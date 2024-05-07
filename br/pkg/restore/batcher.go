@@ -12,6 +12,7 @@ import (
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/glue"
+	"github.com/pingcap/tidb/br/pkg/restore/utils"
 	"github.com/pingcap/tidb/br/pkg/rtree"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"go.uber.org/zap"
@@ -227,7 +228,7 @@ type DrainResult struct {
 	BlankTablesAfterSend []CreatedTable
 	// RewriteRules are the rewrite rules for the tables.
 	// the key is the table id after rewritten.
-	RewriteRulesMap map[int64]*RewriteRules
+	RewriteRulesMap map[int64]*utils.RewriteRules
 	Ranges          []rtree.Range
 	// Record which part of ranges belongs to the table
 	TableEndOffsetInRanges []int
@@ -245,7 +246,7 @@ func (result DrainResult) Files() []TableIDWithFiles {
 		for _, rg := range ranges {
 			files = append(files, rg.Files...)
 		}
-		var rules *RewriteRules
+		var rules *utils.RewriteRules
 		if r, ok := result.RewriteRulesMap[tableID]; ok {
 			rules = r
 		}
@@ -266,7 +267,7 @@ func newDrainResult() DrainResult {
 	return DrainResult{
 		TablesToSend:           make([]CreatedTable, 0),
 		BlankTablesAfterSend:   make([]CreatedTable, 0),
-		RewriteRulesMap:        EmptyRewriteRulesMap(),
+		RewriteRulesMap:        utils.EmptyRewriteRulesMap(),
 		Ranges:                 make([]rtree.Range, 0),
 		TableEndOffsetInRanges: make([]int, 0),
 	}

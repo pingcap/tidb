@@ -30,9 +30,10 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner"
 	"github.com/pingcap/tidb/pkg/planner/core"
-	"github.com/pingcap/tidb/pkg/planner/core/internal"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
+	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/external"
@@ -221,7 +222,7 @@ func TestIndexLookupCartesianJoin(t *testing.T) {
 }
 
 func TestMPPHintsWithBinding(t *testing.T) {
-	store := testkit.CreateMockStore(t, internal.WithMockTiFlash(2))
+	store := testkit.CreateMockStore(t, coretestsdk.WithMockTiFlash(2))
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set tidb_cost_model_version=2")
@@ -270,7 +271,7 @@ func TestMPPHintsWithBinding(t *testing.T) {
 }
 
 func TestJoinHintCompatibilityWithBinding(t *testing.T) {
-	store := testkit.CreateMockStore(t, internal.WithMockTiFlash(2))
+	store := testkit.CreateMockStore(t, coretestsdk.WithMockTiFlash(2))
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set tidb_cost_model_version=2")
@@ -392,7 +393,7 @@ func TestDAGPlanBuilderSplitAvg(t *testing.T) {
 		require.NoError(t, err, comment)
 
 		require.Equal(t, tt.plan, core.ToString(p), comment)
-		root, ok := p.(core.PhysicalPlan)
+		root, ok := p.(base.PhysicalPlan)
 		if !ok {
 			continue
 		}
@@ -400,7 +401,7 @@ func TestDAGPlanBuilderSplitAvg(t *testing.T) {
 	}
 }
 
-func testDAGPlanBuilderSplitAvg(t *testing.T, root core.PhysicalPlan) {
+func testDAGPlanBuilderSplitAvg(t *testing.T, root base.PhysicalPlan) {
 	if p, ok := root.(*core.PhysicalTableReader); ok {
 		if p.TablePlans != nil {
 			baseAgg := p.TablePlans[len(p.TablePlans)-1]
@@ -441,7 +442,7 @@ func TestPhysicalPlanMemoryTrace(t *testing.T) {
 }
 
 func TestPhysicalTableScanExtractCorrelatedCols(t *testing.T) {
-	store := testkit.CreateMockStore(t, internal.WithMockTiFlash(2))
+	store := testkit.CreateMockStore(t, coretestsdk.WithMockTiFlash(2))
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t1 (id int, client_type tinyint, client_no char(18), taxpayer_no varchar(50), status tinyint, update_time datetime)")
@@ -457,11 +458,11 @@ func TestPhysicalTableScanExtractCorrelatedCols(t *testing.T) {
 	tk.MustExec(sql)
 	info := tk.Session().ShowProcess()
 	require.NotNil(t, info)
-	p, ok := info.Plan.(core.Plan)
+	p, ok := info.Plan.(base.Plan)
 	require.True(t, ok)
 
-	var findSelection func(p core.Plan) *core.PhysicalSelection
-	findSelection = func(p core.Plan) *core.PhysicalSelection {
+	var findSelection func(p base.Plan) *core.PhysicalSelection
+	findSelection = func(p base.Plan) *core.PhysicalSelection {
 		if p == nil {
 			return nil
 		}
@@ -481,7 +482,7 @@ func TestPhysicalTableScanExtractCorrelatedCols(t *testing.T) {
 			}
 			return nil
 		default:
-			physicayPlan := p.(core.PhysicalPlan)
+			physicayPlan := p.(base.PhysicalPlan)
 			for _, child := range physicayPlan.Children() {
 				if sel := findSelection(child); sel != nil {
 					return sel
@@ -506,7 +507,7 @@ func TestPhysicalTableScanExtractCorrelatedCols(t *testing.T) {
 		core.PushedDown(sel, ts, []expression.Expression{selected}, 0.1)
 	}
 
-	pb, err := ts.ToPB(tk.Session().GetPlanCtx(), kv.TiFlash)
+	pb, err := ts.ToPB(tk.Session().GetBuildPBCtx(), kv.TiFlash)
 	require.NoError(t, err)
 	// make sure the pushed down filter condition is correct
 	require.Equal(t, 1, len(pb.TblScan.PushedDownFilterConditions))

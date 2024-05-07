@@ -9,7 +9,7 @@ go_library(
         "//pkg/distsql",
         "//pkg/kv",
         "//pkg/planner/context",
-        "//pkg/planner/core",
+        "//pkg/planner/core/base",
         "//pkg/sessionctx",
         "//pkg/sessionctx/variable",
         "//pkg/util/timeutil",

@@ -16,7 +16,7 @@ go_library(
         "//pkg/errctx",
         "//pkg/errno",
         "//pkg/expression",
-        "//pkg/infoschema",
+        "//pkg/infoschema/context",
         "//pkg/kv",
         "//pkg/metrics",
         "//pkg/parser/model",

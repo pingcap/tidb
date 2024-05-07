@@ -694,7 +694,8 @@ func getSignatureByPB(ctx BuildContext, sigCode tipb.ScalarFuncSig, tp *tipb.Fie
 		f = &builtinJSONArrayAppendSig{base}
 	case tipb.ScalarFuncSig_JsonArrayInsertSig:
 		f = &builtinJSONArrayInsertSig{base}
-	// case tipb.ScalarFuncSig_JsonMergePatchSig:
+	case tipb.ScalarFuncSig_JsonMergePatchSig:
+		f = &builtinJSONMergePatchSig{base}
 	case tipb.ScalarFuncSig_JsonMergePreserveSig:
 		f = &builtinJSONMergeSig{base}
 	case tipb.ScalarFuncSig_JsonContainsPathSig:

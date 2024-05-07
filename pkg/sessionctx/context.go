@@ -72,6 +72,7 @@ type Context interface {
 	// RollbackTxn rolls back the current transaction.
 	RollbackTxn(ctx context.Context)
 	// CommitTxn commits the current transaction.
+	// buffered KV changes will be discarded, call StmtCommit if you want to commit them.
 	CommitTxn(ctx context.Context) error
 	// Txn returns the current transaction which is created before executing a statement.
 	// The returned kv.Transaction is not nil, but it maybe pending or invalid.
@@ -118,6 +119,9 @@ type Context interface {
 	// GetRangerCtx returns the context used in `ranger` related functions
 	GetRangerCtx() *rangerctx.RangerContext
 
+	// GetBuildPBCtx gets the ctx used in `ToPB` of the current session
+	GetBuildPBCtx() *planctx.BuildPBContext
+
 	GetSessionManager() util.SessionManager
 
 	// RefreshTxnCtx commits old transaction without retry,
@@ -138,9 +142,17 @@ type Context interface {
 	HasDirtyContent(tid int64) bool
 
 	// StmtCommit flush all changes by the statement to the underlying transaction.
+	// it must be called before CommitTxn, else all changes since last StmtCommit
+	// will be lost. For SQL statement, StmtCommit or StmtRollback is called automatically.
+	// the "Stmt" not only means SQL statement, but also any KV changes, such as
+	// meta KV.
 	StmtCommit(ctx context.Context)
 	// StmtRollback provides statement level rollback. The parameter `forPessimisticRetry` should be true iff it's used
 	// for auto-retrying execution of DMLs in pessimistic transactions.
+	// if error happens when you are handling batch of KV changes since last StmtCommit
+	// or StmtRollback, and you don't want them to be committed, you must call StmtRollback
+	// before you start another batch, otherwise, the previous changes might be committed
+	// unexpectedly.
 	StmtRollback(ctx context.Context, isForPessimisticRetry bool)
 	// StmtGetMutation gets the binlog mutation for current statement.
 	StmtGetMutation(int64) *binlog.TableMutation

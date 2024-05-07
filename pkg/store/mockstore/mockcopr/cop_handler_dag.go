@@ -40,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
+	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
 	"github.com/pingcap/tidb/pkg/util/timeutil"
@@ -539,7 +540,7 @@ func (mock *mockBatchCopDataClient) Recv() (*coprocessor.BatchResponse, error) {
 	return nil, io.EOF
 }
 
-func (h coprHandler) initSelectResponse(err error, warnings []stmtctx.SQLWarn, counts []int64) *tipb.SelectResponse {
+func (h coprHandler) initSelectResponse(err error, warnings []contextutil.SQLWarn, counts []int64) *tipb.SelectResponse {
 	selResp := &tipb.SelectResponse{
 		Error:        toPBError(err),
 		OutputCounts: counts,

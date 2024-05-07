@@ -94,10 +94,10 @@
       {
         "SQL": "select /*+ broadcast_join(t1, t2), hash_join_build(t1) */ * from t1, t2 where t1.k1+1=t2.k1; -- Support transform src expression t1.k1+1",
         "Plan": [
-          "TableReader_20 1.00 root  MppVersion: 2, data:ExchangeSender_19",
-          "└─ExchangeSender_19 1.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─Projection_8 1.00 mpp[tiflash]  test.t1.k1, test.t2.k1, test.t2.k2, test.t2.k3",
-          "    └─HashJoin_18 1.00 mpp[tiflash]  inner join, equal:[eq(Column#7, test.t2.k1)], runtime filter:0[IN] <- Column#7",
+          "TableReader_22 1.00 root  MppVersion: 2, data:ExchangeSender_21",
+          "└─ExchangeSender_21 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection_20 1.00 mpp[tiflash]  test.t1.k1, test.t2.k1, test.t2.k2, test.t2.k3",
+          "    └─HashJoin_19 1.00 mpp[tiflash]  inner join, equal:[eq(Column#7, test.t2.k1)], runtime filter:0[IN] <- Column#7",
           "      ├─ExchangeReceiver_14(Build) 1.00 mpp[tiflash]  ",
           "      │ └─ExchangeSender_13 1.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "      │   └─Projection_11 1.00 mpp[tiflash]  test.t1.k1, plus(test.t1.k1, 1)->Column#7",
@@ -138,10 +138,10 @@
       {
         "SQL": "select /*+ broadcast_join(t1, t2), hash_join_build(t1) */ * from t1, t2 where t1.k1=t2.k1+1; -- Doesn't support target expression t2.k1+1",
         "Plan": [
-          "TableReader_19 1.00 root  MppVersion: 2, data:ExchangeSender_18",
-          "└─ExchangeSender_18 1.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─Projection_8 1.00 mpp[tiflash]  test.t1.k1, test.t2.k1, test.t2.k2, test.t2.k3",
-          "    └─HashJoin_17 1.00 mpp[tiflash]  inner join, equal:[eq(test.t1.k1, Column#7)]",
+          "TableReader_21 1.00 root  MppVersion: 2, data:ExchangeSender_20",
+          "└─ExchangeSender_20 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection_19 1.00 mpp[tiflash]  test.t1.k1, test.t2.k1, test.t2.k2, test.t2.k3",
+          "    └─HashJoin_18 1.00 mpp[tiflash]  inner join, equal:[eq(test.t1.k1, Column#7)]",
           "      ├─ExchangeReceiver_12(Build) 1.00 mpp[tiflash]  ",
           "      │ └─ExchangeSender_11 1.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "      │   └─TableFullScan_10 1.00 mpp[tiflash] table:t1 keep order:false",

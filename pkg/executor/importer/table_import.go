@@ -155,7 +155,7 @@ func NewTableImporter(
 	id string,
 	kvStore tidbkv.Storage,
 ) (ti *TableImporter, err error) {
-	idAlloc := kv.NewPanickingAllocators(0)
+	idAlloc := kv.NewPanickingAllocators(e.Table.Meta().SepAutoInc(), 0)
 	tbl, err := tables.TableFromMeta(idAlloc, e.Table.Meta())
 	if err != nil {
 		return nil, errors.Annotatef(err, "failed to tables.TableFromMeta %s", e.Table.Meta().Name)
@@ -235,7 +235,7 @@ type TableImporter struct {
 
 // NewTableImporterForTest creates a new table importer for test.
 func NewTableImporterForTest(ctx context.Context, e *LoadDataController, id string, helper local.StoreHelper) (*TableImporter, error) {
-	idAlloc := kv.NewPanickingAllocators(0)
+	idAlloc := kv.NewPanickingAllocators(e.Table.Meta().SepAutoInc(), 0)
 	tbl, err := tables.TableFromMeta(idAlloc, e.Table.Meta())
 	if err != nil {
 		return nil, errors.Annotatef(err, "failed to tables.TableFromMeta %s", e.Table.Meta().Name)
@@ -966,6 +966,10 @@ func GetImportRootDir(tidbCfg *tidb.Config) string {
 }
 
 // FlushTableStats flushes the stats of the table.
+// stats will be flushed in domain.updateStatsWorker, default interval is [1, 2) minutes,
+// see DumpStatsDeltaToKV for more details. then the background analyzer will analyze
+// the table.
+// the stats stay in memory until the next flush, so it might be lost if the tidb-server restarts.
 func FlushTableStats(ctx context.Context, se sessionctx.Context, tableID int64, result *JobImportResult) error {
 	if err := sessiontxn.NewTxn(ctx, se); err != nil {
 		return err

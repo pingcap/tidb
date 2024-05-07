@@ -34,10 +34,12 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	exprctx "github.com/pingcap/tidb/pkg/expression/context"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	isctx "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	planctx "github.com/pingcap/tidb/pkg/planner/context"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/table"
@@ -77,18 +79,19 @@ type kvRangeBuilder interface {
 
 // tableReaderExecutorContext is the execution context for the `TableReaderExecutor`
 type tableReaderExecutorContext struct {
-	dctx *distsqlctx.DistSQLContext
-	rctx *rangerctx.RangerContext
-	pctx planctx.PlanContext
-	ectx exprctx.BuildContext
+	dctx       *distsqlctx.DistSQLContext
+	rctx       *rangerctx.RangerContext
+	buildPBCtx *planctx.BuildPBContext
+	ectx       exprctx.BuildContext
 
 	stmtMemTracker *memory.Tracker
 
+	infoSchema  isctx.MetaOnlyInfoSchema
 	getDDLOwner func(context.Context) (*infosync.ServerInfo, error)
 }
 
-func (treCtx *tableReaderExecutorContext) GetInfoSchema() infoschema.InfoSchema {
-	return treCtx.pctx.GetInfoSchema().(infoschema.InfoSchema)
+func (treCtx *tableReaderExecutorContext) GetInfoSchema() isctx.MetaOnlyInfoSchema {
+	return treCtx.infoSchema
 }
 
 func (treCtx *tableReaderExecutorContext) GetDDLOwner(ctx context.Context) (*infosync.ServerInfo, error) {
@@ -120,9 +123,10 @@ func newTableReaderExecutorContext(sctx sessionctx.Context) tableReaderExecutorC
 	return tableReaderExecutorContext{
 		dctx:           sctx.GetDistSQLCtx(),
 		rctx:           pctx.GetRangerCtx(),
-		pctx:           pctx,
+		buildPBCtx:     pctx.GetBuildPBCtx(),
 		ectx:           sctx.GetExprCtx(),
 		stmtMemTracker: sctx.GetSessionVars().StmtCtx.MemTracker,
+		infoSchema:     pctx.GetInfoSchema(),
 		getDDLOwner:    getDDLOwner,
 	}
 }
@@ -159,8 +163,8 @@ type TableReaderExecutor struct {
 	// resultHandler handles the order of the result. Since (MAXInt64, MAXUint64] stores before [0, MaxInt64] physically
 	// for unsigned int.
 	resultHandler *tableResultHandler
-	plans         []plannercore.PhysicalPlan
-	tablePlan     plannercore.PhysicalPlan
+	plans         []base.PhysicalPlan
+	tablePlan     base.PhysicalPlan
 
 	memTracker       *memory.Tracker
 	selectResultHook // for testing
@@ -232,13 +236,13 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 	if e.corColInFilter {
 		// If there's correlated column in filter, need to rewrite dagPB
 		if e.storeType == kv.TiFlash {
-			execs, err := builder.ConstructTreeBasedDistExec(e.pctx, e.tablePlan)
+			execs, err := builder.ConstructTreeBasedDistExec(e.buildPBCtx, e.tablePlan)
 			if err != nil {
 				return err
 			}
 			e.dagPB.RootExecutor = execs[0]
 		} else {
-			e.dagPB.Executors, err = builder.ConstructListBasedDistExec(e.pctx, e.plans)
+			e.dagPB.Executors, err = builder.ConstructListBasedDistExec(e.buildPBCtx, e.plans)
 			if err != nil {
 				return err
 			}

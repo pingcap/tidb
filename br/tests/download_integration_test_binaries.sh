@@ -68,18 +68,33 @@ function main() {
     rm -rf tmp
     mkdir third_bin
     mkdir tmp
+    
+    #PD server
     download "$pd_download_url" "pd-server.tar.gz" "tmp/pd-server.tar.gz"
-    tar -xz -C third_bin 'bin/*' -f tmp/pd-server.tar.gz && mv third_bin/bin/* third_bin/
+    tar -xzf tmp/pd-server.tar.gz -C third_bin --wildcards 'bin/*'
+    mv third_bin/bin/* third_bin/ 
+
+    #TiKV server
     download "$tikv_download_url" "tikv-server.tar.gz" "tmp/tikv-server.tar.gz"
-    tar -xz -C third_bin 'bin/*' -f tmp/tikv-server.tar.gz && mv third_bin/bin/* third_bin/
+    tar -xzf tmp/tikv-server.tar.gz -C third_bin --wildcards 'bin/*'
+    mv third_bin/bin/* third_bin/
+
+    #TiFlash
     download "$tiflash_download_url" "tiflash.tar.gz" "tmp/tiflash.tar.gz"
-    tar -xz -C third_bin -f tmp/tiflash.tar.gz
+    tar -xzf tmp/tiflash.tar.gz -C third_bin
     mv third_bin/tiflash third_bin/_tiflash
     mv third_bin/_tiflash/* third_bin && rm -rf third_bin/_tiflash
+
+    #TiKV Importer
     download "$tikv_importer_download_url" "importer.tar.gz" "tmp/importer.tar.gz"
-    tar -xz -C third_bin bin/tikv-importer  -f tmp/importer.tar.gz && mv third_bin/bin/tikv-importer third_bin/
+    tar -xzf tmp/importer.tar.gz -C third_bin --wildcards 'bin/tikv-importer'
+    mv third_bin/bin/tikv-importer third_bin/
+
+    #TiCDC
     download "$ticdc_download_url" "ticdc-linux-amd64.tar.gz" "tmp/ticdc-linux-amd64.tar.gz"
-    tar -xz -C third_bin -f tmp/ticdc-linux-amd64.tar.gz && mv third_bin/ticdc-linux-amd64/bin/* third_bin/ && rm -rf third_bin/ticdc-linux-amd64
+    tar -xzf tmp/ticdc-linux-amd64.tar.gz -C third_bin --wildcards '*/bin/*'
+    mv third_bin/ticdc-linux-amd64/bin/* third_bin/
+    rm -rf third_bin/ticdc-linux-amd64
 
     download "$minio_url" "minio" "third_bin/minio"
     download "$go_ycsb_url" "go-ycsb" "third_bin/go-ycsb"
