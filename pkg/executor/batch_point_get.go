@@ -193,10 +193,9 @@ func (e *BatchPointGetExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	if e.index >= len(e.values) {
 		return nil
 	}
+
 	schema := e.Schema()
 	sctx := e.BaseExecutor.Ctx()
-	tz := sctx.GetSessionVars().Location()
-
 	start := e.index
 	for !req.IsFull() && e.index < len(e.values) {
 		handle, val := e.handles[e.index], e.values[e.index]
@@ -207,7 +206,7 @@ func (e *BatchPointGetExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		e.index++
 	}
 
-	err := fillRowChecksum(start, e.index, schema, e.tblInfo, tz, e.values, e.handles, req, nil)
+	err := fillRowChecksum(sctx, start, e.index, schema, e.tblInfo, e.values, e.handles, req, nil)
 	if err != nil {
 		return err
 	}

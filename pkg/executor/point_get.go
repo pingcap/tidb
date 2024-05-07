@@ -19,7 +19,6 @@ import (
 	"fmt"
 	"sort"
 	"strconv"
-	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -398,7 +397,7 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 		return err
 	}
 
-	err = fillRowChecksum(0, 1, schema, e.tblInfo, sctx.GetSessionVars().Location(), [][]byte{val}, []kv.Handle{e.handle}, req, nil)
+	err = fillRowChecksum(sctx, 0, 1, schema, e.tblInfo, [][]byte{val}, []kv.Handle{e.handle}, req, nil)
 	if err != nil {
 		return err
 	}
@@ -421,8 +420,9 @@ func shouldFillRowChecksum(schema *expression.Schema) (int, bool) {
 }
 
 func fillRowChecksum(
+	sctx sessionctx.Context,
 	start, end int,
-	schema *expression.Schema, tblInfo *model.TableInfo, tz *time.Location,
+	schema *expression.Schema, tblInfo *model.TableInfo,
 	values [][]byte, handles []kv.Handle,
 	req *chunk.Chunk, buf []byte,
 ) error {
@@ -448,6 +448,7 @@ func fillRowChecksum(
 		columnFt[col.ID] = &col.FieldType
 	}
 
+	tz := sctx.GetSessionVars().TimeZone
 	ft := []*types.FieldType{schema.Columns[checksumColumnIndex].GetType()}
 	checksumCols := chunk.NewChunkWithCapacity(ft, req.Capacity())
 	for i := start; i < end; i++ {
@@ -463,6 +464,19 @@ func fillRowChecksum(
 		datums, err = tablecodec.DecodeHandleToDatumMap(handle, handleColIDs, columnFt, tz, datums)
 		if err != nil {
 			return err
+		}
+		for _, col := range tblInfo.Columns {
+			// cannot found from the datums, which means the data is not stored, this
+			// may happen after `add column` executed, filling with the default value.
+			_, ok := datums[col.ID]
+			if !ok {
+				colInfo := getColInfoByID(tblInfo, col.ID)
+				d, err := table.GetColOriginDefaultValue(sctx.GetExprCtx(), colInfo)
+				if err != nil {
+					return err
+				}
+				datums[col.ID] = d
+			}
 		}
 
 		colData := make([]rowcodec.ColData, len(tblInfo.Columns))
