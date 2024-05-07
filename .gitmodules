@@ -1,3 +1,3 @@
-[submodule "extension/enterprise"]
-	path = pkg/extension/enterprise
-	url = git@github.com:pingcap-inc/enterprise-extensions.git
+[submodule "tikv-client-go"]
+	path = tikv-client-go
+	url = git@commitment.musta.ch:company/tidb-client-go.git
