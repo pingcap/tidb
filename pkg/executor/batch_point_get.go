@@ -193,13 +193,16 @@ func (e *BatchPointGetExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	if e.index >= len(e.values) {
 		return nil
 	}
+	schema := e.Schema()
+	sctx := e.BaseExecutor.Ctx()
+	tz := sctx.GetSessionVars().Location()
 	for !req.IsFull() && e.index < len(e.values) {
 		handle, val := e.handles[e.index], e.values[e.index]
-		err := DecodeRowValToChunk(e.BaseExecutor.Ctx(), e.Schema(), e.tblInfo, handle, val, req, e.rowDecoder)
+		err := DecodeRowValToChunk(sctx, schema, e.tblInfo, handle, val, req, e.rowDecoder)
 		if err != nil {
 			return err
 		}
-		err = fillRowChecksum(e.Schema(), e.tblInfo, e.BaseExecutor.Ctx().GetSessionVars().Location(), val, handle, req, nil)
+		err = fillRowChecksum(schema, e.tblInfo, tz, val, handle, req, nil)
 		if err != nil {
 			return err
 		}

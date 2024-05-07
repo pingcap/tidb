@@ -444,11 +444,9 @@ func fillRowChecksum(
 	}
 
 	columnFt := make(map[int64]*types.FieldType)
-	for idx := range tblInfo.Columns {
-		col := tblInfo.Columns[idx]
+	for _, col := range tblInfo.Columns {
 		columnFt[col.ID] = &col.FieldType
 	}
-
 	datums, err := tablecodec.DecodeRowWithMapNew(val, columnFt, tz, nil)
 	if err != nil {
 		return err
@@ -459,7 +457,7 @@ func fillRowChecksum(
 	}
 
 	columns := tblInfo.Cols()
-	colData := make([]rowcodec.ColData, len(datums))
+	colData := make([]rowcodec.ColData, len(columns))
 	for idx, col := range columns {
 		d := datums[col.ID]
 		data := rowcodec.ColData{
@@ -481,6 +479,7 @@ func fillRowChecksum(
 	}
 
 	result := strconv.FormatUint(uint64(checksum), 10)
+	req.Column(targetIndex).Reset(types.ETString)
 	req.AppendString(targetIndex, result)
 	return nil
 }
