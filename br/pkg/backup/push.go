@@ -210,3 +210,35 @@ func (push *pushDown) pushBackup(
 		}
 	}
 }
+
+func startStoreBackup(
+	ctx context.Context,
+	storeID uint64,
+	backupReq backuppb.BackupRequest,
+	backupCli backuppb.BackupClient,
+	respCh chan *backuppb.BackupResponse,
+) error {
+	// this goroutine handle the response from a single store
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+		retry := -1
+		return utils.WithRetry(ctx, func() error {
+			retry += 1
+			logutil.CL(ctx).Info("try backup", zap.Int("retry time", retry))
+			// Send backup request to the store.
+			// handle the backup response or internal error here.
+			// handle the store error(reboot or network partition) outside.
+			return doSendBackup(ctx, backupCli, backupReq, func(resp *backuppb.BackupResponse) error {
+				// Forward all responses (including error).
+				select {
+				case <-ctx.Done():
+					return ctx.Err()
+				case respCh <- resp:
+				}
+				return nil
+			})
+		}, utils.NewBackupSSTBackoffer())
+	}
+}
