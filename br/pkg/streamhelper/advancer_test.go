@@ -563,10 +563,9 @@ func TestUnregisterAfterPause(t *testing.T) {
 	require.NoError(t, adv.OnTick(ctx))
 	env.unregisterTask()
 	env.putTask()
-	time.Sleep(1 * time.Second)
 	require.Eventually(t, func() bool {
 		return assert.ErrorContains(t, adv.OnTick(ctx), "check point lagged too large")
-	}, 5*time.Second, 100*time.Millisecond)
+	}, 5*time.Second, 300*time.Millisecond)
 }
 
 func TestOwnershipLost(t *testing.T) {
