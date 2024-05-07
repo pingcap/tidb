@@ -17,7 +17,6 @@ package expression
 import (
 	goJSON "encoding/json"
 	"fmt"
-	"github.com/pingcap/tidb/pkg/util/mathutil"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/errctx"
@@ -29,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/generatedexpr"
+	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/pingcap/tidb/pkg/util/zeropool"
 )
