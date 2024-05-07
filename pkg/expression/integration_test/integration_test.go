@@ -2988,23 +2988,42 @@ func TestTiDBRowChecksumBuiltin(t *testing.T) {
 	// row with 1 checksum
 	tk.MustExec("insert into t values (1, 10)")
 	tk.MustExec("alter table t change column c c varchar(10)")
-	checksum1 := fmt.Sprintf("%d", checksum(1, "10"))
+	expected1 := checksum(1, "10")
+	checksum1 := fmt.Sprintf("%d", expected1)
+	checksum11 := fmt.Sprintf("%d %v %d", 1, "10", expected1)
 
 	tk.Session().GetSessionVars().EnableRowLevelChecksum = true
 	tk.MustExec("insert into t values (2, '20')")
-	checksum2 := fmt.Sprintf("%d", checksum(2, "20"))
+	expected2 := checksum(2, "20")
+	checksum2 := fmt.Sprintf("%d", expected2)
+	checksum22 := fmt.Sprintf("%d %d %v", 2, expected2, "20")
 
 	// row without checksum
 	tk.Session().GetSessionVars().EnableRowLevelChecksum = false
 	tk.MustExec("insert into t values (3, '30')")
-	checksum3 := fmt.Sprintf("%d", checksum(3, "30"))
+	expected3 := checksum(3, "30")
+	checksum3 := fmt.Sprintf("%d", expected3)
+	checksum33 := fmt.Sprintf("%d %d %v", expected3, 3, "30")
 
 	// fast point-get
 	tk.MustQuery("select tidb_row_checksum() from t where id = 1").Check(testkit.Rows(checksum1))
+	tk.MustQuery("select id, c, tidb_row_checksum() from t where id = 1").Check(testkit.Rows(checksum11))
+
 	tk.MustQuery("select tidb_row_checksum() from t where id = 2").Check(testkit.Rows(checksum2))
+	tk.MustQuery("select id, tidb_row_checksum(), c from t where id = 2").Check(testkit.Rows(checksum22))
+
 	tk.MustQuery("select tidb_row_checksum() from t where id = 3").Check(testkit.Rows(checksum3))
+	tk.MustQuery("select tidb_row_checksum(), id, c from t where id = 3").Check(testkit.Rows(checksum33))
+
 	// fast batch-point-get
 	tk.MustQuery("select tidb_row_checksum() from t where id in (1, 2, 3)").Check(testkit.Rows(checksum1, checksum2, checksum3))
+
+	tk.MustQuery("select id, c, tidb_row_checksum() from t where id in (1, 2, 3)").
+		Check(testkit.Rows(
+			checksum11,
+			fmt.Sprintf("%d %v %d", 2, "20", expected2),
+			fmt.Sprintf("%d %v %d", 3, "30", expected3),
+		))
 
 	// non-fast point-get
 	tk.MustGetDBError("select length(tidb_row_checksum()) from t where id = 1", expression.ErrNotSupportedYet)

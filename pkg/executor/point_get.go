@@ -487,7 +487,7 @@ func fillRowChecksum(
 		}
 		checksumCols.AppendString(0, strconv.FormatUint(uint64(checksum), 10))
 	}
-	req.SetCol(checksumColumnIndex, checksumCols.Column(checksumColumnIndex))
+	req.SetCol(checksumColumnIndex, checksumCols.Column(0))
 	return nil
 }
 
