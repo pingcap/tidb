@@ -558,7 +558,7 @@ func TestUnregisterAfterPause(t *testing.T) {
 	adv.StartTaskListener(ctx)
 	c.advanceClusterTimeBy(1 * time.Minute)
 	require.NoError(t, adv.OnTick(ctx))
-	env.PauseTask(ctx,"whole")
+	env.PauseTask(ctx, "whole")
 	time.Sleep(1 * time.Second)
 	c.advanceClusterTimeBy(1 * time.Minute)
 	require.NoError(t, adv.OnTick(ctx))
