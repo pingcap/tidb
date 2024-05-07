@@ -391,19 +391,20 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 		return nil
 	}
 
+	sctx := e.BaseExecutor.Ctx()
 	schema := e.Schema()
-	err = DecodeRowValToChunk(e.BaseExecutor.Ctx(), schema, e.tblInfo, e.handle, val, req, e.rowDecoder)
+	err = DecodeRowValToChunk(sctx, schema, e.tblInfo, e.handle, val, req, e.rowDecoder)
 	if err != nil {
 		return err
 	}
 
-	err = fillRowChecksum(schema, e.tblInfo, e.BaseExecutor.Ctx().GetSessionVars().Location(), val, e.handle, req, nil)
+	err = fillRowChecksum(schema, e.tblInfo, sctx.GetSessionVars().Location(), val, e.handle, req, nil)
 	if err != nil {
 		return err
 	}
 
 	err = table.FillVirtualColumnValue(e.virtualColumnRetFieldTypes, e.virtualColumnIndex,
-		e.Schema().Columns, e.columns, e.Ctx().GetExprCtx(), req)
+		schema.Columns, e.columns, sctx.GetExprCtx(), req)
 	if err != nil {
 		return err
 	}
@@ -456,9 +457,8 @@ func fillRowChecksum(
 		return err
 	}
 
-	columns := tblInfo.Cols()
-	colData := make([]rowcodec.ColData, len(columns))
-	for idx, col := range columns {
+	colData := make([]rowcodec.ColData, len(tblInfo.Columns))
+	for idx, col := range tblInfo.Columns {
 		d := datums[col.ID]
 		data := rowcodec.ColData{
 			ColumnInfo: col,
