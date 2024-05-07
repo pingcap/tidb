@@ -421,6 +421,7 @@ func (c *CheckpointAdvancer) onTaskEvent(ctx context.Context, e TaskEvent) error
 	switch e.Type {
 	case EventAdd:
 		utils.LogBackupTaskCountInc()
+		c.isPaused.Store(false)
 		c.task = e.Info
 		c.taskRange = spans.Collapse(len(e.Ranges), func(i int) kv.KeyRange { return e.Ranges[i] })
 		c.setCheckpoints(spans.Sorted(spans.NewFullWith(e.Ranges, 0)))
@@ -433,6 +434,7 @@ func (c *CheckpointAdvancer) onTaskEvent(ctx context.Context, e TaskEvent) error
 			zap.Stringer("ranges", logutil.StringifyKeys(c.taskRange)), zap.Uint64("current-checkpoint", p))
 	case EventDel:
 		utils.LogBackupTaskCountDec()
+		c.isPaused.Store(false)
 		c.task = nil
 		c.taskRange = nil
 		// This would be synced by `taskMu`, perhaps we'd better rename that to `tickMu`.
@@ -450,11 +452,11 @@ func (c *CheckpointAdvancer) onTaskEvent(ctx context.Context, e TaskEvent) error
 		metrics.LastCheckpoint.DeleteLabelValues(e.Name)
 	case EventPause:
 		if c.task.GetName() == e.Name {
-			c.isPaused.CompareAndSwap(false, true)
+			c.isPaused.Store(true)
 		}
 	case EventResume:
 		if c.task.GetName() == e.Name {
-			c.isPaused.CompareAndSwap(true, false)
+			c.isPaused.Store(false)
 		}
 	case EventErr:
 		return e.Err
