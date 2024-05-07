@@ -1153,6 +1153,10 @@ func wrapWithIsTrue(ctx BuildContext, keepNull bool, arg Expression, wrapForInt 
 func PropagateType(evalType types.EvalType, args ...Expression) {
 	switch evalType {
 	case types.ETReal:
+		if _, ok := args[0].(*Constant); ok {
+			// don't propagate type for constant
+			return
+		}
 		expr := args[0]
 		oldFlen, oldDecimal := expr.GetType().GetFlen(), expr.GetType().GetDecimal()
 		newFlen, newDecimal := setDataTypeDouble(expr.GetType().GetDecimal())
