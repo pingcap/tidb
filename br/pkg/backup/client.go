@@ -894,11 +894,12 @@ func (bc *Client) BackupRanges(
 		}
 		// merge the ranges[rangeInBatchStartIndex, id) into a batch
 		pranges := bc.getProgressRanges(ranges[rangeInBatchStartIndex:idx])
-		idx := idx
+		idxStart := rangeInBatchStartIndex
+		idxEnd := idx
 		req := request
 		workerPool.ApplyOnErrorGroup(eg, func() (retErr error) {
 			elctx := logutil.ContextWithField(ectx,
-				logutil.RedactAny("range-sn-start", rangeInBatchStartIndex), logutil.RedactAny("range-sn-end", idx))
+				logutil.RedactAny("range-sn-start", idxStart), logutil.RedactAny("range-sn-end", idxEnd))
 
 			prTree, subRanges, err := buildProgressRangeTree(pranges)
 			if err != nil {
