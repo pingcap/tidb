@@ -196,20 +196,22 @@ func (e *BatchPointGetExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	schema := e.Schema()
 	sctx := e.BaseExecutor.Ctx()
 	tz := sctx.GetSessionVars().Location()
+
+	start := e.index
 	for !req.IsFull() && e.index < len(e.values) {
 		handle, val := e.handles[e.index], e.values[e.index]
 		err := DecodeRowValToChunk(sctx, schema, e.tblInfo, handle, val, req, e.rowDecoder)
 		if err != nil {
 			return err
 		}
-		err = fillRowChecksum(schema, e.tblInfo, tz, val, handle, req, nil)
-		if err != nil {
-			return err
-		}
 		e.index++
 	}
 
-	err := table.FillVirtualColumnValue(e.virtualColumnRetFieldTypes, e.virtualColumnIndex, e.Schema().Columns, e.columns, e.Ctx().GetExprCtx(), req)
+	err := fillRowChecksum(start, e.index, schema, e.tblInfo, tz, e.values, e.handles, req, nil)
+	if err != nil {
+		return err
+	}
+	err = table.FillVirtualColumnValue(e.virtualColumnRetFieldTypes, e.virtualColumnIndex, schema.Columns, e.columns, sctx.GetExprCtx(), req)
 	if err != nil {
 		return err
 	}

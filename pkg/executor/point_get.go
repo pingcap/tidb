@@ -398,7 +398,7 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 		return err
 	}
 
-	err = fillRowChecksum(schema, e.tblInfo, sctx.GetSessionVars().Location(), val, e.handle, req, nil)
+	err = fillRowChecksum(0, 1, schema, e.tblInfo, sctx.GetSessionVars().Location(), [][]byte{val}, []kv.Handle{e.handle}, req, nil)
 	if err != nil {
 		return err
 	}
@@ -421,13 +421,12 @@ func shouldFillRowChecksum(schema *expression.Schema) (int, bool) {
 }
 
 func fillRowChecksum(
+	start, end int,
 	schema *expression.Schema, tblInfo *model.TableInfo, tz *time.Location,
-	val []byte, handle kv.Handle, req *chunk.Chunk, buf []byte,
+	values [][]byte, handles []kv.Handle,
+	req *chunk.Chunk, buf []byte,
 ) error {
-	if !rowcodec.IsNewFormat(val) {
-		return nil
-	}
-	targetIndex, ok := shouldFillRowChecksum(schema)
+	checksumColumnIndex, ok := shouldFillRowChecksum(schema)
 	if !ok {
 		return nil
 	}
@@ -448,39 +447,47 @@ func fillRowChecksum(
 	for _, col := range tblInfo.Columns {
 		columnFt[col.ID] = &col.FieldType
 	}
-	datums, err := tablecodec.DecodeRowWithMapNew(val, columnFt, tz, nil)
-	if err != nil {
-		return err
-	}
-	datums, err = tablecodec.DecodeHandleToDatumMap(handle, handleColIDs, columnFt, tz, datums)
-	if err != nil {
-		return err
-	}
 
-	colData := make([]rowcodec.ColData, len(tblInfo.Columns))
-	for idx, col := range tblInfo.Columns {
-		d := datums[col.ID]
-		data := rowcodec.ColData{
-			ColumnInfo: col,
-			Datum:      &d,
+	ft := []*types.FieldType{schema.Columns[checksumColumnIndex].GetType()}
+	checksumCols := chunk.NewChunkWithCapacity(ft, req.Capacity())
+	for i := start; i < end; i++ {
+		handle, val := handles[i], values[i]
+		if !rowcodec.IsNewFormat(val) {
+			checksumCols.AppendNull(0)
+			continue
 		}
-		colData[idx] = data
-	}
-	row := rowcodec.RowData{
-		Cols: colData,
-		Data: buf,
-	}
-	if !sort.IsSorted(row) {
-		sort.Sort(row)
-	}
-	checksum, err := row.Checksum(tz)
-	if err != nil {
-		return err
-	}
+		datums, err := tablecodec.DecodeRowWithMapNew(val, columnFt, tz, nil)
+		if err != nil {
+			return err
+		}
+		datums, err = tablecodec.DecodeHandleToDatumMap(handle, handleColIDs, columnFt, tz, datums)
+		if err != nil {
+			return err
+		}
 
-	result := strconv.FormatUint(uint64(checksum), 10)
-	req.Column(targetIndex).Reset(types.ETString)
-	req.AppendString(targetIndex, result)
+		colData := make([]rowcodec.ColData, len(tblInfo.Columns))
+		for idx, col := range tblInfo.Columns {
+			d := datums[col.ID]
+			data := rowcodec.ColData{
+				ColumnInfo: col,
+				Datum:      &d,
+			}
+			colData[idx] = data
+		}
+		row := rowcodec.RowData{
+			Cols: colData,
+			Data: buf,
+		}
+		if !sort.IsSorted(row) {
+			sort.Sort(row)
+		}
+		checksum, err := row.Checksum(tz)
+		if err != nil {
+			return err
+		}
+		checksumCols.AppendString(0, strconv.FormatUint(uint64(checksum), 10))
+	}
+	req.SetCol(checksumColumnIndex, checksumCols.Column(checksumColumnIndex))
 	return nil
 }
 
