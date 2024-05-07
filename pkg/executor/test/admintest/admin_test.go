@@ -1787,6 +1787,7 @@ func TestAdminCheckGlobalIndex(t *testing.T) {
 
 	tk.MustExec("create table admin_test (a int, b int, c int, unique key uidx_a(a)) partition by hash(c) partitions 5")
 	tk.MustExec("insert admin_test values (-10, -20, 1), (-1, -10, 2), (1, 11, 3), (2, 12, 0), (5, 15, -1), (10, 20, -2), (20, 30, -3)")
+	tk.MustExec("analyze table admin_test")
 
 	// Make some corrupted index. Build the index information.
 	sctx := mock.NewContext()
@@ -1814,6 +1815,6 @@ func TestAdminCheckGlobalIndex(t *testing.T) {
 	require.NoError(t, err)
 	err = tk.ExecToErr("admin check table admin_test")
 	require.Error(t, err)
-	require.EqualError(t, err, "[admin:8223]data inconsistency in table: admin_test, index: uidx_a, handle: 4, index-values:\"\" != record-values:\"handle: -1, values: [KindInt64 -10]\"")
+	require.EqualError(t, err, "[admin:8223]data inconsistency in table: admin_test, index: uidx_a, handle: 4, index-values:\"handle: 4, values: [KindInt64 2 KindInt64 4 KindInt64 105]\" != record-values:\"\"")
 	require.True(t, consistency.ErrAdminCheckInconsistent.Equal(err))
 }
