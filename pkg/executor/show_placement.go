@@ -288,35 +288,6 @@ func (e *ShowExec) fetchRangesPlacementPlocy(ctx context.Context) error {
 			}
 			e.appendRow([]any{"RANGE " + rangeBundleID, policy.PlacementSettings.String(), state.String()})
 		}
-<<<<<<< HEAD
-		policyName := ""
-		startKey := []byte("")
-		endKey := []byte("")
-		rule := bundle.Rules[0]
-		pos := strings.Index(rule.ID, "_rule")
-		if pos > 0 {
-			policyName = rule.ID[:pos]
-		}
-		startKey, err = hex.DecodeString(rule.StartKeyHex)
-		if err != nil {
-			return err
-		}
-		endKey, err = hex.DecodeString(rule.EndKeyHex)
-		if err != nil {
-			return err
-		}
-		state, err := infosync.GetReplicationState(ctx, startKey, endKey)
-		if err != nil {
-			return err
-		}
-		policy, ok := e.is.PolicyByName(model.NewCIStr(policyName))
-		if !ok {
-			return errors.Errorf("Policy with name '%s' not found", policyName)
-		}
-		e.appendRow([]interface{}{"RANGE " + rangeName, policy.PlacementSettings.String(), state.String()})
-=======
-
->>>>>>> 65817ac7bb7 (placement: fix alter placement policy cannot update the relative ranges policy (#52254))
 		return nil
 	}
 	// try fetch ranges placement policy
