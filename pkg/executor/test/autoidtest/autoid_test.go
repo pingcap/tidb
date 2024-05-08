@@ -768,7 +768,6 @@ func TestIssue39528(t *testing.T) {
 	require.False(t, codeRun)
 }
 
-<<<<<<< HEAD
 func TestAutoIDConstraint(t *testing.T) {
 	// Remove the constraint that auto id column must be defined as a key
 	// See https://github.com/pingcap/tidb/issues/40580
