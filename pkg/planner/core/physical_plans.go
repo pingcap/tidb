@@ -33,7 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
-	"github.com/pingcap/tidb/pkg/planner/util/tablesample"
+	"github.com/pingcap/tidb/pkg/planner/util/tablesampler"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/statistics"
@@ -899,7 +899,7 @@ type PhysicalTableScan struct {
 
 	PlanPartInfo PhysPlanPartInfo
 
-	SampleInfo *tablesample.TableSampleInfo
+	SampleInfo *tablesampler.TableSampleInfo
 
 	// required by cost model
 	// tblCols and tblColHists contains all columns before pruning, which are used to calculate row-size
@@ -2526,7 +2526,7 @@ func SafeClone(v base.PhysicalPlan) (_ base.PhysicalPlan, err error) {
 // It returns the sample rows to its parent operand.
 type PhysicalTableSample struct {
 	physicalSchemaProducer
-	TableSampleInfo *tablesample.TableSampleInfo
+	TableSampleInfo *tablesampler.TableSampleInfo
 	TableInfo       table.Table
 	PhysicalTableID int64
 	Desc            bool

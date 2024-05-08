@@ -122,7 +122,7 @@ go_library(
         "//pkg/planner/util/debugtrace",
         "//pkg/planner/util/fixcontrol",
         "//pkg/planner/util/optimizetrace",
-        "//pkg/planner/util/tablesample",
+        "//pkg/planner/util/tablesampler",
         "//pkg/privilege",
         "//pkg/sessionctx",
         "//pkg/sessionctx/stmtctx",

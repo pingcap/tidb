@@ -1,4 +1,4 @@
-package tablesample
+package tablesampler
 
 import (
 	"unsafe"

@@ -34,7 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
 	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
-	"github.com/pingcap/tidb/pkg/planner/util/tablesample"
+	"github.com/pingcap/tidb/pkg/planner/util/tablesampler"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/table"
@@ -1471,7 +1471,7 @@ type DataSource struct {
 	preferStoreType int
 	// preferPartitions store the map, the key represents store type, the value represents the partition name list.
 	preferPartitions map[int][]model.CIStr
-	SampleInfo       *tablesample.TableSampleInfo
+	SampleInfo       *tablesampler.TableSampleInfo
 	is               infoschema.InfoSchema
 	// isForUpdateRead should be true in either of the following situations
 	// 1. use `inside insert`, `update`, `delete` or `select for update` statement
