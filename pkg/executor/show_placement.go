@@ -322,7 +322,6 @@ func (e *ShowExec) fetchAllDBPlacements(ctx context.Context, scheduleState map[i
 			e.appendRow([]interface{}{"DATABASE " + dbInfo.Name.String(), placement.String(), state.String()})
 		}
 	}
-
 	return nil
 }
 
