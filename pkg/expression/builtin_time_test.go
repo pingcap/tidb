@@ -876,12 +876,9 @@ func TestNowAndUTCTimestamp(t *testing.T) {
 	}
 
 	// Test that "timestamp" and "time_zone" variable may affect the result of Now() builtin function.
-	ctx = mockStmtTruncateAsWarningExprCtx(t,
-		contextstatic.WithLocation(time.UTC),
-		contextstatic.WithCurrentTime(func() (time.Time, error) {
-			return time.Unix(1234, 0), nil
-		}),
-	)
+	ctx = mockStmtTruncateAsWarningExprCtx(contextstatic.WithLocation(time.UTC), contextstatic.WithCurrentTime(func() (time.Time, error) {
+		return time.Unix(1234, 0), nil
+	}))
 	fc := funcs[ast.Now]
 	f, err := fc.getFunction(ctx, datumsToConstants(nil))
 	require.NoError(t, err)
@@ -1234,7 +1231,7 @@ func builtinDateFormat(tc types.Context, args []types.Datum) (d types.Datum, err
 }
 
 func TestFromUnixTime(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t, contextstatic.WithLocation(time.UTC))
+	ctx := mockStmtTruncateAsWarningExprCtx(contextstatic.WithLocation(time.UTC))
 	tbl := []struct {
 		isDecimal    bool
 		integralPart int64
@@ -2980,7 +2977,7 @@ func TestLastDay(t *testing.T) {
 
 func TestWithTimeZone(t *testing.T) {
 	tz, _ := time.LoadLocation("Asia/Tokyo")
-	ctx := mockStmtTruncateAsWarningExprCtx(t, contextstatic.WithLocation(tz))
+	ctx := mockStmtTruncateAsWarningExprCtx(contextstatic.WithLocation(tz))
 	timeToGoTime := func(d types.Datum, loc *time.Location) time.Time {
 		result, _ := d.GetMysqlTime().GoTime(loc)
 		return result
@@ -3017,7 +3014,7 @@ func TestWithTimeZone(t *testing.T) {
 }
 
 func TestTidbParseTso(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t, contextstatic.WithLocation(time.UTC))
+	ctx := mockStmtTruncateAsWarningExprCtx(contextstatic.WithLocation(time.UTC))
 	tests := []struct {
 		param  any
 		expect string
@@ -3100,17 +3097,9 @@ func TestTiDBBoundedStaleness(t *testing.T) {
 	t2Str := t2.Format(types.TimeFormat)
 	timeZone := time.Local
 	vars := variable.NewSessionVars(nil)
-	vars.TimeZone = timeZone
-	vars.StmtCtx.SetTimeZone(timeZone)
-	ctx := mockStmtTruncateAsWarningExprCtx(t,
-		contextstatic.WithLocation(timeZone),
-		contextstatic.WithOptionalProperty(
-			contextopt.KVStorePropProvider(func() kv.Storage {
-				return nil
-			}),
-			contextopt.NewSessionVarsProvider(contextopt.SessionVarsAsProvider(vars)),
-		),
-	)
+	ctx := mockStmtTruncateAsWarningExprCtx(contextstatic.WithLocation(timeZone), contextopt.KVStorePropProvider(func() kv.Storage {
+		return nil
+	}), vars)
 	tests := []struct {
 		leftTime     any
 		rightTime    any
@@ -3225,11 +3214,7 @@ func TestGetIntervalFromDecimal(t *testing.T) {
 
 func TestCurrentTso(t *testing.T) {
 	vars := variable.NewSessionVars(nil)
-	ctx := mockStmtTruncateAsWarningExprCtx(t, contextstatic.WithOptionalProperty(
-		contextopt.NewSessionVarsProvider(contextopt.SessionVarsAsProvider(vars)),
-	))
-	vars.TimeZone = ctx.GetEvalCtx().Location()
-	vars.StmtCtx.SetTimeZone(vars.Location())
+	ctx := mockStmtTruncateAsWarningExprCtx(vars)
 	fc := funcs[ast.TiDBCurrentTso]
 	f, err := fc.getFunction(ctx, datumsToConstants(nil))
 	require.NoError(t, err)

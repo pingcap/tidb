@@ -19,8 +19,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/tidb/pkg/expression/contextopt"
-	"github.com/pingcap/tidb/pkg/expression/contextstatic"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -79,11 +77,7 @@ func TestRowFunc(t *testing.T) {
 
 func TestSetVar(t *testing.T) {
 	vars := variable.NewSessionVars(nil)
-	ctx := mockStmtTruncateAsWarningExprCtx(t, contextstatic.WithOptionalProperty(
-		contextopt.NewSessionVarsProvider(contextopt.SessionVarsAsProvider(vars)),
-	))
-	vars.TimeZone = ctx.GetEvalCtx().Location()
-	vars.StmtCtx.SetTimeZone(vars.Location())
+	ctx := mockStmtTruncateAsWarningExprCtx(vars)
 
 	fc := funcs[ast.SetVar]
 	dec := types.NewDecFromInt(5)
@@ -120,11 +114,7 @@ func TestSetVar(t *testing.T) {
 
 func TestGetVar(t *testing.T) {
 	vars := variable.NewSessionVars(nil)
-	ctx := mockStmtTruncateAsWarningExprCtx(t, contextstatic.WithOptionalProperty(
-		contextopt.NewSessionVarsProvider(contextopt.SessionVarsAsProvider(vars)),
-	))
-	vars.TimeZone = ctx.GetEvalCtx().Location()
-	vars.StmtCtx.SetTimeZone(vars.Location())
+	ctx := mockStmtTruncateAsWarningExprCtx(vars)
 
 	dec := types.NewDecFromInt(5)
 	timeDec := types.NewTime(types.FromGoTime(time.Now()), mysql.TypeTimestamp, 0)
@@ -180,11 +170,7 @@ func TestGetVar(t *testing.T) {
 
 func TestTypeConversion(t *testing.T) {
 	vars := variable.NewSessionVars(nil)
-	ctx := mockStmtTruncateAsWarningExprCtx(t, contextstatic.WithOptionalProperty(
-		contextopt.NewSessionVarsProvider(contextopt.SessionVarsAsProvider(vars)),
-	))
-	vars.TimeZone = ctx.GetEvalCtx().Location()
-	vars.StmtCtx.SetTimeZone(vars.Location())
+	ctx := mockStmtTruncateAsWarningExprCtx(vars)
 
 	// Set value as int64
 	key := "a"
@@ -213,11 +199,7 @@ func TestTypeConversion(t *testing.T) {
 
 func TestValues(t *testing.T) {
 	vars := variable.NewSessionVars(nil)
-	ctx := mockStmtTruncateAsWarningExprCtx(t, contextstatic.WithOptionalProperty(
-		contextopt.NewSessionVarsProvider(contextopt.SessionVarsAsProvider(vars)),
-	))
-	vars.TimeZone = ctx.GetEvalCtx().Location()
-	vars.StmtCtx.SetTimeZone(vars.Location())
+	ctx := mockStmtTruncateAsWarningExprCtx(vars)
 
 	fc := &valuesFunctionClass{baseFunctionClass{ast.Values, 0, 0}, 1, types.NewFieldType(mysql.TypeVarchar)}
 	_, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums("")))
@@ -248,11 +230,7 @@ func TestValues(t *testing.T) {
 
 func TestSetVarFromColumn(t *testing.T) {
 	vars := variable.NewSessionVars(nil)
-	ctx := mockStmtTruncateAsWarningExprCtx(t, contextstatic.WithOptionalProperty(
-		contextopt.NewSessionVarsProvider(contextopt.SessionVarsAsProvider(vars)),
-	))
-	vars.TimeZone = ctx.GetEvalCtx().Location()
-	vars.StmtCtx.SetTimeZone(vars.Location())
+	ctx := mockStmtTruncateAsWarningExprCtx(vars)
 
 	ft1 := types.FieldType{}
 	ft1.SetType(mysql.TypeVarString)

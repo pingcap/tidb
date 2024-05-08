@@ -94,7 +94,7 @@ func TestLengthAndOctetLength(t *testing.T) {
 		for _, c := range tbl {
 			vars := variable.NewSessionVars(nil)
 			require.NoError(t, vars.SetSystemVarWithoutValidation(variable.CharacterSetConnection, c.chs))
-			ctx := mockStmtTruncateAsWarningExprCtx(t, contextstatic.WithCharset(vars.GetCharsetInfo()))
+			ctx := mockStmtTruncateAsWarningExprCtx(contextstatic.WithCharset(vars.GetCharsetInfo()))
 			ctx = ctx.Apply(contextstatic.WithCharset(vars.GetCharsetInfo()))
 			f, err := newFunctionForTest(ctx, lengthMethod, primitiveValsToConstants(ctx, []any{c.input})...)
 			require.NoError(t, err)
@@ -157,7 +157,7 @@ func TestASCII(t *testing.T) {
 	for _, c := range tbl {
 		vars := variable.NewSessionVars(nil)
 		require.NoError(t, vars.SetSystemVarWithoutValidation(variable.CharacterSetConnection, c.chs))
-		ctx := mockStmtTruncateAsWarningExprCtx(t, contextstatic.WithCharset(vars.GetCharsetInfo()))
+		ctx := mockStmtTruncateAsWarningExprCtx(contextstatic.WithCharset(vars.GetCharsetInfo()))
 		f, err := newFunctionForTest(ctx, ast.ASCII, primitiveValsToConstants(ctx, []any{c.input})...)
 		require.NoError(t, err)
 		d, err := f.Eval(ctx.GetEvalCtx(), chunk.Row{})
@@ -605,7 +605,7 @@ func TestLower(t *testing.T) {
 	for _, c := range tbl {
 		vars := variable.NewSessionVars(nil)
 		require.NoError(t, vars.SetSystemVarWithoutValidation(variable.CharacterSetConnection, c.chs))
-		ctx := mockStmtTruncateAsWarningExprCtx(t, contextstatic.WithCharset(vars.GetCharsetInfo()))
+		ctx := mockStmtTruncateAsWarningExprCtx(contextstatic.WithCharset(vars.GetCharsetInfo()))
 		f, err := newFunctionForTest(ctx, ast.Lower, primitiveValsToConstants(ctx, []any{c.input})...)
 		require.NoError(t, err)
 		d, err := f.Eval(ctx.GetEvalCtx(), chunk.Row{})
@@ -665,7 +665,7 @@ func TestUpper(t *testing.T) {
 	for _, c := range tbl {
 		vars := variable.NewSessionVars(nil)
 		require.NoError(t, vars.SetSystemVarWithoutValidation(variable.CharacterSetConnection, c.chs))
-		ctx := mockStmtTruncateAsWarningExprCtx(t, contextstatic.WithCharset(vars.GetCharsetInfo()))
+		ctx := mockStmtTruncateAsWarningExprCtx(contextstatic.WithCharset(vars.GetCharsetInfo()))
 		f, err := newFunctionForTest(ctx, ast.Upper, primitiveValsToConstants(ctx, []any{c.input})...)
 		require.NoError(t, err)
 		d, err := f.Eval(ctx.GetEvalCtx(), chunk.Row{})
@@ -1269,7 +1269,7 @@ func TestHexFunc(t *testing.T) {
 	for _, c := range strCases {
 		vars := variable.NewSessionVars(nil)
 		require.NoError(t, vars.SetSystemVarWithoutValidation(variable.CharacterSetConnection, c.chs))
-		ctx := mockStmtTruncateAsWarningExprCtx(t, contextstatic.WithCharset(vars.GetCharsetInfo()))
+		ctx := mockStmtTruncateAsWarningExprCtx(contextstatic.WithCharset(vars.GetCharsetInfo()))
 		f, err := newFunctionForTest(ctx, ast.Hex, primitiveValsToConstants(ctx, []any{c.arg})...)
 		require.NoError(t, err)
 		d, err := f.Eval(ctx.GetEvalCtx(), chunk.Row{})
@@ -1351,7 +1351,7 @@ func TestBitLength(t *testing.T) {
 	for _, c := range cases {
 		vars := variable.NewSessionVars(nil)
 		require.NoError(t, vars.SetSystemVarWithoutValidation(variable.CharacterSetConnection, c.chs))
-		ctx := mockStmtTruncateAsWarningExprCtx(t, contextstatic.WithCharset(vars.GetCharsetInfo()))
+		ctx := mockStmtTruncateAsWarningExprCtx(contextstatic.WithCharset(vars.GetCharsetInfo()))
 		f, err := newFunctionForTest(ctx, ast.BitLength, primitiveValsToConstants(ctx, []any{c.args})...)
 		require.NoError(t, err)
 		d, err := f.Eval(ctx.GetEvalCtx(), chunk.Row{})
@@ -2193,7 +2193,7 @@ func TestOrd(t *testing.T) {
 	for _, c := range cases {
 		vars := variable.NewSessionVars(nil)
 		require.NoError(t, vars.SetSystemVarWithoutValidation(variable.CharacterSetConnection, c.chs))
-		ctx := mockStmtTruncateAsWarningExprCtx(t, contextstatic.WithCharset(vars.GetCharsetInfo()))
+		ctx := mockStmtTruncateAsWarningExprCtx(contextstatic.WithCharset(vars.GetCharsetInfo()))
 		f, err := newFunctionForTest(ctx, ast.Ord, primitiveValsToConstants(ctx, []any{c.args})...)
 		require.NoError(t, err)
 
@@ -2409,7 +2409,7 @@ func TestToBase64(t *testing.T) {
 	for _, c := range tbl {
 		vars := variable.NewSessionVars(nil)
 		require.NoError(t, vars.SetSystemVarWithoutValidation(variable.CharacterSetConnection, c.chs))
-		ctx := mockStmtTruncateAsWarningExprCtx(t, contextstatic.WithCharset(vars.GetCharsetInfo()))
+		ctx := mockStmtTruncateAsWarningExprCtx(contextstatic.WithCharset(vars.GetCharsetInfo()))
 		f, err := newFunctionForTest(ctx, ast.ToBase64, primitiveValsToConstants(ctx, []any{c.input})...)
 		require.NoError(t, err)
 		d, err := f.Eval(ctx.GetEvalCtx(), chunk.Row{})

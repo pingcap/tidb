@@ -1300,18 +1300,9 @@ func genVecExprBenchCase(ctx BuildContext, funcName string, testCase vecExprBenc
 // expression is evaluated correctly during projection
 func testVectorizedEvalOneVec(t *testing.T, vecExprCases vecExprBenchCases) {
 	vars := variable.NewSessionVars(nil)
-	ctx := mockStmtTruncateAsWarningExprCtx(t,
-		contextstatic.WithOptionalProperty(
-			contextopt.NewSessionVarsProvider(contextopt.SessionVarsAsProvider(vars)),
-			contextopt.KVStorePropProvider(func() kv.Storage {
-				return nil
-			}),
-		),
-	)
-
-	// keep timezone all the same to pass some `intest.Assert` for location assertion
-	vars.TimeZone = ctx.GetEvalCtx().Location()
-	vars.StmtCtx.SetTimeZone(vars.Location())
+	ctx := mockStmtTruncateAsWarningExprCtx(vars, contextopt.KVStorePropProvider(func() kv.Storage {
+		return nil
+	}))
 
 	for funcName, testCases := range vecExprCases {
 		for _, testCase := range testCases {
@@ -1552,29 +1543,10 @@ func testVectorizedBuiltinFunc(t *testing.T, vecExprCases vecExprBenchCases) {
 					types.NewMysqlEnumDatum(types.Enum{Name: "n", Value: 2}))
 			}
 
-			exprCtx := mockStmtTruncateAsWarningExprCtx(t,
-				contextstatic.WithOptionalProperty(
-					contextopt.CurrentUserPropProvider(func() (*auth.UserIdentity, []*auth.RoleIdentity) {
-						return vars.User, vars.ActiveRoles
-					}),
-					contextopt.NewSessionVarsProvider(contextopt.SessionVarsAsProvider(vars)),
-					contextopt.InfoSchemaPropProvider(func(isDomain bool) infoschema.MetaOnlyInfoSchema {
-						return nil
-					}),
-					contextopt.DDLOwnerInfoProvider(func() bool {
-						return false
-					}),
-					contextopt.KVStorePropProvider(func() kv.Storage {
-						return nil
-					}),
-				),
-				contextstatic.WithBlockEncryptionMode(testCase.aesModes),
-			)
+			exprCtx := mockStmtTruncateAsWarningExprCtx(vars, contextopt.InfoSchemaPropProvider(func(isDomain bool) infoschema.MetaOnlyInfoSchema { return nil }), contextopt.DDLOwnerInfoProvider(func() bool { return false }), contextopt.KVStorePropProvider(func() kv.Storage { return nil }), contextstatic.WithBlockEncryptionMode(testCase.aesModes))
 
 			ctx := exprCtx.GetEvalCtx()
-			// reset timezone in SessionVars and StmtCtx to make some intest.Assert pass
-			vars.TimeZone = ctx.Location()
-			vars.StmtCtx.SetTimeZone(ctx.Location())
+
 			baseFunc, fts, input, output := genVecBuiltinFuncBenchCase(exprCtx, funcName, testCase)
 			baseFuncName := fmt.Sprintf("%v", reflect.TypeOf(baseFunc))
 			tmp := strings.Split(baseFuncName, ".")
@@ -1763,14 +1735,12 @@ func testVectorizedBuiltinFuncForRand(t *testing.T, vecExprCases vecExprBenchCas
 // using the vectorized expression evaluations
 func benchmarkVectorizedBuiltinFunc(b *testing.B, vecExprCases vecExprBenchCases) {
 	vars := variable.NewSessionVars(nil)
-	ctx := mockStmtExprCtx(b, contextstatic.WithOptionalProperty(
-		contextopt.NewSessionVarsProvider(contextopt.SessionVarsAsProvider(vars)),
-		contextopt.CurrentUserPropProvider(func() (*auth.UserIdentity, []*auth.RoleIdentity) {
-			return vars.User, vars.ActiveRoles
-		}),
-	))
-	vars.TimeZone = ctx.GetEvalCtx().Location()
-	vars.StmtCtx.SetTimeZone(vars.Location())
+	ctx := mockStmtExprCtx(b,
+		vars,
+		contextopt.InfoSchemaPropProvider(func(isDomain bool) infoschema.MetaOnlyInfoSchema { return nil }),
+		contextopt.DDLOwnerInfoProvider(func() bool { return false }),
+		contextopt.KVStorePropProvider(func() kv.Storage { return nil }),
+	)
 	testFunc := make(map[string]bool)
 	argList := removeTestOptions(flag.Args())
 	testAll := len(argList) == 0

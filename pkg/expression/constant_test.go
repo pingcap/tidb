@@ -60,10 +60,7 @@ func newString(value string, collation string) *Constant {
 
 func newFunctionWithMockCtx(funcName string, args ...Expression) Expression {
 	return newFunction(contextstatic.NewStaticExprContext(
-		contextstatic.WithEvalCtx(mockEvalCtx(
-			contextstatic.WithTypeFlags(types.DefaultStmtFlags),
-			contextstatic.WithErrLevelMap(stmtctx.DefaultStmtErrLevels),
-		)),
+		contextstatic.WithEvalCtx(mockEvalCtx(contextstatic.WithErrLevelMap(stmtctx.DefaultStmtErrLevels))),
 	), funcName, args...)
 }
 

@@ -18,7 +18,6 @@ import (
 	"math"
 	"testing"
 
-	"github.com/pingcap/tidb/pkg/expression/contextopt"
 	"github.com/pingcap/tidb/pkg/expression/contextstatic"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
@@ -59,11 +58,7 @@ func TestDatabase(t *testing.T) {
 
 func TestFoundRows(t *testing.T) {
 	vars := variable.NewSessionVars(nil)
-	ctx := mockStmtExprCtx(t, contextstatic.WithOptionalProperty(
-		contextopt.NewSessionVarsProvider(contextopt.SessionVarsAsProvider(vars)),
-	))
-	vars.TimeZone = ctx.GetEvalCtx().Location()
-	vars.StmtCtx.SetTimeZone(vars.Location())
+	ctx := mockStmtExprCtx(t, vars)
 	vars.LastFoundRows = 2
 
 	fc := funcs[ast.FoundRows]
@@ -76,14 +71,7 @@ func TestFoundRows(t *testing.T) {
 
 func TestUser(t *testing.T) {
 	sessionVars := variable.NewSessionVars(nil)
-	ctx := mockStmtExprCtx(t, contextstatic.WithOptionalProperty(
-		contextopt.NewSessionVarsProvider(contextopt.SessionVarsAsProvider(sessionVars)),
-		contextopt.CurrentUserPropProvider(func() (*auth.UserIdentity, []*auth.RoleIdentity) {
-			return sessionVars.User, sessionVars.ActiveRoles
-		}),
-	))
-	sessionVars.TimeZone = ctx.GetEvalCtx().Location()
-	sessionVars.StmtCtx.SetTimeZone(sessionVars.Location())
+	ctx := mockStmtExprCtx(t, sessionVars)
 	sessionVars.User = &auth.UserIdentity{Username: "root", Hostname: "localhost"}
 
 	fc := funcs[ast.User]
@@ -97,14 +85,7 @@ func TestUser(t *testing.T) {
 
 func TestCurrentUser(t *testing.T) {
 	sessionVars := variable.NewSessionVars(nil)
-	ctx := mockStmtExprCtx(t, contextstatic.WithOptionalProperty(
-		contextopt.NewSessionVarsProvider(contextopt.SessionVarsAsProvider(sessionVars)),
-		contextopt.CurrentUserPropProvider(func() (*auth.UserIdentity, []*auth.RoleIdentity) {
-			return sessionVars.User, sessionVars.ActiveRoles
-		}),
-	))
-	sessionVars.TimeZone = ctx.GetEvalCtx().Location()
-	sessionVars.StmtCtx.SetTimeZone(sessionVars.Location())
+	ctx := mockStmtExprCtx(t, sessionVars)
 	sessionVars.User = &auth.UserIdentity{Username: "root", Hostname: "localhost", AuthUsername: "root", AuthHostname: "localhost"}
 
 	fc := funcs[ast.CurrentUser]
@@ -118,11 +99,7 @@ func TestCurrentUser(t *testing.T) {
 
 func TestCurrentResourceGroup(t *testing.T) {
 	sessionVars := variable.NewSessionVars(nil)
-	ctx := mockStmtExprCtx(t, contextstatic.WithOptionalProperty(
-		contextopt.NewSessionVarsProvider(contextopt.SessionVarsAsProvider(sessionVars)),
-	))
-	sessionVars.TimeZone = ctx.GetEvalCtx().Location()
-	sessionVars.StmtCtx.SetTimeZone(sessionVars.Location())
+	ctx := mockStmtExprCtx(t, variable.NewSessionVars(nil))
 	sessionVars.StmtCtx.ResourceGroupName = "rg1"
 
 	fc := funcs[ast.CurrentResourceGroup]
@@ -136,14 +113,7 @@ func TestCurrentResourceGroup(t *testing.T) {
 
 func TestCurrentRole(t *testing.T) {
 	sessionVars := variable.NewSessionVars(nil)
-	ctx := mockStmtExprCtx(t, contextstatic.WithOptionalProperty(
-		contextopt.NewSessionVarsProvider(contextopt.SessionVarsAsProvider(sessionVars)),
-		contextopt.CurrentUserPropProvider(func() (*auth.UserIdentity, []*auth.RoleIdentity) {
-			return sessionVars.User, sessionVars.ActiveRoles
-		}),
-	))
-	sessionVars.TimeZone = ctx.GetEvalCtx().Location()
-	sessionVars.StmtCtx.SetTimeZone(sessionVars.Location())
+	ctx := mockStmtExprCtx(t, sessionVars)
 
 	fc := funcs[ast.CurrentRole]
 	f, err := fc.getFunction(ctx, nil)
@@ -169,11 +139,7 @@ func TestCurrentRole(t *testing.T) {
 
 func TestConnectionID(t *testing.T) {
 	sessionVars := variable.NewSessionVars(nil)
-	ctx := mockStmtExprCtx(t, contextstatic.WithOptionalProperty(
-		contextopt.NewSessionVarsProvider(contextopt.SessionVarsAsProvider(sessionVars)),
-	))
-	sessionVars.TimeZone = ctx.GetEvalCtx().Location()
-	sessionVars.StmtCtx.SetTimeZone(sessionVars.Location())
+	ctx := mockStmtExprCtx(t, sessionVars)
 	sessionVars.ConnectionID = uint64(1)
 
 	fc := funcs[ast.ConnectionID]
@@ -265,11 +231,7 @@ func TestCollation(t *testing.T) {
 
 func TestRowCount(t *testing.T) {
 	sessionVars := variable.NewSessionVars(nil)
-	ctx := mockStmtExprCtx(t, contextstatic.WithOptionalProperty(
-		contextopt.NewSessionVarsProvider(contextopt.SessionVarsAsProvider(sessionVars)),
-	))
-	sessionVars.TimeZone = ctx.GetEvalCtx().Location()
-	sessionVars.StmtCtx.SetTimeZone(sessionVars.Location())
+	ctx := mockStmtExprCtx(t, sessionVars)
 	sessionVars.StmtCtx.PrevAffectedRows = 10
 
 	f, err := funcs[ast.RowCount].getFunction(ctx, nil)
@@ -297,11 +259,7 @@ func TestTiDBVersion(t *testing.T) {
 
 func TestLastInsertID(t *testing.T) {
 	vars := variable.NewSessionVars(nil)
-	ctx := mockStmtTruncateAsWarningExprCtx(t, contextstatic.WithOptionalProperty(
-		contextopt.NewSessionVarsProvider(contextopt.SessionVarsAsProvider(vars)),
-	))
-	vars.TimeZone = ctx.GetEvalCtx().Location()
-	vars.StmtCtx.SetTimeZone(vars.Location())
+	ctx := mockStmtTruncateAsWarningExprCtx(vars)
 	maxUint64 := uint64(math.MaxUint64)
 	cases := []struct {
 		insertID uint64

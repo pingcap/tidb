@@ -19,7 +19,6 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/errctx"
-	"github.com/pingcap/tidb/pkg/expression/contextopt"
 	"github.com/pingcap/tidb/pkg/expression/contextstatic"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
@@ -103,11 +102,7 @@ func primitiveValsToConstants(ctx BuildContext, args []any) []Expression {
 
 func TestSleep(t *testing.T) {
 	vars := variable.NewSessionVars(nil)
-	ctx := mockStmtTruncateAsWarningExprCtx(t, contextstatic.WithOptionalProperty(
-		contextopt.NewSessionVarsProvider(contextopt.SessionVarsAsProvider(vars)),
-	))
-	vars.TimeZone = ctx.GetEvalCtx().Location()
-	vars.StmtCtx.SetTimeZone(vars.Location())
+	ctx := mockStmtTruncateAsWarningExprCtx(vars)
 
 	fc := funcs[ast.Sleep]
 	// non-strict model

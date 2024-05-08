@@ -272,7 +272,7 @@ var (
 )
 
 func TestCastFuncSig(t *testing.T) {
-	ctx := mockStmtIgnoreTruncateExprCtx(t, contextstatic.WithLocation(time.UTC))
+	ctx := mockStmtIgnoreTruncateExprCtx(contextstatic.WithLocation(time.UTC))
 	var sig builtinFunc
 
 	durationColumn := &Column{RetType: types.NewFieldType(mysql.TypeDuration), Index: 0}
@@ -1279,7 +1279,7 @@ func TestWrapWithCastAsTypesClasses(t *testing.T) {
 }
 
 func TestWrapWithCastAsTime(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t, contextstatic.WithLocation(time.UTC))
+	ctx := mockStmtTruncateAsWarningExprCtx(contextstatic.WithLocation(time.UTC))
 	cases := []struct {
 		expr Expression
 		tp   *types.FieldType

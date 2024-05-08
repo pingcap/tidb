@@ -15,13 +15,17 @@
 package expression
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/errctx"
+	"github.com/pingcap/tidb/pkg/expression/contextopt"
 	"github.com/pingcap/tidb/pkg/expression/contextstatic"
+	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit/testmain"
 	"github.com/pingcap/tidb/pkg/testkit/testsetup"
 	"github.com/pingcap/tidb/pkg/types"
@@ -59,19 +63,58 @@ func TestMain(m *testing.M) {
 	goleak.VerifyTestMain(m, opts...)
 }
 
-func mockEvalCtx(opts ...contextstatic.StaticEvalCtxOption) *contextstatic.StaticEvalContext {
+func mockEvalCtx(opts ...any) *contextstatic.StaticEvalContext {
+	evalOpts := make([]contextstatic.StaticEvalCtxOption, 0, len(opts))
+	optionalProps := make([]OptionalEvalPropProvider, 0, len(opts))
+	var sessionVars *variable.SessionVars
+	for _, opt := range opts {
+		if o, ok := opt.(contextstatic.StaticEvalCtxOption); ok {
+			evalOpts = append(evalOpts, o)
+			continue
+		}
+
+		if vars, ok := opt.(*variable.SessionVars); ok {
+			sessionVars = vars
+			optionalProps = append(optionalProps,
+				contextopt.NewSessionVarsProvider(contextopt.SessionVarsAsProvider(vars)),
+				contextopt.CurrentUserPropProvider(func() (*auth.UserIdentity, []*auth.RoleIdentity) {
+					return vars.User, vars.ActiveRoles
+				}),
+			)
+			continue
+		}
+
+		if p, ok := opt.(OptionalEvalPropProvider); ok {
+			optionalProps = append(optionalProps, p)
+			continue
+		}
+
+		panic(fmt.Sprintf("unexpected option type: %T", opt))
+	}
+
+	if len(optionalProps) > 0 {
+		evalOpts = append(evalOpts, contextstatic.WithOptionalProperty(optionalProps...))
+	}
+
 	ctx := contextstatic.NewStaticEvalContext(
 		// sets default time zone to UTC+11 value to make it different with most CI and development environments and forbid
 		// some tests are success in some environments but failed in some others.
 		contextstatic.WithLocation(time.FixedZone("UTC+11", 11*3600)),
 	)
 	if len(opts) > 0 {
-		ctx = ctx.Apply(opts...)
+		ctx = ctx.Apply(evalOpts...)
 	}
+
+	if sessionVars != nil {
+		// keep timezone all the same to pass some `intest.Assert` for location assertion
+		sessionVars.TimeZone = ctx.Location()
+		sessionVars.StmtCtx.SetTimeZone(ctx.Location())
+	}
+
 	return ctx
 }
 
-func mockStmtTruncateAsWarningExprCtx(t testing.TB, opts ...any) *contextstatic.StaticExprContext {
+func mockStmtTruncateAsWarningExprCtx(opts ...any) *contextstatic.StaticExprContext {
 	flags := types.DefaultStmtFlags.WithTruncateAsWarning(true)
 	levelMap := stmtctx.DefaultStmtErrLevels
 	levelMap[errctx.ErrGroupTruncate] = errctx.LevelWarn
@@ -80,10 +123,10 @@ func mockStmtTruncateAsWarningExprCtx(t testing.TB, opts ...any) *contextstatic.
 		contextstatic.WithErrLevelMap(levelMap),
 	}, opts...)
 
-	return mockExprCtx(t, opts...)
+	return mockExprCtx(opts...)
 }
 
-func mockStmtIgnoreTruncateExprCtx(t testing.TB, opts ...any) *contextstatic.StaticExprContext {
+func mockStmtIgnoreTruncateExprCtx(opts ...any) *contextstatic.StaticExprContext {
 	flags := types.DefaultStmtFlags.WithIgnoreTruncateErr(true)
 	levelMap := stmtctx.DefaultStmtErrLevels
 	levelMap[errctx.ErrGroupTruncate] = errctx.LevelIgnore
@@ -91,35 +134,29 @@ func mockStmtIgnoreTruncateExprCtx(t testing.TB, opts ...any) *contextstatic.Sta
 		contextstatic.WithTypeFlags(flags),
 		contextstatic.WithErrLevelMap(levelMap),
 	}, opts...)
-	return mockExprCtx(t, opts...)
+	return mockExprCtx(opts...)
 }
 
-func mockStmtExprCtx(t testing.TB, opts ...any) *contextstatic.StaticExprContext {
+func mockStmtExprCtx(opts ...any) *contextstatic.StaticExprContext {
 	opts = append([]any{
 		contextstatic.WithTypeFlags(types.DefaultStmtFlags),
 		contextstatic.WithErrLevelMap(stmtctx.DefaultStmtErrLevels),
 	}, opts...)
-	return mockExprCtx(t, opts...)
+	return mockExprCtx(opts...)
 }
 
-func mockExprCtx(t testing.TB, opts ...any) *contextstatic.StaticExprContext {
-	evalOptions := make([]contextstatic.StaticEvalCtxOption, 0, len(opts))
+func mockExprCtx(opts ...any) *contextstatic.StaticExprContext {
 	exprOptions := make([]contextstatic.StaticExprCtxOption, 0, len(opts))
+	otherOpts := make([]any, 0, len(opts))
 	for _, opt := range opts {
-		if o, ok := opt.(contextstatic.StaticEvalCtxOption); ok {
-			evalOptions = append(evalOptions, o)
-			continue
-		}
-
 		if o, ok := opt.(contextstatic.StaticExprCtxOption); ok {
 			exprOptions = append(exprOptions, o)
 			continue
 		}
-
-		require.FailNow(t, "unexpected option type: %T", opt)
+		otherOpts = append(otherOpts, opt)
 	}
 
-	ctx := contextstatic.NewStaticExprContext(contextstatic.WithEvalCtx(mockEvalCtx(evalOptions...)))
+	ctx := contextstatic.NewStaticExprContext(contextstatic.WithEvalCtx(mockEvalCtx(otherOpts...)))
 	if len(exprOptions) > 0 {
 		ctx = ctx.Apply(exprOptions...)
 	}

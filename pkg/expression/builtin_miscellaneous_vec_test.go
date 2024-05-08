@@ -19,7 +19,6 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/errctx"
-	"github.com/pingcap/tidb/pkg/expression/contextopt"
 	"github.com/pingcap/tidb/pkg/expression/contextstatic"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -142,11 +141,7 @@ func (c *counter) add(diff int) int {
 
 func TestSleepVectorized(t *testing.T) {
 	sessVars := variable.NewSessionVars(nil)
-	ctx := mockStmtExprCtx(t, contextstatic.WithOptionalProperty(
-		contextopt.NewSessionVarsProvider(contextopt.SessionVarsAsProvider(sessVars)),
-	))
-	sessVars.TimeZone = ctx.GetEvalCtx().Location()
-	sessVars.StmtCtx.SetTimeZone(sessVars.Location())
+	ctx := mockStmtExprCtx(t, sessVars)
 
 	fc := funcs[ast.Sleep]
 	ft := eType2FieldType(types.ETReal)

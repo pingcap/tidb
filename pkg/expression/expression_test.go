@@ -301,10 +301,7 @@ func TestExpressionMemeoryUsage(t *testing.T) {
 }
 
 func TestIgnoreTruncateExprCtx(t *testing.T) {
-	ctx := mockExprCtx(t,
-		contextstatic.WithTypeFlags(types.StrictFlags),
-		contextstatic.WithErrLevelMap(errctx.LevelMap{}),
-	)
+	ctx := mockExprCtx(contextstatic.WithTypeFlags(types.StrictFlags), contextstatic.WithErrLevelMap(errctx.LevelMap{}))
 	evalCtx := ctx.GetEvalCtx()
 	tc, ec := evalCtx.TypeCtx(), evalCtx.ErrCtx()
 	require.True(t, !tc.Flags().IgnoreTruncateErr() && !tc.Flags().TruncateAsWarning())
@@ -328,10 +325,7 @@ func TestIgnoreTruncateExprCtx(t *testing.T) {
 	require.Equal(t, errctx.LevelError, ec.LevelForGroup(errctx.ErrGroupTruncate))
 
 	// truncate ignored ctx will not create new ctx
-	ctx = mockExprCtx(t,
-		contextstatic.WithTypeFlags(types.StrictFlags.WithIgnoreTruncateErr(true)),
-		contextstatic.WithErrLevelMap(errctx.LevelMap{errctx.ErrGroupTruncate: errctx.LevelIgnore}),
-	)
+	ctx = mockExprCtx(contextstatic.WithTypeFlags(types.StrictFlags.WithIgnoreTruncateErr(true)), contextstatic.WithErrLevelMap(errctx.LevelMap{errctx.ErrGroupTruncate: errctx.LevelIgnore}))
 	newCtx := ignoreTruncate(ctx)
 	require.Same(t, ctx, newCtx)
 }

@@ -538,7 +538,7 @@ func TestCRC32(t *testing.T) {
 	for _, c := range tbl {
 		vars := variable.NewSessionVars(nil)
 		require.NoError(t, vars.SetSystemVar(variable.CharacterSetConnection, c.chs))
-		ctx := mockStmtTruncateAsWarningExprCtx(t, contextstatic.WithCharset(vars.GetCharsetInfo()))
+		ctx := mockStmtTruncateAsWarningExprCtx(contextstatic.WithCharset(vars.GetCharsetInfo()))
 		f, err := newFunctionForTest(ctx, ast.CRC32, primitiveValsToConstants(ctx, c.input)...)
 		require.NoError(t, err)
 		d, err := f.Eval(ctx.GetEvalCtx(), chunk.Row{})

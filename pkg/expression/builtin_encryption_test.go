@@ -22,7 +22,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/pingcap/tidb/pkg/expression/contextopt"
 	"github.com/pingcap/tidb/pkg/expression/contextstatic"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
@@ -656,15 +655,7 @@ func TestValidatePasswordStrength(t *testing.T) {
 	err := vars.GlobalVarsAccessor.SetGlobalSysVar(context.Background(), variable.ValidatePasswordDictionary, "1234")
 	require.NoError(t, err)
 
-	ctx := mockStmtTruncateAsWarningExprCtx(t, contextstatic.WithOptionalProperty(
-		contextopt.CurrentUserPropProvider(func() (*auth.UserIdentity, []*auth.RoleIdentity) {
-			return vars.User, vars.ActiveRoles
-		}),
-		contextopt.NewSessionVarsProvider(contextopt.SessionVarsAsProvider(vars)),
-	))
-
-	vars.TimeZone = ctx.GetEvalCtx().Location()
-	vars.StmtCtx.SetTimeZone(vars.Location())
+	ctx := mockStmtTruncateAsWarningExprCtx(vars)
 
 	tests := []struct {
 		in     any
