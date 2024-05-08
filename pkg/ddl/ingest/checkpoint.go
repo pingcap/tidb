@@ -482,6 +482,10 @@ func (s *CheckpointManager) updateCheckpointLoop() {
 }
 
 func (s *CheckpointManager) updateCheckpoint() error {
+	failpoint.Inject("checkpointLoopExit", func() {
+		// used in a manual test
+		failpoint.Return(errors.New("failpoint triggered so can't update checkpoint"))
+	})
 	finishCh := make(chan struct{})
 	select {
 	case s.updaterCh <- finishCh:
