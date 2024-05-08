@@ -43,16 +43,22 @@ var (
 	pointQueryPrepared = "select * from t where id = ?"
 	expectedPointPlan  = "Point_Get"
 	// IN (...) uses TryFastPlan, which does not use Plan Cache
-	batchPointQuery         = "select * from t where id = 1 or id = 5000 or id = 2 or id = 100000"
-	expectedBatchPointPlan  = "Batch_Point_Get"
-	expectedIndexPlan       = "IndexLookUp"
-	expectedTableScanPlan   = "TableReader"
-	partitionByHash         = `partition by hash(id) partitions 7`
-	partitionByHashExpr     = `partition by hash(floor(id*0.5)) partitions 7`
-	partitionByKey          = `partition by key(id) partitions 7`
-	partitionByRange        = `partition by range(id) (partition p0 values less than (10), partition p1 values less than (1000), partition p3 values less than (100000), partition pMax values less than (maxvalue))`
-	partitionByRangeExpr    = `partition by range(floor(id*0.5)) (partition p0 values less than (10), partition p1 values less than (1000), partition p3 values less than (100000), partition pMax values less than (maxvalue))`
-	partitionByRangeColumns = `partition by range columns (id) (partition p0 values less than (10), partition p1 values less than (1000), partition p3 values less than (100000), partition pMax values less than (maxvalue))`
+	batchPointQuery             = "select * from t where id = 1 or id = 5000 or id = 2 or id = 100000"
+	batchPointQueryPrepared     = "select * from t where id IN (?,?,?)"
+	expectedBatchPointPlan      = "Batch_Point_Get"
+	expectedIndexPlan           = "IndexLookUp"
+	expectedTableScanPlan       = "TableReader"
+	partitionByHash             = `partition by hash(id) partitions 7`
+	partitionByHashExpr         = `partition by hash(floor(id*0.5)) partitions 7`
+	partitionByKey              = `partition by key(id) partitions 7`
+	partitionByRange            = `partition by range(id) (partition p0 values less than (10), partition p1 values less than (1000), partition p3 values less than (100000), partition pMax values less than (maxvalue))`
+	partitionByRangeExpr        = `partition by range(floor(id*0.5)) (partition p0 values less than (10), partition p1 values less than (1000), partition p3 values less than (100000), partition pMax values less than (maxvalue))`
+	partitionByRangeColumns     = `partition by range columns (id) (partition p0 values less than (10), partition p1 values less than (1000), partition p3 values less than (100000), partition pMax values less than (maxvalue))`
+	pointArgs                   = 1
+	batchArgs                   = []any{2, 10000, 1}
+	partitionByRangePrep        = "partition by range (id) (partition p0 values less than (10), partition p1 values less than (63), partition p3 values less than (100), partition pMax values less than (maxvalue))"
+	partitionByRangeExprPrep    = "partition by range (floor(id*0.5)*2) (partition p0 values less than (10), partition p1 values less than (63), partition p3 values less than (100), partition pMax values less than (maxvalue))"
+	partitionByRangeColumnsPrep = "partition by range columns (id) (partition p0 values less than (10), partition p1 values less than (63), partition p3 values less than (100), partition pMax values less than (maxvalue))"
 )
 
 type accessType int
@@ -949,16 +955,222 @@ func benchPreparedPointGet(b *testing.B, partitionBy string) {
 	})
 }
 
+func runBenchmarkPrepared(b *testing.B, partitionBy, query string, access accessType, enablePlanCache bool, qArgs ...any) {
+	se, do, st := prepareBenchSession()
+	defer func() {
+		se.Close()
+		do.Close()
+		st.Close()
+	}()
+	switch access {
+	case pointGet:
+		preparePointGet(se, partitionBy)
+	case indexLookup:
+		prepareIndexLookup(se, partitionBy)
+	case tableScan:
+		prepareTableScan(se, partitionBy)
+	}
+	runPreparedPointSelect(b, se, query, enablePlanCache, qArgs...)
+}
+
+func BenchmarkNonPartitionPreparedPointGetPlanCacheOn(b *testing.B) {
+	runBenchmarkPrepared(b, "", pointQueryPrepared, pointGet, true, pointArgs)
+}
+
+func BenchmarkNonPartitionPreparedPointGetPlanCacheOff(b *testing.B) {
+	runBenchmarkPrepared(b, "", pointQueryPrepared, pointGet, false, pointArgs)
+}
+
+func BenchmarkNonPartitionPreparedBatchPointGetPlanCacheOn(b *testing.B) {
+	runBenchmarkPrepared(b, "", batchPointQueryPrepared, pointGet, true, batchArgs...)
+}
+
+func BenchmarkNonPartitionPreparedBatchPointGetPlanCacheOff(b *testing.B) {
+	runBenchmarkPrepared(b, "", batchPointQueryPrepared, pointGet, false, batchArgs...)
+}
+
+func BenchmarkNonPartitionPreparedIndexLookupPlanCacheOn(b *testing.B) {
+	runBenchmarkPrepared(b, "", pointQueryPrepared, indexLookup, true, pointArgs)
+}
+
+func BenchmarkNonPartitionPreparedIndexLookupPlanCacheOff(b *testing.B) {
+	runBenchmarkPrepared(b, "", pointQueryPrepared, indexLookup, false, pointArgs)
+}
+
+func BenchmarkNonPartitionPreparedBatchIndexLookupPlanCacheOn(b *testing.B) {
+	runBenchmarkPrepared(b, "", batchPointQueryPrepared, indexLookup, true, batchArgs...)
+}
+
+func BenchmarkNonPartitionPreparedBatchIndexLookupPlanCacheOff(b *testing.B) {
+	runBenchmarkPrepared(b, "", batchPointQueryPrepared, indexLookup, false, batchArgs...)
+}
+func BenchmarkNonPartitionPreparedTableScanPlanCacheOn(b *testing.B) {
+	runBenchmarkPrepared(b, "", pointQueryPrepared, tableScan, true, pointArgs)
+}
+
+func BenchmarkNonPartitionPreparedTableScanPlanCacheOff(b *testing.B) {
+	runBenchmarkPrepared(b, "", pointQueryPrepared, tableScan, false, pointArgs)
+}
+
+func BenchmarkNonPartitionPreparedBatchTableScanPlanCacheOn(b *testing.B) {
+	runBenchmarkPrepared(b, "", batchPointQueryPrepared, tableScan, true, batchArgs...)
+}
+
+func BenchmarkNonPartitionPreparedBatchTableScanPlanCacheOff(b *testing.B) {
+	runBenchmarkPrepared(b, "", batchPointQueryPrepared, tableScan, false, batchArgs...)
+}
+
 func BenchmarkNonPartitionPrepared(b *testing.B) {
 	benchPreparedPointGet(b, "")
 }
 
+func BenchmarkHashPartitionPreparedPointGetPlanCacheOn(b *testing.B) {
+	runBenchmarkPrepared(b, partitionByHash, pointQueryPrepared, pointGet, true, pointArgs)
+}
+
+func BenchmarkHashPartitionPreparedPointGetPlanCacheOff(b *testing.B) {
+	runBenchmarkPrepared(b, partitionByHash, pointQueryPrepared, pointGet, false, pointArgs)
+}
+
+func BenchmarkHashPartitionPreparedBatchPointGetPlanCacheOn(b *testing.B) {
+	runBenchmarkPrepared(b, partitionByHash, batchPointQueryPrepared, pointGet, true, batchArgs...)
+}
+
+func BenchmarkHashPartitionPreparedBatchPointGetPlanCacheOff(b *testing.B) {
+	runBenchmarkPrepared(b, partitionByHash, batchPointQueryPrepared, pointGet, false, batchArgs...)
+}
+
+func BenchmarkHashPartitionPreparedIndexLookupPlanCacheOn(b *testing.B) {
+	runBenchmarkPrepared(b, partitionByHash, pointQueryPrepared, indexLookup, true, pointArgs)
+}
+
+func BenchmarkHashPartitionPreparedIndexLookupPlanCacheOff(b *testing.B) {
+	runBenchmarkPrepared(b, partitionByHash, pointQueryPrepared, indexLookup, false, pointArgs)
+}
+
+func BenchmarkHashPartitionPreparedBatchIndexLookupPlanCacheOn(b *testing.B) {
+	runBenchmarkPrepared(b, partitionByHash, batchPointQueryPrepared, indexLookup, true, batchArgs...)
+}
+
+func BenchmarkHashPartitionPreparedBatchIndexLookupPlanCacheOff(b *testing.B) {
+	runBenchmarkPrepared(b, partitionByHash, batchPointQueryPrepared, indexLookup, false, batchArgs...)
+}
+func BenchmarkHashPartitionPreparedTableScanPlanCacheOn(b *testing.B) {
+	runBenchmarkPrepared(b, partitionByHash, pointQueryPrepared, tableScan, true, pointArgs)
+}
+
+func BenchmarkHashPartitionPreparedTableScanPlanCacheOff(b *testing.B) {
+	runBenchmarkPrepared(b, partitionByHash, pointQueryPrepared, tableScan, false, pointArgs)
+}
+
+func BenchmarkHashPartitionPreparedBatchTableScanPlanCacheOn(b *testing.B) {
+	runBenchmarkPrepared(b, partitionByHash, batchPointQueryPrepared, tableScan, true, batchArgs...)
+}
+
+func BenchmarkHashPartitionPreparedBatchTableScanPlanCacheOff(b *testing.B) {
+	runBenchmarkPrepared(b, partitionByHash, batchPointQueryPrepared, tableScan, false, batchArgs...)
+}
+
 func BenchmarkHashPartitionPrepared(b *testing.B) {
-	benchPreparedPointGet(b, "partition by hash (id) partitions 7")
+	benchPreparedPointGet(b, partitionByHash)
+}
+
+func BenchmarkHashExprPartitionPreparedPointGetPlanCacheOn(b *testing.B) {
+	runBenchmarkPrepared(b, partitionByHashExpr, pointQueryPrepared, pointGet, true, pointArgs)
+}
+
+func BenchmarkHashExprPartitionPreparedPointGetPlanCacheOff(b *testing.B) {
+	runBenchmarkPrepared(b, partitionByHashExpr, pointQueryPrepared, pointGet, false, pointArgs)
+}
+
+func BenchmarkHashExprPartitionPreparedBatchPointGetPlanCacheOn(b *testing.B) {
+	runBenchmarkPrepared(b, partitionByHashExpr, batchPointQueryPrepared, pointGet, true, batchArgs...)
+}
+
+func BenchmarkHashExprPartitionPreparedBatchPointGetPlanCacheOff(b *testing.B) {
+	runBenchmarkPrepared(b, partitionByHashExpr, batchPointQueryPrepared, pointGet, false, batchArgs...)
+}
+
+func BenchmarkHashExprPartitionPreparedIndexLookupPlanCacheOn(b *testing.B) {
+	runBenchmarkPrepared(b, partitionByHashExpr, pointQueryPrepared, indexLookup, true, pointArgs)
+}
+
+func BenchmarkHashExprPartitionPreparedIndexLookupPlanCacheOff(b *testing.B) {
+	runBenchmarkPrepared(b, partitionByHashExpr, pointQueryPrepared, indexLookup, false, pointArgs)
+}
+
+func BenchmarkHashExprPartitionPreparedBatchIndexLookupPlanCacheOn(b *testing.B) {
+	runBenchmarkPrepared(b, partitionByHashExpr, batchPointQueryPrepared, indexLookup, true, batchArgs...)
+}
+
+func BenchmarkHashExprPartitionPreparedBatchIndexLookupPlanCacheOff(b *testing.B) {
+	runBenchmarkPrepared(b, partitionByHashExpr, batchPointQueryPrepared, indexLookup, false, batchArgs...)
+}
+func BenchmarkHashExprPartitionPreparedTableScanPlanCacheOn(b *testing.B) {
+	runBenchmarkPrepared(b, partitionByHashExpr, pointQueryPrepared, tableScan, true, pointArgs)
+}
+
+func BenchmarkHashExprPartitionPreparedTableScanPlanCacheOff(b *testing.B) {
+	runBenchmarkPrepared(b, partitionByHashExpr, pointQueryPrepared, tableScan, false, pointArgs)
+}
+
+func BenchmarkHashExprPartitionPreparedBatchTableScanPlanCacheOn(b *testing.B) {
+	runBenchmarkPrepared(b, partitionByHashExpr, batchPointQueryPrepared, tableScan, true, batchArgs...)
+}
+
+func BenchmarkHashExprPartitionPreparedBatchTableScanPlanCacheOff(b *testing.B) {
+	runBenchmarkPrepared(b, partitionByHashExpr, batchPointQueryPrepared, tableScan, false, batchArgs...)
 }
 
 func BenchmarkHashExprPartitionPrepared(b *testing.B) {
-	benchPreparedPointGet(b, "partition by hash (floor(id*0.5)) partitions 7")
+	benchPreparedPointGet(b, partitionByHashExpr)
+}
+
+func BenchmarkListPartitionPreparedPointGetPlanCacheOn(b *testing.B) {
+	runBenchmarkPrepared(b, getListPartitionDef("id", false), pointQueryPrepared, pointGet, true, pointArgs)
+}
+
+func BenchmarkListPartitionPreparedPointGetPlanCacheOff(b *testing.B) {
+	runBenchmarkPrepared(b, getListPartitionDef("id", false), pointQueryPrepared, pointGet, false, pointArgs)
+}
+
+func BenchmarkListPartitionPreparedBatchPointGetPlanCacheOn(b *testing.B) {
+	runBenchmarkPrepared(b, getListPartitionDef("id", false), batchPointQueryPrepared, pointGet, true, batchArgs...)
+}
+
+func BenchmarkListPartitionPreparedBatchPointGetPlanCacheOff(b *testing.B) {
+	runBenchmarkPrepared(b, getListPartitionDef("id", false), batchPointQueryPrepared, pointGet, false, batchArgs...)
+}
+
+func BenchmarkListPartitionPreparedIndexLookupPlanCacheOn(b *testing.B) {
+	runBenchmarkPrepared(b, getListPartitionDef("id", false), pointQueryPrepared, indexLookup, true, pointArgs)
+}
+
+func BenchmarkListPartitionPreparedIndexLookupPlanCacheOff(b *testing.B) {
+	runBenchmarkPrepared(b, getListPartitionDef("id", false), pointQueryPrepared, indexLookup, false, pointArgs)
+}
+
+func BenchmarkListPartitionPreparedBatchIndexLookupPlanCacheOn(b *testing.B) {
+	runBenchmarkPrepared(b, getListPartitionDef("id", false), batchPointQueryPrepared, indexLookup, true, batchArgs...)
+}
+
+func BenchmarkListPartitionPreparedBatchIndexLookupPlanCacheOff(b *testing.B) {
+	runBenchmarkPrepared(b, getListPartitionDef("id", false), batchPointQueryPrepared, indexLookup, false, batchArgs...)
+}
+func BenchmarkListPartitionPreparedTableScanPlanCacheOn(b *testing.B) {
+	runBenchmarkPrepared(b, getListPartitionDef("id", false), pointQueryPrepared, tableScan, true, pointArgs)
+}
+
+func BenchmarkListPartitionPreparedTableScanPlanCacheOff(b *testing.B) {
+	runBenchmarkPrepared(b, getListPartitionDef("id", false), pointQueryPrepared, tableScan, false, pointArgs)
+}
+
+func BenchmarkListPartitionPreparedBatchTableScanPlanCacheOn(b *testing.B) {
+	runBenchmarkPrepared(b, getListPartitionDef("id", false), batchPointQueryPrepared, tableScan, true, batchArgs...)
+}
+
+func BenchmarkListPartitionPreparedBatchTableScanPlanCacheOff(b *testing.B) {
+	runBenchmarkPrepared(b, getListPartitionDef("id", false), batchPointQueryPrepared, tableScan, false, batchArgs...)
 }
 
 func BenchmarkListPartitionPrepared(b *testing.B) {
@@ -966,9 +1178,103 @@ func BenchmarkListPartitionPrepared(b *testing.B) {
 	benchPreparedPointGet(b, partitionBy)
 }
 
+func BenchmarkListExprPartitionPreparedPointGetPlanCacheOn(b *testing.B) {
+	runBenchmarkPrepared(b, getListPartitionDef("floor(id*0.5)*2", false), pointQueryPrepared, pointGet, true, pointArgs)
+}
+
+func BenchmarkListExprPartitionPreparedPointGetPlanCacheOff(b *testing.B) {
+	runBenchmarkPrepared(b, getListPartitionDef("floor(id*0.5)*2", false), pointQueryPrepared, pointGet, false, pointArgs)
+}
+
+func BenchmarkListExprPartitionPreparedBatchPointGetPlanCacheOn(b *testing.B) {
+	runBenchmarkPrepared(b, getListPartitionDef("floor(id*0.5)*2", false), batchPointQueryPrepared, pointGet, true, batchArgs...)
+}
+
+func BenchmarkListExprPartitionPreparedBatchPointGetPlanCacheOff(b *testing.B) {
+	runBenchmarkPrepared(b, getListPartitionDef("floor(id*0.5)*2", false), batchPointQueryPrepared, pointGet, false, batchArgs...)
+}
+
+func BenchmarkListExprPartitionPreparedIndexLookupPlanCacheOn(b *testing.B) {
+	runBenchmarkPrepared(b, getListPartitionDef("floor(id*0.5)*2", false), pointQueryPrepared, indexLookup, true, pointArgs)
+}
+
+func BenchmarkListExprPartitionPreparedIndexLookupPlanCacheOff(b *testing.B) {
+	runBenchmarkPrepared(b, getListPartitionDef("floor(id*0.5)*2", false), pointQueryPrepared, indexLookup, false, pointArgs)
+}
+
+func BenchmarkListExprPartitionPreparedBatchIndexLookupPlanCacheOn(b *testing.B) {
+	runBenchmarkPrepared(b, getListPartitionDef("floor(id*0.5)*2", false), batchPointQueryPrepared, indexLookup, true, batchArgs...)
+}
+
+func BenchmarkListExprPartitionPreparedBatchIndexLookupPlanCacheOff(b *testing.B) {
+	runBenchmarkPrepared(b, getListPartitionDef("floor(id*0.5)*2", false), batchPointQueryPrepared, indexLookup, false, batchArgs...)
+}
+func BenchmarkListExprPartitionPreparedTableScanPlanCacheOn(b *testing.B) {
+	runBenchmarkPrepared(b, getListPartitionDef("floor(id*0.5)*2", false), pointQueryPrepared, tableScan, true, pointArgs)
+}
+
+func BenchmarkListExprPartitionPreparedTableScanPlanCacheOff(b *testing.B) {
+	runBenchmarkPrepared(b, getListPartitionDef("floor(id*0.5)*2", false), pointQueryPrepared, tableScan, false, pointArgs)
+}
+
+func BenchmarkListExprPartitionPreparedBatchTableScanPlanCacheOn(b *testing.B) {
+	runBenchmarkPrepared(b, getListPartitionDef("floor(id*0.5)*2", false), batchPointQueryPrepared, tableScan, true, batchArgs...)
+}
+
+func BenchmarkListExprPartitionPreparedBatchTableScanPlanCacheOff(b *testing.B) {
+	runBenchmarkPrepared(b, getListPartitionDef("floor(id*0.5)*2", false), batchPointQueryPrepared, tableScan, false, batchArgs...)
+}
+
 func BenchmarkListExprPartitionPrepared(b *testing.B) {
 	partitionBy := getListPartitionDef("floor(id*0.5)*2", false)
 	benchPreparedPointGet(b, partitionBy)
+}
+
+func BenchmarkListColumnsPartitionPreparedPointGetPlanCacheOn(b *testing.B) {
+	runBenchmarkPrepared(b, getListPartitionDef("id", true), pointQueryPrepared, pointGet, true, pointArgs)
+}
+
+func BenchmarkListColumnsPartitionPreparedPointGetPlanCacheOff(b *testing.B) {
+	runBenchmarkPrepared(b, getListPartitionDef("id", true), pointQueryPrepared, pointGet, false, pointArgs)
+}
+
+func BenchmarkListColumnsPartitionPreparedBatchPointGetPlanCacheOn(b *testing.B) {
+	runBenchmarkPrepared(b, getListPartitionDef("id", true), batchPointQueryPrepared, pointGet, true, batchArgs...)
+}
+
+func BenchmarkListColumnsPartitionPreparedBatchPointGetPlanCacheOff(b *testing.B) {
+	runBenchmarkPrepared(b, getListPartitionDef("id", true), batchPointQueryPrepared, pointGet, false, batchArgs...)
+}
+
+func BenchmarkListColumnsPartitionPreparedIndexLookupPlanCacheOn(b *testing.B) {
+	runBenchmarkPrepared(b, getListPartitionDef("id", true), pointQueryPrepared, indexLookup, true, pointArgs)
+}
+
+func BenchmarkListColumnsPartitionPreparedIndexLookupPlanCacheOff(b *testing.B) {
+	runBenchmarkPrepared(b, getListPartitionDef("id", true), pointQueryPrepared, indexLookup, false, pointArgs)
+}
+
+func BenchmarkListColumnsPartitionPreparedBatchIndexLookupPlanCacheOn(b *testing.B) {
+	runBenchmarkPrepared(b, getListPartitionDef("id", true), batchPointQueryPrepared, indexLookup, true, batchArgs...)
+}
+
+func BenchmarkListColumnsPartitionPreparedBatchIndexLookupPlanCacheOff(b *testing.B) {
+	runBenchmarkPrepared(b, getListPartitionDef("id", true), batchPointQueryPrepared, indexLookup, false, batchArgs...)
+}
+func BenchmarkListColumnsPartitionPreparedTableScanPlanCacheOn(b *testing.B) {
+	runBenchmarkPrepared(b, getListPartitionDef("id", true), pointQueryPrepared, tableScan, true, pointArgs)
+}
+
+func BenchmarkListColumnsPartitionPreparedTableScanPlanCacheOff(b *testing.B) {
+	runBenchmarkPrepared(b, getListPartitionDef("id", true), pointQueryPrepared, tableScan, false, pointArgs)
+}
+
+func BenchmarkListColumnsPartitionPreparedBatchTableScanPlanCacheOn(b *testing.B) {
+	runBenchmarkPrepared(b, getListPartitionDef("id", true), batchPointQueryPrepared, tableScan, true, batchArgs...)
+}
+
+func BenchmarkListColumnsPartitionPreparedBatchTableScanPlanCacheOff(b *testing.B) {
+	runBenchmarkPrepared(b, getListPartitionDef("id", true), batchPointQueryPrepared, tableScan, false, batchArgs...)
 }
 
 func BenchmarkListColumnPartitionPrepared(b *testing.B) {
@@ -976,16 +1282,157 @@ func BenchmarkListColumnPartitionPrepared(b *testing.B) {
 	benchPreparedPointGet(b, partitionBy)
 }
 
-func BenchmarkRangePartitionPrepared(b *testing.B) {
-	benchPreparedPointGet(b, "partition by range (id) (partition p0 values less than (10), partition p1 values less than (63), partition p3 values less than (100), partition pMax values less than (maxvalue))")
+func BenchmarkRangePartitionPreparedPointGetPlanCacheOn(b *testing.B) {
+	runBenchmarkPrepared(b, partitionByRangePrep, pointQueryPrepared, pointGet, true, pointArgs)
 }
 
-func BenchmarkRangeColumnPartitionPrepared(b *testing.B) {
-	benchPreparedPointGet(b, "partition by range columns (id) (partition p0 values less than (10), partition p1 values less than (63), partition p3 values less than (100), partition pMax values less than (maxvalue))")
+func BenchmarkRangePartitionPreparedPointGetPlanCacheOff(b *testing.B) {
+	runBenchmarkPrepared(b, partitionByRangePrep, pointQueryPrepared, pointGet, false, pointArgs)
+}
+
+func BenchmarkRangePartitionPreparedBatchPointGetPlanCacheOn(b *testing.B) {
+	runBenchmarkPrepared(b, partitionByRangePrep, batchPointQueryPrepared, pointGet, true, batchArgs...)
+}
+
+func BenchmarkRangePartitionPreparedBatchPointGetPlanCacheOff(b *testing.B) {
+	runBenchmarkPrepared(b, partitionByRangePrep, batchPointQueryPrepared, pointGet, false, batchArgs...)
+}
+
+func BenchmarkRangePartitionPreparedIndexLookupPlanCacheOn(b *testing.B) {
+	runBenchmarkPrepared(b, partitionByRangePrep, pointQueryPrepared, indexLookup, true, pointArgs)
+}
+
+func BenchmarkRangePartitionPreparedIndexLookupPlanCacheOff(b *testing.B) {
+	runBenchmarkPrepared(b, partitionByRangePrep, pointQueryPrepared, indexLookup, false, pointArgs)
+}
+
+func BenchmarkRangePartitionPreparedBatchIndexLookupPlanCacheOn(b *testing.B) {
+	runBenchmarkPrepared(b, partitionByRangePrep, batchPointQueryPrepared, indexLookup, true, batchArgs...)
+}
+
+func BenchmarkRangePartitionPreparedBatchIndexLookupPlanCacheOff(b *testing.B) {
+	runBenchmarkPrepared(b, partitionByRangePrep, batchPointQueryPrepared, indexLookup, false, batchArgs...)
+}
+func BenchmarkRangePartitionPreparedTableScanPlanCacheOn(b *testing.B) {
+	runBenchmarkPrepared(b, partitionByRangePrep, pointQueryPrepared, tableScan, true, pointArgs)
+}
+
+func BenchmarkRangePartitionPreparedTableScanPlanCacheOff(b *testing.B) {
+	runBenchmarkPrepared(b, partitionByRangePrep, pointQueryPrepared, tableScan, false, pointArgs)
+}
+
+func BenchmarkRangePartitionPreparedBatchTableScanPlanCacheOn(b *testing.B) {
+	runBenchmarkPrepared(b, partitionByRangePrep, batchPointQueryPrepared, tableScan, true, batchArgs...)
+}
+
+func BenchmarkRangePartitionPreparedBatchTableScanPlanCacheOff(b *testing.B) {
+	runBenchmarkPrepared(b, partitionByRangePrep, batchPointQueryPrepared, tableScan, false, batchArgs...)
+}
+
+func BenchmarkRangePartitionPrepared(b *testing.B) {
+	benchPreparedPointGet(b, partitionByRangePrep)
+}
+
+func BenchmarkRangeExprPartitionPreparedPointGetPlanCacheOn(b *testing.B) {
+	runBenchmarkPrepared(b, partitionByRangeExprPrep, pointQueryPrepared, pointGet, true, pointArgs)
+}
+
+func BenchmarkRangeExprPartitionPreparedPointGetPlanCacheOff(b *testing.B) {
+	runBenchmarkPrepared(b, partitionByRangeExprPrep, pointQueryPrepared, pointGet, false, pointArgs)
+}
+
+func BenchmarkRangeExprPartitionPreparedBatchPointGetPlanCacheOn(b *testing.B) {
+	runBenchmarkPrepared(b, partitionByRangeExprPrep, batchPointQueryPrepared, pointGet, true, batchArgs...)
+}
+
+func BenchmarkRangeExprPartitionPreparedBatchPointGetPlanCacheOff(b *testing.B) {
+	runBenchmarkPrepared(b, partitionByRangeExprPrep, batchPointQueryPrepared, pointGet, false, batchArgs...)
+}
+
+func BenchmarkRangeExprPartitionPreparedIndexLookupPlanCacheOn(b *testing.B) {
+	runBenchmarkPrepared(b, partitionByRangeExprPrep, pointQueryPrepared, indexLookup, true, pointArgs)
+}
+
+func BenchmarkRangeExprPartitionPreparedIndexLookupPlanCacheOff(b *testing.B) {
+	runBenchmarkPrepared(b, partitionByRangeExprPrep, pointQueryPrepared, indexLookup, false, pointArgs)
+}
+
+func BenchmarkRangeExprPartitionPreparedBatchIndexLookupPlanCacheOn(b *testing.B) {
+	runBenchmarkPrepared(b, partitionByRangeExprPrep, batchPointQueryPrepared, indexLookup, true, batchArgs...)
+}
+
+func BenchmarkRangeExprPartitionPreparedBatchIndexLookupPlanCacheOff(b *testing.B) {
+	runBenchmarkPrepared(b, partitionByRangeExprPrep, batchPointQueryPrepared, indexLookup, false, batchArgs...)
+}
+func BenchmarkRangeExprPartitionPreparedTableScanPlanCacheOn(b *testing.B) {
+	runBenchmarkPrepared(b, partitionByRangeExprPrep, pointQueryPrepared, tableScan, true, pointArgs)
+}
+
+func BenchmarkRangeExprPartitionPreparedTableScanPlanCacheOff(b *testing.B) {
+	runBenchmarkPrepared(b, partitionByRangeExprPrep, pointQueryPrepared, tableScan, false, pointArgs)
+}
+
+func BenchmarkRangeExprPartitionPreparedBatchTableScanPlanCacheOn(b *testing.B) {
+	runBenchmarkPrepared(b, partitionByRangeExprPrep, batchPointQueryPrepared, tableScan, true, batchArgs...)
+}
+
+func BenchmarkRangeExprPartitionPreparedBatchTableScanPlanCacheOff(b *testing.B) {
+	runBenchmarkPrepared(b, partitionByRangeExprPrep, batchPointQueryPrepared, tableScan, false, batchArgs...)
 }
 
 func BenchmarkRangeExprPartitionPrepared(b *testing.B) {
-	benchPreparedPointGet(b, "partition by range (floor(id*0.5)*2) (partition p0 values less than (10), partition p1 values less than (63), partition p3 values less than (100), partition pMax values less than (maxvalue))")
+	benchPreparedPointGet(b, partitionByRangeExprPrep)
+}
+
+func BenchmarkRangeColumnsPartitionPreparedPointGetPlanCacheOn(b *testing.B) {
+	runBenchmarkPrepared(b, partitionByRangeColumnsPrep, pointQueryPrepared, pointGet, true, pointArgs)
+}
+
+func BenchmarkRangeColumnsPartitionPreparedPointGetPlanCacheOff(b *testing.B) {
+	runBenchmarkPrepared(b, partitionByRangeColumnsPrep, pointQueryPrepared, pointGet, false, pointArgs)
+}
+
+func BenchmarkRangeColumnsPartitionPreparedBatchPointGetPlanCacheOn(b *testing.B) {
+	runBenchmarkPrepared(b, partitionByRangeColumnsPrep, batchPointQueryPrepared, pointGet, true, batchArgs...)
+}
+
+func BenchmarkRangeColumnsPartitionPreparedBatchPointGetPlanCacheOff(b *testing.B) {
+	runBenchmarkPrepared(b, partitionByRangeColumnsPrep, batchPointQueryPrepared, pointGet, false, batchArgs...)
+}
+
+func BenchmarkRangeColumnsPartitionPreparedIndexLookupPlanCacheOn(b *testing.B) {
+	runBenchmarkPrepared(b, partitionByRangeColumnsPrep, pointQueryPrepared, indexLookup, true, pointArgs)
+}
+
+func BenchmarkRangeColumnsPartitionPreparedIndexLookupPlanCacheOff(b *testing.B) {
+	runBenchmarkPrepared(b, partitionByRangeColumnsPrep, pointQueryPrepared, indexLookup, false, pointArgs)
+}
+
+func BenchmarkRangeColumnsPartitionPreparedBatchIndexLookupPlanCacheOn(b *testing.B) {
+	runBenchmarkPrepared(b, partitionByRangeColumnsPrep, batchPointQueryPrepared, indexLookup, true, batchArgs...)
+}
+
+func BenchmarkRangeColumnsPartitionPreparedBatchIndexLookupPlanCacheOff(b *testing.B) {
+	runBenchmarkPrepared(b, partitionByRangeColumnsPrep, batchPointQueryPrepared, indexLookup, false, batchArgs...)
+}
+func BenchmarkRangeColumnsPartitionPreparedTableScanPlanCacheOn(b *testing.B) {
+	runBenchmarkPrepared(b, partitionByRangeColumnsPrep, pointQueryPrepared, tableScan, true, pointArgs)
+}
+
+func BenchmarkRangeColumnsPartitionPreparedTableScanPlanCacheOff(b *testing.B) {
+	runBenchmarkPrepared(b, partitionByRangeColumnsPrep, pointQueryPrepared, tableScan, false, pointArgs)
+}
+
+func BenchmarkRangeColumnsPartitionPreparedBatchTableScanPlanCacheOn(b *testing.B) {
+	runBenchmarkPrepared(b, partitionByRangeColumnsPrep, batchPointQueryPrepared, tableScan, true, batchArgs...)
+}
+
+func BenchmarkRangeColumnsPartitionPreparedBatchTableScanPlanCacheOff(b *testing.B) {
+	runBenchmarkPrepared(b, partitionByRangeColumnsPrep, batchPointQueryPrepared, tableScan, false, batchArgs...)
+}
+
+func BenchmarkRangeColumnPartitionPrepared(b *testing.B) {
+	benchPreparedPointGet(b, partitionByRangeColumnsPrep)
 }
 
 // TODO: Add benchmarks for {RANGE|LIST} COLUMNS, both single and multi columns!!!
@@ -1154,5 +1601,113 @@ func TestBenchDaily(t *testing.T) {
 		BenchmarkListColumnsPartitionTableScanPlanCacheOff,
 		BenchmarkListColumnsPartitionBatchTableScanPlanCacheOn,
 		BenchmarkListColumnsPartitionBatchTableScanPlanCacheOff,
+		BenchmarkNonPartitionPreparedPointGetPlanCacheOn,
+		BenchmarkNonPartitionPreparedPointGetPlanCacheOff,
+		BenchmarkNonPartitionPreparedBatchPointGetPlanCacheOn,
+		BenchmarkNonPartitionPreparedBatchPointGetPlanCacheOff,
+		BenchmarkNonPartitionPreparedIndexLookupPlanCacheOn,
+		BenchmarkNonPartitionPreparedIndexLookupPlanCacheOff,
+		BenchmarkNonPartitionPreparedBatchIndexLookupPlanCacheOn,
+		BenchmarkNonPartitionPreparedBatchIndexLookupPlanCacheOff,
+		BenchmarkNonPartitionPreparedTableScanPlanCacheOn,
+		BenchmarkNonPartitionPreparedTableScanPlanCacheOff,
+		BenchmarkNonPartitionPreparedBatchTableScanPlanCacheOn,
+		BenchmarkNonPartitionPreparedBatchTableScanPlanCacheOff,
+		BenchmarkHashPartitionPreparedPointGetPlanCacheOn,
+		BenchmarkHashPartitionPreparedPointGetPlanCacheOff,
+		BenchmarkHashPartitionPreparedBatchPointGetPlanCacheOn,
+		BenchmarkHashPartitionPreparedBatchPointGetPlanCacheOff,
+		BenchmarkHashPartitionPreparedIndexLookupPlanCacheOn,
+		BenchmarkHashPartitionPreparedIndexLookupPlanCacheOff,
+		BenchmarkHashPartitionPreparedBatchIndexLookupPlanCacheOn,
+		BenchmarkHashPartitionPreparedBatchIndexLookupPlanCacheOff,
+		BenchmarkHashPartitionPreparedTableScanPlanCacheOn,
+		BenchmarkHashPartitionPreparedTableScanPlanCacheOff,
+		BenchmarkHashPartitionPreparedBatchTableScanPlanCacheOn,
+		BenchmarkHashPartitionPreparedBatchTableScanPlanCacheOff,
+		BenchmarkHashExprPartitionPreparedPointGetPlanCacheOn,
+		BenchmarkHashExprPartitionPreparedPointGetPlanCacheOff,
+		BenchmarkHashExprPartitionPreparedBatchPointGetPlanCacheOn,
+		BenchmarkHashExprPartitionPreparedBatchPointGetPlanCacheOff,
+		BenchmarkHashExprPartitionPreparedIndexLookupPlanCacheOn,
+		BenchmarkHashExprPartitionPreparedIndexLookupPlanCacheOff,
+		BenchmarkHashExprPartitionPreparedBatchIndexLookupPlanCacheOn,
+		BenchmarkHashExprPartitionPreparedBatchIndexLookupPlanCacheOff,
+		BenchmarkHashExprPartitionPreparedTableScanPlanCacheOn,
+		BenchmarkHashExprPartitionPreparedTableScanPlanCacheOff,
+		BenchmarkHashExprPartitionPreparedBatchTableScanPlanCacheOn,
+		BenchmarkHashExprPartitionPreparedBatchTableScanPlanCacheOff,
+		BenchmarkListPartitionPreparedPointGetPlanCacheOn,
+		BenchmarkListPartitionPreparedPointGetPlanCacheOff,
+		BenchmarkListPartitionPreparedBatchPointGetPlanCacheOn,
+		BenchmarkListPartitionPreparedBatchPointGetPlanCacheOff,
+		BenchmarkListPartitionPreparedIndexLookupPlanCacheOn,
+		BenchmarkListPartitionPreparedIndexLookupPlanCacheOff,
+		BenchmarkListPartitionPreparedBatchIndexLookupPlanCacheOn,
+		BenchmarkListPartitionPreparedBatchIndexLookupPlanCacheOff,
+		BenchmarkListPartitionPreparedTableScanPlanCacheOn,
+		BenchmarkListPartitionPreparedTableScanPlanCacheOff,
+		BenchmarkListPartitionPreparedBatchTableScanPlanCacheOn,
+		BenchmarkListPartitionPreparedBatchTableScanPlanCacheOff,
+		BenchmarkListExprPartitionPreparedPointGetPlanCacheOn,
+		BenchmarkListExprPartitionPreparedPointGetPlanCacheOff,
+		BenchmarkListExprPartitionPreparedBatchPointGetPlanCacheOn,
+		BenchmarkListExprPartitionPreparedBatchPointGetPlanCacheOff,
+		BenchmarkListExprPartitionPreparedIndexLookupPlanCacheOn,
+		BenchmarkListExprPartitionPreparedIndexLookupPlanCacheOff,
+		BenchmarkListExprPartitionPreparedBatchIndexLookupPlanCacheOn,
+		BenchmarkListExprPartitionPreparedBatchIndexLookupPlanCacheOff,
+		BenchmarkListExprPartitionPreparedTableScanPlanCacheOn,
+		BenchmarkListExprPartitionPreparedTableScanPlanCacheOff,
+		BenchmarkListExprPartitionPreparedBatchTableScanPlanCacheOn,
+		BenchmarkListExprPartitionPreparedBatchTableScanPlanCacheOff,
+		BenchmarkListColumnsPartitionPreparedPointGetPlanCacheOn,
+		BenchmarkListColumnsPartitionPreparedPointGetPlanCacheOff,
+		BenchmarkListColumnsPartitionPreparedBatchPointGetPlanCacheOn,
+		BenchmarkListColumnsPartitionPreparedBatchPointGetPlanCacheOff,
+		BenchmarkListColumnsPartitionPreparedIndexLookupPlanCacheOn,
+		BenchmarkListColumnsPartitionPreparedIndexLookupPlanCacheOff,
+		BenchmarkListColumnsPartitionPreparedBatchIndexLookupPlanCacheOn,
+		BenchmarkListColumnsPartitionPreparedBatchIndexLookupPlanCacheOff,
+		BenchmarkListColumnsPartitionPreparedTableScanPlanCacheOn,
+		BenchmarkListColumnsPartitionPreparedTableScanPlanCacheOff,
+		BenchmarkListColumnsPartitionPreparedBatchTableScanPlanCacheOn,
+		BenchmarkListColumnsPartitionPreparedBatchTableScanPlanCacheOff,
+		BenchmarkRangePartitionPreparedPointGetPlanCacheOn,
+		BenchmarkRangePartitionPreparedPointGetPlanCacheOff,
+		BenchmarkRangePartitionPreparedBatchPointGetPlanCacheOn,
+		BenchmarkRangePartitionPreparedBatchPointGetPlanCacheOff,
+		BenchmarkRangePartitionPreparedIndexLookupPlanCacheOn,
+		BenchmarkRangePartitionPreparedIndexLookupPlanCacheOff,
+		BenchmarkRangePartitionPreparedBatchIndexLookupPlanCacheOn,
+		BenchmarkRangePartitionPreparedBatchIndexLookupPlanCacheOff,
+		BenchmarkRangePartitionPreparedTableScanPlanCacheOn,
+		BenchmarkRangePartitionPreparedTableScanPlanCacheOff,
+		BenchmarkRangePartitionPreparedBatchTableScanPlanCacheOn,
+		BenchmarkRangePartitionPreparedBatchTableScanPlanCacheOff,
+		BenchmarkRangeExprPartitionPreparedPointGetPlanCacheOn,
+		BenchmarkRangeExprPartitionPreparedPointGetPlanCacheOff,
+		BenchmarkRangeExprPartitionPreparedBatchPointGetPlanCacheOn,
+		BenchmarkRangeExprPartitionPreparedBatchPointGetPlanCacheOff,
+		BenchmarkRangeExprPartitionPreparedIndexLookupPlanCacheOn,
+		BenchmarkRangeExprPartitionPreparedIndexLookupPlanCacheOff,
+		BenchmarkRangeExprPartitionPreparedBatchIndexLookupPlanCacheOn,
+		BenchmarkRangeExprPartitionPreparedBatchIndexLookupPlanCacheOff,
+		BenchmarkRangeExprPartitionPreparedTableScanPlanCacheOn,
+		BenchmarkRangeExprPartitionPreparedTableScanPlanCacheOff,
+		BenchmarkRangeExprPartitionPreparedBatchTableScanPlanCacheOn,
+		BenchmarkRangeExprPartitionPreparedBatchTableScanPlanCacheOff,
+		BenchmarkRangeColumnsPartitionPreparedPointGetPlanCacheOn,
+		BenchmarkRangeColumnsPartitionPreparedPointGetPlanCacheOff,
+		BenchmarkRangeColumnsPartitionPreparedBatchPointGetPlanCacheOn,
+		BenchmarkRangeColumnsPartitionPreparedBatchPointGetPlanCacheOff,
+		BenchmarkRangeColumnsPartitionPreparedIndexLookupPlanCacheOn,
+		BenchmarkRangeColumnsPartitionPreparedIndexLookupPlanCacheOff,
+		BenchmarkRangeColumnsPartitionPreparedBatchIndexLookupPlanCacheOn,
+		BenchmarkRangeColumnsPartitionPreparedBatchIndexLookupPlanCacheOff,
+		BenchmarkRangeColumnsPartitionPreparedTableScanPlanCacheOn,
+		BenchmarkRangeColumnsPartitionPreparedTableScanPlanCacheOff,
+		BenchmarkRangeColumnsPartitionPreparedBatchTableScanPlanCacheOn,
+		BenchmarkRangeColumnsPartitionPreparedBatchTableScanPlanCacheOff,
 	)
 }
