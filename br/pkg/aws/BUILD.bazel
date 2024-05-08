@@ -27,9 +27,15 @@ go_test(
     name = "aws_test",
     srcs = ["ebs_test.go"],
     embed = [":aws"],
+<<<<<<< HEAD
+=======
+    flaky = True,
+    shard_count = 3,
+>>>>>>> f304f041eaa (br: Fail backup if any snapshots failed (#53038))
     deps = [
         "@com_github_aws_aws_sdk_go//aws",
         "@com_github_aws_aws_sdk_go//service/ec2",
+        "@com_github_aws_aws_sdk_go//service/ec2/ec2iface",
         "@com_github_stretchr_testify//require",
     ],
 )
