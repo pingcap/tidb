@@ -688,3 +688,46 @@ func TestIssue42662(t *testing.T) {
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/issue42662_1"))
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/util/servermemorylimit/issue42662_2"))
 }
+<<<<<<< HEAD
+=======
+
+func TestIssue50393(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+
+	tk.MustExec("create table t1 (a blob)")
+	tk.MustExec("create table t2 (a blob)")
+	tk.MustExec("insert into t1 values (0xC2A0)")
+	tk.MustExec("insert into t2 values (0xC2)")
+	tk.MustQuery("select count(*) from t1,t2 where t1.a like concat(\"%\",t2.a,\"%\")").Check(testkit.Rows("1"))
+}
+
+func TestIssue51874(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.Session().GetSessionVars().AllowProjectionPushDown = true
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t, t2")
+	tk.MustExec("create table t (a int, b int)")
+	tk.MustExec("create table t2 (i int)")
+	tk.MustExec("insert into t values (5, 6), (1, 7)")
+	tk.MustExec("insert into t2 values (10), (100)")
+	tk.MustQuery("select (select sum(a) over () from t2 limit 1) from t;").Check(testkit.Rows("10", "2"))
+}
+
+func TestIssue52978(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int)")
+	tk.MustExec("insert into t values (-1790816583),(2049821819), (-1366665321), (536581933), (-1613686445)")
+	tk.MustQuery("select min(truncate(cast(-26340 as double), ref_11.a)) as c3 from t as ref_11;").Check(testkit.Rows("-26340"))
+	tk.MustExec("drop table if exists t")
+}
+>>>>>>> 57b382b01ae (executor,types: Fix truncate function behavior when second param is large negative (#53075))
