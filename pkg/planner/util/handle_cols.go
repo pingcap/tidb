@@ -70,6 +70,7 @@ type CommonHandleCols struct {
 	sc      *stmtctx.StatementContext
 }
 
+// GetColumns returns all the internal columns out.
 func (cb *CommonHandleCols) GetColumns() []*expression.Column {
 	return cb.columns
 }
@@ -229,6 +230,7 @@ func NewCommonHandleCols(sc *stmtctx.StatementContext, tblInfo *model.TableInfo,
 	return cols
 }
 
+// NewCommonHandlesColsWithoutColsAlign creates a new CommonHandleCols without internal col align.
 func NewCommonHandlesColsWithoutColsAlign(sc *stmtctx.StatementContext, tblInfo *model.TableInfo, idxInfo *model.IndexInfo,
 	cols []*expression.Column) *CommonHandleCols {
 	return &CommonHandleCols{
