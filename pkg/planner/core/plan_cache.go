@@ -42,8 +42,10 @@ import (
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/kvcache"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	utilpc "github.com/pingcap/tidb/pkg/util/plancache"
 	"github.com/pingcap/tidb/pkg/util/ranger"
+	"go.uber.org/zap"
 )
 
 // PlanCacheKeyTestIssue43667 is only for test.
@@ -493,6 +495,9 @@ func rebuildRange(p base.Plan) error {
 				for i := range x.IndexValues {
 					x.IndexValues[i] = ranges.Ranges[0].LowVal[i]
 				}
+				if x.PartitionIdx != nil {
+					logutil.BgLogger().Debug("IndexInfo prev partIdx was", zap.Int("PartitionIdx", *x.PartitionIdx))
+				}
 			} else {
 				var pkCol *expression.Column
 				var unsignedIntHandle bool
@@ -517,6 +522,9 @@ func rebuildRange(p base.Plan) error {
 						return errors.New("rebuild to get an unsafe range")
 					}
 					x.Handle = kv.IntHandle(ranges[0].LowVal[0].GetInt64())
+					if x.PartitionIdx != nil {
+						logutil.BgLogger().Debug("!IndexInfo prev partIdx was", zap.Int("PartitionIdx", *x.PartitionIdx))
+					}
 				}
 			}
 		}

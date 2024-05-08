@@ -1302,8 +1302,10 @@ func (t *partitionedTable) locatePartitionCommon(ctx expression.BuildContext, tp
 		idx = 0
 	}
 	if err != nil {
+		logutil.BgLogger().Debug("Error in locatePartitionCommon", zap.Error(err))
 		return 0, errors.Trace(err)
 	}
+	logutil.BgLogger().Debug("Found partition", zap.Int("idx", idx))
 	return idx, nil
 }
 
@@ -1367,6 +1369,7 @@ func (t *partitionedTable) locateRangeColumnPartition(ctx expression.BuildContex
 		return ret > 0
 	})
 	if lastError != nil {
+		logutil.BgLogger().Debug("Error when searching for partition", zap.Error(lastError))
 		return 0, errors.Trace(lastError)
 	}
 	if idx >= len(upperBounds) {
@@ -1384,8 +1387,10 @@ func (t *partitionedTable) locateRangeColumnPartition(ctx expression.BuildContex
 			// When the table is partitioned by range columns.
 			valueMsg = "from column_list"
 		}
+		logutil.BgLogger().Debug("No partition found", zap.String("valueMsg", valueMsg))
 		return 0, table.ErrNoPartitionForGivenValue.GenWithStackByArgs(valueMsg)
 	}
+	logutil.BgLogger().Debug("found partition", zap.Int("idx", idx))
 	return idx, nil
 }
 
@@ -1410,6 +1415,7 @@ func (t *partitionedTable) locateRangePartition(ctx expression.BuildContext, par
 			isNull = true
 		}
 		ret = r[col.Index].GetInt64()
+		logutil.BgLogger().Debug("part val", zap.Int64("ret", ret), zap.Int("col.Index", col.Index), zap.Bool("isNull", isNull), zap.Any("r", r))
 	} else {
 		evalBuffer := t.evalBufferPool.Get().(*chunk.MutRow)
 		defer t.evalBufferPool.Put(evalBuffer)
@@ -1419,6 +1425,7 @@ func (t *partitionedTable) locateRangePartition(ctx expression.BuildContext, par
 			return 0, err
 		}
 		ret = val
+		logutil.BgLogger().Debug("part val", zap.Int64("ret", ret))
 	}
 	unsigned := mysql.HasUnsignedFlag(partitionExpr.Expr.GetType().GetFlag())
 	ranges := partitionExpr.ForRangePruning
