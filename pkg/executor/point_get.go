@@ -444,10 +444,10 @@ func fillRowChecksum(
 	}
 
 	columnFt := make(map[int64]*types.FieldType)
-	for _, col := range tblInfo.Columns {
+	for idx := range tblInfo.Columns {
+		col := tblInfo.Columns[idx]
 		columnFt[col.ID] = &col.FieldType
 	}
-
 	tz := sctx.GetSessionVars().TimeZone
 	ft := []*types.FieldType{schema.Columns[checksumColumnIndex].GetType()}
 	checksumCols := chunk.NewChunkWithCapacity(ft, req.Capacity())
