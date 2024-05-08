@@ -17,6 +17,7 @@ package executor
 import (
 	"context"
 	"fmt"
+	util2 "github.com/pingcap/tidb/pkg/planner/util"
 	"math"
 	"strings"
 	"time"
@@ -46,7 +47,7 @@ type AnalyzeColumnsExec struct {
 
 	tableInfo     *model.TableInfo
 	colsInfo      []*model.ColumnInfo
-	handleCols    core.HandleCols
+	handleCols    util2.HandleCols
 	commonHandle  *model.IndexInfo
 	resultHandler *tableResultHandler
 	indexes       []*model.IndexInfo
@@ -379,7 +380,7 @@ func (e *AnalyzeColumnsExecV1) analyzeColumnsPushDownV1() *statistics.AnalyzeRes
 	}
 }
 
-func hasPkHist(handleCols core.HandleCols) bool {
+func hasPkHist(handleCols util2.HandleCols) bool {
 	return handleCols != nil && handleCols.IsInt()
 }
 

@@ -19,6 +19,7 @@ import (
 	"context"
 	stderrors "errors"
 	"fmt"
+	util2 "github.com/pingcap/tidb/pkg/planner/util"
 	"math"
 	"runtime/pprof"
 	"slices"
@@ -1099,7 +1100,7 @@ type SelectLockExec struct {
 	keys []kv.Key
 
 	// The children may be a join of multiple tables, so we need a map.
-	tblID2Handle map[int64][]plannercore.HandleCols
+	tblID2Handle map[int64][]util2.HandleCols
 
 	// When SelectLock work on a partition table, we need the partition ID
 	// (Physical Table ID) instead of the 'logical' table ID to calculate

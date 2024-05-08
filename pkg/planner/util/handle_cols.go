@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package core
+package util
 
 import (
 	"strings"
@@ -68,6 +68,10 @@ type CommonHandleCols struct {
 	idxInfo *model.IndexInfo
 	columns []*expression.Column
 	sc      *stmtctx.StatementContext
+}
+
+func (cb *CommonHandleCols) GetColumns() []*expression.Column {
+	return cb.columns
 }
 
 func (cb *CommonHandleCols) buildHandleByDatumsBuffer(datumBuf []types.Datum) (kv.Handle, error) {
@@ -223,6 +227,16 @@ func NewCommonHandleCols(sc *stmtctx.StatementContext, tblInfo *model.TableInfo,
 		cols.columns[i] = tableColumns[idxCol.Offset]
 	}
 	return cols
+}
+
+func NewCommonHandlesColsWithoutColsAlign(sc *stmtctx.StatementContext, tblInfo *model.TableInfo, idxInfo *model.IndexInfo,
+	cols []*expression.Column) *CommonHandleCols {
+	return &CommonHandleCols{
+		tblInfo: tblInfo,
+		idxInfo: idxInfo,
+		sc:      sc,
+		columns: cols,
+	}
 }
 
 // IntHandleCols implements the kv.HandleCols interface.
