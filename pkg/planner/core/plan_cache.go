@@ -32,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn/staleread"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/types"
@@ -227,7 +226,7 @@ func GetPlanFromSessionPlanCache(ctx context.Context, sctx sessionctx.Context,
 	if err != nil {
 		return nil, nil, err
 	}
-	if stmtCtx.UseCache() { // for non-point plans
+	if stmtCtx.UseCache() {
 		if plan, names, ok, err := getCachedPlan(sctx, isNonPrepared, cacheKey, bindSQL, is, stmt, matchOpts); err != nil || ok {
 			return plan, names, err
 		}
@@ -254,31 +253,6 @@ func parseParamTypes(sctx sessionctx.Context, params []expression.Expression) (p
 		paramTypes = append(paramTypes, tp)
 	}
 	return
-}
-
-func getCachedPointPlan(stmt *PlanCacheStmt, sessVars *variable.SessionVars) (base.Plan,
-	[]*types.FieldName, bool, error) {
-	// short path for point-get plans
-	// Rewriting the expression in the select.where condition  will convert its
-	// type from "paramMarker" to "Constant".When Point Select queries are executed,
-	// the expression in the where condition will not be evaluated,
-	// so you don't need to consider whether prepared.useCache is enabled.
-	plan := stmt.PointGet.Plan.(base.Plan)
-	names := stmt.PointGet.ColumnNames.(types.NameSlice)
-	if !RebuildPlan4CachedPlan(plan) {
-		return nil, nil, false, nil
-	}
-	if metrics.ResettablePlanCacheCounterFortTest {
-		metrics.PlanCacheCounter.WithLabelValues("prepare").Inc()
-	} else {
-		// only for prepared plan cache
-		core_metrics.GetPlanCacheHitCounter(false).Inc()
-	}
-	sessVars.FoundInPlanCache = true
-	if pointGetPlan, ok := plan.(*PointGetPlan); ok && pointGetPlan != nil && pointGetPlan.stmtHints != nil {
-		sessVars.StmtCtx.StmtHints = *pointGetPlan.stmtHints
-	}
-	return plan, names, true, nil
 }
 
 func getCachedPlan(sctx sessionctx.Context, isNonPrepared bool, cacheKey kvcache.Key, bindSQL string,
