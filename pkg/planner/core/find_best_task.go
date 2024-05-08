@@ -1384,7 +1384,6 @@ func (ds *DataSource) FindBestTask(prop *property.PhysicalProperty, planCounter 
 				planCounter.Dec(1)
 			}
 			appendCandidate(ds, idxMergeTask, prop, opt)
-
 			curIsBetter, err := ds.compareTaskRegardingStore(idxMergeTask, t, kv.TiKV, bestTaskStore, opt)
 			if err != nil {
 				return nil, 0, err
