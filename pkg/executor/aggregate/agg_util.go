@@ -58,27 +58,23 @@ var groupKeyPool = sync.Pool{
 	},
 }
 
-func getPartialResultsBufferFromPool() *[][]aggfuncs.PartialResult {
+func getBuffer() (*[][]aggfuncs.PartialResult, *[][]byte) {
 	partialResultsBuffer := partialResultsBufferPool.Get().(*[][]aggfuncs.PartialResult)
 	*partialResultsBuffer = (*partialResultsBuffer)[:0]
-	return partialResultsBuffer
-}
-
-func getGroupKeyFromPool() *[][]byte {
 	groupKey := groupKeyPool.Get().(*[][]byte)
 	*groupKey = (*groupKey)[:0]
-	return groupKey
+	return partialResultsBuffer, groupKey
 }
 
-func tryToRecyclePartialResultsBuffer(buf *[][]aggfuncs.PartialResult) {
+// tryRecycleBuffer recycles small buffers only. This approach reduces the CPU pressure
+// from memory allocation during high concurrency aggregation computations (like DDL's scheduled tasks),
+// and also prevents the pool from holding too much memory and causing memory pressure.
+func tryRecycleBuffer(buf *[][]aggfuncs.PartialResult, groupKey *[][]byte) {
 	if cap(*buf) <= defaultPartialResultsBufferCap {
 		partialResultsBufferPool.Put(buf)
 	}
-}
-
-func tryToRecycleGroupKey(buf *[][]byte) {
-	if cap(*buf) <= defaultGroupKeyCap {
-		groupKeyPool.Put(buf)
+	if cap(*groupKey) <= defaultGroupKeyCap {
+		groupKeyPool.Put(groupKey)
 	}
 }
 

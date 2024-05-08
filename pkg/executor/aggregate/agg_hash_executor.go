@@ -287,8 +287,7 @@ func (e *HashAggExec) initPartialWorkers(partialConcurrency int, finalConcurrenc
 			partialResultsMap[i] = make(aggfuncs.AggPartialResultMapper)
 		}
 
-		partialResultsBuffer := getPartialResultsBufferFromPool()
-		groupKey := getGroupKeyFromPool()
+		partialResultsBuffer, groupKeyBuf := getBuffer()
 		e.partialWorkers[i] = HashAggPartialWorker{
 			baseHashAggWorker:    newBaseHashAggWorker(e.finishCh, e.PartialAggFuncs, e.MaxChunkSize(), e.memTracker),
 			idForTest:            i,
@@ -302,7 +301,7 @@ func (e *HashAggExec) initPartialWorkers(partialConcurrency int, finalConcurrenc
 			partialResultsMap:    partialResultsMap,
 			groupByItems:         e.GroupByItems,
 			chk:                  exec.TryNewCacheChunk(e.Children(0)),
-			groupKey:             *groupKey,
+			groupKeyBuf:          *groupKeyBuf,
 			serializeHelpers:     aggfuncs.NewSerializeHelper(),
 			isSpillPrepared:      false,
 			spillHelper:          e.spillHelper,
