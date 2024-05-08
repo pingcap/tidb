@@ -1369,7 +1369,7 @@ func (ds *DataSource) FindBestTask(prop *property.PhysicalProperty, planCounter 
 	defer func() {
 		if (ds.preferStoreType&h.PreferTiKV > 0 && bestTaskStore != kv.TiKV) ||
 			(ds.preferStoreType&h.PreferTiFlash > 0 && bestTaskStore != kv.TiFlash) {
-			ds.SCtx().GetSessionVars().StmtCtx.AppendWarning(errors.New("the read_from_storage hint might not work"))
+			ds.SCtx().GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("the read_from_storage hint might not work"))
 		}
 	}()
 	for _, candidate := range candidates {
