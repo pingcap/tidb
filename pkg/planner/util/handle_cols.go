@@ -231,8 +231,8 @@ func NewCommonHandleCols(sc *stmtctx.StatementContext, tblInfo *model.TableInfo,
 }
 
 // NewCommonHandlesColsWithoutColsAlign creates a new CommonHandleCols without internal col align.
-func NewCommonHandlesColsWithoutColsAlign(sc *stmtctx.StatementContext, tblInfo *model.TableInfo, idxInfo *model.IndexInfo,
-	cols []*expression.Column) *CommonHandleCols {
+func NewCommonHandlesColsWithoutColsAlign(sc *stmtctx.StatementContext, tblInfo *model.TableInfo,
+	idxInfo *model.IndexInfo, cols []*expression.Column) *CommonHandleCols {
 	return &CommonHandleCols{
 		tblInfo: tblInfo,
 		idxInfo: idxInfo,
