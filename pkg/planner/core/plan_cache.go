@@ -298,7 +298,7 @@ func getCachedPlan(sctx sessionctx.Context, isNonPrepared bool, cacheKey kvcache
 		return nil, nil, false, nil
 	}
 	cachedVal := candidate.(*PlanCacheValue)
-	if err := CheckPreparedPriv(sctx, stmt, is); err != nil {
+	if err := checkPreparedPriv(sctx, stmt, is); err != nil {
 		return nil, nil, false, err
 	}
 	for tblInfo, unionScan := range cachedVal.TblInfo2UnionScan {
@@ -344,10 +344,6 @@ func generateNewPlan(ctx context.Context, sctx sessionctx.Context, isNonPrepared
 	if err != nil {
 		return nil, nil, err
 	}
-	err = tryCachePointPlan(ctx, sctx.GetPlanCtx(), stmt, p, names)
-	if err != nil {
-		return nil, nil, err
-	}
 
 	// check whether this plan is cacheable.
 	if stmtCtx.UseCache() {
@@ -358,6 +354,13 @@ func generateNewPlan(ctx context.Context, sctx sessionctx.Context, isNonPrepared
 
 	// put this plan into the plan cache.
 	if stmtCtx.UseCache() {
+		// update PointGet Plan specially
+		if pointGet, ok := p.(*PointGetPlan); ok {
+			pointGet.stmtHints = sctx.GetSessionVars().StmtCtx.StmtHints.Clone()
+			stmt.PointGet.Plan = p
+			stmt.PointGet.ColumnNames = names
+		}
+
 		// rebuild key to exclude kv.TiFlash when stmt is not read only
 		if _, isolationReadContainTiFlash := sessVars.IsolationReadEngines[kv.TiFlash]; isolationReadContainTiFlash && !IsReadOnly(stmtAst.Stmt, sessVars) {
 			delete(sessVars.IsolationReadEngines, kv.TiFlash)
@@ -784,8 +787,8 @@ func isSafeRange(accessConds []expression.Expression, rebuiltResult *ranger.Deta
 	return true
 }
 
-// CheckPreparedPriv checks the privilege of the prepared statement
-func CheckPreparedPriv(sctx sessionctx.Context, stmt *PlanCacheStmt, is infoschema.InfoSchema) error {
+// checkPreparedPriv checks the privilege of the prepared statement
+func checkPreparedPriv(sctx sessionctx.Context, stmt *PlanCacheStmt, is infoschema.InfoSchema) error {
 	if pm := privilege.GetPrivilegeManager(sctx); pm != nil {
 		visitInfo := VisitInfo4PrivCheck(is, stmt.PreparedAst.Stmt, stmt.VisitInfos)
 		if err := CheckPrivilege(sctx.GetSessionVars().ActiveRoles, pm, visitInfo); err != nil {
@@ -793,36 +796,6 @@ func CheckPreparedPriv(sctx sessionctx.Context, stmt *PlanCacheStmt, is infosche
 		}
 	}
 	err := CheckTableLock(sctx, is, stmt.VisitInfos)
-	return err
-}
-
-// tryCachePointPlan will try to cache point execution plan, there may be some
-// short paths for these executions, currently "point select" and "point update"
-func tryCachePointPlan(_ context.Context, sctx base.PlanContext,
-	stmt *PlanCacheStmt, p base.Plan, names types.NameSlice) error {
-	if !sctx.GetSessionVars().StmtCtx.UseCache() {
-		return nil
-	}
-	var (
-		ok  bool
-		err error
-	)
-
-	if plan, _ok := p.(*PointGetPlan); _ok {
-		ok = IsPointGetWithPKOrUniqueKeyByAutoCommit(sctx.GetSessionVars(), p)
-		if ok {
-			plan.stmtHints = sctx.GetSessionVars().StmtCtx.StmtHints.Clone()
-		}
-	}
-
-	if ok {
-		// just cache point plan now
-		stmt.PointGet.Plan = p
-		stmt.PointGet.ColumnNames = names
-		stmt.NormalizedPlan, stmt.PlanDigest = NormalizePlan(p)
-		sctx.GetSessionVars().StmtCtx.SetPlan(p)
-		sctx.GetSessionVars().StmtCtx.SetPlanDigest(stmt.NormalizedPlan, stmt.PlanDigest)
-	}
 	return err
 }
 
