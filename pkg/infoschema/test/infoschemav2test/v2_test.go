@@ -36,7 +36,8 @@ func TestSpecialSchemas(t *testing.T) {
 	tk.MustQuery("select @@global.tidb_schema_cache_size;").Check(testkit.Rows("1024"))
 	tk.MustExec("create table t (id int);")
 	is := domain.GetDomain(tk.Session()).InfoSchema()
-	require.True(t, infoschema.IsV2(is))
+	isV2, _ := infoschema.IsV2(is)
+	require.True(t, isV2)
 
 	tk.MustQuery("show databases;").Check(testkit.Rows(
 		"INFORMATION_SCHEMA", "METRICS_SCHEMA", "PERFORMANCE_SCHEMA", "mysql", "sys", "test"))

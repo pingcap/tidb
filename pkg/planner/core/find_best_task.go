@@ -1744,7 +1744,7 @@ func (ds *DataSource) convertToPartialTableScan(prop *property.PhysicalProperty,
 func overwritePartialTableScanSchema(ds *DataSource, ts *PhysicalTableScan) {
 	handleCols := ds.handleCols
 	if handleCols == nil {
-		handleCols = NewIntHandleCols(ds.newExtraHandleSchemaCol())
+		handleCols = util.NewIntHandleCols(ds.newExtraHandleSchemaCol())
 	}
 	hdColNum := handleCols.NumCols()
 	exprCols := make([]*expression.Column, 0, hdColNum)
@@ -1766,7 +1766,7 @@ func overwritePartialTableScanSchema(ds *DataSource, ts *PhysicalTableScan) {
 func setIndexMergeTableScanHandleCols(ds *DataSource, ts *PhysicalTableScan) (err error) {
 	handleCols := ds.handleCols
 	if handleCols == nil {
-		handleCols = NewIntHandleCols(ds.newExtraHandleSchemaCol())
+		handleCols = util.NewIntHandleCols(ds.newExtraHandleSchemaCol())
 	}
 	hdColNum := handleCols.NumCols()
 	exprCols := make([]*expression.Column, 0, hdColNum)
@@ -2048,8 +2048,8 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty,
 	task = cop
 	if cop.tablePlan != nil && ds.tableInfo.IsCommonHandle {
 		cop.commonHandleCols = ds.commonHandleCols
-		commonHandle := ds.handleCols.(*CommonHandleCols)
-		for _, col := range commonHandle.columns {
+		commonHandle := ds.handleCols.(*util.CommonHandleCols)
+		for _, col := range commonHandle.GetColumns() {
 			if ds.schema.ColumnIndex(col) == -1 {
 				ts := cop.tablePlan.(*PhysicalTableScan)
 				ts.Schema().Append(col)

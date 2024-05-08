@@ -55,6 +55,7 @@ import (
 	planctx "github.com/pingcap/tidb/pkg/planner/context"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
@@ -1099,7 +1100,7 @@ type SelectLockExec struct {
 	keys []kv.Key
 
 	// The children may be a join of multiple tables, so we need a map.
-	tblID2Handle map[int64][]plannercore.HandleCols
+	tblID2Handle map[int64][]plannerutil.HandleCols
 
 	// When SelectLock work on a partition table, we need the partition ID
 	// (Physical Table ID) instead of the 'logical' table ID to calculate
