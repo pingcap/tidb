@@ -101,11 +101,11 @@ func TestWaitSnapshotsCreated(t *testing.T) {
 	}
 
 	cases := []struct {
-		desc    string
+		desc            string
 		snapshotsOutput ec2.DescribeSnapshotsOutput
-		expectedSize int64
-		expectErr bool
-		expectTimeout bool
+		expectedSize    int64
+		expectErr       bool
+		expectTimeout   bool
 	}{
 		{
 			desc: "snapshots are all completed",
@@ -114,17 +114,17 @@ func TestWaitSnapshotsCreated(t *testing.T) {
 					{
 						SnapshotId: awsapi.String("snap-1"),
 						VolumeSize: awsapi.Int64(1),
-						State: awsapi.String(ec2.SnapshotStateCompleted),
+						State:      awsapi.String(ec2.SnapshotStateCompleted),
 					},
 					{
 						SnapshotId: awsapi.String("snap-2"),
 						VolumeSize: awsapi.Int64(2),
-						State: awsapi.String(ec2.SnapshotStateCompleted),
+						State:      awsapi.String(ec2.SnapshotStateCompleted),
 					},
 				},
 			},
 			expectedSize: 3,
-			expectErr: false,
+			expectErr:    false,
 		},
 		{
 			desc: "snapshot failed",
@@ -133,17 +133,17 @@ func TestWaitSnapshotsCreated(t *testing.T) {
 					{
 						SnapshotId: awsapi.String("snap-1"),
 						VolumeSize: awsapi.Int64(1),
-						State: awsapi.String(ec2.SnapshotStateCompleted),
+						State:      awsapi.String(ec2.SnapshotStateCompleted),
 					},
 					{
-						SnapshotId: awsapi.String("snap-2"),
-						State: awsapi.String(ec2.SnapshotStateError),
+						SnapshotId:   awsapi.String("snap-2"),
+						State:        awsapi.String(ec2.SnapshotStateError),
 						StateMessage: awsapi.String("snapshot failed"),
 					},
 				},
 			},
 			expectedSize: 0,
-			expectErr: true,
+			expectErr:    true,
 		},
 		{
 			desc: "snapshots pending",
@@ -152,11 +152,11 @@ func TestWaitSnapshotsCreated(t *testing.T) {
 					{
 						SnapshotId: awsapi.String("snap-1"),
 						VolumeSize: awsapi.Int64(1),
-						State: awsapi.String(ec2.SnapshotStateCompleted),
+						State:      awsapi.String(ec2.SnapshotStateCompleted),
 					},
 					{
 						SnapshotId: awsapi.String("snap-2"),
-						State: awsapi.String(ec2.SnapshotStatePending),
+						State:      awsapi.String(ec2.SnapshotStatePending),
 					},
 				},
 			},
