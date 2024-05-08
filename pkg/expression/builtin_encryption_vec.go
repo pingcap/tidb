@@ -737,7 +737,7 @@ func (b *builtinPasswordSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, 
 		// We should append a warning here because function "PASSWORD" is deprecated since MySQL 5.7.6.
 		// See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_password
 		tc := typeCtx(ctx)
-		tc.AppendWarning(errDeprecatedSyntaxNoReplacement.FastGenByArgs("PASSWORD"))
+		tc.AppendWarning(errDeprecatedSyntaxNoReplacement.FastGenByArgs("PASSWORD", ""))
 
 		result.AppendString(auth.EncodePasswordBytes(passBytes))
 	}

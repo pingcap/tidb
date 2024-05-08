@@ -15,6 +15,10 @@
 package util
 
 import (
+	"fmt"
+	"time"
+	"unsafe"
+
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/util/ranger"
@@ -58,4 +62,29 @@ func CloneRanges(ranges []*ranger.Range) []*ranger.Range {
 		cloned = append(cloned, r.Clone())
 	}
 	return cloned
+}
+
+// QueryTimeRange represents a time range specified by TIME_RANGE hint
+type QueryTimeRange struct {
+	From time.Time
+	To   time.Time
+}
+
+// Condition returns a WHERE clause base on it's value
+func (tr *QueryTimeRange) Condition() string {
+	return fmt.Sprintf("where time>='%s' and time<='%s'",
+		tr.From.Format(MetricTableTimeFormat), tr.To.Format(MetricTableTimeFormat))
+}
+
+// MetricTableTimeFormat is the time format for metric table explain and format.
+const MetricTableTimeFormat = "2006-01-02 15:04:05.999"
+
+const emptyQueryTimeRangeSize = int64(unsafe.Sizeof(QueryTimeRange{}))
+
+// MemoryUsage return the memory usage of QueryTimeRange
+func (tr *QueryTimeRange) MemoryUsage() (sum int64) {
+	if tr == nil {
+		return
+	}
+	return emptyQueryTimeRangeSize
 }

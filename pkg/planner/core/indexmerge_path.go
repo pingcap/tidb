@@ -168,7 +168,7 @@ func (ds *DataSource) generateNormalIndexPartialPaths4DNF(
 			}
 			return false
 		})
-		partialPath := ds.buildIndexMergePartialPath(itemPaths)
+		partialPath := buildIndexMergePartialPath(itemPaths)
 		if partialPath == nil {
 			// for this dnf item, we couldn't generate an index merge partial path.
 			// (1 member of (a)) or (3 member of (b)) or d=1; if one dnf item like d=1 here could walk index path,
@@ -271,7 +271,7 @@ func (ds *DataSource) generateIndexMergeOrPaths(filters []expression.Expression)
 				}
 			}
 			// 2.1: trade off on countAfterAccess.
-			minCountAfterAccessPath := ds.buildIndexMergePartialPath(oneAlternativeSet)
+			minCountAfterAccessPath := buildIndexMergePartialPath(oneAlternativeSet)
 			indexCondsForP := minCountAfterAccessPath.AccessConds[:]
 			indexCondsForP = append(indexCondsForP, minCountAfterAccessPath.IndexFilters...)
 			if len(indexCondsForP) > 0 {
@@ -289,7 +289,7 @@ func (ds *DataSource) generateIndexMergeOrPaths(filters []expression.Expression)
 			sel = SelectionFactor
 		}
 
-		possiblePath := ds.buildIndexMergeOrPath(filters, partialAlternativePaths, k, shouldKeepCurrentFilter)
+		possiblePath := buildIndexMergeOrPath(filters, partialAlternativePaths, k, shouldKeepCurrentFilter)
 		if possiblePath == nil {
 			return nil
 		}
@@ -425,7 +425,7 @@ func (ds *DataSource) accessPathsForConds(
 
 // buildIndexMergePartialPath chooses the best index path from all possible paths.
 // Now we choose the index with minimal estimate row count.
-func (*DataSource) buildIndexMergePartialPath(indexAccessPaths []*util.AccessPath) *util.AccessPath {
+func buildIndexMergePartialPath(indexAccessPaths []*util.AccessPath) *util.AccessPath {
 	if len(indexAccessPaths) == 1 {
 		return indexAccessPaths[0]
 	}
@@ -446,7 +446,7 @@ func (*DataSource) buildIndexMergePartialPath(indexAccessPaths []*util.AccessPat
 }
 
 // buildIndexMergeOrPath generates one possible IndexMergePath.
-func (ds *DataSource) buildIndexMergeOrPath(
+func buildIndexMergeOrPath(
 	filters []expression.Expression,
 	partialAlternativePaths [][]*util.AccessPath,
 	current int,
@@ -455,25 +455,6 @@ func (ds *DataSource) buildIndexMergeOrPath(
 	indexMergePath := &util.AccessPath{PartialAlternativeIndexPaths: partialAlternativePaths}
 	indexMergePath.TableFilters = append(indexMergePath.TableFilters, filters[:current]...)
 	indexMergePath.TableFilters = append(indexMergePath.TableFilters, filters[current+1:]...)
-	// If global index exists, index merge is not allowed.
-	// Global index is not compatible with IndexMergeReaderExecutor.
-	for i := range partialAlternativePaths {
-		// if one path's all alternatives are global index, warning it.
-		allGlobal := true
-		for _, oneAlternative := range partialAlternativePaths[i] {
-			// once we have a table alternative path
-			if oneAlternative.IsTablePath() {
-				allGlobal = false
-			}
-			if oneAlternative.Index != nil && !oneAlternative.Index.Global {
-				allGlobal = false
-			}
-		}
-		if allGlobal {
-			ds.SCtx().GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError("global index is not compatible with index merge, so ignore it"))
-			return nil
-		}
-	}
 	// since shouldKeepCurrentFilter may be changed in alternative paths converging, kept the filer expression anyway here.
 	indexMergePath.KeepIndexMergeORSourceFilter = shouldKeepCurrentFilter
 	// this filter will be merged into indexPath's table filters when converging.

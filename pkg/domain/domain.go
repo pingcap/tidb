@@ -240,20 +240,27 @@ func (do *Domain) loadInfoSchema(startTS uint64) (infoschema.InfoSchema, bool, i
 	}
 	// fetch the commit timestamp of the schema diff
 	schemaTs, err := do.getTimestampForSchemaVersionWithNonEmptyDiff(m, neededSchemaVersion, startTS)
-	schemaTsOrStartTs := schemaTs
 	if err != nil {
 		logutil.BgLogger().Warn("failed to get schema version", zap.Error(err), zap.Int64("version", neededSchemaVersion))
 		schemaTs = 0
-		schemaTsOrStartTs = startTS
 	}
 
 	if is := do.infoCache.GetByVersion(neededSchemaVersion); is != nil {
+		isV2, raw := infoschema.IsV2(is)
+		if isV2 {
+			// Copy the infoschema V2 instance and update its ts.
+			// For example, the DDL run 30 minutes ago, GC happened 10 minutes ago. If we use
+			// that infoschema it would get error "GC life time is shorter than transaction
+			// duration" when visiting TiKV.
+			// So we keep updating the ts of the infoschema v2.
+			is = raw.CloneAndUpdateTS(startTS)
+		}
+
 		// try to insert here as well to correct the schemaTs if previous is wrong
 		// the insert method check if schemaTs is zero
 		do.infoCache.Insert(is, schemaTs)
 
 		enableV2 := variable.SchemaCacheSize.Load() > 0
-		isV2 := infoschema.IsV2(is)
 		if enableV2 == isV2 {
 			return is, true, 0, nil, nil
 		}
@@ -273,7 +280,7 @@ func (do *Domain) loadInfoSchema(startTS uint64) (infoschema.InfoSchema, bool, i
 	// 4. No regenrated schema diff.
 	startTime := time.Now()
 	if currentSchemaVersion != 0 && neededSchemaVersion > currentSchemaVersion && neededSchemaVersion-currentSchemaVersion < LoadSchemaDiffVersionGapThreshold {
-		is, relatedChanges, diffTypes, err := do.tryLoadSchemaDiffs(m, currentSchemaVersion, neededSchemaVersion, schemaTsOrStartTs)
+		is, relatedChanges, diffTypes, err := do.tryLoadSchemaDiffs(m, currentSchemaVersion, neededSchemaVersion, startTS)
 		if err == nil {
 			infoschema_metrics.LoadSchemaDurationLoadDiff.Observe(time.Since(startTime).Seconds())
 			do.infoCache.Insert(is, schemaTs)
@@ -317,7 +324,7 @@ func (do *Domain) loadInfoSchema(startTS uint64) (infoschema.InfoSchema, bool, i
 		zap.Int64("neededSchemaVersion", neededSchemaVersion),
 		zap.Duration("start time", time.Since(startTime)))
 
-	is := newISBuilder.Build(schemaTs)
+	is := newISBuilder.Build(startTS)
 	do.infoCache.Insert(is, schemaTs)
 	return is, false, currentSchemaVersion, nil, nil
 }
@@ -441,7 +448,7 @@ func (*Domain) fetchSchemasWithTables(schemas []*model.DBInfo, m *meta.Meta, don
 // Return true if the schema is loaded successfully.
 // Return false if the schema can not be loaded by schema diff, then we need to do full load.
 // The second returned value is the delta updated table and partition IDs.
-func (do *Domain) tryLoadSchemaDiffs(m *meta.Meta, usedVersion, newVersion int64, schemaTS uint64) (infoschema.InfoSchema, *transaction.RelatedSchemaChange, []string, error) {
+func (do *Domain) tryLoadSchemaDiffs(m *meta.Meta, usedVersion, newVersion int64, startTS uint64) (infoschema.InfoSchema, *transaction.RelatedSchemaChange, []string, error) {
 	var diffs []*model.SchemaDiff
 	for usedVersion < newVersion {
 		usedVersion++
@@ -482,7 +489,7 @@ func (do *Domain) tryLoadSchemaDiffs(m *meta.Meta, usedVersion, newVersion int64
 		}
 	}
 
-	is := builder.Build(schemaTS)
+	is := builder.Build(startTS)
 	relatedChange := transaction.RelatedSchemaChange{}
 	relatedChange.PhyTblIDS = phyTblIDs
 	relatedChange.ActionTypes = actions

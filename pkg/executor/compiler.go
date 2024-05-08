@@ -97,9 +97,7 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (_ *ExecS
 		if preparedObj, err = plannercore.GetPreparedStmt(execStmt, sessVars); err != nil {
 			return nil, err
 		}
-		if pointGetPlanShortPathOK, err = plannercore.IsPointGetPlanShortPathOK(c.Ctx, is, preparedObj); err != nil {
-			return nil, err
-		}
+		pointGetPlanShortPathOK = plannercore.IsPointGetPlanShortPathOK(c.Ctx, is, preparedObj)
 	}
 	// Build the final physical plan.
 	finalPlan, names, err := planner.Optimize(ctx, c.Ctx, stmtNode, is)
