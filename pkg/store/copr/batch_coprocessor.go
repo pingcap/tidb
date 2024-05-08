@@ -53,8 +53,6 @@ import (
 
 const fetchTopoMaxBackoff = 20000
 
-var regionNotFoundFlagForTest = false
-
 // batchCopTask comprises of multiple copTask that will send to same store.
 type batchCopTask struct {
 	storeAddr string
@@ -151,7 +149,6 @@ const (
 func selectRegion(storeID uint64, candidateRegionInfos []RegionInfo, selected []bool, storeID2RegionIndex map[uint64][]int, cnt int64) []RegionInfo {
 	regionIndexes, ok := storeID2RegionIndex[storeID]
 	if !ok {
-		regionNotFoundFlagForTest = true
 		logutil.BgLogger().Error("selectRegion: storeID2RegionIndex not found", zap.Uint64("storeID", storeID))
 		return nil
 	}
