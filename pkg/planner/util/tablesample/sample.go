@@ -33,7 +33,8 @@ func (t *TableSampleInfo) MemoryUsage() (sum int64) {
 }
 
 // NewTableSampleInfo creates a new TableSampleInfo.
-func NewTableSampleInfo(node *ast.TableSample, fullSchema *expression.Schema, pt []table.PartitionedTable) *TableSampleInfo {
+func NewTableSampleInfo(node *ast.TableSample, fullSchema *expression.Schema,
+	pt []table.PartitionedTable) *TableSampleInfo {
 	if node == nil {
 		return nil
 	}
