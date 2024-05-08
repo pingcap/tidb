@@ -6189,6 +6189,11 @@ func addUnitToTime(unit string, t time.Time, v float64) (time.Time, bool, error)
 			return tb, true, nil
 		}
 		tb = t.AddDate(0, int(v), 0)
+
+		// For corner case: timestampadd(month,1,date '2024-01-31') = "2024-02-29", timestampadd(month,1,date '2024-01-30') = "2024-02-29"
+		for tb.Month() != t.Month()+1 {
+			tb = tb.AddDate(0, 0, -1)
+		}
 	case "QUARTER":
 		if !validAddMonth(v*3, t.Year(), int(t.Month())) {
 			return tb, true, nil
