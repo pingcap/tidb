@@ -1675,7 +1675,7 @@ func (b *executorBuilder) buildHashJoinV2(v *plannercore.PhysicalHashJoin) exec.
 }
 
 func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) exec.Executor {
-	if v.SCtx().GetSessionVars().UseNewHashJoinImpl && v.CanUseNewHashJoin() {
+	if v.SCtx().GetSessionVars().UseHashJoinV2 && v.CanUseHashJoinV2() {
 		return b.buildHashJoinV2(v)
 	}
 	leftExec := b.build(v.Children()[0])
