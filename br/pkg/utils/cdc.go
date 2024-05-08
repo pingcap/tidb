@@ -66,7 +66,7 @@ func (c *changefeed) infoKey() string {
 		return path.Join(CDCPrefix, c.Cluster, c.Namespace, "changefeed", "info", c.ID)
 	}
 	log.Panic("Invalid changefeed version type.", zap.Any("this", c))
-	panic("unreachable")
+	return ""
 }
 
 func (c *changefeed) statusKey() string {
@@ -77,7 +77,7 @@ func (c *changefeed) statusKey() string {
 		return path.Join(CDCPrefix, c.Cluster, c.Namespace, "changefeed", "status", c.ID)
 	}
 	log.Panic("Invalid changefeed version type.", zap.Any("this", c))
-	panic("unreachable")
+	return ""
 }
 
 type checkCDCClient struct {

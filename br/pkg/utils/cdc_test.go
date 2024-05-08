@@ -87,7 +87,6 @@ func testGetConflictChangefeeds(t *testing.T, cli *clientv3.Client) {
 		"default/default/nost-ok",
 		"default/default/st-ok",
 	})
-
 }
 
 func testGetCDCChangefeedNameSet(t *testing.T, cli *clientv3.Client) {
