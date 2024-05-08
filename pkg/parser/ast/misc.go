@@ -3427,7 +3427,7 @@ func (kind BRIEOptionType) String() string {
 	case BRIEOptionCompressionLevel:
 		return "COMPRESSION_LEVEL"
 	case BRIEOptionCompression:
-		return "BACKUP_COMPRESSION"
+		return "COMPRESSION_TYPE"
 	case BRIEOptionEncryptionMethod:
 		return "ENCRYPTION_METHOD"
 	case BRIEOptionEncryptionKeyFile:

@@ -152,7 +152,7 @@ func TestBRIEBuilderOPtions(t *testing.T) {
 	ctx := context.Background()
 	p := parser.New()
 	p.SetParserConfig(parser.ParserConfig{EnableWindowFunction: true, EnableStrictDoubleTypeCheck: true})
-	stmt, err := p.ParseOneStmt("BACKUP TABLE `a` TO 'noop://' CHECKSUM_CONCURRENCY = 4 COMPRESSION_LEVEL = 4 IGNORE_STATS = 1 BACKUP_COMPRESSION = 'lz4' ENCRYPTION_METHOD = 'aes256-ctr'", "", "")
+	stmt, err := p.ParseOneStmt("BACKUP TABLE `a` TO 'noop://' CHECKSUM_CONCURRENCY = 4 COMPRESSION_LEVEL = 4 IGNORE_STATS = 1 COMPRESSION_TYPE = 'lz4' ENCRYPTION_METHOD = 'aes256-ctr'", "", "")
 	require.NoError(t, err)
 	plan, err := core.BuildLogicalPlanForTest(ctx, sctx, stmt, infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable(), core.MockUnsignedTable(), core.MockView()}))
 	require.NoError(t, err)

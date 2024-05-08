@@ -687,7 +687,7 @@ import (
 	ignoreStats           "IGNORE_STATS"
 	checksumConcurrency   "CHECKSUM_CONCURRENCY"
 	compressionLevel      "COMPRESSION_LEVEL"
-	backupCompression     "BACKUP_COMPRESSION"
+	compressionType       "COMPRESSION_TYPE"
 	encryptionMethod      "ENCRYPTION_METHOD"
 	encryptionKeyFile     "ENCRYPTION_KEY_FILE"
 
@@ -5669,7 +5669,7 @@ BRIEStringOptionName:
 	{
 		$$ = ast.BRIEOptionCSVNull
 	}
-|	"BACKUP_COMPRESSION"
+|	"COMPRESSION_TYPE"
 	{
 		$$ = ast.BRIEOptionCompression
 	}
@@ -6962,7 +6962,7 @@ UnReservedKeyword:
 |	"IGNORE_STATS"
 |	"CHECKSUM_CONCURRENCY"
 |	"COMPRESSION_LEVEL"
-|	"BACKUP_COMPRESSION"
+|	"COMPRESSION_TYPE"
 |	"ENCRYPTION_METHOD"
 |	"ENCRYPTION_KEY_FILE"
 

@@ -291,7 +291,7 @@ var tokenMap = map[string]int{
 	"IGNORE_STATS":             ignoreStats,
 	"CHECKSUM_CONCURRENCY":     checksumConcurrency,
 	"COMPRESSION_LEVEL":        compressionLevel,
-	"BACKUP_COMPRESSION":       backupCompression,
+	"COMPRESSION_TYPE":         compressionType,
 	"ENCRYPTION_METHOD":        encryptionMethod,
 	"ENCRYPTION_KEY_FILE":      encryptionKeyFile,
 	"CURDATE":                  curDate,
