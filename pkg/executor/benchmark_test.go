@@ -658,7 +658,7 @@ func prepareResolveIndices(joinSchema, lSchema, rSchema *expression.Schema, join
 	return joinSchema
 }
 
-func prepare4HashJoin(testCase *hashJoinTestCase, innerExec, outerExec exec.Executor) *join.HashJoinExec {
+func prepare4HashJoin(testCase *hashJoinTestCase, innerExec, outerExec exec.Executor) *join.HashJoinV1Exec {
 	if testCase.useOuterToBuild {
 		innerExec, outerExec = outerExec, innerExec
 	}
@@ -690,9 +690,9 @@ func prepare4HashJoin(testCase *hashJoinTestCase, innerExec, outerExec exec.Exec
 	joinKeysColIdx = append(joinKeysColIdx, testCase.keyIdx...)
 	probeKeysColIdx := make([]int, 0, len(testCase.keyIdx))
 	probeKeysColIdx = append(probeKeysColIdx, testCase.keyIdx...)
-	e := &join.HashJoinExec{
+	e := &join.HashJoinV1Exec{
 		BaseExecutor: exec.NewBaseExecutor(testCase.ctx, joinSchema, 5, innerExec, outerExec),
-		HashJoinCtx: &join.HashJoinCtx{
+		HashJoinCtxV1: &join.HashJoinCtxV1{
 			SessCtx:         testCase.ctx,
 			JoinType:        testCase.joinType, // 0 for InnerJoin, 1 for LeftOutersJoin, 2 for RightOuterJoin
 			IsOuterJoin:     false,
@@ -718,13 +718,13 @@ func prepare4HashJoin(testCase *hashJoinTestCase, innerExec, outerExec exec.Exec
 	for i := uint(0); i < e.Concurrency; i++ {
 		e.ProbeWorkers[i] = &join.ProbeWorker{
 			WorkerID:    i,
-			HashJoinCtx: e.HashJoinCtx,
+			HashJoinCtx: e.HashJoinCtxV1,
 			Joiner: join.NewJoiner(testCase.ctx, e.JoinType, true, defaultValues,
 				nil, lhsTypes, rhsTypes, childrenUsedSchema, false),
 			ProbeKeyColIdx: probeKeysColIdx,
 		}
 	}
-	e.BuildWorker.HashJoinCtx = e.HashJoinCtx
+	e.BuildWorker.HashJoinCtx = e.HashJoinCtxV1
 	memLimit := int64(-1)
 	if testCase.disk {
 		memLimit = 1
