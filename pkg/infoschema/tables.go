@@ -1988,13 +1988,13 @@ func getMicroServiceServerInfo(ctx sessionctx.Context, serviceName string) ([]Se
 		}
 		req.Header.Add("PD-Allow-follower-handle", "true")
 		resp, err := util.InternalHTTPClient().Do(req)
-		if resp == nil || resp.StatusCode != http.StatusOK {
-			terror.Log(resp.Body.Close())
-			continue
-		}
 		if err != nil {
 			ctx.GetSessionVars().StmtCtx.AppendWarning(err)
 			logutil.BgLogger().Warn("request microservice server info error", zap.String("service", serviceName), zap.String("url", url), zap.Error(err))
+			continue
+		}
+		if resp.StatusCode != http.StatusOK {
+			terror.Log(resp.Body.Close())
 			continue
 		}
 		var content = []struct {
