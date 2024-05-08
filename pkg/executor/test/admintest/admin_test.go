@@ -43,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil/consistency"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tidb/pkg/util/redact"
+	"github.com/pingcap/tidb/pkg/util/rowcodec"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 )
@@ -1779,42 +1780,84 @@ func TestAdminCheckGlobalIndex(t *testing.T) {
 	store, domain := testkit.CreateMockStoreAndDomain(t)
 
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists admin_test")
+	var enable_fast_check = []bool{false, true}
+	for _, enabled := range enable_fast_check {
+		tk.MustExec("use test")
+		tk.MustExec("drop table if exists admin_test")
 
-	tk.MustExec("set tidb_enable_global_index = true")
-	tk.MustExec("set tidb_enable_fast_table_check = false")
+		tk.MustExec("set tidb_enable_global_index = true")
+		tk.MustExec(fmt.Sprintf("set tidb_enable_fast_table_check = %v", enabled))
 
-	tk.MustExec("create table admin_test (a int, b int, c int, unique key uidx_a(a)) partition by hash(c) partitions 5")
-	tk.MustExec("insert admin_test values (-10, -20, 1), (-1, -10, 2), (1, 11, 3), (2, 12, 0), (5, 15, -1), (10, 20, -2), (20, 30, -3)")
-	tk.MustExec("analyze table admin_test")
+		tk.MustExec("create table admin_test (a int, b int, c int, unique key uidx_a(a)) partition by hash(c) partitions 5")
+		tk.MustExec("insert admin_test values (-10, -20, 1), (-1, -10, 2), (1, 11, 3), (2, 12, 0), (5, 15, -1), (10, 20, -2), (20, 30, -3)")
+		tk.MustExec("analyze table admin_test")
 
-	// Make some corrupted index. Build the index information.
-	sctx := mock.NewContext()
-	sctx.Store = store
-	// ctx := sctx.GetTableCtx()
-	is := domain.InfoSchema()
-	dbName := model.NewCIStr("test")
-	tblName := model.NewCIStr("admin_test")
-	tbl, err := is.TableByName(dbName, tblName)
-	require.NoError(t, err)
-	tblInfo := tbl.Meta()
-	// idxInfo := tblInfo.Indices[0]
-	df := tblInfo.GetPartitionInfo().Definitions[0]
-	// indexOpr := tables.NewIndex(df.ID, tblInfo, idxInfo)
-	tk.Session().GetSessionVars().IndexLookupSize = 3
-	tk.Session().GetSessionVars().MaxChunkSize = 3
+		// Make some corrupted index. Build the index information.
+		sctx := mock.NewContext()
+		sctx.Store = store
+		is := domain.InfoSchema()
+		dbName := model.NewCIStr("test")
+		tblName := model.NewCIStr("admin_test")
+		tbl, err := is.TableByName(dbName, tblName)
+		require.NoError(t, err)
+		tblInfo := tbl.Meta()
+		idxInfo := tblInfo.Indices[0]
+		require.True(t, idxInfo.Global)
+		df := tblInfo.GetPartitionInfo().Definitions[0]
 
-	// Reduce one row of index.
-	// Table count > index count.
-	// Index c2 is missing 2.
-	txn, err := store.Begin()
-	require.NoError(t, err)
-	txn.Delete(tablecodec.EncodeRowKey(df.ID, kv.IntHandle(4).Encoded()))
-	err = txn.Commit(context.Background())
-	require.NoError(t, err)
-	err = tk.ExecToErr("admin check table admin_test")
-	require.Error(t, err)
-	require.EqualError(t, err, "[admin:8223]data inconsistency in table: admin_test, index: uidx_a, handle: 4, index-values:\"handle: 4, values: [KindInt64 2 KindInt64 4 KindInt64 105]\" != record-values:\"\"")
-	require.True(t, consistency.ErrAdminCheckInconsistent.Equal(err))
+		// Reduce one row of table.
+		// Index count > table count, (2, 12, 0) is deleted.
+		txn, err := store.Begin()
+		require.NoError(t, err)
+		txn.Delete(tablecodec.EncodeRowKey(df.ID, kv.IntHandle(4).Encoded()))
+		err = txn.Commit(context.Background())
+		require.NoError(t, err)
+		err = tk.ExecToErr("admin check table admin_test")
+		require.Error(t, err)
+		require.True(t, consistency.ErrAdminCheckInconsistent.Equal(err))
+		require.ErrorContains(t, err, "[admin:8223]data inconsistency in table: admin_test, index: uidx_a, handle: 4, index-values:\"handle: 4, values: [KindInt64 2")
+
+		// Remove corresponding index key/value.
+		// Admin check table will success.
+		idxVal, err := codec.EncodeKey(tk.Session().GetSessionVars().StmtCtx.TimeZone(), nil, types.NewIntDatum(2))
+		require.NoError(t, err)
+		txn, err = store.Begin()
+		require.NoError(t, err)
+		txn.Delete(tablecodec.EncodeIndexSeekKey(tblInfo.ID, idxInfo.ID, idxVal))
+		err = txn.Commit(context.Background())
+		require.NoError(t, err)
+		tk.MustExec("admin check table admin_test")
+
+		// Reduce one row of index.
+		// Index count < table count, (-1, -10, 2) is deleted.
+		idxVal, err = codec.EncodeKey(tk.Session().GetSessionVars().StmtCtx.TimeZone(), nil, types.NewIntDatum(-1))
+		require.NoError(t, err)
+		txn, err = store.Begin()
+		require.NoError(t, err)
+		txn.Delete(tablecodec.EncodeIndexSeekKey(tblInfo.ID, idxInfo.ID, idxVal))
+		err = txn.Commit(context.Background())
+		require.NoError(t, err)
+		err = tk.ExecToErr("admin check table admin_test")
+		require.Error(t, err)
+		require.True(t, consistency.ErrAdminCheckInconsistent.Equal(err))
+		require.EqualError(t, err, "[admin:8223]data inconsistency in table: admin_test, index: uidx_a, handle: 2, index-values:\"\" != record-values:\"handle: 2, values: [KindInt64 -1]\"")
+
+		// Add one row with inconsistent value.
+		// Index count = table count, but data is different.
+		rd := rowcodec.Encoder{Enable: true}
+		value, err := tablecodec.EncodeRow(tk.Session().GetSessionVars().StmtCtx.TimeZone(),
+			[]types.Datum{types.NewIntDatum(100), types.NewIntDatum(200), types.NewIntDatum(300)},
+			[]int64{tblInfo.Cols()[0].ID, tblInfo.Cols()[1].ID, tblInfo.Cols()[2].ID}, nil, nil, &rd)
+		require.NoError(t, err)
+		txn, err = store.Begin()
+		require.NoError(t, err)
+		err = txn.Set(tablecodec.EncodeRowKeyWithHandle(df.ID, kv.IntHandle(2)), value)
+		require.NoError(t, err)
+		err = txn.Commit(context.Background())
+		require.NoError(t, err)
+		err = tk.ExecToErr("admin check table admin_test")
+		require.Error(t, err)
+		require.True(t, consistency.ErrAdminCheckInconsistent.Equal(err))
+		require.EqualError(t, err, "[admin:8223]data inconsistency in table: admin_test, index: uidx_a, handle: 2, index-values:\"\" != record-values:\"handle: 2, values: [KindInt64 100]\"")
+	}
 }
