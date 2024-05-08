@@ -17,7 +17,6 @@ package join
 import (
 	"sync/atomic"
 
-	"github.com/pingcap/tidb/pkg/executor/internal/util"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
@@ -75,11 +74,11 @@ func (j *leftOuterJoinProbe) InitForScanRowTable() {
 	j.rowIter = j.ctx.hashTableContext.hashTable.createRowIter(startIndex, endIndex)
 }
 
-func (j *leftOuterJoinProbe) ScanRowTable(joinResult *util.HashjoinWorkerResult) *util.HashjoinWorkerResult {
+func (j *leftOuterJoinProbe) ScanRowTable(joinResult *hashjoinWorkerResult) *hashjoinWorkerResult {
 	if j.rightAsBuildSide {
 		panic("should not reach here")
 	}
-	if joinResult.Chk.IsFull() {
+	if joinResult.chk.IsFull() {
 		return joinResult
 	}
 	if j.rowIter == nil {
@@ -88,23 +87,23 @@ func (j *leftOuterJoinProbe) ScanRowTable(joinResult *util.HashjoinWorkerResult)
 	j.cachedBuildRows = j.cachedBuildRows[:0]
 	meta := j.ctx.hashTableMeta
 	insertedRows := 0
-	remainCap := joinResult.Chk.RequiredRows() - joinResult.Chk.NumRows()
+	remainCap := joinResult.chk.RequiredRows() - joinResult.chk.NumRows()
 	for insertedRows < remainCap && !j.rowIter.isEnd() {
 		currentRow := j.rowIter.getValue()
 		if !meta.isCurrentRowUsed(currentRow) {
 			// append build side of this row
-			j.appendBuildRowToCachedBuildRowsAndConstructBuildRowsIfNeeded(rowIndexInfo{buildRowStart: currentRow}, joinResult.Chk, 0, false)
+			j.appendBuildRowToCachedBuildRowsAndConstructBuildRowsIfNeeded(rowIndexInfo{buildRowStart: currentRow}, joinResult.chk, 0, false)
 			insertedRows++
 		}
 		j.rowIter.next()
 	}
 	if len(j.cachedBuildRows) > 0 {
-		j.batchConstructBuildRows(joinResult.Chk, 0, false)
+		j.batchConstructBuildRows(joinResult.chk, 0, false)
 	}
 	// append probe side in batch
 	colOffset := len(j.lUsed)
 	for index := range j.rUsed {
-		joinResult.Chk.Column(index + colOffset).AppendNNulls(insertedRows)
+		joinResult.chk.Column(index + colOffset).AppendNNulls(insertedRows)
 	}
 	return joinResult
 }
@@ -308,22 +307,22 @@ func (j *leftOuterJoinProbe) probeForLeftBuild(chk, joinedChk *chunk.Chunk, rema
 	return
 }
 
-func (j *leftOuterJoinProbe) Probe(joinResult *util.HashjoinWorkerResult, sqlKiller sqlkiller.SQLKiller) (ok bool, _ *util.HashjoinWorkerResult) {
-	if joinResult.Chk.IsFull() {
+func (j *leftOuterJoinProbe) Probe(joinResult *hashjoinWorkerResult, sqlKiller sqlkiller.SQLKiller) (ok bool, _ *hashjoinWorkerResult) {
+	if joinResult.chk.IsFull() {
 		return true, joinResult
 	}
-	joinedChk, remainCap, err := j.prepareForProbe(joinResult.Chk)
+	joinedChk, remainCap, err := j.prepareForProbe(joinResult.chk)
 	if err != nil {
-		joinResult.Err = err
+		joinResult.err = err
 		return false, joinResult
 	}
 	if j.rightAsBuildSide {
-		err = j.probeForRightBuild(joinResult.Chk, joinedChk, remainCap, sqlKiller)
+		err = j.probeForRightBuild(joinResult.chk, joinedChk, remainCap, sqlKiller)
 	} else {
-		err = j.probeForLeftBuild(joinResult.Chk, joinedChk, remainCap, sqlKiller)
+		err = j.probeForLeftBuild(joinResult.chk, joinedChk, remainCap, sqlKiller)
 	}
 	if err != nil {
-		joinResult.Err = err
+		joinResult.err = err
 		return false, joinResult
 	}
 	return true, joinResult
