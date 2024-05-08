@@ -1578,11 +1578,11 @@ func (p *preprocessor) handleTableName(tn *ast.TableName) {
 		currentDB = tn.Schema.L
 	}
 	if !p.skipLockMDL() {
-	    table, err = tryLockMDLAndUpdateSchemaIfNecessary(p.sctx, model.NewCIStr(currentDB), table, p.ensureInfoSchema())
-	    if err != nil {
-		    p.err = err
-		    return
-	    }
+		table, err = tryLockMDLAndUpdateSchemaIfNecessary(p.sctx, model.NewCIStr(currentDB), table, p.ensureInfoSchema())
+		if err != nil {
+			p.err = err
+			return
+		}
 	}
 
 	tableInfo := table.Meta()
