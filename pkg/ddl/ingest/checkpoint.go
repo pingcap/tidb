@@ -32,6 +32,8 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/tikv/client-go/v2/oracle"
+	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
 )
 
@@ -47,6 +49,7 @@ type CheckpointManager struct {
 	jobID         int64
 	indexIDs      []int64
 	localStoreDir string
+	pdCli         pd.Client
 	logger        *zap.Logger
 
 	// Derived and unchanged after the initialization.
@@ -73,6 +76,7 @@ type CheckpointManager struct {
 	pidImported      int64
 	startKeyImported kv.Key
 	endKeyImported   kv.Key
+	ts               uint64
 
 	// For persisting the checkpoint periodically.
 	updaterWg sync.WaitGroup
@@ -101,6 +105,7 @@ func NewCheckpointManager(
 	jobID int64,
 	indexIDs []int64,
 	localStoreDir string,
+	pdCli pd.Client,
 ) (*CheckpointManager, error) {
 	instanceAddr := InstanceAddr()
 	ctx2, cancel := context.WithCancel(ctx)
@@ -115,6 +120,7 @@ func NewCheckpointManager(
 		jobID:         jobID,
 		indexIDs:      indexIDs,
 		localStoreDir: localStoreDir,
+		pdCli:         pdCli,
 		logger:        logger,
 		checkpoints:   make(map[int]*taskCheckpoint, 16),
 		mu:            sync.Mutex{},
@@ -122,7 +128,7 @@ func NewCheckpointManager(
 		updaterWg:     sync.WaitGroup{},
 		updaterCh:     make(chan chan struct{}),
 	}
-	err := cm.resumeCheckpoint()
+	err := cm.resumeOrInitCheckpoint()
 	if err != nil {
 		return nil, err
 	}
@@ -260,16 +266,9 @@ func (s *CheckpointManager) Flush() {
 	s.afterFlush()
 	s.mu.Unlock()
 
-	finishCh := make(chan struct{})
-	select {
-	case s.updaterCh <- finishCh:
-	case <-s.ctx.Done():
-		return
-	}
-	// wait updateCheckpointLoop to finish checkpoint update.
-	select {
-	case <-finishCh:
-	case <-s.ctx.Done():
+	err = s.updateCheckpoint()
+	if err != nil {
+		s.logger.Error("update checkpoint failed", zap.Error(err))
 	}
 }
 
@@ -308,6 +307,7 @@ type ReorgCheckpoint struct {
 	PhysicalID int64  `json:"physical_id"`
 	StartKey   kv.Key `json:"start_key"`
 	EndKey     kv.Key `json:"end_key"`
+	TS         uint64 `json:"ts"`
 
 	Version int64 `json:"version"`
 }
@@ -318,14 +318,14 @@ const (
 	JobCheckpointVersion1       = 1
 )
 
-func (s *CheckpointManager) resumeCheckpoint() error {
+func (s *CheckpointManager) resumeOrInitCheckpoint() error {
 	sessCtx, err := s.sessPool.Get()
 	if err != nil {
 		return errors.Trace(err)
 	}
 	defer s.sessPool.Put(sessCtx)
 	ddlSess := sess.NewSession(sessCtx)
-	return ddlSess.RunInTxn(func(se *sess.Session) error {
+	err = ddlSess.RunInTxn(func(se *sess.Session) error {
 		template := "select reorg_meta from mysql.tidb_ddl_reorg where job_id = %d and ele_type = %s;"
 		sql := fmt.Sprintf(template, s.jobID, util.WrapKey2String(meta.IndexElementKey))
 		ctx := kv.WithInternalSourceType(s.ctx, kv.InternalTxnBackfillDDLPrefix+"add_index")
@@ -333,6 +333,7 @@ func (s *CheckpointManager) resumeCheckpoint() error {
 		if err != nil {
 			return errors.Trace(err)
 		}
+
 		if len(rows) == 0 || rows[0].IsNull(0) {
 			return nil
 		}
@@ -348,6 +349,7 @@ func (s *CheckpointManager) resumeCheckpoint() error {
 			s.pidImported = cp.PhysicalID
 			s.startKeyImported = cp.StartKey
 			s.endKeyImported = cp.EndKey
+			s.ts = cp.TS
 			if util.FolderNotEmpty(s.localStoreDir) &&
 				(s.instanceAddr == cp.InstanceAddr || cp.InstanceAddr == "" /* initial state */) {
 				s.localDataIsValid = true
@@ -365,10 +367,27 @@ func (s *CheckpointManager) resumeCheckpoint() error {
 		s.logger.Info("checkpoint is empty")
 		return nil
 	})
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	if s.ts > 0 {
+		return nil
+	}
+	// if TS is not set, we need to allocate a TS and save it to the storage before
+	// continue.
+	p, l, err := s.pdCli.GetTS(s.ctx)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	ts := oracle.ComposeTS(p, l)
+	s.ts = ts
+	return s.updateCheckpointImpl()
 }
 
-// updateCheckpoint is only used by updateCheckpointLoop goroutine.
-func (s *CheckpointManager) updateCheckpoint() error {
+// updateCheckpointImpl is only used by updateCheckpointLoop goroutine or in
+// NewCheckpointManager. In other cases, use updateCheckpoint instead.
+func (s *CheckpointManager) updateCheckpointImpl() error {
 	s.mu.Lock()
 	minKeyFlushed := s.minFlushedKey
 	minKeyImported := s.minImportedKey
@@ -377,6 +396,7 @@ func (s *CheckpointManager) updateCheckpoint() error {
 	pidImported := s.pidImported
 	startKeyImported := s.startKeyImported
 	endKeyImported := s.endKeyImported
+	ts := s.ts
 	s.mu.Unlock()
 
 	sessCtx, err := s.sessPool.Get()
@@ -396,6 +416,7 @@ func (s *CheckpointManager) updateCheckpoint() error {
 			PhysicalID:     pidImported,
 			StartKey:       startKeyImported,
 			EndKey:         endKeyImported,
+			TS:             ts,
 			Version:        JobCheckpointVersionCurrent,
 		}
 		rawReorgMeta, err := json.Marshal(JobReorgMeta{Checkpoint: cp})
@@ -431,7 +452,7 @@ func (s *CheckpointManager) updateCheckpointLoop() {
 	for {
 		select {
 		case finishCh := <-s.updaterCh:
-			err := s.updateCheckpoint()
+			err := s.updateCheckpointImpl()
 			if err != nil {
 				s.logger.Error("update checkpoint failed", zap.Error(err))
 			}
@@ -443,7 +464,7 @@ func (s *CheckpointManager) updateCheckpointLoop() {
 				continue
 			}
 			s.mu.Unlock()
-			err := s.updateCheckpoint()
+			err := s.updateCheckpointImpl()
 			if err != nil {
 				s.logger.Error("periodically update checkpoint failed", zap.Error(err))
 			}
@@ -451,4 +472,32 @@ func (s *CheckpointManager) updateCheckpointLoop() {
 			return
 		}
 	}
+}
+
+func (s *CheckpointManager) updateCheckpoint() error {
+	finishCh := make(chan struct{})
+	select {
+	case s.updaterCh <- finishCh:
+	case <-s.ctx.Done():
+		return s.ctx.Err()
+	}
+	// wait updateCheckpointLoop to finish checkpoint update.
+	select {
+	case <-finishCh:
+	case <-s.ctx.Done():
+		return s.ctx.Err()
+	}
+	return nil
+}
+
+func (s *CheckpointManager) refreshTS() (uint64, error) {
+	p, l, err := s.pdCli.GetTS(s.ctx)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	newTS := oracle.ComposeTS(p, l)
+	s.mu.Lock()
+	s.ts = newTS
+	s.mu.Unlock()
+	return newTS, s.updateCheckpoint()
 }
