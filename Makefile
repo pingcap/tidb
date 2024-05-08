@@ -331,14 +331,6 @@ tools/bin/vfsgendev:
 tools/bin/gotestsum:
 	GOBIN=$(shell pwd)/tools/bin $(GO) install gotest.tools/gotestsum@v1.8.1
 
-.PHONY: tools/bin/gobenchdata
-tools/bin/gobenchdata:
-	GOBIN=$(shell pwd)/tools/bin $(GO) install go.bobheadxi.dev/gobenchdata@v1.3.1
-
-.PHONY: tools/bin/gojq
-tools/bin/gojq:
-	GOBIN=$(shell pwd)/tools/bin $(GO) install github.com/itchyny/gojq/cmd/gojq@v0.12.15
-
 # mockgen@v0.2.0 is imcompatible with v0.3.0, so install it always.
 .PHONY: mockgen
 mockgen:
@@ -370,15 +362,12 @@ endif
 # Usage:
 #	make bench-daily TO=/path/to/file.json
 .PHONY: bench-daily
-bench-daily: tools/bin/gobenchdata tools/bin/gojq
+bench-daily:
 	go test github.com/pingcap/tidb/pkg/distsql -run TestBenchDaily -bench Ignore --outfile bench_daily.json
 	go test github.com/pingcap/tidb/pkg/executor -run TestBenchDaily -bench Ignore --outfile bench_daily.json
 	go test github.com/pingcap/tidb/pkg/executor/test/splittest -run TestBenchDaily -bench Ignore --outfile bench_daily.json
 	go test github.com/pingcap/tidb/pkg/expression -run TestBenchDaily -bench Ignore --outfile bench_daily.json
-	go test github.com/pingcap/tidb/pkg/planner/core/tests/partition -run '^[^T]' -bench . -benchmem \
-		> pkg/planner/core/tests/partition/bench_daily.full
-	tools/bin/gobenchdata --json pkg/planner/core/tests/partition/bench_daily.full < pkg/planner/core/tests/partition/bench_daily.gobenchdata
-	tools/bin/gojq '[ .[0].Suites[0].Benchmarks[] | ( { "Name": .Name | sub("(?<n>.*)-[0-9]*$$"; "\(.n)"), "NsPerOp": .NsPerOp, "AllocsPerOp": .Mem.AllocsPerOp, "BytesPerOp": .Mem.BytesPerOp } ) ]' pkg/planner/core/tests/partition/bench_daily.gobenchdata > pkg/planner/core/tests/partition/bench_daily.json
+	go test github.com/pingcap/tidb/pkg/planner/core/tests/partition -run TestBenchDaily -bench Ignore --outfile bench_daily.json
 	go test github.com/pingcap/tidb/pkg/session -run TestBenchDaily -bench Ignore --outfile bench_daily.json
 	go test github.com/pingcap/tidb/pkg/statistics -run TestBenchDaily -bench Ignore --outfile bench_daily.json
 	go test github.com/pingcap/tidb/pkg/tablecodec -run TestBenchDaily -bench Ignore --outfile bench_daily.json
