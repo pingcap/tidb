@@ -277,7 +277,7 @@ type PlanBuilder struct {
 }
 
 type handleColHelper struct {
-	id2HandleMapStack []map[int64][]HandleCols
+	id2HandleMapStack []map[int64][]util.HandleCols
 	stackTail         int
 }
 
@@ -287,36 +287,36 @@ func (hch *handleColHelper) resetForReuse() {
 	}
 }
 
-func (hch *handleColHelper) popMap() map[int64][]HandleCols {
+func (hch *handleColHelper) popMap() map[int64][]util.HandleCols {
 	ret := hch.id2HandleMapStack[hch.stackTail-1]
 	hch.stackTail--
 	hch.id2HandleMapStack = hch.id2HandleMapStack[:hch.stackTail]
 	return ret
 }
 
-func (hch *handleColHelper) pushMap(m map[int64][]HandleCols) {
+func (hch *handleColHelper) pushMap(m map[int64][]util.HandleCols) {
 	hch.id2HandleMapStack = append(hch.id2HandleMapStack, m)
 	hch.stackTail++
 }
 
-func (hch *handleColHelper) mergeAndPush(m1, m2 map[int64][]HandleCols) {
-	newMap := make(map[int64][]HandleCols, max(len(m1), len(m2)))
+func (hch *handleColHelper) mergeAndPush(m1, m2 map[int64][]util.HandleCols) {
+	newMap := make(map[int64][]util.HandleCols, max(len(m1), len(m2)))
 	for k, v := range m1 {
-		newMap[k] = make([]HandleCols, len(v))
+		newMap[k] = make([]util.HandleCols, len(v))
 		copy(newMap[k], v)
 	}
 	for k, v := range m2 {
 		if _, ok := newMap[k]; ok {
 			newMap[k] = append(newMap[k], v...)
 		} else {
-			newMap[k] = make([]HandleCols, len(v))
+			newMap[k] = make([]util.HandleCols, len(v))
 			copy(newMap[k], v)
 		}
 	}
 	hch.pushMap(newMap)
 }
 
-func (hch *handleColHelper) tailMap() map[int64][]HandleCols {
+func (hch *handleColHelper) tailMap() map[int64][]util.HandleCols {
 	return hch.id2HandleMapStack[hch.stackTail-1]
 }
 
@@ -407,7 +407,7 @@ func NewPlanBuilder(opts ...PlanBuilderOpt) *PlanBuilder {
 	builder := &PlanBuilder{
 		outerCTEs:           make([]*cteInfo, 0),
 		colMapper:           make(map[*ast.ColumnNameExpr]int),
-		handleHelper:        &handleColHelper{id2HandleMapStack: make([]map[int64][]HandleCols, 0)},
+		handleHelper:        &handleColHelper{id2HandleMapStack: make([]map[int64][]util.HandleCols, 0)},
 		correlatedAggMapper: make(map[*ast.AggregateFuncExpr]*expression.CorrelatedColumn),
 	}
 	for _, opt := range opts {
@@ -1790,8 +1790,8 @@ func getColsInfo(tn *ast.TableName) (indicesInfo []*model.IndexInfo, colsInfo []
 }
 
 // BuildHandleColsForAnalyze returns HandleCols for ANALYZE.
-func BuildHandleColsForAnalyze(ctx base.PlanContext, tblInfo *model.TableInfo, allColumns bool, colsInfo []*model.ColumnInfo) HandleCols {
-	var handleCols HandleCols
+func BuildHandleColsForAnalyze(ctx base.PlanContext, tblInfo *model.TableInfo, allColumns bool, colsInfo []*model.ColumnInfo) util.HandleCols {
+	var handleCols util.HandleCols
 	switch {
 	case tblInfo.PKIsHandle:
 		pkCol := tblInfo.GetPkColInfo()
@@ -1803,11 +1803,11 @@ func BuildHandleColsForAnalyze(ctx base.PlanContext, tblInfo *model.TableInfo, a
 			// If only a part of the columns need to be analyzed, we need to set index according to colsInfo.
 			index = getColOffsetForAnalyze(colsInfo, pkCol.ID)
 		}
-		handleCols = &IntHandleCols{col: &expression.Column{
+		handleCols = util.NewIntHandleCols(&expression.Column{
 			ID:      pkCol.ID,
 			RetType: &pkCol.FieldType,
 			Index:   index,
-		}}
+		})
 	case tblInfo.IsCommonHandle:
 		pkIdx := tables.FindPrimaryIndex(tblInfo)
 		pkColLen := len(pkIdx.Columns)
@@ -1834,12 +1834,7 @@ func BuildHandleColsForAnalyze(ctx base.PlanContext, tblInfo *model.TableInfo, a
 		// The second reason is that in (cb *CommonHandleCols).BuildHandleByDatums, tablecodec.TruncateIndexValues(cb.tblInfo, cb.idxInfo, datumBuf)
 		// is called, which asks that IndexColumn.Offset of cb.idxInfo must be according to cb,tblInfo.
 		// TODO: find a better way to find handle columns in ANALYZE rather than use Column.Index
-		handleCols = &CommonHandleCols{
-			tblInfo: tblInfo,
-			idxInfo: pkIdx,
-			columns: columns,
-			sc:      ctx.GetSessionVars().StmtCtx,
-		}
+		handleCols = util.NewCommonHandlesColsWithoutColsAlign(ctx.GetSessionVars().StmtCtx, tblInfo, pkIdx, columns)
 	}
 	return handleCols
 }
@@ -2259,7 +2254,7 @@ func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
 			extraCol := model.NewExtraHandleColInfo()
 			// Always place _tidb_rowid at the end of colsInfo, this is corresponding to logics in `analyzeColumnsPushdown`.
 			newTask.ColsInfo = append(newTask.ColsInfo, extraCol)
-			newTask.HandleCols = &IntHandleCols{col: colInfoToColumn(extraCol, len(newTask.ColsInfo)-1)}
+			newTask.HandleCols = util.NewIntHandleCols(colInfoToColumn(extraCol, len(newTask.ColsInfo)-1))
 		}
 		analyzePlan.ColTasks = append(analyzePlan.ColTasks, newTask)
 		for _, indexInfo := range independentIndexes {

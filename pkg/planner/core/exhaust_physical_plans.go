@@ -1291,8 +1291,8 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 		}.Init(ds.SCtx(), ds.QueryBlockOffset())
 		ts.schema = is.dataSourceSchema.Clone()
 		if ds.tableInfo.IsCommonHandle {
-			commonHandle := ds.handleCols.(*CommonHandleCols)
-			for _, col := range commonHandle.columns {
+			commonHandle := ds.handleCols.(*util.CommonHandleCols)
+			for _, col := range commonHandle.GetColumns() {
 				if ts.schema.ColumnIndex(col) == -1 {
 					ts.Schema().Append(col)
 					ts.Columns = append(ts.Columns, col.ToInfo())
