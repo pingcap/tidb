@@ -12,15 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package partitionedhashjoin
+package join
 
 import (
-	"fmt"
-	"sync/atomic"
-	"time"
-
 	"github.com/cznic/mathutil"
-	"github.com/pingcap/tidb/pkg/util/execdetails"
+	"sync/atomic"
 )
 
 type subTable struct {
@@ -29,16 +25,6 @@ type subTable struct {
 	posMask          uint64
 	isRowTableEmpty  bool
 	isHashTableEmpty bool
-}
-
-type hashStatistic struct {
-	// NOTE: probeCollision may be accessed from multiple goroutines concurrently.
-	probeCollision   int64
-	buildTableElapse time.Duration
-}
-
-func (s *hashStatistic) String() string {
-	return fmt.Sprintf("probe_collision:%v, build:%v", s.probeCollision, execdetails.FormatDuration(s.buildTableElapse))
 }
 
 func (st *subTable) lookup(hashValue uint64) uintptr {

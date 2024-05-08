@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package partitionedhashjoin
+package join
 
 import (
 	"math/rand"
@@ -74,12 +74,12 @@ func createRowTable(t *testing.T, rows int) *rowTable {
 
 	partitionNumber := 1
 	chk := chunk.GenRandomChunks(buildTypes, rows)
-	hashJoinCtx := &PartitionedHashJoinCtx{
-		SessCtx:          mock.NewContext(),
+	hashJoinCtx := &HashJoinCtxV2{
 		PartitionNumber:  partitionNumber,
 		hashTableMeta:    meta,
 		hashTableContext: newHashTableContext(partitionNumber, partitionNumber),
 	}
+	hashJoinCtx.SessCtx = mock.NewContext()
 	builder := createRowTableBuilder(buildKeyIndex, buildSchema, meta, partitionNumber, hasNullableKey, false, false)
 	err := builder.processOneChunk(chk, hashJoinCtx.SessCtx.GetSessionVars().StmtCtx.TypeCtx(), hashJoinCtx, 0)
 	require.NoError(t, err)
