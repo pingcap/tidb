@@ -690,39 +690,40 @@ func prepare4HashJoin(testCase *hashJoinTestCase, innerExec, outerExec exec.Exec
 	joinKeysColIdx = append(joinKeysColIdx, testCase.keyIdx...)
 	probeKeysColIdx := make([]int, 0, len(testCase.keyIdx))
 	probeKeysColIdx = append(probeKeysColIdx, testCase.keyIdx...)
+	hashJoinCtx := &join.HashJoinCtxV1{
+		IsOuterJoin:     false,
+		UseOuterToBuild: testCase.useOuterToBuild,
+		ProbeTypes:      exec.RetTypes(outerExec),
+		BuildTypes:      exec.RetTypes(innerExec),
+	}
+	hashJoinCtx.SessCtx = testCase.ctx
+	hashJoinCtx.JoinType = testCase.joinType
+	hashJoinCtx.Concurrency = uint(testCase.concurrency)
+	hashJoinCtx.ChunkAllocPool = chunk.NewEmptyAllocator()
+	probeFetcher := &join.ProbeSideTupleFetcherV1{}
+	probeFetcher.ProbeSideExec = outerExec
+	buildWorker := &join.BuildWorkerV1{}
+	buildWorker.BuildSideExec = innerExec
+	buildWorker.BuildKeyColIdx = joinKeysColIdx
 	e := &join.HashJoinV1Exec{
-		BaseExecutor: exec.NewBaseExecutor(testCase.ctx, joinSchema, 5, innerExec, outerExec),
-		HashJoinCtxV1: &join.HashJoinCtxV1{
-			SessCtx:         testCase.ctx,
-			JoinType:        testCase.joinType, // 0 for InnerJoin, 1 for LeftOutersJoin, 2 for RightOuterJoin
-			IsOuterJoin:     false,
-			UseOuterToBuild: testCase.useOuterToBuild,
-			Concurrency:     uint(testCase.concurrency),
-			ProbeTypes:      exec.RetTypes(outerExec),
-			BuildTypes:      exec.RetTypes(innerExec),
-			ChunkAllocPool:  chunk.NewEmptyAllocator(),
-		},
-		ProbeSideTupleFetcher: &join.ProbeSideTupleFetcher{
-			ProbeSideExec: outerExec,
-		},
-		ProbeWorkers: make([]*join.ProbeWorker, testCase.concurrency),
-		BuildWorker: &join.BuildWorker{
-			BuildKeyColIdx: joinKeysColIdx,
-			BuildSideExec:  innerExec,
-		},
+		BaseExecutor:          exec.NewBaseExecutor(testCase.ctx, joinSchema, 5, innerExec, outerExec),
+		HashJoinCtxV1:         hashJoinCtx,
+		ProbeSideTupleFetcher: probeFetcher,
+		ProbeWorkers:          make([]*join.ProbeWorkerV1, testCase.concurrency),
+		BuildWorker:           buildWorker,
 	}
 
 	childrenUsedSchema := markChildrenUsedColsForTest(testCase.ctx, e.Schema(), e.Children(0).Schema(), e.Children(1).Schema())
 	defaultValues := make([]types.Datum, e.BuildWorker.BuildSideExec.Schema().Len())
 	lhsTypes, rhsTypes := exec.RetTypes(innerExec), exec.RetTypes(outerExec)
 	for i := uint(0); i < e.Concurrency; i++ {
-		e.ProbeWorkers[i] = &join.ProbeWorker{
-			WorkerID:    i,
+		e.ProbeWorkers[i] = &join.ProbeWorkerV1{
 			HashJoinCtx: e.HashJoinCtxV1,
 			Joiner: join.NewJoiner(testCase.ctx, e.JoinType, true, defaultValues,
 				nil, lhsTypes, rhsTypes, childrenUsedSchema, false),
 			ProbeKeyColIdx: probeKeysColIdx,
 		}
+		e.ProbeWorkers[i].WorkerID = i
 	}
 	e.BuildWorker.HashJoinCtx = e.HashJoinCtxV1
 	memLimit := int64(-1)
