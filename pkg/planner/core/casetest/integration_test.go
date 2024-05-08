@@ -465,6 +465,34 @@ func TestIssue52023(t *testing.T) {
 		"  └─TableFullScan 1.00 cop[tikv] table:t keep order:false"))
 }
 
+func TestIssue51360(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table tt3(a int,b int ,c int as (a+b))`)
+	tbl1, err := dom.InfoSchema().TableByName(model.CIStr{O: "test", L: "test"}, model.CIStr{O: "tt3", L: "tt3"})
+	require.NoError(t, err)
+	tbl1.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}
+	tk.MustExec(`select /*+ read_from_storage(TIFLASH[tt3]) */ * from tt3 limit 2;`)
+	tk.MustQuery(`show warnings`).CheckContain("the read_from_storage hint might not work")
+}
+
+func TestIssue43050(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`CREATE TABLE test_202304141 (id INT NOT NULL PRIMARY KEY)`)
+	tk.MustExec(`CREATE TABLE test_202304142 (id INT NOT NULL PRIMARY KEY)`)
+	tbl1, err := dom.InfoSchema().TableByName(model.CIStr{O: "test", L: "test"}, model.CIStr{O: "test_202304141", L: "test_202304141"})
+	require.NoError(t, err)
+	tbl1.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}
+
+	tk.MustExec(`begin`)
+	tk.MustExec(`INSERT INTO test_202304142 SELECT /*+ read_from_storage(tiflash[t]) */ * FROM test_202304141 t`) // no error
+	tk.MustQuery(`show warnings`).CheckContain("the read_from_storage hint might not work")
+	tk.MustExec(`commit`)
+}
+
 func TestTiFlashExtraColumnPrune(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)

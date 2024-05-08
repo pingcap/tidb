@@ -1365,6 +1365,13 @@ func (ds *DataSource) FindBestTask(prop *property.PhysicalProperty, planCounter 
 	}()
 
 	cntPlan = 0
+	bestTaskStore := kv.TiKV
+	defer func() {
+		if (ds.preferStoreType&h.PreferTiKV > 0 && bestTaskStore != kv.TiKV) ||
+			(ds.preferStoreType&h.PreferTiFlash > 0 && bestTaskStore != kv.TiFlash) {
+			ds.SCtx().GetSessionVars().StmtCtx.AppendWarning(errors.New("the read_from_storage hint might not work"))
+		}
+	}()
 	for _, candidate := range candidates {
 		path := candidate.path
 		if path.PartialIndexPaths != nil {
@@ -1378,12 +1385,13 @@ func (ds *DataSource) FindBestTask(prop *property.PhysicalProperty, planCounter 
 			}
 			appendCandidate(ds, idxMergeTask, prop, opt)
 
-			curIsBetter, err := compareTaskCost(idxMergeTask, t, opt)
+			curIsBetter, err := ds.compareTaskRegardingStore(idxMergeTask, t, kv.TiKV, bestTaskStore, opt)
 			if err != nil {
 				return nil, 0, err
 			}
 			if curIsBetter || planCounter.Empty() {
 				t = idxMergeTask
+				bestTaskStore = kv.TiKV
 			}
 			if planCounter.Empty() {
 				return t, cntPlan, nil
@@ -1493,12 +1501,13 @@ func (ds *DataSource) FindBestTask(prop *property.PhysicalProperty, planCounter 
 					cntPlan++
 					planCounter.Dec(1)
 				}
-				curIsBetter, cerr := compareTaskCost(pointGetTask, t, opt)
+				curIsBetter, cerr := ds.compareTaskRegardingStore(pointGetTask, t, kv.TiKV, bestTaskStore, opt)
 				if cerr != nil {
 					return nil, 0, cerr
 				}
 				if curIsBetter || planCounter.Empty() {
 					t = pointGetTask
+					bestTaskStore = kv.TiKV
 					if planCounter.Empty() {
 						return
 					}
@@ -1507,12 +1516,6 @@ func (ds *DataSource) FindBestTask(prop *property.PhysicalProperty, planCounter 
 			}
 		}
 		if path.IsTablePath() {
-			if ds.preferStoreType&h.PreferTiFlash != 0 && path.StoreType == kv.TiKV {
-				continue
-			}
-			if ds.preferStoreType&h.PreferTiKV != 0 && path.StoreType == kv.TiFlash {
-				continue
-			}
 			var tblTask base.Task
 			if ds.SampleInfo != nil {
 				tblTask, err = ds.convertToSampleTable(prop, candidate, opt)
@@ -1527,20 +1530,18 @@ func (ds *DataSource) FindBestTask(prop *property.PhysicalProperty, planCounter 
 				planCounter.Dec(1)
 			}
 			appendCandidate(ds, tblTask, prop, opt)
-			curIsBetter, err := compareTaskCost(tblTask, t, opt)
+
+			curIsBetter, err := ds.compareTaskRegardingStore(tblTask, t, path.StoreType, bestTaskStore, opt)
 			if err != nil {
 				return nil, 0, err
 			}
 			if curIsBetter || planCounter.Empty() {
 				t = tblTask
+				bestTaskStore = path.StoreType
 			}
 			if planCounter.Empty() {
 				return t, cntPlan, nil
 			}
-			continue
-		}
-		// TiFlash storage do not support index scan.
-		if ds.preferStoreType&h.PreferTiFlash != 0 {
 			continue
 		}
 		idxTask, err := ds.convertToIndexScan(prop, candidate, opt)
@@ -1552,7 +1553,7 @@ func (ds *DataSource) FindBestTask(prop *property.PhysicalProperty, planCounter 
 			planCounter.Dec(1)
 		}
 		appendCandidate(ds, idxTask, prop, opt)
-		curIsBetter, err := compareTaskCost(idxTask, t, opt)
+		curIsBetter, err := ds.compareTaskRegardingStore(idxTask, t, kv.TiKV, kv.TiKV, opt)
 		if err != nil {
 			return nil, 0, err
 		}
@@ -1565,6 +1566,22 @@ func (ds *DataSource) FindBestTask(prop *property.PhysicalProperty, planCounter 
 	}
 
 	return
+}
+
+func (ds *DataSource) compareTaskRegardingStore(curTask, bestTask base.Task, curTaskStore, bestTaskStore kv.StoreType,
+	op *optimizetrace.PhysicalOptimizeOp) (curIsBetter bool, err error) {
+	if bestTask.Invalid() { // in this case the curTask is always better to at least get a valid plan.
+		return true, nil
+	}
+	// if prefer TiFlash and the best task is TiFlash but the current task is TiKV, return false.
+	if ds.preferStoreType&h.PreferTiFlash > 0 && bestTaskStore == kv.TiFlash && curTaskStore == kv.TiKV {
+		return false, nil
+	}
+	// if prefer TiKV and the best task is TiKV but the current task is TiFlash, return false.
+	if ds.preferStoreType&h.PreferTiKV > 0 && bestTaskStore == kv.TiKV && curTaskStore == kv.TiFlash {
+		return false, nil
+	}
+	return compareTaskCost(curTask, bestTask, op)
 }
 
 // convertToIndexMergeScan builds the index merge scan for intersection or union cases.
