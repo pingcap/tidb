@@ -18,11 +18,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
+	"path"
 	"regexp"
 	"strings"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/pkg/util/mathutil"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
 )
@@ -33,50 +36,57 @@ const (
 	CDCPrefixV61   = "/tidb/cdc/changefeed/info/"
 )
 
-// CDCNameSet saves CDC changefeed's information.
-// nameSet maps `cluster/namespace` to `changefeed`s
-type CDCNameSet struct {
-	nameSet map[string][]string
-}
+type keyVersion int
 
-// that the nameSet is empty means no changefeed exists.
-func (s *CDCNameSet) Empty() bool {
-	return len(s.nameSet) == 0
-}
+const (
+	legacy     keyVersion = 1
+	namespaced keyVersion = 2
+)
 
-// MessageToUser convert the map `nameSet` to a readable message to user.
-func (s *CDCNameSet) MessageToUser() string {
-	var changefeedMsgBuf strings.Builder
-	changefeedMsgBuf.WriteString("found CDC changefeed(s): ")
-	for clusterID, captureIDs := range s.nameSet {
-		changefeedMsgBuf.WriteString("cluster/namespace: ")
-		changefeedMsgBuf.WriteString(clusterID)
-		changefeedMsgBuf.WriteString(" changefeed(s): ")
-		changefeedMsgBuf.WriteString(fmt.Sprintf("%v", captureIDs))
-		changefeedMsgBuf.WriteString(", ")
-	}
-	return changefeedMsgBuf.String()
-}
-
-// GetCDCChangefeedNameSet gets CDC changefeed information and wraps them to a map
-// for CDC >= v6.2, the etcd key format is /tidb/cdc/<clusterID>/<namespace>/changefeed/info/<changefeedID>
-// for CDC <= v6.1, the etcd key format is /tidb/cdc/changefeed/info/<changefeedID>
-func GetCDCChangefeedNameSet(ctx context.Context, cli *clientv3.Client) (*CDCNameSet, error) {
-	nameSet := make(map[string][]string, 1)
-	// check etcd KV of CDC >= v6.2
-	resp, err := cli.Get(ctx, CDCPrefix, clientv3.WithPrefix())
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
+var (
 	// cluster id should be valid in
 	// https://github.com/pingcap/tiflow/blob/ca69c33948bea082aff9f4c0a357ace735b494ed/pkg/config/server_config.go#L218
-	reg, err := regexp.Compile("^[a-zA-Z0-9]+(-[a-zA-Z0-9]+)*$")
-	if err != nil {
-		log.L().Warn("failed to parse cluster id, skip it", zap.Error(err))
-		reg = nil
-	}
+	clusterNameRe = regexp.MustCompile("^[a-zA-Z0-9]+(-[a-zA-Z0-9]+)*$")
+)
 
+type changefeed struct {
+	ID         string
+	Cluster    string
+	Namespace  string
+	KeyVersion keyVersion
+}
+
+func (c *changefeed) infoKey() string {
+	switch c.KeyVersion {
+	case legacy:
+		return path.Join(CDCPrefix, "changefeed", "info", c.ID)
+	case namespaced:
+		return path.Join(CDCPrefix, c.Cluster, c.Namespace, "changefeed", "info", c.ID)
+	}
+	log.Panic("Invalid changefeed version type.", zap.Any("this", c))
+	panic("unreachable")
+}
+
+func (c *changefeed) statusKey() string {
+	switch c.KeyVersion {
+	case legacy:
+		return path.Join(CDCPrefix, "changefeed", "status", c.ID)
+	case namespaced:
+		return path.Join(CDCPrefix, c.Cluster, c.Namespace, "changefeed", "status", c.ID)
+	}
+	log.Panic("Invalid changefeed version type.", zap.Any("this", c))
+	panic("unreachable")
+}
+
+type checkCDCClient struct {
+	cli *clientv3.Client
+}
+
+func (c checkCDCClient) loadChangefeeds(ctx context.Context, out *[]changefeed) error {
+	resp, err := c.cli.Get(ctx, CDCPrefix, clientv3.WithPrefix(), clientv3.WithKeysOnly())
+	if err != nil {
+		return errors.Trace(err)
+	}
 	for _, kv := range resp.Kvs {
 		// example: /tidb/cdc/<clusterID>/<namespace>/changefeed/info/<changefeedID>
 		k := kv.Key[len(CDCPrefix):]
@@ -84,69 +94,168 @@ func GetCDCChangefeedNameSet(ctx context.Context, cli *clientv3.Client) (*CDCNam
 		if !found {
 			continue
 		}
+		if len(clusterAndNamespace) == 0 {
+			// They should be keys with format /tidb/cdc/changefeed/info.
+			*out = append(*out, changefeed{
+				ID:         string(changefeedID),
+				KeyVersion: legacy,
+			})
+			continue
+		}
+
 		// example: clusterAndNamespace normally is <clusterID>/<namespace>
 		// but in migration scenario it become __backup__. we need handle it
 		// see https://github.com/pingcap/tiflow/issues/9807
-		clusterID, _, found := bytes.Cut(clusterAndNamespace, []byte(`/`))
+		clusterID, namespace, found := bytes.Cut(clusterAndNamespace, []byte(`/`))
 		if !found {
 			// ignore __backup__ or other formats
 			continue
 		}
 
-		if reg != nil {
-			matched := reg.Match(clusterID)
-			if !matched {
-				continue
-			}
-			if !isActiveCDCChangefeed(kv.Value) {
-				continue
-			}
+		matched := clusterNameRe.Match(clusterID)
+		if !matched {
+			continue
 		}
 
-		nameSet[string(clusterAndNamespace)] = append(nameSet[string(clusterAndNamespace)], string(changefeedID))
+		*out = append(*out, changefeed{
+			ID:         string(changefeedID),
+			Cluster:    string(clusterID),
+			Namespace:  string(namespace),
+			KeyVersion: namespaced,
+		})
 	}
-	if len(nameSet) == 0 {
-		// check etcd KV of CDC <= v6.1
-		resp, err = cli.Get(ctx, CDCPrefixV61, clientv3.WithPrefix())
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		for _, kv := range resp.Kvs {
-			// example: /tidb/cdc/changefeed/info/<changefeedID>
-			k := kv.Key[len(CDCPrefixV61):]
-			if len(k) == 0 {
-				continue
-			}
-			if !isActiveCDCChangefeed(kv.Value) {
-				continue
-			}
-
-			nameSet["<nil>"] = append(nameSet["<nil>"], string(k))
-		}
-	}
-
-	return &CDCNameSet{nameSet}, nil
+	return nil
 }
 
-type onlyState struct {
+type changefeedInfoView struct {
 	State string `json:"state"`
+	Start uint64 `json:"start-ts"`
 }
 
-func isActiveCDCChangefeed(jsonBytes []byte) bool {
-	s := onlyState{}
-	err := json.Unmarshal(jsonBytes, &s)
+type changefeedStatusView struct {
+	Checkpoint uint64 `json:"checkpoint-ts"`
+}
+
+func (c checkCDCClient) fetchCheckpointTSFromStatus(ctx context.Context, cf changefeed) (uint64, error) {
+	statusResp, err := c.cli.KV.Get(ctx, cf.statusKey())
 	if err != nil {
-		// maybe a compatible issue, skip this key
-		log.L().Error("unmarshal etcd value failed when check CDC changefeed, will skip this key",
-			zap.ByteString("value", jsonBytes),
-			zap.Error(err))
-		return false
+		return 0, err
 	}
-	switch s.State {
+	if statusResp.Count == 0 {
+		// The changefeed might was created recently.
+		return 0, nil
+	}
+	var status changefeedStatusView
+	if err := json.Unmarshal(statusResp.Kvs[0].Value, &status); err != nil {
+		return 0, err
+	}
+	return status.Checkpoint, nil
+}
+
+func (c checkCDCClient) checkpointTSFor(ctx context.Context, cf changefeed) (uint64, error) {
+	infoResp, err := c.cli.KV.Get(ctx, cf.infoKey())
+	if err != nil {
+		return 0, err
+	}
+	if infoResp.Count == 0 {
+		// The changefeed have been removed.
+		return math.MaxUint64, nil
+	}
+	var info changefeedInfoView
+	if err := json.Unmarshal(infoResp.Kvs[0].Value, &info); err != nil {
+		return 0, err
+	}
+	switch info.State {
 	// https://docs.pingcap.com/zh/tidb/stable/ticdc-changefeed-overview
-	case "normal", "stopped", "error", "warning":
-		return true
+	case "stopped", "error":
+		return math.MaxInt64, nil
+	case "running", "warning":
+		cts, err := c.fetchCheckpointTSFromStatus(ctx, cf)
+		if err != nil {
+			return 0, err
+		}
+		return mathutil.Max(cts, info.Start), nil
 	default:
-		return false
+		// This changefeed may be noise, ignore it.
+		log.Warn("Ignoring invalid changefeed.", zap.Any("changefeed", cf))
+		return math.MaxInt64, nil
 	}
+}
+
+func (c checkCDCClient) getNameSet(ctx context.Context, safeTS uint64) (*CDCNameSet, error) {
+	changefeeds := make([]changefeed, 0)
+	if err := c.loadChangefeeds(ctx, &changefeeds); err != nil {
+		return nil, err
+	}
+
+	nameset := new(CDCNameSet)
+	for _, cf := range changefeeds {
+		// Special case: when safe ts not provided, just record all changefeeds.
+		if safeTS == math.MaxUint64 {
+			nameset.save(cf)
+			continue
+		}
+
+		cts, err := c.checkpointTSFor(ctx, cf)
+		if err != nil {
+			return nil, errors.Annotatef(err, "failed to check changefeed %v", cf)
+		}
+		if cts < safeTS {
+			nameset.save(cf)
+		}
+	}
+
+	return nameset, nil
+}
+
+// CDCNameSet saves CDC changefeed's information.
+// nameSet maps `cluster/namespace` to `changefeed`s
+type CDCNameSet struct {
+	changefeeds map[string][]string
+}
+
+func (s *CDCNameSet) save(cf changefeed) {
+	if s.changefeeds == nil {
+		s.changefeeds = map[string][]string{}
+	}
+
+	switch cf.KeyVersion {
+	case legacy:
+		s.changefeeds["<nil>"] = append(s.changefeeds["<nil>"], cf.ID)
+	case namespaced:
+		s.changefeeds[cf.Cluster] = append(s.changefeeds[cf.Cluster], cf.ID)
+	}
+}
+
+// that the nameSet is empty means no changefeed exists.
+func (s *CDCNameSet) Empty() bool {
+	return len(s.changefeeds) == 0
+}
+
+// MessageToUser convert the map `nameSet` to a readable message to user.
+func (s *CDCNameSet) MessageToUser() string {
+	var changefeedMsgBuf strings.Builder
+	changefeedMsgBuf.WriteString("found CDC changefeed(s): ")
+	for clusterID, changefeedID := range s.changefeeds {
+		changefeedMsgBuf.WriteString("cluster/namespace: ")
+		changefeedMsgBuf.WriteString(clusterID)
+		changefeedMsgBuf.WriteString(" changefeed(s): ")
+		changefeedMsgBuf.WriteString(fmt.Sprintf("%v", changefeedID))
+		changefeedMsgBuf.WriteString(", ")
+	}
+	return changefeedMsgBuf.String()
+}
+
+// GetRunningChangefeeds gets CDC changefeed information and wraps them to a map
+// for CDC >= v6.2, the etcd key format is /tidb/cdc/<clusterID>/<namespace>/changefeed/info/<changefeedID>
+// for CDC <= v6.1, the etcd key format is /tidb/cdc/changefeed/info/<changefeedID>
+func GetRunningChangefeeds(ctx context.Context, cli *clientv3.Client) (*CDCNameSet, error) {
+	checkCli := checkCDCClient{cli: cli}
+	return checkCli.getNameSet(ctx, math.MaxUint64)
+}
+
+// GetIncompatibleChangefeedsWithSafeTS gets CDC changefeed that may not compatible with the safe ts and wraps them to a map.
+func GetIncompatibleChangefeedsWithSafeTS(ctx context.Context, cli *clientv3.Client, safeTS uint64) (*CDCNameSet, error) {
+	checkCli := checkCDCClient{cli: cli}
+	return checkCli.getNameSet(ctx, safeTS)
 }

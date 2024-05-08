@@ -1083,7 +1083,7 @@ func checkTaskExists(ctx context.Context, cfg *RestoreConfig, etcdCLI *clientv3.
 
 	// check cdc changefeed
 	if cfg.CheckRequirements {
-		nameSet, err := utils.GetCDCChangefeedNameSet(ctx, etcdCLI)
+		nameSet, err := utils.GetRunningChangefeeds(ctx, etcdCLI)
 		if err != nil {
 			return err
 		}
