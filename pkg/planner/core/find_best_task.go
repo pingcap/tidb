@@ -1569,18 +1569,18 @@ func (ds *DataSource) FindBestTask(prop *property.PhysicalProperty, planCounter 
 
 func (ds *DataSource) compareTaskRegardingStore(curTask, bestTask base.Task, curTaskStore, bestTaskStore kv.StoreType,
 	op *optimizetrace.PhysicalOptimizeOp) (curIsBetter bool, err error) {
-	if bestTask.Invalid() { // in this case the curTask is always better to at least get a valid plan.
+	if bestTask.Invalid() { // in this case the curTask is always better to let us at least can get a valid plan.
 		return true, nil
 	}
-	// if prefer TiFlash and the best task is TiFlash but the current task is TiKV, return false.
+	// if prefer TiFlash and the best task is TiFlash but the current task is TiKV, return false directly.
 	if ds.preferStoreType&h.PreferTiFlash > 0 && bestTaskStore == kv.TiFlash && curTaskStore == kv.TiKV {
 		return false, nil
 	}
-	// if prefer TiKV and the best task is TiKV but the current task is TiFlash, return false.
+	// if prefer TiKV and the best task is TiKV but the current task is TiFlash, return false directly.
 	if ds.preferStoreType&h.PreferTiKV > 0 && bestTaskStore == kv.TiKV && curTaskStore == kv.TiFlash {
 		return false, nil
 	}
-	return compareTaskCost(curTask, bestTask, op)
+	return compareTaskCost(curTask, bestTask, op) // determined by their costs
 }
 
 // convertToIndexMergeScan builds the index merge scan for intersection or union cases.
