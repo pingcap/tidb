@@ -969,7 +969,7 @@ func (bc *Client) startMainBackupLoop(
 			}()
 			err := startStoreBackup(ctx, storeID, request, cli, respCh)
 			if err != nil {
-				// only 2 kinds of errors will occurr here.
+				// only 2 kinds of errors will occur here.
 				// 1. grpc connection error(already retry inside)
 				// 2. context cancelled outside.
 				if errors.Cause(err) == context.Canceled {
