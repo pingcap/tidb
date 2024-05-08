@@ -21,7 +21,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/executor/internal/util"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core"
@@ -49,9 +48,9 @@ func (hCtx *HashJoinCtxV2) hasOtherCondition() bool {
 
 type JoinProbe interface {
 	SetChunkForProbe(chunk *chunk.Chunk) error
-	Probe(joinResult *util.HashjoinWorkerResult, sqlKiller sqlkiller.SQLKiller) (ok bool, result *util.HashjoinWorkerResult)
+	Probe(joinResult *hashjoinWorkerResult, sqlKiller sqlkiller.SQLKiller) (ok bool, result *hashjoinWorkerResult)
 	IsCurrentChunkProbeDone() bool
-	ScanRowTable(joinResult *util.HashjoinWorkerResult) (result *util.HashjoinWorkerResult)
+	ScanRowTable(joinResult *hashjoinWorkerResult) (result *hashjoinWorkerResult)
 	IsScanRowTableDone() bool
 	NeedScanRowTable() bool
 	InitForScanRowTable()
@@ -528,11 +527,11 @@ func (m *mockJoinProbe) SetChunkForProbe(chunk *chunk.Chunk) error {
 	return errors.New("not supported")
 }
 
-func (m *mockJoinProbe) Probe(joinResult *util.HashjoinWorkerResult, killer sqlkiller.SQLKiller) (ok bool, result *util.HashjoinWorkerResult) {
+func (m *mockJoinProbe) Probe(joinResult *hashjoinWorkerResult, killer sqlkiller.SQLKiller) (ok bool, result *hashjoinWorkerResult) {
 	panic("not supported")
 }
 
-func (m *mockJoinProbe) ScanRowTable(joinResult *util.HashjoinWorkerResult) (result *util.HashjoinWorkerResult) {
+func (m *mockJoinProbe) ScanRowTable(joinResult *hashjoinWorkerResult) (result *hashjoinWorkerResult) {
 	panic("not supported")
 }
 
