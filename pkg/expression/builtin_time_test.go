@@ -41,7 +41,7 @@ import (
 )
 
 func TestDate(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	tblDate := []struct {
 		Input  any
 		Expect any
@@ -213,7 +213,7 @@ func TestDate(t *testing.T) {
 	}
 
 	// test nil
-	ctx = applyExprCtx(t, ctx, contextstatic.WithSQLMode(
+	ctx = applyExprCtx(ctx, contextstatic.WithSQLMode(
 		mysql.DelSQLMode(ctx.GetEvalCtx().SQLMode(), mysql.ModeNoZeroDate),
 	))
 	tblNil := []struct {
@@ -339,7 +339,7 @@ func TestDate(t *testing.T) {
 	}
 
 	dtblNil = tblToDtbl(tblNil)
-	ctx = applyExprCtx(t, ctx, contextstatic.WithSQLMode(mysql.ModeNoZeroDate))
+	ctx = applyExprCtx(ctx, contextstatic.WithSQLMode(mysql.ModeNoZeroDate))
 	for _, c := range dtblNil {
 		fc := funcs[ast.Year]
 		f, err := fc.getFunction(ctx, datumsToConstants(c["Input"]))
@@ -422,9 +422,9 @@ func TestDate(t *testing.T) {
 }
 
 func TestMonthName(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	tc := ctx.GetEvalCtx().TypeCtx()
-	ctx = applyExprCtx(t, ctx, contextstatic.WithTypeFlags(tc.Flags().WithIgnoreZeroInDate(true)))
+	ctx = applyExprCtx(ctx, contextstatic.WithTypeFlags(tc.Flags().WithIgnoreZeroInDate(true)))
 	cases := []struct {
 		args     any
 		expected string
@@ -458,9 +458,9 @@ func TestMonthName(t *testing.T) {
 }
 
 func TestDayName(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	tc := ctx.GetEvalCtx().TypeCtx()
-	ctx = applyExprCtx(t, ctx, contextstatic.WithTypeFlags(tc.Flags().WithIgnoreZeroInDate(true)))
+	ctx = applyExprCtx(ctx, contextstatic.WithTypeFlags(tc.Flags().WithIgnoreZeroInDate(true)))
 	cases := []struct {
 		args     any
 		expected string
@@ -496,9 +496,9 @@ func TestDayName(t *testing.T) {
 }
 
 func TestDayOfWeek(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	tc := ctx.GetEvalCtx().TypeCtx()
-	ctx = applyExprCtx(t, ctx, contextstatic.WithTypeFlags(tc.Flags().WithIgnoreZeroInDate(true)))
+	ctx = applyExprCtx(ctx, contextstatic.WithTypeFlags(tc.Flags().WithIgnoreZeroInDate(true)))
 	cases := []struct {
 		args     any
 		expected int64
@@ -532,9 +532,9 @@ func TestDayOfWeek(t *testing.T) {
 }
 
 func TestDayOfMonth(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	tc := ctx.GetEvalCtx().TypeCtx()
-	ctx = applyExprCtx(t, ctx, contextstatic.WithTypeFlags(tc.Flags().WithIgnoreZeroInDate(true)))
+	ctx = applyExprCtx(ctx, contextstatic.WithTypeFlags(tc.Flags().WithIgnoreZeroInDate(true)))
 	cases := []struct {
 		args     any
 		expected int64
@@ -568,9 +568,9 @@ func TestDayOfMonth(t *testing.T) {
 }
 
 func TestDayOfYear(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	tc := ctx.GetEvalCtx().TypeCtx()
-	ctx = applyExprCtx(t, ctx, contextstatic.WithTypeFlags(tc.Flags().WithIgnoreZeroInDate(true)))
+	ctx = applyExprCtx(ctx, contextstatic.WithTypeFlags(tc.Flags().WithIgnoreZeroInDate(true)))
 	cases := []struct {
 		args     any
 		expected int64
@@ -604,7 +604,7 @@ func TestDayOfYear(t *testing.T) {
 }
 
 func TestDateFormat(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	// Test case for https://github.com/pingcap/tidb/issues/2908
 	// SELECT DATE_FORMAT(null,'%Y-%M-%D')
 	args := []types.Datum{types.NewDatum(nil), types.NewStringDatum("%Y-%M-%D")}
@@ -650,7 +650,7 @@ func TestDateFormat(t *testing.T) {
 }
 
 func TestClock(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	// test hour, minute, second, micro second
 
 	tbl := []struct {
@@ -782,7 +782,7 @@ func TestClock(t *testing.T) {
 }
 
 func TestTime(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	cases := []struct {
 		args     any
 		expected string
@@ -824,13 +824,13 @@ func TestTime(t *testing.T) {
 }
 
 func resetCurrentTime(t *testing.T, ctx *contextstatic.StaticExprContext) *contextstatic.StaticExprContext {
-	return applyExprCtx(t, ctx, contextstatic.WithCurrentTime(func() (time.Time, error) {
+	return applyExprCtx(ctx, contextstatic.WithCurrentTime(func() (time.Time, error) {
 		return time.Now(), nil
 	}))
 }
 
 func TestNowAndUTCTimestamp(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	gotime := func(typ types.Time, l *time.Location) time.Time {
 		tt, err := typ.GoTime(l)
 		require.NoError(t, err)
@@ -911,7 +911,7 @@ func TestIsDuration(t *testing.T) {
 }
 
 func TestAddTimeSig(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	tbl := []struct {
 		Input         string
 		InputDuration string
@@ -1027,7 +1027,7 @@ func TestAddTimeSig(t *testing.T) {
 }
 
 func TestSubTimeSig(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	tbl := []struct {
 		Input         string
 		InputDuration string
@@ -1128,11 +1128,11 @@ func TestSubTimeSig(t *testing.T) {
 
 func TestSysDate(t *testing.T) {
 	fc := funcs[ast.Sysdate]
-	ctx := mockStmtExprCtx(t, contextstatic.WithLocation(timeutil.SystemLocation()))
+	ctx := mockStmtExprCtx(contextstatic.WithLocation(timeutil.SystemLocation()))
 	timezones := []int64{1234, 0}
 	for _, timezone := range timezones {
 		// sysdate() result is not affected by "timestamp" session variable.
-		ctx = applyExprCtx(t, ctx, contextstatic.WithCurrentTime(func() (time.Time, error) {
+		ctx = applyExprCtx(ctx, contextstatic.WithCurrentTime(func() (time.Time, error) {
 			return time.Unix(timezone, 0), nil
 		}))
 		f, err := fc.getFunction(ctx, datumsToConstants(nil))
@@ -1305,10 +1305,10 @@ func TestFromUnixTime(t *testing.T) {
 }
 
 func TestCurrentDate(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	last := time.Now()
 	fc := funcs[ast.CurrentDate]
-	f, err := fc.getFunction(mockStmtExprCtx(t), datumsToConstants(nil))
+	f, err := fc.getFunction(mockStmtExprCtx(), datumsToConstants(nil))
 	require.NoError(t, err)
 	ctx = resetCurrentTime(t, ctx)
 	v, err := evalBuiltinFunc(f, ctx.GetEvalCtx(), chunk.Row{})
@@ -1318,7 +1318,7 @@ func TestCurrentDate(t *testing.T) {
 }
 
 func TestCurrentTime(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	tfStr := time.TimeOnly
 
 	last := time.Now().In(ctx.GetEvalCtx().Location())
@@ -1358,7 +1358,7 @@ func TestCurrentTime(t *testing.T) {
 }
 
 func TestUTCTime(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	last := time.Now().UTC()
 	tfStr := "00:00:00"
 	fc := funcs[ast.UTCTime]
@@ -1401,9 +1401,9 @@ func TestUTCTime(t *testing.T) {
 func TestUTCDate(t *testing.T) {
 	last := time.Now().UTC()
 	fc := funcs[ast.UTCDate]
-	f, err := fc.getFunction(mockStmtExprCtx(t), datumsToConstants(nil))
+	f, err := fc.getFunction(mockStmtExprCtx(), datumsToConstants(nil))
 	require.NoError(t, err)
-	ctx := mockStmtExprCtx(t)
+	ctx := mockStmtExprCtx()
 	v, err := evalBuiltinFunc(f, ctx.GetEvalCtx(), chunk.Row{})
 	require.NoError(t, err)
 	n := v.GetMysqlTime()
@@ -1411,7 +1411,7 @@ func TestUTCDate(t *testing.T) {
 }
 
 func TestStrToDate(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	// If you want to add test cases for `strToDate` but not the builtin function,
 	// adding cases in `types.format_test.go` `TestStrToDate` maybe more clear and easier
 	tests := []struct {
@@ -1483,7 +1483,7 @@ func TestStrToDate(t *testing.T) {
 }
 
 func TestFromDays(t *testing.T) {
-	ctx := mockStmtIgnoreTruncateExprCtx(t)
+	ctx := mockStmtIgnoreTruncateExprCtx()
 	tests := []struct {
 		day    int64
 		expect string
@@ -1545,7 +1545,7 @@ func TestFromDays(t *testing.T) {
 }
 
 func TestDateDiff(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	// Test cases from https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_datediff
 	tests := []struct {
 		t1     string
@@ -1598,9 +1598,9 @@ func TestDateDiff(t *testing.T) {
 }
 
 func TestTimeDiff(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	tc := ctx.GetEvalCtx().TypeCtx()
-	ctx = applyExprCtx(t, ctx, contextstatic.WithTypeFlags(tc.Flags().WithIgnoreZeroInDate(true)))
+	ctx = applyExprCtx(ctx, contextstatic.WithTypeFlags(tc.Flags().WithIgnoreZeroInDate(true)))
 	// Test cases from https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_timediff
 	tests := []struct {
 		args       []any
@@ -1648,7 +1648,7 @@ func TestTimeDiff(t *testing.T) {
 }
 
 func TestWeek(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	// Test cases from https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_week
 	tests := []struct {
 		t      string
@@ -1672,7 +1672,7 @@ func TestWeek(t *testing.T) {
 }
 
 func TestWeekWithoutModeSig(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	tests := []struct {
 		t      string
 		expect int64
@@ -1693,16 +1693,16 @@ func TestWeekWithoutModeSig(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, test.expect, result.GetInt64())
 		if i == 1 {
-			ctx = applyExprCtx(t, ctx, contextstatic.WithDefaultWeekFormatMode("6"))
+			ctx = applyExprCtx(ctx, contextstatic.WithDefaultWeekFormatMode("6"))
 		} else if i == 3 {
-			ctx = applyExprCtx(t, ctx, contextstatic.WithDefaultWeekFormatMode(""))
+			ctx = applyExprCtx(ctx, contextstatic.WithDefaultWeekFormatMode(""))
 		}
 	}
 }
 func TestYearWeek(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	tc := ctx.GetEvalCtx().TypeCtx()
-	ctx = applyExprCtx(t, ctx, contextstatic.WithTypeFlags(tc.Flags().WithIgnoreZeroInDate(true)))
+	ctx = applyExprCtx(ctx, contextstatic.WithTypeFlags(tc.Flags().WithIgnoreZeroInDate(true)))
 	// Test cases from https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_yearweek
 	tests := []struct {
 		t      string
@@ -1731,7 +1731,7 @@ func TestYearWeek(t *testing.T) {
 }
 
 func TestTimestampDiff(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	tests := []struct {
 		unit   string
 		t1     string
@@ -1766,7 +1766,7 @@ func TestTimestampDiff(t *testing.T) {
 	}
 
 	tc := ctx.GetEvalCtx().TypeCtx()
-	ctx = applyExprCtx(t, ctx, contextstatic.WithTypeFlags(tc.Flags().WithIgnoreZeroInDate(true)))
+	ctx = applyExprCtx(ctx, contextstatic.WithTypeFlags(tc.Flags().WithIgnoreZeroInDate(true)))
 	f, err := fc.getFunction(ctx, datumsToConstants([]types.Datum{types.NewStringDatum("DAY"),
 		types.NewStringDatum("2017-01-00"),
 		types.NewStringDatum("2017-01-01")}))
@@ -1785,7 +1785,7 @@ func TestTimestampDiff(t *testing.T) {
 }
 
 func TestUnixTimestamp(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	// Test UNIX_TIMESTAMP().
 	fc := funcs[ast.UnixTimestamp]
 	f, err := fc.getFunction(ctx, nil)
@@ -1826,10 +1826,7 @@ func TestUnixTimestamp(t *testing.T) {
 
 	// Set the time_zone variable, because UnixTimestamp() result depends on it.
 	tc := ctx.GetEvalCtx().TypeCtx()
-	ctx = applyExprCtx(t, ctx,
-		contextstatic.WithLocation(time.UTC),
-		contextstatic.WithTypeFlags(tc.Flags().WithIgnoreZeroInDate(true)),
-	)
+	ctx = applyExprCtx(ctx, contextstatic.WithLocation(time.UTC), contextstatic.WithTypeFlags(tc.Flags().WithIgnoreZeroInDate(true)))
 	tests := []struct {
 		inputDecimal int
 		input        types.Datum
@@ -1878,7 +1875,7 @@ func TestUnixTimestamp(t *testing.T) {
 }
 
 func TestDateArithFuncs(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	date := []string{"2016-12-31", "2017-01-01"}
 	fcAdd := funcs[ast.DateAdd]
 	fcSub := funcs[ast.DateSub]
@@ -2166,9 +2163,9 @@ func TestDateArithFuncs(t *testing.T) {
 }
 
 func TestTimestamp(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	tc := ctx.GetEvalCtx().TypeCtx()
-	ctx = applyExprCtx(t, ctx, contextstatic.WithTypeFlags(tc.Flags().WithIgnoreZeroDateErr(true)))
+	ctx = applyExprCtx(ctx, contextstatic.WithTypeFlags(tc.Flags().WithIgnoreZeroDateErr(true)))
 	tests := []struct {
 		t      []types.Datum
 		expect string
@@ -2228,7 +2225,7 @@ func TestTimestamp(t *testing.T) {
 }
 
 func TestMakeDate(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	cases := []struct {
 		args     []any
 		expected string
@@ -2282,7 +2279,7 @@ func TestMakeDate(t *testing.T) {
 }
 
 func TestMakeTime(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	tbl := []struct {
 		Args []any
 		Want any
@@ -2386,9 +2383,9 @@ func TestMakeTime(t *testing.T) {
 }
 
 func TestQuarter(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	tc := ctx.GetEvalCtx().TypeCtx()
-	ctx = applyExprCtx(t, ctx, contextstatic.WithTypeFlags(tc.Flags().WithIgnoreZeroInDate(true)))
+	ctx = applyExprCtx(ctx, contextstatic.WithTypeFlags(tc.Flags().WithIgnoreZeroInDate(true)))
 	tests := []struct {
 		t      string
 		expect int64
@@ -2427,7 +2424,7 @@ func TestQuarter(t *testing.T) {
 }
 
 func TestGetFormat(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	tests := []struct {
 		unit     string
 		location string
@@ -2465,9 +2462,9 @@ func TestGetFormat(t *testing.T) {
 }
 
 func TestToSeconds(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	tc := ctx.GetEvalCtx().TypeCtx()
-	ctx = applyExprCtx(t, ctx, contextstatic.WithTypeFlags(tc.Flags().WithIgnoreZeroInDate(true)))
+	ctx = applyExprCtx(ctx, contextstatic.WithTypeFlags(tc.Flags().WithIgnoreZeroInDate(true)))
 	tests := []struct {
 		param  any
 		expect int64
@@ -2508,9 +2505,9 @@ func TestToSeconds(t *testing.T) {
 }
 
 func TestToDays(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	tc := ctx.GetEvalCtx().TypeCtx()
-	ctx = applyExprCtx(t, ctx, contextstatic.WithTypeFlags(tc.Flags().WithIgnoreZeroInDate(true)))
+	ctx = applyExprCtx(ctx, contextstatic.WithTypeFlags(tc.Flags().WithIgnoreZeroInDate(true)))
 	tests := []struct {
 		param  any
 		expect int64
@@ -2551,7 +2548,7 @@ func TestToDays(t *testing.T) {
 }
 
 func TestTimestampAdd(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	tests := []struct {
 		unit     string
 		interval float64
@@ -2600,7 +2597,7 @@ func TestTimestampAdd(t *testing.T) {
 }
 
 func TestPeriodAdd(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	tests := []struct {
 		Period  int64
 		Months  int64
@@ -2636,7 +2633,7 @@ func TestPeriodAdd(t *testing.T) {
 }
 
 func TestTimeFormat(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	// SELECT TIME_FORMAT(null,'%H %k %h %I %l')
 	args := []types.Datum{types.NewDatum(nil), types.NewStringDatum(`%H %k %h %I %l`)}
 	fc := funcs[ast.TimeFormat]
@@ -2674,7 +2671,7 @@ func TestTimeFormat(t *testing.T) {
 }
 
 func TestTimeToSec(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	fc := funcs[ast.TimeToSec]
 
 	// test nil
@@ -2719,7 +2716,7 @@ func TestTimeToSec(t *testing.T) {
 }
 
 func TestSecToTime(t *testing.T) {
-	ctx := mockStmtIgnoreTruncateExprCtx(t)
+	ctx := mockStmtIgnoreTruncateExprCtx()
 
 	fc := funcs[ast.SecToTime]
 
@@ -2767,7 +2764,7 @@ func TestSecToTime(t *testing.T) {
 }
 
 func TestConvertTz(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	loc1, _ := time.LoadLocation("Europe/Tallinn")
 	loc2, _ := time.LoadLocation("Local")
 	t1, _ := time.ParseInLocation("2006-01-02 15:04:00", "2021-10-22 10:00:00", loc1)
@@ -2849,7 +2846,7 @@ func TestConvertTz(t *testing.T) {
 }
 
 func TestPeriodDiff(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	tests := []struct {
 		Period1 int64
 		Period2 int64
@@ -2922,7 +2919,7 @@ func TestPeriodDiff(t *testing.T) {
 }
 
 func TestLastDay(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	tests := []struct {
 		param  any
 		expect string
@@ -2968,7 +2965,7 @@ func TestLastDay(t *testing.T) {
 		d, err := evalBuiltinFunc(f, ctx.GetEvalCtx(), chunk.Row{})
 		require.NoError(t, err)
 		require.True(t, d.IsNull() == i.isNilNoZeroDate)
-		ctx2 := applyExprCtx(t, ctx, contextstatic.WithSQLMode(ctx.GetEvalCtx().SQLMode()&^mysql.ModeNoZeroDate))
+		ctx2 := applyExprCtx(ctx, contextstatic.WithSQLMode(ctx.GetEvalCtx().SQLMode()&^mysql.ModeNoZeroDate))
 		d, err = evalBuiltinFunc(f, ctx2.GetEvalCtx(), chunk.Row{})
 		require.NoError(t, err)
 		require.True(t, d.IsNull() == i.isNil)
@@ -3051,7 +3048,7 @@ func TestTidbParseTso(t *testing.T) {
 }
 
 func TestTidbParseTsoLogical(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	tests := []struct {
 		param  int64
 		expect string
@@ -3185,7 +3182,7 @@ func TestTiDBBoundedStaleness(t *testing.T) {
 }
 
 func TestGetIntervalFromDecimal(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	du := baseDateArithmetical{}
 
 	tests := []struct {

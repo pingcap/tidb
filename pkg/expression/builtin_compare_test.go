@@ -27,7 +27,7 @@ import (
 )
 
 func TestCompareFunctionWithRefine(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 
 	tblInfo := newTestTableBuilder("").add("a", mysql.TypeLong, mysql.NotNullFlag).build()
 	tests := []struct {
@@ -78,7 +78,7 @@ func TestCompareFunctionWithRefine(t *testing.T) {
 }
 
 func TestCompare(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 
 	intVal, uintVal, realVal, stringVal, decimalVal := 1, uint64(1), 1.1, "123", types.NewDecFromFloatForTest(123.123)
 	timeVal := types.NewTime(types.FromGoTime(time.Now()), mysql.TypeDatetime, 6)
@@ -172,7 +172,7 @@ func TestCompare(t *testing.T) {
 }
 
 func TestCoalesce(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 
 	cases := []struct {
 		args     []any
@@ -227,7 +227,7 @@ func TestCoalesce(t *testing.T) {
 }
 
 func TestIntervalFunc(t *testing.T) {
-	ctx := mockStmtIgnoreTruncateExprCtx(t)
+	ctx := mockStmtIgnoreTruncateExprCtx()
 	for _, test := range []struct {
 		args   []types.Datum
 		ret    int64
@@ -276,7 +276,7 @@ func TestIntervalFunc(t *testing.T) {
 
 // greatest/least function is compatible with MySQL 8.0
 func TestGreatestLeastFunc(t *testing.T) {
-	ctx := mockStmtIgnoreTruncateExprCtx(t)
+	ctx := mockStmtIgnoreTruncateExprCtx()
 	decG := &types.MyDecimal{}
 	decL := &types.MyDecimal{}
 
@@ -391,7 +391,7 @@ func TestGreatestLeastFunc(t *testing.T) {
 }
 
 func TestRefineArgsWithCastEnum(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	zeroUintConst := primitiveValsToConstants(ctx, []any{uint64(0)})[0]
 	enumType := types.NewFieldTypeBuilder().SetType(mysql.TypeEnum).SetElems([]string{"1", "2", "3"}).AddFlag(mysql.EnumSetAsIntFlag).Build()
 	enumCol := &Column{RetType: &enumType}
@@ -405,7 +405,7 @@ func TestRefineArgsWithCastEnum(t *testing.T) {
 }
 
 func TestIssue46475(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	args := []any{nil, dt, nil}
 
 	f, err := newFunctionForTest(ctx, ast.Coalesce, primitiveValsToConstants(ctx, args)...)

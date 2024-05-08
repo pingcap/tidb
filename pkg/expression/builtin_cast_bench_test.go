@@ -40,7 +40,7 @@ func genCastIntAsInt(ctx BuildContext) (*builtinCastIntAsIntSig, *chunk.Chunk, *
 }
 
 func BenchmarkCastIntAsIntRow(b *testing.B) {
-	ctx := mockStmtExprCtx(b)
+	ctx := mockStmtExprCtx()
 	evalCtx := ctx.GetEvalCtx()
 	cast, input, _ := genCastIntAsInt(ctx)
 	it := chunk.NewIterator4Chunk(input)
@@ -55,7 +55,7 @@ func BenchmarkCastIntAsIntRow(b *testing.B) {
 }
 
 func BenchmarkCastIntAsIntVec(b *testing.B) {
-	ctx := mockStmtExprCtx(b)
+	ctx := mockStmtExprCtx()
 	evalCtx := ctx.GetEvalCtx()
 	cast, input, result := genCastIntAsInt(ctx)
 	b.ResetTimer()

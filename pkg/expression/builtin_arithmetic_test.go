@@ -92,7 +92,7 @@ func TestSetFlenDecimal4RealOrDecimal(t *testing.T) {
 }
 
 func TestArithmeticPlus(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	// case: 1
 	args := []any{int64(12), int64(1)}
 
@@ -188,7 +188,7 @@ func TestArithmeticPlus(t *testing.T) {
 }
 
 func TestArithmeticMinus(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	// case: 1
 	args := []any{int64(12), int64(1)}
 
@@ -266,7 +266,7 @@ func TestArithmeticMinus(t *testing.T) {
 }
 
 func TestArithmeticMultiply(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	testCases := []struct {
 		args   []any
 		expect []any
@@ -322,7 +322,7 @@ func TestArithmeticMultiply(t *testing.T) {
 }
 
 func TestArithmeticDivide(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	testCases := []struct {
 		args   []any
 		expect any
@@ -390,7 +390,7 @@ func TestArithmeticDivide(t *testing.T) {
 }
 
 func TestArithmeticIntDivide(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	testCases := []struct {
 		args   []any
 		expect []any
@@ -505,7 +505,7 @@ func TestArithmeticIntDivide(t *testing.T) {
 }
 
 func TestArithmeticMod(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	testCases := []struct {
 		args   []any
 		expect any
@@ -657,7 +657,7 @@ func TestArithmeticMod(t *testing.T) {
 }
 
 func TestDecimalErrOverflow(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	testCases := []struct {
 		args   []float64
 		opd    string

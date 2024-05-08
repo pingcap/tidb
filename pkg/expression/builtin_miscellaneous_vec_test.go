@@ -141,7 +141,7 @@ func (c *counter) add(diff int) int {
 
 func TestSleepVectorized(t *testing.T) {
 	sessVars := variable.NewSessionVars(nil)
-	ctx := mockStmtExprCtx(t, sessVars)
+	ctx := mockStmtExprCtx(sessVars)
 
 	fc := funcs[ast.Sleep]
 	ft := eType2FieldType(types.ETReal)
@@ -155,7 +155,7 @@ func TestSleepVectorized(t *testing.T) {
 	// non-strict model
 	var levels errctx.LevelMap
 	levels[errctx.ErrGroupBadNull] = errctx.LevelWarn
-	ctx = applyExprCtx(t, ctx, contextstatic.WithErrLevelMap(levels))
+	ctx = applyExprCtx(ctx, contextstatic.WithErrLevelMap(levels))
 	input.AppendFloat64(0, 1)
 	err = vecEvalType(ctx.GetEvalCtx(), f, types.ETInt, input, result)
 	require.NoError(t, err)
@@ -189,7 +189,7 @@ func TestSleepVectorized(t *testing.T) {
 
 	// for error case under the strict model
 	levels[errctx.ErrGroupBadNull] = errctx.LevelError
-	ctx = applyExprCtx(t, ctx, contextstatic.WithErrLevelMap(levels))
+	ctx = applyExprCtx(ctx, contextstatic.WithErrLevelMap(levels))
 	input.Reset()
 	input.AppendNull(0)
 	err = vecEvalType(ctx.GetEvalCtx(), f, types.ETInt, input, result)

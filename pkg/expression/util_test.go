@@ -30,7 +30,7 @@ import (
 )
 
 func TestBaseBuiltin(t *testing.T) {
-	ctx := mockStmtExprCtx(t)
+	ctx := mockStmtExprCtx()
 	bf, err := newBaseBuiltinFuncWithTp(ctx, "", nil, types.ETTimestamp)
 	require.NoError(t, err)
 	_, _, err = bf.evalInt(ctx.GetEvalCtx(), chunk.Row{})
@@ -191,7 +191,7 @@ func TestSetExprColumnInOperand(t *testing.T) {
 	col := &Column{RetType: newIntFieldType()}
 	require.True(t, SetExprColumnInOperand(col).(*Column).InOperand)
 
-	ctx := mockStmtExprCtx(t)
+	ctx := mockStmtExprCtx()
 	f, err := funcs[ast.Abs].getFunction(ctx, []Expression{col})
 	require.NoError(t, err)
 	fun := &ScalarFunction{Function: f}
@@ -200,7 +200,7 @@ func TestSetExprColumnInOperand(t *testing.T) {
 }
 
 func TestPopRowFirstArg(t *testing.T) {
-	ctx := mockStmtExprCtx(t)
+	ctx := mockStmtExprCtx()
 	c1, c2, c3 := &Column{RetType: newIntFieldType()}, &Column{RetType: newIntFieldType()}, &Column{RetType: newIntFieldType()}
 	f, err := funcs[ast.RowFunc].getFunction(ctx, []Expression{c1, c2, c3})
 	require.NoError(t, err)
@@ -239,7 +239,7 @@ func TestGetStrIntFromConstant(t *testing.T) {
 }
 
 func TestSubstituteCorCol2Constant(t *testing.T) {
-	ctx := mockStmtExprCtx(t)
+	ctx := mockStmtExprCtx()
 	corCol1 := &CorrelatedColumn{Data: &NewOne().Value}
 	corCol1.RetType = types.NewFieldType(mysql.TypeLonglong)
 	corCol2 := &CorrelatedColumn{Data: &NewOne().Value}
@@ -264,7 +264,7 @@ func TestSubstituteCorCol2Constant(t *testing.T) {
 }
 
 func TestPushDownNot(t *testing.T) {
-	ctx := mockStmtExprCtx(t)
+	ctx := mockStmtExprCtx()
 	col := &Column{Index: 1, RetType: types.NewFieldType(mysql.TypeLonglong)}
 	// !((a=1||a=1)&&a=1)
 	eqFunc := newFunctionWithMockCtx(ast.EQ, col, NewOne())
@@ -464,7 +464,7 @@ func BenchmarkExtractColumns(b *testing.B) {
 		newFunctionWithMockCtx(ast.EQ, newColumn(3), newLonglong(1)),
 		newFunctionWithMockCtx(ast.LogicOr, newLonglong(1), newColumn(0)),
 	}
-	expr := ComposeCNFCondition(mockStmtExprCtx(b), conditions...)
+	expr := ComposeCNFCondition(mockStmtExprCtx(), conditions...)
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -481,7 +481,7 @@ func BenchmarkExprFromSchema(b *testing.B) {
 		newFunctionWithMockCtx(ast.EQ, newColumn(3), newLonglong(1)),
 		newFunctionWithMockCtx(ast.LogicOr, newLonglong(1), newColumn(0)),
 	}
-	expr := ComposeCNFCondition(mockStmtExprCtx(b), conditions...)
+	expr := ComposeCNFCondition(mockStmtExprCtx(), conditions...)
 	schema := &Schema{Columns: ExtractColumns(expr)}
 
 	b.ResetTimer()

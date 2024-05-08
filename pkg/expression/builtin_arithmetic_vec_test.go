@@ -196,7 +196,7 @@ func TestVectorizedBuiltinArithmeticFunc(t *testing.T) {
 }
 
 func TestVectorizedDecimalErrOverflow(t *testing.T) {
-	ctx := mockStmtExprCtx(t)
+	ctx := mockStmtExprCtx()
 	testCases := []struct {
 		args     []float64
 		funcName string

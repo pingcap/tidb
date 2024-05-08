@@ -27,7 +27,7 @@ import (
 )
 
 func TestCaseWhen(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	tbl := []struct {
 		Arg []any
 		Ret any
@@ -59,7 +59,7 @@ func TestCaseWhen(t *testing.T) {
 }
 
 func TestIf(t *testing.T) {
-	ctx := mockStmtIgnoreTruncateExprCtx(t)
+	ctx := mockStmtIgnoreTruncateExprCtx()
 	tbl := []struct {
 		Arg1 any
 		Arg2 any
@@ -101,7 +101,7 @@ func TestIf(t *testing.T) {
 }
 
 func TestIfNull(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	tbl := []struct {
 		arg1     any
 		arg2     any

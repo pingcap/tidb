@@ -208,7 +208,7 @@ func setBinaryCollation(tp *types.FieldType) {
 }
 
 func TestRegexpLike(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 
 	// test Regexp_like without match type
 	testsExcludeMatchType := []struct {
@@ -354,7 +354,7 @@ func TestRegexpLikeVec(t *testing.T) {
 }
 
 func TestRegexpSubstr(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 
 	// test regexp_substr(expr, pat)
 	testParam2 := []struct {
@@ -609,7 +609,7 @@ func TestRegexpSubstrVec(t *testing.T) {
 }
 
 func TestRegexpInStr(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 
 	// test regexp_instr(expr, pat)
 	testParam2 := []struct {
@@ -921,7 +921,7 @@ func TestRegexpInStrVec(t *testing.T) {
 }
 
 func TestRegexpReplace(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 
 	url1 := "https://go.mail/folder-1/online/ru-en/#lingvo/#1О 50000&price_ashka/rav4/page=/check.xml"
 	url2 := "http://saint-peters-total=меньше 1000-rublyayusche/catalogue/kolasuryat-v-2-kadyirovka-personal/serial_id=0&input_state/apartments/mokrotochki.net/upravda.ru/yandex.ru/GameMain.aspx?mult]/on/orders/50195&text=мыс и орелка в Балаш смотреть онлайн бесплатно в хорошем камбалакс&lr=20030393833539353862643188&op_promo=C-Teaser_id=06d162.html"

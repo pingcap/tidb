@@ -108,7 +108,7 @@ func TestSleep(t *testing.T) {
 	// non-strict model
 	var levels errctx.LevelMap
 	levels[errctx.ErrGroupBadNull] = errctx.LevelWarn
-	ctx = applyExprCtx(t, ctx, contextstatic.WithErrLevelMap(levels))
+	ctx = applyExprCtx(ctx, contextstatic.WithErrLevelMap(levels))
 	d := make([]types.Datum, 1)
 	f, err := fc.getFunction(ctx, datumsToConstants(d))
 	require.NoError(t, err)
@@ -128,7 +128,7 @@ func TestSleep(t *testing.T) {
 
 	// for error case under the strict model
 	levels[errctx.ErrGroupBadNull] = errctx.LevelError
-	ctx = applyExprCtx(t, ctx, contextstatic.WithErrLevelMap(levels))
+	ctx = applyExprCtx(ctx, contextstatic.WithErrLevelMap(levels))
 	d[0].SetNull()
 	_, err = fc.getFunction(ctx, datumsToConstants(d))
 	require.NoError(t, err)
@@ -209,7 +209,7 @@ func TestBinopComparison(t *testing.T) {
 		{1, ast.LT, 1, 0},
 		{1, ast.LE, 1, 1},
 	}
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	for _, tt := range tbl {
 		fc := funcs[tt.op]
 		f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(tt.lhs, tt.rhs)))
@@ -274,7 +274,7 @@ func TestBinopLogic(t *testing.T) {
 		{0, ast.LogicXor, 0, 0},
 		{0, ast.LogicXor, 1, 1},
 	}
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	for _, tt := range tbl {
 		fc := funcs[tt.op]
 		f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(tt.lhs, tt.rhs)))
@@ -310,7 +310,7 @@ func TestBinopBitop(t *testing.T) {
 		{nil, ast.RightShift, 1, nil},
 	}
 
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	for _, tt := range tbl {
 		fc := funcs[tt.op]
 		f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(tt.lhs, tt.rhs)))
@@ -404,7 +404,7 @@ func TestBinopNumeric(t *testing.T) {
 		{types.NewDecFromInt(10), ast.Mod, 0, nil},
 	}
 
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	for _, tt := range tbl {
 		fc := funcs[tt.op]
 		f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(tt.lhs, tt.rhs)))
@@ -450,7 +450,7 @@ func TestBinopNumeric(t *testing.T) {
 	ec := ctx.GetEvalCtx().ErrCtx()
 	levels := ec.LevelMap()
 	levels[errctx.ErrGroupDividedByZero] = errctx.LevelError
-	ctx = applyExprCtx(t, ctx, contextstatic.WithErrLevelMap(levels))
+	ctx = applyExprCtx(ctx, contextstatic.WithErrLevelMap(levels))
 	for _, tt := range testcases {
 		fc := funcs[tt.op]
 		f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(tt.lhs, tt.rhs)))
@@ -460,7 +460,7 @@ func TestBinopNumeric(t *testing.T) {
 	}
 
 	levels[errctx.ErrGroupDividedByZero] = errctx.LevelWarn
-	ctx = applyExprCtx(t, ctx, contextstatic.WithErrLevelMap(levels))
+	ctx = applyExprCtx(ctx, contextstatic.WithErrLevelMap(levels))
 	for _, tt := range testcases {
 		fc := funcs[tt.op]
 		f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(tt.lhs, tt.rhs)))
@@ -472,7 +472,7 @@ func TestBinopNumeric(t *testing.T) {
 }
 
 func TestExtract(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	str := "2011-11-11 10:10:10.123456"
 	tbl := []struct {
 		Unit   string
@@ -518,7 +518,7 @@ func TestExtract(t *testing.T) {
 }
 
 func TestUnaryOp(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	tbl := []struct {
 		arg    any
 		op     string
@@ -590,7 +590,7 @@ func TestUnaryOp(t *testing.T) {
 }
 
 func TestMod(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	fc := funcs[ast.Mod]
 	f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(234, 10)))
 	require.NoError(t, err)

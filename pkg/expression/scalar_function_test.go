@@ -90,7 +90,7 @@ func TestExpressionSemanticEqual(t *testing.T) {
 }
 
 func TestScalarFunction(t *testing.T) {
-	ctx := mockStmtExprCtx(t)
+	ctx := mockStmtExprCtx()
 	a := &Column{
 		UniqueID: 1,
 		RetType:  types.NewFieldType(mysql.TypeDouble),
@@ -126,14 +126,14 @@ func TestIssue23309(t *testing.T) {
 	null := NewNull()
 	null.RetType = types.NewFieldType(mysql.TypeNull)
 	sf, _ := newFunctionWithMockCtx(ast.NE, a, null).(*ScalarFunction)
-	v, err := sf.GetArgs()[1].Eval(mockStmtExprCtx(t).GetEvalCtx(), chunk.Row{})
+	v, err := sf.GetArgs()[1].Eval(mockStmtExprCtx().GetEvalCtx(), chunk.Row{})
 	require.NoError(t, err)
 	require.True(t, v.IsNull())
 	require.False(t, mysql.HasNotNullFlag(sf.GetArgs()[1].GetType().GetFlag()))
 }
 
 func TestScalarFuncs2Exprs(t *testing.T) {
-	ctx := mockStmtExprCtx(t)
+	ctx := mockStmtExprCtx()
 	a := &Column{
 		UniqueID: 1,
 		RetType:  types.NewFieldType(mysql.TypeDouble),

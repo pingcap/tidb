@@ -30,7 +30,7 @@ import (
 )
 
 func TestNewValuesFunc(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	res := NewValuesFunc(ctx, 0, types.NewFieldType(mysql.TypeLonglong))
 	require.Equal(t, "values", res.FuncName.O)
 	require.Equal(t, mysql.TypeLonglong, res.RetType.GetType())
@@ -39,7 +39,7 @@ func TestNewValuesFunc(t *testing.T) {
 }
 
 func TestEvaluateExprWithNull(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	tblInfo := newTestTableBuilder("").add("col0", mysql.TypeLonglong, 0).add("col1", mysql.TypeLonglong, 0).build()
 	schema := tableInfoToSchemaForTest(tblInfo)
 	col0 := schema.Columns[0]
@@ -59,7 +59,7 @@ func TestEvaluateExprWithNull(t *testing.T) {
 }
 
 func TestEvaluateExprWithNullAndParameters(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	tblInfo := newTestTableBuilder("").add("col0", mysql.TypeLonglong, 0).build()
 	schema := tableInfoToSchemaForTest(tblInfo)
 	col0 := schema.Columns[0]
@@ -83,7 +83,7 @@ func TestEvaluateExprWithNullAndParameters(t *testing.T) {
 }
 
 func TestEvaluateExprWithNullNoChangeRetType(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	tblInfo := newTestTableBuilder("").add("col_str", mysql.TypeString, 0).build()
 	schema := tableInfoToSchemaForTest(tblInfo)
 

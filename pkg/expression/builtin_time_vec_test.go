@@ -579,7 +579,7 @@ func BenchmarkVectorizedBuiltinTimeFunc(b *testing.B) {
 }
 
 func TestVecMonth(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	input := chunk.New([]*types.FieldType{types.NewFieldType(mysql.TypeDatetime)}, 3, 3)
 	input.Reset()
 	input.AppendTime(0, types.ZeroDate)
@@ -591,7 +591,7 @@ func TestVecMonth(t *testing.T) {
 	require.NoError(t, vecEvalType(ctx.GetEvalCtx(), f, types.ETInt, input, result))
 	require.Equal(t, 0, ctx.GetEvalCtx().WarningCount())
 
-	ctx = mockStmtExprCtx(t)
+	ctx = mockStmtExprCtx()
 	tc, ec := ctx.GetEvalCtx().TypeCtx(), ctx.GetEvalCtx().ErrCtx()
 	require.False(t, tc.Flags().TruncateAsWarning())
 	require.False(t, tc.Flags().IgnoreTruncateErr())

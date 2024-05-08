@@ -60,7 +60,7 @@ func genVecBuiltinRegexpBenchCaseForConstants(ctx BuildContext) (baseFunc builti
 }
 
 func TestVectorizedBuiltinRegexpForConstants(t *testing.T) {
-	ctx := mockStmtExprCtx(t)
+	ctx := mockStmtExprCtx()
 	bf, childrenFieldTypes, input, output := genVecBuiltinRegexpBenchCaseForConstants(ctx)
 	err := vecEvalType(ctx.GetEvalCtx(), bf, types.ETInt, input, output)
 	require.NoError(t, err)
@@ -84,7 +84,7 @@ func TestVectorizedBuiltinRegexpForConstants(t *testing.T) {
 }
 
 func BenchmarkVectorizedBuiltinRegexpForConstants(b *testing.B) {
-	ctx := mockStmtExprCtx(b)
+	ctx := mockStmtExprCtx()
 	evalCtx := ctx.GetEvalCtx()
 	bf, _, input, output := genVecBuiltinRegexpBenchCaseForConstants(ctx)
 	b.Run("builtinRegexpUTF8Sig-Constants-VecBuiltinFunc", func(b *testing.B) {

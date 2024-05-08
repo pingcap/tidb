@@ -286,7 +286,7 @@ func newColInt(coercibility Coercibility) *Column {
 }
 
 func TestDeriveCollation(t *testing.T) {
-	ctx := mockStmtExprCtx(t)
+	ctx := mockStmtExprCtx()
 	tests := []struct {
 		fcs    []string
 		args   []Expression
@@ -736,7 +736,7 @@ func TestCompareString(t *testing.T) {
 	require.NotEqual(t, 0, types.CompareString("😜", "😃", "binary"))
 	require.NotEqual(t, 0, types.CompareString("a ", "a  ", "binary"))
 
-	ctx := mockStmtExprCtx(t)
+	ctx := mockStmtExprCtx()
 	ft := types.NewFieldType(mysql.TypeVarString)
 	col1 := &Column{
 		RetType: ft,

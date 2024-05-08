@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit/testsetup"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/timeutil"
-	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/goleak"
 )
@@ -163,7 +162,7 @@ func mockExprCtx(opts ...any) *contextstatic.StaticExprContext {
 	return ctx
 }
 
-func applyExprCtx(t testing.TB, ctx *contextstatic.StaticExprContext, opts ...any) *contextstatic.StaticExprContext {
+func applyExprCtx(ctx *contextstatic.StaticExprContext, opts ...any) *contextstatic.StaticExprContext {
 	evalOptions := make([]contextstatic.StaticEvalCtxOption, 0, len(opts))
 	exprOptions := make([]contextstatic.StaticExprCtxOption, 0, len(opts))
 	for _, opt := range opts {
@@ -177,7 +176,7 @@ func applyExprCtx(t testing.TB, ctx *contextstatic.StaticExprContext, opts ...an
 			continue
 		}
 
-		require.FailNow(t, "unexpected option type: %T", opt)
+		panic(fmt.Sprintf("unexpected option type: %T", opt))
 	}
 
 	if len(evalOptions) > 0 {

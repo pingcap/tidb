@@ -29,7 +29,7 @@ import (
 )
 
 func TestIlike(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	tests := []struct {
 		input        string
 		pattern      string

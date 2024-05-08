@@ -98,7 +98,7 @@ func genMockVecPlusIntBuiltinFunc(ctx BuildContext) (*mockVecPlusIntBuiltinFunc,
 }
 
 func TestMockVecPlusInt(t *testing.T) {
-	ctx := mockStmtExprCtx(t)
+	ctx := mockStmtExprCtx()
 	plus, input, buf := genMockVecPlusIntBuiltinFunc(ctx)
 	plus.enableAlloc = false
 	require.NoError(t, plus.vecEvalInt(ctx.GetEvalCtx(), input, buf))
@@ -116,7 +116,7 @@ func TestMockVecPlusInt(t *testing.T) {
 }
 
 func TestMockVecPlusIntParallel(t *testing.T) {
-	ctx := mockStmtExprCtx(t)
+	ctx := mockStmtExprCtx()
 	plus, input, buf := genMockVecPlusIntBuiltinFunc(ctx)
 	plus.enableAlloc = true // it's concurrency-safe if enableAlloc is true
 	var wg sync.WaitGroup
@@ -188,7 +188,7 @@ func BenchmarkColumnPoolGetPutParallel(b *testing.B) {
 }
 
 func BenchmarkPlusIntBufAllocator(b *testing.B) {
-	ctx := mockStmtExprCtx(b)
+	ctx := mockStmtExprCtx()
 	plus, input, buf := genMockVecPlusIntBuiltinFunc(ctx)
 	names := []string{"enable", "disable"}
 	enable := []bool{true, false}
@@ -514,7 +514,7 @@ func checkVecEval(t *testing.T, eType types.EvalType, sel []int, result *chunk.C
 			tt := types.NewTime(gt, convertETType(eType), 0)
 			d, err := tt.ConvertToDuration()
 			require.NoError(t, err)
-			v, err := tt.Add(mockStmtExprCtx(t).GetEvalCtx().TypeCtx(), d)
+			v, err := tt.Add(mockStmtExprCtx().GetEvalCtx().TypeCtx(), d)
 			require.NoError(t, err)
 			require.Equal(t, 0, v.Compare(ds[i]))
 		}
@@ -557,7 +557,7 @@ func vecEvalType(ctx EvalContext, f builtinFunc, eType types.EvalType, input *ch
 func TestDoubleRow2Vec(t *testing.T) {
 	eTypes := []types.EvalType{types.ETInt, types.ETReal, types.ETDecimal, types.ETDuration, types.ETString, types.ETDatetime, types.ETJson}
 	for _, eType := range eTypes {
-		ctx := mockStmtExprCtx(t)
+		ctx := mockStmtExprCtx()
 		rowDouble, input, result, err := genMockRowDouble(ctx, eType, false)
 		require.NoError(t, err)
 		require.NoError(t, vecEvalType(ctx.GetEvalCtx(), rowDouble, eType, input, result))
@@ -582,7 +582,7 @@ func TestDoubleRow2Vec(t *testing.T) {
 func TestDoubleVec2Row(t *testing.T) {
 	eTypes := []types.EvalType{types.ETInt, types.ETReal, types.ETDecimal, types.ETDuration, types.ETString, types.ETDatetime, types.ETJson}
 	for _, eType := range eTypes {
-		mockCtx := mockStmtExprCtx(t)
+		mockCtx := mockStmtExprCtx()
 		rowDouble, input, result, err := genMockRowDouble(mockCtx, eType, true)
 		ctx := wrapEvalAssert(mockCtx.GetEvalCtx(), rowDouble)
 		result.Reset(eType)
@@ -739,7 +739,7 @@ func BenchmarkMockDoubleRow(b *testing.B) {
 	eTypes := []types.EvalType{types.ETInt, types.ETReal, types.ETDecimal, types.ETDuration, types.ETString, types.ETDatetime, types.ETJson}
 	for i, eType := range eTypes {
 		b.Run(typeNames[i], func(b *testing.B) {
-			ctx := mockStmtExprCtx(b)
+			ctx := mockStmtExprCtx()
 			rowDouble, input, result, _ := genMockRowDouble(ctx, eType, false)
 			it := chunk.NewIterator4Chunk(input)
 			b.ResetTimer()
@@ -753,7 +753,7 @@ func BenchmarkMockDoubleVec(b *testing.B) {
 	eTypes := []types.EvalType{types.ETInt, types.ETReal, types.ETDecimal, types.ETDuration, types.ETString, types.ETDatetime, types.ETJson}
 	for i, eType := range eTypes {
 		b.Run(typeNames[i], func(b *testing.B) {
-			ctx := mockStmtExprCtx(b)
+			ctx := mockStmtExprCtx()
 			rowDouble, input, result, _ := genMockRowDouble(ctx, eType, true)
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
@@ -773,7 +773,7 @@ func TestVectorizedCheck(t *testing.T) {
 	cor := CorrelatedColumn{Column: *col}
 	require.True(t, cor.Vectorized())
 
-	ctx := mockStmtExprCtx(t)
+	ctx := mockStmtExprCtx()
 	vecF, _, _, _ := genMockRowDouble(ctx, types.ETInt, true)
 	sf := &ScalarFunction{Function: vecF}
 	require.True(t, sf.Vectorized())
@@ -796,7 +796,7 @@ func genFloat32Col() (*Column, *chunk.Chunk, *chunk.Column) {
 
 func TestFloat32ColVec(t *testing.T) {
 	col, chk, result := genFloat32Col()
-	ctx := mockStmtExprCtx(t)
+	ctx := mockStmtExprCtx()
 	require.NoError(t, col.VecEvalReal(ctx.GetEvalCtx(), chk, result))
 	it := chunk.NewIterator4Chunk(chk)
 	i := 0
@@ -827,7 +827,7 @@ func TestFloat32ColVec(t *testing.T) {
 }
 
 func TestVecEvalBool(t *testing.T) {
-	ctx := mockStmtExprCtx(t)
+	ctx := mockStmtExprCtx()
 	eTypes := []types.EvalType{types.ETReal, types.ETDecimal, types.ETString, types.ETTimestamp, types.ETDatetime, types.ETDuration}
 	for numCols := 1; numCols <= 5; numCols++ {
 		for round := 0; round < 16; round++ {
@@ -848,7 +848,7 @@ func TestVecEvalBool(t *testing.T) {
 }
 
 func TestRowBasedFilterAndVectorizedFilter(t *testing.T) {
-	ctx := mockStmtExprCtx(t)
+	ctx := mockStmtExprCtx()
 	eTypes := []types.EvalType{types.ETInt, types.ETReal, types.ETDecimal, types.ETString, types.ETTimestamp, types.ETDatetime, types.ETDuration}
 	for numCols := 1; numCols <= 5; numCols++ {
 		for round := 0; round < 16; round++ {
@@ -869,7 +869,7 @@ func TestRowBasedFilterAndVectorizedFilter(t *testing.T) {
 }
 
 func TestVectorizedFilterConsiderNull(t *testing.T) {
-	ctx := mockStmtExprCtx(t)
+	ctx := mockStmtExprCtx()
 	eTypes := []types.EvalType{types.ETInt, types.ETReal, types.ETDecimal, types.ETString, types.ETTimestamp, types.ETDatetime, types.ETDuration}
 	for numCols := 1; numCols <= 5; numCols++ {
 		for round := 0; round < 16; round++ {
@@ -922,7 +922,7 @@ func TestVectorizedFilterConsiderNull(t *testing.T) {
 
 func BenchmarkFloat32ColRow(b *testing.B) {
 	col, chk, _ := genFloat32Col()
-	ctx := mockStmtExprCtx(b)
+	ctx := mockStmtExprCtx()
 	it := chunk.NewIterator4Chunk(chk)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -936,7 +936,7 @@ func BenchmarkFloat32ColRow(b *testing.B) {
 
 func BenchmarkFloat32ColVec(b *testing.B) {
 	col, chk, result := genFloat32Col()
-	ctx := mockStmtExprCtx(b)
+	ctx := mockStmtExprCtx()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		if err := col.VecEvalReal(ctx.GetEvalCtx(), chk, result); err != nil {

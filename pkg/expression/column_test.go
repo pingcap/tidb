@@ -27,7 +27,7 @@ import (
 )
 
 func TestColumn(t *testing.T) {
-	ctx := mockStmtExprCtx(t).GetEvalCtx()
+	ctx := mockStmtExprCtx().GetEvalCtx()
 	col := &Column{RetType: types.NewFieldType(mysql.TypeLonglong), UniqueID: 1}
 
 	require.True(t, col.EqualColumn(col))
@@ -164,7 +164,7 @@ func TestIndexInfo2Cols(t *testing.T) {
 }
 
 func TestColHybird(t *testing.T) {
-	ctx := mockStmtExprCtx(t).GetEvalCtx()
+	ctx := mockStmtExprCtx().GetEvalCtx()
 
 	// bit
 	ft := types.NewFieldType(mysql.TypeBit)
@@ -243,7 +243,7 @@ func TestInColumnArray(t *testing.T) {
 }
 
 func TestGcColumnExprIsTidbShard(t *testing.T) {
-	ctx := mockStmtExprCtx(t)
+	ctx := mockStmtExprCtx()
 
 	// abnormal case
 	// nil, not tidb_shard

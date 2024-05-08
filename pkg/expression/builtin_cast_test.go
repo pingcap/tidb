@@ -31,7 +31,7 @@ import (
 )
 
 func TestCastFunctions(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 
 	tp := types.NewFieldType(mysql.TypeString)
 	tp.SetFlen(5)
@@ -1099,7 +1099,7 @@ func TestCastFuncSig(t *testing.T) {
 }
 
 func TestCastJSONAsDecimalSig(t *testing.T) {
-	ctx := mockStmtIgnoreTruncateExprCtx(t)
+	ctx := mockStmtIgnoreTruncateExprCtx()
 	col := &Column{RetType: types.NewFieldType(mysql.TypeJSON), Index: 0}
 	b, err := newBaseBuiltinFunc(ctx, "", []Expression{col}, types.NewFieldType(mysql.TypeNewDecimal))
 	require.NoError(t, err)
@@ -1137,7 +1137,7 @@ func TestCastJSONAsDecimalSig(t *testing.T) {
 
 // TestWrapWithCastAsTypesClasses tests WrapWithCastAsInt/Real/String/decimal.
 func TestWrapWithCastAsTypesClasses(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 
 	durationColumn0 := &Column{RetType: types.NewFieldType(mysql.TypeDuration), Index: 0}
 	durationColumn0.RetType.SetDecimal(types.DefaultFsp)
@@ -1327,7 +1327,7 @@ func TestWrapWithCastAsTime(t *testing.T) {
 }
 
 func TestWrapWithCastAsDuration(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 
 	cases := []struct {
 		expr Expression
@@ -1361,7 +1361,7 @@ func TestWrapWithCastAsDuration(t *testing.T) {
 }
 
 func TestWrapWithCastAsString(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 
 	cases := []struct {
 		expr Expression
@@ -1422,7 +1422,7 @@ func TestWrapWithCastAsString(t *testing.T) {
 }
 
 func TestWrapWithCastAsJSON(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 
 	input := &Column{RetType: types.NewFieldTypeBuilder().SetType(mysql.TypeJSON).BuildP()}
 	expr := WrapWithCastAsJSON(ctx, input)
@@ -1433,7 +1433,7 @@ func TestWrapWithCastAsJSON(t *testing.T) {
 }
 
 func TestCastIntAsIntVec(t *testing.T) {
-	ctx := mockStmtExprCtx(t)
+	ctx := mockStmtExprCtx()
 	cast, input, result := genCastIntAsInt(ctx)
 	require.NoError(t, cast.vecEvalInt(ctx.GetEvalCtx(), input, result))
 	i64s := result.Int64s()
@@ -1463,7 +1463,7 @@ func TestCastIntAsIntVec(t *testing.T) {
 // for issue https://github.com/pingcap/tidb/issues/16825
 func TestCastStringAsDecimalSigWithUnsignedFlagInUnion(t *testing.T) {
 	col := &Column{RetType: types.NewFieldType(mysql.TypeString), Index: 0}
-	ctx := mockStmtExprCtx(t)
+	ctx := mockStmtExprCtx()
 	b, err := newBaseBuiltinFunc(ctx, "", []Expression{col}, types.NewFieldType(mysql.TypeNewDecimal))
 	require.NoError(t, err)
 	// set `inUnion` to `true`
@@ -1564,7 +1564,7 @@ func TestCastConstAsDecimalFieldType(t *testing.T) {
 		// test date
 		{&Constant{RetType: types.NewFieldTypeBuilder().SetType(mysql.TypeDate).SetFlen(types.UnspecifiedLength).SetDecimal(0).BuildP(), Value: types.NewTimeDatum(types.NewTime(types.FromDate(2020, 10, 10, 10, 10, 10, 110), mysql.TypeDate, 0))}, 8, 0},
 	}
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	for _, tc := range allTestCase {
 		expr := WrapWithCastAsDecimal(ctx, tc.input)
 		require.Equal(t, tc.resultFlen, expr.GetType().GetFlen())
@@ -1573,7 +1573,7 @@ func TestCastConstAsDecimalFieldType(t *testing.T) {
 }
 
 func TestCastBinaryStringAsJSONSig(t *testing.T) {
-	ctx := mockStmtIgnoreTruncateExprCtx(t)
+	ctx := mockStmtIgnoreTruncateExprCtx()
 
 	// BINARY STRING will be converted to a JSON opaque
 	// and yield "base64:typeXX:<base64 encoded value>" finally
@@ -1628,7 +1628,7 @@ func TestCastBinaryStringAsJSONSig(t *testing.T) {
 }
 
 func TestCastArrayFunc(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	tbl := []struct {
 		input            any
 		expected         any

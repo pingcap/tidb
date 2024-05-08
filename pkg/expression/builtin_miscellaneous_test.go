@@ -30,7 +30,7 @@ import (
 )
 
 func TestInetAton(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	tbl := []struct {
 		Input    any
 		Expected any
@@ -66,7 +66,7 @@ func TestInetAton(t *testing.T) {
 }
 
 func TestIsIPv4(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	tests := []struct {
 		ip     string
 		expect any
@@ -101,7 +101,7 @@ func TestIsIPv4(t *testing.T) {
 }
 
 func TestIsUUID(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	tests := []struct {
 		uuid   string
 		expect any
@@ -136,7 +136,7 @@ func TestIsUUID(t *testing.T) {
 }
 
 func TestUUID(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	f, err := newFunctionForTest(ctx, ast.UUID)
 	require.NoError(t, err)
 	d, err := f.Eval(ctx.GetEvalCtx(), chunk.Row{})
@@ -162,7 +162,7 @@ func TestUUID(t *testing.T) {
 }
 
 func TestAnyValue(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	tbl := []struct {
 		arg any
 		ret any
@@ -184,7 +184,7 @@ func TestAnyValue(t *testing.T) {
 }
 
 func TestIsIPv6(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	tests := []struct {
 		ip     string
 		expect any
@@ -213,7 +213,7 @@ func TestIsIPv6(t *testing.T) {
 }
 
 func TestInetNtoa(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	tests := []struct {
 		ip     int
 		expect any
@@ -243,7 +243,7 @@ func TestInetNtoa(t *testing.T) {
 }
 
 func TestInet6NtoA(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	tests := []struct {
 		ip     []byte
 		expect any
@@ -281,7 +281,7 @@ func TestInet6NtoA(t *testing.T) {
 }
 
 func TestInet6AtoN(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	tests := []struct {
 		ip     string
 		expect any
@@ -319,7 +319,7 @@ func TestInet6AtoN(t *testing.T) {
 }
 
 func TestIsIPv4Mapped(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	tests := []struct {
 		ip     []byte
 		expect any
@@ -348,7 +348,7 @@ func TestIsIPv4Mapped(t *testing.T) {
 }
 
 func TestIsIPv4Compat(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	tests := []struct {
 		ip     []byte
 		expect any
@@ -378,7 +378,7 @@ func TestIsIPv4Compat(t *testing.T) {
 }
 
 func TestNameConst(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	dec := types.NewDecFromFloatForTest(123.123)
 	tm := types.NewTime(types.FromGoTime(time.Now()), mysql.TypeDatetime, 6)
 	du := types.Duration{Duration: 12*time.Hour + 1*time.Minute + 1*time.Second, Fsp: types.DefaultFsp}
@@ -421,7 +421,7 @@ func TestNameConst(t *testing.T) {
 }
 
 func TestUUIDToBin(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	tests := []struct {
 		args       []any
 		expect     any
@@ -520,7 +520,7 @@ func TestUUIDToBin(t *testing.T) {
 }
 
 func TestBinToUUID(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	tests := []struct {
 		args       []any
 		expect     string
@@ -591,7 +591,7 @@ func TestBinToUUID(t *testing.T) {
 }
 
 func TestTidbShard(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 
 	fc := funcs[ast.TiDBShard]
 

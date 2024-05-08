@@ -30,7 +30,7 @@ import (
 )
 
 func TestBitCount(t *testing.T) {
-	ctx := mockStmtIgnoreTruncateExprCtx(t)
+	ctx := mockStmtIgnoreTruncateExprCtx()
 	fc := funcs[ast.BitCount]
 	var bitCountCases = []struct {
 		origin any
@@ -69,7 +69,7 @@ func TestBitCount(t *testing.T) {
 }
 
 func TestRowFunc(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	fc := funcs[ast.RowFunc]
 	_, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums([]any{"1", 1.2, true, 120}...)))
 	require.NoError(t, err)
@@ -278,7 +278,7 @@ func TestSetVarFromColumn(t *testing.T) {
 }
 
 func TestInFunc(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	fc := funcs[ast.In]
 	decimal1 := types.NewDecFromFloatForTest(123.121)
 	decimal2 := types.NewDecFromFloatForTest(123.122)

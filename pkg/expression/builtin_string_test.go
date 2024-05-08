@@ -58,7 +58,7 @@ func TestLengthAndOctetLength(t *testing.T) {
 	lengthMethods := []string{ast.Length, ast.OctetLength}
 	for _, lengthMethod := range lengthMethods {
 		for _, c := range cases {
-			ctx := mockStmtTruncateAsWarningExprCtx(t)
+			ctx := mockStmtTruncateAsWarningExprCtx()
 			f, err := newFunctionForTest(ctx, lengthMethod, primitiveValsToConstants(ctx, []any{c.args})...)
 			require.NoError(t, err)
 			d, err := f.Eval(ctx.GetEvalCtx(), chunk.Row{})
@@ -75,7 +75,7 @@ func TestLengthAndOctetLength(t *testing.T) {
 		}
 	}
 
-	_, err := funcs[ast.Length].getFunction(mockStmtTruncateAsWarningExprCtx(t), []Expression{NewZero()})
+	_, err := funcs[ast.Length].getFunction(mockStmtTruncateAsWarningExprCtx(), []Expression{NewZero()})
 	require.NoError(t, err)
 
 	// Test GBK String
@@ -122,7 +122,7 @@ func TestASCII(t *testing.T) {
 		{"你好", 228, false, false},
 	}
 	for _, c := range cases {
-		ctx := mockStmtTruncateAsWarningExprCtx(t)
+		ctx := mockStmtTruncateAsWarningExprCtx()
 		f, err := newFunctionForTest(ctx, ast.ASCII, primitiveValsToConstants(ctx, []any{c.args})...)
 		require.NoError(t, err)
 
@@ -138,7 +138,7 @@ func TestASCII(t *testing.T) {
 			}
 		}
 	}
-	_, err := funcs[ast.Length].getFunction(mockStmtTruncateAsWarningExprCtx(t), []Expression{NewZero()})
+	_, err := funcs[ast.Length].getFunction(mockStmtTruncateAsWarningExprCtx(), []Expression{NewZero()})
 	require.NoError(t, err)
 
 	// Test GBK String
@@ -167,7 +167,7 @@ func TestASCII(t *testing.T) {
 }
 
 func TestConcat(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	cases := []struct {
 		args    []any
 		isNil   bool
@@ -223,7 +223,7 @@ func TestConcat(t *testing.T) {
 }
 
 func TestConcatSig(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	colTypes := []*types.FieldType{
 		types.NewFieldType(mysql.TypeVarchar),
 		types.NewFieldType(mysql.TypeVarchar),
@@ -271,7 +271,7 @@ func TestConcatSig(t *testing.T) {
 }
 
 func TestConcatWS(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	cases := []struct {
 		args     []any
 		isNil    bool
@@ -343,7 +343,7 @@ func TestConcatWS(t *testing.T) {
 }
 
 func TestConcatWSSig(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	colTypes := []*types.FieldType{
 		types.NewFieldType(mysql.TypeVarchar),
 		types.NewFieldType(mysql.TypeVarchar),
@@ -393,7 +393,7 @@ func TestConcatWSSig(t *testing.T) {
 }
 
 func TestLeft(t *testing.T) {
-	ctx := mockStmtIgnoreTruncateExprCtx(t)
+	ctx := mockStmtIgnoreTruncateExprCtx()
 	cases := []struct {
 		args   []any
 		isNil  bool
@@ -436,7 +436,7 @@ func TestLeft(t *testing.T) {
 }
 
 func TestRight(t *testing.T) {
-	ctx := mockStmtIgnoreTruncateExprCtx(t)
+	ctx := mockStmtIgnoreTruncateExprCtx()
 	cases := []struct {
 		args   []any
 		isNil  bool
@@ -492,7 +492,7 @@ func TestRepeat(t *testing.T) {
 		{[]any{"a", uint64(0)}, false, ""},
 	}
 
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	fc := funcs[ast.Repeat]
 	for _, c := range cases {
 		f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(c.args...)))
@@ -508,7 +508,7 @@ func TestRepeat(t *testing.T) {
 }
 
 func TestRepeatSig(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	colTypes := []*types.FieldType{
 		types.NewFieldType(mysql.TypeVarchar),
 		types.NewFieldType(mysql.TypeLonglong),
@@ -572,7 +572,7 @@ func TestLower(t *testing.T) {
 	}
 
 	for _, c := range cases {
-		ctx := mockStmtTruncateAsWarningExprCtx(t)
+		ctx := mockStmtTruncateAsWarningExprCtx()
 		f, err := newFunctionForTest(ctx, ast.Lower, primitiveValsToConstants(ctx, c.args)...)
 		require.NoError(t, err)
 		v, err := f.Eval(ctx.GetEvalCtx(), chunk.Row{})
@@ -588,7 +588,7 @@ func TestLower(t *testing.T) {
 		}
 	}
 
-	_, err := funcs[ast.Lower].getFunction(mockStmtTruncateAsWarningExprCtx(t), []Expression{getVarcharCon()})
+	_, err := funcs[ast.Lower].getFunction(mockStmtTruncateAsWarningExprCtx(), []Expression{getVarcharCon()})
 	require.NoError(t, err)
 
 	// Test GBK String
@@ -631,7 +631,7 @@ func TestUpper(t *testing.T) {
 	}
 
 	for _, c := range cases {
-		ctx := mockStmtTruncateAsWarningExprCtx(t)
+		ctx := mockStmtTruncateAsWarningExprCtx()
 		f, err := newFunctionForTest(ctx, ast.Upper, primitiveValsToConstants(ctx, c.args)...)
 		require.NoError(t, err)
 		v, err := f.Eval(ctx.GetEvalCtx(), chunk.Row{})
@@ -647,7 +647,7 @@ func TestUpper(t *testing.T) {
 		}
 	}
 
-	_, err := funcs[ast.Upper].getFunction(mockStmtTruncateAsWarningExprCtx(t), []Expression{getVarcharCon()})
+	_, err := funcs[ast.Upper].getFunction(mockStmtTruncateAsWarningExprCtx(), []Expression{getVarcharCon()})
 	require.NoError(t, err)
 
 	// Test GBK String
@@ -675,7 +675,7 @@ func TestUpper(t *testing.T) {
 }
 
 func TestReverse(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	fc := funcs[ast.Reverse]
 	f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(nil)))
 	require.NoError(t, err)
@@ -706,7 +706,7 @@ func TestReverse(t *testing.T) {
 }
 
 func TestStrcmp(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	cases := []struct {
 		args   []any
 		isNil  bool
@@ -747,7 +747,7 @@ func TestStrcmp(t *testing.T) {
 }
 
 func TestReplace(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	cases := []struct {
 		args   []any
 		isNil  bool
@@ -788,7 +788,7 @@ func TestReplace(t *testing.T) {
 }
 
 func TestSubstring(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	cases := []struct {
 		args   []any
 		isNil  bool
@@ -836,7 +836,7 @@ func TestSubstring(t *testing.T) {
 }
 
 func TestConvert(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	tbl := []struct {
 		str           any
 		cs            string
@@ -897,7 +897,7 @@ func TestConvert(t *testing.T) {
 }
 
 func TestSubstringIndex(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	cases := []struct {
 		args   []any
 		isNil  bool
@@ -944,7 +944,7 @@ func TestSubstringIndex(t *testing.T) {
 }
 
 func TestSpace(t *testing.T) {
-	ctx := mockStmtIgnoreTruncateExprCtx(t)
+	ctx := mockStmtIgnoreTruncateExprCtx()
 	cases := []struct {
 		arg    any
 		isNil  bool
@@ -983,7 +983,7 @@ func TestSpace(t *testing.T) {
 }
 
 func TestSpaceSig(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	colTypes := []*types.FieldType{
 		types.NewFieldType(mysql.TypeLonglong),
 	}
@@ -1013,7 +1013,7 @@ func TestSpaceSig(t *testing.T) {
 }
 
 func TestLocate(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	// 1. Test LOCATE without binary input.
 	tbl := []struct {
 		Args []any
@@ -1085,7 +1085,7 @@ func TestLocate(t *testing.T) {
 }
 
 func TestTrim(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	cases := []struct {
 		args   []any
 		isNil  bool
@@ -1137,7 +1137,7 @@ func TestTrim(t *testing.T) {
 }
 
 func TestLTrim(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	cases := []struct {
 		arg    any
 		isNil  bool
@@ -1179,7 +1179,7 @@ func TestLTrim(t *testing.T) {
 }
 
 func TestRTrim(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	cases := []struct {
 		arg    any
 		isNil  bool
@@ -1239,7 +1239,7 @@ func TestHexFunc(t *testing.T) {
 		{errors.New("must err"), false, true, ""},
 	}
 	for _, c := range cases {
-		ctx := mockStmtTruncateAsWarningExprCtx(t)
+		ctx := mockStmtTruncateAsWarningExprCtx()
 		f, err := newFunctionForTest(ctx, ast.Hex, primitiveValsToConstants(ctx, []any{c.arg})...)
 		require.NoError(t, err)
 		d, err := f.Eval(ctx.GetEvalCtx(), chunk.Row{})
@@ -1282,7 +1282,7 @@ func TestHexFunc(t *testing.T) {
 		}
 	}
 
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	_, err := funcs[ast.Hex].getFunction(ctx, []Expression{getInt8Con()})
 	require.NoError(t, err)
 
@@ -1291,7 +1291,7 @@ func TestHexFunc(t *testing.T) {
 }
 
 func TestUnhexFunc(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	cases := []struct {
 		arg    any
 		isNil  bool
@@ -1367,13 +1367,13 @@ func TestBitLength(t *testing.T) {
 		}
 	}
 
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	_, err := funcs[ast.BitLength].getFunction(ctx, []Expression{NewZero()})
 	require.NoError(t, err)
 }
 
 func TestChar(t *testing.T) {
-	ctx := mockStmtIgnoreTruncateExprCtx(t)
+	ctx := mockStmtIgnoreTruncateExprCtx()
 	tbl := []struct {
 		str      string
 		iNum     int64
@@ -1421,7 +1421,7 @@ func TestChar(t *testing.T) {
 }
 
 func TestCharLength(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	tbl := []struct {
 		input  any
 		result any
@@ -1470,7 +1470,7 @@ func TestCharLength(t *testing.T) {
 }
 
 func TestFindInSet(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	for _, c := range []struct {
 		str    any
 		strlst any
@@ -1498,7 +1498,7 @@ func TestFindInSet(t *testing.T) {
 }
 
 func TestField(t *testing.T) {
-	ctx := mockStmtIgnoreTruncateExprCtx(t)
+	ctx := mockStmtIgnoreTruncateExprCtx()
 	tbl := []struct {
 		argLst []any
 		ret    any
@@ -1526,7 +1526,7 @@ func TestField(t *testing.T) {
 }
 
 func TestLpad(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	tests := []struct {
 		str    string
 		len    int64
@@ -1566,7 +1566,7 @@ func TestLpad(t *testing.T) {
 }
 
 func TestRpad(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	tests := []struct {
 		str    string
 		len    int64
@@ -1606,7 +1606,7 @@ func TestRpad(t *testing.T) {
 }
 
 func TestRpadSig(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	colTypes := []*types.FieldType{
 		types.NewFieldType(mysql.TypeVarchar),
 		types.NewFieldType(mysql.TypeLonglong),
@@ -1650,7 +1650,7 @@ func TestRpadSig(t *testing.T) {
 }
 
 func TestInsertBinarySig(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	colTypes := []*types.FieldType{
 		types.NewFieldType(mysql.TypeVarchar),
 		types.NewFieldType(mysql.TypeLonglong),
@@ -1743,7 +1743,7 @@ func TestInsertBinarySig(t *testing.T) {
 }
 
 func TestInstr(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	tbl := []struct {
 		Args []any
 		Want any
@@ -1788,7 +1788,7 @@ func TestInstr(t *testing.T) {
 }
 
 func TestLoadFile(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	cases := []struct {
 		arg    any
 		isNil  bool
@@ -1820,7 +1820,7 @@ func TestLoadFile(t *testing.T) {
 }
 
 func TestMakeSet(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	tbl := []struct {
 		argList []any
 		ret     any
@@ -1846,7 +1846,7 @@ func TestMakeSet(t *testing.T) {
 }
 
 func TestOct(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	octTests := []struct {
 		origin any
 		ret    string
@@ -1966,7 +1966,7 @@ func TestFormat(t *testing.T) {
 
 	fc := funcs[ast.Format]
 	for _, tt := range formatTests {
-		ctx := mockStmtTruncateAsWarningExprCtx(t)
+		ctx := mockStmtTruncateAsWarningExprCtx()
 		f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(tt.number, tt.precision, tt.locale)))
 		require.NoError(t, err)
 		require.NotNil(t, f)
@@ -1976,7 +1976,7 @@ func TestFormat(t *testing.T) {
 	}
 
 	for _, tt := range formatTests1 {
-		ctx := mockStmtTruncateAsWarningExprCtx(t)
+		ctx := mockStmtTruncateAsWarningExprCtx()
 		f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(tt.number, tt.precision)))
 		require.NoError(t, err)
 		require.NotNil(t, f)
@@ -1992,7 +1992,7 @@ func TestFormat(t *testing.T) {
 		}
 	}
 
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	f2, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(formatTests2.number, formatTests2.precision, formatTests2.locale)))
 	require.NoError(t, err)
 	require.NotNil(t, f2)
@@ -2021,7 +2021,7 @@ func TestFormat(t *testing.T) {
 }
 
 func TestFromBase64(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	tests := []struct {
 		args   any
 		expect any
@@ -2066,7 +2066,7 @@ func TestFromBase64(t *testing.T) {
 }
 
 func TestFromBase64Sig(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	colTypes := []*types.FieldType{
 		types.NewFieldType(mysql.TypeVarchar),
 	}
@@ -2120,7 +2120,7 @@ func TestFromBase64Sig(t *testing.T) {
 }
 
 func TestInsert(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	tests := []struct {
 		args   []any
 		expect any
@@ -2209,12 +2209,12 @@ func TestOrd(t *testing.T) {
 			}
 		}
 	}
-	_, err := funcs[ast.Ord].getFunction(mockStmtTruncateAsWarningExprCtx(t), []Expression{NewZero()})
+	_, err := funcs[ast.Ord].getFunction(mockStmtTruncateAsWarningExprCtx(), []Expression{NewZero()})
 	require.NoError(t, err)
 }
 
 func TestElt(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	tbl := []struct {
 		argLst []any
 		ret    any
@@ -2237,7 +2237,7 @@ func TestElt(t *testing.T) {
 }
 
 func TestExportSet(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	estd := []struct {
 		argLst []any
 		res    string
@@ -2285,7 +2285,7 @@ func TestBin(t *testing.T) {
 	}
 	fc := funcs[ast.Bin]
 	dtbl := tblToDtbl(tbl)
-	ctx := mockStmtIgnoreTruncateExprCtx(t)
+	ctx := mockStmtIgnoreTruncateExprCtx()
 	for _, c := range dtbl {
 		f, err := fc.getFunction(ctx, datumsToConstants(c["Input"]))
 		require.NoError(t, err)
@@ -2297,7 +2297,7 @@ func TestBin(t *testing.T) {
 }
 
 func TestQuote(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	tbl := []struct {
 		arg any
 		ret any
@@ -2375,7 +2375,7 @@ func TestToBase64(t *testing.T) {
 	}
 
 	for _, test := range tests {
-		ctx := mockStmtTruncateAsWarningExprCtx(t)
+		ctx := mockStmtTruncateAsWarningExprCtx()
 		f, err := newFunctionForTest(ctx, ast.ToBase64, primitiveValsToConstants(ctx, []any{test.args})...)
 		require.NoError(t, err)
 		d, err := f.Eval(ctx.GetEvalCtx(), chunk.Row{})
@@ -2391,7 +2391,7 @@ func TestToBase64(t *testing.T) {
 		}
 	}
 
-	_, err := funcs[ast.ToBase64].getFunction(mockStmtTruncateAsWarningExprCtx(t), []Expression{NewZero()})
+	_, err := funcs[ast.ToBase64].getFunction(mockStmtTruncateAsWarningExprCtx(), []Expression{NewZero()})
 	require.NoError(t, err)
 
 	// Test GBK String
@@ -2419,7 +2419,7 @@ func TestToBase64(t *testing.T) {
 }
 
 func TestToBase64Sig(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	colTypes := []*types.FieldType{
 		types.NewFieldType(mysql.TypeVarchar),
 	}
@@ -2488,7 +2488,7 @@ func TestToBase64Sig(t *testing.T) {
 }
 
 func TestStringRight(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	fc := funcs[ast.Right]
 	tests := []struct {
 		str    any
@@ -2520,7 +2520,7 @@ func TestStringRight(t *testing.T) {
 }
 
 func TestWeightString(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	fc := funcs[ast.WeightString]
 	tests := []struct {
 		expr    any
@@ -2597,7 +2597,7 @@ func TestWeightString(t *testing.T) {
 }
 
 func TestTranslate(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	cases := []struct {
 		args  []any
 		isNil bool
@@ -2644,7 +2644,7 @@ func TestTranslate(t *testing.T) {
 }
 
 func TestCIWeightString(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 
 	type weightStringTest struct {
 		str     string

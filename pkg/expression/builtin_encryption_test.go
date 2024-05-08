@@ -59,7 +59,7 @@ var cryptTests = []struct {
 }
 
 func TestSQLDecode(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	for _, tt := range cryptTests {
 		vars := variable.NewSessionVars(nil)
 		require.NoError(t, vars.SetSystemVarWithoutValidation(variable.CharacterSetConnection, tt.chs))
@@ -78,7 +78,7 @@ func TestSQLDecode(t *testing.T) {
 }
 
 func TestSQLEncode(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	for _, test := range cryptTests {
 		vars := variable.NewSessionVars(nil)
 		require.NoError(t, vars.SetSystemVarWithoutValidation(variable.CharacterSetConnection, test.chs))
@@ -146,7 +146,7 @@ var aesTests = []struct {
 }
 
 func TestAESEncrypt(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 
 	fc := funcs[ast.AesEncrypt]
 	for _, tt := range aesTests {
@@ -209,7 +209,7 @@ func TestAESEncrypt(t *testing.T) {
 }
 
 func TestAESDecrypt(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 
 	fc := funcs[ast.AesDecrypt]
 	for _, tt := range aesTests {
@@ -337,7 +337,7 @@ func fromHex(str any) (d types.Datum) {
 }
 
 func TestSha1Hash(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	sha1Tests := []struct {
 		chs    string
 		origin any
@@ -376,7 +376,7 @@ func TestSha1Hash(t *testing.T) {
 }
 
 func TestSha2Hash(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	sha2Tests := []struct {
 		chs        string
 		origin     any
@@ -447,7 +447,7 @@ func TestSha2Hash(t *testing.T) {
 }
 
 func TestMD5Hash(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 
 	cases := []struct {
 		args     any
@@ -513,7 +513,7 @@ func BenchmarkMD5Hash(b *testing.B) {
 }
 
 func TestRandomBytes(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 
 	fc := funcs[ast.RandomBytes]
 	f, err := fc.getFunction(ctx, datumsToConstants([]types.Datum{types.NewDatum(32)}))
@@ -551,7 +551,7 @@ func decodeHex(str string) []byte {
 }
 
 func TestCompress(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	fc := funcs[ast.Compress]
 	tests := []struct {
 		chs    string
@@ -584,7 +584,7 @@ func TestCompress(t *testing.T) {
 }
 
 func TestUncompress(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	tests := []struct {
 		in     any
 		expect any
@@ -619,7 +619,7 @@ func TestUncompress(t *testing.T) {
 }
 
 func TestUncompressLength(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	tests := []struct {
 		in     any
 		expect any
@@ -699,7 +699,7 @@ func TestValidatePasswordStrength(t *testing.T) {
 }
 
 func TestPassword(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	cases := []struct {
 		args     any
 		expected string

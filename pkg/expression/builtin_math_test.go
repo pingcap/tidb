@@ -34,7 +34,7 @@ import (
 )
 
 func TestAbs(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	tbl := []struct {
 		Arg any
 		Ret any
@@ -60,7 +60,7 @@ func TestAbs(t *testing.T) {
 }
 
 func TestCeil(t *testing.T) {
-	ctx := mockStmtIgnoreTruncateExprCtx(t)
+	ctx := mockStmtIgnoreTruncateExprCtx()
 	type testCase struct {
 		arg    any
 		expect any
@@ -118,7 +118,7 @@ func TestCeil(t *testing.T) {
 }
 
 func TestExp(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	tests := []struct {
 		args       any
 		expect     float64
@@ -169,7 +169,7 @@ func TestExp(t *testing.T) {
 }
 
 func TestFloor(t *testing.T) {
-	ctx := mockStmtIgnoreTruncateExprCtx(t)
+	ctx := mockStmtIgnoreTruncateExprCtx()
 	genDuration := func(h, m, s int64) types.Duration {
 		duration := time.Duration(h)*time.Hour +
 			time.Duration(m)*time.Minute +
@@ -232,7 +232,7 @@ func TestFloor(t *testing.T) {
 }
 
 func TestLog(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	tests := []struct {
 		args         []any
 		expect       float64
@@ -275,7 +275,7 @@ func TestLog(t *testing.T) {
 }
 
 func TestLog2(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	tests := []struct {
 		args         any
 		expect       float64
@@ -313,7 +313,7 @@ func TestLog2(t *testing.T) {
 }
 
 func TestLog10(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	tests := []struct {
 		args         any
 		expect       float64
@@ -351,7 +351,7 @@ func TestLog10(t *testing.T) {
 }
 
 func TestRand(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	fc := funcs[ast.Rand]
 	f, err := fc.getFunction(ctx, nil)
 	require.NoError(t, err)
@@ -372,7 +372,7 @@ func TestRand(t *testing.T) {
 }
 
 func TestPow(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	tbl := []struct {
 		Arg []any
 		Ret float64
@@ -419,7 +419,7 @@ func TestPow(t *testing.T) {
 }
 
 func TestRound(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	newDec := types.NewDecFromStringForTest
 	tbl := []struct {
 		Arg []any
@@ -473,7 +473,7 @@ func TestRound(t *testing.T) {
 }
 
 func TestTruncate(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	newDec := types.NewDecFromStringForTest
 	tbl := []struct {
 		Arg []any
@@ -552,7 +552,7 @@ func TestCRC32(t *testing.T) {
 }
 
 func TestConv(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	cases := []struct {
 		args     []any
 		expected any
@@ -616,7 +616,7 @@ func TestConv(t *testing.T) {
 }
 
 func TestSign(t *testing.T) {
-	ctx := mockStmtIgnoreTruncateExprCtx(t)
+	ctx := mockStmtIgnoreTruncateExprCtx()
 	for _, tt := range []struct {
 		num []any
 		ret any
@@ -644,7 +644,7 @@ func TestSign(t *testing.T) {
 }
 
 func TestDegrees(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	cases := []struct {
 		args       any
 		expected   float64
@@ -685,7 +685,7 @@ func TestDegrees(t *testing.T) {
 }
 
 func TestSqrt(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	tbl := []struct {
 		Arg []any
 		Ret any
@@ -709,7 +709,7 @@ func TestSqrt(t *testing.T) {
 }
 
 func TestPi(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	f, err := funcs[ast.PI].getFunction(ctx, nil)
 	require.NoError(t, err)
 
@@ -719,7 +719,7 @@ func TestPi(t *testing.T) {
 }
 
 func TestRadians(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	tbl := []struct {
 		Arg any
 		Ret any
@@ -752,7 +752,7 @@ func TestRadians(t *testing.T) {
 }
 
 func TestSin(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	cases := []struct {
 		args       any
 		expected   float64
@@ -796,7 +796,7 @@ func TestSin(t *testing.T) {
 }
 
 func TestCos(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	cases := []struct {
 		args       any
 		expected   float64
@@ -837,7 +837,7 @@ func TestCos(t *testing.T) {
 }
 
 func TestAcos(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	tests := []struct {
 		args       any
 		expect     float64
@@ -876,7 +876,7 @@ func TestAcos(t *testing.T) {
 }
 
 func TestAsin(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	tests := []struct {
 		args       any
 		expect     float64
@@ -915,7 +915,7 @@ func TestAsin(t *testing.T) {
 }
 
 func TestAtan(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	tests := []struct {
 		args       []any
 		expect     float64
@@ -954,7 +954,7 @@ func TestAtan(t *testing.T) {
 }
 
 func TestTan(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	cases := []struct {
 		args       any
 		expected   float64
@@ -994,7 +994,7 @@ func TestTan(t *testing.T) {
 }
 
 func TestCot(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	tests := []struct {
 		args   any
 		expect float64

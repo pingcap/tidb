@@ -29,7 +29,7 @@ import (
 )
 
 func TestPBToExpr(t *testing.T) {
-	ctx := mockStmtExprCtx(t)
+	ctx := mockStmtExprCtx()
 	fieldTps := make([]*types.FieldType, 1)
 	ds := []types.Datum{types.NewIntDatum(1), types.NewUintDatum(1), types.NewFloat64Datum(1),
 		types.NewDecimalDatum(newMyDecimal(t, "1")), types.NewDurationDatum(newDuration(time.Second))}
@@ -777,7 +777,7 @@ func TestEval(t *testing.T) {
 			types.NewIntDatum(1),
 		},
 	}
-	ctx := mockStmtExprCtx(t)
+	ctx := mockStmtExprCtx()
 	for _, tt := range tests {
 		expr, err := PBToExpr(ctx, tt.expr, fieldTps)
 		require.NoError(t, err)
@@ -792,7 +792,7 @@ func TestEval(t *testing.T) {
 
 func TestPBToExprWithNewCollation(t *testing.T) {
 	collate.SetNewCollationEnabledForTest(false)
-	ctx := mockStmtExprCtx(t)
+	ctx := mockStmtExprCtx()
 	fieldTps := make([]*types.FieldType, 1)
 
 	cases := []struct {
@@ -847,7 +847,7 @@ func TestPBToExprWithNewCollation(t *testing.T) {
 
 // Test convert various scalar functions.
 func TestPBToScalarFuncExpr(t *testing.T) {
-	ctx := mockStmtExprCtx(t)
+	ctx := mockStmtExprCtx()
 	fieldTps := make([]*types.FieldType, 1)
 	exprs := []*tipb.Expr{
 		{

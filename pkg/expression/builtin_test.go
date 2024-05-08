@@ -126,7 +126,7 @@ func makeDatums(i any) []types.Datum {
 }
 
 func TestIsNullFunc(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	fc := funcs[ast.IsNull]
 	f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(1)))
 	require.NoError(t, err)
@@ -164,7 +164,7 @@ func (mockAdvisoryLock) ReleaseAllAdvisoryLocks() int {
 }
 
 func TestLock(t *testing.T) {
-	ctx := mockStmtIgnoreTruncateExprCtx(t, contextstatic.WithOptionalProperty(
+	ctx := mockStmtIgnoreTruncateExprCtx(contextstatic.WithOptionalProperty(
 		contextopt.NewAdvisoryLockPropProvider(mockAdvisoryLock{}),
 	))
 	lock := funcs[ast.GetLock]

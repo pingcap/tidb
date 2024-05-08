@@ -28,7 +28,7 @@ import (
 )
 
 func TestUnary(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	cases := []struct {
 		args     any
 		expected any
@@ -62,7 +62,7 @@ func TestUnary(t *testing.T) {
 }
 
 func TestLogicAnd(t *testing.T) {
-	ctx := mockStmtIgnoreTruncateExprCtx(t)
+	ctx := mockStmtIgnoreTruncateExprCtx()
 	cases := []struct {
 		args     []any
 		expected int64
@@ -118,7 +118,7 @@ func TestLogicAnd(t *testing.T) {
 }
 
 func TestLeftShift(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	cases := []struct {
 		args     []any
 		expected uint64
@@ -150,7 +150,7 @@ func TestLeftShift(t *testing.T) {
 }
 
 func TestRightShift(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	cases := []struct {
 		args     []any
 		expected uint64
@@ -189,7 +189,7 @@ func TestRightShift(t *testing.T) {
 }
 
 func TestBitXor(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	cases := []struct {
 		args     []any
 		expected uint64
@@ -228,7 +228,7 @@ func TestBitXor(t *testing.T) {
 }
 
 func TestBitOr(t *testing.T) {
-	ctx := mockStmtIgnoreTruncateExprCtx(t)
+	ctx := mockStmtIgnoreTruncateExprCtx()
 	cases := []struct {
 		args     []any
 		expected uint64
@@ -267,7 +267,7 @@ func TestBitOr(t *testing.T) {
 }
 
 func TestLogicOr(t *testing.T) {
-	ctx := mockStmtIgnoreTruncateExprCtx(t)
+	ctx := mockStmtIgnoreTruncateExprCtx()
 	cases := []struct {
 		args     []any
 		expected int64
@@ -327,7 +327,7 @@ func TestLogicOr(t *testing.T) {
 }
 
 func TestBitAnd(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	cases := []struct {
 		args     []any
 		expected int64
@@ -366,7 +366,7 @@ func TestBitAnd(t *testing.T) {
 }
 
 func TestBitNeg(t *testing.T) {
-	ctx := mockStmtIgnoreTruncateExprCtx(t)
+	ctx := mockStmtIgnoreTruncateExprCtx()
 	cases := []struct {
 		args     []any
 		expected uint64
@@ -405,7 +405,7 @@ func TestBitNeg(t *testing.T) {
 }
 
 func TestUnaryNot(t *testing.T) {
-	ctx := mockStmtIgnoreTruncateExprCtx(t)
+	ctx := mockStmtIgnoreTruncateExprCtx()
 	cases := []struct {
 		args     []any
 		expected int64
@@ -452,7 +452,7 @@ func TestUnaryNot(t *testing.T) {
 }
 
 func TestIsTrueOrFalse(t *testing.T) {
-	ctx := mockStmtIgnoreTruncateExprCtx(t)
+	ctx := mockStmtIgnoreTruncateExprCtx()
 	testCases := []struct {
 		args    []any
 		isTrue  any
@@ -552,7 +552,7 @@ func TestIsTrueOrFalse(t *testing.T) {
 }
 
 func TestLogicXor(t *testing.T) {
-	ctx := mockStmtIgnoreTruncateExprCtx(t)
+	ctx := mockStmtIgnoreTruncateExprCtx()
 	cases := []struct {
 		args     []any
 		expected int64

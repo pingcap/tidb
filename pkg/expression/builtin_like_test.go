@@ -28,7 +28,7 @@ import (
 )
 
 func TestLike(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	tests := []struct {
 		input   string
 		pattern string
@@ -62,7 +62,7 @@ func TestLike(t *testing.T) {
 }
 
 func TestRegexp(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	tests := []struct {
 		pattern string
 		input   string
@@ -98,7 +98,7 @@ func TestRegexp(t *testing.T) {
 }
 
 func TestCILike(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	tests := []struct {
 		input            string
 		pattern          string

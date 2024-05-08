@@ -54,7 +54,7 @@ func TestConstant2Pb(t *testing.T) {
 	t.Skip("constant pb has changed")
 	var constExprs []Expression
 	vars := variable.NewSessionVars(nil)
-	ctx := mockExprCtx(t)
+	ctx := mockExprCtx()
 	client := mockClient{}
 	pushDownCtx := NewPushDownContextFromSessionVars(ctx.GetEvalCtx(), vars, client)
 
@@ -138,7 +138,7 @@ func TestConstant2Pb(t *testing.T) {
 
 func TestColumn2Pb(t *testing.T) {
 	var colExprs []Expression
-	ctx := mockExprCtx(t)
+	ctx := mockExprCtx()
 	client := mockClient{}
 	pushDownCtx := NewPushDownContextFromSessionVars(ctx.GetEvalCtx(), variable.NewSessionVars(nil), client)
 
@@ -231,7 +231,7 @@ func TestColumn2Pb(t *testing.T) {
 
 func TestCompareFunc2Pb(t *testing.T) {
 	var compareExprs = make([]Expression, 0)
-	ctx := mockExprCtx(t)
+	ctx := mockExprCtx()
 	client := mockClient{}
 	pushDownCtx := NewPushDownContextFromSessionVars(ctx.GetEvalCtx(), variable.NewSessionVars(nil), client)
 
@@ -268,7 +268,7 @@ func TestCompareFunc2Pb(t *testing.T) {
 
 func TestLikeFunc2Pb(t *testing.T) {
 	var likeFuncs []Expression
-	ctx := mockExprCtx(t)
+	ctx := mockExprCtx()
 	client := mockClient{}
 
 	retTp := types.NewFieldType(mysql.TypeString)
@@ -305,7 +305,7 @@ func TestLikeFunc2Pb(t *testing.T) {
 
 func TestArithmeticalFunc2Pb(t *testing.T) {
 	var arithmeticalFuncs = make([]Expression, 0)
-	ctx := mockStmtExprCtx(t)
+	ctx := mockStmtExprCtx()
 	client := mockClient{}
 
 	funcNames := []string{ast.Plus, ast.Minus, ast.Mul, ast.Div}
@@ -353,7 +353,7 @@ func TestArithmeticalFunc2Pb(t *testing.T) {
 }
 
 func TestDateFunc2Pb(t *testing.T) {
-	ctx := mockStmtExprCtx(t)
+	ctx := mockStmtExprCtx()
 	client := mockClient{}
 
 	fc, err := NewFunction(
@@ -374,7 +374,7 @@ func TestDateFunc2Pb(t *testing.T) {
 
 func TestLogicalFunc2Pb(t *testing.T) {
 	var logicalFuncs = make([]Expression, 0)
-	ctx := mockStmtExprCtx(t)
+	ctx := mockStmtExprCtx()
 	client := mockClient{}
 
 	funcNames := []string{ast.LogicAnd, ast.LogicOr, ast.LogicXor, ast.UnaryNot}
@@ -410,7 +410,7 @@ func TestLogicalFunc2Pb(t *testing.T) {
 
 func TestBitwiseFunc2Pb(t *testing.T) {
 	var bitwiseFuncs = make([]Expression, 0)
-	ctx := mockStmtExprCtx(t)
+	ctx := mockStmtExprCtx()
 	client := mockClient{}
 
 	funcNames := []string{ast.And, ast.Or, ast.Xor, ast.LeftShift, ast.RightShift, ast.BitNeg}
@@ -448,7 +448,7 @@ func TestBitwiseFunc2Pb(t *testing.T) {
 
 func TestControlFunc2Pb(t *testing.T) {
 	var controlFuncs = make([]Expression, 0)
-	ctx := mockStmtExprCtx(t)
+	ctx := mockStmtExprCtx()
 	client := mockClient{}
 
 	funcNames := []string{
@@ -494,7 +494,7 @@ func TestOtherFunc2Pb(t *testing.T) {
 	funcNames := []string{ast.Coalesce, ast.IsNull}
 	for _, funcName := range funcNames {
 		fc, err := NewFunction(
-			mockStmtExprCtx(t),
+			mockStmtExprCtx(),
 			funcName,
 			types.NewFieldType(mysql.TypeUnspecified),
 			genColumn(mysql.TypeLong, 1),
@@ -503,7 +503,7 @@ func TestOtherFunc2Pb(t *testing.T) {
 		otherFuncs = append(otherFuncs, fc)
 	}
 
-	pbExprs, err := ExpressionsToPBList(mockExprCtx(t).GetEvalCtx(), otherFuncs, client)
+	pbExprs, err := ExpressionsToPBList(mockExprCtx().GetEvalCtx(), otherFuncs, client)
 	require.NoError(t, err)
 	jsons := map[string]string{
 		ast.Coalesce: "{\"tp\":10000,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0,\"field_type\":{\"tp\":3,\"flag\":0,\"flen\":11,\"decimal\":0,\"collate\":-63,\"charset\":\"binary\",\"array\":false},\"has_distinct\":false}],\"sig\":4201,\"field_type\":{\"tp\":3,\"flag\":0,\"flen\":11,\"decimal\":0,\"collate\":-63,\"charset\":\"binary\",\"array\":false},\"has_distinct\":false}",
@@ -517,7 +517,7 @@ func TestOtherFunc2Pb(t *testing.T) {
 }
 
 func TestExprPushDownToFlash(t *testing.T) {
-	ctx := mockStmtExprCtx(t)
+	ctx := mockStmtExprCtx()
 	client := mockClient{}
 	pushDownCtx := NewPushDownContextFromSessionVars(ctx.GetEvalCtx(), variable.NewSessionVars(nil), client)
 
@@ -1399,7 +1399,7 @@ func TestExprOnlyPushDownToFlash(t *testing.T) {
 	t.Skip("Skip this unstable test temporarily and bring it back before 2021-07-26")
 	client := mockClient{}
 
-	ctx := mockStmtExprCtx(t)
+	ctx := mockStmtExprCtx()
 	exprs := make([]Expression, 0)
 
 	//jsonColumn := genColumn(mysql.TypeJSON, 1)
@@ -1455,7 +1455,7 @@ func TestExprOnlyPushDownToFlash(t *testing.T) {
 }
 
 func TestExprPushDownToTiKV(t *testing.T) {
-	ctx := mockStmtExprCtx(t)
+	ctx := mockStmtExprCtx()
 	client := mockClient{}
 
 	exprs := make([]Expression, 0)
@@ -1680,7 +1680,7 @@ func TestExprPushDownToTiKV(t *testing.T) {
 }
 
 func TestExprOnlyPushDownToTiKV(t *testing.T) {
-	ctx := mockExprCtx(t)
+	ctx := mockExprCtx()
 	client := mockClient{}
 	pushDownCtx := NewPushDownContextFromSessionVars(ctx.GetEvalCtx(), variable.NewSessionVars(nil), client)
 
@@ -1707,7 +1707,7 @@ func TestExprOnlyPushDownToTiKV(t *testing.T) {
 }
 
 func TestGroupByItem2Pb(t *testing.T) {
-	ctx := mockExprCtx(t)
+	ctx := mockExprCtx()
 	client := mockClient{}
 
 	item := genColumn(mysql.TypeDouble, 0)
@@ -1724,7 +1724,7 @@ func TestGroupByItem2Pb(t *testing.T) {
 }
 
 func TestSortByItem2Pb(t *testing.T) {
-	ctx := mockExprCtx(t)
+	ctx := mockExprCtx()
 	client := mockClient{}
 
 	item := genColumn(mysql.TypeDouble, 0)
@@ -1747,7 +1747,7 @@ func TestSortByItem2Pb(t *testing.T) {
 }
 
 func TestPushCollationDown(t *testing.T) {
-	ctx := mockExprCtx(t)
+	ctx := mockExprCtx()
 	fc, err := NewFunction(ctx, ast.EQ, types.NewFieldType(mysql.TypeUnspecified), genColumn(mysql.TypeVarchar, 0), genColumn(mysql.TypeVarchar, 1))
 	require.NoError(t, err)
 	client := mockClient{}
@@ -1772,7 +1772,7 @@ func columnCollation(c *Column, chs, coll string) *Column {
 
 func TestNewCollationsEnabled(t *testing.T) {
 	var colExprs []Expression
-	ctx := mockExprCtx(t)
+	ctx := mockExprCtx()
 	client := mockClient{}
 	pushDownCtx := NewPushDownContextFromSessionVars(ctx.GetEvalCtx(), variable.NewSessionVars(nil), client)
 
@@ -1812,7 +1812,7 @@ func TestNewCollationsEnabled(t *testing.T) {
 }
 
 func TestMetadata(t *testing.T) {
-	ctx := mockExprCtx(t)
+	ctx := mockExprCtx()
 	client := mockClient{}
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/expression/PushDownTestSwitcher", `return("all")`))
@@ -1854,7 +1854,7 @@ func TestMetadata(t *testing.T) {
 
 func TestPushDownSwitcher(t *testing.T) {
 	var funcs = make([]Expression, 0)
-	ctx := mockExprCtx(t)
+	ctx := mockExprCtx()
 	client := mockClient{}
 
 	cases := []struct {
@@ -1920,7 +1920,7 @@ func TestPushDownSwitcher(t *testing.T) {
 
 func TestPanicIfPbCodeUnspecified(t *testing.T) {
 	args := []Expression{genColumn(mysql.TypeLong, 1), genColumn(mysql.TypeLong, 2)}
-	ctx := mockStmtExprCtx(t)
+	ctx := mockStmtExprCtx()
 	fc, err := NewFunction(
 		ctx,
 		ast.And,
@@ -1942,7 +1942,7 @@ func TestPanicIfPbCodeUnspecified(t *testing.T) {
 
 func TestProjectionColumn2Pb(t *testing.T) {
 	var colExprs []Expression
-	ctx := mockExprCtx(t)
+	ctx := mockExprCtx()
 	client := mockClient{}
 
 	colExprs = append(colExprs, genColumn(mysql.TypeSet, 1))

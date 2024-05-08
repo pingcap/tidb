@@ -54,7 +54,7 @@ func createGroupingFunc(args []Expression) (*BuiltinGroupingImplSig, error) {
 }
 
 func TestGrouping(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	tests := []struct {
 		groupingID   uint64
 		mode         tipb.GroupingMode

@@ -182,7 +182,7 @@ func TestConstantPropagation(t *testing.T) {
 	}
 	for _, tt := range tests {
 		for _, solver := range tt.solver {
-			ctx := mockStmtExprCtx(t)
+			ctx := mockStmtExprCtx()
 			conds := make([]Expression, 0, len(tt.conditions))
 			for _, cd := range tt.conditions {
 				conds = append(conds, FoldConstant(ctx, cd))
@@ -250,7 +250,7 @@ func TestConstantFolding(t *testing.T) {
 		},
 	}
 	for _, tt := range tests {
-		var ctx exprctx.ExprContext = mockStmtExprCtx(t)
+		var ctx exprctx.ExprContext = mockStmtExprCtx()
 		require.False(t, ctx.IsInNullRejectCheck())
 		expr := tt.condition(ctx)
 		if tt.nullRejectCheck {
@@ -263,7 +263,7 @@ func TestConstantFolding(t *testing.T) {
 }
 
 func TestConstantFoldingCharsetConvert(t *testing.T) {
-	ctx := mockStmtExprCtx(t)
+	ctx := mockStmtExprCtx()
 	tests := []struct {
 		condition Expression
 		result    string
@@ -325,7 +325,7 @@ func TestConstantFoldingCharsetConvert(t *testing.T) {
 }
 
 func TestDeferredParamNotNull(t *testing.T) {
-	ctx := mockStmtExprCtx(t)
+	ctx := mockStmtExprCtx()
 	vars := contextopt.SessionVarsAsProvider(variable.NewSessionVars(nil))
 	testTime := time.Now()
 	vars.GetSessionVars().PlanCacheParams.Append(
@@ -394,7 +394,7 @@ func TestDeferredParamNotNull(t *testing.T) {
 
 func TestDeferredExprNotNull(t *testing.T) {
 	m := &MockExpr{}
-	ctx := mockStmtExprCtx(t)
+	ctx := mockStmtExprCtx()
 	cst := &Constant{DeferredExpr: m, RetType: newIntFieldType()}
 	m.i, m.err = nil, fmt.Errorf("ERROR")
 	_, _, err := cst.EvalInt(ctx.GetEvalCtx(), chunk.Row{})
@@ -477,7 +477,7 @@ func TestVectorizedConstant(t *testing.T) {
 			chk.AppendInt64(0, int64(i))
 		}
 		col := chunk.NewColumn(newIntFieldType(), 1024)
-		ctx := mockStmtExprCtx(t)
+		ctx := mockStmtExprCtx()
 		require.Nil(t, cst.VecEvalInt(ctx.GetEvalCtx(), chk, col))
 		i64s := col.Int64s()
 		require.Equal(t, 1024, len(i64s))
@@ -506,7 +506,7 @@ func TestVectorizedConstant(t *testing.T) {
 		cst = &Constant{DeferredExpr: nil, RetType: newStringFieldType(), Value: types.NewStringDatum("hello")}
 		chk.SetSel(nil)
 		col := chunk.NewColumn(newStringFieldType(), 1024)
-		ctx := mockStmtExprCtx(t)
+		ctx := mockStmtExprCtx()
 		require.Nil(t, cst.VecEvalString(ctx.GetEvalCtx(), chk, col))
 		for i := 0; i < 1024; i++ {
 			require.Equal(t, "hello", col.GetString(i))

@@ -28,7 +28,7 @@ import (
 )
 
 func TestJSONType(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	fc := funcs[ast.JSONType]
 	tbl := []struct {
 		Input    any
@@ -53,7 +53,7 @@ func TestJSONType(t *testing.T) {
 }
 
 func TestJSONQuote(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	fc := funcs[ast.JSONQuote]
 	tbl := []struct {
 		Input    any
@@ -82,7 +82,7 @@ func TestJSONQuote(t *testing.T) {
 }
 
 func TestJSONUnquote(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	fc := funcs[ast.JSONUnquote]
 	tbl := []struct {
 		Input  string
@@ -122,7 +122,7 @@ func TestJSONUnquote(t *testing.T) {
 }
 
 func TestJSONExtract(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	fc := funcs[ast.JSONExtract]
 	jstr := `{"a": [{"aa": [{"aaa": 1}]}], "aaa": 2}`
 	tbl := []struct {
@@ -160,7 +160,7 @@ func TestJSONExtract(t *testing.T) {
 
 // TestJSONSetInsertReplace tests grammar of json_{set,insert,replace}.
 func TestJSONSetInsertReplace(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	tbl := []struct {
 		fc           functionClass
 		Input        []any
@@ -206,7 +206,7 @@ func TestJSONSetInsertReplace(t *testing.T) {
 }
 
 func TestJSONMerge(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	fc := funcs[ast.JSONMerge]
 	tbl := []struct {
 		Input    []any
@@ -237,7 +237,7 @@ func TestJSONMerge(t *testing.T) {
 }
 
 func TestJSONMergePreserve(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	fc := funcs[ast.JSONMergePreserve]
 	tbl := []struct {
 		Input    []any
@@ -268,7 +268,7 @@ func TestJSONMergePreserve(t *testing.T) {
 }
 
 func TestJSONArray(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	fc := funcs[ast.JSONArray]
 	tbl := []struct {
 		Input    []any
@@ -293,7 +293,7 @@ func TestJSONArray(t *testing.T) {
 }
 
 func TestJSONObject(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	fc := funcs[ast.JSONObject]
 	tbl := []struct {
 		Input        []any
@@ -337,7 +337,7 @@ func TestJSONObject(t *testing.T) {
 }
 
 func TestJSONRemove(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	fc := funcs[ast.JSONRemove]
 	tbl := []struct {
 		Input    []any
@@ -387,7 +387,7 @@ func TestJSONRemove(t *testing.T) {
 }
 
 func TestJSONMemberOf(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	fc := funcs[ast.JSONMemberOf]
 	tbl := []struct {
 		input    []any
@@ -428,7 +428,7 @@ func TestJSONMemberOf(t *testing.T) {
 }
 
 func TestJSONContains(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	fc := funcs[ast.JSONContains]
 	tbl := []struct {
 		input    []any
@@ -508,7 +508,7 @@ func TestJSONContains(t *testing.T) {
 }
 
 func TestJSONOverlaps(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	fc := funcs[ast.JSONOverlaps]
 	tbl := []struct {
 		input    []any
@@ -573,7 +573,7 @@ func TestJSONOverlaps(t *testing.T) {
 }
 
 func TestJSONContainsPath(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	fc := funcs[ast.JSONContainsPath]
 	jsonString := `{"a": 1, "b": 2, "c": {"d": 4}}`
 	invalidJSON := `{"a": 1`
@@ -632,7 +632,7 @@ func TestJSONContainsPath(t *testing.T) {
 }
 
 func TestJSONLength(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	fc := funcs[ast.JSONLength]
 	tbl := []struct {
 		input    []any
@@ -704,7 +704,7 @@ func TestJSONLength(t *testing.T) {
 }
 
 func TestJSONKeys(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	fc := funcs[ast.JSONKeys]
 	tbl := []struct {
 		input    []any
@@ -775,7 +775,7 @@ func TestJSONKeys(t *testing.T) {
 }
 
 func TestJSONDepth(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	fc := funcs[ast.JSONDepth]
 	tbl := []struct {
 		input    []any
@@ -834,7 +834,7 @@ func TestJSONDepth(t *testing.T) {
 }
 
 func TestJSONArrayAppend(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	sampleJSON, err := types.ParseBinaryJSONFromString(`{"b": 2}`)
 	require.NoError(t, err)
 	fc := funcs[ast.JSONArrayAppend]
@@ -913,7 +913,7 @@ func TestJSONArrayAppend(t *testing.T) {
 }
 
 func TestJSONSearch(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	fc := funcs[ast.JSONSearch]
 	jsonString := `["abc", [{"k": "10"}, "def"], {"x":"abc"}, {"y":"bcd"}]`
 	jsonString2 := `["abc", [{"k": "10"}, "def"], {"x":"ab%d"}, {"y":"abcd"}]`
@@ -988,7 +988,7 @@ func TestJSONSearch(t *testing.T) {
 }
 
 func TestJSONArrayInsert(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	fc := funcs[ast.JSONArrayInsert]
 	tbl := []struct {
 		input    []any
@@ -1061,7 +1061,7 @@ func TestJSONArrayInsert(t *testing.T) {
 }
 
 func TestJSONValid(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	fc := funcs[ast.JSONValid]
 	tbl := []struct {
 		Input    any
@@ -1092,7 +1092,7 @@ func TestJSONValid(t *testing.T) {
 }
 
 func TestJSONStorageFree(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	fc := funcs[ast.JSONStorageFree]
 	tbl := []struct {
 		input    []any
@@ -1135,7 +1135,7 @@ func TestJSONStorageFree(t *testing.T) {
 }
 
 func TestJSONStorageSize(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	fc := funcs[ast.JSONStorageSize]
 	tbl := []struct {
 		input    []any
@@ -1178,7 +1178,7 @@ func TestJSONStorageSize(t *testing.T) {
 }
 
 func TestJSONPretty(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	fc := funcs[ast.JSONPretty]
 	tbl := []struct {
 		input    []any
@@ -1252,7 +1252,7 @@ func TestJSONPretty(t *testing.T) {
 }
 
 func TestJSONMergePatch(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	fc := funcs[ast.JSONMergePatch]
 	tbl := []struct {
 		input    []any

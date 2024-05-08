@@ -33,13 +33,13 @@ import (
 
 func TestDatabase(t *testing.T) {
 	fc := funcs[ast.Database]
-	ctx := mockStmtExprCtx(t)
+	ctx := mockStmtExprCtx()
 	f, err := fc.getFunction(ctx, nil)
 	require.NoError(t, err)
 	d, err := evalBuiltinFunc(f, ctx.GetEvalCtx(), chunk.Row{})
 	require.NoError(t, err)
 	require.Equal(t, types.KindNull, d.Kind())
-	ctx = applyExprCtx(t, ctx, contextstatic.WithCurrentDB("test"))
+	ctx = applyExprCtx(ctx, contextstatic.WithCurrentDB("test"))
 	d, err = evalBuiltinFunc(f, ctx.GetEvalCtx(), chunk.Row{})
 	require.NoError(t, err)
 	require.Equal(t, "test", d.GetString())
@@ -58,7 +58,7 @@ func TestDatabase(t *testing.T) {
 
 func TestFoundRows(t *testing.T) {
 	vars := variable.NewSessionVars(nil)
-	ctx := mockStmtExprCtx(t, vars)
+	ctx := mockStmtExprCtx(vars)
 	vars.LastFoundRows = 2
 
 	fc := funcs[ast.FoundRows]
@@ -71,7 +71,7 @@ func TestFoundRows(t *testing.T) {
 
 func TestUser(t *testing.T) {
 	sessionVars := variable.NewSessionVars(nil)
-	ctx := mockStmtExprCtx(t, sessionVars)
+	ctx := mockStmtExprCtx(sessionVars)
 	sessionVars.User = &auth.UserIdentity{Username: "root", Hostname: "localhost"}
 
 	fc := funcs[ast.User]
@@ -85,7 +85,7 @@ func TestUser(t *testing.T) {
 
 func TestCurrentUser(t *testing.T) {
 	sessionVars := variable.NewSessionVars(nil)
-	ctx := mockStmtExprCtx(t, sessionVars)
+	ctx := mockStmtExprCtx(sessionVars)
 	sessionVars.User = &auth.UserIdentity{Username: "root", Hostname: "localhost", AuthUsername: "root", AuthHostname: "localhost"}
 
 	fc := funcs[ast.CurrentUser]
@@ -99,7 +99,7 @@ func TestCurrentUser(t *testing.T) {
 
 func TestCurrentResourceGroup(t *testing.T) {
 	sessionVars := variable.NewSessionVars(nil)
-	ctx := mockStmtExprCtx(t, variable.NewSessionVars(nil))
+	ctx := mockStmtExprCtx(sessionVars)
 	sessionVars.StmtCtx.ResourceGroupName = "rg1"
 
 	fc := funcs[ast.CurrentResourceGroup]
@@ -113,7 +113,7 @@ func TestCurrentResourceGroup(t *testing.T) {
 
 func TestCurrentRole(t *testing.T) {
 	sessionVars := variable.NewSessionVars(nil)
-	ctx := mockStmtExprCtx(t, sessionVars)
+	ctx := mockStmtExprCtx(sessionVars)
 
 	fc := funcs[ast.CurrentRole]
 	f, err := fc.getFunction(ctx, nil)
@@ -139,7 +139,7 @@ func TestCurrentRole(t *testing.T) {
 
 func TestConnectionID(t *testing.T) {
 	sessionVars := variable.NewSessionVars(nil)
-	ctx := mockStmtExprCtx(t, sessionVars)
+	ctx := mockStmtExprCtx(sessionVars)
 	sessionVars.ConnectionID = uint64(1)
 
 	fc := funcs[ast.ConnectionID]
@@ -152,7 +152,7 @@ func TestConnectionID(t *testing.T) {
 }
 
 func TestVersion(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	fc := funcs[ast.Version]
 	f, err := fc.getFunction(ctx, nil)
 	require.NoError(t, err)
@@ -163,7 +163,7 @@ func TestVersion(t *testing.T) {
 }
 
 func TestBenchMark(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	cases := []struct {
 		LoopCount  int
 		Expression any
@@ -204,7 +204,7 @@ func TestBenchMark(t *testing.T) {
 }
 
 func TestCharset(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	fc := funcs[ast.Charset]
 	f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(nil)))
 	require.NotNil(t, f)
@@ -213,7 +213,7 @@ func TestCharset(t *testing.T) {
 }
 
 func TestCoercibility(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	fc := funcs[ast.Coercibility]
 	f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(nil)))
 	require.NotNil(t, f)
@@ -221,7 +221,7 @@ func TestCoercibility(t *testing.T) {
 }
 
 func TestCollation(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	fc := funcs[ast.Collation]
 	f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(nil)))
 	require.NotNil(t, f)
@@ -231,7 +231,7 @@ func TestCollation(t *testing.T) {
 
 func TestRowCount(t *testing.T) {
 	sessionVars := variable.NewSessionVars(nil)
-	ctx := mockStmtExprCtx(t, sessionVars)
+	ctx := mockStmtExprCtx(sessionVars)
 	sessionVars.StmtCtx.PrevAffectedRows = 10
 
 	f, err := funcs[ast.RowCount].getFunction(ctx, nil)
@@ -249,7 +249,7 @@ func TestRowCount(t *testing.T) {
 
 // TestTiDBVersion for tidb_server().
 func TestTiDBVersion(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	f, err := newFunctionForTest(ctx, ast.TiDBVersion, primitiveValsToConstants(ctx, []any{})...)
 	require.NoError(t, err)
 	v, err := f.Eval(ctx.GetEvalCtx(), chunk.Row{})
@@ -315,7 +315,7 @@ func TestLastInsertID(t *testing.T) {
 }
 
 func TestFormatBytes(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	tbl := []struct {
 		Arg any
 		Ret any
@@ -344,7 +344,7 @@ func TestFormatBytes(t *testing.T) {
 }
 
 func TestFormatNanoTime(t *testing.T) {
-	ctx := mockStmtTruncateAsWarningExprCtx(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	tbl := []struct {
 		Arg any
 		Ret any

@@ -151,6 +151,6 @@ func TestGetUsedList(t *testing.T) {
 	usedCols = append(usedCols, schema.Columns[1])
 	usedCols = append(usedCols, schema.Columns[3])
 
-	used := GetUsedList(mockStmtExprCtx(t).GetEvalCtx(), usedCols, schema)
+	used := GetUsedList(mockStmtExprCtx().GetEvalCtx(), usedCols, schema)
 	require.Equal(t, []bool{false, true, false, true, false}, used)
 }

@@ -62,7 +62,7 @@ func BenchmarkVectorizedBuiltinOtherFunc(b *testing.B) {
 }
 
 func TestInDecimal(t *testing.T) {
-	ctx := mockStmtExprCtx(t)
+	ctx := mockStmtExprCtx()
 	ft := eType2FieldType(types.ETDecimal)
 	col0 := &Column{RetType: ft, Index: 0}
 	col1 := &Column{RetType: ft, Index: 1}

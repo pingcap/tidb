@@ -59,7 +59,7 @@ type benchHelper struct {
 func (h *benchHelper) init(b *testing.B) {
 	numRows := 4 * 1024
 
-	h.ctx = mockStmtExprCtx(b, contextstatic.WithLocation(time.Local))
+	h.ctx = mockStmtExprCtx(contextstatic.WithLocation(time.Local))
 	h.inputTypes = make([]*types.FieldType, 0, 10)
 	ftb := types.NewFieldTypeBuilder()
 	ftb.SetType(mysql.TypeLonglong).SetFlag(mysql.BinaryFlag).SetFlen(mysql.MaxIntWidth).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin)
@@ -173,8 +173,8 @@ func BenchmarkScalarFunctionClone(b *testing.B) {
 	col := &Column{RetType: types.NewFieldType(mysql.TypeLonglong)}
 	con1 := NewOne()
 	con2 := NewZero()
-	add := NewFunctionInternal(mockStmtExprCtx(b), ast.Plus, types.NewFieldType(mysql.TypeLonglong), col, con1)
-	sub := NewFunctionInternal(mockStmtExprCtx(b), ast.Plus, types.NewFieldType(mysql.TypeLonglong), add, con2)
+	add := NewFunctionInternal(mockStmtExprCtx(), ast.Plus, types.NewFieldType(mysql.TypeLonglong), col, con1)
+	sub := NewFunctionInternal(mockStmtExprCtx(), ast.Plus, types.NewFieldType(mysql.TypeLonglong), add, con2)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		sub.Clone()
@@ -1374,7 +1374,7 @@ func testVectorizedEvalOneVec(t *testing.T, vecExprCases vecExprBenchCases) {
 // benchmarkVectorizedEvalOneVec is used to get the effect of
 // using the vectorized expression evaluations during projection
 func benchmarkVectorizedEvalOneVec(b *testing.B, vecExprCases vecExprBenchCases) {
-	ctx := mockStmtExprCtx(b)
+	ctx := mockStmtExprCtx()
 	for funcName, testCases := range vecExprCases {
 		for _, testCase := range testCases {
 			expr, _, input, output := genVecExprBenchCase(ctx, funcName, testCase)
@@ -1706,7 +1706,7 @@ func testVectorizedBuiltinFuncForRand(t *testing.T, vecExprCases vecExprBenchCas
 		for _, testCase := range testCases {
 			require.Len(t, testCase.childrenTypes, 0)
 
-			ctx := mockStmtExprCtx(t)
+			ctx := mockStmtExprCtx()
 			baseFunc, _, input, output := genVecBuiltinFuncBenchCase(ctx, funcName, testCase)
 			baseFuncName := fmt.Sprintf("%v", reflect.TypeOf(baseFunc))
 			tmp := strings.Split(baseFuncName, ".")
@@ -1752,7 +1752,7 @@ func benchmarkVectorizedBuiltinFunc(b *testing.B, vecExprCases vecExprBenchCases
 			if testCase.aesModes == "" {
 				testCase.aesModes = "aes-128-ecb"
 			}
-			ctx = applyExprCtx(b, ctx, contextstatic.WithBlockEncryptionMode(testCase.aesModes))
+			ctx = applyExprCtx(ctx, contextstatic.WithBlockEncryptionMode(testCase.aesModes))
 			if funcName == ast.CurrentUser || funcName == ast.User {
 				vars.User = &auth.UserIdentity{
 					Username:     "tidb",
@@ -2019,7 +2019,7 @@ func generateRandomSel() []int {
 }
 
 func BenchmarkVecEvalBool(b *testing.B) {
-	ctx := mockStmtExprCtx(b)
+	ctx := mockStmtExprCtx()
 	selected := make([]bool, 0, 1024)
 	nulls := make([]bool, 0, 1024)
 	eTypes := []types.EvalType{types.ETInt, types.ETReal, types.ETDecimal, types.ETString, types.ETTimestamp, types.ETDatetime, types.ETDuration}
@@ -2073,7 +2073,7 @@ func BenchmarkVecEvalBool(b *testing.B) {
 }
 
 func BenchmarkRowBasedFilterAndVectorizedFilter(b *testing.B) {
-	ctx := mockStmtExprCtx(b)
+	ctx := mockStmtExprCtx()
 	selected := make([]bool, 0, 1024)
 	nulls := make([]bool, 0, 1024)
 	eTypes := []types.EvalType{types.ETInt, types.ETReal, types.ETDecimal, types.ETString, types.ETTimestamp, types.ETDatetime, types.ETDuration}
