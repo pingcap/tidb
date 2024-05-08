@@ -20,7 +20,6 @@ import (
 	"testing"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/executor/internal/util"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -349,18 +348,18 @@ func testJoinProbe(t *testing.T, withSel bool, leftKeyIndex []int, rightKeyIndex
 	}
 	// probe
 	resultChunks := make([]*chunk.Chunk, 0)
-	joinResult := &util.HashjoinWorkerResult{
-		Chk: chunk.New(resultTypes, hashJoinCtx.SessCtx.GetSessionVars().MaxChunkSize, hashJoinCtx.SessCtx.GetSessionVars().MaxChunkSize),
+	joinResult := &hashjoinWorkerResult{
+		chk: chunk.New(resultTypes, hashJoinCtx.SessCtx.GetSessionVars().MaxChunkSize, hashJoinCtx.SessCtx.GetSessionVars().MaxChunkSize),
 	}
 	for _, probeChunk := range probeChunks {
 		err := joinProbe.SetChunkForProbe(probeChunk)
 		require.NoError(t, err, "unexpected error during SetChunkForProbe")
 		for !joinProbe.IsCurrentChunkProbeDone() {
 			_, joinResult = joinProbe.Probe(joinResult, sqlkiller.SQLKiller{})
-			require.NoError(t, joinResult.Err, "unexpected error during join probe")
-			if joinResult.Chk.IsFull() {
-				resultChunks = append(resultChunks, joinResult.Chk)
-				joinResult.Chk = chunk.New(resultTypes, hashJoinCtx.SessCtx.GetSessionVars().MaxChunkSize, hashJoinCtx.SessCtx.GetSessionVars().MaxChunkSize)
+			require.NoError(t, joinResult.err, "unexpected error during join probe")
+			if joinResult.chk.IsFull() {
+				resultChunks = append(resultChunks, joinResult.chk)
+				joinResult.chk = chunk.New(resultTypes, hashJoinCtx.SessCtx.GetSessionVars().MaxChunkSize, hashJoinCtx.SessCtx.GetSessionVars().MaxChunkSize)
 			}
 		}
 	}
@@ -373,16 +372,16 @@ func testJoinProbe(t *testing.T, withSel bool, leftKeyIndex []int, rightKeyIndex
 			prober.InitForScanRowTable()
 			for !prober.IsScanRowTableDone() {
 				joinResult = prober.ScanRowTable(joinResult)
-				require.NoError(t, joinResult.Err, "unexpected error during scan row table")
-				if joinResult.Chk.IsFull() {
-					resultChunks = append(resultChunks, joinResult.Chk)
-					joinResult.Chk = chunk.New(resultTypes, hashJoinCtx.SessCtx.GetSessionVars().MaxChunkSize, hashJoinCtx.SessCtx.GetSessionVars().MaxChunkSize)
+				require.NoError(t, joinResult.err, "unexpected error during scan row table")
+				if joinResult.chk.IsFull() {
+					resultChunks = append(resultChunks, joinResult.chk)
+					joinResult.chk = chunk.New(resultTypes, hashJoinCtx.SessCtx.GetSessionVars().MaxChunkSize, hashJoinCtx.SessCtx.GetSessionVars().MaxChunkSize)
 				}
 			}
 		}
 	}
-	if joinResult.Chk.NumRows() > 0 {
-		resultChunks = append(resultChunks, joinResult.Chk)
+	if joinResult.chk.NumRows() > 0 {
+		resultChunks = append(resultChunks, joinResult.chk)
 	}
 	checkVirtualRows(t, resultChunks)
 	switch joinType {
