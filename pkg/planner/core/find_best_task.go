@@ -1573,20 +1573,20 @@ func (ds *DataSource) compareTaskRegardingStore(curTask, bestTask base.Task, cur
 		return true, nil
 	}
 
-	switch ds.preferStoreType {
+	switch ds.preferStoreType { // consider the storage preference
 	case h.PreferTiFlash:
 		if bestTaskStore == kv.TiFlash && curTaskStore == kv.TiKV {
-			return false, nil // prefer TiFlash and the best is TiFlash and the current is TiKV
+			return false, nil // prefer TiFlash and the best is TiFlash but the current is TiKV
 		}
 		if bestTaskStore == kv.TiKV && curTaskStore == kv.TiFlash {
 			return true, nil // prefer TiFlash but the best is TiKV and the current is TiFlash
 		}
 	case h.PreferTiKV:
 		if bestTaskStore == kv.TiKV && curTaskStore == kv.TiFlash {
-			return false, nil // prefer TiKV and the best is TiKV and the current is TiFlash
+			return false, nil
 		}
 		if bestTaskStore == kv.TiFlash && curTaskStore == kv.TiKV {
-			return true, nil // prefer TiKV but the best is TiFlash and the current is TiKV
+			return true, nil
 		}
 	}
 
