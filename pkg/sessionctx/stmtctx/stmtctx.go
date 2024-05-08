@@ -269,7 +269,6 @@ type StatementContext struct {
 	plan any
 
 	Tables                []TableEntry
-	PointExec             bool  // for point update cached execution, Constant expression need to set "paramMarker"
 	lockWaitStartTime     int64 // LockWaitStartTime stores the pessimistic lock wait start time
 	PessimisticLockWaited int32
 	LockKeysDuration      int64

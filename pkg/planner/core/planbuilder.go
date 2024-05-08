@@ -21,8 +21,6 @@ import (
 	"math"
 	"strconv"
 	"strings"
-	"time"
-	"unsafe"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/storage"
@@ -82,28 +80,6 @@ type visitInfo struct {
 	alterWritable    bool
 	dynamicPriv      string
 	dynamicWithGrant bool
-}
-
-// QueryTimeRange represents a time range specified by TIME_RANGE hint
-type QueryTimeRange struct {
-	From time.Time
-	To   time.Time
-}
-
-// Condition returns a WHERE clause base on it's value
-func (tr *QueryTimeRange) Condition() string {
-	return fmt.Sprintf("where time>='%s' and time<='%s'", tr.From.Format(MetricTableTimeFormat), tr.To.Format(MetricTableTimeFormat))
-}
-
-const emptyQueryTimeRangeSize = int64(unsafe.Sizeof(QueryTimeRange{}))
-
-// MemoryUsage return the memory usage of QueryTimeRange
-func (tr *QueryTimeRange) MemoryUsage() (sum int64) {
-	if tr == nil {
-		return
-	}
-
-	return emptyQueryTimeRangeSize
 }
 
 // clauseCode indicates in which clause the column is currently.

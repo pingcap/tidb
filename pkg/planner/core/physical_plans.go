@@ -838,8 +838,8 @@ type PhysicalMemTable struct {
 	DBName         model.CIStr
 	Table          *model.TableInfo
 	Columns        []*model.ColumnInfo
-	Extractor      MemTablePredicateExtractor
-	QueryTimeRange QueryTimeRange
+	Extractor      base.MemTablePredicateExtractor
+	QueryTimeRange util.QueryTimeRange
 }
 
 // MemoryUsage return the memory usage of PhysicalMemTable
@@ -2472,7 +2472,7 @@ type PhysicalShow struct {
 
 	ShowContents
 
-	Extractor ShowPredicateExtractor
+	Extractor base.ShowPredicateExtractor
 }
 
 // MemoryUsage return the memory usage of PhysicalShow
