@@ -1814,12 +1814,14 @@ func (c *jsonSchemaValidFunctionClass) getFunction(ctx BuildContext, args []Expr
 		return nil, err
 	}
 
-	sig := &builtinJSONSchemaValidSig{bf}
+	sig := &builtinJSONSchemaValidSig{baseBuiltinFunc: bf}
 	return sig, nil
 }
 
 type builtinJSONSchemaValidSig struct {
 	baseBuiltinFunc
+
+	schemaCache builtinFuncCache[jsonschema.Schema]
 }
 
 func (b *builtinJSONSchemaValidSig) Clone() builtinFunc {
@@ -1829,7 +1831,7 @@ func (b *builtinJSONSchemaValidSig) Clone() builtinFunc {
 }
 
 func (b *builtinJSONSchemaValidSig) evalInt(ctx EvalContext, row chunk.Row) (res int64, isNull bool, err error) {
-	schema := &jsonschema.Schema{}
+	var schema jsonschema.Schema
 
 	// First argument is the schema
 	schemaData, schemaIsNull, err := b.args[0].EvalJSON(ctx, row)
@@ -1839,12 +1841,29 @@ func (b *builtinJSONSchemaValidSig) evalInt(ctx EvalContext, row chunk.Row) (res
 	if schemaIsNull {
 		return res, true, err
 	}
-	dataBin, err := schemaData.MarshalJSON()
-	if err != nil {
-		return res, false, err
-	}
-	if err := goJSON.Unmarshal(dataBin, schema); err != nil {
-		return res, false, err
+
+	if b.args[0].ConstLevel() >= ConstOnlyInContext {
+		schema, err = b.schemaCache.getOrInitCache(ctx, func() (jsonschema.Schema, error) {
+			dataBin, err := schemaData.MarshalJSON()
+			if err != nil {
+				return jsonschema.Schema{}, err
+			}
+			if err := goJSON.Unmarshal(dataBin, &schema); err != nil {
+				return jsonschema.Schema{}, err
+			}
+			return schema, nil
+		})
+		if err != nil {
+			return res, false, err
+		}
+	} else {
+		dataBin, err := schemaData.MarshalJSON()
+		if err != nil {
+			return res, false, err
+		}
+		if err := goJSON.Unmarshal(dataBin, &schema); err != nil {
+			return res, false, err
+		}
 	}
 
 	// Second argument is the JSON document
