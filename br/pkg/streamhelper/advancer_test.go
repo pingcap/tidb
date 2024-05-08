@@ -564,7 +564,8 @@ func TestUnregisterAfterPause(t *testing.T) {
 	env.unregisterTask()
 	env.putTask()
 	require.Eventually(t, func() bool {
-		return assert.ErrorContains(t, adv.OnTick(ctx), "check point lagged too large")
+		err := adv.OnTick(ctx)
+		return err != nil && strings.Contains(err.Error(), "check point lagged too large")
 	}, 5*time.Second, 300*time.Millisecond)
 }
 
