@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
-	internalutil "github.com/pingcap/tidb/pkg/executor/internal/util"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
@@ -125,7 +124,7 @@ func newHashTableContext(workerConcurrency int, partitionNumber int) *hashTableC
 }
 
 type HashJoinCtxV2 struct {
-	baseHashJoinCtx
+	hashJoinCtxBase
 	PartitionNumber int
 	ProbeKeyTypes   []*types.FieldType
 	BuildKeyTypes   []*types.FieldType
@@ -328,8 +327,8 @@ func (fetcher *ProbeSideTupleFetcherV2) fetchProbeSideChunks(ctx context.Context
 		err := exec.Next(ctx, fetcher.ProbeSideExec, probeSideResult)
 		failpoint.Inject("ConsumeRandomPanic", nil)
 		if err != nil {
-			fetcher.joinResultCh <- &internalutil.HashjoinWorkerResult{
-				Err: err,
+			fetcher.joinResultCh <- &hashjoinWorkerResult{
+				err: err,
 			}
 			return
 		}
@@ -347,8 +346,8 @@ func (fetcher *ProbeSideTupleFetcherV2) fetchProbeSideChunks(ctx context.Context
 			}
 			skipProbe, buildErr := fetcher.wait4BuildSide()
 			if buildErr != nil {
-				fetcher.joinResultCh <- &internalutil.HashjoinWorkerResult{
-					Err: buildErr,
+				fetcher.joinResultCh <- &hashjoinWorkerResult{
+					err: buildErr,
 				}
 				return
 			} else if skipProbe {
@@ -476,7 +475,7 @@ func (e *HashJoinV2Exec) canSkipProbeIfHashTableIsEmpty() bool {
 func (e *HashJoinV2Exec) initializeForProbe() {
 	// e.joinResultCh is for transmitting the join result chunks to the main
 	// thread.
-	e.joinResultCh = make(chan *internalutil.HashjoinWorkerResult, e.Concurrency+1)
+	e.joinResultCh = make(chan *hashjoinWorkerResult, e.Concurrency+1)
 
 	e.ProbeSideTupleFetcher.HashJoinCtxV2 = e.HashJoinCtxV2
 	e.ProbeSideTupleFetcher.canSkipProbeIfHashTableIsEmpty = e.canSkipProbeIfHashTableIsEmpty()
@@ -530,19 +529,19 @@ func (fetcher *ProbeSideTupleFetcherV2) handleProbeSideFetcherPanic(r any) {
 		close(fetcher.probeResultChs[i])
 	}
 	if r != nil {
-		fetcher.joinResultCh <- &internalutil.HashjoinWorkerResult{Err: util.GetRecoverError(r)}
+		fetcher.joinResultCh <- &hashjoinWorkerResult{err: util.GetRecoverError(r)}
 	}
 }
 
 func (w *ProbeWorkerV2) handleProbeWorkerPanic(r any) {
 	if r != nil {
-		w.HashJoinCtx.joinResultCh <- &internalutil.HashjoinWorkerResult{Err: util.GetRecoverError(r)}
+		w.HashJoinCtx.joinResultCh <- &hashjoinWorkerResult{err: util.GetRecoverError(r)}
 	}
 }
 
 func (e *HashJoinV2Exec) handleJoinWorkerPanic(r any) {
 	if r != nil {
-		e.joinResultCh <- &internalutil.HashjoinWorkerResult{Err: util.GetRecoverError(r)}
+		e.joinResultCh <- &hashjoinWorkerResult{err: util.GetRecoverError(r)}
 	}
 }
 
@@ -568,11 +567,11 @@ func (w *ProbeWorkerV2) scanRowTableAfterProbeDone() {
 	}
 	for !w.JoinProbe.IsScanRowTableDone() {
 		joinResult = w.JoinProbe.ScanRowTable(joinResult)
-		if joinResult.Err != nil {
+		if joinResult.err != nil {
 			w.HashJoinCtx.joinResultCh <- joinResult
 			return
 		}
-		if joinResult.Chk.IsFull() {
+		if joinResult.chk.IsFull() {
 			w.HashJoinCtx.joinResultCh <- joinResult
 			ok, joinResult = w.getNewJoinResult()
 			if !ok {
@@ -582,24 +581,24 @@ func (w *ProbeWorkerV2) scanRowTableAfterProbeDone() {
 	}
 	if joinResult == nil {
 		return
-	} else if joinResult.Err != nil || (joinResult.Chk != nil && joinResult.Chk.NumRows() > 0) {
+	} else if joinResult.err != nil || (joinResult.chk != nil && joinResult.chk.NumRows() > 0) {
 		w.HashJoinCtx.joinResultCh <- joinResult
 	}
 }
 
-func (w *ProbeWorkerV2) processOneProbeChunk(probeChunk *chunk.Chunk, joinResult *internalutil.HashjoinWorkerResult) (ok bool, waitTime int64, _ *internalutil.HashjoinWorkerResult) {
+func (w *ProbeWorkerV2) processOneProbeChunk(probeChunk *chunk.Chunk, joinResult *hashjoinWorkerResult) (ok bool, waitTime int64, _ *hashjoinWorkerResult) {
 	waitTime = 0
-	joinResult.Err = w.JoinProbe.SetChunkForProbe(probeChunk)
-	if joinResult.Err != nil {
+	joinResult.err = w.JoinProbe.SetChunkForProbe(probeChunk)
+	if joinResult.err != nil {
 		return false, waitTime, joinResult
 	}
 	for !w.JoinProbe.IsCurrentChunkProbeDone() {
 		ok, joinResult = w.JoinProbe.Probe(joinResult, w.HashJoinCtx.SessCtx.GetSessionVars().SQLKiller)
-		if !ok || joinResult.Err != nil {
+		if !ok || joinResult.err != nil {
 			return ok, waitTime, joinResult
 		}
 		failpoint.Inject("processOneProbeChunkPanic", nil)
-		if joinResult.Chk.IsFull() {
+		if joinResult.chk.IsFull() {
 			waitStart := time.Now()
 			w.HashJoinCtx.joinResultCh <- joinResult
 			ok, joinResult = w.getNewJoinResult()
@@ -664,22 +663,22 @@ func (w *ProbeWorkerV2) runJoinWorker() {
 	// note joinResult.chk may be nil when getNewJoinResult fails in loops
 	if joinResult == nil {
 		return
-	} else if joinResult.Err != nil || (joinResult.Chk != nil && joinResult.Chk.NumRows() > 0) {
+	} else if joinResult.err != nil || (joinResult.chk != nil && joinResult.chk.NumRows() > 0) {
 		w.HashJoinCtx.joinResultCh <- joinResult
-	} else if joinResult.Chk != nil && joinResult.Chk.NumRows() == 0 {
-		w.joinChkResourceCh <- joinResult.Chk
+	} else if joinResult.chk != nil && joinResult.chk.NumRows() == 0 {
+		w.joinChkResourceCh <- joinResult.chk
 	}
 }
 
-func (w *ProbeWorkerV2) getNewJoinResult() (bool, *internalutil.HashjoinWorkerResult) {
-	joinResult := &internalutil.HashjoinWorkerResult{
-		Src: w.joinChkResourceCh,
+func (w *ProbeWorkerV2) getNewJoinResult() (bool, *hashjoinWorkerResult) {
+	joinResult := &hashjoinWorkerResult{
+		src: w.joinChkResourceCh,
 	}
 	ok := true
 	select {
 	case <-w.HashJoinCtx.closeCh:
 		ok = false
-	case joinResult.Chk, ok = <-w.joinChkResourceCh:
+	case joinResult.chk, ok = <-w.joinChkResourceCh:
 	}
 	return ok, joinResult
 }
@@ -707,12 +706,12 @@ func (e *HashJoinV2Exec) Next(ctx context.Context, req *chunk.Chunk) (err error)
 	if !ok {
 		return nil
 	}
-	if result.Err != nil {
+	if result.err != nil {
 		e.finished.Store(true)
-		return result.Err
+		return result.err
 	}
-	req.SwapColumns(result.Chk)
-	result.Src <- result.Chk
+	req.SwapColumns(result.chk)
+	result.src <- result.chk
 	return nil
 }
 
