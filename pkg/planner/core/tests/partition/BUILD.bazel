@@ -14,6 +14,7 @@ go_test(
         "//pkg/session",
         "//pkg/session/types",
         "//pkg/store/mockstore",
+        "//pkg/util/benchdaily",
         "//pkg/util/chunk",
         "//pkg/util/logutil",
         "//pkg/util/sqlexec",

@@ -642,6 +642,58 @@ func BenchmarkListExprPartition(b *testing.B) {
 	benchmarkPointGetPlanCache(b, partitionBy)
 }
 
+func BenchmarkListColumnsPartitionPointGetPlanCacheOn(b *testing.B) {
+	runBenchmark(b, getListPartitionDef("id", true), pointQuery, expectedPointPlan, pointGet, true)
+}
+
+func BenchmarkListColumnsPartitionPointGetPlanCacheOff(b *testing.B) {
+	runBenchmark(b, getListPartitionDef("id", true), pointQuery, expectedPointPlan, pointGet, false)
+}
+
+func BenchmarkListColumnsPartitionBatchPointGetPlanCacheOn(b *testing.B) {
+	runBenchmark(b, getListPartitionDef("id", true), batchPointQuery, expectedTableScanPlan, pointGet, true)
+}
+
+func BenchmarkListColumnsPartitionBatchPointGetPlanCacheOff(b *testing.B) {
+	runBenchmark(b, getListPartitionDef("id", true), batchPointQuery, expectedTableScanPlan, pointGet, false)
+}
+
+func BenchmarkListColumnsPartitionIndexLookupPlanCacheOn(b *testing.B) {
+	runBenchmark(b, getListPartitionDef("id", true), pointQuery, expectedIndexPlan, indexLookup, true)
+}
+
+func BenchmarkListColumnsPartitionIndexLookupPlanCacheOff(b *testing.B) {
+	runBenchmark(b, getListPartitionDef("id", true), pointQuery, expectedIndexPlan, indexLookup, false)
+}
+
+func BenchmarkListColumnsPartitionBatchIndexLookupPlanCacheOn(b *testing.B) {
+	runBenchmark(b, getListPartitionDef("id", true), batchPointQuery, expectedIndexPlan, indexLookup, true)
+}
+
+func BenchmarkListColumnsPartitionBatchIndexLookupPlanCacheOff(b *testing.B) {
+	runBenchmark(b, getListPartitionDef("id", true), batchPointQuery, expectedIndexPlan, indexLookup, false)
+}
+func BenchmarkListColumnsPartitionTableScanPlanCacheOn(b *testing.B) {
+	runBenchmark(b, getListPartitionDef("id", true), pointQuery, expectedTableScanPlan, tableScan, true)
+}
+
+func BenchmarkListColumnsPartitionTableScanPlanCacheOff(b *testing.B) {
+	runBenchmark(b, getListPartitionDef("id", true), pointQuery, expectedTableScanPlan, tableScan, false)
+}
+
+func BenchmarkListColumnsPartitionBatchTableScanPlanCacheOn(b *testing.B) {
+	runBenchmark(b, getListPartitionDef("id", true), batchPointQuery, expectedTableScanPlan, tableScan, true)
+}
+
+func BenchmarkListColumnsPartitionBatchTableScanPlanCacheOff(b *testing.B) {
+	runBenchmark(b, getListPartitionDef("id", true), batchPointQuery, expectedTableScanPlan, tableScan, false)
+}
+
+func BenchmarkListColumnsPartition(b *testing.B) {
+	partitionBy := getListPartitionDef("id", true)
+	benchmarkPointGetPlanCache(b, partitionBy)
+}
+
 func BenchmarkRangePartitionPointGetPlanCacheOn(b *testing.B) {
 	runBenchmark(b, partitionByRange, pointQuery, expectedPointPlan, pointGet, true)
 }
@@ -793,58 +845,6 @@ func BenchmarkRangeColumnsPartitionBatchTableScanPlanCacheOff(b *testing.B) {
 
 func BenchmarkRangeColumnsPartition(b *testing.B) {
 	benchmarkPointGetPlanCache(b, partitionByRangeColumns)
-}
-
-func BenchmarkListColumnsPartitionPointGetPlanCacheOn(b *testing.B) {
-	runBenchmark(b, getListPartitionDef("id", true), pointQuery, expectedPointPlan, pointGet, true)
-}
-
-func BenchmarkListColumnsPartitionPointGetPlanCacheOff(b *testing.B) {
-	runBenchmark(b, getListPartitionDef("id", true), pointQuery, expectedPointPlan, pointGet, false)
-}
-
-func BenchmarkListColumnsPartitionBatchPointGetPlanCacheOn(b *testing.B) {
-	runBenchmark(b, getListPartitionDef("id", true), batchPointQuery, expectedTableScanPlan, pointGet, true)
-}
-
-func BenchmarkListColumnsPartitionBatchPointGetPlanCacheOff(b *testing.B) {
-	runBenchmark(b, getListPartitionDef("id", true), batchPointQuery, expectedTableScanPlan, pointGet, false)
-}
-
-func BenchmarkListColumnsPartitionIndexLookupPlanCacheOn(b *testing.B) {
-	runBenchmark(b, getListPartitionDef("id", true), pointQuery, expectedIndexPlan, indexLookup, true)
-}
-
-func BenchmarkListColumnsPartitionIndexLookupPlanCacheOff(b *testing.B) {
-	runBenchmark(b, getListPartitionDef("id", true), pointQuery, expectedIndexPlan, indexLookup, false)
-}
-
-func BenchmarkListColumnsPartitionBatchIndexLookupPlanCacheOn(b *testing.B) {
-	runBenchmark(b, getListPartitionDef("id", true), batchPointQuery, expectedIndexPlan, indexLookup, true)
-}
-
-func BenchmarkListColumnsPartitionBatchIndexLookupPlanCacheOff(b *testing.B) {
-	runBenchmark(b, getListPartitionDef("id", true), batchPointQuery, expectedIndexPlan, indexLookup, false)
-}
-func BenchmarkListColumnsPartitionTableScanPlanCacheOn(b *testing.B) {
-	runBenchmark(b, getListPartitionDef("id", true), pointQuery, expectedTableScanPlan, tableScan, true)
-}
-
-func BenchmarkListColumnsPartitionTableScanPlanCacheOff(b *testing.B) {
-	runBenchmark(b, getListPartitionDef("id", true), pointQuery, expectedTableScanPlan, tableScan, false)
-}
-
-func BenchmarkListColumnsPartitionBatchTableScanPlanCacheOn(b *testing.B) {
-	runBenchmark(b, getListPartitionDef("id", true), batchPointQuery, expectedTableScanPlan, tableScan, true)
-}
-
-func BenchmarkListColumnsPartitionBatchTableScanPlanCacheOff(b *testing.B) {
-	runBenchmark(b, getListPartitionDef("id", true), batchPointQuery, expectedTableScanPlan, tableScan, false)
-}
-
-func BenchmarkListColumnsPartition(b *testing.B) {
-	partitionBy := getListPartitionDef("id", true)
-	benchmarkPointGetPlanCache(b, partitionBy)
 }
 
 // TODO: Add benchmarks for {RANGE|LIST} COLUMNS, multi columns!!!
@@ -1505,18 +1505,20 @@ func TestBenchDaily(t *testing.T) {
 		BenchmarkHashPartitionTableScanPlanCacheOff,
 		BenchmarkHashPartitionBatchTableScanPlanCacheOn,
 		BenchmarkHashPartitionBatchTableScanPlanCacheOff,
-		BenchmarkHashExprPartitionPointGetPlanCacheOn,
-		BenchmarkHashExprPartitionPointGetPlanCacheOff,
-		BenchmarkHashExprPartitionBatchPointGetPlanCacheOn,
-		BenchmarkHashExprPartitionBatchPointGetPlanCacheOff,
-		BenchmarkHashExprPartitionIndexLookupPlanCacheOn,
-		BenchmarkHashExprPartitionIndexLookupPlanCacheOff,
-		BenchmarkHashExprPartitionBatchIndexLookupPlanCacheOn,
-		BenchmarkHashExprPartitionBatchIndexLookupPlanCacheOff,
-		BenchmarkHashExprPartitionTableScanPlanCacheOn,
-		BenchmarkHashExprPartitionTableScanPlanCacheOff,
-		BenchmarkHashExprPartitionBatchTableScanPlanCacheOn,
-		BenchmarkHashExprPartitionBatchTableScanPlanCacheOff,
+		/*
+			BenchmarkHashExprPartitionPointGetPlanCacheOn,
+			BenchmarkHashExprPartitionPointGetPlanCacheOff,
+			BenchmarkHashExprPartitionBatchPointGetPlanCacheOn,
+			BenchmarkHashExprPartitionBatchPointGetPlanCacheOff,
+			BenchmarkHashExprPartitionIndexLookupPlanCacheOn,
+			BenchmarkHashExprPartitionIndexLookupPlanCacheOff,
+			BenchmarkHashExprPartitionBatchIndexLookupPlanCacheOn,
+			BenchmarkHashExprPartitionBatchIndexLookupPlanCacheOff,
+			BenchmarkHashExprPartitionTableScanPlanCacheOn,
+			BenchmarkHashExprPartitionTableScanPlanCacheOff,
+			BenchmarkHashExprPartitionBatchTableScanPlanCacheOn,
+			BenchmarkHashExprPartitionBatchTableScanPlanCacheOff,
+		*/
 		BenchmarkKeyPartitionPointGetPlanCacheOn,
 		BenchmarkKeyPartitionPointGetPlanCacheOff,
 		BenchmarkKeyPartitionBatchPointGetPlanCacheOn,
@@ -1541,54 +1543,20 @@ func TestBenchDaily(t *testing.T) {
 		BenchmarkListPartitionTableScanPlanCacheOff,
 		BenchmarkListPartitionBatchTableScanPlanCacheOn,
 		BenchmarkListPartitionBatchTableScanPlanCacheOff,
-		BenchmarkListExprPartitionPointGetPlanCacheOn,
-		BenchmarkListExprPartitionPointGetPlanCacheOff,
-		BenchmarkListExprPartitionBatchPointGetPlanCacheOn,
-		BenchmarkListExprPartitionBatchPointGetPlanCacheOff,
-		BenchmarkListExprPartitionIndexLookupPlanCacheOn,
-		BenchmarkListExprPartitionIndexLookupPlanCacheOff,
-		BenchmarkListExprPartitionBatchIndexLookupPlanCacheOn,
-		BenchmarkListExprPartitionBatchIndexLookupPlanCacheOff,
-		BenchmarkListExprPartitionTableScanPlanCacheOn,
-		BenchmarkListExprPartitionTableScanPlanCacheOff,
-		BenchmarkListExprPartitionBatchTableScanPlanCacheOn,
-		BenchmarkListExprPartitionBatchTableScanPlanCacheOff,
-		BenchmarkRangePartitionPointGetPlanCacheOn,
-		BenchmarkRangePartitionPointGetPlanCacheOff,
-		BenchmarkRangePartitionBatchPointGetPlanCacheOn,
-		BenchmarkRangePartitionBatchPointGetPlanCacheOff,
-		BenchmarkRangePartitionIndexLookupPlanCacheOn,
-		BenchmarkRangePartitionIndexLookupPlanCacheOff,
-		BenchmarkRangePartitionBatchIndexLookupPlanCacheOn,
-		BenchmarkRangePartitionBatchIndexLookupPlanCacheOff,
-		BenchmarkRangePartitionTableScanPlanCacheOn,
-		BenchmarkRangePartitionTableScanPlanCacheOff,
-		BenchmarkRangePartitionBatchTableScanPlanCacheOn,
-		BenchmarkRangePartitionBatchTableScanPlanCacheOff,
-		BenchmarkRangeExprPartitionPointGetPlanCacheOn,
-		BenchmarkRangeExprPartitionPointGetPlanCacheOff,
-		BenchmarkRangeExprPartitionBatchPointGetPlanCacheOn,
-		BenchmarkRangeExprPartitionBatchPointGetPlanCacheOff,
-		BenchmarkRangeExprPartitionIndexLookupPlanCacheOn,
-		BenchmarkRangeExprPartitionIndexLookupPlanCacheOff,
-		BenchmarkRangeExprPartitionBatchIndexLookupPlanCacheOn,
-		BenchmarkRangeExprPartitionBatchIndexLookupPlanCacheOff,
-		BenchmarkRangeExprPartitionTableScanPlanCacheOn,
-		BenchmarkRangeExprPartitionTableScanPlanCacheOff,
-		BenchmarkRangeExprPartitionBatchTableScanPlanCacheOn,
-		BenchmarkRangeExprPartitionBatchTableScanPlanCacheOff,
-		BenchmarkRangeColumnsPartitionPointGetPlanCacheOn,
-		BenchmarkRangeColumnsPartitionPointGetPlanCacheOff,
-		BenchmarkRangeColumnsPartitionBatchPointGetPlanCacheOn,
-		BenchmarkRangeColumnsPartitionBatchPointGetPlanCacheOff,
-		BenchmarkRangeColumnsPartitionIndexLookupPlanCacheOn,
-		BenchmarkRangeColumnsPartitionIndexLookupPlanCacheOff,
-		BenchmarkRangeColumnsPartitionBatchIndexLookupPlanCacheOn,
-		BenchmarkRangeColumnsPartitionBatchIndexLookupPlanCacheOff,
-		BenchmarkRangeColumnsPartitionTableScanPlanCacheOn,
-		BenchmarkRangeColumnsPartitionTableScanPlanCacheOff,
-		BenchmarkRangeColumnsPartitionBatchTableScanPlanCacheOn,
-		BenchmarkRangeColumnsPartitionBatchTableScanPlanCacheOff,
+		/*
+			BenchmarkListExprPartitionPointGetPlanCacheOn,
+			BenchmarkListExprPartitionPointGetPlanCacheOff,
+			BenchmarkListExprPartitionBatchPointGetPlanCacheOn,
+			BenchmarkListExprPartitionBatchPointGetPlanCacheOff,
+			BenchmarkListExprPartitionIndexLookupPlanCacheOn,
+			BenchmarkListExprPartitionIndexLookupPlanCacheOff,
+			BenchmarkListExprPartitionBatchIndexLookupPlanCacheOn,
+			BenchmarkListExprPartitionBatchIndexLookupPlanCacheOff,
+			BenchmarkListExprPartitionTableScanPlanCacheOn,
+			BenchmarkListExprPartitionTableScanPlanCacheOff,
+			BenchmarkListExprPartitionBatchTableScanPlanCacheOn,
+			BenchmarkListExprPartitionBatchTableScanPlanCacheOff,
+		*/
 		BenchmarkListColumnsPartitionPointGetPlanCacheOn,
 		BenchmarkListColumnsPartitionPointGetPlanCacheOff,
 		BenchmarkListColumnsPartitionBatchPointGetPlanCacheOn,
@@ -1601,6 +1569,44 @@ func TestBenchDaily(t *testing.T) {
 		BenchmarkListColumnsPartitionTableScanPlanCacheOff,
 		BenchmarkListColumnsPartitionBatchTableScanPlanCacheOn,
 		BenchmarkListColumnsPartitionBatchTableScanPlanCacheOff,
+		BenchmarkRangePartitionPointGetPlanCacheOn,
+		BenchmarkRangePartitionPointGetPlanCacheOff,
+		BenchmarkRangePartitionBatchPointGetPlanCacheOn,
+		BenchmarkRangePartitionBatchPointGetPlanCacheOff,
+		BenchmarkRangePartitionIndexLookupPlanCacheOn,
+		BenchmarkRangePartitionIndexLookupPlanCacheOff,
+		BenchmarkRangePartitionBatchIndexLookupPlanCacheOn,
+		BenchmarkRangePartitionBatchIndexLookupPlanCacheOff,
+		BenchmarkRangePartitionTableScanPlanCacheOn,
+		BenchmarkRangePartitionTableScanPlanCacheOff,
+		BenchmarkRangePartitionBatchTableScanPlanCacheOn,
+		BenchmarkRangePartitionBatchTableScanPlanCacheOff,
+		/*
+			BenchmarkRangeExprPartitionPointGetPlanCacheOn,
+			BenchmarkRangeExprPartitionPointGetPlanCacheOff,
+			BenchmarkRangeExprPartitionBatchPointGetPlanCacheOn,
+			BenchmarkRangeExprPartitionBatchPointGetPlanCacheOff,
+			BenchmarkRangeExprPartitionIndexLookupPlanCacheOn,
+			BenchmarkRangeExprPartitionIndexLookupPlanCacheOff,
+			BenchmarkRangeExprPartitionBatchIndexLookupPlanCacheOn,
+			BenchmarkRangeExprPartitionBatchIndexLookupPlanCacheOff,
+			BenchmarkRangeExprPartitionTableScanPlanCacheOn,
+			BenchmarkRangeExprPartitionTableScanPlanCacheOff,
+			BenchmarkRangeExprPartitionBatchTableScanPlanCacheOn,
+			BenchmarkRangeExprPartitionBatchTableScanPlanCacheOff,
+		*/
+		BenchmarkRangeColumnsPartitionPointGetPlanCacheOn,
+		BenchmarkRangeColumnsPartitionPointGetPlanCacheOff,
+		BenchmarkRangeColumnsPartitionBatchPointGetPlanCacheOn,
+		BenchmarkRangeColumnsPartitionBatchPointGetPlanCacheOff,
+		BenchmarkRangeColumnsPartitionIndexLookupPlanCacheOn,
+		BenchmarkRangeColumnsPartitionIndexLookupPlanCacheOff,
+		BenchmarkRangeColumnsPartitionBatchIndexLookupPlanCacheOn,
+		BenchmarkRangeColumnsPartitionBatchIndexLookupPlanCacheOff,
+		BenchmarkRangeColumnsPartitionTableScanPlanCacheOn,
+		BenchmarkRangeColumnsPartitionTableScanPlanCacheOff,
+		BenchmarkRangeColumnsPartitionBatchTableScanPlanCacheOn,
+		BenchmarkRangeColumnsPartitionBatchTableScanPlanCacheOff,
 		BenchmarkNonPartitionPreparedPointGetPlanCacheOn,
 		BenchmarkNonPartitionPreparedPointGetPlanCacheOff,
 		BenchmarkNonPartitionPreparedBatchPointGetPlanCacheOn,
@@ -1625,18 +1631,20 @@ func TestBenchDaily(t *testing.T) {
 		BenchmarkHashPartitionPreparedTableScanPlanCacheOff,
 		BenchmarkHashPartitionPreparedBatchTableScanPlanCacheOn,
 		BenchmarkHashPartitionPreparedBatchTableScanPlanCacheOff,
-		BenchmarkHashExprPartitionPreparedPointGetPlanCacheOn,
-		BenchmarkHashExprPartitionPreparedPointGetPlanCacheOff,
-		BenchmarkHashExprPartitionPreparedBatchPointGetPlanCacheOn,
-		BenchmarkHashExprPartitionPreparedBatchPointGetPlanCacheOff,
-		BenchmarkHashExprPartitionPreparedIndexLookupPlanCacheOn,
-		BenchmarkHashExprPartitionPreparedIndexLookupPlanCacheOff,
-		BenchmarkHashExprPartitionPreparedBatchIndexLookupPlanCacheOn,
-		BenchmarkHashExprPartitionPreparedBatchIndexLookupPlanCacheOff,
-		BenchmarkHashExprPartitionPreparedTableScanPlanCacheOn,
-		BenchmarkHashExprPartitionPreparedTableScanPlanCacheOff,
-		BenchmarkHashExprPartitionPreparedBatchTableScanPlanCacheOn,
-		BenchmarkHashExprPartitionPreparedBatchTableScanPlanCacheOff,
+		/*
+			BenchmarkHashExprPartitionPreparedPointGetPlanCacheOn,
+			BenchmarkHashExprPartitionPreparedPointGetPlanCacheOff,
+			BenchmarkHashExprPartitionPreparedBatchPointGetPlanCacheOn,
+			BenchmarkHashExprPartitionPreparedBatchPointGetPlanCacheOff,
+			BenchmarkHashExprPartitionPreparedIndexLookupPlanCacheOn,
+			BenchmarkHashExprPartitionPreparedIndexLookupPlanCacheOff,
+			BenchmarkHashExprPartitionPreparedBatchIndexLookupPlanCacheOn,
+			BenchmarkHashExprPartitionPreparedBatchIndexLookupPlanCacheOff,
+			BenchmarkHashExprPartitionPreparedTableScanPlanCacheOn,
+			BenchmarkHashExprPartitionPreparedTableScanPlanCacheOff,
+			BenchmarkHashExprPartitionPreparedBatchTableScanPlanCacheOn,
+			BenchmarkHashExprPartitionPreparedBatchTableScanPlanCacheOff,
+		*/
 		BenchmarkListPartitionPreparedPointGetPlanCacheOn,
 		BenchmarkListPartitionPreparedPointGetPlanCacheOff,
 		BenchmarkListPartitionPreparedBatchPointGetPlanCacheOn,
@@ -1649,30 +1657,32 @@ func TestBenchDaily(t *testing.T) {
 		BenchmarkListPartitionPreparedTableScanPlanCacheOff,
 		BenchmarkListPartitionPreparedBatchTableScanPlanCacheOn,
 		BenchmarkListPartitionPreparedBatchTableScanPlanCacheOff,
-		BenchmarkListExprPartitionPreparedPointGetPlanCacheOn,
-		BenchmarkListExprPartitionPreparedPointGetPlanCacheOff,
-		BenchmarkListExprPartitionPreparedBatchPointGetPlanCacheOn,
-		BenchmarkListExprPartitionPreparedBatchPointGetPlanCacheOff,
-		BenchmarkListExprPartitionPreparedIndexLookupPlanCacheOn,
-		BenchmarkListExprPartitionPreparedIndexLookupPlanCacheOff,
-		BenchmarkListExprPartitionPreparedBatchIndexLookupPlanCacheOn,
-		BenchmarkListExprPartitionPreparedBatchIndexLookupPlanCacheOff,
-		BenchmarkListExprPartitionPreparedTableScanPlanCacheOn,
-		BenchmarkListExprPartitionPreparedTableScanPlanCacheOff,
-		BenchmarkListExprPartitionPreparedBatchTableScanPlanCacheOn,
-		BenchmarkListExprPartitionPreparedBatchTableScanPlanCacheOff,
-		BenchmarkListColumnsPartitionPreparedPointGetPlanCacheOn,
-		BenchmarkListColumnsPartitionPreparedPointGetPlanCacheOff,
-		BenchmarkListColumnsPartitionPreparedBatchPointGetPlanCacheOn,
-		BenchmarkListColumnsPartitionPreparedBatchPointGetPlanCacheOff,
-		BenchmarkListColumnsPartitionPreparedIndexLookupPlanCacheOn,
-		BenchmarkListColumnsPartitionPreparedIndexLookupPlanCacheOff,
-		BenchmarkListColumnsPartitionPreparedBatchIndexLookupPlanCacheOn,
-		BenchmarkListColumnsPartitionPreparedBatchIndexLookupPlanCacheOff,
-		BenchmarkListColumnsPartitionPreparedTableScanPlanCacheOn,
-		BenchmarkListColumnsPartitionPreparedTableScanPlanCacheOff,
-		BenchmarkListColumnsPartitionPreparedBatchTableScanPlanCacheOn,
-		BenchmarkListColumnsPartitionPreparedBatchTableScanPlanCacheOff,
+		/*
+			BenchmarkListExprPartitionPreparedPointGetPlanCacheOn,
+			BenchmarkListExprPartitionPreparedPointGetPlanCacheOff,
+			BenchmarkListExprPartitionPreparedBatchPointGetPlanCacheOn,
+			BenchmarkListExprPartitionPreparedBatchPointGetPlanCacheOff,
+			BenchmarkListExprPartitionPreparedIndexLookupPlanCacheOn,
+			BenchmarkListExprPartitionPreparedIndexLookupPlanCacheOff,
+			BenchmarkListExprPartitionPreparedBatchIndexLookupPlanCacheOn,
+			BenchmarkListExprPartitionPreparedBatchIndexLookupPlanCacheOff,
+			BenchmarkListExprPartitionPreparedTableScanPlanCacheOn,
+			BenchmarkListExprPartitionPreparedTableScanPlanCacheOff,
+			BenchmarkListExprPartitionPreparedBatchTableScanPlanCacheOn,
+			BenchmarkListExprPartitionPreparedBatchTableScanPlanCacheOff,
+			BenchmarkListColumnsPartitionPreparedPointGetPlanCacheOn,
+			BenchmarkListColumnsPartitionPreparedPointGetPlanCacheOff,
+			BenchmarkListColumnsPartitionPreparedBatchPointGetPlanCacheOn,
+			BenchmarkListColumnsPartitionPreparedBatchPointGetPlanCacheOff,
+			BenchmarkListColumnsPartitionPreparedIndexLookupPlanCacheOn,
+			BenchmarkListColumnsPartitionPreparedIndexLookupPlanCacheOff,
+			BenchmarkListColumnsPartitionPreparedBatchIndexLookupPlanCacheOn,
+			BenchmarkListColumnsPartitionPreparedBatchIndexLookupPlanCacheOff,
+			BenchmarkListColumnsPartitionPreparedTableScanPlanCacheOn,
+			BenchmarkListColumnsPartitionPreparedTableScanPlanCacheOff,
+			BenchmarkListColumnsPartitionPreparedBatchTableScanPlanCacheOn,
+			BenchmarkListColumnsPartitionPreparedBatchTableScanPlanCacheOff,
+		*/
 		BenchmarkRangePartitionPreparedPointGetPlanCacheOn,
 		BenchmarkRangePartitionPreparedPointGetPlanCacheOff,
 		BenchmarkRangePartitionPreparedBatchPointGetPlanCacheOn,
@@ -1685,18 +1695,20 @@ func TestBenchDaily(t *testing.T) {
 		BenchmarkRangePartitionPreparedTableScanPlanCacheOff,
 		BenchmarkRangePartitionPreparedBatchTableScanPlanCacheOn,
 		BenchmarkRangePartitionPreparedBatchTableScanPlanCacheOff,
-		BenchmarkRangeExprPartitionPreparedPointGetPlanCacheOn,
-		BenchmarkRangeExprPartitionPreparedPointGetPlanCacheOff,
-		BenchmarkRangeExprPartitionPreparedBatchPointGetPlanCacheOn,
-		BenchmarkRangeExprPartitionPreparedBatchPointGetPlanCacheOff,
-		BenchmarkRangeExprPartitionPreparedIndexLookupPlanCacheOn,
-		BenchmarkRangeExprPartitionPreparedIndexLookupPlanCacheOff,
-		BenchmarkRangeExprPartitionPreparedBatchIndexLookupPlanCacheOn,
-		BenchmarkRangeExprPartitionPreparedBatchIndexLookupPlanCacheOff,
-		BenchmarkRangeExprPartitionPreparedTableScanPlanCacheOn,
-		BenchmarkRangeExprPartitionPreparedTableScanPlanCacheOff,
-		BenchmarkRangeExprPartitionPreparedBatchTableScanPlanCacheOn,
-		BenchmarkRangeExprPartitionPreparedBatchTableScanPlanCacheOff,
+		/*
+			BenchmarkRangeExprPartitionPreparedPointGetPlanCacheOn,
+			BenchmarkRangeExprPartitionPreparedPointGetPlanCacheOff,
+			BenchmarkRangeExprPartitionPreparedBatchPointGetPlanCacheOn,
+			BenchmarkRangeExprPartitionPreparedBatchPointGetPlanCacheOff,
+			BenchmarkRangeExprPartitionPreparedIndexLookupPlanCacheOn,
+			BenchmarkRangeExprPartitionPreparedIndexLookupPlanCacheOff,
+			BenchmarkRangeExprPartitionPreparedBatchIndexLookupPlanCacheOn,
+			BenchmarkRangeExprPartitionPreparedBatchIndexLookupPlanCacheOff,
+			BenchmarkRangeExprPartitionPreparedTableScanPlanCacheOn,
+			BenchmarkRangeExprPartitionPreparedTableScanPlanCacheOff,
+			BenchmarkRangeExprPartitionPreparedBatchTableScanPlanCacheOn,
+			BenchmarkRangeExprPartitionPreparedBatchTableScanPlanCacheOff,
+		*/
 		BenchmarkRangeColumnsPartitionPreparedPointGetPlanCacheOn,
 		BenchmarkRangeColumnsPartitionPreparedPointGetPlanCacheOff,
 		BenchmarkRangeColumnsPartitionPreparedBatchPointGetPlanCacheOn,
