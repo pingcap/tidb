@@ -5,6 +5,7 @@ package streamhelper_test
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -540,3 +541,86 @@ func TestCheckPointResume(t *testing.T) {
 	c.advanceClusterTimeBy(2 * time.Minute)
 	require.ErrorContains(t, adv.OnTick(ctx), "lagged too large")
 }
+<<<<<<< HEAD
+=======
+
+func TestUnregisterAfterPause(t *testing.T) {
+	c := createFakeCluster(t, 4, false)
+	defer func() {
+		fmt.Println(c)
+	}()
+	c.splitAndScatter("01", "02", "022", "023", "033", "04", "043")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	env := &testEnv{fakeCluster: c, testCtx: t}
+	adv := streamhelper.NewCheckpointAdvancer(env)
+	adv.UpdateConfigWith(func(c *config.Config) {
+		c.CheckPointLagLimit = 1 * time.Minute
+	})
+	adv.StartTaskListener(ctx)
+	c.advanceClusterTimeBy(1 * time.Minute)
+	require.NoError(t, adv.OnTick(ctx))
+	env.PauseTask(ctx, "whole")
+	time.Sleep(1 * time.Second)
+	c.advanceClusterTimeBy(1 * time.Minute)
+	require.NoError(t, adv.OnTick(ctx))
+	env.unregisterTask()
+	env.putTask()
+	require.Eventually(t, func() bool {
+		err := adv.OnTick(ctx)
+		return err != nil && strings.Contains(err.Error(), "check point lagged too large")
+	}, 5*time.Second, 300*time.Millisecond)
+}
+
+func TestOwnershipLost(t *testing.T) {
+	c := createFakeCluster(t, 4, false)
+	c.splitAndScatter(manyRegions(0, 10240)...)
+	installSubscribeSupport(c)
+	ctx, cancel := context.WithCancel(context.Background())
+	env := &testEnv{fakeCluster: c, testCtx: t}
+	adv := streamhelper.NewCheckpointAdvancer(env)
+	adv.OnStart(ctx)
+	adv.OnBecomeOwner(ctx)
+	require.NoError(t, adv.OnTick(ctx))
+	c.advanceCheckpoints()
+	c.flushAll()
+	failpoint.Enable("github.com/pingcap/tidb/br/pkg/streamhelper/subscription.listenOver.aboutToSend", "pause")
+	failpoint.Enable("github.com/pingcap/tidb/br/pkg/streamhelper/FlushSubscriber.Clear.timeoutMs", "return(500)")
+	wg := new(sync.WaitGroup)
+	wg.Add(adv.TEST_registerCallbackForSubscriptions(wg.Done))
+	cancel()
+	failpoint.Disable("github.com/pingcap/tidb/br/pkg/streamhelper/subscription.listenOver.aboutToSend")
+	wg.Wait()
+}
+
+func TestSubscriptionPanic(t *testing.T) {
+	c := createFakeCluster(t, 4, false)
+	c.splitAndScatter(manyRegions(0, 20)...)
+	installSubscribeSupport(c)
+	ctx, cancel := context.WithCancel(context.Background())
+	env := &testEnv{fakeCluster: c, testCtx: t}
+	adv := streamhelper.NewCheckpointAdvancer(env)
+	adv.OnStart(ctx)
+	adv.OnBecomeOwner(ctx)
+	wg := new(sync.WaitGroup)
+	wg.Add(adv.TEST_registerCallbackForSubscriptions(wg.Done))
+
+	require.NoError(t, adv.OnTick(ctx))
+	failpoint.Enable("github.com/pingcap/tidb/br/pkg/streamhelper/subscription.listenOver.aboutToSend", "5*panic")
+	ckpt := c.advanceCheckpoints()
+	c.flushAll()
+	cnt := 0
+	for {
+		require.NoError(t, adv.OnTick(ctx))
+		cnt++
+		if env.checkpoint >= ckpt {
+			break
+		}
+		if cnt > 100 {
+			t.Fatalf("After 100 times, the progress cannot be advanced.")
+		}
+	}
+	cancel()
+	wg.Wait()
+}
+>>>>>>> 184c76b9162 (br: fix checkpoint cannot advance after pause->stop->start (#53091))
