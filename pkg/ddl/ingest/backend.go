@@ -263,7 +263,19 @@ func (bc *litBackendCtx) unsafeImportAndReset(ei *engineInfo) error {
 		return err
 	}
 
-	newTS, err := bc.checkpointMgr.refreshTS()
+	mgr := bc.GetCheckpointManager()
+	if mgr == nil {
+		// disttask case, no need to refresh TS.
+		return nil
+	}
+
+	// for local disk case, we need to refresh TS because duplicate detection
+	// requires each ingest to have a unique TS.
+	//
+	// TODO(lance6716): there's still a chance that data is imported but because of
+	// checkpoint is low-watermark, the data will still be imported again with
+	// another TS after failover. Need to refine the checkpoint mechanism.
+	newTS, err := mgr.refreshTS()
 	if err != nil {
 		return errors.Trace(err)
 	}
