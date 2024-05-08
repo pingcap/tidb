@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package partitionedhashjoin
+package join
 
 import (
 	"strconv"
@@ -106,13 +106,13 @@ func checkKeys(t *testing.T, withSelCol bool, buildFilter expression.CNFExprs, b
 		}
 		chk.SetSel(sel)
 	}
-	hashJoinCtx := &PartitionedHashJoinCtx{
-		SessCtx:          mock.NewContext(),
+	hashJoinCtx := &HashJoinCtxV2{
 		PartitionNumber:  1,
 		hashTableMeta:    meta,
 		BuildFilter:      buildFilter,
 		hashTableContext: newHashTableContext(1, 1),
 	}
+	hashJoinCtx.SessCtx = mock.NewContext()
 	err := builder.processOneChunk(chk, hashJoinCtx.SessCtx.GetSessionVars().StmtCtx.TypeCtx(), hashJoinCtx, 0)
 	builder.appendRemainingRowLocations(0, hashJoinCtx.hashTableContext)
 	require.NoError(t, err, "processOneChunk returns error")
@@ -228,7 +228,7 @@ func TestKey(t *testing.T) {
 	checkKeys(t, true, buildFilter, buildKeyIndex, buildTypes, buildKeyTypes, probeKeyTypes, false)
 }
 
-func checkColumnResult(t *testing.T, builder *rowTableBuilder, keepFilteredRows bool, result *chunk.Chunk, expected *chunk.Chunk, ctx *PartitionedHashJoinCtx, forOtherCondition bool) {
+func checkColumnResult(t *testing.T, builder *rowTableBuilder, keepFilteredRows bool, result *chunk.Chunk, expected *chunk.Chunk, ctx *HashJoinCtxV2, forOtherCondition bool) {
 	if keepFilteredRows {
 		require.Equal(t, expected.NumRows(), result.NumRows())
 	}
@@ -312,8 +312,7 @@ func checkColumns(t *testing.T, withSelCol bool, buildFilter expression.CNFExprs
 		}
 		chk.SetSel(sel)
 	}
-	hashJoinCtx := &PartitionedHashJoinCtx{
-		SessCtx:               mock.NewContext(),
+	hashJoinCtx := &HashJoinCtxV2{
 		PartitionNumber:       1,
 		hashTableMeta:         meta,
 		BuildFilter:           buildFilter,
@@ -321,6 +320,7 @@ func checkColumns(t *testing.T, withSelCol bool, buildFilter expression.CNFExprs
 		LUsed:                 outputColumns,
 		hashTableContext:      newHashTableContext(1, 1),
 	}
+	hashJoinCtx.SessCtx = mock.NewContext()
 	err := builder.processOneChunk(chk, hashJoinCtx.SessCtx.GetSessionVars().StmtCtx.TypeCtx(), hashJoinCtx, 0)
 	builder.appendRemainingRowLocations(0, hashJoinCtx.hashTableContext)
 	require.NoError(t, err, "processOneChunk returns error")
@@ -540,13 +540,13 @@ func TestBalanceOfFilteredRows(t *testing.T) {
 	buildFilter := createImpossibleFilter(t)
 	builder := createRowTableBuilder(buildKeyIndex, buildSchema, meta, partitionNumber, hasNullableKey, true, true)
 	chk := chunk.GenRandomChunks(buildTypes, 3000)
-	hashJoinCtx := &PartitionedHashJoinCtx{
-		SessCtx:          mock.NewContext(),
+	hashJoinCtx := &HashJoinCtxV2{
 		PartitionNumber:  partitionNumber,
 		hashTableMeta:    meta,
 		BuildFilter:      buildFilter,
 		hashTableContext: newHashTableContext(partitionNumber, partitionNumber),
 	}
+	hashJoinCtx.SessCtx = mock.NewContext()
 	err := builder.processOneChunk(chk, hashJoinCtx.SessCtx.GetSessionVars().StmtCtx.TypeCtx(), hashJoinCtx, 0)
 	require.NoError(t, err)
 	builder.appendRemainingRowLocations(0, hashJoinCtx.hashTableContext)

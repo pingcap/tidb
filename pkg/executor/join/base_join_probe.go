@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package partitionedhashjoin
+package join
 
 import (
 	"bytes"
@@ -43,7 +43,7 @@ const (
 
 const BATCH_BUILD_ROW_SIZE = 32
 
-func (hCtx *PartitionedHashJoinCtx) hasOtherCondition() bool {
+func (hCtx *HashJoinCtxV2) hasOtherCondition() bool {
 	return hCtx.OtherCondition != nil
 }
 
@@ -74,7 +74,7 @@ type posAndHashValue struct {
 }
 
 type baseJoinProbe struct {
-	ctx    *PartitionedHashJoinCtx
+	ctx    *HashJoinCtxV2
 	workID uint
 
 	currentChunk *chunk.Chunk
@@ -469,7 +469,7 @@ func isKeyMatched(keyMode keyMode, serializedKey []byte, rowStart uintptr, meta 
 	}
 }
 
-func NewJoinProbe(ctx *PartitionedHashJoinCtx, workID uint, joinType core.JoinType, keyIndex []int, joinedColumnTypes, probeColumnTypes []*types.FieldType, rightAsBuildSide bool) JoinProbe {
+func NewJoinProbe(ctx *HashJoinCtxV2, workID uint, joinType core.JoinType, keyIndex []int, joinedColumnTypes, probeColumnTypes []*types.FieldType, rightAsBuildSide bool) JoinProbe {
 	base := baseJoinProbe{
 		ctx:                   ctx,
 		workID:                workID,
@@ -549,7 +549,7 @@ func (m *mockJoinProbe) InitForScanRowTable() {
 }
 
 // used for test
-func newMockJoinProbe(ctx *PartitionedHashJoinCtx) *mockJoinProbe {
+func newMockJoinProbe(ctx *HashJoinCtxV2) *mockJoinProbe {
 	base := baseJoinProbe{
 		ctx:                   ctx,
 		lUsed:                 ctx.LUsed,
