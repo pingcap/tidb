@@ -1367,8 +1367,8 @@ type PhysicalHashJoin struct {
 	runtimeFilterList []*RuntimeFilter
 }
 
-// CanUseNewHashJoin returns true if current join is supported by partitioned hash join
-func (p *PhysicalHashJoin) CanUseNewHashJoin() bool {
+// CanUseHashJoinV2 returns true if current join is supported by hash join v2
+func (p *PhysicalHashJoin) CanUseHashJoinV2() bool {
 	switch p.JoinType {
 	case LeftOuterJoin, InnerJoin:
 		// null aware join is not supported yet
