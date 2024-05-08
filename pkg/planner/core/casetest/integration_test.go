@@ -474,7 +474,7 @@ func TestIssue51360(t *testing.T) {
 	require.NoError(t, err)
 	tbl1.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}
 	tk.MustExec(`select /*+ read_from_storage(TIFLASH[tt3]) */ * from tt3 limit 2;`)
-	tk.MustQuery(`show warnings`).CheckContain("the read_from_storage hint might not work")
+	tk.MustQuery(`show warnings`).CheckContain("read_from_storage hint is inapplicable")
 }
 
 func TestIssue43050(t *testing.T) {
@@ -489,7 +489,7 @@ func TestIssue43050(t *testing.T) {
 
 	tk.MustExec(`begin`)
 	tk.MustExec(`INSERT INTO test_202304142 SELECT /*+ read_from_storage(tiflash[t]) */ * FROM test_202304141 t`) // no error
-	tk.MustQuery(`show warnings`).CheckContain("the read_from_storage hint might not work")
+	tk.MustQuery(`show warnings`).CheckContain("read_from_storage hint is inapplicable")
 	tk.MustExec(`commit`)
 }
 

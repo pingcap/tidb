@@ -1369,7 +1369,7 @@ func (ds *DataSource) FindBestTask(prop *property.PhysicalProperty, planCounter 
 	defer func() {
 		if (ds.preferStoreType&h.PreferTiKV > 0 && bestTaskStore != kv.TiKV) ||
 			(ds.preferStoreType&h.PreferTiFlash > 0 && bestTaskStore != kv.TiFlash) {
-			ds.SCtx().GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("the read_from_storage hint might not work"))
+			ds.SCtx().GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("Optimizer Hint read_from_storage hint is inapplicable"))
 		}
 	}()
 	for _, candidate := range candidates {
@@ -1552,7 +1552,7 @@ func (ds *DataSource) FindBestTask(prop *property.PhysicalProperty, planCounter 
 			planCounter.Dec(1)
 		}
 		appendCandidate(ds, idxTask, prop, opt)
-		curIsBetter, err := ds.compareTaskRegardingStore(idxTask, t, kv.TiKV, kv.TiKV, opt)
+		curIsBetter, err := ds.compareTaskRegardingStore(idxTask, t, kv.TiKV, bestTaskStore, opt)
 		if err != nil {
 			return nil, 0, err
 		}
@@ -1578,14 +1578,14 @@ func (ds *DataSource) compareTaskRegardingStore(curTask, bestTask base.Task, cur
 		if bestTaskStore == kv.TiFlash && curTaskStore != kv.TiFlash {
 			return false, nil // prefer TiFlash and the best is TiFlash but the current is TiKV
 		}
-		if bestTaskStore == kv.TiKV && curTaskStore == kv.TiFlash {
+		if bestTaskStore != kv.TiFlash && curTaskStore == kv.TiFlash {
 			return true, nil // prefer TiFlash but the best is TiKV and the current is TiFlash
 		}
 	case h.PreferTiKV:
-		if bestTaskStore == kv.TiKV && curTaskStore == kv.TiFlash {
+		if bestTaskStore == kv.TiKV && curTaskStore != kv.TiKV {
 			return false, nil
 		}
-		if bestTaskStore == kv.TiFlash && curTaskStore == kv.TiKV {
+		if bestTaskStore != kv.TiKV && curTaskStore == kv.TiKV {
 			return true, nil
 		}
 	}
