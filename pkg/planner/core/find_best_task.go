@@ -1572,14 +1572,24 @@ func (ds *DataSource) compareTaskRegardingStore(curTask, bestTask base.Task, cur
 	if bestTask.Invalid() { // in this case the curTask is always better to let us at least can get a valid plan.
 		return true, nil
 	}
-	// if prefer TiFlash and the best task is TiFlash but the current task is TiKV, return false directly.
-	if ds.preferStoreType&h.PreferTiFlash > 0 && bestTaskStore == kv.TiFlash && curTaskStore == kv.TiKV {
-		return false, nil
+
+	switch ds.preferStoreType {
+	case h.PreferTiFlash:
+		if bestTaskStore == kv.TiFlash && curTaskStore == kv.TiKV {
+			return false, nil // prefer TiFlash and the best is TiFlash and the current is TiKV
+		}
+		if bestTaskStore == kv.TiKV && curTaskStore == kv.TiFlash {
+			return true, nil // prefer TiFlash but the best is TiKV and the current is TiFlash
+		}
+	case h.PreferTiKV:
+		if bestTaskStore == kv.TiKV && curTaskStore == kv.TiFlash {
+			return false, nil // prefer TiKV and the best is TiKV and the current is TiFlash
+		}
+		if bestTaskStore == kv.TiFlash && curTaskStore == kv.TiKV {
+			return true, nil // prefer TiKV but the best is TiFlash and the current is TiKV
+		}
 	}
-	// if prefer TiKV and the best task is TiKV but the current task is TiFlash, return false directly.
-	if ds.preferStoreType&h.PreferTiKV > 0 && bestTaskStore == kv.TiKV && curTaskStore == kv.TiFlash {
-		return false, nil
-	}
+
 	return compareTaskCost(curTask, bestTask, op) // determined by their costs
 }
 
