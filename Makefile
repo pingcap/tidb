@@ -376,8 +376,9 @@ bench-daily: tools/bin/gobenchdata tools/bin/gojq
 	go test github.com/pingcap/tidb/pkg/executor/test/splittest -run TestBenchDaily -bench Ignore --outfile bench_daily.json
 	go test github.com/pingcap/tidb/pkg/expression -run TestBenchDaily -bench Ignore --outfile bench_daily.json
 	go test github.com/pingcap/tidb/pkg/planner/core/tests/partition -run '^[^T]' -bench . -benchmem \
-		| tools/bin/gobenchdata --json pkg/planner/core/tests/partition/bench_daily.full
-	tools/bin/gojq '[ .[0].Suites[0].Benchmarks[] | ( { "Name": .Name | sub("(?<n>.*)-[0-9]*$$"; "\(.n)"), "NsPerOp": .NsPerOp, "AllocsPerOp": .Mem.AllocsPerOp, "BytesPerOp": .Mem.BytesPerOp } ) ]' pkg/planner/core/tests/partition/bench_daily.full > pkg/planner/core/tests/partition/bench_daily.json
+		> pkg/planner/core/tests/partition/bench_daily.full
+	tools/bin/gobenchdata --json pkg/planner/core/tests/partition/bench_daily.full < pkg/planner/core/tests/partition/bench_daily.gobenchdata
+	tools/bin/gojq '[ .[0].Suites[0].Benchmarks[] | ( { "Name": .Name | sub("(?<n>.*)-[0-9]*$$"; "\(.n)"), "NsPerOp": .NsPerOp, "AllocsPerOp": .Mem.AllocsPerOp, "BytesPerOp": .Mem.BytesPerOp } ) ]' pkg/planner/core/tests/partition/bench_daily.gobenchdata > pkg/planner/core/tests/partition/bench_daily.json
 	go test github.com/pingcap/tidb/pkg/session -run TestBenchDaily -bench Ignore --outfile bench_daily.json
 	go test github.com/pingcap/tidb/pkg/statistics -run TestBenchDaily -bench Ignore --outfile bench_daily.json
 	go test github.com/pingcap/tidb/pkg/tablecodec -run TestBenchDaily -bench Ignore --outfile bench_daily.json
