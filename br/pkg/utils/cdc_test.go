@@ -15,6 +15,8 @@ package utils_test
 
 import (
 	"context"
+	"path"
+	"strconv"
 	"testing"
 
 	"github.com/pingcap/tidb/br/pkg/utils"
@@ -23,13 +25,73 @@ import (
 	"go.etcd.io/etcd/tests/v3/integration"
 )
 
-func TestGetCDCChangefeedNameSet(t *testing.T) {
+func TestCDCCheckWithEmbedEtcd(t *testing.T) {
 	integration.BeforeTestExternal(t)
 	testEtcdCluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
 	defer testEtcdCluster.Terminate(t)
-
-	ctx := context.Background()
 	cli := testEtcdCluster.RandClient()
+
+	t.Run("testGetCDCChangefeedNameSet", func(t *testing.T) { testGetCDCChangefeedNameSet(t, cli) })
+	cli.KV.Delete(context.Background(), "", clientv3.WithPrefix())
+	t.Run("testGEtConflictChangefeeds", func(t *testing.T) { testGetConflictChangefeeds(t, cli) })
+}
+
+func testGetConflictChangefeeds(t *testing.T, cli *clientv3.Client) {
+	checkEtcdPut := func(key string, vals ...string) {
+		val := ""
+		if len(vals) == 1 {
+			val = vals[0]
+		}
+		_, err := cli.Put(context.Background(), key, val)
+		require.NoError(t, err)
+	}
+	putLameChangefeed := func(name string, status string, startTs uint64) {
+		checkEtcdPut(
+			path.Join("/tidb/cdc/default/default/changefeed/info/", name),
+			`{"state":"`+status+`", "start-ts": `+strconv.Itoa(int(startTs))+`}`,
+		)
+	}
+	putChangefeed := func(name string, status string, startTs uint64, checkpointTs uint64) {
+		putLameChangefeed(name, status, startTs)
+		checkEtcdPut(path.Join("/tidb/cdc/default/default/changefeed/status/", name), `{"checkpoint-ts": `+strconv.Itoa(int(checkpointTs))+`}`)
+	}
+
+	checkEtcdPut("/tidb/cdc/default/__cdc_meta__/capture/3ecd5c98-0148-4086-adfd-17641995e71f")
+	checkEtcdPut("/tidb/cdc/default/__cdc_meta__/meta/meta-version")
+	checkEtcdPut("/tidb/cdc/default/__cdc_meta__/meta/ticdc-delete-etcd-key-count")
+	checkEtcdPut("/tidb/cdc/default/__cdc_meta__/owner/22318498f4dd6639")
+	checkEtcdPut("/tidb/cdc/default/default/upstream/7168358383033671922")
+
+	putChangefeed("st-ok", "normal", 1, 43)
+	putChangefeed("st-fail", "normal", 1, 41)
+	putLameChangefeed("skipped", "failed", 1)
+	putLameChangefeed("nost-ok", "normal", 43)
+	putLameChangefeed("nost-fail", "normal", 41)
+
+	names, err := utils.GetIncompatibleChangefeedsWithSafeTS(context.Background(), cli, 42)
+	require.NoError(t, err)
+	require.ElementsMatch(t, names.TEST_getChangefeedNames(), []string{
+		"default/default/nost-fail",
+		"default/default/st-fail",
+	})
+
+	names2, err := utils.GetIncompatibleChangefeedsWithSafeTS(context.Background(), cli, 40)
+	require.NoError(t, err)
+	require.ElementsMatch(t, names2.TEST_getChangefeedNames(), []string{})
+
+	names3, err := utils.GetIncompatibleChangefeedsWithSafeTS(context.Background(), cli, 48)
+	require.NoError(t, err)
+	require.ElementsMatch(t, names3.TEST_getChangefeedNames(), []string{
+		"default/default/nost-fail",
+		"default/default/st-fail",
+		"default/default/nost-ok",
+		"default/default/st-ok",
+	})
+
+}
+
+func testGetCDCChangefeedNameSet(t *testing.T, cli *clientv3.Client) {
+	ctx := context.Background()
 	checkEtcdPut := func(key string, vals ...string) {
 		val := ""
 		if len(vals) == 1 {
@@ -50,13 +112,12 @@ func TestGetCDCChangefeedNameSet(t *testing.T) {
 	checkEtcdPut("/tidb/cdc/default/__cdc_meta__/owner/22318498f4dd6639")
 	checkEtcdPut(
 		"/tidb/cdc/default/default/changefeed/info/test",
-		`{"upstream-id":7195826648407968958,"namespace":"default","changefeed-id":"test-1","sink-uri":"mysql://root@127.0.0.1:3306?time-zone=","create-time":"2023-02-03T15:23:34.773768+08:00","start-ts":439198420741652483,"target-ts":0,"admin-job-type":0,"sort-engine":"unified","sort-dir":"","config":{"memory-quota":1073741824,"case-sensitive":true,"enable-old-value":true,"force-replicate":false,"check-gc-safe-point":true,"enable-sync-point":false,"bdr-mode":false,"sync-point-interval":600000000000,"sync-point-retention":86400000000000,"filter":{"rules":["*.*"],"ignore-txn-start-ts":null,"event-filters":null},"mounter":{"worker-num":16},"sink":{"transaction-atomicity":"","protocol":"","dispatchers":null,"csv":{"delimiter":",","quote":"\"","null":"\\N","include-commit-ts":false},"column-selectors":null,"schema-registry":"","encoder-concurrency":16,"terminator":"\r\n","date-separator":"none","enable-partition-separator":false},"consistent":{"level":"none","max-log-size":64,"flush-interval":2000,"storage":""},"scheduler":{"region-per-span":0}},"state":"normal","error":null,"creator-version":"v6.5.0-master-dirty"}`,
+		`{"state":"normal"}`,
 	)
 	checkEtcdPut(
 		"/tidb/cdc/default/default/changefeed/info/test-1",
-		`{"upstream-id":7195826648407968958,"namespace":"default","changefeed-id":"test-1","sink-uri":"mysql://root@127.0.0.1:3306?time-zone=","create-time":"2023-02-03T15:23:34.773768+08:00","start-ts":439198420741652483,"target-ts":0,"admin-job-type":0,"sort-engine":"unified","sort-dir":"","config":{"memory-quota":1073741824,"case-sensitive":true,"enable-old-value":true,"force-replicate":false,"check-gc-safe-point":true,"enable-sync-point":false,"bdr-mode":false,"sync-point-interval":600000000000,"sync-point-retention":86400000000000,"filter":{"rules":["*.*"],"ignore-txn-start-ts":null,"event-filters":null},"mounter":{"worker-num":16},"sink":{"transaction-atomicity":"","protocol":"","dispatchers":null,"csv":{"delimiter":",","quote":"\"","null":"\\N","include-commit-ts":false},"column-selectors":null,"schema-registry":"","encoder-concurrency":16,"terminator":"\r\n","date-separator":"none","enable-partition-separator":false},"consistent":{"level":"none","max-log-size":64,"flush-interval":2000,"storage":""},"scheduler":{"region-per-span":0}},"state":"failed","error":null,"creator-version":"v6.5.0-master-dirty"}`,
+		`{"state":"failed"}`,
 	)
-	checkEtcdPut("/tidb/cdc/default/default/changefeed/status/test")
 	checkEtcdPut("/tidb/cdc/default/default/changefeed/status/test-1")
 	checkEtcdPut("/tidb/cdc/default/default/task/position/3ecd5c98-0148-4086-adfd-17641995e71f/test-1")
 	checkEtcdPut("/tidb/cdc/default/default/upstream/7168358383033671922")
@@ -64,8 +125,7 @@ func TestGetCDCChangefeedNameSet(t *testing.T) {
 	nameSet, err = utils.GetRunningChangefeeds(ctx, cli)
 	require.NoError(t, err)
 	require.False(t, nameSet.Empty())
-	require.Equal(t, "found CDC changefeed(s): cluster/namespace: default/default changefeed(s): [test], ",
-		nameSet.MessageToUser())
+	require.ElementsMatch(t, nameSet.TEST_getChangefeedNames(), []string{"default/default/test"})
 
 	_, err = cli.Delete(ctx, "/tidb/cdc/", clientv3.WithPrefix())
 	require.NoError(t, err)
@@ -74,7 +134,7 @@ func TestGetCDCChangefeedNameSet(t *testing.T) {
 	checkEtcdPut("/tidb/cdc/capture/f14cb04d-5ba1-410e-a59b-ccd796920e9d")
 	checkEtcdPut(
 		"/tidb/cdc/changefeed/info/test",
-		`{"upstream-id":7195826648407968958,"namespace":"default","changefeed-id":"test-1","sink-uri":"mysql://root@127.0.0.1:3306?time-zone=","create-time":"2023-02-03T15:23:34.773768+08:00","start-ts":439198420741652483,"target-ts":0,"admin-job-type":0,"sort-engine":"unified","sort-dir":"","config":{"memory-quota":1073741824,"case-sensitive":true,"enable-old-value":true,"force-replicate":false,"check-gc-safe-point":true,"enable-sync-point":false,"bdr-mode":false,"sync-point-interval":600000000000,"sync-point-retention":86400000000000,"filter":{"rules":["*.*"],"ignore-txn-start-ts":null,"event-filters":null},"mounter":{"worker-num":16},"sink":{"transaction-atomicity":"","protocol":"","dispatchers":null,"csv":{"delimiter":",","quote":"\"","null":"\\N","include-commit-ts":false},"column-selectors":null,"schema-registry":"","encoder-concurrency":16,"terminator":"\r\n","date-separator":"none","enable-partition-separator":false},"consistent":{"level":"none","max-log-size":64,"flush-interval":2000,"storage":""},"scheduler":{"region-per-span":0}},"state":"stopped","error":null,"creator-version":"v6.5.0-master-dirty"}`,
+		`{"state":"stopped"}`,
 	)
 	checkEtcdPut("/tidb/cdc/job/test")
 	checkEtcdPut("/tidb/cdc/owner/223184ad80a88b0b")
@@ -83,8 +143,7 @@ func TestGetCDCChangefeedNameSet(t *testing.T) {
 	nameSet, err = utils.GetRunningChangefeeds(ctx, cli)
 	require.NoError(t, err)
 	require.False(t, nameSet.Empty())
-	require.Equal(t, "found CDC changefeed(s): cluster/namespace: <nil> changefeed(s): [test], ",
-		nameSet.MessageToUser())
+	require.ElementsMatch(t, nameSet.TEST_getChangefeedNames(), []string{"<nil>/test"})
 
 	_, err = cli.Delete(ctx, "/tidb/cdc/", clientv3.WithPrefix())
 	require.NoError(t, err)

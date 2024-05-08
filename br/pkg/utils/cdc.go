@@ -41,6 +41,8 @@ type keyVersion int
 const (
 	legacy     keyVersion = 1
 	namespaced keyVersion = 2
+
+	invalidTs uint64 = math.MaxUint64
 )
 
 var (
@@ -89,7 +91,7 @@ func (c checkCDCClient) loadChangefeeds(ctx context.Context, out *[]changefeed) 
 	}
 	for _, kv := range resp.Kvs {
 		// example: /tidb/cdc/<clusterID>/<namespace>/changefeed/info/<changefeedID>
-		k := kv.Key[len(CDCPrefix):]
+		k := kv.Key[len(CDCPrefix)-1:]
 		clusterAndNamespace, changefeedID, found := bytes.Cut(k, []byte(ChangefeedPath))
 		if !found {
 			continue
@@ -106,7 +108,7 @@ func (c checkCDCClient) loadChangefeeds(ctx context.Context, out *[]changefeed) 
 		// example: clusterAndNamespace normally is <clusterID>/<namespace>
 		// but in migration scenario it become __backup__. we need handle it
 		// see https://github.com/pingcap/tiflow/issues/9807
-		clusterID, namespace, found := bytes.Cut(clusterAndNamespace, []byte(`/`))
+		clusterID, namespace, found := bytes.Cut(clusterAndNamespace[1:], []byte(`/`))
 		if !found {
 			// ignore __backup__ or other formats
 			continue
@@ -159,7 +161,7 @@ func (c checkCDCClient) checkpointTSFor(ctx context.Context, cf changefeed) (uin
 	}
 	if infoResp.Count == 0 {
 		// The changefeed have been removed.
-		return math.MaxUint64, nil
+		return invalidTs, nil
 	}
 	var info changefeedInfoView
 	if err := json.Unmarshal(infoResp.Kvs[0].Value, &info); err != nil {
@@ -167,9 +169,9 @@ func (c checkCDCClient) checkpointTSFor(ctx context.Context, cf changefeed) (uin
 	}
 	switch info.State {
 	// https://docs.pingcap.com/zh/tidb/stable/ticdc-changefeed-overview
-	case "stopped", "error":
-		return math.MaxInt64, nil
-	case "running", "warning":
+	case "error", "failed":
+		return invalidTs, nil
+	case "running", "warning", "normal", "stopped":
 		cts, err := c.fetchCheckpointTSFromStatus(ctx, cf)
 		if err != nil {
 			return 0, err
@@ -177,8 +179,8 @@ func (c checkCDCClient) checkpointTSFor(ctx context.Context, cf changefeed) (uin
 		return mathutil.Max(cts, info.Start), nil
 	default:
 		// This changefeed may be noise, ignore it.
-		log.Warn("Ignoring invalid changefeed.", zap.Any("changefeed", cf))
-		return math.MaxInt64, nil
+		log.Warn("Ignoring invalid changefeed.", zap.Any("changefeed", cf), zap.String("state", info.State))
+		return invalidTs, nil
 	}
 }
 
@@ -190,17 +192,12 @@ func (c checkCDCClient) getNameSet(ctx context.Context, safeTS uint64) (*CDCName
 
 	nameset := new(CDCNameSet)
 	for _, cf := range changefeeds {
-		// Special case: when safe ts not provided, just record all changefeeds.
-		if safeTS == math.MaxUint64 {
-			nameset.save(cf)
-			continue
-		}
-
 		cts, err := c.checkpointTSFor(ctx, cf)
 		if err != nil {
 			return nil, errors.Annotatef(err, "failed to check changefeed %v", cf)
 		}
 		if cts < safeTS {
+			log.Info("Found incompatible changefeed.", zap.Any("changefeed", cf), zap.Uint64("checkpoint-ts", cts), zap.Uint64("safe-ts", safeTS))
 			nameset.save(cf)
 		}
 	}
@@ -223,7 +220,8 @@ func (s *CDCNameSet) save(cf changefeed) {
 	case legacy:
 		s.changefeeds["<nil>"] = append(s.changefeeds["<nil>"], cf.ID)
 	case namespaced:
-		s.changefeeds[cf.Cluster] = append(s.changefeeds[cf.Cluster], cf.ID)
+		k := path.Join(cf.Cluster, cf.Namespace)
+		s.changefeeds[k] = append(s.changefeeds[k], cf.ID)
 	}
 }
 
@@ -251,7 +249,7 @@ func (s *CDCNameSet) MessageToUser() string {
 // for CDC <= v6.1, the etcd key format is /tidb/cdc/changefeed/info/<changefeedID>
 func GetRunningChangefeeds(ctx context.Context, cli *clientv3.Client) (*CDCNameSet, error) {
 	checkCli := checkCDCClient{cli: cli}
-	return checkCli.getNameSet(ctx, math.MaxUint64)
+	return checkCli.getNameSet(ctx, invalidTs)
 }
 
 // GetIncompatibleChangefeedsWithSafeTS gets CDC changefeed that may not compatible with the safe ts and wraps them to a map.
