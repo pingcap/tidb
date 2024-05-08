@@ -806,7 +806,8 @@ func TestAutoIDConstraint(t *testing.T) {
 	// Cover case: create table with auto id column as key, and remove it later
 	tk.MustExec("create table tt2 (id int, c int auto_increment, key c_idx(c))")
 	tk.MustExec("alter table tt2 drop index c_idx")
-=======
+}
+
 func TestIssue52622(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
@@ -845,5 +846,4 @@ func TestIssue52622(t *testing.T) {
 
 		tk.MustExec("drop table issue52622;")
 	}
->>>>>>> f5e591d107b (*: fix 'Duplicate entry' error when @@auto_increment_increment and @@auto_increment_offset is set (#52626))
 }
