@@ -364,8 +364,7 @@ func generateWriteIngestSpecs(planCtx planner.PlanCtx, p *LogicalPlan) ([]planne
 		}, nil)
 	})
 
-	pdCli := planCtx.SessionCtx.GetStore().(tidbkv.StorageWithPD).GetPDClient()
-	pTS, lTS, err := pdCli.GetTS(ctx)
+	pTS, lTS, err := planCtx.Store.GetPDClient().GetTS(ctx)
 	if err != nil {
 		return nil, err
 	}
