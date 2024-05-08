@@ -170,7 +170,7 @@ func TestWaitSnapshotsCreated(t *testing.T) {
 		})
 
 		if c.expectTimeout {
-			func () {
+			func() {
 				// We wait 5s before checking snapshots
 				ctx, cancel := context.WithTimeout(context.Background(), 6)
 				defer cancel()
@@ -187,7 +187,6 @@ func TestWaitSnapshotsCreated(t *testing.T) {
 				case <-ctx.Done():
 					require.True(t, true)
 				}
-
 			}()
 
 			continue
