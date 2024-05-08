@@ -68,10 +68,10 @@ type CheckpointManager struct {
 	endKeyFlushed   kv.Key
 
 	// Persisted to the storage.
-	minFlushedKey  kv.Key
-	minImportedKey kv.Key
-	flushedKeyCnt  int
-	importedKeyCnt int
+	flushedKeyLowWatermark  kv.Key
+	importedKeyLowWatermark kv.Key
+	flushedKeyCnt           int
+	importedKeyCnt          int
 	// Global meta.
 	pidImported      int64
 	startKeyImported kv.Key
@@ -154,10 +154,10 @@ func InstanceAddr() string {
 func (s *CheckpointManager) IsKeyProcessed(end kv.Key) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if len(s.minImportedKey) > 0 && end.Cmp(s.minImportedKey) <= 0 {
+	if len(s.importedKeyLowWatermark) > 0 && end.Cmp(s.importedKeyLowWatermark) <= 0 {
 		return true
 	}
-	return s.localDataIsValid && len(s.minFlushedKey) > 0 && end.Cmp(s.minFlushedKey) <= 0
+	return s.localDataIsValid && len(s.flushedKeyLowWatermark) > 0 && end.Cmp(s.flushedKeyLowWatermark) <= 0
 }
 
 // Status returns the status of the checkpoint.
@@ -169,7 +169,7 @@ func (s *CheckpointManager) Status() (keyCnt int, minKeyImported kv.Key) {
 		total += cp.writtenKeys
 	}
 	// TODO(lance6716): ???
-	return s.flushedKeyCnt + total, s.minImportedKey
+	return s.flushedKeyCnt + total, s.importedKeyLowWatermark
 }
 
 // Register registers a new task. taskID MUST be continuous ascending and start
@@ -220,9 +220,9 @@ func (s *CheckpointManager) UpdateWrittenKeys(taskID int, delta int) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.afterFlush()
-	if imported && s.minImportedKey.Cmp(s.minFlushedKey) != 0 {
+	if imported && s.importedKeyLowWatermark.Cmp(s.flushedKeyLowWatermark) != 0 {
 		// TODO(lance6716): add warning log if cmp > 0
-		s.minImportedKey = s.minFlushedKey
+		s.importedKeyLowWatermark = s.flushedKeyLowWatermark
 		s.importedKeyCnt = s.flushedKeyCnt
 		s.dirty = true
 
@@ -241,7 +241,7 @@ func (s *CheckpointManager) afterFlush() {
 			break
 		}
 		s.minTaskIDFinished++
-		s.minFlushedKey = cp.endKey
+		s.flushedKeyLowWatermark = cp.endKey
 		s.flushedKeyCnt += cp.totalKeys
 		delete(s.checkpoints, s.minTaskIDFinished)
 		s.dirty = true
@@ -282,8 +282,8 @@ func (s *CheckpointManager) Reset(newPhysicalID int64, start, end kv.Key) {
 		zap.Int64("oldPhysicalID", s.pidFlushed),
 		zap.Int("flushedKeyCnt", s.flushedKeyCnt))
 	if s.pidFlushed != newPhysicalID {
-		s.minFlushedKey = nil
-		s.minImportedKey = nil
+		s.flushedKeyLowWatermark = nil
+		s.importedKeyLowWatermark = nil
 		s.minTaskIDFinished = 0
 		s.pidFlushed = newPhysicalID
 		s.startKeyFlushed = start
@@ -351,7 +351,7 @@ func (s *CheckpointManager) resumeOrInitCheckpoint() error {
 			return errors.Trace(err)
 		}
 		if cp := reorgMeta.Checkpoint; cp != nil {
-			s.minImportedKey = cp.GlobalSyncKey
+			s.importedKeyLowWatermark = cp.GlobalSyncKey
 			s.importedKeyCnt = cp.GlobalKeyCount
 			s.pidImported = cp.PhysicalID
 			s.startKeyImported = cp.StartKey
@@ -360,12 +360,12 @@ func (s *CheckpointManager) resumeOrInitCheckpoint() error {
 			if util.FolderNotEmpty(s.localStoreDir) &&
 				(s.instanceAddr == cp.InstanceAddr || cp.InstanceAddr == "" /* initial state */) {
 				s.localDataIsValid = true
-				s.minFlushedKey = cp.LocalSyncKey
+				s.flushedKeyLowWatermark = cp.LocalSyncKey
 				s.flushedKeyCnt = cp.LocalKeyCount
 			}
 			s.logger.Info("resume checkpoint",
-				zap.String("minimum flushed key", hex.EncodeToString(s.minFlushedKey)),
-				zap.String("minimum imported key", hex.EncodeToString(s.minImportedKey)),
+				zap.String("flushed key low watermark", hex.EncodeToString(s.flushedKeyLowWatermark)),
+				zap.String("imported key low watermark", hex.EncodeToString(s.importedKeyLowWatermark)),
 				zap.Int64("physical table ID", cp.PhysicalID),
 				zap.String("previous instance", cp.InstanceAddr),
 				zap.String("current instance", s.instanceAddr))
@@ -396,8 +396,8 @@ func (s *CheckpointManager) resumeOrInitCheckpoint() error {
 // NewCheckpointManager. In other cases, use updateCheckpoint instead.
 func (s *CheckpointManager) updateCheckpointImpl() error {
 	s.mu.Lock()
-	minKeyFlushed := s.minFlushedKey
-	minKeyImported := s.minImportedKey
+	flushedKeyLowWatermark := s.flushedKeyLowWatermark
+	importedKeyLowWatermark := s.importedKeyLowWatermark
 	flushedKeyCnt := s.flushedKeyCnt
 	importedKeyCnt := s.importedKeyCnt
 	pidImported := s.pidImported
@@ -415,8 +415,8 @@ func (s *CheckpointManager) updateCheckpointImpl() error {
 	err = ddlSess.RunInTxn(func(se *sess.Session) error {
 		template := "update mysql.tidb_ddl_reorg set reorg_meta = %s where job_id = %d and ele_type = %s;"
 		cp := &ReorgCheckpoint{
-			LocalSyncKey:   minKeyFlushed,
-			GlobalSyncKey:  minKeyImported,
+			LocalSyncKey:   flushedKeyLowWatermark,
+			GlobalSyncKey:  importedKeyLowWatermark,
 			LocalKeyCount:  flushedKeyCnt,
 			GlobalKeyCount: importedKeyCnt,
 			InstanceAddr:   s.instanceAddr,
@@ -442,8 +442,8 @@ func (s *CheckpointManager) updateCheckpointImpl() error {
 		return nil
 	})
 	s.logger.Info("update checkpoint",
-		zap.String("local checkpoint", hex.EncodeToString(minKeyFlushed)),
-		zap.String("global checkpoint", hex.EncodeToString(minKeyImported)),
+		zap.String("local checkpoint", hex.EncodeToString(flushedKeyLowWatermark)),
+		zap.String("global checkpoint", hex.EncodeToString(importedKeyLowWatermark)),
 		zap.Int64("global physical ID", pidImported),
 		zap.Error(err))
 	return err
