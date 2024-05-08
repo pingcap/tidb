@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package partitionedhashjoin
+package join
 
 import (
 	"sort"
@@ -257,11 +257,8 @@ func testJoinProbe(t *testing.T, withSel bool, leftKeyIndex []int, rightKeyIndex
 	}
 
 	meta := newTableMeta(buildKeyIndex, buildTypes, buildKeyTypes, probeKeyTypes, buildUsedByOtherCondition, buildUsed, needUsedFlag)
-	hashJoinCtx := &PartitionedHashJoinCtx{
-		SessCtx:               mock.NewContext(),
-		JoinType:              joinType,
+	hashJoinCtx := &HashJoinCtxV2{
 		hashTableMeta:         meta,
-		Concurrency:           uint(partitionNumber),
 		BuildFilter:           buildFilter,
 		ProbeFilter:           probeFilter,
 		OtherCondition:        otherCondition,
@@ -275,6 +272,9 @@ func testJoinProbe(t *testing.T, withSel bool, leftKeyIndex []int, rightKeyIndex
 		RUsedInOtherCondition: rightUsedByOtherCondition,
 		hashTableContext:      newHashTableContext(partitionNumber, partitionNumber),
 	}
+	hashJoinCtx.SessCtx = mock.NewContext()
+	hashJoinCtx.JoinType = joinType
+	hashJoinCtx.Concurrency = uint(partitionNumber)
 	joinProbe := NewJoinProbe(hashJoinCtx, 0, joinType, probeKeyIndex, joinedTypes, probeTypes, rightAsBuildSide)
 	buildSchema := &expression.Schema{}
 	for _, tp := range buildTypes {

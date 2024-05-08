@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package partitionedhashjoin
+package join
 
 import (
 	"hash/fnv"
@@ -501,7 +501,7 @@ func (b *rowTableBuilder) initBuffer() {
 	}
 }
 
-func (b *rowTableBuilder) processOneChunk(chk *chunk.Chunk, typeCtx types.Context, hashJoinCtx *PartitionedHashJoinCtx, workerId int) error {
+func (b *rowTableBuilder) processOneChunk(chk *chunk.Chunk, typeCtx types.Context, hashJoinCtx *HashJoinCtxV2, workerId int) error {
 	b.ResetBuffer(chk)
 	var err error
 	if b.hasFilter {
@@ -597,7 +597,7 @@ func (builder *rowTableBuilder) appendRemainingRowLocations(workerId int, htCtx 
 	}
 }
 
-func (builder *rowTableBuilder) appendToRowTable(chk *chunk.Chunk, hashJoinCtx *PartitionedHashJoinCtx, workerId int) {
+func (builder *rowTableBuilder) appendToRowTable(chk *chunk.Chunk, hashJoinCtx *HashJoinCtxV2, workerId int) {
 	fakeAddrByte := make([]byte, 8)
 	rowTableMeta := hashJoinCtx.hashTableMeta
 	var fakeKeyByte []byte
