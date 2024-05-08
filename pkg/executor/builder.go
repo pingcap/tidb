@@ -50,7 +50,6 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/join"
 	"github.com/pingcap/tidb/pkg/executor/lockstats"
 	executor_metrics "github.com/pingcap/tidb/pkg/executor/metrics"
-	"github.com/pingcap/tidb/pkg/executor/partitionedhashjoin"
 	"github.com/pingcap/tidb/pkg/executor/sortexec"
 	"github.com/pingcap/tidb/pkg/executor/unionexec"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -1503,7 +1502,7 @@ func extractUsedColumnsInJoinOtherCondition(expr expression.CNFExprs, leftColumn
 	return leftColumnIndex, rightColumnIndex
 }
 
-func (b *executorBuilder) buildPartitionedHashJoin(v *plannercore.PhysicalHashJoin) exec.Executor {
+func (b *executorBuilder) buildHashJoinV2(v *plannercore.PhysicalHashJoin) exec.Executor {
 	leftExec := b.build(v.Children()[0])
 	if b.err != nil {
 		return nil
@@ -1514,27 +1513,28 @@ func (b *executorBuilder) buildPartitionedHashJoin(v *plannercore.PhysicalHashJo
 		return nil
 	}
 
-	e := &partitionedhashjoin.PartitionedHashJoinExec{
+	e := &join.HashJoinV2Exec{
 		BaseExecutor:          exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID(), leftExec, rightExec),
-		ProbeSideTupleFetcher: &partitionedhashjoin.ProbeSideTupleFetcher{},
-		BuildSideTupleFetcher: &partitionedhashjoin.BuildSideTupleFetcher{},
-		ProbeWorkers:          make([]*partitionedhashjoin.ProbeWorker, v.Concurrency),
-		BuildWorkers:          make([]*partitionedhashjoin.BuildWorker, v.Concurrency),
-		PartitionedHashJoinCtx: &partitionedhashjoin.PartitionedHashJoinCtx{
-			SessCtx:         b.ctx,
-			JoinType:        v.JoinType,
-			Concurrency:     v.Concurrency,
+		ProbeSideTupleFetcher: &join.ProbeSideTupleFetcherV2{},
+		BuildSideTupleFetcher: &join.BuildSideTupleFetcher{},
+		ProbeWorkers:          make([]*join.ProbeWorkerV2, v.Concurrency),
+		BuildWorkers:          make([]*join.BuildWorkerV2, v.Concurrency),
+		HashJoinCtxV2: &join.HashJoinCtxV2{
 			OtherCondition:  v.OtherConditions,
 			PartitionNumber: mathutil.Min(int(v.Concurrency), 16),
 		},
 	}
-	e.PartitionedHashJoinCtx.RightAsBuildSide = true
+	e.HashJoinCtxV2.SessCtx = b.ctx
+	e.HashJoinCtxV2.JoinType = v.JoinType
+	e.HashJoinCtxV2.Concurrency = v.Concurrency
+	e.ChunkAllocPool = e.AllocPool
+	e.HashJoinCtxV2.RightAsBuildSide = true
 	if v.InnerChildIdx == 1 && v.UseOuterToBuild {
-		e.PartitionedHashJoinCtx.RightAsBuildSide = false
+		e.HashJoinCtxV2.RightAsBuildSide = false
 	} else if v.InnerChildIdx == 0 && !v.UseOuterToBuild {
-		e.PartitionedHashJoinCtx.RightAsBuildSide = false
+		e.HashJoinCtxV2.RightAsBuildSide = false
 	}
-	e.BuildSideTupleFetcher.HashJoinCtx = e.PartitionedHashJoinCtx
+	e.BuildSideTupleFetcher.HashJoinCtx = e.HashJoinCtxV2
 
 	lhsTypes, rhsTypes := exec.RetTypes(leftExec), exec.RetTypes(rightExec)
 	joinedTypes := make([]*types.FieldType, 0, len(lhsTypes)+len(rhsTypes))
@@ -1563,24 +1563,24 @@ func (b *executorBuilder) buildPartitionedHashJoin(v *plannercore.PhysicalHashJo
 		if v.InnerChildIdx == 1 {
 			buildSideExec, buildKeys = leftExec, v.LeftJoinKeys
 			e.ProbeSideTupleFetcher.ProbeSideExec, probeKeys = rightExec, v.RightJoinKeys
-			e.PartitionedHashJoinCtx.BuildFilter = v.LeftConditions
+			e.HashJoinCtxV2.BuildFilter = v.LeftConditions
 			e.BuildSideTupleFetcher.BuildSideExec = leftExec
 		} else {
 			buildSideExec, buildKeys = rightExec, v.RightJoinKeys
 			e.ProbeSideTupleFetcher.ProbeSideExec, probeKeys = leftExec, v.LeftJoinKeys
-			e.PartitionedHashJoinCtx.BuildFilter = v.RightConditions
+			e.HashJoinCtxV2.BuildFilter = v.RightConditions
 			e.BuildSideTupleFetcher.BuildSideExec = rightExec
 		}
 	} else {
 		if v.InnerChildIdx == 0 {
 			buildSideExec, buildKeys = leftExec, v.LeftJoinKeys
 			e.ProbeSideTupleFetcher.ProbeSideExec, probeKeys = rightExec, v.RightJoinKeys
-			e.PartitionedHashJoinCtx.ProbeFilter = v.RightConditions
+			e.HashJoinCtxV2.ProbeFilter = v.RightConditions
 			e.BuildSideTupleFetcher.BuildSideExec = leftExec
 		} else {
 			buildSideExec, buildKeys = rightExec, v.RightJoinKeys
 			e.ProbeSideTupleFetcher.ProbeSideExec, probeKeys = leftExec, v.LeftJoinKeys
-			e.PartitionedHashJoinCtx.ProbeFilter = v.LeftConditions
+			e.HashJoinCtxV2.ProbeFilter = v.LeftConditions
 			e.BuildSideTupleFetcher.BuildSideExec = rightExec
 		}
 	}
@@ -1618,13 +1618,13 @@ func (b *executorBuilder) buildPartitionedHashJoin(v *plannercore.PhysicalHashJo
 		e.LUsedInOtherCondition, e.RUsedInOtherCondition = extractUsedColumnsInJoinOtherCondition(v.OtherConditions, leftColumnSize)
 	}
 	for i := uint(0); i < e.Concurrency; i++ {
-		e.ProbeWorkers[i] = &partitionedhashjoin.ProbeWorker{
-			HashJoinCtx: e.PartitionedHashJoinCtx,
-			WorkerID:    i,
-			JoinProbe:   partitionedhashjoin.NewJoinProbe(e.PartitionedHashJoinCtx, i, v.JoinType, probeKeyColIdx, joinedTypes, probeColumnTypes, e.RightAsBuildSide),
+		e.ProbeWorkers[i] = &join.ProbeWorkerV2{
+			HashJoinCtx: e.HashJoinCtxV2,
+			JoinProbe:   join.NewJoinProbe(e.HashJoinCtxV2, i, v.JoinType, probeKeyColIdx, joinedTypes, probeColumnTypes, e.RightAsBuildSide),
 		}
+		e.ProbeWorkers[i].WorkerID = i
 
-		e.BuildWorkers[i] = partitionedhashjoin.NewJoinBuildWorker(e.PartitionedHashJoinCtx, i, buildSideExec, buildKeyColIdx, exec.RetTypes(buildSideExec))
+		e.BuildWorkers[i] = join.NewJoinBuildWorkerV2(e.HashJoinCtxV2, i, buildSideExec, buildKeyColIdx, exec.RetTypes(buildSideExec))
 	}
 	// todo add partition hash join exec
 	executor_metrics.ExecutorCountHashJoinExec.Inc()
@@ -1676,7 +1676,7 @@ func (b *executorBuilder) buildPartitionedHashJoin(v *plannercore.PhysicalHashJo
 
 func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) exec.Executor {
 	if v.SCtx().GetSessionVars().UseNewHashJoinImpl && v.CanUseNewHashJoin() {
-		return b.buildPartitionedHashJoin(v)
+		return b.buildHashJoinV2(v)
 	}
 	leftExec := b.build(v.Children()[0])
 	if b.err != nil {
@@ -1688,20 +1688,20 @@ func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) exec.Ex
 		return nil
 	}
 
-	e := &join.HashJoinExec{
+	e := &join.HashJoinV1Exec{
 		BaseExecutor:          exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID(), leftExec, rightExec),
-		ProbeSideTupleFetcher: &join.ProbeSideTupleFetcher{},
-		ProbeWorkers:          make([]*join.ProbeWorker, v.Concurrency),
-		BuildWorker:           &join.BuildWorker{},
-		HashJoinCtx: &join.HashJoinCtx{
-			SessCtx:         b.ctx,
+		ProbeSideTupleFetcher: &join.ProbeSideTupleFetcherV1{},
+		ProbeWorkers:          make([]*join.ProbeWorkerV1, v.Concurrency),
+		BuildWorker:           &join.BuildWorkerV1{},
+		HashJoinCtxV1: &join.HashJoinCtxV1{
 			IsOuterJoin:     v.JoinType.IsOuterJoin(),
 			UseOuterToBuild: v.UseOuterToBuild,
-			JoinType:        v.JoinType,
-			Concurrency:     v.Concurrency,
 		},
 	}
-	e.HashJoinCtx.ChunkAllocPool = e.AllocPool
+	e.HashJoinCtxV1.SessCtx = b.ctx
+	e.HashJoinCtxV1.JoinType = v.JoinType
+	e.HashJoinCtxV1.Concurrency = v.Concurrency
+	e.HashJoinCtxV1.ChunkAllocPool = e.AllocPool
 	defaultValues := v.DefaultValues
 	lhsTypes, rhsTypes := exec.RetTypes(leftExec), exec.RetTypes(rightExec)
 	if v.InnerChildIdx == 1 {
@@ -1774,16 +1774,16 @@ func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) exec.Ex
 	}
 	childrenUsedSchema := markChildrenUsedCols(colsFromChildren, v.Children()[0].Schema(), v.Children()[1].Schema())
 	for i := uint(0); i < e.Concurrency; i++ {
-		e.ProbeWorkers[i] = &join.ProbeWorker{
-			HashJoinCtx:      e.HashJoinCtx,
-			WorkerID:         i,
+		e.ProbeWorkers[i] = &join.ProbeWorkerV1{
+			HashJoinCtx:      e.HashJoinCtxV1,
 			Joiner:           join.NewJoiner(b.ctx, v.JoinType, v.InnerChildIdx == 0, defaultValues, v.OtherConditions, lhsTypes, rhsTypes, childrenUsedSchema, isNAJoin),
 			ProbeKeyColIdx:   probeKeyColIdx,
 			ProbeNAKeyColIdx: probeNAKeColIdx,
 		}
+		e.ProbeWorkers[i].WorkerID = i
 	}
-	e.BuildWorker.BuildKeyColIdx, e.BuildWorker.BuildNAKeyColIdx, e.BuildWorker.BuildSideExec, e.BuildWorker.HashJoinCtx = buildKeyColIdx, buildNAKeyColIdx, buildSideExec, e.HashJoinCtx
-	e.HashJoinCtx.IsNullAware = isNAJoin
+	e.BuildWorker.BuildKeyColIdx, e.BuildWorker.BuildNAKeyColIdx, e.BuildWorker.BuildSideExec, e.BuildWorker.HashJoinCtx = buildKeyColIdx, buildNAKeyColIdx, buildSideExec, e.HashJoinCtxV1
+	e.HashJoinCtxV1.IsNullAware = isNAJoin
 	executor_metrics.ExecutorCountHashJoinExec.Inc()
 
 	// We should use JoinKey to construct the type information using by hashing, instead of using the child's schema directly.
