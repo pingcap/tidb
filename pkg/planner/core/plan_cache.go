@@ -223,12 +223,6 @@ func GetPlanFromSessionPlanCache(ctx context.Context, sctx sessionctx.Context,
 		}
 	}
 
-	if stmtCtx.UseCache() && stmt.PointGet.Plan != nil { // special code path for fast point plan
-		if plan, names, ok, err := getCachedPointPlan(stmt, sessVars); ok {
-			return plan, names, err
-		}
-	}
-
 	matchOpts, err := GetMatchOpts(sctx, is, stmt, params)
 	if err != nil {
 		return nil, nil, err
@@ -292,6 +286,26 @@ func getCachedPlan(sctx sessionctx.Context, isNonPrepared bool, cacheKey kvcache
 	[]*types.FieldName, bool, error) {
 	sessVars := sctx.GetSessionVars()
 	stmtCtx := sessVars.StmtCtx
+
+	// handle PointGet Plan specially
+	if stmt.PointGet.Plan != nil { // TODO: remove this special handle for point-get plan
+		plan := stmt.PointGet.Plan.(base.Plan)
+		names := stmt.PointGet.ColumnNames.(types.NameSlice)
+		if !RebuildPlan4CachedPlan(plan) {
+			return nil, nil, false, nil
+		}
+		if metrics.ResettablePlanCacheCounterFortTest {
+			metrics.PlanCacheCounter.WithLabelValues("prepare").Inc()
+		} else {
+			// only for prepared plan cache
+			core_metrics.GetPlanCacheHitCounter(false).Inc()
+		}
+		sessVars.FoundInPlanCache = true
+		if pointGetPlan, ok := plan.(*PointGetPlan); ok && pointGetPlan != nil && pointGetPlan.stmtHints != nil {
+			stmtCtx.StmtHints = *pointGetPlan.stmtHints
+		}
+		return plan, names, true, nil
+	}
 
 	candidate, exist := sctx.GetSessionPlanCache().Get(cacheKey, matchOpts)
 	if !exist {
