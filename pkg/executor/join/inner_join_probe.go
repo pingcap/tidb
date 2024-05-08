@@ -17,7 +17,6 @@ package join
 import (
 	"sync/atomic"
 
-	"github.com/pingcap/tidb/pkg/executor/internal/util"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
@@ -27,14 +26,14 @@ type innerJoinProbe struct {
 	baseJoinProbe
 }
 
-func (j *innerJoinProbe) Probe(joinResult *util.HashjoinWorkerResult, sqlKiller sqlkiller.SQLKiller) (ok bool, _ *util.HashjoinWorkerResult) {
-	if joinResult.Chk.IsFull() {
+func (j *innerJoinProbe) Probe(joinResult *hashjoinWorkerResult, sqlKiller sqlkiller.SQLKiller) (ok bool, _ *hashjoinWorkerResult) {
+	if joinResult.chk.IsFull() {
 		return true, joinResult
 	}
 	hasOtherCondition := j.ctx.hasOtherCondition()
-	joinedChk, remainCap, err := j.prepareForProbe(joinResult.Chk)
+	joinedChk, remainCap, err := j.prepareForProbe(joinResult.chk)
 	if err != nil {
-		joinResult.Err = err
+		joinResult.err = err
 		return false, joinResult
 	}
 	meta := j.ctx.hashTableMeta
@@ -61,7 +60,7 @@ func (j *innerJoinProbe) Probe(joinResult *util.HashjoinWorkerResult, sqlKiller 
 
 	err = j.checkSqlKiller(sqlKiller)
 	if err != nil {
-		joinResult.Err = err
+		joinResult.err = err
 		return false, joinResult
 	}
 
@@ -70,14 +69,14 @@ func (j *innerJoinProbe) Probe(joinResult *util.HashjoinWorkerResult, sqlKiller 
 	if j.ctx.hasOtherCondition() && joinedChk.NumRows() > 0 {
 		// eval other condition, and construct final chunk
 		j.selected = j.selected[:0]
-		j.selected, joinResult.Err = expression.VectorizedFilter(j.ctx.SessCtx.GetExprCtx().GetEvalCtx(), j.ctx.SessCtx.GetSessionVars().EnableVectorizedExpression, j.ctx.OtherCondition, chunk.NewIterator4Chunk(joinedChk), j.selected)
-		if joinResult.Err != nil {
+		j.selected, joinResult.err = expression.VectorizedFilter(j.ctx.SessCtx.GetExprCtx().GetEvalCtx(), j.ctx.SessCtx.GetSessionVars().EnableVectorizedExpression, j.ctx.OtherCondition, chunk.NewIterator4Chunk(joinedChk), j.selected)
+		if joinResult.err != nil {
 			return false, joinResult
 		}
-		joinResult.Err = j.buildResultAfterOtherCondition(joinResult.Chk, joinedChk)
+		joinResult.err = j.buildResultAfterOtherCondition(joinResult.chk, joinedChk)
 	}
 	// if there is no other condition, the joinedChk is the final result
-	if joinResult.Err != nil {
+	if joinResult.err != nil {
 		return false, joinResult
 	}
 	return true, joinResult
@@ -87,7 +86,7 @@ func (j *innerJoinProbe) NeedScanRowTable() bool {
 	return false
 }
 
-func (j *innerJoinProbe) ScanRowTable(*util.HashjoinWorkerResult) *util.HashjoinWorkerResult {
+func (j *innerJoinProbe) ScanRowTable(*hashjoinWorkerResult) *hashjoinWorkerResult {
 	panic("should not reach here")
 }
 
