@@ -291,6 +291,13 @@ func (s *CheckpointManager) Reset(newPhysicalID int64, start, end kv.Key) {
 	}
 }
 
+// GetTS returns the TS saved in checkpoint.
+func (s *CheckpointManager) GetTS() uint64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.ts
+}
+
 // JobReorgMeta is the metadata for a reorg job.
 type JobReorgMeta struct {
 	Checkpoint *ReorgCheckpoint `json:"reorg_checkpoint"`

@@ -54,7 +54,7 @@ func (bc *litBackendCtx) Register(jobID, indexID int64, schemaName, tableName st
 		}
 
 		mgr := backend.MakeEngineManager(bc.backend)
-		cfg := generateLocalEngineConfig(jobID, schemaName, tableName, bc.checkpointMgr.ts)
+		cfg := generateLocalEngineConfig(jobID, schemaName, tableName, bc.checkpointMgr.GetTS())
 		openedEn, err := mgr.OpenEngine(bc.ctx, cfg, tableName, int32(indexID))
 		if err != nil {
 			logutil.Logger(bc.ctx).Warn(LitErrCreateEngineFail, zap.Int64("job ID", jobID),
