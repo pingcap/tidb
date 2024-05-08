@@ -170,22 +170,25 @@ func TestWaitSnapshotsCreated(t *testing.T) {
 		})
 
 		if c.expectTimeout {
-			// We wait 5s before checking snapshots
-			ctx, cancel := context.WithTimeout(context.Background(), 6)
-			defer cancel()
+			func () {
+				// We wait 5s before checking snapshots
+				ctx, cancel := context.WithTimeout(context.Background(), 6)
+				defer cancel()
 
-			done := make(chan struct{})
-			go func() {
-				_, _ = e.WaitSnapshotsCreated(snapIdMap, nil)
-				done <- struct{}{}
+				done := make(chan struct{})
+				go func() {
+					_, _ = e.WaitSnapshotsCreated(snapIdMap, nil)
+					done <- struct{}{}
+				}()
+
+				select {
+				case <-done:
+					t.Fatal("WaitSnapshotsCreated should not return before timeout")
+				case <-ctx.Done():
+					require.True(t, true)
+				}
+
 			}()
-
-			select {
-			case <-done:
-				t.Fatal("WaitSnapshotsCreated should not return before timeout")
-			case <-ctx.Done():
-				require.True(t, true)
-			}
 
 			continue
 		}
