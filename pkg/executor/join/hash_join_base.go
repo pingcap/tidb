@@ -22,7 +22,6 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
-	internalutil "github.com/pingcap/tidb/pkg/executor/internal/util"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -31,12 +30,22 @@ import (
 	"github.com/pingcap/tidb/pkg/util/memory"
 )
 
-type baseHashJoinCtx struct {
+// hashjoinWorkerResult stores the result of join workers,
+// `src` is for Chunk reuse: the main goroutine will get the join result chunk `chk`,
+// and push `chk` into `src` after processing, join worker goroutines get the empty chunk from `src`
+// and push new data into this chunk.
+type hashjoinWorkerResult struct {
+	chk *chunk.Chunk
+	err error
+	src chan<- *chunk.Chunk
+}
+
+type hashJoinCtxBase struct {
 	SessCtx        sessionctx.Context
 	ChunkAllocPool chunk.Allocator
 	// Concurrency is the number of partition, build and join workers.
 	Concurrency  uint
-	joinResultCh chan *internalutil.HashjoinWorkerResult
+	joinResultCh chan *hashjoinWorkerResult
 	// closeCh add a lock for closing executor.
 	closeCh       chan struct{}
 	finished      atomic.Bool
