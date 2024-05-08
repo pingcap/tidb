@@ -16,6 +16,7 @@ package issuetest_test
 
 import (
 	"fmt"
+	"github.com/pingcap/tidb/pkg/executor/join"
 	"math/rand"
 	"strings"
 	"testing"
@@ -179,8 +180,11 @@ func TestIssue30289(t *testing.T) {
 	defer func() {
 		require.NoError(t, failpoint.Disable(fpName))
 	}()
-	err := tk.QueryToErr("select /*+ hash_join(t1) */ * from t t1 join t t2 on t1.a=t2.a")
-	require.EqualError(t, err, "issue30289 build return error")
+	for _, setSql := range join.GetHashJoinOptSetSQL() {
+		tk.MustExec(setSql)
+		err := tk.QueryToErr("select /*+ hash_join(t1) */ * from t t1 join t t2 on t1.a=t2.a")
+		require.EqualError(t, err, "issue30289 build return error")
+	}
 }
 
 func TestIssue51998(t *testing.T) {
@@ -607,20 +611,23 @@ func TestIssue42662(t *testing.T) {
 	tk.MustExec("set global tidb_server_memory_limit='1600MB'")
 	tk.MustExec("set global tidb_server_memory_limit_sess_min_size=128*1024*1024")
 	tk.MustExec("set global tidb_mem_oom_action = 'cancel'")
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/join/issue42662_1", `return(true)`))
-	// tk.Session() should be marked as MemoryTop1Tracker but not killed.
-	tk.MustQuery("select /*+ hash_join(t1)*/ * from t1 join t2 on t1.a = t2.a and t1.b = t2.b")
+	for _, setSQL := range join.GetHashJoinOptSetSQL() {
+		tk.MustExec(setSQL)
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/join/issue42662_1", `return(true)`))
+		// tk.Session() should be marked as MemoryTop1Tracker but not killed.
+		tk.MustQuery("select /*+ hash_join(t1)*/ * from t1 join t2 on t1.a = t2.a and t1.b = t2.b")
 
-	// try to trigger the kill top1 logic
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/servermemorylimit/issue42662_2", `return(true)`))
-	time.Sleep(1 * time.Second)
+		// try to trigger the kill top1 logic
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/servermemorylimit/issue42662_2", `return(true)`))
+		time.Sleep(1 * time.Second)
 
-	// no error should be returned
-	tk.MustQuery("select count(*) from t1")
-	tk.MustQuery("select count(*) from t1")
+		// no error should be returned
+		tk.MustQuery("select count(*) from t1")
+		tk.MustQuery("select count(*) from t1")
 
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/join/issue42662_1"))
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/util/servermemorylimit/issue42662_2"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/join/issue42662_1"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/util/servermemorylimit/issue42662_2"))
+	}
 }
 
 func TestIssue50393(t *testing.T) {
