@@ -30,6 +30,11 @@ import (
 	"github.com/pingcap/tidb/pkg/util/memory"
 )
 
+// GetHashJoinOptSetSQL returns the set sql used to switch hash join v1 and v2
+func GetHashJoinOptSetSQL() []string {
+	return []string{"set tidb_opt_use_hash_join_v2 = 0", "set tidb_opt_use_hash_join_v2 = 1"}
+}
+
 // hashjoinWorkerResult stores the result of join workers,
 // `src` is for Chunk reuse: the main goroutine will get the join result chunk `chk`,
 // and push `chk` into `src` after processing, join worker goroutines get the empty chunk from `src`
