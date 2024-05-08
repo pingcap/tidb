@@ -1575,7 +1575,7 @@ func (ds *DataSource) compareTaskRegardingStore(curTask, bestTask base.Task, cur
 
 	switch ds.preferStoreType { // consider the storage preference
 	case h.PreferTiFlash:
-		if bestTaskStore == kv.TiFlash && curTaskStore == kv.TiKV {
+		if bestTaskStore == kv.TiFlash && curTaskStore != kv.TiFlash {
 			return false, nil // prefer TiFlash and the best is TiFlash but the current is TiKV
 		}
 		if bestTaskStore == kv.TiKV && curTaskStore == kv.TiFlash {
