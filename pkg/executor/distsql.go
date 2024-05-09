@@ -33,11 +33,14 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/internal/builder"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
+	exprctx "github.com/pingcap/tidb/pkg/expression/context"
+	isctx "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	planctx "github.com/pingcap/tidb/pkg/planner/context"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
@@ -56,6 +59,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil/consistency"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/ranger"
+	rangerctx "github.com/pingcap/tidb/pkg/util/ranger/context"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
@@ -149,23 +153,51 @@ func closeAll(objs ...Closeable) error {
 
 // rebuildIndexRanges will be called if there's correlated column in access conditions. We will rebuild the range
 // by substituting correlated column with the constant.
-func rebuildIndexRanges(ctx sessionctx.Context, is *plannercore.PhysicalIndexScan, idxCols []*expression.Column, colLens []int) (ranges []*ranger.Range, err error) {
+func rebuildIndexRanges(ectx exprctx.BuildContext, rctx *rangerctx.RangerContext, is *plannercore.PhysicalIndexScan, idxCols []*expression.Column, colLens []int) (ranges []*ranger.Range, err error) {
 	access := make([]expression.Expression, 0, len(is.AccessCondition))
 	for _, cond := range is.AccessCondition {
-		newCond, err1 := expression.SubstituteCorCol2Constant(ctx.GetExprCtx(), cond)
+		newCond, err1 := expression.SubstituteCorCol2Constant(ectx, cond)
 		if err1 != nil {
 			return nil, err1
 		}
 		access = append(access, newCond)
 	}
 	// All of access conditions must be used to build ranges, so we don't limit range memory usage.
-	ranges, _, err = ranger.DetachSimpleCondAndBuildRangeForIndex(ctx.GetRangerCtx(), access, idxCols, colLens, 0)
+	ranges, _, err = ranger.DetachSimpleCondAndBuildRangeForIndex(rctx, access, idxCols, colLens, 0)
 	return ranges, err
+}
+
+type indexReaderExecutorContext struct {
+	dctx       *distsqlctx.DistSQLContext
+	rctx       *rangerctx.RangerContext
+	buildPBCtx *planctx.BuildPBContext
+	ectx       exprctx.BuildContext
+
+	stmtMemTracker *memory.Tracker
+
+	infoSchema isctx.MetaOnlyInfoSchema
+}
+
+func (ireCtx *indexReaderExecutorContext) GetInfoSchema() isctx.MetaOnlyInfoSchema {
+	return ireCtx.infoSchema
+}
+
+func newIndexReaderExecutorContext(sctx sessionctx.Context) indexReaderExecutorContext {
+	pctx := sctx.GetPlanCtx()
+	return indexReaderExecutorContext{
+		dctx:           sctx.GetDistSQLCtx(),
+		rctx:           pctx.GetRangerCtx(),
+		buildPBCtx:     pctx.GetBuildPBCtx(),
+		ectx:           sctx.GetExprCtx(),
+		stmtMemTracker: sctx.GetSessionVars().StmtCtx.MemTracker,
+		infoSchema:     pctx.GetInfoSchema(),
+	}
 }
 
 // IndexReaderExecutor sends dag request and reads index data from kv layer.
 type IndexReaderExecutor struct {
-	exec.BaseExecutor
+	indexReaderExecutorContext
+	exec.BaseExecutorV2
 	indexUsageReporter *exec.IndexUsageReporter
 
 	// For a partitioned table, the IndexReaderExecutor works on a partition, so
@@ -270,7 +302,7 @@ func (e *IndexReaderExecutor) buildKeyRanges(dctx *distsqlctx.DistSQLContext, ra
 func (e *IndexReaderExecutor) Open(ctx context.Context) error {
 	var err error
 	if e.corColInAccess {
-		e.ranges, err = rebuildIndexRanges(e.Ctx(), e.plans[0].(*plannercore.PhysicalIndexScan), e.idxCols, e.colLens)
+		e.ranges, err = rebuildIndexRanges(e.ectx, e.rctx, e.plans[0].(*plannercore.PhysicalIndexScan), e.idxCols, e.colLens)
 		if err != nil {
 			return err
 		}
@@ -283,14 +315,14 @@ func (e *IndexReaderExecutor) Open(ctx context.Context) error {
 			if pRange, ok := e.partRangeMap[p.GetPhysicalID()]; ok {
 				partRange = pRange
 			}
-			kvRange, err := e.buildKeyRanges(e.Ctx().GetDistSQLCtx(), partRange, p.GetPhysicalID())
+			kvRange, err := e.buildKeyRanges(e.dctx, partRange, p.GetPhysicalID())
 			if err != nil {
 				return err
 			}
 			kvRanges = append(kvRanges, kvRange...)
 		}
 	} else {
-		kvRanges, err = e.buildKeyRanges(e.Ctx().GetDistSQLCtx(), e.ranges, e.physicalTableID)
+		kvRanges, err = e.buildKeyRanges(e.dctx, e.ranges, e.physicalTableID)
 	}
 	if err != nil {
 		return err
@@ -309,11 +341,11 @@ func (e *IndexReaderExecutor) buildKVReq(r []kv.KeyRange) (*kv.Request, error) {
 		SetTxnScope(e.txnScope).
 		SetReadReplicaScope(e.readReplicaScope).
 		SetIsStaleness(e.isStaleness).
-		SetFromSessionVars(e.Ctx().GetDistSQLCtx()).
-		SetFromInfoSchema(e.Ctx().GetInfoSchema()).
+		SetFromSessionVars(e.dctx).
+		SetFromInfoSchema(e.GetInfoSchema()).
 		SetMemTracker(e.memTracker).
-		SetClosestReplicaReadAdjuster(newClosestReadAdjuster(e.Ctx().GetDistSQLCtx(), &builder.Request, e.netDataSize)).
-		SetConnIDAndConnAlias(e.Ctx().GetSessionVars().ConnectionID, e.Ctx().GetSessionVars().SessionAlias)
+		SetClosestReplicaReadAdjuster(newClosestReadAdjuster(e.dctx, &builder.Request, e.netDataSize)).
+		SetConnIDAndConnAlias(e.dctx.ConnectionID, e.dctx.SessionAlias)
 	kvReq, err := builder.Build()
 	return kvReq, err
 }
@@ -321,7 +353,7 @@ func (e *IndexReaderExecutor) buildKVReq(r []kv.KeyRange) (*kv.Request, error) {
 func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) error {
 	var err error
 	if e.corColInFilter {
-		e.dagPB.Executors, err = builder.ConstructListBasedDistExec(e.Ctx().GetBuildPBCtx(), e.plans)
+		e.dagPB.Executors, err = builder.ConstructListBasedDistExec(e.buildPBCtx, e.plans)
 		if err != nil {
 			return err
 		}
@@ -344,7 +376,7 @@ func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 	} else {
 		e.memTracker = memory.NewTracker(e.ID(), -1)
 	}
-	e.memTracker.AttachTo(e.Ctx().GetSessionVars().StmtCtx.MemTracker)
+	e.memTracker.AttachTo(e.stmtMemTracker)
 	slices.SortFunc(kvRanges, func(i, j kv.KeyRange) int {
 		return bytes.Compare(i.StartKey, j.StartKey)
 	})
@@ -354,7 +386,7 @@ func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 		if err != nil {
 			return err
 		}
-		e.result, err = e.SelectResult(ctx, e.Ctx().GetDistSQLCtx(), kvReq, exec.RetTypes(e), getPhysicalPlanIDs(e.plans), e.ID())
+		e.result, err = e.SelectResult(ctx, e.dctx, kvReq, exec.RetTypes(e), getPhysicalPlanIDs(e.plans), e.ID())
 		if err != nil {
 			return err
 		}
@@ -369,7 +401,7 @@ func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 		}
 		var results []distsql.SelectResult
 		for _, kvReq := range kvReqs {
-			result, err := e.SelectResult(ctx, e.Ctx().GetDistSQLCtx(), kvReq, exec.RetTypes(e), getPhysicalPlanIDs(e.plans), e.ID())
+			result, err := e.SelectResult(ctx, e.dctx, kvReq, exec.RetTypes(e), getPhysicalPlanIDs(e.plans), e.ID())
 			if err != nil {
 				return err
 			}
@@ -481,7 +513,7 @@ func (e *IndexLookUpExecutor) setDummy() {
 func (e *IndexLookUpExecutor) Open(ctx context.Context) error {
 	var err error
 	if e.corColInAccess {
-		e.ranges, err = rebuildIndexRanges(e.Ctx(), e.idxPlans[0].(*plannercore.PhysicalIndexScan), e.idxCols, e.colLens)
+		e.ranges, err = rebuildIndexRanges(e.Ctx().GetExprCtx(), e.Ctx().GetRangerCtx(), e.idxPlans[0].(*plannercore.PhysicalIndexScan), e.idxCols, e.colLens)
 		if err != nil {
 			return err
 		}

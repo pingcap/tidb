@@ -164,6 +164,17 @@ func buildMockBaseExec(sctx sessionctx.Context) exec.BaseExecutor {
 	return baseExec
 }
 
+func buildMockBaseExecV2(sctx sessionctx.Context) exec.BaseExecutorV2 {
+	retTypes := []*types.FieldType{types.NewFieldType(mysql.TypeDouble), types.NewFieldType(mysql.TypeLonglong)}
+	cols := make([]*expression.Column, len(retTypes))
+	for i := range retTypes {
+		cols[i] = &expression.Column{Index: i, RetType: retTypes[i]}
+	}
+	schema := expression.NewSchema(cols...)
+	baseExec := exec.NewBaseExecutorV2(sctx.GetSessionVars(), schema, 0)
+	return baseExec
+}
+
 func TestTableReaderRequiredRows(t *testing.T) {
 	maxChunkSize := defaultCtx().GetSessionVars().MaxChunkSize
 	testCases := []struct {
@@ -208,10 +219,11 @@ func TestTableReaderRequiredRows(t *testing.T) {
 
 func buildIndexReader(sctx sessionctx.Context) exec.Executor {
 	e := &IndexReaderExecutor{
-		BaseExecutor:     buildMockBaseExec(sctx),
-		dagPB:            buildMockDAGRequest(sctx),
-		index:            &model.IndexInfo{},
-		selectResultHook: selectResultHook{mockSelectResult},
+		indexReaderExecutorContext: newIndexReaderExecutorContext(sctx),
+		BaseExecutorV2:             buildMockBaseExecV2(sctx),
+		dagPB:                      buildMockDAGRequest(sctx),
+		index:                      &model.IndexInfo{},
+		selectResultHook:           selectResultHook{mockSelectResult},
 	}
 	return e
 }
