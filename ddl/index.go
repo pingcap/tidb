@@ -1698,10 +1698,34 @@ func writeChunkToLocal(writer ingest.Writer,
 	handleDataBuf := make([]types.Datum, len(copCtx.handleOutputOffsets))
 	count := 0
 	var lastHandle kv.Handle
+<<<<<<< HEAD:ddl/index.go
 	unlock := writer.LockForWrite()
 	defer unlock()
 	var restoreDataBuf []types.Datum
 	restore := tables.NeedRestoredData(index.Meta().Columns, copCtx.tblInfo.Columns)
+=======
+
+	unlockFns := make([]func(), 0, len(writers))
+	for _, w := range writers {
+		unlock := w.LockForWrite()
+		unlockFns = append(unlockFns, unlock)
+	}
+	defer func() {
+		for _, unlock := range unlockFns {
+			unlock()
+		}
+	}()
+	needRestoreForIndexes := make([]bool, len(indexes))
+	restore, pkNeedRestore := false, false
+	if c.PrimaryKeyInfo != nil && c.TableInfo.IsCommonHandle && c.TableInfo.CommonHandleVersion != 0 {
+		pkNeedRestore = tables.NeedRestoredData(c.PrimaryKeyInfo.Columns, c.TableInfo.Columns)
+	}
+	for i, index := range indexes {
+		needRestore := pkNeedRestore || tables.NeedRestoredData(index.Meta().Columns, c.TableInfo.Columns)
+		needRestoreForIndexes[i] = needRestore
+		restore = restore || needRestore
+	}
+>>>>>>> 12b37d88dce (ddl: fix the primary key in index is not in restored format (#53118)):pkg/ddl/index.go
 	if restore {
 		restoreDataBuf = make([]types.Datum, len(copCtx.handleOutputOffsets))
 	}
