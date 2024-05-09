@@ -17,6 +17,7 @@ go_test(
         "//pkg/ddl/util",
         "//pkg/errno",
         "//pkg/executor",
+        "//pkg/executor/join",
         "//pkg/expression",
         "//pkg/kv",
         "//pkg/meta/autoid",
