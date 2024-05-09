@@ -352,8 +352,8 @@ func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) 
 			case "plaintext":
 				cfg.CipherInfo.CipherType = encryptionpb.EncryptionMethod_PLAINTEXT
 			default:
-				cfg.CipherInfo.CipherType = encryptionpb.EncryptionMethod_PLAINTEXT
 				b.err = errors.Errorf("unsupported encryption method: %s", opt.StrValue)
+				return nil
 			}
 		}
 	}
@@ -417,8 +417,8 @@ func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) 
 				case "lz4":
 					e.backupCfg.CompressionConfig.CompressionType = backuppb.CompressionType_LZ4
 				default:
-					e.backupCfg.CompressionConfig.CompressionType = backuppb.CompressionType_ZSTD
 					b.err = errors.Errorf("unsupported compression type: %s", opt.StrValue)
+					return nil
 				}
 			case ast.BRIEOptionCompressionLevel:
 				e.backupCfg.CompressionConfig.CompressionLevel = int32(opt.UintValue)
