@@ -289,6 +289,7 @@ var tokenMap = map[string]int{
 	"WAIT_TIFLASH_READY":       waitTiflashReady,
 	"WITH_SYS_TABLE":           withSysTable,
 	"IGNORE_STATS":             ignoreStats,
+	"LOAD_STATS":               loadStats,
 	"CHECKSUM_CONCURRENCY":     checksumConcurrency,
 	"COMPRESSION_LEVEL":        compressionLevel,
 	"COMPRESSION_TYPE":         compressionType,

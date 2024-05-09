@@ -685,6 +685,7 @@ import (
 	withSysTable          "WITH_SYS_TABLE"
 	waitTiflashReady      "WAIT_TIFLASH_READY"
 	ignoreStats           "IGNORE_STATS"
+	loadStats             "LOAD_STATS"
 	checksumConcurrency   "CHECKSUM_CONCURRENCY"
 	compressionLevel      "COMPRESSION_LEVEL"
 	compressionType       "COMPRESSION_TYPE"
@@ -5651,6 +5652,10 @@ BRIEBooleanOptionName:
 	{
 		$$ = ast.BRIEOptionIgnoreStats
 	}
+|	"LOAD_STATS"
+	{
+		$$ = ast.BRIEOptionLoadStats
+	}
 
 BRIEStringOptionName:
 	"TIKV_IMPORTER"
@@ -6960,6 +6965,7 @@ UnReservedKeyword:
 |	"WITH_SYS_TABLE"
 |	"WAIT_TIFLASH_READY"
 |	"IGNORE_STATS"
+|	"LOAD_STATS"
 |	"CHECKSUM_CONCURRENCY"
 |	"COMPRESSION_LEVEL"
 |	"COMPRESSION_TYPE"

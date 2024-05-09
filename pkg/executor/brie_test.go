@@ -158,7 +158,7 @@ func TestBRIEBuilderOPtions(t *testing.T) {
 	defer failpoint.Disable("github.com/pingcap/tidb/pkg/executor/modifyStore")
 	err := os.WriteFile("/tmp/keyfile", []byte(strings.Repeat("A", 128)), 0644)
 
-	require.NoError(t,err)
+	require.NoError(t, err)
 	stmt, err := p.ParseOneStmt("BACKUP TABLE `a` TO 'noop://' CHECKSUM_CONCURRENCY = 4 IGNORE_STATS = 1 COMPRESSION_LEVEL = 4 COMPRESSION_TYPE = 'lz4' ENCRYPTION_METHOD = 'aes256-ctr' ENCRYPTION_KEYFILE = '/tmp/keyfile'", "", "")
 	require.NoError(t, err)
 	plan, err := core.BuildLogicalPlanForTest(ctx, sctx, stmt, infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable(), core.MockUnsignedTable(), core.MockView()}))
@@ -184,8 +184,8 @@ func TestBRIEBuilderOPtions(t *testing.T) {
 	}
 	schema := plan.Schema()
 	exec := builder.buildBRIE(s, schema)
-	require.NoError(t,builder.err)
-	e,ok := exec.(*BRIEExec)
+	require.NoError(t, builder.err)
+	e, ok := exec.(*BRIEExec)
 	require.True(t, ok)
 	require.True(t, e.backupCfg.ChecksumConcurrency == 4)
 	require.True(t, e.backupCfg.CompressionLevel == 4)
@@ -194,7 +194,7 @@ func TestBRIEBuilderOPtions(t *testing.T) {
 	require.True(t, e.backupCfg.CipherInfo.CipherType == encryptionpb.EncryptionMethod_AES256_CTR)
 	require.True(t, len(e.backupCfg.CipherInfo.CipherKey) > 0)
 
-	stmt, err = p.ParseOneStmt("RESTORE TABLE `a` FROM 'noop://' CHECKSUM_CONCURRENCY = 4 WAIT_TIFLASH_READY = 1 WITH_SYS_TABLE = 1", "", "")
+	stmt, err = p.ParseOneStmt("RESTORE TABLE `a` FROM 'noop://' CHECKSUM_CONCURRENCY = 4 WAIT_TIFLASH_READY = 1 WITH_SYS_TABLE = 1 LOAD_STATS = 1", "", "")
 	require.NoError(t, err)
 	plan, err = core.BuildLogicalPlanForTest(ctx, sctx, stmt, infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable(), core.MockUnsignedTable(), core.MockView()}))
 	require.NoError(t, err)
@@ -209,14 +209,17 @@ func TestBRIEBuilderOPtions(t *testing.T) {
 			require.True(t, opt.UintValue == 1)
 		case ast.BRIEOptionWithSysTable:
 			require.True(t, opt.UintValue == 1)
+		case ast.BRIEOptionLoadStats:
+			require.True(t, opt.UintValue == 1)
 		}
 	}
 	schema = plan.Schema()
 	exec = builder.buildBRIE(s, schema)
-	require.NoError(t,builder.err)
-	e,ok = exec.(*BRIEExec)
+	require.NoError(t, builder.err)
+	e, ok = exec.(*BRIEExec)
 	require.True(t, ok)
 	require.True(t, e.restoreCfg.ChecksumConcurrency == 4)
 	require.True(t, e.restoreCfg.WaitTiflashReady)
 	require.True(t, e.restoreCfg.WithSysTable)
+	require.True(t, e.restoreCfg.LoadStats)
 }

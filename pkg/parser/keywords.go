@@ -423,6 +423,7 @@ var Keywords = []KeywordsType{
 	{"LESS", false, "unreserved"},
 	{"LEVEL", false, "unreserved"},
 	{"LIST", false, "unreserved"},
+	{"LOAD_STATS", false, "unreserved"},
 	{"LOCAL", false, "unreserved"},
 	{"LOCATION", false, "unreserved"},
 	{"LOCKED", false, "unreserved"},

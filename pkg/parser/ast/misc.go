@@ -3291,6 +3291,7 @@ const (
 	BRIEOptionCompressionLevel
 	BRIEOptionCompression
 	BRIEOptionIgnoreStats
+	BRIEOptionLoadStats
 	// restore options
 	BRIEOptionOnline
 	BRIEOptionFullBackupStorage
@@ -3422,6 +3423,8 @@ func (kind BRIEOptionType) String() string {
 		return "WITH_SYS_TABLE"
 	case BRIEOptionIgnoreStats:
 		return "IGNORE_STATS"
+	case BRIEOptionLoadStats:
+		return "LOAD_STATS"
 	case BRIEOptionChecksumConcurrency:
 		return "CHECKSUM_CONCURRENCY"
 	case BRIEOptionCompressionLevel:

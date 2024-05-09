@@ -337,7 +337,7 @@ func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) 
 		case ast.BRIEOptionChecksumConcurrency:
 			cfg.ChecksumConcurrency = uint(opt.UintValue)
 		case ast.BRIEOptionEncryptionKeyFile:
-			cfg.CipherInfo.CipherKey,err = task.GetCipherKeyContent("",opt.StrValue)
+			cfg.CipherInfo.CipherKey, err = task.GetCipherKeyContent("", opt.StrValue)
 			if err != nil {
 				b.err = err
 				return nil
@@ -443,6 +443,8 @@ func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) 
 				e.restoreCfg.WaitTiflashReady = opt.UintValue != 0
 			case ast.BRIEOptionWithSysTable:
 				e.restoreCfg.WithSysTable = opt.UintValue != 0
+			case ast.BRIEOptionLoadStats:
+				e.restoreCfg.LoadStats = opt.UintValue != 0
 			}
 		}
 
