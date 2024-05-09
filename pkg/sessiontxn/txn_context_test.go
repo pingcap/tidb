@@ -579,6 +579,10 @@ func TestStaleReadInPrepare(t *testing.T) {
 	rs, err = se.ExecutePreparedStmt(context.TODO(), st, nil)
 	require.NoError(t, err)
 	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("12"))
+	rs, err = se.ExecutePreparedStmt(context.TODO(), st, nil)
+	require.NoError(t, err)
+	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("12"))
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
 }
 
 func TestTxnContextForStaleReadInPrepare(t *testing.T) {
