@@ -74,7 +74,7 @@ func (j *leftOuterJoinProbe) InitForScanRowTable() {
 	j.rowIter = j.ctx.hashTableContext.hashTable.createRowIter(startIndex, endIndex)
 }
 
-func (j *leftOuterJoinProbe) ScanRowTable(joinResult *hashjoinWorkerResult) *hashjoinWorkerResult {
+func (j *leftOuterJoinProbe) ScanRowTable(joinResult *hashjoinWorkerResult, sqlKiller sqlkiller.SQLKiller) *hashjoinWorkerResult {
 	if j.rightAsBuildSide {
 		panic("should not reach here")
 	}
@@ -96,6 +96,11 @@ func (j *leftOuterJoinProbe) ScanRowTable(joinResult *hashjoinWorkerResult) *has
 			insertedRows++
 		}
 		j.rowIter.next()
+	}
+	err := probeCheckSqlKiller(sqlKiller)
+	if err != nil {
+		joinResult.err = err
+		return joinResult
 	}
 	if len(j.cachedBuildRows) > 0 {
 		j.batchConstructBuildRows(joinResult.chk, 0, false)
@@ -233,7 +238,7 @@ func (j *leftOuterJoinProbe) probeForRightBuild(chk, joinedChk *chunk.Chunk, rem
 		remainCap--
 	}
 
-	err = j.checkSqlKiller(sqlKiller)
+	err = probeCheckSqlKiller(sqlKiller)
 	if err != nil {
 		return err
 	}
@@ -286,7 +291,7 @@ func (j *leftOuterJoinProbe) probeForLeftBuild(chk, joinedChk *chunk.Chunk, rema
 			j.currentProbeRow++
 		}
 	}
-	err = j.checkSqlKiller(sqlKiller)
+	err = probeCheckSqlKiller(sqlKiller)
 	if err != nil {
 		return err
 	}
