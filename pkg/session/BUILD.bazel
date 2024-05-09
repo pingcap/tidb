@@ -75,6 +75,7 @@ go_library(
         "//pkg/sessiontxn",
         "//pkg/sessiontxn/isolation",
         "//pkg/sessiontxn/staleread",
+        "//pkg/statistics/handle/syncload",
         "//pkg/statistics/handle/usage",
         "//pkg/statistics/handle/usage/indexusage",
         "//pkg/store/driver/error",
