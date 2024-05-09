@@ -50,7 +50,7 @@ type JoinProbe interface {
 	SetChunkForProbe(chunk *chunk.Chunk) error
 	Probe(joinResult *hashjoinWorkerResult, sqlKiller sqlkiller.SQLKiller) (ok bool, result *hashjoinWorkerResult)
 	IsCurrentChunkProbeDone() bool
-	ScanRowTable(joinResult *hashjoinWorkerResult) (result *hashjoinWorkerResult)
+	ScanRowTable(joinResult *hashjoinWorkerResult, sqlKiller sqlkiller.SQLKiller) (result *hashjoinWorkerResult)
 	IsScanRowTableDone() bool
 	NeedScanRowTable() bool
 	InitForScanRowTable()
@@ -231,7 +231,7 @@ func (j *baseJoinProbe) finishLookupCurrentProbeRow() {
 	j.matchedRowsForCurrentProbeRow = 0
 }
 
-func (j *baseJoinProbe) checkSqlKiller(killer sqlkiller.SQLKiller) error {
+func probeCheckSqlKiller(killer sqlkiller.SQLKiller) error {
 	err := killer.HandleSignal()
 	failpoint.Inject("killedDuringProbe", func(val failpoint.Value) {
 		if val.(bool) {
@@ -531,7 +531,7 @@ func (m *mockJoinProbe) Probe(joinResult *hashjoinWorkerResult, killer sqlkiller
 	panic("not supported")
 }
 
-func (m *mockJoinProbe) ScanRowTable(joinResult *hashjoinWorkerResult) (result *hashjoinWorkerResult) {
+func (m *mockJoinProbe) ScanRowTable(joinResult *hashjoinWorkerResult, sqlKiller sqlkiller.SQLKiller) (result *hashjoinWorkerResult) {
 	panic("not supported")
 }
 

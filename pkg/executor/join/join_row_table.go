@@ -15,6 +15,9 @@
 package join
 
 import (
+	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
+	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"hash/fnv"
 	"sync/atomic"
 	"unsafe"
@@ -501,6 +504,16 @@ func (b *rowTableBuilder) initBuffer() {
 	}
 }
 
+func buildCheckSqlKiller(killer sqlkiller.SQLKiller) error {
+	err := killer.HandleSignal()
+	failpoint.Inject("killedDuringBuild", func(val failpoint.Value) {
+		if val.(bool) {
+			err = exeerrors.ErrQueryInterrupted
+		}
+	})
+	return err
+}
+
 func (b *rowTableBuilder) processOneChunk(chk *chunk.Chunk, typeCtx types.Context, hashJoinCtx *HashJoinCtxV2, workerId int) error {
 	b.ResetBuffer(chk)
 	var err error
@@ -510,12 +523,20 @@ func (b *rowTableBuilder) processOneChunk(chk *chunk.Chunk, typeCtx types.Contex
 			return err
 		}
 	}
+	err = buildCheckSqlKiller(hashJoinCtx.SessCtx.GetSessionVars().SQLKiller)
+	if err != nil {
+		return err
+	}
 	// split partition
 	for index, colIdx := range b.buildKeyIndex {
 		err := codec.SerializeKeys(typeCtx, chk, b.buildSchema.Columns[colIdx].RetType, colIdx, b.usedRows, b.filterVector, b.nullKeyVector, hashJoinCtx.hashTableMeta.serializeModes[index], b.serializedKeyVectorBuffer)
 		if err != nil {
 			return err
 		}
+	}
+	err = buildCheckSqlKiller(hashJoinCtx.SessCtx.GetSessionVars().SQLKiller)
+	if err != nil {
+		return err
 	}
 
 	h := fnv.New64()
@@ -533,10 +554,13 @@ func (b *rowTableBuilder) processOneChunk(chk *chunk.Chunk, typeCtx types.Contex
 		b.partIdxVector[logicalRowIndex] = int(hash % uint64(hashJoinCtx.PartitionNumber))
 		h.Reset()
 	}
+	err = buildCheckSqlKiller(hashJoinCtx.SessCtx.GetSessionVars().SQLKiller)
+	if err != nil {
+		return err
+	}
 
 	// 2. build rowtable
-	b.appendToRowTable(chk, hashJoinCtx, workerId)
-	return nil
+	return b.appendToRowTable(chk, hashJoinCtx, workerId)
 }
 
 func resizeSlice[T int | uint64 | bool](s []T, newSize int) []T {
@@ -597,7 +621,7 @@ func (builder *rowTableBuilder) appendRemainingRowLocations(workerId int, htCtx 
 	}
 }
 
-func (builder *rowTableBuilder) appendToRowTable(chk *chunk.Chunk, hashJoinCtx *HashJoinCtxV2, workerId int) {
+func (builder *rowTableBuilder) appendToRowTable(chk *chunk.Chunk, hashJoinCtx *HashJoinCtxV2, workerId int) error {
 	fakeAddrByte := make([]byte, 8)
 	rowTableMeta := hashJoinCtx.hashTableMeta
 	var fakeKeyByte []byte
@@ -605,6 +629,12 @@ func (builder *rowTableBuilder) appendToRowTable(chk *chunk.Chunk, hashJoinCtx *
 		fakeKeyByte = make([]byte, rowTableMeta.joinKeysLength)
 	}
 	for logicalRowIndex, physicalRowIndex := range builder.usedRows {
+		if logicalRowIndex%10 == 0 || logicalRowIndex == len(builder.usedRows)-1 {
+			err := buildCheckSqlKiller(hashJoinCtx.SessCtx.GetSessionVars().SQLKiller)
+			if err != nil {
+				return err
+			}
+		}
 		hasValidKey := (!builder.hasFilter || builder.filterVector[physicalRowIndex]) && (!builder.hasNullableKey || !builder.nullKeyVector[physicalRowIndex])
 		if !hasValidKey && !builder.keepFilteredRows {
 			continue
@@ -689,6 +719,7 @@ func (builder *rowTableBuilder) appendToRowTable(chk *chunk.Chunk, hashJoinCtx *
 		}
 		builder.crrntSizeOfRowTable[partIdx]++
 	}
+	return nil
 }
 
 func (rt *rowTable) merge(other *rowTable) {

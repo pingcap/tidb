@@ -58,7 +58,7 @@ func (j *innerJoinProbe) Probe(joinResult *hashjoinWorkerResult, sqlKiller sqlki
 		}
 	}
 
-	err = j.checkSqlKiller(sqlKiller)
+	err = probeCheckSqlKiller(sqlKiller)
 	if err != nil {
 		joinResult.err = err
 		return false, joinResult
@@ -86,7 +86,7 @@ func (j *innerJoinProbe) NeedScanRowTable() bool {
 	return false
 }
 
-func (j *innerJoinProbe) ScanRowTable(*hashjoinWorkerResult) *hashjoinWorkerResult {
+func (j *innerJoinProbe) ScanRowTable(*hashjoinWorkerResult, sqlkiller.SQLKiller) *hashjoinWorkerResult {
 	panic("should not reach here")
 }
 
