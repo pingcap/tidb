@@ -549,6 +549,38 @@ func TestTxnContextForPrepareExecute(t *testing.T) {
 	tk.MustExec("rollback")
 }
 
+func TestStaleReadInPrepare(t *testing.T) {
+	store, _ := setupTxnContextTest(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	se := tk.Session()
+
+	tk.MustExec(`create table tt (id int primary key, v int)`)
+	tk.MustExec(`insert into tt values(1, 10)`)
+	tk.MustExec("do sleep(0.1)")
+	tk.MustExec("set @a=now(6)")
+	tk.MustExec("do sleep(0.1)")
+
+	st, _, _, err := se.PrepareStmt("select v from tt where id=1")
+	require.NoError(t, err)
+
+	tk.MustExec(`update tt set v=11 where id=1`)
+	rs, err := se.ExecutePreparedStmt(context.TODO(), st, nil)
+	require.NoError(t, err)
+	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("11"))
+
+	tk.MustExec("set @@tx_read_ts=@a")
+	rs, err = se.ExecutePreparedStmt(context.TODO(), st, nil)
+	require.NoError(t, err)
+	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("10"))
+
+	tk.MustExec("update tt set v=12 where id=1")
+	tk.MustExec("set @@tx_read_ts=''")
+	rs, err = se.ExecutePreparedStmt(context.TODO(), st, nil)
+	require.NoError(t, err)
+	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("12"))
+}
+
 func TestTxnContextForStaleReadInPrepare(t *testing.T) {
 	store, _ := setupTxnContextTest(t)
 	tk := testkit.NewTestKit(t, store)
@@ -632,7 +664,8 @@ func TestTxnContextForStaleReadInPrepare(t *testing.T) {
 	tk.MustExec("do sleep(0.1)")
 	tk.MustExec("update t1 set v=v+1 where id=1")
 	se.SetValue(sessiontxn.AssertTxnInfoSchemaKey, is2)
-	doWithCheckPath(t, se, normalPathRecords, func() {
+	doWithCheckPath(t, se, []string{"assertTxnManagerInCompile", "assertTxnManagerInShortPointGetPlan"}, func() {
+		// stale-read is not used since `tx_read_ts` is empty, so the plan cache should be used in this case.
 		rs, err := se.ExecutePreparedStmt(context.TODO(), stmtID1, nil)
 		require.NoError(t, err)
 		tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("1 12"))
