@@ -649,7 +649,7 @@ func TestIssue51777(t *testing.T) {
 	tk.MustExec("insert into t1 values(-2123227448), (2131706870), (-2071508387), (2135465388), (2052805244), (-2066000113)")
 	tk.MustQuery("SELECT ( select  (ref_4.c_pv <= ref_3.c_k) as c0 from t1 as ref_4 order by c0 asc limit 1) as p2 FROM t0 as ref_3 order by p2;").Check(testkit.Rows("0", "0", "0", "0", "0", "0", "1", "1", "1"))
 }
-  
+
 func TestIssue52978(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
