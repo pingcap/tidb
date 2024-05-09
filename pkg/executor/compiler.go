@@ -127,12 +127,12 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (_ *ExecS
 	}
 	// Use cached plan if possible.
 	if preparedObj != nil {
-		pointPlan := finalPlan
 		if exec, ok := finalPlan.(*plannercore.Execute); ok {
-			pointPlan = exec.Plan
-		}
-		if plannercore.IsSafeToReusePointGetExecutor(c.Ctx, is, preparedObj, pointPlan) {
-			stmt.PsStmt, stmt.Plan = preparedObj, pointPlan // notify to re-use the cached plan
+			if pointPlan, ok := exec.Plan.(*plannercore.PointGetPlan); ok {
+				if plannercore.IsSafeToReusePointGetExecutor(c.Ctx, is, preparedObj) {
+					stmt.PsStmt, stmt.Plan = preparedObj, pointPlan // notify to re-use the cached plan
+				}
+			}
 		}
 	}
 

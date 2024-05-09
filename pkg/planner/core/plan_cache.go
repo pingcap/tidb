@@ -788,7 +788,7 @@ func checkPreparedPriv(sctx sessionctx.Context, stmt *PlanCacheStmt, is infosche
 }
 
 // IsSafeToReusePointGetExecutor checks whether this is a PointGet Plan and safe to reuse its executor.
-func IsSafeToReusePointGetExecutor(sctx sessionctx.Context, is infoschema.InfoSchema, stmt *PlanCacheStmt, plan base.Plan) bool {
+func IsSafeToReusePointGetExecutor(sctx sessionctx.Context, is infoschema.InfoSchema, stmt *PlanCacheStmt) bool {
 	if staleread.IsStmtStaleness(sctx) {
 		return false
 	}
@@ -799,12 +799,5 @@ func IsSafeToReusePointGetExecutor(sctx sessionctx.Context, is infoschema.InfoSc
 	if stmt.SchemaVersion != is.SchemaMetaVersion() {
 		return false
 	}
-
-	// only support simple PointGet Plan now
-	switch plan.(type) {
-	case *PointGetPlan:
-		return true
-	default:
-		return false
-	}
+	return true
 }
