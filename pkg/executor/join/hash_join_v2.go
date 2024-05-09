@@ -49,7 +49,7 @@ type hashTableContext struct {
 	// rowTables is used during split partition stage, each buildWorker has
 	// its own rowTable
 	rowTables     [][]*rowTable
-	hashTable     *JoinHashTable
+	hashTable     *HashTableV2
 	memoryTracker *memory.Tracker
 }
 
@@ -115,7 +115,7 @@ func newHashTableContext(workerConcurrency int, partitionNumber int) *hashTableC
 	for index := range ret.rowTables {
 		ret.rowTables[index] = make([]*rowTable, partitionNumber)
 	}
-	ret.hashTable = &JoinHashTable{
+	ret.hashTable = &HashTableV2{
 		tables:          make([]*subTable, partitionNumber),
 		partitionNumber: uint64(partitionNumber),
 	}
