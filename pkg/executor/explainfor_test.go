@@ -75,7 +75,7 @@ func TestExplainFor(t *testing.T) {
 				buf.WriteString(fmt.Sprintf("%v", v))
 			}
 		}
-		require.Regexp(t, "TableReader_5 10000.00 0 root  time:.*, loops:1,( RU:.*,)? cop_task: {num:.*, max:.*, proc_keys:.* rpc_num: 1, rpc_time:.*} data:TableFullScan_4 N/A N/A\n"+
+		require.Regexp(t, "TableReader_5 10000.00 0 root  time:.*, loops:1,( RU:.*,)? cop_task: {num:.*, max:.*, proc_keys:.*num_rpc:1, total_time:.*} data:TableFullScan_4 N/A N/A\n"+
 			"└─TableFullScan_4 10000.00 0 cop.* table:t1 tikv_task:{time:.*, loops:0} keep order:false, stats:pseudo N/A N/A",
 			buf.String())
 	}
@@ -379,15 +379,15 @@ func TestIssue28259(t *testing.T) {
 	ps = []*util.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
-	require.Len(t, res.Rows(), 3)
-	require.Regexp(t, ".*Selection.*", res.Rows()[1][0])
-	require.Regexp(t, ".*IndexFullScan.*", res.Rows()[2][0])
+	require.Len(t, res.Rows(), 2)
+	require.Regexp(t, ".*IndexReader.*", res.Rows()[0][0])
+	require.Regexp(t, ".*IndexRangeScan.*", res.Rows()[1][0])
 
 	res = tk.MustQuery("explain format = 'brief' select col1 from UK_GCOL_VIRTUAL_18588 use index(UK_COL1) " +
 		"where col1 between -1696020282760139948 and -2619168038882941276 or col1 < -4004648990067362699;")
-	require.Len(t, res.Rows(), 3)
-	require.Regexp(t, ".*Selection.*", res.Rows()[1][0])
-	require.Regexp(t, ".*IndexFullScan.*", res.Rows()[2][0])
+	require.Len(t, res.Rows(), 2)
+	require.Regexp(t, ".*IndexReader.*", res.Rows()[0][0])
+	require.Regexp(t, ".*IndexRangeScan.*", res.Rows()[1][0])
 	res = tk.MustQuery("explain format = 'brief' select col1 from UK_GCOL_VIRTUAL_18588 use index(UK_COL1) " +
 		"where col1 between 5516958330762833919 and 8551969118506051323 or col1 < 2887622822023883594;")
 	require.Len(t, res.Rows(), 2)

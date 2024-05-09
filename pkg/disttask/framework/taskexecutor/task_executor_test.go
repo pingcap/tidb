@@ -21,9 +21,10 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/disttask/framework/mock"
-	mockexecute "github.com/pingcap/tidb/pkg/disttask/framework/mock/execute"
+	"github.com/pingcap/tidb/pkg/disttask/framework/mock/execute"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
+	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 	"google.golang.org/grpc/codes"
@@ -57,7 +58,7 @@ func TestTaskExecutorRun(t *testing.T) {
 
 	// 1. no taskExecutor constructor
 	taskExecutorRegisterErr := errors.Errorf("constructor of taskExecutor for key not found")
-	mockExtension.EXPECT().GetStepExecutor(gomock.Any(), gomock.Any()).Return(nil, taskExecutorRegisterErr).Times(2)
+	mockExtension.EXPECT().GetStepExecutor(gomock.Any()).Return(nil, taskExecutorRegisterErr).Times(2)
 	taskExecutor := NewBaseTaskExecutor(ctx, "id", task1, mockSubtaskTable)
 	taskExecutor.Extension = mockExtension
 	err := taskExecutor.runStep(nil)
@@ -68,7 +69,7 @@ func TestTaskExecutorRun(t *testing.T) {
 	require.True(t, ctrl.Satisfied())
 
 	// 2. init subtask exec env failed
-	mockExtension.EXPECT().GetStepExecutor(gomock.Any(), gomock.Any()).Return(mockStepExecutor, nil).AnyTimes()
+	mockExtension.EXPECT().GetStepExecutor(gomock.Any()).Return(mockStepExecutor, nil).AnyTimes()
 
 	initErr := errors.New("init error")
 	mockStepExecutor.EXPECT().Init(gomock.Any()).Return(initErr)
@@ -297,7 +298,7 @@ func TestTaskExecutor(t *testing.T) {
 	mockStepExecutor := mockexecute.NewMockStepExecutor(ctrl)
 	mockExtension := mock.NewMockExtension(ctrl)
 	mockSubtaskTable.EXPECT().UpdateSubtaskStateAndError(gomock.Any(), "id", taskID, proto.SubtaskStateFailed, gomock.Any()).Return(nil)
-	mockExtension.EXPECT().GetStepExecutor(gomock.Any(), gomock.Any()).Return(mockStepExecutor, nil).AnyTimes()
+	mockExtension.EXPECT().GetStepExecutor(gomock.Any()).Return(mockStepExecutor, nil).AnyTimes()
 	mockExtension.EXPECT().IsRetryableError(gomock.Any()).Return(false).AnyTimes()
 	// mock for checkBalanceSubtask
 	mockSubtaskTable.EXPECT().GetSubtasksByExecIDAndStepAndStates(gomock.Any(), "id",
@@ -359,7 +360,7 @@ func TestRunStepCurrentSubtaskScheduledAway(t *testing.T) {
 	mockSubtaskTable.EXPECT().GetSubtasksByExecIDAndStepAndStates(gomock.Any(), "tidb1",
 		task.ID, proto.StepOne, proto.SubtaskStateRunning).Return([]*proto.Subtask{}, nil)
 	// mock for runStep
-	mockExtension.EXPECT().GetStepExecutor(gomock.Any(), gomock.Any()).Return(mockStepExecutor, nil)
+	mockExtension.EXPECT().GetStepExecutor(gomock.Any()).Return(mockStepExecutor, nil)
 	mockExtension.EXPECT().IsRetryableError(gomock.Any()).Return(false)
 	mockSubtaskTable.EXPECT().GetTaskByID(gomock.Any(), task.ID).Return(task, nil)
 	mockSubtaskTable.EXPECT().GetFirstSubtaskInStates(gomock.Any(), "tidb1", task.ID, proto.StepOne,
@@ -451,14 +452,14 @@ func TestExecutorErrHandling(t *testing.T) {
 	// GetStepExecutor meet retryable error.
 	getSubtaskExecutorErr := errors.New("get executor err")
 	mockSubtaskTable.EXPECT().GetTaskByID(gomock.Any(), task.ID).Return(task, nil)
-	mockExtension.EXPECT().GetStepExecutor(gomock.Any(), gomock.Any()).Return(nil, getSubtaskExecutorErr)
+	mockExtension.EXPECT().GetStepExecutor(gomock.Any()).Return(nil, getSubtaskExecutorErr)
 	mockExtension.EXPECT().IsRetryableError(gomock.Any()).Return(true)
 	require.NoError(t, taskExecutor.RunStep(nil))
 	require.True(t, ctrl.Satisfied())
 
 	// GetStepExecutor meet non retryable error.
 	mockSubtaskTable.EXPECT().GetTaskByID(gomock.Any(), task.ID).Return(task, nil)
-	mockExtension.EXPECT().GetStepExecutor(gomock.Any(), gomock.Any()).Return(nil, getSubtaskExecutorErr)
+	mockExtension.EXPECT().GetStepExecutor(gomock.Any()).Return(nil, getSubtaskExecutorErr)
 	mockExtension.EXPECT().IsRetryableError(gomock.Any()).Return(false)
 	mockSubtaskTable.EXPECT().FailSubtask(taskExecutor.ctx, taskExecutor.id, gomock.Any(), getSubtaskExecutorErr)
 	require.NoError(t, taskExecutor.RunStep(nil))
@@ -467,7 +468,7 @@ func TestExecutorErrHandling(t *testing.T) {
 	// Init meet retryable error.
 	initErr := errors.New("executor init err")
 	mockSubtaskTable.EXPECT().GetTaskByID(gomock.Any(), task.ID).Return(task, nil)
-	mockExtension.EXPECT().GetStepExecutor(gomock.Any(), gomock.Any()).Return(mockSubtaskExecutor, nil)
+	mockExtension.EXPECT().GetStepExecutor(gomock.Any()).Return(mockSubtaskExecutor, nil)
 	mockSubtaskExecutor.EXPECT().Init(gomock.Any()).Return(initErr)
 	mockExtension.EXPECT().IsRetryableError(gomock.Any()).Return(true)
 	require.NoError(t, taskExecutor.RunStep(nil))
@@ -475,7 +476,7 @@ func TestExecutorErrHandling(t *testing.T) {
 
 	// Init meet non retryable error.
 	mockSubtaskTable.EXPECT().GetTaskByID(gomock.Any(), task.ID).Return(task, nil)
-	mockExtension.EXPECT().GetStepExecutor(gomock.Any(), gomock.Any()).Return(mockSubtaskExecutor, nil)
+	mockExtension.EXPECT().GetStepExecutor(gomock.Any()).Return(mockSubtaskExecutor, nil)
 	mockSubtaskExecutor.EXPECT().Init(gomock.Any()).Return(initErr)
 	mockExtension.EXPECT().IsRetryableError(gomock.Any()).Return(false)
 	mockSubtaskTable.EXPECT().FailSubtask(taskExecutor.ctx, taskExecutor.id, gomock.Any(), initErr)
@@ -485,7 +486,7 @@ func TestExecutorErrHandling(t *testing.T) {
 	// Cleanup meet retryable error.
 	cleanupErr := errors.New("cleanup err")
 	mockSubtaskTable.EXPECT().GetTaskByID(gomock.Any(), task.ID).Return(task, nil)
-	mockExtension.EXPECT().GetStepExecutor(gomock.Any(), gomock.Any()).Return(mockSubtaskExecutor, nil)
+	mockExtension.EXPECT().GetStepExecutor(gomock.Any()).Return(mockSubtaskExecutor, nil)
 	mockSubtaskExecutor.EXPECT().Init(gomock.Any()).Return(nil)
 	mockSubtaskTable.EXPECT().GetFirstSubtaskInStates(gomock.Any(), "id", task.ID, proto.StepOne,
 		unfinishedNormalSubtaskStates...).Return(&proto.Subtask{SubtaskBase: proto.SubtaskBase{
@@ -503,7 +504,7 @@ func TestExecutorErrHandling(t *testing.T) {
 
 	// Cleanup meet non retryable error.
 	mockSubtaskTable.EXPECT().GetTaskByID(gomock.Any(), task.ID).Return(task, nil)
-	mockExtension.EXPECT().GetStepExecutor(gomock.Any(), gomock.Any()).Return(mockSubtaskExecutor, nil)
+	mockExtension.EXPECT().GetStepExecutor(gomock.Any()).Return(mockSubtaskExecutor, nil)
 	mockSubtaskExecutor.EXPECT().Init(gomock.Any()).Return(nil)
 	mockSubtaskTable.EXPECT().GetFirstSubtaskInStates(gomock.Any(), "id", task.ID, proto.StepOne,
 		unfinishedNormalSubtaskStates...).Return(&proto.Subtask{SubtaskBase: proto.SubtaskBase{
@@ -522,7 +523,7 @@ func TestExecutorErrHandling(t *testing.T) {
 
 	// subtask succeed.
 	mockSubtaskTable.EXPECT().GetTaskByID(gomock.Any(), task.ID).Return(task, nil)
-	mockExtension.EXPECT().GetStepExecutor(gomock.Any(), gomock.Any()).Return(mockSubtaskExecutor, nil)
+	mockExtension.EXPECT().GetStepExecutor(gomock.Any()).Return(mockSubtaskExecutor, nil)
 	mockSubtaskExecutor.EXPECT().Init(gomock.Any()).Return(nil)
 	mockSubtaskTable.EXPECT().GetFirstSubtaskInStates(gomock.Any(), "id", task.ID, proto.StepOne,
 		unfinishedNormalSubtaskStates...).Return(&proto.Subtask{SubtaskBase: proto.SubtaskBase{
@@ -536,4 +537,12 @@ func TestExecutorErrHandling(t *testing.T) {
 	mockSubtaskExecutor.EXPECT().Cleanup(gomock.Any()).Return(nil)
 	require.NoError(t, taskExecutor.RunStep(nil))
 	require.True(t, ctrl.Satisfied())
+}
+
+func TestInject(t *testing.T) {
+	e := &EmptyStepExecutor{}
+	r := &proto.StepResource{CPU: proto.NewAllocatable(1)}
+	execute.SetFrameworkInfo(e, r)
+	got := e.GetResource()
+	require.Equal(t, r, got)
 }

@@ -14,10 +14,12 @@
 package aws
 
 import (
+	"context"
 	"testing"
 
 	awsapi "github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/ec2"
+	"github.com/aws/aws-sdk-go/service/ec2/ec2iface"
 	"github.com/stretchr/testify/require"
 )
 
@@ -75,4 +77,128 @@ func TestHandleDescribeVolumesResponse(t *testing.T) {
 	createdVolumeSize, unfinishedVolumes, _ := e.HandleDescribeVolumesResponse(curentVolumesStates, false)
 	require.Equal(t, int64(4), createdVolumeSize)
 	require.Equal(t, 1, len(unfinishedVolumes))
+}
+
+type mockEC2 struct {
+	ec2iface.EC2API
+	output ec2.DescribeSnapshotsOutput
+}
+
+func (m mockEC2) DescribeSnapshots(*ec2.DescribeSnapshotsInput) (*ec2.DescribeSnapshotsOutput, error) {
+	return &m.output, nil
+}
+
+func NewMockEc2Session(mock mockEC2) *EC2Session {
+	return &EC2Session{
+		ec2: mock,
+	}
+}
+
+func TestWaitSnapshotsCreated(t *testing.T) {
+	snapIdMap := map[string]string{
+		"vol-1": "snap-1",
+		"vol-2": "snap-2",
+	}
+
+	cases := []struct {
+		desc            string
+		snapshotsOutput ec2.DescribeSnapshotsOutput
+		expectedSize    int64
+		expectErr       bool
+		expectTimeout   bool
+	}{
+		{
+			desc: "snapshots are all completed",
+			snapshotsOutput: ec2.DescribeSnapshotsOutput{
+				Snapshots: []*ec2.Snapshot{
+					{
+						SnapshotId: awsapi.String("snap-1"),
+						VolumeSize: awsapi.Int64(1),
+						State:      awsapi.String(ec2.SnapshotStateCompleted),
+					},
+					{
+						SnapshotId: awsapi.String("snap-2"),
+						VolumeSize: awsapi.Int64(2),
+						State:      awsapi.String(ec2.SnapshotStateCompleted),
+					},
+				},
+			},
+			expectedSize: 3,
+			expectErr:    false,
+		},
+		{
+			desc: "snapshot failed",
+			snapshotsOutput: ec2.DescribeSnapshotsOutput{
+				Snapshots: []*ec2.Snapshot{
+					{
+						SnapshotId: awsapi.String("snap-1"),
+						VolumeSize: awsapi.Int64(1),
+						State:      awsapi.String(ec2.SnapshotStateCompleted),
+					},
+					{
+						SnapshotId:   awsapi.String("snap-2"),
+						State:        awsapi.String(ec2.SnapshotStateError),
+						StateMessage: awsapi.String("snapshot failed"),
+					},
+				},
+			},
+			expectedSize: 0,
+			expectErr:    true,
+		},
+		{
+			desc: "snapshots pending",
+			snapshotsOutput: ec2.DescribeSnapshotsOutput{
+				Snapshots: []*ec2.Snapshot{
+					{
+						SnapshotId: awsapi.String("snap-1"),
+						VolumeSize: awsapi.Int64(1),
+						State:      awsapi.String(ec2.SnapshotStateCompleted),
+					},
+					{
+						SnapshotId: awsapi.String("snap-2"),
+						State:      awsapi.String(ec2.SnapshotStatePending),
+					},
+				},
+			},
+			expectTimeout: true,
+		},
+	}
+
+	for _, c := range cases {
+		e := NewMockEc2Session(mockEC2{
+			output: c.snapshotsOutput,
+		})
+
+		if c.expectTimeout {
+			func() {
+				// We wait 5s before checking snapshots
+				ctx, cancel := context.WithTimeout(context.Background(), 6)
+				defer cancel()
+
+				done := make(chan struct{})
+				go func() {
+					_, _ = e.WaitSnapshotsCreated(snapIdMap, nil)
+					done <- struct{}{}
+				}()
+
+				select {
+				case <-done:
+					t.Fatal("WaitSnapshotsCreated should not return before timeout")
+				case <-ctx.Done():
+					require.True(t, true)
+				}
+			}()
+
+			continue
+		}
+
+		size, err := e.WaitSnapshotsCreated(snapIdMap, nil)
+		if c.expectErr {
+			require.Error(t, err)
+		} else {
+			require.NoError(t, err)
+		}
+
+		require.Equal(t, c.expectedSize, size)
+	}
 }

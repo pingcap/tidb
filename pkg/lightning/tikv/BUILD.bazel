@@ -1,0 +1,46 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "tikv",
+    srcs = ["tikv.go"],
+    importpath = "github.com/pingcap/tidb/pkg/lightning/tikv",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//br/pkg/pdutil",
+        "//br/pkg/version",
+        "//pkg/kv",
+        "//pkg/lightning/common",
+        "//pkg/lightning/config",
+        "//pkg/lightning/log",
+        "//pkg/parser/model",
+        "@com_github_coreos_go_semver//semver",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_kvproto//pkg/debugpb",
+        "@com_github_pingcap_kvproto//pkg/import_sstpb",
+        "@com_github_pingcap_kvproto//pkg/kvrpcpb",
+        "@com_github_pingcap_kvproto//pkg/metapb",
+        "@com_github_tikv_client_go_v2//util",
+        "@com_github_tikv_pd_client//http",
+        "@org_golang_google_grpc//:grpc",
+        "@org_golang_google_grpc//codes",
+        "@org_golang_google_grpc//status",
+        "@org_golang_x_sync//errgroup",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "tikv_test",
+    timeout = "short",
+    srcs = ["tikv_test.go"],
+    flaky = True,
+    shard_count = 4,
+    deps = [
+        ":tikv",
+        "@com_github_coreos_go_semver//semver",
+        "@com_github_pingcap_kvproto//pkg/import_sstpb",
+        "@com_github_pingcap_kvproto//pkg/metapb",
+        "@com_github_stretchr_testify//require",
+        "@com_github_tikv_pd_client//http",
+    ],
+)

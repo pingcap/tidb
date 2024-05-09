@@ -6,10 +6,12 @@ import (
 	"context"
 	"database/sql"
 	"io"
+	"math"
 	"strings"
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"go.uber.org/zap"
@@ -60,6 +62,20 @@ func isGRPCCancel(err error) bool {
 		}
 	}
 	return false
+}
+
+// ConstantBackoff is a backoffer that retry forever until success.
+type ConstantBackoff time.Duration
+
+// NextBackoff returns a duration to wait before retrying again
+func (c ConstantBackoff) NextBackoff(err error) time.Duration {
+	return time.Duration(c)
+}
+
+// Attempt returns the remain attempt times
+func (c ConstantBackoff) Attempt() int {
+	// A large enough value. Also still safe for arithmetic operations (won't easily overflow).
+	return math.MaxInt16
 }
 
 // RetryState is the mutable state needed for retrying.
@@ -249,6 +265,9 @@ func (bo *pdReqBackoffer) NextBackoff(err error) time.Duration {
 		}
 	}
 
+	failpoint.Inject("set-attempt-to-one", func(_ failpoint.Value) {
+		bo.attempt = 1
+	})
 	if bo.delayTime > bo.maxDelayTime {
 		return bo.maxDelayTime
 	}

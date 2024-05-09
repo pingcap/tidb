@@ -182,15 +182,49 @@ func testInitStatsMemTrace(t *testing.T) {
 		tStats := h.GetTableStats(tbl.Meta())
 		memCostTot += tStats.MemoryUsage().TotalMemUsage
 	}
+	tables := h.StatsCache.Values()
+	for _, tt := range tables {
+		tbl, ok := h.StatsCache.Get(tt.PhysicalID)
+		require.True(t, ok)
+		require.Equal(t, tbl.PhysicalID, tt.PhysicalID)
+	}
 
 	require.Equal(t, h.MemConsumed(), memCostTot)
 }
 
 func TestInitStatsMemTraceWithLite(t *testing.T) {
+	restore := config.RestoreFunc()
+	defer restore()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Performance.ConcurrentlyInitStats = false
+	})
 	testInitStatsMemTraceFunc(t, true)
 }
 
 func TestInitStatsMemTraceWithoutLite(t *testing.T) {
+	restore := config.RestoreFunc()
+	defer restore()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Performance.ConcurrentlyInitStats = false
+	})
+	testInitStatsMemTraceFunc(t, false)
+}
+
+func TestInitStatsMemTraceWithConcurrrencyLite(t *testing.T) {
+	restore := config.RestoreFunc()
+	defer restore()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Performance.ConcurrentlyInitStats = true
+	})
+	testInitStatsMemTraceFunc(t, true)
+}
+
+func TestInitStatsMemTraceWithoutConcurrrencyLite(t *testing.T) {
+	restore := config.RestoreFunc()
+	defer restore()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Performance.ConcurrentlyInitStats = true
+	})
 	testInitStatsMemTraceFunc(t, false)
 }
 
@@ -283,11 +317,26 @@ func TestInitStats51358(t *testing.T) {
 }
 
 func TestInitStatsVer2(t *testing.T) {
-	originValue := config.GetGlobalConfig().Performance.LiteInitStats
-	defer func() {
-		config.GetGlobalConfig().Performance.LiteInitStats = originValue
-	}()
-	config.GetGlobalConfig().Performance.LiteInitStats = false
+	restore := config.RestoreFunc()
+	defer restore()
+	config.UpdateGlobal(func(conf *config.Config) {
+		config.GetGlobalConfig().Performance.LiteInitStats = false
+		config.GetGlobalConfig().Performance.ConcurrentlyInitStats = false
+	})
+	initStatsVer2(t)
+}
+
+func TestInitStatsVer2Concurrency(t *testing.T) {
+	restore := config.RestoreFunc()
+	defer restore()
+	config.UpdateGlobal(func(conf *config.Config) {
+		config.GetGlobalConfig().Performance.LiteInitStats = false
+		config.GetGlobalConfig().Performance.ConcurrentlyInitStats = true
+	})
+	initStatsVer2(t)
+}
+
+func initStatsVer2(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")

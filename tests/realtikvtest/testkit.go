@@ -134,6 +134,9 @@ func CreateMockStoreAndDomainAndSetup(t *testing.T, opts ...mockstore.MockTiKVSt
 		for _, row := range rs.Rows() {
 			tables = append(tables, fmt.Sprintf("`%v`", row[0]))
 		}
+		for _, table := range tables {
+			tk.MustExec(fmt.Sprintf("alter table %s nocache", table))
+		}
 		if len(tables) > 0 {
 			tk.MustExec(fmt.Sprintf("drop table %s", strings.Join(tables, ",")))
 		}

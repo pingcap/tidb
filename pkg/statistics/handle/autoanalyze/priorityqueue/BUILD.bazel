@@ -15,12 +15,12 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/sessionctx",
+        "//pkg/sessionctx/sysproctrack",
         "//pkg/sessionctx/variable",
         "//pkg/statistics/handle/autoanalyze/exec",
         "//pkg/statistics/handle/logutil",
         "//pkg/statistics/handle/types",
         "//pkg/statistics/handle/util",
-        "//pkg/util/intest",
         "@org_uber_go_zap//:zap",
     ],
 )

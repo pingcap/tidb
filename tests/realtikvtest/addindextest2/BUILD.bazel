@@ -9,11 +9,11 @@ go_test(
     ],
     flaky = True,
     deps = [
-        "//br/pkg/lightning/backend/external",
         "//br/pkg/storage",
         "//pkg/config",
         "//pkg/ddl/util/callback",
         "//pkg/disttask/framework/scheduler",
+        "//pkg/lightning/backend/external",
         "//pkg/parser/model",
         "//pkg/sessionctx/variable",
         "//pkg/testkit",

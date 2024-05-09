@@ -18,6 +18,8 @@ import (
 	"fmt"
 	"log"
 	"unsafe"
+
+	"github.com/pingcap/tidb/pkg/util/intest"
 )
 
 func init() {
@@ -69,8 +71,23 @@ func (k OptionalEvalPropKey) String() string {
 }
 
 const (
-	// OptPropCurrentUser indicates the current user property
+	// OptPropCurrentUser indicates to provide the current user property.
 	OptPropCurrentUser OptionalEvalPropKey = iota
+	// OptPropSessionVars indicates to provide `variable.SessionVariable`.
+	OptPropSessionVars
+	// OptPropInfoSchema indicates to provide the information schema.
+	OptPropInfoSchema
+	// OptPropKVStore indicates to provide the kv store.
+	OptPropKVStore
+	// OptPropSQLExecutor indicates to provide executors to execute sql.
+	OptPropSQLExecutor
+	// OptPropSequenceOperator indicates to provide sequence operators for sequences.
+	OptPropSequenceOperator
+	// OptPropAdvisoryLock indicates to provide advisory lock operations.
+	OptPropAdvisoryLock
+	// OptPropDDLOwnerInfo indicates to provide DDL owner information.
+	OptPropDDLOwnerInfo
+	// optPropsCnt is the count of optional properties. DO NOT use it as a property key.
 	optPropsCnt
 )
 
@@ -102,6 +119,34 @@ var optionalPropertyDescList = []OptionalEvalPropDesc{
 		key: OptPropCurrentUser,
 		str: "OptPropCurrentUser",
 	},
+	{
+		key: OptPropSessionVars,
+		str: "OptPropSessionVars",
+	},
+	{
+		key: OptPropInfoSchema,
+		str: "OptPropInfoSchema",
+	},
+	{
+		key: OptPropKVStore,
+		str: "OptPropKVStore",
+	},
+	{
+		key: OptPropSQLExecutor,
+		str: "OptPropSQLExecutor",
+	},
+	{
+		key: OptPropSequenceOperator,
+		str: "OptPropDDLOwnerInfo",
+	},
+	{
+		key: OptPropAdvisoryLock,
+		str: "OptPropAdvisoryLock",
+	},
+	{
+		key: OptPropDDLOwnerInfo,
+		str: "OptPropDDLOwnerInfo",
+	},
 }
 
 // OptionalEvalPropKeySet is a bit map for optional evaluation properties in EvalContext
@@ -110,16 +155,28 @@ type OptionalEvalPropKeySet uint64
 
 // Add adds the property key to the set
 func (b OptionalEvalPropKeySet) Add(key OptionalEvalPropKey) OptionalEvalPropKeySet {
+	intest.Assert(key < optPropsCnt)
+	if key >= optPropsCnt {
+		return b
+	}
 	return b | key.AsPropKeySet()
 }
 
 // Remove removes the property key from the set
 func (b OptionalEvalPropKeySet) Remove(key OptionalEvalPropKey) OptionalEvalPropKeySet {
+	intest.Assert(key < optPropsCnt)
+	if key >= optPropsCnt {
+		return b
+	}
 	return b &^ key.AsPropKeySet()
 }
 
 // Contains checks whether the set contains the property
 func (b OptionalEvalPropKeySet) Contains(key OptionalEvalPropKey) bool {
+	intest.Assert(key < optPropsCnt)
+	if key >= optPropsCnt {
+		return false
+	}
 	return b&key.AsPropKeySet() != 0
 }
 

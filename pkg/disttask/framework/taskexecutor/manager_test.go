@@ -366,8 +366,8 @@ func TestSlotManagerInManager(t *testing.T) {
 	require.Equal(t, 0, m.slotManager.availableSlots())
 	require.Len(t, m.slotManager.executorTasks, 1)
 	// task1 succeed
-	ch <- nil
 	mockInternalExecutors[task1.ID].EXPECT().Close()
+	ch <- nil
 	m.executorWG.Wait()
 	require.Equal(t, 10, m.slotManager.availableSlots())
 	require.False(t, m.isExecutorStarted(task1.ID))

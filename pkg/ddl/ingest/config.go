@@ -16,17 +16,15 @@ package ingest
 
 import (
 	"context"
-	"math"
 	"net"
-	"path/filepath"
 	"strconv"
 	"sync/atomic"
 
-	"github.com/pingcap/tidb/br/pkg/lightning/backend"
-	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
-	"github.com/pingcap/tidb/br/pkg/lightning/common"
-	lightning "github.com/pingcap/tidb/br/pkg/lightning/config"
 	tidb "github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/lightning/backend"
+	"github.com/pingcap/tidb/pkg/lightning/checkpoints"
+	"github.com/pingcap/tidb/pkg/lightning/common"
+	lightning "github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/size"
@@ -44,12 +42,18 @@ type litConfig struct {
 	resourceGroup string
 }
 
-func genConfig(ctx context.Context, memRoot MemRoot, jobID int64, unique bool, resourceGroup string) (*litConfig, error) {
+func genConfig(
+	ctx context.Context,
+	jobSortPath string,
+	memRoot MemRoot,
+	unique bool,
+	resourceGroup string,
+) (*litConfig, error) {
 	tidbCfg := tidb.GetGlobalConfig()
 	cfg := lightning.NewConfig()
 	cfg.TikvImporter.Backend = lightning.BackendLocal
 	// Each backend will build a single dir in lightning dir.
-	cfg.TikvImporter.SortedKVDir = filepath.Join(LitSortPath, EncodeBackendTag(jobID))
+	cfg.TikvImporter.SortedKVDir = jobSortPath
 	if ImporterRangeConcurrencyForTest != nil {
 		cfg.TikvImporter.RangeConcurrency = int(ImporterRangeConcurrencyForTest.Load())
 	} else {
@@ -64,7 +68,7 @@ func genConfig(ctx context.Context, memRoot MemRoot, jobID int64, unique bool, r
 	cfg.Checkpoint.Enable = true
 	if unique {
 		cfg.Conflict.Strategy = lightning.ErrorOnDup
-		cfg.Conflict.Threshold = math.MaxInt64
+		cfg.Conflict.Threshold = lightning.DefaultRecordDuplicateThreshold
 	} else {
 		cfg.Conflict.Strategy = lightning.NoneOnDup
 	}

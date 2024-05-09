@@ -22,11 +22,11 @@ go_library(
         "//pkg/util",
         "//pkg/util/chunk",
         "//pkg/util/execdetails",
-        "//pkg/util/sqlexec",
         "//pkg/util/topsql",
         "//pkg/util/topsql/state",
         "//pkg/util/tracing",
         "@com_github_ngaut_pools//:pools",
+        "@com_github_pingcap_failpoint//:failpoint",
         "@org_uber_go_atomic//:atomic",
     ],
 )

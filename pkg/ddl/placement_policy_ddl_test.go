@@ -119,7 +119,7 @@ func TestPlacementPolicyInUse(t *testing.T) {
 	t4.State = model.StatePublic
 	db1.Tables = append(db1.Tables, t4)
 
-	builder, err := infoschema.NewBuilder(dom, nil, nil).InitWithDBInfos(
+	builder, err := infoschema.NewBuilder(dom, nil, infoschema.NewData()).InitWithDBInfos(
 		[]*model.DBInfo{db1, db2, dbP},
 		[]*model.PolicyInfo{p1, p2, p3, p4, p5},
 		nil,

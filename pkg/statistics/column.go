@@ -134,7 +134,7 @@ func (c *Column) MemoryUsage() CacheItemMemoryUsage {
 
 // HistogramNeededItems stores the columns/indices whose Histograms need to be loaded from physical kv layer.
 // Currently, we only load index/pk's Histogram from kv automatically. Columns' are loaded by needs.
-var HistogramNeededItems = neededStatsMap{items: map[model.TableItemID]struct{}{}}
+var HistogramNeededItems = newNeededStatsMap()
 
 // ColumnStatsIsInvalid checks if this column is invalid.
 // If this column has histogram but not loaded yet,

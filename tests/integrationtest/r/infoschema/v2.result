@@ -12,4 +12,27 @@ select * from t1;
 Error 1146 (42S02): Table 'infoschema__v2.t1' doesn't exist
 show create table t1;
 Error 1146 (42S02): Table 'infoschema__v2.t1' doesn't exist
+use infoschema__v2;
+drop table if exists pt, nt;
+create table pt (a int) partition by hash(a) partitions 2;
+create table nt (a int);
+alter table pt exchange partition p1 with table nt;
+admin check table pt;
+admin check table nt;
+create table t (a int);
+drop database infoschema__v2;
+create database infoschema__v2;
+use infoschema__v2;
+create table t (a int, b int, PRIMARY KEY (a));
+drop database infoschema__v2;
+create database infoschema__v2;
+drop database infoschema__v2;
+create database infoschema__v2;
+drop database infoschema__v2;
+show databases like 'infoschema%';
+Database (infoschema%)
+create database infoschema__v2;
+show databases like 'infoschema%';
+Database (infoschema%)
+infoschema__v2
 set @@global.tidb_schema_cache_size = default;

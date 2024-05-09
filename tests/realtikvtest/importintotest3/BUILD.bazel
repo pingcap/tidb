@@ -11,12 +11,12 @@ go_test(
     flaky = True,
     race = "on",
     deps = [
-        "//br/pkg/lightning/mydump",
         "//pkg/config",
         "//pkg/disttask/framework/storage",
         "//pkg/disttask/framework/testutil",
         "//pkg/disttask/importinto",
         "//pkg/kv",
+        "//pkg/lightning/mydump",
         "//pkg/testkit",
         "//tests/realtikvtest",
         "@com_github_fsouza_fake_gcs_server//fakestorage",

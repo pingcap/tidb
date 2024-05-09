@@ -56,7 +56,7 @@ func RegisterTaskMeta(t testing.TB, ctrl *gomock.Controller, schedulerExt schedu
 	}
 	mockStepExecutor.EXPECT().RealtimeSummary().Return(nil).AnyTimes()
 	executorExt.EXPECT().IsIdempotent(gomock.Any()).Return(true).AnyTimes()
-	executorExt.EXPECT().GetStepExecutor(gomock.Any(), gomock.Any()).Return(mockStepExecutor, nil).AnyTimes()
+	executorExt.EXPECT().GetStepExecutor(gomock.Any()).Return(mockStepExecutor, nil).AnyTimes()
 	executorExt.EXPECT().IsRetryableError(gomock.Any()).Return(false).AnyTimes()
 	registerTaskMetaInner(t, proto.TaskTypeExample, schedulerExt, executorExt, mockCleanupRountine)
 }
@@ -104,15 +104,15 @@ func RegisterRollbackTaskMeta(t testing.TB, ctrl *gomock.Controller, schedulerEx
 	stepExecutor.EXPECT().RealtimeSummary().Return(nil).AnyTimes()
 	stepExecutor.EXPECT().OnFinished(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 	executorExt.EXPECT().IsIdempotent(gomock.Any()).Return(true).AnyTimes()
-	executorExt.EXPECT().GetStepExecutor(gomock.Any(), gomock.Any()).Return(stepExecutor, nil).AnyTimes()
+	executorExt.EXPECT().GetStepExecutor(gomock.Any()).Return(stepExecutor, nil).AnyTimes()
 	executorExt.EXPECT().IsRetryableError(gomock.Any()).Return(false).AnyTimes()
 
 	registerTaskMetaInner(t, proto.TaskTypeExample, schedulerExt, executorExt, mockCleanupRountine)
 }
 
 // SubmitAndWaitTask schedule one task.
-func SubmitAndWaitTask(ctx context.Context, t testing.TB, taskKey string, concurrency int) *proto.TaskBase {
-	_, err := handle.SubmitTask(ctx, taskKey, proto.TaskTypeExample, concurrency, nil)
+func SubmitAndWaitTask(ctx context.Context, t testing.TB, taskKey string, targetScope string, concurrency int) *proto.TaskBase {
+	_, err := handle.SubmitTask(ctx, taskKey, proto.TaskTypeExample, concurrency, targetScope, nil)
 	require.NoError(t, err)
 	return WaitTaskDoneOrPaused(ctx, t, taskKey)
 }

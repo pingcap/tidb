@@ -815,6 +815,16 @@ func (b *builtinTiDBBoundedStalenessSig) vectorized() bool {
 }
 
 func (b *builtinTiDBBoundedStalenessSig) vecEvalTime(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
+	store, err := b.GetKVStore(ctx)
+	if err != nil {
+		return err
+	}
+
+	vars, err := b.GetSessionVars(ctx)
+	if err != nil {
+		return err
+	}
+
 	n := input.NumRows()
 	buf0, err := b.bufAllocator.get()
 	if err != nil {
@@ -835,7 +845,7 @@ func (b *builtinTiDBBoundedStalenessSig) vecEvalTime(ctx EvalContext, input *chu
 	args0 := buf0.Times()
 	args1 := buf1.Times()
 	timeZone := getTimeZone(ctx)
-	minSafeTime := getMinSafeTime(ctx, timeZone)
+	minSafeTime := GetStmtMinSafeTime(vars.StmtCtx, store, timeZone)
 	result.ResizeTime(n, false)
 	result.MergeNulls(buf0, buf1)
 	times := result.Times()

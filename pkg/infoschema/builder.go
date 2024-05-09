@@ -30,11 +30,12 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/util/domainutil"
-	"github.com/pingcap/tidb/pkg/util/sqlexec"
+	"github.com/pingcap/tidb/pkg/util/intest"
 )
 
 // Builder builds a new InfoSchema.
@@ -368,7 +369,7 @@ func (b *Builder) updateBundleForTableUpdate(diff *model.SchemaDiff, newTableID,
 
 func dropTableForUpdate(b *Builder, newTableID, oldTableID int64, dbInfo *model.DBInfo, diff *model.SchemaDiff) ([]int64, autoid.Allocators, error) {
 	tblIDs := make([]int64, 0, 2)
-	var newAllocs autoid.Allocators
+	var keptAllocs autoid.Allocators
 	// We try to reuse the old allocator, so the cached auto ID can be reused.
 	if tableIDIsValid(oldTableID) {
 		if oldTableID == newTableID &&
@@ -384,19 +385,18 @@ func dropTableForUpdate(b *Builder, newTableID, oldTableID int64, dbInfo *model.
 			// TODO: Check how this would work with ADD/REMOVE Partitioning,
 			// which may have AutoID not connected to tableID
 			// TODO: can there be _tidb_rowid AutoID per partition?
-			oldAllocs, _ := allocByID(b.infoSchema, oldTableID)
-			newAllocs = filterAllocators(diff, oldAllocs)
+			oldAllocs, _ := allocByID(b, oldTableID)
+			keptAllocs = getKeptAllocators(diff, oldAllocs)
 		}
 
 		tmpIDs := tblIDs
 		if (diff.Type == model.ActionRenameTable || diff.Type == model.ActionRenameTables) && diff.OldSchemaID != diff.SchemaID {
-			oldRoDBInfo, ok := b.infoSchema.SchemaByID(diff.OldSchemaID)
+			oldDBInfo, ok := oldSchemaInfo(b, diff)
 			if !ok {
-				return nil, newAllocs, ErrDatabaseNotExists.GenWithStackByArgs(
+				return nil, keptAllocs, ErrDatabaseNotExists.GenWithStackByArgs(
 					fmt.Sprintf("(Schema ID %d)", diff.OldSchemaID),
 				)
 			}
-			oldDBInfo := b.getSchemaAndCopyIfNecessary(oldRoDBInfo.Name.L)
 			tmpIDs = applyDropTable(b, diff, oldDBInfo, oldTableID, tmpIDs)
 		} else {
 			tmpIDs = applyDropTable(b, diff, dbInfo, oldTableID, tmpIDs)
@@ -407,7 +407,7 @@ func dropTableForUpdate(b *Builder, newTableID, oldTableID int64, dbInfo *model.
 			tblIDs = tmpIDs
 		}
 	}
-	return tblIDs, newAllocs, nil
+	return tblIDs, keptAllocs, nil
 }
 
 func (b *Builder) applyTableUpdate(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
@@ -438,16 +438,33 @@ func (b *Builder) applyTableUpdate(m *meta.Meta, diff *model.SchemaDiff) ([]int6
 	return tblIDs, nil
 }
 
-func filterAllocators(diff *model.SchemaDiff, oldAllocs autoid.Allocators) autoid.Allocators {
-	var newAllocs autoid.Allocators
+// getKeptAllocators get allocators that is not changed by the DDL.
+func getKeptAllocators(diff *model.SchemaDiff, oldAllocs autoid.Allocators) autoid.Allocators {
+	var autoIDChanged, autoRandomChanged bool
 	switch diff.Type {
 	case model.ActionRebaseAutoID, model.ActionModifyTableAutoIdCache:
+		autoIDChanged = true
+	case model.ActionRebaseAutoRandomBase:
+		autoRandomChanged = true
+	case model.ActionMultiSchemaChange:
+		for _, t := range diff.SubActionTypes {
+			switch t {
+			case model.ActionRebaseAutoID, model.ActionModifyTableAutoIdCache:
+				autoIDChanged = true
+			case model.ActionRebaseAutoRandomBase:
+				autoRandomChanged = true
+			}
+		}
+	}
+	var newAllocs autoid.Allocators
+	switch {
+	case autoIDChanged:
 		// Only drop auto-increment allocator.
 		newAllocs = oldAllocs.Filter(func(a autoid.Allocator) bool {
 			tp := a.GetType()
 			return tp != autoid.RowIDAllocType && tp != autoid.AutoIncrementType
 		})
-	case model.ActionRebaseAutoRandomBase:
+	case autoRandomChanged:
 		// Only drop auto-random allocator.
 		newAllocs = oldAllocs.Filter(func(a autoid.Allocator) bool {
 			tp := a.GetType()
@@ -637,7 +654,7 @@ func applyCreateTable(b *Builder, m *meta.Meta, dbInfo *model.DBInfo, tableID in
 	if tblInfo == nil {
 		// When we apply an old schema diff, the table may has been dropped already, so we need to fall back to
 		// full load.
-		return nil, ErrTableNotExists.GenWithStackByArgs(
+		return nil, ErrTableNotExists.FastGenByArgs(
 			fmt.Sprintf("(Schema ID %d)", dbInfo.ID),
 			fmt.Sprintf("(Table ID %d)", tableID),
 		)
@@ -777,8 +794,9 @@ func (b *Builder) Build(schemaTS uint64) InfoSchema {
 func (b *Builder) InitWithOldInfoSchema(oldSchema InfoSchema) (*Builder, error) {
 	// Do not mix infoschema v1 and infoschema v2 building, this can simplify the logic.
 	// If we want to build infoschema v2, but the old infoschema is v1, just return error to trigger a full load.
-	if b.enableV2 != IsV2(oldSchema) {
-		return nil, errors.New("builder's infoschema mismatch, return error to trigger full reload")
+	isV2, _ := IsV2(oldSchema)
+	if b.enableV2 != isV2 {
+		return nil, errors.Errorf("builder's (v2=%v) infoschema mismatch, return error to trigger full reload", b.enableV2)
 	}
 
 	if schemaV2, ok := oldSchema.(*infoschemaV2); ok {
@@ -883,7 +901,7 @@ func (b *Builder) tableFromMeta(alloc autoid.Allocators, tblInfo *model.TableInf
 			return nil, errors.Trace(err)
 		}
 
-		err = t.Init(tmp.(sqlexec.SQLExecutor))
+		err = t.Init(tmp.(sessionctx.Context).GetSQLExecutor())
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -970,9 +988,10 @@ func NewBuilder(r autoid.Requirement, factory func() (pools.Resource, error), in
 }
 
 func tableBucketIdx(tableID int64) int {
+	intest.Assert(tableID > 0)
 	return int(tableID % bucketCount)
 }
 
 func tableIDIsValid(tableID int64) bool {
-	return tableID != 0
+	return tableID > 0
 }

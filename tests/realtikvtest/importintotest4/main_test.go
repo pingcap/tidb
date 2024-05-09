@@ -49,7 +49,7 @@ func TestImportInto(t *testing.T) {
 }
 
 func (s *mockGCSSuite) SetupSuite() {
-	testkit.EnableFailPoint(s.T(), "github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", `return(32)`)
+	testkit.EnableFailPoint(s.T(), "github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", `return(16)`)
 	s.Require().True(*realtikvtest.WithRealTiKV)
 	testutil.ReduceCheckInterval(s.T())
 	var err error

@@ -583,6 +583,7 @@ const (
 		meta LONGBLOB,
 		concurrency INT(11),
 		step INT(11),
+		target_scope VARCHAR(256) DEFAULT "",
 		error BLOB,
 		key(state),
       	UNIQUE KEY task_key(task_key)
@@ -603,6 +604,7 @@ const (
 		meta LONGBLOB,
 		concurrency INT(11),
 		step INT(11),
+		target_scope VARCHAR(256) DEFAULT "",
 		error BLOB,
 		key(state),
       	UNIQUE KEY task_key(task_key)
@@ -763,8 +765,8 @@ const (
 	// The variable name in mysql.tidb table and it will be used when we want to know
 	// system timezone.
 	tidbSystemTZ = "system_tz"
-	// The variable name in mysql.tidb table and it will indicate if the new collations are enabled in the TiDB cluster.
-	tidbNewCollationEnabled = "new_collation_enabled"
+	// TidbNewCollationEnabled The variable name in mysql.tidb table and it will indicate if the new collations are enabled in the TiDB cluster.
+	TidbNewCollationEnabled = "new_collation_enabled"
 	// The variable name in mysql.tidb table and it records the default value of
 	// mem-quota-query when upgrade from v3.0.x to v4.0.9+.
 	tidbDefMemoryQuotaQuery = "default_memory_quota_query"
@@ -1082,11 +1084,16 @@ const (
 	//   create `sys` schema
 	//   create `sys.schema_unused_indexes` table
 	version195 = 195
+
+	// version 196
+	//   add column `target_scope` for 'mysql.tidb_global_task` table
+	//   add column `target_scope` for 'mysql.tidb_global_task_history` table
+	version196 = 196
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version195
+var currentBootstrapVersion int64 = version196
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1247,6 +1254,7 @@ var (
 		upgradeToVer193,
 		upgradeToVer194,
 		upgradeToVer195,
+		upgradeToVer196,
 	}
 )
 
@@ -1310,7 +1318,11 @@ var (
 	SupportUpgradeHTTPOpVer int64 = version174
 )
 
-func checkDistTask(s sessiontypes.Session) {
+func checkDistTask(s sessiontypes.Session, ver int64) {
+	if ver > version195 {
+		// since version195 we enable dist task by default, no need to check
+		return
+	}
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
 	rs, err := s.ExecuteInternal(ctx, "SELECT HIGH_PRIORITY variable_value from mysql.global_variables where variable_name = %?;", variable.TiDBEnableDistTask)
 	if err != nil {
@@ -1361,7 +1373,7 @@ func upgrade(s sessiontypes.Session) {
 		return
 	}
 
-	checkDistTask(s)
+	checkDistTask(s, ver)
 	printClusterState(s, ver)
 
 	// Only upgrade from under version92 and this TiDB is not owner set.
@@ -1864,7 +1876,7 @@ func writeNewCollationParameter(s sessiontypes.Session, flag bool) {
 		b = varTrue
 	}
 	mustExecute(s, `INSERT HIGH_PRIORITY INTO %n.%n VALUES (%?, %?, %?) ON DUPLICATE KEY UPDATE VARIABLE_VALUE=%?`,
-		mysql.SystemDB, mysql.TiDBTable, tidbNewCollationEnabled, b, comment, b,
+		mysql.SystemDB, mysql.TiDBTable, TidbNewCollationEnabled, b, comment, b,
 	)
 }
 
@@ -3067,6 +3079,15 @@ func upgradeToVer195(s sessiontypes.Session, ver int64) {
 	}
 
 	doReentrantDDL(s, DropMySQLIndexUsageTable)
+}
+
+func upgradeToVer196(s sessiontypes.Session, ver int64) {
+	if ver >= version196 {
+		return
+	}
+
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task ADD COLUMN target_scope VARCHAR(256) DEFAULT '' AFTER `step`;", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task_history ADD COLUMN target_scope VARCHAR(256) DEFAULT '' AFTER `step`;", infoschema.ErrColumnExists)
 }
 
 func writeOOMAction(s sessiontypes.Session) {

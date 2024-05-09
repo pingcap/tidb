@@ -31,6 +31,7 @@ import (
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
+	"golang.org/x/net/http/httpproxy"
 )
 
 const (
@@ -222,7 +223,9 @@ func Logger(ctx context.Context) *zap.Logger {
 	return log.L()
 }
 
-// BgLogger is alias of `logutil.BgLogger()`
+// BgLogger is alias of `logutil.BgLogger()`. It's initialized in tidb-server's
+// main function. Don't use it in `init` or equivalent functions otherwise it
+// will print to stdout.
 func BgLogger() *zap.Logger {
 	return log.L()
 }
@@ -367,4 +370,28 @@ func SetTag(ctx context.Context, key string, value any) {
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span.SetTag(key, value)
 	}
+}
+
+// LogEnvVariables logs related environment variables.
+func LogEnvVariables() {
+	// log http proxy settings, it will be used in gRPC connection by default
+	fields := proxyFields()
+	if len(fields) > 0 {
+		log.Info("using proxy config", fields...)
+	}
+}
+
+func proxyFields() []zap.Field {
+	proxyCfg := httpproxy.FromEnvironment()
+	fields := make([]zap.Field, 0, 3)
+	if proxyCfg.HTTPProxy != "" {
+		fields = append(fields, zap.String("http_proxy", proxyCfg.HTTPProxy))
+	}
+	if proxyCfg.HTTPSProxy != "" {
+		fields = append(fields, zap.String("https_proxy", proxyCfg.HTTPSProxy))
+	}
+	if proxyCfg.NoProxy != "" {
+		fields = append(fields, zap.String("no_proxy", proxyCfg.NoProxy))
+	}
+	return fields
 }

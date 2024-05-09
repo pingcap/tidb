@@ -487,6 +487,7 @@ func TestChangingColOriginDefaultValueAfterAddColAndCastFail(t *testing.T) {
 	originalHook := dom.DDL().GetHook()
 	hook := &callback.TestDDLCallback{Do: dom}
 	var checkErr error
+	var firstJobID int64
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
 		if checkErr != nil {
 			return
@@ -495,34 +496,58 @@ func TestChangingColOriginDefaultValueAfterAddColAndCastFail(t *testing.T) {
 			return
 		}
 
+		if firstJobID == 0 {
+			firstJobID = job.ID
+		}
 		if job.SchemaState == model.StateWriteOnly || job.SchemaState == model.StateWriteReorganization {
 			tbl := external.GetTableByName(t, tk, "test", "t")
 			if len(tbl.WritableCols()) != 4 {
-				errMsg := fmt.Sprintf("cols len:%v", len(tbl.WritableCols()))
+				errMsg := fmt.Sprintf("job ID:%d, cols len:%v", job.ID, len(tbl.WritableCols()))
 				checkErr = errors.New("assert the writable column number error" + errMsg)
 				return
 			}
-			originalDV := fmt.Sprintf("%v", tbl.WritableCols()[3].OriginDefaultValue)
-			expectVal := "0000-00-00 00:00:00"
-			if originalDV != expectVal {
-				errMsg := fmt.Sprintf("expect: %v, got: %v", expectVal, originalDV)
-				checkErr = errors.New("assert the write only column origin default value error" + errMsg)
-				return
+			// modify column x
+			if job.ID == firstJobID {
+				originalDV := fmt.Sprintf("%v", tbl.WritableCols()[3].OriginDefaultValue)
+				expectVal := "0000-00-00 00:00:00"
+				if originalDV != expectVal {
+					errMsg := fmt.Sprintf("job ID:%d, expect: %v, got: %v", job.ID, expectVal, originalDV)
+					checkErr = errors.New("assert the write only column origin default value error" + errMsg)
+					return
+				}
+				// The cast value will be inserted into changing column too.
+				_, err := tk1.Exec("UPDATE t SET a = '18apf' WHERE x = '' AND a = 'mul'")
+				if err != nil {
+					checkErr = err
+					return
+				}
 			}
-			// The casted value will be inserted into changing column too.
-			_, err := tk1.Exec("UPDATE t SET a = '18apf' WHERE x = '' AND a = 'mul'")
-			if err != nil {
-				checkErr = err
-				return
+			// modify column b
+			if job.ID == firstJobID+1 {
+				originalDV := fmt.Sprintf("%v", tbl.WritableCols()[3].OriginDefaultValue)
+				expectVal := ""
+				if originalDV != expectVal {
+					errMsg := fmt.Sprintf("job ID:%d, expect: %v, got: %v", job.ID, expectVal, originalDV)
+					checkErr = errors.New("assert the write only column origin default value error" + errMsg)
+					return
+				}
+				// The cast value will be inserted into changing column too.
+				_, err := tk1.Exec("UPDATE t SET a = '18apf' WHERE a = '1'")
+				if err != nil {
+					checkErr = err
+					return
+				}
 			}
 		}
 	}
 
 	dom.DDL().SetHook(hook)
 	tk.MustExec("alter table t modify column x DATETIME NULL DEFAULT '3771-02-28 13:00:11' AFTER b;")
+	tk.MustExec("insert into t(a) value('1')")
+	tk.MustExec("alter table t modify column b varchar(256) default (REPLACE(UPPER(UUID()), '-', ''));")
 	dom.DDL().SetHook(originalHook)
 	require.NoError(t, checkErr)
-	tk.MustQuery("select * from t order by a").Check(testkit.Rows())
+	tk.MustQuery("select * from t order by a").Check(testkit.Rows("18apf -729850476163 3771-02-28 13:00:11"))
 	tk.MustExec("drop table if exists t")
 }
 

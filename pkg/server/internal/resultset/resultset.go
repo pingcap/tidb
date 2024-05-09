@@ -99,7 +99,7 @@ func (trs *tidbResultSet) Columns() []*column.Info {
 	// for prepare statement, try to get cached columnInfo array
 	if trs.preparedStmt != nil {
 		ps := trs.preparedStmt
-		if colInfos, ok := ps.ColumnInfos.([]*column.Info); ok {
+		if colInfos, ok := ps.PointGet.ColumnInfos.([]*column.Info); ok {
 			trs.columns = colInfos
 		}
 	}
@@ -111,7 +111,7 @@ func (trs *tidbResultSet) Columns() []*column.Info {
 		if trs.preparedStmt != nil {
 			// if Info struct has allocated object,
 			// here maybe we need deep copy Info to do caching
-			trs.preparedStmt.ColumnInfos = trs.columns
+			trs.preparedStmt.PointGet.ColumnInfos = trs.columns
 		}
 	}
 	return trs.columns

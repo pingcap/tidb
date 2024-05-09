@@ -103,8 +103,7 @@ func TestDisableAutoAnalyze(t *testing.T) {
 	is := dom.InfoSchema()
 	require.NoError(t, h.Update(is))
 
-	// Set auto analyze ratio to 0.
-	tk.MustExec("set @@global.tidb_auto_analyze_ratio = 0")
+	tk.MustExec("set @@global.tidb_enable_auto_analyze = 0")
 	exec.AutoAnalyzeMinCnt = 0
 	defer func() {
 		exec.AutoAnalyzeMinCnt = 1000

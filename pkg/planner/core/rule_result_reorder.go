@@ -18,7 +18,9 @@ import (
 	"context"
 
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/util"
+	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 )
 
 /*
@@ -39,7 +41,7 @@ This rule reorders results by modifying or injecting a Sort operator:
 type resultReorder struct {
 }
 
-func (rs *resultReorder) optimize(_ context.Context, lp LogicalPlan, _ *logicalOptimizeOp) (LogicalPlan, bool, error) {
+func (rs *resultReorder) optimize(_ context.Context, lp base.LogicalPlan, _ *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
 	planChanged := false
 	ordered := rs.completeSort(lp)
 	if !ordered {
@@ -48,7 +50,7 @@ func (rs *resultReorder) optimize(_ context.Context, lp LogicalPlan, _ *logicalO
 	return lp, planChanged, nil
 }
 
-func (rs *resultReorder) completeSort(lp LogicalPlan) bool {
+func (rs *resultReorder) completeSort(lp base.LogicalPlan) bool {
 	if rs.isInputOrderKeeper(lp) {
 		return rs.completeSort(lp.Children()[0])
 	} else if sort, ok := lp.(*LogicalSort); ok {
@@ -73,7 +75,7 @@ func (rs *resultReorder) completeSort(lp LogicalPlan) bool {
 	return false
 }
 
-func (rs *resultReorder) injectSort(lp LogicalPlan) LogicalPlan {
+func (rs *resultReorder) injectSort(lp base.LogicalPlan) base.LogicalPlan {
 	if rs.isInputOrderKeeper(lp) {
 		lp.SetChildren(rs.injectSort(lp.Children()[0]))
 		return lp
@@ -94,7 +96,7 @@ func (rs *resultReorder) injectSort(lp LogicalPlan) LogicalPlan {
 	return sort
 }
 
-func (*resultReorder) isInputOrderKeeper(lp LogicalPlan) bool {
+func (*resultReorder) isInputOrderKeeper(lp base.LogicalPlan) bool {
 	switch lp.(type) {
 	case *LogicalSelection, *LogicalProjection, *LogicalLimit:
 		return true
@@ -103,7 +105,7 @@ func (*resultReorder) isInputOrderKeeper(lp LogicalPlan) bool {
 }
 
 // extractHandleCols does the best effort to get the handle column.
-func (rs *resultReorder) extractHandleCol(lp LogicalPlan) *expression.Column {
+func (rs *resultReorder) extractHandleCol(lp base.LogicalPlan) *expression.Column {
 	switch x := lp.(type) {
 	case *LogicalSelection, *LogicalLimit:
 		handleCol := rs.extractHandleCol(lp.Children()[0])

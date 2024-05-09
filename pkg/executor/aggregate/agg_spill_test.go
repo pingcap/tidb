@@ -146,7 +146,7 @@ func buildMockDataSource(opt testutil.MockDataSourceParameters, col0Data []strin
 	return mockDatasource
 }
 
-func generateResult(col0 []string, col1 []float64) map[string]float64 {
+func generateResult(col0 []string) map[string]float64 {
 	result := make(map[string]float64, 0)
 	length := len(col0)
 
@@ -350,7 +350,7 @@ func TestGetCorrectResult(t *testing.T) {
 	rowNum := 100000
 	ndv := 50000
 	col1, col2 := generateData(rowNum, ndv)
-	result := generateResult(col1, col2)
+	result := generateResult(col1)
 	opt := getMockDataSourceParameters(ctx)
 	dataSource := buildMockDataSource(opt, col1, col2)
 
@@ -397,7 +397,9 @@ func TestRandomFail(t *testing.T) {
 	initCtx(ctx, newRootExceedAction, hardLimitBytesNum, 32)
 
 	failpoint.Enable("github.com/pingcap/tidb/pkg/executor/aggregate/enableAggSpillIntest", `return(true)`)
+	defer failpoint.Disable("github.com/pingcap/tidb/pkg/executor/aggregate/enableAggSpillIntest")
 	failpoint.Enable("github.com/pingcap/tidb/pkg/util/chunk/ChunkInDiskError", `return(true)`)
+	defer failpoint.Disable("github.com/pingcap/tidb/pkg/util/chunk/ChunkInDiskError")
 	rowNum := 100000 + rand.Intn(100000)
 	ndv := 50000 + rand.Intn(50000)
 	col1, col2 := generateData(rowNum, ndv)

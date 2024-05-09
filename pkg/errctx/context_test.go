@@ -27,7 +27,7 @@ import (
 
 func TestContext(t *testing.T) {
 	var warn error
-	ctx := errctx.NewContext(contextutil.NewFuncWarnHandlerForTest(func(err error) {
+	ctx := errctx.NewContext(contextutil.NewFuncWarnAppenderForTest(func(err error) {
 		warn = err
 	}))
 
@@ -75,7 +75,7 @@ func TestContext(t *testing.T) {
 	// test with a level map
 	levels = errctx.LevelMap{}
 	levels[errctx.ErrGroupAutoIncReadFailed] = errctx.LevelWarn
-	ctx = errctx.NewContextWithLevels(levels, contextutil.NewFuncWarnHandlerForTest(func(err error) {
+	ctx = errctx.NewContextWithLevels(levels, contextutil.NewFuncWarnAppenderForTest(func(err error) {
 		warn = err
 	}))
 	require.Equal(t, levels, ctx.LevelMap())

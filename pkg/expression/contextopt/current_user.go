@@ -19,6 +19,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/auth"
 )
 
+var _ context.OptionalEvalPropProvider = CurrentUserPropProvider(nil)
 var _ RequireOptionalEvalProps = CurrentUserPropReader{}
 
 // CurrentUserPropProvider is a provider to get the current user

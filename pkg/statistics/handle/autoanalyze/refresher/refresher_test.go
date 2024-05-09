@@ -54,8 +54,10 @@ func TestSkipAnalyzeTableWhenAutoAnalyzeRatioIsZero(t *testing.T) {
 	)
 	tk.MustExec("insert into t1 values (1, 1), (2, 2), (3, 3)")
 	tk.MustExec("insert into t2 values (1, 1), (2, 2), (3, 3)")
-	// Set the auto analyze ratio to 0.
-	tk.MustExec("set global tidb_auto_analyze_ratio = 0")
+	// HACK: Set the auto analyze ratio to 0.
+	// We don't allow users to set the ratio to 0 anymore, but we still need to test this case.
+	// Because we need to compilable with the old configuration.
+	tk.MustExec("update mysql.global_variables set variable_value = '0' where variable_name = 'tidb_auto_analyze_ratio'")
 	handle := dom.StatsHandle()
 	require.NoError(t, handle.DumpStatsDeltaToKV(true))
 	require.NoError(t, handle.Update(dom.InfoSchema()))

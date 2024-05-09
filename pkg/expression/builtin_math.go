@@ -329,7 +329,7 @@ func calculateDecimal4RoundAndTruncate(ctx BuildContext, args []Expression, retT
 	if !secondIsConst {
 		return args[0].GetType().GetDecimal()
 	}
-	argDec, isNull, err := secondConst.EvalInt(ctx, chunk.Row{})
+	argDec, isNull, err := secondConst.EvalInt(ctx.GetEvalCtx(), chunk.Row{})
 	if err != nil || isNull || argDec < 0 {
 		return 0
 	}
@@ -1029,14 +1029,14 @@ func (c *randFunctionClass) getFunction(ctx BuildContext, args []Expression) (bu
 	}
 	bt := bf
 	if len(args) == 0 {
-		sig = &builtinRandSig{bt, ctx.GetSessionVars().Rng}
+		sig = &builtinRandSig{bt, ctx.Rng()}
 		sig.setPbCode(tipb.ScalarFuncSig_Rand)
 	} else if _, isConstant := args[0].(*Constant); isConstant {
 		// According to MySQL manual:
 		// If an integer argument N is specified, it is used as the seed value:
 		// With a constant initializer argument, the seed is initialized once
 		// when the statement is prepared, prior to execution.
-		seed, isNull, err := args[0].EvalInt(ctx, chunk.Row{})
+		seed, isNull, err := args[0].EvalInt(ctx.GetEvalCtx(), chunk.Row{})
 		if err != nil {
 			return nil, err
 		}
@@ -1163,7 +1163,7 @@ func (c *convFunctionClass) getFunction(ctx BuildContext, args []Expression) (bu
 	if err != nil {
 		return nil, err
 	}
-	charset, collate := ctx.GetSessionVars().GetCharsetInfo()
+	charset, collate := ctx.GetCharsetInfo()
 	bf.tp.SetCharset(charset)
 	bf.tp.SetCollate(collate)
 	bf.tp.SetFlen(64)

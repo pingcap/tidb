@@ -39,13 +39,16 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/metrics"
 	tmysql "github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/server"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testenv"
 	"github.com/pingcap/tidb/pkg/util/versioninfo"
+	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
+	"golang.org/x/text/encoding/simplifiedchinese"
 )
 
 //revive:disable:exported
@@ -2658,6 +2661,130 @@ func (cli *TestServerClient) RunTestSQLModeIsLoadedBeforeQuery(t *testing.T) {
 		require.NoError(t, result.Scan(&tStr))
 
 		require.Equal(t, "ab\\\\c", tStr)
+	})
+}
+
+func (cli *TestServerClient) RunTestConnectionCount(t *testing.T) {
+	readConnCount := func(resourceGroupName string) float64 {
+		metric, err := metrics.ConnGauge.GetMetricWith(map[string]string{
+			metrics.LblResourceGroup: resourceGroupName,
+		})
+		require.NoError(t, err)
+		output := &dto.Metric{}
+		metric.Write(output)
+
+		return output.GetGauge().GetValue()
+	}
+
+	resourceGroupConnCountReached := func(t *testing.T, resourceGroupName string, expected float64) {
+		require.Eventually(t, func() bool {
+			return readConnCount(resourceGroupName) == expected
+		}, 5*time.Second, 100*time.Millisecond)
+	}
+
+	cli.RunTests(t, nil, func(dbt *testkit.DBTestKit) {
+		ctx := context.Background()
+		dbt.GetDB().SetMaxIdleConns(0)
+
+		// start 100 connections
+		conns := make([]*sql.Conn, 100)
+		for i := 0; i < 100; i++ {
+			conn, err := dbt.GetDB().Conn(ctx)
+			require.NoError(t, err)
+			conns[i] = conn
+		}
+		resourceGroupConnCountReached(t, "default", 100.0)
+
+		// close 50 connections
+		for i := 0; i < 50; i++ {
+			err := conns[i].Close()
+			require.NoError(t, err)
+		}
+		resourceGroupConnCountReached(t, "default", 50.0)
+
+		// close 25 connections
+		for i := 50; i < 75; i++ {
+			err := conns[i].Close()
+			require.NoError(t, err)
+		}
+		resourceGroupConnCountReached(t, "default", 25.0)
+
+		// change the following 25 connections from `default` resource group to `test`
+		dbt.MustExec("create resource group test RU_PER_SEC = 1000;")
+		for i := 75; i < 100; i++ {
+			_, err := conns[i].ExecContext(ctx, "set resource group test")
+			require.NoError(t, err)
+		}
+		resourceGroupConnCountReached(t, "default", 0.0)
+		resourceGroupConnCountReached(t, "test", 25.0)
+
+		// close 25 connections
+		for i := 75; i < 100; i++ {
+			err := conns[i].Close()
+			require.NoError(t, err)
+		}
+		resourceGroupConnCountReached(t, "default", 0.0)
+		resourceGroupConnCountReached(t, "test", 0.0)
+	})
+}
+
+func (cli *TestServerClient) RunTestTypeAndCharsetOfSendLongData(t *testing.T) {
+	cli.RunTests(t, func(config *mysql.Config) {
+		config.MaxAllowedPacket = 1024
+	}, func(dbt *testkit.DBTestKit) {
+		ctx := context.Background()
+
+		conn, err := dbt.GetDB().Conn(ctx)
+		require.NoError(t, err)
+		_, err = conn.ExecContext(ctx, "CREATE TABLE t (j JSON);")
+		require.NoError(t, err)
+
+		str := `"` + strings.Repeat("a", 1024) + `"`
+		stmt, err := conn.PrepareContext(ctx, "INSERT INTO t VALUES (cast(? as JSON));")
+		require.NoError(t, err)
+		_, err = stmt.ExecContext(ctx, str)
+		require.NoError(t, err)
+		result, err := conn.QueryContext(ctx, "SELECT j FROM t;")
+		require.NoError(t, err)
+
+		for result.Next() {
+			var j string
+			require.NoError(t, result.Scan(&j))
+			require.Equal(t, str, j)
+		}
+	})
+
+	str := strings.Repeat("你好", 1024)
+	enc := simplifiedchinese.GBK.NewEncoder()
+	gbkStr, err := enc.String(str)
+	require.NoError(t, err)
+
+	cli.RunTests(t, func(config *mysql.Config) {
+		config.MaxAllowedPacket = 1024
+		config.Params["charset"] = "gbk"
+	}, func(dbt *testkit.DBTestKit) {
+		ctx := context.Background()
+
+		conn, err := dbt.GetDB().Conn(ctx)
+		require.NoError(t, err)
+		_, err = conn.ExecContext(ctx, "drop table t")
+		require.NoError(t, err)
+		_, err = conn.ExecContext(ctx, "CREATE TABLE t (t TEXT);")
+		require.NoError(t, err)
+
+		stmt, err := conn.PrepareContext(ctx, "INSERT INTO t VALUES (?);")
+		require.NoError(t, err)
+		_, err = stmt.ExecContext(ctx, gbkStr)
+		require.NoError(t, err)
+
+		result, err := conn.QueryContext(ctx, "SELECT * FROM t;")
+		require.NoError(t, err)
+
+		for result.Next() {
+			var txt string
+			require.NoError(t, result.Scan(&txt))
+			require.Equal(t, gbkStr, txt)
+		}
 	})
 }
 

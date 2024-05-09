@@ -25,11 +25,13 @@ import (
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/pdutil"
 	"github.com/pingcap/tidb/br/pkg/restore"
+	fileimporter "github.com/pingcap/tidb/br/pkg/restore/file_importer"
 	"github.com/pingcap/tidb/br/pkg/restore/tiflashrec"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/spf13/cobra"
@@ -129,7 +131,7 @@ func (cfg *RestoreCommonConfig) adjust() {
 		cfg.MergeSmallRegionSizeBytes.Value = conn.DefaultMergeRegionSizeBytes
 	}
 	if len(cfg.Granularity) == 0 {
-		cfg.Granularity = string(restore.FineGrained)
+		cfg.Granularity = string(restore.CoarseGrained)
 	}
 	if !cfg.ConcurrencyPerStore.Modified {
 		cfg.ConcurrencyPerStore.Value = conn.DefaultImportNumGoroutines
@@ -140,8 +142,8 @@ func (cfg *RestoreCommonConfig) adjust() {
 func DefineRestoreCommonFlags(flags *pflag.FlagSet) {
 	// TODO remove experimental tag if it's stable
 	flags.Bool(flagOnline, false, "(experimental) Whether online when restore")
-	flags.String(flagGranularity, string(restore.FineGrained), "(experimental) Whether split & scatter regions using fine-grained way during restore")
-	flags.Uint(flagConcurrencyPerStore, 128, "(experimental) The size of thread pool on each store that executes tasks")
+	flags.String(flagGranularity, string(restore.CoarseGrained), "Whether split & scatter regions using fine-grained way during restore")
+	flags.Uint(flagConcurrencyPerStore, 128, "The size of thread pool on each store that executes tasks, only enabled when `--granularity=coarse-grained`")
 	flags.Uint32(flagConcurrency, 128, "(deprecated) The size of thread pool on BR that executes tasks, "+
 		"where each task restores one SST file to TiKV")
 	flags.Uint64(FlagMergeRegionSizeBytes, conn.DefaultMergeRegionSizeBytes,
@@ -535,9 +537,9 @@ func configureRestoreClient(ctx context.Context, client *restore.Client, cfg *Re
 	err := restore.CheckKeyspaceBREnable(ctx, client.GetPDClient())
 	if err != nil {
 		log.Warn("Keyspace BR is not supported in this cluster, fallback to legacy restore", zap.Error(err))
-		client.SetRewriteMode(restore.RewriteModeLegacy)
+		client.SetRewriteMode(fileimporter.RewriteModeLegacy)
 	} else {
-		client.SetRewriteMode(restore.RewriteModeKeyspace)
+		client.SetRewriteMode(fileimporter.RewriteModeKeyspace)
 	}
 
 	err = client.LoadRestoreStores(ctx)
@@ -734,13 +736,7 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	mgr.ProcessTiKVConfigs(ctx, kvConfigs, httpCli)
 
 	keepaliveCfg.PermitWithoutStream = true
-	client := restore.NewRestoreClient(
-		mgr.GetPDClient(),
-		mgr.GetPDHTTPClient(),
-		mgr.GetTLSConfig(),
-		keepaliveCfg,
-		false,
-	)
+	client := restore.NewRestoreClient(mgr.GetPDClient(), mgr.GetPDHTTPClient(), mgr.GetTLSConfig(), keepaliveCfg)
 	// using tikv config to set the concurrency-per-store for client.
 	client.SetConcurrencyPerStore(kvConfigs.ImportGoroutines.Value)
 	err = configureRestoreClient(ctx, client, cfg)
@@ -982,7 +978,7 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 
 		// If the API V2 data occurs in the restore process, the cluster must
 		// support the keyspace rewrite mode.
-		if (len(oldKeyspace) > 0 || len(newKeyspace) > 0) && client.GetRewriteMode() == restore.RewriteModeLegacy {
+		if (len(oldKeyspace) > 0 || len(newKeyspace) > 0) && client.GetRewriteMode() == fileimporter.RewriteModeLegacy {
 			return errors.Annotate(berrors.ErrRestoreModeMismatch, "cluster only supports legacy rewrite mode")
 		}
 
@@ -1012,13 +1008,13 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	// Block on creating tables before restore starts. since create table is no longer a heavy operation any more.
 	tableStream = GoBlockCreateTablesPipeline(ctx, maxRestoreBatchSizeLimit, tableStream)
 
-	tableFileMap := restore.MapTableToFiles(files)
+	tableFileMap := MapTableToFiles(files)
 	log.Debug("mapped table to files", zap.Any("result map", tableFileMap))
 
 	rangeStream := restore.GoValidateFileRanges(
 		ctx, tableStream, tableFileMap, kvConfigs.MergeRegionSize.Value, kvConfigs.MergeRegionKeyCount.Value, errCh)
 
-	rangeSize := restore.EstimateRangeSize(files)
+	rangeSize := EstimateRangeSize(files)
 	summary.CollectInt("restore ranges", rangeSize)
 	log.Info("range and file prepared", zap.Int("file count", len(files)), zap.Int("range count", rangeSize))
 
@@ -1128,6 +1124,41 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	// Set task summary to success status.
 	summary.SetSuccessStatus(true)
 	return nil
+}
+
+// EstimateRangeSize estimates the total range count by file.
+func EstimateRangeSize(files []*backuppb.File) int {
+	result := 0
+	for _, f := range files {
+		if strings.HasSuffix(f.GetName(), "_write.sst") {
+			result++
+		}
+	}
+	return result
+}
+
+// MapTableToFiles makes a map that mapping table ID to its backup files.
+// aware that one file can and only can hold one table.
+func MapTableToFiles(files []*backuppb.File) map[int64][]*backuppb.File {
+	result := map[int64][]*backuppb.File{}
+	for _, file := range files {
+		tableID := tablecodec.DecodeTableID(file.GetStartKey())
+		tableEndID := tablecodec.DecodeTableID(file.GetEndKey())
+		if tableID != tableEndID {
+			log.Panic("key range spread between many files.",
+				zap.String("file name", file.Name),
+				logutil.Key("startKey", file.StartKey),
+				logutil.Key("endKey", file.EndKey))
+		}
+		if tableID == 0 {
+			log.Panic("invalid table key of file",
+				zap.String("file name", file.Name),
+				logutil.Key("startKey", file.StartKey),
+				logutil.Key("endKey", file.EndKey))
+		}
+		result[tableID] = append(result[tableID], file)
+	}
+	return result
 }
 
 // dropToBlackhole drop all incoming tables into black hole,

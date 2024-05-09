@@ -338,6 +338,7 @@ func cmdRun(args ...string) bool {
 			fmt.Println("create junit file fail:", err)
 			return false
 		}
+		defer f.Close()
 		if err := write(f, out); err != nil {
 			fmt.Println("write junit file error:", err)
 			return false
@@ -839,7 +840,7 @@ func (n *numa) testCommand(pkg string, fn string) *exec.Cmd {
 }
 
 func skipDIR(pkg string) bool {
-	skipDir := []string{"br", "cmd", "dumpling", "tests", "tools/check", "build"}
+	skipDir := []string{"br", "lightning", "pkg/lightning", "cmd", "dumpling", "tests", "tools/check", "build"}
 	for _, ignore := range skipDir {
 		if strings.HasPrefix(pkg, ignore) {
 			return true

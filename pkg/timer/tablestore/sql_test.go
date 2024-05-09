@@ -23,7 +23,6 @@ import (
 
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -582,6 +581,10 @@ type mockSession struct {
 	sqlexec.SQLExecutor
 }
 
+func (p *mockSession) GetSQLExecutor() sqlexec.SQLExecutor {
+	return p
+}
+
 func (p *mockSession) ExecuteInternal(ctx context.Context, sql string, args ...any) (rs sqlexec.RecordSet, _ error) {
 	ret := p.Called(ctx, sql, args)
 	if r := ret.Get(0); r != nil {
@@ -592,10 +595,6 @@ func (p *mockSession) ExecuteInternal(ctx context.Context, sql string, args ...a
 
 func (p *mockSession) GetSessionVars() *variable.SessionVars {
 	return p.Context.GetSessionVars()
-}
-
-func (p *mockSession) SetDiskFullOpt(level kvrpcpb.DiskFullOpt) {
-	p.Context.SetDiskFullOpt(level)
 }
 
 func (p *mockSession) Close() {

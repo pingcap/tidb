@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
-	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/stretchr/testify/require"
 )
 
@@ -38,7 +37,7 @@ func TestJobHappyPath(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	ctx := context.Background()
-	conn := tk.Session().(sqlexec.SQLExecutor)
+	conn := tk.Session().GetSQLExecutor()
 
 	cases := []struct {
 		action          func(jobID int64)
@@ -94,7 +93,7 @@ func TestJobHappyPath(t *testing.T) {
 		require.True(t, gotJobInfo.StartTime.IsZero())
 		require.True(t, gotJobInfo.EndTime.IsZero())
 		jobInfoEqual(t, jobInfo, gotJobInfo)
-		cnt, err := importer.GetActiveJobCnt(ctx, conn)
+		cnt, err := importer.GetActiveJobCnt(ctx, conn, gotJobInfo.TableSchema, gotJobInfo.TableName)
 		require.NoError(t, err)
 		require.Equal(t, int64(1), cnt)
 
@@ -114,13 +113,13 @@ func TestJobHappyPath(t *testing.T) {
 		jobInfo.Status = "running"
 		jobInfo.Step = importer.JobStepImporting
 		jobInfoEqual(t, jobInfo, gotJobInfo)
-		cnt, err = importer.GetActiveJobCnt(ctx, conn)
+		cnt, err = importer.GetActiveJobCnt(ctx, conn, gotJobInfo.TableSchema, gotJobInfo.TableName)
 		require.NoError(t, err)
 		require.Equal(t, int64(1), cnt)
 
 		// change job step
 		require.NoError(t, importer.Job2Step(ctx, conn, jobID, importer.JobStepValidating))
-		cnt, err = importer.GetActiveJobCnt(ctx, conn)
+		cnt, err = importer.GetActiveJobCnt(ctx, conn, gotJobInfo.TableSchema, gotJobInfo.TableName)
 		require.NoError(t, err)
 		require.Equal(t, int64(1), cnt)
 
@@ -136,7 +135,7 @@ func TestJobHappyPath(t *testing.T) {
 		jobInfo.Summary = c.expectedSummary
 		jobInfo.ErrorMessage = c.expectedErrMsg
 		jobInfoEqual(t, jobInfo, gotJobInfo)
-		cnt, err = importer.GetActiveJobCnt(ctx, conn)
+		cnt, err = importer.GetActiveJobCnt(ctx, conn, gotJobInfo.TableSchema, gotJobInfo.TableName)
 		require.NoError(t, err)
 		require.Equal(t, int64(0), cnt)
 
@@ -153,7 +152,7 @@ func TestGetAndCancelJob(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	ctx := context.Background()
-	conn := tk.Session().(sqlexec.SQLExecutor)
+	conn := tk.Session().GetSQLExecutor()
 	jobInfo := &importer.JobInfo{
 		TableSchema: "test",
 		TableName:   "t",
@@ -183,7 +182,7 @@ func TestGetAndCancelJob(t *testing.T) {
 	require.True(t, gotJobInfo.StartTime.IsZero())
 	require.True(t, gotJobInfo.EndTime.IsZero())
 	jobInfoEqual(t, jobInfo, gotJobInfo)
-	cnt, err := importer.GetActiveJobCnt(ctx, conn)
+	cnt, err := importer.GetActiveJobCnt(ctx, conn, gotJobInfo.TableSchema, gotJobInfo.TableName)
 	require.NoError(t, err)
 	require.Equal(t, int64(1), cnt)
 
@@ -198,7 +197,7 @@ func TestGetAndCancelJob(t *testing.T) {
 	jobInfo.Status = "cancelled"
 	jobInfo.ErrorMessage = "cancelled by user"
 	jobInfoEqual(t, jobInfo, gotJobInfo)
-	cnt, err = importer.GetActiveJobCnt(ctx, conn)
+	cnt, err = importer.GetActiveJobCnt(ctx, conn, gotJobInfo.TableSchema, gotJobInfo.TableName)
 	require.NoError(t, err)
 	require.Equal(t, int64(0), cnt)
 
@@ -284,7 +283,7 @@ func TestGetJobInfoNullField(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	ctx := context.Background()
-	conn := tk.Session().(sqlexec.SQLExecutor)
+	conn := tk.Session().GetSQLExecutor()
 	jobInfo := &importer.JobInfo{
 		TableSchema: "test",
 		TableName:   "t",

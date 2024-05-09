@@ -412,7 +412,7 @@ func (p *PhysicalIndexReader) ResolveIndices() (err error) {
 		if err != nil {
 			// Check if there is duplicate virtual expression column matched.
 			sctx := p.SCtx()
-			newExprCol, isOK := col.ResolveIndicesByVirtualExpr(sctx.GetExprCtx(), p.indexPlan.Schema())
+			newExprCol, isOK := col.ResolveIndicesByVirtualExpr(sctx.GetExprCtx().GetEvalCtx(), p.indexPlan.Schema())
 			if isOK {
 				p.OutputColumns[i] = newExprCol.(*expression.Column)
 				continue
@@ -492,7 +492,7 @@ func (p *PhysicalSelection) ResolveIndices() (err error) {
 		p.Conditions[i], err = expr.ResolveIndices(p.children[0].Schema())
 		if err != nil {
 			// Check if there is duplicate virtual expression column matched.
-			newCond, isOk := expr.ResolveIndicesByVirtualExpr(p.SCtx().GetExprCtx(), p.children[0].Schema())
+			newCond, isOk := expr.ResolveIndicesByVirtualExpr(p.SCtx().GetExprCtx().GetEvalCtx(), p.children[0].Schema())
 			if isOk {
 				p.Conditions[i] = newCond
 				continue

@@ -544,6 +544,7 @@ func TestHiddenColumn(t *testing.T) {
 	tk.MustGetErrMsg("update t set a=1 where c=3 order by b;", "[planner:1054]Unknown column 'b' in 'order clause'")
 
 	// `DELETE` statement
+	tk.MustQuery("trace plan delete from t;")
 	tk.MustExec("delete from t;")
 	tk.MustQuery("select count(*) from t;").Check(testkit.Rows("0"))
 	tk.MustExec("insert into t values (1, 3, 5);")
@@ -840,6 +841,14 @@ func TestTxnAssertion(t *testing.T) {
 			err = tk.ExecToErr("insert into t values (?, 10, 100, 1000, '10000')", id1)
 			expectAssertionErr(level, err)
 		})
+
+		tk.MustExec("set @@tidb_redact_log=MARKER")
+		withFailpoint(fpAdd, func() {
+			err = tk.ExecToErr("insert into t values (?, 10, 100, 1000, '10000')", id1)
+			require.Contains(t, err.Error(), "‹")
+		})
+		tk.MustExec("set @@tidb_redact_log=0")
+
 		withFailpoint(fpUpdate, func() {
 			err = tk.ExecToErr("update t set v = v + 1 where id = ?", id2)
 			expectAssertionErr(level, err)

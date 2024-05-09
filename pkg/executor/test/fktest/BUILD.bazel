@@ -24,7 +24,6 @@ go_test(
         "//pkg/types",
         "//pkg/util/dbterror/exeerrors",
         "//pkg/util/dbterror/plannererrors",
-        "//pkg/util/sqlexec",
         "//tests/realtikvtest",
         "@com_github_stretchr_testify//require",
         "@com_github_tikv_client_go_v2//tikv",

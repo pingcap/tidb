@@ -13,10 +13,11 @@ import (
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/metautil"
+	"github.com/pingcap/tidb/br/pkg/restore/utils"
 	"github.com/pingcap/tidb/br/pkg/rtree"
 	"github.com/pingcap/tidb/br/pkg/summary"
-	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/util"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
@@ -148,7 +149,7 @@ func splitPrepareWork(ctx context.Context, client *Client, tables []*model.Table
 // CreatedTable is a table created on restore process,
 // but not yet filled with data.
 type CreatedTable struct {
-	RewriteRule *RewriteRules
+	RewriteRule *utils.RewriteRules
 	Table       *model.TableInfo
 	OldTable    *metautil.Table
 }
@@ -172,7 +173,7 @@ type TableIDWithFiles struct {
 	// RewriteRules is the rewrite rules for the specify table.
 	// because these rules belongs to the *one table*.
 	// we can hold them here.
-	RewriteRules *RewriteRules
+	RewriteRules *utils.RewriteRules
 }
 
 // Exhaust drains all remaining errors in the channel, into a slice of errors.
@@ -328,7 +329,7 @@ func (b *tikvSender) splitWorker(ctx context.Context,
 		summary.CollectDuration("split region", elapsed)
 	}()
 
-	pool := utils.NewWorkerPool(concurrency, "split")
+	pool := util.NewWorkerPool(concurrency, "split")
 	for {
 		select {
 		case <-ectx.Done():

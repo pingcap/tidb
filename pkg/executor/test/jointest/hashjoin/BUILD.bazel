@@ -9,11 +9,10 @@ go_test(
     ],
     flaky = True,
     race = "on",
-    shard_count = 10,
+    shard_count = 11,
     deps = [
         "//pkg/config",
         "//pkg/meta/autoid",
-        "//pkg/planner/core",
         "//pkg/session",
         "//pkg/sessionctx/variable",
         "//pkg/testkit",

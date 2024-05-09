@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/sysproctrack"
 	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/exec"
 	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
 	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
@@ -71,7 +72,7 @@ func NewNonPartitionedTableAnalysisJob(
 // Analyze analyzes the table or indexes.
 func (j *NonPartitionedTableAnalysisJob) Analyze(
 	statsHandle statstypes.StatsHandle,
-	sysProcTracker sessionctx.SysProcTracker,
+	sysProcTracker sysproctrack.Tracker,
 ) error {
 	return statsutil.CallWithSCtx(statsHandle.SPool(), func(sctx sessionctx.Context) error {
 		switch j.getAnalyzeType() {
@@ -94,10 +95,6 @@ func (j *NonPartitionedTableAnalysisJob) HasNewlyAddedIndex() bool {
 func (j *NonPartitionedTableAnalysisJob) IsValidToAnalyze(
 	sctx sessionctx.Context,
 ) (bool, string) {
-	if valid, failReason := isValidWeight(j.Weight); !valid {
-		return false, failReason
-	}
-
 	if valid, failReason := isValidToAnalyze(
 		sctx,
 		j.TableSchema,
@@ -134,10 +131,10 @@ func (j *NonPartitionedTableAnalysisJob) String() string {
 			"\tTable: %s\n"+
 			"\tTableID: %d\n"+
 			"\tTableStatsVer: %d\n"+
-			"\tChangePercentage: %.2f\n"+
+			"\tChangePercentage: %.6f\n"+
 			"\tTableSize: %.2f\n"+
 			"\tLastAnalysisDuration: %v\n"+
-			"\tWeight: %.4f\n",
+			"\tWeight: %.6f\n",
 		j.getAnalyzeType(),
 		strings.Join(j.Indexes, ", "),
 		j.TableSchema, j.TableName, j.TableID, j.TableStatsVer,
@@ -154,7 +151,7 @@ func (j *NonPartitionedTableAnalysisJob) getAnalyzeType() analyzeType {
 func (j *NonPartitionedTableAnalysisJob) analyzeTable(
 	sctx sessionctx.Context,
 	statsHandle statstypes.StatsHandle,
-	sysProcTracker sessionctx.SysProcTracker,
+	sysProcTracker sysproctrack.Tracker,
 ) {
 	sql, params := j.GenSQLForAnalyzeTable()
 	exec.AutoAnalyze(sctx, statsHandle, sysProcTracker, j.TableStatsVer, sql, params...)
@@ -171,7 +168,7 @@ func (j *NonPartitionedTableAnalysisJob) GenSQLForAnalyzeTable() (string, []any)
 func (j *NonPartitionedTableAnalysisJob) analyzeIndexes(
 	sctx sessionctx.Context,
 	statsHandle statstypes.StatsHandle,
-	sysProcTracker sessionctx.SysProcTracker,
+	sysProcTracker sysproctrack.Tracker,
 ) {
 	if len(j.Indexes) == 0 {
 		return

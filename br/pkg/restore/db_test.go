@@ -406,7 +406,7 @@ func TestGetExistedUserDBs(t *testing.T) {
 			{Name: model.NewCIStr("d1")},
 			{
 				Name:   model.NewCIStr("test"),
-				Tables: []*model.TableInfo{{Name: model.NewCIStr("t1"), State: model.StatePublic}},
+				Tables: []*model.TableInfo{{ID: 1, Name: model.NewCIStr("t1"), State: model.StatePublic}},
 				State:  model.StatePublic,
 			},
 		},
@@ -425,5 +425,5 @@ func TestGetExistedUserDBs(t *testing.T) {
 //
 // The above variables are in the file br/pkg/restore/systable_restore.go
 func TestMonitorTheSystemTableIncremental(t *testing.T) {
-	require.Equal(t, int64(195), session.CurrentBootstrapVersion)
+	require.Equal(t, int64(196), session.CurrentBootstrapVersion)
 }

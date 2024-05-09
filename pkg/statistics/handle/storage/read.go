@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/statistics"
 	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
@@ -99,10 +98,6 @@ func HistogramFromStorage(sctx sessionctx.Context, tableID int64, colID int64, t
 			lowerBound = rows[i].GetDatum(2, &fields[2].Column.FieldType)
 			upperBound = rows[i].GetDatum(3, &fields[3].Column.FieldType)
 		} else {
-			// Invalid date values may be inserted into table under some relaxed sql mode. Those values may exist in statistics.
-			// Hence, when reading statistics, we should skip invalid date check. See #39336.
-			sc := stmtctx.NewStmtCtxWithTimeZone(time.UTC)
-			sc.SetTypeFlags(sc.TypeFlags().WithIgnoreInvalidDateErr(true).WithIgnoreZeroInDate(true))
 			d := rows[i].GetDatum(2, &fields[2].Column.FieldType)
 			// For new collation data, when storing the bounds of the histogram, we store the collate key instead of the
 			// original value.
@@ -114,12 +109,12 @@ func HistogramFromStorage(sctx sessionctx.Context, tableID int64, colID int64, t
 			if tp.EvalType() == types.ETString && tp.GetType() != mysql.TypeEnum && tp.GetType() != mysql.TypeSet {
 				tp = types.NewFieldType(mysql.TypeBlob)
 			}
-			lowerBound, err = d.ConvertTo(sc.TypeCtx(), tp)
+			lowerBound, err = d.ConvertTo(statistics.UTCWithAllowInvalidDateCtx, tp)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
 			d = rows[i].GetDatum(3, &fields[3].Column.FieldType)
-			upperBound, err = d.ConvertTo(sc.TypeCtx(), tp)
+			upperBound, err = d.ConvertTo(statistics.UTCWithAllowInvalidDateCtx, tp)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -572,7 +567,9 @@ func CleanFakeItemsForShowHistInFlights(statsCache statstypes.StatsCache) int {
 		if item.IsIndex {
 			_, loadNeeded = tbl.IndexIsLoadNeeded(item.ID)
 		} else {
-			_, loadNeeded = tbl.ColumnIsLoadNeeded(item.ID)
+			var analyzed bool
+			_, loadNeeded, analyzed = tbl.ColumnIsLoadNeeded(item.ID, true)
+			loadNeeded = loadNeeded && analyzed
 		}
 		if !loadNeeded {
 			statistics.HistogramNeededItems.Delete(item)
@@ -589,8 +586,8 @@ func loadNeededColumnHistograms(sctx sessionctx.Context, statsCache statstypes.S
 		return nil
 	}
 	var colInfo *model.ColumnInfo
-	c, loadNeeded := tbl.ColumnIsLoadNeeded(col.ID)
-	if !loadNeeded {
+	_, loadNeeded, analyzed := tbl.ColumnIsLoadNeeded(col.ID, true)
+	if !loadNeeded || !analyzed {
 		statistics.HistogramNeededItems.Delete(col)
 		return nil
 	}
@@ -644,9 +641,9 @@ func loadNeededColumnHistograms(sctx sessionctx.Context, statsCache statstypes.S
 	statistics.HistogramNeededItems.Delete(col)
 	if col.IsSyncLoadFailed {
 		logutil.BgLogger().Warn("Hist for column should already be loaded as sync but not found.",
-			zap.Int64("table_id", c.PhysicalID),
-			zap.Int64("column_id", c.Info.ID),
-			zap.String("column_name", c.Info.Name.O))
+			zap.Int64("table_id", colHist.PhysicalID),
+			zap.Int64("column_id", colHist.Info.ID),
+			zap.String("column_name", colHist.Info.Name.O))
 	}
 	return nil
 }
@@ -700,10 +697,10 @@ func loadNeededIndexHistograms(sctx sessionctx.Context, statsCache statstypes.St
 	tbl.LastAnalyzeVersion = max(tbl.LastAnalyzeVersion, idxHist.LastUpdateVersion)
 	statsCache.UpdateStatsCache([]*statistics.Table{tbl}, nil)
 	if idx.IsSyncLoadFailed {
-		logutil.BgLogger().Warn("Hist for column should already be loaded as sync but not found.",
-			zap.Int64("table_id", tbl.PhysicalID),
-			zap.Int64("column_id", idxHist.Info.ID),
-			zap.String("column_name", idxHist.Info.Name.O))
+		logutil.BgLogger().Warn("Hist for index should already be loaded as sync but not found.",
+			zap.Int64("table_id", idx.TableID),
+			zap.Int64("index_id", idxHist.Info.ID),
+			zap.String("index_name", idxHist.Info.Name.O))
 	}
 	statistics.HistogramNeededItems.Delete(idx)
 	return nil

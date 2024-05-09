@@ -53,13 +53,13 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/tidb"
 	field_types "github.com/pingcap/tidb/pkg/parser/types"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/plugin"
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/privilege/privileges"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/table"
@@ -69,6 +69,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
+	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/etcd"
@@ -100,7 +101,7 @@ type ShowExec struct {
 	Flag              int                  // Some flag parsed from sql, such as FULL.
 	Roles             []*auth.RoleIdentity // Used for show grants.
 	User              *auth.UserIdentity   // Used by show grants, show create user.
-	Extractor         plannercore.ShowPredicateExtractor
+	Extractor         base.ShowPredicateExtractor
 
 	is infoschema.InfoSchema
 
@@ -374,7 +375,7 @@ func (e *ShowExec) fetchShowBind() error {
 }
 
 func (e *ShowExec) fetchShowBindingCacheStatus(ctx context.Context) error {
-	exec := e.Ctx().(sqlexec.RestrictedSQLExecutor)
+	exec := e.Ctx().GetRestrictedSQLExecutor()
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnBindInfo)
 
 	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, fmt.Sprintf("SELECT count(*) FROM mysql.bind_info where status = '%s' or status = '%s';", bindinfo.Enabled, bindinfo.Using))
@@ -405,7 +406,7 @@ func (e *ShowExec) fetchShowBindingCacheStatus(ctx context.Context) error {
 
 func (e *ShowExec) fetchShowEngines(ctx context.Context) error {
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnMeta)
-	exec := e.Ctx().(sqlexec.RestrictedSQLExecutor)
+	exec := e.Ctx().GetRestrictedSQLExecutor()
 
 	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, `SELECT * FROM information_schema.engines`)
 	if err != nil {
@@ -559,7 +560,7 @@ func (e *ShowExec) fetchShowTableStatus(ctx context.Context) error {
 		return exeerrors.ErrBadDB.GenWithStackByArgs(e.DBName)
 	}
 
-	exec := e.Ctx().(sqlexec.RestrictedSQLExecutor)
+	exec := e.Ctx().GetRestrictedSQLExecutor()
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnStats)
 
 	var snapshot uint64
@@ -1032,12 +1033,19 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *model.CISt
 						}
 						buf.WriteString(" DEFAULT NULL")
 					}
-				case "CURRENT_TIMESTAMP", "CURRENT_DATE":
+				case "CURRENT_TIMESTAMP":
 					buf.WriteString(" DEFAULT ")
 					buf.WriteString(defaultValue.(string))
 					if col.GetDecimal() > 0 {
 						fmt.Fprintf(buf, "(%d)", col.GetDecimal())
 					}
+				case "CURRENT_DATE":
+					buf.WriteString(" DEFAULT (")
+					buf.WriteString(defaultValue.(string))
+					if col.GetDecimal() > 0 {
+						fmt.Fprintf(buf, "(%d)", col.GetDecimal())
+					}
+					buf.WriteString(")")
 				default:
 					defaultValStr := fmt.Sprintf("%v", defaultValue)
 					// If column is timestamp, and default value is not current_timestamp, should convert the default value to the current session time zone.
@@ -1050,7 +1058,7 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *model.CISt
 					}
 
 					if col.DefaultIsExpr {
-						fmt.Fprintf(buf, " DEFAULT %s", defaultValStr)
+						fmt.Fprintf(buf, " DEFAULT (%s)", defaultValStr)
 					} else {
 						if col.GetType() == mysql.TypeBit {
 							defaultValBinaryLiteral := types.BinaryLiteral(defaultValStr)
@@ -1172,7 +1180,7 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *model.CISt
 			colNames = append(colNames, stringutil.Escape(col.O, sqlMode))
 		}
 		fmt.Fprintf(buf, "(%s)", strings.Join(colNames, ","))
-		if fk.RefSchema.L != "" {
+		if fk.RefSchema.L != "" && dbName != nil && fk.RefSchema.L != dbName.L {
 			fmt.Fprintf(buf, " REFERENCES %s.%s ", stringutil.Escape(fk.RefSchema.O, sqlMode), stringutil.Escape(fk.RefTable.O, sqlMode))
 		} else {
 			fmt.Fprintf(buf, " REFERENCES %s ", stringutil.Escape(fk.RefTable.O, sqlMode))
@@ -1645,7 +1653,7 @@ func (e *ShowExec) fetchShowCreateUser(ctx context.Context) error {
 		}
 	}
 
-	exec := e.Ctx().(sqlexec.RestrictedSQLExecutor)
+	exec := e.Ctx().GetRestrictedSQLExecutor()
 
 	rows, _, err := exec.ExecRestrictedSQL(ctx, nil,
 		`SELECT plugin, Account_locked, user_attributes->>'$.metadata', Token_issuer,
@@ -1870,7 +1878,7 @@ func (e *ShowExec) fetchShowWarnings(errOnly bool) error {
 		return nil
 	}
 	for _, w := range stmtCtx.GetWarnings() {
-		if errOnly && w.Level != stmtctx.WarnLevelError {
+		if errOnly && w.Level != contextutil.WarnLevelError {
 			continue
 		}
 		warn := errors.Cause(w.Err)
@@ -2296,7 +2304,7 @@ func (e *ShowExec) fetchShowImportJobs(ctx context.Context) error {
 	if e.ImportJobID != nil {
 		var info *importer.JobInfo
 		if err = taskManager.WithNewSession(func(se sessionctx.Context) error {
-			exec := se.(sqlexec.SQLExecutor)
+			exec := se.GetSQLExecutor()
 			var err2 error
 			info, err2 = importer.GetJob(ctx, exec, *e.ImportJobID, e.Ctx().GetSessionVars().User.String(), hasSuperPriv)
 			return err2
@@ -2307,7 +2315,7 @@ func (e *ShowExec) fetchShowImportJobs(ctx context.Context) error {
 	}
 	var infos []*importer.JobInfo
 	if err = taskManager.WithNewSession(func(se sessionctx.Context) error {
-		exec := se.(sqlexec.SQLExecutor)
+		exec := se.GetSQLExecutor()
 		var err2 error
 		infos, err2 = importer.GetAllViewableJobs(ctx, exec, e.Ctx().GetSessionVars().User.String(), hasSuperPriv)
 		return err2
