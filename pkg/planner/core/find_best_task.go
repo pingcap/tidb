@@ -1373,7 +1373,7 @@ func (ds *DataSource) FindBestTask(prop *property.PhysicalProperty, planCounter 
 	}()
 
 	cntPlan = 0
-	bestTaskStore := kv.TiKV
+	bestTaskStore := kv.TiKV // use TiKV as the default since it always can generate a valid plan.
 	defer func() {
 		if (ds.preferStoreType&h.PreferTiKV > 0 && bestTaskStore != kv.TiKV) ||
 			(ds.preferStoreType&h.PreferTiFlash > 0 && bestTaskStore != kv.TiFlash) {
