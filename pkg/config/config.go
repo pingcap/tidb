@@ -76,7 +76,7 @@ const (
 	// DefMaxOfTableColumnCountLimit is maximum limitation of the number of columns in a table
 	DefMaxOfTableColumnCountLimit = 4096
 	// DefStatsLoadConcurrencyLimit is limit of the concurrency of stats-load
-	DefStatsLoadConcurrencyLimit = 1
+	DefStatsLoadConcurrencyLimit = 0
 	// DefMaxOfStatsLoadConcurrencyLimit is maximum limitation of the concurrency of stats-load
 	DefMaxOfStatsLoadConcurrencyLimit = 128
 	// DefStatsLoadQueueSizeLimit is limit of the size of stats-load request queue
@@ -1010,7 +1010,7 @@ var defaultConf = Config{
 		GOGC:                              100,
 		EnforceMPP:                        false,
 		PlanReplayerGCLease:               "10m",
-		StatsLoadConcurrency:              5,
+		StatsLoadConcurrency:              0, // 0 is auto mode.
 		StatsLoadQueueSize:                1000,
 		AnalyzePartitionConcurrencyQuota:  16,
 		PlanReplayerDumpWorkerConcurrency: 1,
