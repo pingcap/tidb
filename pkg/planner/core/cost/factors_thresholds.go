@@ -26,6 +26,7 @@ const (
 	DistinctFactor = 0.8
 )
 
+// AggFuncFactor is the basic factor for aggregation.
 var AggFuncFactor = map[string]float64{
 	ast.AggFuncCount:       1.0,
 	ast.AggFuncSum:         1.0,
