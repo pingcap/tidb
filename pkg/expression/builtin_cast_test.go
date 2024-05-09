@@ -1119,12 +1119,12 @@ func TestCastFuncSig(t *testing.T) {
 
 	// test cast real to string
 	zero := float32(0.00)
-	neg_zero := -zero
+	negZero := -zero
 	castFloat32ToStringCases := []struct {
 		v      float32
 		expect string
 	}{
-		{neg_zero, "-0"},
+		{negZero, "-0"},
 		{00000.0, "0"},
 		{4474.7812, "4474.7812"},
 		{1e15, "1e15"},
@@ -1150,7 +1150,7 @@ func TestCastFuncSig(t *testing.T) {
 		v      float64
 		expect string
 	}{
-		{float64(neg_zero), "-0"},
+		{float64(negZero), "-0"},
 		{00000.0, "0"},
 		{4474.7812, "4474.7812"},
 		{1e15, "1e15"},
