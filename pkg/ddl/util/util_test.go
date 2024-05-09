@@ -12,20 +12,23 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package ingest
+package util
 
-// TryFlushAllIndexes tries to flush and import all indexes.
-func TryFlushAllIndexes(flushCtrl FlushController, mode FlushMode, indexIDs []int64) (flushed, imported bool, failedIdxID int64, err error) {
-	allFlushed := true
-	allImported := true
-	for _, idxID := range indexIDs {
-		// TODO(lance6716): use flushCtrl.Flush(indexIDs, mode)
-		flushed, imported, err := flushCtrl.Flush(idxID, mode)
-		if err != nil {
-			return false, false, idxID, err
-		}
-		allFlushed = allFlushed && flushed
-		allImported = allImported && imported
-	}
-	return allFlushed, allImported, -1, nil
+import (
+	"os"
+	"path/filepath"
+	"testing"
+
+	"github.com/stretchr/testify/require"
+)
+
+func TestFolderNotEmpty(t *testing.T) {
+	tmp := t.TempDir()
+	require.False(t, FolderNotEmpty(tmp))
+	require.False(t, FolderNotEmpty(filepath.Join(tmp, "not-exist")))
+
+	f, err := os.Create(filepath.Join(tmp, "test-file"))
+	require.NoError(t, err)
+	require.NoError(t, f.Close())
+	require.True(t, FolderNotEmpty(tmp))
 }
