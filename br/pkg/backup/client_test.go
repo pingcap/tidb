@@ -215,8 +215,8 @@ func TestOnBackupResponse(t *testing.T) {
 		return &rtree.ProgressRange{
 			Res: rtree.NewRangeTree(),
 			Origin: rtree.Range{
-				StartKey: []byte(startKey),
-				EndKey:   []byte(endKey),
+				StartKey: startKey,
+				EndKey:   endKey,
 			},
 		}
 	}
