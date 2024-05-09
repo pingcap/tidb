@@ -12,6 +12,7 @@ go_test(
     deps = [
         "//pkg/autoid_service",
         "//pkg/config",
+        "//pkg/executor/join",
         "//pkg/kv",
         "//pkg/meta/autoid",
         "//pkg/parser/auth",
