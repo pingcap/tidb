@@ -16,7 +16,6 @@ package issuetest_test
 
 import (
 	"fmt"
-	"github.com/pingcap/tidb/pkg/executor/join"
 	"math/rand"
 	"strings"
 	"testing"
@@ -25,6 +24,7 @@ import (
 	"github.com/pingcap/failpoint"
 	_ "github.com/pingcap/tidb/pkg/autoid_service"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/executor/join"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/charset"
