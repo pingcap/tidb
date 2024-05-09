@@ -308,7 +308,7 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) error {
 		}
 
 		failpoint.Inject("mockWritePeerErr", func() {
-			err = errors.Errorf("mock write peer error")
+			err = errors.Errorf("ErrMockRetryable")
 			failpoint.Return(annotateErr(err, peer, "when open write stream"))
 		})
 
