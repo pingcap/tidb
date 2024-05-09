@@ -433,9 +433,6 @@ func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) 
 		rcfg.Config = cfg
 		e.restoreCfg = &rcfg
 		for _, opt := range s.Options {
-			// if opt.Tp == ast.BRIEOptionOnline {
-			// 	e.restoreCfg.Online = opt.UintValue != 0
-			// }
 			switch opt.Tp {
 			case ast.BRIEOptionOnline:
 				e.restoreCfg.Online = opt.UintValue != 0
