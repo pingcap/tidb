@@ -71,18 +71,18 @@ func testGetConflictChangefeeds(t *testing.T, cli *clientv3.Client) {
 
 	names, err := cdcutil.GetIncompatibleChangefeedsWithSafeTS(context.Background(), cli, 42)
 	require.NoError(t, err)
-	require.ElementsMatch(t, names.TEST_getChangefeedNames(), []string{
+	require.ElementsMatch(t, names.TESTGetChangefeedNames(), []string{
 		"default/default/nost-fail",
 		"default/default/st-fail",
 	})
 
 	names2, err := cdcutil.GetIncompatibleChangefeedsWithSafeTS(context.Background(), cli, 40)
 	require.NoError(t, err)
-	require.ElementsMatch(t, names2.TEST_getChangefeedNames(), []string{})
+	require.ElementsMatch(t, names2.TESTGetChangefeedNames(), []string{})
 
 	names3, err := cdcutil.GetIncompatibleChangefeedsWithSafeTS(context.Background(), cli, 48)
 	require.NoError(t, err)
-	require.ElementsMatch(t, names3.TEST_getChangefeedNames(), []string{
+	require.ElementsMatch(t, names3.TESTGetChangefeedNames(), []string{
 		"default/default/nost-fail",
 		"default/default/st-fail",
 		"default/default/nost-ok",
@@ -125,7 +125,7 @@ func testGetCDCChangefeedNameSet(t *testing.T, cli *clientv3.Client) {
 	nameSet, err = cdcutil.GetRunningChangefeeds(ctx, cli)
 	require.NoError(t, err)
 	require.False(t, nameSet.Empty())
-	require.ElementsMatch(t, nameSet.TEST_getChangefeedNames(), []string{"default/default/test"})
+	require.ElementsMatch(t, nameSet.TESTGetChangefeedNames(), []string{"default/default/test"})
 
 	_, err = cli.Delete(ctx, "/tidb/cdc/", clientv3.WithPrefix())
 	require.NoError(t, err)
@@ -143,7 +143,7 @@ func testGetCDCChangefeedNameSet(t *testing.T, cli *clientv3.Client) {
 	nameSet, err = cdcutil.GetRunningChangefeeds(ctx, cli)
 	require.NoError(t, err)
 	require.False(t, nameSet.Empty())
-	require.ElementsMatch(t, nameSet.TEST_getChangefeedNames(), []string{"<nil>/test"})
+	require.ElementsMatch(t, nameSet.TESTGetChangefeedNames(), []string{"<nil>/test"})
 
 	_, err = cli.Delete(ctx, "/tidb/cdc/", clientv3.WithPrefix())
 	require.NoError(t, err)

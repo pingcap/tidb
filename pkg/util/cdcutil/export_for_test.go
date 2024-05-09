@@ -16,7 +16,7 @@ package cdcutil
 
 import "path"
 
-func (c *CDCNameSet) TEST_getChangefeedNames() []string {
+func (c *CDCNameSet) TESTGetChangefeedNames() []string {
 	names := make([]string, 0, len(c.changefeeds))
 	for ns, cfs := range c.changefeeds {
 		for _, cf := range cfs {
