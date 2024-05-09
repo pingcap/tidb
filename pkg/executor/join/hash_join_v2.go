@@ -566,7 +566,7 @@ func (w *ProbeWorkerV2) scanRowTableAfterProbeDone() {
 		return
 	}
 	for !w.JoinProbe.IsScanRowTableDone() {
-		joinResult = w.JoinProbe.ScanRowTable(joinResult)
+		joinResult = w.JoinProbe.ScanRowTable(joinResult, w.HashJoinCtx.SessCtx.GetSessionVars().SQLKiller)
 		if joinResult.err != nil {
 			w.HashJoinCtx.joinResultCh <- joinResult
 			return

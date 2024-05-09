@@ -371,7 +371,7 @@ func testJoinProbe(t *testing.T, withSel bool, leftKeyIndex []int, rightKeyIndex
 		for _, prober := range joinProbes {
 			prober.InitForScanRowTable()
 			for !prober.IsScanRowTableDone() {
-				joinResult = prober.ScanRowTable(joinResult)
+				joinResult = prober.ScanRowTable(joinResult, sqlkiller.SQLKiller{})
 				require.NoError(t, joinResult.err, "unexpected error during scan row table")
 				if joinResult.chk.IsFull() {
 					resultChunks = append(resultChunks, joinResult.chk)
