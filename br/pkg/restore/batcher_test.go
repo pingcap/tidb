@@ -14,6 +14,7 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/restore"
+	"github.com/pingcap/tidb/br/pkg/restore/utils"
 	"github.com/pingcap/tidb/br/pkg/rtree"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/stretchr/testify/require"
@@ -23,7 +24,7 @@ import (
 type drySender struct {
 	mu *sync.Mutex
 
-	rewriteRules *restore.RewriteRules
+	rewriteRules *utils.RewriteRules
 	ranges       []rtree.Range
 	nBatch       int
 
@@ -60,7 +61,7 @@ func (sender *drySender) Ranges() []rtree.Range {
 
 func newDrySender() *drySender {
 	return &drySender{
-		rewriteRules: restore.EmptyRewriteRule(),
+		rewriteRules: utils.EmptyRewriteRule(),
 		ranges:       []rtree.Range{},
 		mu:           new(sync.Mutex),
 	}
@@ -161,7 +162,7 @@ func fakeTableWithRange(id int64, rngs []rtree.Range) restore.TableWithRange {
 	}
 	tblWithRng := restore.TableWithRange{
 		CreatedTable: restore.CreatedTable{
-			RewriteRule: restore.EmptyRewriteRule(),
+			RewriteRule: utils.EmptyRewriteRule(),
 			Table:       tbl.Info,
 			OldTable:    tbl,
 		},
@@ -170,8 +171,8 @@ func fakeTableWithRange(id int64, rngs []rtree.Range) restore.TableWithRange {
 	return tblWithRng
 }
 
-func fakeRewriteRules(oldPrefix string, newPrefix string) *restore.RewriteRules {
-	return &restore.RewriteRules{
+func fakeRewriteRules(oldPrefix string, newPrefix string) *utils.RewriteRules {
+	return &utils.RewriteRules{
 		Data: []*import_sstpb.RewriteRule{
 			{
 				OldKeyPrefix: []byte(oldPrefix),
@@ -299,7 +300,7 @@ func TestRewriteRules(t *testing.T) {
 			fakeRange("can", "cao"), fakeRange("cap", "caq"),
 		},
 	}
-	rewriteRules := []*restore.RewriteRules{
+	rewriteRules := []*utils.RewriteRules{
 		fakeRewriteRules("a", "ada"),
 		fakeRewriteRules("b", "bob"),
 		fakeRewriteRules("c", "cpp"),

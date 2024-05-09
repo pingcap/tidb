@@ -143,6 +143,7 @@ select a from t order by a;
 select * from t where a = 'bbc';
 select a from t partition (p0) order by a;
 select a from t partition (p1) order by a;
+--replace_regex /in\(_tidb_pid, [0-9]+\)/in(_tidb_pid, pid1)/
 explain format = 'brief' select a from t partition (p1) order by a;
 
 drop table if exists t;
@@ -166,5 +167,6 @@ select a from t order by a;
 select * from t where a = 'bbc';
 select a from t partition (p0) order by a;
 select a from t partition (p1) order by a;
+--replace_regex /in\(_tidb_pid, [0-9]+\)/in(_tidb_pid, pid1)/
 explain format = 'brief' select a from t partition (p1) order by a;
 
