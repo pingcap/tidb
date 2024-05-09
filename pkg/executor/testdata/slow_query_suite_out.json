@@ -28,7 +28,7 @@
       },
       {
         "SQL": "select /*+ READ_FROM_STORAGE(TIKV[t]) */ f from t where f > 1",
-        "Result": "[{\"Level\":\"Warning\",\"Message\":\"Optimizer Hint read_from_storage hint is inapplicable\"},{\"Level\":\"Note\",\"Message\":\"[t(tiflash),f,f_g] remain after pruning paths for t given Prop{SortItems: [], TaskTp: rootTask}\",\"IsExtra\":true}]"
+        "Result": "[{\"Level\":\"Note\",\"Message\":\"[t(tiflash),f,f_g] remain after pruning paths for t given Prop{SortItems: [], TaskTp: rootTask}\",\"IsExtra\":true}]"
       },
       {
         "SQL": "select /*+ READ_FROM_STORAGE(TIKV[t]) */ * from t where f > 3 and g = 5",

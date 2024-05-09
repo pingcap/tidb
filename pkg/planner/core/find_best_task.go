@@ -1566,6 +1566,7 @@ func (ds *DataSource) FindBestTask(prop *property.PhysicalProperty, planCounter 
 		}
 		if curIsBetter || planCounter.Empty() {
 			t = idxTask
+			bestTaskStore = kv.TiKV
 		}
 		if planCounter.Empty() {
 			return t, cntPlan, nil
