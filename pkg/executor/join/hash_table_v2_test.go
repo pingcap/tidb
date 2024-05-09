@@ -192,7 +192,7 @@ func TestLookup(t *testing.T) {
 	}
 }
 
-func checkRowIter(t *testing.T, table *JoinHashTable, scanConcurrency int) {
+func checkRowIter(t *testing.T, table *HashTableV2, scanConcurrency int) {
 	// first create a map containing all the row locations
 	totalRowCount := table.totalRowCount()
 	rowSet := make(map[uintptr]struct{}, totalRowCount)
