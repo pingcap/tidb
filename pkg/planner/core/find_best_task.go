@@ -1577,6 +1577,9 @@ func (ds *DataSource) FindBestTask(prop *property.PhysicalProperty, planCounter 
 
 func (ds *DataSource) compareTaskRegardingStore(curTask, bestTask base.Task, curTaskStore, bestTaskStore kv.StoreType,
 	op *optimizetrace.PhysicalOptimizeOp) (curIsBetter bool, err error) {
+	if curTask.Invalid() { // keep the bestTask unchanged
+		return false, nil
+	}
 	if bestTask.Invalid() { // in this case the curTask is always better to let us at least can get a valid plan.
 		return true, nil
 	}
