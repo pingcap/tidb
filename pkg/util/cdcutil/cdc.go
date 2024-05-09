@@ -148,15 +148,15 @@ type changefeedStatusView struct {
 func (c checkCDCClient) fetchCheckpointTSFromStatus(ctx context.Context, cf changefeed) (uint64, error) {
 	statusResp, err := c.cli.KV.Get(ctx, cf.statusKey())
 	if err != nil {
-		return 0, err
+		return 0, errors.Trace(err)
 	}
-	if statusResp.Count == 0 {
-		// The changefeed might was created recently.
+	if statusResp.Count == 0 || len(statusResp.Kvs[0].Value) == 0 {
+		// The changefeed might was created recently, or just a phantom in test cases...
 		return 0, nil
 	}
 	var status changefeedStatusView
 	if err := json.Unmarshal(statusResp.Kvs[0].Value, &status); err != nil {
-		return 0, err
+		return 0, errors.Trace(err)
 	}
 	return status.Checkpoint, nil
 }
@@ -164,7 +164,7 @@ func (c checkCDCClient) fetchCheckpointTSFromStatus(ctx context.Context, cf chan
 func (c checkCDCClient) checkpointTSFor(ctx context.Context, cf changefeed) (uint64, error) {
 	infoResp, err := c.cli.KV.Get(ctx, cf.infoKey())
 	if err != nil {
-		return 0, err
+		return 0, errors.Trace(err)
 	}
 	if infoResp.Count == 0 {
 		// The changefeed have been removed.
@@ -172,7 +172,7 @@ func (c checkCDCClient) checkpointTSFor(ctx context.Context, cf changefeed) (uin
 	}
 	var info changefeedInfoView
 	if err := json.Unmarshal(infoResp.Kvs[0].Value, &info); err != nil {
-		return 0, err
+		return 0, errors.Trace(err)
 	}
 	switch info.State {
 	// https://docs.pingcap.com/zh/tidb/stable/ticdc-changefeed-overview
