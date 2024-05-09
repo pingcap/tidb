@@ -21,13 +21,13 @@ import (
 
 	"github.com/pingcap/errors"
 	sess "github.com/pingcap/tidb/pkg/ddl/internal/session"
+	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/intest"
-	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"go.uber.org/zap"
 )
@@ -38,12 +38,12 @@ func (d *ddl) checkDeleteRangeCnt(job *model.Job) {
 		if strings.Contains(err.Error(), "Not Supported") {
 			return // For mock session, we don't support executing SQLs.
 		}
-		logutil.BgLogger().Error("query delete range count failed", zap.Error(err))
+		logutil.DDLLogger().Error("query delete range count failed", zap.Error(err))
 		panic(err)
 	}
 	expectedCnt, err := expectedDeleteRangeCnt(delRangeCntCtx{idxIDs: map[int64]struct{}{}}, job)
 	if err != nil {
-		logutil.BgLogger().Error("decode job's delete range count failed", zap.Error(err))
+		logutil.DDLLogger().Error("decode job's delete range count failed", zap.Error(err))
 		panic(err)
 	}
 	if actualCnt != expectedCnt {

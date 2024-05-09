@@ -826,7 +826,7 @@ func SampleFileCompressRatio(ctx context.Context, fileMeta SourceFileMeta, store
 // SampleParquetDataSize samples the data size of the parquet file.
 func SampleParquetDataSize(ctx context.Context, fileMeta SourceFileMeta, store storage.ExternalStorage) (int64, error) {
 	totalRowCount, err := ReadParquetFileRowCountByFile(ctx, store, fileMeta)
-	if err != nil {
+	if totalRowCount == 0 || err != nil {
 		return 0, err
 	}
 

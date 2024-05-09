@@ -19,14 +19,17 @@ import (
 	"github.com/pingcap/tidb/br/pkg/pdutil"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/multierr"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
 
 func TestGetAllTiKVStoresWithRetryCancel(t *testing.T) {
-	_ = failpoint.Enable("github.com/pingcap/tidb/br/pkg/conn/hint-GetAllTiKVStores-cancel", "return(true)")
+	err := failpoint.Enable("github.com/pingcap/tidb/br/pkg/conn/hint-GetAllTiKVStores-cancel", "1*return(true)->1*return(false)")
+	require.NoError(t, err)
 	defer func() {
-		_ = failpoint.Disable("github.com/pingcap/tidb/br/pkg/conn/hint-GetAllTiKVStores-cancel")
+		err = failpoint.Disable("github.com/pingcap/tidb/br/pkg/conn/hint-GetAllTiKVStores-cancel")
+		require.NoError(t, err)
 	}()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -58,15 +61,19 @@ func TestGetAllTiKVStoresWithRetryCancel(t *testing.T) {
 		Stores: stores,
 	}
 
-	_, err := GetAllTiKVStoresWithRetry(ctx, fpdc, util.SkipTiFlash)
+	_, err = GetAllTiKVStoresWithRetry(ctx, fpdc, util.SkipTiFlash)
 	require.Error(t, err)
-	require.Equal(t, codes.Canceled, status.Code(errors.Cause(err)))
+	errs := multierr.Errors(err)
+	require.Equal(t, 2, len(errs))
+	require.Equal(t, codes.Canceled, status.Code(errors.Cause(errs[0])))
 }
 
 func TestGetAllTiKVStoresWithUnknown(t *testing.T) {
-	_ = failpoint.Enable("github.com/pingcap/tidb/br/pkg/conn/hint-GetAllTiKVStores-error", "return(true)")
+	err := failpoint.Enable("github.com/pingcap/tidb/br/pkg/conn/hint-GetAllTiKVStores-error", "1*return(true)->1*return(false)")
+	require.NoError(t, err)
 	defer func() {
-		_ = failpoint.Disable("github.com/pingcap/tidb/br/pkg/conn/hint-GetAllTiKVStores-error")
+		err = failpoint.Disable("github.com/pingcap/tidb/br/pkg/conn/hint-GetAllTiKVStores-error")
+		require.NoError(t, err)
 	}()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -98,10 +105,13 @@ func TestGetAllTiKVStoresWithUnknown(t *testing.T) {
 		Stores: stores,
 	}
 
-	_, err := GetAllTiKVStoresWithRetry(ctx, fpdc, util.SkipTiFlash)
+	_, err = GetAllTiKVStoresWithRetry(ctx, fpdc, util.SkipTiFlash)
 	require.Error(t, err)
-	require.Equal(t, codes.Unknown, status.Code(errors.Cause(err)))
+	errs := multierr.Errors(err)
+	require.Equal(t, 2, len(errs))
+	require.Equal(t, codes.Unknown, status.Code(errors.Cause(errs[0])))
 }
+
 func TestCheckStoresAlive(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -405,14 +415,18 @@ func TestGetMergeRegionSizeAndCount(t *testing.T) {
 		},
 	}
 
-	ctx := context.Background()
+	pctx := context.Background()
 	for _, ca := range cases {
+		ctx, cancel := context.WithCancel(pctx)
 		pdCli := utils.FakePDClient{Stores: ca.stores}
 		require.Equal(t, len(ca.content), len(ca.stores))
 		count := 0
 		mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			switch strings.TrimSpace(r.URL.Path) {
 			case "/config":
+				if len(ca.content[count]) == 0 {
+					cancel()
+				}
 				_, _ = fmt.Fprint(w, ca.content[count])
 			default:
 				http.NotFoundHandler().ServeHTTP(w, r)

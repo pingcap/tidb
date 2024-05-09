@@ -157,12 +157,13 @@ func TestVerifyChecksum(t *testing.T) {
 
 func TestGetTargetNodeCpuCnt(t *testing.T) {
 	_, tm, ctx := testutil.InitTableTest(t)
-	require.False(t, variable.EnableDistTask.Load())
+	old := variable.EnableDistTask.Load()
 
+	variable.EnableDistTask.Store(false)
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(16)"))
 	t.Cleanup(func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu"))
-		variable.EnableDistTask.Store(false)
+		variable.EnableDistTask.Store(old)
 	})
 	require.NoError(t, tm.InitMeta(ctx, "tidb1", ""))
 
