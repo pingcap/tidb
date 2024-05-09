@@ -18,7 +18,6 @@ import (
 	"fmt"
 
 	mysql "github.com/pingcap/tidb/pkg/errno"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
 	parser_mysql "github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 )
