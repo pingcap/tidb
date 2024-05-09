@@ -191,32 +191,18 @@ func (c *columnStatsUsageCollector) addHistNeededColumns(ds *DataSource) {
 	if tblStats.Pseudo && !skipPseudoCheckForTest {
 		return
 	}
-	columns := expression.ExtractColumnsFromExpressions(c.cols[:0], ds.pushedDownConds, nil)
-
-	colIDSet := intset.NewFastIntSet()
-
-	for _, col := range columns {
-		// If the column is plan-generated one, Skip it.
-		// TODO: we may need to consider the ExtraHandle.
-		if col.ID < 0 {
-			continue
-		}
-		tblColID := model.TableItemID{TableID: ds.physicalTableID, ID: col.ID, IsIndex: false}
-		colIDSet.Insert(int(col.ID))
-		c.histNeededCols[tblColID] = true
-	}
 	for _, col := range ds.Columns {
 		// If the column is plan-generated one, Skip it.
 		// TODO: we may need to consider the ExtraHandle.
 		if col.ID < 0 {
 			continue
 		}
-		if !colIDSet.Has(int(col.ID)) && !col.Hidden {
+		if !col.Hidden {
 			tblColID := model.TableItemID{TableID: ds.physicalTableID, ID: col.ID, IsIndex: false}
 			if _, ok := c.histNeededCols[tblColID]; ok {
 				continue
 			}
-			c.histNeededCols[tblColID] = false
+			c.histNeededCols[tblColID] = true
 		}
 	}
 }
