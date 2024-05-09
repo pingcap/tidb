@@ -200,7 +200,7 @@ func (alloc *autoIDValue) rebase4Unsigned(ctx context.Context,
 		return nil
 	}
 	// Satisfied by alloc.end, need to update alloc.base.
-	if requiredBase <= uint64(alloc.end) {
+	if requiredBase > uint64(alloc.base) && requiredBase <= uint64(alloc.end) {
 		alloc.base = int64(requiredBase)
 		return nil
 	}
@@ -243,7 +243,7 @@ func (alloc *autoIDValue) rebase4Signed(ctx context.Context, store kv.Storage, d
 		return nil
 	}
 	// Satisfied by alloc.end, need to update alloc.base.
-	if requiredBase <= alloc.end {
+	if requiredBase > alloc.base && requiredBase <= alloc.end {
 		alloc.base = requiredBase
 		return nil
 	}
@@ -501,6 +501,7 @@ func (s *Service) allocAutoID(ctx context.Context, req *autoid.AutoIDRequest) (*
 			if err1 != nil {
 				return err1
 			}
+			val.base = currentEnd
 			val.end = currentEnd
 			return nil
 		})
