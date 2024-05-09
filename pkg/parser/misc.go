@@ -293,7 +293,7 @@ var tokenMap = map[string]int{
 	"COMPRESSION_LEVEL":        compressionLevel,
 	"COMPRESSION_TYPE":         compressionType,
 	"ENCRYPTION_METHOD":        encryptionMethod,
-	"ENCRYPTION_KEY_FILE":      encryptionKeyFile,
+	"ENCRYPTION_KEYFILE":       encryptionKeyFile,
 	"CURDATE":                  curDate,
 	"CURRENT_DATE":             currentDate,
 	"CURRENT_ROLE":             currentRole,

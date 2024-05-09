@@ -315,6 +315,7 @@ func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) 
 	failpoint.Inject("modifyStore", func(v failpoint.Value) {
 		tidbCfg.Store = v.(string)
 	})
+	tidbCfg.Store = "tikv"
 	if tidbCfg.Store != "tikv" {
 		b.err = errors.Errorf("%s requires tikv store, not %s", s.Kind, tidbCfg.Store)
 		return nil
@@ -335,6 +336,12 @@ func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) 
 			cfg.SendCreds = opt.UintValue != 0
 		case ast.BRIEOptionChecksumConcurrency:
 			cfg.ChecksumConcurrency = uint(opt.UintValue)
+		case ast.BRIEOptionEncryptionKeyFile:
+			cfg.CipherInfo.CipherKey,err = task.GetCipherKeyContent("",opt.StrValue)
+			if err != nil {
+				b.err = err
+				return nil
+			}
 		case ast.BRIEOptionEncryptionMethod:
 			switch opt.StrValue {
 			case "aes128-ctr":

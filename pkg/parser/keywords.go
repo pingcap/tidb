@@ -356,7 +356,7 @@ var Keywords = []KeywordsType{
 	{"ENABLE", false, "unreserved"},
 	{"ENABLED", false, "unreserved"},
 	{"ENCRYPTION", false, "unreserved"},
-	{"ENCRYPTION_KEY_FILE", false, "unreserved"},
+	{"ENCRYPTION_KEYFILE", false, "unreserved"},
 	{"ENCRYPTION_METHOD", false, "unreserved"},
 	{"END", false, "unreserved"},
 	{"ENFORCED", false, "unreserved"},

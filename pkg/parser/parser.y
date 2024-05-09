@@ -689,7 +689,7 @@ import (
 	compressionLevel      "COMPRESSION_LEVEL"
 	compressionType       "COMPRESSION_TYPE"
 	encryptionMethod      "ENCRYPTION_METHOD"
-	encryptionKeyFile     "ENCRYPTION_KEY_FILE"
+	encryptionKeyFile     "ENCRYPTION_KEYFILE"
 
 	/* The following tokens belong to NotKeywordToken. Notice: make sure these tokens are contained in NotKeywordToken. */
 	addDate               "ADDDATE"
@@ -5677,7 +5677,7 @@ BRIEStringOptionName:
 	{
 		$$ = ast.BRIEOptionEncryptionMethod
 	}
-|	"ENCRYPTION_KEY_FILE"
+|	"ENCRYPTION_KEYFILE"
 	{
 		$$ = ast.BRIEOptionEncryptionKeyFile
 	}
@@ -6964,7 +6964,7 @@ UnReservedKeyword:
 |	"COMPRESSION_LEVEL"
 |	"COMPRESSION_TYPE"
 |	"ENCRYPTION_METHOD"
-|	"ENCRYPTION_KEY_FILE"
+|	"ENCRYPTION_KEYFILE"
 
 TiDBKeyword:
 	"ADMIN"
