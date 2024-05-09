@@ -1261,7 +1261,9 @@ func (ds *DataSource) FindBestTask(prop *property.PhysicalProperty, planCounter 
 		planCounter.Dec(1)
 		return nil, 1, nil
 	}
-	if prop.TaskTp == property.MppTaskType && ds.preferStoreType&h.PreferTiKV > 0 {
+	if (prop.TaskTp == property.MppTaskType && ds.preferStoreType&h.PreferTiKV > 0) ||
+		(prop.TaskTp == property.CopMultiReadTaskType && ds.preferStoreType&h.PreferTiFlash > 0) ||
+		(prop.TaskTp == property.CopSingleReadTaskType && ds.preferStoreType&h.PreferTiFlash > 0) {
 		return invalidTask, 1, nil
 	}
 
