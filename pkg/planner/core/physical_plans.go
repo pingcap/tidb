@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/cost"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
@@ -1915,10 +1916,10 @@ func (p *basePhysicalAgg) numDistinctFunc() (num int) {
 func (p *basePhysicalAgg) getAggFuncCostFactor(isMPP bool) (factor float64) {
 	factor = 0.0
 	for _, agg := range p.AggFuncs {
-		if fac, ok := aggFuncFactor[agg.Name]; ok {
+		if fac, ok := cost.AggFuncFactor[agg.Name]; ok {
 			factor += fac
 		} else {
-			factor += aggFuncFactor["default"]
+			factor += cost.AggFuncFactor["default"]
 		}
 	}
 	if factor == 0 {
@@ -1927,7 +1928,7 @@ func (p *basePhysicalAgg) getAggFuncCostFactor(isMPP bool) (factor float64) {
 			// But in mpp cases, 2-phase is more usual. So we change this factor.
 			// TODO: This is still a little tricky and might cause regression. We should
 			// calibrate these factors and polish our cost model in the future.
-			factor = aggFuncFactor[ast.AggFuncFirstRow]
+			factor = cost.AggFuncFactor[ast.AggFuncFirstRow]
 		} else {
 			factor = 1.0
 		}
