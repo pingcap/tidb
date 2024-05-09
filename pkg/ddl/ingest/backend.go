@@ -146,7 +146,7 @@ func (bc *litBackendCtx) FinishImport(indexID int64, unique bool, tbl table.Tabl
 	}
 
 	failpoint.Inject("mockFinishImportErr", func() {
-		failpoint.Return(fmt.Errorf("mock finish import error"))
+		failpoint.Return(fmt.Errorf("ErrMockRetryable"))
 	})
 
 	// Check remote duplicate value for the index.
