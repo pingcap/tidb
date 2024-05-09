@@ -1,6 +1,6 @@
 // Copyright 2020 PingCAP, Inc. Licensed under Apache-2.0.
 
-package restore_test
+package snapclient_test
 
 import (
 	"bytes"
@@ -13,7 +13,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/metautil"
-	"github.com/pingcap/tidb/br/pkg/restore"
+	snapclient "github.com/pingcap/tidb/br/pkg/restore/snap_client"
 	"github.com/pingcap/tidb/br/pkg/restore/utils"
 	"github.com/pingcap/tidb/br/pkg/rtree"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -28,14 +28,14 @@ type drySender struct {
 	ranges       []rtree.Range
 	nBatch       int
 
-	sink restore.TableSink
+	sink snapclient.TableSink
 }
 
-func (sender *drySender) PutSink(sink restore.TableSink) {
+func (sender *drySender) PutSink(sink snapclient.TableSink) {
 	sender.sink = sink
 }
 
-func (sender *drySender) RestoreBatch(ranges restore.DrainResult) {
+func (sender *drySender) RestoreBatch(ranges snapclient.DrainResult) {
 	sender.mu.Lock()
 	defer sender.mu.Unlock()
 	log.Info("fake restore range", rtree.ZapRanges(ranges.Ranges))
@@ -87,7 +87,7 @@ func newMockManager() *recordCurrentTableManager {
 	}
 }
 
-func (manager *recordCurrentTableManager) Enter(_ context.Context, tables []restore.CreatedTable) error {
+func (manager *recordCurrentTableManager) Enter(_ context.Context, tables []snapclient.CreatedTable) error {
 	manager.lock.Lock()
 	defer manager.lock.Unlock()
 	for _, t := range tables {
@@ -97,7 +97,7 @@ func (manager *recordCurrentTableManager) Enter(_ context.Context, tables []rest
 	return nil
 }
 
-func (manager *recordCurrentTableManager) Leave(_ context.Context, tables []restore.CreatedTable) error {
+func (manager *recordCurrentTableManager) Leave(_ context.Context, tables []snapclient.CreatedTable) error {
 	manager.lock.Lock()
 	defer manager.lock.Unlock()
 	for _, t := range tables {
@@ -110,7 +110,7 @@ func (manager *recordCurrentTableManager) Leave(_ context.Context, tables []rest
 	return nil
 }
 
-func (manager *recordCurrentTableManager) Has(tables ...restore.TableWithRange) bool {
+func (manager *recordCurrentTableManager) Has(tables ...snapclient.TableWithRange) bool {
 	manager.lock.Lock()
 	defer manager.lock.Unlock()
 	ids := make([]int64, 0, len(tables))
@@ -153,15 +153,15 @@ func (sender *drySender) BatchCount() int {
 	return sender.nBatch
 }
 
-func fakeTableWithRange(id int64, rngs []rtree.Range) restore.TableWithRange {
+func fakeTableWithRange(id int64, rngs []rtree.Range) snapclient.TableWithRange {
 	tbl := &metautil.Table{
 		DB: &model.DBInfo{},
 		Info: &model.TableInfo{
 			ID: id,
 		},
 	}
-	tblWithRng := restore.TableWithRange{
-		CreatedTable: restore.CreatedTable{
+	tblWithRng := snapclient.TableWithRange{
+		CreatedTable: snapclient.CreatedTable{
 			RewriteRule: utils.EmptyRewriteRule(),
 			Table:       tbl.Info,
 			OldTable:    tbl,
@@ -202,7 +202,7 @@ func TestBasic(t *testing.T) {
 	errCh := make(chan error, 8)
 	sender := newDrySender()
 	manager := newMockManager()
-	batcher, _ := restore.NewBatcher(ctx, sender, manager, errCh, nil)
+	batcher, _ := snapclient.NewBatcher(ctx, sender, manager, errCh, nil)
 	batcher.SetThreshold(2)
 
 	tableRanges := [][]rtree.Range{
@@ -211,7 +211,7 @@ func TestBasic(t *testing.T) {
 		{fakeRange("caa", "cab"), fakeRange("cac", "cad")},
 	}
 
-	simpleTables := []restore.TableWithRange{}
+	simpleTables := []snapclient.TableWithRange{}
 	for i, ranges := range tableRanges {
 		simpleTables = append(simpleTables, fakeTableWithRange(int64(i), ranges))
 	}
@@ -235,7 +235,7 @@ func TestAutoSend(t *testing.T) {
 	errCh := make(chan error, 8)
 	sender := newDrySender()
 	manager := newMockManager()
-	batcher, _ := restore.NewBatcher(ctx, sender, manager, errCh, nil)
+	batcher, _ := snapclient.NewBatcher(ctx, sender, manager, errCh, nil)
 	batcher.SetThreshold(1024)
 
 	simpleTable := fakeTableWithRange(1, []rtree.Range{fakeRange("caa", "cab"), fakeRange("cac", "cad")})
@@ -266,7 +266,7 @@ func TestSplitRangeOnSameTable(t *testing.T) {
 	errCh := make(chan error, 8)
 	sender := newDrySender()
 	manager := newMockManager()
-	batcher, _ := restore.NewBatcher(ctx, sender, manager, errCh, nil)
+	batcher, _ := snapclient.NewBatcher(ctx, sender, manager, errCh, nil)
 	batcher.SetThreshold(2)
 
 	simpleTable := fakeTableWithRange(1, []rtree.Range{
@@ -306,7 +306,7 @@ func TestRewriteRules(t *testing.T) {
 		fakeRewriteRules("c", "cpp"),
 	}
 
-	tables := make([]restore.TableWithRange, 0, len(tableRanges))
+	tables := make([]snapclient.TableWithRange, 0, len(tableRanges))
 	for i, ranges := range tableRanges {
 		table := fakeTableWithRange(int64(i), ranges)
 		table.RewriteRule = rewriteRules[i]
@@ -317,7 +317,7 @@ func TestRewriteRules(t *testing.T) {
 	errCh := make(chan error, 8)
 	sender := newDrySender()
 	manager := newMockManager()
-	batcher, _ := restore.NewBatcher(ctx, sender, manager, errCh, nil)
+	batcher, _ := snapclient.NewBatcher(ctx, sender, manager, errCh, nil)
 	batcher.SetThreshold(2)
 
 	batcher.Add(tables[0])
@@ -348,7 +348,7 @@ func TestBatcherLen(t *testing.T) {
 	errCh := make(chan error, 8)
 	sender := newDrySender()
 	manager := newMockManager()
-	batcher, _ := restore.NewBatcher(ctx, sender, manager, errCh, nil)
+	batcher, _ := snapclient.NewBatcher(ctx, sender, manager, errCh, nil)
 	batcher.SetThreshold(15)
 
 	simpleTable := fakeTableWithRange(1, []rtree.Range{

@@ -43,7 +43,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/br/pkg/storage"
-	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/br/pkg/utils/utilstest"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
@@ -1118,7 +1118,7 @@ func TestGetRegionSplitSizeKeys(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	cli := utils.FakePDClient{Stores: allStores}
+	cli := utilstest.NewFakePDClient(allStores, false, nil)
 	defer func() {
 		getSplitConfFromStoreFunc = getSplitConfFromStore
 	}()

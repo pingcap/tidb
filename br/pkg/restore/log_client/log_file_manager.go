@@ -1,6 +1,6 @@
 // Copyright 2022 PingCAP, Inc. Licensed under Apache-2.0.
 
-package logrestore
+package logclient
 
 import (
 	"bytes"
@@ -50,14 +50,14 @@ type Log = *backuppb.DataFileInfo
 type LogFileManager struct {
 	// startTS and restoreTS are used for kv file restore.
 	// TiKV will filter the key space that don't belong to [startTS, restoreTS].
-	StartTS   uint64
-	RestoreTS uint64
+	startTS   uint64
+	restoreTS uint64
 
 	// If the commitTS of txn-entry belong to [startTS, restoreTS],
 	// the startTS of txn-entry may be smaller than startTS.
 	// We need maintain and restore more entries in default cf
 	// (the startTS in these entries belong to [shiftStartTS, startTS]).
-	ShiftStartTS uint64
+	shiftStartTS uint64
 
 	storage storage.ExternalStorage
 	helper  *stream.MetadataHelper
@@ -83,8 +83,8 @@ type DDLMetaGroup struct {
 // Generally the config cannot be changed during its lifetime.
 func CreateLogFileManager(ctx context.Context, init LogFileManagerInit) (*LogFileManager, error) {
 	fm := &LogFileManager{
-		StartTS:   init.StartTS,
-		RestoreTS: init.RestoreTS,
+		startTS:   init.StartTS,
+		restoreTS: init.RestoreTS,
 		storage:   init.Storage,
 		helper:    stream.NewMetadataHelper(),
 
@@ -98,7 +98,7 @@ func CreateLogFileManager(ctx context.Context, init LogFileManagerInit) (*LogFil
 }
 
 func (rc *LogFileManager) ShiftTS() uint64 {
-	return rc.ShiftStartTS
+	return rc.shiftStartTS
 }
 
 func (rc *LogFileManager) loadShiftTS(ctx context.Context) error {
@@ -115,7 +115,7 @@ func (rc *LogFileManager) loadShiftTS(ctx context.Context) error {
 		log.Info("read meta from storage and parse", zap.String("path", path), zap.Uint64("min-ts", m.MinTs),
 			zap.Uint64("max-ts", m.MaxTs), zap.Int32("meta-version", int32(m.MetaVersion)))
 
-		ts, ok := stream.UpdateShiftTS(m, rc.StartTS, rc.RestoreTS)
+		ts, ok := stream.UpdateShiftTS(m, rc.startTS, rc.restoreTS)
 		shiftTS.Lock()
 		if ok && (!shiftTS.exists || shiftTS.value > ts) {
 			shiftTS.value = ts
@@ -129,15 +129,15 @@ func (rc *LogFileManager) loadShiftTS(ctx context.Context) error {
 		return err
 	}
 	if !shiftTS.exists {
-		rc.ShiftStartTS = rc.StartTS
+		rc.shiftStartTS = rc.startTS
 		return nil
 	}
-	rc.ShiftStartTS = shiftTS.value
+	rc.shiftStartTS = shiftTS.value
 	return nil
 }
 
 func (rc *LogFileManager) streamingMeta(ctx context.Context) (MetaIter, error) {
-	return rc.streamingMetaByTS(ctx, rc.RestoreTS)
+	return rc.streamingMetaByTS(ctx, rc.restoreTS)
 }
 
 func (rc *LogFileManager) streamingMetaByTS(ctx context.Context, restoreTS uint64) (MetaIter, error) {
@@ -146,7 +146,7 @@ func (rc *LogFileManager) streamingMetaByTS(ctx context.Context, restoreTS uint6
 		return nil, err
 	}
 	filtered := iter.FilterOut(it, func(metadata *backuppb.Metadata) bool {
-		return restoreTS < metadata.MinTs || metadata.MaxTs < rc.ShiftStartTS
+		return restoreTS < metadata.MinTs || metadata.MaxTs < rc.shiftStartTS
 	})
 	return filtered, nil
 }
@@ -213,9 +213,9 @@ func (rc *LogFileManager) FilterDataFiles(ms MetaIter) LogIter {
 
 // ShouldFilterOut checks whether a file should be filtered out via the current client.
 func (rc *LogFileManager) ShouldFilterOut(d *backuppb.DataFileInfo) bool {
-	return d.MinTs > rc.RestoreTS ||
-		(d.Cf == stream.WriteCF && d.MaxTs < rc.StartTS) ||
-		(d.Cf == stream.DefaultCF && d.MaxTs < rc.ShiftStartTS)
+	return d.MinTs > rc.restoreTS ||
+		(d.Cf == stream.WriteCF && d.MaxTs < rc.startTS) ||
+		(d.Cf == stream.DefaultCF && d.MaxTs < rc.shiftStartTS)
 }
 
 func (rc *LogFileManager) collectDDLFilesAndPrepareCache(
@@ -347,11 +347,11 @@ func (rc *LogFileManager) ReadAllEntries(
 
 		// The commitTs in write CF need be limited on [startTs, restoreTs].
 		// We can restore more key-value in default CF.
-		if ts > rc.RestoreTS {
+		if ts > rc.restoreTS {
 			continue
-		} else if file.Cf == stream.WriteCF && ts < rc.StartTS {
+		} else if file.Cf == stream.WriteCF && ts < rc.startTS {
 			continue
-		} else if file.Cf == stream.DefaultCF && ts < rc.ShiftStartTS {
+		} else if file.Cf == stream.DefaultCF && ts < rc.shiftStartTS {
 			continue
 		}
 

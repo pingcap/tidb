@@ -5,7 +5,6 @@ package task
 import (
 	"context"
 	"fmt"
-	"sort"
 	"strings"
 	"time"
 
@@ -18,25 +17,30 @@ import (
 	"github.com/pingcap/tidb/br/pkg/checkpoint"
 	pconfig "github.com/pingcap/tidb/br/pkg/config"
 	"github.com/pingcap/tidb/br/pkg/conn"
+	connutil "github.com/pingcap/tidb/br/pkg/conn/util"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/httputil"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/metautil"
-	"github.com/pingcap/tidb/br/pkg/pdutil"
 	"github.com/pingcap/tidb/br/pkg/restore"
-	fileimporter "github.com/pingcap/tidb/br/pkg/restore/file_importer"
+	snapclient "github.com/pingcap/tidb/br/pkg/restore/snap_client"
 	"github.com/pingcap/tidb/br/pkg/restore/tiflashrec"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 	"github.com/tikv/client-go/v2/tikv"
+	pd "github.com/tikv/pd/client"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
@@ -519,43 +523,69 @@ func (cfg *RestoreConfig) generateSnapshotRestoreTaskName(clusterID uint64) stri
 	return cfg.checkpointSnapshotRestoreTaskName
 }
 
-func configureRestoreClient(ctx context.Context, client *restore.Client, cfg *RestoreConfig) error {
+func configureRestoreClient(ctx context.Context, client *snapclient.SnapClient, cfg *RestoreConfig) error {
 	client.SetRateLimit(cfg.RateLimit)
 	client.SetCrypter(&cfg.CipherInfo)
-	client.SetGranularity(cfg.Granularity)
-	if cfg.Online {
-		client.EnableOnline()
-	}
 	if cfg.NoSchema {
 		client.EnableSkipCreateSQL()
 	}
-	client.SetSwitchModeInterval(cfg.SwitchModeInterval)
 	client.SetBatchDdlSize(cfg.DdlBatchSize)
 	client.SetPlacementPolicyMode(cfg.WithPlacementPolicy)
 	client.SetWithSysTable(cfg.WithSysTable)
-
-	err := restore.CheckKeyspaceBREnable(ctx, client.GetPDClient())
-	if err != nil {
-		log.Warn("Keyspace BR is not supported in this cluster, fallback to legacy restore", zap.Error(err))
-		client.SetRewriteMode(fileimporter.RewriteModeLegacy)
-	} else {
-		client.SetRewriteMode(fileimporter.RewriteModeKeyspace)
-	}
-
-	err = client.LoadRestoreStores(ctx)
-	if err != nil {
-		return errors.Trace(err)
-	}
+	client.SetRewriteMode(ctx)
 	client.SetConcurrency(uint(cfg.Concurrency))
 	return nil
 }
 
+func CheckNewCollationEnable(
+	backupNewCollationEnable string,
+	g glue.Glue,
+	storage kv.Storage,
+	CheckRequirements bool,
+) (bool, error) {
+	se, err := g.CreateSession(storage)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+
+	newCollationEnable, err := se.GetGlobalVariable(utils.GetTidbNewCollationEnabled())
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	// collate.newCollationEnabled is set to 1 when the collate package is initialized,
+	// so we need to modify this value according to the config of the cluster
+	// before using the collate package.
+	enabled := newCollationEnable == "True"
+	// modify collate.newCollationEnabled according to the config of the cluster
+	collate.SetNewCollationEnabledForTest(enabled)
+	log.Info(fmt.Sprintf("set %s", utils.TidbNewCollationEnabled), zap.Bool("new_collation_enabled", enabled))
+
+	if backupNewCollationEnable == "" {
+		if CheckRequirements {
+			return enabled, errors.Annotatef(berrors.ErrUnknown,
+				"the value '%s' not found in backupmeta. "+
+					"you can use \"SELECT VARIABLE_VALUE FROM mysql.tidb WHERE VARIABLE_NAME='%s';\" to manually check the config. "+
+					"if you ensure the value '%s' in backup cluster is as same as restore cluster, use --check-requirements=false to skip this check",
+				utils.TidbNewCollationEnabled, utils.TidbNewCollationEnabled, utils.TidbNewCollationEnabled)
+		}
+		log.Warn(fmt.Sprintf("the config '%s' is not in backupmeta", utils.TidbNewCollationEnabled))
+		return enabled, nil
+	}
+
+	if !strings.EqualFold(backupNewCollationEnable, newCollationEnable) {
+		return enabled, errors.Annotatef(berrors.ErrUnknown,
+			"the config '%s' not match, upstream:%v, downstream: %v",
+			utils.TidbNewCollationEnabled, backupNewCollationEnable, newCollationEnable)
+	}
+
+	return enabled, nil
+}
+
 // CheckRestoreDBAndTable is used to check whether the restore dbs or tables have been backup
-func CheckRestoreDBAndTable(client *restore.Client, cfg *RestoreConfig) error {
+func CheckRestoreDBAndTable(schemas []*metautil.Database, cfg *RestoreConfig) error {
 	if len(cfg.Schemas) == 0 && len(cfg.Tables) == 0 {
 		return nil
 	}
-	schemas := client.GetDatabases()
 	schemasMap := make(map[string]struct{})
 	tablesMap := make(map[string]struct{})
 	for _, db := range schemas {
@@ -736,7 +766,7 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	mgr.ProcessTiKVConfigs(ctx, kvConfigs, httpCli)
 
 	keepaliveCfg.PermitWithoutStream = true
-	client := restore.NewRestoreClient(mgr.GetPDClient(), mgr.GetPDHTTPClient(), mgr.GetTLSConfig(), keepaliveCfg)
+	client := snapclient.NewRestoreClient(mgr.GetPDClient(), mgr.GetPDHTTPClient(), mgr.GetTLSConfig(), keepaliveCfg)
 	// using tikv config to set the concurrency-per-store for client.
 	client.SetConcurrencyPerStore(kvConfigs.ImportGoroutines.Value)
 	err = configureRestoreClient(ctx, client, cfg)
@@ -761,7 +791,7 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 			return errors.Trace(versionErr)
 		}
 	}
-	if _, err = restore.CheckNewCollationEnable(backupMeta.GetNewCollationsEnabled(), g, mgr.GetStorage(), cfg.CheckRequirements); err != nil {
+	if _, err = CheckNewCollationEnable(backupMeta.GetNewCollationsEnabled(), g, mgr.GetStorage(), cfg.CheckRequirements); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -773,7 +803,7 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	if client.IsRawKvMode() {
 		return errors.Annotate(berrors.ErrRestoreModeMismatch, "cannot do transactional restore from raw kv data")
 	}
-	if err = CheckRestoreDBAndTable(client, cfg); err != nil {
+	if err = CheckRestoreDBAndTable(client.GetDatabases(), cfg); err != nil {
 		return err
 	}
 	files, tables, dbs := filterRestoreFiles(client, cfg)
@@ -785,7 +815,7 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	g.Record(summary.RestoreDataSize, archiveSize)
 	//restore from tidb will fetch a general Size issue https://github.com/pingcap/tidb/issues/27247
 	g.Record("Size", archiveSize)
-	restoreTS, err := client.GetTSWithRetry(ctx)
+	restoreTS, err := restore.GetTSWithRetry(ctx, mgr.GetPDClient())
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -796,7 +826,8 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		cfg.UseCheckpoint = false
 	}
 
-	restoreSchedulers, schedulersConfig, err := restorePreWork(ctx, client, mgr, true)
+	importModeSwitcher := restore.NewImportModeSwitcher(mgr.GetPDClient(), cfg.Config.SwitchModeInterval, mgr.GetTLSConfig())
+	restoreSchedulers, schedulersConfig, err := restore.RestorePreWork(ctx, mgr, importModeSwitcher, cfg.Online, true)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -811,7 +842,7 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		log.Info("start to remove the pd scheduler")
 		// run the post-work to avoid being stuck in the import
 		// mode or emptied schedulers.
-		restorePostWork(ctx, client, restoreSchedulers)
+		restore.RestorePostWork(ctx, importModeSwitcher, restoreSchedulers, cfg.Online)
 		log.Info("finish removing pd scheduler")
 	}()
 
@@ -844,7 +875,7 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	}
 
 	if client.IsFullClusterRestore() && client.HasBackedUpSysDB() {
-		if err = client.CheckSysTableCompatibility(mgr.GetDomain(), tables); err != nil {
+		if err = snapclient.CheckSysTableCompatibility(mgr.GetDomain(), tables); err != nil {
 			return errors.Trace(err)
 		}
 	}
@@ -905,12 +936,12 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	ddlJobs := restore.FilterDDLJobs(client.GetDDLJobs(), tables)
 	ddlJobs = restore.FilterDDLJobByRules(ddlJobs, restore.DDLJobBlockListRule)
 
-	err = client.PreCheckTableTiFlashReplica(ctx, tables, cfg.tiflashRecorder)
+	err = PreCheckTableTiFlashReplica(ctx, mgr.GetPDClient(), tables, cfg.tiflashRecorder)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	err = client.PreCheckTableClusterIndex(tables, ddlJobs, mgr.GetDomain())
+	err = PreCheckTableClusterIndex(tables, ddlJobs, mgr.GetDomain())
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -963,7 +994,7 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	// We make bigger errCh so we won't block on multi-part failed.
 	errCh := make(chan error, 32)
 
-	tableStream := client.GoCreateTables(ctx, mgr.GetDomain(), tables, newTS, errCh)
+	tableStream := client.GoCreateTables(ctx, tables, newTS, errCh)
 
 	if len(files) == 0 {
 		log.Info("no files, empty databases and tables are restored")
@@ -978,12 +1009,12 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 
 		// If the API V2 data occurs in the restore process, the cluster must
 		// support the keyspace rewrite mode.
-		if (len(oldKeyspace) > 0 || len(newKeyspace) > 0) && client.GetRewriteMode() == fileimporter.RewriteModeLegacy {
+		if (len(oldKeyspace) > 0 || len(newKeyspace) > 0) && client.GetRewriteMode() == snapclient.RewriteModeLegacy {
 			return errors.Annotate(berrors.ErrRestoreModeMismatch, "cluster only supports legacy rewrite mode")
 		}
 
 		// Hijack the tableStream and rewrite the rewrite rules.
-		tableStream = util.ChanMap(tableStream, func(t restore.CreatedTable) restore.CreatedTable {
+		tableStream = util.ChanMap(tableStream, func(t snapclient.CreatedTable) snapclient.CreatedTable {
 			// Set the keyspace info for the checksum requests
 			t.RewriteRule.OldKeyspace = oldKeyspace
 			t.RewriteRule.NewKeyspace = newKeyspace
@@ -997,7 +1028,7 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	}
 
 	if cfg.tiflashRecorder != nil {
-		tableStream = util.ChanMap(tableStream, func(t restore.CreatedTable) restore.CreatedTable {
+		tableStream = util.ChanMap(tableStream, func(t snapclient.CreatedTable) snapclient.CreatedTable {
 			if cfg.tiflashRecorder != nil {
 				cfg.tiflashRecorder.Rewrite(t.OldTable.Info.ID, t.Table.ID)
 			}
@@ -1006,12 +1037,12 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	}
 
 	// Block on creating tables before restore starts. since create table is no longer a heavy operation any more.
-	tableStream = GoBlockCreateTablesPipeline(ctx, maxRestoreBatchSizeLimit, tableStream)
+	tableStream = client.GoBlockCreateTablesPipeline(ctx, maxRestoreBatchSizeLimit, tableStream)
 
 	tableFileMap := MapTableToFiles(files)
 	log.Debug("mapped table to files", zap.Any("result map", tableFileMap))
 
-	rangeStream := restore.GoValidateFileRanges(
+	rangeStream := client.GoValidateFileRanges(
 		ctx, tableStream, tableFileMap, kvConfigs.MergeRegionSize.Value, kvConfigs.MergeRegionKeyCount.Value, errCh)
 
 	rangeSize := EstimateRangeSize(files)
@@ -1028,10 +1059,7 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	}
 
 	// Restore sst files in batch.
-	batchSize := mathutil.Clamp(int(cfg.Concurrency), defaultRestoreConcurrency, maxRestoreBatchSizeLimit)
-	if client.GetGranularity() == string(restore.CoarseGrained) {
-		batchSize = mathutil.MaxInt
-	}
+	batchSize := mathutil.MaxInt
 	failpoint.Inject("small-batch-size", func(v failpoint.Value) {
 		log.Info("failpoint small batch size is on", zap.Int("size", v.(int)))
 		batchSize = v.(int)
@@ -1052,12 +1080,15 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		progressLen,
 		!cfg.LogProgress)
 	defer updateCh.Close()
-	sender, err := restore.NewTiKVSender(ctx, client, updateCh, cfg.PDConcurrency, cfg.Granularity)
+	sender, err := snapclient.NewTiKVSender(ctx, client, updateCh, cfg.PDConcurrency)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	manager := restore.NewBRContextManager(client)
-	batcher, afterTableRestoredCh := restore.NewBatcher(ctx, sender, manager, errCh, updateCh)
+	manager, err := snapclient.NewBRContextManager(ctx, mgr.GetPDClient(), mgr.GetPDHTTPClient(), mgr.GetTLSConfig())
+	if err != nil {
+		return errors.Trace(err)
+	}
+	batcher, afterTableRestoredCh := snapclient.NewBatcher(ctx, sender, manager, errCh, updateCh)
 	batcher.SetCheckpoint(checkpointSetWithTableID)
 	batcher.SetThreshold(batchSize)
 	batcher.EnableAutoCommit(ctx, cfg.BatchFlushInterval)
@@ -1073,7 +1104,7 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	}
 
 	// pipeline update meta and load stats
-	postHandleCh = client.GoUpdateMetaAndLoadStats(ctx, s, &cfg.CipherInfo, postHandleCh, errCh, cfg.StatsConcurrency, cfg.LoadStats)
+	postHandleCh = client.GoUpdateMetaAndLoadStats(ctx, s, postHandleCh, errCh, cfg.StatsConcurrency, cfg.LoadStats)
 
 	// pipeline wait Tiflash synced
 	if cfg.WaitTiflashReady {
@@ -1103,7 +1134,7 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 
 	select {
 	case err = <-errCh:
-		err = multierr.Append(err, multierr.Combine(restore.Exhaust(errCh)...))
+		err = multierr.Append(err, multierr.Combine(Exhaust(errCh)...))
 	case <-finish:
 	}
 
@@ -1124,6 +1155,21 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	// Set task summary to success status.
 	summary.SetSuccessStatus(true)
 	return nil
+}
+
+// Exhaust drains all remaining errors in the channel, into a slice of errors.
+func Exhaust(ec <-chan error) []error {
+	out := make([]error, 0, len(ec))
+	for {
+		select {
+		case err := <-ec:
+			out = append(out, err)
+		default:
+			// errCh will NEVER be closed(ya see, it has multi sender-part),
+			// so we just consume the current backlog of this channel, then return.
+			return out
+		}
+	}
 }
 
 // EstimateRangeSize estimates the total range count by file.
@@ -1165,7 +1211,7 @@ func MapTableToFiles(files []*backuppb.File) map[int64][]*backuppb.File {
 // i.e. don't execute checksum, just increase the process anyhow.
 func dropToBlackhole(
 	ctx context.Context,
-	inCh <-chan *restore.CreatedTable,
+	inCh <-chan *snapclient.CreatedTable,
 	errCh chan<- error,
 ) <-chan struct{} {
 	outCh := make(chan struct{}, 1)
@@ -1191,7 +1237,7 @@ func dropToBlackhole(
 // filterRestoreFiles filters tables that can't be processed after applying cfg.TableFilter.MatchTable.
 // if the db has no table that can be processed, the db will be filtered too.
 func filterRestoreFiles(
-	client *restore.Client,
+	client *snapclient.SnapClient,
 	cfg *RestoreConfig,
 ) (files []*backuppb.File, tables []*metautil.Table, dbs []*metautil.Database) {
 	for _, db := range client.GetDatabases() {
@@ -1212,41 +1258,6 @@ func filterRestoreFiles(
 		}
 	}
 	return
-}
-
-// restorePreWork executes some prepare work before restore.
-// TODO make this function returns a restore post work.
-func restorePreWork(ctx context.Context, client *restore.Client, mgr *conn.Mgr, switchToImport bool) (pdutil.UndoFunc, *pdutil.ClusterConfig, error) {
-	if client.IsOnline() {
-		return pdutil.Nop, nil, nil
-	}
-
-	if switchToImport {
-		// Switch TiKV cluster to import mode (adjust rocksdb configuration).
-		client.SwitchToImportMode(ctx)
-	}
-
-	return mgr.RemoveSchedulersWithConfig(ctx)
-}
-
-// restorePostWork executes some post work after restore.
-// TODO: aggregate all lifetime manage methods into batcher's context manager field.
-func restorePostWork(
-	ctx context.Context, client *restore.Client, restoreSchedulers pdutil.UndoFunc,
-) {
-	if ctx.Err() != nil {
-		log.Warn("context canceled, try shutdown")
-		ctx = context.Background()
-	}
-	if client.IsOnline() {
-		return
-	}
-	if err := client.SwitchToNormalMode(ctx); err != nil {
-		log.Warn("fail to switch to normal mode", zap.Error(err))
-	}
-	if err := restoreSchedulers(ctx); err != nil {
-		log.Warn("failed to restore PD schedulers", zap.Error(err))
-	}
 }
 
 // enableTiDBConfig tweaks some of configs of TiDB to make the restore progress go well.
@@ -1271,8 +1282,8 @@ func enableTiDBConfig() func() {
 // by send tables to batcher.
 func restoreTableStream(
 	ctx context.Context,
-	inputCh <-chan restore.TableWithRange,
-	batcher *restore.Batcher,
+	inputCh <-chan snapclient.TableWithRange,
+	batcher *snapclient.Batcher,
 	errCh chan<- error,
 ) {
 	oldTableCount := 0
@@ -1300,28 +1311,92 @@ func restoreTableStream(
 	}
 }
 
-func GoBlockCreateTablesPipeline(ctx context.Context, sz int, inCh <-chan restore.CreatedTable) <-chan restore.CreatedTable {
-	outCh := make(chan restore.CreatedTable, sz)
+func getTiFlashNodeCount(ctx context.Context, pdClient pd.Client) (uint64, error) {
+	tiFlashStores, err := conn.GetAllTiKVStoresWithRetry(ctx, pdClient, connutil.TiFlashOnly)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	return uint64(len(tiFlashStores)), nil
+}
 
-	go func() {
-		defer close(outCh)
-		cachedTables := make([]restore.CreatedTable, 0, sz)
-		for tbl := range inCh {
-			cachedTables = append(cachedTables, tbl)
-		}
-
-		sort.Slice(cachedTables, func(a, b int) bool {
-			return cachedTables[a].Table.ID < cachedTables[b].Table.ID
-		})
-
-		for _, tbl := range cachedTables {
-			select {
-			case <-ctx.Done():
-				return
-			default:
-				outCh <- tbl
+// PreCheckTableTiFlashReplica checks whether TiFlash replica is less than TiFlash node.
+func PreCheckTableTiFlashReplica(
+	ctx context.Context,
+	pdClient pd.Client,
+	tables []*metautil.Table,
+	recorder *tiflashrec.TiFlashRecorder,
+) error {
+	tiFlashStoreCount, err := getTiFlashNodeCount(ctx, pdClient)
+	if err != nil {
+		return err
+	}
+	for _, table := range tables {
+		if table.Info.TiFlashReplica != nil {
+			// we should not set available to true. because we cannot guarantee the raft log lag of tiflash when restore finished.
+			// just let tiflash ticker set it by checking lag of all related regions.
+			table.Info.TiFlashReplica.Available = false
+			table.Info.TiFlashReplica.AvailablePartitionIDs = nil
+			if recorder != nil {
+				recorder.AddTable(table.Info.ID, *table.Info.TiFlashReplica)
+				log.Info("record tiflash replica for table, to reset it by ddl later",
+					zap.Stringer("db", table.DB.Name),
+					zap.Stringer("table", table.Info.Name),
+				)
+				table.Info.TiFlashReplica = nil
+			} else if table.Info.TiFlashReplica.Count > tiFlashStoreCount {
+				// we cannot satisfy TiFlash replica in restore cluster. so we should
+				// set TiFlashReplica to unavailable in tableInfo, to avoid TiDB cannot sense TiFlash and make plan to TiFlash
+				// see details at https://github.com/pingcap/br/issues/931
+				// TODO maybe set table.Info.TiFlashReplica.Count to tiFlashStoreCount, but we need more tests about it.
+				log.Warn("table does not satisfy tiflash replica requirements, set tiflash replcia to unavaiable",
+					zap.Stringer("db", table.DB.Name),
+					zap.Stringer("table", table.Info.Name),
+					zap.Uint64("expect tiflash replica", table.Info.TiFlashReplica.Count),
+					zap.Uint64("actual tiflash store", tiFlashStoreCount),
+				)
+				table.Info.TiFlashReplica = nil
 			}
 		}
-	}()
-	return outCh
+	}
+	return nil
+}
+
+// PreCheckTableClusterIndex checks whether backup tables and existed tables have different cluster index options。
+func PreCheckTableClusterIndex(
+	tables []*metautil.Table,
+	ddlJobs []*model.Job,
+	dom *domain.Domain,
+) error {
+	for _, table := range tables {
+		oldTableInfo, err := restore.GetTableSchema(dom, table.DB.Name, table.Info.Name)
+		// table exists in database
+		if err == nil {
+			if table.Info.IsCommonHandle != oldTableInfo.IsCommonHandle {
+				return errors.Annotatef(berrors.ErrRestoreModeMismatch,
+					"Clustered index option mismatch. Restored cluster's @@tidb_enable_clustered_index should be %v (backup table = %v, created table = %v).",
+					restore.TransferBoolToValue(table.Info.IsCommonHandle),
+					table.Info.IsCommonHandle,
+					oldTableInfo.IsCommonHandle)
+			}
+		}
+	}
+	for _, job := range ddlJobs {
+		if job.Type == model.ActionCreateTable {
+			tableInfo := job.BinlogInfo.TableInfo
+			if tableInfo != nil {
+				oldTableInfo, err := restore.GetTableSchema(dom, model.NewCIStr(job.SchemaName), tableInfo.Name)
+				// table exists in database
+				if err == nil {
+					if tableInfo.IsCommonHandle != oldTableInfo.IsCommonHandle {
+						return errors.Annotatef(berrors.ErrRestoreModeMismatch,
+							"Clustered index option mismatch. Restored cluster's @@tidb_enable_clustered_index should be %v (backup table = %v, created table = %v).",
+							restore.TransferBoolToValue(tableInfo.IsCommonHandle),
+							tableInfo.IsCommonHandle,
+							oldTableInfo.IsCommonHandle)
+					}
+				}
+			}
+		}
+	}
+	return nil
 }

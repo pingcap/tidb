@@ -1,6 +1,6 @@
 // Copyright 2020 PingCAP, Inc. Licensed under Apache-2.0.
 
-package restore
+package snapclient
 
 import (
 	"context"
@@ -111,7 +111,7 @@ func NewBatcher(
 	errCh chan<- error,
 	updateCh glue.Progress,
 ) (*Batcher, chan *CreatedTable) {
-	outCh := DefaultOutputTableChan()
+	outCh := defaultOutputTableChan()
 	sendChan := make(chan SendType, 2)
 	b := &Batcher{
 		sendErr:            errCh,
@@ -401,7 +401,7 @@ func (b *Batcher) Send(ctx context.Context) {
 	drainResult := b.drainRanges()
 	tbs := drainResult.TablesToSend
 	ranges := drainResult.Ranges
-	log.Info("restore batch start", rtree.ZapRanges(ranges), ZapTables(tbs))
+	log.Info("restore batch start", rtree.ZapRanges(ranges), zapTables(tbs))
 	// Leave is called at b.contextCleaner
 	if err := b.manager.Enter(ctx, drainResult.TablesToSend); err != nil {
 		b.sendErr <- err

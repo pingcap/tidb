@@ -1,6 +1,6 @@
 // Copyright 2021 PingCAP, Inc. Licensed under Apache-2.0.
 
-package file_importer_test
+package logclient_test
 
 import (
 	"bytes"
@@ -19,7 +19,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/kvproto/pkg/pdpb"
-	fileimporter "github.com/pingcap/tidb/br/pkg/restore/file_importer"
+	logclient "github.com/pingcap/tidb/br/pkg/restore/log_client"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/store/pdtypes"
@@ -228,35 +228,35 @@ func TestScanSuccess(t *testing.T) {
 	ctx := context.Background()
 
 	// make exclusive to inclusive.
-	ctl := fileimporter.OverRegionsInRange([]byte("aa"), []byte("aay"), cli, &rs)
+	ctl := logclient.OverRegionsInRange([]byte("aa"), []byte("aay"), cli, &rs)
 	collectedRegions := []*split.RegionInfo{}
-	ctl.Run(ctx, func(ctx context.Context, r *split.RegionInfo) fileimporter.RPCResult {
+	ctl.Run(ctx, func(ctx context.Context, r *split.RegionInfo) logclient.RPCResult {
 		collectedRegions = append(collectedRegions, r)
-		return fileimporter.RPCResultOK()
+		return logclient.RPCResultOK()
 	})
 	assertRegions(t, collectedRegions, "", "aay", "bba")
 
-	ctl = fileimporter.OverRegionsInRange([]byte("aaz"), []byte("bb"), cli, &rs)
+	ctl = logclient.OverRegionsInRange([]byte("aaz"), []byte("bb"), cli, &rs)
 	collectedRegions = []*split.RegionInfo{}
-	ctl.Run(ctx, func(ctx context.Context, r *split.RegionInfo) fileimporter.RPCResult {
+	ctl.Run(ctx, func(ctx context.Context, r *split.RegionInfo) logclient.RPCResult {
 		collectedRegions = append(collectedRegions, r)
-		return fileimporter.RPCResultOK()
+		return logclient.RPCResultOK()
 	})
 	assertRegions(t, collectedRegions, "aay", "bba", "bbh", "cca")
 
-	ctl = fileimporter.OverRegionsInRange([]byte("aa"), []byte("cc"), cli, &rs)
+	ctl = logclient.OverRegionsInRange([]byte("aa"), []byte("cc"), cli, &rs)
 	collectedRegions = []*split.RegionInfo{}
-	ctl.Run(ctx, func(ctx context.Context, r *split.RegionInfo) fileimporter.RPCResult {
+	ctl.Run(ctx, func(ctx context.Context, r *split.RegionInfo) logclient.RPCResult {
 		collectedRegions = append(collectedRegions, r)
-		return fileimporter.RPCResultOK()
+		return logclient.RPCResultOK()
 	})
 	assertRegions(t, collectedRegions, "", "aay", "bba", "bbh", "cca", "")
 
-	ctl = fileimporter.OverRegionsInRange([]byte("aa"), []byte(""), cli, &rs)
+	ctl = logclient.OverRegionsInRange([]byte("aa"), []byte(""), cli, &rs)
 	collectedRegions = []*split.RegionInfo{}
-	ctl.Run(ctx, func(ctx context.Context, r *split.RegionInfo) fileimporter.RPCResult {
+	ctl.Run(ctx, func(ctx context.Context, r *split.RegionInfo) logclient.RPCResult {
 		collectedRegions = append(collectedRegions, r)
-		return fileimporter.RPCResultOK()
+		return logclient.RPCResultOK()
 	})
 	assertRegions(t, collectedRegions, "", "aay", "bba", "bbh", "cca", "")
 }
@@ -265,7 +265,7 @@ func TestNotLeader(t *testing.T) {
 	// region: [, aay), [aay, bba), [bba, bbh), [bbh, cca), [cca, )
 	cli := initTestClient(false)
 	rs := utils.InitialRetryState(1, 0, 0)
-	ctl := fileimporter.OverRegionsInRange([]byte(""), []byte(""), cli, &rs)
+	ctl := logclient.OverRegionsInRange([]byte(""), []byte(""), cli, &rs)
 	ctx := context.Background()
 
 	notLeader := errorpb.Error{
@@ -279,17 +279,17 @@ func TestNotLeader(t *testing.T) {
 	meetRegions := []*split.RegionInfo{}
 	// record all regions we meet with id == 2.
 	idEqualsTo2Regions := []*split.RegionInfo{}
-	err := ctl.Run(ctx, func(ctx context.Context, r *split.RegionInfo) fileimporter.RPCResult {
+	err := ctl.Run(ctx, func(ctx context.Context, r *split.RegionInfo) logclient.RPCResult {
 		if r.Region.Id == 2 {
 			idEqualsTo2Regions = append(idEqualsTo2Regions, r)
 		}
 		if r.Region.Id == 2 && (r.Leader == nil || r.Leader.Id != 42) {
-			return fileimporter.RPCResult{
+			return logclient.RPCResult{
 				StoreError: &notLeader,
 			}
 		}
 		meetRegions = append(meetRegions, r)
-		return fileimporter.RPCResultOK()
+		return logclient.RPCResultOK()
 	})
 
 	require.NoError(t, err)
@@ -305,7 +305,7 @@ func TestServerIsBusy(t *testing.T) {
 	// region: [, aay), [aay, bba), [bba, bbh), [bbh, cca), [cca, )
 	cli := initTestClient(false)
 	rs := utils.InitialRetryState(2, 0, 0)
-	ctl := fileimporter.OverRegionsInRange([]byte(""), []byte(""), cli, &rs)
+	ctl := logclient.OverRegionsInRange([]byte(""), []byte(""), cli, &rs)
 	ctx := context.Background()
 
 	serverIsBusy := errorpb.Error{
@@ -319,16 +319,16 @@ func TestServerIsBusy(t *testing.T) {
 	// record all regions we meet with id == 2.
 	idEqualsTo2Regions := []*split.RegionInfo{}
 	theFirstRun := true
-	err := ctl.Run(ctx, func(ctx context.Context, r *split.RegionInfo) fileimporter.RPCResult {
+	err := ctl.Run(ctx, func(ctx context.Context, r *split.RegionInfo) logclient.RPCResult {
 		if theFirstRun && r.Region.Id == 2 {
 			idEqualsTo2Regions = append(idEqualsTo2Regions, r)
 			theFirstRun = false
-			return fileimporter.RPCResult{
+			return logclient.RPCResult{
 				StoreError: &serverIsBusy,
 			}
 		}
 		meetRegions = append(meetRegions, r)
-		return fileimporter.RPCResultOK()
+		return logclient.RPCResultOK()
 	})
 
 	require.NoError(t, err)
@@ -346,7 +346,7 @@ func TestServerIsBusyWithMemoryIsLimited(t *testing.T) {
 	// region: [, aay), [aay, bba), [bba, bbh), [bbh, cca), [cca, )
 	cli := initTestClient(false)
 	rs := utils.InitialRetryState(2, 0, 0)
-	ctl := fileimporter.OverRegionsInRange([]byte(""), []byte(""), cli, &rs)
+	ctl := logclient.OverRegionsInRange([]byte(""), []byte(""), cli, &rs)
 	ctx := context.Background()
 
 	serverIsBusy := errorpb.Error{
@@ -360,16 +360,16 @@ func TestServerIsBusyWithMemoryIsLimited(t *testing.T) {
 	// record all regions we meet with id == 2.
 	idEqualsTo2Regions := []*split.RegionInfo{}
 	theFirstRun := true
-	err := ctl.Run(ctx, func(ctx context.Context, r *split.RegionInfo) fileimporter.RPCResult {
+	err := ctl.Run(ctx, func(ctx context.Context, r *split.RegionInfo) logclient.RPCResult {
 		if theFirstRun && r.Region.Id == 2 {
 			idEqualsTo2Regions = append(idEqualsTo2Regions, r)
 			theFirstRun = false
-			return fileimporter.RPCResult{
+			return logclient.RPCResult{
 				StoreError: &serverIsBusy,
 			}
 		}
 		meetRegions = append(meetRegions, r)
-		return fileimporter.RPCResultOK()
+		return logclient.RPCResultOK()
 	})
 
 	require.NoError(t, err)
@@ -398,7 +398,7 @@ func TestEpochNotMatch(t *testing.T) {
 	// region: [, aay), [aay, bba), [bba, bbh), [bbh, cca), [cca, )
 	cli := initTestClient(false)
 	rs := utils.InitialRetryState(2, 0, 0)
-	ctl := fileimporter.OverRegionsInRange([]byte(""), []byte(""), cli, &rs)
+	ctl := logclient.OverRegionsInRange([]byte(""), []byte(""), cli, &rs)
 	ctx := context.Background()
 
 	printPDRegion("cli", cli.regionsInfo.Regions)
@@ -432,18 +432,18 @@ func TestEpochNotMatch(t *testing.T) {
 	firstRunRegions := []*split.RegionInfo{}
 	secondRunRegions := []*split.RegionInfo{}
 	isSecondRun := false
-	err = ctl.Run(ctx, func(ctx context.Context, r *split.RegionInfo) fileimporter.RPCResult {
+	err = ctl.Run(ctx, func(ctx context.Context, r *split.RegionInfo) logclient.RPCResult {
 		if !isSecondRun && r.Region.Id == left.Region.Id {
 			mergeRegion()
 			isSecondRun = true
-			return fileimporter.RPCResultFromPBError(epochNotMatch)
+			return logclient.RPCResultFromPBError(epochNotMatch)
 		}
 		if isSecondRun {
 			secondRunRegions = append(secondRunRegions, r)
 		} else {
 			firstRunRegions = append(firstRunRegions, r)
 		}
-		return fileimporter.RPCResultOK()
+		return logclient.RPCResultOK()
 	})
 	printRegion("first", firstRunRegions)
 	printRegion("second", secondRunRegions)
@@ -457,7 +457,7 @@ func TestRegionSplit(t *testing.T) {
 	// region: [, aay), [aay, bba), [bba, bbh), [bbh, cca), [cca, )
 	cli := initTestClient(false)
 	rs := utils.InitialRetryState(2, 0, 0)
-	ctl := fileimporter.OverRegionsInRange([]byte(""), []byte(""), cli, &rs)
+	ctl := logclient.OverRegionsInRange([]byte(""), []byte(""), cli, &rs)
 	ctx := context.Background()
 
 	printPDRegion("cli", cli.regionsInfo.Regions)
@@ -510,18 +510,18 @@ func TestRegionSplit(t *testing.T) {
 	firstRunRegions := []*split.RegionInfo{}
 	secondRunRegions := []*split.RegionInfo{}
 	isSecondRun := false
-	err = ctl.Run(ctx, func(ctx context.Context, r *split.RegionInfo) fileimporter.RPCResult {
+	err = ctl.Run(ctx, func(ctx context.Context, r *split.RegionInfo) logclient.RPCResult {
 		if !isSecondRun && r.Region.Id == target.Region.Id {
 			splitRegion()
 			isSecondRun = true
-			return fileimporter.RPCResultFromPBError(epochNotMatch)
+			return logclient.RPCResultFromPBError(epochNotMatch)
 		}
 		if isSecondRun {
 			secondRunRegions = append(secondRunRegions, r)
 		} else {
 			firstRunRegions = append(firstRunRegions, r)
 		}
-		return fileimporter.RPCResultOK()
+		return logclient.RPCResultOK()
 	})
 	printRegion("first", firstRunRegions)
 	printRegion("second", secondRunRegions)
@@ -535,7 +535,7 @@ func TestRetryBackoff(t *testing.T) {
 	// region: [, aay), [aay, bba), [bba, bbh), [bbh, cca), [cca, )
 	cli := initTestClient(false)
 	rs := utils.InitialRetryState(2, time.Millisecond, 10*time.Millisecond)
-	ctl := fileimporter.OverRegionsInRange([]byte(""), []byte(""), cli, &rs)
+	ctl := logclient.OverRegionsInRange([]byte(""), []byte(""), cli, &rs)
 	ctx := context.Background()
 
 	printPDRegion("cli", cli.regionsInfo.Regions)
@@ -552,12 +552,12 @@ func TestRetryBackoff(t *testing.T) {
 			},
 		}}
 	isSecondRun := false
-	err = ctl.Run(ctx, func(ctx context.Context, r *split.RegionInfo) fileimporter.RPCResult {
+	err = ctl.Run(ctx, func(ctx context.Context, r *split.RegionInfo) logclient.RPCResult {
 		if !isSecondRun && r.Region.Id == left.Region.Id {
 			isSecondRun = true
-			return fileimporter.RPCResultFromPBError(epochNotLeader)
+			return logclient.RPCResultFromPBError(epochNotLeader)
 		}
-		return fileimporter.RPCResultOK()
+		return logclient.RPCResultOK()
 	})
 	printPDRegion("cli", cli.regionsInfo.Regions)
 	require.Equal(t, 1, rs.Attempt())
@@ -567,10 +567,10 @@ func TestRetryBackoff(t *testing.T) {
 }
 
 func TestWrappedError(t *testing.T) {
-	result := fileimporter.RPCResultFromError(errors.Trace(status.Error(codes.Unavailable, "the server is slacking. ><=·>")))
-	require.Equal(t, result.StrategyForRetry(), fileimporter.StrategyFromThisRegion)
-	result = fileimporter.RPCResultFromError(errors.Trace(status.Error(codes.Unknown, "the server said something hard to understand")))
-	require.Equal(t, result.StrategyForRetry(), fileimporter.StrategyGiveUp)
+	result := logclient.RPCResultFromError(errors.Trace(status.Error(codes.Unavailable, "the server is slacking. ><=·>")))
+	require.Equal(t, result.StrategyForRetry(), logclient.StrategyFromThisRegion)
+	result = logclient.RPCResultFromError(errors.Trace(status.Error(codes.Unknown, "the server said something hard to understand")))
+	require.Equal(t, result.StrategyForRetry(), logclient.StrategyGiveUp)
 }
 
 func envInt(name string, def int) int {
@@ -586,15 +586,15 @@ func TestPaginateScanLeader(t *testing.T) {
 	// region: [, aay), [aay, bba), [bba, bbh), [bbh, cca), [cca, )
 	cli := initTestClient(false)
 	rs := utils.InitialRetryState(2, time.Millisecond, 10*time.Millisecond)
-	ctl := fileimporter.OverRegionsInRange([]byte("aa"), []byte("aaz"), cli, &rs)
+	ctl := logclient.OverRegionsInRange([]byte("aa"), []byte("aaz"), cli, &rs)
 	ctx := context.Background()
 
 	cli.InjectErr = true
 	cli.InjectTimes = int32(envInt("PAGINATE_SCAN_LEADER_FAILURE_COUNT", 2))
 	collectedRegions := []*split.RegionInfo{}
-	ctl.Run(ctx, func(ctx context.Context, r *split.RegionInfo) fileimporter.RPCResult {
+	ctl.Run(ctx, func(ctx context.Context, r *split.RegionInfo) logclient.RPCResult {
 		collectedRegions = append(collectedRegions, r)
-		return fileimporter.RPCResultOK()
+		return logclient.RPCResultOK()
 	})
 	assertRegions(t, collectedRegions, "", "aay", "bba")
 }

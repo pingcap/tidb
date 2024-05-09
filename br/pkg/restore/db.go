@@ -81,7 +81,11 @@ func NewDB(g glue.Glue, store kv.Storage, policyMode string) (*DB, bool, error) 
 	}, supportPolicy, nil
 }
 
-func (db *DB) registerPreallocatedIDs(ids *prealloctableid.PreallocIDs) {
+func (db *DB) Session() glue.Session {
+	return db.se
+}
+
+func (db *DB) RegisterPreallocatedIDs(ids *prealloctableid.PreallocIDs) {
 	db.preallocedIDs = ids
 }
 
@@ -170,7 +174,21 @@ func (db *DB) CreatePlacementPolicy(ctx context.Context, policy *model.PolicyInf
 }
 
 // CreateDatabase executes a CREATE DATABASE SQL.
-func (db *DB) CreateDatabase(ctx context.Context, schema *model.DBInfo) error {
+func (db *DB) CreateDatabase(ctx context.Context, schema *model.DBInfo, supportPolicy bool, policyMap *sync.Map) error {
+	log.Info("create database", zap.Stringer("name", schema.Name))
+
+	if !supportPolicy {
+		log.Info("set placementPolicyRef to nil when target tidb not support policy",
+			zap.Stringer("database", schema.Name))
+		schema.PlacementPolicyRef = nil
+	}
+
+	if schema.PlacementPolicyRef != nil {
+		if err := db.ensurePlacementPolicy(ctx, schema.PlacementPolicyRef.Name, policyMap); err != nil {
+			return errors.Trace(err)
+		}
+	}
+
 	err := db.se.CreateDatabase(ctx, schema)
 	if err != nil {
 		log.Error("create database failed", zap.Stringer("db", schema.Name), zap.Error(err))

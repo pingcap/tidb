@@ -17,7 +17,7 @@ import (
 	kvconfig "github.com/pingcap/tidb/br/pkg/config"
 	"github.com/pingcap/tidb/br/pkg/conn/util"
 	"github.com/pingcap/tidb/br/pkg/pdutil"
-	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/br/pkg/utils/utilstest"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/multierr"
 	"google.golang.org/grpc/codes"
@@ -57,9 +57,7 @@ func TestGetAllTiKVStoresWithRetryCancel(t *testing.T) {
 		},
 	}
 
-	fpdc := utils.FakePDClient{
-		Stores: stores,
-	}
+	fpdc := utilstest.NewFakePDClient(stores, false, nil)
 
 	_, err = GetAllTiKVStoresWithRetry(ctx, fpdc, util.SkipTiFlash)
 	require.Error(t, err)
@@ -101,9 +99,7 @@ func TestGetAllTiKVStoresWithUnknown(t *testing.T) {
 		},
 	}
 
-	fpdc := utils.FakePDClient{
-		Stores: stores,
-	}
+	fpdc := utilstest.NewFakePDClient(stores, false, nil)
 
 	_, err = GetAllTiKVStoresWithRetry(ctx, fpdc, util.SkipTiFlash)
 	require.Error(t, err)
@@ -159,9 +155,7 @@ func TestCheckStoresAlive(t *testing.T) {
 		},
 	}
 
-	fpdc := utils.FakePDClient{
-		Stores: stores,
-	}
+	fpdc := utilstest.NewFakePDClient(stores, false, nil)
 
 	kvStores, err := GetAllTiKVStoresWithRetry(ctx, fpdc, util.SkipTiFlash)
 	require.NoError(t, err)
@@ -248,7 +242,7 @@ func TestGetAllTiKVStores(t *testing.T) {
 	}
 
 	for _, testCase := range testCases {
-		pdClient := utils.FakePDClient{Stores: testCase.stores}
+		pdClient := utilstest.NewFakePDClient(testCase.stores, false, nil)
 		stores, err := util.GetAllTiKVStores(context.Background(), pdClient, testCase.storeBehavior)
 		if len(testCase.expectedError) != 0 {
 			require.Error(t, err)
@@ -418,7 +412,7 @@ func TestGetMergeRegionSizeAndCount(t *testing.T) {
 	pctx := context.Background()
 	for _, ca := range cases {
 		ctx, cancel := context.WithCancel(pctx)
-		pdCli := utils.FakePDClient{Stores: ca.stores}
+		pdCli := utilstest.NewFakePDClient(ca.stores, false, nil)
 		require.Equal(t, len(ca.content), len(ca.stores))
 		count := 0
 		mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -583,7 +577,7 @@ func TestIsLogBackupEnabled(t *testing.T) {
 	pctx := context.Background()
 	for _, ca := range cases {
 		ctx, cancel := context.WithCancel(pctx)
-		pdCli := utils.FakePDClient{Stores: ca.stores}
+		pdCli := utilstest.NewFakePDClient(ca.stores, false, nil)
 		require.Equal(t, len(ca.content), len(ca.stores))
 		count := 0
 		mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

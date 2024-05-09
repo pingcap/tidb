@@ -1,6 +1,6 @@
 // Copyright 2020 PingCAP, Inc. Licensed under Apache-2.0.
 
-package restore
+package snapclient
 
 import (
 	"context"
@@ -11,8 +11,11 @@ import (
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/logutil"
+	"github.com/pingcap/tidb/br/pkg/metautil"
+	"github.com/pingcap/tidb/br/pkg/restore"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/bindinfo"
+	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
@@ -37,6 +40,18 @@ var statsTables = map[string]map[string]struct{}{
 		"stats_table_locked": {},
 		"stats_top_n":        {},
 	},
+}
+
+// tables in this map is restored when fullClusterRestore=true
+var sysPrivilegeTableMap = map[string]string{
+	"user":          "(user = '%s' and host = '%%')",       // since v1.0.0
+	"db":            "(user = '%s' and host = '%%')",       // since v1.0.0
+	"tables_priv":   "(user = '%s' and host = '%%')",       // since v1.0.0
+	"columns_priv":  "(user = '%s' and host = '%%')",       // since v1.0.0
+	"default_roles": "(user = '%s' and host = '%%')",       // since v3.0.0
+	"role_edges":    "(to_user = '%s' and to_host = '%%')", // since v3.0.0
+	"global_priv":   "(user = '%s' and host = '%%')",       // since v3.0.8
+	"global_grants": "(user = '%s' and host = '%%')",       // since v5.0.3
 }
 
 var unRecoverableTable = map[string]map[string]struct{}{
@@ -80,7 +95,7 @@ func isStatsTable(schemaName string, tableName string) bool {
 
 // RestoreSystemSchemas restores the system schema(i.e. the `mysql` schema).
 // Detail see https://github.com/pingcap/br/issues/679#issuecomment-762592254.
-func (rc *Client) RestoreSystemSchemas(ctx context.Context, f filter.Filter) (rerr error) {
+func (rc *SnapClient) RestoreSystemSchemas(ctx context.Context, f filter.Filter) (rerr error) {
 	sysDBs := []string{mysql.SystemDB, mysql.SysDB}
 	for _, sysDB := range sysDBs {
 		err := rc.restoreSystemSchema(ctx, f, sysDB)
@@ -93,7 +108,7 @@ func (rc *Client) RestoreSystemSchemas(ctx context.Context, f filter.Filter) (re
 
 // restoreSystemSchema restores a system schema(i.e. the `mysql` or `sys` schema).
 // Detail see https://github.com/pingcap/br/issues/679#issuecomment-762592254.
-func (rc *Client) restoreSystemSchema(ctx context.Context, f filter.Filter, sysDB string) (rerr error) {
+func (rc *SnapClient) restoreSystemSchema(ctx context.Context, f filter.Filter, sysDB string) (rerr error) {
 	temporaryDB := utils.TemporaryDBName(sysDB)
 	defer func() {
 		// Don't clean the temporary database for next restore with checkpoint.
@@ -147,7 +162,7 @@ type database struct {
 }
 
 // getDatabaseByName make a record of a database from info schema by its name.
-func (rc *Client) getDatabaseByName(name string) (*database, bool) {
+func (rc *SnapClient) getDatabaseByName(name string) (*database, bool) {
 	infoSchema := rc.dom.InfoSchema()
 	schema, ok := infoSchema.SchemaByName(model.NewCIStr(name))
 	if !ok {
@@ -166,7 +181,7 @@ func (rc *Client) getDatabaseByName(name string) (*database, bool) {
 
 // afterSystemTablesReplaced do some extra work for special system tables.
 // e.g. after inserting to the table mysql.user, we must execute `FLUSH PRIVILEGES` to allow it take effect.
-func (rc *Client) afterSystemTablesReplaced(ctx context.Context, db string, tables []string) error {
+func (rc *SnapClient) afterSystemTablesReplaced(ctx context.Context, db string, tables []string) error {
 	if db != mysql.SystemDB {
 		return nil
 	}
@@ -181,7 +196,7 @@ func (rc *Client) afterSystemTablesReplaced(ctx context.Context, db string, tabl
 				log.Info("privilege system table restored, please reconnect to make it effective")
 			}
 		} else if table == "bind_info" {
-			if serr := rc.db.se.Execute(ctx, bindinfo.StmtRemoveDuplicatedPseudoBinding); serr != nil {
+			if serr := rc.db.Session().Execute(ctx, bindinfo.StmtRemoveDuplicatedPseudoBinding); serr != nil {
 				log.Warn("failed to delete duplicated pseudo binding", zap.Error(serr))
 				err = multierr.Append(err,
 					berrors.ErrUnknown.Wrap(serr).GenWithStack("failed to delete duplicated pseudo binding %s", bindinfo.StmtRemoveDuplicatedPseudoBinding))
@@ -194,12 +209,12 @@ func (rc *Client) afterSystemTablesReplaced(ctx context.Context, db string, tabl
 }
 
 // replaceTemporaryTableToSystable replaces the temporary table to real system table.
-func (rc *Client) replaceTemporaryTableToSystable(ctx context.Context, ti *model.TableInfo, db *database) error {
+func (rc *SnapClient) replaceTemporaryTableToSystable(ctx context.Context, ti *model.TableInfo, db *database) error {
 	dbName := db.Name.L
 	tableName := ti.Name.L
 	execSQL := func(sql string) error {
 		// SQLs here only contain table name and database name, seems it is no need to redact them.
-		if err := rc.db.se.Execute(ctx, sql); err != nil {
+		if err := rc.db.Session().Execute(ctx, sql); err != nil {
 			log.Warn("failed to execute SQL restore system database",
 				zap.String("table", tableName),
 				zap.Stringer("database", db.Name),
@@ -272,14 +287,106 @@ func (rc *Client) replaceTemporaryTableToSystable(ctx context.Context, ti *model
 	return execSQL(renameSQL)
 }
 
-func (rc *Client) cleanTemporaryDatabase(ctx context.Context, originDB string) {
+func (rc *SnapClient) cleanTemporaryDatabase(ctx context.Context, originDB string) {
 	database := utils.TemporaryDBName(originDB)
 	log.Debug("dropping temporary database", zap.Stringer("database", database))
 	sql := fmt.Sprintf("DROP DATABASE IF EXISTS %s", utils.EncloseName(database.L))
-	if err := rc.db.se.Execute(ctx, sql); err != nil {
+	if err := rc.db.Session().Execute(ctx, sql); err != nil {
 		logutil.WarnTerm("failed to drop temporary database, it should be dropped manually",
 			zap.Stringer("database", database),
 			logutil.ShortError(err),
 		)
 	}
+}
+
+func CheckSysTableCompatibility(dom *domain.Domain, tables []*metautil.Table) error {
+	log.Info("checking target cluster system table compatibility with backed up data")
+	privilegeTablesInBackup := make([]*metautil.Table, 0)
+	for _, table := range tables {
+		decodedSysDBName, ok := utils.GetSysDBCIStrName(table.DB.Name)
+		if ok && decodedSysDBName.L == mysql.SystemDB && sysPrivilegeTableMap[table.Info.Name.L] != "" {
+			privilegeTablesInBackup = append(privilegeTablesInBackup, table)
+		}
+	}
+	sysDB := model.NewCIStr(mysql.SystemDB)
+	for _, table := range privilegeTablesInBackup {
+		ti, err := restore.GetTableSchema(dom, sysDB, table.Info.Name)
+		if err != nil {
+			log.Error("missing table on target cluster", zap.Stringer("table", table.Info.Name))
+			return errors.Annotate(berrors.ErrRestoreIncompatibleSys, "missed system table: "+table.Info.Name.O)
+		}
+		backupTi := table.Info
+		// skip checking the number of columns in mysql.user table,
+		// because higher versions of TiDB may add new columns.
+		if len(ti.Columns) != len(backupTi.Columns) && backupTi.Name.L != sysUserTableName {
+			log.Error("column count mismatch",
+				zap.Stringer("table", table.Info.Name),
+				zap.Int("col in cluster", len(ti.Columns)),
+				zap.Int("col in backup", len(backupTi.Columns)))
+			return errors.Annotatef(berrors.ErrRestoreIncompatibleSys,
+				"column count mismatch, table: %s, col in cluster: %d, col in backup: %d",
+				table.Info.Name.O, len(ti.Columns), len(backupTi.Columns))
+		}
+		backupColMap := make(map[string]*model.ColumnInfo)
+		for i := range backupTi.Columns {
+			col := backupTi.Columns[i]
+			backupColMap[col.Name.L] = col
+		}
+		// order can be different but type must compatible
+		for i := range ti.Columns {
+			col := ti.Columns[i]
+			backupCol := backupColMap[col.Name.L]
+			if backupCol == nil {
+				// skip when the backed up mysql.user table is missing columns.
+				if backupTi.Name.L == sysUserTableName {
+					log.Warn("missing column in backup data",
+						zap.Stringer("table", table.Info.Name),
+						zap.String("col", fmt.Sprintf("%s %s", col.Name, col.FieldType.String())))
+					continue
+				}
+				log.Error("missing column in backup data",
+					zap.Stringer("table", table.Info.Name),
+					zap.String("col", fmt.Sprintf("%s %s", col.Name, col.FieldType.String())))
+				return errors.Annotatef(berrors.ErrRestoreIncompatibleSys,
+					"missing column in backup data, table: %s, col: %s %s",
+					table.Info.Name.O,
+					col.Name, col.FieldType.String())
+			}
+			if !utils.IsTypeCompatible(backupCol.FieldType, col.FieldType) {
+				log.Error("incompatible column",
+					zap.Stringer("table", table.Info.Name),
+					zap.String("col in cluster", fmt.Sprintf("%s %s", col.Name, col.FieldType.String())),
+					zap.String("col in backup", fmt.Sprintf("%s %s", backupCol.Name, backupCol.FieldType.String())))
+				return errors.Annotatef(berrors.ErrRestoreIncompatibleSys,
+					"incompatible column, table: %s, col in cluster: %s %s, col in backup: %s %s",
+					table.Info.Name.O,
+					col.Name, col.FieldType.String(),
+					backupCol.Name, backupCol.FieldType.String())
+			}
+		}
+
+		if backupTi.Name.L == sysUserTableName {
+			// check whether the columns of table in cluster are less than the backup data
+			clusterColMap := make(map[string]*model.ColumnInfo)
+			for i := range ti.Columns {
+				col := ti.Columns[i]
+				clusterColMap[col.Name.L] = col
+			}
+			// order can be different
+			for i := range backupTi.Columns {
+				col := backupTi.Columns[i]
+				clusterCol := clusterColMap[col.Name.L]
+				if clusterCol == nil {
+					log.Error("missing column in cluster data",
+						zap.Stringer("table", table.Info.Name),
+						zap.String("col", fmt.Sprintf("%s %s", col.Name, col.FieldType.String())))
+					return errors.Annotatef(berrors.ErrRestoreIncompatibleSys,
+						"missing column in cluster data, table: %s, col: %s %s",
+						table.Info.Name.O,
+						col.Name, col.FieldType.String())
+				}
+			}
+		}
+	}
+	return nil
 }

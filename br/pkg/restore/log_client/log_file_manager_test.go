@@ -3,7 +3,7 @@
 // NOTE: we need to create client with only `storage` field.
 // However adding a public API for that is weird, so this test uses the `restore` package instead of `restore_test`.
 // Maybe we should refactor these APIs when possible.
-package logrestore_test
+package logclient_test
 
 import (
 	"context"
@@ -19,7 +19,7 @@ import (
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
-	logrestore "github.com/pingcap/tidb/br/pkg/restore/log_restore"
+	logclient "github.com/pingcap/tidb/br/pkg/restore/log_client"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/stream"
 	"github.com/pingcap/tidb/br/pkg/utils/iter"
@@ -147,7 +147,7 @@ func (b *mockMetaBuilder) build(temp string) (*storage.LocalStorage, error) {
 	return local, err
 }
 
-func (b *mockMetaBuilder) b(useV2 bool) (*storage.LocalStorage, string) {
+func (b *mockMetaBuilder) b(_ bool) (*storage.LocalStorage, string) {
 	path, err := b.createTempDir()
 	if err != nil {
 		panic(err)
@@ -227,14 +227,14 @@ func testReadMetaBetweenTSWithVersion(t *testing.T, m metaMaker) {
 				os.RemoveAll(temp)
 			}
 		}()
-		init := logrestore.LogFileManagerInit{
+		init := logclient.LogFileManagerInit{
 			StartTS:   c.startTS,
 			RestoreTS: c.endTS,
 			Storage:   loc,
 
 			MetadataDownloadBatchSize: 32,
 		}
-		cli, err := logrestore.CreateLogFileManager(ctx, init)
+		cli, err := logclient.CreateLogFileManager(ctx, init)
 		req.Equal(cli.ShiftTS(), c.expectedShiftTS)
 		req.NoError(err)
 		metas, err := cli.ReadStreamMeta(ctx)
@@ -461,7 +461,7 @@ func testFileManagerWithMeta(t *testing.T, m metaMaker) {
 			}
 		}()
 		ctx := context.Background()
-		fm, err := logrestore.CreateLogFileManager(ctx, logrestore.LogFileManagerInit{
+		fm, err := logclient.CreateLogFileManager(ctx, logclient.LogFileManagerInit{
 			StartTS:   start,
 			RestoreTS: end,
 			Storage:   loc,
@@ -478,7 +478,7 @@ func testFileManagerWithMeta(t *testing.T, m metaMaker) {
 				ctx,
 				iter.Map(
 					datas,
-					func(d *logrestore.LogDataFileInfo) *backuppb.DataFileInfo {
+					func(d *logclient.LogDataFileInfo) *backuppb.DataFileInfo {
 						return d.DataFileInfo
 					},
 				),
@@ -520,7 +520,7 @@ func TestFilterDataFiles(t *testing.T) {
 			os.RemoveAll(temp)
 		}
 	}()
-	fm, err := logrestore.CreateLogFileManager(ctx, logrestore.LogFileManagerInit{
+	fm, err := logclient.CreateLogFileManager(ctx, logclient.LogFileManagerInit{
 		StartTS:   0,
 		RestoreTS: 10,
 		Storage:   loc,
@@ -535,7 +535,7 @@ func TestFilterDataFiles(t *testing.T) {
 	}
 	metaIter := iter.FromSlice(metas)
 	files := iter.CollectAll(ctx, fm.FilterDataFiles(metaIter)).Item
-	check := func(file *logrestore.LogDataFileInfo, metaKey string, goff, foff int) {
+	check := func(file *logclient.LogDataFileInfo, metaKey string, goff, foff int) {
 		req.Equal(file.MetaDataGroupName, metaKey)
 		req.Equal(file.OffsetInMetaGroup, goff)
 		req.Equal(file.OffsetInMergedGroup, foff)

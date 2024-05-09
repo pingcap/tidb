@@ -4,19 +4,30 @@ package restore
 
 import (
 	"context"
-	"fmt"
+	"crypto/tls"
+	"time"
 
 	_ "github.com/go-sql-driver/mysql" // mysql driver
-	backuppb "github.com/pingcap/kvproto/pkg/brpb"
+	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
+	"github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/log"
-	"github.com/pingcap/tidb/br/pkg/glue"
+	"github.com/pingcap/tidb/br/pkg/conn"
+	"github.com/pingcap/tidb/br/pkg/conn/util"
 	"github.com/pingcap/tidb/br/pkg/logutil"
-	"github.com/pingcap/tidb/br/pkg/restore/split"
-	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
-	"github.com/pingcap/tidb/br/pkg/rtree"
+	"github.com/pingcap/tidb/br/pkg/pdutil"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/parser/model"
+	tidbutil "github.com/pingcap/tidb/pkg/util"
+	"github.com/tikv/client-go/v2/oracle"
+	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
-	"go.uber.org/zap/zapcore"
+	"golang.org/x/sync/errgroup"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/backoff"
+	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/credentials/insecure"
 )
 
 type Granularity string
@@ -24,129 +35,234 @@ type Granularity string
 const (
 	FineGrained   Granularity = "fine-grained"
 	CoarseGrained Granularity = "coarse-grained"
-
-	maxSplitKeysOnce = 10240
 )
 
-// GoValidateFileRanges validate files by a stream of tables and yields
-// tables with range.
-func GoValidateFileRanges(
+// GetTableSchema returns the schema of a table from TiDB.
+func GetTableSchema(
+	dom *domain.Domain,
+	dbName model.CIStr,
+	tableName model.CIStr,
+) (*model.TableInfo, error) {
+	info := dom.InfoSchema()
+	table, err := info.TableByName(dbName, tableName)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return table.Meta(), nil
+}
+
+// GetTS gets a new timestamp from PD.
+func GetTS(ctx context.Context, pdClient pd.Client) (uint64, error) {
+	p, l, err := pdClient.GetTS(ctx)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	restoreTS := oracle.ComposeTS(p, l)
+	return restoreTS, nil
+}
+
+// GetTSWithRetry gets a new timestamp with retry from PD.
+func GetTSWithRetry(ctx context.Context, pdClient pd.Client) (uint64, error) {
+	var (
+		startTS  uint64
+		getTSErr error
+		retry    uint
+	)
+
+	err := utils.WithRetry(ctx, func() error {
+		startTS, getTSErr = GetTS(ctx, pdClient)
+		failpoint.Inject("get-ts-error", func(val failpoint.Value) {
+			if val.(bool) && retry < 3 {
+				getTSErr = errors.Errorf("rpc error: code = Unknown desc = [PD:tso:ErrGenerateTimestamp]generate timestamp failed, requested pd is not leader of cluster")
+			}
+		})
+
+		retry++
+		if getTSErr != nil {
+			log.Warn("failed to get TS, retry it", zap.Uint("retry time", retry), logutil.ShortError(getTSErr))
+		}
+		return getTSErr
+	}, utils.NewPDReqBackoffer())
+
+	if err != nil {
+		log.Error("failed to get TS", zap.Error(err))
+	}
+	return startTS, errors.Trace(err)
+}
+
+func TransferBoolToValue(enable bool) string {
+	if enable {
+		return "ON"
+	}
+	return "OFF"
+}
+
+type ImportModeSwitcher struct {
+	pdClient pd.Client
+
+	switchModeInterval time.Duration
+	tlsConf            *tls.Config
+
+	switchCh chan struct{}
+}
+
+func NewImportModeSwitcher(
+	pdClient pd.Client,
+	switchModeInterval time.Duration,
+	tlsConf *tls.Config,
+) *ImportModeSwitcher {
+	return &ImportModeSwitcher{
+		pdClient:           pdClient,
+		switchModeInterval: switchModeInterval,
+		tlsConf:            tlsConf,
+		switchCh:           make(chan struct{}),
+	}
+}
+
+// switchToNormalMode switch tikv cluster to normal mode.
+func (switcher *ImportModeSwitcher) switchToNormalMode(ctx context.Context) error {
+	close(switcher.switchCh)
+	return switcher.switchTiKVMode(ctx, import_sstpb.SwitchMode_Normal)
+}
+
+func (switcher *ImportModeSwitcher) switchTiKVMode(
 	ctx context.Context,
-	tableStream <-chan CreatedTable,
-	fileOfTable map[int64][]*backuppb.File,
-	splitSizeBytes, splitKeyCount uint64,
-	errCh chan<- error,
-) <-chan TableWithRange {
-	// Could we have a smaller outCh size?
-	outCh := make(chan TableWithRange, len(fileOfTable))
+	mode import_sstpb.SwitchMode,
+) error {
+	stores, err := util.GetAllTiKVStores(ctx, switcher.pdClient, util.SkipTiFlash)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	bfConf := backoff.DefaultConfig
+	bfConf.MaxDelay = time.Second * 3
+
+	workerPool := tidbutil.NewWorkerPool(uint(len(stores)), "switch import mode")
+	eg, ectx := errgroup.WithContext(ctx)
+	for _, store := range stores {
+		if err := ectx.Err(); err != nil {
+			return errors.Trace(err)
+		}
+
+		finalStore := store
+		workerPool.ApplyOnErrorGroup(eg,
+			func() error {
+				opt := grpc.WithTransportCredentials(insecure.NewCredentials())
+				if switcher.tlsConf != nil {
+					opt = grpc.WithTransportCredentials(credentials.NewTLS(switcher.tlsConf))
+				}
+				gctx, cancel := context.WithTimeout(ectx, time.Second*5)
+				connection, err := grpc.DialContext(
+					gctx,
+					finalStore.GetAddress(),
+					opt,
+					grpc.WithBlock(),
+					grpc.FailOnNonTempDialError(true),
+					grpc.WithConnectParams(grpc.ConnectParams{Backoff: bfConf}),
+					// we don't need to set keepalive timeout here, because the connection lives
+					// at most 5s. (shorter than minimal value for keepalive time!)
+				)
+				cancel()
+				if err != nil {
+					return errors.Trace(err)
+				}
+				client := import_sstpb.NewImportSSTClient(connection)
+				_, err = client.SwitchMode(ctx, &import_sstpb.SwitchModeRequest{
+					Mode: mode,
+				})
+				if err != nil {
+					return errors.Trace(err)
+				}
+				err = connection.Close()
+				if err != nil {
+					log.Error("close grpc connection failed in switch mode", zap.Error(err))
+				}
+				return nil
+			})
+	}
+
+	if err = eg.Wait(); err != nil {
+		return errors.Trace(err)
+	}
+	return nil
+}
+
+// switchToImportMode switch tikv cluster to import mode.
+func (switcher *ImportModeSwitcher) switchToImportMode(
+	ctx context.Context,
+) {
+	// tikv automatically switch to normal mode in every 10 minutes
+	// so we need ping tikv in less than 10 minute
 	go func() {
-		defer close(outCh)
-		defer log.Info("all range generated")
+		tick := time.NewTicker(switcher.switchModeInterval)
+		defer tick.Stop()
+
+		// [important!] switch tikv mode into import at the beginning
+		log.Info("switch to import mode at beginning")
+		err := switcher.switchTiKVMode(ctx, import_sstpb.SwitchMode_Import)
+		if err != nil {
+			log.Warn("switch to import mode failed", zap.Error(err))
+		}
+
 		for {
 			select {
 			case <-ctx.Done():
-				errCh <- ctx.Err()
 				return
-			case t, ok := <-tableStream:
-				if !ok {
-					return
-				}
-				files := fileOfTable[t.OldTable.Info.ID]
-				if partitions := t.OldTable.Info.Partition; partitions != nil {
-					log.Debug("table partition",
-						zap.Stringer("database", t.OldTable.DB.Name),
-						zap.Stringer("table", t.Table.Name),
-						zap.Any("partition info", partitions),
-					)
-					for _, partition := range partitions.Definitions {
-						files = append(files, fileOfTable[partition.ID]...)
-					}
-				}
-				for _, file := range files {
-					err := restoreutils.ValidateFileRewriteRule(file, t.RewriteRule)
-					if err != nil {
-						errCh <- err
-						return
-					}
-				}
-				// Merge small ranges to reduce split and scatter regions.
-				ranges, stat, err := restoreutils.MergeAndRewriteFileRanges(
-					files, t.RewriteRule, splitSizeBytes, splitKeyCount)
+			case <-tick.C:
+				log.Info("switch to import mode")
+				err := switcher.switchTiKVMode(ctx, import_sstpb.SwitchMode_Import)
 				if err != nil {
-					errCh <- err
-					return
+					log.Warn("switch to import mode failed", zap.Error(err))
 				}
-				log.Info("merge and validate file",
-					zap.Stringer("database", t.OldTable.DB.Name),
-					zap.Stringer("table", t.Table.Name),
-					zap.Int("Files(total)", stat.TotalFiles),
-					zap.Int("File(write)", stat.TotalWriteCFFile),
-					zap.Int("File(default)", stat.TotalDefaultCFFile),
-					zap.Int("Region(total)", stat.TotalRegions),
-					zap.Int("Regoin(keys avg)", stat.RegionKeysAvg),
-					zap.Int("Region(bytes avg)", stat.RegionBytesAvg),
-					zap.Int("Merged(regions)", stat.MergedRegions),
-					zap.Int("Merged(keys avg)", stat.MergedRegionKeysAvg),
-					zap.Int("Merged(bytes avg)", stat.MergedRegionBytesAvg))
-
-				tableWithRange := TableWithRange{
-					CreatedTable: t,
-					Range:        ranges,
-				}
-				log.Debug("sending range info",
-					zap.Stringer("table", t.Table.Name),
-					zap.Int("files", len(files)),
-					zap.Int("range size", len(ranges)),
-					zap.Int("output channel size", len(outCh)))
-				outCh <- tableWithRange
+			case <-switcher.switchCh:
+				log.Info("stop automatic switch to import mode")
+				return
 			}
 		}
 	}()
-	return outCh
 }
 
-// SplitRanges splits region by
-// 1. data range after rewrite.
-// 2. rewrite rules.
-func SplitRanges(
+// RestorePreWork executes some prepare work before restore.
+// TODO make this function returns a restore post work.
+func RestorePreWork(
 	ctx context.Context,
-	client *Client,
-	ranges []rtree.Range,
-	updateCh glue.Progress,
-	isRawKv bool,
-) error {
-	splitClientOpts := make([]split.ClientOptionalParameter, 0, 2)
-	splitClientOpts = append(splitClientOpts, split.WithOnSplit(func(keys [][]byte) {
-		for range keys {
-			updateCh.Inc()
-		}
-	}))
-	if isRawKv {
-		splitClientOpts = append(splitClientOpts, split.WithRawKV())
+	mgr *conn.Mgr,
+	switcher *ImportModeSwitcher,
+	isOnline bool,
+	switchToImport bool,
+) (pdutil.UndoFunc, *pdutil.ClusterConfig, error) {
+	if isOnline {
+		return pdutil.Nop, nil, nil
 	}
 
-	splitter := restoreutils.NewRegionSplitter(split.NewClient(
-		client.GetPDClient(),
-		client.pdHTTPClient,
-		client.GetTLSConfig(),
-		maxSplitKeysOnce,
-		client.GetStoreCount()+1,
-		splitClientOpts...,
-	))
+	if switchToImport {
+		// Switch TiKV cluster to import mode (adjust rocksdb configuration).
+		switcher.switchToImportMode(ctx)
+	}
 
-	return splitter.ExecuteSplit(ctx, ranges)
+	return mgr.RemoveSchedulersWithConfig(ctx)
 }
 
-// ZapTables make zap field of table for debuging, including table names.
-func ZapTables(tables []CreatedTable) zapcore.Field {
-	return logutil.AbbreviatedArray("tables", tables, func(input any) []string {
-		tables := input.([]CreatedTable)
-		names := make([]string, 0, len(tables))
-		for _, t := range tables {
-			names = append(names, fmt.Sprintf("%s.%s",
-				utils.EncloseName(t.OldTable.DB.Name.String()),
-				utils.EncloseName(t.OldTable.Info.Name.String())))
-		}
-		return names
-	})
+// RestorePostWork executes some post work after restore.
+// TODO: aggregate all lifetime manage methods into batcher's context manager field.
+func RestorePostWork(
+	ctx context.Context,
+	switcher *ImportModeSwitcher,
+	restoreSchedulers pdutil.UndoFunc,
+	isOnline bool,
+) {
+	if isOnline {
+		return
+	}
+
+	if ctx.Err() != nil {
+		log.Warn("context canceled, try shutdown")
+		ctx = context.Background()
+	}
+
+	if err := switcher.switchToNormalMode(ctx); err != nil {
+		log.Warn("fail to switch to normal mode", zap.Error(err))
+	}
+	if err := restoreSchedulers(ctx); err != nil {
+		log.Warn("failed to restore PD schedulers", zap.Error(err))
+	}
 }

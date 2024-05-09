@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package file_importer_test
+package snapclient_test
 
 import (
 	"testing"
@@ -20,7 +20,7 @@ import (
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
-	fileimporter "github.com/pingcap/tidb/br/pkg/restore/file_importer"
+	snapclient "github.com/pingcap/tidb/br/pkg/restore/snap_client"
 	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/stretchr/testify/require"
@@ -46,7 +46,7 @@ func TestGetKeyRangeByMode(t *testing.T) {
 		},
 	}
 	// raw kv
-	testRawFn := fileimporter.GetKeyRangeByModeForTest(fileimporter.Raw)
+	testRawFn := snapclient.GetKeyRangeByMode(snapclient.Raw)
 	start, end, err := testRawFn(file, rule)
 	require.NoError(t, err)
 	require.Equal(t, []byte("t1a"), start)
@@ -58,7 +58,7 @@ func TestGetKeyRangeByMode(t *testing.T) {
 	require.Equal(t, []byte(""), end)
 
 	// txn kv: the keys must be encoded.
-	testTxnFn := fileimporter.GetKeyRangeByModeForTest(fileimporter.Txn)
+	testTxnFn := snapclient.GetKeyRangeByMode(snapclient.Txn)
 	start, end, err = testTxnFn(file, rule)
 	require.NoError(t, err)
 	require.Equal(t, codec.EncodeBytes(nil, []byte("t1a")), start)
@@ -70,7 +70,7 @@ func TestGetKeyRangeByMode(t *testing.T) {
 	require.Equal(t, []byte(""), end)
 
 	// normal kv: the keys must be encoded.
-	testFn := fileimporter.GetKeyRangeByModeForTest(fileimporter.TiDB)
+	testFn := snapclient.GetKeyRangeByMode(snapclient.TiDB)
 	start, end, err = testFn(file, rule)
 	require.NoError(t, err)
 	require.Equal(t, codec.EncodeBytes(nil, []byte("t2a")), start)
@@ -99,7 +99,7 @@ func TestGetSSTMetaFromFile(t *testing.T) {
 		StartKey: []byte("t2abc"),
 		EndKey:   []byte("t3a"),
 	}
-	sstMeta, err := fileimporter.GetSSTMetaFromFile([]byte{}, file, region, rule, fileimporter.RewriteModeLegacy)
+	sstMeta, err := snapclient.GetSSTMetaFromFile([]byte{}, file, region, rule, snapclient.RewriteModeLegacy)
 	require.Nil(t, err)
 	require.Equal(t, "t2abc", string(sstMeta.GetRange().GetStart()))
 	require.Equal(t, "t2\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff", string(sstMeta.GetRange().GetEnd()))

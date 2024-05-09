@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package logrestore_test
+package logclient_test
 
 import (
 	"context"
@@ -21,8 +21,7 @@ import (
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
-	fileimporter "github.com/pingcap/tidb/br/pkg/restore/file_importer"
-	logrestore "github.com/pingcap/tidb/br/pkg/restore/log_restore"
+	logclient "github.com/pingcap/tidb/br/pkg/restore/log_client"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/stretchr/testify/require"
@@ -30,7 +29,7 @@ import (
 
 func TestImportKVFiles(t *testing.T) {
 	var (
-		importer            = fileimporter.FileImporter{}
+		importer            = logclient.LogFileImporter{}
 		ctx                 = context.Background()
 		shiftStartTS uint64 = 100
 		startTS      uint64 = 200
@@ -39,7 +38,7 @@ func TestImportKVFiles(t *testing.T) {
 
 	err := importer.ImportKVFiles(
 		ctx,
-		[]*logrestore.LogDataFileInfo{
+		[]*logclient.LogDataFileInfo{
 			{
 				DataFileInfo: &backuppb.DataFileInfo{
 					Path: "log3",
@@ -61,7 +60,7 @@ func TestImportKVFiles(t *testing.T) {
 }
 
 func TestFilterFilesByRegion(t *testing.T) {
-	files := []*logrestore.LogDataFileInfo{
+	files := []*logclient.LogDataFileInfo{
 		{
 			DataFileInfo: &backuppb.DataFileInfo{
 				Path: "log3",
@@ -85,7 +84,7 @@ func TestFilterFilesByRegion(t *testing.T) {
 
 	testCases := []struct {
 		r        split.RegionInfo
-		subfiles []*logrestore.LogDataFileInfo
+		subfiles []*logclient.LogDataFileInfo
 		err      error
 	}{
 		{
@@ -95,7 +94,7 @@ func TestFilterFilesByRegion(t *testing.T) {
 					EndKey:   []byte("1110"),
 				},
 			},
-			subfiles: []*logrestore.LogDataFileInfo{},
+			subfiles: []*logclient.LogDataFileInfo{},
 			err:      nil,
 		},
 		{
@@ -105,7 +104,7 @@ func TestFilterFilesByRegion(t *testing.T) {
 					EndKey:   []byte("1111"),
 				},
 			},
-			subfiles: []*logrestore.LogDataFileInfo{
+			subfiles: []*logclient.LogDataFileInfo{
 				files[0],
 			},
 			err: nil,
@@ -117,7 +116,7 @@ func TestFilterFilesByRegion(t *testing.T) {
 					EndKey:   []byte("2222"),
 				},
 			},
-			subfiles: []*logrestore.LogDataFileInfo{
+			subfiles: []*logclient.LogDataFileInfo{
 				files[0],
 			},
 			err: nil,
@@ -129,7 +128,7 @@ func TestFilterFilesByRegion(t *testing.T) {
 					EndKey:   []byte("3332"),
 				},
 			},
-			subfiles: []*logrestore.LogDataFileInfo{
+			subfiles: []*logclient.LogDataFileInfo{
 				files[0],
 			},
 			err: nil,
@@ -141,7 +140,7 @@ func TestFilterFilesByRegion(t *testing.T) {
 					EndKey:   []byte("3332"),
 				},
 			},
-			subfiles: []*logrestore.LogDataFileInfo{},
+			subfiles: []*logclient.LogDataFileInfo{},
 			err:      nil,
 		},
 		{
@@ -151,7 +150,7 @@ func TestFilterFilesByRegion(t *testing.T) {
 					EndKey:   []byte("3333"),
 				},
 			},
-			subfiles: []*logrestore.LogDataFileInfo{
+			subfiles: []*logclient.LogDataFileInfo{
 				files[1],
 			},
 			err: nil,
@@ -163,7 +162,7 @@ func TestFilterFilesByRegion(t *testing.T) {
 					EndKey:   []byte("5555"),
 				},
 			},
-			subfiles: []*logrestore.LogDataFileInfo{
+			subfiles: []*logclient.LogDataFileInfo{
 				files[1],
 			},
 			err: nil,
@@ -175,7 +174,7 @@ func TestFilterFilesByRegion(t *testing.T) {
 					EndKey:   nil,
 				},
 			},
-			subfiles: []*logrestore.LogDataFileInfo{
+			subfiles: []*logclient.LogDataFileInfo{
 				files[1],
 			},
 			err: nil,
@@ -193,7 +192,7 @@ func TestFilterFilesByRegion(t *testing.T) {
 	}
 
 	for _, c := range testCases {
-		subfile, err := fileimporter.FilterFilesByRegion(files, ranges, &c.r)
+		subfile, err := logclient.FilterFilesByRegion(files, ranges, &c.r)
 		require.Equal(t, err, c.err)
 		require.Equal(t, subfile, c.subfiles)
 	}

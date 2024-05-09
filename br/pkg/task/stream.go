@@ -42,6 +42,8 @@ import (
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/restore"
+	"github.com/pingcap/tidb/br/pkg/restore/ingestrec"
+	logclient "github.com/pingcap/tidb/br/pkg/restore/log_client"
 	"github.com/pingcap/tidb/br/pkg/restore/rawkv"
 	"github.com/pingcap/tidb/br/pkg/restore/tiflashrec"
 	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
@@ -1287,20 +1289,21 @@ func restoreStream(
 		log.Info("reuse the task's rewrite ts", zap.Uint64("rewrite-ts", taskInfo.RewriteTS))
 		currentTS = taskInfo.RewriteTS
 	} else {
-		currentTS, err = client.GetTSWithRetry(ctx)
+		currentTS, err = restore.GetTSWithRetry(ctx, mgr.GetPDClient())
 		if err != nil {
 			return errors.Trace(err)
 		}
 	}
 	client.SetCurrentTS(currentTS)
 
-	restoreSchedulers, _, err := restorePreWork(ctx, client, mgr, false)
+	importModeSwitcher := restore.NewImportModeSwitcher(mgr.GetPDClient(), cfg.Config.SwitchModeInterval, mgr.GetTLSConfig())
+	restoreSchedulers, _, err := restore.RestorePreWork(ctx, mgr, importModeSwitcher, cfg.Online, false)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	// Always run the post-work even on error, so we don't stuck in the import
 	// mode or emptied schedulers
-	defer restorePostWork(ctx, client, restoreSchedulers)
+	defer restore.RestorePostWork(ctx, importModeSwitcher, restoreSchedulers, cfg.Online)
 
 	// It need disable GC in TiKV when PiTR.
 	// because the process of PITR is concurrent and kv events isn't sorted by tso.
@@ -1359,7 +1362,7 @@ func restoreStream(
 		newTask = false
 	}
 	// get the schemas ID replace information.
-	schemasReplace, err := client.InitSchemasReplaceForDDL(ctx, &restore.InitSchemaConfig{
+	schemasReplace, err := client.InitSchemasReplaceForDDL(ctx, &logclient.InitSchemaConfig{
 		IsNewTask:         newTask,
 		HasFullRestore:    len(cfg.FullBackupStorage) > 0,
 		TableFilter:       cfg.TableFilter,
@@ -1403,7 +1406,7 @@ func restoreStream(
 	rewriteRules := initRewriteRules(schemasReplace)
 
 	ingestRecorder := schemasReplace.GetIngestRecorder()
-	if err := client.RangeFilterFromIngestRecorder(ingestRecorder, rewriteRules); err != nil {
+	if err := rangeFilterFromIngestRecorder(ingestRecorder, rewriteRules); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -1455,7 +1458,7 @@ func restoreStream(
 		return errors.Annotate(err, "failed to insert rows into gc_delete_range")
 	}
 
-	if err = client.RepairIngestIndex(ctx, ingestRecorder, g, mgr.GetStorage(), taskName); err != nil {
+	if err = client.RepairIngestIndex(ctx, ingestRecorder, g, taskName); err != nil {
 		return errors.Annotate(err, "failed to repair ingest index")
 	}
 
@@ -1490,11 +1493,11 @@ func restoreStream(
 	return nil
 }
 
-func createRestoreClient(ctx context.Context, g glue.Glue, cfg *RestoreConfig, mgr *conn.Mgr) (*restore.Client, error) {
+func createRestoreClient(ctx context.Context, g glue.Glue, cfg *RestoreConfig, mgr *conn.Mgr) (*logclient.LogClient, error) {
 	var err error
 	keepaliveCfg := GetKeepalive(&cfg.Config)
 	keepaliveCfg.PermitWithoutStream = true
-	client := restore.NewRestoreClient(mgr.GetPDClient(), mgr.GetPDHTTPClient(), mgr.GetTLSConfig(), keepaliveCfg)
+	client := logclient.NewRestoreClient(mgr.GetPDClient(), mgr.GetPDHTTPClient(), mgr.GetTLSConfig(), keepaliveCfg)
 	err = client.Init(g, mgr.GetStorage())
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -1514,11 +1517,9 @@ func createRestoreClient(ctx context.Context, g glue.Glue, cfg *RestoreConfig, m
 	if err = client.SetStorage(ctx, u, &opts); err != nil {
 		return nil, errors.Trace(err)
 	}
-	client.SetRateLimit(cfg.RateLimit)
 	client.SetCrypter(&cfg.CipherInfo)
 	client.SetConcurrency(uint(cfg.Concurrency))
-	client.SetSwitchModeInterval(cfg.SwitchModeInterval)
-	client.InitClients(ctx, u, false, false)
+	client.InitClients(ctx, u)
 
 	rawKVClient, err := newRawBatchClient(ctx, cfg.PD, cfg.TLS)
 	if err != nil {
@@ -1526,12 +1527,25 @@ func createRestoreClient(ctx context.Context, g glue.Glue, cfg *RestoreConfig, m
 	}
 	client.SetRawKVClient(rawKVClient)
 
-	err = client.LoadRestoreStores(ctx)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
 	return client, nil
+}
+
+// rangeFilterFromIngestRecorder rewrites the table id of items in the ingestRecorder
+// TODO: need to implement the range filter out feature
+func rangeFilterFromIngestRecorder(recorder *ingestrec.IngestRecorder, rewriteRules map[int64]*restoreutils.RewriteRules) error {
+	err := recorder.RewriteTableID(func(tableID int64) (int64, bool, error) {
+		rewriteRule, exists := rewriteRules[tableID]
+		if !exists {
+			// since the table's files will be skipped restoring, here also skips.
+			return 0, true, nil
+		}
+		newTableID := restoreutils.GetRewriteTableID(tableID, rewriteRule)
+		if newTableID == 0 {
+			return 0, false, errors.Errorf("newTableID is 0, tableID: %d", tableID)
+		}
+		return newTableID, false, nil
+	})
+	return errors.Trace(err)
 }
 
 func getExternalStorageOptions(cfg *Config, u *backuppb.StorageBackend) storage.ExternalStorageOptions {
@@ -1672,7 +1686,7 @@ func getFullBackupTS(
 
 func parseFullBackupTablesStorage(
 	cfg *RestoreConfig,
-) (*restore.FullBackupStorageConfig, error) {
+) (*logclient.FullBackupStorageConfig, error) {
 	var storageName string
 	if len(cfg.FullBackupStorage) > 0 {
 		storageName = cfg.FullBackupStorage
@@ -1683,7 +1697,7 @@ func parseFullBackupTablesStorage(
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	return &restore.FullBackupStorageConfig{
+	return &logclient.FullBackupStorageConfig{
 		Backend: u,
 		Opts:    storageOpts(&cfg.Config),
 	}, nil

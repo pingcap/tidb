@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package logrestore
+package logclient
 
 import (
 	"context"
@@ -20,6 +20,8 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/utils/iter"
 )
+
+var FilterFilesByRegion = filterFilesByRegion
 
 // readStreamMetaByTS is used for streaming task. collect all meta file by TS, it is for test usage.
 func (rc *LogFileManager) ReadStreamMeta(ctx context.Context) ([]Meta, error) {

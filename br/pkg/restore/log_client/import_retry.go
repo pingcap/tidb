@@ -1,6 +1,6 @@
 // Copyright 2022 PingCAP, Inc. Licensed under Apache-2.0.
 
-package file_importer
+package logclient
 
 import (
 	"context"
@@ -53,7 +53,7 @@ func OverRegionsInRange(start, end []byte, metaClient split.SplitClient, retrySt
 	}
 }
 
-func (o *OverRegionsInRangeController) onError(ctx context.Context, result RPCResult, region *split.RegionInfo) {
+func (o *OverRegionsInRangeController) onError(_ context.Context, result RPCResult, region *split.RegionInfo) {
 	o.errors = multierr.Append(o.errors, errors.Annotatef(&result, "execute over region %v failed", region.Region))
 	// TODO: Maybe handle some of region errors like `epoch not match`?
 }

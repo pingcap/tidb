@@ -91,13 +91,13 @@ func TestRestoreAutoIncID(t *testing.T) {
 	// Test empty collate value
 	table.DB.Charset = "utf8mb4"
 	table.DB.Collate = ""
-	err = db.CreateDatabase(context.Background(), table.DB)
+	err = db.CreateDatabase(context.Background(), table.DB, false, nil)
 	require.NoErrorf(t, err, "Error create empty collate db: %s %s", err, s.mock.DSN)
 	tk.MustExec("drop database if exists test;")
 	// Test empty charset value
 	table.DB.Charset = ""
 	table.DB.Collate = "utf8mb4_bin"
-	err = db.CreateDatabase(context.Background(), table.DB)
+	err = db.CreateDatabase(context.Background(), table.DB, false, nil)
 	require.NoErrorf(t, err, "Error create empty charset db: %s %s", err, s.mock.DSN)
 	uniqueMap := make(map[restore.UniqueTableName]bool)
 	err = db.CreateTable(context.Background(), &table, uniqueMap, false, nil)
