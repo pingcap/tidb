@@ -505,12 +505,12 @@ func TestTxnContextForPrepareExecute(t *testing.T) {
 	doWithCheckPath(t, se, normalPathRecords, func() {
 		tk.MustExec("prepare s from 'select * from t1 where id=1'")
 	})
-	doWithCheckPath(t, se, normalPathRecords, func() {
+	doWithCheckPath(t, se, []string{"assertTxnManagerInCompile", "assertTxnManagerInShortPointGetPlan"}, func() {
 		tk.MustQuery("execute s").Check(testkit.Rows("1 10"))
 	})
 
 	// Test ExecutePreparedStmt
-	doWithCheckPath(t, se, normalPathRecords, func() {
+	doWithCheckPath(t, se, []string{"assertTxnManagerInCompile", "assertTxnManagerInShortPointGetPlan"}, func() {
 		rs, err := se.ExecutePreparedStmt(context.TODO(), stmtID, nil)
 		require.NoError(t, err)
 		tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("1 10"))
