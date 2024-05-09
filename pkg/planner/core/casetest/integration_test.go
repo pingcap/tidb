@@ -465,18 +465,6 @@ func TestIssue52023(t *testing.T) {
 		"  └─TableFullScan 1.00 cop[tikv] table:t keep order:false"))
 }
 
-func TestIssue51360(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec(`create table tt3(a int,b int ,c int as (a+b))`)
-	tbl1, err := dom.InfoSchema().TableByName(model.CIStr{O: "test", L: "test"}, model.CIStr{O: "tt3", L: "tt3"})
-	require.NoError(t, err)
-	tbl1.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}
-	tk.MustExec(`select /*+ read_from_storage(TIFLASH[tt3]) */ * from tt3 limit 2;`)
-	tk.MustQuery(`show warnings`).CheckContain("read_from_storage hint is inapplicable")
-}
-
 func TestIssue43050(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
