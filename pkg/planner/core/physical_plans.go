@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
+	"github.com/pingcap/tidb/pkg/planner/util/tablesampler"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/statistics"
@@ -898,7 +899,7 @@ type PhysicalTableScan struct {
 
 	PlanPartInfo PhysPlanPartInfo
 
-	SampleInfo *TableSampleInfo
+	SampleInfo *tablesampler.TableSampleInfo
 
 	// required by cost model
 	// tblCols and tblColHists contains all columns before pruning, which are used to calculate row-size
@@ -2525,45 +2526,10 @@ func SafeClone(v base.PhysicalPlan) (_ base.PhysicalPlan, err error) {
 // It returns the sample rows to its parent operand.
 type PhysicalTableSample struct {
 	physicalSchemaProducer
-	TableSampleInfo *TableSampleInfo
+	TableSampleInfo *tablesampler.TableSampleInfo
 	TableInfo       table.Table
 	PhysicalTableID int64
 	Desc            bool
-}
-
-// TableSampleInfo contains the information for PhysicalTableSample.
-type TableSampleInfo struct {
-	AstNode    *ast.TableSample
-	FullSchema *expression.Schema
-	Partitions []table.PartitionedTable
-}
-
-// MemoryUsage return the memory usage of TableSampleInfo
-func (t *TableSampleInfo) MemoryUsage() (sum int64) {
-	if t == nil {
-		return
-	}
-
-	sum = size.SizeOfPointer*2 + size.SizeOfSlice + int64(cap(t.Partitions))*size.SizeOfInterface
-	if t.AstNode != nil {
-		sum += int64(unsafe.Sizeof(ast.TableSample{}))
-	}
-	if t.FullSchema != nil {
-		sum += t.FullSchema.MemoryUsage()
-	}
-	return
-}
-
-// NewTableSampleInfo creates a new TableSampleInfo.
-func NewTableSampleInfo(node *ast.TableSample, fullSchema *expression.Schema, pt []table.PartitionedTable) *TableSampleInfo {
-	if node == nil {
-		return nil
-	}
-	return &TableSampleInfo{
-		AstNode:    node,
-		FullSchema: fullSchema.Clone(),
-		Partitions: pt,
-	}
 }
 
 // PhysicalCTE is for CTE.
