@@ -96,10 +96,13 @@ func (c checkCDCClient) loadChangefeeds(ctx context.Context, out *[]changefeed) 
 	for _, kv := range resp.Kvs {
 		// example: /tidb/cdc/<clusterID>/<namespace>/changefeed/info/<changefeedID>
 		k := kv.Key[len(CDCPrefix)-1:]
+		// example of k( >6.1): /<clusterID>/<namespace>/changefeed/info/<changefeedID>
+		// example of k(<=6.1): /changefeed/info/<changefeedID>
 		clusterAndNamespace, changefeedID, found := bytes.Cut(k, []byte(ChangefeedPath))
 		if !found {
 			continue
 		}
+
 		if len(clusterAndNamespace) == 0 {
 			// They should be keys with format /tidb/cdc/changefeed/info.
 			*out = append(*out, changefeed{
@@ -109,7 +112,7 @@ func (c checkCDCClient) loadChangefeeds(ctx context.Context, out *[]changefeed) 
 			continue
 		}
 
-		// example: clusterAndNamespace normally is <clusterID>/<namespace>
+		// example: clusterAndNamespace[1:] normally is <clusterID>/<namespace>
 		// but in migration scenario it become __backup__. we need handle it
 		// see https://github.com/pingcap/tiflow/issues/9807
 		clusterID, namespace, found := bytes.Cut(clusterAndNamespace[1:], []byte(`/`))
@@ -188,7 +191,7 @@ func (c checkCDCClient) checkpointTSFor(ctx context.Context, cf changefeed) (uin
 	}
 }
 
-func (c checkCDCClient) getNameSet(ctx context.Context, safeTS uint64) (*CDCNameSet, error) {
+func (c checkCDCClient) getIncompatible(ctx context.Context, safeTS uint64) (*CDCNameSet, error) {
 	changefeeds := make([]changefeed, 0)
 	if err := c.loadChangefeeds(ctx, &changefeeds); err != nil {
 		return nil, err
@@ -253,11 +256,11 @@ func (s *CDCNameSet) MessageToUser() string {
 // for CDC <= v6.1, the etcd key format is /tidb/cdc/changefeed/info/<changefeedID>
 func GetRunningChangefeeds(ctx context.Context, cli *clientv3.Client) (*CDCNameSet, error) {
 	checkCli := checkCDCClient{cli: cli}
-	return checkCli.getNameSet(ctx, invalidTs)
+	return checkCli.getIncompatible(ctx, invalidTs)
 }
 
 // GetIncompatibleChangefeedsWithSafeTS gets CDC changefeed that may not compatible with the safe ts and wraps them to a map.
 func GetIncompatibleChangefeedsWithSafeTS(ctx context.Context, cli *clientv3.Client, safeTS uint64) (*CDCNameSet, error) {
 	checkCli := checkCDCClient{cli: cli}
-	return checkCli.getNameSet(ctx, safeTS)
+	return checkCli.getIncompatible(ctx, safeTS)
 }
