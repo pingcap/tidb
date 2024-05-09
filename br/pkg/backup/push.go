@@ -22,16 +22,16 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-type responseAndStore struct {
+type ResponseAndStore struct {
 	Resp    *backuppb.BackupResponse
 	StoreID uint64
 }
 
-func (r responseAndStore) GetResponse() *backuppb.BackupResponse {
+func (r ResponseAndStore) GetResponse() *backuppb.BackupResponse {
 	return r.Resp
 }
 
-func (r responseAndStore) GetStoreID() uint64 {
+func (r ResponseAndStore) GetStoreID() uint64 {
 	return r.StoreID
 }
 
@@ -111,7 +111,7 @@ func startStoreBackup(
 	storeID uint64,
 	backupReq backuppb.BackupRequest,
 	backupCli backuppb.BackupClient,
-	respCh chan *responseAndStore,
+	respCh chan *ResponseAndStore,
 ) error {
 	// this goroutine handle the response from a single store
 	select {
@@ -163,7 +163,7 @@ func startStoreBackup(
 				select {
 				case <-ctx.Done():
 					return ctx.Err()
-				case respCh <- &responseAndStore{
+				case respCh <- &ResponseAndStore{
 					Resp:    resp,
 					StoreID: storeID,
 				}:

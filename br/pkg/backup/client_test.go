@@ -17,7 +17,9 @@ import (
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/mock"
 	"github.com/pingcap/tidb/br/pkg/pdutil"
+	"github.com/pingcap/tidb/br/pkg/rtree"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
@@ -202,4 +204,102 @@ func TestCheckBackupIsLocked(t *testing.T) {
 	err = backup.CheckBackupStorageIsLocked(ctx, s.storage)
 	require.Error(t, err)
 	require.Regexp(t, "backup lock file and sst file exist in(.+)", err.Error())
+}
+
+func TestOnBackupResponse(t *testing.T) {
+	s := createBackupSuite(t)
+
+	ctx := context.Background()
+
+	buildProgressRangeFn := func(startKey []byte, endKey []byte) *rtree.ProgressRange {
+		return &rtree.ProgressRange{
+			Res: rtree.NewRangeTree(),
+			Origin: rtree.Range{
+				StartKey: []byte(startKey),
+				EndKey:   []byte(endKey),
+			},
+		}
+	}
+
+	errContext := utils.NewErrorContext("test", 1)
+	require.Nil(t, s.backupClient.OnBackupResponse(ctx, nil, errContext, nil))
+
+	tree := rtree.NewProgressRangeTree()
+	r := &backup.ResponseAndStore{
+		StoreID: 0,
+		Resp: &backuppb.BackupResponse{
+			Error: &backuppb.Error{
+				Msg: "test",
+			},
+		},
+	}
+	// case #1: error resposne
+	// first error can be ignored due to errContext.
+	require.NoError(t, s.backupClient.OnBackupResponse(ctx, r, errContext, &tree))
+	// second error cannot be ignored.
+	require.Error(t, s.backupClient.OnBackupResponse(ctx, r, errContext, &tree))
+
+	// case #2: normal resposne
+	r = &backup.ResponseAndStore{
+		StoreID: 0,
+		Resp: &backuppb.BackupResponse{
+			StartKey: []byte("a"),
+			EndKey:   []byte("b"),
+		},
+	}
+
+	require.NoError(t, tree.Insert(buildProgressRangeFn([]byte("aa"), []byte("c"))))
+	// error due to the tree range does not match response range.
+	require.Error(t, s.backupClient.OnBackupResponse(ctx, r, errContext, &tree))
+
+	// case #3: partial range success case, find incomplete range
+	r.Resp.StartKey = []byte("aa")
+	require.NoError(t, s.backupClient.OnBackupResponse(ctx, r, errContext, &tree))
+
+	incomplete := tree.Iter().GetIncompleteRanges()
+	require.Len(t, incomplete, 1)
+	require.Equal(t, []byte("b"), incomplete[0].StartKey)
+	require.Equal(t, []byte("c"), incomplete[0].EndKey)
+
+	// case #4: success case, make up incomplete range
+	r.Resp.StartKey = []byte("b")
+	r.Resp.EndKey = []byte("c")
+	require.NoError(t, s.backupClient.OnBackupResponse(ctx, r, errContext, &tree))
+	incomplete = tree.Iter().GetIncompleteRanges()
+	require.Len(t, incomplete, 0)
+}
+
+func TestBuildProgressRangeTree(t *testing.T) {
+	s := createBackupSuite(t)
+	ranges := []rtree.Range{
+		{
+			StartKey: []byte("aa"),
+			EndKey:   []byte("b"),
+		},
+		{
+			StartKey: []byte("c"),
+			EndKey:   []byte("d"),
+		},
+	}
+	pranges := s.backupClient.GetProgressRanges(ranges)
+	tree, err := backup.BuildProgressRangeTree(pranges)
+	require.NoError(t, err)
+
+	contained, err := tree.FindContained([]byte("a"), []byte("aa"))
+	require.Nil(t, contained)
+	require.Error(t, err)
+
+	contained, err = tree.FindContained([]byte("b"), []byte("ba"))
+	require.Nil(t, contained)
+	require.Error(t, err)
+
+	contained, err = tree.FindContained([]byte("e"), []byte("ea"))
+	require.Nil(t, contained)
+	require.Error(t, err)
+
+	contained, err = tree.FindContained([]byte("aa"), []byte("b"))
+	require.NotNil(t, contained)
+	require.Equal(t, []byte("aa"), contained.Origin.StartKey)
+	require.Equal(t, []byte("b"), contained.Origin.EndKey)
+	require.NoError(t, err)
 }

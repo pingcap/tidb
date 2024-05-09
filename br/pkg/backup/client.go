@@ -768,7 +768,7 @@ func WriteBackupDDLJobs(metaWriter *metautil.MetaWriter, g glue.Glue, store kv.S
 	return nil
 }
 
-func (bc *Client) getProgressRanges(ranges []rtree.Range) []*rtree.ProgressRange {
+func (bc *Client) GetProgressRanges(ranges []rtree.Range) []*rtree.ProgressRange {
 	prs := make([]*rtree.ProgressRange, 0, len(ranges))
 	for _, r := range ranges {
 		prs = append(prs, bc.getProgressRange(r))
@@ -776,31 +776,16 @@ func (bc *Client) getProgressRanges(ranges []rtree.Range) []*rtree.ProgressRange
 	return prs
 }
 
-func buildProgressRangeTree(pranges []*rtree.ProgressRange) (rtree.ProgressRangeTree, []*kvrpcpb.KeyRange, error) {
+func BuildProgressRangeTree(pranges []*rtree.ProgressRange) (rtree.ProgressRangeTree, error) {
 	// the response from TiKV only contains the region's key, so use the
 	// progress range tree to quickly seek the region's corresponding progress range.
 	progressRangeTree := rtree.NewProgressRangeTree()
-	subRangesCount := 0
 	for _, pr := range pranges {
 		if err := progressRangeTree.Insert(pr); err != nil {
-			return progressRangeTree, nil, errors.Trace(err)
+			return progressRangeTree, errors.Trace(err)
 		}
-		subRangesCount += len(pr.Incomplete)
 	}
-	// either the `incomplete` is origin range itself,
-	// or the `incomplete` is sub-ranges split by checkpoint of origin range.
-	subRanges := make([]*kvrpcpb.KeyRange, 0, subRangesCount)
-	progressRangeTree.Ascend(func(pr *rtree.ProgressRange) bool {
-		for _, r := range pr.Incomplete {
-			subRanges = append(subRanges, &kvrpcpb.KeyRange{
-				StartKey: r.StartKey,
-				EndKey:   r.EndKey,
-			})
-		}
-		return true
-	})
-
-	return progressRangeTree, subRanges, nil
+	return progressRangeTree, nil
 }
 
 // BackupRanges make a backup of the given key ranges.
@@ -854,8 +839,8 @@ func (bc *Client) BackupRanges(
 	// 	}
 	// }()
 
-	pranges := bc.getProgressRanges(ranges)
-	globalProgressTree, _, err := buildProgressRangeTree(pranges)
+	pranges := bc.GetProgressRanges(ranges)
+	globalProgressTree, err := BuildProgressRangeTree(pranges)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -894,10 +879,14 @@ func (bc *Client) getBackupStores(ctx context.Context, replicaReadLabel map[stri
 
 func (bc *Client) OnBackupResponse(
 	ctx context.Context,
-	r *responseAndStore,
+	r *ResponseAndStore,
 	errContext *utils.ErrorContext,
 	globalProgressTree *rtree.ProgressRangeTree,
 ) error {
+	if r == nil || r.GetResponse() == nil {
+		return nil
+	}
+
 	resp := r.GetResponse()
 	storeID := r.GetStoreID()
 	if resp.GetError() == nil {
@@ -917,8 +906,8 @@ func (bc *Client) OnBackupResponse(
 				resp.Files,
 			); err != nil {
 				// flush checkpoint failed,
-				logutil.CL(ctx).Warn("failed to flush checkpoint, ignore it", zap.Error(err))
 				// this error doesn't not influnce main procedure. so ignore it.
+				logutil.CL(ctx).Warn("failed to flush checkpoint, ignore it", zap.Error(err))
 			}
 		}
 		pr.Res.Put(resp.StartKey, resp.EndKey, resp.Files)
@@ -960,7 +949,7 @@ func (bc *Client) startMainBackupLoop(
 		storeID uint64,
 		request backuppb.BackupRequest,
 		cli backuppb.BackupClient,
-		respCh chan *responseAndStore,
+		respCh chan *ResponseAndStore,
 	) {
 		go func() {
 			defer func() {
@@ -990,8 +979,8 @@ func (bc *Client) startMainBackupLoop(
 	collectStoreBackupsAsyncFn := func(
 		ctx context.Context,
 		round uint64,
-		storeBackupChs map[uint64]chan *responseAndStore,
-		globalCh chan *responseAndStore,
+		storeBackupChs map[uint64]chan *ResponseAndStore,
+		globalCh chan *ResponseAndStore,
 
 	) {
 		go func() {
@@ -1018,7 +1007,7 @@ func (bc *Client) startMainBackupLoop(
 				select {
 				case <-ctx.Done():
 					return
-				case globalCh <- value.Interface().(*responseAndStore):
+				case globalCh <- value.Interface().(*ResponseAndStore):
 				}
 			}
 		}()
@@ -1036,9 +1025,9 @@ mainLoop:
 		errContext := utils.NewErrorContext("MainBackupLoop", 10)
 
 		// a channel to collect all store backup results
-		globalBackupResultCh := make(chan *responseAndStore)
+		globalBackupResultCh := make(chan *ResponseAndStore)
 		// channel slices to receive backup region result from different tikv stores
-		storeBackupResultChMap := make(map[uint64]chan *responseAndStore)
+		storeBackupResultChMap := make(map[uint64]chan *ResponseAndStore)
 
 		// mainCtx used to control mainLoop
 		// every round need a new context to control the main backup process
@@ -1082,7 +1071,7 @@ mainLoop:
 				time.Sleep(time.Second)
 				continue mainLoop
 			}
-			ch := make(chan *responseAndStore)
+			ch := make(chan *ResponseAndStore)
 			storeBackupResultChMap[storeID] = ch
 			startStoreBackupAsyncFn(mainCtx, round, storeID, request, cli, ch)
 		}
@@ -1119,7 +1108,7 @@ mainLoop:
 
 					// cancel the former collect goroutine
 					handleCancel()
-					ch := make(chan *responseAndStore)
+					ch := make(chan *ResponseAndStore)
 
 					storeBackupResultChMap[storeID] = ch
 					// start backup for this store
@@ -1128,7 +1117,7 @@ mainLoop:
 					handleCtx, handleCancel = context.WithCancel(mainCtx)
 					// handleCancel makes the former collect goroutine exits
 					// so we need to re-create a new channel and restart a new collect goroutine.
-					globalBackupResultCh = make(chan *responseAndStore)
+					globalBackupResultCh = make(chan *ResponseAndStore)
 					// collect all store backup producer channel result to one channel
 					collectStoreBackupsAsyncFn(handleCtx, round, storeBackupResultChMap, globalBackupResultCh)
 				}
