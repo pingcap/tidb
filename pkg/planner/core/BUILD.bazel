@@ -112,6 +112,7 @@ go_library(
         "//pkg/planner/cardinality",
         "//pkg/planner/context",
         "//pkg/planner/core/base",
+        "//pkg/planner/core/cost",
         "//pkg/planner/core/metrics",
         "//pkg/planner/core/operator/baseimpl",
         "//pkg/planner/funcdep",

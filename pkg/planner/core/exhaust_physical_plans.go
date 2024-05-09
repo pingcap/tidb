@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/cost"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
@@ -1078,7 +1079,7 @@ func (p *LogicalJoin) constructInnerTableScanTask(
 		selectivity, _, err = cardinality.Selectivity(ds.SCtx(), ds.tableStats.HistColl, ts.filterCondition, ds.possibleAccessPaths)
 		if err != nil || selectivity <= 0 {
 			logutil.BgLogger().Debug("unexpected selectivity, use selection factor", zap.Float64("selectivity", selectivity), zap.String("table", ts.TableAsName.L))
-			selectivity = SelectionFactor
+			selectivity = cost.SelectionFactor
 		}
 		// rowCount is computed from result row count of join, which has already accounted the filters on DataSource,
 		// i.e, rowCount equals to `countAfterAccess * selectivity`.
@@ -1370,7 +1371,7 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 		selectivity, _, err := cardinality.Selectivity(ds.SCtx(), ds.tableStats.HistColl, tblConds, ds.possibleAccessPaths)
 		if err != nil || selectivity <= 0 {
 			logutil.BgLogger().Debug("unexpected selectivity, use selection factor", zap.Float64("selectivity", selectivity), zap.String("table", ds.TableAsName.L))
-			selectivity = SelectionFactor
+			selectivity = cost.SelectionFactor
 		}
 		// rowCount is computed from result row count of join, which has already accounted the filters on DataSource,
 		// i.e, rowCount equals to `countAfterIndex * selectivity`.
@@ -1388,7 +1389,7 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 		selectivity, _, err := cardinality.Selectivity(ds.SCtx(), ds.tableStats.HistColl, indexConds, ds.possibleAccessPaths)
 		if err != nil || selectivity <= 0 {
 			logutil.BgLogger().Debug("unexpected selectivity, use selection factor", zap.Float64("selectivity", selectivity), zap.String("table", ds.TableAsName.L))
-			selectivity = SelectionFactor
+			selectivity = cost.SelectionFactor
 		}
 		cnt := tmpPath.CountAfterIndex / selectivity
 		if rowCountUpperBound > 0 {
