@@ -262,7 +262,11 @@ func (do *Domain) loadInfoSchema(startTS uint64) (infoschema.InfoSchema, bool, i
 
 		enableV2 := variable.SchemaCacheSize.Load() > 0
 		if enableV2 == isV2 {
+			fmt.Println("skip schema load ==", startTS, schemaTs, neededSchemaVersion)
 			return is, true, 0, nil, nil
+		} else {
+			fmt.Println("previous and current mismatch????", enableV2, isV2)
+			// do.infoCache.Reset(int(variable.SchemaVersionCacheLimit.Load()))
 		}
 	}
 
@@ -279,6 +283,10 @@ func (do *Domain) loadInfoSchema(startTS uint64) (infoschema.InfoSchema, bool, i
 	// 3. There are less 100 diffs.
 	// 4. No regenrated schema diff.
 	startTime := time.Now()
+	fmt.Println("in Reload, currentSchemaVersion=", currentSchemaVersion,
+		"neededSchemaVersion=", neededSchemaVersion,
+		"gapThreshold=", LoadSchemaDiffVersionGapThreshold,
+	)
 	if currentSchemaVersion != 0 && neededSchemaVersion > currentSchemaVersion && neededSchemaVersion-currentSchemaVersion < LoadSchemaDiffVersionGapThreshold {
 		is, relatedChanges, diffTypes, err := do.tryLoadSchemaDiffs(m, currentSchemaVersion, neededSchemaVersion, startTS)
 		if err == nil {
