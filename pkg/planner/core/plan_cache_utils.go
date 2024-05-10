@@ -492,6 +492,7 @@ func (*PlanCacheQueryFeatures) Leave(in ast.Node) (out ast.Node, ok bool) {
 }
 
 // PointGetExecutorCache caches the PointGetExecutor to further improve its performance.
+// Don't forget to reset this executor when the prior plan is invalid.
 type PointGetExecutorCache struct {
 	ColumnInfos any
 	// Executor is only used for point get scene.
