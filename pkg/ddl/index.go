@@ -2109,15 +2109,10 @@ func (w *worker) executeDistGlobalTask(reorgInfo *reorgInfo) error {
 			return err
 		})
 	} else {
-		elemIDs := make([]int64, 0, len(reorgInfo.elements))
-		for _, elem := range reorgInfo.elements {
-			elemIDs = append(elemIDs, elem.ID)
-		}
-
 		job := reorgInfo.Job
 		taskMeta := &BackfillGlobalMeta{
 			Job:             *job.Clone(),
-			EleIDs:          elemIDs,
+			EleIDs:          extractElemIDs(reorgInfo),
 			EleTypeKey:      reorgInfo.currElement.TypeKey,
 			CloudStorageURI: w.jobContext(job.ID, job.ReorgMeta).cloudStorageURI,
 		}
