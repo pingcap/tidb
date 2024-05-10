@@ -28,13 +28,8 @@ import (
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/util"
-<<<<<<< HEAD
-	fifo "github.com/scalalang2/golang-fifo"
-	"github.com/scalalang2/golang-fifo/sieve"
-=======
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/size"
->>>>>>> 53664d491dc (infoschema: support evict by lru cache size (#52423))
 	"github.com/tidwall/btree"
 	"golang.org/x/sync/singleflight"
 )
