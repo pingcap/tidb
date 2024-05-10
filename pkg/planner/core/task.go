@@ -897,7 +897,7 @@ func (p *PhysicalLimit) attach2Task(tasks ...task) task {
 					sunk = p.sinkIntoIndexMerge(t)
 				} else {
 					// when there are some limitations, just sink the limit upon the index merge reader.
-					t = cop.ConvertToRootTask(p.SCtx())
+					t = cop.convertToRootTask(p.SCtx())
 					sunk = p.sinkIntoIndexMerge(t)
 				}
 			} else {
