@@ -135,7 +135,6 @@ func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isNonPrep
 		// cached plan once the schema version is changed.
 		// Cached plan in prepared struct does NOT have a "cache key" with
 		// schema version like prepared plan cache key
-		stmt.PointGet.Plan = nil
 		stmt.PointGet.Executor = nil
 		stmt.PointGet.ColumnInfos = nil
 		// If the schema version has changed we need to preprocess it again,
@@ -160,7 +159,6 @@ func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isNonPrep
 	expiredTimeStamp4PC := domain.GetDomain(sctx).ExpiredTimeStamp4PC()
 	if stmt.StmtCacheable && expiredTimeStamp4PC.Compare(vars.LastUpdateTime4PC) > 0 {
 		sctx.GetSessionPlanCache().DeleteAll()
-		stmt.PointGet.Plan = nil
 		vars.LastUpdateTime4PC = expiredTimeStamp4PC
 	}
 
@@ -261,26 +259,6 @@ func getCachedPlan(sctx sessionctx.Context, isNonPrepared bool, cacheKey kvcache
 	sessVars := sctx.GetSessionVars()
 	stmtCtx := sessVars.StmtCtx
 
-	// handle PointGet Plan specially
-	if stmt.PointGet.Plan != nil { // TODO: remove this special handle for point-get plan
-		plan := stmt.PointGet.Plan.(base.Plan)
-		names := stmt.PointGet.ColumnNames.(types.NameSlice)
-		if !RebuildPlan4CachedPlan(plan) {
-			return nil, nil, false, nil
-		}
-		if metrics.ResettablePlanCacheCounterFortTest {
-			metrics.PlanCacheCounter.WithLabelValues("prepare").Inc()
-		} else {
-			// only for prepared plan cache
-			core_metrics.GetPlanCacheHitCounter(false).Inc()
-		}
-		sessVars.FoundInPlanCache = true
-		if pointGetPlan, ok := plan.(*PointGetPlan); ok && pointGetPlan != nil && pointGetPlan.stmtHints != nil {
-			stmtCtx.StmtHints = *pointGetPlan.stmtHints
-		}
-		return plan, names, true, nil
-	}
-
 	candidate, exist := sctx.GetSessionPlanCache().Get(cacheKey, matchOpts)
 	if !exist {
 		return nil, nil, false, nil
@@ -342,13 +320,6 @@ func generateNewPlan(ctx context.Context, sctx sessionctx.Context, isNonPrepared
 
 	// put this plan into the plan cache.
 	if stmtCtx.UseCache() {
-		// update PointGet Plan specially
-		if pointGet, ok := p.(*PointGetPlan); ok {
-			pointGet.stmtHints = sctx.GetSessionVars().StmtCtx.StmtHints.Clone()
-			stmt.PointGet.Plan = p
-			stmt.PointGet.ColumnNames = names
-		}
-
 		// rebuild key to exclude kv.TiFlash when stmt is not read only
 		if _, isolationReadContainTiFlash := sessVars.IsolationReadEngines[kv.TiFlash]; isolationReadContainTiFlash && !IsReadOnly(stmtAst.Stmt, sessVars) {
 			delete(sessVars.IsolationReadEngines, kv.TiFlash)
