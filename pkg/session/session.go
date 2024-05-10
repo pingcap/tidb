@@ -88,6 +88,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
+	"github.com/pingcap/tidb/pkg/statistics/handle/syncload"
 	"github.com/pingcap/tidb/pkg/statistics/handle/usage"
 	"github.com/pingcap/tidb/pkg/statistics/handle/usage/indexusage"
 	storeerr "github.com/pingcap/tidb/pkg/store/driver/error"
@@ -3368,7 +3369,15 @@ func bootstrapSessionImpl(store kv.Storage, createSessionsImpl func(store kv.Sto
 	)
 
 	analyzeConcurrencyQuota := int(config.GetGlobalConfig().Performance.AnalyzePartitionConcurrencyQuota)
-	concurrency := int(config.GetGlobalConfig().Performance.StatsLoadConcurrency)
+	concurrency := config.GetGlobalConfig().Performance.StatsLoadConcurrency
+	if concurrency == 0 {
+		// if concurrency is 0, we will set the concurrency of sync load by CPU.
+		concurrency = syncload.GetSyncLoadConcurrencyByCPU()
+	}
+	if concurrency < 0 { // it is only for test, in the production, negative value is illegal.
+		concurrency = 0
+	}
+
 	ses, err := createSessionsImpl(store, 10)
 	if err != nil {
 		return nil, err
