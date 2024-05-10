@@ -3128,6 +3128,12 @@ func (b *executorBuilder) corColInDistPlan(plans []plannercore.PhysicalPlan) boo
 					return true
 				}
 			}
+		case *plannercore.PhysicalTopN:
+			for _, byItem := range x.ByItems {
+				if len(expression.ExtractCorColumns(byItem.Expr)) > 0 {
+					return true
+				}
+			}
 		case *plannercore.PhysicalTableScan:
 			for _, cond := range x.LateMaterializationFilterCondition {
 				if len(expression.ExtractCorColumns(cond)) > 0 {
