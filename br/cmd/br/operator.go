@@ -6,8 +6,8 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/task"
 	"github.com/pingcap/tidb/br/pkg/task/operator"
-	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version/build"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/spf13/cobra"
 )
 
@@ -20,7 +20,7 @@ func newOperatorCommand() *cobra.Command {
 				return errors.Trace(err)
 			}
 			build.LogInfo(build.BR)
-			utils.LogEnvVariables()
+			logutil.LogEnvVariables()
 			task.LogArguments(c)
 			return nil
 		},

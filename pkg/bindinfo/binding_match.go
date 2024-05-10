@@ -86,9 +86,11 @@ func matchSQLBinding(sctx sessionctx.Context, stmtNode ast.StmtNode, info *Bindi
 	if globalHandle == nil {
 		return
 	}
-	if binding, matched := globalHandle.MatchGlobalBinding(sctx, fuzzyDigest, tableNames); matched {
+	binding, matched = globalHandle.MatchGlobalBinding(sctx, fuzzyDigest, tableNames)
+	if matched {
 		return binding, matched, metrics.ScopeGlobal
 	}
+
 	return
 }
 

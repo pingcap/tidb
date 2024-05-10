@@ -304,6 +304,8 @@ const (
 	LastSeenStr                       = "LAST_SEEN"
 	PlanInCacheStr                    = "PLAN_IN_CACHE"
 	PlanCacheHitsStr                  = "PLAN_CACHE_HITS"
+	PlanCacheUnqualifiedStr           = "PLAN_CACHE_UNQUALIFIED"
+	LastPlanCacheUnqualifiedStr       = "LAST_PLAN_CACHE_UNQUALIFIED_REASON"
 	PlanInBindingStr                  = "PLAN_IN_BINDING"
 	QuerySampleTextStr                = "QUERY_SAMPLE_TEXT"
 	PrevSampleTextStr                 = "PREV_SAMPLE_TEXT"
@@ -659,5 +661,11 @@ var columnValueFactoryMap = map[string]columnValueFactory{
 	},
 	ResourceGroupName: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
 		return ssElement.resourceGroupName
+	},
+	PlanCacheUnqualifiedStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
+		return ssElement.planCacheUnqualifiedCount
+	},
+	LastPlanCacheUnqualifiedStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
+		return ssElement.lastPlanCacheUnqualified
 	},
 }

@@ -78,7 +78,43 @@ drop table if exists t;
 -- error 1067
 create table t (d int default '18446744073709551616' );
 set sql_mode='';
--- enable_warnings
+-- error 1067
 create table t (d int default '18446744073709551616' );
--- disable_warnings
 set sql_mode=DEFAULT;
+
+# Test alter non-partition table to partition with global index needed. 
+drop table if exists t;
+create table t(a int not null, b int, primary key(a), unique idx_b(b));
+drop table if exists t2;
+create table t2(a int not null, b int, primary key(a) nonclustered, unique idx_b(b));
+drop table if exists t3;
+set tidb_enable_global_index=1;
+create table t3(a int not null, b int, primary key(a) nonclustered, unique idx_b(b)) partition by hash(a) partitions 3;
+drop table if exists t4;
+create table t4(a int not null, b int, primary key(a)) partition by hash(a) partitions 3;
+-- error 8214
+alter table t partition by hash(a) partitions 3;
+-- error 8214
+alter table t partition by key() partitions 3;
+-- error 1503
+alter table t partition by hash(b) partitions 3;
+-- error 8214
+alter table t2 partition by hash(b) partitions 3;
+-- error 8214
+alter table t3 partition by key(a) partitions 3;
+-- error 1503
+alter table t4 partition by hash(b) partitions 3;
+set tidb_enable_global_index=0;
+-- error 1503
+alter table t partition by hash(a) partitions 3;
+-- error 1503
+alter table t partition by key() partitions 3;
+-- error 1503
+alter table t partition by hash(b) partitions 3;
+-- error 1503
+alter table t2 partition by hash(b) partitions 3;
+-- error 1503
+alter table t3 partition by key(a) partitions 3;
+-- error 1503
+alter table t4 partition by hash(b) partitions 3;
+drop table t, t2, t3, t4;

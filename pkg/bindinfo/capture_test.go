@@ -290,7 +290,8 @@ func TestCapturePlanBaselineIgnoreTiFlash(t *testing.T) {
 	is := domSession.InfoSchema()
 	db, exists := is.SchemaByName(model.NewCIStr("test"))
 	require.True(t, exists)
-	for _, tblInfo := range db.Tables {
+	for _, tbl := range is.SchemaTables(db.Name) {
+		tblInfo := tbl.Meta()
 		if tblInfo.Name.L == "t" {
 			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
 				Count:     1,
@@ -661,6 +662,7 @@ func TestCaptureTableFilterValid(t *testing.T) {
 }
 
 func TestCaptureWildcardFilter(t *testing.T) {
+	t.Skip("the old implementation of Capture is considered as deprecated")
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	tk := testkit.NewTestKit(t, store)
@@ -766,6 +768,7 @@ func TestCaptureWildcardFilter(t *testing.T) {
 }
 
 func TestCaptureFilter(t *testing.T) {
+	t.Skip("the old implementation of Capture is considered as deprecated")
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	tk := testkit.NewTestKit(t, store)

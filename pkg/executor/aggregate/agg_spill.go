@@ -294,7 +294,7 @@ func (p *parallelHashAggSpillHelper) processRow(context *processRowContext) (tot
 		exprCtx := context.ctx.GetExprCtx()
 		// The key has appeared before, merge results.
 		for aggPos := 0; aggPos < context.aggFuncNum; aggPos++ {
-			memDelta, err := p.aggFuncsForRestoring[aggPos].MergePartialResult(exprCtx, context.partialResultsRestored[aggPos][context.rowPos], prs[aggPos])
+			memDelta, err := p.aggFuncsForRestoring[aggPos].MergePartialResult(exprCtx.GetEvalCtx(), context.partialResultsRestored[aggPos][context.rowPos], prs[aggPos])
 			if err != nil {
 				return totalMemDelta, 0, err
 			}

@@ -169,7 +169,7 @@ func TestIssue28650(t *testing.T) {
 }
 
 func TestIssue30289(t *testing.T) {
-	fpName := "github.com/pingcap/tidb/pkg/executor/issue30289"
+	fpName := "github.com/pingcap/tidb/pkg/executor/join/issue30289"
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -592,7 +592,7 @@ func TestIssue42662(t *testing.T) {
 	tk.MustExec("set global tidb_server_memory_limit='1600MB'")
 	tk.MustExec("set global tidb_server_memory_limit_sess_min_size=128*1024*1024")
 	tk.MustExec("set global tidb_mem_oom_action = 'cancel'")
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/issue42662_1", `return(true)`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/join/issue42662_1", `return(true)`))
 	// tk.Session() should be marked as MemoryTop1Tracker but not killed.
 	tk.MustQuery("select /*+ hash_join(t1)*/ * from t1 join t2 on t1.a = t2.a and t1.b = t2.b")
 
@@ -604,7 +604,7 @@ func TestIssue42662(t *testing.T) {
 	tk.MustQuery("select count(*) from t1")
 	tk.MustQuery("select count(*) from t1")
 
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/issue42662_1"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/join/issue42662_1"))
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/util/servermemorylimit/issue42662_2"))
 }
 
@@ -620,4 +620,30 @@ func TestIssue50393(t *testing.T) {
 	tk.MustExec("insert into t1 values (0xC2A0)")
 	tk.MustExec("insert into t2 values (0xC2)")
 	tk.MustQuery("select count(*) from t1,t2 where t1.a like concat(\"%\",t2.a,\"%\")").Check(testkit.Rows("1"))
+}
+
+func TestIssue51874(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.Session().GetSessionVars().AllowProjectionPushDown = true
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t, t2")
+	tk.MustExec("create table t (a int, b int)")
+	tk.MustExec("create table t2 (i int)")
+	tk.MustExec("insert into t values (5, 6), (1, 7)")
+	tk.MustExec("insert into t2 values (10), (100)")
+	tk.MustQuery("select (select sum(a) over () from t2 limit 1) from t;").Check(testkit.Rows("10", "2"))
+}
+
+func TestIssue52978(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int)")
+	tk.MustExec("insert into t values (-1790816583),(2049821819), (-1366665321), (536581933), (-1613686445)")
+	tk.MustQuery("select min(truncate(cast(-26340 as double), ref_11.a)) as c3 from t as ref_11;").Check(testkit.Rows("-26340"))
+	tk.MustExec("drop table if exists t")
 }

@@ -142,7 +142,7 @@ func readFile(filepath string) (res []byte, err error) {
 	return res, err
 }
 
-// The field in /proc/self/cgroup and /proc/self/meminfo may appear as "cpuacct,cpu" or "rw,cpuacct,cpu"
+// The field in /proc/self/cgroup and /proc/self/mountinfo may appear as "cpuacct,cpu" or "rw,cpuacct,cpu"
 // while the input controller is "cpu,cpuacct"
 func controllerMatch(field string, controller string) bool {
 	if field == controller {

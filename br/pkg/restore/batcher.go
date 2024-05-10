@@ -12,6 +12,7 @@ import (
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/glue"
+	"github.com/pingcap/tidb/br/pkg/restore/utils"
 	"github.com/pingcap/tidb/br/pkg/rtree"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"go.uber.org/zap"
@@ -36,7 +37,6 @@ const (
 type Batcher struct {
 	cachedTables   []TableWithRange
 	cachedTablesMu *sync.Mutex
-	rewriteRules   *RewriteRules
 
 	// autoCommitJoiner is for joining the background batch sender.
 	autoCommitJoiner chan<- struct{}
@@ -114,7 +114,6 @@ func NewBatcher(
 	outCh := DefaultOutputTableChan()
 	sendChan := make(chan SendType, 2)
 	b := &Batcher{
-		rewriteRules:       EmptyRewriteRule(),
 		sendErr:            errCh,
 		outCh:              outCh,
 		sender:             sender,
@@ -227,8 +226,10 @@ type DrainResult struct {
 	TablesToSend []CreatedTable
 	// BlankTablesAfterSend are tables that will be full-restored after this batch send.
 	BlankTablesAfterSend []CreatedTable
-	RewriteRules         *RewriteRules
-	Ranges               []rtree.Range
+	// RewriteRules are the rewrite rules for the tables.
+	// the key is the table id after rewritten.
+	RewriteRulesMap map[int64]*utils.RewriteRules
+	Ranges          []rtree.Range
 	// Record which part of ranges belongs to the table
 	TableEndOffsetInRanges []int
 }
@@ -240,14 +241,19 @@ func (result DrainResult) Files() []TableIDWithFiles {
 	for i, endOffset := range result.TableEndOffsetInRanges {
 		tableID := result.TablesToSend[i].Table.ID
 		ranges := result.Ranges[startOffset:endOffset]
-		files := make([]*backuppb.File, 0, len(result.Ranges)*2)
+		// each range has at least a default file + a write file
+		files := make([]*backuppb.File, 0, len(ranges)*2)
 		for _, rg := range ranges {
 			files = append(files, rg.Files...)
 		}
-
+		var rules *utils.RewriteRules
+		if r, ok := result.RewriteRulesMap[tableID]; ok {
+			rules = r
+		}
 		tableIDWithFiles = append(tableIDWithFiles, TableIDWithFiles{
-			TableID: tableID,
-			Files:   files,
+			TableID:      tableID,
+			Files:        files,
+			RewriteRules: rules,
 		})
 
 		// update start offset
@@ -261,7 +267,7 @@ func newDrainResult() DrainResult {
 	return DrainResult{
 		TablesToSend:           make([]CreatedTable, 0),
 		BlankTablesAfterSend:   make([]CreatedTable, 0),
-		RewriteRules:           EmptyRewriteRule(),
+		RewriteRulesMap:        utils.EmptyRewriteRulesMap(),
 		Ranges:                 make([]rtree.Range, 0),
 		TableEndOffsetInRanges: make([]int, 0),
 	}
@@ -329,7 +335,7 @@ func (b *Batcher) drainRanges() DrainResult {
 		thisTableLen := len(thisTable.Range)
 		collected := len(result.Ranges)
 
-		result.RewriteRules.Append(*thisTable.RewriteRule)
+		result.RewriteRulesMap[thisTable.Table.ID] = thisTable.RewriteRule
 		result.TablesToSend = append(result.TablesToSend, thisTable.CreatedTable)
 
 		// the batch is full, we should stop here!
@@ -423,7 +429,6 @@ func (b *Batcher) Add(tbs TableWithRange) {
 		zap.Int("batch size", b.Len()),
 	)
 	b.cachedTables = append(b.cachedTables, tbs)
-	b.rewriteRules.Append(*tbs.RewriteRule)
 	atomic.AddInt32(&b.size, int32(len(tbs.Range)))
 	b.cachedTablesMu.Unlock()
 

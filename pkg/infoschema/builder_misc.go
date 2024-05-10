@@ -23,7 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 )
 
-func (b *Builder) applyCreatePolicy(m *meta.Meta, diff *model.SchemaDiff) error {
+func applyCreatePolicy(b *Builder, m *meta.Meta, diff *model.SchemaDiff) error {
 	po, err := m.GetPolicy(diff.SchemaID)
 	if err != nil {
 		return errors.Trace(err)
@@ -44,7 +44,7 @@ func (b *Builder) applyCreatePolicy(m *meta.Meta, diff *model.SchemaDiff) error 
 	return nil
 }
 
-func (b *Builder) applyAlterPolicy(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
+func applyAlterPolicy(b *Builder, m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
 	po, err := m.GetPolicy(diff.SchemaID)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -62,7 +62,7 @@ func (b *Builder) applyAlterPolicy(m *meta.Meta, diff *model.SchemaDiff) ([]int6
 	return []int64{}, nil
 }
 
-func (b *Builder) applyDropPolicy(PolicyID int64) []int64 {
+func applyDropPolicy(b *Builder, PolicyID int64) []int64 {
 	po, ok := b.infoSchema.PolicyByID(PolicyID)
 	if !ok {
 		return nil

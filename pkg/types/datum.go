@@ -2575,3 +2575,13 @@ func (d Datum) EstimatedMemUsage() int64 {
 	}
 	return int64(bytesConsumed)
 }
+
+// DatumsContainNull return true if any value is null
+func DatumsContainNull(vals []Datum) bool {
+	for _, val := range vals {
+		if val.IsNull() {
+			return true
+		}
+	}
+	return false
+}

@@ -17,7 +17,6 @@ package executor
 import (
 	"context"
 	"testing"
-	"time"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
@@ -29,9 +28,9 @@ import (
 )
 
 func TestJoinExec(t *testing.T) {
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/testRowContainerSpill", "return(true)"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/join/testRowContainerSpill", "return(true)"))
 	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/testRowContainerSpill"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/join/testRowContainerSpill"))
 	}()
 	colTypes := []*types.FieldType{
 		types.NewFieldType(mysql.TypeLonglong),
@@ -77,7 +76,7 @@ func TestJoinExec(t *testing.T) {
 				}
 				result.Append(chk, 0, chk.NumRows())
 			}
-			require.Equal(t, casTest.disk, executor.rowContainer.alreadySpilledSafeForTest())
+			require.Equal(t, casTest.disk, executor.RowContainer.AlreadySpilledSafeForTest())
 			err = executor.Close()
 			require.NoError(t, err)
 		}
@@ -110,41 +109,4 @@ func TestJoinExec(t *testing.T) {
 			}
 		}
 	}
-}
-
-func TestHashJoinRuntimeStats(t *testing.T) {
-	stats := &hashJoinRuntimeStats{
-		fetchAndBuildHashTable: 2 * time.Second,
-		hashStat: hashStatistic{
-			probeCollision:   1,
-			buildTableElapse: time.Millisecond * 100,
-		},
-		fetchAndProbe:    int64(5 * time.Second),
-		probe:            int64(4 * time.Second),
-		concurrent:       4,
-		maxFetchAndProbe: int64(2 * time.Second),
-	}
-	require.Equal(t, "build_hash_table:{total:2s, fetch:1.9s, build:100ms}, probe:{concurrency:4, total:5s, max:2s, probe:4s, fetch:1s, probe_collision:1}", stats.String())
-	require.Equal(t, stats.Clone().String(), stats.String())
-	stats.Merge(stats.Clone())
-	require.Equal(t, "build_hash_table:{total:4s, fetch:3.8s, build:200ms}, probe:{concurrency:4, total:10s, max:2s, probe:8s, fetch:2s, probe_collision:2}", stats.String())
-}
-
-func TestIndexJoinRuntimeStats(t *testing.T) {
-	stats := indexLookUpJoinRuntimeStats{
-		concurrency: 5,
-		probe:       int64(time.Second),
-		innerWorker: innerWorkerRuntimeStats{
-			totalTime: int64(time.Second * 5),
-			task:      16,
-			construct: int64(100 * time.Millisecond),
-			fetch:     int64(300 * time.Millisecond),
-			build:     int64(250 * time.Millisecond),
-			join:      int64(150 * time.Millisecond),
-		},
-	}
-	require.Equal(t, "inner:{total:5s, concurrency:5, task:16, construct:100ms, fetch:300ms, build:250ms, join:150ms}, probe:1s", stats.String())
-	require.Equal(t, stats.Clone().String(), stats.String())
-	stats.Merge(stats.Clone())
-	require.Equal(t, "inner:{total:10s, concurrency:5, task:32, construct:200ms, fetch:600ms, build:500ms, join:300ms}, probe:2s", stats.String())
 }

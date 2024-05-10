@@ -59,6 +59,7 @@ type ProcessInfo struct {
 	Port                  string
 	ResourceGroupName     string
 	SessionAlias          string
+	RedactSQL             string
 	IndexNames            []string
 	TableIDs              []int64
 	PlanExplainRows       [][]string
@@ -70,7 +71,6 @@ type ProcessInfo struct {
 	MaxExecutionTime uint64
 	State            uint16
 	Command          byte
-	RedactSQL        bool
 }
 
 // Clone return a shallow clone copy of this processInfo.

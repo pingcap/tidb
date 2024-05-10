@@ -5,6 +5,7 @@
 //
 //	mockgen -package mockstorage github.com/pingcap/tidb/br/pkg/storage ExternalStorage
 //
+
 // Package mockstorage is a generated GoMock package.
 package mockstorage
 
@@ -37,6 +38,11 @@ func NewMockExternalStorage(ctrl *gomock.Controller) *MockExternalStorage {
 // EXPECT returns an object that allows the caller to indicate expected use.
 func (m *MockExternalStorage) EXPECT() *MockExternalStorageMockRecorder {
 	return m.recorder
+}
+
+// ISGOMOCK indicates that this struct is a gomock mock.
+func (m *MockExternalStorage) ISGOMOCK() struct{} {
+	return struct{}{}
 }
 
 // Close mocks base method.

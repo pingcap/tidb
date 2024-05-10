@@ -93,6 +93,10 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 			failpoint.Return(tikvrpc.GenRegionErrorResp(req, &errorpb.Error{Message: "Deadline is exceeded"}))
 		}
 	})
+	failpoint.Inject("unistoreRPCSlowByInjestSleep", func(val failpoint.Value) {
+		time.Sleep(time.Duration(val.(int) * int(time.Millisecond)))
+		failpoint.Return(tikvrpc.GenRegionErrorResp(req, &errorpb.Error{Message: "Deadline is exceeded"}))
+	})
 
 	select {
 	case <-ctx.Done():
@@ -315,6 +319,13 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 		// (dr *delRange) startEmulator()
 		resp.Resp = &kvrpcpb.UnsafeDestroyRangeResponse{}
 		return resp, nil
+	case tikvrpc.CmdFlush:
+		r := req.Flush()
+		c.cluster.handleDelay(r.StartTs, r.Context.RegionId)
+		resp.Resp, err = c.usSvr.KvFlush(ctx, r)
+	case tikvrpc.CmdBufferBatchGet:
+		r := req.BufferBatchGet()
+		resp.Resp, err = c.usSvr.KvBufferBatchGet(ctx, r)
 	default:
 		err = errors.Errorf("not support this request type %v", req.Type)
 	}

@@ -317,6 +317,13 @@ func (c *TestDXFContext) GetRandNodeIDs(limit int) map[string]struct{} {
 	return ids
 }
 
+// GetNodeIDByIdx returns nodeID by idx in nodes.
+func (c *TestDXFContext) GetNodeIDByIdx(idx int) string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.mu.nodes[idx].id
+}
+
 // NodeCount returns the number of nodes.
 func (c *TestDXFContext) NodeCount() int {
 	c.mu.RLock()
@@ -387,8 +394,7 @@ type TestContext struct {
 func InitTestContext(t *testing.T, nodeNum int) (context.Context, *gomock.Controller, *TestContext, *testkit.DistExecutionContext) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
-	ctx := context.Background()
-	ctx = util.WithInternalSourceType(ctx, "dispatcher")
+	ctx := util.WithInternalSourceType(context.Background(), "scheduler")
 	testkit.EnableFailPoint(t, "github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(8)")
 
 	executionContext := testkit.NewDistExecutionContext(t, nodeNum)

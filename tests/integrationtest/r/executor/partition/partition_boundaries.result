@@ -125,7 +125,9 @@ a	b
 1000002	1000002 Filler ...
 explain format='brief' SELECT * FROM t WHERE a = 3000000;
 id	estRows	task	access object	operator info
-TableDual	0.00	root		rows:0
+TableReader	0.00	root	partition:dual	data:Selection
+└─Selection	0.00	cop[tikv]		eq(executor__partition__partition_boundaries.t.a, 3000000)
+  └─TableFullScan	14.00	cop[tikv]	table:t	keep order:false
 SELECT * FROM t WHERE a = 3000000;
 a	b
 explain format='brief' SELECT * FROM t WHERE a IN (3000000);
@@ -137,7 +139,9 @@ SELECT * FROM t WHERE a IN (3000000);
 a	b
 explain format='brief' SELECT * FROM t WHERE a = 3000001;
 id	estRows	task	access object	operator info
-TableDual	0.00	root		rows:0
+TableReader	0.00	root	partition:dual	data:Selection
+└─Selection	0.00	cop[tikv]		eq(executor__partition__partition_boundaries.t.a, 3000001)
+  └─TableFullScan	14.00	cop[tikv]	table:t	keep order:false
 SELECT * FROM t WHERE a = 3000001;
 a	b
 explain format='brief' SELECT * FROM t WHERE a IN (3000001);

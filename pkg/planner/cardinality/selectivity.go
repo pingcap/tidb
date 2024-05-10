@@ -78,7 +78,7 @@ func Selectivity(
 	// TODO: If len(exprs) is bigger than 63, we could use bitset structure to replace the int64.
 	// This will simplify some code and speed up if we use this rather than a boolean slice.
 	if len(exprs) > 63 || (len(coll.Columns) == 0 && len(coll.Indices) == 0) {
-		ret = pseudoSelectivity(coll, exprs)
+		ret = pseudoSelectivity(ctx, coll, exprs)
 		if sc.EnableOptimizerCETrace {
 			ceTraceExpr(ctx, tableID, "Table Stats-Pseudo-Expression",
 				expression.ComposeCNFCondition(ctx.GetExprCtx(), exprs...), ret*float64(coll.RealtimeCount))
@@ -104,7 +104,7 @@ func Selectivity(
 
 		colHist := coll.Columns[c.UniqueID]
 		var sel float64
-		if colHist == nil || colHist.IsInvalid(ctx, coll.Pseudo) {
+		if statistics.ColumnStatsIsInvalid(colHist, ctx, coll, c.ID) {
 			sel = 1.0 / pseudoEqualRate
 		} else if colHist.Histogram.NDV > 0 {
 			sel = 1 / float64(colHist.Histogram.NDV)
@@ -119,12 +119,16 @@ func Selectivity(
 
 	extractedCols := make([]*expression.Column, 0, len(coll.Columns))
 	extractedCols = expression.ExtractColumnsFromExpressions(extractedCols, remainedExprs, nil)
-	colIDs := maps.Keys(coll.Columns)
-	slices.Sort(colIDs)
-	for _, id := range colIDs {
-		colStats := coll.Columns[id]
-		col := expression.ColInfo2Col(extractedCols, colStats.Info)
-		if col != nil {
+	slices.SortFunc(extractedCols, func(a *expression.Column, b *expression.Column) int {
+		return cmp.Compare(a.ID, b.ID)
+	})
+	extractedCols = slices.CompactFunc(extractedCols, func(a, b *expression.Column) bool {
+		return a.ID == b.ID
+	})
+	for _, col := range extractedCols {
+		id := col.UniqueID
+		colStats := coll.Columns[col.UniqueID]
+		if colStats != nil {
 			maskCovered, ranges, _, err := getMaskAndRanges(ctx, remainedExprs, ranger.ColumnRangeType, nil, nil, col)
 			if err != nil {
 				return 0, nil, errors.Trace(err)
@@ -145,6 +149,10 @@ func Selectivity(
 				return 0, nil, errors.Trace(err)
 			}
 			nodes[len(nodes)-1].Selectivity = cnt / float64(coll.RealtimeCount)
+		} else if !col.IsHidden {
+			// TODO: We are able to remove this path if we remove the async stats load.
+			statistics.ColumnStatsIsInvalid(nil, ctx, coll, col.ID)
+			recordUsedItemStatsStatus(ctx, (*statistics.Column)(nil), tableID, col.ID)
 		}
 	}
 	id2Paths := make(map[int64]*planutil.AccessPath)
@@ -174,7 +182,7 @@ func Selectivity(
 			})
 			continue
 		}
-		idxCols := findPrefixOfIndexByCol(ctx, extractedCols, coll.Idx2ColumnIDs[id], id2Paths[idxStats.ID])
+		idxCols := findPrefixOfIndexByCol(ctx, extractedCols, coll.Idx2ColUniqueIDs[id], id2Paths[idxStats.ID])
 		if len(idxCols) > 0 {
 			lengths := make([]int, 0, len(idxCols))
 			for i := 0; i < len(idxCols) && i < len(idxStats.Info.Columns); i++ {
@@ -320,7 +328,7 @@ OUTER:
 		}
 
 		dnfItems := expression.FlattenDNFConditions(scalarCond)
-		dnfItems = ranger.MergeDNFItems4Col(ctx, dnfItems)
+		dnfItems = ranger.MergeDNFItems4Col(ctx.GetRangerCtx(), dnfItems)
 		// If the conditions only contain a single column, we won't handle them.
 		if len(dnfItems) <= 1 {
 			continue
@@ -663,12 +671,13 @@ func isColEqCorCol(filter expression.Expression) *expression.Column {
 func findPrefixOfIndexByCol(ctx context.PlanContext, cols []*expression.Column, idxColIDs []int64,
 	cachedPath *planutil.AccessPath) []*expression.Column {
 	if cachedPath != nil {
+		evalCtx := ctx.GetExprCtx().GetEvalCtx()
 		idxCols := cachedPath.IdxCols
 		retCols := make([]*expression.Column, 0, len(idxCols))
 	idLoop:
 		for _, idCol := range idxCols {
 			for _, col := range cols {
-				if col.EqualByExprAndID(ctx.GetExprCtx(), idCol) {
+				if col.EqualByExprAndID(evalCtx, idCol) {
 					retCols = append(retCols, col)
 					continue idLoop
 				}
@@ -688,8 +697,8 @@ func getMaskAndRanges(ctx context.PlanContext, exprs []expression.Expression, ra
 	var accessConds, remainedConds []expression.Expression
 	switch rangeType {
 	case ranger.ColumnRangeType:
-		accessConds = ranger.ExtractAccessConditionsForColumn(ctx, exprs, cols[0])
-		ranges, accessConds, _, err = ranger.BuildColumnRange(accessConds, ctx, cols[0].RetType,
+		accessConds = ranger.ExtractAccessConditionsForColumn(ctx.GetRangerCtx(), exprs, cols[0])
+		ranges, accessConds, _, err = ranger.BuildColumnRange(accessConds, ctx.GetRangerCtx(), cols[0].RetType,
 			types.UnspecifiedLength, ctx.GetSessionVars().RangeMaxSize)
 	case ranger.IndexRangeType:
 		if cachedPath != nil {
@@ -698,7 +707,7 @@ func getMaskAndRanges(ctx context.PlanContext, exprs []expression.Expression, ra
 			break
 		}
 		var res *ranger.DetachRangeResult
-		res, err = ranger.DetachCondAndBuildRangeForIndex(ctx, exprs, cols, lengths, ctx.GetSessionVars().RangeMaxSize)
+		res, err = ranger.DetachCondAndBuildRangeForIndex(ctx.GetRangerCtx(), exprs, cols, lengths, ctx.GetSessionVars().RangeMaxSize)
 		if err != nil {
 			return 0, nil, false, err
 		}
@@ -715,7 +724,7 @@ func getMaskAndRanges(ctx context.PlanContext, exprs []expression.Expression, ra
 	}
 	for i := range exprs {
 		for j := range accessConds {
-			if exprs[i].Equal(ctx.GetExprCtx(), accessConds[j]) {
+			if exprs[i].Equal(ctx.GetExprCtx().GetEvalCtx(), accessConds[j]) {
 				mask |= 1 << uint64(i)
 				break
 			}
@@ -736,7 +745,7 @@ func getMaskAndSelectivityForMVIndex(
 	}
 	// You can find more examples and explanations in comments for collectFilters4MVIndex() and
 	// buildPartialPaths4MVIndex() in planner/core.
-	accessConds, _ := CollectFilters4MVIndex(ctx, exprs, cols)
+	accessConds, _, _ := CollectFilters4MVIndex(ctx, exprs, cols)
 	paths, isIntersection, ok, err := BuildPartialPaths4MVIndex(ctx, accessConds, cols, coll.Indices[id].Info, coll)
 	if err != nil || !ok {
 		return 1.0, 0, false
@@ -745,7 +754,7 @@ func getMaskAndSelectivityForMVIndex(
 	var mask int64
 	for i := range exprs {
 		for _, accessCond := range accessConds {
-			if exprs[i].Equal(ctx.GetExprCtx(), accessCond) {
+			if exprs[i].Equal(ctx.GetExprCtx().GetEvalCtx(), accessCond) {
 				mask |= 1 << uint64(i)
 				break
 			}
@@ -842,7 +851,7 @@ func GetSelectivityByFilter(sctx context.PlanContext, coll *statistics.HistColl,
 			}
 			c.AppendDatum(0, &val)
 		}
-		selected, err = expression.VectorizedFilter(sctx.GetExprCtx(), vecEnabled, filters, chunk.NewIterator4Chunk(c), selected)
+		selected, err = expression.VectorizedFilter(sctx.GetExprCtx().GetEvalCtx(), vecEnabled, filters, chunk.NewIterator4Chunk(c), selected)
 		if err != nil {
 			return false, 0, err
 		}
@@ -859,7 +868,7 @@ func GetSelectivityByFilter(sctx context.PlanContext, coll *statistics.HistColl,
 	// The buckets lower bounds are used as random samples and are regarded equally.
 	if hist != nil && histTotalCnt > 0 {
 		selected = selected[:0]
-		selected, err = expression.VectorizedFilter(sctx.GetExprCtx(), vecEnabled, filters, chunk.NewIterator4Chunk(hist.Bounds), selected)
+		selected, err = expression.VectorizedFilter(sctx.GetExprCtx().GetEvalCtx(), vecEnabled, filters, chunk.NewIterator4Chunk(hist.Bounds), selected)
 		if err != nil {
 			return false, 0, err
 		}
@@ -893,7 +902,7 @@ func GetSelectivityByFilter(sctx context.PlanContext, coll *statistics.HistColl,
 	c.Reset()
 	c.AppendNull(0)
 	selected = selected[:0]
-	selected, err = expression.VectorizedFilter(sctx.GetExprCtx(), vecEnabled, filters, chunk.NewIterator4Chunk(c), selected)
+	selected, err = expression.VectorizedFilter(sctx.GetExprCtx().GetEvalCtx(), vecEnabled, filters, chunk.NewIterator4Chunk(c), selected)
 	if err != nil || len(selected) != 1 || !selected[0] {
 		nullSel = 0
 	} else {
@@ -907,16 +916,15 @@ func GetSelectivityByFilter(sctx context.PlanContext, coll *statistics.HistColl,
 
 func findAvailableStatsForCol(sctx context.PlanContext, coll *statistics.HistColl, uniqueID int64) (isIndex bool, idx int64) {
 	// try to find available stats in column stats
-	if colStats, ok := coll.Columns[uniqueID]; ok && colStats != nil && !colStats.IsInvalid(sctx, coll.Pseudo) && colStats.IsFullLoad() {
+	if colStats := coll.Columns[uniqueID]; !statistics.ColumnStatsIsInvalid(colStats, sctx, coll, uniqueID) && colStats.IsFullLoad() {
 		return false, uniqueID
 	}
 	// try to find available stats in single column index stats (except for prefix index)
-	for idxStatsIdx, cols := range coll.Idx2ColumnIDs {
+	for idxStatsIdx, cols := range coll.Idx2ColUniqueIDs {
 		if len(cols) == 1 && cols[0] == uniqueID {
-			idxStats, ok := coll.Indices[idxStatsIdx]
-			if ok &&
+			idxStats := coll.Indices[idxStatsIdx]
+			if !statistics.IndexStatsIsInvalid(sctx, idxStats, coll, idxStatsIdx) &&
 				idxStats.Info.Columns[0].Length == types.UnspecifiedLength &&
-				!idxStats.IsInvalid(sctx, coll.Pseudo) &&
 				idxStats.IsFullLoad() {
 				return true, idxStatsIdx
 			}
@@ -961,7 +969,7 @@ func getEqualCondSelectivity(sctx context.PlanContext, coll *statistics.HistColl
 			return outOfRangeEQSelectivity(sctx, idx.NDV, realtimeCnt, int64(idx.TotalRowCount())), nil
 		}
 		// The equal condition only uses prefix columns of the index.
-		colIDs := coll.Idx2ColumnIDs[idx.ID]
+		colIDs := coll.Idx2ColUniqueIDs[idx.ID]
 		var ndv int64
 		for i, colID := range colIDs {
 			if i >= usedColsLen {
@@ -1043,36 +1051,35 @@ func crossValidationSelectivity(
 		}()
 	}
 	minRowCount = math.MaxFloat64
-	cols := coll.Idx2ColumnIDs[idx.ID]
+	cols := coll.Idx2ColUniqueIDs[idx.ID]
 	crossValidationSelectivity = 1.0
 	totalRowCount := idx.TotalRowCount()
 	for i, colID := range cols {
 		if i >= usedColsLen {
 			break
 		}
-		if col, ok := coll.Columns[colID]; ok {
-			if col.IsInvalid(sctx, coll.Pseudo) {
-				continue
-			}
-			// Since the column range is point range(LowVal is equal to HighVal), we need to set both LowExclude and HighExclude to false.
-			// Otherwise we would get 0.0 estRow from GetColumnRowCount.
-			rang := ranger.Range{
-				LowVal:      []types.Datum{idxPointRange.LowVal[i]},
-				LowExclude:  false,
-				HighVal:     []types.Datum{idxPointRange.HighVal[i]},
-				HighExclude: false,
-				Collators:   []collate.Collator{idxPointRange.Collators[i]},
-			}
+		col := coll.Columns[colID]
+		if statistics.ColumnStatsIsInvalid(col, sctx, coll, colID) {
+			continue
+		}
+		// Since the column range is point range(LowVal is equal to HighVal), we need to set both LowExclude and HighExclude to false.
+		// Otherwise we would get 0.0 estRow from GetColumnRowCount.
+		rang := ranger.Range{
+			LowVal:      []types.Datum{idxPointRange.LowVal[i]},
+			LowExclude:  false,
+			HighVal:     []types.Datum{idxPointRange.HighVal[i]},
+			HighExclude: false,
+			Collators:   []collate.Collator{idxPointRange.Collators[i]},
+		}
 
-			rowCount, err := GetColumnRowCount(sctx, col, []*ranger.Range{&rang}, coll.RealtimeCount, coll.ModifyCount, col.IsHandle)
-			if err != nil {
-				return 0, 0, err
-			}
-			crossValidationSelectivity = crossValidationSelectivity * (rowCount / totalRowCount)
+		rowCount, err := GetColumnRowCount(sctx, col, []*ranger.Range{&rang}, coll.RealtimeCount, coll.ModifyCount, col.IsHandle)
+		if err != nil {
+			return 0, 0, err
+		}
+		crossValidationSelectivity = crossValidationSelectivity * (rowCount / totalRowCount)
 
-			if rowCount < minRowCount {
-				minRowCount = rowCount
-			}
+		if rowCount < minRowCount {
+			minRowCount = rowCount
 		}
 	}
 	return minRowCount, crossValidationSelectivity, nil
@@ -1089,6 +1096,7 @@ var (
 	) (
 		accessFilters,
 		remainingFilters []expression.Expression,
+		accessTp int,
 	)
 	BuildPartialPaths4MVIndex func(
 		sctx context.PlanContext,

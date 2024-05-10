@@ -19,6 +19,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/sysproctrack"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze"
 	"github.com/pingcap/tidb/pkg/statistics/handle/cache"
@@ -110,7 +111,7 @@ func NewHandle(
 	initStatsCtx sessionctx.Context,
 	lease time.Duration,
 	pool util.SessionPool,
-	tracker sessionctx.SysProcTracker,
+	tracker sysproctrack.Tracker,
 	autoAnalyzeProcIDGetter func() uint64,
 ) (*Handle, error) {
 	handle := &Handle{
@@ -168,14 +169,14 @@ func (h *Handle) GetPartitionStatsForAutoAnalyze(tblInfo *model.TableInfo, pid i
 func (h *Handle) getPartitionStats(tblInfo *model.TableInfo, pid int64, returnPseudo bool) *statistics.Table {
 	var tbl *statistics.Table
 	if h == nil {
-		tbl = statistics.PseudoTable(tblInfo, false)
+		tbl = statistics.PseudoTable(tblInfo, false, false)
 		tbl.PhysicalID = pid
 		return tbl
 	}
 	tbl, ok := h.Get(pid)
 	if !ok {
 		if returnPseudo {
-			tbl = statistics.PseudoTable(tblInfo, false)
+			tbl = statistics.PseudoTable(tblInfo, false, true)
 			tbl.PhysicalID = pid
 			if tblInfo.GetPartitionInfo() == nil || h.Len() < 64 {
 				h.UpdateStatsCache([]*statistics.Table{tbl}, nil)

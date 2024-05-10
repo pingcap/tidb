@@ -104,6 +104,10 @@ func (c *mockPDClient) GetStore(_ context.Context, storeID uint64) (*metapb.Stor
 	}, nil
 }
 
+func (c *mockPDClient) GetClusterID(_ context.Context) uint64 {
+	return 1
+}
+
 type mockTiKVStore struct {
 	t *testing.T
 	helper.Storage

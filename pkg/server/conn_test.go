@@ -30,11 +30,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/extension"
+	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/server/internal"
@@ -52,7 +54,9 @@ import (
 	"github.com/pingcap/tidb/pkg/util/arena"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
+	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
+	promtestutils "github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/require"
 	tikverr "github.com/tikv/client-go/v2/error"
 	"github.com/tikv/client-go/v2/testutils"
@@ -720,6 +724,16 @@ func TestConnExecutionTimeout(t *testing.T) {
 	tk.MustQuery("select SLEEP(1);").Check(testkit.Rows("0"))
 	err := tk.QueryToErr("select * FROM testTable2 WHERE SLEEP(1);")
 	require.Equal(t, "[executor:3024]Query execution was interrupted, maximum statement execution time exceeded", err.Error())
+	// Test executor stats when execution time exceeded.
+	tk.MustExec("set @@tidb_slow_log_threshold=300")
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/unistoreRPCSlowByInjestSleep", `return(150)`))
+	err = tk.QueryToErr("select /*+ max_execution_time(600), set_var(tikv_client_read_timeout=100) */ * from testTable2")
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/unistoreRPCSlowByInjestSleep"))
+	require.Error(t, err)
+	require.Equal(t, "[executor:3024]Query execution was interrupted, maximum statement execution time exceeded", err.Error())
+	planInfo, err := plancodec.DecodePlan(tk.Session().GetSessionVars().StmtCtx.GetEncodedPlan())
+	require.NoError(t, err)
+	require.Regexp(t, "TableReader.*cop_task: {num: .*num_rpc:.*, total_time:.*", planInfo)
 
 	// Killed because of max execution time, reset Killed to 0.
 	tk.Session().GetSessionVars().SQLKiller.SendKillSignal(sqlkiller.MaxExecTimeExceeded)
@@ -824,7 +838,7 @@ func TestPrefetchPointKeys4Update(t *testing.T) {
 	require.True(t, txn.Valid())
 	snap := txn.GetSnapshot()
 	//nolint:forcetypeassert
-	require.Equal(t, 4, snap.(snapshotCache).SnapCacheHitCount())
+	require.Equal(t, 6, snap.(snapshotCache).SnapCacheHitCount())
 	tk.MustExec("commit")
 	tk.MustQuery("select * from prefetch").Check(testkit.Rows("1 1 2", "2 2 4", "3 3 4"))
 
@@ -874,7 +888,7 @@ func TestPrefetchPointKeys4Delete(t *testing.T) {
 	require.True(t, txn.Valid())
 	snap := txn.GetSnapshot()
 	//nolint:forcetypeassert
-	require.Equal(t, 4, snap.(snapshotCache).SnapCacheHitCount())
+	require.Equal(t, 6, snap.(snapshotCache).SnapCacheHitCount())
 	tk.MustExec("commit")
 	tk.MustQuery("select * from prefetch").Check(testkit.Rows("4 4 4", "5 5 5", "6 6 6"))
 
@@ -953,6 +967,8 @@ func TestPrefetchPartitionTable(t *testing.T) {
 	query := "delete from prefetch where a = 2;" +
 		"delete from prefetch where a = 3;" +
 		"delete from prefetch where a in (4,5);"
+	// TODO: refactor the build code and extract the partition pruning one,
+	// so it can be called in prefetchPointPlanKeys
 	err := cc.handleQuery(ctx, query)
 	require.NoError(t, err)
 	txn, err := tk.Session().Txn(false)
@@ -2066,9 +2082,46 @@ func TestCloseConn(t *testing.T) {
 	for i := 0; i < numGoroutines; i++ {
 		go func() {
 			defer wg.Done()
-			err := closeConn(cc, "", 1)
+			err := closeConn(cc)
 			require.NoError(t, err)
 		}()
 	}
 	wg.Wait()
+}
+
+func TestConnAddMetrics(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	re := require.New(t)
+	tk := testkit.NewTestKit(t, store)
+	cc := &clientConn{
+		alloc:      arena.NewAllocator(1024),
+		chunkAlloc: chunk.NewAllocator(),
+		pkt:        internal.NewPacketIOForTest(bufio.NewWriter(bytes.NewBuffer(nil))),
+	}
+	tk.MustExec("use test")
+	cc.SetCtx(&TiDBContext{Session: tk.Session(), stmts: make(map[int]*TiDBStatement)})
+
+	// default
+	cc.addMetrics(mysql.ComQuery, time.Now(), nil)
+	counter := metrics.QueryTotalCounter
+	v := promtestutils.ToFloat64(counter.WithLabelValues("Query", "OK", "default"))
+	require.Equal(t, 1.0, v)
+
+	// rg1
+	cc.getCtx().GetSessionVars().ResourceGroupName = "test_rg1"
+	cc.addMetrics(mysql.ComQuery, time.Now(), nil)
+	re.Equal(promtestutils.ToFloat64(counter.WithLabelValues("Query", "OK", "default")), 1.0)
+	re.Equal(promtestutils.ToFloat64(counter.WithLabelValues("Query", "OK", "test_rg1")), 1.0)
+	/// inc the counter again
+	cc.addMetrics(mysql.ComQuery, time.Now(), nil)
+	re.Equal(promtestutils.ToFloat64(counter.WithLabelValues("Query", "OK", "test_rg1")), 2.0)
+
+	// rg2
+	cc.getCtx().GetSessionVars().ResourceGroupName = "test_rg2"
+	// error
+	cc.addMetrics(mysql.ComQuery, time.Now(), errors.New("unknown error"))
+	re.Equal(promtestutils.ToFloat64(counter.WithLabelValues("Query", "Error", "test_rg2")), 1.0)
+	// ok
+	cc.addMetrics(mysql.ComStmtExecute, time.Now(), nil)
+	re.Equal(promtestutils.ToFloat64(counter.WithLabelValues("StmtExecute", "OK", "test_rg2")), 1.0)
 }

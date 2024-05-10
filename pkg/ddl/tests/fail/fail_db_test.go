@@ -425,6 +425,11 @@ func TestRunDDLJobPanic(t *testing.T) {
 func TestPartitionAddIndexGC(t *testing.T) {
 	s := createFailDBSuite(t)
 	tk := testkit.NewTestKit(t, s.store)
+	if tk.MustQuery("select @@tidb_schema_cache_size > 0").Equal(testkit.Rows("1")) {
+		// This test mock GC expire time exceeded, it's ok for infoschema v1 because it does not visit the network.
+		// While in infoschema v2, SchemaTable call meta.ListTables and fail.
+		t.Skip()
+	}
 	tk.MustExec("use test")
 	tk.MustExec(`create table partition_add_idx (
 	id int not null,

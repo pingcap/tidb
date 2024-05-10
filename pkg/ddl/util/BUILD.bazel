@@ -10,13 +10,14 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/ddl/util",
     visibility = ["//visibility:public"],
     deps = [
+        "//pkg/ddl/logutil",
         "//pkg/kv",
         "//pkg/parser/model",
         "//pkg/parser/terror",
         "//pkg/sessionctx",
         "//pkg/sessionctx/variable",
         "//pkg/util/chunk",
-        "//pkg/util/logutil",
+        "//pkg/util/mock",
         "//pkg/util/sqlexec",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
@@ -30,11 +31,15 @@ go_library(
 go_test(
     name = "util_test",
     timeout = "short",
-    srcs = ["main_test.go"],
+    srcs = [
+        "main_test.go",
+        "util_test.go",
+    ],
     embed = [":util"],
     flaky = True,
     deps = [
         "//pkg/testkit/testsetup",
+        "@com_github_stretchr_testify//require",
         "@org_uber_go_goleak//:goleak",
     ],
 )

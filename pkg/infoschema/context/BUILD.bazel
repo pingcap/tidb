@@ -5,4 +5,8 @@ go_library(
     srcs = ["infoschema.go"],
     importpath = "github.com/pingcap/tidb/pkg/infoschema/context",
     visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/ddl/placement",
+        "//pkg/parser/model",
+    ],
 )

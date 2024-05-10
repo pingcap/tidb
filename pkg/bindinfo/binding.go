@@ -18,7 +18,6 @@ import (
 	"time"
 	"unsafe"
 
-	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -224,47 +223,8 @@ func (br Bindings) size() float64 {
 	return mem
 }
 
-var statusIndex = map[string]int{
-	Enabled: 0,
-	deleted: 1,
-	Invalid: 2,
-}
-
-func bindingMetrics(br Bindings) ([]float64, []int) {
-	sizes := make([]float64, len(statusIndex))
-	count := make([]int, len(statusIndex))
-	if br == nil {
-		return sizes, count
-	}
-	commonLength := float64(0)
-	// We treat it as deleted if there are no bindings. It could only occur in session handles.
-	if len(br) == 0 {
-		sizes[statusIndex[deleted]] = commonLength
-		count[statusIndex[deleted]] = 1
-		return sizes, count
-	}
-	// Make the common length counted in the first binding.
-	sizes[statusIndex[br[0].Status]] = commonLength
-	for _, binding := range br {
-		sizes[statusIndex[binding.Status]] += binding.size()
-		count[statusIndex[binding.Status]]++
-	}
-	return sizes, count
-}
-
 // size calculates the memory size of a bind info.
 func (b *Binding) size() float64 {
 	res := len(b.OriginalSQL) + len(b.Db) + len(b.BindSQL) + len(b.Status) + 2*int(unsafe.Sizeof(b.CreateTime)) + len(b.Charset) + len(b.Collation) + len(b.ID)
 	return float64(res)
-}
-
-func updateMetrics(scope string, before Bindings, after Bindings, sizeOnly bool) {
-	beforeSize, beforeCount := bindingMetrics(before)
-	afterSize, afterCount := bindingMetrics(after)
-	for status, index := range statusIndex {
-		metrics.BindMemoryUsage.WithLabelValues(scope, status).Add(afterSize[index] - beforeSize[index])
-		if !sizeOnly {
-			metrics.BindTotalGauge.WithLabelValues(scope, status).Add(float64(afterCount[index] - beforeCount[index]))
-		}
-	}
 }

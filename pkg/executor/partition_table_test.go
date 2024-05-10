@@ -38,7 +38,6 @@ func TestPointGetwithRangeAndListPartitionTable(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
-	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
 
 	// list partition table
 	tk.MustExec(`create table tlist(a int, b int, unique index idx_a(a), index idx_b(b)) partition by list(a)(
@@ -92,15 +91,15 @@ func TestPointGetwithRangeAndListPartitionTable(t *testing.T) {
 
 	// test table dual
 	queryRange1 := "select a from trange1 where a=200"
-	tk.MustHavePlan(queryRange1, "TableDual") // check if TableDual is used
+	tk.MustQuery("EXPLAIN FORMAT='brief' " + queryRange1).Check(testkit.Rows("Point_Get 1.00 root table:trange1, partition:dual, index:a(a) "))
 	tk.MustQuery(queryRange1).Check(testkit.Rows())
 
 	queryRange2 := "select a from trange2 where a=200"
-	tk.MustHavePlan(queryRange2, "TableDual") // check if TableDual is used
+	tk.MustQuery("EXPLAIN FORMAT='brief' " + queryRange2).Check(testkit.Rows("Point_Get 1.00 root table:trange2, partition:dual, index:a(a) "))
 	tk.MustQuery(queryRange2).Check(testkit.Rows())
 
 	queryList := "select a from tlist where a=200"
-	tk.MustHavePlan(queryList, "TableDual") // check if TableDual is used
+	tk.MustQuery("EXPLAIN FORMAT='brief' " + queryList).Check(testkit.Rows("Point_Get 1.00 root table:tlist, partition:dual, index:idx_a(a) "))
 	tk.MustQuery(queryList).Check(testkit.Rows())
 
 	// test PointGet for one partition
@@ -319,7 +318,8 @@ func TestOrderByAndLimit(t *testing.T) {
 	is := dom.InfoSchema()
 	db, exists := is.SchemaByName(model.NewCIStr("test_orderby_limit"))
 	require.True(t, exists)
-	for _, tblInfo := range db.Tables {
+	for _, tbl := range is.SchemaTables(db.Name) {
+		tblInfo := tbl.Meta()
 		if strings.HasPrefix(tblInfo.Name.L, "tr") || strings.HasPrefix(tblInfo.Name.L, "thash") || strings.HasPrefix(tblInfo.Name.L, "tlist") {
 			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
 				Count:     1,

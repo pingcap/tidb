@@ -20,7 +20,6 @@ import (
 	"strconv"
 	"testing"
 
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/bindinfo/internal"
 	"github.com/pingcap/tidb/pkg/bindinfo/norm"
@@ -571,7 +570,8 @@ func TestBindingWithIsolationRead(t *testing.T) {
 	is := dom.InfoSchema()
 	db, exists := is.SchemaByName(model.NewCIStr("test"))
 	require.True(t, exists)
-	for _, tblInfo := range db.Tables {
+	for _, tbl := range is.SchemaTables(db.Name) {
+		tblInfo := tbl.Meta()
 		if tblInfo.Name.L == "t" {
 			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
 				Count:     1,
@@ -1099,13 +1099,15 @@ func TestFuzzyBindingHintsWithSourceReturning(t *testing.T) {
 		for _, currentDB := range []string{"db1", "db2", "db3"} {
 			tk.MustExec(`use ` + currentDB)
 			for _, db := range []string{"db1.", "db2.", "db3.", ""} {
-				require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/bindinfo/get_binding_return_nil", `return()`))
 				query := fmt.Sprintf(c.qTemplate, db)
 				tk.MustExec(query)
-				require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/bindinfo/get_binding_return_nil"))
 				tk.MustQuery(`show warnings`).Check(testkit.Rows()) // no warning
+				sctx := tk.Session()
+				sctx.SetValue(bindinfo.GetBindingReturnNil, true)
 				tk.MustExec(query)
+				sctx.ClearValue(bindinfo.GetBindingReturnNil)
 				tk.MustQuery(`select @@last_plan_from_binding`).Check(testkit.Rows("1"))
+				bindinfo.GetBindingReturnNilBool.Store(false)
 			}
 		}
 	}

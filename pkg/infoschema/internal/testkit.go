@@ -126,6 +126,14 @@ func CreateAutoIDRequirement(t testing.TB, opts ...mockstore.MockTiKVStoreOption
 	}
 }
 
+// CreateAutoIDRequirementWithStore create autoid requirement with storage for testing.
+func CreateAutoIDRequirementWithStore(t testing.TB, store kv.Storage) autoid.Requirement {
+	return &mockAutoIDRequirement{
+		store:  store,
+		client: nil,
+	}
+}
+
 // GenGlobalID generates next id globally for testing.
 func GenGlobalID(store kv.Storage) (int64, error) {
 	var globalID int64
@@ -139,7 +147,7 @@ func GenGlobalID(store kv.Storage) (int64, error) {
 }
 
 // MockDBInfo mock DBInfo for testing.
-func MockDBInfo(t *testing.T, store kv.Storage, DBName string) *model.DBInfo {
+func MockDBInfo(t testing.TB, store kv.Storage, DBName string) *model.DBInfo {
 	id, err := GenGlobalID(store)
 	require.NoError(t, err)
 	return &model.DBInfo{
@@ -151,7 +159,7 @@ func MockDBInfo(t *testing.T, store kv.Storage, DBName string) *model.DBInfo {
 }
 
 // MockTableInfo mock TableInfo for testing.
-func MockTableInfo(t *testing.T, store kv.Storage, tblName string) *model.TableInfo {
+func MockTableInfo(t testing.TB, store kv.Storage, tblName string) *model.TableInfo {
 	colID, err := GenGlobalID(store)
 	require.NoError(t, err)
 	colInfo := &model.ColumnInfo{
@@ -190,8 +198,28 @@ func MockResourceGroupInfo(t *testing.T, store kv.Storage, groupName string) *mo
 	}
 }
 
+// MockPolicyInfo mock policy for testing.
+func MockPolicyInfo(t *testing.T, store kv.Storage, policyName string) *model.PolicyInfo {
+	id, err := GenGlobalID(store)
+	require.NoError(t, err)
+	return &model.PolicyInfo{
+		ID:   id,
+		Name: model.NewCIStr(policyName),
+	}
+}
+
+// MockPolicyRefInfo mock policy ref info for testing.
+func MockPolicyRefInfo(t *testing.T, store kv.Storage, policyName string) *model.PolicyRefInfo {
+	id, err := GenGlobalID(store)
+	require.NoError(t, err)
+	return &model.PolicyRefInfo{
+		ID:   id,
+		Name: model.NewCIStr(policyName),
+	}
+}
+
 // AddTable add mock table for testing.
-func AddTable(t *testing.T, store kv.Storage, dbInfo *model.DBInfo, tblInfo *model.TableInfo) {
+func AddTable(t testing.TB, store kv.Storage, dbInfo *model.DBInfo, tblInfo *model.TableInfo) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	err := kv.RunInNewTxn(ctx, store, true, func(ctx context.Context, txn kv.Transaction) error {
 		err := meta.NewMeta(txn).CreateTableOrView(dbInfo.ID, dbInfo.Name.O, tblInfo)
@@ -201,8 +229,19 @@ func AddTable(t *testing.T, store kv.Storage, dbInfo *model.DBInfo, tblInfo *mod
 	require.NoError(t, err)
 }
 
+// UpdateTable update mock table for testing.
+func UpdateTable(t *testing.T, store kv.Storage, dbInfo *model.DBInfo, tblInfo *model.TableInfo) {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+	err := kv.RunInNewTxn(ctx, store, true, func(ctx context.Context, txn kv.Transaction) error {
+		err := meta.NewMeta(txn).UpdateTable(dbInfo.ID, tblInfo)
+		require.NoError(t, err)
+		return errors.Trace(err)
+	})
+	require.NoError(t, err)
+}
+
 // DropTable drop mock table for testing.
-func DropTable(t *testing.T, store kv.Storage, dbInfo *model.DBInfo, tblID int64, tblName string) {
+func DropTable(t testing.TB, store kv.Storage, dbInfo *model.DBInfo, tblID int64, tblName string) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	err := kv.RunInNewTxn(ctx, store, true, func(ctx context.Context, txn kv.Transaction) error {
 		err := meta.NewMeta(txn).DropTableOrView(dbInfo.ID, dbInfo.Name.O, tblID, tblName)
@@ -213,7 +252,7 @@ func DropTable(t *testing.T, store kv.Storage, dbInfo *model.DBInfo, tblID int64
 }
 
 // AddDB add mock db for testing.
-func AddDB(t *testing.T, store kv.Storage, dbInfo *model.DBInfo) {
+func AddDB(t testing.TB, store kv.Storage, dbInfo *model.DBInfo) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	err := kv.RunInNewTxn(ctx, store, true, func(ctx context.Context, txn kv.Transaction) error {
 		err := meta.NewMeta(txn).CreateDatabase(dbInfo)
@@ -224,11 +263,22 @@ func AddDB(t *testing.T, store kv.Storage, dbInfo *model.DBInfo) {
 }
 
 // DropDB drop mock db for testing.
-func DropDB(t *testing.T, store kv.Storage, dbInfo *model.DBInfo) {
+func DropDB(t testing.TB, store kv.Storage, dbInfo *model.DBInfo) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 
 	err := kv.RunInNewTxn(ctx, store, true, func(ctx context.Context, txn kv.Transaction) error {
 		err := meta.NewMeta(txn).DropDatabase(dbInfo.ID, dbInfo.Name.O)
+		require.NoError(t, err)
+		return errors.Trace(err)
+	})
+	require.NoError(t, err)
+}
+
+// UpdateDB update mock db for testing.
+func UpdateDB(t testing.TB, store kv.Storage, dbInfo *model.DBInfo) {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+	err := kv.RunInNewTxn(ctx, store, true, func(ctx context.Context, txn kv.Transaction) error {
+		err := meta.NewMeta(txn).UpdateDatabase(dbInfo)
 		require.NoError(t, err)
 		return errors.Trace(err)
 	})
@@ -262,6 +312,39 @@ func DropResourceGroup(t *testing.T, store kv.Storage, group *model.ResourceGrou
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	err := kv.RunInNewTxn(ctx, store, true, func(ctx context.Context, txn kv.Transaction) error {
 		err := meta.NewMeta(txn).DropResourceGroup(group.ID)
+		require.NoError(t, err)
+		return errors.Trace(err)
+	})
+	require.NoError(t, err)
+}
+
+// CreatePolicy create mock policy for testing.
+func CreatePolicy(t *testing.T, store kv.Storage, policy *model.PolicyInfo) {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+	err := kv.RunInNewTxn(ctx, store, true, func(ctx context.Context, txn kv.Transaction) error {
+		err := meta.NewMeta(txn).CreatePolicy(policy)
+		require.NoError(t, err)
+		return errors.Trace(err)
+	})
+	require.NoError(t, err)
+}
+
+// UpdatePolicy update mock policy for testing.
+func UpdatePolicy(t *testing.T, store kv.Storage, policy *model.PolicyInfo) {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+	err := kv.RunInNewTxn(ctx, store, true, func(ctx context.Context, txn kv.Transaction) error {
+		err := meta.NewMeta(txn).UpdatePolicy(policy)
+		require.NoError(t, err)
+		return errors.Trace(err)
+	})
+	require.NoError(t, err)
+}
+
+// DropPolicy drop mock policy for testing.
+func DropPolicy(t *testing.T, store kv.Storage, policy *model.PolicyInfo) {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+	err := kv.RunInNewTxn(ctx, store, true, func(ctx context.Context, txn kv.Transaction) error {
+		err := meta.NewMeta(txn).DropPolicy(policy.ID)
 		require.NoError(t, err)
 		return errors.Trace(err)
 	})

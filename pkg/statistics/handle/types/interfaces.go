@@ -271,6 +271,9 @@ type StatsReadWriter interface {
 	// SaveTableStatsToStorage saves the stats of a table to storage.
 	SaveTableStatsToStorage(results *statistics.AnalyzeResults, analyzeSnapshot bool, source string) (err error)
 
+	// SaveMetaToStorage saves the stats meta of a table to storage.
+	SaveMetaToStorage(tableID, count, modifyCount int64, source string) (err error)
+
 	// InsertColStats2KV inserts columns stats to kv.
 	InsertColStats2KV(physicalID int64, colInfos []*model.ColumnInfo) (err error)
 
@@ -363,24 +366,44 @@ type StatsReadWriter interface {
 
 // NeededItemTask represents one needed column/indices with expire time.
 type NeededItemTask struct {
-	ToTimeout   time.Time
-	ResultCh    chan stmtctx.StatsLoadResult
-	TableItemID model.TableItemID
+	ToTimeout time.Time
+	ResultCh  chan stmtctx.StatsLoadResult
+	Item      model.StatsLoadItem
+	Retry     int
 }
 
 // StatsLoad is used to load stats concurrently
+// TODO(hawkingrei): Our implementation of loading statistics is flawed.
+// Currently, we enqueue tasks that require loading statistics into a channel,
+// from which workers retrieve tasks to process. Then, using the singleflight mechanism,
+// we filter out duplicate tasks. However, the issue with this approach is that it does
+// not filter out all duplicate tasks, but only the duplicates within the number of workers.
+// Such an implementation is not reasonable.
+//
+// We should first filter all tasks through singleflight as shown in the diagram, and then use workers to load stats.
+//
+// ┌─────────▼──────────▼─────────────▼──────────────▼────────────────▼────────────────────┐
+// │                                                                                       │
+// │                                       singleflight                                    │
+// │                                                                                       │
+// └───────────────────────────────────────────────────────────────────────────────────────┘
+//
+//		            │                │
+//	   ┌────────────▼──────┐ ┌───────▼───────────┐
+//	   │                   │ │                   │
+//	   │  syncload worker  │ │  syncload worker  │
+//	   │                   │ │                   │
+//	   └───────────────────┘ └───────────────────┘
 type StatsLoad struct {
 	NeededItemsCh  chan *NeededItemTask
 	TimeoutItemsCh chan *NeededItemTask
-	WorkingColMap  map[model.TableItemID][]chan stmtctx.StatsLoadResult
-	SubCtxs        []sessionctx.Context
 	sync.Mutex
 }
 
 // StatsSyncLoad implement the sync-load feature.
 type StatsSyncLoad interface {
 	// SendLoadRequests sends load requests to the channel.
-	SendLoadRequests(sc *stmtctx.StatementContext, neededHistItems []model.TableItemID, timeout time.Duration) error
+	SendLoadRequests(sc *stmtctx.StatementContext, neededHistItems []model.StatsLoadItem, timeout time.Duration) error
 
 	// SyncWaitStatsLoad will wait for the load requests to finish.
 	SyncWaitStatsLoad(sc *stmtctx.StatementContext) error
@@ -393,10 +416,6 @@ type StatsSyncLoad interface {
 
 	// HandleOneTask will handle one task.
 	HandleOneTask(sctx sessionctx.Context, lastTask *NeededItemTask, exit chan struct{}) (task *NeededItemTask, err error)
-
-	// SetSubCtxs sets the sessionctx which is used to run queries background.
-	// TODO: use SessionPool instead.
-	SetSubCtxs(idx int, sctx sessionctx.Context)
 }
 
 // StatsGlobal is used to manage partition table global stats.

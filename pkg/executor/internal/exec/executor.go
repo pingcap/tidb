@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/ngaut/pools"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser"
@@ -30,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
-	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/pkg/util/topsql"
 	topsqlstate "github.com/pingcap/tidb/pkg/util/topsql/state"
 	"github.com/pingcap/tidb/pkg/util/tracing"
@@ -90,6 +90,9 @@ func newExecutorChunkAllocator(vars *variable.SessionVars, retFieldTypes []*type
 
 // InitCap returns the initial capacity for chunk
 func (e *executorChunkAllocator) InitCap() int {
+	failpoint.Inject("initCap", func(val failpoint.Value) {
+		failpoint.Return(val.(int))
+	})
 	return e.initCap
 }
 
@@ -100,6 +103,9 @@ func (e *executorChunkAllocator) SetInitCap(c int) {
 
 // MaxChunkSize returns the max chunk size.
 func (e *executorChunkAllocator) MaxChunkSize() int {
+	failpoint.Inject("maxChunkSize", func(val failpoint.Value) {
+		failpoint.Return(val.(int))
+	})
 	return e.maxChunkSize
 }
 
@@ -349,7 +355,7 @@ func (e *BaseExecutor) ReleaseSysSession(ctx context.Context, sctx sessionctx.Co
 	}
 	dom := domain.GetDomain(e.Ctx())
 	sysSessionPool := dom.SysSessionPool()
-	if _, err := sctx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, "rollback"); err != nil {
+	if _, err := sctx.GetSQLExecutor().ExecuteInternal(ctx, "rollback"); err != nil {
 		sctx.(pools.Resource).Close()
 		return
 	}

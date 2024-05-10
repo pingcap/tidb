@@ -47,6 +47,7 @@ func AssertTableEqual(t *testing.T, a *statistics.Table, b *statistics.Table) {
 		require.True(t, a.Indices[i].TopN.Equal(b.Indices[i].TopN))
 	}
 	require.True(t, IsSameExtendedStats(a.ExtendedStats, b.ExtendedStats))
+	require.True(t, statistics.ColAndIdxExistenceMapIsEqual(a.ColAndIdxExistenceMap, b.ColAndIdxExistenceMap))
 }
 
 // IsSameExtendedStats is to judge whether the extended states is the same.

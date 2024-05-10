@@ -575,17 +575,17 @@ create table io (a int key auto_increment);
 insert into io values (null),(null),(null);
 select * from io;
 a
-10
-15
-20
+1
+6
+11
 drop table io;
 create table io (a int key auto_increment) AUTO_ID_CACHE 1;
 insert into io values (null),(null),(null);
 select * from io;
 a
-10
-15
-20
+1
+6
+11
 drop table io;
 create table io (a int key auto_increment);
 set auto_increment_offset = 10;
@@ -593,33 +593,33 @@ set auto_increment_increment = 2;
 insert into io values (),(),();
 select * from io;
 a
-10
-12
-14
+1
+3
+5
 delete from io;
 set auto_increment_increment = 5;
 insert into io values (),(),();
 select * from io;
 a
-15
-20
-25
+6
+11
+16
 delete from io;
 set auto_increment_increment = 10;
 insert into io values (),(),();
 select * from io;
 a
+20
 30
 40
-50
 delete from io;
 set auto_increment_increment = 5;
 insert into io values (),(),();
 select * from io;
 a
-55
-60
-65
+41
+46
+51
 drop table io;
 create table io (a int key auto_increment) AUTO_ID_CACHE 1;
 set auto_increment_offset = 10;
@@ -627,33 +627,33 @@ set auto_increment_increment = 2;
 insert into io values (),(),();
 select * from io;
 a
-10
-12
-14
+1
+3
+5
 delete from io;
 set auto_increment_increment = 5;
 insert into io values (),(),();
 select * from io;
 a
-15
-20
-25
+6
+11
+16
 delete from io;
 set auto_increment_increment = 10;
 insert into io values (),(),();
 select * from io;
 a
+20
 30
 40
-50
 delete from io;
 set auto_increment_increment = 5;
 insert into io values (),(),();
 select * from io;
 a
-55
-60
-65
+41
+46
+51
 drop table io;
 set auto_increment_offset = 10;
 set auto_increment_increment = 2;
@@ -661,27 +661,27 @@ create table io (a int, b int auto_increment, key(b));
 insert into io(b) values (null),(null),(null);
 select b from io;
 b
-10
-12
-14
+1
+3
+5
 select _tidb_rowid from io;
 _tidb_rowid
-15
-16
-17
+6
+7
+8
 delete from io;
 set auto_increment_increment = 10;
 insert into io(b) values (null),(null),(null);
 select b from io;
 b
+10
 20
 30
-40
 select _tidb_rowid from io;
 _tidb_rowid
-41
-42
-43
+31
+32
+33
 drop table io;
 set auto_increment_offset = 10;
 set auto_increment_increment = 2;
@@ -689,9 +689,9 @@ create table io (a int, b int auto_increment, key(b)) AUTO_ID_CACHE 1;
 insert into io(b) values (null),(null),(null);
 select b from io;
 b
-10
-12
-14
+1
+3
+5
 select _tidb_rowid from io;
 _tidb_rowid
 1
@@ -702,9 +702,9 @@ set auto_increment_increment = 10;
 insert into io(b) values (null),(null),(null);
 select b from io;
 b
+10
 20
 30
-40
 select _tidb_rowid from io;
 _tidb_rowid
 4
@@ -737,3 +737,83 @@ auto_increment_increment	65535
 auto_increment_offset	65535
 set auto_increment_offset = default;
 set auto_increment_increment = default;
+drop table if exists issue52465;
+create table issue52465 (id int primary key auto_increment, k int) AUTO_ID_CACHE=1;
+insert into issue52465 (k) values (1);
+insert into issue52465 values (3997, 2);
+select * from issue52465 t;
+id	k
+1	1
+3997	2
+insert into issue52465 (k) values (1),(2),(3),(4),(5),(6),(7),(8),(9),(10);
+select * from issue52465;
+id	k
+1	1
+3997	2
+3998	1
+3999	2
+4000	3
+4001	4
+4002	5
+4003	6
+4004	7
+4005	8
+4006	9
+4007	10
+insert into issue52465 (k) values (11);
+select * from issue52465;
+id	k
+1	1
+3997	2
+3998	1
+3999	2
+4000	3
+4001	4
+4002	5
+4003	6
+4004	7
+4005	8
+4006	9
+4007	10
+4008	11
+drop table issue52465;
+drop table if exists issue52465;
+create table issue52465 (id int unsigned primary key auto_increment, k int) AUTO_ID_CACHE=1;
+insert into issue52465 (k) values (1);
+insert into issue52465 values (3997, 2);
+select * from issue52465 t;
+id	k
+1	1
+3997	2
+insert into issue52465 (k) values (1),(2),(3),(4),(5),(6),(7),(8),(9),(10);
+select * from issue52465;
+id	k
+1	1
+3997	2
+3998	1
+3999	2
+4000	3
+4001	4
+4002	5
+4003	6
+4004	7
+4005	8
+4006	9
+4007	10
+insert into issue52465 (k) values (11);
+select * from issue52465;
+id	k
+1	1
+3997	2
+3998	1
+3999	2
+4000	3
+4001	4
+4002	5
+4003	6
+4004	7
+4005	8
+4006	9
+4007	10
+4008	11
+drop table issue52465;

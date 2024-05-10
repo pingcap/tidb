@@ -14,6 +14,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/httputil"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/restore"
+	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -91,13 +92,7 @@ func RunRestoreRaw(c context.Context, g glue.Glue, cmdName string, cfg *RestoreR
 	// sometimes we have pooled the connections.
 	// sending heartbeats in idle times is useful.
 	keepaliveCfg.PermitWithoutStream = true
-	client := restore.NewRestoreClient(
-		mgr.GetPDClient(),
-		mgr.GetPDHTTPClient(),
-		mgr.GetTLSConfig(),
-		keepaliveCfg,
-		true,
-	)
+	client := restore.NewRestoreClient(mgr.GetPDClient(), mgr.GetPDHTTPClient(), mgr.GetTLSConfig(), keepaliveCfg)
 	client.SetRateLimit(cfg.RateLimit)
 	client.SetCrypter(&cfg.CipherInfo)
 	client.SetConcurrency(uint(cfg.Concurrency))
@@ -116,7 +111,7 @@ func RunRestoreRaw(c context.Context, g glue.Glue, cmdName string, cfg *RestoreR
 		return errors.Trace(err)
 	}
 	reader := metautil.NewMetaReader(backupMeta, s, &cfg.CipherInfo)
-	if err = client.InitBackupMeta(c, backupMeta, u, reader); err != nil {
+	if err = client.InitBackupMeta(c, backupMeta, u, reader, true); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -137,8 +132,8 @@ func RunRestoreRaw(c context.Context, g glue.Glue, cmdName string, cfg *RestoreR
 	}
 	summary.CollectInt("restore files", len(files))
 
-	ranges, _, err := restore.MergeFileRanges(
-		files, kvConfigs.MergeRegionSize.Value, kvConfigs.MergeRegionKeyCount.Value)
+	ranges, _, err := restoreutils.MergeAndRewriteFileRanges(
+		files, nil, kvConfigs.MergeRegionSize.Value, kvConfigs.MergeRegionKeyCount.Value)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -153,7 +148,7 @@ func RunRestoreRaw(c context.Context, g glue.Glue, cmdName string, cfg *RestoreR
 		!cfg.LogProgress)
 
 	// RawKV restore does not need to rewrite keys.
-	err = restore.SplitRanges(ctx, client, ranges, nil, updateCh, true)
+	err = restore.SplitRanges(ctx, client, ranges, updateCh, true)
 	if err != nil {
 		return errors.Trace(err)
 	}

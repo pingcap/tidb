@@ -18,7 +18,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/format"
@@ -355,30 +354,30 @@ func nodeType4Stmt(node ast.StmtNode) NodeType {
 	return TypeInvalid
 }
 
-// CheckBindingFromHistoryBindable checks whether the ast and hint string from history is bindable.
-// Not support:
+// CheckBindingFromHistoryComplete checks whether the ast and hint string from history is complete.
+// For these complex queries, the auto-generated binding might be not complete:
 // 1. query use tiFlash engine
 // 2. query with sub query
 // 3. query with more than 2 table join
-func CheckBindingFromHistoryBindable(node ast.Node, hintStr string) error {
+func CheckBindingFromHistoryComplete(node ast.Node, hintStr string) (complete bool, reason string) {
 	// check tiflash
 	contain := strings.Contains(hintStr, "tiflash")
 	if contain {
-		return errors.New("can't create binding for query with tiflash engine")
+		return false, "auto-generated hint for queries accessing TiFlash might not be complete, the plan might change even after creating this binding"
 	}
 
 	checker := bindableChecker{
-		bindable: true,
+		complete: true,
 		tables:   make(map[model.CIStr]struct{}, 2),
 	}
 	node.Accept(&checker)
-	return checker.reason
+	return checker.complete, checker.reason
 }
 
 // bindableChecker checks whether a binding from history can be created.
 type bindableChecker struct {
-	bindable bool
-	reason   error
+	complete bool
+	reason   string
 	tables   map[model.CIStr]struct{}
 }
 
@@ -386,16 +385,16 @@ type bindableChecker struct {
 func (checker *bindableChecker) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 	switch node := in.(type) {
 	case *ast.ExistsSubqueryExpr, *ast.SubqueryExpr:
-		checker.bindable = false
-		checker.reason = errors.New("can't create binding for query with sub query")
+		checker.complete = false
+		checker.reason = "auto-generated hint for queries with sub queries might not be complete, the plan might change even after creating this binding"
 		return in, true
 	case *ast.TableName:
 		if _, ok := checker.tables[node.Schema]; !ok {
 			checker.tables[node.Name] = struct{}{}
 		}
 		if len(checker.tables) >= 3 {
-			checker.bindable = false
-			checker.reason = errors.New("can't create binding for query with more than two table join")
+			checker.complete = false
+			checker.reason = "auto-generated hint for queries with more than 3 table join might not be complete, the plan might change even after creating this binding"
 			return in, true
 		}
 	}
@@ -404,5 +403,5 @@ func (checker *bindableChecker) Enter(in ast.Node) (out ast.Node, skipChildren b
 
 // Leave implements Visitor interface.
 func (checker *bindableChecker) Leave(in ast.Node) (out ast.Node, ok bool) {
-	return in, checker.bindable
+	return in, checker.complete
 }

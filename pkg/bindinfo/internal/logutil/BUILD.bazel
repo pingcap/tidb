@@ -1,0 +1,12 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "logutil",
+    srcs = ["logutil.go"],
+    importpath = "github.com/pingcap/tidb/pkg/bindinfo/internal/logutil",
+    visibility = ["//pkg/bindinfo:__subpackages__"],
+    deps = [
+        "//pkg/util/logutil",
+        "@org_uber_go_zap//:zap",
+    ],
+)

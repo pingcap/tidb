@@ -238,11 +238,38 @@ func WithRetryV2[T any](
 		allErrors = multierr.Append(allErrors, err)
 		select {
 		case <-ctx.Done():
+			// allErrors must not be `nil` here, so ignore the context error.
 			return *new(T), allErrors
 		case <-time.After(backoffer.NextBackoff(err)):
 		}
 	}
 	return *new(T), allErrors // nolint:wrapcheck
+}
+
+// WithRetryReturnLastErr is like WithRetry but the returned error is the last
+// error during retry rather than a multierr.
+func WithRetryReturnLastErr(
+	ctx context.Context,
+	retryableFunc RetryableFunc,
+	backoffer Backoffer,
+) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	var lastErr error
+	for backoffer.Attempt() > 0 {
+		lastErr = retryableFunc()
+		if lastErr == nil {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return lastErr
+		case <-time.After(backoffer.NextBackoff(lastErr)):
+		}
+	}
+
+	return lastErr
 }
 
 // MessageIsRetryableStorageError checks whether the message returning from TiKV is retryable ExternalStorageError.

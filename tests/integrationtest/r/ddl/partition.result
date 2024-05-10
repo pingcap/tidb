@@ -457,3 +457,12 @@ drop table t;
 set character_set_connection=DEFAULT;
 create table a (col1 int, col2 int, unique key (col1, col2)) partition by range  columns (col1, col2) (partition p0 values less than (NULL, 1 ));
 Error 1566 (HY000): Not allowed to use NULL value in VALUES LESS THAN
+drop table if exists parent, child, child_with_partition;
+create table parent (id int unique);
+create table child (id int, parent_id int, foreign key (parent_id) references parent(id));
+create table child_with_partition(id int, parent_id int) partition by range(id) (partition p1 values less than (100));
+alter table child_with_partition exchange partition p1 with table child;
+Error 1740 (HY000): Table to exchange with partition has foreign key references: 'child'
+alter table child drop foreign key fk_1;
+alter table child drop key fk_1;
+alter table child_with_partition exchange partition p1 with table child;

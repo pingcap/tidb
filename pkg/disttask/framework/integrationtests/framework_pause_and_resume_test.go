@@ -37,7 +37,12 @@ func CheckSubtasksState(ctx context.Context, t *testing.T, taskID int64, state p
 	require.NoError(t, err)
 	historySubTasksCnt, err := testutil.GetSubtasksFromHistoryByTaskID(ctx, mgr, taskID)
 	require.NoError(t, err)
-	require.Equal(t, expectedCnt, cntByStatesStepOne[state]+cntByStatesStepTwo[state]+int64(historySubTasksCnt))
+	// all subtasks moved to history.
+	if historySubTasksCnt != 0 {
+		require.Equal(t, expectedCnt, int64(historySubTasksCnt))
+	} else {
+		require.Equal(t, expectedCnt, cntByStatesStepOne[state]+cntByStatesStepTwo[state])
+	}
 }
 
 func TestFrameworkPauseAndResume(t *testing.T) {
@@ -46,7 +51,7 @@ func TestFrameworkPauseAndResume(t *testing.T) {
 	testutil.RegisterTaskMeta(t, c.MockCtrl, testutil.GetMockBasicSchedulerExt(c.MockCtrl), c.TestContext, nil)
 	// 1. schedule and pause one running task.
 	testkit.EnableFailPoint(t, "github.com/pingcap/tidb/pkg/disttask/framework/scheduler/pauseTaskAfterRefreshTask", "2*return(true)")
-	task1 := testutil.SubmitAndWaitTask(c.Ctx, t, "key1", 1)
+	task1 := testutil.SubmitAndWaitTask(c.Ctx, t, "key1", "", 1)
 	require.Equal(t, proto.TaskStatePaused, task1.State)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/pauseTaskAfterRefreshTask"))
 	// 4 subtask scheduled.
@@ -63,7 +68,7 @@ func TestFrameworkPauseAndResume(t *testing.T) {
 
 	// 2. pause pending task.
 	testkit.EnableFailPoint(t, "github.com/pingcap/tidb/pkg/disttask/framework/scheduler/pausePendingTask", "2*return(true)")
-	task2 := testutil.SubmitAndWaitTask(c.Ctx, t, "key2", 1)
+	task2 := testutil.SubmitAndWaitTask(c.Ctx, t, "key2", "", 1)
 	require.Equal(t, proto.TaskStatePaused, task2.State)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/pausePendingTask"))
 	// 4 subtask scheduled.

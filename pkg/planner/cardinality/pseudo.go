@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/planner/context"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/ranger"
@@ -40,7 +41,7 @@ func PseudoAvgCountPerValue(t *statistics.Table) float64 {
 	return float64(t.RealtimeCount) / pseudoEqualRate
 }
 
-func pseudoSelectivity(coll *statistics.HistColl, exprs []expression.Expression) float64 {
+func pseudoSelectivity(sctx context.PlanContext, coll *statistics.HistColl, exprs []expression.Expression) float64 {
 	minFactor := selectionFactor
 	colExists := make(map[string]bool)
 	for _, expr := range exprs {
@@ -52,6 +53,7 @@ func pseudoSelectivity(coll *statistics.HistColl, exprs []expression.Expression)
 		if colID == unknownColumnID {
 			continue
 		}
+		statistics.ColumnStatsIsInvalid((*statistics.Column)(nil), sctx, coll, colID)
 		switch fun.FuncName.L {
 		case ast.EQ, ast.NullEQ, ast.In:
 			minFactor = math.Min(minFactor, 1.0/pseudoEqualRate)
@@ -73,17 +75,19 @@ func pseudoSelectivity(coll *statistics.HistColl, exprs []expression.Expression)
 	}
 	// use the unique key info
 	for _, idx := range coll.Indices {
-		if !idx.Info.Unique {
-			continue
-		}
 		unique := true
+		firstMatch := false
 		for _, col := range idx.Info.Columns {
 			if !colExists[col.Name.L] {
 				unique = false
 				break
 			}
+			firstMatch = true
 		}
-		if unique {
+		if firstMatch {
+			statistics.IndexStatsIsInvalid(sctx, (*statistics.Index)(nil), coll, idx.ID)
+		}
+		if idx.Info.Unique && unique {
 			return 1.0 / float64(coll.RealtimeCount)
 		}
 	}

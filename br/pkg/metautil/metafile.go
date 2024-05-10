@@ -23,10 +23,10 @@ import (
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/summary"
-	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/tablecodec"
+	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/encrypt"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
@@ -121,7 +121,7 @@ func walkLeafMetaFile(
 		return nil
 	}
 	eg, ectx := errgroup.WithContext(ctx)
-	workers := utils.NewWorkerPool(8, "download files workers")
+	workers := tidbutil.NewWorkerPool(8, "download files workers")
 	for _, node_ := range file.MetaFiles {
 		node := node_
 		workers.ApplyOnErrorGroup(eg, func() error {
@@ -291,6 +291,7 @@ func (reader *MetaReader) ReadDDLs(ctx context.Context) ([]byte, error) {
 
 type readSchemaConfig struct {
 	skipFiles bool
+	skipStats bool
 }
 
 // ReadSchemaOption describes some extra option of reading the config.
@@ -300,6 +301,10 @@ type ReadSchemaOption func(*readSchemaConfig)
 // This is useful when only schema information is needed.
 func SkipFiles(conf *readSchemaConfig) {
 	conf.skipFiles = true
+}
+
+func SkipStats(conf *readSchemaConfig) {
+	conf.skipStats = true
 }
 
 // GetBasic returns a basic copy of the backup meta.
@@ -313,6 +318,10 @@ func (reader *MetaReader) ReadSchemasFiles(ctx context.Context, output chan<- *T
 	cctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
+	cfg := readSchemaConfig{}
+	for _, opt := range opts {
+		opt(&cfg)
+	}
 	ch := make(chan any, MaxBatchSize)
 	schemaCh := make(chan *backuppb.Schema, MaxBatchSize)
 	// Make sure these 2 goroutine avoid to blocked by the errCh.
@@ -322,6 +331,10 @@ func (reader *MetaReader) ReadSchemasFiles(ctx context.Context, output chan<- *T
 	go func() {
 		defer close(schemaCh)
 		if err := reader.readSchemas(cctx, func(s *backuppb.Schema) {
+			if cfg.skipStats {
+				s.Stats = nil
+				s.StatsIndex = nil
+			}
 			select {
 			case <-cctx.Done():
 			case schemaCh <- s:
@@ -334,7 +347,7 @@ func (reader *MetaReader) ReadSchemasFiles(ctx context.Context, output chan<- *T
 	go func() {
 		defer close(ch)
 		eg, ectx := errgroup.WithContext(cctx)
-		workers := utils.NewWorkerPool(8, "parse schema workers")
+		workers := tidbutil.NewWorkerPool(8, "parse schema workers")
 		for {
 			select {
 			case <-ectx.Done():
@@ -361,11 +374,6 @@ func (reader *MetaReader) ReadSchemasFiles(ctx context.Context, output chan<- *T
 			}
 		}
 	}()
-
-	cfg := readSchemaConfig{}
-	for _, opt := range opts {
-		opt(&cfg)
-	}
 
 	// It's not easy to balance memory and time costs for current structure.
 	// put all files in memory due to https://github.com/pingcap/br/issues/705

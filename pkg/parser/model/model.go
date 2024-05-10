@@ -542,6 +542,9 @@ type TableInfo struct {
 
 	TTLInfo *TTLInfo `json:"ttl_info"`
 
+	// Revision is per table schema's version, it will be increased when the schema changed.
+	Revision uint64 `json:"revision"`
+
 	DBID int64 `json:"-"`
 }
 
@@ -1250,6 +1253,7 @@ func (pi *PartitionInfo) Clone() *PartitionInfo {
 }
 
 // GetNameByID gets the partition name by ID.
+// TODO: Remove the need for this function!
 func (pi *PartitionInfo) GetNameByID(id int64) string {
 	definitions := pi.Definitions
 	// do not convert this loop to `for _, def := range definitions`.
@@ -1316,6 +1320,14 @@ func (pi *PartitionInfo) HasTruncatingPartitionID(pid int64) bool {
 		}
 	}
 	return false
+}
+
+// ClearReorgIntermediateInfo remove intermediate information used during reorganize partition.
+func (pi *PartitionInfo) ClearReorgIntermediateInfo() {
+	pi.DDLType = PartitionTypeNone
+	pi.DDLExpr = ""
+	pi.DDLColumns = nil
+	pi.NewTableID = 0
 }
 
 // PartitionState is the state of the partition.
@@ -1771,9 +1783,26 @@ func (cis *CIStr) MemoryUsage() (sum int64) {
 
 // TableItemID is composed by table ID and column/index ID
 type TableItemID struct {
-	TableID int64
-	ID      int64
-	IsIndex bool
+	TableID          int64
+	ID               int64
+	IsIndex          bool
+	IsSyncLoadFailed bool
+}
+
+// Key is used to generate unique key for TableItemID to use in the syncload
+func (t TableItemID) Key() string {
+	return fmt.Sprintf("%d#%d#%t", t.ID, t.TableID, t.IsIndex)
+}
+
+// StatsLoadItem represents the load unit for statistics's memory loading.
+type StatsLoadItem struct {
+	TableItemID
+	FullLoad bool
+}
+
+// Key is used to generate unique key for TableItemID to use in the syncload
+func (s StatsLoadItem) Key() string {
+	return fmt.Sprintf("%s#%t", s.TableItemID.Key(), s.FullLoad)
 }
 
 // PolicyRefInfo is the struct to refer the placement policy.
@@ -1913,6 +1942,10 @@ func (p *PlacementSettings) String() string {
 
 	if len(p.LearnerConstraints) > 0 {
 		writeSettingStringToBuilder(sb, "LEARNER_CONSTRAINTS", p.LearnerConstraints)
+	}
+
+	if len(p.SurvivalPreferences) > 0 {
+		writeSettingStringToBuilder(sb, "SURVIVAL_PREFERENCES", p.SurvivalPreferences)
 	}
 
 	return sb.String()

@@ -368,7 +368,7 @@ func TestAutoUpdate(t *testing.T) {
 		testKit.MustExec("set global tidb_auto_analyze_ratio = 0.2")
 		defer func() {
 			exec.AutoAnalyzeMinCnt = 1000
-			testKit.MustExec("set global tidb_auto_analyze_ratio = 0.0")
+			testKit.MustExec("set global tidb_auto_analyze_ratio = 0.5")
 		}()
 
 		do := dom
@@ -473,7 +473,7 @@ func TestAutoUpdatePartition(t *testing.T) {
 		testKit.MustExec("set global tidb_auto_analyze_ratio = 0.6")
 		defer func() {
 			exec.AutoAnalyzeMinCnt = 1000
-			testKit.MustExec("set global tidb_auto_analyze_ratio = 0.0")
+			testKit.MustExec("set global tidb_auto_analyze_ratio = 0.5")
 		}()
 
 		do := dom
@@ -633,9 +633,7 @@ func TestLoadHistCorrelation(t *testing.T) {
 	h.Clear()
 	require.NoError(t, h.Update(dom.InfoSchema()))
 	result := testKit.MustQuery("show stats_histograms where Table_name = 't'")
-	// After https://github.com/pingcap/tidb/pull/37444, `show stats_histograms` displays the columns whose hist/topn/cmsketch
-	// are not loaded and their stats status is allEvicted.
-	require.Len(t, result.Rows(), 1)
+	require.Len(t, result.Rows(), 0)
 	testKit.MustExec("explain select * from t where c = 1")
 	require.NoError(t, h.LoadNeededHistograms())
 	result = testKit.MustQuery("show stats_histograms where Table_name = 't'")
@@ -758,14 +756,14 @@ func TestStatsVariables(t *testing.T) {
 	err = util.UpdateSCtxVarsForStats(sctx)
 	require.NoError(t, err)
 	require.Equal(t, 2, sctx.GetSessionVars().AnalyzeVersion)
-	require.Equal(t, true, sctx.GetSessionVars().EnableHistoricalStats)
+	require.Equal(t, false, sctx.GetSessionVars().EnableHistoricalStats)
 	require.Equal(t, string(variable.Dynamic), sctx.GetSessionVars().PartitionPruneMode.Load())
 	require.Equal(t, false, sctx.GetSessionVars().EnableAnalyzeSnapshot)
 	require.Equal(t, true, sctx.GetSessionVars().SkipMissingPartitionStats)
 
 	tk.MustExec(`set global tidb_analyze_version=1`)
 	tk.MustExec(`set global tidb_partition_prune_mode='static'`)
-	tk.MustExec(`set global tidb_enable_historical_stats=0`)
+	tk.MustExec(`set global tidb_enable_historical_stats=1`)
 	tk.MustExec(`set global tidb_enable_analyze_snapshot=1`)
 	tk.MustExec(`set global tidb_skip_missing_partition_stats=0`)
 
@@ -775,7 +773,7 @@ func TestStatsVariables(t *testing.T) {
 	err = util.UpdateSCtxVarsForStats(sctx)
 	require.NoError(t, err)
 	require.Equal(t, 1, sctx.GetSessionVars().AnalyzeVersion)
-	require.Equal(t, false, sctx.GetSessionVars().EnableHistoricalStats)
+	require.Equal(t, true, sctx.GetSessionVars().EnableHistoricalStats)
 	require.Equal(t, string(variable.Static), sctx.GetSessionVars().PartitionPruneMode.Load())
 	require.Equal(t, true, sctx.GetSessionVars().EnableAnalyzeSnapshot)
 	require.Equal(t, false, sctx.GetSessionVars().SkipMissingPartitionStats)
@@ -808,7 +806,7 @@ func TestAutoUpdatePartitionInDynamicOnlyMode(t *testing.T) {
 		testKit.MustExec("set global tidb_auto_analyze_ratio = 0.1")
 		defer func() {
 			exec.AutoAnalyzeMinCnt = 1000
-			testKit.MustExec("set global tidb_auto_analyze_ratio = 0.0")
+			testKit.MustExec("set global tidb_auto_analyze_ratio = 0.5")
 		}()
 
 		require.NoError(t, h.Update(is))

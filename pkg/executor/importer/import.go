@@ -29,17 +29,16 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
-	"github.com/pingcap/tidb/br/pkg/lightning/backend/local"
-	"github.com/pingcap/tidb/br/pkg/lightning/common"
-	"github.com/pingcap/tidb/br/pkg/lightning/config"
-	litlog "github.com/pingcap/tidb/br/pkg/lightning/log"
-	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	tidb "github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/expression"
-	tidbkv "github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/lightning/backend/local"
+	"github.com/pingcap/tidb/pkg/lightning/common"
+	"github.com/pingcap/tidb/pkg/lightning/config"
+	litlog "github.com/pingcap/tidb/pkg/lightning/log"
+	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	pformat "github.com/pingcap/tidb/pkg/parser/format"
@@ -49,18 +48,17 @@ import (
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/cpu"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/filter"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
-	kvconfig "github.com/tikv/client-go/v2/config"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
 )
@@ -171,9 +169,6 @@ func (t DataSourceType) String() string {
 }
 
 var (
-	// GetKVStore returns a kv.Storage.
-	// kv encoder of physical mode needs it.
-	GetKVStore func(path string, tls kvconfig.Security) (tidbkv.Storage, error)
 	// NewClientWithContext returns a kv.Client.
 	NewClientWithContext = pd.NewClientWithContext
 )
@@ -363,7 +358,7 @@ func NewPlanFromLoadDataPlan(userSctx sessionctx.Context, plan *plannercore.Load
 	}
 
 	return &Plan{
-		DBName: plan.Table.Schema.O,
+		DBName: plan.Table.Schema.L,
 		DBID:   plan.Table.DBInfo.ID,
 
 		Path:                 plan.Path,
@@ -407,7 +402,7 @@ func NewImportPlan(ctx context.Context, userSctx sessionctx.Context, plan *plann
 	p := &Plan{
 		TableInfo:        tbl.Meta(),
 		DesiredTableInfo: tbl.Meta(),
-		DBName:           plan.Table.Schema.O,
+		DBName:           plan.Table.Schema.L,
 		DBID:             plan.Table.DBInfo.ID,
 
 		Path:           plan.Path,
@@ -598,7 +593,7 @@ func (p *Plan) initOptions(ctx context.Context, seCtx sessionctx.Context, option
 		if opt.Value.GetType().GetType() != mysql.TypeVarString {
 			return "", exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}
-		val, isNull, err2 := opt.Value.EvalString(seCtx.GetExprCtx(), chunk.Row{})
+		val, isNull, err2 := opt.Value.EvalString(seCtx.GetExprCtx().GetEvalCtx(), chunk.Row{})
 		if err2 != nil || isNull {
 			return "", exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}
@@ -609,7 +604,7 @@ func (p *Plan) initOptions(ctx context.Context, seCtx sessionctx.Context, option
 		if opt.Value.GetType().GetType() != mysql.TypeLonglong || mysql.HasIsBooleanFlag(opt.Value.GetType().GetFlag()) {
 			return 0, exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}
-		val, isNull, err2 := opt.Value.EvalInt(seCtx.GetExprCtx(), chunk.Row{})
+		val, isNull, err2 := opt.Value.EvalInt(seCtx.GetExprCtx().GetEvalCtx(), chunk.Row{})
 		if err2 != nil || isNull {
 			return 0, exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}
@@ -1050,7 +1045,7 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 		fileNameKey = strings.Trim(u.Path, "/")
 	}
 	// try to find pattern error in advance
-	_, err2 = filepath.Match(stringutil.EscapeGlobExceptAsterisk(fileNameKey), "")
+	_, err2 = filepath.Match(stringutil.EscapeGlobQuestionMark(fileNameKey), "")
 	if err2 != nil {
 		return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(plannercore.ImportIntoDataSource,
 			"Glob pattern error: "+err2.Error())
@@ -1063,7 +1058,8 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 	s := e.dataStore
 	var totalSize int64
 	dataFiles := []*mydump.SourceFileMeta{}
-	idx := strings.IndexByte(fileNameKey, '*')
+	// check glob pattern is present in filename.
+	idx := strings.IndexAny(fileNameKey, "*[")
 	// simple path when the path represent one file
 	sourceType := e.getSourceType()
 	if idx == -1 {
@@ -1098,7 +1094,7 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 		// when import from server disk, all entries in parent directory should have READ
 		// access, else walkDir will fail
 		// we only support '*', in order to reuse glob library manually escape the path
-		escapedPath := stringutil.EscapeGlobExceptAsterisk(fileNameKey)
+		escapedPath := stringutil.EscapeGlobQuestionMark(fileNameKey)
 		err := s.WalkDir(ctx, &storage.WalkOption{ObjPrefix: commonPrefix, SkipSubDir: true},
 			func(remotePath string, size int64) error {
 				// we have checked in LoadDataExec.Next
@@ -1275,23 +1271,23 @@ func (e *LoadDataController) toMyDumpFiles() []mydump.FileInfo {
 }
 
 // IsLocalSort returns true if we sort data on local disk.
-func (e *LoadDataController) IsLocalSort() bool {
-	return e.Plan.CloudStorageURI == ""
+func (p *Plan) IsLocalSort() bool {
+	return p.CloudStorageURI == ""
 }
 
 // IsGlobalSort returns true if we sort data on global storage.
-func (e *LoadDataController) IsGlobalSort() bool {
-	return !e.IsLocalSort()
+func (p *Plan) IsGlobalSort() bool {
+	return !p.IsLocalSort()
 }
 
 // CreateColAssignExprs creates the column assignment expressions using session context.
 // RewriteAstExpr will write ast node in place(due to xxNode.Accept), but it doesn't change node content,
 // so we sync it.
-func (e *LoadDataController) CreateColAssignExprs(sctx sessionctx.Context) ([]expression.Expression, []stmtctx.SQLWarn, error) {
+func (e *LoadDataController) CreateColAssignExprs(sctx sessionctx.Context) ([]expression.Expression, []contextutil.SQLWarn, error) {
 	e.colAssignMu.Lock()
 	defer e.colAssignMu.Unlock()
 	res := make([]expression.Expression, 0, len(e.ColumnAssignments))
-	allWarnings := []stmtctx.SQLWarn{}
+	allWarnings := []contextutil.SQLWarn{}
 	for _, assign := range e.ColumnAssignments {
 		newExpr, err := plannerutil.RewriteAstExprWithPlanCtx(sctx.GetPlanCtx(), assign.Expr, nil, nil, false)
 		// col assign expr warnings is static, we should generate it for each row processed.
@@ -1307,16 +1303,10 @@ func (e *LoadDataController) CreateColAssignExprs(sctx sessionctx.Context) ([]ex
 }
 
 func (e *LoadDataController) getBackendWorkerConcurrency() int {
-	// when using global sort, write&ingest step buffers KV data in memory,
 	// suppose cpu:mem ratio 1:2(true in most case), and we assign 1G per concurrency,
 	// so we can use 2 * threadCnt as concurrency. write&ingest step is mostly
 	// IO intensive, so CPU usage is below ThreadCnt in our tests.
-	// The real concurrency used is adjusted in external engine later.
-	// when using local sort, use the default value as lightning.
-	if e.IsGlobalSort() {
-		return e.ThreadCnt * 2
-	}
-	return config.DefaultRangeConcurrency * 2
+	return e.ThreadCnt * 2
 }
 
 func (e *LoadDataController) getLocalBackendCfg(pdAddr, dataDir string) local.BackendConfig {
@@ -1364,7 +1354,7 @@ func getDataSourceType(p *plannercore.ImportInto) DataSourceType {
 // JobImportResult is the result of the job import.
 type JobImportResult struct {
 	Affected   uint64
-	Warnings   []stmtctx.SQLWarn
+	Warnings   []contextutil.SQLWarn
 	ColSizeMap map[int64]int64
 }
 
@@ -1405,7 +1395,7 @@ func GetTargetNodeCPUCnt(ctx context.Context, sourceType DataSourceType, path st
 	if serverDiskImport || !variable.EnableDistTask.Load() {
 		return cpu.GetCPUCount(), nil
 	}
-	return handle.GetCPUCountOfManagedNode(ctx)
+	return handle.GetCPUCountOfNode(ctx)
 }
 
 // TestSyncCh is used in unit test to synchronize the execution.

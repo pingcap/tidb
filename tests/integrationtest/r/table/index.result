@@ -31,3 +31,54 @@ Error 1062 (23000): Duplicate entry 'q' for key 't.idx_a'
 update ignore t set a = 'qcc' where a = 'rcc';
 Level	Code	Message
 Warning	1062	Duplicate entry 'q' for key 't.idx_a'
+drop table if exists t;
+create table t (id int, a varchar(64), b varchar(64), c varchar(64), index idx_a(a(64)));
+show create table t;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `id` int(11) DEFAULT NULL,
+  `a` varchar(64) DEFAULT NULL,
+  `b` varchar(64) DEFAULT NULL,
+  `c` varchar(64) DEFAULT NULL,
+  KEY `idx_a` (`a`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+alter table t add index idx_b(b(64));
+show create table t;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `id` int(11) DEFAULT NULL,
+  `a` varchar(64) DEFAULT NULL,
+  `b` varchar(64) DEFAULT NULL,
+  `c` varchar(64) DEFAULT NULL,
+  KEY `idx_a` (`a`),
+  KEY `idx_b` (`b`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+alter table t add index idx_c(c(32));
+show create table t;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `id` int(11) DEFAULT NULL,
+  `a` varchar(64) DEFAULT NULL,
+  `b` varchar(64) DEFAULT NULL,
+  `c` varchar(64) DEFAULT NULL,
+  KEY `idx_a` (`a`),
+  KEY `idx_b` (`b`),
+  KEY `idx_c` (`c`(32))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+alter table t modify column c varchar(32);
+show create table t;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `id` int(11) DEFAULT NULL,
+  `a` varchar(64) DEFAULT NULL,
+  `b` varchar(64) DEFAULT NULL,
+  `c` varchar(32) DEFAULT NULL,
+  KEY `idx_a` (`a`),
+  KEY `idx_b` (`b`),
+  KEY `idx_c` (`c`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+drop table t;
+drop table if exists t;
+create table t (a int, b int, k varchar(255), primary key (a, b), key k (k));
+insert into t values (1, 1, 'abc                                                                                                                                ');
+drop table t;

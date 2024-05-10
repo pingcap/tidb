@@ -21,21 +21,20 @@ import (
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/br/pkg/lightning/backend"
-	"github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
-	"github.com/pingcap/tidb/br/pkg/lightning/backend/external"
-	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
-	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
-	"github.com/pingcap/tidb/br/pkg/lightning/common"
-	"github.com/pingcap/tidb/br/pkg/lightning/log"
-	"github.com/pingcap/tidb/br/pkg/lightning/metric"
-	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
-	verify "github.com/pingcap/tidb/br/pkg/lightning/verification"
+	"github.com/pingcap/tidb/pkg/lightning/backend"
+	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
+	"github.com/pingcap/tidb/pkg/lightning/backend/external"
+	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
+	"github.com/pingcap/tidb/pkg/lightning/checkpoints"
+	"github.com/pingcap/tidb/pkg/lightning/common"
+	"github.com/pingcap/tidb/pkg/lightning/log"
+	"github.com/pingcap/tidb/pkg/lightning/metric"
+	"github.com/pingcap/tidb/pkg/lightning/mydump"
+	verify "github.com/pingcap/tidb/pkg/lightning/verification"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/syncutil"
 	"github.com/prometheus/client_golang/prometheus"
-	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
@@ -135,10 +134,10 @@ func (b *encodedKVGroupBatch) reset() {
 	b.memBuf = nil
 }
 
-func newEncodedKVGroupBatch(codec tikv.Codec) *encodedKVGroupBatch {
+func newEncodedKVGroupBatch(keyspace []byte) *encodedKVGroupBatch {
 	return &encodedKVGroupBatch{
 		indexKVs:      make(map[int64][]common.KvPair, 8),
-		groupChecksum: verify.NewKVGroupChecksumWithKeyspace(codec),
+		groupChecksum: verify.NewKVGroupChecksumWithKeyspace(keyspace),
 	}
 }
 
@@ -175,7 +174,7 @@ type chunkEncoder struct {
 	chunkName string
 	logger    *zap.Logger
 	encoder   KVEncoder
-	kvCodec   tikv.Codec
+	keyspace  []byte
 
 	// total duration takes by read/encode.
 	readTotalDur   time.Duration
@@ -191,7 +190,7 @@ func newChunkEncoder(
 	sendFn func(ctx context.Context, batch *encodedKVGroupBatch) error,
 	logger *zap.Logger,
 	encoder KVEncoder,
-	kvCodec tikv.Codec,
+	keyspace []byte,
 ) *chunkEncoder {
 	return &chunkEncoder{
 		chunkName:     chunkName,
@@ -200,8 +199,8 @@ func newChunkEncoder(
 		sendFn:        sendFn,
 		logger:        logger,
 		encoder:       encoder,
-		kvCodec:       kvCodec,
-		groupChecksum: verify.NewKVGroupChecksumWithKeyspace(kvCodec),
+		keyspace:      keyspace,
+		groupChecksum: verify.NewKVGroupChecksumWithKeyspace(keyspace),
 	}
 }
 
@@ -243,7 +242,7 @@ func (p *chunkEncoder) encodeLoop(ctx context.Context) error {
 		p.encodeTotalDur += encodeDur
 		p.readTotalDur += readDur
 
-		kvGroupBatch := newEncodedKVGroupBatch(p.kvCodec)
+		kvGroupBatch := newEncodedKVGroupBatch(p.keyspace)
 
 		for _, kvs := range rowBatch {
 			if err := kvGroupBatch.add(kvs); err != nil {
@@ -305,9 +304,11 @@ func (p *chunkEncoder) encodeLoop(ctx context.Context) error {
 }
 
 func (p *chunkEncoder) summaryFields() []zap.Field {
+	mergedChecksum := p.groupChecksum.MergedChecksum()
 	return []zap.Field{
 		zap.Duration("readDur", p.readTotalDur),
 		zap.Duration("encodeDur", p.encodeTotalDur),
+		zap.Object("checksum", &mergedChecksum),
 	}
 }
 
@@ -358,7 +359,7 @@ func (p *baseChunkProcessor) Process(ctx context.Context) (err error) {
 func NewFileChunkProcessor(
 	parser mydump.Parser,
 	encoder KVEncoder,
-	kvCodec tikv.Codec,
+	keyspace []byte,
 	chunk *checkpoints.ChunkCheckpoint,
 	logger *zap.Logger,
 	diskQuotaLock *syncutil.RWMutex,
@@ -369,7 +370,6 @@ func NewFileChunkProcessor(
 	chunkLogger := logger.With(zap.String("key", chunk.GetKey()))
 	deliver := &dataDeliver{
 		logger:        chunkLogger,
-		kvCodec:       kvCodec,
 		diskQuotaLock: diskQuotaLock,
 		kvBatch:       make(chan *encodedKVGroupBatch, maxKVQueueSize),
 		dataWriter:    dataWriter,
@@ -385,7 +385,7 @@ func NewFileChunkProcessor(
 			deliver.sendEncodedData,
 			chunkLogger,
 			encoder,
-			kvCodec,
+			keyspace,
 		),
 		logger:        chunkLogger,
 		groupChecksum: groupChecksum,
@@ -394,7 +394,6 @@ func NewFileChunkProcessor(
 
 type dataDeliver struct {
 	logger        *zap.Logger
-	kvCodec       tikv.Codec
 	kvBatch       chan *encodedKVGroupBatch
 	diskQuotaLock *syncutil.RWMutex
 	dataWriter    backend.EngineWriter
@@ -503,7 +502,7 @@ type QueryRow struct {
 func newQueryChunkProcessor(
 	rowCh chan QueryRow,
 	encoder KVEncoder,
-	kvCodec tikv.Codec,
+	keyspace []byte,
 	logger *zap.Logger,
 	diskQuotaLock *syncutil.RWMutex,
 	dataWriter backend.EngineWriter,
@@ -514,7 +513,6 @@ func newQueryChunkProcessor(
 	chunkLogger := logger.With(zap.String("key", chunkName))
 	deliver := &dataDeliver{
 		logger:        chunkLogger,
-		kvCodec:       kvCodec,
 		diskQuotaLock: diskQuotaLock,
 		kvBatch:       make(chan *encodedKVGroupBatch, maxKVQueueSize),
 		dataWriter:    dataWriter,
@@ -530,7 +528,7 @@ func newQueryChunkProcessor(
 			deliver.sendEncodedData,
 			chunkLogger,
 			encoder,
-			kvCodec,
+			keyspace,
 		),
 		logger:        chunkLogger,
 		groupChecksum: groupChecksum,

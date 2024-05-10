@@ -27,6 +27,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/expression/contextopt"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -117,12 +118,13 @@ func (c *sleepFunctionClass) getFunction(ctx BuildContext, args []Expression) (b
 		return nil, err
 	}
 	bf.tp.SetFlen(21)
-	sig := &builtinSleepSig{bf}
+	sig := &builtinSleepSig{baseBuiltinFunc: bf}
 	return sig, nil
 }
 
 type builtinSleepSig struct {
 	baseBuiltinFunc
+	contextopt.SessionVarsPropReader
 }
 
 func (b *builtinSleepSig) Clone() builtinFunc {
@@ -131,9 +133,18 @@ func (b *builtinSleepSig) Clone() builtinFunc {
 	return newSig
 }
 
+func (b *builtinSleepSig) RequiredOptionalEvalProps() OptionalEvalPropKeySet {
+	return b.SessionVarsPropReader.RequiredOptionalEvalProps()
+}
+
 // evalInt evals a builtinSleepSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_sleep
 func (b *builtinSleepSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool, error) {
+	vars, err := b.GetSessionVars(ctx)
+	if err != nil {
+		return 0, true, err
+	}
+
 	val, isNull, err := b.args[0].EvalReal(ctx, row)
 	if err != nil {
 		return 0, isNull, err
@@ -153,7 +164,7 @@ func (b *builtinSleepSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool, 
 		return 0, false, errIncorrectArgs.GenWithStackByArgs("sleep")
 	}
 
-	if isKilled := doSleep(val, ctx.GetSessionVars()); isKilled {
+	if isKilled := doSleep(val, vars); isKilled {
 		return 1, false, nil
 	}
 
@@ -172,13 +183,14 @@ func (c *lockFunctionClass) getFunction(ctx BuildContext, args []Expression) (bu
 	if err != nil {
 		return nil, err
 	}
-	sig := &builtinLockSig{bf}
+	sig := &builtinLockSig{baseBuiltinFunc: bf}
 	bf.tp.SetFlen(1)
 	return sig, nil
 }
 
 type builtinLockSig struct {
 	baseBuiltinFunc
+	contextopt.AdvisoryLockPropReader
 }
 
 func (b *builtinLockSig) Clone() builtinFunc {
@@ -187,9 +199,18 @@ func (b *builtinLockSig) Clone() builtinFunc {
 	return newSig
 }
 
+func (b *builtinLockSig) RequiredOptionalEvalProps() OptionalEvalPropKeySet {
+	return b.AdvisoryLockPropReader.RequiredOptionalEvalProps()
+}
+
 // evalInt evals a builtinLockSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_get-lock
 func (b *builtinLockSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool, error) {
+	lockCtx, err := b.AdvisoryLockCtx(ctx)
+	if err != nil {
+		return 0, false, err
+	}
+
 	lockName, isNull, err := b.args[0].EvalString(ctx, row)
 	if err != nil {
 		return 0, isNull, err
@@ -226,7 +247,7 @@ func (b *builtinLockSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool, e
 	if utf8.RuneCountInString(lockName) > 64 {
 		return 0, false, errIncorrectArgs.GenWithStackByArgs("get_lock")
 	}
-	err = ctx.GetAdvisoryLock(lockName, timeout)
+	err = lockCtx.GetAdvisoryLock(lockName, timeout)
 	if err != nil {
 		if terr, ok := errors.Cause(err).(*terror.Error); ok {
 			switch terr.Code() {
@@ -256,13 +277,14 @@ func (c *releaseLockFunctionClass) getFunction(ctx BuildContext, args []Expressi
 	if err != nil {
 		return nil, err
 	}
-	sig := &builtinReleaseLockSig{bf}
+	sig := &builtinReleaseLockSig{baseBuiltinFunc: bf}
 	bf.tp.SetFlen(1)
 	return sig, nil
 }
 
 type builtinReleaseLockSig struct {
 	baseBuiltinFunc
+	contextopt.AdvisoryLockPropReader
 }
 
 func (b *builtinReleaseLockSig) Clone() builtinFunc {
@@ -271,9 +293,18 @@ func (b *builtinReleaseLockSig) Clone() builtinFunc {
 	return newSig
 }
 
+func (b *builtinReleaseLockSig) RequiredOptionalEvalProps() OptionalEvalPropKeySet {
+	return b.AdvisoryLockPropReader.RequiredOptionalEvalProps()
+}
+
 // evalInt evals a builtinReleaseLockSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_release-lock
 func (b *builtinReleaseLockSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool, error) {
+	lockCtx, err := b.AdvisoryLockCtx(ctx)
+	if err != nil {
+		return 0, false, err
+	}
+
 	lockName, isNull, err := b.args[0].EvalString(ctx, row)
 	if err != nil {
 		return 0, isNull, err
@@ -292,7 +323,7 @@ func (b *builtinReleaseLockSig) evalInt(ctx EvalContext, row chunk.Row) (int64, 
 		return 0, false, errIncorrectArgs.GenWithStackByArgs("release_lock")
 	}
 	released := int64(0)
-	if ctx.ReleaseAdvisoryLock(lockName) {
+	if lockCtx.ReleaseAdvisoryLock(lockName) {
 		released = 1
 	}
 	return released, false, nil
@@ -557,7 +588,7 @@ func (c *inetNtoaFunctionClass) getFunction(ctx BuildContext, args []Expression)
 	if err != nil {
 		return nil, err
 	}
-	charset, collate := ctx.GetSessionVars().GetCharsetInfo()
+	charset, collate := ctx.GetCharsetInfo()
 	bf.tp.SetCharset(charset)
 	bf.tp.SetCollate(collate)
 	bf.tp.SetFlen(93)
@@ -685,7 +716,7 @@ func (c *inet6NtoaFunctionClass) getFunction(ctx BuildContext, args []Expression
 	if err != nil {
 		return nil, err
 	}
-	charset, collate := ctx.GetSessionVars().GetCharsetInfo()
+	charset, collate := ctx.GetCharsetInfo()
 	bf.tp.SetCharset(charset)
 	bf.tp.SetCollate(collate)
 	bf.tp.SetFlen(117)
@@ -736,13 +767,14 @@ func (c *isFreeLockFunctionClass) getFunction(ctx BuildContext, args []Expressio
 	if err != nil {
 		return nil, err
 	}
-	sig := &builtinFreeLockSig{bf}
+	sig := &builtinFreeLockSig{baseBuiltinFunc: bf}
 	bf.tp.SetFlen(1)
 	return sig, nil
 }
 
 type builtinFreeLockSig struct {
 	baseBuiltinFunc
+	contextopt.AdvisoryLockPropReader
 }
 
 func (b *builtinFreeLockSig) Clone() builtinFunc {
@@ -751,8 +783,17 @@ func (b *builtinFreeLockSig) Clone() builtinFunc {
 	return newSig
 }
 
+func (b *builtinFreeLockSig) RequiredOptionalEvalProps() OptionalEvalPropKeySet {
+	return b.AdvisoryLockPropReader.RequiredOptionalEvalProps()
+}
+
 // See https://dev.mysql.com/doc/refman/8.0/en/locking-functions.html#function_is-free-lock
 func (b *builtinFreeLockSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool, error) {
+	lockCtx, err := b.AdvisoryLockCtx(ctx)
+	if err != nil {
+		return 0, true, err
+	}
+
 	lockName, isNull, err := b.args[0].EvalString(ctx, row)
 	if err != nil {
 		return 0, true, err
@@ -771,7 +812,7 @@ func (b *builtinFreeLockSig) evalInt(ctx EvalContext, row chunk.Row) (int64, boo
 	if utf8.RuneCountInString(lockName) > 64 {
 		return 0, true, errIncorrectArgs.GenWithStackByArgs("is_free_lock")
 	}
-	lock := ctx.IsUsedAdvisoryLock(lockName)
+	lock := lockCtx.IsUsedAdvisoryLock(lockName)
 	if lock > 0 {
 		return 0, false, nil
 	}
@@ -998,13 +1039,14 @@ func (c *isUsedLockFunctionClass) getFunction(ctx BuildContext, args []Expressio
 	if err != nil {
 		return nil, err
 	}
-	sig := &builtinUsedLockSig{bf}
+	sig := &builtinUsedLockSig{baseBuiltinFunc: bf}
 	bf.tp.SetFlen(1)
 	return sig, nil
 }
 
 type builtinUsedLockSig struct {
 	baseBuiltinFunc
+	contextopt.AdvisoryLockPropReader
 }
 
 func (b *builtinUsedLockSig) Clone() builtinFunc {
@@ -1013,8 +1055,17 @@ func (b *builtinUsedLockSig) Clone() builtinFunc {
 	return newSig
 }
 
+func (b *builtinUsedLockSig) RequiredOptionalEvalProps() OptionalEvalPropKeySet {
+	return b.AdvisoryLockPropReader.RequiredOptionalEvalProps()
+}
+
 // See https://dev.mysql.com/doc/refman/8.0/en/locking-functions.html#function_is-used-lock
 func (b *builtinUsedLockSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool, error) {
+	lockCtx, err := b.AdvisoryLockCtx(ctx)
+	if err != nil {
+		return 0, false, err
+	}
+
 	lockName, isNull, err := b.args[0].EvalString(ctx, row)
 	if err != nil {
 		return 0, isNull, err
@@ -1033,7 +1084,7 @@ func (b *builtinUsedLockSig) evalInt(ctx EvalContext, row chunk.Row) (int64, boo
 	if utf8.RuneCountInString(lockName) > 64 {
 		return 0, false, errIncorrectArgs.GenWithStackByArgs("is_used_lock")
 	}
-	lock := ctx.IsUsedAdvisoryLock(lockName)
+	lock := lockCtx.IsUsedAdvisoryLock(lockName)
 	return int64(lock), lock == 0, nil // TODO, uint64
 }
 
@@ -1237,13 +1288,14 @@ func (c *releaseAllLocksFunctionClass) getFunction(ctx BuildContext, args []Expr
 	if err != nil {
 		return nil, err
 	}
-	sig := &builtinReleaseAllLocksSig{bf}
+	sig := &builtinReleaseAllLocksSig{baseBuiltinFunc: bf}
 	bf.tp.SetFlen(1)
 	return sig, nil
 }
 
 type builtinReleaseAllLocksSig struct {
 	baseBuiltinFunc
+	contextopt.AdvisoryLockPropReader
 }
 
 func (b *builtinReleaseAllLocksSig) Clone() builtinFunc {
@@ -1252,10 +1304,18 @@ func (b *builtinReleaseAllLocksSig) Clone() builtinFunc {
 	return newSig
 }
 
+func (b *builtinReleaseAllLocksSig) RequiredOptionalEvalProps() OptionalEvalPropKeySet {
+	return b.AdvisoryLockPropReader.RequiredOptionalEvalProps()
+}
+
 // evalInt evals a builtinReleaseAllLocksSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_release-all-locks
 func (b *builtinReleaseAllLocksSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool, error) {
-	count := ctx.ReleaseAllAdvisoryLocks()
+	lockCtx, err := b.AdvisoryLockCtx(ctx)
+	if err != nil {
+		return 0, false, err
+	}
+	count := lockCtx.ReleaseAllAdvisoryLocks()
 	return int64(count), false, nil
 }
 
@@ -1271,7 +1331,7 @@ func (c *uuidFunctionClass) getFunction(ctx BuildContext, args []Expression) (bu
 	if err != nil {
 		return nil, err
 	}
-	charset, collate := ctx.GetSessionVars().GetCharsetInfo()
+	charset, collate := ctx.GetCharsetInfo()
 	bf.tp.SetCharset(charset)
 	bf.tp.SetCollate(collate)
 	bf.tp.SetFlen(36)
@@ -1439,7 +1499,7 @@ func (c *binToUUIDFunctionClass) getFunction(ctx BuildContext, args []Expression
 		return nil, err
 	}
 
-	charset, collate := ctx.GetSessionVars().GetCharsetInfo()
+	charset, collate := ctx.GetCharsetInfo()
 	bf.tp.SetCharset(charset)
 	bf.tp.SetCollate(collate)
 	bf.tp.SetFlen(32)

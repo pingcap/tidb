@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/sysproctrack"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/exec"
 	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
@@ -86,7 +87,7 @@ func NewDynamicPartitionedTableAnalysisJob(
 // Analyze analyzes the partitions or partition indexes.
 func (j *DynamicPartitionedTableAnalysisJob) Analyze(
 	statsHandle statstypes.StatsHandle,
-	sysProcTracker sessionctx.SysProcTracker,
+	sysProcTracker sysproctrack.Tracker,
 ) error {
 	return statsutil.CallWithSCtx(statsHandle.SPool(), func(sctx sessionctx.Context) error {
 		switch j.getAnalyzeType() {
@@ -111,10 +112,9 @@ func (j *DynamicPartitionedTableAnalysisJob) HasNewlyAddedIndex() bool {
 
 // IsValidToAnalyze checks whether the table or partition is valid to analyze.
 // We need to check each partition to determine whether the table is valid to analyze.
-func (j *DynamicPartitionedTableAnalysisJob) IsValidToAnalyze(sctx sessionctx.Context) (bool, string) {
-	if valid, failReason := isValidWeight(j.Weight); !valid {
-		return false, failReason
-	}
+func (j *DynamicPartitionedTableAnalysisJob) IsValidToAnalyze(
+	sctx sessionctx.Context,
+) (bool, string) {
 	// Check whether the table or partition is valid to analyze.
 	if len(j.Partitions) > 0 || len(j.PartitionIndexes) > 0 {
 		// Any partition is invalid to analyze, the whole table is invalid to analyze.
@@ -154,10 +154,10 @@ func (j *DynamicPartitionedTableAnalysisJob) String() string {
 			"\tGlobal Table: %s\n"+
 			"\tGlobal TableID: %d\n"+
 			"\tTableStatsVer: %d\n"+
-			"\tChangePercentage: %.2f\n"+
+			"\tChangePercentage: %.6f\n"+
 			"\tTableSize: %.2f\n"+
 			"\tLastAnalysisDuration: %s\n"+
-			"\tWeight: %.4f\n",
+			"\tWeight: %.6f\n",
 		j.getAnalyzeType(),
 		strings.Join(j.Partitions, ", "),
 		j.PartitionIndexes,
@@ -174,7 +174,7 @@ func (j *DynamicPartitionedTableAnalysisJob) String() string {
 func (j *DynamicPartitionedTableAnalysisJob) analyzePartitions(
 	sctx sessionctx.Context,
 	statsHandle statstypes.StatsHandle,
-	sysProcTracker sessionctx.SysProcTracker,
+	sysProcTracker sysproctrack.Tracker,
 ) {
 	analyzePartitionBatchSize := int(variable.AutoAnalyzePartitionBatchSize.Load())
 	needAnalyzePartitionNames := make([]any, 0, len(j.Partitions))
@@ -198,10 +198,11 @@ func (j *DynamicPartitionedTableAnalysisJob) analyzePartitions(
 func (j *DynamicPartitionedTableAnalysisJob) analyzePartitionIndexes(
 	sctx sessionctx.Context,
 	statsHandle statstypes.StatsHandle,
-	sysProcTracker sessionctx.SysProcTracker,
+	sysProcTracker sysproctrack.Tracker,
 ) {
 	analyzePartitionBatchSize := int(variable.AutoAnalyzePartitionBatchSize.Load())
 
+OnlyPickOneIndex:
 	for indexName, partitionNames := range j.PartitionIndexes {
 		needAnalyzePartitionNames := make([]any, 0, len(partitionNames))
 		for _, partition := range partitionNames {
@@ -218,6 +219,10 @@ func (j *DynamicPartitionedTableAnalysisJob) analyzePartitionIndexes(
 			params := append([]any{j.TableSchema, j.GlobalTableName}, needAnalyzePartitionNames[start:end]...)
 			params = append(params, indexName)
 			exec.AutoAnalyze(sctx, statsHandle, sysProcTracker, j.TableStatsVer, sql, params...)
+			// Halt execution after analyzing one index.
+			// This is because analyzing a single index also analyzes all other indexes and columns.
+			// Therefore, to avoid redundancy, we prevent multiple analyses of the same partition.
+			break OnlyPickOneIndex
 		}
 	}
 }

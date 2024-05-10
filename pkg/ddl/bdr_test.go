@@ -30,7 +30,7 @@ func TestDeniedByBDRWhenAddColumn(t *testing.T) {
 		expected bool
 	}{
 		{
-			name:     "Test with no options",
+			name:     "Test with no options(implicit nullable)",
 			options:  []*ast.ColumnOption{},
 			expected: false,
 		},
@@ -40,13 +40,33 @@ func TestDeniedByBDRWhenAddColumn(t *testing.T) {
 			expected: false,
 		},
 		{
-			name:     "Test with notNull and defaultValue options",
+			name:     "Test with implicit nullable and defaultValue options",
+			options:  []*ast.ColumnOption{{Tp: ast.ColumnOptionDefaultValue}},
+			expected: false,
+		},
+		{
+			name:     "Test with nullable and defaultValue options",
 			options:  []*ast.ColumnOption{{Tp: ast.ColumnOptionNotNull}, {Tp: ast.ColumnOptionDefaultValue}},
 			expected: false,
 		},
 		{
+			name:     "Test with comment options",
+			options:  []*ast.ColumnOption{{Tp: ast.ColumnOptionComment}},
+			expected: false,
+		},
+		{
+			name:     "Test with generated options",
+			options:  []*ast.ColumnOption{{Tp: ast.ColumnOptionGenerated}},
+			expected: false,
+		},
+		{
+			name:     "Test with comment and generated options",
+			options:  []*ast.ColumnOption{{Tp: ast.ColumnOptionComment}, {Tp: ast.ColumnOptionGenerated}},
+			expected: false,
+		},
+		{
 			name:     "Test with other options",
-			options:  []*ast.ColumnOption{{Tp: ast.ColumnOptionPrimaryKey}},
+			options:  []*ast.ColumnOption{{Tp: ast.ColumnOptionCheck}},
 			expected: true,
 		},
 	}

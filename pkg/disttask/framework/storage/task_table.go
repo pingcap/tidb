@@ -36,12 +36,12 @@ import (
 const (
 	defaultSubtaskKeepDays = 14
 
-	basicTaskColumns = `t.id, t.task_key, t.type, t.state, t.step, t.priority, t.concurrency, t.create_time`
+	basicTaskColumns = `t.id, t.task_key, t.type, t.state, t.step, t.priority, t.concurrency, t.create_time, t.target_scope`
 	// TaskColumns is the columns for task.
 	// TODO: dispatcher_id will update to scheduler_id later
 	TaskColumns = basicTaskColumns + `, t.start_time, t.state_update_time, t.meta, t.dispatcher_id, t.error`
 	// InsertTaskColumns is the columns used in insert task.
-	InsertTaskColumns   = `task_key, type, state, priority, concurrency, step, meta, create_time`
+	InsertTaskColumns   = `task_key, type, state, priority, concurrency, step, meta, create_time, target_scope`
 	basicSubtaskColumns = `id, step, task_key, type, exec_id, state, concurrency, create_time, ordinal, start_time`
 	// SubtaskColumns is the columns for subtask.
 	SubtaskColumns = basicSubtaskColumns + `, state_update_time, meta, summary`
@@ -151,7 +151,7 @@ func (mgr *TaskManager) WithNewSession(fn func(se sessionctx.Context) error) err
 func (mgr *TaskManager) WithNewTxn(ctx context.Context, fn func(se sessionctx.Context) error) error {
 	ctx = util.WithInternalSourceType(ctx, kv.InternalDistTask)
 	return mgr.WithNewSession(func(se sessionctx.Context) (err error) {
-		_, err = sqlexec.ExecSQL(ctx, se, "begin")
+		_, err = sqlexec.ExecSQL(ctx, se.GetSQLExecutor(), "begin")
 		if err != nil {
 			return err
 		}
@@ -162,7 +162,7 @@ func (mgr *TaskManager) WithNewTxn(ctx context.Context, fn func(se sessionctx.Co
 			if success {
 				sql = "commit"
 			}
-			_, commitErr := sqlexec.ExecSQL(ctx, se, sql)
+			_, commitErr := sqlexec.ExecSQL(ctx, se.GetSQLExecutor(), sql)
 			if err == nil && commitErr != nil {
 				err = commitErr
 			}
@@ -180,7 +180,7 @@ func (mgr *TaskManager) WithNewTxn(ctx context.Context, fn func(se sessionctx.Co
 // ExecuteSQLWithNewSession executes one SQL with new session.
 func (mgr *TaskManager) ExecuteSQLWithNewSession(ctx context.Context, sql string, args ...any) (rs []chunk.Row, err error) {
 	err = mgr.WithNewSession(func(se sessionctx.Context) error {
-		rs, err = sqlexec.ExecSQL(ctx, se, sql, args...)
+		rs, err = sqlexec.ExecSQL(ctx, se.GetSQLExecutor(), sql, args...)
 		return err
 	})
 
@@ -192,33 +192,41 @@ func (mgr *TaskManager) ExecuteSQLWithNewSession(ctx context.Context, sql string
 }
 
 // CreateTask adds a new task to task table.
-func (mgr *TaskManager) CreateTask(ctx context.Context, key string, tp proto.TaskType, concurrency int, meta []byte) (taskID int64, err error) {
+func (mgr *TaskManager) CreateTask(ctx context.Context, key string, tp proto.TaskType, concurrency int, targetScope string, meta []byte) (taskID int64, err error) {
 	err = mgr.WithNewSession(func(se sessionctx.Context) error {
 		var err2 error
-		taskID, err2 = mgr.CreateTaskWithSession(ctx, se, key, tp, concurrency, meta)
+		taskID, err2 = mgr.CreateTaskWithSession(ctx, se, key, tp, concurrency, targetScope, meta)
 		return err2
 	})
 	return
 }
 
 // CreateTaskWithSession adds a new task to task table with session.
-func (mgr *TaskManager) CreateTaskWithSession(ctx context.Context, se sessionctx.Context, key string, tp proto.TaskType, concurrency int, meta []byte) (taskID int64, err error) {
-	cpuCount, err := mgr.getCPUCountOfManagedNode(ctx, se)
+func (mgr *TaskManager) CreateTaskWithSession(
+	ctx context.Context,
+	se sessionctx.Context,
+	key string,
+	tp proto.TaskType,
+	concurrency int,
+	targetScope string,
+	meta []byte,
+) (taskID int64, err error) {
+	cpuCount, err := mgr.getCPUCountOfNode(ctx, se)
 	if err != nil {
 		return 0, err
 	}
 	if concurrency > cpuCount {
 		return 0, errors.Errorf("task concurrency(%d) larger than cpu count(%d) of managed node", concurrency, cpuCount)
 	}
-	_, err = sqlexec.ExecSQL(ctx, se, `
+	_, err = sqlexec.ExecSQL(ctx, se.GetSQLExecutor(), `
 			insert into mysql.tidb_global_task(`+InsertTaskColumns+`)
-			values (%?, %?, %?, %?, %?, %?, %?, CURRENT_TIMESTAMP())`,
-		key, tp, proto.TaskStatePending, proto.NormalPriority, concurrency, proto.StepInit, meta)
+			values (%?, %?, %?, %?, %?, %?, %?, CURRENT_TIMESTAMP(), %?)`,
+		key, tp, proto.TaskStatePending, proto.NormalPriority, concurrency, proto.StepInit, meta, targetScope)
 	if err != nil {
 		return 0, err
 	}
 
-	rs, err := sqlexec.ExecSQL(ctx, se, "select @@last_insert_id")
+	rs, err := sqlexec.ExecSQL(ctx, se.GetSQLExecutor(), "select @@last_insert_id")
 	if err != nil {
 		return 0, err
 	}
@@ -274,7 +282,7 @@ func (mgr *TaskManager) GetTaskExecInfoByExecID(ctx context.Context, execID stri
 	for _, r := range rs {
 		res = append(res, &TaskExecInfo{
 			TaskBase:           row2TaskBasic(r),
-			SubtaskConcurrency: int(r.GetInt64(8)),
+			SubtaskConcurrency: int(r.GetInt64(9)),
 		})
 	}
 	return res, nil
@@ -567,7 +575,7 @@ func (mgr *TaskManager) UpdateSubtasksExecIDs(ctx context.Context, subtasks []*p
 	}
 	err := mgr.WithNewTxn(ctx, func(se sessionctx.Context) error {
 		for _, subtask := range subtasks {
-			_, err := sqlexec.ExecSQL(ctx, se, `
+			_, err := sqlexec.ExecSQL(ctx, se.GetSQLExecutor(), `
 				update mysql.tidb_background_subtask
 				set exec_id = %?
 				where id = %? and state = %?`,
@@ -581,7 +589,7 @@ func (mgr *TaskManager) UpdateSubtasksExecIDs(ctx context.Context, subtasks []*p
 	return err
 }
 
-// SwitchTaskStep implements the dispatcher.TaskManager interface.
+// SwitchTaskStep implements the scheduler.TaskManager interface.
 func (mgr *TaskManager) SwitchTaskStep(
 	ctx context.Context,
 	task *proto.Task,
@@ -624,7 +632,7 @@ func (*TaskManager) updateTaskStateStep(ctx context.Context, se sessionctx.Conte
 	}
 	// TODO: during generating subtask, task meta might change, maybe move meta
 	// update to another place.
-	_, err := sqlexec.ExecSQL(ctx, se, `
+	_, err := sqlexec.ExecSQL(ctx, se.GetSQLExecutor(), `
 		update mysql.tidb_global_task
 		set state = %?,
 			step = %?, `+extraUpdateStr+`
@@ -658,11 +666,11 @@ func (*TaskManager) insertSubtasks(ctx context.Context, se sessionctx.Context, s
 			proto.SubtaskStatePending, proto.Type2Int(subtask.Type), subtask.Concurrency, subtask.Ordinal)
 	}
 	sb.WriteString(strings.Join(markerList, ","))
-	_, err := sqlexec.ExecSQL(ctx, se, sb.String(), args...)
+	_, err := sqlexec.ExecSQL(ctx, se.GetSQLExecutor(), sb.String(), args...)
 	return err
 }
 
-// SwitchTaskStepInBatch implements the dispatcher.TaskManager interface.
+// SwitchTaskStepInBatch implements the scheduler.TaskManager interface.
 func (mgr *TaskManager) SwitchTaskStepInBatch(
 	ctx context.Context,
 	task *proto.Task,
@@ -671,8 +679,8 @@ func (mgr *TaskManager) SwitchTaskStepInBatch(
 	subtasks []*proto.Subtask,
 ) error {
 	return mgr.WithNewSession(func(se sessionctx.Context) error {
-		// some subtasks may be inserted by other dispatchers, we can skip them.
-		rs, err := sqlexec.ExecSQL(ctx, se, `
+		// some subtasks may be inserted by other schedulers, we can skip them.
+		rs, err := sqlexec.ExecSQL(ctx, se.GetSQLExecutor(), `
 			select count(1) from mysql.tidb_background_subtask
 			where task_key = %? and step = %?`, task.ID, nextStep)
 		if err != nil {
@@ -738,7 +746,7 @@ func (mgr *TaskManager) GetSubtasksWithHistory(ctx context.Context, taskID int64
 		err error
 	)
 	err = mgr.WithNewTxn(ctx, func(se sessionctx.Context) error {
-		rs, err = sqlexec.ExecSQL(ctx, se,
+		rs, err = sqlexec.ExecSQL(ctx, se.GetSQLExecutor(),
 			`select `+SubtaskColumns+` from mysql.tidb_background_subtask where task_key = %? and step = %?`,
 			taskID, step,
 		)
@@ -748,7 +756,7 @@ func (mgr *TaskManager) GetSubtasksWithHistory(ctx context.Context, taskID int64
 
 		// To avoid the situation that the subtasks has been `TransferTasks2History`
 		// when the user show import jobs, we need to check the history table.
-		rsFromHistory, err := sqlexec.ExecSQL(ctx, se,
+		rsFromHistory, err := sqlexec.ExecSQL(ctx, se.GetSQLExecutor(),
 			`select `+SubtaskColumns+` from mysql.tidb_background_subtask_history where task_key = %? and step = %?`,
 			taskID, step,
 		)
@@ -796,11 +804,11 @@ func (mgr *TaskManager) GetAllSubtasks(ctx context.Context) ([]*proto.SubtaskBas
 // For details, see https://github.com/pingcap/tidb/issues/50894.
 // For the following versions, there is a check when submiting a new task. This function should be a no-op.
 func (mgr *TaskManager) AdjustTaskOverflowConcurrency(ctx context.Context, se sessionctx.Context) error {
-	cpuCount, err := mgr.getCPUCountOfManagedNode(ctx, se)
+	cpuCount, err := mgr.getCPUCountOfNode(ctx, se)
 	if err != nil {
 		return err
 	}
 	sql := "update mysql.tidb_global_task set concurrency = %? where concurrency > %?;"
-	_, err = sqlexec.ExecSQL(ctx, se, sql, cpuCount, cpuCount)
+	_, err = sqlexec.ExecSQL(ctx, se.GetSQLExecutor(), sql, cpuCount, cpuCount)
 	return err
 }

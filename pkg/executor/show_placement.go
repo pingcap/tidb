@@ -21,9 +21,9 @@ import (
 	gjson "encoding/json"
 	"fmt"
 	"slices"
-	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -35,7 +35,6 @@ import (
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/codec"
-	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	pd "github.com/tikv/pd/client/http"
 )
 
@@ -110,7 +109,7 @@ func (*showPlacementLabelsResultBuilder) sortMapKeys(m map[string]any) []string 
 }
 
 func (e *ShowExec) fetchShowPlacementLabels(ctx context.Context) error {
-	exec := e.Ctx().(sqlexec.RestrictedSQLExecutor)
+	exec := e.Ctx().GetRestrictedSQLExecutor()
 	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, "SELECT DISTINCT LABEL FROM %n.%n", "INFORMATION_SCHEMA", infoschema.TableTiKVStoreStatus)
 	if err != nil {
 		return errors.Trace(err)
@@ -269,39 +268,26 @@ func (e *ShowExec) fetchAllPlacementPolicies() error {
 }
 
 func (e *ShowExec) fetchRangesPlacementPlocy(ctx context.Context) error {
-	fetchFn := func(ctx context.Context, rangeName string) error {
-		bundle, err := infosync.GetRuleBundle(ctx, rangeName)
+	fetchFn := func(ctx context.Context, rangeBundleID string) error {
+		policyName, err := ddl.GetRangePlacementPolicyName(ctx, rangeBundleID)
 		if err != nil {
 			return err
 		}
-		if bundle == nil || len(bundle.Rules) == 0 {
-			return nil
+		if policyName != "" {
+			startKeyHex, endKeyHex := placement.GetRangeStartAndEndKeyHex(rangeBundleID)
+			startKey, _ := hex.DecodeString(startKeyHex)
+			endKey, _ := hex.DecodeString(endKeyHex)
+			state, err := infosync.GetReplicationState(ctx, startKey, endKey)
+			if err != nil {
+				return err
+			}
+			policy, ok := e.is.PolicyByName(model.NewCIStr(policyName))
+			if !ok {
+				return errors.Errorf("Policy with name '%s' not found", policyName)
+			}
+			e.appendRow([]any{"RANGE " + rangeBundleID, policy.PlacementSettings.String(), state.String()})
 		}
-		policyName := ""
-		startKey := []byte("")
-		endKey := []byte("")
-		rule := bundle.Rules[0]
-		pos := strings.Index(rule.ID, "_rule")
-		if pos > 0 {
-			policyName = rule.ID[:pos]
-		}
-		startKey, err = hex.DecodeString(rule.StartKeyHex)
-		if err != nil {
-			return err
-		}
-		endKey, err = hex.DecodeString(rule.EndKeyHex)
-		if err != nil {
-			return err
-		}
-		state, err := infosync.GetReplicationState(ctx, startKey, endKey)
-		if err != nil {
-			return err
-		}
-		policy, ok := e.is.PolicyByName(model.NewCIStr(policyName))
-		if !ok {
-			return errors.Errorf("Policy with name '%s' not found", policyName)
-		}
-		e.appendRow([]any{"RANGE " + rangeName, policy.PlacementSettings.String(), state.String()})
+
 		return nil
 	}
 	// try fetch ranges placement policy

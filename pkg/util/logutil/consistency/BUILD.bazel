@@ -15,6 +15,8 @@ go_library(
         "//pkg/types",
         "//pkg/util/dbterror",
         "//pkg/util/logutil",
+        "//pkg/util/redact",
+        "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_kvproto//pkg/kvrpcpb",
         "@com_github_tikv_client_go_v2//tikv",
         "@org_uber_go_zap//:zap",

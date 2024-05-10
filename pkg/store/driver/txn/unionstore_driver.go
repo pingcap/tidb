@@ -26,13 +26,14 @@ import (
 // memBuffer wraps tikv.MemDB as kv.MemBuffer.
 type memBuffer struct {
 	tikv.MemBuffer
+	isPipelinedDML bool
 }
 
-func newMemBuffer(m tikv.MemBuffer) kv.MemBuffer {
+func newMemBuffer(m tikv.MemBuffer, isPipelinedDML bool) kv.MemBuffer {
 	if m == nil {
 		return nil
 	}
-	return &memBuffer{MemBuffer: m}
+	return &memBuffer{MemBuffer: m, isPipelinedDML: isPipelinedDML}
 }
 
 func (m *memBuffer) Size() int {
@@ -80,7 +81,7 @@ func (m *memBuffer) Release(h kv.StagingHandle) {
 
 func (m *memBuffer) InspectStage(handle kv.StagingHandle, f func(kv.Key, kv.KeyFlags, []byte)) {
 	tf := func(key []byte, flag tikvstore.KeyFlags, value []byte) {
-		f(kv.Key(key), getTiDBKeyFlags(flag), value)
+		f(key, getTiDBKeyFlags(flag), value)
 	}
 	m.MemBuffer.InspectStage(int(handle), tf)
 }
@@ -112,20 +113,40 @@ func (m *memBuffer) IterReverse(k, lowerBound kv.Key) (kv.Iterator, error) {
 	return &tikvIterator{Iterator: it}, derr.ToTiDBErr(err)
 }
 
-// SnapshotIter returns a Iterator for a snapshot of MemBuffer.
+// SnapshotIter returns an Iterator for a snapshot of MemBuffer.
 func (m *memBuffer) SnapshotIter(k, upperbound kv.Key) kv.Iterator {
+	if m.isPipelinedDML {
+		return &kv.EmptyIterator{}
+	}
 	it := m.MemBuffer.SnapshotIter(k, upperbound)
 	return &tikvIterator{Iterator: it}
 }
 
 func (m *memBuffer) SnapshotIterReverse(k, lowerBound kv.Key) kv.Iterator {
+	if m.isPipelinedDML {
+		return &kv.EmptyIterator{}
+	}
 	it := m.MemBuffer.SnapshotIterReverse(k, lowerBound)
 	return &tikvIterator{Iterator: it}
 }
 
 // SnapshotGetter returns a Getter for a snapshot of MemBuffer.
 func (m *memBuffer) SnapshotGetter() kv.Getter {
+	if m.isPipelinedDML {
+		return &kv.EmptyRetriever{}
+	}
 	return newKVGetter(m.MemBuffer.SnapshotGetter())
+}
+
+// GetLocal implements kv.MemBuffer interface
+func (m *memBuffer) GetLocal(ctx context.Context, key []byte) ([]byte, error) {
+	data, err := m.MemBuffer.GetLocal(ctx, key)
+	return data, derr.ToTiDBErr(err)
+}
+
+func (m *memBuffer) BatchGet(ctx context.Context, keys [][]byte) (map[string][]byte, error) {
+	data, err := m.MemBuffer.BatchGet(ctx, keys)
+	return data, derr.ToTiDBErr(err)
 }
 
 type tikvGetter struct {

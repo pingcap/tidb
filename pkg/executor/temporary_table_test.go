@@ -75,6 +75,12 @@ func assertTemporaryTableNoNetwork(t *testing.T, createTable func(*testkit.TestK
 
 	tk.MustExec("use test")
 	tk1.MustExec("use test")
+
+	if tk.MustQuery("select @@tidb_schema_cache_size > 0").Equal(testkit.Rows("1")) {
+		// infoschema v2 requires network, so it cannot be tested this way.
+		t.Skip()
+	}
+
 	tk.MustExec("drop table if exists normal, tmp_t")
 	tk.MustExec("create table normal (id int, a int, index(a))")
 	createTable(tk)

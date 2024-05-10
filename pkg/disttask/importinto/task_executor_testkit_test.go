@@ -20,10 +20,10 @@ import (
 	"strconv"
 	"testing"
 
-	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/importinto"
 	"github.com/pingcap/tidb/pkg/executor/importer"
+	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -70,7 +70,7 @@ func TestPostProcessStepExecutor(t *testing.T) {
 
 	bytes, err := json.Marshal(stepMeta)
 	require.NoError(t, err)
-	executor := importinto.NewPostProcessStepExecutor(1, taskMeta, zap.NewExample())
+	executor := importinto.NewPostProcessStepExecutor(1, store, taskMeta, zap.NewExample())
 	err = executor.RunSubtask(context.Background(), &proto.Subtask{Meta: bytes})
 	require.NoError(t, err)
 
@@ -79,17 +79,17 @@ func TestPostProcessStepExecutor(t *testing.T) {
 	stepMeta.Checksum[-1] = tmp
 	bytes, err = json.Marshal(stepMeta)
 	require.NoError(t, err)
-	executor = importinto.NewPostProcessStepExecutor(1, taskMeta, zap.NewExample())
+	executor = importinto.NewPostProcessStepExecutor(1, store, taskMeta, zap.NewExample())
 	err = executor.RunSubtask(context.Background(), &proto.Subtask{Meta: bytes})
 	require.ErrorContains(t, err, "checksum mismatched remote vs local")
 
 	taskMeta.Plan.Checksum = config.OpLevelOptional
-	executor = importinto.NewPostProcessStepExecutor(1, taskMeta, zap.NewExample())
+	executor = importinto.NewPostProcessStepExecutor(1, store, taskMeta, zap.NewExample())
 	err = executor.RunSubtask(context.Background(), &proto.Subtask{Meta: bytes})
 	require.NoError(t, err)
 
 	taskMeta.Plan.Checksum = config.OpLevelOff
-	executor = importinto.NewPostProcessStepExecutor(1, taskMeta, zap.NewExample())
+	executor = importinto.NewPostProcessStepExecutor(1, store, taskMeta, zap.NewExample())
 	err = executor.RunSubtask(context.Background(), &proto.Subtask{Meta: bytes})
 	require.NoError(t, err)
 }

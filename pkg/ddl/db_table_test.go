@@ -318,14 +318,14 @@ func TestCreateTableWithInfo(t *testing.T) {
 	d := dom.DDL()
 	require.NotNil(t, d)
 	info := []*model.TableInfo{{
-		ID:   42,
+		ID:   42042, // Note, we must ensure the table ID is globally unique!
 		Name: model.NewCIStr("t"),
 	}}
 
 	require.NoError(t, d.BatchCreateTableWithInfo(tk.Session(), model.NewCIStr("test"), info, ddl.OnExistError, ddl.AllocTableIDIf(func(ti *model.TableInfo) bool {
 		return false
 	})))
-	tk.MustQuery("select tidb_table_id from information_schema.tables where table_name = 't'").Check(testkit.Rows("42"))
+	tk.MustQuery("select tidb_table_id from information_schema.tables where table_name = 't'").Check(testkit.Rows("42042"))
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)
 
 	var id int64

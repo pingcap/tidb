@@ -27,21 +27,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/memory"
 )
 
-var errSpillEmptyChunk = errors.New("can not spill empty chunk to disk")
-var errFailToAddChunk = errors.New("fail to add chunk")
-
-// It should be const, but we need to modify it for test.
-var spillChunkSize = 1024
-
-// signalCheckpointForSort indicates the times of row comparation that a signal detection will be triggered.
-const signalCheckpointForSort uint = 10240
-
-const (
-	notSpilled = iota
-	inSpilling
-	spillTriggered
-)
-
 type sortPartition struct {
 	// cond is only used for protecting spillStatus
 	cond        *sync.Cond
@@ -116,22 +101,6 @@ func (s *sortPartition) close() {
 		s.inDisk.Close()
 	}
 	s.getMemTracker().ReplaceBytesUsed(0)
-}
-
-func (s *sortPartition) reloadCursor() (bool, error) {
-	spilledChkNum := s.inDisk.NumChunks()
-	restoredChkID := s.cursor.getChkID() + 1
-	if restoredChkID >= spilledChkNum {
-		// All data has been consumed
-		return false, nil
-	}
-
-	chk, err := s.inDisk.GetChunk(restoredChkID)
-	if err != nil {
-		return false, err
-	}
-	s.cursor.setChunk(chk, restoredChkID)
-	return true, nil
 }
 
 // Return false if the spill is triggered in this partition.
@@ -259,7 +228,7 @@ func (s *sortPartition) getNextSortedRow() (chunk.Row, error) {
 	if s.isSpillTriggered() {
 		row := s.cursor.next()
 		if row.IsEmpty() {
-			success, err := s.reloadCursor()
+			success, err := reloadCursor(s.cursor, s.inDisk)
 			if err != nil {
 				return chunk.Row{}, err
 			}

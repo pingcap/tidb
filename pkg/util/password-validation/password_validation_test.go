@@ -73,7 +73,7 @@ func TestValidateUserNameInPassword(t *testing.T) {
 	err := sessionVars.GlobalVarsAccessor.SetGlobalSysVar(context.Background(), variable.ValidatePasswordCheckUserName, "ON")
 	require.NoError(t, err)
 	for _, testcase := range testcases {
-		warn, err := ValidateUserNameInPassword(testcase.pwd, sessionVars)
+		warn, err := ValidateUserNameInPassword(testcase.pwd, sessionVars.User, &sessionVars.GlobalVarsAccessor)
 		require.NoError(t, err)
 		require.Equal(t, testcase.warn, warn, testcase.pwd)
 	}
@@ -82,7 +82,7 @@ func TestValidateUserNameInPassword(t *testing.T) {
 	err = sessionVars.GlobalVarsAccessor.SetGlobalSysVar(context.Background(), variable.ValidatePasswordCheckUserName, "OFF")
 	require.NoError(t, err)
 	for _, testcase := range testcases {
-		warn, err := ValidateUserNameInPassword(testcase.pwd, sessionVars)
+		warn, err := ValidateUserNameInPassword(testcase.pwd, sessionVars.User, &sessionVars.GlobalVarsAccessor)
 		require.NoError(t, err)
 		require.Equal(t, "", warn, testcase.pwd)
 	}

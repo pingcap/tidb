@@ -48,7 +48,17 @@ This folder contains all tests which relies on external processes such as TiDB.
     The versions must be ≥2.1.0.
 
     What's more, there must be dynamic link library for TiFlash, see make target `bin` to learn more.
-    You can install most of dependencies by running `download_tools.sh`.
+    You can install most of dependencies by running following commands:
+
+    ```sh
+    cd ${WORKSPACE}/tidb
+    rm -rf third_bin/
+    rm -rf bin/
+    br/tests/download_integration_test_binaries.sh
+    mkdir -p bin && mv third_bin/* bin/
+    rm -rf third_bin/
+    make failpoint-enable && make && make failpoint-disable #make tidb
+    ```
 
 2. The following programs must be installed:
 
@@ -57,6 +67,7 @@ This folder contains all tests which relies on external processes such as TiDB.
     * `openssl`
     * `wget`
     * `lsof`
+    * `psmisc`
 
 3. The user executing the tests must have permission to create the folder
     `/tmp/backup_restore_test`. All test artifacts will be written into this folder.
@@ -66,13 +77,11 @@ If you have docker installed, you can skip step 1 and step 2 by running
 
 ## Running
 
-Link `bin` directory by `cd br && ln -s ../bin bin` and run `make br_integration_test` to execute the integration tests.
-This command will
-
-1. Build `br`
+1. Build `br.test` using `make build_for_br_integration_test`
 2. Check that all 9 required executables and `br` executable exist
+3. Select the tests to run using `export TEST_NAME="<test_name1> <test_name2> ..."` 
 3. Execute `tests/run.sh`
-4. To start cluster with tiflash, please run `TIFLASH=1 tests/run.sh`
+<!-- 4. To start cluster with tiflash, please run `TIFLASH=1 tests/run.sh` -->
 
 If the first two steps are done before, you could also run `tests/run.sh` directly.
 This script will
@@ -89,12 +98,13 @@ After executing the tests, run `make br_coverage` to get a coverage report at
 
 1. New integration tests can be written as shell scripts in `tests/TEST_NAME/run.sh`.
 The script should exit with a nonzero error code on failure.
-2. Add TEST_NAME to existing group in [run_group_br_tests.sh](./run_group_br_tests.sh)(Recommended) or [run_group_lightning_tests.sh](./run_group_lightning_tests.sh)(Recommended), or add a new group for it.
-3. If you add a new group, the name of the new group must be added to CI [br-integration-test](https://github.com/PingCAP-QE/ci/blob/main/pipelines/pingcap/tidb/latest/pull_br_integration_test.groovy) or [lightning-integration-test](https://github.com/PingCAP-QE/ci/blob/main/pipelines/pingcap/tidb/latest/pull_lightning_integration_test.groovy).
+2. Add TEST_NAME to existing group in [run_group_br_tests.sh](./run_group_br_tests.sh)(Recommended), or add a new group for it.
+3. If you add a new group, the name of the new group must be added to CI [br-integration-test](https://github.com/PingCAP-QE/ci/blob/main/pipelines/pingcap/tidb/latest/pull_br_integration_test.groovy).
 
 Several convenient commands are provided:
 
 * `run_sql <SQL>` — Executes an SQL query on the TiDB database
+* `run_br` - Executes `br.test` with necessary settings
 * `run_lightning [CONFIG]` — Starts `tidb-lightning` using `tests/TEST_NAME/CONFIG.toml`
 * `check_contains <TEXT>` — Checks if the previous `run_sql` result contains the given text
     (in `-E` format)

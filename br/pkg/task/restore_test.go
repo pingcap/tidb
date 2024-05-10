@@ -39,6 +39,10 @@ type mockPDClient struct {
 	pd.Client
 }
 
+func (m mockPDClient) GetClusterID(_ context.Context) uint64 {
+	return 1
+}
+
 func (m mockPDClient) GetAllStores(ctx context.Context, opts ...pd.GetStoreOption) ([]*metapb.Store, error) {
 	return []*metapb.Store{}, nil
 }
@@ -55,7 +59,7 @@ func TestConfigureRestoreClient(t *testing.T) {
 		RestoreCommonConfig: restoreComCfg,
 		DdlBatchSize:        128,
 	}
-	client := restore.NewRestoreClient(mockPDClient{}, nil, nil, keepalive.ClientParameters{}, false)
+	client := restore.NewRestoreClient(mockPDClient{}, nil, nil, keepalive.ClientParameters{})
 	ctx := context.Background()
 	err := configureRestoreClient(ctx, client, restoreCfg)
 	require.NoError(t, err)
@@ -256,6 +260,7 @@ func mockReadSchemasFromBackupMeta(t *testing.T, db2Tables map[string][]string) 
 			&backuppb.CipherInfo{
 				CipherType: encryptionpb.EncryptionMethod_PLAINTEXT,
 			}),
+		true,
 	)
 	require.NoError(t, err)
 	return dbs
@@ -266,4 +271,41 @@ func mockBackupMeta(mockSchemas []*backuppb.Schema, mockFiles []*backuppb.File) 
 		Files:   mockFiles,
 		Schemas: mockSchemas,
 	}
+}
+
+func TestMapTableToFiles(t *testing.T) {
+	filesOfTable1 := []*backuppb.File{
+		{
+			Name:     "table1-1.sst",
+			StartKey: tablecodec.EncodeTablePrefix(1),
+			EndKey:   tablecodec.EncodeTablePrefix(1),
+		},
+		{
+			Name:     "table1-2.sst",
+			StartKey: tablecodec.EncodeTablePrefix(1),
+			EndKey:   tablecodec.EncodeTablePrefix(1),
+		},
+		{
+			Name:     "table1-3.sst",
+			StartKey: tablecodec.EncodeTablePrefix(1),
+			EndKey:   tablecodec.EncodeTablePrefix(1),
+		},
+	}
+	filesOfTable2 := []*backuppb.File{
+		{
+			Name:     "table2-1.sst",
+			StartKey: tablecodec.EncodeTablePrefix(2),
+			EndKey:   tablecodec.EncodeTablePrefix(2),
+		},
+		{
+			Name:     "table2-2.sst",
+			StartKey: tablecodec.EncodeTablePrefix(2),
+			EndKey:   tablecodec.EncodeTablePrefix(2),
+		},
+	}
+
+	result := MapTableToFiles(append(filesOfTable2, filesOfTable1...))
+
+	require.Equal(t, filesOfTable1, result[1])
+	require.Equal(t, filesOfTable2, result[2])
 }

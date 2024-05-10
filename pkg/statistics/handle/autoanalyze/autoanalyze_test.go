@@ -103,8 +103,7 @@ func TestDisableAutoAnalyze(t *testing.T) {
 	is := dom.InfoSchema()
 	require.NoError(t, h.Update(is))
 
-	// Set auto analyze ratio to 0.
-	tk.MustExec("set @@global.tidb_auto_analyze_ratio = 0")
+	tk.MustExec("set @@global.tidb_enable_auto_analyze = 0")
 	exec.AutoAnalyzeMinCnt = 0
 	defer func() {
 		exec.AutoAnalyzeMinCnt = 1000
@@ -207,12 +206,12 @@ func TestTableAnalyzed(t *testing.T) {
 
 	require.NoError(t, h.Update(is))
 	statsTbl := h.GetTableStats(tableInfo)
-	require.False(t, exec.TableAnalyzed(statsTbl))
+	require.False(t, statsTbl.LastAnalyzeVersion > 0)
 
 	testKit.MustExec("analyze table t")
 	require.NoError(t, h.Update(is))
 	statsTbl = h.GetTableStats(tableInfo)
-	require.True(t, exec.TableAnalyzed(statsTbl))
+	require.True(t, statsTbl.LastAnalyzeVersion > 0)
 
 	h.Clear()
 	oriLease := h.Lease()
@@ -223,7 +222,7 @@ func TestTableAnalyzed(t *testing.T) {
 	}()
 	require.NoError(t, h.Update(is))
 	statsTbl = h.GetTableStats(tableInfo)
-	require.True(t, exec.TableAnalyzed(statsTbl))
+	require.True(t, statsTbl.LastAnalyzeVersion > 0)
 }
 
 func TestNeedAnalyzeTable(t *testing.T) {
@@ -251,42 +250,42 @@ func TestNeedAnalyzeTable(t *testing.T) {
 		},
 		// table was already analyzed but auto analyze is disabled
 		{
-			tbl:    &statistics.Table{HistColl: statistics.HistColl{Columns: columns, ModifyCount: 1, RealtimeCount: 1}},
+			tbl:    &statistics.Table{HistColl: statistics.HistColl{Columns: columns, ModifyCount: 1, RealtimeCount: 1}, LastAnalyzeVersion: 1},
 			ratio:  0,
 			result: false,
 			reason: "",
 		},
 		// table was already analyzed but modify count is small
 		{
-			tbl:    &statistics.Table{HistColl: statistics.HistColl{Columns: columns, ModifyCount: 0, RealtimeCount: 1}},
+			tbl:    &statistics.Table{HistColl: statistics.HistColl{Columns: columns, ModifyCount: 0, RealtimeCount: 1}, LastAnalyzeVersion: 1},
 			ratio:  0.3,
 			result: false,
 			reason: "",
 		},
 		// table was already analyzed
 		{
-			tbl:    &statistics.Table{HistColl: statistics.HistColl{Columns: columns, ModifyCount: 1, RealtimeCount: 1}},
+			tbl:    &statistics.Table{HistColl: statistics.HistColl{Columns: columns, ModifyCount: 1, RealtimeCount: 1}, LastAnalyzeVersion: 1},
 			ratio:  0.3,
 			result: true,
 			reason: "too many modifications",
 		},
 		// table was already analyzed
 		{
-			tbl:    &statistics.Table{HistColl: statistics.HistColl{Columns: columns, ModifyCount: 1, RealtimeCount: 1}},
+			tbl:    &statistics.Table{HistColl: statistics.HistColl{Columns: columns, ModifyCount: 1, RealtimeCount: 1}, LastAnalyzeVersion: 1},
 			ratio:  0.3,
 			result: true,
 			reason: "too many modifications",
 		},
 		// table was already analyzed
 		{
-			tbl:    &statistics.Table{HistColl: statistics.HistColl{Columns: columns, ModifyCount: 1, RealtimeCount: 1}},
+			tbl:    &statistics.Table{HistColl: statistics.HistColl{Columns: columns, ModifyCount: 1, RealtimeCount: 1}, LastAnalyzeVersion: 1},
 			ratio:  0.3,
 			result: true,
 			reason: "too many modifications",
 		},
 		// table was already analyzed
 		{
-			tbl:    &statistics.Table{HistColl: statistics.HistColl{Columns: columns, ModifyCount: 1, RealtimeCount: 1}},
+			tbl:    &statistics.Table{HistColl: statistics.HistColl{Columns: columns, ModifyCount: 1, RealtimeCount: 1}, LastAnalyzeVersion: 1},
 			ratio:  0.3,
 			result: true,
 			reason: "too many modifications",

@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
@@ -61,7 +62,7 @@ func (e *DeleteExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	return e.deleteSingleTableByChunk(ctx)
 }
 
-func (e *DeleteExec) deleteOneRow(tbl table.Table, handleCols plannercore.HandleCols, isExtraHandle bool, row []types.Datum) error {
+func (e *DeleteExec) deleteOneRow(tbl table.Table, handleCols util.HandleCols, isExtraHandle bool, row []types.Datum) error {
 	end := len(row)
 	if isExtraHandle {
 		end--
@@ -81,7 +82,7 @@ func (e *DeleteExec) deleteSingleTableByChunk(ctx context.Context) error {
 	var (
 		tbl           table.Table
 		isExtrahandle bool
-		handleCols    plannercore.HandleCols
+		handleCols    util.HandleCols
 		rowCount      int
 	)
 	for _, info := range e.tblColPosInfos {
@@ -144,6 +145,11 @@ func (e *DeleteExec) deleteSingleTableByChunk(ctx context.Context) error {
 			rowCount++
 		}
 		chk = chunk.Renew(chk, e.MaxChunkSize())
+		if txn, _ := e.Ctx().Txn(false); txn != nil {
+			if err := txn.MayFlush(); err != nil {
+				return err
+			}
+		}
 	}
 
 	return nil
@@ -222,6 +228,11 @@ func (e *DeleteExec) deleteMultiTablesByChunk(ctx context.Context) error {
 			}
 		}
 		chk = exec.TryNewCacheChunk(e.Children(0))
+		if txn, _ := e.Ctx().Txn(false); txn != nil {
+			if err := txn.MayFlush(); err != nil {
+				return err
+			}
+		}
 	}
 
 	return e.removeRowsInTblRowMap(tblRowMap)

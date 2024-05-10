@@ -117,7 +117,7 @@ var isHintUpdatableVerified = map[string]struct{}{
 func setHintUpdatable(vars []*SysVar) {
 	for _, v := range vars {
 		if _, ok := isHintUpdatableVerified[v.Name]; ok {
-			v.IsHintUpdatableVerfied = true
+			v.IsHintUpdatableVerified = true
 		}
 	}
 }

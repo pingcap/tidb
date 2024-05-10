@@ -184,6 +184,9 @@ func (r *QuarantineRecord) GenDeletionStmt() (string, []any) {
 
 // RunawayManager is used to detect and record runaway queries.
 type RunawayManager struct {
+	syncerInitialized atomic.Bool
+	logOnce           sync.Once
+
 	// queryLock is used to avoid repeated additions. Since we will add new items to the system table,
 	// in order to avoid repeated additions, we need a lock to ensure that
 	// action "judging whether there is this record in the current watch list and adding records" have atomicity.
@@ -219,6 +222,7 @@ func NewRunawayManager(resourceGroupCtl *rmclient.ResourceGroupsController, serv
 	go watchList.Start()
 	staleQuarantineChan := make(chan *QuarantineRecord, maxWatchRecordChannelSize)
 	m := &RunawayManager{
+		syncerInitialized:     atomic.Bool{},
 		resourceGroupCtl:      resourceGroupCtl,
 		watchList:             watchList,
 		serverID:              serverAddr,
@@ -243,6 +247,11 @@ func NewRunawayManager(resourceGroupCtl *rmclient.ResourceGroupsController, serv
 		staleQuarantineChan <- i.Value()
 	})
 	return m
+}
+
+// MarkSyncerInitialized is used to mark the syncer is initialized.
+func (rm *RunawayManager) MarkSyncerInitialized() {
+	rm.syncerInitialized.Store(true)
 }
 
 // DeriveChecker derives a RunawayChecker from the given resource group
@@ -282,11 +291,22 @@ func (rm *RunawayManager) markQuarantine(resourceGroupName, convict string, watc
 	}
 	// Add record without ID into watch list in this TiDB right now.
 	rm.addWatchList(record, ttl, false)
+	if !rm.syncerInitialized.Load() {
+		rm.logOnce.Do(func() {
+			logutil.BgLogger().Warn("runaway syncer is not initialized, so can't records about runaway")
+		})
+		return
+	}
 	select {
 	case rm.quarantineChan <- record:
 	default:
 		// TODO: add warning for discard flush records
 	}
+}
+
+// IsSyncerInitialized is only used for test.
+func (rm *RunawayManager) IsSyncerInitialized() bool {
+	return rm.syncerInitialized.Load()
 }
 
 func (rm *RunawayManager) addWatchList(record *QuarantineRecord, ttl time.Duration, force bool) {
@@ -380,6 +400,12 @@ func (rm *RunawayManager) getWatchFromWatchList(key string) *QuarantineRecord {
 
 func (rm *RunawayManager) markRunaway(resourceGroupName, originalSQL, planDigest string, action string, matchType RunawayMatchType, now *time.Time) {
 	source := rm.serverID
+	if !rm.syncerInitialized.Load() {
+		rm.logOnce.Do(func() {
+			logutil.BgLogger().Warn("runaway syncer is not initialized, so can't records about runaway")
+		})
+		return
+	}
 	select {
 	case rm.runawayQueriesChan <- &RunawayRecord{
 		ResourceGroupName: resourceGroupName,
@@ -442,7 +468,9 @@ type RunawayChecker struct {
 	deadline time.Time
 	setting  *rmpb.RunawaySettings
 
-	marked atomic.Bool
+	markedByRule  atomic.Bool
+	markedByWatch bool
+	watchAction   rmpb.RunawayAction
 }
 
 func newRunawayChecker(manager *RunawayManager, resourceGroupName string, setting *rmpb.RunawaySettings, originalSQL, sqlDigest, planDigest string) *RunawayChecker {
@@ -453,7 +481,8 @@ func newRunawayChecker(manager *RunawayManager, resourceGroupName string, settin
 		sqlDigest:         sqlDigest,
 		planDigest:        planDigest,
 		setting:           setting,
-		marked:            atomic.Bool{},
+		markedByRule:      atomic.Bool{},
+		markedByWatch:     false,
 	}
 	if setting != nil {
 		c.deadline = time.Now().Add(time.Duration(setting.Rule.ExecElapsedTimeMs) * time.Millisecond)
@@ -472,15 +501,16 @@ func (r *RunawayChecker) BeforeExecutor() error {
 			if action == rmpb.RunawayAction_NoneAction && r.setting != nil {
 				action = r.setting.Action
 			}
-			if r.marked.CompareAndSwap(false, true) {
-				now := time.Now()
-				r.markRunaway(RunawayMatchTypeWatch, action, &now)
-			}
+			r.markedByWatch = true
+			now := time.Now()
+			r.watchAction = action
+			r.markRunaway(RunawayMatchTypeWatch, action, &now)
 			// If no match action, it will do nothing.
 			switch action {
 			case rmpb.RunawayAction_Kill:
 				return exeerrors.ErrResourceGroupQueryRunawayQuarantine
 			case rmpb.RunawayAction_CoolDown:
+				// This action should be done in BeforeCopRequest.
 				return nil
 			case rmpb.RunawayAction_DryRun:
 				return nil
@@ -493,12 +523,18 @@ func (r *RunawayChecker) BeforeExecutor() error {
 
 // BeforeCopRequest checks runaway and modifies the request if necessary before sending coprocessor request.
 func (r *RunawayChecker) BeforeCopRequest(req *tikvrpc.Request) error {
-	if r.setting == nil {
+	if r.setting == nil && !r.markedByWatch {
 		return nil
 	}
-	marked := r.marked.Load()
+	marked := r.markedByRule.Load()
 	if !marked {
 		// note: now we don't check whether query is in watch list again.
+		if r.markedByWatch {
+			if r.watchAction == rmpb.RunawayAction_CoolDown {
+				req.ResourceControlContext.OverridePriority = 1 // set priority to lowest
+			}
+		}
+
 		now := time.Now()
 		until := r.deadline.Sub(now)
 		if until > 0 {
@@ -511,9 +547,11 @@ func (r *RunawayChecker) BeforeCopRequest(req *tikvrpc.Request) error {
 			return nil
 		}
 		// execution time exceeds the threshold, mark the query as runaway
-		if r.marked.CompareAndSwap(false, true) {
+		if r.markedByRule.CompareAndSwap(false, true) {
 			r.markRunaway(RunawayMatchTypeIdentify, r.setting.Action, &now)
-			r.markQuarantine(&now)
+			if !r.markedByWatch {
+				r.markQuarantine(&now)
+			}
 		}
 	}
 	switch r.setting.Action {
@@ -535,16 +573,18 @@ func (r *RunawayChecker) CheckCopRespError(err error) error {
 		return err
 	}
 	if strings.HasPrefix(err.Error(), "Coprocessor task terminated due to exceeding the deadline") {
-		if !r.marked.Load() {
+		if !r.markedByRule.Load() {
 			now := time.Now()
-			if r.deadline.Before(now) && r.marked.CompareAndSwap(false, true) {
+			if r.deadline.Before(now) && r.markedByRule.CompareAndSwap(false, true) {
 				r.markRunaway(RunawayMatchTypeIdentify, r.setting.Action, &now)
-				r.markQuarantine(&now)
+				if !r.markedByWatch {
+					r.markQuarantine(&now)
+				}
 				return exeerrors.ErrResourceGroupQueryRunawayInterrupted
 			}
 		}
 		// Due to concurrency, check again.
-		if r.marked.Load() {
+		if r.markedByRule.Load() {
 			return exeerrors.ErrResourceGroupQueryRunawayInterrupted
 		}
 	}

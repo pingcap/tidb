@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/statistics"
+	statsStorage "github.com/pingcap/tidb/pkg/statistics/handle/storage"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/tikv/client-go/v2/oracle"
@@ -141,14 +142,27 @@ func (e *ShowExec) appendTableForStatsMeta(dbName, tblName, partitionName string
 	if statsTbl.Pseudo {
 		return
 	}
-	e.appendRow([]any{
-		dbName,
-		tblName,
-		partitionName,
-		e.versionToTime(statsTbl.Version),
-		statsTbl.ModifyCount,
-		statsTbl.RealtimeCount,
-	})
+	if !statsTbl.IsAnalyzed() {
+		e.appendRow([]any{
+			dbName,
+			tblName,
+			partitionName,
+			e.versionToTime(statsTbl.Version),
+			statsTbl.ModifyCount,
+			statsTbl.RealtimeCount,
+			nil,
+		})
+	} else {
+		e.appendRow([]any{
+			dbName,
+			tblName,
+			partitionName,
+			e.versionToTime(statsTbl.Version),
+			statsTbl.ModifyCount,
+			statsTbl.RealtimeCount,
+			e.versionToTime(statsTbl.LastAnalyzeVersion),
+		})
+	}
 }
 
 func (e *ShowExec) appendTableForStatsLocked(dbName, tblName, partitionName string) {
@@ -545,7 +559,8 @@ func (e *ShowExec) appendTableForStatsHealthy(dbName, tblName, partitionName str
 }
 
 func (e *ShowExec) fetchShowHistogramsInFlight() {
-	e.appendRow([]any{statistics.HistogramNeededItems.Length()})
+	statsHandle := domain.GetDomain(e.Ctx()).StatsHandle()
+	e.appendRow([]any{statsStorage.CleanFakeItemsForShowHistInFlights(statsHandle)})
 }
 
 func (e *ShowExec) fetchShowAnalyzeStatus(ctx context.Context) error {

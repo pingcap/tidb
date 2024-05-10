@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ttl/metrics"
 	"github.com/pingcap/tidb/pkg/ttl/session"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"go.uber.org/zap"
@@ -76,28 +77,34 @@ func getSession(pool sessionPool) (session.Session, error) {
 		return nil, errors.Errorf("%T cannot be casted to sessionctx.Context", sctx)
 	}
 
-	exec, ok := resource.(sqlexec.SQLExecutor)
-	if !ok {
-		pool.Put(resource)
-		return nil, errors.Errorf("%T cannot be casted to sqlexec.SQLExecutor", sctx)
-	}
-
+	exec := sctx.GetSQLExecutor()
 	originalRetryLimit := sctx.GetSessionVars().RetryLimit
 	originalEnable1PC := sctx.GetSessionVars().Enable1PC
 	originalEnableAsyncCommit := sctx.GetSessionVars().EnableAsyncCommit
+	originalTimeZone, restoreTimeZone := "", false
+
 	se := session.NewSession(sctx, exec, func(se session.Session) {
 		_, err = se.ExecuteSQL(context.Background(), fmt.Sprintf("set tidb_retry_limit=%d", originalRetryLimit))
 		if err != nil {
+			intest.AssertNoError(err)
 			logutil.BgLogger().Error("fail to reset tidb_retry_limit", zap.Int64("originalRetryLimit", originalRetryLimit), zap.Error(err))
 		}
 
 		if !originalEnable1PC {
 			_, err = se.ExecuteSQL(context.Background(), "set tidb_enable_1pc=OFF")
+			intest.AssertNoError(err)
 			terror.Log(err)
 		}
 
 		if !originalEnableAsyncCommit {
 			_, err = se.ExecuteSQL(context.Background(), "set tidb_enable_async_commit=OFF")
+			intest.AssertNoError(err)
+			terror.Log(err)
+		}
+
+		if restoreTimeZone {
+			_, err = se.ExecuteSQL(context.Background(), "set @@time_zone=%?", originalTimeZone)
+			intest.AssertNoError(err)
 			terror.Log(err)
 		}
 
@@ -134,6 +141,26 @@ func getSession(pool sessionPool) (session.Session, error) {
 		se.Close()
 		return nil, err
 	}
+
+	// set the time zone to UTC
+	rows, err := se.ExecuteSQL(context.Background(), "select @@time_zone")
+	if err != nil {
+		se.Close()
+		return nil, err
+	}
+
+	if len(rows) == 0 || rows[0].Len() == 0 {
+		se.Close()
+		return nil, errors.New("failed to get time_zone variable")
+	}
+	originalTimeZone = rows[0].GetString(0)
+
+	_, err = se.ExecuteSQL(context.Background(), "set @@time_zone='UTC'")
+	if err != nil {
+		se.Close()
+		return nil, err
+	}
+	restoreTimeZone = true
 
 	return se, nil
 }

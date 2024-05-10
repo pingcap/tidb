@@ -34,19 +34,21 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	exprctx "github.com/pingcap/tidb/pkg/expression/context"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	isctx "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	planctx "github.com/pingcap/tidb/pkg/planner/context"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/ranger"
+	rangerctx "github.com/pingcap/tidb/pkg/util/ranger/context"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 	"github.com/pingcap/tidb/pkg/util/tracing"
@@ -58,11 +60,11 @@ var _ exec.Executor = &TableReaderExecutor{}
 
 // selectResultHook is used to hack distsql.SelectWithRuntimeStats safely for testing.
 type selectResultHook struct {
-	selectResultFunc func(ctx context.Context, dctx distsqlctx.DistSQLContext, kvReq *kv.Request,
+	selectResultFunc func(ctx context.Context, dctx *distsqlctx.DistSQLContext, kvReq *kv.Request,
 		fieldTypes []*types.FieldType, copPlanIDs []int) (distsql.SelectResult, error)
 }
 
-func (sr selectResultHook) SelectResult(ctx context.Context, dctx distsqlctx.DistSQLContext, kvReq *kv.Request,
+func (sr selectResultHook) SelectResult(ctx context.Context, dctx *distsqlctx.DistSQLContext, kvReq *kv.Request,
 	fieldTypes []*types.FieldType, copPlanIDs []int, rootPlanID int) (distsql.SelectResult, error) {
 	if sr.selectResultFunc == nil {
 		return distsql.SelectWithRuntimeStats(ctx, dctx, kvReq, fieldTypes, copPlanIDs, rootPlanID)
@@ -77,19 +79,19 @@ type kvRangeBuilder interface {
 
 // tableReaderExecutorContext is the execution context for the `TableReaderExecutor`
 type tableReaderExecutorContext struct {
-	dctx distsqlctx.DistSQLContext
-	pctx planctx.PlanContext
-	ectx exprctx.BuildContext
+	dctx       *distsqlctx.DistSQLContext
+	rctx       *rangerctx.RangerContext
+	buildPBCtx *planctx.BuildPBContext
+	ectx       exprctx.BuildContext
 
+	stmtMemTracker *memory.Tracker
+
+	infoSchema  isctx.MetaOnlyInfoSchema
 	getDDLOwner func(context.Context) (*infosync.ServerInfo, error)
 }
 
-func (treCtx *tableReaderExecutorContext) GetSessionVars() *variable.SessionVars {
-	return treCtx.dctx.GetSessionVars()
-}
-
-func (treCtx *tableReaderExecutorContext) GetInfoSchema() infoschema.InfoSchema {
-	return treCtx.pctx.GetInfoSchema().(infoschema.InfoSchema)
+func (treCtx *tableReaderExecutorContext) GetInfoSchema() isctx.MetaOnlyInfoSchema {
+	return treCtx.infoSchema
 }
 
 func (treCtx *tableReaderExecutorContext) GetDDLOwner(ctx context.Context) (*infosync.ServerInfo, error) {
@@ -117,11 +119,15 @@ func newTableReaderExecutorContext(sctx sessionctx.Context) tableReaderExecutorC
 		}
 	}
 
+	pctx := sctx.GetPlanCtx()
 	return tableReaderExecutorContext{
-		dctx:        sctx.GetDistSQLCtx(),
-		pctx:        sctx.GetPlanCtx(),
-		ectx:        sctx.GetExprCtx(),
-		getDDLOwner: getDDLOwner,
+		dctx:           sctx.GetDistSQLCtx(),
+		rctx:           pctx.GetRangerCtx(),
+		buildPBCtx:     pctx.GetBuildPBCtx(),
+		ectx:           sctx.GetExprCtx(),
+		stmtMemTracker: sctx.GetSessionVars().StmtCtx.MemTracker,
+		infoSchema:     pctx.GetInfoSchema(),
+		getDDLOwner:    getDDLOwner,
 	}
 }
 
@@ -157,8 +163,8 @@ type TableReaderExecutor struct {
 	// resultHandler handles the order of the result. Since (MAXInt64, MAXUint64] stores before [0, MaxInt64] physically
 	// for unsigned int.
 	resultHandler *tableResultHandler
-	plans         []plannercore.PhysicalPlan
-	tablePlan     plannercore.PhysicalPlan
+	plans         []base.PhysicalPlan
+	tablePlan     base.PhysicalPlan
 
 	memTracker       *memory.Tracker
 	selectResultHook // for testing
@@ -224,25 +230,25 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 	} else {
 		e.memTracker = memory.NewTracker(e.ID(), -1)
 	}
-	e.memTracker.AttachTo(e.GetSessionVars().StmtCtx.MemTracker)
+	e.memTracker.AttachTo(e.stmtMemTracker)
 
 	var err error
 	if e.corColInFilter {
 		// If there's correlated column in filter, need to rewrite dagPB
 		if e.storeType == kv.TiFlash {
-			execs, err := builder.ConstructTreeBasedDistExec(e.pctx, e.tablePlan)
+			execs, err := builder.ConstructTreeBasedDistExec(e.buildPBCtx, e.tablePlan)
 			if err != nil {
 				return err
 			}
 			e.dagPB.RootExecutor = execs[0]
 		} else {
-			e.dagPB.Executors, err = builder.ConstructListBasedDistExec(e.pctx, e.plans)
+			e.dagPB.Executors, err = builder.ConstructListBasedDistExec(e.buildPBCtx, e.plans)
 			if err != nil {
 				return err
 			}
 		}
 	}
-	if e.GetSessionVars().StmtCtx.RuntimeStatsColl != nil {
+	if e.dctx.RuntimeStatsColl != nil {
 		collExec := true
 		e.dagPB.CollectExecutionSummaries = &collExec
 	}
@@ -434,14 +440,14 @@ func (e *TableReaderExecutor) buildKVReqSeparately(ctx context.Context, ranges [
 			SetKeepOrder(e.keepOrder).
 			SetTxnScope(e.txnScope).
 			SetReadReplicaScope(e.readReplicaScope).
-			SetFromSessionVars(e.GetSessionVars()).
+			SetFromSessionVars(e.dctx).
 			SetFromInfoSchema(e.GetInfoSchema()).
 			SetMemTracker(e.memTracker).
 			SetStoreType(e.storeType).
 			SetPaging(e.paging).
 			SetAllowBatchCop(e.batchCop).
-			SetClosestReplicaReadAdjuster(newClosestReadAdjuster(e.GetSessionVars(), &reqBuilder.Request, e.netDataSize)).
-			SetConnIDAndConnAlias(e.GetSessionVars().ConnectionID, e.GetSessionVars().SessionAlias).
+			SetClosestReplicaReadAdjuster(newClosestReadAdjuster(e.dctx, &reqBuilder.Request, e.netDataSize)).
+			SetConnIDAndConnAlias(e.dctx.ConnectionID, e.dctx.SessionAlias).
 			Build()
 		if err != nil {
 			return nil, err
@@ -476,14 +482,14 @@ func (e *TableReaderExecutor) buildKVReqForPartitionTableScan(ctx context.Contex
 		SetKeepOrder(e.keepOrder).
 		SetTxnScope(e.txnScope).
 		SetReadReplicaScope(e.readReplicaScope).
-		SetFromSessionVars(e.GetSessionVars()).
+		SetFromSessionVars(e.dctx).
 		SetFromInfoSchema(e.GetInfoSchema()).
 		SetMemTracker(e.memTracker).
 		SetStoreType(e.storeType).
 		SetPaging(e.paging).
 		SetAllowBatchCop(e.batchCop).
-		SetClosestReplicaReadAdjuster(newClosestReadAdjuster(e.GetSessionVars(), &reqBuilder.Request, e.netDataSize)).
-		SetConnIDAndConnAlias(e.GetSessionVars().ConnectionID, e.GetSessionVars().SessionAlias).
+		SetClosestReplicaReadAdjuster(newClosestReadAdjuster(e.dctx, &reqBuilder.Request, e.netDataSize)).
+		SetConnIDAndConnAlias(e.dctx.ConnectionID, e.dctx.SessionAlias).
 		Build()
 	if err != nil {
 		return nil, err
@@ -501,7 +507,7 @@ func (e *TableReaderExecutor) buildKVReq(ctx context.Context, ranges []*ranger.R
 		}
 		reqBuilder = builder.SetPartitionKeyRanges(kvRange)
 	} else {
-		reqBuilder = builder.SetHandleRanges(e.GetSessionVars().StmtCtx, getPhysicalTableID(e.table), e.table.Meta() != nil && e.table.Meta().IsCommonHandle, ranges)
+		reqBuilder = builder.SetHandleRanges(e.dctx, getPhysicalTableID(e.table), e.table.Meta() != nil && e.table.Meta().IsCommonHandle, ranges)
 	}
 	if e.table != nil && e.table.Type().IsClusterTable() {
 		copDestination := infoschema.GetClusterTableCopDestination(e.table.Meta().Name.L)
@@ -521,14 +527,14 @@ func (e *TableReaderExecutor) buildKVReq(ctx context.Context, ranges []*ranger.R
 		SetTxnScope(e.txnScope).
 		SetReadReplicaScope(e.readReplicaScope).
 		SetIsStaleness(e.isStaleness).
-		SetFromSessionVars(e.GetSessionVars()).
+		SetFromSessionVars(e.dctx).
 		SetFromInfoSchema(e.GetInfoSchema()).
 		SetMemTracker(e.memTracker).
 		SetStoreType(e.storeType).
 		SetAllowBatchCop(e.batchCop).
-		SetClosestReplicaReadAdjuster(newClosestReadAdjuster(e.GetSessionVars(), &reqBuilder.Request, e.netDataSize)).
+		SetClosestReplicaReadAdjuster(newClosestReadAdjuster(e.dctx, &reqBuilder.Request, e.netDataSize)).
 		SetPaging(e.paging).
-		SetConnIDAndConnAlias(e.GetSessionVars().ConnectionID, e.GetSessionVars().SessionAlias)
+		SetConnIDAndConnAlias(e.dctx.ConnectionID, e.dctx.SessionAlias)
 	return reqBuilder.Build()
 }
 

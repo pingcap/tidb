@@ -337,3 +337,8 @@ explain select * from t where col_29 between -7 and -6;
 --sorted_result
 select * from t where col_29 between -7 and -6;
 
+# TestIssue52198
+create table issue52198 (a int, b int, primary key (b)) partition by hash(b) partitions 5;
+insert into issue52198 values (1,1);
+select space(1), b from issue52198 where b in (1);
+drop table issue52198;

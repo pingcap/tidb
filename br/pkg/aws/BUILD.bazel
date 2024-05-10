@@ -8,7 +8,7 @@ go_library(
     deps = [
         "//br/pkg/config",
         "//br/pkg/glue",
-        "//br/pkg/utils",
+        "//pkg/util",
         "@com_github_aws_aws_sdk_go//aws",
         "@com_github_aws_aws_sdk_go//aws/awserr",
         "@com_github_aws_aws_sdk_go//aws/session",
@@ -29,9 +29,11 @@ go_test(
     srcs = ["ebs_test.go"],
     embed = [":aws"],
     flaky = True,
+    shard_count = 3,
     deps = [
         "@com_github_aws_aws_sdk_go//aws",
         "@com_github_aws_aws_sdk_go//service/ec2",
+        "@com_github_aws_aws_sdk_go//service/ec2/ec2iface",
         "@com_github_stretchr_testify//require",
     ],
 )

@@ -184,6 +184,11 @@ func (it *Iterator4Chunk) GetChunk() *Chunk {
 	return it.chk
 }
 
+// ResetChunk reset the chunk this iter holds
+func (it *Iterator4Chunk) ResetChunk(chk *Chunk) {
+	it.chk = chk
+}
+
 // Error returns none-nil error if anything wrong happens during the iteration.
 func (*Iterator4Chunk) Error() error {
 	return nil

@@ -50,6 +50,8 @@ type TTLJobTrace struct {
 
 // TTLJobAdapter is used to submit TTL job and trace job status
 type TTLJobAdapter interface {
+	// Now returns the current time with system timezone.
+	Now() (time.Time, error)
 	// CanSubmitJob returns whether a new job can be created for the specified table
 	CanSubmitJob(tableID, physicalID int64) bool
 	// SubmitJob submits a new job
@@ -64,7 +66,6 @@ type ttlTimerHook struct {
 	ctx                 context.Context
 	cancel              func()
 	wg                  sync.WaitGroup
-	nowFunc             func() time.Time
 	checkTTLJobInterval time.Duration
 	// waitJobLoopCounter is only used for test
 	waitJobLoopCounter int64
@@ -77,7 +78,6 @@ func newTTLTimerHook(adapter TTLJobAdapter, cli timerapi.TimerClient) *ttlTimerH
 		cli:                 cli,
 		ctx:                 ctx,
 		cancel:              cancel,
-		nowFunc:             time.Now,
 		checkTTLJobInterval: defaultCheckTTLJobInterval,
 	}
 }
@@ -95,8 +95,13 @@ func (t *ttlTimerHook) OnPreSchedEvent(_ context.Context, event timerapi.TimerSh
 		return
 	}
 
+	now, err := t.adapter.Now()
+	if err != nil {
+		return r, err
+	}
+
 	windowStart, windowEnd := variable.TTLJobScheduleWindowStartTime.Load(), variable.TTLJobScheduleWindowEndTime.Load()
-	if !timeutil.WithinDayTimePeriod(windowStart, windowEnd, t.nowFunc()) {
+	if !timeutil.WithinDayTimePeriod(windowStart, windowEnd, now) {
 		r.Delay = time.Minute
 		return
 	}
@@ -154,7 +159,12 @@ func (t *ttlTimerHook) OnSchedEvent(ctx context.Context, event timerapi.TimerShe
 			logger.Warn("cancel current TTL timer event because table's ttl is not enabled")
 		}
 
-		if t.nowFunc().Sub(timer.EventStart) > 10*time.Minute {
+		now, err := t.adapter.Now()
+		if err != nil {
+			return err
+		}
+
+		if now.Sub(timer.EventStart) > 10*time.Minute {
 			cancel = true
 			logger.Warn("cancel current TTL timer event because job not submitted for a long time")
 		}

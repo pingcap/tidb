@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core"
+	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
@@ -46,7 +47,7 @@ type AnalyzeColumnsExec struct {
 
 	tableInfo     *model.TableInfo
 	colsInfo      []*model.ColumnInfo
-	handleCols    core.HandleCols
+	handleCols    plannerutil.HandleCols
 	commonHandle  *model.IndexInfo
 	resultHandler *tableResultHandler
 	indexes       []*model.IndexInfo
@@ -64,7 +65,7 @@ type AnalyzeColumnsExec struct {
 
 func analyzeColumnsPushDownEntry(gp *gp.Pool, e *AnalyzeColumnsExec) *statistics.AnalyzeResults {
 	if e.AnalyzeInfo.StatsVersion >= statistics.Version2 {
-		return e.toV2().analyzeColumnsPushDownWithRetryV2(gp)
+		return e.toV2().analyzeColumnsPushDownV2(gp)
 	}
 	return e.toV1().analyzeColumnsPushDownV1()
 }
@@ -106,7 +107,7 @@ func (e *AnalyzeColumnsExec) open(ranges []*ranger.Range) error {
 
 func (e *AnalyzeColumnsExec) buildResp(ranges []*ranger.Range) (distsql.SelectResult, error) {
 	var builder distsql.RequestBuilder
-	reqBuilder := builder.SetHandleRangesForTables(e.ctx.GetSessionVars().StmtCtx, []int64{e.TableID.GetStatisticsID()}, e.handleCols != nil && !e.handleCols.IsInt(), ranges)
+	reqBuilder := builder.SetHandleRangesForTables(e.ctx.GetDistSQLCtx(), []int64{e.TableID.GetStatisticsID()}, e.handleCols != nil && !e.handleCols.IsInt(), ranges)
 	builder.SetResourceGroupTagger(e.ctx.GetSessionVars().StmtCtx.GetResourceGroupTagger())
 	startTS := uint64(math.MaxUint64)
 	isoLevel := kv.RC
@@ -129,7 +130,7 @@ func (e *AnalyzeColumnsExec) buildResp(ranges []*ranger.Range) (distsql.SelectRe
 		return nil, err
 	}
 	ctx := context.TODO()
-	result, err := distsql.Analyze(ctx, e.ctx.GetClient(), kvReq, e.ctx.GetSessionVars().KVVars, e.ctx.GetSessionVars().InRestrictedSQL, e.ctx.GetSessionVars().StmtCtx)
+	result, err := distsql.Analyze(ctx, e.ctx.GetClient(), kvReq, e.ctx.GetSessionVars().KVVars, e.ctx.GetSessionVars().InRestrictedSQL, e.ctx.GetDistSQLCtx())
 	if err != nil {
 		return nil, err
 	}
@@ -157,7 +158,7 @@ func (e *AnalyzeColumnsExec) buildStats(ranges []*ranger.Range, needExtStats boo
 		handleHist = &statistics.Histogram{}
 		handleCms = statistics.NewCMSketch(int32(e.opts[ast.AnalyzeOptCMSketchDepth]), int32(e.opts[ast.AnalyzeOptCMSketchWidth]))
 		handleTopn = statistics.NewTopN(int(e.opts[ast.AnalyzeOptNumTopN]))
-		handleFms = statistics.NewFMSketch(maxSketchSize)
+		handleFms = statistics.NewFMSketch(statistics.MaxSketchSize)
 		if e.analyzePB.IdxReq.Version != nil {
 			statsVer = int(*e.analyzePB.IdxReq.Version)
 		}
@@ -167,7 +168,7 @@ func (e *AnalyzeColumnsExec) buildStats(ranges []*ranger.Range, needExtStats boo
 	for i := range collectors {
 		collectors[i] = &statistics.SampleCollector{
 			IsMerger:      true,
-			FMSketch:      statistics.NewFMSketch(maxSketchSize),
+			FMSketch:      statistics.NewFMSketch(statistics.MaxSketchSize),
 			MaxSampleSize: int64(e.opts[ast.AnalyzeOptNumSamples]),
 			CMSketch:      statistics.NewCMSketch(int32(e.opts[ast.AnalyzeOptCMSketchDepth]), int32(e.opts[ast.AnalyzeOptCMSketchWidth])),
 		}
@@ -379,7 +380,7 @@ func (e *AnalyzeColumnsExecV1) analyzeColumnsPushDownV1() *statistics.AnalyzeRes
 	}
 }
 
-func hasPkHist(handleCols core.HandleCols) bool {
+func hasPkHist(handleCols plannerutil.HandleCols) bool {
 	return handleCols != nil && handleCols.IsInt()
 }
 

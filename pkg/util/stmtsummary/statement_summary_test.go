@@ -178,7 +178,7 @@ func TestAddStatement(t *testing.T) {
 		TotalLatency:   20000,
 		ParseLatency:   200,
 		CompileLatency: 2000,
-		CopTasks: &stmtctx.CopTasksDetails{
+		CopTasks: &execdetails.CopTasksDetails{
 			NumCopTasks:       20,
 			AvgProcessTime:    2000,
 			P90ProcessTime:    20000,
@@ -321,7 +321,7 @@ func TestAddStatement(t *testing.T) {
 		TotalLatency:   1000,
 		ParseLatency:   50,
 		CompileLatency: 500,
-		CopTasks: &stmtctx.CopTasksDetails{
+		CopTasks: &execdetails.CopTasksDetails{
 			NumCopTasks:       2,
 			AvgProcessTime:    100,
 			P90ProcessTime:    300,
@@ -627,7 +627,7 @@ func generateAnyExecInfo() *StmtExecInfo {
 		TotalLatency:   10000,
 		ParseLatency:   100,
 		CompileLatency: 1000,
-		CopTasks: &stmtctx.CopTasksDetails{
+		CopTasks: &execdetails.CopTasksDetails{
 			NumCopTasks:       10,
 			AvgProcessTime:    1000,
 			P90ProcessTime:    10000,

@@ -560,6 +560,17 @@ func (n *ColumnName) OrigColName() (ret string) {
 	return
 }
 
+// Match means that if a match b, e.g. t.a can match test.t.a but test.t.a can't match t.a.
+// Because column a want column from database test exactly.
+func (n *ColumnName) Match(b *ColumnName) bool {
+	if n.Schema.L == "" || n.Schema.L == b.Schema.L {
+		if n.Table.L == "" || n.Table.L == b.Table.L {
+			return n.Name.L == b.Name.L
+		}
+	}
+	return false
+}
+
 // ColumnNameExpr represents a column name expression.
 type ColumnNameExpr struct {
 	exprNode

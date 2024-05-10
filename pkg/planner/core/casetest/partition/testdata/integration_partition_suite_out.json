@@ -680,8 +680,8 @@
         ],
         "StaticPlan": [
           "PartitionUnion 2.00 root  ",
-          "├─Batch_Point_Get 1.00 root table:t handle:[1 2], keep order:false, desc:false",
-          "└─Batch_Point_Get 1.00 root table:t handle:[1 2], keep order:false, desc:false"
+          "├─Batch_Point_Get 1.00 root table:t, partition:p1 handle:[1], keep order:false, desc:false",
+          "└─Batch_Point_Get 1.00 root table:t, partition:P2 handle:[2], keep order:false, desc:false"
         ]
       },
       {
@@ -887,7 +887,7 @@
           "└─IndexRangeScan 2.00 cop[tikv] table:thash1, index:PRIMARY(a, b) range:[1 1,1 1], [2 1,2 1], keep order:false, stats:pseudo"
         ],
         "StaticPlan": [
-          "Batch_Point_Get 2.00 root table:thash1, index:PRIMARY(a, b) keep order:false, desc:false"
+          "Batch_Point_Get 2.00 root table:thash1, partition:p1, index:PRIMARY(a, b) keep order:false, desc:false"
         ],
         "Result": [
           "1 1",
@@ -901,7 +901,7 @@
           "└─IndexRangeScan 2.00 cop[tikv] table:thash1, index:PRIMARY(a, b) range:[1 1,1 1], [2 1,2 1], keep order:true, stats:pseudo"
         ],
         "StaticPlan": [
-          "Batch_Point_Get 2.00 root table:thash1, index:PRIMARY(a, b) keep order:true, desc:false"
+          "Batch_Point_Get 2.00 root table:thash1, partition:p1, index:PRIMARY(a, b) keep order:true, desc:false"
         ],
         "Result": [
           "1 1",
@@ -915,7 +915,7 @@
           "└─IndexRangeScan 2.00 cop[tikv] table:thash1, index:PRIMARY(a, b) range:[1 1,1 1], [2 1,2 1], keep order:true, desc, stats:pseudo"
         ],
         "StaticPlan": [
-          "Batch_Point_Get 2.00 root table:thash1, index:PRIMARY(a, b) keep order:true, desc:true"
+          "Batch_Point_Get 2.00 root table:thash1, partition:p1, index:PRIMARY(a, b) keep order:true, desc:true"
         ],
         "Result": [
           "2 1",
@@ -930,8 +930,8 @@
         ],
         "StaticPlan": [
           "PartitionUnion 4.00 root  ",
-          "├─Batch_Point_Get 2.00 root table:thash1, index:PRIMARY(a, b) keep order:false, desc:false",
-          "└─Batch_Point_Get 2.00 root table:thash1, index:PRIMARY(a, b) keep order:false, desc:false"
+          "├─Batch_Point_Get 2.00 root table:thash1, partition:p0, index:PRIMARY(a, b) keep order:false, desc:false",
+          "└─Batch_Point_Get 2.00 root table:thash1, partition:p1, index:PRIMARY(a, b) keep order:false, desc:false"
         ],
         "Result": [
           "1 1",
@@ -947,8 +947,8 @@
         "StaticPlan": [
           "Sort 4.00 root  test.thash1.b",
           "└─PartitionUnion 4.00 root  ",
-          "  ├─Batch_Point_Get 2.00 root table:thash1, index:PRIMARY(a, b) keep order:false, desc:false",
-          "  └─Batch_Point_Get 2.00 root table:thash1, index:PRIMARY(a, b) keep order:false, desc:false"
+          "  ├─Batch_Point_Get 2.00 root table:thash1, partition:p0, index:PRIMARY(a, b) keep order:false, desc:false",
+          "  └─Batch_Point_Get 2.00 root table:thash1, partition:p1, index:PRIMARY(a, b) keep order:false, desc:false"
         ],
         "Result": [
           "1 1",
@@ -964,8 +964,8 @@
         "StaticPlan": [
           "Sort 4.00 root  test.thash1.b:desc",
           "└─PartitionUnion 4.00 root  ",
-          "  ├─Batch_Point_Get 2.00 root table:thash1, index:PRIMARY(a, b) keep order:false, desc:false",
-          "  └─Batch_Point_Get 2.00 root table:thash1, index:PRIMARY(a, b) keep order:false, desc:false"
+          "  ├─Batch_Point_Get 2.00 root table:thash1, partition:p0, index:PRIMARY(a, b) keep order:false, desc:false",
+          "  └─Batch_Point_Get 2.00 root table:thash1, partition:p1, index:PRIMARY(a, b) keep order:false, desc:false"
         ],
         "Result": [
           "1 2",
@@ -1181,7 +1181,7 @@
           "└─TableRangeScan 2.00 cop[tikv] table:thash2 range:[1 1,1 1], [2 1,2 1], keep order:false, stats:pseudo"
         ],
         "StaticPlan": [
-          "Batch_Point_Get 2.00 root table:thash2, clustered index:PRIMARY(a, b) keep order:false, desc:false"
+          "Batch_Point_Get 2.00 root table:thash2, partition:p1, clustered index:PRIMARY(a, b) keep order:false, desc:false"
         ],
         "Result": [
           "1 1",
@@ -1195,7 +1195,7 @@
           "└─TableRangeScan 2.00 cop[tikv] table:thash2 range:[1 1,1 1], [2 1,2 1], keep order:true, stats:pseudo"
         ],
         "StaticPlan": [
-          "Batch_Point_Get 2.00 root table:thash2, clustered index:PRIMARY(a, b) keep order:true, desc:false"
+          "Batch_Point_Get 2.00 root table:thash2, partition:p1, clustered index:PRIMARY(a, b) keep order:true, desc:false"
         ],
         "Result": [
           "1 1",
@@ -1210,7 +1210,7 @@
           "  └─TableRangeScan 2.00 cop[tikv] table:thash2 range:[1 1,1 1], [2 1,2 1], keep order:false, stats:pseudo"
         ],
         "StaticPlan": [
-          "Batch_Point_Get 2.00 root table:thash2, clustered index:PRIMARY(a, b) keep order:true, desc:true"
+          "Batch_Point_Get 2.00 root table:thash2, partition:p1, clustered index:PRIMARY(a, b) keep order:true, desc:true"
         ],
         "Result": [
           "2 1",
@@ -1225,8 +1225,8 @@
         ],
         "StaticPlan": [
           "PartitionUnion 0.04 root  ",
-          "├─Batch_Point_Get 2.00 root table:thash2, clustered index:PRIMARY(a, b) keep order:false, desc:false",
-          "└─Batch_Point_Get 2.00 root table:thash2, clustered index:PRIMARY(a, b) keep order:false, desc:false"
+          "├─Batch_Point_Get 2.00 root table:thash2, partition:p0, clustered index:PRIMARY(a, b) keep order:false, desc:false",
+          "└─Batch_Point_Get 2.00 root table:thash2, partition:p1, clustered index:PRIMARY(a, b) keep order:false, desc:false"
         ],
         "Result": [
           "1 1",
@@ -1242,8 +1242,8 @@
         "StaticPlan": [
           "Sort 0.04 root  test.thash2.b",
           "└─PartitionUnion 0.04 root  ",
-          "  ├─Batch_Point_Get 2.00 root table:thash2, clustered index:PRIMARY(a, b) keep order:false, desc:false",
-          "  └─Batch_Point_Get 2.00 root table:thash2, clustered index:PRIMARY(a, b) keep order:false, desc:false"
+          "  ├─Batch_Point_Get 2.00 root table:thash2, partition:p0, clustered index:PRIMARY(a, b) keep order:false, desc:false",
+          "  └─Batch_Point_Get 2.00 root table:thash2, partition:p1, clustered index:PRIMARY(a, b) keep order:false, desc:false"
         ],
         "Result": [
           "1 1",
@@ -1260,8 +1260,8 @@
         "StaticPlan": [
           "Sort 0.04 root  test.thash2.b:desc",
           "└─PartitionUnion 0.04 root  ",
-          "  ├─Batch_Point_Get 2.00 root table:thash2, clustered index:PRIMARY(a, b) keep order:false, desc:false",
-          "  └─Batch_Point_Get 2.00 root table:thash2, clustered index:PRIMARY(a, b) keep order:false, desc:false"
+          "  ├─Batch_Point_Get 2.00 root table:thash2, partition:p0, clustered index:PRIMARY(a, b) keep order:false, desc:false",
+          "  └─Batch_Point_Get 2.00 root table:thash2, partition:p1, clustered index:PRIMARY(a, b) keep order:false, desc:false"
         ],
         "Result": [
           "1 2",
@@ -1484,8 +1484,8 @@
         ],
         "StaticPlan": [
           "PartitionUnion 4.00 root  ",
-          "├─Batch_Point_Get 2.00 root table:thash3 handle:[1 2], keep order:false, desc:false",
-          "└─Batch_Point_Get 2.00 root table:thash3 handle:[1 2], keep order:false, desc:false"
+          "├─Batch_Point_Get 2.00 root table:thash3, partition:p0 handle:[2], keep order:false, desc:false",
+          "└─Batch_Point_Get 2.00 root table:thash3, partition:p1 handle:[1], keep order:false, desc:false"
         ],
         "Result": [
           "1 0",
@@ -1499,7 +1499,7 @@
           "└─TableRangeScan 2.00 cop[tikv] table:thash3 range:[1,1], [3,3], keep order:false, stats:pseudo"
         ],
         "StaticPlan": [
-          "Batch_Point_Get 2.00 root table:thash3 handle:[1 3], keep order:false, desc:false"
+          "Batch_Point_Get 2.00 root table:thash3, partition:p1 handle:[1 3], keep order:false, desc:false"
         ],
         "Result": [
           "1 0",
@@ -1513,7 +1513,7 @@
           "└─TableRangeScan 2.00 cop[tikv] table:thash3 range:[1,1], [3,3], keep order:true, stats:pseudo"
         ],
         "StaticPlan": [
-          "Batch_Point_Get 2.00 root table:thash3 handle:[1 3], keep order:true, desc:false"
+          "Batch_Point_Get 2.00 root table:thash3, partition:p1 handle:[1 3], keep order:true, desc:false"
         ],
         "Result": [
           "1 0",
@@ -1527,7 +1527,7 @@
           "└─TableRangeScan 2.00 cop[tikv] table:thash3 range:[1,1], [3,3], keep order:true, desc, stats:pseudo"
         ],
         "StaticPlan": [
-          "Batch_Point_Get 2.00 root table:thash3 handle:[1 3], keep order:true, desc:true"
+          "Batch_Point_Get 2.00 root table:thash3, partition:p1 handle:[1 3], keep order:true, desc:true"
         ],
         "Result": [
           "3 0",
@@ -1541,7 +1541,7 @@
           "└─TableRangeScan 2.00 cop[tikv] table:thash3 range:[1,1], [4,4], keep order:false, stats:pseudo"
         ],
         "StaticPlan": [
-          "Batch_Point_Get 2.00 root table:thash3 handle:[1 4], keep order:false, desc:false"
+          "Batch_Point_Get 2.00 root table:thash3, partition:p0 handle:[4], keep order:false, desc:false"
         ],
         "Result": [
           "4 0"
@@ -1565,7 +1565,7 @@
           "└─TableRangeScan 2.00 cop[tikv] table:thash3 range:[2,2], [4,4], keep order:false, stats:pseudo"
         ],
         "StaticPlan": [
-          "Batch_Point_Get 2.00 root table:thash3 handle:[2 4], keep order:false, desc:false"
+          "Batch_Point_Get 2.00 root table:thash3, partition:p0 handle:[2 4], keep order:false, desc:false"
         ],
         "Result": [
           "2 0",

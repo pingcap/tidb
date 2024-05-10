@@ -99,13 +99,13 @@ func TestAnalyzeStaticPartitionedTableIndexes(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
-	tk.MustExec("create table t (a int, b int, index idx(a)) partition by range (a) (partition p0 values less than (2), partition p1 values less than (4))")
+	tk.MustExec("create table t (a int, b int, index idx(a), index idx1(b)) partition by range (a) (partition p0 values less than (2), partition p1 values less than (4))")
 	tk.MustExec("insert into t values (1, 1), (2, 2), (3, 3)")
 	job := &priorityqueue.StaticPartitionedTableAnalysisJob{
 		TableSchema:         "test",
 		GlobalTableName:     "t",
 		StaticPartitionName: "p0",
-		Indexes:             []string{"idx"},
+		Indexes:             []string{"idx", "idx1"},
 		TableStatsVer:       2,
 	}
 	handle := dom.StatsHandle()
@@ -126,33 +126,12 @@ func TestAnalyzeStaticPartitionedTableIndexes(t *testing.T) {
 	tblStats = handle.GetPartitionStats(tbl.Meta(), pid)
 	require.NotNil(t, tblStats.Indices[1])
 	require.True(t, tblStats.Indices[1].IsAnalyzed())
-	// Add a new index.
-	tk.MustExec("alter table t add index idx2(b)")
-	job = &priorityqueue.StaticPartitionedTableAnalysisJob{
-		TableSchema:         "test",
-		GlobalTableName:     "t",
-		StaticPartitionName: "p0",
-		Indexes:             []string{"idx", "idx2"},
-		TableStatsVer:       2,
-	}
-	require.NoError(t, handle.Update(dom.InfoSchema()))
-	// Before analyze indexes.
-	is = dom.InfoSchema()
-	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-	require.NoError(t, err)
-	pid = tbl.Meta().GetPartitionInfo().Definitions[0].ID
-	tblStats = handle.GetPartitionStats(tbl.Meta(), pid)
-	require.Len(t, tblStats.Indices, 1)
-
-	job.Analyze(handle, dom.SysProcTracker())
-	// Check the result of analyze.
-	is = dom.InfoSchema()
-	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-	require.NoError(t, err)
-	pid = tbl.Meta().GetPartitionInfo().Definitions[0].ID
-	tblStats = handle.GetPartitionStats(tbl.Meta(), pid)
 	require.NotNil(t, tblStats.Indices[2])
 	require.True(t, tblStats.Indices[2].IsAnalyzed())
+	// Check analyze jobs are created.
+	rows := tk.MustQuery("select * from mysql.analyze_jobs").Rows()
+	// Because analyze one index will analyze all indexes and all columns together, so there are 4 jobs.
+	require.Len(t, rows, 4)
 }
 
 func TestStaticPartitionedTableIsValidToAnalyze(t *testing.T) {

@@ -853,7 +853,7 @@ func (b *builtinCastStringAsJSONSig) vecEvalJSON(ctx EvalContext, input *chunk.C
 
 			val := buf.GetBytes(i)
 			resultBuf := val
-			if typ.GetType() == mysql.TypeString {
+			if typ.GetType() == mysql.TypeString && typ.GetFlen() > 0 {
 				// only for BINARY: the tailing zero should also be in the opaque json
 				resultBuf = make([]byte, typ.GetFlen())
 				copy(resultBuf, val)

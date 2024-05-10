@@ -5,14 +5,12 @@ package operator
 import (
 	"context"
 	"crypto/tls"
-	"fmt"
-	"math/rand"
-	"os"
 	"runtime/debug"
 	"sync"
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
 	preparesnap "github.com/pingcap/tidb/br/pkg/backup/prepare_snap"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
@@ -134,10 +132,23 @@ func AdaptEnvForSnapshotBackup(ctx context.Context, cfg *PauseGcConfig) error {
 	}
 	defer cx.Close()
 
+	initChan := make(chan struct{})
 	cx.run(func() error { return pauseGCKeeper(cx) })
-	cx.run(func() error { return pauseSchedulerKeeper(cx) })
-	cx.run(func() error { return pauseAdminAndWaitApply(cx) })
+	cx.run(func() error {
+		log.Info("Pause scheduler waiting all connections established.")
+		select {
+		case <-initChan:
+		case <-cx.Done():
+			return cx.Err()
+		}
+		log.Info("Pause scheduler noticed connections established.")
+		return pauseSchedulerKeeper(cx)
+	})
+	cx.run(func() error { return pauseAdminAndWaitApply(cx, initChan) })
 	go func() {
+		failpoint.Inject("SkipReadyHint", func() {
+			failpoint.Return()
+		})
 		cx.rdGrp.Wait()
 		if cfg.OnAllReady != nil {
 			cfg.OnAllReady()
@@ -154,7 +165,7 @@ func AdaptEnvForSnapshotBackup(ctx context.Context, cfg *PauseGcConfig) error {
 	return eg.Wait()
 }
 
-func pauseAdminAndWaitApply(cx *AdaptEnvForSnapshotBackupContext) error {
+func pauseAdminAndWaitApply(cx *AdaptEnvForSnapshotBackupContext, afterConnectionsEstablished chan<- struct{}) error {
 	env := preparesnap.CliEnv{
 		Cache: tikv.NewRegionCache(cx.pdMgr.GetPDClient()),
 		Mgr:   cx.kvMgr,
@@ -164,6 +175,10 @@ func pauseAdminAndWaitApply(cx *AdaptEnvForSnapshotBackupContext) error {
 	begin := time.Now()
 	prep := preparesnap.New(retryEnv)
 	prep.LeaseDuration = cx.cfg.TTL
+	prep.AfterConnectionsEstablished = func() {
+		log.Info("All connections are stablished.")
+		close(afterConnectionsEstablished)
+	}
 
 	defer cx.cleanUpWith(func(ctx context.Context) {
 		if err := prep.Finalize(ctx); err != nil {
@@ -180,14 +195,6 @@ func pauseAdminAndWaitApply(cx *AdaptEnvForSnapshotBackupContext) error {
 	cx.ReadyL("pause_admin_and_wait_apply", zap.Stringer("take", time.Since(begin)))
 	<-cx.Done()
 	return nil
-}
-
-func getCallerName() string {
-	name, err := os.Hostname()
-	if err != nil {
-		name = fmt.Sprintf("UNKNOWN-%d", rand.Int63())
-	}
-	return fmt.Sprintf("operator@%sT%d#%d", name, time.Now().Unix(), os.Getpid())
 }
 
 func pauseGCKeeper(cx *AdaptEnvForSnapshotBackupContext) (err error) {

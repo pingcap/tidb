@@ -20,12 +20,12 @@ import (
 	gotime "time"
 
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
-	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 )
@@ -296,7 +296,11 @@ func TestRenameConcurrentAutoID(t *testing.T) {
 	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
 
 	tk1 := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk3 := testkit.NewTestKit(t, store)
 	tk1.MustExec("use test")
+	tk2.MustExec(`use test`)
+	tk3.MustExec(`use test`)
 	// Use first client session, tidb1
 	tk1.MustExec(`create schema if not exists test1`)
 	tk1.MustExec(`create schema if not exists test2`)
@@ -315,14 +319,11 @@ func TestRenameConcurrentAutoID(t *testing.T) {
 	require.Equal(t, int64(5), origAllocs.Allocs[0].End())
 
 	// Switch to a new client (tidb2)
-	tk2 := testkit.NewTestKit(t, store)
-	tk2.MustExec(`use test`)
 	alterChan := make(chan error)
 	go func() {
 		// will wait for tidb1
 		alterChan <- tk2.ExecToErr(`rename table test1.t1 to test2.t2`)
 	}()
-	tk3 := testkit.NewTestKit(t, store)
 	waitFor := func(tableName, s string, pos int) {
 		for {
 			select {
@@ -333,7 +334,7 @@ func TestRenameConcurrentAutoID(t *testing.T) {
 			}
 			res := tk3.MustQuery(`admin show ddl jobs where table_name = '` + tableName + `' and job_type = 'rename table'`).Rows()
 			if len(res) == 1 && res[0][pos] == s {
-				logutil.BgLogger().Info("Got state", zap.String("State", s))
+				logutil.DDLLogger().Info("Got state", zap.String("State", s))
 				break
 			}
 			gotime.Sleep(50 * gotime.Millisecond)
@@ -344,7 +345,6 @@ func TestRenameConcurrentAutoID(t *testing.T) {
 
 	// Switch to new client (tidb3)
 	waitFor("t1", "public", 4)
-	tk3.MustExec(`use test`)
 	tk3.MustExec(`begin`)
 	tk3.MustExec(`insert into test2.t2 values (null, "t2 first null")`)
 	tk3.MustQuery(`select _tidb_rowid, a, b from test2.t2`).Sort().Check(testkit.Rows("4 3 t2 first null"))

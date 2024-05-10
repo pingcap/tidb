@@ -19,17 +19,17 @@ import (
 	"encoding/json"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/br/pkg/lightning/backend/external"
-	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
+	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
+	"github.com/pingcap/tidb/pkg/lightning/backend/external"
+	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
-	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
 )
@@ -44,9 +44,7 @@ type BackfillTaskMeta struct {
 	EleTypeKey []byte `json:"ele_type_key"`
 
 	CloudStorageURI string `json:"cloud_storage_uri"`
-	// UseMergeSort indicate whether the backfilling task use merge sort step for global sort.
-	// Merge Sort step aims to support more data.
-	UseMergeSort bool `json:"use_merge_sort"`
+	EstimateRowSize int    `json:"estimate_row_size"`
 }
 
 // BackfillSubTaskMeta is the sub-task meta for backfilling index.
@@ -103,20 +101,22 @@ func (s *backfillDistExecutor) newBackfillSubtaskExecutor(
 	for _, eid := range eleIDs {
 		indexInfo := model.FindIndexInfoByID(tbl.Meta().Indices, eid)
 		if indexInfo == nil {
-			logutil.BgLogger().Warn("index info not found", zap.String("category", "ddl-ingest"),
-				zap.Int64("table ID", tbl.Meta().ID), zap.Int64("index ID", eid))
+			logutil.DDLIngestLogger().Warn("index info not found",
+				zap.Int64("table ID", tbl.Meta().ID),
+				zap.Int64("index ID", eid))
 			return nil, errors.Errorf("index info not found: %d", eid)
 		}
 		indexInfos = append(indexInfos, indexInfo)
 	}
 	cloudStorageURI := s.taskMeta.CloudStorageURI
+	estRowSize := s.taskMeta.EstimateRowSize
 
 	switch stage {
 	case proto.BackfillStepReadIndex:
 		jc := ddlObj.jobContext(jobMeta.ID, jobMeta.ReorgMeta)
 		ddlObj.setDDLLabelForTopSQL(jobMeta.ID, jobMeta.Query)
 		ddlObj.setDDLSourceForDiagnosis(jobMeta.ID, jobMeta.Type)
-		return newReadIndexExecutor(ddlObj, jobMeta, indexInfos, tbl, jc, s.getBackendCtx, cloudStorageURI)
+		return newReadIndexExecutor(ddlObj, jobMeta, indexInfos, tbl, jc, s.getBackendCtx, cloudStorageURI, estRowSize)
 	case proto.BackfillStepMergeSort:
 		return newMergeSortExecutor(jobMeta.ID, len(indexInfos), tbl, cloudStorageURI)
 	case proto.BackfillStepWriteAndIngest:
@@ -192,7 +192,7 @@ func (s *backfillDistExecutor) Init(ctx context.Context) error {
 	return nil
 }
 
-func (s *backfillDistExecutor) GetStepExecutor(task *proto.Task, _ *proto.StepResource) (execute.StepExecutor, error) {
+func (s *backfillDistExecutor) GetStepExecutor(task *proto.Task) (execute.StepExecutor, error) {
 	switch task.Step {
 	case proto.BackfillStepReadIndex, proto.BackfillStepMergeSort, proto.BackfillStepWriteAndIngest:
 		return s.newBackfillSubtaskExecutor(task.Step)

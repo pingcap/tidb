@@ -1,0 +1,8 @@
+[lightning]
+check-requirements=true
+
+[mydumper.csv]
+header = true
+
+[conflict]
+strategy = "replace"
