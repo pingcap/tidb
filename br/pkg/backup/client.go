@@ -1063,7 +1063,7 @@ mainLoop:
 		for _, store := range allStores {
 			storeID := store.GetId()
 			// reset backup client every round, to get a clean grpc connection.
-			cli, err := bc.mgr.ResetBackupClient(ctx, storeID)
+			cli, err := bc.mgr.ResetBackupClient(mainCtx, storeID)
 			if err != nil {
 				// because the we get store info from pd.
 				// there is no customer setting here, so make infinite retry.
@@ -1096,7 +1096,7 @@ mainLoop:
 				if storeBackupInfo.One != 0 {
 					// new tikv store come up
 					storeID := storeBackupInfo.One
-					cli, err := bc.mgr.GetBackupClient(ctx, storeID)
+					cli, err := bc.mgr.GetBackupClient(mainCtx, storeID)
 					if err != nil {
 						logutil.CL(ctx).Error("failed to get backup client", zap.Uint64("storeID", storeID), zap.Error(err))
 						handleCancel()
@@ -1126,7 +1126,7 @@ mainLoop:
 					// this round backup finished. break and check incomplete ranges in mainLoop.
 					break handleLoop
 				}
-				err = bc.OnBackupResponse(ctx, respAndStore, errContext, globalProgressTree)
+				err = bc.OnBackupResponse(handleCtx, respAndStore, errContext, globalProgressTree)
 				if err != nil {
 					// if error occurred here, stop the backup process
 					// because only 2 kinds of errors will be returned here:
