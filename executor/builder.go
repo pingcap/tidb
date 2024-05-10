@@ -2895,6 +2895,7 @@ func constructDAGReq(ctx sessionctx.Context, plans []plannercore.PhysicalPlan, s
 
 func (b *executorBuilder) corColInDistPlan(plans []plannercore.PhysicalPlan) bool {
 	for _, p := range plans {
+<<<<<<< HEAD:executor/builder.go
 		x, ok := p.(*plannercore.PhysicalSelection)
 		if !ok {
 			continue
@@ -2902,6 +2903,32 @@ func (b *executorBuilder) corColInDistPlan(plans []plannercore.PhysicalPlan) boo
 		for _, cond := range x.Conditions {
 			if len(expression.ExtractCorColumns(cond)) > 0 {
 				return true
+=======
+		switch x := p.(type) {
+		case *plannercore.PhysicalSelection:
+			for _, cond := range x.Conditions {
+				if len(expression.ExtractCorColumns(cond)) > 0 {
+					return true
+				}
+			}
+		case *plannercore.PhysicalProjection:
+			for _, expr := range x.Exprs {
+				if len(expression.ExtractCorColumns(expr)) > 0 {
+					return true
+				}
+			}
+		case *plannercore.PhysicalTopN:
+			for _, byItem := range x.ByItems {
+				if len(expression.ExtractCorColumns(byItem.Expr)) > 0 {
+					return true
+				}
+			}
+		case *plannercore.PhysicalTableScan:
+			for _, cond := range x.LateMaterializationFilterCondition {
+				if len(expression.ExtractCorColumns(cond)) > 0 {
+					return true
+				}
+>>>>>>> 203e5f2cff1 (executor: Fix push downed topN won't replace correlated column problem (#53097)):pkg/executor/builder.go
 			}
 		}
 	}
