@@ -23,7 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
+	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/table"
@@ -33,7 +33,7 @@ import (
 
 type collectPredicateColumnsPoint struct{}
 
-func (collectPredicateColumnsPoint) optimize(_ context.Context, plan LogicalPlan, _ *coreusage.LogicalOptimizeOp) (LogicalPlan, bool, error) {
+func (collectPredicateColumnsPoint) optimize(_ context.Context, plan base.LogicalPlan, _ *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
 	planChanged := false
 	if plan.SCtx().GetSessionVars().InRestrictedSQL {
 		return plan, planChanged, nil
@@ -79,7 +79,7 @@ func (collectPredicateColumnsPoint) name() string {
 
 type syncWaitStatsLoadPoint struct{}
 
-func (syncWaitStatsLoadPoint) optimize(_ context.Context, plan LogicalPlan, _ *coreusage.LogicalOptimizeOp) (LogicalPlan, bool, error) {
+func (syncWaitStatsLoadPoint) optimize(_ context.Context, plan base.LogicalPlan, _ *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
 	planChanged := false
 	if plan.SCtx().GetSessionVars().InRestrictedSQL {
 		return plan, planChanged, nil
@@ -125,7 +125,7 @@ func RequestLoadStats(ctx base.PlanContext, neededHistItems []model.StatsLoadIte
 }
 
 // SyncWaitStatsLoad sync-wait for stats load until timeout
-func SyncWaitStatsLoad(plan LogicalPlan) error {
+func SyncWaitStatsLoad(plan base.LogicalPlan) error {
 	stmtCtx := plan.SCtx().GetSessionVars().StmtCtx
 	if len(stmtCtx.StatsLoad.NeededItems) <= 0 {
 		return nil

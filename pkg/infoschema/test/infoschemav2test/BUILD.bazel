@@ -12,6 +12,8 @@ go_test(
         "//pkg/domain",
         "//pkg/infoschema",
         "//pkg/parser/auth",
+        "//pkg/parser/model",
+        "//pkg/table",
         "//pkg/testkit",
         "//pkg/testkit/testsetup",
         "@com_github_stretchr_testify//require",

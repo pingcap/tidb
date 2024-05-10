@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	sess "github.com/pingcap/tidb/pkg/ddl/internal/session"
+	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/distsql"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
@@ -44,7 +45,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
-	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
@@ -73,8 +73,7 @@ type reorgCtx struct {
 	references atomicutil.Int32
 }
 
-// newContext gets a context. It is only used for adding column in reorganization state.
-func newContext(store kv.Storage) sessionctx.Context {
+func newReorgSessCtx(store kv.Storage) sessionctx.Context {
 	c := mock.NewContext()
 	c.Store = store
 	c.GetSessionVars().SetStatusFlag(mysql.ServerStatusAutocommit, false)
@@ -228,9 +227,9 @@ func (w *worker) runReorgJob(reorgInfo *reorgInfo, tblInfo *model.TableInfo,
 		rowCount := rc.getRowCount()
 		job.SetRowCount(rowCount)
 		if err != nil {
-			logutil.BgLogger().Warn("run reorg job done", zap.String("category", "ddl"), zap.Int64("handled rows", rowCount), zap.Error(err))
+			logutil.DDLLogger().Warn("run reorg job done", zap.Int64("handled rows", rowCount), zap.Error(err))
 		} else {
-			logutil.BgLogger().Info("run reorg job done", zap.String("category", "ddl"), zap.Int64("handled rows", rowCount))
+			logutil.DDLLogger().Info("run reorg job done", zap.Int64("handled rows", rowCount))
 		}
 
 		// Update a job's warnings.
@@ -246,7 +245,7 @@ func (w *worker) runReorgJob(reorgInfo *reorgInfo, tblInfo *model.TableInfo,
 			return errors.Trace(err)
 		}
 	case <-w.ctx.Done():
-		logutil.BgLogger().Info("run reorg job quit", zap.String("category", "ddl"))
+		logutil.DDLLogger().Info("run reorg job quit")
 		d.removeReorgCtx(job.ID)
 		// We return dbterror.ErrWaitReorgTimeout here too, so that outer loop will break.
 		return dbterror.ErrWaitReorgTimeout
@@ -260,7 +259,7 @@ func (w *worker) runReorgJob(reorgInfo *reorgInfo, tblInfo *model.TableInfo,
 
 		rc.resetWarnings()
 
-		logutil.BgLogger().Info("run reorg job wait timeout", zap.String("category", "ddl"),
+		logutil.DDLLogger().Info("run reorg job wait timeout",
 			zap.Duration("wait time", waitTimeout),
 			zap.Int64("total added row count", rowCount))
 		// If timeout, we will return, check the owner and retry to wait job done again.
@@ -290,9 +289,16 @@ func overwriteReorgInfoFromGlobalCheckpoint(w *worker, sess *sess.Session, job *
 	if ok {
 		// We create the checkpoint manager here because we need to wait for the reorg meta to be initialized.
 		if bc.GetCheckpointManager() == nil {
-			mgr, err := ingest.NewCheckpointManager(w.ctx, bc, w.sessPool, job.ID, extractElemIDs(reorgInfo))
+			mgr, err := ingest.NewCheckpointManager(
+				w.ctx,
+				bc,
+				w.sessPool,
+				job.ID,
+				extractElemIDs(reorgInfo),
+				bc.GetLocalBackend().LocalStoreDir,
+			)
 			if err != nil {
-				logutil.BgLogger().Warn("create checkpoint manager failed", zap.String("category", "ddl-ingest"), zap.Error(err))
+				logutil.DDLIngestLogger().Warn("create checkpoint manager failed", zap.Error(err))
 			}
 			bc.AttachCheckpointManager(mgr)
 		}
@@ -344,7 +350,7 @@ func updateBackfillProgress(w *worker, reorgInfo *reorgInfo, tblInfo *model.Tabl
 		if progress > 1 {
 			progress = 1
 		}
-		logutil.BgLogger().Debug("update progress", zap.String("category", "ddl"),
+		logutil.DDLLogger().Debug("update progress",
 			zap.Float64("progress", progress),
 			zap.Int64("addedRowCount", addedRowCount),
 			zap.Int64("totalCount", totalCount))
@@ -422,7 +428,7 @@ func (dc *ddlCtx) isReorgRunnable(jobID int64, isDistReorg bool) error {
 	}
 
 	if dc.isReorgPaused(jobID) {
-		logutil.BgLogger().Warn("job paused by user", zap.String("category", "ddl"), zap.String("ID", dc.uuid))
+		logutil.DDLLogger().Warn("job paused by user", zap.String("ID", dc.uuid))
 		return dbterror.ErrPausedDDLJob.GenWithStackByArgs(jobID)
 	}
 
@@ -432,7 +438,7 @@ func (dc *ddlCtx) isReorgRunnable(jobID int64, isDistReorg bool) error {
 	}
 	if !dc.isOwner() {
 		// If it's not the owner, we will try later, so here just returns an error.
-		logutil.BgLogger().Info("DDL is not the DDL owner", zap.String("category", "ddl"), zap.String("ID", dc.uuid))
+		logutil.DDLLogger().Info("DDL is not the DDL owner", zap.String("ID", dc.uuid))
 		return errors.Trace(dbterror.ErrNotOwner)
 	}
 	return nil
@@ -515,7 +521,7 @@ func getColumnsTypes(columns []*model.ColumnInfo) []*types.FieldType {
 // buildDescTableScan builds a desc table scan upon tblInfo.
 func (dc *ddlCtx) buildDescTableScan(ctx *JobContext, startTS uint64, tbl table.PhysicalTable,
 	handleCols []*model.ColumnInfo, limit uint64) (distsql.SelectResult, error) {
-	sctx := newContext(dc.store)
+	sctx := newReorgSessCtx(dc.store)
 	dagPB, err := buildDescTableScanDAG(sctx, tbl, handleCols, limit)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -594,7 +600,7 @@ func (dc *ddlCtx) GetTableMaxHandle(ctx *JobContext, startTS uint64, tbl table.P
 		// empty table
 		return nil, true, nil
 	}
-	sessCtx := newContext(dc.store)
+	sessCtx := newReorgSessCtx(dc.store)
 	row := chk.GetRow(0)
 	if tblInfo.IsCommonHandle {
 		maxHandle, err = buildCommonHandleFromChunkRow(sessCtx.GetSessionVars().StmtCtx, tblInfo, pkIdx, handleCols, row)
@@ -640,7 +646,7 @@ func getTableRange(ctx *JobContext, d *ddlCtx, tbl table.PhysicalTable, snapshot
 		endHandleKey = tablecodec.EncodeRecordKey(tbl.RecordPrefix(), maxHandle).Next()
 	}
 	if isEmptyTable || endHandleKey.Cmp(startHandleKey) <= 0 {
-		logutil.BgLogger().Info("get noop table range", zap.String("category", "ddl"),
+		logutil.DDLLogger().Info("get noop table range",
 			zap.String("table", fmt.Sprintf("%v", tbl.Meta())),
 			zap.Int64("table/partition ID", tbl.GetPhysicalID()),
 			zap.String("start key", hex.EncodeToString(startHandleKey)),
@@ -716,7 +722,7 @@ func getReorgInfo(ctx *JobContext, d *ddlCtx, rh *reorgHandler, job *model.Job, 
 				return nil, errors.Trace(err)
 			}
 		}
-		logutil.BgLogger().Info("job get table range", zap.String("category", "ddl"),
+		logutil.DDLLogger().Info("job get table range",
 			zap.Int64("jobID", job.ID), zap.Int64("physicalTableID", pid),
 			zap.String("startKey", hex.EncodeToString(start)),
 			zap.String("endKey", hex.EncodeToString(end)))
@@ -751,7 +757,7 @@ func getReorgInfo(ctx *JobContext, d *ddlCtx, rh *reorgHandler, job *model.Job, 
 			// We'll try to remove it in the next major TiDB version.
 			if meta.ErrDDLReorgElementNotExist.Equal(err) {
 				job.SnapshotVer = 0
-				logutil.BgLogger().Warn("get reorg info, the element does not exist", zap.String("category", "ddl"), zap.String("job", job.String()))
+				logutil.DDLLogger().Warn("get reorg info, the element does not exist", zap.Stringer("job", job))
 				if job.IsCancelling() {
 					return nil, nil
 				}
@@ -796,7 +802,7 @@ func getReorgInfoFromPartitions(ctx *JobContext, d *ddlCtx, rh *reorgHandler, jo
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		logutil.BgLogger().Info("job get table range", zap.String("category", "ddl"),
+		logutil.DDLLogger().Info("job get table range",
 			zap.Int64("job ID", job.ID), zap.Int64("physical table ID", pid),
 			zap.String("start key", hex.EncodeToString(start)),
 			zap.String("end key", hex.EncodeToString(end)))
@@ -817,7 +823,7 @@ func getReorgInfoFromPartitions(ctx *JobContext, d *ddlCtx, rh *reorgHandler, jo
 			// We'll try to remove it in the next major TiDB version.
 			if meta.ErrDDLReorgElementNotExist.Equal(err) {
 				job.SnapshotVer = 0
-				logutil.BgLogger().Warn("get reorg info, the element does not exist", zap.String("category", "ddl"), zap.String("job", job.String()))
+				logutil.DDLLogger().Warn("get reorg info, the element does not exist", zap.Stringer("job", job))
 			}
 			return &info, errors.Trace(err)
 		}
@@ -899,7 +905,7 @@ func CleanupDDLReorgHandles(job *model.Job, s *sess.Session) {
 	err := cleanDDLReorgHandles(s, job)
 	if err != nil {
 		// ignore error, cleanup is not that critical
-		logutil.BgLogger().Warn("Failed removing the DDL reorg entry in tidb_ddl_reorg", zap.String("job", job.String()), zap.Error(err))
+		logutil.DDLLogger().Warn("Failed removing the DDL reorg entry in tidb_ddl_reorg", zap.Stringer("job", job), zap.Error(err))
 	}
 }
 
@@ -917,8 +923,7 @@ func (r *reorgHandler) GetDDLReorgHandle(job *model.Job) (element *meta.Element,
 // For old version TiDB, the semantic is still [start_key, end_key], we need to adjust it in new version TiDB.
 func adjustEndKeyAcrossVersion(job *model.Job, endKey kv.Key) kv.Key {
 	if job.ReorgMeta != nil && job.ReorgMeta.Version == model.ReorgMetaVersion0 {
-		logutil.BgLogger().Info("adjust range end key for old version ReorgMetas",
-			zap.String("category", "ddl"),
+		logutil.DDLLogger().Info("adjust range end key for old version ReorgMetas",
 			zap.Int64("jobID", job.ID),
 			zap.Int64("reorgMetaVersion", job.ReorgMeta.Version),
 			zap.String("endKey", hex.EncodeToString(endKey)))

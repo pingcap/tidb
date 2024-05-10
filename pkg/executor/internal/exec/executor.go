@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/ngaut/pools"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser"
@@ -89,6 +90,9 @@ func newExecutorChunkAllocator(vars *variable.SessionVars, retFieldTypes []*type
 
 // InitCap returns the initial capacity for chunk
 func (e *executorChunkAllocator) InitCap() int {
+	failpoint.Inject("initCap", func(val failpoint.Value) {
+		failpoint.Return(val.(int))
+	})
 	return e.initCap
 }
 
@@ -99,6 +103,9 @@ func (e *executorChunkAllocator) SetInitCap(c int) {
 
 // MaxChunkSize returns the max chunk size.
 func (e *executorChunkAllocator) MaxChunkSize() int {
+	failpoint.Inject("maxChunkSize", func(val failpoint.Value) {
+		failpoint.Return(val.(int))
+	})
 	return e.maxChunkSize
 }
 

@@ -21,8 +21,6 @@ import (
 	"math"
 	"strconv"
 	"strings"
-	"time"
-	"unsafe"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/storage"
@@ -84,28 +82,6 @@ type visitInfo struct {
 	dynamicWithGrant bool
 }
 
-// QueryTimeRange represents a time range specified by TIME_RANGE hint
-type QueryTimeRange struct {
-	From time.Time
-	To   time.Time
-}
-
-// Condition returns a WHERE clause base on it's value
-func (tr *QueryTimeRange) Condition() string {
-	return fmt.Sprintf("where time>='%s' and time<='%s'", tr.From.Format(MetricTableTimeFormat), tr.To.Format(MetricTableTimeFormat))
-}
-
-const emptyQueryTimeRangeSize = int64(unsafe.Sizeof(QueryTimeRange{}))
-
-// MemoryUsage return the memory usage of QueryTimeRange
-func (tr *QueryTimeRange) MemoryUsage() (sum int64) {
-	if tr == nil {
-		return
-	}
-
-	return emptyQueryTimeRangeSize
-}
-
 // clauseCode indicates in which clause the column is currently.
 type clauseCode int
 
@@ -162,9 +138,9 @@ type cteInfo struct {
 	// isDistinct indicates if the union between seed part and recursive part is distinct or not.
 	isDistinct bool
 	// seedLP is the seed part's logical plan.
-	seedLP LogicalPlan
+	seedLP base.LogicalPlan
 	// recurLP is the recursive part's logical plan.
-	recurLP LogicalPlan
+	recurLP base.LogicalPlan
 	// storageID for this CTE.
 	storageID int
 	// optFlag is the optFlag for the whole CTE.
@@ -172,7 +148,7 @@ type cteInfo struct {
 	// enterSubquery and recursiveRef are used to check "recursive table must be referenced only once, and not in any subquery".
 	enterSubquery bool
 	recursiveRef  bool
-	limitLP       LogicalPlan
+	limitLP       base.LogicalPlan
 	// seedStat is shared between logicalCTE and logicalCTETable.
 	seedStat *property.StatsInfo
 	// The LogicalCTEs that reference the same table should share the same CteClass.
@@ -301,7 +277,7 @@ type PlanBuilder struct {
 }
 
 type handleColHelper struct {
-	id2HandleMapStack []map[int64][]HandleCols
+	id2HandleMapStack []map[int64][]util.HandleCols
 	stackTail         int
 }
 
@@ -311,36 +287,36 @@ func (hch *handleColHelper) resetForReuse() {
 	}
 }
 
-func (hch *handleColHelper) popMap() map[int64][]HandleCols {
+func (hch *handleColHelper) popMap() map[int64][]util.HandleCols {
 	ret := hch.id2HandleMapStack[hch.stackTail-1]
 	hch.stackTail--
 	hch.id2HandleMapStack = hch.id2HandleMapStack[:hch.stackTail]
 	return ret
 }
 
-func (hch *handleColHelper) pushMap(m map[int64][]HandleCols) {
+func (hch *handleColHelper) pushMap(m map[int64][]util.HandleCols) {
 	hch.id2HandleMapStack = append(hch.id2HandleMapStack, m)
 	hch.stackTail++
 }
 
-func (hch *handleColHelper) mergeAndPush(m1, m2 map[int64][]HandleCols) {
-	newMap := make(map[int64][]HandleCols, max(len(m1), len(m2)))
+func (hch *handleColHelper) mergeAndPush(m1, m2 map[int64][]util.HandleCols) {
+	newMap := make(map[int64][]util.HandleCols, max(len(m1), len(m2)))
 	for k, v := range m1 {
-		newMap[k] = make([]HandleCols, len(v))
+		newMap[k] = make([]util.HandleCols, len(v))
 		copy(newMap[k], v)
 	}
 	for k, v := range m2 {
 		if _, ok := newMap[k]; ok {
 			newMap[k] = append(newMap[k], v...)
 		} else {
-			newMap[k] = make([]HandleCols, len(v))
+			newMap[k] = make([]util.HandleCols, len(v))
 			copy(newMap[k], v)
 		}
 	}
 	hch.pushMap(newMap)
 }
 
-func (hch *handleColHelper) tailMap() map[int64][]HandleCols {
+func (hch *handleColHelper) tailMap() map[int64][]util.HandleCols {
 	return hch.id2HandleMapStack[hch.stackTail-1]
 }
 
@@ -431,7 +407,7 @@ func NewPlanBuilder(opts ...PlanBuilderOpt) *PlanBuilder {
 	builder := &PlanBuilder{
 		outerCTEs:           make([]*cteInfo, 0),
 		colMapper:           make(map[*ast.ColumnNameExpr]int),
-		handleHelper:        &handleColHelper{id2HandleMapStack: make([]map[int64][]HandleCols, 0)},
+		handleHelper:        &handleColHelper{id2HandleMapStack: make([]map[int64][]util.HandleCols, 0)},
 		correlatedAggMapper: make(map[*ast.AggregateFuncExpr]*expression.CorrelatedColumn),
 	}
 	for _, opt := range opts {
@@ -616,7 +592,7 @@ func (b *PlanBuilder) buildExecute(ctx context.Context, v *ast.ExecuteStmt) (bas
 }
 
 func (b *PlanBuilder) buildDo(ctx context.Context, v *ast.DoStmt) (base.Plan, error) {
-	var p LogicalPlan
+	var p base.LogicalPlan
 	dual := LogicalTableDual{RowCount: 1}.Init(b.ctx, b.getSelectOffset())
 	dual.SetSchema(expression.NewSchema())
 	p = dual
@@ -699,7 +675,7 @@ func (b *PlanBuilder) buildSet(ctx context.Context, v *ast.SetStmt) (base.Plan, 
 			// See the following IF branch.
 			mockTablePlan := LogicalTableDual{RowCount: 1}.Init(b.ctx, b.getSelectOffset())
 			var err error
-			var possiblePlan LogicalPlan
+			var possiblePlan base.LogicalPlan
 			assign.Expr, possiblePlan, err = b.rewrite(ctx, vars.Value, mockTablePlan, nil, true)
 			if err != nil {
 				return nil, err
@@ -1306,7 +1282,7 @@ func removeGlobalIndexPaths(paths []*util.AccessPath) []*util.AccessPath {
 	return paths[:i]
 }
 
-func (b *PlanBuilder) buildSelectLock(src LogicalPlan, lock *ast.SelectLockInfo) (*LogicalLock, error) {
+func (b *PlanBuilder) buildSelectLock(src base.LogicalPlan, lock *ast.SelectLockInfo) (*LogicalLock, error) {
 	var tblID2PhysTblIDCol map[int64]*expression.Column
 	if len(b.partitionedTable) > 0 {
 		tblID2PhysTblIDCol = make(map[int64]*expression.Column)
@@ -1329,7 +1305,7 @@ func (b *PlanBuilder) buildSelectLock(src LogicalPlan, lock *ast.SelectLockInfo)
 	return selectLock, nil
 }
 
-func setExtraPhysTblIDColsOnDataSource(p LogicalPlan, tblID2PhysTblIDCol map[int64]*expression.Column) {
+func setExtraPhysTblIDColsOnDataSource(p base.LogicalPlan, tblID2PhysTblIDCol map[int64]*expression.Column) {
 	switch ds := p.(type) {
 	case *DataSource:
 		if ds.tableInfo.GetPartitionInfo() == nil {
@@ -1814,8 +1790,8 @@ func getColsInfo(tn *ast.TableName) (indicesInfo []*model.IndexInfo, colsInfo []
 }
 
 // BuildHandleColsForAnalyze returns HandleCols for ANALYZE.
-func BuildHandleColsForAnalyze(ctx base.PlanContext, tblInfo *model.TableInfo, allColumns bool, colsInfo []*model.ColumnInfo) HandleCols {
-	var handleCols HandleCols
+func BuildHandleColsForAnalyze(ctx base.PlanContext, tblInfo *model.TableInfo, allColumns bool, colsInfo []*model.ColumnInfo) util.HandleCols {
+	var handleCols util.HandleCols
 	switch {
 	case tblInfo.PKIsHandle:
 		pkCol := tblInfo.GetPkColInfo()
@@ -1827,11 +1803,11 @@ func BuildHandleColsForAnalyze(ctx base.PlanContext, tblInfo *model.TableInfo, a
 			// If only a part of the columns need to be analyzed, we need to set index according to colsInfo.
 			index = getColOffsetForAnalyze(colsInfo, pkCol.ID)
 		}
-		handleCols = &IntHandleCols{col: &expression.Column{
+		handleCols = util.NewIntHandleCols(&expression.Column{
 			ID:      pkCol.ID,
 			RetType: &pkCol.FieldType,
 			Index:   index,
-		}}
+		})
 	case tblInfo.IsCommonHandle:
 		pkIdx := tables.FindPrimaryIndex(tblInfo)
 		pkColLen := len(pkIdx.Columns)
@@ -1858,12 +1834,7 @@ func BuildHandleColsForAnalyze(ctx base.PlanContext, tblInfo *model.TableInfo, a
 		// The second reason is that in (cb *CommonHandleCols).BuildHandleByDatums, tablecodec.TruncateIndexValues(cb.tblInfo, cb.idxInfo, datumBuf)
 		// is called, which asks that IndexColumn.Offset of cb.idxInfo must be according to cb,tblInfo.
 		// TODO: find a better way to find handle columns in ANALYZE rather than use Column.Index
-		handleCols = &CommonHandleCols{
-			tblInfo: tblInfo,
-			idxInfo: pkIdx,
-			columns: columns,
-			sc:      ctx.GetSessionVars().StmtCtx,
-		}
+		handleCols = util.NewCommonHandlesColsWithoutColsAlign(ctx.GetSessionVars().StmtCtx, tblInfo, pkIdx, columns)
 	}
 	return handleCols
 }
@@ -2283,7 +2254,7 @@ func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
 			extraCol := model.NewExtraHandleColInfo()
 			// Always place _tidb_rowid at the end of colsInfo, this is corresponding to logics in `analyzeColumnsPushdown`.
 			newTask.ColsInfo = append(newTask.ColsInfo, extraCol)
-			newTask.HandleCols = &IntHandleCols{col: colInfoToColumn(extraCol, len(newTask.ColsInfo)-1)}
+			newTask.HandleCols = util.NewIntHandleCols(colInfoToColumn(extraCol, len(newTask.ColsInfo)-1))
 		}
 		analyzePlan.ColTasks = append(analyzePlan.ColTasks, newTask)
 		for _, indexInfo := range independentIndexes {
@@ -3238,7 +3209,7 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (base.P
 		col.UniqueID = b.ctx.GetSessionVars().AllocPlanColumnID()
 	}
 	var err error
-	var np LogicalPlan
+	var np base.LogicalPlan
 	np = p
 	// If we have ShowPredicateExtractor, we do not buildSelection with Pattern
 	if show.Pattern != nil && buildPattern {
@@ -3571,7 +3542,7 @@ func (b *PlanBuilder) getDefaultValueForInsert(col *table.Column) (*expression.C
 
 // resolveGeneratedColumns resolves generated columns with their generation
 // expressions respectively. onDups indicates which columns are in on-duplicate list.
-func (b *PlanBuilder) resolveGeneratedColumns(ctx context.Context, columns []*table.Column, onDups map[string]struct{}, mockPlan LogicalPlan) (igc InsertGeneratedColumns, err error) {
+func (b *PlanBuilder) resolveGeneratedColumns(ctx context.Context, columns []*table.Column, onDups map[string]struct{}, mockPlan base.LogicalPlan) (igc InsertGeneratedColumns, err error) {
 	for _, column := range columns {
 		if !column.IsGenerated() {
 			continue
@@ -3864,7 +3835,7 @@ func (b PlanBuilder) getInsertColExpr(ctx context.Context, insertPlan *Insert, m
 		if _, ok := expr.(*ast.SubqueryExpr); ok {
 			usingPlan = LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
 		}
-		var np LogicalPlan
+		var np base.LogicalPlan
 		outExpr, np, err = b.rewriteWithPreprocess(ctx, expr, usingPlan, nil, nil, true, checkRefColumn)
 		if np != nil {
 			if _, ok := np.(*LogicalTableDual); !ok {
@@ -4040,7 +4011,7 @@ func (b *PlanBuilder) buildSelectPlanOfInsert(ctx context.Context, insert *ast.I
 	}
 
 	names := selectPlan.OutputNames()
-	insertPlan.SelectPlan, _, err = DoOptimize(ctx, b.ctx, b.optFlag, selectPlan.(LogicalPlan))
+	insertPlan.SelectPlan, _, err = DoOptimize(ctx, b.ctx, b.optFlag, selectPlan.(base.LogicalPlan))
 	if err != nil {
 		return err
 	}
@@ -4250,7 +4221,7 @@ func (b *PlanBuilder) buildImportInto(ctx context.Context, ld *ast.ImportIntoStm
 			(len(ld.ColumnsAndUserVars) == 0 && len(selectPlan.Schema().Columns) != len(tableInPlan.VisibleCols())) {
 			return nil, plannererrors.ErrWrongValueCountOnRow.GenWithStackByArgs(1)
 		}
-		p.SelectPlan, _, err2 = DoOptimize(ctx, b.ctx, b.optFlag, selectPlan.(LogicalPlan))
+		p.SelectPlan, _, err2 = DoOptimize(ctx, b.ctx, b.optFlag, selectPlan.(base.LogicalPlan))
 		if err2 != nil {
 			return nil, err2
 		}
@@ -4399,7 +4370,7 @@ func (b *PlanBuilder) buildSplitIndexRegion(node *ast.SplitRegionStmt) (base.Pla
 	return p, nil
 }
 
-func (b *PlanBuilder) convertValue2ColumnType(valuesItem []ast.ExprNode, mockTablePlan LogicalPlan, indexInfo *model.IndexInfo, tblInfo *model.TableInfo) ([]types.Datum, error) {
+func (b *PlanBuilder) convertValue2ColumnType(valuesItem []ast.ExprNode, mockTablePlan base.LogicalPlan, indexInfo *model.IndexInfo, tblInfo *model.TableInfo) ([]types.Datum, error) {
 	values := make([]types.Datum, 0, len(valuesItem))
 	for j, valueItem := range valuesItem {
 		colOffset := indexInfo.Columns[j].Offset
@@ -4412,7 +4383,7 @@ func (b *PlanBuilder) convertValue2ColumnType(valuesItem []ast.ExprNode, mockTab
 	return values, nil
 }
 
-func (b *PlanBuilder) convertValue(valueItem ast.ExprNode, mockTablePlan LogicalPlan, col *model.ColumnInfo) (d types.Datum, err error) {
+func (b *PlanBuilder) convertValue(valueItem ast.ExprNode, mockTablePlan base.LogicalPlan, col *model.ColumnInfo) (d types.Datum, err error) {
 	var expr expression.Expression
 	switch x := valueItem.(type) {
 	case *driver.ValueExpr:
@@ -4716,7 +4687,7 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (base.Plan
 		schema := plan.Schema()
 		names := plan.OutputNames()
 		if v.Cols == nil {
-			adjustOverlongViewColname(plan.(LogicalPlan))
+			adjustOverlongViewColname(plan.(base.LogicalPlan))
 			v.Cols = make([]model.CIStr, len(schema.Columns))
 			for i, name := range names {
 				v.Cols[i] = name.ColName
@@ -5380,7 +5351,7 @@ func buildChecksumTableSchema() (*expression.Schema, []*types.FieldName) {
 // adjustOverlongViewColname adjusts the overlong outputNames of a view to
 // `new_exp_$off` where `$off` is the offset of the output column, $off starts from 1.
 // There is still some MySQL compatible problems.
-func adjustOverlongViewColname(plan LogicalPlan) {
+func adjustOverlongViewColname(plan base.LogicalPlan) {
 	outputNames := plan.OutputNames()
 	for i := range outputNames {
 		if outputName := outputNames[i].ColName.L; len(outputName) > mysql.MaxColumnNameLength {

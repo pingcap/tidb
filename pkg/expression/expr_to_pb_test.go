@@ -1448,7 +1448,7 @@ func TestExprPushDownToTiKV(t *testing.T) {
 
 	exprs := make([]Expression, 0)
 
-	//jsonColumn := genColumn(mysql.TypeJSON, 1)
+	jsonColumn := genColumn(mysql.TypeJSON, 1)
 	intColumn := genColumn(mysql.TypeLonglong, 2)
 	realColumn := genColumn(mysql.TypeDouble, 3)
 	//decimalColumn := genColumn(mysql.TypeNewDecimal, 4)
@@ -1638,6 +1638,21 @@ func TestExprPushDownToTiKV(t *testing.T) {
 			functionName: ast.Power,
 			retType:      types.NewFieldType(mysql.TypeDouble),
 			args:         []Expression{realColumn, realColumn},
+		},
+		{
+			functionName: ast.JSONReplace,
+			retType:      types.NewFieldType(mysql.TypeJSON),
+			args:         []Expression{jsonColumn, stringColumn, jsonColumn, stringColumn, jsonColumn},
+		},
+		{
+			functionName: ast.JSONArrayAppend,
+			retType:      types.NewFieldType(mysql.TypeJSON),
+			args:         []Expression{jsonColumn, stringColumn, jsonColumn, stringColumn, jsonColumn},
+		},
+		{
+			functionName: ast.JSONMergePatch,
+			retType:      types.NewFieldType(mysql.TypeJSON),
+			args:         []Expression{jsonColumn, jsonColumn, jsonColumn},
 		},
 	}
 

@@ -455,6 +455,169 @@ func TestGetMergeRegionSizeAndCount(t *testing.T) {
 	}
 }
 
+func TestIsLogBackupEnabled(t *testing.T) {
+	cases := []struct {
+		stores  []*metapb.Store
+		content []string
+		enable  bool
+		err     bool
+	}{
+		{
+			stores: []*metapb.Store{
+				{
+					Id:    1,
+					State: metapb.StoreState_Up,
+					Labels: []*metapb.StoreLabel{
+						{
+							Key:   "engine",
+							Value: "tiflash",
+						},
+					},
+				},
+			},
+			content: []string{""},
+			enable:  true,
+			err:     false,
+		},
+		{
+			stores: []*metapb.Store{
+				{
+					Id:    1,
+					State: metapb.StoreState_Up,
+					Labels: []*metapb.StoreLabel{
+						{
+							Key:   "engine",
+							Value: "tiflash",
+						},
+					},
+				},
+				{
+					Id:    2,
+					State: metapb.StoreState_Up,
+					Labels: []*metapb.StoreLabel{
+						{
+							Key:   "engine",
+							Value: "tikv",
+						},
+					},
+				},
+			},
+			content: []string{
+				"",
+				// Assuming the TiKV has failed due to some reason.
+				"",
+			},
+			enable: false,
+			err:    true,
+		},
+		{
+			stores: []*metapb.Store{
+				{
+					Id:    1,
+					State: metapb.StoreState_Up,
+					Labels: []*metapb.StoreLabel{
+						{
+							Key:   "engine",
+							Value: "tikv",
+						},
+					},
+				},
+			},
+			content: []string{
+				"{\"log-level\": \"debug\", \"log-backup\": {\"enable\": true}}",
+			},
+			enable: true,
+			err:    false,
+		},
+		{
+			stores: []*metapb.Store{
+				{
+					Id:    1,
+					State: metapb.StoreState_Up,
+					Labels: []*metapb.StoreLabel{
+						{
+							Key:   "engine",
+							Value: "tikv",
+						},
+					},
+				},
+			},
+			content: []string{
+				"{\"log-level\": \"debug\", \"log-backup\": {\"enable\": false}}",
+			},
+			enable: false,
+			err:    false,
+		},
+		{
+			stores: []*metapb.Store{
+				{
+					Id:    1,
+					State: metapb.StoreState_Up,
+					Labels: []*metapb.StoreLabel{
+						{
+							Key:   "engine",
+							Value: "tikv",
+						},
+					},
+				},
+				{
+					Id:    2,
+					State: metapb.StoreState_Up,
+					Labels: []*metapb.StoreLabel{
+						{
+							Key:   "engine",
+							Value: "tikv",
+						},
+					},
+				},
+			},
+			content: []string{
+				"{\"log-level\": \"debug\", \"log-backup\": {\"enable\": true}}",
+				"{\"log-level\": \"debug\", \"log-backup\": {\"enable\": false}}",
+			},
+			enable: false,
+			err:    false,
+		},
+	}
+
+	pctx := context.Background()
+	for _, ca := range cases {
+		ctx, cancel := context.WithCancel(pctx)
+		pdCli := utils.FakePDClient{Stores: ca.stores}
+		require.Equal(t, len(ca.content), len(ca.stores))
+		count := 0
+		mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch strings.TrimSpace(r.URL.Path) {
+			case "/config":
+				if len(ca.content[count]) == 0 {
+					cancel()
+				}
+				_, _ = fmt.Fprint(w, ca.content[count])
+			default:
+				http.NotFoundHandler().ServeHTTP(w, r)
+			}
+			count++
+		}))
+
+		for _, s := range ca.stores {
+			s.Address = mockServer.URL
+			s.StatusAddress = mockServer.URL
+		}
+
+		httpCli := mockServer.Client()
+		mgr := &Mgr{PdController: &pdutil.PdController{}}
+		mgr.PdController.SetPDClient(pdCli)
+		enable, err := mgr.IsLogBackupEnabled(ctx, httpCli)
+		if ca.err {
+			require.Error(t, err)
+		} else {
+			require.NoError(t, err)
+			require.Equal(t, ca.enable, enable)
+		}
+		mockServer.Close()
+	}
+}
+
 func TestHandleTiKVAddress(t *testing.T) {
 	cases := []struct {
 		store      *metapb.Store
