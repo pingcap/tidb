@@ -250,7 +250,7 @@ func (bc *litBackendCtx) unsafeImportAndReset(ei *engineInfo) error {
 		return err
 	}
 
-	err := bc.backend.ResetEngine(bc.ctx, ei.uuid)
+	err := bc.backend.ResetEngineSkipAllocTS(bc.ctx, ei.uuid)
 	if err != nil {
 		logutil.Logger(bc.ctx).Error(LitErrResetEngineFail, zap.Int64("index ID", ei.indexID))
 		err1 := ei.closedEngine.Cleanup(bc.ctx)

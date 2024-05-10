@@ -402,7 +402,11 @@ func (em *engineManager) getExternalEngineKVStatistics(engineUUID uuid.UUID) (
 }
 
 // resetEngine reset the engine and reclaim the space.
-func (em *engineManager) resetEngine(ctx context.Context, engineUUID uuid.UUID) error {
+func (em *engineManager) resetEngine(
+	ctx context.Context,
+	engineUUID uuid.UUID,
+	skipAllocTS bool,
+) error {
 	// the only way to reset the engine + reclaim the space is to delete and reopen it 🤷
 	localEngine := em.lockEngine(engineUUID, importMutexStateClose)
 	if localEngine == nil {
@@ -430,8 +434,10 @@ func (em *engineManager) resetEngine(ctx context.Context, engineUUID uuid.UUID) 
 				return errors.Trace(err)
 			}
 		}
-		if err = em.allocateTSIfNotExists(ctx, localEngine); err != nil {
-			return errors.Trace(err)
+		if !skipAllocTS {
+			if err = em.allocateTSIfNotExists(ctx, localEngine); err != nil {
+				return errors.Trace(err)
+			}
 		}
 	}
 	localEngine.pendingFileSize.Store(0)
