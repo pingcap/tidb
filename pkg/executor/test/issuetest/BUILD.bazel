@@ -8,11 +8,7 @@ go_test(
         "main_test.go",
     ],
     flaky = True,
-<<<<<<< HEAD
-    shard_count = 17,
-=======
-    shard_count = 19,
->>>>>>> 203e5f2cff1 (executor: Fix push downed topN won't replace correlated column problem (#53097))
+    shard_count = 18,
     deps = [
         "//pkg/autoid_service",
         "//pkg/config",
