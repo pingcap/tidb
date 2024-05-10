@@ -600,10 +600,11 @@ func (e *IndexLookUpExecutor) needPartitionHandle(tp getHandleType) (bool, error
 		hasExtraCol = col.ID == model.ExtraPhysTblID
 	}
 
+	// TODO: fix global index related bugs later
 	// There will be two needPartitionHandle != hasExtraCol situations.
 	// Only `needPartitionHandle` == true and `hasExtraCol` == false are not allowed.
 	// `ExtraPhysTblID` will be used in `SelectLock` when `needPartitionHandle` == false and `hasExtraCol` == true.
-	if needPartitionHandle && !hasExtraCol {
+	if needPartitionHandle && !hasExtraCol && !e.index.Global {
 		return needPartitionHandle, errors.Errorf("Internal error, needPartitionHandle != ret, tp(%d)", tp)
 	}
 	return needPartitionHandle, nil
