@@ -17,7 +17,9 @@ package infoschema
 import (
 	"fmt"
 	"math"
+	"strings"
 	"sync"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
@@ -582,6 +584,7 @@ func (is *infoschemaV2) SchemaTables(schema model.CIStr) (tables []table.Table) 
 		return tables
 	}
 
+retry:
 	dbInfo, ok := is.SchemaByName(schema)
 	if !ok {
 		return
@@ -595,6 +598,13 @@ func (is *infoschemaV2) SchemaTables(schema model.CIStr) (tables []table.Table) 
 	if err != nil {
 		if meta.ErrDBNotExists.Equal(err) {
 			return nil
+		}
+		// Flashback statement could cause such kind of error.
+		// In theory that error should be handled in the lower layer, like client-go.
+		// But it's not done, so we retry here.
+		if strings.Contains(err.Error(), "in flashback progress") {
+			time.Sleep(200 * time.Millisecond)
+			goto retry
 		}
 		// TODO: error could happen, so do not panic!
 		panic(err)
