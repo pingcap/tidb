@@ -364,8 +364,48 @@ func TestAdjustSecuritySection(t *testing.T) {
 				tls = "skip-verify"
 				[tidb.security]
 			`,
+<<<<<<< HEAD:br/pkg/lightning/config/config_test.go
 			expectedCA:  "",
 			expectedTLS: "skip-verify",
+=======
+			expectedCA:     "",
+			hasTLS:         true,
+			fallback2NoTLS: false,
+		},
+		{
+			input: `
+				[security]
+				[tidb]
+				tls = "preferred"
+				[tidb.security]
+			`,
+			expectedCA:     "",
+			hasTLS:         true,
+			fallback2NoTLS: true,
+		},
+		{
+			input: `
+				[security]
+				[tidb]
+				tls = "false"
+				[tidb.security]
+			`,
+			expectedCA:     "",
+			hasTLS:         false,
+			fallback2NoTLS: false,
+>>>>>>> 98312088b86 (lightning/config: align the behaviour of tidb.tls to doc (#53140)):pkg/lightning/config/config_test.go
+		},
+		{
+			input: `
+				[security]
+				[tidb]
+				tls = "false"
+				[tidb.security]
+				ca-path = "/path/to/ca2.pem"
+			`,
+			expectedCA:     "",
+			hasTLS:         false,
+			fallback2NoTLS: false,
 		},
 	}
 
