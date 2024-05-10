@@ -1784,8 +1784,8 @@ func TestAdminCheckGlobalIndex(t *testing.T) {
 	store, domain := testkit.CreateMockStoreAndDomain(t)
 
 	tk := testkit.NewTestKit(t, store)
-	var enable_fast_check = []bool{false, true}
-	for _, enabled := range enable_fast_check {
+	var enableFastCheck = []bool{false, true}
+	for _, enabled := range enableFastCheck {
 		tk.MustExec("use test")
 		tk.MustExec("drop table if exists admin_test")
 
@@ -1870,8 +1870,8 @@ func TestAdminCheckGlobalIndexWithClusterIndex(t *testing.T) {
 	store, domain := testkit.CreateMockStoreAndDomain(t)
 
 	tk := testkit.NewTestKit(t, store)
-	var enable_fast_check = []bool{false, true}
-	for _, enabled := range enable_fast_check {
+	var enableFastCheck = []bool{false, true}
+	for _, enabled := range enableFastCheck {
 		tk.MustExec("use test")
 		tk.MustExec("drop table if exists admin_test")
 
@@ -1973,8 +1973,8 @@ func TestAdminCheckGlobalIndexDuringDDL(t *testing.T) {
 		assert.NoError(t, err)
 	}
 
-	var enable_fast_check = []bool{false, true}
-	for _, enabled := range enable_fast_check {
+	var enableFastCheck = []bool{false, true}
+	for _, enabled := range enableFastCheck {
 		tk.MustExec("use test")
 		tk.MustExec("drop table if exists admin_test")
 
