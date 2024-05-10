@@ -314,7 +314,8 @@ type ReorgCheckpoint struct {
 	PhysicalID int64  `json:"physical_id"`
 	StartKey   kv.Key `json:"start_key"`
 	EndKey     kv.Key `json:"end_key"`
-	TS         uint64 `json:"ts"`
+	// TS of next engine ingest.
+	TS uint64 `json:"ts"`
 
 	Version int64 `json:"version"`
 }
@@ -501,7 +502,7 @@ func (s *CheckpointManager) updateCheckpoint() error {
 	return nil
 }
 
-func (s *CheckpointManager) refreshTS() (uint64, error) {
+func (s *CheckpointManager) refreshTSAndUpdateCP() (uint64, error) {
 	p, l, err := s.pdCli.GetTS(s.ctx)
 	if err != nil {
 		return 0, errors.Trace(err)

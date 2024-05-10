@@ -298,12 +298,12 @@ func (em *engineManager) closeEngine(
 				store.Close()
 			}
 		}()
-		physical, logical, err := em.GetTS(ctx)
-		if err != nil {
-			return err
-		}
 		ts := cfg.TS
 		if ts == 0 {
+			physical, logical, err := em.GetTS(ctx)
+			if err != nil {
+				return err
+			}
 			ts = oracle.ComposeTS(physical, logical)
 		}
 		externalEngine := external.NewExternalEngine(

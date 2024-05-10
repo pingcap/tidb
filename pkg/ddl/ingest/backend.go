@@ -275,7 +275,7 @@ func (bc *litBackendCtx) unsafeImportAndReset(ei *engineInfo) error {
 	// TODO(lance6716): there's still a chance that data is imported but because of
 	// checkpoint is low-watermark, the data will still be imported again with
 	// another TS after failover. Need to refine the checkpoint mechanism.
-	newTS, err := mgr.refreshTS()
+	newTS, err := mgr.refreshTSAndUpdateCP()
 	if err != nil {
 		return errors.Trace(err)
 	}
