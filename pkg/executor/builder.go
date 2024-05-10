@@ -2958,6 +2958,21 @@ func (*executorBuilder) corColInDistPlan(plans []plannercore.PhysicalPlan) bool 
 					return true
 				}
 			}
+<<<<<<< HEAD
+=======
+		case *plannercore.PhysicalProjection:
+			for _, expr := range x.Exprs {
+				if len(expression.ExtractCorColumns(expr)) > 0 {
+					return true
+				}
+			}
+		case *plannercore.PhysicalTopN:
+			for _, byItem := range x.ByItems {
+				if len(expression.ExtractCorColumns(byItem.Expr)) > 0 {
+					return true
+				}
+			}
+>>>>>>> 203e5f2cff1 (executor: Fix push downed topN won't replace correlated column problem (#53097))
 		case *plannercore.PhysicalTableScan:
 			for _, cond := range x.LateMaterializationFilterCondition {
 				if len(expression.ExtractCorColumns(cond)) > 0 {
