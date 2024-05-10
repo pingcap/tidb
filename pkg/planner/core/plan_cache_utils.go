@@ -491,6 +491,15 @@ func (*PlanCacheQueryFeatures) Leave(in ast.Node) (out ast.Node, ok bool) {
 	return in, true
 }
 
+// PointGetExecutorCache caches the PointGetExecutor to further improve its performance.
+type PointGetExecutorCache struct {
+	ColumnInfos any
+	// Executor is only used for point get scene.
+	// Notice that we should only cache the PointGetExecutor that have a snapshot with MaxTS in it.
+	// If the current plan is not PointGet or does not use MaxTS optimization, this value should be nil here.
+	Executor any
+}
+
 // PlanCacheStmt store prepared ast from PrepareExec and other related fields
 type PlanCacheStmt struct {
 	PreparedAst *ast.Prepared
@@ -498,16 +507,7 @@ type PlanCacheStmt struct {
 	VisitInfos  []visitInfo
 	Params      []ast.ParamMarkerExpr
 
-	// To further improve the performance of PointGet, cache execution info for PointGet directly.
-	// Use any to avoid cycle import.
-	// TODO: caching execution info directly is risky and tricky to the optimizer, refactor it later.
-	PointGet struct {
-		ColumnInfos any
-		// Executor is only used for point get scene.
-		// Notice that we should only cache the PointGetExecutor that have a snapshot with MaxTS in it.
-		// If the current plan is not PointGet or does not use MaxTS optimization, this value should be nil here.
-		Executor any
-	}
+	PointGet PointGetExecutorCache
 
 	// below fields are for PointGet short path
 	SchemaVersion int64
