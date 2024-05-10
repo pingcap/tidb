@@ -3041,13 +3041,18 @@ func constructDAGReq(ctx sessionctx.Context, plans []plannercore.PhysicalPlan, s
 
 func (b *executorBuilder) corColInDistPlan(plans []plannercore.PhysicalPlan) bool {
 	for _, p := range plans {
-		x, ok := p.(*plannercore.PhysicalSelection)
-		if !ok {
-			continue
-		}
-		for _, cond := range x.Conditions {
-			if len(expression.ExtractCorColumns(cond)) > 0 {
-				return true
+		switch x := p.(type) {
+		case *plannercore.PhysicalSelection:
+			for _, cond := range x.Conditions {
+				if len(expression.ExtractCorColumns(cond)) > 0 {
+					return true
+				}
+			}
+		case *plannercore.PhysicalTopN:
+			for _, byItem := range x.ByItems {
+				if len(expression.ExtractCorColumns(byItem.Expr)) > 0 {
+					return true
+				}
 			}
 		}
 	}
