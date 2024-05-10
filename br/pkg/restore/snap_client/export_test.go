@@ -21,7 +21,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/tidb/br/pkg/metautil"
-	"github.com/pingcap/tidb/br/pkg/restore"
+	importclient "github.com/pingcap/tidb/br/pkg/restore/internal/import_client"
 	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -38,7 +38,7 @@ func MockClient(dbs map[string]*metautil.Database) *SnapClient {
 }
 
 // Mock the call of setSpeedLimit function
-func MockCallSetSpeedLimit(ctx context.Context, fakeImportClient restore.ImporterClient, rc *SnapClient, concurrency uint) (err error) {
+func MockCallSetSpeedLimit(ctx context.Context, fakeImportClient importclient.ImporterClient, rc *SnapClient, concurrency uint) (err error) {
 	rc.SetRateLimit(42)
 	rc.SetConcurrency(concurrency)
 	rc.hasSpeedLimited = false

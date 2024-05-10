@@ -12,13 +12,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package utilstest
+package utiltest
 
 import (
+	"bytes"
 	"context"
 	"time"
 
 	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pkg/errors"
 	pd "github.com/tikv/pd/client"
 	"google.golang.org/grpc/keepalive"
@@ -64,4 +66,43 @@ func (fpdc FakePDClient) GetTS(ctx context.Context) (int64, int64, error) {
 		return 0, 0, errors.Errorf("rpc error: code = Unknown desc = [PD:tso:ErrGenerateTimestamp]generate timestamp failed, requested pd is not leader of cluster")
 	}
 	return 1, 1, nil
+}
+
+type FakeSplitClient struct {
+	split.SplitClient
+	regions []*split.RegionInfo
+}
+
+func NewFakeSplitClient() *FakeSplitClient {
+	return &FakeSplitClient{
+		regions: make([]*split.RegionInfo, 0),
+	}
+}
+
+func (f *FakeSplitClient) AppendRegion(startKey, endKey []byte) {
+	f.regions = append(f.regions, &split.RegionInfo{
+		Region: &metapb.Region{
+			StartKey: startKey,
+			EndKey:   endKey,
+		},
+	})
+}
+
+func (f *FakeSplitClient) ScanRegions(ctx context.Context, startKey, endKey []byte, limit int) ([]*split.RegionInfo, error) {
+	result := make([]*split.RegionInfo, 0)
+	count := 0
+	for _, rng := range f.regions {
+		if bytes.Compare(rng.Region.StartKey, endKey) <= 0 && bytes.Compare(rng.Region.EndKey, startKey) > 0 {
+			result = append(result, rng)
+			count++
+		}
+		if count >= limit {
+			break
+		}
+	}
+	return result, nil
+}
+
+func (f *FakeSplitClient) WaitRegionsScattered(context.Context, []*split.RegionInfo) (int, error) {
+	return 0, nil
 }

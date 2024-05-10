@@ -31,7 +31,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/conn/util"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/logutil"
-	"github.com/pingcap/tidb/br/pkg/restore"
+	importclient "github.com/pingcap/tidb/br/pkg/restore/internal/import_client"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
 	"github.com/pingcap/tidb/br/pkg/stream"
@@ -45,7 +45,7 @@ import (
 
 type LogFileImporter struct {
 	metaClient   split.SplitClient
-	importClient restore.ImporterClient
+	importClient importclient.ImporterClient
 	backend      *backuppb.StorageBackend
 
 	cacheKey string
@@ -54,7 +54,7 @@ type LogFileImporter struct {
 // NewFileImporter returns a new file importClient.
 func NewLogFileImporter(
 	metaClient split.SplitClient,
-	importClient restore.ImporterClient,
+	importClient importclient.ImporterClient,
 	backend *backuppb.StorageBackend,
 ) *LogFileImporter {
 

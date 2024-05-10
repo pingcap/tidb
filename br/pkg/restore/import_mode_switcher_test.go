@@ -12,23 +12,4 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package utils
-
-import "github.com/pingcap/tidb/pkg/util/codec"
-
-func TruncateTS(key []byte) []byte {
-	if len(key) == 0 {
-		return nil
-	}
-	if len(key) < 8 {
-		return key
-	}
-	return key[:len(key)-8]
-}
-
-func EncodeKeyPrefix(key []byte) []byte {
-	encodedPrefix := make([]byte, 0)
-	ungroupedLen := len(key) % 8
-	encodedPrefix = append(encodedPrefix, codec.EncodeBytes([]byte{}, key[:len(key)-ungroupedLen])...)
-	return append(encodedPrefix[:len(encodedPrefix)-9], key[len(key)-ungroupedLen:]...)
-}
+package restore_test

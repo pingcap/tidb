@@ -41,7 +41,9 @@ import (
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/restore"
 	"github.com/pingcap/tidb/br/pkg/restore/ingestrec"
-	"github.com/pingcap/tidb/br/pkg/restore/rawkv"
+	importclient "github.com/pingcap/tidb/br/pkg/restore/internal/import_client"
+	logsplit "github.com/pingcap/tidb/br/pkg/restore/internal/log_split"
+	"github.com/pingcap/tidb/br/pkg/restore/internal/rawkv"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/br/pkg/restore/tiflashrec"
 	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
@@ -58,6 +60,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
+	"github.com/tikv/client-go/v2/config"
 	kvutil "github.com/tikv/client-go/v2/util"
 	pd "github.com/tikv/pd/client"
 	pdhttp "github.com/tikv/pd/client/http"
@@ -69,6 +72,9 @@ import (
 
 const MetaKVBatchSize = 64 * 1024 * 1024
 const maxSplitKeysOnce = 10240
+
+// rawKVBatchCount specifies the count of entries that the rawkv client puts into TiKV.
+const rawKVBatchCount = 64
 
 type LogClient struct {
 	cipher        *backuppb.CipherInfo
@@ -82,7 +88,7 @@ type LogClient struct {
 	rawKVClient *rawkv.RawKVBatchClient
 	storage     storage.ExternalStorage
 
-	db *restore.DB
+	se glue.Session
 
 	// currentTS is used for rewrite meta kv when restore stream.
 	// Can not use `restoreTS` directly, because schema created in `full backup` maybe is new than `restoreTS`.
@@ -122,8 +128,8 @@ func NewRestoreClient(
 // Close a client.
 func (rc *LogClient) Close() {
 	// close the connection, and it must be succeed when in SQL mode.
-	if rc.db != nil {
-		rc.db.Close()
+	if rc.se != nil {
+		rc.se.Close()
 	}
 
 	if rc.rawKVClient != nil {
@@ -135,6 +141,20 @@ func (rc *LogClient) Close() {
 	}
 
 	log.Info("Restore client closed")
+}
+
+func (rc *LogClient) SetRawKVBatchClient(
+	ctx context.Context,
+	pdAddrs []string,
+	security config.Security,
+) error {
+	rawkvClient, err := rawkv.NewRawkvClient(ctx, pdAddrs, security)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	rc.rawKVClient = rawkv.NewRawKVBatchClient(rawkvClient, rawKVBatchCount)
+	return nil
 }
 
 func (rc *LogClient) SetCrypter(crypter *backuppb.CipherInfo) {
@@ -157,10 +177,6 @@ func (rc *LogClient) SetStorage(ctx context.Context, backend *backuppb.StorageBa
 
 func (rc *LogClient) SetCurrentTS(ts uint64) {
 	rc.currentTS = ts
-}
-
-func (rc *LogClient) SetRawKVClient(c *rawkv.RawKVBatchClient) {
-	rc.rawKVClient = c
 }
 
 // GetClusterID gets the cluster id from down-stream cluster.
@@ -191,10 +207,17 @@ func (rc *LogClient) StartCheckpointRunnerForLogRestore(ctx context.Context, tas
 // Init create db connection and domain for storage.
 func (rc *LogClient) Init(g glue.Glue, store kv.Storage) error {
 	var err error
-	rc.db, _, err = restore.NewDB(g, store, "")
+	rc.se, err = g.CreateSession(store)
 	if err != nil {
 		return errors.Trace(err)
 	}
+
+	// Set SQL mode to None for avoiding SQL compatibility problem
+	err = rc.se.Execute(context.Background(), "set @@sql_mode=''")
+	if err != nil {
+		return errors.Trace(err)
+	}
+
 	rc.dom, err = g.GetDomain(store)
 	if err != nil {
 		return errors.Trace(err)
@@ -210,7 +233,7 @@ func (rc *LogClient) InitClients(ctx context.Context, backend *backuppb.StorageB
 	}
 
 	metaClient := split.NewClient(rc.pdClient, rc.pdHTTPClient, rc.tlsConf, maxSplitKeysOnce, len(stores)+1)
-	importCli := restore.NewImportClient(metaClient, rc.tlsConf, rc.keepaliveConf)
+	importCli := importclient.NewImportClient(metaClient, rc.tlsConf, rc.keepaliveConf)
 	rc.fileImporter = NewLogFileImporter(metaClient, importCli, backend)
 }
 
@@ -1151,8 +1174,8 @@ func (rc *LogClient) WrapLogFilesIterWithSplitHelper(logIter LogIter, rules map[
 	return NewLogFilesIterWithSplitHelper(logIter, rules, client, splitSize, splitKeys), nil
 }
 
-func (rc *LogClient) generateKvFilesSkipMap(ctx context.Context, downstreamIdset map[int64]struct{}, taskName string) (*restoreutils.LogFilesSkipMap, error) {
-	skipMap := restoreutils.NewLogFilesSkipMap()
+func (rc *LogClient) generateKvFilesSkipMap(ctx context.Context, downstreamIdset map[int64]struct{}, taskName string) (*LogFilesSkipMap, error) {
+	skipMap := NewLogFilesSkipMap()
 	t, err := checkpoint.WalkCheckpointFileForRestore(ctx, rc.storage, rc.cipher, taskName, func(groupKey checkpoint.LogRestoreKeyType, off checkpoint.LogRestoreValueMarshaled) {
 		for tableID, foffs := range off.Foffs {
 			// filter out the checkpoint data of dropped table
@@ -1338,7 +1361,7 @@ NEXTSQL:
 
 			// only when first execution or old index id is not dropped
 			if !fromCheckpoint || oldIndexIDFound {
-				if err := rc.db.Session().ExecuteInternal(ctx, alterTableDropIndexSQL, sql.SchemaName.O, sql.TableName.O, sql.IndexName); err != nil {
+				if err := rc.se.ExecuteInternal(ctx, alterTableDropIndexSQL, sql.SchemaName.O, sql.TableName.O, sql.IndexName); err != nil {
 					return errors.Trace(err)
 				}
 			}
@@ -1348,7 +1371,7 @@ NEXTSQL:
 				}
 			})
 			// create the repaired index when first execution or not found it
-			if err := rc.db.Session().ExecuteInternal(ctx, sql.AddSQL, sql.AddArgs...); err != nil {
+			if err := rc.se.ExecuteInternal(ctx, sql.AddSQL, sql.AddArgs...); err != nil {
 				return errors.Trace(err)
 			}
 			w.Inc()
@@ -1421,7 +1444,7 @@ func (rc *LogClient) InsertGCRows(ctx context.Context) error {
 			// trim the ',' behind the query.Sql if exists
 			// that's when the rewrite rule of the last table id is not exist
 			sql := strings.TrimSuffix(query.Sql, ",")
-			if err := rc.db.Session().ExecuteInternal(ctx, sql, paramsList...); err != nil {
+			if err := rc.se.ExecuteInternal(ctx, sql, paramsList...); err != nil {
 				return errors.Trace(err)
 			}
 		}
@@ -1582,4 +1605,53 @@ func (rc *LogClient) FailpointDoChecksumForLogRestore(
 	}
 
 	return eg.Wait()
+}
+
+type LogFilesIterWithSplitHelper struct {
+	iter   LogIter
+	helper *logsplit.LogSplitHelper
+	buffer []*LogDataFileInfo
+	next   int
+}
+
+const SplitFilesBufferSize = 4096
+
+func NewLogFilesIterWithSplitHelper(iter LogIter, rules map[int64]*restoreutils.RewriteRules, client split.SplitClient, splitSize uint64, splitKeys int64) LogIter {
+	return &LogFilesIterWithSplitHelper{
+		iter:   iter,
+		helper: logsplit.NewLogSplitHelper(rules, client, splitSize, splitKeys),
+		buffer: nil,
+		next:   0,
+	}
+}
+
+func (splitIter *LogFilesIterWithSplitHelper) TryNext(ctx context.Context) iter.IterResult[*LogDataFileInfo] {
+	if splitIter.next >= len(splitIter.buffer) {
+		splitIter.buffer = make([]*LogDataFileInfo, 0, SplitFilesBufferSize)
+		for r := splitIter.iter.TryNext(ctx); !r.Finished; r = splitIter.iter.TryNext(ctx) {
+			if r.Err != nil {
+				return r
+			}
+			f := r.Item
+			splitIter.helper.Merge(f.DataFileInfo)
+			splitIter.buffer = append(splitIter.buffer, f)
+			if len(splitIter.buffer) >= SplitFilesBufferSize {
+				break
+			}
+		}
+		splitIter.next = 0
+		if len(splitIter.buffer) == 0 {
+			return iter.Done[*LogDataFileInfo]()
+		}
+		log.Info("start to split the regions")
+		startTime := time.Now()
+		if err := splitIter.helper.Split(ctx); err != nil {
+			return iter.Throw[*LogDataFileInfo](errors.Trace(err))
+		}
+		log.Info("end to split the regions", zap.Duration("takes", time.Since(startTime)))
+	}
+
+	res := iter.Emit(splitIter.buffer[splitIter.next])
+	splitIter.next += 1
+	return res
 }

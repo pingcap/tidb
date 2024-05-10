@@ -3,8 +3,10 @@
 package task
 
 import (
+	"cmp"
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -146,7 +148,7 @@ func (cfg *RestoreCommonConfig) adjust() {
 func DefineRestoreCommonFlags(flags *pflag.FlagSet) {
 	// TODO remove experimental tag if it's stable
 	flags.Bool(flagOnline, false, "(experimental) Whether online when restore")
-	flags.String(flagGranularity, string(restore.CoarseGrained), "Whether split & scatter regions using fine-grained way during restore")
+	flags.String(flagGranularity, string(restore.CoarseGrained), "(deprecated) Whether split & scatter regions using fine-grained way during restore")
 	flags.Uint(flagConcurrencyPerStore, 128, "The size of thread pool on each store that executes tasks, only enabled when `--granularity=coarse-grained`")
 	flags.Uint32(flagConcurrency, 128, "(deprecated) The size of thread pool on BR that executes tasks, "+
 		"where each task restores one SST file to TiKV")
@@ -933,8 +935,8 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	if client.IsIncremental() {
 		newTS = restoreTS
 	}
-	ddlJobs := restore.FilterDDLJobs(client.GetDDLJobs(), tables)
-	ddlJobs = restore.FilterDDLJobByRules(ddlJobs, restore.DDLJobBlockListRule)
+	ddlJobs := FilterDDLJobs(client.GetDDLJobs(), tables)
+	ddlJobs = FilterDDLJobByRules(ddlJobs, DDLJobBlockListRule)
 
 	err = PreCheckTableTiFlashReplica(ctx, mgr.GetPDClient(), tables, cfg.tiflashRecorder)
 	if err != nil {
@@ -1399,4 +1401,106 @@ func PreCheckTableClusterIndex(
 		}
 	}
 	return nil
+}
+
+func getDatabases(tables []*metautil.Table) (dbs []*model.DBInfo) {
+	dbIDs := make(map[int64]bool)
+	for _, table := range tables {
+		if !dbIDs[table.DB.ID] {
+			dbs = append(dbs, table.DB)
+			dbIDs[table.DB.ID] = true
+		}
+	}
+	return
+}
+
+// FilterDDLJobs filters ddl jobs.
+func FilterDDLJobs(allDDLJobs []*model.Job, tables []*metautil.Table) (ddlJobs []*model.Job) {
+	// Sort the ddl jobs by schema version in descending order.
+	slices.SortFunc(allDDLJobs, func(i, j *model.Job) int {
+		return cmp.Compare(j.BinlogInfo.SchemaVersion, i.BinlogInfo.SchemaVersion)
+	})
+	dbs := getDatabases(tables)
+	for _, db := range dbs {
+		// These maps is for solving some corner case.
+		// e.g. let "t=2" indicates that the id of database "t" is 2, if the ddl execution sequence is:
+		// rename "a" to "b"(a=1) -> drop "b"(b=1) -> create "b"(b=2) -> rename "b" to "a"(a=2)
+		// Which we cannot find the "create" DDL by name and id directly.
+		// To cover †his case, we must find all names and ids the database/table ever had.
+		dbIDs := make(map[int64]bool)
+		dbIDs[db.ID] = true
+		dbNames := make(map[string]bool)
+		dbNames[db.Name.String()] = true
+		for _, job := range allDDLJobs {
+			if job.BinlogInfo.DBInfo != nil {
+				if dbIDs[job.SchemaID] || dbNames[job.BinlogInfo.DBInfo.Name.String()] {
+					ddlJobs = append(ddlJobs, job)
+					// The the jobs executed with the old id, like the step 2 in the example above.
+					dbIDs[job.SchemaID] = true
+					// For the jobs executed after rename, like the step 3 in the example above.
+					dbNames[job.BinlogInfo.DBInfo.Name.String()] = true
+				}
+			}
+		}
+	}
+
+	for _, table := range tables {
+		tableIDs := make(map[int64]bool)
+		tableIDs[table.Info.ID] = true
+		tableNames := make(map[restore.UniqueTableName]bool)
+		name := restore.UniqueTableName{DB: table.DB.Name.String(), Table: table.Info.Name.String()}
+		tableNames[name] = true
+		for _, job := range allDDLJobs {
+			if job.BinlogInfo.TableInfo != nil {
+				name = restore.UniqueTableName{DB: job.SchemaName, Table: job.BinlogInfo.TableInfo.Name.String()}
+				if tableIDs[job.TableID] || tableNames[name] {
+					ddlJobs = append(ddlJobs, job)
+					tableIDs[job.TableID] = true
+					// For truncate table, the id may be changed
+					tableIDs[job.BinlogInfo.TableInfo.ID] = true
+					tableNames[name] = true
+				}
+			}
+		}
+	}
+	return ddlJobs
+}
+
+// FilterDDLJobByRules if one of rules returns true, the job in srcDDLJobs will be filtered.
+func FilterDDLJobByRules(srcDDLJobs []*model.Job, rules ...DDLJobFilterRule) (dstDDLJobs []*model.Job) {
+	dstDDLJobs = make([]*model.Job, 0, len(srcDDLJobs))
+	for _, ddlJob := range srcDDLJobs {
+		passed := true
+		for _, rule := range rules {
+			if rule(ddlJob) {
+				passed = false
+				break
+			}
+		}
+
+		if passed {
+			dstDDLJobs = append(dstDDLJobs, ddlJob)
+		}
+	}
+
+	return
+}
+
+type DDLJobFilterRule func(ddlJob *model.Job) bool
+
+var incrementalRestoreActionBlockList = map[model.ActionType]struct{}{
+	model.ActionSetTiFlashReplica:          {},
+	model.ActionUpdateTiFlashReplicaStatus: {},
+	model.ActionLockTable:                  {},
+	model.ActionUnlockTable:                {},
+}
+
+// DDLJobBlockListRule rule for filter ddl job with type in block list.
+func DDLJobBlockListRule(ddlJob *model.Job) bool {
+	return checkIsInActions(ddlJob.Type, incrementalRestoreActionBlockList)
+}
+
+func checkIsInActions(action model.ActionType, actions map[model.ActionType]struct{}) bool {
+	_, ok := actions[action]
+	return ok
 }

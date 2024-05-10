@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package utils
+package logclient
 
 // each 64 items constitute a bitmap unit
 type bitMap map[int]uint64

@@ -10,7 +10,7 @@ import (
 
 	"github.com/pingcap/errors"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
-	rawclient "github.com/pingcap/tidb/br/pkg/restore/rawkv"
+	rawclient "github.com/pingcap/tidb/br/pkg/restore/internal/rawkv"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/stretchr/testify/require"

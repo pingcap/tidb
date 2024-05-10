@@ -1,16 +1,16 @@
 // Copyright 2022 PingCAP, Inc. Licensed under Apache-2.0.
-package split_test
+package logsplit_test
 
 import (
 	"testing"
 
-	"github.com/pingcap/tidb/br/pkg/restore/split"
+	logsplit "github.com/pingcap/tidb/br/pkg/restore/internal/log_split"
 	"github.com/stretchr/testify/require"
 )
 
-func v(s, e string, val split.Value) split.Valued {
-	return split.Valued{
-		Key: split.Span{
+func v(s, e string, val logsplit.Value) logsplit.Valued {
+	return logsplit.Valued{
+		Key: logsplit.Span{
 			StartKey: []byte(s),
 			EndKey:   []byte(e),
 		},
@@ -18,8 +18,8 @@ func v(s, e string, val split.Value) split.Valued {
 	}
 }
 
-func mb(b uint64) split.Value {
-	return split.Value{
+func mb(b uint64) logsplit.Value {
+	return logsplit.Value{
 		Size:   b * 1024 * 1024,
 		Number: int64(b),
 	}
@@ -27,11 +27,11 @@ func mb(b uint64) split.Value {
 
 func TestSumSorted(t *testing.T) {
 	cases := []struct {
-		values []split.Valued
+		values []logsplit.Valued
 		result []uint64
 	}{
 		{
-			values: []split.Valued{
+			values: []logsplit.Valued{
 				v("a", "f", mb(100)),
 				v("a", "c", mb(200)),
 				v("d", "g", mb(100)),
@@ -39,7 +39,7 @@ func TestSumSorted(t *testing.T) {
 			result: []uint64{0, 250, 25, 75, 50, 0},
 		},
 		{
-			values: []split.Valued{
+			values: []logsplit.Valued{
 				v("a", "f", mb(100)),
 				v("a", "c", mb(200)),
 				v("d", "f", mb(100)),
@@ -47,7 +47,7 @@ func TestSumSorted(t *testing.T) {
 			result: []uint64{0, 250, 25, 125, 0},
 		},
 		{
-			values: []split.Valued{
+			values: []logsplit.Valued{
 				v("a", "f", mb(100)),
 				v("a", "c", mb(200)),
 				v("c", "f", mb(100)),
@@ -55,7 +55,7 @@ func TestSumSorted(t *testing.T) {
 			result: []uint64{0, 250, 150, 0},
 		},
 		{
-			values: []split.Valued{
+			values: []logsplit.Valued{
 				v("a", "f", mb(100)),
 				v("a", "c", mb(200)),
 				v("c", "f", mb(100)),
@@ -64,7 +64,7 @@ func TestSumSorted(t *testing.T) {
 			result: []uint64{0, 250, 50, 150, 50, 0},
 		},
 		{
-			values: []split.Valued{
+			values: []logsplit.Valued{
 				v("a", "f", mb(100)),
 				v("a", "c", mb(200)),
 				v("c", "f", mb(100)),
@@ -74,7 +74,7 @@ func TestSumSorted(t *testing.T) {
 			result: []uint64{0, 250, 25, 75, 200, 50, 0},
 		},
 		{
-			values: []split.Valued{
+			values: []logsplit.Valued{
 				v("a", "f", mb(100)),
 				v("a", "c", mb(200)),
 				v("c", "f", mb(100)),
@@ -84,7 +84,7 @@ func TestSumSorted(t *testing.T) {
 			result: []uint64{0, 250, 25, 75, 200, 100, 0},
 		},
 		{
-			values: []split.Valued{
+			values: []logsplit.Valued{
 				v("a", "f", mb(100)),
 				v("a", "c", mb(200)),
 				v("c", "f", mb(100)),
@@ -94,7 +94,7 @@ func TestSumSorted(t *testing.T) {
 			result: []uint64{0, 250, 25, 75, 200, 75, 25, 0},
 		},
 		{
-			values: []split.Valued{
+			values: []logsplit.Valued{
 				v("a", "f", mb(100)),
 				v("a", "c", mb(200)),
 				v("c", "f", mb(100)),
@@ -104,7 +104,7 @@ func TestSumSorted(t *testing.T) {
 			result: []uint64{0, 250, 25, 75, 200, 75, 25, 0},
 		},
 		{
-			values: []split.Valued{
+			values: []logsplit.Valued{
 				v("a", "f", mb(100)),
 				v("a", "c", mb(200)),
 				v("c", "f", mb(100)),
@@ -114,7 +114,7 @@ func TestSumSorted(t *testing.T) {
 			result: []uint64{0, 250, 100, 200, 75, 25, 0},
 		},
 		{
-			values: []split.Valued{
+			values: []logsplit.Valued{
 				v("a", "f", mb(100)),
 				v("a", "c", mb(200)),
 				v("c", "f", mb(100)),
@@ -126,13 +126,13 @@ func TestSumSorted(t *testing.T) {
 	}
 
 	for _, ca := range cases {
-		full := split.NewSplitHelper()
+		full := logsplit.NewSplitHelper()
 		for _, v := range ca.values {
 			full.Merge(v)
 		}
 
 		i := 0
-		full.Traverse(func(v split.Valued) bool {
+		full.Traverse(func(v logsplit.Valued) bool {
 			require.Equal(t, mb(ca.result[i]), v.Value)
 			i++
 			return true

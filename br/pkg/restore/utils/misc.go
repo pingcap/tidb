@@ -14,7 +14,15 @@
 
 package utils
 
-import "github.com/pingcap/tidb/pkg/parser/model"
+import (
+	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/util/codec"
+)
+
+const (
+	WriteCFName   = "write"
+	DefaultCFName = "default"
+)
 
 // GetPartitionIDMap creates a map maping old physical ID to new physical ID.
 func GetPartitionIDMap(newTable, oldTable *model.TableInfo) map[int64]int64 {
@@ -55,4 +63,21 @@ func GetIndexIDMap(newTable, oldTable *model.TableInfo) map[int64]int64 {
 	}
 
 	return indexIDMap
+}
+
+func TruncateTS(key []byte) []byte {
+	if len(key) == 0 {
+		return nil
+	}
+	if len(key) < 8 {
+		return key
+	}
+	return key[:len(key)-8]
+}
+
+func EncodeKeyPrefix(key []byte) []byte {
+	encodedPrefix := make([]byte, 0)
+	ungroupedLen := len(key) % 8
+	encodedPrefix = append(encodedPrefix, codec.EncodeBytes([]byte{}, key[:len(key)-ungroupedLen])...)
+	return append(encodedPrefix[:len(encodedPrefix)-9], key[len(key)-ungroupedLen:]...)
 }

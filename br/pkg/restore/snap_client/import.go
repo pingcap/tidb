@@ -34,7 +34,7 @@ import (
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/logutil"
-	"github.com/pingcap/tidb/br/pkg/restore"
+	importclient "github.com/pingcap/tidb/br/pkg/restore/internal/import_client"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
 	"github.com/pingcap/tidb/br/pkg/summary"
@@ -131,7 +131,7 @@ func newStoreTokenChannelMap(stores []*metapb.Store, bufferSize uint) *storeToke
 
 type SnapFileImporter struct {
 	metaClient   split.SplitClient
-	importClient restore.ImporterClient
+	importClient importclient.ImporterClient
 	backend      *backuppb.StorageBackend
 
 	downloadTokensMap *storeTokenChannelMap
@@ -151,7 +151,7 @@ type SnapFileImporter struct {
 func NewSnapFileImporter(
 	ctx context.Context,
 	metaClient split.SplitClient,
-	importClient restore.ImporterClient,
+	importClient importclient.ImporterClient,
 	backend *backuppb.StorageBackend,
 	isRawKvMode bool,
 	isTxnKvMode bool,

@@ -1,27 +1,24 @@
 // Copyright 2020 PingCAP, Inc. Licensed under Apache-2.0.
 
-package restore
+package preallocdb
 
 import (
-	"cmp"
 	"context"
 	"fmt"
-	"slices"
 	"sync"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/metautil"
-	prealloctableid "github.com/pingcap/tidb/br/pkg/restore/prealloc_table_id"
+	"github.com/pingcap/tidb/br/pkg/restore"
+	prealloctableid "github.com/pingcap/tidb/br/pkg/restore/internal/prealloc_table_id"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/ddl"
-	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
-	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"go.uber.org/zap"
 )
 
@@ -29,20 +26,6 @@ import (
 type DB struct {
 	se            glue.Session
 	preallocedIDs *prealloctableid.PreallocIDs
-}
-
-type UniqueTableName struct {
-	DB    string
-	Table string
-}
-
-type DDLJobFilterRule func(ddlJob *model.Job) bool
-
-var incrementalRestoreActionBlockList = map[model.ActionType]struct{}{
-	model.ActionSetTiFlashReplica:          {},
-	model.ActionUpdateTiFlashReplicaStatus: {},
-	model.ActionLockTable:                  {},
-	model.ActionUnlockTable:                {},
 }
 
 // NewDB returns a new DB.
@@ -253,7 +236,7 @@ func (db *DB) restoreSequence(ctx context.Context, table *metautil.Table) error 
 	return errors.Trace(err)
 }
 
-func (db *DB) CreateTablePostRestore(ctx context.Context, table *metautil.Table, toBeCorrectedTables map[UniqueTableName]bool) error {
+func (db *DB) CreateTablePostRestore(ctx context.Context, table *metautil.Table, toBeCorrectedTables map[restore.UniqueTableName]bool) error {
 	var restoreMetaSQL string
 	var err error
 	switch {
@@ -265,7 +248,7 @@ func (db *DB) CreateTablePostRestore(ctx context.Context, table *metautil.Table,
 			return errors.Trace(err)
 		}
 	// only table exists in restored cluster during incremental restoration should do alter after creation.
-	case toBeCorrectedTables[UniqueTableName{table.DB.Name.String(), table.Info.Name.String()}]:
+	case toBeCorrectedTables[restore.UniqueTableName{DB: table.DB.Name.String(), Table: table.Info.Name.String()}]:
 		if utils.NeedAutoID(table.Info) {
 			restoreMetaSQL = fmt.Sprintf(
 				"alter table %s.%s auto_increment = %d;",
@@ -312,7 +295,7 @@ func (db *DB) tableIDAllocFilter() ddl.AllocTableIDIf {
 
 // CreateTables execute a internal CREATE TABLES.
 func (db *DB) CreateTables(ctx context.Context, tables []*metautil.Table,
-	ddlTables map[UniqueTableName]bool, supportPolicy bool, policyMap *sync.Map) error {
+	ddlTables map[restore.UniqueTableName]bool, supportPolicy bool, policyMap *sync.Map) error {
 	if batchSession, ok := db.se.(glue.BatchCreateTableSession); ok {
 		m := map[string][]*model.TableInfo{}
 		for _, table := range tables {
@@ -347,7 +330,7 @@ func (db *DB) CreateTables(ctx context.Context, tables []*metautil.Table,
 
 // CreateTable executes a CREATE TABLE SQL.
 func (db *DB) CreateTable(ctx context.Context, table *metautil.Table,
-	ddlTables map[UniqueTableName]bool, supportPolicy bool, policyMap *sync.Map) error {
+	ddlTables map[restore.UniqueTableName]bool, supportPolicy bool, policyMap *sync.Map) error {
 	if !supportPolicy {
 		log.Info("set placementPolicyRef to nil when target tidb not support policy",
 			zap.Stringer("table", table.Info.Name), zap.Stringer("db", table.DB.Name))
@@ -417,116 +400,4 @@ func (db *DB) ensureTablePlacementPolicies(ctx context.Context, tableInfo *model
 	}
 
 	return nil
-}
-
-// FilterDDLJobs filters ddl jobs.
-func FilterDDLJobs(allDDLJobs []*model.Job, tables []*metautil.Table) (ddlJobs []*model.Job) {
-	// Sort the ddl jobs by schema version in descending order.
-	slices.SortFunc(allDDLJobs, func(i, j *model.Job) int {
-		return cmp.Compare(j.BinlogInfo.SchemaVersion, i.BinlogInfo.SchemaVersion)
-	})
-	dbs := getDatabases(tables)
-	for _, db := range dbs {
-		// These maps is for solving some corner case.
-		// e.g. let "t=2" indicates that the id of database "t" is 2, if the ddl execution sequence is:
-		// rename "a" to "b"(a=1) -> drop "b"(b=1) -> create "b"(b=2) -> rename "b" to "a"(a=2)
-		// Which we cannot find the "create" DDL by name and id directly.
-		// To cover †his case, we must find all names and ids the database/table ever had.
-		dbIDs := make(map[int64]bool)
-		dbIDs[db.ID] = true
-		dbNames := make(map[string]bool)
-		dbNames[db.Name.String()] = true
-		for _, job := range allDDLJobs {
-			if job.BinlogInfo.DBInfo != nil {
-				if dbIDs[job.SchemaID] || dbNames[job.BinlogInfo.DBInfo.Name.String()] {
-					ddlJobs = append(ddlJobs, job)
-					// The the jobs executed with the old id, like the step 2 in the example above.
-					dbIDs[job.SchemaID] = true
-					// For the jobs executed after rename, like the step 3 in the example above.
-					dbNames[job.BinlogInfo.DBInfo.Name.String()] = true
-				}
-			}
-		}
-	}
-
-	for _, table := range tables {
-		tableIDs := make(map[int64]bool)
-		tableIDs[table.Info.ID] = true
-		tableNames := make(map[UniqueTableName]bool)
-		name := UniqueTableName{table.DB.Name.String(), table.Info.Name.String()}
-		tableNames[name] = true
-		for _, job := range allDDLJobs {
-			if job.BinlogInfo.TableInfo != nil {
-				name = UniqueTableName{job.SchemaName, job.BinlogInfo.TableInfo.Name.String()}
-				if tableIDs[job.TableID] || tableNames[name] {
-					ddlJobs = append(ddlJobs, job)
-					tableIDs[job.TableID] = true
-					// For truncate table, the id may be changed
-					tableIDs[job.BinlogInfo.TableInfo.ID] = true
-					tableNames[name] = true
-				}
-			}
-		}
-	}
-	return ddlJobs
-}
-
-// FilterDDLJobByRules if one of rules returns true, the job in srcDDLJobs will be filtered.
-func FilterDDLJobByRules(srcDDLJobs []*model.Job, rules ...DDLJobFilterRule) (dstDDLJobs []*model.Job) {
-	dstDDLJobs = make([]*model.Job, 0, len(srcDDLJobs))
-	for _, ddlJob := range srcDDLJobs {
-		passed := true
-		for _, rule := range rules {
-			if rule(ddlJob) {
-				passed = false
-				break
-			}
-		}
-
-		if passed {
-			dstDDLJobs = append(dstDDLJobs, ddlJob)
-		}
-	}
-
-	return
-}
-
-// DDLJobBlockListRule rule for filter ddl job with type in block list.
-func DDLJobBlockListRule(ddlJob *model.Job) bool {
-	return checkIsInActions(ddlJob.Type, incrementalRestoreActionBlockList)
-}
-
-// GetExistedUserDBs get dbs created or modified by users
-func GetExistedUserDBs(dom *domain.Domain) []*model.DBInfo {
-	databases := dom.InfoSchema().AllSchemas()
-	existedDatabases := make([]*model.DBInfo, 0, 16)
-	for _, db := range databases {
-		dbName := db.Name.L
-		if tidbutil.IsMemOrSysDB(dbName) {
-			continue
-		} else if dbName == "test" && len(db.Tables) == 0 {
-			// tidb create test db on fresh cluster
-			// if it's empty we don't take it as user db
-			continue
-		}
-		existedDatabases = append(existedDatabases, db)
-	}
-
-	return existedDatabases
-}
-
-func getDatabases(tables []*metautil.Table) (dbs []*model.DBInfo) {
-	dbIDs := make(map[int64]bool)
-	for _, table := range tables {
-		if !dbIDs[table.DB.ID] {
-			dbs = append(dbs, table.DB)
-			dbIDs[table.DB.ID] = true
-		}
-	}
-	return
-}
-
-func checkIsInActions(action model.ActionType, actions map[model.ActionType]struct{}) bool {
-	_, ok := actions[action]
-	return ok
 }

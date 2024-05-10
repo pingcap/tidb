@@ -4,23 +4,32 @@ package task_test
 
 import (
 	"context"
+	"encoding/json"
 	"math"
 	"strconv"
 	"testing"
 
+	"github.com/gogo/protobuf/proto"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
+	"github.com/pingcap/kvproto/pkg/encryptionpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/pingcap/tidb/br/pkg/backup"
 	"github.com/pingcap/tidb/br/pkg/gluetidb"
+	gluemock "github.com/pingcap/tidb/br/pkg/gluetidb/mock"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/mock"
 	"github.com/pingcap/tidb/br/pkg/restore/tiflashrec"
 	"github.com/pingcap/tidb/br/pkg/task"
-	"github.com/pingcap/tidb/br/pkg/utils/utilstest"
+	utiltest "github.com/pingcap/tidb/br/pkg/utiltest"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/session"
+	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/oracle"
 )
 
 var mc *mock.Cluster
@@ -47,7 +56,7 @@ func TestPreCheckTableTiFlashReplicas(t *testing.T) {
 		},
 	}
 
-	pdClient := utilstest.NewFakePDClient(mockStores, false, nil)
+	pdClient := utiltest.NewFakePDClient(mockStores, false, nil)
 
 	tables := make([]*metautil.Table, 4)
 	for i := 0; i < len(tables); i++ {
@@ -214,7 +223,7 @@ func TestCheckNewCollationEnable(t *testing.T) {
 	}
 
 	for i, ca := range caseList {
-		g := &gluetidb.MockGlue{
+		g := &gluemock.MockGlue{
 			GlobalVars: map[string]string{"new_collation_enabled": ca.newCollationEnableInCluster},
 		}
 		enabled, err := task.CheckNewCollationEnable(ca.backupMeta.GetNewCollationsEnabled(), g, nil, ca.CheckRequirements)
@@ -226,4 +235,191 @@ func TestCheckNewCollationEnable(t *testing.T) {
 		}
 		require.Equal(t, ca.newCollationEnableInCluster == "True", enabled)
 	}
+}
+
+func TestFilterDDLJobs(t *testing.T) {
+	s := utiltest.CreateRestoreSchemaSuite(t)
+	tk := testkit.NewTestKit(t, s.Mock.Storage)
+	tk.MustExec("CREATE DATABASE IF NOT EXISTS test_db;")
+	tk.MustExec("CREATE TABLE IF NOT EXISTS test_db.test_table (c1 INT);")
+	lastTS, err := s.Mock.GetOracle().GetTimestamp(context.Background(), &oracle.Option{TxnScope: oracle.GlobalTxnScope})
+	require.NoErrorf(t, err, "Error get last ts: %s", err)
+	tk.MustExec("RENAME TABLE test_db.test_table to test_db.test_table1;")
+	tk.MustExec("DROP TABLE test_db.test_table1;")
+	tk.MustExec("DROP DATABASE test_db;")
+	tk.MustExec("CREATE DATABASE test_db;")
+	tk.MustExec("USE test_db;")
+	tk.MustExec("CREATE TABLE test_table1 (c2 CHAR(255));")
+	tk.MustExec("RENAME TABLE test_table1 to test_table;")
+	tk.MustExec("TRUNCATE TABLE test_table;")
+
+	ts, err := s.Mock.GetOracle().GetTimestamp(context.Background(), &oracle.Option{TxnScope: oracle.GlobalTxnScope})
+	require.NoErrorf(t, err, "Error get ts: %s", err)
+
+	cipher := backuppb.CipherInfo{
+		CipherType: encryptionpb.EncryptionMethod_PLAINTEXT,
+	}
+
+	metaWriter := metautil.NewMetaWriter(s.Storage, metautil.MetaFileSize, false, "", &cipher)
+	ctx := context.Background()
+	metaWriter.StartWriteMetasAsync(ctx, metautil.AppendDDL)
+	s.MockGlue.SetSession(tk.Session())
+	err = backup.WriteBackupDDLJobs(metaWriter, s.MockGlue, s.Mock.Storage, lastTS, ts, false)
+	require.NoErrorf(t, err, "Error get ddl jobs: %s", err)
+	err = metaWriter.FinishWriteMetas(ctx, metautil.AppendDDL)
+	require.NoErrorf(t, err, "Flush failed", err)
+	err = metaWriter.FlushBackupMeta(ctx)
+	require.NoErrorf(t, err, "Finially flush backupmeta failed", err)
+	infoSchema, err := s.Mock.Domain.GetSnapshotInfoSchema(ts)
+	require.NoErrorf(t, err, "Error get snapshot info schema: %s", err)
+	dbInfo, ok := infoSchema.SchemaByName(model.NewCIStr("test_db"))
+	require.Truef(t, ok, "DB info not exist")
+	tableInfo, err := infoSchema.TableByName(model.NewCIStr("test_db"), model.NewCIStr("test_table"))
+	require.NoErrorf(t, err, "Error get table info: %s", err)
+	tables := []*metautil.Table{{
+		DB:   dbInfo,
+		Info: tableInfo.Meta(),
+	}}
+	metaBytes, err := s.Storage.ReadFile(ctx, metautil.MetaFile)
+	require.NoError(t, err)
+	mockMeta := &backuppb.BackupMeta{}
+	err = proto.Unmarshal(metaBytes, mockMeta)
+	require.NoError(t, err)
+	// check the schema version
+	require.Equal(t, int32(metautil.MetaV1), mockMeta.Version)
+	metaReader := metautil.NewMetaReader(mockMeta, s.Storage, &cipher)
+	allDDLJobsBytes, err := metaReader.ReadDDLs(ctx)
+	require.NoError(t, err)
+	var allDDLJobs []*model.Job
+	err = json.Unmarshal(allDDLJobsBytes, &allDDLJobs)
+	require.NoError(t, err)
+
+	ddlJobs := task.FilterDDLJobs(allDDLJobs, tables)
+	for _, job := range ddlJobs {
+		t.Logf("get ddl job: %s", job.Query)
+	}
+	require.Equal(t, 7, len(ddlJobs))
+}
+
+func TestFilterDDLJobsV2(t *testing.T) {
+	s := utiltest.CreateRestoreSchemaSuite(t)
+	tk := testkit.NewTestKit(t, s.Mock.Storage)
+	tk.MustExec("CREATE DATABASE IF NOT EXISTS test_db;")
+	tk.MustExec("CREATE TABLE IF NOT EXISTS test_db.test_table (c1 INT);")
+	lastTS, err := s.Mock.GetOracle().GetTimestamp(context.Background(), &oracle.Option{TxnScope: oracle.GlobalTxnScope})
+	require.NoErrorf(t, err, "Error get last ts: %s", err)
+	tk.MustExec("RENAME TABLE test_db.test_table to test_db.test_table1;")
+	tk.MustExec("DROP TABLE test_db.test_table1;")
+	tk.MustExec("DROP DATABASE test_db;")
+	tk.MustExec("CREATE DATABASE test_db;")
+	tk.MustExec("USE test_db;")
+	tk.MustExec("CREATE TABLE test_table1 (c2 CHAR(255));")
+	tk.MustExec("RENAME TABLE test_table1 to test_table;")
+	tk.MustExec("TRUNCATE TABLE test_table;")
+
+	ts, err := s.Mock.GetOracle().GetTimestamp(context.Background(), &oracle.Option{TxnScope: oracle.GlobalTxnScope})
+	require.NoErrorf(t, err, "Error get ts: %s", err)
+
+	cipher := backuppb.CipherInfo{
+		CipherType: encryptionpb.EncryptionMethod_PLAINTEXT,
+	}
+
+	metaWriter := metautil.NewMetaWriter(s.Storage, metautil.MetaFileSize, true, "", &cipher)
+	ctx := context.Background()
+	metaWriter.StartWriteMetasAsync(ctx, metautil.AppendDDL)
+	s.MockGlue.SetSession(tk.Session())
+	err = backup.WriteBackupDDLJobs(metaWriter, s.MockGlue, s.Mock.Storage, lastTS, ts, false)
+	require.NoErrorf(t, err, "Error get ddl jobs: %s", err)
+	err = metaWriter.FinishWriteMetas(ctx, metautil.AppendDDL)
+	require.NoErrorf(t, err, "Flush failed", err)
+	err = metaWriter.FlushBackupMeta(ctx)
+	require.NoErrorf(t, err, "Flush BackupMeta failed", err)
+
+	infoSchema, err := s.Mock.Domain.GetSnapshotInfoSchema(ts)
+	require.NoErrorf(t, err, "Error get snapshot info schema: %s", err)
+	dbInfo, ok := infoSchema.SchemaByName(model.NewCIStr("test_db"))
+	require.Truef(t, ok, "DB info not exist")
+	tableInfo, err := infoSchema.TableByName(model.NewCIStr("test_db"), model.NewCIStr("test_table"))
+	require.NoErrorf(t, err, "Error get table info: %s", err)
+	tables := []*metautil.Table{{
+		DB:   dbInfo,
+		Info: tableInfo.Meta(),
+	}}
+	metaBytes, err := s.Storage.ReadFile(ctx, metautil.MetaFile)
+	require.NoError(t, err)
+	mockMeta := &backuppb.BackupMeta{}
+	err = proto.Unmarshal(metaBytes, mockMeta)
+	require.NoError(t, err)
+	// check the schema version
+	require.Equal(t, int32(metautil.MetaV2), mockMeta.Version)
+	metaReader := metautil.NewMetaReader(mockMeta, s.Storage, &cipher)
+	allDDLJobsBytes, err := metaReader.ReadDDLs(ctx)
+	require.NoError(t, err)
+	var allDDLJobs []*model.Job
+	err = json.Unmarshal(allDDLJobsBytes, &allDDLJobs)
+	require.NoError(t, err)
+
+	ddlJobs := task.FilterDDLJobs(allDDLJobs, tables)
+	for _, job := range ddlJobs {
+		t.Logf("get ddl job: %s", job.Query)
+	}
+	require.Equal(t, 7, len(ddlJobs))
+}
+
+func TestFilterDDLJobByRules(t *testing.T) {
+	ddlJobs := []*model.Job{
+		{
+			Type: model.ActionSetTiFlashReplica,
+		},
+		{
+			Type: model.ActionAddPrimaryKey,
+		},
+		{
+			Type: model.ActionUpdateTiFlashReplicaStatus,
+		},
+		{
+			Type: model.ActionCreateTable,
+		},
+		{
+			Type: model.ActionLockTable,
+		},
+		{
+			Type: model.ActionAddIndex,
+		},
+		{
+			Type: model.ActionUnlockTable,
+		},
+		{
+			Type: model.ActionCreateSchema,
+		},
+		{
+			Type: model.ActionModifyColumn,
+		},
+	}
+
+	expectedDDLTypes := []model.ActionType{
+		model.ActionAddPrimaryKey,
+		model.ActionCreateTable,
+		model.ActionAddIndex,
+		model.ActionCreateSchema,
+		model.ActionModifyColumn,
+	}
+
+	ddlJobs = task.FilterDDLJobByRules(ddlJobs, task.DDLJobBlockListRule)
+
+	require.Equal(t, len(expectedDDLTypes), len(ddlJobs))
+	for i, ddlJob := range ddlJobs {
+		assert.Equal(t, expectedDDLTypes[i], ddlJob.Type)
+	}
+}
+
+// NOTICE: Once there is a new system table, BR needs to ensure that it is correctly classified:
+//
+// - IF it is an unrecoverable table, please add the table name into `unRecoverableTable`.
+// - IF it is an system privilege table, please add the table name into `sysPrivilegeTableMap`.
+// - IF it is an statistics table, please add the table name into `statsTables`.
+//
+// The above variables are in the file br/pkg/restore/systable_restore.go
+func TestMonitorTheSystemTableIncremental(t *testing.T) {
+	require.Equal(t, int64(196), session.CurrentBootstrapVersion)
 }

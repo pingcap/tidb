@@ -39,7 +39,10 @@ import (
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/pdutil"
 	"github.com/pingcap/tidb/br/pkg/restore"
-	tidalloc "github.com/pingcap/tidb/br/pkg/restore/prealloc_table_id"
+	importclient "github.com/pingcap/tidb/br/pkg/restore/internal/import_client"
+	tidallocdb "github.com/pingcap/tidb/br/pkg/restore/internal/prealloc_db"
+	tidalloc "github.com/pingcap/tidb/br/pkg/restore/internal/prealloc_table_id"
+	internalutils "github.com/pingcap/tidb/br/pkg/restore/internal/utils"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
 	"github.com/pingcap/tidb/br/pkg/rtree"
@@ -110,10 +113,10 @@ type SnapClient struct {
 	// Before you do it, you can firstly read discussions at
 	// https://github.com/pingcap/br/pull/377#discussion_r446594501,
 	// this probably isn't as easy as it seems like (however, not hard, too :D)
-	db *restore.DB
+	db *tidallocdb.DB
 
 	// use db pool to speed up restoration in BR binary mode.
-	dbPool []*restore.DB
+	dbPool []*tidallocdb.DB
 
 	dom *domain.Domain
 
@@ -374,8 +377,8 @@ func (rc *SnapClient) WaitForFinishCheckpoint(ctx context.Context, flush bool) {
 }
 
 // makeDBPool makes a session pool with specficated size by sessionFactory.
-func makeDBPool(size uint, dbFactory func() (*restore.DB, error)) ([]*restore.DB, error) {
-	dbPool := make([]*restore.DB, 0, size)
+func makeDBPool(size uint, dbFactory func() (*tidallocdb.DB, error)) ([]*tidallocdb.DB, error) {
+	dbPool := make([]*tidallocdb.DB, 0, size)
 	for i := uint(0); i < size; i++ {
 		db, e := dbFactory()
 		if e != nil {
@@ -393,7 +396,7 @@ func (rc *SnapClient) Init(g glue.Glue, store kv.Storage) error {
 	// setDB must happen after set PolicyMode.
 	// we will use policyMode to set session variables.
 	var err error
-	rc.db, rc.supportPolicy, err = restore.NewDB(g, store, rc.policyMode)
+	rc.db, rc.supportPolicy, err = tidallocdb.NewDB(g, store, rc.policyMode)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -414,8 +417,8 @@ func (rc *SnapClient) Init(g glue.Glue, store kv.Storage) error {
 	// and we cost most of time at waiting DDL jobs be enqueued.
 	// So these jobs won't be faster or slower when machine become faster or slower,
 	// hence make it a fixed value would be fine.
-	rc.dbPool, err = makeDBPool(defaultDDLConcurrency, func() (*restore.DB, error) {
-		db, _, err := restore.NewDB(g, store, rc.policyMode)
+	rc.dbPool, err = makeDBPool(defaultDDLConcurrency, func() (*tidallocdb.DB, error) {
+		db, _, err := tidallocdb.NewDB(g, store, rc.policyMode)
 		return db, err
 	})
 	if err != nil {
@@ -439,7 +442,7 @@ func (rc *SnapClient) initClients(ctx context.Context, backend *backuppb.Storage
 		splitClientOpts = append(splitClientOpts, split.WithRawKV())
 	}
 	metaClient := split.NewClient(rc.pdClient, rc.pdHTTPClient, rc.tlsConf, maxSplitKeysOnce, rc.storeCount+1, splitClientOpts...)
-	importCli := restore.NewImportClient(metaClient, rc.tlsConf, rc.keepaliveConf)
+	importCli := importclient.NewImportClient(metaClient, rc.tlsConf, rc.keepaliveConf)
 	rc.fileImporter, err = NewSnapFileImporter(ctx, metaClient, importCli, backend, isRawKvMode, isTxnKvMode, stores, rc.rewriteMode, rc.concurrencyPerStore)
 	return errors.Trace(err)
 }
@@ -669,7 +672,7 @@ func (rc *SnapClient) getRebasedTables() map[restore.UniqueTableName]bool {
 
 func (rc *SnapClient) createTables(
 	ctx context.Context,
-	db *restore.DB,
+	db *tidallocdb.DB,
 	tables []*metautil.Table,
 	newTS uint64,
 ) ([]CreatedTable, error) {
@@ -749,7 +752,7 @@ func (rc *SnapClient) createTablesInWorkerPool(ctx context.Context, tables []*me
 
 func (rc *SnapClient) createTable(
 	ctx context.Context,
-	db *restore.DB,
+	db *tidallocdb.DB,
 	table *metautil.Table,
 	newTS uint64,
 ) (CreatedTable, error) {
@@ -782,7 +785,7 @@ func (rc *SnapClient) createTable(
 }
 
 func (rc *SnapClient) createTablesWithSoleDB(ctx context.Context,
-	createOneTable func(ctx context.Context, db *restore.DB, t *metautil.Table) error,
+	createOneTable func(ctx context.Context, db *tidallocdb.DB, t *metautil.Table) error,
 	tables []*metautil.Table) error {
 	for _, t := range tables {
 		if err := createOneTable(ctx, rc.db, t); err != nil {
@@ -793,7 +796,7 @@ func (rc *SnapClient) createTablesWithSoleDB(ctx context.Context,
 }
 
 func (rc *SnapClient) createTablesWithDBPool(ctx context.Context,
-	createOneTable func(ctx context.Context, db *restore.DB, t *metautil.Table) error,
+	createOneTable func(ctx context.Context, db *tidallocdb.DB, t *metautil.Table) error,
 	tables []*metautil.Table) error {
 	eg, ectx := errgroup.WithContext(ctx)
 	workers := tidbutil.NewWorkerPool(uint(len(rc.dbPool)), "DDL workers")
@@ -1209,7 +1212,7 @@ func (rc *SnapClient) SplitRanges(
 		splitClientOpts = append(splitClientOpts, split.WithRawKV())
 	}
 
-	splitter := restoreutils.NewRegionSplitter(split.NewClient(
+	splitter := internalutils.NewRegionSplitter(split.NewClient(
 		rc.pdClient,
 		rc.pdHTTPClient,
 		rc.tlsConf,

@@ -7,9 +7,11 @@ import (
 	"testing"
 
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
+	"github.com/pingcap/tidb/br/pkg/restore/internal/utils"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
-	"github.com/pingcap/tidb/br/pkg/restore/utils"
+	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
 	"github.com/pingcap/tidb/br/pkg/rtree"
+	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/stretchr/testify/require"
 )
@@ -48,7 +50,7 @@ func TestSplitAndScatter(t *testing.T) {
 	ranges := initRanges()
 	rules := initRewriteRules()
 	for i, rg := range ranges {
-		tmp, err := utils.RewriteRange(&rg, rules)
+		tmp, err := restoreutils.RewriteRange(&rg, rules)
 		require.NoError(t, err)
 		ranges[i] = *tmp
 	}
@@ -121,7 +123,7 @@ func initRanges() []rtree.Range {
 	return ranges[:]
 }
 
-func initRewriteRules() *utils.RewriteRules {
+func initRewriteRules() *restoreutils.RewriteRules {
 	var rules [2]*import_sstpb.RewriteRule
 	rules[0] = &import_sstpb.RewriteRule{
 		OldKeyPrefix: []byte("aa"),
@@ -131,7 +133,85 @@ func initRewriteRules() *utils.RewriteRules {
 		OldKeyPrefix: []byte("cc"),
 		NewKeyPrefix: []byte("bb"),
 	}
-	return &utils.RewriteRules{
+	return &restoreutils.RewriteRules{
 		Data: rules[:],
+	}
+}
+
+func TestSortRange(t *testing.T) {
+	dataRules := []*import_sstpb.RewriteRule{
+		{OldKeyPrefix: tablecodec.GenTableRecordPrefix(1), NewKeyPrefix: tablecodec.GenTableRecordPrefix(4)},
+		{OldKeyPrefix: tablecodec.GenTableRecordPrefix(2), NewKeyPrefix: tablecodec.GenTableRecordPrefix(5)},
+	}
+	rewriteRules := &restoreutils.RewriteRules{
+		Data: dataRules,
+	}
+	ranges1 := []rtree.Range{
+		{
+			StartKey: append(tablecodec.GenTableRecordPrefix(1), []byte("aaa")...),
+			EndKey:   append(tablecodec.GenTableRecordPrefix(1), []byte("bbb")...), Files: nil,
+		},
+	}
+	for i, rg := range ranges1 {
+		tmp, _ := restoreutils.RewriteRange(&rg, rewriteRules)
+		ranges1[i] = *tmp
+	}
+	rs1, err := utils.SortRanges(ranges1)
+	require.NoErrorf(t, err, "sort range1 failed: %v", err)
+	rangeEquals(t, rs1, []rtree.Range{
+		{
+			StartKey: append(tablecodec.GenTableRecordPrefix(4), []byte("aaa")...),
+			EndKey:   append(tablecodec.GenTableRecordPrefix(4), []byte("bbb")...), Files: nil,
+		},
+	})
+
+	ranges2 := []rtree.Range{
+		{
+			StartKey: append(tablecodec.GenTableRecordPrefix(1), []byte("aaa")...),
+			EndKey:   append(tablecodec.GenTableRecordPrefix(2), []byte("bbb")...), Files: nil,
+		},
+	}
+	for _, rg := range ranges2 {
+		_, err := restoreutils.RewriteRange(&rg, rewriteRules)
+		require.Error(t, err)
+		require.Regexp(t, "table id mismatch.*", err.Error())
+	}
+
+	ranges3 := []rtree.Range{
+		{StartKey: []byte("aaa"), EndKey: []byte("aae")},
+		{StartKey: []byte("aae"), EndKey: []byte("aaz")},
+		{StartKey: []byte("ccd"), EndKey: []byte("ccf")},
+		{StartKey: []byte("ccf"), EndKey: []byte("ccj")},
+	}
+	rewriteRules1 := &restoreutils.RewriteRules{
+		Data: []*import_sstpb.RewriteRule{
+			{
+				OldKeyPrefix: []byte("aa"),
+				NewKeyPrefix: []byte("xx"),
+			}, {
+				OldKeyPrefix: []byte("cc"),
+				NewKeyPrefix: []byte("bb"),
+			},
+		},
+	}
+	for i, rg := range ranges3 {
+		tmp, _ := restoreutils.RewriteRange(&rg, rewriteRules1)
+		ranges3[i] = *tmp
+	}
+	rs3, err := utils.SortRanges(ranges3)
+	require.NoErrorf(t, err, "sort range1 failed: %v", err)
+	rangeEquals(t, rs3, []rtree.Range{
+		{StartKey: []byte("bbd"), EndKey: []byte("bbf"), Files: nil},
+		{StartKey: []byte("bbf"), EndKey: []byte("bbj"), Files: nil},
+		{StartKey: []byte("xxa"), EndKey: []byte("xxe"), Files: nil},
+		{StartKey: []byte("xxe"), EndKey: []byte("xxz"), Files: nil},
+	})
+}
+
+func rangeEquals(t *testing.T, obtained, expected []rtree.Range) {
+	require.Equal(t, len(expected), len(obtained))
+	for i := range obtained {
+		require.Equal(t, expected[i].StartKey, obtained[i].StartKey)
+		require.Equal(t, expected[i].EndKey, obtained[i].EndKey)
 	}
 }

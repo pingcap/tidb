@@ -12,14 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package utils_test
+package logclient_test
 
 import (
 	"fmt"
 	"math/rand"
 	"testing"
 
-	"github.com/pingcap/tidb/br/pkg/restore/utils"
+	logclient "github.com/pingcap/tidb/br/pkg/restore/log_client"
 	"github.com/stretchr/testify/require"
 )
 
@@ -33,7 +33,7 @@ func TestLogFilesSkipMap(t *testing.T) {
 	)
 
 	for ratio < 1 {
-		skipmap := utils.NewLogFilesSkipMap()
+		skipmap := logclient.NewLogFilesSkipMap()
 		nativemap := make(map[string]map[int]map[int]struct{})
 		count := 0
 		for i := 0; i < int(ratio*float64(metaNum*groupNum*fileNum)); i++ {

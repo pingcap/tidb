@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package logclient
+package logsplit
 
 import (
 	"bytes"
@@ -24,10 +24,10 @@ import (
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/br/pkg/restore/internal/utils"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
-	"github.com/pingcap/tidb/br/pkg/restore/utils"
+	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
 	"github.com/pingcap/tidb/br/pkg/rtree"
-	"github.com/pingcap/tidb/br/pkg/utils/iter"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/codec"
@@ -38,25 +38,25 @@ import (
 type rewriteSplitter struct {
 	rewriteKey []byte
 	tableID    int64
-	rule       *utils.RewriteRules
-	splitter   *split.SplitHelper
+	rule       *restoreutils.RewriteRules
+	splitter   *SplitHelper
 }
 
 type splitHelperIterator struct {
 	tableSplitters []*rewriteSplitter
 }
 
-func (iter *splitHelperIterator) Traverse(fn func(v split.Valued, endKey []byte, rule *utils.RewriteRules) bool) {
+func (iter *splitHelperIterator) Traverse(fn func(v Valued, endKey []byte, rule *restoreutils.RewriteRules) bool) {
 	for _, entry := range iter.tableSplitters {
 		endKey := codec.EncodeBytes([]byte{}, tablecodec.EncodeTablePrefix(entry.tableID+1))
 		rule := entry.rule
-		entry.splitter.Traverse(func(v split.Valued) bool {
+		entry.splitter.Traverse(func(v Valued) bool {
 			return fn(v, endKey, rule)
 		})
 	}
 }
 
-func NewSplitHelperIteratorForTest(helper *split.SplitHelper, tableID int64, rule *utils.RewriteRules) *splitHelperIterator {
+func NewSplitHelperIteratorForTest(helper *SplitHelper, tableID int64, rule *restoreutils.RewriteRules) *splitHelperIterator {
 	return &splitHelperIterator{
 		tableSplitters: []*rewriteSplitter{
 			{
@@ -69,8 +69,8 @@ func NewSplitHelperIteratorForTest(helper *split.SplitHelper, tableID int64, rul
 }
 
 type LogSplitHelper struct {
-	tableSplitter map[int64]*split.SplitHelper
-	rules         map[int64]*utils.RewriteRules
+	tableSplitter map[int64]*SplitHelper
+	rules         map[int64]*restoreutils.RewriteRules
 	client        split.SplitClient
 	pool          *util.WorkerPool
 	eg            *errgroup.Group
@@ -80,9 +80,9 @@ type LogSplitHelper struct {
 	splitThreSholdKeys int64
 }
 
-func NewLogSplitHelper(rules map[int64]*utils.RewriteRules, client split.SplitClient, splitSize uint64, splitKeys int64) *LogSplitHelper {
+func NewLogSplitHelper(rules map[int64]*restoreutils.RewriteRules, client split.SplitClient, splitSize uint64, splitKeys int64) *LogSplitHelper {
 	return &LogSplitHelper{
-		tableSplitter: make(map[int64]*split.SplitHelper),
+		tableSplitter: make(map[int64]*SplitHelper),
 		rules:         rules,
 		client:        client,
 		pool:          util.NewWorkerPool(128, "split region"),
@@ -102,7 +102,7 @@ func (helper *LogSplitHelper) iterator() *splitHelperIterator {
 			log.Info("skip splitting due to no table id matched", zap.Int64("tableID", tableID))
 			continue
 		}
-		newTableID := utils.GetRewriteTableID(tableID, rewriteRule)
+		newTableID := restoreutils.GetRewriteTableID(tableID, rewriteRule)
 		if newTableID == 0 {
 			log.Warn("failed to get the rewrite table id", zap.Int64("tableID", tableID))
 			continue
@@ -135,23 +135,23 @@ func (helper *LogSplitHelper) Merge(file *backuppb.DataFileInfo) {
 	}
 	splitHelper, exist := helper.tableSplitter[file.TableId]
 	if !exist {
-		splitHelper = split.NewSplitHelper()
+		splitHelper = NewSplitHelper()
 		helper.tableSplitter[file.TableId] = splitHelper
 	}
 
-	splitHelper.Merge(split.Valued{
-		Key: split.Span{
+	splitHelper.Merge(Valued{
+		Key: Span{
 			StartKey: file.StartKey,
 			EndKey:   file.EndKey,
 		},
-		Value: split.Value{
+		Value: Value{
 			Size:   file.Length,
 			Number: file.NumberOfEntries,
 		},
 	})
 }
 
-type splitFunc = func(context.Context, *utils.RegionSplitter, uint64, int64, *split.RegionInfo, []split.Valued) error
+type splitFunc = func(context.Context, *utils.RegionSplitter, uint64, int64, *split.RegionInfo, []Valued) error
 
 func (helper *LogSplitHelper) splitRegionByPoints(
 	ctx context.Context,
@@ -159,7 +159,7 @@ func (helper *LogSplitHelper) splitRegionByPoints(
 	initialLength uint64,
 	initialNumber int64,
 	region *split.RegionInfo,
-	valueds []split.Valued,
+	valueds []Valued,
 ) error {
 	var (
 		splitPoints [][]byte = make([][]byte, 0)
@@ -231,7 +231,7 @@ func SplitPoint(
 		// region span    +------------------------------------+
 		//                +initial length+          +end valued+
 		// regionValueds is the ranges array overlapped with `regionInfo`
-		regionValueds []split.Valued = nil
+		regionValueds []Valued = nil
 		// regionInfo is the region to be split
 		regionInfo *split.RegionInfo = nil
 		// intialLength is the length of the part of the first range overlapped with the region
@@ -244,7 +244,7 @@ func SplitPoint(
 		regionOverCount uint64 = 0
 	)
 
-	iter.Traverse(func(v split.Valued, endKey []byte, rule *utils.RewriteRules) bool {
+	iter.Traverse(func(v Valued, endKey []byte, rule *restoreutils.RewriteRules) bool {
 		if v.Value.Number == 0 || v.Value.Size == 0 {
 			return true
 		}
@@ -253,7 +253,7 @@ func SplitPoint(
 			vEndKey   []byte
 		)
 		// use `vStartKey` and `vEndKey` to compare with region's key
-		vStartKey, vEndKey, err = utils.GetRewriteEncodedKeys(v, rule)
+		vStartKey, vEndKey, err = restoreutils.GetRewriteEncodedKeys(v, rule)
 		if err != nil {
 			return false
 		}
@@ -299,19 +299,19 @@ func SplitPoint(
 				if len(regionValueds) > 0 && regionInfo != region {
 					// add a part of the range as the end part
 					if bytes.Compare(vStartKey, regionInfo.Region.EndKey) < 0 {
-						regionValueds = append(regionValueds, split.NewValued(vStartKey, regionInfo.Region.EndKey, split.Value{Size: endLength, Number: endNumber}))
+						regionValueds = append(regionValueds, NewValued(vStartKey, regionInfo.Region.EndKey, Value{Size: endLength, Number: endNumber}))
 					}
 					// try to split the region
 					err = splitF(ctx, regionSplitter, initialLength, initialNumber, regionInfo, regionValueds)
 					if err != nil {
 						return false
 					}
-					regionValueds = make([]split.Valued, 0)
+					regionValueds = make([]Valued, 0)
 				}
 				if regionOverCount == 1 {
 					// the region completely contains the range
-					regionValueds = append(regionValueds, split.Valued{
-						Key: split.Span{
+					regionValueds = append(regionValueds, Valued{
+						Key: Span{
 							StartKey: vStartKey,
 							EndKey:   vEndKey,
 						},
@@ -390,53 +390,4 @@ func (helper *LogSplitHelper) Split(ctx context.Context) error {
 	wg.Wait()
 
 	return nil
-}
-
-type LogFilesIterWithSplitHelper struct {
-	iter   LogIter
-	helper *LogSplitHelper
-	buffer []*LogDataFileInfo
-	next   int
-}
-
-const SplitFilesBufferSize = 4096
-
-func NewLogFilesIterWithSplitHelper(iter LogIter, rules map[int64]*utils.RewriteRules, client split.SplitClient, splitSize uint64, splitKeys int64) LogIter {
-	return &LogFilesIterWithSplitHelper{
-		iter:   iter,
-		helper: NewLogSplitHelper(rules, client, splitSize, splitKeys),
-		buffer: nil,
-		next:   0,
-	}
-}
-
-func (splitIter *LogFilesIterWithSplitHelper) TryNext(ctx context.Context) iter.IterResult[*LogDataFileInfo] {
-	if splitIter.next >= len(splitIter.buffer) {
-		splitIter.buffer = make([]*LogDataFileInfo, 0, SplitFilesBufferSize)
-		for r := splitIter.iter.TryNext(ctx); !r.Finished; r = splitIter.iter.TryNext(ctx) {
-			if r.Err != nil {
-				return r
-			}
-			f := r.Item
-			splitIter.helper.Merge(f.DataFileInfo)
-			splitIter.buffer = append(splitIter.buffer, f)
-			if len(splitIter.buffer) >= SplitFilesBufferSize {
-				break
-			}
-		}
-		splitIter.next = 0
-		if len(splitIter.buffer) == 0 {
-			return iter.Done[*LogDataFileInfo]()
-		}
-		log.Info("start to split the regions")
-		startTime := time.Now()
-		if err := splitIter.helper.Split(ctx); err != nil {
-			return iter.Throw[*LogDataFileInfo](errors.Trace(err))
-		}
-		log.Info("end to split the regions", zap.Duration("takes", time.Since(startTime)))
-	}
-
-	res := iter.Emit(splitIter.buffer[splitIter.next])
-	splitIter.next += 1
-	return res
 }

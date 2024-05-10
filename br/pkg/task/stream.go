@@ -44,7 +44,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/restore"
 	"github.com/pingcap/tidb/br/pkg/restore/ingestrec"
 	logclient "github.com/pingcap/tidb/br/pkg/restore/log_client"
-	"github.com/pingcap/tidb/br/pkg/restore/rawkv"
 	"github.com/pingcap/tidb/br/pkg/restore/tiflashrec"
 	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
 	"github.com/pingcap/tidb/br/pkg/storage"
@@ -58,7 +57,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/util/cdcutil"
 	"github.com/spf13/pflag"
-	"github.com/tikv/client-go/v2/config"
 	"github.com/tikv/client-go/v2/oracle"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
@@ -92,9 +90,6 @@ var (
 		StreamStatus:   {},
 		StreamTruncate: {},
 	}
-
-	// rawKVBatchCount specifies the count of entries that the rawkv client puts into TiKV.
-	rawKVBatchCount = 64
 
 	streamShiftDuration = time.Hour
 )
@@ -1521,11 +1516,10 @@ func createRestoreClient(ctx context.Context, g glue.Glue, cfg *RestoreConfig, m
 	client.SetConcurrency(uint(cfg.Concurrency))
 	client.InitClients(ctx, u)
 
-	rawKVClient, err := newRawBatchClient(ctx, cfg.PD, cfg.TLS)
+	err = client.SetRawKVBatchClient(ctx, cfg.PD, cfg.TLS.ToKVSecurity())
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	client.SetRawKVClient(rawKVClient)
 
 	return client, nil
 }
@@ -1736,24 +1730,6 @@ func initRewriteRules(schemasReplace *stream.SchemasReplace) map[int64]*restoreu
 		}
 	}
 	return rules
-}
-
-func newRawBatchClient(
-	ctx context.Context,
-	pdAddrs []string,
-	tlsConfig TLSConfig,
-) (*rawkv.RawKVBatchClient, error) {
-	security := config.Security{
-		ClusterSSLCA:   tlsConfig.CA,
-		ClusterSSLCert: tlsConfig.Cert,
-		ClusterSSLKey:  tlsConfig.Key,
-	}
-	rawkvClient, err := rawkv.NewRawkvClient(ctx, pdAddrs, security)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	return rawkv.NewRawKVBatchClient(rawkvClient, rawKVBatchCount), nil
 }
 
 // ShiftTS gets a smaller shiftTS than startTS.

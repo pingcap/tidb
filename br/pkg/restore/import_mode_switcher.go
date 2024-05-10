@@ -9,18 +9,12 @@ import (
 
 	_ "github.com/go-sql-driver/mysql" // mysql driver
 	"github.com/pingcap/errors"
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/conn"
 	"github.com/pingcap/tidb/br/pkg/conn/util"
-	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/pdutil"
-	"github.com/pingcap/tidb/br/pkg/utils"
-	"github.com/pingcap/tidb/pkg/domain"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
-	"github.com/tikv/client-go/v2/oracle"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
@@ -29,73 +23,6 @@ import (
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
 )
-
-type Granularity string
-
-const (
-	FineGrained   Granularity = "fine-grained"
-	CoarseGrained Granularity = "coarse-grained"
-)
-
-// GetTableSchema returns the schema of a table from TiDB.
-func GetTableSchema(
-	dom *domain.Domain,
-	dbName model.CIStr,
-	tableName model.CIStr,
-) (*model.TableInfo, error) {
-	info := dom.InfoSchema()
-	table, err := info.TableByName(dbName, tableName)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	return table.Meta(), nil
-}
-
-// GetTS gets a new timestamp from PD.
-func GetTS(ctx context.Context, pdClient pd.Client) (uint64, error) {
-	p, l, err := pdClient.GetTS(ctx)
-	if err != nil {
-		return 0, errors.Trace(err)
-	}
-	restoreTS := oracle.ComposeTS(p, l)
-	return restoreTS, nil
-}
-
-// GetTSWithRetry gets a new timestamp with retry from PD.
-func GetTSWithRetry(ctx context.Context, pdClient pd.Client) (uint64, error) {
-	var (
-		startTS  uint64
-		getTSErr error
-		retry    uint
-	)
-
-	err := utils.WithRetry(ctx, func() error {
-		startTS, getTSErr = GetTS(ctx, pdClient)
-		failpoint.Inject("get-ts-error", func(val failpoint.Value) {
-			if val.(bool) && retry < 3 {
-				getTSErr = errors.Errorf("rpc error: code = Unknown desc = [PD:tso:ErrGenerateTimestamp]generate timestamp failed, requested pd is not leader of cluster")
-			}
-		})
-
-		retry++
-		if getTSErr != nil {
-			log.Warn("failed to get TS, retry it", zap.Uint("retry time", retry), logutil.ShortError(getTSErr))
-		}
-		return getTSErr
-	}, utils.NewPDReqBackoffer())
-
-	if err != nil {
-		log.Error("failed to get TS", zap.Error(err))
-	}
-	return startTS, errors.Trace(err)
-}
-
-func TransferBoolToValue(enable bool) string {
-	if enable {
-		return "ON"
-	}
-	return "OFF"
-}
 
 type ImportModeSwitcher struct {
 	pdClient pd.Client

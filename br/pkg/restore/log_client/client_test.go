@@ -16,18 +16,22 @@ package logclient_test
 
 import (
 	"context"
+	"fmt"
 	"math"
 	"sync"
 	"testing"
 	"time"
 
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
+	"github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/tidb/br/pkg/gluetidb"
 	"github.com/pingcap/tidb/br/pkg/mock"
 	logclient "github.com/pingcap/tidb/br/pkg/restore/log_client"
+	"github.com/pingcap/tidb/br/pkg/restore/utils"
 	"github.com/pingcap/tidb/br/pkg/stream"
 	"github.com/pingcap/tidb/br/pkg/utils/iter"
-	"github.com/pingcap/tidb/br/pkg/utils/utilstest"
+	"github.com/pingcap/tidb/br/pkg/utiltest"
+	"github.com/pingcap/tidb/pkg/tablecodec"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/keepalive"
@@ -77,7 +81,7 @@ func TestDeleteRangeQueryExec(t *testing.T) {
 	m := mc
 	g := gluetidb.New()
 	client := logclient.NewRestoreClient(
-		utilstest.NewFakePDClient(nil, false, nil), nil, nil, keepalive.ClientParameters{})
+		utiltest.NewFakePDClient(nil, false, nil), nil, nil, keepalive.ClientParameters{})
 	err := client.Init(g, m.Storage)
 	require.NoError(t, err)
 
@@ -96,7 +100,7 @@ func TestDeleteRangeQuery(t *testing.T) {
 
 	g := gluetidb.New()
 	client := logclient.NewRestoreClient(
-		utilstest.NewFakePDClient(nil, false, nil), nil, nil, keepalive.ClientParameters{})
+		utiltest.NewFakePDClient(nil, false, nil), nil, nil, keepalive.ClientParameters{})
 	err := client.Init(g, m.Storage)
 	require.NoError(t, err)
 
@@ -1289,4 +1293,47 @@ func TestApplyKVFilesWithBatchMethod5(t *testing.T) {
 
 	applyWg.Wait()
 	require.Equal(t, backuppb.FileType_Delete, types[len(types)-1])
+}
+
+type mockLogIter struct {
+	next int
+}
+
+func (m *mockLogIter) TryNext(ctx context.Context) iter.IterResult[*logclient.LogDataFileInfo] {
+	if m.next > 10000 {
+		return iter.Done[*logclient.LogDataFileInfo]()
+	}
+	m.next += 1
+	return iter.Emit(&logclient.LogDataFileInfo{
+		DataFileInfo: &backuppb.DataFileInfo{
+			StartKey: []byte(fmt.Sprintf("a%d", m.next)),
+			EndKey:   []byte("b"),
+			Length:   1024, // 1 KB
+		},
+	})
+}
+
+func TestLogFilesIterWithSplitHelper(t *testing.T) {
+	var tableID int64 = 76
+	var oldTableID int64 = 80
+	rewriteRules := &utils.RewriteRules{
+		Data: []*import_sstpb.RewriteRule{
+			{
+				OldKeyPrefix: tablecodec.EncodeTablePrefix(oldTableID),
+				NewKeyPrefix: tablecodec.EncodeTablePrefix(tableID),
+			},
+		},
+	}
+	rewriteRulesMap := map[int64]*utils.RewriteRules{
+		oldTableID: rewriteRules,
+	}
+	mockIter := &mockLogIter{}
+	ctx := context.Background()
+	logIter := logclient.NewLogFilesIterWithSplitHelper(mockIter, rewriteRulesMap, utiltest.NewFakeSplitClient(), 144*1024*1024, 1440000)
+	next := 0
+	for r := logIter.TryNext(ctx); !r.Finished; r = logIter.TryNext(ctx) {
+		require.NoError(t, r.Err)
+		next += 1
+		require.Equal(t, []byte(fmt.Sprintf("a%d", next)), r.Item.StartKey)
+	}
 }

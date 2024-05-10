@@ -27,7 +27,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/metautil"
-	"github.com/pingcap/tidb/br/pkg/restore"
+	tidallocdb "github.com/pingcap/tidb/br/pkg/restore/internal/prealloc_db"
 	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
 	"github.com/pingcap/tidb/br/pkg/rtree"
 	"github.com/pingcap/tidb/br/pkg/storage"
@@ -428,7 +428,7 @@ func (rc *SnapClient) GoCreateTables(
 		log.Info("fall back to the sequential create table")
 	}
 
-	createOneTable := func(c context.Context, db *restore.DB, t *metautil.Table) error {
+	createOneTable := func(c context.Context, db *tidallocdb.DB, t *metautil.Table) error {
 		select {
 		case <-c.Done():
 			return c.Err()
