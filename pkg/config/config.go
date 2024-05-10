@@ -720,7 +720,7 @@ type Performance struct {
 	PlanReplayerGCLease               string `toml:"plan-replayer-gc-lease" json:"plan-replayer-gc-lease"`
 	GOGC                              int    `toml:"gogc" json:"gogc"`
 	EnforceMPP                        bool   `toml:"enforce-mpp" json:"enforce-mpp"`
-	StatsLoadConcurrency              uint   `toml:"stats-load-concurrency" json:"stats-load-concurrency"`
+	StatsLoadConcurrency              int    `toml:"stats-load-concurrency" json:"stats-load-concurrency"`
 	StatsLoadQueueSize                uint   `toml:"stats-load-queue-size" json:"stats-load-queue-size"`
 	AnalyzePartitionConcurrencyQuota  uint   `toml:"analyze-partition-concurrency-quota" json:"analyze-partition-concurrency-quota"`
 	PlanReplayerDumpWorkerConcurrency uint   `toml:"plan-replayer-dump-worker-concurrency" json:"plan-replayer-dump-worker-concurrency"`

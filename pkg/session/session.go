@@ -3369,10 +3369,14 @@ func bootstrapSessionImpl(store kv.Storage, createSessionsImpl func(store kv.Sto
 	)
 
 	analyzeConcurrencyQuota := int(config.GetGlobalConfig().Performance.AnalyzePartitionConcurrencyQuota)
-	concurrency := int(config.GetGlobalConfig().Performance.StatsLoadConcurrency)
+	concurrency := config.GetGlobalConfig().Performance.StatsLoadConcurrency
 	if concurrency == 0 {
 		concurrency = syncload.GetSyncLoadConcurrencyByCPU()
 	}
+	if concurrency < 0 { // it is only for test, in the production, negative value is illegal.
+		concurrency = 0
+	}
+
 	ses, err := createSessionsImpl(store, 10)
 	if err != nil {
 		return nil, err
