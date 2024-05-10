@@ -636,6 +636,20 @@ func TestIssue51874(t *testing.T) {
 	tk.MustQuery("select (select sum(a) over () from t2 limit 1) from t;").Check(testkit.Rows("10", "2"))
 }
 
+func TestIssue51777(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.Session().GetSessionVars().AllowProjectionPushDown = true
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t0, t1")
+	tk.MustExec("create table t0 (c_k int)")
+	tk.MustExec("create table t1 (c_pv int)")
+	tk.MustExec("insert into t0 values(-2127559046),(-190905159),(-171305020),(-59638845),(98004414),(2111663670),(2137868682),(2137868682),(2142611610)")
+	tk.MustExec("insert into t1 values(-2123227448), (2131706870), (-2071508387), (2135465388), (2052805244), (-2066000113)")
+	tk.MustQuery("SELECT ( select  (ref_4.c_pv <= ref_3.c_k) as c0 from t1 as ref_4 order by c0 asc limit 1) as p2 FROM t0 as ref_3 order by p2;").Check(testkit.Rows("0", "0", "0", "0", "0", "0", "1", "1", "1"))
+}
+
 func TestIssue52978(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
