@@ -1473,12 +1473,8 @@ func NewConfig() *Config {
 			DiskQuota:               ByteSize(math.MaxInt64),
 			DuplicateResolution:     DupeResAlgNone,
 			PausePDSchedulerScope:   PausePDSchedulerScopeTable,
-<<<<<<< HEAD
-=======
-			BlockSize:               16 * 1024,
 			LogicalImportBatchSize:  ByteSize(defaultLogicalImportBatchSize),
 			LogicalImportBatchRows:  defaultLogicalImportBatchRows,
->>>>>>> 2d57455a4f9 (lightning: allow configure the desired size and number of rows of each INSERT statement for logical mode (#46997))
 		},
 		PostRestore: PostRestore{
 			Checksum:          OpLevelRequired,
