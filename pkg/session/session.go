@@ -1872,6 +1872,9 @@ func (s *session) getInternalSession(execOption sqlexec.ExecOption) (*session, f
 	}
 	se.sessionVars.OptimizerUseInvisibleIndexes = s.sessionVars.OptimizerUseInvisibleIndexes
 
+	preSkipStats := s.sessionVars.SkipMissingPartitionStats
+	se.sessionVars.SkipMissingPartitionStats = s.sessionVars.SkipMissingPartitionStats
+
 	if execOption.SnapshotTS != 0 {
 		if err := se.sessionVars.SetSystemVar(variable.TiDBSnapshot, strconv.FormatUint(execOption.SnapshotTS, 10)); err != nil {
 			return nil, nil, err
@@ -1913,6 +1916,7 @@ func (s *session) getInternalSession(execOption sqlexec.ExecOption) (*session, f
 		}
 		se.sessionVars.PartitionPruneMode.Store(prePruneMode)
 		se.sessionVars.OptimizerUseInvisibleIndexes = false
+		se.sessionVars.SkipMissingPartitionStats = preSkipStats
 		se.sessionVars.InspectionTableCache = nil
 		se.sessionVars.MemTracker.Detach()
 		s.sysSessionPool().Put(tmp)
