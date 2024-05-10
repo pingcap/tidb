@@ -1,0 +1,18 @@
+[mydumper.csv]
+separator = ','
+delimiter = '"'
+header = true
+not-null = false
+null = '\N'
+backslash-escape = true
+trim-last-separator = false
+
+[conflict]
+strategy = 'replace'
+precheck-conflict-before-import = true
+
+[checkpoint]
+enable = true
+schema = "tidb_lightning_checkpoint_test"
+driver = "mysql"
+keep-after-success = true

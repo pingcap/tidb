@@ -1,0 +1,266 @@
+# TestPreparedNullParam
+set @@tidb_enable_prepared_plan_cache=true;
+drop table if exists t;
+create table t (id int, KEY id (id));
+insert into t values (1), (2), (3);
+prepare stmt from 'select * from t use index(id) where id = ?';
+execute stmt using @id;
+execute stmt using @id;
+set @id="1";
+execute stmt using @id;
+execute stmt using @id2;
+execute stmt using @id;
+set @@tidb_enable_prepared_plan_cache=false;
+drop table if exists t;
+create table t (id int, KEY id (id));
+insert into t values (1), (2), (3);
+prepare stmt from 'select * from t use index(id) where id = ?';
+execute stmt using @id;
+execute stmt using @id;
+set @id="1";
+execute stmt using @id;
+execute stmt using @id2;
+execute stmt using @id;
+set @@tidb_enable_prepared_plan_cache=default;
+
+# TestPreparedIssue7579
+set @@tidb_enable_prepared_plan_cache=true;
+drop table if exists t;
+create table t (a int, b int, index a_idx(a));
+insert into t values (1,1), (2,2), (null,3);
+select a, b from t order by b asc;
+prepare stmt from 'select a, b from t where ? order by b asc';
+execute stmt using @param;
+set @param = true;
+execute stmt using @param;
+set @param = false;
+execute stmt using @param;
+set @param = 1;
+execute stmt using @param;
+set @param = 0;
+execute stmt using @param;
+set @@tidb_enable_prepared_plan_cache=false;
+drop table if exists t;
+create table t (a int, b int, index a_idx(a));
+insert into t values (1,1), (2,2), (null,3);
+select a, b from t order by b asc;
+prepare stmt from 'select a, b from t where ? order by b asc';
+execute stmt using @param;
+set @param = true;
+execute stmt using @param;
+set @param = false;
+execute stmt using @param;
+set @param = 1;
+execute stmt using @param;
+set @param = 0;
+execute stmt using @param;
+set @@tidb_enable_prepared_plan_cache=default;
+
+# TestPreparedIssue8644
+set @@tidb_enable_prepared_plan_cache=true;
+drop table if exists t;
+create table t(data mediumblob);
+prepare stmt from 'insert t (data) values (?)';
+set @a = 'a';
+execute stmt using @a;
+set @b = 'aaaaaaaaaaaaaaaaaa';
+execute stmt using @b;
+select * from t;
+drop table if exists t;
+create table t(data decimal);
+prepare stmt from 'insert t (data) values (?)';
+set @a = '1';
+execute stmt using @a;
+set @b = '11111.11111';
+execute stmt using @b;
+select * from t;
+drop table if exists t;
+create table t(data decimal(10,3));
+prepare stmt from 'insert t (data) values (?)';
+set @a = 1.1;
+execute stmt using @a;
+set @b = 11.11;
+execute stmt using @b;
+select * from t;
+set @@tidb_enable_prepared_plan_cache=false;
+drop table if exists t;
+create table t(data mediumblob);
+prepare stmt from 'insert t (data) values (?)';
+set @a = 'a';
+execute stmt using @a;
+set @b = 'aaaaaaaaaaaaaaaaaa';
+execute stmt using @b;
+select * from t;
+drop table if exists t;
+create table t(data decimal);
+prepare stmt from 'insert t (data) values (?)';
+set @a = '1';
+execute stmt using @a;
+set @b = '11111.11111';
+execute stmt using @b;
+select * from t;
+drop table if exists t;
+create table t(data decimal(10,3));
+prepare stmt from 'insert t (data) values (?)';
+set @a = 1.1;
+execute stmt using @a;
+set @b = 11.11;
+execute stmt using @b;
+select * from t;
+set @@tidb_enable_prepared_plan_cache=default;
+
+# TestPreparedNameResolver
+drop table if exists t;
+create table t (id int, KEY id (id));
+prepare stmt from 'select * from t limit ? offset ?';
+-- error 1054
+prepare stmt from 'select b from t';
+-- error 1054
+prepare stmt from '(select * FROM t) union all (select * FROM t) order by a limit ?';
+
+# TestPreparedDDL
+# a 'create table' DDL statement should be accepted if it has no parameters.
+drop table if exists t;
+prepare stmt from 'create table t (id int, KEY id (id))';
+
+# TestUnsupportedStmtForPrepare
+# https://github.com/pingcap/tidb/issues/17412
+prepare stmt0 from "create table t0(a int primary key)";
+-- error 1295
+prepare stmt1 from "execute stmt0";
+-- error 1295
+prepare stmt2 from "deallocate prepare stmt0";
+-- error 1295
+prepare stmt4 from "prepare stmt3 from 'create table t1(a int, b int)'";
+
+# TestIgnorePlanCache
+drop table if exists t;
+create table t (id int primary key, num int);
+insert into t values (1, 1);
+insert into t values (2, 2);
+insert into t values (3, 3);
+prepare stmt from 'select /*+ IGNORE_PLAN_CACHE() */ * from t where id=?';
+set @ignore_plan_doma = 1;
+execute stmt using @ignore_plan_doma;
+select @@last_plan_from_cache;
+
+# TestPreparedStmtWithHint
+## https://github.com/pingcap/tidb/issues/18535
+prepare stmt from "select /*+ max_execution_time(10) */ sleep(3)";
+set @a=now();
+execute stmt;
+select timediff(now(), @a) < 3;
+set @a=now();
+select /*+ max_execution_time(10) */ sleep(3);
+select timediff(now(), @a) < 3;
+
+## see https://github.com/pingcap/tidb/issues/46817
+drop table if exists t;
+create table t (i int);
+prepare stmt from 'with a as (select /*+ qb_name(qb1) */ * from t)  select /*+ leading(@qb1)*/ * from a;';
+
+# TestIssue28782
+set tidb_enable_prepared_plan_cache=1;
+set @@tidb_enable_collect_execution_info=0;
+prepare stmt from 'SELECT IF(?, 1, 0);';
+set @a=1, @b=null, @c=0;
+execute stmt using @a;
+execute stmt using @b;
+## TODO(Reminiscent): Support cache more tableDual plan.
+select @@last_plan_from_cache;
+execute stmt using @c;
+select @@last_plan_from_cache;
+set tidb_enable_prepared_plan_cache=default;
+set @@tidb_enable_collect_execution_info=default;
+
+# TestIssue28087And28162
+set tidb_enable_prepared_plan_cache=1;
+## issue 28087
+drop table if exists IDT_26207;
+CREATE TABLE IDT_26207 (col1 bit(1));
+insert into  IDT_26207 values(0x0), (0x1);
+prepare stmt from 'select hex(t1.col1) from IDT_26207 as t1 left join IDT_26207 as t2 on t1.col1 = t2.col1 where t1.col1 in (?, ?, ?)';
+set @a=0x01, @b=0x01, @c=0x01;
+execute stmt using @a,@b,@c;
+set @a=0x00, @b=0x00, @c=0x01;
+execute stmt using @a,@b,@c;
+select @@last_plan_from_cache;
+
+## issue 28162
+drop table if exists IDT_MC21780;
+CREATE TABLE IDT_MC21780 (
+	COL1 timestamp NULL DEFAULT NULL,
+	COL2 timestamp NULL DEFAULT NULL,
+	COL3 timestamp NULL DEFAULT NULL,
+	KEY U_M_COL (COL1,COL2)
+);
+insert into IDT_MC21780 values("1970-12-18 10:53:28", "1970-12-18 10:53:28", "1970-12-18 10:53:28");
+prepare stmt from 'select/*+ hash_join(t1) */ * from IDT_MC21780 t1 join IDT_MC21780 t2 on t1.col1 = t2.col1 where t1. col1 < ? and t2. col1 in (?, ?, ?);';
+set @a="2038-01-19 03:14:07", @b="2038-01-19 03:14:07", @c="2038-01-19 03:14:07", @d="2038-01-19 03:14:07";
+execute stmt using @a,@b,@c,@d;
+set @a="1976-09-09 20:21:11", @b="2021-07-14 09:28:16", @c="1982-01-09 03:36:39", @d="1970-12-18 10:53:28";
+execute stmt using @a,@b,@c,@d;
+select @@last_plan_from_cache;
+set tidb_enable_prepared_plan_cache=default;
+
+# TestTemporaryTable4PlanCache
+set tidb_enable_prepared_plan_cache=1;
+set @@tidb_enable_collect_execution_info=0;
+drop table if exists tmp2;
+create temporary table tmp2 (a int, b int, key(a), key(b));
+prepare stmt from 'select * from tmp2;';
+execute stmt;
+execute stmt;
+select @@last_plan_from_cache;
+drop table if exists tmp_t;
+create global temporary table tmp_t (id int primary key, a int, b int, index(a)) on commit delete rows;
+prepare stmt from 'select * from tmp_t;';
+execute stmt;
+execute stmt;
+select @@last_plan_from_cache;
+set tidb_enable_prepared_plan_cache=default;
+set @@tidb_enable_collect_execution_info=default;
+
+# TestIssue31141
+set tidb_enable_prepared_plan_cache=1;
+set @@tidb_txn_mode = 'pessimistic';
+prepare stmt1 from 'do 1';
+set @@tidb_txn_mode = 'optimistic';
+prepare stmt1 from 'do 1';
+set tidb_enable_prepared_plan_cache=default;
+set @@tidb_txn_mode=default;
+
+# TestLimitUnsupportedCase
+drop table if exists t;
+create table t(a int, key(a));
+prepare stmt from 'select * from t limit ?';
+set @a = 1.2;
+-- error 1210
+execute stmt using @a;
+set @a = 1.;
+-- error 1210
+execute stmt using @a;
+set @a = '0';
+-- error 1210
+execute stmt using @a;
+set @a = '1';
+-- error 1210
+execute stmt using @a;
+set @a = 1_2;
+-- error 1210
+execute stmt using @a;
+
+# TestIssue38323
+drop table if exists t;
+create table t(id int, k int);
+prepare stmt from 'explain select * from t where id = ? and k = ? group by id, k';
+show warnings;
+set @a = 1;
+execute stmt using @a, @a;
+explain select * from t where id = 1 and k = 1 group by id, k;
+prepare stmt from 'explain select * from t where ? = id and ? = k group by id, k';
+show warnings;
+set @a = 1;
+execute stmt using @a, @a;
+explain select * from t where 1 = id and 1 = k group by id, k;
+

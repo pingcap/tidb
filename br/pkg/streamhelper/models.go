@@ -12,7 +12,7 @@ import (
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/logutil"
-	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/pkg/kv"
 	"go.uber.org/zap"
 )
 
@@ -61,12 +61,6 @@ func RangeKeyOf(name string, startKey []byte) string {
 	return RangesOf(name) + string(startKey)
 }
 
-func writeUint64(buf *bytes.Buffer, num uint64) {
-	items := [8]byte{}
-	binary.BigEndian.PutUint64(items[:], num)
-	buf.Write(items[:])
-}
-
 func encodeUint64(num uint64) []byte {
 	items := [8]byte{}
 	binary.BigEndian.PutUint64(items[:], num)
@@ -83,29 +77,27 @@ func CheckPointsOf(task string) string {
 }
 
 // GlobalCheckpointOf returns the path to the "global" checkpoint of some task.
+// Normally it would be <prefix>/checkpoint/<task-name>/central_globa.
 func GlobalCheckpointOf(task string) string {
 	return path.Join(streamKeyPrefix, taskCheckpointPath, task, checkpointTypeGlobal)
 }
 
 // StorageCheckpointOf get the prefix path of the `storage checkpoint status` of a task.
+// Normally it would be <prefix>/storage-checkpoint/<task>.
 func StorageCheckpointOf(task string) string {
 	return path.Join(streamKeyPrefix, storageCheckPoint, task)
-}
-
-// CheckpointOf returns the checkpoint prefix of some store.
-// Normally it would be <prefix>/checkpoint/<task-name>/<store-id(binary-u64)>.
-func CheckPointOf(task string, store uint64) string {
-	buf := bytes.NewBuffer(nil)
-	buf.WriteString(strings.TrimSuffix(path.Join(streamKeyPrefix, taskCheckpointPath, task), "/"))
-	buf.WriteRune('/')
-	writeUint64(buf, store)
-	return buf.String()
 }
 
 // Pause returns the path for pausing the task.
 // Normally it would be <prefix>/pause/<task-name>.
 func Pause(task string) string {
 	return path.Join(streamKeyPrefix, taskPausePath, task)
+}
+
+// PrefixOfPause returns the prefix for pausing the task.
+// Normally it would be <prefix>/pause/
+func PrefixOfPause() string {
+	return path.Join(streamKeyPrefix, taskPausePath) + "/"
 }
 
 // LastErrorPrefixOf make the prefix for searching last error by some task.
@@ -178,7 +170,8 @@ func (t *TaskInfo) Check() (*TaskInfo, error) {
 		return nil, errors.Annotate(berrors.ErrPiTRInvalidTaskInfo, "the storage backend is null")
 	}
 	if len(t.PBInfo.TableFilter) == 0 {
-		return nil, errors.Annotate(berrors.ErrPiTRInvalidTaskInfo, "the table filter is empty, maybe add '*.*' for including all tables")
+		return nil, errors.Annotate(berrors.ErrPiTRInvalidTaskInfo,
+			"the table filter is empty, maybe add '*.*' for including all tables")
 	}
 	// Maybe check StartTs > 0?
 	if !taskNameRe.MatchString(t.PBInfo.Name) {

@@ -4,7 +4,6 @@ package backup
 
 import (
 	"context"
-	"fmt"
 	"sync"
 
 	"github.com/opentracing/opentracing-go"
@@ -16,9 +15,9 @@ import (
 	"github.com/pingcap/tidb/br/pkg/checkpoint"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/logutil"
-	"github.com/pingcap/tidb/br/pkg/redact"
 	"github.com/pingcap/tidb/br/pkg/rtree"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/pkg/util/redact"
 	"go.uber.org/zap"
 )
 
@@ -55,10 +54,10 @@ func newPushDown(mgr ClientMgr, capacity int) *pushDown {
 func (push *pushDown) pushBackup(
 	ctx context.Context,
 	req backuppb.BackupRequest,
-	pr *rtree.ProgressRange,
+	prTree rtree.ProgressRangeTree,
 	stores []*metapb.Store,
-	checkpointRunner *checkpoint.CheckpointRunner,
-	progressCallBack func(ProgressUnit),
+	checkpointRunner *checkpoint.CheckpointRunner[checkpoint.BackupKeyType, checkpoint.BackupValueType],
+	progressCallBack func(),
 ) error {
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("pushDown.pushBackup", opentracing.ChildOf(span.Context()))
@@ -73,12 +72,13 @@ func (push *pushDown) pushBackup(
 	})
 
 	wg := new(sync.WaitGroup)
+	errContext := utils.NewErrorContext("pushBackup", 10)
 	for _, s := range stores {
 		store := s
 		storeID := s.GetId()
 		lctx := logutil.ContextWithField(ctx, zap.Uint64("store-id", storeID))
-		if s.GetState() != metapb.StoreState_Up {
-			logutil.CL(lctx).Warn("skip store", zap.Stringer("State", s.GetState()))
+		if err := utils.CheckStoreLiveness(s); err != nil {
+			logutil.CL(lctx).Warn("skip store", logutil.ShortError(err))
 			continue
 		}
 		client, err := push.mgr.GetBackupClient(lctx, storeID)
@@ -86,7 +86,7 @@ func (push *pushDown) pushBackup(
 			// BR should be able to backup even some of stores disconnected.
 			// The regions managed by this store can be retried at fine-grained backup then.
 			logutil.CL(lctx).Warn("fail to connect store, skipping", zap.Error(err))
-			return nil
+			continue
 		}
 		wg.Add(1)
 		go func() {
@@ -119,7 +119,6 @@ func (push *pushDown) pushBackup(
 		close(push.respCh)
 	}()
 
-	regionErrorIngestedOnce := false
 	for {
 		select {
 		case respAndStore, ok := <-push.respCh:
@@ -131,7 +130,7 @@ func (push *pushDown) pushBackup(
 			}
 			failpoint.Inject("backup-timeout-error", func(val failpoint.Value) {
 				msg := val.(string)
-				logutil.CL(ctx).Debug("failpoint backup-timeout-error injected.", zap.String("msg", msg))
+				logutil.CL(ctx).Info("failpoint backup-timeout-error injected.", zap.String("msg", msg))
 				resp.Error = &backuppb.Error{
 					Msg: msg,
 				}
@@ -151,25 +150,27 @@ func (push *pushDown) pushBackup(
 				}
 			})
 			failpoint.Inject("tikv-region-error", func(val failpoint.Value) {
-				if !regionErrorIngestedOnce {
-					msg := val.(string)
-					logutil.CL(ctx).Debug("failpoint tikv-regionh-error injected.", zap.String("msg", msg))
-					resp.Error = &backuppb.Error{
-						// Msg: msg,
-						Detail: &backuppb.Error_RegionError{
-							RegionError: &errorpb.Error{
-								Message: msg,
-							},
+				msg := val.(string)
+				logutil.CL(ctx).Debug("failpoint tikv-region-error injected.", zap.String("msg", msg))
+				resp.Error = &backuppb.Error{
+					// Msg: msg,
+					Detail: &backuppb.Error_RegionError{
+						RegionError: &errorpb.Error{
+							Message: msg,
 						},
-					}
+					},
 				}
-				regionErrorIngestedOnce = true
 			})
 			if resp.GetError() == nil {
+				pr, err := prTree.FindContained(resp.StartKey, resp.EndKey)
+				if err != nil {
+					return errors.Annotate(err, "failed to update the backup response")
+				}
 				// None error means range has been backuped successfully.
 				if checkpointRunner != nil {
-					if err := checkpointRunner.Append(
+					if err := checkpoint.AppendForBackup(
 						ctx,
+						checkpointRunner,
 						pr.GroupKey,
 						resp.StartKey,
 						resp.EndKey,
@@ -183,47 +184,25 @@ func (push *pushDown) pushBackup(
 					resp.GetStartKey(), resp.GetEndKey(), resp.GetFiles())
 
 				// Update progress
-				progressCallBack(RegionUnit)
+				progressCallBack()
 			} else {
 				errPb := resp.GetError()
-				switch v := errPb.Detail.(type) {
-				case *backuppb.Error_KvError:
-					logutil.CL(ctx).Warn("backup occur kv error", zap.Reflect("error", v))
-
-				case *backuppb.Error_RegionError:
-					logutil.CL(ctx).Warn("backup occur region error", zap.Reflect("error", v))
-
-				case *backuppb.Error_ClusterIdError:
-					logutil.CL(ctx).Error("backup occur cluster ID error", zap.Reflect("error", v))
-					return errors.Annotatef(berrors.ErrKVClusterIDMismatch, "%v", errPb)
-				default:
-					if utils.MessageIsRetryableStorageError(errPb.GetMsg()) {
-						logutil.CL(ctx).Warn("backup occur storage error", zap.String("error", errPb.GetMsg()))
-						continue
-					}
-					var errMsg string
-					if utils.MessageIsNotFoundStorageError(errPb.GetMsg()) {
-						errMsg = fmt.Sprintf("File or directory not found on TiKV Node (store id: %v; Address: %s). "+
-							"work around:please ensure br and tikv nodes share a same storage and the user of br and tikv has same uid.",
-							store.GetId(), redact.String(store.GetAddress()))
-						logutil.CL(ctx).Error("", zap.String("error", berrors.ErrKVStorage.Error()+": "+errMsg))
-					}
-					if utils.MessageIsPermissionDeniedStorageError(errPb.GetMsg()) {
-						errMsg = fmt.Sprintf("I/O permission denied error occurs on TiKV Node(store id: %v; Address: %s). "+
-							"work around:please ensure tikv has permission to read from & write to the storage.",
-							store.GetId(), redact.String(store.GetAddress()))
-						logutil.CL(ctx).Error("", zap.String("error", berrors.ErrKVStorage.Error()+": "+errMsg))
-					}
-
+				res := errContext.HandleIgnorableError(errPb, store.GetId())
+				switch res.Strategy {
+				case utils.GiveUpStrategy:
+					errMsg := res.Reason
 					if len(errMsg) <= 0 {
 						errMsg = errPb.Msg
 					}
-					return errors.Annotatef(berrors.ErrKVStorage, "error happen in store %v at %s: %s %s",
+					return errors.Annotatef(berrors.ErrKVStorage, "error happen in store %v at %s: %s",
 						store.GetId(),
-						redact.String(store.GetAddress()),
-						req.StorageBackend.String(),
+						redact.Value(store.GetAddress()),
 						errMsg,
 					)
+				default:
+					// other type just continue for next response
+					// and finally handle the range in fineGrainedBackup
+					continue
 				}
 			}
 		case err := <-push.errCh:

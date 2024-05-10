@@ -1,0 +1,33 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "copr",
+    srcs = ["copr_ctx.go"],
+    importpath = "github.com/pingcap/tidb/pkg/ddl/copr",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/expression",
+        "//pkg/parser/model",
+        "//pkg/sessionctx",
+        "//pkg/table/tables",
+        "//pkg/types",
+        "@com_github_pingcap_errors//:errors",
+    ],
+)
+
+go_test(
+    name = "copr_test",
+    timeout = "short",
+    srcs = ["copr_ctx_test.go"],
+    embed = [":copr"],
+    flaky = True,
+    shard_count = 3,
+    deps = [
+        "//pkg/expression",
+        "//pkg/parser/model",
+        "//pkg/parser/mysql",
+        "//pkg/types",
+        "//pkg/util/mock",
+        "@com_github_stretchr_testify//require",
+    ],
+)

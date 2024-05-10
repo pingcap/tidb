@@ -1,0 +1,332 @@
+drop user if exists 'testWithGrant'@'localhost';
+CREATE USER 'testWithGrant'@'localhost' IDENTIFIED BY '123';
+SELECT * FROM mysql.db WHERE User="testWithGrant" and host="localhost";
+Host	DB	User	Select_priv	Insert_priv	Update_priv	Delete_priv	Create_priv	Drop_priv	Grant_priv	References_priv	Index_priv	Alter_priv	Create_tmp_table_priv	Lock_tables_priv	Create_view_priv	Show_view_priv	Create_routine_priv	Alter_routine_priv	Execute_priv	Event_priv	Trigger_priv
+GRANT select ON executor__grant.* TO 'testWithGrant'@'localhost' WITH GRANT OPTION;
+SELECT grant_priv FROM mysql.DB WHERE User="testWithGrant" and host="localhost" and db="executor__grant";
+grant_priv
+Y
+drop user if exists 'testWithGrant1';
+CREATE USER 'testWithGrant1';
+SELECT grant_priv FROM mysql.user WHERE User="testWithGrant1";
+grant_priv
+N
+GRANT ALL ON *.* TO 'testWithGrant1';
+SELECT grant_priv FROM mysql.user WHERE User="testWithGrant1";
+grant_priv
+N
+GRANT ALL ON *.* TO 'testWithGrant1' WITH GRANT OPTION;
+SELECT grant_priv FROM mysql.user WHERE User="testWithGrant1";
+grant_priv
+Y
+drop user if exists 'dduser'@'%';
+drop DATABASE if exists `dddb_%`;
+CREATE USER 'dduser'@'%' IDENTIFIED by '123456';
+CREATE DATABASE `dddb_%`;
+CREATE table `dddb_%`.`te%` (id int);
+GRANT ALL PRIVILEGES ON `dddb_%`.* TO 'dduser'@'%';
+GRANT ALL PRIVILEGES ON `dddb_%`.`te%` to 'dduser'@'%';
+DROP USER IF EXISTS 'test'@'%';
+SET sql_mode='NO_AUTO_CREATE_USER';
+GRANT ALL PRIVILEGES ON *.* to 'test'@'%' IDENTIFIED BY 'xxx';
+Error 1410 (42000): You are not allowed to create a user with GRANT
+set sql_mode=default;
+DROP USER IF EXISTS 'test'@'%';
+SET SQL_MODE='';
+GRANT ALL PRIVILEGES ON *.* to 'test'@'%' IDENTIFIED BY 'xxx';
+SELECT user FROM mysql.user WHERE user='test' and host='%';
+user
+test
+DROP USER IF EXISTS 'test'@'%';
+GRANT ALL PRIVILEGES ON *.* to 'test'@'%';
+SELECT user, plugin FROM mysql.user WHERE user='test' and host='%';
+user	plugin
+test	mysql_native_password
+DROP USER IF EXISTS 'test'@'%';
+set sql_mode=default;
+CREATE USER '1234567890abcdefGHIKL1234567890abcdefGHIKL@localhost';
+Error 1470 (HY000): String '1234567890abcdefGHIKL1234567890abcdefGHIKL@localhost' is too long for user name (should be no longer than 32)
+CREATE USER 'some_user_name@host_1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890X';
+Error 1470 (HY000): String 'some_user_name@host_1234567890abcdefghij1234567890abcdefghij1234567890' is too long for user name (should be no longer than 32)
+drop role if exists r1, r2, r3, r4;
+create role r1, r2, r3;
+create table executor__grant.testatomic(x int);
+grant update, select, insert, delete on *.* to r1, r2, r4;
+Error 1410 (42000): You are not allowed to create a user with GRANT
+select Update_priv, Select_priv, Insert_priv, Delete_priv from mysql.user where user in ('r1', 'r2', 'r3', 'r4') and host = "%";
+Update_priv	Select_priv	Insert_priv	Delete_priv
+N	N	N	N
+N	N	N	N
+N	N	N	N
+grant update, select, insert, delete on *.* to r1, r2, r3;
+revoke all on *.* from r1, r2, r4, r3;
+Error 1105 (HY000): Unknown user: r4@%
+select Update_priv, Select_priv, Insert_priv, Delete_priv from mysql.user where user in ('r1', 'r2', 'r3', 'r4') and host = "%";
+Update_priv	Select_priv	Insert_priv	Delete_priv
+Y	Y	Y	Y
+Y	Y	Y	Y
+Y	Y	Y	Y
+grant update, select, insert, delete on executor__grant.* to r1, r2, r4;
+Error 1410 (42000): You are not allowed to create a user with GRANT
+select Update_priv, Select_priv, Insert_priv, Delete_priv from mysql.db where user in ('r1', 'r2', 'r3', 'r4') and host = "%";
+Update_priv	Select_priv	Insert_priv	Delete_priv
+grant update, select, insert, delete on executor__grant.* to r1, r2, r3;
+revoke all on *.* from r1, r2, r4, r3;
+Error 1105 (HY000): Unknown user: r4@%
+select Update_priv, Select_priv, Insert_priv, Delete_priv from mysql.db where user in ('r1', 'r2', 'r3', 'r4') and host = "%";
+Update_priv	Select_priv	Insert_priv	Delete_priv
+Y	Y	Y	Y
+Y	Y	Y	Y
+Y	Y	Y	Y
+grant update, select, insert, delete on executor__grant.testatomic to r1, r2, r4;
+Error 1410 (42000): You are not allowed to create a user with GRANT
+select Table_priv from mysql.tables_priv where user in ('r1', 'r2', 'r3', 'r4') and host = "%";
+Table_priv
+grant update, select, insert, delete on executor__grant.testatomic to r1, r2, r3;
+revoke all on *.* from r1, r2, r4, r3;
+Error 1105 (HY000): Unknown user: r4@%
+select Table_priv from mysql.tables_priv where user in ('r1', 'r2', 'r3', 'r4') and host = "%";
+Table_priv
+Select,Insert,Update,Delete
+Select,Insert,Update,Delete
+Select,Insert,Update,Delete
+drop role if exists r1, r2, r3, r4;
+drop table executor__grant.testatomic;
+DROP USER IF EXISTS 'test'@'%';
+CREATE USER 'test'@'%' IDENTIFIED BY 'test';
+GRANT SELECT ON executor__grant.* to 'test';
+SELECT user,host FROM mysql.user WHERE user='test' and host='%';
+user	host
+test	%
+SET SQL_MODE='ANSI_QUOTES';
+GRANT ALL PRIVILEGES ON video_ulimit.* TO web@'%' IDENTIFIED BY 'eDrkrhZ>l2sV';
+REVOKE ALL PRIVILEGES ON video_ulimit.* FROM web@'%';
+DROP USER IF EXISTS 'web'@'%';
+set sql_mode=default;
+DROP USER if exists 'ssl_auser'@'%';
+DROP USER if exists 'ssl_buser'@'%';
+DROP USER if exists 'ssl_cuser'@'%';
+DROP USER if exists 'ssl_duser'@'%';
+DROP USER if exists 'ssl_euser'@'%';
+DROP USER if exists 'ssl_fuser'@'%';
+DROP USER if exists 'ssl_guser'@'%';
+drop user if exists 'u1'@'%';
+drop user if exists 'u2'@'%';
+drop user if exists 'u3'@'%';
+CREATE USER 'ssl_auser'@'%' require issuer '/CN=TiDB admin/OU=TiDB/O=PingCAP/L=San Francisco/ST=California/C=US' subject '/CN=tester1/OU=TiDB/O=PingCAP.Inc/L=Haidian/ST=Beijing/C=ZH' cipher 'AES128-GCM-SHA256';
+CREATE USER 'ssl_buser'@'%' require subject '/CN=tester1/OU=TiDB/O=PingCAP.Inc/L=Haidian/ST=Beijing/C=ZH' cipher 'AES128-GCM-SHA256';
+CREATE USER 'ssl_cuser'@'%' require cipher 'AES128-GCM-SHA256';
+CREATE USER 'ssl_duser'@'%';
+CREATE USER 'ssl_euser'@'%' require none;
+CREATE USER 'ssl_fuser'@'%' require ssl;
+CREATE USER 'ssl_guser'@'%' require x509;
+select * from mysql.global_priv where `user` like 'ssl_%';
+Host	User	Priv
+%	ssl_auser	{"ssl_type":3,"ssl_cipher":"AES128-GCM-SHA256","x509_issuer":"/CN=TiDB admin/OU=TiDB/O=PingCAP/L=San Francisco/ST=California/C=US","x509_subject":"/CN=tester1/OU=TiDB/O=PingCAP.Inc/L=Haidian/ST=Beijing/C=ZH"}
+%	ssl_buser	{"ssl_type":3,"ssl_cipher":"AES128-GCM-SHA256","x509_subject":"/CN=tester1/OU=TiDB/O=PingCAP.Inc/L=Haidian/ST=Beijing/C=ZH"}
+%	ssl_cuser	{"ssl_type":3,"ssl_cipher":"AES128-GCM-SHA256"}
+%	ssl_duser	{}
+%	ssl_euser	{}
+%	ssl_fuser	{"ssl_type":1}
+%	ssl_guser	{"ssl_type":2}
+CREATE USER 'u1'@'%';
+GRANT ALL ON *.* TO 'u1'@'%' require issuer '/CN=TiDB admin/OU=TiDB/O=PingCAP/L=San Francisco/ST=California/C=US' and subject '/CN=tester1/OU=TiDB/O=PingCAP.Inc/L=Haidian/ST=Beijing/C=ZH';
+select priv from mysql.global_priv where `Host` = '%' and `User` = 'u1';
+priv
+{"ssl_type":3,"x509_issuer":"/CN=TiDB admin/OU=TiDB/O=PingCAP/L=San Francisco/ST=California/C=US","x509_subject":"/CN=tester1/OU=TiDB/O=PingCAP.Inc/L=Haidian/ST=Beijing/C=ZH"}
+GRANT ALL ON *.* TO 'u1'@'%' require cipher 'AES128-GCM-SHA256';
+select priv from mysql.global_priv where `Host` = '%' and `User` = 'u1';
+priv
+{"ssl_type":3,"ssl_cipher":"AES128-GCM-SHA256"}
+GRANT select ON *.* TO 'u1'@'%';
+select priv from mysql.global_priv where `Host` = '%' and `User` = 'u1';
+priv
+{"ssl_type":3,"ssl_cipher":"AES128-GCM-SHA256"}
+GRANT ALL ON *.* TO 'u1'@'%' require none;
+select priv from mysql.global_priv where `Host` = '%' and `User` = 'u1';
+priv
+{}
+CREATE USER 'u2'@'%';
+alter user 'u2'@'%' require ssl;
+select priv from mysql.global_priv where `Host` = '%' and `User` = 'u2';
+priv
+{"ssl_type":1}
+alter user 'u2'@'%' require x509;
+select priv from mysql.global_priv where `Host` = '%' and `User` = 'u2';
+priv
+{"ssl_type":2}
+alter user 'u2'@'%' require issuer '/CN=TiDB admin/OU=TiDB/O=PingCAP/L=San Francisco/ST=California/C=US' subject '/CN=tester1/OU=TiDB/O=PingCAP.Inc/L=Haidian/ST=Beijing/C=ZH' cipher 'AES128-GCM-SHA256';
+select priv from mysql.global_priv where `Host` = '%' and `User` = 'u2';
+priv
+{"ssl_type":3,"ssl_cipher":"AES128-GCM-SHA256","x509_issuer":"/CN=TiDB admin/OU=TiDB/O=PingCAP/L=San Francisco/ST=California/C=US","x509_subject":"/CN=tester1/OU=TiDB/O=PingCAP.Inc/L=Haidian/ST=Beijing/C=ZH"}
+alter user 'u2'@'%' require none;
+select priv from mysql.global_priv where `Host` = '%' and `User` = 'u2';
+priv
+{}
+CREATE USER 'u3'@'%' require issuer '/CN=TiDB admin/OU=TiDB/O=PingCAP/L=San Francisco/ST=California/C=US' subject '/CN=tester1/OU=TiDB/O=PingCAP.Inc/L=Haidian/ST=Beijing/C=ZH' cipher 'AES128-GCM-SHA256';
+show create user 'u3';
+CREATE USER for u3@%
+CREATE USER 'u3'@'%' IDENTIFIED WITH 'mysql_native_password' AS '' REQUIRE CIPHER 'AES128-GCM-SHA256' ISSUER '/CN=TiDB admin/OU=TiDB/O=PingCAP/L=San Francisco/ST=California/C=US' SUBJECT '/CN=tester1/OU=TiDB/O=PingCAP.Inc/L=Haidian/ST=Beijing/C=ZH' PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK PASSWORD HISTORY DEFAULT PASSWORD REUSE INTERVAL DEFAULT
+CREATE USER 'u4'@'%' require issuer 'CN=TiDB,OU=PingCAP';
+Error 1105 (HY000): invalid X509_NAME input: CN=TiDB,OU=PingCAP
+CREATE USER 'u5'@'%' require subject '/CN=TiDB\OU=PingCAP';
+Error 1105 (HY000): invalid X509_NAME input: /CN=TiDBOU=PingCAP
+CREATE USER 'u6'@'%' require subject '/CN=TiDB\NC=PingCAP';
+Error 1105 (HY000): invalid X509_NAME input: /CN=TiDBNC=PingCAP
+CREATE USER 'u7'@'%' require cipher 'AES128-GCM-SHA1';
+Error 1105 (HY000): Unsupported cipher suit: AES128-GCM-SHA1
+CREATE USER 'u8'@'%' require subject '/CN';
+Error 1105 (HY000): invalid X509_NAME input: /CN
+CREATE USER 'u9'@'%' require cipher 'TLS_AES_256_GCM_SHA384' cipher 'RC4-SHA';
+Error 1105 (HY000): Duplicate require CIPHER clause
+CREATE USER 'u9'@'%' require issuer 'CN=TiDB,OU=PingCAP' issuer 'CN=TiDB,OU=PingCAP2';
+Error 1105 (HY000): Duplicate require ISSUER clause
+CREATE USER 'u9'@'%' require subject '/CN=TiDB\OU=PingCAP' subject '/CN=TiDB\OU=PingCAP2';
+Error 1105 (HY000): Duplicate require SUBJECT clause
+CREATE USER 'u9'@'%' require ssl ssl;
+Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 36 near "ssl;" 
+CREATE USER 'u9'@'%' require x509 x509;
+Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 38 near "x509;" 
+drop user if exists 'maint_auth_str1'@'%';
+CREATE USER 'maint_auth_str1'@'%' IDENTIFIED BY 'foo';
+SELECT authentication_string FROM mysql.user WHERE `Host` = '%' and `User` = 'maint_auth_str1';
+authentication_string
+*F3A2A51A9B0F2BE2468926B4132313728C250DBF
+ALTER USER 'maint_auth_str1'@'%' REQUIRE SSL;
+SELECT authentication_string FROM mysql.user WHERE `Host` = '%' and `User` = 'maint_auth_str1';
+authentication_string
+*F3A2A51A9B0F2BE2468926B4132313728C250DBF
+drop table if exists xx;
+drop user if exists 'sync_ci_data'@'%';
+create table xx (id int);
+CREATE USER 'sync_ci_data'@'%' IDENTIFIED BY 'sNGNQo12fEHe0n3vU';
+GRANT USAGE ON *.* TO 'sync_ci_data'@'%';
+GRANT USAGE ON sync_ci_data.* TO 'sync_ci_data'@'%';
+GRANT USAGE ON executor__grant.* TO 'sync_ci_data'@'%';
+GRANT USAGE ON executor__grant.xx TO 'sync_ci_data'@'%';
+drop user if exists issue27867;
+create user issue27867;
+grant all on performance_schema.* to issue27867;
+Error 1044 (42000): Access denied for user 'root'@'%' to database 'performance_schema'
+grant all on PERFormanCE_scHemA.* to issue27867;
+Error 1044 (42000): Access denied for user 'root'@'%' to database 'PERFormanCE_scHemA'
+grant select on performance_schema.* to issue27867;
+grant insert on performance_schema.* to issue27867;
+Error 1044 (42000): Access denied for user 'root'@'%' to database 'performance_schema'
+grant update on performance_schema.* to issue27867;
+Error 1044 (42000): Access denied for user 'root'@'%' to database 'performance_schema'
+grant delete on performance_schema.* to issue27867;
+Error 1044 (42000): Access denied for user 'root'@'%' to database 'performance_schema'
+grant drop on performance_schema.* to issue27867;
+Error 1044 (42000): Access denied for user 'root'@'%' to database 'performance_schema'
+grant lock tables on performance_schema.* to issue27867;
+Error 1044 (42000): Access denied for user 'root'@'%' to database 'performance_schema'
+grant create on performance_schema.* to issue27867;
+Error 1044 (42000): Access denied for user 'root'@'%' to database 'performance_schema'
+grant references on performance_schema.* to issue27867;
+Error 1044 (42000): Access denied for user 'root'@'%' to database 'performance_schema'
+grant alter on PERFormAnCE_scHemA.* to issue27867;
+Error 1044 (42000): Access denied for user 'root'@'%' to database 'PERFormAnCE_scHemA'
+grant execute on performance_schema.* to issue27867;
+Error 1044 (42000): Access denied for user 'root'@'%' to database 'performance_schema'
+grant index on PERFormanCE_scHemA.* to issue27867;
+Error 1044 (42000): Access denied for user 'root'@'%' to database 'PERFormanCE_scHemA'
+grant create view on performance_schema.* to issue27867;
+Error 1044 (42000): Access denied for user 'root'@'%' to database 'performance_schema'
+grant show view on performance_schema.* to issue27867;
+Error 1044 (42000): Access denied for user 'root'@'%' to database 'performance_schema'
+drop user issue27867;
+drop user if exists dyn;
+create user dyn;
+GRANT BACKUP_ADMIN ON executor__grant.* TO dyn;
+Error 3619 (HY000): Illegal privilege level specified for BACKUP_ADMIN
+GRANT BOGUS_GRANT ON *.* TO dyn;
+Error 3929 (HY000): Dynamic privilege 'BOGUS_GRANT' is not registered with the server.
+GRANT BACKUP_Admin ON *.* TO dyn;
+SELECT * FROM mysql.global_grants WHERE `Host` = '%' AND `User` = 'dyn' ORDER BY user,host,priv,with_grant_option;
+USER	HOST	PRIV	WITH_GRANT_OPTION
+dyn	%	BACKUP_ADMIN	N
+GRANT SYSTEM_VARIABLES_ADMIN, BACKUP_ADMIN ON *.* TO dyn;
+SELECT * FROM mysql.global_grants WHERE `Host` = '%' AND `User` = 'dyn' ORDER BY user,host,priv,with_grant_option;
+USER	HOST	PRIV	WITH_GRANT_OPTION
+dyn	%	BACKUP_ADMIN	N
+dyn	%	SYSTEM_VARIABLES_ADMIN	N
+GRANT ROLE_ADMIN, BACKUP_ADMIN ON *.* TO dyn WITH GRANT OPTION;
+SELECT * FROM mysql.global_grants WHERE `Host` = '%' AND `User` = 'dyn' ORDER BY user,host,priv,with_grant_option;
+USER	HOST	PRIV	WITH_GRANT_OPTION
+dyn	%	BACKUP_ADMIN	Y
+dyn	%	ROLE_ADMIN	Y
+dyn	%	SYSTEM_VARIABLES_ADMIN	N
+GRANT SYSTEM_VARIABLES_ADMIN, Select, ROLE_ADMIN ON *.* TO dyn;
+SELECT Grant_Priv FROM mysql.user WHERE `Host` = '%' AND `User` = 'dyn';
+Grant_Priv
+N
+SELECT WITH_GRANT_OPTION FROM mysql.global_grants WHERE `Host` = '%' AND `User` = 'dyn' AND Priv='SYSTEM_VARIABLES_ADMIN';
+WITH_GRANT_OPTION
+N
+GRANT CONNECTION_ADMIN, Insert ON *.* TO dyn WITH GRANT OPTION;
+SELECT Grant_Priv FROM mysql.user WHERE `Host` = '%' AND `User` = 'dyn';
+Grant_Priv
+Y
+SELECT WITH_GRANT_OPTION FROM mysql.global_grants WHERE `Host` = '%' AND `User` = 'dyn' AND Priv='CONNECTION_ADMIN';
+WITH_GRANT_OPTION
+Y
+drop user if exists u29302;
+create user u29302;
+grant create temporary tables on NotExistsD29302.NotExistsT29302 to u29302;
+Error 1144 (42000): Illegal GRANT/REVOKE command; please consult the manual to see which privileges can be used
+grant lock tables on executor__grant.NotExistsT29302 to u29302;
+Error 1144 (42000): Illegal GRANT/REVOKE command; please consult the manual to see which privileges can be used
+grant create temporary tables (NotExistsCol) on NotExistsD29302.NotExistsT29302 to u29302;
+Error 1221 (HY000): Incorrect usage of COLUMN GRANT and NON-COLUMN PRIVILEGES
+drop user u29302;
+drop table if exists t1;
+drop user if exists user_1@localhost;
+CREATE USER user_1@localhost;
+CREATE TABLE T1(f1 INT);
+CREATE TABLE t1(f1 INT);
+Error 1050 (42S01): Table 'executor__grant.t1' already exists
+GRANT SELECT ON T1 to user_1@localhost;
+GRANT SELECT ON t1 to user_1@localhost;
+DROP USER IF EXISTS test;
+CREATE USER test;
+GRANT SELECT ON `mysql`.`db` TO test;
+SELECT `Grantor` FROM `mysql`.`tables_priv` WHERE User = 'test';
+Grantor
+root@%
+drop user if exists genius;
+drop user if exists u29268;
+create user genius;
+select * from nonexist;
+Error 1146 (42S02): Table 'executor__grant.nonexist' doesn't exist
+grant Select,Insert on nonexist to 'genius';
+Error 1146 (42S02): Table 'executor__grant.nonexist' doesn't exist
+create table if not exists xx (id int);
+grant Select,Insert on XX to 'genius';
+grant Select,Insert on xx to 'genius';
+grant Select,Update on executor__grant.xx to 'genius';
+CREATE DATABASE d29268;
+USE d29268;
+CREATE USER u29268;
+GRANT SELECT ON t29268 TO u29268;
+Error 1146 (42S02): Table 'd29268.t29268' doesn't exist
+GRANT DROP, INSERT ON t29268 TO u29268;
+Error 1146 (42S02): Table 'd29268.t29268' doesn't exist
+GRANT UPDATE, CREATE VIEW, SHOW VIEW ON t29268 TO u29268;
+Error 1146 (42S02): Table 'd29268.t29268' doesn't exist
+GRANT DELETE, REFERENCES, ALTER ON t29268 TO u29268;
+Error 1146 (42S02): Table 'd29268.t29268' doesn't exist
+GRANT CREATE ON t29268 TO u29268;
+GRANT CREATE, SELECT ON t29268 TO u29268;
+GRANT CREATE, DROP, INSERT ON t29268 TO u29268;
+CREATE TABLE t29268 (c1 int);
+INSERT INTO t29268 VALUES (1), (2);
+SELECT c1 FROM t29268;
+c1
+1
+2
+DROP TABLE t29268;
+GRANT ALL ON t29268 TO u29268;
+DROP USER u29268;
+DROP DATABASE IF EXISTS d29268;
+use executor__grant;

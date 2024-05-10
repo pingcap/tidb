@@ -1,5 +1,5 @@
 # For loading data to TiDB
-FROM golang:1.18.1-alpine as go-ycsb-builder
+FROM golang:1.18.9-alpine as go-ycsb-builder
 WORKDIR /go/src/github.com/pingcap/
 
 RUN apk add --no-cache \
@@ -17,7 +17,7 @@ RUN git clone https://github.com/pingcap/go-ycsb.git --depth=1 && \
 # For operating minio S3 compatible storage
 FROM minio/mc as mc-builder
 
-FROM golang:1.18.1-alpine
+FROM golang:1.18.9-alpine
 
 WORKDIR /go/src/github.com/pingcap/br
 COPY . .

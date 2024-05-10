@@ -1,0 +1,18 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "duration",
+    srcs = ["duration.go"],
+    importpath = "github.com/pingcap/tidb/pkg/parser/duration",
+    visibility = ["//visibility:public"],
+    deps = ["@com_github_pingcap_errors//:errors"],
+)
+
+go_test(
+    name = "duration_test",
+    timeout = "short",
+    srcs = ["duration_test.go"],
+    embed = [":duration"],
+    flaky = True,
+    deps = ["@com_github_stretchr_testify//require"],
+)

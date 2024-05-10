@@ -1,0 +1,24 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "consistency",
+    srcs = ["reporter.go"],
+    importpath = "github.com/pingcap/tidb/pkg/util/logutil/consistency",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/errno",
+        "//pkg/kv",
+        "//pkg/parser/model",
+        "//pkg/sessionctx",
+        "//pkg/store/helper",
+        "//pkg/tablecodec",
+        "//pkg/types",
+        "//pkg/util/dbterror",
+        "//pkg/util/logutil",
+        "//pkg/util/redact",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_kvproto//pkg/kvrpcpb",
+        "@com_github_tikv_client_go_v2//tikv",
+        "@org_uber_go_zap//:zap",
+    ],
+)

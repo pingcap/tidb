@@ -1,0 +1,26 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "password-validation",
+    srcs = ["password_validation.go"],
+    importpath = "github.com/pingcap/tidb/pkg/util/password-validation",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/parser/auth",
+        "//pkg/sessionctx/variable",
+        "//pkg/util/hack",
+    ],
+)
+
+go_test(
+    name = "password-validation_test",
+    timeout = "short",
+    srcs = ["password_validation_test.go"],
+    embed = [":password-validation"],
+    flaky = True,
+    deps = [
+        "//pkg/parser/auth",
+        "//pkg/sessionctx/variable",
+        "@com_github_stretchr_testify//require",
+    ],
+)

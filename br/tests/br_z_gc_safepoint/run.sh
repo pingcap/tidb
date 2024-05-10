@@ -21,6 +21,7 @@
 
 set -eux
 
+CUR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 DB="$TEST_NAME"
 TABLE="usertable"
 
@@ -28,7 +29,7 @@ MAX_UINT64=9223372036854775807
 
 run_sql "CREATE DATABASE $DB;"
 
-go-ycsb load mysql -P tests/$TEST_NAME/workload -p mysql.host=$TIDB_IP -p mysql.port=$TIDB_PORT -p mysql.user=root -p mysql.db=$DB
+go-ycsb load mysql -P $CUR/workload -p mysql.host=$TIDB_IP -p mysql.port=$TIDB_PORT -p mysql.user=root -p mysql.db=$DB
 
 # Update GC safepoint to now + 5s after 10s seconds.
 sleep 10 && bin/gc -pd $PD_ADDR \

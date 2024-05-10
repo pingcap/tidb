@@ -1,0 +1,31 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "simpletest_test",
+    timeout = "short",
+    srcs = [
+        "main_test.go",
+        "simple_test.go",
+    ],
+    flaky = True,
+    race = "on",
+    shard_count = 11,
+    deps = [
+        "//pkg/config",
+        "//pkg/parser/auth",
+        "//pkg/parser/model",
+        "//pkg/parser/mysql",
+        "//pkg/parser/terror",
+        "//pkg/server",
+        "//pkg/session",
+        "//pkg/sessionctx",
+        "//pkg/store/mockstore",
+        "//pkg/testkit",
+        "//pkg/util/dbterror/exeerrors",
+        "//pkg/util/globalconn",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_stretchr_testify//require",
+        "@io_opencensus_go//stats/view",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

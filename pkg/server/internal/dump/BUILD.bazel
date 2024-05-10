@@ -1,0 +1,25 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "dump",
+    srcs = ["dump.go"],
+    importpath = "github.com/pingcap/tidb/pkg/server/internal/dump",
+    visibility = ["//pkg/server:__subpackages__"],
+    deps = [
+        "//pkg/parser/mysql",
+        "//pkg/types",
+    ],
+)
+
+go_test(
+    name = "dump_test",
+    timeout = "short",
+    srcs = ["dump_test.go"],
+    embed = [":dump"],
+    flaky = True,
+    shard_count = 3,
+    deps = [
+        "//pkg/types",
+        "@com_github_stretchr_testify//require",
+    ],
+)

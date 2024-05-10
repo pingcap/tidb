@@ -1,0 +1,17 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "backoff",
+    srcs = ["backoff.go"],
+    importpath = "github.com/pingcap/tidb/pkg/util/backoff",
+    visibility = ["//visibility:public"],
+)
+
+go_test(
+    name = "backoff_test",
+    timeout = "short",
+    srcs = ["backoff_test.go"],
+    embed = [":backoff"],
+    flaky = True,
+    deps = ["@com_github_stretchr_testify//require"],
+)

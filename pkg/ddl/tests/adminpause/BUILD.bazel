@@ -1,0 +1,50 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "adminpause",
+    srcs = [
+        "ddl_data_generation.go",
+        "ddl_stmt_cases.go",
+        "global.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/ddl/tests/adminpause",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/ddl",
+        "//pkg/ddl/logutil",
+        "//pkg/domain",
+        "//pkg/parser/model",
+        "//pkg/testkit",
+    ],
+)
+
+go_test(
+    name = "adminpause_test",
+    timeout = "moderate",
+    srcs = [
+        "main_test.go",
+        "pause_cancel_test.go",
+        "pause_negative_test.go",
+        "pause_resume_test.go",
+    ],
+    embed = [":adminpause"],
+    flaky = True,
+    shard_count = 14,
+    deps = [
+        "//pkg/config",
+        "//pkg/ddl",
+        "//pkg/ddl/testutil",
+        "//pkg/ddl/util/callback",
+        "//pkg/domain",
+        "//pkg/errno",
+        "//pkg/parser/model",
+        "//pkg/testkit",
+        "//pkg/testkit/testsetup",
+        "//pkg/util/sqlexec",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_atomic//:atomic",
+        "@org_uber_go_goleak//:goleak",
+        "@org_uber_go_zap//:zap",
+    ],
+)

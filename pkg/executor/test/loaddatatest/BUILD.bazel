@@ -1,0 +1,26 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "loaddatatest_test",
+    timeout = "short",
+    srcs = [
+        "load_data_test.go",
+        "main_test.go",
+    ],
+    flaky = True,
+    race = "on",
+    shard_count = 11,
+    deps = [
+        "//pkg/config",
+        "//pkg/executor",
+        "//pkg/lightning/mydump",
+        "//pkg/meta/autoid",
+        "//pkg/sessionctx",
+        "//pkg/testkit",
+        "//pkg/util/dbterror/exeerrors",
+        "@com_github_stretchr_testify//require",
+        "@com_github_tikv_client_go_v2//tikv",
+        "@io_opencensus_go//stats/view",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

@@ -19,9 +19,9 @@ import (
 	"github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/version"
-	dbconfig "github.com/pingcap/tidb/config"
 	tcontext "github.com/pingcap/tidb/dumpling/context"
-	"github.com/pingcap/tidb/util/promutil"
+	dbconfig "github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/util/promutil"
 	"github.com/stretchr/testify/require"
 )
 
@@ -1308,6 +1308,8 @@ func buildMockNewRows(mock sqlmock.Sqlmock, columns []string, driverValues [][]d
 }
 
 func readRegionCsvDriverValues(t *testing.T) [][]driver.Value {
+	t.Helper()
+
 	csvFilename := "region_results.csv"
 	file, err := os.Open(csvFilename)
 	require.NoError(t, err)
@@ -1634,7 +1636,7 @@ func TestCheckTiDBWithTiKV(t *testing.T) {
 	}
 
 	errLackPrivilege := errors.New("ERROR 1142 (42000): SELECT command denied to user 'test'@'%' for table 'tidb'")
-	expectedResults := []interface{}{errLackPrivilege, 1, 0}
+	expectedResults := []any{errLackPrivilege, 1, 0}
 	for i, res := range expectedResults {
 		t.Logf("case #%d", i)
 		mock.ExpectQuery("SELECT @@tidb_config").WillReturnError(errLackPrivilege)

@@ -1,0 +1,7 @@
+[checkpoint]
+enable = true
+driver = "mysql"
+
+[tikv-importer]
+backend = 'local'
+add-index-by-sql = true

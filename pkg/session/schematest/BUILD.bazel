@@ -1,0 +1,31 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "schematest_test",
+    timeout = "short",
+    srcs = [
+        "main_test.go",
+        "schema_test.go",
+    ],
+    flaky = True,
+    shard_count = 11,
+    deps = [
+        "//pkg/config",
+        "//pkg/domain",
+        "//pkg/kv",
+        "//pkg/parser/model",
+        "//pkg/server",
+        "//pkg/session",
+        "//pkg/sessionctx/variable",
+        "//pkg/store/mockstore",
+        "//pkg/tablecodec",
+        "//pkg/testkit",
+        "//pkg/testkit/testmain",
+        "//pkg/testkit/testsetup",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_stretchr_testify//require",
+        "@com_github_tikv_client_go_v2//testutils",
+        "@com_github_tikv_client_go_v2//tikv",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

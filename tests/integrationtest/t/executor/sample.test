@@ -1,0 +1,143 @@
+set @@global.tidb_scatter_region=1
+
+# TestTableSampleSchema
+drop table if exists t;
+set tidb_enable_clustered_index = on;
+create table t (a varchar(255) primary key, b bigint);
+insert into t values ('b', 100), ('y', 100);
+split table t between ('a') and ('z') regions 2;
+select a from t tablesample regions();
+drop table t;
+create table t (a varchar(255), b int, c decimal, primary key (a, b, c));
+split table t between ('a', 0, 0) and ('z', 100, 100) regions 2;
+insert into t values ('b', 10, 100), ('y', 100, 10);
+select * from t tablesample regions();
+drop table t;
+create table t (a bigint primary key, b int default 10);
+split table t between (1) and (100000) regions 4;
+insert into t(a) values (200), (25600), (50300), (99900), (99901);
+select a from t tablesample regions();
+drop table t;
+create table t (a bigint, b int default 10);
+split table t between (0) and (100000) regions 4;
+insert into t(a) values (1), (2), (3);
+select a from t tablesample regions();
+set tidb_enable_clustered_index=default;
+
+# TestTableSampleInvalid
+drop table if exists t;
+create table t (a int, b varchar(255));
+insert into t values (1, 'abc');
+create view v as select * from t;
+-- error 8128
+select * from v tablesample regions();
+-- error 8128
+select * from information_schema.tables tablesample regions();
+-- error 8128
+select a from t tablesample system();
+-- error 8128
+select a from t tablesample bernoulli(10 percent);
+-- error 8128
+select a from t as t1 tablesample regions(), t as t2 tablesample system();
+-- error 8128
+select a from t tablesample ();
+
+# TestTableSampleWithTiDBRowID
+drop table if exists t;
+create table t (a int, b varchar(255));
+insert into t values (1, 'abc');
+select _tidb_rowid from t tablesample regions();
+select a, _tidb_rowid from t tablesample regions();
+select _tidb_rowid, b from t tablesample regions();
+select b, _tidb_rowid, a from t tablesample regions();
+
+# TestTableSampleWithPartition
+drop table if exists t;
+create table t (a int, b varchar(255), primary key (a)) partition by hash(a) partitions 2;
+insert into t values (1, '1'), (2, '2'), (3, '3');
+select count(*) from t tablesample regions();
+delete from t;
+insert into t values (1, '1');
+select count(*) from t partition (p0) tablesample regions();
+select count(*) from t partition (p1) tablesample regions();
+## Test https://github.com/pingcap/tidb/issues/27349
+drop table if exists t;
+create table t (a int, b int, unique key idx(a)) partition by range (a) (
+        partition p0 values less than (0),
+        partition p1 values less than (10),
+        partition p2 values less than (30),
+        partition p3 values less than (maxvalue));
+insert into t values (2, 2), (31, 31), (12, 12);
+select _tidb_rowid from t tablesample regions() order by _tidb_rowid;
+
+# TestTableSampleGeneratedColumns
+drop table if exists t;
+create table t (a int primary key, b int as (a + 1), c int as (b + 1), d int as (c + 1));
+split table t between (0) and (10000) regions 4;
+insert into t(a) values (1), (2), (2999), (4999), (9999);
+select a from t tablesample regions();
+select c from t tablesample regions();
+select a, b from t tablesample regions();
+select d, c from t tablesample regions();
+select a, d from t tablesample regions();
+
+# TestTableSampleUnionScanIgnorePendingKV
+drop table if exists t;
+create table t (a int primary key);
+split table t between (0) and (40000) regions 4;
+insert into t values (1), (1000), (10002);
+select * from t tablesample regions();
+begin;
+insert into t values (20006), (50000);
+select * from t tablesample regions();
+delete from t where a = 1;
+select * from t tablesample regions();
+commit;
+select * from t tablesample regions();
+
+# TestTableSampleTransactionConsistency
+drop table if exists t;
+create table t (a int primary key);
+split table t between (0) and (40000) regions 4;
+insert into t values (1), (1000), (10002);
+begin;
+select * from t tablesample regions();
+
+connect (conn1, localhost, root,, executor__sample);
+insert into t values (20006), (50000);
+connection default;
+
+select * from t tablesample regions();
+commit;
+select * from t tablesample regions();
+disconnect conn1;
+
+# TestTableSampleNotSupportedPlanWarning
+drop table if exists t;
+create table t (a int primary key, b int, c varchar(255));
+split table t between (0) and (10000) regions 5;
+insert into t values (1000, 1, '1'), (1001, 1, '1'), (2100, 2, '2'), (4500, 3, '3');
+create index idx_0 on t (b);
+select a from t tablesample regions() order by a;
+-- error 8128
+select a from t use index (idx_0) tablesample regions() order by a;
+
+# TestTableSampleUnsignedIntHandle
+DROP TABLE IF EXISTS a;
+CREATE TABLE a (pk bigint unsigned primary key clustered, v text);
+INSERT INTO a WITH RECURSIVE b(pk) AS (SELECT 1 UNION ALL SELECT pk+1 FROM b WHERE pk < 1000) SELECT pk, 'a' FROM b;
+INSERT INTO a WITH RECURSIVE b(pk) AS (SELECT 1 UNION ALL SELECT pk+1 FROM b WHERE pk < 1000) SELECT pk + (1<<63), 'b' FROM b;
+SPLIT TABLE a BY (500);
+SELECT * FROM a TABLESAMPLE REGIONS() ORDER BY pk;
+
+set @@global.tidb_scatter_region=default;
+
+# TestTableSamplePartitionPruneMode
+drop table if exists t;
+create table t (a int, b varchar(255), primary key (a)) partition by hash(a) partitions 2;
+insert into t values (1, '1'), (2, '2'), (3, '3');
+set @@tidb_partition_prune_mode='static';
+select * from t tablesample regions() order by a;
+set @@tidb_partition_prune_mode='dynamic';
+select * from t tablesample regions() order by a;
+set @@tidb_partition_prune_mode=default;

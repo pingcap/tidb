@@ -2,6 +2,7 @@
 
 set -eux
 
+CUR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 backup_dir=$TEST_DIR/$TEST_NAME
 
 test_data="('TiDB'),('TiKV'),('TiFlash'),('TiSpark'),('TiCDC'),('TiPB'),('Rust'),('C++'),('Go'),('Haskell'),('Scala')"
@@ -16,7 +17,7 @@ modify_systables() {
     run_sql "INSERT INTO mysql.foo(field) VALUES $test_data"
     run_sql "INSERT INTO mysql.bar(field) VALUES $test_data"
 
-    go-ycsb load mysql -P tests/"$TEST_NAME"/workload \
+    go-ycsb load mysql -P $CUR/workload \
         -p mysql.host="$TIDB_IP" \
         -p mysql.port="$TIDB_PORT" \
         -p mysql.user=root \
@@ -42,7 +43,7 @@ add_test_data() {
 }
 
 delete_test_data() {
-    run_sql "DROP TABLE usertest.test;"
+    run_sql "DROP DATABASE usertest;"
 }
 
 rollback_modify() {
@@ -78,14 +79,14 @@ check2() {
 modify_systables
 run_br backup full -s "local://$backup_dir"
 rollback_modify
-run_br restore full -f '*.*' -f '!mysql.bar' -s "local://$backup_dir" --with-sys-table
+run_br restore full -f '*.*' -f '!mysql.bar' -s "local://$backup_dir"
 check
 
-run_br restore full -f 'mysql.bar' -s "local://$backup_dir" --with-sys-table
+run_br restore full -f 'mysql.bar' -s "local://$backup_dir"
 run_sql "SELECT count(*) from mysql.bar;" | grep 11
 
 rollback_modify 
-run_br restore full -f "mysql*.*" -f '!mysql.bar' -s "local://$backup_dir" --with-sys-table
+run_br restore full -f "mysql*.*" -f '!mysql.bar' -s "local://$backup_dir"
 check
 
 add_user

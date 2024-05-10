@@ -14,8 +14,9 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/restore"
+	"github.com/pingcap/tidb/br/pkg/restore/utils"
 	"github.com/pingcap/tidb/br/pkg/rtree"
-	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 )
@@ -23,7 +24,7 @@ import (
 type drySender struct {
 	mu *sync.Mutex
 
-	rewriteRules *restore.RewriteRules
+	rewriteRules *utils.RewriteRules
 	ranges       []rtree.Range
 	nBatch       int
 
@@ -39,7 +40,9 @@ func (sender *drySender) RestoreBatch(ranges restore.DrainResult) {
 	defer sender.mu.Unlock()
 	log.Info("fake restore range", rtree.ZapRanges(ranges.Ranges))
 	sender.nBatch++
-	sender.rewriteRules.Append(*ranges.RewriteRules)
+	for _, r := range ranges.RewriteRulesMap {
+		sender.rewriteRules.Append(*r)
+	}
 	sender.ranges = append(sender.ranges, ranges.Ranges...)
 	sender.sink.EmitTables(ranges.BlankTablesAfterSend...)
 }
@@ -49,7 +52,7 @@ func (sender *drySender) Close() {
 }
 
 func waitForSend() {
-	time.Sleep(10 * time.Millisecond)
+	time.Sleep(50 * time.Millisecond)
 }
 
 func (sender *drySender) Ranges() []rtree.Range {
@@ -58,7 +61,7 @@ func (sender *drySender) Ranges() []rtree.Range {
 
 func newDrySender() *drySender {
 	return &drySender{
-		rewriteRules: restore.EmptyRewriteRule(),
+		rewriteRules: utils.EmptyRewriteRule(),
 		ranges:       []rtree.Range{},
 		mu:           new(sync.Mutex),
 	}
@@ -159,7 +162,7 @@ func fakeTableWithRange(id int64, rngs []rtree.Range) restore.TableWithRange {
 	}
 	tblWithRng := restore.TableWithRange{
 		CreatedTable: restore.CreatedTable{
-			RewriteRule: restore.EmptyRewriteRule(),
+			RewriteRule: utils.EmptyRewriteRule(),
 			Table:       tbl.Info,
 			OldTable:    tbl,
 		},
@@ -168,8 +171,8 @@ func fakeTableWithRange(id int64, rngs []rtree.Range) restore.TableWithRange {
 	return tblWithRng
 }
 
-func fakeRewriteRules(oldPrefix string, newPrefix string) *restore.RewriteRules {
-	return &restore.RewriteRules{
+func fakeRewriteRules(oldPrefix string, newPrefix string) *utils.RewriteRules {
+	return &utils.RewriteRules{
 		Data: []*import_sstpb.RewriteRule{
 			{
 				OldKeyPrefix: []byte(oldPrefix),
@@ -199,7 +202,7 @@ func TestBasic(t *testing.T) {
 	errCh := make(chan error, 8)
 	sender := newDrySender()
 	manager := newMockManager()
-	batcher, _ := restore.NewBatcher(ctx, sender, manager, errCh)
+	batcher, _ := restore.NewBatcher(ctx, sender, manager, errCh, nil)
 	batcher.SetThreshold(2)
 
 	tableRanges := [][]rtree.Range{
@@ -232,7 +235,7 @@ func TestAutoSend(t *testing.T) {
 	errCh := make(chan error, 8)
 	sender := newDrySender()
 	manager := newMockManager()
-	batcher, _ := restore.NewBatcher(ctx, sender, manager, errCh)
+	batcher, _ := restore.NewBatcher(ctx, sender, manager, errCh, nil)
 	batcher.SetThreshold(1024)
 
 	simpleTable := fakeTableWithRange(1, []rtree.Range{fakeRange("caa", "cab"), fakeRange("cac", "cad")})
@@ -263,7 +266,7 @@ func TestSplitRangeOnSameTable(t *testing.T) {
 	errCh := make(chan error, 8)
 	sender := newDrySender()
 	manager := newMockManager()
-	batcher, _ := restore.NewBatcher(ctx, sender, manager, errCh)
+	batcher, _ := restore.NewBatcher(ctx, sender, manager, errCh, nil)
 	batcher.SetThreshold(2)
 
 	simpleTable := fakeTableWithRange(1, []rtree.Range{
@@ -297,7 +300,7 @@ func TestRewriteRules(t *testing.T) {
 			fakeRange("can", "cao"), fakeRange("cap", "caq"),
 		},
 	}
-	rewriteRules := []*restore.RewriteRules{
+	rewriteRules := []*utils.RewriteRules{
 		fakeRewriteRules("a", "ada"),
 		fakeRewriteRules("b", "bob"),
 		fakeRewriteRules("c", "cpp"),
@@ -314,7 +317,7 @@ func TestRewriteRules(t *testing.T) {
 	errCh := make(chan error, 8)
 	sender := newDrySender()
 	manager := newMockManager()
-	batcher, _ := restore.NewBatcher(ctx, sender, manager, errCh)
+	batcher, _ := restore.NewBatcher(ctx, sender, manager, errCh, nil)
 	batcher.SetThreshold(2)
 
 	batcher.Add(tables[0])
@@ -345,7 +348,7 @@ func TestBatcherLen(t *testing.T) {
 	errCh := make(chan error, 8)
 	sender := newDrySender()
 	manager := newMockManager()
-	batcher, _ := restore.NewBatcher(ctx, sender, manager, errCh)
+	batcher, _ := restore.NewBatcher(ctx, sender, manager, errCh, nil)
 	batcher.SetThreshold(15)
 
 	simpleTable := fakeTableWithRange(1, []rtree.Range{

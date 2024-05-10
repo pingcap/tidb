@@ -1,0 +1,54 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "prepare_snap",
+    srcs = [
+        "env.go",
+        "errors.go",
+        "prepare.go",
+        "stream.go",
+    ],
+    importpath = "github.com/pingcap/tidb/br/pkg/backup/prepare_snap",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//br/pkg/logutil",
+        "//br/pkg/utils",
+        "//pkg/util/engine",
+        "@com_github_docker_go_units//:go-units",
+        "@com_github_google_btree//:btree",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_pingcap_kvproto//pkg/brpb",
+        "@com_github_pingcap_kvproto//pkg/errorpb",
+        "@com_github_pingcap_kvproto//pkg/metapb",
+        "@com_github_pingcap_log//:log",
+        "@com_github_tikv_client_go_v2//tikv",
+        "@com_github_tikv_pd_client//:client",
+        "@org_golang_google_grpc//:grpc",
+        "@org_golang_x_sync//errgroup",
+        "@org_uber_go_zap//:zap",
+        "@org_uber_go_zap//zapcore",
+    ],
+)
+
+go_test(
+    name = "prepare_snap_test",
+    timeout = "short",
+    srcs = ["prepare_test.go"],
+    flaky = True,
+    shard_count = 10,
+    deps = [
+        ":prepare_snap",
+        "//br/pkg/utils",
+        "//pkg/store/mockstore/unistore",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_kvproto//pkg/brpb",
+        "@com_github_pingcap_kvproto//pkg/errorpb",
+        "@com_github_pingcap_kvproto//pkg/metapb",
+        "@com_github_pingcap_log//:log",
+        "@com_github_stretchr_testify//require",
+        "@com_github_tikv_client_go_v2//tikv",
+        "@com_github_tikv_pd_client//:client",
+        "@org_uber_go_zap//zapcore",
+    ],
+)

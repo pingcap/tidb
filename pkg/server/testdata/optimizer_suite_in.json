@@ -1,0 +1,11 @@
+[
+  {
+    "name": "TestOptimizerDebugTrace",
+    "cases": [
+      "\u0017\u0001\u0000\u0000\u0000\u0000\u0001\u0000\u0000\u0000\u0000\u0001\u0008\u0000\u007F\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000",
+      "\u0003create session binding for select * from t where col1 = 100 using select * from t use index () where col1 = 100",
+      "\u0003select * from t where col1 = 100",
+      "\u0003execute stmt using @a"
+    ]
+  }
+]

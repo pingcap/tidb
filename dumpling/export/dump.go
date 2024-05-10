@@ -10,13 +10,17 @@ import (
 	"encoding/hex"
 	"fmt"
 	"math/big"
+	"net"
+	"slices"
 	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
 
+	"github.com/coreos/go-semver/semver"
 	// import mysql driver
 	"github.com/go-sql-driver/mysql"
+	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	pclog "github.com/pingcap/log"
@@ -26,21 +30,26 @@ import (
 	"github.com/pingcap/tidb/dumpling/cli"
 	tcontext "github.com/pingcap/tidb/dumpling/context"
 	"github.com/pingcap/tidb/dumpling/log"
-	"github.com/pingcap/tidb/parser"
-	"github.com/pingcap/tidb/parser/ast"
-	"github.com/pingcap/tidb/parser/format"
-	"github.com/pingcap/tidb/store/helper"
-	"github.com/pingcap/tidb/tablecodec"
-	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/pkg/parser"
+	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/format"
+	"github.com/pingcap/tidb/pkg/store/helper"
+	"github.com/pingcap/tidb/pkg/tablecodec"
+	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/codec"
 	pd "github.com/tikv/pd/client"
+	gatomic "go.uber.org/atomic"
 	"go.uber.org/zap"
-	"golang.org/x/exp/slices"
 	"golang.org/x/sync/errgroup"
 )
 
 var openDBFunc = openDB
 
 var errEmptyHandleVals = errors.New("empty handleVals for TiDB table")
+
+// After TiDB v6.2.0 we always enable tidb_enable_paging by default.
+// see https://docs.pingcap.com/zh/tidb/dev/system-variables#tidb_enable_paging-%E4%BB%8E-v540-%E7%89%88%E6%9C%AC%E5%BC%80%E5%A7%8B%E5%BC%95%E5%85%A5
+var enablePagingVersion = semver.New("6.2.0")
 
 // Dumper is the dump progress structure
 type Dumper struct {
@@ -101,6 +110,17 @@ func NewDumper(ctx context.Context, conf *Config) (*Dumper, error) {
 	if err != nil {
 		return nil, err
 	}
+	failpoint.Inject("SetIOTotalBytes", func(_ failpoint.Value) {
+		d.conf.IOTotalBytes = gatomic.NewUint64(0)
+		d.conf.Net = uuid.New().String()
+		go func() {
+			for {
+				time.Sleep(10 * time.Millisecond)
+				d.tctx.L().Logger.Info("IOTotalBytes", zap.Uint64("IOTotalBytes", d.conf.IOTotalBytes.Load()))
+			}
+		}()
+	})
+
 	err = runSteps(d,
 		initLogger,
 		createExternalStore,
@@ -205,7 +225,7 @@ func (d *Dumper) Dump() (dumpErr error) {
 	atomic.StoreInt64(&d.totalTables, int64(calculateTableCount(conf.Tables)))
 
 	rebuildMetaConn := func(conn *sql.Conn, updateMeta bool) (*sql.Conn, error) {
-		_ = conn.Raw(func(dc interface{}) error {
+		_ = conn.Raw(func(any) error {
 			// return an `ErrBadConn` to ensure close the connection, but do not put it back to the pool.
 			// if we choose to use `Close`, it will always put the connection back to the pool.
 			return driver.ErrBadConn
@@ -867,11 +887,10 @@ func (d *Dumper) concurrentDumpTiDBTables(tctx *tcontext.Context, conn *BaseConn
 			partitions, err = GetPartitionNames(tctx, conn, db, tbl)
 		}
 		if err == nil {
-			if len(partitions) == 0 {
-				handleColNames, handleVals, err = d.selectTiDBTableRegionFunc(tctx, conn, meta)
-			} else {
+			if len(partitions) != 0 {
 				return d.concurrentDumpTiDBPartitionTables(tctx, conn, meta, taskChan, partitions)
 			}
+			handleColNames, handleVals, err = d.selectTiDBTableRegionFunc(tctx, conn, meta)
 		}
 	}
 	if err != nil {
@@ -961,7 +980,7 @@ func selectTiDBTableSample(tctx *tcontext.Context, conn *BaseConn, meta TableMet
 		if iter == nil {
 			iter = &rowIter{
 				rows: rows,
-				args: make([]interface{}, pkValNum),
+				args: make([]any, pkValNum),
 			}
 		}
 		err = iter.Decode(rowRec)
@@ -1126,7 +1145,7 @@ func getListTableTypeByConf(conf *Config) listTableType {
 }
 
 func prepareTableListToDump(tctx *tcontext.Context, conf *Config, db *sql.Conn) error {
-	if conf.specifiedTables {
+	if conf.SpecifiedTables || conf.SQL != "" {
 		return nil
 	}
 	databases, err := prepareDumpingDatabases(tctx, conf, db)
@@ -1199,9 +1218,7 @@ func dumpTableMeta(tctx *tcontext.Context, conf *Config, conn *BaseConn, db stri
 		selectedField:    selectField,
 		selectedLen:      selectLen,
 		hasImplicitRowID: hasImplicitRowID,
-		specCmts: []string{
-			"/*!40101 SET NAMES binary*/;",
-		},
+		specCmts:         getSpecialComments(conf.ServerInfo.ServerType),
 	}
 
 	if conf.NoSchemas {
@@ -1330,6 +1347,22 @@ func startHTTPService(d *Dumper) error {
 
 // openSQLDB is an initialization step of Dumper.
 func openSQLDB(d *Dumper) error {
+	if d.conf.IOTotalBytes != nil {
+		mysql.RegisterDialContext(d.conf.Net, func(ctx context.Context, addr string) (net.Conn, error) {
+			dial := &net.Dialer{}
+			conn, err := dial.DialContext(ctx, "tcp", addr)
+			if err != nil {
+				return nil, err
+			}
+			tcpConn := conn.(*net.TCPConn)
+			// try https://github.com/go-sql-driver/mysql/blob/bcc459a906419e2890a50fc2c99ea6dd927a88f2/connector.go#L56-L64
+			err = tcpConn.SetKeepAlive(true)
+			if err != nil {
+				d.tctx.L().Logger.Warn("fail to keep alive", zap.Error(err))
+			}
+			return util.NewTCPConnWithIOCounter(tcpConn, d.conf.IOTotalBytes), nil
+		})
+	}
 	conf := d.conf
 	c, err := mysql.NewConnector(conf.GetDriverConfig(""))
 	if err != nil {
@@ -1508,6 +1541,19 @@ func updateServiceSafePoint(tctx *tcontext.Context, pdClient pd.Client, ttl int6
 	}
 }
 
+// setDefaultSessionParams is a step to set default params for session params.
+func setDefaultSessionParams(si version.ServerInfo, sessionParams map[string]any) {
+	defaultSessionParams := map[string]any{}
+	if si.ServerType == version.ServerTypeTiDB && si.HasTiKV && si.ServerVersion.Compare(*enablePagingVersion) >= 0 {
+		defaultSessionParams["tidb_enable_paging"] = "ON"
+	}
+	for k, v := range defaultSessionParams {
+		if _, ok := sessionParams[k]; !ok {
+			sessionParams[k] = v
+		}
+	}
+}
+
 // setSessionParam is an initialization step of Dumper.
 func setSessionParam(d *Dumper) error {
 	conf, pool := d.conf, d.dbHandle
@@ -1528,7 +1574,7 @@ func setSessionParam(d *Dumper) error {
 				d.L().Info("cannot check whether TiDB has TiKV, will apply tidb_snapshot by default. This won't affect dump process", log.ShortError(err))
 			}
 			if conf.ServerInfo.HasTiKV {
-				sessionParam["tidb_snapshot"] = snapshot
+				sessionParam[snapshotVar] = snapshot
 			}
 		}
 	}

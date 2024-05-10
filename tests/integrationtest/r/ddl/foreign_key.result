@@ -1,0 +1,209 @@
+set @@global.tidb_enable_foreign_key=1;
+create table t1 (id int key, a int);
+begin;
+insert into t1 values (1, 1);
+update t1 set a = 2 where id = 1;
+create table t2 (id int key, b int, foreign key fk_b(b) references ddl__foreign_key.t1(id));
+commit;
+set @@global.tidb_enable_foreign_key=default;
+set @@global.tidb_enable_foreign_key=1;
+set @@foreign_key_checks=1;
+drop table if exists t1, t2;
+create table t1 (id int key, b varchar(10), index(b));
+create table t2 (a varchar(10), constraint fk foreign key (a) references t1(b));
+insert into t1 values (1, '123456789');
+insert into t2 values ('123456789');
+alter table t1 modify column b varchar(5);
+Error 1833 (HY000): Cannot change column 'b': used in a foreign key constraint 'fk' of table 'ddl__foreign_key.t2'
+alter table t1 modify column b bigint;
+Error 3780 (HY000): Referencing column 'a' and referenced column 'b' in foreign key constraint 'fk' are incompatible.
+alter table t1 modify column b varchar(20);
+alter table t1 modify column b varchar(10);
+Error 1833 (HY000): Cannot change column 'b': used in a foreign key constraint 'fk' of table 'ddl__foreign_key.t2'
+alter table t2 modify column a varchar(20);
+alter table t2 modify column a varchar(21);
+alter table t2 modify column a varchar(5);
+Error 1832 (HY000): Cannot change column 'a': used in a foreign key constraint 'fk'
+alter table t2 modify column a bigint;
+Error 3780 (HY000): Referencing column 'a' and referenced column 'b' in foreign key constraint 'fk' are incompatible.
+drop table t1, t2;
+create table t1 (id int key, b decimal(10, 5), index(b));
+create table t2 (a decimal(10, 5), constraint fk foreign key (a) references t1(b));
+insert into t1 values (1, 12345.67891);
+insert into t2 values (12345.67891);
+alter table t1 modify column b decimal(10, 6);
+Error 1833 (HY000): Cannot change column 'b': used in a foreign key constraint 'fk' of table 'ddl__foreign_key.t2'
+alter table t1 modify column b decimal(10, 3);
+Error 1833 (HY000): Cannot change column 'b': used in a foreign key constraint 'fk' of table 'ddl__foreign_key.t2'
+alter table t1 modify column b decimal(5, 2);
+Error 1833 (HY000): Cannot change column 'b': used in a foreign key constraint 'fk' of table 'ddl__foreign_key.t2'
+alter table t1 modify column b decimal(20, 10);
+Error 1833 (HY000): Cannot change column 'b': used in a foreign key constraint 'fk' of table 'ddl__foreign_key.t2'
+alter table t2 modify column a decimal(30, 15);
+Error 1832 (HY000): Cannot change column 'a': used in a foreign key constraint 'fk'
+alter table t2 modify column a decimal(5, 2);
+Error 1832 (HY000): Cannot change column 'a': used in a foreign key constraint 'fk'
+drop table t1, t2;
+create table t1 (a bigint(10) key);
+create table t2 (a bigint(10), constraint fk foreign key (a) references t1(a));
+alter table t2 modify column a bigint(5);
+alter table t1 modify column a bigint(1);
+drop table t1, t2;
+create table t1 (id int key, b decimal(8, 5), index(b));
+create table t2 (a decimal(10, 5), constraint fk foreign key (a) references t1(b));
+alter table t1 modify column b decimal(10, 5);
+Error 1833 (HY000): Cannot change column 'b': used in a foreign key constraint 'fk' of table 'ddl__foreign_key.t2'
+set @@global.tidb_enable_foreign_key=default;
+set @@foreign_key_checks=default;
+set @@global.tidb_enable_foreign_key=1;
+set @@foreign_key_checks=1;
+drop table if exists t1,t2,t3;
+create table t1 (id int key, b int, index(b));
+create table t2 (id int key, b int, foreign key fk_b(b) references t1(id));
+create table t3 (id int key, b int, foreign key fk_b(b) references t2(id));
+drop table if exists t1,t2;
+Error 3730 (HY000): Cannot drop table 't2' referenced by a foreign key constraint 'fk_b' on table 't3'.
+show tables;
+Tables_in_ddl__foreign_key
+t1
+t2
+t3
+drop table if exists t1,t2,t3;
+set @@global.tidb_enable_foreign_key=default;
+set @@foreign_key_checks=default;
+set @@global.tidb_enable_foreign_key=1;
+set @@foreign_key_checks=1;
+drop table if exists t1, t2;
+create table t1 (id int key, a int, b int, index(b), CONSTRAINT fk foreign key (a) references t1(b));
+alter table t1 drop column a;
+Error 1828 (HY000): Cannot drop column 'a': needed in a foreign key constraint 'fk'
+alter table t1 drop column b;
+Error 1829 (HY000): Cannot drop column 'b': needed in a foreign key constraint 'fk' of table 't1'
+drop table t1;
+create table t1 (id int key, b int, index(b));
+create table t2 (a int, b int, constraint fk foreign key (a) references t1(b));
+alter table t1 drop column b;
+Error 1829 (HY000): Cannot drop column 'b': needed in a foreign key constraint 'fk' of table 't2'
+alter table t2 drop column a;
+Error 1828 (HY000): Cannot drop column 'a': needed in a foreign key constraint 'fk'
+set @@global.tidb_enable_foreign_key=default;
+set @@foreign_key_checks=default;
+set @@global.tidb_enable_foreign_key=1;
+set @@foreign_key_checks=1;
+drop table if exists t1, t2;
+create table t1 (id int key, b int, index(b));
+create table t2 (id int key, b int, foreign key fk_b(b) references t1(id));
+create database ddl__foreign_key_test;
+create table ddl__foreign_key_test.t3 (id int key, b int, foreign key fk_b(b) references ddl__foreign_key.t2(id));
+drop database ddl__foreign_key;
+Error 3730 (HY000): Cannot drop table 't2' referenced by a foreign key constraint 'fk_b' on table 't3'.
+set @@foreign_key_checks=0;
+drop database ddl__foreign_key;
+set @@foreign_key_checks=1;
+create database ddl__foreign_key;
+use ddl__foreign_key;
+create table t1 (id int key, b int, index(b));
+create table t2 (id int key, b int, foreign key fk_b(b) references t1(id));
+drop database ddl__foreign_key;
+Error 3730 (HY000): Cannot drop table 't2' referenced by a foreign key constraint 'fk_b' on table 't3'.
+drop table ddl__foreign_key_test.t3;
+drop database ddl__foreign_key;
+create database ddl__foreign_key;
+use ddl__foreign_key;
+set @@global.tidb_enable_foreign_key=default;
+set @@foreign_key_checks=default;
+set @@foreign_key_checks=1;
+drop table if exists t1, t2;
+create table t1 (id int key);
+create table t2 (a int, b int);
+alter table t2 add foreign key (a) references t1(id), add foreign key (b) references t1(id);
+alter table t2 add column c int, add column d int;
+alter table t2 add foreign key (c) references t1(id), add foreign key (d) references t1(id), add index(c), add index(d);
+drop table t2;
+create table t2 (a int, b int, index idx1(a), index idx2(b));
+alter table t2 drop index idx1, drop index idx2, add foreign key (a) references t1(id), add foreign key (b) references t1(id);
+Error 1553 (HY000): Cannot drop index 'idx1': needed in a foreign key constraint
+alter table t2 drop index idx1, drop index idx2;
+alter table t2 add foreign key (a) references t1(id), add foreign key (b) references t1(id);
+show create table t2;
+Table	Create Table
+t2	CREATE TABLE `t2` (
+  `a` int(11) DEFAULT NULL,
+  `b` int(11) DEFAULT NULL,
+  KEY `fk_1` (`a`),
+  KEY `fk_2` (`b`),
+  CONSTRAINT `fk_1` FOREIGN KEY (`a`) REFERENCES `t1` (`id`),
+  CONSTRAINT `fk_2` FOREIGN KEY (`b`) REFERENCES `t1` (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+drop table t2;
+create table t2 (a int, b int, index idx0(a,b), index idx1(a), index idx2(b));
+alter table t2 drop index idx1, add foreign key (a) references t1(id), add foreign key (b) references t1(id);
+set @@foreign_key_checks=default;
+set @@foreign_key_checks=1;
+drop table if exists t1, t2;
+create table t1 (id int key);
+insert into t1 values (1),(2),(3),(4);
+alter table t1 cache;
+create table t2 (b int);
+alter  table t2 add constraint fk foreign key (b) references t1(id) on delete cascade on update cascade;
+insert into t2 values (1),(2),(3),(4);
+insert into t2 values (5);
+Error 1452 (23000): Cannot add or update a child row: a foreign key constraint fails (`ddl__foreign_key`.`t2`, CONSTRAINT `fk` FOREIGN KEY (`b`) REFERENCES `t1` (`id`) ON DELETE CASCADE ON UPDATE CASCADE)
+update t1 set id = id+10 where id=1;
+delete from t1 where id<10;
+select * from t1;
+id
+11
+select * from t2;
+b
+11
+alter table t1 nocache;
+drop table t1,t2;
+create table t1 (id int key);
+create table t2 (b int);
+alter  table t2 add constraint fk foreign key (b) references t1(id) on delete cascade on update cascade;
+alter table t2 cache;
+insert into t1 values (1),(2),(3),(4);
+insert into t2 values (1),(2),(3),(4);
+insert into t2 values (5);
+Error 1452 (23000): Cannot add or update a child row: a foreign key constraint fails (`ddl__foreign_key`.`t2`, CONSTRAINT `fk` FOREIGN KEY (`b`) REFERENCES `t1` (`id`) ON DELETE CASCADE ON UPDATE CASCADE)
+update t1 set id = id+10 where id=1;
+delete from t1 where id<10;
+select * from t1;
+id
+11
+select * from t2;
+b
+11
+alter table t2 nocache;
+drop table t1,t2;
+set @@foreign_key_checks=default;
+set @@foreign_key_checks=1;
+drop table if exists t1, t2;
+create table t1 (id int key, b int, index idx1(b));
+create table t2 (id int key, b int, constraint fk foreign key (b) references t1(b));
+insert into t1 values (1,1),(2,2);
+insert into t2 values (1,1),(2,2);
+insert into t2 values (3,3);
+Error 1452 (23000): Cannot add or update a child row: a foreign key constraint fails (`ddl__foreign_key`.`t2`, CONSTRAINT `fk` FOREIGN KEY (`b`) REFERENCES `t1` (`b`))
+delete from t1 where id=1;
+Error 1451 (23000): Cannot delete or update a parent row: a foreign key constraint fails (`ddl__foreign_key`.`t2`, CONSTRAINT `fk` FOREIGN KEY (`b`) REFERENCES `t1` (`b`))
+alter table t1 rename index idx1 to idx2;
+alter table t2 rename index fk to idx;
+insert into t2 values (3,3);
+Error 1452 (23000): Cannot add or update a child row: a foreign key constraint fails (`ddl__foreign_key`.`t2`, CONSTRAINT `fk` FOREIGN KEY (`b`) REFERENCES `t1` (`b`))
+delete from t1 where id=1;
+Error 1451 (23000): Cannot delete or update a parent row: a foreign key constraint fails (`ddl__foreign_key`.`t2`, CONSTRAINT `fk` FOREIGN KEY (`b`) REFERENCES `t1` (`b`))
+alter table t2 drop foreign key fk;
+alter table t2 add foreign key fk (b) references t1(b) on delete cascade on update cascade;
+alter table t1 rename index idx2 to idx3;
+alter table t2 rename index idx to idx0;
+delete from t1 where id=1;
+select * from t1;
+id	b
+2	2
+select * from t2;
+id	b
+2	2
+admin check table t1,t2;
+set @@foreign_key_checks=default;

@@ -1,0 +1,14 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "testutil",
+    srcs = ["testutil.go"],
+    importpath = "github.com/pingcap/tidb/pkg/statistics/handle/cache/internal/testutil",
+    visibility = ["//pkg/statistics/handle/cache:__subpackages__"],
+    deps = [
+        "//pkg/parser/model",
+        "//pkg/parser/mysql",
+        "//pkg/statistics",
+        "//pkg/types",
+    ],
+)

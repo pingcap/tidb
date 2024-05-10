@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/pingcap/log"
-	"github.com/pingcap/tidb/br/pkg/lightning/metric"
+	"github.com/pingcap/tidb/pkg/lightning/metric"
 	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
 )
@@ -51,5 +51,5 @@ func (r *RateTracer) RateAt(instant time.Time) float64 {
 
 // L make a logger with the current speed.
 func (r *RateTracer) L() *zap.Logger {
-	return log.With(zap.String("speed", fmt.Sprintf("%.2f ops/s", r.Rate())))
+	return log.L().With(zap.String("speed", fmt.Sprintf("%.2f ops/s", r.Rate())))
 }

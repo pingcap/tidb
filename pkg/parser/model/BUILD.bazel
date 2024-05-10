@@ -1,0 +1,41 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "model",
+    srcs = [
+        "ddl.go",
+        "flags.go",
+        "model.go",
+        "reorg.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/parser/model",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/parser/auth",
+        "//pkg/parser/charset",
+        "//pkg/parser/duration",
+        "//pkg/parser/mysql",
+        "//pkg/parser/terror",
+        "//pkg/parser/types",
+        "@com_github_pingcap_errors//:errors",
+    ],
+)
+
+go_test(
+    name = "model_test",
+    timeout = "short",
+    srcs = [
+        "ddl_test.go",
+        "model_test.go",
+    ],
+    embed = [":model"],
+    flaky = True,
+    shard_count = 22,
+    deps = [
+        "//pkg/parser/charset",
+        "//pkg/parser/mysql",
+        "//pkg/parser/terror",
+        "//pkg/parser/types",
+        "@com_github_stretchr_testify//require",
+    ],
+)

@@ -1,0 +1,51 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "logutil",
+    srcs = [
+        "general_logger.go",
+        "hex.go",
+        "log.go",
+        "slow_query_logger.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/util/logutil",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/parser/model",
+        "@com_github_golang_protobuf//proto",
+        "@com_github_grpc_ecosystem_go_grpc_middleware//logging/zap",
+        "@com_github_opentracing_opentracing_go//:opentracing-go",
+        "@com_github_opentracing_opentracing_go//log",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_log//:log",
+        "@com_github_tikv_client_go_v2//tikv",
+        "@org_golang_x_net//http/httpproxy",
+        "@org_uber_go_zap//:zap",
+        "@org_uber_go_zap//buffer",
+        "@org_uber_go_zap//zapcore",
+    ],
+)
+
+go_test(
+    name = "logutil_test",
+    timeout = "short",
+    srcs = [
+        "hex_test.go",
+        "log_test.go",
+        "main_test.go",
+    ],
+    embed = [":logutil"],
+    flaky = True,
+    deps = [
+        "//pkg/kv",
+        "//pkg/parser/model",
+        "//pkg/testkit/testsetup",
+        "@com_github_google_uuid//:uuid",
+        "@com_github_pingcap_kvproto//pkg/metapb",
+        "@com_github_pingcap_log//:log",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_goleak//:goleak",
+        "@org_uber_go_zap//:zap",
+        "@org_uber_go_zap//zapcore",
+    ],
+)

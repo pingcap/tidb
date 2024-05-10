@@ -14,6 +14,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+CUR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+
 random_values() {
     length=$1
     count=$2
@@ -56,7 +58,7 @@ record_counts=(10000 10010 10086)
 for i in $record_counts; do
     create_and_insert "t$i" $i
 done
-go-ycsb load mysql -P tests/$TEST_NAME/workload -p mysql.host=$TIDB_IP -p mysql.port=$TIDB_PORT -p mysql.user=root -p mysql.db=$DB
+go-ycsb load mysql -P $CUR/workload -p mysql.host=$TIDB_IP -p mysql.port=$TIDB_PORT -p mysql.user=root -p mysql.db=$DB
 
 
 echo "backup start..."

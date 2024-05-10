@@ -1,0 +1,217 @@
+# TestCharacterSetCollations
+drop table if EXISTS charset_collate_col_test;
+CREATE TABLE charset_collate_col_test(
+		c_int int,
+		c_float float,
+		c_bit bit,
+		c_bool bool,
+		c_char char(1) charset ascii collate ascii_bin,
+		c_nchar national char(1) charset ascii collate ascii_bin,
+		c_binary binary,
+		c_varchar varchar(1) charset ascii collate ascii_bin,
+		c_nvarchar national varchar(1) charset ascii collate ascii_bin,
+		c_varbinary varbinary(1),
+		c_year year,
+		c_date date,
+		c_time time,
+		c_datetime datetime,
+		c_timestamp timestamp,
+		c_blob blob,
+		c_tinyblob tinyblob,
+		c_mediumblob mediumblob,
+		c_longblob longblob,
+		c_text text charset ascii collate ascii_bin,
+		c_tinytext tinytext charset ascii collate ascii_bin,
+		c_mediumtext mediumtext charset ascii collate ascii_bin,
+		c_longtext longtext charset ascii collate ascii_bin,
+		c_json json,
+		c_enum enum('1') charset ascii collate ascii_bin,
+		c_set set('1') charset ascii collate ascii_bin
+	);
+SELECT column_name, character_set_name, collation_name
+					FROM information_schema.COLUMNS
+					WHERE table_schema = "infoschema__tables" AND table_name = "charset_collate_col_test"
+					ORDER BY column_name;
+
+# TestCurrentTimestampAsDefault
+drop table if EXISTS default_time_table;
+CREATE TABLE default_time_table(
+	c_datetime datetime,
+	c_datetime_default datetime default current_timestamp,
+	c_datetime_default_2 datetime(2) default current_timestamp(2),
+	c_timestamp timestamp,
+	c_timestamp_default timestamp default current_timestamp,
+	c_timestamp_default_3 timestamp(3) default current_timestamp(3),
+	c_date_default date default current_date,
+	c_date_default_2 date default curdate(),
+	c_varchar_default varchar(20) default "current_timestamp",
+	c_varchar_default_3 varchar(20) default "current_timestamp(3)",
+	c_varchar_default_on_update datetime default current_timestamp on update current_timestamp,
+	c_varchar_default_on_update_fsp datetime(3) default current_timestamp(3) on update current_timestamp(3),
+	c_varchar_default_with_case varchar(20) default "cUrrent_tImestamp"
+);
+SELECT column_name, column_default, extra
+	FROM information_schema.COLUMNS
+	WHERE table_schema = "infoschema__tables" AND table_name = "default_time_table"
+	ORDER BY column_name;
+
+# TestColumnStatistics
+select * from information_schema.column_statistics;
+
+# TestIssue18845
+drop user if EXISTS 'user18845'@'localhost';
+CREATE USER 'user18845'@'localhost';
+connect (conn1, localhost, user18845,,information_schema);
+connection conn1;
+-- replace_column 1 1
+select count(*) from information_schema.columns;
+disconnect conn1;
+connection default;
+
+# TestStmtSummaryErrorCount
+set global tidb_enable_stmt_summary = 0;
+set global tidb_enable_stmt_summary = 1;
+drop table if exists stmt_summary_test;
+create table stmt_summary_test(id int primary key);
+insert into stmt_summary_test values(1);
+-- error 1062
+insert into stmt_summary_test values(1);
+select exec_count, sum_errors, sum_warnings from information_schema.statements_summary where digest_text like "insert into `stmt_summary_test`%";
+insert ignore into stmt_summary_test values(1);
+select exec_count, sum_errors, sum_warnings from information_schema.statements_summary where digest_text like "insert ignore into `stmt_summary_test`%";
+set global tidb_enable_stmt_summary = default;
+
+# TestStmtSummaryPreparedStatements
+set global tidb_enable_stmt_summary = 0;
+set global tidb_enable_stmt_summary = 1;
+prepare stmt from 'select ?';
+set @number=1;
+execute stmt using @number;
+select exec_count
+		from information_schema.statements_summary
+		where digest_text like "prepare%";
+select exec_count
+		from information_schema.statements_summary
+		where digest_text like "select ?";
+set global tidb_enable_stmt_summary = default;
+
+# TestStmtSummarySensitiveQuery
+set global tidb_enable_stmt_summary = 0;
+set global tidb_enable_stmt_summary = 1;
+drop user if exists user_sensitive;
+create user user_sensitive identified by '123456789';
+alter user 'user_sensitive'@'%' identified by 'abcdefg';
+set password for 'user_sensitive'@'%' = 'xyzuvw';
+select query_sample_text from `information_schema`.`STATEMENTS_SUMMARY` where query_sample_text like '%user_sensitive%' and (query_sample_text like 'set password%' or query_sample_text like 'create user%' or query_sample_text like 'alter user%') order by query_sample_text;
+set global tidb_enable_stmt_summary = default;
+
+# TestStmtSummaryTableOther
+set global tidb_stmt_summary_refresh_interval=1800;
+set global tidb_enable_stmt_summary=0;
+set global tidb_enable_stmt_summary=1;
+set global tidb_stmt_summary_max_stmt_count=1;
+begin;
+show tables;
+SELECT DIGEST_TEXT, DIGEST FROM `INFORMATION_SCHEMA`.`STATEMENTS_SUMMARY`;
+SELECT SCHEMA_NAME FROM `INFORMATION_SCHEMA`.`STATEMENTS_SUMMARY`;
+commit;
+set global tidb_stmt_summary_max_stmt_count=default;
+set global tidb_stmt_summary_refresh_interval=default;
+set global tidb_enable_stmt_summary = default;
+
+# TestStmtSummaryHistoryTableOther
+set global tidb_stmt_summary_max_stmt_count = 1;
+set global tidb_stmt_summary_refresh_interval = 9999;
+set global tidb_enable_stmt_summary = 0;
+set global tidb_enable_stmt_summary = 1;
+set global tidb_stmt_summary_max_stmt_count=1;
+begin;
+show tables;
+SELECT DIGEST_TEXT, DIGEST FROM `INFORMATION_SCHEMA`.`STATEMENTS_SUMMARY_HISTORY`;
+SELECT SCHEMA_NAME FROM `INFORMATION_SCHEMA`.`STATEMENTS_SUMMARY_HISTORY`;
+commit;
+set global tidb_stmt_summary_refresh_interval = default;
+set global tidb_stmt_summary_max_stmt_count = default;
+set global tidb_enable_stmt_summary = default;
+
+# TestPerformanceSchemaforPlanCache
+set global tidb_enable_stmt_summary = 0;
+set global tidb_enable_stmt_summary = 1;
+drop table if exists t;
+create table t(a int);
+prepare stmt from 'select * from t';
+execute stmt;
+select plan_cache_hits, plan_in_cache from information_schema.statements_summary where digest_text='select * from `t`';
+execute stmt;
+execute stmt;
+execute stmt;
+select plan_cache_hits, plan_in_cache from information_schema.statements_summary where digest_text='select * from `t`';
+set global tidb_enable_stmt_summary = default;
+
+# TestInfoSchemaDeadlockPrivilege
+drop user if exists 'testuser'@'localhost', 'testuser2'@'localhost';
+create user 'testuser'@'localhost';
+create user 'testuser2'@'localhost';
+grant process on *.* to 'testuser2'@'localhost';
+connect (conn1, localhost, testuser,,information_schema);
+connect (conn2, localhost, testuser2,,information_schema);
+connection conn1;
+-- error 1227
+select * from information_schema.deadlocks;
+connection conn2;
+select * from information_schema.deadlocks;
+disconnect conn2;
+disconnect conn1;
+connection default;
+
+# TestReferentialConstraints
+drop table if exists t1, t2;
+CREATE TABLE t1 (id INT NOT NULL PRIMARY KEY);
+CREATE TABLE t2 (id INT NOT NULL PRIMARY KEY, t1_id INT DEFAULT NULL, INDEX (t1_id), CONSTRAINT `fk_to_t1` FOREIGN KEY (`t1_id`) REFERENCES `t1` (`id`));
+SELECT * FROM information_schema.referential_constraints WHERE table_name='t2' and CONSTRAINT_SCHEMA='infoschema__tables';
+
+# TestVariablesInfo
+use information_schema;
+SET GLOBAL innodb_compression_level = 8;
+SELECT * FROM variables_info WHERE variable_name = 'innodb_compression_level';
+SET GLOBAL innodb_compression_level = DEFAULT;
+SELECT * FROM variables_info WHERE variable_name = 'tidb_txn_mode';
+SELECT * FROM variables_info WHERE variable_name = 'max_connections' AND is_noop='NO';
+SELECT * FROM variables_info WHERE variable_name = 'tidb_checksum_table_concurrency';
+SELECT * FROM variables_info WHERE variable_name = 'tidb_prepared_plan_cache_memory_guard_ratio';
+SELECT * FROM variables_info WHERE variable_name = 'tidb_metric_query_step';
+use infoschema__tables;
+
+# TestTableConstraintsContainForeignKeys
+# https://github.com/pingcap/tidb/issues/28918
+drop table if exists t1, t2;
+CREATE TABLE `t1` (`id` int(11) NOT NULL AUTO_INCREMENT, `name` varchar(25) DEFAULT NULL, PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+CREATE TABLE `t2` (`id` int(11) NOT NULL AUTO_INCREMENT, `t1_id` int(11) DEFAULT NULL,	PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,	CONSTRAINT `fk_t2_t1` FOREIGN KEY (`t1_id`) REFERENCES `t1` (`id`)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+SELECT *  FROM INFORMATION_SCHEMA.table_constraints WHERE constraint_schema = 'infoschema__tables' AND table_name = 't2';
+SELECT *  FROM INFORMATION_SCHEMA.table_constraints WHERE constraint_schema = 'infoschema__tables' AND table_name = 't1';
+
+# TestCheckConstraints
+drop table if exists t1, t2;
+SET GLOBAL tidb_enable_check_constraint = ON;
+CREATE TABLE t1 (id INT PRIMARY KEY, CHECK (id<10));
+SELECT * FROM information_schema.CHECK_CONSTRAINTS where CONSTRAINT_NAME = 't1_chk_1';
+ALTER TABLE t1 DROP CONSTRAINT t1_chk_1;
+SELECT * FROM information_schema.CHECK_CONSTRAINTS where CONSTRAINT_NAME = 't1_chk_1';
+CREATE TABLE t2 (id INT PRIMARY KEY, CHECK (id<20));
+SELECT * FROM information_schema.CHECK_CONSTRAINTS where CONSTRAINT_NAME = 't2_chk_1';
+DROP TABLE t2;
+SELECT * FROM information_schema.CHECK_CONSTRAINTS where CONSTRAINT_NAME = 't2_chk_1';
+SET GLOBAL tidb_enable_check_constraint = default;
+
+# TestTiDBCheckConstraints
+drop table if exists t1, t2;
+SET GLOBAL tidb_enable_check_constraint = ON;
+CREATE TABLE t1 (id INT PRIMARY KEY, CHECK (id<10));
+SELECT CONSTRAINT_SCHEMA, CONSTRAINT_NAME, CHECK_CLAUSE, TABLE_NAME FROM information_schema.TIDB_CHECK_CONSTRAINTS where CONSTRAINT_NAME = 't1_chk_1';
+ALTER TABLE t1 DROP CONSTRAINT t1_chk_1;
+SELECT CONSTRAINT_SCHEMA, CONSTRAINT_NAME, CHECK_CLAUSE, TABLE_NAME FROM information_schema.TIDB_CHECK_CONSTRAINTS where CONSTRAINT_NAME = 't1_chk_1';
+CREATE TABLE t2 (id INT PRIMARY KEY, CHECK (id<20));
+SELECT CONSTRAINT_SCHEMA, CONSTRAINT_NAME, CHECK_CLAUSE, TABLE_NAME FROM information_schema.TIDB_CHECK_CONSTRAINTS where CONSTRAINT_NAME = 't2_chk_1';
+DROP TABLE t2;
+SELECT CONSTRAINT_SCHEMA, CONSTRAINT_NAME, CHECK_CLAUSE, TABLE_NAME FROM information_schema.TIDB_CHECK_CONSTRAINTS where CONSTRAINT_NAME = 't2_chk_1';
+SET GLOBAL tidb_enable_check_constraint = default;

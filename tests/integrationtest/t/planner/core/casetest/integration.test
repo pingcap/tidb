@@ -1,0 +1,731 @@
+# TestAggColumnPrune
+set tidb_cost_model_version=2;
+drop table if exists t;
+create table t(a int);
+insert into t values(1),(2);
+select count(1) from t join (select count(1) from t where false) as tmp;
+select count(1) from t join (select max(a) from t where false) as tmp;
+select count(1) from t join (select min(a) from t where false) as tmp;
+select count(1) from t join (select sum(a) from t where false) as tmp;
+select count(1) from t join (select avg(a) from t where false) as tmp;
+select count(1) from t join (select count(1) from t where false group by a) as tmp;
+select count(1) from t join (select max(a) from t where false group by a) as tmp;
+select count(1) from t join (select min(a) from t where false group by a) as tmp;
+select count(1) from t join (select sum(a) from t where false group by a) as tmp;
+select count(1) from t join (select avg(a) from t where false group by a) as tmp;
+SELECT avg(2) FROM(SELECT min(c) FROM t JOIN(SELECT 1 c) d ORDER BY a) e;
+
+# TestIsFromUnixtimeNullRejective
+set tidb_cost_model_version=2;
+drop table if exists t;
+create table t(a bigint, b bigint);
+explain format = 'brief' select * from t t1 left join t t2 on t1.a=t2.a where from_unixtime(t2.b);
+
+# TestSimplifyOuterJoinWithCast
+set tidb_cost_model_version=2;
+drop table if exists t;
+create table t(a int not null, b datetime default null);
+explain format = 'brief' select * from t t1 left join t t2 on t1.a = t2.a where cast(t1.b as date) >= '2019-01-01';
+
+# TestPartitionTableStats
+set @@tidb_partition_prune_mode='static';
+set tidb_opt_limit_push_down_threshold=0;
+drop table if exists t;
+create table t(a int, b int)partition by range columns(a)(partition p0 values less than (10), partition p1 values less than(20), partition p2 values less than(30));
+insert into t values(21, 1), (22, 2), (23, 3), (24, 4), (15, 5);
+analyze table t;
+explain format = 'brief' select * from t order by a;
+select * from t order by a;
+explain format = 'brief' select * from t order by a limit 3;
+select * from t order by a limit 3;
+set tidb_opt_limit_push_down_threshold=default;
+
+# TestMaxMinEliminate
+set tidb_cost_model_version=2;
+drop table if exists t;
+create table t(a int primary key);
+set tidb_enable_clustered_index='ON';
+create table cluster_index_t(a int, b int, c int, primary key (a, b));
+explain format = 'brief' (select max(a) from t) union (select min(a) from t);
+explain format = 'brief' select min(a), max(a) from cluster_index_t;
+explain format = 'brief' select min(b), max(b) from cluster_index_t where a = 1;
+explain format = 'brief' select min(a), max(a) from cluster_index_t where b = 1;
+explain format = 'brief' select min(b), max(b) from cluster_index_t where b = 1;
+set tidb_enable_clustered_index=DEFAULT;
+
+# TestSubqueryWithTopN
+set tidb_cost_model_version=2;
+drop table if exists t;
+create table t(a int, b int);
+desc format = 'brief' select t1.b from t t1 where t1.b in (select t2.a from t t2 order by t1.a+t2.a limit 1);
+desc format = 'brief' select t1.a from t t1 order by (t1.b = 1 and exists (select 1 from t t2 where t1.b = t2.b)) limit 1;
+desc format = 'brief' select * from (select b+b as x from t) t1, t t2 where t1.x=t2.b order by t1.x limit 1;
+
+# TestApproxPercentile
+drop table if exists t;
+create table t(a int, b int);
+insert into t values(1, 1), (2, 1), (3, 2), (4, 2), (5, 2);
+explain select approx_percentile(a, 50) from t;
+select approx_percentile(a, 50) from t;
+explain select approx_percentile(a, 10) from t;
+select approx_percentile(a, 10) from t;
+explain select approx_percentile(a, 10+70) from t;
+select approx_percentile(a, 10+70) from t;
+explain select approx_percentile(a, 10*10) from t;
+select approx_percentile(a, 10*10) from t;
+explain select approx_percentile(a, 50) from t group by b order by b;
+select approx_percentile(a, 50) from t group by b order by b;
+
+# TestStreamAggProp
+drop table if exists t;
+create table t(a int);
+insert into t values(1),(1),(2);
+explain format = 'brief' select /*+ stream_agg() */ count(*) c from t group by a order by c limit 1;
+select /*+ stream_agg() */ count(*) c from t group by a order by c limit 1;
+explain format = 'brief' select /*+ stream_agg() */ count(*) c from t group by a order by c;
+select /*+ stream_agg() */ count(*) c from t group by a order by c;
+explain format = 'brief' select /*+ stream_agg() */ count(*) c from t group by a order by a limit 1;
+select /*+ stream_agg() */ count(*) c from t group by a order by a limit 1;
+explain format = 'brief' select /*+ stream_agg() */ count(*) c from t group by a order by a;
+select /*+ stream_agg() */ count(*) c from t group by a order by a;
+
+# TestIssue20710
+drop table if exists t;
+drop table if exists s;
+create table t(a int, b int);
+create table s(a int, b int, index(a));
+insert into t values(1,1),(1,2),(2,2);
+insert into s values(1,1),(2,2),(2,1);
+explain format = 'brief' select /*+ inl_join(s) */ * from t join s on t.a=s.a and t.b = s.b;
+explain format = 'brief' select /*+ inl_join(s) */ * from t join s on t.a=s.a and t.b = s.a;
+explain format = 'brief' select /*+ inl_join(s) */ * from t join s on t.a=s.a and t.a = s.b;
+explain format = 'brief' select /*+ inl_hash_join(s) */ * from t join s on t.a=s.a and t.b = s.b;
+explain format = 'brief' select /*+ inl_hash_join(s) */ * from t join s on t.a=s.a and t.b = s.a;
+explain format = 'brief' select /*+ inl_hash_join(s) */ * from t join s on t.a=s.a and t.a = s.b;
+
+# TestIssue23887
+drop table if exists t;
+create table t(a int, b int);
+insert into t values(1, 2), (3, 4);
+explain format = 'brief' select (2) in (select b from t) from (select t.a < (select t.a from t t1 limit 1) from t) t;
+select (2) in (select b from t) from (select t.a < (select t.a from t t1 limit 1) from t) t;
+drop table if exists t1;
+create table t1 (c1 int primary key, c2 int, c3 int, index c2 (c2));
+select count(1) from (select count(1) from (select * from t1 where c3 = 100) k) k2;
+
+# TestReorderSimplifiedOuterJoins
+set tidb_cost_model_version=2;
+drop table if exists t1,t2,t3;
+create table t1 (pk char(32) primary key nonclustered, col1 char(32), col2 varchar(40), col3 char(32), key (col1), key (col3), key (col2,col3), key (col1,col3));
+create table t2 (pk char(32) primary key nonclustered, col1 varchar(100));
+create table t3 (pk char(32) primary key nonclustered, keycol varchar(100), pad1 tinyint(1) default null, pad2 varchar(40), key (keycol,pad1,pad2));
+explain format = 'brief' SELECT t1.pk FROM t1 INNER JOIN t2 ON t1.col1 = t2.pk INNER JOIN t3 ON t1.col3 = t3.pk WHERE t2.col1 IN ('a' , 'b') AND t3.keycol = 'c' AND t1.col2 = 'a' AND t1.col1 != 'abcdef' AND t1.col1 != 'aaaaaa';
+explain format = 'brief' SELECT t1.pk FROM t1 LEFT JOIN t2 ON t1.col1 = t2.pk LEFT JOIN t3 ON t1.col3 = t3.pk WHERE t2.col1 IN ('a' , 'b') AND t3.keycol = 'c' AND t1.col2 = 'a' AND t1.col1 != 'abcdef' AND t1.col1 != 'aaaaaa';
+
+# TestIsMatchProp
+drop table if exists t1, t2;
+create table t1(a int, b int, c int, d int, index idx_a_b_c(a, b, c));
+create table t2(a int, b int, c int, d int, index idx_a_b_c_d(a, b, c, d));
+explain format = 'brief' select a, b, c from t1 where a > 3 and b = 4 order by a, c;
+explain format = 'brief' select * from t2 where a = 1 and c = 2 order by b, d;
+explain format = 'brief' select a, b, c from t1 where (a = 1 and b = 1 and c = 1) or (a = 1 and b = 1 and c = 2) order by c;
+explain format = 'brief' select a, b, c from t1 where (a = 1 and b = 1 and c < 3) or (a = 1 and b = 1 and c > 6) order by c;
+explain format = 'brief' select * from t2 where ((a = 1 and b = 1 and d < 3) or (a = 1 and b = 1 and d > 6)) and c = 3 order by d;
+
+# TestDecorrelateInnerJoinInSubquery
+drop table if exists t;
+create table t(a int not null, b int not null);
+explain format = 'brief' select * from t where exists (select 1 from t t1 join t t2 where t1.a = t2.a and t1.a = t.a);
+explain format = 'brief' select * from t where exists (select 1 from t t1 join t t2 on t1.a = t2.a and t1.a = t.a);
+explain format = 'brief' select * from t where exists (select /*+ SEMI_JOIN_REWRITE() */ 1 from t t1 join t t2 where t1.a = t2.a and t1.a = t.a);
+explain format = 'brief' select * from t where exists (select /*+ SEMI_JOIN_REWRITE() */ 1 from t t1 join t t2 on t1.a = t2.a and t1.a = t.a);
+explain format = 'brief' select /*+ hash_join_build(t) */ * from t where exists (select /*+ SEMI_JOIN_REWRITE() */ 1 from t t1 join t t2 where t1.a = t2.a and t1.a = t.a);
+explain format = 'brief' select /*+ hash_join_probe(t) */ * from t where exists (select /*+ SEMI_JOIN_REWRITE() */ 1 from t t1 join t t2 where t1.a = t2.a and t1.a = t.a);
+
+# TestDecorrelateLimitInSubquery
+drop table if exists test;
+create table test(id int, value int);
+drop table if exists t;
+create table t(c int);
+insert t values(10), (8), (7), (9), (11);
+explain format = 'brief' select count(*) from test t1 where exists (select value from test t2 where t1.id = t2.id limit 1);
+explain format = 'brief' select count(*) from test t1 where exists (select value from test t2 where t1.id = t2.id);
+explain format = 'brief' select count(*) from test t1 where exists (select value from test t2 where t1.id = t2.id limit 1,2);
+explain format = 'brief' select * from t where 9 in (select c from t s where s.c < t.c limit 3);
+
+# TestConvertRangeToPoint
+drop table if exists t0;
+create table t0 (a int, b int, index(a, b));
+insert into t0 values (1, 1);
+insert into t0 values (2, 2);
+insert into t0 values (2, 2);
+insert into t0 values (2, 2);
+insert into t0 values (2, 2);
+insert into t0 values (2, 2);
+insert into t0 values (3, 3);
+drop table if exists t1;
+create table t1 (a int, b int, c int, index(a, b, c));
+drop table if exists t2;
+create table t2 (a float, b float, index(a, b));
+drop table if exists t3;
+create table t3 (a char(10), b char(10), c char(10), index(a, b, c));
+explain format = 'brief' select * from t0 where a > 1 and a < 3 order by b limit 2;
+explain format = 'brief' select * from t1 where a >= 2 and a <= 2 and b = 2 and c > 2;
+explain format = 'brief' select * from t2 where a >= 2.5 and a <= 2.5 order by b limit 2;
+explain format = 'brief' select * from t3 where a >= 'a' and a <= 'a' and b = 'b' and c > 'c';
+
+# TestIssue22105
+drop table if exists t1;
+CREATE TABLE t1 (
+  key1 int(11) NOT NULL,
+  key2 int(11) NOT NULL,
+  key3 int(11) NOT NULL,
+  key4 int(11) NOT NULL,
+  key5 int(11) DEFAULT NULL,
+  key6 int(11) DEFAULT NULL,
+  key7 int(11) NOT NULL,
+  key8 int(11) NOT NULL,
+  KEY i1 (key1),
+  KEY i2 (key2),
+  KEY i3 (key3),
+  KEY i4 (key4),
+  KEY i5 (key5),
+  KEY i6 (key6)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+explain format = 'brief' SELECT /*+ use_index_merge(t1)*/ COUNT(*) FROM t1 WHERE (key4=42 AND key6 IS NOT NULL) OR (key1=4 AND key3=6);
+
+# TestRegardNULLAsPoint
+drop table if exists tpk;
+create table tuk (a int, b int, c int, unique key (a, b, c));
+create table tik (a int, b int, c int, key (a, b, c));
+insert into tuk values (NULL, NULL, NULL);
+insert into tik values (NULL, NULL, NULL);
+insert into tuk values (NULL, NULL, NULL);
+insert into tik values (NULL, NULL, NULL);
+insert into tuk values (NULL, NULL, 1);
+insert into tik values (NULL, NULL, 1);
+insert into tuk values (NULL, NULL, 1);
+insert into tik values (NULL, NULL, 1);
+insert into tuk values (NULL, 1, NULL);
+insert into tik values (NULL, 1, NULL);
+insert into tuk values (NULL, 1, NULL);
+insert into tik values (NULL, 1, NULL);
+insert into tuk values (NULL, 1, 1);
+insert into tik values (NULL, 1, 1);
+insert into tuk values (NULL, 1, 1);
+insert into tik values (NULL, 1, 1);
+insert into tuk values (1, NULL, NULL);
+insert into tik values (1, NULL, NULL);
+insert into tuk values (1, NULL, NULL);
+insert into tik values (1, NULL, NULL);
+insert into tuk values (1, NULL, 1);
+insert into tik values (1, NULL, 1);
+insert into tuk values (1, NULL, 1);
+insert into tik values (1, NULL, 1);
+insert into tuk values (1, 1, NULL);
+insert into tik values (1, 1, NULL);
+insert into tuk values (1, 1, NULL);
+insert into tik values (1, 1, NULL);
+insert into tuk values (1, 1, 1);
+insert into tik values (1, 1, 1);
+set @@session.tidb_regard_null_as_point=true;
+explain select * from tuk where a<=>null and b=1;
+select * from tuk where a<=>null and b=1;
+set @@session.tidb_regard_null_as_point=false;
+explain select * from tuk where a<=>null and b=1;
+select * from tuk where a<=>null and b=1;
+set @@session.tidb_regard_null_as_point=true;
+explain select * from tik where a<=>null and b=1;
+select * from tik where a<=>null and b=1;
+set @@session.tidb_regard_null_as_point=false;
+explain select * from tik where a<=>null and b=1;
+select * from tik where a<=>null and b=1;
+set @@session.tidb_regard_null_as_point=true;
+explain select * from tuk where a<=>null and b>0 and b<2;
+select * from tuk where a<=>null and b>0 and b<2;
+set @@session.tidb_regard_null_as_point=false;
+explain select * from tuk where a<=>null and b>0 and b<2;
+select * from tuk where a<=>null and b>0 and b<2;
+set @@session.tidb_regard_null_as_point=true;
+explain select * from tik where a<=>null and b>0 and b<2;
+select * from tik where a<=>null and b>0 and b<2;
+set @@session.tidb_regard_null_as_point=false;
+explain select * from tik where a<=>null and b>0 and b<2;
+select * from tik where a<=>null and b>0 and b<2;
+set @@session.tidb_regard_null_as_point=true;
+explain select * from tuk where a<=>null and b>=1 and b<2;
+select * from tuk where a<=>null and b>=1 and b<2;
+set @@session.tidb_regard_null_as_point=false;
+explain select * from tuk where a<=>null and b>=1 and b<2;
+select * from tuk where a<=>null and b>=1 and b<2;
+set @@session.tidb_regard_null_as_point=true;
+explain select * from tik where a<=>null and b>=1 and b<2;
+select * from tik where a<=>null and b>=1 and b<2;
+set @@session.tidb_regard_null_as_point=false;
+explain select * from tik where a<=>null and b>=1 and b<2;
+select * from tik where a<=>null and b>=1 and b<2;
+set @@session.tidb_regard_null_as_point=true;
+explain select * from tuk where a<=>null and b=1 and c=1;
+select * from tuk where a<=>null and b=1 and c=1;
+set @@session.tidb_regard_null_as_point=false;
+explain select * from tuk where a<=>null and b=1 and c=1;
+select * from tuk where a<=>null and b=1 and c=1;
+set @@session.tidb_regard_null_as_point=true;
+explain select * from tik where a<=>null and b=1 and c=1;
+select * from tik where a<=>null and b=1 and c=1;
+set @@session.tidb_regard_null_as_point=false;
+explain select * from tik where a<=>null and b=1 and c=1;
+select * from tik where a<=>null and b=1 and c=1;
+set @@session.tidb_regard_null_as_point=true;
+explain select * from tuk where a=1 and b<=>null and c=1;
+select * from tuk where a=1 and b<=>null and c=1;
+set @@session.tidb_regard_null_as_point=false;
+explain select * from tuk where a=1 and b<=>null and c=1;
+select * from tuk where a=1 and b<=>null and c=1;
+set @@session.tidb_regard_null_as_point=true;
+explain select * from tik where a=1 and b<=>null and c=1;
+select * from tik where a=1 and b<=>null and c=1;
+set @@session.tidb_regard_null_as_point=false;
+explain select * from tik where a=1 and b<=>null and c=1;
+select * from tik where a=1 and b<=>null and c=1;
+set @@session.tidb_regard_null_as_point=true;
+explain select * from tuk where a<=>null and b<=>null and c=1;
+select * from tuk where a<=>null and b<=>null and c=1;
+set @@session.tidb_regard_null_as_point=false;
+explain select * from tuk where a<=>null and b<=>null and c=1;
+select * from tuk where a<=>null and b<=>null and c=1;
+set @@session.tidb_regard_null_as_point=true;
+explain select * from tik where a<=>null and b<=>null and c=1;
+select * from tik where a<=>null and b<=>null and c=1;
+set @@session.tidb_regard_null_as_point=false;
+explain select * from tik where a<=>null and b<=>null and c=1;
+select * from tik where a<=>null and b<=>null and c=1;
+set @@session.tidb_regard_null_as_point=true;
+explain select * from tuk where a<=>null and b<=>null and c<=>null;
+select * from tuk where a<=>null and b<=>null and c<=>null;
+set @@session.tidb_regard_null_as_point=false;
+explain select * from tuk where a<=>null and b<=>null and c<=>null;
+select * from tuk where a<=>null and b<=>null and c<=>null;
+set @@session.tidb_regard_null_as_point=true;
+explain select * from tik where a<=>null and b<=>null and c<=>null;
+select * from tik where a<=>null and b<=>null and c<=>null;
+set @@session.tidb_regard_null_as_point=false;
+explain select * from tik where a<=>null and b<=>null and c<=>null;
+select * from tik where a<=>null and b<=>null and c<=>null;
+set @@session.tidb_regard_null_as_point=default;
+
+# TestIssue30200
+drop table if exists t1;
+create table t1(c1 varchar(100), c2 varchar(100), key(c1), key(c2), c3 varchar(100));
+insert into t1 values('ab', '10', '10');
+drop table if exists tt1;
+create table tt1(c1 varchar(100), c2 varchar(100), c3 varchar(100), c4 varchar(100), key idx_0(c1), key idx_1(c2, c3));
+insert into tt1 values('ab', '10', '10', '10');
+drop table if exists tt2;
+create table tt2 (c1 int , pk int, primary key( pk ) , unique key( c1));
+insert into tt2 values(-3896405, -1), (-2, 1), (-1, -2);
+drop table if exists tt3;
+create table tt3(c1 int, c2 int, c3 int as (c1 + c2), key(c1), key(c2), key(c3));
+insert into tt3(c1, c2) values(1, 1);
+select @@tidb_enable_index_merge;
+set tidb_enable_index_merge = on;
+explain format=brief select /*+ use_index_merge(t1) */ 1 from t1 where c1 = 'de' or c2 = '10' and from_base64(to_base64(c1)) = 'ab';
+select /*+ use_index_merge(t1) */ 1 from t1 where c1 = 'de' or c2 = '10' and from_base64(to_base64(c1)) = 'ab';
+explain format=brief select /*+ use_index_merge(t1) */ 1 from t1 where c1 = 'ab' or c2 = '10' and char_length(left(c1, 10)) = 10;
+select /*+ use_index_merge(t1) */ 1 from t1 where c1 = 'ab' or c2 = '10' and char_length(left(c1, 10)) = 10;
+explain format=brief select /*+ use_index_merge(tt1) */ 1 from tt1 where c1 = 'de' or c2 = '10' and from_base64(to_base64(c3)) = '10';
+select /*+ use_index_merge(tt1) */ 1 from tt1 where c1 = 'de' or c2 = '10' and from_base64(to_base64(c3)) = '10';
+explain format=brief select /*+ use_index_merge( tt2 ) */ 1 from tt2 where tt2.c1 in (-3896405) or tt2.pk in (1, 53330) and to_base64(left(pk, 5));
+select /*+ use_index_merge( tt2 ) */ 1 from tt2 where tt2.c1 in (-3896405) or tt2.pk in (1, 53330) and to_base64(left(pk, 5));
+explain format=brief select /*+ use_index_merge(tt3) */ 1 from tt3 where c1 < -10 or c2 < 10 and reverse(c3) = '2';
+select /*+ use_index_merge(tt3) */ 1 from tt3 where c1 < -10 or c2 < 10 and reverse(c3) = '2';
+explain format=brief select 1 from t1 where c1 = 'de' or c2 = '10' and from_base64(to_base64(c1)) = 'ab';
+select 1 from t1 where c1 = 'de' or c2 = '10' and from_base64(to_base64(c1)) = 'ab';
+set tidb_enable_index_merge = 1;
+set tidb_enable_index_merge = default;
+
+# TestMultiColMaxOneRow
+drop table if exists t1,t2;
+create table t1(a int);
+create table t2(a int, b int, c int, primary key(a,b) nonclustered);
+explain format = 'brief' select (select c from t2 where t2.a = t1.a and t2.b = 1) from t1;
+explain format = 'brief' select (select c from t2 where t2.a = t1.a and (t2.b = 1 or t2.b = 2)) from t1;
+
+# TestSequenceAsDataSource
+set tidb_cost_model_version=2;
+drop sequence if exists s1, s2;
+create sequence s1;
+create sequence s2;
+explain format = 'brief' select 1 from s1;
+explain format = 'brief' select count(1) from s1;
+explain format = 'brief' select count(*) from s1;
+explain format = 'brief' select sum(1) from s1;
+explain format = 'brief' select count(1) as cnt from s1 union select count(1) as cnt from s2;
+
+# TestOutputSkylinePruningInfo
+set tidb_cost_model_version=2;
+drop table if exists t;
+create table t(a int, b int, c int, d int, e int, f int, g int, primary key (a), unique key c_d_e (c, d, e), unique key f (f), unique key f_g (f, g), key g (g));
+set @@tidb_enable_chunk_rpc = on;
+--enable_warnings
+explain format = 'verbose' select * from t where a > 1 order by f;
+explain format = 'verbose' select * from t where f > 1;
+explain format = 'verbose' select f from t where f > 1;
+explain format = 'verbose' select * from t where f > 3 and g = 5;
+explain format = 'verbose' select * from t where g = 5 order by f;
+explain format = 'verbose' select * from t where d = 3 order by c, e;
+--disable_warnings
+set @@tidb_enable_chunk_rpc = default;
+
+# TestPreferRangeScanForUnsignedIntHandle
+set tidb_cost_model_version=2;
+drop table if exists t;
+create table t(a int unsigned primary key, b int, c int, index idx_b(b));
+insert into t values (1,2,3), (4,5,6), (7,8,9), (10,11,12), (13,14,15);
+analyze table t;
+set @@tidb_enable_chunk_rpc = on;
+set tidb_opt_prefer_range_scan = 0;
+--enable_warnings
+explain format = 'verbose' select * from t where b > 5;
+explain format = 'verbose' select * from t where b = 6 order by a limit 1;
+explain format = 'verbose' select * from t where b = 6 limit 1;
+set tidb_opt_prefer_range_scan = 1;
+explain format = 'verbose' select * from t where b > 5;
+explain format = 'verbose' select * from t where b = 6 order by a limit 1;
+explain format = 'verbose' select * from t where b = 6 limit 1;
+--disable_warnings
+set @@tidb_enable_chunk_rpc = default;
+set tidb_opt_prefer_range_scan = default;
+
+# TestIssue27083
+drop table if exists t;
+create table t(a int primary key, b int, c int, index idx_b(b));
+insert into t values (1,2,3), (4,5,6), (7,8,9), (10, 11, 12), (13,14,15), (16, 17, 18);
+analyze table t;
+explain format = 'brief' select * from t use index (idx_b) where b = 2 limit 1;
+
+# TestGroupBySetVar
+drop table if exists t1;
+create table t1(c1 int);
+insert into t1 values(1), (2), (3), (4), (5), (6);
+select floor(dt.rn/2) rownum, count(c1) from (select @rownum := @rownum + 1 rn, c1 from (select @rownum := -1) drn, t1) dt group by floor(dt.rn/2) order by rownum;
+create table ta(a int, b int);
+set sql_mode='';
+explain format = 'brief' select floor(dt.rn/2) rownum, count(c1) from (select @rownum := @rownum + 1 rn, c1 from (select @rownum := -1) drn, t1) dt group by floor(dt.rn/2) order by rownum;
+explain format = 'brief' select @n:=@n+1 as e from ta group by e;
+explain format = 'brief' select @n:=@n+a as e from ta group by e;
+explain format = 'brief' select * from (select @n:=@n+1 as e from ta) tt group by e;
+explain format = 'brief' select * from (select @n:=@n+a as e from ta) tt group by e;
+explain format = 'brief' select a from ta group by @n:=@n+1;
+explain format = 'brief' select a from ta group by @n:=@n+a;
+set sql_mode=default;
+
+# TestDowncastPointGetOrRangeScan
+drop table if exists t1, t2, t3, t4, t5, t6, t7, t8;
+create table t1 (a bigint key);
+create table t2 (a int key);
+create definer=`root`@`127.0.0.1` view v1 as (select a from t1) union (select a from t2);
+create table t3 (a varchar(100) key);
+create table t4 (a varchar(10) key);
+create definer=`root`@`127.0.0.1` view v2 as (select a from t3) union (select a from t4);
+create table t5 (a char(100) key);
+create table t6 (a char(10) key);
+create definer=`root`@`127.0.0.1` view v3 as (select a from t5) union (select a from t6);
+create table t7 (a varchar(100) key);
+create table t8 (a int key);
+create definer=`root`@`127.0.0.1` view v4 as (select a from t7) union (select a from t8);
+explain format='brief' select * from v1 where a = 1; -- the condition should be downcast through both side and go get point;
+select * from v1 where a = 1; -- the condition should be downcast through both side and go get point;
+explain format='brief' select * from v1 where a = '1test'; -- the condition should be downcast through both side and go get point too;
+select * from v1 where a = '1test'; -- the condition should be downcast through both side and go get point too;
+explain format='brief' select * from v1 where a > 1; -- the condition should be downcast through both side and go range scan;
+select * from v1 where a > 1; -- the condition should be downcast through both side and go range scan;
+explain format='brief' select * from v2 where a = 'test';
+select * from v2 where a = 'test';
+explain format='brief' select * from v2 where a = 1;
+select * from v2 where a = 1;
+explain format='brief' select * from v2 where a > 'test';
+select * from v2 where a > 'test';
+explain format='brief' select * from v3 where a = 'test' -- the condition shouldn't be downcast through both side and go get point;
+select * from v3 where a = 'test' -- the condition shouldn't be downcast through both side and go get point;
+explain format='brief' select * from v3 where a > 'test' -- the condition shouldn't be downcast through both side and go get point too;
+select * from v3 where a > 'test' -- the condition shouldn't be downcast through both side and go get point too;
+explain format='brief' select * from v4 where a = 'test' -- diff column union may have precision loss couldn't downcast the condition to get the range;
+select * from v4 where a = 'test' -- diff column union may have precision loss couldn't downcast the condition to get the range;
+explain format='brief' select * from v4 where a > 'test' -- diff column union may have precision loss couldn't downcast the condition to get the range;
+select * from v4 where a > 'test' -- diff column union may have precision loss couldn't downcast the condition to get the range;
+
+# TestIssue24095
+set tidb_cost_model_version=2;
+drop table if exists t;
+create table t (id int, value decimal(10,5));
+desc format = 'brief' select count(*) from t join (select t.id, t.value v1 from t join t t1 on t.id = t1.id order by t.value limit 1) v on v.id = t.id and v.v1 = t.value;
+explain format = 'brief' select count(*) from t join (select t.id, t.value v1 from t join t t1 on t.id = t1.id order by t.value limit 1) v on v.id = t.id and v.v1 = t.value;
+
+# TestFixControl44262
+set tidb_partition_prune_mode='dynamic';
+drop table if exists t1, t2_part;
+create table t1 (a int, b int);
+create table t2_part (a int, b int, key(a)) partition by hash(a) partitions 4;
+set @@tidb_skip_missing_partition_stats = off;
+set @@tidb_opt_fix_control = "";
+--enable_warnings
+explain select /*+ TIDB_INLJ(t2_part@sel_2) */ * from t1 where t1.b<10 and not exists (select 1 from t2_part where t1.a=t2_part.a and t2_part.b<20);
+--disable_warnings
+set @@tidb_opt_fix_control = "44262:ON";
+--enable_warnings
+explain select /*+ TIDB_INLJ(t2_part@sel_2) */ * from t1 where t1.b<10 and not exists (select 1 from t2_part where t1.a=t2_part.a and t2_part.b<20);
+--disable_warnings
+set @@tidb_opt_fix_control = "";
+set @@tidb_skip_missing_partition_stats = on;
+--enable_warnings
+explain select /*+ TIDB_INLJ(t2_part@sel_2) */ * from t1 where t1.b<10 and not exists (select 1 from t2_part where t1.a=t2_part.a and t2_part.b<20);
+--disable_warnings
+set @@tidb_skip_missing_partition_stats = default;
+
+
+# TestPartitionPruningForInExpr
+drop table if exists t;
+create table t(a int(11) not null, b int) partition by range (a) (partition p0 values less than (4), partition p1 values less than(10), partition p2 values less than maxvalue);
+insert into t values (1, 1),(10, 10),(11, 11);
+set tidb_opt_fix_control='44262:ON';
+explain format = 'brief' select * from t where a in (1, 2,'11');
+explain format = 'brief' select * from t where a in (17, null);
+explain format = 'brief' select * from t where a in (16, 'abc');
+explain format = 'brief' select * from t where a in (15, 0.12, 3.47);
+explain format = 'brief' select * from t where a in (0.12, 3.47);
+explain format = 'brief' select * from t where a in (14, floor(3.47));
+explain format = 'brief' select * from t where b in (3, 4);
+set tidb_opt_fix_control=default;
+
+
+# TestPartitionExplain
+drop table if exists pt;
+create table pt (id int, c int, key i_id(id), key i_c(c)) partition by range (c) (
+partition p0 values less than (4),
+partition p1 values less than (7),
+partition p2 values less than (10));
+set @@tidb_enable_index_merge = 1;
+set tidb_opt_fix_control='44262:ON';
+--echo ## Table reader
+explain format='brief' select * from pt where c > 10;
+explain format='brief' select * from pt where c > 8;
+explain format='brief' select * from pt where c < 2 or c >= 9;
+--echo ##  Index reader
+explain format='brief' select c from pt;
+explain format='brief' select c from pt where c > 10;
+explain format='brief' select c from pt where c > 8;
+explain format='brief' select c from pt where c < 2 or c >= 9;
+--echo ## Index Lookup
+explain format='brief' select /*+ use_index(pt, i_id) */ * from pt;
+explain format='brief' select /*+ use_index(pt, i_id) */ * from pt where id < 4 and c > 10;
+explain format='brief' select /*+ use_index(pt, i_id) */ * from pt where id < 10 and c > 8;
+explain format='brief' select /*+ use_index(pt, i_id) */ * from pt where id < 10 and c < 2 or c >= 9;
+--echo ## Partition selection
+explain format='brief' select * from pt partition (p0) where c > 8;
+explain format='brief' select c from pt partition (p0, p2) where c > 8;
+explain format='brief' select /*+ use_index(pt, i_id) */ * from pt partition (p1, p2) where c < 3 and id = 5;
+--echo ## Index Merge
+explain format='brief' select * from pt where id = 4 or c < 7;
+explain format='brief' select * from pt where id > 4 or c = 7;
+set tidb_opt_fix_control=default;
+set @@tidb_enable_index_merge = default;
+
+
+# TestIssue41957
+drop table if exists github_events;
+CREATE TABLE `github_events` (
+  `id` bigint(20) NOT NULL DEFAULT '0',
+  `type` varchar(29) NOT NULL DEFAULT 'Event',
+  `created_at` datetime NOT NULL DEFAULT '1970-01-01 00:00:00',
+  `repo_id` bigint(20) NOT NULL DEFAULT '0',
+  `repo_name` varchar(140) NOT NULL DEFAULT '',
+  `actor_id` bigint(20) NOT NULL DEFAULT '0',
+  `actor_login` varchar(40) NOT NULL DEFAULT '',
+  `language` varchar(26) NOT NULL DEFAULT '',
+  `additions` bigint(20) NOT NULL DEFAULT '0',
+  `deletions` bigint(20) NOT NULL DEFAULT '0',
+  `action` varchar(11) NOT NULL DEFAULT '',
+  `number` int(11) NOT NULL DEFAULT '0',
+  `commit_id` varchar(40) NOT NULL DEFAULT '',
+  `comment_id` bigint(20) NOT NULL DEFAULT '0',
+  `org_login` varchar(40) NOT NULL DEFAULT '',
+  `org_id` bigint(20) NOT NULL DEFAULT '0',
+  `state` varchar(6) NOT NULL DEFAULT '',
+  `closed_at` datetime NOT NULL DEFAULT '1970-01-01 00:00:00',
+  `comments` int(11) NOT NULL DEFAULT '0',
+  `pr_merged_at` datetime NOT NULL DEFAULT '1970-01-01 00:00:00',
+  `pr_merged` tinyint(1) NOT NULL DEFAULT '0',
+  `pr_changed_files` int(11) NOT NULL DEFAULT '0',
+  `pr_review_comments` int(11) NOT NULL DEFAULT '0',
+  `pr_or_issue_id` bigint(20) NOT NULL DEFAULT '0',
+  `event_day` date NOT NULL,
+  `event_month` date NOT NULL,
+  `event_year` int(11) NOT NULL,
+  `push_size` int(11) NOT NULL DEFAULT '0',
+  `push_distinct_size` int(11) NOT NULL DEFAULT '0',
+  `creator_user_login` varchar(40) NOT NULL DEFAULT '',
+  `creator_user_id` bigint(20) NOT NULL DEFAULT '0',
+  `pr_or_issue_created_at` datetime NOT NULL DEFAULT '1970-01-01 00:00:00',
+  KEY `index_github_events_on_id` (`id`),
+  KEY `index_github_events_on_created_at` (`created_at`),
+  KEY `index_github_events_on_repo_id_type_action_month_actor_login` (`repo_id`,`type`,`action`,`event_month`,`actor_login`),
+  KEY `index_ge_on_repo_id_type_action_pr_merged_created_at_add_del` (`repo_id`,`type`,`action`,`pr_merged`,`created_at`,`additions`,`deletions`),
+  KEY `index_ge_on_creator_id_type_action_merged_created_at_add_del` (`creator_user_id`,`type`,`action`,`pr_merged`,`created_at`,`additions`,`deletions`),
+  KEY `index_ge_on_actor_id_type_action_created_at_repo_id_commits` (`actor_id`,`type`,`action`,`created_at`,`repo_id`,`push_distinct_size`),
+  KEY `index_ge_on_repo_id_type_action_created_at_number_pdsize_psize` (`repo_id`,`type`,`action`,`created_at`,`number`,`push_distinct_size`,`push_size`),
+  KEY `index_ge_on_repo_id_type_action_created_at_actor_login` (`repo_id`,`type`,`action`,`created_at`,`actor_login`),
+  KEY `index_ge_on_repo_name_type` (`repo_name`,`type`),
+  KEY `index_ge_on_actor_login_type` (`actor_login`,`type`),
+  KEY `index_ge_on_org_login_type` (`org_login`,`type`),
+  KEY `index_ge_on_language` (`language`),
+  KEY `index_ge_on_org_id_type` (`org_id`,`type`),
+  KEY `index_ge_on_actor_login_lower` ((lower(`actor_login`))),
+  KEY `index_ge_on_repo_name_lower` ((lower(`repo_name`))),
+  KEY `index_ge_on_language_lower` ((lower(`language`))),
+  KEY `index_ge_on_type_action` (`type`,`action`) /*!80000 INVISIBLE */,
+  KEY `index_ge_on_repo_id_type_created_at` (`repo_id`,`type`,`created_at`),
+  KEY `index_ge_on_repo_id_created_at` (`repo_id`,`created_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY LIST COLUMNS(`type`)
+(PARTITION `push_event` VALUES IN ('PushEvent'),
+ PARTITION `create_event` VALUES IN ('CreateEvent'),
+ PARTITION `pull_request_event` VALUES IN ('PullRequestEvent'),
+ PARTITION `watch_event` VALUES IN ('WatchEvent'),
+ PARTITION `issue_comment_event` VALUES IN ('IssueCommentEvent'),
+ PARTITION `issues_event` VALUES IN ('IssuesEvent'),
+ PARTITION `delete_event` VALUES IN ('DeleteEvent'),
+ PARTITION `fork_event` VALUES IN ('ForkEvent'),
+ PARTITION `pull_request_review_comment_event` VALUES IN ('PullRequestReviewCommentEvent'),
+ PARTITION `pull_request_review_event` VALUES IN ('PullRequestReviewEvent'),
+ PARTITION `gollum_event` VALUES IN ('GollumEvent'),
+ PARTITION `release_event` VALUES IN ('ReleaseEvent'),
+ PARTITION `member_event` VALUES IN ('MemberEvent'),
+ PARTITION `commit_comment_event` VALUES IN ('CommitCommentEvent'),
+ PARTITION `public_event` VALUES IN ('PublicEvent'),
+ PARTITION `gist_event` VALUES IN ('GistEvent'),
+ PARTITION `follow_event` VALUES IN ('FollowEvent'),
+ PARTITION `event` VALUES IN ('Event'),
+ PARTITION `download_event` VALUES IN ('DownloadEvent'),
+ PARTITION `team_add_event` VALUES IN ('TeamAddEvent'),
+ PARTITION `fork_apply_event` VALUES IN ('ForkApplyEvent'));
+SELECT
+    repo_id, GROUP_CONCAT(
+      DISTINCT actor_login
+      ORDER BY cnt DESC
+      SEPARATOR ','
+    ) AS actor_logins
+FROM (
+    SELECT
+        ge.repo_id AS repo_id,
+        ge.actor_login AS actor_login,
+        COUNT(*) AS cnt
+    FROM github_events ge
+    WHERE
+        type = 'PullRequestEvent' AND action = 'opened'
+        AND (ge.created_at >= DATE_SUB(NOW(), INTERVAL 1 DAY) AND ge.created_at <= NOW())
+    GROUP BY ge.repo_id, ge.actor_login
+    ORDER BY cnt DESC
+) sub
+GROUP BY repo_id;
+
+# TestIssue42588
+drop database if exists testdb;
+create database testdb;
+use testdb;
+drop table if exists `t270`;
+CREATE TABLE `t270` (
+  `vkey` int(11) DEFAULT NULL,
+  `pkey` int(11) DEFAULT NULL,
+  `c1128` varchar(100) DEFAULT NULL,
+  `c1129` int(11) DEFAULT NULL,
+  `c1130` varchar(100) DEFAULT NULL,
+  `c1131` double DEFAULT NULL,
+  `c1132` varchar(100) DEFAULT NULL,
+  `c1133` double DEFAULT NULL,
+  `c1134` varchar(100) DEFAULT NULL,
+  `c1135` int(11) DEFAULT NULL
+);
+drop table if exists `t271`;
+CREATE TABLE `t271` (
+  `vkey` int(11) DEFAULT NULL,
+  `pkey` int(11) DEFAULT NULL,
+  `c1136` varchar(100) DEFAULT NULL,
+  `c1137` int(11) DEFAULT NULL,
+  `c1138` varchar(100) DEFAULT NULL,
+  `c1139` int(11) DEFAULT NULL,
+  `c1140` double DEFAULT NULL,
+  `c1141` int(11) DEFAULT NULL
+);
+drop table if exists `t272`;
+CREATE TABLE `t272` (
+  `vkey` int(11) DEFAULT NULL,
+  `pkey` int(11) DEFAULT NULL,
+  `c1142` int(11) DEFAULT NULL,
+  `c1143` varchar(100) DEFAULT NULL,
+  `c1144` int(11) DEFAULT NULL,
+  `c1145` int(11) DEFAULT NULL,
+  `c1146` varchar(100) DEFAULT NULL,
+  `c1147` double DEFAULT NULL,
+  `c1148` varchar(100) DEFAULT NULL,
+  `c1149` double DEFAULT NULL
+);
+CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`%` SQL SECURITY DEFINER VIEW `t273_test` (`c0`, `c1`, `c2`, `c3`, `c4`) AS SELECT AVG(37) OVER (PARTITION BY `ref_0`.`c1136` ORDER BY `ref_0`.`vkey` DESC,`ref_0`.`pkey` DESC,`ref_0`.`c1136` DESC,`ref_0`.`c1137`,`ref_0`.`c1138` DESC,`ref_0`.`c1139` DESC,`ref_0`.`c1140` DESC,`ref_0`.`c1141`) AS `c0`,COALESCE(`ref_0`.`c1137`, `ref_0`.`c1141`) AS `c1`,`ref_0`.`vkey` AS `c2`,`ref_0`.`pkey` AS `c3`,`ref_0`.`c1138` AS `c4` FROM `testdb`.`t271` AS `ref_0` WHERE EXISTS (SELECT `subq_0`.`c2` AS `c0`,`subq_0`.`c0` AS `c1`,`subq_0`.`c0` AS `c2`,`subq_0`.`c0` AS `c3`,CASE WHEN EXISTS (SELECT `ref_9`.`c1131` AS `c0`,`ref_9`.`c1131` AS `c1`,(FALSE) XOR (((-45)=(-69)) OR ((-0)>(-71))) AS `c2`,`ref_9`.`c1133` AS `c3`,`ref_9`.`c1128` AS `c4`,-0 AS `c5`,1 AS `c6`,`ref_9`.`c1132` AS `c7`,`ref_9`.`c1131` AS `c8`,`ref_9`.`c1130` AS `c9`,NULL AS `c10` FROM `testdb`.`t270` AS `ref_9` WHERE (-0)<(-8) UNION ALL SELECT `ref_0`.`c1140` AS `c0`,`ref_11`.`c1133` AS `c1`,(NULL)<(NULL) AS `c2`,`ref_0`.`c1140` AS `c3`,`ref_0`.`c1136` AS `c4`,95 AS `c5`,NOT (_UTF8MB4'mum#M' LIKE _UTF8MB4'%_U') AS `c6`,`ref_11`.`c1128` AS `c7`,`ref_11`.`c1131` AS `c8`,(SELECT `c1143` AS `c1143` FROM `testdb`.`t272` ORDER BY `c1143` LIMIT 3,1) AS `c9`,97 AS `c10` FROM `testdb`.`t270` AS `ref_11` WHERE NOT (TRUE)) THEN _UTF8MB4'xf' ELSE _UTF8MB4'>c' END LIKE _UTF8MB4'_^^' AS `c4`,`subq_0`.`c1` AS `c5`,`ref_0`.`vkey` AS `c6`,((`subq_0`.`c1`)=(SELECT `ref_12`.`c1132` AS `c0` FROM `testdb`.`t270` AS `ref_12` WHERE TRUE ORDER BY `c0` DESC LIMIT 1)) XOR ((`ref_0`.`pkey`)>=(SELECT (SELECT `vkey` AS `vkey` FROM `testdb`.`t271` ORDER BY `vkey` LIMIT 1,1) AS `c0` FROM `testdb`.`t271` AS `ref_13` WHERE (-24)<=((SELECT COUNT(`c1140`) AS `count(c1140)` FROM `testdb`.`t271`)) ORDER BY `c0` LIMIT 1)) AS `c7`,`ref_0`.`pkey` AS `c8`,`subq_0`.`c2` AS `c9`,`ref_0`.`vkey` AS `c10`,`ref_0`.`c1139` AS `c11`,TRUE AS `c12`,`subq_0`.`c0` AS `c13`,`subq_0`.`c2` AS `c14`,`subq_0`.`c2` AS `c15`,FALSE AS `c16`,CASE WHEN ((FALSE) OR ((((FALSE) XOR (((-73)<(-91)) OR (((-0) BETWEEN (-0) AND (-0)) AND ((NULL) OR ((0)>((SELECT COUNT(`c1131`) AS `count(c1131)` FROM `testdb`.`t270`))))))) AND ((-19)>(NULL))) OR (((77)<(73)) AND (NOT (((73) IN (SELECT 0 AS `c0` FROM `testdb`.`t271` AS `ref_14` WHERE (NULL) AND (NULL) EXCEPT SELECT NULL AS `c0` FROM `testdb`.`t270` AS `ref_15` WHERE (`ref_15`.`c1131`)!=(SELECT `ref_15`.`c1133` AS `c0` FROM `testdb`.`t270` AS `ref_16` WHERE _UTF8MB4'$@-X' LIKE _UTF8MB4'__%' ORDER BY `c0` DESC LIMIT 1))) IS TRUE))))) OR (NOT ((-24)<=(-43))) THEN `subq_0`.`c1` ELSE `subq_0`.`c2` END AS `c17`,`subq_0`.`c1` AS `c18`,`subq_0`.`c0` AS `c19`,`subq_0`.`c0` AS `c20`,`subq_0`.`c2` AS `c21`,`subq_0`.`c0` AS `c22`,`subq_0`.`c2` AS `c23`,`subq_0`.`c0` AS `c24`,`ref_0`.`c1141` AS `c25` FROM (SELECT DISTINCT TRUE AS `c0`,`ref_1`.`c1143` AS `c1`,`ref_1`.`c1146` AS `c2` FROM `testdb`.`t272` AS `ref_1` WHERE NOT (((`ref_0`.`c1136`)!=(SELECT `ref_2`.`c1146` AS `c0` FROM `testdb`.`t272` AS `ref_2` WHERE (62) BETWEEN ((SELECT COUNT(`c1147`) AS `count(c1147)` FROM `testdb`.`t272`)) AND (-0) ORDER BY `c0` LIMIT 1)) XOR ((-0) BETWEEN (0) AND (-0)))) AS `subq_0` WHERE (CHAR_LENGTH(CASE WHEN ((`subq_0`.`c0`) IS NOT NULL) OR ((`ref_0`.`c1138`)>(SELECT `ref_0`.`c1138` AS `c0` FROM `testdb`.`t272` AS `ref_3` WHERE FALSE ORDER BY `c0` DESC LIMIT 1)) THEN _UTF8MB4'' ELSE _UTF8MB4'tL' END)) BETWEEN (ABS(46%-11)) AND (CASE WHEN (((((`subq_0`.`c2`) IN (SELECT `ref_4`.`c1134` AS `c0` FROM `testdb`.`t270` AS `ref_4` WHERE (NULL LIKE _UTF8MB4'%Ny') OR (EXISTS (SELECT DISTINCT `ref_5`.`c1136` AS `c0`,`ref_5`.`c1140` AS `c1` FROM `testdb`.`t271` AS `ref_5` WHERE FALSE UNION ALL SELECT `ref_4`.`c1130` AS `c0`,`ref_4`.`c1131` AS `c1` FROM `testdb`.`t271` AS `ref_6` WHERE (-97) BETWEEN (73) AND (-10))) UNION ALL SELECT `ref_7`.`c1138` AS `c0` FROM `testdb`.`t271` AS `ref_7` WHERE FALSE)) IS TRUE) OR (NULL)) AND ((NULL)>=((SELECT COUNT(`c1140`) AS `count(c1140)` FROM `testdb`.`t271`)))) XOR (((`ref_0`.`vkey`) IN (SELECT `ref_8`.`c1145` AS `c0` FROM `testdb`.`t272` AS `ref_8` WHERE ((FALSE) AND (NULL)) OR ((`ref_8`.`c1144`) IS NULL))) IS TRUE) THEN 87 ELSE CASE WHEN ((`ref_0`.`c1138`) IS NULL) OR ((-22)!=(-0)) THEN 17 ELSE -67 END END)) ORDER BY `c0` DESC,`c1` DESC,`c2`,`c3`,`c4` DESC;
+select
+  (select
+      subq_1.c0 as c0
+    from
+      t273_test as ref_84
+    where exists (
+        select
+            (select
+                  ref_86.c1147 as c0
+                from
+                  t272 as ref_86
+                where (subq_1.c0) > (subq_1.c0)
+                window w0 as (partition by ref_86.c1147 order by ref_86.c1143 desc)
+                order by c0 limit 1
+            ) as c3,
+            (select
+                  subq_1.c0 as c0
+                from
+                  t273_test as ref_89
+                order by c0 limit 1) as c4
+          from
+            t271 as ref_85
+          )
+    order by c0 desc limit 1) as c1
+from
+  (select 1 as c0) as subq_1;
+select
+  (select
+      subq_1.c0 as c0
+    from
+      t271 as ref_84
+    where exists (
+        select
+            (select
+                  ref_86.c1147 as c0
+                from
+                  t272 as ref_86
+                where (subq_1.c0) > (subq_1.c0)
+                window w0 as (partition by ref_86.c1147 order by ref_86.c1143 desc)
+                order by c0 limit 1
+            ) as c3,
+            (select
+                  subq_1.c0 as c0
+                from
+                  t271 as ref_89
+                order by c0 limit 1) as c4
+          from
+            t271 as ref_85
+          )
+    order by c0 desc limit 1) as c1
+from
+  (select 1 as c0) as subq_1;
+
+# TestIssue50614
+use test;
+drop table if exists tt;
+create table tt(a bigint, b bigint, c bigint, d bigint, e bigint, primary key(c,d));
+explain format = brief update tt, (select 1 as c1 ,2 as c2 ,3 as c3, 4 as c4 union all select 2,3,4,5 union all select 3,4,5,6) tmp set tt.a=tmp.c1, tt.b=tmp.c2 where tt.c=tmp.c3 and tt.d=tmp.c4 and (tt.c,tt.d) in ((11,111),(22,222),(33,333),(44,444));

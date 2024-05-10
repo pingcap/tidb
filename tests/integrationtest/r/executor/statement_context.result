@@ -1,0 +1,105 @@
+drop table if exists sc, sc2, sc3;
+create table sc (a int);
+insert sc values (1), (2);
+set sql_mode = 'STRICT_TRANS_TABLES';
+select * from sc where a > cast(1.1 as decimal);
+a
+2
+update sc set a = 4 where a > cast(1.1 as decimal);
+set sql_mode = '';
+update sc set a = 3 where a > cast(1.1 as decimal);
+select * from sc;
+a
+1
+3
+set sql_mode = 'STRICT_TRANS_TABLES';
+delete from sc;
+insert sc values ('1.8'+1);
+select * from sc;
+a
+3
+select * from sc where a > '1x';
+a
+3
+set sql_mode = '';
+update sc set a = 4 where a > '1x';
+delete from sc where a < '1x';
+select * from sc where a > '1x';
+a
+4
+create table sc2 (a varchar(255));
+insert sc2 values (unhex('4040ffff'));
+select @@warning_count > 0;
+@@warning_count > 0
+1
+select * from sc2;
+a
+@@
+set sql_mode = 'STRICT_TRANS_TABLES';
+insert sc2 values (unhex('4040ffff'));
+Error 1366 (HY000): Incorrect string value '\xFF' for column 'a'
+set @@tidb_skip_utf8_check = '1';
+insert sc2 values (unhex('4040ffff'));
+select length(a) from sc2;
+length(a)
+2
+4
+set @@tidb_skip_utf8_check = '0';
+insert sc2 values ('�');
+create table sc3 (a varchar(255)) charset ascii;
+set sql_mode = '';
+insert sc3 values (unhex('4040ffff'));
+select @@warning_count > 0;
+@@warning_count > 0
+1
+select * from sc3;
+a
+@@
+set sql_mode = 'STRICT_TRANS_TABLES';
+insert sc3 values (unhex('4040ffff'));
+Error 1366 (HY000): Incorrect string value '\xFF\xFF' for column 'a'
+set @@tidb_skip_ascii_check = '1';
+insert sc3 values (unhex('4040ffff'));
+select length(a) from sc3;
+length(a)
+2
+4
+set @@tidb_skip_ascii_check = '0';
+insert sc3 values (unhex('4040'));
+set sql_mode = '';
+drop table if exists t1;
+create table t1(a varchar(100) charset utf8);
+insert t1 values (unhex('f09f8c80'));
+select @@warning_count > 0;
+@@warning_count > 0
+1
+select * from t1;
+a
+
+insert t1 values (unhex('4040f09f8c80'));
+select @@warning_count > 0;
+@@warning_count > 0
+1
+select * from t1;
+a
+
+@@
+select length(a) from t1;
+length(a)
+0
+2
+set sql_mode = 'STRICT_TRANS_TABLES';
+insert t1 values (unhex('f09f8c80'));
+Error 1366 (HY000): Incorrect string value '\xF0\x9F\x8C\x80' for column 'a'
+insert t1 values (unhex('F0A48BAE'));
+Error 1366 (HY000): Incorrect string value '\xF0\xA4\x8B\xAE' for column 'a'
+set global tidb_check_mb4_value_in_utf8 = false;
+insert t1 values (unhex('f09f8c80'));
+set global tidb_check_mb4_value_in_utf8 = true;
+insert t1 values (unhex('F0A48BAE'));
+Error 1366 (HY000): Incorrect string value '\xF0\xA4\x8B\xAE' for column 'a'
+drop table if exists t1;
+set global tidb_check_mb4_value_in_utf8 = default;
+set sql_mode = default;
+set @@tidb_skip_ascii_check = default;
+set @@tidb_skip_utf8_check = default;

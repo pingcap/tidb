@@ -1,0 +1,135 @@
+drop table if exists t;
+create table t (a char(10) charset gbk default 0xC4E3BAC3);
+insert into t values (default);
+select a from t;
+a
+你好
+drop table if exists t;
+create table t (a char(10) charset gbk default '好');
+insert into t values (default);
+select a from t;
+a
+好
+drop table if exists t;
+create table t (a varchar(10) charset gbk default 0xC4E3BAC3);
+insert into t values (default);
+select a from t;
+a
+你好
+drop table if exists t;
+create table t (a char(10) charset utf8mb4 default 0xE4BDA0E5A5BD);
+insert into t values (default);
+select a from t;
+a
+你好
+drop table if exists t;
+create table t (a char(10) charset utf8mb4 default 0b111001001011100010010110111001111001010110001100);
+insert into t values (default);
+select a from t;
+a
+世界
+drop table if exists t;
+create table t (a bit(48) default 0xE4BDA0E5A5BD);
+insert into t values (default);
+select a from t;
+a
+你好
+drop table if exists t;
+create table t (a enum('你好') default 0xE4BDA0E5A5BD);
+insert into t values (default);
+select a from t;
+a
+你好
+drop table if exists t;
+create table t (a set('你好') default 0xE4BDA0E5A5BD);
+insert into t values (default);
+select a from t;
+a
+你好
+drop table if exists t;
+create table t (a char(20) charset utf8mb4 default 0xE4BDA0E5A5BD81);
+Error 1067 (42000): Invalid default value for 'a'
+create table t (a blob default 0xE4BDA0E5A5BD81);
+Error 1101 (42000): BLOB/TEXT/JSON column 'a' can't have a default value
+drop table if exists t;
+create table t(a enum('a', 0x91) charset gbk);
+insert into t values (1), (2);
+select a from t;
+a
+a
+?
+drop table t;
+create table t (a enum('a', 0x91)) charset gbk;
+insert into t values (1), (2);
+select a from t;
+a
+a
+?
+drop table t;
+create table t(a set('a', 0x91, '?') charset gbk);
+Error 1291 (HY000): Column 'a' has duplicated value '?' in SET
+create table t (a enum('a', 0xE4BDA0E5A5BD) charset gbk);
+insert into t values (1), (2);
+select a from t;
+a
+a
+浣犲ソ
+drop table if exists t;
+create table t (id int, c int, index(c));
+alter table t cache;
+drop table t;
+Error 8242 (HY000): 'Drop Table' is unsupported on cache tables.
+create index t_id on t (id);
+Error 8242 (HY000): 'Create Index' is unsupported on cache tables.
+alter table t drop index c;
+Error 8242 (HY000): 'Alter Table' is unsupported on cache tables.
+alter table t add column (d int);
+Error 8242 (HY000): 'Alter Table' is unsupported on cache tables.
+truncate table t;
+Error 8242 (HY000): 'Truncate Table' is unsupported on cache tables.
+rename table t to t1;
+Error 8242 (HY000): 'Rename Table' is unsupported on cache tables.
+alter table t nocache;
+drop table if exists t;
+drop table if exists t;
+create table t (d int default '18446744073709551616' );
+Error 1067 (42000): Invalid default value for 'd'
+set sql_mode='';
+create table t (d int default '18446744073709551616' );
+Error 1067 (42000): Invalid default value for 'd'
+set sql_mode=DEFAULT;
+drop table if exists t;
+create table t(a int not null, b int, primary key(a), unique idx_b(b));
+drop table if exists t2;
+create table t2(a int not null, b int, primary key(a) nonclustered, unique idx_b(b));
+drop table if exists t3;
+set tidb_enable_global_index=1;
+create table t3(a int not null, b int, primary key(a) nonclustered, unique idx_b(b)) partition by hash(a) partitions 3;
+drop table if exists t4;
+create table t4(a int not null, b int, primary key(a)) partition by hash(a) partitions 3;
+alter table t partition by hash(a) partitions 3;
+Error 8214 (HY000): global index is not supported yet for alter table partitioning
+alter table t partition by key() partitions 3;
+Error 8214 (HY000): global index is not supported yet for alter table partitioning
+alter table t partition by hash(b) partitions 3;
+Error 1503 (HY000): A PRIMARY must include all columns in the table's partitioning function
+alter table t2 partition by hash(b) partitions 3;
+Error 8214 (HY000): global index is not supported yet for alter table partitioning
+alter table t3 partition by key(a) partitions 3;
+Error 8214 (HY000): global index is not supported yet for alter table partitioning
+alter table t4 partition by hash(b) partitions 3;
+Error 1503 (HY000): A PRIMARY must include all columns in the table's partitioning function
+set tidb_enable_global_index=0;
+alter table t partition by hash(a) partitions 3;
+Error 1503 (HY000): A UNIQUE INDEX must include all columns in the table's partitioning function
+alter table t partition by key() partitions 3;
+Error 1503 (HY000): A UNIQUE INDEX must include all columns in the table's partitioning function
+alter table t partition by hash(b) partitions 3;
+Error 1503 (HY000): A PRIMARY must include all columns in the table's partitioning function
+alter table t2 partition by hash(b) partitions 3;
+Error 1503 (HY000): A PRIMARY must include all columns in the table's partitioning function
+alter table t3 partition by key(a) partitions 3;
+Error 1503 (HY000): A UNIQUE INDEX must include all columns in the table's partitioning function
+alter table t4 partition by hash(b) partitions 3;
+Error 1503 (HY000): A PRIMARY must include all columns in the table's partitioning function
+drop table t, t2, t3, t4;

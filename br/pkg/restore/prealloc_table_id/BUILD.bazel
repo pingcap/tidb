@@ -5,18 +5,22 @@ go_library(
     srcs = ["alloc.go"],
     importpath = "github.com/pingcap/tidb/br/pkg/restore/prealloc_table_id",
     visibility = ["//visibility:public"],
-    deps = ["//br/pkg/metautil"],
+    deps = [
+        "//br/pkg/metautil",
+        "//pkg/parser/model",
+    ],
 )
 
 go_test(
     name = "prealloc_table_id_test",
+    timeout = "short",
     srcs = ["alloc_test.go"],
     flaky = True,
     race = "on",
     deps = [
         ":prealloc_table_id",
         "//br/pkg/metautil",
-        "//parser/model",
+        "//pkg/parser/model",
         "@com_github_stretchr_testify//require",
     ],
 )

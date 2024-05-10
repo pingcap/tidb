@@ -1,0 +1,1 @@
+build:ci --remote_cache=http://bazel-cache.pingcap.net:8080/tidb --remote_timeout="15s"

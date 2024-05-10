@@ -1,0 +1,31 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "pattern",
+    srcs = [
+        "engine.go",
+        "pattern.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/planner/pattern",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/planner/core",
+        "//pkg/planner/core/base",
+    ],
+)
+
+go_test(
+    name = "pattern_test",
+    timeout = "short",
+    srcs = [
+        "engine_test.go",
+        "pattern_test.go",
+    ],
+    embed = [":pattern"],
+    flaky = True,
+    shard_count = 5,
+    deps = [
+        "//pkg/planner/core",
+        "@com_github_stretchr_testify//require",
+    ],
+)

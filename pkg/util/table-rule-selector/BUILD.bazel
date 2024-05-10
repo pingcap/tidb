@@ -1,0 +1,18 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "table-rule-selector",
+    srcs = ["trie_selector.go"],
+    importpath = "github.com/pingcap/tidb/pkg/util/table-rule-selector",
+    visibility = ["//visibility:public"],
+    deps = ["@com_github_pingcap_errors//:errors"],
+)
+
+go_test(
+    name = "table-rule-selector_test",
+    timeout = "short",
+    srcs = ["selector_test.go"],
+    embed = [":table-rule-selector"],
+    flaky = True,
+    deps = ["@com_github_stretchr_testify//require"],
+)

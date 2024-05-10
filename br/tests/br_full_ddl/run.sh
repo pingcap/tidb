@@ -22,9 +22,10 @@ LOG=/$TEST_DIR/backup.log
 RESTORE_LOG=LOG=/$TEST_DIR/restore.log
 BACKUP_STAT=/$TEST_DIR/backup_stat
 RESOTRE_STAT=/$TEST_DIR/restore_stat
+CUR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 
 run_sql "CREATE DATABASE $DB;"
-go-ycsb load mysql -P tests/$TEST_NAME/workload -p mysql.host=$TIDB_IP -p mysql.port=$TIDB_PORT -p mysql.user=root -p mysql.db=$DB
+go-ycsb load mysql -P $CUR/workload -p mysql.host=$TIDB_IP -p mysql.port=$TIDB_PORT -p mysql.user=root -p mysql.db=$DB
 
 row_count_ori=$(run_sql "SELECT COUNT(*) FROM $DB.$TABLE;" | awk '/COUNT/{print $2}')
 
@@ -40,32 +41,65 @@ done
 
 # run analyze to generate stats
 run_sql "analyze table $DB.$TABLE;"
-# record field0's stats and remove last_update_version
+# record the stats and remove last_update_version
 # it's enough to compare with restore stats
 # the stats looks like
-# {
-#   "histogram": {
-#     "ndv": 10000,
-#     "buckets": [
-#       {
-#         "count": 40,
-#         "lower_bound": "QUFqVW1HZkt3UWhXakdCSlF0a2NHRFp0UWpFZ1lEUFFNWXVtVFFTRUh0U3N4RXhub2VMeUF1emhyT0FjWUZvWUhRZVZBcGJLRlVoWVlWR      0djSmRYbnhxc1NzcG1VTHFoZnJZbg==",
-#         "upper_bound": "QUp5bmVNc29FVUFIZ3ZKS3dCaUdGQ0xoV1BSQ0FWZ2VzZGpGU05na2xsYUhkY1VMVWdEeHZORUJLbW9tWGxSTWZQTmZYZVVWR3h5amVyW      EJXQ01GcU5mRWlHeEd1dndZa1BSRg==",
-#         "repeats": 1
-#       },
-#       ...(nearly 1000 rows)
-#     ],
-#   "cm_sketch": {
-#     "rows": [
+#
+#{
+# "columns":
+#  "ol_amount": {
+#    "histogram": {
+#      "ndv": 829568,
+#      "buckets": [
 #        {
-#          "counters": [
-#             5,
-#             ...(nearly 10000 rows)
-#           ],
-#        }
-#     ]
+#          "count": 7066,
+#          "lower_bound": "MS40Mw==",
+#          "upper_bound": "NDkuMjI=",
+#          "repeats": 2,
+#          "ndv": 0
+#        },
+#       ...(nearly 1000 rows)
+#      ],
+#      "cm_sketch": {
+#          "top_n": [
+#            {
+#              "data": "BgYCgAAA",
+#              "count": 4204452
+#            }
+#          ],
+#          "default_value": 0
+#        },
+#        "null_count": 0,
+#        "tot_col_size": 29988125,
+#        "stats_ver": 2
+#      },
+#  }
+#  "ol_d_id": { similar value },
+#  "ol_delivery_d": { similar value },
+#  "ol_dist_info": { similar value },
+#  "ol_i_id": { similar value },
+#  "ol_number": { similar value },
+#  "ol_o_id": { similar value },
+#  "ol_quantity": { similar value },
+#  "ol_supply_w_id": { similar value },
+#  "ol_w_id": { similar value },
+#  },
+# "indices": {
+#   similar value
+#  }
 # }
-run_curl https://$TIDB_STATUS_ADDR/stats/dump/$DB/$TABLE | jq '.columns.field0 | del(.last_update_version, .fm_sketch, .correlation)' > $BACKUP_STAT
+
+run_curl https://$TIDB_STATUS_ADDR/stats/dump/$DB/$TABLE | jq '{columns,indices} | map_values(with_entries(del(.value.last_update_version, .value.correlation)))' > $BACKUP_STAT
+
+# ensure buckets in stats
+cat $BACKUP_STAT | grep buckets 
+if [ $? -ne 0 ] ;then
+    echo "TEST: [$TEST_NAME] fail due to grep not find buckets in stats file"
+    echo $(cat $BACKUP_STAT)
+    exit 1
+else
+    echo "grep find buckets in stats file"
+fi
 
 # backup full
 echo "backup start with stats..."
@@ -108,7 +142,7 @@ fi
 
 echo "restore full without stats..."
 run_br restore full -s "local://$TEST_DIR/${DB}_disable_stats" --pd $PD_ADDR
-curl $TIDB_IP:10080/stats/dump/$DB/$TABLE | jq '.columns.field0 | del(.last_update_version, .fm_sketch, .correlation)' > $RESOTRE_STAT
+curl $TIDB_IP:10080/stats/dump/$DB/$TABLE | jq '{columns,indices} | map_values(with_entries(del(.value.last_update_version, .value.correlation)))' > $RESOTRE_STAT
 
 # stats should not be equal because we disable stats by default.
 if diff -q $BACKUP_STAT $RESOTRE_STAT > /dev/null
@@ -135,6 +169,7 @@ fi
 
 # clear restore environment
 run_sql "DROP DATABASE $DB;"
+run_sql "DROP DATABASE __tidb_br_temporary_mysql;"
 # restore full
 echo "restore start..."
 export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/pdutil/PDEnabledPauseConfig=return(true)"
@@ -161,7 +196,7 @@ if [ "${skip_count}" -gt "2" ];then
     exit 1
 fi
 
-run_curl https://$TIDB_STATUS_ADDR/stats/dump/$DB/$TABLE | jq '.columns.field0 | del(.last_update_version, .fm_sketch, .correlation)' > $RESOTRE_STAT
+run_curl https://$TIDB_STATUS_ADDR/stats/dump/$DB/$TABLE | jq '{columns,indices} | map_values(with_entries(del(.value.last_update_version, .value.correlation)))' > $RESOTRE_STAT
 
 if diff -q $BACKUP_STAT $RESOTRE_STAT > /dev/null
 then
@@ -169,8 +204,8 @@ then
 else
   echo "TEST: [$TEST_NAME] fail due to stats are not equal"
   grep ERROR $LOG
-  cat $BACKUP_STAT | head -n 1000
-  cat $RESOTRE_STAT | head -n 1000
+  cat $BACKUP_STAT | tail -n 1000
+  cat $RESOTRE_STAT | tail -n 1000
   exit 1
 fi
 

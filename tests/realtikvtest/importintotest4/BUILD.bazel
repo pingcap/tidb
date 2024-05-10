@@ -1,0 +1,30 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "importintotest4_test",
+    timeout = "moderate",
+    srcs = [
+        "global_sort_test.go",
+        "main_test.go",
+        "split_file_test.go",
+    ],
+    flaky = True,
+    race = "on",
+    deps = [
+        "//pkg/config",
+        "//pkg/disttask/framework/proto",
+        "//pkg/disttask/framework/scheduler",
+        "//pkg/disttask/framework/storage",
+        "//pkg/disttask/framework/testutil",
+        "//pkg/disttask/importinto",
+        "//pkg/executor/importer",
+        "//pkg/kv",
+        "//pkg/lightning/config",
+        "//pkg/testkit",
+        "//tests/realtikvtest",
+        "@com_github_fsouza_fake_gcs_server//fakestorage",
+        "@com_github_stretchr_testify//require",
+        "@com_github_stretchr_testify//suite",
+        "@com_github_tikv_client_go_v2//util",
+    ],
+)

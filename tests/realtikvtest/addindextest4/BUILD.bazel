@@ -1,0 +1,27 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "addindextest4_test",
+    timeout = "long",
+    srcs = [
+        "ingest_test.go",
+        "main_test.go",
+    ],
+    flaky = True,
+    deps = [
+        "//pkg/config",
+        "//pkg/ddl",
+        "//pkg/ddl/ingest",
+        "//pkg/ddl/testutil",
+        "//pkg/ddl/util/callback",
+        "//pkg/errno",
+        "//pkg/lightning/backend/local",
+        "//pkg/parser/model",
+        "//pkg/sessionctx/variable",
+        "//pkg/testkit",
+        "//tests/realtikvtest",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_stretchr_testify//assert",
+        "@com_github_stretchr_testify//require",
+    ],
+)

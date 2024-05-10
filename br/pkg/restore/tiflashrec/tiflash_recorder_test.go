@@ -19,8 +19,8 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/br/pkg/restore/tiflashrec"
-	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/stretchr/testify/require"
 )
 
@@ -168,5 +168,34 @@ func TestGenSql(t *testing.T) {
 		"ALTER TABLE `test`.`woods` SET TIFLASH REPLICA 3 LOCATION LABELS 'leaf', 'seed'",
 		"ALTER TABLE `test`.`fruits` SET TIFLASH REPLICA 1",
 		"ALTER TABLE `test`.`evils` SET TIFLASH REPLICA 1 LOCATION LABELS 'kIll''; OR DROP DATABASE test --', 'dEaTh with " + `\\"quoting\\"` + "'",
+	})
+}
+
+func TestGenResetSql(t *testing.T) {
+	tInfo := func(id int, name string) *model.TableInfo {
+		return &model.TableInfo{
+			ID:   int64(id),
+			Name: model.NewCIStr(name),
+		}
+	}
+	fakeInfo := infoschema.MockInfoSchema([]*model.TableInfo{
+		tInfo(1, "fruits"),
+		tInfo(2, "whisper"),
+	})
+	rec := tiflashrec.New()
+	rec.AddTable(1, model.TiFlashReplicaInfo{
+		Count: 1,
+	})
+	rec.AddTable(2, model.TiFlashReplicaInfo{
+		Count:          2,
+		LocationLabels: []string{"climate"},
+	})
+
+	sqls := rec.GenerateResetAlterTableDDLs(fakeInfo)
+	require.ElementsMatch(t, sqls, []string{
+		"ALTER TABLE `test`.`whisper` SET TIFLASH REPLICA 0",
+		"ALTER TABLE `test`.`whisper` SET TIFLASH REPLICA 2 LOCATION LABELS 'climate'",
+		"ALTER TABLE `test`.`fruits` SET TIFLASH REPLICA 0",
+		"ALTER TABLE `test`.`fruits` SET TIFLASH REPLICA 1",
 	})
 }

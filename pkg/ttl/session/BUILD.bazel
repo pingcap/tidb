@@ -1,0 +1,42 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "session",
+    srcs = ["session.go"],
+    importpath = "github.com/pingcap/tidb/pkg/ttl/session",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/infoschema",
+        "//pkg/kv",
+        "//pkg/parser/terror",
+        "//pkg/sessionctx",
+        "//pkg/sessionctx/variable",
+        "//pkg/sessiontxn",
+        "//pkg/ttl/metrics",
+        "//pkg/util/chunk",
+        "//pkg/util/sqlexec",
+        "//pkg/util/timeutil",
+        "@com_github_pingcap_errors//:errors",
+    ],
+)
+
+go_test(
+    name = "session_test",
+    timeout = "short",
+    srcs = [
+        "main_test.go",
+        "session_test.go",
+        "sysvar_test.go",
+    ],
+    flaky = True,
+    shard_count = 6,
+    deps = [
+        ":session",
+        "//pkg/sessionctx/variable",
+        "//pkg/testkit",
+        "//pkg/testkit/testsetup",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

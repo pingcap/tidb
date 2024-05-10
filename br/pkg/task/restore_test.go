@@ -17,9 +17,9 @@ import (
 	"github.com/pingcap/tidb/br/pkg/restore"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/utils"
-	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/statistics/handle"
-	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/statistics/handle/util"
+	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/stretchr/testify/require"
 	pd "github.com/tikv/pd/client"
 	"google.golang.org/grpc/keepalive"
@@ -31,12 +31,16 @@ func TestRestoreConfigAdjust(t *testing.T) {
 
 	require.Equal(t, uint32(defaultRestoreConcurrency), cfg.Config.Concurrency)
 	require.Equal(t, defaultSwitchInterval, cfg.Config.SwitchModeInterval)
-	require.Equal(t, conn.DefaultMergeRegionKeyCount, cfg.MergeSmallRegionKeyCount)
-	require.Equal(t, conn.DefaultMergeRegionSizeBytes, cfg.MergeSmallRegionSizeBytes)
+	require.Equal(t, conn.DefaultMergeRegionKeyCount, cfg.MergeSmallRegionKeyCount.Value)
+	require.Equal(t, conn.DefaultMergeRegionSizeBytes, cfg.MergeSmallRegionSizeBytes.Value)
 }
 
 type mockPDClient struct {
 	pd.Client
+}
+
+func (m mockPDClient) GetClusterID(_ context.Context) uint64 {
+	return 1
 }
 
 func (m mockPDClient) GetAllStores(ctx context.Context, opts ...pd.GetStoreOption) ([]*metapb.Store, error) {
@@ -55,7 +59,7 @@ func TestConfigureRestoreClient(t *testing.T) {
 		RestoreCommonConfig: restoreComCfg,
 		DdlBatchSize:        128,
 	}
-	client := restore.NewRestoreClient(mockPDClient{}, nil, keepalive.ClientParameters{}, false)
+	client := restore.NewRestoreClient(mockPDClient{}, nil, nil, keepalive.ClientParameters{})
 	ctx := context.Background()
 	err := configureRestoreClient(ctx, client, restoreCfg)
 	require.NoError(t, err)
@@ -77,7 +81,7 @@ func TestCheckRestoreDBAndTable(t *testing.T) {
 	cases := []struct {
 		cfgSchemas map[string]struct{}
 		cfgTables  map[string]struct{}
-		backupDBs  map[string]*utils.Database
+		backupDBs  map[string]*metautil.Database
 	}{
 		{
 			cfgSchemas: map[string]struct{}{
@@ -154,6 +158,18 @@ func TestCheckRestoreDBAndTable(t *testing.T) {
 				"__TiDB_BR_Temporary_mysql": {"tablE"},
 			}),
 		},
+		{
+			cfgSchemas: map[string]struct{}{
+				utils.EncloseName("sys"): {},
+			},
+			cfgTables: map[string]struct{}{
+				utils.EncloseDBAndTable("sys", "t"):  {},
+				utils.EncloseDBAndTable("sys", "t2"): {},
+			},
+			backupDBs: mockReadSchemasFromBackupMeta(t, map[string][]string{
+				"__TiDB_BR_Temporary_sys": {"T", "T2"},
+			}),
+		},
 	}
 
 	cfg := &RestoreConfig{}
@@ -167,7 +183,7 @@ func TestCheckRestoreDBAndTable(t *testing.T) {
 	}
 }
 
-func mockReadSchemasFromBackupMeta(t *testing.T, db2Tables map[string][]string) map[string]*utils.Database {
+func mockReadSchemasFromBackupMeta(t *testing.T, db2Tables map[string][]string) map[string]*metautil.Database {
 	testDir := t.TempDir()
 	store, err := storage.NewLocalStorage(testDir)
 	require.NoError(t, err)
@@ -187,7 +203,7 @@ func mockReadSchemasFromBackupMeta(t *testing.T, db2Tables map[string][]string) 
 			}
 			mockTblList = append(mockTblList, mockTbl)
 
-			mockStats := handle.JSONTable{
+			mockStats := util.JSONTable{
 				DatabaseName: dbName.String(),
 				TableName:    tblName.String(),
 			}
@@ -236,7 +252,7 @@ func mockReadSchemasFromBackupMeta(t *testing.T, db2Tables map[string][]string) 
 	err = store.WriteFile(ctx, metautil.MetaFile, data)
 	require.NoError(t, err)
 
-	dbs, err := utils.LoadBackupTables(
+	dbs, err := metautil.LoadBackupTables(
 		ctx,
 		metautil.NewMetaReader(
 			meta,
@@ -244,6 +260,7 @@ func mockReadSchemasFromBackupMeta(t *testing.T, db2Tables map[string][]string) 
 			&backuppb.CipherInfo{
 				CipherType: encryptionpb.EncryptionMethod_PLAINTEXT,
 			}),
+		true,
 	)
 	require.NoError(t, err)
 	return dbs
@@ -254,4 +271,41 @@ func mockBackupMeta(mockSchemas []*backuppb.Schema, mockFiles []*backuppb.File) 
 		Files:   mockFiles,
 		Schemas: mockSchemas,
 	}
+}
+
+func TestMapTableToFiles(t *testing.T) {
+	filesOfTable1 := []*backuppb.File{
+		{
+			Name:     "table1-1.sst",
+			StartKey: tablecodec.EncodeTablePrefix(1),
+			EndKey:   tablecodec.EncodeTablePrefix(1),
+		},
+		{
+			Name:     "table1-2.sst",
+			StartKey: tablecodec.EncodeTablePrefix(1),
+			EndKey:   tablecodec.EncodeTablePrefix(1),
+		},
+		{
+			Name:     "table1-3.sst",
+			StartKey: tablecodec.EncodeTablePrefix(1),
+			EndKey:   tablecodec.EncodeTablePrefix(1),
+		},
+	}
+	filesOfTable2 := []*backuppb.File{
+		{
+			Name:     "table2-1.sst",
+			StartKey: tablecodec.EncodeTablePrefix(2),
+			EndKey:   tablecodec.EncodeTablePrefix(2),
+		},
+		{
+			Name:     "table2-2.sst",
+			StartKey: tablecodec.EncodeTablePrefix(2),
+			EndKey:   tablecodec.EncodeTablePrefix(2),
+		},
+	}
+
+	result := MapTableToFiles(append(filesOfTable2, filesOfTable1...))
+
+	require.Equal(t, filesOfTable1, result[1])
+	require.Equal(t, filesOfTable2, result[2])
 }

@@ -1,0 +1,13 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "ddlhelper",
+    srcs = ["helper.go"],
+    importpath = "github.com/pingcap/tidb/pkg/testkit/ddlhelper",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/ddl",
+        "//pkg/parser/ast",
+        "//pkg/parser/model",
+    ],
+)

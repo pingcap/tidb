@@ -1,0 +1,1703 @@
+select /*+ set_var(tidb_read_consistency="strict") */ @@tidb_read_consistency;
+@@tidb_read_consistency
+strict
+select @@tidb_read_consistency;
+@@tidb_read_consistency
+strict
+set @@tidb_read_consistency=default;
+select @@tidb_read_consistency;
+@@tidb_read_consistency
+strict
+select /*+ set_var(tidb_read_consistency="weak") */ @@tidb_read_consistency;
+@@tidb_read_consistency
+weak
+select @@tidb_read_consistency;
+@@tidb_read_consistency
+strict
+set @@tidb_read_consistency=default;
+select @@tidb_read_consistency;
+@@tidb_read_consistency
+strict
+select /*+ set_var(tidb_isolation_read_engines="tidb,tiflash") */ @@tidb_isolation_read_engines;
+@@tidb_isolation_read_engines
+tidb,tiflash
+select @@tidb_isolation_read_engines;
+@@tidb_isolation_read_engines
+tikv,tiflash,tidb
+set @@tidb_isolation_read_engines=default;
+select @@tidb_isolation_read_engines;
+@@tidb_isolation_read_engines
+tikv,tiflash,tidb
+select /*+ set_var(tidb_isolation_read_engines="tikv,tidb") */ @@tidb_isolation_read_engines;
+@@tidb_isolation_read_engines
+tikv,tidb
+select @@tidb_isolation_read_engines;
+@@tidb_isolation_read_engines
+tikv,tiflash,tidb
+set @@tidb_isolation_read_engines=default;
+select @@tidb_isolation_read_engines;
+@@tidb_isolation_read_engines
+tikv,tiflash,tidb
+select /*+ set_var(tidb_replica_read="follower") */ @@tidb_replica_read;
+@@tidb_replica_read
+follower
+select @@tidb_replica_read;
+@@tidb_replica_read
+leader
+set @@tidb_replica_read=default;
+select @@tidb_replica_read;
+@@tidb_replica_read
+leader
+select /*+ set_var(tidb_replica_read="prefer-leader") */ @@tidb_replica_read;
+@@tidb_replica_read
+prefer-leader
+select @@tidb_replica_read;
+@@tidb_replica_read
+leader
+set @@tidb_replica_read=default;
+select @@tidb_replica_read;
+@@tidb_replica_read
+leader
+select /*+ set_var(tidb_partition_prune_mode="static") */ @@tidb_partition_prune_mode;
+@@tidb_partition_prune_mode
+static
+select @@tidb_partition_prune_mode;
+@@tidb_partition_prune_mode
+dynamic
+set @@tidb_partition_prune_mode=default;
+select @@tidb_partition_prune_mode;
+@@tidb_partition_prune_mode
+dynamic
+select /*+ set_var(tidb_partition_prune_mode="dynamic") */ @@tidb_partition_prune_mode;
+@@tidb_partition_prune_mode
+dynamic
+select @@tidb_partition_prune_mode;
+@@tidb_partition_prune_mode
+dynamic
+set @@tidb_partition_prune_mode=default;
+select @@tidb_partition_prune_mode;
+@@tidb_partition_prune_mode
+dynamic
+select /*+ set_var(mpp_version="0") */ @@mpp_version;
+@@mpp_version
+0
+select @@mpp_version;
+@@mpp_version
+UNSPECIFIED
+set @@mpp_version=default;
+select @@mpp_version;
+@@mpp_version
+UNSPECIFIED
+select /*+ set_var(mpp_version="1") */ @@mpp_version;
+@@mpp_version
+1
+select @@mpp_version;
+@@mpp_version
+UNSPECIFIED
+set @@mpp_version=default;
+select @@mpp_version;
+@@mpp_version
+UNSPECIFIED
+select /*+ set_var(tidb_opt_fix_control="44262:ON") */ @@tidb_opt_fix_control;
+@@tidb_opt_fix_control
+44262:ON
+select @@tidb_opt_fix_control;
+@@tidb_opt_fix_control
+
+set @@tidb_opt_fix_control=default;
+select @@tidb_opt_fix_control;
+@@tidb_opt_fix_control
+
+select /*+ set_var(tidb_opt_fix_control="44389:ON,44823:ON") */ @@tidb_opt_fix_control;
+@@tidb_opt_fix_control
+44389:ON,44823:ON
+select @@tidb_opt_fix_control;
+@@tidb_opt_fix_control
+
+set @@tidb_opt_fix_control=default;
+select @@tidb_opt_fix_control;
+@@tidb_opt_fix_control
+
+select /*+ set_var(tidb_runtime_filter_mode="OFF") */ @@tidb_runtime_filter_mode;
+@@tidb_runtime_filter_mode
+OFF
+select @@tidb_runtime_filter_mode;
+@@tidb_runtime_filter_mode
+OFF
+set @@tidb_runtime_filter_mode=default;
+select @@tidb_runtime_filter_mode;
+@@tidb_runtime_filter_mode
+OFF
+select /*+ set_var(tidb_runtime_filter_mode="LOCAL") */ @@tidb_runtime_filter_mode;
+@@tidb_runtime_filter_mode
+LOCAL
+select @@tidb_runtime_filter_mode;
+@@tidb_runtime_filter_mode
+OFF
+set @@tidb_runtime_filter_mode=default;
+select @@tidb_runtime_filter_mode;
+@@tidb_runtime_filter_mode
+OFF
+select /*+ set_var(sql_mode="") */ @@sql_mode;
+@@sql_mode
+
+select @@sql_mode;
+@@sql_mode
+ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION
+set @@sql_mode=default;
+select @@sql_mode;
+@@sql_mode
+ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION
+select /*+ set_var(sql_mode="ONLY_FULL_GROUP_BY") */ @@sql_mode;
+@@sql_mode
+ONLY_FULL_GROUP_BY
+select @@sql_mode;
+@@sql_mode
+ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION
+set @@sql_mode=default;
+select @@sql_mode;
+@@sql_mode
+ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION
+CREATE TABLE t (a INT, b INT, KEY(b));
+SET tidb_enable_non_prepared_plan_cache = true;
+SELECT * FROM t WHERE b < 10 AND a = 1;
+a	b
+SELECT * FROM t WHERE b < 5 AND a = 2;
+a	b
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+1
+SELECT /*+ SET_VAR(tidb_distsql_scan_concurrency=10) */ * FROM t WHERE b < 5 AND a = 2;
+a	b
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+0
+SELECT * FROM t WHERE b < 5 AND a = 2;
+a	b
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+1
+select /*+ set_var(tidb_opt_agg_push_down=0) */ @@tidb_opt_agg_push_down;
+@@tidb_opt_agg_push_down
+0
+select @@tidb_opt_agg_push_down;
+@@tidb_opt_agg_push_down
+0
+set @@tidb_opt_agg_push_down=default;
+select @@tidb_opt_agg_push_down;
+@@tidb_opt_agg_push_down
+0
+select /*+ set_var(tidb_opt_agg_push_down=1) */ @@tidb_opt_agg_push_down;
+@@tidb_opt_agg_push_down
+1
+select @@tidb_opt_agg_push_down;
+@@tidb_opt_agg_push_down
+0
+set @@tidb_opt_agg_push_down=default;
+select @@tidb_opt_agg_push_down;
+@@tidb_opt_agg_push_down
+0
+select /*+ set_var(tidb_opt_derive_topn=0) */ @@tidb_opt_derive_topn;
+@@tidb_opt_derive_topn
+0
+select @@tidb_opt_derive_topn;
+@@tidb_opt_derive_topn
+0
+set @@tidb_opt_derive_topn=default;
+select @@tidb_opt_derive_topn;
+@@tidb_opt_derive_topn
+0
+select /*+ set_var(tidb_opt_derive_topn=1) */ @@tidb_opt_derive_topn;
+@@tidb_opt_derive_topn
+1
+select @@tidb_opt_derive_topn;
+@@tidb_opt_derive_topn
+0
+set @@tidb_opt_derive_topn=default;
+select @@tidb_opt_derive_topn;
+@@tidb_opt_derive_topn
+0
+select /*+ set_var(tidb_opt_broadcast_cartesian_join=0) */ @@tidb_opt_broadcast_cartesian_join;
+@@tidb_opt_broadcast_cartesian_join
+0
+select @@tidb_opt_broadcast_cartesian_join;
+@@tidb_opt_broadcast_cartesian_join
+1
+set @@tidb_opt_broadcast_cartesian_join=default;
+select @@tidb_opt_broadcast_cartesian_join;
+@@tidb_opt_broadcast_cartesian_join
+1
+select /*+ set_var(tidb_opt_broadcast_cartesian_join=1) */ @@tidb_opt_broadcast_cartesian_join;
+@@tidb_opt_broadcast_cartesian_join
+1
+select @@tidb_opt_broadcast_cartesian_join;
+@@tidb_opt_broadcast_cartesian_join
+1
+set @@tidb_opt_broadcast_cartesian_join=default;
+select @@tidb_opt_broadcast_cartesian_join;
+@@tidb_opt_broadcast_cartesian_join
+1
+select /*+ set_var(tidb_opt_mpp_outer_join_fixed_build_side=0) */ @@tidb_opt_mpp_outer_join_fixed_build_side;
+@@tidb_opt_mpp_outer_join_fixed_build_side
+0
+select @@tidb_opt_mpp_outer_join_fixed_build_side;
+@@tidb_opt_mpp_outer_join_fixed_build_side
+0
+set @@tidb_opt_mpp_outer_join_fixed_build_side=default;
+select @@tidb_opt_mpp_outer_join_fixed_build_side;
+@@tidb_opt_mpp_outer_join_fixed_build_side
+0
+select /*+ set_var(tidb_opt_mpp_outer_join_fixed_build_side=1) */ @@tidb_opt_mpp_outer_join_fixed_build_side;
+@@tidb_opt_mpp_outer_join_fixed_build_side
+1
+select @@tidb_opt_mpp_outer_join_fixed_build_side;
+@@tidb_opt_mpp_outer_join_fixed_build_side
+0
+set @@tidb_opt_mpp_outer_join_fixed_build_side=default;
+select @@tidb_opt_mpp_outer_join_fixed_build_side;
+@@tidb_opt_mpp_outer_join_fixed_build_side
+0
+select /*+ set_var(tidb_opt_distinct_agg_push_down=0) */ @@tidb_opt_distinct_agg_push_down;
+@@tidb_opt_distinct_agg_push_down
+0
+select @@tidb_opt_distinct_agg_push_down;
+@@tidb_opt_distinct_agg_push_down
+0
+set @@tidb_opt_distinct_agg_push_down=default;
+select @@tidb_opt_distinct_agg_push_down;
+@@tidb_opt_distinct_agg_push_down
+0
+select /*+ set_var(tidb_opt_distinct_agg_push_down=1) */ @@tidb_opt_distinct_agg_push_down;
+@@tidb_opt_distinct_agg_push_down
+1
+select @@tidb_opt_distinct_agg_push_down;
+@@tidb_opt_distinct_agg_push_down
+0
+set @@tidb_opt_distinct_agg_push_down=default;
+select @@tidb_opt_distinct_agg_push_down;
+@@tidb_opt_distinct_agg_push_down
+0
+select /*+ set_var(tidb_opt_skew_distinct_agg=0) */ @@tidb_opt_skew_distinct_agg;
+@@tidb_opt_skew_distinct_agg
+0
+select @@tidb_opt_skew_distinct_agg;
+@@tidb_opt_skew_distinct_agg
+0
+set @@tidb_opt_skew_distinct_agg=default;
+select @@tidb_opt_skew_distinct_agg;
+@@tidb_opt_skew_distinct_agg
+0
+select /*+ set_var(tidb_opt_skew_distinct_agg=1) */ @@tidb_opt_skew_distinct_agg;
+@@tidb_opt_skew_distinct_agg
+1
+select @@tidb_opt_skew_distinct_agg;
+@@tidb_opt_skew_distinct_agg
+0
+set @@tidb_opt_skew_distinct_agg=default;
+select @@tidb_opt_skew_distinct_agg;
+@@tidb_opt_skew_distinct_agg
+0
+select /*+ set_var(tidb_opt_three_stage_distinct_agg=0) */ @@tidb_opt_three_stage_distinct_agg;
+@@tidb_opt_three_stage_distinct_agg
+0
+select @@tidb_opt_three_stage_distinct_agg;
+@@tidb_opt_three_stage_distinct_agg
+1
+set @@tidb_opt_three_stage_distinct_agg=default;
+select @@tidb_opt_three_stage_distinct_agg;
+@@tidb_opt_three_stage_distinct_agg
+1
+select /*+ set_var(tidb_opt_three_stage_distinct_agg=1) */ @@tidb_opt_three_stage_distinct_agg;
+@@tidb_opt_three_stage_distinct_agg
+1
+select @@tidb_opt_three_stage_distinct_agg;
+@@tidb_opt_three_stage_distinct_agg
+1
+set @@tidb_opt_three_stage_distinct_agg=default;
+select @@tidb_opt_three_stage_distinct_agg;
+@@tidb_opt_three_stage_distinct_agg
+1
+select /*+ set_var(tidb_broadcast_join_threshold_size=0) */ @@tidb_broadcast_join_threshold_size;
+@@tidb_broadcast_join_threshold_size
+0
+select @@tidb_broadcast_join_threshold_size;
+@@tidb_broadcast_join_threshold_size
+104857600
+set @@tidb_broadcast_join_threshold_size=default;
+select @@tidb_broadcast_join_threshold_size;
+@@tidb_broadcast_join_threshold_size
+104857600
+select /*+ set_var(tidb_broadcast_join_threshold_size=1) */ @@tidb_broadcast_join_threshold_size;
+@@tidb_broadcast_join_threshold_size
+1
+select @@tidb_broadcast_join_threshold_size;
+@@tidb_broadcast_join_threshold_size
+104857600
+set @@tidb_broadcast_join_threshold_size=default;
+select @@tidb_broadcast_join_threshold_size;
+@@tidb_broadcast_join_threshold_size
+104857600
+select /*+ set_var(tidb_broadcast_join_threshold_count=0) */ @@tidb_broadcast_join_threshold_count;
+@@tidb_broadcast_join_threshold_count
+0
+select @@tidb_broadcast_join_threshold_count;
+@@tidb_broadcast_join_threshold_count
+10240
+set @@tidb_broadcast_join_threshold_count=default;
+select @@tidb_broadcast_join_threshold_count;
+@@tidb_broadcast_join_threshold_count
+10240
+select /*+ set_var(tidb_broadcast_join_threshold_count=1) */ @@tidb_broadcast_join_threshold_count;
+@@tidb_broadcast_join_threshold_count
+1
+select @@tidb_broadcast_join_threshold_count;
+@@tidb_broadcast_join_threshold_count
+10240
+set @@tidb_broadcast_join_threshold_count=default;
+select @@tidb_broadcast_join_threshold_count;
+@@tidb_broadcast_join_threshold_count
+10240
+select /*+ set_var(tidb_prefer_broadcast_join_by_exchange_data_size=0) */ @@tidb_prefer_broadcast_join_by_exchange_data_size;
+@@tidb_prefer_broadcast_join_by_exchange_data_size
+0
+select @@tidb_prefer_broadcast_join_by_exchange_data_size;
+@@tidb_prefer_broadcast_join_by_exchange_data_size
+0
+set @@tidb_prefer_broadcast_join_by_exchange_data_size=default;
+select @@tidb_prefer_broadcast_join_by_exchange_data_size;
+@@tidb_prefer_broadcast_join_by_exchange_data_size
+0
+select /*+ set_var(tidb_prefer_broadcast_join_by_exchange_data_size=1) */ @@tidb_prefer_broadcast_join_by_exchange_data_size;
+@@tidb_prefer_broadcast_join_by_exchange_data_size
+1
+select @@tidb_prefer_broadcast_join_by_exchange_data_size;
+@@tidb_prefer_broadcast_join_by_exchange_data_size
+0
+set @@tidb_prefer_broadcast_join_by_exchange_data_size=default;
+select @@tidb_prefer_broadcast_join_by_exchange_data_size;
+@@tidb_prefer_broadcast_join_by_exchange_data_size
+0
+select /*+ set_var(tidb_opt_write_row_id=0) */ @@tidb_opt_write_row_id;
+@@tidb_opt_write_row_id
+0
+select @@tidb_opt_write_row_id;
+@@tidb_opt_write_row_id
+0
+set @@tidb_opt_write_row_id=default;
+select @@tidb_opt_write_row_id;
+@@tidb_opt_write_row_id
+0
+select /*+ set_var(tidb_opt_write_row_id=1) */ @@tidb_opt_write_row_id;
+@@tidb_opt_write_row_id
+1
+select @@tidb_opt_write_row_id;
+@@tidb_opt_write_row_id
+0
+set @@tidb_opt_write_row_id=default;
+select @@tidb_opt_write_row_id;
+@@tidb_opt_write_row_id
+0
+select /*+ set_var(tidb_optimizer_selectivity_level=0) */ @@tidb_optimizer_selectivity_level;
+@@tidb_optimizer_selectivity_level
+0
+select @@tidb_optimizer_selectivity_level;
+@@tidb_optimizer_selectivity_level
+0
+set @@tidb_optimizer_selectivity_level=default;
+select @@tidb_optimizer_selectivity_level;
+@@tidb_optimizer_selectivity_level
+0
+select /*+ set_var(tidb_optimizer_selectivity_level=1) */ @@tidb_optimizer_selectivity_level;
+@@tidb_optimizer_selectivity_level
+1
+select @@tidb_optimizer_selectivity_level;
+@@tidb_optimizer_selectivity_level
+0
+set @@tidb_optimizer_selectivity_level=default;
+select @@tidb_optimizer_selectivity_level;
+@@tidb_optimizer_selectivity_level
+0
+select /*+ set_var(tidb_enable_new_only_full_group_by_check=0) */ @@tidb_enable_new_only_full_group_by_check;
+@@tidb_enable_new_only_full_group_by_check
+0
+select @@tidb_enable_new_only_full_group_by_check;
+@@tidb_enable_new_only_full_group_by_check
+0
+set @@tidb_enable_new_only_full_group_by_check=default;
+select @@tidb_enable_new_only_full_group_by_check;
+@@tidb_enable_new_only_full_group_by_check
+0
+select /*+ set_var(tidb_enable_new_only_full_group_by_check=1) */ @@tidb_enable_new_only_full_group_by_check;
+@@tidb_enable_new_only_full_group_by_check
+1
+select @@tidb_enable_new_only_full_group_by_check;
+@@tidb_enable_new_only_full_group_by_check
+0
+set @@tidb_enable_new_only_full_group_by_check=default;
+select @@tidb_enable_new_only_full_group_by_check;
+@@tidb_enable_new_only_full_group_by_check
+0
+select /*+ set_var(tidb_enable_outer_join_reorder=0) */ @@tidb_enable_outer_join_reorder;
+@@tidb_enable_outer_join_reorder
+0
+select @@tidb_enable_outer_join_reorder;
+@@tidb_enable_outer_join_reorder
+1
+set @@tidb_enable_outer_join_reorder=default;
+select @@tidb_enable_outer_join_reorder;
+@@tidb_enable_outer_join_reorder
+1
+select /*+ set_var(tidb_enable_outer_join_reorder=1) */ @@tidb_enable_outer_join_reorder;
+@@tidb_enable_outer_join_reorder
+1
+select @@tidb_enable_outer_join_reorder;
+@@tidb_enable_outer_join_reorder
+1
+set @@tidb_enable_outer_join_reorder=default;
+select @@tidb_enable_outer_join_reorder;
+@@tidb_enable_outer_join_reorder
+1
+select /*+ set_var(tidb_enable_null_aware_anti_join=0) */ @@tidb_enable_null_aware_anti_join;
+@@tidb_enable_null_aware_anti_join
+0
+select @@tidb_enable_null_aware_anti_join;
+@@tidb_enable_null_aware_anti_join
+1
+set @@tidb_enable_null_aware_anti_join=default;
+select @@tidb_enable_null_aware_anti_join;
+@@tidb_enable_null_aware_anti_join
+1
+select /*+ set_var(tidb_enable_null_aware_anti_join=1) */ @@tidb_enable_null_aware_anti_join;
+@@tidb_enable_null_aware_anti_join
+1
+select @@tidb_enable_null_aware_anti_join;
+@@tidb_enable_null_aware_anti_join
+1
+set @@tidb_enable_null_aware_anti_join=default;
+select @@tidb_enable_null_aware_anti_join;
+@@tidb_enable_null_aware_anti_join
+1
+select /*+ set_var(tidb_enable_paging=0) */ @@tidb_enable_paging;
+@@tidb_enable_paging
+0
+select @@tidb_enable_paging;
+@@tidb_enable_paging
+1
+set @@tidb_enable_paging=default;
+select @@tidb_enable_paging;
+@@tidb_enable_paging
+1
+select /*+ set_var(tidb_enable_paging=1) */ @@tidb_enable_paging;
+@@tidb_enable_paging
+1
+select @@tidb_enable_paging;
+@@tidb_enable_paging
+1
+set @@tidb_enable_paging=default;
+select @@tidb_enable_paging;
+@@tidb_enable_paging
+1
+select /*+ set_var(tidb_distsql_scan_concurrency=1) */ @@tidb_distsql_scan_concurrency;
+@@tidb_distsql_scan_concurrency
+1
+select @@tidb_distsql_scan_concurrency;
+@@tidb_distsql_scan_concurrency
+15
+set @@tidb_distsql_scan_concurrency=default;
+select @@tidb_distsql_scan_concurrency;
+@@tidb_distsql_scan_concurrency
+15
+select /*+ set_var(tidb_distsql_scan_concurrency=2) */ @@tidb_distsql_scan_concurrency;
+@@tidb_distsql_scan_concurrency
+2
+select @@tidb_distsql_scan_concurrency;
+@@tidb_distsql_scan_concurrency
+15
+set @@tidb_distsql_scan_concurrency=default;
+select @@tidb_distsql_scan_concurrency;
+@@tidb_distsql_scan_concurrency
+15
+select /*+ set_var(tidb_opt_insubq_to_join_and_agg=0) */ @@tidb_opt_insubq_to_join_and_agg;
+@@tidb_opt_insubq_to_join_and_agg
+0
+select @@tidb_opt_insubq_to_join_and_agg;
+@@tidb_opt_insubq_to_join_and_agg
+1
+set @@tidb_opt_insubq_to_join_and_agg=default;
+select @@tidb_opt_insubq_to_join_and_agg;
+@@tidb_opt_insubq_to_join_and_agg
+1
+select /*+ set_var(tidb_opt_insubq_to_join_and_agg=1) */ @@tidb_opt_insubq_to_join_and_agg;
+@@tidb_opt_insubq_to_join_and_agg
+1
+select @@tidb_opt_insubq_to_join_and_agg;
+@@tidb_opt_insubq_to_join_and_agg
+1
+set @@tidb_opt_insubq_to_join_and_agg=default;
+select @@tidb_opt_insubq_to_join_and_agg;
+@@tidb_opt_insubq_to_join_and_agg
+1
+select /*+ set_var(tidb_opt_prefer_range_scan=0) */ @@tidb_opt_prefer_range_scan;
+@@tidb_opt_prefer_range_scan
+0
+select @@tidb_opt_prefer_range_scan;
+@@tidb_opt_prefer_range_scan
+0
+set @@tidb_opt_prefer_range_scan=default;
+select @@tidb_opt_prefer_range_scan;
+@@tidb_opt_prefer_range_scan
+0
+select /*+ set_var(tidb_opt_prefer_range_scan=1) */ @@tidb_opt_prefer_range_scan;
+@@tidb_opt_prefer_range_scan
+1
+select @@tidb_opt_prefer_range_scan;
+@@tidb_opt_prefer_range_scan
+0
+set @@tidb_opt_prefer_range_scan=default;
+select @@tidb_opt_prefer_range_scan;
+@@tidb_opt_prefer_range_scan
+0
+select /*+ set_var(tidb_opt_enable_correlation_adjustment=0) */ @@tidb_opt_enable_correlation_adjustment;
+@@tidb_opt_enable_correlation_adjustment
+0
+select @@tidb_opt_enable_correlation_adjustment;
+@@tidb_opt_enable_correlation_adjustment
+1
+set @@tidb_opt_enable_correlation_adjustment=default;
+select @@tidb_opt_enable_correlation_adjustment;
+@@tidb_opt_enable_correlation_adjustment
+1
+select /*+ set_var(tidb_opt_enable_correlation_adjustment=1) */ @@tidb_opt_enable_correlation_adjustment;
+@@tidb_opt_enable_correlation_adjustment
+1
+select @@tidb_opt_enable_correlation_adjustment;
+@@tidb_opt_enable_correlation_adjustment
+1
+set @@tidb_opt_enable_correlation_adjustment=default;
+select @@tidb_opt_enable_correlation_adjustment;
+@@tidb_opt_enable_correlation_adjustment
+1
+select /*+ set_var(tidb_opt_limit_push_down_threshold=0) */ @@tidb_opt_limit_push_down_threshold;
+@@tidb_opt_limit_push_down_threshold
+0
+select @@tidb_opt_limit_push_down_threshold;
+@@tidb_opt_limit_push_down_threshold
+100
+set @@tidb_opt_limit_push_down_threshold=default;
+select @@tidb_opt_limit_push_down_threshold;
+@@tidb_opt_limit_push_down_threshold
+100
+select /*+ set_var(tidb_opt_limit_push_down_threshold=1) */ @@tidb_opt_limit_push_down_threshold;
+@@tidb_opt_limit_push_down_threshold
+1
+select @@tidb_opt_limit_push_down_threshold;
+@@tidb_opt_limit_push_down_threshold
+100
+set @@tidb_opt_limit_push_down_threshold=default;
+select @@tidb_opt_limit_push_down_threshold;
+@@tidb_opt_limit_push_down_threshold
+100
+select /*+ set_var(tidb_opt_correlation_threshold=0) */ @@tidb_opt_correlation_threshold;
+@@tidb_opt_correlation_threshold
+0
+select @@tidb_opt_correlation_threshold;
+@@tidb_opt_correlation_threshold
+0.9
+set @@tidb_opt_correlation_threshold=default;
+select @@tidb_opt_correlation_threshold;
+@@tidb_opt_correlation_threshold
+0.9
+select /*+ set_var(tidb_opt_correlation_threshold=1) */ @@tidb_opt_correlation_threshold;
+@@tidb_opt_correlation_threshold
+1
+select @@tidb_opt_correlation_threshold;
+@@tidb_opt_correlation_threshold
+0.9
+set @@tidb_opt_correlation_threshold=default;
+select @@tidb_opt_correlation_threshold;
+@@tidb_opt_correlation_threshold
+0.9
+select /*+ set_var(tidb_opt_correlation_exp_factor=0) */ @@tidb_opt_correlation_exp_factor;
+@@tidb_opt_correlation_exp_factor
+0
+select @@tidb_opt_correlation_exp_factor;
+@@tidb_opt_correlation_exp_factor
+1
+set @@tidb_opt_correlation_exp_factor=default;
+select @@tidb_opt_correlation_exp_factor;
+@@tidb_opt_correlation_exp_factor
+1
+select /*+ set_var(tidb_opt_correlation_exp_factor=1) */ @@tidb_opt_correlation_exp_factor;
+@@tidb_opt_correlation_exp_factor
+1
+select @@tidb_opt_correlation_exp_factor;
+@@tidb_opt_correlation_exp_factor
+1
+set @@tidb_opt_correlation_exp_factor=default;
+select @@tidb_opt_correlation_exp_factor;
+@@tidb_opt_correlation_exp_factor
+1
+select /*+ set_var(tidb_opt_cpu_factor=0) */ @@tidb_opt_cpu_factor;
+@@tidb_opt_cpu_factor
+0
+select @@tidb_opt_cpu_factor;
+@@tidb_opt_cpu_factor
+3
+set @@tidb_opt_cpu_factor=default;
+select @@tidb_opt_cpu_factor;
+@@tidb_opt_cpu_factor
+3
+select /*+ set_var(tidb_opt_cpu_factor=1) */ @@tidb_opt_cpu_factor;
+@@tidb_opt_cpu_factor
+1
+select @@tidb_opt_cpu_factor;
+@@tidb_opt_cpu_factor
+3
+set @@tidb_opt_cpu_factor=default;
+select @@tidb_opt_cpu_factor;
+@@tidb_opt_cpu_factor
+3
+select /*+ set_var(tidb_opt_copcpu_factor=0) */ @@tidb_opt_copcpu_factor;
+@@tidb_opt_copcpu_factor
+0
+select @@tidb_opt_copcpu_factor;
+@@tidb_opt_copcpu_factor
+3
+set @@tidb_opt_copcpu_factor=default;
+select @@tidb_opt_copcpu_factor;
+@@tidb_opt_copcpu_factor
+3
+select /*+ set_var(tidb_opt_copcpu_factor=1) */ @@tidb_opt_copcpu_factor;
+@@tidb_opt_copcpu_factor
+1
+select @@tidb_opt_copcpu_factor;
+@@tidb_opt_copcpu_factor
+3
+set @@tidb_opt_copcpu_factor=default;
+select @@tidb_opt_copcpu_factor;
+@@tidb_opt_copcpu_factor
+3
+select /*+ set_var(tidb_opt_tiflash_concurrency_factor=1) */ @@tidb_opt_tiflash_concurrency_factor;
+@@tidb_opt_tiflash_concurrency_factor
+1
+select @@tidb_opt_tiflash_concurrency_factor;
+@@tidb_opt_tiflash_concurrency_factor
+24
+set @@tidb_opt_tiflash_concurrency_factor=default;
+select @@tidb_opt_tiflash_concurrency_factor;
+@@tidb_opt_tiflash_concurrency_factor
+24
+select /*+ set_var(tidb_opt_tiflash_concurrency_factor=2) */ @@tidb_opt_tiflash_concurrency_factor;
+@@tidb_opt_tiflash_concurrency_factor
+2
+select @@tidb_opt_tiflash_concurrency_factor;
+@@tidb_opt_tiflash_concurrency_factor
+24
+set @@tidb_opt_tiflash_concurrency_factor=default;
+select @@tidb_opt_tiflash_concurrency_factor;
+@@tidb_opt_tiflash_concurrency_factor
+24
+select /*+ set_var(tidb_opt_network_factor=0) */ @@tidb_opt_network_factor;
+@@tidb_opt_network_factor
+0
+select @@tidb_opt_network_factor;
+@@tidb_opt_network_factor
+1
+set @@tidb_opt_network_factor=default;
+select @@tidb_opt_network_factor;
+@@tidb_opt_network_factor
+1
+select /*+ set_var(tidb_opt_network_factor=1) */ @@tidb_opt_network_factor;
+@@tidb_opt_network_factor
+1
+select @@tidb_opt_network_factor;
+@@tidb_opt_network_factor
+1
+set @@tidb_opt_network_factor=default;
+select @@tidb_opt_network_factor;
+@@tidb_opt_network_factor
+1
+select /*+ set_var(tidb_opt_scan_factor=0) */ @@tidb_opt_scan_factor;
+@@tidb_opt_scan_factor
+0
+select @@tidb_opt_scan_factor;
+@@tidb_opt_scan_factor
+1.5
+set @@tidb_opt_scan_factor=default;
+select @@tidb_opt_scan_factor;
+@@tidb_opt_scan_factor
+1.5
+select /*+ set_var(tidb_opt_scan_factor=1) */ @@tidb_opt_scan_factor;
+@@tidb_opt_scan_factor
+1
+select @@tidb_opt_scan_factor;
+@@tidb_opt_scan_factor
+1.5
+set @@tidb_opt_scan_factor=default;
+select @@tidb_opt_scan_factor;
+@@tidb_opt_scan_factor
+1.5
+select /*+ set_var(tidb_opt_desc_factor=0) */ @@tidb_opt_desc_factor;
+@@tidb_opt_desc_factor
+0
+select @@tidb_opt_desc_factor;
+@@tidb_opt_desc_factor
+3
+set @@tidb_opt_desc_factor=default;
+select @@tidb_opt_desc_factor;
+@@tidb_opt_desc_factor
+3
+select /*+ set_var(tidb_opt_desc_factor=1) */ @@tidb_opt_desc_factor;
+@@tidb_opt_desc_factor
+1
+select @@tidb_opt_desc_factor;
+@@tidb_opt_desc_factor
+3
+set @@tidb_opt_desc_factor=default;
+select @@tidb_opt_desc_factor;
+@@tidb_opt_desc_factor
+3
+select /*+ set_var(tidb_opt_seek_factor=0) */ @@tidb_opt_seek_factor;
+@@tidb_opt_seek_factor
+0
+select @@tidb_opt_seek_factor;
+@@tidb_opt_seek_factor
+20
+set @@tidb_opt_seek_factor=default;
+select @@tidb_opt_seek_factor;
+@@tidb_opt_seek_factor
+20
+select /*+ set_var(tidb_opt_seek_factor=1) */ @@tidb_opt_seek_factor;
+@@tidb_opt_seek_factor
+1
+select @@tidb_opt_seek_factor;
+@@tidb_opt_seek_factor
+20
+set @@tidb_opt_seek_factor=default;
+select @@tidb_opt_seek_factor;
+@@tidb_opt_seek_factor
+20
+select /*+ set_var(tidb_opt_memory_factor=0) */ @@tidb_opt_memory_factor;
+@@tidb_opt_memory_factor
+0
+select @@tidb_opt_memory_factor;
+@@tidb_opt_memory_factor
+0.001
+set @@tidb_opt_memory_factor=default;
+select @@tidb_opt_memory_factor;
+@@tidb_opt_memory_factor
+0.001
+select /*+ set_var(tidb_opt_memory_factor=1) */ @@tidb_opt_memory_factor;
+@@tidb_opt_memory_factor
+1
+select @@tidb_opt_memory_factor;
+@@tidb_opt_memory_factor
+0.001
+set @@tidb_opt_memory_factor=default;
+select @@tidb_opt_memory_factor;
+@@tidb_opt_memory_factor
+0.001
+select /*+ set_var(tidb_opt_disk_factor=0) */ @@tidb_opt_disk_factor;
+@@tidb_opt_disk_factor
+0
+select @@tidb_opt_disk_factor;
+@@tidb_opt_disk_factor
+1.5
+set @@tidb_opt_disk_factor=default;
+select @@tidb_opt_disk_factor;
+@@tidb_opt_disk_factor
+1.5
+select /*+ set_var(tidb_opt_disk_factor=1) */ @@tidb_opt_disk_factor;
+@@tidb_opt_disk_factor
+1
+select @@tidb_opt_disk_factor;
+@@tidb_opt_disk_factor
+1.5
+set @@tidb_opt_disk_factor=default;
+select @@tidb_opt_disk_factor;
+@@tidb_opt_disk_factor
+1.5
+select /*+ set_var(tidb_opt_concurrency_factor=1) */ @@tidb_opt_concurrency_factor;
+@@tidb_opt_concurrency_factor
+1
+select @@tidb_opt_concurrency_factor;
+@@tidb_opt_concurrency_factor
+3
+set @@tidb_opt_concurrency_factor=default;
+select @@tidb_opt_concurrency_factor;
+@@tidb_opt_concurrency_factor
+3
+select /*+ set_var(tidb_opt_concurrency_factor=2) */ @@tidb_opt_concurrency_factor;
+@@tidb_opt_concurrency_factor
+2
+select @@tidb_opt_concurrency_factor;
+@@tidb_opt_concurrency_factor
+3
+set @@tidb_opt_concurrency_factor=default;
+select @@tidb_opt_concurrency_factor;
+@@tidb_opt_concurrency_factor
+3
+select /*+ set_var(tidb_opt_force_inline_cte=0) */ @@tidb_opt_force_inline_cte;
+@@tidb_opt_force_inline_cte
+0
+select @@tidb_opt_force_inline_cte;
+@@tidb_opt_force_inline_cte
+0
+set @@tidb_opt_force_inline_cte=default;
+select @@tidb_opt_force_inline_cte;
+@@tidb_opt_force_inline_cte
+0
+select /*+ set_var(tidb_opt_force_inline_cte=1) */ @@tidb_opt_force_inline_cte;
+@@tidb_opt_force_inline_cte
+1
+select @@tidb_opt_force_inline_cte;
+@@tidb_opt_force_inline_cte
+0
+set @@tidb_opt_force_inline_cte=default;
+select @@tidb_opt_force_inline_cte;
+@@tidb_opt_force_inline_cte
+0
+select /*+ set_var(tidb_index_join_batch_size=1) */ @@tidb_index_join_batch_size;
+@@tidb_index_join_batch_size
+1
+select @@tidb_index_join_batch_size;
+@@tidb_index_join_batch_size
+25000
+set @@tidb_index_join_batch_size=default;
+select @@tidb_index_join_batch_size;
+@@tidb_index_join_batch_size
+25000
+select /*+ set_var(tidb_index_join_batch_size=2) */ @@tidb_index_join_batch_size;
+@@tidb_index_join_batch_size
+2
+select @@tidb_index_join_batch_size;
+@@tidb_index_join_batch_size
+25000
+set @@tidb_index_join_batch_size=default;
+select @@tidb_index_join_batch_size;
+@@tidb_index_join_batch_size
+25000
+select /*+ set_var(tidb_index_lookup_size=1) */ @@tidb_index_lookup_size;
+@@tidb_index_lookup_size
+1
+select @@tidb_index_lookup_size;
+@@tidb_index_lookup_size
+20000
+set @@tidb_index_lookup_size=default;
+select @@tidb_index_lookup_size;
+@@tidb_index_lookup_size
+20000
+select /*+ set_var(tidb_index_lookup_size=2) */ @@tidb_index_lookup_size;
+@@tidb_index_lookup_size
+2
+select @@tidb_index_lookup_size;
+@@tidb_index_lookup_size
+20000
+set @@tidb_index_lookup_size=default;
+select @@tidb_index_lookup_size;
+@@tidb_index_lookup_size
+20000
+select /*+ set_var(tidb_index_serial_scan_concurrency=1) */ @@tidb_index_serial_scan_concurrency;
+@@tidb_index_serial_scan_concurrency
+1
+select @@tidb_index_serial_scan_concurrency;
+@@tidb_index_serial_scan_concurrency
+1
+set @@tidb_index_serial_scan_concurrency=default;
+select @@tidb_index_serial_scan_concurrency;
+@@tidb_index_serial_scan_concurrency
+1
+select /*+ set_var(tidb_index_serial_scan_concurrency=2) */ @@tidb_index_serial_scan_concurrency;
+@@tidb_index_serial_scan_concurrency
+2
+select @@tidb_index_serial_scan_concurrency;
+@@tidb_index_serial_scan_concurrency
+1
+set @@tidb_index_serial_scan_concurrency=default;
+select @@tidb_index_serial_scan_concurrency;
+@@tidb_index_serial_scan_concurrency
+1
+select /*+ set_var(tidb_allow_batch_cop=0) */ @@tidb_allow_batch_cop;
+@@tidb_allow_batch_cop
+0
+select @@tidb_allow_batch_cop;
+@@tidb_allow_batch_cop
+1
+set @@tidb_allow_batch_cop=default;
+select @@tidb_allow_batch_cop;
+@@tidb_allow_batch_cop
+1
+select /*+ set_var(tidb_allow_batch_cop=1) */ @@tidb_allow_batch_cop;
+@@tidb_allow_batch_cop
+1
+select @@tidb_allow_batch_cop;
+@@tidb_allow_batch_cop
+1
+set @@tidb_allow_batch_cop=default;
+select @@tidb_allow_batch_cop;
+@@tidb_allow_batch_cop
+1
+select /*+ set_var(tidb_allow_mpp=0) */ @@tidb_allow_mpp;
+@@tidb_allow_mpp
+0
+select @@tidb_allow_mpp;
+@@tidb_allow_mpp
+1
+set @@tidb_allow_mpp=default;
+select @@tidb_allow_mpp;
+@@tidb_allow_mpp
+1
+select /*+ set_var(tidb_allow_mpp=1) */ @@tidb_allow_mpp;
+@@tidb_allow_mpp
+1
+select @@tidb_allow_mpp;
+@@tidb_allow_mpp
+1
+set @@tidb_allow_mpp=default;
+select @@tidb_allow_mpp;
+@@tidb_allow_mpp
+1
+select /*+ set_var(tidb_enforce_mpp=0) */ @@tidb_enforce_mpp;
+@@tidb_enforce_mpp
+0
+select @@tidb_enforce_mpp;
+@@tidb_enforce_mpp
+0
+set @@tidb_enforce_mpp=default;
+select @@tidb_enforce_mpp;
+@@tidb_enforce_mpp
+0
+select /*+ set_var(tidb_enforce_mpp=1) */ @@tidb_enforce_mpp;
+@@tidb_enforce_mpp
+1
+select @@tidb_enforce_mpp;
+@@tidb_enforce_mpp
+0
+set @@tidb_enforce_mpp=default;
+select @@tidb_enforce_mpp;
+@@tidb_enforce_mpp
+0
+select /*+ set_var(tidb_max_bytes_before_tiflash_external_join=0) */ @@tidb_max_bytes_before_tiflash_external_join;
+@@tidb_max_bytes_before_tiflash_external_join
+0
+select @@tidb_max_bytes_before_tiflash_external_join;
+@@tidb_max_bytes_before_tiflash_external_join
+-1
+set @@tidb_max_bytes_before_tiflash_external_join=default;
+select @@tidb_max_bytes_before_tiflash_external_join;
+@@tidb_max_bytes_before_tiflash_external_join
+-1
+select /*+ set_var(tidb_max_bytes_before_tiflash_external_join=1) */ @@tidb_max_bytes_before_tiflash_external_join;
+@@tidb_max_bytes_before_tiflash_external_join
+1
+select @@tidb_max_bytes_before_tiflash_external_join;
+@@tidb_max_bytes_before_tiflash_external_join
+-1
+set @@tidb_max_bytes_before_tiflash_external_join=default;
+select @@tidb_max_bytes_before_tiflash_external_join;
+@@tidb_max_bytes_before_tiflash_external_join
+-1
+select /*+ set_var(tidb_max_bytes_before_tiflash_external_group_by=0) */ @@tidb_max_bytes_before_tiflash_external_group_by;
+@@tidb_max_bytes_before_tiflash_external_group_by
+0
+select @@tidb_max_bytes_before_tiflash_external_group_by;
+@@tidb_max_bytes_before_tiflash_external_group_by
+-1
+set @@tidb_max_bytes_before_tiflash_external_group_by=default;
+select @@tidb_max_bytes_before_tiflash_external_group_by;
+@@tidb_max_bytes_before_tiflash_external_group_by
+-1
+select /*+ set_var(tidb_max_bytes_before_tiflash_external_group_by=1) */ @@tidb_max_bytes_before_tiflash_external_group_by;
+@@tidb_max_bytes_before_tiflash_external_group_by
+1
+select @@tidb_max_bytes_before_tiflash_external_group_by;
+@@tidb_max_bytes_before_tiflash_external_group_by
+-1
+set @@tidb_max_bytes_before_tiflash_external_group_by=default;
+select @@tidb_max_bytes_before_tiflash_external_group_by;
+@@tidb_max_bytes_before_tiflash_external_group_by
+-1
+select /*+ set_var(tidb_max_bytes_before_tiflash_external_sort=0) */ @@tidb_max_bytes_before_tiflash_external_sort;
+@@tidb_max_bytes_before_tiflash_external_sort
+0
+select @@tidb_max_bytes_before_tiflash_external_sort;
+@@tidb_max_bytes_before_tiflash_external_sort
+-1
+set @@tidb_max_bytes_before_tiflash_external_sort=default;
+select @@tidb_max_bytes_before_tiflash_external_sort;
+@@tidb_max_bytes_before_tiflash_external_sort
+-1
+select /*+ set_var(tidb_max_bytes_before_tiflash_external_sort=1) */ @@tidb_max_bytes_before_tiflash_external_sort;
+@@tidb_max_bytes_before_tiflash_external_sort
+1
+select @@tidb_max_bytes_before_tiflash_external_sort;
+@@tidb_max_bytes_before_tiflash_external_sort
+-1
+set @@tidb_max_bytes_before_tiflash_external_sort=default;
+select @@tidb_max_bytes_before_tiflash_external_sort;
+@@tidb_max_bytes_before_tiflash_external_sort
+-1
+select /*+ set_var(tidb_min_paging_size=1) */ @@tidb_min_paging_size;
+@@tidb_min_paging_size
+1
+select @@tidb_min_paging_size;
+@@tidb_min_paging_size
+128
+set @@tidb_min_paging_size=default;
+select @@tidb_min_paging_size;
+@@tidb_min_paging_size
+128
+select /*+ set_var(tidb_min_paging_size=2) */ @@tidb_min_paging_size;
+@@tidb_min_paging_size
+2
+select @@tidb_min_paging_size;
+@@tidb_min_paging_size
+128
+set @@tidb_min_paging_size=default;
+select @@tidb_min_paging_size;
+@@tidb_min_paging_size
+128
+select /*+ set_var(tidb_max_paging_size=10) */ @@tidb_max_paging_size;
+@@tidb_max_paging_size
+10
+select @@tidb_max_paging_size;
+@@tidb_max_paging_size
+50000
+set @@tidb_max_paging_size=default;
+select @@tidb_max_paging_size;
+@@tidb_max_paging_size
+50000
+select /*+ set_var(tidb_max_paging_size=20) */ @@tidb_max_paging_size;
+@@tidb_max_paging_size
+20
+select @@tidb_max_paging_size;
+@@tidb_max_paging_size
+50000
+set @@tidb_max_paging_size=default;
+select @@tidb_max_paging_size;
+@@tidb_max_paging_size
+50000
+select /*+ set_var(tidb_enable_cascades_planner=0) */ @@tidb_enable_cascades_planner;
+@@tidb_enable_cascades_planner
+0
+select @@tidb_enable_cascades_planner;
+@@tidb_enable_cascades_planner
+0
+set @@tidb_enable_cascades_planner=default;
+select @@tidb_enable_cascades_planner;
+@@tidb_enable_cascades_planner
+0
+select /*+ set_var(tidb_enable_cascades_planner=1) */ @@tidb_enable_cascades_planner;
+@@tidb_enable_cascades_planner
+1
+select @@tidb_enable_cascades_planner;
+@@tidb_enable_cascades_planner
+0
+set @@tidb_enable_cascades_planner=default;
+select @@tidb_enable_cascades_planner;
+@@tidb_enable_cascades_planner
+0
+select /*+ set_var(tidb_merge_join_concurrency=1) */ @@tidb_merge_join_concurrency;
+@@tidb_merge_join_concurrency
+1
+select @@tidb_merge_join_concurrency;
+@@tidb_merge_join_concurrency
+1
+set @@tidb_merge_join_concurrency=default;
+select @@tidb_merge_join_concurrency;
+@@tidb_merge_join_concurrency
+1
+select /*+ set_var(tidb_merge_join_concurrency=2) */ @@tidb_merge_join_concurrency;
+@@tidb_merge_join_concurrency
+2
+select @@tidb_merge_join_concurrency;
+@@tidb_merge_join_concurrency
+1
+set @@tidb_merge_join_concurrency=default;
+select @@tidb_merge_join_concurrency;
+@@tidb_merge_join_concurrency
+1
+select /*+ set_var(tidb_index_merge_intersection_concurrency=1) */ @@tidb_index_merge_intersection_concurrency;
+@@tidb_index_merge_intersection_concurrency
+1
+select @@tidb_index_merge_intersection_concurrency;
+@@tidb_index_merge_intersection_concurrency
+-1
+set @@tidb_index_merge_intersection_concurrency=default;
+select @@tidb_index_merge_intersection_concurrency;
+@@tidb_index_merge_intersection_concurrency
+-1
+select /*+ set_var(tidb_index_merge_intersection_concurrency=2) */ @@tidb_index_merge_intersection_concurrency;
+@@tidb_index_merge_intersection_concurrency
+2
+select @@tidb_index_merge_intersection_concurrency;
+@@tidb_index_merge_intersection_concurrency
+-1
+set @@tidb_index_merge_intersection_concurrency=default;
+select @@tidb_index_merge_intersection_concurrency;
+@@tidb_index_merge_intersection_concurrency
+-1
+select /*+ set_var(tidb_opt_projection_push_down=0) */ @@tidb_opt_projection_push_down;
+@@tidb_opt_projection_push_down
+0
+select @@tidb_opt_projection_push_down;
+@@tidb_opt_projection_push_down
+0
+set @@tidb_opt_projection_push_down=default;
+select @@tidb_opt_projection_push_down;
+@@tidb_opt_projection_push_down
+0
+select /*+ set_var(tidb_opt_projection_push_down=1) */ @@tidb_opt_projection_push_down;
+@@tidb_opt_projection_push_down
+1
+select @@tidb_opt_projection_push_down;
+@@tidb_opt_projection_push_down
+0
+set @@tidb_opt_projection_push_down=default;
+select @@tidb_opt_projection_push_down;
+@@tidb_opt_projection_push_down
+0
+select /*+ set_var(tidb_enable_vectorized_expression=0) */ @@tidb_enable_vectorized_expression;
+@@tidb_enable_vectorized_expression
+0
+select @@tidb_enable_vectorized_expression;
+@@tidb_enable_vectorized_expression
+1
+set @@tidb_enable_vectorized_expression=default;
+select @@tidb_enable_vectorized_expression;
+@@tidb_enable_vectorized_expression
+1
+select /*+ set_var(tidb_enable_vectorized_expression=1) */ @@tidb_enable_vectorized_expression;
+@@tidb_enable_vectorized_expression
+1
+select @@tidb_enable_vectorized_expression;
+@@tidb_enable_vectorized_expression
+1
+set @@tidb_enable_vectorized_expression=default;
+select @@tidb_enable_vectorized_expression;
+@@tidb_enable_vectorized_expression
+1
+select /*+ set_var(tidb_opt_join_reorder_threshold=0) */ @@tidb_opt_join_reorder_threshold;
+@@tidb_opt_join_reorder_threshold
+0
+select @@tidb_opt_join_reorder_threshold;
+@@tidb_opt_join_reorder_threshold
+0
+set @@tidb_opt_join_reorder_threshold=default;
+select @@tidb_opt_join_reorder_threshold;
+@@tidb_opt_join_reorder_threshold
+0
+select /*+ set_var(tidb_opt_join_reorder_threshold=1) */ @@tidb_opt_join_reorder_threshold;
+@@tidb_opt_join_reorder_threshold
+1
+select @@tidb_opt_join_reorder_threshold;
+@@tidb_opt_join_reorder_threshold
+0
+set @@tidb_opt_join_reorder_threshold=default;
+select @@tidb_opt_join_reorder_threshold;
+@@tidb_opt_join_reorder_threshold
+0
+select /*+ set_var(tidb_enable_index_merge=0) */ @@tidb_enable_index_merge;
+@@tidb_enable_index_merge
+0
+select @@tidb_enable_index_merge;
+@@tidb_enable_index_merge
+1
+set @@tidb_enable_index_merge=default;
+select @@tidb_enable_index_merge;
+@@tidb_enable_index_merge
+1
+select /*+ set_var(tidb_enable_index_merge=1) */ @@tidb_enable_index_merge;
+@@tidb_enable_index_merge
+1
+select @@tidb_enable_index_merge;
+@@tidb_enable_index_merge
+1
+set @@tidb_enable_index_merge=default;
+select @@tidb_enable_index_merge;
+@@tidb_enable_index_merge
+1
+select /*+ set_var(tidb_enable_extended_stats=0) */ @@tidb_enable_extended_stats;
+@@tidb_enable_extended_stats
+0
+select @@tidb_enable_extended_stats;
+@@tidb_enable_extended_stats
+0
+set @@tidb_enable_extended_stats=default;
+select @@tidb_enable_extended_stats;
+@@tidb_enable_extended_stats
+0
+select /*+ set_var(tidb_enable_extended_stats=1) */ @@tidb_enable_extended_stats;
+@@tidb_enable_extended_stats
+1
+select @@tidb_enable_extended_stats;
+@@tidb_enable_extended_stats
+0
+set @@tidb_enable_extended_stats=default;
+select @@tidb_enable_extended_stats;
+@@tidb_enable_extended_stats
+0
+select /*+ set_var(tidb_executor_concurrency=1) */ @@tidb_executor_concurrency;
+@@tidb_executor_concurrency
+1
+select @@tidb_executor_concurrency;
+@@tidb_executor_concurrency
+5
+set @@tidb_executor_concurrency=default;
+select @@tidb_executor_concurrency;
+@@tidb_executor_concurrency
+5
+select /*+ set_var(tidb_executor_concurrency=2) */ @@tidb_executor_concurrency;
+@@tidb_executor_concurrency
+2
+select @@tidb_executor_concurrency;
+@@tidb_executor_concurrency
+5
+set @@tidb_executor_concurrency=default;
+select @@tidb_executor_concurrency;
+@@tidb_executor_concurrency
+5
+select /*+ set_var(tidb_enable_index_merge_join=0) */ @@tidb_enable_index_merge_join;
+@@tidb_enable_index_merge_join
+0
+select @@tidb_enable_index_merge_join;
+@@tidb_enable_index_merge_join
+0
+set @@tidb_enable_index_merge_join=default;
+select @@tidb_enable_index_merge_join;
+@@tidb_enable_index_merge_join
+0
+select /*+ set_var(tidb_enable_index_merge_join=1) */ @@tidb_enable_index_merge_join;
+@@tidb_enable_index_merge_join
+1
+select @@tidb_enable_index_merge_join;
+@@tidb_enable_index_merge_join
+0
+set @@tidb_enable_index_merge_join=default;
+select @@tidb_enable_index_merge_join;
+@@tidb_enable_index_merge_join
+0
+select /*+ set_var(tidb_enable_ordered_result_mode=0) */ @@tidb_enable_ordered_result_mode;
+@@tidb_enable_ordered_result_mode
+0
+select @@tidb_enable_ordered_result_mode;
+@@tidb_enable_ordered_result_mode
+0
+set @@tidb_enable_ordered_result_mode=default;
+select @@tidb_enable_ordered_result_mode;
+@@tidb_enable_ordered_result_mode
+0
+select /*+ set_var(tidb_enable_ordered_result_mode=1) */ @@tidb_enable_ordered_result_mode;
+@@tidb_enable_ordered_result_mode
+1
+select @@tidb_enable_ordered_result_mode;
+@@tidb_enable_ordered_result_mode
+0
+set @@tidb_enable_ordered_result_mode=default;
+select @@tidb_enable_ordered_result_mode;
+@@tidb_enable_ordered_result_mode
+0
+select /*+ set_var(tidb_enable_pseudo_for_outdated_stats=0) */ @@tidb_enable_pseudo_for_outdated_stats;
+@@tidb_enable_pseudo_for_outdated_stats
+0
+select @@tidb_enable_pseudo_for_outdated_stats;
+@@tidb_enable_pseudo_for_outdated_stats
+0
+set @@tidb_enable_pseudo_for_outdated_stats=default;
+select @@tidb_enable_pseudo_for_outdated_stats;
+@@tidb_enable_pseudo_for_outdated_stats
+0
+select /*+ set_var(tidb_enable_pseudo_for_outdated_stats=1) */ @@tidb_enable_pseudo_for_outdated_stats;
+@@tidb_enable_pseudo_for_outdated_stats
+1
+select @@tidb_enable_pseudo_for_outdated_stats;
+@@tidb_enable_pseudo_for_outdated_stats
+0
+set @@tidb_enable_pseudo_for_outdated_stats=default;
+select @@tidb_enable_pseudo_for_outdated_stats;
+@@tidb_enable_pseudo_for_outdated_stats
+0
+select /*+ set_var(tidb_stats_load_sync_wait=0) */ @@tidb_stats_load_sync_wait;
+@@tidb_stats_load_sync_wait
+0
+select @@tidb_stats_load_sync_wait;
+@@tidb_stats_load_sync_wait
+100
+set @@tidb_stats_load_sync_wait=default;
+select @@tidb_stats_load_sync_wait;
+@@tidb_stats_load_sync_wait
+100
+select /*+ set_var(tidb_stats_load_sync_wait=1) */ @@tidb_stats_load_sync_wait;
+@@tidb_stats_load_sync_wait
+1
+select @@tidb_stats_load_sync_wait;
+@@tidb_stats_load_sync_wait
+100
+set @@tidb_stats_load_sync_wait=default;
+select @@tidb_stats_load_sync_wait;
+@@tidb_stats_load_sync_wait
+100
+select /*+ set_var(tidb_cost_model_version=1) */ @@tidb_cost_model_version;
+@@tidb_cost_model_version
+1
+select @@tidb_cost_model_version;
+@@tidb_cost_model_version
+2
+set @@tidb_cost_model_version=default;
+select @@tidb_cost_model_version;
+@@tidb_cost_model_version
+2
+select /*+ set_var(tidb_cost_model_version=2) */ @@tidb_cost_model_version;
+@@tidb_cost_model_version
+2
+select @@tidb_cost_model_version;
+@@tidb_cost_model_version
+2
+set @@tidb_cost_model_version=default;
+select @@tidb_cost_model_version;
+@@tidb_cost_model_version
+2
+select /*+ set_var(tidb_index_join_double_read_penalty_cost_rate=0) */ @@tidb_index_join_double_read_penalty_cost_rate;
+@@tidb_index_join_double_read_penalty_cost_rate
+0
+select @@tidb_index_join_double_read_penalty_cost_rate;
+@@tidb_index_join_double_read_penalty_cost_rate
+0
+set @@tidb_index_join_double_read_penalty_cost_rate=default;
+select @@tidb_index_join_double_read_penalty_cost_rate;
+@@tidb_index_join_double_read_penalty_cost_rate
+0
+select /*+ set_var(tidb_index_join_double_read_penalty_cost_rate=1) */ @@tidb_index_join_double_read_penalty_cost_rate;
+@@tidb_index_join_double_read_penalty_cost_rate
+1
+select @@tidb_index_join_double_read_penalty_cost_rate;
+@@tidb_index_join_double_read_penalty_cost_rate
+0
+set @@tidb_index_join_double_read_penalty_cost_rate=default;
+select @@tidb_index_join_double_read_penalty_cost_rate;
+@@tidb_index_join_double_read_penalty_cost_rate
+0
+select /*+ set_var(tidb_default_string_match_selectivity=0) */ @@tidb_default_string_match_selectivity;
+@@tidb_default_string_match_selectivity
+0
+select @@tidb_default_string_match_selectivity;
+@@tidb_default_string_match_selectivity
+0.8
+set @@tidb_default_string_match_selectivity=default;
+select @@tidb_default_string_match_selectivity;
+@@tidb_default_string_match_selectivity
+0.8
+select /*+ set_var(tidb_default_string_match_selectivity=1) */ @@tidb_default_string_match_selectivity;
+@@tidb_default_string_match_selectivity
+1
+select @@tidb_default_string_match_selectivity;
+@@tidb_default_string_match_selectivity
+0.8
+set @@tidb_default_string_match_selectivity=default;
+select @@tidb_default_string_match_selectivity;
+@@tidb_default_string_match_selectivity
+0.8
+select /*+ set_var(tidb_enable_prepared_plan_cache=0) */ @@tidb_enable_prepared_plan_cache;
+@@tidb_enable_prepared_plan_cache
+0
+select @@tidb_enable_prepared_plan_cache;
+@@tidb_enable_prepared_plan_cache
+1
+set @@tidb_enable_prepared_plan_cache=default;
+select @@tidb_enable_prepared_plan_cache;
+@@tidb_enable_prepared_plan_cache
+1
+select /*+ set_var(tidb_enable_prepared_plan_cache=1) */ @@tidb_enable_prepared_plan_cache;
+@@tidb_enable_prepared_plan_cache
+1
+select @@tidb_enable_prepared_plan_cache;
+@@tidb_enable_prepared_plan_cache
+1
+set @@tidb_enable_prepared_plan_cache=default;
+select @@tidb_enable_prepared_plan_cache;
+@@tidb_enable_prepared_plan_cache
+1
+select /*+ set_var(tidb_enable_non_prepared_plan_cache=0) */ @@tidb_enable_non_prepared_plan_cache;
+@@tidb_enable_non_prepared_plan_cache
+0
+select @@tidb_enable_non_prepared_plan_cache;
+@@tidb_enable_non_prepared_plan_cache
+1
+set @@tidb_enable_non_prepared_plan_cache=default;
+select @@tidb_enable_non_prepared_plan_cache;
+@@tidb_enable_non_prepared_plan_cache
+0
+select /*+ set_var(tidb_enable_non_prepared_plan_cache=1) */ @@tidb_enable_non_prepared_plan_cache;
+@@tidb_enable_non_prepared_plan_cache
+1
+select @@tidb_enable_non_prepared_plan_cache;
+@@tidb_enable_non_prepared_plan_cache
+0
+set @@tidb_enable_non_prepared_plan_cache=default;
+select @@tidb_enable_non_prepared_plan_cache;
+@@tidb_enable_non_prepared_plan_cache
+0
+select /*+ set_var(tidb_plan_cache_max_plan_size=0) */ @@tidb_plan_cache_max_plan_size;
+@@tidb_plan_cache_max_plan_size
+0
+select @@tidb_plan_cache_max_plan_size;
+@@tidb_plan_cache_max_plan_size
+2097152
+set @@tidb_plan_cache_max_plan_size=default;
+select @@tidb_plan_cache_max_plan_size;
+@@tidb_plan_cache_max_plan_size
+2097152
+select /*+ set_var(tidb_plan_cache_max_plan_size=1) */ @@tidb_plan_cache_max_plan_size;
+@@tidb_plan_cache_max_plan_size
+1
+select @@tidb_plan_cache_max_plan_size;
+@@tidb_plan_cache_max_plan_size
+2097152
+set @@tidb_plan_cache_max_plan_size=default;
+select @@tidb_plan_cache_max_plan_size;
+@@tidb_plan_cache_max_plan_size
+2097152
+select /*+ set_var(tidb_opt_range_max_size=0) */ @@tidb_opt_range_max_size;
+@@tidb_opt_range_max_size
+0
+select @@tidb_opt_range_max_size;
+@@tidb_opt_range_max_size
+67108864
+set @@tidb_opt_range_max_size=default;
+select @@tidb_opt_range_max_size;
+@@tidb_opt_range_max_size
+67108864
+select /*+ set_var(tidb_opt_range_max_size=1) */ @@tidb_opt_range_max_size;
+@@tidb_opt_range_max_size
+1
+select @@tidb_opt_range_max_size;
+@@tidb_opt_range_max_size
+67108864
+set @@tidb_opt_range_max_size=default;
+select @@tidb_opt_range_max_size;
+@@tidb_opt_range_max_size
+67108864
+select /*+ set_var(tidb_opt_advanced_join_hint=0) */ @@tidb_opt_advanced_join_hint;
+@@tidb_opt_advanced_join_hint
+0
+select @@tidb_opt_advanced_join_hint;
+@@tidb_opt_advanced_join_hint
+1
+set @@tidb_opt_advanced_join_hint=default;
+select @@tidb_opt_advanced_join_hint;
+@@tidb_opt_advanced_join_hint
+1
+select /*+ set_var(tidb_opt_advanced_join_hint=1) */ @@tidb_opt_advanced_join_hint;
+@@tidb_opt_advanced_join_hint
+1
+select @@tidb_opt_advanced_join_hint;
+@@tidb_opt_advanced_join_hint
+1
+set @@tidb_opt_advanced_join_hint=default;
+select @@tidb_opt_advanced_join_hint;
+@@tidb_opt_advanced_join_hint
+1
+select /*+ set_var(tidb_opt_prefix_index_single_scan=0) */ @@tidb_opt_prefix_index_single_scan;
+@@tidb_opt_prefix_index_single_scan
+0
+select @@tidb_opt_prefix_index_single_scan;
+@@tidb_opt_prefix_index_single_scan
+1
+set @@tidb_opt_prefix_index_single_scan=default;
+select @@tidb_opt_prefix_index_single_scan;
+@@tidb_opt_prefix_index_single_scan
+1
+select /*+ set_var(tidb_opt_prefix_index_single_scan=1) */ @@tidb_opt_prefix_index_single_scan;
+@@tidb_opt_prefix_index_single_scan
+1
+select @@tidb_opt_prefix_index_single_scan;
+@@tidb_opt_prefix_index_single_scan
+1
+set @@tidb_opt_prefix_index_single_scan=default;
+select @@tidb_opt_prefix_index_single_scan;
+@@tidb_opt_prefix_index_single_scan
+1
+select /*+ set_var(tidb_store_batch_size=1) */ @@tidb_store_batch_size;
+@@tidb_store_batch_size
+1
+select @@tidb_store_batch_size;
+@@tidb_store_batch_size
+4
+set @@tidb_store_batch_size=default;
+select @@tidb_store_batch_size;
+@@tidb_store_batch_size
+4
+select /*+ set_var(tidb_store_batch_size=2) */ @@tidb_store_batch_size;
+@@tidb_store_batch_size
+2
+select @@tidb_store_batch_size;
+@@tidb_store_batch_size
+4
+set @@tidb_store_batch_size=default;
+select @@tidb_store_batch_size;
+@@tidb_store_batch_size
+4
+select /*+ set_var(tidb_enable_inl_join_inner_multi_pattern=0) */ @@tidb_enable_inl_join_inner_multi_pattern;
+@@tidb_enable_inl_join_inner_multi_pattern
+0
+select @@tidb_enable_inl_join_inner_multi_pattern;
+@@tidb_enable_inl_join_inner_multi_pattern
+0
+set @@tidb_enable_inl_join_inner_multi_pattern=default;
+select @@tidb_enable_inl_join_inner_multi_pattern;
+@@tidb_enable_inl_join_inner_multi_pattern
+0
+select /*+ set_var(tidb_enable_inl_join_inner_multi_pattern=1) */ @@tidb_enable_inl_join_inner_multi_pattern;
+@@tidb_enable_inl_join_inner_multi_pattern
+1
+select @@tidb_enable_inl_join_inner_multi_pattern;
+@@tidb_enable_inl_join_inner_multi_pattern
+0
+set @@tidb_enable_inl_join_inner_multi_pattern=default;
+select @@tidb_enable_inl_join_inner_multi_pattern;
+@@tidb_enable_inl_join_inner_multi_pattern
+0
+select /*+ set_var(tidb_opt_enable_late_materialization=0) */ @@tidb_opt_enable_late_materialization;
+@@tidb_opt_enable_late_materialization
+0
+select @@tidb_opt_enable_late_materialization;
+@@tidb_opt_enable_late_materialization
+1
+set @@tidb_opt_enable_late_materialization=default;
+select @@tidb_opt_enable_late_materialization;
+@@tidb_opt_enable_late_materialization
+1
+select /*+ set_var(tidb_opt_enable_late_materialization=1) */ @@tidb_opt_enable_late_materialization;
+@@tidb_opt_enable_late_materialization
+1
+select @@tidb_opt_enable_late_materialization;
+@@tidb_opt_enable_late_materialization
+1
+set @@tidb_opt_enable_late_materialization=default;
+select @@tidb_opt_enable_late_materialization;
+@@tidb_opt_enable_late_materialization
+1
+select /*+ set_var(tidb_opt_ordering_index_selectivity_threshold=0) */ @@tidb_opt_ordering_index_selectivity_threshold;
+@@tidb_opt_ordering_index_selectivity_threshold
+0
+select @@tidb_opt_ordering_index_selectivity_threshold;
+@@tidb_opt_ordering_index_selectivity_threshold
+0
+set @@tidb_opt_ordering_index_selectivity_threshold=default;
+select @@tidb_opt_ordering_index_selectivity_threshold;
+@@tidb_opt_ordering_index_selectivity_threshold
+0
+select /*+ set_var(tidb_opt_ordering_index_selectivity_threshold=1) */ @@tidb_opt_ordering_index_selectivity_threshold;
+@@tidb_opt_ordering_index_selectivity_threshold
+1
+select @@tidb_opt_ordering_index_selectivity_threshold;
+@@tidb_opt_ordering_index_selectivity_threshold
+0
+set @@tidb_opt_ordering_index_selectivity_threshold=default;
+select @@tidb_opt_ordering_index_selectivity_threshold;
+@@tidb_opt_ordering_index_selectivity_threshold
+0
+select /*+ set_var(tidb_opt_ordering_index_selectivity_ratio=-1) */ @@tidb_opt_ordering_index_selectivity_ratio;
+@@tidb_opt_ordering_index_selectivity_ratio
+-1
+select @@tidb_opt_ordering_index_selectivity_ratio;
+@@tidb_opt_ordering_index_selectivity_ratio
+-1
+set @@tidb_opt_ordering_index_selectivity_ratio=default;
+select @@tidb_opt_ordering_index_selectivity_ratio;
+@@tidb_opt_ordering_index_selectivity_ratio
+-1
+select /*+ set_var(tidb_opt_ordering_index_selectivity_ratio=1) */ @@tidb_opt_ordering_index_selectivity_ratio;
+@@tidb_opt_ordering_index_selectivity_ratio
+1
+select @@tidb_opt_ordering_index_selectivity_ratio;
+@@tidb_opt_ordering_index_selectivity_ratio
+-1
+set @@tidb_opt_ordering_index_selectivity_ratio=default;
+select @@tidb_opt_ordering_index_selectivity_ratio;
+@@tidb_opt_ordering_index_selectivity_ratio
+-1
+select /*+ set_var(tidb_opt_enable_mpp_shared_cte_execution=0) */ @@tidb_opt_enable_mpp_shared_cte_execution;
+@@tidb_opt_enable_mpp_shared_cte_execution
+0
+select @@tidb_opt_enable_mpp_shared_cte_execution;
+@@tidb_opt_enable_mpp_shared_cte_execution
+0
+set @@tidb_opt_enable_mpp_shared_cte_execution=default;
+select @@tidb_opt_enable_mpp_shared_cte_execution;
+@@tidb_opt_enable_mpp_shared_cte_execution
+0
+select /*+ set_var(tidb_opt_enable_mpp_shared_cte_execution=1) */ @@tidb_opt_enable_mpp_shared_cte_execution;
+@@tidb_opt_enable_mpp_shared_cte_execution
+1
+select @@tidb_opt_enable_mpp_shared_cte_execution;
+@@tidb_opt_enable_mpp_shared_cte_execution
+0
+set @@tidb_opt_enable_mpp_shared_cte_execution=default;
+select @@tidb_opt_enable_mpp_shared_cte_execution;
+@@tidb_opt_enable_mpp_shared_cte_execution
+0
+select @@max_execution_time;
+@@max_execution_time
+0
+set @@max_execution_time=1000;
+select @@max_execution_time;
+@@max_execution_time
+1000
+select /*+ set_var(max_execution_time=100) */ @@max_execution_time;
+@@max_execution_time
+100
+select @@max_execution_time;
+@@max_execution_time
+1000
+select @@tidb_max_chunk_size;
+@@tidb_max_chunk_size
+32
+select /*+ set_var(tidb_max_chunk_size=32) */ @@tidb_max_chunk_size;
+@@tidb_max_chunk_size
+32
+select @@tidb_max_chunk_size;
+@@tidb_max_chunk_size
+32
+select @@tidb_init_chunk_size;
+@@tidb_init_chunk_size
+1
+select /*+ set_var(tidb_init_chunk_size=3) */ @@tidb_init_chunk_size;
+@@tidb_init_chunk_size
+3
+select @@tidb_init_chunk_size;
+@@tidb_init_chunk_size
+1
+select /*+ set_var(tidb_opt_use_invisible_indexes=on) */ @@tidb_opt_use_invisible_indexes;
+@@tidb_opt_use_invisible_indexes
+1
+select @@tidb_opt_use_invisible_indexes;
+@@tidb_opt_use_invisible_indexes
+0
+select /*+ set_var(tidb_opt_use_invisible_indexes=off) */ @@tidb_opt_use_invisible_indexes;
+@@tidb_opt_use_invisible_indexes
+0
+select @@tidb_opt_use_invisible_indexes;
+@@tidb_opt_use_invisible_indexes
+0
+set @@global.max_execution_time=1000;
+select @@max_execution_time;
+@@max_execution_time
+1000
+select /*+ set_var(max_execution_time=100) */ @@max_execution_time;
+@@max_execution_time
+100
+select @@max_execution_time;
+@@max_execution_time
+1000
+set @@max_execution_time=2000;
+select @@max_execution_time;
+@@max_execution_time
+2000
+select /*+ set_var(max_execution_time=100) */ @@max_execution_time;
+@@max_execution_time
+100
+select @@max_execution_time;
+@@max_execution_time
+2000
+set @@global.max_execution_time=default;

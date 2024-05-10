@@ -1,0 +1,32 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "updatetest_test",
+    timeout = "short",
+    srcs = [
+        "main_test.go",
+        "update_test.go",
+    ],
+    flaky = True,
+    shard_count = 23,
+    deps = [
+        "//pkg/parser/model",
+        "//pkg/parser/mysql",
+        "//pkg/planner/cardinality",
+        "//pkg/sessionctx",
+        "//pkg/sessionctx/stmtctx",
+        "//pkg/sessionctx/variable",
+        "//pkg/statistics",
+        "//pkg/statistics/handle/autoanalyze/exec",
+        "//pkg/statistics/handle/usage",
+        "//pkg/statistics/handle/util",
+        "//pkg/testkit",
+        "//pkg/testkit/testsetup",
+        "//pkg/types",
+        "//pkg/util/collate",
+        "//pkg/util/ranger",
+        "@com_github_prometheus_client_model//go",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

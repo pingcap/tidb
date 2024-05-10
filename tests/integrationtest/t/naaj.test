@@ -1,0 +1,213 @@
+set tidb_cost_model_version=1;
+# naaj.test file is for null-aware anti join
+set @@session.tidb_enable_null_aware_anti_join=1;
+# assert the cases for the left side without null.
+select "***************************************************** PART 1 *****************************************************************" as name;
+drop table if exists naaj_A, naaj_B;
+create table naaj_A(a int, b int, c int);
+create table naaj_B(a int, b int, c int);
+insert into naaj_A values (1,1,1);
+insert into naaj_B values (1,2,2);
+
+# assert 1: both side don't have null values.
+# AntiLeftOuterSemiJoin
+explain format = 'brief' select (a, b) not in (select a, b from naaj_B) from naaj_A;
+select (a, b) not in (select a, b from naaj_B) from naaj_A;
+
+# AntiSemiJoin
+explain format = 'brief' select * from naaj_A where (a, b) not in (select a, b from naaj_B);
+select * from naaj_A where (a, b) not in (select a, b from naaj_B);
+
+# assert 2: right side has same key bucket.
+insert into naaj_B values(1,1,1);
+select (a, b) not in (select a, b from naaj_B) from naaj_A;
+select * from naaj_A where (a, b) not in (select a, b from naaj_B);
+
+# assert 3: right side has null values.
+insert into naaj_B values(1, null, 2);
+select (a, b) not in (select a, b from naaj_B) from naaj_A;
+select * from naaj_A where (a, b) not in (select a, b from naaj_B);
+
+# assert 4: right side have null values, but it can't pass the inner(join key related or not) filter.
+explain format = 'brief' select (a, b) not in (select a, b from naaj_B where naaj_A.c > naaj_B.c) from naaj_A;
+select (a, b) not in (select a, b from naaj_B where naaj_A.c > naaj_B.c) from naaj_A;
+
+explain format = 'brief' select * from naaj_A where (a, b) not in (select a, b from naaj_B where naaj_A.c > naaj_B.c);
+select * from naaj_A where (a, b) not in (select a, b from naaj_B where naaj_A.c > naaj_B.c);
+
+explain format = 'brief' select (a, b) not in (select a, b from naaj_B where naaj_A.a != naaj_B.a) from naaj_A;
+select (a, b) not in (select a, b from naaj_B where naaj_A.a != naaj_B.a) from naaj_A;
+
+explain format = 'brief' select * from naaj_A where (a, b) not in (select a, b from naaj_B where naaj_A.a != naaj_B.a);
+select * from naaj_A where (a, b) not in (select a, b from naaj_B where naaj_A.a != naaj_B.a);
+
+# assert 5: right side is empty.
+select * from naaj_A where (a, b) not in (select a, b from naaj_B where false);
+select (a, b) not in (select a, b from naaj_B where false) from naaj_A;
+
+# assert 6: right side null bucket filter (not-null join key should match with each other).
+insert into naaj_B values(2, null, 2);
+select (a, b) not in (select a, b from naaj_B) from naaj_A;
+select * from naaj_A where (a, b) not in (select a, b from naaj_B);
+
+delete from naaj_B where a=1 and b=1 and c=1;
+select (a, b) not in (select a, b from naaj_B) from naaj_A;
+select * from naaj_A where (a, b) not in (select a, b from naaj_B);
+
+# case 2: assert the cases for the left side has null.
+select "***************************************************** PART 2 *****************************************************************" as name;
+delete from naaj_A;
+delete from naaj_B;
+insert into naaj_A values(1,null,1);
+
+# assert 1: left side has null, while the right is empty.
+select (a, b) not in (select a, b from naaj_B) from naaj_A;
+select * from naaj_A where (a, b) not in (select a, b from naaj_B);
+
+# assert 2: left side has null, while the right has a invalid null row (can't pass the nullBit filter).
+insert into naaj_B values(2, null, 2);
+select (a, b) not in (select a, b from naaj_B) from naaj_A;
+select * from naaj_A where (a, b) not in (select a, b from naaj_B);
+
+# left side has null, while the right has a valid null row. (passed the nullBit filter).
+insert into naaj_B values(null, null, 2);
+select (a, b) not in (select a, b from naaj_B) from naaj_A;
+select * from naaj_A where (a, b) not in (select a, b from naaj_B);
+
+# assert 3: left side has null, while the right has a valid non-null row.
+delete from naaj_B;
+insert into naaj_B values(2, 2, 2);
+select (a, b) not in (select a, b from naaj_B) from naaj_A;
+select * from naaj_A where (a, b) not in (select a, b from naaj_B);
+
+# assert 4: left side has null, while the right has no valid rows (equivalent to ).
+insert into naaj_B values(2, null, 2);
+insert into naaj_B values(null, null, 2);
+explain format = 'brief' select (a, b) not in (select a, b from naaj_B where naaj_A.c > naaj_B.c) from naaj_A;
+select (a, b) not in (select a, b from naaj_B where naaj_A.c > naaj_B.c) from naaj_A;
+explain format = 'brief' select * from naaj_A where (a, b) not in (select a, b from naaj_B  where naaj_A.c > naaj_B.c);
+select * from naaj_A where (a, b) not in (select a, b from naaj_B  where naaj_A.c > naaj_B.c);
+
+# assert 5: When the inner subq has a correlated EQ condition, we won't built the NA-EQ connecting condition here.
+explain format = 'brief' select (a, b) not in (select a, b from naaj_B where naaj_A.c = naaj_B.c) from naaj_A;
+select (a, b) not in (select a, b from naaj_B where naaj_A.c = naaj_B.c) from naaj_A;
+explain format = 'brief' select * from naaj_A where (a, b) not in (select a, b from naaj_B  where naaj_A.c = naaj_B.c);
+select * from naaj_A where (a, b) not in (select a, b from naaj_B  where naaj_A.c = naaj_B.c);
+
+# case 3: assert the cases for the equivalent semantic predicate of != ALL
+select "***************************************************** PART 3 *****************************************************************" as name;
+drop table if exists naaj_A, naaj_B;
+create table naaj_A(a int, b int, c int);
+create table naaj_B(a int, b int, c int);
+insert into naaj_A values (1,1,1);
+insert into naaj_B values (1,2,2);
+
+# assert 1: both side don't have null values.
+# AntiLeftOuterSemiJoin
+explain format = 'brief' select (a, b) != all (select a, b from naaj_B) from naaj_A;
+select (a, b) != all (select a, b from naaj_B) from naaj_A;
+
+# AntiSemiJoin
+explain format = 'brief' select * from naaj_A where (a, b) != all (select a, b from naaj_B);
+select * from naaj_A where (a, b) != all (select a, b from naaj_B);
+
+# assert 2: right side has same key bucket.
+insert into naaj_B values(1,1,1);
+select (a, b) != all (select a, b from naaj_B) from naaj_A;
+select * from naaj_A where (a, b) != all (select a, b from naaj_B);
+
+# assert 3: right side has null values.
+insert into naaj_B values(1, null, 2);
+select (a, b) != all (select a, b from naaj_B) from naaj_A;
+select * from naaj_A where (a, b) != all (select a, b from naaj_B);
+
+# assert 4: right side have null values, but it can't pass the inner(join key related or not) filter.
+explain format = 'brief' select (a, b) != all (select a, b from naaj_B where naaj_A.c > naaj_B.c) from naaj_A;
+select (a, b) != all (select a, b from naaj_B where naaj_A.c > naaj_B.c) from naaj_A;
+
+explain format = 'brief' select * from naaj_A where (a, b) != all (select a, b from naaj_B where naaj_A.c > naaj_B.c);
+select * from naaj_A where (a, b) != all (select a, b from naaj_B where naaj_A.c > naaj_B.c);
+
+explain format = 'brief' select (a, b) != all (select a, b from naaj_B where naaj_A.a != naaj_B.a) from naaj_A;
+select (a, b) != all (select a, b from naaj_B where naaj_A.a != naaj_B.a) from naaj_A;
+
+explain format = 'brief' select * from naaj_A where (a, b) != all (select a, b from naaj_B where naaj_A.a != naaj_B.a);
+select * from naaj_A where (a, b) != all (select a, b from naaj_B where naaj_A.a != naaj_B.a);
+
+# assert 5: right side is empty.
+select * from naaj_A where (a, b) != all (select a, b from naaj_B where false);
+select (a, b) != all (select a, b from naaj_B where false) from naaj_A;
+
+# assert 6: right side null bucket filter (not-null join key should match with each other).
+insert into naaj_B values(2, null, 2);
+select (a, b) != all (select a, b from naaj_B) from naaj_A;
+select * from naaj_A where (a, b) != all (select a, b from naaj_B);
+
+delete from naaj_B where a=1 and b=1 and c=1;
+select (a, b) != all (select a, b from naaj_B) from naaj_A;
+select * from naaj_A where (a, b) != all (select a, b from naaj_B);
+
+# case 4: assert the cases for the equivalent semantic predicate of != ALL
+select "***************************************************** PART 4 *****************************************************************" as name;
+delete from naaj_A;
+delete from naaj_B;
+insert into naaj_A values(1,null,1);
+
+# assert 1: left side has null, while the right is empty.
+select (a, b) != all (select a, b from naaj_B) from naaj_A;
+select * from naaj_A where (a, b) != all (select a, b from naaj_B);
+
+# assert 2: left side has null, while the right has a invalid null row (can't pass the nullBit filter).
+insert into naaj_B values(2, null, 2);
+select (a, b) != all (select a, b from naaj_B) from naaj_A;
+select * from naaj_A where (a, b) != all (select a, b from naaj_B);
+
+# left side has null, while the right has a valid null row. (passed the nullBit filter).
+insert into naaj_B values(null, null, 2);
+select (a, b) != all (select a, b from naaj_B) from naaj_A;
+select * from naaj_A where (a, b) != all (select a, b from naaj_B);
+
+# assert 3: left side has null, while the right has a valid non-null row.
+delete from naaj_B;
+insert into naaj_B values(2, 2, 2);
+select (a, b) != all (select a, b from naaj_B) from naaj_A;
+select * from naaj_A where (a, b) != all (select a, b from naaj_B);
+
+# assert 4: left side has null, while the right has no valid rows (equivalent to ).
+insert into naaj_B values(2, null, 2);
+insert into naaj_B values(null, null, 2);
+explain format = 'brief' select (a, b) != all (select a, b from naaj_B where naaj_A.c > naaj_B.c) from naaj_A;
+select (a, b) != all (select a, b from naaj_B where naaj_A.c > naaj_B.c) from naaj_A;
+explain format = 'brief' select * from naaj_A where (a, b) != all (select a, b from naaj_B  where naaj_A.c > naaj_B.c);
+select * from naaj_A where (a, b) != all (select a, b from naaj_B  where naaj_A.c > naaj_B.c);
+
+# assert 5: When the inner subq has a correlated EQ condition, we won't built the NA-EQ connecting condition here.
+explain format = 'brief' select (a, b) != all (select a, b from naaj_B where naaj_A.c = naaj_B.c) from naaj_A;
+select (a, b) != all (select a, b from naaj_B where naaj_A.c = naaj_B.c) from naaj_A;
+explain format = 'brief' select * from naaj_A where (a, b) != all (select a, b from naaj_B  where naaj_A.c = naaj_B.c);
+select * from naaj_A where (a, b) != all (select a, b from naaj_B  where naaj_A.c = naaj_B.c);
+
+# case 5: assert some bugs.
+select "***************************************************** PART 5 *****************************************************************" as name;
+delete from naaj_A;
+delete from naaj_B;
+insert into naaj_A values(1,1,1);
+insert into naaj_B values(2,null,2);
+
+# assert 1: although the probe key doesn't have null values, we still need to use buildNullBits to guarantee the non-null position has the exactly the same value.
+select (a,b) not in (select a, b from naaj_B) from naaj_A;
+select * from naaj_A where (a,b) not in (select a, b from naaj_B);
+
+# assert 2: should inject the projection under join.
+explain select (a+1,b*2) not in (select a, b from naaj_B) from naaj_A;
+select (a+1,b*2) not in (select a, b from naaj_B) from naaj_A;
+insert into naaj_B values(2,2,2);
+select (a+1,b*2) not in (select a, b from naaj_B) from naaj_A;
+
+explain select * from naaj_A where (a+1,b*2) not in (select a+1, b-1 from naaj_B);
+select * from naaj_A where (a+1,b*2) not in (select a, b from naaj_B);
+
+# assert 3: NA-EQ and EQ can't co-exist at the same time.
+explain select (a+1,b*2) not in (select a, b=1 from naaj_B where naaj_A.a = naaj_B.a) from naaj_A;
+explain select * from naaj_A where (a+1,b*2) not in (select a, b=1 from naaj_B where naaj_A.a = naaj_B.a);
+set @@session.tidb_enable_null_aware_anti_join=0;

@@ -4,7 +4,9 @@ package storage
 
 import (
 	"context"
+	"io"
 	"os"
+	"path"
 	"path/filepath"
 	"runtime"
 	"testing"
@@ -25,7 +27,7 @@ func TestDeleteFile(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, false, ret)
 
-	_, err = store.Create(context.Background(), name)
+	_, err = store.Create(context.Background(), name, nil)
 	require.NoError(t, err)
 
 	ret, err = store.FileExists(context.Background(), name)
@@ -126,4 +128,132 @@ func TestWalkDirWithSoftLinkFile(t *testing.T) {
 		return errors.Errorf("find other file: %s", path)
 	})
 	require.NoError(t, err)
+}
+
+func TestWalkDirSkipSubDir(t *testing.T) {
+	tempDir := t.TempDir()
+	require.NoError(t, os.WriteFile(path.Join(tempDir, "test1.txt"), []byte("test1"), 0o644))
+	require.NoError(t, os.MkdirAll(path.Join(tempDir, "sub"), 0o755))
+	require.NoError(t, os.WriteFile(path.Join(tempDir, "sub", "test2.txt"), []byte("test2"), 0o644))
+
+	sb, err := ParseBackend(tempDir, &BackendOptions{})
+	require.NoError(t, err)
+	store, err := Create(context.TODO(), sb, true)
+	require.NoError(t, err)
+	names := []string{"sub/test2.txt", "test1.txt"}
+	i := 0
+	require.NoError(t, store.WalkDir(context.Background(), &WalkOption{}, func(path string, size int64) error {
+		require.Equal(t, names[i], path)
+		i++
+		return nil
+	}))
+
+	names = []string{"test1.txt"}
+	i = 0
+	require.NoError(t, store.WalkDir(context.Background(), &WalkOption{SkipSubDir: true}, func(path string, size int64) error {
+		require.Equal(t, names[i], path)
+		i++
+		return nil
+	}))
+}
+
+func TestLocalURI(t *testing.T) {
+	ctx := context.Background()
+
+	url := "file:///tmp/folder"
+	sb, err := ParseBackend(url, &BackendOptions{})
+	require.NoError(t, err)
+
+	store, err := Create(ctx, sb, true)
+	require.NoError(t, err)
+
+	obtained := store.URI()
+	require.Equal(t, url, obtained)
+}
+
+func TestLocalFileReadRange(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	sb, err := ParseBackend("file://"+filepath.ToSlash(dir), &BackendOptions{})
+	require.NoError(t, err)
+	store, err := Create(ctx, sb, true)
+	require.NoError(t, err)
+
+	name := "test_read_range"
+
+	w, err := store.Create(ctx, name, nil)
+	require.NoError(t, err)
+	_, err = w.Write(ctx, []byte("0123456789"))
+	require.NoError(t, err)
+	require.NoError(t, w.Close(ctx))
+
+	checkContent := func(r ExternalFileReader, expected string) {
+		buf := make([]byte, 10)
+		n, _ := r.Read(buf)
+		require.Equal(t, expected, string(buf[:n]))
+		n, err = r.Read(buf)
+		require.Equal(t, 0, n)
+		require.ErrorIs(t, err, io.EOF)
+	}
+
+	// [2, 6]
+	start, end := int64(2), int64(6)
+	r, err := store.Open(ctx, name, &ReaderOption{
+		StartOffset: &start,
+		EndOffset:   &end,
+	})
+	require.NoError(t, err)
+	checkContent(r, "2345")
+
+	// full range
+	r, err = store.Open(ctx, name, nil)
+	require.NoError(t, err)
+	checkContent(r, "0123456789")
+
+	// [5, ...)
+	start = 5
+	r, err = store.Open(ctx, name, &ReaderOption{
+		StartOffset: &start,
+	})
+	require.NoError(t, err)
+	checkContent(r, "56789")
+
+	// [..., 5)
+	end = 5
+	r, err = store.Open(ctx, name, &ReaderOption{
+		EndOffset: &end,
+	})
+	require.NoError(t, err)
+	checkContent(r, "01234")
+
+	// test read into smaller buffer
+	smallBuf := make([]byte, 2)
+	start, end = int64(2), int64(6)
+	r, err = store.Open(ctx, name, &ReaderOption{
+		StartOffset: &start,
+		EndOffset:   &end,
+	})
+	require.NoError(t, err)
+	n, _ := r.Read(smallBuf)
+	require.Equal(t, "23", string(smallBuf[:n]))
+}
+
+func TestWalkBrokenSymLink(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	err := os.Symlink(filepath.Join(dir, "non-existing-file"), filepath.Join(dir, "file-that-should-be-ignored"))
+	require.NoError(t, err)
+
+	sb, err := ParseBackend("file://"+filepath.ToSlash(dir), nil)
+	require.NoError(t, err)
+	store, err := New(ctx, sb, nil)
+	require.NoError(t, err)
+
+	files := map[string]int64{}
+	err = store.WalkDir(ctx, nil, func(path string, size int64) error {
+		files[path] = size
+		return nil
+	})
+	require.NoError(t, err)
+	require.Equal(t, map[string]int64{"file-that-should-be-ignored": 0}, files)
 }

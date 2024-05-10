@@ -26,6 +26,18 @@ func (r IterResult[T]) String() string {
 	return fmt.Sprintf("IterResult.Emit(%v)", r.Item)
 }
 
+func convertDoneOrErrResult[T, R any](r IterResult[T]) IterResult[R] {
+	return IterResult[R]{
+		Err:      r.Err,
+		Finished: r.Finished,
+	}
+}
+
+type Indexed[T any] struct {
+	Index int
+	Item  T
+}
+
 // TryNextor is the general interface for "impure" iterators:
 // which may trigger some error or block the caller when advancing.
 type TryNextor[T any] interface {

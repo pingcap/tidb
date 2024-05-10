@@ -1,0 +1,22 @@
+# TestCommitRetryCount
+set session tidb_txn_mode="";
+drop table if exists no_retry;
+create table no_retry (id int);
+insert into no_retry values (1);
+set @@tidb_retry_limit = 0;
+begin;
+update no_retry set id = 2;
+
+connect (conn1, localhost, root,, session__txn);
+set session tidb_txn_mode="";
+begin;
+update no_retry set id = 3;
+commit;
+disconnect conn1;
+
+-- echo ## No auto retry because retry limit is set to 0.
+-- replace_regex /Write conflict,.*reason=Optimistic \[try again later\]/Write conflict, <details> reason=Optimistic [try again later]/
+-- error 9007
+commit;
+set session tidb_txn_mode=pessimistic;
+set @@tidb_retry_limit = default;

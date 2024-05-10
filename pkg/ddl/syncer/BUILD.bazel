@@ -1,0 +1,55 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "syncer",
+    srcs = [
+        "state_syncer.go",
+        "syncer.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/ddl/syncer",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/ddl/logutil",
+        "//pkg/ddl/util",
+        "//pkg/domain/infosync",
+        "//pkg/metrics",
+        "//pkg/sessionctx/variable",
+        "//pkg/util",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@io_etcd_go_etcd_api_v3//mvccpb",
+        "@io_etcd_go_etcd_client_v3//:client",
+        "@io_etcd_go_etcd_client_v3//concurrency",
+        "@org_uber_go_atomic//:atomic",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "syncer_test",
+    timeout = "short",
+    srcs = [
+        "state_syncer_test.go",
+        "syncer_test.go",
+    ],
+    flaky = True,
+    shard_count = 3,
+    deps = [
+        ":syncer",
+        "//pkg/ddl",
+        "//pkg/ddl/util",
+        "//pkg/infoschema",
+        "//pkg/parser/terror",
+        "//pkg/sessionctx/variable",
+        "//pkg/store/mockstore",
+        "//pkg/util",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_stretchr_testify//require",
+        "@io_etcd_go_etcd_api_v3//mvccpb",
+        "@io_etcd_go_etcd_client_v3//:client",
+        "@io_etcd_go_etcd_server_v3//etcdserver",
+        "@io_etcd_go_etcd_tests_v3//integration",
+        "@org_golang_google_grpc//codes",
+        "@org_golang_google_grpc//status",
+    ],
+)
