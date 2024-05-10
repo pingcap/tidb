@@ -35,6 +35,7 @@ type List struct {
 	consumedIdx int             // chunk index in "chunks", has been consumed.
 }
 
+// RowPtrSize shows the size of RowPtr
 const RowPtrSize = int(unsafe.Sizeof(RowPtr{}))
 
 // RowPtr is used to get a row from a list.
