@@ -24,6 +24,9 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/ddl/util/callback"
 	"github.com/pingcap/tidb/pkg/domain"
 	mysql "github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/executor"
@@ -44,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tidb/pkg/util/redact"
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 )
@@ -1945,5 +1949,52 @@ func TestAdminCheckGlobalIndexWithClusterIndex(t *testing.T) {
 		require.Error(t, err)
 		require.True(t, consistency.ErrAdminCheckInconsistent.Equal(err))
 		require.ErrorContains(t, err, "[admin:8223]data inconsistency in table: admin_test, index: uidx_a, ")
+	}
+}
+
+func TestAdminCheckGlobalIndexDuringDDL(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	originalHook := dom.DDL().GetHook()
+	tk := testkit.NewTestKit(t, store)
+
+	var schemaMap = make(map[model.SchemaState]struct{})
+
+	hook := &callback.TestDDLCallback{Do: dom}
+	onJobUpdatedExportedFunc := func(job *model.Job) {
+		schemaMap[job.SchemaState] = struct{}{}
+		_, err := tk.Exec("admin check table admin_test")
+		assert.NoError(t, err)
+	}
+	hook.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
+
+	// check table after delete some index key/value pairs.
+	ddl.MockDMLExecution = func() {
+		_, err := tk.Exec("admin check table admin_test")
+		assert.NoError(t, err)
+	}
+
+	var enable_fast_check = []bool{false, true}
+	for _, enabled := range enable_fast_check {
+		tk.MustExec("use test")
+		tk.MustExec("drop table if exists admin_test")
+
+		tk.MustExec("set tidb_enable_global_index = true")
+		tk.MustExec(fmt.Sprintf("set tidb_enable_fast_table_check = %v", enabled))
+
+		tk.MustExec("create table admin_test (a int, b int, c int, unique key uidx_a(a), primary key(c)) partition by hash(c) partitions 5")
+		tk.MustExec("insert admin_test values (-10, -20, 1), (-1, -10, 2), (1, 11, 3), (2, 12, 0), (5, 15, -1), (10, 20, -2), (20, 30, -3)")
+		tk.MustExec("analyze table admin_test")
+
+		dom.DDL().SetHook(hook)
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockDMLExecution", "1*return(true)->return(false)"))
+		tk.MustExec("alter table admin_test truncate partition p0")
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockDMLExecution"))
+		dom.DDL().SetHook(originalHook)
+
+		// Should have 3 different schema states, `none`, `deleteOnly`, `deleteReorg`
+		require.Len(t, schemaMap, 3)
+		for ss := range schemaMap {
+			delete(schemaMap, ss)
+		}
 	}
 }
