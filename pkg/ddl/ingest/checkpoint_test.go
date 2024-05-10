@@ -26,12 +26,28 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/internal/session"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/oracle"
+	pd "github.com/tikv/pd/client"
 )
 
 func createDummyFile(t *testing.T, folder string) {
 	f, err := os.Create(filepath.Join(folder, "test-file"))
 	require.NoError(t, err)
 	require.NoError(t, f.Close())
+}
+
+var (
+	mockPTS    int64 = 12
+	mockLTS    int64 = 34
+	expectedTS       = oracle.ComposeTS(mockPTS, mockLTS)
+)
+
+type mockGetTSClient struct {
+	pd.Client
+}
+
+func (m mockGetTSClient) GetTS(context.Context) (int64, int64, error) {
+	return mockPTS, mockLTS, nil
 }
 
 func TestCheckpointManager(t *testing.T) {
@@ -48,7 +64,7 @@ func TestCheckpointManager(t *testing.T) {
 	flushCtrl := &dummyFlushCtrl{imported: false}
 	tmpFolder := t.TempDir()
 	createDummyFile(t, tmpFolder)
-	mgr, err := ingest.NewCheckpointManager(ctx, flushCtrl, sessPool, 1, []int64{1}, tmpFolder)
+	mgr, err := ingest.NewCheckpointManager(ctx, flushCtrl, sessPool, 1, []int64{1}, tmpFolder, mockGetTSClient{})
 	require.NoError(t, err)
 	defer mgr.Close()
 
@@ -103,7 +119,7 @@ func TestCheckpointManagerUpdateReorg(t *testing.T) {
 	flushCtrl := &dummyFlushCtrl{imported: true}
 	tmpFolder := t.TempDir()
 	createDummyFile(t, tmpFolder)
-	mgr, err := ingest.NewCheckpointManager(ctx, flushCtrl, sessPool, 1, []int64{1}, tmpFolder)
+	mgr, err := ingest.NewCheckpointManager(ctx, flushCtrl, sessPool, 1, []int64{1}, tmpFolder, mockGetTSClient{})
 	require.NoError(t, err)
 	defer mgr.Close()
 
@@ -126,6 +142,7 @@ func TestCheckpointManagerUpdateReorg(t *testing.T) {
 	require.Equal(t, 100, reorgMeta.Checkpoint.LocalKeyCount)
 	require.EqualValues(t, []byte{'1', '9'}, reorgMeta.Checkpoint.GlobalSyncKey)
 	require.EqualValues(t, []byte{'1', '9'}, reorgMeta.Checkpoint.LocalSyncKey)
+	require.EqualValues(t, expectedTS, reorgMeta.Checkpoint.TS)
 }
 
 func TestCheckpointManagerResumeReorg(t *testing.T) {
@@ -140,6 +157,7 @@ func TestCheckpointManagerResumeReorg(t *testing.T) {
 			GlobalKeyCount: 200,
 			InstanceAddr:   ingest.InstanceAddr(),
 			Version:        1,
+			TS:             123456,
 		},
 	}
 	reorgMetaRaw, err := json.Marshal(reorgMeta)
@@ -154,7 +172,7 @@ func TestCheckpointManagerResumeReorg(t *testing.T) {
 	flushCtrl := &dummyFlushCtrl{imported: false}
 	tmpFolder := t.TempDir()
 	// checkpoint manager should not use local checkpoint if the folder is empty
-	mgr, err := ingest.NewCheckpointManager(ctx, flushCtrl, sessPool, 1, []int64{1}, tmpFolder)
+	mgr, err := ingest.NewCheckpointManager(ctx, flushCtrl, sessPool, 1, []int64{1}, tmpFolder, nil)
 	require.NoError(t, err)
 	defer mgr.Close()
 	require.True(t, mgr.IsKeyProcessed([]byte{'1', '9'}))
@@ -162,9 +180,10 @@ func TestCheckpointManagerResumeReorg(t *testing.T) {
 	localCnt, globalNextKey := mgr.Status()
 	require.Equal(t, 0, localCnt)
 	require.EqualValues(t, []byte{'1', '9'}, globalNextKey)
+	require.EqualValues(t, 123456, mgr.GetTS())
 
 	createDummyFile(t, tmpFolder)
-	mgr2, err := ingest.NewCheckpointManager(ctx, flushCtrl, sessPool, 1, []int64{1}, tmpFolder)
+	mgr2, err := ingest.NewCheckpointManager(ctx, flushCtrl, sessPool, 1, []int64{1}, tmpFolder, nil)
 	require.NoError(t, err)
 	defer mgr2.Close()
 	require.True(t, mgr2.IsKeyProcessed([]byte{'1', '9'}))
@@ -172,6 +191,7 @@ func TestCheckpointManagerResumeReorg(t *testing.T) {
 	localCnt, globalNextKey = mgr2.Status()
 	require.Equal(t, 100, localCnt)
 	require.EqualValues(t, []byte{'1', '9'}, globalNextKey)
+	require.EqualValues(t, 123456, mgr.GetTS())
 }
 
 type dummyFlushCtrl struct {
