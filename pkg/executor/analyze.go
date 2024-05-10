@@ -22,6 +22,7 @@ import (
 	"net"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -64,6 +65,7 @@ type AnalyzeExec struct {
 	gp         *gp.Pool
 	// errExitCh is used to notice the worker that the whole analyze task is finished when to meet error.
 	errExitCh chan struct{}
+	notEmpty  atomic.Bool
 }
 
 var (
@@ -159,7 +161,7 @@ TASKLOOP:
 		dom.SysProcTracker().KillSysProcess(dom.GetAutoAnalyzeProcID())
 	})
 	// If we enabled dynamic prune mode, then we need to generate global stats here for partition tables.
-	if needGlobalStats {
+	if needGlobalStats && e.notEmpty.Load() {
 		err = e.handleGlobalStats(ctx, globalStatsMap)
 		if err != nil {
 			return err
@@ -423,7 +425,9 @@ func (e *AnalyzeExec) handleResultsError(
 		}
 		handleGlobalStats(needGlobalStats, globalStatsMap, results)
 		tableIDs[results.TableID.GetStatisticsID()] = struct{}{}
-
+		if results.Job.Progress.GetProcessRow() != 0 {
+			e.notEmpty.Store(true)
+		}
 		if err1 := statsHandle.SaveTableStatsToStorage(results, e.Ctx().GetSessionVars().EnableAnalyzeSnapshot, handleutil.StatsMetaHistorySourceAnalyze); err1 != nil {
 			tableID := results.TableID.TableID
 			err = err1
@@ -488,6 +492,9 @@ func (e *AnalyzeExec) handleResultsErrorWithConcurrency(ctx context.Context, sta
 		}
 		handleGlobalStats(needGlobalStats, globalStatsMap, results)
 		tableIDs[results.TableID.GetStatisticsID()] = struct{}{}
+		if results.Job.Progress.GetProcessRow() != 0 {
+			e.notEmpty.Store(true)
+		}
 		saveResultsCh <- results
 	}
 	close(saveResultsCh)

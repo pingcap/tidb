@@ -3127,3 +3127,21 @@ func TestAnalyzePartitionVerify(t *testing.T) {
 		}
 	}
 }
+
+func TestAnalyzeEmptryPartitionTable(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	sql := "create table t(a int,b varchar(100),c int,INDEX idx_c(c)) PARTITION BY RANGE ( a ) ("
+	for n := 100; n < 1000; n = n + 100 {
+		sql += "PARTITION p" + fmt.Sprint(n) + " VALUES LESS THAN (" + fmt.Sprint(n) + "),"
+	}
+	sql += "PARTITION p" + fmt.Sprint(1000) + " VALUES LESS THAN MAXVALUE)"
+	tk.MustExec(sql)
+	tk.MustExec("set @@tidb_analyze_partition_concurrency=1")
+	tk.MustExec("analyze table t")
+	tk.MustQuery("select * from mysql.analyze_jobs where job_info like \"%merge%\"").Check(testkit.Rows())
+	tk.MustExec("set @@tidb_analyze_partition_concurrency=2")
+	tk.MustExec("analyze table t")
+	tk.MustQuery("select * from mysql.analyze_jobs where job_info like \"%merge%\"").Check(testkit.Rows())
+}

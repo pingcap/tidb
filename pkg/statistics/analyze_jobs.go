@@ -61,6 +61,7 @@ type AnalyzeProgress struct {
 
 	// deltaCount is the newly processed rows after the last time mysql.analyze_jobs.processed_rows is updated.
 	deltaCount atomic.Int64
+	count      atomic.Int64
 }
 
 // Update adds rowCount to the delta count. If the updated delta count reaches threshold, it returns the delta count for
@@ -68,6 +69,7 @@ type AnalyzeProgress struct {
 func (p *AnalyzeProgress) Update(rowCount int64) int64 {
 	dumpCount := int64(0)
 	newCount := p.deltaCount.Add(rowCount)
+	p.count.Add(rowCount)
 
 	t := time.Now()
 	p.lastDumpTimeMu.Lock()
@@ -98,4 +100,9 @@ func (p *AnalyzeProgress) GetLastDumpTime() time.Time {
 	p.lastDumpTimeMu.RLock()
 	defer p.lastDumpTimeMu.RUnlock()
 	return p.lastDumpTime
+}
+
+// GetProcessRow returns the total processed rows.
+func (p *AnalyzeProgress) GetProcessRow() int64 {
+	return p.count.Load()
 }
