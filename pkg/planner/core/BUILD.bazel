@@ -32,6 +32,7 @@ go_library(
         "plan_cache.go",
         "plan_cache_lru.go",
         "plan_cache_param.go",
+        "plan_cache_rebuild.go",
         "plan_cache_utils.go",
         "plan_cacheable_checker.go",
         "plan_cost_detail.go",
