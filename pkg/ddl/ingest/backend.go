@@ -250,7 +250,17 @@ func (bc *litBackendCtx) unsafeImportAndReset(ei *engineInfo) error {
 		return err
 	}
 
-	err := bc.backend.ResetEngineSkipAllocTS(bc.ctx, ei.uuid)
+	resetFn := bc.backend.ResetEngineSkipAllocTS
+	mgr := bc.GetCheckpointManager()
+	if mgr == nil {
+		// disttask case, no need to refresh TS.
+		//
+		// TODO(lance6716): for disttask local sort case, we need to use a fixed TS. But
+		// it doesn't have checkpoint, so we need to find a way to save TS.
+		resetFn = bc.backend.ResetEngine
+	}
+
+	err := resetFn(bc.ctx, ei.uuid)
 	if err != nil {
 		logutil.Logger(bc.ctx).Error(LitErrResetEngineFail, zap.Int64("index ID", ei.indexID))
 		err1 := ei.closedEngine.Cleanup(bc.ctx)
@@ -263,9 +273,7 @@ func (bc *litBackendCtx) unsafeImportAndReset(ei *engineInfo) error {
 		return err
 	}
 
-	mgr := bc.GetCheckpointManager()
 	if mgr == nil {
-		// disttask case, no need to refresh TS.
 		return nil
 	}
 
