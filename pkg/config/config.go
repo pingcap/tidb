@@ -75,7 +75,7 @@ const (
 	DefTableColumnCountLimit = 1017
 	// DefMaxOfTableColumnCountLimit is maximum limitation of the number of columns in a table
 	DefMaxOfTableColumnCountLimit = 4096
-	// DefStatsLoadConcurrencyLimit is limit of the concurrency of stats-load
+	// DefStatsLoadConcurrencyLimit is limit of the concurrency of stats-load. When it is set to 0, it will be set by syncload.GetSyncLoadConcurrencyByCPU.
 	DefStatsLoadConcurrencyLimit = 0
 	// DefMaxOfStatsLoadConcurrencyLimit is maximum limitation of the concurrency of stats-load
 	DefMaxOfStatsLoadConcurrencyLimit = 128

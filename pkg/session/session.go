@@ -3371,6 +3371,7 @@ func bootstrapSessionImpl(store kv.Storage, createSessionsImpl func(store kv.Sto
 	analyzeConcurrencyQuota := int(config.GetGlobalConfig().Performance.AnalyzePartitionConcurrencyQuota)
 	concurrency := config.GetGlobalConfig().Performance.StatsLoadConcurrency
 	if concurrency == 0 {
+		// if concurrency is 0, we will set the concurrency of sync load by CPU.
 		concurrency = syncload.GetSyncLoadConcurrencyByCPU()
 	}
 	if concurrency < 0 { // it is only for test, in the production, negative value is illegal.
