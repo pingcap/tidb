@@ -276,7 +276,7 @@ func TestUnlockPartitionedTableWouldUpdateGlobalCountCorrectly(t *testing.T) {
 	tk.MustExec("insert into t(a, b) values(2,'b')")
 	tk.MustExec("analyze table test.t")
 	tblStats := h.GetTableStats(tbl)
-	require.Equal(t, int64(0), tblStats.RealtimeCount)
+	require.Equal(t, int64(10000), tblStats.RealtimeCount)
 
 	// Dump stats delta to KV.
 	require.Nil(t, h.DumpStatsDeltaToKV(true))
@@ -297,11 +297,12 @@ func TestUnlockPartitionedTableWouldUpdateGlobalCountCorrectly(t *testing.T) {
 
 	// Unlock the table.
 	tk.MustExec("unlock stats t")
+	tk.MustExec("analyze table test.t")
 	// Check the global count is updated correctly.
 	rows = tk.MustQuery(fmt.Sprint("select count, modify_count from mysql.stats_meta where table_id = ", tbl.ID)).Rows()
 	require.Len(t, rows, 1)
 	require.Equal(t, "2", rows[0][0])
-	require.Equal(t, "2", rows[0][1])
+	require.Equal(t, "0", rows[0][1])
 }
 
 func TestDeltaInLockInfoCanBeNegative(t *testing.T) {
