@@ -7691,13 +7691,13 @@ def go_deps():
         name = "com_google_cloud_go_compute_metadata",
         build_file_proto_mode = "disable_global",
         importpath = "cloud.google.com/go/compute/metadata",
-        sha256 = "292864dbd0b1de37a968e285e949885e573384837d81cd3695be5ce2e2391887",
-        strip_prefix = "cloud.google.com/go/compute/metadata@v0.2.3",
+        sha256 = "c0ab79c30870c1aa9912fb0fdcb043e0044782825988e40f59401d227976b677",
+        strip_prefix = "cloud.google.com/go/compute/metadata@v0.3.0",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/cloud.google.com/go/compute/metadata/com_google_cloud_go_compute_metadata-v0.2.3.zip",
-            "http://ats.apps.svc/gomod/cloud.google.com/go/compute/metadata/com_google_cloud_go_compute_metadata-v0.2.3.zip",
-            "https://cache.hawkingrei.com/gomod/cloud.google.com/go/compute/metadata/com_google_cloud_go_compute_metadata-v0.2.3.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/cloud.google.com/go/compute/metadata/com_google_cloud_go_compute_metadata-v0.2.3.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/cloud.google.com/go/compute/metadata/com_google_cloud_go_compute_metadata-v0.3.0.zip",
+            "http://ats.apps.svc/gomod/cloud.google.com/go/compute/metadata/com_google_cloud_go_compute_metadata-v0.3.0.zip",
+            "https://cache.hawkingrei.com/gomod/cloud.google.com/go/compute/metadata/com_google_cloud_go_compute_metadata-v0.3.0.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/cloud.google.com/go/compute/metadata/com_google_cloud_go_compute_metadata-v0.3.0.zip",
         ],
     )
     go_repository(
@@ -9892,13 +9892,13 @@ def go_deps():
         name = "org_golang_x_oauth2",
         build_file_proto_mode = "disable_global",
         importpath = "golang.org/x/oauth2",
-        sha256 = "7716d06cf89e1736b74b94584cdcad120c769519f0c41e6d77d0f12657870772",
-        strip_prefix = "golang.org/x/oauth2@v0.18.0",
+        sha256 = "48bbe74b766a2a899e9688084dfbf9bda44b2cd0aa98d0245eec058960ec4bdc",
+        strip_prefix = "golang.org/x/oauth2@v0.20.0",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/golang.org/x/oauth2/org_golang_x_oauth2-v0.18.0.zip",
-            "http://ats.apps.svc/gomod/golang.org/x/oauth2/org_golang_x_oauth2-v0.18.0.zip",
-            "https://cache.hawkingrei.com/gomod/golang.org/x/oauth2/org_golang_x_oauth2-v0.18.0.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/golang.org/x/oauth2/org_golang_x_oauth2-v0.18.0.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/golang.org/x/oauth2/org_golang_x_oauth2-v0.20.0.zip",
+            "http://ats.apps.svc/gomod/golang.org/x/oauth2/org_golang_x_oauth2-v0.20.0.zip",
+            "https://cache.hawkingrei.com/gomod/golang.org/x/oauth2/org_golang_x_oauth2-v0.20.0.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/golang.org/x/oauth2/org_golang_x_oauth2-v0.20.0.zip",
         ],
     )
     go_repository(
