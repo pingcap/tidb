@@ -1038,8 +1038,8 @@ func (b *builtinCastRealAsStringSig) Clone() builtinFunc {
 }
 
 func formatFloat(f float64, bitSize int) string {
-	// MySQL makes float to string max 12 digits
-	// MySQL makes double to string max 15 ~ 17 digits
+	// MySQL makes float to string max 6 significant digits
+	// MySQL makes double to string max 17 significant digits
 
 	// Unified to display behavior of TiDB. TiKV should also follow this rule.
 	const (
