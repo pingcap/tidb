@@ -57,3 +57,22 @@ t2	CREATE TABLE `t2` (
   PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,
   UNIQUE KEY `authorIdx` (`authorId`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+set @@sql_mode='';
+drop table if exists t1;
+create table t1(b tinyint default '11111111');
+Error 1067 (42000): Invalid default value for 'b'
+create table t1(b tinyint default '11abc');
+Error 1067 (42000): Invalid default value for 'b'
+create table t1(b datetime default '11abc');
+Error 1067 (42000): Invalid default value for 'b'
+create table t1(b date default '2024-10');
+Error 1067 (42000): Invalid default value for 'b'
+create table t1(a tinyint, b date default '2024-10-24 12:20');
+alter table t1 add column(c tinyint default '11111111');
+Error 1067 (42000): Invalid default value for 'c'
+alter table t1 add column(c tinyint default '11abc');
+Error 1067 (42000): Invalid default value for 'c'
+alter table t1 add column(c datetime default '11abc');
+Error 1067 (42000): Invalid default value for 'c'
+alter table t1 add column d date default '2024-10';
+Error 1067 (42000): Invalid default value for 'd'

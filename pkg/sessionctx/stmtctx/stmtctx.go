@@ -269,7 +269,6 @@ type StatementContext struct {
 	plan any
 
 	Tables                []TableEntry
-	PointExec             bool  // for point update cached execution, Constant expression need to set "paramMarker"
 	lockWaitStartTime     int64 // LockWaitStartTime stores the pessimistic lock wait start time
 	PessimisticLockWaited int32
 	LockKeysDuration      int64
@@ -399,6 +398,9 @@ type StatementContext struct {
 		value *uint64
 		eval  func() (uint64, error)
 	}
+
+	// MDLRelatedTableIDs is used to store the table IDs that are related to the current MDL lock.
+	MDLRelatedTableIDs map[int64]struct{}
 }
 
 var defaultErrLevels = func() (l errctx.LevelMap) {

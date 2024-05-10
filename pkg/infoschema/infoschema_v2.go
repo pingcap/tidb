@@ -302,6 +302,12 @@ func (is *infoschemaV2) base() *infoSchema {
 	return is.infoSchema
 }
 
+func (is *infoschemaV2) CloneAndUpdateTS(startTS uint64) *infoschemaV2 {
+	tmp := *is
+	tmp.ts = startTS
+	return &tmp
+}
+
 func (is *infoschemaV2) TableByID(id int64) (val table.Table, ok bool) {
 	if !tableIDIsValid(id) {
 		return
@@ -662,9 +668,9 @@ func isTableVirtual(id int64) bool {
 }
 
 // IsV2 tells whether an InfoSchema is v2 or not.
-func IsV2(is InfoSchema) bool {
-	_, ok := is.(*infoschemaV2)
-	return ok
+func IsV2(is InfoSchema) (bool, *infoschemaV2) {
+	ret, ok := is.(*infoschemaV2)
+	return ok, ret
 }
 
 func applyTableUpdate(b *Builder, m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
