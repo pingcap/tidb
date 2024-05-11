@@ -15,8 +15,9 @@
 package join
 
 import (
-	"github.com/cznic/mathutil"
 	"sync/atomic"
+
+	"github.com/cznic/mathutil"
 )
 
 type subTable struct {
@@ -99,7 +100,7 @@ func (st *subTable) build(startSegmentIndex int, endSegmentIndex int) {
 	}
 }
 
-type HashTableV2 struct {
+type hashTableV2 struct {
 	tables          []*subTable
 	partitionNumber uint64
 }
@@ -111,7 +112,7 @@ type rowPos struct {
 }
 
 type rowIter struct {
-	table      *HashTableV2
+	table      *hashTableV2
 	currentPos *rowPos
 	endPos     *rowPos
 }
@@ -139,9 +140,9 @@ func (ri *rowIter) isEnd() bool {
 	return !(ri.currentPos.subTableIndex < ri.endPos.subTableIndex || ri.currentPos.rowSegmentIndex < ri.endPos.rowSegmentIndex || ri.currentPos.rowIndex < ri.endPos.rowIndex)
 }
 
-func newJoinHashTable(partitionedRowTables []*rowTable) *HashTableV2 {
+func newJoinHashTable(partitionedRowTables []*rowTable) *hashTableV2 {
 	// first make sure there is no nil rowTable
-	jht := &HashTableV2{
+	jht := &hashTableV2{
 		tables:          make([]*subTable, len(partitionedRowTables)),
 		partitionNumber: uint64(len(partitionedRowTables)),
 	}
@@ -151,7 +152,7 @@ func newJoinHashTable(partitionedRowTables []*rowTable) *HashTableV2 {
 	return jht
 }
 
-func (jht *HashTableV2) createRowPos(pos uint64) *rowPos {
+func (jht *hashTableV2) createRowPos(pos uint64) *rowPos {
 	if pos < 0 || pos > jht.totalRowCount() {
 		panic("invalid call to createRowPos, the input pos should be in [0, totalRowCount]")
 	}
@@ -178,7 +179,7 @@ func (jht *HashTableV2) createRowPos(pos uint64) *rowPos {
 		rowIndex:        pos,
 	}
 }
-func (jht *HashTableV2) createRowIter(start, end uint64) *rowIter {
+func (jht *hashTableV2) createRowIter(start, end uint64) *rowIter {
 	if start > end {
 		start = end
 	}
@@ -189,7 +190,7 @@ func (jht *HashTableV2) createRowIter(start, end uint64) *rowIter {
 	}
 }
 
-func (jht *HashTableV2) isHashTableEmpty() bool {
+func (jht *hashTableV2) isHashTableEmpty() bool {
 	for _, subTable := range jht.tables {
 		if !subTable.isHashTableEmpty {
 			return false
@@ -198,7 +199,7 @@ func (jht *HashTableV2) isHashTableEmpty() bool {
 	return true
 }
 
-func (jht *HashTableV2) totalRowCount() uint64 {
+func (jht *hashTableV2) totalRowCount() uint64 {
 	ret := uint64(0)
 	for _, table := range jht.tables {
 		ret += table.rowData.rowCount()
@@ -206,11 +207,11 @@ func (jht *HashTableV2) totalRowCount() uint64 {
 	return ret
 }
 
-func (jht *HashTableV2) buildHashTable(partitionIndex int, startSegmentIndex int, segmentStep int) {
+func (jht *hashTableV2) buildHashTable(partitionIndex int, startSegmentIndex int, segmentStep int) {
 	jht.tables[partitionIndex].build(startSegmentIndex, segmentStep)
 }
 
-func (jht *HashTableV2) lookup(hashValue uint64) uintptr {
+func (jht *hashTableV2) lookup(hashValue uint64) uintptr {
 	partitionIndex := hashValue % jht.partitionNumber
 	return jht.tables[partitionIndex].lookup(hashValue)
 }

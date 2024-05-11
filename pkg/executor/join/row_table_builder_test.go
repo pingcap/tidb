@@ -94,7 +94,7 @@ func checkKeys(t *testing.T, withSelCol bool, buildFilter expression.CNFExprs, b
 			break
 		}
 	}
-	builder := createRowTableBuilder(buildKeyIndex, buildSchema, meta, 1, hasNullableKey, buildFilter != nil, keepFilteredRows)
+	builder := createRowTableBuilder(buildKeyIndex, buildSchema, 1, hasNullableKey, buildFilter != nil, keepFilteredRows)
 	chk := chunk.GenRandomChunks(buildTypes, 2049)
 	if withSelCol {
 		sel := make([]int, 0, 2049)
@@ -300,7 +300,7 @@ func checkColumns(t *testing.T, withSelCol bool, buildFilter expression.CNFExprs
 			break
 		}
 	}
-	builder := createRowTableBuilder(buildKeyIndex, buildSchema, meta, 1, hasNullableKey, buildFilter != nil, keepFilteredRows)
+	builder := createRowTableBuilder(buildKeyIndex, buildSchema, 1, hasNullableKey, buildFilter != nil, keepFilteredRows)
 	chk := chunk.GenRandomChunks(buildTypes, 2049)
 	if withSelCol {
 		sel := make([]int, 0, 2049)
@@ -538,7 +538,7 @@ func TestBalanceOfFilteredRows(t *testing.T) {
 
 	partitionNumber := 5
 	buildFilter := createImpossibleFilter(t)
-	builder := createRowTableBuilder(buildKeyIndex, buildSchema, meta, partitionNumber, hasNullableKey, true, true)
+	builder := createRowTableBuilder(buildKeyIndex, buildSchema, partitionNumber, hasNullableKey, true, true)
 	chk := chunk.GenRandomChunks(buildTypes, 3000)
 	hashJoinCtx := &HashJoinCtxV2{
 		PartitionNumber:  partitionNumber,

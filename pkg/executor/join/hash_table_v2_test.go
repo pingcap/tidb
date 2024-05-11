@@ -80,7 +80,7 @@ func createRowTable(t *testing.T, rows int) *rowTable {
 		hashTableContext: newHashTableContext(partitionNumber, partitionNumber),
 	}
 	hashJoinCtx.SessCtx = mock.NewContext()
-	builder := createRowTableBuilder(buildKeyIndex, buildSchema, meta, partitionNumber, hasNullableKey, false, false)
+	builder := createRowTableBuilder(buildKeyIndex, buildSchema, partitionNumber, hasNullableKey, false, false)
 	err := builder.processOneChunk(chk, hashJoinCtx.SessCtx.GetSessionVars().StmtCtx.TypeCtx(), hashJoinCtx, 0)
 	require.NoError(t, err)
 	builder.appendRemainingRowLocations(0, hashJoinCtx.hashTableContext)
@@ -192,7 +192,7 @@ func TestLookup(t *testing.T) {
 	}
 }
 
-func checkRowIter(t *testing.T, table *HashTableV2, scanConcurrency int) {
+func checkRowIter(t *testing.T, table *hashTableV2, scanConcurrency int) {
 	// first create a map containing all the row locations
 	totalRowCount := table.totalRowCount()
 	rowSet := make(map[uintptr]struct{}, totalRowCount)
