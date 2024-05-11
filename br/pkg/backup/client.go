@@ -970,6 +970,7 @@ func (bc *Client) startMainBackupLoop(
 					logutil.CL(ctx).Error("store backup failed",
 						zap.Uint64("round", round),
 						zap.Uint64("storeID", storeID), zap.Error(err))
+					time.Sleep(15 * time.Second)
 					stateChan <- StoreBackupPolicy{One: storeID}
 				}
 			}
@@ -1086,7 +1087,7 @@ mainLoop:
 				return ctx.Err()
 			case storeBackupInfo := <-stateChan:
 				if storeBackupInfo.All {
-					logutil.CL(ctx).Info("cluster state changed. restart store backups")
+					logutil.CL(mainCtx).Info("cluster state changed. restart store backups")
 					// stop current connections
 					handleCancel()
 					mainCancel()
@@ -1094,11 +1095,20 @@ mainLoop:
 					continue mainLoop
 				}
 				if storeBackupInfo.One != 0 {
-					// new tikv store come up
 					storeID := storeBackupInfo.One
-					cli, err := bc.mgr.GetBackupClient(mainCtx, storeID)
+					_, err := bc.mgr.GetPDClient().GetStore(mainCtx, storeID)
 					if err != nil {
-						logutil.CL(ctx).Error("failed to get backup client", zap.Uint64("storeID", storeID), zap.Error(err))
+						// cannot get store, maybe store has scaled-in.
+						logutil.CL(mainCtx).Info("cannot get store from pd", zap.Error(err))
+						// try next round
+						handleCancel()
+						mainCancel()
+						continue mainLoop
+					}
+					// reset backup client. store address could change but store id remained.
+					cli, err := bc.mgr.ResetBackupClient(mainCtx, storeID)
+					if err != nil {
+						logutil.CL(mainCtx).Error("failed to reset backup client", zap.Uint64("storeID", storeID), zap.Error(err))
 						handleCancel()
 						mainCancel()
 						// receive new store info but failed to get backup client.

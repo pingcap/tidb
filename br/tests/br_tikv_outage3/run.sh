@@ -30,6 +30,5 @@ github.com/pingcap/tidb/br/pkg/utils/hint-get-backup-client=1*return(\"$hint_get
     stop_services
     start_services
 
-
     check
 done
