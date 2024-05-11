@@ -34,7 +34,6 @@ go_test(
         "//pkg/util/logutil/consistency",
         "//pkg/util/mock",
         "//pkg/util/redact",
-        "//pkg/util/rowcodec",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_stretchr_testify//assert",
