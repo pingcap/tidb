@@ -99,6 +99,7 @@ func (b *builtinIlikeSig) evalInt(row chunk.Row) (int64, bool, error) {
 	valStr = string(valStrBytes)
 	patternStr = string(patternStrBytes)
 
+<<<<<<< HEAD
 	memorization := func() {
 		if b.pattern == nil {
 			b.pattern = collate.ConvertAndGetBinCollation(b.collation).Pattern()
@@ -107,6 +108,23 @@ func (b *builtinIlikeSig) evalInt(row chunk.Row) (int64, bool, error) {
 				b.isMemorizedPattern = true
 			}
 		}
+=======
+	var pattern collate.WildcardPattern
+	if b.args[1].ConstLevel() >= ConstOnlyInContext && b.args[2].ConstLevel() >= ConstOnlyInContext {
+		pattern, err = b.patternCache.getOrInitCache(ctx, func() (collate.WildcardPattern, error) {
+			ret := collate.ConvertAndGetBinCollator(b.collation).Pattern()
+			ret.Compile(patternStr, byte(escape))
+			return ret, nil
+		})
+
+		intest.AssertNoError(err)
+		if err != nil {
+			return 0, true, err
+		}
+	} else {
+		pattern = collate.ConvertAndGetBinCollator(b.collation).Pattern()
+		pattern.Compile(patternStr, byte(escape))
+>>>>>>> dcd1fa9d967 (expression: fix the collation of functions with json arguments (#53126))
 	}
 	// Only be executed once to achieve thread-safe
 	b.once.Do(memorization)
