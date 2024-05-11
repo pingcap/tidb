@@ -379,7 +379,7 @@ func (e *HashJoinV2Exec) fetchAndProbeHashTable(ctx context.Context) {
 		e.ProbeSideTupleFetcher.fetchProbeSideChunks(ctx, e.MaxChunkSize(), func() bool {
 			return e.ProbeSideTupleFetcher.hashTableContext.hashTable.isHashTableEmpty()
 		}, e.ProbeSideTupleFetcher.canSkipProbeIfHashTableIsEmpty, e.ProbeSideTupleFetcher.needScanRowTableAfterProbeDone,
-			e.ProbeSideTupleFetcher.needScanRowTableAfterProbeDone, &e.ProbeSideTupleFetcher.hashJoinCtxBase)
+			e.ProbeSideTupleFetcher.shouldLimitProbeFetchSize(), &e.ProbeSideTupleFetcher.hashJoinCtxBase)
 	}, e.ProbeSideTupleFetcher.handleProbeSideFetcherPanic)
 
 	for i := uint(0); i < e.Concurrency; i++ {
