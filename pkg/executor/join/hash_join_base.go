@@ -89,6 +89,68 @@ func wait4BuildSide(isBuildEmpty isBuildSideEmpty, canSkipIfBuildEmpty bool, has
 	return false, nil
 }
 
+// fetchProbeSideChunks get chunks from fetches chunks from the big table in a background goroutine
+// and sends the chunks to multiple channels which will be read by multiple join workers.
+func (fetcher *probeSideTupleFetcherBase) fetchProbeSideChunks(ctx context.Context, maxChunkSize int, isBuildEmpty isBuildSideEmpty, canSkipIfBuildEmpty, needScanAfterProbeDone, shouldLimitProbeFetchSize bool, hashJoinCtx *hashJoinCtxBase) {
+	hasWaitedForBuild := false
+	for {
+		if hashJoinCtx.finished.Load() {
+			return
+		}
+
+		var probeSideResource *probeChkResource
+		var ok bool
+		select {
+		case <-hashJoinCtx.closeCh:
+			return
+		case probeSideResource, ok = <-fetcher.probeChkResourceCh:
+			if !ok {
+				return
+			}
+		}
+		probeSideResult := probeSideResource.chk
+		if shouldLimitProbeFetchSize {
+			required := int(atomic.LoadInt64(&fetcher.requiredRows))
+			probeSideResult.SetRequiredRows(required, maxChunkSize)
+		}
+		err := exec.Next(ctx, fetcher.ProbeSideExec, probeSideResult)
+		failpoint.Inject("ConsumeRandomPanic", nil)
+		if err != nil {
+			hashJoinCtx.joinResultCh <- &hashjoinWorkerResult{
+				err: err,
+			}
+			return
+		}
+		if !hasWaitedForBuild {
+			failpoint.Inject("issue30289", func(val failpoint.Value) {
+				if val.(bool) {
+					probeSideResult.Reset()
+				}
+			})
+			skipProbe, buildErr := wait4BuildSide(isBuildEmpty, canSkipIfBuildEmpty, hashJoinCtx)
+			if buildErr != nil {
+				hashJoinCtx.joinResultCh <- &hashjoinWorkerResult{
+					err: buildErr,
+				}
+				return
+			} else if skipProbe {
+				// stop probe
+				if !needScanAfterProbeDone {
+					hashJoinCtx.finished.Store(true)
+				}
+				return
+			}
+			hasWaitedForBuild = true
+		}
+
+		if probeSideResult.NumRows() == 0 {
+			return
+		}
+
+		probeSideResource.dest <- probeSideResult
+	}
+}
+
 type probeWorkerBase struct {
 	WorkerID           uint
 	probeChkResourceCh chan *probeChkResource
