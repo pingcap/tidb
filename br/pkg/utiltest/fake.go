@@ -63,7 +63,10 @@ func (fpdc FakePDClient) GetTS(ctx context.Context) (int64, int64, error) {
 	}
 
 	if fpdc.notLeader {
-		return 0, 0, errors.Errorf("rpc error: code = Unknown desc = [PD:tso:ErrGenerateTimestamp]generate timestamp failed, requested pd is not leader of cluster")
+		return 0, 0, errors.Errorf(
+			"rpc error: code = Unknown desc = [PD:tso:ErrGenerateTimestamp]generate timestamp failed, " +
+				"requested pd is not leader of cluster",
+		)
 	}
 	return 1, 1, nil
 }
@@ -88,7 +91,11 @@ func (f *FakeSplitClient) AppendRegion(startKey, endKey []byte) {
 	})
 }
 
-func (f *FakeSplitClient) ScanRegions(ctx context.Context, startKey, endKey []byte, limit int) ([]*split.RegionInfo, error) {
+func (f *FakeSplitClient) ScanRegions(
+	ctx context.Context,
+	startKey, endKey []byte,
+	limit int,
+) ([]*split.RegionInfo, error) {
 	result := make([]*split.RegionInfo, 0)
 	count := 0
 	for _, rng := range f.regions {

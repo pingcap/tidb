@@ -57,7 +57,6 @@ func NewLogFileImporter(
 	importClient importclient.ImporterClient,
 	backend *backuppb.StorageBackend,
 ) *LogFileImporter {
-
 	return &LogFileImporter{
 		metaClient:   metaClient,
 		backend:      backend,
