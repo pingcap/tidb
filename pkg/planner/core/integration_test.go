@@ -2633,3 +2633,97 @@ func TestIssue41458(t *testing.T) {
 		require.Equalf(t, expectedRes[i], op, fmt.Sprintf("Mismatch at index %d.", i))
 	}
 }
+<<<<<<< HEAD
+=======
+
+func TestIssue48257(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	h := dom.StatsHandle()
+	oriLease := h.Lease()
+	h.SetLease(1)
+	defer func() {
+		h.SetLease(oriLease)
+	}()
+	tk.MustExec("use test")
+
+	// 1. test sync load
+	tk.MustExec("create table t(a int)")
+	tk.MustExec("insert into t value(1)")
+	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	require.NoError(t, h.Update(dom.InfoSchema()))
+	tk.MustExec("analyze table t")
+	tk.MustQuery("explain format = brief select * from t").Check(testkit.Rows(
+		"TableReader 1.00 root  data:TableFullScan",
+		"└─TableFullScan 1.00 cop[tikv] table:t keep order:false",
+	))
+	tk.MustExec("insert into t value(1)")
+	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	require.NoError(t, h.Update(dom.InfoSchema()))
+	tk.MustQuery("explain format = brief select * from t").Check(testkit.Rows(
+		"TableReader 2.00 root  data:TableFullScan",
+		"└─TableFullScan 2.00 cop[tikv] table:t keep order:false",
+	))
+	tk.MustExec("set tidb_opt_objective='determinate'")
+	tk.MustQuery("explain format = brief select * from t").Check(testkit.Rows(
+		"TableReader 1.00 root  data:TableFullScan",
+		"└─TableFullScan 1.00 cop[tikv] table:t keep order:false",
+	))
+	tk.MustExec("set tidb_opt_objective='moderate'")
+
+	// 2. test async load
+	tk.MustExec("set tidb_stats_load_sync_wait = 0")
+	tk.MustExec("create table t1(a int)")
+	tk.MustExec("insert into t1 value(1)")
+	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	require.NoError(t, h.Update(dom.InfoSchema()))
+	tk.MustExec("analyze table t1")
+	tk.MustQuery("explain format = brief select * from t1").Check(testkit.Rows(
+		"TableReader 1.00 root  data:TableFullScan",
+		"└─TableFullScan 1.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+	))
+	tk.MustExec("insert into t1 value(1)")
+	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	require.NoError(t, h.Update(dom.InfoSchema()))
+	tk.MustQuery("explain format = brief select * from t1").Check(testkit.Rows(
+		"TableReader 2.00 root  data:TableFullScan",
+		"└─TableFullScan 2.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+	))
+	tk.MustExec("set tidb_opt_objective='determinate'")
+	tk.MustQuery("explain format = brief select * from t1").Check(testkit.Rows(
+		"TableReader 10000.00 root  data:TableFullScan",
+		"└─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+	))
+	require.NoError(t, h.LoadNeededHistograms())
+	tk.MustQuery("explain format = brief select * from t1").Check(testkit.Rows(
+		"TableReader 1.00 root  data:TableFullScan",
+		"└─TableFullScan 1.00 cop[tikv] table:t1 keep order:false",
+	))
+}
+
+func TestIssue52472(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE t1 ( c1 int);")
+	tk.MustExec("CREATE TABLE t2 ( c1 int unsigned);")
+	tk.MustExec("CREATE TABLE t3 ( c1 bigint unsigned);")
+	tk.MustExec("INSERT INTO t1 (c1) VALUES (8);")
+	tk.MustExec("INSERT INTO t2 (c1) VALUES (2454396638);")
+
+	// union int and unsigned int will be promoted to long long
+	rs, err := tk.Exec("SELECT c1 FROM t1 UNION ALL SELECT c1 FROM t2")
+	require.NoError(t, err)
+	require.Len(t, rs.Fields(), 1)
+	require.Equal(t, mysql.TypeLonglong, rs.Fields()[0].Column.FieldType.GetType())
+	require.NoError(t, rs.Close())
+
+	// union int (even literal) and unsigned bigint will be promoted to decimal
+	rs, err = tk.Exec("SELECT 0 UNION ALL SELECT c1 FROM t3")
+	require.NoError(t, err)
+	require.Len(t, rs.Fields(), 1)
+	require.Equal(t, mysql.TypeNewDecimal, rs.Fields()[0].Column.FieldType.GetType())
+	require.NoError(t, rs.Close())
+}
+>>>>>>> 09c8f964cc5 (planner: fix the issue that UnionAll didn't handle the range bump case (#52542))
