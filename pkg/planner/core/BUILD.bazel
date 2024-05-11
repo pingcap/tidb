@@ -3,6 +3,7 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "core",
     srcs = [
+	"unit_test_util.go",
         "access_object.go",
         "collect_column_stats_usage.go",
         "common_plans.go",
@@ -230,6 +231,7 @@ go_test(
         "rule_join_reorder_dp_test.go",
         "runtime_filter_generator_test.go",
         "stringer_test.go",
+	"unit_test_util.go",
     ],
     data = glob(["testdata/**"]),
     embed = [":core"],
