@@ -1265,16 +1265,17 @@ func (v TempIndexValue) FilterOverwritten() TempIndexValue {
 
 // TempIndexValueElem represents a history index operations on the original index.
 // A temp index value element is encoded as one of:
-//   - [flag 1 byte][value_length 2 bytes ] [value value_len bytes]   [key_version 1 byte] {distinct normal}
+//   - [flag 1 byte][value_length 2 bytes ] [value value_len bytes]   [key_version 1 byte] {distinct normal} {force merge flag}(0x0 or 0x1)
 //   - [flag 1 byte][value value_len bytes]                           [key_version 1 byte] {non-distinct normal}
 //   - [flag 1 byte][handle_length 2 bytes] [handle handle_len bytes] [key_version 1 byte] {distinct deleted}
 //   - [flag 1 byte]                                                  [key_version 1 byte] {non-distinct deleted}
 type TempIndexValueElem struct {
-	Value    []byte
-	Handle   kv.Handle
-	KeyVer   byte
-	Delete   bool
-	Distinct bool
+	Value      []byte
+	Handle     kv.Handle
+	KeyVer     byte
+	Delete     bool
+	Distinct   bool
+	ForceMerge bool
 }
 
 // Encode encodes the temp index value.
@@ -1310,7 +1311,7 @@ func (v *TempIndexValueElem) Encode(buf []byte) []byte {
 		return buf
 	}
 	if v.Distinct {
-		// flag + value length + value + temp key version
+		// flag + value length + value + temp key version + force merge flag
 		if buf == nil {
 			buf = make([]byte, 0, len(v.Value)+4)
 		}
@@ -1319,6 +1320,11 @@ func (v *TempIndexValueElem) Encode(buf []byte) []byte {
 		buf = append(buf, byte(vLen>>8), byte(vLen))
 		buf = append(buf, v.Value...)
 		buf = append(buf, v.KeyVer)
+		if v.ForceMerge {
+			buf = append(buf, 0x1)
+		} else {
+			buf = append(buf, 0)
+		}
 		return buf
 	}
 	// flag + value + temp key version
@@ -1361,6 +1367,8 @@ func (v *TempIndexValueElem) DecodeOne(b []byte) (remain []byte, err error) {
 		v.KeyVer = b[0]
 		b = b[1:]
 		v.Distinct = true
+		v.ForceMerge = b[0] == 0x1
+		b = b[1:]
 		return b, err
 	case TempIndexValueFlagNonDistinctNormal:
 		v.Value = b[:len(b)-1]
