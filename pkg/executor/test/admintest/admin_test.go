@@ -1982,6 +1982,9 @@ func TestAdminCheckGlobalIndexDuringDDL(t *testing.T) {
 		assert.NoError(t, err)
 	}
 
+	batchSize := 32
+	tk.MustExec(fmt.Sprintf("set global tidb_ddl_reorg_batch_size = %d", batchSize))
+
 	var enableFastCheck = []bool{false, true}
 	for _, enabled := range enableFastCheck {
 		tk.MustExec("use test")
@@ -1992,6 +1995,9 @@ func TestAdminCheckGlobalIndexDuringDDL(t *testing.T) {
 
 		tk.MustExec("create table admin_test (a int, b int, c int, unique key uidx_a(a), primary key(c)) partition by hash(c) partitions 5")
 		tk.MustExec("insert admin_test values (-10, -20, 1), (-1, -10, 2), (1, 11, 3), (2, 12, 0), (5, 15, -1), (10, 20, -2), (20, 30, -3)")
+		for i := 1; i <= batchSize*2; i++ {
+			tk.MustExec(fmt.Sprintf("insert admin_test values (%d, %d, %d)", i*5+1, i, i*5+1))
+		}
 
 		dom.DDL().SetHook(hook)
 		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockDMLExecution", "1*return(true)->return(false)"))
