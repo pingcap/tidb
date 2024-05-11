@@ -139,7 +139,7 @@ func Preprocess(ctx context.Context, sctx sessionctx.Context, node ast.Node, pre
 	return errors.Trace(v.err)
 }
 
-type preprocessorFlag uint8
+type preprocessorFlag uint64
 
 const (
 	// inPrepare is set when visiting in prepare statement.
@@ -157,6 +157,8 @@ const (
 	inSequenceFunction
 	// initTxnContextProvider is set when we should init txn context in preprocess
 	initTxnContextProvider
+	// inAnalyze is set when visiting an analyze statement.
+	inAnalyze
 )
 
 // Make linter happy.
@@ -390,6 +392,8 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 			p.sctx.GetSessionVars().StmtCtx.IsStaleness = true
 			p.IsStaleness = true
 		}
+	case *ast.AnalyzeTableStmt:
+		p.flag |= inAnalyze
 	default:
 		p.flag &= ^parentIsJoin
 	}
@@ -1573,10 +1577,12 @@ func (p *preprocessor) handleTableName(tn *ast.TableName) {
 	if tn.Schema.String() != "" {
 		currentDB = tn.Schema.L
 	}
-	table, err = tryLockMDLAndUpdateSchemaIfNecessary(p.sctx, model.NewCIStr(currentDB), table, p.ensureInfoSchema())
-	if err != nil {
-		p.err = err
-		return
+	if !p.skipLockMDL() {
+		table, err = tryLockMDLAndUpdateSchemaIfNecessary(p.sctx, model.NewCIStr(currentDB), table, p.ensureInfoSchema())
+		if err != nil {
+			p.err = err
+			return
+		}
 	}
 
 	tableInfo := table.Meta()
@@ -1904,4 +1910,11 @@ func tryLockMDLAndUpdateSchemaIfNecessary(sctx sessionctx.Context, dbName model.
 		return tbl, nil
 	}
 	return tbl, nil
+}
+
+// skipLockMDL returns true if the preprocessor should skip the lock of MDL.
+func (p *preprocessor) skipLockMDL() bool {
+	// because it's a batch process and will do both DML and DDL.
+	// skip lock mdl for ANALYZE statement.
+	return p.flag&inAnalyze > 0
 }
