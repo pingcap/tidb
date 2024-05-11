@@ -334,23 +334,29 @@ func IsCICollation(collate string) bool {
 		collate == "utf8mb4_0900_ai_ci"
 }
 
-// ConvertAndGetBinCollation converts collator to binary collator
-func ConvertAndGetBinCollation(collate string) Collator {
+// ConvertAndGetBinCollation converts collation to binary collation
+func ConvertAndGetBinCollation(collate string) string {
 	switch collate {
 	case "utf8_general_ci":
-		return GetCollator("utf8_bin")
+		return "utf8_bin"
 	case "utf8_unicode_ci":
-		return GetCollator("utf8_bin")
+		return "utf8_bin"
 	case "utf8mb4_general_ci":
-		return GetCollator("utf8mb4_bin")
+		return "utf8mb4_bin"
 	case "utf8mb4_unicode_ci":
-		return GetCollator("utf8mb4_bin")
+		return "utf8mb4_bin"
 	case "utf8mb4_0900_ai_ci":
-		return GetCollator("utf8mb4_bin")
+		return "utf8mb4_bin"
 	case "gbk_chinese_ci":
-		return GetCollator("gbk_bin")
+		return "gbk_bin"
 	}
-	return GetCollator(collate)
+
+	return collate
+}
+
+// ConvertAndGetBinCollator converts collation to binary collator
+func ConvertAndGetBinCollator(collate string) Collator {
+	return GetCollator(ConvertAndGetBinCollation(collate))
 }
 
 // IsBinCollation returns if the collation is 'xx_bin' or 'bin'.
