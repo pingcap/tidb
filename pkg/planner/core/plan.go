@@ -15,6 +15,7 @@
 package core
 
 import (
+	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"math"
 
 	"github.com/pingcap/errors"
@@ -35,7 +36,7 @@ import (
 )
 
 func init() {
-	util.HasMaxOneRowUtil = HasMaxOneRow
+	utilfuncp.HasMaxOneRowUtil = HasMaxOneRow
 }
 
 // AsSctx converts PlanContext to sessionctx.Context.
@@ -479,7 +480,7 @@ func (p *baseLogicalPlan) BuildKeyInfo(_ *expression.Schema, _ []*expression.Sch
 	for i := range p.children {
 		childMaxOneRow[i] = p.children[i].MaxOneRow()
 	}
-	p.maxOneRow = util.HasMaxOneRowUtil(p.self, childMaxOneRow)
+	p.maxOneRow = utilfuncp.HasMaxOneRowUtil(p.self, childMaxOneRow)
 }
 
 // BuildKeyInfo implements LogicalPlan BuildKeyInfo interface.

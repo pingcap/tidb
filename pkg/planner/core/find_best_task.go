@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
+	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/types"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
@@ -52,6 +53,10 @@ import (
 var PlanCounterDisabled base.PlanCounterTp = -1
 
 var invalidTask = &RootTask{} // invalid if p is nil
+
+func init() {
+	utilfuncp.AppendCandidate4PhysicalOptimizeOp = appendCandidate4PhysicalOptimizeOp
+}
 
 // GetPropByOrderByItems will check if this sort property can be pushed or not. In order to simplify the problem, we only
 // consider the case that all expression are columns.
@@ -103,7 +108,7 @@ func (p *LogicalTableDual) FindBestTask(prop *property.PhysicalProperty, planCou
 	}.Init(p.SCtx(), p.StatsInfo(), p.QueryBlockOffset())
 	dual.SetSchema(p.schema)
 	planCounter.Dec(1)
-	appendCandidate4PhysicalOptimizeOp(opt, p, dual, prop)
+	utilfuncp.AppendCandidate4PhysicalOptimizeOp(opt, p, dual, prop)
 	rt := &RootTask{}
 	rt.SetPlan(dual)
 	rt.SetEmpty(p.RowCount == 0)
@@ -167,6 +172,19 @@ func (p *baseLogicalPlan) rebuildChildTasks(childTasks *[]base.Task, pp base.Phy
 	}
 	return nil
 }
+
+
+
+Possible questions like how we make sure the latency will not be increased significantly can be answered now.
+
+Except the always-good transformations, we'll still apply some logical rewrites before we enter the rule's searching and expanding.
+Such as that we will not decorrelate the subqueries in the SELECT fields and we will still generate a join order by greedy way.(TP cases usually requires a left deep join tree with index nested loop join chosen by all the join nodes)
+Then we will get a modified plan before expanding the search space.
+We'll first check the physical cost of this plan tree, if it's small enough. We'll directly choose it as the final plan, without entering the later optimization. And the physical cost of this plan will be set as the upper bound during the later transformations.
+
+Besides that, we'll also try to split the optimizations into multiple stages. The transformations like eager aggregations will not be useful for most of the TP queries. So we can remove it in our first search stage. And check the physical cost again after the first search stage, we'll break the optimization if it's smaller than a given threshold.
+
+With these ways, we are trying to reduce the overhead of the TP queries in the new planner, to not enter too much useless transformations.
 
 func (p *baseLogicalPlan) enumeratePhysicalPlans4Task(
 	physicalPlans []base.PhysicalPlan,
@@ -239,7 +257,7 @@ func (p *baseLogicalPlan) enumeratePhysicalPlans4Task(
 			bestTask = curTask
 			break
 		}
-		appendCandidate4PhysicalOptimizeOp(opt, p, curTask.Plan(), prop)
+		utilfuncp.AppendCandidate4PhysicalOptimizeOp(opt, p, curTask.Plan(), prop)
 		// Get the most efficient one.
 		if curIsBetter, err := compareTaskCost(curTask, bestTask, opt); err != nil {
 			return nil, 0, err
@@ -579,7 +597,7 @@ func (p *baseLogicalPlan) FindBestTask(prop *property.PhysicalProperty, planCoun
 		bestTask = curTask
 		goto END
 	}
-	appendCandidate4PhysicalOptimizeOp(opt, p, curTask.Plan(), prop)
+	utilfuncp.AppendCandidate4PhysicalOptimizeOp(opt, p, curTask.Plan(), prop)
 	if curIsBetter, err := compareTaskCost(curTask, bestTask, opt); err != nil {
 		return nil, 0, err
 	} else if curIsBetter {
@@ -639,7 +657,7 @@ func (p *LogicalMemTable) FindBestTask(prop *property.PhysicalProperty, planCoun
 	}.Init(p.SCtx(), p.StatsInfo(), p.QueryBlockOffset())
 	memTable.SetSchema(p.schema)
 	planCounter.Dec(1)
-	appendCandidate4PhysicalOptimizeOp(opt, p, memTable, prop)
+	utilfuncp.AppendCandidate4PhysicalOptimizeOp(opt, p, memTable, prop)
 	rt := &RootTask{}
 	rt.SetPlan(memTable)
 	return rt, 1, nil
@@ -2926,7 +2944,7 @@ func appendCandidate(lp base.LogicalPlan, task base.Task, prop *property.Physica
 	if task == nil || task.Invalid() {
 		return
 	}
-	appendCandidate4PhysicalOptimizeOp(opt, lp, task.Plan(), prop)
+	utilfuncp.AppendCandidate4PhysicalOptimizeOp(opt, lp, task.Plan(), prop)
 }
 
 // PushDownNot here can convert condition 'not (a != 1)' to 'a = 1'. When we build range from conds, the condition like
