@@ -465,12 +465,20 @@ const (
 			session_id,
 			txnstart,
 			tidb_decode_sql_digests(all_sql_digests, 4096) AS SQL_DIGESTS
+<<<<<<< HEAD
 		FROM information_schema.ddl_jobs,
 			information_schema.cluster_tidb_trx,
 			information_schema.cluster_processlist
 		WHERE (ddl_jobs.state != 'synced' and ddl_jobs.state != 'cancelled')
 			AND Find_in_set(ddl_jobs.table_id, cluster_tidb_trx.related_table_ids)
 			AND cluster_tidb_trx.session_id = cluster_processlist.id
+=======
+		FROM mysql.tidb_ddl_job,
+			mysql.tidb_mdl_info,
+			information_schema.cluster_tidb_trx
+		WHERE tidb_ddl_job.job_id=tidb_mdl_info.job_id
+			AND CONCAT(',', tidb_mdl_info.table_ids, ',') REGEXP CONCAT(',(', REPLACE(cluster_tidb_trx.related_table_ids, ',', '|'), '),') != 0
+>>>>>>> af825ac7d8b (ddl,mdl: fix the issue that the table_ids overlap regex is not correct (#52879))
 	);`
 
 	// CreatePlanReplayerStatusTable is a table about plan replayer status
@@ -1024,11 +1032,64 @@ const (
 	// vresion 179
 	//   enlarge `VARIABLE_VALUE` of `mysql.global_variables` from `varchar(1024)` to `varchar(16383)`.
 	version179 = 179
+<<<<<<< HEAD
+=======
+
+	// ...
+	// [version180, version189] is the version range reserved for patches of 7.5.x
+	// ...
+
+	// version 190
+	//   add priority/create_time/end_time to `mysql.tidb_global_task`/`mysql.tidb_global_task_history`
+	//   add concurrency/create_time/end_time/digest to `mysql.tidb_background_subtask`/`mysql.tidb_background_subtask_history`
+	//   add idx_exec_id(exec_id), uk_digest to `mysql.tidb_background_subtask`
+	//   add cpu_count to mysql.dist_framework_meta
+	//   modify `mysql.dist_framework_meta` host from VARCHAR(100) to VARCHAR(261)
+	//   modify `mysql.tidb_background_subtask`/`mysql.tidb_background_subtask_history` exec_id from varchar(256) to VARCHAR(261)
+	//   modify `mysql.tidb_global_task`/`mysql.tidb_global_task_history` dispatcher_id from varchar(256) to VARCHAR(261)
+	version190 = 190
+
+	// version 191
+	//   set tidb_txn_mode to Optimistic when tidb_txn_mode is not set.
+	version191 = 191
+
+	// version 192
+	//   add new system table `mysql.request_unit_by_group`, which is used for
+	//   historical RU consumption by resource group per day.
+	version192 = 192
+
+	// version 193
+	//   replace `mysql.tidb_mdl_view` table
+	version193 = 193
+
+	// version 194
+	//   remove `mysql.load_data_jobs` table
+	version194 = 194
+
+	// version 195
+	//   drop `mysql.schema_index_usage` table
+	//   create `sys` schema
+	//   create `sys.schema_unused_indexes` table
+	version195 = 195
+
+	// version 196
+	//   add column `target_scope` for 'mysql.tidb_global_task` table
+	//   add column `target_scope` for 'mysql.tidb_global_task_history` table
+	version196 = 196
+
+	// version 197
+	//   replace `mysql.tidb_mdl_view` table
+	version197 = 197
+>>>>>>> af825ac7d8b (ddl,mdl: fix the issue that the table_ids overlap regex is not correct (#52879))
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
+<<<<<<< HEAD
 var currentBootstrapVersion int64 = version179
+=======
+var currentBootstrapVersion int64 = version197
+>>>>>>> af825ac7d8b (ddl,mdl: fix the issue that the table_ids overlap regex is not correct (#52879))
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1183,6 +1244,17 @@ var (
 		upgradeToVer177,
 		upgradeToVer178,
 		upgradeToVer179,
+<<<<<<< HEAD
+=======
+		upgradeToVer190,
+		upgradeToVer191,
+		upgradeToVer192,
+		upgradeToVer193,
+		upgradeToVer194,
+		upgradeToVer195,
+		upgradeToVer196,
+		upgradeToVer197,
+>>>>>>> af825ac7d8b (ddl,mdl: fix the issue that the table_ids overlap regex is not correct (#52879))
 	}
 )
 
@@ -2897,7 +2969,99 @@ func upgradeToVer179(s Session, ver int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.global_variables MODIFY COLUMN `VARIABLE_VALUE` varchar(16383)")
 }
 
+<<<<<<< HEAD
 func writeOOMAction(s Session) {
+=======
+func upgradeToVer190(s sessiontypes.Session, ver int64) {
+	if ver >= version190 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task ADD COLUMN `priority` INT DEFAULT 1 AFTER `state`", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task ADD COLUMN `create_time` TIMESTAMP AFTER `priority`", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task ADD COLUMN `end_time` TIMESTAMP AFTER `state_update_time`", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task_history ADD COLUMN `priority` INT DEFAULT 1 AFTER `state`", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task_history ADD COLUMN `create_time` TIMESTAMP AFTER `priority`", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task_history ADD COLUMN `end_time` TIMESTAMP AFTER `state_update_time`", infoschema.ErrColumnExists)
+
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask ADD COLUMN `concurrency` INT AFTER `checkpoint`", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask ADD COLUMN `create_time` TIMESTAMP AFTER `concurrency`", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask ADD COLUMN `end_time` TIMESTAMP AFTER `state_update_time`", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask ADD COLUMN `ordinal` int AFTER `meta`", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask_history ADD COLUMN `concurrency` INT AFTER `checkpoint`", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask_history ADD COLUMN `create_time` TIMESTAMP AFTER `concurrency`", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask_history ADD COLUMN `end_time` TIMESTAMP AFTER `state_update_time`", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask_history ADD COLUMN `ordinal` int AFTER `meta`", infoschema.ErrColumnExists)
+
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask ADD INDEX idx_exec_id(exec_id)", dbterror.ErrDupKeyName)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask ADD UNIQUE INDEX uk_task_key_step_ordinal(task_key, step, ordinal)", dbterror.ErrDupKeyName)
+
+	doReentrantDDL(s, "ALTER TABLE mysql.dist_framework_meta ADD COLUMN `cpu_count` INT DEFAULT 0 AFTER `role`", infoschema.ErrColumnExists)
+
+	doReentrantDDL(s, "ALTER TABLE mysql.dist_framework_meta MODIFY COLUMN `host` VARCHAR(261)")
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask MODIFY COLUMN `exec_id` VARCHAR(261)")
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask_history MODIFY COLUMN `exec_id` VARCHAR(261)")
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task MODIFY COLUMN `dispatcher_id` VARCHAR(261)")
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task_history MODIFY COLUMN `dispatcher_id` VARCHAR(261)")
+}
+
+func upgradeToVer191(s sessiontypes.Session, ver int64) {
+	if ver >= version191 {
+		return
+	}
+	sql := fmt.Sprintf("INSERT HIGH_PRIORITY IGNORE INTO %s.%s VALUES('%s', '%s')",
+		mysql.SystemDB, mysql.GlobalVariablesTable,
+		variable.TiDBTxnMode, variable.OptimisticTxnMode)
+	mustExecute(s, sql)
+}
+
+func upgradeToVer192(s sessiontypes.Session, ver int64) {
+	if ver >= version192 {
+		return
+	}
+	doReentrantDDL(s, CreateRequestUnitByGroupTable)
+}
+
+func upgradeToVer193(s sessiontypes.Session, ver int64) {
+	if ver >= version193 {
+		return
+	}
+	doReentrantDDL(s, CreateMDLView)
+}
+
+func upgradeToVer194(s sessiontypes.Session, ver int64) {
+	if ver >= version194 {
+		return
+	}
+	mustExecute(s, "DROP TABLE IF EXISTS mysql.load_data_jobs")
+}
+
+func upgradeToVer195(s sessiontypes.Session, ver int64) {
+	if ver >= version195 {
+		return
+	}
+
+	doReentrantDDL(s, DropMySQLIndexUsageTable)
+}
+
+func upgradeToVer196(s sessiontypes.Session, ver int64) {
+	if ver >= version196 {
+		return
+	}
+
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task ADD COLUMN target_scope VARCHAR(256) DEFAULT '' AFTER `step`;", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task_history ADD COLUMN target_scope VARCHAR(256) DEFAULT '' AFTER `step`;", infoschema.ErrColumnExists)
+}
+
+func upgradeToVer197(s sessiontypes.Session, ver int64) {
+	if ver >= version197 {
+		return
+	}
+
+	doReentrantDDL(s, CreateMDLView)
+}
+
+func writeOOMAction(s sessiontypes.Session) {
+>>>>>>> af825ac7d8b (ddl,mdl: fix the issue that the table_ids overlap regex is not correct (#52879))
 	comment := "oom-action is `log` by default in v3.0.x, `cancel` by default in v4.0.11+"
 	mustExecute(s, `INSERT HIGH_PRIORITY INTO %n.%n VALUES (%?, %?, %?) ON DUPLICATE KEY UPDATE VARIABLE_VALUE= %?`,
 		mysql.SystemDB, mysql.TiDBTable, tidbDefOOMAction, variable.OOMActionLog, comment, variable.OOMActionLog,
