@@ -184,7 +184,7 @@ func TestIssue30289(t *testing.T) {
 }
 
 func TestIssue51998(t *testing.T) {
-	fpName := "github.com/pingcap/tidb/pkg/executor/join/issue51998"
+	fpName := "github.com/pingcap/tidb/pkg/executor/issue51998"
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
