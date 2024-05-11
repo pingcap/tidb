@@ -72,6 +72,25 @@ type probeSideTupleFetcherBase struct {
 	requiredRows       int64
 }
 
+func (fetcher *probeSideTupleFetcherBase) initializeForProbeBase(concurrency uint) {
+	// fetcher.probeResultChs is for transmitting the chunks which store the data of
+	// ProbeSideExec, it'll be written by probe side worker goroutine, and read by join
+	// workers.
+	fetcher.probeResultChs = make([]chan *chunk.Chunk, concurrency)
+	for i := uint(0); i < concurrency; i++ {
+		fetcher.probeResultChs[i] = make(chan *chunk.Chunk, 1)
+	}
+	// fetcher.probeChkResourceCh is for transmitting the used ProbeSideExec chunks from
+	// join workers to ProbeSideExec worker.
+	fetcher.probeChkResourceCh = make(chan *probeChkResource, concurrency)
+	for i := uint(0); i < concurrency; i++ {
+		fetcher.probeChkResourceCh <- &probeChkResource{
+			chk:  exec.NewFirstChunk(fetcher.ProbeSideExec),
+			dest: fetcher.probeResultChs[i],
+		}
+	}
+}
+
 type isBuildSideEmpty func() bool
 
 func wait4BuildSide(isBuildEmpty isBuildSideEmpty, canSkipIfBuildEmpty bool, hashJoinCtx *hashJoinCtxBase) (skipProbe bool, err error) {
@@ -156,6 +175,15 @@ type probeWorkerBase struct {
 	probeChkResourceCh chan *probeChkResource
 	joinChkResourceCh  chan *chunk.Chunk
 	probeResultCh      chan *chunk.Chunk
+}
+
+func (worker *probeWorkerBase) initializeForProbe(probeChkResourceCh chan *probeChkResource, probeResultCh chan *chunk.Chunk, joinExec exec.Executor) {
+	// worker.joinChkResourceCh is for transmitting the reused join result chunks
+	// from the main thread to probe worker goroutines.
+	worker.joinChkResourceCh = make(chan *chunk.Chunk, 1)
+	worker.joinChkResourceCh <- exec.NewFirstChunk(joinExec)
+	worker.probeChkResourceCh = probeChkResourceCh
+	worker.probeResultCh = probeResultCh
 }
 
 type buildWorkerBase struct {
