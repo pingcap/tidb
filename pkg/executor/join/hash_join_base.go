@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/disk"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
@@ -70,9 +71,10 @@ type probeSideTupleFetcherBase struct {
 	probeChkResourceCh chan *probeChkResource
 	probeResultChs     []chan *chunk.Chunk
 	requiredRows       int64
+	joinResultChannel  chan *hashjoinWorkerResult
 }
 
-func (fetcher *probeSideTupleFetcherBase) initializeForProbeBase(concurrency uint) {
+func (fetcher *probeSideTupleFetcherBase) initializeForProbeBase(concurrency uint, joinResultChannel chan *hashjoinWorkerResult) {
 	// fetcher.probeResultChs is for transmitting the chunks which store the data of
 	// ProbeSideExec, it'll be written by probe side worker goroutine, and read by join
 	// workers.
@@ -88,6 +90,16 @@ func (fetcher *probeSideTupleFetcherBase) initializeForProbeBase(concurrency uin
 			chk:  exec.NewFirstChunk(fetcher.ProbeSideExec),
 			dest: fetcher.probeResultChs[i],
 		}
+	}
+	fetcher.joinResultChannel = joinResultChannel
+}
+
+func (fetcher *probeSideTupleFetcherBase) handleProbeSideFetcherPanic(r any) {
+	for i := range fetcher.probeResultChs {
+		close(fetcher.probeResultChs[i])
+	}
+	if r != nil {
+		fetcher.joinResultChannel <- &hashjoinWorkerResult{err: util.GetRecoverError(r)}
 	}
 }
 

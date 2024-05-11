@@ -467,15 +467,15 @@ func appendCellByCell(dst *Column, src *Column, rowIdx int) {
 func AppendCellFromRawData(dst *Column, rowData uintptr) uintptr {
 	if dst.isFixed() {
 		elemLen := len(dst.elemBuf)
-		dst.data = append(dst.data, hack.GetBytesFromPtr(unsafe.Pointer(rowData), elemLen)...)
-		rowData = uintptr(unsafe.Add(unsafe.Pointer(rowData), elemLen))
+		dst.data = append(dst.data, hack.GetBytesFromPtr(unsafe.Pointer(rowData), elemLen)...) //nolint:all
+		rowData = uintptr(unsafe.Add(unsafe.Pointer(rowData), elemLen))                        //nolint:all
 	} else {
-		elemLen := *(*uint64)(unsafe.Pointer(rowData))
+		elemLen := *(*uint64)(unsafe.Pointer(rowData)) //nolint:all
 		if elemLen > 0 {
-			dst.data = append(dst.data, hack.GetBytesFromPtr(unsafe.Add(unsafe.Pointer(rowData), 8), int(elemLen))...)
+			dst.data = append(dst.data, hack.GetBytesFromPtr(unsafe.Add(unsafe.Pointer(rowData), 8), int(elemLen))...) //nolint:all
 		}
 		dst.offsets = append(dst.offsets, int64(len(dst.data)))
-		rowData = uintptr(unsafe.Add(unsafe.Pointer(rowData), elemLen+8))
+		rowData = uintptr(unsafe.Add(unsafe.Pointer(rowData), elemLen+8)) //nolint:all
 	}
 	dst.length++
 	return rowData
