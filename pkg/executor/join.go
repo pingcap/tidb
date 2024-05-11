@@ -268,9 +268,12 @@ func (fetcher *probeSideTupleFetcher) fetchProbeSideChunks(ctx context.Context, 
 					probeSideResult.Reset()
 				}
 			})
+<<<<<<< HEAD:pkg/executor/join.go
 			if probeSideResult.NumRows() == 0 && !fetcher.useOuterToBuild {
 				fetcher.finished.Store(true)
 			}
+=======
+>>>>>>> 5d780ebf8e9 (executor: disable probe short path in hash join (#53079)):pkg/executor/join/join.go
 			emptyBuild, buildErr := fetcher.wait4BuildSide()
 			if buildErr != nil {
 				fetcher.joinResultCh <- &hashjoinWorkerResult{
@@ -327,13 +330,32 @@ func (w *buildWorker) fetchBuildSideRows(ctx context.Context, chkCh chan<- *chun
 			return
 		}
 	})
+<<<<<<< HEAD:pkg/executor/join.go
 	sessVars := w.hashJoinCtx.sessCtx.GetSessionVars()
+=======
+	sessVars := w.HashJoinCtx.SessCtx.GetSessionVars()
+	failpoint.Inject("issue51998", func(val failpoint.Value) {
+		if val.(bool) {
+			time.Sleep(2 * time.Second)
+		}
+	})
+>>>>>>> 5d780ebf8e9 (executor: disable probe short path in hash join (#53079)):pkg/executor/join/join.go
 	for {
 		if w.hashJoinCtx.finished.Load() {
 			return
 		}
+<<<<<<< HEAD:pkg/executor/join.go
 		chk := w.hashJoinCtx.allocPool.Alloc(w.buildSideExec.RetFieldTypes(), sessVars.MaxChunkSize, sessVars.MaxChunkSize)
 		err = exec.Next(ctx, w.buildSideExec, chk)
+=======
+		chk := w.HashJoinCtx.ChunkAllocPool.Alloc(w.BuildSideExec.RetFieldTypes(), sessVars.MaxChunkSize, sessVars.MaxChunkSize)
+		err = exec.Next(ctx, w.BuildSideExec, chk)
+		failpoint.Inject("issue51998", func(val failpoint.Value) {
+			if val.(bool) {
+				err = errors.Errorf("issue51998 build return error")
+			}
+		})
+>>>>>>> 5d780ebf8e9 (executor: disable probe short path in hash join (#53079)):pkg/executor/join/join.go
 		if err != nil {
 			errCh <- errors.Trace(err)
 			return
