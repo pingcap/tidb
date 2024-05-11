@@ -970,7 +970,6 @@ func (bc *Client) startMainBackupLoop(
 					logutil.CL(ctx).Error("store backup failed",
 						zap.Uint64("round", round),
 						zap.Uint64("storeID", storeID), zap.Error(err))
-					time.Sleep(15 * time.Second)
 					stateChan <- StoreBackupPolicy{One: storeID}
 				}
 			}
@@ -1057,11 +1056,15 @@ mainLoop:
 		if err != nil {
 			// because we have connectted to pd before.
 			// so this error must be retryable, just make infinite retry here
-			logutil.CL(ctx).Error("failed to get backup stores", zap.Uint64("round", round), zap.Error(err))
-			time.Sleep(time.Second)
+			logutil.CL(mainCtx).Error("failed to get backup stores", zap.Uint64("round", round), zap.Error(err))
 			continue mainLoop
 		}
 		for _, store := range allStores {
+			if err = utils.CheckStoreLiveness(store); err != nil {
+				// skip this store in this round.
+				logutil.CL(mainCtx).Warn("store not alive, skip backup it in this round", zap.Uint64("round", round), zap.Error(err))
+				continue
+			}
 			storeID := store.GetId()
 			// reset backup client every round, to get a clean grpc connection.
 			cli, err := bc.mgr.ResetBackupClient(mainCtx, storeID)
@@ -1069,7 +1072,6 @@ mainLoop:
 				// because the we get store info from pd.
 				// there is no customer setting here, so make infinite retry.
 				logutil.CL(ctx).Error("failed to reset backup client", zap.Uint64("round", round), zap.Uint64("storeID", storeID), zap.Error(err))
-				time.Sleep(time.Second)
 				continue mainLoop
 			}
 			ch := make(chan *ResponseAndStore)
@@ -1087,7 +1089,7 @@ mainLoop:
 				return ctx.Err()
 			case storeBackupInfo := <-stateChan:
 				if storeBackupInfo.All {
-					logutil.CL(mainCtx).Info("cluster state changed. restart store backups")
+					logutil.CL(mainCtx).Info("cluster state changed. restart store backups", zap.Uint64("round", round))
 					// stop current connections
 					handleCancel()
 					mainCancel()
@@ -1096,19 +1098,24 @@ mainLoop:
 				}
 				if storeBackupInfo.One != 0 {
 					storeID := storeBackupInfo.One
-					_, err := bc.mgr.GetPDClient().GetStore(mainCtx, storeID)
+					store, err := bc.mgr.GetPDClient().GetStore(mainCtx, storeID)
 					if err != nil {
 						// cannot get store, maybe store has scaled-in.
-						logutil.CL(mainCtx).Info("cannot get store from pd", zap.Error(err))
+						logutil.CL(mainCtx).Info("cannot get store from pd", zap.Uint64("round", round), zap.Error(err))
 						// try next round
 						handleCancel()
 						mainCancel()
 						continue mainLoop
 					}
+					if err = utils.CheckStoreLiveness(store); err != nil {
+						// skip this store in this round.
+						logutil.CL(mainCtx).Warn("store not alive, skip backup it in this round", zap.Uint64("round", round), zap.Error(err))
+						continue
+					}
 					// reset backup client. store address could change but store id remained.
 					cli, err := bc.mgr.ResetBackupClient(mainCtx, storeID)
 					if err != nil {
-						logutil.CL(mainCtx).Error("failed to reset backup client", zap.Uint64("storeID", storeID), zap.Error(err))
+						logutil.CL(mainCtx).Error("failed to reset backup client", zap.Uint64("round", round), zap.Uint64("storeID", storeID), zap.Error(err))
 						handleCancel()
 						mainCancel()
 						// receive new store info but failed to get backup client.
