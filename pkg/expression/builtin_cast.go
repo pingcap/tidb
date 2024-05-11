@@ -23,6 +23,7 @@
 package expression
 
 import (
+	"bytes"
 	"fmt"
 	"math"
 	"strconv"
@@ -1036,6 +1037,39 @@ func (b *builtinCastRealAsStringSig) Clone() builtinFunc {
 	return newSig
 }
 
+func formatFloat(f float64, bitSize int) string {
+	// MySQL makes float to string max 6 significant digits
+	// MySQL makes double to string max 17 significant digits
+
+	// Unified to display behavior of TiDB. TiKV should also follow this rule.
+	const (
+		expFormatBig   = 1e15
+		expFormatSmall = 1e-15
+	)
+
+	absVal := math.Abs(f)
+	isEFormat := false
+
+	if bitSize == 32 {
+		isEFormat = float32(absVal) >= float32(expFormatBig) || (float32(absVal) != 0 && float32(absVal) < float32(expFormatSmall))
+	} else {
+		isEFormat = absVal >= expFormatBig || (absVal != 0 && absVal < expFormatSmall)
+	}
+
+	dst := make([]byte, 0, 24)
+	if isEFormat {
+		dst = strconv.AppendFloat(dst, f, 'e', -1, bitSize)
+		if idx := bytes.IndexByte(dst, '+'); idx != -1 {
+			copy(dst[idx:], dst[idx+1:])
+			dst = dst[:len(dst)-1]
+		}
+	} else {
+		dst = strconv.AppendFloat(dst, f, 'f', -1, bitSize)
+	}
+
+	return string(dst)
+}
+
 func (b *builtinCastRealAsStringSig) evalString(ctx EvalContext, row chunk.Row) (res string, isNull bool, err error) {
 	val, isNull, err := b.args[0].EvalReal(ctx, row)
 	if isNull || err != nil {
@@ -1049,7 +1083,7 @@ func (b *builtinCastRealAsStringSig) evalString(ctx EvalContext, row chunk.Row) 
 		// If we strconv.FormatFloat the value with 64bits, the result is incorrect!
 		bits = 32
 	}
-	res, err = types.ProduceStrWithSpecifiedTp(strconv.FormatFloat(val, 'f', -1, bits), b.tp, typeCtx(ctx), false)
+	res, err = types.ProduceStrWithSpecifiedTp(formatFloat(val, bits), b.tp, typeCtx(ctx), false)
 	if err != nil {
 		return res, false, err
 	}
