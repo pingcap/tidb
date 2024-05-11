@@ -338,37 +338,15 @@ func (e *HashJoinV2Exec) canSkipProbeIfHashTableIsEmpty() bool {
 }
 
 func (e *HashJoinV2Exec) initializeForProbe() {
+	e.ProbeSideTupleFetcher.initializeForProbeBase(e.Concurrency)
+	e.ProbeSideTupleFetcher.HashJoinCtxV2 = e.HashJoinCtxV2
 	// e.joinResultCh is for transmitting the join result chunks to the main
 	// thread.
 	e.joinResultCh = make(chan *hashjoinWorkerResult, e.Concurrency+1)
-
-	e.ProbeSideTupleFetcher.HashJoinCtxV2 = e.HashJoinCtxV2
 	e.ProbeSideTupleFetcher.canSkipProbeIfHashTableIsEmpty = e.canSkipProbeIfHashTableIsEmpty()
-	// e.ProbeSideTupleFetcher.probeResultChs is for transmitting the chunks which store the data of
-	// ProbeSideExec, it'll be written by probe side worker goroutine, and read by join
-	// workers.
-	e.ProbeSideTupleFetcher.probeResultChs = make([]chan *chunk.Chunk, e.Concurrency)
-	for i := uint(0); i < e.Concurrency; i++ {
-		e.ProbeSideTupleFetcher.probeResultChs[i] = make(chan *chunk.Chunk, 1)
-		e.ProbeWorkers[i].probeResultCh = e.ProbeSideTupleFetcher.probeResultChs[i]
-	}
 
-	// e.probeChkResourceCh is for transmitting the used ProbeSideExec chunks from
-	// join workers to ProbeSideExec worker.
-	e.ProbeSideTupleFetcher.probeChkResourceCh = make(chan *probeChkResource, e.Concurrency)
 	for i := uint(0); i < e.Concurrency; i++ {
-		e.ProbeSideTupleFetcher.probeChkResourceCh <- &probeChkResource{
-			chk:  exec.NewFirstChunk(e.ProbeSideTupleFetcher.ProbeSideExec),
-			dest: e.ProbeSideTupleFetcher.probeResultChs[i],
-		}
-	}
-
-	// e.ProbeWorker.joinChkResourceCh is for transmitting the reused join result chunks
-	// from the main thread to probe worker goroutines.
-	for i := uint(0); i < e.Concurrency; i++ {
-		e.ProbeWorkers[i].joinChkResourceCh = make(chan *chunk.Chunk, 1)
-		e.ProbeWorkers[i].joinChkResourceCh <- exec.NewFirstChunk(e)
-		e.ProbeWorkers[i].probeChkResourceCh = e.ProbeSideTupleFetcher.probeChkResourceCh
+		e.ProbeWorkers[i].initializeForProbe(e.ProbeSideTupleFetcher.probeChkResourceCh, e.ProbeSideTupleFetcher.probeResultChs[i], e)
 	}
 }
 
