@@ -325,7 +325,37 @@ func runeLen(b byte) int {
 // IsCICollation returns if the collation is case-sensitive
 func IsCICollation(collate string) bool {
 	return collate == "utf8_general_ci" || collate == "utf8mb4_general_ci" ||
+<<<<<<< HEAD:util/collate/collate.go
 		collate == "utf8_unicode_ci" || collate == "utf8mb4_unicode_ci"
+=======
+		collate == "utf8_unicode_ci" || collate == "utf8mb4_unicode_ci" || collate == "gbk_chinese_ci" ||
+		collate == "utf8mb4_0900_ai_ci"
+}
+
+// ConvertAndGetBinCollation converts collation to binary collation
+func ConvertAndGetBinCollation(collate string) string {
+	switch collate {
+	case "utf8_general_ci":
+		return "utf8_bin"
+	case "utf8_unicode_ci":
+		return "utf8_bin"
+	case "utf8mb4_general_ci":
+		return "utf8mb4_bin"
+	case "utf8mb4_unicode_ci":
+		return "utf8mb4_bin"
+	case "utf8mb4_0900_ai_ci":
+		return "utf8mb4_bin"
+	case "gbk_chinese_ci":
+		return "gbk_bin"
+	}
+
+	return collate
+}
+
+// ConvertAndGetBinCollator converts collation to binary collator
+func ConvertAndGetBinCollator(collate string) Collator {
+	return GetCollator(ConvertAndGetBinCollation(collate))
+>>>>>>> dcd1fa9d967 (expression: fix the collation of functions with json arguments (#53126)):pkg/util/collate/collate.go
 }
 
 // IsBinCollation returns if the collation is 'xx_bin' or 'bin'.
