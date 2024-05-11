@@ -338,12 +338,6 @@ func (fetcher *ProbeSideTupleFetcherV2) fetchProbeSideChunks(ctx context.Context
 					probeSideResult.Reset()
 				}
 			})
-			if probeSideResult.NumRows() == 0 && !fetcher.HashJoinCtxV2.needScanRowTableAfterProbeDone {
-				// this is a short path, if current join don't need to scan hash table
-				// after probe, then if the probe side is empty, the join result must
-				// be empty
-				fetcher.finished.Store(true)
-			}
 			skipProbe, buildErr := fetcher.wait4BuildSide()
 			if buildErr != nil {
 				fetcher.joinResultCh <- &hashjoinWorkerResult{
@@ -432,12 +426,22 @@ func (w *BuildSideTupleFetcher) fetchBuildSideRows(ctx context.Context, chkCh ch
 		}
 	})
 	sessVars := w.HashJoinCtx.SessCtx.GetSessionVars()
+	failpoint.Inject("issue51998", func(val failpoint.Value) {
+		if val.(bool) {
+			time.Sleep(2 * time.Second)
+		}
+	})
 	for {
 		if w.HashJoinCtx.finished.Load() {
 			return
 		}
 		chk := w.HashJoinCtx.ChunkAllocPool.Alloc(w.BuildSideExec.RetFieldTypes(), sessVars.MaxChunkSize, sessVars.MaxChunkSize)
 		err = exec.Next(ctx, w.BuildSideExec, chk)
+		failpoint.Inject("issue51998", func(val failpoint.Value) {
+			if val.(bool) {
+				err = errors.Errorf("issue51998 build return error")
+			}
+		})
 		if err != nil {
 			errCh <- errors.Trace(err)
 			return
