@@ -502,7 +502,7 @@ func (e *TopNExec) generateResultWithMultiWayMerge(offset int64, limit int64) er
 	}
 }
 
-// Generate results with this function when we trigger spill only once.
+// GenerateTopNResultsWhenSpillOnlyOnce generates results with this function when we trigger spill only once.
 // It's a public function as we need to test it in ut.
 func (e *TopNExec) GenerateTopNResultsWhenSpillOnlyOnce() error {
 	inDisk := e.spillHelper.sortedRowsInDisk[0]
@@ -525,14 +525,13 @@ func (e *TopNExec) GenerateTopNResultsWhenSpillOnlyOnce() error {
 			// spilled to disk.
 			if skippedRowNum < offset {
 				rowNumNeedSkip := offset - skippedRowNum
-				if rowNum > int(rowNumNeedSkip) {
-					j += int(rowNumNeedSkip)
-					skippedRowNum += rowNumNeedSkip
-				} else {
+				if rowNum <= int(rowNumNeedSkip) {
 					// All rows in this chunk should be skipped
 					skippedRowNum += uint64(rowNum)
 					continue
 				}
+				j += int(rowNumNeedSkip)
+				skippedRowNum += rowNumNeedSkip
 			}
 		}
 
@@ -573,21 +572,28 @@ func (e *TopNExec) generateTopNResults() {
 		e.inMemoryThenSpillFlag = true
 	}
 
-	e.generateTopNResultsWhenSpillTriggered()
+	err := e.generateTopNResultsWhenSpillTriggered()
+	if err != nil {
+		e.resultChannel <- rowWithError{err: err}
+	}
 }
 
+// IsSpillTriggeredForTest shows if spill is triggered, used for test.
 func (e *TopNExec) IsSpillTriggeredForTest() bool {
 	return e.spillHelper.isSpillTriggered()
 }
 
+// GetIsSpillTriggeredInStage1ForTest shows if spill is triggered in stage 1, only used for test.
 func (e *TopNExec) GetIsSpillTriggeredInStage1ForTest() bool {
 	return e.isSpillTriggeredInStage1ForTest
 }
 
+// GetIsSpillTriggeredInStage2ForTest shows if spill is triggered in stage 2, only used for test.
 func (e *TopNExec) GetIsSpillTriggeredInStage2ForTest() bool {
 	return e.isSpillTriggeredInStage2ForTest
 }
 
+// GetInMemoryThenSpillFlagForTest shows if results are in memory before they are spilled, only used for test
 func (e *TopNExec) GetInMemoryThenSpillFlagForTest() bool {
 	return e.inMemoryThenSpillFlag
 }
@@ -603,6 +609,7 @@ func injectTopNRandomFail(triggerFactor int32) {
 	})
 }
 
+// InitTopNExecForTest initializes TopN executors, only for test.
 func InitTopNExecForTest(topnExec *TopNExec, offset uint64, sortedRowsInDisk *chunk.DataInDiskByChunks) {
 	topnExec.inMemoryThenSpillFlag = false
 	topnExec.finishCh = make(chan struct{}, 1)
@@ -612,6 +619,7 @@ func InitTopNExecForTest(topnExec *TopNExec, offset uint64, sortedRowsInDisk *ch
 	topnExec.spillHelper.sortedRowsInDisk = []*chunk.DataInDiskByChunks{sortedRowsInDisk}
 }
 
+// GetResultForTest gets result, only for test.
 func GetResultForTest(topnExec *TopNExec) []int64 {
 	close(topnExec.resultChannel)
 	result := make([]int64, 0, 100)

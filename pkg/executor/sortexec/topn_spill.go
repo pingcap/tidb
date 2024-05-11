@@ -130,7 +130,7 @@ func (t *topNSpillHelper) addInDisk(inDisk *chunk.DataInDiskByChunks) {
 	t.sortedRowsInDisk = append(t.sortedRowsInDisk, inDisk)
 }
 
-func (t *topNSpillHelper) spillTmpSpillChunk(inDisk *chunk.DataInDiskByChunks, tmpSpillChunk *chunk.Chunk) error {
+func (*topNSpillHelper) spillTmpSpillChunk(inDisk *chunk.DataInDiskByChunks, tmpSpillChunk *chunk.Chunk) error {
 	err := inDisk.Add(tmpSpillChunk)
 	if err != nil {
 		return err

@@ -112,11 +112,11 @@ func (t *topNWorker) run() {
 	t.fetchChunksAndProcess()
 }
 
-func (p *topNWorker) injectFailPointForTopNWorker(triggerFactor int32) {
+func (t *topNWorker) injectFailPointForTopNWorker(triggerFactor int32) {
 	injectTopNRandomFail(triggerFactor)
 	failpoint.Inject("SlowSomeWorkers", func(val failpoint.Value) {
 		if val.(bool) {
-			if p.workerIDForTest%2 == 0 {
+			if t.workerIDForTest%2 == 0 {
 				randNum := rand.Int31n(10000)
 				if randNum < 10 {
 					time.Sleep(1 * time.Millisecond)
