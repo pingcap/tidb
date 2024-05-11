@@ -440,7 +440,22 @@ const (
 	);`
 	// CreateMDLView is a view about metadata locks.
 	CreateMDLView = `CREATE OR REPLACE VIEW mysql.tidb_mdl_view as (
+<<<<<<< HEAD:session/bootstrap.go
 	select JOB_ID, DB_NAME, TABLE_NAME, QUERY, SESSION_ID, TxnStart, TIDB_DECODE_SQL_DIGESTS(ALL_SQL_DIGESTS, 4096) AS SQL_DIGESTS from information_schema.ddl_jobs, information_schema.CLUSTER_TIDB_TRX, information_schema.CLUSTER_PROCESSLIST where ddl_jobs.STATE = 'running' and find_in_set(ddl_jobs.table_id, CLUSTER_TIDB_TRX.RELATED_TABLE_IDS) and CLUSTER_TIDB_TRX.SESSION_ID=CLUSTER_PROCESSLIST.ID
+=======
+		SELECT tidb_mdl_info.job_id,
+			JSON_UNQUOTE(JSON_EXTRACT(cast(cast(job_meta as char) as json), "$.schema_name")) as db_name,
+			JSON_UNQUOTE(JSON_EXTRACT(cast(cast(job_meta as char) as json), "$.table_name")) as table_name,
+			JSON_UNQUOTE(JSON_EXTRACT(cast(cast(job_meta as char) as json), "$.query")) as query,
+			session_id,
+			cluster_tidb_trx.start_time,
+			tidb_decode_sql_digests(all_sql_digests, 4096) AS SQL_DIGESTS
+		FROM mysql.tidb_ddl_job,
+			mysql.tidb_mdl_info,
+			information_schema.cluster_tidb_trx
+		WHERE tidb_ddl_job.job_id=tidb_mdl_info.job_id
+			AND CONCAT(',', tidb_mdl_info.table_ids, ',') REGEXP CONCAT(',(', REPLACE(cluster_tidb_trx.related_table_ids, ',', '|'), '),') != 0
+>>>>>>> af825ac7d8b (ddl,mdl: fix the issue that the table_ids overlap regex is not correct (#52879)):pkg/session/bootstrap.go
 	);`
 
 	// CreatePlanReplayerStatusTable is a table about plan replayer status
@@ -737,13 +752,155 @@ const (
 	version109 = 109
 	// version110 sets tidb_server_memory_limit to "80%"
 	version110 = 110
+<<<<<<< HEAD:session/bootstrap.go
 	// version111 sets tidb_stats_load_pseudo_timeout to ON when a cluster upgrades from some version lower than v6.5.0.
 	version111 = 111
+=======
+	// version130 add column source to mysql.stats_meta_history
+	version130 = 130
+	// version131 adds the table tidb_ttl_task and tidb_ttl_job_history
+	version131 = 131
+	// version132 modifies the view tidb_mdl_view
+	version132 = 132
+	// version133 sets tidb_server_memory_limit to "80%"
+	version133 = 133
+	// version134 modifies the following global variables default value:
+	// - foreign_key_checks: off -> on
+	// - tidb_enable_foreign_key: off -> on
+	// - tidb_store_batch_size: 0 -> 4
+	version134 = 134
+	// version135 sets tidb_opt_advanced_join_hint to off when a cluster upgrades from some version lower than v7.0.
+	version135 = 135
+	// version136 prepare the tables for the distributed task.
+	version136 = 136
+	// version137 introduces some reserved resource groups
+	version137 = 137
+	// version 138 set tidb_enable_null_aware_anti_join to true
+	version138 = 138
+	// version 139 creates mysql.load_data_jobs table for LOAD DATA statement
+	// deprecated in version184
+	version139 = 139
+	// version 140 add column task_key to mysql.tidb_global_task
+	version140 = 140
+	// version 141
+	//   set the value of `tidb_session_plan_cache_size` to "tidb_prepared_plan_cache_size" if there is no `tidb_session_plan_cache_size`.
+	//   update tidb_load_based_replica_read_threshold from 0 to 4
+	// This will only happens when we upgrade a cluster before 7.1.
+	version141 = 141
+	// version 142 insert "tidb_enable_non_prepared_plan_cache|0" to mysql.GLOBAL_VARIABLES if there is no tidb_enable_non_prepared_plan_cache.
+	// This will only happens when we upgrade a cluster before 6.5.
+	version142 = 142
+	// version 143 add column `error` to `mysql.tidb_global_task` and `mysql.tidb_background_subtask`
+	version143 = 143
+	// version 144 turn off `tidb_plan_cache_invalidation_on_fresh_stats`, which is introduced in 7.1-rc,
+	// if it's upgraded from an existing old version cluster.
+	version144 = 144
+	// version 145 to only add a version make we know when we support upgrade state.
+	version145 = 145
+	// version 146 add index for mysql.stats_meta_history and mysql.stats_history.
+	version146 = 146
+	// ...
+	// [version147, version166] is the version range reserved for patches of 7.1.x
+	// ...
+	// version 167 add column `step` to `mysql.tidb_background_subtask`
+	version167 = 167
+	version168 = 168
+	// version 169
+	// 	 create table `mysql.tidb_runaway_quarantined_watch` and table `mysql.tidb_runaway_queries`
+	//   to save runaway query records and persist runaway watch at 7.2 version.
+	//   but due to ver171 recreate `mysql.tidb_runaway_watch`,
+	//   no need to create table `mysql.tidb_runaway_quarantined_watch`, so delete it.
+	version169 = 169
+	version170 = 170
+	// version 171
+	//   keep the tidb_server length same as instance in other tables.
+	version171 = 171
+	// version 172
+	//   create table `mysql.tidb_runaway_watch` and table `mysql.tidb_runaway_watch_done`
+	//   to persist runaway watch and deletion of runaway watch at 7.3.
+	version172 = 172
+	// version 173 add column `summary` to `mysql.tidb_background_subtask`.
+	version173 = 173
+	// version 174
+	//   add column `step`, `error`; delete unique key; and add key idx_state_update_time
+	//   to `mysql.tidb_background_subtask_history`.
+	version174 = 174
+
+	// version 175
+	//   update normalized bindings of `in (?)` to `in (...)` to solve #44298.
+	version175 = 175
+
+	// version 176
+	//   add `mysql.tidb_global_task_history`
+	version176 = 176
+
+	// version 177
+	//   add `mysql.dist_framework_meta`
+	version177 = 177
+
+	// version 178
+	//   write mDDLTableVersion into `mysql.tidb` table
+	version178 = 178
+
+	// version 179
+	//   enlarge `VARIABLE_VALUE` of `mysql.global_variables` from `varchar(1024)` to `varchar(16383)`.
+	version179 = 179
+
+	// ...
+	// [version180, version189] is the version range reserved for patches of 7.5.x
+	// ...
+
+	// version 190
+	//   add priority/create_time/end_time to `mysql.tidb_global_task`/`mysql.tidb_global_task_history`
+	//   add concurrency/create_time/end_time/digest to `mysql.tidb_background_subtask`/`mysql.tidb_background_subtask_history`
+	//   add idx_exec_id(exec_id), uk_digest to `mysql.tidb_background_subtask`
+	//   add cpu_count to mysql.dist_framework_meta
+	//   modify `mysql.dist_framework_meta` host from VARCHAR(100) to VARCHAR(261)
+	//   modify `mysql.tidb_background_subtask`/`mysql.tidb_background_subtask_history` exec_id from varchar(256) to VARCHAR(261)
+	//   modify `mysql.tidb_global_task`/`mysql.tidb_global_task_history` dispatcher_id from varchar(256) to VARCHAR(261)
+	version190 = 190
+
+	// version 191
+	//   set tidb_txn_mode to Optimistic when tidb_txn_mode is not set.
+	version191 = 191
+
+	// version 192
+	//   add new system table `mysql.request_unit_by_group`, which is used for
+	//   historical RU consumption by resource group per day.
+	version192 = 192
+
+	// version 193
+	//   replace `mysql.tidb_mdl_view` table
+	version193 = 193
+
+	// version 194
+	//   remove `mysql.load_data_jobs` table
+	version194 = 194
+
+	// version 195
+	//   drop `mysql.schema_index_usage` table
+	//   create `sys` schema
+	//   create `sys.schema_unused_indexes` table
+	version195 = 195
+
+	// version 196
+	//   add column `target_scope` for 'mysql.tidb_global_task` table
+	//   add column `target_scope` for 'mysql.tidb_global_task_history` table
+	version196 = 196
+
+	// version 197
+	//   replace `mysql.tidb_mdl_view` table
+	version197 = 197
+>>>>>>> af825ac7d8b (ddl,mdl: fix the issue that the table_ids overlap regex is not correct (#52879)):pkg/session/bootstrap.go
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
+<<<<<<< HEAD:session/bootstrap.go
 var currentBootstrapVersion int64 = version110
+=======
+var currentBootstrapVersion int64 = version197
+>>>>>>> af825ac7d8b (ddl,mdl: fix the issue that the table_ids overlap regex is not correct (#52879)):pkg/session/bootstrap.go
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -861,7 +1018,48 @@ var (
 		upgradeToVer108,
 		upgradeToVer109,
 		upgradeToVer110,
+<<<<<<< HEAD:session/bootstrap.go
 		upgradeToVer111,
+=======
+		upgradeToVer130,
+		upgradeToVer131,
+		upgradeToVer132,
+		upgradeToVer133,
+		upgradeToVer134,
+		upgradeToVer135,
+		upgradeToVer136,
+		upgradeToVer137,
+		upgradeToVer138,
+		upgradeToVer139,
+		upgradeToVer140,
+		upgradeToVer141,
+		upgradeToVer142,
+		upgradeToVer143,
+		upgradeToVer144,
+		// We will only use Ver145 to differentiate versions, so it is skipped here.
+		upgradeToVer146,
+		upgradeToVer167,
+		upgradeToVer168,
+		upgradeToVer169,
+		upgradeToVer170,
+		upgradeToVer171,
+		upgradeToVer172,
+		upgradeToVer173,
+		upgradeToVer174,
+		upgradeToVer175,
+		upgradeToVer176,
+		upgradeToVer177,
+		upgradeToVer178,
+		upgradeToVer179,
+		upgradeToVer190,
+		upgradeToVer191,
+		upgradeToVer192,
+		upgradeToVer193,
+		upgradeToVer194,
+		upgradeToVer195,
+		upgradeToVer196,
+		upgradeToVer197,
+>>>>>>> af825ac7d8b (ddl,mdl: fix the issue that the table_ids overlap regex is not correct (#52879)):pkg/session/bootstrap.go
 	}
 )
 
@@ -2230,7 +2428,401 @@ func upgradeToVer111(s Session, ver int64) {
 		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBStatsLoadPseudoTimeout, 1)
 }
 
+<<<<<<< HEAD:session/bootstrap.go
 func writeOOMAction(s Session) {
+=======
+// For users that upgrade TiDB from a pre-7.0 version, we want to set tidb_opt_advanced_join_hint to off by default to keep plans unchanged.
+func upgradeToVer135(s sessiontypes.Session, ver int64) {
+	if ver >= version135 {
+		return
+	}
+
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
+	rs, err := s.ExecuteInternal(ctx, "SELECT VARIABLE_VALUE FROM %n.%n WHERE VARIABLE_NAME=%?;",
+		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBOptAdvancedJoinHint)
+	terror.MustNil(err)
+	req := rs.NewChunk(nil)
+	err = rs.Next(ctx, req)
+	terror.MustNil(err)
+	if req.NumRows() != 0 {
+		return
+	}
+
+	mustExecute(s, "INSERT HIGH_PRIORITY IGNORE INTO %n.%n VALUES (%?, %?);",
+		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBOptAdvancedJoinHint, false)
+}
+
+func upgradeToVer136(s sessiontypes.Session, ver int64) {
+	if ver >= version136 {
+		return
+	}
+	mustExecute(s, CreateGlobalTask)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask DROP INDEX namespace", dbterror.ErrCantDropFieldOrKey)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask ADD INDEX idx_task_key(task_key)", dbterror.ErrDupKeyName)
+}
+
+func upgradeToVer137(_ sessiontypes.Session, _ int64) {
+	// NOOP, we don't depend on ddl to init the default group due to backward compatible issue.
+}
+
+// For users that upgrade TiDB from a version below 7.0, we want to enable tidb tidb_enable_null_aware_anti_join by default.
+func upgradeToVer138(s sessiontypes.Session, ver int64) {
+	if ver >= version138 {
+		return
+	}
+	mustExecute(s, "REPLACE HIGH_PRIORITY INTO %n.%n VALUES (%?, %?);", mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBOptimizerEnableNAAJ, variable.On)
+}
+
+func upgradeToVer139(sessiontypes.Session, int64) {}
+
+func upgradeToVer140(s sessiontypes.Session, ver int64) {
+	if ver >= version140 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task ADD COLUMN `task_key` VARCHAR(256) NOT NULL AFTER `id`", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task ADD UNIQUE KEY task_key(task_key)", dbterror.ErrDupKeyName)
+}
+
+// upgradeToVer141 sets the value of `tidb_session_plan_cache_size` as `tidb_prepared_plan_cache_size` for compatibility,
+// and update tidb_load_based_replica_read_threshold from 0 to 4.
+func upgradeToVer141(s sessiontypes.Session, ver int64) {
+	if ver >= version141 {
+		return
+	}
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
+	rs, err := s.ExecuteInternal(ctx, "SELECT VARIABLE_VALUE FROM %n.%n WHERE VARIABLE_NAME=%?;",
+		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBPrepPlanCacheSize)
+	terror.MustNil(err)
+	req := rs.NewChunk(nil)
+	err = rs.Next(ctx, req)
+	if err != nil || req.NumRows() == 0 {
+		return
+	}
+	row := req.GetRow(0)
+	if row.IsNull(0) {
+		return
+	}
+	val := row.GetString(0)
+
+	mustExecute(s, "INSERT HIGH_PRIORITY IGNORE INTO %n.%n VALUES (%?, %?);",
+		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBSessionPlanCacheSize, val)
+	mustExecute(s, "REPLACE HIGH_PRIORITY INTO %n.%n VALUES (%?, %?);", mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBLoadBasedReplicaReadThreshold, variable.DefTiDBLoadBasedReplicaReadThreshold.String())
+}
+
+func upgradeToVer142(s sessiontypes.Session, ver int64) {
+	if ver >= version142 {
+		return
+	}
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
+	rs, err := s.ExecuteInternal(ctx, "SELECT VARIABLE_VALUE FROM %n.%n WHERE VARIABLE_NAME=%?;",
+		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBEnableNonPreparedPlanCache)
+	terror.MustNil(err)
+	req := rs.NewChunk(nil)
+	err = rs.Next(ctx, req)
+	terror.MustNil(err)
+	if req.NumRows() != 0 {
+		return
+	}
+
+	mustExecute(s, "INSERT HIGH_PRIORITY IGNORE INTO %n.%n VALUES (%?, %?);",
+		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBEnableNonPreparedPlanCache, variable.Off)
+}
+
+func upgradeToVer143(s sessiontypes.Session, ver int64) {
+	if ver >= version143 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task ADD COLUMN `error` BLOB", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask ADD COLUMN `error` BLOB", infoschema.ErrColumnExists)
+}
+
+func upgradeToVer144(s sessiontypes.Session, ver int64) {
+	if ver >= version144 {
+		return
+	}
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
+	rs, err := s.ExecuteInternal(ctx, "SELECT VARIABLE_VALUE FROM %n.%n WHERE VARIABLE_NAME=%?;",
+		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBPlanCacheInvalidationOnFreshStats)
+	terror.MustNil(err)
+	req := rs.NewChunk(nil)
+	err = rs.Next(ctx, req)
+	terror.MustNil(err)
+	if req.NumRows() != 0 {
+		return
+	}
+
+	mustExecute(s, "INSERT HIGH_PRIORITY IGNORE INTO %n.%n VALUES (%?, %?);",
+		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBPlanCacheInvalidationOnFreshStats, variable.Off)
+}
+
+func upgradeToVer146(s sessiontypes.Session, ver int64) {
+	if ver >= version146 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.stats_meta_history ADD INDEX idx_create_time (create_time)", dbterror.ErrDupKeyName)
+	doReentrantDDL(s, "ALTER TABLE mysql.stats_history ADD INDEX idx_create_time (create_time)", dbterror.ErrDupKeyName)
+}
+
+func upgradeToVer167(s sessiontypes.Session, ver int64) {
+	if ver >= version167 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask ADD COLUMN `step` INT AFTER `id`", infoschema.ErrColumnExists)
+}
+
+func upgradeToVer168(s sessiontypes.Session, ver int64) {
+	if ver >= version168 {
+		return
+	}
+	mustExecute(s, CreateImportJobs)
+}
+
+func upgradeToVer169(s sessiontypes.Session, ver int64) {
+	if ver >= version169 {
+		return
+	}
+	mustExecute(s, CreateRunawayTable)
+}
+
+func upgradeToVer170(s sessiontypes.Session, ver int64) {
+	if ver >= version170 {
+		return
+	}
+	mustExecute(s, CreateTimers)
+}
+
+func upgradeToVer171(s sessiontypes.Session, ver int64) {
+	if ver >= version171 {
+		return
+	}
+	mustExecute(s, "ALTER TABLE mysql.tidb_runaway_queries CHANGE COLUMN `tidb_server` `tidb_server` varchar(512)")
+}
+
+func upgradeToVer172(s sessiontypes.Session, ver int64) {
+	if ver >= version172 {
+		return
+	}
+	mustExecute(s, "DROP TABLE IF EXISTS mysql.tidb_runaway_quarantined_watch")
+	mustExecute(s, CreateRunawayWatchTable)
+	mustExecute(s, CreateDoneRunawayWatchTable)
+}
+
+func upgradeToVer173(s sessiontypes.Session, ver int64) {
+	if ver >= version173 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask ADD COLUMN `summary` JSON", infoschema.ErrColumnExists)
+}
+
+func upgradeToVer174(s sessiontypes.Session, ver int64) {
+	if ver >= version174 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask_history ADD COLUMN `step` INT AFTER `id`", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask_history ADD COLUMN `error` BLOB", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask_history DROP INDEX `namespace`", dbterror.ErrCantDropFieldOrKey)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask_history ADD INDEX `idx_task_key`(`task_key`)", dbterror.ErrDupKeyName)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask_history ADD INDEX `idx_state_update_time`(`state_update_time`)", dbterror.ErrDupKeyName)
+}
+
+// upgradeToVer175 updates normalized bindings of `in (?)` to `in (...)` to solve
+// the issue #44298 that bindings for `in (?)` can't work for `in (?, ?, ?)`.
+// After this update, multiple bindings may have the same `original_sql`, but it's OK, and
+// for safety, don't remove duplicated bindings when upgrading.
+func upgradeToVer175(s sessiontypes.Session, ver int64) {
+	if ver >= version175 {
+		return
+	}
+
+	var err error
+	mustExecute(s, "BEGIN PESSIMISTIC")
+	defer func() {
+		if err != nil {
+			mustExecute(s, "ROLLBACK")
+			return
+		}
+		mustExecute(s, "COMMIT")
+	}()
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
+	rs, err := s.ExecuteInternal(ctx, "SELECT original_sql, bind_sql FROM mysql.bind_info WHERE source != 'builtin'")
+	if err != nil {
+		logutil.BgLogger().Fatal("upgradeToVer175 error", zap.Error(err))
+		return
+	}
+	req := rs.NewChunk(nil)
+	updateStmts := make([]string, 0, 4)
+	for {
+		err = rs.Next(ctx, req)
+		if err != nil {
+			logutil.BgLogger().Fatal("upgradeToVer175 error", zap.Error(err))
+			return
+		}
+		if req.NumRows() == 0 {
+			break
+		}
+		for i := 0; i < req.NumRows(); i++ {
+			originalNormalizedSQL, bindSQL := req.GetRow(i).GetString(0), req.GetRow(i).GetString(1)
+			newNormalizedSQL := parser.NormalizeForBinding(bindSQL, false)
+			// update `in (?)` to `in (...)`
+			if originalNormalizedSQL == newNormalizedSQL {
+				continue // no need to update
+			}
+			// must run those update statements outside this loop, otherwise may cause some concurrency problems,
+			// since the current statement over this session has not been finished yet.
+			updateStmts = append(updateStmts, fmt.Sprintf("UPDATE mysql.bind_info SET original_sql='%s' WHERE original_sql='%s'", newNormalizedSQL, originalNormalizedSQL))
+		}
+		req.Reset()
+	}
+	if err := rs.Close(); err != nil {
+		logutil.BgLogger().Fatal("upgradeToVer175 error", zap.Error(err))
+	}
+	for _, updateStmt := range updateStmts {
+		mustExecute(s, updateStmt)
+	}
+}
+
+func upgradeToVer176(s sessiontypes.Session, ver int64) {
+	if ver >= version176 {
+		return
+	}
+	mustExecute(s, CreateGlobalTaskHistory)
+}
+
+func upgradeToVer177(s sessiontypes.Session, ver int64) {
+	if ver >= version177 {
+		return
+	}
+	// ignore error when upgrading from v7.4 to higher version.
+	doReentrantDDL(s, CreateDistFrameworkMeta, infoschema.ErrTableExists)
+	err := s.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(context.Background(), variable.TiDBEnableAsyncMergeGlobalStats, variable.Off)
+	if err != nil {
+		logutil.BgLogger().Fatal("upgradeToVer177 error", zap.Error(err))
+	}
+}
+
+// writeDDLTableVersion writes mDDLTableVersion into mysql.tidb
+func writeDDLTableVersion(s sessiontypes.Session) {
+	var err error
+	var ddlTableVersion meta.DDLTableVersion
+	err = kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap), s.GetStore(), true, func(_ context.Context, txn kv.Transaction) error {
+		t := meta.NewMeta(txn)
+		ddlTableVersion, err = t.CheckDDLTableVersion()
+		return err
+	})
+	terror.MustNil(err)
+	mustExecute(s, `INSERT HIGH_PRIORITY INTO %n.%n VALUES (%?, %?, "DDL Table Version. Do not delete.") ON DUPLICATE KEY UPDATE VARIABLE_VALUE= %?`,
+		mysql.SystemDB,
+		mysql.TiDBTable,
+		tidbDDLTableVersion,
+		ddlTableVersion,
+		ddlTableVersion,
+	)
+}
+
+func upgradeToVer178(s sessiontypes.Session, ver int64) {
+	if ver >= version178 {
+		return
+	}
+	writeDDLTableVersion(s)
+}
+
+func upgradeToVer179(s sessiontypes.Session, ver int64) {
+	if ver >= version179 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.global_variables MODIFY COLUMN `VARIABLE_VALUE` varchar(16383)")
+}
+
+func upgradeToVer190(s sessiontypes.Session, ver int64) {
+	if ver >= version190 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task ADD COLUMN `priority` INT DEFAULT 1 AFTER `state`", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task ADD COLUMN `create_time` TIMESTAMP AFTER `priority`", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task ADD COLUMN `end_time` TIMESTAMP AFTER `state_update_time`", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task_history ADD COLUMN `priority` INT DEFAULT 1 AFTER `state`", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task_history ADD COLUMN `create_time` TIMESTAMP AFTER `priority`", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task_history ADD COLUMN `end_time` TIMESTAMP AFTER `state_update_time`", infoschema.ErrColumnExists)
+
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask ADD COLUMN `concurrency` INT AFTER `checkpoint`", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask ADD COLUMN `create_time` TIMESTAMP AFTER `concurrency`", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask ADD COLUMN `end_time` TIMESTAMP AFTER `state_update_time`", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask ADD COLUMN `ordinal` int AFTER `meta`", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask_history ADD COLUMN `concurrency` INT AFTER `checkpoint`", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask_history ADD COLUMN `create_time` TIMESTAMP AFTER `concurrency`", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask_history ADD COLUMN `end_time` TIMESTAMP AFTER `state_update_time`", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask_history ADD COLUMN `ordinal` int AFTER `meta`", infoschema.ErrColumnExists)
+
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask ADD INDEX idx_exec_id(exec_id)", dbterror.ErrDupKeyName)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask ADD UNIQUE INDEX uk_task_key_step_ordinal(task_key, step, ordinal)", dbterror.ErrDupKeyName)
+
+	doReentrantDDL(s, "ALTER TABLE mysql.dist_framework_meta ADD COLUMN `cpu_count` INT DEFAULT 0 AFTER `role`", infoschema.ErrColumnExists)
+
+	doReentrantDDL(s, "ALTER TABLE mysql.dist_framework_meta MODIFY COLUMN `host` VARCHAR(261)")
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask MODIFY COLUMN `exec_id` VARCHAR(261)")
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask_history MODIFY COLUMN `exec_id` VARCHAR(261)")
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task MODIFY COLUMN `dispatcher_id` VARCHAR(261)")
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task_history MODIFY COLUMN `dispatcher_id` VARCHAR(261)")
+}
+
+func upgradeToVer191(s sessiontypes.Session, ver int64) {
+	if ver >= version191 {
+		return
+	}
+	sql := fmt.Sprintf("INSERT HIGH_PRIORITY IGNORE INTO %s.%s VALUES('%s', '%s')",
+		mysql.SystemDB, mysql.GlobalVariablesTable,
+		variable.TiDBTxnMode, variable.OptimisticTxnMode)
+	mustExecute(s, sql)
+}
+
+func upgradeToVer192(s sessiontypes.Session, ver int64) {
+	if ver >= version192 {
+		return
+	}
+	doReentrantDDL(s, CreateRequestUnitByGroupTable)
+}
+
+func upgradeToVer193(s sessiontypes.Session, ver int64) {
+	if ver >= version193 {
+		return
+	}
+	doReentrantDDL(s, CreateMDLView)
+}
+
+func upgradeToVer194(s sessiontypes.Session, ver int64) {
+	if ver >= version194 {
+		return
+	}
+	mustExecute(s, "DROP TABLE IF EXISTS mysql.load_data_jobs")
+}
+
+func upgradeToVer195(s sessiontypes.Session, ver int64) {
+	if ver >= version195 {
+		return
+	}
+
+	doReentrantDDL(s, DropMySQLIndexUsageTable)
+}
+
+func upgradeToVer196(s sessiontypes.Session, ver int64) {
+	if ver >= version196 {
+		return
+	}
+
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task ADD COLUMN target_scope VARCHAR(256) DEFAULT '' AFTER `step`;", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task_history ADD COLUMN target_scope VARCHAR(256) DEFAULT '' AFTER `step`;", infoschema.ErrColumnExists)
+}
+
+func upgradeToVer197(s sessiontypes.Session, ver int64) {
+	if ver >= version197 {
+		return
+	}
+
+	doReentrantDDL(s, CreateMDLView)
+}
+
+func writeOOMAction(s sessiontypes.Session) {
+>>>>>>> af825ac7d8b (ddl,mdl: fix the issue that the table_ids overlap regex is not correct (#52879)):pkg/session/bootstrap.go
 	comment := "oom-action is `log` by default in v3.0.x, `cancel` by default in v4.0.11+"
 	mustExecute(s, `INSERT HIGH_PRIORITY INTO %n.%n VALUES (%?, %?, %?) ON DUPLICATE KEY UPDATE VARIABLE_VALUE= %?`,
 		mysql.SystemDB, mysql.TiDBTable, tidbDefOOMAction, variable.OOMActionLog, comment, variable.OOMActionLog,
