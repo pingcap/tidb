@@ -293,71 +293,6 @@ func (fetcher *ProbeSideTupleFetcherV2) shouldLimitProbeFetchSize() bool {
 	return false
 }
 
-// fetchProbeSideChunks get chunks from fetches chunks from the big table in a background goroutine
-// and sends the chunks to multiple channels which will be read by multiple join workers.
-func (fetcher *ProbeSideTupleFetcherV2) fetchProbeSideChunks(ctx context.Context, maxChunkSize int) {
-	hasWaitedForBuild := false
-	for {
-		if fetcher.finished.Load() {
-			return
-		}
-
-		var probeSideResource *probeChkResource
-		var ok bool
-		select {
-		case <-fetcher.closeCh:
-			return
-		case probeSideResource, ok = <-fetcher.probeChkResourceCh:
-			if !ok {
-				return
-			}
-		}
-		probeSideResult := probeSideResource.chk
-		if fetcher.shouldLimitProbeFetchSize() {
-			required := int(atomic.LoadInt64(&fetcher.requiredRows))
-			probeSideResult.SetRequiredRows(required, maxChunkSize)
-		}
-		err := exec.Next(ctx, fetcher.ProbeSideExec, probeSideResult)
-		failpoint.Inject("ConsumeRandomPanic", nil)
-		if err != nil {
-			fetcher.joinResultCh <- &hashjoinWorkerResult{
-				err: err,
-			}
-			return
-		}
-		if !hasWaitedForBuild {
-			failpoint.Inject("issue30289", func(val failpoint.Value) {
-				if val.(bool) {
-					probeSideResult.Reset()
-				}
-			})
-
-			skipProbe, buildErr := wait4BuildSide(func() bool {
-				return fetcher.hashTableContext.hashTable.isHashTableEmpty()
-			}, fetcher.canSkipProbeIfHashTableIsEmpty, &fetcher.hashJoinCtxBase)
-			if buildErr != nil {
-				fetcher.joinResultCh <- &hashjoinWorkerResult{
-					err: buildErr,
-				}
-				return
-			} else if skipProbe {
-				// stop probe
-				if !fetcher.HashJoinCtxV2.needScanRowTableAfterProbeDone {
-					fetcher.finished.Store(true)
-				}
-				return
-			}
-			hasWaitedForBuild = true
-		}
-
-		if probeSideResult.NumRows() == 0 {
-			return
-		}
-
-		probeSideResource.dest <- probeSideResult
-	}
-}
-
 func (w *BuildWorkerV2) splitPartitionAndAppendToRowTable(typeCtx types.Context, srcChkCh chan *chunk.Chunk) (err error) {
 	cost := int64(0)
 	defer func() {
@@ -441,7 +376,10 @@ func (e *HashJoinV2Exec) fetchAndProbeHashTable(ctx context.Context) {
 	e.initializeForProbe()
 	e.workerWg.RunWithRecover(func() {
 		defer trace.StartRegion(ctx, "HashJoinProbeSideFetcher").End()
-		e.ProbeSideTupleFetcher.fetchProbeSideChunks(ctx, e.MaxChunkSize())
+		e.ProbeSideTupleFetcher.fetchProbeSideChunks(ctx, e.MaxChunkSize(), func() bool {
+			return e.ProbeSideTupleFetcher.hashTableContext.hashTable.isHashTableEmpty()
+		}, e.ProbeSideTupleFetcher.canSkipProbeIfHashTableIsEmpty, e.ProbeSideTupleFetcher.needScanRowTableAfterProbeDone,
+			e.ProbeSideTupleFetcher.needScanRowTableAfterProbeDone, &e.ProbeSideTupleFetcher.hashJoinCtxBase)
 	}, e.ProbeSideTupleFetcher.handleProbeSideFetcherPanic)
 
 	for i := uint(0); i < e.Concurrency; i++ {

@@ -193,66 +193,6 @@ func (e *HashJoinV1Exec) Open(ctx context.Context) error {
 	return nil
 }
 
-// fetchProbeSideChunks get chunks from fetches chunks from the big table in a background goroutine
-// and sends the chunks to multiple channels which will be read by multiple join workers.
-func (fetcher *ProbeSideTupleFetcherV1) fetchProbeSideChunks(ctx context.Context, maxChunkSize int) {
-	hasWaitedForBuild := false
-	for {
-		if fetcher.finished.Load() {
-			return
-		}
-
-		var probeSideResource *probeChkResource
-		var ok bool
-		select {
-		case <-fetcher.closeCh:
-			return
-		case probeSideResource, ok = <-fetcher.probeChkResourceCh:
-			if !ok {
-				return
-			}
-		}
-		probeSideResult := probeSideResource.chk
-		if fetcher.IsOuterJoin {
-			required := int(atomic.LoadInt64(&fetcher.requiredRows))
-			probeSideResult.SetRequiredRows(required, maxChunkSize)
-		}
-		err := exec.Next(ctx, fetcher.ProbeSideExec, probeSideResult)
-		failpoint.Inject("ConsumeRandomPanic", nil)
-		if err != nil {
-			fetcher.joinResultCh <- &hashjoinWorkerResult{
-				err: err,
-			}
-			return
-		}
-		if !hasWaitedForBuild {
-			failpoint.Inject("issue30289", func(val failpoint.Value) {
-				if val.(bool) {
-					probeSideResult.Reset()
-				}
-			})
-			emptyBuild, buildErr := wait4BuildSide(func() bool {
-				return fetcher.RowContainer.Len() == uint64(0)
-			}, fetcher.JoinType == plannercore.InnerJoin || fetcher.JoinType == plannercore.SemiJoin, &fetcher.hashJoinCtxBase)
-			if buildErr != nil {
-				fetcher.joinResultCh <- &hashjoinWorkerResult{
-					err: buildErr,
-				}
-				return
-			} else if emptyBuild {
-				return
-			}
-			hasWaitedForBuild = true
-		}
-
-		if probeSideResult.NumRows() == 0 {
-			return
-		}
-
-		probeSideResource.dest <- probeSideResult
-	}
-}
-
 func (e *HashJoinV1Exec) initializeForProbe() {
 	// e.joinResultCh is for transmitting the join result chunks to the main
 	// thread.
@@ -291,7 +231,10 @@ func (e *HashJoinV1Exec) fetchAndProbeHashTable(ctx context.Context) {
 	e.initializeForProbe()
 	e.workerWg.RunWithRecover(func() {
 		defer trace.StartRegion(ctx, "HashJoinProbeSideFetcher").End()
-		e.ProbeSideTupleFetcher.fetchProbeSideChunks(ctx, e.MaxChunkSize())
+		e.ProbeSideTupleFetcher.fetchProbeSideChunks(ctx, e.MaxChunkSize(), func() bool {
+			return e.ProbeSideTupleFetcher.RowContainer.Len() == uint64(0)
+		}, e.ProbeSideTupleFetcher.JoinType == plannercore.InnerJoin || e.ProbeSideTupleFetcher.JoinType == plannercore.SemiJoin,
+			false, e.ProbeSideTupleFetcher.IsOuterJoin, &e.ProbeSideTupleFetcher.hashJoinCtxBase)
 	}, e.ProbeSideTupleFetcher.handleProbeSideFetcherPanic)
 
 	for i := uint(0); i < e.Concurrency; i++ {
