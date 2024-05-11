@@ -15,7 +15,6 @@
 package core
 
 import (
-	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"math"
 
 	"github.com/pingcap/errors"
@@ -28,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
+	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
