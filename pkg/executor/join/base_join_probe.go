@@ -35,18 +35,22 @@ import (
 type keyMode int
 
 const (
+	// OneInt64 mean the key contains only one Int64
 	OneInt64 keyMode = iota
+	// FixedSerializedKey mean the key has fixed length
 	FixedSerializedKey
+	// VariableSerializedKey mean the key has variable length
 	VariableSerializedKey
 )
 
-const BATCH_BUILD_ROW_SIZE = 32
+const batchBuildRowSize = 32
 
 func (hCtx *HashJoinCtxV2) hasOtherCondition() bool {
 	return hCtx.OtherCondition != nil
 }
 
-type JoinProbe interface {
+// ProbeV2 is the interface used to do probe in hash join v2
+type ProbeV2 interface {
 	// SetChunkForProbe will do some pre-work when start probing a chunk
 	SetChunkForProbe(chunk *chunk.Chunk) error
 	// Probe is to probe current chunk, the result chunk is set in result.chk, and Probe need to make sure result.chk.NumRows() <= result.chk.RequiredRows()
@@ -239,7 +243,7 @@ func (j *baseJoinProbe) finishLookupCurrentProbeRow() {
 	j.matchedRowsForCurrentProbeRow = 0
 }
 
-func probeCheckSqlKiller(killer sqlkiller.SQLKiller) error {
+func probeCheckSQLKiller(killer sqlkiller.SQLKiller) error {
 	err := killer.HandleSignal()
 	failpoint.Inject("killedDuringProbe", func(val failpoint.Value) {
 		if val.(bool) {
@@ -251,7 +255,7 @@ func probeCheckSqlKiller(killer sqlkiller.SQLKiller) error {
 
 func (j *baseJoinProbe) appendBuildRowToCachedBuildRowsAndConstructBuildRowsIfNeeded(buildRow rowIndexInfo, chk *chunk.Chunk, currentColumnIndexInRow int, forOtherCondition bool) {
 	j.cachedBuildRows = append(j.cachedBuildRows, buildRow)
-	if len(j.cachedBuildRows) >= BATCH_BUILD_ROW_SIZE {
+	if len(j.cachedBuildRows) >= batchBuildRowSize {
 		j.batchConstructBuildRows(chk, currentColumnIndexInRow, forOtherCondition)
 	}
 }
@@ -343,12 +347,12 @@ func (j *baseJoinProbe) appendBuildRowToChunkInternal(chk *chunk.Chunk, usedCols
 			// not used so don't need to insert into chk, but still need to advance rowData
 			if meta.columnsSize[columnIndex] < 0 {
 				for index := range j.cachedBuildRows {
-					size := *(*uint64)(unsafe.Pointer(j.cachedBuildRows[index].buildRowData))
-					j.cachedBuildRows[index].buildRowData = uintptr(unsafe.Add(unsafe.Pointer(j.cachedBuildRows[index].buildRowData), SizeOfLengthField+int(size)))
+					size := *(*uint64)(unsafe.Pointer(j.cachedBuildRows[index].buildRowData))                                                                       //nolint:all
+					j.cachedBuildRows[index].buildRowData = uintptr(unsafe.Add(unsafe.Pointer(j.cachedBuildRows[index].buildRowData), sizeOfLengthField+int(size))) //nolint:all
 				}
 			} else {
 				for index := range j.cachedBuildRows {
-					j.cachedBuildRows[index].buildRowData = uintptr(unsafe.Add(unsafe.Pointer(j.cachedBuildRows[index].buildRowData), meta.columnsSize[columnIndex]))
+					j.cachedBuildRows[index].buildRowData = uintptr(unsafe.Add(unsafe.Pointer(j.cachedBuildRows[index].buildRowData), meta.columnsSize[columnIndex])) //nolint:all
 				}
 			}
 		}
@@ -421,7 +425,7 @@ func (j *baseJoinProbe) buildResultAfterOtherCondition(chk *chunk.Chunk, joinedC
 		} else {
 			// probe column that is not in joinedChk
 			srcCol := j.currentChunk.Column(colIndex)
-			chunk.CopySelectedRowsWithRowIdFunc(dstCol, srcCol, j.selected, 0, len(j.selected), func(i int) int {
+			chunk.CopySelectedRowsWithRowIDFunc(dstCol, srcCol, j.selected, 0, len(j.selected), func(i int) int {
 				return j.usedRows[j.rowIndexInfos[i].probeRowIndex]
 			})
 		}
@@ -463,20 +467,21 @@ func (j *baseJoinProbe) buildResultAfterOtherCondition(chk *chunk.Chunk, joinedC
 	return
 }
 
-func isKeyMatched(keyMode keyMode, serializedKey []byte, rowStart uintptr, meta *JoinTableMeta) bool {
+func isKeyMatched(keyMode keyMode, serializedKey []byte, rowStart uintptr, meta *TableMeta) bool {
 	switch keyMode {
 	case OneInt64:
-		return *(*int64)(unsafe.Pointer(&serializedKey[0])) == *(*int64)(unsafe.Add(unsafe.Pointer(rowStart), meta.nullMapLength+SizeOfNextPtr))
+		return *(*int64)(unsafe.Pointer(&serializedKey[0])) == *(*int64)(unsafe.Add(unsafe.Pointer(rowStart), meta.nullMapLength+sizeOfNextPtr)) //nolint:all
 	case FixedSerializedKey:
-		return bytes.Equal(serializedKey, hack.GetBytesFromPtr(unsafe.Add(unsafe.Pointer(rowStart), meta.nullMapLength+SizeOfNextPtr), meta.joinKeysLength))
+		return bytes.Equal(serializedKey, hack.GetBytesFromPtr(unsafe.Add(unsafe.Pointer(rowStart), meta.nullMapLength+sizeOfNextPtr), meta.joinKeysLength)) //nolint:all
 	case VariableSerializedKey:
-		return bytes.Equal(serializedKey, hack.GetBytesFromPtr(unsafe.Add(unsafe.Pointer(rowStart), meta.nullMapLength+SizeOfNextPtr+SizeOfLengthField), int(meta.getSerializedKeyLength(rowStart))))
+		return bytes.Equal(serializedKey, hack.GetBytesFromPtr(unsafe.Add(unsafe.Pointer(rowStart), meta.nullMapLength+sizeOfNextPtr+sizeOfLengthField), int(meta.getSerializedKeyLength(rowStart)))) //nolint:all
 	default:
 		panic("unknown key match type")
 	}
 }
 
-func NewJoinProbe(ctx *HashJoinCtxV2, workID uint, joinType core.JoinType, keyIndex []int, joinedColumnTypes, probeColumnTypes []*types.FieldType, rightAsBuildSide bool) JoinProbe {
+// NewJoinProbe create a join probe used for hash join v2
+func NewJoinProbe(ctx *HashJoinCtxV2, workID uint, joinType core.JoinType, keyIndex []int, joinedColumnTypes, probeColumnTypes []*types.FieldType, rightAsBuildSide bool) ProbeV2 {
 	base := baseJoinProbe{
 		ctx:                   ctx,
 		workID:                workID,
@@ -494,7 +499,7 @@ func NewJoinProbe(ctx *HashJoinCtxV2, workID uint, joinType core.JoinType, keyIn
 			base.hasNullableKey = true
 		}
 	}
-	base.cachedBuildRows = make([]rowIndexInfo, 0, BATCH_BUILD_ROW_SIZE)
+	base.cachedBuildRows = make([]rowIndexInfo, 0, batchBuildRowSize)
 	base.matchedRowsHeaders = make([]uintptr, 0, chunk.InitialCapacity)
 	base.selRows = make([]int, 0, chunk.InitialCapacity)
 	for i := 0; i < chunk.InitialCapacity; i++ {
@@ -531,27 +536,27 @@ type mockJoinProbe struct {
 	baseJoinProbe
 }
 
-func (m *mockJoinProbe) SetChunkForProbe(chunk *chunk.Chunk) error {
+func (*mockJoinProbe) SetChunkForProbe(*chunk.Chunk) error {
 	return errors.New("not supported")
 }
 
-func (m *mockJoinProbe) Probe(joinResult *hashjoinWorkerResult, killer sqlkiller.SQLKiller) (ok bool, result *hashjoinWorkerResult) {
+func (*mockJoinProbe) Probe(*hashjoinWorkerResult, sqlkiller.SQLKiller) (ok bool, result *hashjoinWorkerResult) {
 	panic("not supported")
 }
 
-func (m *mockJoinProbe) ScanRowTable(joinResult *hashjoinWorkerResult, sqlKiller sqlkiller.SQLKiller) (result *hashjoinWorkerResult) {
+func (*mockJoinProbe) ScanRowTable(*hashjoinWorkerResult, sqlkiller.SQLKiller) (result *hashjoinWorkerResult) {
 	panic("not supported")
 }
 
-func (m *mockJoinProbe) IsScanRowTableDone() bool {
+func (*mockJoinProbe) IsScanRowTableDone() bool {
 	panic("not supported")
 }
 
-func (m *mockJoinProbe) NeedScanRowTable() bool {
+func (*mockJoinProbe) NeedScanRowTable() bool {
 	panic("not supported")
 }
 
-func (m *mockJoinProbe) InitForScanRowTable() {
+func (*mockJoinProbe) InitForScanRowTable() {
 	panic("not supported")
 }
 

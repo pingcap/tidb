@@ -48,7 +48,7 @@ type hashTableContext struct {
 	// rowTables is used during split partition stage, each buildWorker has
 	// its own rowTable
 	rowTables     [][]*rowTable
-	hashTable     *HashTableV2
+	hashTable     *hashTableV2
 	memoryTracker *memory.Tracker
 }
 
@@ -58,35 +58,35 @@ func (htc *hashTableContext) reset() {
 	htc.memoryTracker.Detach()
 }
 
-func (htc *hashTableContext) getCurrentRowSegment(workerId, partitionId int, tableMeta *JoinTableMeta, allowCreate bool) *rowTableSegment {
-	if htc.rowTables[workerId][partitionId] == nil {
-		htc.rowTables[workerId][partitionId] = newRowTable(tableMeta)
+func (htc *hashTableContext) getCurrentRowSegment(workerID, partitionID int, tableMeta *TableMeta, allowCreate bool) *rowTableSegment {
+	if htc.rowTables[workerID][partitionID] == nil {
+		htc.rowTables[workerID][partitionID] = newRowTable(tableMeta)
 	}
-	segNum := len(htc.rowTables[workerId][partitionId].segments)
-	if segNum == 0 || htc.rowTables[workerId][partitionId].segments[segNum-1].finalized {
+	segNum := len(htc.rowTables[workerID][partitionID].segments)
+	if segNum == 0 || htc.rowTables[workerID][partitionID].segments[segNum-1].finalized {
 		if !allowCreate {
 			panic("logical error, should not reach here")
 		}
 		seg := newRowTableSegment()
-		htc.rowTables[workerId][partitionId].segments = append(htc.rowTables[workerId][partitionId].segments, seg)
+		htc.rowTables[workerID][partitionID].segments = append(htc.rowTables[workerID][partitionID].segments, seg)
 		segNum++
 	}
-	return htc.rowTables[workerId][partitionId].segments[segNum-1]
+	return htc.rowTables[workerID][partitionID].segments[segNum-1]
 }
 
-func (htc *hashTableContext) finalizeCurrentSeg(workerId, partitionId int, builder *rowTableBuilder) {
-	seg := htc.getCurrentRowSegment(workerId, partitionId, nil, false)
-	for _, pos := range builder.startPosInRawData[partitionId] {
+func (htc *hashTableContext) finalizeCurrentSeg(workerID, partitionID int, builder *rowTableBuilder) {
+	seg := htc.getCurrentRowSegment(workerID, partitionID, nil, false)
+	for _, pos := range builder.startPosInRawData[partitionID] {
 		seg.rowLocations = append(seg.rowLocations, uintptr(unsafe.Pointer(&seg.rawData[pos])))
 	}
-	builder.crrntSizeOfRowTable[partitionId] = 0
-	builder.startPosInRawData[partitionId] = builder.startPosInRawData[partitionId][:0]
+	builder.crrntSizeOfRowTable[partitionID] = 0
+	builder.startPosInRawData[partitionID] = builder.startPosInRawData[partitionID][:0]
 	failpoint.Inject("finalizeCurrentSegPanic", nil)
 	seg.finalized = true
 	htc.memoryTracker.Consume(seg.totalUsedBytes())
 }
 
-func (htc *hashTableContext) mergeRowTablesToHashTable(tableMeta *JoinTableMeta, partitionNumber int) int {
+func (htc *hashTableContext) mergeRowTablesToHashTable(tableMeta *TableMeta, partitionNumber int) int {
 	rowTables := make([]*rowTable, partitionNumber)
 	for i := 0; i < partitionNumber; i++ {
 		rowTables[i] = newRowTable(tableMeta)
@@ -114,7 +114,7 @@ func newHashTableContext(workerConcurrency int, partitionNumber int) *hashTableC
 	for index := range ret.rowTables {
 		ret.rowTables[index] = make([]*rowTable, partitionNumber)
 	}
-	ret.hashTable = &HashTableV2{
+	ret.hashTable = &hashTableV2{
 		tables:          make([]*subTable, partitionNumber),
 		partitionNumber: uint64(partitionNumber),
 	}
@@ -122,6 +122,7 @@ func newHashTableContext(workerConcurrency int, partitionNumber int) *hashTableC
 	return ret
 }
 
+// HashJoinCtxV2 is the hash join ctx used in hash join v2
 type HashJoinCtxV2 struct {
 	hashJoinCtxBase
 	PartitionNumber int
@@ -134,7 +135,7 @@ type HashJoinCtxV2 struct {
 	ProbeFilter                    expression.CNFExprs
 	OtherCondition                 expression.CNFExprs
 	hashTableContext               *hashTableContext
-	hashTableMeta                  *JoinTableMeta
+	hashTableMeta                  *TableMeta
 	needScanRowTableAfterProbeDone bool
 
 	LUsed, RUsed                                 []int
@@ -148,14 +149,16 @@ type ProbeSideTupleFetcherV2 struct {
 	canSkipProbeIfHashTableIsEmpty bool
 }
 
+// ProbeWorkerV2 is the probe worker used in hash join v2
 type ProbeWorkerV2 struct {
 	probeWorkerBase
 	HashJoinCtx *HashJoinCtxV2
 	// We build individual joinProbe for each join worker when use chunk-based
 	// execution, to avoid the concurrency of joiner.chk and joiner.selected.
-	JoinProbe JoinProbe
+	JoinProbe ProbeV2
 }
 
+// BuildWorkerV2 is the build worker used in hash join v2
 type BuildWorkerV2 struct {
 	buildWorkerBase
 	HashJoinCtx    *HashJoinCtxV2
@@ -165,6 +168,7 @@ type BuildWorkerV2 struct {
 	rtBuilder      *rowTableBuilder
 }
 
+// NewJoinBuildWorkerV2 create a BuildWorkerV2
 func NewJoinBuildWorkerV2(ctx *HashJoinCtxV2, workID uint, buildSideExec exec.Executor, buildKeyColIdx []int, buildTypes []*types.FieldType) *BuildWorkerV2 {
 	hasNullableKey := false
 	for _, idx := range buildKeyColIdx {
@@ -303,9 +307,8 @@ func (w *BuildWorkerV2) splitPartitionAndAppendToRowTable(typeCtx types.Context,
 	}()
 	partitionNumber := w.HashJoinCtx.PartitionNumber
 	hashJoinCtx := w.HashJoinCtx
-	hashTableMeta := hashJoinCtx.hashTableMeta
 
-	builder := createRowTableBuilder(w.BuildKeyColIdx, w.BuildSideExec.Schema(), hashTableMeta, partitionNumber, w.HasNullableKey, hashJoinCtx.BuildFilter != nil, hashJoinCtx.needScanRowTableAfterProbeDone)
+	builder := createRowTableBuilder(w.BuildKeyColIdx, w.BuildSideExec.Schema(), partitionNumber, w.HasNullableKey, hashJoinCtx.BuildFilter != nil, hashJoinCtx.needScanRowTableAfterProbeDone)
 
 	for chk := range srcChkCh {
 		start := time.Now()
@@ -338,11 +341,11 @@ func (e *HashJoinV2Exec) canSkipProbeIfHashTableIsEmpty() bool {
 }
 
 func (e *HashJoinV2Exec) initializeForProbe() {
-	e.ProbeSideTupleFetcher.initializeForProbeBase(e.Concurrency)
 	e.ProbeSideTupleFetcher.HashJoinCtxV2 = e.HashJoinCtxV2
 	// e.joinResultCh is for transmitting the join result chunks to the main
 	// thread.
 	e.joinResultCh = make(chan *hashjoinWorkerResult, e.Concurrency+1)
+	e.ProbeSideTupleFetcher.initializeForProbeBase(e.Concurrency, e.joinResultCh)
 	e.ProbeSideTupleFetcher.canSkipProbeIfHashTableIsEmpty = e.canSkipProbeIfHashTableIsEmpty()
 
 	for i := uint(0); i < e.Concurrency; i++ {
@@ -368,15 +371,6 @@ func (e *HashJoinV2Exec) fetchAndProbeHashTable(ctx context.Context) {
 		}, e.ProbeWorkers[workerID].handleProbeWorkerPanic)
 	}
 	e.waiterWg.RunWithRecover(e.waitJoinWorkersAndCloseResultChan, nil)
-}
-
-func (fetcher *ProbeSideTupleFetcherV2) handleProbeSideFetcherPanic(r any) {
-	for i := range fetcher.probeResultChs {
-		close(fetcher.probeResultChs[i])
-	}
-	if r != nil {
-		fetcher.joinResultCh <- &hashjoinWorkerResult{err: util.GetRecoverError(r)}
-	}
 }
 
 func (w *ProbeWorkerV2) handleProbeWorkerPanic(r any) {
