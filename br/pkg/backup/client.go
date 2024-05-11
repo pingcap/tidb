@@ -1043,8 +1043,8 @@ mainLoop:
 		inCompleteRanges := iter.GetIncompleteRanges()
 		if len(inCompleteRanges) == 0 {
 			// all range backuped
-			mainCancel()
 			handleCancel()
+			mainCancel()
 			return nil
 		}
 

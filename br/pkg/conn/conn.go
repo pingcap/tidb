@@ -91,8 +91,6 @@ func GetAllTiKVStoresWithRetry(ctx context.Context,
 				logutil.CL(ctx).Debug("failpoint hint-GetAllTiKVStores-error injected.")
 				if val.(bool) {
 					err = status.Error(codes.Unknown, "Retryable error")
-				} else {
-					err = context.Canceled
 				}
 			})
 
@@ -100,8 +98,6 @@ func GetAllTiKVStoresWithRetry(ctx context.Context,
 				logutil.CL(ctx).Debug("failpoint hint-GetAllTiKVStores-cancel injected.")
 				if val.(bool) {
 					err = status.Error(codes.Canceled, "Cancel Retry")
-				} else {
-					err = context.Canceled
 				}
 			})
 
