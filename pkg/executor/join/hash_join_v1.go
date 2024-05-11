@@ -194,11 +194,11 @@ func (e *HashJoinV1Exec) Open(ctx context.Context) error {
 }
 
 func (e *HashJoinV1Exec) initializeForProbe() {
-	e.ProbeSideTupleFetcher.initializeForProbeBase(e.Concurrency)
 	e.ProbeSideTupleFetcher.HashJoinCtxV1 = e.HashJoinCtxV1
 	// e.joinResultCh is for transmitting the join result chunks to the main
 	// thread.
 	e.joinResultCh = make(chan *hashjoinWorkerResult, e.Concurrency+1)
+	e.ProbeSideTupleFetcher.initializeForProbeBase(e.Concurrency, e.joinResultCh)
 
 	for i := uint(0); i < e.Concurrency; i++ {
 		e.ProbeWorkers[i].initializeForProbe(e.ProbeSideTupleFetcher.probeChkResourceCh, e.ProbeSideTupleFetcher.probeResultChs[i], e)
@@ -223,15 +223,6 @@ func (e *HashJoinV1Exec) fetchAndProbeHashTable(ctx context.Context) {
 		}, e.ProbeWorkers[workerID].handleProbeWorkerPanic)
 	}
 	e.waiterWg.RunWithRecover(e.waitJoinWorkersAndCloseResultChan, nil)
-}
-
-func (fetcher *ProbeSideTupleFetcherV1) handleProbeSideFetcherPanic(r any) {
-	for i := range fetcher.probeResultChs {
-		close(fetcher.probeResultChs[i])
-	}
-	if r != nil {
-		fetcher.joinResultCh <- &hashjoinWorkerResult{err: util.GetRecoverError(r)}
-	}
 }
 
 func (w *ProbeWorkerV1) handleProbeWorkerPanic(r any) {

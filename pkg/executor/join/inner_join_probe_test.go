@@ -288,7 +288,7 @@ func testJoinProbe(t *testing.T, withSel bool, leftKeyIndex []int, rightKeyIndex
 			break
 		}
 	}
-	builder := createRowTableBuilder(buildKeyIndex, buildSchema, meta, partitionNumber, hasNullableKey, buildFilter != nil, joinProbe.NeedScanRowTable())
+	builder := createRowTableBuilder(buildKeyIndex, buildSchema, partitionNumber, hasNullableKey, buildFilter != nil, joinProbe.NeedScanRowTable())
 	chunkNumber := 3
 	buildChunks := make([]*chunk.Chunk, 0, chunkNumber)
 	probeChunks := make([]*chunk.Chunk, 0, chunkNumber)
@@ -364,7 +364,7 @@ func testJoinProbe(t *testing.T, withSel bool, leftKeyIndex []int, rightKeyIndex
 		}
 	}
 	if joinProbe.NeedScanRowTable() {
-		joinProbes := make([]JoinProbe, 0, hashJoinCtx.Concurrency)
+		joinProbes := make([]ProbeV2, 0, hashJoinCtx.Concurrency)
 		for i := uint(0); i < hashJoinCtx.Concurrency; i++ {
 			joinProbes = append(joinProbes, NewJoinProbe(hashJoinCtx, i, joinType, probeKeyIndex, joinedTypes, probeTypes, rightAsBuildSide))
 		}
@@ -384,6 +384,7 @@ func testJoinProbe(t *testing.T, withSel bool, leftKeyIndex []int, rightKeyIndex
 		resultChunks = append(resultChunks, joinResult.chk)
 	}
 	checkVirtualRows(t, resultChunks)
+
 	switch joinType {
 	case plannercore.InnerJoin:
 		expectedChunks := genInnerJoinResult(t, hashJoinCtx.SessCtx, leftChunks, rightChunks, leftKeyIndex, rightKeyIndex, leftTypes, rightTypes,
@@ -395,7 +396,6 @@ func testJoinProbe(t *testing.T, withSel bool, leftKeyIndex []int, rightKeyIndex
 		checkChunksEqual(t, expectedChunks, resultChunks, resultTypes)
 	default:
 		require.NoError(t, errors.New("not supported join type"))
-
 	}
 }
 

@@ -25,8 +25,8 @@ import (
 )
 
 func TestFixedOffsetInRowLayout(t *testing.T) {
-	require.Equal(t, 8, SizeOfNextPtr)
-	require.Equal(t, 8, SizeOfLengthField)
+	require.Equal(t, 8, sizeOfNextPtr)
+	require.Equal(t, 8, sizeOfLengthField)
 }
 
 func TestJoinTableMetaKeyMode(t *testing.T) {

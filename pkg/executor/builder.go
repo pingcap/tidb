@@ -1550,12 +1550,8 @@ func (b *executorBuilder) buildHashJoinV2(v *plannercore.PhysicalHashJoin) exec.
 
 	lhsTypes, rhsTypes := exec.RetTypes(leftExec), exec.RetTypes(rightExec)
 	joinedTypes := make([]*types.FieldType, 0, len(lhsTypes)+len(rhsTypes))
-	for _, t := range lhsTypes {
-		joinedTypes = append(joinedTypes, t)
-	}
-	for _, t := range rhsTypes {
-		joinedTypes = append(joinedTypes, t)
-	}
+	joinedTypes = append(joinedTypes, lhsTypes...)
+	joinedTypes = append(joinedTypes, rhsTypes...)
 
 	if v.InnerChildIdx == 1 {
 		if len(v.RightConditions) > 0 {
