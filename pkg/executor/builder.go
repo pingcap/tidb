@@ -1530,7 +1530,6 @@ func (b *executorBuilder) buildHashJoinV2(v *plannercore.PhysicalHashJoin) exec.
 	e := &join.HashJoinV2Exec{
 		BaseExecutor:          exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID(), leftExec, rightExec),
 		ProbeSideTupleFetcher: &join.ProbeSideTupleFetcherV2{},
-		BuildSideTupleFetcher: &join.BuildSideTupleFetcher{},
 		ProbeWorkers:          make([]*join.ProbeWorkerV2, v.Concurrency),
 		BuildWorkers:          make([]*join.BuildWorkerV2, v.Concurrency),
 		HashJoinCtxV2: &join.HashJoinCtxV2{
@@ -1548,7 +1547,6 @@ func (b *executorBuilder) buildHashJoinV2(v *plannercore.PhysicalHashJoin) exec.
 	} else if v.InnerChildIdx == 0 && !v.UseOuterToBuild {
 		e.HashJoinCtxV2.RightAsBuildSide = false
 	}
-	e.BuildSideTupleFetcher.HashJoinCtx = e.HashJoinCtxV2
 
 	lhsTypes, rhsTypes := exec.RetTypes(leftExec), exec.RetTypes(rightExec)
 	joinedTypes := make([]*types.FieldType, 0, len(lhsTypes)+len(rhsTypes))
@@ -1578,24 +1576,20 @@ func (b *executorBuilder) buildHashJoinV2(v *plannercore.PhysicalHashJoin) exec.
 			buildSideExec, buildKeys = leftExec, v.LeftJoinKeys
 			e.ProbeSideTupleFetcher.ProbeSideExec, probeKeys = rightExec, v.RightJoinKeys
 			e.HashJoinCtxV2.BuildFilter = v.LeftConditions
-			e.BuildSideTupleFetcher.BuildSideExec = leftExec
 		} else {
 			buildSideExec, buildKeys = rightExec, v.RightJoinKeys
 			e.ProbeSideTupleFetcher.ProbeSideExec, probeKeys = leftExec, v.LeftJoinKeys
 			e.HashJoinCtxV2.BuildFilter = v.RightConditions
-			e.BuildSideTupleFetcher.BuildSideExec = rightExec
 		}
 	} else {
 		if v.InnerChildIdx == 0 {
 			buildSideExec, buildKeys = leftExec, v.LeftJoinKeys
 			e.ProbeSideTupleFetcher.ProbeSideExec, probeKeys = rightExec, v.RightJoinKeys
 			e.HashJoinCtxV2.ProbeFilter = v.RightConditions
-			e.BuildSideTupleFetcher.BuildSideExec = leftExec
 		} else {
 			buildSideExec, buildKeys = rightExec, v.RightJoinKeys
 			e.ProbeSideTupleFetcher.ProbeSideExec, probeKeys = leftExec, v.LeftJoinKeys
 			e.HashJoinCtxV2.ProbeFilter = v.LeftConditions
-			e.BuildSideTupleFetcher.BuildSideExec = rightExec
 		}
 	}
 	var probeColumnTypes []*types.FieldType
