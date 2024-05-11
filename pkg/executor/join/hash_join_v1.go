@@ -231,7 +231,9 @@ func (fetcher *ProbeSideTupleFetcherV1) fetchProbeSideChunks(ctx context.Context
 					probeSideResult.Reset()
 				}
 			})
-			emptyBuild, buildErr := fetcher.wait4BuildSide()
+			emptyBuild, buildErr := wait4BuildSide(func() bool {
+				return fetcher.RowContainer.Len() == uint64(0)
+			}, fetcher.JoinType == plannercore.InnerJoin || fetcher.JoinType == plannercore.SemiJoin, &fetcher.hashJoinCtxBase)
 			if buildErr != nil {
 				fetcher.joinResultCh <- &hashjoinWorkerResult{
 					err: buildErr,
@@ -248,78 +250,6 @@ func (fetcher *ProbeSideTupleFetcherV1) fetchProbeSideChunks(ctx context.Context
 		}
 
 		probeSideResource.dest <- probeSideResult
-	}
-}
-
-func (fetcher *ProbeSideTupleFetcherV1) wait4BuildSide() (emptyBuild bool, err error) {
-	select {
-	case <-fetcher.closeCh:
-		return true, nil
-	case err := <-fetcher.buildFinished:
-		if err != nil {
-			return false, err
-		}
-	}
-	if fetcher.RowContainer.Len() == uint64(0) && (fetcher.JoinType == plannercore.InnerJoin || fetcher.JoinType == plannercore.SemiJoin) {
-		return true, nil
-	}
-	return false, nil
-}
-
-// fetchBuildSideRows fetches all rows from build side executor, and append them
-// to e.buildSideResult.
-func (w *BuildWorkerV1) fetchBuildSideRows(ctx context.Context, chkCh chan<- *chunk.Chunk, errCh chan<- error, doneCh <-chan struct{}) {
-	defer close(chkCh)
-	var err error
-	failpoint.Inject("issue30289", func(val failpoint.Value) {
-		if val.(bool) {
-			err = errors.Errorf("issue30289 build return error")
-			errCh <- errors.Trace(err)
-			return
-		}
-	})
-	failpoint.Inject("issue42662_1", func(val failpoint.Value) {
-		if val.(bool) {
-			if w.HashJoinCtx.SessCtx.GetSessionVars().ConnectionID != 0 {
-				// consume 170MB memory, this sql should be tracked into MemoryTop1Tracker
-				w.HashJoinCtx.memTracker.Consume(170 * 1024 * 1024)
-			}
-			return
-		}
-	})
-	sessVars := w.HashJoinCtx.SessCtx.GetSessionVars()
-	failpoint.Inject("issue51998", func(val failpoint.Value) {
-		if val.(bool) {
-			time.Sleep(2 * time.Second)
-		}
-	})
-	for {
-		if w.HashJoinCtx.finished.Load() {
-			return
-		}
-		chk := w.HashJoinCtx.ChunkAllocPool.Alloc(w.BuildSideExec.RetFieldTypes(), sessVars.MaxChunkSize, sessVars.MaxChunkSize)
-		err = exec.Next(ctx, w.BuildSideExec, chk)
-		failpoint.Inject("issue51998", func(val failpoint.Value) {
-			if val.(bool) {
-				err = errors.Errorf("issue51998 build return error")
-			}
-		})
-		if err != nil {
-			errCh <- errors.Trace(err)
-			return
-		}
-		failpoint.Inject("errorFetchBuildSideRowsMockOOMPanic", nil)
-		failpoint.Inject("ConsumeRandomPanic", nil)
-		if chk.NumRows() == 0 {
-			return
-		}
-		select {
-		case <-doneCh:
-			return
-		case <-w.HashJoinCtx.closeCh:
-			return
-		case chkCh <- chk:
-		}
 	}
 }
 
@@ -1187,7 +1117,7 @@ func (e *HashJoinV1Exec) fetchAndBuildHashTable(ctx context.Context) {
 	e.workerWg.RunWithRecover(
 		func() {
 			defer trace.StartRegion(ctx, "HashJoinBuildSideFetcher").End()
-			e.BuildWorker.fetchBuildSideRows(ctx, buildSideResultCh, fetchBuildSideRowsOk, doneCh)
+			e.BuildWorker.fetchBuildSideRows(ctx, &e.BuildWorker.HashJoinCtx.hashJoinCtxBase, buildSideResultCh, fetchBuildSideRowsOk, doneCh)
 		},
 		func(r any) {
 			if r != nil {

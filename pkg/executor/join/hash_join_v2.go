@@ -26,7 +26,6 @@ import (
 	"unsafe"
 
 	"github.com/cznic/mathutil"
-	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -157,11 +156,6 @@ type ProbeWorkerV2 struct {
 	JoinProbe JoinProbe
 }
 
-type BuildSideTupleFetcher struct {
-	HashJoinCtx   *HashJoinCtxV2
-	BuildSideExec exec.Executor
-}
-
 type BuildWorkerV2 struct {
 	buildWorkerBase
 	HashJoinCtx    *HashJoinCtxV2
@@ -197,7 +191,6 @@ type HashJoinV2Exec struct {
 
 	ProbeSideTupleFetcher *ProbeSideTupleFetcherV2
 	ProbeWorkers          []*ProbeWorkerV2
-	BuildSideTupleFetcher *BuildSideTupleFetcher
 	BuildWorkers          []*BuildWorkerV2
 
 	workerWg util.WaitGroupWrapper
@@ -338,7 +331,10 @@ func (fetcher *ProbeSideTupleFetcherV2) fetchProbeSideChunks(ctx context.Context
 					probeSideResult.Reset()
 				}
 			})
-			skipProbe, buildErr := fetcher.wait4BuildSide()
+
+			skipProbe, buildErr := wait4BuildSide(func() bool {
+				return fetcher.hashTableContext.hashTable.isHashTableEmpty()
+			}, fetcher.canSkipProbeIfHashTableIsEmpty, &fetcher.hashJoinCtxBase)
 			if buildErr != nil {
 				fetcher.joinResultCh <- &hashjoinWorkerResult{
 					err: buildErr,
@@ -360,21 +356,6 @@ func (fetcher *ProbeSideTupleFetcherV2) fetchProbeSideChunks(ctx context.Context
 
 		probeSideResource.dest <- probeSideResult
 	}
-}
-
-func (fetcher *ProbeSideTupleFetcherV2) wait4BuildSide() (skipProbe bool, err error) {
-	select {
-	case <-fetcher.closeCh:
-		return true, nil
-	case err := <-fetcher.buildFinished:
-		if err != nil {
-			return false, err
-		}
-	}
-	if fetcher.hashTableContext.hashTable.isHashTableEmpty() && fetcher.canSkipProbeIfHashTableIsEmpty {
-		return true, nil
-	}
-	return false, nil
 }
 
 func (w *BuildWorkerV2) splitPartitionAndAppendToRowTable(typeCtx types.Context, srcChkCh chan *chunk.Chunk) (err error) {
@@ -404,61 +385,6 @@ func (w *BuildWorkerV2) splitPartitionAndAppendToRowTable(typeCtx types.Context,
 	builder.appendRemainingRowLocations(int(w.WorkerID), w.HashJoinCtx.hashTableContext)
 	cost += int64(time.Since(start))
 	return nil
-}
-
-func (w *BuildSideTupleFetcher) fetchBuildSideRows(ctx context.Context, chkCh chan<- *chunk.Chunk, errCh chan<- error, doneCh <-chan struct{}) {
-	defer close(chkCh)
-	var err error
-	failpoint.Inject("issue30289", func(val failpoint.Value) {
-		if val.(bool) {
-			err = errors.Errorf("issue30289 build return error")
-			errCh <- errors.Trace(err)
-			return
-		}
-	})
-	failpoint.Inject("issue42662_1", func(val failpoint.Value) {
-		if val.(bool) {
-			if w.HashJoinCtx.SessCtx.GetSessionVars().ConnectionID != 0 {
-				// consume 170MB memory, this sql should be tracked into MemoryTop1Tracker
-				w.HashJoinCtx.memTracker.Consume(170 * 1024 * 1024)
-			}
-			return
-		}
-	})
-	sessVars := w.HashJoinCtx.SessCtx.GetSessionVars()
-	failpoint.Inject("issue51998", func(val failpoint.Value) {
-		if val.(bool) {
-			time.Sleep(2 * time.Second)
-		}
-	})
-	for {
-		if w.HashJoinCtx.finished.Load() {
-			return
-		}
-		chk := w.HashJoinCtx.ChunkAllocPool.Alloc(w.BuildSideExec.RetFieldTypes(), sessVars.MaxChunkSize, sessVars.MaxChunkSize)
-		err = exec.Next(ctx, w.BuildSideExec, chk)
-		failpoint.Inject("issue51998", func(val failpoint.Value) {
-			if val.(bool) {
-				err = errors.Errorf("issue51998 build return error")
-			}
-		})
-		if err != nil {
-			errCh <- errors.Trace(err)
-			return
-		}
-		failpoint.Inject("errorFetchBuildSideRowsMockOOMPanic", nil)
-		failpoint.Inject("ConsumeRandomPanic", nil)
-		if chk.NumRows() == 0 {
-			return
-		}
-		select {
-		case <-doneCh:
-			return
-		case <-w.HashJoinCtx.closeCh:
-			return
-		case chkCh <- chk:
-		}
-	}
 }
 
 func (e *HashJoinV2Exec) canSkipProbeIfHashTableIsEmpty() bool {
@@ -816,7 +742,8 @@ func (e *HashJoinV2Exec) fetchBuildSideRows(ctx context.Context, wg *sync.WaitGr
 	e.workerWg.RunWithRecover(
 		func() {
 			defer trace.StartRegion(ctx, "HashJoinBuildSideFetcher").End()
-			e.BuildSideTupleFetcher.fetchBuildSideRows(ctx, srcChkCh, errCh, doneCh)
+			fetcher := e.BuildWorkers[0]
+			fetcher.fetchBuildSideRows(ctx, &fetcher.HashJoinCtx.hashJoinCtxBase, srcChkCh, errCh, doneCh)
 		},
 		func(r any) {
 			if r != nil {

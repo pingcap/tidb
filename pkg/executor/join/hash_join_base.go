@@ -16,11 +16,14 @@ package join
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"strconv"
 	"sync/atomic"
 	"time"
 
+	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -69,6 +72,23 @@ type probeSideTupleFetcherBase struct {
 	requiredRows       int64
 }
 
+type isBuildSideEmpty func() bool
+
+func wait4BuildSide(isBuildEmpty isBuildSideEmpty, canSkipIfBuildEmpty bool, hashJoinCtx *hashJoinCtxBase) (skipProbe bool, err error) {
+	select {
+	case <-hashJoinCtx.closeCh:
+		return true, nil
+	case err := <-hashJoinCtx.buildFinished:
+		if err != nil {
+			return false, err
+		}
+	}
+	if isBuildEmpty() && canSkipIfBuildEmpty {
+		return true, nil
+	}
+	return false, nil
+}
+
 type probeWorkerBase struct {
 	WorkerID           uint
 	probeChkResourceCh chan *probeChkResource
@@ -79,6 +99,63 @@ type probeWorkerBase struct {
 type buildWorkerBase struct {
 	BuildSideExec  exec.Executor
 	BuildKeyColIdx []int
+}
+
+// fetchBuildSideRows fetches all rows from build side executor, and append them
+// to e.buildSideResult.
+func (w *buildWorkerBase) fetchBuildSideRows(ctx context.Context, hashJoinCtx *hashJoinCtxBase, chkCh chan<- *chunk.Chunk, errCh chan<- error, doneCh <-chan struct{}) {
+	defer close(chkCh)
+	var err error
+	failpoint.Inject("issue30289", func(val failpoint.Value) {
+		if val.(bool) {
+			err = errors.Errorf("issue30289 build return error")
+			errCh <- errors.Trace(err)
+			return
+		}
+	})
+	failpoint.Inject("issue42662_1", func(val failpoint.Value) {
+		if val.(bool) {
+			if hashJoinCtx.SessCtx.GetSessionVars().ConnectionID != 0 {
+				// consume 170MB memory, this sql should be tracked into MemoryTop1Tracker
+				hashJoinCtx.memTracker.Consume(170 * 1024 * 1024)
+			}
+			return
+		}
+	})
+	sessVars := hashJoinCtx.SessCtx.GetSessionVars()
+	failpoint.Inject("issue51998", func(val failpoint.Value) {
+		if val.(bool) {
+			time.Sleep(2 * time.Second)
+		}
+	})
+	for {
+		if hashJoinCtx.finished.Load() {
+			return
+		}
+		chk := hashJoinCtx.ChunkAllocPool.Alloc(w.BuildSideExec.RetFieldTypes(), sessVars.MaxChunkSize, sessVars.MaxChunkSize)
+		err = exec.Next(ctx, w.BuildSideExec, chk)
+		failpoint.Inject("issue51998", func(val failpoint.Value) {
+			if val.(bool) {
+				err = errors.Errorf("issue51998 build return error")
+			}
+		})
+		if err != nil {
+			errCh <- errors.Trace(err)
+			return
+		}
+		failpoint.Inject("errorFetchBuildSideRowsMockOOMPanic", nil)
+		failpoint.Inject("ConsumeRandomPanic", nil)
+		if chk.NumRows() == 0 {
+			return
+		}
+		select {
+		case <-doneCh:
+			return
+		case <-hashJoinCtx.closeCh:
+			return
+		case chkCh <- chk:
+		}
+	}
 }
 
 // probeChkResource stores the result of the join probe side fetch worker,
