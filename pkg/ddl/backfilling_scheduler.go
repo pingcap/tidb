@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/copr"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	sess "github.com/pingcap/tidb/pkg/ddl/internal/session"
+	ddllogutil "github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
@@ -227,7 +228,7 @@ func (b *txnBackfillScheduler) adjustWorkerSize() error {
 	job := reorgInfo.Job
 	jc := b.jobCtx
 	if err := loadDDLReorgVars(b.ctx, b.sessPool); err != nil {
-		logutil.BgLogger().Error("load DDL reorganization variable failed", zap.String("category", "ddl"), zap.Error(err))
+		ddllogutil.DDLLogger().Error("load DDL reorganization variable failed", zap.Error(err))
 	}
 	workerCnt := b.expectedWorkerSize()
 	// Increase the worker.
@@ -395,7 +396,7 @@ func (b *ingestBackfillScheduler) close(force bool) {
 		b.writerPool.ReleaseAndWait()
 	}
 	if b.checkpointMgr != nil {
-		b.checkpointMgr.Sync()
+		b.checkpointMgr.Flush()
 		// Get the latest status after all workers are closed so that the result is more accurate.
 		cnt, nextKey := b.checkpointMgr.Status()
 		b.resultCh <- &backfillResult{
@@ -575,7 +576,7 @@ func (w *addIndexIngestWorker) HandleTask(rs IndexRecordChunk, _ func(workerpool
 		cnt, nextKey := w.checkpointMgr.Status()
 		result.totalCount = cnt
 		result.nextKey = nextKey
-		result.err = w.checkpointMgr.UpdateCurrent(rs.ID, count)
+		result.err = w.checkpointMgr.UpdateWrittenKeys(rs.ID, count)
 	} else {
 		result.addedCount = count
 		result.scanCount = count

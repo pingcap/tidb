@@ -1,0 +1,17 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "servicescope",
+    srcs = ["scope.go"],
+    importpath = "github.com/pingcap/tidb/pkg/util/servicescope",
+    visibility = ["//visibility:public"],
+)
+
+go_test(
+    name = "servicescope_test",
+    timeout = "short",
+    srcs = ["scope_test.go"],
+    embed = [":servicescope"],
+    flaky = True,
+    deps = ["@com_github_stretchr_testify//require"],
+)
