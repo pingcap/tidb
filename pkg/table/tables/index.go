@@ -304,14 +304,14 @@ func (c *index) Create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 		if err != nil || len(value) == 0 || (!tempIdxVal.IsEmpty() && tempIdxVal.Current().Delete) {
 			val := idxVal
 			lazyCheck := (txn.IsPipelined() || sctx.GetSessionVars().LazyCheckKeyNotExists()) && err != nil
-			needPresumeNotExists, forceMerge, err := needPresumeKeyNotExistsFlag(ctx, txn, key, tempKey, h,
+			if keyIsTempIdxKey {
+				tempVal := tablecodec.TempIndexValueElem{Value: idxVal, KeyVer: keyVer, Distinct: true}
+				val = tempVal.Encode(value)
+			}
+			needPresumeNotExists, err := needPresumeKeyNotExistsFlag(ctx, txn, key, tempKey, h,
 				keyIsTempIdxKey, c.tblInfo.IsCommonHandle, c.tblInfo.ID)
 			if err != nil {
 				return nil, err
-			}
-			if keyIsTempIdxKey {
-				tempVal := tablecodec.TempIndexValueElem{Value: idxVal, KeyVer: keyVer, Distinct: true, ForceMerge: forceMerge}
-				val = tempVal.Encode(value)
 			}
 			if lazyCheck {
 				var flags []kv.FlagsOp
@@ -366,24 +366,24 @@ func (c *index) Create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 	return nil, nil
 }
 
-func needPresumeKeyNotExistsFlag(ctx context.Context, txn kv.Transaction, key, tempKey kv.Key, h kv.Handle, keyIsTempIdxKey, isCommon bool, tblID int64) (needFlag, extraMerge bool, err error) {
+func needPresumeKeyNotExistsFlag(ctx context.Context, txn kv.Transaction, key, tempKey kv.Key,
+	h kv.Handle, keyIsTempIdxKey bool, isCommon bool, tblID int64) (needFlag bool, err error) {
 	var uniqueTempKey kv.Key
 	if keyIsTempIdxKey {
 		uniqueTempKey = key
 	} else if len(tempKey) > 0 {
 		uniqueTempKey = tempKey
 	} else {
-		return true, false, nil
+		return true, nil
 	}
 	foundKey, dupHandle, err := FetchDuplicatedHandle(ctx, uniqueTempKey, true, txn, tblID, isCommon)
 	if err != nil {
-		return false, false, err
+		return false, err
 	}
 	if foundKey && dupHandle != nil && !dupHandle.Equal(h) {
-		// Even if the key is not found, it may still invisible, so we need to force merge the key.
-		return false, true, kv.ErrKeyExists
+		return false, kv.ErrKeyExists
 	}
-	return false, false, nil
+	return false, nil
 }
 
 // Delete removes the entry for handle h and indexedValues from KV index.
