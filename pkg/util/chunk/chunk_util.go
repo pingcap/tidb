@@ -107,24 +107,24 @@ func CopySelectedJoinRowsWithSameOuterRows(src *Chunk, innerColOffset, innerColL
 
 // CopySelectedRows copies the selected rows in srcCol to dstCol
 func CopySelectedRows(dstCol *Column, srcCol *Column, selected []bool) {
-	CopySelectedRowsWithRowIdFunc(dstCol, srcCol, selected, 0, len(selected), func(i int) int {
+	CopySelectedRowsWithRowIDFunc(dstCol, srcCol, selected, 0, len(selected), func(i int) int {
 		return i
 	})
 }
 
-// CopySelectedRowsWithRowIdFunc copies the selected rows in srcCol to dstCol
-func CopySelectedRowsWithRowIdFunc(dstCol *Column, srcCol *Column, selected []bool, start int, end int, rowIdFunc func(int) int) {
+// CopySelectedRowsWithRowIDFunc copies the selected rows in srcCol to dstCol
+func CopySelectedRowsWithRowIDFunc(dstCol *Column, srcCol *Column, selected []bool, start int, end int, rowIDFunc func(int) int) {
 	if srcCol.isFixed() {
 		for i := start; i < end; i++ {
 			if !selected[i] {
 				continue
 			}
-			rowId := rowIdFunc(i)
-			dstCol.appendNullBitmap(!srcCol.IsNull(rowId))
+			rowID := rowIDFunc(i)
+			dstCol.appendNullBitmap(!srcCol.IsNull(rowID))
 			dstCol.length++
 
 			elemLen := len(srcCol.elemBuf)
-			offset := rowId * elemLen
+			offset := rowID * elemLen
 			dstCol.data = append(dstCol.data, srcCol.data[offset:offset+elemLen]...)
 		}
 	} else {
@@ -132,11 +132,11 @@ func CopySelectedRowsWithRowIdFunc(dstCol *Column, srcCol *Column, selected []bo
 			if !selected[i] {
 				continue
 			}
-			rowId := rowIdFunc(i)
-			dstCol.appendNullBitmap(!srcCol.IsNull(rowId))
+			rowID := rowIDFunc(i)
+			dstCol.appendNullBitmap(!srcCol.IsNull(rowID))
 			dstCol.length++
 
-			start, end := srcCol.offsets[rowId], srcCol.offsets[rowId+1]
+			start, end := srcCol.offsets[rowID], srcCol.offsets[rowID+1]
 			dstCol.data = append(dstCol.data, srcCol.data[start:end]...)
 			dstCol.offsets = append(dstCol.offsets, int64(len(dstCol.data)))
 		}

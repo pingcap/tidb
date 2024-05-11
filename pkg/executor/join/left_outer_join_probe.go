@@ -61,11 +61,11 @@ func (j *leftOuterJoinProbe) InitForScanRowTable() {
 	}
 	totalRowCount := j.ctx.hashTableContext.hashTable.totalRowCount()
 	concurrency := j.ctx.Concurrency
-	workId := uint64(j.workID)
+	workID := uint64(j.workID)
 	avgRowPerWorker := totalRowCount / uint64(concurrency)
-	startIndex := workId * avgRowPerWorker
-	endIndex := (workId + 1) * avgRowPerWorker
-	if workId == uint64(concurrency-1) {
+	startIndex := workID * avgRowPerWorker
+	endIndex := (workID + 1) * avgRowPerWorker
+	if workID == uint64(concurrency-1) {
 		endIndex = totalRowCount
 	}
 	if endIndex > totalRowCount {
@@ -97,7 +97,7 @@ func (j *leftOuterJoinProbe) ScanRowTable(joinResult *hashjoinWorkerResult, sqlK
 		}
 		j.rowIter.next()
 	}
-	err := probeCheckSqlKiller(sqlKiller)
+	err := probeCheckSQLKiller(sqlKiller)
 	if err != nil {
 		joinResult.err = err
 		return joinResult
@@ -125,7 +125,7 @@ func (j *leftOuterJoinProbe) buildResultForMatchedRowsAfterOtherCondition(chk, j
 		} else {
 			markedJoined = true
 			srcCol := j.currentChunk.Column(colIndex)
-			chunk.CopySelectedRowsWithRowIdFunc(dstCol, srcCol, j.selected, 0, len(j.selected), func(i int) int {
+			chunk.CopySelectedRowsWithRowIDFunc(dstCol, srcCol, j.selected, 0, len(j.selected), func(i int) int {
 				ret := j.rowIndexInfos[i].probeRowIndex
 				j.isNotMatchedRows[ret] = false
 				return j.usedRows[ret]
@@ -182,7 +182,7 @@ func (j *leftOuterJoinProbe) buildResultForNotMatchedRows(chk *chunk.Chunk, star
 	for index, colIndex := range j.lUsed {
 		dstCol := chk.Column(index)
 		srcCol := j.currentChunk.Column(colIndex)
-		chunk.CopySelectedRowsWithRowIdFunc(dstCol, srcCol, j.isNotMatchedRows, startProbeRow, j.currentProbeRow, func(i int) int {
+		chunk.CopySelectedRowsWithRowIDFunc(dstCol, srcCol, j.isNotMatchedRows, startProbeRow, j.currentProbeRow, func(i int) int {
 			return j.usedRows[i]
 		})
 		afterRows = dstCol.Rows()
@@ -190,7 +190,7 @@ func (j *leftOuterJoinProbe) buildResultForNotMatchedRows(chk *chunk.Chunk, star
 	nullRows := afterRows - prevRows
 	if len(j.lUsed) == 0 {
 		for i := startProbeRow; i < j.currentProbeRow; i++ {
-			if j.isNotMatchedRows[i] == true {
+			if j.isNotMatchedRows[i] {
 				nullRows++
 			}
 		}
@@ -238,7 +238,7 @@ func (j *leftOuterJoinProbe) probeForRightBuild(chk, joinedChk *chunk.Chunk, rem
 		remainCap--
 	}
 
-	err = probeCheckSqlKiller(sqlKiller)
+	err = probeCheckSQLKiller(sqlKiller)
 	if err != nil {
 		return err
 	}
@@ -291,7 +291,7 @@ func (j *leftOuterJoinProbe) probeForLeftBuild(chk, joinedChk *chunk.Chunk, rema
 			j.currentProbeRow++
 		}
 	}
-	err = probeCheckSqlKiller(sqlKiller)
+	err = probeCheckSQLKiller(sqlKiller)
 	if err != nil {
 		return err
 	}
