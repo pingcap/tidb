@@ -173,19 +173,6 @@ func (p *baseLogicalPlan) rebuildChildTasks(childTasks *[]base.Task, pp base.Phy
 	return nil
 }
 
-
-
-Possible questions like how we make sure the latency will not be increased significantly can be answered now.
-
-Except the always-good transformations, we'll still apply some logical rewrites before we enter the rule's searching and expanding.
-Such as that we will not decorrelate the subqueries in the SELECT fields and we will still generate a join order by greedy way.(TP cases usually requires a left deep join tree with index nested loop join chosen by all the join nodes)
-Then we will get a modified plan before expanding the search space.
-We'll first check the physical cost of this plan tree, if it's small enough. We'll directly choose it as the final plan, without entering the later optimization. And the physical cost of this plan will be set as the upper bound during the later transformations.
-
-Besides that, we'll also try to split the optimizations into multiple stages. The transformations like eager aggregations will not be useful for most of the TP queries. So we can remove it in our first search stage. And check the physical cost again after the first search stage, we'll break the optimization if it's smaller than a given threshold.
-
-With these ways, we are trying to reduce the overhead of the TP queries in the new planner, to not enter too much useless transformations.
-
 func (p *baseLogicalPlan) enumeratePhysicalPlans4Task(
 	physicalPlans []base.PhysicalPlan,
 	prop *property.PhysicalProperty,
