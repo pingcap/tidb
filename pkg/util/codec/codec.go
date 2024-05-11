@@ -395,6 +395,7 @@ func encodeHashChunkRowIdx(typeCtx types.Context, row chunk.Row, tp *types.Field
 type SerializeMode int
 
 const (
+	// Normal means serialize in the normal way
 	Normal SerializeMode = iota
 	// NeedSignFlag when serialize integer column, if the join key is <signed, signed> or <unsigned, unsigned>,
 	// the unsigned flag can be ignored, if the join key is <unsigned, signed> or <signed, unsigned>
