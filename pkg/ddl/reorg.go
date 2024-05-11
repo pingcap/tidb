@@ -296,6 +296,7 @@ func overwriteReorgInfoFromGlobalCheckpoint(w *worker, sess *sess.Session, job *
 				job.ID,
 				extractElemIDs(reorgInfo),
 				bc.GetLocalBackend().LocalStoreDir,
+				w.store.(kv.StorageWithPD).GetPDClient(),
 			)
 			if err != nil {
 				logutil.DDLIngestLogger().Warn("create checkpoint manager failed", zap.Error(err))

@@ -5,6 +5,7 @@ go_library(
     srcs = [
         "byitem.go",
         "expression.go",
+        "func_pointer_misc.go",
         "handle_cols.go",
         "misc.go",
         "null_misc.go",
@@ -19,6 +20,7 @@ go_library(
         "//pkg/parser/model",
         "//pkg/parser/mysql",
         "//pkg/planner/context",
+        "//pkg/planner/core/base",
         "//pkg/sessionctx/stmtctx",
         "//pkg/tablecodec",
         "//pkg/types",

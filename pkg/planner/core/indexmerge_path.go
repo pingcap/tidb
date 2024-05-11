@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/planner/context"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/cost"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
@@ -286,7 +287,7 @@ func (ds *DataSource) generateIndexMergeOrPaths(filters []expression.Expression)
 		sel, _, err := cardinality.Selectivity(ds.SCtx(), ds.tableStats.HistColl, []expression.Expression{accessDNF}, nil)
 		if err != nil {
 			logutil.BgLogger().Debug("something wrong happened, use the default selectivity", zap.Error(err))
-			sel = SelectionFactor
+			sel = cost.SelectionFactor
 		}
 
 		possiblePath := buildIndexMergeOrPath(filters, partialAlternativePaths, k, shouldKeepCurrentFilter)
@@ -594,7 +595,7 @@ func (ds *DataSource) generateIndexMergeAndPaths(normalPathCnt int, usedAccessMa
 	sel, _, err := cardinality.Selectivity(ds.SCtx(), ds.tableStats.HistColl, partialFilters, nil)
 	if err != nil {
 		logutil.BgLogger().Debug("something wrong happened, use the default selectivity", zap.Error(err))
-		sel = SelectionFactor
+		sel = cost.SelectionFactor
 	}
 
 	indexMergePath := &util.AccessPath{

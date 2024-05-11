@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/cost"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
@@ -46,36 +47,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/tracing"
 	"go.uber.org/zap"
 )
-
-const (
-	// SelectionFactor is the default factor of the selectivity.
-	// For example, If we have no idea how to estimate the selectivity
-	// of a Selection or a JoinCondition, we can use this default value.
-	SelectionFactor = 0.8
-	distinctFactor  = 0.8
-
-	// If the actual row count is much more than the limit count, the unordered scan may cost much more than keep order.
-	// So when a limit exists, we don't apply the DescScanFactor.
-	smallScanThreshold = 10000
-)
-
-var aggFuncFactor = map[string]float64{
-	ast.AggFuncCount:       1.0,
-	ast.AggFuncSum:         1.0,
-	ast.AggFuncAvg:         2.0,
-	ast.AggFuncFirstRow:    0.1,
-	ast.AggFuncMax:         1.0,
-	ast.AggFuncMin:         1.0,
-	ast.AggFuncGroupConcat: 1.0,
-	ast.AggFuncBitOr:       0.9,
-	ast.AggFuncBitXor:      0.9,
-	ast.AggFuncBitAnd:      0.9,
-	ast.AggFuncVarPop:      3.0,
-	ast.AggFuncVarSamp:     3.0,
-	ast.AggFuncStddevPop:   3.0,
-	ast.AggFuncStddevSamp:  3.0,
-	"default":              1.5,
-}
 
 // PlanCounterDisabled is the default value of PlanCounterTp, indicating that optimizer needn't force a plan.
 var PlanCounterDisabled base.PlanCounterTp = -1
@@ -1042,7 +1013,7 @@ func (ds *DataSource) matchPropForIndexMergeAlternatives(path *util.AccessPath, 
 	sel, _, err := cardinality.Selectivity(ds.SCtx(), ds.tableStats.HistColl, []expression.Expression{accessDNF}, nil)
 	if err != nil {
 		logutil.BgLogger().Debug("something wrong happened, use the default selectivity", zap.Error(err))
-		sel = SelectionFactor
+		sel = cost.SelectionFactor
 	}
 	indexMergePath.CountAfterAccess = sel * ds.tableStats.RowCount
 	if noSortItem {
@@ -1730,7 +1701,7 @@ func (ds *DataSource) convertToPartialTableScan(prop *property.PhysicalProperty,
 		selectivity, _, err := cardinality.Selectivity(ds.SCtx(), ds.tableStats.HistColl, ts.filterCondition, nil)
 		if err != nil {
 			logutil.BgLogger().Debug("calculate selectivity failed, use selection factor", zap.Error(err))
-			selectivity = SelectionFactor
+			selectivity = cost.SelectionFactor
 		}
 		tablePlan = PhysicalSelection{Conditions: ts.filterCondition}.Init(ts.SCtx(), ts.StatsInfo().ScaleByExpectCnt(selectivity*rowCount), ds.QueryBlockOffset())
 		tablePlan.SetChildren(ts)
@@ -1816,7 +1787,7 @@ func (ds *DataSource) buildIndexMergeTableScan(tableFilters []expression.Express
 			selectivity, _, err := cardinality.Selectivity(ds.SCtx(), ds.tableStats.HistColl, pushedFilters, nil)
 			if err != nil {
 				logutil.BgLogger().Debug("calculate selectivity failed, use selection factor", zap.Error(err))
-				selectivity = SelectionFactor
+				selectivity = cost.SelectionFactor
 			}
 			sel := PhysicalSelection{Conditions: pushedFilters}.Init(ts.SCtx(), ts.StatsInfo().ScaleByExpectCnt(selectivity*totalRowCount), ts.QueryBlockOffset())
 			sel.SetChildren(ts)
@@ -2299,7 +2270,7 @@ func (is *PhysicalIndexScan) addPushedDownSelection(copTask *CopTask, p *DataSou
 			selectivity, _, err := cardinality.Selectivity(is.SCtx(), copTask.tblColHists, tableConds, nil)
 			if err != nil {
 				logutil.BgLogger().Debug("calculate selectivity failed, use selection factor", zap.Error(err))
-				selectivity = SelectionFactor
+				selectivity = cost.SelectionFactor
 			}
 			tableSel.SetStats(copTask.Plan().StatsInfo().Scale(selectivity))
 		}
@@ -2790,7 +2761,7 @@ func (ts *PhysicalTableScan) addPushedDownSelection(copTask *CopTask, stats *pro
 			selectivity, _, err := cardinality.Selectivity(ts.SCtx(), copTask.tblColHists, ts.filterCondition, nil)
 			if err != nil {
 				logutil.BgLogger().Debug("calculate selectivity failed, use selection factor", zap.Error(err))
-				selectivity = SelectionFactor
+				selectivity = cost.SelectionFactor
 			}
 			sel.SetStats(ts.StatsInfo().Scale(selectivity))
 		}
