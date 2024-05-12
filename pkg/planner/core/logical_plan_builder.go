@@ -1318,19 +1318,30 @@ func (b *PlanBuilder) buildSelection(ctx context.Context, p base.LogicalPlan, wh
 	for _, expr := range expressions {
 		cnfItems := expression.SplitCNFItems(expr)
 		for _, item := range cnfItems {
-			if con, ok := item.(*expression.Constant); ok && expression.ConstExprConsiderPlanCache(con, useCache) {
-				ret, _, err := expression.EvalBool(b.ctx.GetExprCtx().GetEvalCtx(), expression.CNFExprs{con}, chunk.Row{})
-				if err != nil {
-					return nil, errors.Trace(err)
+			switch item := item.(type) {
+			case *expression.Constant:
+				if expression.ConstExprConsiderPlanCache(item, useCache) {
+					if ret, _, err := expression.EvalBool(b.ctx.GetExprCtx().GetEvalCtx(), expression.CNFExprs{item}, chunk.Row{}); err != nil {
+						return nil, errors.Trace(err)
+					} else if ret {
+						continue
+					}
+					// If there is condition which is always false, return dual plan directly.
+					dual := LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
+					dual.names = p.OutputNames()
+					dual.SetSchema(p.Schema())
+					return dual, nil
 				}
-				if ret {
-					continue
+			case *expression.ScalarFunction:
+				if item.FuncName.L != ast.IsNull && item.FuncName.L != ast.UnaryNot && item.FuncName.L != ast.NullEQ && len(item.GetArgs()) == 2 {
+					if constExpr, ok := item.GetArgs()[1].(*expression.Constant); ok && constExpr.Value.IsNull() && constExpr.DeferredExpr == nil {
+						// If there is condition which is always false, return dual plan directly.
+						dual := LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
+						dual.names = p.OutputNames()
+						dual.SetSchema(p.Schema())
+						return dual, nil
+					}
 				}
-				// If there is condition which is always false, return dual plan directly.
-				dual := LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
-				dual.names = p.OutputNames()
-				dual.SetSchema(p.Schema())
-				return dual, nil
 			}
 			cnfExpres = append(cnfExpres, item)
 		}

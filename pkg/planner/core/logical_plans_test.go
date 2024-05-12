@@ -2392,3 +2392,102 @@ func TestRollupExpand(t *testing.T) {
 	require.NotNil(t, gm)
 	require.Equal(t, len(gm), 2)
 }
+
+// issue 51446
+//
+//	func TestGenerateDualPlan(t *testing.T) {
+//		tests := []struct {
+//			sql  string
+//			best string
+//		}{
+//			{
+//				sql:  "select * from t where a > null",
+//				best: "Dual->Projection",
+//			},
+//			{
+//				sql:  "select * from t where a != null",
+//				best: "Dual->Projection",
+//			},
+//			{
+//				sql:  "select * from t where a in (null,1)",
+//				best: "DataScan(t)->Projection",
+//			},
+//			{
+//				sql:  "select * from t where a <=> null",
+//				best: "DataScan(t)->Projection",
+//			},
+//			{
+//				sql:  "select * from t where not(a <=> null)",
+//				best: "DataScan(t)->Projection",
+//			},
+//			{
+//				sql:  "select * from t where a > (select a from t order by a limit 1)",
+//				best: "DataScan(t)->Projection->Sort->Limit->Projection->Aggr(count(1),firstrow(test.t.b))->Projection",
+//			},
+//		}
+//		s := createPlannerSuite()
+//		defer s.Close()
+//		for i, tt := range tests {
+//			ctx := context.Background()
+//			comment := fmt.Sprintf("case:%v sql:%s", i, tt.sql)
+//			stmt, err := s.p.ParseOneStmt(tt.sql, "", "")
+//			require.NoError(t, err, comment)
+//			err = Preprocess(context.Background(), s.sctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
+//			require.NoError(t, err)
+//			sctx := MockContext()
+//			builder, _ := NewPlanBuilder().Init(sctx, s.is, hint.NewQBHintHandler(nil))
+//			domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(s.is)
+//			p, err := builder.Build(ctx, stmt)
+//			require.NoError(t, err)
+//			p, err = logicalOptimize(ctx, builder.optFlag, p.(base.LogicalPlan))
+//			require.NoError(t, err)
+//			require.Equal(t, tt.best, ToString(p), comment)
+//			domain.GetDomain(sctx).StatsHandle().Close()
+//		}
+//	}
+func TestGenerateDualPlan(t *testing.T) {
+	tests := []struct {
+		sql  string
+		best string
+	}{
+		{
+			sql:  "select * from t where a > null",
+			best: "Dual->Projection",
+		},
+		{
+			sql:  "select * from t where a != null",
+			best: "Dual->Projection",
+		},
+		{
+			sql:  "select * from t where a in (null,1)",
+			best: "DataScan(t)->Projection",
+		},
+		{
+			sql:  "select * from t where a <=> null",
+			best: "DataScan(t)->Projection",
+		},
+		{
+			sql:  "select * from t where not(a <=> null)",
+			best: "DataScan(t)->Projection",
+		},
+	}
+	s := createPlannerSuite()
+	defer s.Close()
+	ctx := context.TODO()
+	for i, tt := range tests {
+		comment := fmt.Sprintf("case:%v sql:%s", i, tt.sql)
+		stmt, err := s.p.ParseOneStmt(tt.sql, "", "")
+		require.NoError(t, err, comment)
+		err = Preprocess(context.Background(), s.sctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
+		require.NoError(t, err)
+		sctx := MockContext()
+		builder, _ := NewPlanBuilder().Init(sctx, s.is, hint.NewQBHintHandler(nil))
+		domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(s.is)
+		p, err := builder.Build(ctx, stmt)
+		require.NoError(t, err)
+		p, err = logicalOptimize(ctx, builder.optFlag, p.(base.LogicalPlan))
+		require.NoError(t, err)
+		require.Equal(t, tt.best, ToString(p), comment)
+		domain.GetDomain(sctx).StatsHandle().Close()
+	}
+}

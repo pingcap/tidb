@@ -712,20 +712,8 @@ and n_name = 'MOZAMBIQUE'
 order by
 value desc;
 id	estRows	task	access object	operator info
-Projection	1304801.67	root		tpch.partsupp.ps_partkey, Column#35->Column#58
-└─Sort	1304801.67	root		Column#35:desc
-  └─Selection	1304801.67	root		gt(Column#35, NULL)
-    └─HashAgg	1631002.09	root		group by:Column#61, funcs:sum(Column#59)->Column#35, funcs:firstrow(Column#60)->tpch.partsupp.ps_partkey
-      └─Projection	1631002.09	root		mul(tpch.partsupp.ps_supplycost, cast(tpch.partsupp.ps_availqty, decimal(10,0) BINARY))->Column#59, tpch.partsupp.ps_partkey->Column#60, tpch.partsupp.ps_partkey->Column#61
-        └─HashJoin	1631002.09	root		inner join, equal:[eq(tpch.supplier.s_suppkey, tpch.partsupp.ps_suppkey)]
-          ├─HashJoin(Build)	20000.00	root		inner join, equal:[eq(tpch.nation.n_nationkey, tpch.supplier.s_nationkey)]
-          │ ├─TableReader(Build)	1.00	root		data:Selection
-          │ │ └─Selection	1.00	cop[tikv]		eq(tpch.nation.n_name, "MOZAMBIQUE")
-          │ │   └─TableFullScan	25.00	cop[tikv]	table:nation	keep order:false
-          │ └─TableReader(Probe)	500000.00	root		data:TableFullScan
-          │   └─TableFullScan	500000.00	cop[tikv]	table:supplier	keep order:false
-          └─TableReader(Probe)	40000000.00	root		data:TableFullScan
-            └─TableFullScan	40000000.00	cop[tikv]	table:partsupp	keep order:false
+Projection	0.00	root		tpch.partsupp.ps_partkey, Column#35->Column#58
+└─TableDual	0.00	root		rows:0
 /*
 Q12 Shipping Modes and Order Priority Query
 This query determines whether selecting less expensive modes of shipping is negatively affecting the critical-priority
@@ -1295,9 +1283,4 @@ Sort	1.00	root		Column#31
 └─Projection	1.00	root		Column#31, Column#32, Column#33
   └─HashAgg	1.00	root		group by:Column#37, funcs:count(1)->Column#32, funcs:sum(Column#35)->Column#33, funcs:firstrow(Column#36)->Column#31
     └─Projection	0.00	root		tpch.customer.c_acctbal->Column#35, substring(tpch.customer.c_phone, 1, 2)->Column#36, substring(tpch.customer.c_phone, 1, 2)->Column#37
-      └─HashJoin	0.00	root		anti semi join, equal:[eq(tpch.customer.c_custkey, tpch.orders.o_custkey)]
-        ├─TableReader(Build)	75000000.00	root		data:TableFullScan
-        │ └─TableFullScan	75000000.00	cop[tikv]	table:orders	keep order:false
-        └─TableReader(Probe)	0.00	root		data:Selection
-          └─Selection	0.00	cop[tikv]		gt(tpch.customer.c_acctbal, NULL), in(substring(tpch.customer.c_phone, 1, 2), "20", "40", "22", "30", "39", "42", "21")
-            └─TableFullScan	7500000.00	cop[tikv]	table:customer	keep order:false
+      └─TableDual	0.00	root		rows:0
