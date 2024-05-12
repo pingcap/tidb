@@ -100,11 +100,11 @@ func (rts *rowTableSegment) validKeyCount() uint64 {
 }
 
 func setNextRowAddress(rowStart uintptr, nextRowAddress uintptr) {
-	*(*unsafe.Pointer)(unsafe.Pointer(rowStart)) = unsafe.Pointer(nextRowAddress) //nolint:all
+	*(*uintptr)(unsafe.Pointer(rowStart)) = nextRowAddress //nolint:all
 }
 
 func getNextRowAddress(rowStart uintptr) uintptr {
-	return uintptr(*(*unsafe.Pointer)(unsafe.Pointer(rowStart))) //nolint:all
+	return *(*uintptr)(unsafe.Pointer(rowStart)) //nolint:all
 }
 
 // TableMeta is the join table meta used in hash join v2

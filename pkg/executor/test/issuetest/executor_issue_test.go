@@ -180,8 +180,8 @@ func TestIssue30289(t *testing.T) {
 	defer func() {
 		require.NoError(t, failpoint.Disable(fpName))
 	}()
-	for _, setSql := range join.GetHashJoinOptSetSQL() {
-		tk.MustExec(setSql)
+	for _, setSQL := range join.GetHashJoinOptSetSQL() {
+		tk.MustExec(setSQL)
 		err := tk.QueryToErr("select /*+ hash_join(t1) */ * from t t1 join t t2 on t1.a=t2.a")
 		require.EqualError(t, err, "issue30289 build return error")
 	}
@@ -198,8 +198,8 @@ func TestIssue51998(t *testing.T) {
 	defer func() {
 		require.NoError(t, failpoint.Disable(fpName))
 	}()
-	for _, setSql := range join.GetHashJoinOptSetSQL() {
-		tk.MustExec(setSql)
+	for _, setSQL := range join.GetHashJoinOptSetSQL() {
+		tk.MustExec(setSQL)
 		err := tk.QueryToErr("select /*+ hash_join(t1) */ * from t t1 join t t2 on t1.a=t2.a")
 		require.EqualError(t, err, "issue51998 build return error")
 	}
