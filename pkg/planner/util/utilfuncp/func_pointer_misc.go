@@ -35,4 +35,5 @@ var HasMaxOneRowUtil func(p base.LogicalPlan, childMaxOneRow []bool) bool
 // will heavily depend on concrete other logical operators inside, which are still defined in core/pkg
 // too.
 // todo: (2) arenatlx, remove this func pointer when concrete Logical Operators moved out of core.
-var AppendCandidate4PhysicalOptimizeOp func(pop *optimizetrace.PhysicalOptimizeOp, lp base.LogicalPlan, pp base.PhysicalPlan, prop *property.PhysicalProperty)
+var AppendCandidate4PhysicalOptimizeOp func(pop *optimizetrace.PhysicalOptimizeOp, lp base.LogicalPlan,
+	pp base.PhysicalPlan, prop *property.PhysicalProperty)
