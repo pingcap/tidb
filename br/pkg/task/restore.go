@@ -535,7 +535,6 @@ func configureRestoreClient(ctx context.Context, client *snapclient.SnapClient, 
 	client.SetPlacementPolicyMode(cfg.WithPlacementPolicy)
 	client.SetWithSysTable(cfg.WithSysTable)
 	client.SetRewriteMode(ctx)
-	client.SetConcurrency(uint(cfg.Concurrency))
 	return nil
 }
 

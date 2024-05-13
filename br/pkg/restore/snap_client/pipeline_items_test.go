@@ -168,9 +168,15 @@ func TestRestoreFailed(t *testing.T) {
 	for _, r := range ranges {
 		sender.RestoreBatch(r)
 	}
-	sink.Wait()
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		sink.Wait()
+	}()
 	sink.Close()
 	sender.Close()
+	wg.Wait()
 	require.GreaterOrEqual(t, len(r.restoredFiles), 1)
 	require.True(t, r.tableIDIsInsequence)
 }

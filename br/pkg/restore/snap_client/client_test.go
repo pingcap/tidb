@@ -288,6 +288,10 @@ func (fakeImportCli FakeImporterClient) SetDownloadSpeedLimit(
 	return nil, nil
 }
 
+func (fakeImportCli FakeImporterClient) CheckMultiIngestSupport(ctx context.Context, stores []uint64) error {
+	return nil
+}
+
 func TestSetSpeedLimit(t *testing.T) {
 	mockStores := []*metapb.Store{
 		{Id: 1},

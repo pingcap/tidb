@@ -56,11 +56,6 @@ type ImporterClient interface {
 		req *import_sstpb.DownloadRequest,
 	) (*import_sstpb.DownloadResponse, error)
 
-	IngestSST(
-		ctx context.Context,
-		storeID uint64,
-		req *import_sstpb.IngestRequest,
-	) (*import_sstpb.IngestResponse, error)
 	MultiIngest(
 		ctx context.Context,
 		storeID uint64,
@@ -154,18 +149,6 @@ func (ic *importClient) SetDownloadSpeedLimit(
 		return nil, errors.Trace(err)
 	}
 	return client.SetDownloadSpeedLimit(ctx, req)
-}
-
-func (ic *importClient) IngestSST(
-	ctx context.Context,
-	storeID uint64,
-	req *import_sstpb.IngestRequest,
-) (*import_sstpb.IngestResponse, error) {
-	client, err := ic.GetIngestClient(ctx, storeID)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	return client.Ingest(ctx, req)
 }
 
 func (ic *importClient) MultiIngest(

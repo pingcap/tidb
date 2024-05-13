@@ -218,8 +218,7 @@ func (rc *SnapClient) GetSupportPolicy() bool {
 	return rc.supportPolicy
 }
 
-func (rc *SnapClient) SetConcurrency(c uint) {
-	log.Info("download worker pool", zap.Uint("size", c))
+func (rc *SnapClient) updateConcurrency() {
 	// we believe 32 is large enough for download worker pool.
 	// it won't reach the limit if sst files distribute evenly.
 	// when restore memory usage is still too high, we should reduce concurrencyPerStore
@@ -436,6 +435,7 @@ func (rc *SnapClient) initClients(ctx context.Context, backend *backuppb.Storage
 		return errors.Annotate(err, "failed to get stores")
 	}
 	rc.storeCount = len(stores)
+	rc.updateConcurrency()
 
 	var splitClientOpts []split.ClientOptionalParameter
 	if isRawKvMode {

@@ -43,7 +43,7 @@ func RunRestoreTxn(c context.Context, g glue.Glue, cmdName string, cfg *Config) 
 	client := snapclient.NewRestoreClient(mgr.GetPDClient(), mgr.GetPDHTTPClient(), mgr.GetTLSConfig(), keepaliveCfg)
 	client.SetRateLimit(cfg.RateLimit)
 	client.SetCrypter(&cfg.CipherInfo)
-	client.SetConcurrency(uint(cfg.Concurrency))
+	client.SetConcurrencyPerStore(uint(cfg.Concurrency))
 	err = client.Init(g, mgr.GetStorage())
 	defer client.Close()
 	if err != nil {

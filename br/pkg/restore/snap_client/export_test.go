@@ -25,6 +25,7 @@ import (
 	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/parser/model"
+	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"golang.org/x/exp/slices"
 )
 
@@ -40,7 +41,7 @@ func MockClient(dbs map[string]*metautil.Database) *SnapClient {
 // Mock the call of setSpeedLimit function
 func MockCallSetSpeedLimit(ctx context.Context, fakeImportClient importclient.ImporterClient, rc *SnapClient, concurrency uint) (err error) {
 	rc.SetRateLimit(42)
-	rc.SetConcurrency(concurrency)
+	rc.workerPool = tidbutil.NewWorkerPool(128, "set-speed-limit")
 	rc.hasSpeedLimited = false
 	rc.fileImporter, err = NewSnapFileImporter(ctx, nil, fakeImportClient, nil, false, false, nil, rc.rewriteMode, 128)
 	if err != nil {
