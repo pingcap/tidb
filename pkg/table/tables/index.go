@@ -366,8 +366,8 @@ func (c *index) Create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 	return nil, nil
 }
 
-func needPresumeKeyNotExistsFlag(ctx context.Context, txn kv.Transaction, key, tempKey kv.Key,
-	h kv.Handle, keyIsTempIdxKey bool, isCommon bool, tblID int64) (needFlag bool, err error) {
+func needPresumeKeyNotExistsFlag(ctx context.Context, txn kv.Transaction, key, tempKey kv.Key, h kv.Handle,
+	keyIsTempIdxKey, isCommon bool, tblID int64) (needFlag bool, err error) {
 	var uniqueTempKey kv.Key
 	if keyIsTempIdxKey {
 		uniqueTempKey = key
@@ -427,9 +427,19 @@ func (c *index) Delete(ctx table.MutateContext, txn kv.Transaction, indexedValue
 
 		if distinct {
 			if len(key) > 0 {
-				err = txn.GetMemBuffer().DeleteWithFlags(key, kv.SetNeedLocked)
+				originVal, err := getKeyInTxn(context.TODO(), txn, key)
 				if err != nil {
 					return err
+				}
+				oh, err := tablecodec.DecodeHandleInUniqueIndexValue(originVal, c.tblInfo.IsCommonHandle)
+				if err != nil {
+					return err
+				}
+				if h.Equal(oh) {
+					err = txn.GetMemBuffer().DeleteWithFlags(key, kv.SetNeedLocked)
+					if err != nil {
+						return err
+					}
 				}
 			}
 			if len(tempKey) > 0 {
