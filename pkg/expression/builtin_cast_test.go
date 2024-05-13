@@ -1116,6 +1116,61 @@ func TestCastFuncSig(t *testing.T) {
 	require.False(t, iRes.IsNull())
 	require.Equal(t, types.KindInt64, iRes.Kind())
 	require.Equal(t, int64(0), iRes.GetInt64())
+
+	// test cast real to string
+	zero := float32(0.00)
+	negZero := -zero
+	castFloat32ToStringCases := []struct {
+		v      float32
+		expect string
+	}{
+		{negZero, "-0"},
+		{00000.0, "0"},
+		{4474.78125, "4474.7812"},
+		{1e15, "1e15"},
+		{-1e15, "-1e15"},
+		{9.99999e14, "999999000000000"},
+		{-9.99999e14, "-999999000000000"},
+		{1e15 - 1.0, "1e15"},
+		{-3.4028235e38, "-3.4028235e38"},
+		{3.4028235e38, "3.4028235e38"},
+		{1.1754944e-38, "1.1754944e-38"},
+		{1.000, "1"},
+		{-123456789123000.0, "-123456790000000"},
+		{1e-15, "0.000000000000001"},
+		{9.9999e-16, "9.9999e-16"},
+		{1.23456789123000e-9, "0.0000000012345679"},
+	}
+
+	for _, d := range castFloat32ToStringCases {
+		require.Equal(t, formatFloat(float64(d.v), 32), d.expect)
+	}
+
+	castFloat64ToStringCases := []struct {
+		v      float64
+		expect string
+	}{
+		{float64(negZero), "-0"},
+		{00000.0, "0"},
+		{4474.78125, "4474.78125"},
+		{1e15, "1e15"},
+		{-1e15, "-1e15"},
+		{9.99999e14, "999999000000000"},
+		{-9.99999e14, "-999999000000000"},
+		{1e15 - 1.0, "999999999999999"},
+		{-1.7976931348623157e308, "-1.7976931348623157e308"},
+		{1.7976931348623157e308, "1.7976931348623157e308"},
+		{2.2250738585072014e-308, "2.2250738585072014e-308"},
+		{1.000, "1"},
+		{-123456789123000.0, "-123456789123000"},
+		{1e-15, "0.000000000000001"},
+		{9.9999e-16, "9.9999e-16"},
+		{1.23456789123000e-9, "0.00000000123456789123"},
+	}
+
+	for _, d := range castFloat64ToStringCases {
+		require.Equal(t, formatFloat(d.v, 64), d.expect)
+	}
 }
 
 func TestCastJSONAsDecimalSig(t *testing.T) {

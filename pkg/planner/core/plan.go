@@ -34,6 +34,10 @@ import (
 	"github.com/pingcap/tidb/pkg/util/tracing"
 )
 
+func init() {
+	util.HasMaxOneRowUtil = HasMaxOneRow
+}
+
 // AsSctx converts PlanContext to sessionctx.Context.
 func AsSctx(pctx base.PlanContext) (sessionctx.Context, error) {
 	sctx, ok := pctx.(sessionctx.Context)
@@ -475,7 +479,7 @@ func (p *baseLogicalPlan) BuildKeyInfo(_ *expression.Schema, _ []*expression.Sch
 	for i := range p.children {
 		childMaxOneRow[i] = p.children[i].MaxOneRow()
 	}
-	p.maxOneRow = HasMaxOneRow(p.self, childMaxOneRow)
+	p.maxOneRow = util.HasMaxOneRowUtil(p.self, childMaxOneRow)
 }
 
 // BuildKeyInfo implements LogicalPlan BuildKeyInfo interface.

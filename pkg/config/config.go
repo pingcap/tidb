@@ -75,8 +75,8 @@ const (
 	DefTableColumnCountLimit = 1017
 	// DefMaxOfTableColumnCountLimit is maximum limitation of the number of columns in a table
 	DefMaxOfTableColumnCountLimit = 4096
-	// DefStatsLoadConcurrencyLimit is limit of the concurrency of stats-load
-	DefStatsLoadConcurrencyLimit = 1
+	// DefStatsLoadConcurrencyLimit is limit of the concurrency of stats-load. When it is set to 0, it will be set by syncload.GetSyncLoadConcurrencyByCPU.
+	DefStatsLoadConcurrencyLimit = 0
 	// DefMaxOfStatsLoadConcurrencyLimit is maximum limitation of the concurrency of stats-load
 	DefMaxOfStatsLoadConcurrencyLimit = 128
 	// DefStatsLoadQueueSizeLimit is limit of the size of stats-load request queue
@@ -720,7 +720,7 @@ type Performance struct {
 	PlanReplayerGCLease               string `toml:"plan-replayer-gc-lease" json:"plan-replayer-gc-lease"`
 	GOGC                              int    `toml:"gogc" json:"gogc"`
 	EnforceMPP                        bool   `toml:"enforce-mpp" json:"enforce-mpp"`
-	StatsLoadConcurrency              uint   `toml:"stats-load-concurrency" json:"stats-load-concurrency"`
+	StatsLoadConcurrency              int    `toml:"stats-load-concurrency" json:"stats-load-concurrency"`
 	StatsLoadQueueSize                uint   `toml:"stats-load-queue-size" json:"stats-load-queue-size"`
 	AnalyzePartitionConcurrencyQuota  uint   `toml:"analyze-partition-concurrency-quota" json:"analyze-partition-concurrency-quota"`
 	PlanReplayerDumpWorkerConcurrency uint   `toml:"plan-replayer-dump-worker-concurrency" json:"plan-replayer-dump-worker-concurrency"`
@@ -1010,7 +1010,7 @@ var defaultConf = Config{
 		GOGC:                              100,
 		EnforceMPP:                        false,
 		PlanReplayerGCLease:               "10m",
-		StatsLoadConcurrency:              5,
+		StatsLoadConcurrency:              0, // 0 is auto mode.
 		StatsLoadQueueSize:                1000,
 		AnalyzePartitionConcurrencyQuota:  16,
 		PlanReplayerDumpWorkerConcurrency: 1,

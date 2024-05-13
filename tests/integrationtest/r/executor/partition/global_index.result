@@ -121,9 +121,10 @@ analyze table t;
 # when index_merge has global index as its partial path, ignore it.
 explain select /*+ use_index_merge(t, uidx_ac, idx_bc) */ * from t where a=1 or b=2;
 id	estRows	task	access object	operator info
-TableReader_7	1.88	root	partition:all	data:Selection_6
-└─Selection_6	1.88	cop[tikv]		or(eq(executor__partition__global_index.t.a, 1), eq(executor__partition__global_index.t.b, 2))
-  └─TableFullScan_5	8.00	cop[tikv]	table:t	keep order:false
+IndexMerge_12	1.88	root	partition:all	type: union
+├─IndexRangeScan_8(Build)	1.00	cop[tikv]	table:t, index:uidx_ac(a)	range:[1,1], keep order:false
+├─IndexRangeScan_10(Build)	1.00	cop[tikv]	table:t, index:idx_bd(b, c)	range:[2,2], keep order:false
+└─TableRowIDScan_11(Probe)	1.88	cop[tikv]	table:t	keep order:false
 select /*+ use_index_merge(t, uidx_ac, idx_bc) */ * from t where a=1 or b=2;
 a	b	c	d
 1	1	1	1

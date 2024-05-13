@@ -24,6 +24,7 @@ import (
 	"crypto/sha256"
 	"crypto/sha512"
 	"encoding/binary"
+	"encoding/hex"
 	"fmt"
 	"hash"
 	"io"
@@ -635,7 +636,8 @@ func (b *builtinMD5Sig) evalString(ctx EvalContext, row chunk.Row) (string, bool
 		return "", isNull, err
 	}
 	sum := md5.Sum([]byte(arg)) // #nosec G401
-	hexStr := fmt.Sprintf("%x", sum)
+	hexStr := hex.EncodeToString(sum[:])
+
 	return hexStr, false, nil
 }
 

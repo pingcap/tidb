@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/cost"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/baseimpl"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
@@ -597,7 +598,7 @@ func (t *CopTask) handleRootTaskConds(ctx base.PlanContext, newTask *RootTask) {
 		selectivity, _, err := cardinality.Selectivity(ctx, t.tblColHists, t.rootTaskConds, nil)
 		if err != nil {
 			logutil.BgLogger().Debug("calculate selectivity failed, use selection factor", zap.Error(err))
-			selectivity = SelectionFactor
+			selectivity = cost.SelectionFactor
 		}
 		sel := PhysicalSelection{Conditions: t.rootTaskConds}.Init(ctx, newTask.GetPlan().StatsInfo().Scale(selectivity), newTask.GetPlan().QueryBlockOffset())
 		sel.fromDataSource = true
@@ -674,10 +675,12 @@ func (p *PhysicalLimit) Attach2Task(tasks ...base.Task) base.Task {
 		} else if !cop.idxMergeIsIntersection {
 			// We only support push part of the order prop down to index merge build case.
 			if len(cop.rootTaskConds) == 0 {
-				if cop.indexPlanFinished {
-					// when the index plan is finished, sink the limit to the index merge table side.
+				// For double read which requires order being kept, the limit cannot be pushed down to the table side,
+				// because handles would be reordered before being sent to table scan.
+				if cop.indexPlanFinished && !cop.keepOrder {
+					// when the index plan is finished and index plan is not ordered, sink the limit to the index merge table side.
 					suspendLimitAboveTablePlan()
-				} else {
+				} else if !cop.indexPlanFinished {
 					// cop.indexPlanFinished = false indicates the table side is a pure table-scan, sink the limit to the index merge index side.
 					newCount := p.Offset + p.Count
 					limitChildren := make([]base.PhysicalPlan, 0, len(cop.idxMergePartPlans))
@@ -690,6 +693,10 @@ func (p *PhysicalLimit) Attach2Task(tasks ...base.Task) base.Task {
 						limitChildren = append(limitChildren, pushedDownLimit)
 					}
 					cop.idxMergePartPlans = limitChildren
+					t = cop.ConvertToRootTask(p.SCtx())
+					sunk = p.sinkIntoIndexMerge(t)
+				} else {
+					// when there are some limitations, just sink the limit upon the index merge reader.
 					t = cop.ConvertToRootTask(p.SCtx())
 					sunk = p.sinkIntoIndexMerge(t)
 				}

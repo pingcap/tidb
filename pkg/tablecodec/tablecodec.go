@@ -543,26 +543,24 @@ func DecodeHandleToDatumMap(handle kv.Handle, handleColIDs []int64,
 	if row == nil {
 		row = make(map[int64]types.Datum, len(cols))
 	}
-	for id, ft := range cols {
-		for idx, hid := range handleColIDs {
-			if id != hid {
-				continue
-			}
-			if types.NeedRestoredData(ft) {
-				continue
-			}
-			d, err := decodeHandleToDatum(handle, ft, idx)
-			if err != nil {
-				return row, err
-			}
-			d, err = Unflatten(d, ft, loc)
-			if err != nil {
-				return row, err
-			}
-			if _, exists := row[id]; !exists {
-				row[id] = d
-			}
-			break
+	for idx, id := range handleColIDs {
+		ft, ok := cols[id]
+		if !ok {
+			continue
+		}
+		if types.NeedRestoredData(ft) {
+			continue
+		}
+		d, err := decodeHandleToDatum(handle, ft, idx)
+		if err != nil {
+			return row, err
+		}
+		d, err = Unflatten(d, ft, loc)
+		if err != nil {
+			return row, err
+		}
+		if _, exists := row[id]; !exists {
+			row[id] = d
 		}
 	}
 	return row, nil
@@ -883,7 +881,11 @@ func buildRestoredColumn(allCols []rowcodec.ColInfo) []rowcodec.ColInfo {
 		}
 		if collate.IsBinCollation(col.Ft.GetCollate()) {
 			// Change the fieldType from string to uint since we store the number of the truncated spaces.
+			// NOTE: the corresponding datum is generated as `types.NewUintDatum(paddingSize)`, and the raw data is
+			// encoded via `encodeUint`. Thus we should mark the field type as unsigened here so that the BytesDecoder
+			// can decode it correctly later. Otherwise there might be issues like #47115.
 			copyColInfo.Ft = types.NewFieldType(mysql.TypeLonglong)
+			copyColInfo.Ft.AddFlag(mysql.UnsignedFlag)
 		} else {
 			copyColInfo.Ft = allCols[i].Ft
 		}

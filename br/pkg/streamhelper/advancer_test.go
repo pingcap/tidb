@@ -5,6 +5,7 @@ package streamhelper_test
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -539,6 +540,34 @@ func TestCheckPointResume(t *testing.T) {
 	//with time passed, the checkpoint will exceed the limit again
 	c.advanceClusterTimeBy(2 * time.Minute)
 	require.ErrorContains(t, adv.OnTick(ctx), "lagged too large")
+}
+
+func TestUnregisterAfterPause(t *testing.T) {
+	c := createFakeCluster(t, 4, false)
+	defer func() {
+		fmt.Println(c)
+	}()
+	c.splitAndScatter("01", "02", "022", "023", "033", "04", "043")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	env := &testEnv{fakeCluster: c, testCtx: t}
+	adv := streamhelper.NewCheckpointAdvancer(env)
+	adv.UpdateConfigWith(func(c *config.Config) {
+		c.CheckPointLagLimit = 1 * time.Minute
+	})
+	adv.StartTaskListener(ctx)
+	c.advanceClusterTimeBy(1 * time.Minute)
+	require.NoError(t, adv.OnTick(ctx))
+	env.PauseTask(ctx, "whole")
+	time.Sleep(1 * time.Second)
+	c.advanceClusterTimeBy(1 * time.Minute)
+	require.NoError(t, adv.OnTick(ctx))
+	env.unregisterTask()
+	env.putTask()
+	require.Eventually(t, func() bool {
+		err := adv.OnTick(ctx)
+		return err != nil && strings.Contains(err.Error(), "check point lagged too large")
+	}, 5*time.Second, 300*time.Millisecond)
 }
 
 func TestOwnershipLost(t *testing.T) {
