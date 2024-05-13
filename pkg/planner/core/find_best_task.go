@@ -344,11 +344,11 @@ func (p *LogicalSequence) iterateChildPlan(
 
 // compareTaskCost compares cost of curTask and bestTask and returns whether curTask's cost is smaller than bestTask's.
 func compareTaskCost(curTask, bestTask base.Task, op *optimizetrace.PhysicalOptimizeOp) (curIsBetter bool, err error) {
-	curCost, curInvalid, err := getTaskPlanCost(curTask, op)
+	curCost, curInvalid, err := utilfuncp.GetTaskPlanCost(curTask, op)
 	if err != nil {
 		return false, err
 	}
-	bestCost, bestInvalid, err := getTaskPlanCost(bestTask, op)
+	bestCost, bestInvalid, err := utilfuncp.GetTaskPlanCost(bestTask, op)
 	if err != nil {
 		return false, err
 	}
