@@ -18,7 +18,6 @@ import (
 	"context"
 	"strconv"
 	"sync"
-	"sync/atomic"
 
 	"github.com/google/uuid"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
@@ -61,7 +60,6 @@ type engineInfo struct {
 	writerCache  generic.SyncMap[int, backend.EngineWriter]
 	memRoot      MemRoot
 	flushLock    *sync.RWMutex
-	flushing     atomic.Bool
 }
 
 // newEngineInfo create a new engineInfo struct.

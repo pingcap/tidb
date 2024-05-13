@@ -17,6 +17,7 @@ package ingest
 import (
 	"context"
 	"fmt"
+	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -50,7 +51,7 @@ type BackendCtx interface {
 
 	CollectRemoteDuplicateRows(indexID int64, tbl table.Table) error
 	FinishImport(indexID int64, unique bool, tbl table.Table) error
-	Flush(indexID int64, mode FlushMode) (flushed, imported bool, err error)
+	FlushController
 	Done() bool
 	SetDone()
 
@@ -87,6 +88,7 @@ type litBackendCtx struct {
 	sysVars  map[string]string
 	done     bool
 
+	flushing        atomic.Bool
 	timeOfLastFlush atomicutil.Time
 	updateInterval  time.Duration
 	checkpointMgr   *CheckpointManager
@@ -176,42 +178,49 @@ func acquireLock(ctx context.Context, se *concurrency.Session, key string) (*con
 	return mu, nil
 }
 
-// Flush checks the disk quota and imports the current key-values in engine to the storage.
-func (bc *litBackendCtx) Flush(indexID int64, mode FlushMode) (flushed, imported bool, err error) {
-	ei, exist := bc.engines.Load(indexID)
-	if !exist {
-		logutil.Logger(bc.ctx).Error(LitErrGetEngineFail, zap.Int64("index ID", indexID))
-		return false, false, dbterror.ErrIngestFailed.FastGenByArgs("ingest engine not found")
-	}
-
+// Flush implements FlushController.
+func (bc *litBackendCtx) Flush(mode FlushMode) (flushed, imported bool, errIdxID int64, err error) {
 	shouldFlush, shouldImport := bc.checkFlush(mode)
 	if !shouldFlush {
-		return false, false, nil
+		return false, false, 0, nil
 	}
-	if !ei.flushing.CompareAndSwap(false, true) {
-		return false, false, nil
+	if !bc.flushing.CompareAndSwap(false, true) {
+		return false, false, 0, nil
 	}
-	defer ei.flushing.Store(false)
-	ei.flushLock.Lock()
-	defer ei.flushLock.Unlock()
+	defer bc.flushing.Store(false)
 
-	err = ei.Flush()
-	if err != nil {
-		return false, false, err
+	indexIDs := bc.engines.Keys()
+	unlockFn := make([]func(), 0, len(indexIDs))
+	defer func() {
+		for _, fn := range unlockFn {
+			fn()
+		}
+	}()
+	for _, indexID := range indexIDs {
+		ei, exist := bc.engines.Load(indexID)
+		if !exist {
+			return false, false, indexID, dbterror.ErrIngestFailed.FastGenByArgs("ingest engine not found")
+		}
+		ei.flushLock.Lock()
+		unlockFn = append(unlockFn, ei.flushLock.Unlock)
+
+		if err = ei.Flush(); err != nil {
+			return false, false, indexID, err
+		}
 	}
 	bc.timeOfLastFlush.Store(time.Now())
 
 	if !shouldImport {
-		return true, false, nil
+		return true, false, 0, nil
 	}
 
 	// Use distributed lock if run in distributed mode).
 	if bc.etcdClient != nil {
-		distLockKey := fmt.Sprintf("/tidb/distributeLock/%d/%d", bc.jobID, indexID)
+		distLockKey := fmt.Sprintf("/tidb/distributeLock/%d", bc.jobID)
 		se, _ := concurrency.NewSession(bc.etcdClient)
 		mu, err := acquireLock(bc.ctx, se, distLockKey)
 		if err != nil {
-			return true, false, errors.Trace(err)
+			return true, false, 0, errors.Trace(err)
 		}
 		logutil.Logger(bc.ctx).Info("acquire distributed flush lock success", zap.Int64("jobID", bc.jobID))
 		defer func() {
@@ -227,11 +236,18 @@ func (bc *litBackendCtx) Flush(indexID int64, mode FlushMode) (flushed, imported
 			}
 		}()
 	}
-	err = bc.unsafeImportAndReset(ei)
-	if err != nil {
-		return true, false, err
+
+	for _, indexID := range indexIDs {
+		ei, exist := bc.engines.Load(indexID)
+		if !exist {
+			return false, false, indexID, dbterror.ErrIngestFailed.FastGenByArgs("ingest engine not found")
+		}
+		if err = bc.unsafeImportAndReset(ei); err != nil {
+			return true, false, indexID, err
+		}
 	}
-	return true, true, nil
+
+	return true, true, 0, nil
 }
 
 func (bc *litBackendCtx) unsafeImportAndReset(ei *engineInfo) error {

@@ -132,8 +132,8 @@ func (*MockBackendCtx) FinishImport(indexID int64, _ bool, _ table.Table) error 
 }
 
 // Flush implements BackendCtx.Flush interface.
-func (*MockBackendCtx) Flush(_ int64, _ FlushMode) (flushed bool, imported bool, err error) {
-	return false, false, nil
+func (*MockBackendCtx) Flush(_ FlushMode) (flushed bool, imported bool, errIdxID int64, err error) {
+	return false, false, 0, nil
 }
 
 // Done implements BackendCtx.Done interface.
