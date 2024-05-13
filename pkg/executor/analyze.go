@@ -169,7 +169,10 @@ TASKLOOP:
 			}
 		} else {
 			for globalStatsID := range globalStatsMap {
-				statsHandle.SaveMetaToStorage(globalStatsID.tableID, 0, 0, handleutil.StatsMetaHistorySourceAnalyze)
+				err = statsHandle.SaveMetaToStorage(globalStatsID.tableID, 0, 0, handleutil.StatsMetaHistorySourceAnalyze)
+				if err != nil {
+					return err
+				}
 			}
 		}
 	}
