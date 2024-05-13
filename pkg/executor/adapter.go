@@ -1852,8 +1852,12 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 	sessVars.SetPrevStmtDigest(digest.String())
 
 	// No need to encode every time, so encode lazily.
-	planGenerator := func() (string, string) {
-		return getEncodedPlan(stmtCtx, !sessVars.InRestrictedSQL)
+	planGenerator := func() (p string, h string, e any) {
+		defer func() {
+			e = recover()
+		}()
+		p, h = getEncodedPlan(stmtCtx, !sessVars.InRestrictedSQL)
+		return
 	}
 	var binPlanGen func() string
 	if variable.GenerateBinaryPlan.Load() {
