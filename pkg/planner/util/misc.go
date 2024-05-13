@@ -15,6 +15,7 @@
 package util
 
 import (
+	"encoding/binary"
 	"fmt"
 	"time"
 	"unsafe"
@@ -87,4 +88,11 @@ func (tr *QueryTimeRange) MemoryUsage() (sum int64) {
 		return
 	}
 	return emptyQueryTimeRangeSize
+}
+
+// EncodeIntAsUint32 is used for LogicalPlan Interface
+func EncodeIntAsUint32(result []byte, value int) []byte {
+	var buf [4]byte
+	binary.BigEndian.PutUint32(buf[:], uint32(value))
+	return append(result, buf[:]...)
 }

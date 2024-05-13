@@ -2036,7 +2036,14 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		sc.RuntimeStatsColl = execdetails.NewRuntimeStatsColl(reuseObj)
 
 		// also enable index usage collector
-		sc.IndexUsageCollector = ctx.NewStmtIndexUsageCollector()
+		if sc.IndexUsageCollector == nil {
+			sc.IndexUsageCollector = ctx.NewStmtIndexUsageCollector()
+		} else {
+			sc.IndexUsageCollector.Reset()
+		}
+	} else {
+		// turn off the index usage collector
+		sc.IndexUsageCollector = nil
 	}
 
 	sc.SetForcePlanCache(fixcontrol.GetBoolWithDefault(vars.OptimizerFixControl, fixcontrol.Fix49736, false))

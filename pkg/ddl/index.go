@@ -2474,6 +2474,12 @@ func (w *cleanUpIndexWorker) BackfillData(handleRange reorgBackfillTask) (taskCt
 		return nil
 	})
 	logSlowOperations(time.Since(oprStartTime), "cleanUpIndexBackfillDataInTxn", 3000)
+	failpoint.Inject("mockDMLExecution", func(val failpoint.Value) {
+		//nolint:forcetypeassert
+		if val.(bool) && MockDMLExecution != nil {
+			MockDMLExecution()
+		}
+	})
 
 	return
 }

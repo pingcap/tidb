@@ -18,6 +18,7 @@ import (
 	"context"
 
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 )
 
@@ -38,6 +39,8 @@ type PlanCtx struct {
 	GlobalSort           bool
 	NextTaskStep         proto.Step
 	ExecuteNodesCnt      int
+
+	Store kv.StorageWithPD
 }
 
 // LogicalPlan represents a logical plan in distribute framework.

@@ -1457,7 +1457,7 @@ func (b *PlanBuilder) buildAdmin(ctx context.Context, as *ast.AdminStmt) (base.P
 
 func (b *PlanBuilder) buildPhysicalIndexLookUpReader(_ context.Context, dbName model.CIStr, tbl table.Table, idx *model.IndexInfo) (base.Plan, error) {
 	tblInfo := tbl.Meta()
-	physicalID, isPartition := getPhysicalID(tbl)
+	physicalID, isPartition := getPhysicalID(tbl, idx.Global)
 	fullExprCols, _, err := expression.TableInfo2SchemaAndNames(b.ctx.GetExprCtx(), dbName, tblInfo)
 	if err != nil {
 		return nil, err
@@ -1531,6 +1531,9 @@ func (b *PlanBuilder) buildPhysicalIndexLookUpReader(_ context.Context, dbName m
 			}
 		}
 	}
+	if is.Index.Global {
+		ts.Columns, ts.schema, _ = AddExtraPhysTblIDColumn(b.ctx, ts.Columns, ts.schema)
+	}
 
 	cop := &CopTask{
 		indexPlan:        is,
@@ -1567,9 +1570,9 @@ func getIndexColsSchema(tblInfo *model.TableInfo, idx *model.IndexInfo, allColSc
 	return schema
 }
 
-func getPhysicalID(t table.Table) (physicalID int64, isPartition bool) {
+func getPhysicalID(t table.Table, isGlobalIndex bool) (physicalID int64, isPartition bool) {
 	tblInfo := t.Meta()
-	if tblInfo.GetPartitionInfo() != nil {
+	if !isGlobalIndex && tblInfo.GetPartitionInfo() != nil {
 		pid := t.(table.PhysicalTable).GetPhysicalID()
 		return pid, true
 	}
@@ -1657,8 +1660,8 @@ func (b *PlanBuilder) buildPhysicalIndexLookUpReaders(ctx context.Context, dbNam
 			}
 		}
 		indexInfos = append(indexInfos, idxInfo)
-		// For partition tables.
-		if pi := tbl.Meta().GetPartitionInfo(); pi != nil {
+		// For partition tables except global index.
+		if pi := tbl.Meta().GetPartitionInfo(); pi != nil && !idxInfo.Global {
 			for _, def := range pi.Definitions {
 				t := tbl.(table.PartitionedTable).GetPartition(def.ID)
 				reader, err := b.buildPhysicalIndexLookUpReader(ctx, dbName, t, idxInfo)

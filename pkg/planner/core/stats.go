@@ -217,11 +217,6 @@ func (ds *DataSource) getGroupNDVs(colGroups [][]*expression.Column) []property.
 	return ndvs
 }
 
-func init() {
-	// To handle cycle import, we have to define this function here.
-	cardinality.GetTblInfoForUsedStatsByPhysicalID = getTblInfoForUsedStatsByPhysicalID
-}
-
 // getTblInfoForUsedStatsByPhysicalID get table name, partition name and HintedTable that will be used to record used stats.
 func getTblInfoForUsedStatsByPhysicalID(sctx base.PlanContext, id int64) (fullName string, tblInfo *model.TableInfo) {
 	fullName = "tableID " + strconv.FormatInt(id, 10)
@@ -1084,7 +1079,16 @@ func loadTableStats(ctx sessionctx.Context, tblInfo *model.TableInfo, pid int64)
 
 	pctx := ctx.GetPlanCtx()
 	tableStats := getStatsTable(pctx, tblInfo, pid)
-	name, _ := getTblInfoForUsedStatsByPhysicalID(pctx, pid)
+
+	name := tblInfo.Name.O
+	partInfo := tblInfo.GetPartitionInfo()
+	if partInfo != nil {
+		for _, p := range partInfo.Definitions {
+			if p.ID == pid {
+				name += " " + p.Name.O
+			}
+		}
+	}
 	usedStats := &stmtctx.UsedStatsInfoForTable{
 		Name:          name,
 		TblInfo:       tblInfo,

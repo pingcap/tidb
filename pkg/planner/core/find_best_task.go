@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
+	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/types"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
@@ -103,7 +104,7 @@ func (p *LogicalTableDual) FindBestTask(prop *property.PhysicalProperty, planCou
 	}.Init(p.SCtx(), p.StatsInfo(), p.QueryBlockOffset())
 	dual.SetSchema(p.schema)
 	planCounter.Dec(1)
-	appendCandidate4PhysicalOptimizeOp(opt, p, dual, prop)
+	utilfuncp.AppendCandidate4PhysicalOptimizeOp(opt, p, dual, prop)
 	rt := &RootTask{}
 	rt.SetPlan(dual)
 	rt.SetEmpty(p.RowCount == 0)
@@ -239,7 +240,7 @@ func (p *baseLogicalPlan) enumeratePhysicalPlans4Task(
 			bestTask = curTask
 			break
 		}
-		appendCandidate4PhysicalOptimizeOp(opt, p, curTask.Plan(), prop)
+		utilfuncp.AppendCandidate4PhysicalOptimizeOp(opt, p, curTask.Plan(), prop)
 		// Get the most efficient one.
 		if curIsBetter, err := compareTaskCost(curTask, bestTask, opt); err != nil {
 			return nil, 0, err
@@ -343,11 +344,11 @@ func (p *LogicalSequence) iterateChildPlan(
 
 // compareTaskCost compares cost of curTask and bestTask and returns whether curTask's cost is smaller than bestTask's.
 func compareTaskCost(curTask, bestTask base.Task, op *optimizetrace.PhysicalOptimizeOp) (curIsBetter bool, err error) {
-	curCost, curInvalid, err := getTaskPlanCost(curTask, op)
+	curCost, curInvalid, err := utilfuncp.GetTaskPlanCost(curTask, op)
 	if err != nil {
 		return false, err
 	}
-	bestCost, bestInvalid, err := getTaskPlanCost(bestTask, op)
+	bestCost, bestInvalid, err := utilfuncp.GetTaskPlanCost(bestTask, op)
 	if err != nil {
 		return false, err
 	}
@@ -579,7 +580,7 @@ func (p *baseLogicalPlan) FindBestTask(prop *property.PhysicalProperty, planCoun
 		bestTask = curTask
 		goto END
 	}
-	appendCandidate4PhysicalOptimizeOp(opt, p, curTask.Plan(), prop)
+	utilfuncp.AppendCandidate4PhysicalOptimizeOp(opt, p, curTask.Plan(), prop)
 	if curIsBetter, err := compareTaskCost(curTask, bestTask, opt); err != nil {
 		return nil, 0, err
 	} else if curIsBetter {
@@ -639,7 +640,7 @@ func (p *LogicalMemTable) FindBestTask(prop *property.PhysicalProperty, planCoun
 	}.Init(p.SCtx(), p.StatsInfo(), p.QueryBlockOffset())
 	memTable.SetSchema(p.schema)
 	planCounter.Dec(1)
-	appendCandidate4PhysicalOptimizeOp(opt, p, memTable, prop)
+	utilfuncp.AppendCandidate4PhysicalOptimizeOp(opt, p, memTable, prop)
 	rt := &RootTask{}
 	rt.SetPlan(memTable)
 	return rt, 1, nil
@@ -2926,7 +2927,7 @@ func appendCandidate(lp base.LogicalPlan, task base.Task, prop *property.Physica
 	if task == nil || task.Invalid() {
 		return
 	}
-	appendCandidate4PhysicalOptimizeOp(opt, lp, task.Plan(), prop)
+	utilfuncp.AppendCandidate4PhysicalOptimizeOp(opt, lp, task.Plan(), prop)
 }
 
 // PushDownNot here can convert condition 'not (a != 1)' to 'a = 1'. When we build range from conds, the condition like

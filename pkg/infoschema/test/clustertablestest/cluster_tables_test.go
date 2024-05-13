@@ -40,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/auth"
+	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/privilege/privileges"
 	"github.com/pingcap/tidb/pkg/server"
@@ -1693,4 +1694,92 @@ func TestUnusedIndexView(t *testing.T) {
 		expectedResult := testkit.Rows("test t id2")
 		return result.Equal(expectedResult)
 	}, 5*time.Second, 100*time.Millisecond)
+}
+
+func TestMDLViewIDConflict(t *testing.T) {
+	save := privileges.SkipWithGrant
+	privileges.SkipWithGrant = true
+	defer func() {
+		privileges.SkipWithGrant = save
+	}()
+
+	s := new(clusterTablesSuite)
+	s.store, s.dom = testkit.CreateMockStoreAndDomain(t)
+	s.httpServer, s.mockAddr = s.setUpMockPDHTTPServer()
+	s.startTime = time.Now()
+	defer s.httpServer.Close()
+	tk := s.newTestKitWithRoot(t)
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int);")
+	tbl, err := s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	tk.MustExec("insert into t values (1)")
+
+	bigID := tbl.Meta().ID * 10
+	bigTableName := ""
+	// set a hard limitation on 10000 to avoid using too much resource
+	for i := 0; i < 10000; i++ {
+		bigTableName = fmt.Sprintf("t%d", i)
+		tk.MustExec(fmt.Sprintf("create table %s(a int);", bigTableName))
+
+		tbl, err := s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr(bigTableName))
+		require.NoError(t, err)
+
+		require.LessOrEqual(t, tbl.Meta().ID, bigID)
+		if tbl.Meta().ID == bigID {
+			break
+		}
+	}
+	tk.MustExec("insert into t1 values (1)")
+	tk.MustExec(fmt.Sprintf("insert into %s values (1)", bigTableName))
+
+	// Now we have two table: t and `bigTableName`. The later one's ID is 10 times the former one.
+	// Then create two session to run TXNs on these two tables
+	txnTK1 := s.newTestKitWithRoot(t)
+	txnTK2 := s.newTestKitWithRoot(t)
+	txnTK1.MustExec("use test")
+	txnTK1.MustExec("BEGIN")
+	// this transaction will query `t` and one another table. Then the `related_table_ids` is `smallID|anotherID`
+	txnTK1.MustQuery("SELECT * FROM t").Check(testkit.Rows("1"))
+	txnTK1.MustQuery("SELECT * FROM t1").Check(testkit.Rows("1"))
+	txnTK2.MustExec("use test")
+	txnTK2.MustExec("BEGIN")
+	txnTK2.MustQuery("SELECT * FROM " + bigTableName).Check(testkit.Rows("1"))
+
+	testTK := s.newTestKitWithRoot(t)
+	s.rpcserver, s.listenAddr = s.setUpRPCService(t, "127.0.0.1:0", testTK.Session().GetSessionManager())
+	defer s.rpcserver.Stop()
+	testTK.MustQuery("select table_name from mysql.tidb_mdl_view").Check(testkit.Rows())
+
+	// run a DDL on the table with smallID
+	ddlTK1 := s.newTestKitWithRoot(t)
+	ddlTK1.MustExec("use test")
+	wg := &sync.WaitGroup{}
+	wg.Add(1)
+	go func() {
+		ddlTK1.MustExec("ALTER TABLE t ADD COLUMN b INT;")
+		wg.Done()
+	}()
+	ddlTK2 := s.newTestKitWithRoot(t)
+	ddlTK2.MustExec("use test")
+	wg.Add(1)
+	go func() {
+		ddlTK2.MustExec(fmt.Sprintf("ALTER TABLE %s ADD COLUMN b INT;", bigTableName))
+		wg.Done()
+	}()
+
+	require.Eventually(t, func() bool {
+		rows := testTK.MustQuery("select table_ids from mysql.tidb_mdl_info").Rows()
+		return len(rows) == 2
+	}, time.Second*10, time.Second)
+
+	// it only contains the table with smallID
+	require.Eventually(t, func() bool {
+		rows := testTK.MustQuery("select table_name, query, start_time from mysql.tidb_mdl_view order by table_name").Rows()
+		return len(rows) == 2
+	}, time.Second*10, time.Second)
+	txnTK1.MustExec("COMMIT")
+	txnTK2.MustExec("COMMIT")
+	wg.Wait()
 }
