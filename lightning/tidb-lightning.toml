@@ -99,9 +99,9 @@ driver = "file"
 #              You can manually insert the correct records into the target table based on your application requirements. Note that the target TiKV must be v5.2.0 or later versions.
 # - "ignore": when encountering conflicting primary or unique key records, TiDB Lightning retains the old data and ignores the new data. This option can only be used in the logical import mode.
 strategy = ""
-# Controls whether to enable preprocess conflict detection, which checks conflicts in data before importing it to TiDB. The default value is false, indicating that TiDB Lightning only checks conflicts after the import. If you set it to true, TiDB Lightning checks conflicts both before and after the import. This parameter can be used only in the physical import mode. It is not recommended to set `precheck-conflict-before-import = true` for now.
+# Controls whether to enable preprocess conflict detection, which checks conflicts in data before importing it to TiDB. The default value is false, indicating that TiDB Lightning only checks conflicts after the import. If you set it to true, TiDB Lightning checks conflicts both before and after the import. This parameter can be used only in the physical import mode. In scenarios where the number of conflict records is greater than 1,000,000, it is recommended to set `precheck-conflict-before-import = true` for better performance in conflict detection. In other scenarios, it is recommended to disable it.
 # precheck-conflict-before-import = false
-# Controls the maximum number of conflict errors that can be handled when strategy is "replace" or "ignore". You can set it only when strategy is "replace" or "ignore". The default value is 10000. If you set the value larger than 10000, it is possible that the import will have performance degradation or fail due to potential errors.
+# Controls the maximum number of conflict errors that can be handled when strategy is "replace" or "ignore". You can set it only when the strategy is "replace" or "ignore". The default value is 10000. If you set a value larger than 10000, the import process might experience performance degradation.
 # threshold = 10000
 # Controls the maximum number of records in the `conflict_records` table. The default value is 10000.
 # Starting from v8.1.0, there is no need to configure `max-record-rows` manually, because TiDB Lightning automatically assigns the value of `max-record-rows` with the value of `threshold`, regardless of the user input. `max-record-rows` will be deprecated in a future release.
@@ -114,6 +114,19 @@ strategy = ""
 backend = "importer"
 # Address of tikv-importer when the backend is 'importer'
 addr = "127.0.0.1:8287"
+
+# The `duplicate-resolution` parameter is deprecated starting from v8.0.0 and will be removed in a future release. For more information, see <https://docs.pingcap.com/tidb/dev/tidb-lightning-physical-import-mode-usage#the-old-version-of-conflict-detection-deprecated-in-v800>.
+# Whether to detect and resolve duplicate records (unique key conflict) in the physical import mode.
+# The following resolution algorithms are supported:
+#  - none: does not detect duplicate records, which has the best performance of the two algorithms.
+#          But if there are duplicate records in the data source, it might lead to inconsistent data in the target TiDB.
+#  - remove: if there are primary key or unique key conflicts between the inserting data A and B,
+#            A and B will be removed from the target table and recorded
+#            in the `lightning_task_info.conflict_error_v1` table in the target TiDB.
+#            You can manually insert the correct records into the target table based on your business requirements.
+#            Note that the target TiKV must be v5.2.0 or later versions; otherwise it falls back to 'none'.
+# The default value is 'none'.
+# duplicate-resolution = 'none'
 # Maximum KV size of SST files produced in the 'local' backend. This should be the same as
 # the TiKV region size to avoid further region splitting. The default value is 96 MiB.
 #region-split-size = '96MiB'
