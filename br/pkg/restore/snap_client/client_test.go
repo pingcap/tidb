@@ -134,9 +134,9 @@ func TestNeedCheckTargetClusterFresh(t *testing.T) {
 	// skip check when has set --filter and has checkpoint
 	require.False(t, client.NeedCheckFreshCluster(true, true))
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/br/pkg/restore/mock-incr-backup-data", "return(false)"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/br/pkg/restore/snap_client/mock-incr-backup-data", "return(false)"))
 	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/restore/mock-incr-backup-data"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/restore/snap_client/mock-incr-backup-data"))
 	}()
 	// skip check when increment backup
 	require.False(t, client.NeedCheckFreshCluster(false, true))
@@ -214,9 +214,9 @@ func TestInitFullClusterRestore(t *testing.T) {
 	client.InitFullClusterRestore(true)
 	require.False(t, client.IsFullClusterRestore())
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/br/pkg/restore/mock-incr-backup-data", "return(true)"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/br/pkg/restore/snap_client/mock-incr-backup-data", "return(true)"))
 	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/restore/mock-incr-backup-data"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/restore/snap_client/mock-incr-backup-data"))
 	}()
 	client.InitFullClusterRestore(false)
 	require.False(t, client.IsFullClusterRestore())

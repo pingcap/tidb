@@ -31,8 +31,6 @@ import (
 	"github.com/tikv/client-go/v2/oracle"
 )
 
-var mc *mock.Cluster
-
 func TestPreCheckTableTiFlashReplicas(t *testing.T) {
 	mockStores := []*metapb.Store{
 		{
@@ -96,7 +94,15 @@ func TestPreCheckTableTiFlashReplicas(t *testing.T) {
 
 func TestPreCheckTableClusterIndex(t *testing.T) {
 	ctx := context.Background()
-	m := mc
+	m, err := mock.NewCluster()
+	if err != nil {
+		panic(err)
+	}
+	err = m.Start()
+	if err != nil {
+		panic(err)
+	}
+	defer m.Stop()
 	g := gluetidb.New()
 	se, err := g.CreateSession(m.Storage)
 	require.NoError(t, err)
