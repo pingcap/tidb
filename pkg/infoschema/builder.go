@@ -941,6 +941,7 @@ func (b *Builder) addDB(schemaVersion int64, di *model.DBInfo, schTbls *schemaTa
 		if isSpecialDB(di.Name.L) {
 			b.infoData.addSpecialDB(di, schTbls)
 		} else {
+			di.Tables = nil
 			b.infoData.addDB(schemaVersion, di)
 		}
 	} else {
