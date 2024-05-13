@@ -123,7 +123,7 @@ func init() {
 // NewMockDomain is only used for test
 func NewMockDomain() *Domain {
 	do := &Domain{}
-	do.infoCache = infoschema.NewCache(do, 1)
+	do.infoCache = infoschema.NewCache(do, 1, nil)
 	do.infoCache.Insert(infoschema.MockInfoSchema(nil), 0)
 	return do
 }
@@ -797,7 +797,8 @@ func (do *Domain) refreshMDLCheckTableInfo() {
 	defer do.sysSessionPool.Put(se)
 	exec := sctx.GetRestrictedSQLExecutor()
 	domainSchemaVer := do.InfoSchema().SchemaMetaVersion()
-	rows, _, err := exec.ExecRestrictedSQL(kv.WithInternalSourceType(context.Background(), kv.InternalTxnMeta), nil, fmt.Sprintf("select job_id, version, table_ids from mysql.tidb_mdl_info where version <= %d", domainSchemaVer))
+	rows, _, err := exec.ExecRestrictedSQL(kv.WithInternalSourceType(context.Background(), kv.InternalTxnMeta), nil,
+		fmt.Sprintf("select job_id, version, table_ids from mysql.tidb_mdl_info where version <= %d", domainSchemaVer))
 	if err != nil {
 		logutil.BgLogger().Warn("get mdl info from tidb_mdl_info failed", zap.Error(err))
 		return
@@ -1093,7 +1094,7 @@ func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duratio
 		mdlCheckCh: make(chan struct{}),
 	}
 
-	do.infoCache = infoschema.NewCache(do, int(variable.SchemaVersionCacheLimit.Load()))
+	do.infoCache = infoschema.NewCache(do, int(variable.SchemaVersionCacheLimit.Load()), store)
 	do.stopAutoAnalyze.Store(false)
 	do.wg = util.NewWaitGroupEnhancedWrapper("domain", do.exit, config.GetGlobalConfig().TiDBEnableExitCheck)
 	do.SchemaValidator = NewSchemaValidator(ddlLease, do)

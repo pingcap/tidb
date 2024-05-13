@@ -15,6 +15,7 @@
 package infoschema
 
 import (
+	"cmp"
 	"encoding/json"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
@@ -247,11 +248,19 @@ func (is *infoschemaV3) TableInfoByID(id int64) (*model.TableInfo, bool) {
 	return tbl2, ok1
 }
 
-func (is *infoschemaV3) SchemaTables(schema model.CIStr) (tables []table.Table) {
+func (is *infoschemaV3) SchemaTablesWithTs(schema model.CIStr, ts uint64) (tables []table.Table) {
 	tbl1 := is.infoV1.SchemaTables(schema)
-	tbl2 := is.infoV2.SchemaTables(schema)
+	tbl2 := is.infoV2.SchemaTablesWithTs(schema, ts)
 	if len(tbl1) != len(tbl2) {
-		panic("inconsistent infoschema")
+		ids := make(map[int64]struct{})
+		for _, t := range tbl2 {
+			ids[t.Meta().ID] = struct{}{}
+		}
+		for _, t := range tbl1 {
+			if _, ok := ids[t.Meta().ID]; !ok {
+				panic(t.Meta().Name.L + " not found in tbl2")
+			}
+		}
 	}
 	slices.SortFunc(tbl1, func(i, j table.Table) int {
 		return strings.Compare(i.Meta().Name.O, j.Meta().Name.O)
@@ -261,7 +270,35 @@ func (is *infoschemaV3) SchemaTables(schema model.CIStr) (tables []table.Table) 
 	})
 	for i := range tbl1 {
 		if !tblEqual(tbl1[i], tbl2[i]) {
-			panic("inconsistent infoschema")
+			panic("inconsistent infoschema" + tbl1[i].Meta().Name.L + " " + tbl2[i].Meta().Name.L)
+		}
+	}
+	return tbl2
+}
+
+func (is *infoschemaV3) SchemaTables(schema model.CIStr) (tables []table.Table) {
+	tbl1 := is.infoV1.SchemaTables(schema)
+	tbl2 := is.infoV2.SchemaTables(schema)
+	if len(tbl1) != len(tbl2) {
+		ids := make(map[int64]struct{})
+		for _, t := range tbl2 {
+			ids[t.Meta().ID] = struct{}{}
+		}
+		for _, t := range tbl1 {
+			if _, ok := ids[t.Meta().ID]; !ok {
+				panic(t.Meta().Name.L + " not found in tbl2")
+			}
+		}
+	}
+	slices.SortFunc(tbl1, func(i, j table.Table) int {
+		return strings.Compare(i.Meta().Name.O, j.Meta().Name.O)
+	})
+	slices.SortFunc(tbl2, func(i, j table.Table) int {
+		return strings.Compare(i.Meta().Name.O, j.Meta().Name.O)
+	})
+	for i := range tbl1 {
+		if !tblEqual(tbl1[i], tbl2[i]) {
+			panic("inconsistent infoschema" + tbl1[i].Meta().Name.L + " " + tbl2[i].Meta().Name.L)
 		}
 	}
 	return tbl2
@@ -462,6 +499,12 @@ func (is *infoschemaV3) AllPlacementBundles() []*placement.Bundle {
 	if len(b1) != len(b2) {
 		panic("inconsistent infoschema")
 	}
+	slices.SortFunc(b1, func(a, b *placement.Bundle) int {
+		return cmp.Compare(a.ID, b.ID)
+	})
+	slices.SortFunc(b2, func(a, b *placement.Bundle) int {
+		return cmp.Compare(a.ID, b.ID)
+	})
 	for i := range b1 {
 		if !bundleEqual(b1[i], b2[i]) {
 			panic("inconsistent infoschema")
@@ -476,6 +519,12 @@ func (is *infoschemaV3) AllPlacementPolicies() []*model.PolicyInfo {
 	if len(p1) != len(p2) {
 		panic("inconsistent infoschema")
 	}
+	slices.SortFunc(p1, func(a, b *model.PolicyInfo) int {
+		return cmp.Compare(a.ID, b.ID)
+	})
+	slices.SortFunc(p2, func(a, b *model.PolicyInfo) int {
+		return cmp.Compare(a.ID, b.ID)
+	})
 	for i := range p1 {
 		if !policyEqual(p1[i], p2[i]) {
 			panic("inconsistent infoschema")
@@ -490,6 +539,12 @@ func (is *infoschemaV3) AllResourceGroups() []*model.ResourceGroupInfo {
 	if len(r1) != len(r2) {
 		panic("inconsistent infoschema")
 	}
+	slices.SortFunc(r1, func(a, b *model.ResourceGroupInfo) int {
+		return cmp.Compare(a.ID, b.ID)
+	})
+	slices.SortFunc(r2, func(a, b *model.ResourceGroupInfo) int {
+		return cmp.Compare(a.ID, b.ID)
+	})
 	for i := range r1 {
 		if !resourceGroupEqual(r1[i], r2[i]) {
 			panic("inconsistent infoschema")

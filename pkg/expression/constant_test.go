@@ -21,6 +21,7 @@ import (
 	"testing"
 	"time"
 
+	exprctx "github.com/pingcap/tidb/pkg/expression/context"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
@@ -194,8 +195,9 @@ func TestConstantPropagation(t *testing.T) {
 
 func TestConstantFolding(t *testing.T) {
 	tests := []struct {
-		condition func(ctx BuildContext) Expression
-		result    string
+		condition       func(ctx BuildContext) Expression
+		result          string
+		nullRejectCheck bool
 	}{
 		{
 			condition: func(ctx BuildContext) Expression {
@@ -236,15 +238,20 @@ func TestConstantFolding(t *testing.T) {
 		{
 			condition: func(ctx BuildContext) Expression {
 				expr := newFunction(ctx, ast.ConcatWS, newColumn(0), NewNull())
-				ctx.SetInNullRejectCheck(true)
 				return expr
 			},
-			result: "concat_ws(cast(Column#0, var_string(20)), <nil>)",
+			nullRejectCheck: true,
+			result:          "concat_ws(cast(Column#0, var_string(20)), <nil>)",
 		},
 	}
 	for _, tt := range tests {
-		ctx := mock.NewContext()
+		ctx := mock.NewContext().GetExprCtx()
+		require.False(t, ctx.IsInNullRejectCheck())
 		expr := tt.condition(ctx)
+		if tt.nullRejectCheck {
+			ctx = exprctx.WithNullRejectCheck(ctx)
+			require.True(t, ctx.IsInNullRejectCheck())
+		}
 		newConds := FoldConstant(ctx, expr)
 		require.Equalf(t, tt.result, newConds.String(), "different for expr %s", tt.condition)
 	}

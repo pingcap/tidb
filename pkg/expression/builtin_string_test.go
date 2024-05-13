@@ -27,11 +27,11 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit/testutil"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 )
@@ -2009,7 +2009,7 @@ func TestFormat(t *testing.T) {
 			for i := 0; i < tt.warnings; i++ {
 				require.Truef(t, terror.ErrorEqual(types.ErrTruncatedWrongVal, warnings[i].Err), "test %v", tt)
 			}
-			ctx.GetSessionVars().StmtCtx.SetWarnings([]stmtctx.SQLWarn{})
+			ctx.GetSessionVars().StmtCtx.SetWarnings([]contextutil.SQLWarn{})
 		}
 	}
 	ctx.GetSessionVars().StmtCtx.SetTypeFlags(origTypeFlags)
@@ -2039,7 +2039,7 @@ func TestFormat(t *testing.T) {
 	for i := 0; i < 3; i++ {
 		require.True(t, terror.ErrorEqual(errUnknownLocale, warnings[i].Err))
 	}
-	ctx.GetSessionVars().StmtCtx.SetWarnings([]stmtctx.SQLWarn{})
+	ctx.GetSessionVars().StmtCtx.SetWarnings([]contextutil.SQLWarn{})
 }
 
 func TestFromBase64(t *testing.T) {
@@ -2136,7 +2136,7 @@ func TestFromBase64Sig(t *testing.T) {
 			require.Equal(t, 1, len(warnings))
 			lastWarn := warnings[len(warnings)-1]
 			require.True(t, terror.ErrorEqual(errWarnAllowedPacketOverflowed, lastWarn.Err))
-			ctx.GetSessionVars().StmtCtx.SetWarnings([]stmtctx.SQLWarn{})
+			ctx.GetSessionVars().StmtCtx.SetWarnings([]contextutil.SQLWarn{})
 		}
 		require.Equal(t, test.expect, res)
 	}
@@ -2504,7 +2504,7 @@ func TestToBase64Sig(t *testing.T) {
 			require.Equal(t, 1, len(warnings))
 			lastWarn := warnings[len(warnings)-1]
 			require.True(t, terror.ErrorEqual(errWarnAllowedPacketOverflowed, lastWarn.Err))
-			ctx.GetSessionVars().StmtCtx.SetWarnings([]stmtctx.SQLWarn{})
+			ctx.GetSessionVars().StmtCtx.SetWarnings([]contextutil.SQLWarn{})
 		} else {
 			require.False(t, isNull)
 		}

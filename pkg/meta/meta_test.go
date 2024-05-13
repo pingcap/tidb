@@ -360,7 +360,7 @@ func TestMeta(t *testing.T) {
 		ID:   3,
 		Name: model.NewCIStr("tbl3"),
 	}
-	err = m.CreateTableAndSetAutoID(1, dbInfo.Name.L, tbInfo3, 123, 0)
+	err = m.CreateTableAndSetAutoID(1, dbInfo.Name.L, tbInfo3, meta.AutoIDGroup{RowID: 123, IncrementID: 0})
 	require.NoError(t, err)
 	id, err := m.GetAutoIDAccessors(1, tbInfo3.ID).RowID().Get()
 	require.NoError(t, err)

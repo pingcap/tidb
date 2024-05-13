@@ -19,7 +19,10 @@ import (
 	"sync"
 
 	infoschema_metrics "github.com/pingcap/tidb/pkg/infoschema/metrics"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
+	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
@@ -32,8 +35,9 @@ type InfoCache struct {
 	// cache is sorted by both SchemaVersion and timestamp in descending order, assume they have same order
 	cache []schemaAndTimestamp
 
-	r    autoid.Requirement
-	Data *Data
+	r     autoid.Requirement
+	Data  *Data
+	store kv.Storage
 }
 
 type schemaAndTimestamp struct {
@@ -42,12 +46,13 @@ type schemaAndTimestamp struct {
 }
 
 // NewCache creates a new InfoCache.
-func NewCache(r autoid.Requirement, capacity int) *InfoCache {
+func NewCache(r autoid.Requirement, capacity int, store kv.Storage) *InfoCache {
 	infoData := NewData()
 	return &InfoCache{
 		cache: make([]schemaAndTimestamp, 0, capacity),
 		r:     r,
 		Data:  infoData,
+		store: store,
 	}
 }
 
@@ -89,7 +94,16 @@ func (h *InfoCache) GetLatest() InfoSchema {
 	infoschema_metrics.GetLatestCounter.Inc()
 	if len(h.cache) > 0 {
 		infoschema_metrics.HitLatestCounter.Inc()
-		return h.cache[0].infoschema
+		if h.store != nil {
+			ver, _ := h.store.CurrentVersion(kv.GlobalTxnScope)
+			return &WithTS{
+				InfoSchema: h.cache[0].infoschema,
+				Timestamp:  ver.Ver,
+			}
+		}
+		return &WithTS{
+			InfoSchema: h.cache[0].infoschema,
+		}
 	}
 	return nil
 }
@@ -134,7 +148,20 @@ func (h *InfoCache) getSchemaByTimestampNoLock(ts uint64) (InfoSchema, bool) {
 func (h *InfoCache) GetByVersion(version int64) InfoSchema {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
-	return h.getByVersionNoLock(version)
+	is := h.getByVersionNoLock(version)
+	if is == nil {
+		return nil
+	}
+	if h.store != nil {
+		ver, _ := h.store.CurrentVersion(kv.GlobalTxnScope)
+		return &WithTS{
+			InfoSchema: is,
+			Timestamp:  ver.Ver,
+		}
+	}
+	return &WithTS{
+		InfoSchema: is,
+	}
 }
 
 func (h *InfoCache) getByVersionNoLock(version int64) InfoSchema {
@@ -143,7 +170,10 @@ func (h *InfoCache) getByVersionNoLock(version int64) InfoSchema {
 		return h.cache[i].infoschema.SchemaMetaVersion() <= version
 	})
 
-	// `GetByVersion` is allowed to load the latest schema that is less than argument `version`.
+	// `GetByVersion` is allowed to load the latest schema that is less than argument
+	// `version` when the argument `version` <= the latest schema version.
+	// if `version` > the latest schema version, always return nil, loadInfoSchema
+	// will use this behavior to decide whether to load schema diffs or full reload.
 	// Consider cache has values [10, 9, _, _, 6, 5, 4, 3, 2, 1], version 8 and 7 is empty because of the diff is empty.
 	// If we want to get version 8, we can return version 6 because v7 and v8 do not change anything, they are totally the same,
 	// in this case the `i` will not be 0.
@@ -178,7 +208,16 @@ func (h *InfoCache) GetBySnapshotTS(snapshotTS uint64) InfoSchema {
 	infoschema_metrics.GetTSCounter.Inc()
 	if schema, ok := h.getSchemaByTimestampNoLock(snapshotTS); ok {
 		infoschema_metrics.HitTSCounter.Inc()
-		return schema
+		if h.store != nil {
+			ver, _ := h.store.CurrentVersion(kv.GlobalTxnScope)
+			return &WithTS{
+				InfoSchema: schema,
+				Timestamp:  ver.Ver,
+			}
+		}
+		return &WithTS{
+			InfoSchema: schema,
+		}
 	}
 	return nil
 }
@@ -230,4 +269,18 @@ func (h *InfoCache) Insert(is InfoSchema, schemaTS uint64) bool {
 	}
 
 	return true
+}
+
+// WithTS ...
+type WithTS struct {
+	InfoSchema
+	Timestamp uint64
+}
+
+// SchemaTables ...
+func (is *WithTS) SchemaTables(schema model.CIStr) []table.Table {
+	if v3, ok := is.InfoSchema.(*infoschemaV3); ok {
+		return v3.SchemaTablesWithTs(schema, is.Timestamp)
+	}
+	return is.InfoSchema.SchemaTables(schema)
 }

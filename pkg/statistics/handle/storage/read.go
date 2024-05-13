@@ -702,10 +702,10 @@ func loadNeededIndexHistograms(sctx sessionctx.Context, statsCache statstypes.St
 	tbl.LastAnalyzeVersion = max(tbl.LastAnalyzeVersion, idxHist.LastUpdateVersion)
 	statsCache.UpdateStatsCache([]*statistics.Table{tbl}, nil)
 	if idx.IsSyncLoadFailed {
-		logutil.BgLogger().Warn("Hist for column should already be loaded as sync but not found.",
+		logutil.BgLogger().Warn("Hist for index should already be loaded as sync but not found.",
 			zap.Int64("table_id", idx.TableID),
-			zap.Int64("column_id", idxHist.Info.ID),
-			zap.String("column_name", idxHist.Info.Name.O))
+			zap.Int64("index_id", idxHist.Info.ID),
+			zap.String("index_name", idxHist.Info.Name.O))
 	}
 	statistics.HistogramNeededItems.Delete(idx)
 	return nil
