@@ -494,7 +494,7 @@ func (d *ddl) addBatchDDLJobs(tasks []*limitJobTask) error {
 		jobTasks = append(jobTasks, job)
 		injectModifyJobArgFailPoint(job)
 		// only need it for non-local mode.
-		if !tasks[0].job.LocalMode {
+		if !job.LocalMode {
 			d.initJobDoneCh(job.ID)
 		}
 	}
