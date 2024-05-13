@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl/label"
+	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/ddl/resourcegroup"
 	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
 	rg "github.com/pingcap/tidb/pkg/domain/resourcegroup"
@@ -67,7 +68,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/domainutil"
 	"github.com/pingcap/tidb/pkg/util/hack"
-	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tidb/pkg/util/set"
@@ -343,7 +343,7 @@ func (d *ddl) waitPendingTableThreshold(sctx sessionctx.Context, schemaID int64,
 	for retry := 0; retry < configRetry; retry++ {
 		done, killed := isSessionDone(sctx)
 		if done {
-			logutil.BgLogger().Info("abort batch add TiFlash replica", zap.Int64("schemaID", schemaID), zap.Uint32("isKilled", killed))
+			logutil.DDLLogger().Info("abort batch add TiFlash replica", zap.Int64("schemaID", schemaID), zap.Uint32("isKilled", killed))
 			return true, originVersion, pendingCount, false
 		}
 		originVersion, pendingCount = d.getPendingTiFlashTableCount(sctx, originVersion, pendingCount)
@@ -352,11 +352,16 @@ func (d *ddl) waitPendingTableThreshold(sctx sessionctx.Context, schemaID int64,
 			// If there are not many unavailable tables, we don't need a force check.
 			return false, originVersion, pendingCount, false
 		}
-		logutil.BgLogger().Info("too many unavailable tables, wait", zap.Uint32("threshold", threshold), zap.Uint32("currentPendingCount", pendingCount), zap.Int64("schemaID", schemaID), zap.Int64("tableID", tableID), zap.Duration("time", configWaitTime))
+		logutil.DDLLogger().Info("too many unavailable tables, wait",
+			zap.Uint32("threshold", threshold),
+			zap.Uint32("currentPendingCount", pendingCount),
+			zap.Int64("schemaID", schemaID),
+			zap.Int64("tableID", tableID),
+			zap.Duration("time", configWaitTime))
 		delay = configWaitTime
 		time.Sleep(delay)
 	}
-	logutil.BgLogger().Info("too many unavailable tables, timeout", zap.Int64("schemaID", schemaID), zap.Int64("tableID", tableID))
+	logutil.DDLLogger().Info("too many unavailable tables, timeout", zap.Int64("schemaID", schemaID), zap.Int64("tableID", tableID))
 	// If timeout here, we will trigger a ddl job, to force sync schema. However, it doesn't mean we remove limiter,
 	// so there is a force check immediately after that.
 	return false, originVersion, pendingCount, true
@@ -393,20 +398,20 @@ func (d *ddl) ModifySchemaSetTiFlashReplica(sctx sessionctx.Context, stmt *ast.A
 	var pendingCount uint32
 	forceCheck := false
 
-	logutil.BgLogger().Info("start batch add TiFlash replicas", zap.Int("total", total), zap.Int64("schemaID", dbInfo.ID))
+	logutil.DDLLogger().Info("start batch add TiFlash replicas", zap.Int("total", total), zap.Int64("schemaID", dbInfo.ID))
 	threshold := uint32(sctx.GetSessionVars().BatchPendingTiFlashCount)
 
 	for _, tbl := range tbls {
 		tbl := tbl.Meta()
 		done, killed := isSessionDone(sctx)
 		if done {
-			logutil.BgLogger().Info("abort batch add TiFlash replica", zap.Int64("schemaID", dbInfo.ID), zap.Uint32("isKilled", killed))
+			logutil.DDLLogger().Info("abort batch add TiFlash replica", zap.Int64("schemaID", dbInfo.ID), zap.Uint32("isKilled", killed))
 			return nil
 		}
 
 		tbReplicaInfo := tbl.TiFlashReplica
 		if !shouldModifyTiFlashReplica(tbReplicaInfo, tiflashReplica) {
-			logutil.BgLogger().Info("skip repeated processing table",
+			logutil.DDLLogger().Info("skip repeated processing table",
 				zap.Int64("tableID", tbl.ID),
 				zap.Int64("schemaID", dbInfo.ID),
 				zap.String("tableName", tbl.Name.String()),
@@ -418,7 +423,7 @@ func (d *ddl) ModifySchemaSetTiFlashReplica(sctx sessionctx.Context, stmt *ast.A
 		// If table is not supported, add err to warnings.
 		err = isTableTiFlashSupported(dbName, tbl)
 		if err != nil {
-			logutil.BgLogger().Info("skip processing table", zap.Int64("tableID", tbl.ID),
+			logutil.DDLLogger().Info("skip processing table", zap.Int64("tableID", tbl.ID),
 				zap.Int64("schemaID", dbInfo.ID),
 				zap.String("tableName", tbl.Name.String()),
 				zap.String("schemaName", dbInfo.Name.String()),
@@ -435,7 +440,7 @@ func (d *ddl) ModifySchemaSetTiFlashReplica(sctx sessionctx.Context, stmt *ast.A
 			finished := false
 			finished, originVersion, pendingCount, forceCheck = d.waitPendingTableThreshold(sctx, dbInfo.ID, tbl.ID, originVersion, pendingCount, threshold)
 			if finished {
-				logutil.BgLogger().Info("abort batch add TiFlash replica", zap.Int64("schemaID", dbInfo.ID))
+				logutil.DDLLogger().Info("abort batch add TiFlash replica", zap.Int64("schemaID", dbInfo.ID))
 				return nil
 			}
 		}
@@ -455,7 +460,12 @@ func (d *ddl) ModifySchemaSetTiFlashReplica(sctx sessionctx.Context, stmt *ast.A
 		if err != nil {
 			oneFail = tbl.ID
 			fail++
-			logutil.BgLogger().Info("processing schema table error", zap.Int64("tableID", tbl.ID), zap.Int64("schemaID", dbInfo.ID), zap.String("tableName", tbl.Name.String()), zap.String("schemaName", dbInfo.Name.String()), zap.Error(err))
+			logutil.DDLLogger().Info("processing schema table error",
+				zap.Int64("tableID", tbl.ID),
+				zap.Int64("schemaID", dbInfo.ID),
+				zap.Stringer("tableName", tbl.Name),
+				zap.Stringer("schemaName", dbInfo.Name),
+				zap.Error(err))
 		} else {
 			succ++
 		}
@@ -466,7 +476,7 @@ func (d *ddl) ModifySchemaSetTiFlashReplica(sctx sessionctx.Context, stmt *ast.A
 	}
 	msg := fmt.Sprintf("In total %v tables: %v succeed, %v failed%v, %v skipped", total, succ, fail, failStmt, skip)
 	sctx.GetSessionVars().StmtCtx.SetMessage(msg)
-	logutil.BgLogger().Info("finish batch add TiFlash replica", zap.Int64("schemaID", dbInfo.ID))
+	logutil.DDLLogger().Info("finish batch add TiFlash replica", zap.Int64("schemaID", dbInfo.ID))
 	return nil
 }
 
@@ -960,7 +970,7 @@ func decodeEnumSetBinaryLiteralToUTF8(tp *types.FieldType, chs string) {
 		}
 		s, err := enc.Transform(nil, hack.Slice(elem), charset.OpDecodeReplace)
 		if err != nil {
-			logutil.BgLogger().Warn("decode enum binary literal to utf-8 failed", zap.Error(err))
+			logutil.DDLLogger().Warn("decode enum binary literal to utf-8 failed", zap.Error(err))
 		}
 		tp.SetElem(i, string(hack.String(s)))
 	}
@@ -1120,17 +1130,17 @@ func adjustBlobTypesFlen(tp *types.FieldType, colCharset string) error {
 	l := tp.GetFlen() * cs.Maxlen
 	if tp.GetType() == mysql.TypeBlob {
 		if l <= tinyBlobMaxLength {
-			logutil.BgLogger().Info(fmt.Sprintf("Automatically convert BLOB(%d) to TINYBLOB", tp.GetFlen()))
+			logutil.DDLLogger().Info(fmt.Sprintf("Automatically convert BLOB(%d) to TINYBLOB", tp.GetFlen()))
 			tp.SetFlen(tinyBlobMaxLength)
 			tp.SetType(mysql.TypeTinyBlob)
 		} else if l <= blobMaxLength {
 			tp.SetFlen(blobMaxLength)
 		} else if l <= mediumBlobMaxLength {
-			logutil.BgLogger().Info(fmt.Sprintf("Automatically convert BLOB(%d) to MEDIUMBLOB", tp.GetFlen()))
+			logutil.DDLLogger().Info(fmt.Sprintf("Automatically convert BLOB(%d) to MEDIUMBLOB", tp.GetFlen()))
 			tp.SetFlen(mediumBlobMaxLength)
 			tp.SetType(mysql.TypeMediumBlob)
 		} else if l <= longBlobMaxLength {
-			logutil.BgLogger().Info(fmt.Sprintf("Automatically convert BLOB(%d) to LONGBLOB", tp.GetFlen()))
+			logutil.DDLLogger().Info(fmt.Sprintf("Automatically convert BLOB(%d) to LONGBLOB", tp.GetFlen()))
 			tp.SetFlen(longBlobMaxLength)
 			tp.SetType(mysql.TypeLongBlob)
 		}
@@ -1614,7 +1624,7 @@ func setYearDefaultValue(c *table.Column, hasDefaultValue bool) {
 
 	if c.GetType() == mysql.TypeYear && mysql.HasNotNullFlag(c.GetFlag()) {
 		if err := c.SetDefaultValue("0000"); err != nil {
-			logutil.BgLogger().Error("set default value failed", zap.Error(err))
+			logutil.DDLLogger().Error("set default value failed", zap.Error(err))
 		}
 	}
 }
@@ -1628,11 +1638,11 @@ func setTimestampDefaultValue(c *table.Column, hasDefaultValue bool, setOnUpdate
 	if mysql.HasTimestampFlag(c.GetFlag()) && mysql.HasNotNullFlag(c.GetFlag()) {
 		if setOnUpdateNow {
 			if err := c.SetDefaultValue(types.ZeroDatetimeStr); err != nil {
-				logutil.BgLogger().Error("set default value failed", zap.Error(err))
+				logutil.DDLLogger().Error("set default value failed", zap.Error(err))
 			}
 		} else {
 			if err := c.SetDefaultValue(strings.ToUpper(ast.CurrentTimestamp)); err != nil {
-				logutil.BgLogger().Error("set default value failed", zap.Error(err))
+				logutil.DDLLogger().Error("set default value failed", zap.Error(err))
 			}
 		}
 	}
@@ -1653,7 +1663,7 @@ func setNoDefaultValueFlag(c *table.Column, hasDefaultValue bool) {
 	}
 }
 
-func checkDefaultValue(ctx sessionctx.Context, c *table.Column, hasDefaultValue bool) error {
+func checkDefaultValue(ctx sessionctx.Context, c *table.Column, hasDefaultValue bool) (err error) {
 	if !hasDefaultValue {
 		return nil
 	}
@@ -1665,7 +1675,10 @@ func checkDefaultValue(ctx sessionctx.Context, c *table.Column, hasDefaultValue 
 			}
 			return nil
 		}
-		if _, err := table.GetColDefaultValue(ctx.GetExprCtx(), c.ToInfo()); err != nil {
+		handleWithTruncateErr(ctx, func() {
+			_, err = table.GetColDefaultValue(ctx.GetExprCtx(), c.ToInfo())
+		})
+		if err != nil {
 			return types.ErrInvalidDefault.GenWithStackByArgs(c.Name)
 		}
 		return nil
@@ -3110,7 +3123,7 @@ func preSplitAndScatter(ctx sessionctx.Context, store kv.Storage, tbInfo *model.
 	)
 	val, err := ctx.GetSessionVars().GetGlobalSystemVar(context.Background(), variable.TiDBScatterRegion)
 	if err != nil {
-		logutil.BgLogger().Warn("won't scatter region", zap.String("category", "ddl"), zap.Error(err))
+		logutil.DDLLogger().Warn("won't scatter region", zap.Error(err))
 	} else {
 		scatterRegion = variable.TiDBOptOn(val)
 	}
@@ -3127,7 +3140,7 @@ func preSplitAndScatter(ctx sessionctx.Context, store kv.Storage, tbInfo *model.
 }
 
 func (d *ddl) FlashbackCluster(ctx sessionctx.Context, flashbackTS uint64) error {
-	logutil.BgLogger().Info("get flashback cluster job", zap.String("category", "ddl"), zap.String("flashbackTS", oracle.GetTimeFromTS(flashbackTS).String()))
+	logutil.DDLLogger().Info("get flashback cluster job", zap.Stringer("flashbackTS", oracle.GetTimeFromTS(flashbackTS)))
 	nowTS, err := ctx.GetStore().GetOracle().GetTimestamp(d.ctx, &oracle.Option{})
 	if err != nil {
 		return errors.Trace(err)
@@ -5503,10 +5516,23 @@ func checkModifyTypes(origin *types.FieldType, to *types.FieldType, needRewriteC
 	return errors.Trace(err)
 }
 
+// handleWithTruncateErr handles the doFunc with FlagTruncateAsWarning and FlagIgnoreTruncateErr flags, both of which are false.
+func handleWithTruncateErr(ctx sessionctx.Context, doFunc func()) {
+	sv := ctx.GetSessionVars().StmtCtx
+	oldTypeFlags := sv.TypeFlags()
+	newTypeFlags := oldTypeFlags.WithTruncateAsWarning(false).WithIgnoreTruncateErr(false)
+	sv.SetTypeFlags(newTypeFlags)
+	doFunc()
+	sv.SetTypeFlags(oldTypeFlags)
+}
+
 // SetDefaultValue sets the default value of the column.
-func SetDefaultValue(ctx sessionctx.Context, col *table.Column, option *ast.ColumnOption) (bool, error) {
-	hasDefaultValue := false
-	value, isSeqExpr, err := getDefaultValue(ctx, col, option)
+func SetDefaultValue(ctx sessionctx.Context, col *table.Column, option *ast.ColumnOption) (hasDefaultValue bool, err error) {
+	var value any
+	var isSeqExpr bool
+	handleWithTruncateErr(ctx, func() {
+		value, isSeqExpr, err = getDefaultValue(ctx, col, option)
+	})
 	if err != nil {
 		return false, errors.Trace(err)
 	}
@@ -5913,12 +5939,9 @@ func GetModifiableColumnJob(
 				return nil, dbterror.ErrUnsupportedModifyColumn.GenWithStack("cannot parse generated PartitionInfo")
 			}
 			pAst := at.Specs[0].Partition
-			sv := sctx.GetSessionVars().StmtCtx
-			oldTypeFlags := sv.TypeFlags()
-			newTypeFlags := oldTypeFlags.WithTruncateAsWarning(false).WithIgnoreTruncateErr(false)
-			sv.SetTypeFlags(newTypeFlags)
-			_, err = buildPartitionDefinitionsInfo(sctx.GetExprCtx(), pAst.Definitions, &newTblInfo, uint64(len(newTblInfo.Partition.Definitions)))
-			sv.SetTypeFlags(oldTypeFlags)
+			handleWithTruncateErr(sctx, func() {
+				_, err = buildPartitionDefinitionsInfo(sctx.GetExprCtx(), pAst.Definitions, &newTblInfo, uint64(len(newTblInfo.Partition.Definitions)))
+			})
 			if err != nil {
 				return nil, dbterror.ErrUnsupportedModifyColumn.GenWithStack("New column does not match partition definitions: %s", err.Error())
 			}
@@ -6979,7 +7002,7 @@ func (d *ddl) dropTableObject(
 
 			tempTableType := tableInfo.Meta().TempTableType
 			if config.CheckTableBeforeDrop && tempTableType == model.TempTableNone {
-				logutil.BgLogger().Warn("admin check table before drop",
+				logutil.DDLLogger().Warn("admin check table before drop",
 					zap.String("database", fullti.Schema.O),
 					zap.String("table", fullti.Name.O),
 				)
@@ -7720,13 +7743,15 @@ func newReorgMetaFromVariables(job *model.Job, sctx sessionctx.Context) (*model.
 	reorgMeta := NewDDLReorgMeta(sctx)
 	reorgMeta.IsDistReorg = variable.EnableDistTask.Load()
 	reorgMeta.IsFastReorg = variable.EnableFastReorg.Load()
+	reorgMeta.TargetScope = variable.ServiceScope.Load()
+
 	if reorgMeta.IsDistReorg && !reorgMeta.IsFastReorg {
 		return nil, dbterror.ErrUnsupportedDistTask
 	}
 	if hasSysDB(job) {
 		if reorgMeta.IsDistReorg {
-			logutil.BgLogger().Info("cannot use distributed task execution on system DB",
-				zap.String("category", "ddl"), zap.Stringer("job", job))
+			logutil.DDLLogger().Info("cannot use distributed task execution on system DB",
+				zap.Stringer("job", job))
 		}
 		reorgMeta.IsDistReorg = false
 		reorgMeta.IsFastReorg = false
@@ -8482,8 +8507,7 @@ func (d *ddl) RepairTable(ctx sessionctx.Context, createStmt *ast.CreateTableStm
 			return dbterror.ErrRepairTableFail.GenWithStackByArgs("Column " + newOne.Name.L + " type should be the same")
 		}
 		if newOne.GetFlen() != old.GetFlen() {
-			logutil.BgLogger().Warn("admin repair table : Column "+newOne.Name.L+" flen is not equal to the old one",
-				zap.String("category", "ddl"))
+			logutil.DDLLogger().Warn("admin repair table : Column " + newOne.Name.L + " flen is not equal to the old one")
 		}
 		newTableInfo.Columns[i].ID = old.ID
 	}
@@ -8932,7 +8956,7 @@ func (d *ddl) AddResourceGroup(ctx sessionctx.Context, stmt *ast.CreateResourceG
 		return err
 	}
 
-	logutil.BgLogger().Debug("create resource group", zap.String("name", groupName.O), zap.Stringer("resource group settings", groupInfo.ResourceGroupSettings))
+	logutil.DDLLogger().Debug("create resource group", zap.String("name", groupName.O), zap.Stringer("resource group settings", groupInfo.ResourceGroupSettings))
 	groupIDs, err := d.genGlobalIDs(1)
 	if err != nil {
 		return err
@@ -9046,7 +9070,7 @@ func (d *ddl) AlterResourceGroup(ctx sessionctx.Context, stmt *ast.AlterResource
 		return err
 	}
 
-	logutil.BgLogger().Debug("alter resource group", zap.String("name", groupName.L), zap.Stringer("new resource group settings", newGroupInfo.ResourceGroupSettings))
+	logutil.DDLLogger().Debug("alter resource group", zap.String("name", groupName.L), zap.Stringer("new resource group settings", newGroupInfo.ResourceGroupSettings))
 
 	job := &model.Job{
 		SchemaID:       newGroupInfo.ID,

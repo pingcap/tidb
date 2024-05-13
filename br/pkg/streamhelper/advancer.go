@@ -434,6 +434,7 @@ func (c *CheckpointAdvancer) onTaskEvent(ctx context.Context, e TaskEvent) error
 	case EventDel:
 		utils.LogBackupTaskCountDec()
 		c.task = nil
+		c.isPaused.Store(false)
 		c.taskRange = nil
 		// This would be synced by `taskMu`, perhaps we'd better rename that to `tickMu`.
 		// Do the null check because some of test cases won't equip the advancer with subscriber.
@@ -444,17 +445,17 @@ func (c *CheckpointAdvancer) onTaskEvent(ctx context.Context, e TaskEvent) error
 		if err := c.env.ClearV3GlobalCheckpointForTask(ctx, e.Name); err != nil {
 			log.Warn("failed to clear global checkpoint", logutil.ShortError(err))
 		}
-		if _, err := c.env.BlockGCUntil(ctx, 0); err != nil {
+		if err := c.env.UnblockGC(ctx); err != nil {
 			log.Warn("failed to remove service GC safepoint", logutil.ShortError(err))
 		}
 		metrics.LastCheckpoint.DeleteLabelValues(e.Name)
 	case EventPause:
 		if c.task.GetName() == e.Name {
-			c.isPaused.CompareAndSwap(false, true)
+			c.isPaused.Store(true)
 		}
 	case EventResume:
 		if c.task.GetName() == e.Name {
-			c.isPaused.CompareAndSwap(true, false)
+			c.isPaused.Store(false)
 		}
 	case EventErr:
 		return e.Err

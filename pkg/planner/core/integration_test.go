@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
@@ -2170,6 +2171,23 @@ func TestWindowRangeFramePushDownTiflash(t *testing.T) {
 		"          └─TableFullScan_9 10000.00 mpp[tiflash] table:first_range keep order:false, stats:pseudo"))
 }
 
+func TestIssue46556(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`CREATE TABLE t0(c0 BLOB);`)
+	tk.MustExec(`CREATE definer='root'@'localhost' VIEW v0(c0) AS SELECT NULL FROM t0 GROUP BY NULL;`)
+	tk.MustExec(`SELECT t0.c0 FROM t0 NATURAL JOIN v0 WHERE v0.c0 LIKE v0.c0;`) // no error
+	tk.MustQuery(`explain format='brief' SELECT t0.c0 FROM t0 NATURAL JOIN v0 WHERE v0.c0 LIKE v0.c0`).Check(
+		testkit.Rows(`HashJoin 0.00 root  inner join, equal:[eq(Column#9, Column#10)]`,
+			`├─Projection(Build) 0.00 root  <nil>->Column#9`,
+			`│ └─TableDual 0.00 root  rows:0`,
+			`└─Projection(Probe) 9990.00 root  test.t0.c0, cast(test.t0.c0, double BINARY)->Column#10`,
+			`  └─TableReader 9990.00 root  data:Selection`,
+			`    └─Selection 9990.00 cop[tikv]  not(isnull(test.t0.c0))`,
+			`      └─TableFullScan 10000.00 cop[tikv] table:t0 keep order:false, stats:pseudo`))
+}
+
 // https://github.com/pingcap/tidb/issues/41458
 func TestIssue41458(t *testing.T) {
 	store := testkit.CreateMockStore(t)
@@ -2273,4 +2291,30 @@ func TestIssue48257(t *testing.T) {
 		"TableReader 1.00 root  data:TableFullScan",
 		"└─TableFullScan 1.00 cop[tikv] table:t1 keep order:false",
 	))
+}
+
+func TestIssue52472(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE t1 ( c1 int);")
+	tk.MustExec("CREATE TABLE t2 ( c1 int unsigned);")
+	tk.MustExec("CREATE TABLE t3 ( c1 bigint unsigned);")
+	tk.MustExec("INSERT INTO t1 (c1) VALUES (8);")
+	tk.MustExec("INSERT INTO t2 (c1) VALUES (2454396638);")
+
+	// union int and unsigned int will be promoted to long long
+	rs, err := tk.Exec("SELECT c1 FROM t1 UNION ALL SELECT c1 FROM t2")
+	require.NoError(t, err)
+	require.Len(t, rs.Fields(), 1)
+	require.Equal(t, mysql.TypeLonglong, rs.Fields()[0].Column.FieldType.GetType())
+	require.NoError(t, rs.Close())
+
+	// union int (even literal) and unsigned bigint will be promoted to decimal
+	rs, err = tk.Exec("SELECT 0 UNION ALL SELECT c1 FROM t3")
+	require.NoError(t, err)
+	require.Len(t, rs.Fields(), 1)
+	require.Equal(t, mysql.TypeNewDecimal, rs.Fields()[0].Column.FieldType.GetType())
+	require.NoError(t, rs.Close())
 }

@@ -1407,7 +1407,7 @@ var tableTableTiFlashTablesCols = []columnInfo{
 	{name: "TABLE", tp: mysql.TypeVarchar, size: 64},
 	{name: "TIDB_DATABASE", tp: mysql.TypeVarchar, size: 64},
 	{name: "TIDB_TABLE", tp: mysql.TypeVarchar, size: 64},
-	{name: "TABLE_ID", tp: mysql.TypeLonglong, size: 64},
+	{name: "TABLE_ID", tp: mysql.TypeLonglong, size: 21},
 	{name: "IS_TOMBSTONE", tp: mysql.TypeLonglong, size: 64},
 	{name: "SEGMENT_COUNT", tp: mysql.TypeLonglong, size: 64},
 	{name: "TOTAL_ROWS", tp: mysql.TypeLonglong, size: 64},
@@ -1464,7 +1464,7 @@ var tableTableTiFlashSegmentsCols = []columnInfo{
 	{name: "TABLE", tp: mysql.TypeVarchar, size: 64},
 	{name: "TIDB_DATABASE", tp: mysql.TypeVarchar, size: 64},
 	{name: "TIDB_TABLE", tp: mysql.TypeVarchar, size: 64},
-	{name: "TABLE_ID", tp: mysql.TypeLonglong, size: 64},
+	{name: "TABLE_ID", tp: mysql.TypeLonglong, size: 21},
 	{name: "IS_TOMBSTONE", tp: mysql.TypeLonglong, size: 64},
 	{name: "SEGMENT_ID", tp: mysql.TypeLonglong, size: 64},
 	{name: "RANGE", tp: mysql.TypeVarchar, size: 64},
@@ -1988,13 +1988,13 @@ func getMicroServiceServerInfo(ctx sessionctx.Context, serviceName string) ([]Se
 		}
 		req.Header.Add("PD-Allow-follower-handle", "true")
 		resp, err := util.InternalHTTPClient().Do(req)
-		if resp == nil || resp.StatusCode != http.StatusOK {
-			terror.Log(resp.Body.Close())
-			return servers, nil
-		}
 		if err != nil {
 			ctx.GetSessionVars().StmtCtx.AppendWarning(err)
 			logutil.BgLogger().Warn("request microservice server info error", zap.String("service", serviceName), zap.String("url", url), zap.Error(err))
+			continue
+		}
+		if resp.StatusCode != http.StatusOK {
+			terror.Log(resp.Body.Close())
 			continue
 		}
 		var content = []struct {

@@ -2837,47 +2837,231 @@ func TestNoopFunctions(t *testing.T) {
 	}
 }
 
-func TestTiDBRowChecksumBuiltin(t *testing.T) {
+func TestCrossDCQuery(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
-	checksum := func(cols ...any) uint32 {
-		buf := make([]byte, 0, 64)
-		for _, col := range cols {
-			switch x := col.(type) {
-			case int:
-				buf = binary.LittleEndian.AppendUint64(buf, uint64(x))
-			case string:
-				buf = binary.LittleEndian.AppendUint32(buf, uint32(len(x)))
-				buf = append(buf, []byte(x)...)
-			}
-		}
-		return crc32.ChecksumIEEE(buf)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("drop placement policy if exists p1")
+	tk.MustExec("drop placement policy if exists p2")
+	tk.MustExec("create placement policy p1 leader_constraints='[+zone=sh]'")
+	tk.MustExec("create placement policy p2 leader_constraints='[+zone=bj]'")
+	tk.MustExec(`create table t1 (c int primary key, d int,e int,index idx_d(d),index idx_e(e))
+PARTITION BY RANGE (c) (
+	PARTITION p0 VALUES LESS THAN (6) placement policy p1,
+	PARTITION p1 VALUES LESS THAN (11) placement policy p2
+);`)
+	defer func() {
+		tk.MustExec("drop table if exists t1")
+		tk.MustExec("drop placement policy if exists p1")
+		tk.MustExec("drop placement policy if exists p2")
+	}()
+
+	tk.MustExec(`insert into t1 (c,d,e) values (1,1,1);`)
+	tk.MustExec(`insert into t1 (c,d,e) values (2,3,5);`)
+	tk.MustExec(`insert into t1 (c,d,e) values (3,5,7);`)
+
+	testcases := []struct {
+		name      string
+		txnScope  string
+		zone      string
+		sql       string
+		expectErr error
+	}{
+		// FIXME: block by https://github.com/pingcap/tidb/issues/21872
+		//{
+		//	name:      "cross dc read to sh by holding bj, IndexReader",
+		//	txnScope:  "bj",
+		//	sql:       "select /*+ USE_INDEX(t1, idx_d) */ d from t1 where c < 5 and d < 1;",
+		//	expectErr: fmt.Errorf(".*can not be read by.*"),
+		//},
+		// FIXME: block by https://github.com/pingcap/tidb/issues/21847
+		//{
+		//	name:      "cross dc read to sh by holding bj, BatchPointGet",
+		//	txnScope:  "bj",
+		//	sql:       "select * from t1 where c in (1,2,3,4);",
+		//	expectErr: fmt.Errorf(".*can not be read by.*"),
+		//},
+		{
+			name:      "cross dc read to sh by holding bj, PointGet",
+			txnScope:  "local",
+			zone:      "bj",
+			sql:       "select * from t1 where c = 1",
+			expectErr: fmt.Errorf(".*can not be read by.*"),
+		},
+		{
+			name:      "cross dc read to sh by holding bj, IndexLookUp",
+			txnScope:  "local",
+			zone:      "bj",
+			sql:       "select * from t1 use index (idx_d) where c < 5 and d < 5;",
+			expectErr: fmt.Errorf(".*can not be read by.*"),
+		},
+		{
+			name:      "cross dc read to sh by holding bj, IndexMerge",
+			txnScope:  "local",
+			zone:      "bj",
+			sql:       "select /*+ USE_INDEX_MERGE(t1, idx_d, idx_e) */ * from t1 where c <5 and (d =5 or e=5);",
+			expectErr: fmt.Errorf(".*can not be read by.*"),
+		},
+		{
+			name:      "cross dc read to sh by holding bj, TableReader",
+			txnScope:  "local",
+			zone:      "bj",
+			sql:       "select * from t1 where c < 6",
+			expectErr: fmt.Errorf(".*can not be read by.*"),
+		},
+		{
+			name:      "cross dc read to global by holding bj",
+			txnScope:  "local",
+			zone:      "bj",
+			sql:       "select * from t1",
+			expectErr: fmt.Errorf(".*can not be read by.*"),
+		},
+		{
+			name:      "read sh dc by holding sh",
+			txnScope:  "local",
+			zone:      "sh",
+			sql:       "select * from t1 where c < 6",
+			expectErr: nil,
+		},
+		{
+			name:      "read sh dc by holding global",
+			txnScope:  "global",
+			zone:      "",
+			sql:       "select * from t1 where c < 6",
+			expectErr: nil,
+		},
 	}
+	tk.MustExec("set global tidb_enable_local_txn = on;")
+	for _, testcase := range testcases {
+		t.Log(testcase.name)
+		require.NoError(t, failpoint.Enable("tikvclient/injectTxnScope",
+			fmt.Sprintf(`return("%v")`, testcase.zone)))
+		tk.MustExec(fmt.Sprintf("set @@txn_scope='%v'", testcase.txnScope))
+		tk.Exec("begin")
+		res, err := tk.Exec(testcase.sql)
+		_, resErr := session.GetRows4Test(context.Background(), tk.Session(), res)
+		var checkErr error
+		if err != nil {
+			checkErr = err
+		} else {
+			checkErr = resErr
+		}
+		if testcase.expectErr != nil {
+			require.Error(t, checkErr)
+			require.Regexp(t, ".*can not be read by.*", checkErr.Error())
+		} else {
+			require.NoError(t, checkErr)
+		}
+		if res != nil {
+			res.Close()
+		}
+		tk.Exec("commit")
+	}
+	require.NoError(t, failpoint.Disable("tikvclient/injectTxnScope"))
+	tk.MustExec("set global tidb_enable_local_txn = off;")
+}
+
+func calculateChecksum(cols ...any) string {
+	buf := make([]byte, 0, 64)
+	for _, col := range cols {
+		switch x := col.(type) {
+		case int:
+			buf = binary.LittleEndian.AppendUint64(buf, uint64(x))
+		case string:
+			buf = binary.LittleEndian.AppendUint32(buf, uint32(len(x)))
+			buf = append(buf, []byte(x)...)
+		}
+	}
+	checksum := crc32.ChecksumIEEE(buf)
+	return fmt.Sprintf("%d", checksum)
+}
+
+func TestTiDBRowChecksumBuiltinAfterDropColumn(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set global tidb_enable_row_level_checksum = 1")
+	tk.MustExec("use test")
+
+	tk.MustExec("create table t(a int primary key, b int, c int)")
+	tk.MustExec("insert into t values(1, 1, 1)")
+
+	oldChecksum := tk.MustQuery("select tidb_row_checksum() from t where a = 1").Rows()[0][0].(string)
+
+	tk.MustExec("alter table t drop column b")
+	newChecksum := tk.MustQuery("select tidb_row_checksum() from t where a = 1").Rows()[0][0].(string)
+
+	require.NotEqual(t, oldChecksum, newChecksum)
+}
+
+func TestTiDBRowChecksumBuiltinAfterAddColumn(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set global tidb_enable_row_level_checksum = 1")
+	tk.MustExec("use test")
+
+	tk.MustExec("create table t(a int primary key, b int)")
+	tk.MustExec("insert into t values(1, 1)")
+
+	oldChecksum := tk.MustQuery("select tidb_row_checksum() from t where a = 1").Rows()[0][0].(string)
+	expected := calculateChecksum(1, 1)
+	require.Equal(t, expected, oldChecksum)
+
+	tk.MustExec("alter table t add column c int default 1")
+	newChecksum := tk.MustQuery("select tidb_row_checksum() from t where a = 1").Rows()[0][0].(string)
+	expected = calculateChecksum(1, 1, 1)
+	require.Equal(t, expected, newChecksum)
+
+	require.NotEqual(t, oldChecksum, newChecksum)
+}
+
+func TestTiDBRowChecksumBuiltin(t *testing.T) {
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set global tidb_enable_row_level_checksum = 1")
 	tk.MustExec("use test")
 	tk.MustExec("create table t (id int primary key, c int)")
 
-	// row with 2 checksums
+	// row with 1 checksum
 	tk.MustExec("insert into t values (1, 10)")
 	tk.MustExec("alter table t change column c c varchar(10)")
-	checksum1 := fmt.Sprintf("%d,%d", checksum(1, 10), checksum(1, "10"))
-	// row with 1 checksum
+	checksum1 := calculateChecksum(1, "10")
+	checksum11 := fmt.Sprintf("%d %v %v", 1, "10", checksum1)
+
 	tk.Session().GetSessionVars().EnableRowLevelChecksum = true
 	tk.MustExec("insert into t values (2, '20')")
-	checksum2 := fmt.Sprintf("%d", checksum(2, "20"))
+	checksum2 := calculateChecksum(2, "20")
+	checksum22 := fmt.Sprintf("%d %v %v", 2, checksum2, "20")
+
 	// row without checksum
 	tk.Session().GetSessionVars().EnableRowLevelChecksum = false
 	tk.MustExec("insert into t values (3, '30')")
-	checksum3 := "<nil>"
+	checksum3 := calculateChecksum(3, "30")
+	checksum33 := fmt.Sprintf("%v %d %v", checksum3, 3, "30")
 
 	// fast point-get
 	tk.MustQuery("select tidb_row_checksum() from t where id = 1").Check(testkit.Rows(checksum1))
+	tk.MustQuery("select id, c, tidb_row_checksum() from t where id = 1").Check(testkit.Rows(checksum11))
+
 	tk.MustQuery("select tidb_row_checksum() from t where id = 2").Check(testkit.Rows(checksum2))
+	tk.MustQuery("select id, tidb_row_checksum(), c from t where id = 2").Check(testkit.Rows(checksum22))
+
 	tk.MustQuery("select tidb_row_checksum() from t where id = 3").Check(testkit.Rows(checksum3))
+	tk.MustQuery("select tidb_row_checksum(), id, c from t where id = 3").Check(testkit.Rows(checksum33))
+
 	// fast batch-point-get
 	tk.MustQuery("select tidb_row_checksum() from t where id in (1, 2, 3)").Check(testkit.Rows(checksum1, checksum2, checksum3))
+
+	tk.MustQuery("select id, c, tidb_row_checksum() from t where id in (1, 2, 3)").
+		Check(testkit.Rows(
+			checksum11,
+			fmt.Sprintf("%d %v %v", 2, "20", checksum2),
+			fmt.Sprintf("%d %v %v", 3, "30", checksum3),
+		))
 
 	// non-fast point-get
 	tk.MustGetDBError("select length(tidb_row_checksum()) from t where id = 1", expression.ErrNotSupportedYet)

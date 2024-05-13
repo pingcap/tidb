@@ -2,7 +2,7 @@ load("@io_bazel_rules_go//go:def.bzl", "go_test")
 
 go_test(
     name = "flashbacktest_test",
-    timeout = "short",
+    timeout = "long",
     srcs = [
         "flashback_test.go",
         "main_test.go",

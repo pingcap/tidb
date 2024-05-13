@@ -32,9 +32,9 @@ func TestPlanNotRetryableOnNextSubtasksBatchErr(t *testing.T) {
 	c := testutil.NewTestDXFContext(t, 2, 16, true)
 
 	testutil.RegisterTaskMeta(t, c.MockCtrl, testutil.GetPlanNotRetryableErrSchedulerExt(c.MockCtrl), c.TestContext, nil)
-	task := testutil.SubmitAndWaitTask(c.Ctx, t, "key1", 1)
+	task := testutil.SubmitAndWaitTask(c.Ctx, t, "key1", "", 1)
 	require.Equal(t, proto.TaskStateReverted, task.State)
 	testutil.RegisterTaskMeta(t, c.MockCtrl, testutil.GetStepTwoPlanNotRetryableErrSchedulerExt(c.MockCtrl), c.TestContext, nil)
-	task = testutil.SubmitAndWaitTask(c.Ctx, t, "key2", 1)
+	task = testutil.SubmitAndWaitTask(c.Ctx, t, "key2", "", 1)
 	require.Equal(t, proto.TaskStateReverted, task.State)
 }

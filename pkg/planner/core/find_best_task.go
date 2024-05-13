@@ -31,10 +31,12 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/cost"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
+	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/types"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
@@ -46,36 +48,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/tracing"
 	"go.uber.org/zap"
 )
-
-const (
-	// SelectionFactor is the default factor of the selectivity.
-	// For example, If we have no idea how to estimate the selectivity
-	// of a Selection or a JoinCondition, we can use this default value.
-	SelectionFactor = 0.8
-	distinctFactor  = 0.8
-
-	// If the actual row count is much more than the limit count, the unordered scan may cost much more than keep order.
-	// So when a limit exists, we don't apply the DescScanFactor.
-	smallScanThreshold = 10000
-)
-
-var aggFuncFactor = map[string]float64{
-	ast.AggFuncCount:       1.0,
-	ast.AggFuncSum:         1.0,
-	ast.AggFuncAvg:         2.0,
-	ast.AggFuncFirstRow:    0.1,
-	ast.AggFuncMax:         1.0,
-	ast.AggFuncMin:         1.0,
-	ast.AggFuncGroupConcat: 1.0,
-	ast.AggFuncBitOr:       0.9,
-	ast.AggFuncBitXor:      0.9,
-	ast.AggFuncBitAnd:      0.9,
-	ast.AggFuncVarPop:      3.0,
-	ast.AggFuncVarSamp:     3.0,
-	ast.AggFuncStddevPop:   3.0,
-	ast.AggFuncStddevSamp:  3.0,
-	"default":              1.5,
-}
 
 // PlanCounterDisabled is the default value of PlanCounterTp, indicating that optimizer needn't force a plan.
 var PlanCounterDisabled base.PlanCounterTp = -1
@@ -132,7 +104,7 @@ func (p *LogicalTableDual) FindBestTask(prop *property.PhysicalProperty, planCou
 	}.Init(p.SCtx(), p.StatsInfo(), p.QueryBlockOffset())
 	dual.SetSchema(p.schema)
 	planCounter.Dec(1)
-	appendCandidate4PhysicalOptimizeOp(opt, p, dual, prop)
+	utilfuncp.AppendCandidate4PhysicalOptimizeOp(opt, p, dual, prop)
 	rt := &RootTask{}
 	rt.SetPlan(dual)
 	rt.SetEmpty(p.RowCount == 0)
@@ -268,7 +240,7 @@ func (p *baseLogicalPlan) enumeratePhysicalPlans4Task(
 			bestTask = curTask
 			break
 		}
-		appendCandidate4PhysicalOptimizeOp(opt, p, curTask.Plan(), prop)
+		utilfuncp.AppendCandidate4PhysicalOptimizeOp(opt, p, curTask.Plan(), prop)
 		// Get the most efficient one.
 		if curIsBetter, err := compareTaskCost(curTask, bestTask, opt); err != nil {
 			return nil, 0, err
@@ -608,7 +580,7 @@ func (p *baseLogicalPlan) FindBestTask(prop *property.PhysicalProperty, planCoun
 		bestTask = curTask
 		goto END
 	}
-	appendCandidate4PhysicalOptimizeOp(opt, p, curTask.Plan(), prop)
+	utilfuncp.AppendCandidate4PhysicalOptimizeOp(opt, p, curTask.Plan(), prop)
 	if curIsBetter, err := compareTaskCost(curTask, bestTask, opt); err != nil {
 		return nil, 0, err
 	} else if curIsBetter {
@@ -668,7 +640,7 @@ func (p *LogicalMemTable) FindBestTask(prop *property.PhysicalProperty, planCoun
 	}.Init(p.SCtx(), p.StatsInfo(), p.QueryBlockOffset())
 	memTable.SetSchema(p.schema)
 	planCounter.Dec(1)
-	appendCandidate4PhysicalOptimizeOp(opt, p, memTable, prop)
+	utilfuncp.AppendCandidate4PhysicalOptimizeOp(opt, p, memTable, prop)
 	rt := &RootTask{}
 	rt.SetPlan(memTable)
 	return rt, 1, nil
@@ -1042,7 +1014,7 @@ func (ds *DataSource) matchPropForIndexMergeAlternatives(path *util.AccessPath, 
 	sel, _, err := cardinality.Selectivity(ds.SCtx(), ds.tableStats.HistColl, []expression.Expression{accessDNF}, nil)
 	if err != nil {
 		logutil.BgLogger().Debug("something wrong happened, use the default selectivity", zap.Error(err))
-		sel = SelectionFactor
+		sel = cost.SelectionFactor
 	}
 	indexMergePath.CountAfterAccess = sel * ds.tableStats.RowCount
 	if noSortItem {
@@ -1614,7 +1586,10 @@ func (ds *DataSource) convertToIndexMergeScan(prop *property.PhysicalProperty, c
 		if partPath.IsTablePath() {
 			scan = ds.convertToPartialTableScan(prop, partPath, candidate.isMatchProp, byItems)
 		} else {
-			scan = ds.convertToPartialIndexScan(prop, partPath, candidate.isMatchProp, byItems)
+			scan, err = ds.convertToPartialIndexScan(&cop.physPlanPartInfo, prop, partPath, candidate.isMatchProp, byItems)
+			if err != nil {
+				return invalidTask, err
+			}
 		}
 		scans = append(scans, scan)
 	}
@@ -1659,7 +1634,7 @@ func (ds *DataSource) convertToIndexMergeScan(prop *property.PhysicalProperty, c
 	return task, nil
 }
 
-func (ds *DataSource) convertToPartialIndexScan(prop *property.PhysicalProperty, path *util.AccessPath, matchProp bool, byItems []*util.ByItems) (indexPlan base.PhysicalPlan) {
+func (ds *DataSource) convertToPartialIndexScan(physPlanPartInfo *PhysPlanPartInfo, prop *property.PhysicalProperty, path *util.AccessPath, matchProp bool, byItems []*util.ByItems) (base.PhysicalPlan, error) {
 	is := ds.getOriginalPhysicalIndexScan(prop, path, matchProp, false)
 	// TODO: Consider using isIndexCoveringColumns() to avoid another TableRead
 	indexConds := path.IndexFilters
@@ -1670,6 +1645,14 @@ func (ds *DataSource) convertToPartialIndexScan(prop *property.PhysicalProperty,
 		// Add sort items for index scan for merge-sort operation between partitions.
 		is.ByItems = byItems
 	}
+
+	// Add a `Selection` for `IndexScan` with global index.
+	// It should pushdown to TiKV, DataSource schema doesn't contain partition id column.
+	indexConds, err := is.addSelectionConditionForGlobalIndex(ds, physPlanPartInfo, indexConds)
+	if err != nil {
+		return nil, err
+	}
+
 	if len(indexConds) > 0 {
 		var selectivity float64
 		if path.CountAfterAccess > 0 {
@@ -1683,10 +1666,9 @@ func (ds *DataSource) convertToPartialIndexScan(prop *property.PhysicalProperty,
 		}
 		indexPlan := PhysicalSelection{Conditions: indexConds}.Init(is.SCtx(), stats, ds.QueryBlockOffset())
 		indexPlan.SetChildren(is)
-		return indexPlan
+		return indexPlan, nil
 	}
-	indexPlan = is
-	return indexPlan
+	return is, nil
 }
 
 func checkColinSchema(cols []*expression.Column, schema *expression.Schema) bool {
@@ -1720,7 +1702,7 @@ func (ds *DataSource) convertToPartialTableScan(prop *property.PhysicalProperty,
 		selectivity, _, err := cardinality.Selectivity(ds.SCtx(), ds.tableStats.HistColl, ts.filterCondition, nil)
 		if err != nil {
 			logutil.BgLogger().Debug("calculate selectivity failed, use selection factor", zap.Error(err))
-			selectivity = SelectionFactor
+			selectivity = cost.SelectionFactor
 		}
 		tablePlan = PhysicalSelection{Conditions: ts.filterCondition}.Init(ts.SCtx(), ts.StatsInfo().ScaleByExpectCnt(selectivity*rowCount), ds.QueryBlockOffset())
 		tablePlan.SetChildren(ts)
@@ -1734,7 +1716,7 @@ func (ds *DataSource) convertToPartialTableScan(prop *property.PhysicalProperty,
 func overwritePartialTableScanSchema(ds *DataSource, ts *PhysicalTableScan) {
 	handleCols := ds.handleCols
 	if handleCols == nil {
-		handleCols = NewIntHandleCols(ds.newExtraHandleSchemaCol())
+		handleCols = util.NewIntHandleCols(ds.newExtraHandleSchemaCol())
 	}
 	hdColNum := handleCols.NumCols()
 	exprCols := make([]*expression.Column, 0, hdColNum)
@@ -1756,7 +1738,7 @@ func overwritePartialTableScanSchema(ds *DataSource, ts *PhysicalTableScan) {
 func setIndexMergeTableScanHandleCols(ds *DataSource, ts *PhysicalTableScan) (err error) {
 	handleCols := ds.handleCols
 	if handleCols == nil {
-		handleCols = NewIntHandleCols(ds.newExtraHandleSchemaCol())
+		handleCols = util.NewIntHandleCols(ds.newExtraHandleSchemaCol())
 	}
 	hdColNum := handleCols.NumCols()
 	exprCols := make([]*expression.Column, 0, hdColNum)
@@ -1806,7 +1788,7 @@ func (ds *DataSource) buildIndexMergeTableScan(tableFilters []expression.Express
 			selectivity, _, err := cardinality.Selectivity(ds.SCtx(), ds.tableStats.HistColl, pushedFilters, nil)
 			if err != nil {
 				logutil.BgLogger().Debug("calculate selectivity failed, use selection factor", zap.Error(err))
-				selectivity = SelectionFactor
+				selectivity = cost.SelectionFactor
 			}
 			sel := PhysicalSelection{Conditions: pushedFilters}.Init(ts.SCtx(), ts.StatsInfo().ScaleByExpectCnt(selectivity*totalRowCount), ts.QueryBlockOffset())
 			sel.SetChildren(ts)
@@ -2038,8 +2020,8 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty,
 	task = cop
 	if cop.tablePlan != nil && ds.tableInfo.IsCommonHandle {
 		cop.commonHandleCols = ds.commonHandleCols
-		commonHandle := ds.handleCols.(*CommonHandleCols)
-		for _, col := range commonHandle.columns {
+		commonHandle := ds.handleCols.(*util.CommonHandleCols)
+		for _, col := range commonHandle.GetColumns() {
 			if ds.schema.ColumnIndex(col) == -1 {
 				ts := cop.tablePlan.(*PhysicalTableScan)
 				ts.Schema().Append(col)
@@ -2084,7 +2066,9 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty,
 	// prop.IsSortItemEmpty() would always return true when coming to here,
 	// so we can just use prop.ExpectedCnt as parameter of addPushedDownSelection.
 	finalStats := ds.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt)
-	is.addPushedDownSelection(cop, ds, path, finalStats)
+	if err = is.addPushedDownSelection(cop, ds, path, finalStats); err != nil {
+		return invalidTask, err
+	}
 	if prop.TaskTp == property.RootTaskType {
 		task = task.ConvertToRootTask(ds.SCtx())
 	} else if _, ok := task.(*RootTask); ok {
@@ -2154,22 +2138,23 @@ func (is *PhysicalIndexScan) initSchema(idxExprCols []*expression.Column, isDoub
 	if isDoubleRead || is.Index.Global {
 		// If it's double read case, the first index must return handle. So we should add extra handle column
 		// if there isn't a handle column.
-		// If it's global index, handle and PidColID columns has to be added, so that needed pids can be filtered.
 		if !setHandle {
 			if !is.Table.IsCommonHandle {
 				indexCols = append(indexCols, &expression.Column{
 					RetType:  types.NewFieldType(mysql.TypeLonglong),
 					ID:       model.ExtraHandleID,
 					UniqueID: is.SCtx().GetSessionVars().AllocPlanColumnID(),
+					OrigName: model.ExtraHandleName.O,
 				})
 			}
 		}
-		// If index is global, we should add extra column for pid.
+		// If it's global index, handle and PidColID columns has to be added, so that needed pids can be filtered.
 		if is.Index.Global {
 			indexCols = append(indexCols, &expression.Column{
 				RetType:  types.NewFieldType(mysql.TypeLonglong),
 				ID:       model.ExtraPidColID,
 				UniqueID: is.SCtx().GetSessionVars().AllocPlanColumnID(),
+				OrigName: model.ExtraPartitionIdName.O,
 			})
 		}
 	}
@@ -2185,7 +2170,70 @@ func (is *PhysicalIndexScan) initSchema(idxExprCols []*expression.Column, isDoub
 	is.SetSchema(expression.NewSchema(indexCols...))
 }
 
-func (is *PhysicalIndexScan) addPushedDownSelection(copTask *CopTask, p *DataSource, path *util.AccessPath, finalStats *property.StatsInfo) {
+func (is *PhysicalIndexScan) addSelectionConditionForGlobalIndex(p *DataSource, physPlanPartInfo *PhysPlanPartInfo, conditions []expression.Expression) ([]expression.Expression, error) {
+	if !is.Index.Global {
+		return conditions, nil
+	}
+	args := make([]expression.Expression, 0, len(p.partitionNames)+1)
+	for _, col := range is.schema.Columns {
+		if col.ID == model.ExtraPidColID {
+			args = append(args, col.Clone())
+			break
+		}
+	}
+
+	if len(args) != 1 {
+		return nil, errors.Errorf("Can't find column %s in schema %s", model.ExtraPartitionIdName.O, is.schema)
+	}
+
+	// For SQL like 'select x from t partition(p0, p1) use index(idx)',
+	// we will add a `Selection` like `in(t._tidb_pid, p0, p1)` into the plan.
+	// For truncate/drop partitions, we should only return indexes where partitions still in public state.
+	idxArr, err := PartitionPruning(p.SCtx(), p.table.GetPartitionedTable(),
+		physPlanPartInfo.PruningConds,
+		physPlanPartInfo.PartitionNames,
+		physPlanPartInfo.Columns,
+		physPlanPartInfo.ColumnNames)
+	if err != nil {
+		return nil, err
+	}
+	needNot := false
+	pInfo := p.TableInfo().GetPartitionInfo()
+	if len(idxArr) == 1 && idxArr[0] == FullRange {
+		// Only filter adding and dropping partitions.
+		if len(pInfo.AddingDefinitions) == 0 && len(pInfo.DroppingDefinitions) == 0 {
+			return conditions, nil
+		}
+		needNot = true
+		for _, p := range pInfo.AddingDefinitions {
+			args = append(args, expression.NewInt64Const(p.ID))
+		}
+		for _, p := range pInfo.DroppingDefinitions {
+			args = append(args, expression.NewInt64Const(p.ID))
+		}
+	} else if len(idxArr) == 0 {
+		// add an invalid pid as param for `IN` function
+		args = append(args, expression.NewInt64Const(-1))
+	} else {
+		// `PartitionPruning`` func does not return adding and dropping partitions
+		for _, idx := range idxArr {
+			args = append(args, expression.NewInt64Const(pInfo.Definitions[idx].ID))
+		}
+	}
+	condition, err := expression.NewFunction(p.SCtx().GetExprCtx(), ast.In, types.NewFieldType(mysql.TypeLonglong), args...)
+	if err != nil {
+		return nil, err
+	}
+	if needNot {
+		condition, err = expression.NewFunction(p.SCtx().GetExprCtx(), ast.UnaryNot, types.NewFieldType(mysql.TypeLonglong), condition)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return append(conditions, condition), nil
+}
+
+func (is *PhysicalIndexScan) addPushedDownSelection(copTask *CopTask, p *DataSource, path *util.AccessPath, finalStats *property.StatsInfo) error {
 	// Add filter condition to table plan now.
 	indexConds, tableConds := path.IndexFilters, path.TableFilters
 	tableConds, copTask.rootTaskConds = SplitSelCondsWithVirtualColumn(tableConds)
@@ -2197,6 +2245,13 @@ func (is *PhysicalIndexScan) addPushedDownSelection(copTask *CopTask, p *DataSou
 
 	tableConds, newRootConds = expression.PushDownExprs(pctx, tableConds, kv.TiKV)
 	copTask.rootTaskConds = append(copTask.rootTaskConds, newRootConds...)
+
+	// Add a `Selection` for `IndexScan` with global index.
+	// It should pushdown to TiKV, DataSource schema doesn't contain partition id column.
+	indexConds, err := is.addSelectionConditionForGlobalIndex(p, &copTask.physPlanPartInfo, indexConds)
+	if err != nil {
+		return err
+	}
 
 	if indexConds != nil {
 		var selectivity float64
@@ -2216,13 +2271,14 @@ func (is *PhysicalIndexScan) addPushedDownSelection(copTask *CopTask, p *DataSou
 			selectivity, _, err := cardinality.Selectivity(is.SCtx(), copTask.tblColHists, tableConds, nil)
 			if err != nil {
 				logutil.BgLogger().Debug("calculate selectivity failed, use selection factor", zap.Error(err))
-				selectivity = SelectionFactor
+				selectivity = cost.SelectionFactor
 			}
 			tableSel.SetStats(copTask.Plan().StatsInfo().Scale(selectivity))
 		}
 		tableSel.SetChildren(copTask.tablePlan)
 		copTask.tablePlan = tableSel
 	}
+	return nil
 }
 
 // NeedExtraOutputCol is designed for check whether need an extra column for
@@ -2706,7 +2762,7 @@ func (ts *PhysicalTableScan) addPushedDownSelection(copTask *CopTask, stats *pro
 			selectivity, _, err := cardinality.Selectivity(ts.SCtx(), copTask.tblColHists, ts.filterCondition, nil)
 			if err != nil {
 				logutil.BgLogger().Debug("calculate selectivity failed, use selection factor", zap.Error(err))
-				selectivity = SelectionFactor
+				selectivity = cost.SelectionFactor
 			}
 			sel.SetStats(ts.StatsInfo().Scale(selectivity))
 		}
@@ -2871,7 +2927,7 @@ func appendCandidate(lp base.LogicalPlan, task base.Task, prop *property.Physica
 	if task == nil || task.Invalid() {
 		return
 	}
-	appendCandidate4PhysicalOptimizeOp(opt, lp, task.Plan(), prop)
+	utilfuncp.AppendCandidate4PhysicalOptimizeOp(opt, lp, task.Plan(), prop)
 }
 
 // PushDownNot here can convert condition 'not (a != 1)' to 'a = 1'. When we build range from conds, the condition like

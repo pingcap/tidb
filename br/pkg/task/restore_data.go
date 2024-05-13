@@ -15,6 +15,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/conn/util"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/restore"
+	"github.com/pingcap/tidb/br/pkg/restore/data"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
@@ -142,7 +143,7 @@ func RunResolveKvData(c context.Context, g glue.Glue, cmdName string, cfg *Resto
 	// restore tikv data from a snapshot volume
 	var totalRegions int
 
-	totalRegions, err = restore.RecoverData(ctx, resolveTS, allStores, mgr, progress, restoreTS, cfg.Concurrency)
+	totalRegions, err = data.RecoverData(ctx, resolveTS, allStores, mgr, progress, restoreTS, cfg.Concurrency)
 	if err != nil {
 		return errors.Trace(err)
 	}

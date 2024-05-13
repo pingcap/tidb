@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/cost"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/baseimpl"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
@@ -427,6 +428,17 @@ func (p *PhysicalHashJoin) attach2TaskForMpp(tasks ...base.Task) base.Task {
 	// To avoid the performance issue, add a projection here above the Join operator to prune useless columns explicitly.
 	// TODO(hyb): transfer Join executors' schema to TiFlash through DagRequest, and use it directly in TiFlash.
 	defaultSchema := BuildPhysicalJoinSchema(p.JoinType, p)
+	hashColArray := make([]*expression.Column, 0, len(task.hashCols))
+	// For task.hashCols, these columns may not be contained in pruned columns:
+	// select A.id from A join B on A.id = B.id; Suppose B is probe side, and it's hash inner join.
+	// After column prune, the output schema of A join B will be A.id only; while the task's hashCols will be B.id.
+	// To make matters worse, the hashCols may be used to check if extra cast projection needs to be added, then the newly
+	// added projection will expect B.id as input schema. So make sure hashCols are included in task.p's schema.
+	// TODO: planner should takes the hashCols attribute into consideration when perform column pruning; Or provide mechanism
+	// to constraint hashCols are always chosen inside Join's pruned schema
+	for _, hashCol := range task.hashCols {
+		hashColArray = append(hashColArray, hashCol.Col)
+	}
 	if p.schema.Len() < defaultSchema.Len() {
 		if p.schema.Len() > 0 {
 			proj := PhysicalProjection{
@@ -434,20 +446,45 @@ func (p *PhysicalHashJoin) attach2TaskForMpp(tasks ...base.Task) base.Task {
 			}.Init(p.SCtx(), p.StatsInfo(), p.QueryBlockOffset())
 
 			proj.SetSchema(p.Schema().Clone())
+			for _, hashCol := range hashColArray {
+				if !proj.Schema().Contains(hashCol) && defaultSchema.Contains(hashCol) {
+					joinCol := defaultSchema.Columns[defaultSchema.ColumnIndex(hashCol)]
+					proj.Exprs = append(proj.Exprs, joinCol)
+					proj.Schema().Append(joinCol.Clone().(*expression.Column))
+				}
+			}
 			attachPlan2Task(proj, task)
 		} else {
-			constOne := expression.NewOne()
-			expr := make([]expression.Expression, 0, 1)
-			expr = append(expr, constOne)
-			proj := PhysicalProjection{
-				Exprs: expr,
-			}.Init(p.SCtx(), p.StatsInfo(), p.QueryBlockOffset())
+			if len(hashColArray) == 0 {
+				constOne := expression.NewOne()
+				expr := make([]expression.Expression, 0, 1)
+				expr = append(expr, constOne)
+				proj := PhysicalProjection{
+					Exprs: expr,
+				}.Init(p.SCtx(), p.StatsInfo(), p.QueryBlockOffset())
 
-			proj.schema = expression.NewSchema(&expression.Column{
-				UniqueID: proj.SCtx().GetSessionVars().AllocPlanColumnID(),
-				RetType:  constOne.GetType(),
-			})
-			attachPlan2Task(proj, task)
+				proj.schema = expression.NewSchema(&expression.Column{
+					UniqueID: proj.SCtx().GetSessionVars().AllocPlanColumnID(),
+					RetType:  constOne.GetType(),
+				})
+				attachPlan2Task(proj, task)
+			} else {
+				proj := PhysicalProjection{
+					Exprs: make([]expression.Expression, 0, len(hashColArray)),
+				}.Init(p.SCtx(), p.StatsInfo(), p.QueryBlockOffset())
+
+				clonedHashColArray := make([]*expression.Column, 0, len(task.hashCols))
+				for _, hashCol := range hashColArray {
+					if defaultSchema.Contains(hashCol) {
+						joinCol := defaultSchema.Columns[defaultSchema.ColumnIndex(hashCol)]
+						proj.Exprs = append(proj.Exprs, joinCol)
+						clonedHashColArray = append(clonedHashColArray, joinCol.Clone().(*expression.Column))
+					}
+				}
+
+				proj.SetSchema(expression.NewSchema(clonedHashColArray...))
+				attachPlan2Task(proj, task)
+			}
 		}
 	}
 	p.schema = defaultSchema
@@ -561,7 +598,7 @@ func (t *CopTask) handleRootTaskConds(ctx base.PlanContext, newTask *RootTask) {
 		selectivity, _, err := cardinality.Selectivity(ctx, t.tblColHists, t.rootTaskConds, nil)
 		if err != nil {
 			logutil.BgLogger().Debug("calculate selectivity failed, use selection factor", zap.Error(err))
-			selectivity = SelectionFactor
+			selectivity = cost.SelectionFactor
 		}
 		sel := PhysicalSelection{Conditions: t.rootTaskConds}.Init(ctx, newTask.GetPlan().StatsInfo().Scale(selectivity), newTask.GetPlan().QueryBlockOffset())
 		sel.fromDataSource = true
@@ -638,10 +675,12 @@ func (p *PhysicalLimit) Attach2Task(tasks ...base.Task) base.Task {
 		} else if !cop.idxMergeIsIntersection {
 			// We only support push part of the order prop down to index merge build case.
 			if len(cop.rootTaskConds) == 0 {
-				if cop.indexPlanFinished {
-					// when the index plan is finished, sink the limit to the index merge table side.
+				// For double read which requires order being kept, the limit cannot be pushed down to the table side,
+				// because handles would be reordered before being sent to table scan.
+				if cop.indexPlanFinished && !cop.keepOrder {
+					// when the index plan is finished and index plan is not ordered, sink the limit to the index merge table side.
 					suspendLimitAboveTablePlan()
-				} else {
+				} else if !cop.indexPlanFinished {
 					// cop.indexPlanFinished = false indicates the table side is a pure table-scan, sink the limit to the index merge index side.
 					newCount := p.Offset + p.Count
 					limitChildren := make([]base.PhysicalPlan, 0, len(cop.idxMergePartPlans))
@@ -654,6 +693,10 @@ func (p *PhysicalLimit) Attach2Task(tasks ...base.Task) base.Task {
 						limitChildren = append(limitChildren, pushedDownLimit)
 					}
 					cop.idxMergePartPlans = limitChildren
+					t = cop.ConvertToRootTask(p.SCtx())
+					sunk = p.sinkIntoIndexMerge(t)
+				} else {
+					// when there are some limitations, just sink the limit upon the index merge reader.
 					t = cop.ConvertToRootTask(p.SCtx())
 					sunk = p.sinkIntoIndexMerge(t)
 				}

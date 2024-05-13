@@ -41,6 +41,7 @@ go_library(
         "//pkg/util/chunk",
         "//pkg/util/codec",
         "//pkg/util/collate",
+        "//pkg/util/context",
         "//pkg/util/dbterror",
         "//pkg/util/fastrand",
         "//pkg/util/hack",
