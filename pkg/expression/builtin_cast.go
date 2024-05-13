@@ -329,7 +329,7 @@ func (c *castAsStringFunctionClass) getFunction(ctx BuildContext, args []Express
 	case types.ETString:
 		// When cast from binary to some other charsets, we should check if the binary is valid or not.
 		// so we build a from_binary function to do this check.
-		bf.args[0] = HandleBinaryLiteral(ctx, args[0], &ExprCollation{Charset: c.tp.GetCharset(), Collation: c.tp.GetCollate()}, c.funcName)
+		bf.args[0] = HandleBinaryLiteral(ctx, args[0], &ExprCollation{Charset: c.tp.GetCharset(), Collation: c.tp.GetCollate()}, c.funcName, true)
 		sig = &builtinCastStringAsStringSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastStringAsString)
 	default:

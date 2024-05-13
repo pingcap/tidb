@@ -2056,3 +2056,15 @@ select export_set(3,cast('[]' as json),'2','-',8) between 'W' and 'm';
 export_set(3,cast('[]' as json),'2','-',8) between 'W' and 'm'
 1
 set names default;
+select cast(compress('b') as char);
+cast(compress('b') as char)
+NULL
+Level	Code	Message
+Warning	3854	Cannot convert string '   x\x9C...' from binary to utf8mb4
+set sql_mode='';
+select cast(compress('b') as char);
+cast(compress('b') as char)
+   x
+Level	Code	Message
+Warning	3854	Cannot convert string '   x\x9C...' from binary to utf8mb4
+set sql_mode=DEFAULT;
