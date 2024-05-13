@@ -726,6 +726,17 @@ func (w *indexIngestBaseWorker) initSessCtx() {
 }
 
 func (w *indexIngestBaseWorker) Close() {
+	// TODO(lance6716): ugly
+	for _, writer := range w.writers {
+		ew, ok := writer.(*external.Writer)
+		if !ok {
+			break
+		}
+		err := ew.Close(w.ctx)
+		if err != nil {
+			w.ctx.onError(err)
+		}
+	}
 	if w.se != nil {
 		w.restore(w.se.Context)
 		w.sessPool.Put(w.se.Context)
