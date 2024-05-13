@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -81,7 +82,7 @@ func (p *baseLogicalPlan) PredicatePushDown(predicates []expression.Expression, 
 	}
 	child := p.children[0]
 	rest, newChild := child.PredicatePushDown(predicates, opt)
-	addSelection(p.self, newChild, rest, 0, opt)
+	utilfuncp.AddSelection(p.self, newChild, rest, 0, opt)
 	return nil, p.self
 }
 
@@ -240,8 +241,8 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression, opt 
 	rightCond = expression.RemoveDupExprs(rightCond)
 	leftRet, lCh := p.children[0].PredicatePushDown(leftCond, opt)
 	rightRet, rCh := p.children[1].PredicatePushDown(rightCond, opt)
-	addSelection(p, lCh, leftRet, 0, opt)
-	addSelection(p, rCh, rightRet, 1, opt)
+	utilfuncp.AddSelection(p, lCh, leftRet, 0, opt)
+	utilfuncp.AddSelection(p, rCh, rightRet, 1, opt)
 	p.updateEQCond()
 	buildKeyInfo(p)
 	return ret, p.self
@@ -459,7 +460,7 @@ func (p *LogicalUnionAll) PredicatePushDown(predicates []expression.Expression, 
 		newExprs := make([]expression.Expression, 0, len(predicates))
 		newExprs = append(newExprs, predicates...)
 		retCond, newChild := proj.PredicatePushDown(newExprs, opt)
-		addSelection(p, newChild, retCond, i, opt)
+		utilfuncp.AddSelection(p, newChild, retCond, i, opt)
 	}
 	return nil, p
 }
