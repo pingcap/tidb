@@ -811,6 +811,9 @@ func (d *ddl) prepareWorkers4ConcurrencyDDL() {
 	})
 	d.wg.Run(d.startDispatchLoop)
 	d.wg.Run(d.startLocalWorkerLoop)
+	d.wg.Run(func() {
+		d.schemaSyncer.SyncJobSchemaVerLoop(d.ctx)
+	})
 }
 
 // Start implements DDL.Start interface.
