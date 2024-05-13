@@ -726,12 +726,6 @@ func (w *indexIngestBaseWorker) initSessCtx() {
 }
 
 func (w *indexIngestBaseWorker) Close() {
-	for _, writer := range w.writers {
-		err := writer.Close(w.ctx)
-		if err != nil {
-			w.ctx.onError(err)
-		}
-	}
 	if w.se != nil {
 		w.restore(w.se.Context)
 		w.sessPool.Put(w.se.Context)
