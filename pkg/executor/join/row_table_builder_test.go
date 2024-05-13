@@ -17,6 +17,7 @@ package join
 import (
 	"strconv"
 	"testing"
+	"unsafe"
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -73,7 +74,7 @@ func checkRowLocationAlignment(t *testing.T, rowTables []*rowTable) {
 		}
 		for _, seg := range rt.segments {
 			for _, rowLocation := range seg.rowLocations {
-				require.Equal(t, uint64(0), uint64(rowLocation)%8, "row location must be 8 byte aligned")
+				require.Equal(t, uint64(0), uint64(uintptr(rowLocation))%8, "row location must be 8 byte aligned")
 			}
 		}
 	}
@@ -151,7 +152,7 @@ func checkKeys(t *testing.T, withSelCol bool, buildFilter expression.CNFExprs, b
 			rowIndex++
 		}
 		rowStart := rowTables[0].getRowStart(rowIndex)
-		require.Equal(t, uintptr(0), rowStart, "row start must be nil at the end of the test")
+		require.Equal(t, unsafe.Pointer(nil), rowStart, "row start must be nil at the end of the test")
 	}
 }
 
@@ -392,7 +393,7 @@ func checkColumns(t *testing.T, withSelCol bool, buildFilter expression.CNFExprs
 			}
 		}
 		rowStart := rowTables[0].getRowStart(rowIndex)
-		require.Equal(t, uintptr(0), rowStart, "row start must be nil at the end of the test")
+		require.Equal(t, unsafe.Pointer(nil), rowStart, "row start must be nil at the end of the test")
 		if hasOtherConditionColumns {
 			checkColumnResult(t, builder, keepFilteredRows, tmpChunk, chk, hashJoinCtx, hasOtherConditionColumns)
 			mockJoinProber.selected = make([]bool, 0, tmpChunk.NumRows())
