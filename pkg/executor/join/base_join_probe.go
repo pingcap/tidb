@@ -342,12 +342,12 @@ func (j *baseJoinProbe) appendBuildRowToChunkInternal(chk *chunk.Chunk, usedCols
 			// not used so don't need to insert into chk, but still need to advance rowData
 			if meta.columnsSize[columnIndex] < 0 {
 				for index := range j.cachedBuildRows {
-					size := *(*uint64)(j.cachedBuildRows[index].buildRowData)                                                              //nolint:all
-					j.cachedBuildRows[index].buildRowData = unsafe.Add(j.cachedBuildRows[index].buildRowData, sizeOfLengthField+int(size)) //nolint:all
+					size := *(*uint64)(j.cachedBuildRows[index].buildRowData)
+					j.cachedBuildRows[index].buildRowData = unsafe.Add(j.cachedBuildRows[index].buildRowData, sizeOfLengthField+int(size))
 				}
 			} else {
 				for index := range j.cachedBuildRows {
-					j.cachedBuildRows[index].buildRowData = unsafe.Add(j.cachedBuildRows[index].buildRowData, meta.columnsSize[columnIndex]) //nolint:all
+					j.cachedBuildRows[index].buildRowData = unsafe.Add(j.cachedBuildRows[index].buildRowData, meta.columnsSize[columnIndex])
 				}
 			}
 		}
@@ -465,11 +465,11 @@ func (j *baseJoinProbe) buildResultAfterOtherCondition(chk *chunk.Chunk, joinedC
 func isKeyMatched(keyMode keyMode, serializedKey []byte, rowStart unsafe.Pointer, meta *TableMeta) bool {
 	switch keyMode {
 	case OneInt64:
-		return *(*int64)(unsafe.Pointer(&serializedKey[0])) == *(*int64)(unsafe.Add(rowStart, meta.nullMapLength+sizeOfNextPtr)) //nolint:all
+		return *(*int64)(unsafe.Pointer(&serializedKey[0])) == *(*int64)(unsafe.Add(rowStart, meta.nullMapLength+sizeOfNextPtr))
 	case FixedSerializedKey:
-		return bytes.Equal(serializedKey, hack.GetBytesFromPtr(unsafe.Add(rowStart, meta.nullMapLength+sizeOfNextPtr), meta.joinKeysLength)) //nolint:all
+		return bytes.Equal(serializedKey, hack.GetBytesFromPtr(unsafe.Add(rowStart, meta.nullMapLength+sizeOfNextPtr), meta.joinKeysLength))
 	case VariableSerializedKey:
-		return bytes.Equal(serializedKey, hack.GetBytesFromPtr(unsafe.Add(rowStart, meta.nullMapLength+sizeOfNextPtr+sizeOfLengthField), int(meta.getSerializedKeyLength(rowStart)))) //nolint:all
+		return bytes.Equal(serializedKey, hack.GetBytesFromPtr(unsafe.Add(rowStart, meta.nullMapLength+sizeOfNextPtr+sizeOfLengthField), int(meta.getSerializedKeyLength(rowStart))))
 	default:
 		panic("unknown key match type")
 	}

@@ -467,15 +467,15 @@ func appendCellByCell(dst *Column, src *Column, rowIdx int) {
 func AppendCellFromRawData(dst *Column, rowData unsafe.Pointer) unsafe.Pointer {
 	if dst.isFixed() {
 		elemLen := len(dst.elemBuf)
-		dst.data = append(dst.data, hack.GetBytesFromPtr(rowData, elemLen)...) //nolint:all
-		rowData = unsafe.Add(rowData, elemLen)                                 //nolint:all
+		dst.data = append(dst.data, hack.GetBytesFromPtr(rowData, elemLen)...)
+		rowData = unsafe.Add(rowData, elemLen)
 	} else {
-		elemLen := *(*uint64)(rowData) //nolint:all
+		elemLen := *(*uint64)(rowData)
 		if elemLen > 0 {
-			dst.data = append(dst.data, hack.GetBytesFromPtr(unsafe.Add(unsafe.Pointer(rowData), 8), int(elemLen))...) //nolint:all
+			dst.data = append(dst.data, hack.GetBytesFromPtr(unsafe.Add(rowData, 8), int(elemLen))...)
 		}
 		dst.offsets = append(dst.offsets, int64(len(dst.data)))
-		rowData = unsafe.Add(rowData, elemLen+8) //nolint:all
+		rowData = unsafe.Add(rowData, elemLen+8)
 	}
 	dst.length++
 	return rowData
