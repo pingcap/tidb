@@ -54,10 +54,6 @@ var PlanCounterDisabled base.PlanCounterTp = -1
 
 var invalidTask = &RootTask{} // invalid if p is nil
 
-func init() {
-	utilfuncp.AppendCandidate4PhysicalOptimizeOp = appendCandidate4PhysicalOptimizeOp
-}
-
 // GetPropByOrderByItems will check if this sort property can be pushed or not. In order to simplify the problem, we only
 // consider the case that all expression are columns.
 func GetPropByOrderByItems(items []*util.ByItems) (*property.PhysicalProperty, bool) {
