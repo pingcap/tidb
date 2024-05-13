@@ -1095,7 +1095,7 @@ const (
 	version197 = 197
 
 	// version 198
-	//   add column `exec_id` for `mysql.tidb_mdl_info` table
+	//   add column `owner_id` for `mysql.tidb_mdl_info` table
 	version198 = 198
 )
 
@@ -1264,6 +1264,7 @@ var (
 		upgradeToVer195,
 		upgradeToVer196,
 		upgradeToVer197,
+		upgradeToVer198,
 	}
 )
 
