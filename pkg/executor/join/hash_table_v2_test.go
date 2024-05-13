@@ -41,7 +41,7 @@ func createMockRowTable(maxRowsPerSeg int, segmentCount int, fixedSize bool) *ro
 		}
 		rowSeg.rawData = make([]byte, rows)
 		for j := 0; j < rows; j++ {
-			rowSeg.rowLocations = append(rowSeg.rowLocations, uintptr(unsafe.Pointer(&rowSeg.rawData[j])))
+			rowSeg.rowLocations = append(rowSeg.rowLocations, unsafe.Pointer(&rowSeg.rawData[j]))
 			rowSeg.validJoinKeyPos = append(rowSeg.validJoinKeyPos, j)
 		}
 		ret.segments = append(ret.segments, rowSeg)
@@ -111,7 +111,7 @@ func TestBuild(t *testing.T) {
 	subTable := newSubTable(rowTable)
 	// single thread build
 	subTable.build(0, len(rowTable.segments))
-	rowSet := make(map[uintptr]struct{}, rowTable.rowCount())
+	rowSet := make(map[unsafe.Pointer]struct{}, rowTable.rowCount())
 	for _, seg := range rowTable.segments {
 		for _, loc := range seg.rowLocations {
 			_, ok := rowSet[loc]
@@ -121,7 +121,7 @@ func TestBuild(t *testing.T) {
 	}
 	rowCount := 0
 	for _, loc := range subTable.hashTable {
-		for loc != 0 {
+		for loc != nil {
 			rowCount++
 			_, ok := rowSet[loc]
 			require.True(t, ok)
@@ -150,7 +150,7 @@ func TestConcurrentBuild(t *testing.T) {
 		})
 	}
 	wg.Wait()
-	rowSet := make(map[uintptr]struct{}, rowTable.rowCount())
+	rowSet := make(map[unsafe.Pointer]struct{}, rowTable.rowCount())
 	for _, seg := range rowTable.segments {
 		for _, loc := range seg.rowLocations {
 			_, ok := rowSet[loc]
@@ -159,7 +159,7 @@ func TestConcurrentBuild(t *testing.T) {
 		}
 	}
 	for _, loc := range subTable.hashTable {
-		for loc != 0 {
+		for loc != nil {
 			_, ok := rowSet[loc]
 			require.True(t, ok)
 			delete(rowSet, loc)
@@ -180,7 +180,7 @@ func TestLookup(t *testing.T) {
 			hashValue := seg.hashValues[index]
 			candidate := subTable.lookup(hashValue)
 			found := false
-			for candidate != 0 {
+			for candidate != nil {
 				if candidate == loc {
 					found = true
 					break
@@ -195,7 +195,7 @@ func TestLookup(t *testing.T) {
 func checkRowIter(t *testing.T, table *hashTableV2, scanConcurrency int) {
 	// first create a map containing all the row locations
 	totalRowCount := table.totalRowCount()
-	rowSet := make(map[uintptr]struct{}, totalRowCount)
+	rowSet := make(map[unsafe.Pointer]struct{}, totalRowCount)
 	for _, rt := range table.tables {
 		for _, seg := range rt.rowData.segments {
 			for _, loc := range seg.rowLocations {

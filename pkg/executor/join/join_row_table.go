@@ -31,7 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 )
 
-const sizeOfNextPtr = int(unsafe.Sizeof(uintptr(0)))
+const sizeOfNextPtr = int(unsafe.Sizeof(unsafe.Pointer(nil)))
 const sizeOfLengthField = int(unsafe.Sizeof(uint64(1)))
 const sizeOfUInt64 = int(unsafe.Sizeof(uint64(1)))
 const sizeOfInt = int(unsafe.Sizeof(int(1)))
@@ -64,10 +64,10 @@ type rowTableSegment struct {
 	   * join key is not inlined + have other conditions: columns used in other condition, rest columns that will be used as join output
 	   * join key is not inlined + no other conditions: columns that will be used as join output
 	*/
-	rawData         []byte    // the chunk of memory to save the row data
-	hashValues      []uint64  // the hash value of each rows
-	rowLocations    []uintptr // the start address of each row
-	validJoinKeyPos []int     // the pos of rows that need to be inserted into hash table, used in hash table build
+	rawData         []byte           // the chunk of memory to save the row data
+	hashValues      []uint64         // the hash value of each rows
+	rowLocations    []unsafe.Pointer // the start address of each row
+	validJoinKeyPos []int            // the pos of rows that need to be inserted into hash table, used in hash table build
 	finalized       bool
 }
 
@@ -86,7 +86,7 @@ func newRowTableSegment() *rowTableSegment {
 		// TODO: @XuHuaiyu if joinKeyIsInlined, the cap of rawData can be calculated
 		rawData:         make([]byte, 0),
 		hashValues:      make([]uint64, 0, maxRowTableSegmentSize),
-		rowLocations:    make([]uintptr, 0, maxRowTableSegmentSize),
+		rowLocations:    make([]unsafe.Pointer, 0, maxRowTableSegmentSize),
 		validJoinKeyPos: make([]int, 0, maxRowTableSegmentSize),
 	}
 }
@@ -99,12 +99,12 @@ func (rts *rowTableSegment) validKeyCount() uint64 {
 	return uint64(len(rts.validJoinKeyPos))
 }
 
-func setNextRowAddress(rowStart uintptr, nextRowAddress uintptr) {
-	*(*uintptr)(unsafe.Pointer(rowStart)) = nextRowAddress //nolint:all
+func setNextRowAddress(rowStart unsafe.Pointer, nextRowAddress unsafe.Pointer) {
+	*(*unsafe.Pointer)(rowStart) = nextRowAddress //nolint:all
 }
 
-func getNextRowAddress(rowStart uintptr) uintptr {
-	return *(*uintptr)(unsafe.Pointer(rowStart)) //nolint:all
+func getNextRowAddress(rowStart unsafe.Pointer) unsafe.Pointer {
+	return *(*unsafe.Pointer)(rowStart) //nolint:all
 }
 
 // TableMeta is the join table meta used in hash join v2
@@ -146,46 +146,46 @@ type TableMeta struct {
 	usedFlagMask uint32
 }
 
-func (meta *TableMeta) getSerializedKeyLength(rowStart uintptr) uint64 {
-	return *(*uint64)(unsafe.Add(unsafe.Pointer(rowStart), sizeOfNextPtr+meta.nullMapLength)) //nolint:all
+func (meta *TableMeta) getSerializedKeyLength(rowStart unsafe.Pointer) uint64 {
+	return *(*uint64)(unsafe.Add(rowStart, sizeOfNextPtr+meta.nullMapLength)) //nolint:all
 }
 
-func (meta *TableMeta) getKeyBytes(rowStart uintptr) []byte {
+func (meta *TableMeta) getKeyBytes(rowStart unsafe.Pointer) []byte {
 	switch meta.keyMode {
 	case OneInt64:
-		return hack.GetBytesFromPtr(unsafe.Add(unsafe.Pointer(rowStart), meta.nullMapLength+sizeOfNextPtr), sizeOfUInt64) //nolint:all
+		return hack.GetBytesFromPtr(unsafe.Add(rowStart, meta.nullMapLength+sizeOfNextPtr), sizeOfUInt64) //nolint:all
 	case FixedSerializedKey:
-		return hack.GetBytesFromPtr(unsafe.Add(unsafe.Pointer(rowStart), meta.nullMapLength+sizeOfNextPtr), meta.joinKeysLength) //nolint:all
+		return hack.GetBytesFromPtr(unsafe.Add(rowStart, meta.nullMapLength+sizeOfNextPtr), meta.joinKeysLength) //nolint:all
 	case VariableSerializedKey:
-		return hack.GetBytesFromPtr(unsafe.Add(unsafe.Pointer(rowStart), meta.nullMapLength+sizeOfNextPtr+sizeOfLengthField), int(meta.getSerializedKeyLength(rowStart))) //nolint:all
+		return hack.GetBytesFromPtr(unsafe.Add(rowStart, meta.nullMapLength+sizeOfNextPtr+sizeOfLengthField), int(meta.getSerializedKeyLength(rowStart))) //nolint:all
 	default:
 		panic("unknown key match type")
 	}
 }
 
-func (meta *TableMeta) advanceToRowData(rowStart uintptr) uintptr {
+func (meta *TableMeta) advanceToRowData(rowStart unsafe.Pointer) unsafe.Pointer {
 	if meta.rowDataOffset == -1 {
 		// variable length, non-inlined key
-		return uintptr(unsafe.Add(unsafe.Pointer(rowStart), sizeOfNextPtr+meta.nullMapLength+sizeOfLengthField+int(meta.getSerializedKeyLength(rowStart)))) //nolint:all
+		return unsafe.Add(rowStart, sizeOfNextPtr+meta.nullMapLength+sizeOfLengthField+int(meta.getSerializedKeyLength(rowStart))) //nolint:all
 	}
-	return uintptr(unsafe.Add(unsafe.Pointer(rowStart), meta.rowDataOffset)) //nolint:all
+	return unsafe.Add(rowStart, meta.rowDataOffset) //nolint:all
 }
 
-func (meta *TableMeta) isColumnNull(rowStart uintptr, columnIndex int) bool {
+func (meta *TableMeta) isColumnNull(rowStart unsafe.Pointer, columnIndex int) bool {
 	byteIndex := (columnIndex + meta.colOffsetInNullMap) / 8
 	bitIndex := (columnIndex + meta.colOffsetInNullMap) % 8
-	return *(*uint8)(unsafe.Add(unsafe.Pointer(rowStart), sizeOfNextPtr+byteIndex))&(uint8(1)<<(7-bitIndex)) != uint8(0) //nolint:all
+	return *(*uint8)(unsafe.Add(rowStart, sizeOfNextPtr+byteIndex))&(uint8(1)<<(7-bitIndex)) != uint8(0) //nolint:all
 }
 
-func (meta *TableMeta) setUsedFlag(rowStart uintptr) {
-	addr := (*uint32)(unsafe.Add(unsafe.Pointer(rowStart), sizeOfNextPtr)) //nolint:all
+func (meta *TableMeta) setUsedFlag(rowStart unsafe.Pointer) {
+	addr := (*uint32)(unsafe.Add(rowStart, sizeOfNextPtr)) //nolint:all
 	value := atomic.LoadUint32(addr)
 	value |= meta.usedFlagMask
 	atomic.StoreUint32(addr, value)
 }
 
-func (meta *TableMeta) isCurrentRowUsed(rowStart uintptr) bool {
-	return (*(*uint32)(unsafe.Add(unsafe.Pointer(rowStart), sizeOfNextPtr)) & meta.usedFlagMask) == meta.usedFlagMask //nolint:all
+func (meta *TableMeta) isCurrentRowUsed(rowStart unsafe.Pointer) bool {
+	return (*(*uint32)(unsafe.Add(rowStart, sizeOfNextPtr)) & meta.usedFlagMask) == meta.usedFlagMask //nolint:all
 }
 
 type rowTable struct {
@@ -194,14 +194,14 @@ type rowTable struct {
 }
 
 // used for test
-func (rt *rowTable) getRowStart(rowIndex int) uintptr {
+func (rt *rowTable) getRowStart(rowIndex int) unsafe.Pointer {
 	for segIndex := 0; segIndex < len(rt.segments); segIndex++ {
 		if rowIndex < len(rt.segments[segIndex].rowLocations) {
 			return rt.segments[segIndex].rowLocations[rowIndex]
 		}
 		rowIndex -= len(rt.segments[segIndex].rowLocations)
 	}
-	return 0
+	return nil
 }
 
 func (rt *rowTable) getValidJoinKeyPos(rowIndex int) int {
