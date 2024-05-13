@@ -553,7 +553,7 @@ func decodeJobVersionEvent(kv *mvccpb.KeyValue, tp mvccpb.Event_EventType, prefi
 	if err != nil {
 		return 0, "", 0, false
 	}
-	// there is Value in DELETE event, so we need to check it.
+	// there is no Value in DELETE event, so we need to check it.
 	if tp == mvccpb.PUT {
 		schemaVer, err = strconv.ParseInt(string(kv.Value), 10, 64)
 		if err != nil {

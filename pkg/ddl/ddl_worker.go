@@ -493,6 +493,10 @@ func (d *ddl) addBatchDDLJobs(tasks []*limitJobTask) error {
 
 		jobTasks = append(jobTasks, job)
 		injectModifyJobArgFailPoint(job)
+		// only need it for non-local mode.
+		if !tasks[0].job.LocalMode {
+			d.initJobDoneCh(job.ID)
+		}
 	}
 
 	se.GetSessionVars().SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
@@ -860,7 +864,7 @@ func (w *worker) HandleJobDone(d *ddlCtx, job *model.Job, t *meta.Meta) error {
 		return err
 	}
 	CleanupDDLReorgHandles(job, w.sess)
-	asyncNotify(d.ddlJobDoneCh)
+	d.notifyJobDone(job.ID)
 	return nil
 }
 
