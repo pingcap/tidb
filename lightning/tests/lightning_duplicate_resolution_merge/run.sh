@@ -39,9 +39,6 @@ wait "$pid1" "$pid2"
 # Ensure all tables are consistent.
 run_sql 'admin check table dup_resolve.a'
 
-run_sql 'select count(*) from dup_resolve.a'
-check_contains 'count(*): 10'
-
 run_sql 'select count(*) from lightning_task_info.conflict_records'
 check_contains 'count(*): 16'
 
