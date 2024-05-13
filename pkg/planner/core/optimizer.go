@@ -40,7 +40,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/property"
-	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/privilege"
@@ -1171,16 +1170,6 @@ func existsCartesianProduct(p base.LogicalPlan) bool {
 
 // DefaultDisabledLogicalRulesList indicates the logical rules which should be banned.
 var DefaultDisabledLogicalRulesList *atomic.Value
-
-func init() {
-	expression.EvalSimpleAst = evalAstExpr
-	expression.BuildSimpleExpr = buildSimpleExpr
-	expression.DecodeKeyFromString = decodeKeyFromString
-	plannerutil.EvalAstExprWithPlanCtx = evalAstExprWithPlanCtx
-	plannerutil.RewriteAstExprWithPlanCtx = rewriteAstExprWithPlanCtx
-	DefaultDisabledLogicalRulesList = new(atomic.Value)
-	DefaultDisabledLogicalRulesList.Store(set.NewStringSet())
-}
 
 func disableReuseChunkIfNeeded(sctx base.PlanContext, plan base.PhysicalPlan) {
 	if !sctx.GetSessionVars().IsAllocValid() {
