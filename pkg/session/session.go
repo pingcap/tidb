@@ -3150,7 +3150,8 @@ var (
 	mdlTable = `create table mysql.tidb_mdl_info(
 		job_id BIGINT NOT NULL PRIMARY KEY,
 		version BIGINT NOT NULL,
-		table_ids text(65535)
+		table_ids text(65535),
+		owner_id varchar(261)
 	);`
 )
 

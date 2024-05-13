@@ -605,18 +605,19 @@ func (w *worker) registerMDLInfo(job *model.Job, ver int64) error {
 	if len(rows) == 0 {
 		return errors.Errorf("can't find ddl job %d", job.ID)
 	}
+	ownerID := w.ownerManager.ID()
 	ids := rows[0].GetString(0)
-	sql := fmt.Sprintf("replace into mysql.tidb_mdl_info (job_id, version, table_ids) values (%d, %d, '%s')", job.ID, ver, ids)
+	sql := fmt.Sprintf("replace into mysql.tidb_mdl_info (job_id, version, table_ids, owner_id) values (%d, %d, '%s', '%s')", job.ID, ver, ids, ownerID)
 	_, err = w.sess.Execute(context.Background(), sql, "register-mdl-info")
 	return err
 }
 
 // cleanMDLInfo cleans metadata lock info.
-func cleanMDLInfo(pool *sess.Pool, jobID int64, ec *clientv3.Client, cleanETCD bool) {
+func cleanMDLInfo(pool *sess.Pool, jobID int64, ec *clientv3.Client, ownerID string, cleanETCD bool) {
 	if !variable.EnableMDL.Load() {
 		return
 	}
-	sql := fmt.Sprintf("delete from mysql.tidb_mdl_info where job_id = %d", jobID)
+	sql := fmt.Sprintf("delete from mysql.tidb_mdl_info where job_id = %d and owner_id = '%s'", jobID, ownerID)
 	sctx, _ := pool.Get()
 	defer pool.Put(sctx)
 	se := sess.NewSession(sctx)
@@ -636,8 +637,8 @@ func cleanMDLInfo(pool *sess.Pool, jobID int64, ec *clientv3.Client, cleanETCD b
 }
 
 // checkMDLInfo checks if metadata lock info exists. It means the schema is locked by some TiDBs if exists.
-func checkMDLInfo(jobID int64, pool *sess.Pool) (bool, int64, error) {
-	sql := fmt.Sprintf("select version from mysql.tidb_mdl_info where job_id = %d", jobID)
+func checkMDLInfo(jobID int64, pool *sess.Pool, ownerID string) (bool, int64, error) {
+	sql := fmt.Sprintf("select version from mysql.tidb_mdl_info where job_id = %d and owner_id = '%s'", jobID, ownerID)
 	sctx, _ := pool.Get()
 	defer pool.Put(sctx)
 	se := sess.NewSession(sctx)
