@@ -77,7 +77,7 @@ func (htc *hashTableContext) getCurrentRowSegment(workerID, partitionID int, tab
 func (htc *hashTableContext) finalizeCurrentSeg(workerID, partitionID int, builder *rowTableBuilder) {
 	seg := htc.getCurrentRowSegment(workerID, partitionID, nil, false)
 	for _, pos := range builder.startPosInRawData[partitionID] {
-		seg.rowLocations = append(seg.rowLocations, uintptr(unsafe.Pointer(&seg.rawData[pos])))
+		seg.rowLocations = append(seg.rowLocations, unsafe.Pointer(&seg.rawData[pos]))
 	}
 	builder.crrntSizeOfRowTable[partitionID] = 0
 	builder.startPosInRawData[partitionID] = builder.startPosInRawData[partitionID][:0]
