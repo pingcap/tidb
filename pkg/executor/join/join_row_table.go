@@ -163,12 +163,13 @@ func (meta *TableMeta) getKeyBytes(rowStart unsafe.Pointer) []byte {
 	}
 }
 
-func (meta *TableMeta) advanceToRowData(rowStart unsafe.Pointer) unsafe.Pointer {
+func (meta *TableMeta) advanceToRowData(matchedRowInfo *matchedRowInfo) {
 	if meta.rowDataOffset == -1 {
 		// variable length, non-inlined key
-		return unsafe.Add(rowStart, sizeOfNextPtr+meta.nullMapLength+sizeOfLengthField+int(meta.getSerializedKeyLength(rowStart)))
+		matchedRowInfo.buildRowOffset = sizeOfNextPtr + meta.nullMapLength + sizeOfLengthField + int(meta.getSerializedKeyLength(matchedRowInfo.buildRowStart))
+	} else {
+		matchedRowInfo.buildRowOffset = meta.rowDataOffset
 	}
-	return unsafe.Add(rowStart, meta.rowDataOffset)
 }
 
 func (meta *TableMeta) isColumnNull(rowStart unsafe.Pointer, columnIndex int) bool {

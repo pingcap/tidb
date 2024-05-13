@@ -73,10 +73,13 @@ type offsetAndLength struct {
 	length int
 }
 
-type rowIndexInfo struct {
+type matchedRowInfo struct {
+	// probeRowIndex mean the probe side index of current matched row
 	probeRowIndex int
+	// buildRowStart mean the build row start of the current matched row
 	buildRowStart unsafe.Pointer
-	buildRowData  unsafe.Pointer
+	// buildRowOffset mean the current offset of current BuildRow, used to construct column data from BuildRow
+	buildRowOffset int
 }
 
 type posAndHashValue struct {
@@ -102,7 +105,7 @@ type baseJoinProbe struct {
 	currentProbeRow               int
 	matchedRowsForCurrentProbeRow int
 	chunkRows                     int
-	cachedBuildRows               []rowIndexInfo
+	cachedBuildRows               []*matchedRowInfo
 
 	keyIndex         []int
 	columnTypes      []*types.FieldType
@@ -119,7 +122,7 @@ type baseJoinProbe struct {
 	offsetAndLengthArray []offsetAndLength
 	// these 3 variables are used for join that has other condition, should be inited when the join has other condition
 	tmpChk        *chunk.Chunk
-	rowIndexInfos []rowIndexInfo
+	rowIndexInfos []*matchedRowInfo
 	selected      []bool
 }
 
@@ -247,7 +250,7 @@ func probeCheckSQLKiller(killer sqlkiller.SQLKiller) error {
 	return err
 }
 
-func (j *baseJoinProbe) appendBuildRowToCachedBuildRowsAndConstructBuildRowsIfNeeded(buildRow rowIndexInfo, chk *chunk.Chunk, currentColumnIndexInRow int, forOtherCondition bool) {
+func (j *baseJoinProbe) appendBuildRowToCachedBuildRowsAndConstructBuildRowsIfNeeded(buildRow *matchedRowInfo, chk *chunk.Chunk, currentColumnIndexInRow int, forOtherCondition bool) {
 	j.cachedBuildRows = append(j.cachedBuildRows, buildRow)
 	if len(j.cachedBuildRows) >= batchBuildRowSize {
 		j.batchConstructBuildRows(chk, currentColumnIndexInRow, forOtherCondition)
@@ -302,8 +305,8 @@ func (j *baseJoinProbe) appendBuildRowToChunkInternal(chk *chunk.Chunk, usedCols
 		return
 	}
 	for i := 0; i < len(j.cachedBuildRows); i++ {
-		if j.cachedBuildRows[i].buildRowData == nil {
-			j.cachedBuildRows[i].buildRowData = j.ctx.hashTableMeta.advanceToRowData(j.cachedBuildRows[i].buildRowStart)
+		if j.cachedBuildRows[i].buildRowOffset == 0 {
+			j.ctx.hashTableMeta.advanceToRowData(j.cachedBuildRows[i])
 		}
 	}
 	colIndexMap := make(map[int]int)
@@ -335,18 +338,18 @@ func (j *baseJoinProbe) appendBuildRowToChunkInternal(chk *chunk.Chunk, usedCols
 			currentColumn = chk.Column(indexInDstChk)
 			for index := range j.cachedBuildRows {
 				currentColumn.AppendNullBitmap(!meta.isColumnNull(j.cachedBuildRows[index].buildRowStart, columnIndex))
-				j.cachedBuildRows[index].buildRowData = chunk.AppendCellFromRawData(currentColumn, j.cachedBuildRows[index].buildRowData)
+				j.cachedBuildRows[index].buildRowOffset = chunk.AppendCellFromRawData(currentColumn, j.cachedBuildRows[index].buildRowStart, j.cachedBuildRows[index].buildRowOffset)
 			}
 		} else {
 			// not used so don't need to insert into chk, but still need to advance rowData
 			if meta.columnsSize[columnIndex] < 0 {
 				for index := range j.cachedBuildRows {
-					size := *(*uint64)(j.cachedBuildRows[index].buildRowData)
-					j.cachedBuildRows[index].buildRowData = unsafe.Add(j.cachedBuildRows[index].buildRowData, sizeOfLengthField+int(size))
+					size := *(*uint64)(unsafe.Add(j.cachedBuildRows[index].buildRowStart, j.cachedBuildRows[index].buildRowOffset))
+					j.cachedBuildRows[index].buildRowOffset += sizeOfLengthField + int(size)
 				}
 			} else {
 				for index := range j.cachedBuildRows {
-					j.cachedBuildRows[index].buildRowData = unsafe.Add(j.cachedBuildRows[index].buildRowData, meta.columnsSize[columnIndex])
+					j.cachedBuildRows[index].buildRowOffset += meta.columnsSize[columnIndex]
 				}
 			}
 		}
@@ -493,7 +496,7 @@ func NewJoinProbe(ctx *HashJoinCtxV2, workID uint, joinType core.JoinType, keyIn
 			base.hasNullableKey = true
 		}
 	}
-	base.cachedBuildRows = make([]rowIndexInfo, 0, batchBuildRowSize)
+	base.cachedBuildRows = make([]*matchedRowInfo, 0, batchBuildRowSize)
 	base.matchedRowsHeaders = make([]unsafe.Pointer, 0, chunk.InitialCapacity)
 	base.selRows = make([]int, 0, chunk.InitialCapacity)
 	for i := 0; i < chunk.InitialCapacity; i++ {
@@ -514,7 +517,7 @@ func NewJoinProbe(ctx *HashJoinCtxV2, workID uint, joinType core.JoinType, keyIn
 		base.tmpChk = chunk.NewChunkWithCapacity(joinedColumnTypes, chunk.InitialCapacity)
 		base.tmpChk.SetInCompleteChunk(true)
 		base.selected = make([]bool, 0, chunk.InitialCapacity)
-		base.rowIndexInfos = make([]rowIndexInfo, 0, chunk.InitialCapacity)
+		base.rowIndexInfos = make([]*matchedRowInfo, 0, chunk.InitialCapacity)
 	}
 	switch joinType {
 	case core.InnerJoin:
