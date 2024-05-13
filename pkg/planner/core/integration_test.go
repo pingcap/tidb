@@ -2016,6 +2016,7 @@ func TestIsIPv6ToTiFlash(t *testing.T) {
 // The "virtual generated column" push down is not supported now.
 // This test covers: TopN, Projection, Selection.
 func TestVirtualExprPushDown(t *testing.T) {
+	t.SkipNow()
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")

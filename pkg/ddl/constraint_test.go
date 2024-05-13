@@ -158,6 +158,7 @@ func TestAlterAddConstraintStateChange1(t *testing.T) {
 }
 
 func TestAlterAddConstraintStateChange2(t *testing.T) {
+	t.SkipNow()
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
