@@ -79,38 +79,34 @@ We propose a set of interfaces for users to implement an auth plugin that are si
 
 Following is the interface for an auth plugin:
 ```go
-// AuthPlugin is an interface for authentication plugins.
-type AuthPlugin interface {
-    // Name returns the name of the auth plugin. It will be registered as a system variable in TiDB which can be used inside the `CREATE USER ... IDENTIFIED WITH 'plugin_name'` statement.
-    Name() string
+// AuthPlugin contains attributes needed for an authentication plugin.
+type AuthPlugin struct {
+    // Name is the name of the auth plugin. It will be registered as a system variable in TiDB which can be used inside the `CREATE USER ... IDENTIFIED WITH 'plugin_name'` statement.
+    Name string
+	
+    // RequiredClientSidePlugin is the name of the client-side plugin required by the server-side plugin. It will be used to check if the client has the required plugin installed and require the client to use it if installed.
+    // The user can require default MySQL plugins such as 'caching_sha2_password' or 'mysql_native_password'. 
+    RequiredClientSidePlugin string
     
-    // PasswordReader is a function to communicate with the client during handshake phase to 
-    // read/write more data to the client-side plugin using authConn. For example, sending extra salt to the client.
-    // If `plugin.PasswordReader()` returns nil, the connection will default to mysql_clear_password plugin which means the password will be passed from the client-side in clear text format. Otherwise, the connection will use `plugin.Name()` as the current plugin
-    // When `plugin.PasswordReader()(ctx, authConn, resp)` is called, it should return the final password received from the client in bytes format. This bytes password will be passed into `plugin.Authenticate` below.
-    // ctx: context passed in from caller
-    // authConn: interface for the plugin to communicate with the client
-    PasswordReader() func(ctx context.Context, authConn conn.AuthConn) ([]byte, error)
-    
-    // Authenticate is called when a client connects to the server as a user and the server authenticates the user.
+    // AuthenticateUser is called when a client connects to the server as a user and the server authenticates the user.
     // If an error is returned, the login attempt fails, otherwise it succeeds.
     // authUser: the username in the connect attempt
     // storedPwd: the user's password stored in mysql.user table
-    // inputPwd (authentication): the user's password passed in from the connection attempt in bytes (return value of `plugin.PasswordReader()(ctx, authConn, resp)` if `plugin.PasswordReader() != nil`)
+    // inputPwd (authentication): the user's password passed in from the connection attempt in bytes
     // salt: randomly generated salt for the current connection
     // connState: the TLS connection state (contains the TLS certificate) if client is using TLS. It will be nil if the client is not using TLS
     // authConn: interface for the plugin to communicate with the client
-    Authenticate(authUser string, storedPwd string, inputPwd []byte, salt []byte, connState *tls.ConnectionState, authConn conn.AuthConn) error
+    AuthenticateUser func(authUser string, storedPwd string, inputPwd []byte, salt []byte, connState *tls.ConnectionState, authConn conn.AuthConn) error
     
-    // EncodePassword is a function for user to implement customized ways to encode the password (e.g. hash/salt/clear-text). The returned string will be stored as the encoded password in the mysql.user table.
+    // GenerateAuthString is a function for user to implement customized ways to encode the password (e.g. hash/salt/clear-text). The returned string will be stored as the encoded password in the mysql.user table.
     // If the input password is considered as invalid, this should return an error.
     // pwd: User's input password in CREATE/ALTER USER statements in clear-text
-    EncodePassword(pwd string) (string, bool)
+    GenerateAuthString func(pwd string) (string, bool)
     
-    // IsValidPasswordHash checks if the password hash stored in the mysql.user table is valid.
-    // This is called when retrieving an existing user to make sure the password stored is valid and not modified.
+    // ValidateAuthString checks if the password hash stored in the mysql.user table or passed in from `IDENTIFIED AS` is valid.
+    // This is called when retrieving an existing user to make sure the password stored is valid and not modified and make sure user is passing a valid password hash in `IDENTIFIED AS`.
     // pwdHash: hash of the password stored in the internal user table
-    IsValidPasswordHash(pwdHash string) bool
+    ValidateAuthString func(pwdHash string) bool
     
     // VerifyPrivilege is called for each user queries, and serves as an extra check for privileges for the user.
     // It will only be executed if the user has already been granted the privilege in SQL layer.
@@ -123,7 +119,7 @@ type AuthPlugin interface {
     // column: the column to check for privilege (currently just a placeholder in TiDB as column-level privilege is not supported by TiDB yet)
     // priv: the privilege type of the SQL statement that will be executed
     // connState: the TLS connection state (contains the TLS certificate) if client is using TLS. It will be nil if the client is not using TLS
-    VerifyPrivilege(activeRoles []*auth.RoleIdentity, user, host, db, table, column string, priv mysql.PrivilegeType, connState *tls.ConnectionState) bool
+    VerifyPrivilege func(activeRoles []*auth.RoleIdentity, user, host, db, table, column string, priv mysql.PrivilegeType, connState *tls.ConnectionState) bool
     
     // VerifyDynamicPrivilege is called for each user queries, and serves as an extra check for dynamic privileges for the user.
     // It will only be executed if the user has already been granted the dynamic privilege in SQL layer.
@@ -134,24 +130,26 @@ type AuthPlugin interface {
     // priv: the dynamic privilege required by the user's SQL statement
     // withGrant: whether the statement to be executed is granting the user privilege for executing GRANT statements
     // connState: the TLS connection state (contains the TLS certificate) if client is using TLS. It will be nil if the client is not using TLS
-    VerifyDynamicPrivilege(activeRoles []*auth.RoleIdentity, user, host, privName string, withGrant bool, connState *tls.ConnectionState) bool
+    VerifyDynamicPrivilege func(activeRoles []*auth.RoleIdentity, user, host, privName string, withGrant bool, connState *tls.ConnectionState) bool
 }
 ```
 
-Let’s discuss each interface and why they are needed:
+Note that we are using a `struct` instead of an `interface` to make sure that if in the future we add a new function/attribute required, existing user-implemented plugin code are still compatible.
 
-`PasswordReader`: This function will be called multiple times:
-1. When the client establishes connections, TiDB should check if `PasswordReader() == nil`, if so, it means the plugin does not require custom handling for passing client passwords, so it will tell the client to use `mysql_clear_password` plugin on the client-side to pass the password in clear text format. 
-Otherwise, if the function does not return nil, it means the plugin has some special mechanisms for reading the password from the client, which could include sending more data back to the client. In this case, TiDB will return the Name of the plugin to the client, so the client can look for the [local implementation](https://dev.mysql.com/doc/extending-mysql/8.0/en/writing-authentication-plugins-client-side.html) of the plugin which understands the data sent from the server side.
-It is important to keep this as an option, as a user-implemented customized plugin can require client-side implementation as well. This should happen here: https://github.com/pingcap/tidb/blob/8d9e67b37dea759db0980aeddf4da967bf93e83e/pkg/server/conn.go#L252
-2. If `PasswordReader() != nil`,  then the returned function will be called with the current connection, which the plugin can use to communicate with the client and return the final password (can be processed) from the client in here: https://github.com/pingcap/tidb/blob/8d9e67b37dea759db0980aeddf4da967bf93e83e/pkg/server/conn.go#L605
+Let’s discuss each attributes/functions and why they are needed:
 
-`Authenticate`: this should include the authentication check performed during connection attempts after the plugin/SSL information has been exchanged between the client and server. It should be called inside https://github.com/pingcap/tidb/blob/8d9e67b37dea759db0980aeddf4da967bf93e83e/pkg/privilege/privileges/privileges.go#L514 where the privilege manager checks the authentication plugin, and receives all the information it needs.
+`Name`: the name of the plugin. This will be used in the `CREATE USER ... IDENTIFIED WITH 'plugin_name'` statement. The plugin name will be registered as a system variable in TiDB.
+
+`RequiredClientSidePlugin`: the name of the client-side plugin required by the server-side plugin. This is used to check if the client has the required plugin installed and require the client to use it if installed. The user can require default MySQL plugins such as `caching_sha2_password` or `mysql_native_password`.
+
+`AuthenticateUser`: this should include the authentication check performed during connection attempts after the plugin/SSL information has been exchanged between the client and server. It should be called inside https://github.com/pingcap/tidb/blob/8d9e67b37dea759db0980aeddf4da967bf93e83e/pkg/privilege/privileges/privileges.go#L514 where the privilege manager checks the authentication plugin, and receives all the information it needs.
 For example, username, password, and the TLS connection state which includes the TLS certificates. If an error is returned, the connection attempt will fail.
+If the server would like to communicate with the client to send extra data (e.g. salt) to the client, it can use the `authConn` interface to do so. The client can then use this data to process the password before sending it back to the server.
 
-`IsValidPasswordHash`: after the connection attempt is granted, validates whether the password stored locally in TiDB is a valid password hash. This should be called in https://github.com/pingcap/tidb/blob/8d9e67b37dea759db0980aeddf4da967bf93e83e/pkg/privilege/privileges/privileges.go#L213
+`ValidateAuthString`: after the connection attempt is granted, validates whether the password stored locally in TiDB is a valid password hash. This should be called in https://github.com/pingcap/tidb/blob/8d9e67b37dea759db0980aeddf4da967bf93e83e/pkg/privilege/privileges/privileges.go#L213.
+This is also called with the user is created with `CREATE USER .... IDENTIFIED AS 'my_auth_string'` where `my_auth_string` will be validated using this function to make sure it's a valid hash.
 
-`EncodePassword`: called when executing `CREATE`/`ALTER USER`/`SET PASSWORD` statements to encode the password. It should return the encoded password and whether the input password is legal. Should be called inside https://github.com/pingcap/tidb/blob/8d9e67b37dea759db0980aeddf4da967bf93e83e/pkg/parser/ast/misc.go#L1421. Password validation during creation/alter time should be done inside this function.
+`GenerateAuthString`: called when executing `CREATE`/`ALTER USER`/`SET PASSWORD` statements to encode the password. It should return the encoded password and whether the input password is legal. Should be called inside https://github.com/pingcap/tidb/blob/8d9e67b37dea759db0980aeddf4da967bf93e83e/pkg/parser/ast/misc.go#L1421. Password validation during creation/alter time should be done inside this function.
 
 `VerifyPrivilege`: is called to authorize users for executing SQL statements. This will be an extra check on top of the existing check done with the `MySQLPrivilege.RequestVerification`, so it should be called after the statement here: https://github.com/pingcap/tidb/blob/8d9e67b37dea759db0980aeddf4da967bf93e83e/pkg/privilege/privileges/privileges.go#L189.
 If the user does not have the privileges granted in MySQL, the overall approval will fail and the user will get a privilege error. The overall logic should be:
@@ -175,7 +173,7 @@ The above interfaces and parameters should give the users all information they n
 
 ### Compatibility
 The feature needs to be compatible with existing user related statements and options, such as `CREATE USER`, `ALTER USER`, `SET PASSWORD`.
-However, it will not work with existing functionalities such as password expiry and password validation. Users can implement their own password validation logic inside the EncodePassword implementation.
+However, it will not work with existing functionalities such as password expiry and password validation. Users can implement their own password validation logic inside the `GenerateAuthString` implementation.
 
 ## Test Design
 
@@ -228,4 +226,4 @@ Technically, we could implement PAM support in TiDB instead of what is being pro
 
 ## Unresolved Questions
 
-+ Is the `IsValidPasswordHash` function really needed? Why do we want to do a password validity check for passwords fetched from the internal user table?
+None
