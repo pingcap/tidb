@@ -99,6 +99,28 @@ type Data struct {
 	// pid2tid is used by FindTableInfoByPartitionID, it stores {partitionID, schemaVersion} => table ID
 	// Need full data in memory!
 	pid2tid *btree.BTreeG[partitionItem]
+
+	// tableInfoResident is a {dbName, tableID, schemaVersion} => model.TableInfo
+	// It is part of the model.TableInfo data kept in memory to accelerate the SchemaTableInfos API.
+	// We observe the pattern that SchemaTableInfos always come with filter.
+	// All model.TableInfo with special attributes are here, currently the special attributes including:
+	//     TTLInfo, TiFlashReplica
+	// PlacementPolicyRef, Partition should be added later, and then maybe ForeignKeys, TableLock etc
+	tableInfoResident *btree.BTreeG[tableInfoItem]
+}
+
+func hasSpecialAttributes(t *model.TableInfo) bool {
+	if t.TTLInfo != nil || t.TiFlashReplica != nil {
+		return true
+	}
+	return false
+}
+
+type tableInfoItem struct {
+	dbName string
+	tableID int64
+	schemaVersion int64
+	tableInfo *model.TableInfo
 }
 
 type partitionItem struct {
@@ -157,6 +179,7 @@ func NewData() *Data {
 		tableCache: newSieve[tableCacheKey, table.Table](32 * size.MB),
 		specials:   make(map[string]*schemaTables),
 		pid2tid:    btree.NewBTreeG[partitionItem](comparePartitionItem),
+		tableInfoResident: btree.NewBTreeG[tableInfoItem](compareTableInfoItem),
 	}
 	return ret
 }
@@ -165,10 +188,14 @@ func (isd *Data) add(item tableItem, tbl table.Table) {
 	isd.byID.Set(item)
 	isd.byName.Set(item)
 	isd.tableCache.Set(tableCacheKey{item.tableID, item.schemaVersion}, tbl)
-	if pi := tbl.Meta().GetPartitionInfo(); pi != nil {
+	ti := tbl.Meta()
+	if pi := ti.GetPartitionInfo(); pi != nil {
 		for _, def := range pi.Definitions {
 			isd.pid2tid.Set(partitionItem{def.ID, item.schemaVersion, tbl.Meta().ID, false})
 		}
+	}
+	if hasSpecialAttributes(ti) {
+		isd.tableInfoResident.Set(tableInfoItem{item.dbName, item.tableID, item.schemaVersion, ti})
 	}
 }
 
@@ -218,6 +245,23 @@ func compareByName(a, b tableItem) bool {
 		return false
 	}
 
+	return a.schemaVersion < b.schemaVersion
+}
+
+func compareTableInfoItem(a, b tableInfoItem) bool {
+	if a.dbName < b.dbName {
+		return true
+	}
+	if a.dbName > b.dbName {
+		return false
+	}
+	
+	if a.tableID < b.tableID {
+		return true
+	}
+	if a.tableID > b.tableID {
+		return false
+	}
 	return a.schemaVersion < b.schemaVersion
 }
 
@@ -970,4 +1014,28 @@ func (b *bundleInfoBuilder) completeUpdateTablesV2(is *infoschemaV2) {
 			}
 		}
 	}
+}
+
+func (is *infoschemaV2) ListWithFilter(filter func(*model.TableInfo) bool) <-chan tableInfoResult {
+	ch := make(chan tableInfoResult)
+	go func() {
+		defer close(ch)
+		var currDB string
+		var res tableInfoResult
+		is.Data.tableInfoResident.Reverse(func(item tableInfoItem) bool {
+			if currDB == "" {
+				currDB = item.dbName
+				res = tableInfoResult{DBName: item.dbName}
+				res.TableInfo = append(res.TableInfo, item.tableInfo)
+			} else if currDB == item.dbName {
+				res.TableInfo = append(res.TableInfo, item.tableInfo)
+			} else {
+				ch <- res
+				res = tableInfoResult{DBName: item.dbName}
+				res.TableInfo = append(res.TableInfo, item.tableInfo)
+			}
+			return true
+		})
+	}()
+	return ch
 }

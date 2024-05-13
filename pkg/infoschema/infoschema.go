@@ -279,6 +279,29 @@ func (is *infoSchema) SchemaTableInfos(schema model.CIStr) []*model.TableInfo {
 	return getTableInfoList(is.SchemaTables(schema))
 }
 
+type tableInfoResult struct {
+	DBName string
+	TableInfo []*model.TableInfo
+}
+
+func (is *infoSchema) ListWithFilter(filter func(*model.TableInfo) bool) <-chan tableInfoResult {
+	ch := make(chan tableInfoResult)
+	go func() {
+		defer close(ch)
+		for _, dbName := range is.AllSchemaNames() {
+			res := tableInfoResult{DBName: dbName.O}
+			for _, tblInfo := range is.SchemaTableInfos(dbName) {
+				if !filter(tblInfo) {
+					continue
+				}
+				res.TableInfo = append(res.TableInfo, tblInfo)
+			}
+			ch <- res
+		}
+	}()
+	return ch
+}
+
 // AllSchemaNames returns all the schemas' names.
 func AllSchemaNames(is InfoSchema) (names []string) {
 	schemas := is.AllSchemaNames()
