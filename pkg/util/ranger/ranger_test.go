@@ -1422,7 +1422,6 @@ create table t(
 				got := fmt.Sprintf("%v", res.Ranges)
 				require.Equal(t, tt.resultStr, got)
 			}
-
 		})
 	}
 }
