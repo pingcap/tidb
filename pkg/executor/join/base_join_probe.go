@@ -92,9 +92,8 @@ type baseJoinProbe struct {
 	// if currentChunk.Sel() == nil, then construct a fake selRows
 	selRows  []int
 	usedRows []int
-	// matchedRowsHeaders, currentRowsPos, serializedKeys is indexed by logical row index
+	// matchedRowsHeaders, serializedKeys is indexed by logical row index
 	matchedRowsHeaders []unsafe.Pointer // the start address of each matched rows
-	currentRowsPos     []unsafe.Pointer // the current address of each matched rows
 	serializedKeys     [][]byte         // used for save serialized keys
 	// filterVector and nullKeyVector is indexed by physical row index because the return vector of VectorizedFilter is based on physical row index
 	filterVector                  []bool              // if there is filter before probe, filterVector saves the filter result
