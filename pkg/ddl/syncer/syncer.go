@@ -500,7 +500,7 @@ func (s *schemaVersionSyncer) syncJobSchemaVer(ctx context.Context) {
 }
 
 func (s *schemaVersionSyncer) handleJobSchemaVerKV(kv *mvccpb.KeyValue, tp mvccpb.Event_EventType) {
-	jobID, tidbID, schemaVer, valid := decodeJobVersionEvent(kv, s.jobNodeVerPrefix)
+	jobID, tidbID, schemaVer, valid := decodeJobVersionEvent(kv, tp, s.jobNodeVerPrefix)
 	if !valid {
 		logutil.DDLLogger().Error("invalid job version kv", zap.Stringer("kv", kv), zap.Stringer("type", tp))
 		return
@@ -543,7 +543,7 @@ func (s *schemaVersionSyncer) jobSchemaVerMatchOrSet(jobID int64, matchFn func(m
 	return item
 }
 
-func decodeJobVersionEvent(kv *mvccpb.KeyValue, prefix string) (jobID int64, tidbID string, schemaVer int64, valid bool) {
+func decodeJobVersionEvent(kv *mvccpb.KeyValue, tp mvccpb.Event_EventType, prefix string) (jobID int64, tidbID string, schemaVer int64, valid bool) {
 	left := strings.TrimPrefix(string(kv.Key), prefix)
 	parts := strings.Split(left, "/")
 	if len(parts) != 2 {
@@ -553,9 +553,12 @@ func decodeJobVersionEvent(kv *mvccpb.KeyValue, prefix string) (jobID int64, tid
 	if err != nil {
 		return 0, "", 0, false
 	}
-	schemaVer, err = strconv.ParseInt(string(kv.Value), 10, 64)
-	if err != nil {
-		return 0, "", 0, false
+	// there is Value in DELETE event, so we need to check it.
+	if tp == mvccpb.PUT {
+		schemaVer, err = strconv.ParseInt(string(kv.Value), 10, 64)
+		if err != nil {
+			return 0, "", 0, false
+		}
 	}
 	return jobID, parts[1], schemaVer, true
 }
