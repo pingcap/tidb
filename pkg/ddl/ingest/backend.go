@@ -41,14 +41,15 @@ import (
 	"go.uber.org/zap"
 )
 
-// BackendCtx is the backend context for add index reorg task.
+// BackendCtx is the backend context for one add index reorg task.
 type BackendCtx interface {
-	Register(jobID, indexID int64, schemaName, tableName string) (Engine, error)
-	Unregister(jobID, indexID int64)
+	// Register create a new engineInfo for each index ID and register it to the
+	// backend context.
+	Register(indexIDs []int64, tableName string) ([]Engine, error)
+	UnregisterEngines()
 
 	CollectRemoteDuplicateRows(indexID int64, tbl table.Table) error
 	FinishImport(indexID int64, unique bool, tbl table.Table) error
-	ResetWorkers(jobID int64)
 	Flush(indexID int64, mode FlushMode) (flushed, imported bool, err error)
 	Done() bool
 	SetDone()
@@ -73,17 +74,17 @@ const (
 	FlushModeForceFlushAndImport
 )
 
-// litBackendCtx store a backend info for add index reorg task.
+// litBackendCtx implements BackendCtx.
 type litBackendCtx struct {
-	generic.SyncMap[int64, *engineInfo]
-	MemRoot  MemRoot
-	DiskRoot DiskRoot
+	// TODO(lance6716): no need to sync map?
+	engines  generic.SyncMap[int64, *engineInfo]
+	memRoot  MemRoot
+	diskRoot DiskRoot
 	jobID    int64
 	backend  *local.Backend
 	ctx      context.Context
 	cfg      *lightning.Config
 	sysVars  map[string]string
-	diskRoot DiskRoot
 	done     bool
 
 	timeOfLastFlush atomicutil.Time
@@ -135,7 +136,7 @@ func (bc *litBackendCtx) CollectRemoteDuplicateRows(indexID int64, tbl table.Tab
 // FinishImport imports all the key-values in engine into the storage, collects the duplicate errors if any, and
 // removes the engine from the backend context.
 func (bc *litBackendCtx) FinishImport(indexID int64, unique bool, tbl table.Table) error {
-	ei, exist := bc.Load(indexID)
+	ei, exist := bc.engines.Load(indexID)
 	if !exist {
 		return dbterror.ErrIngestFailed.FastGenByArgs("ingest engine not found")
 	}
@@ -177,7 +178,7 @@ func acquireLock(ctx context.Context, se *concurrency.Session, key string) (*con
 
 // Flush checks the disk quota and imports the current key-values in engine to the storage.
 func (bc *litBackendCtx) Flush(indexID int64, mode FlushMode) (flushed, imported bool, err error) {
-	ei, exist := bc.Load(indexID)
+	ei, exist := bc.engines.Load(indexID)
 	if !exist {
 		logutil.Logger(bc.ctx).Error(LitErrGetEngineFail, zap.Int64("index ID", indexID))
 		return false, false, dbterror.ErrIngestFailed.FastGenByArgs("ingest engine not found")
