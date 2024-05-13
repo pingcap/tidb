@@ -427,15 +427,21 @@ func (c *index) Delete(ctx table.MutateContext, txn kv.Transaction, indexedValue
 
 		if distinct {
 			if len(key) > 0 {
-				originVal, err := getKeyInTxn(context.TODO(), txn, key)
-				if err != nil {
-					return err
+				okToDelete := true
+				if c.idxInfo.State != model.StatePublic {
+					originVal, err := getKeyInTxn(context.TODO(), txn, key)
+					if err != nil {
+						return err
+					}
+					oh, err := tablecodec.DecodeHandleInUniqueIndexValue(originVal, c.tblInfo.IsCommonHandle)
+					if err != nil {
+						return err
+					}
+					if !h.Equal(oh) {
+						okToDelete = false
+					}
 				}
-				oh, err := tablecodec.DecodeHandleInUniqueIndexValue(originVal, c.tblInfo.IsCommonHandle)
-				if err != nil {
-					return err
-				}
-				if h.Equal(oh) {
+				if okToDelete {
 					err = txn.GetMemBuffer().DeleteWithFlags(key, kv.SetNeedLocked)
 					if err != nil {
 						return err
