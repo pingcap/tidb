@@ -16,19 +16,20 @@ package join
 
 import (
 	"sync/atomic"
+	"unsafe"
 
 	"github.com/cznic/mathutil"
 )
 
 type subTable struct {
 	rowData          *rowTable
-	hashTable        []uintptr
+	hashTable        []unsafe.Pointer
 	posMask          uint64
 	isRowTableEmpty  bool
 	isHashTableEmpty bool
 }
 
-func (st *subTable) lookup(hashValue uint64) uintptr {
+func (st *subTable) lookup(hashValue uint64) unsafe.Pointer {
 	return st.hashTable[hashValue&st.posMask]
 }
 
@@ -57,21 +58,21 @@ func newSubTable(table *rowTable) *subTable {
 		ret.isHashTableEmpty = true
 	}
 	capacity := mathutil.MaxUint64(nextPowerOfTwo(table.validKeyCount()), uint64(1024))
-	ret.hashTable = make([]uintptr, capacity)
+	ret.hashTable = make([]unsafe.Pointer, capacity)
 	ret.posMask = capacity - 1
 	return ret
 }
 
-func (st *subTable) updateHashValue(pos uint64, rowAddress uintptr) {
+func (st *subTable) updateHashValue(pos uint64, rowAddress unsafe.Pointer) {
 	prev := st.hashTable[pos]
 	st.hashTable[pos] = rowAddress
 	setNextRowAddress(rowAddress, prev)
 }
 
-func (st *subTable) atomicUpdateHashValue(pos uint64, rowAddress uintptr) {
+func (st *subTable) atomicUpdateHashValue(pos uint64, rowAddress unsafe.Pointer) {
 	for {
-		prev := atomic.LoadUintptr(&st.hashTable[pos])
-		if atomic.CompareAndSwapUintptr(&st.hashTable[pos], prev, rowAddress) {
+		prev := atomic.LoadPointer(&st.hashTable[pos])
+		if atomic.CompareAndSwapPointer(&st.hashTable[pos], prev, rowAddress) {
 			setNextRowAddress(rowAddress, prev)
 			break
 		}
@@ -117,7 +118,7 @@ type rowIter struct {
 	endPos     *rowPos
 }
 
-func (ri *rowIter) getValue() uintptr {
+func (ri *rowIter) getValue() unsafe.Pointer {
 	return ri.table.tables[ri.currentPos.subTableIndex].rowData.segments[ri.currentPos.rowSegmentIndex].rowLocations[ri.currentPos.rowIndex]
 }
 
@@ -211,7 +212,7 @@ func (jht *hashTableV2) buildHashTable(partitionIndex int, startSegmentIndex int
 	jht.tables[partitionIndex].build(startSegmentIndex, segmentStep)
 }
 
-func (jht *hashTableV2) lookup(hashValue uint64) uintptr {
+func (jht *hashTableV2) lookup(hashValue uint64) unsafe.Pointer {
 	partitionIndex := hashValue % jht.partitionNumber
 	return jht.tables[partitionIndex].lookup(hashValue)
 }
