@@ -161,10 +161,16 @@ TASKLOOP:
 		dom.SysProcTracker().KillSysProcess(dom.GetAutoAnalyzeProcID())
 	})
 	// If we enabled dynamic prune mode, then we need to generate global stats here for partition tables.
-	if needGlobalStats && e.notEmpty.Load() {
-		err = e.handleGlobalStats(ctx, globalStatsMap)
-		if err != nil {
-			return err
+	if needGlobalStats {
+		if e.notEmpty.Load() {
+			err = e.handleGlobalStats(ctx, globalStatsMap)
+			if err != nil {
+				return err
+			}
+		} else {
+			for globalStatsID := range globalStatsMap {
+				statsHandle.SaveMetaToStorage(globalStatsID.tableID, 0, 0, handleutil.StatsMetaHistorySourceAnalyze)
+			}
 		}
 	}
 
