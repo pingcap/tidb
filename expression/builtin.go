@@ -164,7 +164,7 @@ func newBaseBuiltinFuncWithTp(ctx sessionctx.Context, funcName string, args []Ex
 			args[i] = WrapWithCastAsDecimal(ctx, args[i])
 		case types.ETString:
 			args[i] = WrapWithCastAsString(ctx, args[i])
-			args[i] = HandleBinaryLiteral(ctx, args[i], ec, funcName)
+			args[i] = HandleBinaryLiteral(ctx, args[i], ec, funcName, false)
 		case types.ETDatetime:
 			args[i] = WrapWithCastAsTime(ctx, args[i], types.NewFieldType(mysql.TypeDatetime))
 		case types.ETTimestamp:
@@ -176,6 +176,7 @@ func newBaseBuiltinFuncWithTp(ctx sessionctx.Context, funcName string, args []Ex
 		}
 	}
 
+<<<<<<< HEAD:expression/builtin.go
 	var fieldType *types.FieldType
 	switch retType {
 	case types.ETInt:
@@ -202,6 +203,70 @@ func newBaseBuiltinFuncWithTp(ctx sessionctx.Context, funcName string, args []Ex
 	if _, ok := booleanFunctions[funcName]; ok {
 		fieldType.AddFlag(mysql.IsBooleanFlag)
 	}
+=======
+	fieldType := newReturnFieldTypeForBaseBuiltinFunc(funcName, retType, ec)
+	bf = baseBuiltinFunc{
+		bufAllocator:           newLocalColumnPool(),
+		childrenVectorizedOnce: new(sync.Once),
+
+		args: args,
+		tp:   fieldType,
+	}
+	bf.SetCharsetAndCollation(ec.Charset, ec.Collation)
+	bf.setCollator(collate.GetCollator(ec.Collation))
+	bf.SetCoercibility(ec.Coer)
+	bf.SetRepertoire(ec.Repe)
+	// note this function must be called after wrap cast function to the args
+	adjustNullFlagForReturnType(funcName, args, bf)
+	return bf, nil
+}
+
+// newBaseBuiltinFuncWithFieldTypes creates a built-in function signature with specified field types of arguments and the return type of the function.
+// argTps indicates the field types of the args, retType indicates the return type of the built-in function.
+// newBaseBuiltinFuncWithTp and newBaseBuiltinFuncWithFieldTypes are essentially the same, but newBaseBuiltinFuncWithFieldTypes uses FieldType to cast args.
+// If there are specific requirements for decimal/datetime/timestamp, newBaseBuiltinFuncWithFieldTypes should be used, such as if,ifnull and casewhen.
+func newBaseBuiltinFuncWithFieldTypes(ctx BuildContext, funcName string, args []Expression, retType types.EvalType, argTps ...*types.FieldType) (bf baseBuiltinFunc, err error) {
+	if len(args) != len(argTps) {
+		panic("unexpected length of args and argTps")
+	}
+	if ctx == nil {
+		return baseBuiltinFunc{}, errors.New("unexpected nil session ctx")
+	}
+
+	// derive collation information for string function, and we must do it
+	// before doing implicit cast.
+	argEvalTps := make([]types.EvalType, 0, len(argTps))
+	for i := range args {
+		argEvalTps = append(argEvalTps, argTps[i].EvalType())
+	}
+	ec, err := deriveCollation(ctx, funcName, args, retType, argEvalTps...)
+	if err != nil {
+		return
+	}
+
+	for i := range args {
+		switch argTps[i].EvalType() {
+		case types.ETInt:
+			args[i] = WrapWithCastAsInt(ctx, args[i])
+		case types.ETReal:
+			args[i] = WrapWithCastAsReal(ctx, args[i])
+		case types.ETString:
+			args[i] = WrapWithCastAsString(ctx, args[i])
+			args[i] = HandleBinaryLiteral(ctx, args[i], ec, funcName, false)
+		case types.ETJson:
+			args[i] = WrapWithCastAsJSON(ctx, args[i])
+		// https://github.com/pingcap/tidb/issues/44196
+		// For decimal/datetime/timestamp/duration types, it is necessary to ensure that decimal are consistent with the output type,
+		// so adding a cast function here.
+		case types.ETDecimal, types.ETDatetime, types.ETTimestamp, types.ETDuration:
+			if !args[i].GetType().Equal(argTps[i]) {
+				args[i] = BuildCastFunction(ctx, args[i], argTps[i])
+			}
+		}
+	}
+
+	fieldType := newReturnFieldTypeForBaseBuiltinFunc(funcName, retType, ec)
+>>>>>>> 4674b125fc7 (expression: fix charset conversion warning and error behavior (#51191)):pkg/expression/builtin.go
 	bf = baseBuiltinFunc{
 		bufAllocator:           newLocalColumnPool(),
 		childrenVectorizedOnce: new(sync.Once),
