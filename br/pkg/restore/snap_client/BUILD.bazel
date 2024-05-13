@@ -106,6 +106,7 @@ go_test(
         "//pkg/tablecodec",
         "//pkg/testkit/testsetup",
         "//pkg/types",
+        "//pkg/util",
         "//pkg/util/codec",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",

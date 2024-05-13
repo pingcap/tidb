@@ -36,10 +36,7 @@ go_library(
 go_test(
     name = "restore_test",
     timeout = "short",
-    srcs = [
-        "import_mode_switcher_test.go",
-        "misc_test.go",
-    ],
+    srcs = ["misc_test.go"],
     flaky = True,
     race = "off",
     deps = [
