@@ -1191,11 +1191,11 @@ create table t(a int, b bigint, c float, d double, e decimal);
 insert into t values(1, 1000, 6.8, 3.45, 8.3), (1, 3998, -3.4, 5.12, 9.3),(1, 288, 9.2, 6.08, 1);
 select variance(b), variance(c), variance(d), variance(e) from t group by a;
 variance(b)	variance(c)	variance(d)	variance(e)
-2584338.6666666665	29.840000178019228	1.1808222222222229	12.666666666666666
+2584338.6666666665	29.840000178019228	1.1808222222222222	12.666666666666666
 insert into t values(1, 255, 6.8, 6.08, 1);
 select variance(distinct b), variance(distinct c), variance(distinct d), variance(distinct e) from t group by a;
 variance(distinct b)	variance(distinct c)	variance(distinct d)	variance(distinct e)
-2364075.6875	29.840000178019228	1.1808222222222229	12.666666666666666
+2364075.6875	29.840000178019228	1.1808222222222222	12.666666666666666
 insert into t values(2, 322, 0.8, 2.22, 6);
 select a, variance(b) over w from t window w as (partition by a);
 a	variance(b) over w
@@ -2060,3 +2060,14 @@ Projection	1.00	root		Column#9, Column#12, Column#15, Column#18
             └─TableFullScan	1000.00	cop[tikv]	table:test	keep order:false, stats:pseudo
 delete from mysql.opt_rule_blacklist where name = "decorrelate";
 admin reload opt_rule_blacklist;
+drop table if exists t0, t1;
+CREATE TABLE t0 (
+c0 double unsigned zerofill NULL
+);
+INSERT INTO t0 VALUES (0.1251773127435537), (NULL), (0), (0.6665588482250941);
+CREATE TABLE t1(c0 BOOL);
+INSERT INTO t1 VALUES (NULL), (NULL), (0), (0);
+explain format="brief" SELECT t0.c0 FROM t0 NATURAL RIGHT JOIN t1 GROUP BY NULL;
+Error 1055 (42000): Expression #1 of SELECT list is not in GROUP BY clause and contains nonaggregated column 'executor__aggregate.t0._tidb_rowid' which is not functionally dependent on columns in GROUP BY clause; this is incompatible with sql_mode=only_full_group_by
+SELECT t0.c0 FROM t0 NATURAL RIGHT JOIN t1 GROUP BY NULL;
+Error 1055 (42000): Expression #1 of SELECT list is not in GROUP BY clause and contains nonaggregated column 'executor__aggregate.t0._tidb_rowid' which is not functionally dependent on columns in GROUP BY clause; this is incompatible with sql_mode=only_full_group_by

@@ -3801,7 +3801,12 @@ func (*colNameResolver) Enter(inNode ast.Node) (ast.Node, bool) {
 
 func (c *colNameResolver) Leave(inNode ast.Node) (ast.Node, bool) {
 	if v, ok := inNode.(*ast.ColumnNameExpr); ok {
-		idx, err := expression.FindFieldName(c.p.OutputNames(), v.Name)
+		// if p is join, try to use join full schema, cause same column may be folded by nature join.
+		names := c.p.OutputNames()
+		if join, ok := c.p.(*LogicalJoin); ok {
+			names = join.fullNames
+		}
+		idx, err := expression.FindFieldName(names, v.Name)
 		if err == nil && idx >= 0 {
 			c.names[c.p.OutputNames()[idx]] = struct{}{}
 		}

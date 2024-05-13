@@ -1067,3 +1067,15 @@ explain format = 'brief' select /*+ hash_agg() */ sum(a), (select NULL from test
 delete from mysql.opt_rule_blacklist where name = "decorrelate";
 admin reload opt_rule_blacklist;
 
+# TestIssue52935
+drop table if exists t0, t1;
+CREATE TABLE t0 (
+  c0 double unsigned zerofill NULL
+);
+INSERT INTO t0 VALUES (0.1251773127435537), (NULL), (0), (0.6665588482250941);
+CREATE TABLE t1(c0 BOOL);
+INSERT INTO t1 VALUES (NULL), (NULL), (0), (0);
+--error 1055
+explain format="brief" SELECT t0.c0 FROM t0 NATURAL RIGHT JOIN t1 GROUP BY NULL;
+--error 1055
+SELECT t0.c0 FROM t0 NATURAL RIGHT JOIN t1 GROUP BY NULL;
