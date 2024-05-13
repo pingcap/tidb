@@ -838,7 +838,9 @@ func (s *indexWriteResultSink) flush() error {
 }
 
 func (s *indexWriteResultSink) Close() error {
-	return s.errGroup.Wait()
+	err := s.errGroup.Wait()
+	s.backendCtx.UnregisterEngines()
+	return err
 }
 
 func (*indexWriteResultSink) String() string {
