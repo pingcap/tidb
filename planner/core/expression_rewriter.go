@@ -777,8 +777,18 @@ func (er *expressionRewriter) handleNEAny(lexpr, rexpr expression.Expression, np
 
 // handleEQAll handles the case of = all. For example, if the query is t.id = all (select s.id from s), it will be rewrote to
 // t.id = (select s.id from s having count(distinct s.id) <= 1 and [all checker]).
+<<<<<<< HEAD:planner/core/expression_rewriter.go
 func (er *expressionRewriter) handleEQAll(lexpr, rexpr expression.Expression, np LogicalPlan, markNoDecorrelate bool) {
 	firstRowFunc, err := aggregation.NewAggFuncDesc(er.sctx, ast.AggFuncFirstRow, []expression.Expression{rexpr}, false)
+=======
+func (er *expressionRewriter) handleEQAll(planCtx *exprRewriterPlanCtx, lexpr, rexpr expression.Expression, np base.LogicalPlan, markNoDecorrelate bool) {
+	intest.AssertNotNil(planCtx)
+	sctx := planCtx.builder.ctx
+	exprCtx := sctx.GetExprCtx()
+	// If there is NULL in s.id column, s.id should be the value that isn't null in condition t.id == s.id.
+	// So use function max to filter NULL.
+	maxFunc, err := aggregation.NewAggFuncDesc(exprCtx, ast.AggFuncMax, []expression.Expression{rexpr}, false)
+>>>>>>> 98e5cfbd1c5 (planner: fix wrong behavior for = all() (#52801)):pkg/planner/core/expression_rewriter.go
 	if err != nil {
 		er.err = err
 		return
@@ -789,14 +799,23 @@ func (er *expressionRewriter) handleEQAll(lexpr, rexpr expression.Expression, np
 		return
 	}
 	plan4Agg := LogicalAggregation{
+<<<<<<< HEAD:planner/core/expression_rewriter.go
 		AggFuncs: []*aggregation.AggFuncDesc{firstRowFunc, countFunc},
 	}.Init(er.sctx, er.b.getSelectOffset())
 	if hint := er.b.TableHints(); hint != nil {
 		plan4Agg.aggHints = hint.aggHints
+=======
+		AggFuncs: []*aggregation.AggFuncDesc{maxFunc, countFunc},
+	}.Init(sctx, planCtx.builder.getSelectOffset())
+	if hintinfo := planCtx.builder.TableHints(); hintinfo != nil {
+		plan4Agg.PreferAggType = hintinfo.PreferAggType
+		plan4Agg.PreferAggToCop = hintinfo.PreferAggToCop
+>>>>>>> 98e5cfbd1c5 (planner: fix wrong behavior for = all() (#52801)):pkg/planner/core/expression_rewriter.go
 	}
 	plan4Agg.SetChildren(np)
 	plan4Agg.names = append(plan4Agg.names, types.EmptyName)
 
+<<<<<<< HEAD:planner/core/expression_rewriter.go
 	// Currently, firstrow agg function is treated like the exact representation of aggregate group key,
 	// so the data type is the same with group key, even if the group key is not null.
 	// However, the return type of firstrow should be nullable, we clear the null flag here instead of
@@ -810,16 +829,21 @@ func (er *expressionRewriter) handleEQAll(lexpr, rexpr expression.Expression, np
 	firstRowResultCol := &expression.Column{
 		UniqueID: er.sctx.GetSessionVars().AllocPlanColumnID(),
 		RetType:  firstRowFunc.RetTp,
+=======
+	maxResultCol := &expression.Column{
+		UniqueID: sctx.GetSessionVars().AllocPlanColumnID(),
+		RetType:  maxFunc.RetTp,
+>>>>>>> 98e5cfbd1c5 (planner: fix wrong behavior for = all() (#52801)):pkg/planner/core/expression_rewriter.go
 	}
-	firstRowResultCol.SetCoercibility(rexpr.Coercibility())
+	maxResultCol.SetCoercibility(rexpr.Coercibility())
 	plan4Agg.names = append(plan4Agg.names, types.EmptyName)
 	count := &expression.Column{
 		UniqueID: er.sctx.GetSessionVars().AllocPlanColumnID(),
 		RetType:  countFunc.RetTp,
 	}
-	plan4Agg.SetSchema(expression.NewSchema(firstRowResultCol, count))
+	plan4Agg.SetSchema(expression.NewSchema(maxResultCol, count))
 	leFunc := expression.NewFunctionInternal(er.sctx, ast.LE, types.NewFieldType(mysql.TypeTiny), count, expression.NewOne())
-	eqCond := expression.NewFunctionInternal(er.sctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), lexpr, firstRowResultCol)
+	eqCond := expression.NewFunctionInternal(er.sctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), lexpr, maxResultCol)
 	cond := expression.ComposeCNFCondition(er.sctx, leFunc, eqCond)
 	er.buildQuantifierPlan(plan4Agg, cond, lexpr, rexpr, true, markNoDecorrelate)
 }
