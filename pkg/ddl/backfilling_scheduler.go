@@ -422,7 +422,7 @@ func (b *ingestBackfillScheduler) close(force bool) {
 		})
 	}
 	close(b.resultCh)
-	if intest.InTest && len(b.copReqSenderPool.srcChkPool) != copReadChunkPoolSize() {
+	if intest.InTest && b.copReqSenderPool != nil && len(b.copReqSenderPool.srcChkPool) != copReadChunkPoolSize() {
 		panic(fmt.Sprintf("unexpected chunk size %d", len(b.copReqSenderPool.srcChkPool)))
 	}
 }

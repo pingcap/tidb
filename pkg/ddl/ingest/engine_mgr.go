@@ -23,6 +23,8 @@ import (
 
 // Register create a new engineInfo and register it to the backend context.
 func (bc *litBackendCtx) Register(indexIDs []int64, tableName string) ([]Engine, error) {
+	ret := make([]Engine, 0, len(indexIDs))
+
 	for _, indexID := range indexIDs {
 		en, ok := bc.engines.Load(indexID)
 		if !ok {
@@ -35,10 +37,16 @@ func (bc *litBackendCtx) Register(indexIDs []int64, tableName string) ([]Engine,
 				return nil, errors.Trace(err)
 			}
 		}
-		return nil, errors.Errorf(
-			"engine already exists: job ID %d, index ID: %d",
-			bc.jobID, indexID,
-		)
+		ret = append(ret, en)
+	}
+	if l := len(ret); l > 0 {
+		if l != len(indexIDs) {
+			return nil, errors.Errorf(
+				"engines index ID number mismatch: job ID %d, required number of index IDs: %d, actual number of engines: %d",
+				bc.jobID, len(indexIDs), l,
+			)
+		}
+		return ret, nil
 	}
 
 	bc.memRoot.RefreshConsumption()
@@ -84,7 +92,6 @@ func (bc *litBackendCtx) Register(indexIDs []int64, tableName string) ([]Engine,
 		)
 	}
 
-	ret := make([]Engine, 0, len(indexIDs))
 	for _, indexID := range indexIDs {
 		ei := openedEngines[indexID]
 		ret = append(ret, ei)
