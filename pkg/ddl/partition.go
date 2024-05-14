@@ -2872,6 +2872,35 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 			}
 		}
 
+		// All global indexes must be recreated, we cannot update them in-place, since we must have
+		// both old and new set of partition ids in the unique index at the same time!
+		/*
+			tbl, err := getTable((*asAutoIDRequirement)(d), job.SchemaID, tblInfo)
+			if err != nil {
+				return ver, errors.Trace(err)
+			}
+		*/
+		// TODO: handle non-partitioned <=> partitioned (with global index)
+		for _, index := range tblInfo.Indices {
+			if index.Global {
+				// Duplicate the global indexes with new index ids
+				globalIndex := *index
+				globalIndex.State = model.StateDeleteOnly
+				globalIndex.ID = AllocateIndexID(tblInfo)
+				if job.Type == model.ActionRemovePartitioning {
+					globalIndex.Global = false
+				}
+				if tblInfo.GetPartitionInfo() == nil {
+					// Should never happen, but is actually harmless here!
+					panic("FIXME: add a proper error message")
+				}
+				tblInfo.Indices = append(tblInfo.Indices, &globalIndex)
+			}
+			if index.Unique && tblInfo.GetPartitionInfo() == nil {
+				// TODO: Check if it needs and can add it as a global index?!?
+				panic("FIXME: support non-partitioned table to partitioned with global index!")
+			}
+		}
 		// From now on we cannot just cancel the DDL, we must roll back if changesMade!
 		changesMade := false
 		if tblInfo.TiFlashReplica != nil {
@@ -2981,6 +3010,11 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 			}
 		}
 
+		for i := range tblInfo.Indices {
+			if tblInfo.Indices[i].Global && tblInfo.Indices[i].State == model.StateDeleteOnly {
+				tblInfo.Indices[i].State = model.StateWriteOnly
+			}
+		}
 		tblInfo.Partition.DDLState = model.StateWriteOnly
 		metrics.GetBackfillProgressByLabel(metrics.LblReorgPartition, job.SchemaName, tblInfo.Name.String()).Set(0.2 / float64(math.MaxUint64))
 		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, true)
@@ -2989,6 +3023,16 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 		// Insert this state to confirm all servers can see the new partitions when reorg is running,
 		// so that new data will be updated in both old and new partitions when reorganizing.
 		job.SnapshotVer = 0
+		for i := range tblInfo.Indices {
+			if tblInfo.Indices[i].Global {
+				// Duplicate the global indexes with new index ids
+			}
+		}
+		for i := range tblInfo.Indices {
+			if tblInfo.Indices[i].Global && tblInfo.Indices[i].State == model.StateWriteOnly {
+				tblInfo.Indices[i].State = model.StateWriteReorganization
+			}
+		}
 		tblInfo.Partition.DDLState = model.StateWriteReorganization
 		metrics.GetBackfillProgressByLabel(metrics.LblReorgPartition, job.SchemaName, tblInfo.Name.String()).Set(0.3 / float64(math.MaxUint64))
 		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, true)
@@ -3001,10 +3045,22 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 		}
 		// TODO: If table has global indexes, we need reorg to clean up them.
 		// and then add the new partition ids back...
-		if _, ok := tbl.(table.PartitionedTable); ok && hasGlobalIndex(tblInfo) {
-			err = errors.Trace(dbterror.ErrCancelledDDLJob.GenWithStack("global indexes is not supported yet for reorganize partition"))
-			return convertAddTablePartitionJob2RollbackJob(d, t, job, err, tblInfo)
-		}
+		// How to do it?
+		// Create a new global index? Just use a new IndexID?
+		// Update the global index in place?
+		// - That may be hard since an older schema version should see the 'old' partitions and a newer the 'new' partitions, which does not work with a single global index? And since it may be an unique index, we cannot have one entry for the old partition and one entry for the new, and filter depending on which partitions it sees (like drop/truncate partition could work).
+		//   But we could do a simple copy+filter from the old index to the ew,
+		//   and that way not scan all non-touched partitions.
+		//   So should also implement copy the old index, or only create
+		//   a new index, i.e. read from all current partitions (regardless if they are touched in the reorg or not)?
+		//   First version, recreate it from scratch, don't copy old global index with filtering!
+		/*
+			if _, ok := tbl.(table.PartitionedTable); ok && hasGlobalIndex(tblInfo) {
+				err = errors.Trace(dbterror.ErrCancelledDDLJob.GenWithStack("global indexes is not supported yet for reorganize partition"))
+				return convertAddTablePartitionJob2RollbackJob(d, t, job, err, tblInfo)
+			}
+
+		*/
 		var done bool
 		done, ver, err = doPartitionReorgWork(w, d, t, job, tbl, physicalTableIDs)
 
@@ -3012,6 +3068,16 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 			return ver, err
 		}
 
+		for i := range tblInfo.Indices {
+			if tblInfo.Indices[i].Global {
+				if tblInfo.Indices[i].State == model.StateWriteReorganization {
+					tblInfo.Indices[i].State = model.StatePublic
+				} else if tblInfo.Indices[i].State == model.StatePublic {
+					// Mark the old global index as non-readable
+					tblInfo.Indices[i].State = model.StateDeleteReorganization
+				}
+			}
+		}
 		firstPartIdx, lastPartIdx, idMap, err2 := getReplacedPartitionIDs(partNames, tblInfo.Partition)
 		failpoint.Inject("reorgPartWriteReorgReplacedPartIDsFail", func(val failpoint.Value) {
 			if val.(bool) {
@@ -3061,6 +3127,23 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 		tblInfo.Partition.AddingDefinitions = nil
 		tblInfo.Partition.DDLState = model.StateNone
 
+		var globalIndexIDs []int64
+		var oldGlobalIndices []*model.IndexInfo
+		for _, indexInfo := range tblInfo.Indices {
+			if indexInfo.Global {
+				if indexInfo.State == model.StateDeleteReorganization {
+					// Drop the old global index, see onDropIndex
+					indexInfo.State = model.StateNone
+					DropIndexColumnFlag(tblInfo, indexInfo)
+					RemoveDependentHiddenColumns(tblInfo, indexInfo)
+					globalIndexIDs = append(globalIndexIDs, indexInfo.ID)
+					oldGlobalIndices = append(oldGlobalIndices, indexInfo)
+				}
+			}
+		}
+		for _, indexInfo := range oldGlobalIndices {
+			removeIndexInfo(tblInfo, indexInfo)
+		}
 		var oldTblID int64
 		if job.Type != model.ActionReorganizePartition {
 			// ALTER TABLE ... PARTITION BY
@@ -3131,7 +3214,7 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 		}
 		asyncNotifyEvent(d, event)
 		// A background job will be created to delete old partition data.
-		job.Args = []any{physicalTableIDs}
+		job.Args = []any{physicalTableIDs, partInfo, globalIndexIDs}
 
 	default:
 		err = dbterror.ErrInvalidDDLState.GenWithStackByArgs("partition", job.SchemaState)
@@ -3187,7 +3270,19 @@ func doPartitionReorgWork(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job, tb
 	}
 	defer w.sessPool.Put(sctx)
 	rh := newReorgHandler(sess.NewSession(sctx))
-	elements := BuildElements(tbl.Meta().Columns[0], tbl.Meta().Indices)
+	// TODO: Change this to:
+	// First element - as current - I.e. copy all rows (i.e. all columns) to new partitions
+	// possible second element, all non global indexes (which can be done by reading all rows once) Hmm, why not all together?
+	// TODO: Try to skip elements?!
+	var rebuildIndices []*model.IndexInfo
+	for _, index := range tbl.Meta().Indices {
+		if index.Global && index.State == model.StatePublic {
+			// Skip old global indexes, but rebuild all other indexes
+			continue
+		}
+		rebuildIndices = append(rebuildIndices, index)
+	}
+	elements := BuildElements(tbl.Meta().Columns[0], rebuildIndices)
 	partTbl, ok := tbl.(table.PartitionedTable)
 	if !ok {
 		return false, ver, dbterror.ErrUnsupportedReorganizePartition.GenWithStackByArgs()
@@ -3202,6 +3297,7 @@ func doPartitionReorgWork(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job, tb
 			func() {
 				reorgErr = dbterror.ErrCancelledDDLJob.GenWithStack("reorganize partition for table `%v` panic", tbl.Meta().Name)
 			}, false)
+		// TODO: Skip old global indexes, and re-generate them with new ids!
 		return w.reorgPartitionDataAndIndex(tbl, reorgInfo)
 	})
 	if err != nil {
@@ -3221,6 +3317,7 @@ func doPartitionReorgWork(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job, tb
 				zap.Stringer("job", job), zap.Error(err1))
 		}
 		logutil.DDLLogger().Warn("reorg partition job failed, convert job to rollback", zap.Stringer("job", job), zap.Error(err))
+		// TODO: rollback new global indexes! TODO: How to handle new index ids?
 		ver, err = convertAddTablePartitionJob2RollbackJob(d, t, job, err, tbl.Meta())
 		return false, ver, errors.Trace(err)
 	}
@@ -3419,10 +3516,16 @@ func (w *worker) reorgPartitionDataAndIndex(t table.Table, reorgInfo *reorgInfo)
 	// First copy all table data to the new partitions
 	// from each of the DroppingDefinitions partitions.
 	// Then create all indexes on the AddingDefinitions partitions
-	// for each new index, one partition at a time.
+	// for each new index, one partition at a time. (Skip global indexes!)
+	// And last create new global indexes
+	//   It is hard to update global indexes in-place due to:
+	//   - Transactions on different TiDB nodes/domains may see different states of the table/partitions
+	//   - We cannot have multiple partition ids for a unique index entry.
 
 	// Copy the data from the DroppingDefinitions to the AddingDefinitions
 	if bytes.Equal(reorgInfo.currElement.TypeKey, meta.ColumnElementKey) {
+		// TODO: use the same rows for creating the index entries?
+		// I.e. only read the data once.
 		err := w.updatePhysicalTableRow(t, reorgInfo)
 		if err != nil {
 			return errors.Trace(err)
@@ -3436,76 +3539,62 @@ func (w *worker) reorgPartitionDataAndIndex(t table.Table, reorgInfo *reorgInfo)
 		}
 	})
 
-	// Rewrite this to do all indexes at once in addTableIndex
-	// instead of calling it once per index (meaning reading the table multiple times)
-	// But for now, try to understand how it works...
 	firstNewPartitionID := t.Meta().Partition.AddingDefinitions[0].ID
-	startElementOffset := 0
-	//startElementOffsetToResetHandle := -1
-	// This backfill job starts with backfilling index data, whose index ID is currElement.ID.
 	if !bytes.Equal(reorgInfo.currElement.TypeKey, meta.IndexElementKey) {
 		// First run, have not yet started backfilling index data
 		// Restart with the first new partition.
 		// TODO: handle remove partitioning
 		reorgInfo.PhysicalTableID = firstNewPartitionID
-	} else {
-		// The job was interrupted and has been restarted,
-		// reset and start from where it was done
-		for i, element := range reorgInfo.elements[1:] {
-			if reorgInfo.currElement.ID == element.ID {
-				startElementOffset = i
-				//startElementOffsetToResetHandle = i
-				break
-			}
-		}
+		reorgInfo.currElement = reorgInfo.elements[1]
 	}
 
-	for i := startElementOffset; i < len(reorgInfo.elements[1:]); i++ {
-		// Now build the indexes in the new partitions
-		var physTbl table.PhysicalTable
-		if tbl, ok := t.(table.PartitionedTable); ok {
-			physTbl = tbl.GetPartition(reorgInfo.PhysicalTableID)
-		} else if tbl, ok := t.(table.PhysicalTable); ok {
-			// This may be used when partitioning a non-partitioned table
-			physTbl = tbl
-		}
-		// Get the original start handle and end handle.
-		currentVer, err := getValidCurrentVersion(reorgInfo.d.store)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		// TODO: Can we improve this in case of a crash?
-		// like where the regInfo PhysicalTableID and element is the same,
-		// and the tableid in the key-prefix regInfo.StartKey and regInfo.EndKey matches with PhysicalTableID
-		// do not change the reorgInfo start/end key
-		startHandle, endHandle, err := getTableRange(reorgInfo.NewJobContext(), reorgInfo.d, physTbl, currentVer.Ver, reorgInfo.Job.Priority)
-		if err != nil {
-			return errors.Trace(err)
-		}
-
-		// Always (re)start with the full PhysicalTable range
-		reorgInfo.StartKey, reorgInfo.EndKey = startHandle, endHandle
-
-		// Update the element in the reorgInfo for updating the reorg meta below.
-		reorgInfo.currElement = reorgInfo.elements[i+1]
-		// Write the reorg info to store so the whole reorganize process can recover from panic.
-		err = reorgInfo.UpdateReorgMeta(reorgInfo.StartKey, w.sessPool)
-		logutil.DDLLogger().Info("update column and indexes",
-			zap.Int64("jobID", reorgInfo.Job.ID),
-			zap.ByteString("elementType", reorgInfo.currElement.TypeKey),
-			zap.Int64("elementID", reorgInfo.currElement.ID),
-			zap.Int64("partitionTableId", physTbl.GetPhysicalID()),
-			zap.String("startHandle", hex.EncodeToString(reorgInfo.StartKey)),
-			zap.String("endHandle", hex.EncodeToString(reorgInfo.EndKey)))
-		if err != nil {
-			return errors.Trace(err)
-		}
-		err = w.addTableIndex(t, reorgInfo)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		reorgInfo.PhysicalTableID = firstNewPartitionID
+	// Now build the indexes in the new partitions
+	var physTbl table.PhysicalTable
+	if tbl, ok := t.(table.PartitionedTable); ok {
+		physTbl = tbl.GetPartition(reorgInfo.PhysicalTableID)
+	} else if tbl, ok := t.(table.PhysicalTable); ok {
+		// This may be used when partitioning a non-partitioned table
+		physTbl = tbl
 	}
+	// Get the original start handle and end handle.
+	currentVer, err := getValidCurrentVersion(reorgInfo.d.store)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	// TODO: Can we improve this in case of a crash?
+	// like where the regInfo PhysicalTableID and element is the same,
+	// and the tableid in the key-prefix regInfo.StartKey and regInfo.EndKey matches with PhysicalTableID
+	// do not change the reorgInfo start/end key
+	startHandle, endHandle, err := getTableRange(reorgInfo.NewJobContext(), reorgInfo.d, physTbl, currentVer.Ver, reorgInfo.Job.Priority)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	// Always (re)start with the full PhysicalTable range
+	reorgInfo.StartKey, reorgInfo.EndKey = startHandle, endHandle
+
+	// TODO: Should we have some extra element for the non-touched partitions for the global index?
+
+	// Write the reorg info to store so the whole reorganize process can recover from panic.
+	err = reorgInfo.UpdateReorgMeta(reorgInfo.StartKey, w.sessPool)
+	logutil.DDLLogger().Info("update column and indexes",
+		zap.Int64("jobID", reorgInfo.Job.ID),
+		zap.ByteString("elementType", reorgInfo.currElement.TypeKey),
+		zap.Int64("elementID", reorgInfo.currElement.ID),
+		zap.Int64("partitionTableId", physTbl.GetPhysicalID()),
+		zap.String("startHandle", hex.EncodeToString(reorgInfo.StartKey)),
+		zap.String("endHandle", hex.EncodeToString(reorgInfo.EndKey)))
+	if err != nil {
+		return errors.Trace(err)
+	}
+	// This will recreate all indexes on the partition
+	err = w.addTableIndex(t, reorgInfo)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	reorgInfo.PhysicalTableID = firstNewPartitionID
+	//}
+	// TODO: add the non-reorganized partitions to the global indexes?
 	failpoint.Inject("reorgPartitionAfterIndex", func(val failpoint.Value) {
 		//nolint:forcetypeassert
 		if val.(bool) {
