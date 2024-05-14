@@ -178,7 +178,25 @@ func (c *columnStatsUsageCollector) addHistNeededColumns(ds *DataSource) {
 	columns := expression.ExtractColumnsFromExpressions(c.cols[:0], ds.pushedDownConds, nil)
 	for _, col := range columns {
 		tblColID := model.TableItemID{TableID: ds.physicalTableID, ID: col.ID, IsIndex: false}
+<<<<<<< HEAD
 		c.histNeededCols[tblColID] = struct{}{}
+=======
+		colIDSet.Insert(int(col.ID))
+		c.histNeededCols[tblColID] = true
+	}
+	for _, column := range ds.tableInfo.Columns {
+		// If the column is plan-generated one, Skip it.
+		// TODO: we may need to consider the ExtraHandle.
+		if column.ID < 0 {
+			continue
+		}
+		if !column.Hidden {
+			tblColID := model.TableItemID{TableID: ds.physicalTableID, ID: column.ID, IsIndex: false}
+			if _, ok := c.histNeededCols[tblColID]; !ok {
+				c.histNeededCols[tblColID] = false
+			}
+		}
+>>>>>>> a2037fe4fb1 (planner: collect all columns meta by sync load (#53137))
 	}
 }
 

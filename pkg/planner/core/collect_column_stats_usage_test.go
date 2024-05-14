@@ -295,7 +295,11 @@ func TestCollectHistNeededColumns(t *testing.T) {
 		},
 		{
 			sql: "select b, count(a) from t where b > 1 group by b having count(a) > 2",
+<<<<<<< HEAD
 			res: []string{"t.b"},
+=======
+			res: []string{"t.a meta", "t.b full", "t.c meta", "t.c_str meta", "t.d meta", "t.d_str meta", "t.e meta", "t.e_str meta", "t.f meta", "t.g meta", "t.h meta", "t.i_date meta"},
+>>>>>>> a2037fe4fb1 (planner: collect all columns meta by sync load (#53137))
 		},
 		{
 			sql: "select * from t as x join t2 as y on x.b + y.b > 2 and x.c > 1 and y.a < 1",
@@ -303,6 +307,7 @@ func TestCollectHistNeededColumns(t *testing.T) {
 		},
 		{
 			sql: "select * from t2 where t2.b > all(select b from t where t.c > 2)",
+<<<<<<< HEAD
 			res: []string{"t.c"},
 		},
 		{
@@ -312,6 +317,17 @@ func TestCollectHistNeededColumns(t *testing.T) {
 		{
 			sql: "select * from t2 where t2.b in (select b from t where t.c > 2)",
 			res: []string{"t.c"},
+=======
+			res: []string{"t.a meta", "t.b meta", "t.c full", "t.c_str meta", "t.d meta", "t.d_str meta", "t.e meta", "t.e_str meta", "t.f meta", "t.g meta", "t.h meta", "t.i_date meta", "t2.a meta", "t2.b meta", "t2.c meta"},
+		},
+		{
+			sql: "select * from t2 where t2.b > any(select b from t where t.c > 2)",
+			res: []string{"t.a meta", "t.b meta", "t.c full", "t.c_str meta", "t.d meta", "t.d_str meta", "t.e meta", "t.e_str meta", "t.f meta", "t.g meta", "t.h meta", "t.i_date meta", "t2.a meta", "t2.b meta", "t2.c meta"},
+		},
+		{
+			sql: "select * from t2 where t2.b in (select b from t where t.c > 2)",
+			res: []string{"t.a meta", "t.b meta", "t.c full", "t.c_str meta", "t.d meta", "t.d_str meta", "t.e meta", "t.e_str meta", "t.f meta", "t.g meta", "t.h meta", "t.i_date meta", "t2.a meta", "t2.b meta", "t2.c meta"},
+>>>>>>> a2037fe4fb1 (planner: collect all columns meta by sync load (#53137))
 		},
 		{
 			pruneMode: "static",
