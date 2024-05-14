@@ -389,13 +389,6 @@ func (w *Writer) WriteRow(ctx context.Context, key, val []byte, handle tidbkv.Ha
 	return nil
 }
 
-// LockForWrite implements ingest.Writer.
-// Since flushKVs is thread-safe in external storage writer,
-// this is implemented as noop.
-func (w *Writer) LockForWrite() func() {
-	return func() {}
-}
-
 // Close closes the writer.
 func (w *Writer) Close(ctx context.Context) error {
 	if w.closed {
