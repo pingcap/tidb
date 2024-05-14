@@ -354,6 +354,15 @@ func newIngestBackfillScheduler(
 	}, nil
 }
 
+func (b *ingestBackfillScheduler) finishWritingNeedImport() bool {
+	job := b.reorgInfo.Job
+	bc, ok := ingest.LitBackCtxMgr.Load(job.ID)
+	if !ok {
+		return false
+	}
+	return bc.FinishWritingNeedImport()
+}
+
 func (b *ingestBackfillScheduler) setupWorkers() error {
 	job := b.reorgInfo.Job
 	bc, ok := ingest.LitBackCtxMgr.Load(job.ID)

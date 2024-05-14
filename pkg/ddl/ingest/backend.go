@@ -48,6 +48,9 @@ type BackendCtx interface {
 	// backend context.
 	Register(indexIDs []int64, tableName string) ([]Engine, error)
 	UnregisterEngines()
+	// FinishWritingNeedImport returns true only when all the engines are finished
+	// writing and only need import, that is to say, engines are closed.
+	FinishWritingNeedImport() bool
 
 	CollectRemoteDuplicateRows(indexID int64, tbl table.Table) error
 	FinishImport(indexID int64, unique bool, tbl table.Table) error
@@ -251,17 +254,18 @@ func (bc *litBackendCtx) Flush(mode FlushMode) (flushed, imported bool, errIdxID
 }
 
 func (bc *litBackendCtx) unsafeImportAndReset(ei *engineInfo) error {
-	logutil.Logger(bc.ctx).Info(LitInfoUnsafeImport, zap.Int64("index ID", ei.indexID),
-		zap.String("usage info", bc.diskRoot.UsageInfo()))
 	logger := log.FromContext(bc.ctx).With(
 		zap.Stringer("engineUUID", ei.uuid),
 	)
+	logger.Info(LitInfoUnsafeImport,
+		zap.Int64("index ID", ei.indexID),
+		zap.String("usage info", bc.diskRoot.UsageInfo()))
 
-	ei.closedEngine = backend.NewClosedEngine(bc.backend, logger, ei.uuid, 0)
+	closedEngine := backend.NewClosedEngine(bc.backend, logger, ei.uuid, 0)
 
 	regionSplitSize := int64(lightning.SplitRegionSize) * int64(lightning.MaxSplitRegionSizeRatio)
 	regionSplitKeys := int64(lightning.SplitRegionKeys)
-	if err := ei.closedEngine.Import(bc.ctx, regionSplitSize, regionSplitKeys); err != nil {
+	if err := closedEngine.Import(bc.ctx, regionSplitSize, regionSplitKeys); err != nil {
 		logutil.Logger(bc.ctx).Error(LitErrIngestDataErr, zap.Int64("index ID", ei.indexID),
 			zap.String("usage info", bc.diskRoot.UsageInfo()))
 		return err

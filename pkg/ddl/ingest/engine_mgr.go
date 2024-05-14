@@ -30,13 +30,6 @@ func (bc *litBackendCtx) Register(indexIDs []int64, tableName string) ([]Engine,
 		if !ok {
 			continue
 		}
-		if en.closedEngine != nil {
-			// Import failed before, try to import again.
-			err := en.ImportAndClean()
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-		}
 		ret = append(ret, en)
 	}
 	if l := len(ret); l > 0 {
@@ -124,4 +117,20 @@ func (bc *litBackendCtx) UnregisterEngines() {
 
 	engineCacheSize := int64(bc.cfg.TikvImporter.EngineMemCacheSize)
 	bc.memRoot.Release(numIdx * (structSizeEngineInfo + engineCacheSize))
+}
+
+// FinishWritingNeedImport implements BackendCtx.
+func (bc *litBackendCtx) FinishWritingNeedImport() bool {
+	indexIDs := bc.engines.Keys()
+	if len(indexIDs) == 0 {
+		return false
+	}
+	ei, ok := bc.engines.Load(indexIDs[0])
+	if !ok {
+		logutil.Logger(bc.ctx).Error("engine not found",
+			zap.Int64("job ID", bc.jobID),
+			zap.Int64("index ID", indexIDs[0]))
+		return false
+	}
+	return ei.closedEngine != nil
 }

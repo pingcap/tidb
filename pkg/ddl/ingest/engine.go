@@ -53,6 +53,7 @@ type engineInfo struct {
 	jobID        int64
 	indexID      int64
 	openedEngine *backend.OpenedEngine
+	// closedEngine is set only closed when all data is finished written.
 	closedEngine *backend.ClosedEngine
 	uuid         uuid.UUID
 	cfg          *backend.EngineConfig

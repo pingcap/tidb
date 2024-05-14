@@ -119,6 +119,11 @@ func (*MockBackendCtx) UnregisterEngines() {
 	logutil.DDLIngestLogger().Info("mock backend ctx unregister")
 }
 
+// FinishWritingNeedImport implements BackendCtx.FinishWritingNeedImport interface.
+func (*MockBackendCtx) FinishWritingNeedImport() bool {
+	return false
+}
+
 // CollectRemoteDuplicateRows implements BackendCtx.CollectRemoteDuplicateRows interface.
 func (*MockBackendCtx) CollectRemoteDuplicateRows(indexID int64, _ table.Table) error {
 	logutil.DDLIngestLogger().Info("mock backend ctx collect remote duplicate rows", zap.Int64("indexID", indexID))
