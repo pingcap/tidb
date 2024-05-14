@@ -477,5 +477,5 @@ func TestVarSampAsAWindowFunction(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t1 (c1 int)")
 	tk.MustExec("select var_samp(c1) from t1")
-	tk.MustExecToErr("select c1, var_samp(c1) over (partition by c1) from t1")
+	tk.MustExec("select c1, var_samp(c1) over (partition by c1) from t1")
 }
