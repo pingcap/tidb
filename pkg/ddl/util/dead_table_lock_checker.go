@@ -88,7 +88,7 @@ func (d *DeadTableLockChecker) GetDeadLockedTables(ctx context.Context, schemas 
 			return nil, ctx.Err()
 		default:
 		}
-		for _, tbl := range schema.Tables {
+		for _, tbl := range schema.Tables() {
 			if tbl.Lock == nil {
 				continue
 			}

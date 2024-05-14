@@ -1772,11 +1772,12 @@ func ensureSchemaTables(is infoschema.InfoSchema, schemaNames []model.CIStr) []*
 	for _, dbName := range schemaNames {
 		dbInfoRaw, _ := is.SchemaByName(dbName)
 		dbInfo := dbInfoRaw.Clone()
-		dbInfo.Tables = dbInfo.Tables[:0]
 		tbls := is.SchemaTables(dbName)
+		tables := make([]*model.TableInfo, 0, len(tbls))
 		for _, tbl := range tbls {
-			dbInfo.Tables = append(dbInfo.Tables, tbl.Meta())
+			tables = append(tables, tbl.Meta())
 		}
+		dbInfo.SetTables(tables)
 		res = append(res, dbInfo)
 	}
 	return res

@@ -91,21 +91,21 @@ func TestPlacementPolicyInUse(t *testing.T) {
 	t1.PlacementPolicyRef = &model.PolicyRefInfo{ID: p1.ID, Name: p1.Name}
 	testCreateTable(t, sctx, d, db1, t1)
 	t1.State = model.StatePublic
-	db1.Tables = append(db1.Tables, t1)
+	db1.SetTables(append(db1.Tables(), t1))
 
 	t2, err := testTableInfo(store, "t2", 1)
 	require.NoError(t, err)
 	t2.PlacementPolicyRef = &model.PolicyRefInfo{ID: p1.ID, Name: p1.Name}
 	testCreateTable(t, sctx, d, db2, t2)
 	t2.State = model.StatePublic
-	db2.Tables = append(db2.Tables, t2)
+	db2.SetTables(append(db2.Tables(), t2))
 
 	t3, err := testTableInfo(store, "t3", 1)
 	require.NoError(t, err)
 	t3.PlacementPolicyRef = &model.PolicyRefInfo{ID: p2.ID, Name: p2.Name}
 	testCreateTable(t, sctx, d, db1, t3)
 	t3.State = model.StatePublic
-	db1.Tables = append(db1.Tables, t3)
+	db1.SetTables(append(db1.Tables(), t3))
 
 	dbP, err := testSchemaInfo(store, "db_p")
 	require.NoError(t, err)
@@ -117,7 +117,7 @@ func TestPlacementPolicyInUse(t *testing.T) {
 	t4.Partition.Definitions[0].PlacementPolicyRef = &model.PolicyRefInfo{ID: p5.ID, Name: p5.Name}
 	testCreateTable(t, sctx, d, db1, t4)
 	t4.State = model.StatePublic
-	db1.Tables = append(db1.Tables, t4)
+	db1.SetTables(append(db1.Tables(), t4))
 
 	builder, err := infoschema.NewBuilder(dom, nil, infoschema.NewData()).InitWithDBInfos(
 		[]*model.DBInfo{db1, db2, dbP},

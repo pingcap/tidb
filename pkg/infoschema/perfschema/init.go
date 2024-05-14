@@ -68,8 +68,8 @@ func Init() {
 			Name:    util.PerformanceSchemaName,
 			Charset: mysql.DefaultCharset,
 			Collate: mysql.DefaultCollationName,
-			Tables:  tbls,
 		}
+		dbInfo.SetTables(tbls)
 		infoschema.RegisterVirtualTable(dbInfo, tableFromMeta)
 	}
 	if expression.EvalSimpleAst != nil {

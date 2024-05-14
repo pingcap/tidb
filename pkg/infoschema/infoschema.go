@@ -98,7 +98,8 @@ func MockInfoSchema(tbList []*model.TableInfo) InfoSchema {
 	result.resourceGroupMap = make(map[string]*model.ResourceGroupInfo)
 	result.ruleBundleMap = make(map[int64]*placement.Bundle)
 	result.sortedTablesBuckets = make([]sortedTables, bucketCount)
-	dbInfo := &model.DBInfo{ID: 1, Name: model.NewCIStr("test"), Tables: tbList}
+	dbInfo := &model.DBInfo{ID: 1, Name: model.NewCIStr("test")}
+	dbInfo.SetTables(tbList)
 	tableNames := &schemaTables{
 		dbInfo: dbInfo,
 		tables: make(map[string]table.Table),
@@ -137,7 +138,8 @@ func MockInfoSchemaWithSchemaVer(tbList []*model.TableInfo, schemaVer int64) Inf
 	result.resourceGroupMap = make(map[string]*model.ResourceGroupInfo)
 	result.ruleBundleMap = make(map[int64]*placement.Bundle)
 	result.sortedTablesBuckets = make([]sortedTables, bucketCount)
-	dbInfo := &model.DBInfo{ID: 1, Name: model.NewCIStr("test"), Tables: tbList}
+	dbInfo := &model.DBInfo{ID: 1, Name: model.NewCIStr("test")}
+	dbInfo.SetTables(tbList)
 	tableNames := &schemaTables{
 		dbInfo: dbInfo,
 		tables: make(map[string]table.Table),
@@ -378,8 +380,8 @@ func init() {
 		Name:    util.InformationSchemaName,
 		Charset: mysql.DefaultCharset,
 		Collate: mysql.DefaultCollationName,
-		Tables:  infoSchemaTables,
 	}
+	infoSchemaDB.SetTables(infoSchemaTables)
 	RegisterVirtualTable(infoSchemaDB, createInfoSchemaTable)
 	util.GetSequenceByName = func(is context.MetaOnlyInfoSchema, schema, sequence model.CIStr) (util.SequenceTable, error) {
 		return GetSequenceByName(is.(InfoSchema), schema, sequence)

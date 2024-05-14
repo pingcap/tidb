@@ -411,7 +411,7 @@ func (h *Helper) FetchRegionTableIndex(metrics map[uint64]RegionMetric, allSchem
 // FindTableIndexOfRegion finds what table is involved in this hot region. And constructs the new frame item for future use.
 func (*Helper) FindTableIndexOfRegion(allSchemas []*model.DBInfo, hotRange *RegionFrameRange) *FrameItem {
 	for _, db := range allSchemas {
-		for _, tbl := range db.Tables {
+		for _, tbl := range db.Tables() {
 			if f := findRangeInTable(hotRange, db, tbl); f != nil {
 				return f
 			}
@@ -720,7 +720,7 @@ func newTableInfoWithKeyRange(db *model.DBInfo, table *model.TableInfo, partitio
 func (*Helper) GetTablesInfoWithKeyRange(schemas []*model.DBInfo) []TableInfoWithKeyRange {
 	tables := []TableInfoWithKeyRange{}
 	for _, db := range schemas {
-		for _, table := range db.Tables {
+		for _, table := range db.Tables() {
 			if table.Partition != nil {
 				for i := range table.Partition.Definitions {
 					tables = append(tables, newTableInfoWithKeyRange(db, table, &table.Partition.Definitions[i], nil))

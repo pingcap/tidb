@@ -168,8 +168,8 @@ func TestModelBasic(t *testing.T) {
 		Name:    NewCIStr("test"),
 		Charset: "utf8",
 		Collate: "utf8_bin",
-		Tables:  []*TableInfo{table},
 	}
+	dbInfo.SetTables([]*TableInfo{table})
 
 	n := dbInfo.Clone()
 	require.Equal(t, dbInfo, n)

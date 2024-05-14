@@ -19,6 +19,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/types"
 )
@@ -136,9 +137,11 @@ func (i *IngestRecorder) RewriteTableID(rewriteFunc func(tableID int64) (int64, 
 }
 
 // UpdateIndexInfo uses the newest schemas to update the ingest index's information
-func (i *IngestRecorder) UpdateIndexInfo(dbInfos []*model.DBInfo) {
+func (i *IngestRecorder) UpdateIndexInfo(is infoschema.InfoSchema) {
+	dbInfos := is.AllSchemas()
 	for _, dbInfo := range dbInfos {
-		for _, tblInfo := range dbInfo.Tables {
+		for _, tbl := range is.SchemaTables(dbInfo.Name) {
+			tblInfo := tbl.Meta()
 			tableindexes, tblexists := i.items[tblInfo.ID]
 			if !tblexists {
 				continue
