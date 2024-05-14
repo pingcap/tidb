@@ -1724,6 +1724,7 @@ func SplitIndexValue(value []byte) (segs IndexValueSegments) {
 	if getIndexVersion(value) == 0 {
 		if len(value) <= MaxOldEncodeValueLen {
 			segs.IntHandle = value
+			return segs
 		}
 		return splitIndexValueForIndexValueVersion0(value)
 	}
