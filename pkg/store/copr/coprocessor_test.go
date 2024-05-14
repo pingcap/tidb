@@ -824,7 +824,7 @@ func TestBuildCopTasksWithRowCountHint(t *testing.T) {
 	require.Equal(t, tasks[2].RowCountHint, 3)
 	// task[3] ["t"-"x", "y"-"z"]
 	require.Equal(t, tasks[3].RowCountHint, 3+CopSmallTaskRow)
-	_, conc := smallTaskConcurrency(&kv.Request{Concurrency: 15}, tasks, 16)
+	_, conc := smallTaskConcurrency(&kv.Request{Concurrency: 1}, tasks, 16)
 	require.Equal(t, conc, 1)
 
 	ranges = buildCopRanges("a", "c", "d", "e", "h", "x", "y", "z")
