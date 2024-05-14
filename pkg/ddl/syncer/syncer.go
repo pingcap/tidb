@@ -134,6 +134,7 @@ type SchemaSyncer interface {
 	Close()
 }
 
+// nodeVersions is used to record the schema versions of all TiDB nodes for a DDL job.
 type nodeVersions struct {
 	sync.Mutex
 	nodeVersions map[string]int64
@@ -432,6 +433,10 @@ func (s *schemaVersionSyncer) OwnerCheckAllVersions(ctx context.Context, jobID i
 				if id := unmatchedNodeID.Load(); id != nil {
 					logutil.DDLLogger().Info("syncer check all versions, someone is not synced",
 						zap.String("info", *id),
+						zap.Int64("ddl job id", jobID),
+						zap.Int64("ver", latestVer))
+				} else {
+					logutil.DDLLogger().Info("syncer check all versions, all nodes are not synced",
 						zap.Int64("ddl job id", jobID),
 						zap.Int64("ver", latestVer))
 				}
