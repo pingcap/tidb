@@ -644,7 +644,7 @@ func smallTaskConcurrency(req *kv.Request, tasks []*copTask, numcpu int) (int, i
 			res++
 		}
 	}
-	if res < req.Concurrency {
+	if res <= req.Concurrency {
 		return res, res
 	}
 	// Calculate the extra concurrency for small tasks
