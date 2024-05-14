@@ -3270,19 +3270,17 @@ func doPartitionReorgWork(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job, tb
 	}
 	defer w.sessPool.Put(sctx)
 	rh := newReorgHandler(sess.NewSession(sctx))
-	// TODO: Change this to:
-	// First element - as current - I.e. copy all rows (i.e. all columns) to new partitions
-	// possible second element, all non global indexes (which can be done by reading all rows once) Hmm, why not all together?
-	// TODO: Try to skip elements?!
-	var rebuildIndices []*model.IndexInfo
+	indices := make([]*model.IndexInfo, 0, len(tbl.Meta().Indices))
 	for _, index := range tbl.Meta().Indices {
-		if index.Global && index.State == model.StatePublic {
-			// Skip old global indexes, but rebuild all other indexes
-			continue
+		if index.Global {
+			if index.State == model.StatePublic {
+				// Skip old global indexes, but rebuild all other indexes
+				continue
+			}
 		}
-		rebuildIndices = append(rebuildIndices, index)
+		indices = append(indices, index)
 	}
-	elements := BuildElements(tbl.Meta().Columns[0], rebuildIndices)
+	elements := BuildElements(tbl.Meta().Columns[0], indices)
 	partTbl, ok := tbl.(table.PartitionedTable)
 	if !ok {
 		return false, ver, dbterror.ErrUnsupportedReorganizePartition.GenWithStackByArgs()
@@ -3297,7 +3295,6 @@ func doPartitionReorgWork(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job, tb
 			func() {
 				reorgErr = dbterror.ErrCancelledDDLJob.GenWithStack("reorganize partition for table `%v` panic", tbl.Meta().Name)
 			}, false)
-		// TODO: Skip old global indexes, and re-generate them with new ids!
 		return w.reorgPartitionDataAndIndex(tbl, reorgInfo)
 	})
 	if err != nil {
@@ -3512,21 +3509,19 @@ func (w *reorgPartitionWorker) GetCtx() *backfillCtx {
 	return w.backfillCtx
 }
 
-func (w *worker) reorgPartitionDataAndIndex(t table.Table, reorgInfo *reorgInfo) error {
-	// First copy all table data to the new partitions
+func (w *worker) reorgPartitionDataAndIndex(t table.Table, reorgInfo *reorgInfo) (err error) {
+	// First copy all table data to the new AddingDefinitions partitions
 	// from each of the DroppingDefinitions partitions.
-	// Then create all indexes on the AddingDefinitions partitions
-	// for each new index, one partition at a time. (Skip global indexes!)
-	// And last create new global indexes
-	//   It is hard to update global indexes in-place due to:
+	// Then create all indexes on the AddingDefinitions partitions,
+	// both new local and new global indexes
+	// And last update new global indexes from the non-touched partitions
+	// Note it is hard to update global indexes in-place due to:
 	//   - Transactions on different TiDB nodes/domains may see different states of the table/partitions
 	//   - We cannot have multiple partition ids for a unique index entry.
 
 	// Copy the data from the DroppingDefinitions to the AddingDefinitions
 	if bytes.Equal(reorgInfo.currElement.TypeKey, meta.ColumnElementKey) {
-		// TODO: use the same rows for creating the index entries?
-		// I.e. only read the data once.
-		err := w.updatePhysicalTableRow(t, reorgInfo)
+		err = w.updatePhysicalTableRow(t, reorgInfo)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -3539,69 +3534,109 @@ func (w *worker) reorgPartitionDataAndIndex(t table.Table, reorgInfo *reorgInfo)
 		}
 	})
 
-	firstNewPartitionID := t.Meta().Partition.AddingDefinitions[0].ID
 	if !bytes.Equal(reorgInfo.currElement.TypeKey, meta.IndexElementKey) {
-		// First run, have not yet started backfilling index data
-		// Restart with the first new partition.
-		// TODO: handle remove partitioning
-		reorgInfo.PhysicalTableID = firstNewPartitionID
+		// row data has been copied, now proceed with creating the indexes
+		// on the new AddingDefinitions partitions
+		reorgInfo.PhysicalTableID = t.Meta().Partition.AddingDefinitions[0].ID
 		reorgInfo.currElement = reorgInfo.elements[1]
-	}
-
-	// Now build the indexes in the new partitions
-	var physTbl table.PhysicalTable
-	if tbl, ok := t.(table.PartitionedTable); ok {
-		physTbl = tbl.GetPartition(reorgInfo.PhysicalTableID)
-	} else if tbl, ok := t.(table.PhysicalTable); ok {
-		// This may be used when partitioning a non-partitioned table
-		physTbl = tbl
-	}
-	// Get the original start handle and end handle.
-	currentVer, err := getValidCurrentVersion(reorgInfo.d.store)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	// TODO: Can we improve this in case of a crash?
-	// like where the regInfo PhysicalTableID and element is the same,
-	// and the tableid in the key-prefix regInfo.StartKey and regInfo.EndKey matches with PhysicalTableID
-	// do not change the reorgInfo start/end key
-	startHandle, endHandle, err := getTableRange(reorgInfo.NewJobContext(), reorgInfo.d, physTbl, currentVer.Ver, reorgInfo.Job.Priority)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	// Always (re)start with the full PhysicalTable range
-	reorgInfo.StartKey, reorgInfo.EndKey = startHandle, endHandle
-
-	// TODO: Should we have some extra element for the non-touched partitions for the global index?
-
-	// Write the reorg info to store so the whole reorganize process can recover from panic.
-	err = reorgInfo.UpdateReorgMeta(reorgInfo.StartKey, w.sessPool)
-	logutil.DDLLogger().Info("update column and indexes",
-		zap.Int64("jobID", reorgInfo.Job.ID),
-		zap.ByteString("elementType", reorgInfo.currElement.TypeKey),
-		zap.Int64("elementID", reorgInfo.currElement.ID),
-		zap.Int64("partitionTableId", physTbl.GetPhysicalID()),
-		zap.String("startHandle", hex.EncodeToString(reorgInfo.StartKey)),
-		zap.String("endHandle", hex.EncodeToString(reorgInfo.EndKey)))
-	if err != nil {
-		return errors.Trace(err)
-	}
-	// This will recreate all indexes on the partition
-	err = w.addTableIndex(t, reorgInfo)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	reorgInfo.PhysicalTableID = firstNewPartitionID
-	//}
-	// TODO: add the non-reorganized partitions to the global indexes?
-	failpoint.Inject("reorgPartitionAfterIndex", func(val failpoint.Value) {
-		//nolint:forcetypeassert
-		if val.(bool) {
-			panic("panic test in reorgPartitionAfterIndex")
+		var physTbl table.PhysicalTable
+		if tbl, ok := t.(table.PartitionedTable); ok {
+			physTbl = tbl.GetPartition(reorgInfo.PhysicalTableID)
+		} else if tbl, ok := t.(table.PhysicalTable); ok {
+			// This may be used when partitioning a non-partitioned table
+			physTbl = tbl
 		}
-	})
-	return nil
+		// Get the original start handle and end handle.
+		currentVer, err := getValidCurrentVersion(reorgInfo.d.store)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		startHandle, endHandle, err := getTableRange(reorgInfo.NewJobContext(), reorgInfo.d, physTbl, currentVer.Ver, reorgInfo.Job.Priority)
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		// Always (re)start with the full PhysicalTable range
+		reorgInfo.StartKey, reorgInfo.EndKey = startHandle, endHandle
+
+		// Write the reorg info to store so the whole reorganize process can recover from panic.
+		err = reorgInfo.UpdateReorgMeta(reorgInfo.StartKey, w.sessPool)
+		logutil.DDLLogger().Info("update column and indexes",
+			zap.Int64("jobID", reorgInfo.Job.ID),
+			zap.ByteString("elementType", reorgInfo.currElement.TypeKey),
+			zap.Int64("elementID", reorgInfo.currElement.ID),
+			zap.Int64("partitionTableId", physTbl.GetPhysicalID()),
+			zap.String("startHandle", hex.EncodeToString(reorgInfo.StartKey)),
+			zap.String("endHandle", hex.EncodeToString(reorgInfo.EndKey)))
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+
+	pi := t.Meta().GetPartitionInfo()
+	if _, err = findNextPartitionID(reorgInfo.PhysicalTableID, pi.AddingDefinitions); err == nil {
+		// Now build all the indexes in the new partitions
+		err = w.addTableIndex(t, reorgInfo)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		// All indexes are up-to-date for new partitions,
+		// now we only need to add the existing non-touched partitions
+		// to the global indexes
+		reorgInfo.elements = reorgInfo.elements[:0]
+		for _, indexInfo := range t.Meta().Indices {
+			if indexInfo.Global && indexInfo.State == model.StateWriteReorganization {
+				reorgInfo.elements = append(reorgInfo.elements, &meta.Element{ID: indexInfo.ID, TypeKey: meta.IndexElementKey})
+			}
+		}
+		if len(reorgInfo.elements) == 0 {
+			// No global indexes
+			return nil
+		}
+		reorgInfo.currElement = reorgInfo.elements[0]
+		pid := pi.Definitions[0].ID
+		if _, err = findNextPartitionID(pid, pi.DroppingDefinitions); err == nil {
+			// Skip all dropped partitions
+			pid, err = findNextNonTouchedPartitionID(pid, pi)
+			if err != nil {
+				return errors.Trace(err)
+			}
+		}
+		reorgInfo.PhysicalTableID = pid
+		var physTbl table.PhysicalTable
+		if tbl, ok := t.(table.PartitionedTable); ok {
+			physTbl = tbl.GetPartition(reorgInfo.PhysicalTableID)
+		} else if tbl, ok := t.(table.PhysicalTable); ok {
+			// This may be used when partitioning a non-partitioned table
+			physTbl = tbl
+		}
+		// Get the original start handle and end handle.
+		currentVer, err := getValidCurrentVersion(reorgInfo.d.store)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		startHandle, endHandle, err := getTableRange(reorgInfo.NewJobContext(), reorgInfo.d, physTbl, currentVer.Ver, reorgInfo.Job.Priority)
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		// Always (re)start with the full PhysicalTable range
+		reorgInfo.StartKey, reorgInfo.EndKey = startHandle, endHandle
+
+		// Write the reorg info to store so the whole reorganize process can recover from panic.
+		err = reorgInfo.UpdateReorgMeta(reorgInfo.StartKey, w.sessPool)
+		logutil.DDLLogger().Info("update column and indexes",
+			zap.Int64("jobID", reorgInfo.Job.ID),
+			zap.ByteString("elementType", reorgInfo.currElement.TypeKey),
+			zap.Int64("elementID", reorgInfo.currElement.ID),
+			zap.Int64("partitionTableId", physTbl.GetPhysicalID()),
+			zap.String("startHandle", hex.EncodeToString(reorgInfo.StartKey)),
+			zap.String("endHandle", hex.EncodeToString(reorgInfo.EndKey)))
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+	return w.addTableIndex(t, reorgInfo)
 }
 
 func bundlesForExchangeTablePartition(t *meta.Meta, pt *model.TableInfo, newPar *model.PartitionDefinition, nt *model.TableInfo) ([]*placement.Bundle, error) {
