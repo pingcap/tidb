@@ -1583,12 +1583,6 @@ func (b *executorBuilder) buildHashJoinV2(v *plannercore.PhysicalHashJoin) exec.
 			e.HashJoinCtxV2.ProbeFilter = v.LeftConditions
 		}
 	}
-	var probeColumnTypes []*types.FieldType
-	if e.RightAsBuildSide {
-		probeColumnTypes = lhsTypes
-	} else {
-		probeColumnTypes = rhsTypes
-	}
 	probeKeyColIdx := make([]int, len(probeKeys))
 	buildKeyColIdx := make([]int, len(buildKeys))
 	for i := range buildKeys {
@@ -1615,15 +1609,6 @@ func (b *executorBuilder) buildHashJoinV2(v *plannercore.PhysicalHashJoin) exec.
 	if v.OtherConditions != nil {
 		leftColumnSize := v.Children()[0].Schema().Len()
 		e.LUsedInOtherCondition, e.RUsedInOtherCondition = extractUsedColumnsInJoinOtherCondition(v.OtherConditions, leftColumnSize)
-	}
-	for i := uint(0); i < e.Concurrency; i++ {
-		e.ProbeWorkers[i] = &join.ProbeWorkerV2{
-			HashJoinCtx: e.HashJoinCtxV2,
-			JoinProbe:   join.NewJoinProbe(e.HashJoinCtxV2, i, v.JoinType, probeKeyColIdx, joinedTypes, probeColumnTypes, e.RightAsBuildSide),
-		}
-		e.ProbeWorkers[i].WorkerID = i
-
-		e.BuildWorkers[i] = join.NewJoinBuildWorkerV2(e.HashJoinCtxV2, i, buildSideExec, buildKeyColIdx, exec.RetTypes(buildSideExec))
 	}
 	// todo add partition hash join exec
 	executor_metrics.ExecutorCountHashJoinExec.Inc()
@@ -1669,6 +1654,15 @@ func (b *executorBuilder) buildHashJoinV2(v *plannercore.PhysicalHashJoin) exec.
 		e.BuildKeyTypes, e.ProbeKeyTypes = rightTypes, leftTypes
 	} else {
 		e.BuildKeyTypes, e.ProbeKeyTypes = leftTypes, rightTypes
+	}
+	for i := uint(0); i < e.Concurrency; i++ {
+		e.ProbeWorkers[i] = &join.ProbeWorkerV2{
+			HashJoinCtx: e.HashJoinCtxV2,
+			JoinProbe:   join.NewJoinProbe(e.HashJoinCtxV2, i, v.JoinType, probeKeyColIdx, joinedTypes, e.ProbeKeyTypes, e.RightAsBuildSide),
+		}
+		e.ProbeWorkers[i].WorkerID = i
+
+		e.BuildWorkers[i] = join.NewJoinBuildWorkerV2(e.HashJoinCtxV2, i, buildSideExec, buildKeyColIdx, exec.RetTypes(buildSideExec))
 	}
 	return e
 }
