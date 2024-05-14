@@ -143,9 +143,9 @@ type nodeVersions struct {
 	onceMatchFn func(map[string]int64) bool
 }
 
-func newNodeVersions(len int, fn func(map[string]int64) bool) *nodeVersions {
+func newNodeVersions(initialCap int, fn func(map[string]int64) bool) *nodeVersions {
 	return &nodeVersions{
-		nodeVersions: make(map[string]int64, len),
+		nodeVersions: make(map[string]int64, initialCap),
 		onceMatchFn:  fn,
 	}
 }
