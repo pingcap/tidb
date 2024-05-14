@@ -195,17 +195,6 @@ func (g *TTLTimersSyncer) SyncTimers(ctx context.Context, is infoschema.InfoSche
 		}
 	}
 
-	// for _, dbName := range is.AllSchemaNames() {
-	// 	for _, tblInfo := range is.SchemaTableInfos(dbName) {
-	// 		if tblInfo.State != model.StatePublic || tblInfo.TTLInfo == nil {
-	// 			continue
-	// 		}
-	// 		for _, key := range g.syncTimersForTable(ctx, se, dbName, tblInfo) {
-	// 			currentTimerKeys[key] = struct{}{}
-	// 		}
-	// 	}
-	// }
-
 	for key, timer := range g.key2Timers {
 		if _, ok := currentTimerKeys[key]; ok {
 			continue

@@ -15,7 +15,6 @@
 package infoschema
 
 import (
-	"runtime/debug"
 	"fmt"
 	"math"
 	"strings"
@@ -119,10 +118,10 @@ func hasSpecialAttributes(t *model.TableInfo) bool {
 }
 
 type tableInfoItem struct {
-	dbName string
-	tableID int64
+	dbName        string
+	tableID       int64
 	schemaVersion int64
-	tableInfo *model.TableInfo
+	tableInfo     *model.TableInfo
 }
 
 type partitionItem struct {
@@ -175,12 +174,12 @@ type tableCacheKey struct {
 // NewData creates an infoschema V2 data struct.
 func NewData() *Data {
 	ret := &Data{
-		byID:       btree.NewBTreeG[tableItem](compareByID),
-		byName:     btree.NewBTreeG[tableItem](compareByName),
-		schemaMap:  btree.NewBTreeG[schemaItem](compareSchemaItem),
-		tableCache: newSieve[tableCacheKey, table.Table](32 * size.MB),
-		specials:   make(map[string]*schemaTables),
-		pid2tid:    btree.NewBTreeG[partitionItem](comparePartitionItem),
+		byID:              btree.NewBTreeG[tableItem](compareByID),
+		byName:            btree.NewBTreeG[tableItem](compareByName),
+		schemaMap:         btree.NewBTreeG[schemaItem](compareSchemaItem),
+		tableCache:        newSieve[tableCacheKey, table.Table](1024 * 1024 * size.MB),
+		specials:          make(map[string]*schemaTables),
+		pid2tid:           btree.NewBTreeG[partitionItem](comparePartitionItem),
 		tableInfoResident: btree.NewBTreeG[tableInfoItem](compareTableInfoItem),
 	}
 	return ret
@@ -258,7 +257,7 @@ func compareTableInfoItem(a, b tableInfoItem) bool {
 	if a.dbName > b.dbName {
 		return false
 	}
-	
+
 	if a.tableID < b.tableID {
 		return true
 	}
@@ -689,8 +688,6 @@ retry:
 		// TODO: error could happen, so do not panic!
 		panic(err)
 	}
-
-	debug.PrintStack()
 
 	tables = make([]table.Table, 0, len(tblInfos))
 	for _, tblInfo := range tblInfos {

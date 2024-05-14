@@ -15,7 +15,6 @@
 package infoschema
 
 import (
-	"fmt"
 	"sort"
 	"sync"
 
@@ -193,7 +192,7 @@ func (h *InfoCache) GetBySnapshotTS(snapshotTS uint64) InfoSchema {
 // It returns 'true' if it is cached, 'false' otherwise.
 // schemaTs is the commitTs of the txn creates the schema diff, which indicates since when the schema version is taking effect
 func (h *InfoCache) Insert(is InfoSchema, schemaTS uint64) bool {
-	logutil.BgLogger().Info("INSERT SCHEMA", zap.Uint64("schema ts", schemaTS), zap.Int64("schema version", is.SchemaMetaVersion()))
+	logutil.BgLogger().Debug("INSERT SCHEMA", zap.Uint64("schema ts", schemaTS), zap.Int64("schema version", is.SchemaMetaVersion()))
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
@@ -203,7 +202,6 @@ func (h *InfoCache) Insert(is InfoSchema, schemaTS uint64) bool {
 	i := sort.Search(len(h.cache), func(i int) bool {
 		return h.cache[i].infoschema.SchemaMetaVersion() <= version
 	})
-	fmt.Println("infoCache Insert ... a cached entry:", version, "i=", i)
 
 	// cached entry
 	if i < len(h.cache) && h.cache[i].infoschema.SchemaMetaVersion() == version {
@@ -212,20 +210,16 @@ func (h *InfoCache) Insert(is InfoSchema, schemaTS uint64) bool {
 		if xisV2 == yisV2 {
 			// update timestamp if it is not 0 and cached one is 0
 			if schemaTS > 0 && h.cache[i].timestamp == 0 {
-				fmt.Println("both v1 or v2? update schema ts", xisV2, yisV2)
 				h.cache[i].timestamp = int64(schemaTS)
 			} else if xisV2 {
 				// update infoschema if it's infoschema v2
-				fmt.Println("is v2 and update schema ts", xisV2, yisV2)
 				h.cache[i].infoschema = is
 			}
 			return true
 		}
-		fmt.Println("not replace v1 => v2??", xisV2, yisV2)
 	}
 
 	if len(h.cache) < cap(h.cache) {
-		fmt.Println("111 insert ... entry:", version, "i=", i)
 		// has free space, grown the slice
 		h.cache = h.cache[:len(h.cache)+1]
 		copy(h.cache[i+1:], h.cache[i:])
@@ -234,7 +228,6 @@ func (h *InfoCache) Insert(is InfoSchema, schemaTS uint64) bool {
 			timestamp:  int64(schemaTS),
 		}
 	} else if i < len(h.cache) {
-		fmt.Println("222 insert ... entry:", version, "i=", i)
 		// drop older schema
 		copy(h.cache[i+1:], h.cache[i:])
 		h.cache[i] = schemaAndTimestamp{

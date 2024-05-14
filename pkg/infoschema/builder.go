@@ -941,7 +941,6 @@ func (b *Builder) addDB(schemaVersion int64, di *model.DBInfo, schTbls *schemaTa
 		if isSpecialDB(di.Name.L) {
 			b.infoData.addSpecialDB(di, schTbls)
 		} else {
-			di.Tables = nil
 			b.infoData.addDB(schemaVersion, di)
 		}
 	} else {
@@ -951,10 +950,6 @@ func (b *Builder) addDB(schemaVersion int64, di *model.DBInfo, schTbls *schemaTa
 
 func (b *Builder) addTable(schemaVersion int64, di *model.DBInfo, tblInfo *model.TableInfo, tbl table.Table) {
 	if b.enableV2 {
-		if !isSpecialDB(di.Name.L) {
-			fmt.Println("add v2 table ==", di.Name, tblInfo.Name)
-		}
-		
 		b.infoData.add(tableItem{
 			dbName:        di.Name.L,
 			dbID:          di.ID,
@@ -963,10 +958,6 @@ func (b *Builder) addTable(schemaVersion int64, di *model.DBInfo, tblInfo *model
 			schemaVersion: schemaVersion,
 		}, tbl)
 	} else {
-		if !isSpecialDB(di.Name.L) {
-			fmt.Println("add v1 table ==", di.Name, tblInfo.Name)
-		}
-
 		sortedTbls := b.infoSchema.sortedTablesBuckets[tableBucketIdx(tblInfo.ID)]
 		b.infoSchema.sortedTablesBuckets[tableBucketIdx(tblInfo.ID)] = append(sortedTbls, tbl)
 	}

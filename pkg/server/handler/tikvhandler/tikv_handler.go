@@ -982,7 +982,7 @@ func (h SchemaHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 				handler.WriteError(w, err)
 				return
 			}
-			handler.WriteData(w, data)
+			handler.WriteData(w, data.Meta())
 			return
 		}
 		// all table schemas in a specified database
@@ -1007,7 +1007,7 @@ func (h SchemaHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			return
 		}
 		if data, ok := schema.TableByID(int64(tid)); ok {
-			handler.WriteData(w, data)
+			handler.WriteData(w, data.Meta())
 			return
 		}
 		// The tid maybe a partition ID of the partition-table.

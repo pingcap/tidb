@@ -280,7 +280,7 @@ func (is *infoSchema) SchemaTableInfos(schema model.CIStr) []*model.TableInfo {
 }
 
 type tableInfoResult struct {
-	DBName string
+	DBName    string
 	TableInfo []*model.TableInfo
 }
 

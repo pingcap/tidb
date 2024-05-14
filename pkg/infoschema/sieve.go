@@ -15,7 +15,6 @@
 package infoschema
 
 import (
-	"fmt"
 	"container/list"
 	"context"
 	"sync"
@@ -183,7 +182,6 @@ func (s *Sieve[K, V]) removeEntry(e *entry[K, V]) {
 	s.ll.Remove(e.element)
 	delete(s.items, e.key)
 	s.size -= e.Size()
-	fmt.Println("remove entry, current size ==", e.Size(), s.size)
 }
 
 func (s *Sieve[K, V]) evict() {
