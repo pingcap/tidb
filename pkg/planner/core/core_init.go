@@ -26,6 +26,7 @@ import (
 
 func init() {
 	// For code refactor init.
+	utilfuncp.AddSelection = addSelection
 	utilfuncp.HasMaxOneRowUtil = HasMaxOneRow
 	utilfuncp.GetTaskPlanCost = getTaskPlanCost
 	utilfuncp.AppendCandidate4PhysicalOptimizeOp = appendCandidate4PhysicalOptimizeOp

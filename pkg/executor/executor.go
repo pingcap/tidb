@@ -559,7 +559,7 @@ func ts2Time(timestamp uint64, loc *time.Location) types.Time {
 	duration := time.Duration(math.Pow10(9-types.DefaultFsp)) * time.Nanosecond
 	t := model.TSConvert2Time(timestamp)
 	t.Truncate(duration)
-	return types.NewTime(types.FromGoTime(t.In(loc)), mysql.TypeDatetime, types.DefaultFsp)
+	return types.NewTime(types.FromGoTime(t.In(loc)), mysql.TypeDatetime, types.MaxFsp)
 }
 
 // ShowDDLJobQueriesExec represents a show DDL job queries executor.
