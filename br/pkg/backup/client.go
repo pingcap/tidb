@@ -9,7 +9,6 @@ import (
 	"encoding/json"
 	"reflect"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/google/btree"
@@ -43,8 +42,6 @@ import (
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
 )
-
-var apiVersionSetter sync.Once
 
 // ClientMgr manages connections needed by backup.
 type ClientMgr interface {
@@ -913,10 +910,8 @@ func (bc *Client) OnBackupResponse(
 			}
 		}
 		pr.Res.Put(resp.StartKey, resp.EndKey, resp.Files)
-		apiVersionSetter.Do(func() {
-			apiVersion := resp.ApiVersion
-			bc.SetApiVersion(apiVersion)
-		})
+		apiVersion := resp.ApiVersion
+		bc.SetApiVersion(apiVersion)
 	} else {
 		errPb := resp.GetError()
 		res := errContext.HandleIgnorableError(errPb, storeID)
