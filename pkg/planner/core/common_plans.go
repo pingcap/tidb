@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/property"
+	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -520,7 +521,7 @@ type V2AnalyzeOptions struct {
 
 // AnalyzeColumnsTask is used for analyze columns.
 type AnalyzeColumnsTask struct {
-	HandleCols       HandleCols
+	HandleCols       util.HandleCols
 	CommonHandleInfo *model.IndexInfo
 	ColsInfo         []*model.ColumnInfo
 	TblInfo          *model.TableInfo
@@ -1385,9 +1386,9 @@ func (e *Explain) prepareTaskDot(p base.PhysicalPlan, taskTp string, buffer *byt
 //  1. ctx is auto commit tagged
 //  2. session is not InTxn
 //  3. plan is point get by pk, or point get by unique index (no double read)
-func IsPointGetWithPKOrUniqueKeyByAutoCommit(vars *variable.SessionVars, p base.Plan) (bool, error) {
+func IsPointGetWithPKOrUniqueKeyByAutoCommit(vars *variable.SessionVars, p base.Plan) bool {
 	if !IsAutoCommitTxn(vars) {
-		return false, nil
+		return false
 	}
 
 	// check plan
@@ -1398,22 +1399,22 @@ func IsPointGetWithPKOrUniqueKeyByAutoCommit(vars *variable.SessionVars, p base.
 	switch v := p.(type) {
 	case *PhysicalIndexReader:
 		indexScan := v.IndexPlans[0].(*PhysicalIndexScan)
-		return indexScan.IsPointGetByUniqueKey(vars.StmtCtx.TypeCtx()), nil
+		return indexScan.IsPointGetByUniqueKey(vars.StmtCtx.TypeCtx())
 	case *PhysicalTableReader:
 		tableScan, ok := v.TablePlans[0].(*PhysicalTableScan)
 		if !ok {
-			return false, nil
+			return false
 		}
 		isPointRange := len(tableScan.Ranges) == 1 && tableScan.Ranges[0].IsPointNonNullable(vars.StmtCtx.TypeCtx())
 		if !isPointRange {
-			return false, nil
+			return false
 		}
 		pkLength := 1
 		if tableScan.Table.IsCommonHandle {
 			pkIdx := tables.FindPrimaryIndex(tableScan.Table)
 			pkLength = len(pkIdx.Columns)
 		}
-		return len(tableScan.Ranges[0].LowVal) == pkLength, nil
+		return len(tableScan.Ranges[0].LowVal) == pkLength
 	case *PointGetPlan:
 		// If the PointGetPlan needs to read data using unique index (double read), we
 		// can't use max uint64, because using math.MaxUint64 can't guarantee repeatable-read
@@ -1422,14 +1423,14 @@ func IsPointGetWithPKOrUniqueKeyByAutoCommit(vars *variable.SessionVars, p base.
 		// because math.MaxUint64 always make cacheData invalid.
 		noSecondRead := v.IndexInfo == nil || (v.IndexInfo.Primary && v.TblInfo.IsCommonHandle)
 		if !noSecondRead {
-			return false, nil
+			return false
 		}
 		if v.TblInfo != nil && (v.TblInfo.TableCacheStatusType != model.TableCacheStatusDisable) {
-			return false, nil
+			return false
 		}
-		return true, nil
+		return true
 	default:
-		return false, nil
+		return false
 	}
 }
 

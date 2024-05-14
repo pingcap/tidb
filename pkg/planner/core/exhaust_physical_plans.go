@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/cost"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
@@ -966,14 +967,16 @@ func (p *LogicalJoin) buildIndexJoinInner2IndexScan(
 	}
 	innerTask := p.constructInnerIndexScanTask(wrapper, helper.chosenPath, helper.chosenRanges.Range(), helper.chosenRemained, innerJoinKeys, helper.idxOff2KeyOff, rangeInfo, false, false, avgInnerRowCnt, maxOneRow)
 	failpoint.Inject("MockOnlyEnableIndexHashJoin", func(val failpoint.Value) {
-		if val.(bool) && !p.SCtx().GetSessionVars().InRestrictedSQL {
+		if val.(bool) && !p.SCtx().GetSessionVars().InRestrictedSQL && innerTask != nil {
 			failpoint.Return(p.constructIndexHashJoin(prop, outerIdx, innerTask, helper.chosenRanges, keyOff2IdxOff, helper.chosenPath, helper.lastColManager))
 		}
 	})
-	joins = append(joins, p.constructIndexJoin(prop, outerIdx, innerTask, helper.chosenRanges, keyOff2IdxOff, helper.chosenPath, helper.lastColManager, true)...)
-	// We can reuse the `innerTask` here since index nested loop hash join
-	// do not need the inner child to promise the order.
-	joins = append(joins, p.constructIndexHashJoin(prop, outerIdx, innerTask, helper.chosenRanges, keyOff2IdxOff, helper.chosenPath, helper.lastColManager)...)
+	if innerTask != nil {
+		joins = append(joins, p.constructIndexJoin(prop, outerIdx, innerTask, helper.chosenRanges, keyOff2IdxOff, helper.chosenPath, helper.lastColManager, true)...)
+		// We can reuse the `innerTask` here since index nested loop hash join
+		// do not need the inner child to promise the order.
+		joins = append(joins, p.constructIndexHashJoin(prop, outerIdx, innerTask, helper.chosenRanges, keyOff2IdxOff, helper.chosenPath, helper.lastColManager)...)
+	}
 	// The index merge join's inner plan is different from index join, so we
 	// should construct another inner plan for it.
 	// Because we can't keep order for union scan, if there is a union scan in inner task,
@@ -1076,7 +1079,7 @@ func (p *LogicalJoin) constructInnerTableScanTask(
 		selectivity, _, err = cardinality.Selectivity(ds.SCtx(), ds.tableStats.HistColl, ts.filterCondition, ds.possibleAccessPaths)
 		if err != nil || selectivity <= 0 {
 			logutil.BgLogger().Debug("unexpected selectivity, use selection factor", zap.Float64("selectivity", selectivity), zap.String("table", ts.TableAsName.L))
-			selectivity = SelectionFactor
+			selectivity = cost.SelectionFactor
 		}
 		// rowCount is computed from result row count of join, which has already accounted the filters on DataSource,
 		// i.e, rowCount equals to `countAfterAccess * selectivity`.
@@ -1289,8 +1292,8 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 		}.Init(ds.SCtx(), ds.QueryBlockOffset())
 		ts.schema = is.dataSourceSchema.Clone()
 		if ds.tableInfo.IsCommonHandle {
-			commonHandle := ds.handleCols.(*CommonHandleCols)
-			for _, col := range commonHandle.columns {
+			commonHandle := ds.handleCols.(*util.CommonHandleCols)
+			for _, col := range commonHandle.GetColumns() {
 				if ts.schema.ColumnIndex(col) == -1 {
 					ts.Schema().Append(col)
 					ts.Columns = append(ts.Columns, col.ToInfo())
@@ -1368,7 +1371,7 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 		selectivity, _, err := cardinality.Selectivity(ds.SCtx(), ds.tableStats.HistColl, tblConds, ds.possibleAccessPaths)
 		if err != nil || selectivity <= 0 {
 			logutil.BgLogger().Debug("unexpected selectivity, use selection factor", zap.Float64("selectivity", selectivity), zap.String("table", ds.TableAsName.L))
-			selectivity = SelectionFactor
+			selectivity = cost.SelectionFactor
 		}
 		// rowCount is computed from result row count of join, which has already accounted the filters on DataSource,
 		// i.e, rowCount equals to `countAfterIndex * selectivity`.
@@ -1386,7 +1389,7 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 		selectivity, _, err := cardinality.Selectivity(ds.SCtx(), ds.tableStats.HistColl, indexConds, ds.possibleAccessPaths)
 		if err != nil || selectivity <= 0 {
 			logutil.BgLogger().Debug("unexpected selectivity, use selection factor", zap.Float64("selectivity", selectivity), zap.String("table", ds.TableAsName.L))
-			selectivity = SelectionFactor
+			selectivity = cost.SelectionFactor
 		}
 		cnt := tmpPath.CountAfterIndex / selectivity
 		if rowCountUpperBound > 0 {
@@ -1403,7 +1406,10 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 		is.usedStatsInfo = usedStats.GetUsedInfo(is.physicalTableID)
 	}
 	finalStats := ds.tableStats.ScaleByExpectCnt(rowCount)
-	is.addPushedDownSelection(cop, ds, tmpPath, finalStats)
+	if err := is.addPushedDownSelection(cop, ds, tmpPath, finalStats); err != nil {
+		logutil.BgLogger().Warn("unexpected error happened during addPushedDownSelection function", zap.Error(err))
+		return nil
+	}
 	return p.constructIndexJoinInnerSideTask(cop, ds, path, wrapper)
 }
 
