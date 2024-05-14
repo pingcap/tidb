@@ -405,9 +405,7 @@ func (d *ddl) addBatchDDLJobs(tasks []*limitJobTask) error {
 		return errors.Trace(err)
 	}
 	defer d.sessPool.Put(se)
-	st1 := time.Now()
 	jobs, err := getJobsBySQL(sess.NewSession(se), JobTable, fmt.Sprintf("type = %d", model.ActionFlashbackCluster))
-	logutil.DDLLogger().Info("check flash back cluster job cost", zap.Duration("total cost time", time.Since(st1)))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -454,6 +452,7 @@ func (d *ddl) addBatchDDLJobs(tasks []*limitJobTask) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
+
 	jobTasks := make([]*model.Job, 0, len(tasks))
 	for i, task := range tasks {
 		job := task.job
@@ -900,10 +899,6 @@ func (w *worker) prepareTxn(job *model.Job) (kv.Transaction, error) {
 }
 
 func (w *worker) HandleDDLJobTable(d *ddlCtx, job *model.Job) (int64, error) {
-	st := time.Now()
-	defer func() {
-		logutil.DDLLogger().Info("HandleDDLJobTable cost", zap.Duration("total cost time", time.Since(st)))
-	}()
 	var (
 		err       error
 		schemaVer int64
@@ -1388,10 +1383,6 @@ func toTError(err error) *terror.Error {
 // waitSchemaChanged waits for the completion of updating all servers' schema or MDL synced. In order to make sure that happens,
 // we wait at most 2 * lease time(sessionTTL, 90 seconds).
 func waitSchemaChanged(d *ddlCtx, waitTime time.Duration, latestSchemaVersion int64, job *model.Job) error {
-	st := time.Now()
-	defer func() {
-		logutil.DDLLogger().Info("waitSchemaChanged cost", zap.Duration("total cost time", time.Since(st)))
-	}()
 	if !job.IsRunning() && !job.IsRollingback() && !job.IsDone() && !job.IsRollbackDone() {
 		return nil
 	}
