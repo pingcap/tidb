@@ -15,12 +15,42 @@
 package syncer
 
 import (
+	"context"
+	"sync"
 	"testing"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/stretchr/testify/require"
 	"go.etcd.io/etcd/api/v3/mvccpb"
+	"go.etcd.io/etcd/tests/v3/integration"
 )
+
+func TestNodeVersions(t *testing.T) {
+	nv := newNodeVersions(1, nil)
+	nv.add("a", 10)
+	nv.add("b", 20)
+	require.EqualValues(t, 2, nv.len())
+	var waterMark int64 = 10
+	fn := func(nodeVersions map[string]int64) bool {
+		for _, v := range nodeVersions {
+			if v < waterMark {
+				return false
+			}
+		}
+		return true
+	}
+	nv.matchOrSet(fn)
+	require.Nil(t, nv.onceMatchFn)
+	waterMark = 20
+	nv.matchOrSet(fn)
+	require.NotNil(t, nv.onceMatchFn)
+	// matched and cleared
+	nv.add("a", 20)
+	require.Nil(t, nv.onceMatchFn)
+	nv.del("a")
+	require.EqualValues(t, 1, nv.len())
+}
 
 func TestDecodeJobVersionEvent(t *testing.T) {
 	prefix := util.DDLAllSchemaVersionsByJob + "/"
@@ -44,4 +74,94 @@ func TestDecodeJobVersionEvent(t *testing.T) {
 	require.EqualValues(t, 1, jobID)
 	require.EqualValues(t, "aa", tidbID)
 	require.EqualValues(t, 0, schemaVer)
+}
+
+func TestSyncJobSchemaVerLoop(t *testing.T) {
+	integration.BeforeTestExternal(t)
+	mockCluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
+	defer mockCluster.Terminate(t)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	etcdCli := mockCluster.RandClient()
+	_, err := etcdCli.Put(ctx, util.DDLAllSchemaVersionsByJob+"/1/aa", "123")
+	require.NoError(t, err)
+	s := NewSchemaSyncer(etcdCli, "1111").(*schemaVersionSyncer)
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		s.SyncJobSchemaVerLoop(ctx)
+	}()
+
+	// job 1 is matched
+	notifyCh := make(chan struct{})
+	item := s.jobSchemaVerMatchOrSet(1, func(m map[string]int64) bool {
+		for _, v := range m {
+			if v < 123 {
+				return false
+			}
+		}
+		close(notifyCh)
+		return true
+	})
+	<-notifyCh
+	require.Nil(t, item.getMatchFn())
+	_, err = etcdCli.Delete(ctx, util.DDLAllSchemaVersionsByJob+"/1/aa")
+	require.NoError(t, err)
+
+	// job 2 requires aa and bb
+	notifyCh = make(chan struct{}, 1)
+	item = s.jobSchemaVerMatchOrSet(2, func(m map[string]int64) bool {
+		for _, nodeID := range []string{"aa", "bb"} {
+			if v, ok := m[nodeID]; !ok || v < 123 {
+				return false
+			}
+		}
+		close(notifyCh)
+		return true
+	})
+	require.NotNil(t, item.getMatchFn())
+	require.Len(t, notifyCh, 0)
+	_, err = etcdCli.Put(ctx, util.DDLAllSchemaVersionsByJob+"/2/aa", "123")
+	require.NoError(t, err)
+	_, err = etcdCli.Put(ctx, util.DDLAllSchemaVersionsByJob+"/2/bb", "124")
+	require.NoError(t, err)
+	<-notifyCh
+	require.Nil(t, item.getMatchFn())
+	jobNodeVersionCnt := func() int {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		return len(s.jobNodeVersions)
+	}
+	require.EqualValues(t, 1, jobNodeVersionCnt())
+	_, err = etcdCli.Delete(ctx, util.DDLAllSchemaVersionsByJob+"/2/aa")
+	require.NoError(t, err)
+	_, err = etcdCli.Delete(ctx, util.DDLAllSchemaVersionsByJob+"/2/bb")
+	require.NoError(t, err)
+	require.Zero(t, jobNodeVersionCnt())
+
+	// job 3 is matched after restart from a compaction error
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/syncer/mockCompaction", `1*return(true)`))
+	notifyCh = make(chan struct{}, 1)
+	item = s.jobSchemaVerMatchOrSet(3, func(m map[string]int64) bool {
+		for _, nodeID := range []string{"aa"} {
+			if v, ok := m[nodeID]; !ok || v < 123 {
+				return false
+			}
+		}
+		close(notifyCh)
+		return true
+	})
+	require.NotNil(t, item.getMatchFn())
+	require.Len(t, notifyCh, 0)
+	_, err = etcdCli.Put(ctx, util.DDLAllSchemaVersionsByJob+"/3/aa", "123")
+	require.NoError(t, err)
+	<-notifyCh
+	require.Nil(t, item.getMatchFn())
+	_, err = etcdCli.Delete(ctx, util.DDLAllSchemaVersionsByJob+"/3/aa")
+	require.NoError(t, err)
+	require.Zero(t, jobNodeVersionCnt())
+
+	cancel()
+	wg.Wait()
 }

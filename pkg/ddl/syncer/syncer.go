@@ -143,6 +143,13 @@ type nodeVersions struct {
 	onceMatchFn func(map[string]int64) bool
 }
 
+func newNodeVersions(len int, fn func(map[string]int64) bool) *nodeVersions {
+	return &nodeVersions{
+		nodeVersions: make(map[string]int64, len),
+		onceMatchFn:  fn,
+	}
+}
+
 func (v *nodeVersions) add(nodeID string, ver int64) {
 	v.Lock()
 	defer v.Unlock()
@@ -158,6 +165,8 @@ func (v *nodeVersions) del(nodeID string) {
 	v.Lock()
 	defer v.Unlock()
 	delete(v.nodeVersions, nodeID)
+	// we don't call onceMatchFn here, for only "add" can cause onceMatchFn return
+	// true currently.
 }
 
 func (v *nodeVersions) len() int {
@@ -172,6 +181,19 @@ func (v *nodeVersions) matchOrSet(fn func(nodeVersions map[string]int64) bool) {
 	if ok := fn(v.nodeVersions); !ok {
 		v.onceMatchFn = fn
 	}
+}
+
+func (v *nodeVersions) clearData() {
+	v.Lock()
+	defer v.Unlock()
+	v.nodeVersions = make(map[string]int64, len(v.nodeVersions))
+}
+
+// for test
+func (v *nodeVersions) getMatchFn() func(map[string]int64) bool {
+	v.Lock()
+	defer v.Unlock()
+	return v.onceMatchFn
 }
 
 func (v *nodeVersions) clearMatchFn() {
@@ -365,8 +387,8 @@ func (s *schemaVersionSyncer) OwnerCheckAllVersions(ctx context.Context, jobID i
 
 			for _, info := range serverInfos {
 				instance := disttaskutil.GenerateExecID(info)
-				// if some node shutdown abnormally and start, so we might see the
-				// same instance with different id, we should use the latest id.
+				// if some node shutdown abnormally and start, we might see some
+				// instance with different id, we should use the latest one.
 				if id, ok := instance2id[instance]; ok {
 					if info.StartTimestamp > serverInfos[id].StartTimestamp {
 						// Replace it.
@@ -466,9 +488,16 @@ func (s *schemaVersionSyncer) syncJobSchemaVer(ctx context.Context) {
 		logutil.DDLLogger().Info("get all job versions failed", zap.Error(err))
 		return
 	}
+	s.mu.Lock()
+	// item might be saved and accessed outside, so we only clear data here.
+	for _, item := range s.jobNodeVersions {
+		item.clearData()
+	}
+	s.mu.Unlock()
 	for _, oneKV := range resp.Kvs {
 		s.handleJobSchemaVerKV(oneKV, mvccpb.PUT)
 	}
+
 	startRev := resp.Header.Revision + 1
 	watchCtx, watchCtxCancel := context.WithCancel(ctx)
 	defer watchCtxCancel()
@@ -489,8 +518,11 @@ func (s *schemaVersionSyncer) syncJobSchemaVer(ctx context.Context) {
 				return
 			}
 		}
+		failpoint.Inject("mockCompaction", func() {
+			wresp.CompactRevision = 123
+		})
 		if err := wresp.Err(); err != nil {
-			logutil.DDLLogger().Error("watch job version failed", zap.Error(err))
+			logutil.DDLLogger().Warn("watch job version failed", zap.Error(err))
 			return
 		}
 		for _, ev := range wresp.Events {
@@ -509,7 +541,7 @@ func (s *schemaVersionSyncer) handleJobSchemaVerKV(kv *mvccpb.KeyValue, tp mvccp
 		s.mu.Lock()
 		item, exists := s.jobNodeVersions[jobID]
 		if !exists {
-			item = &nodeVersions{nodeVersions: make(map[string]int64, 1)}
+			item = newNodeVersions(1, nil)
 			s.jobNodeVersions[jobID] = item
 		}
 		s.mu.Unlock()
@@ -534,10 +566,7 @@ func (s *schemaVersionSyncer) jobSchemaVerMatchOrSet(jobID int64, matchFn func(m
 	if exists {
 		item.matchOrSet(matchFn)
 	} else {
-		item = &nodeVersions{
-			nodeVersions: make(map[string]int64, 1),
-			onceMatchFn:  matchFn,
-		}
+		item = newNodeVersions(1, matchFn)
 		s.jobNodeVersions[jobID] = item
 	}
 	return item
