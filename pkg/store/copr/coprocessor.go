@@ -679,7 +679,6 @@ type copIterator struct {
 
 	// If keepOrder, results are stored in copTask.respChan, read them out one by one.
 	tasks []*copTask
-
 	// curr indicates the curr id of the finished copTask
 	curr int
 
