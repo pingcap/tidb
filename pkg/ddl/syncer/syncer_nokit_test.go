@@ -16,11 +16,15 @@ package syncer
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"sync"
 	"testing"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl/util"
+	"github.com/pingcap/tidb/pkg/domain/infosync"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/stretchr/testify/require"
 	"go.etcd.io/etcd/api/v3/mvccpb"
 	"go.etcd.io/etcd/tests/v3/integration"
@@ -138,10 +142,12 @@ func TestSyncJobSchemaVerLoop(t *testing.T) {
 	require.NoError(t, err)
 	_, err = etcdCli.Delete(ctx, util.DDLAllSchemaVersionsByJob+"/2/bb")
 	require.NoError(t, err)
-	require.Zero(t, jobNodeVersionCnt())
 
 	// job 3 is matched after restart from a compaction error
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/syncer/mockCompaction", `1*return(true)`))
+	t.Cleanup(func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/syncer/mockCompaction"))
+	})
 	notifyCh = make(chan struct{}, 1)
 	item = s.jobSchemaVerMatchOrSet(3, func(m map[string]int64) bool {
 		for _, nodeID := range []string{"aa"} {
@@ -160,8 +166,22 @@ func TestSyncJobSchemaVerLoop(t *testing.T) {
 	require.Nil(t, item.getMatchFn())
 	_, err = etcdCli.Delete(ctx, util.DDLAllSchemaVersionsByJob+"/3/aa")
 	require.NoError(t, err)
-	require.Zero(t, jobNodeVersionCnt())
+
+	// job 4 is matched using OwnerCheckAllVersions
+	variable.EnableMDL.Store(true)
+	serverInfos := map[string]*infosync.ServerInfo{"aa": {ID: "aa", IP: "test", Port: 4000}}
+	bytes, err := json.Marshal(serverInfos)
+	require.NoError(t, err)
+	inTerms := fmt.Sprintf("return(`%s`)", string(bytes))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/domain/infosync/mockGetAllServerInfo", inTerms))
+	_, err = etcdCli.Put(ctx, util.DDLAllSchemaVersionsByJob+"/4/aa", "333")
+	require.NoError(t, err)
+	require.NoError(t, s.OwnerCheckAllVersions(ctx, 4, 333))
+	_, err = etcdCli.Delete(ctx, util.DDLAllSchemaVersionsByJob+"/4/aa")
+	require.NoError(t, err)
 
 	cancel()
 	wg.Wait()
+
+	require.Zero(t, jobNodeVersionCnt())
 }
