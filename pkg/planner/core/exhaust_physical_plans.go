@@ -3108,6 +3108,7 @@ func (p *baseLogicalPlan) CanPushToCop(storeTp kv.StoreType) bool {
 	return canPushToCopImpl(p, storeTp, false)
 }
 
+// todo: move canPushToCopImpl to func_pointer_misc when move baseLogicalPlan out of core.
 func canPushToCopImpl(p *baseLogicalPlan, storeTp kv.StoreType, considerDual bool) bool {
 	ret := true
 	for _, ch := range p.children {
