@@ -12,11 +12,7 @@ go_test(
     ],
     data = glob(["testdata/**"]),
     flaky = True,
-<<<<<<< HEAD
-    shard_count = 21,
-=======
-    shard_count = 24,
->>>>>>> 98e5cfbd1c5 (planner: fix wrong behavior for = all() (#52801))
+    shard_count = 22,
     deps = [
         "//pkg/domain",
         "//pkg/parser",
