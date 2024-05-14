@@ -25,6 +25,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+<<<<<<< HEAD:expression/util.go
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -37,8 +38,22 @@ import (
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
+=======
+	"github.com/pingcap/tidb/pkg/expression/contextopt"
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/parser/opcode"
+	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/types"
+	driver "github.com/pingcap/tidb/pkg/types/parser_driver"
+	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/collate"
+	"github.com/pingcap/tidb/pkg/util/intset"
+	"github.com/pingcap/tidb/pkg/util/logutil"
+>>>>>>> acdb6f58e3b (planner: UPDATE's select plan's output col IDs should be stable (#53268)):pkg/expression/util.go
 	"go.uber.org/zap"
-	"golang.org/x/tools/container/intsets"
 )
 
 // cowExprRef is a copy-on-write slice ref util using in `ColumnSubstitute`
@@ -372,15 +387,15 @@ func ExtractColumnsAndCorColumnsFromExpressions(result []*Column, list []Express
 }
 
 // ExtractColumnSet extracts the different values of `UniqueId` for columns in expressions.
-func ExtractColumnSet(exprs ...Expression) *intsets.Sparse {
-	set := &intsets.Sparse{}
+func ExtractColumnSet(exprs ...Expression) intset.FastIntSet {
+	set := intset.NewFastIntSet()
 	for _, expr := range exprs {
-		extractColumnSet(expr, set)
+		extractColumnSet(expr, &set)
 	}
 	return set
 }
 
-func extractColumnSet(expr Expression, set *intsets.Sparse) {
+func extractColumnSet(expr Expression, set *intset.FastIntSet) {
 	switch v := expr.(type) {
 	case *Column:
 		set.Insert(int(v.UniqueID))
