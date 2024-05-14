@@ -138,7 +138,7 @@ func TestPredicatePushDown(t *testing.T) {
 		require.NoError(t, err, comment)
 		p, err := BuildLogicalPlanForTest(ctx, s.sctx, stmt, s.is)
 		require.NoError(t, err)
-		p, err = logicalOptimize(context.TODO(), flagPredicatePushDown|flagDecorrelate|flagPrunColumns|flagPrunColumnsAgain, p.(base.LogicalPlan))
+		p, err = logicalOptimize(context.TODO(), flagConvertOuterToInnerJoin|flagPredicatePushDown|flagDecorrelate|flagPrunColumns|flagPrunColumnsAgain, p.(base.LogicalPlan))
 		require.NoError(t, err)
 		testdata.OnRecord(func() {
 			output[ith] = ToString(p)

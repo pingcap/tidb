@@ -417,6 +417,7 @@ func (e *writeAndIngestStepExecutor) RunSubtask(ctx context.Context, subtask *pr
 			TotalKVCount:    0,
 			CheckHotspot:    false,
 		},
+		TS: sm.TS,
 	}, engineUUID)
 	if err != nil {
 		return err

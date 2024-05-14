@@ -829,7 +829,7 @@ func (s *indexWriteResultSink) flush() error {
 	})
 	for _, index := range s.indexes {
 		idxInfo := index.Meta()
-		_, _, err := s.backendCtx.Flush(idxInfo.ID, ingest.FlushModeForceGlobal)
+		_, _, err := s.backendCtx.Flush(idxInfo.ID, ingest.FlushModeForceFlushAndImport)
 		if err != nil {
 			if common.ErrFoundDuplicateKeys.Equal(err) {
 				err = convertToKeyExistsErr(err, idxInfo, s.tbl.Meta())

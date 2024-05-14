@@ -717,6 +717,22 @@ func (t *testEnv) unregisterTask() {
 	}
 }
 
+func (t *testEnv) putTask() {
+	rngs := t.ranges
+	if len(rngs) == 0 {
+		rngs = []kv.KeyRange{{}}
+	}
+	tsk := streamhelper.TaskEvent{
+		Type: streamhelper.EventAdd,
+		Name: "whole",
+		Info: &backup.StreamBackupTaskInfo{
+			Name: "whole",
+		},
+		Ranges: rngs,
+	}
+	t.taskCh <- tsk
+}
+
 func (t *testEnv) ScanLocksInOneRegion(bo *tikv.Backoffer, key []byte, maxVersion uint64, limit uint32) ([]*txnlock.Lock, *tikv.KeyLocation, error) {
 	for _, r := range t.regions {
 		if len(r.locks) != 0 {

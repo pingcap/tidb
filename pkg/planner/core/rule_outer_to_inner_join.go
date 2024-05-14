@@ -42,6 +42,17 @@ func mergeOnClausePredicates(p *LogicalJoin, predicates []expression.Expression)
 type convertOuterToInnerJoin struct {
 }
 
+// convertOuterToInnerJoin is refactoring of the outer to inner join logic that used to be part of predicate push down.
+// The rewrite passes down predicates from selection (WHERE clause) and join predicates (ON clause).
+// All nodes except LogicalJoin are pass through where the rewrite is done for the child and nothing for the node itself.
+// The main logic is applied for joins:
+//  1. Traversal is preorder and the passed down predicate is checked for the left/right after join
+//  2. The ON clause and passed down predicate (from higher selects or joins) are comined and applied to join children.
+//     This logic depends on the join type with the following logic:
+//     - For left/right outer joins, the ON clause an be applied only on the inner side (null producing side)
+//     - For inner/semi joins, the ON clause can be applied on both children
+//     - For anti semi joins, ON clause applied only on left side
+//     - For all other cases, do not pass ON clause.
 func (*convertOuterToInnerJoin) optimize(_ context.Context, p base.LogicalPlan, _ *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
 	planChanged := false
 	return p.ConvertOuterToInnerJoin(nil), planChanged, nil
@@ -76,7 +87,7 @@ func (p *LogicalJoin) ConvertOuterToInnerJoin(predicates []expression.Expression
 	if p.JoinType == LeftOuterJoin || p.JoinType == RightOuterJoin {
 		canBeSimplified := false
 		for _, expr := range predicates {
-			isOk := isNullFiltered(p.SCtx(), innerTable.Schema(), expr, outerTable.Schema())
+			isOk := isNullFiltered(p.SCtx(), innerTable.Schema(), expr)
 			if isOk {
 				canBeSimplified = true
 				break
@@ -140,11 +151,14 @@ func (s *LogicalProjection) ConvertOuterToInnerJoin(predicates []expression.Expr
 }
 
 // allConstants checks if only the expression has only constants.
-func allConstants(expr expression.Expression) bool {
+func allConstants(ctx expression.BuildContext, expr expression.Expression) bool {
+	if expression.MaybeOverOptimized4PlanCache(ctx, []expression.Expression{expr}) {
+		return false // expression contains non-deterministic parameter
+	}
 	switch v := expr.(type) {
 	case *expression.ScalarFunction:
 		for _, arg := range v.GetArgs() {
-			if !allConstants(arg) {
+			if !allConstants(ctx, arg) {
 				return false
 			}
 		}
@@ -158,24 +172,24 @@ func allConstants(expr expression.Expression) bool {
 // isNullFiltered takes care of complex predicates like this:
 // isNullFiltered(A OR B) = isNullFiltered(A) AND isNullFiltered(B)
 // isNullFiltered(A AND B) = isNullFiltered(A) OR isNullFiltered(B)
-func isNullFiltered(ctx base.PlanContext, innerSchema *expression.Schema, predicate expression.Expression, outerSchema *expression.Schema) bool {
+func isNullFiltered(ctx base.PlanContext, innerSchema *expression.Schema, predicate expression.Expression) bool {
 	// The expression should reference at least one field in innerSchema or all constants.
-	if !expression.ExprReferenceSchema(predicate, innerSchema) && !allConstants(predicate) {
+	if !expression.ExprReferenceSchema(predicate, innerSchema) && !allConstants(ctx.GetExprCtx(), predicate) {
 		return false
 	}
 
 	switch expr := predicate.(type) {
 	case *expression.ScalarFunction:
 		if expr.FuncName.L == ast.LogicAnd {
-			if isNullFiltered(ctx, innerSchema, expr.GetArgs()[0], outerSchema) {
+			if isNullFiltered(ctx, innerSchema, expr.GetArgs()[0]) {
 				return true
 			}
-			return isNullFiltered(ctx, innerSchema, expr.GetArgs()[0], outerSchema)
+			return isNullFiltered(ctx, innerSchema, expr.GetArgs()[0])
 		} else if expr.FuncName.L == ast.LogicOr {
-			if !(isNullFiltered(ctx, innerSchema, expr.GetArgs()[0], outerSchema)) {
+			if !(isNullFiltered(ctx, innerSchema, expr.GetArgs()[0])) {
 				return false
 			}
-			return isNullFiltered(ctx, innerSchema, expr.GetArgs()[1], outerSchema)
+			return isNullFiltered(ctx, innerSchema, expr.GetArgs()[1])
 		} else {
 			return util.IsNullRejected(ctx, innerSchema, expr)
 		}

@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/intest"
+	"github.com/pingcap/tidb/pkg/util/intset"
 	"github.com/pingcap/tidb/pkg/util/linter/constructor"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/nocopy"
@@ -269,7 +270,6 @@ type StatementContext struct {
 	plan any
 
 	Tables                []TableEntry
-	PointExec             bool  // for point update cached execution, Constant expression need to set "paramMarker"
 	lockWaitStartTime     int64 // LockWaitStartTime stores the pessimistic lock wait start time
 	PessimisticLockWaited int32
 	LockKeysDuration      int64
@@ -363,7 +363,7 @@ type StatementContext struct {
 	// UseDynamicPruneMode indicates whether use UseDynamicPruneMode in query stmt
 	UseDynamicPruneMode bool
 	// ColRefFromPlan mark the column ref used by assignment in update statement.
-	ColRefFromUpdatePlan []int64
+	ColRefFromUpdatePlan intset.FastIntSet
 
 	// IsExplainAnalyzeDML is true if the statement is "explain analyze DML executors", before responding the explain
 	// results to the client, the transaction should be committed first. See issue #37373 for more details.
@@ -399,6 +399,9 @@ type StatementContext struct {
 		value *uint64
 		eval  func() (uint64, error)
 	}
+
+	// MDLRelatedTableIDs is used to store the table IDs that are related to the current MDL lock.
+	MDLRelatedTableIDs map[int64]struct{}
 }
 
 var defaultErrLevels = func() (l errctx.LevelMap) {
