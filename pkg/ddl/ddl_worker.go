@@ -637,8 +637,8 @@ func cleanMDLInfo(pool *sess.Pool, jobID int64, ec *clientv3.Client, ownerID str
 }
 
 // checkMDLInfo checks if metadata lock info exists. It means the schema is locked by some TiDBs if exists.
-func checkMDLInfo(jobID int64, pool *sess.Pool, ownerID string) (bool, int64, error) {
-	sql := fmt.Sprintf("select version from mysql.tidb_mdl_info where job_id = %d and owner_id = '%s'", jobID, ownerID)
+func checkMDLInfo(jobID int64, pool *sess.Pool) (bool, int64, error) {
+	sql := fmt.Sprintf("select version from mysql.tidb_mdl_info where job_id = %d", jobID)
 	sctx, _ := pool.Get()
 	defer pool.Put(sctx)
 	se := sess.NewSession(sctx)

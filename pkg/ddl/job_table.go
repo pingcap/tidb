@@ -429,7 +429,7 @@ func (d *ddl) delivery2Worker(wk *worker, pool *workerPool, job *model.Job) {
 		// check if this ddl job is synced to all servers.
 		if !job.NotStarted() && (!d.isSynced(job) || !d.maybeAlreadyRunOnce(job.ID)) {
 			if variable.EnableMDL.Load() {
-				exist, version, err := checkMDLInfo(job.ID, d.sessPool, ownerID)
+				exist, version, err := checkMDLInfo(job.ID, d.sessPool)
 				if err != nil {
 					wk.jobLogger(job).Warn("check MDL info failed", zap.Error(err))
 					// Release the worker resource.

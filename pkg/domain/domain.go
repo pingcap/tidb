@@ -804,9 +804,8 @@ func (do *Domain) refreshMDLCheckTableInfo() {
 	defer do.sysSessionPool.Put(se)
 	exec := sctx.GetRestrictedSQLExecutor()
 	domainSchemaVer := do.InfoSchema().SchemaMetaVersion()
-	ownerID := do.ddl.OwnerManager().ID()
 	rows, _, err := exec.ExecRestrictedSQL(kv.WithInternalSourceType(context.Background(), kv.InternalTxnMeta), nil,
-		fmt.Sprintf("select job_id, version, table_ids from mysql.tidb_mdl_info where version <= %d and owner_id = '%s'", domainSchemaVer, ownerID))
+		fmt.Sprintf("select job_id, version, table_ids from mysql.tidb_mdl_info where version <= %d", domainSchemaVer))
 	if err != nil {
 		logutil.BgLogger().Warn("get mdl info from tidb_mdl_info failed", zap.Error(err))
 		return
