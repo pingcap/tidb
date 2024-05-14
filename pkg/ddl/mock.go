@@ -43,7 +43,6 @@ const mockCheckVersInterval = 2 * time.Millisecond
 
 // MockSchemaSyncer is a mock schema syncer, it is exported for testing.
 type MockSchemaSyncer struct {
-	syncer.SchemaSyncer
 	selfSchemaVersion int64
 	mdlSchemaVersions sync.Map
 	globalVerCh       chan clientv3.WatchResponse
@@ -145,6 +144,10 @@ func (s *MockSchemaSyncer) OwnerCheckAllVersions(ctx context.Context, jobID int6
 			}
 		}
 	}
+}
+
+// SyncJobSchemaVerLoop implements SchemaSyncer.SyncJobSchemaVerLoop interface.
+func (*MockSchemaSyncer) SyncJobSchemaVerLoop(context.Context) {
 }
 
 // Close implements SchemaSyncer.Close interface.
