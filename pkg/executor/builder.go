@@ -2492,6 +2492,9 @@ func (b *executorBuilder) buildAnalyzeIndexPushdown(task plannercore.AnalyzeInde
 		startTS = uint64(val.(int))
 	})
 	concurrency := b.ctx.GetSessionVars().AnalyzeDistSQLScanConcurrency()
+	if concurrency <= 0 {
+		concurrency = adaptiveAnlayzeDistSQLConcurrency(context.Background(), b.ctx)
+	}
 	base := baseAnalyzeExec{
 		ctx:         b.ctx,
 		tableID:     task.TableID,
@@ -2609,6 +2612,9 @@ func (b *executorBuilder) buildAnalyzeSamplingPushdown(
 		SampleRateReason: sampleRateReason,
 	}
 	concurrency := b.ctx.GetSessionVars().AnalyzeDistSQLScanConcurrency()
+	if concurrency <= 0 {
+		concurrency = adaptiveAnlayzeDistSQLConcurrency(context.Background(), b.ctx)
+	}
 	base := baseAnalyzeExec{
 		ctx:         b.ctx,
 		tableID:     task.TableID,
@@ -2743,6 +2749,9 @@ func (b *executorBuilder) buildAnalyzeColumnsPushdown(
 		startTS = uint64(val.(int))
 	})
 	concurrency := b.ctx.GetSessionVars().AnalyzeDistSQLScanConcurrency()
+	if concurrency <= 0 {
+		concurrency = adaptiveAnlayzeDistSQLConcurrency(context.Background(), b.ctx)
+	}
 	base := baseAnalyzeExec{
 		ctx:         b.ctx,
 		tableID:     task.TableID,
