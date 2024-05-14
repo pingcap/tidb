@@ -108,7 +108,7 @@ type baseJoinProbe struct {
 	cachedBuildRows               []*matchedRowInfo
 
 	keyIndex         []int
-	columnTypes      []*types.FieldType
+	keyTypes         []*types.FieldType
 	hasNullableKey   bool
 	maxChunkSize     int
 	rightAsBuildSide bool
@@ -203,7 +203,7 @@ func (j *baseJoinProbe) SetChunkForProbe(chk *chunk.Chunk) (err error) {
 
 	// generate serialized key
 	for i, index := range j.keyIndex {
-		err = codec.SerializeKeys(j.ctx.SessCtx.GetSessionVars().StmtCtx.TypeCtx(), j.currentChunk, j.columnTypes[index], index, j.usedRows, j.filterVector, j.nullKeyVector, j.ctx.hashTableMeta.serializeModes[i], j.serializedKeys)
+		err = codec.SerializeKeys(j.ctx.SessCtx.GetSessionVars().StmtCtx.TypeCtx(), j.currentChunk, j.keyTypes[i], index, j.usedRows, j.filterVector, j.nullKeyVector, j.ctx.hashTableMeta.serializeModes[i], j.serializedKeys)
 		if err != nil {
 			return err
 		}
@@ -478,12 +478,12 @@ func isKeyMatched(keyMode keyMode, serializedKey []byte, rowStart unsafe.Pointer
 }
 
 // NewJoinProbe create a join probe used for hash join v2
-func NewJoinProbe(ctx *HashJoinCtxV2, workID uint, joinType core.JoinType, keyIndex []int, joinedColumnTypes, probeColumnTypes []*types.FieldType, rightAsBuildSide bool) ProbeV2 {
+func NewJoinProbe(ctx *HashJoinCtxV2, workID uint, joinType core.JoinType, keyIndex []int, joinedColumnTypes, probeKeyTypes []*types.FieldType, rightAsBuildSide bool) ProbeV2 {
 	base := baseJoinProbe{
 		ctx:                   ctx,
 		workID:                workID,
 		keyIndex:              keyIndex,
-		columnTypes:           probeColumnTypes,
+		keyTypes:              probeKeyTypes,
 		maxChunkSize:          ctx.SessCtx.GetSessionVars().MaxChunkSize,
 		lUsed:                 ctx.LUsed,
 		rUsed:                 ctx.RUsed,
@@ -491,8 +491,8 @@ func NewJoinProbe(ctx *HashJoinCtxV2, workID uint, joinType core.JoinType, keyIn
 		rUsedInOtherCondition: ctx.RUsedInOtherCondition,
 		rightAsBuildSide:      rightAsBuildSide,
 	}
-	for _, i := range keyIndex {
-		if !mysql.HasNotNullFlag(base.columnTypes[i].GetFlag()) {
+	for i := range keyIndex {
+		if !mysql.HasNotNullFlag(base.keyTypes[i].GetFlag()) {
 			base.hasNullableKey = true
 		}
 	}
