@@ -1466,6 +1466,7 @@ var (
 	ColumnElementKey ElementKeyType = []byte("_col_")
 	// IndexElementKey is the key for index element.
 	IndexElementKey ElementKeyType = []byte("_idx_")
+)
 
 const elementKeyLen = 5
 
