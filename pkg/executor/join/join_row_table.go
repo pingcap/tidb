@@ -100,6 +100,12 @@ func (rts *rowTableSegment) validKeyCount() uint64 {
 }
 
 func setNextRowAddress(rowStart unsafe.Pointer, nextRowAddress unsafe.Pointer) {
+	// Save unsafe.Pointer into current Row header. Generally speaking it is unsafe or even illegal in go
+	// since after save the value of unsafe.Pointer into row header, it has no pointer semantics the value
+	// in the row header may become invalid after GC. It is ok to save unsafe.Pointer so far because
+	// 1. Go has a non-moving GC(https://tip.golang.org/doc/gc-guide), which means if the object is in heap, the address will not be changed after GC
+	// 2. `rowStart` only points to a valid address in `rawData`. `rawData` is a slice in `rowTableSegment`, and it will be used by multiple goroutines,
+	//    and its size will be runtime expanded, this kind of slice will always be allocated in heap
 	*(*unsafe.Pointer)(rowStart) = nextRowAddress
 }
 
