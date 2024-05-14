@@ -81,11 +81,9 @@ func canProjectionBeEliminatedStrict(p *PhysicalProjection) bool {
 	if p.Schema().Len() != child.Schema().Len() {
 		return false
 	}
-	for _, ref := range p.SCtx().GetSessionVars().StmtCtx.ColRefFromUpdatePlan {
-		for _, one := range p.Schema().Columns {
-			if ref == one.UniqueID {
-				return false
-			}
+	for _, col := range p.Schema().Columns {
+		if p.SCtx().GetSessionVars().StmtCtx.ColRefFromUpdatePlan.Has(int(col.UniqueID)) {
+			return false
 		}
 	}
 	for i, expr := range p.Exprs {
