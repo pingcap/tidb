@@ -768,20 +768,12 @@ func WriteBackupDDLJobs(metaWriter *metautil.MetaWriter, g glue.Glue, store kv.S
 	return nil
 }
 
-func (bc *Client) GetProgressRanges(ranges []rtree.Range) []*rtree.ProgressRange {
-	prs := make([]*rtree.ProgressRange, 0, len(ranges))
-	for _, r := range ranges {
-		prs = append(prs, bc.getProgressRange(r))
-	}
-	return prs
-}
-
-func BuildProgressRangeTree(pranges []*rtree.ProgressRange) (rtree.ProgressRangeTree, error) {
+func (bc *Client) BuildProgressRangeTree(ranges []rtree.Range) (rtree.ProgressRangeTree, error) {
 	// the response from TiKV only contains the region's key, so use the
 	// progress range tree to quickly seek the region's corresponding progress range.
 	progressRangeTree := rtree.NewProgressRangeTree()
-	for _, pr := range pranges {
-		if err := progressRangeTree.Insert(pr); err != nil {
+	for _, r := range ranges {
+		if err := progressRangeTree.Insert(bc.getProgressRange(r)); err != nil {
 			return progressRangeTree, errors.Trace(err)
 		}
 	}
@@ -838,8 +830,7 @@ func (bc *Client) BackupRanges(
 	// 	}
 	// }()
 
-	pranges := bc.GetProgressRanges(ranges)
-	globalProgressTree, err := BuildProgressRangeTree(pranges)
+	globalProgressTree, err := bc.BuildProgressRangeTree(ranges)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1058,6 +1049,7 @@ mainLoop:
 			// because we have connectted to pd before.
 			// so this error must be retryable, just make infinite retry here
 			logutil.CL(mainCtx).Error("failed to get backup stores", zap.Uint64("round", round), zap.Error(err))
+			mainCancel()
 			continue mainLoop
 		}
 		for _, store := range allStores {
@@ -1073,6 +1065,7 @@ mainLoop:
 				// because the we get store info from pd.
 				// there is no customer setting here, so make infinite retry.
 				logutil.CL(ctx).Error("failed to reset backup client", zap.Uint64("round", round), zap.Uint64("storeID", storeID), zap.Error(err))
+				mainCancel()
 				continue mainLoop
 			}
 			ch := make(chan *ResponseAndStore)

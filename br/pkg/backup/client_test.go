@@ -281,8 +281,7 @@ func TestBuildProgressRangeTree(t *testing.T) {
 			EndKey:   []byte("d"),
 		},
 	}
-	pranges := s.backupClient.GetProgressRanges(ranges)
-	tree, err := backup.BuildProgressRangeTree(pranges)
+	tree, err := s.backupClient.BuildProgressRangeTree(ranges)
 	require.NoError(t, err)
 
 	contained, err := tree.FindContained([]byte("a"), []byte("aa"))
