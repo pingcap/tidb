@@ -86,7 +86,10 @@ func (e *TopNExec) Open(ctx context.Context) error {
 
 	if variable.EnableTmpStorageOnOOM.Load() {
 		e.diskTracker = disk.NewTracker(e.ID(), -1)
-		e.diskTracker.AttachTo(e.Ctx().GetSessionVars().StmtCtx.DiskTracker)
+		diskTracker := e.Ctx().GetSessionVars().StmtCtx.DiskTracker
+		if diskTracker != nil {
+			e.diskTracker.AttachTo(diskTracker)
+		}
 		e.fetcherAndWorkerSyncer = &sync.WaitGroup{}
 
 		workers := make([]*topNWorker, e.Concurrency)
