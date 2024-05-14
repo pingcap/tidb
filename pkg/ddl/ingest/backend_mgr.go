@@ -28,7 +28,6 @@ import (
 	ddllogutil "github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/pkg/lightning/config"
-	"github.com/pingcap/tidb/pkg/util/generic"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	kvutil "github.com/tikv/client-go/v2/util"
 	pd "github.com/tikv/pd/client"
@@ -268,7 +267,7 @@ func newBackendContext(
 	etcdClient *clientv3.Client,
 ) *litBackendCtx {
 	bCtx := &litBackendCtx{
-		engines:        generic.NewSyncMap[int64, *engineInfo](10),
+		engines:        make(map[int64]*engineInfo, 10),
 		memRoot:        memRoot,
 		diskRoot:       diskRoot,
 		jobID:          jobID,

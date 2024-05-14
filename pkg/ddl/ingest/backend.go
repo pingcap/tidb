@@ -34,7 +34,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
-	"github.com/pingcap/tidb/pkg/util/generic"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/client/v3/concurrency"
@@ -45,12 +44,14 @@ import (
 // BackendCtx is the backend context for one add index reorg task.
 type BackendCtx interface {
 	// Register create a new engineInfo for each index ID and register it to the
-	// backend context.
+	// backend context. If the index ID is already registered, it will return the
+	// associated engines. Only one group of index ID is allowed to register for a
+	// BackendCtx.
 	Register(indexIDs []int64, tableName string) ([]Engine, error)
 	UnregisterEngines()
-	// FinishWritingNeedImport returns true only when all the engines are finished
+	// FinishedWritingNeedImport returns true only when all the engines are finished
 	// writing and only need import, that is to say, engines are closed.
-	FinishWritingNeedImport() bool
+	FinishedWritingNeedImport() bool
 
 	CollectRemoteDuplicateRows(indexID int64, tbl table.Table) error
 	FinishImport(indexID int64, unique bool, tbl table.Table) error
@@ -80,8 +81,7 @@ const (
 
 // litBackendCtx implements BackendCtx.
 type litBackendCtx struct {
-	// TODO(lance6716): no need to sync map?
-	engines  generic.SyncMap[int64, *engineInfo]
+	engines  map[int64]*engineInfo
 	memRoot  MemRoot
 	diskRoot DiskRoot
 	jobID    int64
@@ -141,7 +141,7 @@ func (bc *litBackendCtx) CollectRemoteDuplicateRows(indexID int64, tbl table.Tab
 // FinishImport imports all the key-values in engine into the storage, collects the duplicate errors if any, and
 // removes the engine from the backend context.
 func (bc *litBackendCtx) FinishImport(indexID int64, unique bool, tbl table.Table) error {
-	ei, exist := bc.engines.Load(indexID)
+	ei, exist := bc.engines[indexID]
 	if !exist {
 		return dbterror.ErrIngestFailed.FastGenByArgs("ingest engine not found")
 	}
@@ -192,18 +192,13 @@ func (bc *litBackendCtx) Flush(mode FlushMode) (flushed, imported bool, errIdxID
 	}
 	defer bc.flushing.Store(false)
 
-	indexIDs := bc.engines.Keys()
-	unlockFn := make([]func(), 0, len(indexIDs))
+	unlockFn := make([]func(), 0, len(bc.engines))
 	defer func() {
 		for _, fn := range unlockFn {
 			fn()
 		}
 	}()
-	for _, indexID := range indexIDs {
-		ei, exist := bc.engines.Load(indexID)
-		if !exist {
-			return false, false, indexID, dbterror.ErrIngestFailed.FastGenByArgs("ingest engine not found")
-		}
+	for indexID, ei := range bc.engines {
 		ei.flushLock.Lock()
 		unlockFn = append(unlockFn, ei.flushLock.Unlock)
 
@@ -240,11 +235,7 @@ func (bc *litBackendCtx) Flush(mode FlushMode) (flushed, imported bool, errIdxID
 		}()
 	}
 
-	for _, indexID := range indexIDs {
-		ei, exist := bc.engines.Load(indexID)
-		if !exist {
-			return false, false, indexID, dbterror.ErrIngestFailed.FastGenByArgs("ingest engine not found")
-		}
+	for indexID, ei := range bc.engines {
 		if err = bc.unsafeImportAndReset(ei); err != nil {
 			return true, false, indexID, err
 		}

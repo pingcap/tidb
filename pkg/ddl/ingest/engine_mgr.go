@@ -21,12 +21,12 @@ import (
 	"go.uber.org/zap"
 )
 
-// Register create a new engineInfo and register it to the backend context.
+// Register implements BackendCtx.
 func (bc *litBackendCtx) Register(indexIDs []int64, tableName string) ([]Engine, error) {
 	ret := make([]Engine, 0, len(indexIDs))
 
 	for _, indexID := range indexIDs {
-		en, ok := bc.engines.Load(indexID)
+		en, ok := bc.engines[indexID]
 		if !ok {
 			continue
 		}
@@ -88,7 +88,7 @@ func (bc *litBackendCtx) Register(indexIDs []int64, tableName string) ([]Engine,
 	for _, indexID := range indexIDs {
 		ei := openedEngines[indexID]
 		ret = append(ret, ei)
-		bc.engines.Store(indexID, ei)
+		bc.engines[indexID] = ei
 	}
 	bc.memRoot.Consume(numIdx * (structSizeEngineInfo + engineCacheSize))
 
@@ -101,36 +101,23 @@ func (bc *litBackendCtx) Register(indexIDs []int64, tableName string) ([]Engine,
 
 // UnregisterEngines implements BackendCtx.
 func (bc *litBackendCtx) UnregisterEngines() {
-	indexIDs := bc.engines.Keys()
-	numIdx := int64(len(indexIDs))
-	for _, indexID := range indexIDs {
-		ei, ok := bc.engines.Load(indexID)
-		if !ok {
-			logutil.Logger(bc.ctx).Error("engine not found",
-				zap.Int64("job ID", bc.jobID),
-				zap.Int64("index ID", indexID))
-			continue
-		}
+	numIdx := int64(len(bc.engines))
+	for _, ei := range bc.engines {
 		ei.Clean()
-		bc.engines.Delete(indexID)
 	}
+	bc.engines = make(map[int64]*engineInfo, 10)
 
 	engineCacheSize := int64(bc.cfg.TikvImporter.EngineMemCacheSize)
 	bc.memRoot.Release(numIdx * (structSizeEngineInfo + engineCacheSize))
 }
 
-// FinishWritingNeedImport implements BackendCtx.
-func (bc *litBackendCtx) FinishWritingNeedImport() bool {
-	indexIDs := bc.engines.Keys()
-	if len(indexIDs) == 0 {
+// FinishedWritingNeedImport implements BackendCtx.
+func (bc *litBackendCtx) FinishedWritingNeedImport() bool {
+	if len(bc.engines) == 0 {
 		return false
 	}
-	ei, ok := bc.engines.Load(indexIDs[0])
-	if !ok {
-		logutil.Logger(bc.ctx).Error("engine not found",
-			zap.Int64("job ID", bc.jobID),
-			zap.Int64("index ID", indexIDs[0]))
-		return false
+	for _, ei := range bc.engines {
+		return ei.closedEngine != nil
 	}
-	return ei.closedEngine != nil
+	return false
 }

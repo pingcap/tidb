@@ -613,7 +613,7 @@ func (dc *ddlCtx) writePhysicalTableRecord(
 	}
 	defer scheduler.close(true)
 	if lit, ok := scheduler.(*ingestBackfillScheduler); ok {
-		if lit.finishWritingNeedImport() {
+		if lit.finishedWritingNeedImport() {
 			return nil
 		}
 	}

@@ -726,7 +726,8 @@ func (w *indexIngestBaseWorker) initSessCtx() {
 }
 
 func (w *indexIngestBaseWorker) Close() {
-	// TODO(lance6716): ugly
+	// TODO(lance6716): unify the real write action for engineInfo and external
+	// writer.
 	for _, writer := range w.writers {
 		ew, ok := writer.(*external.Writer)
 		if !ok {
