@@ -1891,7 +1891,7 @@ func (w *addIndexTxnWorker) BackfillData(handleRange reorgBackfillTask) (taskCtx
 
 			// We need to add this lock to make sure pessimistic transaction can realize this operation.
 			// For the normal pessimistic transaction, it's ok. But if async commit is used, it may lead to inconsistent data and index.
-			// TODO: For global index, lock the correct key?! Currelty it locks the partition (phyTblID) and the handle or actual key?
+			// TODO: For global index, lock the correct key?! Currently it locks the partition (phyTblID) and the handle or actual key?
 			// but should really lock the table's ID + key col(s)
 			err := txn.LockKeys(context.Background(), new(kv.LockCtx), idxRecord.key)
 			if err != nil {
@@ -2051,7 +2051,7 @@ func (w *worker) executeDistTask(t table.Table, reorgInfo *reorgInfo) error {
 	}
 
 	// For resuming add index task.
-	// Need to fetch task by taskKey in tidb_global_task_history tables.
+	// Need to fetch task by taskKey in tidb_global_task and tidb_global_task_history tables.
 	// When pausing the related ddl job, it is possible that the task with taskKey is succeed and in tidb_global_task_history.
 	// As a result, when resuming the related ddl job,
 	// it is necessary to check task exits in tidb_global_task and tidb_global_task_history tables.
@@ -2295,10 +2295,12 @@ func getNextPartitionInfo(reorg *reorgInfo, t table.PartitionedTable, currPhysic
 		return 0, nil, nil, nil
 	}
 
-	// During data copying, copy data from partitions to be dropped
-	// During index add (recreate) read the partitions to be added
-	// During Global Index Add (recreate)
-	// and use that for all non-touched partitions (i.e. pi.Definitions - pi.DroppingDefinitions)
+	// This will be used in multiple different scenarios/ALTER TABLE:
+	// ADD INDEX - no change in partitions, just use pi.Definitions
+	// REORGANIZE PARTITION - copy data from partitions to be dropped
+	// REORGANIZE PARTITION - (re)create indexes on partitions to be added
+	// REORGANIZE PARTITION - Update new Global indexes with data from non-touched partitions
+	// (i.e. pi.Definitions - pi.DroppingDefinitions)
 	var pid int64
 	var err error
 	if bytes.Equal(reorg.currElement.TypeKey, meta.IndexElementKey) {
@@ -2403,6 +2405,9 @@ func findNextPartitionID(currentPartition int64, defs []model.PartitionDefinitio
 
 func findNextNonTouchedPartitionID(currPartitionID int64, pi *model.PartitionInfo) (int64, error) {
 	pid, err := findNextPartitionID(currPartitionID, pi.Definitions)
+	if err != nil {
+		return 0, err
+	}
 	for _, err = findNextPartitionID(pid, pi.DroppingDefinitions); err == nil; {
 		// This can be optimized, but it is not frequently called, so keeping as-is
 		pid, err = findNextPartitionID(pid, pi.Definitions)

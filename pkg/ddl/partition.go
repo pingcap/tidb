@@ -2874,12 +2874,6 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 
 		// All global indexes must be recreated, we cannot update them in-place, since we must have
 		// both old and new set of partition ids in the unique index at the same time!
-		/*
-			tbl, err := getTable((*asAutoIDRequirement)(d), job.SchemaID, tblInfo)
-			if err != nil {
-				return ver, errors.Trace(err)
-			}
-		*/
 		// TODO: handle non-partitioned <=> partitioned (with global index)
 		for _, index := range tblInfo.Indices {
 			if index.Global {
@@ -3024,11 +3018,6 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 		// so that new data will be updated in both old and new partitions when reorganizing.
 		job.SnapshotVer = 0
 		for i := range tblInfo.Indices {
-			if tblInfo.Indices[i].Global {
-				// Duplicate the global indexes with new index ids
-			}
-		}
-		for i := range tblInfo.Indices {
 			if tblInfo.Indices[i].Global && tblInfo.Indices[i].State == model.StateWriteOnly {
 				tblInfo.Indices[i].State = model.StateWriteReorganization
 			}
@@ -3043,24 +3032,6 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 		if err2 != nil {
 			return ver, errors.Trace(err2)
 		}
-		// TODO: If table has global indexes, we need reorg to clean up them.
-		// and then add the new partition ids back...
-		// How to do it?
-		// Create a new global index? Just use a new IndexID?
-		// Update the global index in place?
-		// - That may be hard since an older schema version should see the 'old' partitions and a newer the 'new' partitions, which does not work with a single global index? And since it may be an unique index, we cannot have one entry for the old partition and one entry for the new, and filter depending on which partitions it sees (like drop/truncate partition could work).
-		//   But we could do a simple copy+filter from the old index to the ew,
-		//   and that way not scan all non-touched partitions.
-		//   So should also implement copy the old index, or only create
-		//   a new index, i.e. read from all current partitions (regardless if they are touched in the reorg or not)?
-		//   First version, recreate it from scratch, don't copy old global index with filtering!
-		/*
-			if _, ok := tbl.(table.PartitionedTable); ok && hasGlobalIndex(tblInfo) {
-				err = errors.Trace(dbterror.ErrCancelledDDLJob.GenWithStack("global indexes is not supported yet for reorganize partition"))
-				return convertAddTablePartitionJob2RollbackJob(d, t, job, err, tblInfo)
-			}
-
-		*/
 		var done bool
 		done, ver, err = doPartitionReorgWork(w, d, t, job, tbl, physicalTableIDs)
 
