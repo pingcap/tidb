@@ -491,7 +491,16 @@ func appendPlanCostDetail4PhysicalOptimizeOp(pop *optimizetrace.PhysicalOptimize
 }
 
 // FindBestTask implements LogicalPlan interface.
-func (p *baseLogicalPlan) FindBestTask(prop *property.PhysicalProperty, planCounter *base.PlanCounterTp, opt *optimizetrace.PhysicalOptimizeOp) (bestTask base.Task, cntPlan int64, err error) {
+func (p *baseLogicalPlan) FindBestTask(prop *property.PhysicalProperty, planCounter *base.PlanCounterTp,
+	opt *optimizetrace.PhysicalOptimizeOp) (bestTask base.Task, cntPlan int64, err error) {
+	return findBestTask(p, prop, planCounter, opt)
+}
+
+// findBestTask is key workflow that drive logic plan tree to generate optimal physical ones.
+// The logic inside it is mainly about physical plan numeration and task encapsulation, it should
+// be defined in core pkg, and be called by logic plan in their logic interface implementation.
+func findBestTask(p *baseLogicalPlan, prop *property.PhysicalProperty, planCounter *base.PlanCounterTp,
+	opt *optimizetrace.PhysicalOptimizeOp) (bestTask base.Task, cntPlan int64, err error) {
 	// If p is an inner plan in an IndexJoin, the IndexJoin will generate an inner plan by itself,
 	// and set inner child prop nil, so here we do nothing.
 	if prop == nil {

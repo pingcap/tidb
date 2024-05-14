@@ -48,6 +48,6 @@ var GetTaskPlanCost func(t base.Task, pop *optimizetrace.PhysicalOptimizeOp) (fl
 
 // AddSelection will add a selection if necessary.
 // This function is util function pointer that initialized by core functionality.
-// todo: (3) arenatlx, remove this func pointer when inside referred LogicalSelection is moved out of core.
+// todo: (4) arenatlx, remove this func pointer when inside referred LogicalSelection is moved out of core.
 var AddSelection func(p base.LogicalPlan, child base.LogicalPlan, conditions []expression.Expression,
 	chIdx int, opt *optimizetrace.LogicalOptimizeOp)
