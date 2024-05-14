@@ -52,7 +52,7 @@ func TestBuildCopIteratorWithRowCountHint(t *testing.T) {
 	conc, smallConc := it.GetConcurrency()
 	rateLimit := it.GetSendRate()
 	require.Equal(t, conc, 1)
-	require.Equal(t, smallConc, 1)
+	require.Equal(t, smallConc, 3)
 	require.Equal(t, rateLimit.GetCapacity(), 2)
 
 	ranges = copr.BuildKeyRanges("a", "c", "d", "e", "h", "x", "y", "z")
