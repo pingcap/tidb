@@ -102,7 +102,7 @@ func TestV2Basic(t *testing.T) {
 
 	tblInfos := is.SchemaTableInfos(schemaName)
 	require.Equal(t, 1, len(tblInfos))
-	require.Same(t, tables[0].Meta(), tblInfos[0])
+	require.Same(t, tables[0], tblInfos[0])
 
 	tables = is.SchemaTables(model.NewCIStr("notexist"))
 	require.Equal(t, 0, len(tables))
