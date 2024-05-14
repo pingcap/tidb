@@ -442,6 +442,7 @@ func (sv *schemaVersionManager) setSchemaVersion(job *model.Job, store kv.Storag
 		return schemaVersion, errors.Trace(err)
 	}
 	err = kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), store, true, func(_ context.Context, txn kv.Transaction) error {
+		logutil.DDLLogger().Info("xxx----------------------------- set schema", zap.Uint64("start ts", txn.StartTS()))
 		var err error
 		m := meta.NewMeta(txn)
 		schemaVersion, err = m.GenSchemaVersion()

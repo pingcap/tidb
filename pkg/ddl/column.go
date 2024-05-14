@@ -1458,6 +1458,7 @@ func (w *updateColumnWorker) BackfillData(handleRange reorgBackfillTask) (taskCt
 	oprStartTime := time.Now()
 	ctx := kv.WithInternalSourceAndTaskType(context.Background(), w.jobContext.ddlJobSourceType(), kvutil.ExplicitTypeDDL)
 	errInTxn = kv.RunInNewTxn(ctx, w.sessCtx.GetStore(), true, func(_ context.Context, txn kv.Transaction) error {
+		logutil.DDLLogger().Info("xxx----------------------------- update col", zap.Uint64("start ts", txn.StartTS()))
 		taskCtx.addedCount = 0
 		taskCtx.scanCount = 0
 		updateTxnEntrySizeLimitIfNeeded(txn)
