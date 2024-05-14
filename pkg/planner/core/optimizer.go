@@ -22,6 +22,7 @@ import (
 	"runtime"
 	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -284,6 +285,9 @@ func doOptimize(
 ) (base.LogicalPlan, base.PhysicalPlan, float64, error) {
 	sessVars := sctx.GetSessionVars()
 	flag = adjustOptimizationFlags(flag, logic)
+	if strings.Contains(ToString(logic), "var_samp") {
+		logutil.BgLogger().Info("doOptimize", zap.String("logic", ToString(logic)))
+	}
 	logic, err := logicalOptimize(ctx, flag, logic)
 	if err != nil {
 		return nil, nil, 0, err
