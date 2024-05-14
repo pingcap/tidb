@@ -7067,7 +7067,6 @@ def go_deps():
         name = "com_github_tikv_client_go_v2",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/tikv/client-go/v2",
-<<<<<<< HEAD
         sha256 = "26c2415f678560d5a23727c12a99d67b1a10f770bb050e65d25116891993997d",
         strip_prefix = "github.com/tikv/client-go/v2@v2.0.8-0.20240430145300-f841120d6d81",
         urls = [
@@ -7075,15 +7074,6 @@ def go_deps():
             "http://ats.apps.svc/gomod/github.com/tikv/client-go/v2/com_github_tikv_client_go_v2-v2.0.8-0.20240430145300-f841120d6d81.zip",
             "https://cache.hawkingrei.com/gomod/github.com/tikv/client-go/v2/com_github_tikv_client_go_v2-v2.0.8-0.20240430145300-f841120d6d81.zip",
             "https://storage.googleapis.com/pingcapmirror/gomod/github.com/tikv/client-go/v2/com_github_tikv_client_go_v2-v2.0.8-0.20240430145300-f841120d6d81.zip",
-=======
-        sha256 = "c76c6e73f51a6d77b937e67a877c198c1b8e9a244363ff47dd7dcc86cac5fdb2",
-        strip_prefix = "github.com/tikv/client-go/v2@v2.0.8-0.20240513134913-e1ca512cca19",
-        urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/tikv/client-go/v2/com_github_tikv_client_go_v2-v2.0.8-0.20240513134913-e1ca512cca19.zip",
-            "http://ats.apps.svc/gomod/github.com/tikv/client-go/v2/com_github_tikv_client_go_v2-v2.0.8-0.20240513134913-e1ca512cca19.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/tikv/client-go/v2/com_github_tikv_client_go_v2-v2.0.8-0.20240513134913-e1ca512cca19.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/tikv/client-go/v2/com_github_tikv_client_go_v2-v2.0.8-0.20240513134913-e1ca512cca19.zip",
->>>>>>> 041f7008b3d (*: fix issue of doesn't fast fail request when no available connections (#53247))
         ],
     )
     go_repository(
