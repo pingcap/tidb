@@ -102,10 +102,7 @@ type MockBackendCtx struct {
 // Register implements BackendCtx.Register interface.
 func (m *MockBackendCtx) Register(jobID, indexID int64, _, _ string) (Engine, error) {
 	logutil.DDLIngestLogger().Info("mock backend ctx register", zap.Int64("jobID", jobID), zap.Int64("indexID", indexID))
-	return &MockEngineInfo{
-		sessCtx: m.sessCtx,
-		mu:      &m.mu,
-	}, nil
+	return &MockEngineInfo{sessCtx: m.sessCtx, mu: &m.mu}, nil
 }
 
 // Unregister implements BackendCtx.Unregister interface.
@@ -199,11 +196,7 @@ func (m *MockEngineInfo) SetHook(onWrite func(key, val []byte)) {
 // CreateWriter implements Engine.CreateWriter interface.
 func (m *MockEngineInfo) CreateWriter(id int) (Writer, error) {
 	logutil.DDLIngestLogger().Info("mock engine info create writer", zap.Int("id", id))
-	return &MockWriter{
-		sessCtx: m.sessCtx,
-		mu:      m.mu,
-		onWrite: m.onWrite,
-	}, nil
+	return &MockWriter{sessCtx: m.sessCtx, mu: m.mu, onWrite: m.onWrite}, nil
 }
 
 // MockWriter is a mock writer.
@@ -220,7 +213,6 @@ func (m *MockWriter) WriteRow(_ context.Context, key, idxVal []byte, _ kv.Handle
 		zap.String("idxVal", hex.EncodeToString(idxVal)))
 	m.mu.Lock()
 	defer m.mu.Unlock()
-
 	if m.onWrite != nil {
 		m.onWrite(key, idxVal)
 		return nil

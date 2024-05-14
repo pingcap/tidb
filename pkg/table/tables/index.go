@@ -366,8 +366,8 @@ func (c *index) Create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 	return nil, nil
 }
 
-func needPresumeKeyNotExistsFlag(ctx context.Context, txn kv.Transaction, key, tempKey kv.Key, h kv.Handle,
-	keyIsTempIdxKey, isCommon bool, tblID int64) (needFlag bool, err error) {
+func needPresumeKeyNotExistsFlag(ctx context.Context, txn kv.Transaction, key, tempKey kv.Key,
+	h kv.Handle, keyIsTempIdxKey bool, isCommon bool, tblID int64) (needFlag bool, err error) {
 	var uniqueTempKey kv.Key
 	if keyIsTempIdxKey {
 		uniqueTempKey = key
@@ -428,7 +428,8 @@ func (c *index) Delete(ctx table.MutateContext, txn kv.Transaction, indexedValue
 		if distinct {
 			if len(key) > 0 {
 				okToDelete := true
-				if c.idxInfo.State != model.StatePublic {
+				if c.idxInfo.BackfillState != model.BackfillStateInapplicable {
+					// #52914: the delete key is covered by the new ingested key, which shouldn't be deleted.
 					originVal, err := getKeyInTxn(context.TODO(), txn, key)
 					if err != nil {
 						return err
