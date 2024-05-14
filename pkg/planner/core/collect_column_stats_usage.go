@@ -205,14 +205,14 @@ func (c *columnStatsUsageCollector) addHistNeededColumns(ds *DataSource) {
 		colIDSet.Insert(int(col.ID))
 		c.histNeededCols[tblColID] = true
 	}
-	for _, columns := range ds.tableInfo.Columns {
+	for _, column := range ds.tableInfo.Columns {
 		// If the column is plan-generated one, Skip it.
 		// TODO: we may need to consider the ExtraHandle.
-		if columns.ID < 0 {
+		if column.ID < 0 {
 			continue
 		}
-		if !columns.Hidden {
-			tblColID := model.TableItemID{TableID: ds.physicalTableID, ID: columns.ID, IsIndex: false}
+		if !column.Hidden {
+			tblColID := model.TableItemID{TableID: ds.physicalTableID, ID: column.ID, IsIndex: false}
 			if _, ok := c.histNeededCols[tblColID]; !ok {
 				c.histNeededCols[tblColID] = false
 			}
