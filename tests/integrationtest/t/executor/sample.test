@@ -131,3 +131,15 @@ SPLIT TABLE a BY (500);
 SELECT * FROM a TABLESAMPLE REGIONS() ORDER BY pk;
 
 set @@global.tidb_scatter_region=default;
+
+# TestTableSamplePartitionPruneMode
+drop table if exists t;
+create table t (a int, b varchar(255), primary key (a)) partition by hash(a) partitions 2;
+insert into t values (1, '1'), (2, '2'), (3, '3');
+# https://github.com/pingcap/tidb/issues/52897
+select sleep(0.5);
+set @@tidb_partition_prune_mode='static';
+select * from t tablesample regions() order by a;
+set @@tidb_partition_prune_mode='dynamic';
+select * from t tablesample regions() order by a;
+set @@tidb_partition_prune_mode=default;

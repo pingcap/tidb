@@ -74,8 +74,13 @@ func (c *MockPDClientForSplit) setRegions(boundaries [][]byte) []*metapb.Region 
 			StartKey: boundaries[i-1],
 			EndKey:   boundaries[i],
 		}
+		p := &metapb.Peer{
+			Id:      c.lastRegionID,
+			StoreId: 1,
+		}
 		c.Regions.SetRegion(&pdtypes.Region{
-			Meta: r,
+			Meta:   r,
+			Leader: p,
 		})
 		ret = append(ret, r)
 	}
@@ -181,6 +186,9 @@ func (c *MockPDClientForSplit) GetOperator(_ context.Context, regionID uint64) (
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
+	if c.getOperator.responses == nil {
+		return &pdpb.GetOperatorResponse{Desc: []byte("scatter-region"), Status: pdpb.OperatorStatus_SUCCESS}, nil
+	}
 	ret := c.getOperator.responses[regionID][0]
 	c.getOperator.responses[regionID] = c.getOperator.responses[regionID][1:]
 	return ret, nil

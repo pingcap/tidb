@@ -44,7 +44,7 @@ import (
 )
 
 type benchHelper struct {
-	ctx   BuildContext
+	ctx   *mock.Context
 	exprs []Expression
 
 	inputTypes  []*types.FieldType
@@ -160,10 +160,11 @@ func BenchmarkVectorizedExecute(b *testing.B) {
 	h.init()
 	inputIter := chunk.NewIterator4Chunk(h.inputChunk)
 
+	evalCtx := h.ctx.GetEvalCtx()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		h.outputChunk.Reset()
-		if err := VectorizedExecute(h.ctx, h.exprs, inputIter, h.outputChunk); err != nil {
+		if err := VectorizedExecute(evalCtx, h.exprs, inputIter, h.outputChunk); err != nil {
 			panic("errors happened during \"VectorizedExecute\"")
 		}
 	}
@@ -1435,11 +1436,11 @@ func genVecBuiltinFuncBenchCase(ctx BuildContext, funcName string, testCase vecE
 		tp := eType2FieldType(testCase.retEvalType)
 		switch testCase.retEvalType {
 		case types.ETInt:
-			fc = &castAsIntFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
+			fc = &castAsIntFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp, false}
 		case types.ETDecimal:
-			fc = &castAsDecimalFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
+			fc = &castAsDecimalFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp, false}
 		case types.ETReal:
-			fc = &castAsRealFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
+			fc = &castAsRealFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp, false}
 		case types.ETDatetime, types.ETTimestamp:
 			fc = &castAsTimeFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
 		case types.ETDuration:

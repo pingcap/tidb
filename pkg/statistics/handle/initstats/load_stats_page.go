@@ -15,8 +15,6 @@
 package initstats
 
 import (
-	"runtime"
-
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
@@ -46,7 +44,7 @@ func NewRangeWorker(dealFunc func(task Task) error) *RangeWorker {
 
 // LoadStats loads stats concurrently when to init stats
 func (ls *RangeWorker) LoadStats() {
-	concurrency := runtime.GOMAXPROCS(0)
+	concurrency := getConcurrency()
 	for n := 0; n < concurrency; n++ {
 		ls.wg.Run(func() {
 			ls.loadStats()

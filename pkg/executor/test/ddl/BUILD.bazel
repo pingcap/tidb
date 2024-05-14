@@ -22,7 +22,6 @@ go_test(
         "//pkg/parser/model",
         "//pkg/parser/mysql",
         "//pkg/sessionctx/variable",
-        "//pkg/sessionctx/variable/featuretag/disttask",
         "//pkg/sessiontxn",
         "//pkg/store/mockstore",
         "//pkg/table",

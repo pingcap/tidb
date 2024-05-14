@@ -20,10 +20,10 @@ import (
 	"testing"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/br/pkg/lightning/backend/local"
 	tidb "github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"

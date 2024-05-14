@@ -841,6 +841,14 @@ func TestTxnAssertion(t *testing.T) {
 			err = tk.ExecToErr("insert into t values (?, 10, 100, 1000, '10000')", id1)
 			expectAssertionErr(level, err)
 		})
+
+		tk.MustExec("set @@tidb_redact_log=MARKER")
+		withFailpoint(fpAdd, func() {
+			err = tk.ExecToErr("insert into t values (?, 10, 100, 1000, '10000')", id1)
+			require.Contains(t, err.Error(), "‹")
+		})
+		tk.MustExec("set @@tidb_redact_log=0")
+
 		withFailpoint(fpUpdate, func() {
 			err = tk.ExecToErr("update t set v = v + 1 where id = ?", id2)
 			expectAssertionErr(level, err)

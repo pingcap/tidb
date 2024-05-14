@@ -22,6 +22,7 @@ go_library(
         "//pkg/sessionctx/variable",
         "//pkg/statistics/handle/logutil",
         "//pkg/table",
+        "//pkg/util",
         "//pkg/util/chunk",
         "//pkg/util/intest",
         "//pkg/util/sqlexec",

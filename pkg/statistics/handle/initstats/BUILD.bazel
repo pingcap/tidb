@@ -9,14 +9,9 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/statistics/handle/initstats",
     visibility = ["//visibility:public"],
     deps = [
-        "//pkg/infoschema",
-        "//pkg/kv",
-        "//pkg/statistics/handle/logutil",
-        "//pkg/statistics/handle/types",
+        "//pkg/config",
         "//pkg/util",
-        "//pkg/util/chunk",
         "//pkg/util/logutil",
-        "//pkg/util/sqlexec",
         "@org_uber_go_zap//:zap",
     ],
 )

@@ -23,6 +23,7 @@
 package expression
 
 import (
+	"bytes"
 	"fmt"
 	"math"
 	"strconv"
@@ -111,7 +112,8 @@ var (
 type castAsIntFunctionClass struct {
 	baseFunctionClass
 
-	tp *types.FieldType
+	tp      *types.FieldType
+	inUnion bool
 }
 
 func (c *castAsIntFunctionClass) getFunction(ctx BuildContext, args []Expression) (sig builtinFunc, err error) {
@@ -122,7 +124,7 @@ func (c *castAsIntFunctionClass) getFunction(ctx BuildContext, args []Expression
 	if err != nil {
 		return nil, err
 	}
-	bf := newBaseBuiltinCastFunc(b, ctx.Value(inUnionCastContext) != nil)
+	bf := newBaseBuiltinCastFunc(b, c.inUnion)
 	if args[0].GetType().Hybrid() || IsBinaryLiteral(args[0]) {
 		sig = &builtinCastIntAsIntSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastIntAsInt)
@@ -160,7 +162,8 @@ func (c *castAsIntFunctionClass) getFunction(ctx BuildContext, args []Expression
 type castAsRealFunctionClass struct {
 	baseFunctionClass
 
-	tp *types.FieldType
+	tp      *types.FieldType
+	inUnion bool
 }
 
 func (c *castAsRealFunctionClass) getFunction(ctx BuildContext, args []Expression) (sig builtinFunc, err error) {
@@ -171,7 +174,7 @@ func (c *castAsRealFunctionClass) getFunction(ctx BuildContext, args []Expressio
 	if err != nil {
 		return nil, err
 	}
-	bf := newBaseBuiltinCastFunc(b, ctx.Value(inUnionCastContext) != nil)
+	bf := newBaseBuiltinCastFunc(b, c.inUnion)
 	if IsBinaryLiteral(args[0]) {
 		sig = &builtinCastRealAsRealSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastRealAsReal)
@@ -215,7 +218,8 @@ func (c *castAsRealFunctionClass) getFunction(ctx BuildContext, args []Expressio
 type castAsDecimalFunctionClass struct {
 	baseFunctionClass
 
-	tp *types.FieldType
+	tp      *types.FieldType
+	inUnion bool
 }
 
 func (c *castAsDecimalFunctionClass) getFunction(ctx BuildContext, args []Expression) (sig builtinFunc, err error) {
@@ -226,7 +230,7 @@ func (c *castAsDecimalFunctionClass) getFunction(ctx BuildContext, args []Expres
 	if err != nil {
 		return nil, err
 	}
-	bf := newBaseBuiltinCastFunc(b, ctx.Value(inUnionCastContext) != nil)
+	bf := newBaseBuiltinCastFunc(b, c.inUnion)
 	if IsBinaryLiteral(args[0]) {
 		sig = &builtinCastDecimalAsDecimalSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastDecimalAsDecimal)
@@ -325,7 +329,7 @@ func (c *castAsStringFunctionClass) getFunction(ctx BuildContext, args []Express
 	case types.ETString:
 		// When cast from binary to some other charsets, we should check if the binary is valid or not.
 		// so we build a from_binary function to do this check.
-		bf.args[0] = HandleBinaryLiteral(ctx, args[0], &ExprCollation{Charset: c.tp.GetCharset(), Collation: c.tp.GetCollate()}, c.funcName)
+		bf.args[0] = HandleBinaryLiteral(ctx, args[0], &ExprCollation{Charset: c.tp.GetCharset(), Collation: c.tp.GetCollate()}, c.funcName, true)
 		sig = &builtinCastStringAsStringSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastStringAsString)
 	default:
@@ -451,7 +455,7 @@ func (c *castAsArrayFunctionClass) getFunction(ctx BuildContext, args []Expressi
 		return nil, ErrNotSupportedYet.GenWithStackByArgs("specifying charset for multi-valued index")
 	}
 	if arrayType.EvalType() == types.ETString && arrayType.GetFlen() == types.UnspecifiedLength {
-		return nil, ErrNotSupportedYet.GenWithStackByArgs("CAST-ing data to array of char/binary BLOBs")
+		return nil, ErrNotSupportedYet.GenWithStackByArgs("CAST-ing data to array of char/binary BLOBs with unspecified length")
 	}
 
 	bf, err := newBaseBuiltinFunc(ctx, c.funcName, args, c.tp)
@@ -1033,6 +1037,39 @@ func (b *builtinCastRealAsStringSig) Clone() builtinFunc {
 	return newSig
 }
 
+func formatFloat(f float64, bitSize int) string {
+	// MySQL makes float to string max 6 significant digits
+	// MySQL makes double to string max 17 significant digits
+
+	// Unified to display behavior of TiDB. TiKV should also follow this rule.
+	const (
+		expFormatBig   = 1e15
+		expFormatSmall = 1e-15
+	)
+
+	absVal := math.Abs(f)
+	isEFormat := false
+
+	if bitSize == 32 {
+		isEFormat = float32(absVal) >= float32(expFormatBig) || (float32(absVal) != 0 && float32(absVal) < float32(expFormatSmall))
+	} else {
+		isEFormat = absVal >= expFormatBig || (absVal != 0 && absVal < expFormatSmall)
+	}
+
+	dst := make([]byte, 0, 24)
+	if isEFormat {
+		dst = strconv.AppendFloat(dst, f, 'e', -1, bitSize)
+		if idx := bytes.IndexByte(dst, '+'); idx != -1 {
+			copy(dst[idx:], dst[idx+1:])
+			dst = dst[:len(dst)-1]
+		}
+	} else {
+		dst = strconv.AppendFloat(dst, f, 'f', -1, bitSize)
+	}
+
+	return string(dst)
+}
+
 func (b *builtinCastRealAsStringSig) evalString(ctx EvalContext, row chunk.Row) (res string, isNull bool, err error) {
 	val, isNull, err := b.args[0].EvalReal(ctx, row)
 	if isNull || err != nil {
@@ -1046,7 +1083,7 @@ func (b *builtinCastRealAsStringSig) evalString(ctx EvalContext, row chunk.Row) 
 		// If we strconv.FormatFloat the value with 64bits, the result is incorrect!
 		bits = 32
 	}
-	res, err = types.ProduceStrWithSpecifiedTp(strconv.FormatFloat(val, 'f', -1, bits), b.tp, typeCtx(ctx), false)
+	res, err = types.ProduceStrWithSpecifiedTp(formatFloat(val, bits), b.tp, typeCtx(ctx), false)
 	if err != nil {
 		return res, false, err
 	}
@@ -2052,11 +2089,9 @@ func CanImplicitEvalReal(expr Expression) bool {
 // BuildCastFunction4Union build a implicitly CAST ScalarFunction from the Union
 // Expression.
 func BuildCastFunction4Union(ctx BuildContext, expr Expression, tp *types.FieldType) (res Expression) {
-	ctx.SetValue(inUnionCastContext, struct{}{})
-	defer func() {
-		ctx.SetValue(inUnionCastContext, nil)
-	}()
-	return BuildCastFunction(ctx, expr, tp)
+	res, err := BuildCastFunctionWithCheck(ctx, expr, tp, true)
+	terror.Log(err)
+	return
 }
 
 // BuildCastCollationFunction builds a ScalarFunction which casts the collation.
@@ -2091,13 +2126,13 @@ func BuildCastCollationFunction(ctx BuildContext, expr Expression, ec *ExprColla
 
 // BuildCastFunction builds a CAST ScalarFunction from the Expression.
 func BuildCastFunction(ctx BuildContext, expr Expression, tp *types.FieldType) (res Expression) {
-	res, err := BuildCastFunctionWithCheck(ctx, expr, tp)
+	res, err := BuildCastFunctionWithCheck(ctx, expr, tp, false)
 	terror.Log(err)
 	return
 }
 
 // BuildCastFunctionWithCheck builds a CAST ScalarFunction from the Expression and return error if any.
-func BuildCastFunctionWithCheck(ctx BuildContext, expr Expression, tp *types.FieldType) (res Expression, err error) {
+func BuildCastFunctionWithCheck(ctx BuildContext, expr Expression, tp *types.FieldType, inUnion bool) (res Expression, err error) {
 	argType := expr.GetType()
 	// If source argument's nullable, then target type should be nullable
 	if !mysql.HasNotNullFlag(argType.GetFlag()) {
@@ -2107,11 +2142,11 @@ func BuildCastFunctionWithCheck(ctx BuildContext, expr Expression, tp *types.Fie
 	var fc functionClass
 	switch tp.EvalType() {
 	case types.ETInt:
-		fc = &castAsIntFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
+		fc = &castAsIntFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp, inUnion}
 	case types.ETDecimal:
-		fc = &castAsDecimalFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
+		fc = &castAsDecimalFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp, inUnion}
 	case types.ETReal:
-		fc = &castAsRealFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
+		fc = &castAsRealFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp, inUnion}
 	case types.ETDatetime, types.ETTimestamp:
 		fc = &castAsTimeFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
 	case types.ETDuration:
@@ -2220,7 +2255,7 @@ func WrapWithCastAsDecimal(ctx BuildContext, expr Expression) Expression {
 	castExpr := BuildCastFunction(ctx, expr, tp)
 	// For const item, we can use find-grained precision and scale by the result.
 	if castExpr.ConstLevel() == ConstStrict {
-		val, isnull, err := castExpr.EvalDecimal(ctx, chunk.Row{})
+		val, isnull, err := castExpr.EvalDecimal(ctx.GetEvalCtx(), chunk.Row{})
 		if !isnull && err == nil {
 			precision, frac := val.PrecisionAndFrac()
 			castTp := castExpr.GetType()
@@ -2270,7 +2305,7 @@ func WrapWithCastAsString(ctx BuildContext, expr Expression) Expression {
 		tp.SetCharset(charset.CharsetBin)
 		tp.SetCollate(charset.CollationBin)
 	} else {
-		charset, collate := ctx.GetSessionVars().GetCharsetInfo()
+		charset, collate := ctx.GetCharsetInfo()
 		tp.SetCharset(charset)
 		tp.SetCollate(collate)
 	}

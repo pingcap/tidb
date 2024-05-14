@@ -61,7 +61,7 @@ func buildExpr(t *testing.T, ctx expression.BuildContext, exprNode any, opts ...
 func buildExprAndEval(t *testing.T, ctx expression.BuildContext, exprNode any) types.Datum {
 	expr, err := buildExpr(t, ctx, exprNode)
 	require.NoError(t, err)
-	val, err := expr.Eval(ctx, chunk.Row{})
+	val, err := expr.Eval(ctx.GetEvalCtx(), chunk.Row{})
 	require.NoError(t, err)
 	return val
 }

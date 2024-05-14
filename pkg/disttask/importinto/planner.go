@@ -23,21 +23,22 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/br/pkg/lightning/backend/external"
-	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
-	"github.com/pingcap/tidb/br/pkg/lightning/common"
-	"github.com/pingcap/tidb/br/pkg/lightning/config"
-	verify "github.com/pingcap/tidb/br/pkg/lightning/verification"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/disttask/framework/planner"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/lightning/backend/external"
+	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
+	"github.com/pingcap/tidb/pkg/lightning/common"
+	"github.com/pingcap/tidb/pkg/lightning/config"
+	verify "github.com/pingcap/tidb/pkg/lightning/verification"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/tikv/client-go/v2/oracle"
 	"go.uber.org/zap"
 )
 
@@ -238,7 +239,7 @@ func buildControllerForPlan(p *LogicalPlan) (*importer.LoadDataController, error
 }
 
 func buildController(plan *importer.Plan, stmt string) (*importer.LoadDataController, error) {
-	idAlloc := kv.NewPanickingAllocators(0)
+	idAlloc := kv.NewPanickingAllocators(plan.TableInfo.SepAutoInc(), 0)
 	tbl, err := tables.TableFromMeta(idAlloc, plan.TableInfo)
 	if err != nil {
 		return nil, err
@@ -362,6 +363,13 @@ func generateWriteIngestSpecs(planCtx planner.PlanCtx, p *LogicalPlan) ([]planne
 			},
 		}, nil)
 	})
+
+	pTS, lTS, err := planCtx.Store.GetPDClient().GetTS(ctx)
+	if err != nil {
+		return nil, err
+	}
+	ts := oracle.ComposeTS(pTS, lTS)
+
 	specs := make([]planner.PipelineSpec, 0, 16)
 	for kvGroup, kvMeta := range kvMetas {
 		splitter, err1 := getRangeSplitter(ctx, controller.GlobalSortStore, kvMeta)
@@ -409,6 +417,7 @@ func generateWriteIngestSpecs(planCtx planner.PlanCtx, p *LogicalPlan) ([]planne
 					StatFiles:      statFiles,
 					RangeSplitKeys: rangeSplitKeys,
 					RangeSplitSize: splitter.GetRangeSplitSize(),
+					TS:             ts,
 				}
 				specs = append(specs, &WriteIngestSpec{m})
 

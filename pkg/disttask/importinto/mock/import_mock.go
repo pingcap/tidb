@@ -13,7 +13,7 @@ import (
 	context "context"
 	reflect "reflect"
 
-	backend "github.com/pingcap/tidb/br/pkg/lightning/backend"
+	"github.com/pingcap/tidb/pkg/lightning/backend"
 	gomock "go.uber.org/mock/gomock"
 )
 

@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -47,7 +48,7 @@ type plannerSuite struct {
 	p    *parser.Parser
 	is   infoschema.InfoSchema
 	sctx sessionctx.Context
-	ctx  PlanContext
+	ctx  base.PlanContext
 }
 
 func (p *plannerSuite) GetParser() *parser.Parser {
@@ -91,8 +92,8 @@ func createPlannerSuite() (s *plannerSuite) {
 		if pi == nil {
 			continue
 		}
-		for _, def := range pi.Definitions {
-			def.ID = id
+		for i := range pi.Definitions {
+			pi.Definitions[i].ID = id
 			id += 1
 		}
 	}
@@ -137,7 +138,7 @@ func TestPredicatePushDown(t *testing.T) {
 		require.NoError(t, err, comment)
 		p, err := BuildLogicalPlanForTest(ctx, s.sctx, stmt, s.is)
 		require.NoError(t, err)
-		p, err = logicalOptimize(context.TODO(), flagPredicatePushDown|flagDecorrelate|flagPrunColumns|flagPrunColumnsAgain, p.(LogicalPlan))
+		p, err = logicalOptimize(context.TODO(), flagPredicatePushDown|flagDecorrelate|flagPrunColumns|flagPrunColumnsAgain, p.(base.LogicalPlan))
 		require.NoError(t, err)
 		testdata.OnRecord(func() {
 			output[ith] = ToString(p)
@@ -157,7 +158,7 @@ func TestImplicitCastNotNullFlag(t *testing.T) {
 	require.NoError(t, err, comment)
 	p, err := BuildLogicalPlanForTest(ctx, s.sctx, stmt, s.is)
 	require.NoError(t, err)
-	p, err = logicalOptimize(context.TODO(), flagPredicatePushDown|flagJoinReOrder|flagPrunColumns|flagEliminateProjection, p.(LogicalPlan))
+	p, err = logicalOptimize(context.TODO(), flagPredicatePushDown|flagJoinReOrder|flagPrunColumns|flagEliminateProjection, p.(base.LogicalPlan))
 	require.NoError(t, err)
 	// AggFuncs[0] is count; AggFuncs[1] is bit_and, args[0] is return type of the implicit cast
 	castNotNullFlag := (p.(*LogicalProjection).children[0].(*LogicalSelection).children[0].(*LogicalAggregation).AggFuncs[1].Args[0].GetType().GetFlag()) & mysql.NotNullFlag
@@ -175,7 +176,7 @@ func TestEliminateProjectionUnderUnion(t *testing.T) {
 	require.NoError(t, err, comment)
 	p, err := BuildLogicalPlanForTest(ctx, s.sctx, stmt, s.is)
 	require.NoError(t, err)
-	p, err = logicalOptimize(context.TODO(), flagPredicatePushDown|flagJoinReOrder|flagPrunColumns|flagEliminateProjection, p.(LogicalPlan))
+	p, err = logicalOptimize(context.TODO(), flagPredicatePushDown|flagJoinReOrder|flagPrunColumns|flagEliminateProjection, p.(base.LogicalPlan))
 	require.NoError(t, err)
 	// after folding constants, the null flag should keep the same with the old one's (i.e., the schema's).
 	schemaNullFlag := p.(*LogicalProjection).children[0].(*LogicalJoin).children[1].Children()[1].(*LogicalProjection).schema.Columns[0].RetType.GetFlag() & mysql.NotNullFlag
@@ -202,7 +203,7 @@ func TestJoinPredicatePushDown(t *testing.T) {
 		require.NoError(t, err, comment)
 		p, err := BuildLogicalPlanForTest(ctx, s.sctx, stmt, s.is)
 		require.NoError(t, err, comment)
-		p, err = logicalOptimize(context.TODO(), flagPredicatePushDown|flagDecorrelate|flagPrunColumns|flagPrunColumnsAgain, p.(LogicalPlan))
+		p, err = logicalOptimize(context.TODO(), flagPredicatePushDown|flagDecorrelate|flagPrunColumns|flagPrunColumnsAgain, p.(base.LogicalPlan))
 		require.NoError(t, err, comment)
 		proj, ok := p.(*LogicalProjection)
 		require.True(t, ok, comment)
@@ -242,7 +243,7 @@ func TestOuterWherePredicatePushDown(t *testing.T) {
 		require.NoError(t, err, comment)
 		p, err := BuildLogicalPlanForTest(ctx, s.sctx, stmt, s.is)
 		require.NoError(t, err, comment)
-		p, err = logicalOptimize(context.TODO(), flagPredicatePushDown|flagDecorrelate|flagPrunColumns|flagPrunColumnsAgain, p.(LogicalPlan))
+		p, err = logicalOptimize(context.TODO(), flagPredicatePushDown|flagDecorrelate|flagPrunColumns|flagPrunColumnsAgain, p.(base.LogicalPlan))
 		require.NoError(t, err, comment)
 		proj, ok := p.(*LogicalProjection)
 		require.True(t, ok, comment)
@@ -288,16 +289,16 @@ func TestSimplifyOuterJoin(t *testing.T) {
 		require.NoError(t, err, comment)
 		p, err := BuildLogicalPlanForTest(ctx, s.sctx, stmt, s.is)
 		require.NoError(t, err, comment)
-		p, err = logicalOptimize(context.TODO(), flagPredicatePushDown|flagPrunColumns|flagPrunColumnsAgain, p.(LogicalPlan))
+		p, err = logicalOptimize(context.TODO(), flagPredicatePushDown|flagPrunColumns|flagPrunColumnsAgain, p.(base.LogicalPlan))
 		require.NoError(t, err, comment)
 		planString := ToString(p)
 		testdata.OnRecord(func() {
 			output[i].Best = planString
 		})
 		require.Equal(t, output[i].Best, planString, comment)
-		join, ok := p.(LogicalPlan).Children()[0].(*LogicalJoin)
+		join, ok := p.(base.LogicalPlan).Children()[0].(*LogicalJoin)
 		if !ok {
-			join, ok = p.(LogicalPlan).Children()[0].Children()[0].(*LogicalJoin)
+			join, ok = p.(base.LogicalPlan).Children()[0].Children()[0].(*LogicalJoin)
 			require.True(t, ok, comment)
 		}
 		testdata.OnRecord(func() {
@@ -329,10 +330,10 @@ func TestAntiSemiJoinConstFalse(t *testing.T) {
 		require.NoError(t, err, comment)
 		p, err := BuildLogicalPlanForTest(ctx, s.sctx, stmt, s.is)
 		require.NoError(t, err, comment)
-		p, err = logicalOptimize(context.TODO(), flagDecorrelate|flagPredicatePushDown|flagPrunColumns|flagPrunColumnsAgain, p.(LogicalPlan))
+		p, err = logicalOptimize(context.TODO(), flagDecorrelate|flagPredicatePushDown|flagPrunColumns|flagPrunColumnsAgain, p.(base.LogicalPlan))
 		require.NoError(t, err, comment)
 		require.Equal(t, ca.best, ToString(p), comment)
-		join, _ := p.(LogicalPlan).Children()[0].(*LogicalJoin)
+		join, _ := p.(base.LogicalPlan).Children()[0].(*LogicalJoin)
 		require.Equal(t, ca.joinType, join.JoinType.String(), comment)
 	}
 }
@@ -357,13 +358,13 @@ func TestDeriveNotNullConds(t *testing.T) {
 		require.NoError(t, err, comment)
 		p, err := BuildLogicalPlanForTest(ctx, s.sctx, stmt, s.is)
 		require.NoError(t, err, comment)
-		p, err = logicalOptimize(context.TODO(), flagPredicatePushDown|flagPrunColumns|flagPrunColumnsAgain|flagDecorrelate, p.(LogicalPlan))
+		p, err = logicalOptimize(context.TODO(), flagPredicatePushDown|flagPrunColumns|flagPrunColumnsAgain|flagDecorrelate, p.(base.LogicalPlan))
 		require.NoError(t, err, comment)
 		testdata.OnRecord(func() {
 			output[i].Plan = ToString(p)
 		})
 		require.Equal(t, output[i].Plan, ToString(p), comment)
-		join := p.(LogicalPlan).Children()[0].(*LogicalJoin)
+		join := p.(base.LogicalPlan).Children()[0].(*LogicalJoin)
 		left := join.Children()[0].(*DataSource)
 		right := join.Children()[1].(*DataSource)
 		leftConds := fmt.Sprintf("%s", left.pushedDownConds)
@@ -392,7 +393,7 @@ func TestExtraPKNotNullFlag(t *testing.T) {
 	require.Equal(t, mysql.PriKeyFlag|mysql.NotNullFlag, ds.schema.Columns[2].RetType.GetFlag())
 }
 
-func buildLogicPlan4GroupBy(s *plannerSuite, t *testing.T, sql string) (Plan, error) {
+func buildLogicPlan4GroupBy(s *plannerSuite, t *testing.T, sql string) (base.Plan, error) {
 	sqlMode := s.ctx.GetSessionVars().SQLMode
 	mockedTableInfo := MockSignedTable()
 	// mock the table info here for later use
@@ -469,7 +470,7 @@ func TestDupRandJoinCondsPushDown(t *testing.T) {
 	require.NoError(t, err, comment)
 	p, err := BuildLogicalPlanForTest(context.Background(), s.sctx, stmt, s.is)
 	require.NoError(t, err, comment)
-	p, err = logicalOptimize(context.TODO(), flagPredicatePushDown, p.(LogicalPlan))
+	p, err = logicalOptimize(context.TODO(), flagPredicatePushDown, p.(base.LogicalPlan))
 	require.NoError(t, err, comment)
 	proj, ok := p.(*LogicalProjection)
 	require.True(t, ok, comment)
@@ -539,7 +540,7 @@ func TestTablePartition(t *testing.T) {
 		})
 		p, err := BuildLogicalPlanForTest(ctx, s.sctx, stmt, isChoices[ca.IsIdx])
 		require.NoError(t, err)
-		p, err = logicalOptimize(context.TODO(), flagDecorrelate|flagPrunColumns|flagPrunColumnsAgain|flagPredicatePushDown|flagPartitionProcessor, p.(LogicalPlan))
+		p, err = logicalOptimize(context.TODO(), flagDecorrelate|flagPrunColumns|flagPrunColumnsAgain|flagPredicatePushDown|flagPartitionProcessor, p.(base.LogicalPlan))
 		require.NoError(t, err)
 		planString := ToString(p)
 		testdata.OnRecord(func() {
@@ -565,7 +566,7 @@ func TestSubquery(t *testing.T) {
 		require.NoError(t, err)
 		p, err := BuildLogicalPlanForTest(ctx, s.sctx, stmt, s.is)
 		require.NoError(t, err)
-		if lp, ok := p.(LogicalPlan); ok {
+		if lp, ok := p.(base.LogicalPlan); ok {
 			p, err = logicalOptimize(context.TODO(), flagBuildKeyInfo|flagDecorrelate|flagPrunColumns|flagPrunColumnsAgain|flagSemiJoinRewrite, lp)
 			require.NoError(t, err)
 		}
@@ -594,7 +595,7 @@ func TestPlanBuilder(t *testing.T) {
 		require.NoError(t, err)
 		p, err := BuildLogicalPlanForTest(ctx, s.sctx, stmt, s.is)
 		require.NoError(t, err)
-		if lp, ok := p.(LogicalPlan); ok {
+		if lp, ok := p.(base.LogicalPlan); ok {
 			p, err = logicalOptimize(context.TODO(), flagPrunColumns|flagPrunColumnsAgain, lp)
 			require.NoError(t, err)
 		}
@@ -619,7 +620,7 @@ func TestJoinReOrder(t *testing.T) {
 
 		p, err := BuildLogicalPlanForTest(ctx, s.sctx, stmt, s.is)
 		require.NoError(t, err)
-		p, err = logicalOptimize(context.TODO(), flagPredicatePushDown|flagJoinReOrder, p.(LogicalPlan))
+		p, err = logicalOptimize(context.TODO(), flagPredicatePushDown|flagJoinReOrder, p.(base.LogicalPlan))
 		require.NoError(t, err)
 		planString := ToString(p)
 		testdata.OnRecord(func() {
@@ -648,7 +649,7 @@ func TestEagerAggregation(t *testing.T) {
 
 		p, err := BuildLogicalPlanForTest(ctx, s.sctx, stmt, s.is)
 		require.NoError(t, err)
-		p, err = logicalOptimize(context.TODO(), flagBuildKeyInfo|flagPredicatePushDown|flagPrunColumns|flagPrunColumnsAgain|flagPushDownAgg, p.(LogicalPlan))
+		p, err = logicalOptimize(context.TODO(), flagBuildKeyInfo|flagPredicatePushDown|flagPrunColumns|flagPrunColumnsAgain|flagPushDownAgg, p.(base.LogicalPlan))
 		require.NoError(t, err)
 		testdata.OnRecord(func() {
 			output[ith] = ToString(p)
@@ -674,7 +675,7 @@ func TestColumnPruning(t *testing.T) {
 
 		p, err := BuildLogicalPlanForTest(ctx, s.sctx, stmt, s.is)
 		require.NoError(t, err)
-		lp, err := logicalOptimize(ctx, flagPredicatePushDown|flagPrunColumns|flagPrunColumnsAgain, p.(LogicalPlan))
+		lp, err := logicalOptimize(ctx, flagPredicatePushDown|flagPrunColumns|flagPrunColumnsAgain, p.(base.LogicalPlan))
 		require.NoError(t, err)
 		testdata.OnRecord(func() {
 			output[i] = make(map[int][]string)
@@ -703,7 +704,7 @@ func TestSortByItemsPruning(t *testing.T) {
 
 		p, err := BuildLogicalPlanForTest(ctx, s.sctx, stmt, s.is)
 		require.NoError(t, err)
-		lp, err := logicalOptimize(ctx, flagEliminateProjection|flagPredicatePushDown|flagPrunColumns|flagPrunColumnsAgain, p.(LogicalPlan))
+		lp, err := logicalOptimize(ctx, flagEliminateProjection|flagPredicatePushDown|flagPrunColumns|flagPrunColumnsAgain, p.(base.LogicalPlan))
 		require.NoError(t, err)
 		checkOrderByItems(lp, t, &output[i], comment)
 	}
@@ -733,7 +734,7 @@ func TestProjectionEliminator(t *testing.T) {
 
 		p, err := BuildLogicalPlanForTest(ctx, s.sctx, stmt, s.is)
 		require.NoError(t, err)
-		p, err = logicalOptimize(context.TODO(), flagBuildKeyInfo|flagPrunColumns|flagPrunColumnsAgain|flagEliminateProjection, p.(LogicalPlan))
+		p, err = logicalOptimize(context.TODO(), flagBuildKeyInfo|flagPrunColumns|flagPrunColumnsAgain|flagEliminateProjection, p.(base.LogicalPlan))
 		require.NoError(t, err)
 		require.Equal(t, tt.best, ToString(p), fmt.Sprintf("for %s %d", tt.sql, ith))
 	}
@@ -747,7 +748,7 @@ func TestCS3389(t *testing.T) {
 	require.NoError(t, err)
 	p, err := BuildLogicalPlanForTest(ctx, s.sctx, stmt, s.is)
 	require.NoError(t, err)
-	p, err = logicalOptimize(context.TODO(), flagBuildKeyInfo|flagPrunColumns|flagPrunColumnsAgain|flagEliminateProjection|flagJoinReOrder, p.(LogicalPlan))
+	p, err = logicalOptimize(context.TODO(), flagBuildKeyInfo|flagPrunColumns|flagPrunColumnsAgain|flagEliminateProjection|flagJoinReOrder, p.(base.LogicalPlan))
 	require.NoError(t, err)
 
 	// Assert that all Projection is not empty and there is no Projection between Aggregation and Join.
@@ -772,7 +773,7 @@ func TestAllocID(t *testing.T) {
 	require.Equal(t, pB.ID(), pA.ID()+1)
 }
 
-func checkDataSourceCols(p LogicalPlan, t *testing.T, ans map[int][]string, comment string) {
+func checkDataSourceCols(p base.LogicalPlan, t *testing.T, ans map[int][]string, comment string) {
 	switch v := p.(type) {
 	case *DataSource, *LogicalUnionAll, *LogicalLimit:
 		testdata.OnRecord(func() {
@@ -793,7 +794,7 @@ func checkDataSourceCols(p LogicalPlan, t *testing.T, ans map[int][]string, comm
 	}
 }
 
-func checkOrderByItems(p LogicalPlan, t *testing.T, colList *[]string, comment string) {
+func checkOrderByItems(p base.LogicalPlan, t *testing.T, colList *[]string, comment string) {
 	switch p := p.(type) {
 	case *LogicalSort:
 		testdata.OnRecord(func() {
@@ -1008,7 +1009,7 @@ func TestValidate(t *testing.T) {
 	}
 }
 
-func checkUniqueKeys(p LogicalPlan, t *testing.T, ans map[int][][]string, sql string) {
+func checkUniqueKeys(p base.LogicalPlan, t *testing.T, ans map[int][][]string, sql string) {
 	testdata.OnRecord(func() {
 		ans[p.ID()] = make([][]string, len(p.Schema().Keys))
 	})
@@ -1053,7 +1054,7 @@ func TestUniqueKeyInfo(t *testing.T) {
 
 		p, err := BuildLogicalPlanForTest(ctx, s.sctx, stmt, s.is)
 		require.NoError(t, err)
-		lp, err := logicalOptimize(context.TODO(), flagPredicatePushDown|flagPrunColumns|flagBuildKeyInfo, p.(LogicalPlan))
+		lp, err := logicalOptimize(context.TODO(), flagPredicatePushDown|flagPrunColumns|flagBuildKeyInfo, p.(base.LogicalPlan))
 		require.NoError(t, err)
 		testdata.OnRecord(func() {
 			output[ith] = make(map[int][][]string)
@@ -1077,7 +1078,7 @@ func TestAggPrune(t *testing.T) {
 		p, err := BuildLogicalPlanForTest(ctx, s.sctx, stmt, s.is)
 		require.NoError(t, err)
 
-		p, err = logicalOptimize(context.TODO(), flagPredicatePushDown|flagPrunColumns|flagPrunColumnsAgain|flagBuildKeyInfo|flagEliminateAgg|flagEliminateProjection, p.(LogicalPlan))
+		p, err = logicalOptimize(context.TODO(), flagPredicatePushDown|flagPrunColumns|flagPrunColumnsAgain|flagBuildKeyInfo|flagEliminateAgg|flagEliminateProjection, p.(base.LogicalPlan))
 		require.NoError(t, err)
 		planString := ToString(p)
 		testdata.OnRecord(func() {
@@ -1598,7 +1599,7 @@ func TestUnion(t *testing.T) {
 			continue
 		}
 		require.NoError(t, err, comment)
-		p := plan.(LogicalPlan)
+		p := plan.(base.LogicalPlan)
 		p, err = logicalOptimize(ctx, builder.optFlag, p)
 		testdata.OnRecord(func() {
 			output[i].Best = ToString(p)
@@ -1632,7 +1633,7 @@ func TestTopNPushDown(t *testing.T) {
 		domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(s.is)
 		p, err := builder.Build(ctx, stmt)
 		require.NoError(t, err)
-		p, err = logicalOptimize(ctx, builder.optFlag, p.(LogicalPlan))
+		p, err = logicalOptimize(ctx, builder.optFlag, p.(base.LogicalPlan))
 		require.NoError(t, err)
 		testdata.OnRecord(func() {
 			output[i] = ToString(p)
@@ -1719,7 +1720,7 @@ func TestOuterJoinEliminator(t *testing.T) {
 		domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(s.is)
 		p, err := builder.Build(ctx, stmt)
 		require.NoError(t, err)
-		p, err = logicalOptimize(ctx, builder.optFlag, p.(LogicalPlan))
+		p, err = logicalOptimize(ctx, builder.optFlag, p.(base.LogicalPlan))
 		require.NoError(t, err)
 		planString := ToString(p)
 		testdata.OnRecord(func() {
@@ -1758,7 +1759,7 @@ func TestSelectView(t *testing.T) {
 		builder, _ := NewPlanBuilder().Init(sctx, s.is, hint.NewQBHintHandler(nil))
 		p, err := builder.Build(ctx, stmt)
 		require.NoError(t, err)
-		p, err = logicalOptimize(ctx, builder.optFlag, p.(LogicalPlan))
+		p, err = logicalOptimize(ctx, builder.optFlag, p.(base.LogicalPlan))
 		require.NoError(t, err)
 		require.Equal(t, tt.best, ToString(p), comment)
 		domain.GetDomain(sctx).StatsHandle().Close()
@@ -1845,7 +1846,7 @@ func (s *plannerSuiteWithOptimizeVars) doTestWindowFunction(t *testing.T, input,
 	}
 }
 
-func (s *plannerSuiteWithOptimizeVars) optimize(ctx context.Context, sql string) (PhysicalPlan, ast.Node, error) {
+func (s *plannerSuiteWithOptimizeVars) optimize(ctx context.Context, sql string) (base.PhysicalPlan, ast.Node, error) {
 	stmt, err := s.p.ParseOneStmt(sql, "", "")
 	if err != nil {
 		return nil, nil, err
@@ -1870,12 +1871,12 @@ func (s *plannerSuiteWithOptimizeVars) optimize(ctx context.Context, sql string)
 	if err != nil {
 		return nil, nil, err
 	}
-	p, err = logicalOptimize(ctx, builder.optFlag, p.(LogicalPlan))
+	p, err = logicalOptimize(ctx, builder.optFlag, p.(base.LogicalPlan))
 	if err != nil {
 		return nil, nil, err
 	}
-	p, _, err = physicalOptimize(p.(LogicalPlan), &PlanCounterDisabled)
-	return p.(PhysicalPlan), stmt, err
+	p, _, err = physicalOptimize(p.(base.LogicalPlan), &PlanCounterDisabled)
+	return p.(base.PhysicalPlan), stmt, err
 }
 
 func byItemsToProperty(byItems []*util.ByItems) *property.PhysicalProperty {
@@ -1975,10 +1976,10 @@ func TestSkylinePruning(t *testing.T) {
 			continue
 		}
 		require.NoError(t, err, comment)
-		p, err = logicalOptimize(ctx, builder.optFlag, p.(LogicalPlan))
+		p, err = logicalOptimize(ctx, builder.optFlag, p.(base.LogicalPlan))
 		require.NoError(t, err, comment)
-		lp := p.(LogicalPlan)
-		_, err = lp.recursiveDeriveStats(nil)
+		lp := p.(base.LogicalPlan)
+		_, err = lp.RecursiveDeriveStats(nil)
 		require.NoError(t, err, comment)
 		var ds *DataSource
 		var byItems []*util.ByItems
@@ -2079,7 +2080,7 @@ func TestUpdateEQCond(t *testing.T) {
 		domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(s.is)
 		p, err := builder.Build(ctx, stmt)
 		require.NoError(t, err)
-		p, err = logicalOptimize(ctx, builder.optFlag, p.(LogicalPlan))
+		p, err = logicalOptimize(ctx, builder.optFlag, p.(base.LogicalPlan))
 		require.NoError(t, err)
 		require.Equal(t, tt.best, ToString(p), comment)
 		domain.GetDomain(sctx).StatsHandle().Close()
@@ -2103,7 +2104,7 @@ func TestConflictedJoinTypeHints(t *testing.T) {
 	domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(s.is)
 	p, err := builder.Build(ctx, stmt)
 	require.NoError(t, err)
-	p, err = logicalOptimize(ctx, builder.optFlag, p.(LogicalPlan))
+	p, err = logicalOptimize(ctx, builder.optFlag, p.(base.LogicalPlan))
 	require.NoError(t, err)
 	proj, ok := p.(*LogicalProjection)
 	require.True(t, ok)
@@ -2130,7 +2131,7 @@ func TestSimplyOuterJoinWithOnlyOuterExpr(t *testing.T) {
 	domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(s.is)
 	p, err := builder.Build(ctx, stmt)
 	require.NoError(t, err)
-	p, err = logicalOptimize(ctx, builder.optFlag, p.(LogicalPlan))
+	p, err = logicalOptimize(ctx, builder.optFlag, p.(base.LogicalPlan))
 	require.NoError(t, err)
 	proj, ok := p.(*LogicalProjection)
 	require.True(t, ok)
@@ -2182,7 +2183,7 @@ func TestResolvingCorrelatedAggregate(t *testing.T) {
 		require.NoError(t, err, comment)
 		p, err := BuildLogicalPlanForTest(ctx, s.sctx, stmt, s.is)
 		require.NoError(t, err, comment)
-		p, err = logicalOptimize(context.TODO(), flagBuildKeyInfo|flagEliminateProjection|flagPrunColumns|flagPrunColumnsAgain, p.(LogicalPlan))
+		p, err = logicalOptimize(context.TODO(), flagBuildKeyInfo|flagEliminateProjection|flagPrunColumns|flagPrunColumnsAgain, p.(base.LogicalPlan))
 		require.NoError(t, err, comment)
 		require.Equal(t, tt.best, ToString(p), comment)
 	}
@@ -2339,7 +2340,7 @@ func TestRollupExpand(t *testing.T) {
 	require.Equal(t, builder.currentBlockExpand.distinctSize, 3)
 	require.Equal(t, len(builder.currentBlockExpand.distinctGroupByCol), 2)
 
-	_, err = logicalOptimize(context.TODO(), flagPredicatePushDown|flagJoinReOrder|flagPrunColumns|flagEliminateProjection|flagResolveExpand, p.(LogicalPlan))
+	_, err = logicalOptimize(context.TODO(), flagPredicatePushDown|flagJoinReOrder|flagPrunColumns|flagEliminateProjection|flagResolveExpand, p.(base.LogicalPlan))
 	require.NoError(t, err)
 
 	expand := builder.currentBlockExpand

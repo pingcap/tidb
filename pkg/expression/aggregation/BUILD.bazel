@@ -42,7 +42,6 @@ go_library(
         "//pkg/parser/terror",
         "//pkg/planner/util",
         "//pkg/sessionctx/stmtctx",
-        "//pkg/sessionctx/variable",
         "//pkg/types",
         "//pkg/util/chunk",
         "//pkg/util/codec",

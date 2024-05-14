@@ -16,6 +16,7 @@ package expression
 
 import (
 	"context"
+	"crypto/md5"
 	"encoding/hex"
 	"fmt"
 	"strings"
@@ -30,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/hack"
+	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 )
 
@@ -280,7 +282,7 @@ func TestAESDecrypt(t *testing.T) {
 	}
 }
 
-func testNullInput(t *testing.T, ctx BuildContext, fnName string) {
+func testNullInput(t *testing.T, ctx *mock.Context, fnName string) {
 	err := ctx.GetSessionVars().SetSystemVar(variable.BlockEncryptionMode, "aes-128-ecb")
 	require.NoError(t, err)
 	fc := funcs[fnName]
@@ -299,7 +301,7 @@ func testNullInput(t *testing.T, ctx BuildContext, fnName string) {
 	require.True(t, crypt.IsNull())
 }
 
-func testAmbiguousInput(t *testing.T, ctx BuildContext, fnName string) {
+func testAmbiguousInput(t *testing.T, ctx *mock.Context, fnName string) {
 	fc := funcs[fnName]
 	arg := types.NewStringDatum("str")
 	// test for modes that require init_vector
@@ -495,6 +497,25 @@ func TestMD5Hash(t *testing.T) {
 	}
 	_, err := funcs[ast.MD5].getFunction(ctx, []Expression{NewZero()})
 	require.NoError(t, err)
+}
+
+func MD5HashOld(arg string) string {
+	sum := md5.Sum([]byte(arg))
+	return fmt.Sprintf("%x", sum)
+}
+
+func MD5HashNew(arg string) string {
+	sum := md5.Sum([]byte(arg))
+	return hex.EncodeToString(sum[:])
+}
+
+func BenchmarkMD5Hash(b *testing.B) {
+	b.ResetTimer()
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		MD5HashOld("abc")
+		//MD5HashNew("abc")
+	}
 }
 
 func TestRandomBytes(t *testing.T) {

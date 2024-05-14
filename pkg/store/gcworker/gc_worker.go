@@ -237,7 +237,7 @@ func createSession(store kv.Storage) sessiontypes.Session {
 		privilege.BindPrivilegeManager(se, nil)
 		se.GetSessionVars().CommonGlobalLoaded = true
 		se.GetSessionVars().InRestrictedSQL = true
-		se.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
+		se.GetSessionVars().SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
 		return se
 	}
 }

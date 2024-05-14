@@ -47,7 +47,7 @@ func setWatchOption(ctx context.Context,
 			if err != nil {
 				return err
 			}
-			name, isNull, err := expr.EvalString(sctx.GetExprCtx(), chunk.Row{})
+			name, isNull, err := expr.EvalString(sctx.GetExprCtx().GetEvalCtx(), chunk.Row{})
 			if err != nil {
 				return err
 			}
@@ -65,7 +65,7 @@ func setWatchOption(ctx context.Context,
 		if err != nil {
 			return err
 		}
-		strval, isNull, err := expr.EvalString(sctx.GetExprCtx(), chunk.Row{})
+		strval, isNull, err := expr.EvalString(sctx.GetExprCtx().GetEvalCtx(), chunk.Row{})
 		if err != nil {
 			return err
 		}

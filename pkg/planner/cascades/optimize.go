@@ -19,7 +19,7 @@ import (
 	"math"
 
 	"github.com/pingcap/tidb/pkg/expression"
-	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/memo"
 	"github.com/pingcap/tidb/pkg/planner/pattern"
 	"github.com/pingcap/tidb/pkg/planner/property"
@@ -59,7 +59,7 @@ func (opt *Optimizer) ResetImplementationRules(rules map[pattern.Operand][]Imple
 
 // GetImplementationRules gets all the candidate implementation rules of the optimizer
 // for the logical plan node.
-func (opt *Optimizer) GetImplementationRules(node plannercore.LogicalPlan) []ImplementationRule {
+func (opt *Optimizer) GetImplementationRules(node base.LogicalPlan) []ImplementationRule {
 	return opt.implementationRuleMap[pattern.GetOperand(node)]
 }
 
@@ -98,7 +98,7 @@ func (opt *Optimizer) GetImplementationRules(node plannercore.LogicalPlan) []Imp
 // for each expression in each group under the required physical property. A
 // memo structure is used for a group to reduce the repeated search on the same
 // required physical property.
-func (opt *Optimizer) FindBestPlan(sctx plannercore.PlanContext, logical plannercore.LogicalPlan) (p plannercore.PhysicalPlan, cost float64, err error) {
+func (opt *Optimizer) FindBestPlan(sctx base.PlanContext, logical base.LogicalPlan) (p base.PhysicalPlan, cost float64, err error) {
 	logical, err = opt.onPhasePreprocessing(sctx, logical)
 	if err != nil {
 		return nil, 0, err
@@ -116,7 +116,7 @@ func (opt *Optimizer) FindBestPlan(sctx plannercore.PlanContext, logical planner
 	return p, cost, err
 }
 
-func (*Optimizer) onPhasePreprocessing(_ plannercore.PlanContext, plan plannercore.LogicalPlan) (plannercore.LogicalPlan, error) {
+func (*Optimizer) onPhasePreprocessing(_ base.PlanContext, plan base.LogicalPlan) (base.LogicalPlan, error) {
 	var err error
 	plan, err = plan.PruneColumns(plan.Schema().Columns, nil)
 	if err != nil {
@@ -125,7 +125,7 @@ func (*Optimizer) onPhasePreprocessing(_ plannercore.PlanContext, plan plannerco
 	return plan, nil
 }
 
-func (opt *Optimizer) onPhaseExploration(_ plannercore.PlanContext, g *memo.Group) error {
+func (opt *Optimizer) onPhaseExploration(_ base.PlanContext, g *memo.Group) error {
 	for round, ruleBatch := range opt.transformationRuleBatches {
 		for !g.Explored(round) {
 			err := opt.exploreGroup(g, round, ruleBatch)
@@ -242,7 +242,7 @@ func (opt *Optimizer) fillGroupStats(g *memo.Group) (err error) {
 }
 
 // onPhaseImplementation starts implementation physical operators from given root Group.
-func (opt *Optimizer) onPhaseImplementation(_ plannercore.PlanContext, g *memo.Group) (plannercore.PhysicalPlan, float64, error) {
+func (opt *Optimizer) onPhaseImplementation(_ base.PlanContext, g *memo.Group) (base.PhysicalPlan, float64, error) {
 	prop := &property.PhysicalProperty{
 		ExpectedCnt: math.MaxFloat64,
 	}

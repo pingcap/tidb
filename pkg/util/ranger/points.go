@@ -25,12 +25,12 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	planctx "github.com/pingcap/tidb/pkg/planner/context"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/hack"
+	rangerctx "github.com/pingcap/tidb/pkg/util/ranger/context"
 )
 
 // RangeType is alias for int.
@@ -130,7 +130,7 @@ func rangePointEqualValueLess(a, b *point) bool {
 	return a.excl && !b.excl
 }
 
-func pointsConvertToSortKey(sctx planctx.PlanContext, inputPs []*point, newTp *types.FieldType) ([]*point, error) {
+func pointsConvertToSortKey(sctx *rangerctx.RangerContext, inputPs []*point, newTp *types.FieldType) ([]*point, error) {
 	// Only handle normal string type here.
 	// Currently, set won't be pushed down and it shouldn't reach here in theory.
 	// For enum, we have separate logic for it, like handleEnumFromBinOp(). For now, it only supports point range,
@@ -152,7 +152,7 @@ func pointsConvertToSortKey(sctx planctx.PlanContext, inputPs []*point, newTp *t
 }
 
 func pointConvertToSortKey(
-	sctx planctx.PlanContext,
+	sctx *rangerctx.RangerContext,
 	inputP *point,
 	newTp *types.FieldType,
 	trimTrailingSpace bool,
@@ -243,7 +243,7 @@ func NullRange() Ranges {
 // builder is the range builder struct.
 type builder struct {
 	err  error
-	sctx planctx.PlanContext
+	sctx *rangerctx.RangerContext
 }
 
 // build converts Expression on one column into point, which can be further built into Range.
@@ -272,7 +272,7 @@ func (r *builder) build(
 }
 
 func (r *builder) buildFromConstant(expr *expression.Constant) []*point {
-	dt, err := expr.Eval(r.sctx.GetExprCtx(), chunk.Row{})
+	dt, err := expr.Eval(r.sctx.ExprCtx.GetEvalCtx(), chunk.Row{})
 	if err != nil {
 		r.err = err
 		return nil
@@ -281,7 +281,7 @@ func (r *builder) buildFromConstant(expr *expression.Constant) []*point {
 		return nil
 	}
 
-	tc := r.sctx.GetSessionVars().StmtCtx.TypeCtx()
+	tc := r.sctx.TypeCtx
 	val, err := dt.ToBool(tc)
 	if err != nil {
 		r.err = err
@@ -320,7 +320,7 @@ func (r *builder) buildFromBinOp(
 		ft    *types.FieldType
 	)
 
-	tc := r.sctx.GetSessionVars().StmtCtx.TypeCtx()
+	tc := r.sctx.TypeCtx
 	// refineValueAndOp refines the constant datum and operator:
 	// 1. for string type since we may eval the constant to another collation instead of its own collation.
 	// 2. for year type since 2-digit year value need adjustment, see https://dev.mysql.com/doc/refman/5.6/en/year.html
@@ -362,7 +362,7 @@ func (r *builder) buildFromBinOp(
 	var ok bool
 	if col, ok = expr.GetArgs()[0].(*expression.Column); ok {
 		ft = col.RetType
-		value, err = expr.GetArgs()[1].Eval(r.sctx.GetExprCtx(), chunk.Row{})
+		value, err = expr.GetArgs()[1].Eval(r.sctx.ExprCtx.GetEvalCtx(), chunk.Row{})
 		if err != nil {
 			return nil
 		}
@@ -373,7 +373,7 @@ func (r *builder) buildFromBinOp(
 			return nil
 		}
 		ft = col.RetType
-		value, err = expr.GetArgs()[0].Eval(r.sctx.GetExprCtx(), chunk.Row{})
+		value, err = expr.GetArgs()[0].Eval(r.sctx.ExprCtx.GetEvalCtx(), chunk.Row{})
 		if err != nil {
 			return nil
 		}
@@ -653,14 +653,15 @@ func (r *builder) buildFromIn(
 	hasNull := false
 	ft := expr.GetArgs()[0].GetType()
 	colCollate := ft.GetCollate()
-	tc := r.sctx.GetSessionVars().StmtCtx.TypeCtx()
+	tc := r.sctx.TypeCtx
+	evalCtx := r.sctx.ExprCtx.GetEvalCtx()
 	for _, e := range list {
 		v, ok := e.(*expression.Constant)
 		if !ok {
 			r.err = plannererrors.ErrUnsupportedType.GenWithStack("expr:%v is not constant", e)
 			return getFullRange(), hasNull
 		}
-		dt, err := v.Eval(r.sctx.GetExprCtx(), chunk.Row{})
+		dt, err := v.Eval(evalCtx, chunk.Row{})
 		if err != nil {
 			r.err = plannererrors.ErrUnsupportedType.GenWithStack("expr:%v is not evaluated", e)
 			return getFullRange(), hasNull
@@ -748,7 +749,7 @@ func (r *builder) newBuildFromPatternLike(
 	if !collate.CompatibleCollate(expr.GetArgs()[0].GetType().GetCollate(), collation) {
 		return getFullRange()
 	}
-	pdt, err := expr.GetArgs()[1].(*expression.Constant).Eval(r.sctx.GetExprCtx(), chunk.Row{})
+	pdt, err := expr.GetArgs()[1].(*expression.Constant).Eval(r.sctx.ExprCtx.GetEvalCtx(), chunk.Row{})
 	tpOfPattern := expr.GetArgs()[0].GetType()
 	if err != nil {
 		r.err = errors.Trace(err)
@@ -774,7 +775,7 @@ func (r *builder) newBuildFromPatternLike(
 		return res
 	}
 	lowValue := make([]byte, 0, len(pattern))
-	edt, err := expr.GetArgs()[2].(*expression.Constant).Eval(r.sctx.GetExprCtx(), chunk.Row{})
+	edt, err := expr.GetArgs()[2].(*expression.Constant).Eval(r.sctx.ExprCtx.GetEvalCtx(), chunk.Row{})
 	if err != nil {
 		r.err = errors.Trace(err)
 		return getFullRange()
@@ -1029,7 +1030,7 @@ func (r *builder) union(a, b []*point, collator collate.Collator) []*point {
 func (r *builder) mergeSorted(a, b []*point, collator collate.Collator) []*point {
 	ret := make([]*point, 0, len(a)+len(b))
 	i, j := 0, 0
-	tc := r.sctx.GetSessionVars().StmtCtx.TypeCtx()
+	tc := r.sctx.TypeCtx
 	for i < len(a) && j < len(b) {
 		less, err := rangePointLess(tc, a[i], b[j], collator)
 		if err != nil {

@@ -552,12 +552,8 @@ func (n *DeallocateStmt) Accept(v Visitor) (Node, bool) {
 
 // Prepared represents a prepared statement.
 type Prepared struct {
-	Stmt          StmtNode
-	StmtType      string
-	Params        []ParamMarkerExpr
-	SchemaVersion int64
-	CachedPlan    interface{}
-	CachedNames   interface{}
+	Stmt     StmtNode
+	StmtType string
 }
 
 // ExecuteStmt is a statement to execute PreparedStmt.
@@ -979,6 +975,13 @@ func (n *FlushStmt) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*FlushStmt)
+	for i, t := range n.Tables {
+		node, ok := t.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.Tables[i] = node.(*TableName)
+	}
 	return v.Leave(n)
 }
 

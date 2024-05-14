@@ -1,0 +1,17 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "coretestsdk",
+    srcs = ["testkit.go"],
+    importpath = "github.com/pingcap/tidb/pkg/planner/util/coretestsdk",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/domain",
+        "//pkg/parser/model",
+        "//pkg/store/mockstore",
+        "//pkg/store/mockstore/unistore",
+        "@com_github_pingcap_kvproto//pkg/metapb",
+        "@com_github_stretchr_testify//require",
+        "@com_github_tikv_client_go_v2//testutils",
+    ],
+)

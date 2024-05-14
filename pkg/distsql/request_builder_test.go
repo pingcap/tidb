@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/tidb/pkg/domain/resourcegroup"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
@@ -67,6 +66,50 @@ func TestTableHandlesToKVRanges(t *testing.T) {
 	// Compare key ranges and expected key ranges.
 	require.Equal(t, len(expect), len(actual))
 	require.Equal(t, hints, []int{1, 4, 2, 1, 2})
+	for i := range actual {
+		require.Equal(t, expect[i].StartKey, actual[i].StartKey)
+		require.Equal(t, expect[i].EndKey, actual[i].EndKey)
+	}
+}
+
+func TestTablePartitionHandlesToKVRanges(t *testing.T) {
+	handles := []kv.Handle{
+		// Partition handles in different partitions
+		kv.NewPartitionHandle(1, kv.IntHandle(0)),
+		kv.NewPartitionHandle(2, kv.IntHandle(2)),
+		kv.NewPartitionHandle(2, kv.IntHandle(3)),
+		kv.NewPartitionHandle(2, kv.IntHandle(4)),
+		kv.NewPartitionHandle(3, kv.IntHandle(5)),
+		kv.NewPartitionHandle(1, kv.IntHandle(10)),
+		kv.NewPartitionHandle(2, kv.IntHandle(11)),
+		kv.NewPartitionHandle(3, kv.IntHandle(100)),
+		kv.NewPartitionHandle(1, kv.IntHandle(9223372036854775806)),
+		kv.NewPartitionHandle(1, kv.IntHandle(9223372036854775807)),
+	}
+
+	// Build expected key ranges.
+	hrs := make([]*handleRange, 0, len(handles))
+	hrs = append(hrs, &handleRange{start: 0, end: 0})
+	hrs = append(hrs, &handleRange{start: 2, end: 4})
+	hrs = append(hrs, &handleRange{start: 5, end: 5})
+	hrs = append(hrs, &handleRange{start: 10, end: 10})
+	hrs = append(hrs, &handleRange{start: 11, end: 11})
+	hrs = append(hrs, &handleRange{start: 100, end: 100})
+	hrs = append(hrs, &handleRange{start: 9223372036854775806, end: 9223372036854775807})
+
+	expect := append(getExpectedRanges(1, hrs[:1]), getExpectedRanges(2, hrs[1:2])...)
+	expect = append(expect, getExpectedRanges(3, hrs[2:3])...)
+	expect = append(expect, getExpectedRanges(1, hrs[3:4])...)
+	expect = append(expect, getExpectedRanges(2, hrs[4:5])...)
+	expect = append(expect, getExpectedRanges(3, hrs[5:6])...)
+	expect = append(expect, getExpectedRanges(1, hrs[6:])...)
+
+	// Build actual key ranges.
+	actual, hints := TableHandlesToKVRanges(0, handles)
+
+	// Compare key ranges and expected key ranges.
+	require.Equal(t, len(expect), len(actual))
+	require.Equal(t, hints, []int{1, 3, 1, 1, 1, 1, 2})
 	for i := range actual {
 		require.Equal(t, expect[i].StartKey, actual[i].StartKey)
 		require.Equal(t, expect[i].EndKey, actual[i].EndKey)
@@ -192,7 +235,7 @@ func TestIndexRangesToKVRanges(t *testing.T) {
 		},
 	}
 
-	actual, err := IndexRangesToKVRanges(stmtctx.NewStmtCtx(), 12, 15, ranges)
+	actual, err := IndexRangesToKVRanges(DefaultDistSQLContext, 12, 15, ranges)
 	require.NoError(t, err)
 	for i := range actual.FirstPartitionRange() {
 		require.Equal(t, expect[i], actual.FirstPartitionRange()[i])
@@ -237,7 +280,7 @@ func TestRequestBuilder1(t *testing.T) {
 		SetDAGRequest(&tipb.DAGRequest{}).
 		SetDesc(false).
 		SetKeepOrder(false).
-		SetFromSessionVars(variable.NewSessionVars(nil)).
+		SetFromSessionVars(DefaultDistSQLContext).
 		Build()
 	require.NoError(t, err)
 	expect := &kv.Request{
@@ -317,11 +360,11 @@ func TestRequestBuilder2(t *testing.T) {
 		},
 	}
 
-	actual, err := (&RequestBuilder{}).SetIndexRanges(stmtctx.NewStmtCtx(), 12, 15, ranges).
+	actual, err := (&RequestBuilder{}).SetIndexRanges(DefaultDistSQLContext, 12, 15, ranges).
 		SetDAGRequest(&tipb.DAGRequest{}).
 		SetDesc(false).
 		SetKeepOrder(false).
-		SetFromSessionVars(variable.NewSessionVars(nil)).
+		SetFromSessionVars(DefaultDistSQLContext).
 		Build()
 	require.NoError(t, err)
 	expect := &kv.Request{
@@ -375,7 +418,7 @@ func TestRequestBuilder3(t *testing.T) {
 		SetDAGRequest(&tipb.DAGRequest{}).
 		SetDesc(false).
 		SetKeepOrder(false).
-		SetFromSessionVars(variable.NewSessionVars(nil)).
+		SetFromSessionVars(DefaultDistSQLContext).
 		Build()
 	require.NoError(t, err)
 	expect := &kv.Request{
@@ -441,7 +484,7 @@ func TestRequestBuilder4(t *testing.T) {
 		SetDAGRequest(&tipb.DAGRequest{}).
 		SetDesc(false).
 		SetKeepOrder(false).
-		SetFromSessionVars(variable.NewSessionVars(nil)).
+		SetFromSessionVars(DefaultDistSQLContext).
 		Build()
 	require.NoError(t, err)
 	expect := &kv.Request{
@@ -549,12 +592,12 @@ func TestRequestBuilder7(t *testing.T) {
 		// copy iterator variable into a new variable, see issue #27779
 		replicaRead := replicaRead
 		t.Run(replicaRead.src, func(t *testing.T) {
-			vars := variable.NewSessionVars(nil)
-			vars.SetReplicaRead(replicaRead.replicaReadType)
+			dctx := NewDistSQLContextForTest()
+			dctx.ReplicaReadType = replicaRead.replicaReadType
 
 			concurrency := 10
 			actual, err := (&RequestBuilder{}).
-				SetFromSessionVars(vars).
+				SetFromSessionVars(dctx).
 				SetConcurrency(concurrency).
 				Build()
 			require.NoError(t, err)
@@ -581,10 +624,10 @@ func TestRequestBuilder7(t *testing.T) {
 }
 
 func TestRequestBuilder8(t *testing.T) {
-	sv := variable.NewSessionVars(nil)
-	sv.StmtCtx.ResourceGroupName = "test"
+	dctx := NewDistSQLContextForTest()
+	dctx.ResourceGroupName = "test"
 	actual, err := (&RequestBuilder{}).
-		SetFromSessionVars(sv).
+		SetFromSessionVars(dctx).
 		Build()
 	require.NoError(t, err)
 	expect := &kv.Request{
@@ -607,10 +650,10 @@ func TestRequestBuilder8(t *testing.T) {
 }
 
 func TestRequestBuilderTiKVClientReadTimeout(t *testing.T) {
-	sv := variable.NewSessionVars(nil)
-	sv.TiKVClientReadTimeout = 100
+	dctx := NewDistSQLContextForTest()
+	dctx.TiKVClientReadTimeout = 100
 	actual, err := (&RequestBuilder{}).
-		SetFromSessionVars(sv).
+		SetFromSessionVars(dctx).
 		Build()
 	require.NoError(t, err)
 	expect := &kv.Request{
@@ -662,7 +705,7 @@ func TestIndexRangesToKVRangesWithFbs(t *testing.T) {
 			Collators: collate.GetBinaryCollatorSlice(1),
 		},
 	}
-	actual, err := IndexRangesToKVRanges(stmtctx.NewStmtCtx(), 0, 0, ranges)
+	actual, err := IndexRangesToKVRanges(DefaultDistSQLContext, 0, 0, ranges)
 	require.NoError(t, err)
 	expect := []kv.KeyRange{
 		{
@@ -676,7 +719,7 @@ func TestIndexRangesToKVRangesWithFbs(t *testing.T) {
 }
 
 func TestScanLimitConcurrency(t *testing.T) {
-	vars := variable.NewSessionVars(nil)
+	dctx := NewDistSQLContextForTest()
 	for _, tt := range []struct {
 		tp          tipb.ExecType
 		limit       uint64
@@ -685,8 +728,8 @@ func TestScanLimitConcurrency(t *testing.T) {
 	}{
 		{tipb.ExecType_TypeTableScan, 1, 1, "TblScan_Def"},
 		{tipb.ExecType_TypeIndexScan, 1, 1, "IdxScan_Def"},
-		{tipb.ExecType_TypeTableScan, 1000000, vars.Concurrency.DistSQLScanConcurrency(), "TblScan_SessionVars"},
-		{tipb.ExecType_TypeIndexScan, 1000000, vars.Concurrency.DistSQLScanConcurrency(), "IdxScan_SessionVars"},
+		{tipb.ExecType_TypeTableScan, 1000000, dctx.DistSQLConcurrency, "TblScan_SessionVars"},
+		{tipb.ExecType_TypeIndexScan, 1000000, dctx.DistSQLConcurrency, "IdxScan_SessionVars"},
 	} {
 		// copy iterator variable into a new variable, see issue #27779
 		tt := tt
@@ -703,7 +746,7 @@ func TestScanLimitConcurrency(t *testing.T) {
 			dag := &tipb.DAGRequest{Executors: []*tipb.Executor{firstExec, limitExec}}
 			actual, err := (&RequestBuilder{}).
 				SetDAGRequest(dag).
-				SetFromSessionVars(vars).
+				SetFromSessionVars(dctx).
 				Build()
 			require.NoError(t, err)
 			require.Equal(t, tt.concurrency, actual.Concurrency)

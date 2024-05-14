@@ -22,13 +22,13 @@ import (
 
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/br/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/disttask/importinto"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/executor/importer"
+	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
@@ -84,7 +84,7 @@ func TestSchedulerExtLocalSort(t *testing.T) {
 	require.NoError(t, err)
 	taskMeta, err := json.Marshal(task)
 	require.NoError(t, err)
-	taskID, err := manager.CreateTask(ctx, importinto.TaskKey(jobID), proto.ImportInto, 1, taskMeta)
+	taskID, err := manager.CreateTask(ctx, importinto.TaskKey(jobID), proto.ImportInto, 1, "", taskMeta)
 	require.NoError(t, err)
 	task.ID = taskID
 
@@ -227,7 +227,7 @@ func TestSchedulerExtGlobalSort(t *testing.T) {
 	require.NoError(t, err)
 	taskMeta, err := json.Marshal(task)
 	require.NoError(t, err)
-	taskID, err := manager.CreateTask(ctx, importinto.TaskKey(jobID), proto.ImportInto, 1, taskMeta)
+	taskID, err := manager.CreateTask(ctx, importinto.TaskKey(jobID), proto.ImportInto, 1, "", taskMeta)
 	require.NoError(t, err)
 	task.ID = taskID
 

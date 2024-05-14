@@ -1147,7 +1147,7 @@ func TestSysDate(t *testing.T) {
 
 		baseFunc, _, input, output := genVecBuiltinFuncBenchCase(ctx, ast.Sysdate, vecExprBenchCase{retEvalType: types.ETDatetime})
 		resetStmtContext(ctx)
-		err = baseFunc.vecEvalTime(ctx, input, output)
+		err = vecEvalType(ctx, baseFunc, types.ETDatetime, input, output)
 		require.NoError(t, err)
 		last = time.Now()
 		times := output.Times()
@@ -1164,7 +1164,7 @@ func TestSysDate(t *testing.T) {
 		resetStmtContext(ctx)
 		loc := location(ctx)
 		startTm := time.Now().In(loc)
-		err = baseFunc.vecEvalTime(ctx, input, output)
+		err = vecEvalType(ctx, baseFunc, types.ETDatetime, input, output)
 		require.NoError(t, err)
 		for i := 0; i < 1024; i++ {
 			require.GreaterOrEqual(t, times[i].String(), startTm.Format(types.TimeFormat))
@@ -2580,6 +2580,18 @@ func TestTimestampAdd(t *testing.T) {
 		{"MINUTE", 1.5, "1995-05-01 00:00:00", "1995-05-01 00:02:00"},
 		{"MINUTE", 1.5, "1995-05-01 00:00:00.000000", "1995-05-01 00:02:00"},
 		{"MICROSECOND", -100, "1995-05-01 00:00:00.0001", "1995-05-01 00:00:00"},
+
+		// issue41052
+		{"MONTH", 1, "2024-01-31", "2024-02-29 00:00:00"},
+		{"MONTH", 1, "2024-01-30", "2024-02-29 00:00:00"},
+		{"MONTH", 1, "2024-01-29", "2024-02-29 00:00:00"},
+		{"MONTH", 1, "2024-01-28", "2024-02-28 00:00:00"},
+		{"MONTH", 1, "2024-10-31", "2024-11-30 00:00:00"},
+		{"MONTH", 3, "2024-01-31", "2024-04-30 00:00:00"},
+		{"MONTH", 15, "2024-01-31", "2025-04-30 00:00:00"},
+		{"MONTH", 10, "2024-10-31", "2025-08-31 00:00:00"},
+		{"MONTH", 1, "2024-11-30", "2024-12-30 00:00:00"},
+		{"MONTH", 13, "2024-11-30", "2025-12-30 00:00:00"},
 	}
 
 	fc := funcs[ast.TimestampAdd]
@@ -2620,7 +2632,7 @@ func TestPeriodAdd(t *testing.T) {
 		require.NotNil(t, f)
 		result, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 		if !test.Success {
-			require.True(t, result.IsNull())
+			require.Error(t, err)
 			continue
 		}
 		require.NoError(t, err)

@@ -19,10 +19,10 @@ import (
 	"slices"
 
 	"github.com/fsouza/fake-gcs-server/fakestorage"
-	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/testkit"
 )
@@ -62,11 +62,11 @@ func (s *mockGCSSuite) testWriteAfterImport(importSQL string, sourceType importe
 			caseResults: map[importer.DataSourceType]caseResult{
 				importer.DataSourceTypeFile: {
 					insertedData:     "8 1",
-					nextGlobalAutoID: []int64{8, 8},
+					nextGlobalAutoID: []int64{8, 1},
 				},
 				importer.DataSourceTypeQuery: {
 					insertedData:     "8 1",
-					nextGlobalAutoID: []int64{8, 8},
+					nextGlobalAutoID: []int64{8, 1},
 				},
 			},
 			autoIDCache1: true,
@@ -91,11 +91,11 @@ func (s *mockGCSSuite) testWriteAfterImport(importSQL string, sourceType importe
 			caseResults: map[importer.DataSourceType]caseResult{
 				importer.DataSourceTypeFile: {
 					insertedData:     "12 1",
-					nextGlobalAutoID: []int64{12, 12},
+					nextGlobalAutoID: []int64{8, 12},
 				},
 				importer.DataSourceTypeQuery: {
 					insertedData:     "8 1",
-					nextGlobalAutoID: []int64{8, 8},
+					nextGlobalAutoID: []int64{8, 5},
 				},
 			},
 			autoIDCache1: true,

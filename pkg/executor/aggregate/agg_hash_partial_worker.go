@@ -56,7 +56,7 @@ type HashAggPartialWorker struct {
 	partialResultsMapMem atomic.Int64
 
 	groupByItems []expression.Expression
-	groupKey     [][]byte
+	groupKeyBuf  [][]byte
 	// chk stores the input data from child,
 	// and is reused by childExec and partial worker.
 	chk *chunk.Chunk
@@ -201,6 +201,8 @@ func (w *HashAggPartialWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitG
 
 		// We must ensure that there is no panic before `waitGroup.Done()` or there will be hang
 		waitGroup.Done()
+
+		tryRecycleBuffer(&w.partialResultsBuffer, &w.groupKeyBuf)
 	}()
 
 	intestBeforePartialWorkerRun()
@@ -254,15 +256,15 @@ func (w *HashAggPartialWorker) getPartialResultsOfEachRow(groupKey [][]byte, fin
 }
 
 func (w *HashAggPartialWorker) updatePartialResult(ctx sessionctx.Context, chk *chunk.Chunk, finalConcurrency int) (err error) {
-	memSize := getGroupKeyMemUsage(w.groupKey)
-	w.groupKey, err = GetGroupKey(w.ctx, chk, w.groupKey, w.groupByItems)
+	memSize := getGroupKeyMemUsage(w.groupKeyBuf)
+	w.groupKeyBuf, err = GetGroupKey(w.ctx, chk, w.groupKeyBuf, w.groupByItems)
 	failpoint.Inject("ConsumeRandomPanic", nil)
-	w.memTracker.Consume(getGroupKeyMemUsage(w.groupKey) - memSize)
+	w.memTracker.Consume(getGroupKeyMemUsage(w.groupKeyBuf) - memSize)
 	if err != nil {
 		return err
 	}
 
-	partialResultOfEachRow := w.getPartialResultsOfEachRow(w.groupKey, finalConcurrency)
+	partialResultOfEachRow := w.getPartialResultsOfEachRow(w.groupKeyBuf, finalConcurrency)
 
 	numRows := chk.NumRows()
 	rows := make([]chunk.Row, 1)
@@ -272,7 +274,7 @@ func (w *HashAggPartialWorker) updatePartialResult(ctx sessionctx.Context, chk *
 		partialResult := partialResultOfEachRow[i]
 		rows[0] = chk.GetRow(i)
 		for j, af := range w.aggFuncs {
-			memDelta, err := af.UpdatePartialResult(exprCtx, rows, partialResult[j])
+			memDelta, err := af.UpdatePartialResult(exprCtx.GetEvalCtx(), rows, partialResult[j])
 			if err != nil {
 				return err
 			}

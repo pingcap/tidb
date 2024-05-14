@@ -10,11 +10,11 @@ go_test(
     flaky = True,
     shard_count = 9,
     deps = [
-        "//br/pkg/lightning/mydump",
         "//pkg/config",
         "//pkg/errctx",
         "//pkg/executor",
         "//pkg/kv",
+        "//pkg/lightning/mydump",
         "//pkg/meta/autoid",
         "//pkg/parser/model",
         "//pkg/parser/mysql",

@@ -29,7 +29,7 @@ import (
 )
 
 type mockAggFuncSuite struct {
-	ctx     expression.BuildContext
+	ctx     *mock.Context
 	rows    []chunk.Row
 	nullRow chunk.Row
 }

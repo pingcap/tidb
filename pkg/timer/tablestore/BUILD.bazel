@@ -49,7 +49,6 @@ go_test(
         "//pkg/util/sqlexec",
         "@com_github_ngaut_pools//:pools",
         "@com_github_pingcap_errors//:errors",
-        "@com_github_pingcap_kvproto//pkg/kvrpcpb",
         "@com_github_stretchr_testify//mock",
         "@com_github_stretchr_testify//require",
     ],

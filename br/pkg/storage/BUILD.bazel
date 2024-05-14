@@ -26,8 +26,8 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//br/pkg/errors",
-        "//br/pkg/lightning/log",
         "//br/pkg/logutil",
+        "//pkg/lightning/log",
         "//pkg/sessionctx/variable",
         "//pkg/util",
         "//pkg/util/intest",

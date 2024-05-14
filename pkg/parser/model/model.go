@@ -542,6 +542,9 @@ type TableInfo struct {
 
 	TTLInfo *TTLInfo `json:"ttl_info"`
 
+	// Revision is per table schema's version, it will be increased when the schema changed.
+	Revision uint64 `json:"revision"`
+
 	DBID int64 `json:"-"`
 }
 
@@ -1786,10 +1789,20 @@ type TableItemID struct {
 	IsSyncLoadFailed bool
 }
 
+// Key is used to generate unique key for TableItemID to use in the syncload
+func (t TableItemID) Key() string {
+	return fmt.Sprintf("%d#%d#%t", t.ID, t.TableID, t.IsIndex)
+}
+
 // StatsLoadItem represents the load unit for statistics's memory loading.
 type StatsLoadItem struct {
 	TableItemID
 	FullLoad bool
+}
+
+// Key is used to generate unique key for TableItemID to use in the syncload
+func (s StatsLoadItem) Key() string {
+	return fmt.Sprintf("%s#%t", s.TableItemID.Key(), s.FullLoad)
 }
 
 // PolicyRefInfo is the struct to refer the placement policy.

@@ -18,7 +18,7 @@ import (
 	"fmt"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/br/pkg/lightning/backend"
+	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
@@ -54,7 +54,11 @@ func (bc *litBackendCtx) Register(jobID, indexID int64, schemaName, tableName st
 		}
 
 		mgr := backend.MakeEngineManager(bc.backend)
-		cfg := generateLocalEngineConfig(jobID, schemaName, tableName)
+		ts := uint64(0)
+		if c := bc.checkpointMgr; c != nil {
+			ts = c.GetTS()
+		}
+		cfg := generateLocalEngineConfig(jobID, schemaName, tableName, ts)
 		openedEn, err := mgr.OpenEngine(bc.ctx, cfg, tableName, int32(indexID))
 		if err != nil {
 			logutil.Logger(bc.ctx).Warn(LitErrCreateEngineFail, zap.Int64("job ID", jobID),

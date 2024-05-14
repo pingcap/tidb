@@ -12,6 +12,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/restore"
+	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
 	"github.com/pingcap/tidb/br/pkg/summary"
 )
 
@@ -38,13 +39,7 @@ func RunRestoreTxn(c context.Context, g glue.Glue, cmdName string, cfg *Config) 
 	// sometimes we have pooled the connections.
 	// sending heartbeats in idle times is useful.
 	keepaliveCfg.PermitWithoutStream = true
-	client := restore.NewRestoreClient(
-		mgr.GetPDClient(),
-		mgr.GetPDHTTPClient(),
-		mgr.GetTLSConfig(),
-		keepaliveCfg,
-		true,
-	)
+	client := restore.NewRestoreClient(mgr.GetPDClient(), mgr.GetPDHTTPClient(), mgr.GetTLSConfig(), keepaliveCfg)
 	client.SetRateLimit(cfg.RateLimit)
 	client.SetCrypter(&cfg.CipherInfo)
 	client.SetConcurrency(uint(cfg.Concurrency))
@@ -78,7 +73,7 @@ func RunRestoreTxn(c context.Context, g glue.Glue, cmdName string, cfg *Config) 
 	}
 	summary.CollectInt("restore files", len(files))
 
-	ranges, _, err := restore.MergeAndRewriteFileRanges(
+	ranges, _, err := restoreutils.MergeAndRewriteFileRanges(
 		files, nil, conn.DefaultMergeRegionSizeBytes, conn.DefaultMergeRegionKeyCount)
 	if err != nil {
 		return errors.Trace(err)

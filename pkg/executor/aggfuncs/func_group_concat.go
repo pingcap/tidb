@@ -303,7 +303,8 @@ type topNRows struct {
 	rows []sortRow
 	desc []bool
 	sctx AggFuncUpdateContext
-	err  error
+	// TODO: this err is never assigned now. Please choose to make use of it or just remove it.
+	err error
 
 	currSize  uint64
 	limitSize uint64
@@ -325,7 +326,16 @@ func (h topNRows) Less(i, j int) bool {
 	for k := 0; k < n; k++ {
 		ret, err := h.rows[i].byItems[k].Compare(h.sctx.TypeCtx(), h.rows[j].byItems[k], h.collators[k])
 		if err != nil {
-			h.err = err
+			// TODO: check whether it's appropriate to just ignore the error here.
+			//
+			// Previously, the error is assigned to `h.err` and hope it can be accessed from outside. However,
+			// the `h` is copied when calling this method, and the assignment to `h.err` is meaningless.
+			//
+			// The linter `unusedwrite` found this issue. Therefore, the unused write to `h.err` is removed and
+			// it doesn't change the behavior. But we need to confirm whether it's correct to just ignore the error
+			// here.
+			//
+			// Ref https://github.com/pingcap/tidb/issues/52449
 			return false
 		}
 		if h.desc[k] {

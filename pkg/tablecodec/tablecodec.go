@@ -543,26 +543,24 @@ func DecodeHandleToDatumMap(handle kv.Handle, handleColIDs []int64,
 	if row == nil {
 		row = make(map[int64]types.Datum, len(cols))
 	}
-	for id, ft := range cols {
-		for idx, hid := range handleColIDs {
-			if id != hid {
-				continue
-			}
-			if types.NeedRestoredData(ft) {
-				continue
-			}
-			d, err := decodeHandleToDatum(handle, ft, idx)
-			if err != nil {
-				return row, err
-			}
-			d, err = Unflatten(d, ft, loc)
-			if err != nil {
-				return row, err
-			}
-			if _, exists := row[id]; !exists {
-				row[id] = d
-			}
-			break
+	for idx, id := range handleColIDs {
+		ft, ok := cols[id]
+		if !ok {
+			continue
+		}
+		if types.NeedRestoredData(ft) {
+			continue
+		}
+		d, err := decodeHandleToDatum(handle, ft, idx)
+		if err != nil {
+			return row, err
+		}
+		d, err = Unflatten(d, ft, loc)
+		if err != nil {
+			return row, err
+		}
+		if _, exists := row[id]; !exists {
+			row[id] = d
 		}
 	}
 	return row, nil
@@ -883,7 +881,11 @@ func buildRestoredColumn(allCols []rowcodec.ColInfo) []rowcodec.ColInfo {
 		}
 		if collate.IsBinCollation(col.Ft.GetCollate()) {
 			// Change the fieldType from string to uint since we store the number of the truncated spaces.
+			// NOTE: the corresponding datum is generated as `types.NewUintDatum(paddingSize)`, and the raw data is
+			// encoded via `encodeUint`. Thus we should mark the field type as unsigened here so that the BytesDecoder
+			// can decode it correctly later. Otherwise there might be issues like #47115.
 			copyColInfo.Ft = types.NewFieldType(mysql.TypeLonglong)
+			copyColInfo.Ft.AddFlag(mysql.UnsignedFlag)
 		} else {
 			copyColInfo.Ft = allCols[i].Ft
 		}
@@ -975,20 +977,36 @@ func decodeHandleInIndexKey(keySuffix []byte) (kv.Handle, error) {
 	return kv.NewCommonHandle(keySuffix)
 }
 
-func decodeHandleInIndexValue(value []byte) (kv.Handle, error) {
-	if getIndexVersion(value) == 1 {
-		seg := SplitIndexValueForClusteredIndexVersion1(value)
-		return kv.NewCommonHandle(seg.CommonHandle)
-	}
-	if len(value) > MaxOldEncodeValueLen {
-		tailLen := value[0]
-		if tailLen >= 8 {
-			return decodeIntHandleInIndexValue(value[len(value)-int(tailLen):]), nil
+func decodeHandleInIndexValue(value []byte) (handle kv.Handle, err error) {
+	var seg IndexValueSegments
+	if getIndexVersion(value) == 0 {
+		// For Old Encoding (IntHandle without any others options)
+		if len(value) <= MaxOldEncodeValueLen {
+			return decodeIntHandleInIndexValue(value), nil
 		}
-		handleLen := uint16(value[2])<<8 + uint16(value[3])
-		return kv.NewCommonHandle(value[4 : 4+handleLen])
+		// For IndexValueVersion0
+		seg = SplitIndexValue(value)
+	} else {
+		// For IndexValueForClusteredIndexVersion1
+		seg = SplitIndexValueForClusteredIndexVersion1(value)
 	}
-	return decodeIntHandleInIndexValue(value), nil
+	if len(seg.IntHandle) != 0 {
+		handle = decodeIntHandleInIndexValue(seg.IntHandle)
+	}
+	if len(seg.CommonHandle) != 0 {
+		handle, err = kv.NewCommonHandle(seg.CommonHandle)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if len(seg.PartitionID) != 0 {
+		_, pid, err := codec.DecodeInt(seg.PartitionID)
+		if err != nil {
+			return nil, err
+		}
+		handle = kv.NewPartitionHandle(pid, handle)
+	}
+	return handle, nil
 }
 
 // decodeIntHandleInIndexValue uses to decode index value as int handle id.

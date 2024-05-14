@@ -20,10 +20,10 @@ import (
 	"strconv"
 	"testing"
 
-	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/importinto"
 	"github.com/pingcap/tidb/pkg/executor/importer"
+	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/testkit"

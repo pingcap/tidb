@@ -54,7 +54,7 @@ func TestLogFormat(t *testing.T) {
 	logSQLTruncateLen := 1024 * 8
 	logFields := GenLogFields(costTime, info, true)
 
-	assert.Len(t, logFields, 8)
+	assert.Len(t, logFields, 9)
 	assert.Equal(t, "cost_time", logFields[0].Key)
 	assert.Equal(t, "233s", logFields[0].String)
 	assert.Equal(t, "conn", logFields[1].Key)

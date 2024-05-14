@@ -25,12 +25,12 @@ import (
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/importinto/mock"
 	"github.com/pingcap/tidb/pkg/disttask/operator"
 	"github.com/pingcap/tidb/pkg/executor/importer"
+	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -81,7 +81,7 @@ func TestEncodeAndSortOperator(t *testing.T) {
 	}
 
 	source := operator.NewSimpleDataChannel(make(chan *importStepMinimalTask))
-	op := newEncodeAndSortOperator(context.Background(), executorForParam, nil, 3)
+	op := newEncodeAndSortOperator(context.Background(), executorForParam, nil, 3, 1)
 	op.SetSource(source)
 	require.NoError(t, op.Open())
 	require.Greater(t, len(op.String()), 0)
@@ -101,7 +101,7 @@ func TestEncodeAndSortOperator(t *testing.T) {
 	// cancel on error and log other errors
 	mockErr2 := errors.New("mock err 2")
 	source = operator.NewSimpleDataChannel(make(chan *importStepMinimalTask))
-	op = newEncodeAndSortOperator(context.Background(), executorForParam, nil, 2)
+	op = newEncodeAndSortOperator(context.Background(), executorForParam, nil, 2, 2)
 	op.SetSource(source)
 	executor1 := mock.NewMockMiniTaskExecutor(ctrl)
 	executor2 := mock.NewMockMiniTaskExecutor(ctrl)

@@ -177,6 +177,11 @@ func (p *parallelSortSpillHelper) spillImpl(merger *multiWayMerger) error {
 	inDisk.GetDiskTracker().AttachTo(p.sortExec.diskTracker)
 
 	spilledRowChannel := make(chan chunk.Row, 10000)
+
+	// We must wait the finish of the following goroutine,
+	// or we will exit `spillImpl` function in advance and
+	// this will cause data race.
+	defer channel.Clear(spilledRowChannel)
 	go func() {
 		defer func() {
 			if r := recover(); r != nil {
@@ -207,9 +212,6 @@ func (p *parallelSortSpillHelper) spillImpl(merger *multiWayMerger) error {
 	for {
 		select {
 		case <-p.finishCh:
-			// We must wait the finish of the above goroutine,
-			// or p.errOutputChan may be closed in advandce.
-			channel.Clear(spilledRowChannel)
 			return nil
 		case row, ok = <-spilledRowChannel:
 			if !ok {
