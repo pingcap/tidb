@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"reflect"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/btree"
@@ -42,6 +43,8 @@ import (
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
 )
+
+var apiVersionSetter sync.Once
 
 // ClientMgr manages connections needed by backup.
 type ClientMgr interface {
@@ -792,7 +795,6 @@ func BuildProgressRangeTree(pranges []*rtree.ProgressRange) (rtree.ProgressRange
 func (bc *Client) BackupRanges(
 	ctx context.Context,
 	ranges []rtree.Range,
-	regionCounts []int,
 	request backuppb.BackupRequest,
 	concurrency uint,
 	replicaReadLabel map[string]string,
@@ -906,11 +908,15 @@ func (bc *Client) OnBackupResponse(
 				resp.Files,
 			); err != nil {
 				// flush checkpoint failed,
-				// this error doesn't not influnce main procedure. so ignore it.
-				logutil.CL(ctx).Warn("failed to flush checkpoint, ignore it", zap.Error(err))
+				logutil.CL(ctx).Error("failed to flush checkpoint", zap.Error(err))
+				return err
 			}
 		}
 		pr.Res.Put(resp.StartKey, resp.EndKey, resp.Files)
+		apiVersionSetter.Do(func() {
+			apiVersion := resp.ApiVersion
+			bc.SetApiVersion(apiVersion)
+		})
 	} else {
 		errPb := resp.GetError()
 		res := errContext.HandleIgnorableError(errPb, storeID)
@@ -1146,9 +1152,10 @@ mainLoop:
 				err = bc.OnBackupResponse(handleCtx, respAndStore, errContext, globalProgressTree)
 				if err != nil {
 					// if error occurred here, stop the backup process
-					// because only 2 kinds of errors will be returned here:
+					// because only 3 kinds of errors will be returned here:
 					// 1. permission denied on tikv store.
 					// 2. parse backup response error.(shouldn't happen in any case)
+					// 3. checkpoint update failed. TODO: should we retry here?
 					handleCancel()
 					mainCancel()
 					return err
