@@ -119,6 +119,11 @@ func (e *TopNExec) Open(ctx context.Context) error {
 
 // Close implements the Executor Close interface.
 func (e *TopNExec) Close() error {
+	// `e.finishCh == nil` means that `Open` is not called.
+	if e.finishCh == nil {
+		return exec.Close(e.Children(0))
+	}
+
 	close(e.finishCh)
 	if e.fetched.CompareAndSwap(false, true) {
 		close(e.resultChannel)
