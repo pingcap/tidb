@@ -144,7 +144,7 @@ func TestConcurrentLoadHistTimeout(t *testing.T) {
 func TestConcurrentLoadHistWithPanicAndFail(t *testing.T) {
 	originConfig := config.GetGlobalConfig()
 	newConfig := config.NewConfig()
-	newConfig.Performance.StatsLoadConcurrency = 0 // no worker to consume channel
+	newConfig.Performance.StatsLoadConcurrency = -1 // no worker to consume channel
 	config.StoreGlobalConfig(newConfig)
 	defer config.StoreGlobalConfig(originConfig)
 	store, dom := testkit.CreateMockStoreAndDomain(t)
@@ -258,7 +258,7 @@ func TestConcurrentLoadHistWithPanicAndFail(t *testing.T) {
 func TestRetry(t *testing.T) {
 	originConfig := config.GetGlobalConfig()
 	newConfig := config.NewConfig()
-	newConfig.Performance.StatsLoadConcurrency = 0 // no worker to consume channel
+	newConfig.Performance.StatsLoadConcurrency = -1 // no worker to consume channel
 	config.StoreGlobalConfig(newConfig)
 	defer config.StoreGlobalConfig(originConfig)
 	store, dom := testkit.CreateMockStoreAndDomain(t)

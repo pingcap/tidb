@@ -62,7 +62,6 @@ func buildPartitionID2TableID(is infoschema.InfoSchema) map[int64]int64 {
 	for _, dbName := range is.AllSchemaNames() {
 		tbls := is.SchemaTableInfos(dbName)
 		for _, tbl := range tbls {
-			// tbl := tbl.Meta()
 			pi := tbl.GetPartitionInfo()
 			if pi == nil {
 				continue

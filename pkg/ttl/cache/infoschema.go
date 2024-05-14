@@ -51,7 +51,6 @@ func (isc *InfoSchemaCache) Update(se session.Session) error {
 	newTables := make(map[int64]*PhysicalTable, len(isc.Tables))
 	for _, dbName := range is.AllSchemaNames() {
 		for _, tblInfo := range is.SchemaTableInfos(dbName) {
-			// tblInfo := tbl.Meta()
 			if tblInfo.TTLInfo == nil || !tblInfo.TTLInfo.Enable || tblInfo.State != model.StatePublic {
 				continue
 			}

@@ -179,7 +179,10 @@ func (d *DBStore) adjust(
 	}
 
 	switch d.TLS {
-	case "skip-verify", "preferred":
+	case "preferred":
+		d.Security.AllowFallbackToPlaintext = true
+		fallthrough
+	case "skip-verify":
 		if d.Security.TLSConfig == nil {
 			/* #nosec G402 */
 			d.Security.TLSConfig = &tls.Config{
@@ -187,14 +190,22 @@ func (d *DBStore) adjust(
 				InsecureSkipVerify: true,
 				NextProtos:         []string{"h2", "http/1.1"}, // specify `h2` to let Go use HTTP/2.
 			}
-			d.Security.AllowFallbackToPlaintext = true
+		} else {
+			d.Security.TLSConfig.InsecureSkipVerify = true
 		}
 	case "cluster":
 		if len(s.CAPath) == 0 {
 			return common.ErrInvalidConfig.GenWithStack("cannot set `tidb.tls` to 'cluster' without a [security] section")
 		}
-	case "", "false":
-		d.TLS = "false"
+	case "":
+	case "false":
+		d.Security.TLSConfig = nil
+		d.Security.CAPath = ""
+		d.Security.CertPath = ""
+		d.Security.KeyPath = ""
+		d.Security.CABytes = nil
+		d.Security.CertBytes = nil
+		d.Security.KeyBytes = nil
 	default:
 		return common.ErrInvalidConfig.GenWithStack("unsupported `tidb.tls` config %s", d.TLS)
 	}

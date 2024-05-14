@@ -183,6 +183,21 @@ func TestIssue30289(t *testing.T) {
 	require.EqualError(t, err, "issue30289 build return error")
 }
 
+func TestIssue51998(t *testing.T) {
+	fpName := "github.com/pingcap/tidb/pkg/executor/join/issue51998"
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int)")
+	require.NoError(t, failpoint.Enable(fpName, `return(true)`))
+	defer func() {
+		require.NoError(t, failpoint.Disable(fpName))
+	}()
+	err := tk.QueryToErr("select /*+ hash_join(t1) */ * from t t1 join t t2 on t1.a=t2.a")
+	require.EqualError(t, err, "issue51998 build return error")
+}
+
 func TestIssue29498(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -636,6 +651,20 @@ func TestIssue51874(t *testing.T) {
 	tk.MustQuery("select (select sum(a) over () from t2 limit 1) from t;").Check(testkit.Rows("10", "2"))
 }
 
+func TestIssue51777(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.Session().GetSessionVars().AllowProjectionPushDown = true
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t0, t1")
+	tk.MustExec("create table t0 (c_k int)")
+	tk.MustExec("create table t1 (c_pv int)")
+	tk.MustExec("insert into t0 values(-2127559046),(-190905159),(-171305020),(-59638845),(98004414),(2111663670),(2137868682),(2137868682),(2142611610)")
+	tk.MustExec("insert into t1 values(-2123227448), (2131706870), (-2071508387), (2135465388), (2052805244), (-2066000113)")
+	tk.MustQuery("SELECT ( select  (ref_4.c_pv <= ref_3.c_k) as c0 from t1 as ref_4 order by c0 asc limit 1) as p2 FROM t0 as ref_3 order by p2;").Check(testkit.Rows("0", "0", "0", "0", "0", "0", "1", "1", "1"))
+}
+
 func TestIssue52978(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -645,5 +674,29 @@ func TestIssue52978(t *testing.T) {
 	tk.MustExec("create table t (a int)")
 	tk.MustExec("insert into t values (-1790816583),(2049821819), (-1366665321), (536581933), (-1613686445)")
 	tk.MustQuery("select min(truncate(cast(-26340 as double), ref_11.a)) as c3 from t as ref_11;").Check(testkit.Rows("-26340"))
+	tk.MustExec("drop table if exists t")
+}
+
+func TestIssue53221(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a varchar(20))")
+	tk.MustExec("insert into t values ('')")
+	tk.MustExec("insert into t values ('')")
+	err := tk.QueryToErr("select regexp_like('hello', t.a) from test.t")
+	require.ErrorContains(t, err, "Empty pattern is invalid")
+
+	err = tk.QueryToErr("select regexp_instr('hello', t.a) from test.t")
+	require.ErrorContains(t, err, "Empty pattern is invalid")
+
+	err = tk.QueryToErr("select regexp_substr('hello', t.a) from test.t")
+	require.ErrorContains(t, err, "Empty pattern is invalid")
+
+	err = tk.QueryToErr("select regexp_replace('hello', t.a, 'd') from test.t")
+	require.ErrorContains(t, err, "Empty pattern is invalid")
+
 	tk.MustExec("drop table if exists t")
 }
