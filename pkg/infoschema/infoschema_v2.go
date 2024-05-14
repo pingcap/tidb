@@ -178,6 +178,7 @@ func (isd *Data) addSpecialDB(di *model.DBInfo, tables *schemaTables) {
 }
 
 func (isd *Data) addDB(schemaVersion int64, dbInfo *model.DBInfo) {
+	dbInfo.Tables = nil
 	isd.schemaMap.Set(schemaItem{schemaVersion: schemaVersion, dbInfo: dbInfo})
 }
 
@@ -311,6 +312,10 @@ func (is *infoschemaV2) CloneAndUpdateTS(startTS uint64) *infoschemaV2 {
 }
 
 func (is *infoschemaV2) TableByID(id int64) (val table.Table, ok bool) {
+	return is.tableByID(id, false)
+}
+
+func (is *infoschemaV2) tableByID(id int64, noRefill bool) (val table.Table, ok bool) {
 	if !tableIDIsValid(id) {
 		return
 	}
@@ -340,7 +345,9 @@ func (is *infoschemaV2) TableByID(id int64) (val table.Table, ok bool) {
 	oldKey := tableCacheKey{itm.tableID, itm.schemaVersion}
 	tbl, found = is.tableCache.Get(oldKey)
 	if found && tbl != nil {
-		is.tableCache.Set(key, tbl)
+		if !noRefill {
+			is.tableCache.Set(key, tbl)
+		}
 		return tbl, true
 	}
 
@@ -350,7 +357,9 @@ func (is *infoschemaV2) TableByID(id int64) (val table.Table, ok bool) {
 		return nil, false
 	}
 
-	is.tableCache.Set(key, ret)
+	if !noRefill {
+		is.tableCache.Set(key, ret)
+	}
 	return ret, true
 }
 
@@ -415,7 +424,33 @@ func (is *infoschemaV2) TableInfoByID(id int64) (*model.TableInfo, bool) {
 
 // SchemaTableInfos implements InfoSchema.FindTableInfoByPartitionID
 func (is *infoschemaV2) SchemaTableInfos(schema model.CIStr) []*model.TableInfo {
-	return getTableInfoList(is.SchemaTables(schema))
+	if isSpecialDB(schema.L) {
+		schTbls := is.Data.specials[schema.L]
+		tables := make([]table.Table, 0, len(schTbls.tables))
+		for _, tbl := range schTbls.tables {
+			tables = append(tables, tbl)
+		}
+		return getTableInfoList(tables)
+	}
+
+	dbInfo, ok := is.SchemaByName(schema)
+	if !ok {
+		return nil
+	}
+	snapshot := is.r.Store().GetSnapshot(kv.NewVersion(is.ts))
+	// Using the KV timeout read feature to address the issue of potential DDL lease expiration when
+	// the meta region leader is slow.
+	snapshot.SetOption(kv.TiKVClientReadTimeout, uint64(3000)) // 3000ms.
+	m := meta.NewSnapshotMeta(snapshot)
+	tblInfos, err := m.ListTables(dbInfo.ID)
+	if err != nil {
+		if meta.ErrDBNotExists.Equal(err) {
+			return nil
+		}
+		// TODO: error could happen, so do not panic!
+		panic(err)
+	}
+	return tblInfos
 }
 
 // FindTableInfoByPartitionID implements InfoSchema.FindTableInfoByPartitionID
@@ -611,7 +646,7 @@ retry:
 	}
 	tables = make([]table.Table, 0, len(tblInfos))
 	for _, tblInfo := range tblInfos {
-		tbl, ok := is.TableByID(tblInfo.ID)
+		tbl, ok := is.tableByID(tblInfo.ID, true)
 		if !ok {
 			// what happen?
 			continue
@@ -912,8 +947,8 @@ func (b *bundleInfoBuilder) updateInfoSchemaBundlesV2(is *infoschemaV2) {
 	// TODO: This is quite inefficient! we need some better way or avoid this API.
 	is.ruleBundleMap = make(map[int64]*placement.Bundle)
 	for _, dbInfo := range is.AllSchemas() {
-		for _, tbl := range is.SchemaTables(dbInfo.Name) {
-			b.updateTableBundles(is, tbl.Meta().ID)
+		for _, tbl := range is.SchemaTableInfos(dbInfo.Name) {
+			b.updateTableBundles(is, tbl.ID)
 		}
 	}
 }
