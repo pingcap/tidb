@@ -17,6 +17,11 @@ Point_Get_1	1.00	root	table:pt, index:uidx(c)
 select c from pt where c = 1;
 c
 1
+explain select c from pt partition(p1) where c = 1;
+id	estRows	task	access object	operator info
+Point_Get_1	1.00	root	table:pt, index:uidx(c)	
+select c from pt partition(p1) where c = 1;
+c
 # Test BatchPointGet
 explain select c from pt where c in (1,2,3);
 id	estRows	task	access object	operator info
@@ -44,6 +49,11 @@ Point_Get_1	1.00	root	table:pt, index:uidx(c)
 select c from pt where c = 1;
 c
 1
+explain select c from pt partition(p1) where c = 1;
+id	estRows	task	access object	operator info
+Point_Get_1	1.00	root	table:pt, index:uidx(c)	
+select c from pt partition(p1) where c = 1;
+c
 # Test BatchPointGet
 explain select c from pt where c in (1,2,3);
 id	estRows	task	access object	operator info
