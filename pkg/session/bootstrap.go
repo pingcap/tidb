@@ -460,7 +460,7 @@ const (
 		lock_name VARCHAR(64) NOT NULL PRIMARY KEY
 	);`
 	// CreateMDLView is a view about metadata locks.
-	CreateMDLView = `CREATE OR REPLACE VIEW mysql.tidb_mdl_view as (
+	CreateMDLView = `CREATE OR REPLACE SQL SECURITY INVOKER VIEW mysql.tidb_mdl_view as (
 		SELECT tidb_mdl_info.job_id,
 			JSON_UNQUOTE(JSON_EXTRACT(cast(cast(job_meta as char) as json), "$.schema_name")) as db_name,
 			JSON_UNQUOTE(JSON_EXTRACT(cast(cast(job_meta as char) as json), "$.table_name")) as table_name,
