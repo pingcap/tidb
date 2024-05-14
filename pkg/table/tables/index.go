@@ -412,15 +412,12 @@ func (c *index) Delete(ctx table.MutateContext, txn kv.Transaction, indexedValue
 		// Only when pid in value equals to c.physicalID, the key can be deleted.
 		if c.idxInfo.Global {
 			if val, err := txn.GetMemBuffer().Get(context.Background(), key); err == nil {
-				segs := tablecodec.SplitIndexValue(val)
-				if len(segs.PartitionID) != 0 {
-					_, pid, err := codec.DecodeInt(segs.PartitionID)
-					if err != nil {
-						return err
-					}
-					if pid != c.phyTblID {
-						continue
-					}
+				_, pid, err := codec.DecodeInt(tablecodec.SplitIndexValue(val).PartitionID)
+				if err != nil {
+					return err
+				}
+				if pid != c.phyTblID {
+					continue
 				}
 			}
 		}
