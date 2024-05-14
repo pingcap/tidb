@@ -1625,6 +1625,7 @@ func (w *addIndexTxnWorker) batchCheckUniqueKey(txn kv.Transaction, idxRecords [
 	// 1. unique-key/primary-key is duplicate and the handle is equal, skip it.
 	// 2. unique-key/primary-key is duplicate and the handle is not equal, return duplicate error.
 	// 3. non-unique-key is duplicate, skip it.
+	// Note: Global index may have the same handle but for different partitions!
 	for i, key := range w.batchCheckKeys {
 		if len(key) == 0 {
 			continue
@@ -1890,6 +1891,8 @@ func (w *addIndexTxnWorker) BackfillData(handleRange reorgBackfillTask) (taskCtx
 
 			// We need to add this lock to make sure pessimistic transaction can realize this operation.
 			// For the normal pessimistic transaction, it's ok. But if async commit is used, it may lead to inconsistent data and index.
+			// TODO: For global index, lock the correct key?! Currelty it locks the partition (phyTblID) and the handle or actual key?
+			// but should really lock the table's ID + key col(s)
 			err := txn.LockKeys(context.Background(), new(kv.LockCtx), idxRecord.key)
 			if err != nil {
 				return errors.Trace(err)
@@ -2048,7 +2051,7 @@ func (w *worker) executeDistTask(t table.Table, reorgInfo *reorgInfo) error {
 	}
 
 	// For resuming add index task.
-	// Need to fetch task by taskKey in tidb_global_task and tidb_global_task_history tables.
+	// Need to fetch task by taskKey in tidb_global_task_history tables.
 	// When pausing the related ddl job, it is possible that the task with taskKey is succeed and in tidb_global_task_history.
 	// As a result, when resuming the related ddl job,
 	// it is necessary to check task exits in tidb_global_task and tidb_global_task_history tables.
