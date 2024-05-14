@@ -308,7 +308,7 @@ func (w *BuildWorkerV2) splitPartitionAndAppendToRowTable(typeCtx types.Context,
 	partitionNumber := w.HashJoinCtx.PartitionNumber
 	hashJoinCtx := w.HashJoinCtx
 
-	builder := createRowTableBuilder(w.BuildKeyColIdx, w.BuildSideExec.Schema(), partitionNumber, w.HasNullableKey, hashJoinCtx.BuildFilter != nil, hashJoinCtx.needScanRowTableAfterProbeDone)
+	builder := createRowTableBuilder(w.BuildKeyColIdx, hashJoinCtx.BuildKeyTypes, partitionNumber, w.HasNullableKey, hashJoinCtx.BuildFilter != nil, hashJoinCtx.needScanRowTableAfterProbeDone)
 
 	for chk := range srcChkCh {
 		start := time.Now()

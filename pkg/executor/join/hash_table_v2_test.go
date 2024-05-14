@@ -80,7 +80,7 @@ func createRowTable(t *testing.T, rows int) *rowTable {
 		hashTableContext: newHashTableContext(partitionNumber, partitionNumber),
 	}
 	hashJoinCtx.SessCtx = mock.NewContext()
-	builder := createRowTableBuilder(buildKeyIndex, buildSchema, partitionNumber, hasNullableKey, false, false)
+	builder := createRowTableBuilder(buildKeyIndex, buildKeyTypes, partitionNumber, hasNullableKey, false, false)
 	err := builder.processOneChunk(chk, hashJoinCtx.SessCtx.GetSessionVars().StmtCtx.TypeCtx(), hashJoinCtx, 0)
 	require.NoError(t, err)
 	builder.appendRemainingRowLocations(0, hashJoinCtx.hashTableContext)

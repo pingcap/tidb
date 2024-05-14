@@ -453,6 +453,7 @@ func newTableMeta(buildKeyIndex []int, buildTypes, buildKeyTypes, probeKeyTypes 
 
 type rowTableBuilder struct {
 	buildKeyIndex    []int
+	buildKeyTypes    []*types.FieldType
 	buildSchema      *expression.Schema
 	needUsedFlag     bool
 	hasNullableKey   bool
@@ -474,10 +475,10 @@ type rowTableBuilder struct {
 	startPosInRawData [][]uint64
 }
 
-func createRowTableBuilder(buildKeyIndex []int, buildSchema *expression.Schema, partitionNumber int, hasNullableKey bool, hasFilter bool, keepFilteredRows bool) *rowTableBuilder {
+func createRowTableBuilder(buildKeyIndex []int, buildKeyTypes []*types.FieldType, partitionNumber int, hasNullableKey bool, hasFilter bool, keepFilteredRows bool) *rowTableBuilder {
 	builder := &rowTableBuilder{
 		buildKeyIndex:       buildKeyIndex,
-		buildSchema:         buildSchema,
+		buildKeyTypes:       buildKeyTypes,
 		crrntSizeOfRowTable: make([]int64, partitionNumber),
 		startPosInRawData:   make([][]uint64, partitionNumber),
 		hasNullableKey:      hasNullableKey,
@@ -532,7 +533,7 @@ func (b *rowTableBuilder) processOneChunk(chk *chunk.Chunk, typeCtx types.Contex
 	}
 	// split partition
 	for index, colIdx := range b.buildKeyIndex {
-		err := codec.SerializeKeys(typeCtx, chk, b.buildSchema.Columns[colIdx].RetType, colIdx, b.usedRows, b.filterVector, b.nullKeyVector, hashJoinCtx.hashTableMeta.serializeModes[index], b.serializedKeyVectorBuffer)
+		err := codec.SerializeKeys(typeCtx, chk, b.buildKeyTypes[index], colIdx, b.usedRows, b.filterVector, b.nullKeyVector, hashJoinCtx.hashTableMeta.serializeModes[index], b.serializedKeyVectorBuffer)
 		if err != nil {
 			return err
 		}
