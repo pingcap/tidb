@@ -1,3 +1,5 @@
+// Copyright 2024 PingCAP, Inc.
+//
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -52,11 +54,12 @@ type ContextManager interface {
 // NewBRContextManager makes a BR context manager, that is,
 // set placement rules for online restore when enter(see <splitPrepareWork>),
 // unset them when leave.
-func NewBRContextManager(ctx context.Context, pdClient pd.Client, pdHTTPCli pdhttp.Client, tlsConf *tls.Config) (ContextManager, error) {
+func NewBRContextManager(ctx context.Context, pdClient pd.Client, pdHTTPCli pdhttp.Client, tlsConf *tls.Config, isOnline bool) (ContextManager, error) {
 	manager := &brContextManager{
 		// toolClient reuse the split.SplitClient to do miscellaneous things. It doesn't
 		// call split related functions so set the arguments to arbitrary values.
 		toolClient: split.NewClient(pdClient, pdHTTPCli, tlsConf, maxSplitKeysOnce, 3),
+		isOnline:   isOnline,
 
 		hasTable: make(map[int64]CreatedTable),
 	}
