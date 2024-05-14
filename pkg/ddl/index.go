@@ -2296,15 +2296,31 @@ func getNextPartitionInfo(reorg *reorgInfo, t table.PartitionedTable, currPhysic
 	}
 
 	// During data copying, copy data from partitions to be dropped
-	nextPartitionDefs := pi.DroppingDefinitions
+	// During index add (recreate) read the partitions to be added
+	// During Global Index Add (recreate)
+	// and use that for all non-touched partitions (i.e. pi.Definitions - pi.DroppingDefinitions)
+	var pid int64
+	var err error
 	if bytes.Equal(reorg.currElement.TypeKey, meta.IndexElementKey) {
 		// During index re-creation, process data from partitions to be added
-		nextPartitionDefs = pi.AddingDefinitions
+		if len(pi.AddingDefinitions) == 0 {
+			// Simply AddIndex, without any partitions added or dropped!
+			pid, err = findNextPartitionID(currPhysicalTableID, pi.Definitions)
+		} else {
+			if len(pi.DroppingDefinitions) == 0 {
+				panic("Is this possible? In which case?")
+			}
+			// check if recreating Global Index (during Reorg Partition)
+			pid, err = findNextPartitionID(currPhysicalTableID, pi.AddingDefinitions)
+			if err != nil {
+				// Not a partition in the AddingDefinitions, so it must be an existing
+				// non-touched partition, i.e. recreating Global Index for the non-touched partitions
+				pid, err = findNextNonTouchedPartitionID(currPhysicalTableID, pi)
+			}
+		}
+	} else {
+		pid, err = findNextPartitionID(currPhysicalTableID, pi.DroppingDefinitions)
 	}
-	if len(nextPartitionDefs) == 0 {
-		nextPartitionDefs = pi.Definitions
-	}
-	pid, err := findNextPartitionID(currPhysicalTableID, nextPartitionDefs)
 	if err != nil {
 		// Fatal error, should not run here.
 		logutil.DDLLogger().Error("find next partition ID failed", zap.Reflect("table", t), zap.Error(err))
@@ -2383,6 +2399,18 @@ func findNextPartitionID(currentPartition int64, defs []model.PartitionDefinitio
 		}
 	}
 	return 0, errors.Errorf("partition id not found %d", currentPartition)
+}
+
+func findNextNonTouchedPartitionID(currPartitionID int64, pi *model.PartitionInfo) (int64, error) {
+	pid, err := findNextPartitionID(currPartitionID, pi.Definitions)
+	for _, err = findNextPartitionID(pid, pi.DroppingDefinitions); err == nil; {
+		// This can be optimized, but it is not frequently called, so keeping as-is
+		pid, err = findNextPartitionID(pid, pi.Definitions)
+		if pid == 0 {
+			break
+		}
+	}
+	return pid, err
 }
 
 // AllocateIndexID allocates an index ID from TableInfo.

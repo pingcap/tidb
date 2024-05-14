@@ -3476,7 +3476,6 @@ func TestReorgPartitionGlobalIndex(t *testing.T) {
 		partition p2 values less than (20)
 	)`)
 	tt := external.GetTableByName(t, tk, "test", "t")
-	pid0 := tt.Meta().Partition.Definitions[0].ID
 	pid1 := tt.Meta().Partition.Definitions[1].ID
 
 	tk.MustExec("Alter Table t Add Unique Index idx_b (b)")
@@ -3484,24 +3483,22 @@ func TestReorgPartitionGlobalIndex(t *testing.T) {
 	tk.MustExec(`INSERT INTO t VALUES (8, 8, 9), (9, 9, 8), (18, 18, 17), (19, 17, 18)`)
 	tk.MustExec("Alter Table t Add Unique Index idx_c (c)")
 
-	tk.MustExec("alter table t reorganize partition p2 into (partition p2 values less than (20), partition p3 values less than (30), partition pMax values less than (maxvalue))")
+	tk.MustExec("alter table t reorganize partition p2 into (partition p2 values less than (15), partition p3 values less than (20), partition pMax values less than (maxvalue))")
 	result := tk.MustQuery("select * from t")
 	result.Sort().Check(testkit.Rows("11 6 4", "12 7 7", "18 18 17", "19 17 18", "4 5 6", "6 4 5", "8 8 9", "9 9 8"))
+	tk.MustQuery("select /*+ USE_INDEX(t, idx_b) */ * from t").Sort().Check(testkit.Rows("11 6 4", "12 7 7", "18 18 17", "19 17 18", "4 5 6", "6 4 5", "8 8 9", "9 9 8"))
+	tk.MustQuery("select /*+ USE_INDEX(t, idx_c) */ * from t").Sort().Check(testkit.Rows("11 6 4", "12 7 7", "18 18 17", "19 17 18", "4 5 6", "6 4 5", "8 8 9", "9 9 8"))
 
-	tk.MustQuery(`select * from t where b = 6`).Check(testkit.Rows("11 6 4"))
-	tk.MustQuery(`select * from t where b = 4`).Check(testkit.Rows("6 5 5"))
+	tk.MustQuery(`select b from t where b = 6`).Check(testkit.Rows("6"))
+	tk.MustQuery(`select b from t where b = 4`).Check(testkit.Rows("4"))
 	tt = external.GetTableByName(t, tk, "test", "t")
 	idxInfo := tt.Meta().FindIndexByName("idx_b")
 	require.NotNil(t, idxInfo)
-	cnt := checkGlobalIndexCleanUpDone(t, tk.Session(), tt.Meta(), idxInfo, pid0)
-	require.Equal(t, 4, cnt)
-	cnt = checkGlobalIndexCleanUpDone(t, tk.Session(), tt.Meta(), idxInfo, pid1)
-	require.Equal(t, 4, cnt)
+	cnt := checkGlobalIndexCleanUpDone(t, tk.Session(), tt.Meta(), idxInfo, pid1)
+	require.Equal(t, 8, cnt)
 
 	idxInfo = tt.Meta().FindIndexByName("idx_c")
 	require.NotNil(t, idxInfo)
-	cnt = checkGlobalIndexCleanUpDone(t, tk.Session(), tt.Meta(), idxInfo, pid0)
-	require.Equal(t, 4, cnt)
 	cnt = checkGlobalIndexCleanUpDone(t, tk.Session(), tt.Meta(), idxInfo, pid1)
-	require.Equal(t, 4, cnt)
+	require.Equal(t, 8, cnt)
 }
