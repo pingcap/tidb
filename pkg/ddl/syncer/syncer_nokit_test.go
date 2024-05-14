@@ -32,8 +32,10 @@ import (
 
 func TestNodeVersions(t *testing.T) {
 	nv := newNodeVersions(1, nil)
+	require.True(t, nv.emptyAndNotUsed())
 	nv.add("a", 10)
 	nv.add("b", 20)
+	require.False(t, nv.emptyAndNotUsed())
 	require.EqualValues(t, 2, nv.len())
 	var waterMark int64 = 10
 	fn := func(nodeVersions map[string]int64) bool {
@@ -54,6 +56,10 @@ func TestNodeVersions(t *testing.T) {
 	require.Nil(t, nv.onceMatchFn)
 	nv.del("a")
 	require.EqualValues(t, 1, nv.len())
+	nv.del("b")
+	require.True(t, nv.emptyAndNotUsed())
+	nv.matchOrSet(func(map[string]int64) bool { return false })
+	require.False(t, nv.emptyAndNotUsed())
 }
 
 func TestDecodeJobVersionEvent(t *testing.T) {

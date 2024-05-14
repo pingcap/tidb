@@ -180,6 +180,7 @@ func (v *nodeVersions) matchOrSet(fn func(nodeVersions map[string]int64) bool) {
 	v.Lock()
 	defer v.Unlock()
 	if ok := fn(v.nodeVersions); !ok {
+		// onceMatchFn must be nil before.
 		v.onceMatchFn = fn
 	}
 }
@@ -190,17 +191,23 @@ func (v *nodeVersions) clearData() {
 	v.nodeVersions = make(map[string]int64, len(v.nodeVersions))
 }
 
+func (v *nodeVersions) clearMatchFn() {
+	v.Lock()
+	defer v.Unlock()
+	v.onceMatchFn = nil
+}
+
+func (v *nodeVersions) emptyAndNotUsed() bool {
+	v.Lock()
+	defer v.Unlock()
+	return len(v.nodeVersions) == 0 && v.onceMatchFn == nil
+}
+
 // for test
 func (v *nodeVersions) getMatchFn() func(map[string]int64) bool {
 	v.Lock()
 	defer v.Unlock()
 	return v.onceMatchFn
-}
-
-func (v *nodeVersions) clearMatchFn() {
-	v.Lock()
-	defer v.Unlock()
-	v.onceMatchFn = nil
 }
 
 type schemaVersionSyncer struct {
@@ -494,7 +501,8 @@ func (s *schemaVersionSyncer) syncJobSchemaVer(ctx context.Context) {
 		return
 	}
 	s.mu.Lock()
-	// item might be saved and accessed outside, so we only clear data here.
+	// item might be saved and accessed outside, so we only clear data here, will
+	// clean up emptyAndNotUsed items later.
 	for _, item := range s.jobNodeVersions {
 		item.clearData()
 	}
@@ -502,6 +510,14 @@ func (s *schemaVersionSyncer) syncJobSchemaVer(ctx context.Context) {
 	for _, oneKV := range resp.Kvs {
 		s.handleJobSchemaVerKV(oneKV, mvccpb.PUT)
 	}
+	s.mu.Lock()
+	// we might miss some DELETE events during retry, some items might be emptyAndNotUsed, remove them.
+	for jobID, item := range s.jobNodeVersions {
+		if item.emptyAndNotUsed() {
+			delete(s.jobNodeVersions, jobID)
+		}
+	}
+	s.mu.Unlock()
 
 	startRev := resp.Header.Revision + 1
 	watchCtx, watchCtxCancel := context.WithCancel(ctx)
