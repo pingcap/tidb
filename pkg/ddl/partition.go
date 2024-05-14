@@ -3496,6 +3496,10 @@ func (w *worker) reorgPartitionDataAndIndex(t table.Table, reorgInfo *reorgInfo)
 		if err != nil {
 			return errors.Trace(err)
 		}
+		if len(reorgInfo.elements) <= 1 {
+			// No indexes to (re)create, all done!
+			return nil
+		}
 	}
 
 	failpoint.Inject("reorgPartitionAfterDataCopy", func(val failpoint.Value) {
