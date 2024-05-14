@@ -1722,12 +1722,15 @@ type IndexValueSegments struct {
 // SplitIndexValue decodes segments in index value for both non-clustered and clustered table.
 func SplitIndexValue(value []byte) (segs IndexValueSegments) {
 	if getIndexVersion(value) == 0 {
+		// For Old Encoding (IntHandle without any others options)
 		if len(value) <= MaxOldEncodeValueLen {
 			segs.IntHandle = value
 			return segs
 		}
+		// For IndexValueVersion0
 		return splitIndexValueForIndexValueVersion0(value)
 	}
+	// For IndexValueForClusteredIndexVersion1
 	return splitIndexValueForClusteredIndexVersion1(value)
 }
 
