@@ -43,7 +43,6 @@ import (
 	"github.com/pingcap/tipb/go-tipb"
 	tikvmetrics "github.com/tikv/client-go/v2/metrics"
 	"github.com/tikv/client-go/v2/tikv"
-	"github.com/tikv/client-go/v2/tikvrpc"
 	"go.uber.org/zap"
 	"golang.org/x/exp/maps"
 )
@@ -360,7 +359,7 @@ func (r *selectResult) updateCopRuntimeStats(ctx context.Context, copStats *copr
 	if r.stats == nil {
 		r.stats = &selectResultRuntimeStats{
 			backoffSleep:       make(map[string]time.Duration),
-			rpcStat:            tikv.NewRegionRequestRuntimeStats(),
+			reqStat:            tikv.NewRegionRequestRuntimeStats(),
 			distSQLConcurrency: r.distSQLConcurrency,
 		}
 	}
@@ -471,7 +470,7 @@ type selectResultRuntimeStats struct {
 	backoffSleep       map[string]time.Duration
 	totalProcessTime   time.Duration
 	totalWaitTime      time.Duration
-	rpcStat            tikv.RegionRequestRuntimeStats
+	reqStat            *tikv.RegionRequestRuntimeStats
 	distSQLConcurrency int
 	CoprCacheHitNum    int64
 }
@@ -486,7 +485,7 @@ func (s *selectResultRuntimeStats) mergeCopRuntimeStats(copStats *copr.CopRuntim
 	maps.Copy(s.backoffSleep, copStats.BackoffSleep)
 	s.totalProcessTime += copStats.TimeDetail.ProcessTime
 	s.totalWaitTime += copStats.TimeDetail.WaitTime
-	s.rpcStat.Merge(copStats.RegionRequestRuntimeStats)
+	s.reqStat.Merge(copStats.ReqStats)
 	if copStats.CoprCacheHit {
 		s.CoprCacheHitNum++
 	}
@@ -497,7 +496,7 @@ func (s *selectResultRuntimeStats) Clone() execdetails.RuntimeStats {
 		copRespTime:        execdetails.Percentile[execdetails.Duration]{},
 		procKeys:           execdetails.Percentile[execdetails.Int64]{},
 		backoffSleep:       make(map[string]time.Duration, len(s.backoffSleep)),
-		rpcStat:            tikv.NewRegionRequestRuntimeStats(),
+		reqStat:            tikv.NewRegionRequestRuntimeStats(),
 		distSQLConcurrency: s.distSQLConcurrency,
 		CoprCacheHitNum:    s.CoprCacheHitNum,
 	}
@@ -508,7 +507,7 @@ func (s *selectResultRuntimeStats) Clone() execdetails.RuntimeStats {
 	}
 	newRs.totalProcessTime += s.totalProcessTime
 	newRs.totalWaitTime += s.totalWaitTime
-	maps.Copy(newRs.rpcStat.Stats, s.rpcStat.Stats)
+	newRs.reqStat = s.reqStat.Clone()
 	return &newRs
 }
 
@@ -525,13 +524,13 @@ func (s *selectResultRuntimeStats) Merge(rs execdetails.RuntimeStats) {
 	}
 	s.totalProcessTime += other.totalProcessTime
 	s.totalWaitTime += other.totalWaitTime
-	s.rpcStat.Merge(other.rpcStat)
+	s.reqStat.Merge(other.reqStat)
 	s.CoprCacheHitNum += other.CoprCacheHitNum
 }
 
 func (s *selectResultRuntimeStats) String() string {
 	buf := bytes.NewBuffer(nil)
-	rpcStat := s.rpcStat
+	reqStat := s.reqStat
 	if s.copRespTime.Size() > 0 {
 		size := s.copRespTime.Size()
 		if size == 1 {
@@ -562,15 +561,6 @@ func (s *selectResultRuntimeStats) String() string {
 				buf.WriteString(execdetails.FormatDuration(s.totalWaitTime))
 			}
 		}
-		copRPC := rpcStat.Stats[tikvrpc.CmdCop]
-		if copRPC != nil && copRPC.Count > 0 {
-			rpcStat = rpcStat.Clone()
-			delete(rpcStat.Stats, tikvrpc.CmdCop)
-			buf.WriteString(", rpc_num: ")
-			buf.WriteString(strconv.FormatInt(copRPC.Count, 10))
-			buf.WriteString(", rpc_time: ")
-			buf.WriteString(execdetails.FormatDuration(time.Duration(copRPC.Consume)))
-		}
 		if config.GetGlobalConfig().TiKVClient.CoprCache.CapacityMB > 0 {
 			buf.WriteString(fmt.Sprintf(", copr_cache_hit_ratio: %v",
 				strconv.FormatFloat(float64(s.CoprCacheHitNum)/float64(s.copRespTime.Size()), 'f', 2, 64)))
@@ -584,10 +574,11 @@ func (s *selectResultRuntimeStats) String() string {
 		buf.WriteString("}")
 	}
 
-	rpcStatsStr := rpcStat.String()
+	rpcStatsStr := reqStat.String()
 	if len(rpcStatsStr) > 0 {
-		buf.WriteString(", ")
+		buf.WriteString(", rpc_info:{")
 		buf.WriteString(rpcStatsStr)
+		buf.WriteString("}")
 	}
 
 	if len(s.backoffSleep) > 0 {
