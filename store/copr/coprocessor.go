@@ -1222,6 +1222,8 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.R
 		logutil.Logger(bo.GetCtx()).Warn("other error",
 			zap.Uint64("txnStartTS", worker.req.StartTs),
 			zap.Uint64("regionID", task.region.GetID()),
+			zap.Uint64("regionVer", task.region.GetVer()),
+			zap.Uint64("regionConfVer", task.region.GetConfVer()),
 			zap.Uint64("bucketsVer", task.bucketsVer),
 			zap.Uint64("latestBucketsVer", resp.pbResp.GetLatestBucketsVersion()),
 			zap.Int("rangeNums", task.ranges.Len()),
@@ -1372,6 +1374,8 @@ func (worker *copIteratorWorker) handleBatchCopResponse(bo *Backoffer, rpcCtx *t
 			logutil.Logger(bo.GetCtx()).Warn("other error",
 				zap.Uint64("txnStartTS", worker.req.StartTs),
 				zap.Uint64("regionID", task.region.GetID()),
+				zap.Uint64("regionVer", task.region.GetVer()),
+				zap.Uint64("regionConfVer", task.region.GetConfVer()),
 				zap.Uint64("bucketsVer", task.bucketsVer),
 				// TODO: add bucket version in log
 				//zap.Uint64("latestBucketsVer", batchResp.GetLatestBucketsVersion()),
