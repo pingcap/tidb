@@ -308,7 +308,7 @@ func TestCollectHistNeededColumns(t *testing.T) {
 		},
 		{
 			sql: "select * from t where b in (2, 5) or c = 5",
-			res: []string{"t.a meta", "t.b full", "t.c full", "t.c_str meta", "t.d meta", "t.d_str meta", "t.e meta", "t.e_str meta", "t.f meta", "t.g meta", "t.h meta", "t.i_date meta"},
+			res: []string{"t.a full", "t.b full", "t.c full", "t.c_str meta", "t.d meta", "t.d_str meta", "t.e meta", "t.e_str meta", "t.f meta", "t.g meta", "t.h meta", "t.i_date meta"},
 		},
 		{
 			sql: "select * from t where a + b > 1",
