@@ -142,14 +142,14 @@ func (p *BaseLogicalPlan) PredicateSimplification(opt *optimizetrace.LogicalOpti
 }
 
 // ConstantPropagation implements the LogicalPlan.<8th> interface.
-func (_ *BaseLogicalPlan) ConstantPropagation(_ base.LogicalPlan, _ int, _ *optimizetrace.LogicalOptimizeOp) (newRoot base.LogicalPlan) {
+func (*BaseLogicalPlan) ConstantPropagation(_ base.LogicalPlan, _ int, _ *optimizetrace.LogicalOptimizeOp) (newRoot base.LogicalPlan) {
 	// Only LogicalJoin can apply constant propagation
 	// Other Logical plan do nothing
 	return nil
 }
 
 // PullUpConstantPredicates implements the LogicalPlan.<9th> interface.
-func (_ *BaseLogicalPlan) PullUpConstantPredicates() []expression.Expression {
+func (*BaseLogicalPlan) PullUpConstantPredicates() []expression.Expression {
 	// Only LogicalProjection and LogicalSelection can get constant predicates
 	// Other Logical plan return nil
 	return nil
@@ -176,22 +176,22 @@ func (p *BaseLogicalPlan) RecursiveDeriveStats(colGroups [][]*expression.Column)
 }
 
 // ExtractColGroups implements LogicalPlan.<12th> interface.
-func (_ *BaseLogicalPlan) ExtractColGroups(_ [][]*expression.Column) [][]*expression.Column {
+func (*BaseLogicalPlan) ExtractColGroups(_ [][]*expression.Column) [][]*expression.Column {
 	return nil
 }
 
 // PreparePossibleProperties implements LogicalPlan.<13th> interface.
-func (_ *BaseLogicalPlan) PreparePossibleProperties(_ *expression.Schema, _ ...[][]*expression.Column) [][]*expression.Column {
+func (*BaseLogicalPlan) PreparePossibleProperties(_ *expression.Schema, _ ...[][]*expression.Column) [][]*expression.Column {
 	return nil
 }
 
 // ExhaustPhysicalPlans implements LogicalPlan.<14th> interface.
-func (_ *BaseLogicalPlan) ExhaustPhysicalPlans(*property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
+func (*BaseLogicalPlan) ExhaustPhysicalPlans(*property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
 	panic("baseLogicalPlan.ExhaustPhysicalPlans() should never be called.")
 }
 
 // ExtractCorrelatedCols implements LogicalPlan.<15th> interface.
-func (_ *BaseLogicalPlan) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
+func (*BaseLogicalPlan) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
 	return nil
 }
 
