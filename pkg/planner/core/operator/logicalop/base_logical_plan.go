@@ -317,11 +317,13 @@ func (p *BaseLogicalPlan) GetLogicalTS4TaskMap() uint64 {
 	return p.SCtx().GetSessionVars().StmtCtx.TaskMapBakTS
 }
 
+// GetTask returns the history recorded Task for specified property.
 func (p *BaseLogicalPlan) GetTask(prop *property.PhysicalProperty) base.Task {
 	key := prop.HashCode()
 	return p.taskMap[string(key)]
 }
 
+// StoreTask records Task for specified property as <k,v>.
 func (p *BaseLogicalPlan) StoreTask(prop *property.PhysicalProperty, task base.Task) {
 	key := prop.HashCode()
 	if p.SCtx().GetSessionVars().StmtCtx.StmtHints.TaskMapNeedBackUp() {
