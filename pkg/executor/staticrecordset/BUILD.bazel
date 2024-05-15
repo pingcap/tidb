@@ -12,7 +12,6 @@ go_library(
         "//pkg/executor/internal/exec",
         "//pkg/planner/core/resolve",
         "//pkg/session/cursor",
-        "//pkg/util",
         "//pkg/util/chunk",
         "//pkg/util/logutil",
         "//pkg/util/sqlexec",

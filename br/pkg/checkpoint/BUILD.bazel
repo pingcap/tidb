@@ -26,7 +26,6 @@ go_library(
         "//pkg/kv",
         "//pkg/meta/model",
         "//pkg/parser/model",
-        "//pkg/util",
         "//pkg/util/sqlexec",
         "@com_github_google_uuid//:uuid",
         "@com_github_pingcap_errors//:errors",

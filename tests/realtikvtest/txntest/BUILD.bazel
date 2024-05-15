@@ -20,7 +20,6 @@ go_test(
         "//pkg/session/txninfo",
         "//pkg/store/driver",
         "//pkg/testkit",
-        "//pkg/util",
         "//tests/realtikvtest",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",

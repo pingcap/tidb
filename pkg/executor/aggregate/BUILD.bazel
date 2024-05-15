@@ -24,7 +24,6 @@ go_library(
         "//pkg/sessionctx/stmtctx",
         "//pkg/sessionctx/variable",
         "//pkg/types",
-        "//pkg/util",
         "//pkg/util/channel",
         "//pkg/util/chunk",
         "//pkg/util/codec",

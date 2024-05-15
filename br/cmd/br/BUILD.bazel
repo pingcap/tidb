@@ -34,7 +34,6 @@ go_library(
         "//pkg/config",
         "//pkg/meta/model",
         "//pkg/session",
-        "//pkg/util",
         "//pkg/util/gctuner",
         "//pkg/util/logutil",
         "//pkg/util/mathutil",

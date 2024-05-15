@@ -7,7 +7,6 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/resourcemanager/util",
-        "//pkg/util",
         "//pkg/util/syncutil",
         "@org_uber_go_atomic//:atomic",
     ],

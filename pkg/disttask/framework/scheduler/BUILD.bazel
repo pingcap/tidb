@@ -25,7 +25,6 @@ go_library(
         "//pkg/lightning/log",
         "//pkg/metrics",
         "//pkg/sessionctx",
-        "//pkg/util",
         "//pkg/util/backoff",
         "//pkg/util/cpu",
         "//pkg/util/disttask",

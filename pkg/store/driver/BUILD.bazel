@@ -8,6 +8,7 @@ go_library(
     deps = [
         "//pkg/kv",
         "//pkg/metrics",
+        "//pkg/resourcemanager/gpool",
         "//pkg/sessionctx/variable",
         "//pkg/store/copr",
         "//pkg/store/driver/error",
@@ -53,7 +54,6 @@ go_test(
         "//pkg/store/mockstore",
         "//pkg/store/mockstore/unistore",
         "//pkg/testkit/testsetup",
-        "//pkg/util",
         "//pkg/util/tracing",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",

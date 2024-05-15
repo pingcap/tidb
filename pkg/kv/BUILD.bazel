@@ -29,6 +29,7 @@ go_library(
         "//pkg/parser/mysql",
         "//pkg/parser/terror",
         "//pkg/resourcegroup",
+        "//pkg/resourcemanager/gpool",
         "//pkg/types",
         "//pkg/util/codec",
         "//pkg/util/dbterror",
@@ -83,8 +84,10 @@ go_test(
     shard_count = 23,
     deps = [
         "//pkg/meta/model",
+        "//pkg/parser/model",
         "//pkg/parser/mysql",
         "//pkg/parser/terror",
+        "//pkg/resourcemanager/gpool",
         "//pkg/sessionctx/stmtctx",
         "//pkg/testkit/testsetup",
         "//pkg/testkit/testutil",

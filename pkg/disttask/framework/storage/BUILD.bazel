@@ -17,7 +17,6 @@ go_library(
         "//pkg/kv",
         "//pkg/sessionctx",
         "//pkg/sessionctx/variable",
-        "//pkg/util",
         "//pkg/util/chunk",
         "//pkg/util/cpu",
         "//pkg/util/logutil",

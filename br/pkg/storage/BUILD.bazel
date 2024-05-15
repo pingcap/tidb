@@ -29,7 +29,6 @@ go_library(
         "//br/pkg/logutil",
         "//pkg/lightning/log",
         "//pkg/sessionctx/variable",
-        "//pkg/util",
         "//pkg/util/intest",
         "//pkg/util/logutil",
         "//pkg/util/prefetch",

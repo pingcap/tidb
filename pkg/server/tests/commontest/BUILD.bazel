@@ -31,7 +31,6 @@ go_test(
         "//pkg/store/mockstore/unistore",
         "//pkg/testkit",
         "//pkg/testkit/testsetup",
-        "//pkg/util",
         "//pkg/util/plancodec",
         "//pkg/util/resourcegrouptag",
         "//pkg/util/topsql",

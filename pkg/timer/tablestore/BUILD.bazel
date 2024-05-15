@@ -15,7 +15,6 @@ go_library(
         "//pkg/sessionctx",
         "//pkg/sessionctx/variable",
         "//pkg/timer/api",
-        "//pkg/util",
         "//pkg/util/chunk",
         "//pkg/util/logutil",
         "//pkg/util/sqlexec",

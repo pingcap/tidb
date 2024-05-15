@@ -16,7 +16,6 @@ go_library(
         "//pkg/sessionctx",
         "//pkg/sessionctx/variable",
         "//pkg/sessiontxn/staleread",
-        "//pkg/util",
         "//pkg/util/chunk",
         "//pkg/util/sqlexec",
         "@com_github_docker_go_units//:go-units",

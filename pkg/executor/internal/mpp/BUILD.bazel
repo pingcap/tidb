@@ -25,7 +25,6 @@ go_library(
         "//pkg/store/copr",
         "//pkg/store/driver/backoff",
         "//pkg/store/driver/error",
-        "//pkg/util",
         "//pkg/util/execdetails",
         "//pkg/util/logutil",
         "//pkg/util/memory",

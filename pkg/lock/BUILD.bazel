@@ -11,6 +11,5 @@ go_library(
         "//pkg/parser/model",
         "//pkg/parser/mysql",
         "//pkg/table",
-        "//pkg/util",
     ],
 )

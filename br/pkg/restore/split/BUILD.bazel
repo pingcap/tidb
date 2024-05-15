@@ -20,7 +20,6 @@ go_library(
         "//pkg/lightning/config",
         "//pkg/lightning/log",
         "//pkg/store/pdtypes",
-        "//pkg/util",
         "//pkg/util/codec",
         "//pkg/util/intest",
         "//pkg/util/redact",

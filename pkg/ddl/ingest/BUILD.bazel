@@ -40,7 +40,6 @@ go_library(
         "//pkg/sessionctx",
         "//pkg/sessionctx/variable",
         "//pkg/table",
-        "//pkg/util",
         "//pkg/util/dbterror",
         "//pkg/util/generic",
         "//pkg/util/logutil",

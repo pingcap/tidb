@@ -9,7 +9,6 @@ go_library(
         "//pkg/metrics",
         "//pkg/sessionctx/variable",
         "//pkg/statistics/handle/util",
-        "//pkg/util",
         "//pkg/util/logutil",
         "@com_github_pingcap_log//:log",
         "@org_uber_go_zap//:zap",

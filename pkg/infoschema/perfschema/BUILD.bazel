@@ -25,7 +25,6 @@ go_library(
         "//pkg/table",
         "//pkg/table/tables",
         "//pkg/types",
-        "//pkg/util",
         "//pkg/util/profile",
         "@com_github_ngaut_pools//:pools",
         "@com_github_pingcap_errors//:errors",

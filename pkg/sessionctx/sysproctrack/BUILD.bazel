@@ -5,8 +5,5 @@ go_library(
     srcs = ["track.go"],
     importpath = "github.com/pingcap/tidb/pkg/sessionctx/sysproctrack",
     visibility = ["//visibility:public"],
-    deps = [
-        "//pkg/sessionctx/variable",
-        "//pkg/util",
-    ],
+    deps = ["//pkg/sessionctx/variable"],
 )

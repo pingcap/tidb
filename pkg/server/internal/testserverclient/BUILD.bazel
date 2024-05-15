@@ -16,7 +16,6 @@ go_library(
         "//pkg/testkit",
         "//pkg/testkit/testenv",
         "//pkg/testkit/testfailpoint",
-        "//pkg/util",
         "//pkg/util/versioninfo",
         "@com_github_go_sql_driver_mysql//:mysql",
         "@com_github_pingcap_errors//:errors",

@@ -29,7 +29,6 @@ go_library(
         "//pkg/meta",
         "//pkg/meta/model",
         "//pkg/tablecodec",
-        "//pkg/util",
         "//pkg/util/codec",
         "//pkg/util/mathutil",
         "//pkg/util/table-filter",

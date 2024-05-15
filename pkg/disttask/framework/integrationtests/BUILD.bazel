@@ -31,7 +31,6 @@ go_test(
         "//pkg/testkit",
         "//pkg/testkit/testfailpoint",
         "//pkg/testkit/testsetup",
-        "//pkg/util",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_stretchr_testify//require",
         "@io_opencensus_go//stats/view",

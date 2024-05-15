@@ -25,7 +25,6 @@ go_test(
         "//pkg/sessionctx/variable",
         "//pkg/testkit",
         "//pkg/testkit/testsetup",
-        "//pkg/util",
         "//pkg/util/hint",
         "@com_github_prometheus_client_golang//prometheus",
         "@com_github_prometheus_client_model//go",

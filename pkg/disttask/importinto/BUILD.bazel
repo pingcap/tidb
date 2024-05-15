@@ -52,7 +52,6 @@ go_library(
         "//pkg/resourcemanager/util",
         "//pkg/sessionctx",
         "//pkg/table/tables",
-        "//pkg/util",
         "//pkg/util/backoff",
         "//pkg/util/disttask",
         "//pkg/util/etcd",

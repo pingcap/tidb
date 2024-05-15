@@ -30,7 +30,6 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/server",
-        "//pkg/util",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_log//:log",
         "@org_uber_go_zap//:zap",

@@ -40,7 +40,6 @@ go_library(
         "//pkg/kv",
         "//pkg/meta",
         "//pkg/meta/model",
-        "//pkg/util",
         "//pkg/util/codec",
         "//pkg/util/redact",
         "//pkg/util/table-filter",

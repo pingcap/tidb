@@ -26,7 +26,6 @@ go_library(
         "//pkg/store/mockstore",
         "//pkg/testkit",
         "//pkg/testkit/testfailpoint",
-        "//pkg/util",
         "//pkg/util/logutil",
         "//pkg/util/sqlexec",
         "@com_github_ngaut_pools//:pools",

@@ -7,7 +7,6 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/metrics",
-        "//pkg/util",
         "//pkg/util/cgroup",
         "@com_github_pingcap_log//:log",
         "@com_github_shirou_gopsutil_v3//mem",

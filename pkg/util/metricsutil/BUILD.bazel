@@ -22,7 +22,6 @@ go_library(
         "//pkg/store/copr/metrics",
         "//pkg/store/mockstore/unistore/metrics",
         "//pkg/ttl/metrics",
-        "//pkg/util",
         "//pkg/util/topsql/reporter/metrics",
         "@com_github_pingcap_kvproto//pkg/keyspacepb",
         "@com_github_tikv_client_go_v2//config",

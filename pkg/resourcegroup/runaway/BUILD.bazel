@@ -21,7 +21,6 @@ go_library(
         "//pkg/ttl/cache",
         "//pkg/ttl/sqlbuilder",
         "//pkg/types",
-        "//pkg/util",
         "//pkg/util/chunk",
         "//pkg/util/dbterror/exeerrors",
         "//pkg/util/generic",

@@ -16,7 +16,6 @@ go_library(
         "//br/pkg/utils",
         "//pkg/kv",
         "//pkg/tablecodec",
-        "//pkg/util",
         "//pkg/util/codec",
         "@com_github_google_btree//:btree",
         "@com_github_pingcap_errors//:errors",

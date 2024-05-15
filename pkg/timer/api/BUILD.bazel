@@ -14,7 +14,6 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/parser/duration",
-        "//pkg/util",
         "//pkg/util/logutil",
         "//pkg/util/timeutil",
         "@com_github_google_uuid//:uuid",

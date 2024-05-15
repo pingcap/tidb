@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/resourcemanager/gpool"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics"
 	handleutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
@@ -43,7 +44,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/pingcap/tidb/pkg/util/timeutil"
 	"github.com/pingcap/tipb/go-tipb"
-	"github.com/tiancaiamao/gp"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
@@ -53,7 +53,7 @@ type AnalyzeColumnsExecV2 struct {
 	*AnalyzeColumnsExec
 }
 
-func (e *AnalyzeColumnsExecV2) analyzeColumnsPushDownV2(gp *gp.Pool) *statistics.AnalyzeResults {
+func (e *AnalyzeColumnsExecV2) analyzeColumnsPushDownV2(gp gpool.Pool) *statistics.AnalyzeResults {
 	var ranges []*ranger.Range
 	if hc := e.handleCols; hc != nil {
 		if hc.IsInt() {
@@ -204,7 +204,7 @@ func printAnalyzeMergeCollectorLog(oldRootCount, newRootCount, subCount, tableID
 }
 
 func (e *AnalyzeColumnsExecV2) buildSamplingStats(
-	gp *gp.Pool,
+	gp gpool.Pool,
 	ranges []*ranger.Range,
 	needExtStats bool,
 	indexesWithVirtualColOffsets []int,

@@ -23,7 +23,6 @@ go_library(
         "//pkg/lightning/log",
         "//pkg/metrics",
         "//pkg/sessionctx/variable",
-        "//pkg/util",
         "//pkg/util/backoff",
         "//pkg/util/cgroup",
         "//pkg/util/cpu",

@@ -10,7 +10,6 @@ go_library(
         "//br/pkg/glue",
         "//br/pkg/logutil",
         "//br/pkg/utils",
-        "//pkg/util",
         "@com_github_aws_aws_sdk_go//aws",
         "@com_github_aws_aws_sdk_go//aws/awserr",
         "@com_github_aws_aws_sdk_go//aws/client",

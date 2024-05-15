@@ -35,7 +35,6 @@ go_library(
         "//pkg/store/driver/error",
         "//pkg/table/tables",
         "//pkg/types",
-        "//pkg/util",
         "//pkg/util/codec",
         "//pkg/util/dbutil",
         "//pkg/util/format",

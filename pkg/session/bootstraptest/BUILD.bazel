@@ -25,7 +25,6 @@ go_test(
         "//pkg/testkit/testfailpoint",
         "//pkg/testkit/testmain",
         "//pkg/testkit/testsetup",
-        "//pkg/util",
         "//pkg/util/chunk",
         "//pkg/util/sqlexec",
         "@com_github_pingcap_errors//:errors",

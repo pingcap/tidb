@@ -36,8 +36,12 @@ go_library(
         "//pkg/parser/model",
         "//pkg/parser/mysql",
         "//pkg/parser/terror",
+<<<<<<< HEAD
         "//pkg/resourcegroup",
         "//pkg/session/cursor",
+=======
+        "//pkg/resourcemanager/gpool",
+>>>>>>> 8f4f0f2176 (add global pool interface)
         "//pkg/session/txninfo",
         "//pkg/sessionctx/stmtctx",
         "//pkg/util/collate",
@@ -52,7 +56,6 @@ go_library(
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_pingcap_log//:log",
         "@com_github_pingcap_tipb//go-tipb",
-        "@com_github_tiancaiamao_gp//:gp",
         "@com_github_tikv_client_go_v2//oracle",
         "@io_etcd_go_etcd_client_v3//:client",
         "@io_etcd_go_etcd_client_v3//concurrency",

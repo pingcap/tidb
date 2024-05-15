@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/resourcegroup"
+	"github.com/pingcap/tidb/pkg/resourcemanager/gpool"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/resourcegrouptag"
 	"github.com/pingcap/tidb/pkg/util/tiflash"
@@ -717,6 +718,8 @@ type Storage interface {
 	GetLockWaits() ([]*deadlockpb.WaitForEntry, error)
 	// GetCodec gets the codec of the storage.
 	GetCodec() tikv.Codec
+	// GetGPool gets the gpool of the storage.
+	GetGPool() gpool.Pool
 }
 
 // EtcdBackend is used for judging a storage is a real TiKV.

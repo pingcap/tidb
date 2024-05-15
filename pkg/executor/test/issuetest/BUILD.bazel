@@ -21,7 +21,6 @@ go_test(
         "//pkg/parser/mysql",
         "//pkg/session/types",
         "//pkg/testkit",
-        "//pkg/util",
         "//pkg/util/dbterror/exeerrors",
         "//pkg/util/memory",
         "@com_github_pingcap_failpoint//:failpoint",

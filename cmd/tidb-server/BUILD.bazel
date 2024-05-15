@@ -33,7 +33,6 @@ go_library(
         "//pkg/store/copr",
         "//pkg/store/driver",
         "//pkg/store/mockstore",
-        "//pkg/util",
         "//pkg/util/cgmon",
         "//pkg/util/chunk",
         "//pkg/util/cpuprofile",
