@@ -27,10 +27,8 @@ func TestInfoSchemaAddDel(t *testing.T) {
 		dbInfo: &model.DBInfo{ID: 1, Name: model.NewCIStr("test")},
 	})
 	require.Contains(t, is.schemaMap, "test")
-	require.Contains(t, is.schemaID2Name, 1)
+	require.Contains(t, is.schemaID2Name, int64(1))
 	is.delSchema(&model.DBInfo{ID: 1, Name: model.NewCIStr("test")})
-	require.NotContains(t, is.schemaMap, "test")
-	require.NotContains(t, is.schemaID2Name, 1)
 	require.Empty(t, is.schemaMap)
 	require.Empty(t, is.schemaID2Name)
 }
