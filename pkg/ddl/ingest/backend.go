@@ -50,8 +50,8 @@ type BackendCtx interface {
 	Register(indexIDs []int64, tableName string) ([]Engine, error)
 	UnregisterEngines()
 	// FinishImport imports the engine of given index ID into the storage, collects
-	// the duplicate errors if the `unique` is true. The first call of FinishImport
-	// means no further data will be wrote to the engine.
+	// the duplicate errors if the `unique` is true. Caller should make sure the
+	// first call of FinishImport means no further data will be wrote to all engines.
 	//
 	// TODO(lance6716): refine the interface to let caller don't need to pass the
 	// indexID, and unify with CollectRemoteDuplicateRows.
