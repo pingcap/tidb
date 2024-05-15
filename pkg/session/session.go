@@ -3090,16 +3090,12 @@ var (
 		{ddl.BackgroundSubtaskTableSQL, ddl.BackgroundSubtaskTableID},
 		{ddl.BackgroundSubtaskHistoryTableSQL, ddl.BackgroundSubtaskHistoryTableID},
 	}
-<<<<<<< HEAD
-	mdlTable = "create table mysql.tidb_mdl_info(job_id BIGINT NOT NULL PRIMARY KEY, version BIGINT NOT NULL, table_ids text(65535));"
-=======
 	mdlTable = `create table mysql.tidb_mdl_info(
 		job_id BIGINT NOT NULL PRIMARY KEY,
 		version BIGINT NOT NULL,
 		table_ids text(65535),
 		owner_id varchar(64) NOT NULL DEFAULT ''
 	);`
->>>>>>> 4538a216d36 (ddl: add owner_id field to tidb_mdl_info to avoid unexpected writes (#53234))
 )
 
 func splitAndScatterTable(store kv.Storage, tableIDs []int64) {
