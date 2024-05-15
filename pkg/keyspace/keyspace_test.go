@@ -15,6 +15,7 @@
 package keyspace
 
 import (
+	"os"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/config"
@@ -22,22 +23,41 @@ import (
 )
 
 func TestSetKeyspaceNameInConf(t *testing.T) {
+	expectedKeyspaceName := "test_keyspace_cfg"
+	// Reset keyspace name in TiDB config.
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.KeyspaceName = expectedKeyspaceName
+	})
+
+	// Set KeyspaceName in conf
+	getKeyspaceName := GetKeyspaceNameBySettings()
+
+	// Check the keyspaceName which get from GetKeyspaceNameBySettings, equals expectedKeyspaceName which is in conf.
+	// The cfg.keyspaceName get higher weights than KEYSPACE_NAME in system env.
+	require.Equal(t, expectedKeyspaceName, getKeyspaceName)
+	require.Equal(t, expectedKeyspaceName, config.GetGlobalKeyspaceName())
+	require.Equal(t, false, IsKeyspaceNameEmpty(getKeyspaceName))
+}
+
+func TestSetKeyspaceNameByEnv(t *testing.T) {
+	// Reset keyspace name in TiDB config.
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.KeyspaceName = ""
 	})
 
-	keyspaceNameInCfg := "test_keyspace_cfg"
-
-	// Set KeyspaceName in conf
-	c1 := config.GetGlobalConfig()
-	c1.KeyspaceName = keyspaceNameInCfg
+	// Set keyspace name by system env.
+	expectedKeyspaceName := "test_keyspace_02"
+	os.Setenv(config.EnvVarKeyspaceName, expectedKeyspaceName)
 
 	getKeyspaceName := GetKeyspaceNameBySettings()
 
-	// Check the keyspaceName which get from GetKeyspaceNameBySettings, equals keyspaceNameInCfg which is in conf.
+	// Check the keyspaceName which get from GetKeyspaceNameBySettings, equals expectedKeyspaceName which is in conf.
 	// The cfg.keyspaceName get higher weights than KEYSPACE_NAME in system env.
-	require.Equal(t, keyspaceNameInCfg, getKeyspaceName)
+	require.Equal(t, expectedKeyspaceName, getKeyspaceName)
+	require.Equal(t, expectedKeyspaceName, config.GetGlobalKeyspaceName())
 	require.Equal(t, false, IsKeyspaceNameEmpty(getKeyspaceName))
+
+	os.Unsetenv(config.EnvVarKeyspaceName)
 }
 
 func TestNoKeyspaceNameSet(t *testing.T) {
