@@ -387,12 +387,12 @@ func (p *PhysicalHashJoin) attach2TaskForMpp(tasks ...base.Task) base.Task {
 	lTask, lok := tasks[0].(*MppTask)
 	rTask, rok := tasks[1].(*MppTask)
 	if !lok || !rok {
-		return invalidTask
+		return base.InvalidTask
 	}
 	if p.mppShuffleJoin {
 		// protection check is case of some bugs
 		if len(lTask.hashCols) != len(rTask.hashCols) || len(lTask.hashCols) == 0 {
-			return invalidTask
+			return base.InvalidTask
 		}
 		lTask, rTask = p.convertPartitionKeysIfNeed(lTask, rTask)
 	}
@@ -1017,7 +1017,7 @@ func (p *PhysicalExpand) Attach2Task(tasks ...base.Task) base.Task {
 		mpp.p = p
 		return mpp
 	}
-	return invalidTask
+	return base.InvalidTask
 }
 
 // Attach2Task implements PhysicalPlan interface.
@@ -1052,11 +1052,11 @@ func (p *PhysicalUnionAll) attach2MppTasks(tasks ...base.Task) base.Task {
 		} else if root, ok := tk.(*RootTask); ok && root.IsEmpty() {
 			continue
 		} else {
-			return invalidTask
+			return base.InvalidTask
 		}
 	}
 	if len(childPlans) == 0 {
-		return invalidTask
+		return base.InvalidTask
 	}
 	p.SetChildren(childPlans...)
 	return t
@@ -1069,8 +1069,8 @@ func (p *PhysicalUnionAll) Attach2Task(tasks ...base.Task) base.Task {
 			if p.TP() == plancodec.TypePartitionUnion {
 				// In attach2MppTasks(), will attach PhysicalUnion to mppTask directly.
 				// But PartitionUnion cannot pushdown to tiflash, so here disable PartitionUnion pushdown to tiflash explicitly.
-				// For now, return invalidTask immediately, we can refine this by letting childTask of PartitionUnion convert to rootTask.
-				return invalidTask
+				// For now, return base.InvalidTask immediately, we can refine this by letting childTask of PartitionUnion convert to rootTask.
+				return base.InvalidTask
 			}
 			return p.attach2MppTasks(tasks...)
 		}
@@ -1758,7 +1758,7 @@ func (p *PhysicalStreamAgg) Attach2Task(tasks ...base.Task) base.Task {
 			storeType := cop.getStoreType()
 			// TiFlash doesn't support Stream Aggregation
 			if storeType == kv.TiFlash && len(p.GroupByItems) > 0 {
-				return invalidTask
+				return base.InvalidTask
 			}
 			partialAgg, finalAgg := p.newPartialAggregate(storeType, false)
 			if partialAgg != nil {
@@ -2122,7 +2122,7 @@ func (p *PhysicalHashAgg) attach2TaskForMpp(tasks ...base.Task) base.Task {
 	t := tasks[0].Copy()
 	mpp, ok := t.(*MppTask)
 	if !ok {
-		return invalidTask
+		return base.InvalidTask
 	}
 	switch p.MppRunMode {
 	case Mpp1Phase:
@@ -2139,7 +2139,7 @@ func (p *PhysicalHashAgg) attach2TaskForMpp(tasks ...base.Task) base.Task {
 		proj := p.convertAvgForMPP()
 		partialAgg, finalAgg := p.newPartialAggregate(kv.TiFlash, true)
 		if partialAgg == nil {
-			return invalidTask
+			return base.InvalidTask
 		}
 		attachPlan2Task(partialAgg, mpp)
 		partitionCols := p.MppPartitionCols
@@ -2149,7 +2149,7 @@ func (p *PhysicalHashAgg) attach2TaskForMpp(tasks ...base.Task) base.Task {
 			for _, expr := range items {
 				col, ok := expr.(*expression.Column)
 				if !ok {
-					return invalidTask
+					return base.InvalidTask
 				}
 				partitionCols = append(partitionCols, &property.MPPPartitionColumn{
 					Col:       col,
@@ -2188,12 +2188,12 @@ func (p *PhysicalHashAgg) attach2TaskForMpp(tasks ...base.Task) base.Task {
 		proj := p.convertAvgForMPP()
 		partialAgg, finalAgg := p.newPartialAggregate(kv.TiFlash, true)
 		if finalAgg == nil {
-			return invalidTask
+			return base.InvalidTask
 		}
 
 		final, middle, partial, proj4Partial, err := p.adjust3StagePhaseAgg(partialAgg, finalAgg, canUse3StageAgg, groupingSets, mpp)
 		if err != nil {
-			return invalidTask
+			return base.InvalidTask
 		}
 
 		// partial agg proj would be null if one scalar agg cannot run in two-phase mode
@@ -2241,7 +2241,7 @@ func (p *PhysicalHashAgg) attach2TaskForMpp(tasks ...base.Task) base.Task {
 		attachPlan2Task(proj, newMpp)
 		return newMpp
 	default:
-		return invalidTask
+		return base.InvalidTask
 	}
 }
 
