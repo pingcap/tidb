@@ -277,7 +277,10 @@ func (ds *DataSource) initStats(colGroups [][]*expression.Column) {
 	ds.tableStats.GroupNDVs = ds.getGroupNDVs(colGroups)
 	ds.TblColHists = ds.statisticTable.ID2UniqueID(ds.TblCols)
 	if config.GetGlobalConfig().Performance.LiteInitStats {
-		for _, col := range ds.tableInfo.Cols() {
+		for _, col := range ds.tableInfo.Columns {
+			if col.State != model.StatePublic {
+				continue
+			}
 			// If we enable lite stats init, we need to register columns for async load.
 			_, isLoadNeeded, _ := ds.statisticTable.ColumnIsLoadNeeded(col.ID, false)
 			if isLoadNeeded {
