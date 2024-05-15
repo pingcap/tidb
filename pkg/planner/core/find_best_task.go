@@ -298,7 +298,7 @@ func iterateChildPlan4LogicalSequence(
 	childTasks = childTasks[:0]
 	// The curCntPlan records the number of possible plans for pp
 	curCntPlan := int64(1)
-	lastIdx := len(p.Children()) - 1
+	lastIdx := p.ChildLen() - 1
 	for j := 0; j < lastIdx; j++ {
 		child := p.Children()[j]
 		childProp := selfPhysicalPlan.GetChildReqProps(j)

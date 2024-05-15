@@ -35,7 +35,7 @@ func (*pushDownTopNOptimizer) optimize(_ context.Context, p base.LogicalPlan, op
 	return p.PushDownTopN(nil, opt), planChanged, nil
 }
 
-// pushDownTopNForBaseLogicalPlan can be moved to func_pointer_misc for migrate baseLogicalPlan out of core.
+// pushDownTopNForBaseLogicalPlan can be moved when LogicalTopN has been moved to logicalop.
 func pushDownTopNForBaseLogicalPlan(lp base.LogicalPlan, topNLogicalPlan base.LogicalPlan,
 	opt *optimizetrace.LogicalOptimizeOp) base.LogicalPlan {
 	s := lp.GetBaseLogicalPlan().(*logicalop.BaseLogicalPlan)
