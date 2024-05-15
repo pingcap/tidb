@@ -255,18 +255,9 @@ type infoschemaV2 struct {
 // NewInfoSchemaV2 create infoschemaV2.
 func NewInfoSchemaV2(r autoid.Requirement, infoData *Data) infoschemaV2 {
 	return infoschemaV2{
-		infoSchema: &infoSchema{
-			infoSchemaMisc: infoSchemaMisc{
-				policyMap:             map[string]*model.PolicyInfo{},
-				resourceGroupMap:      map[string]*model.ResourceGroupInfo{},
-				ruleBundleMap:         map[int64]*placement.Bundle{},
-				referredForeignKeyMap: make(map[SchemaAndTableName][]*model.ReferredFKInfo),
-			},
-			schemaMap:           map[string]*schemaTables{},
-			sortedTablesBuckets: make([]sortedTables, bucketCount),
-		},
-		Data: infoData,
-		r:    r,
+		infoSchema: newInfoSchema(),
+		Data:       infoData,
+		r:          r,
 	}
 }
 
