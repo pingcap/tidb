@@ -101,20 +101,13 @@ type Data struct {
 	// Need full data in memory!
 	pid2tid *btree.BTreeG[partitionItem]
 
-	// tableInfoResident is a {dbName, tableID, schemaVersion} => model.TableInfo
-	// It is part of the model.TableInfo data kept in memory to accelerate the SchemaTableInfos API.
-	// We observe the pattern that SchemaTableInfos always come with filter.
+	// tableInfoResident stores {dbName, tableID, schemaVersion} => model.TableInfo
+	// It is part of the model.TableInfo data kept in memory to accelerate the list tables API.
+	// We observe the pattern that list table API always come with filter.
 	// All model.TableInfo with special attributes are here, currently the special attributes including:
 	//     TTLInfo, TiFlashReplica
-	// PlacementPolicyRef, Partition should be added later, and then maybe ForeignKeys, TableLock etc
+	// PlacementPolicyRef, Partition might be added later, and also ForeignKeys, TableLock etc
 	tableInfoResident *btree.BTreeG[tableInfoItem]
-}
-
-func hasSpecialAttributes(t *model.TableInfo) bool {
-	if t.TTLInfo != nil || t.TiFlashReplica != nil {
-		return true
-	}
-	return false
 }
 
 type tableInfoItem struct {
@@ -122,6 +115,7 @@ type tableInfoItem struct {
 	tableID       int64
 	schemaVersion int64
 	tableInfo     *model.TableInfo
+	tomb          bool
 }
 
 type partitionItem struct {
@@ -196,7 +190,7 @@ func (isd *Data) add(item tableItem, tbl table.Table) {
 		}
 	}
 	if hasSpecialAttributes(ti) {
-		isd.tableInfoResident.Set(tableInfoItem{item.dbName, item.tableID, item.schemaVersion, ti})
+		isd.tableInfoResident.Set(tableInfoItem{item.dbName, item.tableID, item.schemaVersion, ti, false})
 	}
 }
 
@@ -213,6 +207,7 @@ func (isd *Data) remove(item tableItem) {
 	item.tomb = true
 	isd.byID.Set(item)
 	isd.byName.Set(item)
+	isd.tableInfoResident.Set(tableInfoItem{item.dbName, item.tableID, item.schemaVersion, nil, true})
 	isd.tableCache.Remove(tableCacheKey{item.tableID, item.schemaVersion})
 }
 
@@ -1024,13 +1019,44 @@ func (b *bundleInfoBuilder) completeUpdateTablesV2(is *infoschemaV2) {
 	}
 }
 
-func (is *infoschemaV2) ListWithFilter(filter func(*model.TableInfo) bool) <-chan tableInfoResult {
+type specialAttributeFilter func(*model.TableInfo) bool
+
+var TTLAttribute specialAttributeFilter = func(t *model.TableInfo) bool {
+	return t.State == model.StatePublic && t.TTLInfo != nil
+}
+
+var TiFlashAttribute specialAttributeFilter = func(t *model.TableInfo) bool {
+	return t.TiFlashReplica != nil
+}
+
+func hasSpecialAttributes(t *model.TableInfo) bool {
+	return TTLAttribute(t) || TiFlashAttribute(t)
+}
+
+var AllSpecialAttribute specialAttributeFilter = hasSpecialAttributes
+
+func (is *infoschemaV2) ListTablesWithSpecialAttribute(filter specialAttributeFilter) <-chan tableInfoResult {
 	ch := make(chan tableInfoResult)
 	go func() {
 		defer close(ch)
 		var currDB string
+		var lastTableID int64
 		var res tableInfoResult
 		is.Data.tableInfoResident.Reverse(func(item tableInfoItem) bool {
+			if item.schemaVersion > is.infoSchema.schemaMetaVersion {
+				// Skip the versions that we are not looking for.
+				return true
+			}
+			// Dedup the same record of different versions.
+			if lastTableID != 0 && lastTableID == item.tableID {
+				return true
+			}
+			lastTableID = item.tableID
+
+			if item.tomb {
+				return true
+			}
+
 			if currDB == "" {
 				currDB = item.dbName
 				res = tableInfoResult{DBName: item.dbName}
@@ -1044,6 +1070,9 @@ func (is *infoschemaV2) ListWithFilter(filter func(*model.TableInfo) bool) <-cha
 			}
 			return true
 		})
+		if len(res.TableInfo) > 0 {
+			ch <- res
+		}
 	}()
 	return ch
 }

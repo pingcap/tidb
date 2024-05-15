@@ -284,7 +284,7 @@ type tableInfoResult struct {
 	TableInfo []*model.TableInfo
 }
 
-func (is *infoSchema) ListWithFilter(filter func(*model.TableInfo) bool) <-chan tableInfoResult {
+func (is *infoSchema) ListTablesWithSpecialAttribute(filter specialAttributeFilter) <-chan tableInfoResult {
 	ch := make(chan tableInfoResult)
 	go func() {
 		defer close(ch)

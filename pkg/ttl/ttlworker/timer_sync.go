@@ -184,9 +184,7 @@ func (g *TTLTimersSyncer) SyncTimers(ctx context.Context, is infoschema.InfoSche
 	defer se.Close()
 
 	currentTimerKeys := make(map[string]struct{})
-	ch := is.ListWithFilter(func(tblInfo *model.TableInfo) bool {
-		return tblInfo.State == model.StatePublic && tblInfo.TTLInfo != nil
-	})
+	ch := is.ListTablesWithSpecialAttribute(infoschema.TTLAttribute)
 	for v := range ch {
 		for _, tblInfo := range v.TableInfo {
 			for _, key := range g.syncTimersForTable(ctx, se, model.NewCIStr(v.DBName), tblInfo) {

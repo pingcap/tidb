@@ -29,6 +29,6 @@ type InfoSchema interface {
 	TableByID(id int64) (table.Table, bool)
 	SchemaTables(schema model.CIStr) []table.Table
 	FindTableByPartitionID(partitionID int64) (table.Table, *model.DBInfo, *model.PartitionDefinition)
-	ListWithFilter(filter func(*model.TableInfo) bool) <-chan tableInfoResult
+	ListTablesWithSpecialAttribute(filter specialAttributeFilter) <-chan tableInfoResult
 	base() *infoSchema
 }
