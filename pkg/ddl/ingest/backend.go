@@ -250,7 +250,17 @@ func (bc *litBackendCtx) unsafeImportAndReset(ei *engineInfo) error {
 		return err
 	}
 
-	err := bc.backend.ResetEngine(bc.ctx, ei.uuid)
+	resetFn := bc.backend.ResetEngineSkipAllocTS
+	mgr := bc.GetCheckpointManager()
+	if mgr == nil {
+		// disttask case, no need to refresh TS.
+		//
+		// TODO(lance6716): for disttask local sort case, we need to use a fixed TS. But
+		// it doesn't have checkpoint, so we need to find a way to save TS.
+		resetFn = bc.backend.ResetEngine
+	}
+
+	err := resetFn(bc.ctx, ei.uuid)
 	if err != nil {
 		logutil.Logger(bc.ctx).Error(LitErrResetEngineFail, zap.Int64("index ID", ei.indexID))
 		err1 := ei.closedEngine.Cleanup(bc.ctx)
@@ -262,6 +272,22 @@ func (bc *litBackendCtx) unsafeImportAndReset(ei *engineInfo) error {
 		ei.closedEngine = nil
 		return err
 	}
+
+	if mgr == nil {
+		return nil
+	}
+
+	// for local disk case, we need to refresh TS because duplicate detection
+	// requires each ingest to have a unique TS.
+	//
+	// TODO(lance6716): there's still a chance that data is imported but because of
+	// checkpoint is low-watermark, the data will still be imported again with
+	// another TS after failover. Need to refine the checkpoint mechanism.
+	newTS, err := mgr.refreshTSAndUpdateCP()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	ei.openedEngine.SetTS(newTS)
 	return nil
 }
 
@@ -269,6 +295,10 @@ func (bc *litBackendCtx) unsafeImportAndReset(ei *engineInfo) error {
 var ForceSyncFlagForTest = false
 
 func (bc *litBackendCtx) checkFlush(mode FlushMode) (shouldFlush bool, shouldImport bool) {
+	failpoint.Inject("forceSyncFlagForTest", func() {
+		// used in a manual test
+		ForceSyncFlagForTest = true
+	})
 	if mode == FlushModeForceFlushAndImport || ForceSyncFlagForTest {
 		return true, true
 	}

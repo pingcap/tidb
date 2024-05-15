@@ -25,12 +25,15 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
 	sess "github.com/pingcap/tidb/pkg/ddl/internal/session"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/tikv/client-go/v2/oracle"
+	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
 )
 
@@ -46,6 +49,7 @@ type CheckpointManager struct {
 	jobID         int64
 	indexIDs      []int64
 	localStoreDir string
+	pdCli         pd.Client
 	logger        *zap.Logger
 
 	// Derived and unchanged after the initialization.
@@ -64,14 +68,15 @@ type CheckpointManager struct {
 	endKeyFlushed   kv.Key
 
 	// Persisted to the storage.
-	minFlushedKey  kv.Key
-	minImportedKey kv.Key
-	flushedKeyCnt  int
-	importedKeyCnt int
+	flushedKeyLowWatermark  kv.Key
+	importedKeyLowWatermark kv.Key
+	flushedKeyCnt           int
+	importedKeyCnt          int
 	// Global meta.
 	pidImported      int64
 	startKeyImported kv.Key
 	endKeyImported   kv.Key
+	ts               uint64
 
 	// For persisting the checkpoint periodically.
 	updaterWg sync.WaitGroup
@@ -100,6 +105,7 @@ func NewCheckpointManager(
 	jobID int64,
 	indexIDs []int64,
 	localStoreDir string,
+	pdCli pd.Client,
 ) (*CheckpointManager, error) {
 	instanceAddr := InstanceAddr()
 	ctx2, cancel := context.WithCancel(ctx)
@@ -114,6 +120,7 @@ func NewCheckpointManager(
 		jobID:         jobID,
 		indexIDs:      indexIDs,
 		localStoreDir: localStoreDir,
+		pdCli:         pdCli,
 		logger:        logger,
 		checkpoints:   make(map[int]*taskCheckpoint, 16),
 		mu:            sync.Mutex{},
@@ -121,7 +128,7 @@ func NewCheckpointManager(
 		updaterWg:     sync.WaitGroup{},
 		updaterCh:     make(chan chan struct{}),
 	}
-	err := cm.resumeCheckpoint()
+	err := cm.resumeOrInitCheckpoint()
 	if err != nil {
 		return nil, err
 	}
@@ -147,10 +154,10 @@ func InstanceAddr() string {
 func (s *CheckpointManager) IsKeyProcessed(end kv.Key) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if len(s.minImportedKey) > 0 && end.Cmp(s.minImportedKey) <= 0 {
+	if len(s.importedKeyLowWatermark) > 0 && end.Cmp(s.importedKeyLowWatermark) <= 0 {
 		return true
 	}
-	return s.localDataIsValid && len(s.minFlushedKey) > 0 && end.Cmp(s.minFlushedKey) <= 0
+	return s.localDataIsValid && len(s.flushedKeyLowWatermark) > 0 && end.Cmp(s.flushedKeyLowWatermark) <= 0
 }
 
 // Status returns the status of the checkpoint.
@@ -162,7 +169,7 @@ func (s *CheckpointManager) Status() (keyCnt int, minKeyImported kv.Key) {
 		total += cp.writtenKeys
 	}
 	// TODO(lance6716): ???
-	return s.flushedKeyCnt + total, s.minImportedKey
+	return s.flushedKeyCnt + total, s.importedKeyLowWatermark
 }
 
 // Register registers a new task. taskID MUST be continuous ascending and start
@@ -201,12 +208,21 @@ func (s *CheckpointManager) UpdateWrittenKeys(taskID int, delta int) error {
 		return err
 	}
 
+	failpoint.Inject("resignAfterFlush", func() {
+		// used in a manual test
+		ResignOwnerForTest.Store(true)
+		// wait until ResignOwnerForTest is processed
+		for ResignOwnerForTest.Load() {
+			time.Sleep(100 * time.Millisecond)
+		}
+	})
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.afterFlush()
-	if imported && s.minImportedKey.Cmp(s.minFlushedKey) != 0 {
+	if imported && s.importedKeyLowWatermark.Cmp(s.flushedKeyLowWatermark) != 0 {
 		// TODO(lance6716): add warning log if cmp > 0
-		s.minImportedKey = s.minFlushedKey
+		s.importedKeyLowWatermark = s.flushedKeyLowWatermark
 		s.importedKeyCnt = s.flushedKeyCnt
 		s.dirty = true
 
@@ -225,7 +241,7 @@ func (s *CheckpointManager) afterFlush() {
 			break
 		}
 		s.minTaskIDFinished++
-		s.minFlushedKey = cp.endKey
+		s.flushedKeyLowWatermark = cp.endKey
 		s.flushedKeyCnt += cp.totalKeys
 		delete(s.checkpoints, s.minTaskIDFinished)
 		s.dirty = true
@@ -250,16 +266,9 @@ func (s *CheckpointManager) Flush() {
 	s.afterFlush()
 	s.mu.Unlock()
 
-	finishCh := make(chan struct{})
-	select {
-	case s.updaterCh <- finishCh:
-	case <-s.ctx.Done():
-		return
-	}
-	// wait updateCheckpointLoop to finish checkpoint update.
-	select {
-	case <-finishCh:
-	case <-s.ctx.Done():
+	err = s.updateCheckpoint()
+	if err != nil {
+		s.logger.Error("update checkpoint failed", zap.Error(err))
 	}
 }
 
@@ -273,13 +282,20 @@ func (s *CheckpointManager) Reset(newPhysicalID int64, start, end kv.Key) {
 		zap.Int64("oldPhysicalID", s.pidFlushed),
 		zap.Int("flushedKeyCnt", s.flushedKeyCnt))
 	if s.pidFlushed != newPhysicalID {
-		s.minFlushedKey = nil
-		s.minImportedKey = nil
+		s.flushedKeyLowWatermark = nil
+		s.importedKeyLowWatermark = nil
 		s.minTaskIDFinished = 0
 		s.pidFlushed = newPhysicalID
 		s.startKeyFlushed = start
 		s.endKeyFlushed = end
 	}
+}
+
+// GetTS returns the TS saved in checkpoint.
+func (s *CheckpointManager) GetTS() uint64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.ts
 }
 
 // JobReorgMeta is the metadata for a reorg job.
@@ -298,6 +314,8 @@ type ReorgCheckpoint struct {
 	PhysicalID int64  `json:"physical_id"`
 	StartKey   kv.Key `json:"start_key"`
 	EndKey     kv.Key `json:"end_key"`
+	// TS of next engine ingest.
+	TS uint64 `json:"ts"`
 
 	Version int64 `json:"version"`
 }
@@ -308,14 +326,14 @@ const (
 	JobCheckpointVersion1       = 1
 )
 
-func (s *CheckpointManager) resumeCheckpoint() error {
+func (s *CheckpointManager) resumeOrInitCheckpoint() error {
 	sessCtx, err := s.sessPool.Get()
 	if err != nil {
 		return errors.Trace(err)
 	}
 	defer s.sessPool.Put(sessCtx)
 	ddlSess := sess.NewSession(sessCtx)
-	return ddlSess.RunInTxn(func(se *sess.Session) error {
+	err = ddlSess.RunInTxn(func(se *sess.Session) error {
 		template := "select reorg_meta from mysql.tidb_ddl_reorg where job_id = %d and ele_type = %s;"
 		sql := fmt.Sprintf(template, s.jobID, util.WrapKey2String(meta.IndexElementKey))
 		ctx := kv.WithInternalSourceType(s.ctx, kv.InternalTxnBackfillDDLPrefix+"add_index")
@@ -323,6 +341,7 @@ func (s *CheckpointManager) resumeCheckpoint() error {
 		if err != nil {
 			return errors.Trace(err)
 		}
+
 		if len(rows) == 0 || rows[0].IsNull(0) {
 			return nil
 		}
@@ -333,20 +352,21 @@ func (s *CheckpointManager) resumeCheckpoint() error {
 			return errors.Trace(err)
 		}
 		if cp := reorgMeta.Checkpoint; cp != nil {
-			s.minImportedKey = cp.GlobalSyncKey
+			s.importedKeyLowWatermark = cp.GlobalSyncKey
 			s.importedKeyCnt = cp.GlobalKeyCount
 			s.pidImported = cp.PhysicalID
 			s.startKeyImported = cp.StartKey
 			s.endKeyImported = cp.EndKey
+			s.ts = cp.TS
 			if util.FolderNotEmpty(s.localStoreDir) &&
 				(s.instanceAddr == cp.InstanceAddr || cp.InstanceAddr == "" /* initial state */) {
 				s.localDataIsValid = true
-				s.minFlushedKey = cp.LocalSyncKey
+				s.flushedKeyLowWatermark = cp.LocalSyncKey
 				s.flushedKeyCnt = cp.LocalKeyCount
 			}
 			s.logger.Info("resume checkpoint",
-				zap.String("minimum flushed key", hex.EncodeToString(s.minFlushedKey)),
-				zap.String("minimum imported key", hex.EncodeToString(s.minImportedKey)),
+				zap.String("flushed key low watermark", hex.EncodeToString(s.flushedKeyLowWatermark)),
+				zap.String("imported key low watermark", hex.EncodeToString(s.importedKeyLowWatermark)),
 				zap.Int64("physical table ID", cp.PhysicalID),
 				zap.String("previous instance", cp.InstanceAddr),
 				zap.String("current instance", s.instanceAddr))
@@ -355,18 +375,36 @@ func (s *CheckpointManager) resumeCheckpoint() error {
 		s.logger.Info("checkpoint is empty")
 		return nil
 	})
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	if s.ts > 0 {
+		return nil
+	}
+	// if TS is not set, we need to allocate a TS and save it to the storage before
+	// continue.
+	p, l, err := s.pdCli.GetTS(s.ctx)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	ts := oracle.ComposeTS(p, l)
+	s.ts = ts
+	return s.updateCheckpointImpl()
 }
 
-// updateCheckpoint is only used by updateCheckpointLoop goroutine.
-func (s *CheckpointManager) updateCheckpoint() error {
+// updateCheckpointImpl is only used by updateCheckpointLoop goroutine or in
+// NewCheckpointManager. In other cases, use updateCheckpoint instead.
+func (s *CheckpointManager) updateCheckpointImpl() error {
 	s.mu.Lock()
-	minKeyFlushed := s.minFlushedKey
-	minKeyImported := s.minImportedKey
+	flushedKeyLowWatermark := s.flushedKeyLowWatermark
+	importedKeyLowWatermark := s.importedKeyLowWatermark
 	flushedKeyCnt := s.flushedKeyCnt
 	importedKeyCnt := s.importedKeyCnt
 	pidImported := s.pidImported
 	startKeyImported := s.startKeyImported
 	endKeyImported := s.endKeyImported
+	ts := s.ts
 	s.mu.Unlock()
 
 	sessCtx, err := s.sessPool.Get()
@@ -378,14 +416,15 @@ func (s *CheckpointManager) updateCheckpoint() error {
 	err = ddlSess.RunInTxn(func(se *sess.Session) error {
 		template := "update mysql.tidb_ddl_reorg set reorg_meta = %s where job_id = %d and ele_type = %s;"
 		cp := &ReorgCheckpoint{
-			LocalSyncKey:   minKeyFlushed,
-			GlobalSyncKey:  minKeyImported,
+			LocalSyncKey:   flushedKeyLowWatermark,
+			GlobalSyncKey:  importedKeyLowWatermark,
 			LocalKeyCount:  flushedKeyCnt,
 			GlobalKeyCount: importedKeyCnt,
 			InstanceAddr:   s.instanceAddr,
 			PhysicalID:     pidImported,
 			StartKey:       startKeyImported,
 			EndKey:         endKeyImported,
+			TS:             ts,
 			Version:        JobCheckpointVersionCurrent,
 		}
 		rawReorgMeta, err := json.Marshal(JobReorgMeta{Checkpoint: cp})
@@ -404,20 +443,24 @@ func (s *CheckpointManager) updateCheckpoint() error {
 		return nil
 	})
 	s.logger.Info("update checkpoint",
-		zap.String("local checkpoint", hex.EncodeToString(minKeyFlushed)),
-		zap.String("global checkpoint", hex.EncodeToString(minKeyImported)),
+		zap.String("local checkpoint", hex.EncodeToString(flushedKeyLowWatermark)),
+		zap.String("global checkpoint", hex.EncodeToString(importedKeyLowWatermark)),
 		zap.Int64("global physical ID", pidImported),
 		zap.Error(err))
 	return err
 }
 
 func (s *CheckpointManager) updateCheckpointLoop() {
+	failpoint.Inject("checkpointLoopExit", func() {
+		// used in a manual test
+		failpoint.Return()
+	})
 	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()
 	for {
 		select {
 		case finishCh := <-s.updaterCh:
-			err := s.updateCheckpoint()
+			err := s.updateCheckpointImpl()
 			if err != nil {
 				s.logger.Error("update checkpoint failed", zap.Error(err))
 			}
@@ -429,7 +472,7 @@ func (s *CheckpointManager) updateCheckpointLoop() {
 				continue
 			}
 			s.mu.Unlock()
-			err := s.updateCheckpoint()
+			err := s.updateCheckpointImpl()
 			if err != nil {
 				s.logger.Error("periodically update checkpoint failed", zap.Error(err))
 			}
@@ -437,4 +480,36 @@ func (s *CheckpointManager) updateCheckpointLoop() {
 			return
 		}
 	}
+}
+
+func (s *CheckpointManager) updateCheckpoint() error {
+	failpoint.Inject("checkpointLoopExit", func() {
+		// used in a manual test
+		failpoint.Return(errors.New("failpoint triggered so can't update checkpoint"))
+	})
+	finishCh := make(chan struct{})
+	select {
+	case s.updaterCh <- finishCh:
+	case <-s.ctx.Done():
+		return s.ctx.Err()
+	}
+	// wait updateCheckpointLoop to finish checkpoint update.
+	select {
+	case <-finishCh:
+	case <-s.ctx.Done():
+		return s.ctx.Err()
+	}
+	return nil
+}
+
+func (s *CheckpointManager) refreshTSAndUpdateCP() (uint64, error) {
+	p, l, err := s.pdCli.GetTS(s.ctx)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	newTS := oracle.ComposeTS(p, l)
+	s.mu.Lock()
+	s.ts = newTS
+	s.mu.Unlock()
+	return newTS, s.updateCheckpoint()
 }

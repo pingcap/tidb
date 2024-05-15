@@ -128,6 +128,7 @@ go_library(
         "//pkg/table/tables",
         "//pkg/tablecodec",
         "//pkg/tidb-binlog/pump_client",
+        "//pkg/ttl/cache",
         "//pkg/types",
         "//pkg/types/parser_driver",
         "//pkg/util",

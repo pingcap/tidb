@@ -36,6 +36,12 @@ func (*pushDownTopNOptimizer) optimize(_ context.Context, p base.LogicalPlan, op
 
 // PushDownTopN implements the LogicalPlan interface.
 func (s *baseLogicalPlan) PushDownTopN(topNLogicalPlan base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) base.LogicalPlan {
+	return pushDownTopNForBaseLogicalPlan(s, topNLogicalPlan, opt)
+}
+
+// pushDownTopNForBaseLogicalPlan can be moved to func_pointer_misc for migrate baseLogicalPlan out of core.
+func pushDownTopNForBaseLogicalPlan(s *baseLogicalPlan, topNLogicalPlan base.LogicalPlan,
+	opt *optimizetrace.LogicalOptimizeOp) base.LogicalPlan {
 	var topN *LogicalTopN
 	if topNLogicalPlan != nil {
 		topN = topNLogicalPlan.(*LogicalTopN)
