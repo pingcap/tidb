@@ -1754,6 +1754,7 @@ func (p *preprocessor) updateStateFromStaleReadProcessor() error {
 				if err := txnManager.OnStmtStart(context.TODO(), txnManager.GetCurrentStmt()); err != nil {
 					return err
 				}
+				p.sctx.GetSessionVars().TxnCtx.StaleReadTs = p.LastSnapshotTS
 			}
 		}
 	}
