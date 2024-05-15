@@ -106,6 +106,8 @@ func UpdateServiceSafePoint(ctx context.Context, pdClient pd.Client, sp BRServic
 func UpdateServiceSafePointWithGCManagementType(ctx context.Context, pdClient pd.Client, serviceID string, ttl int64, serviceSafePoint uint64) (uint64, error) {
 	var lastServiceSafePoint uint64
 	var err error
+	var keyspaceID uint32
+	var gcManagementType string
 	keyspaceName := config.GetGlobalConfig().KeyspaceName
 
 	if keyspaceName == "" {
@@ -117,7 +119,7 @@ func UpdateServiceSafePointWithGCManagementType(ctx context.Context, pdClient pd
 			zap.Uint64("service-safe-point", serviceSafePoint),
 			zap.Uint64("last-service-safe-point", lastServiceSafePoint))
 	} else {
-		keyspaceID, gcManagementType, err := getKeyspaceMeta(ctx, pdClient, keyspaceName)
+		keyspaceID, gcManagementType, err = getKeyspaceMeta(ctx, pdClient, keyspaceName)
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
