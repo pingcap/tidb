@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
@@ -214,7 +215,8 @@ func (c *columnStatsUsageCollector) addHistNeededColumns(ds *DataSource) {
 		if !column.Hidden {
 			tblColID := model.TableItemID{TableID: ds.physicalTableID, ID: column.ID, IsIndex: false}
 			if _, ok := c.histNeededCols[tblColID]; !ok {
-				c.histNeededCols[tblColID] = false
+				// if columns is an primary key column, we need to load the full stats of the table.
+				c.histNeededCols[tblColID] = mysql.HasPriKeyFlag(column.GetFlag())
 			}
 		}
 	}
