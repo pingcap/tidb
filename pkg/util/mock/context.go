@@ -250,7 +250,7 @@ func (c *Context) GetDistSQLCtx() *distsqlctx.DistSQLContext {
 	sc := vars.StmtCtx
 
 	return &distsqlctx.DistSQLContext{
-		AppendWarning:                        sc.AppendWarning,
+		WarnHandler:                          sc.WarnHandler,
 		InRestrictedSQL:                      sc.InRestrictedSQL,
 		Client:                               c.GetClient(),
 		EnabledRateLimitAction:               vars.EnabledRateLimitAction,
@@ -303,10 +303,10 @@ func (c *Context) GetBuildPBCtx() *planctx.BuildPBContext {
 		// the following fields are used to build `expression.PushDownContext`.
 		// TODO: it'd be better to embed `expression.PushDownContext` in `BuildPBContext`. But `expression` already
 		// depends on this package, so we need to move `expression.PushDownContext` to a standalone package first.
-		GroupConcatMaxLen:  c.GetSessionVars().GroupConcatMaxLen,
-		InExplainStmt:      c.GetSessionVars().StmtCtx.InExplainStmt,
-		AppendWarning:      c.GetSessionVars().StmtCtx.AppendWarning,
-		AppendExtraWarning: c.GetSessionVars().StmtCtx.AppendExtraWarning,
+		GroupConcatMaxLen: c.GetSessionVars().GroupConcatMaxLen,
+		InExplainStmt:     c.GetSessionVars().StmtCtx.InExplainStmt,
+		WarnHandler:       c.GetSessionVars().StmtCtx.WarnHandler,
+		ExtraWarnghandler: c.GetSessionVars().StmtCtx.ExtraWarnHandler,
 	}
 }
 
