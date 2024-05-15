@@ -752,6 +752,7 @@ func (h *Handle) InitStats(is infoschema.InfoSchema) (err error) {
 		for _, col := range table.Columns {
 			if col.StatsAvailable() {
 				if mysql.HasPriKeyFlag(col.Info.GetFlag()) {
+					col.IsHandle
 					col.StatsLoadedStatus = statistics.NewStatsFullLoadStatus()
 				} else {
 					col.StatsLoadedStatus = statistics.NewStatsAllEvictedStatus()
