@@ -436,7 +436,7 @@ func CollectColumnStatsUsage(lp base.LogicalPlan, predicate, histNeeded bool) (
 		if histNeeded {
 			collector.histNeededCols[*colToTriggerLoad] = true
 		} else {
-			statistics.HistogramNeededItems.Insert(*colToTriggerLoad)
+			statistics.HistogramNeededItems.Insert(*colToTriggerLoad, true)
 		}
 	})
 	var (
