@@ -5,6 +5,8 @@ package backup_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"sync"
 	"testing"
 	"time"
 
@@ -40,6 +42,46 @@ type testBackup struct {
 
 	cluster *mock.Cluster
 	storage storage.ExternalStorage
+}
+
+var _ backup.LoopSender = (*mockBackupLoopSender)(nil)
+
+type mockBackupLoopSender struct {
+	sync.Mutex
+	backupResponses map[uint64][]*backup.ResponseAndStore
+}
+
+func (m *mockBackupLoopSender) GetGRPCClient(ctx context.Context, storeID uint64) (backuppb.BackupClient, error) {
+	// we don't need connect real tikv in unit test
+	// and we have already mock the backup response in `AsyncStartStoreBackup`
+	// so just return nil here
+	return nil, nil
+}
+
+func (m *mockBackupLoopSender) AsyncStartStoreBackup(
+	ctx context.Context,
+	round uint64,
+	storeID uint64,
+	request backuppb.BackupRequest,
+	cli backuppb.BackupClient,
+	respCh chan *backup.ResponseAndStore,
+) {
+	go func() {
+		defer close(respCh)
+		m.Lock()
+		resps := m.backupResponses[storeID]
+		m.Unlock()
+		fmt.Println("resps", resps)
+		for _, r := range resps {
+			select {
+			case <-ctx.Done():
+				return
+			case respCh <- r:
+				fmt.Println("in sending", resps)
+
+			}
+		}
+	}()
 }
 
 func createBackupSuite(t *testing.T) *testBackup {
@@ -301,4 +343,72 @@ func TestBuildProgressRangeTree(t *testing.T) {
 	require.Equal(t, []byte("aa"), contained.Origin.StartKey)
 	require.Equal(t, []byte("b"), contained.Origin.EndKey)
 	require.NoError(t, err)
+}
+
+func TestMainBackupLoop(t *testing.T) {
+	s := createBackupSuite(t)
+	backgroundCtx := context.Background()
+
+	// test 3 stores backup
+	s.mockCluster.AddStore(1, "127.0.0.1:20160")
+	s.mockCluster.AddStore(2, "127.0.0.1:20161")
+
+	stores, err := s.mockPDClient.GetAllStores(backgroundCtx)
+	require.NoError(t, err)
+	require.Len(t, stores, 2)
+
+	ranges := []rtree.Range{
+		{
+			StartKey: []byte("aa"),
+			EndKey:   []byte("b"),
+		},
+		{
+			StartKey: []byte("c"),
+			EndKey:   []byte("d"),
+		},
+	}
+	tree, err := s.backupClient.BuildProgressRangeTree(ranges)
+	require.NoError(t, err)
+
+	mockBackupResponses := make(map[uint64][]*backup.ResponseAndStore)
+	mockBackupResponses[1] = []*backup.ResponseAndStore{
+		{
+			StoreID: 1,
+			Resp: &backuppb.BackupResponse{
+				StartKey: []byte("aa"),
+				EndKey:   []byte("ab"),
+			},
+		},
+		{
+			StoreID: 1,
+			Resp: &backuppb.BackupResponse{
+				StartKey: []byte("ab"),
+				EndKey:   []byte("b"),
+			},
+		},
+	}
+	mockBackupResponses[2] = []*backup.ResponseAndStore{
+		{
+			StoreID: 2,
+			Resp: &backuppb.BackupResponse{
+				StartKey: []byte("c"),
+				EndKey:   []byte("d"),
+			},
+		},
+	}
+	ch := make(chan backup.StoreBackupPolicy)
+	mainLoop := &backup.MainBackupLoop{
+		LoopSender: &mockBackupLoopSender{
+			backupResponses: mockBackupResponses,
+		},
+
+		BackupClient:       s.backupClient,
+		GlobalProgressTree: &tree,
+		ReplicaReadLabel:   nil,
+		StateChan:          ch,
+		ProgressCallBack:   func() {},
+	}
+
+	req := backuppb.BackupRequest{}
+	require.NoError(t, mainLoop.Run(backgroundCtx, req))
 }
