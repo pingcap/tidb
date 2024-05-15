@@ -312,9 +312,10 @@ select * from t use index (i3);
 
 # TestMultiSchemaChangeTableOption
 drop table if exists t;
-create table t (a int auto_increment primary key, b int);
-alter table t modify column b tinyint, auto_increment = 100;
-insert into t (b) values (1);
+create table t (a int auto_increment primary key, b int) auto_id_cache = 100;
+insert into t(b) values(1);
+alter table t modify column b tinyint, auto_increment = 200;
+insert into t (b) values (2);
 select * from t;
 drop table if exists t;
 create table t (a int auto_increment primary key, b int);

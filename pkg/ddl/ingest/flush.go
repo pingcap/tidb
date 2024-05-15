@@ -19,6 +19,7 @@ func TryFlushAllIndexes(flushCtrl FlushController, mode FlushMode, indexIDs []in
 	allFlushed := true
 	allImported := true
 	for _, idxID := range indexIDs {
+		// TODO(lance6716): use flushCtrl.Flush(indexIDs, mode)
 		flushed, imported, err := flushCtrl.Flush(idxID, mode)
 		if err != nil {
 			return false, false, idxID, err

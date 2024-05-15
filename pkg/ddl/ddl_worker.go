@@ -845,7 +845,7 @@ func (w *JobContext) setDDLLabelForDiagnosis(jobType model.ActionType) {
 }
 
 func (w *worker) HandleJobDone(d *ddlCtx, job *model.Job, t *meta.Meta) error {
-	if err := w.checkOwnerBeforeCommit(); err != nil {
+	if err := w.checkBeforeCommit(); err != nil {
 		return err
 	}
 	err := w.finishDDLJob(t, job)
@@ -956,7 +956,7 @@ func (w *worker) HandleDDLJobTable(d *ddlCtx, job *model.Job) (int64, error) {
 		return 0, err
 	}
 
-	if err = w.checkOwnerBeforeCommit(); err != nil {
+	if err = w.checkBeforeCommit(); err != nil {
 		d.unlockSchemaVersion(job.ID)
 		return 0, err
 	}
@@ -1008,12 +1008,17 @@ func (w *worker) HandleDDLJobTable(d *ddlCtx, job *model.Job) (int64, error) {
 	return schemaVer, nil
 }
 
-func (w *worker) checkOwnerBeforeCommit() error {
+func (w *worker) checkBeforeCommit() error {
 	if !w.ddlCtx.isOwner() && w.tp != localWorker {
 		// Since this TiDB instance is not a DDL owner anymore,
 		// it should not commit any transaction.
 		w.sess.Rollback()
 		return dbterror.ErrNotOwner
+	}
+
+	if err := w.ctx.Err(); err != nil {
+		// The worker context is canceled, it should not commit any transaction.
+		return err
 	}
 	return nil
 }

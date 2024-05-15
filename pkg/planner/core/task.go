@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/cost"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/baseimpl"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
@@ -386,12 +387,12 @@ func (p *PhysicalHashJoin) attach2TaskForMpp(tasks ...base.Task) base.Task {
 	lTask, lok := tasks[0].(*MppTask)
 	rTask, rok := tasks[1].(*MppTask)
 	if !lok || !rok {
-		return invalidTask
+		return base.InvalidTask
 	}
 	if p.mppShuffleJoin {
 		// protection check is case of some bugs
 		if len(lTask.hashCols) != len(rTask.hashCols) || len(lTask.hashCols) == 0 {
-			return invalidTask
+			return base.InvalidTask
 		}
 		lTask, rTask = p.convertPartitionKeysIfNeed(lTask, rTask)
 	}
@@ -446,8 +447,10 @@ func (p *PhysicalHashJoin) attach2TaskForMpp(tasks ...base.Task) base.Task {
 
 			proj.SetSchema(p.Schema().Clone())
 			for _, hashCol := range hashColArray {
-				if !proj.Schema().Contains(hashCol) {
-					proj.Schema().Append(hashCol)
+				if !proj.Schema().Contains(hashCol) && defaultSchema.Contains(hashCol) {
+					joinCol := defaultSchema.Columns[defaultSchema.ColumnIndex(hashCol)]
+					proj.Exprs = append(proj.Exprs, joinCol)
+					proj.Schema().Append(joinCol.Clone().(*expression.Column))
 				}
 			}
 			attachPlan2Task(proj, task)
@@ -470,11 +473,16 @@ func (p *PhysicalHashJoin) attach2TaskForMpp(tasks ...base.Task) base.Task {
 					Exprs: make([]expression.Expression, 0, len(hashColArray)),
 				}.Init(p.SCtx(), p.StatsInfo(), p.QueryBlockOffset())
 
+				clonedHashColArray := make([]*expression.Column, 0, len(task.hashCols))
 				for _, hashCol := range hashColArray {
-					proj.Exprs = append(proj.Exprs, hashCol)
+					if defaultSchema.Contains(hashCol) {
+						joinCol := defaultSchema.Columns[defaultSchema.ColumnIndex(hashCol)]
+						proj.Exprs = append(proj.Exprs, joinCol)
+						clonedHashColArray = append(clonedHashColArray, joinCol.Clone().(*expression.Column))
+					}
 				}
 
-				proj.SetSchema(expression.NewSchema(hashColArray...))
+				proj.SetSchema(expression.NewSchema(clonedHashColArray...))
 				attachPlan2Task(proj, task)
 			}
 		}
@@ -590,7 +598,7 @@ func (t *CopTask) handleRootTaskConds(ctx base.PlanContext, newTask *RootTask) {
 		selectivity, _, err := cardinality.Selectivity(ctx, t.tblColHists, t.rootTaskConds, nil)
 		if err != nil {
 			logutil.BgLogger().Debug("calculate selectivity failed, use selection factor", zap.Error(err))
-			selectivity = SelectionFactor
+			selectivity = cost.SelectionFactor
 		}
 		sel := PhysicalSelection{Conditions: t.rootTaskConds}.Init(ctx, newTask.GetPlan().StatsInfo().Scale(selectivity), newTask.GetPlan().QueryBlockOffset())
 		sel.fromDataSource = true
@@ -667,10 +675,12 @@ func (p *PhysicalLimit) Attach2Task(tasks ...base.Task) base.Task {
 		} else if !cop.idxMergeIsIntersection {
 			// We only support push part of the order prop down to index merge build case.
 			if len(cop.rootTaskConds) == 0 {
-				if cop.indexPlanFinished {
-					// when the index plan is finished, sink the limit to the index merge table side.
+				// For double read which requires order being kept, the limit cannot be pushed down to the table side,
+				// because handles would be reordered before being sent to table scan.
+				if cop.indexPlanFinished && !cop.keepOrder {
+					// when the index plan is finished and index plan is not ordered, sink the limit to the index merge table side.
 					suspendLimitAboveTablePlan()
-				} else {
+				} else if !cop.indexPlanFinished {
 					// cop.indexPlanFinished = false indicates the table side is a pure table-scan, sink the limit to the index merge index side.
 					newCount := p.Offset + p.Count
 					limitChildren := make([]base.PhysicalPlan, 0, len(cop.idxMergePartPlans))
@@ -683,6 +693,10 @@ func (p *PhysicalLimit) Attach2Task(tasks ...base.Task) base.Task {
 						limitChildren = append(limitChildren, pushedDownLimit)
 					}
 					cop.idxMergePartPlans = limitChildren
+					t = cop.ConvertToRootTask(p.SCtx())
+					sunk = p.sinkIntoIndexMerge(t)
+				} else {
+					// when there are some limitations, just sink the limit upon the index merge reader.
 					t = cop.ConvertToRootTask(p.SCtx())
 					sunk = p.sinkIntoIndexMerge(t)
 				}
@@ -1003,7 +1017,7 @@ func (p *PhysicalExpand) Attach2Task(tasks ...base.Task) base.Task {
 		mpp.p = p
 		return mpp
 	}
-	return invalidTask
+	return base.InvalidTask
 }
 
 // Attach2Task implements PhysicalPlan interface.
@@ -1038,11 +1052,11 @@ func (p *PhysicalUnionAll) attach2MppTasks(tasks ...base.Task) base.Task {
 		} else if root, ok := tk.(*RootTask); ok && root.IsEmpty() {
 			continue
 		} else {
-			return invalidTask
+			return base.InvalidTask
 		}
 	}
 	if len(childPlans) == 0 {
-		return invalidTask
+		return base.InvalidTask
 	}
 	p.SetChildren(childPlans...)
 	return t
@@ -1055,8 +1069,8 @@ func (p *PhysicalUnionAll) Attach2Task(tasks ...base.Task) base.Task {
 			if p.TP() == plancodec.TypePartitionUnion {
 				// In attach2MppTasks(), will attach PhysicalUnion to mppTask directly.
 				// But PartitionUnion cannot pushdown to tiflash, so here disable PartitionUnion pushdown to tiflash explicitly.
-				// For now, return invalidTask immediately, we can refine this by letting childTask of PartitionUnion convert to rootTask.
-				return invalidTask
+				// For now, return base.InvalidTask immediately, we can refine this by letting childTask of PartitionUnion convert to rootTask.
+				return base.InvalidTask
 			}
 			return p.attach2MppTasks(tasks...)
 		}
@@ -1744,7 +1758,7 @@ func (p *PhysicalStreamAgg) Attach2Task(tasks ...base.Task) base.Task {
 			storeType := cop.getStoreType()
 			// TiFlash doesn't support Stream Aggregation
 			if storeType == kv.TiFlash && len(p.GroupByItems) > 0 {
-				return invalidTask
+				return base.InvalidTask
 			}
 			partialAgg, finalAgg := p.newPartialAggregate(storeType, false)
 			if partialAgg != nil {
@@ -2108,7 +2122,7 @@ func (p *PhysicalHashAgg) attach2TaskForMpp(tasks ...base.Task) base.Task {
 	t := tasks[0].Copy()
 	mpp, ok := t.(*MppTask)
 	if !ok {
-		return invalidTask
+		return base.InvalidTask
 	}
 	switch p.MppRunMode {
 	case Mpp1Phase:
@@ -2125,7 +2139,7 @@ func (p *PhysicalHashAgg) attach2TaskForMpp(tasks ...base.Task) base.Task {
 		proj := p.convertAvgForMPP()
 		partialAgg, finalAgg := p.newPartialAggregate(kv.TiFlash, true)
 		if partialAgg == nil {
-			return invalidTask
+			return base.InvalidTask
 		}
 		attachPlan2Task(partialAgg, mpp)
 		partitionCols := p.MppPartitionCols
@@ -2135,7 +2149,7 @@ func (p *PhysicalHashAgg) attach2TaskForMpp(tasks ...base.Task) base.Task {
 			for _, expr := range items {
 				col, ok := expr.(*expression.Column)
 				if !ok {
-					return invalidTask
+					return base.InvalidTask
 				}
 				partitionCols = append(partitionCols, &property.MPPPartitionColumn{
 					Col:       col,
@@ -2174,12 +2188,12 @@ func (p *PhysicalHashAgg) attach2TaskForMpp(tasks ...base.Task) base.Task {
 		proj := p.convertAvgForMPP()
 		partialAgg, finalAgg := p.newPartialAggregate(kv.TiFlash, true)
 		if finalAgg == nil {
-			return invalidTask
+			return base.InvalidTask
 		}
 
 		final, middle, partial, proj4Partial, err := p.adjust3StagePhaseAgg(partialAgg, finalAgg, canUse3StageAgg, groupingSets, mpp)
 		if err != nil {
-			return invalidTask
+			return base.InvalidTask
 		}
 
 		// partial agg proj would be null if one scalar agg cannot run in two-phase mode
@@ -2227,7 +2241,7 @@ func (p *PhysicalHashAgg) attach2TaskForMpp(tasks ...base.Task) base.Task {
 		attachPlan2Task(proj, newMpp)
 		return newMpp
 	default:
-		return invalidTask
+		return base.InvalidTask
 	}
 }
 

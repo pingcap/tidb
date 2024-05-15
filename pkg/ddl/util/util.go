@@ -19,6 +19,7 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -402,4 +403,10 @@ func IsRaftKv2(ctx context.Context, sctx sessionctx.Context) (bool, error) {
 	// All nodes should have the same type of engine
 	raftVersion := rows[0].GetString(0)
 	return raftVersion == raftKv2, nil
+}
+
+// FolderNotEmpty returns true only when the folder is not empty.
+func FolderNotEmpty(path string) bool {
+	entries, _ := os.ReadDir(path)
+	return len(entries) > 0
 }

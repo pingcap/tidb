@@ -1290,7 +1290,7 @@ func TestConfigExample(t *testing.T) {
 func TestStatsLoadLimit(t *testing.T) {
 	conf := NewConfig()
 	checkConcurrencyValid := func(concurrency int, shouldBeValid bool) {
-		conf.Performance.StatsLoadConcurrency = uint(concurrency)
+		conf.Performance.StatsLoadConcurrency = concurrency
 		require.Equal(t, shouldBeValid, conf.Valid() == nil)
 	}
 	checkConcurrencyValid(DefStatsLoadConcurrencyLimit, true)

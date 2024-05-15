@@ -23,6 +23,8 @@ import (
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/mock"
 	"github.com/pingcap/tidb/br/pkg/restore"
+	fileimporter "github.com/pingcap/tidb/br/pkg/restore/file_importer"
+	logrestore "github.com/pingcap/tidb/br/pkg/restore/log_restore"
 	"github.com/pingcap/tidb/br/pkg/restore/tiflashrec"
 	"github.com/pingcap/tidb/br/pkg/stream"
 	"github.com/pingcap/tidb/br/pkg/utils"
@@ -497,7 +499,7 @@ func TestPreCheckTableTiFlashReplicas(t *testing.T) {
 
 // Mock ImporterClient interface
 type FakeImporterClient struct {
-	restore.ImporterClient
+	fileimporter.ImporterClient
 }
 
 // Record the stores that have communicated
@@ -765,7 +767,7 @@ func TestRestoreBatchMetaKVFiles(t *testing.T) {
 	client := restore.MockClient(nil)
 	files := []*backuppb.DataFileInfo{}
 	// test empty files and entries
-	next, err := client.RestoreBatchMetaKVFiles(context.Background(), files[0:], nil, make([]*restore.KvEntryWithTS, 0), math.MaxUint64, nil, nil, "")
+	next, err := client.RestoreBatchMetaKVFiles(context.Background(), files[0:], nil, make([]*logrestore.KvEntryWithTS, 0), math.MaxUint64, nil, nil, "")
 	require.NoError(t, err)
 	require.Equal(t, 0, len(next))
 }
@@ -788,12 +790,12 @@ func TestRestoreMetaKVFilesWithBatchMethod1(t *testing.T) {
 			ctx context.Context,
 			files []*backuppb.DataFileInfo,
 			schemasReplace *stream.SchemasReplace,
-			entries []*restore.KvEntryWithTS,
+			entries []*logrestore.KvEntryWithTS,
 			filterTS uint64,
 			updateStats func(kvCount uint64, size uint64),
 			progressInc func(),
 			cf string,
-		) ([]*restore.KvEntryWithTS, error) {
+		) ([]*logrestore.KvEntryWithTS, error) {
 			require.Equal(t, 0, len(entries))
 			require.Equal(t, 0, len(files))
 			batchCount++
@@ -828,12 +830,12 @@ func TestRestoreMetaKVFilesWithBatchMethod2_default_empty(t *testing.T) {
 			ctx context.Context,
 			files []*backuppb.DataFileInfo,
 			schemasReplace *stream.SchemasReplace,
-			entries []*restore.KvEntryWithTS,
+			entries []*logrestore.KvEntryWithTS,
 			filterTS uint64,
 			updateStats func(kvCount uint64, size uint64),
 			progressInc func(),
 			cf string,
-		) ([]*restore.KvEntryWithTS, error) {
+		) ([]*logrestore.KvEntryWithTS, error) {
 			if len(entries) == 0 && len(files) == 0 {
 				require.Equal(t, stream.DefaultCF, cf)
 				batchCount++
@@ -875,12 +877,12 @@ func TestRestoreMetaKVFilesWithBatchMethod2_write_empty_1(t *testing.T) {
 			ctx context.Context,
 			files []*backuppb.DataFileInfo,
 			schemasReplace *stream.SchemasReplace,
-			entries []*restore.KvEntryWithTS,
+			entries []*logrestore.KvEntryWithTS,
 			filterTS uint64,
 			updateStats func(kvCount uint64, size uint64),
 			progressInc func(),
 			cf string,
-		) ([]*restore.KvEntryWithTS, error) {
+		) ([]*logrestore.KvEntryWithTS, error) {
 			if len(entries) == 0 && len(files) == 0 {
 				require.Equal(t, stream.WriteCF, cf)
 				batchCount++
@@ -930,12 +932,12 @@ func TestRestoreMetaKVFilesWithBatchMethod2_write_empty_2(t *testing.T) {
 			ctx context.Context,
 			files []*backuppb.DataFileInfo,
 			schemasReplace *stream.SchemasReplace,
-			entries []*restore.KvEntryWithTS,
+			entries []*logrestore.KvEntryWithTS,
 			filterTS uint64,
 			updateStats func(kvCount uint64, size uint64),
 			progressInc func(),
 			cf string,
-		) ([]*restore.KvEntryWithTS, error) {
+		) ([]*logrestore.KvEntryWithTS, error) {
 			if len(entries) == 0 && len(files) == 0 {
 				// write - write
 				require.Equal(t, stream.WriteCF, cf)
@@ -997,12 +999,12 @@ func TestRestoreMetaKVFilesWithBatchMethod_with_entries(t *testing.T) {
 			ctx context.Context,
 			files []*backuppb.DataFileInfo,
 			schemasReplace *stream.SchemasReplace,
-			entries []*restore.KvEntryWithTS,
+			entries []*logrestore.KvEntryWithTS,
 			filterTS uint64,
 			updateStats func(kvCount uint64, size uint64),
 			progressInc func(),
 			cf string,
-		) ([]*restore.KvEntryWithTS, error) {
+		) ([]*logrestore.KvEntryWithTS, error) {
 			if len(entries) == 0 && len(files) == 0 {
 				// write - write
 				require.Equal(t, stream.WriteCF, cf)
@@ -1105,17 +1107,17 @@ func TestRestoreMetaKVFilesWithBatchMethod3(t *testing.T) {
 			ctx context.Context,
 			fs []*backuppb.DataFileInfo,
 			schemasReplace *stream.SchemasReplace,
-			entries []*restore.KvEntryWithTS,
+			entries []*logrestore.KvEntryWithTS,
 			filterTS uint64,
 			updateStats func(kvCount uint64, size uint64),
 			progressInc func(),
 			cf string,
-		) ([]*restore.KvEntryWithTS, error) {
+		) ([]*logrestore.KvEntryWithTS, error) {
 			result[batchCount] = fs
 			t.Log(filterTS)
 			resultKV[batchCount] = len(entries)
 			batchCount++
-			return make([]*restore.KvEntryWithTS, batchCount), nil
+			return make([]*logrestore.KvEntryWithTS, batchCount), nil
 		},
 	)
 	require.Nil(t, err)
@@ -1192,12 +1194,12 @@ func TestRestoreMetaKVFilesWithBatchMethod4(t *testing.T) {
 			ctx context.Context,
 			fs []*backuppb.DataFileInfo,
 			schemasReplace *stream.SchemasReplace,
-			entries []*restore.KvEntryWithTS,
+			entries []*logrestore.KvEntryWithTS,
 			filterTS uint64,
 			updateStats func(kvCount uint64, size uint64),
 			progressInc func(),
 			cf string,
-		) ([]*restore.KvEntryWithTS, error) {
+		) ([]*logrestore.KvEntryWithTS, error) {
 			result[batchCount] = fs
 			batchCount++
 			return nil, nil
@@ -1273,12 +1275,12 @@ func TestRestoreMetaKVFilesWithBatchMethod5(t *testing.T) {
 			ctx context.Context,
 			fs []*backuppb.DataFileInfo,
 			schemasReplace *stream.SchemasReplace,
-			entries []*restore.KvEntryWithTS,
+			entries []*logrestore.KvEntryWithTS,
 			filterTS uint64,
 			updateStats func(kvCount uint64, size uint64),
 			progressInc func(),
 			cf string,
-		) ([]*restore.KvEntryWithTS, error) {
+		) ([]*logrestore.KvEntryWithTS, error) {
 			result[batchCount] = fs
 			batchCount++
 			return nil, nil
@@ -1371,17 +1373,17 @@ func TestRestoreMetaKVFilesWithBatchMethod6(t *testing.T) {
 			ctx context.Context,
 			fs []*backuppb.DataFileInfo,
 			schemasReplace *stream.SchemasReplace,
-			entries []*restore.KvEntryWithTS,
+			entries []*logrestore.KvEntryWithTS,
 			filterTS uint64,
 			updateStats func(kvCount uint64, size uint64),
 			progressInc func(),
 			cf string,
-		) ([]*restore.KvEntryWithTS, error) {
+		) ([]*logrestore.KvEntryWithTS, error) {
 			result[batchCount] = fs
 			t.Log(filterTS)
 			resultKV[batchCount] = len(entries)
 			batchCount++
-			return make([]*restore.KvEntryWithTS, batchCount), nil
+			return make([]*logrestore.KvEntryWithTS, batchCount), nil
 		},
 	)
 	require.Nil(t, err)
@@ -1443,9 +1445,9 @@ func TestSortMetaKVFiles(t *testing.T) {
 	require.Equal(t, files[4].Path, "f5")
 }
 
-func toLogDataFileInfoIter(logIter iter.TryNextor[*backuppb.DataFileInfo]) restore.LogIter {
-	return iter.Map(logIter, func(d *backuppb.DataFileInfo) *restore.LogDataFileInfo {
-		return &restore.LogDataFileInfo{
+func toLogDataFileInfoIter(logIter iter.TryNextor[*backuppb.DataFileInfo]) logrestore.LogIter {
+	return iter.Map(logIter, func(d *backuppb.DataFileInfo) *logrestore.LogDataFileInfo {
+		return &logrestore.LogDataFileInfo{
 			DataFileInfo: d,
 		}
 	})
@@ -1481,7 +1483,7 @@ func TestApplyKVFilesWithSingelMethod(t *testing.T) {
 	}
 	var applyWg sync.WaitGroup
 	applyFunc := func(
-		files []*restore.LogDataFileInfo,
+		files []*logrestore.LogDataFileInfo,
 		kvCount int64,
 		size uint64,
 	) {
@@ -1553,7 +1555,7 @@ func TestApplyKVFilesWithBatchMethod1(t *testing.T) {
 	}
 	var applyWg sync.WaitGroup
 	applyFunc := func(
-		files []*restore.LogDataFileInfo,
+		files []*logrestore.LogDataFileInfo,
 		kvCount int64,
 		size uint64,
 	) {
@@ -1643,7 +1645,7 @@ func TestApplyKVFilesWithBatchMethod2(t *testing.T) {
 	}
 	var applyWg sync.WaitGroup
 	applyFunc := func(
-		files []*restore.LogDataFileInfo,
+		files []*logrestore.LogDataFileInfo,
 		kvCount int64,
 		size uint64,
 	) {
@@ -1727,7 +1729,7 @@ func TestApplyKVFilesWithBatchMethod3(t *testing.T) {
 	}
 	var applyWg sync.WaitGroup
 	applyFunc := func(
-		files []*restore.LogDataFileInfo,
+		files []*logrestore.LogDataFileInfo,
 		kvCount int64,
 		size uint64,
 	) {
@@ -1809,7 +1811,7 @@ func TestApplyKVFilesWithBatchMethod4(t *testing.T) {
 	}
 	var applyWg sync.WaitGroup
 	applyFunc := func(
-		files []*restore.LogDataFileInfo,
+		files []*logrestore.LogDataFileInfo,
 		kvCount int64,
 		size uint64,
 	) {
@@ -1887,7 +1889,7 @@ func TestApplyKVFilesWithBatchMethod5(t *testing.T) {
 	}
 	var applyWg sync.WaitGroup
 	applyFunc := func(
-		files []*restore.LogDataFileInfo,
+		files []*logrestore.LogDataFileInfo,
 		kvCount int64,
 		size uint64,
 	) {
