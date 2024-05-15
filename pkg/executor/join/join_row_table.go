@@ -227,36 +227,47 @@ type keyProp struct {
 	canBeInlined        bool
 	keyLength           int
 	isStringRelatedType bool
-	isKeyUInt64         bool
+	isKeyInteger        bool
+	isKeyUnsigned       bool
 }
 
 func getKeyProp(tp *types.FieldType) *keyProp {
 	switch tp.GetType() {
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeYear,
 		mysql.TypeDuration:
-		return &keyProp{canBeInlined: true, keyLength: chunk.GetFixedLen(tp), isStringRelatedType: false, isKeyUInt64: true}
+		isKeyUnsigned := mysql.HasUniKeyFlag(tp.GetFlag())
+		if tp.GetType() == mysql.TypeYear {
+			// year type is always unsigned
+			isKeyUnsigned = true
+		} else if tp.GetType() == mysql.TypeDuration {
+			// duration type is always signed
+			isKeyUnsigned = false
+		}
+		return &keyProp{canBeInlined: true, keyLength: chunk.GetFixedLen(tp), isStringRelatedType: false, isKeyInteger: true, isKeyUnsigned: isKeyUnsigned}
 	case mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeString, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
 		collator := collate.GetCollator(tp.GetCollate())
-		return &keyProp{canBeInlined: collate.CanUseRawMemAsKey(collator), keyLength: chunk.VarElemLen, isStringRelatedType: true, isKeyUInt64: false}
+		return &keyProp{canBeInlined: collate.CanUseRawMemAsKey(collator), keyLength: chunk.VarElemLen, isStringRelatedType: true, isKeyInteger: false, isKeyUnsigned: false}
 	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
 		// date related type will use uint64 as serialized key
-		return &keyProp{canBeInlined: false, keyLength: sizeOfUInt64, isStringRelatedType: false, isKeyUInt64: true}
+		return &keyProp{canBeInlined: false, keyLength: sizeOfUInt64, isStringRelatedType: false, isKeyInteger: true, isKeyUnsigned: true}
 	case mysql.TypeFloat:
 		// float will use float64 as serialized key
-		return &keyProp{canBeInlined: false, keyLength: sizeOfFloat64, isStringRelatedType: false, isKeyUInt64: false}
+		return &keyProp{canBeInlined: false, keyLength: sizeOfFloat64, isStringRelatedType: false, isKeyInteger: false, isKeyUnsigned: false}
 	case mysql.TypeNewDecimal:
 		// Although decimal is fixed length, but its key is not fixed length
-		return &keyProp{canBeInlined: false, keyLength: chunk.VarElemLen, isStringRelatedType: false, isKeyUInt64: false}
+		return &keyProp{canBeInlined: false, keyLength: chunk.VarElemLen, isStringRelatedType: false, isKeyInteger: false, isKeyUnsigned: false}
 	case mysql.TypeEnum:
 		if mysql.HasEnumSetAsIntFlag(tp.GetFlag()) {
-			return &keyProp{canBeInlined: false, keyLength: sizeOfUInt64, isStringRelatedType: false, isKeyUInt64: true}
+			// enum int type is always unsigned
+			return &keyProp{canBeInlined: false, keyLength: sizeOfUInt64, isStringRelatedType: false, isKeyInteger: true, isKeyUnsigned: true}
 		}
-		return &keyProp{canBeInlined: false, keyLength: chunk.VarElemLen, isStringRelatedType: false, isKeyUInt64: false}
+		return &keyProp{canBeInlined: false, keyLength: chunk.VarElemLen, isStringRelatedType: false, isKeyInteger: false, isKeyUnsigned: false}
 	case mysql.TypeBit:
-		return &keyProp{canBeInlined: false, keyLength: sizeOfUInt64, isStringRelatedType: false, isKeyUInt64: true}
+		// bit type is always unsigned
+		return &keyProp{canBeInlined: false, keyLength: sizeOfUInt64, isStringRelatedType: false, isKeyInteger: true, isKeyUnsigned: true}
 	default:
 		keyLength := chunk.GetFixedLen(tp)
-		return &keyProp{canBeInlined: false, keyLength: keyLength, isStringRelatedType: false, isKeyUInt64: false}
+		return &keyProp{canBeInlined: false, keyLength: keyLength, isStringRelatedType: false, isKeyInteger: false, isKeyUnsigned: false}
 	}
 }
 
@@ -315,9 +326,13 @@ func newTableMeta(buildKeyIndex []int, buildTypes, buildKeyTypes, probeKeyTypes 
 		if !prop.canBeInlined {
 			meta.isJoinKeysInlined = false
 		}
-		if mysql.IsIntegerType(keyType.GetType()) {
-			buildUnsigned := mysql.HasUnsignedFlag(keyType.GetFlag())
-			probeUnsigned := mysql.HasUnsignedFlag(probeKeyTypes[index].GetFlag())
+		if prop.isKeyInteger {
+			buildUnsigned := prop.isKeyUnsigned
+			probeKeyProp := getKeyProp(probeKeyTypes[index])
+			if !probeKeyProp.isKeyInteger {
+				panic("build key is integer but probe key is not integer, should not happens")
+			}
+			probeUnsigned := probeKeyProp.isKeyUnsigned
 			if (buildUnsigned && !probeUnsigned) || (probeUnsigned && !buildUnsigned) {
 				meta.serializeModes = append(meta.serializeModes, codec.NeedSignFlag)
 				meta.isJoinKeysInlined = false
@@ -329,7 +344,7 @@ func newTableMeta(buildKeyIndex []int, buildTypes, buildKeyTypes, probeKeyTypes 
 				meta.serializeModes = append(meta.serializeModes, codec.Normal)
 			}
 		} else {
-			if !prop.isKeyUInt64 {
+			if !prop.isKeyInteger {
 				isAllKeyInteger = false
 			}
 			if meta.isJoinKeysInlined && prop.isStringRelatedType {
