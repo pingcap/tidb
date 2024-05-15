@@ -482,6 +482,7 @@ func SerializeKeys(typeCtx types.Context, chk *chunk.Chunk, tp *types.FieldType,
 			if err != nil {
 				return err
 			}
+			// don't need to check serializeMode since date/datetime/timestamp must be compared with date/datetime/timestamp, so the serializeMode must be normal
 			serializedKeysVector[logicalRowIndex] = append(serializedKeysVector[logicalRowIndex], unsafe.Slice((*byte)(unsafe.Pointer(&v)), sizeUint64)...)
 		}
 	case mysql.TypeDuration:
@@ -489,6 +490,7 @@ func SerializeKeys(typeCtx types.Context, chk *chunk.Chunk, tp *types.FieldType,
 			if canSkip(physicalRowIndex) {
 				continue
 			}
+			// don't need to check serializeMode since duration must be compared with duration, so the serializeMode must be normal
 			serializedKeysVector[logicalRowIndex] = append(serializedKeysVector[logicalRowIndex], column.GetRaw(physicalRowIndex)...)
 		}
 	case mysql.TypeNewDecimal:
@@ -511,6 +513,10 @@ func SerializeKeys(typeCtx types.Context, chk *chunk.Chunk, tp *types.FieldType,
 			}
 			v := column.GetEnum(physicalRowindex).Value
 			if mysql.HasEnumSetAsIntFlag(tp.GetFlag()) {
+				// check serializeMode here because enum maybe compare to integer type directly
+				if serializeMode == NeedSignFlag {
+					serializedKeysVector[logicalRowIndex] = append(serializedKeysVector[logicalRowIndex], uintFlag)
+				}
 				serializedKeysVector[logicalRowIndex] = append(serializedKeysVector[logicalRowIndex], unsafe.Slice((*byte)(unsafe.Pointer(&v)), sizeUint64)...)
 			} else {
 				str := ""
@@ -538,6 +544,10 @@ func SerializeKeys(typeCtx types.Context, chk *chunk.Chunk, tp *types.FieldType,
 			}
 			v, err1 := types.BinaryLiteral(column.GetBytes(physicalRowindex)).ToInt(typeCtx)
 			terror.Log(errors.Trace(err1))
+			// check serializeMode here because enum maybe compare to integer type directly
+			if serializeMode == NeedSignFlag {
+				serializedKeysVector[logicalRowIndex] = append(serializedKeysVector[logicalRowIndex], uintFlag)
+			}
 			serializedKeysVector[logicalRowIndex] = append(serializedKeysVector[logicalRowIndex], unsafe.Slice((*byte)(unsafe.Pointer(&v)), sizeUint64)...)
 		}
 	case mysql.TypeJSON:
