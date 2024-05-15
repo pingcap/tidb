@@ -280,4 +280,7 @@ type LogicalPlan interface {
 
 	// ExtractFD derive the FDSet from the tree bottom up.
 	ExtractFD() *fd.FDSet
+
+	// GetBaseLogicalPlan return the baseLogicalPlan inside each logical plan.
+	GetBaseLogicalPlan() LogicalPlan
 }

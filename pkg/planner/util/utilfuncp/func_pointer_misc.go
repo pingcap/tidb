@@ -16,6 +16,7 @@ package utilfuncp
 
 import (
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
@@ -51,3 +52,11 @@ var GetTaskPlanCost func(t base.Task, pop *optimizetrace.PhysicalOptimizeOp) (fl
 // todo: (4) arenatlx, remove this func pointer when inside referred LogicalSelection is moved out of core.
 var AddSelection func(p base.LogicalPlan, child base.LogicalPlan, conditions []expression.Expression,
 	chIdx int, opt *optimizetrace.LogicalOptimizeOp)
+
+var PushDownTopNForBaseLogicalPlan func(s base.LogicalPlan, topNLogicalPlan base.LogicalPlan,
+	opt *optimizetrace.LogicalOptimizeOp) base.LogicalPlan
+
+var FindBestTask func(p base.LogicalPlan, prop *property.PhysicalProperty, planCounter *base.PlanCounterTp,
+	opt *optimizetrace.PhysicalOptimizeOp) (bestTask base.Task, cntPlan int64, err error)
+
+var CanPushToCopImpl func(p base.LogicalPlan, storeTp kv.StoreType, considerDual bool) bool
