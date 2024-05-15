@@ -174,7 +174,11 @@ func newInfoSchema() *infoSchema {
 }
 
 func (is *infoSchema) SchemaByName(schema model.CIStr) (val *model.DBInfo, ok bool) {
-	tableNames, ok := is.schemaMap[schema.L]
+	return is.schemaByName(schema.L)
+}
+
+func (is *infoSchema) schemaByName(name string) (val *model.DBInfo, ok bool) {
+	tableNames, ok := is.schemaMap[name]
 	if !ok {
 		return
 	}
@@ -243,7 +247,7 @@ func (is *infoSchema) SchemaByID(id int64) (val *model.DBInfo, ok bool) {
 	if !ok {
 		return nil, false
 	}
-	return is.SchemaByName(model.NewCIStr(name))
+	return is.schemaByName(name)
 }
 
 // SchemaByTable get a table's schema name
