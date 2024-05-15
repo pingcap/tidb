@@ -92,6 +92,7 @@ type processinfoSetter interface {
 type recordSet struct {
 	fields     []*ast.ResultField
 	executor   exec.Executor
+	schema     *expression.Schema
 	stmt       *ExecStmt
 	lastErrs   []error
 	txnStartTS uint64
@@ -101,7 +102,7 @@ type recordSet struct {
 
 func (a *recordSet) Fields() []*ast.ResultField {
 	if len(a.fields) == 0 {
-		a.fields = colNames2ResultFields(a.executor.Schema(), a.stmt.OutputNames, a.stmt.Ctx.GetSessionVars().CurrentDB)
+		a.fields = colNames2ResultFields(a.schema, a.stmt.OutputNames, a.stmt.Ctx.GetSessionVars().CurrentDB)
 	}
 	return a.fields
 }
@@ -159,6 +160,12 @@ func (a *recordSet) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 	}()
 	a.finishLock.Lock()
 	defer a.finishLock.Unlock()
+	if a.stmt != nil {
+		err = a.stmt.Ctx.GetSessionVars().SQLKiller.HandleSignal()
+		if err != nil {
+			return err
+		}
+	}
 
 	err = a.stmt.next(ctx, a.executor, req)
 	if err != nil {
@@ -200,6 +207,7 @@ func (a *recordSet) Finish() error {
 			if err == nil {
 				err = cteErr
 			}
+			a.executor = nil
 		})
 	}
 	if err != nil {
@@ -342,6 +350,7 @@ func (a *ExecStmt) PointGet(ctx context.Context) (*recordSet, error) {
 
 	return &recordSet{
 		executor:   executor,
+		schema:     executor.Schema(),
 		stmt:       a,
 		txnStartTS: startTs,
 	}, nil
@@ -577,6 +586,7 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 
 	return &recordSet{
 		executor:   e,
+		schema:     e.Schema(),
 		stmt:       a,
 		txnStartTS: txnStartTS,
 	}, nil

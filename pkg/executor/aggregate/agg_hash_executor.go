@@ -212,8 +212,6 @@ func (e *HashAggExec) Close() error {
 			e.parallelAggSpillAction = nil
 			e.spillHelper.close()
 		}
-		e.finalWorkers = nil
-		e.partialWorkers = nil
 	}
 
 	err := e.BaseExecutor.Close()
