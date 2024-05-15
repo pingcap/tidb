@@ -13709,6 +13709,12 @@ PasswordOrLockOption:
 			Type: ast.PasswordLockTimeUnbounded,
 		}
 	}
+|	"PASSWORD" "REQUIRE" "CURRENT" "DEFAULT"
+	{
+		$$ = &ast.PasswordOrLockOption{
+			Type: ast.PasswordRequireCurrentDefault,
+		}
+	}
 
 AuthOption:
 	{
