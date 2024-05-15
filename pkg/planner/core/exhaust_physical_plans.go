@@ -3814,13 +3814,13 @@ func (p *LogicalSequence) ExhaustPhysicalPlans(prop *property.PhysicalProperty) 
 	}
 	seqs := make([]base.PhysicalPlan, 0, 2)
 	for _, propChoice := range possibleChildrenProps {
-		childReqs := make([]*property.PhysicalProperty, 0, len(p.Children()))
-		for i := 0; i < len(p.Children())-1; i++ {
+		childReqs := make([]*property.PhysicalProperty, 0, p.ChildLen())
+		for i := 0; i < p.ChildLen()-1; i++ {
 			childReqs = append(childReqs, propChoice[0].CloneEssentialFields())
 		}
 		childReqs = append(childReqs, propChoice[1])
 		seq := PhysicalSequence{}.Init(p.SCtx(), p.StatsInfo(), p.QueryBlockOffset(), childReqs...)
-		seq.SetSchema(p.Children()[len(p.Children())-1].Schema())
+		seq.SetSchema(p.Children()[p.ChildLen()-1].Schema())
 		seqs = append(seqs, seq)
 	}
 	return seqs, true, nil
