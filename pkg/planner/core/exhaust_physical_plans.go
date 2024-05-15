@@ -3098,7 +3098,6 @@ func (lw *LogicalWindow) ExhaustPhysicalPlans(prop *property.PhysicalProperty) (
 	return windows, true, nil
 }
 
-// todo: move canPushToCopImpl to func_pointer_misc when move baseLogicalPlan out of core.
 func canPushToCopImpl(lp base.LogicalPlan, storeTp kv.StoreType, considerDual bool) bool {
 	p := lp.GetBaseLogicalPlan().(*logicalop.BaseLogicalPlan)
 	ret := true
