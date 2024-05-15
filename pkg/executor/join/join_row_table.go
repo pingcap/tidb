@@ -235,7 +235,7 @@ func getKeyProp(tp *types.FieldType) *keyProp {
 	switch tp.GetType() {
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeYear,
 		mysql.TypeDuration:
-		isKeyUnsigned := mysql.HasUniKeyFlag(tp.GetFlag())
+		isKeyUnsigned := mysql.HasUnsignedFlag(tp.GetFlag())
 		if tp.GetType() == mysql.TypeYear {
 			// year type is always unsigned
 			isKeyUnsigned = true
