@@ -837,7 +837,7 @@ func (ci *CDCPITRCheckItem) Check(ctx context.Context) (*precheck.CheckResult, e
 		errorMsg = append(errorMsg, fmt.Sprintf("found PiTR log streaming task(s): %v,", names))
 	}
 
-	nameSet, err := cdcutil.GetCDCChangefeedNameSet(ctx, ci.etcdCli)
+	nameSet, err := cdcutil.GetRunningChangefeeds(ctx, ci.etcdCli)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

@@ -1116,15 +1116,16 @@ func checkTaskExists(ctx context.Context, cfg *RestoreConfig, etcdCLI *clientv3.
 			"create log-backup task again and create a full backup on this cluster", tasks[0].Info.Name)
 	}
 
-	// check cdc changefeed
-	if cfg.CheckRequirements {
-		nameSet, err := cdcutil.GetCDCChangefeedNameSet(ctx, etcdCLI)
-		if err != nil {
-			return err
-		}
-		if !nameSet.Empty() {
-			return errors.Errorf("%splease remove changefeed(s) before restore", nameSet.MessageToUser())
-		}
+	return nil
+}
+
+func checkIncompatibleChangefeed(ctx context.Context, backupTS uint64, etcdCLI *clientv3.Client) error {
+	nameSet, err := cdcutil.GetIncompatibleChangefeedsWithSafeTS(ctx, etcdCLI, backupTS)
+	if err != nil {
+		return err
+	}
+	if !nameSet.Empty() {
+		return errors.Errorf("%splease remove changefeed(s) before restore", nameSet.MessageToUser())
 	}
 	return nil
 }
