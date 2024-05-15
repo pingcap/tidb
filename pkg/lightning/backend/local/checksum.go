@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/checksum"
+	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/pkg/lightning/common"
@@ -481,7 +482,7 @@ func (m *gcTTLManager) doUpdateGCTTL(ctx context.Context, ts uint64) error {
 		zap.Uint64("currnet_ts", ts))
 	var err error
 	if ts > 0 {
-		_, err = m.pdClient.UpdateServiceGCSafePoint(ctx,
+		_, err = utils.UpdateServiceSafePointWithGCManagementType(ctx, m.pdClient,
 			m.serviceID, serviceSafePointTTL, ts)
 	}
 	return err

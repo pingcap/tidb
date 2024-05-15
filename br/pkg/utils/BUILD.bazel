@@ -25,6 +25,7 @@ go_library(
     deps = [
         "//br/pkg/errors",
         "//br/pkg/logutil",
+        "//pkg/config",
         "//pkg/errno",
         "//pkg/kv",
         "//pkg/parser/model",
@@ -40,7 +41,9 @@ go_library(
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_pingcap_kvproto//pkg/brpb",
+        "@com_github_pingcap_kvproto//pkg/keyspacepb",
         "@com_github_pingcap_kvproto//pkg/metapb",
+        "@com_github_pingcap_kvproto//pkg/pdpb",
         "@com_github_pingcap_log//:log",
         "@com_github_tikv_client_go_v2//oracle",
         "@com_github_tikv_client_go_v2//tikv",

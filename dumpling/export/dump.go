@@ -18,6 +18,8 @@ import (
 	"time"
 
 	"github.com/coreos/go-semver/semver"
+	"github.com/pingcap/tidb/br/pkg/utils"
+
 	// import mysql driver
 	"github.com/go-sql-driver/mysql"
 	"github.com/google/uuid"
@@ -1522,7 +1524,7 @@ func updateServiceSafePoint(tctx *tcontext.Context, pdClient pd.Client, ttl int6
 			zap.Uint64("safePoint", snapshotTS),
 			zap.Int64("ttl", ttl))
 		for retryCnt := 0; retryCnt <= 10; retryCnt++ {
-			_, err := pdClient.UpdateServiceGCSafePoint(tctx, dumplingServiceSafePointID, ttl, snapshotTS)
+			_, err := utils.UpdateServiceSafePointWithGCManagementType(tctx, pdClient, dumplingServiceSafePointID, ttl, snapshotTS)
 			if err == nil {
 				break
 			}

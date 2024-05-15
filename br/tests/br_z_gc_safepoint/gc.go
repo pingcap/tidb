@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/tikv/client-go/v2/oracle"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
@@ -65,7 +66,7 @@ func main() {
 	nowMinusOffset := oracle.GetTimeFromTS(now).Add(-*gcOffset)
 	newSP := oracle.ComposeTS(oracle.GetPhysical(nowMinusOffset), 0)
 	if *updateService {
-		_, err = pdclient.UpdateServiceGCSafePoint(ctx, "br", 300, newSP)
+		_, err = utils.UpdateServiceSafePointWithGCManagementType(ctx, pdclient, "br", 300, newSP)
 		if err != nil {
 			log.Panic("update service safe point failed", zap.Error(err))
 		}
