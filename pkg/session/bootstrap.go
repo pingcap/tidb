@@ -3113,7 +3113,7 @@ func upgradeToVer198(s sessiontypes.Session, ver int64) {
 		return
 	}
 
-	doReentrantDDL(s, "ALTER TABLE mysql.tidb_mdl_info ADD COLUMN owner_id VARCHAR(64) DEFAULT '';", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_mdl_info ADD COLUMN owner_id VARCHAR(64) NOT NULL DEFAULT '';", infoschema.ErrColumnExists)
 }
 
 func writeOOMAction(s sessiontypes.Session) {
