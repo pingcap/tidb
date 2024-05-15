@@ -19,8 +19,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/resourcemanager/gpool"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/tiancaiamao/gp"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
@@ -193,11 +193,11 @@ func (w *WaitGroupWrapper) RunWithRecover(exec func(), recoverFn func(r any)) {
 // WaitGroupPool is a wrapper for sync.WaitGroup and support goroutine pool
 type WaitGroupPool struct {
 	sync.WaitGroup
-	gp *gp.Pool
+	gp gpool.Pool
 }
 
 // NewWaitGroupPool returns WaitGroupPool
-func NewWaitGroupPool(gp *gp.Pool) *WaitGroupPool {
+func NewWaitGroupPool(gp gpool.Pool) *WaitGroupPool {
 	var wg WaitGroupPool
 	wg.gp = gp
 	return &wg

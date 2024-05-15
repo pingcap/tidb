@@ -94,7 +94,7 @@ func createUnistore(t *testing.T) (kv.Storage, *domain.Domain) {
 	kvStore, err := tikv.NewTestTiKVStore(client, pdClient, nil, nil, 0)
 	require.NoError(t, err)
 
-	coprStore, err := copr.NewStore(kvStore, nil)
+	coprStore, err := copr.NewStore(kvStore, nil, nil)
 	require.NoError(t, err)
 
 	store := &tikvStore{KVStore: kvStore, coprStore: coprStore}

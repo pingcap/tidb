@@ -20,6 +20,7 @@ import (
 
 	deadlockpb "github.com/pingcap/kvproto/pkg/deadlock"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/resourcemanager/gpool"
 	"github.com/pingcap/tidb/pkg/store/copr"
 	driver "github.com/pingcap/tidb/pkg/store/driver/txn"
 	"github.com/pingcap/tidb/pkg/store/helper"
@@ -40,7 +41,7 @@ type mockStorage struct {
 // NewMockStorage wraps tikv.KVStore as kv.Storage.
 func NewMockStorage(tikvStore *tikv.KVStore) (kv.Storage, error) {
 	coprConfig := config.DefaultConfig().TiKVClient.CoprCache
-	coprStore, err := copr.NewStore(tikvStore, &coprConfig)
+	coprStore, err := copr.NewStore(tikvStore, nil, &coprConfig)
 	if err != nil {
 		return nil, err
 	}
@@ -129,6 +130,10 @@ func (s *mockStorage) GetCodec() tikv.Codec {
 	pdClient := s.KVStore.GetPDClient()
 	pdCodecCli := tikv.NewCodecPDClient(tikv.ModeTxn, pdClient)
 	return pdCodecCli.GetCodec()
+}
+
+func (s *mockStorage) GetGPool() gpool.Pool {
+	return gpool.MockGPool
 }
 
 // MockLockWaitSetter is used to set the mocked lock wait information, which helps implementing tests that uses the

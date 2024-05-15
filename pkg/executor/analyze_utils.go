@@ -21,11 +21,11 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/resourcemanager/gpool"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/util"
-	"github.com/tiancaiamao/gp"
 	"go.uber.org/atomic"
 )
 
@@ -110,7 +110,7 @@ type notifyErrorWaitGroupWrapper struct {
 }
 
 // newNotifyErrorWaitGroupWrapper is to create notifyErrorWaitGroupWrapper
-func newNotifyErrorWaitGroupWrapper(gp *gp.Pool, notify chan error) *notifyErrorWaitGroupWrapper {
+func newNotifyErrorWaitGroupWrapper(gp gpool.Pool, notify chan error) *notifyErrorWaitGroupWrapper {
 	return &notifyErrorWaitGroupWrapper{
 		WaitGroupPool: util.NewWaitGroupPool(gp),
 		notify:        notify,

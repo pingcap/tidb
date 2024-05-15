@@ -127,7 +127,7 @@ func NewHandle(
 	if err != nil {
 		return nil, err
 	}
-	handle.Pool = util.NewPool(pool)
+	handle.Pool = util.NewPool(initStatsCtx.GetStore().GetGPool(), pool)
 	handle.AutoAnalyzeProcIDGenerator = util.NewGenerator(autoAnalyzeProcIDGetter)
 	handle.LeaseGetter = util.NewLeaseGetter(lease)
 	handle.StatsCache = statsCache
@@ -208,7 +208,6 @@ func (h *Handle) StartWorker() {
 
 // Close stops the background
 func (h *Handle) Close() {
-	h.Pool.Close()
 	h.StatsCache.Close()
 	h.StatsUsage.Close()
 }

@@ -15,11 +15,8 @@
 package util
 
 import (
-	"math"
-	"time"
-
 	"github.com/ngaut/pools"
-	"github.com/tiancaiamao/gp"
+	"github.com/pingcap/tidb/pkg/resourcemanager/gpool"
 )
 
 // SessionPool is used to recycle sessionctx.
@@ -31,7 +28,7 @@ type SessionPool interface {
 // Pool is used to reuse goroutine and session.
 type Pool interface {
 	// GPool returns the goroutine pool.
-	GPool() *gp.Pool
+	GPool() gpool.Pool
 
 	// SPool returns the session pool.
 	SPool() SessionPool
@@ -44,20 +41,20 @@ var _ Pool = (*pool)(nil)
 
 type pool struct {
 	// This gpool is used to reuse goroutine in the mergeGlobalStatsTopN.
-	gpool *gp.Pool
+	gpool gpool.Pool
 	pool  SessionPool
 }
 
 // NewPool creates a new Pool.
-func NewPool(p SessionPool) Pool {
+func NewPool(gPool gpool.Pool, sessionPool SessionPool) Pool {
 	return &pool{
-		gpool: gp.New(math.MaxInt16, time.Minute),
-		pool:  p,
+		gpool: gPool,
+		pool:  sessionPool,
 	}
 }
 
 // GPool returns the goroutine pool.
-func (p *pool) GPool() *gp.Pool {
+func (p *pool) GPool() gpool.Pool {
 	return p.gpool
 }
 
