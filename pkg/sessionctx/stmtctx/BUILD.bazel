@@ -21,6 +21,7 @@ go_library(
         "//pkg/util/execdetails",
         "//pkg/util/hint",
         "//pkg/util/intest",
+        "//pkg/util/intset",
         "//pkg/util/linter/constructor",
         "//pkg/util/memory",
         "//pkg/util/nocopy",
