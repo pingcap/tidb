@@ -425,6 +425,7 @@ func (d *ddl) delivery2Worker(wk *worker, pool *workerPool, job *model.Job) {
 			asyncNotify(d.ddlJobCh)
 			metrics.DDLRunningJobCount.WithLabelValues(pool.tp().String()).Dec()
 		}()
+		ownerID := d.ownerManager.ID()
 		// check if this ddl job is synced to all servers.
 		if !job.NotStarted() && (!d.isSynced(job) || !d.maybeAlreadyRunOnce(job.ID)) {
 			if variable.EnableMDL.Load() {
@@ -442,7 +443,7 @@ func (d *ddl) delivery2Worker(wk *worker, pool *workerPool, job *model.Job) {
 						return
 					}
 					d.setAlreadyRunOnce(job.ID)
-					cleanMDLInfo(d.sessPool, job.ID, d.etcdCli, job.State == model.JobStateSynced)
+					cleanMDLInfo(d.sessPool, job.ID, d.etcdCli, ownerID, job.State == model.JobStateSynced)
 					// Don't have a worker now.
 					return
 				}
@@ -480,7 +481,7 @@ func (d *ddl) delivery2Worker(wk *worker, pool *workerPool, job *model.Job) {
 			if err != nil {
 				return
 			}
-			cleanMDLInfo(d.sessPool, job.ID, d.etcdCli, job.State == model.JobStateSynced)
+			cleanMDLInfo(d.sessPool, job.ID, d.etcdCli, ownerID, job.State == model.JobStateSynced)
 			d.synced(job)
 
 			if RunInGoTest {
