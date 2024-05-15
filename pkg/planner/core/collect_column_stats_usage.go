@@ -323,7 +323,92 @@ func CollectColumnStatsUsage(lp LogicalPlan, predicate, histNeeded bool) (
 	if collector.collectVisitedTable {
 		recordTableRuntimeStats(lp.SCtx(), collector.visitedtbls)
 	}
+<<<<<<< HEAD
 	var predicateCols, histNeededCols []model.TableItemID
+=======
+	itemSet2slice := func(set map[model.TableItemID]bool) []model.StatsLoadItem {
+		ret := make([]model.StatsLoadItem, 0, len(set))
+		for item, fullLoad := range set {
+			ret = append(ret, model.StatsLoadItem{TableItemID: item, FullLoad: fullLoad})
+		}
+		return ret
+	}
+	is := lp.SCtx().GetInfoSchema().(infoschema.InfoSchema)
+	statsHandle := domain.GetDomain(lp.SCtx()).StatsHandle()
+	physTblIDsWithNeededCols := intset.NewFastIntSet()
+	for neededCol, fullLoad := range collector.histNeededCols {
+		if !fullLoad {
+			continue
+		}
+		physTblIDsWithNeededCols.Insert(int(neededCol.TableID))
+	}
+	collector.visitedPhysTblIDs.ForEach(func(physicalTblID int) {
+		// 1. collect table metadata
+		tbl, _ := infoschema.FindTableByTblOrPartID(is, int64(physicalTblID))
+		if tbl == nil {
+			return
+		}
+
+		// 2. handle extra sync/async stats loading for the determinate mode
+
+		// If we visited a table without getting any columns need stats (likely because there are no pushed down
+		// predicates), and we are in the determinate mode, we need to make sure we are able to get the "analyze row
+		// count" in getStatsTable(), which means any column/index stats are available.
+		if lp.SCtx().GetSessionVars().GetOptObjective() != variable.OptObjectiveDeterminate ||
+			// If we already collected some columns that need trigger sync laoding on this table, we don't need to
+			// additionally do anything for determinate mode.
+			physTblIDsWithNeededCols.Has(physicalTblID) ||
+			statsHandle == nil {
+			return
+		}
+		tblStats := statsHandle.GetTableStats(tbl.Meta())
+		if tblStats == nil || tblStats.Pseudo {
+			return
+		}
+		var colToTriggerLoad *model.TableItemID
+		for _, col := range tbl.Cols() {
+			if col.State != model.StatePublic || (col.IsGenerated() && !col.GeneratedStored) || !tblStats.ColAndIdxExistenceMap.HasAnalyzed(col.ID, false) {
+				continue
+			}
+			if colStats := tblStats.Columns[col.ID]; colStats != nil {
+				// If any stats are already full loaded, we don't need to trigger stats loading on this table.
+				if colStats.IsFullLoad() {
+					colToTriggerLoad = nil
+					break
+				}
+			}
+			// Choose the first column we meet to trigger stats loading.
+			if colToTriggerLoad == nil {
+				colToTriggerLoad = &model.TableItemID{TableID: int64(physicalTblID), ID: col.ID, IsIndex: false}
+			}
+		}
+		if colToTriggerLoad == nil {
+			return
+		}
+		for _, idx := range tbl.Indices() {
+			if idx.Meta().State != model.StatePublic || idx.Meta().MVIndex {
+				continue
+			}
+			// If any stats are already full loaded, we don't need to trigger stats loading on this table.
+			if idxStats := tblStats.Indices[idx.Meta().ID]; idxStats != nil && idxStats.IsFullLoad() {
+				colToTriggerLoad = nil
+				break
+			}
+		}
+		if colToTriggerLoad == nil {
+			return
+		}
+		if histNeeded {
+			collector.histNeededCols[*colToTriggerLoad] = true
+		} else {
+			statistics.HistogramNeededItems.Insert(*colToTriggerLoad, true)
+		}
+	})
+	var (
+		predicateCols  []model.TableItemID
+		histNeededCols []model.StatsLoadItem
+	)
+>>>>>>> 5d27b731d57 (planner, statistics: async load should load all column meta info for lite init (#53297))
 	if predicate {
 		predicateCols = maps.Keys(collector.predicateCols)
 	}

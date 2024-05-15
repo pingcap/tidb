@@ -459,24 +459,102 @@ func (t *Table) GetStatsHealthy() (int64, bool) {
 	return healthy, true
 }
 
+<<<<<<< HEAD
 type neededStatsMap struct {
 	items map[model.TableItemID]struct{}
 	m     sync.RWMutex
 }
 
 func (n *neededStatsMap) AllItems() []model.TableItemID {
+=======
+// ColumnIsLoadNeeded checks whether the column needs trigger the async/sync load.
+// The Column should be visible in the table and really has analyzed statistics in the stroage.
+// Also, if the stats has been loaded into the memory, we also don't need to load it.
+// We return the Column together with the checking result, to avoid accessing the map multiple times.
+// The first bool is whether we have it in memory. The second bool is whether this column has stats in the system table or not.
+func (t *Table) ColumnIsLoadNeeded(id int64, fullLoad bool) (*Column, bool, bool) {
+	if t.Pseudo {
+		return nil, false, false
+	}
+	col, ok := t.Columns[id]
+	hasAnalyzed := t.ColAndIdxExistenceMap.HasAnalyzed(id, false)
+
+	// If it's not analyzed yet.
+	if !hasAnalyzed {
+		// If we don't have it in memory, we create a fake hist for pseudo estimation (see handleOneItemTask()).
+		if !ok {
+			// If we don't have this column. We skip it.
+			// It's something ridiculous. But it's possible that the stats don't have some ColumnInfo.
+			// We need to find a way to maintain it more correctly.
+			return nil, t.ColAndIdxExistenceMap.Has(id, false), false
+		}
+		// Otherwise we don't need to load it.
+		return nil, false, false
+	}
+
+	// Restore the condition from the simplified form:
+	// 1. !ok && hasAnalyzed => need load
+	// 2. ok && hasAnalyzed && fullLoad && !col.IsFullLoad => need load
+	// 3. ok && hasAnalyzed && !fullLoad && !col.statsInitialized => need load
+	if !ok || (fullLoad && !col.IsFullLoad()) || (!fullLoad && !col.statsInitialized) {
+		return col, true, true
+	}
+
+	// Otherwise don't need load it.
+	return col, false, true
+}
+
+// IndexIsLoadNeeded checks whether the index needs trigger the async/sync load.
+// The Index should be visible in the table and really has analyzed statistics in the stroage.
+// Also, if the stats has been loaded into the memory, we also don't need to load it.
+// We return the Index together with the checking result, to avoid accessing the map multiple times.
+func (t *Table) IndexIsLoadNeeded(id int64) (*Index, bool) {
+	idx, ok := t.Indices[id]
+	// If the index is not in the memory, and we have its stats in the storage. We need to trigger the load.
+	if !ok && t.ColAndIdxExistenceMap.HasAnalyzed(id, true) {
+		return nil, true
+	}
+	// If the index is in the memory, we check its embedded func.
+	if ok && idx.IsAnalyzed() && !idx.IsFullLoad() {
+		return idx, true
+	}
+	return idx, false
+}
+
+type neededStatsInternalMap struct {
+	// the bool value indicates whether is a full load or not.
+	items map[model.TableItemID]bool
+	m     sync.RWMutex
+}
+
+func (n *neededStatsInternalMap) AllItems() []model.StatsLoadItem {
+>>>>>>> 5d27b731d57 (planner, statistics: async load should load all column meta info for lite init (#53297))
 	n.m.RLock()
-	keys := make([]model.TableItemID, 0, len(n.items))
-	for key := range n.items {
-		keys = append(keys, key)
+	keys := make([]model.StatsLoadItem, 0, len(n.items))
+	for key, val := range n.items {
+		keys = append(keys, model.StatsLoadItem{
+			TableItemID: key,
+			FullLoad:    val,
+		})
 	}
 	n.m.RUnlock()
 	return keys
 }
 
+<<<<<<< HEAD
 func (n *neededStatsMap) Insert(col model.TableItemID) {
+=======
+func (n *neededStatsInternalMap) Insert(col model.TableItemID, fullLoad bool) {
+>>>>>>> 5d27b731d57 (planner, statistics: async load should load all column meta info for lite init (#53297))
 	n.m.Lock()
-	n.items[col] = struct{}{}
+	cur := n.items[col]
+	if cur {
+		// If the existing one is full load. We don't need to update it.
+		n.m.Unlock()
+		return
+	}
+	n.items[col] = fullLoad
+	// Otherwise, we could safely update it.
 	n.m.Unlock()
 }
 
@@ -492,6 +570,60 @@ func (n *neededStatsMap) Length() int {
 	return len(n.items)
 }
 
+<<<<<<< HEAD
+=======
+const shardCnt = 128
+
+type neededStatsMap struct {
+	items [shardCnt]neededStatsInternalMap
+}
+
+func getIdx(tbl model.TableItemID) int64 {
+	var id int64
+	if tbl.ID < 0 {
+		id = -tbl.ID
+	} else {
+		id = tbl.ID
+	}
+	return id % shardCnt
+}
+
+func newNeededStatsMap() *neededStatsMap {
+	result := neededStatsMap{}
+	for i := 0; i < shardCnt; i++ {
+		result.items[i] = neededStatsInternalMap{
+			items: make(map[model.TableItemID]bool),
+		}
+	}
+	return &result
+}
+
+func (n *neededStatsMap) AllItems() []model.StatsLoadItem {
+	var result []model.StatsLoadItem
+	for i := 0; i < shardCnt; i++ {
+		keys := n.items[i].AllItems()
+		result = append(result, keys...)
+	}
+	return result
+}
+
+func (n *neededStatsMap) Insert(col model.TableItemID, fullLoad bool) {
+	n.items[getIdx(col)].Insert(col, fullLoad)
+}
+
+func (n *neededStatsMap) Delete(col model.TableItemID) {
+	n.items[getIdx(col)].Delete(col)
+}
+
+func (n *neededStatsMap) Length() int {
+	var result int
+	for i := 0; i < shardCnt; i++ {
+		result += n.items[i].Length()
+	}
+	return result
+}
+
+>>>>>>> 5d27b731d57 (planner, statistics: async load should load all column meta info for lite init (#53297))
 // RatioOfPseudoEstimate means if modifyCount / statsTblCount is greater than this ratio, we think the stats is invalid
 // and use pseudo estimation.
 var RatioOfPseudoEstimate = atomic.NewFloat64(0.7)

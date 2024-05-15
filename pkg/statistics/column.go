@@ -165,6 +165,7 @@ func (c *Column) IsInvalid(
 	}
 	if sctx != nil {
 		stmtctx := sctx.GetSessionVars().StmtCtx
+<<<<<<< HEAD
 		if (!c.IsStatsInitialized() || c.IsLoadNeeded()) && stmtctx != nil {
 			if stmtctx.StatsLoad.Timeout > 0 {
 				logutil.BgLogger().Warn("Hist for column should already be loaded as sync but not found.",
@@ -176,6 +177,17 @@ func (c *Column) IsInvalid(
 			if c.Info != nil && c.PhysicalID > 0 {
 				HistogramNeededItems.Insert(model.TableItemID{TableID: c.PhysicalID, ID: c.Info.ID, IsIndex: false})
 			}
+=======
+		if (colStats == nil || !colStats.IsStatsInitialized() || colStats.IsLoadNeeded()) &&
+			stmtctx != nil &&
+			!histColl.CanNotTriggerLoad {
+			HistogramNeededItems.Insert(model.TableItemID{
+				TableID:          histColl.PhysicalID,
+				ID:               cid,
+				IsIndex:          false,
+				IsSyncLoadFailed: sctx.GetSessionVars().StmtCtx.StatsLoad.Timeout > 0,
+			}, true)
+>>>>>>> 5d27b731d57 (planner, statistics: async load should load all column meta info for lite init (#53297))
 		}
 	}
 	if collPseudo {

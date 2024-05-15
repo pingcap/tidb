@@ -499,9 +499,10 @@ func LoadNeededHistograms(sctx sessionctx.Context, statsCache util.StatsCache, l
 	items := statistics.HistogramNeededItems.AllItems()
 	for _, item := range items {
 		if !item.IsIndex {
-			err = loadNeededColumnHistograms(sctx, statsCache, item, loadFMSketch)
+			err = loadNeededColumnHistograms(sctx, statsCache, item.TableItemID, loadFMSketch, item.FullLoad)
 		} else {
-			err = loadNeededIndexHistograms(sctx, statsCache, item, loadFMSketch)
+			// Index is always full load.
+			err = loadNeededIndexHistograms(sctx, statsCache, item.TableItemID, loadFMSketch)
 		}
 		if err != nil {
 			return err
@@ -510,7 +511,38 @@ func LoadNeededHistograms(sctx sessionctx.Context, statsCache util.StatsCache, l
 	return nil
 }
 
+<<<<<<< HEAD
 func loadNeededColumnHistograms(sctx sessionctx.Context, statsCache util.StatsCache, col model.TableItemID, loadFMSketch bool) (err error) {
+=======
+// CleanFakeItemsForShowHistInFlights cleans the invalid inserted items.
+func CleanFakeItemsForShowHistInFlights(statsCache statstypes.StatsCache) int {
+	items := statistics.HistogramNeededItems.AllItems()
+	reallyNeeded := 0
+	for _, item := range items {
+		tbl, ok := statsCache.Get(item.TableID)
+		if !ok {
+			statistics.HistogramNeededItems.Delete(item.TableItemID)
+			continue
+		}
+		loadNeeded := false
+		if item.IsIndex {
+			_, loadNeeded = tbl.IndexIsLoadNeeded(item.ID)
+		} else {
+			var analyzed bool
+			_, loadNeeded, analyzed = tbl.ColumnIsLoadNeeded(item.ID, item.FullLoad)
+			loadNeeded = loadNeeded && analyzed
+		}
+		if !loadNeeded {
+			statistics.HistogramNeededItems.Delete(item.TableItemID)
+			continue
+		}
+		reallyNeeded++
+	}
+	return reallyNeeded
+}
+
+func loadNeededColumnHistograms(sctx sessionctx.Context, statsCache statstypes.StatsCache, col model.TableItemID, loadFMSketch bool, fullLoad bool) (err error) {
+>>>>>>> 5d27b731d57 (planner, statistics: async load should load all column meta info for lite init (#53297))
 	tbl, ok := statsCache.Get(col.TableID)
 	if !ok {
 		return nil
@@ -520,6 +552,7 @@ func loadNeededColumnHistograms(sctx sessionctx.Context, statsCache util.StatsCa
 		statistics.HistogramNeededItems.Delete(col)
 		return nil
 	}
+<<<<<<< HEAD
 	hg, err := HistogramFromStorage(sctx, col.TableID, c.ID, &c.Info.FieldType, c.Histogram.NDV, 0, c.LastUpdateVersion, c.NullCount, c.TotColSize, c.Correlation)
 	if err != nil {
 		return errors.Trace(err)
@@ -531,8 +564,33 @@ func loadNeededColumnHistograms(sctx sessionctx.Context, statsCache util.StatsCa
 	var fms *statistics.FMSketch
 	if loadFMSketch {
 		fms, err = FMSketchFromStorage(sctx, col.TableID, 0, col.ID)
+=======
+	colInfo = tbl.ColAndIdxExistenceMap.GetCol(col.ID)
+	hg, _, statsVer, _, err := HistMetaFromStorage(sctx, &col, colInfo)
+	if hg == nil || err != nil {
+		statistics.HistogramNeededItems.Delete(col)
+		return err
+	}
+	var (
+		cms  *statistics.CMSketch
+		topN *statistics.TopN
+		fms  *statistics.FMSketch
+	)
+	if fullLoad {
+		hg, err = HistogramFromStorage(sctx, col.TableID, col.ID, &colInfo.FieldType, hg.NDV, 0, hg.LastUpdateVersion, hg.NullCount, hg.TotColSize, hg.Correlation)
+>>>>>>> 5d27b731d57 (planner, statistics: async load should load all column meta info for lite init (#53297))
 		if err != nil {
 			return errors.Trace(err)
+		}
+		cms, topN, err = CMSketchAndTopNFromStorage(sctx, col.TableID, 0, col.ID)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if loadFMSketch {
+			fms, err = FMSketchFromStorage(sctx, col.TableID, 0, col.ID)
+			if err != nil {
+				return errors.Trace(err)
+			}
 		}
 	}
 	rows, _, err := util.ExecRows(sctx, "select stats_ver from mysql.stats_histograms where is_index = 0 and table_id = %? and hist_id = %?", col.TableID, col.ID)
@@ -564,7 +622,22 @@ func loadNeededColumnHistograms(sctx sessionctx.Context, statsCache util.StatsCa
 		return nil
 	}
 	tbl = tbl.Copy()
+<<<<<<< HEAD
 	tbl.Columns[c.ID] = colHist
+=======
+	if colHist.StatsAvailable() {
+		if fullLoad {
+			colHist.StatsLoadedStatus = statistics.NewStatsFullLoadStatus()
+		} else {
+			colHist.StatsLoadedStatus = statistics.NewStatsAllEvictedStatus()
+		}
+		tbl.LastAnalyzeVersion = max(tbl.LastAnalyzeVersion, colHist.LastUpdateVersion)
+		if statsVer != statistics.Version0 {
+			tbl.StatsVer = int(statsVer)
+		}
+	}
+	tbl.Columns[col.ID] = colHist
+>>>>>>> 5d27b731d57 (planner, statistics: async load should load all column meta info for lite init (#53297))
 	statsCache.UpdateStatsCache([]*statistics.Table{tbl}, nil)
 	statistics.HistogramNeededItems.Delete(col)
 	return nil
