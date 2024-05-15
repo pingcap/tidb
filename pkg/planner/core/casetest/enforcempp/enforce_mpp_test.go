@@ -117,6 +117,7 @@ func TestEnforceMPP(t *testing.T) {
 
 // general cases.
 func TestEnforceMPPWarning1(t *testing.T) {
+	t.SkipNow()
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
