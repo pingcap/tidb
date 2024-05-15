@@ -58,7 +58,7 @@ func doSendBackup(
 	bCli, err := client.Backup(ctx, &req)
 	failpoint.Inject("reset-retryable-error", func(val failpoint.Value) {
 		switch val.(string) {
-		case "Unavaiable":
+		case "Unavailable":
 			{
 				logutil.CL(ctx).Debug("failpoint reset-retryable-error unavailable injected.")
 				err = status.Error(codes.Unavailable, "Unavailable error")
