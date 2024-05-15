@@ -340,15 +340,13 @@ func (d *Dumper) Dump() (dumpErr error) {
 }
 
 func (d *Dumper) updateTiDBGlobalConfigKeyspaceName() {
-	d.tctx.L().Info("using API V2. 01", zap.Any("d.conf.ServerInfo.ServerType", d.conf.ServerInfo.ServerType))
-
 	if d.conf.ServerInfo.ServerType == version.ServerTypeTiDB || d.conf.ServerInfo.ServerType == version.ServerTypeUnknown {
 		keyspaceNameInTiDB, err := utils.GetKeyspaceNameFromTiDB(d.dbHandle)
 		if err != nil {
 			panic(err)
 		}
 
-		if d.conf.KeyspaceName != d.conf.KeyspaceName {
+		if d.conf.KeyspaceName != keyspaceNameInTiDB {
 			panic("the keyspace name in command line is different from keyspace name in TiDB.")
 		}
 
