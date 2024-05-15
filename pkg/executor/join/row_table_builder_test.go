@@ -203,8 +203,8 @@ func TestKey(t *testing.T) {
 	checkKeys(t, false, nil, buildKeyIndex, buildTypes, buildKeyTypes, probeKeyTypes, true)
 	buildKeyIndex = []int{2, 0, 1}
 	buildTypes = []*types.FieldType{stringTp, intTp, binaryStringTp, uintTp}
-	buildKeyTypes = []*types.FieldType{stringTp, intTp, binaryStringTp}
-	probeKeyTypes = []*types.FieldType{stringTp, intTp, binaryStringTp}
+	buildKeyTypes = []*types.FieldType{binaryStringTp, stringTp, intTp}
+	probeKeyTypes = []*types.FieldType{binaryStringTp, stringTp, intTp}
 	checkKeys(t, false, nil, buildKeyIndex, buildTypes, buildKeyTypes, probeKeyTypes, false)
 	checkKeys(t, false, nil, buildKeyIndex, buildTypes, buildKeyTypes, probeKeyTypes, true)
 
