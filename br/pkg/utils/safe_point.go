@@ -87,7 +87,6 @@ func CheckGCSafePoint(ctx context.Context, pdClient pd.Client, ts uint64) error 
 
 // UpdateServiceSafePoint register BackupTS to PD, to lock down BackupTS as safePoint with TTL seconds.
 func UpdateServiceSafePoint(ctx context.Context, pdClient pd.Client, sp BRServiceSafePoint) error {
-
 	var lastSafePoint uint64
 	var err error
 
@@ -186,7 +185,6 @@ func getKeyspaceMeta(ctx context.Context, pdClient pd.Client, keyspaceName strin
 	}
 
 	return keyspaceMeta.Id, keyspaceMeta.Config["gc_management_type"], nil
-
 }
 
 // IsNotBootstrappedError returns true if the error is pd not bootstrapped error.
