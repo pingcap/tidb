@@ -677,6 +677,7 @@ func (t *Table) IndexIsLoadNeeded(id int64) (*Index, bool) {
 }
 
 type neededStatsInternalMap struct {
+	// the bool value indicates whether is a full load or not.
 	items map[model.TableItemID]bool
 	m     sync.RWMutex
 }
