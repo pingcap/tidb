@@ -134,6 +134,7 @@ type HashJoinCtxV2 struct {
 	BuildFilter                    expression.CNFExprs
 	ProbeFilter                    expression.CNFExprs
 	OtherCondition                 expression.CNFExprs
+	hashTableContextMutex          sync.Mutex
 	hashTableContext               *hashTableContext
 	hashTableMeta                  *TableMeta
 	needScanRowTableAfterProbeDone bool
@@ -203,6 +204,21 @@ type HashJoinV2Exec struct {
 	prepared bool
 }
 
+func (e *HashJoinV2Exec) initHashTableContext() {
+	e.hashTableContextMutex.Lock()
+	defer e.hashTableContextMutex.Unlock()
+	e.HashJoinCtxV2.hashTableContext = newHashTableContext(int(e.Concurrency), e.PartitionNumber)
+	e.HashJoinCtxV2.hashTableContext.memoryTracker.AttachTo(e.HashJoinCtxV2.memTracker)
+}
+
+func (e *HashJoinV2Exec) resetHashTableContext() {
+	e.hashTableContextMutex.Lock()
+	if e.hashTableContext != nil {
+		e.HashJoinCtxV2.hashTableContext.reset()
+	}
+	e.hashTableContextMutex.Unlock()
+}
+
 // Close implements the Executor Close interface.
 func (e *HashJoinV2Exec) Close() error {
 	if e.closeCh != nil {
@@ -237,7 +253,7 @@ func (e *HashJoinV2Exec) Close() error {
 	if e.stats != nil {
 		defer e.Ctx().GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.ID(), e.stats)
 	}
-	e.HashJoinCtxV2.hashTableContext.reset()
+	e.resetHashTableContext()
 	err := e.BaseExecutor.Close()
 	return err
 }
@@ -269,8 +285,7 @@ func (e *HashJoinV2Exec) Open(ctx context.Context) error {
 		e.HashJoinCtxV2.memTracker = memory.NewTracker(e.ID(), -1)
 	}
 	e.HashJoinCtxV2.memTracker.AttachTo(e.Ctx().GetSessionVars().StmtCtx.MemTracker)
-	e.HashJoinCtxV2.hashTableContext = newHashTableContext(int(e.Concurrency), e.PartitionNumber)
-	e.HashJoinCtxV2.hashTableContext.memoryTracker.AttachTo(e.HashJoinCtxV2.memTracker)
+	e.initHashTableContext()
 
 	e.diskTracker = disk.NewTracker(e.ID(), -1)
 	e.diskTracker.AttachTo(e.Ctx().GetSessionVars().StmtCtx.DiskTracker)
