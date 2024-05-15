@@ -175,6 +175,10 @@ The above interfaces and parameters should give the users all information they n
 The feature needs to be compatible with existing user related statements and options, such as `CREATE USER`, `ALTER USER`, `SET PASSWORD`.
 However, it will not work with existing functionalities such as password expiry and password validation. Users can implement their own password validation logic inside the `GenerateAuthString` implementation.
 
+It will also not work with `CREATE VIEW SQL SECURITY DEFINER` since the view is created with the privileges of the view creator, and the plugin will not be able to check the privileges of the view creator because it
+does not have the `tls.ConnectionState` information for the definer to pass into `VerifyPrivilege`. This means that if a user is created using an auth plugin, it can only create views using `CREATE VIEW SQL SECURITY INVOKER` since
+at invocation time the plugin can check the privileges of the invoker and pass in the `tls.ConnectionState`.
+
 ## Test Design
 
 This feature requires tests focusing on functional and compatibility. Performance should not be a concern, since that depends on the actual auth plugin implementation and it is up to the users to keep the implementation performant if needed.
@@ -200,6 +204,8 @@ We will implement client to server tests to test out scenarios where MySQL users
 
 This feature should integrate well with all the existing test cases since it is an additional functionality. Existing tests related to authentication and authorization should continue to pass since they are not using auth plugins.
 
+We should add tests to verify that auth plugin users can only create views with `SQL SECURITY INVOKER` as mentioned in the compatibility section.
+
 ### Benchmark Tests
 
 This feature should not affect the performance of the TiDB as it simply provides interfaces for users to inject their own auth plugins via the extension system. The performance implication will come from the implementation of those plugins which depends on how the users of the framework want to use it.
@@ -209,6 +215,8 @@ This feature should not affect the performance of the TiDB as it simply provides
 If a user is using an auth plugin, the SQL privilege status in TiDB might not reflect the actual privileges, since there might be an outside system that decides whether the privilege check can actually pass. However, this is an intentional behavioral change when the user uses an auth plugin since we are providing users customizations on checks to run.
 
 The design does not account for implementing the same level of proxy user support as in MySQL auth plugin, since currently TiDB does not support [proxy users](https://dev.mysql.com/doc/extending-mysql/8.0/en/writing-authentication-plugins-proxy-users.html) yet. Also existing support for password expiry and validation will not work, as mentioned in the earlier section.
+
+Users created with auth plugins can only create views with `SQL SECURITY INVOKER` as well due to the missing `tls.ConnectionState` information for the definer at invocation time.
 
 
 ## Investigation & Alternatives
