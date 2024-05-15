@@ -306,6 +306,7 @@ func TestInitStats51358(t *testing.T) {
 			// primary key column has no stats info, because primary key's is_index is false. so it cannot load the topn
 			require.Nil(t, column.TopN)
 		}
+		require.False(t, column.IsFullLoad())
 	}
 }
 
