@@ -3682,7 +3682,7 @@ func (p *LogicalUnionAll) ExhaustPhysicalPlans(prop *property.PhysicalProperty) 
 		return nil, true, nil
 	}
 	canUseMpp := p.SCtx().GetSessionVars().IsMPPAllowed() && canPushToCopImpl(&p.BaseLogicalPlan, kv.TiFlash, true)
-	chReqProps := make([]*property.PhysicalProperty, 0, len(p.Children()))
+	chReqProps := make([]*property.PhysicalProperty, 0, p.ChildLen())
 	for range p.Children() {
 		if canUseMpp && prop.TaskTp == property.MppTaskType {
 			chReqProps = append(chReqProps, &property.PhysicalProperty{
@@ -3700,7 +3700,7 @@ func (p *LogicalUnionAll) ExhaustPhysicalPlans(prop *property.PhysicalProperty) 
 	}.Init(p.SCtx(), p.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), p.QueryBlockOffset(), chReqProps...)
 	ua.SetSchema(p.Schema())
 	if canUseMpp && prop.TaskTp == property.RootTaskType {
-		chReqProps = make([]*property.PhysicalProperty, 0, len(p.Children()))
+		chReqProps = make([]*property.PhysicalProperty, 0, p.ChildLen())
 		for range p.Children() {
 			chReqProps = append(chReqProps, &property.PhysicalProperty{
 				ExpectedCnt:       prop.ExpectedCnt,
