@@ -202,6 +202,7 @@ func (bc *litBackendCtx) Flush(mode FlushMode) (flushed, imported bool, errIdxID
 
 	for indexID, ei := range bc.engines {
 		ei.flushLock.Lock()
+		//nolint: all_revive,revive
 		defer ei.flushLock.Unlock()
 
 		if err = ei.Flush(); err != nil {
