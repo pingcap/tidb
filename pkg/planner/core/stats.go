@@ -275,6 +275,21 @@ func (ds *DataSource) initStats(colGroups [][]*expression.Column) {
 	ds.tableStats = tableStats
 	ds.tableStats.GroupNDVs = ds.getGroupNDVs(colGroups)
 	ds.TblColHists = ds.statisticTable.ID2UniqueID(ds.TblCols)
+	for _, col := range ds.tableInfo.Columns {
+		if col.State != model.StatePublic {
+			continue
+		}
+		// If we enable lite stats init or we just found out the meta info of the column is missed, we need to register columns for async load.
+		_, isLoadNeeded, _ := ds.statisticTable.ColumnIsLoadNeeded(col.ID, false)
+		if isLoadNeeded {
+			statistics.HistogramNeededItems.Insert(model.TableItemID{
+				TableID:          ds.tableInfo.ID,
+				ID:               col.ID,
+				IsIndex:          false,
+				IsSyncLoadFailed: ds.SCtx().GetSessionVars().StmtCtx.StatsLoad.Timeout > 0,
+			}, false)
+		}
+	}
 }
 
 func (ds *DataSource) deriveStatsByFilter(conds expression.CNFExprs, filledPaths []*util.AccessPath) *property.StatsInfo {
