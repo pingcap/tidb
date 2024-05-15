@@ -60,7 +60,7 @@ func TestJoinTableMetaKeyMode(t *testing.T) {
 		// OneInt64 for some basic fixed size type
 		{[]int{0}, []*types.FieldType{tinyTp}, []*types.FieldType{tinyTp}, []*types.FieldType{tinyTp}, OneInt64},
 		{[]int{0}, []*types.FieldType{yearTp}, []*types.FieldType{yearTp}, []*types.FieldType{yearTp}, OneInt64},
-		{[]int{0}, []*types.FieldType{durationTp}, []*types.FieldType{durationTp}, []*types.FieldType{yearTp}, OneInt64},
+		{[]int{0}, []*types.FieldType{durationTp}, []*types.FieldType{durationTp}, []*types.FieldType{durationTp}, OneInt64},
 		{[]int{0}, []*types.FieldType{bitTp}, []*types.FieldType{bitTp}, []*types.FieldType{bitTp}, OneInt64},
 		{[]int{0}, []*types.FieldType{intTp}, []*types.FieldType{intTp}, []*types.FieldType{intTp}, OneInt64},
 		{[]int{0}, []*types.FieldType{uintTp}, []*types.FieldType{uintTp}, []*types.FieldType{uintTp}, OneInt64},
