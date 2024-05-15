@@ -55,7 +55,10 @@ const bucketCount = 512
 
 type infoSchema struct {
 	infoSchemaMisc
-	schemaMap     map[string]*schemaTables
+	schemaMap map[string]*schemaTables
+	// schemaID2Name is a map from schema ID to schema name.
+	// it should be enough to query by name only theoretically, but there are some
+	// places we only have schema ID, and we check both name and id in some sanity checks.
 	schemaID2Name map[int64]string
 
 	// sortedTablesBuckets is a slice of sortedTables, a table's bucket index is (tableID % bucketCount).
