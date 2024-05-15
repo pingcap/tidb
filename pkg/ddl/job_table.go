@@ -217,7 +217,7 @@ func (d *ddl) getGeneralJob(sess *sess.Session) (*model.Job, error) {
 		}
 		// Check if there is any running job works on the same table.
 		sql := fmt.Sprintf("select job_id from mysql.tidb_ddl_job t1, (select table_ids from mysql.tidb_ddl_job where job_id = %d) t2 where "+
-			"(processing and CONCAT(',', t2.table_ids, ',') REGEXP CONCAT(',', REPLACE(t1.table_ids, ',', '|'), ',') != 0)"+
+			"(processing and CONCAT(',', t2.table_ids, ',') REGEXP CONCAT(',(', REPLACE(t1.table_ids, ',', '|'), '),') != 0)"+
 			"or (type = %d and processing)", job.ID, model.ActionFlashbackCluster)
 		rows, err := sess.Execute(d.ctx, sql, "check conflict jobs")
 		return len(rows) == 0, err
