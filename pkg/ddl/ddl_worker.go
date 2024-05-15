@@ -406,6 +406,7 @@ func (d *ddl) addBatchDDLJobs(tasks []*limitJobTask) error {
 		return errors.Trace(err)
 	}
 	defer d.sessPool.Put(se)
+	st := time.Now()
 	jobs, err := getJobsBySQL(sess.NewSession(se), JobTable, fmt.Sprintf("type = %d", model.ActionFlashbackCluster))
 	if err != nil {
 		return errors.Trace(err)
@@ -413,6 +414,8 @@ func (d *ddl) addBatchDDLJobs(tasks []*limitJobTask) error {
 	if len(jobs) != 0 {
 		return errors.Errorf("Can't add ddl job, have flashback cluster job")
 	}
+	logutil.DDLLogger().Info("DDL cost analysis",
+		zap.Duration("cost", time.Since(st)), zap.String("call", "check-flashback-cluster"))
 
 	var (
 		startTS = uint64(0)
@@ -596,6 +599,11 @@ func (w *worker) updateDDLJob(job *model.Job, meetErr bool) error {
 
 // registerMDLInfo registers metadata lock info.
 func (w *worker) registerMDLInfo(job *model.Job, ver int64) error {
+	st := time.Now()
+	defer func() {
+		logutil.DDLLogger().Info("DDL cost analysis",
+			zap.Duration("cost", time.Since(st)), zap.String("call", "registerMDLInfo"), zap.Stringer("job_state", job.State))
+	}()
 	if !variable.EnableMDL.Load() {
 		return nil
 	}
@@ -625,6 +633,11 @@ func (w *worker) registerMDLInfo(job *model.Job, ver int64) error {
 
 // cleanMDLInfo cleans metadata lock info.
 func cleanMDLInfo(pool *sess.Pool, job *model.Job, ec *clientv3.Client, ownerID string, cleanETCD bool) {
+	st := time.Now()
+	defer func() {
+		logutil.DDLLogger().Info("DDL cost analysis",
+			zap.Duration("cost", time.Since(st)), zap.String("call", "cleanMDLInfo"))
+	}()
 	if !variable.EnableMDL.Load() {
 		return
 	}
@@ -864,6 +877,11 @@ func (w *JobContext) setDDLLabelForDiagnosis(jobType model.ActionType) {
 }
 
 func (w *worker) HandleJobDone(d *ddlCtx, job *model.Job, t *meta.Meta) error {
+	st := time.Now()
+	defer func() {
+		logutil.DDLLogger().Info("DDL cost analysis",
+			zap.Duration("cost", time.Since(st)), zap.String("call", "HandleJobDone"), zap.Stringer("job_state", job.State))
+	}()
 	if err := w.checkBeforeCommit(); err != nil {
 		return err
 	}
@@ -914,6 +932,11 @@ func (w *worker) prepareTxn(job *model.Job) (kv.Transaction, error) {
 }
 
 func (w *worker) HandleDDLJobTable(d *ddlCtx, job *model.Job) (int64, error) {
+	st := time.Now()
+	defer func() {
+		logutil.DDLLogger().Info("DDL cost analysis",
+			zap.Duration("cost", time.Since(st)), zap.String("call", "HandleDDLJobTable"), zap.Stringer("job_state", job.State))
+	}()
 	var (
 		err       error
 		schemaVer int64
@@ -1008,7 +1031,10 @@ func (w *worker) HandleDDLJobTable(d *ddlCtx, job *model.Job) (int64, error) {
 	writeBinlog(d.binlogCli, txn, job)
 	// reset the SQL digest to make topsql work right.
 	w.sess.GetSessionVars().StmtCtx.ResetSQLDigest(job.Query)
+	st2 := time.Now()
 	err = w.sess.Commit()
+	logutil.DDLLogger().Info("DDL cost analysis",
+		zap.Duration("cost", time.Since(st2)), zap.String("call", "HandleDDLJobTable-commit"), zap.Stringer("job_state", job.State))
 	d.unlockSchemaVersion(job.ID)
 	if err != nil {
 		return 0, err
@@ -1197,6 +1223,12 @@ func (w *worker) processJobPausingRequest(d *ddlCtx, job *model.Job) (isRunnable
 
 // runDDLJob runs a DDL job. It returns the current schema version in this transaction and the error.
 func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
+	st := time.Now()
+	defer func() {
+		logutil.DDLLogger().Info("DDL cost analysis",
+			zap.Duration("cost", time.Since(st)), zap.String("call", "runDDLJob"),
+			zap.Stringer("job_state", job.State), zap.Int64("job_id", job.ID))
+	}()
 	defer tidbutil.Recover(metrics.LabelDDLWorker, fmt.Sprintf("%s runDDLJob", w),
 		func() {
 			w.countForPanic(job)
@@ -1403,6 +1435,12 @@ func toTError(err error) *terror.Error {
 // waitSchemaChanged waits for the completion of updating all servers' schema or MDL synced. In order to make sure that happens,
 // we wait at most 2 * lease time(sessionTTL, 90 seconds).
 func waitSchemaChanged(d *ddlCtx, waitTime time.Duration, latestSchemaVersion int64, job *model.Job) error {
+	st := time.Now()
+	defer func() {
+		logutil.DDLLogger().Info("DDL cost analysis",
+			zap.Duration("cost", time.Since(st)), zap.String("call", "waitSchemaChanged"),
+			zap.Stringer("job_state", job.State), zap.Int64("job_id", job.ID))
+	}()
 	if !job.IsRunning() && !job.IsRollingback() && !job.IsDone() && !job.IsRollbackDone() {
 		return nil
 	}
@@ -1439,6 +1477,12 @@ func waitSchemaChanged(d *ddlCtx, waitTime time.Duration, latestSchemaVersion in
 
 // waitSchemaSyncedForMDL likes waitSchemaSynced, but it waits for getting the metadata lock of the latest version of this DDL.
 func waitSchemaSyncedForMDL(d *ddlCtx, job *model.Job, latestSchemaVersion int64) error {
+	st := time.Now()
+	defer func() {
+		logutil.DDLLogger().Info("DDL cost analysis",
+			zap.Duration("cost", time.Since(st)), zap.String("call", "waitSchemaSyncedForMDL"),
+			zap.Stringer("job_state", job.State), zap.Int64("job_id", job.ID))
+	}()
 	timeStart := time.Now()
 	return checkAllVersions(d, job, latestSchemaVersion, timeStart)
 }

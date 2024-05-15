@@ -950,6 +950,11 @@ func (job *Job) NotStarted() bool {
 	return job.State == JobStateNone || job.State == JobStateQueueing
 }
 
+func (job *Job) InTerminalState() bool {
+	return job.State == JobStateSynced || job.State == JobStateRollbackDone ||
+		job.State == JobStateCancelled || job.State == JobStatePaused
+}
+
 // MayNeedReorg indicates that this job may need to reorganize the data.
 func (job *Job) MayNeedReorg() bool {
 	switch job.Type {

@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	disttaskutil "github.com/pingcap/tidb/pkg/util/disttask"
@@ -127,7 +128,7 @@ type SchemaSyncer interface {
 	// OwnerCheckAllVersions checks whether all followers' schema version are equal to
 	// the latest schema version. (exclude the isolated TiDB)
 	// It returns until all servers' versions are equal to the latest version.
-	OwnerCheckAllVersions(ctx context.Context, jobID int64, latestVer int64) error
+	OwnerCheckAllVersions(ctx context.Context, jobID *model.Job, latestVer int64) error
 	// SyncJobSchemaVerLoop syncs the schema versions on all TiDB nodes for DDL jobs.
 	SyncJobSchemaVerLoop(ctx context.Context)
 	// Close ends SchemaSyncer.
@@ -360,7 +361,7 @@ func (s *schemaVersionSyncer) removeSelfVersionPath() error {
 }
 
 // OwnerCheckAllVersions implements SchemaSyncer.OwnerCheckAllVersions interface.
-func (s *schemaVersionSyncer) OwnerCheckAllVersions(ctx context.Context, jobID int64, latestVer int64) error {
+func (s *schemaVersionSyncer) OwnerCheckAllVersions(ctx context.Context, job *model.Job, latestVer int64) error {
 	startTime := time.Now()
 	if !variable.EnableMDL.Load() {
 		time.Sleep(CheckVersFirstWaitTime)
@@ -386,10 +387,14 @@ func (s *schemaVersionSyncer) OwnerCheckAllVersions(ctx context.Context, jobID i
 		}
 
 		if variable.EnableMDL.Load() {
+			st := time.Now()
 			serverInfos, err := infosync.GetAllServerInfo(ctx)
 			if err != nil {
 				return err
 			}
+			logutil.DDLLogger().Info("DDL cost analysis",
+				zap.Duration("cost", time.Since(st)), zap.String("call", "syncSchemaVersion-GetAllServerInfo"),
+				zap.Stringer("job_state", job.State), zap.Int64("job_id", job.ID))
 			updatedMap = make(map[string]string)
 			instance2id := make(map[string]string)
 
@@ -429,9 +434,13 @@ func (s *schemaVersionSyncer) OwnerCheckAllVersions(ctx context.Context, jobID i
 				close(notifyCh)
 				return true
 			}
-			item := s.jobSchemaVerMatchOrSet(jobID, matchFn)
+			item := s.jobSchemaVerMatchOrSet(job, matchFn)
+			st := time.Now()
 			select {
 			case <-notifyCh:
+				logutil.DDLLogger().Info("DDL cost analysis",
+					zap.Duration("cost", time.Since(st)), zap.String("call", "syncSchemaVersion-notified"),
+					zap.Stringer("job_state", job.State), zap.Int64("job_id", job.ID))
 				return nil
 			case <-ctx.Done():
 				return errors.Trace(ctx.Err())
@@ -440,11 +449,11 @@ func (s *schemaVersionSyncer) OwnerCheckAllVersions(ctx context.Context, jobID i
 				if id := unmatchedNodeID.Load(); id != nil {
 					logutil.DDLLogger().Info("syncer check all versions, someone is not synced",
 						zap.String("info", *id),
-						zap.Int64("ddl job id", jobID),
+						zap.Int64("ddl job id", job.ID),
 						zap.Int64("ver", latestVer))
 				} else {
 					logutil.DDLLogger().Info("syncer check all versions, all nodes are not synced",
-						zap.Int64("ddl job id", jobID),
+						zap.Int64("ddl job id", job.ID),
 						zap.Int64("ver", latestVer))
 				}
 			}
@@ -573,16 +582,22 @@ func (s *schemaVersionSyncer) handleJobSchemaVerKV(kv *mvccpb.KeyValue, tp mvccp
 	}
 }
 
-func (s *schemaVersionSyncer) jobSchemaVerMatchOrSet(jobID int64, matchFn func(map[string]int64) bool) *nodeVersions {
+func (s *schemaVersionSyncer) jobSchemaVerMatchOrSet(job *model.Job, matchFn func(map[string]int64) bool) *nodeVersions {
+	st := time.Now()
+	defer func() {
+		logutil.DDLLogger().Info("DDL cost analysis",
+			zap.Duration("cost", time.Since(st)), zap.String("call", "syncSchemaVersion-jobSchemaVerMatchOrSet"),
+			zap.Stringer("job_state", job.State), zap.Int64("job_id", job.ID))
+	}()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	item, exists := s.jobNodeVersions[jobID]
+	item, exists := s.jobNodeVersions[job.ID]
 	if exists {
 		item.matchOrSet(matchFn)
 	} else {
 		item = newNodeVersions(1, matchFn)
-		s.jobNodeVersions[jobID] = item
+		s.jobNodeVersions[job.ID] = item
 	}
 	return item
 }

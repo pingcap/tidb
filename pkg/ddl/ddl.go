@@ -88,7 +88,7 @@ const (
 	batchAddingJobs = 10
 
 	reorgWorkerCnt   = 10
-	generalWorkerCnt = 1
+	generalWorkerCnt = 64
 	localWorkerCnt   = 10
 
 	// checkFlagIndexInJobArgs is the recoverCheckFlag index used in RecoverTable/RecoverSchema job arg list.
@@ -441,6 +441,11 @@ func newSchemaVersionManager(ctx context.Context, etcdClient *clientv3.Client) *
 }
 
 func (sv *schemaVersionManager) setSchemaVersion(job *model.Job, store kv.Storage) (schemaVersion int64, err error) {
+	st := time.Now()
+	defer func() {
+		logutil.DDLLogger().Info("DDL cost analysis",
+			zap.Duration("cost", time.Since(st)), zap.String("call", "setSchemaVersion"))
+	}()
 	err = sv.lockSchemaVersion(job.ID)
 	if err != nil {
 		return schemaVersion, errors.Trace(err)
@@ -454,13 +459,21 @@ func (sv *schemaVersionManager) setSchemaVersion(job *model.Job, store kv.Storag
 	return schemaVersion, err
 }
 
+var schemaVersionLockStart time.Time
+
 // lockSchemaVersion gets the lock to prevent the schema version from being updated.
 func (sv *schemaVersionManager) lockSchemaVersion(jobID int64) error {
+	st := time.Now()
+	defer func() {
+		logutil.DDLLogger().Info("DDL cost analysis",
+			zap.Duration("cost", time.Since(st)), zap.String("call", "lockSchemaVersion"))
+	}()
 	ownerID := sv.lockOwner.Load()
 	// There may exist one job update schema version many times in multiple-schema-change, so we do not lock here again
 	// if they are the same job.
 	if ownerID != jobID {
 		sv.schemaVersionMu.Lock()
+		schemaVersionLockStart = time.Now()
 		sv.lockOwner.Store(jobID)
 		if sv.etcdClient != nil && variable.EnableFastCreateTable.Load() {
 			se, err := concurrency.NewSession(sv.etcdClient)
@@ -500,6 +513,8 @@ func (sv *schemaVersionManager) unlockSchemaVersion(jobID int64) {
 			}
 		}
 		sv.lockOwner.Store(0)
+		logutil.DDLLogger().Info("DDL cost analysis",
+			zap.Duration("cost", time.Since(schemaVersionLockStart)), zap.String("call", "SchemaVersionLockDuration"))
 		sv.schemaVersionMu.Unlock()
 	}
 }
@@ -670,6 +685,11 @@ func (d *ddl) RegisterStatsHandle(h *handle.Handle) {
 // asyncNotifyEvent will notify the ddl event to outside world, say statistic handle. When the channel is full, we may
 // give up notify and log it.
 func asyncNotifyEvent(d *ddlCtx, e *statsutil.DDLEvent) {
+	st := time.Now()
+	defer func() {
+		logutil.DDLLogger().Info("DDL cost analysis",
+			zap.Duration("cost", time.Since(st)), zap.String("call", "asyncNotifyEvent"))
+	}()
 	if d.ddlEventCh != nil {
 		if d.lease == 0 {
 			// If lease is 0, it's always used in test.
@@ -1167,6 +1187,11 @@ func (*ddl) shouldCheckHistoryJob(job *model.Job) bool {
 // - context.Cancel: job has been sent to worker, but not found in history DDL job before cancel
 // - other: found in history DDL job and return that job error
 func (d *ddl) DoDDLJob(ctx sessionctx.Context, job *model.Job) error {
+	st := time.Now()
+	defer func() {
+		logutil.DDLLogger().Info("DDL cost analysis",
+			zap.Duration("cost", time.Since(st)), zap.String("call", "DoDDLJob"))
+	}()
 	job.TraceInfo = &model.TraceInfo{
 		ConnectionID: ctx.GetSessionVars().ConnectionID,
 		SessionAlias: ctx.GetSessionVars().SessionAlias,
@@ -1180,6 +1205,7 @@ func (d *ddl) DoDDLJob(ctx sessionctx.Context, job *model.Job) error {
 	setDDLJobQuery(ctx, job)
 	setDDLJobMode(job)
 	task := &limitJobTask{job, []chan error{make(chan error)}, nil}
+	st2 := time.Now()
 	d.deliverJobTask(task)
 
 	failpoint.Inject("mockParallelSameDDLJobTwice", func(val failpoint.Value) {
@@ -1201,6 +1227,8 @@ func (d *ddl) DoDDLJob(ctx sessionctx.Context, job *model.Job) error {
 		// The transaction of enqueuing job is failed.
 		return errors.Trace(err)
 	}
+	logutil.DDLLogger().Info("DDL cost analysis",
+		zap.Duration("cost", time.Since(st2)), zap.String("call", "deliverJobTask"))
 
 	sessVars := ctx.GetSessionVars()
 	sessVars.StmtCtx.IsDDLJobInQueue = true
@@ -1326,6 +1354,11 @@ func (d *ddl) DoDDLJob(ctx sessionctx.Context, job *model.Job) error {
 }
 
 func (d *ddl) callHookOnChanged(job *model.Job, err error) error {
+	st := time.Now()
+	defer func() {
+		logutil.DDLLogger().Info("DDL cost analysis",
+			zap.Duration("cost", time.Since(st)), zap.String("call", "callHookOnChanged"))
+	}()
 	if job.State == model.JobStateNone {
 		// We don't call the hook if the job haven't run yet.
 		return err
