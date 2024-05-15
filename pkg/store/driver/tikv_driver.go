@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/resourcemanager/gpool"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/store/copr"
 	derr "github.com/pingcap/tidb/pkg/store/driver/error"
@@ -210,9 +211,11 @@ func (d TiKVDriver) OpenWithOptions(path string, options ...Option) (resStore kv
 		tikv.WithSecurity(d.security),
 		tikv.WithCodec(codec),
 	)
+	gp := gpool.NewGPool()
 
 	s, err = tikv.NewKVStore(uuid, pdClient, spkv, &injectTraceClient{Client: rpcClient},
-		tikv.WithPDHTTPClient("tikv-driver", etcdAddrs, pdhttp.WithTLSConfig(tlsConfig), pdhttp.WithMetrics(metrics.PDAPIRequestCounter, metrics.PDAPIExecutionHistogram)))
+		tikv.WithPDHTTPClient("tikv-driver", etcdAddrs, pdhttp.WithTLSConfig(tlsConfig), pdhttp.WithMetrics(metrics.PDAPIRequestCounter, metrics.PDAPIExecutionHistogram)),
+		tikv.WithPool(gpool.NewTikvGPool(gp)))
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -222,7 +225,7 @@ func (d TiKVDriver) OpenWithOptions(path string, options ...Option) (resStore kv
 		s.EnableTxnLocalLatches(d.txnLocalLatches.Capacity)
 	}
 	coprCacheConfig := &config.GetGlobalConfig().TiKVClient.CoprCache
-	coprStore, err := copr.NewStore(s, coprCacheConfig)
+	coprStore, err := copr.NewStore(s, gp, coprCacheConfig)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -235,6 +238,7 @@ func (d TiKVDriver) OpenWithOptions(path string, options ...Option) (resStore kv
 		enableGC:  !disableGC,
 		coprStore: coprStore,
 		codec:     codec,
+		gpool:     gp,
 	}
 
 	mc.cache[uuid] = store
@@ -250,6 +254,7 @@ type tikvStore struct {
 	gcWorker  *gcworker.GCWorker
 	coprStore *copr.Store
 	codec     tikv.Codec
+	gpool     gpool.Pool
 }
 
 // Name gets the name of the storage engine
@@ -347,6 +352,7 @@ func (s *tikvStore) Close() error {
 	}
 	s.coprStore.Close()
 	err := s.KVStore.Close()
+	s.gpool.Close()
 	return derr.ToTiDBErr(err)
 }
 
@@ -404,6 +410,10 @@ func (s *tikvStore) GetLockWaits() ([]*deadlockpb.WaitForEntry, error) {
 
 func (s *tikvStore) GetCodec() tikv.Codec {
 	return s.codec
+}
+
+func (s *tikvStore) GetGPool() gpool.Pool {
+	return s.gpool
 }
 
 // injectTraceClient injects trace info to the tikv request

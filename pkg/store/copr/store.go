@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/errors"
 	tidb_config "github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/resourcemanager/gpool"
 	"github.com/pingcap/tidb/pkg/store/driver/backoff"
 	derr "github.com/pingcap/tidb/pkg/store/driver/error"
 	"github.com/tikv/client-go/v2/config"
@@ -83,21 +84,25 @@ type Store struct {
 	coprCache       *coprCache
 	replicaReadSeed uint32
 	numcpu          int
+	gp              gpool.Pool
 }
 
 // NewStore creates a new store instance.
-func NewStore(s *tikv.KVStore, coprCacheConfig *config.CoprocessorCache) (*Store, error) {
+func NewStore(s *tikv.KVStore, gp gpool.Pool, coprCacheConfig *config.CoprocessorCache) (*Store, error) {
 	coprCache, err := newCoprCache(coprCacheConfig)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-
+	if gp == nil {
+		gp = gpool.MockGPool
+	}
 	/* #nosec G404 */
 	return &Store{
 		kvStore:         &kvStore{store: s, mppStoreCnt: &mppStoreCnt{}},
 		coprCache:       coprCache,
 		replicaReadSeed: rand.Uint32(),
 		numcpu:          runtime.GOMAXPROCS(0),
+		gp:              gp,
 	}, nil
 }
 
