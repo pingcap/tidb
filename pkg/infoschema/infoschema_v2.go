@@ -1021,10 +1021,12 @@ func (b *bundleInfoBuilder) completeUpdateTablesV2(is *infoschemaV2) {
 
 type specialAttributeFilter func(*model.TableInfo) bool
 
+// TTLAttribute is the TTL attribute filter used by ListTablesWithSpecialAttribute.
 var TTLAttribute specialAttributeFilter = func(t *model.TableInfo) bool {
 	return t.State == model.StatePublic && t.TTLInfo != nil
 }
 
+// TiFlashAttribute is the TiFlashReplica attribute filter used by ListTablesWithSpecialAttribute.
 var TiFlashAttribute specialAttributeFilter = func(t *model.TableInfo) bool {
 	return t.TiFlashReplica != nil
 }
@@ -1033,6 +1035,7 @@ func hasSpecialAttributes(t *model.TableInfo) bool {
 	return TTLAttribute(t) || TiFlashAttribute(t)
 }
 
+// AllSpecialAttribute marks a model.TableInfo with any special attributes.
 var AllSpecialAttribute specialAttributeFilter = hasSpecialAttributes
 
 func (is *infoschemaV2) ListTablesWithSpecialAttribute(filter specialAttributeFilter) <-chan tableInfoResult {
