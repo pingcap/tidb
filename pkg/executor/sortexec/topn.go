@@ -445,7 +445,6 @@ func (e *TopNExec) executeTopN(ctx context.Context) {
 	for uint64(len(e.chkHeap.rowPtrs)) > e.chkHeap.totalLimit {
 		// The number of rows we loaded may exceeds total limit, remove greatest rows by Pop.
 		heap.Pop(e.chkHeap)
-		e.chkHeap.droppedRowNum++
 	}
 
 	if err := e.executeTopNWhenNoSpillTriggered(ctx); err != nil {

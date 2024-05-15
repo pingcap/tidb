@@ -16,7 +16,6 @@ package sortexec
 
 import (
 	"container/heap"
-	"fmt"
 
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/types"
@@ -42,9 +41,7 @@ type topNChunkHeap struct {
 	totalLimit uint64
 	idx        int
 
-	droppedRowNum     int64
-	fieldTypes        []*types.FieldType
-	droppedRowsString string
+	fieldTypes []*types.FieldType
 }
 
 func (h *topNChunkHeap) init(topnExec *TopNExec, memTracker *memory.Tracker, totalLimit uint64, idx int, greaterRow func(chunk.Row, chunk.Row) bool, fieldTypes []*types.FieldType) {
@@ -94,11 +91,7 @@ func (h *topNChunkHeap) update(heapMaxRow chunk.Row, newRow chunk.Row) {
 		// Evict heap max, keep the next row.
 		h.rowPtrs[0] = h.rowChunks.AppendRow(newRow)
 		heap.Fix(h, 0)
-		h.droppedRowsString = fmt.Sprintf("%s; %s", h.droppedRowsString, heapMaxRow.ToString(h.fieldTypes))
-	} else {
-		h.droppedRowsString = fmt.Sprintf("%s; %s", h.droppedRowsString, newRow.ToString(h.fieldTypes))
 	}
-	h.droppedRowNum++
 }
 
 func (h *topNChunkHeap) processChk(chk *chunk.Chunk) {
