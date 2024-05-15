@@ -111,7 +111,7 @@ func UpdateServiceSafePointWithGCManagementType(ctx context.Context, pdClient pd
 	if keyspaceName == "" {
 		// If keyspace is not set.
 		lastServiceSafePoint, err = pdClient.UpdateServiceGCSafePoint(ctx, serviceID, ttl, serviceSafePoint)
-		log.Debug("use service safe point.",
+		log.Info("use service safe point.",
 			zap.String("service-safe-point-id", serviceID),
 			zap.Int64("service-safe-point-ttl", ttl),
 			zap.Uint64("service-safe-point", serviceSafePoint),
@@ -126,9 +126,10 @@ func UpdateServiceSafePointWithGCManagementType(ctx context.Context, pdClient pd
 		case "keyspace_level_gc":
 			{
 				lastServiceSafePoint, err = pdClient.UpdateServiceSafePointV2(ctx, keyspaceID, serviceID, ttl, serviceSafePoint)
-				log.Debug("update keyspace level service safe point.",
+				log.Info("update keyspace level service safe point.",
 					zap.String("keyspace-name", keyspaceName),
 					zap.Uint32("keyspace-id", keyspaceID),
+					zap.String("service-safe-point-id", serviceID),
 					zap.Int64("service-safe-point-ttl", ttl),
 					zap.Uint64("service-safe-point", serviceSafePoint),
 					zap.Uint64("last-service-safe-point", lastServiceSafePoint))
@@ -136,9 +137,10 @@ func UpdateServiceSafePointWithGCManagementType(ctx context.Context, pdClient pd
 		case "global_gc":
 			{
 				lastServiceSafePoint, err = pdClient.UpdateServiceGCSafePoint(ctx, serviceID, ttl, serviceSafePoint)
-				log.Debug("use service safe point.",
+				log.Info("use service safe point.",
 					zap.String("keyspace-name", keyspaceName),
 					zap.Uint32("keyspace-id", keyspaceID),
+					zap.String("service-safe-point-id", serviceID),
 					zap.Int64("service-safe-point-ttl", ttl),
 					zap.Uint64("service-safe-point", serviceSafePoint),
 					zap.Uint64("last-service-safe-point", lastServiceSafePoint))
@@ -147,9 +149,10 @@ func UpdateServiceSafePointWithGCManagementType(ctx context.Context, pdClient pd
 			{
 				// If `gc_management_type` is not set.
 				lastServiceSafePoint, err = pdClient.UpdateServiceGCSafePoint(ctx, serviceID, ttl, serviceSafePoint)
-				log.Debug("use service safe point.",
+				log.Info("use service safe point.",
 					zap.String("keyspace-name", keyspaceName),
 					zap.Uint32("keyspace-id", keyspaceID),
+					zap.String("service-safe-point-id", serviceID),
 					zap.Int64("service-safe-point-ttl", ttl),
 					zap.Uint64("service-safe-point", serviceSafePoint),
 					zap.Uint64("last-service-safe-point", lastServiceSafePoint))
