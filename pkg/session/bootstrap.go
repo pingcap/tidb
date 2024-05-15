@@ -3109,7 +3109,7 @@ func upgradeToVer197(s sessiontypes.Session, ver int64) {
 }
 
 func upgradeToVer198(s sessiontypes.Session, ver int64) {
-	if ver >= version197 {
+	if ver >= version198 {
 		return
 	}
 
