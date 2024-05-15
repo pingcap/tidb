@@ -117,7 +117,9 @@ func (bc *litBackendCtx) FinishedWritingNeedImport() bool {
 		return false
 	}
 	for _, ei := range bc.engines {
-		return ei.closedEngine != nil
+		if ei.closedEngine != nil {
+			return true
+		}
 	}
 	return false
 }

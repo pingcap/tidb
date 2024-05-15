@@ -49,12 +49,20 @@ type BackendCtx interface {
 	// BackendCtx.
 	Register(indexIDs []int64, tableName string) ([]Engine, error)
 	UnregisterEngines()
+	// FinishImport imports the engine of given index ID into the storage, collects
+	// the duplicate errors if the `unique` is true. The first call of FinishImport
+	// means no further data will be wrote to the engine.
+	//
+	// TODO(lance6716): refine the interface to let caller don't need to pass the
+	// indexID, and unify with CollectRemoteDuplicateRows.
+	FinishImport(indexID int64, unique bool, tbl table.Table) error
 	// FinishedWritingNeedImport returns true only when all the engines are finished
-	// writing and only need import, that is to say, engines are closed.
+	// writing and only need import. Considering the calling usage of FinishImport,
+	// it will return true after a successful call of FinishImport and may return
+	// true after a failed call of FinishImport.
 	FinishedWritingNeedImport() bool
 
 	CollectRemoteDuplicateRows(indexID int64, tbl table.Table) error
-	FinishImport(indexID int64, unique bool, tbl table.Table) error
 	FlushController
 	Done() bool
 	SetDone()
@@ -192,15 +200,9 @@ func (bc *litBackendCtx) Flush(mode FlushMode) (flushed, imported bool, errIdxID
 	}
 	defer bc.flushing.Store(false)
 
-	unlockFn := make([]func(), 0, len(bc.engines))
-	defer func() {
-		for _, fn := range unlockFn {
-			fn()
-		}
-	}()
 	for indexID, ei := range bc.engines {
 		ei.flushLock.Lock()
-		unlockFn = append(unlockFn, ei.flushLock.Unlock)
+		defer ei.flushLock.Unlock()
 
 		if err = ei.Flush(); err != nil {
 			return false, false, indexID, err
