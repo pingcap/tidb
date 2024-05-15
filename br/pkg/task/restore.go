@@ -754,6 +754,14 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	if err != nil {
 		return errors.Trace(err)
 	}
+	if cfg.CheckRequirements {
+		err := checkIncompatibleChangefeed(ctx, backupMeta.EndVersion, mgr.GetDomain().GetEtcdClient())
+		log.Info("Checking incompatible TiCDC changefeeds before restoring.",
+			logutil.ShortError(err), zap.Uint64("restore-ts", backupMeta.EndVersion))
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
 
 	backupVersion := version.NormalizeBackupVersion(backupMeta.ClusterVersion)
 	if cfg.CheckRequirements && backupVersion != nil {
