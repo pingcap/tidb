@@ -1,0 +1,24 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "statstest_test",
+    timeout = "short",
+    srcs = [
+        "main_test.go",
+        "stats_test.go",
+    ],
+    flaky = True,
+    race = "on",
+    shard_count = 12,
+    deps = [
+        "//pkg/config",
+        "//pkg/parser/model",
+        "//pkg/parser/mysql",
+        "//pkg/statistics/handle/internal",
+        "//pkg/testkit",
+        "//pkg/testkit/testsetup",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)
