@@ -99,17 +99,74 @@ func (p *BaseLogicalPlan) SetChild(i int, child base.LogicalPlan) {
 	p.children[i] = child
 }
 
-// ConstantPropagation implements the LogicalPlan interface.
-func (*BaseLogicalPlan) ConstantPropagation(_ base.LogicalPlan, _ int, _ *optimizetrace.LogicalOptimizeOp) (newRoot base.LogicalPlan) {
+// FindBestTask implements LogicalPlan.<3rd> interface.
+func (p *BaseLogicalPlan) FindBestTask(prop *property.PhysicalProperty, planCounter *base.PlanCounterTp,
+	opt *optimizetrace.PhysicalOptimizeOp) (bestTask base.Task, cntPlan int64, err error) {
+	return utilfuncp.FindBestTask(p, prop, planCounter, opt)
+}
+
+// BuildKeyInfo implements LogicalPlan.<4th> interface.
+func (p *BaseLogicalPlan) BuildKeyInfo(_ *expression.Schema, _ []*expression.Schema) {
+	childMaxOneRow := make([]bool, len(p.children))
+	for i := range p.children {
+		childMaxOneRow[i] = p.children[i].MaxOneRow()
+	}
+	p.maxOneRow = utilfuncp.HasMaxOneRowUtil(p.self, childMaxOneRow)
+}
+
+// PushDownTopN implements the LogicalPlan.<5th> interface.
+func (p *BaseLogicalPlan) PushDownTopN(topNLogicalPlan base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) base.LogicalPlan {
+	return utilfuncp.PushDownTopNForBaseLogicalPlan(p, topNLogicalPlan, opt)
+}
+
+// DeriveTopN implements the LogicalPlan.<6th> interface.
+func (p *BaseLogicalPlan) DeriveTopN(opt *optimizetrace.LogicalOptimizeOp) base.LogicalPlan {
+	s := p.self
+	if s.SCtx().GetSessionVars().AllowDeriveTopN {
+		for i, child := range s.Children() {
+			newChild := child.DeriveTopN(opt)
+			s.SetChild(i, newChild)
+		}
+	}
+	return s
+}
+
+// PredicateSimplification implements the LogicalPlan.<7th> interface.
+func (p *BaseLogicalPlan) PredicateSimplification(opt *optimizetrace.LogicalOptimizeOp) base.LogicalPlan {
+	s := p.self
+	for i, child := range s.Children() {
+		newChild := child.PredicateSimplification(opt)
+		s.SetChild(i, newChild)
+	}
+	return s
+}
+
+// ConstantPropagation implements the LogicalPlan.<8th> interface.
+func (p *BaseLogicalPlan) ConstantPropagation(_ base.LogicalPlan, _ int, _ *optimizetrace.LogicalOptimizeOp) (newRoot base.LogicalPlan) {
 	// Only LogicalJoin can apply constant propagation
 	// Other Logical plan do nothing
 	return nil
 }
 
-// ExtractFD return the children[0]'s fdSet if there are no adding/removing fd in this logic plan.
-func (p *BaseLogicalPlan) ExtractFD() *fd.FDSet {
-	if p.fdSet != nil {
-		return p.fdSet
+// PullUpConstantPredicates implements the LogicalPlan.<9th> interface.
+func (p *BaseLogicalPlan) PullUpConstantPredicates() []expression.Expression {
+	// Only LogicalProjection and LogicalSelection can get constant predicates
+	// Other Logical plan return nil
+	return nil
+}
+
+// RecursiveDeriveStats implements LogicalPlan.<10th> interface.
+func (p *BaseLogicalPlan) RecursiveDeriveStats(colGroups [][]*expression.Column) (*property.StatsInfo, error) {
+	childStats := make([]*property.StatsInfo, len(p.children))
+	childSchema := make([]*expression.Schema, len(p.children))
+	cumColGroups := p.self.ExtractColGroups(colGroups)
+	for i, child := range p.children {
+		childProfile, err := child.RecursiveDeriveStats(cumColGroups)
+		if err != nil {
+			return nil, err
+		}
+		childStats[i] = childProfile
+		childSchema[i] = child.Schema()
 	}
 	fds := &fd.FDSet{HashCodeToUniqueID: make(map[string]int)}
 	for _, ch := range p.children {
@@ -118,12 +175,47 @@ func (p *BaseLogicalPlan) ExtractFD() *fd.FDSet {
 	return fds
 }
 
-// GetBaseLogicalPlan return the baseLogicalPlan inside each logical plan.
-func (p *BaseLogicalPlan) GetBaseLogicalPlan() base.LogicalPlan {
-	return p
+// ExtractColGroups implements LogicalPlan.<12th> interface.
+func (p *BaseLogicalPlan) ExtractColGroups(_ [][]*expression.Column) [][]*expression.Column {
+	return nil
 }
 
-// RollBackTaskMap implements LogicalPlan interface.
+// PreparePossibleProperties implements LogicalPlan.<13th> interface.
+func (p *BaseLogicalPlan) PreparePossibleProperties(_ *expression.Schema, _ ...[][]*expression.Column) [][]*expression.Column {
+	return nil
+}
+
+// ExhaustPhysicalPlans implements LogicalPlan.<14th> interface.
+func (p *BaseLogicalPlan) ExhaustPhysicalPlans(*property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
+	panic("baseLogicalPlan.ExhaustPhysicalPlans() should never be called.")
+}
+
+// ExtractCorrelatedCols implements LogicalPlan.<15th> interface.
+func (p *BaseLogicalPlan) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
+	return nil
+}
+
+// MaxOneRow implements the LogicalPlan.<16th> interface.
+func (p *BaseLogicalPlan) MaxOneRow() bool {
+	return p.maxOneRow
+}
+
+// Children implements LogicalPlan.<17th> interface.
+func (p *BaseLogicalPlan) Children() []base.LogicalPlan {
+	return p.children
+}
+
+// SetChildren implements LogicalPlan.<18th> interface.
+func (p *BaseLogicalPlan) SetChildren(children ...base.LogicalPlan) {
+	p.children = children
+}
+
+// SetChild implements LogicalPlan.<19th> interface.
+func (p *BaseLogicalPlan) SetChild(i int, child base.LogicalPlan) {
+	p.children[i] = child
+}
+
+// RollBackTaskMap implements LogicalPlan.<20th> interface.
 func (p *BaseLogicalPlan) RollBackTaskMap(ts uint64) {
 	if !p.SCtx().GetSessionVars().StmtCtx.StmtHints.TaskMapNeedBackUp() {
 		return
