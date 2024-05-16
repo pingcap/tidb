@@ -108,11 +108,12 @@ func checkKeys(t *testing.T, withSelCol bool, buildFilter expression.CNFExprs, b
 		chk.SetSel(sel)
 	}
 	hashJoinCtx := &HashJoinCtxV2{
-		PartitionNumber:  1,
-		hashTableMeta:    meta,
-		BuildFilter:      buildFilter,
-		hashTableContext: newHashTableContext(1, 1),
+		PartitionNumber: 1,
+		hashTableMeta:   meta,
+		BuildFilter:     buildFilter,
 	}
+	hashJoinCtx.Concurrency = 1
+	hashJoinCtx.InitHashTableContext()
 	hashJoinCtx.SessCtx = mock.NewContext()
 	err := builder.processOneChunk(chk, hashJoinCtx.SessCtx.GetSessionVars().StmtCtx.TypeCtx(), hashJoinCtx, 0)
 	builder.appendRemainingRowLocations(0, hashJoinCtx.hashTableContext)
@@ -319,8 +320,9 @@ func checkColumns(t *testing.T, withSelCol bool, buildFilter expression.CNFExprs
 		BuildFilter:           buildFilter,
 		LUsedInOtherCondition: columnsUsedByOtherCondition,
 		LUsed:                 outputColumns,
-		hashTableContext:      newHashTableContext(1, 1),
 	}
+	hashJoinCtx.Concurrency = 1
+	hashJoinCtx.InitHashTableContext()
 	hashJoinCtx.SessCtx = mock.NewContext()
 	err := builder.processOneChunk(chk, hashJoinCtx.SessCtx.GetSessionVars().StmtCtx.TypeCtx(), hashJoinCtx, 0)
 	builder.appendRemainingRowLocations(0, hashJoinCtx.hashTableContext)
@@ -542,11 +544,12 @@ func TestBalanceOfFilteredRows(t *testing.T) {
 	builder := createRowTableBuilder(buildKeyIndex, buildKeyTypes, partitionNumber, hasNullableKey, true, true)
 	chk := chunk.GenRandomChunks(buildTypes, 3000)
 	hashJoinCtx := &HashJoinCtxV2{
-		PartitionNumber:  partitionNumber,
-		hashTableMeta:    meta,
-		BuildFilter:      buildFilter,
-		hashTableContext: newHashTableContext(partitionNumber, partitionNumber),
+		PartitionNumber: partitionNumber,
+		hashTableMeta:   meta,
+		BuildFilter:     buildFilter,
 	}
+	hashJoinCtx.Concurrency = 1
+	hashJoinCtx.InitHashTableContext()
 	hashJoinCtx.SessCtx = mock.NewContext()
 	err := builder.processOneChunk(chk, hashJoinCtx.SessCtx.GetSessionVars().StmtCtx.TypeCtx(), hashJoinCtx, 0)
 	require.NoError(t, err)
