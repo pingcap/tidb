@@ -23,6 +23,8 @@ import (
 
 // RangerContext is the context used to build range.
 type RangerContext struct {
+	WarnHandler contextutil.WarnAppender
+
 	TypeCtx types.Context
 	ErrCtx  errctx.Context
 	ExprCtx exprctx.BuildContext
@@ -33,4 +35,15 @@ type RangerContext struct {
 	InPreparedPlanBuilding   bool
 	RegardNULLAsPoint        bool
 	OptPrefixIndexSingleScan bool
+}
+
+// IntoStatic persists some fields to make sure it's safe to read/write the context after the session continues
+// to execute other statements.
+func (r *RangerContext) IntoStatic(staticExprCtx exprctx.BuildContext) {
+	r.ExprCtx = staticExprCtx
+
+	fixControl := make(map[uint64]string, len(r.OptimizerFixControl))
+	for k, v := range r.OptimizerFixControl {
+		fixControl[k] = v
+	}
 }

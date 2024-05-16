@@ -350,7 +350,7 @@ func checkRangeFallbackAndReset(t *testing.T, ctx base.PlanContext, expectedRang
 	}
 	require.Equal(t, expectedRangeFallback, hasRangeFallbackWarn)
 	stmtCtx.PlanCacheTracker = contextutil.NewPlanCacheTracker(stmtCtx)
-	stmtCtx.RangeFallbackHandler = contextutil.NewRangeFallbackHandler(&stmtCtx.PlanCacheTracker, stmtCtx)
+	stmtCtx.RangeFallbackHandler = contextutil.NewRangeFallbackHandler(stmtCtx.PlanCacheTracker, stmtCtx)
 	stmtCtx.SetWarnings(nil)
 }
 

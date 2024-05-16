@@ -2560,7 +2560,7 @@ func (s *session) GetDistSQLCtx() *distsqlctx.DistSQLContext {
 			EnabledRateLimitAction: vars.EnabledRateLimitAction,
 			EnableChunkRPC:         vars.EnableChunkRPC,
 			OriginalSQL:            sc.OriginalSQL,
-			KVVars:                 vars.KVVars,
+			KVVars:                 *vars.KVVars,
 			KvExecCounter:          sc.KvExecCounter,
 			SessionMemTracker:      vars.MemTracker,
 
@@ -2612,6 +2612,8 @@ func (s *session) GetRangerCtx() *rangerctx.RangerContext {
 
 	rctx := sc.GetOrInitRangerCtxFromCache(func() any {
 		return &rangerctx.RangerContext{
+			WarnHandler: sc.WarnHandler,
+
 			ExprCtx: s.GetExprCtx(),
 			TypeCtx: s.GetSessionVars().StmtCtx.TypeCtx(),
 			ErrCtx:  s.GetSessionVars().StmtCtx.ErrCtx(),
@@ -2621,8 +2623,8 @@ func (s *session) GetRangerCtx() *rangerctx.RangerContext {
 			OptPrefixIndexSingleScan: s.GetSessionVars().OptPrefixIndexSingleScan,
 			OptimizerFixControl:      s.GetSessionVars().OptimizerFixControl,
 
-			PlanCacheTracker:     &s.GetSessionVars().StmtCtx.PlanCacheTracker,
-			RangeFallbackHandler: &s.GetSessionVars().StmtCtx.RangeFallbackHandler,
+			PlanCacheTracker:     s.GetSessionVars().StmtCtx.PlanCacheTracker,
+			RangeFallbackHandler: s.GetSessionVars().StmtCtx.RangeFallbackHandler,
 		}
 	})
 

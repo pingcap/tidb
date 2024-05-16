@@ -125,6 +125,7 @@ go_library(
         "//pkg/expression",
         "//pkg/expression/aggregation",
         "//pkg/expression/context",
+        "//pkg/expression/contextsession",
         "//pkg/infoschema",
         "//pkg/infoschema/context",
         "//pkg/keyspace",

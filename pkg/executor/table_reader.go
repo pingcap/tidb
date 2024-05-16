@@ -33,6 +33,7 @@ import (
 	internalutil "github.com/pingcap/tidb/pkg/executor/internal/util"
 	"github.com/pingcap/tidb/pkg/expression"
 	exprctx "github.com/pingcap/tidb/pkg/expression/context"
+	"github.com/pingcap/tidb/pkg/expression/contextsession"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	isctx "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -82,7 +83,7 @@ type tableReaderExecutorContext struct {
 	dctx       *distsqlctx.DistSQLContext
 	rctx       *rangerctx.RangerContext
 	buildPBCtx *planctx.BuildPBContext
-	ectx       exprctx.BuildContext
+	ectx       exprctx.ExprContext
 
 	stmtMemTracker *memory.Tracker
 
@@ -100,6 +101,22 @@ func (treCtx *tableReaderExecutorContext) GetDDLOwner(ctx context.Context) (*inf
 	}
 
 	return nil, errors.New("GetDDLOwner in a context without DDL")
+}
+
+// IntoStatic detaches the current context from the original session context.
+//
+// NOTE: For `dctx`, `rctx`... most of the fields don't need to be handled specially, because they are already copied from the session context.
+// some reference types like `WarnHandler` also doesn't need to copy because a new statement will always creates a new `WarnHandler`, so it's
+// safe to continue to use it here. We'll need to call `IntoStatic` method for `evalCtx` and `exprCtx`, because maybe they are implemented by
+// the session context directly.
+func (treCtx *tableReaderExecutorContext) IntoStatic() {
+	if sctx, ok := treCtx.ectx.(*contextsession.SessionExprContext); ok {
+		staticECtx := sctx.IntoStatic()
+
+		treCtx.rctx.IntoStatic(staticECtx)
+		treCtx.buildPBCtx.IntoStatic(staticECtx)
+		treCtx.ectx = staticECtx
+	}
 }
 
 func newTableReaderExecutorContext(sctx sessionctx.Context) tableReaderExecutorContext {

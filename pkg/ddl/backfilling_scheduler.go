@@ -180,7 +180,7 @@ func newDefaultReorgDistSQLCtx(kvClient kv.Client) *distsqlctx.DistSQLContext {
 		Client:                               kvClient,
 		EnableChunkRPC:                       true,
 		EnabledRateLimitAction:               variable.DefTiDBEnableRateLimitAction,
-		KVVars:                               tikvstore.NewVariables(&sqlKiller.Signal),
+		KVVars:                               *tikvstore.NewVariables(&sqlKiller.Signal),
 		SessionMemTracker:                    memory.NewTracker(memory.LabelForSession, -1),
 		Location:                             time.UTC,
 		SQLKiller:                            &sqlKiller,
