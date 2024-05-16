@@ -859,10 +859,26 @@ func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Jo
 		ver, err = updateVersionAndTableInfo(d, t, job, tbl.Meta(), true)
 		return false, ver, errors.Trace(err)
 	case model.BackfillStateReadyToMerge:
+<<<<<<< HEAD:ddl/index.go
 		logutil.BgLogger().Info("[ddl] index backfill state ready to merge", zap.Int64("job ID", job.ID),
 			zap.String("table", tbl.Meta().Name.O), zap.String("index", indexInfo.Name.O))
 		indexInfo.BackfillState = model.BackfillStateMerging
 		if bfProcess == model.ReorgTypeLitMerge {
+=======
+		failpoint.Inject("mockDMLExecutionStateBeforeMerge", func(_ failpoint.Value) {
+			if MockDMLExecutionStateBeforeMerge != nil {
+				MockDMLExecutionStateBeforeMerge()
+			}
+		})
+		logutil.DDLLogger().Info("index backfill state ready to merge",
+			zap.Int64("job ID", job.ID),
+			zap.String("table", tbl.Meta().Name.O),
+			zap.String("index", allIndexInfos[0].Name.O))
+		for _, indexInfo := range allIndexInfos {
+			indexInfo.BackfillState = model.BackfillStateMerging
+		}
+		if reorgTp == model.ReorgTypeLitMerge {
+>>>>>>> e1a6b1d6339 (*: check delete unique key's handle to handle corner case (#52975)):pkg/ddl/index.go
 			ingest.LitBackCtxMgr.Unregister(job.ID)
 		}
 		job.SnapshotVer = 0 // Reset the snapshot version for merge index reorg.
@@ -1674,6 +1690,15 @@ var MockDMLExecutionMerging func()
 // MockDMLExecutionStateMerging is only used for test.
 var MockDMLExecutionStateMerging func()
 
+<<<<<<< HEAD:ddl/index.go
+=======
+// MockDMLExecutionStateBeforeImport is only used for test.
+var MockDMLExecutionStateBeforeImport func()
+
+// MockDMLExecutionStateBeforeMerge is only used for test.
+var MockDMLExecutionStateBeforeMerge func()
+
+>>>>>>> e1a6b1d6339 (*: check delete unique key's handle to handle corner case (#52975)):pkg/ddl/index.go
 func (w *worker) addPhysicalTableIndex(t table.PhysicalTable, reorgInfo *reorgInfo) error {
 	if reorgInfo.mergingTmpIdx {
 		logutil.BgLogger().Info("[ddl] start to merge temp index", zap.String("job", reorgInfo.Job.String()), zap.String("reorgInfo", reorgInfo.String()))
