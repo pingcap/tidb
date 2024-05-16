@@ -57,11 +57,8 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-<<<<<<< HEAD
-	planctx "github.com/pingcap/tidb/pkg/planner/context"
-=======
 	"github.com/pingcap/tidb/pkg/parser/terror"
->>>>>>> 31b3440dc75 (executor: fix goroutine leak when builder panic (#52471))
+	planctx "github.com/pingcap/tidb/pkg/planner/context"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx"
