@@ -41,14 +41,10 @@ import (
 	"go.uber.org/zap"
 )
 
-<<<<<<< HEAD
-// BackendCtx is the backend context for add index reorg task.
-=======
 // MockDMLExecutionStateBeforeImport is a failpoint to mock the DML execution state before import.
 var MockDMLExecutionStateBeforeImport func()
 
 // BackendCtx is the backend context for one add index reorg task.
->>>>>>> e1a6b1d6339 (*: check delete unique key's handle to handle corner case (#52975))
 type BackendCtx interface {
 	Register(jobID, indexID int64, schemaName, tableName string) (Engine, error)
 	Unregister(jobID, indexID int64)
@@ -233,11 +229,10 @@ func (bc *litBackendCtx) Flush(indexID int64, mode FlushMode) (flushed, imported
 			}
 		}()
 	}
-<<<<<<< HEAD
 	err = bc.unsafeImportAndReset(ei)
 	if err != nil {
 		return true, false, err
-=======
+
 	failpoint.Inject("mockDMLExecutionStateBeforeImport", func(_ failpoint.Value) {
 		if MockDMLExecutionStateBeforeImport != nil {
 			MockDMLExecutionStateBeforeImport()
@@ -248,7 +243,6 @@ func (bc *litBackendCtx) Flush(indexID int64, mode FlushMode) (flushed, imported
 		if err = bc.unsafeImportAndReset(ei); err != nil {
 			return true, false, indexID, err
 		}
->>>>>>> e1a6b1d6339 (*: check delete unique key's handle to handle corner case (#52975))
 	}
 	return true, true, nil
 }
