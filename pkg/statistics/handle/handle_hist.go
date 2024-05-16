@@ -38,6 +38,9 @@ import (
 	"golang.org/x/sync/singleflight"
 )
 
+// RetryCount is the max retry count for a sync load task.
+const RetryCount = 3
+
 type statsWrapper struct {
 	col *statistics.Column
 	idx *statistics.Index
@@ -57,6 +60,7 @@ type NeededItemTask struct {
 	ToTimeout   time.Time
 	ResultCh    chan stmtctx.StatsLoadResult
 	TableItemID model.TableItemID
+	Retry       int
 }
 
 // SendLoadRequests send neededColumns requests
@@ -203,6 +207,9 @@ func (h *Handle) SubLoadWorker(sctx sessionctx.Context, exit chan struct{}, exit
 }
 
 // HandleOneTask handles last task if not nil, else handle a new task from chan, and return current task if fail somewhere.
+//   - If the task is handled successfully, return nil, nil.
+//   - If the task is timeout, return the task and nil. The caller should retry the timeout task without sleep.
+//   - If the task is failed, return the task, error. The caller should retry the timeout task with sleep.
 func (h *Handle) HandleOneTask(sctx sessionctx.Context, lastTask *NeededItemTask, exit chan struct{}) (task *NeededItemTask, err error) {
 	defer func() {
 		// recover for each task, worker keeps working
@@ -222,25 +229,38 @@ func (h *Handle) HandleOneTask(sctx sessionctx.Context, lastTask *NeededItemTask
 	} else {
 		task = lastTask
 	}
+	result := stmtctx.StatsLoadResult{Item: task.TableItemID}
 	resultChan := h.StatsLoad.Singleflight.DoChan(task.TableItemID.Key(), func() (any, error) {
 		return h.handleOneItemTask(sctx, task)
 	})
 	timeout := time.Until(task.ToTimeout)
 	select {
-	case result := <-resultChan:
-		if result.Err == nil {
-			slr := result.Val.(*stmtctx.StatsLoadResult)
-			if slr.Error != nil {
-				return task, slr.Error
-			}
-			task.ResultCh <- *slr
+	case sr := <-resultChan:
+		// sr.Val is always nil.
+		if sr.Err == nil {
+			task.ResultCh <- result
 			return nil, nil
 		}
-		return task, result.Err
+		if !isVaildForRetry(task) {
+			result.Error = sr.Err
+			task.ResultCh <- result
+			return nil, nil
+		}
+		return task, sr.Err
 	case <-time.After(timeout):
+		if !isVaildForRetry(task) {
+			result.Error = errors.New("stats loading timeout")
+			task.ResultCh <- result
+			return nil, nil
+		}
 		task.ToTimeout.Add(time.Duration(sctx.GetSessionVars().StatsLoadSyncWait.Load()) * time.Microsecond)
 		return task, nil
 	}
+}
+
+func isVaildForRetry(task *NeededItemTask) bool {
+	task.Retry++
+	return task.Retry <= RetryCount
 }
 
 func (h *Handle) handleOneItemTask(sctx sessionctx.Context, task *NeededItemTask) (result *stmtctx.StatsLoadResult, err error) {
@@ -251,11 +271,11 @@ func (h *Handle) handleOneItemTask(sctx sessionctx.Context, task *NeededItemTask
 			err = errors.Errorf("stats loading panicked: %v", r)
 		}
 	}()
-	result = &stmtctx.StatsLoadResult{Item: task.TableItemID}
-	item := result.Item
+
+	item := task.TableItemID
 	tbl, ok := h.Get(item.TableID)
 	if !ok {
-		return result, nil
+		return nil, nil
 	}
 	wrapper := &statsWrapper{}
 	if item.IsIndex {
@@ -275,8 +295,7 @@ func (h *Handle) handleOneItemTask(sctx sessionctx.Context, task *NeededItemTask
 	needUpdate := false
 	wrapper, err = h.readStatsForOneItem(sctx, item, wrapper)
 	if err != nil {
-		result.Error = err
-		return result, err
+		return nil, err
 	}
 	if item.IsIndex {
 		if wrapper.idx != nil {
@@ -288,8 +307,8 @@ func (h *Handle) handleOneItemTask(sctx sessionctx.Context, task *NeededItemTask
 		}
 	}
 	metrics.ReadStatsHistogram.Observe(float64(time.Since(t).Milliseconds()))
-	if needUpdate && h.updateCachedItem(item, wrapper.col, wrapper.idx) {
-		return result, nil
+	if needUpdate {
+		h.updateCachedItem(item, wrapper.col, wrapper.idx)
 	}
 	return nil, nil
 }
@@ -462,7 +481,7 @@ func (h *Handle) updateCachedItem(item model.TableItemID, colHist *statistics.Co
 	// like `GetPartitionStats` called in `fmSketchFromStorage` would have modified the stats cache already.
 	tbl, ok := h.Get(item.TableID)
 	if !ok {
-		return true
+		return false
 	}
 	if !item.IsIndex && colHist != nil {
 		c, ok := tbl.Columns[item.ID]
