@@ -113,7 +113,7 @@ func checkKeys(t *testing.T, withSelCol bool, buildFilter expression.CNFExprs, b
 		BuildFilter:     buildFilter,
 	}
 	hashJoinCtx.Concurrency = 1
-	hashJoinCtx.InitHashTableContext()
+	hashJoinCtx.initHashTableContext()
 	hashJoinCtx.SessCtx = mock.NewContext()
 	err := builder.processOneChunk(chk, hashJoinCtx.SessCtx.GetSessionVars().StmtCtx.TypeCtx(), hashJoinCtx, 0)
 	builder.appendRemainingRowLocations(0, hashJoinCtx.hashTableContext)
@@ -322,7 +322,7 @@ func checkColumns(t *testing.T, withSelCol bool, buildFilter expression.CNFExprs
 		LUsed:                 outputColumns,
 	}
 	hashJoinCtx.Concurrency = 1
-	hashJoinCtx.InitHashTableContext()
+	hashJoinCtx.initHashTableContext()
 	hashJoinCtx.SessCtx = mock.NewContext()
 	err := builder.processOneChunk(chk, hashJoinCtx.SessCtx.GetSessionVars().StmtCtx.TypeCtx(), hashJoinCtx, 0)
 	builder.appendRemainingRowLocations(0, hashJoinCtx.hashTableContext)
@@ -549,7 +549,7 @@ func TestBalanceOfFilteredRows(t *testing.T) {
 		BuildFilter:     buildFilter,
 	}
 	hashJoinCtx.Concurrency = 1
-	hashJoinCtx.InitHashTableContext()
+	hashJoinCtx.initHashTableContext()
 	hashJoinCtx.SessCtx = mock.NewContext()
 	err := builder.processOneChunk(chk, hashJoinCtx.SessCtx.GetSessionVars().StmtCtx.TypeCtx(), hashJoinCtx, 0)
 	require.NoError(t, err)

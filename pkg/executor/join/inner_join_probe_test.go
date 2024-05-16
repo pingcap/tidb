@@ -273,7 +273,7 @@ func testJoinProbe(t *testing.T, withSel bool, leftKeyIndex []int, rightKeyIndex
 	hashJoinCtx.SessCtx = mock.NewContext()
 	hashJoinCtx.JoinType = joinType
 	hashJoinCtx.Concurrency = uint(partitionNumber)
-	hashJoinCtx.InitHashTableContext()
+	hashJoinCtx.initHashTableContext()
 	joinProbe := NewJoinProbe(hashJoinCtx, 0, joinType, probeKeyIndex, joinedTypes, probeKeyTypes, rightAsBuildSide)
 	buildSchema := &expression.Schema{}
 	for _, tp := range buildTypes {
