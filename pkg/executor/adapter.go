@@ -164,6 +164,9 @@ func (a *recordSet) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 			return err
 		}
 	}
+	if a.executor == nil {
+		return nil
+	}
 
 	err = a.stmt.next(ctx, a.executor, req)
 	if err != nil {

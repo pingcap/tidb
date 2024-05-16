@@ -2373,6 +2373,7 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs resultset.ResultSet, b
 		if stmtDetail != nil {
 			stmtDetail.WriteSQLRespDuration += time.Since(start)
 		}
+		break
 	}
 	if err := rs.Finish(); err != nil {
 		return false, err
