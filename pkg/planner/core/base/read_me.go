@@ -27,3 +27,7 @@ package base
 // 3: interface definition should cover the abstract logic, do not depend on
 //    concrete implementor type, or relay on other core pkg handling logic.
 //    otherwise, importing cycle occurs, think about abstraction again.
+//
+// 4: if additional interface method is decided to added, pls append it to
+//	  function list with order, the later implementors reference can also be
+//    easy to locate.
