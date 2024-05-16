@@ -1,7 +1,7 @@
 set tidb_enable_global_index=true;
 drop table if exists pt;
 # Non-clustered index table
-create table pt (a int, b int, c int, d int default 0, primary key (a, b), unique key uidx(c))
+create table pt (a int, b int, c int, d int default 0, primary key (a, b) nonclustered, unique key uidx(c))
 partition by range(a) (
 PARTITION p0 VALUES LESS THAN (3),
 PARTITION p1 VALUES LESS THAN (6),
