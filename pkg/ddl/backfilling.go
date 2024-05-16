@@ -612,6 +612,12 @@ func (dc *ddlCtx) writePhysicalTableRecord(
 		return errors.Trace(err)
 	}
 	defer scheduler.close(true)
+	if lit, ok := scheduler.(*ingestBackfillScheduler); ok {
+		if lit.finishedWritingNeedImport() {
+			return nil
+		}
+	}
+
 	err = scheduler.setupWorkers()
 	if err != nil {
 		return errors.Trace(err)
