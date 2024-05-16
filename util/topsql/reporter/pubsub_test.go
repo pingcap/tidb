@@ -87,7 +87,7 @@ func TestPubSubDataSink(t *testing.T) {
 		_ = ds.run()
 	}()
 
-	panicPath := "github.com/pingcap/tidb/pkg/util/topsql/reporter/mockGrpcLogPanic"
+	panicPath := "github.com/pingcap/tidb/util/topsql/reporter/mockGrpcLogPanic"
 	require.NoError(t, failpoint.Enable(panicPath, "panic"))
 	err := ds.TrySend(&ReportData{
 		DataRecords: []tipb.TopSQLRecord{{
