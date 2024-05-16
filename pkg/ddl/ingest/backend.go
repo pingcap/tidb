@@ -239,11 +239,6 @@ func (bc *litBackendCtx) Flush(indexID int64, mode FlushMode) (flushed, imported
 		}
 	})
 
-	for indexID, ei := range bc.engines {
-		if err = bc.unsafeImportAndReset(ei); err != nil {
-			return true, false, indexID, err
-		}
-	}
 	return true, true, nil
 }
 
