@@ -313,6 +313,10 @@ func (do *Domain) loadInfoSchema(startTS uint64) (infoschema.InfoSchema, bool, i
 			// So we keep updating the ts of the infoschema v2.
 			is = raw.CloneAndUpdateTS(startTS)
 		}
+		isV3, raw2 := infoschema.IsV3(is)
+		if isV3 {
+			is = raw2.CloneAndUpdateTS(startTS)
+		}
 
 		// try to insert here as well to correct the schemaTs if previous is wrong
 		// the insert method check if schemaTs is zero

@@ -28,7 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/table"
 )
 
-type infoschemaV3 struct {
+type InfoschemaV3 struct {
 	infoV2 *infoschemaV2
 	infoV1 *infoSchema
 }
@@ -188,7 +188,7 @@ func referredFKInfoEqual(r1, r2 *model.ReferredFKInfo) bool {
 	return true
 }
 
-func (is *infoschemaV3) TableByID(id int64) (val table.Table, ok bool) {
+func (is *InfoschemaV3) TableByID(id int64) (val table.Table, ok bool) {
 	tbl1, ok1 := is.infoV1.TableByID(id)
 	tbl2, ok2 := is.infoV2.TableByID(id)
 	if ok1 != ok2 {
@@ -203,7 +203,7 @@ func (is *infoschemaV3) TableByID(id int64) (val table.Table, ok bool) {
 	return tbl2, ok1
 }
 
-func (is *infoschemaV3) TableByName(schema, tbl model.CIStr) (t table.Table, err error) {
+func (is *InfoschemaV3) TableByName(schema, tbl model.CIStr) (t table.Table, err error) {
 	tbl1, err1 := is.infoV1.TableByName(schema, tbl)
 	tbl2, err2 := is.infoV2.TableByName(schema, tbl)
 	if !errors.ErrorEqual(err2, err1) {
@@ -218,7 +218,7 @@ func (is *infoschemaV3) TableByName(schema, tbl model.CIStr) (t table.Table, err
 	return tbl2, err1
 }
 
-func (is *infoschemaV3) TableInfoByName(schema, table model.CIStr) (*model.TableInfo, error) {
+func (is *InfoschemaV3) TableInfoByName(schema, table model.CIStr) (*model.TableInfo, error) {
 	tbl1, err1 := is.infoV1.TableInfoByName(schema, table)
 	tbl2, err2 := is.infoV2.TableInfoByName(schema, table)
 	if !errors.ErrorEqual(err2, err1) {
@@ -233,7 +233,7 @@ func (is *infoschemaV3) TableInfoByName(schema, table model.CIStr) (*model.Table
 	return tbl2, err1
 }
 
-func (is *infoschemaV3) TableInfoByID(id int64) (*model.TableInfo, bool) {
+func (is *InfoschemaV3) TableInfoByID(id int64) (*model.TableInfo, bool) {
 	tbl1, ok1 := is.infoV1.TableInfoByID(id)
 	tbl2, ok2 := is.infoV2.TableInfoByID(id)
 	if ok1 != ok2 {
@@ -248,7 +248,7 @@ func (is *infoschemaV3) TableInfoByID(id int64) (*model.TableInfo, bool) {
 	return tbl2, ok1
 }
 
-func (is *infoschemaV3) SchemaTablesWithTs(schema model.CIStr, ts uint64) (tables []table.Table) {
+func (is *InfoschemaV3) SchemaTablesWithTs(schema model.CIStr, ts uint64) (tables []table.Table) {
 	tbl1 := is.infoV1.SchemaTables(schema)
 	tbl2 := is.infoV2.SchemaTablesWithTs(schema, ts)
 	if len(tbl1) != len(tbl2) {
@@ -276,7 +276,7 @@ func (is *infoschemaV3) SchemaTablesWithTs(schema model.CIStr, ts uint64) (table
 	return tbl2
 }
 
-func (is *infoschemaV3) SchemaTables(schema model.CIStr) (tables []table.Table) {
+func (is *InfoschemaV3) SchemaTables(schema model.CIStr) (tables []table.Table) {
 	tbl1 := is.infoV1.SchemaTables(schema)
 	tbl2 := is.infoV2.SchemaTables(schema)
 	if len(tbl1) != len(tbl2) {
@@ -304,7 +304,7 @@ func (is *infoschemaV3) SchemaTables(schema model.CIStr) (tables []table.Table) 
 	return tbl2
 }
 
-func (is *infoschemaV3) SchemaTableInfos(schema model.CIStr) []*model.TableInfo {
+func (is *InfoschemaV3) SchemaTableInfos(schema model.CIStr) []*model.TableInfo {
 	tbl1 := is.infoV1.SchemaTableInfos(schema)
 	tbl2 := is.infoV2.SchemaTableInfos(schema)
 	if len(tbl1) != len(tbl2) {
@@ -324,7 +324,7 @@ func (is *infoschemaV3) SchemaTableInfos(schema model.CIStr) []*model.TableInfo 
 	return tbl2
 }
 
-func (is *infoschemaV3) FindTableInfoByPartitionID(
+func (is *InfoschemaV3) FindTableInfoByPartitionID(
 	partitionID int64,
 ) (*model.TableInfo, *model.DBInfo, *model.PartitionDefinition) {
 	tbl1, db1, part1 := is.infoV1.FindTableInfoByPartitionID(partitionID)
@@ -341,7 +341,7 @@ func (is *infoschemaV3) FindTableInfoByPartitionID(
 	return tbl2, db2, part2
 }
 
-func (is *infoschemaV3) SchemaByName(schema model.CIStr) (val *model.DBInfo, ok bool) {
+func (is *InfoschemaV3) SchemaByName(schema model.CIStr) (val *model.DBInfo, ok bool) {
 	db1, ok1 := is.infoV1.SchemaByName(schema)
 	db2, ok2 := is.infoV2.SchemaByName(schema)
 	if ok1 != ok2 {
@@ -356,7 +356,7 @@ func (is *infoschemaV3) SchemaByName(schema model.CIStr) (val *model.DBInfo, ok 
 	return db2, ok1
 }
 
-func (is *infoschemaV3) AllSchemas() (schemas []*model.DBInfo) {
+func (is *InfoschemaV3) AllSchemas() (schemas []*model.DBInfo) {
 	db1 := is.infoV1.AllSchemas()
 	db2 := is.infoV2.AllSchemas()
 	if len(db1) != len(db2) {
@@ -376,7 +376,7 @@ func (is *infoschemaV3) AllSchemas() (schemas []*model.DBInfo) {
 	return db2
 }
 
-func (is *infoschemaV3) AllSchemaNames() []model.CIStr {
+func (is *InfoschemaV3) AllSchemaNames() []model.CIStr {
 	names1 := is.infoV1.AllSchemaNames()
 	names2 := is.infoV2.AllSchemaNames()
 	if len(names1) != len(names2) {
@@ -396,7 +396,7 @@ func (is *infoschemaV3) AllSchemaNames() []model.CIStr {
 	return names2
 }
 
-func (is *infoschemaV3) SchemaExists(schema model.CIStr) bool {
+func (is *InfoschemaV3) SchemaExists(schema model.CIStr) bool {
 	ok1 := is.infoV1.SchemaExists(schema)
 	ok2 := is.infoV2.SchemaExists(schema)
 	if ok1 != ok2 {
@@ -405,7 +405,7 @@ func (is *infoschemaV3) SchemaExists(schema model.CIStr) bool {
 	return ok2
 }
 
-func (is *infoschemaV3) FindTableByPartitionID(partitionID int64) (table.Table, *model.DBInfo, *model.PartitionDefinition) {
+func (is *InfoschemaV3) FindTableByPartitionID(partitionID int64) (table.Table, *model.DBInfo, *model.PartitionDefinition) {
 	tbl1, db1, part1 := is.infoV1.FindTableByPartitionID(partitionID)
 	tbl2, db2, part2 := is.infoV2.FindTableByPartitionID(partitionID)
 	if !tblEqual(tbl1, tbl2) {
@@ -420,7 +420,7 @@ func (is *infoschemaV3) FindTableByPartitionID(partitionID int64) (table.Table, 
 	return tbl2, db2, part2
 }
 
-func (is *infoschemaV3) TableExists(schema, table model.CIStr) bool {
+func (is *InfoschemaV3) TableExists(schema, table model.CIStr) bool {
 	ok1 := is.infoV1.TableExists(schema, table)
 	ok2 := is.infoV2.TableExists(schema, table)
 	if ok1 != ok2 {
@@ -429,7 +429,7 @@ func (is *infoschemaV3) TableExists(schema, table model.CIStr) bool {
 	return ok2
 }
 
-func (is *infoschemaV3) SchemaByID(id int64) (*model.DBInfo, bool) {
+func (is *InfoschemaV3) SchemaByID(id int64) (*model.DBInfo, bool) {
 	db1, ok1 := is.infoV1.SchemaByID(id)
 	db2, ok2 := is.infoV2.SchemaByID(id)
 	if ok1 != ok2 {
@@ -444,11 +444,11 @@ func (is *infoschemaV3) SchemaByID(id int64) (*model.DBInfo, bool) {
 	return db2, ok1
 }
 
-func (is *infoschemaV3) base() *infoSchema {
+func (is *InfoschemaV3) base() *infoSchema {
 	return is.infoV2.base()
 }
 
-func (is *infoschemaV3) PolicyByName(name model.CIStr) (*model.PolicyInfo, bool) {
+func (is *InfoschemaV3) PolicyByName(name model.CIStr) (*model.PolicyInfo, bool) {
 	p1, ok1 := is.infoV1.PolicyByName(name)
 	p2, ok2 := is.infoV2.PolicyByName(name)
 	if ok1 != ok2 {
@@ -463,7 +463,7 @@ func (is *infoschemaV3) PolicyByName(name model.CIStr) (*model.PolicyInfo, bool)
 	return p2, ok1
 }
 
-func (is *infoschemaV3) ResourceGroupByName(name model.CIStr) (*model.ResourceGroupInfo, bool) {
+func (is *InfoschemaV3) ResourceGroupByName(name model.CIStr) (*model.ResourceGroupInfo, bool) {
 	r1, ok1 := is.infoV1.ResourceGroupByName(name)
 	r2, ok2 := is.infoV2.ResourceGroupByName(name)
 	if ok1 != ok2 {
@@ -478,7 +478,7 @@ func (is *infoschemaV3) ResourceGroupByName(name model.CIStr) (*model.ResourceGr
 	return r2, ok1
 }
 
-func (is *infoschemaV3) PlacementBundleByPhysicalTableID(id int64) (*placement.Bundle, bool) {
+func (is *InfoschemaV3) PlacementBundleByPhysicalTableID(id int64) (*placement.Bundle, bool) {
 	b1, ok1 := is.infoV1.PlacementBundleByPhysicalTableID(id)
 	b2, ok2 := is.infoV2.PlacementBundleByPhysicalTableID(id)
 	if ok1 != ok2 {
@@ -493,7 +493,7 @@ func (is *infoschemaV3) PlacementBundleByPhysicalTableID(id int64) (*placement.B
 	return b2, ok1
 }
 
-func (is *infoschemaV3) AllPlacementBundles() []*placement.Bundle {
+func (is *InfoschemaV3) AllPlacementBundles() []*placement.Bundle {
 	b1 := is.infoV1.AllPlacementBundles()
 	b2 := is.infoV2.AllPlacementBundles()
 	if len(b1) != len(b2) {
@@ -513,7 +513,7 @@ func (is *infoschemaV3) AllPlacementBundles() []*placement.Bundle {
 	return b2
 }
 
-func (is *infoschemaV3) AllPlacementPolicies() []*model.PolicyInfo {
+func (is *InfoschemaV3) AllPlacementPolicies() []*model.PolicyInfo {
 	p1 := is.infoV1.AllPlacementPolicies()
 	p2 := is.infoV2.AllPlacementPolicies()
 	if len(p1) != len(p2) {
@@ -533,7 +533,7 @@ func (is *infoschemaV3) AllPlacementPolicies() []*model.PolicyInfo {
 	return p2
 }
 
-func (is *infoschemaV3) AllResourceGroups() []*model.ResourceGroupInfo {
+func (is *InfoschemaV3) AllResourceGroups() []*model.ResourceGroupInfo {
 	r1 := is.infoV1.AllResourceGroups()
 	r2 := is.infoV2.AllResourceGroups()
 	if len(r1) != len(r2) {
@@ -553,7 +553,7 @@ func (is *infoschemaV3) AllResourceGroups() []*model.ResourceGroupInfo {
 	return r2
 }
 
-func (is *infoschemaV3) HasTemporaryTable() bool {
+func (is *InfoschemaV3) HasTemporaryTable() bool {
 	ok := is.infoV1.HasTemporaryTable()
 	if ok != is.infoV2.HasTemporaryTable() {
 		panic("inconsistent infoschema")
@@ -561,7 +561,7 @@ func (is *infoschemaV3) HasTemporaryTable() bool {
 	return ok
 }
 
-func (is *infoschemaV3) GetTableReferredForeignKeys(schema, table string) []*model.ReferredFKInfo {
+func (is *InfoschemaV3) GetTableReferredForeignKeys(schema, table string) []*model.ReferredFKInfo {
 	r1 := is.infoV1.GetTableReferredForeignKeys(schema, table)
 	r2 := is.infoV2.GetTableReferredForeignKeys(schema, table)
 	if len(r1) != len(r2) {
@@ -575,9 +575,21 @@ func (is *infoschemaV3) GetTableReferredForeignKeys(schema, table string) []*mod
 	return r2
 }
 
-func (is *infoschemaV3) SchemaMetaVersion() int64 {
+func (is *InfoschemaV3) SchemaMetaVersion() int64 {
 	if is.infoV1.SchemaMetaVersion() != is.infoV2.SchemaMetaVersion() {
 		panic("inconsistent infoschema")
 	}
 	return is.infoV2.SchemaMetaVersion()
+}
+
+// IsV3 tells whether an InfoSchema is v3 or not.
+func IsV3(is InfoSchema) (bool, *InfoschemaV3) {
+	ret, ok := is.(*InfoschemaV3)
+	return ok, ret
+}
+
+func (is *InfoschemaV3) CloneAndUpdateTS(startTS uint64) *InfoschemaV3 {
+	tmp := *is
+	tmp.infoV2.ts = startTS
+	return &tmp
 }

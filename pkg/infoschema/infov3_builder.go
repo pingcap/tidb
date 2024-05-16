@@ -42,11 +42,23 @@ func NewBuilderV3(r autoid.Requirement, factory func() (pools.Resource, error), 
 
 // InitWithOldInfoSchema ...
 func (b *BuilderV3) InitWithOldInfoSchema(oldSchema InfoSchema) (*BuilderV3, error) {
-	oldSchemaV1 := oldSchema.(*WithTS).InfoSchema.(*infoschemaV3).infoV1
-	oldSchemaV2 := oldSchema.(*WithTS).InfoSchema.(*infoschemaV3).infoV2
+	var infoV1 *infoSchema
+	var infoV2 *infoschemaV2
+	oldSchemaV1t := oldSchema.(*WithTS)
+	if V1ts, ok := oldSchemaV1t.InfoSchema.(*WithTS); ok {
+		infoV1 = V1ts.InfoSchema.(*InfoschemaV3).infoV1
+	} else {
+		infoV1 = oldSchemaV1t.InfoSchema.(*InfoschemaV3).infoV1
+	}
+	oldSchemaV2t := oldSchema.(*WithTS)
+	if V2ts, ok := oldSchemaV2t.InfoSchema.(*WithTS); ok {
+		infoV2 = V2ts.InfoSchema.(*InfoschemaV3).infoV2
+	} else {
+		infoV2 = oldSchemaV2t.InfoSchema.(*InfoschemaV3).infoV2
+	}
 
-	_, err1 := b.builderV1.InitWithOldInfoSchema(oldSchemaV1)
-	_, err2 := b.builderV2.InitWithOldInfoSchema(oldSchemaV2)
+	_, err1 := b.builderV1.InitWithOldInfoSchema(infoV1)
+	_, err2 := b.builderV2.InitWithOldInfoSchema(infoV2)
 	if !errors.ErrorEqual(err1, err2) {
 		panic("err1 != err2")
 	}
@@ -73,7 +85,7 @@ func (b *BuilderV3) InitWithDBInfos(dbInfos []*model.DBInfo, policies []*model.P
 func (b *BuilderV3) Build(schemaTS uint64) InfoSchema {
 	v1 := b.builderV1.Build(schemaTS)
 	v2 := b.builderV2.Build(schemaTS)
-	return &infoschemaV3{infoV1: v1.(*infoSchema), infoV2: v2.(*infoschemaV2)}
+	return &InfoschemaV3{infoV1: v1.(*infoSchema), infoV2: v2.(*infoschemaV2)}
 }
 
 // SetDeltaUpdateBundles ...

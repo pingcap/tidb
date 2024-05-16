@@ -227,7 +227,7 @@ func (h *InfoCache) GetBySnapshotTS(snapshotTS uint64) InfoSchema {
 // It returns 'true' if it is cached, 'false' otherwise.
 // schemaTs is the commitTs of the txn creates the schema diff, which indicates since when the schema version is taking effect
 func (h *InfoCache) Insert(is InfoSchema, schemaTS uint64) bool {
-	logutil.BgLogger().Debug("INSERT SCHEMA", zap.Uint64("schema ts", schemaTS), zap.Int64("schema version", is.SchemaMetaVersion()))
+	logutil.BgLogger().Info("INSERT SCHEMA", zap.Uint64("schema ts", schemaTS), zap.Int64("schema version", is.SchemaMetaVersion()))
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
@@ -248,6 +248,9 @@ func (h *InfoCache) Insert(is InfoSchema, schemaTS uint64) bool {
 				h.cache[i].timestamp = int64(schemaTS)
 			} else if xisV2 {
 				// update infoschema if it's infoschema v2
+				h.cache[i].infoschema = is
+			} else if xisV3, _ := IsV3(h.cache[i].infoschema); xisV3 {
+				// update infoschema if it's infoschema v3
 				h.cache[i].infoschema = is
 			}
 			return true
@@ -285,7 +288,7 @@ type WithTS struct {
 
 // SchemaTables ...
 func (is *WithTS) SchemaTables(schema model.CIStr) []table.Table {
-	if v3, ok := is.InfoSchema.(*infoschemaV3); ok {
+	if v3, ok := is.InfoSchema.(*InfoschemaV3); ok {
 		return v3.SchemaTablesWithTs(schema, is.Timestamp)
 	}
 	return is.InfoSchema.SchemaTables(schema)
