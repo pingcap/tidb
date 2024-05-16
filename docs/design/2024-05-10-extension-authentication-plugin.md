@@ -177,6 +177,7 @@ However, it will not work with existing functionalities such as password expiry 
 
 It will also not work with `CREATE VIEW SQL SECURITY DEFINER` since the view is created with the privileges of the view creator, and if the creator is an auth plugin user, the plugin will not be able to check the privileges of the view creator because it
 does not have the `tls.ConnectionState` information for the definer to pass into `VerifyPrivilege`. This means we should not allow any users to create a view with `SQL SECURITY DEFINER` where the definer is an auth plugin user.
+However, if the plugin implementation does not have `VerifyPrivilege` and `VerifyDynamicPrivilege` implemented, the view creation with an auth plugin user as the definer will still be allowed, since we will have everything needed for the authorization check.
 
 ## Test Design
 
@@ -203,7 +204,7 @@ We will implement client to server tests to test out scenarios where MySQL users
 
 This feature should integrate well with all the existing test cases since it is an additional functionality. Existing tests related to authentication and authorization should continue to pass since they are not using auth plugins.
 
-We should add tests to verify that users cannot create views with `SQL SECURITY DEFINER` where the definer is an auth plugin user as mentioned in the compatibility section.
+We should add tests to verify that users cannot create views with `SQL SECURITY DEFINER` where the definer is an auth plugin user and the plugin implementation has `VerifyPrivilege` and `VerifyDynamicPrivilege` set, as mentioned in the compatibility section.
 
 ### Benchmark Tests
 
@@ -215,7 +216,7 @@ If a user is using an auth plugin, the SQL privilege status in TiDB might not re
 
 The design does not account for implementing the same level of proxy user support as in MySQL auth plugin, since currently TiDB does not support [proxy users](https://dev.mysql.com/doc/extending-mysql/8.0/en/writing-authentication-plugins-proxy-users.html) yet. Also existing support for password expiry and validation will not work, as mentioned in the earlier section.
 
-Also, users cannot create views with `SQL SECURITY DEFINER` where the definer is an auth plugin user because we will lack the `tls.ConnectionState` information for the definer to pass into `VerifyPrivilege`.
+Also, users cannot create views with `SQL SECURITY DEFINER` where the definer is an auth plugin user because we will lack the `tls.ConnectionState` information for the definer to pass into `VerifyPrivilege`, unless the plugin implementation does not have `VerifyPrivilege` and `VerifyDynamicPrivilege` implemented.
 
 ## Investigation & Alternatives
 
