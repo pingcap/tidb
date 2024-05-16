@@ -431,7 +431,7 @@ func TestTimeBoundedStalenessTxn(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (id int primary key);")
-	defer tk.MustExec(`drop table if exists t`)
+	//defer tk.MustExec(`drop table if exists t`)
 	testcases := []struct {
 		name         string
 		sql          string
@@ -488,6 +488,8 @@ func TestTimeBoundedStalenessTxn(t *testing.T) {
 	}
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/expression/injectSafeTS"))
 	require.NoError(t, failpoint.Disable("tikvclient/injectSafeTS"))
+
+	tk.MustExec(`drop table if exists t`)
 }
 
 func TestStalenessTransactionSchemaVer(t *testing.T) {

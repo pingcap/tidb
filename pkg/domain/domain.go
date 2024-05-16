@@ -217,6 +217,64 @@ func (do *Domain) EtcdClient() *clientv3.Client {
 	return do.etcdClient
 }
 
+func (do *Domain) FullReload(startTS uint64) error {
+	beginTime := time.Now()
+	defer func() {
+		infoschema_metrics.LoadSchemaDurationTotal.Observe(time.Since(beginTime).Seconds())
+	}()
+	snapshot := do.store.GetSnapshot(kv.NewVersion(startTS))
+	// Using the KV timeout read feature to address the issue of potential DDL lease expiration when
+	// the meta region leader is slow.
+	snapshot.SetOption(kv.TiKVClientReadTimeout, uint64(3000)) // 3000ms.
+
+	currentSchemaVersion := int64(0)
+	if oldInfoSchema := do.infoCache.GetLatest(); oldInfoSchema != nil {
+		currentSchemaVersion = oldInfoSchema.SchemaMetaVersion()
+	}
+
+	m := meta.NewSnapshotMeta(snapshot)
+	neededSchemaVersion, err := m.GetSchemaVersionWithNonEmptyDiff()
+	if err != nil {
+		return err
+	}
+	// fetch the commit timestamp of the schema diff
+	schemaTs, err := do.getTimestampForSchemaVersionWithNonEmptyDiff(m, neededSchemaVersion, startTS)
+	if err != nil {
+		logutil.BgLogger().Warn("failed to get schema version", zap.Error(err), zap.Int64("version", neededSchemaVersion))
+		schemaTs = 0
+	}
+
+	schemas, err := do.fetchAllSchemasWithTables(m)
+	if err != nil {
+		return err
+	}
+
+	policies, err := do.fetchPolicies(m)
+	if err != nil {
+		return err
+	}
+
+	resourceGroups, err := do.fetchResourceGroups(m)
+	if err != nil {
+		return err
+	}
+	// clear data
+	do.infoCache.Data = infoschema.NewData()
+	newISBuilder, err := infoschema.NewBuilderV3(do, do.sysFacHack, do.infoCache.Data).InitWithDBInfos(schemas, policies, resourceGroups, neededSchemaVersion)
+	if err != nil {
+		return err
+	}
+	infoschema_metrics.LoadSchemaDurationLoadAll.Observe(time.Since(beginTime).Seconds())
+	logutil.BgLogger().Info("full load InfoSchema success",
+		zap.Int64("currentSchemaVersion", currentSchemaVersion),
+		zap.Int64("neededSchemaVersion", neededSchemaVersion),
+		zap.Duration("start time", time.Since(beginTime)))
+
+	is := newISBuilder.Build(startTS)
+	do.infoCache.Insert(is, schemaTs)
+	return nil
+}
+
 // loadInfoSchema loads infoschema at startTS.
 // It returns:
 // 1. the needed infoschema
@@ -260,6 +318,7 @@ func (do *Domain) loadInfoSchema(startTS uint64) (infoschema.InfoSchema, bool, i
 		// the insert method check if schemaTs is zero
 		do.infoCache.Insert(is, schemaTs)
 
+		return is, true, 0, nil, nil
 		enableV2 := variable.SchemaCacheSize.Load() > 0
 		if enableV2 == isV2 {
 			return is, true, 0, nil, nil

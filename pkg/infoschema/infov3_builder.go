@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/parser/model"
+	"slices"
 )
 
 // BuilderV3 ...
@@ -94,6 +95,8 @@ func (b *BuilderV3) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, er
 	if len(rs1) != len(rs2) {
 		panic("len(rs1) != len(rs2)")
 	}
+	slices.Sort(rs1)
+	slices.Sort(rs2)
 	for i := range rs1 {
 		if rs1[i] != rs2[i] {
 			panic("rs1[i] != rs2[i]")
