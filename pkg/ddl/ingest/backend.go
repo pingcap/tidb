@@ -232,6 +232,7 @@ func (bc *litBackendCtx) Flush(indexID int64, mode FlushMode) (flushed, imported
 	err = bc.unsafeImportAndReset(ei)
 	if err != nil {
 		return true, false, err
+	}
 
 	failpoint.Inject("mockDMLExecutionStateBeforeImport", func(_ failpoint.Value) {
 		if MockDMLExecutionStateBeforeImport != nil {
