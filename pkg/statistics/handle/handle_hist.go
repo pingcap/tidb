@@ -229,7 +229,6 @@ func (h *Handle) HandleOneTask(sctx sessionctx.Context, lastTask *NeededItemTask
 	} else {
 		task = lastTask
 	}
-
 	result := stmtctx.StatsLoadResult{Item: task.TableItemID}
 	resultChan := h.StatsLoad.Singleflight.DoChan(task.TableItemID.Key(), func() (any, error) {
 		err := h.handleOneItemTask(task)
