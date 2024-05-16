@@ -78,6 +78,7 @@ go_test(
     srcs = [
         "bench_test.go",
         "builder_test.go",
+        "infoschema_nokit_test.go",
         "infoschema_test.go",
         "infoschema_v2_test.go",
         "main_test.go",
@@ -86,7 +87,7 @@ go_test(
     ],
     embed = [":infoschema"],
     flaky = True,
-    shard_count = 20,
+    shard_count = 21,
     deps = [
         "//pkg/ddl/placement",
         "//pkg/domain",

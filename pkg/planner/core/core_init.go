@@ -17,6 +17,7 @@ package core
 import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/statistics"
@@ -38,6 +39,7 @@ func init() {
 	statistics.PrepareCols4MVIndex = PrepareIdxColsAndUnwrapArrayType
 
 	// For basic optimizer init.
+	base.InvalidTask = &RootTask{} // invalid if p is nil
 	expression.EvalSimpleAst = evalAstExpr
 	expression.BuildSimpleExpr = buildSimpleExpr
 	expression.DecodeKeyFromString = decodeKeyFromString

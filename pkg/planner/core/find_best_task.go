@@ -52,8 +52,6 @@ import (
 // PlanCounterDisabled is the default value of PlanCounterTp, indicating that optimizer needn't force a plan.
 var PlanCounterDisabled base.PlanCounterTp = -1
 
-var invalidTask = &RootTask{} // invalid if p is nil
-
 // GetPropByOrderByItems will check if this sort property can be pushed or not. In order to simplify the problem, we only
 // consider the case that all expression are columns.
 func GetPropByOrderByItems(items []*util.ByItems) (*property.PhysicalProperty, bool) {
@@ -97,7 +95,7 @@ func (p *LogicalTableDual) FindBestTask(prop *property.PhysicalProperty, planCou
 	// we cannot ensure this required property.
 	// But if the row count is 0 or 1, we don't need to care about the property.
 	if (!prop.IsSortItemEmpty() && p.RowCount > 1) || planCounter.Empty() {
-		return invalidTask, 0, nil
+		return base.InvalidTask, 0, nil
 	}
 	dual := PhysicalTableDual{
 		RowCount: p.RowCount,
@@ -114,7 +112,7 @@ func (p *LogicalTableDual) FindBestTask(prop *property.PhysicalProperty, planCou
 // FindBestTask implements the LogicalPlan interface.
 func (p *LogicalShow) FindBestTask(prop *property.PhysicalProperty, planCounter *base.PlanCounterTp, _ *optimizetrace.PhysicalOptimizeOp) (base.Task, int64, error) {
 	if !prop.IsSortItemEmpty() || planCounter.Empty() {
-		return invalidTask, 0, nil
+		return base.InvalidTask, 0, nil
 	}
 	pShow := PhysicalShow{ShowContents: p.ShowContents, Extractor: p.Extractor}.Init(p.SCtx())
 	pShow.SetSchema(p.schema)
@@ -127,7 +125,7 @@ func (p *LogicalShow) FindBestTask(prop *property.PhysicalProperty, planCounter 
 // FindBestTask implements the LogicalPlan interface.
 func (p *LogicalShowDDLJobs) FindBestTask(prop *property.PhysicalProperty, planCounter *base.PlanCounterTp, _ *optimizetrace.PhysicalOptimizeOp) (base.Task, int64, error) {
 	if !prop.IsSortItemEmpty() || planCounter.Empty() {
-		return invalidTask, 0, nil
+		return base.InvalidTask, 0, nil
 	}
 	pShow := PhysicalShowDDLJobs{JobNumber: p.JobNumber}.Init(p.SCtx())
 	pShow.SetSchema(p.schema)
@@ -176,7 +174,7 @@ func (p *baseLogicalPlan) enumeratePhysicalPlans4Task(
 	planCounter *base.PlanCounterTp,
 	opt *optimizetrace.PhysicalOptimizeOp,
 ) (base.Task, int64, error) {
-	var bestTask base.Task = invalidTask
+	var bestTask base.Task = base.InvalidTask
 	var curCntPlan, cntPlan int64
 	var err error
 	childTasks := make([]base.Task, 0, len(p.children))
@@ -493,7 +491,16 @@ func appendPlanCostDetail4PhysicalOptimizeOp(pop *optimizetrace.PhysicalOptimize
 }
 
 // FindBestTask implements LogicalPlan interface.
-func (p *baseLogicalPlan) FindBestTask(prop *property.PhysicalProperty, planCounter *base.PlanCounterTp, opt *optimizetrace.PhysicalOptimizeOp) (bestTask base.Task, cntPlan int64, err error) {
+func (p *baseLogicalPlan) FindBestTask(prop *property.PhysicalProperty, planCounter *base.PlanCounterTp,
+	opt *optimizetrace.PhysicalOptimizeOp) (bestTask base.Task, cntPlan int64, err error) {
+	return findBestTask(p, prop, planCounter, opt)
+}
+
+// findBestTask is key workflow that drive logic plan tree to generate optimal physical ones.
+// The logic inside it is mainly about physical plan numeration and task encapsulation, it should
+// be defined in core pkg, and be called by logic plan in their logic interface implementation.
+func findBestTask(p *baseLogicalPlan, prop *property.PhysicalProperty, planCounter *base.PlanCounterTp,
+	opt *optimizetrace.PhysicalOptimizeOp) (bestTask base.Task, cntPlan int64, err error) {
 	// If p is an inner plan in an IndexJoin, the IndexJoin will generate an inner plan by itself,
 	// and set inner child prop nil, so here we do nothing.
 	if prop == nil {
@@ -511,8 +518,8 @@ func (p *baseLogicalPlan) FindBestTask(prop *property.PhysicalProperty, planCoun
 
 	if prop.TaskTp != property.RootTaskType && !prop.IsFlashProp() {
 		// Currently all plan cannot totally push down to TiKV.
-		p.storeTask(prop, invalidTask)
-		return invalidTask, 0, nil
+		p.storeTask(prop, base.InvalidTask)
+		return base.InvalidTask, 0, nil
 	}
 
 	cntPlan = 0
@@ -595,7 +602,7 @@ END:
 // FindBestTask implements the LogicalPlan interface.
 func (p *LogicalMemTable) FindBestTask(prop *property.PhysicalProperty, planCounter *base.PlanCounterTp, opt *optimizetrace.PhysicalOptimizeOp) (t base.Task, cntPlan int64, err error) {
 	if prop.MPPPartitionTp != property.AnyType {
-		return invalidTask, 0, nil
+		return base.InvalidTask, 0, nil
 	}
 
 	// If prop.CanAddEnforcer is true, the prop.SortItems need to be set nil for p.findBestTask.
@@ -610,7 +617,7 @@ func (p *LogicalMemTable) FindBestTask(prop *property.PhysicalProperty, planCoun
 			return nil, 0, err
 		}
 		prop.CanAddEnforcer = true
-		if t != invalidTask {
+		if t != base.InvalidTask {
 			cntPlan = cnt
 			return
 		}
@@ -629,7 +636,7 @@ func (p *LogicalMemTable) FindBestTask(prop *property.PhysicalProperty, planCoun
 	}()
 
 	if !prop.IsSortItemEmpty() || planCounter.Empty() {
-		return invalidTask, 0, nil
+		return base.InvalidTask, 0, nil
 	}
 	memTable := PhysicalMemTable{
 		DBName:         p.DBName,
@@ -1286,7 +1293,7 @@ func (ds *DataSource) FindBestTask(prop *property.PhysicalProperty, planCounter 
 		prop.SortItems = []property.SortItem{}
 		prop.MPPPartitionTp = property.AnyType
 	} else if prop.MPPPartitionTp != property.AnyType {
-		return invalidTask, 0, nil
+		return base.InvalidTask, 0, nil
 	}
 	defer func() {
 		if err != nil {
@@ -1322,7 +1329,7 @@ func (ds *DataSource) FindBestTask(prop *property.PhysicalProperty, planCounter 
 		return t, 1, err
 	}
 
-	t = invalidTask
+	t = base.InvalidTask
 	candidates := ds.skylinePruning(prop)
 	pruningInfo := ds.getPruningInfo(candidates, prop)
 	defer func() {
@@ -1542,22 +1549,22 @@ func (ds *DataSource) FindBestTask(prop *property.PhysicalProperty, planCounter 
 // convertToIndexMergeScan builds the index merge scan for intersection or union cases.
 func (ds *DataSource) convertToIndexMergeScan(prop *property.PhysicalProperty, candidate *candidatePath, _ *optimizetrace.PhysicalOptimizeOp) (task base.Task, err error) {
 	if prop.IsFlashProp() || prop.TaskTp == property.CopSingleReadTaskType {
-		return invalidTask, nil
+		return base.InvalidTask, nil
 	}
 	// lift the limitation of that double read can not build index merge **COP** task with intersection.
 	// that means we can output a cop task here without encapsulating it as root task, for the convenience of attaching limit to its table side.
 
 	if !prop.IsSortItemEmpty() && !candidate.isMatchProp {
-		return invalidTask, nil
+		return base.InvalidTask, nil
 	}
 	// while for now, we still can not push the sort prop to the intersection index plan side, temporarily banned here.
 	if !prop.IsSortItemEmpty() && candidate.path.IndexMergeIsIntersection {
-		return invalidTask, nil
+		return base.InvalidTask, nil
 	}
 	failpoint.Inject("forceIndexMergeKeepOrder", func(_ failpoint.Value) {
 		if len(candidate.path.PartialIndexPaths) > 0 && !candidate.path.IndexMergeIsIntersection {
 			if prop.IsSortItemEmpty() {
-				failpoint.Return(invalidTask, nil)
+				failpoint.Return(base.InvalidTask, nil)
 			}
 		}
 	})
@@ -1588,7 +1595,7 @@ func (ds *DataSource) convertToIndexMergeScan(prop *property.PhysicalProperty, c
 		} else {
 			scan, err = ds.convertToPartialIndexScan(&cop.physPlanPartInfo, prop, partPath, candidate.isMatchProp, byItems)
 			if err != nil {
-				return invalidTask, err
+				return base.InvalidTask, err
 			}
 		}
 		scans = append(scans, scan)
@@ -1599,10 +1606,10 @@ func (ds *DataSource) convertToIndexMergeScan(prop *property.PhysicalProperty, c
 	}
 	ts, remainingFilters, moreColumn, err := ds.buildIndexMergeTableScan(path.TableFilters, totalRowCount, candidate.isMatchProp)
 	if err != nil {
-		return invalidTask, err
+		return base.InvalidTask, err
 	}
 	if prop.TaskTp != property.RootTaskType && len(remainingFilters) > 0 {
-		return invalidTask, nil
+		return base.InvalidTask, nil
 	}
 	cop.keepOrder = candidate.isMatchProp
 	cop.tablePlan = ts
@@ -1958,27 +1965,27 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty,
 		// MVIndex is special since different index rows may return the same _row_id and this can break some assumptions of IndexReader.
 		// Currently only support using IndexMerge to access MVIndex instead of IndexReader.
 		// TODO: make IndexReader support accessing MVIndex directly.
-		return invalidTask, nil
+		return base.InvalidTask, nil
 	}
 	if !candidate.path.IsSingleScan {
 		// If it's parent requires single read task, return max cost.
 		if prop.TaskTp == property.CopSingleReadTaskType {
-			return invalidTask, nil
+			return base.InvalidTask, nil
 		}
 	} else if prop.TaskTp == property.CopMultiReadTaskType {
 		// If it's parent requires double read task, return max cost.
-		return invalidTask, nil
+		return base.InvalidTask, nil
 	}
 	if !prop.IsSortItemEmpty() && !candidate.isMatchProp {
-		return invalidTask, nil
+		return base.InvalidTask, nil
 	}
 	// If we need to keep order for the index scan, we should forbid the non-keep-order index scan when we try to generate the path.
 	if prop.IsSortItemEmpty() && candidate.path.ForceKeepOrder {
-		return invalidTask, nil
+		return base.InvalidTask, nil
 	}
 	// If we don't need to keep order for the index scan, we should forbid the non-keep-order index scan when we try to generate the path.
 	if !prop.IsSortItemEmpty() && candidate.path.ForceNoKeepOrder {
-		return invalidTask, nil
+		return base.InvalidTask, nil
 	}
 	path := candidate.path
 	is := ds.getOriginalPhysicalIndexScan(prop, path, candidate.isMatchProp, candidate.path.IsSingleScan)
@@ -2067,12 +2074,12 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty,
 	// so we can just use prop.ExpectedCnt as parameter of addPushedDownSelection.
 	finalStats := ds.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt)
 	if err = is.addPushedDownSelection(cop, ds, path, finalStats); err != nil {
-		return invalidTask, err
+		return base.InvalidTask, err
 	}
 	if prop.TaskTp == property.RootTaskType {
 		task = task.ConvertToRootTask(ds.SCtx())
 	} else if _, ok := task.(*RootTask); ok {
-		return invalidTask, nil
+		return base.InvalidTask, nil
 	}
 	return task, nil
 }
@@ -2420,23 +2427,23 @@ func (ds *DataSource) isPointGetPath(path *util.AccessPath) bool {
 func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candidate *candidatePath, _ *optimizetrace.PhysicalOptimizeOp) (base.Task, error) {
 	// It will be handled in convertToIndexScan.
 	if prop.TaskTp == property.CopMultiReadTaskType {
-		return invalidTask, nil
+		return base.InvalidTask, nil
 	}
 	if !prop.IsSortItemEmpty() && !candidate.isMatchProp {
-		return invalidTask, nil
+		return base.InvalidTask, nil
 	}
 	// If we need to keep order for the index scan, we should forbid the non-keep-order index scan when we try to generate the path.
 	if prop.IsSortItemEmpty() && candidate.path.ForceKeepOrder {
-		return invalidTask, nil
+		return base.InvalidTask, nil
 	}
 	// If we don't need to keep order for the index scan, we should forbid the non-keep-order index scan when we try to generate the path.
 	if !prop.IsSortItemEmpty() && candidate.path.ForceNoKeepOrder {
-		return invalidTask, nil
+		return base.InvalidTask, nil
 	}
 	ts, _ := ds.getOriginalPhysicalTableScan(prop, candidate.path, candidate.isMatchProp)
 	if ts.KeepOrder && ts.StoreType == kv.TiFlash && (ts.Desc || ds.SCtx().GetSessionVars().TiFlashFastScan) {
 		// TiFlash fast mode(https://github.com/pingcap/tidb/pull/35851) does not keep order in TableScan
-		return invalidTask, nil
+		return base.InvalidTask, nil
 	}
 	if ts.StoreType == kv.TiFlash {
 		for _, col := range ts.Columns {
@@ -2453,10 +2460,10 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 	canMppConvertToRootForWhenTiFlashCopIsBanned := ds.SCtx().GetSessionVars().IsTiFlashCopBanned() && canMppConvertToRoot
 	if prop.TaskTp == property.MppTaskType || canMppConvertToRootForDisaggregatedTiFlash || canMppConvertToRootForWhenTiFlashCopIsBanned {
 		if ts.KeepOrder {
-			return invalidTask, nil
+			return base.InvalidTask, nil
 		}
 		if prop.MPPPartitionTp != property.AnyType {
-			return invalidTask, nil
+			return base.InvalidTask, nil
 		}
 		// ********************************** future deprecated start **************************/
 		var hasVirtualColumn bool
@@ -2477,7 +2484,7 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 		// as its schema, so when we resolve indices later, the virtual column 'a' itself couldn't resolve itself anymore.
 		//
 		if hasVirtualColumn && !canMppConvertToRootForDisaggregatedTiFlash && !canMppConvertToRootForWhenTiFlashCopIsBanned {
-			return invalidTask, nil
+			return base.InvalidTask, nil
 		}
 		// ********************************** future deprecated end **************************/
 		mppTask := &MppTask{
@@ -2497,7 +2504,7 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 			if prop.TaskTp == property.MppTaskType && len(mppTask.rootTaskConds) > 0 {
 				// If got filters cannot be pushed down to tiflash, we have to make sure it will be executed in TiDB,
 				// So have to return a rootTask, but prop requires mppTask, cannot meet this requirement.
-				task = invalidTask
+				task = base.InvalidTask
 			} else if prop.TaskTp == property.RootTaskType {
 				// When got here, canMppConvertToRootX is true.
 				// This is for situations like cannot generate mppTask for some operators.
@@ -2511,8 +2518,8 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 		return task, nil
 	}
 	if isTiFlashPath && config.GetGlobalConfig().DisaggregatedTiFlash || isTiFlashPath && ds.SCtx().GetSessionVars().IsTiFlashCopBanned() {
-		// prop.TaskTp is cop related, just return invalidTask.
-		return invalidTask, nil
+		// prop.TaskTp is cop related, just return base.InvalidTask.
+		return base.InvalidTask, nil
 	}
 	copTask := &CopTask{
 		tablePlan:         ts,
@@ -2532,7 +2539,7 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 		if ds.tableInfo.GetPartitionInfo() != nil {
 			// TableScan on partition table on TiFlash can't keep order.
 			if ts.StoreType == kv.TiFlash {
-				return invalidTask, nil
+				return base.InvalidTask, nil
 			}
 			// Add sort items for table scan for merge-sort operation between partitions.
 			byItems := make([]*util.ByItems, 0, len(prop.SortItems))
@@ -2547,12 +2554,12 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 	}
 	ts.addPushedDownSelection(copTask, ds.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt))
 	if prop.IsFlashProp() && len(copTask.rootTaskConds) != 0 {
-		return invalidTask, nil
+		return base.InvalidTask, nil
 	}
 	if prop.TaskTp == property.RootTaskType {
 		task = task.ConvertToRootTask(ds.SCtx())
 	} else if _, ok := task.(*RootTask); ok {
-		return invalidTask, nil
+		return base.InvalidTask, nil
 	}
 	return task, nil
 }
@@ -2560,14 +2567,14 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 func (ds *DataSource) convertToSampleTable(prop *property.PhysicalProperty,
 	candidate *candidatePath, _ *optimizetrace.PhysicalOptimizeOp) (base.Task, error) {
 	if prop.TaskTp == property.CopMultiReadTaskType {
-		return invalidTask, nil
+		return base.InvalidTask, nil
 	}
 	if !prop.IsSortItemEmpty() && !candidate.isMatchProp {
-		return invalidTask, nil
+		return base.InvalidTask, nil
 	}
 	if candidate.isMatchProp {
 		// Disable keep order property for sample table path.
-		return invalidTask, nil
+		return base.InvalidTask, nil
 	}
 	p := PhysicalTableSample{
 		TableSampleInfo: ds.SampleInfo,
@@ -2583,15 +2590,15 @@ func (ds *DataSource) convertToSampleTable(prop *property.PhysicalProperty,
 
 func (ds *DataSource) convertToPointGet(prop *property.PhysicalProperty, candidate *candidatePath) base.Task {
 	if !prop.IsSortItemEmpty() && !candidate.isMatchProp {
-		return invalidTask
+		return base.InvalidTask
 	}
 	if prop.TaskTp == property.CopMultiReadTaskType && candidate.path.IsSingleScan ||
 		prop.TaskTp == property.CopSingleReadTaskType && !candidate.path.IsSingleScan {
-		return invalidTask
+		return base.InvalidTask
 	}
 
 	if tidbutil.IsMemDB(ds.DBName.L) {
-		return invalidTask
+		return base.InvalidTask
 	}
 
 	accessCnt := math.Min(candidate.path.CountAfterAccess, float64(1))
@@ -2624,7 +2631,7 @@ func (ds *DataSource) convertToPointGet(prop *property.PhysicalProperty, candida
 			}
 		}
 		if !found {
-			return invalidTask
+			return base.InvalidTask
 		}
 		// Add filter condition to table plan now.
 		if len(candidate.path.TableFilters) > 0 {
@@ -2659,11 +2666,11 @@ func (ds *DataSource) convertToPointGet(prop *property.PhysicalProperty, candida
 
 func (ds *DataSource) convertToBatchPointGet(prop *property.PhysicalProperty, candidate *candidatePath) base.Task {
 	if !prop.IsSortItemEmpty() && !candidate.isMatchProp {
-		return invalidTask
+		return base.InvalidTask
 	}
 	if prop.TaskTp == property.CopMultiReadTaskType && candidate.path.IsSingleScan ||
 		prop.TaskTp == property.CopSingleReadTaskType && !candidate.path.IsSingleScan {
-		return invalidTask
+		return base.InvalidTask
 	}
 
 	accessCnt := math.Min(candidate.path.CountAfterAccess, float64(len(candidate.path.Ranges)))
@@ -2881,7 +2888,7 @@ func (p *LogicalCTE) FindBestTask(prop *property.PhysicalProperty, counter *base
 		return p.baseLogicalPlan.FindBestTask(prop, counter, pop)
 	}
 	if !prop.IsSortItemEmpty() && !prop.CanAddEnforcer {
-		return invalidTask, 1, nil
+		return base.InvalidTask, 1, nil
 	}
 	// The physical plan has been build when derive stats.
 	pcte := PhysicalCTE{SeedPlan: p.cte.seedPartPhysicalPlan, RecurPlan: p.cte.recursivePartPhysicalPlan, CTE: p.cte, cteAsName: p.cteAsName, cteName: p.cteName}.Init(p.SCtx(), p.StatsInfo())
@@ -2889,7 +2896,7 @@ func (p *LogicalCTE) FindBestTask(prop *property.PhysicalProperty, counter *base
 	if prop.IsFlashProp() && prop.CTEProducerStatus == property.AllCTECanMpp {
 		pcte.readerReceiver = PhysicalExchangeReceiver{IsCTEReader: true}.Init(p.SCtx(), p.StatsInfo())
 		if prop.MPPPartitionTp != property.AnyType {
-			return invalidTask, 1, nil
+			return base.InvalidTask, 1, nil
 		}
 		t = &MppTask{
 			p:           pcte,

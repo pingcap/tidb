@@ -542,9 +542,10 @@ func LoadNeededHistograms(sctx sessionctx.Context, statsCache statstypes.StatsCa
 	items := statistics.HistogramNeededItems.AllItems()
 	for _, item := range items {
 		if !item.IsIndex {
-			err = loadNeededColumnHistograms(sctx, statsCache, item, loadFMSketch)
+			err = loadNeededColumnHistograms(sctx, statsCache, item.TableItemID, loadFMSketch, item.FullLoad)
 		} else {
-			err = loadNeededIndexHistograms(sctx, statsCache, item, loadFMSketch)
+			// Index is always full load.
+			err = loadNeededIndexHistograms(sctx, statsCache, item.TableItemID, loadFMSketch)
 		}
 		if err != nil {
 			return err
@@ -560,7 +561,7 @@ func CleanFakeItemsForShowHistInFlights(statsCache statstypes.StatsCache) int {
 	for _, item := range items {
 		tbl, ok := statsCache.Get(item.TableID)
 		if !ok {
-			statistics.HistogramNeededItems.Delete(item)
+			statistics.HistogramNeededItems.Delete(item.TableItemID)
 			continue
 		}
 		loadNeeded := false
@@ -568,11 +569,11 @@ func CleanFakeItemsForShowHistInFlights(statsCache statstypes.StatsCache) int {
 			_, loadNeeded = tbl.IndexIsLoadNeeded(item.ID)
 		} else {
 			var analyzed bool
-			_, loadNeeded, analyzed = tbl.ColumnIsLoadNeeded(item.ID, true)
+			_, loadNeeded, analyzed = tbl.ColumnIsLoadNeeded(item.ID, item.FullLoad)
 			loadNeeded = loadNeeded && analyzed
 		}
 		if !loadNeeded {
-			statistics.HistogramNeededItems.Delete(item)
+			statistics.HistogramNeededItems.Delete(item.TableItemID)
 			continue
 		}
 		reallyNeeded++
@@ -580,7 +581,7 @@ func CleanFakeItemsForShowHistInFlights(statsCache statstypes.StatsCache) int {
 	return reallyNeeded
 }
 
-func loadNeededColumnHistograms(sctx sessionctx.Context, statsCache statstypes.StatsCache, col model.TableItemID, loadFMSketch bool) (err error) {
+func loadNeededColumnHistograms(sctx sessionctx.Context, statsCache statstypes.StatsCache, col model.TableItemID, loadFMSketch bool, fullLoad bool) (err error) {
 	tbl, ok := statsCache.Get(col.TableID)
 	if !ok {
 		return nil
@@ -592,24 +593,30 @@ func loadNeededColumnHistograms(sctx sessionctx.Context, statsCache statstypes.S
 		return nil
 	}
 	colInfo = tbl.ColAndIdxExistenceMap.GetCol(col.ID)
-	hgMeta, _, statsVer, _, err := HistMetaFromStorage(sctx, &col, colInfo)
-	if hgMeta == nil || err != nil {
+	hg, _, statsVer, _, err := HistMetaFromStorage(sctx, &col, colInfo)
+	if hg == nil || err != nil {
 		statistics.HistogramNeededItems.Delete(col)
 		return err
 	}
-	hg, err := HistogramFromStorage(sctx, col.TableID, col.ID, &colInfo.FieldType, hgMeta.NDV, 0, hgMeta.LastUpdateVersion, hgMeta.NullCount, hgMeta.TotColSize, hgMeta.Correlation)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	cms, topN, err := CMSketchAndTopNFromStorage(sctx, col.TableID, 0, col.ID)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	var fms *statistics.FMSketch
-	if loadFMSketch {
-		fms, err = FMSketchFromStorage(sctx, col.TableID, 0, col.ID)
+	var (
+		cms  *statistics.CMSketch
+		topN *statistics.TopN
+		fms  *statistics.FMSketch
+	)
+	if fullLoad {
+		hg, err = HistogramFromStorage(sctx, col.TableID, col.ID, &colInfo.FieldType, hg.NDV, 0, hg.LastUpdateVersion, hg.NullCount, hg.TotColSize, hg.Correlation)
 		if err != nil {
 			return errors.Trace(err)
+		}
+		cms, topN, err = CMSketchAndTopNFromStorage(sctx, col.TableID, 0, col.ID)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if loadFMSketch {
+			fms, err = FMSketchFromStorage(sctx, col.TableID, 0, col.ID)
+			if err != nil {
+				return errors.Trace(err)
+			}
 		}
 	}
 	colHist := &statistics.Column{
@@ -630,7 +637,11 @@ func loadNeededColumnHistograms(sctx sessionctx.Context, statsCache statstypes.S
 	}
 	tbl = tbl.Copy()
 	if colHist.StatsAvailable() {
-		colHist.StatsLoadedStatus = statistics.NewStatsFullLoadStatus()
+		if fullLoad {
+			colHist.StatsLoadedStatus = statistics.NewStatsFullLoadStatus()
+		} else {
+			colHist.StatsLoadedStatus = statistics.NewStatsAllEvictedStatus()
+		}
 		tbl.LastAnalyzeVersion = max(tbl.LastAnalyzeVersion, colHist.LastUpdateVersion)
 		if statsVer != statistics.Version0 {
 			tbl.StatsVer = int(statsVer)

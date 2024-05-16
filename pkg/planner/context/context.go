@@ -91,10 +91,10 @@ type BuildPBContext struct {
 	// the following fields are used to build `expression.PushDownContext`.
 	// TODO: it'd be better to embed `expression.PushDownContext` in `BuildPBContext`. But `expression` already
 	// depends on this package, so we need to move `expression.PushDownContext` to a standalone package first.
-	GroupConcatMaxLen  uint64
-	InExplainStmt      bool
-	AppendWarning      func(err error)
-	AppendExtraWarning func(err error)
+	GroupConcatMaxLen uint64
+	InExplainStmt     bool
+	WarnHandler       contextutil.WarnAppender
+	ExtraWarnghandler contextutil.WarnAppender
 }
 
 // GetExprCtx returns the expression context.
