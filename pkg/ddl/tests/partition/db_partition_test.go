@@ -3476,6 +3476,7 @@ func TestReorgPartitionGlobalIndex(t *testing.T) {
 		partition p2 values less than (20)
 	)`)
 	tt := external.GetTableByName(t, tk, "test", "t")
+	require.Equal(t, 0, len(tt.Meta().Indices))
 	//pid1 := tt.Meta().Partition.Definitions[1].ID
 
 	tk.MustExec("Alter Table t Add Unique Index idx_b (b)")
@@ -3492,6 +3493,7 @@ func TestReorgPartitionGlobalIndex(t *testing.T) {
 	//tk.MustQuery(`select b from t where b = 6`).Check(testkit.Rows("6"))
 	//tk.MustQuery(`select b from t where b = 4`).Check(testkit.Rows("4"))
 	//tt = external.GetTableByName(t, tk, "test", "t")
+	//require.Equal(t, 2, len(tt.Meta().Indices))
 	//idxInfo := tt.Meta().FindIndexByName("idx_b")
 	//require.NotNil(t, idxInfo)
 	//cnt := checkGlobalIndexCleanUpDone(t, tk.Session(), tt.Meta(), idxInfo, pid1)
@@ -3507,6 +3509,7 @@ func TestReorgPartitionGlobalIndex(t *testing.T) {
 	// But better to actually clean that up as well...
 	tk.MustExec("alter table t remove partitioning")
 	tt = external.GetTableByName(t, tk, "test", "t")
+	require.Equal(t, 2, len(tt.Meta().Indices))
 	idxInfo := tt.Meta().FindIndexByName("idx_b")
 	require.False(t, idxInfo.Global)
 	require.True(t, idxInfo.Unique)
@@ -3516,6 +3519,7 @@ func TestReorgPartitionGlobalIndex(t *testing.T) {
 	// This should replace the unique index with a global index
 	tk.MustExec(`alter table t partition by range (a) (partition p1 values less than (10), partition p2 values less than (20))`)
 	tt = external.GetTableByName(t, tk, "test", "t")
+	require.Equal(t, 2, len(tt.Meta().Indices))
 	idxInfo = tt.Meta().FindIndexByName("idx_b")
 	require.True(t, idxInfo.Global)
 	require.True(t, idxInfo.Unique)

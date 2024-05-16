@@ -2874,16 +2874,26 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 
 		// All global indexes must be recreated, we cannot update them in-place, since we must have
 		// both old and new set of partition ids in the unique index at the same time!
-		// TODO: handle non-partitioned <=> partitioned (with global index)
-		// TODO: Should we convert unique indexes to global here? Probably already in the caller?
 		for _, index := range tblInfo.Indices {
+			if !index.Unique {
+				continue
+			}
 			// for now, only unique index can be global, non-unique indexes are 'local'
-			if index.Global /*|| (index.Unique && !checkUniqueKeyIncludePartKey(partCols, index.Columns))*/ {
-				// Duplicate the global indexes with new index ids
-				globalIndex := *index
-				globalIndex.State = model.StateDeleteOnly
-				globalIndex.ID = AllocateIndexID(tblInfo)
-				tblInfo.Indices = append(tblInfo.Indices, &globalIndex)
+			inAllPartitionColumns, err := checkPartitionKeysConstraint(partInfo, index.Columns, tblInfo)
+			if err != nil {
+				return ver, errors.Trace(err)
+			}
+			if index.Global || !inAllPartitionColumns {
+				// Duplicate the unique indexes with new index ids
+				newIndex := *index
+				newIndex.State = model.StateDeleteOnly
+				newIndex.ID = AllocateIndexID(tblInfo)
+				if inAllPartitionColumns {
+					newIndex.Global = false
+				} else {
+					newIndex.Global = true
+				}
+				tblInfo.Indices = append(tblInfo.Indices, &newIndex)
 			}
 		}
 		// From now on we cannot just cancel the DDL, we must roll back if changesMade!
@@ -2996,7 +3006,7 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 		}
 
 		for i := range tblInfo.Indices {
-			if tblInfo.Indices[i].Global && tblInfo.Indices[i].State == model.StateDeleteOnly {
+			if tblInfo.Indices[i].Unique && tblInfo.Indices[i].State == model.StateDeleteOnly {
 				tblInfo.Indices[i].State = model.StateWriteOnly
 			}
 		}
@@ -3009,7 +3019,7 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 		// so that new data will be updated in both old and new partitions when reorganizing.
 		job.SnapshotVer = 0
 		for i := range tblInfo.Indices {
-			if tblInfo.Indices[i].Global && tblInfo.Indices[i].State == model.StateWriteOnly {
+			if tblInfo.Indices[i].Unique && tblInfo.Indices[i].State == model.StateWriteOnly {
 				tblInfo.Indices[i].State = model.StateWriteReorganization
 			}
 		}
@@ -3030,13 +3040,28 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 			return ver, err
 		}
 
-		for i := range tblInfo.Indices {
-			if tblInfo.Indices[i].Global {
-				if tblInfo.Indices[i].State == model.StateWriteReorganization {
-					tblInfo.Indices[i].State = model.StatePublic
-				} else if tblInfo.Indices[i].State == model.StatePublic {
-					// Mark the old global index as non-readable
-					tblInfo.Indices[i].State = model.StateDeleteReorganization
+		for _, index := range tblInfo.Indices {
+			if !index.Unique {
+				continue
+			}
+			switch index.State {
+			case model.StateWriteReorganization:
+				// Newly created index, replacing old unique/global index
+				index.State = model.StatePublic
+			case model.StatePublic:
+				if index.Global {
+					// Mark the old global index as non-readable, and to be dropped
+					index.State = model.StateDeleteReorganization
+				} else {
+					inAllPartitionColumns, err := checkPartitionKeysConstraint(partInfo, index.Columns, tblInfo)
+					if err != nil {
+						return ver, errors.Trace(err)
+					}
+					if !inAllPartitionColumns {
+						// Mark the old unique index as non-readable, and to be dropped,
+						// since it is replaced by a global index
+						index.State = model.StateDeleteReorganization
+					}
 				}
 			}
 		}
@@ -3089,26 +3114,19 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 		tblInfo.Partition.AddingDefinitions = nil
 		tblInfo.Partition.DDLState = model.StateNone
 
-		var globalIndexIDs []int64
-		var oldGlobalIndices []*model.IndexInfo
+		var dropIndexIDs []int64
+		var dropIndices []*model.IndexInfo
 		for _, indexInfo := range tblInfo.Indices {
-			if indexInfo.Global {
-				if indexInfo.State == model.StateDeleteReorganization {
-					// Drop the old global index, see onDropIndex
-					indexInfo.State = model.StateNone
-					DropIndexColumnFlag(tblInfo, indexInfo)
-					RemoveDependentHiddenColumns(tblInfo, indexInfo)
-					globalIndexIDs = append(globalIndexIDs, indexInfo.ID)
-					oldGlobalIndices = append(oldGlobalIndices, indexInfo)
-				}
-				if indexInfo.State == model.StatePublic &&
-					job.Type == model.ActionRemovePartitioning {
-					// Remove Global from unique indexes, since no-longer partitioned
-					indexInfo.Global = false
-				}
+			if indexInfo.Unique && indexInfo.State == model.StateDeleteReorganization {
+				// Drop the old unique (possible global) index, see onDropIndex
+				indexInfo.State = model.StateNone
+				DropIndexColumnFlag(tblInfo, indexInfo)
+				RemoveDependentHiddenColumns(tblInfo, indexInfo)
+				dropIndexIDs = append(dropIndexIDs, indexInfo.ID)
+				dropIndices = append(dropIndices, indexInfo)
 			}
 		}
-		for _, indexInfo := range oldGlobalIndices {
+		for _, indexInfo := range dropIndices {
 			removeIndexInfo(tblInfo, indexInfo)
 		}
 		var oldTblID int64
@@ -3181,7 +3199,7 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 		}
 		asyncNotifyEvent(d, event)
 		// A background job will be created to delete old partition data.
-		job.Args = []any{physicalTableIDs, partInfo, globalIndexIDs}
+		job.Args = []any{physicalTableIDs, partInfo, dropIndexIDs}
 
 	default:
 		err = dbterror.ErrInvalidDDLState.GenWithStackByArgs("partition", job.SchemaState)
@@ -4022,6 +4040,9 @@ func checkPartitionKeysConstraint(pi *model.PartitionInfo, indexColumns []*model
 		partCols []*model.ColumnInfo
 		err      error
 	)
+	if pi.Type == model.PartitionTypeNone {
+		return true, nil
+	}
 	// The expr will be an empty string if the partition is defined by:
 	// CREATE TABLE t (...) PARTITION BY RANGE COLUMNS(...)
 	if partExpr := pi.Expr; partExpr != "" {
