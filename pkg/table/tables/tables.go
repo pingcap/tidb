@@ -415,6 +415,8 @@ func (t *TableCommon) shouldAssert(level variable.AssertionLevel) bool {
 	if p != nil {
 		// This disables asserting during Reorganize Partition.
 		switch level {
+		case variable.AssertionLevelOff:
+			return false
 		case variable.AssertionLevelFast:
 			// Fast option, just skip assertion for all partitions.
 			if p.DDLState != model.StateNone && p.DDLState != model.StatePublic {
