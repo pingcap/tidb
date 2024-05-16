@@ -1625,7 +1625,6 @@ func (w *addIndexTxnWorker) batchCheckUniqueKey(txn kv.Transaction, idxRecords [
 	// 1. unique-key/primary-key is duplicate and the handle is equal, skip it.
 	// 2. unique-key/primary-key is duplicate and the handle is not equal, return duplicate error.
 	// 3. non-unique-key is duplicate, skip it.
-	// Note: Global index may have the same handle but for different partitions!
 	for i, key := range w.batchCheckKeys {
 		if len(key) == 0 {
 			continue
