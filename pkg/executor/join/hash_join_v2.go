@@ -108,21 +108,6 @@ func (htc *hashTableContext) mergeRowTablesToHashTable(tableMeta *TableMeta, par
 	return totalSegmentCnt
 }
 
-// NewHashTableContext create a hashTableContext for current hash join
-func NewHashTableContext(workerConcurrency int, partitionNumber int) *hashTableContext {
-	ret := &hashTableContext{}
-	ret.rowTables = make([][]*rowTable, workerConcurrency)
-	for index := range ret.rowTables {
-		ret.rowTables[index] = make([]*rowTable, partitionNumber)
-	}
-	ret.hashTable = &hashTableV2{
-		tables:          make([]*subTable, partitionNumber),
-		partitionNumber: uint64(partitionNumber),
-	}
-	ret.memoryTracker = memory.NewTracker(memory.LabelForHashTableInHashJoinV2, -1)
-	return ret
-}
-
 // HashJoinCtxV2 is the hash join ctx used in hash join v2
 type HashJoinCtxV2 struct {
 	hashJoinCtxBase
