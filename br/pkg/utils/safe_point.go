@@ -5,13 +5,18 @@ package utils
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/pingcap/kvproto/pkg/pdpb"
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
+	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/tikv/client-go/v2/oracle"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
@@ -82,9 +87,12 @@ func CheckGCSafePoint(ctx context.Context, pdClient pd.Client, ts uint64) error 
 
 // UpdateServiceSafePoint register BackupTS to PD, to lock down BackupTS as safePoint with TTL seconds.
 func UpdateServiceSafePoint(ctx context.Context, pdClient pd.Client, sp BRServiceSafePoint) error {
+	var lastSafePoint uint64
+	var err error
+
 	log.Debug("update PD safePoint limit with TTL", zap.Object("safePoint", sp))
 
-	lastSafePoint, err := pdClient.UpdateServiceGCSafePoint(ctx, sp.ID, sp.TTL, sp.BackupTS-1)
+	lastSafePoint, err = UpdateServiceSafePointWithGCManagementType(ctx, pdClient, sp.ID, sp.TTL, sp.BackupTS-1)
 	if lastSafePoint > sp.BackupTS-1 {
 		log.Warn("service GC safe point lost, we may fail to back up if GC lifetime isn't long enough",
 			zap.Uint64("lastSafePoint", lastSafePoint),
@@ -92,6 +100,107 @@ func UpdateServiceSafePoint(ctx context.Context, pdClient pd.Client, sp BRServic
 		)
 	}
 	return errors.Trace(err)
+}
+
+func UpdateServiceSafePointWithGCManagementType(ctx context.Context, pdClient pd.Client, serviceID string, ttl int64, serviceSafePoint uint64) (uint64, error) {
+	var lastServiceSafePoint uint64
+	var err error
+	var keyspaceID uint32
+	var gcManagementType string
+	keyspaceName := config.GetGlobalConfig().KeyspaceName
+
+	if keyspaceName == "" {
+		// If keyspace is not set.
+		lastServiceSafePoint, err = pdClient.UpdateServiceGCSafePoint(ctx, serviceID, ttl, serviceSafePoint)
+		log.Info("use service safe point.",
+			zap.String("service-safe-point-id", serviceID),
+			zap.Int64("service-safe-point-ttl", ttl),
+			zap.Uint64("service-safe-point", serviceSafePoint),
+			zap.Uint64("last-service-safe-point", lastServiceSafePoint))
+	} else {
+		keyspaceID, gcManagementType, err = getKeyspaceMeta(ctx, pdClient, keyspaceName)
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+
+		switch gcManagementType {
+		case "keyspace_level_gc":
+			{
+				lastServiceSafePoint, err = pdClient.UpdateServiceSafePointV2(ctx, keyspaceID, serviceID, ttl, serviceSafePoint)
+				log.Info("update keyspace level service safe point.",
+					zap.String("keyspace-name", keyspaceName),
+					zap.Uint32("keyspace-id", keyspaceID),
+					zap.String("service-safe-point-id", serviceID),
+					zap.Int64("service-safe-point-ttl", ttl),
+					zap.Uint64("service-safe-point", serviceSafePoint),
+					zap.Uint64("last-service-safe-point", lastServiceSafePoint))
+			}
+		case "global_gc":
+			{
+				lastServiceSafePoint, err = pdClient.UpdateServiceGCSafePoint(ctx, serviceID, ttl, serviceSafePoint)
+				log.Info("use service safe point.",
+					zap.String("keyspace-name", keyspaceName),
+					zap.Uint32("keyspace-id", keyspaceID),
+					zap.String("service-safe-point-id", serviceID),
+					zap.Int64("service-safe-point-ttl", ttl),
+					zap.Uint64("service-safe-point", serviceSafePoint),
+					zap.Uint64("last-service-safe-point", lastServiceSafePoint))
+			}
+		case "":
+			{
+				// If `gc_management_type` is not set.
+				lastServiceSafePoint, err = pdClient.UpdateServiceGCSafePoint(ctx, serviceID, ttl, serviceSafePoint)
+				log.Info("use service safe point.",
+					zap.String("keyspace-name", keyspaceName),
+					zap.Uint32("keyspace-id", keyspaceID),
+					zap.String("service-safe-point-id", serviceID),
+					zap.Int64("service-safe-point-ttl", ttl),
+					zap.Uint64("service-safe-point", serviceSafePoint),
+					zap.Uint64("last-service-safe-point", lastServiceSafePoint))
+			}
+		default:
+			{
+				return 0, errors.New("keyspace has unknown GC management type")
+			}
+		}
+	}
+	return lastServiceSafePoint, err
+}
+
+func getKeyspaceMeta(ctx context.Context, pdClient pd.Client, keyspaceName string) (uint32, string, error) {
+	// Load Keyspace meta with retry.
+	var keyspaceMeta *keyspacepb.KeyspaceMeta
+	err := util.RunWithRetry(util.DefaultMaxRetries, util.RetryInterval, func() (bool, error) {
+		var errInner error
+		keyspaceMeta, errInner = pdClient.LoadKeyspace(ctx, keyspaceName)
+		// Retry when pd not bootstrapped or if keyspace not exists.
+		if IsNotBootstrappedError(errInner) || IsKeyspaceNotExistError(errInner) {
+			return true, errInner
+		}
+		// Do not retry when success or encountered unexpected error.
+		return false, errInner
+	})
+	if err != nil {
+		return 0, "", err
+	}
+
+	return keyspaceMeta.Id, keyspaceMeta.Config["gc_management_type"], nil
+}
+
+// IsNotBootstrappedError returns true if the error is pd not bootstrapped error.
+func IsNotBootstrappedError(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(err.Error(), pdpb.ErrorType_NOT_BOOTSTRAPPED.String())
+}
+
+// IsKeyspaceNotExistError returns true the error is caused by keyspace not exists.
+func IsKeyspaceNotExistError(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(err.Error(), pdpb.ErrorType_ENTRY_NOT_FOUND.String())
 }
 
 // StartServiceSafePointKeeper will run UpdateServiceSafePoint periodicity

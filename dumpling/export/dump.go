@@ -18,6 +18,9 @@ import (
 	"time"
 
 	"github.com/coreos/go-semver/semver"
+	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/pkg/config"
+
 	// import mysql driver
 	"github.com/go-sql-driver/mysql"
 	"github.com/google/uuid"
@@ -334,6 +337,27 @@ func (d *Dumper) Dump() (dumpErr error) {
 	summary.SetSuccessStatus(true)
 	m.recordFinishTime(time.Now())
 	return nil
+}
+
+func (d *Dumper) updateTiDBGlobalConfigKeyspaceName() {
+	if d.conf.ServerInfo.ServerType == version.ServerTypeTiDB || d.conf.ServerInfo.ServerType == version.ServerTypeUnknown {
+		keyspaceNameInTiDB, err := utils.GetKeyspaceNameFromTiDB(d.dbHandle)
+		if err != nil {
+			panic(err)
+		}
+
+		if d.conf.KeyspaceName != keyspaceNameInTiDB {
+			panic("the keyspace name in command line is different from keyspace name in TiDB.")
+		}
+
+		if keyspaceNameInTiDB != "" {
+			config.UpdateGlobal(func(conf *config.Config) {
+				conf.KeyspaceName = keyspaceNameInTiDB
+			})
+		}
+
+		d.tctx.L().Info("using API V2.", zap.String("keyspaceName", keyspaceNameInTiDB))
+	}
 }
 
 func (d *Dumper) startWriters(tctx *tcontext.Context, wg *errgroup.Group, taskChan <-chan Task,
@@ -1369,6 +1393,7 @@ func openSQLDB(d *Dumper) error {
 		return errors.Trace(err)
 	}
 	d.dbHandle = sql.OpenDB(c)
+	d.updateTiDBGlobalConfigKeyspaceName()
 	return nil
 }
 
@@ -1522,7 +1547,7 @@ func updateServiceSafePoint(tctx *tcontext.Context, pdClient pd.Client, ttl int6
 			zap.Uint64("safePoint", snapshotTS),
 			zap.Int64("ttl", ttl))
 		for retryCnt := 0; retryCnt <= 10; retryCnt++ {
-			_, err := pdClient.UpdateServiceGCSafePoint(tctx, dumplingServiceSafePointID, ttl, snapshotTS)
+			_, err := utils.UpdateServiceSafePointWithGCManagementType(tctx, pdClient, dumplingServiceSafePointID, ttl, snapshotTS)
 			if err == nil {
 				break
 			}
