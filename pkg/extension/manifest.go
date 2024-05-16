@@ -65,6 +65,25 @@ func WithCustomAccessCheck(fn AccessCheckFunc) Option {
 	}
 }
 
+// WithCustomAuthPlugins specifies the custom authentication plugins available for the system.
+func WithCustomAuthPlugins(authPlugins map[string]*AuthPlugin) Option {
+	// Validate required functions for the auth plugins
+	for pluginName, p := range authPlugins {
+		if p.Name == "" {
+			panic("auth plugin name cannot be empty for " + pluginName)
+		}
+		if p.AuthenticateUser == nil {
+			panic("auth plugin AuthenticateUser function cannot be nil for " + pluginName)
+		}
+		if p.GenerateAuthString == nil {
+			panic("auth plugin GenerateAuthString function cannot be nil for " + pluginName)
+		}
+	}
+	return func(m *Manifest) {
+		m.authPlugins = authPlugins
+	}
+}
+
 // WithSessionHandlerFactory specifies a factory function to handle session
 func WithSessionHandlerFactory(factory func() *SessionHandler) Option {
 	return func(m *Manifest) {
@@ -118,6 +137,7 @@ type Manifest struct {
 	bootstrap             func(BootstrapContext) error
 	funcs                 []*FunctionDef
 	accessCheckFunc       AccessCheckFunc
+	authPlugins           map[string]*AuthPlugin
 	sessionHandlerFactory func() *SessionHandler
 	close                 func()
 }

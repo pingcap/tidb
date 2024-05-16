@@ -165,7 +165,7 @@ func (e *GrantExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 			// It is required for compatibility with 5.7 but removed from 8.0
 			// since it results in a massive security issue:
 			// spelling errors will create users with no passwords.
-			pwd, ok := user.EncodedPassword()
+			pwd, ok := user.EncodedPassword(getAuthPluginGenAuthString(e.Ctx().GetAuthPlugins()[user.GetAuthPluginOrDefault(mysql.AuthNativePassword)]))
 			if !ok {
 				return errors.Trace(exeerrors.ErrPasswordFormat)
 			}

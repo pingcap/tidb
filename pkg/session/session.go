@@ -216,6 +216,8 @@ type session struct {
 
 	extensions *extension.SessionExtensions
 
+	authPlugins map[string]*extension.AuthPlugin
+
 	sandBoxMode bool
 }
 
@@ -1739,6 +1741,16 @@ func (s *session) SetExtensions(extensions *extension.SessionExtensions) {
 	s.extensions = extensions
 }
 
+// GetAuthPlugins returns the `map[string]extension.AuthPlugin` object
+func (s *session) GetAuthPlugins() map[string]*extension.AuthPlugin {
+	return s.authPlugins
+}
+
+// SetAuthPlugins sets the `map[string]extension.AuthPlugin` object
+func (s *session) SetAuthPlugins(authPlugins map[string]*extension.AuthPlugin) {
+	s.authPlugins = authPlugins
+}
+
 // InSandBoxMode indicates that this session is in sandbox mode
 func (s *session) InSandBoxMode() bool {
 	return s.sandBoxMode
@@ -3135,6 +3147,7 @@ func CreateSessionWithOpt(store kv.Storage, opt *Opt) (types.Session, error) {
 	if err != nil {
 		return nil, err
 	}
+	s.SetAuthPlugins(extensions.GetAuthPlugins())
 	pm := privileges.NewUserPrivileges(do.PrivilegeHandle(), extensions)
 	privilege.BindPrivilegeManager(s, pm)
 

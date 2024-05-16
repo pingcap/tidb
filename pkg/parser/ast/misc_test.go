@@ -194,21 +194,21 @@ func TestUserSpec(t *testing.T) {
 			HashString:   hashString,
 		},
 	}
-	pwd, ok := u.EncodedPassword()
+	pwd, ok := u.EncodedPassword(nil)
 	require.True(t, ok)
 	require.Equal(t, u.AuthOpt.HashString, pwd)
 
 	u.AuthOpt.HashString = "not-good-password-format"
-	_, ok = u.EncodedPassword()
+	_, ok = u.EncodedPassword(nil)
 	require.False(t, ok)
 
 	u.AuthOpt.ByAuthString = true
-	pwd, ok = u.EncodedPassword()
+	pwd, ok = u.EncodedPassword(nil)
 	require.True(t, ok)
 	require.Equal(t, hashString, pwd)
 
 	u.AuthOpt.AuthString = ""
-	pwd, ok = u.EncodedPassword()
+	pwd, ok = u.EncodedPassword(nil)
 	require.True(t, ok)
 	require.Equal(t, "", pwd)
 }
@@ -812,4 +812,40 @@ func TestDeniedByBDR(t *testing.T) {
 	for _, tc := range testCases2 {
 		assert.Equal(t, tc.expected, ast.DeniedByBDR(tc.role, tc.action, tc.job), fmt.Sprintf("role: %v, action: %v", tc.role, tc.action))
 	}
+}
+
+func TestUserSpecEncodePasswordWithPluginFn(t *testing.T) {
+	hashString := "*3D56A309CD04FA2EEF181462E59011F075C89548"
+	u := ast.UserSpec{
+		User: &auth.UserIdentity{
+			Username: "test",
+		},
+		AuthOpt: &ast.AuthOption{
+			ByAuthString: false,
+			AuthString:   "xxx",
+			HashString:   hashString,
+		},
+	}
+
+	p := func(s string) (string, bool) {
+		if s == "xxx" {
+			return "xxxxxxx", true
+		}
+		return "", false
+	}
+
+	u.AuthOpt.ByAuthString = false
+	_, ok := u.EncodedPassword(p)
+	require.False(t, ok)
+
+	u.AuthOpt.AuthString = "xxx"
+	u.AuthOpt.ByAuthString = true
+	pwd, ok := u.EncodedPassword(p)
+	require.True(t, ok)
+	require.Equal(t, "xxxxxxx", pwd)
+
+	u.AuthOpt = nil
+	pwd, ok = u.EncodedPassword(p)
+	require.True(t, ok)
+	require.Equal(t, "", pwd)
 }

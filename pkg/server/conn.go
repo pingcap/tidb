@@ -200,6 +200,8 @@ type clientConn struct {
 	quit       chan struct{}
 	extensions *extension.SessionExtensions
 
+	registeredAuthPlugins map[string]*extension.AuthPlugin
+
 	// Proxy Protocol Enabled
 	ppEnabled bool
 }
@@ -253,6 +255,13 @@ func (cc *clientConn) authSwitchRequest(ctx context.Context, plugin string) ([]b
 		clientPlugin += "_client"
 	} else if plugin == mysql.AuthLDAPSimple {
 		clientPlugin = mysql.AuthMySQLClearPassword
+	} else if authPluginImpl, ok := cc.registeredAuthPlugins[plugin]; ok {
+		if authPluginImpl.RequiredClientSidePlugin != "" {
+			clientPlugin = authPluginImpl.RequiredClientSidePlugin
+		} else {
+			// If the plugin does not need special handling of the password, use clear text password.
+			clientPlugin = mysql.AuthMySQLClearPassword
+		}
 	}
 	failpoint.Inject("FakeAuthSwitch", func() {
 		failpoint.Return([]byte(clientPlugin), nil)
@@ -621,7 +630,9 @@ func (cc *clientConn) readOptionalSSLRequestAndHandshakeResponse(ctx context.Con
 	case mysql.AuthLDAPSASL:
 	case mysql.AuthLDAPSimple:
 	default:
-		return errors.New("Unknown auth plugin")
+		if _, ok := cc.registeredAuthPlugins[resp.AuthPlugin]; !ok {
+			return errors.New("Unknown auth plugin")
+		}
 	}
 
 	err = cc.openSessionAndDoAuth(resp.Auth, resp.AuthPlugin, resp.ZstdLevel)
@@ -642,6 +653,10 @@ func (cc *clientConn) handleAuthPlugin(ctx context.Context, resp *handshake.Resp
 			resp.Auth = newAuth
 		}
 
+		if _, ok := cc.registeredAuthPlugins[resp.AuthPlugin]; ok {
+			// The auth plugin has been registered, skip other checks.
+			return nil
+		}
 		switch resp.AuthPlugin {
 		case mysql.AuthCachingSha2Password:
 		case mysql.AuthTiDBSM3Password:
@@ -752,7 +767,7 @@ func (cc *clientConn) openSession() error {
 		tlsState := cc.tlsConn.ConnectionState()
 		tlsStatePtr = &tlsState
 	}
-	ctx, err := cc.server.driver.OpenCtx(cc.connectionID, cc.capability, cc.collation, cc.dbname, tlsStatePtr, cc.extensions)
+	ctx, err := cc.server.driver.OpenCtx(cc.connectionID, cc.capability, cc.collation, cc.dbname, tlsStatePtr, cc.extensions, cc.registeredAuthPlugins)
 	if err != nil {
 		return err
 	}
@@ -2555,7 +2570,7 @@ func (cc *clientConn) handleResetConnection(ctx context.Context) error {
 		tlsState := cc.tlsConn.ConnectionState()
 		tlsStatePtr = &tlsState
 	}
-	tidbCtx, err := cc.server.driver.OpenCtx(cc.connectionID, cc.capability, cc.collation, cc.dbname, tlsStatePtr, cc.extensions)
+	tidbCtx, err := cc.server.driver.OpenCtx(cc.connectionID, cc.capability, cc.collation, cc.dbname, tlsStatePtr, cc.extensions, cc.registeredAuthPlugins)
 	if err != nil {
 		return err
 	}

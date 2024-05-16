@@ -1419,14 +1419,29 @@ func (n *UserSpec) SecurityString() string {
 	return n.User.String()
 }
 
+// GetAuthPluginOrDefault returns the auth plugin name if available, otherwise returns the default plugin name.
+func (n *UserSpec) GetAuthPluginOrDefault(defaultPlugin string) string {
+	if n.AuthOpt == nil {
+		return defaultPlugin
+	}
+	return n.AuthOpt.AuthPlugin
+}
+
 // EncodedPassword returns the encoded password (which is the real data mysql.user).
 // The boolean value indicates input's password format is legal or not.
-func (n *UserSpec) EncodedPassword() (string, bool) {
+func (n *UserSpec) EncodedPassword(pluginEncoder func(string) (string, bool)) (string, bool) {
 	if n.AuthOpt == nil {
 		return "", true
 	}
 
 	opt := n.AuthOpt
+	// If the extension auth plugin is available, use it to encode the password.
+	if pluginEncoder != nil {
+		if opt.ByAuthString {
+			return pluginEncoder(opt.AuthString)
+		}
+		return pluginEncoder(opt.HashString)
+	}
 	if opt.ByAuthString {
 		switch opt.AuthPlugin {
 		case mysql.AuthCachingSha2Password, mysql.AuthTiDBSM3Password:
