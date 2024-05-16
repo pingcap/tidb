@@ -229,20 +229,11 @@ func (d *sqlDigester) normalize(sql string, keepHint bool, forBinding bool) {
 			continue
 		}
 
-<<<<<<< HEAD
-		d.reduceLit(&currTok)
+		d.reduceLit(&currTok, forBinding)
 
 		// Apply binding matching specific rules
 		if forBinding {
 			// IN (?) => IN ( ... ) #44298
-=======
-		d.reduceLit(&currTok, forBinding)
-		if forPlanReplayerReload {
-			// Apply for plan replayer to match specific rules, changing IN (...) to IN (?). This can avoid plan replayer load failures caused by parse errors.
-			d.replaceSingleLiteralWithInList(&currTok)
-		} else if forBinding {
-			// Apply binding matching specific rules, IN (?) => IN ( ... ) #44298
->>>>>>> 707b0a4e381 (parser: support (Row(..),Row(..))=>(..) in the binding mode (#51319))
 			d.reduceInListWithSingleLiteral(&currTok)
 			// In (Row(...)) => In (...) #51222
 			d.reduceInRowListWithSingleLiteral(&currTok)
@@ -399,8 +390,6 @@ func (d *sqlDigester) isGenericLists(last4 []token) bool {
 	return true
 }
 
-<<<<<<< HEAD
-=======
 // In (Row(...), Row(...)) => In (Row(...))
 func (d *sqlDigester) isGenericRowListsWithIn(last9 []token) bool {
 	if len(last9) < 7 {
@@ -452,7 +441,6 @@ func (d *sqlDigester) replaceSingleLiteralWithInList(currTok *token) {
 	}
 }
 
->>>>>>> 707b0a4e381 (parser: support (Row(..),Row(..))=>(..) in the binding mode (#51319))
 // IN (?) => IN (...) Issue: #44298
 func (d *sqlDigester) reduceInListWithSingleLiteral(currTok *token) {
 	last3 := d.tokens.back(3)
