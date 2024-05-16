@@ -36,6 +36,9 @@ type PlanContext = context.PlanContext
 // BuildPBContext is the context for building `*tipb.Executor`.
 type BuildPBContext = context.BuildPBContext
 
+// Note: appending the new adding method to the last, for the convenience of easy
+// locating in other implementor from other package.
+
 // Plan is the description of an execution flow.
 // It is created from ast.Node first, then optimized by the optimizer,
 // finally used by the executor to create a Cursor which executes the statement.
