@@ -2875,24 +2875,15 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 		// All global indexes must be recreated, we cannot update them in-place, since we must have
 		// both old and new set of partition ids in the unique index at the same time!
 		// TODO: handle non-partitioned <=> partitioned (with global index)
+		// TODO: Should we convert unique indexes to global here? Probably already in the caller?
 		for _, index := range tblInfo.Indices {
-			if index.Global {
+			// for now, only unique index can be global, non-unique indexes are 'local'
+			if index.Global /*|| (index.Unique && !checkUniqueKeyIncludePartKey(partCols, index.Columns))*/ {
 				// Duplicate the global indexes with new index ids
 				globalIndex := *index
 				globalIndex.State = model.StateDeleteOnly
 				globalIndex.ID = AllocateIndexID(tblInfo)
-				if job.Type == model.ActionRemovePartitioning {
-					globalIndex.Global = false
-				}
-				if tblInfo.GetPartitionInfo() == nil {
-					// Should never happen, but is actually harmless here!
-					panic("FIXME: add a proper error message")
-				}
 				tblInfo.Indices = append(tblInfo.Indices, &globalIndex)
-			}
-			if index.Unique && tblInfo.GetPartitionInfo() == nil {
-				// TODO: Check if it needs and can add it as a global index?!?
-				panic("FIXME: support non-partitioned table to partitioned with global index!")
 			}
 		}
 		// From now on we cannot just cancel the DDL, we must roll back if changesMade!
@@ -3109,6 +3100,11 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 					RemoveDependentHiddenColumns(tblInfo, indexInfo)
 					globalIndexIDs = append(globalIndexIDs, indexInfo.ID)
 					oldGlobalIndices = append(oldGlobalIndices, indexInfo)
+				}
+				if indexInfo.State == model.StatePublic &&
+					job.Type == model.ActionRemovePartitioning {
+					// Remove Global from unique indexes, since no-longer partitioned
+					indexInfo.Global = false
 				}
 			}
 		}
@@ -3576,6 +3572,10 @@ func (w *worker) reorgPartitionDataAndIndex(t table.Table, reorgInfo *reorgInfo)
 			if err != nil {
 				return errors.Trace(err)
 			}
+		}
+		if pid == 0 {
+			// All partitions will be dropped, nothing more to add to global indexes.
+			return nil
 		}
 		reorgInfo.PhysicalTableID = pid
 		var physTbl table.PhysicalTable
