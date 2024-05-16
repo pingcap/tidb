@@ -2382,7 +2382,7 @@ func (rc *Client) PreCheckTableTiFlashReplica(
 				// set TiFlashReplica to unavailable in tableInfo, to avoid TiDB cannot sense TiFlash and make plan to TiFlash
 				// see details at https://github.com/pingcap/br/issues/931
 				// TODO maybe set table.Info.TiFlashReplica.Count to tiFlashStoreCount, but we need more tests about it.
-				log.Warn("table does not satisfy tiflash replica requirements, set tiflash replcia to unavaiable",
+				log.Warn("table does not satisfy tiflash replica requirements, set tiflash replcia to unavailable",
 					zap.Stringer("db", table.DB.Name),
 					zap.Stringer("table", table.Info.Name),
 					zap.Uint64("expect tiflash replica", table.Info.TiFlashReplica.Count),

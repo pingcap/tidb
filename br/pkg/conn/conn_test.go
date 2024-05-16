@@ -25,10 +25,14 @@ import (
 )
 
 func TestGetAllTiKVStoresWithRetryCancel(t *testing.T) {
-	err := failpoint.Enable("github.com/pingcap/tidb/br/pkg/conn/hint-GetAllTiKVStores-cancel", "1*return(true)->1*return(false)")
+	err := failpoint.Enable("github.com/pingcap/tidb/br/pkg/conn/hint-GetAllTiKVStores-grpc-cancel", "1*return(true)")
+	require.NoError(t, err)
+	err = failpoint.Enable("github.com/pingcap/tidb/br/pkg/conn/hint-GetAllTiKVStores-ctx-cancel", "1*return(true)")
 	require.NoError(t, err)
 	defer func() {
-		err = failpoint.Disable("github.com/pingcap/tidb/br/pkg/conn/hint-GetAllTiKVStores-cancel")
+		err = failpoint.Disable("github.com/pingcap/tidb/br/pkg/conn/hint-GetAllTiKVStores-grpc-cancel")
+		require.NoError(t, err)
+		err = failpoint.Disable("github.com/pingcap/tidb/br/pkg/conn/hint-GetAllTiKVStores-ctx-cancel")
 		require.NoError(t, err)
 	}()
 	ctx, cancel := context.WithCancel(context.Background())
@@ -64,15 +68,19 @@ func TestGetAllTiKVStoresWithRetryCancel(t *testing.T) {
 	_, err = GetAllTiKVStoresWithRetry(ctx, fpdc, util.SkipTiFlash)
 	require.Error(t, err)
 	errs := multierr.Errors(err)
-	require.Equal(t, 2, len(errs))
+	require.Equal(t, 1, len(errs))
 	require.Equal(t, codes.Canceled, status.Code(errors.Cause(errs[0])))
 }
 
 func TestGetAllTiKVStoresWithUnknown(t *testing.T) {
-	err := failpoint.Enable("github.com/pingcap/tidb/br/pkg/conn/hint-GetAllTiKVStores-error", "1*return(true)->1*return(false)")
+	err := failpoint.Enable("github.com/pingcap/tidb/br/pkg/conn/hint-GetAllTiKVStores-error", "1*return(true)")
+	require.NoError(t, err)
+	err = failpoint.Enable("github.com/pingcap/tidb/br/pkg/conn/hint-GetAllTiKVStores-ctx-cancel", "1*return(true)")
 	require.NoError(t, err)
 	defer func() {
 		err = failpoint.Disable("github.com/pingcap/tidb/br/pkg/conn/hint-GetAllTiKVStores-error")
+		require.NoError(t, err)
+		err = failpoint.Disable("github.com/pingcap/tidb/br/pkg/conn/hint-GetAllTiKVStores-ctx-cancel")
 		require.NoError(t, err)
 	}()
 	ctx, cancel := context.WithCancel(context.Background())
@@ -108,7 +116,7 @@ func TestGetAllTiKVStoresWithUnknown(t *testing.T) {
 	_, err = GetAllTiKVStoresWithRetry(ctx, fpdc, util.SkipTiFlash)
 	require.Error(t, err)
 	errs := multierr.Errors(err)
-	require.Equal(t, 2, len(errs))
+	require.Equal(t, 1, len(errs))
 	require.Equal(t, codes.Unknown, status.Code(errors.Cause(errs[0])))
 }
 

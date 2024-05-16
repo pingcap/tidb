@@ -9,16 +9,15 @@ import (
 	"time"
 
 	"github.com/golang/protobuf/proto"
-	"github.com/pingcap/failpoint"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/encryptionpb"
-	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/tidb/br/pkg/backup"
 	"github.com/pingcap/tidb/br/pkg/conn"
 	"github.com/pingcap/tidb/br/pkg/gluetidb"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/mock"
 	"github.com/pingcap/tidb/br/pkg/pdutil"
+	"github.com/pingcap/tidb/br/pkg/rtree"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -26,8 +25,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/testutils"
-	"github.com/tikv/client-go/v2/tikv"
-	"github.com/tikv/client-go/v2/txnkv/txnlock"
 	pd "github.com/tikv/pd/client"
 	"go.opencensus.io/stats/view"
 )
@@ -128,44 +125,6 @@ func TestGetTS(t *testing.T) {
 	require.Equal(t, backupts, ts)
 }
 
-func TestOnBackupRegionErrorResponse(t *testing.T) {
-	type Case struct {
-		storeID           uint64
-		bo                *tikv.Backoffer
-		backupTS          uint64
-		lockResolver      *txnlock.LockResolver
-		resp              *backuppb.BackupResponse
-		exceptedBackoffMs int
-		exceptedErr       bool
-	}
-	newBackupRegionErrorResp := func(regionError *errorpb.Error) *backuppb.BackupResponse {
-		return &backuppb.BackupResponse{Error: &backuppb.Error{Detail: &backuppb.Error_RegionError{RegionError: regionError}}}
-	}
-
-	cases := []Case{
-		{storeID: 1, backupTS: 421123291611137, resp: newBackupRegionErrorResp(&errorpb.Error{NotLeader: &errorpb.NotLeader{}}), exceptedBackoffMs: 3000, exceptedErr: false},
-		{storeID: 1, backupTS: 421123291611137, resp: newBackupRegionErrorResp(&errorpb.Error{RegionNotFound: &errorpb.RegionNotFound{}}), exceptedBackoffMs: 3000, exceptedErr: false},
-		{storeID: 1, backupTS: 421123291611137, resp: newBackupRegionErrorResp(&errorpb.Error{KeyNotInRegion: &errorpb.KeyNotInRegion{}}), exceptedBackoffMs: 0, exceptedErr: true},
-		{storeID: 1, backupTS: 421123291611137, resp: newBackupRegionErrorResp(&errorpb.Error{EpochNotMatch: &errorpb.EpochNotMatch{}}), exceptedBackoffMs: 3000, exceptedErr: false},
-		{storeID: 1, backupTS: 421123291611137, resp: newBackupRegionErrorResp(&errorpb.Error{ServerIsBusy: &errorpb.ServerIsBusy{}}), exceptedBackoffMs: 3000, exceptedErr: false},
-		{storeID: 1, backupTS: 421123291611137, resp: newBackupRegionErrorResp(&errorpb.Error{StaleCommand: &errorpb.StaleCommand{}}), exceptedBackoffMs: 3000, exceptedErr: false},
-		{storeID: 1, backupTS: 421123291611137, resp: newBackupRegionErrorResp(&errorpb.Error{StoreNotMatch: &errorpb.StoreNotMatch{}}), exceptedBackoffMs: 3000, exceptedErr: false},
-		{storeID: 1, backupTS: 421123291611137, resp: newBackupRegionErrorResp(&errorpb.Error{RaftEntryTooLarge: &errorpb.RaftEntryTooLarge{}}), exceptedBackoffMs: 0, exceptedErr: true},
-		{storeID: 1, backupTS: 421123291611137, resp: newBackupRegionErrorResp(&errorpb.Error{ReadIndexNotReady: &errorpb.ReadIndexNotReady{}}), exceptedBackoffMs: 3000, exceptedErr: false},
-		{storeID: 1, backupTS: 421123291611137, resp: newBackupRegionErrorResp(&errorpb.Error{ProposalInMergingMode: &errorpb.ProposalInMergingMode{}}), exceptedBackoffMs: 3000, exceptedErr: false},
-	}
-	for _, cs := range cases {
-		t.Log(cs)
-		_, backoffMs, err := backup.OnBackupResponse(cs.storeID, cs.bo, cs.backupTS, cs.lockResolver, cs.resp, utils.NewErrorContext("test", 1))
-		require.Equal(t, cs.exceptedBackoffMs, backoffMs)
-		if cs.exceptedErr {
-			require.Error(t, err)
-		} else {
-			require.NoError(t, err)
-		}
-	}
-}
-
 func TestSkipUnsupportedDDLJob(t *testing.T) {
 	s := createBackupSuite(t)
 
@@ -247,62 +206,99 @@ func TestCheckBackupIsLocked(t *testing.T) {
 	require.Regexp(t, "backup lock file and sst file exist in(.+)", err.Error())
 }
 
-func TestFindTargetPeer(t *testing.T) {
+func TestOnBackupResponse(t *testing.T) {
 	s := createBackupSuite(t)
 
 	ctx := context.Background()
-	testutils.BootstrapWithMultiRegions(s.mockCluster, []byte("g"), []byte("n"), []byte("t"))
 
-	leader1, err := s.backupClient.FindTargetPeer(ctx, []byte("a"), false, nil)
+	buildProgressRangeFn := func(startKey []byte, endKey []byte) *rtree.ProgressRange {
+		return &rtree.ProgressRange{
+			Res: rtree.NewRangeTree(),
+			Origin: rtree.Range{
+				StartKey: startKey,
+				EndKey:   endKey,
+			},
+		}
+	}
+
+	errContext := utils.NewErrorContext("test", 1)
+	require.Nil(t, s.backupClient.OnBackupResponse(ctx, nil, errContext, nil))
+
+	tree := rtree.NewProgressRangeTree()
+	r := &backup.ResponseAndStore{
+		StoreID: 0,
+		Resp: &backuppb.BackupResponse{
+			Error: &backuppb.Error{
+				Msg: "test",
+			},
+		},
+	}
+	// case #1: error resposne
+	// first error can be ignored due to errContext.
+	require.NoError(t, s.backupClient.OnBackupResponse(ctx, r, errContext, &tree))
+	// second error cannot be ignored.
+	require.Error(t, s.backupClient.OnBackupResponse(ctx, r, errContext, &tree))
+
+	// case #2: normal resposne
+	r = &backup.ResponseAndStore{
+		StoreID: 0,
+		Resp: &backuppb.BackupResponse{
+			StartKey: []byte("a"),
+			EndKey:   []byte("b"),
+		},
+	}
+
+	require.NoError(t, tree.Insert(buildProgressRangeFn([]byte("aa"), []byte("c"))))
+	// error due to the tree range does not match response range.
+	require.Error(t, s.backupClient.OnBackupResponse(ctx, r, errContext, &tree))
+
+	// case #3: partial range success case, find incomplete range
+	r.Resp.StartKey = []byte("aa")
+	require.NoError(t, s.backupClient.OnBackupResponse(ctx, r, errContext, &tree))
+
+	incomplete := tree.Iter().GetIncompleteRanges()
+	require.Len(t, incomplete, 1)
+	require.Equal(t, []byte("b"), incomplete[0].StartKey)
+	require.Equal(t, []byte("c"), incomplete[0].EndKey)
+
+	// case #4: success case, make up incomplete range
+	r.Resp.StartKey = []byte("b")
+	r.Resp.EndKey = []byte("c")
+	require.NoError(t, s.backupClient.OnBackupResponse(ctx, r, errContext, &tree))
+	incomplete = tree.Iter().GetIncompleteRanges()
+	require.Len(t, incomplete, 0)
+}
+
+func TestBuildProgressRangeTree(t *testing.T) {
+	s := createBackupSuite(t)
+	ranges := []rtree.Range{
+		{
+			StartKey: []byte("aa"),
+			EndKey:   []byte("b"),
+		},
+		{
+			StartKey: []byte("c"),
+			EndKey:   []byte("d"),
+		},
+	}
+	tree, err := s.backupClient.BuildProgressRangeTree(ranges)
 	require.NoError(t, err)
 
-	leader2, err := s.backupClient.FindTargetPeer(ctx, []byte("b"), false, nil)
+	contained, err := tree.FindContained([]byte("a"), []byte("aa"))
+	require.Nil(t, contained)
+	require.Error(t, err)
+
+	contained, err = tree.FindContained([]byte("b"), []byte("ba"))
+	require.Nil(t, contained)
+	require.Error(t, err)
+
+	contained, err = tree.FindContained([]byte("e"), []byte("ea"))
+	require.Nil(t, contained)
+	require.Error(t, err)
+
+	contained, err = tree.FindContained([]byte("aa"), []byte("b"))
+	require.NotNil(t, contained)
+	require.Equal(t, []byte("aa"), contained.Origin.StartKey)
+	require.Equal(t, []byte("b"), contained.Origin.EndKey)
 	require.NoError(t, err)
-
-	// check passed keys on same region
-	require.Equal(t, leader1.GetId(), leader2.GetId())
-
-	failpoint.Enable("github.com/pingcap/tidb/br/pkg/backup/retry-state-on-find-target-peer", "return(2)")
-	failpoint.Enable("github.com/pingcap/tidb/br/pkg/backup/return-region-on-find-target-peer", "1*return(\"nil\")->1*return(\"hasLeader\")")
-
-	leader, err := s.backupClient.FindTargetPeer(ctx, []byte("m"), false, nil)
-	require.NoError(t, err)
-	// check passed keys on find leader after retry
-	require.Equal(t, 42, int(leader.GetId()))
-
-	failpoint.Disable("github.com/pingcap/tidb/br/pkg/backup/retry-state-on-find-target-peer")
-	failpoint.Disable("github.com/pingcap/tidb/br/pkg/backup/return-region-on-find-target-peer")
-
-	failpoint.Enable("github.com/pingcap/tidb/br/pkg/backup/retry-state-on-find-target-peer", "return(2)")
-	failpoint.Enable("github.com/pingcap/tidb/br/pkg/backup/return-region-on-find-target-peer", "return(\"noLeader\")")
-
-	leader, err = s.backupClient.FindTargetPeer(ctx, []byte("m"), false, nil)
-	// check passed keys with error on find leader after retry
-	require.ErrorContains(t, err, "cannot find leader")
-
-	failpoint.Disable("github.com/pingcap/tidb/br/pkg/backup/retry-state-on-find-target-peer")
-	failpoint.Disable("github.com/pingcap/tidb/br/pkg/backup/return-region-on-find-target-peer")
-
-	failpoint.Enable("github.com/pingcap/tidb/br/pkg/backup/retry-state-on-find-target-peer", "return(2)")
-	failpoint.Enable("github.com/pingcap/tidb/br/pkg/backup/return-region-on-find-target-peer", "1*return(\"nil\")->1*return(\"hasPeer\")")
-
-	storeIDMap := make(map[uint64]struct{})
-	storeIDMap[42] = struct{}{}
-	leader, err = s.backupClient.FindTargetPeer(ctx, []byte("m"), false, storeIDMap)
-	require.NoError(t, err)
-	// check passed keys with target peer
-	require.Equal(t, 43, int(leader.GetId()))
-
-	failpoint.Disable("github.com/pingcap/tidb/br/pkg/backup/retry-state-on-find-target-peer")
-	failpoint.Disable("github.com/pingcap/tidb/br/pkg/backup/return-region-on-find-target-peer")
-
-	failpoint.Enable("github.com/pingcap/tidb/br/pkg/backup/retry-state-on-find-target-peer", "return(2)")
-	failpoint.Enable("github.com/pingcap/tidb/br/pkg/backup/return-region-on-find-target-peer", "1*return(\"nil\")->1*return(\"noPeer\")")
-
-	leader, err = s.backupClient.FindTargetPeer(ctx, []byte("m"), false, storeIDMap)
-	// check passed keys with error and cannot find target peer
-	require.ErrorContains(t, err, "cannot find leader")
-
-	failpoint.Disable("github.com/pingcap/tidb/br/pkg/backup/retry-state-on-find-target-peer")
-	failpoint.Disable("github.com/pingcap/tidb/br/pkg/backup/return-region-on-find-target-peer")
 }
