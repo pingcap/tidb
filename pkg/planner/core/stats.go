@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/statistics"
+	"github.com/pingcap/tidb/pkg/statistics/asyncload"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
@@ -282,7 +283,7 @@ func (ds *DataSource) initStats(colGroups [][]*expression.Column) {
 		// If we enable lite stats init or we just found out the meta info of the column is missed, we need to register columns for async load.
 		_, isLoadNeeded, _ := ds.statisticTable.ColumnIsLoadNeeded(col.ID, false)
 		if isLoadNeeded {
-			statistics.HistogramNeededItems.Insert(model.TableItemID{
+			asyncload.AsyncLoadHistogramNeededItems.Insert(model.TableItemID{
 				TableID:          ds.tableInfo.ID,
 				ID:               col.ID,
 				IsIndex:          false,
