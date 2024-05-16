@@ -217,6 +217,9 @@ type LogicalPlan interface {
 	// interface definition should depend on concrete implementation type.
 	PushDownTopN(topN LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) LogicalPlan
 
+	// ConvertOuterToInnerJoin converts outer joins if the unmatching rows are filtered.
+	ConvertOuterToInnerJoin(predicates []expression.Expression) LogicalPlan
+
 	// DeriveTopN derives an implicit TopN from a filter on row_number window function...
 	DeriveTopN(opt *optimizetrace.LogicalOptimizeOp) LogicalPlan
 
