@@ -482,7 +482,7 @@ func (h *Handle) updateCachedItem(item model.TableItemID, colHist *statistics.Co
 	// like `GetPartitionStats` called in `fmSketchFromStorage` would have modified the stats cache already.
 	tbl, ok := h.Get(item.TableID)
 	if !ok {
-		return false
+		return true
 	}
 	if !item.IsIndex && colHist != nil {
 		c, ok := tbl.Columns[item.ID]
