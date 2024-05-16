@@ -275,7 +275,7 @@ func (h *Handle) handleOneItemTask(sctx sessionctx.Context, task *NeededItemTask
 	item := task.TableItemID
 	tbl, ok := h.Get(item.TableID)
 	if !ok {
-		return nil, nil
+		return result, nil
 	}
 	wrapper := &statsWrapper{}
 	if item.IsIndex {
@@ -295,7 +295,8 @@ func (h *Handle) handleOneItemTask(sctx sessionctx.Context, task *NeededItemTask
 	needUpdate := false
 	wrapper, err = h.readStatsForOneItem(sctx, item, wrapper)
 	if err != nil {
-		return nil, err
+		result.Error = err
+		return result, err
 	}
 	if item.IsIndex {
 		if wrapper.idx != nil {
@@ -307,8 +308,8 @@ func (h *Handle) handleOneItemTask(sctx sessionctx.Context, task *NeededItemTask
 		}
 	}
 	metrics.ReadStatsHistogram.Observe(float64(time.Since(t).Milliseconds()))
-	if needUpdate {
-		h.updateCachedItem(item, wrapper.col, wrapper.idx)
+	if needUpdate && h.updateCachedItem(item, wrapper.col, wrapper.idx) {
+		return result, nil
 	}
 	return nil, nil
 }
