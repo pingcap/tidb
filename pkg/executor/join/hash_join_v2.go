@@ -108,7 +108,8 @@ func (htc *hashTableContext) mergeRowTablesToHashTable(tableMeta *TableMeta, par
 	return totalSegmentCnt
 }
 
-func newHashTableContext(workerConcurrency int, partitionNumber int) *hashTableContext {
+// NewHashTableContext create a hashTableContext for current hash join
+func NewHashTableContext(workerConcurrency int, partitionNumber int) *hashTableContext {
 	ret := &hashTableContext{}
 	ret.rowTables = make([][]*rowTable, workerConcurrency)
 	for index := range ret.rowTables {
@@ -134,13 +135,26 @@ type HashJoinCtxV2 struct {
 	BuildFilter                    expression.CNFExprs
 	ProbeFilter                    expression.CNFExprs
 	OtherCondition                 expression.CNFExprs
-	hashTableContextMutex          sync.Mutex
 	hashTableContext               *hashTableContext
 	hashTableMeta                  *TableMeta
 	needScanRowTableAfterProbeDone bool
 
 	LUsed, RUsed                                 []int
 	LUsedInOtherCondition, RUsedInOtherCondition []int
+}
+
+// InitHashTableContext create hashTableContext for current HashJoinCtxV2
+func (hCtx *HashJoinCtxV2) InitHashTableContext() {
+	hCtx.hashTableContext = &hashTableContext{}
+	hCtx.hashTableContext.rowTables = make([][]*rowTable, hCtx.Concurrency)
+	for index := range hCtx.hashTableContext.rowTables {
+		hCtx.hashTableContext.rowTables[index] = make([]*rowTable, hCtx.PartitionNumber)
+	}
+	hCtx.hashTableContext.hashTable = &hashTableV2{
+		tables:          make([]*subTable, hCtx.PartitionNumber),
+		partitionNumber: uint64(hCtx.PartitionNumber),
+	}
+	hCtx.hashTableContext.memoryTracker = memory.NewTracker(memory.LabelForHashTableInHashJoinV2, -1)
 }
 
 // ProbeSideTupleFetcherV2 reads tuples from ProbeSideExec and send them to ProbeWorkers.
@@ -204,21 +218,6 @@ type HashJoinV2Exec struct {
 	prepared bool
 }
 
-func (e *HashJoinV2Exec) initHashTableContext() {
-	e.hashTableContextMutex.Lock()
-	defer e.hashTableContextMutex.Unlock()
-	e.HashJoinCtxV2.hashTableContext = newHashTableContext(int(e.Concurrency), e.PartitionNumber)
-	e.HashJoinCtxV2.hashTableContext.memoryTracker.AttachTo(e.HashJoinCtxV2.memTracker)
-}
-
-func (e *HashJoinV2Exec) resetHashTableContext() {
-	e.hashTableContextMutex.Lock()
-	if e.hashTableContext != nil {
-		e.HashJoinCtxV2.hashTableContext.reset()
-	}
-	e.hashTableContextMutex.Unlock()
-}
-
 // Close implements the Executor Close interface.
 func (e *HashJoinV2Exec) Close() error {
 	if e.closeCh != nil {
@@ -253,7 +252,7 @@ func (e *HashJoinV2Exec) Close() error {
 	if e.stats != nil {
 		defer e.Ctx().GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.ID(), e.stats)
 	}
-	e.resetHashTableContext()
+	e.hashTableContext.reset()
 	err := e.BaseExecutor.Close()
 	return err
 }
@@ -279,13 +278,13 @@ func (e *HashJoinV2Exec) Open(ctx context.Context) error {
 	}
 	e.HashJoinCtxV2.needScanRowTableAfterProbeDone = e.ProbeWorkers[0].JoinProbe.NeedScanRowTable()
 	e.HashJoinCtxV2.ChunkAllocPool = e.AllocPool
-	if e.HashJoinCtxV2.memTracker != nil {
-		e.HashJoinCtxV2.memTracker.Reset()
+	if e.memTracker != nil {
+		e.memTracker.Reset()
 	} else {
-		e.HashJoinCtxV2.memTracker = memory.NewTracker(e.ID(), -1)
+		e.memTracker = memory.NewTracker(e.ID(), -1)
 	}
-	e.HashJoinCtxV2.memTracker.AttachTo(e.Ctx().GetSessionVars().StmtCtx.MemTracker)
-	e.initHashTableContext()
+	e.memTracker.AttachTo(e.Ctx().GetSessionVars().StmtCtx.MemTracker)
+	e.hashTableContext.memoryTracker.AttachTo(e.memTracker)
 
 	e.diskTracker = disk.NewTracker(e.ID(), -1)
 	e.diskTracker.AttachTo(e.Ctx().GetSessionVars().StmtCtx.DiskTracker)
