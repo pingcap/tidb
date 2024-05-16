@@ -212,7 +212,7 @@ func (h *Handle) HandleOneTask(sctx sessionctx.Context, lastTask *NeededItemTask
 		}
 	}()
 	if lastTask == nil {
-		task, err = h.drainColTask(exit)
+		task, err = h.drainColTask(sctx, exit)
 		if err != nil {
 			if err != errExit {
 				logutil.BgLogger().Error("Fail to drain task for stats loading.", zap.Error(err))
@@ -238,6 +238,7 @@ func (h *Handle) HandleOneTask(sctx sessionctx.Context, lastTask *NeededItemTask
 		}
 		return task, result.Err
 	case <-time.After(timeout):
+		task.ToTimeout.Add(time.Duration(sctx.GetSessionVars().StatsLoadSyncWait.Load()) * time.Microsecond)
 		return task, nil
 	}
 }
@@ -380,7 +381,7 @@ func (*Handle) readStatsForOneItem(sctx sessionctx.Context, item model.TableItem
 }
 
 // drainColTask will hang until a column task can return, and either task or error will be returned.
-func (h *Handle) drainColTask(exit chan struct{}) (*NeededItemTask, error) {
+func (h *Handle) drainColTask(sctx sessionctx.Context, exit chan struct{}) (*NeededItemTask, error) {
 	// select NeededColumnsCh firstly, if no task, then select TimeoutColumnsCh
 	for {
 		select {
@@ -393,6 +394,7 @@ func (h *Handle) drainColTask(exit chan struct{}) (*NeededItemTask, error) {
 			// if the task has already timeout, no sql is sync-waiting for it,
 			// so do not handle it just now, put it to another channel with lower priority
 			if time.Now().After(task.ToTimeout) {
+				task.ToTimeout.Add(time.Duration(sctx.GetSessionVars().StatsLoadSyncWait.Load()) * time.Microsecond)
 				h.writeToTimeoutChan(h.StatsLoad.TimeoutItemsCh, task)
 				continue
 			}
