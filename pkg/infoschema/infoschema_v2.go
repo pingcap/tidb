@@ -1051,6 +1051,10 @@ func (is *infoschemaV2) ListTablesWithSpecialAttribute(filter specialAttributeFi
 				return true
 			}
 
+			if !filter(item.tableInfo) {
+				return true
+			}
+
 			if currDB == "" {
 				currDB = item.dbName
 				res = tableInfoResult{DBName: item.dbName}
