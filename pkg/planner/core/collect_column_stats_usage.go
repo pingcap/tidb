@@ -22,7 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
-	"github.com/pingcap/tidb/pkg/statistics"
+	"github.com/pingcap/tidb/pkg/statistics/asyncload"
 	"github.com/pingcap/tidb/pkg/util/intset"
 	"golang.org/x/exp/maps"
 )
@@ -436,7 +436,7 @@ func CollectColumnStatsUsage(lp base.LogicalPlan, predicate, histNeeded bool) (
 		if histNeeded {
 			collector.histNeededCols[*colToTriggerLoad] = true
 		} else {
-			statistics.HistogramNeededItems.Insert(*colToTriggerLoad, true)
+			asyncload.AsyncLoadHistogramNeededItems.Insert(*colToTriggerLoad, true)
 		}
 	})
 	var (
