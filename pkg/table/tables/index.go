@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
-	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
 	"github.com/pingcap/tidb/pkg/util/tracing"
 )
@@ -406,25 +405,8 @@ func (c *index) Delete(ctx table.MutateContext, txn kv.Transaction, indexedValue
 				return err
 			}
 		}
+
 		tempValElem := tablecodec.TempIndexValueElem{Handle: h, KeyVer: tempKeyVer, Delete: true, Distinct: distinct}
-
-		// If index is global, decode the pid from value (if exists) and compare with c.physicalID.
-		// Only when pid in value equals to c.physicalID, the key can be deleted.
-		if c.idxInfo.Global {
-			if val, err := txn.GetMemBuffer().Get(context.Background(), key); err == nil {
-				segs := tablecodec.SplitIndexValue(val)
-				if len(segs.PartitionID) != 0 {
-					_, pid, err := codec.DecodeInt(segs.PartitionID)
-					if err != nil {
-						return err
-					}
-					if pid != c.phyTblID {
-						continue
-					}
-				}
-			}
-		}
-
 		if distinct {
 			if len(key) > 0 {
 				okToDelete := true
