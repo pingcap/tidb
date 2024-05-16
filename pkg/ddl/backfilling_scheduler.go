@@ -354,6 +354,15 @@ func newIngestBackfillScheduler(
 	}, nil
 }
 
+func (b *ingestBackfillScheduler) finishedWritingNeedImport() bool {
+	job := b.reorgInfo.Job
+	bc, ok := ingest.LitBackCtxMgr.Load(job.ID)
+	if !ok {
+		return false
+	}
+	return bc.FinishedWritingNeedImport()
+}
+
 func (b *ingestBackfillScheduler) setupWorkers() error {
 	job := b.reorgInfo.Job
 	bc, ok := ingest.LitBackCtxMgr.Load(job.ID)
@@ -371,10 +380,26 @@ func (b *ingestBackfillScheduler) setupWorkers() error {
 	if err != nil {
 		return errors.Trace(err)
 	}
+
+	indexIDs := make([]int64, 0, len(b.reorgInfo.elements))
+	for _, e := range b.reorgInfo.elements {
+		indexIDs = append(indexIDs, e.ID)
+	}
+	engines, err := b.backendCtx.Register(indexIDs, job.TableName)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
 	b.copReqSenderPool = copReqSenderPool
 	readerCnt, writerCnt := b.expectedWorkerSize()
-	writerPool := workerpool.NewWorkerPool[IndexRecordChunk]("ingest_writer",
-		poolutil.DDL, writerCnt, b.createWorker)
+	writerPool := workerpool.NewWorkerPool[IndexRecordChunk](
+		"ingest_writer",
+		poolutil.DDL,
+		writerCnt,
+		func() workerpool.Worker[IndexRecordChunk, workerpool.None] {
+			return b.createWorker(indexIDs, engines)
+		},
+	)
 	writerPool.Start(b.ctx)
 	b.writerPool = writerPool
 	b.copReqSenderPool.chunkSender = writerPool
@@ -406,12 +431,8 @@ func (b *ingestBackfillScheduler) close(force bool) {
 		})
 	}
 	close(b.resultCh)
-	if intest.InTest && len(b.copReqSenderPool.srcChkPool) != copReadChunkPoolSize() {
+	if intest.InTest && b.copReqSenderPool != nil && len(b.copReqSenderPool.srcChkPool) != copReadChunkPoolSize() {
 		panic(fmt.Sprintf("unexpected chunk size %d", len(b.copReqSenderPool.srcChkPool)))
-	}
-	if !force {
-		jobID := b.reorgInfo.ID
-		b.backendCtx.ResetWorkers(jobID)
 	}
 }
 
@@ -446,31 +467,16 @@ func (b *ingestBackfillScheduler) adjustWorkerSize() error {
 	return nil
 }
 
-func (b *ingestBackfillScheduler) createWorker() workerpool.Worker[IndexRecordChunk, workerpool.None] {
+func (b *ingestBackfillScheduler) createWorker(
+	indexIDs []int64,
+	engines []ingest.Engine,
+) workerpool.Worker[IndexRecordChunk, workerpool.None] {
 	reorgInfo := b.reorgInfo
 	job := reorgInfo.Job
 	sessCtx, err := newSessCtx(reorgInfo.d.store, reorgInfo.ReorgMeta.SQLMode, reorgInfo.ReorgMeta.Location, reorgInfo.ReorgMeta.ResourceGroupName)
 	if err != nil {
 		b.sendResult(&backfillResult{err: err})
 		return nil
-	}
-	bcCtx := b.backendCtx
-	indexIDs := make([]int64, 0, len(reorgInfo.elements))
-	engines := make([]ingest.Engine, 0, len(reorgInfo.elements))
-	for _, elem := range reorgInfo.elements {
-		ei, err := bcCtx.Register(job.ID, elem.ID, job.SchemaName, job.TableName)
-		if err != nil {
-			// Return an error only if it is the first worker.
-			if b.writerMaxID == 0 {
-				b.sendResult(&backfillResult{err: err})
-				return nil
-			}
-			logutil.Logger(b.ctx).Warn("cannot create new writer", zap.Error(err),
-				zap.Int64("job ID", reorgInfo.ID), zap.Int64("index ID", elem.ID))
-			return nil
-		}
-		indexIDs = append(indexIDs, elem.ID)
-		engines = append(engines, ei)
 	}
 
 	worker, err := newAddIndexIngestWorker(

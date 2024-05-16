@@ -15,6 +15,7 @@
 package utilfuncp
 
 import (
+	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
@@ -37,3 +38,16 @@ var HasMaxOneRowUtil func(p base.LogicalPlan, childMaxOneRow []bool) bool
 // todo: (2) arenatlx, remove this func pointer when concrete Logical Operators moved out of core.
 var AppendCandidate4PhysicalOptimizeOp func(pop *optimizetrace.PhysicalOptimizeOp, lp base.LogicalPlan,
 	pp base.PhysicalPlan, prop *property.PhysicalProperty)
+
+// GetTaskPlanCost returns the cost of this task.
+// The new cost interface will be used if EnableNewCostInterface is true.
+// The second returned value indicates whether this task is valid.
+// todo: (3) arenatlx, remove this func pointer when Task pkg is moved out of core, and
+// getTaskPlanCost can be some member function usage of its family.
+var GetTaskPlanCost func(t base.Task, pop *optimizetrace.PhysicalOptimizeOp) (float64, bool, error)
+
+// AddSelection will add a selection if necessary.
+// This function is util function pointer that initialized by core functionality.
+// todo: (4) arenatlx, remove this func pointer when inside referred LogicalSelection is moved out of core.
+var AddSelection func(p base.LogicalPlan, child base.LogicalPlan, conditions []expression.Expression,
+	chIdx int, opt *optimizetrace.LogicalOptimizeOp)

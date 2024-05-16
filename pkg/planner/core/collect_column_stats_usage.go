@@ -22,7 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
-	"github.com/pingcap/tidb/pkg/statistics"
+	"github.com/pingcap/tidb/pkg/statistics/asyncload"
 	"github.com/pingcap/tidb/pkg/util/intset"
 	"golang.org/x/exp/maps"
 )
@@ -205,18 +205,17 @@ func (c *columnStatsUsageCollector) addHistNeededColumns(ds *DataSource) {
 		colIDSet.Insert(int(col.ID))
 		c.histNeededCols[tblColID] = true
 	}
-	for _, col := range ds.Columns {
+	for _, column := range ds.tableInfo.Columns {
 		// If the column is plan-generated one, Skip it.
 		// TODO: we may need to consider the ExtraHandle.
-		if col.ID < 0 {
+		if column.ID < 0 {
 			continue
 		}
-		if !colIDSet.Has(int(col.ID)) && !col.Hidden {
-			tblColID := model.TableItemID{TableID: ds.physicalTableID, ID: col.ID, IsIndex: false}
-			if _, ok := c.histNeededCols[tblColID]; ok {
-				continue
+		if !column.Hidden {
+			tblColID := model.TableItemID{TableID: ds.physicalTableID, ID: column.ID, IsIndex: false}
+			if _, ok := c.histNeededCols[tblColID]; !ok {
+				c.histNeededCols[tblColID] = false
 			}
-			c.histNeededCols[tblColID] = false
 		}
 	}
 }
@@ -437,7 +436,7 @@ func CollectColumnStatsUsage(lp base.LogicalPlan, predicate, histNeeded bool) (
 		if histNeeded {
 			collector.histNeededCols[*colToTriggerLoad] = true
 		} else {
-			statistics.HistogramNeededItems.Insert(*colToTriggerLoad)
+			asyncload.AsyncLoadHistogramNeededItems.Insert(*colToTriggerLoad, true)
 		}
 	})
 	var (

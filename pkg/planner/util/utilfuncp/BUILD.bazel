@@ -6,6 +6,7 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/planner/util/utilfuncp",
     visibility = ["//visibility:public"],
     deps = [
+        "//pkg/expression",
         "//pkg/planner/core/base",
         "//pkg/planner/property",
         "//pkg/planner/util/optimizetrace",
