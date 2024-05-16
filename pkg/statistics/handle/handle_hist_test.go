@@ -290,7 +290,7 @@ func TestRetry(t *testing.T) {
 	h.SendLoadRequests(stmtCtx2, neededColumns, timeout)
 
 	exitCh := make(chan struct{})
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/statistics/handle/syncload/mockReadStatsForOneFail", "return(true)"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/statistics/handle/mockReadStatsForOneFail", "return(true)"))
 	var (
 		task1 *handle.NeededItemTask
 		err1  error
@@ -316,5 +316,5 @@ func TestRetry(t *testing.T) {
 		t.Logf("task1.ResultCh should get nothing")
 		t.FailNow()
 	}
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/statistics/handle/syncload/mockReadStatsForOneFail"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/statistics/handle/mockReadStatsForOneFail"))
 }
