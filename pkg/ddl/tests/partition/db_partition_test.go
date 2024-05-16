@@ -3526,4 +3526,13 @@ func TestReorgPartitionGlobalIndex(t *testing.T) {
 	idxInfo = tt.Meta().FindIndexByName("idx_c")
 	require.True(t, idxInfo.Global)
 	require.True(t, idxInfo.Unique)
+	tk.MustExec(`alter table t partition by hash (a) partitions 3`)
+	tt = external.GetTableByName(t, tk, "test", "t")
+	require.Equal(t, 2, len(tt.Meta().Indices))
+	idxInfo = tt.Meta().FindIndexByName("idx_b")
+	require.True(t, idxInfo.Global)
+	require.True(t, idxInfo.Unique)
+	idxInfo = tt.Meta().FindIndexByName("idx_c")
+	require.True(t, idxInfo.Global)
+	require.True(t, idxInfo.Unique)
 }
