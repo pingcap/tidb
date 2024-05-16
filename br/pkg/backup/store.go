@@ -13,10 +13,13 @@ import (
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/rtree"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/br/pkg/utils/storewatch"
+	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -183,4 +186,31 @@ func getBackupRanges(ranges []rtree.Range) []*kvrpcpb.KeyRange {
 		})
 	}
 	return requestRanges
+}
+
+func watchStoreChangeAsync(ctx context.Context, stateNotifier chan StoreBackupPolicy, pdCli pd.Client) {
+	go func() {
+		cb := storewatch.MakeCallback(storewatch.WithOnReboot(func(s *metapb.Store) {
+			stateNotifier <- StoreBackupPolicy{All: true}
+		}), storewatch.WithOnDisconnect(func(s *metapb.Store) {
+			stateNotifier <- StoreBackupPolicy{All: true}
+		}), storewatch.WithOnNewStoreRegistered(func(s *metapb.Store) {
+			// only backup for this store
+			stateNotifier <- StoreBackupPolicy{One: s.Id}
+		}))
+		watcher := storewatch.New(pdCli, cb)
+		tick := time.NewTicker(30 * time.Second)
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-tick.C:
+				logutil.CL(ctx).Info("check store changes by tick")
+				err := watcher.Step(ctx)
+				if err != nil {
+					logutil.CL(ctx).Warn("failed to watch store changes, ignore it", zap.Error(err))
+				}
+			}
+		}
+	}()
 }

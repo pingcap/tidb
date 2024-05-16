@@ -47,21 +47,21 @@ type testBackup struct {
 	storage storage.ExternalStorage
 }
 
-var _ backup.LoopSender = (*mockBackupLoopSender)(nil)
+var _ backup.StoreConnector = (*mockBackupStoreConnector)(nil)
 
-type mockBackupLoopSender struct {
+type mockBackupStoreConnector struct {
 	sync.Mutex
 	backupResponses map[uint64][]*backup.ResponseAndStore
 }
 
-func (m *mockBackupLoopSender) GetGRPCClient(ctx context.Context, storeID uint64) (backuppb.BackupClient, error) {
+func (m *mockBackupStoreConnector) Connect(ctx context.Context, storeID uint64) (backuppb.BackupClient, error) {
 	// we don't need connect real tikv in unit test
-	// and we have already mock the backup response in `AsyncStartStoreBackup`
+	// and we have already mock the backup response in `RunBackupAsync`
 	// so just return nil here
 	return nil, nil
 }
 
-func (m *mockBackupLoopSender) AsyncStartStoreBackup(
+func (m *mockBackupStoreConnector) RunBackupAsync(
 	ctx context.Context,
 	round uint64,
 	storeID uint64,
@@ -421,14 +421,14 @@ func TestMainBackupLoop(t *testing.T) {
 	}
 	ch := make(chan backup.StoreBackupPolicy)
 	mainLoop := &backup.MainBackupLoop{
-		LoopSender: &mockBackupLoopSender{
+		StoreConnector: &mockBackupStoreConnector{
 			backupResponses: mockBackupResponses,
 		},
 
 		BackupClient:       s.backupClient,
 		GlobalProgressTree: &tree,
 		ReplicaReadLabel:   nil,
-		StateChan:          ch,
+		StateNotifier:      ch,
 		ProgressCallBack:   func() {},
 	}
 
@@ -459,14 +459,14 @@ func TestMainBackupLoop(t *testing.T) {
 		})
 	}
 	mainLoop = &backup.MainBackupLoop{
-		LoopSender: &mockBackupLoopSender{
+		StoreConnector: &mockBackupStoreConnector{
 			backupResponses: mockBackupResponses,
 		},
 
 		BackupClient:       s.backupClient,
 		GlobalProgressTree: &tree,
 		ReplicaReadLabel:   nil,
-		StateChan:          ch,
+		StateNotifier:      ch,
 		ProgressCallBack:   func() {},
 	}
 
