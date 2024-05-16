@@ -3,9 +3,12 @@
 package backup_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"math/rand"
+	"sort"
 	"sync"
 	"testing"
 	"time"
@@ -349,7 +352,7 @@ func TestMainBackupLoop(t *testing.T) {
 	s := createBackupSuite(t)
 	backgroundCtx := context.Background()
 
-	// test 3 stores backup
+	// test 2 stores backup
 	s.mockCluster.AddStore(1, "127.0.0.1:20160")
 	s.mockCluster.AddStore(2, "127.0.0.1:20161")
 
@@ -357,44 +360,64 @@ func TestMainBackupLoop(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, stores, 2)
 
+	// random generate bytes in range [a, b)
+	genRandBytesFn := func(a, b []byte) ([]byte, error) {
+		n := len(a)
+		result := make([]byte, n)
+		for {
+			_, err := rand.Read(result)
+			if err != nil {
+				return nil, err
+			}
+			if bytes.Compare(result, a) > 0 && bytes.Compare(result, b) < 0 {
+				return result, nil
+			}
+		}
+	}
+	// split each range into limit parts
+	splitRangesFn := func(ranges []rtree.Range, limit int) [][]byte {
+		if len(ranges) == 0 {
+			return nil
+		}
+		res := make([][]byte, 0)
+		res = append(res, ranges[0].StartKey)
+		for i := 0; i < len(ranges); i++ {
+			partRes := make([][]byte, 0)
+			for j := 0; j < limit; j++ {
+				x, err := genRandBytesFn(ranges[i].StartKey, ranges[i].EndKey)
+				require.NoError(t, err)
+				partRes = append(partRes, x)
+			}
+			sort.Slice(partRes, func(i, j int) bool {
+				return bytes.Compare(partRes[i], partRes[j]) < 0
+			})
+			res = append(res, partRes...)
+		}
+		res = append(res, ranges[len(ranges)-1].EndKey)
+		return res
+	}
+
+	// Case #1: normal case
 	ranges := []rtree.Range{
 		{
-			StartKey: []byte("aa"),
-			EndKey:   []byte("b"),
-		},
-		{
-			StartKey: []byte("c"),
-			EndKey:   []byte("d"),
+			StartKey: []byte("aaa"),
+			EndKey:   []byte("zzz"),
 		},
 	}
 	tree, err := s.backupClient.BuildProgressRangeTree(ranges)
 	require.NoError(t, err)
 
 	mockBackupResponses := make(map[uint64][]*backup.ResponseAndStore)
-	mockBackupResponses[1] = []*backup.ResponseAndStore{
-		{
-			StoreID: 1,
+	splitKeys := splitRangesFn(ranges, 10)
+	for i := 0; i < len(splitKeys)-1; i++ {
+		randStoreID := uint64(rand.Int()%len(stores) + 1)
+		mockBackupResponses[randStoreID] = append(mockBackupResponses[randStoreID], &backup.ResponseAndStore{
+			StoreID: randStoreID,
 			Resp: &backuppb.BackupResponse{
-				StartKey: []byte("aa"),
-				EndKey:   []byte("ab"),
+				StartKey: splitKeys[i],
+				EndKey:   splitKeys[i+1],
 			},
-		},
-		{
-			StoreID: 1,
-			Resp: &backuppb.BackupResponse{
-				StartKey: []byte("ab"),
-				EndKey:   []byte("b"),
-			},
-		},
-	}
-	mockBackupResponses[2] = []*backup.ResponseAndStore{
-		{
-			StoreID: 2,
-			Resp: &backuppb.BackupResponse{
-				StartKey: []byte("c"),
-				EndKey:   []byte("d"),
-			},
-		},
+		})
 	}
 	ch := make(chan backup.StoreBackupPolicy)
 	mainLoop := &backup.MainBackupLoop{
@@ -411,4 +434,48 @@ func TestMainBackupLoop(t *testing.T) {
 
 	req := backuppb.BackupRequest{}
 	require.NoError(t, mainLoop.Run(backgroundCtx, req))
+
+	// Case #2: canceled case
+	ranges = []rtree.Range{
+		{
+			StartKey: []byte("aaa"),
+			EndKey:   []byte("zzz"),
+		},
+	}
+	tree, err = s.backupClient.BuildProgressRangeTree(ranges)
+	require.NoError(t, err)
+
+	clear(mockBackupResponses)
+	splitKeys = splitRangesFn(ranges, 10)
+	// range is not complete
+	for i := 0; i < len(splitKeys)-2; i++ {
+		randStoreID := uint64(rand.Int()%len(stores) + 1)
+		mockBackupResponses[randStoreID] = append(mockBackupResponses[randStoreID], &backup.ResponseAndStore{
+			StoreID: randStoreID,
+			Resp: &backuppb.BackupResponse{
+				StartKey: splitKeys[i],
+				EndKey:   splitKeys[i+1],
+			},
+		})
+	}
+	mainLoop = &backup.MainBackupLoop{
+		LoopSender: &mockBackupLoopSender{
+			backupResponses: mockBackupResponses,
+		},
+
+		BackupClient:       s.backupClient,
+		GlobalProgressTree: &tree,
+		ReplicaReadLabel:   nil,
+		StateChan:          ch,
+		ProgressCallBack:   func() {},
+	}
+
+	// cancel the backup in another goroutine
+	ctx, cancel := context.WithCancel(backgroundCtx)
+	go func() {
+		time.Sleep(5)
+		cancel()
+	}()
+	require.Error(t, mainLoop.Run(ctx, req))
+
 }
