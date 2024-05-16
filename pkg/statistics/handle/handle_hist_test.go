@@ -23,8 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/pkg/statistics/handle/syncload"
-	"github.com/pingcap/tidb/pkg/statistics/handle/types"
+	"github.com/pingcap/tidb/pkg/statistics/handle"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/stretchr/testify/require"
@@ -272,9 +271,8 @@ func TestRetry(t *testing.T) {
 	tableInfo := tbl.Meta()
 
 	h := dom.StatsHandle()
-
-	neededColumns := make([]model.StatsLoadItem, 1)
-	neededColumns[0] = model.StatsLoadItem{TableItemID: model.TableItemID{TableID: tableInfo.ID, ID: tableInfo.Columns[2].ID, IsIndex: false}, FullLoad: true}
+	neededColumns := make([]model.TableItemID, 1)
+	neededColumns[0] = model.TableItemID{TableID: tableInfo.ID, ID: tableInfo.Columns[2].ID, IsIndex: false}
 	timeout := time.Nanosecond * mathutil.MaxInt
 
 	// clear statsCache
@@ -294,11 +292,11 @@ func TestRetry(t *testing.T) {
 	exitCh := make(chan struct{})
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/statistics/handle/syncload/mockReadStatsForOneFail", "return(true)"))
 	var (
-		task1 *types.NeededItemTask
+		task1 *handle.NeededItemTask
 		err1  error
 	)
 
-	for i := 0; i < syncload.RetryCount; i++ {
+	for i := 0; i < handle.RetryCount; i++ {
 		task1, err1 = h.HandleOneTask(testKit.Session().(sessionctx.Context), task1, exitCh)
 		require.Error(t, err1)
 		require.NotNil(t, task1)
