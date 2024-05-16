@@ -1263,9 +1263,9 @@ var tableDDLJobsCols = []columnInfo{
 	{name: "SCHEMA_ID", tp: mysql.TypeLonglong, size: 21},
 	{name: "TABLE_ID", tp: mysql.TypeLonglong, size: 21},
 	{name: "ROW_COUNT", tp: mysql.TypeLonglong, size: 21},
-	{name: "CREATE_TIME", tp: mysql.TypeDatetime, size: 26},
-	{name: "START_TIME", tp: mysql.TypeDatetime, size: 26},
-	{name: "END_TIME", tp: mysql.TypeDatetime, size: 26},
+	{name: "CREATE_TIME", tp: mysql.TypeDatetime, size: 26, decimal: 6},
+	{name: "START_TIME", tp: mysql.TypeDatetime, size: 26, decimal: 6},
+	{name: "END_TIME", tp: mysql.TypeDatetime, size: 26, decimal: 6},
 	{name: "STATE", tp: mysql.TypeVarchar, size: 64},
 	{name: "QUERY", tp: mysql.TypeBlob, size: types.UnspecifiedLength},
 }
