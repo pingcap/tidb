@@ -96,6 +96,8 @@ const (
 	tiflashCheckPendingTablesRetry = 7
 )
 
+var errCheckConstraintIsOff = errors.NewNoStackError(variable.TiDBEnableCheckConstraint + " is off")
+
 func (d *ddl) CreateSchema(ctx sessionctx.Context, stmt *ast.CreateDatabaseStmt) (err error) {
 	var placementPolicyRef *model.PolicyRefInfo
 	sessionVars := ctx.GetSessionVars()
@@ -1254,7 +1256,7 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 				ctx.GetSessionVars().StmtCtx.AppendWarning(dbterror.ErrTableCantHandleFt.FastGenByArgs())
 			case ast.ColumnOptionCheck:
 				if !variable.EnableCheckConstraint.Load() {
-					ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError("the switch of check constraint is off"))
+					ctx.GetSessionVars().StmtCtx.AppendWarning(errCheckConstraintIsOff)
 				} else {
 					// Check the column CHECK constraint dependency lazily, after fill all the name.
 					// Extract column constraint from column option.
@@ -1663,7 +1665,7 @@ func setNoDefaultValueFlag(c *table.Column, hasDefaultValue bool) {
 	}
 }
 
-func checkDefaultValue(ctx sessionctx.Context, c *table.Column, hasDefaultValue bool) error {
+func checkDefaultValue(ctx sessionctx.Context, c *table.Column, hasDefaultValue bool) (err error) {
 	if !hasDefaultValue {
 		return nil
 	}
@@ -1675,7 +1677,10 @@ func checkDefaultValue(ctx sessionctx.Context, c *table.Column, hasDefaultValue 
 			}
 			return nil
 		}
-		if _, err := table.GetColDefaultValue(ctx.GetExprCtx(), c.ToInfo()); err != nil {
+		handleWithTruncateErr(ctx, func() {
+			_, err = table.GetColDefaultValue(ctx.GetExprCtx(), c.ToInfo())
+		})
+		if err != nil {
 			return types.ErrInvalidDefault.GenWithStackByArgs(c.Name)
 		}
 		return nil
@@ -2194,7 +2199,7 @@ func BuildTableInfo(
 		// check constraint
 		if constr.Tp == ast.ConstraintCheck {
 			if !variable.EnableCheckConstraint.Load() {
-				ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError("the switch of check constraint is off"))
+				ctx.GetSessionVars().StmtCtx.AppendWarning(errCheckConstraintIsOff)
 				continue
 			}
 			// Since column check constraint dependency has been done in columnDefToCol.
@@ -3944,7 +3949,7 @@ func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt *ast
 				sctx.GetSessionVars().StmtCtx.AppendWarning(dbterror.ErrTableCantHandleFt)
 			case ast.ConstraintCheck:
 				if !variable.EnableCheckConstraint.Load() {
-					sctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError("the switch of check constraint is off"))
+					sctx.GetSessionVars().StmtCtx.AppendWarning(errCheckConstraintIsOff)
 				} else {
 					err = d.CreateCheckConstraint(sctx, ident, model.NewCIStr(constr.Name), spec.Constraint)
 				}
@@ -4045,13 +4050,13 @@ func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt *ast
 			err = d.AlterIndexVisibility(sctx, ident, spec.IndexName, spec.Visibility)
 		case ast.AlterTableAlterCheck:
 			if !variable.EnableCheckConstraint.Load() {
-				sctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError("the switch of check constraint is off"))
+				sctx.GetSessionVars().StmtCtx.AppendWarning(errCheckConstraintIsOff)
 			} else {
 				err = d.AlterCheckConstraint(sctx, ident, model.NewCIStr(spec.Constraint.Name), spec.Constraint.Enforced)
 			}
 		case ast.AlterTableDropCheck:
 			if !variable.EnableCheckConstraint.Load() {
-				sctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError("the switch of check constraint is off"))
+				sctx.GetSessionVars().StmtCtx.AppendWarning(errCheckConstraintIsOff)
 			} else {
 				err = d.DropCheckConstraint(sctx, ident, model.NewCIStr(spec.Constraint.Name))
 			}
@@ -5513,10 +5518,23 @@ func checkModifyTypes(origin *types.FieldType, to *types.FieldType, needRewriteC
 	return errors.Trace(err)
 }
 
+// handleWithTruncateErr handles the doFunc with FlagTruncateAsWarning and FlagIgnoreTruncateErr flags, both of which are false.
+func handleWithTruncateErr(ctx sessionctx.Context, doFunc func()) {
+	sv := ctx.GetSessionVars().StmtCtx
+	oldTypeFlags := sv.TypeFlags()
+	newTypeFlags := oldTypeFlags.WithTruncateAsWarning(false).WithIgnoreTruncateErr(false)
+	sv.SetTypeFlags(newTypeFlags)
+	doFunc()
+	sv.SetTypeFlags(oldTypeFlags)
+}
+
 // SetDefaultValue sets the default value of the column.
-func SetDefaultValue(ctx sessionctx.Context, col *table.Column, option *ast.ColumnOption) (bool, error) {
-	hasDefaultValue := false
-	value, isSeqExpr, err := getDefaultValue(ctx, col, option)
+func SetDefaultValue(ctx sessionctx.Context, col *table.Column, option *ast.ColumnOption) (hasDefaultValue bool, err error) {
+	var value any
+	var isSeqExpr bool
+	handleWithTruncateErr(ctx, func() {
+		value, isSeqExpr, err = getDefaultValue(ctx, col, option)
+	})
 	if err != nil {
 		return false, errors.Trace(err)
 	}
@@ -5923,12 +5941,9 @@ func GetModifiableColumnJob(
 				return nil, dbterror.ErrUnsupportedModifyColumn.GenWithStack("cannot parse generated PartitionInfo")
 			}
 			pAst := at.Specs[0].Partition
-			sv := sctx.GetSessionVars().StmtCtx
-			oldTypeFlags := sv.TypeFlags()
-			newTypeFlags := oldTypeFlags.WithTruncateAsWarning(false).WithIgnoreTruncateErr(false)
-			sv.SetTypeFlags(newTypeFlags)
-			_, err = buildPartitionDefinitionsInfo(sctx.GetExprCtx(), pAst.Definitions, &newTblInfo, uint64(len(newTblInfo.Partition.Definitions)))
-			sv.SetTypeFlags(oldTypeFlags)
+			handleWithTruncateErr(sctx, func() {
+				_, err = buildPartitionDefinitionsInfo(sctx.GetExprCtx(), pAst.Definitions, &newTblInfo, uint64(len(newTblInfo.Partition.Definitions)))
+			})
 			if err != nil {
 				return nil, dbterror.ErrUnsupportedModifyColumn.GenWithStack("New column does not match partition definitions: %s", err.Error())
 			}

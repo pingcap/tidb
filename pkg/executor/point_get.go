@@ -17,6 +17,8 @@ package executor
 import (
 	"context"
 	"fmt"
+	"sort"
+	"strconv"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -387,16 +389,119 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 		}
 		return nil
 	}
-	err = DecodeRowValToChunk(e.BaseExecutor.Ctx(), e.Schema(), e.tblInfo, e.handle, val, req, e.rowDecoder)
+
+	sctx := e.BaseExecutor.Ctx()
+	schema := e.Schema()
+	err = DecodeRowValToChunk(sctx, schema, e.tblInfo, e.handle, val, req, e.rowDecoder)
+	if err != nil {
+		return err
+	}
+
+	err = fillRowChecksum(sctx, 0, 1, schema, e.tblInfo, [][]byte{val}, []kv.Handle{e.handle}, req, nil)
 	if err != nil {
 		return err
 	}
 
 	err = table.FillVirtualColumnValue(e.virtualColumnRetFieldTypes, e.virtualColumnIndex,
-		e.Schema().Columns, e.columns, e.Ctx().GetExprCtx(), req)
+		schema.Columns, e.columns, sctx.GetExprCtx(), req)
 	if err != nil {
 		return err
 	}
+	return nil
+}
+
+func shouldFillRowChecksum(schema *expression.Schema) (int, bool) {
+	for idx, col := range schema.Columns {
+		if col.ID == model.ExtraRowChecksumID {
+			return idx, true
+		}
+	}
+	return 0, false
+}
+
+func fillRowChecksum(
+	sctx sessionctx.Context,
+	start, end int,
+	schema *expression.Schema, tblInfo *model.TableInfo,
+	values [][]byte, handles []kv.Handle,
+	req *chunk.Chunk, buf []byte,
+) error {
+	checksumColumnIndex, ok := shouldFillRowChecksum(schema)
+	if !ok {
+		return nil
+	}
+
+	var handleColIDs []int64
+	if tblInfo.PKIsHandle {
+		colInfo := tblInfo.GetPkColInfo()
+		handleColIDs = []int64{colInfo.ID}
+	} else if tblInfo.IsCommonHandle {
+		pkIdx := tables.FindPrimaryIndex(tblInfo)
+		for _, col := range pkIdx.Columns {
+			colInfo := tblInfo.Columns[col.Offset]
+			handleColIDs = append(handleColIDs, colInfo.ID)
+		}
+	}
+
+	columnFt := make(map[int64]*types.FieldType)
+	for idx := range tblInfo.Columns {
+		col := tblInfo.Columns[idx]
+		columnFt[col.ID] = &col.FieldType
+	}
+	tz := sctx.GetSessionVars().TimeZone
+	ft := []*types.FieldType{schema.Columns[checksumColumnIndex].GetType()}
+	checksumCols := chunk.NewChunkWithCapacity(ft, req.Capacity())
+	for i := start; i < end; i++ {
+		handle, val := handles[i], values[i]
+		if !rowcodec.IsNewFormat(val) {
+			checksumCols.AppendNull(0)
+			continue
+		}
+		datums, err := tablecodec.DecodeRowWithMapNew(val, columnFt, tz, nil)
+		if err != nil {
+			return err
+		}
+		datums, err = tablecodec.DecodeHandleToDatumMap(handle, handleColIDs, columnFt, tz, datums)
+		if err != nil {
+			return err
+		}
+		for _, col := range tblInfo.Columns {
+			// cannot found from the datums, which means the data is not stored, this
+			// may happen after `add column` executed, filling with the default value.
+			_, ok := datums[col.ID]
+			if !ok {
+				colInfo := getColInfoByID(tblInfo, col.ID)
+				d, err := table.GetColOriginDefaultValue(sctx.GetExprCtx(), colInfo)
+				if err != nil {
+					return err
+				}
+				datums[col.ID] = d
+			}
+		}
+
+		colData := make([]rowcodec.ColData, len(tblInfo.Columns))
+		for idx, col := range tblInfo.Columns {
+			d := datums[col.ID]
+			data := rowcodec.ColData{
+				ColumnInfo: col,
+				Datum:      &d,
+			}
+			colData[idx] = data
+		}
+		row := rowcodec.RowData{
+			Cols: colData,
+			Data: buf,
+		}
+		if !sort.IsSorted(row) {
+			sort.Sort(row)
+		}
+		checksum, err := row.Checksum(tz)
+		if err != nil {
+			return err
+		}
+		checksumCols.AppendString(0, strconv.FormatUint(uint64(checksum), 10))
+	}
+	req.SetCol(checksumColumnIndex, checksumCols.Column(0))
 	return nil
 }
 

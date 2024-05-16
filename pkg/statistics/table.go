@@ -677,23 +677,34 @@ func (t *Table) IndexIsLoadNeeded(id int64) (*Index, bool) {
 }
 
 type neededStatsInternalMap struct {
-	items map[model.TableItemID]struct{}
+	// the bool value indicates whether is a full load or not.
+	items map[model.TableItemID]bool
 	m     sync.RWMutex
 }
 
-func (n *neededStatsInternalMap) AllItems() []model.TableItemID {
+func (n *neededStatsInternalMap) AllItems() []model.StatsLoadItem {
 	n.m.RLock()
-	keys := make([]model.TableItemID, 0, len(n.items))
-	for key := range n.items {
-		keys = append(keys, key)
+	keys := make([]model.StatsLoadItem, 0, len(n.items))
+	for key, val := range n.items {
+		keys = append(keys, model.StatsLoadItem{
+			TableItemID: key,
+			FullLoad:    val,
+		})
 	}
 	n.m.RUnlock()
 	return keys
 }
 
-func (n *neededStatsInternalMap) Insert(col model.TableItemID) {
+func (n *neededStatsInternalMap) Insert(col model.TableItemID, fullLoad bool) {
 	n.m.Lock()
-	n.items[col] = struct{}{}
+	cur := n.items[col]
+	if cur {
+		// If the existing one is full load. We don't need to update it.
+		n.m.Unlock()
+		return
+	}
+	n.items[col] = fullLoad
+	// Otherwise, we could safely update it.
 	n.m.Unlock()
 }
 
@@ -729,14 +740,14 @@ func newNeededStatsMap() *neededStatsMap {
 	result := neededStatsMap{}
 	for i := 0; i < shardCnt; i++ {
 		result.items[i] = neededStatsInternalMap{
-			items: make(map[model.TableItemID]struct{}),
+			items: make(map[model.TableItemID]bool),
 		}
 	}
 	return &result
 }
 
-func (n *neededStatsMap) AllItems() []model.TableItemID {
-	var result []model.TableItemID
+func (n *neededStatsMap) AllItems() []model.StatsLoadItem {
+	var result []model.StatsLoadItem
 	for i := 0; i < shardCnt; i++ {
 		keys := n.items[i].AllItems()
 		result = append(result, keys...)
@@ -744,8 +755,8 @@ func (n *neededStatsMap) AllItems() []model.TableItemID {
 	return result
 }
 
-func (n *neededStatsMap) Insert(col model.TableItemID) {
-	n.items[getIdx(col)].Insert(col)
+func (n *neededStatsMap) Insert(col model.TableItemID, fullLoad bool) {
+	n.items[getIdx(col)].Insert(col, fullLoad)
 }
 
 func (n *neededStatsMap) Delete(col model.TableItemID) {

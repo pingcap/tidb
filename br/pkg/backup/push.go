@@ -54,10 +54,10 @@ func newPushDown(mgr ClientMgr, capacity int) *pushDown {
 func (push *pushDown) pushBackup(
 	ctx context.Context,
 	req backuppb.BackupRequest,
-	pr *rtree.ProgressRange,
+	prTree rtree.ProgressRangeTree,
 	stores []*metapb.Store,
 	checkpointRunner *checkpoint.CheckpointRunner[checkpoint.BackupKeyType, checkpoint.BackupValueType],
-	progressCallBack func(ProgressUnit),
+	progressCallBack func(),
 ) error {
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("pushDown.pushBackup", opentracing.ChildOf(span.Context()))
@@ -162,6 +162,10 @@ func (push *pushDown) pushBackup(
 				}
 			})
 			if resp.GetError() == nil {
+				pr, err := prTree.FindContained(resp.StartKey, resp.EndKey)
+				if err != nil {
+					return errors.Annotate(err, "failed to update the backup response")
+				}
 				// None error means range has been backuped successfully.
 				if checkpointRunner != nil {
 					if err := checkpoint.AppendForBackup(
@@ -180,7 +184,7 @@ func (push *pushDown) pushBackup(
 					resp.GetStartKey(), resp.GetEndKey(), resp.GetFiles())
 
 				// Update progress
-				progressCallBack(RegionUnit)
+				progressCallBack()
 			} else {
 				errPb := resp.GetError()
 				res := errContext.HandleIgnorableError(errPb, store.GetId())

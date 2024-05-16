@@ -127,7 +127,9 @@ type ExternalStorage interface {
 	// URI returns the base path as a URI
 	URI() string
 
-	// Create opens a file writer by path. path is relative path to storage base path. Currently only s3 implemented WriterOption
+	// Create opens a file writer by path. path is relative path to storage base
+	// path. The old file under same path will be overwritten. Currently only s3
+	// implemented WriterOption.
 	Create(ctx context.Context, path string, option *WriterOption) (ExternalFileWriter, error)
 	// Rename file name from oldFileName to newFileName
 	Rename(ctx context.Context, oldFileName, newFileName string) error

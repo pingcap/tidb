@@ -472,7 +472,7 @@ const (
 			mysql.tidb_mdl_info,
 			information_schema.cluster_tidb_trx
 		WHERE tidb_ddl_job.job_id=tidb_mdl_info.job_id
-			AND CONCAT(',', tidb_mdl_info.table_ids, ',') REGEXP CONCAT(',', REPLACE(cluster_tidb_trx.related_table_ids, ',', '|'), ',') != 0
+			AND CONCAT(',', tidb_mdl_info.table_ids, ',') REGEXP CONCAT(',(', REPLACE(cluster_tidb_trx.related_table_ids, ',', '|'), '),') != 0
 	);`
 
 	// CreatePlanReplayerStatusTable is a table about plan replayer status
@@ -1089,11 +1089,19 @@ const (
 	//   add column `target_scope` for 'mysql.tidb_global_task` table
 	//   add column `target_scope` for 'mysql.tidb_global_task_history` table
 	version196 = 196
+
+	// version 197
+	//   replace `mysql.tidb_mdl_view` table
+	version197 = 197
+
+	// version 198
+	//   add column `owner_id` for `mysql.tidb_mdl_info` table
+	version198 = 198
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version196
+var currentBootstrapVersion int64 = version198
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1255,6 +1263,8 @@ var (
 		upgradeToVer194,
 		upgradeToVer195,
 		upgradeToVer196,
+		upgradeToVer197,
+		upgradeToVer198,
 	}
 )
 
@@ -3088,6 +3098,22 @@ func upgradeToVer196(s sessiontypes.Session, ver int64) {
 
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task ADD COLUMN target_scope VARCHAR(256) DEFAULT '' AFTER `step`;", infoschema.ErrColumnExists)
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task_history ADD COLUMN target_scope VARCHAR(256) DEFAULT '' AFTER `step`;", infoschema.ErrColumnExists)
+}
+
+func upgradeToVer197(s sessiontypes.Session, ver int64) {
+	if ver >= version197 {
+		return
+	}
+
+	doReentrantDDL(s, CreateMDLView)
+}
+
+func upgradeToVer198(s sessiontypes.Session, ver int64) {
+	if ver >= version198 {
+		return
+	}
+
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_mdl_info ADD COLUMN owner_id VARCHAR(64) NOT NULL DEFAULT '';", infoschema.ErrColumnExists)
 }
 
 func writeOOMAction(s sessiontypes.Session) {

@@ -223,7 +223,7 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 		RelateVersion:       relateVersion,
 		Params:              extractor.markers,
 	}
-	if err = CheckPreparedPriv(sctx, preparedObj, ret.InfoSchema); err != nil {
+	if err = checkPreparedPriv(sctx, preparedObj, ret.InfoSchema); err != nil {
 		return nil, nil, 0, err
 	}
 	return preparedObj, p, paramCount, nil
@@ -394,7 +394,7 @@ func NewPlanCacheKey(sessionVars *variable.SessionVars, stmtText, stmtDB string,
 // PlanCacheValue stores the cached Statement and StmtNode.
 type PlanCacheValue struct {
 	Plan              base.Plan
-	OutPutNames       []*types.FieldName
+	OutputColumns     types.NameSlice
 	TblInfo2UnionScan map[*model.TableInfo]bool
 	memoryUsage       int64
 
@@ -430,7 +430,7 @@ func (v *PlanCacheValue) MemoryUsage() (sum int64) {
 		sum = unKnownMemoryUsage
 	}
 
-	sum += size.SizeOfInterface + size.SizeOfSlice*2 + int64(cap(v.OutPutNames))*size.SizeOfPointer +
+	sum += size.SizeOfInterface + size.SizeOfSlice*2 + int64(cap(v.OutputColumns))*size.SizeOfPointer +
 		size.SizeOfMap + int64(len(v.TblInfo2UnionScan))*(size.SizeOfPointer+size.SizeOfBool) + size.SizeOfInt64*2
 	if v.matchOpts != nil {
 		sum += int64(cap(v.matchOpts.ParamTypes)) * size.SizeOfPointer
@@ -439,7 +439,7 @@ func (v *PlanCacheValue) MemoryUsage() (sum int64) {
 		}
 	}
 
-	for _, name := range v.OutPutNames {
+	for _, name := range v.OutputColumns {
 		sum += name.MemoryUsage()
 	}
 	v.memoryUsage = sum
@@ -459,7 +459,7 @@ func NewPlanCacheValue(plan base.Plan, names []*types.FieldName, srcMap map[*mod
 	}
 	return &PlanCacheValue{
 		Plan:              plan,
-		OutPutNames:       names,
+		OutputColumns:     names,
 		TblInfo2UnionScan: dstMap,
 		matchOpts:         matchOpts,
 		stmtHints:         stmtHints.Clone(),
@@ -491,6 +491,16 @@ func (*PlanCacheQueryFeatures) Leave(in ast.Node) (out ast.Node, ok bool) {
 	return in, true
 }
 
+// PointGetExecutorCache caches the PointGetExecutor to further improve its performance.
+// Don't forget to reset this executor when the prior plan is invalid.
+type PointGetExecutorCache struct {
+	ColumnInfos any
+	// Executor is only used for point get scene.
+	// Notice that we should only cache the PointGetExecutor that have a snapshot with MaxTS in it.
+	// If the current plan is not PointGet or does not use MaxTS optimization, this value should be nil here.
+	Executor any
+}
+
 // PlanCacheStmt store prepared ast from PrepareExec and other related fields
 type PlanCacheStmt struct {
 	PreparedAst *ast.Prepared
@@ -498,18 +508,7 @@ type PlanCacheStmt struct {
 	VisitInfos  []visitInfo
 	Params      []ast.ParamMarkerExpr
 
-	// To further improve the performance of PointGet, cache execution info for PointGet directly.
-	// Use any to avoid cycle import.
-	// TODO: caching execution info directly is risky and tricky to the optimizer, refactor it later.
-	PointGet struct {
-		ColumnInfos any
-		ColumnNames any
-		// Executor is only used for point get scene.
-		// Notice that we should only cache the PointGetExecutor that have a snapshot with MaxTS in it.
-		// If the current plan is not PointGet or does not use MaxTS optimization, this value should be nil here.
-		Executor any
-		Plan     any // the cached PointGet Plan
-	}
+	PointGet PointGetExecutorCache
 
 	// below fields are for PointGet short path
 	SchemaVersion int64
@@ -723,4 +722,24 @@ func isSafePointGetPath4PlanCacheScenario3(path *util.AccessPath) bool {
 		}
 	}
 	return true
+}
+
+// parseParamTypes get parameters' types in PREPARE statement
+func parseParamTypes(sctx sessionctx.Context, params []expression.Expression) (paramTypes []*types.FieldType) {
+	paramTypes = make([]*types.FieldType, 0, len(params))
+	for _, param := range params {
+		if c, ok := param.(*expression.Constant); ok { // from binary protocol
+			paramTypes = append(paramTypes, c.GetType())
+			continue
+		}
+
+		// from text protocol, there must be a GetVar function
+		name := param.(*expression.ScalarFunction).GetArgs()[0].String()
+		tp, ok := sctx.GetSessionVars().GetUserVarType(name)
+		if !ok {
+			tp = types.NewFieldType(mysql.TypeNull)
+		}
+		paramTypes = append(paramTypes, tp)
+	}
+	return
 }

@@ -28,7 +28,6 @@ import (
 	ddllogutil "github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/pkg/lightning/config"
-	"github.com/pingcap/tidb/pkg/util/generic"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	kvutil "github.com/tikv/client-go/v2/util"
 	pd "github.com/tikv/pd/client"
@@ -130,7 +129,7 @@ func (m *litBackendCtxMgr) Register(
 	}
 
 	m.memRoot.RefreshConsumption()
-	ok := m.memRoot.CheckConsume(StructSizeBackendCtx)
+	ok := m.memRoot.CheckConsume(structSizeBackendCtx)
 	if !ok {
 		return nil, genBackendAllocMemFailedErr(ctx, m.memRoot, jobID)
 	}
@@ -155,7 +154,7 @@ func (m *litBackendCtxMgr) Register(
 
 	bcCtx := newBackendContext(ctx, jobID, bd, cfg.lightning, defaultImportantVariables, m.memRoot, m.diskRoot, etcdClient)
 	m.backends.m[jobID] = bcCtx
-	m.memRoot.Consume(StructSizeBackendCtx)
+	m.memRoot.Consume(structSizeBackendCtx)
 	m.backends.mu.Unlock()
 
 	logutil.Logger(ctx).Info(LitInfoCreateBackend, zap.Int64("job ID", jobID),
@@ -268,15 +267,14 @@ func newBackendContext(
 	etcdClient *clientv3.Client,
 ) *litBackendCtx {
 	bCtx := &litBackendCtx{
-		SyncMap:        generic.NewSyncMap[int64, *engineInfo](10),
-		MemRoot:        memRoot,
-		DiskRoot:       diskRoot,
+		engines:        make(map[int64]*engineInfo, 10),
+		memRoot:        memRoot,
+		diskRoot:       diskRoot,
 		jobID:          jobID,
 		backend:        be,
 		ctx:            ctx,
 		cfg:            cfg,
 		sysVars:        vars,
-		diskRoot:       diskRoot,
 		updateInterval: checkpointUpdateInterval,
 		etcdClient:     etcdClient,
 	}
@@ -299,12 +297,12 @@ func (m *litBackendCtxMgr) Unregister(jobID int64) {
 	if !exist {
 		return
 	}
-	bc.unregisterAll(jobID)
+	bc.UnregisterEngines()
 	bc.backend.Close()
 	if bc.checkpointMgr != nil {
 		bc.checkpointMgr.Close()
 	}
-	m.memRoot.Release(StructSizeBackendCtx)
+	m.memRoot.Release(structSizeBackendCtx)
 	m.memRoot.ReleaseWithTag(encodeBackendTag(jobID))
 	logutil.Logger(bc.ctx).Info(LitInfoCloseBackend, zap.Int64("job ID", jobID),
 		zap.Int64("current memory usage", m.memRoot.CurrentUsage()),
