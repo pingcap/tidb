@@ -149,7 +149,7 @@ func IndexStatsIsInvalid(sctx context.PlanContext, idxStats *Index, coll *HistCo
 			ID:               cid,
 			IsIndex:          true,
 			IsSyncLoadFailed: sctx.GetSessionVars().StmtCtx.StatsLoad.Timeout > 0,
-		})
+		}, true)
 		// TODO: we can return true here. But need to fix some tests first.
 	}
 	if idxStats == nil {

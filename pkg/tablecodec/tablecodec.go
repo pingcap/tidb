@@ -543,26 +543,24 @@ func DecodeHandleToDatumMap(handle kv.Handle, handleColIDs []int64,
 	if row == nil {
 		row = make(map[int64]types.Datum, len(cols))
 	}
-	for id, ft := range cols {
-		for idx, hid := range handleColIDs {
-			if id != hid {
-				continue
-			}
-			if types.NeedRestoredData(ft) {
-				continue
-			}
-			d, err := decodeHandleToDatum(handle, ft, idx)
-			if err != nil {
-				return row, err
-			}
-			d, err = Unflatten(d, ft, loc)
-			if err != nil {
-				return row, err
-			}
-			if _, exists := row[id]; !exists {
-				row[id] = d
-			}
-			break
+	for idx, id := range handleColIDs {
+		ft, ok := cols[id]
+		if !ok {
+			continue
+		}
+		if types.NeedRestoredData(ft) {
+			continue
+		}
+		d, err := decodeHandleToDatum(handle, ft, idx)
+		if err != nil {
+			return row, err
+		}
+		d, err = Unflatten(d, ft, loc)
+		if err != nil {
+			return row, err
+		}
+		if _, exists := row[id]; !exists {
+			row[id] = d
 		}
 	}
 	return row, nil

@@ -88,6 +88,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
+	"github.com/pingcap/tidb/pkg/statistics/handle/syncload"
 	"github.com/pingcap/tidb/pkg/statistics/handle/usage"
 	"github.com/pingcap/tidb/pkg/statistics/handle/usage/indexusage"
 	storeerr "github.com/pingcap/tidb/pkg/store/driver/error"
@@ -1872,6 +1873,9 @@ func (s *session) getInternalSession(execOption sqlexec.ExecOption) (*session, f
 	}
 	se.sessionVars.OptimizerUseInvisibleIndexes = s.sessionVars.OptimizerUseInvisibleIndexes
 
+	preSkipStats := s.sessionVars.SkipMissingPartitionStats
+	se.sessionVars.SkipMissingPartitionStats = s.sessionVars.SkipMissingPartitionStats
+
 	if execOption.SnapshotTS != 0 {
 		if err := se.sessionVars.SetSystemVar(variable.TiDBSnapshot, strconv.FormatUint(execOption.SnapshotTS, 10)); err != nil {
 			return nil, nil, err
@@ -1913,6 +1917,7 @@ func (s *session) getInternalSession(execOption sqlexec.ExecOption) (*session, f
 		}
 		se.sessionVars.PartitionPruneMode.Store(prePruneMode)
 		se.sessionVars.OptimizerUseInvisibleIndexes = false
+		se.sessionVars.SkipMissingPartitionStats = preSkipStats
 		se.sessionVars.InspectionTableCache = nil
 		se.sessionVars.MemTracker.Detach()
 		s.sysSessionPool().Put(tmp)
@@ -2548,7 +2553,7 @@ func (s *session) GetDistSQLCtx() *distsqlctx.DistSQLContext {
 
 	return sc.GetOrInitDistSQLFromCache(func() *distsqlctx.DistSQLContext {
 		return &distsqlctx.DistSQLContext{
-			AppendWarning:   sc.AppendWarning,
+			WarnHandler:     sc.WarnHandler,
 			InRestrictedSQL: sc.InRestrictedSQL,
 			Client:          s.GetClient(),
 
@@ -2640,10 +2645,10 @@ func (s *session) GetBuildPBCtx() *planctx.BuildPBContext {
 			// the following fields are used to build `expression.PushDownContext`.
 			// TODO: it'd be better to embed `expression.PushDownContext` in `BuildPBContext`. But `expression` already
 			// depends on this package, so we need to move `expression.PushDownContext` to a standalone package first.
-			GroupConcatMaxLen:  s.GetSessionVars().GroupConcatMaxLen,
-			InExplainStmt:      s.GetSessionVars().StmtCtx.InExplainStmt,
-			AppendWarning:      s.GetSessionVars().StmtCtx.AppendWarning,
-			AppendExtraWarning: s.GetSessionVars().StmtCtx.AppendExtraWarning,
+			GroupConcatMaxLen: s.GetSessionVars().GroupConcatMaxLen,
+			InExplainStmt:     s.GetSessionVars().StmtCtx.InExplainStmt,
+			WarnHandler:       s.GetSessionVars().StmtCtx.WarnHandler,
+			ExtraWarnghandler: s.GetSessionVars().StmtCtx.ExtraWarnHandler,
 		}
 	})
 
@@ -3145,7 +3150,8 @@ var (
 	mdlTable = `create table mysql.tidb_mdl_info(
 		job_id BIGINT NOT NULL PRIMARY KEY,
 		version BIGINT NOT NULL,
-		table_ids text(65535)
+		table_ids text(65535),
+		owner_id varchar(64) NOT NULL DEFAULT ''
 	);`
 )
 
@@ -3368,7 +3374,15 @@ func bootstrapSessionImpl(store kv.Storage, createSessionsImpl func(store kv.Sto
 	)
 
 	analyzeConcurrencyQuota := int(config.GetGlobalConfig().Performance.AnalyzePartitionConcurrencyQuota)
-	concurrency := int(config.GetGlobalConfig().Performance.StatsLoadConcurrency)
+	concurrency := config.GetGlobalConfig().Performance.StatsLoadConcurrency
+	if concurrency == 0 {
+		// if concurrency is 0, we will set the concurrency of sync load by CPU.
+		concurrency = syncload.GetSyncLoadConcurrencyByCPU()
+	}
+	if concurrency < 0 { // it is only for test, in the production, negative value is illegal.
+		concurrency = 0
+	}
+
 	ses, err := createSessionsImpl(store, 10)
 	if err != nil {
 		return nil, err

@@ -201,7 +201,7 @@ func (t *MppTask) ConvertToRootTaskImpl(ctx base.PlanContext) *RootTask {
 			// It's only for TableScan. This is ensured by converting mppTask to rootTask just after TableScan is built,
 			// so no other operators are added into this mppTask.
 			logutil.BgLogger().Error("expect Selection or TableScan for mppTask.p", zap.String("mppTask.p", t.p.TP()))
-			return invalidTask
+			return base.InvalidTask.(*RootTask)
 		}
 		selectivity, _, err := cardinality.Selectivity(ctx, t.tblColHists, t.rootTaskConds, nil)
 		if err != nil {

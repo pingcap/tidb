@@ -232,7 +232,7 @@ type StmtExecInfo struct {
 	Digest              string
 	PrevSQL             string
 	PrevSQLDigest       string
-	PlanGenerator       func() (string, string)
+	PlanGenerator       func() (string, string, any)
 	BinaryPlanGenerator func() string
 	PlanDigest          string
 	PlanDigestGen       func() string
@@ -602,6 +602,9 @@ func (ssbd *stmtSummaryByDigest) add(sei *StmtExecInfo, beginTime int64, interva
 		if isElementNew {
 			// If the element is new created, `ssElement.add(sei)` should be done inside the lock of `ssbd`.
 			ssElement = newStmtSummaryByDigestElement(sei, beginTime, intervalSeconds)
+			if ssElement == nil {
+				return nil, isElementNew
+			}
 			ssbd.history.PushBack(ssElement)
 		}
 
@@ -646,7 +649,10 @@ var MaxEncodedPlanSizeInBytes = 1024 * 1024
 func newStmtSummaryByDigestElement(sei *StmtExecInfo, beginTime int64, intervalSeconds int64) *stmtSummaryByDigestElement {
 	// sampleSQL / authUsers(sampleUser) / samplePlan / prevSQL / indexNames store the values shown at the first time,
 	// because it compacts performance to update every time.
-	samplePlan, planHint := sei.PlanGenerator()
+	samplePlan, planHint, e := sei.PlanGenerator()
+	if e != nil {
+		return nil
+	}
 	if len(samplePlan) > MaxEncodedPlanSizeInBytes {
 		samplePlan = plancodec.PlanDiscardedEncoded
 	}

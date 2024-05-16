@@ -42,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/backoff"
 	tidblogutil "github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
 )
@@ -405,6 +406,16 @@ func splitSubtaskMetaForOneKVMetaGroup(
 		// Skip global sort for empty table.
 		return nil, nil
 	}
+	pdCli := store.GetPDClient()
+	p, l, err := pdCli.GetTS(ctx)
+	if err != nil {
+		return nil, err
+	}
+	ts := oracle.ComposeTS(p, l)
+	failpoint.Inject("mockTSForGlobalSort", func(val failpoint.Value) {
+		i := val.(int)
+		ts = uint64(i)
+	})
 	splitter, err := getRangeSplitter(
 		ctx, store, cloudStorageURI, int64(kvMeta.TotalKVSize), instanceCnt, kvMeta.MultipleFilesStats, logger)
 	if err != nil {
@@ -446,6 +457,7 @@ func splitSubtaskMetaForOneKVMetaGroup(
 			DataFiles:      dataFiles,
 			StatFiles:      statFiles,
 			RangeSplitKeys: rangeSplitKeys,
+			TS:             ts,
 		}
 		metaBytes, err := json.Marshal(m)
 		if err != nil {

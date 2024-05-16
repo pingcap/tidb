@@ -451,6 +451,9 @@ func buildIndexLookUpChecker(b *executorBuilder, p *plannercore.PhysicalIndexLoo
 	if !e.isCommonHandle() {
 		fullColLen++
 	}
+	if e.index.Global {
+		fullColLen++
+	}
 	e.dagPB.OutputOffsets = make([]uint32, fullColLen)
 	for i := 0; i < fullColLen; i++ {
 		e.dagPB.OutputOffsets[i] = uint32(i)
@@ -468,6 +471,9 @@ func buildIndexLookUpChecker(b *executorBuilder, p *plannercore.PhysicalIndexLoo
 	}
 
 	if !e.isCommonHandle() {
+		tps = append(tps, types.NewFieldType(mysql.TypeLonglong))
+	}
+	if e.index.Global {
 		tps = append(tps, types.NewFieldType(mysql.TypeLonglong))
 	}
 
@@ -2168,8 +2174,9 @@ func (b *executorBuilder) buildTopN(v *plannercore.PhysicalTopN) exec.Executor {
 	}
 	executor_metrics.ExecutorCounterTopNExec.Inc()
 	return &sortexec.TopNExec{
-		SortExec: sortExec,
-		Limit:    &plannercore.PhysicalLimit{Count: v.Count, Offset: v.Offset},
+		SortExec:    sortExec,
+		Limit:       &plannercore.PhysicalLimit{Count: v.Count, Offset: v.Offset},
+		Concurrency: b.ctx.GetSessionVars().Concurrency.ExecutorConcurrency,
 	}
 }
 
@@ -2892,6 +2899,12 @@ func (*executorBuilder) corColInDistPlan(plans []base.PhysicalPlan) bool {
 		case *plannercore.PhysicalProjection:
 			for _, expr := range x.Exprs {
 				if len(expression.ExtractCorColumns(expr)) > 0 {
+					return true
+				}
+			}
+		case *plannercore.PhysicalTopN:
+			for _, byItem := range x.ByItems {
+				if len(expression.ExtractCorColumns(byItem.Expr)) > 0 {
 					return true
 				}
 			}
