@@ -473,9 +473,54 @@ func TestMainBackupLoop(t *testing.T) {
 	// cancel the backup in another goroutine
 	ctx, cancel := context.WithCancel(backgroundCtx)
 	go func() {
-		time.Sleep(5)
+		time.Sleep(time.Second)
 		cancel()
 	}()
 	require.Error(t, mainLoop.Run(ctx, req))
+
+	// Case #3: one store drops
+	ranges = []rtree.Range{
+		{
+			StartKey: []byte("aaa"),
+			EndKey:   []byte("zzz"),
+		},
+	}
+	tree, err = s.backupClient.BuildProgressRangeTree(ranges)
+	require.NoError(t, err)
+
+	clear(mockBackupResponses)
+	splitKeys = splitRangesFn(ranges, 10)
+	for i := 0; i < len(splitKeys)-1; i++ {
+		randStoreID := uint64(rand.Int()%len(stores) + 1)
+		mockBackupResponses[randStoreID] = append(mockBackupResponses[randStoreID], &backup.ResponseAndStore{
+			StoreID: randStoreID,
+			Resp: &backuppb.BackupResponse{
+				StartKey: splitKeys[i],
+				EndKey:   splitKeys[i+1],
+			},
+		})
+	}
+	dropStoreID := uint64(2)
+	dropBackupResponses := mockBackupResponses[dropStoreID]
+	mockBackupResponses[dropStoreID] = nil
+
+	mainLoop = &backup.MainBackupLoop{
+		StoreConnector: &mockBackupStoreConnector{
+			backupResponses: mockBackupResponses,
+		},
+
+		BackupClient:       s.backupClient,
+		GlobalProgressTree: &tree,
+		ReplicaReadLabel:   nil,
+		StateNotifier:      ch,
+		ProgressCallBack:   func() {},
+	}
+	go func() {
+		ch <- backup.StoreBackupPolicy{One: dropStoreID}
+		mockBackupResponses[dropStoreID] = dropBackupResponses
+	}()
+
+	// backup cannot finished until the dropped store is back
+	require.NoError(t, mainLoop.Run(backgroundCtx, req))
 
 }

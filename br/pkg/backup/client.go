@@ -1063,7 +1063,7 @@ func (bc *Client) BackupRanges(
 	}
 
 	stateNotifier := make(chan StoreBackupPolicy)
-	watchStoreChangeAsync(ctx, stateNotifier, bc.mgr.GetPDClient())
+	ObserveStoreChangesAsync(ctx, stateNotifier, bc.mgr.GetPDClient())
 
 	mainBackupLoop := &MainBackupLoop{
 		GlobalProgressTree: &globalProgressTree,

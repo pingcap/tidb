@@ -188,7 +188,7 @@ func getBackupRanges(ranges []rtree.Range) []*kvrpcpb.KeyRange {
 	return requestRanges
 }
 
-func watchStoreChangeAsync(ctx context.Context, stateNotifier chan StoreBackupPolicy, pdCli pd.Client) {
+func ObserveStoreChangesAsync(ctx context.Context, stateNotifier chan StoreBackupPolicy, pdCli pd.Client) {
 	go func() {
 		cb := storewatch.MakeCallback(storewatch.WithOnReboot(func(s *metapb.Store) {
 			stateNotifier <- StoreBackupPolicy{All: true}
