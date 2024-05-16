@@ -67,7 +67,7 @@ type engineInfo struct {
 
 // newEngineInfo create a new engineInfo struct.
 func newEngineInfo(ctx context.Context, jobID, indexID int64, cfg *backend.EngineConfig,
-	en *backend.OpenedEngine, uuid uuid.UUID, wCnt int, memRoot MemRoot) *engineInfo {
+	en *backend.OpenedEngine, uuid uuid.UUID, memRoot MemRoot) *engineInfo {
 	return &engineInfo{
 		ctx:          ctx,
 		jobID:        jobID,
@@ -75,8 +75,8 @@ func newEngineInfo(ctx context.Context, jobID, indexID int64, cfg *backend.Engin
 		cfg:          cfg,
 		openedEngine: en,
 		uuid:         uuid,
-		writerCount:  wCnt,
-		writerCache:  generic.NewSyncMap[int, backend.EngineWriter](wCnt),
+		writerCount:  0,
+		writerCache:  generic.NewSyncMap[int, backend.EngineWriter](4),
 		memRoot:      memRoot,
 		flushLock:    &sync.RWMutex{},
 	}
@@ -194,13 +194,14 @@ func (ei *engineInfo) CreateWriter(id int) (Writer, error) {
 		return nil, err
 	}
 
+	ei.writerCount++
 	ei.memRoot.Consume(StructSizeWriterCtx)
 	logutil.Logger(ei.ctx).Info(LitInfoCreateWrite, zap.Int64("job ID", ei.jobID),
 		zap.Int64("index ID", ei.indexID), zap.Int("worker ID", id),
 		zap.Int64("allocate memory", StructSizeWriterCtx),
 		zap.Int64("current memory usage", ei.memRoot.CurrentUsage()),
 		zap.Int64("max memory quota", ei.memRoot.MaxMemoryQuota()))
-	return wCtx, err
+	return wCtx, nil
 }
 
 // newWriterContext will get worker local writer from engine info writer cache first, if exists.

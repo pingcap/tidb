@@ -971,14 +971,7 @@ func errorIsRetryable(err error, job *model.Job) bool {
 	if job.ErrorCount+1 >= variable.GetDDLErrorCountLimit() {
 		return false
 	}
-	originErr := errors.Cause(err)
-	if tErr, ok := originErr.(*terror.Error); ok {
-		sqlErr := terror.ToSQLError(tErr)
-		_, ok := dbterror.ReorgRetryableErrCodes[sqlErr.Code]
-		return ok
-	}
-	// For the unknown errors, we should retry.
-	return true
+	return dbterror.IsReorgRetryableErr(err)
 }
 
 func convertToKeyExistsErr(originErr error, idxInfo *model.IndexInfo, tblInfo *model.TableInfo) error {
@@ -1828,7 +1821,7 @@ func writeOneKVToLocal(
 			return errors.Trace(err)
 		}
 		failpoint.Inject("mockLocalWriterError", func() {
-			failpoint.Return(errors.New("mock engine error"))
+			failpoint.Return(errors.New("ErrMockRetryable"))
 		})
 		writeBufs.IndexKeyBuf = key
 		writeBufs.RowValBuf = idxVal

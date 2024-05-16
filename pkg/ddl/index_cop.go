@@ -169,7 +169,7 @@ func scanRecords(p *copReqSenderPool, task *reorgBackfillTask, se *sess.Session)
 			rate := float64(srcChk.MemoryUsage()) / 1024.0 / 1024.0 / time.Since(startTime).Seconds()
 			metrics.AddIndexScanRate.WithLabelValues(metrics.LblAddIndex).Observe(rate)
 			failpoint.Inject("mockCopSenderError", func() {
-				idxRs.Err = errors.New("mock cop error")
+				idxRs.Err = errors.New("ErrMockRetryable")
 			})
 			p.chunkSender.AddTask(idxRs)
 			startTime = time.Now()

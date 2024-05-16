@@ -16,7 +16,9 @@ package dbterror
 
 import (
 	"fmt"
+	"strings"
 
+	"github.com/pingcap/errors"
 	mysql "github.com/pingcap/tidb/pkg/errno"
 	parser_mysql "github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -497,8 +499,7 @@ var (
 			"tidb_enable_dist_task setting. To utilize distributed task execution, please enable tidb_ddl_enable_fast_reorg first."), nil))
 )
 
-// ReorgRetryableErrCodes is the error codes that are retryable for reorganization.
-var ReorgRetryableErrCodes = map[uint16]struct{}{
+var reorgRetryableErrCodes = map[uint16]struct{}{
 	mysql.ErrPDServerTimeout:           {},
 	mysql.ErrTiKVServerTimeout:         {},
 	mysql.ErrTiKVServerBusy:            {},
@@ -519,4 +520,28 @@ var ReorgRetryableErrCodes = map[uint16]struct{}{
 
 	// Temporary network partitioning may cause pk commit failure.
 	uint16(terror.CodeResultUndetermined): {},
+}
+
+// reorgRetryableMessages record errors that do not have an error code.
+var reorgRetryableMessages = []string{
+	"ErrPDBatchScanRegion", // TiDB restarts during import may encounter this error.
+	"ErrMockRetryable",     // Only used for test.
+}
+
+// IsReorgRetryableErr checks whether the error is retryable during DDL reorganization.
+func IsReorgRetryableErr(err error) bool {
+	msg := err.Error()
+	for _, retryMsg := range reorgRetryableMessages {
+		if strings.Contains(msg, retryMsg) {
+			return true
+		}
+	}
+	originErr := errors.Cause(err)
+	if tErr, ok := originErr.(*terror.Error); ok {
+		sqlErr := terror.ToSQLError(tErr)
+		_, ok := reorgRetryableErrCodes[sqlErr.Code]
+		return ok
+	}
+	// can't retry unknown err.
+	return false
 }

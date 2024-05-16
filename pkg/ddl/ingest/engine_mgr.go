@@ -66,7 +66,7 @@ func (bc *litBackendCtx) Register(jobID, indexID int64, schemaName, tableName st
 			return nil, errors.Trace(err)
 		}
 		id := openedEn.GetEngineUUID()
-		en = newEngineInfo(bc.ctx, jobID, indexID, cfg, openedEn, id, 1, bc.MemRoot)
+		en = newEngineInfo(bc.ctx, jobID, indexID, cfg, openedEn, id, bc.MemRoot)
 		bc.Store(indexID, en)
 		bc.MemRoot.Consume(StructSizeEngineInfo)
 		bc.MemRoot.ConsumeWithTag(encodeEngineTag(jobID, indexID), engineCacheSize)
@@ -78,7 +78,6 @@ func (bc *litBackendCtx) Register(jobID, indexID int64, schemaName, tableName st
 				zap.Int("concurrency", bc.cfg.TikvImporter.RangeConcurrency))
 			return nil, dbterror.ErrIngestFailed.FastGenByArgs("concurrency quota exceeded")
 		}
-		en.writerCount++
 		info = LitInfoAddWriter
 	}
 	bc.MemRoot.ConsumeWithTag(encodeEngineTag(jobID, indexID), int64(bc.cfg.TikvImporter.LocalWriterMemCacheSize))
