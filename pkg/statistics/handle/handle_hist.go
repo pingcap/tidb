@@ -231,7 +231,8 @@ func (h *Handle) HandleOneTask(sctx sessionctx.Context, lastTask *NeededItemTask
 	}
 	result := stmtctx.StatsLoadResult{Item: task.TableItemID}
 	resultChan := h.StatsLoad.Singleflight.DoChan(task.TableItemID.Key(), func() (any, error) {
-		return h.handleOneItemTask(sctx, task)
+		err := h.handleOneItemTask(task)
+		return nil, err
 	})
 	timeout := time.Until(task.ToTimeout)
 	select {
@@ -263,31 +264,41 @@ func isVaildForRetry(task *NeededItemTask) bool {
 	return task.Retry <= RetryCount
 }
 
-func (h *Handle) handleOneItemTask(sctx sessionctx.Context, task *NeededItemTask) (result *stmtctx.StatsLoadResult, err error) {
+func (h *Handle) handleOneItemTask(task *NeededItemTask) (err error) {
+	se, err := h.SPool().Get()
+	if err != nil {
+		return err
+	}
+	sctx := se.(sessionctx.Context)
+	sctx.GetSessionVars().StmtCtx.Priority = mysql.HighPriority
 	defer func() {
 		// recover for each task, worker keeps working
 		if r := recover(); r != nil {
 			logutil.BgLogger().Error("handleOneItemTask panicked", zap.Any("recover", r), zap.Stack("stack"))
 			err = errors.Errorf("stats loading panicked: %v", r)
 		}
+		if err == nil { // only recycle when no error
+			sctx.GetSessionVars().StmtCtx.Priority = mysql.NoPriority
+			h.SPool().Put(se)
+		}
 	}()
 
 	item := task.TableItemID
 	tbl, ok := h.Get(item.TableID)
 	if !ok {
-		return result, nil
+		return nil
 	}
 	wrapper := &statsWrapper{}
 	if item.IsIndex {
 		index, ok := tbl.Indices[item.ID]
 		if !ok || index.IsFullLoad() {
-			return result, nil
+			return nil
 		}
 		wrapper.idx = index
 	} else {
 		col, ok := tbl.Columns[item.ID]
 		if !ok || col.IsFullLoad() {
-			return result, nil
+			return nil
 		}
 		wrapper.col = col
 	}
@@ -295,8 +306,7 @@ func (h *Handle) handleOneItemTask(sctx sessionctx.Context, task *NeededItemTask
 	needUpdate := false
 	wrapper, err = h.readStatsForOneItem(sctx, item, wrapper)
 	if err != nil {
-		result.Error = err
-		return result, err
+		return err
 	}
 	if item.IsIndex {
 		if wrapper.idx != nil {
@@ -308,10 +318,10 @@ func (h *Handle) handleOneItemTask(sctx sessionctx.Context, task *NeededItemTask
 		}
 	}
 	metrics.ReadStatsHistogram.Observe(float64(time.Since(t).Milliseconds()))
-	if needUpdate && h.updateCachedItem(item, wrapper.col, wrapper.idx) {
-		return result, nil
+	if needUpdate {
+		h.updateCachedItem(item, wrapper.col, wrapper.idx)
 	}
-	return nil, nil
+	return nil
 }
 
 // readStatsForOneItem reads hist for one column/index, TODO load data via kv-get asynchronously
