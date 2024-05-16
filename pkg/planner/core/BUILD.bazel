@@ -261,6 +261,7 @@ go_test(
         "//pkg/parser/terror",
         "//pkg/planner",
         "//pkg/planner/core/base",
+        "//pkg/planner/core/operator/logicalop",
         "//pkg/planner/property",
         "//pkg/planner/util",
         "//pkg/planner/util/coretestsdk",
