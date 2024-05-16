@@ -39,11 +39,53 @@ var statsTables = map[string]map[string]struct{}{
 	},
 }
 
+var plan_replayer = map[string]map[string]struct{}{
+	"mysql": {
+		"plan_replayer_status": {},
+		"plan_replayer_task":   {},
+	},
+}
+
 var unRecoverableTable = map[string]map[string]struct{}{
 	"mysql": {
 		// some variables in tidb (e.g. gc_safe_point) cannot be recovered.
 		"tidb":             {},
 		"global_variables": {},
+		// GET_LOCK() or IS_USED_LOCK() try to insert a lock into the table in a pessimistic transaction but finally rollback.
+		// Therefore actually the table is empty.
+		"advisory_locks": {},
+		// Distributed eXecution Framework
+		// Records the tidb node information, no need to recovered.
+		"dist_framework_meta":             {},
+		"tidb_global_task":                {},
+		"tidb_global_task_history":        {},
+		"tidb_background_subtask":         {},
+		"tidb_background_subtask_history": {},
+		// DDL internal system tables.
+		"tidb_ddl_history": {},
+		"tidb_ddl_job":     {},
+		"tidb_ddl_reorg":   {},
+		// v7.2.0. Based on Distributed eXecution Framework, records running import jobs.
+		"tidb_import_jobs": {},
+
+		"help_topic": {},
+		// records the RU for each resource group temporary, no need to recovered.
+		"request_unit_by_group": {},
+		// load the table data into the memory.
+		"table_cache_meta": {},
+
+		// TiDB runaway internal information.
+		"tidb_runaway_queries":    {},
+		"tidb_runaway_watch":      {},
+		"tidb_runaway_watch_done": {},
+
+		// TiDB internal ttl information.
+		"tidb_ttl_job_history":  {},
+		"tidb_ttl_table_status": {},
+		"tidb_ttl_task":         {},
+
+		// TiDB internal timers.
+		"tidb_timers": {},
 
 		"column_stats_usage":               {},
 		"capture_plan_baselines_blacklist": {},
@@ -51,6 +93,8 @@ var unRecoverableTable = map[string]map[string]struct{}{
 		"gc_delete_range":      {},
 		"gc_delete_range_done": {},
 
+		// TiDB internal system table to synchronize metadata locks across nodes.
+		"tidb_mdl_info": {},
 		// replace into view is not supported now
 		"tidb_mdl_view": {},
 	},
