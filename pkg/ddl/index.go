@@ -882,7 +882,7 @@ func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Jo
 				MockDMLExecutionStateBeforeMerge()
 			}
 		})
-		logutil.DDLLogger().Info("index backfill state ready to merge", zap.String("category", "ddl"),
+		logutil.DDLLogger().Info("index backfill state ready to merge",
 			zap.Int64("job ID", job.ID),
 			zap.String("table", tbl.Meta().Name.O),
 			zap.String("index", allIndexInfos[0].Name.O))
