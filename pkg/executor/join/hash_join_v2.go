@@ -128,8 +128,8 @@ type HashJoinCtxV2 struct {
 	LUsedInOtherCondition, RUsedInOtherCondition []int
 }
 
-// InitHashTableContext create hashTableContext for current HashJoinCtxV2
-func (hCtx *HashJoinCtxV2) InitHashTableContext() {
+// initHashTableContext create hashTableContext for current HashJoinCtxV2
+func (hCtx *HashJoinCtxV2) initHashTableContext() {
 	hCtx.hashTableContext = &hashTableContext{}
 	hCtx.hashTableContext.rowTables = make([][]*rowTable, hCtx.Concurrency)
 	for index := range hCtx.hashTableContext.rowTables {
@@ -229,6 +229,7 @@ func (e *HashJoinV2Exec) Close() error {
 		}
 		e.ProbeSideTupleFetcher.probeChkResourceCh = nil
 		e.waiterWg.Wait()
+		e.hashTableContext.reset()
 	}
 	for _, w := range e.ProbeWorkers {
 		w.joinChkResourceCh = nil
@@ -237,7 +238,6 @@ func (e *HashJoinV2Exec) Close() error {
 	if e.stats != nil {
 		defer e.Ctx().GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.ID(), e.stats)
 	}
-	e.hashTableContext.reset()
 	err := e.BaseExecutor.Close()
 	return err
 }
@@ -269,7 +269,6 @@ func (e *HashJoinV2Exec) Open(ctx context.Context) error {
 		e.memTracker = memory.NewTracker(e.ID(), -1)
 	}
 	e.memTracker.AttachTo(e.Ctx().GetSessionVars().StmtCtx.MemTracker)
-	e.hashTableContext.memoryTracker.AttachTo(e.memTracker)
 
 	e.diskTracker = disk.NewTracker(e.ID(), -1)
 	e.diskTracker.AttachTo(e.Ctx().GetSessionVars().StmtCtx.DiskTracker)
@@ -528,6 +527,8 @@ func (w *ProbeWorkerV2) getNewJoinResult() (bool, *hashjoinWorkerResult) {
 // step 2. fetch data from probe child in a background goroutine and probe the hash table in multiple join workers.
 func (e *HashJoinV2Exec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 	if !e.prepared {
+		e.initHashTableContext()
+		e.hashTableContext.memoryTracker.AttachTo(e.memTracker)
 		e.buildFinished = make(chan error, 1)
 		e.workerWg.RunWithRecover(func() {
 			defer trace.StartRegion(ctx, "HashJoinHashTableBuilder").End()
