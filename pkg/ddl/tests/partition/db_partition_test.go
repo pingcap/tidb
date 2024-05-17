@@ -3477,32 +3477,32 @@ func TestReorgPartitionGlobalIndex(t *testing.T) {
 	)`)
 	tt := external.GetTableByName(t, tk, "test", "t")
 	require.Equal(t, 0, len(tt.Meta().Indices))
-	//pid1 := tt.Meta().Partition.Definitions[1].ID
+	pid1 := tt.Meta().Partition.Definitions[1].ID
 
 	tk.MustExec("Alter Table t Add Unique Index idx_b (b)")
 	tk.MustExec(`INSERT INTO t VALUES (4, 5, 6), (6, 4, 5), (11, 6, 4), (12, 7, 7)`)
 	tk.MustExec(`INSERT INTO t VALUES (8, 8, 9), (9, 9, 8), (18, 18, 17), (19, 17, 18)`)
 	tk.MustExec("Alter Table t Add Unique Index idx_c (c)")
 
-	//tk.MustExec("alter table t reorganize partition p2 into (partition p2 values less than (15), partition p3 values less than (20), partition pMax values less than (maxvalue))")
-	//result := tk.MustQuery("select * from t")
-	//result.Sort().Check(testkit.Rows("11 6 4", "12 7 7", "18 18 17", "19 17 18", "4 5 6", "6 4 5", "8 8 9", "9 9 8"))
-	//tk.MustQuery("select /*+ USE_INDEX(t, idx_b) */ * from t").Sort().Check(testkit.Rows("11 6 4", "12 7 7", "18 18 17", "19 17 18", "4 5 6", "6 4 5", "8 8 9", "9 9 8"))
-	//tk.MustQuery("select /*+ USE_INDEX(t, idx_c) */ * from t").Sort().Check(testkit.Rows("11 6 4", "12 7 7", "18 18 17", "19 17 18", "4 5 6", "6 4 5", "8 8 9", "9 9 8"))
-	//
-	//tk.MustQuery(`select b from t where b = 6`).Check(testkit.Rows("6"))
-	//tk.MustQuery(`select b from t where b = 4`).Check(testkit.Rows("4"))
-	//tt = external.GetTableByName(t, tk, "test", "t")
-	//require.Equal(t, 2, len(tt.Meta().Indices))
-	//idxInfo := tt.Meta().FindIndexByName("idx_b")
-	//require.NotNil(t, idxInfo)
-	//cnt := checkGlobalIndexCleanUpDone(t, tk.Session(), tt.Meta(), idxInfo, pid1)
-	//require.Equal(t, 8, cnt)
-	//
-	//idxInfo = tt.Meta().FindIndexByName("idx_c")
-	//require.NotNil(t, idxInfo)
-	//cnt = checkGlobalIndexCleanUpDone(t, tk.Session(), tt.Meta(), idxInfo, pid1)
-	//require.Equal(t, 8, cnt)
+	tk.MustExec("alter table t reorganize partition p2 into (partition p2 values less than (15), partition p3 values less than (20), partition pMax values less than (maxvalue))")
+	result := tk.MustQuery("select * from t")
+	result.Sort().Check(testkit.Rows("11 6 4", "12 7 7", "18 18 17", "19 17 18", "4 5 6", "6 4 5", "8 8 9", "9 9 8"))
+	tk.MustQuery("select /*+ USE_INDEX(t, idx_b) */ * from t").Sort().Check(testkit.Rows("11 6 4", "12 7 7", "18 18 17", "19 17 18", "4 5 6", "6 4 5", "8 8 9", "9 9 8"))
+	tk.MustQuery("select /*+ USE_INDEX(t, idx_c) */ * from t").Sort().Check(testkit.Rows("11 6 4", "12 7 7", "18 18 17", "19 17 18", "4 5 6", "6 4 5", "8 8 9", "9 9 8"))
+
+	tk.MustQuery(`select b from t where b = 6`).Check(testkit.Rows("6"))
+	tk.MustQuery(`select b from t where b = 4`).Check(testkit.Rows("4"))
+	tt = external.GetTableByName(t, tk, "test", "t")
+	require.Equal(t, 2, len(tt.Meta().Indices))
+	idxInfo := tt.Meta().FindIndexByName("idx_b")
+	require.NotNil(t, idxInfo)
+	cnt := checkGlobalIndexCleanUpDone(t, tk.Session(), tt.Meta(), idxInfo, pid1)
+	require.Equal(t, 8, cnt)
+
+	idxInfo = tt.Meta().FindIndexByName("idx_c")
+	require.NotNil(t, idxInfo)
+	cnt = checkGlobalIndexCleanUpDone(t, tk.Session(), tt.Meta(), idxInfo, pid1)
+	require.Equal(t, 8, cnt)
 
 	// This should replace the global index with a normal unique index
 	// (not strictly needed, since it could just have some extra Partition ID column)
@@ -3510,7 +3510,7 @@ func TestReorgPartitionGlobalIndex(t *testing.T) {
 	tk.MustExec("alter table t remove partitioning")
 	tt = external.GetTableByName(t, tk, "test", "t")
 	require.Equal(t, 2, len(tt.Meta().Indices))
-	idxInfo := tt.Meta().FindIndexByName("idx_b")
+	idxInfo = tt.Meta().FindIndexByName("idx_b")
 	require.False(t, idxInfo.Global)
 	require.True(t, idxInfo.Unique)
 	idxInfo = tt.Meta().FindIndexByName("idx_c")
