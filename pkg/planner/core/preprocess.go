@@ -243,6 +243,7 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		if node.With != nil {
 			p.preprocessWith.cteStack = append(p.preprocessWith.cteStack, node.With.CTEs)
 		}
+		p.checkSelectNoopFuncs(node)
 	case *ast.SetOprStmt:
 		if node.With != nil {
 			p.preprocessWith.cteStack = append(p.preprocessWith.cteStack, node.With.CTEs)
@@ -1125,6 +1126,31 @@ func (p *preprocessor) checkCreateIndexGrammar(stmt *ast.CreateIndexStmt) {
 		return
 	}
 	p.err = checkIndexInfo(stmt.IndexName, stmt.IndexPartSpecifications)
+}
+
+func (p *preprocessor) checkSelectNoopFuncs(stmt *ast.SelectStmt) {
+	noopFuncsMode := p.sctx.GetSessionVars().NoopFuncsMode
+	if noopFuncsMode == variable.OnInt {
+		return
+	}
+	if stmt.SelectStmtOpts != nil && stmt.SelectStmtOpts.CalcFoundRows {
+		err := expression.ErrFunctionsNoopImpl.GenWithStackByArgs("SQL_CALC_FOUND_ROWS")
+		if noopFuncsMode == variable.OffInt {
+			p.err = err
+			return
+		}
+		// NoopFuncsMode is Warn, append an error
+		p.sctx.GetSessionVars().StmtCtx.AppendWarning(err)
+	}
+	if stmt.LockInfo != nil && stmt.LockInfo.LockType == ast.SelectLockForShare {
+		err := expression.ErrFunctionsNoopImpl.GenWithStackByArgs("LOCK IN SHARE MODE")
+		if noopFuncsMode == variable.OffInt {
+			p.err = err
+			return
+		}
+		// NoopFuncsMode is Warn, append an error
+		p.sctx.GetSessionVars().StmtCtx.AppendWarning(err)
+	}
 }
 
 func (p *preprocessor) checkGroupBy(stmt *ast.GroupByClause) {
