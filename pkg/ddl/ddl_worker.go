@@ -37,12 +37,12 @@ import (
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	pumpcli "github.com/pingcap/tidb/pkg/tidb-binlog/pump_client"
+	db_util "github.com/pingcap/tidb/pkg/util"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	tidblogutil "github.com/pingcap/tidb/pkg/util/logutil"
@@ -592,11 +592,6 @@ func (w *worker) updateDDLJob(job *model.Job, meetErr bool) error {
 	return errors.Trace(updateDDLJob2Table(w.sess, job, updateRawArgs))
 }
 
-func matchMDLInfoTable(schemaName, tblName string) bool {
-	return strings.ToLower(schemaName) == mysql.SystemDB &&
-		strings.ToLower(tblName) == MDLInfoTable
-}
-
 // registerMDLInfo registers metadata lock info.
 func (w *worker) registerMDLInfo(job *model.Job, ver int64) error {
 	if !variable.EnableMDL.Load() {
@@ -615,9 +610,9 @@ func (w *worker) registerMDLInfo(job *model.Job, ver int64) error {
 	ownerID := w.ownerManager.ID()
 	ids := rows[0].GetString(0)
 	var sql string
-	if matchMDLInfoTable(job.SchemaName, job.TableName) {
-		// DDLs that modify system table `tidb_mdl_info` could only happen in upgrade process,
-		// we should not reference 'owner_id'. Otherwise, there is a circular problem.
+	if db_util.IsSysDB(strings.ToLower(job.SchemaName)) {
+		// DDLs that modify system tables could only happen in upgrade process,
+		// we should not reference 'owner_id'. Otherwise, there is a circular blocking problem.
 		sql = fmt.Sprintf("replace into mysql.tidb_mdl_info (job_id, version, table_ids) values (%d, %d, '%s')", job.ID, ver, ids)
 	} else {
 		sql = fmt.Sprintf("replace into mysql.tidb_mdl_info (job_id, version, table_ids, owner_id) values (%d, %d, '%s', '%s')", job.ID, ver, ids, ownerID)
@@ -632,9 +627,9 @@ func cleanMDLInfo(pool *sess.Pool, job *model.Job, ec *clientv3.Client, ownerID 
 		return
 	}
 	var sql string
-	if matchMDLInfoTable(job.SchemaName, job.TableName) {
-		// DDLs that modify system table `tidb_mdl_info` could only happen in upgrade process,
-		// we should not reference 'owner_id'. Otherwise, there is a circular problem.
+	if db_util.IsSysDB(strings.ToLower(job.SchemaName)) {
+		// DDLs that modify system tables could only happen in upgrade process,
+		// we should not reference 'owner_id'. Otherwise, there is a circular blocking problem.
 		sql = fmt.Sprintf("delete from mysql.tidb_mdl_info where job_id = %d", job.ID)
 	} else {
 		sql = fmt.Sprintf("delete from mysql.tidb_mdl_info where job_id = %d and owner_id = '%s'", job.ID, ownerID)
