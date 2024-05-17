@@ -1855,9 +1855,11 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 	planGenerator := func() (p string, h string, e any) {
 		defer func() {
 			e = recover()
-			logutil.BgLogger().Warn("fail to generate plan info",
-				zap.Stack("backtrace"),
-				zap.Any("error", e))
+			if e != nil {
+				logutil.BgLogger().Warn("fail to generate plan info",
+					zap.Stack("backtrace"),
+					zap.Any("error", e))
+			}
 		}()
 		p, h = getEncodedPlan(stmtCtx, !sessVars.InRestrictedSQL)
 		return
