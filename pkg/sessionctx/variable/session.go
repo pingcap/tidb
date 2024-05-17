@@ -839,9 +839,6 @@ type SessionVars struct {
 	// MPPOuterJoinFixedBuildSide means in MPP plan, always use right(left) table as build side for left(right) out join
 	MPPOuterJoinFixedBuildSide bool
 
-	// UseHashJoinV2 mean use hash join v2 if supported
-	UseHashJoinV2 bool
-
 	// AllowDistinctAggPushDown can be set true to allow agg with distinct push down to tikv/tiflash.
 	AllowDistinctAggPushDown bool
 
@@ -1994,7 +1991,6 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		AllowAggPushDown:              false,
 		AllowCartesianBCJ:             DefOptCartesianBCJ,
 		MPPOuterJoinFixedBuildSide:    DefOptMPPOuterJoinFixedBuildSide,
-		UseHashJoinV2:                 DefOptUseHashJoinV2,
 		BroadcastJoinThresholdSize:    DefBroadcastJoinThresholdSize,
 		BroadcastJoinThresholdCount:   DefBroadcastJoinThresholdSize,
 		OptimizerSelectivityLevel:     DefTiDBOptimizerSelectivityLevel,

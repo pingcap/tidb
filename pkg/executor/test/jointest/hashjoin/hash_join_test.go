@@ -22,6 +22,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/executor/join"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -488,7 +489,10 @@ func TestFinalizeCurrentSegPanic(t *testing.T) {
 	tk.MustExec("create table t2 (a int, b int, c int)")
 	tk.MustExec("insert into t1 values (1, 1, 1), (1, 2, 2), (2, 1, 3), (2, 2, 4)")
 	tk.MustExec("insert into t2 values (1, 1, 1), (1, 2, 2), (2, 1, 3), (2, 2, 4)")
-	tk.MustExec("set tidb_opt_use_hash_join_v2 = 1")
+	join.EnableHashJoinV2 = true
+	defer func() {
+		join.EnableHashJoinV2 = false
+	}()
 	fpName := "github.com/pingcap/tidb/pkg/executor/join/finalizeCurrentSegPanic"
 	require.NoError(t, failpoint.Enable(fpName, "panic(\"finalizeCurrentSegPanic\")"))
 	defer func() {
@@ -508,7 +512,10 @@ func TestSplitPartitionPanic(t *testing.T) {
 	tk.MustExec("create table t2 (a int, b int, c int)")
 	tk.MustExec("insert into t1 values (1, 1, 1), (1, 2, 2), (2, 1, 3), (2, 2, 4)")
 	tk.MustExec("insert into t2 values (1, 1, 1), (1, 2, 2), (2, 1, 3), (2, 2, 4)")
-	tk.MustExec("set tidb_opt_use_hash_join_v2 = 1")
+	join.EnableHashJoinV2 = true
+	defer func() {
+		join.EnableHashJoinV2 = false
+	}()
 	fpName := "github.com/pingcap/tidb/pkg/executor/join/splitPartitionPanic"
 	require.NoError(t, failpoint.Enable(fpName, "panic(\"splitPartitionPanic\")"))
 	defer func() {
@@ -528,7 +535,10 @@ func TestProcessOneProbeChunkPanic(t *testing.T) {
 	tk.MustExec("create table t2 (a int, b int, c int)")
 	tk.MustExec("insert into t1 values (1, 1, 1), (1, 2, 2), (2, 1, 3), (2, 2, 4)")
 	tk.MustExec("insert into t2 values (1, 1, 1), (1, 2, 2), (2, 1, 3), (2, 2, 4)")
-	tk.MustExec("set tidb_opt_use_hash_join_v2 = 1")
+	join.EnableHashJoinV2 = true
+	defer func() {
+		join.EnableHashJoinV2 = false
+	}()
 	fpName := "github.com/pingcap/tidb/pkg/executor/join/processOneProbeChunkPanic"
 	require.NoError(t, failpoint.Enable(fpName, "panic(\"processOneProbeChunkPanic\")"))
 	defer func() {
@@ -548,7 +558,10 @@ func TestCreateTasksPanic(t *testing.T) {
 	tk.MustExec("create table t2 (a int, b int, c int)")
 	tk.MustExec("insert into t1 values (1, 1, 1), (1, 2, 2), (2, 1, 3), (2, 2, 4)")
 	tk.MustExec("insert into t2 values (1, 1, 1), (1, 2, 2), (2, 1, 3), (2, 2, 4)")
-	tk.MustExec("set tidb_opt_use_hash_join_v2 = 1")
+	join.EnableHashJoinV2 = true
+	defer func() {
+		join.EnableHashJoinV2 = false
+	}()
 	fpName := "github.com/pingcap/tidb/pkg/executor/join/createTasksPanic"
 	require.NoError(t, failpoint.Enable(fpName, "panic(\"createTasksPanic\")"))
 	defer func() {
@@ -568,7 +581,10 @@ func TestBuildHashTablePanic(t *testing.T) {
 	tk.MustExec("create table t2 (a int, b int, c int)")
 	tk.MustExec("insert into t1 values (1, 1, 1), (1, 2, 2), (2, 1, 3), (2, 2, 4)")
 	tk.MustExec("insert into t2 values (1, 1, 1), (1, 2, 2), (2, 1, 3), (2, 2, 4)")
-	tk.MustExec("set tidb_opt_use_hash_join_v2 = 1")
+	join.EnableHashJoinV2 = true
+	defer func() {
+		join.EnableHashJoinV2 = false
+	}()
 	fpName := "github.com/pingcap/tidb/pkg/executor/join/buildHashTablePanic"
 	require.NoError(t, failpoint.Enable(fpName, "panic(\"buildHashTablePanic\")"))
 	defer func() {
@@ -588,7 +604,10 @@ func TestKillDuringProbe(t *testing.T) {
 	tk.MustExec("create table t1(c1 int, c2 int)")
 	tk.MustExec("insert into t values(1,1),(2,2)")
 	tk.MustExec("insert into t1 values(2,3),(4,4)")
-	tk.MustExec("set tidb_opt_use_hash_join_v2 = 1")
+	join.EnableHashJoinV2 = true
+	defer func() {
+		join.EnableHashJoinV2 = false
+	}()
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/join/killedDuringProbe", "return(true)"))
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/join/killedDuringProbe"))
@@ -618,7 +637,10 @@ func TestKillDuringBuild(t *testing.T) {
 	tk.MustExec("create table t1(c1 int, c2 int)")
 	tk.MustExec("insert into t values(1,1),(2,2)")
 	tk.MustExec("insert into t1 values(2,3),(4,4)")
-	tk.MustExec("set tidb_opt_use_hash_join_v2 = 1")
+	join.EnableHashJoinV2 = true
+	defer func() {
+		join.EnableHashJoinV2 = false
+	}()
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/join/killedDuringBuild", "return(true)"))
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/join/killedDuringBuild"))
