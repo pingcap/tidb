@@ -1197,7 +1197,7 @@ const (
 	DefOptDeriveTopN                               = false
 	DefOptCartesianBCJ                             = 1
 	DefOptMPPOuterJoinFixedBuildSide               = false
-	DefOptUseHashJoinV2                            = true
+	DefOptUseHashJoinV2                            = false
 	DefOptWriteRowID                               = false
 	DefOptEnableCorrelationAdjustment              = true
 	DefOptLimitPushDownThreshold                   = 100
