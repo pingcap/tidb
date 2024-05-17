@@ -201,11 +201,11 @@ Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
 insert into t values ('[-1]');
 Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
 insert into t values ('["1"]');
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 1292 (22007): Incorrect time value: '1'
 insert into t values ('["a"]');
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 1292 (22007): Incorrect datetime value: 'a'
 insert into t values ('["汉字"]');
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 1292 (22007): Incorrect datetime value: '汉字'
 insert into t values ('[1.2]');
 Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
 insert into t values ('[1.0]');
@@ -247,11 +247,11 @@ Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
 insert into t values ('[-1]');
 Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
 insert into t values ('["1"]');
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 1292 (22007): Incorrect time value: '1'
 insert into t values ('["a"]');
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 1292 (22007): Incorrect datetime value: 'a'
 insert into t values ('["汉字"]');
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 1292 (22007): Incorrect datetime value: '汉字'
 insert into t values ('[1.2]');
 Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
 insert into t values ('[1.0]');
@@ -423,11 +423,11 @@ Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
 insert into t values ('[-1]');
 Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
 insert into t values ('["1"]');
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 1292 (22007): Incorrect time value: '1'
 insert into t values ('["a"]');
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 1292 (22007): Incorrect datetime value: 'a'
 insert into t values ('["汉字"]');
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 1292 (22007): Incorrect datetime value: '汉字'
 insert into t values ('[1.2]');
 Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
 insert into t values ('[1.0]');
@@ -469,11 +469,11 @@ Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
 insert into t values ('[-1]');
 Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
 insert into t values ('["1"]');
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 1292 (22007): Incorrect time value: '1'
 insert into t values ('["a"]');
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 1292 (22007): Incorrect datetime value: 'a'
 insert into t values ('["汉字"]');
-Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
+Error 1292 (22007): Incorrect datetime value: '汉字'
 insert into t values ('[1.2]');
 Error 3903 (HY000): Invalid JSON value for CAST for expression index 'idx'
 insert into t values ('[1.0]');
@@ -516,3 +516,23 @@ drop table t;
 create table t (j json not null, str varchar(5) collate gbk_chinese_ci,  KEY `idx` ((cast(`j` as unsigned array)),`str`));
 insert into t values ('1', 'abcde');
 drop table t;
+drop table if exists t;
+CREATE TABLE t (j JSON, UNIQUE INDEX idx_a ((CAST(j AS DATE ARRAY))) );
+INSERT INTO t VALUES (JSON_ARRAY('2024-05-13', '2020-01-01'));
+INSERT INTO t VALUES (JSON_ARRAY('2024-05-13', '2020-01-01'));
+Error 1062 (23000): Duplicate entry '1847955789872889856' for key 't.idx_a'
+INSERT INTO t VALUES (JSON_ARRAY('2024-05-13 12:12:12', '2020-01-01 11:11:11'));
+Error 1062 (23000): Duplicate entry '1847955789872889856' for key 't.idx_a'
+SELECT * FROM t;
+j
+["2024-05-13", "2020-01-01"]
+drop table if exists t;
+CREATE TABLE t (j JSON, UNIQUE INDEX idx_a ((CAST(j AS DATETIME(3) ARRAY))) );
+INSERT INTO t VALUES (JSON_ARRAY('2024-05-13 11:11:11.111111'));
+INSERT INTO t VALUES (JSON_ARRAY('2024-05-13 11:11:11.111222'));
+Error 1062 (23000): Duplicate entry '1851923595735970200' for key 't.idx_a'
+INSERT INTO t VALUES (JSON_ARRAY('2024-05-13 11:11:11.222222'));
+SELECT * FROM t;
+j
+["2024-05-13 11:11:11.111111"]
+["2024-05-13 11:11:11.222222"]

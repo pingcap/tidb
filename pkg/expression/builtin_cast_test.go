@@ -1691,6 +1691,41 @@ func TestCastArrayFunc(t *testing.T) {
 			false,
 			true,
 		},
+		{
+			[]any{"2024-10-24"},
+			[]any{types.NewTime(types.FromDate(2024, 10, 24, 0, 0, 0, 0), mysql.TypeDate, 0)},
+			types.NewFieldTypeBuilder().SetType(mysql.TypeDate).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin).SetArray(true).BuildP(),
+			true,
+			true,
+		},
+		{
+			[]any{"2024-13-24"},
+			nil,
+			types.NewFieldTypeBuilder().SetType(mysql.TypeDate).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin).SetArray(true).BuildP(),
+			false,
+			true,
+		},
+		{
+			[]any{"2024-10-24 10:24:10.241024"},
+			[]any{types.NewTime(types.FromDate(2024, 10, 24, 10, 24, 10, 241024), mysql.TypeDatetime, 6)},
+			types.NewFieldTypeBuilder().SetType(mysql.TypeDatetime).SetDecimal(6).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin).SetArray(true).BuildP(),
+			true,
+			true,
+		},
+		{
+			[]any{"2024-10-24 10:24:10.2410241024"},
+			[]any{types.NewTime(types.FromDate(2024, 10, 24, 10, 24, 10, 241024), mysql.TypeDatetime, 6)},
+			types.NewFieldTypeBuilder().SetType(mysql.TypeDatetime).SetDecimal(6).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin).SetArray(true).BuildP(),
+			true,
+			true,
+		},
+		{
+			[]any{"just random string"},
+			nil,
+			types.NewFieldTypeBuilder().SetType(mysql.TypeDatetime).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin).SetArray(true).BuildP(),
+			false,
+			true,
+		},
 	}
 	for _, tt := range tbl {
 		f, err := BuildCastFunctionWithCheck(ctx, datumsToConstants(types.MakeDatums(types.CreateBinaryJSON(tt.input)))[0], tt.tp, false)
