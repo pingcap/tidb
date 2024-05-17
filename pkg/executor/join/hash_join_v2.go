@@ -41,6 +41,8 @@ import (
 
 var (
 	_ exec.Executor = &HashJoinV2Exec{}
+	// EnableHashJoinV2 is a variable used only in test
+	EnableHashJoinV2 = false
 )
 
 type hashTableContext struct {
