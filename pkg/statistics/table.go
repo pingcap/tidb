@@ -19,7 +19,6 @@ import (
 	"fmt"
 	"slices"
 	"strings"
-	"sync"
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -674,90 +673,6 @@ func (t *Table) IndexIsLoadNeeded(id int64) (*Index, bool) {
 		return idx, true
 	}
 	return idx, false
-}
-
-type neededStatsInternalMap struct {
-	items map[model.TableItemID]struct{}
-	m     sync.RWMutex
-}
-
-func (n *neededStatsInternalMap) AllItems() []model.TableItemID {
-	n.m.RLock()
-	keys := make([]model.TableItemID, 0, len(n.items))
-	for key := range n.items {
-		keys = append(keys, key)
-	}
-	n.m.RUnlock()
-	return keys
-}
-
-func (n *neededStatsInternalMap) Insert(col model.TableItemID) {
-	n.m.Lock()
-	n.items[col] = struct{}{}
-	n.m.Unlock()
-}
-
-func (n *neededStatsInternalMap) Delete(col model.TableItemID) {
-	n.m.Lock()
-	delete(n.items, col)
-	n.m.Unlock()
-}
-
-func (n *neededStatsInternalMap) Length() int {
-	n.m.RLock()
-	defer n.m.RUnlock()
-	return len(n.items)
-}
-
-const shardCnt = 128
-
-type neededStatsMap struct {
-	items [shardCnt]neededStatsInternalMap
-}
-
-func getIdx(tbl model.TableItemID) int64 {
-	var id int64
-	if tbl.ID < 0 {
-		id = -tbl.ID
-	} else {
-		id = tbl.ID
-	}
-	return id % shardCnt
-}
-
-func newNeededStatsMap() *neededStatsMap {
-	result := neededStatsMap{}
-	for i := 0; i < shardCnt; i++ {
-		result.items[i] = neededStatsInternalMap{
-			items: make(map[model.TableItemID]struct{}),
-		}
-	}
-	return &result
-}
-
-func (n *neededStatsMap) AllItems() []model.TableItemID {
-	var result []model.TableItemID
-	for i := 0; i < shardCnt; i++ {
-		keys := n.items[i].AllItems()
-		result = append(result, keys...)
-	}
-	return result
-}
-
-func (n *neededStatsMap) Insert(col model.TableItemID) {
-	n.items[getIdx(col)].Insert(col)
-}
-
-func (n *neededStatsMap) Delete(col model.TableItemID) {
-	n.items[getIdx(col)].Delete(col)
-}
-
-func (n *neededStatsMap) Length() int {
-	var result int
-	for i := 0; i < shardCnt; i++ {
-		result += n.items[i].Length()
-	}
-	return result
 }
 
 // RatioOfPseudoEstimate means if modifyCount / statsTblCount is greater than this ratio, we think the stats is invalid

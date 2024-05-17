@@ -656,7 +656,7 @@ func (w *indexIngestLocalWorker) HandleTask(rs IndexRecordChunk, send func(Index
 	}()
 	w.indexIngestBaseWorker.HandleTask(rs, send)
 	// needs to flush and import to avoid too much use of disk.
-	_, _, _, err := ingest.TryFlushAllIndexes(w.backendCtx, ingest.FlushModeAuto, w.indexIDs)
+	_, _, _, err := w.backendCtx.Flush(ingest.FlushModeAuto)
 	if err != nil {
 		w.ctx.onError(err)
 		return
@@ -726,8 +726,14 @@ func (w *indexIngestBaseWorker) initSessCtx() {
 }
 
 func (w *indexIngestBaseWorker) Close() {
+	// TODO(lance6716): unify the real write action for engineInfo and external
+	// writer.
 	for _, writer := range w.writers {
-		err := writer.Close(w.ctx)
+		ew, ok := writer.(*external.Writer)
+		if !ok {
+			break
+		}
+		err := ew.Close(w.ctx)
 		if err != nil {
 			w.ctx.onError(err)
 		}
@@ -827,24 +833,36 @@ func (s *indexWriteResultSink) flush() error {
 	failpoint.Inject("mockFlushError", func(_ failpoint.Value) {
 		failpoint.Return(errors.New("mock flush error"))
 	})
-	for _, index := range s.indexes {
-		idxInfo := index.Meta()
-		_, _, err := s.backendCtx.Flush(idxInfo.ID, ingest.FlushModeForceFlushAndImport)
-		if err != nil {
-			if common.ErrFoundDuplicateKeys.Equal(err) {
-				err = convertToKeyExistsErr(err, idxInfo, s.tbl.Meta())
-				return err
+	_, _, errIdxID, err := s.backendCtx.Flush(ingest.FlushModeForceFlushAndImport)
+	if err != nil {
+		if common.ErrFoundDuplicateKeys.Equal(err) {
+			var idxInfo table.Index
+			for _, idx := range s.indexes {
+				if idx.Meta().ID == errIdxID {
+					idxInfo = idx
+					break
+				}
 			}
-			logutil.Logger(s.ctx).Error("flush error",
-				zap.String("category", "ddl"), zap.Error(err))
-			return err
+			if idxInfo == nil {
+				logutil.Logger(s.ctx).Error("index not found", zap.Int64("indexID", errIdxID))
+				return kv.ErrKeyExists
+			}
+			return convertToKeyExistsErr(err, idxInfo.Meta(), s.tbl.Meta())
 		}
+		logutil.Logger(s.ctx).Error("flush error",
+			zap.String("category", "ddl"), zap.Error(err))
+		return err
 	}
 	return nil
 }
 
 func (s *indexWriteResultSink) Close() error {
-	return s.errGroup.Wait()
+	err := s.errGroup.Wait()
+	// for local pipeline
+	if bc := s.backendCtx; bc != nil {
+		bc.UnregisterEngines()
+	}
+	return err
 }
 
 func (*indexWriteResultSink) String() string {

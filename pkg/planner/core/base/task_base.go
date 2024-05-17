@@ -32,3 +32,6 @@ type Task interface {
 	// MemoryUsage returns the memory usage of current task.
 	MemoryUsage() int64
 }
+
+// InvalidTask is just a common invalid singleton instance initialized by core's empty RootTask.
+var InvalidTask Task

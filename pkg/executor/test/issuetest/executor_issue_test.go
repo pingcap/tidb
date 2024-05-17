@@ -183,6 +183,21 @@ func TestIssue30289(t *testing.T) {
 	require.EqualError(t, err, "issue30289 build return error")
 }
 
+func TestIssue51998(t *testing.T) {
+	fpName := "github.com/pingcap/tidb/pkg/executor/join/issue51998"
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int)")
+	require.NoError(t, failpoint.Enable(fpName, `return(true)`))
+	defer func() {
+		require.NoError(t, failpoint.Disable(fpName))
+	}()
+	err := tk.QueryToErr("select /*+ hash_join(t1) */ * from t t1 join t t2 on t1.a=t2.a")
+	require.EqualError(t, err, "issue51998 build return error")
+}
+
 func TestIssue29498(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -659,5 +674,29 @@ func TestIssue52978(t *testing.T) {
 	tk.MustExec("create table t (a int)")
 	tk.MustExec("insert into t values (-1790816583),(2049821819), (-1366665321), (536581933), (-1613686445)")
 	tk.MustQuery("select min(truncate(cast(-26340 as double), ref_11.a)) as c3 from t as ref_11;").Check(testkit.Rows("-26340"))
+	tk.MustExec("drop table if exists t")
+}
+
+func TestIssue53221(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a varchar(20))")
+	tk.MustExec("insert into t values ('')")
+	tk.MustExec("insert into t values ('')")
+	err := tk.QueryToErr("select regexp_like('hello', t.a) from test.t")
+	require.ErrorContains(t, err, "Empty pattern is invalid")
+
+	err = tk.QueryToErr("select regexp_instr('hello', t.a) from test.t")
+	require.ErrorContains(t, err, "Empty pattern is invalid")
+
+	err = tk.QueryToErr("select regexp_substr('hello', t.a) from test.t")
+	require.ErrorContains(t, err, "Empty pattern is invalid")
+
+	err = tk.QueryToErr("select regexp_replace('hello', t.a, 'd') from test.t")
+	require.ErrorContains(t, err, "Empty pattern is invalid")
+
 	tk.MustExec("drop table if exists t")
 }

@@ -272,9 +272,6 @@ func (fetcher *ProbeSideTupleFetcher) fetchProbeSideChunks(ctx context.Context, 
 					probeSideResult.Reset()
 				}
 			})
-			if probeSideResult.NumRows() == 0 && !fetcher.UseOuterToBuild {
-				fetcher.finished.Store(true)
-			}
 			emptyBuild, buildErr := fetcher.wait4BuildSide()
 			if buildErr != nil {
 				fetcher.joinResultCh <- &hashjoinWorkerResult{
@@ -332,12 +329,22 @@ func (w *BuildWorker) fetchBuildSideRows(ctx context.Context, chkCh chan<- *chun
 		}
 	})
 	sessVars := w.HashJoinCtx.SessCtx.GetSessionVars()
+	failpoint.Inject("issue51998", func(val failpoint.Value) {
+		if val.(bool) {
+			time.Sleep(2 * time.Second)
+		}
+	})
 	for {
 		if w.HashJoinCtx.finished.Load() {
 			return
 		}
 		chk := w.HashJoinCtx.ChunkAllocPool.Alloc(w.BuildSideExec.RetFieldTypes(), sessVars.MaxChunkSize, sessVars.MaxChunkSize)
 		err = exec.Next(ctx, w.BuildSideExec, chk)
+		failpoint.Inject("issue51998", func(val failpoint.Value) {
+			if val.(bool) {
+				err = errors.Errorf("issue51998 build return error")
+			}
+		})
 		if err != nil {
 			errCh <- errors.Trace(err)
 			return

@@ -541,7 +541,7 @@ func (b *Builder) applyDropSchema(diff *model.SchemaDiff) []int64 {
 	if !ok {
 		return nil
 	}
-	delete(b.infoSchema.schemaMap, di.Name.L)
+	b.infoSchema.delSchema(di)
 
 	// Copy the sortedTables that contain the table we are going to drop.
 	tableIDs := make([]int64, 0, len(di.Tables))
@@ -573,10 +573,10 @@ func (b *Builder) applyRecoverSchema(m *meta.Meta, diff *model.SchemaDiff) ([]in
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	b.infoSchema.schemaMap[di.Name.L] = &schemaTables{
+	b.infoSchema.addSchema(&schemaTables{
 		dbInfo: di,
 		tables: make(map[string]table.Table, len(diff.AffectedOpts)),
-	}
+	})
 	return applyCreateTables(b, m, diff)
 }
 
@@ -817,8 +817,8 @@ func (b *Builder) InitWithOldInfoSchema(oldSchema InfoSchema) (*Builder, error) 
 }
 
 func (b *Builder) copySchemasMap(oldIS *infoSchema) {
-	for k, v := range oldIS.schemaMap {
-		b.infoSchema.schemaMap[k] = v
+	for _, v := range oldIS.schemaMap {
+		b.infoSchema.addSchema(v)
 	}
 }
 
@@ -837,7 +837,7 @@ func (b *Builder) getSchemaAndCopyIfNecessary(dbName string) *model.DBInfo {
 		for k, v := range oldSchemaTables.tables {
 			newSchemaTables.tables[k] = v
 		}
-		b.infoSchema.schemaMap[dbName] = newSchemaTables
+		b.infoSchema.addSchema(newSchemaTables)
 		return newSchemaTables.dbInfo
 	}
 	return b.infoSchema.schemaMap[dbName].dbInfo
@@ -944,7 +944,7 @@ func (b *Builder) addDB(schemaVersion int64, di *model.DBInfo, schTbls *schemaTa
 			b.infoData.addDB(schemaVersion, di)
 		}
 	} else {
-		b.infoSchema.schemaMap[di.Name.L] = schTbls
+		b.infoSchema.addSchema(schTbls)
 	}
 }
 
