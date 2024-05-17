@@ -166,7 +166,7 @@ func (p *LogicalProjection) PushDownTopN(topNLogicalPlan base.LogicalPlan, opt *
 		topN = topNLogicalPlan.(*LogicalTopN)
 	}
 	for _, expr := range p.Exprs {
-		if expression.HasAssignSetVarFunc(expr) || !expression.IsImmutableFunc(expr) {
+		if expression.HasAssignSetVarFunc(expr) {
 			return p.baseLogicalPlan.PushDownTopN(topN, opt)
 		}
 	}
