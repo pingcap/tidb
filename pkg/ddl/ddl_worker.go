@@ -42,7 +42,6 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	pumpcli "github.com/pingcap/tidb/pkg/tidb-binlog/pump_client"
-	db_util "github.com/pingcap/tidb/pkg/util"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	tidblogutil "github.com/pingcap/tidb/pkg/util/logutil"
@@ -610,7 +609,7 @@ func (w *worker) registerMDLInfo(job *model.Job, ver int64) error {
 	ownerID := w.ownerManager.ID()
 	ids := rows[0].GetString(0)
 	var sql string
-	if db_util.IsSysDB(strings.ToLower(job.SchemaName)) {
+	if tidbutil.IsSysDB(strings.ToLower(job.SchemaName)) {
 		// DDLs that modify system tables could only happen in upgrade process,
 		// we should not reference 'owner_id'. Otherwise, there is a circular blocking problem.
 		sql = fmt.Sprintf("replace into mysql.tidb_mdl_info (job_id, version, table_ids) values (%d, %d, '%s')", job.ID, ver, ids)
@@ -627,7 +626,7 @@ func cleanMDLInfo(pool *sess.Pool, job *model.Job, ec *clientv3.Client, ownerID 
 		return
 	}
 	var sql string
-	if db_util.IsSysDB(strings.ToLower(job.SchemaName)) {
+	if tidbutil.IsSysDB(strings.ToLower(job.SchemaName)) {
 		// DDLs that modify system tables could only happen in upgrade process,
 		// we should not reference 'owner_id'. Otherwise, there is a circular blocking problem.
 		sql = fmt.Sprintf("delete from mysql.tidb_mdl_info where job_id = %d", job.ID)
