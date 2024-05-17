@@ -25,7 +25,6 @@ import (
 	"time"
 	"unsafe"
 
-	"github.com/cznic/mathutil"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -583,7 +582,7 @@ func (e *HashJoinV2Exec) checkBalance(totalSegmentCnt int) bool {
 
 func (e *HashJoinV2Exec) createTasks(buildTaskCh chan<- *buildTask, totalSegmentCnt int, doneCh chan struct{}) {
 	isBalanced := e.checkBalance(totalSegmentCnt)
-	segStep := mathutil.Max(1, totalSegmentCnt/int(e.Concurrency))
+	segStep := max(1, totalSegmentCnt/int(e.Concurrency))
 	subTables := e.HashJoinCtxV2.hashTableContext.hashTable.tables
 	createBuildTask := func(partIdx int, segStartIdx int, segEndIdx int) *buildTask {
 		return &buildTask{partitionIdx: partIdx, segStartIdx: segStartIdx, segEndIdx: segEndIdx}
@@ -601,7 +600,7 @@ func (e *HashJoinV2Exec) createTasks(buildTaskCh chan<- *buildTask, totalSegment
 			continue
 		}
 		for startIdx := 0; startIdx < segmentsLen; startIdx += segStep {
-			endIdx := mathutil.Min(startIdx+segStep, segmentsLen)
+			endIdx := min(startIdx+segStep, segmentsLen)
 			select {
 			case <-doneCh:
 				return
