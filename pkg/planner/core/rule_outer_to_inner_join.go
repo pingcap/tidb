@@ -169,6 +169,26 @@ func allConstants(ctx expression.BuildContext, expr expression.Expression) bool 
 	return false
 }
 
+// isNullFilteredInList checks null filter for IN list using OR logic. Reason is that null filtering through evaluation by util.IsNullRejected
+// has problems with IN list.
+func isNullFilteredInList(ctx base.PlanContext, expr *expression.ScalarFunction, innerSchema *expression.Schema) bool {
+	for i, arg := range expr.GetArgs() {
+		if i > 0 {
+			newArgs := make([]expression.Expression, 0, 2)
+			newArgs = append(newArgs, expr.GetArgs()[0])
+			newArgs = append(newArgs, arg)
+			eQCondition, err := expression.NewFunction(ctx.GetExprCtx(), ast.EQ, expr.GetType(), newArgs...)
+			if err != nil {
+				return false
+			}
+			if !(util.IsNullRejected(ctx, innerSchema, eQCondition)) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
 // isNullFiltered takes care of complex predicates like this:
 // isNullFiltered(A OR B) = isNullFiltered(A) AND isNullFiltered(B)
 // isNullFiltered(A AND B) = isNullFiltered(A) OR isNullFiltered(B)
@@ -190,6 +210,8 @@ func isNullFiltered(ctx base.PlanContext, innerSchema *expression.Schema, predic
 				return false
 			}
 			return isNullFiltered(ctx, innerSchema, expr.GetArgs()[1])
+		} else if expr.FuncName.L == ast.In {
+			return isNullFilteredInList(ctx, expr, innerSchema)
 		} else {
 			return util.IsNullRejected(ctx, innerSchema, expr)
 		}
