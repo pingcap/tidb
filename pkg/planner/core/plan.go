@@ -27,16 +27,13 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
+	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/pingcap/tidb/pkg/util/tracing"
 )
-
-func init() {
-	util.HasMaxOneRowUtil = HasMaxOneRow
-}
 
 // AsSctx converts PlanContext to sessionctx.Context.
 func AsSctx(pctx base.PlanContext) (sessionctx.Context, error) {
@@ -51,11 +48,11 @@ func enforceProperty(p *property.PhysicalProperty, tsk base.Task, ctx base.PlanC
 	if p.TaskTp == property.MppTaskType {
 		mpp, ok := tsk.(*MppTask)
 		if !ok || mpp.Invalid() {
-			return invalidTask
+			return base.InvalidTask
 		}
 		if !p.IsSortItemAllForPartition() {
 			ctx.GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because operator `Sort` is not supported now.")
-			return invalidTask
+			return base.InvalidTask
 		}
 		tsk = mpp.enforceExchanger(p)
 	}
@@ -479,7 +476,7 @@ func (p *baseLogicalPlan) BuildKeyInfo(_ *expression.Schema, _ []*expression.Sch
 	for i := range p.children {
 		childMaxOneRow[i] = p.children[i].MaxOneRow()
 	}
-	p.maxOneRow = util.HasMaxOneRowUtil(p.self, childMaxOneRow)
+	p.maxOneRow = utilfuncp.HasMaxOneRowUtil(p.self, childMaxOneRow)
 }
 
 // BuildKeyInfo implements LogicalPlan BuildKeyInfo interface.

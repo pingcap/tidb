@@ -676,3 +676,27 @@ func TestIssue52978(t *testing.T) {
 	tk.MustQuery("select min(truncate(cast(-26340 as double), ref_11.a)) as c3 from t as ref_11;").Check(testkit.Rows("-26340"))
 	tk.MustExec("drop table if exists t")
 }
+
+func TestIssue53221(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a varchar(20))")
+	tk.MustExec("insert into t values ('')")
+	tk.MustExec("insert into t values ('')")
+	err := tk.QueryToErr("select regexp_like('hello', t.a) from test.t")
+	require.ErrorContains(t, err, "Empty pattern is invalid")
+
+	err = tk.QueryToErr("select regexp_instr('hello', t.a) from test.t")
+	require.ErrorContains(t, err, "Empty pattern is invalid")
+
+	err = tk.QueryToErr("select regexp_substr('hello', t.a) from test.t")
+	require.ErrorContains(t, err, "Empty pattern is invalid")
+
+	err = tk.QueryToErr("select regexp_replace('hello', t.a, 'd') from test.t")
+	require.ErrorContains(t, err, "Empty pattern is invalid")
+
+	tk.MustExec("drop table if exists t")
+}

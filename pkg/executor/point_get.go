@@ -349,8 +349,7 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 				failpoint.InjectContext(ctx, "pointGetRepeatableReadTest-step2", nil)
 			})
 			if e.idxInfo.Global {
-				segs := tablecodec.SplitIndexValue(e.handleVal)
-				_, pid, err := codec.DecodeInt(segs.PartitionID)
+				_, pid, err := codec.DecodeInt(tablecodec.SplitIndexValue(e.handleVal).PartitionID)
 				if err != nil {
 					return err
 				}

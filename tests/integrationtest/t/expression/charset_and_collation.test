@@ -839,3 +839,12 @@ select substr(cast('[]' as json), 1) between 'W' and 'm';
 select repeat(cast('[]' as json), 10) between 'W' and 'm';
 select export_set(3,cast('[]' as json),'2','-',8) between 'W' and 'm';
 set names default;
+
+
+# TestConvertCharsetFromBinary
+--enable_warnings
+select cast(compress('b') as char);
+set sql_mode='';
+select cast(compress('b') as char);
+--disable_warnings
+set sql_mode=DEFAULT;

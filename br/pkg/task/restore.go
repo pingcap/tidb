@@ -785,6 +785,14 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	if err != nil {
 		return errors.Trace(err)
 	}
+	if cfg.CheckRequirements {
+		err := checkIncompatibleChangefeed(ctx, backupMeta.EndVersion, mgr.GetDomain().GetEtcdClient())
+		log.Info("Checking incompatible TiCDC changefeeds before restoring.",
+			logutil.ShortError(err), zap.Uint64("restore-ts", backupMeta.EndVersion))
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
 
 	backupVersion := version.NormalizeBackupVersion(backupMeta.ClusterVersion)
 	if cfg.CheckRequirements && backupVersion != nil {
@@ -1349,7 +1357,7 @@ func PreCheckTableTiFlashReplica(
 				// set TiFlashReplica to unavailable in tableInfo, to avoid TiDB cannot sense TiFlash and make plan to TiFlash
 				// see details at https://github.com/pingcap/br/issues/931
 				// TODO maybe set table.Info.TiFlashReplica.Count to tiFlashStoreCount, but we need more tests about it.
-				log.Warn("table does not satisfy tiflash replica requirements, set tiflash replcia to unavaiable",
+				log.Warn("table does not satisfy tiflash replica requirements, set tiflash replcia to unavailable",
 					zap.Stringer("db", table.DB.Name),
 					zap.Stringer("table", table.Info.Name),
 					zap.Uint64("expect tiflash replica", table.Info.TiFlashReplica.Count),

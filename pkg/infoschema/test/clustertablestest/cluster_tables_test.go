@@ -908,6 +908,24 @@ func TestMDLView(t *testing.T) {
 	}
 }
 
+func TestMDLViewPrivilege(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
+	tk.MustQuery("select * from mysql.tidb_mdl_view;").Check(testkit.Rows())
+	tk.MustExec("create user 'test'@'%' identified by '';")
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "test", Hostname: "%"}, nil, nil, nil))
+	_, err := tk.Exec("select * from mysql.tidb_mdl_view;")
+	require.ErrorContains(t, err, "view lack rights")
+
+	// grant all privileges to test user.
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
+	tk.MustExec("grant all privileges on *.* to 'test'@'%';")
+	tk.MustExec("flush privileges;")
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "test", Hostname: "%"}, nil, nil, nil))
+	tk.MustQuery("select * from mysql.tidb_mdl_view;").Check(testkit.Rows())
+}
+
 func TestQuickBinding(t *testing.T) {
 	s := new(clusterTablesSuite)
 	s.store, s.dom = testkit.CreateMockStoreAndDomain(t)

@@ -43,12 +43,6 @@ import (
 	"golang.org/x/exp/maps"
 )
 
-func init() {
-	cardinality.CollectFilters4MVIndex = collectFilters4MVIndex
-	cardinality.BuildPartialPaths4MVIndex = buildPartialPaths4MVIndex
-	statistics.PrepareCols4MVIndex = PrepareIdxColsAndUnwrapArrayType
-}
-
 // generateIndexMergePath generates IndexMerge AccessPaths on this DataSource.
 func (ds *DataSource) generateIndexMergePath() error {
 	if ds.SCtx().GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
