@@ -6,7 +6,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"fmt"
 	"math/rand"
 	"sort"
 	"sync"
@@ -74,14 +73,11 @@ func (m *mockBackupStoreConnector) RunBackupAsync(
 		m.Lock()
 		resps := m.backupResponses[storeID]
 		m.Unlock()
-		fmt.Println("resps", resps)
 		for _, r := range resps {
 			select {
 			case <-ctx.Done():
 				return
 			case respCh <- r:
-				fmt.Println("in sending", resps)
-
 			}
 		}
 	}()
