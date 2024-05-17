@@ -58,9 +58,6 @@ const (
 
 	TiDBOptMPPOuterJoinFixedBuildSide = "tidb_opt_mpp_outer_join_fixed_build_side"
 
-	// TiDBOptUseHashJoinV2 is used to disable/enable hash join v2 in TiDB
-	TiDBOptUseHashJoinV2 = "tidb_opt_use_hash_join_v2"
-
 	// TiDBOptDistinctAggPushDown is used to decide whether agg with distinct should be pushed to tikv/tiflash.
 	TiDBOptDistinctAggPushDown = "tidb_opt_distinct_agg_push_down"
 
@@ -1197,7 +1194,6 @@ const (
 	DefOptDeriveTopN                               = false
 	DefOptCartesianBCJ                             = 1
 	DefOptMPPOuterJoinFixedBuildSide               = false
-	DefOptUseHashJoinV2                            = false
 	DefOptWriteRowID                               = false
 	DefOptEnableCorrelationAdjustment              = true
 	DefOptLimitPushDownThreshold                   = 100
