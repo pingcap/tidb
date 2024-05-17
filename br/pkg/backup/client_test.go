@@ -484,7 +484,6 @@ func TestMainBackupLoop(t *testing.T) {
 
 	// backup cannot finished until the dropped store is back
 	require.NoError(t, mainLoop.Run(backgroundCtx, req))
-
 }
 
 func TestBuildProgressRangeTree(t *testing.T) {

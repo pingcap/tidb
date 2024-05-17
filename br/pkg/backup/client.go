@@ -318,7 +318,6 @@ mainLoop:
 			}
 		}
 	}
-
 }
 
 // Client is a client instructs TiKV how to do a backup.
