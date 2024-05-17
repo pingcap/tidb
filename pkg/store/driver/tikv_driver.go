@@ -352,7 +352,9 @@ func (s *tikvStore) Close() error {
 	}
 	s.coprStore.Close()
 	err := s.KVStore.Close()
-	s.gpool.Close()
+	if s.gpool != nil {
+		s.gpool.Close()
+	}
 	return derr.ToTiDBErr(err)
 }
 
