@@ -64,6 +64,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/gcutil"
+	"github.com/pingcap/tidb/pkg/util/generic"
 	"github.com/pingcap/tidb/pkg/util/syncutil"
 	"github.com/tikv/client-go/v2/tikvrpc"
 	clientv3 "go.etcd.io/etcd/client/v3"
@@ -366,15 +367,17 @@ type ddlCtx struct {
 	ownerManager owner.Manager
 	schemaSyncer syncer.SchemaSyncer
 	stateSyncer  syncer.StateSyncer
-	ddlJobDoneCh chan struct{}
-	ddlEventCh   chan<- *statsutil.DDLEvent
-	lease        time.Duration        // lease is schema lease, default 45s, see config.Lease.
-	binlogCli    *pumpcli.PumpsClient // binlogCli is used for Binlog.
-	infoCache    *infoschema.InfoCache
-	statsHandle  *handle.Handle
-	tableLockCkr util.DeadTableLockChecker
-	etcdCli      *clientv3.Client
-	autoidCli    *autoid.ClientDiscover
+	// ddlJobDoneChMap is used to notify the session that the DDL job is finished.
+	// jobID -> chan struct{}
+	ddlJobDoneChMap generic.SyncMap[int64, chan struct{}]
+	ddlEventCh      chan<- *statsutil.DDLEvent
+	lease           time.Duration        // lease is schema lease, default 45s, see config.Lease.
+	binlogCli       *pumpcli.PumpsClient // binlogCli is used for Binlog.
+	infoCache       *infoschema.InfoCache
+	statsHandle     *handle.Handle
+	tableLockCkr    util.DeadTableLockChecker
+	etcdCli         *clientv3.Client
+	autoidCli       *autoid.ClientDiscover
 
 	*waitSchemaSyncedController
 	*schemaVersionManager
@@ -618,6 +621,27 @@ func (dc *ddlCtx) notifyReorgWorkerJobStateChange(job *model.Job) {
 	rc.notifyJobState(job.State)
 }
 
+func (dc *ddlCtx) initJobDoneCh(jobID int64) {
+	dc.ddlJobDoneChMap.Store(jobID, make(chan struct{}, 1))
+}
+
+func (dc *ddlCtx) getJobDoneCh(jobID int64) (chan struct{}, bool) {
+	return dc.ddlJobDoneChMap.Load(jobID)
+}
+
+func (dc *ddlCtx) delJobDoneCh(jobID int64) {
+	dc.ddlJobDoneChMap.Delete(jobID)
+}
+
+func (dc *ddlCtx) notifyJobDone(jobID int64) {
+	if ch, ok := dc.ddlJobDoneChMap.Load(jobID); ok {
+		select {
+		case ch <- struct{}{}:
+		default:
+		}
+	}
+}
+
 // EnableTiFlashPoll enables TiFlash poll loop aka PollTiFlashReplicaStatus.
 func EnableTiFlashPoll(d any) {
 	if dd, ok := d.(*ddl); ok {
@@ -711,7 +735,7 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 		uuid:                       id,
 		store:                      opt.Store,
 		lease:                      opt.Lease,
-		ddlJobDoneCh:               make(chan struct{}, 1),
+		ddlJobDoneChMap:            generic.NewSyncMap[int64, chan struct{}](10),
 		ownerManager:               manager,
 		schemaSyncer:               schemaSyncer,
 		stateSyncer:                stateSyncer,
@@ -811,6 +835,9 @@ func (d *ddl) prepareWorkers4ConcurrencyDDL() {
 	})
 	d.wg.Run(d.startDispatchLoop)
 	d.wg.Run(d.startLocalWorkerLoop)
+	d.wg.Run(func() {
+		d.schemaSyncer.SyncJobSchemaVerLoop(d.ctx)
+	})
 }
 
 // Start implements DDL.Start interface.
@@ -1169,6 +1196,7 @@ func (d *ddl) DoDDLJob(ctx sessionctx.Context, job *model.Job) error {
 
 	// worker should restart to continue handling tasks in limitJobCh, and send back through task.err
 	err := <-task.errChs[0]
+	defer d.delJobDoneCh(job.ID)
 	if err != nil {
 		// The transaction of enqueuing job is failed.
 		return errors.Trace(err)
@@ -1205,13 +1233,14 @@ func (d *ddl) DoDDLJob(ctx sessionctx.Context, job *model.Job) error {
 		recordLastDDLInfo(ctx, historyJob)
 	}()
 	i := 0
+	notifyCh, _ := d.getJobDoneCh(job.ID)
 	for {
 		failpoint.Inject("storeCloseInLoop", func(_ failpoint.Value) {
 			_ = d.Stop()
 		})
 
 		select {
-		case <-d.ddlJobDoneCh:
+		case <-notifyCh:
 		case <-ticker.C:
 			i++
 			ticker = updateTickerInterval(ticker, 10*d.lease, job, i)

@@ -16,12 +16,17 @@ package local_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/coreos/go-semver/semver"
+	"github.com/pingcap/errors"
+	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/pingcap/tidb/br/pkg/utiltest"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/lightning/backend/local"
+	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/stretchr/testify/require"
 )
@@ -76,4 +81,37 @@ func TestCheckRequirementsTiFlash(t *testing.T) {
 
 	err = local.CheckTiFlashVersionForTest(ctx, db, checkCtx, *semver.New("4.0.2"))
 	require.Regexp(t, "^lightning local backend doesn't support TiFlash in this TiDB version. conflict tables: \\[`test`.`t1`, `test1`.`tbl`\\]", err.Error())
+}
+
+func TestGetRegionSplitSizeKeys(t *testing.T) {
+	allStores := []*metapb.Store{
+		{
+			Address:       "172.16.102.1:20160",
+			StatusAddress: "0.0.0.0:20180",
+		},
+		{
+			Address:       "172.16.102.2:20160",
+			StatusAddress: "0.0.0.0:20180",
+		},
+		{
+			Address:       "172.16.102.3:20160",
+			StatusAddress: "0.0.0.0:20180",
+		},
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	cli := utiltest.NewFakePDClient(allStores, false, nil)
+	defer func() {
+		local.SetGetSplitConfFromStoreFunc(local.GetSplitConfFromStore)
+	}()
+	local.SetGetSplitConfFromStoreFunc(func(ctx context.Context, host string, tls *common.TLS) (int64, int64, error) {
+		if strings.Contains(host, "172.16.102.3:20180") {
+			return int64(1), int64(2), nil
+		}
+		return 0, 0, errors.New("invalid connection")
+	})
+	splitSize, splitKeys, err := local.GetRegionSplitSizeKeys(ctx, cli, nil)
+	require.NoError(t, err)
+	require.Equal(t, int64(1), splitSize)
+	require.Equal(t, int64(2), splitKeys)
 }

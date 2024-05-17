@@ -201,7 +201,7 @@ func newFunctionImpl(ctx BuildContext, fold int, funcName string, retType *types
 	case ast.GetVar:
 		return BuildGetVarFunction(ctx, args[0], retType)
 	case InternalFuncFromBinary:
-		return BuildFromBinaryFunction(ctx, args[0], retType), nil
+		return BuildFromBinaryFunction(ctx, args[0], retType, false), nil
 	case InternalFuncToBinary:
 		return BuildToBinaryFunction(ctx, args[0]), nil
 	case ast.Sysdate:

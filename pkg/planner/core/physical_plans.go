@@ -29,10 +29,12 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/cost"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
+	"github.com/pingcap/tidb/pkg/planner/util/tablesampler"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/statistics"
@@ -604,7 +606,7 @@ type PhysicalIndexMergeReader struct {
 
 	KeepOrder bool
 
-	HandleCols HandleCols
+	HandleCols util.HandleCols
 }
 
 // GetAvgTableRowSize return the average row size of table plan.
@@ -839,7 +841,7 @@ type PhysicalMemTable struct {
 	Table          *model.TableInfo
 	Columns        []*model.ColumnInfo
 	Extractor      base.MemTablePredicateExtractor
-	QueryTimeRange QueryTimeRange
+	QueryTimeRange util.QueryTimeRange
 }
 
 // MemoryUsage return the memory usage of PhysicalMemTable
@@ -878,7 +880,7 @@ type PhysicalTableScan struct {
 
 	// HandleIdx is the index of handle, which is only used for admin check table.
 	HandleIdx  []int
-	HandleCols HandleCols
+	HandleCols util.HandleCols
 
 	StoreType kv.StoreType
 
@@ -898,7 +900,7 @@ type PhysicalTableScan struct {
 
 	PlanPartInfo PhysPlanPartInfo
 
-	SampleInfo *TableSampleInfo
+	SampleInfo *tablesampler.TableSampleInfo
 
 	// required by cost model
 	// tblCols and tblColHists contains all columns before pruning, which are used to calculate row-size
@@ -1760,7 +1762,7 @@ type PhysicalLock struct {
 
 	Lock *ast.SelectLockInfo
 
-	TblID2Handle       map[int64][]HandleCols
+	TblID2Handle       map[int64][]util.HandleCols
 	TblID2PhysTblIDCol map[int64]*expression.Column
 }
 
@@ -1914,10 +1916,10 @@ func (p *basePhysicalAgg) numDistinctFunc() (num int) {
 func (p *basePhysicalAgg) getAggFuncCostFactor(isMPP bool) (factor float64) {
 	factor = 0.0
 	for _, agg := range p.AggFuncs {
-		if fac, ok := aggFuncFactor[agg.Name]; ok {
+		if fac, ok := cost.AggFuncFactor[agg.Name]; ok {
 			factor += fac
 		} else {
-			factor += aggFuncFactor["default"]
+			factor += cost.AggFuncFactor["default"]
 		}
 	}
 	if factor == 0 {
@@ -1926,7 +1928,7 @@ func (p *basePhysicalAgg) getAggFuncCostFactor(isMPP bool) (factor float64) {
 			// But in mpp cases, 2-phase is more usual. So we change this factor.
 			// TODO: This is still a little tricky and might cause regression. We should
 			// calibrate these factors and polish our cost model in the future.
-			factor = aggFuncFactor[ast.AggFuncFirstRow]
+			factor = cost.AggFuncFactor[ast.AggFuncFirstRow]
 		} else {
 			factor = 1.0
 		}
@@ -2125,7 +2127,7 @@ type PhysicalUnionScan struct {
 
 	Conditions []expression.Expression
 
-	HandleCols HandleCols
+	HandleCols util.HandleCols
 }
 
 // ExtractCorrelatedCols implements op.PhysicalPlan interface.
@@ -2525,45 +2527,10 @@ func SafeClone(v base.PhysicalPlan) (_ base.PhysicalPlan, err error) {
 // It returns the sample rows to its parent operand.
 type PhysicalTableSample struct {
 	physicalSchemaProducer
-	TableSampleInfo *TableSampleInfo
+	TableSampleInfo *tablesampler.TableSampleInfo
 	TableInfo       table.Table
 	PhysicalTableID int64
 	Desc            bool
-}
-
-// TableSampleInfo contains the information for PhysicalTableSample.
-type TableSampleInfo struct {
-	AstNode    *ast.TableSample
-	FullSchema *expression.Schema
-	Partitions []table.PartitionedTable
-}
-
-// MemoryUsage return the memory usage of TableSampleInfo
-func (t *TableSampleInfo) MemoryUsage() (sum int64) {
-	if t == nil {
-		return
-	}
-
-	sum = size.SizeOfPointer*2 + size.SizeOfSlice + int64(cap(t.Partitions))*size.SizeOfInterface
-	if t.AstNode != nil {
-		sum += int64(unsafe.Sizeof(ast.TableSample{}))
-	}
-	if t.FullSchema != nil {
-		sum += t.FullSchema.MemoryUsage()
-	}
-	return
-}
-
-// NewTableSampleInfo creates a new TableSampleInfo.
-func NewTableSampleInfo(node *ast.TableSample, fullSchema *expression.Schema, pt []table.PartitionedTable) *TableSampleInfo {
-	if node == nil {
-		return nil
-	}
-	return &TableSampleInfo{
-		AstNode:    node,
-		FullSchema: fullSchema.Clone(),
-		Partitions: pt,
-	}
 }
 
 // PhysicalCTE is for CTE.
