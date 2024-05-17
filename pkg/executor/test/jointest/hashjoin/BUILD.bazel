@@ -12,6 +12,7 @@ go_test(
     shard_count = 18,
     deps = [
         "//pkg/config",
+        "//pkg/executor/join",
         "//pkg/meta/autoid",
         "//pkg/session",
         "//pkg/sessionctx/variable",
