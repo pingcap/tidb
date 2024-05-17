@@ -238,7 +238,7 @@ func (c *cachedTable) updateLockForRead(ctx context.Context, handle StateRemote,
 	// Current status is not suitable to cache.
 }
 
-const cachedTableSizeLimit = 64 * (1 << 20)
+const cachedTableSizeLimit = 64 * (1 << 40)
 
 // AddRecord implements the AddRecord method for the table.Table interface.
 func (c *cachedTable) AddRecord(sctx sessionctx.Context, r []types.Datum, opts ...table.AddRecordOption) (recordID kv.Handle, err error) {
