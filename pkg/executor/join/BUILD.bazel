@@ -51,7 +51,6 @@ go_library(
         "//pkg/util/ranger",
         "//pkg/util/sqlkiller",
         "//pkg/util/syncutil",
-        "@com_github_cznic_mathutil//:mathutil",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
         "@org_uber_go_zap//:zap",
