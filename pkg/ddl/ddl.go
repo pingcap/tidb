@@ -1233,11 +1233,7 @@ func (d *ddl) DoDDLJob(ctx sessionctx.Context, job *model.Job) error {
 		recordLastDDLInfo(ctx, historyJob)
 	}()
 	i := 0
-	notifyCh, ok := d.getJobDoneCh(job.ID)
-	if !ok {
-		// shouldn't happen, just give it a dummy one
-		notifyCh = make(chan struct{})
-	}
+	notifyCh, _ := d.getJobDoneCh(job.ID)
 	for {
 		failpoint.Inject("storeCloseInLoop", func(_ failpoint.Value) {
 			_ = d.Stop()

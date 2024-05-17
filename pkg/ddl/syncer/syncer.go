@@ -176,11 +176,11 @@ func (v *nodeVersions) len() int {
 	return len(v.nodeVersions)
 }
 
+// matchOrSet onceMatchFn must be nil before calling this method.
 func (v *nodeVersions) matchOrSet(fn func(nodeVersions map[string]int64) bool) {
 	v.Lock()
 	defer v.Unlock()
 	if ok := fn(v.nodeVersions); !ok {
-		// onceMatchFn must be nil before.
 		v.onceMatchFn = fn
 	}
 }
@@ -501,23 +501,17 @@ func (s *schemaVersionSyncer) syncJobSchemaVer(ctx context.Context) {
 		return
 	}
 	s.mu.Lock()
-	// item might be saved and accessed outside, so we only clear data here, will
-	// clean up emptyAndNotUsed items later.
-	for _, item := range s.jobNodeVersions {
-		item.clearData()
-	}
-	s.mu.Unlock()
-	for _, oneKV := range resp.Kvs {
-		s.handleJobSchemaVerKV(oneKV, mvccpb.PUT)
-	}
-	s.mu.Lock()
-	// we might miss some DELETE events during retry, some items might be emptyAndNotUsed, remove them.
 	for jobID, item := range s.jobNodeVersions {
+		item.clearData()
+		// we might miss some DELETE events during retry, some items might be emptyAndNotUsed, remove them.
 		if item.emptyAndNotUsed() {
 			delete(s.jobNodeVersions, jobID)
 		}
 	}
 	s.mu.Unlock()
+	for _, oneKV := range resp.Kvs {
+		s.handleJobSchemaVerKV(oneKV, mvccpb.PUT)
+	}
 
 	startRev := resp.Header.Revision + 1
 	watchCtx, watchCtxCancel := context.WithCancel(ctx)
