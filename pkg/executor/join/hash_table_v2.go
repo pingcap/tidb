@@ -17,8 +17,6 @@ package join
 import (
 	"sync/atomic"
 	"unsafe"
-
-	"github.com/cznic/mathutil"
 )
 
 type subTable struct {
@@ -57,7 +55,7 @@ func newSubTable(table *rowTable) *subTable {
 	if table.validKeyCount() == 0 {
 		ret.isHashTableEmpty = true
 	}
-	capacity := mathutil.MaxUint64(nextPowerOfTwo(table.validKeyCount()), uint64(1024))
+	capacity := max(nextPowerOfTwo(table.validKeyCount()), uint64(1024))
 	ret.hashTable = make([]unsafe.Pointer, capacity)
 	ret.posMask = capacity - 1
 	return ret
