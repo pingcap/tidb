@@ -69,7 +69,7 @@ go_test(
     shard_count = 8,
     deps = [
         "//br/pkg/conn",
-        "//br/pkg/gluetidb",
+        "//br/pkg/gluetidb/mock",
         "//br/pkg/metautil",
         "//br/pkg/mock",
         "//br/pkg/pdutil",

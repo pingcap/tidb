@@ -13,7 +13,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/encryptionpb"
 	"github.com/pingcap/tidb/br/pkg/backup"
 	"github.com/pingcap/tidb/br/pkg/conn"
-	"github.com/pingcap/tidb/br/pkg/gluetidb"
+	gluemock "github.com/pingcap/tidb/br/pkg/gluetidb/mock"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/mock"
 	"github.com/pingcap/tidb/br/pkg/pdutil"
@@ -35,7 +35,7 @@ type testBackup struct {
 
 	mockPDClient pd.Client
 	mockCluster  *testutils.MockCluster
-	mockGlue     *gluetidb.MockGlue
+	mockGlue     *gluemock.MockGlue
 	backupClient *backup.Client
 
 	cluster *mock.Cluster
@@ -46,7 +46,7 @@ func createBackupSuite(t *testing.T) *testBackup {
 	tikvClient, mockCluster, pdClient, err := testutils.NewMockTiKV("", nil)
 	require.NoError(t, err)
 	s := new(testBackup)
-	s.mockGlue = &gluetidb.MockGlue{}
+	s.mockGlue = &gluemock.MockGlue{}
 	s.mockPDClient = pdClient
 	s.mockCluster = mockCluster
 	s.ctx, s.cancel = context.WithCancel(context.Background())
