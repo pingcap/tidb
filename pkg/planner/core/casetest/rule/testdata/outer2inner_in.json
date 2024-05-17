@@ -7,6 +7,9 @@
       "select * from t1 left outer join t2 on a1=a2 where not(b2 is null) -- another form of basic case of not null",
       "select * from t1 left outer join t2 on a1=a2 where c2 = 5 OR b2 < 55 -- case with A OR B (Both A  and B are null filtering)",
       "select * from t1 left outer join t2 on a1=a2 where c2 = 5 AND b2 is null -- case with A AND B (A is null filtering and B is not)",
+      "select * from t1 left outer join t2 on a1=a2 where b2 is NULL AND c2 = 5 -- case with A AND B (A is null filtering and B is not)",
+      "select * from t1 left outer join t2 on a1=a2 where not (b2 is NULL OR c2 = 5) -- NOT case ",
+      "select * from t1 left outer join t2 on a1=a2 where not (b2 is NULL AND c2 = 5) -- NOT case ",
       "select * from t2 left outer join t1 on a1=a2 where b1+b1 > 2; -- expression evaluates to UNKNOWN/FALSE",
       "select * from t2 left outer join t1 on a1=a2 where coalesce(b1,2)  > 2; -- false condition for b1=NULL",
       "select * from t2 left outer join t1 on a1=a2 where true and b1 = 5; -- AND with one branch is null filtering",
@@ -43,7 +46,8 @@
       "select * from t0 left outer join t11 on a0=a1 where '5' not in (t0.b0, t11.b1)",
       "select * from t0 left outer join t11 on a0=a1 where '1' in (t0.b0, t11.b1)",
       "select * from t0 left outer join t11 on a0=a1 where t0.b0 in ('5', t11.b1) -- some = in the in list is not null filtering",
-      "select * from t0 left outer join t11 on a0=a1 where '5' in (t0.b0, t11.b1) -- some = in the in list is not null filtering"
+      "select * from t0 left outer join t11 on a0=a1 where '5' in (t0.b0, t11.b1) -- some = in the in list is not null filtering",
+      "select * from t1 left outer join t2 on a1=a2 where not (b2 is NOT NULL AND c2 = 5) -- NOT case "
     ]
   }
 ]
