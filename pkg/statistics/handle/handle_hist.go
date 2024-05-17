@@ -42,25 +42,8 @@ import (
 // RetryCount is the max retry count for a sync load task.
 const RetryCount = 3
 
-<<<<<<< HEAD:pkg/statistics/handle/handle_hist.go
-=======
-type statsSyncLoad struct {
-	statsHandle statstypes.StatsHandle
-	StatsLoad   statstypes.StatsLoad
-}
-
 var globalStatsSyncLoadSingleFlight singleflight.Group
 
-// NewStatsSyncLoad creates a new StatsSyncLoad.
-func NewStatsSyncLoad(statsHandle statstypes.StatsHandle) statstypes.StatsSyncLoad {
-	s := &statsSyncLoad{statsHandle: statsHandle}
-	cfg := config.GetGlobalConfig()
-	s.StatsLoad.NeededItemsCh = make(chan *statstypes.NeededItemTask, cfg.Performance.StatsLoadQueueSize)
-	s.StatsLoad.TimeoutItemsCh = make(chan *statstypes.NeededItemTask, cfg.Performance.StatsLoadQueueSize)
-	return s
-}
-
->>>>>>> cd90f818809 (statistics: support global singleflight for sync load (#52796)):pkg/statistics/handle/syncload/stats_syncload.go
 type statsWrapper struct {
 	col *statistics.Column
 	idx *statistics.Index
@@ -101,40 +84,19 @@ func (h *Handle) SendLoadRequests(sc *stmtctx.StatementContext, neededHistItems 
 	}
 	sc.StatsLoad.Timeout = timeout
 	sc.StatsLoad.NeededItems = remainedItems
-<<<<<<< HEAD:pkg/statistics/handle/handle_hist.go
-	sc.StatsLoad.ResultCh = make(chan stmtctx.StatsLoadResult, len(remainedItems))
-	tasks := make([]*NeededItemTask, 0)
-	for _, item := range remainedItems {
-		task := &NeededItemTask{
-			TableItemID: item,
-			ToTimeout:   time.Now().Local().Add(timeout),
-			ResultCh:    sc.StatsLoad.ResultCh,
-		}
-		tasks = append(tasks, task)
-	}
-	timer := time.NewTimer(timeout)
-	defer timer.Stop()
-	for _, task := range tasks {
-		select {
-		case h.StatsLoad.NeededItemsCh <- task:
-			continue
-		case <-timer.C:
-			return errors.New("sync load stats channel is full and timeout sending task to channel")
-		}
-=======
 	sc.StatsLoad.ResultCh = make([]<-chan singleflight.Result, 0, len(remainedItems))
 	for _, item := range remainedItems {
 		localItem := item
 		resultCh := globalStatsSyncLoadSingleFlight.DoChan(localItem.Key(), func() (any, error) {
 			timer := time.NewTimer(timeout)
 			defer timer.Stop()
-			task := &statstypes.NeededItemTask{
-				Item:      localItem,
-				ToTimeout: time.Now().Local().Add(timeout),
-				ResultCh:  make(chan stmtctx.StatsLoadResult, 1),
+			task := &NeededItemTask{
+				TableItemID: localItem,
+				ToTimeout:   time.Now().Local().Add(timeout),
+				ResultCh:    make(chan stmtctx.StatsLoadResult, 1),
 			}
 			select {
-			case s.StatsLoad.NeededItemsCh <- task:
+			case h.StatsLoad.NeededItemsCh <- task:
 				result, ok := <-task.ResultCh
 				intest.Assert(ok, "task.ResultCh cannot be closed")
 				return result, nil
@@ -143,7 +105,6 @@ func (h *Handle) SendLoadRequests(sc *stmtctx.StatementContext, neededHistItems 
 			}
 		})
 		sc.StatsLoad.ResultCh = append(sc.StatsLoad.ResultCh, resultCh)
->>>>>>> cd90f818809 (statistics: support global singleflight for sync load (#52796)):pkg/statistics/handle/syncload/stats_syncload.go
 	}
 	sc.StatsLoad.LoadStartTime = time.Now()
 	return nil
@@ -282,41 +243,11 @@ func (h *Handle) HandleOneTask(sctx sessionctx.Context, lastTask *NeededItemTask
 	} else {
 		task = lastTask
 	}
-<<<<<<< HEAD:pkg/statistics/handle/handle_hist.go
 	result := stmtctx.StatsLoadResult{Item: task.TableItemID}
-	resultChan := h.StatsLoad.Singleflight.DoChan(task.TableItemID.Key(), func() (any, error) {
-		err := h.handleOneItemTask(task)
-		return nil, err
-	})
-	timeout := time.Until(task.ToTimeout)
-	select {
-	case sr := <-resultChan:
-		// sr.Val is always nil.
-		if sr.Err == nil {
-			task.ResultCh <- result
-			return nil, nil
-		}
-		if !isVaildForRetry(task) {
-			result.Error = sr.Err
-			task.ResultCh <- result
-			return nil, nil
-		}
-		return task, sr.Err
-	case <-time.After(timeout):
-		if !isVaildForRetry(task) {
-			result.Error = errors.New("stats loading timeout")
-			task.ResultCh <- result
-			return nil, nil
-		}
-		task.ToTimeout.Add(time.Duration(sctx.GetSessionVars().StatsLoadSyncWait.Load()) * time.Microsecond)
-		return task, nil
-=======
-	result := stmtctx.StatsLoadResult{Item: task.Item.TableItemID}
-	err = s.handleOneItemTask(task)
+	err = h.handleOneItemTask(task)
 	if err == nil {
 		task.ResultCh <- result
 		return nil, nil
->>>>>>> cd90f818809 (statistics: support global singleflight for sync load (#52796)):pkg/statistics/handle/syncload/stats_syncload.go
 	}
 	if !isVaildForRetry(task) {
 		result.Error = err
