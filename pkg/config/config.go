@@ -501,6 +501,8 @@ type Log struct {
 	EnableSlowLog       AtomicBool `toml:"enable-slow-log" json:"enable-slow-log"`
 	SlowThreshold       uint64     `toml:"slow-threshold" json:"slow-threshold"`
 	RecordPlanInSlowLog uint32     `toml:"record-plan-in-slow-log" json:"record-plan-in-slow-log"`
+	// SlowConfig will be added to the slow query log.
+	SlowLogAdditionalInfo map[string]string `toml:"slog-log-additional-info" json:"slog-log-additional-info"`
 
 	// Make tidb panic if write log operation hang in `Timeout` seconds
 	Timeout int `toml:"timeout" json:"timeout"`
@@ -534,6 +536,8 @@ type Instance struct {
 	// StmtSummaryFileMaxBackups indicates the maximum number of files written
 	// by stmtsummary when StmtSummaryEnablePersistent is true.
 	StmtSummaryFileMaxBackups int `toml:"tidb_stmt_summary_file_max_backups" json:"tidb_stmt_summary_file_max_backups"`
+	// StmtSummaryAdditionalInfo will be recorded in the stmtsummary when StmtSummaryEnablePersistent is true.
+	StmtSummaryAdditionalInfo map[string]string `toml:"tidb_stmt_summar_additional_info" json:"tidb_stmt_summary_additional_info"`
 
 	// These variables exist in both 'instance' section and another place.
 	// The configuration in 'instance' section takes precedence.
