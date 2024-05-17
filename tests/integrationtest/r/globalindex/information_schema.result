@@ -11,3 +11,4 @@ select key_name, is_global from information_schema.tidb_indexes where table_name
 key_name	is_global
 idx	0
 idx1	1
+set tidb_enable_global_index=default;
