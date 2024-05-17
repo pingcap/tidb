@@ -34,8 +34,8 @@ import (
 	"github.com/tikv/client-go/v2/util"
 )
 
-func emptyPlanGenerator() (string, string) {
-	return "", ""
+func emptyPlanGenerator() (string, string, any) {
+	return "", "", nil
 }
 
 func fakePlanDigestGenerator() string {
@@ -79,7 +79,7 @@ func TestAddStatement(t *testing.T) {
 		planDigest:        stmtExecInfo1.PlanDigest,
 		resourceGroupName: stmtExecInfo1.ResourceGroupName,
 	}
-	samplePlan, _ := stmtExecInfo1.PlanGenerator()
+	samplePlan, _, _ := stmtExecInfo1.PlanGenerator()
 	stmtExecInfo1.ExecDetail.CommitDetail.Mu.Lock()
 	expectedSummaryElement := stmtSummaryByDigestElement{
 		beginTime:            now + 60,
@@ -472,12 +472,12 @@ func TestAddStatement(t *testing.T) {
 	// Test for plan too large
 	stmtExecInfo7 := stmtExecInfo1
 	stmtExecInfo7.PlanDigest = "plan_digest7"
-	stmtExecInfo7.PlanGenerator = func() (string, string) {
+	stmtExecInfo7.PlanGenerator = func() (string, string, any) {
 		buf := make([]byte, MaxEncodedPlanSizeInBytes+1)
 		for i := range buf {
 			buf[i] = 'a'
 		}
-		return string(buf), ""
+		return string(buf), "", nil
 	}
 	key = &stmtSummaryByDigestKey{
 		schemaName:        stmtExecInfo7.SchemaName,

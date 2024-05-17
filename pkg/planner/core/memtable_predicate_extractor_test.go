@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/session"
 	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -544,7 +545,7 @@ func TestMetricTableExtractor(t *testing.T) {
 	require.NoError(t, err)
 
 	parseTime := func(t *testing.T, s string) time.Time {
-		tt, err := time.ParseInLocation(plannercore.MetricTableTimeFormat, s, time.Local)
+		tt, err := time.ParseInLocation(util.MetricTableTimeFormat, s, time.Local)
 		require.NoError(t, err)
 		return tt
 	}

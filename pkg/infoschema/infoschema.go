@@ -56,6 +56,10 @@ const bucketCount = 512
 type infoSchema struct {
 	infoSchemaMisc
 	schemaMap map[string]*schemaTables
+	// schemaID2Name is a map from schema ID to schema name.
+	// it should be enough to query by name only theoretically, but there are some
+	// places we only have schema ID, and we check both name and id in some sanity checks.
+	schemaID2Name map[int64]string
 
 	// sortedTablesBuckets is a slice of sortedTables, a table's bucket index is (tableID % bucketCount).
 	sortedTablesBuckets []sortedTables
@@ -92,18 +96,13 @@ type SchemaAndTableName struct {
 
 // MockInfoSchema only serves for test.
 func MockInfoSchema(tbList []*model.TableInfo) InfoSchema {
-	result := &infoSchema{}
-	result.schemaMap = make(map[string]*schemaTables)
-	result.policyMap = make(map[string]*model.PolicyInfo)
-	result.resourceGroupMap = make(map[string]*model.ResourceGroupInfo)
-	result.ruleBundleMap = make(map[int64]*placement.Bundle)
-	result.sortedTablesBuckets = make([]sortedTables, bucketCount)
+	result := newInfoSchema()
 	dbInfo := &model.DBInfo{ID: 1, Name: model.NewCIStr("test"), Tables: tbList}
 	tableNames := &schemaTables{
 		dbInfo: dbInfo,
 		tables: make(map[string]table.Table),
 	}
-	result.schemaMap["test"] = tableNames
+	result.addSchema(tableNames)
 	var tableIDs map[int64]struct{}
 	for _, tb := range tbList {
 		intest.AssertFunc(func() bool {
@@ -131,18 +130,13 @@ func MockInfoSchema(tbList []*model.TableInfo) InfoSchema {
 
 // MockInfoSchemaWithSchemaVer only serves for test.
 func MockInfoSchemaWithSchemaVer(tbList []*model.TableInfo, schemaVer int64) InfoSchema {
-	result := &infoSchema{}
-	result.schemaMap = make(map[string]*schemaTables)
-	result.policyMap = make(map[string]*model.PolicyInfo)
-	result.resourceGroupMap = make(map[string]*model.ResourceGroupInfo)
-	result.ruleBundleMap = make(map[int64]*placement.Bundle)
-	result.sortedTablesBuckets = make([]sortedTables, bucketCount)
+	result := newInfoSchema()
 	dbInfo := &model.DBInfo{ID: 1, Name: model.NewCIStr("test"), Tables: tbList}
 	tableNames := &schemaTables{
 		dbInfo: dbInfo,
 		tables: make(map[string]table.Table),
 	}
-	result.schemaMap["test"] = tableNames
+	result.addSchema(tableNames)
 	for _, tb := range tbList {
 		tb.DBID = dbInfo.ID
 		tbl := table.MockTableFromMeta(tb)
@@ -165,8 +159,26 @@ func (is *infoSchema) base() *infoSchema {
 	return is
 }
 
+func newInfoSchema() *infoSchema {
+	return &infoSchema{
+		infoSchemaMisc: infoSchemaMisc{
+			policyMap:             map[string]*model.PolicyInfo{},
+			resourceGroupMap:      map[string]*model.ResourceGroupInfo{},
+			ruleBundleMap:         map[int64]*placement.Bundle{},
+			referredForeignKeyMap: make(map[SchemaAndTableName][]*model.ReferredFKInfo),
+		},
+		schemaMap:           map[string]*schemaTables{},
+		schemaID2Name:       map[int64]string{},
+		sortedTablesBuckets: make([]sortedTables, bucketCount),
+	}
+}
+
 func (is *infoSchema) SchemaByName(schema model.CIStr) (val *model.DBInfo, ok bool) {
-	tableNames, ok := is.schemaMap[schema.L]
+	return is.schemaByName(schema.L)
+}
+
+func (is *infoSchema) schemaByName(name string) (val *model.DBInfo, ok bool) {
+	tableNames, ok := is.schemaMap[name]
 	if !ok {
 		return
 	}
@@ -231,12 +243,11 @@ func (is *infoSchema) PolicyByID(id int64) (val *model.PolicyInfo, ok bool) {
 }
 
 func (is *infoSchema) SchemaByID(id int64) (val *model.DBInfo, ok bool) {
-	for _, v := range is.schemaMap {
-		if v.dbInfo.ID == id {
-			return v.dbInfo, true
-		}
+	name, ok := is.schemaID2Name[id]
+	if !ok {
+		return nil, false
 	}
-	return nil, false
+	return is.schemaByName(name)
 }
 
 // SchemaByTable get a table's schema name
@@ -331,6 +342,18 @@ func (is *infoSchema) FindTableByPartitionID(partitionID int64) (table.Table, *m
 		}
 	}
 	return nil, nil, nil
+}
+
+// addSchema is used to add a schema to the infoSchema, it will overwrite the old
+// one if it already exists.
+func (is *infoSchema) addSchema(st *schemaTables) {
+	is.schemaMap[st.dbInfo.Name.L] = st
+	is.schemaID2Name[st.dbInfo.ID] = st.dbInfo.Name.L
+}
+
+func (is *infoSchema) delSchema(di *model.DBInfo) {
+	delete(is.schemaMap, di.Name.L)
+	delete(is.schemaID2Name, di.ID)
 }
 
 // HasTemporaryTable returns whether information schema has temporary table

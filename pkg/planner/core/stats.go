@@ -31,12 +31,14 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/cost"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/statistics"
+	"github.com/pingcap/tidb/pkg/statistics/asyncload"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
@@ -216,11 +218,6 @@ func (ds *DataSource) getGroupNDVs(colGroups [][]*expression.Column) []property.
 	return ndvs
 }
 
-func init() {
-	// To handle cycle import, we have to define this function here.
-	cardinality.GetTblInfoForUsedStatsByPhysicalID = getTblInfoForUsedStatsByPhysicalID
-}
-
 // getTblInfoForUsedStatsByPhysicalID get table name, partition name and HintedTable that will be used to record used stats.
 func getTblInfoForUsedStatsByPhysicalID(sctx base.PlanContext, id int64) (fullName string, tblInfo *model.TableInfo) {
 	fullName = "tableID " + strconv.FormatInt(id, 10)
@@ -279,6 +276,21 @@ func (ds *DataSource) initStats(colGroups [][]*expression.Column) {
 	ds.tableStats = tableStats
 	ds.tableStats.GroupNDVs = ds.getGroupNDVs(colGroups)
 	ds.TblColHists = ds.statisticTable.ID2UniqueID(ds.TblCols)
+	for _, col := range ds.tableInfo.Columns {
+		if col.State != model.StatePublic {
+			continue
+		}
+		// If we enable lite stats init or we just found out the meta info of the column is missed, we need to register columns for async load.
+		_, isLoadNeeded, _ := ds.statisticTable.ColumnIsLoadNeeded(col.ID, false)
+		if isLoadNeeded {
+			asyncload.AsyncLoadHistogramNeededItems.Insert(model.TableItemID{
+				TableID:          ds.tableInfo.ID,
+				ID:               col.ID,
+				IsIndex:          false,
+				IsSyncLoadFailed: ds.SCtx().GetSessionVars().StmtCtx.StatsLoad.Timeout > 0,
+			}, false)
+		}
+	}
 }
 
 func (ds *DataSource) deriveStatsByFilter(conds expression.CNFExprs, filledPaths []*util.AccessPath) *property.StatsInfo {
@@ -289,7 +301,7 @@ func (ds *DataSource) deriveStatsByFilter(conds expression.CNFExprs, filledPaths
 	selectivity, _, err := cardinality.Selectivity(ds.SCtx(), ds.tableStats.HistColl, conds, filledPaths)
 	if err != nil {
 		logutil.BgLogger().Debug("something wrong happened, use the default selectivity", zap.Error(err))
-		selectivity = SelectionFactor
+		selectivity = cost.SelectionFactor
 	}
 	// TODO: remove NewHistCollBySelectivity later on.
 	// if ds.SCtx().GetSessionVars().OptimizerSelectivityLevel >= 1 {
@@ -583,7 +595,7 @@ func (p *LogicalSelection) DeriveStats(childStats []*property.StatsInfo, _ *expr
 	if p.StatsInfo() != nil {
 		return p.StatsInfo(), nil
 	}
-	p.SetStats(childStats[0].Scale(SelectionFactor))
+	p.SetStats(childStats[0].Scale(cost.SelectionFactor))
 	p.StatsInfo().GroupNDVs = nil
 	return p.StatsInfo(), nil
 }
@@ -815,11 +827,11 @@ func (p *LogicalJoin) DeriveStats(childStats []*property.StatsInfo, selfSchema *
 		nil, nil)
 	if p.JoinType == SemiJoin || p.JoinType == AntiSemiJoin {
 		p.SetStats(&property.StatsInfo{
-			RowCount: leftProfile.RowCount * SelectionFactor,
+			RowCount: leftProfile.RowCount * cost.SelectionFactor,
 			ColNDVs:  make(map[int64]float64, len(leftProfile.ColNDVs)),
 		})
 		for id, c := range leftProfile.ColNDVs {
-			p.StatsInfo().ColNDVs[id] = c * SelectionFactor
+			p.StatsInfo().ColNDVs[id] = c * cost.SelectionFactor
 		}
 		return p.StatsInfo(), nil
 	}
@@ -1083,7 +1095,16 @@ func loadTableStats(ctx sessionctx.Context, tblInfo *model.TableInfo, pid int64)
 
 	pctx := ctx.GetPlanCtx()
 	tableStats := getStatsTable(pctx, tblInfo, pid)
-	name, _ := getTblInfoForUsedStatsByPhysicalID(pctx, pid)
+
+	name := tblInfo.Name.O
+	partInfo := tblInfo.GetPartitionInfo()
+	if partInfo != nil {
+		for _, p := range partInfo.Definitions {
+			if p.ID == pid {
+				name += " " + p.Name.O
+			}
+		}
+	}
 	usedStats := &stmtctx.UsedStatsInfoForTable{
 		Name:          name,
 		TblInfo:       tblInfo,

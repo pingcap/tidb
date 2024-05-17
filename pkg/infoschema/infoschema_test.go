@@ -966,7 +966,8 @@ func TestEnableInfoSchemaV2(t *testing.T) {
 
 	// Check the InfoSchema used is V2.
 	is := domain.GetDomain(tk.Session()).InfoSchema()
-	require.True(t, infoschema.IsV2(is))
+	isV2, _ := infoschema.IsV2(is)
+	require.True(t, isV2)
 
 	// Execute some basic operations under infoschema v2.
 	tk.MustQuery("show tables").Check(testkit.Rows("v2"))
@@ -985,7 +986,8 @@ func TestEnableInfoSchemaV2(t *testing.T) {
 
 	tk.MustExec("drop table v1")
 	is = domain.GetDomain(tk.Session()).InfoSchema()
-	require.False(t, infoschema.IsV2(is))
+	isV2, _ = infoschema.IsV2(is)
+	require.False(t, isV2)
 }
 
 type infoschemaTestContext struct {

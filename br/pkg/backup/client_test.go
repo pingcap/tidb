@@ -314,40 +314,6 @@ func TestOnBackupResponse(t *testing.T) {
 	require.Len(t, incomplete, 0)
 }
 
-func TestBuildProgressRangeTree(t *testing.T) {
-	s := createBackupSuite(t)
-	ranges := []rtree.Range{
-		{
-			StartKey: []byte("aa"),
-			EndKey:   []byte("b"),
-		},
-		{
-			StartKey: []byte("c"),
-			EndKey:   []byte("d"),
-		},
-	}
-	tree, err := s.backupClient.BuildProgressRangeTree(ranges)
-	require.NoError(t, err)
-
-	contained, err := tree.FindContained([]byte("a"), []byte("aa"))
-	require.Nil(t, contained)
-	require.Error(t, err)
-
-	contained, err = tree.FindContained([]byte("b"), []byte("ba"))
-	require.Nil(t, contained)
-	require.Error(t, err)
-
-	contained, err = tree.FindContained([]byte("e"), []byte("ea"))
-	require.Nil(t, contained)
-	require.Error(t, err)
-
-	contained, err = tree.FindContained([]byte("aa"), []byte("b"))
-	require.NotNil(t, contained)
-	require.Equal(t, []byte("aa"), contained.Origin.StartKey)
-	require.Equal(t, []byte("b"), contained.Origin.EndKey)
-	require.NoError(t, err)
-}
-
 func TestMainBackupLoop(t *testing.T) {
 	s := createBackupSuite(t)
 	backgroundCtx := context.Background()
@@ -523,4 +489,38 @@ func TestMainBackupLoop(t *testing.T) {
 	// backup cannot finished until the dropped store is back
 	require.NoError(t, mainLoop.Run(backgroundCtx, req))
 
+}
+
+func TestBuildProgressRangeTree(t *testing.T) {
+	s := createBackupSuite(t)
+	ranges := []rtree.Range{
+		{
+			StartKey: []byte("aa"),
+			EndKey:   []byte("b"),
+		},
+		{
+			StartKey: []byte("c"),
+			EndKey:   []byte("d"),
+		},
+	}
+	tree, err := s.backupClient.BuildProgressRangeTree(ranges)
+	require.NoError(t, err)
+
+	contained, err := tree.FindContained([]byte("a"), []byte("aa"))
+	require.Nil(t, contained)
+	require.Error(t, err)
+
+	contained, err = tree.FindContained([]byte("b"), []byte("ba"))
+	require.Nil(t, contained)
+	require.Error(t, err)
+
+	contained, err = tree.FindContained([]byte("e"), []byte("ea"))
+	require.Nil(t, contained)
+	require.Error(t, err)
+
+	contained, err = tree.FindContained([]byte("aa"), []byte("b"))
+	require.NotNil(t, contained)
+	require.Equal(t, []byte("aa"), contained.Origin.StartKey)
+	require.Equal(t, []byte("b"), contained.Origin.EndKey)
+	require.NoError(t, err)
 }

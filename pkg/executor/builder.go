@@ -451,6 +451,9 @@ func buildIndexLookUpChecker(b *executorBuilder, p *plannercore.PhysicalIndexLoo
 	if !e.isCommonHandle() {
 		fullColLen++
 	}
+	if e.index.Global {
+		fullColLen++
+	}
 	e.dagPB.OutputOffsets = make([]uint32, fullColLen)
 	for i := 0; i < fullColLen; i++ {
 		e.dagPB.OutputOffsets[i] = uint32(i)
@@ -468,6 +471,9 @@ func buildIndexLookUpChecker(b *executorBuilder, p *plannercore.PhysicalIndexLoo
 	}
 
 	if !e.isCommonHandle() {
+		tps = append(tps, types.NewFieldType(mysql.TypeLonglong))
+	}
+	if e.index.Global {
 		tps = append(tps, types.NewFieldType(mysql.TypeLonglong))
 	}
 
@@ -615,14 +621,14 @@ func (b *executorBuilder) buildRecoverIndex(v *plannercore.RecoverIndex) exec.Ex
 }
 
 func buildHandleColsForExec(sctx *stmtctx.StatementContext, tblInfo *model.TableInfo,
-	allColInfo []*model.ColumnInfo) plannercore.HandleCols {
+	allColInfo []*model.ColumnInfo) plannerutil.HandleCols {
 	if !tblInfo.IsCommonHandle {
 		extraColPos := len(allColInfo) - 1
 		intCol := &expression.Column{
 			Index:   extraColPos,
 			RetType: types.NewFieldType(mysql.TypeLonglong),
 		}
-		return plannercore.NewIntHandleCols(intCol)
+		return plannerutil.NewIntHandleCols(intCol)
 	}
 	tblCols := make([]*expression.Column, len(tblInfo.Columns))
 	for i := 0; i < len(tblInfo.Columns); i++ {
@@ -640,7 +646,7 @@ func buildHandleColsForExec(sctx *stmtctx.StatementContext, tblInfo *model.Table
 			}
 		}
 	}
-	return plannercore.NewCommonHandleCols(sctx, tblInfo, pkIdx, tblCols)
+	return plannerutil.NewCommonHandleCols(sctx, tblInfo, pkIdx, tblCols)
 }
 
 func (b *executorBuilder) buildCleanupIndex(v *plannercore.CleanupIndex) exec.Executor {
@@ -2168,8 +2174,9 @@ func (b *executorBuilder) buildTopN(v *plannercore.PhysicalTopN) exec.Executor {
 	}
 	executor_metrics.ExecutorCounterTopNExec.Inc()
 	return &sortexec.TopNExec{
-		SortExec: sortExec,
-		Limit:    &plannercore.PhysicalLimit{Count: v.Count, Offset: v.Offset},
+		SortExec:    sortExec,
+		Limit:       &plannercore.PhysicalLimit{Count: v.Count, Offset: v.Offset},
+		Concurrency: b.ctx.GetSessionVars().Concurrency.ExecutorConcurrency,
 	}
 }
 
@@ -2294,7 +2301,7 @@ func (b *executorBuilder) buildUnionAll(v *plannercore.PhysicalUnionAll) exec.Ex
 	return e
 }
 
-func buildHandleColsForSplit(sc *stmtctx.StatementContext, tbInfo *model.TableInfo) plannercore.HandleCols {
+func buildHandleColsForSplit(sc *stmtctx.StatementContext, tbInfo *model.TableInfo) plannerutil.HandleCols {
 	if tbInfo.IsCommonHandle {
 		primaryIdx := tables.FindPrimaryIndex(tbInfo)
 		tableCols := make([]*expression.Column, len(tbInfo.Columns))
@@ -2307,12 +2314,12 @@ func buildHandleColsForSplit(sc *stmtctx.StatementContext, tbInfo *model.TableIn
 		for i, pkCol := range primaryIdx.Columns {
 			tableCols[pkCol.Offset].Index = i
 		}
-		return plannercore.NewCommonHandleCols(sc, tbInfo, primaryIdx, tableCols)
+		return plannerutil.NewCommonHandleCols(sc, tbInfo, primaryIdx, tableCols)
 	}
 	intCol := &expression.Column{
 		RetType: types.NewFieldType(mysql.TypeLonglong),
 	}
-	return plannercore.NewIntHandleCols(intCol)
+	return plannerutil.NewIntHandleCols(intCol)
 }
 
 func (b *executorBuilder) buildSplitRegion(v *plannercore.SplitRegion) exec.Executor {
@@ -2892,6 +2899,12 @@ func (*executorBuilder) corColInDistPlan(plans []base.PhysicalPlan) bool {
 		case *plannercore.PhysicalProjection:
 			for _, expr := range x.Exprs {
 				if len(expression.ExtractCorColumns(expr)) > 0 {
+					return true
+				}
+			}
+		case *plannercore.PhysicalTopN:
+			for _, byItem := range x.ByItems {
+				if len(expression.ExtractCorColumns(byItem.Expr)) > 0 {
 					return true
 				}
 			}

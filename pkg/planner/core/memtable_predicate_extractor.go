@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -813,11 +814,11 @@ func (e *ClusterLogTableExtractor) ExplainInfo(pp base.PhysicalPlan) string {
 	st, et := e.StartTime, e.EndTime
 	if st > 0 {
 		st := time.UnixMilli(st)
-		fmt.Fprintf(r, "start_time:%v, ", st.In(p.SCtx().GetSessionVars().StmtCtx.TimeZone()).Format(MetricTableTimeFormat))
+		fmt.Fprintf(r, "start_time:%v, ", st.In(p.SCtx().GetSessionVars().StmtCtx.TimeZone()).Format(util.MetricTableTimeFormat))
 	}
 	if et > 0 {
 		et := time.UnixMilli(et)
-		fmt.Fprintf(r, "end_time:%v, ", et.In(p.SCtx().GetSessionVars().StmtCtx.TimeZone()).Format(MetricTableTimeFormat))
+		fmt.Fprintf(r, "end_time:%v, ", et.In(p.SCtx().GetSessionVars().StmtCtx.TimeZone()).Format(util.MetricTableTimeFormat))
 	}
 	if len(e.NodeTypes) > 0 {
 		fmt.Fprintf(r, "node_types:[%s], ", extractStringFromStringSet(e.NodeTypes))
@@ -1067,8 +1068,8 @@ func (e *MetricTableExtractor) ExplainInfo(pp base.PhysicalPlan) string {
 	step := time.Second * time.Duration(p.SCtx().GetSessionVars().MetricSchemaStep)
 	return fmt.Sprintf("PromQL:%v, start_time:%v, end_time:%v, step:%v",
 		promQL,
-		startTime.In(p.SCtx().GetSessionVars().StmtCtx.TimeZone()).Format(MetricTableTimeFormat),
-		endTime.In(p.SCtx().GetSessionVars().StmtCtx.TimeZone()).Format(MetricTableTimeFormat),
+		startTime.In(p.SCtx().GetSessionVars().StmtCtx.TimeZone()).Format(util.MetricTableTimeFormat),
+		endTime.In(p.SCtx().GetSessionVars().StmtCtx.TimeZone()).Format(util.MetricTableTimeFormat),
 		step,
 	)
 }

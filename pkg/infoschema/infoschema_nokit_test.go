@@ -12,19 +12,23 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package ingest
+package infoschema
 
-// TryFlushAllIndexes tries to flush and import all indexes.
-func TryFlushAllIndexes(flushCtrl FlushController, mode FlushMode, indexIDs []int64) (flushed, imported bool, failedIdxID int64, err error) {
-	allFlushed := true
-	allImported := true
-	for _, idxID := range indexIDs {
-		flushed, imported, err := flushCtrl.Flush(idxID, mode)
-		if err != nil {
-			return false, false, idxID, err
-		}
-		allFlushed = allFlushed && flushed
-		allImported = allImported && imported
-	}
-	return allFlushed, allImported, -1, nil
+import (
+	"testing"
+
+	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/stretchr/testify/require"
+)
+
+func TestInfoSchemaAddDel(t *testing.T) {
+	is := newInfoSchema()
+	is.addSchema(&schemaTables{
+		dbInfo: &model.DBInfo{ID: 1, Name: model.NewCIStr("test")},
+	})
+	require.Contains(t, is.schemaMap, "test")
+	require.Contains(t, is.schemaID2Name, int64(1))
+	is.delSchema(&model.DBInfo{ID: 1, Name: model.NewCIStr("test")})
+	require.Empty(t, is.schemaMap)
+	require.Empty(t, is.schemaID2Name)
 }

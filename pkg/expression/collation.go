@@ -321,7 +321,45 @@ func CheckAndDeriveCollationFromExprs(ctx BuildContext, funcName string, evalTyp
 		return nil, illegalMixCollationErr(funcName, args)
 	}
 
-	return ec, nil
+	return fixStringTypeForMaxLength(funcName, args, ec), nil
+}
+
+// fixStringTypeForMaxLength changes the type of string from `VARCHAR` to `MEDIUM BLOB` or `LONG BLOB` according to the max length of
+// the argument. However, as TiDB doesn't have `MaxLength` for `FieldType`, this function handles the logic manually for different types. Now it only
+// handles the `JSON` type, because in MySQL, `JSON` type has a big max length and will lead to `LONG BLOB` in many situations.
+// To learn more about this case, read the discussion under https://github.com/pingcap/tidb/issues/52833
+//
+// TODO: also consider types other than `JSON`. And also think about when it'll become `MEDIUM BLOB`. This function only handles the collation, but
+// not change the type and binary flag.
+// TODO: some function will generate big values, like `repeat` and `space`. They should be handled according to the argument if it's a constant.
+func fixStringTypeForMaxLength(funcName string, args []Expression, ec *ExprCollation) *ExprCollation {
+	// Be careful that the `args` is not all arguments of the `funcName`. You should check `deriveCollation` function to see which arguments are passed
+	// to the `CheckAndDeriveCollationFromExprs` function, and then passed here.
+	shouldChangeToBin := false
+
+	switch funcName {
+	case ast.Reverse, ast.Lower, ast.Upper, ast.SubstringIndex, ast.Trim, ast.Quote, ast.InsertFunc, ast.Substr, ast.Repeat, ast.Replace:
+		shouldChangeToBin = args[0].GetType().EvalType() == types.ETJson
+	case ast.Concat, ast.ConcatWS, ast.Elt, ast.MakeSet:
+		for _, arg := range args {
+			if arg.GetType().EvalType() == types.ETJson {
+				shouldChangeToBin = true
+				break
+			}
+		}
+	case ast.ExportSet:
+		if len(args) >= 2 {
+			shouldChangeToBin = args[0].GetType().EvalType() == types.ETJson || args[1].GetType().EvalType() == types.ETJson
+		}
+		if len(args) >= 3 {
+			shouldChangeToBin = shouldChangeToBin || args[2].GetType().EvalType() == types.ETJson
+		}
+	}
+
+	if shouldChangeToBin {
+		ec.Collation = collate.ConvertAndGetBinCollation(ec.Collation)
+	}
+	return ec
 }
 
 func safeConvert(ctx BuildContext, ec *ExprCollation, args ...Expression) bool {
