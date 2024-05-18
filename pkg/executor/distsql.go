@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"runtime"
 	"runtime/trace"
 	"slices"
 	"sort"
@@ -700,6 +701,10 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, workCh chan<
 	idxID := e.getIndexPlanRootID()
 	e.idxWorkerWg.Add(1)
 	go func() {
+		// 32KB ballast helps grow the stack to the requirement of index worker.
+		// This reduces the `morestack` call during the execution, thus improvement the efficiency of TiDB.
+		// TODO: remove ballast after global pool is applied
+		ballast := make([]byte, 32*size.KB)
 		defer trace.StartRegion(ctx, "IndexLookUpIndexWorker").End()
 		worker := &indexWorker{
 			idxLookup:       e,
@@ -777,6 +782,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, workCh chan<
 		close(workCh)
 		close(e.resultCh)
 		e.idxWorkerWg.Done()
+		runtime.KeepAlive(ballast)
 	}()
 	return nil
 }
@@ -1188,6 +1194,7 @@ func (w *tableWorker) pickAndExecTask(ctx context.Context) {
 			task.doneCh <- errors.Errorf("%v", r)
 		}
 	}()
+	var ballast []byte
 	for {
 		// Don't check ctx.Done() on purpose. If background worker get the signal and all
 		// exit immediately, session's goroutine doesn't know this and still calling Next(),
@@ -1200,6 +1207,13 @@ func (w *tableWorker) pickAndExecTask(ctx context.Context) {
 		case <-w.finished:
 			return
 		}
+		if ballast == nil {
+			// 32KB ballast helps grow the stack to the requirement of table worker.
+			// This reduces the `morestack` call during the execution, thus improvement the efficiency of TiDB.
+			// Only allocate ballast when task is received.
+			// TODO: remove ballast after global pool is applied
+			ballast = make([]byte, 32*size.KB)
+		}
 		startTime := time.Now()
 		err := w.executeTask(ctx, task)
 		if w.idxLookup.stats != nil {
@@ -1208,6 +1222,7 @@ func (w *tableWorker) pickAndExecTask(ctx context.Context) {
 		}
 		task.doneCh <- err
 	}
+	runtime.KeepAlive(ballast)
 }
 
 func (e *IndexLookUpExecutor) getHandle(row chunk.Row, handleIdx []int,
