@@ -459,7 +459,7 @@ func BuildHistAndTopN(
 //
 //	We assume that the ones not in the top-n list's selectivity is 1/remained_ndv which is the internal implementation of EqualRowCount
 func pruneTopNItem(topns []TopNMeta, ndv, nullCount, sampleRows, totalRows int64) []TopNMeta {
-	if totalRows <= 1 || len(topns) == 0 {
+	if totalRows <= 1 || len(topns) <= 1 {
 		return topns
 	}
 	// Sum the occurrence except the least common one from the top-n list. To check whether the lest common one is worth
