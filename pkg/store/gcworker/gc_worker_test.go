@@ -815,8 +815,18 @@ Loop:
 	}
 }
 
-func TestUnsafeDestroyRangeForRaftkv2(t *testing.T) {
+func testUnsafeDestroyRangeForRaftkv2(t *testing.T) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/util/IsRaftKv2", "return(true)"))
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/store/gcworker/mockHistoryJobForGC", "return(1)"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/gcworker/mockHistoryJobForGC"))
+	}()
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/store/gcworker/mockHistoryJob", "return(\"schema/d1/t1\")"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/gcworker/mockHistoryJob"))
+	}()
 
 	s := createGCWorkerSuite(t)
 	// Put some delete range tasks.
