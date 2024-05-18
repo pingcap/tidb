@@ -674,8 +674,8 @@ func TestPruneTopN(t *testing.T) {
 
 	// case 3
 	topnIn = nil
-	for i := 0; i < 100; i++ {
-		topnIn = append(topnIn, TopNMeta{[]byte{byte(i)}, 1_000})
+	for i := 0; i < 10; i++ {
+		topnIn = append(topnIn, TopNMeta{[]byte{byte(i)}, 10_000})
 	}
 	totalNDV = 100
 	nullCnt = 0
