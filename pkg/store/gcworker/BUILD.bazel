@@ -50,7 +50,7 @@ go_test(
     embed = [":gcworker"],
     flaky = True,
     race = "on",
-    shard_count = 25,
+    shard_count = 24,
     deps = [
         "//pkg/ddl/placement",
         "//pkg/ddl/util",
