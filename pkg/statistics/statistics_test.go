@@ -650,7 +650,7 @@ func TestPruneTopN(t *testing.T) {
 	var totalNDV, nullCnt, sampleRows, totalRows int64
 
 	// case 1
-	topnIn = []TopNMeta{{[]byte{1}, 100_000}, {[]byte{2}, 10}}
+	topnIn = []TopNMeta{{[]byte{1}, 100_000}}
 	totalNDV = 2
 	nullCnt = 0
 	sampleRows = 100_010
