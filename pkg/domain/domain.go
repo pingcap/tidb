@@ -277,7 +277,7 @@ func (do *Domain) loadInfoSchema(startTS uint64) (infoschema.InfoSchema, bool, i
 	// 1. Not first time bootstrap loading, which needs a full load.
 	// 2. It is newer than the current one, so it will be "the current one" after this function call.
 	// 3. There are less 100 diffs.
-	// 4. No regenrated schema diff.
+	// 4. No regenerated schema diff.
 	startTime := time.Now()
 	if currentSchemaVersion != 0 && neededSchemaVersion > currentSchemaVersion && neededSchemaVersion-currentSchemaVersion < LoadSchemaDiffVersionGapThreshold {
 		is, relatedChanges, diffTypes, err := do.tryLoadSchemaDiffs(m, currentSchemaVersion, neededSchemaVersion, startTS)
@@ -511,7 +511,7 @@ func (do *Domain) InfoSchema() infoschema.InfoSchema {
 
 // GetSnapshotInfoSchema gets a snapshot information schema.
 func (do *Domain) GetSnapshotInfoSchema(snapshotTS uint64) (infoschema.InfoSchema, error) {
-	// if the snapshotTS is new enough, we can get infoschema directly through sanpshotTS.
+	// if the snapshotTS is new enough, we can get infoschema directly through snapshotTS.
 	if is := do.infoCache.GetBySnapshotTS(snapshotTS); is != nil {
 		return is, nil
 	}
@@ -613,7 +613,7 @@ func (do *Domain) Reload() error {
 	is, hitCache, oldSchemaVersion, changes, err := do.loadInfoSchema(version)
 	if err != nil {
 		if version = getFlashbackStartTSFromErrorMsg(err); version != 0 {
-			// use the lastest available version to create domain
+			// use the latest available version to create domain
 			version--
 			is, hitCache, oldSchemaVersion, changes, err = do.loadInfoSchema(version)
 		}
@@ -949,7 +949,7 @@ func (do *Domain) loadSchemaInLoop(ctx context.Context, lease time.Duration) {
 			}
 			// The schema maybe changed, must reload schema then the schema validator can restart.
 			exitLoop := do.mustReload()
-			// domain is cosed.
+			// domain is closed.
 			if exitLoop {
 				logutil.BgLogger().Error("domain is closed, exit loadSchemaInLoop")
 				return
@@ -968,7 +968,7 @@ func (do *Domain) loadSchemaInLoop(ctx context.Context, lease time.Duration) {
 }
 
 // mustRestartSyncer tries to restart the SchemaSyncer.
-// It returns until it's successful or the domain is stoped.
+// It returns until it's successful or the domain is stopped.
 func (do *Domain) mustRestartSyncer(ctx context.Context) error {
 	syncer := do.ddl.SchemaSyncer()
 
@@ -2098,7 +2098,7 @@ func (do *Domain) GetHistoricalStatsWorker() *HistoricalStatsWorker {
 	return do.historicalStatsWorker
 }
 
-// EnableDumpHistoricalStats used to control whether enbale dump stats for unit test
+// EnableDumpHistoricalStats used to control whether enable dump stats for unit test
 var enableDumpHistoricalStats atomic.Bool
 
 // StartHistoricalStatsWorker start historical workers running

@@ -535,7 +535,7 @@ func (e *memtableRetriever) setDataFromReferConst(sctx sessionctx.Context, schem
 
 func (e *memtableRetriever) updateStatsCacheIfNeed() bool {
 	for _, col := range e.columns {
-		// only the following columns need stats cahce.
+		// only the following columns need stats cache.
 		if col.Name.O == "AVG_ROW_LENGTH" || col.Name.O == "DATA_LENGTH" || col.Name.O == "INDEX_LENGTH" || col.Name.O == "TABLE_ROWS" {
 			return true
 		}

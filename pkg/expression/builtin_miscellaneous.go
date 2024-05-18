@@ -624,7 +624,7 @@ func (b *builtinInetNtoaSig) evalString(ctx EvalContext, row chunk.Row) (string,
 	binary.BigEndian.PutUint32(ip, uint32(val))
 	ipv4 := ip.To4()
 	if ipv4 == nil {
-		// Not a vaild ipv4 address.
+		// Not a valid ipv4 address.
 		return "", true, nil
 	}
 
