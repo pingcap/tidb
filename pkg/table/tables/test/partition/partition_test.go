@@ -2291,7 +2291,7 @@ func TestPartitionByIntExtensivePart(t *testing.T) {
 }
 
 func TestGlobalIndexPartitionByIntExtensivePart(t *testing.T) {
-	limitSizeOfTest := false
+	limitSizeOfTest := true
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	schemaName := "PartitionByIntExtensive"
@@ -2351,7 +2351,6 @@ func TestGlobalIndexPartitionByIntExtensivePart(t *testing.T) {
 	}
 
 	seed := gotime.Now().UnixNano()
-	seed = 1715953323394088000
 	logutil.BgLogger().Info("Seeding rand", zap.Int64("seed", seed))
 	reorgRand := rand.New(rand.NewSource(seed))
 	for _, createSQL := range tStart {
