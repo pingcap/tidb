@@ -42,7 +42,8 @@ func allConstants(ctx expression.BuildContext, expr expression.Expression) bool 
 
 // isNullRejectedInList checks null filter for IN list using OR logic.
 // Reason is that null filtering through evaluation by isNullRejectedSimpleExpr
-// has problems with IN list.
+// has problems with IN list. For example, constant in (outer-table.col1, inner-table.col2)
+// is not null rejecting since constant in (outer-table.col1, NULL) is not false/unknown.
 func isNullRejectedInList(ctx base.PlanContext, expr *expression.ScalarFunction, innerSchema *expression.Schema) bool {
 	for i, arg := range expr.GetArgs() {
 		if i > 0 {
@@ -94,8 +95,8 @@ func IsNullRejected(ctx base.PlanContext, innerSchema *expression.Schema, predic
 
 // isNullRejectedSimpleExpr check whether a condition is null-rejected
 // A condition would be null-rejected in one of following cases:
-// If it is a predicate containing a reference to an inner table that evaluates to UNKNOWN or FALSE
-// when one of its arguments is NULL.
+// If it is a predicate containing a reference to an inner table (null producing side) that evaluates
+// to UNKNOWN or FALSE when one of its arguments is NULL.
 func isNullRejectedSimpleExpr(ctx context.PlanContext, schema *expression.Schema, expr expression.Expression) bool {
 	// The expression should reference at least one field in innerSchema or all constants.
 	if !expression.ExprReferenceSchema(expr, schema) && !allConstants(ctx.GetExprCtx(), expr) {

@@ -1249,6 +1249,7 @@ func (e *memtableRetriever) setDataFromIndexes(ctx sessionctx.Context, schemas [
 					0,            // INDEX_ID
 					"YES",        // IS_VISIBLE
 					"YES",        // CLUSTERED
+					0,            // IS_GLOBAL
 				)
 				rows = append(rows, record)
 			}
@@ -1294,6 +1295,7 @@ func (e *memtableRetriever) setDataFromIndexes(ctx sessionctx.Context, schemas [
 						idxInfo.ID,      // INDEX_ID
 						visible,         // IS_VISIBLE
 						isClustered,     // CLUSTERED
+						idxInfo.Global,  // IS_GLOBAL
 					)
 					rows = append(rows, record)
 				}
