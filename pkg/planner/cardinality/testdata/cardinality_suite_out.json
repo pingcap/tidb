@@ -2,10 +2,7 @@
   {
     "Name": "TestCollationColumnEstimate",
     "Cases": [
-      [
-        "test t  a 0 \u0000A\u0000A\u0000A 2",
-        "test t  a 0 \u0000B\u0000B\u0000B 2"
-      ],
+      null,
       [
         "TableReader_7 2.00 root  data:Selection_6",
         "└─Selection_6 2.00 cop[tikv]  eq(test.t.a, \"aÄa\")",
@@ -24,7 +21,7 @@
       {
         "Start": 800,
         "End": 900,
-        "Count": 735.504166655054
+        "Count": 763.254166655054
       },
       {
         "Start": 900,
@@ -79,7 +76,7 @@
       {
         "Start": 800,
         "End": 1000,
-        "Count": 1193.696869573942
+        "Count": 1221.446869573942
       },
       {
         "Start": 900,
@@ -104,7 +101,7 @@
       {
         "Start": 200,
         "End": 400,
-        "Count": 1237.5288209899081
+        "Count": 1192.5288209899081
       },
       {
         "Start": 200,
@@ -343,11 +340,11 @@
       },
       {
         "SQL": "select * from t where a > 8 or d < 4 or c > 7 or b < 5",
-        "Selectivity": 0.82421875
+        "Selectivity": 0.794921875
       },
       {
         "SQL": "select * from t where a < 8 and (b > 10 or c < 3 or b > 4) and a > 2",
-        "Selectivity": 0.3125
+        "Selectivity": 0.234375
       }
     ]
   },
@@ -1359,7 +1356,7 @@
             "table_name": "t",
             "type": "Column Stats-Range",
             "expr": "((a > 0 and a < 2))",
-            "row_count": 4
+            "row_count": 2
           },
           {
             "table_name": "t",
@@ -1371,7 +1368,7 @@
             "table_name": "t",
             "type": "Table Stats-Expression-CNF",
             "expr": "`and`(`gt`(test.t.a, 0), `lt`(test.t.a, 2))",
-            "row_count": 4
+            "row_count": 2
           }
         ]
       },
@@ -1532,7 +1529,7 @@
                   {
                     "Histogram NotNull Count": 3080,
                     "Increase Factor": 1,
-                    "TopN total count": 1095
+                    "TopN total count": 1096
                   },
                   {
                     "github.com/pingcap/tidb/pkg/planner/cardinality.GetColumnRowCount": [
@@ -1601,7 +1598,7 @@
                   {
                     "Histogram NotNull Count": 3080,
                     "Increase Factor": 1,
-                    "TopN total count": 1098
+                    "TopN total count": 1097
                   },
                   {
                     "github.com/pingcap/tidb/pkg/planner/cardinality.GetColumnRowCount": [
@@ -2461,7 +2458,7 @@
                   {
                     "Histogram NotNull Count": 3080,
                     "Increase Factor": 1,
-                    "TopN total count": 1095
+                    "TopN total count": 1096
                   },
                   {
                     "github.com/pingcap/tidb/pkg/planner/cardinality.GetColumnRowCount": [
@@ -2596,7 +2593,7 @@
                   {
                     "Histogram NotNull Count": 3080,
                     "Increase Factor": 1,
-                    "TopN total count": 1098
+                    "TopN total count": 1097
                   },
                   {
                     "github.com/pingcap/tidb/pkg/planner/cardinality.GetColumnRowCount": [
