@@ -213,7 +213,7 @@ func GlobalInfoSyncerInit(
 		pdHTTPCli:         pdHTTPCli,
 		info:              getServerInfo(id, serverIDGetter),
 		serverInfoPath:    fmt.Sprintf("%s/%s", ServerInformationPath, id),
-		minStartTSPath:    fmt.Sprintf("%s/%s", ServerMinStartTSPath, id),
+		minStartTSPath:    getMinStartTsPath(codec, id),
 	}
 	err := is.init(ctx, skipRegisterToDashBoard)
 	if err != nil {
@@ -226,6 +226,27 @@ func GlobalInfoSyncerInit(
 	is.initResourceManagerClient(pdCli)
 	setGlobalInfoSyncer(is)
 	return is, nil
+}
+
+func instanceName() string {
+	cfg := config.GetGlobalConfig()
+	hostname, err := os.Hostname()
+	if err != nil {
+		return "unknown"
+	}
+	return fmt.Sprintf("%s_%d", hostname, cfg.Port)
+}
+
+// getMinStartTsPath is used to add keyspace id and the instance information to the etcd path.
+func getMinStartTsPath(codec tikv.Codec, id string) string {
+
+	instanceName := instanceName()
+	minStartTsPath := fmt.Sprintf("%s_%s", ServerMinStartTSPath, instanceName)
+
+	if codec != nil && codec.GetKeyspace() != nil {
+		minStartTsPath = fmt.Sprintf("%s_%d_%s", minStartTsPath, codec.GetKeyspaceID(), id)
+	}
+	return minStartTsPath
 }
 
 // Init creates a new etcd session and stores server info to etcd.
