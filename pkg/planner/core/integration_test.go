@@ -1218,6 +1218,15 @@ func TestRepeatPushDownToTiFlash(t *testing.T) {
 	tk.MustQuery("explain select repeat(a,b) from t;").CheckAt([]int{0, 2, 4}, rows)
 }
 
+func TestIssue50235(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table tt (c year(4) NOT NULL DEFAULT '2016', primary key(c));`)
+	tk.MustExec(`insert into tt values (2016);`)
+	tk.MustQuery(`select * from tt where c < 16212511333665770580`).Check(testkit.Rows("2016"))
+}
+
 func TestIssue36194(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
