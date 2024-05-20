@@ -3261,11 +3261,9 @@ func doPartitionReorgWork(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job, tb
 	rh := newReorgHandler(sess.NewSession(sctx))
 	indices := make([]*model.IndexInfo, 0, len(tbl.Meta().Indices))
 	for _, index := range tbl.Meta().Indices {
-		if index.Global {
-			if index.State == model.StatePublic {
-				// Skip old global indexes, but rebuild all other indexes
-				continue
-			}
+		if index.Global && index.State == model.StatePublic {
+			// Skip old global indexes, but rebuild all other indexes
+			continue
 		}
 		indices = append(indices, index)
 	}
