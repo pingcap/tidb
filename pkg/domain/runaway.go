@@ -240,7 +240,7 @@ func (do *Domain) RemoveRunawayWatch(recordID int64) error {
 func (do *Domain) runawayRecordFlushLoop() {
 	defer util.Recover(metrics.LabelDomain, "runawayRecordFlushLoop", nil, false)
 
-	// this times is used to batch flushing rocords, with 1s duration,
+	// this times is used to batch flushing records, with 1s duration,
 	// we can guarantee a watch record can be seen by the user within 1s.
 	runawayRecordFluashTimer := time.NewTimer(runawayRecordFlushInterval)
 	runawayRecordGCTicker := time.NewTicker(runawayRecordGCInterval)

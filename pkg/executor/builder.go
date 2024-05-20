@@ -3682,7 +3682,7 @@ func buildTableReq(b *executorBuilder, schemaLen int, plans []base.PhysicalPlan)
 
 // buildIndexReq is designed to create a DAG for index request.
 // If len(ByItems) != 0 means index request should return related columns
-// to sort result rows in TiDB side for parition tables.
+// to sort result rows in TiDB side for partition tables.
 func buildIndexReq(ctx sessionctx.Context, columns []*model.IndexColumn, handleLen int, plans []base.PhysicalPlan) (dagReq *tipb.DAGRequest, err error) {
 	indexReq, err := builder.ConstructDAGReq(ctx, plans, kv.TiKV)
 	if err != nil {
@@ -4574,7 +4574,7 @@ func buildRangesForIndexJoin(ctx sessionctx.Context, lookUpContents []*join.Inde
 			}
 		}
 		if cwc == nil {
-			// A deep copy is need here because the old []*range.Range is overwriten
+			// A deep copy is need here because the old []*range.Range is overwritten
 			for _, ran := range ranges {
 				retRanges = append(retRanges, ran.Clone())
 			}

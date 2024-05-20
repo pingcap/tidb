@@ -285,7 +285,7 @@ func (e *RecoverIndexExec) buildTableScan(ctx context.Context, txn kv.Transactio
 		return nil, err
 	}
 
-	// Actually, with limitCnt, the match datas maybe only in one region, so let the concurrency to be 1,
+	// Actually, with limitCnt, the match data maybe only in one region, so let the concurrency to be 1,
 	// avoid unnecessary region scan.
 	kvReq.Concurrency = 1
 	result, err := distsql.Select(ctx, e.Ctx().GetDistSQLCtx(), kvReq, e.columnsTypes())

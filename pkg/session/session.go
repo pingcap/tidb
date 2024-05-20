@@ -747,7 +747,7 @@ func (s *session) commitTxnWithTemporaryData(ctx context.Context, txn kv.Transac
 	return nil
 }
 
-// errIsNoisy is used to filter DUPLCATE KEY errors.
+// errIsNoisy is used to filter DUPLICATE KEY errors.
 // These can observed by users in INFORMATION_SCHEMA.CLIENT_ERRORS_SUMMARY_GLOBAL instead.
 //
 // The rationale for filtering these errors is because they are "client generated errors". i.e.
@@ -2340,7 +2340,7 @@ const ExecStmtVarKey ExecStmtVarKeyType = 0
 // execStmtResult is the return value of ExecuteStmt and it implements the sqlexec.RecordSet interface.
 // Why we need a struct to wrap a RecordSet and provide another RecordSet?
 // This is because there are so many session state related things that definitely not belongs to the original
-// RecordSet, so this struct exists and RecordSet.Close() is overrided handle that.
+// RecordSet, so this struct exists and RecordSet.Close() is overridden to handle that.
 type execStmtResult struct {
 	sqlexec.RecordSet
 	se     *session
