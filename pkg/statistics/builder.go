@@ -300,7 +300,9 @@ func BuildHistAndTopN(
 	// If ndv < numBuckets, collect them all as topN
 	collectAll := false
 	if ndv <= int64(numBuckets) {
-		numTopN = int(ndv)
+		if ndv > int64(numTopN) {
+			numTopN = numBuckets
+		}
 		collectAll = true
 	}
 
@@ -395,17 +397,12 @@ func BuildHistAndTopN(
 	topn := &TopN{TopN: topNList}
 	topn.Scale(sampleFactor)
 
-	if collectAll {
-		// If TopN was instructed to collect all  - don't prune and don't create any buckets
+	if uint64(count) <= topn.TotalCount() {
+		// If we've collected everything  - don't create any buckets
 		return hg, topn, nil
 	}
 
 	topNList = pruneTopNItem(topNList, ndv, nullCount, sampleNum, count)
-
-	if uint64(count) <= topn.TotalCount() {
-		// If after pruning we still have all values in topN  - don't create any buckets
-		return hg, topn, nil
-	}
 
 	// Step2: exclude topn from samples
 	if numTopN != 0 {
