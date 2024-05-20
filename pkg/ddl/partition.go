@@ -2876,21 +2876,24 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 		// both old and new set of partition ids in the unique index at the same time!
 		for _, index := range tblInfo.Indices {
 			if !index.Unique {
+				// for now, only unique index can be global, non-unique indexes are 'local'
 				continue
 			}
-			// for now, only unique index can be global, non-unique indexes are 'local'
 			inAllPartitionColumns, err := checkPartitionKeysConstraint(partInfo, index.Columns, tblInfo)
 			if err != nil {
 				return ver, errors.Trace(err)
 			}
 			if index.Global || !inAllPartitionColumns {
-				// Duplicate the unique indexes with new index ids
+				// Duplicate the unique indexes with new index ids.
+				// If previously was Global or will be Global:
+				// it must be recreated with new index ID
 				newIndex := *index
 				newIndex.State = model.StateDeleteOnly
 				newIndex.ID = AllocateIndexID(tblInfo)
 				if inAllPartitionColumns {
 					newIndex.Global = false
 				} else {
+					// If not including all partitioning columns, make it Global
 					newIndex.Global = true
 				}
 				tblInfo.Indices = append(tblInfo.Indices, &newIndex)
@@ -3055,6 +3058,7 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 				} else {
 					inAllPartitionColumns, err := checkPartitionKeysConstraint(partInfo, index.Columns, tblInfo)
 					if err != nil {
+						job.State = model.JobStateCancelled
 						return ver, errors.Trace(err)
 					}
 					if !inAllPartitionColumns {

@@ -2295,31 +2295,32 @@ func getNextPartitionInfo(reorg *reorgInfo, t table.PartitionedTable, currPhysic
 	}
 
 	// This will be used in multiple different scenarios/ALTER TABLE:
-	// ADD INDEX - no change in partitions, just use pi.Definitions
-	// REORGANIZE PARTITION - copy data from partitions to be dropped
-	// REORGANIZE PARTITION - (re)create indexes on partitions to be added
-	// REORGANIZE PARTITION - Update new Global indexes with data from non-touched partitions
+	// ADD INDEX - no change in partitions, just use pi.Definitions (1)
+	// REORGANIZE PARTITION - copy data from partitions to be dropped (2)
+	// REORGANIZE PARTITION - (re)create indexes on partitions to be added (3)
+	// REORGANIZE PARTITION - Update new Global indexes with data from non-touched partitions (4)
 	// (i.e. pi.Definitions - pi.DroppingDefinitions)
 	var pid int64
 	var err error
 	if bytes.Equal(reorg.currElement.TypeKey, meta.IndexElementKey) {
-		// During index re-creation, process data from partitions to be added
+		// case 1, 3 or 4
 		if len(pi.AddingDefinitions) == 0 {
+			// case 1
 			// Simply AddIndex, without any partitions added or dropped!
 			pid, err = findNextPartitionID(currPhysicalTableID, pi.Definitions)
 		} else {
-			if len(pi.DroppingDefinitions) == 0 {
-				panic("Is this possible? In which case?")
-			}
+			// case 3 (or if not found AddingDefinitions; 4)
 			// check if recreating Global Index (during Reorg Partition)
 			pid, err = findNextPartitionID(currPhysicalTableID, pi.AddingDefinitions)
 			if err != nil {
+				// case 4
 				// Not a partition in the AddingDefinitions, so it must be an existing
 				// non-touched partition, i.e. recreating Global Index for the non-touched partitions
 				pid, err = findNextNonTouchedPartitionID(currPhysicalTableID, pi)
 			}
 		}
 	} else {
+		// case 2
 		pid, err = findNextPartitionID(currPhysicalTableID, pi.DroppingDefinitions)
 	}
 	if err != nil {
