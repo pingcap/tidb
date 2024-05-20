@@ -928,7 +928,7 @@ func (e *slowQueryRetriever) getAllFiles(ctx context.Context, sctx sessionctx.Co
 		}
 
 		// If we want to get the end time from a compressed file,
-		// we need uncompress the whole file which is very slow and consume a lot of memeory.
+		// we need uncompress the whole file which is very slow and consume a lot of memory.
 		if !compressed {
 			// Get the file end time.
 			fileEndTime, err := e.getFileEndTime(ctx, file)

@@ -781,7 +781,7 @@ func TestIndexMergeUpgradeFrom300To540(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int64(ver300), ver)
 
-	// We are now in 3.0.0, check tidb_enable_index_merge shoudle not exist.
+	// We are now in 3.0.0, check tidb_enable_index_merge should not exist.
 	res := MustExecToRecodeSet(t, seV3, fmt.Sprintf("select * from mysql.GLOBAL_VARIABLES where variable_name='%s'", variable.TiDBEnableIndexMerge))
 	chk := res.NewChunk(nil)
 	err = res.Next(ctx, chk)
