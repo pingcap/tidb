@@ -126,8 +126,23 @@ func (p *LogicalProjection) pushDownTopN(topN *LogicalTopN, opt *logicalOptimize
 		}
 	}
 	if topN != nil {
+<<<<<<< HEAD:planner/core/rule_topn_push_down.go
 		for _, by := range topN.ByItems {
 			by.Expr = expression.FoldConstant(expression.ColumnSubstitute(by.Expr, p.schema, p.Exprs))
+=======
+		exprCtx := p.SCtx().GetExprCtx()
+		substitutedExprs := make([]expression.Expression, 0, len(topN.ByItems))
+		for _, by := range topN.ByItems {
+			substituted := expression.FoldConstant(exprCtx, expression.ColumnSubstitute(exprCtx, by.Expr, p.schema, p.Exprs))
+			if !expression.IsImmutableFunc(substituted) {
+				// after substituting, if the order-by expression is un-deterministic like 'order by rand()', stop pushing down.
+				return p.baseLogicalPlan.PushDownTopN(topN, opt)
+			}
+			substitutedExprs = append(substitutedExprs, substituted)
+		}
+		for i, by := range topN.ByItems {
+			by.Expr = substitutedExprs[i]
+>>>>>>> b3d740f7bb9 (planner: stop pushing TopN down through Projection if it has undeterministic functions (#53362)):pkg/planner/core/rule_topn_push_down.go
 		}
 
 		// remove meaningless constant sort items.
