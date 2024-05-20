@@ -62,40 +62,22 @@ type Checksum struct {
 // ProgressUnit represents the unit of progress.
 type ProgressUnit string
 
-type StoreBackupPolicy struct {
-	One uint64
-	All bool
-}
-
-type StoreConnector interface {
-	Connect(ctx context.Context, storeID uint64) (backuppb.BackupClient, error)
-
-	RunBackupAsync(
-		ctx context.Context,
-		round uint64,
-		storeID uint64,
-		request backuppb.BackupRequest,
-		cli backuppb.BackupClient,
-		respCh chan *ResponseAndStore)
-}
-
 type MainBackupLoop struct {
-	StoreConnector
-	BackupClient *Client
+	BackupSender
 
+	// backup requests for all stores.
+	// the subRanges may changed every round.
+	BackupReq backuppb.BackupRequest
+	// record the whole backup progress in infinite loop.
 	GlobalProgressTree *rtree.ProgressRangeTree
 	ReplicaReadLabel   map[string]string
-	StateNotifier      chan StoreBackupPolicy
-	ProgressCallBack   func()
+	StateNotifier      chan BackupRetryPolicy
+
+	ProgressCallBack        func()
+	GetBackupClientCallBack func(ctx context.Context, storeID uint64) (backuppb.BackupClient, error)
 }
 
-func (l *MainBackupLoop) Connect(ctx context.Context, storeID uint64) (backuppb.BackupClient, error) {
-	// always use reset connection here.
-	// because we need to reset connection when store state changed.
-	return l.BackupClient.mgr.ResetBackupClient(ctx, storeID)
-}
-
-func (l *MainBackupLoop) RunBackupAsync(
+func (l *MainBackupLoop) SendAsync(
 	ctx context.Context,
 	round uint64,
 	storeID uint64,
@@ -108,7 +90,7 @@ func (l *MainBackupLoop) RunBackupAsync(
 			logutil.CL(ctx).Info("exit store backup goroutine", zap.Uint64("store", storeID))
 			close(respCh)
 		}()
-		err := startStoreBackup(ctx, storeID, request, cli, respCh)
+		err := startBackup(ctx, storeID, request, cli, respCh)
 		if err != nil {
 			// only 2 kinds of errors will occur here.
 			// 1. grpc connection error(already retry inside)
@@ -122,7 +104,7 @@ func (l *MainBackupLoop) RunBackupAsync(
 				logutil.CL(ctx).Error("store backup failed",
 					zap.Uint64("round", round),
 					zap.Uint64("storeID", storeID), zap.Error(err))
-				l.StateNotifier <- StoreBackupPolicy{One: storeID}
+				l.StateNotifier <- BackupRetryPolicy{One: storeID}
 			}
 		}
 	}()
@@ -170,7 +152,7 @@ func (l *MainBackupLoop) CollectStoreBackupsAsync(
 // if new tikv store joined. send backup request to new store.
 // if one tikv store rebooted. consider leader changes, resend backup request to all stores.
 // if one tikv store disconnected. consider leader changes, resend backup request to all stores.a
-func (l *MainBackupLoop) Run(ctx context.Context, request backuppb.BackupRequest) error {
+func (bc *Client) RunLoop(ctx context.Context, loop *MainBackupLoop) error {
 	// a flag to indicate the backup round
 	// one backup round try to backup all ranges on all tikv stores.
 	// ideally, backup should be finished in one round
@@ -197,7 +179,7 @@ mainLoop:
 		handleCtx, handleCancel := context.WithCancel(ctx)
 
 		// Compute the left ranges that not backuped yet
-		iter := l.GlobalProgressTree.Iter()
+		iter := loop.GlobalProgressTree.Iter()
 		inCompleteRanges := iter.GetIncompleteRanges()
 		if len(inCompleteRanges) == 0 {
 			// all range backuped
@@ -208,9 +190,9 @@ mainLoop:
 
 		logutil.CL(ctx).Info("backup round start...", zap.Uint64("round", round))
 
-		request.SubRanges = getBackupRanges(inCompleteRanges)
+		loop.BackupReq.SubRanges = getBackupRanges(inCompleteRanges)
 
-		allStores, err := l.BackupClient.getBackupStores(mainCtx, l.ReplicaReadLabel)
+		allStores, err := bc.getBackupStores(mainCtx, loop.ReplicaReadLabel)
 		if err != nil {
 			// because we have connectted to pd before.
 			// so this error must be retryable, just make infinite retry here
@@ -226,7 +208,7 @@ mainLoop:
 			}
 			storeID := store.GetId()
 			// reset backup client every round, to get a clean grpc connection.
-			cli, err := l.StoreConnector.Connect(mainCtx, storeID)
+			cli, err := loop.GetBackupClientCallBack(mainCtx, storeID)
 			if err != nil {
 				// because the we get store info from pd.
 				// there is no customer setting here, so make infinite retry.
@@ -236,10 +218,10 @@ mainLoop:
 			}
 			ch := make(chan *ResponseAndStore)
 			storeBackupResultChMap[storeID] = ch
-			l.StoreConnector.RunBackupAsync(mainCtx, round, storeID, request, cli, ch)
+			loop.BackupSender.SendAsync(mainCtx, round, storeID, loop.BackupReq, cli, ch)
 		}
 		// infinite loop to collect region backup response to global channel
-		l.CollectStoreBackupsAsync(handleCtx, round, storeBackupResultChMap, globalBackupResultCh)
+		loop.CollectStoreBackupsAsync(handleCtx, round, storeBackupResultChMap, globalBackupResultCh)
 	handleLoop:
 		for {
 			select {
@@ -247,7 +229,7 @@ mainLoop:
 				handleCancel()
 				mainCancel()
 				return ctx.Err()
-			case storeBackupInfo := <-l.StateNotifier:
+			case storeBackupInfo := <-loop.StateNotifier:
 				if storeBackupInfo.All {
 					logutil.CL(mainCtx).Info("cluster state changed. restart store backups", zap.Uint64("round", round))
 					// stop current connections
@@ -258,7 +240,7 @@ mainLoop:
 				}
 				if storeBackupInfo.One != 0 {
 					storeID := storeBackupInfo.One
-					store, err := l.BackupClient.mgr.GetPDClient().GetStore(mainCtx, storeID)
+					store, err := bc.mgr.GetPDClient().GetStore(mainCtx, storeID)
 					if err != nil {
 						// cannot get store, maybe store has scaled-in.
 						logutil.CL(mainCtx).Info("cannot get store from pd", zap.Uint64("round", round), zap.Error(err))
@@ -273,7 +255,7 @@ mainLoop:
 						continue mainLoop
 					}
 					// reset backup client. store address could change but store id remained.
-					cli, err := l.StoreConnector.Connect(mainCtx, storeID)
+					cli, err := loop.GetBackupClientCallBack(mainCtx, storeID)
 					if err != nil {
 						logutil.CL(mainCtx).Error("failed to reset backup client", zap.Uint64("round", round), zap.Uint64("storeID", storeID), zap.Error(err))
 						handleCancel()
@@ -289,21 +271,21 @@ mainLoop:
 
 					storeBackupResultChMap[storeID] = ch
 					// start backup for this store
-					l.StoreConnector.RunBackupAsync(mainCtx, round, storeID, request, cli, ch)
+					loop.BackupSender.SendAsync(mainCtx, round, storeID, loop.BackupReq, cli, ch)
 					// re-create context for new handler loop
 					handleCtx, handleCancel = context.WithCancel(mainCtx)
 					// handleCancel makes the former collect goroutine exits
 					// so we need to re-create a new channel and restart a new collect goroutine.
 					globalBackupResultCh = make(chan *ResponseAndStore)
 					// collect all store backup producer channel result to one channel
-					l.CollectStoreBackupsAsync(handleCtx, round, storeBackupResultChMap, globalBackupResultCh)
+					loop.CollectStoreBackupsAsync(handleCtx, round, storeBackupResultChMap, globalBackupResultCh)
 				}
 			case respAndStore, ok := <-globalBackupResultCh:
 				if !ok {
 					// this round backup finished. break and check incomplete ranges in mainLoop.
 					break handleLoop
 				}
-				err = l.BackupClient.OnBackupResponse(handleCtx, respAndStore, errContext, l.GlobalProgressTree)
+				err = bc.OnBackupResponse(handleCtx, respAndStore, errContext, loop.GlobalProgressTree)
 				if err != nil {
 					// if error occurred here, stop the backup process
 					// because only 3 kinds of errors will be returned here:
@@ -314,7 +296,7 @@ mainLoop:
 					mainCancel()
 					return err
 				}
-				l.ProgressCallBack()
+				loop.ProgressCallBack()
 			}
 		}
 	}
@@ -1061,17 +1043,21 @@ func (bc *Client) BackupRanges(
 		return errors.Trace(err)
 	}
 
-	stateNotifier := make(chan StoreBackupPolicy)
+	stateNotifier := make(chan BackupRetryPolicy)
 	ObserveStoreChangesAsync(ctx, stateNotifier, bc.mgr.GetPDClient())
 
 	mainBackupLoop := &MainBackupLoop{
+		BackupReq:          request,
 		GlobalProgressTree: &globalProgressTree,
 		ReplicaReadLabel:   replicaReadLabel,
 		StateNotifier:      stateNotifier,
 		ProgressCallBack:   progressCallBack,
+		// always use reset connection here.
+		// because we need to reset connection when store state changed.
+		GetBackupClientCallBack: bc.mgr.ResetBackupClient,
 	}
 
-	err = mainBackupLoop.Run(ctx, request)
+	err = bc.RunLoop(ctx, mainBackupLoop)
 	if err != nil {
 		return errors.Trace(err)
 	}

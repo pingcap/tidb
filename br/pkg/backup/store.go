@@ -25,6 +25,21 @@ import (
 	"google.golang.org/grpc/status"
 )
 
+type BackupRetryPolicy struct {
+	One uint64
+	All bool
+}
+
+type BackupSender interface {
+	SendAsync(
+		ctx context.Context,
+		round uint64,
+		storeID uint64,
+		request backuppb.BackupRequest,
+		cli backuppb.BackupClient,
+		respCh chan *ResponseAndStore)
+}
+
 type ResponseAndStore struct {
 	Resp    *backuppb.BackupResponse
 	StoreID uint64
@@ -109,7 +124,7 @@ func doSendBackup(
 	}
 }
 
-func startStoreBackup(
+func startBackup(
 	ctx context.Context,
 	storeID uint64,
 	backupReq backuppb.BackupRequest,
@@ -188,15 +203,15 @@ func getBackupRanges(ranges []rtree.Range) []*kvrpcpb.KeyRange {
 	return requestRanges
 }
 
-func ObserveStoreChangesAsync(ctx context.Context, stateNotifier chan StoreBackupPolicy, pdCli pd.Client) {
+func ObserveStoreChangesAsync(ctx context.Context, stateNotifier chan BackupRetryPolicy, pdCli pd.Client) {
 	go func() {
 		cb := storewatch.MakeCallback(storewatch.WithOnReboot(func(s *metapb.Store) {
-			stateNotifier <- StoreBackupPolicy{All: true}
+			stateNotifier <- BackupRetryPolicy{All: true}
 		}), storewatch.WithOnDisconnect(func(s *metapb.Store) {
-			stateNotifier <- StoreBackupPolicy{All: true}
+			stateNotifier <- BackupRetryPolicy{All: true}
 		}), storewatch.WithOnNewStoreRegistered(func(s *metapb.Store) {
 			// only backup for this store
-			stateNotifier <- StoreBackupPolicy{One: s.Id}
+			stateNotifier <- BackupRetryPolicy{One: s.Id}
 		}))
 		watcher := storewatch.New(pdCli, cb)
 		tick := time.NewTicker(30 * time.Second)

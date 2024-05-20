@@ -52,23 +52,23 @@ var lock sync.Mutex
 // check the connect behaviour in test.
 var connectedStore map[uint64]int
 
-var _ backup.StoreConnector = (*mockBackupStoreConnector)(nil)
+var _ backup.BackupSender = (*mockBackupBackupSender)(nil)
 
-type mockBackupStoreConnector struct {
-	backupResponses map[uint64][]*backup.ResponseAndStore
-}
-
-func (m *mockBackupStoreConnector) Connect(ctx context.Context, storeID uint64) (backuppb.BackupClient, error) {
+func mockGetBackupClientCallBack(ctx context.Context, storeID uint64) (backuppb.BackupClient, error) {
 	lock.Lock()
 	defer lock.Unlock()
 	connectedStore[storeID] += 1
 	// we don't need connect real tikv in unit test
-	// and we have already mock the backup response in `RunBackupAsync`
+	// and we have already mock the backup response in `SendAsync`
 	// so just return nil here
 	return nil, nil
 }
 
-func (m *mockBackupStoreConnector) RunBackupAsync(
+type mockBackupBackupSender struct {
+	backupResponses map[uint64][]*backup.ResponseAndStore
+}
+
+func (m *mockBackupBackupSender) SendAsync(
 	ctx context.Context,
 	round uint64,
 	storeID uint64,
@@ -400,23 +400,22 @@ func TestMainBackupLoop(t *testing.T) {
 			},
 		})
 	}
-	ch := make(chan backup.StoreBackupPolicy)
+	ch := make(chan backup.BackupRetryPolicy)
 	mainLoop := &backup.MainBackupLoop{
-		StoreConnector: &mockBackupStoreConnector{
+		BackupSender: &mockBackupBackupSender{
 			backupResponses: mockBackupResponses,
 		},
 
-		BackupClient:       s.backupClient,
-		GlobalProgressTree: &tree,
-		ReplicaReadLabel:   nil,
-		StateNotifier:      ch,
-		ProgressCallBack:   func() {},
+		BackupReq:               backuppb.BackupRequest{},
+		GlobalProgressTree:      &tree,
+		ReplicaReadLabel:        nil,
+		StateNotifier:           ch,
+		ProgressCallBack:        func() {},
+		GetBackupClientCallBack: mockGetBackupClientCallBack,
 	}
 
-	req := backuppb.BackupRequest{}
-
 	connectedStore = make(map[uint64]int)
-	require.NoError(t, mainLoop.Run(backgroundCtx, req))
+	require.NoError(t, s.backupClient.RunLoop(backgroundCtx, mainLoop))
 
 	// Case #2: canceled case
 	ranges = []rtree.Range{
@@ -442,15 +441,16 @@ func TestMainBackupLoop(t *testing.T) {
 		})
 	}
 	mainLoop = &backup.MainBackupLoop{
-		StoreConnector: &mockBackupStoreConnector{
+		BackupSender: &mockBackupBackupSender{
 			backupResponses: mockBackupResponses,
 		},
 
-		BackupClient:       s.backupClient,
-		GlobalProgressTree: &tree,
-		ReplicaReadLabel:   nil,
-		StateNotifier:      ch,
-		ProgressCallBack:   func() {},
+		BackupReq:               backuppb.BackupRequest{},
+		GlobalProgressTree:      &tree,
+		ReplicaReadLabel:        nil,
+		StateNotifier:           ch,
+		ProgressCallBack:        func() {},
+		GetBackupClientCallBack: mockGetBackupClientCallBack,
 	}
 
 	// cancel the backup in another goroutine
@@ -460,7 +460,7 @@ func TestMainBackupLoop(t *testing.T) {
 		cancel()
 	}()
 	connectedStore = make(map[uint64]int)
-	require.Error(t, mainLoop.Run(ctx, req))
+	require.Error(t, s.backupClient.RunLoop(ctx, mainLoop))
 
 	// Case #3: one store drops and never come back
 	ranges = []rtree.Range{
@@ -493,15 +493,16 @@ func TestMainBackupLoop(t *testing.T) {
 	lock.Unlock()
 
 	mainLoop = &backup.MainBackupLoop{
-		StoreConnector: &mockBackupStoreConnector{
+		BackupSender: &mockBackupBackupSender{
 			backupResponses: mockBackupResponses,
 		},
 
-		BackupClient:       s.backupClient,
-		GlobalProgressTree: &tree,
-		ReplicaReadLabel:   nil,
-		StateNotifier:      ch,
-		ProgressCallBack:   func() {},
+		BackupReq:               backuppb.BackupRequest{},
+		GlobalProgressTree:      &tree,
+		ReplicaReadLabel:        nil,
+		StateNotifier:           ch,
+		ProgressCallBack:        func() {},
+		GetBackupClientCallBack: mockGetBackupClientCallBack,
 	}
 	go func() {
 		// mock region leader balance behaviour.
@@ -514,7 +515,7 @@ func TestMainBackupLoop(t *testing.T) {
 
 	connectedStore = make(map[uint64]int)
 	// backup can finished until store 1 has response the full ranges.
-	require.NoError(t, mainLoop.Run(backgroundCtx, req))
+	require.NoError(t, s.backupClient.RunLoop(backgroundCtx, mainLoop))
 	// connect to store 1 more than 1 time
 	require.Less(t, 1, connectedStore[remainStoreID])
 	// never connect to a dropped store.
@@ -547,15 +548,16 @@ func TestMainBackupLoop(t *testing.T) {
 	s.mockCluster.StopStore(dropStoreID)
 
 	mainLoop = &backup.MainBackupLoop{
-		StoreConnector: &mockBackupStoreConnector{
+		BackupSender: &mockBackupBackupSender{
 			backupResponses: mockBackupResponses,
 		},
 
-		BackupClient:       s.backupClient,
-		GlobalProgressTree: &tree,
-		ReplicaReadLabel:   nil,
-		StateNotifier:      ch,
-		ProgressCallBack:   func() {},
+		BackupReq:               backuppb.BackupRequest{},
+		GlobalProgressTree:      &tree,
+		ReplicaReadLabel:        nil,
+		StateNotifier:           ch,
+		ProgressCallBack:        func() {},
+		GetBackupClientCallBack: mockGetBackupClientCallBack,
 	}
 	go func() {
 		time.Sleep(500 * time.Millisecond)
@@ -566,7 +568,7 @@ func TestMainBackupLoop(t *testing.T) {
 
 	connectedStore = make(map[uint64]int)
 	// backup can finished until store 1 has response the full ranges.
-	require.NoError(t, mainLoop.Run(backgroundCtx, req))
+	require.NoError(t, s.backupClient.RunLoop(backgroundCtx, mainLoop))
 	// connect to store 1 more than 1 time
 	require.Less(t, 1, connectedStore[remainStoreID])
 	// connect to store 2 once should finished the backup.
@@ -603,15 +605,16 @@ func TestMainBackupLoop(t *testing.T) {
 	lock.Unlock()
 
 	mainLoop = &backup.MainBackupLoop{
-		StoreConnector: &mockBackupStoreConnector{
+		BackupSender: &mockBackupBackupSender{
 			backupResponses: mockBackupResponses,
 		},
 
-		BackupClient:       s.backupClient,
-		GlobalProgressTree: &tree,
-		ReplicaReadLabel:   nil,
-		StateNotifier:      ch,
-		ProgressCallBack:   func() {},
+		BackupReq:               backuppb.BackupRequest{},
+		GlobalProgressTree:      &tree,
+		ReplicaReadLabel:        nil,
+		StateNotifier:           ch,
+		ProgressCallBack:        func() {},
+		GetBackupClientCallBack: mockGetBackupClientCallBack,
 	}
 	go func() {
 		time.Sleep(500 * time.Millisecond)
@@ -622,7 +625,7 @@ func TestMainBackupLoop(t *testing.T) {
 
 	connectedStore = make(map[uint64]int)
 	// backup can finished until store 1 has response the full ranges.
-	require.NoError(t, mainLoop.Run(backgroundCtx, req))
+	require.NoError(t, s.backupClient.RunLoop(backgroundCtx, mainLoop))
 	// connect to store 1 time, and then handle loop blocked until watch store 2 back.
 	require.Equal(t, 1, connectedStore[remainStoreID])
 	// connect to store 2 once should finished the backup.
