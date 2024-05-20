@@ -39,15 +39,23 @@ import (
 	ttlmetrics "github.com/pingcap/tidb/pkg/ttl/metrics"
 	"github.com/pingcap/tidb/pkg/util"
 	topsqlreporter_metrics "github.com/pingcap/tidb/pkg/util/topsql/reporter/metrics"
+	"github.com/prometheus/client_golang/prometheus"
 	tikvconfig "github.com/tikv/client-go/v2/config"
 	pd "github.com/tikv/pd/client"
 )
 
-// RegisterMetrics register metrics with const label 'keyspace_id' if keyspaceName set.
-func RegisterMetrics() error {
+// RegisterMetricsWithLabels register metrics with const label 'keyspace_id' if keyspaceName set.
+func RegisterMetricsWithLabels(constLabels prometheus.Labels) error {
 	cfg := config.GetGlobalConfig()
 	if keyspace.IsKeyspaceNameEmpty(cfg.KeyspaceName) || strings.ToLower(cfg.Store) != "tikv" {
-		return registerMetrics(nil) // register metrics without label 'keyspace_id'.
+		return registerMetricsWithLabels(constLabels) // register metrics without label 'keyspace_id'.
+	}
+
+	if constLabels == nil {
+		constLabels = make(prometheus.Labels)
+	}
+	if _, ok := constLabels["keyspace_id"]; ok {
+		return registerMetricsWithLabels(constLabels)
 	}
 
 	pdAddrs, _, _, err := tikvconfig.ParsePath("tikv://" + cfg.Path)
@@ -60,7 +68,9 @@ func RegisterMetrics() error {
 		CAPath:   cfg.Security.ClusterSSLCA,
 		CertPath: cfg.Security.ClusterSSLCert,
 		KeyPath:  cfg.Security.ClusterSSLKey,
-	}, pd.WithCustomTimeoutOption(timeoutSec))
+	}, pd.WithCustomTimeoutOption(timeoutSec),
+		pd.WithInitMetricsOption(false),
+	)
 	if err != nil {
 		return err
 	}
@@ -71,13 +81,14 @@ func RegisterMetrics() error {
 		return err
 	}
 
-	return registerMetrics(keyspaceMeta)
+	constLabels["keyspace_id"] = fmt.Sprint(keyspaceMeta.GetId())
+	return registerMetricsWithLabels(constLabels)
 }
 
 // RegisterMetricsForBR register metrics with const label keyspace_id for BR.
 func RegisterMetricsForBR(pdAddrs []string, keyspaceName string) error {
 	if keyspace.IsKeyspaceNameEmpty(keyspaceName) {
-		return registerMetrics(nil) // register metrics without label 'keyspace_id'.
+		return registerMetricsWithLabels(nil) // register metrics without label 'keyspace_id'.
 	}
 
 	timeoutSec := 10 * time.Second
@@ -93,12 +104,15 @@ func RegisterMetricsForBR(pdAddrs []string, keyspaceName string) error {
 		return err
 	}
 
-	return registerMetrics(keyspaceMeta)
+	constLabels := prometheus.Labels{
+		"keyspace_id": fmt.Sprint(keyspaceMeta.GetId()),
+	}
+	return registerMetricsWithLabels(constLabels)
 }
 
-func registerMetrics(keyspaceMeta *keyspacepb.KeyspaceMeta) error {
-	if keyspaceMeta != nil {
-		metrics.SetConstLabels("keyspace_id", fmt.Sprint(keyspaceMeta.GetId()))
+func registerMetricsWithLabels(constLabels prometheus.Labels) error {
+	if len(constLabels) != 0 {
+		metrics.SetConstLabels(constLabels)
 	}
 
 	metrics.InitMetrics()
