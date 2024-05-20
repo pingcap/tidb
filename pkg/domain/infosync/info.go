@@ -228,24 +228,14 @@ func GlobalInfoSyncerInit(
 	return is, nil
 }
 
-func instanceName() string {
-	cfg := config.GetGlobalConfig()
-	hostname, err := os.Hostname()
-	if err != nil {
-		return "unknown"
-	}
-	return fmt.Sprintf("%s_%d", hostname, cfg.Port)
-}
-
 // getMinStartTsPath is used to add keyspace id and the instance information to the etcd path.
 func getMinStartTsPath(codec tikv.Codec, id string) string {
-
-	instanceName := instanceName()
+	instanceName := util2.InstanceName()
 	minStartTsPath := fmt.Sprintf("%s_%s", ServerMinStartTSPath, instanceName)
-
 	if codec != nil && codec.GetKeyspace() != nil {
 		minStartTsPath = fmt.Sprintf("%s_%d_%s", minStartTsPath, codec.GetKeyspaceID(), id)
 	}
+	logutil.BgLogger().Debug("get min start ts path:", zap.String("min-start-ts-path", minStartTsPath))
 	return minStartTsPath
 }
 
