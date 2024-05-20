@@ -67,7 +67,7 @@ See the [TiDB Cloud Quick Start Guide](https://docs.pingcap.com/tidbcloud/tidb-c
 
 See [TiDB Quick Start Guide](https://docs.pingcap.com/tidb/stable/quick-start-with-tidb).
 
-### Start developing with TiDB
+### Contributing to TiDB development
 
 See [TiDB Developer Guide](https://docs.pingcap.com/tidb/stable/dev-guide-overview) and [TiDB Cloud Developer Guide](https://docs.pingcap.com/tidbcloud/dev-guide-overview).
 
