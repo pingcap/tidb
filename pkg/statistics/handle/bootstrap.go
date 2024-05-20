@@ -175,6 +175,68 @@ func (h *Handle) initStatsHistograms4ChunkLite(is infoschema.InfoSchema, cache s
 	}
 }
 
+func (h *Handle) initStatsHistograms4ChunkConcurrency(is infoschema.InfoSchema, cache statstypes.StatsCache, iter *chunk.Iterator4Chunk) {
+	var table *statistics.Table
+	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
+		tblID, statsVer := row.GetInt64(0), row.GetInt64(7)
+		if table == nil || table.PhysicalID != tblID {
+			if table != nil {
+				cache.Put(table.PhysicalID, table) // put this table in the cache because all statstics of the table have been read.
+			}
+			var ok bool
+			table, ok = cache.Get(tblID)
+			if !ok {
+				continue
+			}
+			table = table.Copy()
+		}
+		// All the objects in the table share the same stats version.
+		if statsVer != statistics.Version0 {
+			table.StatsVer = int(statsVer)
+		}
+		id, ndv, nullCount, version := row.GetInt64(1), row.GetInt64(2), row.GetInt64(4), row.GetUint64(3)
+		lastAnalyzePos := row.GetDatum(10, types.NewFieldType(mysql.TypeBlob))
+		tbl, _ := h.TableInfoByID(is, table.PhysicalID)
+
+		var idxInfo *model.IndexInfo
+		for _, idx := range tbl.Meta().Indices {
+			if idx.ID == id {
+				idxInfo = idx
+				break
+			}
+		}
+		if idxInfo == nil {
+			continue
+		}
+		cms, topN, err := statistics.DecodeCMSketchAndTopN(row.GetBytes(5), nil)
+		if err != nil {
+			cms = nil
+			terror.Log(errors.Trace(err))
+		}
+		hist := statistics.NewHistogram(id, ndv, nullCount, version, types.NewFieldType(mysql.TypeBlob), chunk.InitialCapacity, 0)
+		index := &statistics.Index{
+			Histogram:  *hist,
+			CMSketch:   cms,
+			TopN:       topN,
+			Info:       idxInfo,
+			StatsVer:   statsVer,
+			Flag:       row.GetInt64(9),
+			PhysicalID: tblID,
+		}
+		if statsVer != statistics.Version0 {
+			index.StatsLoadedStatus = statistics.NewStatsFullLoadStatus()
+			// The LastAnalyzeVersion is added by ALTER table so its value might be 0.
+			table.LastAnalyzeVersion = max(table.LastAnalyzeVersion, version)
+		}
+		lastAnalyzePos.Copy(&index.LastAnalyzePos)
+		table.Indices[hist.ID] = index
+		table.ColAndIdxExistenceMap.InsertIndex(idxInfo.ID, idxInfo, statsVer != statistics.Version0)
+	}
+	if table != nil {
+		cache.Put(table.PhysicalID, table) // put this table in the cache because all statstics of the table have been read.
+	}
+}
+
 func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache statstypes.StatsCache, iter *chunk.Iterator4Chunk) {
 	var table *statistics.Table
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
@@ -323,7 +385,7 @@ func (h *Handle) initStatsHistogramsByPaging(is infoschema.InfoSchema, cache sta
 		}
 	}()
 	sctx := se.(sessionctx.Context)
-	sql := "select HIGH_PRIORITY table_id, is_index, hist_id, distinct_count, version, null_count, cm_sketch, tot_col_size, stats_ver, correlation, flag, last_analyze_pos from mysql.stats_histograms where table_id >= %? and table_id < %? and is_index=1"
+	sql := "select HIGH_PRIORITY table_id, hist_id, distinct_count, version, null_count, cm_sketch, tot_col_size, stats_ver, correlation, flag, last_analyze_pos from mysql.stats_histograms where table_id >= %? and table_id < %? and is_index=1"
 	rc, err := util.Exec(sctx, sql, task.StartTid, task.EndTid)
 	if err != nil {
 		return errors.Trace(err)
@@ -340,7 +402,7 @@ func (h *Handle) initStatsHistogramsByPaging(is infoschema.InfoSchema, cache sta
 		if req.NumRows() == 0 {
 			break
 		}
-		h.initStatsHistograms4Chunk(is, cache, iter)
+		h.initStatsHistograms4ChunkConcurrency(is, cache, iter)
 	}
 	return nil
 }
