@@ -69,7 +69,7 @@ See [TiDB Quick Start Guide](https://docs.pingcap.com/tidb/stable/quick-start-wi
 
 ### Start developing with TiDB
 
-See the [Get Started](https://pingcap.github.io/tidb-dev-guide/get-started/introduction.html) chapter of [TiDB Development Guide](https://pingcap.github.io/tidb-dev-guide/index.html).
+See [TiDB Developer Guide](https://docs.pingcap.com/tidb/stable/dev-guide-overview) and [TiDB Cloud Developer Guide](https://docs.pingcap.com/tidbcloud/dev-guide-overview).
 
 ## Community
 
