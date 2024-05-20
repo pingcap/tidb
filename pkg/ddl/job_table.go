@@ -361,6 +361,16 @@ func (d *ddl) startDispatchLoop() {
 
 	generalDDLJobCh := make(chan *model.Job)
 	d.wg.Run(func() {
+		for {
+			if d.ctx.Err() != nil {
+				return
+			}
+			if !d.isOwner() {
+				time.Sleep(dispatchLoopWaitingDuration)
+				continue
+			}
+			break
+		}
 		d.loadGeneralJobLoop(generalDDLSe, generalDDLJobCh)
 	})
 	d.wg.Run(func() {
@@ -553,6 +563,10 @@ func (d *ddl) delivery2Worker(wk *worker, pool *workerPool, job *model.Job) {
 		for !job.InTerminalState() {
 			job.Args = nil
 			job.CtxVars = nil
+			if d.ctx.Err() != nil {
+				logutil.DDLLogger().Info("run the DDL job failed", zap.Error(d.ctx.Err()), zap.Stringer("job", job))
+				return
+			}
 			if err := d.runTheJob(wk, job); err != nil {
 				logutil.DDLLogger().Info("run the DDL job failed", zap.Error(err), zap.Stringer("job", job))
 				// we have to query the job again, as some fields are changed in the runTheJob.
