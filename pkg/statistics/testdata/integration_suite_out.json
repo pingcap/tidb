@@ -22,12 +22,12 @@
         "  └─IndexFullScan_8 5.00 cop[tikv] table:exp_backoff, index:idx(a, b, c, d) keep order:false"
       ],
       [
-        "IndexReader_6 1.00 root  index:IndexRangeScan_5",
-        "└─IndexRangeScan_5 1.00 cop[tikv] table:exp_backoff, index:idx(a, b, c, d) range:[1 1 1 3,1 1 1 5], keep order:false"
+        "IndexReader_6 1.36 root  index:IndexRangeScan_5",
+        "└─IndexRangeScan_5 1.36 cop[tikv] table:exp_backoff, index:idx(a, b, c, d) range:[1 1 1 3,1 1 1 5], keep order:false"
       ],
       [
-        "IndexReader_6 0.80 root  index:IndexRangeScan_5",
-        "└─IndexRangeScan_5 0.80 cop[tikv] table:exp_backoff, index:idx(a, b, c, d) range:[1 1 1 3,1 1 1 5], keep order:false"
+        "IndexReader_6 1.36 root  index:IndexRangeScan_5",
+        "└─IndexRangeScan_5 1.36 cop[tikv] table:exp_backoff, index:idx(a, b, c, d) range:[1 1 1 3,1 1 1 5], keep order:false"
       ]
     ]
   },
@@ -37,15 +37,14 @@
       [
         "test t  a 0 1 3",
         "test t  a 0 2 2",
+        "test t  a 0 3 1",
+        "test t  a 0 4 1",
         "test t  idx 1 1 3",
-        "test t  idx 1 2 2"
+        "test t  idx 1 2 2",
+        "test t  idx 1 3 1",
+        "test t  idx 1 4 1"
       ],
-      [
-        "test t  a 0 0 1 1 3 3 0",
-        "test t  a 0 1 2 1 4 4 0",
-        "test t  idx 1 0 1 1 3 3 0",
-        "test t  idx 1 1 2 1 4 4 0"
-      ]
+      null
     ]
   }
 ]
