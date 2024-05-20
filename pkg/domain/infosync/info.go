@@ -235,7 +235,7 @@ func getMinStartTsPath(codec tikv.Codec, id string) string {
 	if codec != nil && codec.GetKeyspace() != nil {
 		minStartTsPath = fmt.Sprintf("%s_%d_%s", minStartTsPath, codec.GetKeyspaceID(), id)
 	}
-	logutil.BgLogger().Debug("get min start ts path:", zap.String("min-start-ts-path", minStartTsPath))
+	logutil.BgLogger().Debug("get min start ts path", zap.String("min-start-ts-path", minStartTsPath))
 	return minStartTsPath
 }
 
