@@ -21,10 +21,11 @@ import (
 var constLabels prometheus.Labels
 
 // SetConstLabels sets constant labels for metrics.
-func SetConstLabels(constLabels prometheus.Labels) {
-	constLabels = constLabels
+func SetConstLabels(labels prometheus.Labels) {
+	constLabels = labels
 }
 
+// GetConstLabels returns constant labels for metrics.
 func GetConstLabels() prometheus.Labels {
 	return constLabels
 }

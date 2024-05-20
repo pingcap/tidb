@@ -45,17 +45,17 @@ import (
 )
 
 // RegisterMetricsWithLabels register metrics with const label 'keyspace_id' if keyspaceName set.
-func RegisterMetricsWithLabels(constLabels prometheus.Labels) error {
+func RegisterMetricsWithLabels(labels prometheus.Labels) error {
 	cfg := config.GetGlobalConfig()
 	if keyspace.IsKeyspaceNameEmpty(cfg.KeyspaceName) || strings.ToLower(cfg.Store) != "tikv" {
-		return registerMetricsWithLabels(constLabels) // register metrics without label 'keyspace_id'.
+		return registerMetricsWithLabels(labels) // register metrics without label 'keyspace_id'.
 	}
 
-	if constLabels == nil {
-		constLabels = make(prometheus.Labels)
+	if labels == nil {
+		labels = make(prometheus.Labels)
 	}
-	if _, ok := constLabels["keyspace_id"]; ok {
-		return registerMetricsWithLabels(constLabels)
+	if _, ok := labels["keyspace_id"]; ok {
+		return registerMetricsWithLabels(labels)
 	}
 
 	pdAddrs, _, _, err := tikvconfig.ParsePath("tikv://" + cfg.Path)
@@ -81,8 +81,8 @@ func RegisterMetricsWithLabels(constLabels prometheus.Labels) error {
 		return err
 	}
 
-	constLabels["keyspace_id"] = fmt.Sprint(keyspaceMeta.GetId())
-	return registerMetricsWithLabels(constLabels)
+	labels["keyspace_id"] = fmt.Sprint(keyspaceMeta.GetId())
+	return registerMetricsWithLabels(labels)
 }
 
 // RegisterMetricsForBR register metrics with const label keyspace_id for BR.
@@ -104,15 +104,15 @@ func RegisterMetricsForBR(pdAddrs []string, keyspaceName string) error {
 		return err
 	}
 
-	constLabels := prometheus.Labels{
+	labels := prometheus.Labels{
 		"keyspace_id": fmt.Sprint(keyspaceMeta.GetId()),
 	}
-	return registerMetricsWithLabels(constLabels)
+	return registerMetricsWithLabels(labels)
 }
 
-func registerMetricsWithLabels(constLabels prometheus.Labels) error {
-	if len(constLabels) != 0 {
-		metrics.SetConstLabels(constLabels)
+func registerMetricsWithLabels(labels prometheus.Labels) error {
+	if len(labels) != 0 {
+		metrics.SetConstLabels(labels)
 	}
 
 	metrics.InitMetrics()
