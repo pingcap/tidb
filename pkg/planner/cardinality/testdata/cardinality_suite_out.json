@@ -24,67 +24,67 @@
       {
         "Start": 800,
         "End": 900,
-        "Count": 662.2813395698452
+        "Count": 685.4873229032249
       },
       {
         "Start": 900,
         "End": 950,
-        "Count": 192.45886764250938
+        "Count": 191.7960734362502
       },
       {
         "Start": 950,
         "End": 1000,
-        "Count": 176.27301531768308
+        "Count": 175.66596231615856
       },
       {
         "Start": 1000,
         "End": 1050,
-        "Count": 160.08716299285678
+        "Count": 159.53585119606691
       },
       {
         "Start": 1050,
         "End": 1100,
-        "Count": 143.90131066803045
+        "Count": 143.40574007597525
       },
       {
         "Start": 1150,
         "End": 1200,
-        "Count": 111.52960601837786
+        "Count": 111.14551783579198
       },
       {
         "Start": 1200,
         "End": 1300,
-        "Count": 167.53265506227686
+        "Count": 166.95570231130907
       },
       {
         "Start": 1300,
         "End": 1400,
-        "Count": 102.78924576297166
+        "Count": 102.43525783094249
       },
       {
         "Start": 1400,
         "End": 1500,
-        "Count": 38.05878514552635
+        "Count": 37.92771743947202
       },
       {
         "Start": 1500,
         "End": 1600,
-        "Count": 6.968999999999999
+        "Count": 6.945
       },
       {
         "Start": 300,
         "End": 899,
-        "Count": 3484.5
+        "Count": 3472.5
       },
       {
         "Start": 800,
         "End": 1000,
-        "Count": 1015.1377760067559
+        "Count": 1037.1285843545586
       },
       {
         "Start": 900,
         "End": 1500,
-        "Count": 1164.5941069534367
+        "Count": 1160.58345139785
       },
       {
         "Start": 300,
@@ -94,37 +94,37 @@
       {
         "Start": 200,
         "End": 300,
-        "Count": 362.41031705318545
+        "Count": 361.1622401972124
       },
       {
         "Start": 100,
         "End": 200,
-        "Count": 297.66690775388025
+        "Count": 296.6417957168458
       },
       {
         "Start": 200,
         "End": 400,
-        "Count": 1048.4413170531855
+        "Count": 967.1622401972124
       },
       {
         "Start": 200,
         "End": 1000,
-        "Count": 4205.579093059941
+        "Count": 4191.095824551771
       },
       {
         "Start": 0,
         "End": 100,
-        "Count": 232.92349845457508
+        "Count": 232.12135123647926
       },
       {
         "Start": -100,
         "End": 100,
-        "Count": 232.92349845457508
+        "Count": 232.12135123647926
       },
       {
         "Start": -100,
         "End": 0,
-        "Count": 6.968999999999999
+        "Count": 6.945
       }
     ]
   },
@@ -1532,7 +1532,7 @@
                   {
                     "Histogram NotNull Count": 3080,
                     "Increase Factor": 1,
-                    "TopN total count": 1095
+                    "TopN total count": 1096
                   },
                   {
                     "github.com/pingcap/tidb/pkg/planner/cardinality.GetColumnRowCount": [
@@ -1601,7 +1601,7 @@
                   {
                     "Histogram NotNull Count": 3080,
                     "Increase Factor": 1,
-                    "TopN total count": 1097
+                    "TopN total count": 1098
                   },
                   {
                     "github.com/pingcap/tidb/pkg/planner/cardinality.GetColumnRowCount": [
@@ -2461,7 +2461,7 @@
                   {
                     "Histogram NotNull Count": 3080,
                     "Increase Factor": 1,
-                    "TopN total count": 1095
+                    "TopN total count": 1096
                   },
                   {
                     "github.com/pingcap/tidb/pkg/planner/cardinality.GetColumnRowCount": [
@@ -2596,7 +2596,7 @@
                   {
                     "Histogram NotNull Count": 3080,
                     "Increase Factor": 1,
-                    "TopN total count": 1097
+                    "TopN total count": 1098
                   },
                   {
                     "github.com/pingcap/tidb/pkg/planner/cardinality.GetColumnRowCount": [
