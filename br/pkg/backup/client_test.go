@@ -513,7 +513,7 @@ func TestMainBackupLoop(t *testing.T) {
 	}()
 
 	connectedStore = make(map[uint64]int)
-	// backup can finished until store 1 has reponse the full ranges.
+	// backup can finished until store 1 has response the full ranges.
 	require.NoError(t, mainLoop.Run(backgroundCtx, req))
 	// connect to store 1 more than 1 time
 	require.Less(t, 1, connectedStore[remainStoreID])
@@ -565,7 +565,7 @@ func TestMainBackupLoop(t *testing.T) {
 	}()
 
 	connectedStore = make(map[uint64]int)
-	// backup can finished until store 1 has reponse the full ranges.
+	// backup can finished until store 1 has response the full ranges.
 	require.NoError(t, mainLoop.Run(backgroundCtx, req))
 	// connect to store 1 more than 1 time
 	require.Less(t, 1, connectedStore[remainStoreID])
@@ -621,7 +621,7 @@ func TestMainBackupLoop(t *testing.T) {
 	}()
 
 	connectedStore = make(map[uint64]int)
-	// backup can finished until store 1 has reponse the full ranges.
+	// backup can finished until store 1 has response the full ranges.
 	require.NoError(t, mainLoop.Run(backgroundCtx, req))
 	// connect to store 1 time, and then handle loop blocked until watch store 2 back.
 	require.Equal(t, 1, connectedStore[remainStoreID])
