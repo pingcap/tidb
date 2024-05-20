@@ -84,8 +84,15 @@ grep -Fq "ALTER TABLE \`add_index\`.\`non_pk_auto_inc\` ADD PRIMARY KEY (\`pk\`)
 # 3. Check for recovering from checkpoint
 export GO_FAILPOINTS="github.com/pingcap/tidb/lightning/pkg/importer/AddIndexCrash=return()"
 run_sql "DROP DATABASE add_index;"
+set +e
 run_lightning --enable-checkpoint=1 --config "$CUR/config2.toml" --log-file "$LOG_FILE2"
-grep -Fq "task canceled" "$LOG_FILE2"
+status_code=$?
+set -e
+if [ $? -eq 1 ]; then
+    grep -Fq "task canceled" "$LOG_FILE2"
+else
+    exit 1
+fi
 
 unset GO_FAILPOINTS
 run_lightning --enable-checkpoint=1 --config "$CUR/config2.toml" --log-file "$LOG_FILE2"
