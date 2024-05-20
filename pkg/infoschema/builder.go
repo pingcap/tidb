@@ -499,7 +499,7 @@ func (b *Builder) applyCreateSchema(m *meta.Meta, diff *model.SchemaDiff) error 
 			fmt.Sprintf("(Schema ID %d)", diff.SchemaID),
 		)
 	}
-	b.addDB(diff.Version, di, &schemaTables{dbInfo: di, tables: make(map[string]table.Table)})
+	b.addDB(diff.Version, di, &schemaTables{dbInfo: di, tables: newLayeredMap[string, table.Table](initialMapCap)})
 	return nil
 }
 
@@ -573,9 +573,9 @@ func (b *Builder) applyRecoverSchema(m *meta.Meta, diff *model.SchemaDiff) ([]in
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	b.infoSchema.addSchema(&schemaTables{
+	b.addSchemaAndMark(&schemaTables{
 		dbInfo: di,
-		tables: make(map[string]table.Table, len(diff.AffectedOpts)),
+		tables: newLayeredMap[string, table.Table](len(diff.AffectedOpts)),
 	})
 	return applyCreateTables(b, m, diff)
 }
@@ -689,8 +689,8 @@ func applyCreateTable(b *Builder, m *meta.Meta, dbInfo *model.DBInfo, tableID in
 	b.infoSchema.addReferredForeignKeys(dbInfo.Name, tblInfo)
 
 	if !b.enableV2 {
-		tableNames := b.infoSchema.schemaMap[dbInfo.Name.L]
-		tableNames.tables[tblInfo.Name.L] = tbl
+		tableNames := b.infoSchema.schemaMap.getVal(dbInfo.Name.L)
+		tableNames.tables.add(tblInfo.Name.L, tbl)
 	}
 	b.addTable(schemaVersion, dbInfo, tblInfo, tbl)
 
@@ -748,9 +748,9 @@ func (b *Builder) applyDropTable(diff *model.SchemaDiff, dbInfo *model.DBInfo, t
 	if idx == -1 {
 		return affected
 	}
-	if tableNames, ok := b.infoSchema.schemaMap[dbInfo.Name.L]; ok {
+	if tableNames, ok := b.infoSchema.schemaMap.get(dbInfo.Name.L); ok {
 		tblInfo := sortedTbls[idx].Meta()
-		delete(tableNames.tables, tblInfo.Name.L)
+		tableNames.tables.del(tblInfo.Name.L)
 		affected = appendAffectedIDs(affected, tblInfo)
 	}
 	// Remove the table in sorted table slice.
@@ -817,9 +817,8 @@ func (b *Builder) InitWithOldInfoSchema(oldSchema InfoSchema) (*Builder, error) 
 }
 
 func (b *Builder) copySchemasMap(oldIS *infoSchema) {
-	for _, v := range oldIS.schemaMap {
-		b.infoSchema.addSchema(v)
-	}
+	b.infoSchema.schemaMap = oldIS.schemaMap.forCOW()
+	b.infoSchema.schemaID2Name = oldIS.schemaID2Name.forCOW()
 }
 
 // getSchemaAndCopyIfNecessary creates a new schemaTables instance when a table in the database has changed.
@@ -828,19 +827,15 @@ func (b *Builder) copySchemasMap(oldIS *infoSchema) {
 // NOTE: please make sure the dbName is in lowercase.
 func (b *Builder) getSchemaAndCopyIfNecessary(dbName string) *model.DBInfo {
 	if !b.dirtyDB[dbName] {
-		b.dirtyDB[dbName] = true
-		oldSchemaTables := b.infoSchema.schemaMap[dbName]
+		oldSchemaTables := b.infoSchema.schemaMap.getVal(dbName)
 		newSchemaTables := &schemaTables{
 			dbInfo: oldSchemaTables.dbInfo.Copy(),
-			tables: make(map[string]table.Table, len(oldSchemaTables.tables)),
+			tables: oldSchemaTables.tables.forCOW(),
 		}
-		for k, v := range oldSchemaTables.tables {
-			newSchemaTables.tables[k] = v
-		}
-		b.infoSchema.addSchema(newSchemaTables)
+		b.addSchemaAndMark(newSchemaTables)
 		return newSchemaTables.dbInfo
 	}
-	return b.infoSchema.schemaMap[dbName].dbInfo
+	return b.infoSchema.schemaMap.getVal(dbName).dbInfo
 }
 
 func (b *Builder) initVirtualTables(schemaVersion int64) error {
@@ -914,7 +909,7 @@ type tableFromMetaFunc func(alloc autoid.Allocators, tblInfo *model.TableInfo) (
 func (b *Builder) createSchemaTablesForDB(di *model.DBInfo, tableFromMeta tableFromMetaFunc, schemaVersion int64) error {
 	schTbls := &schemaTables{
 		dbInfo: di,
-		tables: make(map[string]table.Table, len(di.Tables)),
+		tables: newLayeredMap[string, table.Table](len(di.Tables)),
 	}
 	for _, t := range di.Tables {
 		allocs := autoid.NewAllocatorsFromTblInfo(b.Requirement, di.ID, t)
@@ -924,7 +919,7 @@ func (b *Builder) createSchemaTablesForDB(di *model.DBInfo, tableFromMeta tableF
 			return errors.Wrap(err, fmt.Sprintf("Build table `%s`.`%s` schema failed", di.Name.O, t.Name.O))
 		}
 
-		schTbls.tables[t.Name.L] = tbl
+		schTbls.tables.add(t.Name.L, tbl)
 		b.addTable(schemaVersion, di, t, tbl)
 
 		if tblInfo := tbl.Meta(); tblInfo.TempTableType != model.TempTableNone {
@@ -944,8 +939,13 @@ func (b *Builder) addDB(schemaVersion int64, di *model.DBInfo, schTbls *schemaTa
 			b.infoData.addDB(schemaVersion, di)
 		}
 	} else {
-		b.infoSchema.addSchema(schTbls)
+		b.addSchemaAndMark(schTbls)
 	}
+}
+
+func (b *Builder) addSchemaAndMark(st *schemaTables) {
+	b.infoSchema.addSchema(st)
+	b.dirtyDB[st.dbInfo.Name.L] = true
 }
 
 func (b *Builder) addTable(schemaVersion int64, di *model.DBInfo, tblInfo *model.TableInfo, tbl table.Table) {

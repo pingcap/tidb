@@ -48,18 +48,18 @@ func (s sortedTables) searchTable(id int64) int {
 
 type schemaTables struct {
 	dbInfo *model.DBInfo
-	tables map[string]table.Table
+	tables *layeredMap[string, table.Table]
 }
 
 const bucketCount = 512
 
 type infoSchema struct {
 	infoSchemaMisc
-	schemaMap map[string]*schemaTables
+	schemaMap *layeredMap[string, *schemaTables]
 	// schemaID2Name is a map from schema ID to schema name.
 	// it should be enough to query by name only theoretically, but there are some
 	// places we only have schema ID, and we check both name and id in some sanity checks.
-	schemaID2Name map[int64]string
+	schemaID2Name *layeredMap[int64, string]
 
 	// sortedTablesBuckets is a slice of sortedTables, a table's bucket index is (tableID % bucketCount).
 	sortedTablesBuckets []sortedTables
@@ -100,7 +100,7 @@ func MockInfoSchema(tbList []*model.TableInfo) InfoSchema {
 	dbInfo := &model.DBInfo{ID: 1, Name: model.NewCIStr("test"), Tables: tbList}
 	tableNames := &schemaTables{
 		dbInfo: dbInfo,
-		tables: make(map[string]table.Table),
+		tables: newLayeredMap[string, table.Table](initialMapCap),
 	}
 	result.addSchema(tableNames)
 	var tableIDs map[int64]struct{}
@@ -116,7 +116,7 @@ func MockInfoSchema(tbList []*model.TableInfo) InfoSchema {
 		})
 		tb.DBID = dbInfo.ID
 		tbl := table.MockTableFromMeta(tb)
-		tableNames.tables[tb.Name.L] = tbl
+		tableNames.tables.add(tb.Name.L, tbl)
 		bucketIdx := tableBucketIdx(tb.ID)
 		result.sortedTablesBuckets[bucketIdx] = append(result.sortedTablesBuckets[bucketIdx], tbl)
 	}
@@ -134,13 +134,13 @@ func MockInfoSchemaWithSchemaVer(tbList []*model.TableInfo, schemaVer int64) Inf
 	dbInfo := &model.DBInfo{ID: 1, Name: model.NewCIStr("test"), Tables: tbList}
 	tableNames := &schemaTables{
 		dbInfo: dbInfo,
-		tables: make(map[string]table.Table),
+		tables: newLayeredMap[string, table.Table](initialMapCap),
 	}
 	result.addSchema(tableNames)
 	for _, tb := range tbList {
 		tb.DBID = dbInfo.ID
 		tbl := table.MockTableFromMeta(tb)
-		tableNames.tables[tb.Name.L] = tbl
+		tableNames.tables.add(tb.Name.L, tbl)
 		bucketIdx := tableBucketIdx(tb.ID)
 		result.sortedTablesBuckets[bucketIdx] = append(result.sortedTablesBuckets[bucketIdx], tbl)
 	}
@@ -167,8 +167,8 @@ func newInfoSchema() *infoSchema {
 			ruleBundleMap:         map[int64]*placement.Bundle{},
 			referredForeignKeyMap: make(map[SchemaAndTableName][]*model.ReferredFKInfo),
 		},
-		schemaMap:           map[string]*schemaTables{},
-		schemaID2Name:       map[int64]string{},
+		schemaMap:           newLayeredMap[string, *schemaTables](initialMapCap),
+		schemaID2Name:       newLayeredMap[int64, string](initialMapCap),
 		sortedTablesBuckets: make([]sortedTables, bucketCount),
 	}
 }
@@ -178,7 +178,7 @@ func (is *infoSchema) SchemaByName(schema model.CIStr) (val *model.DBInfo, ok bo
 }
 
 func (is *infoSchema) schemaByName(name string) (val *model.DBInfo, ok bool) {
-	tableNames, ok := is.schemaMap[name]
+	tableNames, ok := is.schemaMap.get(name)
 	if !ok {
 		return
 	}
@@ -186,13 +186,13 @@ func (is *infoSchema) schemaByName(name string) (val *model.DBInfo, ok bool) {
 }
 
 func (is *infoSchema) SchemaExists(schema model.CIStr) bool {
-	_, ok := is.schemaMap[schema.L]
+	_, ok := is.schemaMap.get(schema.L)
 	return ok
 }
 
 func (is *infoSchema) TableByName(schema, table model.CIStr) (t table.Table, err error) {
-	if tbNames, ok := is.schemaMap[schema.L]; ok {
-		if t, ok = tbNames.tables[table.L]; ok {
+	if tbNames, ok := is.schemaMap.get(schema.L); ok {
+		if t, ok = tbNames.tables.get(table.L); ok {
 			return
 		}
 	}
@@ -224,8 +224,8 @@ func TableIsSequence(is InfoSchema, schema, table model.CIStr) bool {
 }
 
 func (is *infoSchema) TableExists(schema, table model.CIStr) bool {
-	if tbNames, ok := is.schemaMap[schema.L]; ok {
-		if _, ok = tbNames.tables[table.L]; ok {
+	if tbNames, ok := is.schemaMap.get(schema.L); ok {
+		if _, ok = tbNames.tables.get(table.L); ok {
 			return true
 		}
 	}
@@ -243,7 +243,7 @@ func (is *infoSchema) PolicyByID(id int64) (val *model.PolicyInfo, ok bool) {
 }
 
 func (is *infoSchema) SchemaByID(id int64) (val *model.DBInfo, ok bool) {
-	name, ok := is.schemaID2Name[id]
+	name, ok := is.schemaID2Name.get(id)
 	if !ok {
 		return nil, false
 	}
@@ -300,60 +300,71 @@ func AllSchemaNames(is InfoSchema) (names []string) {
 }
 
 func (is *infoSchema) AllSchemas() (schemas []*model.DBInfo) {
-	for _, v := range is.schemaMap {
+	is.schemaMap.scan(func(_ string, v *schemaTables) bool {
 		schemas = append(schemas, v.dbInfo)
-	}
+		return true
+	})
 	return
 }
 
 func (is *infoSchema) AllSchemaNames() (schemas []model.CIStr) {
-	rs := make([]model.CIStr, 0, len(is.schemaMap))
-	for _, v := range is.schemaMap {
+	rs := make([]model.CIStr, 0, is.schemaMap.estimatedLen())
+	is.schemaMap.scan(func(_ string, v *schemaTables) bool {
 		rs = append(rs, v.dbInfo.Name)
-	}
+		return true
+	})
 	return rs
 }
 
 func (is *infoSchema) SchemaTables(schema model.CIStr) (tables []table.Table) {
-	schemaTables, ok := is.schemaMap[schema.L]
+	schemaTables, ok := is.schemaMap.get(schema.L)
 	if !ok {
 		return
 	}
-	for _, tbl := range schemaTables.tables {
+	schemaTables.tables.scan(func(_ string, tbl table.Table) bool {
 		tables = append(tables, tbl)
-	}
+		return true
+	})
 	return
 }
 
 // FindTableByPartitionID finds the partition-table info by the partitionID.
 // FindTableByPartitionID will traverse all the tables to find the partitionID partition in which partition-table.
-func (is *infoSchema) FindTableByPartitionID(partitionID int64) (table.Table, *model.DBInfo, *model.PartitionDefinition) {
-	for _, v := range is.schemaMap {
-		for _, tbl := range v.tables {
+func (is *infoSchema) FindTableByPartitionID(partitionID int64) (
+	targetTbl table.Table, targetDB *model.DBInfo, targetP *model.PartitionDefinition) {
+	var keepOn bool
+	is.schemaMap.scan(func(_ string, v *schemaTables) bool {
+		v.tables.scan(func(_ string, tbl table.Table) bool {
 			pi := tbl.Meta().GetPartitionInfo()
 			if pi == nil {
-				continue
+				return true
 			}
 			for _, p := range pi.Definitions {
 				if p.ID == partitionID {
-					return tbl, v.dbInfo, &p
+					targetTbl = tbl
+					targetDB = v.dbInfo
+					targetP = &p
+					keepOn = false
+					return false
 				}
 			}
-		}
-	}
-	return nil, nil, nil
+			return true
+		})
+		return keepOn
+	})
+	return
 }
 
 // addSchema is used to add a schema to the infoSchema, it will overwrite the old
 // one if it already exists.
 func (is *infoSchema) addSchema(st *schemaTables) {
-	is.schemaMap[st.dbInfo.Name.L] = st
-	is.schemaID2Name[st.dbInfo.ID] = st.dbInfo.Name.L
+	is.schemaMap.add(st.dbInfo.Name.L, st)
+	is.schemaID2Name.add(st.dbInfo.ID, st.dbInfo.Name.L)
 }
 
 func (is *infoSchema) delSchema(di *model.DBInfo) {
-	delete(is.schemaMap, di.Name.L)
-	delete(is.schemaID2Name, di.ID)
+	is.schemaMap.del(di.Name.L)
+	is.schemaID2Name.del(di.ID)
 }
 
 // HasTemporaryTable returns whether information schema has temporary table
@@ -596,7 +607,7 @@ func NewSessionTables() *SessionTables {
 // TableByName get table by name
 func (is *SessionTables) TableByName(schema, table model.CIStr) (table.Table, bool) {
 	if tbNames, ok := is.schemaMap[schema.L]; ok {
-		if t, ok := tbNames.tables[table.L]; ok {
+		if t, ok := tbNames.tables.get(table.L); ok {
 			return t, true
 		}
 	}
@@ -619,7 +630,7 @@ func (is *SessionTables) TableByID(id int64) (tbl table.Table, ok bool) {
 func (is *SessionTables) AddTable(db *model.DBInfo, tbl table.Table) error {
 	schemaTables := is.ensureSchema(db)
 	tblMeta := tbl.Meta()
-	if _, ok := schemaTables.tables[tblMeta.Name.L]; ok {
+	if _, ok := schemaTables.tables.get(tblMeta.Name.L); ok {
 		return ErrTableExists.GenWithStackByArgs(tblMeta.Name)
 	}
 
@@ -628,7 +639,7 @@ func (is *SessionTables) AddTable(db *model.DBInfo, tbl table.Table) error {
 	}
 	intest.Assert(db.ID == tbl.Meta().DBID)
 
-	schemaTables.tables[tblMeta.Name.L] = tbl
+	schemaTables.tables.add(tblMeta.Name.L, tbl)
 	is.idx2table[tblMeta.ID] = tbl
 
 	return nil
@@ -641,14 +652,14 @@ func (is *SessionTables) RemoveTable(schema, table model.CIStr) (exist bool) {
 		return false
 	}
 
-	oldTable, exist := tbls.tables[table.L]
+	oldTable, exist := tbls.tables.get(table.L)
 	if !exist {
 		return false
 	}
 
-	delete(tbls.tables, table.L)
+	tbls.tables.del(table.L)
 	delete(is.idx2table, oldTable.Meta().ID)
-	if len(tbls.tables) == 0 {
+	if tbls.tables.empty() {
 		delete(is.schemaMap, schema.L)
 	}
 	return true
@@ -675,7 +686,7 @@ func (is *SessionTables) ensureSchema(db *model.DBInfo) *schemaTables {
 		return tbls
 	}
 
-	tbls := &schemaTables{dbInfo: db, tables: make(map[string]table.Table)}
+	tbls := &schemaTables{dbInfo: db, tables: newLayeredMap[string, table.Table](initialMapCap)}
 	is.schemaMap[db.Name.L] = tbls
 	return tbls
 }

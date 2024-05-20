@@ -18,6 +18,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
 	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
@@ -80,11 +81,13 @@ func (b *bundleInfoBuilder) updateInfoSchemaBundles(is *infoSchema) {
 
 	// do full update bundles
 	is.ruleBundleMap = make(map[int64]*placement.Bundle)
-	for _, tbls := range is.schemaMap {
-		for _, tbl := range tbls.tables {
+	is.schemaMap.scan(func(_ string, tbls *schemaTables) bool {
+		tbls.tables.scan(func(_ string, tbl table.Table) bool {
 			b.updateTableBundles(is, tbl.Meta().ID)
-		}
-	}
+			return true
+		})
+		return true
+	})
 }
 
 func (b *bundleInfoBuilder) completeUpdateTables(is *infoSchema) {
@@ -92,8 +95,8 @@ func (b *bundleInfoBuilder) completeUpdateTables(is *infoSchema) {
 		return
 	}
 
-	for _, tbls := range is.schemaMap {
-		for _, tbl := range tbls.tables {
+	is.schemaMap.scan(func(_ string, tbls *schemaTables) bool {
+		tbls.tables.scan(func(_ string, tbl table.Table) bool {
 			tblInfo := tbl.Meta()
 			if tblInfo.PlacementPolicyRef != nil {
 				if _, ok := b.updatePolicies[tblInfo.PlacementPolicyRef.ID]; ok {
@@ -108,8 +111,10 @@ func (b *bundleInfoBuilder) completeUpdateTables(is *infoSchema) {
 					}
 				}
 			}
-		}
-	}
+			return true
+		})
+		return true
+	})
 }
 
 func (b *bundleInfoBuilder) updateTableBundles(infoSchemaInterface InfoSchema, tableID int64) {
