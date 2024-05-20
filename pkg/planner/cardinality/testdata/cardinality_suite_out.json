@@ -2,7 +2,10 @@
   {
     "Name": "TestCollationColumnEstimate",
     "Cases": [
-      null,
+      [
+        "test t  a 0 \u0000A\u0000A\u0000A 2",
+        "test t  a 0 \u0000B\u0000B\u0000B 2"
+      ],
       [
         "TableReader_7 2.00 root  data:Selection_6",
         "└─Selection_6 2.00 cop[tikv]  eq(test.t.a, \"aÄa\")",
@@ -21,67 +24,67 @@
       {
         "Start": 800,
         "End": 900,
-        "Count": 748.254166655054
+        "Count": 590.2538291532076
       },
       {
         "Start": 900,
         "End": 950,
-        "Count": 247.04782734719248
+        "Count": 192.0446212635974
       },
       {
         "Start": 950,
         "End": 1000,
-        "Count": 226.14487557169574
+        "Count": 175.89360719173027
       },
       {
         "Start": 1000,
         "End": 1050,
-        "Count": 205.24192379619902
+        "Count": 159.74259311986313
       },
       {
         "Start": 1050,
         "End": 1100,
-        "Count": 184.33897202070227
+        "Count": 143.59157904799596
       },
       {
         "Start": 1150,
         "End": 1200,
-        "Count": 142.53306846970884
+        "Count": 111.28955090426167
       },
       {
         "Start": 1200,
         "End": 1300,
-        "Count": 214.85728161292752
+        "Count": 167.172059592922
       },
       {
         "Start": 1300,
         "End": 1400,
-        "Count": 131.2454745109406
+        "Count": 102.56800330545343
       },
       {
         "Start": 1400,
         "End": 1500,
-        "Count": 47.650389770374105
+        "Count": 37.976867829242394
       },
       {
         "Start": 1500,
         "End": 1600,
-        "Count": 7.5
+        "Count": 6.954000000000001
       },
       {
         "Start": 300,
         "End": 899,
-        "Count": 4500
+        "Count": 3477
       },
       {
         "Start": 800,
         "End": 1000,
-        "Count": 1206.446869573942
+        "Count": 942.3507812241326
       },
       {
         "Start": 900,
         "End": 1500,
-        "Count": 1502.495833344946
+        "Count": 1162.087447231195
       },
       {
         "Start": 300,
@@ -91,37 +94,37 @@
       {
         "Start": 200,
         "End": 300,
-        "Count": 466.52882098990807
+        "Count": 361.6302690182023
       },
       {
         "Start": 100,
         "End": 200,
-        "Count": 382.91701388792114
+        "Count": 297.02621273073373
       },
       {
         "Start": 200,
         "End": 400,
-        "Count": 1190.2788209899081
+        "Count": 998.1762690182022
       },
       {
         "Start": 200,
         "End": 1000,
-        "Count": 4500
+        "Count": 4196.527050242335
       },
       {
         "Start": 0,
         "End": 100,
-        "Count": 299.3052067859343
+        "Count": 232.4221564432652
       },
       {
         "Start": -100,
         "End": 100,
-        "Count": 299.3052067859343
+        "Count": 232.4221564432652
       },
       {
         "Start": -100,
         "End": 0,
-        "Count": 7.5
+        "Count": 6.954000000000001
       }
     ]
   },
@@ -340,11 +343,11 @@
       },
       {
         "SQL": "select * from t where a > 8 or d < 4 or c > 7 or b < 5",
-        "Selectivity": 0.794921875
+        "Selectivity": 0.82421875
       },
       {
         "SQL": "select * from t where a < 8 and (b > 10 or c < 3 or b > 4) and a > 2",
-        "Selectivity": 0.234375
+        "Selectivity": 0.3125
       }
     ]
   },
@@ -870,8 +873,8 @@
       {
         "SQL": "explain format = 'brief' select * from t where a <= 500",
         "Result": [
-          "TableReader 1670.00 root partition:p0,p1 data:Selection",
-          "└─Selection 1670.00 cop[tikv]  le(test.t.a, 500)",
+          "TableReader 1667.78 root partition:p0,p1 data:Selection",
+          "└─Selection 1667.78 cop[tikv]  le(test.t.a, 500)",
           "  └─TableFullScan 2000.00 cop[tikv] table:t keep order:false"
         ]
       },
@@ -918,40 +921,40 @@
       {
         "SQL": "explain format = 'brief' select * from t where a > 800 and a < 1000",
         "Result": [
-          "TableReader 793.20 root partition:p3 data:Selection",
-          "└─Selection 793.20 cop[tikv]  gt(test.t.a, 800), lt(test.t.a, 1000)",
+          "TableReader 792.98 root partition:p3 data:Selection",
+          "└─Selection 792.98 cop[tikv]  gt(test.t.a, 800), lt(test.t.a, 1000)",
           "  └─TableFullScan 2000.00 cop[tikv] table:t keep order:false"
         ]
       },
       {
         "SQL": "explain format = 'brief' select * from t where a > 900 and a < 1000",
         "Result": [
-          "TableReader 458.19 root partition:p3 data:Selection",
-          "└─Selection 458.19 cop[tikv]  gt(test.t.a, 900), lt(test.t.a, 1000)",
+          "TableReader 457.43 root partition:p3 data:Selection",
+          "└─Selection 457.43 cop[tikv]  gt(test.t.a, 900), lt(test.t.a, 1000)",
           "  └─TableFullScan 2000.00 cop[tikv] table:t keep order:false"
         ]
       },
       {
         "SQL": "explain format = 'brief' select * from t where a > 900 and a < 1100",
         "Result": [
-          "TableReader 832.77 root partition:p3,p4 data:Selection",
-          "└─Selection 832.77 cop[tikv]  gt(test.t.a, 900), lt(test.t.a, 1100)",
+          "TableReader 831.39 root partition:p3,p4 data:Selection",
+          "└─Selection 831.39 cop[tikv]  gt(test.t.a, 900), lt(test.t.a, 1100)",
           "  └─TableFullScan 2000.00 cop[tikv] table:t keep order:false"
         ]
       },
       {
         "SQL": "explain format = 'brief' select * from t where a > 200 and a < 300",
         "Result": [
-          "TableReader 459.03 root partition:p0 data:Selection",
-          "└─Selection 459.03 cop[tikv]  gt(test.t.a, 200), lt(test.t.a, 300)",
+          "TableReader 458.26 root partition:p0 data:Selection",
+          "└─Selection 458.26 cop[tikv]  gt(test.t.a, 200), lt(test.t.a, 300)",
           "  └─TableFullScan 2000.00 cop[tikv] table:t keep order:false"
         ]
       },
       {
         "SQL": "explain format = 'brief' select * from t where a > 100 and a < 300",
         "Result": [
-          "TableReader 834.45 root partition:p0 data:Selection",
-          "└─Selection 834.45 cop[tikv]  gt(test.t.a, 100), lt(test.t.a, 300)",
+          "TableReader 833.06 root partition:p0 data:Selection",
+          "└─Selection 833.06 cop[tikv]  gt(test.t.a, 100), lt(test.t.a, 300)",
           "  └─TableFullScan 2000.00 cop[tikv] table:t keep order:false"
         ]
       }
@@ -1356,7 +1359,7 @@
             "table_name": "t",
             "type": "Column Stats-Range",
             "expr": "((a > 0 and a < 2))",
-            "row_count": 2
+            "row_count": 4
           },
           {
             "table_name": "t",
@@ -1368,7 +1371,7 @@
             "table_name": "t",
             "type": "Table Stats-Expression-CNF",
             "expr": "`and`(`gt`(test.t.a, 0), `lt`(test.t.a, 2))",
-            "row_count": 2
+            "row_count": 4
           }
         ]
       },
@@ -1529,7 +1532,7 @@
                   {
                     "Histogram NotNull Count": 3080,
                     "Increase Factor": 1,
-                    "TopN total count": 1096
+                    "TopN total count": 1095
                   },
                   {
                     "github.com/pingcap/tidb/pkg/planner/cardinality.GetColumnRowCount": [
@@ -2458,7 +2461,7 @@
                   {
                     "Histogram NotNull Count": 3080,
                     "Increase Factor": 1,
-                    "TopN total count": 1096
+                    "TopN total count": 1095
                   },
                   {
                     "github.com/pingcap/tidb/pkg/planner/cardinality.GetColumnRowCount": [
