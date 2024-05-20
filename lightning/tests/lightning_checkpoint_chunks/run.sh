@@ -87,7 +87,7 @@ export GO_FAILPOINTS="$TASKID_FAILPOINTS;github.com/pingcap/tidb/lightning/pkg/i
 set +e
 for i in $(seq "$CHUNK_COUNT"); do
     echo "******** Importing Chunk Now (step $i/$CHUNK_COUNT) ********"
-    do_run_lightning config
+    do_run_lightning config 2> /dev/null
     [ $? -eq 1 ] || exit 1
 done
 set -e
