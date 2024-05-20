@@ -24,67 +24,67 @@
       {
         "Start": 800,
         "End": 900,
-        "Count": 590.2538291532076
+        "Count": 662.2813395698452
       },
       {
         "Start": 900,
         "End": 950,
-        "Count": 192.0446212635974
+        "Count": 192.45886764250938
       },
       {
         "Start": 950,
         "End": 1000,
-        "Count": 175.89360719173027
+        "Count": 176.27301531768308
       },
       {
         "Start": 1000,
         "End": 1050,
-        "Count": 159.74259311986313
+        "Count": 160.08716299285678
       },
       {
         "Start": 1050,
         "End": 1100,
-        "Count": 143.59157904799596
+        "Count": 143.90131066803045
       },
       {
         "Start": 1150,
         "End": 1200,
-        "Count": 111.28955090426167
+        "Count": 111.52960601837786
       },
       {
         "Start": 1200,
         "End": 1300,
-        "Count": 167.172059592922
+        "Count": 167.53265506227686
       },
       {
         "Start": 1300,
         "End": 1400,
-        "Count": 102.56800330545343
+        "Count": 102.78924576297166
       },
       {
         "Start": 1400,
         "End": 1500,
-        "Count": 37.976867829242394
+        "Count": 38.05878514552635
       },
       {
         "Start": 1500,
         "End": 1600,
-        "Count": 6.954000000000001
+        "Count": 6.968999999999999
       },
       {
         "Start": 300,
         "End": 899,
-        "Count": 3477
+        "Count": 3484.5
       },
       {
         "Start": 800,
         "End": 1000,
-        "Count": 942.3507812241326
+        "Count": 1015.1377760067559
       },
       {
         "Start": 900,
         "End": 1500,
-        "Count": 1162.087447231195
+        "Count": 1164.5941069534367
       },
       {
         "Start": 300,
@@ -94,37 +94,37 @@
       {
         "Start": 200,
         "End": 300,
-        "Count": 361.6302690182023
+        "Count": 362.41031705318545
       },
       {
         "Start": 100,
         "End": 200,
-        "Count": 297.02621273073373
+        "Count": 297.66690775388025
       },
       {
         "Start": 200,
         "End": 400,
-        "Count": 998.1762690182022
+        "Count": 1048.4413170531855
       },
       {
         "Start": 200,
         "End": 1000,
-        "Count": 4196.527050242335
+        "Count": 4205.579093059941
       },
       {
         "Start": 0,
         "End": 100,
-        "Count": 232.4221564432652
+        "Count": 232.92349845457508
       },
       {
         "Start": -100,
         "End": 100,
-        "Count": 232.4221564432652
+        "Count": 232.92349845457508
       },
       {
         "Start": -100,
         "End": 0,
-        "Count": 6.954000000000001
+        "Count": 6.968999999999999
       }
     ]
   },
@@ -1601,7 +1601,7 @@
                   {
                     "Histogram NotNull Count": 3080,
                     "Increase Factor": 1,
-                    "TopN total count": 1098
+                    "TopN total count": 1097
                   },
                   {
                     "github.com/pingcap/tidb/pkg/planner/cardinality.GetColumnRowCount": [
@@ -2596,7 +2596,7 @@
                   {
                     "Histogram NotNull Count": 3080,
                     "Increase Factor": 1,
-                    "TopN total count": 1098
+                    "TopN total count": 1097
                   },
                   {
                     "github.com/pingcap/tidb/pkg/planner/cardinality.GetColumnRowCount": [
