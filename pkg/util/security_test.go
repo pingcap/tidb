@@ -16,7 +16,6 @@ package util_test
 
 import (
 	"bytes"
-	"context"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/tls"
@@ -75,12 +74,15 @@ func TestVerifyCommonNameAndRotate(t *testing.T) {
 		util.WithVerifyCommonName([]string{"client1"}),
 	)
 	require.NoError(t, err)
+<<<<<<< HEAD
 	port := 9292
 	url := fmt.Sprintf("https://127.0.0.1:%d", port)
 	ctx, cancel := context.WithCancel(context.Background())
 	server := runServer(ctx, serverTLS, port, t)
+=======
+	server, port := runServer(serverTLS, t)
+>>>>>>> 397a460dd06 (util/security: support client TLS verifies CommonName of server (#53358))
 	defer func() {
-		cancel()
 		server.Close()
 	}()
 
@@ -92,6 +94,20 @@ func TestVerifyCommonNameAndRotate(t *testing.T) {
 	resp, err := util.ClientWithTLS(clientTLS1).Get(url)
 	require.NoError(t, err)
 	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.Equal(t, "This an example server", string(body))
+	require.NoError(t, resp.Body.Close())
+
+	// client1 also check server's Common Name
+	clientTLS1Verify, err := util.NewTLSConfig(
+		util.WithCAContent(caData),
+		util.WithCertAndKeyContent(client1Cert, client1Key),
+		util.WithVerifyCommonName([]string{"server"}),
+	)
+	require.NoError(t, err)
+	resp, err = util.ClientWithTLS(clientTLS1Verify).Get(url)
+	require.NoError(t, err)
+	body, err = io.ReadAll(resp.Body)
 	require.NoError(t, err)
 	require.Equal(t, "This an example server", string(body))
 	require.NoError(t, resp.Body.Close())
@@ -131,6 +147,63 @@ func TestVerifyCommonNameAndRotate(t *testing.T) {
 	require.NoError(t, resp.Body.Close())
 }
 
+<<<<<<< HEAD
+=======
+func TestTLSVersion(t *testing.T) {
+	caData, certs, keys := generateCerts(t, []string{"server", "client"})
+	serverCert, serverKey := certs[0], keys[0]
+	clientCert, clientKey := certs[1], keys[1]
+
+	serverTLS, err := util.NewTLSConfig(
+		util.WithCAContent(caData),
+		util.WithCertAndKeyContent(serverCert, serverKey),
+	)
+	require.NoError(t, err)
+	server, port := runServer(serverTLS, t)
+	defer func() {
+		server.Close()
+	}()
+	url := fmt.Sprintf("https://127.0.0.1:%d", port)
+
+	clientTLS1, err := util.NewTLSConfig(
+		util.WithCAContent(caData),
+		util.WithCertAndKeyContent(clientCert, clientKey),
+	)
+	require.NoError(t, err)
+
+	type testCase struct {
+		version uint16
+		succ    bool
+	}
+	testCases := []testCase{
+		{tls.VersionTLS10, false},
+		{tls.VersionTLS11, false},
+		{tls.VersionTLS12, true},
+		{tls.VersionTLS13, true},
+	}
+	for _, c := range testCases {
+		clientTLS1.MinVersion = c.version
+		clientTLS1.MaxVersion = c.version
+		resp, err := util.ClientWithTLS(clientTLS1).Get(url)
+		if c.succ {
+			require.NoError(t, err)
+			require.NoError(t, resp.Body.Close())
+		} else {
+			require.Error(t, err)
+		}
+	}
+
+	// test with min tls version
+	clientTLS2, err := util.NewTLSConfig(
+		util.WithCAContent(caData),
+		util.WithCertAndKeyContent(clientCert, clientKey),
+		util.WithMinTLSVersion(tls.VersionTLS13),
+	)
+	require.NoError(t, err)
+	require.Equal(t, uint16(tls.VersionTLS13), clientTLS2.MinVersion)
+}
+
+>>>>>>> 397a460dd06 (util/security: support client TLS verifies CommonName of server (#53358))
 func TestCA(t *testing.T) {
 	caData, certs, keys := generateCerts(t, []string{"server", "client"})
 	serverCert, serverKey := certs[0], keys[0]
@@ -143,12 +216,15 @@ func TestCA(t *testing.T) {
 		util.WithCertAndKeyContent(serverCert, serverKey),
 	)
 	require.NoError(t, err)
+<<<<<<< HEAD
 	port := 9293
 	url := fmt.Sprintf("https://127.0.0.1:%d", port)
 	ctx, cancel := context.WithCancel(context.Background())
 	server := runServer(ctx, serverTLS, port, t)
+=======
+	server, port := runServer(serverTLS, t)
+>>>>>>> 397a460dd06 (util/security: support client TLS verifies CommonName of server (#53358))
 	defer func() {
-		cancel()
 		server.Close()
 	}()
 
@@ -202,7 +278,11 @@ func handler(w http.ResponseWriter, req *http.Request) {
 	w.Write([]byte("This an example server"))
 }
 
+<<<<<<< HEAD
 func runServer(ctx context.Context, tlsCfg *tls.Config, port int, t *testing.T) *http.Server {
+=======
+func runServer(tlsCfg *tls.Config, t *testing.T) (*http.Server, int) {
+>>>>>>> 397a460dd06 (util/security: support client TLS verifies CommonName of server (#53358))
 	http.HandleFunc("/", handler)
 	server := &http.Server{Addr: fmt.Sprintf(":%d", port), Handler: nil}
 
