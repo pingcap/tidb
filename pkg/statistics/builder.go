@@ -297,6 +297,13 @@ func BuildHistAndTopN(
 	// As we use samples to build the histogram, the bucket number and repeat should multiply a factor.
 	sampleFactor := float64(count) / float64(len(samples))
 
+	// If ndv < numBuckets, collect them all as topN
+	collectAll := false
+	if ndv <= int64(numBuckets) {
+		numTopN = int(ndv)
+		collectAll = true
+	}
+
 	// Step1: collect topn from samples
 
 	// the topNList is always sorted by count from more to less
@@ -327,11 +334,11 @@ func BuildHistAndTopN(
 		}
 		// case 2, meet a different value: counting for the "current" is complete
 		// case 2-1, do not add a count of 1
-		if curCnt == 1 {
+		if curCnt == 1 && !collectAll {
 			cur, curCnt = sampleBytes, 1
 			continue
 		}
-		// case 2-2, now topn is empty: append the "current" count directly if the value is greater than 1
+		// case 2-2, now topn is empty: append the "current" count directly
 		if len(topNList) == 0 {
 			topNList = append(topNList, TopNMeta{Encoded: cur, Count: uint64(curCnt)})
 			cur, curCnt = sampleBytes, 1
@@ -365,7 +372,7 @@ func BuildHistAndTopN(
 
 	// Handle the counting for the last value. Basically equal to the case 2 above.
 	// now topn is empty: append the "current" count directly
-	if numTopN != 0 {
+	if numTopN != 0 && (collectAll || curCnt > 1) {
 		if len(topNList) == 0 {
 			topNList = append(topNList, TopNMeta{Encoded: cur, Count: uint64(curCnt)})
 		} else if len(topNList) < numTopN || uint64(curCnt) > topNList[len(topNList)-1].Count {
@@ -385,7 +392,20 @@ func BuildHistAndTopN(
 		}
 	}
 
+	topn := &TopN{TopN: topNList}
+	topn.Scale(sampleFactor)
+
+	if collectAll {
+		// If TopN was instructed to collect all  - don't prune and don't create any buckets
+		return hg, topn, nil
+	}
+
 	topNList = pruneTopNItem(topNList, ndv, nullCount, sampleNum, count)
+
+	if uint64(count) <= topn.TotalCount() {
+		// If after pruning we still have all values in topN  - don't create any buckets
+		return hg, topn, nil
+	}
 
 	// Step2: exclude topn from samples
 	if numTopN != 0 {
@@ -434,14 +454,6 @@ func BuildHistAndTopN(
 				}
 			}
 		}
-	}
-
-	topn := &TopN{TopN: topNList}
-	topn.Scale(sampleFactor)
-
-	if uint64(count) <= topn.TotalCount() || int(hg.NDV) <= len(topn.TopN) {
-		// TopN includes all sample data
-		return hg, topn, nil
 	}
 
 	// Step3: build histogram with the rest samples
