@@ -52,7 +52,10 @@ done
 PKG="github.com/pingcap/tidb/lightning/pkg"
 export GO_FAILPOINTS="github.com/pingcap/tidb/pkg/lightning/backend/local/orphanWriterGoRoutine=return();$PKG/importer/orphanWriterGoRoutine=return();$PKG/server/orphanWriterGoRoutine=return()"
 # test won't panic
+set +e
 do_run_lightning config
+[ $? -ne 0 ] || exit 1
+set -e
 
 # Set the failpoint to kill the lightning instance as soon as
 # one file (after writing totally $ROW_COUNT rows) is imported.
@@ -88,7 +91,7 @@ set +e
 for i in $(seq "$CHUNK_COUNT"); do
     echo "******** Importing Chunk Now (step $i/$CHUNK_COUNT) ********"
     do_run_lightning config 2> /dev/null
-    [ $? -eq 1 ] || exit 1
+    [ $? -ne 0 ] || exit 1
 done
 set -e
 

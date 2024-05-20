@@ -86,12 +86,9 @@ export GO_FAILPOINTS="github.com/pingcap/tidb/lightning/pkg/importer/AddIndexCra
 run_sql "DROP DATABASE add_index;"
 set +e
 run_lightning --enable-checkpoint=1 --config "$CUR/config2.toml" --log-file "$LOG_FILE2"
+[ $? -ne 0 ] || exit 1
 set -e
-if [ $? -eq 1 ]; then
-    grep -Fq "task canceled" "$LOG_FILE2"
-else
-    exit 1
-fi
+grep -Fq "task canceled" "$LOG_FILE2"
 
 unset GO_FAILPOINTS
 run_lightning --enable-checkpoint=1 --config "$CUR/config2.toml" --log-file "$LOG_FILE2"
