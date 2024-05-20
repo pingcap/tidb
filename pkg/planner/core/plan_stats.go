@@ -21,12 +21,12 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/planner/funcdep"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/table"
-	"github.com/pingcap/tidb/pkg/util/intset"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"go.uber.org/zap"
@@ -47,17 +47,12 @@ func (collectPredicateColumnsPoint) optimize(_ context.Context, plan LogicalPlan
 		plan.SCtx().UpdateColStatsUsage(predicateColumns)
 	}
 
-<<<<<<< HEAD
-	// Prepare the table metadata to avoid repeatedly fetching from the infoSchema below.
-	is := sessiontxn.GetTxnManager(plan.SCtx()).GetTxnInfoSchema()
-=======
 	// Prepare the table metadata to avoid repeatedly fetching from the infoSchema below, and trigger extra sync/async
 	// stats loading for the determinate mode.
-	is := plan.SCtx().GetInfoSchema().(infoschema.InfoSchema)
+	is := sessiontxn.GetTxnManager(plan.SCtx()).GetTxnInfoSchema()
 	statsHandle := domain.GetDomain(plan.SCtx()).StatsHandle()
->>>>>>> 24b160a360e (planner: trigger stats load on a column in determinate mode to make sure analyze row count is available (#51435))
 	tblID2Tbl := make(map[int64]table.Table)
-	physTblIDsWithNeededCols := intset.NewFastIntSet()
+	physTblIDsWithNeededCols := funcdep.NewFastIntSet()
 	for _, neededCol := range histNeededColumns {
 		physTblIDsWithNeededCols.Insert(int(neededCol.TableID))
 	}
