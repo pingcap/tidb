@@ -270,7 +270,7 @@ mainLoop:
 					if err = utils.CheckStoreLiveness(store); err != nil {
 						// skip this store in this round.
 						logutil.CL(mainCtx).Warn("store not alive, skip backup it in this round", zap.Uint64("round", round), zap.Error(err))
-						continue
+						continue mainLoop
 					}
 					// reset backup client. store address could change but store id remained.
 					cli, err := l.StoreConnector.Connect(mainCtx, storeID)

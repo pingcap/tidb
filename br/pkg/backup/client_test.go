@@ -46,8 +46,11 @@ type testBackup struct {
 	storage storage.ExternalStorage
 }
 
-// locks used for mock then behaviour when store drops
+// locks used to solve race when mock then behaviour when store drops
 var lock sync.Mutex
+
+// check the connect behaviour in test.
+var connectedStore map[uint64]int
 
 var _ backup.StoreConnector = (*mockBackupStoreConnector)(nil)
 
@@ -56,6 +59,9 @@ type mockBackupStoreConnector struct {
 }
 
 func (m *mockBackupStoreConnector) Connect(ctx context.Context, storeID uint64) (backuppb.BackupClient, error) {
+	lock.Lock()
+	defer lock.Unlock()
+	connectedStore[storeID] += 1
 	// we don't need connect real tikv in unit test
 	// and we have already mock the backup response in `RunBackupAsync`
 	// so just return nil here
@@ -71,10 +77,21 @@ func (m *mockBackupStoreConnector) RunBackupAsync(
 	respCh chan *backup.ResponseAndStore,
 ) {
 	go func() {
-		defer close(respCh)
+		defer func() {
+			close(respCh)
+		}()
 		lock.Lock()
 		resps := m.backupResponses[storeID]
 		lock.Unlock()
+		for len(resps) == 0 {
+			// store has no response
+			// block for a while and try again.
+			// let this goroutine never return.
+			time.Sleep(100 * time.Millisecond)
+			lock.Lock()
+			resps = m.backupResponses[storeID]
+			lock.Unlock()
+		}
 		for _, r := range resps {
 			select {
 			case <-ctx.Done():
@@ -397,6 +414,8 @@ func TestMainBackupLoop(t *testing.T) {
 	}
 
 	req := backuppb.BackupRequest{}
+
+	connectedStore = make(map[uint64]int)
 	require.NoError(t, mainLoop.Run(backgroundCtx, req))
 
 	// Case #2: canceled case
@@ -437,12 +456,13 @@ func TestMainBackupLoop(t *testing.T) {
 	// cancel the backup in another goroutine
 	ctx, cancel := context.WithCancel(backgroundCtx)
 	go func() {
-		time.Sleep(time.Second)
+		time.Sleep(500 * time.Millisecond)
 		cancel()
 	}()
+	connectedStore = make(map[uint64]int)
 	require.Error(t, mainLoop.Run(ctx, req))
 
-	// Case #3: one store drops
+	// Case #3: one store drops and never come back
 	ranges = []rtree.Range{
 		{
 			StartKey: []byte("aaa"),
@@ -464,9 +484,13 @@ func TestMainBackupLoop(t *testing.T) {
 			},
 		})
 	}
+	remainStoreID := uint64(1)
 	dropStoreID := uint64(2)
+	s.mockCluster.StopStore(dropStoreID)
 	dropBackupResponses := mockBackupResponses[dropStoreID]
+	lock.Lock()
 	mockBackupResponses[dropStoreID] = nil
+	lock.Unlock()
 
 	mainLoop = &backup.MainBackupLoop{
 		StoreConnector: &mockBackupStoreConnector{
@@ -480,14 +504,129 @@ func TestMainBackupLoop(t *testing.T) {
 		ProgressCallBack:   func() {},
 	}
 	go func() {
-		ch <- backup.StoreBackupPolicy{One: dropStoreID}
+		// mock region leader balance behaviour.
+		time.Sleep(500 * time.Millisecond)
+		lock.Lock()
+		// store 1 has the range after some while.
+		mockBackupResponses[remainStoreID] = append(mockBackupResponses[remainStoreID], dropBackupResponses...)
+		lock.Unlock()
+	}()
+
+	connectedStore = make(map[uint64]int)
+	// backup can finished until store 1 has reponse the full ranges.
+	require.NoError(t, mainLoop.Run(backgroundCtx, req))
+	// connect to store 1 more than 1 time
+	require.Less(t, 1, connectedStore[remainStoreID])
+	// never connect to a dropped store.
+	require.Equal(t, 0, connectedStore[dropStoreID])
+
+	// Case #4 one store drops and come back soon
+	ranges = []rtree.Range{
+		{
+			StartKey: []byte("aaa"),
+			EndKey:   []byte("zzz"),
+		},
+	}
+	tree, err = s.backupClient.BuildProgressRangeTree(ranges)
+	require.NoError(t, err)
+
+	clear(mockBackupResponses)
+	splitKeys = splitRangesFn(ranges, 10)
+	for i := 0; i < len(splitKeys)-1; i++ {
+		randStoreID := uint64(rand.Int()%len(stores) + 1)
+		mockBackupResponses[randStoreID] = append(mockBackupResponses[randStoreID], &backup.ResponseAndStore{
+			StoreID: randStoreID,
+			Resp: &backuppb.BackupResponse{
+				StartKey: splitKeys[i],
+				EndKey:   splitKeys[i+1],
+			},
+		})
+	}
+	remainStoreID = uint64(1)
+	dropStoreID = uint64(2)
+	s.mockCluster.StopStore(dropStoreID)
+
+	mainLoop = &backup.MainBackupLoop{
+		StoreConnector: &mockBackupStoreConnector{
+			backupResponses: mockBackupResponses,
+		},
+
+		BackupClient:       s.backupClient,
+		GlobalProgressTree: &tree,
+		ReplicaReadLabel:   nil,
+		StateNotifier:      ch,
+		ProgressCallBack:   func() {},
+	}
+	go func() {
+		time.Sleep(500 * time.Millisecond)
+		lock.Lock()
+		s.mockCluster.StartStore(dropStoreID)
+		lock.Unlock()
+	}()
+
+	connectedStore = make(map[uint64]int)
+	// backup can finished until store 1 has reponse the full ranges.
+	require.NoError(t, mainLoop.Run(backgroundCtx, req))
+	// connect to store 1 more than 1 time
+	require.Less(t, 1, connectedStore[remainStoreID])
+	// connect to store 2 once should finished the backup.
+	require.Equal(t, 1, connectedStore[dropStoreID])
+
+	// Case #5 one store drops and watch store back
+	ranges = []rtree.Range{
+		{
+			StartKey: []byte("aaa"),
+			EndKey:   []byte("zzz"),
+		},
+	}
+	tree, err = s.backupClient.BuildProgressRangeTree(ranges)
+	require.NoError(t, err)
+
+	clear(mockBackupResponses)
+	splitKeys = splitRangesFn(ranges, 10)
+	for i := 0; i < len(splitKeys)-1; i++ {
+		randStoreID := uint64(rand.Int()%len(stores) + 1)
+		mockBackupResponses[randStoreID] = append(mockBackupResponses[randStoreID], &backup.ResponseAndStore{
+			StoreID: randStoreID,
+			Resp: &backuppb.BackupResponse{
+				StartKey: splitKeys[i],
+				EndKey:   splitKeys[i+1],
+			},
+		})
+	}
+	remainStoreID = uint64(1)
+	dropStoreID = uint64(2)
+	// make store 2 never no response.
+	dropBackupResponses = mockBackupResponses[dropStoreID]
+	lock.Lock()
+	mockBackupResponses[dropStoreID] = nil
+	lock.Unlock()
+
+	mainLoop = &backup.MainBackupLoop{
+		StoreConnector: &mockBackupStoreConnector{
+			backupResponses: mockBackupResponses,
+		},
+
+		BackupClient:       s.backupClient,
+		GlobalProgressTree: &tree,
+		ReplicaReadLabel:   nil,
+		StateNotifier:      ch,
+		ProgressCallBack:   func() {},
+	}
+	go func() {
+		time.Sleep(500 * time.Millisecond)
 		lock.Lock()
 		mockBackupResponses[dropStoreID] = dropBackupResponses
 		lock.Unlock()
 	}()
 
-	// backup cannot finished until the dropped store is back
+	connectedStore = make(map[uint64]int)
+	// backup can finished until store 1 has reponse the full ranges.
 	require.NoError(t, mainLoop.Run(backgroundCtx, req))
+	// connect to store 1 time, and then handle loop blocked until watch store 2 back.
+	require.Equal(t, 1, connectedStore[remainStoreID])
+	// connect to store 2 once should finished the backup.
+	require.Equal(t, 1, connectedStore[dropStoreID])
 }
 
 func TestBuildProgressRangeTree(t *testing.T) {
