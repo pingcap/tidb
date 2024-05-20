@@ -172,7 +172,7 @@ func (p *LogicalProjection) PushDownTopN(topNLogicalPlan base.LogicalPlan, opt *
 	}
 	if topN != nil {
 		exprCtx := p.SCtx().GetExprCtx()
-		substitutedExprs := make([]expression.Expression, 0, len(p.Exprs))
+		substitutedExprs := make([]expression.Expression, 0, len(topN.ByItems))
 		for _, by := range topN.ByItems {
 			substituted := expression.ColumnSubstitute(exprCtx, by.Expr, p.schema, p.Exprs)
 			if !expression.IsImmutableFunc(substituted) {
