@@ -2411,7 +2411,7 @@ func findNextNonTouchedPartitionID(currPartitionID int64, pi *model.PartitionInf
 	if pid == 0 {
 		return 0, nil
 	}
-	for _, err = findNextPartitionID(pid, pi.DroppingDefinitions); err == nil; {
+	for _, notFoundErr := findNextPartitionID(pid, pi.DroppingDefinitions); notFoundErr == nil; {
 		// This can be optimized, but it is not frequently called, so keeping as-is
 		pid, err = findNextPartitionID(pid, pi.Definitions)
 		if pid == 0 {
