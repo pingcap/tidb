@@ -46,10 +46,12 @@ type testBackup struct {
 	storage storage.ExternalStorage
 }
 
+// locks used for mock then behaviour when store drops
+var lock sync.Mutex
+
 var _ backup.StoreConnector = (*mockBackupStoreConnector)(nil)
 
 type mockBackupStoreConnector struct {
-	sync.Mutex
 	backupResponses map[uint64][]*backup.ResponseAndStore
 }
 
@@ -70,9 +72,9 @@ func (m *mockBackupStoreConnector) RunBackupAsync(
 ) {
 	go func() {
 		defer close(respCh)
-		m.Lock()
+		lock.Lock()
 		resps := m.backupResponses[storeID]
-		m.Unlock()
+		lock.Unlock()
 		for _, r := range resps {
 			select {
 			case <-ctx.Done():
@@ -479,7 +481,9 @@ func TestMainBackupLoop(t *testing.T) {
 	}
 	go func() {
 		ch <- backup.StoreBackupPolicy{One: dropStoreID}
+		lock.Lock()
 		mockBackupResponses[dropStoreID] = dropBackupResponses
+		lock.Unlock()
 	}()
 
 	// backup cannot finished until the dropped store is back
