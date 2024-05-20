@@ -15,9 +15,15 @@
 package infoschema
 
 const (
-	maxMapLevel      = 4
+	// maxMapLevel is the maximum number of layers in the layeredMap.
+	// it's a good balance point between cost of copying map elements, and overhead
+	// of 'get' operation.
+	maxMapLevel = 8
+	// compactThreshold is the threshold to trigger compaction for the top layer
+	// if there are read-only layers below it.
+	// this value is close to the optimal for maxMapLevel = 8.
+	compactThreshold = 16
 	initialMapCap    = 16
-	compactThreshold = 1024
 )
 
 type itemT[V any] struct {
@@ -38,15 +44,23 @@ type layeredMap[K comparable, V any] struct {
 	// topLayer is the topLayer layer, it's the last element in layers, and all
 	// layers below it are read-only and might be accessed concurrently, so we need
 	// copy-on-write.
-	topLayer map[K]itemT[V]
+	topLayer         map[K]itemT[V]
+	maxLevel         int
+	compactThreshold int
 }
 
 func newLayeredMap[K comparable, V any](cap int) *layeredMap[K, V] {
+	return newLayeredMap0[K, V](cap, maxMapLevel, compactThreshold)
+}
+
+func newLayeredMap0[K comparable, V any](cap, maxLevel, compactThreshold int) *layeredMap[K, V] {
 	m := &layeredMap[K, V]{
-		layers: make([]map[K]itemT[V], 0, maxMapLevel),
+		layers: make([]map[K]itemT[V], 0, maxLevel),
 	}
 	m.topLayer = make(map[K]itemT[V], cap)
 	m.layers = append(m.layers, m.topLayer)
+	m.maxLevel = maxLevel
+	m.compactThreshold = compactThreshold
 	return m
 }
 
@@ -128,13 +142,12 @@ func (m *layeredMap[K, V]) scan(fn func(K, V) bool) {
 
 func (m *layeredMap[K, V]) forCOW() *layeredMap[K, V] {
 	var newTopLayer map[K]itemT[V]
-	newLayers := make([]map[K]itemT[V], 0, maxMapLevel)
+	newLayers := make([]map[K]itemT[V], 0, m.maxLevel)
 	for _, layer := range m.layers {
 		newLayers = append(newLayers, layer)
 	}
-	if len(newLayers) >= maxMapLevel {
-		// copy the top layer, and make it the topLayer layer.
-		topLayer := newLayers[len(newLayers)-1]
+	topLayer := newLayers[len(newLayers)-1]
+	if len(topLayer) < m.compactThreshold || len(newLayers) >= m.maxLevel {
 		newTopLayer = make(map[K]itemT[V], len(topLayer))
 		for k, v := range topLayer {
 			newTopLayer[k] = v
@@ -145,8 +158,10 @@ func (m *layeredMap[K, V]) forCOW() *layeredMap[K, V] {
 		newLayers = append(newLayers, newTopLayer)
 	}
 	return &layeredMap[K, V]{
-		layers:   newLayers,
-		topLayer: newTopLayer,
+		layers:           newLayers,
+		topLayer:         newTopLayer,
+		maxLevel:         m.maxLevel,
+		compactThreshold: m.compactThreshold,
 	}
 }
 
@@ -166,8 +181,8 @@ func (m *layeredMap[K, V]) del(key K) {
 func (m *layeredMap[K, V]) add0(key K, value V, tombstone bool) {
 	// if the topLayer is the only layer, such as when building infoschema from scratch,
 	// we don't need to do copy-on-write.
-	if len(m.layers) > 1 && len(m.topLayer) >= compactThreshold {
-		if len(m.layers) < maxMapLevel {
+	if len(m.layers) > 1 && len(m.topLayer) >= m.compactThreshold {
+		if len(m.layers) < m.maxLevel {
 			m.topLayer = make(map[K]itemT[V], initialMapCap)
 			m.layers = append(m.layers, m.topLayer)
 		} else {
