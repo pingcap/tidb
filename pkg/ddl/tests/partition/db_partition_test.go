@@ -3664,6 +3664,66 @@ func TestPrimaryGlobalIndex(t *testing.T) {
 	checkGlobalAndPK(t, tk, "t", 1, false, false, false)
 }
 
+func TestPrimaryNoGlobalIndex(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_enable_global_index=false")
+	defer func() {
+		tk.MustExec("set tidb_enable_global_index=default")
+	}()
+
+	// First, clustered indexes cannot be global!
+	// Reasoning is that it breaks the assumption that a clustered table can
+	// get the full row with a single primary key lookup.
+	// Since a global index would first need to be checked to get the partition to
+	// do a second index lookup for getting the full row.
+	tk.MustContainErrMsg(`create table t (a int primary key clustered, b varchar(255)) partition by key(b) partitions 3`, `A CLUSTERED INDEX must include all columns in the table's partitioning function`)
+	// Clustered table where PKIsHandle, but the primary key is not listed in tableInfo.Indices
+	tk.MustExec(`create table t (a int primary key clustered, b varchar(255))`)
+	checkGlobalAndPK(t, tk, "t", 0, true, false, false)
+	tk.MustContainErrMsg(`alter table t partition by key(b) partitions 3`, `A PRIMARY KEY must include all columns in the table's partitioning function`)
+	tk.MustExec(`drop table t`)
+	// Clustered table where PKIsHandle and listed in tableInfo.Indices
+	tk.MustExec(`create table t (a varchar(255), b varchar(255), primary key (a) clustered)`)
+	tk.MustContainErrMsg(`alter table t partition by key(b) partitions 3`, `A PRIMARY KEY must include all columns in the table's partitioning function`)
+	checkGlobalAndPK(t, tk, "t", 1, false, true, false)
+	tk.MustExec(`drop table t`)
+	// Clustered table where IsCommonHandle and listed in tableInfo.Indices
+	tk.MustExec(`create table t (a varchar(255), b varchar(255), c int, primary key (a,c) clustered)`)
+	checkGlobalAndPK(t, tk, "t", 1, false, true, false)
+	tk.MustContainErrMsg(`alter table t partition by key(b) partitions 3`, `A PRIMARY KEY must include all columns in the table's partitioning function`)
+	checkGlobalAndPK(t, tk, "t", 1, false, true, false)
+	tk.MustExec(`drop table t`)
+	// It can be clustered if the PK contains all the partitioning columns.
+	tk.MustExec(`create table t (a varchar(255), b varchar(255), primary key (a, b) clustered)`)
+	checkGlobalAndPK(t, tk, "t", 1, false, true, false)
+	tk.MustExec(`insert into t values (1,1),(2,2),(3,3),(4,4),('Hi','Hi'),('Bye!','Bye!')`)
+	tk.MustExec(`alter table t partition by key(b) partitions 3`)
+	checkGlobalAndPK(t, tk, "t", 1, false, true, false)
+	tk.MustExec(`drop table t`)
+
+	// NONCLUSTERED tables can have PK as global index.
+	tk.MustContainErrMsg(`create table t (a int primary key nonclustered, b varchar(255)) partition by key(b) partitions 3`, "A PRIMARY KEY must include all columns in the table's partitioning function")
+	tk.MustExec(`create table t (a int primary key nonclustered, b varchar(255))`)
+	checkGlobalAndPK(t, tk, "t", 1, false, false, false)
+	tk.MustContainErrMsg(`alter table t partition by key(b) partitions 3`, "A PRIMARY KEY must include all columns in the table's partitioning function")
+	checkGlobalAndPK(t, tk, "t", 1, false, false, false)
+	tk.MustExec(`alter table t partition by hash(a) partitions 3`)
+	checkGlobalAndPK(t, tk, "t", 1, false, false, false)
+	tk.MustExec(`drop table t`)
+	tk.MustExec(`create table t (a varchar(255), b varchar(255), primary key (a) nonclustered)`)
+	checkGlobalAndPK(t, tk, "t", 1, false, false, false)
+	tk.MustContainErrMsg(`alter table t partition by key(b) partitions 3`, "A PRIMARY KEY must include all columns in the table's partitioning function")
+	checkGlobalAndPK(t, tk, "t", 1, false, false, false)
+	tk.MustExec(`drop table t`)
+	tk.MustExec(`create table t (a varchar(255), b varchar(255), primary key (a, b) nonclustered)`)
+	checkGlobalAndPK(t, tk, "t", 1, false, false, false)
+	tk.MustExec(`insert into t values (1,1),(2,2),(3,3),(4,4),('Hi','Hi'),('Bye!','Bye!')`)
+	tk.MustExec(`alter table t partition by key(b) partitions 3`)
+	checkGlobalAndPK(t, tk, "t", 1, false, false, false)
+}
+
 func checkGlobalAndPK(t *testing.T, tk *testkit.TestKit, name string, indexes int, PKIsHandle, IsCommonHandle, global bool) {
 	tt := external.GetTableByName(t, tk, "test", name)
 	require.Equal(t, indexes, len(tt.Meta().Indices))
