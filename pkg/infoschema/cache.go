@@ -19,10 +19,7 @@ import (
 	"sync"
 
 	infoschema_metrics "github.com/pingcap/tidb/pkg/infoschema/metrics"
-	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
-	"github.com/pingcap/tidb/pkg/parser/model"
-	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
@@ -35,9 +32,8 @@ type InfoCache struct {
 	// cache is sorted by both SchemaVersion and timestamp in descending order, assume they have same order
 	cache []schemaAndTimestamp
 
-	r     autoid.Requirement
-	Data  *Data
-	store kv.Storage
+	r    autoid.Requirement
+	Data *Data
 }
 
 type schemaAndTimestamp struct {
@@ -46,13 +42,12 @@ type schemaAndTimestamp struct {
 }
 
 // NewCache creates a new InfoCache.
-func NewCache(r autoid.Requirement, capacity int, store kv.Storage) *InfoCache {
+func NewCache(r autoid.Requirement, capacity int) *InfoCache {
 	infoData := NewData()
 	return &InfoCache{
 		cache: make([]schemaAndTimestamp, 0, capacity),
 		r:     r,
 		Data:  infoData,
-		store: store,
 	}
 }
 
@@ -94,16 +89,7 @@ func (h *InfoCache) GetLatest() InfoSchema {
 	infoschema_metrics.GetLatestCounter.Inc()
 	if len(h.cache) > 0 {
 		infoschema_metrics.HitLatestCounter.Inc()
-		if h.store != nil {
-			ver, _ := h.store.CurrentVersion(kv.GlobalTxnScope)
-			return &WithTS{
-				InfoSchema: h.cache[0].infoschema,
-				Timestamp:  ver.Ver,
-			}
-		}
-		return &WithTS{
-			InfoSchema: h.cache[0].infoschema,
-		}
+		return h.cache[0].infoschema
 	}
 	return nil
 }
@@ -195,16 +181,7 @@ func (h *InfoCache) GetBySnapshotTS(snapshotTS uint64) InfoSchema {
 	infoschema_metrics.GetTSCounter.Inc()
 	if schema, ok := h.getSchemaByTimestampNoLock(snapshotTS); ok {
 		infoschema_metrics.HitTSCounter.Inc()
-		if h.store != nil {
-			ver, _ := h.store.CurrentVersion(kv.GlobalTxnScope)
-			return &WithTS{
-				InfoSchema: schema,
-				Timestamp:  ver.Ver,
-			}
-		}
-		return &WithTS{
-			InfoSchema: schema,
-		}
+		return schema
 	}
 	return nil
 }
@@ -265,18 +242,4 @@ func (h *InfoCache) Insert(is InfoSchema, schemaTS uint64) bool {
 	}
 
 	return true
-}
-
-// WithTS ...
-type WithTS struct {
-	InfoSchema
-	Timestamp uint64
-}
-
-// SchemaTables ...
-func (is *WithTS) SchemaTables(schema model.CIStr) []table.Table {
-	if v3, ok := is.InfoSchema.(*InfoschemaV3); ok {
-		return v3.SchemaTablesWithTs(schema, is.Timestamp)
-	}
-	return is.InfoSchema.SchemaTables(schema)
 }
