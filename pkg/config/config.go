@@ -504,7 +504,7 @@ type Log struct {
 	SlowThreshold       uint64     `toml:"slow-threshold" json:"slow-threshold"`
 	RecordPlanInSlowLog uint32     `toml:"record-plan-in-slow-log" json:"record-plan-in-slow-log"`
 	// SlowConfig will be added to the slow query log.
-	SlowLogAdditionalInfo map[string]string `toml:"slog-log-additional-info" json:"slog-log-additional-info"`
+	SlowLogAdditionalInfo map[string]string `toml:"slow-log-additional-info" json:"slow-log-additional-info"`
 
 	// Make tidb panic if write log operation hang in `Timeout` seconds
 	Timeout int `toml:"timeout" json:"timeout"`
