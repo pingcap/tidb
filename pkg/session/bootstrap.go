@@ -1348,7 +1348,7 @@ func checkDistTask(s sessiontypes.Session, ver int64) {
 		// Not set yet.
 		return
 	} else if req.GetRow(0).GetString(0) == variable.On {
-		logutil.BgLogger().Fatal("running upgrade DDL is not supported when tidb_enable_dist_task is enabled, "+
+		logutil.BgLogger().Fatal("cannot upgrade when tidb_enable_dist_task is enabled, "+
 			"please set tidb_enable_dist_task to off before upgrade", zap.Error(err))
 	}
 
