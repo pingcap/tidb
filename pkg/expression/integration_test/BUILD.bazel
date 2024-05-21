@@ -8,11 +8,7 @@ go_test(
         "main_test.go",
     ],
     flaky = True,
-<<<<<<< HEAD
     shard_count = 28,
-=======
-    shard_count = 25,
->>>>>>> 38ab23ba513 (expression: use the correct type when eval decimal and float session var (#51395))
     deps = [
         "//pkg/config",
         "//pkg/domain",
