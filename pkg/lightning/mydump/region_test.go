@@ -489,6 +489,7 @@ func TestSplitLargeFileOnlyOneChunk(t *testing.T) {
 }
 
 func TestSplitLargeFileSeekInsideCRLF(t *testing.T) {
+	ctx := context.Background()
 	meta := &MDTableMeta{
 		DB:   "csv",
 		Name: "large_csv_seek_inside_crlf",
@@ -527,8 +528,9 @@ func TestSplitLargeFileSeekInsideCRLF(t *testing.T) {
 	}
 	divideConfig := NewDataDivideConfig(cfg, 1, ioWorker, store, meta)
 
-	// in fact this is the wrong result, just to show the bug
+	// in fact this is the wrong result, just to show the bug. pos mismatch with offsets
 	offsets := [][]int64{{0, 3}, {3, 6}, {6, 9}, {9, 12}}
+	pos := []int64{2, 5, 8, 11}
 
 	regions, _, err := SplitLargeCSV(context.Background(), divideConfig, fileInfo)
 	require.NoError(t, err)
@@ -538,11 +540,26 @@ func TestSplitLargeFileSeekInsideCRLF(t *testing.T) {
 		require.Equal(t, offsets[i][1], regions[i].Chunk.EndOffset)
 	}
 
+	file, err := os.Open(filePath)
+	require.NoError(t, err)
+	parser, err := NewCSVParser(ctx, &cfg.Mydumper.CSV, file, 128, ioWorker, false, nil)
+	require.NoError(t, err)
+
+	for parser.ReadRow() == nil {
+		p, _ := parser.Pos()
+		require.Equal(t, pos[0], p)
+		pos = pos[1:]
+	}
+	require.NoError(t, parser.Close())
+
 	// set terminator to "\r\n"
 
 	cfg.Mydumper.CSV.Terminator = "\r\n"
 	divideConfig = NewDataDivideConfig(cfg, 1, ioWorker, store, meta)
+	// pos is contained in expectedOffsets
 	expectedOffsets := [][]int64{{0, 6}, {6, 12}}
+	pos = []int64{3, 6, 9, 12}
+
 	regions, _, err = SplitLargeCSV(context.Background(), divideConfig, fileInfo)
 	require.NoError(t, err)
 	require.Len(t, regions, len(expectedOffsets))
@@ -550,4 +567,16 @@ func TestSplitLargeFileSeekInsideCRLF(t *testing.T) {
 		require.Equal(t, expectedOffsets[i][0], regions[i].Chunk.Offset)
 		require.Equal(t, expectedOffsets[i][1], regions[i].Chunk.EndOffset)
 	}
+
+	file, err = os.Open(filePath)
+	require.NoError(t, err)
+	parser, err = NewCSVParser(ctx, &cfg.Mydumper.CSV, file, 128, ioWorker, false, nil)
+	require.NoError(t, err)
+
+	for parser.ReadRow() == nil {
+		p, _ := parser.Pos()
+		require.Equal(t, pos[0], p)
+		pos = pos[1:]
+	}
+	require.NoError(t, parser.Close())
 }
