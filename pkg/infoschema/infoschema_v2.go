@@ -21,7 +21,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -152,8 +151,6 @@ type tableCacheKey struct {
 
 // NewData creates an infoschema V2 data struct.
 func NewData() *Data {
-	xx := variable.SchemaCacheSize.Load()
-	fmt.Println("===========", xx)
 	ret := &Data{
 		byID:       btree.NewBTreeG[tableItem](compareByID),
 		byName:     btree.NewBTreeG[tableItem](compareByName),
@@ -163,6 +160,11 @@ func NewData() *Data {
 		pid2tid:    btree.NewBTreeG[partitionItem](comparePartitionItem),
 	}
 	return ret
+}
+
+// CacheCapacity is exported for testing.
+func (isd *Data) CacheCapacity() uint64 {
+	return isd.tableCache.Capacity()
 }
 
 func (isd *Data) add(item tableItem, tbl table.Table) {
