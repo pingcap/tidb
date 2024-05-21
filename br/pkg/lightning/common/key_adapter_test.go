@@ -24,6 +24,7 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/stretchr/testify/require"
@@ -190,8 +191,9 @@ func TestMinRowID(t *testing.T) {
 		types.NewBytesDatum(make([]byte, 9)),
 		types.NewBytesDatum(make([]byte, 100)),
 	}
+	sc := stmtctx.NewStmtCtxWithTimeZone(time.Local)
 	for _, d := range handleData {
-		encodedKey, err := codec.EncodeKey(time.Local, nil, d)
+		encodedKey, err := codec.EncodeKey(sc, nil, d)
 		require.NoError(t, err)
 		ch, err := kv.NewCommonHandle(encodedKey)
 		require.NoError(t, err)
