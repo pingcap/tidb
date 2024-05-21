@@ -292,7 +292,7 @@ func (hg *Histogram) BucketToString(bktID, idxCols int) string {
 }
 
 // BinarySearchRemoveVal removes the value from the TopN using binary search.
-func (hg *Histogram) BinarySearchRemoveVal(valCntPairs TopNMeta) {
+func (hg *Histogram) BinarySearchRemoveVal(valCntPairs *TopNMeta) {
 	lowIdx, highIdx := 0, hg.Len()-1
 	column := hg.Bounds.Column(0)
 	// if hg is too small, we don't need to check the branch. because the cost is more than binary search.

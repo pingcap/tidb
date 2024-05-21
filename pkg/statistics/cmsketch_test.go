@@ -256,7 +256,7 @@ func TestCMSketchCodingTopN(t *testing.T) {
 }
 
 func TestSortTopnMeta(t *testing.T) {
-	data := []TopNMeta{{
+	data := []*TopNMeta{{
 		Encoded: []byte("a"),
 		Count:   1,
 	}, {
@@ -269,13 +269,11 @@ func TestSortTopnMeta(t *testing.T) {
 
 func TestTopNScale(t *testing.T) {
 	for _, scaleFactor := range []float64{0.9999, 1.00001, 1.9999, 4.9999, 5.001, 9.99} {
-		var data []TopNMeta
+		var data []*TopNMeta
 		sumCount := uint64(0)
 		for i := 0; i < 20; i++ {
 			cnt := uint64(rand.Intn(100000))
-			data = append(data, TopNMeta{
-				Count: cnt,
-			})
+			data = append(data, NewTopNMeta(nil, cnt))
 			sumCount += cnt
 		}
 		topN := TopN{TopN: data}

@@ -644,7 +644,9 @@ func NewEmptyTopNMeta() *TopNMeta {
 // NewTopNMeta creates a new TopNMeta.
 func NewTopNMeta(encoded []byte, count uint64) *TopNMeta {
 	topn := topNMetaPool.Get().(*TopNMeta)
-	topn.Encoded = append(topn.Encoded, encoded...)
+	if encoded != nil {
+		topn.Encoded = append(topn.Encoded, encoded...)
+	}
 	topn.Count = count
 	return topn
 }
