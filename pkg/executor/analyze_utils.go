@@ -33,6 +33,10 @@ import (
 )
 
 func adaptiveAnlayzeDistSQLConcurrency(ctx context.Context, sctx sessionctx.Context) int {
+	concurrency := sctx.GetSessionVars().AnalyzeDistSQLScanConcurrency()
+	if concurrency > 0 {
+		return concurrency
+	}
 	tikvStore, ok := sctx.GetStore().(helper.Storage)
 	if !ok {
 		logutil.BgLogger().Warn("Information about TiKV store status can be gotten only when the storage is TiKV")
