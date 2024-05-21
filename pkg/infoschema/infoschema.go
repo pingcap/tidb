@@ -123,7 +123,8 @@ func MockInfoSchema(tbList []*model.TableInfo) InfoSchema {
 	// Add a system table.
 	tables := []*model.TableInfo{
 		{
-			ID:   9,
+			// Use a very big ID to avoid conflict with normal tables.
+			ID:   9999,
 			Name: model.NewCIStr("stats_meta"),
 			Columns: []*model.ColumnInfo{
 				{
