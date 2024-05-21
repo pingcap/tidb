@@ -394,14 +394,6 @@ func BuildHistAndTopN(
 		}
 	}
 
-	topn := &TopN{TopN: topNList}
-	topn.Scale(sampleFactor)
-
-	if uint64(count) <= topn.TotalCount() || int(hg.NDV) <= len(topn.TopN) {
-		// If we've collected everything  - don't create any buckets
-		return hg, topn, nil
-	}
-
 	topNList = pruneTopNItem(topNList, ndv, nullCount, sampleNum, count)
 
 	// Step2: exclude topn from samples
@@ -453,6 +445,14 @@ func BuildHistAndTopN(
 		}
 	}
 
+	topn := &TopN{TopN: topNList}
+	topn.Scale(sampleFactor)
+
+	if uint64(count) <= topn.TotalCount() || int(hg.NDV) <= len(topn.TopN) {
+		// If we've collected everything  - don't create any buckets
+		return hg, topn, nil
+	}
+
 	// Step3: build histogram with the rest samples
 	if len(samples) > 0 {
 		_, err = buildHist(sc, hg, samples, count-int64(topn.TotalCount()), ndv-int64(len(topn.TopN)), int64(numBuckets), memTracker)
@@ -468,7 +468,7 @@ func BuildHistAndTopN(
 //
 //	We assume that the ones not in the top-n list's selectivity is 1/remained_ndv which is the internal implementation of EqualRowCount
 func pruneTopNItem(topns []TopNMeta, ndv, nullCount, sampleRows, totalRows int64) []TopNMeta {
-	if totalRows <= 1 || len(topns) <= 1 {
+	if totalRows <= 1 || int64(len(topns)) >= ndv || len(topns) <= 1 {
 		return topns
 	}
 	// Sum the occurrence except the least common one from the top-n list. To check whether the lest common one is worth
