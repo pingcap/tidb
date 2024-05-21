@@ -509,10 +509,7 @@ func (s *baseSingleGroupJoinOrderSolver) checkConnection(leftPlan, rightPlan Log
 				rightNode, leftNode = leftPlan, rightPlan
 				usedEdges = append(usedEdges, edge)
 			} else {
-<<<<<<< HEAD
 				newSf := expression.NewFunctionInternal(s.ctx, ast.EQ, edge.GetType(), rCol, lCol).(*expression.ScalarFunction)
-=======
-				newSf := expression.NewFunctionInternal(s.ctx.GetExprCtx(), ast.EQ, edge.GetType(), rCol, lCol).(*expression.ScalarFunction)
 
 				// after creating the new EQ function, the 2 args might not be column anymore, for example `sf=sf(cast(col))`,
 				// which breaks the assumption that join eq keys must be `col=col`, to handle this, inject 2 projections.
@@ -526,10 +523,9 @@ func (s *baseSingleGroupJoinOrderSolver) checkConnection(leftPlan, rightPlan Log
 						rightPlan, lCol = s.injectExpr(rightPlan, newSf.GetArgs()[1])
 					}
 					leftNode, rightNode = leftPlan, rightPlan
-					newSf = expression.NewFunctionInternal(s.ctx.GetExprCtx(), ast.EQ, edge.GetType(),
+					newSf = expression.NewFunctionInternal(s.ctx, ast.EQ, edge.GetType(),
 						rCol, lCol).(*expression.ScalarFunction)
 				}
->>>>>>> 06ee59bd9c6 (planner: add projections to keep join keys as `col=col` (#52989))
 				usedEdges = append(usedEdges, newSf)
 			}
 		}
@@ -537,10 +533,10 @@ func (s *baseSingleGroupJoinOrderSolver) checkConnection(leftPlan, rightPlan Log
 	return
 }
 
-func (*baseSingleGroupJoinOrderSolver) injectExpr(p base.LogicalPlan, expr expression.Expression) (base.LogicalPlan, *expression.Column) {
+func (*baseSingleGroupJoinOrderSolver) injectExpr(p LogicalPlan, expr expression.Expression) (LogicalPlan, *expression.Column) {
 	proj, ok := p.(*LogicalProjection)
 	if !ok {
-		proj = LogicalProjection{Exprs: cols2Exprs(p.Schema().Columns)}.Init(p.SCtx(), p.QueryBlockOffset())
+		proj = LogicalProjection{Exprs: cols2Exprs(p.Schema().Columns)}.Init(p.SCtx(), p.SelectBlockOffset())
 		proj.SetSchema(p.Schema().Clone())
 		proj.SetChildren(p)
 	}
