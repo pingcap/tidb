@@ -167,6 +167,7 @@ func TestTableSampleInvalid(t *testing.T) {
 func TestTableSampleWithTiDBRowID(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := createSampleTestkit(t, store)
+	tk.MustExec(`set @@tidb_opt_fix_control = "44262:ON"`)
 	tk.MustExec("create table t (a int, b varchar(255));")
 	tk.MustExec("insert into t values (1, 'abc');")
 	tk.MustQuery("select _tidb_rowid from t tablesample regions();").Check(testkit.Rows("1"))
