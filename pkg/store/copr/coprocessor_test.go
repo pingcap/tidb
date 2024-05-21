@@ -226,7 +226,7 @@ func TestBuildTasksByBuckets(t *testing.T) {
 		}
 	}
 
-	// serveral ranges per bucket
+	// several ranges per bucket
 	// region:  nil---------------------------n-----------x-----------nil
 	// buckets: nil-----c-------g-------k-----n----t------x-----------nil
 	// ranges:  nil-a b-c d-e f-g h-i j-k-l m-n
