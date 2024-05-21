@@ -2808,6 +2808,71 @@ func getReorgPartitionInfo(t *meta.Meta, job *model.Job) (*model.TableInfo, []st
 	return tblInfo, partNames, partInfo, droppingDefs, addingDefs, nil
 }
 
+// onReorganizePartition reorganized the partitioning of a table including its indexes.
+// ALTER TABLE t REORGANIZE PARTITION p0 [, p1...] INTO (PARTITION p0 ...)
+//
+//	Takes one set of partitions and copies the data to a newly defined set of partitions
+//
+// ALTER TABLE t REMOVE PARTITIONING
+//
+//	Makes a partitioned table non-partitioned, by first collapsing all partitions into a
+//	single partition and then converts that partition to a non-partitioned table
+//
+// ALTER TABLE T PARTITION BY ...
+//
+//	Changes the partitioning to the newly defined partitioning type and definitions,
+//	works for both partitioned and non-partitioned tables.
+//	If the table is non-partitioned, then it will first convert it to a partitioned
+//	table with a single partition, i.e. the full table as a single partition.
+//
+// job.SchemaState goes through the following SchemaState(s):
+// StateNone -> StateDeleteOnly -> StateWriteOnly -> StateWriteReorganization
+// -> StateDeleteOrganization -> StatePublic
+// There are more details embedded in the implementation, but the high level changes are:
+// StateNone -> StateDeleteOnly:
+//
+//	Various checks and validations.
+//	Add possible new unique/global indexes. They share the same state as job.SchemaState
+//	until end of StateWriteReorganization -> StateDeleteReorganization.
+//	Set DroppingDefinitions and AddingDefinitions.
+//	So both the new partitions and new indexes will be included in new delete/update DML.
+//
+// StateDeleteOnly -> StateWriteOnly:
+//
+//	So both the new partitions and new indexes will be included also in update/insert DML.
+//
+// StateWriteOnly -> StateWriteReorganization:
+//
+//	To make sure that when we are reorganizing the data,
+//	both the old and new partitions/indexes will be updated.
+//
+// StateWriteReorganization -> StateDeleteOrganization:
+//
+//	Here is where all data is reorganized, both partitions and indexes.
+//	It copies all data from the old set of partitions into the new set of partitions,
+//	and creates the local indexes on the new set of partitions,
+//	and if new unique indexes are added, it also updates them with the rest of data from
+//	the non-touched partitions.
+//	For indexes that are to be replaced with new ones (old/new global index),
+//	mark the old indexes as StateDeleteReorganization and new ones as StatePublic
+//	Finally make the table visible with the new partition definitions.
+//	I.e. in this state clients will read from the old set of partitions,
+//	and will read the new set of partitions in StateDeleteReorganization.
+//
+// StateDeleteOrganization -> StatePublic:
+//
+//	Now all heavy lifting is done, and we just need to finalize and drop things, while still doing
+//	double writes, since previous state sees the old partitions/indexes.
+//	Remove the old indexes and old partitions from the TableInfo.
+//	Add the old indexes and old partitions to the queue for later cleanup (see delete_range.go).
+//	Queue new partitions for statistics update.
+//	if ALTER TABLE t PARTITION BY/REMOVE PARTITIONING:
+//	  Recreate the table with the new TableID, by DropTableOrView+CreateTableOrView
+//
+// StatePublic:
+//
+//	Everything now looks as it should, no memory of old partitions/indexes,
+//	and no more double writing, since the previous state is only reading the new partitions/indexes.
 func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	// Handle the rolling back job
 	if job.IsRollingback() {
