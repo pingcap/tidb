@@ -262,6 +262,7 @@ func (h *InfoCache) Insert(is InfoSchema, schemaTS uint64) bool {
 	return true
 }
 
+// InsertEmptySchemaVersion inserts empty schema version into a map. If exceeded the cache capacity, remove the oldest version.
 func (h *InfoCache) InsertEmptySchemaVersion(version int64) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
