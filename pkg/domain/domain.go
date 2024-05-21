@@ -1136,7 +1136,7 @@ func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duratio
 			jobsVerMap: make(map[int64]int64),
 			jobsIDsMap: make(map[int64]string),
 		},
-		mdlCheckCh: make(chan struct{}),
+		mdlCheckCh: make(chan struct{}, 64),
 	}
 
 	do.infoCache = infoschema.NewCache(do, int(variable.SchemaVersionCacheLimit.Load()))
