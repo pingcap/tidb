@@ -624,7 +624,7 @@ func (c *TopN) Copy() *TopN {
 
 var topNMetaPool = sync.Pool{
 	New: func() any {
-		return TopNMeta{
+		return &TopNMeta{
 			Encoded: make([]byte, 0, 64),
 			Count:   0,
 		}
@@ -639,14 +639,14 @@ type TopNMeta struct {
 
 // NewTopNMeta creates a new TopNMeta.
 func NewTopNMeta(encoded []byte, count uint64) TopNMeta {
-	topn := topNMetaPool.Get().(TopNMeta)
+	topn := topNMetaPool.Get().(*TopNMeta)
 	topn.Encoded = append(topn.Encoded[:0], encoded...)
 	topn.Count = count
-	return topn
+	return *topn
 }
 
 // DestoryAndPutPool resets the TopNMeta and puts it back to the pool.
-func (t TopNMeta) DestoryAndPutPool() {
+func (t *TopNMeta) DestoryAndPutPool() {
 	clear(t.Encoded)
 	t.Count = 0
 	topNMetaPool.Put(t)
