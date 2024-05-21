@@ -44,11 +44,12 @@ import (
 	pd "github.com/tikv/pd/client"
 )
 
-// RegisterMetricsWithLabels register metrics with const label 'keyspace_id' if keyspaceName set.
+// RegisterMetricsWithLabels register metrics with const label.
 func RegisterMetricsWithLabels(labels prometheus.Labels) error {
 	cfg := config.GetGlobalConfig()
 	if keyspace.IsKeyspaceNameEmpty(cfg.KeyspaceName) || strings.ToLower(cfg.Store) != "tikv" {
-		return registerMetricsWithLabels(labels) // register metrics without label 'keyspace_id'.
+		// Don't need to register metrics with label 'keyspace_id'.
+		return registerMetricsWithLabels(labels)
 	}
 
 	if labels == nil {
@@ -88,7 +89,8 @@ func RegisterMetricsWithLabels(labels prometheus.Labels) error {
 // RegisterMetricsForBR register metrics with const label keyspace_id for BR.
 func RegisterMetricsForBR(pdAddrs []string, keyspaceName string) error {
 	if keyspace.IsKeyspaceNameEmpty(keyspaceName) {
-		return registerMetricsWithLabels(nil) // register metrics without label 'keyspace_id'.
+		// Don't need to register metrics with label 'keyspace_id'.
+		return registerMetricsWithLabels(nil)
 	}
 
 	timeoutSec := 10 * time.Second
