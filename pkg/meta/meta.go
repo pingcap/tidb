@@ -36,6 +36,8 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/structure"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/logutil"
+	"go.uber.org/zap"
 )
 
 var (
@@ -477,6 +479,11 @@ func (m *Meta) GetAutoIDAccessors(dbID, tableID int64) AutoIDAccessors {
 // if there are multiple consecutive jobs failed or cancelled after the schema version
 // increased, the returned 'version - 1' might still not have diff.
 func (m *Meta) GetSchemaVersionWithNonEmptyDiff() (int64, error) {
+	st := time.Now()
+	defer func() {
+		logutil.BgLogger().Info("DDL cost analysis",
+			zap.Duration("cost", time.Since(st)), zap.String("call", "GetSchemaVersionWithNonEmptyDiff"))
+	}()
 	v, err := m.txn.GetInt64(mSchemaVersionKey)
 	if err != nil {
 		return 0, err

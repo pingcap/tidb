@@ -336,6 +336,11 @@ func (do *Domain) loadInfoSchema(startTS uint64) (infoschema.InfoSchema, bool, i
 
 // Returns the timestamp of a schema version, which is the commit timestamp of the schema diff
 func (do *Domain) getTimestampForSchemaVersionWithNonEmptyDiff(m *meta.Meta, version int64, startTS uint64) (uint64, error) {
+	st := time.Now()
+	defer func() {
+		logutil.BgLogger().Info("DDL cost analysis",
+			zap.Duration("cost", time.Since(st)), zap.String("call", "getTimestampForSchemaVersionWithNonEmptyDiff"))
+	}()
 	tikvStore, ok := do.Store().(helper.Storage)
 	if ok {
 		newHelper := helper.NewHelper(tikvStore)
