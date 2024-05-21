@@ -19,7 +19,6 @@ import (
 	"context"
 
 	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
@@ -87,7 +86,7 @@ func (p *LogicalJoin) ConvertOuterToInnerJoin(predicates []expression.Expression
 	if p.JoinType == LeftOuterJoin || p.JoinType == RightOuterJoin {
 		canBeSimplified := false
 		for _, expr := range predicates {
-			isOk := isNullFiltered(p.SCtx(), innerTable.Schema(), expr)
+			isOk := util.IsNullRejected(p.SCtx(), innerTable.Schema(), expr)
 			if isOk {
 				canBeSimplified = true
 				break
@@ -148,52 +147,4 @@ func (s *LogicalProjection) ConvertOuterToInnerJoin(predicates []expression.Expr
 	child = child.ConvertOuterToInnerJoin(canBePushed)
 	p.SetChildren(child)
 	return p
-}
-
-// allConstants checks if only the expression has only constants.
-func allConstants(ctx expression.BuildContext, expr expression.Expression) bool {
-	if expression.MaybeOverOptimized4PlanCache(ctx, []expression.Expression{expr}) {
-		return false // expression contains non-deterministic parameter
-	}
-	switch v := expr.(type) {
-	case *expression.ScalarFunction:
-		for _, arg := range v.GetArgs() {
-			if !allConstants(ctx, arg) {
-				return false
-			}
-		}
-		return true
-	case *expression.Constant:
-		return true
-	}
-	return false
-}
-
-// isNullFiltered takes care of complex predicates like this:
-// isNullFiltered(A OR B) = isNullFiltered(A) AND isNullFiltered(B)
-// isNullFiltered(A AND B) = isNullFiltered(A) OR isNullFiltered(B)
-func isNullFiltered(ctx base.PlanContext, innerSchema *expression.Schema, predicate expression.Expression) bool {
-	// The expression should reference at least one field in innerSchema or all constants.
-	if !expression.ExprReferenceSchema(predicate, innerSchema) && !allConstants(ctx.GetExprCtx(), predicate) {
-		return false
-	}
-
-	switch expr := predicate.(type) {
-	case *expression.ScalarFunction:
-		if expr.FuncName.L == ast.LogicAnd {
-			if isNullFiltered(ctx, innerSchema, expr.GetArgs()[0]) {
-				return true
-			}
-			return isNullFiltered(ctx, innerSchema, expr.GetArgs()[0])
-		} else if expr.FuncName.L == ast.LogicOr {
-			if !(isNullFiltered(ctx, innerSchema, expr.GetArgs()[0])) {
-				return false
-			}
-			return isNullFiltered(ctx, innerSchema, expr.GetArgs()[1])
-		} else {
-			return util.IsNullRejected(ctx, innerSchema, expr)
-		}
-	default:
-		return util.IsNullRejected(ctx, innerSchema, predicate)
-	}
 }
