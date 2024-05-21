@@ -47,6 +47,7 @@ func TestPrecheckBuilderBasic(t *testing.T) {
 		precheck.CheckTargetClusterVersion,
 		precheck.CheckLocalDiskPlacement,
 		precheck.CheckLocalTempKVDir,
+		precheck.CheckSourceDataSize,
 	} {
 		theChecker, err := theCheckBuilder.BuildPrecheckItem(checkItemID)
 		require.NoError(t, err)

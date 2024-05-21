@@ -1458,9 +1458,11 @@ func (ci *sourceDataSizeCheckItem) Check(ctx context.Context) (*precheck.CheckRe
 		Message:  "the source data size is allowed",
 	}
 
-	if estimatedDataSize > ci.cfg.Mydumper.MaxSourceDataSize {
+	if ci.cfg.Mydumper.MaxSourceDataSize != 0 && estimatedDataSize > ci.cfg.Mydumper.MaxSourceDataSize {
 		theResult.Passed = false
-		//theResult.Message = fmt.Sprintf("source data size %s is too large, limit is %s", }
+		theResult.Message = fmt.Sprintf("source data size %s is too large, limit is %s",
+			units.HumanSize(float64(estimatedDataSize)),
+			units.HumanSize(float64(ci.cfg.Mydumper.MaxSourceDataSize)))
 	}
 	return theResult, nil
 }

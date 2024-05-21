@@ -64,6 +64,7 @@ var (
 		CheckLocalDiskPlacement:       "Local disk placement",
 		CheckLocalTempKVDir:           "Local temp KV dir",
 		CheckTargetUsingCDCPITR:       "Target using CDC/PITR",
+		CheckSourceDataSize:           "Source data size",
 	}
 )
 
