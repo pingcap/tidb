@@ -3,4 +3,5 @@ strict-format = true
 max-region-size = 200
 
 [mydumper.csv]
+header = true
 terminator = '\n'
