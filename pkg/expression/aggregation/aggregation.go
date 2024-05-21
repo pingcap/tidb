@@ -134,6 +134,7 @@ const (
 	DedupMode
 )
 
+// ToString show the agg mode.
 func (a AggFunctionMode) ToString() string {
 	switch a {
 	case CompleteMode:
