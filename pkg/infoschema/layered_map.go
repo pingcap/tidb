@@ -22,7 +22,7 @@ const (
 	// compactThreshold is the threshold to trigger compaction for the top layer
 	// if there are read-only layers below it.
 	// this value is close to the optimal for maxMapLevel = 8.
-	compactThreshold = 16
+	compactThreshold = 32
 	initialMapCap    = 16
 )
 
