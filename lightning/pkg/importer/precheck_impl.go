@@ -1425,3 +1425,42 @@ func hasDefault(col *model.ColumnInfo) bool {
 	return col.DefaultIsExpr || col.DefaultValue != nil || !mysql.HasNotNullFlag(col.GetFlag()) ||
 		col.IsGenerated() || mysql.HasAutoIncrementFlag(col.GetFlag())
 }
+
+type sourceDataSizeCheckItem struct {
+	cfg           *config.Config
+	preInfoGetter PreImportInfoGetter
+}
+
+// NewSourceDataSizeCheckItem creates a new soureceDataSizeCheckItem.
+func NewSourceDataSizeCheckItem(cfg *config.Config, preInfoGetter PreImportInfoGetter) precheck.Checker {
+	return &sourceDataSizeCheckItem{
+		cfg:           cfg,
+		preInfoGetter: preInfoGetter,
+	}
+}
+
+// GetCheckItemID implements Checker.GetCheckItemID.
+func (ci *sourceDataSizeCheckItem) GetCheckItemID() precheck.CheckItemID {
+	return precheck.CheckSourceDataSize
+}
+
+// Check implements Checker.Check.
+func (ci *sourceDataSizeCheckItem) Check(ctx context.Context) (*precheck.CheckResult, error) {
+	estimatedDataSizeResult, err := ci.preInfoGetter.EstimateSourceDataSize(ctx)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	estimatedDataSize := estimatedDataSizeResult.SizeWithoutIndex
+	theResult := &precheck.CheckResult{
+		Item:     ci.GetCheckItemID(),
+		Severity: precheck.Critical,
+		Passed:   true,
+		Message:  "the source data size is allowed",
+	}
+
+	if estimatedDataSize > ci.cfg.Mydumper.MaxSourceDataSize {
+		theResult.Passed = false
+		//theResult.Message = fmt.Sprintf("source data size %s is too large, limit is %s", }
+	}
+	return theResult, nil
+}
