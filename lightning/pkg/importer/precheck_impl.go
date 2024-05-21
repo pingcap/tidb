@@ -1440,7 +1440,7 @@ func NewSourceDataSizeCheckItem(cfg *config.Config, preInfoGetter PreImportInfoG
 }
 
 // GetCheckItemID implements Checker.GetCheckItemID.
-func (ci *sourceDataSizeCheckItem) GetCheckItemID() precheck.CheckItemID {
+func (*sourceDataSizeCheckItem) GetCheckItemID() precheck.CheckItemID {
 	return precheck.CheckSourceDataSize
 }
 
