@@ -638,8 +638,8 @@ type TopNMeta struct {
 }
 
 // NewTopNMeta creates a new TopNMeta.
-func NewTopNMeta(encoded []byte, count uint64) *TopNMeta {
-	topn := topNMetaPool.Get().(*TopNMeta)
+func NewTopNMeta(encoded []byte, count uint64) TopNMeta {
+	topn := topNMetaPool.Get().(TopNMeta)
 	topn.Encoded = append(topn.Encoded[:0], encoded...)
 	topn.Count = count
 	return topn
@@ -648,7 +648,7 @@ func NewTopNMeta(encoded []byte, count uint64) *TopNMeta {
 func (t *TopNMeta) DestoryAndPutPool() {
 	clear(t.Encoded)
 	t.Count = 0
-	topNMetaPool.Put(t)
+	topNMetaPool.Put(*t)
 }
 
 // QueryTopN returns the results for (h1, h2) in murmur3.Sum128(), if not exists, return (0, false).
