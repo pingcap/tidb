@@ -258,16 +258,6 @@
                      "intervalFactor": 2,
                      "legendFormat": "{{instance}}",
                      "refId": "A"
-<<<<<<< HEAD
-=======
-                  },
-                  {
-                     "expr": "tidb_server_maxprocs{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}",
-                     "format": "time_series",
-                     "intervalFactor": 2,
-                     "legendFormat": "quota-{{instance}}",
-                     "refId": "B"
->>>>>>> 07ef0094860 (server, metrics: remove the connection count on server, only use the metrics (#51996))
                   }
                ],
                "thresholds": [ ],
@@ -361,16 +351,6 @@
                      "intervalFactor": 2,
                      "legendFormat": "HeapInuse-{{instance}}",
                      "refId": "B"
-<<<<<<< HEAD
-=======
-                  },
-                  {
-                     "expr": "tidb_server_memory_quota_bytes{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", job=\"tidb\"}",
-                     "format": "time_series",
-                     "intervalFactor": 2,
-                     "legendFormat": "quota-{{instance}}",
-                     "refId": "C"
->>>>>>> 07ef0094860 (server, metrics: remove the connection count on server, only use the metrics (#51996))
                   }
                ],
                "thresholds": [ ],

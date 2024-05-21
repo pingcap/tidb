@@ -2036,11 +2036,7 @@ func TestCloseConn(t *testing.T) {
 	for i := 0; i < numGoroutines; i++ {
 		go func() {
 			defer wg.Done()
-<<<<<<< HEAD
-			err := closeConn(cc, "default", 1)
-=======
 			err := closeConn(cc)
->>>>>>> 07ef0094860 (server, metrics: remove the connection count on server, only use the metrics (#51996))
 			require.NoError(t, err)
 		}()
 	}

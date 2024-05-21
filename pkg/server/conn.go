@@ -351,16 +351,9 @@ func (cc *clientConn) Close() error {
 
 // closeConn is idempotent and thread-safe.
 // It will be called on the same `clientConn` more than once to avoid connection leak.
-<<<<<<< HEAD
-func closeConn(cc *clientConn, resourceGroupName string, connections int) error {
-	var err error
-	cc.closeOnce.Do(func() {
-		metrics.ConnGauge.WithLabelValues(resourceGroupName).Set(float64(connections))
-=======
 func closeConn(cc *clientConn) error {
 	var err error
 	cc.closeOnce.Do(func() {
->>>>>>> 07ef0094860 (server, metrics: remove the connection count on server, only use the metrics (#51996))
 		if cc.connectionID > 0 {
 			cc.server.dom.ReleaseConnID(cc.connectionID)
 			cc.connectionID = 0
