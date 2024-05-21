@@ -123,7 +123,7 @@ func main() {
 		}
 	}
 
-	if err != nil || !finished {
+	if err != nil || (!globalCfg.App.ServerMode && !finished) {
 		exit(1)
 	}
 }
