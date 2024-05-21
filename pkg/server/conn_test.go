@@ -30,11 +30,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/extension"
+	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/server/internal"
@@ -52,6 +54,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/arena"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
+	promtestutils "github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/require"
 	tikverr "github.com/tikv/client-go/v2/error"
 	"github.com/tikv/client-go/v2/testutils"
@@ -2038,4 +2041,41 @@ func TestCloseConn(t *testing.T) {
 		}()
 	}
 	wg.Wait()
+}
+
+func TestConnAddMetrics(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	re := require.New(t)
+	tk := testkit.NewTestKit(t, store)
+	cc := &clientConn{
+		alloc:      arena.NewAllocator(1024),
+		chunkAlloc: chunk.NewAllocator(),
+		pkt:        internal.NewPacketIOForTest(bufio.NewWriter(bytes.NewBuffer(nil))),
+	}
+	tk.MustExec("use test")
+	cc.SetCtx(&TiDBContext{Session: tk.Session(), stmts: make(map[int]*TiDBStatement)})
+
+	// default
+	cc.addMetrics(mysql.ComQuery, time.Now(), nil)
+	counter := metrics.QueryTotalCounter
+	v := promtestutils.ToFloat64(counter.WithLabelValues("Query", "OK", "default"))
+	require.Equal(t, 1.0, v)
+
+	// rg1
+	cc.getCtx().GetSessionVars().ResourceGroupName = "test_rg1"
+	cc.addMetrics(mysql.ComQuery, time.Now(), nil)
+	re.Equal(promtestutils.ToFloat64(counter.WithLabelValues("Query", "OK", "default")), 1.0)
+	re.Equal(promtestutils.ToFloat64(counter.WithLabelValues("Query", "OK", "test_rg1")), 1.0)
+	/// inc the counter again
+	cc.addMetrics(mysql.ComQuery, time.Now(), nil)
+	re.Equal(promtestutils.ToFloat64(counter.WithLabelValues("Query", "OK", "test_rg1")), 2.0)
+
+	// rg2
+	cc.getCtx().GetSessionVars().ResourceGroupName = "test_rg2"
+	// error
+	cc.addMetrics(mysql.ComQuery, time.Now(), errors.New("unknown error"))
+	re.Equal(promtestutils.ToFloat64(counter.WithLabelValues("Query", "Error", "test_rg2")), 1.0)
+	// ok
+	cc.addMetrics(mysql.ComStmtExecute, time.Now(), nil)
+	re.Equal(promtestutils.ToFloat64(counter.WithLabelValues("StmtExecute", "OK", "test_rg2")), 1.0)
 }

@@ -2098,13 +2098,16 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) exec.Ex
 			strings.ToLower(infoschema.TableResourceGroups),
 			strings.ToLower(infoschema.TableRunawayWatches),
 			strings.ToLower(infoschema.TableCheckConstraints):
+			memTracker := memory.NewTracker(v.ID(), -1)
+			memTracker.AttachTo(b.ctx.GetSessionVars().StmtCtx.MemTracker)
 			return &MemTableReaderExec{
 				BaseExecutor: exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID()),
 				table:        v.Table,
 				retriever: &memtableRetriever{
-					table:     v.Table,
-					columns:   v.Columns,
-					extractor: v.Extractor,
+					table:      v.Table,
+					columns:    v.Columns,
+					extractor:  v.Extractor,
+					memTracker: memTracker,
 				},
 			}
 		case strings.ToLower(infoschema.TableTiDBTrx),
@@ -2955,6 +2958,12 @@ func (*executorBuilder) corColInDistPlan(plans []plannercore.PhysicalPlan) bool 
 		case *plannercore.PhysicalSelection:
 			for _, cond := range x.Conditions {
 				if len(expression.ExtractCorColumns(cond)) > 0 {
+					return true
+				}
+			}
+		case *plannercore.PhysicalTopN:
+			for _, byItem := range x.ByItems {
+				if len(expression.ExtractCorColumns(byItem.Expr)) > 0 {
 					return true
 				}
 			}

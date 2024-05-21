@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/statistics/handle/internal"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
@@ -182,15 +183,49 @@ func testInitStatsMemTrace(t *testing.T) {
 		tStats := h.GetTableStats(tbl.Meta())
 		memCostTot += tStats.MemoryUsage().TotalMemUsage
 	}
+	tables := h.StatsCache.Values()
+	for _, tt := range tables {
+		tbl, ok := h.StatsCache.Get(tt.PhysicalID)
+		require.True(t, ok)
+		require.Equal(t, tbl.PhysicalID, tt.PhysicalID)
+	}
 
 	require.Equal(t, h.MemConsumed(), memCostTot)
 }
 
 func TestInitStatsMemTraceWithLite(t *testing.T) {
+	restore := config.RestoreFunc()
+	defer restore()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Performance.ConcurrentlyInitStats = false
+	})
 	testInitStatsMemTraceFunc(t, true)
 }
 
 func TestInitStatsMemTraceWithoutLite(t *testing.T) {
+	restore := config.RestoreFunc()
+	defer restore()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Performance.ConcurrentlyInitStats = false
+	})
+	testInitStatsMemTraceFunc(t, false)
+}
+
+func TestInitStatsMemTraceWithConcurrrencyLite(t *testing.T) {
+	restore := config.RestoreFunc()
+	defer restore()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Performance.ConcurrentlyInitStats = true
+	})
+	testInitStatsMemTraceFunc(t, true)
+}
+
+func TestInitStatsMemTraceWithoutConcurrrencyLite(t *testing.T) {
+	restore := config.RestoreFunc()
+	defer restore()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Performance.ConcurrentlyInitStats = true
+	})
 	testInitStatsMemTraceFunc(t, false)
 }
 
@@ -263,14 +298,39 @@ func TestInitStats51358(t *testing.T) {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/statistics/handle/cache/StatsCacheGetNil"))
 	}()
 	require.NoError(t, h.InitStats(is))
+	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	stats := h.GetTableStats(tbl.Meta())
+	for _, column := range stats.Columns {
+		if mysql.HasPriKeyFlag(column.Info.GetFlag()) {
+			// primary key column has no stats info, because primary key's is_index is false. so it cannot load the topn
+			require.Nil(t, column.TopN)
+		}
+		require.False(t, column.IsFullLoad())
+	}
 }
 
 func TestInitStatsVer2(t *testing.T) {
-	originValue := config.GetGlobalConfig().Performance.LiteInitStats
-	defer func() {
-		config.GetGlobalConfig().Performance.LiteInitStats = originValue
-	}()
-	config.GetGlobalConfig().Performance.LiteInitStats = false
+	restore := config.RestoreFunc()
+	defer restore()
+	config.UpdateGlobal(func(conf *config.Config) {
+		config.GetGlobalConfig().Performance.LiteInitStats = false
+		config.GetGlobalConfig().Performance.ConcurrentlyInitStats = false
+	})
+	initStatsVer2(t)
+}
+
+func TestInitStatsVer2Concurrency(t *testing.T) {
+	restore := config.RestoreFunc()
+	defer restore()
+	config.UpdateGlobal(func(conf *config.Config) {
+		config.GetGlobalConfig().Performance.LiteInitStats = false
+		config.GetGlobalConfig().Performance.ConcurrentlyInitStats = true
+	})
+	initStatsVer2(t)
+}
+
+func initStatsVer2(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")

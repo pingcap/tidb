@@ -15,7 +15,6 @@
 package executor
 
 import (
-	"bytes"
 	"context"
 	"encoding/hex"
 	"time"
@@ -311,7 +310,7 @@ func (task *storeCompactTask) compactOnePhysicalTable(physicalTableID int64) (bo
 
 		// Let's send more compact requests, as there are remaining data to compact.
 		lastEndKey := resp.GetCompactedEndKey()
-		if len(lastEndKey) == 0 || bytes.Compare(lastEndKey, startKey) <= 0 {
+		if len(lastEndKey) == 0 {
 			// The TiFlash server returned an invalid compacted end key.
 			// This is unexpected...
 			warn := errors.Errorf("compact on store %s failed: internal error (check logs for details)", task.targetStore.Address)
