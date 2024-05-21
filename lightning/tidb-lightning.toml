@@ -120,11 +120,7 @@ addr = "127.0.0.1:8287"
 # The following resolution algorithms are supported:
 #  - none: does not detect duplicate records, which has the best performance of the two algorithms.
 #          But if there are duplicate records in the data source, it might lead to inconsistent data in the target TiDB.
-#  - remove: if there are primary key or unique key conflicts between the inserting data A and B,
-#            A and B will be removed from the target table and recorded
-#            in the `lightning_task_info.conflict_error_v1` table in the target TiDB.
-#            You can manually insert the correct records into the target table based on your business requirements.
-#            Note that the target TiKV must be v5.2.0 or later versions; otherwise it falls back to 'none'.
+#          If you set `tikv-importer.duplicate-resolution = "none"` and do not set `conflict.strategy`, TiDB Lightning will automatically assign `"none"` to `conflict.strategy`.
 # The default value is 'none'.
 # duplicate-resolution = 'none'
 # Maximum KV size of SST files produced in the 'local' backend. This should be the same as
