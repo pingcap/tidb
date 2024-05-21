@@ -645,10 +645,11 @@ func NewTopNMeta(encoded []byte, count uint64) TopNMeta {
 	return topn
 }
 
-func (t *TopNMeta) DestoryAndPutPool() {
+// DestoryAndPutPool resets the TopNMeta and puts it back to the pool.
+func (t TopNMeta) DestoryAndPutPool() {
 	clear(t.Encoded)
 	t.Count = 0
-	topNMetaPool.Put(*t)
+	topNMetaPool.Put(t)
 }
 
 // QueryTopN returns the results for (h1, h2) in murmur3.Sum128(), if not exists, return (0, false).
