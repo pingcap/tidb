@@ -415,17 +415,3 @@ func TestGetExistedUserDBs(t *testing.T) {
 	dbs = restore.GetExistedUserDBs(dom)
 	require.Equal(t, 2, len(dbs))
 }
-<<<<<<< HEAD
-=======
-
-// NOTICE: Once there is a new system table, BR needs to ensure that it is correctly classified:
-//
-// - IF it is an unrecoverable table, please add the table name into `unRecoverableTable`.
-// - IF it is an system privilege table, please add the table name into `sysPrivilegeTableMap`.
-// - IF it is an statistics table, please add the table name into `statsTables`.
-//
-// The above variables are in the file br/pkg/restore/systable_restore.go
-func TestMonitorTheSystemTableIncremental(t *testing.T) {
-	require.Equal(t, int64(186), session.CurrentBootstrapVersion)
-}
->>>>>>> 6ec70f17b56 (bootstrap: Modify column sizes in constant.go and bootstrap.go (#51457))
