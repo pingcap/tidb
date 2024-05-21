@@ -878,7 +878,9 @@ func (it *copIterator) open(ctx context.Context, enabledRateLimitAction, enableC
 			storeBatchedFallbackNum:    &it.storeBatchedFallbackNum,
 			unconsumedStats:            it.unconsumedStats,
 		}
-		go worker.run(ctx)
+		it.store.gp.Go(func() {
+			worker.run(ctx)
+		})
 	}
 	taskSender := &copIteratorTaskSender{
 		taskCh:      taskCh,
@@ -896,7 +898,9 @@ func (it *copIterator) open(ctx context.Context, enabledRateLimitAction, enableC
 			it.memTracker.Consume(10 * MockResponseSizeForTest)
 		}
 	})
-	go taskSender.run(it.req.ConnID)
+	it.store.gp.Go(func() {
+		taskSender.run(it.req.ConnID)
+	})
 }
 
 func (sender *copIteratorTaskSender) run(connID uint64) {
