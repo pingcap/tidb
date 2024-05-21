@@ -824,12 +824,17 @@ func (do *Domain) refreshMDLCheckTableInfo() {
 	defer do.sysSessionPool.Put(se)
 	exec := sctx.GetRestrictedSQLExecutor()
 	domainSchemaVer := do.InfoSchema().SchemaMetaVersion()
+	st2 := time.Now()
 	rows, _, err := exec.ExecRestrictedSQL(kv.WithInternalSourceType(context.Background(), kv.InternalTxnMeta), nil,
 		fmt.Sprintf("select job_id, version, table_ids from mysql.tidb_mdl_info where version <= %d", domainSchemaVer))
 	if err != nil {
 		logutil.BgLogger().Warn("get mdl info from tidb_mdl_info failed", zap.Error(err))
 		return
 	}
+	logutil.BgLogger().Info("DDL cost analysis",
+		zap.Duration("cost", time.Since(st2)), zap.String("call", "refreshMDLCheckTableInfo-QueryJobs"))
+
+	st3 := time.Now()
 	do.mdlCheckTableInfo.mu.Lock()
 	defer do.mdlCheckTableInfo.mu.Unlock()
 
@@ -840,6 +845,8 @@ func (do *Domain) refreshMDLCheckTableInfo() {
 		do.mdlCheckTableInfo.jobsVerMap[rows[i].GetInt64(0)] = rows[i].GetInt64(1)
 		do.mdlCheckTableInfo.jobsIDsMap[rows[i].GetInt64(0)] = rows[i].GetString(2)
 	}
+	logutil.BgLogger().Info("DDL cost analysis",
+		zap.Duration("cost", time.Since(st3)), zap.String("call", "refreshMDLCheckTableInfo-updateMap"))
 }
 
 func (do *Domain) mdlCheckLoop() {
