@@ -24,7 +24,7 @@
       {
         "Start": 800,
         "End": 900,
-        "Count": 758.004166655054
+        "Count": 768.504166655054
       },
       {
         "Start": 900,
@@ -79,7 +79,7 @@
       {
         "Start": 800,
         "End": 1000,
-        "Count": 1216.196869573942
+        "Count": 1226.696869573942
       },
       {
         "Start": 900,
@@ -104,7 +104,7 @@
       {
         "Start": 200,
         "End": 400,
-        "Count": 1212.0288209899081
+        "Count": 1210.5288209899081
       },
       {
         "Start": 200,
@@ -873,8 +873,8 @@
       {
         "SQL": "explain format = 'brief' select * from t where a <= 500",
         "Result": [
-          "TableReader 1667.78 root partition:p0,p1 data:Selection",
-          "└─Selection 1667.78 cop[tikv]  le(test.t.a, 500)",
+          "TableReader 1670.00 root partition:p0,p1 data:Selection",
+          "└─Selection 1670.00 cop[tikv]  le(test.t.a, 500)",
           "  └─TableFullScan 2000.00 cop[tikv] table:t keep order:false"
         ]
       },
@@ -921,40 +921,40 @@
       {
         "SQL": "explain format = 'brief' select * from t where a > 800 and a < 1000",
         "Result": [
-          "TableReader 792.98 root partition:p3 data:Selection",
-          "└─Selection 792.98 cop[tikv]  gt(test.t.a, 800), lt(test.t.a, 1000)",
+          "TableReader 793.20 root partition:p3 data:Selection",
+          "└─Selection 793.20 cop[tikv]  gt(test.t.a, 800), lt(test.t.a, 1000)",
           "  └─TableFullScan 2000.00 cop[tikv] table:t keep order:false"
         ]
       },
       {
         "SQL": "explain format = 'brief' select * from t where a > 900 and a < 1000",
         "Result": [
-          "TableReader 457.43 root partition:p3 data:Selection",
-          "└─Selection 457.43 cop[tikv]  gt(test.t.a, 900), lt(test.t.a, 1000)",
+          "TableReader 458.19 root partition:p3 data:Selection",
+          "└─Selection 458.19 cop[tikv]  gt(test.t.a, 900), lt(test.t.a, 1000)",
           "  └─TableFullScan 2000.00 cop[tikv] table:t keep order:false"
         ]
       },
       {
         "SQL": "explain format = 'brief' select * from t where a > 900 and a < 1100",
         "Result": [
-          "TableReader 831.39 root partition:p3,p4 data:Selection",
-          "└─Selection 831.39 cop[tikv]  gt(test.t.a, 900), lt(test.t.a, 1100)",
+          "TableReader 832.77 root partition:p3,p4 data:Selection",
+          "└─Selection 832.77 cop[tikv]  gt(test.t.a, 900), lt(test.t.a, 1100)",
           "  └─TableFullScan 2000.00 cop[tikv] table:t keep order:false"
         ]
       },
       {
         "SQL": "explain format = 'brief' select * from t where a > 200 and a < 300",
         "Result": [
-          "TableReader 458.26 root partition:p0 data:Selection",
-          "└─Selection 458.26 cop[tikv]  gt(test.t.a, 200), lt(test.t.a, 300)",
+          "TableReader 459.03 root partition:p0 data:Selection",
+          "└─Selection 459.03 cop[tikv]  gt(test.t.a, 200), lt(test.t.a, 300)",
           "  └─TableFullScan 2000.00 cop[tikv] table:t keep order:false"
         ]
       },
       {
         "SQL": "explain format = 'brief' select * from t where a > 100 and a < 300",
         "Result": [
-          "TableReader 833.06 root partition:p0 data:Selection",
-          "└─Selection 833.06 cop[tikv]  gt(test.t.a, 100), lt(test.t.a, 300)",
+          "TableReader 834.45 root partition:p0 data:Selection",
+          "└─Selection 834.45 cop[tikv]  gt(test.t.a, 100), lt(test.t.a, 300)",
           "  └─TableFullScan 2000.00 cop[tikv] table:t keep order:false"
         ]
       }
@@ -1532,7 +1532,7 @@
                   {
                     "Histogram NotNull Count": 3080,
                     "Increase Factor": 1,
-                    "TopN total count": 1096
+                    "TopN total count": 1095
                   },
                   {
                     "github.com/pingcap/tidb/pkg/planner/cardinality.GetColumnRowCount": [
@@ -2461,7 +2461,7 @@
                   {
                     "Histogram NotNull Count": 3080,
                     "Increase Factor": 1,
-                    "TopN total count": 1096
+                    "TopN total count": 1095
                   },
                   {
                     "github.com/pingcap/tidb/pkg/planner/cardinality.GetColumnRowCount": [
