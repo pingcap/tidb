@@ -185,7 +185,7 @@ func TestTypeConversion(t *testing.T) {
 	tp = types.NewFieldType(mysql.TypeNewDecimal)
 	fn, err := BuildGetVarFunction(ctx, datumsToConstants(types.MakeDatums(args...))[0], tp)
 	require.NoError(t, err)
-	d, err := fn.Eval(ctx, chunk.Row{})
+	d, err := fn.Eval(chunk.Row{})
 	require.NoError(t, err)
 	des := types.NewDecFromInt(3)
 	require.Equal(t, des, d.GetValue())
@@ -193,7 +193,7 @@ func TestTypeConversion(t *testing.T) {
 	tp = types.NewFieldType(mysql.TypeDouble)
 	fn, err = BuildGetVarFunction(ctx, datumsToConstants(types.MakeDatums(args...))[0], tp)
 	require.NoError(t, err)
-	d, err = fn.Eval(ctx, chunk.Row{})
+	d, err = fn.Eval(chunk.Row{})
 	require.NoError(t, err)
 	require.Equal(t, float64(3), d.GetValue())
 }
