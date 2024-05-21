@@ -4011,8 +4011,8 @@ func checkPartitioningKeysConstraints(sctx sessionctx.Context, s *ast.CreateTabl
 	for _, index := range tblInfo.Indices {
 		if index.Unique && !checkUniqueKeyIncludePartKey(partCols, index.Columns) {
 			if index.Primary {
-				// not support global index with clustered index
-				if tblInfo.IsCommonHandle {
+				// global index does not support clustered index
+				if tblInfo.PKIsHandle || tblInfo.IsCommonHandle {
 					return dbterror.ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs("CLUSTERED INDEX")
 				}
 				if !sctx.GetSessionVars().EnableGlobalIndex {
