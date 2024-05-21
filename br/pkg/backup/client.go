@@ -218,7 +218,7 @@ mainLoop:
 			}
 			ch := make(chan *ResponseAndStore)
 			storeBackupResultChMap[storeID] = ch
-			loop.BackupSender.SendAsync(mainCtx, round, storeID, loop.BackupReq, cli, ch)
+			loop.SendAsync(mainCtx, round, storeID, loop.BackupReq, cli, ch)
 		}
 		// infinite loop to collect region backup response to global channel
 		loop.CollectStoreBackupsAsync(handleCtx, round, storeBackupResultChMap, globalBackupResultCh)
@@ -271,7 +271,7 @@ mainLoop:
 
 					storeBackupResultChMap[storeID] = ch
 					// start backup for this store
-					loop.BackupSender.SendAsync(mainCtx, round, storeID, loop.BackupReq, cli, ch)
+					loop.SendAsync(mainCtx, round, storeID, loop.BackupReq, cli, ch)
 					// re-create context for new handler loop
 					handleCtx, handleCancel = context.WithCancel(mainCtx)
 					// handleCancel makes the former collect goroutine exits
