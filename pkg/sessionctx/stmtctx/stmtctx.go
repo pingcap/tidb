@@ -404,7 +404,8 @@ type StatementContext struct {
 	MDLRelatedTableIDs map[int64]struct{}
 }
 
-var defaultErrLevels = func() (l errctx.LevelMap) {
+// DefaultStmtErrLevels is the default error levels for statement
+var DefaultStmtErrLevels = func() (l errctx.LevelMap) {
 	l[errctx.ErrGroupDividedByZero] = errctx.LevelWarn
 	return
 }()
@@ -421,7 +422,7 @@ func NewStmtCtxWithTimeZone(tz *time.Location) *StatementContext {
 		ctxID: contextutil.GenContextID(),
 	}
 	sc.typeCtx = types.NewContext(types.DefaultStmtFlags, tz, sc)
-	sc.errCtx = newErrCtx(sc.typeCtx, defaultErrLevels, sc)
+	sc.errCtx = newErrCtx(sc.typeCtx, DefaultStmtErrLevels, sc)
 	sc.PlanCacheTracker = contextutil.NewPlanCacheTracker(sc)
 	sc.RangeFallbackHandler = contextutil.NewRangeFallbackHandler(&sc.PlanCacheTracker, sc)
 	sc.WarnHandler = contextutil.NewStaticWarnHandler(0)
@@ -435,7 +436,7 @@ func (sc *StatementContext) Reset() {
 		ctxID: contextutil.GenContextID(),
 	}
 	sc.typeCtx = types.NewContext(types.DefaultStmtFlags, time.UTC, sc)
-	sc.errCtx = newErrCtx(sc.typeCtx, defaultErrLevels, sc)
+	sc.errCtx = newErrCtx(sc.typeCtx, DefaultStmtErrLevels, sc)
 	sc.PlanCacheTracker = contextutil.NewPlanCacheTracker(sc)
 	sc.RangeFallbackHandler = contextutil.NewRangeFallbackHandler(&sc.PlanCacheTracker, sc)
 	sc.WarnHandler = contextutil.NewStaticWarnHandler(0)
