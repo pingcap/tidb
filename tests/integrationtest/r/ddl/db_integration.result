@@ -407,8 +407,15 @@ show create table t;
 Table	Create Table
 t	CREATE TABLE `t` (
   `c` int(10) DEFAULT NULL,
-  `c1` varchar(256) DEFAULT uuid()
+  `c1` varchar(256) DEFAULT (uuid())
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+drop table if exists t;
+create table t (c int(10), c1 varchar(256) default rand());
+alter table t alter column c1 set default 'xx';
+insert into t values (1, default);
+select c1 from t;
+c1
+xx
 drop table if exists t1;
 create table t1 (a int(11) not null auto_increment key, b int(11), c bigint, unique key (a, b, c));
 alter table t1 drop index a;

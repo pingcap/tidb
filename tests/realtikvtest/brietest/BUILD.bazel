@@ -9,10 +9,12 @@ go_test(
         "brie_test.go",
         "main_test.go",
         "operator_test.go",
+        "pdutil_test.go",
     ],
     flaky = True,
     race = "on",
     deps = [
+        "//br/pkg/pdutil",
         "//br/pkg/task",
         "//br/pkg/task/operator",
         "//pkg/config",

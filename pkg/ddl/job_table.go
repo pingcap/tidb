@@ -611,6 +611,7 @@ func getCheckpointReorgHandle(se *sess.Session, job *model.Job) (startKey, endKe
 			}
 			if len(cp.EndKey) > 0 {
 				endKey = cp.EndKey
+				endKey = adjustEndKeyAcrossVersion(job, endKey)
 			}
 		}
 	}

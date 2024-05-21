@@ -4,7 +4,9 @@ package utils_test
 
 import (
 	"context"
+	"fmt"
 	"io"
+	"math"
 	"testing"
 	"time"
 
@@ -196,4 +198,44 @@ func TestNewBackupSSTBackofferWithCancel(t *testing.T) {
 		berrors.ErrKVIngestFailed,
 		context.Canceled,
 	}, multierr.Errors(err))
+}
+
+func TestConstantBackoff(t *testing.T) {
+	backedOff := func(t *testing.T) {
+		backoffer := utils.ConstantBackoff(10 * time.Millisecond)
+		ctx, cancel := context.WithCancel(context.Background())
+		i := 0
+		ch := make(chan error)
+
+		go func() {
+			_, err := utils.WithRetryV2(ctx, backoffer, func(ctx context.Context) (struct{}, error) {
+				i += 1
+				return struct{}{}, fmt.Errorf("%d times, no meaning", i)
+			})
+			ch <- err
+		}()
+		time.Sleep(100 * time.Millisecond)
+		cancel()
+		require.Error(t, <-ch)
+		// Make sure we have backed off.
+		require.Less(t, i, 20)
+	}
+
+	infRetry := func(t *testing.T) {
+		backoffer := utils.ConstantBackoff(0)
+		ctx := context.Background()
+		i := math.MaxInt16
+
+		_, err := utils.WithRetryV2(ctx, backoffer, func(ctx context.Context) (struct{}, error) {
+			i -= 1
+			if i == 0 {
+				return struct{}{}, nil
+			}
+			return struct{}{}, fmt.Errorf("try %d more times", i)
+		})
+		require.NoError(t, err)
+	}
+
+	t.Run("backedOff", backedOff)
+	t.Run("infRetry", infRetry)
 }
