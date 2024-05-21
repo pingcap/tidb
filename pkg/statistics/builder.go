@@ -397,7 +397,7 @@ func BuildHistAndTopN(
 	topn := &TopN{TopN: topNList}
 	topn.Scale(sampleFactor)
 
-	if uint64(count) <= topn.TotalCount() {
+	if uint64(count) <= topn.TotalCount() || int(hg.NDV) <= len(topn.TopN) {
 		// If we've collected everything  - don't create any buckets
 		return hg, topn, nil
 	}
