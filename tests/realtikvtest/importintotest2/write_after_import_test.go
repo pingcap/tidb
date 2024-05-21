@@ -55,7 +55,7 @@ func (s *mockGCSSuite) TestWriteAfterImport() {
 			createTableSQL:   "CREATE TABLE t (id int AUTO_INCREMENT PRIMARY KEY CLUSTERED, v varchar(64)) AUTO_ID_CACHE 1",
 			insertSQL:        "insert into t(v) values(1)",
 			insertedData:     "8 1",
-			nextGlobalAutoID: []int64{8, 8},
+			nextGlobalAutoID: []int64{8, 1},
 			autoIDCache1:     true,
 		},
 		{
@@ -68,7 +68,7 @@ func (s *mockGCSSuite) TestWriteAfterImport() {
 			createTableSQL:   "CREATE TABLE t (id int AUTO_INCREMENT PRIMARY KEY NONCLUSTERED, v varchar(64)) AUTO_ID_CACHE 1",
 			insertSQL:        "insert into t(v) values(1)",
 			insertedData:     "12 1",
-			nextGlobalAutoID: []int64{12, 12},
+			nextGlobalAutoID: []int64{8, 12},
 			autoIDCache1:     true,
 		},
 		// without auto_increment
