@@ -388,7 +388,7 @@ func (b *builtinGetRealVarSig) vectorized() bool {
 
 // NOTE: get/set variable vectorized eval was disabled. See more in
 // https://github.com/pingcap/tidb/pull/8412
-func (b *builtinGetRealVarSig) vecEvalReal(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinGetRealVarSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	buf0, err := b.bufAllocator.get()
 	if err != nil {
@@ -408,7 +408,7 @@ func (b *builtinGetRealVarSig) vecEvalReal(ctx EvalContext, input *chunk.Chunk, 
 		}
 		varName := strings.ToLower(buf0.GetString(i))
 		if v, ok := sessionVars.GetUserVarVal(varName); ok {
-			d, err := v.ToFloat64()
+			d, err := v.ToFloat64(sessionVars.StmtCtx)
 			if err != nil {
 				return err
 			}
@@ -426,7 +426,7 @@ func (b *builtinGetDecimalVarSig) vectorized() bool {
 
 // NOTE: get/set variable vectorized eval was disabled. See more in
 // https://github.com/pingcap/tidb/pull/8412
-func (b *builtinGetDecimalVarSig) vecEvalDecimal(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinGetDecimalVarSig) vecEvalDecimal(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	buf0, err := b.bufAllocator.get()
 	if err != nil {
@@ -446,7 +446,7 @@ func (b *builtinGetDecimalVarSig) vecEvalDecimal(ctx EvalContext, input *chunk.C
 		}
 		varName := strings.ToLower(buf0.GetString(i))
 		if v, ok := sessionVars.GetUserVarVal(varName); ok {
-			d, err := v.ToDecimal(typeCtx(ctx))
+			d, err := v.ToDecimal(sessionVars.StmtCtx)
 			if err != nil {
 				return err
 			}

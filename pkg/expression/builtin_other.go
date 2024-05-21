@@ -1053,7 +1053,7 @@ func (b *builtinGetRealVarSig) evalReal(row chunk.Row) (float64, bool, error) {
 	}
 	varName = strings.ToLower(varName)
 	if v, ok := sessionVars.GetUserVarVal(varName); ok {
-		d, err := v.ToFloat64(typeCtx(ctx))
+		d, err := v.ToFloat64(sessionVars.StmtCtx)
 		if err != nil {
 			return 0, false, err
 		}
@@ -1097,7 +1097,7 @@ func (b *builtinGetDecimalVarSig) evalDecimal(row chunk.Row) (*types.MyDecimal, 
 	}
 	varName = strings.ToLower(varName)
 	if v, ok := sessionVars.GetUserVarVal(varName); ok {
-		d, err := v.ToDecimal(typeCtx(ctx))
+		d, err := v.ToDecimal(sessionVars.StmtCtx)
 		if err != nil {
 			return nil, false, err
 		}
