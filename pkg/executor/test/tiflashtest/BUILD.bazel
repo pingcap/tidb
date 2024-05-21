@@ -9,11 +9,7 @@ go_test(
     ],
     flaky = True,
     race = "on",
-<<<<<<< HEAD
     shard_count = 39,
-=======
-    shard_count = 42,
->>>>>>> 542907f2801 (executor: check schema when build table reader executor (#50425))
     deps = [
         "//pkg/config",
         "//pkg/domain",
