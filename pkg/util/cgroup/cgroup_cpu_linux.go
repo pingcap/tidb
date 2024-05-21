@@ -57,7 +57,12 @@ func CPUQuotaToGOMAXPROCS(minValue int) (int, CPUQuotaStatus, error) {
 
 // InContainer returns true if the process is running in a container.
 func InContainer() bool {
-	v, err := os.ReadFile(procPathCGroup)
+	// for cgroup V1, check /proc/self/cgroup, for V2, check /proc/self/mountinfo
+	return inContainer(procPathCGroup) || inContainer(procPathMountInfo)
+}
+
+func inContainer(path string) bool {
+	v, err := os.ReadFile(path)
 	if err != nil {
 		return false
 	}

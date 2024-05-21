@@ -1075,5 +1075,40 @@
         "Result": null
       }
     ]
+  },
+  {
+    "Name": "TestIndexMergeIssue50382",
+    "Cases": [
+      {
+        "SQL": "SELECT /*+ inl_join(t1)*/ `t2`.`c` AS `r0` FROM `t1` JOIN `t2` ON `t1`.`a`=`t2`.`d` WHERE `t2`.`d`='' AND NOT (6252179388429456273 MEMBER OF (`t1`.`c`));",
+        "Plan": [
+          "HashJoin 12.50 root  inner join, equal:[eq(test.t2.d, test.t1.a)]",
+          "├─TableReader(Build) 10.00 root  data:Selection",
+          "│ └─Selection 10.00 cop[tikv]  eq(test.t2.d, \"\")",
+          "│   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 7992.00 root  data:Selection",
+          "  └─Selection 7992.00 cop[tikv]  not(isnull(test.t1.a)), not(istrue_with_null(json_memberof(cast(6252179388429456273, json BINARY), test.t1.c)))",
+          "    └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Warn": [
+          "[planner:1815]Optimizer Hint /*+ INL_JOIN(t1) */ or /*+ TIDB_INLJ(t1) */ is inapplicable"
+        ]
+      },
+      {
+        "SQL": "SELECT /*+ inl_join(t2)*/ `t2`.`c` AS `r0` FROM `t1` JOIN `t2` ON `t1`.`a`=`t2`.`d` WHERE `t2`.`d`='' AND NOT (6252179388429456273 MEMBER OF (`t1`.`c`));",
+        "Plan": [
+          "HashJoin 12.50 root  inner join, equal:[eq(test.t2.d, test.t1.a)]",
+          "├─TableReader(Build) 10.00 root  data:Selection",
+          "│ └─Selection 10.00 cop[tikv]  eq(test.t2.d, \"\")",
+          "│   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 7992.00 root  data:Selection",
+          "  └─Selection 7992.00 cop[tikv]  not(isnull(test.t1.a)), not(istrue_with_null(json_memberof(cast(6252179388429456273, json BINARY), test.t1.c)))",
+          "    └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Warn": [
+          "[planner:1815]Optimizer Hint /*+ INL_JOIN(t2) */ or /*+ TIDB_INLJ(t2) */ is inapplicable"
+        ]
+      }
+    ]
   }
 ]

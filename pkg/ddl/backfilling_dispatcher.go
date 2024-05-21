@@ -21,14 +21,17 @@ import (
 	"encoding/json"
 	"math"
 	"sort"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/external"
+	"github.com/pingcap/tidb/br/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/disttask/framework/dispatcher"
+	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -37,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/table"
+	"github.com/pingcap/tidb/pkg/util/backoff"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
@@ -70,6 +74,7 @@ func (dsp *BackfillingDispatcherExt) OnNextSubtasksBatch(
 	ctx context.Context,
 	taskHandle dispatcher.TaskHandle,
 	gTask *proto.Task,
+	serverInfo []*infosync.ServerInfo,
 	nextStep proto.Step,
 ) (taskMeta [][]byte, err error) {
 	logger := logutil.BgLogger().With(
@@ -95,12 +100,7 @@ func (dsp *BackfillingDispatcherExt) OnNextSubtasksBatch(
 		if tblInfo.Partition != nil {
 			return generatePartitionPlan(tblInfo)
 		}
-		is, err := dsp.GetEligibleInstances(ctx, gTask)
-		if err != nil {
-			return nil, err
-		}
-		instanceCnt := len(is)
-		return generateNonPartitionPlan(dsp.d, tblInfo, job, dsp.GlobalSort, instanceCnt)
+		return generateNonPartitionPlan(dsp.d, tblInfo, job, dsp.GlobalSort, len(serverInfo))
 	case StepMergeSort:
 		res, err := generateMergePlan(taskHandle, gTask, logger)
 		if err != nil {
@@ -131,9 +131,9 @@ func (dsp *BackfillingDispatcherExt) OnNextSubtasksBatch(
 			})
 			return generateGlobalSortIngestPlan(
 				ctx,
+				dsp.d.store.(kv.StorageWithPD),
 				taskHandle,
 				gTask,
-				job.ID,
 				backfillMeta.CloudStorageURI,
 				prevStep,
 				logger)
@@ -179,28 +179,18 @@ func skipMergeSort(stats []external.MultipleFilesStat) bool {
 	return external.GetMaxOverlappingTotal(stats) <= external.MergeSortOverlapThreshold
 }
 
-// OnErrStage generate error handling stage's plan.
-func (*BackfillingDispatcherExt) OnErrStage(_ context.Context, _ dispatcher.TaskHandle, task *proto.Task, receiveErrs []error) (meta []byte, err error) {
-	// We do not need extra meta info when rolling back
-	logger := logutil.BgLogger().With(
-		zap.Stringer("type", task.Type),
-		zap.Int64("task-id", task.ID),
-		zap.String("step", StepStr(task.Step)),
-	)
-	logger.Info("on error stage", zap.Errors("errors", receiveErrs))
-	firstErr := receiveErrs[0]
-	task.Error = firstErr
-
-	return nil, nil
+// OnDone implements dispatcher.Extension interface.
+func (*BackfillingDispatcherExt) OnDone(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task) error {
+	return nil
 }
 
 // GetEligibleInstances implements dispatcher.Extension interface.
-func (*BackfillingDispatcherExt) GetEligibleInstances(ctx context.Context, _ *proto.Task) ([]*infosync.ServerInfo, error) {
+func (*BackfillingDispatcherExt) GetEligibleInstances(ctx context.Context, _ *proto.Task) ([]*infosync.ServerInfo, bool, error) {
 	serverInfos, err := dispatcher.GenerateSchedulerNodes(ctx)
 	if err != nil {
-		return nil, err
+		return nil, true, err
 	}
-	return serverInfos, nil
+	return serverInfos, true, nil
 }
 
 // IsRetryableErr implements dispatcher.Extension.IsRetryableErr interface.
@@ -275,9 +265,14 @@ func generatePartitionPlan(tblInfo *model.TableInfo) (metas [][]byte, err error)
 	return subTaskMetas, nil
 }
 
+const (
+	scanRegionBackoffBase = 200 * time.Millisecond
+	scanRegionBackoffMax  = 2 * time.Second
+)
+
 func generateNonPartitionPlan(
 	d *ddl, tblInfo *model.TableInfo, job *model.Job, useCloud bool, instanceCnt int) (metas [][]byte, err error) {
-	tbl, err := getTable(d.store, job.SchemaID, tblInfo)
+	tbl, err := getTable((*asAutoIDRequirement)(d.ddlCtx), job.SchemaID, tblInfo)
 	if err != nil {
 		return nil, err
 	}
@@ -293,56 +288,92 @@ func generateNonPartitionPlan(
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	regionCache := d.store.(helper.Storage).GetRegionCache()
-	recordRegionMetas, err := regionCache.LoadRegionsInKeyRange(tikv.NewBackofferWithVars(context.Background(), 20000, nil), startKey, endKey)
-	if err != nil {
-		return nil, err
-	}
-
-	regionBatch := 100
-	if !useCloud {
-		// Make subtask large enough to reduce the overhead of local/global flush.
-		quota := variable.DDLDiskQuota.Load()
-		regionBatch = int(int64(quota) / int64(config.SplitRegionSize))
-	}
-	regionBatch = min(regionBatch, len(recordRegionMetas)/instanceCnt)
 
 	subTaskMetas := make([][]byte, 0, 4)
-	sort.Slice(recordRegionMetas, func(i, j int) bool {
-		return bytes.Compare(recordRegionMetas[i].StartKey(), recordRegionMetas[j].StartKey()) < 0
-	})
-	for i := 0; i < len(recordRegionMetas); i += regionBatch {
-		end := i + regionBatch
-		if end > len(recordRegionMetas) {
-			end = len(recordRegionMetas)
-		}
-		batch := recordRegionMetas[i:end]
-		subTaskMeta := &BackfillSubTaskMeta{
-			SortedKVMeta: external.SortedKVMeta{
-				StartKey: batch[0].StartKey(),
-				EndKey:   batch[len(batch)-1].EndKey(),
-			},
-		}
-		if i == 0 {
-			subTaskMeta.StartKey = startKey
-		}
-		if end == len(recordRegionMetas) {
-			subTaskMeta.EndKey = endKey
-		}
-		metaBytes, err := json.Marshal(subTaskMeta)
+
+	backoffer := backoff.NewExponential(scanRegionBackoffBase, 2, scanRegionBackoffMax)
+
+	err = handle.RunWithRetry(d.ctx, 8, backoffer, logutil.Logger(d.ctx), func(_ context.Context) (bool, error) {
+		regionCache := d.store.(helper.Storage).GetRegionCache()
+		recordRegionMetas, err := regionCache.LoadRegionsInKeyRange(tikv.NewBackofferWithVars(context.Background(), 20000, nil), startKey, endKey)
 		if err != nil {
-			return nil, err
+			return false, err
 		}
-		subTaskMetas = append(subTaskMetas, metaBytes)
+		sort.Slice(recordRegionMetas, func(i, j int) bool {
+			return bytes.Compare(recordRegionMetas[i].StartKey(), recordRegionMetas[j].StartKey()) < 0
+		})
+		// Check if regions are continuous.
+		shouldRetry := false
+		cur := recordRegionMetas[0]
+		for _, m := range recordRegionMetas[1:] {
+			if !bytes.Equal(cur.EndKey(), m.StartKey()) {
+				shouldRetry = true
+				break
+			}
+			cur = m
+		}
+
+		if shouldRetry {
+			return true, nil
+		}
+
+		regionBatch := calculateRegionBatch(len(recordRegionMetas), instanceCnt, !useCloud)
+
+		for i := 0; i < len(recordRegionMetas); i += regionBatch {
+			end := i + regionBatch
+			if end > len(recordRegionMetas) {
+				end = len(recordRegionMetas)
+			}
+			batch := recordRegionMetas[i:end]
+			subTaskMeta := &BackfillSubTaskMeta{
+				SortedKVMeta: external.SortedKVMeta{
+					StartKey: batch[0].StartKey(),
+					EndKey:   batch[len(batch)-1].EndKey(),
+				},
+			}
+			if i == 0 {
+				subTaskMeta.StartKey = startKey
+			}
+			if end == len(recordRegionMetas) {
+				subTaskMeta.EndKey = endKey
+			}
+			metaBytes, err := json.Marshal(subTaskMeta)
+			if err != nil {
+				return false, err
+			}
+			subTaskMetas = append(subTaskMetas, metaBytes)
+		}
+		return false, nil
+	})
+
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if len(subTaskMetas) == 0 {
+		return nil, errors.Errorf("regions are not continuous")
 	}
 	return subTaskMetas, nil
 }
 
+func calculateRegionBatch(totalRegionCnt int, instanceCnt int, useLocalDisk bool) int {
+	var regionBatch int
+	avgTasksPerInstance := totalRegionCnt / instanceCnt
+	if useLocalDisk {
+		// Make subtask large enough to reduce the overhead of local/global flush.
+		avgTasksPerDisk := int(int64(variable.DDLDiskQuota.Load()) / int64(config.SplitRegionSize))
+		regionBatch = min(avgTasksPerDisk, avgTasksPerInstance)
+	} else {
+		regionBatch = min(100, avgTasksPerInstance)
+	}
+	regionBatch = max(regionBatch, 1)
+	return regionBatch
+}
+
 func generateGlobalSortIngestPlan(
 	ctx context.Context,
+	store kv.StorageWithPD,
 	taskHandle dispatcher.TaskHandle,
 	task *proto.Task,
-	jobID int64,
 	cloudStorageURI string,
 	step proto.Step,
 	logger *zap.Logger,
@@ -351,12 +382,16 @@ func generateGlobalSortIngestPlan(
 	if err != nil {
 		return nil, err
 	}
+	if len(startKeyFromSumm) == 0 && len(endKeyFromSumm) == 0 {
+		// Skip global sort for empty table.
+		return nil, nil
+	}
 	instanceIDs, err := dispatcher.GenerateSchedulerNodes(ctx)
 	if err != nil {
 		return nil, err
 	}
 	splitter, err := getRangeSplitter(
-		ctx, cloudStorageURI, jobID, int64(totalSize), int64(len(instanceIDs)), dataFiles, statFiles, logger)
+		ctx, store, cloudStorageURI, int64(totalSize), int64(len(instanceIDs)), dataFiles, statFiles, logger)
 	if err != nil {
 		return nil, err
 	}
@@ -464,8 +499,8 @@ func generateMergePlan(
 
 func getRangeSplitter(
 	ctx context.Context,
+	store kv.StorageWithPD,
 	cloudStorageURI string,
-	jobID int64,
 	totalSize int64,
 	instanceCnt int64,
 	dataFiles, statFiles []string,
@@ -482,21 +517,23 @@ func getRangeSplitter(
 
 	rangeGroupSize := totalSize / instanceCnt
 	rangeGroupKeys := int64(math.MaxInt64)
-	bcCtx, ok := ingest.LitBackCtxMgr.Load(jobID)
-	if !ok {
-		return nil, errors.Errorf("backend context not found")
+	var maxSizePerRange = int64(config.SplitRegionSize)
+	var maxKeysPerRange = int64(config.SplitRegionKeys)
+	if store != nil {
+		pdCli := store.GetPDClient()
+		tls, err := ingest.NewDDLTLS()
+		if err == nil {
+			size, keys, err := local.GetRegionSplitSizeKeys(ctx, pdCli, tls)
+			if err == nil {
+				maxSizePerRange = max(maxSizePerRange, size)
+				maxKeysPerRange = max(maxKeysPerRange, keys)
+			} else {
+				logger.Warn("fail to get region split keys and size", zap.Error(err))
+			}
+		} else {
+			logger.Warn("fail to get region split keys and size", zap.Error(err))
+		}
 	}
-
-	local := bcCtx.GetLocalBackend()
-	if local == nil {
-		return nil, errors.Errorf("local backend not found")
-	}
-	maxSizePerRange, maxKeysPerRange, err := local.GetRegionSplitSizeKeys(ctx)
-	if err != nil {
-		logger.Warn("fail to get region split keys and size", zap.Error(err))
-	}
-	maxSizePerRange = max(maxSizePerRange, int64(config.SplitRegionSize))
-	maxKeysPerRange = max(maxKeysPerRange, int64(config.SplitRegionKeys))
 
 	return external.NewRangeSplitter(ctx, dataFiles, statFiles, extStore,
 		rangeGroupSize, rangeGroupKeys, maxSizePerRange, maxKeysPerRange, true)

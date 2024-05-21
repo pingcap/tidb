@@ -19,6 +19,7 @@ import (
 
 	mysql "github.com/pingcap/tidb/pkg/errno"
 	parser_mysql "github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/parser/terror"
 )
 
 var (
@@ -484,6 +485,10 @@ var (
 			" Use the LPAD function to zero-pad numbers, or store the formatted numbers in a CHAR column.",
 		), nil),
 	)
+	// ErrUnsupportedDistTask is for `tidb_enable_dist_task enabled` but `tidb_ddl_enable_fast_reorg` disabled.
+	ErrUnsupportedDistTask = ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation,
+		parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw,
+			"tidb_enable_dist_task setting. To utilize distributed task execution, please enable tidb_ddl_enable_fast_reorg first."), nil))
 )
 
 // ReorgRetryableErrCodes is the error codes that are retryable for reorganization.
@@ -505,4 +510,7 @@ var ReorgRetryableErrCodes = map[uint16]struct{}{
 	mysql.ErrWriteConflictInTiDB:       {},
 	mysql.ErrTxnRetryable:              {},
 	mysql.ErrNotOwner:                  {},
+
+	// Temporary network partitioning may cause pk commit failure.
+	uint16(terror.CodeResultUndetermined): {},
 }

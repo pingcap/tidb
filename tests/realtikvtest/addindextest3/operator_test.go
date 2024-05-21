@@ -135,12 +135,14 @@ func TestBackfillOperators(t *testing.T) {
 		srcChkPool := make(chan *chunk.Chunk, regionCnt*2)
 		pTbl := tbl.(table.PhysicalTable)
 		index := tables.NewIndex(pTbl.GetPhysicalID(), tbl.Meta(), idxInfo)
+		mockBackendCtx := &ingest.MockBackendCtx{}
 		mockEngine := ingest.NewMockEngineInfo(nil)
 		mockEngine.SetHook(onWrite)
 
 		src := newTestSource(chunkResults...)
+		reorgMeta := ddl.NewDDLReorgMeta(tk.Session())
 		ingestOp := ddl.NewIndexIngestOperator(
-			opCtx, copCtx, sessPool, pTbl, []table.Index{index}, []ingest.Engine{mockEngine}, srcChkPool, 3)
+			opCtx, copCtx, mockBackendCtx, sessPool, pTbl, []table.Index{index}, []ingest.Engine{mockEngine}, srcChkPool, 3, reorgMeta)
 		sink := newTestSink[ddl.IndexWriteResult]()
 
 		operator.Compose[ddl.IndexRecordChunk](src, ingestOp)
@@ -193,6 +195,7 @@ func TestBackfillOperatorPipeline(t *testing.T) {
 		endKey,
 		totalRowCount,
 		nil,
+		ddl.NewDDLReorgMeta(tk.Session()),
 	)
 	require.NoError(t, err)
 	err = pipeline.Execute()
@@ -266,6 +269,7 @@ func TestBackfillOperatorPipelineException(t *testing.T) {
 			endKey,
 			&atomic.Int64{},
 			nil,
+			ddl.NewDDLReorgMeta(tk.Session()),
 		)
 		require.NoError(t, err)
 		err = pipeline.Execute()

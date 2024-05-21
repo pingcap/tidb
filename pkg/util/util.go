@@ -296,3 +296,11 @@ func IsInCorrectIdentifierName(name string) bool {
 	}
 	return false
 }
+
+// GetRecoverError gets the error from recover.
+func GetRecoverError(r interface{}) error {
+	if err, ok := r.(error); ok {
+		return err
+	}
+	return errors.Errorf("%v", r)
+}

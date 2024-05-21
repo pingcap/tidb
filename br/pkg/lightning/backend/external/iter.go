@@ -86,8 +86,8 @@ type mergeIter[T heapElem, R sortedReader[T]] struct {
 	curr          T
 	lastReaderIdx int
 	err           error
-  
-  // determines whether to check reader hotspot, if hotspot is detected, we will
+
+	// determines whether to check reader hotspot, if hotspot is detected, we will
 	// try read this file concurrently.
 	checkHotspot       bool
 	hotspotMap         map[int]int

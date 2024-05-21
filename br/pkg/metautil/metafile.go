@@ -545,6 +545,9 @@ type MetaWriter struct {
 
 	// records the total datafile size
 	totalDataFileSize int
+
+	// records the total metafile size for backupmeta v2
+	totalMetaFileSize int
 }
 
 // NewMetaWriter creates MetaWriter.
@@ -682,6 +685,9 @@ func (writer *MetaWriter) FlushBackupMeta(ctx context.Context) error {
 		writer.backupMeta.Version = MetaV1
 	}
 
+	// update the total size of backup files (include data files and meta files)
+	writer.backupMeta.BackupSize = writer.MetaFilesSize() + writer.ArchiveSize() + uint64(writer.backupMeta.Size())
+
 	// Flush the writer.backupMeta to storage
 	backupMetaData, err := proto.Marshal(writer.backupMeta)
 	if err != nil {
@@ -762,6 +768,7 @@ func (writer *MetaWriter) flushMetasV2(ctx context.Context, op AppendOp) error {
 		return errors.Trace(err)
 	}
 
+	writer.totalMetaFileSize += len(encyptedContent)
 	if err = writer.storage.WriteFile(ctx, fname, encyptedContent); err != nil {
 		return errors.Trace(err)
 	}
@@ -787,6 +794,12 @@ func (writer *MetaWriter) ArchiveSize() uint64 {
 	}
 	total += uint64(writer.totalDataFileSize)
 	return total
+}
+
+// MetaFilesSize represents the size of meta files from backupmeta v2,
+// must be called after everything finishes by `FinishWriteMetas`.
+func (writer *MetaWriter) MetaFilesSize() uint64 {
+	return uint64(writer.totalMetaFileSize)
 }
 
 // Backupmeta clones a backupmeta.

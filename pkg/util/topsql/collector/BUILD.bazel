@@ -8,7 +8,6 @@ go_library(
     deps = [
         "//pkg/util",
         "//pkg/util/cpuprofile",
-        "//pkg/util/hack",
         "//pkg/util/logutil",
         "//pkg/util/topsql/state",
         "@com_github_google_pprof//profile",

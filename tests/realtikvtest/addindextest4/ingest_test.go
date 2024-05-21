@@ -15,7 +15,6 @@
 package addindextest_test
 
 import (
-	"context"
 	"fmt"
 	"strings"
 	"sync"
@@ -90,9 +89,6 @@ func TestAddIndexIngestLimitOneBackend(t *testing.T) {
 	tk2.MustExec("create table t2 (a int, b int);")
 	tk2.MustExec("insert into t2 values (1, 1), (2, 2), (3, 3);")
 
-	// Mock there is a running ingest job.
-	_, err := ingest.LitBackCtxMgr.Register(context.Background(), false, 65535, nil, "")
-	require.NoError(t, err)
 	wg := &sync.WaitGroup{}
 	wg.Add(2)
 	go func() {
@@ -106,18 +102,10 @@ func TestAddIndexIngestLimitOneBackend(t *testing.T) {
 	wg.Wait()
 	rows := tk.MustQuery("admin show ddl jobs 2;").Rows()
 	require.Len(t, rows, 2)
-	require.False(t, strings.Contains(rows[0][3].(string) /* job_type */, "ingest"))
-	require.False(t, strings.Contains(rows[1][3].(string) /* job_type */, "ingest"))
+	require.True(t, strings.Contains(rows[0][3].(string) /* job_type */, "ingest"))
+	require.True(t, strings.Contains(rows[1][3].(string) /* job_type */, "ingest"))
 	require.Equal(t, rows[0][7].(string) /* row_count */, "3")
 	require.Equal(t, rows[1][7].(string) /* row_count */, "3")
-
-	// Remove the running ingest job.
-	ingest.LitBackCtxMgr.Unregister(65535)
-	tk.MustExec("alter table t add index idx_a(a);")
-	rows = tk.MustQuery("admin show ddl jobs 1;").Rows()
-	require.Len(t, rows, 1)
-	require.True(t, strings.Contains(rows[0][3].(string) /* job_type */, "ingest"))
-	require.Equal(t, rows[0][7].(string) /* row_count */, "3")
 }
 
 func TestAddIndexIngestWriterCountOnPartitionTable(t *testing.T) {
@@ -411,6 +399,7 @@ func TestAddIndexRemoteDuplicateCheck(t *testing.T) {
 	tk.MustExec("use addindexlit;")
 	tk.MustExec(`set global tidb_ddl_enable_fast_reorg=on;`)
 	tk.MustExec("set global tidb_ddl_reorg_worker_cnt=1;")
+	tk.MustExec("set global tidb_enable_dist_task = 0;")
 
 	tk.MustExec("create table t(id int primary key, b int, k int);")
 	tk.MustQuery("split table t by (30000);").Check(testkit.Rows("1 1"))
@@ -498,4 +487,44 @@ func TestAddIndexPreCheckFailed(t *testing.T) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/ingest/mockIngestCheckEnvFailed", "return"))
 	tk.MustGetErrMsg("alter table t add index idx(b);", "[ddl:8256]Check ingest environment failed: mock error")
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/ingest/mockIngestCheckEnvFailed"))
+}
+
+func TestAddIndexImportFailed(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("drop database if exists addindexlit;")
+	tk.MustExec("create database addindexlit;")
+	tk.MustExec("use addindexlit;")
+	tk.MustExec(`set global tidb_ddl_enable_fast_reorg=on;`)
+	tk.MustExec(`set global tidb_enable_dist_task=off;`)
+
+	tk.MustExec("create table t (a int, b int);")
+	for i := 0; i < 10; i++ {
+		insertSQL := fmt.Sprintf("insert into t values (%d, %d)", i, i)
+		tk.MustExec(insertSQL)
+	}
+
+	err := failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/mockWritePeerErr", "1*return")
+	require.NoError(t, err)
+	tk.MustExec("alter table t add index idx(a);")
+	err = failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/mockWritePeerErr")
+	require.NoError(t, err)
+	tk.MustExec("admin check table t;")
+}
+
+func TestAddEmptyMultiValueIndex(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("drop database if exists addindexlit;")
+	tk.MustExec("create database addindexlit;")
+	tk.MustExec("use addindexlit;")
+	tk.MustExec(`set global tidb_ddl_enable_fast_reorg=on;`)
+	tk.MustExec(`set global tidb_enable_dist_task=off;`)
+
+	tk.MustExec("create table t(j json);")
+	tk.MustExec(`insert into t(j) values ('{"string":[]}');`)
+	tk.MustExec("alter table t add index ((cast(j->'$.string' as char(10) array)));")
+	tk.MustExec("admin check table t;")
 }

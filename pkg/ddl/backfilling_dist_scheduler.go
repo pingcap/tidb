@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
 )
 
@@ -65,7 +66,7 @@ func NewBackfillSubtaskExecutor(_ context.Context, taskMeta []byte, d *ddl,
 	}
 	jobMeta := &bgm.Job
 
-	_, tbl, err := d.getTableByTxn(d.store, jobMeta.SchemaID, jobMeta.TableID)
+	_, tbl, err := d.getTableByTxn((*asAutoIDRequirement)(d.ddlCtx), jobMeta.SchemaID, jobMeta.TableID)
 	if err != nil {
 		return nil, err
 	}
@@ -132,23 +133,32 @@ func (s *backfillDistScheduler) Init(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 	job := &bgm.Job
-	_, tbl, err := d.getTableByTxn(d.store, job.SchemaID, job.TableID)
+	unique, err := decodeIndexUniqueness(job)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
-	// We only support adding multiple unique indexes or multiple non-unique indexes,
-	// we use the first index uniqueness here.
-	idx := model.FindIndexInfoByID(tbl.Meta().Indices, bgm.EleIDs[0])
-	if idx == nil {
-		return errors.Trace(errors.Errorf("index info not found: %d", bgm.EleIDs[0]))
-	}
-	bc, err := ingest.LitBackCtxMgr.Register(ctx, idx.Unique, job.ID, d.etcdCli, job.ReorgMeta.ResourceGroupName)
+	pdLeaderAddr := d.store.(tikv.Storage).GetRegionCache().PDClient().GetLeaderAddr()
+	bc, err := ingest.LitBackCtxMgr.Register(ctx, unique, job.ID, d.etcdCli, pdLeaderAddr, job.ReorgMeta.ResourceGroupName)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	s.backendCtx = bc
 	s.jobID = job.ID
 	return nil
+}
+
+func decodeIndexUniqueness(job *model.Job) (bool, error) {
+	unique := make([]bool, 1)
+	err := job.DecodeArgs(&unique[0])
+	if err != nil {
+		err = job.DecodeArgs(&unique)
+	}
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	// We only support adding multiple unique indexes or multiple non-unique indexes,
+	// we use the first index uniqueness here.
+	return unique[0], nil
 }
 
 func (s *backfillDistScheduler) GetSubtaskExecutor(ctx context.Context, task *proto.Task, summary *execute.Summary) (execute.SubtaskExecutor, error) {

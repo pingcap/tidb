@@ -37,6 +37,13 @@ func (bc *litBackendCtx) Register(jobID, indexID int64, schemaName, tableName st
 	var info string
 	en, exist := bc.Load(indexID)
 	if !exist || en.openedEngine == nil {
+		if exist && en.closedEngine != nil {
+			// Import failed before, try to import again.
+			err := en.ImportAndClean()
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+		}
 		engineCacheSize := int64(bc.cfg.TikvImporter.EngineMemCacheSize)
 		ok := bc.MemRoot.CheckConsume(StructSizeEngineInfo + engineCacheSize)
 		if !ok {

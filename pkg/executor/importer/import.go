@@ -264,6 +264,8 @@ type LoadDataController struct {
 	dataFiles []*mydump.SourceFileMeta
 	// GlobalSortStore is used to store sorted data when using global sort.
 	GlobalSortStore storage.ExternalStorage
+	// ExecuteNodesCnt is the count of execute nodes.
+	ExecuteNodesCnt int
 }
 
 func getImportantSysVars(sctx sessionctx.Context) map[string]string {
@@ -452,10 +454,11 @@ func NewLoadDataController(plan *Plan, tbl table.Table, astArgs *ASTArgs) (*Load
 	fullTableName := tbl.Meta().Name.String()
 	logger := log.L().With(zap.String("table", fullTableName))
 	c := &LoadDataController{
-		Plan:    plan,
-		ASTArgs: astArgs,
-		Table:   tbl,
-		logger:  logger,
+		Plan:            plan,
+		ASTArgs:         astArgs,
+		Table:           tbl,
+		logger:          logger,
+		ExecuteNodesCnt: 1,
 	}
 	if err := c.checkFieldParams(); err != nil {
 		return nil, err

@@ -6,6 +6,8 @@ import (
 	"context"
 	"database/sql"
 	"io"
+	"math"
+	"strings"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -26,6 +28,10 @@ const (
 	downloadSSTWaitInterval    = 1 * time.Second
 	downloadSSTMaxWaitInterval = 4 * time.Second
 
+	backupSSTRetryTimes      = 5
+	backupSSTWaitInterval    = 2 * time.Second
+	backupSSTMaxWaitInterval = 3 * time.Second
+
 	resetTSRetryTime       = 16
 	resetTSWaitInterval    = 50 * time.Millisecond
 	resetTSMaxWaitInterval = 500 * time.Millisecond
@@ -42,7 +48,34 @@ const (
 	ChecksumRetryTime       = 8
 	ChecksumWaitInterval    = 1 * time.Second
 	ChecksumMaxWaitInterval = 30 * time.Second
+
+	gRPC_Cancel = "the client connection is closing"
 )
+
+// At least, there are two possible cancel() call,
+// one from go context, another from gRPC, here we retry when gRPC cancel with connection closing
+func isGRPCCancel(err error) bool {
+	if s, ok := status.FromError(err); ok {
+		if strings.Contains(s.Message(), gRPC_Cancel) {
+			return true
+		}
+	}
+	return false
+}
+
+// ConstantBackoff is a backoffer that retry forever until success.
+type ConstantBackoff time.Duration
+
+// NextBackoff returns a duration to wait before retrying again
+func (c ConstantBackoff) NextBackoff(err error) time.Duration {
+	return time.Duration(c)
+}
+
+// Attempt returns the remain attempt times
+func (c ConstantBackoff) Attempt() int {
+	// A large enough value. Also still safe for arithmetic operations (won't easily overflow).
+	return math.MaxInt16
+}
 
 // RetryState is the mutable state needed for retrying.
 // It likes the `utils.Backoffer`, but more fundamental:
@@ -120,27 +153,39 @@ type importerBackoffer struct {
 	attempt      int
 	delayTime    time.Duration
 	maxDelayTime time.Duration
+	errContext   *ErrorContext
 }
 
 // NewBackoffer creates a new controller regulating a truncated exponential backoff.
-func NewBackoffer(attempt int, delayTime, maxDelayTime time.Duration) Backoffer {
+func NewBackoffer(attempt int, delayTime, maxDelayTime time.Duration, errContext *ErrorContext) Backoffer {
 	return &importerBackoffer{
 		attempt:      attempt,
 		delayTime:    delayTime,
 		maxDelayTime: maxDelayTime,
+		errContext:   errContext,
 	}
 }
 
 func NewImportSSTBackoffer() Backoffer {
-	return NewBackoffer(importSSTRetryTimes, importSSTWaitInterval, importSSTMaxWaitInterval)
+	errContext := NewErrorContext("import sst", 3)
+	return NewBackoffer(importSSTRetryTimes, importSSTWaitInterval, importSSTMaxWaitInterval, errContext)
 }
 
 func NewDownloadSSTBackoffer() Backoffer {
-	return NewBackoffer(downloadSSTRetryTimes, downloadSSTWaitInterval, downloadSSTMaxWaitInterval)
+	errContext := NewErrorContext("download sst", 3)
+	return NewBackoffer(downloadSSTRetryTimes, downloadSSTWaitInterval, downloadSSTMaxWaitInterval, errContext)
+}
+
+func NewBackupSSTBackoffer() Backoffer {
+	errContext := NewErrorContext("backup sst", 3)
+	return NewBackoffer(backupSSTRetryTimes, backupSSTWaitInterval, backupSSTMaxWaitInterval, errContext)
 }
 
 func (bo *importerBackoffer) NextBackoff(err error) time.Duration {
-	if MessageIsRetryableStorageError(err.Error()) {
+	log.Warn("retry to import ssts", zap.Int("attempt", bo.attempt), zap.Error(err))
+	// we don't care storeID here.
+	res := bo.errContext.HandleErrorMsg(err.Error(), 0)
+	if res.Strategy == RetryStrategy {
 		bo.delayTime = 2 * bo.delayTime
 		bo.attempt--
 	} else {
@@ -150,19 +195,27 @@ func (bo *importerBackoffer) NextBackoff(err error) time.Duration {
 			bo.delayTime = 2 * bo.delayTime
 			bo.attempt--
 		case berrors.ErrKVRangeIsEmpty, berrors.ErrKVRewriteRuleNotFound:
-			// Excepted error, finish the operation
+			// Expected error, finish the operation
 			bo.delayTime = 0
 			bo.attempt = 0
 		default:
 			switch status.Code(e) {
-			case codes.Unavailable, codes.Aborted:
+			case codes.Unavailable, codes.Aborted, codes.DeadlineExceeded, codes.ResourceExhausted, codes.Internal:
 				bo.delayTime = 2 * bo.delayTime
 				bo.attempt--
+			case codes.Canceled:
+				if isGRPCCancel(err) {
+					bo.delayTime = 2 * bo.delayTime
+					bo.attempt--
+				} else {
+					bo.delayTime = 0
+					bo.attempt = 0
+				}
 			default:
-				// Unexcepted error
+				// Unexpected error
 				bo.delayTime = 0
 				bo.attempt = 0
-				log.Warn("unexcepted error, stop to retry", zap.Error(err))
+				log.Warn("unexpected error, stop retrying", zap.Error(err))
 			}
 		}
 	}

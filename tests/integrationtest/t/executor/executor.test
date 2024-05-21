@@ -688,12 +688,6 @@ update t set a=a+1 where id=1;
 commit;
 select a from t where id=1;
 
-# TestChangePumpAndDrainer
---error 1105
-change pump to node_state ='paused' for node_id 'pump1';
---error 1105
-change drainer to node_state ='paused' for node_id 'drainer1';
-
 # TestSelectLimit
 drop table if exists select_limit;
 create table select_limit(id int not null default 1, name varchar(255), PRIMARY KEY(id));

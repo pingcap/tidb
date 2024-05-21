@@ -3643,3 +3643,50 @@ ID	PARTITION_NO	CREATE_TIME
 1	200000	2022-12-29
 2	200000	2023-01-01
 drop database issue43459;
+use planner__core__partition_pruner;
+drop table if exists t;
+create table t(a bigint unsigned)
+PARTITION BY RANGE (`a`)
+(PARTITION `p0` VALUES LESS THAN (5086706),
+PARTITION `p1` VALUES LESS THAN (7268292),
+PARTITION `p2` VALUES LESS THAN (16545422),
+PARTITION `p3` VALUES LESS THAN (9223372036854775810));
+desc select * from t where a BETWEEN -6895222 AND 3125507;
+id	estRows	task	access object	operator info
+TableReader_9	250.00	root		data:Selection_8
+└─Selection_8	250.00	cop[tikv]		ge(planner__core__partition_pruner.t.a, -6895222), le(planner__core__partition_pruner.t.a, 3125507)
+  └─TableFullScan_7	10000.00	cop[tikv]	table:t, partition:p0	keep order:false, stats:pseudo
+desc select * from t where a > 9223372036854775808;
+id	estRows	task	access object	operator info
+TableReader_9	3333.33	root		data:Selection_8
+└─Selection_8	3333.33	cop[tikv]		gt(planner__core__partition_pruner.t.a, 9223372036854775808)
+  └─TableFullScan_7	10000.00	cop[tikv]	table:t, partition:p3	keep order:false, stats:pseudo
+desc select * from t where a in (-6895222, 3125507, 9223372036854775809);
+id	estRows	task	access object	operator info
+PartitionUnion_9	40.00	root		
+├─TableReader_12	20.00	root		data:Selection_11
+│ └─Selection_11	20.00	cop[tikv]		in(planner__core__partition_pruner.t.a, -6895222, 3125507, 9223372036854775809)
+│   └─TableFullScan_10	10000.00	cop[tikv]	table:t, partition:p0	keep order:false, stats:pseudo
+└─TableReader_15	20.00	root		data:Selection_14
+  └─Selection_14	20.00	cop[tikv]		in(planner__core__partition_pruner.t.a, -6895222, 3125507, 9223372036854775809)
+    └─TableFullScan_13	10000.00	cop[tikv]	table:t, partition:p3	keep order:false, stats:pseudo
+drop table if exists t;
+create table t(a bigint)
+PARTITION BY RANGE (`a`)
+(PARTITION `p0` VALUES LESS THAN (5086706),
+PARTITION `p1` VALUES LESS THAN (7268292),
+PARTITION `p2` VALUES LESS THAN (16545422),
+PARTITION `p3` VALUES LESS THAN (9223372036854775807));
+desc select * from t where a BETWEEN -6895222 AND 3125507;
+id	estRows	task	access object	operator info
+TableReader_9	250.00	root		data:Selection_8
+└─Selection_8	250.00	cop[tikv]		ge(planner__core__partition_pruner.t.a, -6895222), le(planner__core__partition_pruner.t.a, 3125507)
+  └─TableFullScan_7	10000.00	cop[tikv]	table:t, partition:p0	keep order:false, stats:pseudo
+desc select * from t where a > 9223372036854775808;
+id	estRows	task	access object	operator info
+TableDual_7	0.00	root		rows:0
+desc select * from t where a in (-6895222, 3125507, 9223372036854775809);
+id	estRows	task	access object	operator info
+TableReader_9	8000.00	root		data:Selection_8
+└─Selection_8	8000.00	cop[tikv]		in(planner__core__partition_pruner.t.a, -6895222, 3125507, 9223372036854775809)
+  └─TableFullScan_7	10000.00	cop[tikv]	table:t, partition:p0	keep order:false, stats:pseudo

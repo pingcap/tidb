@@ -23,20 +23,20 @@ import (
 
 // TaskTable defines the interface to access task table.
 type TaskTable interface {
-	GetGlobalTasksInStates(states ...interface{}) (task []*proto.Task, err error)
-	GetGlobalTaskByID(taskID int64) (task *proto.Task, err error)
+	GetGlobalTasksInStates(ctx context.Context, states ...interface{}) (task []*proto.Task, err error)
+	GetGlobalTaskByID(ctx context.Context, taskID int64) (task *proto.Task, err error)
 
-	GetSubtasksInStates(tidbID string, taskID int64, step proto.Step, states ...interface{}) ([]*proto.Subtask, error)
-	GetFirstSubtaskInStates(instanceID string, taskID int64, step proto.Step, states ...interface{}) (*proto.Subtask, error)
-	StartManager(tidbID string, role string) error
-	StartSubtask(subtaskID int64) error
-	UpdateSubtaskStateAndError(subtaskID int64, state proto.TaskState, err error) error
-	FinishSubtask(subtaskID int64, meta []byte) error
+	GetSubtasksInStates(ctx context.Context, tidbID string, taskID int64, step proto.Step, states ...interface{}) ([]*proto.Subtask, error)
+	GetFirstSubtaskInStates(ctx context.Context, instanceID string, taskID int64, step proto.Step, states ...interface{}) (*proto.Subtask, error)
+	StartManager(ctx context.Context, tidbID string, role string) error
+	StartSubtask(ctx context.Context, subtaskID int64) error
+	UpdateSubtaskStateAndError(ctx context.Context, tidbID string, subtaskID int64, state proto.TaskState, err error) error
+	FinishSubtask(ctx context.Context, tidbID string, subtaskID int64, meta []byte) error
 
-	HasSubtasksInStates(tidbID string, taskID int64, step proto.Step, states ...interface{}) (bool, error)
-	UpdateErrorToSubtask(tidbID string, taskID int64, err error) error
-	IsSchedulerCanceled(tidbID string, taskID int64) (bool, error)
-	PauseSubtasks(tidbID string, taskID int64) error
+	HasSubtasksInStates(ctx context.Context, tidbID string, taskID int64, step proto.Step, states ...interface{}) (bool, error)
+	UpdateErrorToSubtask(ctx context.Context, tidbID string, taskID int64, err error) error
+	IsSchedulerCanceled(ctx context.Context, tidbID string, taskID int64) (bool, error)
+	PauseSubtasks(ctx context.Context, tidbID string, taskID int64) error
 }
 
 // Pool defines the interface of a pool.

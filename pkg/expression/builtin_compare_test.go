@@ -420,3 +420,12 @@ func TestRefineArgsWithCastEnum(t *testing.T) {
 	require.Equal(t, zeroUintConst, args[0])
 	require.Equal(t, enumCol, args[1])
 }
+
+func TestIssue46475(t *testing.T) {
+	ctx := createContext(t)
+	args := []interface{}{nil, dt, nil}
+
+	f, err := newFunctionForTest(ctx, ast.Coalesce, primitiveValsToConstants(ctx, args)...)
+	require.NoError(t, err)
+	require.Equal(t, f.GetType().GetType(), mysql.TypeDate)
+}

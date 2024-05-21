@@ -18,11 +18,13 @@ import (
 	"sync/atomic"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/cache/internal/metrics"
+	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	handle_metrics "github.com/pingcap/tidb/pkg/statistics/handle/metrics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -99,7 +101,7 @@ func (s *StatsCacheImpl) Update(is infoschema.InfoSchema) error {
 		tbl, err := s.statsHandle.TableStatsFromStorage(tableInfo, physicalID, false, 0)
 		// Error is not nil may mean that there are some ddl changes on this table, we will not update it.
 		if err != nil {
-			logutil.BgLogger().Error("error occurred when read table stats", zap.String("category", "stats"), zap.String("table", tableInfo.Name.O), zap.Error(err))
+			statslogutil.StatsLogger().Error("error occurred when read table stats", zap.String("table", tableInfo.Name.O), zap.Error(err))
 			continue
 		}
 		if tbl == nil {
@@ -109,7 +111,6 @@ func (s *StatsCacheImpl) Update(is infoschema.InfoSchema) error {
 		tbl.Version = version
 		tbl.RealtimeCount = count
 		tbl.ModifyCount = modifyCount
-		tbl.Name = util.GetFullTableName(is, tableInfo)
 		tbl.TblInfoUpdateTS = tableInfo.UpdateTS
 		tables = append(tables, tbl)
 	}
@@ -164,6 +165,9 @@ func (s *StatsCacheImpl) MemConsumed() (size int64) {
 
 // Get returns the specified table's stats.
 func (s *StatsCacheImpl) Get(tableID int64) (*statistics.Table, bool) {
+	failpoint.Inject("StatsCacheGetNil", func() {
+		failpoint.Return(nil, false)
+	})
 	return s.Load().Get(tableID)
 }
 

@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	tikverr "github.com/tikv/client-go/v2/error"
 	pderr "github.com/tikv/pd/client/errs"
 )
@@ -116,8 +117,11 @@ func ToTiDBErr(err error) error {
 		return ErrTiFlashServerTimeout
 	}
 
-	if stderrs.Is(err, tikverr.ErrQueryInterrupted) {
+	if stderrs.Is(err, tikverr.ErrQueryInterruptedWithSignal{Signal: 1}) {
 		return ErrQueryInterrupted
+	}
+	if stderrs.Is(err, tikverr.ErrQueryInterruptedWithSignal{Signal: 2}) {
+		return exeerrors.ErrMaxExecTimeExceeded.GenWithStackByArgs()
 	}
 
 	if stderrs.Is(err, tikverr.ErrTiKVServerBusy) {

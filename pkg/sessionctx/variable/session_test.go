@@ -258,7 +258,11 @@ func TestSlowLogFormat(t *testing.T) {
 # Succ: true
 # IsExplicitTxn: true
 # IsSyncStatsFailed: false
-# IsWriteCacheTable: true`
+# IsWriteCacheTable: true
+# Resource_group: rg1
+# Request_unit_read: 50
+# Request_unit_write: 100.56
+# Time_queued_by_rc: 0.134`
 	sql := "select * from t;"
 	_, digest := parser.NormalizeDigest(sql)
 	logItems := &variable.SlowQueryLogItems{
@@ -297,6 +301,10 @@ func TestSlowLogFormat(t *testing.T) {
 		IsExplicitTxn:     true,
 		IsWriteCacheTable: true,
 		UsedStats:         map[int64]*stmtctx.UsedStatsInfoForTable{1: usedStats1, 2: usedStats2},
+		ResourceGroupName: "rg1",
+		RRU:               50.0,
+		WRU:               100.56,
+		WaitRUDuration:    134 * time.Millisecond,
 	}
 	logString := seVar.SlowLogFormat(logItems)
 	require.Equal(t, resultFields+"\n"+sql, logString)

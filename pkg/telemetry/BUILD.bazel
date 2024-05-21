@@ -65,7 +65,6 @@ go_test(
     deps = [
         "//pkg/autoid_service",
         "//pkg/config",
-        "//pkg/ddl",
         "//pkg/domain",
         "//pkg/kv",
         "//pkg/parser/model",

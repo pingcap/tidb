@@ -399,7 +399,7 @@ func (do *Domain) initResourceGroupsController(ctx context.Context, pdClient pd.
 		return nil
 	}
 
-	control, err := rmclient.NewResourceGroupController(ctx, uniqueID, pdClient, nil, rmclient.WithMaxWaitDuration(resourcegroup.MaxWaitDuration))
+	control, err := rmclient.NewResourceGroupController(ctx, uniqueID, pdClient, nil)
 	if err != nil {
 		return err
 	}

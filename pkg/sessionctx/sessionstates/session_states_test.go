@@ -16,6 +16,7 @@ package sessionstates_test
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/binary"
 	"fmt"
 	"strconv"
@@ -336,6 +337,18 @@ func TestInvisibleVars(t *testing.T) {
 	}
 }
 
+func TestIssue47665(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.Session().GetSessionVars().TLSConnectionState = &tls.ConnectionState{} // unrelated mock for the test.
+	originSEM := config.GetGlobalConfig().Security.EnableSEM
+	config.GetGlobalConfig().Security.EnableSEM = true
+	tk.MustGetErrMsg("set @@global.require_secure_transport = on", "require_secure_transport can not be set to ON with SEM(security enhanced mode) enabled")
+	config.GetGlobalConfig().Security.EnableSEM = originSEM
+	tk.MustExec("set @@global.require_secure_transport = on")
+	tk.MustExec("set @@global.require_secure_transport = off") // recover to default value
+}
+
 func TestSessionCtx(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -548,12 +561,14 @@ func TestSessionCtx(t *testing.T) {
 			setFunc: func(tk *testkit.TestKit) any {
 				tk.MustExec("SET GLOBAL tidb_enable_resource_control='on'")
 				tk.MustExec("CREATE RESOURCE GROUP rg1 ru_per_sec = 100")
+				tk.MustExec("CREATE RESOURCE GROUP rg2 ru_per_sec = 100")
 				tk.MustExec("SET RESOURCE GROUP `rg1`")
 				require.Equal(t, "rg1", tk.Session().GetSessionVars().ResourceGroupName)
 				return nil
 			},
 			checkFunc: func(tk *testkit.TestKit, param any) {
 				tk.MustQuery("SELECT CURRENT_RESOURCE_GROUP()").Check(testkit.Rows("rg1"))
+				tk.MustQuery("SELECT /*+ RESOURCE_GROUP(rg2) */ CURRENT_RESOURCE_GROUP()").Check(testkit.Rows("rg2"))
 			},
 		},
 		{

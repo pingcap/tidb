@@ -17,6 +17,7 @@ package executor
 import (
 	"cmp"
 	"context"
+	stderrors "errors"
 	"fmt"
 	"math"
 	"runtime/pprof"
@@ -199,6 +200,7 @@ func (a *globalPanicOnExceed) Action(t *memory.Tracker) {
 	default:
 		msg = "Out of Unknown Resource Quota!"
 	}
+	// TODO(hawkingrei): should return error instead.
 	panic(msg)
 }
 
@@ -491,11 +493,12 @@ func (e *DDLJobRetriever) appendJobToChunk(req *chunk.Chunk, job *model.Job, che
 	}
 	req.AppendString(11, job.State.String())
 	if job.Type == model.ActionMultiSchemaChange {
+		isDistTask := job.ReorgMeta != nil && job.ReorgMeta.IsDistReorg
 		for _, subJob := range job.MultiSchemaInfo.SubJobs {
 			req.AppendInt64(0, job.ID)
 			req.AppendString(1, schemaName)
 			req.AppendString(2, tableName)
-			req.AppendString(3, subJob.Type.String()+" /* subjob */"+showAddIdxReorgTpInSubJob(subJob))
+			req.AppendString(3, subJob.Type.String()+" /* subjob */"+showAddIdxReorgTpInSubJob(subJob, isDistTask))
 			req.AppendString(4, subJob.SchemaState.String())
 			req.AppendInt64(5, job.SchemaID)
 			req.AppendInt64(6, job.TableID)
@@ -520,21 +523,37 @@ func (e *DDLJobRetriever) appendJobToChunk(req *chunk.Chunk, job *model.Job, che
 func showAddIdxReorgTp(job *model.Job) string {
 	if job.Type == model.ActionAddIndex || job.Type == model.ActionAddPrimaryKey {
 		if job.ReorgMeta != nil {
+			sb := strings.Builder{}
 			tp := job.ReorgMeta.ReorgTp.String()
 			if len(tp) > 0 {
-				return " /* " + tp + " */"
+				sb.WriteString(" /* ")
+				sb.WriteString(tp)
+				if job.ReorgMeta.ReorgTp == model.ReorgTypeLitMerge &&
+					job.ReorgMeta.IsDistReorg &&
+					job.ReorgMeta.UseCloudStorage {
+					sb.WriteString(" cloud")
+				}
+				sb.WriteString(" */")
 			}
+			return sb.String()
 		}
 	}
 	return ""
 }
 
-func showAddIdxReorgTpInSubJob(subJob *model.SubJob) string {
+func showAddIdxReorgTpInSubJob(subJob *model.SubJob, useDistTask bool) string {
 	if subJob.Type == model.ActionAddIndex || subJob.Type == model.ActionAddPrimaryKey {
+		sb := strings.Builder{}
 		tp := subJob.ReorgTp.String()
 		if len(tp) > 0 {
-			return " /* " + tp + " */"
+			sb.WriteString(" /* ")
+			sb.WriteString(tp)
+			if subJob.ReorgTp == model.ReorgTypeLitMerge && useDistTask && subJob.UseCloud {
+				sb.WriteString(" cloud")
+			}
+			sb.WriteString(" */")
 		}
+		return sb.String()
 	}
 	return ""
 }
@@ -1926,6 +1945,16 @@ func (e *UnionExec) Close() error {
 // ResetContextOfStmt resets the StmtContext and session variables.
 // Before every execution, we must clear statement context.
 func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			logutil.BgLogger().Warn("ResetContextOfStmt panicked", zap.Stack("stack"), zap.Any("recover", r), zap.Error(err))
+			if err != nil {
+				err = stderrors.Join(err, util.GetRecoverError(r))
+			} else {
+				err = util.GetRecoverError(r)
+			}
+		}
+	}()
 	vars := ctx.GetSessionVars()
 	for name, val := range vars.StmtCtx.SetVarHintRestore {
 		err := vars.SetSystemVar(name, val)
@@ -1952,6 +1981,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	sc.OptimizerCETrace = nil
 	sc.IsSyncStatsFailed = false
 	sc.IsExplainAnalyzeDML = false
+	sc.ResourceGroupName = vars.ResourceGroupName
 	// Firstly we assume that UseDynamicPruneMode can be enabled according session variable, then we will check other conditions
 	// in PlanBuilder.buildDataSource
 	if ctx.GetSessionVars().IsDynamicPartitionPruneEnabled() {
@@ -2074,6 +2104,8 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		// but should not make DupKeyAsWarning.
 		sc.DupKeyAsWarning = stmt.IgnoreErr
 		sc.BadNullAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
+		// see https://dev.mysql.com/doc/refman/8.0/en/out-of-range-and-overflow.html
+		sc.OverflowAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
 		sc.IgnoreNoPartition = stmt.IgnoreErr
 		sc.ErrAutoincReadFailedAsWarning = stmt.IgnoreErr
 		sc.TruncateAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
@@ -2298,6 +2330,19 @@ func getCheckSum(ctx context.Context, se sessionctx.Context, sql string) ([]grou
 	return checksums, nil
 }
 
+func (w *checkIndexWorker) initSessCtx(se sessionctx.Context) (restore func()) {
+	sessVars := se.GetSessionVars()
+	originOptUseInvisibleIdx := sessVars.OptimizerUseInvisibleIndexes
+	originMemQuotaQuery := sessVars.MemQuotaQuery
+
+	sessVars.OptimizerUseInvisibleIndexes = true
+	sessVars.MemQuotaQuery = w.sctx.GetSessionVars().MemQuotaQuery
+	return func() {
+		sessVars.OptimizerUseInvisibleIndexes = originOptUseInvisibleIdx
+		sessVars.MemQuotaQuery = originMemQuotaQuery
+	}
+}
+
 // HandleTask implements the Worker interface.
 func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.None)) {
 	defer w.e.wg.Done()
@@ -2315,9 +2360,9 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.Non
 		trySaveErr(err)
 		return
 	}
-	se.GetSessionVars().OptimizerUseInvisibleIndexes = true
+	restoreCtx := w.initSessCtx(se)
 	defer func() {
-		se.GetSessionVars().OptimizerUseInvisibleIndexes = false
+		restoreCtx()
 		w.e.Base().ReleaseSysSession(ctx, se)
 	}()
 

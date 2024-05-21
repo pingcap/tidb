@@ -154,6 +154,44 @@ func TestNormalizedPlan(t *testing.T) {
 	}
 }
 
+func TestIssue47634(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t3,t4")
+	tk.MustExec("create table t3(a int, b int, c int);")
+	tk.MustExec("create table t4(a int, b int, c int, primary key (a, b) clustered);")
+	tk.MustExec("create table t5(a int, b int, c int, key idx_a_b (a, b));")
+	tk.Session().GetSessionVars().PlanID.Store(0)
+	queriesGroup1 := []string{
+		"explain select /*+ inl_join(t4) */ * from t3 join t4 on t3.b = t4.b where t4.a = 1;",
+		"explain select /*+ inl_join(t5) */ * from t3 join t5 on t3.b = t5.b where t5.a = 1;",
+	}
+	queriesGroup2 := []string{
+		"explain select /*+ inl_join(t4) */ * from t3 join t4 on t3.b = t4.b where t4.a = 2;",
+		"explain select /*+ inl_join(t5) */ * from t3 join t5 on t3.b = t5.b where t5.a = 2;",
+	}
+	for i := 0; i < len(queriesGroup1); i++ {
+		query1 := queriesGroup1[i]
+		query2 := queriesGroup2[i]
+		t.Run(query1+" vs "+query2, func(t *testing.T) {
+			tk.MustExec(query1)
+			info1 := tk.Session().ShowProcess()
+			require.NotNil(t, info1)
+			p1, ok := info1.Plan.(core.Plan)
+			require.True(t, ok)
+			_, digest1 := core.NormalizePlan(p1)
+			tk.MustExec(query2)
+			info2 := tk.Session().ShowProcess()
+			require.NotNil(t, info2)
+			p2, ok := info2.Plan.(core.Plan)
+			require.True(t, ok)
+			_, digest2 := core.NormalizePlan(p2)
+			require.Equal(t, digest1, digest2)
+		})
+	}
+}
+
 func TestNormalizedPlanForDiffStore(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
@@ -231,4 +269,26 @@ func TestJSONPlanInExplain(t *testing.T) {
 			require.Equal(t, expect.OperatorInfo, res[j].OperatorInfo)
 		}
 	}
+}
+
+func TestHandleEQAll(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE t1 (c1 int, c2 int, UNIQUE i1 (c1, c2));")
+	tk.MustExec("INSERT INTO t1 VALUES (7, null),(5,1);")
+	tk.MustQuery("SELECT c1 FROM t1 WHERE ('m' = ALL (SELECT /*+ IGNORE_INDEX(t1, i1) */ c2 FROM t1)) IS NOT UNKNOWN; ").Check(testkit.Rows("5", "7"))
+	tk.MustQuery("SELECT c1 FROM t1 WHERE ('m' = ALL (SELECT /*+ use_INDEX(t1, i1) */ c2 FROM t1)) IS NOT UNKNOWN; ").Check(testkit.Rows("5", "7"))
+	tk.MustQuery("select (null = ALL (SELECT /*+ NO_INDEX() */ c2 FROM t1)) IS NOT UNKNOWN").Check(testkit.Rows("0"))
+	tk.MustExec("CREATE TABLE t2 (c1 int, c2 int, UNIQUE i1 (c1, c2));")
+	tk.MustExec("INSERT INTO t2 VALUES (7, null),(5,null);")
+	tk.MustQuery("select (null = ALL (SELECT /*+ NO_INDEX() */ c2 FROM t2)) IS NOT UNKNOWN").Check(testkit.Rows("0"))
+	tk.MustQuery("SELECT c1 FROM t2 WHERE ('m' = ALL (SELECT /*+ IGNORE_INDEX(t2, i1) */ c2 FROM t2)) IS NOT UNKNOWN; ").Check(testkit.Rows())
+	tk.MustQuery("SELECT c1 FROM t2 WHERE ('m' = ALL (SELECT /*+ use_INDEX(t2, i1) */ c2 FROM t2)) IS NOT UNKNOWN; ").Check(testkit.Rows())
+	tk.MustExec("truncate table t2")
+	tk.MustExec("INSERT INTO t2 VALUES (7, null),(7,null);")
+	tk.MustQuery("select c1 from t2 where (c1 = all (select /*+ IGNORE_INDEX(t2, i1) */ c1 from t2))").Check(testkit.Rows("7", "7"))
+	tk.MustQuery("select c1 from t2 where (c1 = all (select /*+ use_INDEX(t2, i1) */ c1 from t2))").Check(testkit.Rows("7", "7"))
+	tk.MustQuery("select c2 from t2 where (c2 = all (select /*+ IGNORE_INDEX(t2, i1) */ c2 from t2))").Check(testkit.Rows())
+	tk.MustQuery("select c2 from t2 where (c2 = all (select /*+ use_INDEX(t2, i1) */ c2 from t2))").Check(testkit.Rows())
 }

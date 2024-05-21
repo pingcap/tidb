@@ -1000,6 +1000,7 @@ func encodeFromOldRow(oldRow, buf []byte) ([]byte, error) {
 		datums = append(datums, d)
 	}
 	var encoder rowcodec.Encoder
+	buf = buf[:0]
 	return encoder.Encode(stmtctx.NewStmtCtx(), colIDs, datums, buf)
 }
 

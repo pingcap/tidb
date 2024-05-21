@@ -2101,9 +2101,8 @@ create table t(a char(4) collate utf8_general_ci primary key /*T![clustered_inde
 insert into t values('`?');
 explain format='brief' select * from t where a like '`%';
 id	estRows	task	access object	operator info
-TableReader	8000.00	root		data:Selection
-└─Selection	8000.00	cop[tikv]		like(expression__issues.t.a, "`%", 92)
-  └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+TableReader	250.00	root		data:TableRangeScan
+└─TableRangeScan	250.00	cop[tikv]	table:t	range:["\x00`","\x00a"), keep order:false, stats:pseudo
 select * from t where a like '`%';
 a
 `?
@@ -2113,7 +2112,7 @@ insert into t values('`?');
 explain format='brief' select * from t where a like '`%';
 id	estRows	task	access object	operator info
 TableReader	250.00	root		data:TableRangeScan
-└─TableRangeScan	250.00	cop[tikv]	table:t	range:[0x60,0x61), keep order:false, stats:pseudo
+└─TableRangeScan	250.00	cop[tikv]	table:t	range:["`","a"), keep order:false, stats:pseudo
 select * from t where a like '`%';
 a
 `?  
@@ -2169,18 +2168,6 @@ a	A	a	A
 select * from t t1 left join t t2 on t1.a = t2.b collate utf8mb4_general_ci;
 a	b	a	b
 a	A	a	A
-drop table if exists t;
-create table t(a varchar(10) collate utf8mb4_bin, b varchar(10) collate utf8mb4_general_ci);
-insert into t (a, b) values ('a', 'A');
-select * from t where field('A', a collate utf8mb4_general_ci, b) > 1;
-a	b
-select * from t where field('A', a, b collate utf8mb4_general_ci) > 1;
-a	b
-select * from t where field('A' collate utf8mb4_general_ci, a, b) > 1;
-a	b
-select * from t where field('A', a, b) > 1;
-a	b
-a	A
 set names utf8mb4 collate utf8mb4_general_ci;
 select collation(concat(1 collate `binary`));
 collation(concat(1 collate `binary`))
@@ -2763,15 +2750,9 @@ insert into t values('1e649'),('-1e649');
 SELECT * FROM t where c < 1;
 c
 -1e649
-Level	Code	Message
-Warning	1292	Truncated incorrect DOUBLE value: '-1e649'
-Warning	1292	Truncated incorrect DOUBLE value: '1e649'
 SELECT * FROM t where c > 1;
 c
 1e649
-Level	Code	Message
-Warning	1292	Truncated incorrect DOUBLE value: '-1e649'
-Warning	1292	Truncated incorrect DOUBLE value: '1e649'
 drop table if exists t;
 create table t(a int);
 insert t values (1);

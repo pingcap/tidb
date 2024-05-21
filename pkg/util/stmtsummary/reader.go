@@ -313,6 +313,13 @@ const (
 	Charset                           = "CHARSET"
 	Collation                         = "COLLATION"
 	PlanHint                          = "PLAN_HINT"
+	AvgRequestUnitReadStr             = "AVG_REQUEST_UNIT_READ"
+	MaxRequestUnitReadStr             = "MAX_REQUEST_UNIT_READ"
+	AvgRequestUnitWriteStr            = "AVG_REQUEST_UNIT_WRITE"
+	MaxRequestUnitWriteStr            = "MAX_REQUEST_UNIT_WRITE"
+	AvgQueuedRcTimeStr                = "AVG_QUEUED_RC_TIME"
+	MaxQueuedRcTimeStr                = "MAX_QUEUED_RC_TIME"
+	ResourceGroupName                 = "RESOURCE_GROUP"
 )
 
 type columnValueFactory func(reader *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, ssbd *stmtSummaryByDigest) interface{}
@@ -631,5 +638,26 @@ var columnValueFactoryMap = map[string]columnValueFactory{
 	},
 	PlanHint: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) interface{} {
 		return ssElement.planHint
+	},
+	AvgRequestUnitReadStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) interface{} {
+		return avgSumFloat(ssElement.SumRRU, ssElement.execCount)
+	},
+	MaxRequestUnitReadStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) interface{} {
+		return ssElement.MaxRRU
+	},
+	AvgRequestUnitWriteStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) interface{} {
+		return avgSumFloat(ssElement.SumWRU, ssElement.execCount)
+	},
+	MaxRequestUnitWriteStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) interface{} {
+		return ssElement.MaxWRU
+	},
+	AvgQueuedRcTimeStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) interface{} {
+		return avgInt(int64(ssElement.SumRUWaitDuration), ssElement.execCount)
+	},
+	MaxQueuedRcTimeStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) interface{} {
+		return int64(ssElement.MaxRUWaitDuration)
+	},
+	ResourceGroupName: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) interface{} {
+		return ssElement.resourceGroupName
 	},
 }

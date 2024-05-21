@@ -2,7 +2,7 @@
 options:
   no_parent_owners: true
 filters:
-  "(tidb-lightning\\.tom)$":
+  "(tidb-lightning\\.toml)$":
     approvers:
       - sig-critical-approvers-tidb-lightning
   ".*":

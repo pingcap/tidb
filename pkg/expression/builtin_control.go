@@ -117,6 +117,25 @@ func setDecimalFromArgs(evalType types.EvalType, resultFieldType *types.FieldTyp
 	}
 }
 
+// NonBinaryStr means the arg is a string but not binary string
+func hasNonBinaryStr(args []*types.FieldType) bool {
+	for _, arg := range args {
+		if types.IsNonBinaryStr(arg) {
+			return true
+		}
+	}
+	return false
+}
+
+func hasBinaryStr(args []*types.FieldType) bool {
+	for _, arg := range args {
+		if types.IsBinaryStr(arg) {
+			return true
+		}
+	}
+	return false
+}
+
 func addCollateAndCharsetAndFlagFromArgs(ctx sessionctx.Context, funcName string, evalType types.EvalType, resultFieldType *types.FieldType, args ...Expression) error {
 	switch funcName {
 	case ast.If, ast.Ifnull, ast.WindowFuncLead, ast.WindowFuncLag:
@@ -170,13 +189,49 @@ func addCollateAndCharsetAndFlagFromArgs(ctx sessionctx.Context, funcName string
 				break
 			}
 		}
+	case ast.Coalesce: // TODO ast.Case and ast.Coalesce should be merged into the same branch
+		argTypes := make([]*types.FieldType, 0)
+		for _, arg := range args {
+			argTypes = append(argTypes, arg.GetType())
+		}
+
+		nonBinaryStrExist := hasNonBinaryStr(argTypes)
+		binaryStrExist := hasBinaryStr(argTypes)
+		if !binaryStrExist && nonBinaryStrExist {
+			ec, err := CheckAndDeriveCollationFromExprs(ctx, funcName, evalType, args...)
+			if err != nil {
+				return err
+			}
+			resultFieldType.SetCollate(ec.Collation)
+			resultFieldType.SetCharset(ec.Charset)
+			resultFieldType.SetFlag(0)
+
+			// hasNonStringType means that there is a type that is not string
+			hasNonStringType := false
+			for _, argType := range argTypes {
+				if !types.IsString(argType.GetType()) {
+					hasNonStringType = true
+					break
+				}
+			}
+
+			if hasNonStringType {
+				resultFieldType.AddFlag(mysql.BinaryFlag)
+			}
+		} else if binaryStrExist || !evalType.IsStringKind() {
+			types.SetBinChsClnFlag(resultFieldType)
+		} else {
+			resultFieldType.SetCharset(mysql.DefaultCharset)
+			resultFieldType.SetCollate(mysql.DefaultCollationName)
+			resultFieldType.SetFlag(0)
+		}
 	default:
 		panic("unexpected function: " + funcName)
 	}
 	return nil
 }
 
-// InferType4ControlFuncs infer result type for builtin IF, IFNULL, NULLIF, CASEWHEN, LEAD and LAG.
+// InferType4ControlFuncs infer result type for builtin IF, IFNULL, NULLIF, CASEWHEN, COALESCE, LEAD and LAG.
 func InferType4ControlFuncs(ctx sessionctx.Context, funcName string, args ...Expression) (*types.FieldType, error) {
 	argsNum := len(args)
 	if argsNum == 0 {
@@ -198,8 +253,8 @@ func InferType4ControlFuncs(ctx sessionctx.Context, funcName string, args ...Exp
 		tempFlag := resultFieldType.GetFlag()
 		types.SetTypeFlag(&tempFlag, mysql.NotNullFlag, false)
 		resultFieldType.SetFlag(tempFlag)
-		// If both arguments are NULL, make resulting type BINARY(0).
-		resultFieldType.SetType(mysql.TypeString)
+
+		resultFieldType.SetType(mysql.TypeNull)
 		resultFieldType.SetFlen(0)
 		resultFieldType.SetDecimal(0)
 		types.SetBinChsClnFlag(resultFieldType)

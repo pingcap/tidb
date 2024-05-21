@@ -557,3 +557,28 @@ create table F (id int primary key, col_int int);
 insert into F values (1, 8);
 select table1.`col_int` as field1, table1.`col_int` as field2 from V as table1 left join F as table2 on table1.`col_int` = table2.`col_int` order by field1, field2 desc limit 2;
 
+# TestIssue49369
+drop table if exists issue49369;
+CREATE TABLE `issue49369` (
+  `x` varchar(32) COLLATE utf8mb4_bin DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+--error 1690
+insert into t   select round(cast('88888899999999999888888888888888888888888888888888888.11111111111111111111' as decimal(18,12)) * cast('88888899999999999888888888888888888888888888888888888.11111111111111111111' as decimal(42,18)) );
+set @@sql_mode = '';
+insert into t   select round(cast('88888899999999999888888888888888888888888888888888888.11111111111111111111' as decimal(18,12)) * cast('88888899999999999888888888888888888888888888888888888.11111111111111111111' as decimal(42,18)) );
+show warnings;
+select * from t;
+set @@sql_mode = default;
+
+# TestIssue49902
+set @@tidb_max_chunk_size = 32;
+drop table if exists t, s;
+CREATE TABLE `t` (`c` char(1)) COLLATE=utf8_general_ci  ;
+insert into t values("V"),("v");
+insert into t values("V"),("v"),("v");
+CREATE TABLE `s` (`col_61` int);
+insert into s values(1),(1),(1),(1),(1),(1),(1),(1),(1),(1),(1),(1),(1),(1),(1),(1),(1);
+insert into s values(1),(1),(1),(1),(1),(1),(1),(1),(1),(1),(1),(1),(1),(1),(1),(1),(1);
+SELECT /*+ stream_agg()*/ count(`t`.`c`) FROM (`s`) JOIN `t` GROUP BY `t`.`c`;
+SELECT  count(`t`.`c`) FROM (`s`) JOIN `t`  GROUP BY `t`.`c`;
+set @@tidb_max_chunk_size = default;

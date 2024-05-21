@@ -281,7 +281,9 @@ func makeDBPool(size uint, dbFactory func() (*DB, error)) ([]*DB, error) {
 		if e != nil {
 			return dbPool, e
 		}
-		dbPool = append(dbPool, db)
+		if db != nil {
+			dbPool = append(dbPool, db)
+		}
 	}
 	return dbPool, nil
 }

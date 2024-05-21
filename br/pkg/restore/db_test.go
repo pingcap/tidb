@@ -78,7 +78,7 @@ func TestRestoreAutoIncID(t *testing.T) {
 		DB:   dbInfo,
 	}
 	// Get the next AutoIncID
-	idAlloc := autoid.NewAllocator(s.mock.Storage, dbInfo.ID, table.Info.ID, false, autoid.RowIDAllocType)
+	idAlloc := autoid.NewAllocator(s.mock.Domain, dbInfo.ID, table.Info.ID, false, autoid.RowIDAllocType)
 	globalAutoID, err := idAlloc.NextGlobalAutoID()
 	require.NoErrorf(t, err, "Error allocate next auto id")
 	require.Equal(t, uint64(globalAutoID), autoIncID)
@@ -376,7 +376,7 @@ func TestGetExistedUserDBs(t *testing.T) {
 	dbs := restore.GetExistedUserDBs(dom)
 	require.Equal(t, 0, len(dbs))
 
-	builder, err := infoschema.NewBuilder(m.Store(), nil).InitWithDBInfos(
+	builder, err := infoschema.NewBuilder(dom, nil).InitWithDBInfos(
 		[]*model.DBInfo{
 			{Name: model.NewCIStr("mysql")},
 			{Name: model.NewCIStr("test")},
@@ -387,7 +387,7 @@ func TestGetExistedUserDBs(t *testing.T) {
 	dbs = restore.GetExistedUserDBs(dom)
 	require.Equal(t, 0, len(dbs))
 
-	builder, err = infoschema.NewBuilder(m.Store(), nil).InitWithDBInfos(
+	builder, err = infoschema.NewBuilder(dom, nil).InitWithDBInfos(
 		[]*model.DBInfo{
 			{Name: model.NewCIStr("mysql")},
 			{Name: model.NewCIStr("test")},
@@ -399,7 +399,7 @@ func TestGetExistedUserDBs(t *testing.T) {
 	dbs = restore.GetExistedUserDBs(dom)
 	require.Equal(t, 1, len(dbs))
 
-	builder, err = infoschema.NewBuilder(m.Store(), nil).InitWithDBInfos(
+	builder, err = infoschema.NewBuilder(dom, nil).InitWithDBInfos(
 		[]*model.DBInfo{
 			{Name: model.NewCIStr("mysql")},
 			{Name: model.NewCIStr("d1")},

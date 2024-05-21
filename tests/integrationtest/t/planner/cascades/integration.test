@@ -132,16 +132,20 @@ set @@session.tidb_opt_distinct_agg_push_down = 1;
 explain select /*+ HASH_AGG() */ avg(distinct a) from t;
 select /*+ HASH_AGG() */ avg(distinct a) from t;
 explain select /*+ HASH_AGG() */ a, count(distinct a) from t;
+--replace_column 1 1
 select /*+ HASH_AGG() */ a, count(distinct a) from t;
 explain select /*+ HASH_AGG() */ avg(b), c, avg(b), count(distinct A, B),  count(distinct A), count(distinct c), sum(b) from t group by c;
+--sorted_result
 select /*+ HASH_AGG() */ avg(b), c, avg(b), count(distinct A, B),  count(distinct A), count(distinct c), sum(b) from t group by c;
 explain select /*+ STREAM_AGG() */ count(distinct c) from t group by c;
+--sorted_result
 select /*+ STREAM_AGG() */ count(distinct c) from t group by c;
 explain select /*+ STREAM_AGG() */ count(distinct c) from t;
 select /*+ STREAM_AGG() */ count(distinct c) from t;
 explain select /*+ HASH_AGG() */ count(distinct c) from t;
 select /*+ HASH_AGG() */ count(distinct c) from t;
 explain select count(distinct c) from t group by c;
+--sorted_result
 select count(distinct c) from t group by c;
 explain select count(distinct c) from t;
 select count(distinct c) from t;

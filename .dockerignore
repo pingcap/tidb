@@ -6,5 +6,4 @@ bazel-testlogs/
 bin/
 tidb-server/tidb-server
 *.test.bin
-cmd/
 Dockerfile

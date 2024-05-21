@@ -1016,7 +1016,7 @@ func tryWhereIn2BatchPointGet(ctx sessionctx.Context, selStmt *ast.SelectStmt) *
 // 3. All the columns must be public and not generated.
 // 4. The condition is an access path that the range is a unique key.
 func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt, check bool) *PointGetPlan {
-	if selStmt.Having != nil {
+	if selStmt.Having != nil || selStmt.OrderBy != nil {
 		return nil
 	} else if selStmt.Limit != nil {
 		count, offset, err := extractLimitCountOffset(ctx, selStmt.Limit)
@@ -1438,7 +1438,15 @@ func getNameValuePairs(ctx sessionctx.Context, tbl *model.TableInfo, tblName mod
 		col := model.FindColumnInfo(tbl.Cols(), colName.Name.Name.L)
 		if col == nil { // Handling the case when the column is _tidb_rowid.
 			return append(nvPairs, nameValuePair{colName: colName.Name.Name.L, colFieldType: types.NewFieldType(mysql.TypeLonglong), value: d, con: con}), false
-		} else if col.GetType() == mysql.TypeString && col.GetCollate() == charset.CollationBin { // This type we needn't to pad `\0` in here.
+		}
+
+		// As in buildFromBinOp in util/ranger, when we build key from the expression to do range scan or point get on
+		// a string column, we should set the collation of the string datum to collation of the column.
+		if col.FieldType.EvalType() == types.ETString && (d.Kind() == types.KindString || d.Kind() == types.KindBinaryLiteral) {
+			d.SetString(d.GetString(), col.FieldType.GetCollate())
+		}
+
+		if col.GetType() == mysql.TypeString && col.GetCollate() == charset.CollationBin { // This type we needn't to pad `\0` in here.
 			return append(nvPairs, nameValuePair{colName: colName.Name.Name.L, colFieldType: &col.FieldType, value: d, con: con}), false
 		}
 		if !checkCanConvertInPointGet(col, d) {
@@ -1467,6 +1475,11 @@ func getNameValuePairs(ctx sessionctx.Context, tbl *model.TableInfo, tblName mod
 func getPointGetValue(stmtCtx *stmtctx.StatementContext, col *model.ColumnInfo, d *types.Datum) *types.Datum {
 	if !checkCanConvertInPointGet(col, *d) {
 		return nil
+	}
+	// As in buildFromBinOp in util/ranger, when we build key from the expression to do range scan or point get on
+	// a string column, we should set the collation of the string datum to collation of the column.
+	if col.FieldType.EvalType() == types.ETString && (d.Kind() == types.KindString || d.Kind() == types.KindBinaryLiteral) {
+		d.SetString(d.GetString(), col.FieldType.GetCollate())
 	}
 	dVal, err := d.ConvertTo(stmtCtx, &col.FieldType)
 	if err != nil {
@@ -1657,15 +1670,14 @@ func buildPointUpdatePlan(ctx sessionctx.Context, pointPlan PhysicalPlan, dbName
 		VirtualAssignmentsOffset:  len(orderedList),
 	}.Init(ctx)
 	updatePlan.names = pointPlan.OutputNames()
-	is := ctx.GetInfoSchema().(infoschema.InfoSchema)
+	is := sessiontxn.GetTxnManager(ctx).GetTxnInfoSchema()
 	t, _ := is.TableByID(tbl.ID)
 	updatePlan.tblID2Table = map[int64]table.Table{
 		tbl.ID: t,
 	}
 	if tbl.GetPartitionInfo() != nil {
 		pt := t.(table.PartitionedTable)
-		var updateTableList []*ast.TableName
-		updateTableList = extractTableList(updateStmt.TableRefs.TableRefs, updateTableList, true)
+		updateTableList := ExtractTableList(updateStmt.TableRefs.TableRefs, true)
 		updatePlan.PartitionedTable = make([]table.PartitionedTable, 0, len(updateTableList))
 		for _, updateTable := range updateTableList {
 			if len(updateTable.PartitionNames) > 0 {
@@ -1864,9 +1876,14 @@ func getPartitionInfo(ctx sessionctx.Context, tbl *model.TableInfo, pairs []name
 	case model.PartitionTypeKey:
 		// The key partition table supports FastPlan when it contains only one partition column
 		if len(pi.Columns) == 1 {
+			// We need to change the partition column index!
+			col := &expression.Column{}
+			*col = *partitionExpr.KeyPartCols[0]
+			col.Index = 0
+			pe := &tables.ForKeyPruning{KeyPartCols: []*expression.Column{col}}
 			for i, pair := range pairs {
 				if pi.Columns[0].L == pair.colName {
-					pos, err := partitionExpr.LocateKeyPartition(pi.Num, []types.Datum{pair.value})
+					pos, err := pe.LocateKeyPartition(pi.Num, []types.Datum{pair.value})
 					if err != nil {
 						return nil, 0, 0, false
 					}

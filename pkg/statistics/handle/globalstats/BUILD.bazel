@@ -18,6 +18,7 @@ go_library(
         "//pkg/sessionctx/stmtctx",
         "//pkg/sessiontxn",
         "//pkg/statistics",
+        "//pkg/statistics/handle/logutil",
         "//pkg/statistics/handle/storage",
         "//pkg/statistics/handle/util",
         "//pkg/types",
@@ -35,6 +36,7 @@ go_test(
     name = "globalstats_test",
     timeout = "short",
     srcs = [
+        "globalstats_internal_test.go",
         "globalstats_test.go",
         "main_test.go",
         "topn_bench_test.go",
@@ -42,9 +44,10 @@ go_test(
     ],
     embed = [":globalstats"],
     flaky = True,
-    shard_count = 21,
+    shard_count = 26,
     deps = [
         "//pkg/config",
+        "//pkg/domain",
         "//pkg/parser/model",
         "//pkg/parser/mysql",
         "//pkg/sessionctx/stmtctx",

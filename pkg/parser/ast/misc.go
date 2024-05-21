@@ -800,6 +800,8 @@ const (
 	SetNames = "SetNAMES"
 	// SetCharset is the const for set charset stmt.
 	SetCharset = "SetCharset"
+	// TiDBCloudStorageURI is the const for set tidb_cloud_storage_uri stmt.
+	TiDBCloudStorageURI = "tidb_cloud_storage_uri"
 )
 
 // VariableAssignment is a variable assignment struct.
@@ -838,7 +840,10 @@ func (n *VariableAssignment) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteName(n.Name)
 		ctx.WritePlain("=")
 	}
-	if err := n.Value.Restore(ctx); err != nil {
+	if n.Name == TiDBCloudStorageURI && ctx.Flags.HasRestoreWithRedacted() {
+		// need to redact the url for safety when `show processlist;`
+		ctx.WritePlain(RedactURL(n.Value.(ValueExpr).GetString()))
+	} else if err := n.Value.Restore(ctx); err != nil {
 		return errors.Annotate(err, "An error occurred while restore VariableAssignment.Value")
 	}
 	if n.ExtendValue != nil {
@@ -974,6 +979,13 @@ func (n *FlushStmt) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*FlushStmt)
+	for i, t := range n.Tables {
+		node, ok := t.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.Tables[i] = node.(*TableName)
+	}
 	return v.Leave(n)
 }
 
@@ -1107,6 +1119,15 @@ func (n *SetStmt) Accept(v Visitor) (Node, bool) {
 		n.Variables[i] = node.(*VariableAssignment)
 	}
 	return v.Leave(n)
+}
+
+// SecureText implements SensitiveStatement interface.
+// need to redact the tidb_cloud_storage_url for safety when `show processlist;`
+func (n *SetStmt) SecureText() string {
+	redactedStmt := *n
+	var sb strings.Builder
+	_ = redactedStmt.Restore(format.NewRestoreCtx(format.DefaultRestoreFlags|format.RestoreWithRedacted, &sb))
+	return sb.String()
 }
 
 // SetConfigStmt is the statement to set cluster configs.
@@ -3774,7 +3795,7 @@ func (n *TableOptimizerHint) Restore(ctx *format.RestoreCtx) error {
 		hintData := n.HintData.(HintSetVar)
 		ctx.WritePlain(hintData.VarName)
 		ctx.WritePlain(" = ")
-		ctx.WritePlain(hintData.Value)
+		ctx.WriteString(hintData.Value)
 	}
 	ctx.WritePlain(")")
 	return nil

@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/statistics"
+	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -201,7 +202,7 @@ func ExtendedStatsFromStorage(sctx sessionctx.Context, table *statistics.Table, 
 			colIDs := row.GetString(3)
 			err := json.Unmarshal([]byte(colIDs), &item.ColIDs)
 			if err != nil {
-				logutil.BgLogger().Error("decode column IDs failed", zap.String("category", "stats"), zap.String("column_ids", colIDs), zap.Error(err))
+				statslogutil.StatsLogger().Error("decode column IDs failed", zap.String("column_ids", colIDs), zap.Error(err))
 				return nil, err
 			}
 			statsStr := row.GetString(4)
@@ -209,7 +210,7 @@ func ExtendedStatsFromStorage(sctx sessionctx.Context, table *statistics.Table, 
 				if statsStr != "" {
 					item.ScalarVals, err = strconv.ParseFloat(statsStr, 64)
 					if err != nil {
-						logutil.BgLogger().Error("parse scalar stats failed", zap.String("category", "stats"), zap.String("stats", statsStr), zap.Error(err))
+						statslogutil.StatsLogger().Error("parse scalar stats failed", zap.String("stats", statsStr), zap.Error(err))
 						return nil, err
 					}
 				}

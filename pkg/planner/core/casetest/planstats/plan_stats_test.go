@@ -166,13 +166,13 @@ func TestPlanStatsLoad(t *testing.T) {
 		{ // CTE
 			sql: "with cte(x, y) as (select d + 1, b from t where c > 1) select * from cte where x < 3",
 			check: func(p plannercore.Plan, tableInfo *model.TableInfo) {
-				ps, ok := p.(*plannercore.PhysicalSelection)
+				ps, ok := p.(*plannercore.PhysicalProjection)
 				require.True(t, ok)
-				pc, ok := ps.Children()[0].(*plannercore.PhysicalCTE)
+				pc, ok := ps.Children()[0].(*plannercore.PhysicalTableReader)
 				require.True(t, ok)
-				pp, ok := pc.SeedPlan.(*plannercore.PhysicalProjection)
+				pp, ok := pc.GetTablePlan().(*plannercore.PhysicalSelection)
 				require.True(t, ok)
-				reader, ok := pp.Children()[0].(*plannercore.PhysicalTableReader)
+				reader, ok := pp.Children()[0].(*plannercore.PhysicalTableScan)
 				require.True(t, ok)
 				require.Greater(t, countFullStats(reader.StatsInfo().HistColl, tableInfo.Columns[2].ID), 0)
 			},
@@ -284,7 +284,7 @@ func TestPlanStatsLoadTimeout(t *testing.T) {
 	tk.MustExec("set global tidb_stats_load_pseudo_timeout=true")
 	require.NoError(t, failpoint.Enable("github.com/pingcap/executor/assertSyncStatsFailed", `return(true)`))
 	tk.MustExec(sql) // not fail sql for timeout when pseudo=true
-	failpoint.Disable("github.com/pingcap/executor/assertSyncStatsFailed")
+	require.NoError(t, failpoint.Disable("github.com/pingcap/executor/assertSyncStatsFailed"))
 
 	plan, _, err := planner.Optimize(context.TODO(), ctx, stmt, is)
 	require.NoError(t, err) // not fail sql for timeout when pseudo=true
@@ -398,5 +398,50 @@ func TestCollectDependingVirtualCols(t *testing.T) {
 			output[i].OutputColNames = cols
 		})
 		require.Equal(t, output[i].OutputColNames, cols)
+	}
+}
+
+func TestPartialStatsInExplain(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, b int, c int, primary key(a), key idx(b))")
+	tk.MustExec("insert into t values (1,1,1),(2,2,2),(3,3,3)")
+	tk.MustExec("create table t2(a int, primary key(a))")
+	tk.MustExec("insert into t2 values (1),(2),(3)")
+	tk.MustExec(
+		"create table tp(a int, b int, c int, index ic(c)) partition by range(a)" +
+			"(partition p0 values less than (10)," +
+			"partition p1 values less than (20)," +
+			"partition p2 values less than maxvalue)",
+	)
+	tk.MustExec("insert into tp values (1,1,1),(2,2,2),(13,13,13),(14,14,14),(25,25,25),(36,36,36)")
+
+	oriLease := dom.StatsHandle().Lease()
+	dom.StatsHandle().SetLease(1)
+	defer func() {
+		dom.StatsHandle().SetLease(oriLease)
+	}()
+	tk.MustExec("analyze table t")
+	tk.MustExec("analyze table t2")
+	tk.MustExec("analyze table tp")
+	tk.RequireNoError(dom.StatsHandle().Update(dom.InfoSchema()))
+	tk.MustQuery("explain select * from tp where a = 1")
+	tk.MustExec("set @@tidb_stats_load_sync_wait = 0")
+	var (
+		input  []string
+		output []struct {
+			Query  string
+			Result []string
+		}
+	)
+	testData := GetPlanStatsData()
+	testData.LoadTestCases(t, &input, &output)
+	for i, sql := range input {
+		testdata.OnRecord(func() {
+			output[i].Query = input[i]
+			output[i].Result = testdata.ConvertRowsToStrings(tk.MustQuery(sql).Rows())
+		})
+		tk.MustQuery(sql).Check(testkit.Rows(output[i].Result...))
 	}
 }

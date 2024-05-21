@@ -33,6 +33,7 @@ import (
 
 func TestMain(m *testing.M) {
 	server.RunInGoTest = true
+	server.RunInGoTestChan = make(chan struct{})
 	testsetup.SetupForCommonTest()
 	topsqlstate.EnableTopSQL()
 	unistore.CheckResourceTagForTopSQLInGoTest = true

@@ -189,15 +189,14 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	}
 
 	defer func() {
-		// Override the resource group if necessary
-		// TODO: we didn't check the existence of the hinted resource group now to save the cost per query
+		// Override the resource group if the hint is set.
 		if retErr == nil && sessVars.StmtCtx.StmtHints.HasResourceGroup {
 			if variable.EnableResourceControl.Load() {
-				sessVars.ResourceGroupName = sessVars.StmtCtx.StmtHints.ResourceGroup
+				sessVars.StmtCtx.ResourceGroupName = sessVars.StmtCtx.StmtHints.ResourceGroup
 				// if we are in a txn, should update the txn resource name to let the txn
 				// commit with the hint resource group.
 				if txn, err := sctx.Txn(false); err == nil && txn != nil && txn.Valid() {
-					kv.SetTxnResourceGroup(txn, sessVars.ResourceGroupName)
+					kv.SetTxnResourceGroup(txn, sessVars.StmtCtx.ResourceGroupName)
 				}
 			} else {
 				err := infoschema.ErrResourceGroupSupportDisabled
@@ -519,6 +518,8 @@ func optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	if !isLogicalPlan {
 		return p, names, 0, nil
 	}
+
+	core.RecheckCTE(logic)
 
 	// Handle the logical plan statement, use cascades planner if enabled.
 	if sessVars.GetEnableCascadesPlanner() {

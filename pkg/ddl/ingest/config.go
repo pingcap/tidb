@@ -17,11 +17,14 @@ package ingest
 import (
 	"context"
 	"math"
+	"net"
 	"path/filepath"
+	"strconv"
 	"sync/atomic"
 
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
+	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	lightning "github.com/pingcap/tidb/br/pkg/lightning/config"
 	tidb "github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -39,7 +42,7 @@ type Config struct {
 	IsRaftKV2    bool
 }
 
-func genConfig(ctx context.Context, memRoot MemRoot, jobID int64, unique bool, isRaftKV2 bool) (*Config, error) {
+func genConfig(ctx context.Context, memRoot MemRoot, jobID int64, unique bool) (*Config, error) {
 	tidbCfg := tidb.GetGlobalConfig()
 	cfg := lightning.NewConfig()
 	cfg.TikvImporter.Backend = lightning.BackendLocal
@@ -62,7 +65,6 @@ func genConfig(ctx context.Context, memRoot MemRoot, jobID int64, unique bool, i
 	} else {
 		cfg.TikvImporter.DuplicateResolution = lightning.DupeResAlgNone
 	}
-	cfg.TiDB.PdAddr = tidbCfg.Path
 	cfg.TiDB.Host = "127.0.0.1"
 	cfg.TiDB.StatusPort = int(tidbCfg.Status.StatusPort)
 	// Set TLS related information
@@ -75,10 +77,23 @@ func genConfig(ctx context.Context, memRoot MemRoot, jobID int64, unique bool, i
 	c := &Config{
 		Lightning:    cfg,
 		KeyspaceName: tidb.GetGlobalKeyspaceName(),
-		IsRaftKV2:    isRaftKV2,
+		IsRaftKV2:    false,
 	}
 
 	return c, err
+}
+
+// NewDDLTLS creates a common.TLS from the tidb config for DDL.
+func NewDDLTLS() (*common.TLS, error) {
+	tidbCfg := tidb.GetGlobalConfig()
+	hostPort := net.JoinHostPort("127.0.0.1", strconv.Itoa(int(tidbCfg.Status.StatusPort)))
+	return common.NewTLS(
+		tidbCfg.Security.ClusterSSLCA,
+		tidbCfg.Security.ClusterSSLCert,
+		tidbCfg.Security.ClusterSSLKey,
+		hostPort,
+		nil, nil, nil,
+	)
 }
 
 var (

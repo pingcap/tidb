@@ -337,7 +337,7 @@ func TestGetAdjustedConcurrency(t *testing.T) {
 		dataFiles:         genFiles(100),
 	}
 	require.Equal(t, 8, e.getAdjustedConcurrency())
-	e.dataFiles = genFiles(1000)
+	e.dataFiles = genFiles(8000)
 	require.Equal(t, 1, e.getAdjustedConcurrency())
 
 	e.checkHotspot = false

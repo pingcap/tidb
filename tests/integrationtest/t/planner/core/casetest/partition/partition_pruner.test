@@ -283,3 +283,11 @@ analyze table tx2;
 select * from tx1 inner join tx2 on tx1.ID=tx2.ID and tx1.ltype=tx2.ltype where tx2.rid='1';
 explain format='brief' select * from tx1 inner join tx2 on tx1.ID=tx2.ID and tx1.ltype=tx2.ltype where tx2.rid='1';
 
+# Test issue 50206
+create table t (a varchar(255), b int primary key nonclustered, key (a)) partition by key(b) partitions 3;
+insert into t values ('Ab', 1),('abc',2),('BC',3),('AC',4),('BA',5),('cda',6);
+analyze table t;
+# non Fast Plan works!
+select * from t where b = 2 and a like 'abc';
+# Fast plan had a bug
+select * from t where b = 2;

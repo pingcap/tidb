@@ -1593,3 +1593,16 @@ func TestInsertLockUnchangedKeys(t *testing.T) {
 		}
 	}
 }
+
+// see issue: https://github.com/pingcap/tidb/issues/47945
+func TestUnsignedDecimalFloatInsertNegative(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec("create table tf(a float(1, 0) unsigned)")
+	err := tk.ExecToErr("insert into tf values('-100')")
+	require.EqualError(t, err, "[types:1264]Out of range value for column 'a' at row 1")
+	tk.MustExec("set @@sql_mode=''")
+	tk.MustExec("insert into tf values('-100')")
+	tk.MustQuery("select * from tf").Check(testkit.Rows("0"))
+}

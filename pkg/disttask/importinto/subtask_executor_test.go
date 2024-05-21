@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/stretchr/testify/require"
-	"github.com/tikv/client-go/v2/util"
 )
 
 func TestChecksumTable(t *testing.T) {
@@ -40,7 +39,7 @@ func TestChecksumTable(t *testing.T) {
 		return gtk.Session(), nil
 	}, 1, 1, time.Second)
 	defer pool.Close()
-	mgr := storage.NewTaskManager(util.WithInternalSourceType(ctx, "taskManager"), pool)
+	mgr := storage.NewTaskManager(pool)
 
 	taskMeta := &importinto.TaskMeta{
 		Plan: importer.Plan{

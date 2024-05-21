@@ -107,6 +107,9 @@ func (rs *resultReorder) extractHandleCol(lp LogicalPlan) *expression.Column {
 	switch x := lp.(type) {
 	case *LogicalSelection, *LogicalLimit:
 		handleCol := rs.extractHandleCol(lp.Children()[0])
+		if handleCol == nil {
+			return nil // fail to extract handle column from the child, just return nil.
+		}
 		if x.Schema().Contains(handleCol) {
 			// some Projection Operator might be inlined, so check the column again here
 			return handleCol

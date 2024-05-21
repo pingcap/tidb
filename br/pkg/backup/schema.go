@@ -210,6 +210,7 @@ func (s *schemaInfo) calculateChecksum(
 }
 
 func (s *schemaInfo) dumpStatsToJSON(statsHandle *handle.Handle, backupTS uint64) error {
+	log.Info("dump stats to json", zap.Stringer("db", s.dbInfo.Name), zap.Stringer("table", s.tableInfo.Name))
 	jsonTable, err := statsHandle.DumpStatsToJSONBySnapshot(
 		s.dbInfo.Name.String(), s.tableInfo, backupTS, true)
 	if err != nil {

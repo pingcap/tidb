@@ -131,8 +131,8 @@
           "IndexMerge 0.00 root  type: intersection",
           "├─IndexRangeScan(Build) 10.00 cop[tikv] table:t5, index:is1(s1) range:[\"Abc\",\"Abc\"], keep order:false, stats:pseudo",
           "├─IndexRangeScan(Build) 3333.33 cop[tikv] table:t5, index:is2(s2) range:(\"zzz\",+inf], keep order:false, stats:pseudo",
-          "├─IndexRangeScan(Build) 3323.33 cop[tikv] table:t5, index:is3(s3) range:[-inf,\"B啊a\"), keep order:false, stats:pseudo",
-          "├─IndexRangeScan(Build) 10.00 cop[tikv] table:t5, index:is4(s4) range:[\"CcC\",\"CcC\"], keep order:false, stats:pseudo",
+          "├─IndexRangeScan(Build) 3323.33 cop[tikv] table:t5, index:is3(s3) range:[-inf,\"\\x0eJ\\xfb@\\xd5J\\x0e3\"), keep order:false, stats:pseudo",
+          "├─IndexRangeScan(Build) 10.00 cop[tikv] table:t5, index:is4(s4) range:[\"CCC\",\"CCC\"], keep order:false, stats:pseudo",
           "└─TableRowIDScan(Probe) 0.00 cop[tikv] table:t5 keep order:false, stats:pseudo"
         ],
         "Result": [
@@ -144,7 +144,7 @@
         "Plan": [
           "IndexMerge 0.03 root  type: intersection",
           "├─IndexRangeScan(Build) 33.33 cop[tikv] table:t6, index:PRIMARY(s1, s2) range:(\"Abc\" \"zzz\",\"Abc\" +inf], keep order:false, stats:pseudo",
-          "├─IndexRangeScan(Build) 10.00 cop[tikv] table:t6, index:is3(s3) range:[\"A啊a\",\"A啊a\"], keep order:false, stats:pseudo",
+          "├─IndexRangeScan(Build) 10.00 cop[tikv] table:t6, index:is3(s3) range:[\"\\x0e3\\xfb@\\xd5J\\x0e3\",\"\\x0e3\\xfb@\\xd5J\\x0e3\"], keep order:false, stats:pseudo",
           "└─Selection(Probe) 0.03 cop[tikv]  gt(test.t6.s2, \"zzz\"), not(like(test.t6.s4, \"Cd_\", 92))",
           "  └─TableRowIDScan 0.03 cop[tikv] table:t6 keep order:false, stats:pseudo"
         ],
@@ -172,13 +172,14 @@
       {
         "SQL": "select /*+ use_index_merge(t8, primary,is2,is3,is4,is5) */ * from t8 where s1 like '啊A%' and s2 > 'abc' and s3 > 'cba' and s4 in ('aA', '??') and s5 = 'test,2'",
         "Plan": [
-          "Selection 1.42 root  eq(test.t8.s5, \"test,2\")",
-          "└─IndexMerge 0.59 root  type: intersection",
-          "  ├─IndexRangeScan(Build) 3333.33 cop[tikv] table:t8, index:is2(s2) range:(0x616263,+inf], keep order:false, stats:pseudo",
-          "  ├─IndexRangeScan(Build) 3333.33 cop[tikv] table:t8, index:is3(s3) range:(0x636261,+inf], keep order:false, stats:pseudo",
+          "Selection 0.04 root  eq(test.t8.s5, \"test,2\")",
+          "└─IndexMerge 0.06 root  type: intersection",
+          "  ├─IndexRangeScan(Build) 250.00 cop[tikv] table:t8, index:PRIMARY(s1) range:[\"UJ\\x00A\",\"UJ\\x00B\"), keep order:false, stats:pseudo",
+          "  ├─IndexRangeScan(Build) 3333.33 cop[tikv] table:t8, index:is2(s2) range:(\"abc\",+inf], keep order:false, stats:pseudo",
+          "  ├─IndexRangeScan(Build) 3333.33 cop[tikv] table:t8, index:is3(s3) range:(\"cba\",+inf], keep order:false, stats:pseudo",
           "  ├─IndexRangeScan(Build) 20.00 cop[tikv] table:t8, index:is4(s4) range:[\"aA\",\"aA\"], [\"??\",\"??\"], keep order:false, stats:pseudo",
-          "  └─Selection(Probe) 0.59 cop[tikv]  gt(test.t8.s3, \"cba\"), like(test.t8.s1, \"啊A%\", 92)",
-          "    └─TableRowIDScan 2.22 cop[tikv] table:t8 keep order:false, stats:pseudo"
+          "  └─Selection(Probe) 0.06 cop[tikv]  gt(test.t8.s3, \"cba\"), like(test.t8.s1, \"啊A%\", 92)",
+          "    └─TableRowIDScan 0.06 cop[tikv] table:t8 keep order:false, stats:pseudo"
         ],
         "Result": [
           "啊aabbccdd abcc cccc aA tEsT,2"

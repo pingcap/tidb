@@ -208,7 +208,7 @@ func (c *localMppCoordinator) appendMPPDispatchReq(pf *plannercore.Fragment) err
 			return errors.Trace(err)
 		}
 
-		rgName := c.sessionCtx.GetSessionVars().ResourceGroupName
+		rgName := c.sessionCtx.GetSessionVars().StmtCtx.ResourceGroupName
 		if !variable.EnableResourceControl.Load() {
 			rgName = ""
 		}
@@ -668,10 +668,17 @@ func (c *localMppCoordinator) nextImpl(ctx context.Context) (resp *mppResponse, 
 		case resp, ok = <-c.respChan:
 			return
 		case <-ticker.C:
-			if c.vars != nil && c.vars.Killed != nil && atomic.LoadUint32(c.vars.Killed) == 1 {
-				err = derr.ErrQueryInterrupted
-				exit = true
-				return
+			if c.vars != nil && c.vars.Killed != nil {
+				killed := atomic.LoadUint32(c.vars.Killed)
+				if killed != 0 {
+					logutil.Logger(ctx).Info(
+						"a killed signal is received",
+						zap.Uint32("signal", killed),
+					)
+					err = derr.ErrQueryInterrupted
+					exit = true
+					return
+				}
 			}
 		case <-c.finishCh:
 			exit = true

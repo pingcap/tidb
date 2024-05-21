@@ -50,6 +50,7 @@ import (
 	atomic2 "go.uber.org/atomic"
 	"go.uber.org/zap"
 	"golang.org/x/exp/maps"
+	"golang.org/x/sync/singleflight"
 )
 
 const (
@@ -252,18 +253,21 @@ type StatementContext struct {
 	MaxRowID  int64
 
 	// Copied from SessionVars.TimeZone.
-	Priority         mysql.PriorityEnum
-	NotFillCache     bool
-	MemTracker       *memory.Tracker
-	DiskTracker      *disk.Tracker
-	RunawayChecker   *resourcegroup.RunawayChecker
-	IsTiFlash        atomic2.Bool
-	RuntimeStatsColl *execdetails.RuntimeStatsColl
-	TableIDs         []int64
-	IndexNames       []string
-	StmtType         string
-	OriginalSQL      string
-	digestMemo       struct {
+	Priority     mysql.PriorityEnum
+	NotFillCache bool
+	MemTracker   *memory.Tracker
+	DiskTracker  *disk.Tracker
+	// per statement resource group name
+	// hint /* +ResourceGroup(name) */ can change the statement group name
+	ResourceGroupName string
+	RunawayChecker    *resourcegroup.RunawayChecker
+	IsTiFlash         atomic2.Bool
+	RuntimeStatsColl  *execdetails.RuntimeStatsColl
+	TableIDs          []int64
+	IndexNames        []string
+	StmtType          string
+	OriginalSQL       string
+	digestMemo        struct {
 		sync.Once
 		normalized string
 		digest     *parser.Digest
@@ -360,7 +364,7 @@ type StatementContext struct {
 		// NeededItems stores the columns/indices whose stats are needed for planner.
 		NeededItems []model.TableItemID
 		// ResultCh to receive stats loading results
-		ResultCh chan StatsLoadResult
+		ResultCh []<-chan singleflight.Result
 		// LoadStartTime is to record the load start time to calculate latency
 		LoadStartTime time.Time
 	}

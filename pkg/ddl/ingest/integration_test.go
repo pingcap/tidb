@@ -309,3 +309,66 @@ func TestAddIndexIngestMultiSchemaChange(t *testing.T) {
 	tk.MustExec("alter table t add index idx_a(a), add index idx_ab(a, b), add index idx_d(d);")
 	tk.MustExec("admin check table t;")
 }
+
+func TestAddIndexDuplicateMessage(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	defer ingesttestutil.InjectMockBackendMgr(t, store)()
+
+	tk.MustExec("create table t(id int primary key, b int, k int);")
+	tk.MustExec("insert into t values (1, 1, 1);")
+
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
+
+	var runDML bool
+	var errDML error
+
+	ingest.MockExecAfterWriteRow = func() {
+		if runDML {
+			return
+		}
+		_, errDML = tk1.Exec("insert into t values (2, 1, 2);")
+		runDML = true
+	}
+
+	tk.MustGetErrMsg("alter table t add unique index idx(b);", "[kv:1062]Duplicate entry '1' for key 't.idx'")
+
+	require.NoError(t, errDML)
+	require.True(t, runDML)
+	tk.MustExec("admin check table t;")
+	tk.MustQuery("select * from t;").Check(testkit.Rows("1 1 1", "2 1 2"))
+}
+
+func TestMultiSchemaAddIndexMerge(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	defer ingesttestutil.InjectMockBackendMgr(t, store)()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use test")
+
+	for _, createTableSQL := range []string{
+		"create table t (a int, b int);",
+		"create table t (a int, b int) PARTITION BY HASH (`a`) PARTITIONS 4;",
+	} {
+		tk.MustExec("drop table if exists t;")
+		tk.MustExec(createTableSQL)
+		tk.MustExec("insert into t values (1, 1), (2, 2), (3, 3);")
+
+		first := true
+		var tk2Err error
+		ingest.MockExecAfterWriteRow = func() {
+			if !first {
+				return
+			}
+			_, tk2Err = tk2.Exec("insert into t values (4, 4), (5, 5);")
+			first = false
+		}
+		tk.MustExec("alter table t add index idx1(a), add index idx2(b);")
+		require.False(t, first)
+		require.NoError(t, tk2Err)
+		tk.MustExec("admin check table t;")
+	}
+}

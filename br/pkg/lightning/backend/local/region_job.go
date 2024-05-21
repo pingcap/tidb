@@ -219,6 +219,10 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) error {
 		failpoint.Return(err)
 	})
 
+	var cancel context.CancelFunc
+	ctx, cancel = context.WithTimeoutCause(ctx, 15*time.Minute, common.ErrWriteTooSlow)
+	defer cancel()
+
 	apiVersion := local.tikvCodec.GetAPIVersion()
 	clientFactory := local.importClientFactory
 	kvBatchSize := local.KVWriteBatchSize
@@ -303,6 +307,11 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) error {
 			return annotateErr(err, peer, "when open write stream")
 		}
 
+		failpoint.Inject("mockWritePeerErr", func() {
+			err = errors.Errorf("mock write peer error")
+			failpoint.Return(annotateErr(err, peer, "when open write stream"))
+		})
+
 		// Bind uuid for this write request
 		if err = wstream.Send(req); err != nil {
 			return annotateErr(err, peer, "when send meta")
@@ -310,9 +319,10 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) error {
 		clients = append(clients, wstream)
 		allPeers = append(allPeers, peer)
 	}
+	dataCommitTS := j.ingestData.GetTS()
 	req.Chunk = &sst.WriteRequest_Batch{
 		Batch: &sst.WriteBatch{
-			CommitTs: j.ingestData.GetTS(),
+			CommitTs: dataCommitTS,
 		},
 	}
 
@@ -400,7 +410,8 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) error {
 					logutil.Key("endKey", j.keyRange.End),
 					logutil.Key("remainStart", remainingStartKey),
 					logutil.Region(region),
-					logutil.Leader(j.region.Leader))
+					logutil.Leader(j.region.Leader),
+					zap.Uint64("commitTS", dataCommitTS))
 			}
 			break
 		}
