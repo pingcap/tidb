@@ -37,14 +37,15 @@
       [
         "test t  a 0 1 3",
         "test t  a 0 2 2",
-        "test t  a 0 3 1",
-        "test t  a 0 4 1",
         "test t  idx 1 1 3",
-        "test t  idx 1 2 2",
-        "test t  idx 1 3 1",
-        "test t  idx 1 4 1"
+        "test t  idx 1 2 2"
       ],
-      null
+      [
+        "test t  a 0 0 1 1 3 3 0",
+        "test t  a 0 1 2 1 4 4 0",
+        "test t  idx 1 0 1 1 3 3 0",
+        "test t  idx 1 1 2 1 4 4 0"
+      ]
     ]
   }
 ]
