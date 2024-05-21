@@ -958,7 +958,10 @@ func (do *Domain) loadSchemaInLoop(ctx context.Context, lease time.Duration) {
 				logutil.BgLogger().Error("reload schema in loop failed", zap.Error(err))
 			}
 		case _, ok := <-syncer.GlobalVersionCh():
+			st := time.Now()
 			err := do.Reload()
+			logutil.BgLogger().Info("DDL cost analysis",
+				zap.Duration("cost", time.Since(st)), zap.String("call", "loadSchemaInLoop-Reload"))
 			if err != nil {
 				logutil.BgLogger().Error("reload schema in loop failed", zap.Error(err))
 			}
