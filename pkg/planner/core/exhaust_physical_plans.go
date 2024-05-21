@@ -3210,9 +3210,6 @@ func (la *LogicalAggregation) tryToGetMppHashAggs(prop *property.PhysicalPropert
 	if prop.MPPPartitionTp == property.BroadcastType {
 		return nil
 	}
-	if strings.HasPrefix(la.SCtx().GetSessionVars().StmtCtx.OriginalSQL, "explain select 1 from (") {
-		fmt.Println(1)
-	}
 
 	// Is this aggregate a final stage aggregate?
 	// Final agg can't be split into multi-stage aggregate
