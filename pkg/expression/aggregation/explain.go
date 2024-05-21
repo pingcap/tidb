@@ -17,6 +17,7 @@ package aggregation
 import (
 	"bytes"
 	"fmt"
+
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
