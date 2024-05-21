@@ -362,7 +362,7 @@ func BuildHistAndTopN(
 	// now topn is empty: append the "current" count directly
 	if numTopN != 0 {
 		if len(topNList) == 0 {
-			topNList = append(topNList, TopNMeta{Encoded: cur, Count: uint64(curCnt)})
+			topNList = append(topNList, *NewTopNMeta(cur, uint64(curCnt)))
 		} else if len(topNList) < numTopN || uint64(curCnt) > topNList[len(topNList)-1].Count {
 			// now topn is not full, or the "current" count is larger than the least count in the topn: need to find a slot to insert the "current"
 			j := len(topNList)
@@ -373,8 +373,11 @@ func BuildHistAndTopN(
 			}
 			topNList = append(topNList, TopNMeta{})
 			copy(topNList[j+1:], topNList[j:])
-			topNList[j] = TopNMeta{Encoded: cur, Count: uint64(curCnt)}
+			topNList[j] = *NewTopNMeta(cur, uint64(curCnt))
 			if len(topNList) > numTopN {
+				for i := numTopN; i < len(topNList); i++ {
+					topNList[i].DestoryAndPutPool()
+				}
 				topNList = topNList[:numTopN]
 			}
 		}
