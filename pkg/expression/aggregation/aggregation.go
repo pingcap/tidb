@@ -134,6 +134,22 @@ const (
 	DedupMode
 )
 
+func (a AggFunctionMode) ToString() string {
+	switch a {
+	case CompleteMode:
+		return "complete"
+	case FinalMode:
+		return "final"
+	case Partial1Mode:
+		return "partial1"
+	case Partial2Mode:
+		return "partial2"
+	case DedupMode:
+		return "deduplicate"
+	}
+	return ""
+}
+
 type aggFunction struct {
 	*AggFuncDesc
 }

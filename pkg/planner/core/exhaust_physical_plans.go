@@ -3366,6 +3366,9 @@ func (la *LogicalAggregation) tryToGetMppHashAggs(prop *property.PhysicalPropert
 	if prop.MPPPartitionTp == property.BroadcastType {
 		return nil
 	}
+	if strings.HasPrefix(la.SCtx().GetSessionVars().StmtCtx.OriginalSQL, "explain select 1 from (") {
+		fmt.Println(1)
+	}
 
 	// Is this aggregate a final stage aggregate?
 	// Final agg can't be split into multi-stage aggregate
@@ -3381,6 +3384,18 @@ func (la *LogicalAggregation) tryToGetMppHashAggs(prop *property.PhysicalPropert
 				aggFuncs[i].TypeInfer4FinalCount(oldFT)
 			}
 		}
+	}
+	// ref: https://github.com/pingcap/tiflash/blob/3ebb102fba17dce3d990d824a9df93d93f1ab
+	// 766/dbms/src/Flash/Coprocessor/AggregationInterpreterHelper.cpp#L26
+	validMppAgg := func(mppAgg *PhysicalHashAgg) bool {
+		isFinalOrCompleteMode := true
+		for _, one := range mppAgg.AggFuncs {
+			if one.Mode == aggregation.FinalMode || one.Mode == aggregation.CompleteMode {
+				continue
+			}
+			isFinalOrCompleteMode = false
+		}
+		return isFinalOrCompleteMode
 	}
 
 	if len(la.GroupByItems) > 0 {
@@ -3415,7 +3430,9 @@ func (la *LogicalAggregation) tryToGetMppHashAggs(prop *property.PhysicalPropert
 			agg.SetSchema(la.schema.Clone())
 			agg.MppRunMode = Mpp1Phase
 			finalAggAdjust(agg.AggFuncs)
-			hashAggs = append(hashAggs, agg)
+			if validMppAgg(agg) {
+				hashAggs = append(hashAggs, agg)
+			}
 		}
 
 		// Final agg can't be split into multi-stage aggregate, so exit early
@@ -3430,7 +3447,9 @@ func (la *LogicalAggregation) tryToGetMppHashAggs(prop *property.PhysicalPropert
 		agg.SetSchema(la.schema.Clone())
 		agg.MppRunMode = Mpp2Phase
 		agg.MppPartitionCols = partitionCols
-		hashAggs = append(hashAggs, agg)
+		if validMppAgg(agg) {
+			hashAggs = append(hashAggs, agg)
+		}
 
 		// agg runs on TiDB with a partial agg on TiFlash if possible
 		if prop.TaskTp == property.RootTaskType {
