@@ -153,6 +153,11 @@ func newNodeVersions(initialCap int, fn func(map[string]int64) bool) *nodeVersio
 }
 
 func (v *nodeVersions) add(nodeID string, ver int64) {
+	st := time.Now()
+	defer func() {
+		logutil.DDLLogger().Info("DDL cost analysis",
+			zap.Duration("cost", time.Since(st)), zap.String("call", "nodeVersions-add"))
+	}()
 	v.Lock()
 	defer v.Unlock()
 	v.nodeVersions[nodeID] = ver
@@ -564,6 +569,7 @@ func (s *schemaVersionSyncer) handleJobSchemaVerKV(kv *mvccpb.KeyValue, tp mvccp
 	}
 	if tp == mvccpb.PUT {
 		logutil.DDLLogger().Info("SYNC VERSION for job", zap.Int64("job_id", jobID), zap.Int64("version", schemaVer), zap.String("action", "receive-event"))
+		st := time.Now()
 		s.mu.Lock()
 		item, exists := s.jobNodeVersions[jobID]
 		if !exists {
@@ -571,8 +577,11 @@ func (s *schemaVersionSyncer) handleJobSchemaVerKV(kv *mvccpb.KeyValue, tp mvccp
 			s.jobNodeVersions[jobID] = item
 		}
 		s.mu.Unlock()
+		logutil.DDLLogger().Info("DDL cost analysis",
+			zap.Duration("cost", time.Since(st)), zap.String("call", "handleJobSchemaVerKV-get-item"))
 		item.add(tidbID, schemaVer)
 	} else { // DELETE
+		st := time.Now()
 		s.mu.Lock()
 		if item, exists := s.jobNodeVersions[jobID]; exists {
 			item.del(tidbID)
@@ -581,6 +590,8 @@ func (s *schemaVersionSyncer) handleJobSchemaVerKV(kv *mvccpb.KeyValue, tp mvccp
 			}
 		}
 		s.mu.Unlock()
+		logutil.DDLLogger().Info("DDL cost analysis",
+			zap.Duration("cost", time.Since(st)), zap.String("call", "handleJobSchemaVerKV-delete-item"))
 	}
 }
 
