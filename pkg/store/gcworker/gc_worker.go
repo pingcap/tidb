@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/label"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
@@ -424,10 +425,10 @@ func (w *GCWorker) leaderTick(ctx context.Context) error {
 }
 
 func (w *GCWorker) isNeedToWait() bool {
-	//if config.GetGlobalConfig().EnableGCFastStart {
-	return time.Since(w.lastFinish) < gcWaitTime && w.isFirstTickFinished
-	//}
-	//return time.Since(w.lastFinish) < gcWaitTime
+	if config.GetGlobalConfig().EnableGCFastStart {
+		return time.Since(w.lastFinish) < gcWaitTime && w.isFirstTickFinished
+	}
+	return time.Since(w.lastFinish) < gcWaitTime
 }
 
 func (w *GCWorker) runKeyspaceGCJob(ctx context.Context, concurrency int) error {
