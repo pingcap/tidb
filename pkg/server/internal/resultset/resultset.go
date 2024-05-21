@@ -18,7 +18,6 @@ import (
 	"context"
 	"sync/atomic"
 
-	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/server/internal/column"
 	"github.com/pingcap/tidb/pkg/types"
@@ -31,12 +30,11 @@ type ResultSet interface {
 	Columns() []*column.Info
 	NewChunk(chunk.Allocator) *chunk.Chunk
 	Next(context.Context, *chunk.Chunk) error
-	Close()
+	Close() error
 	// IsClosed checks whether the result set is closed.
 	IsClosed() bool
 	FieldTypes() []*types.FieldType
 	SetPreparedStmt(stmt *core.PlanCacheStmt)
-	Finish() error
 }
 
 var _ ResultSet = &tidbResultSet{}
@@ -71,12 +69,13 @@ func (trs *tidbResultSet) Finish() error {
 	return nil
 }
 
-func (trs *tidbResultSet) Close() {
+func (trs *tidbResultSet) Close() error {
 	if !atomic.CompareAndSwapInt32(&trs.closed, 0, 1) {
-		return
+		return nil
 	}
-	terror.Call(trs.recordSet.Close)
+	err := trs.recordSet.Close()
 	trs.recordSet = nil
+	return err
 }
 
 // IsClosed implements ResultSet.IsClosed interface.

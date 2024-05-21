@@ -182,31 +182,13 @@ func (a *recordSet) NewChunk(alloc chunk.Allocator) *chunk.Chunk {
 	return alloc.Alloc(a.executor.RetFieldTypes(), a.executor.InitCap(), a.executor.MaxChunkSize())
 }
 
-func (a *recordSet) Finish() error {
-	var err error
-	a.once.Do(func() {
-		err = exec.Close(a.executor)
-		cteErr := resetCTEStorageMap(a.stmt.Ctx)
-		if cteErr != nil {
-			logutil.BgLogger().Error("got error when reset cte storage, should check if the spill disk file deleted or not", zap.Error(cteErr))
-		}
-		if err == nil {
-			err = cteErr
-		}
-	})
-	if err != nil {
-		a.lastErrs = append(a.lastErrs, err)
-	}
-	return err
-}
-
 func (a *recordSet) Close() error {
-	err := a.Finish()
+	err := exec.Close(a.executor)
+	err1 := a.stmt.CloseRecordSet(a.txnStartTS, errors.Join(a.lastErrs...))
 	if err != nil {
-		logutil.BgLogger().Error("close recordSet error", zap.Error(err))
+		return err
 	}
-	a.stmt.CloseRecordSet(a.txnStartTS, errors.Join(a.lastErrs...))
-	return err
+	return err1
 }
 
 // OnFetchReturned implements commandLifeCycle#OnFetchReturned
@@ -1465,10 +1447,19 @@ func (a *ExecStmt) checkPlanReplayerCapture(txnTS uint64) {
 }
 
 // CloseRecordSet will finish the execution of current statement and do some record work
-func (a *ExecStmt) CloseRecordSet(txnStartTS uint64, lastErr error) {
+func (a *ExecStmt) CloseRecordSet(txnStartTS uint64, lastErr error) error {
+	cteErr := resetCTEStorageMap(a.Ctx)
+	if cteErr != nil {
+		logutil.BgLogger().Error("got error when reset cte storage, should check if the spill disk file deleted or not", zap.Error(cteErr))
+	}
+	if lastErr == nil {
+		// Only overwrite err when it's nil.
+		lastErr = cteErr
+	}
 	a.FinishExecuteStmt(txnStartTS, lastErr, false)
 	a.logAudit()
 	a.Ctx.GetSessionVars().StmtCtx.DetachMemDiskTracker()
+	return cteErr
 }
 
 // Clean CTE storage shared by different CTEFullScan executor within a SQL stmt.
