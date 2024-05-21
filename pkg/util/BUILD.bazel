@@ -3,7 +3,7 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "util",
     srcs = [
-        "conncurrency_controller.go",
+        "concurrency_controller.go",
         "cpu_posix.go",
         "cpu_windows.go",
         "errors.go",
