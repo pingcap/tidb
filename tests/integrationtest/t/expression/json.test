@@ -359,19 +359,6 @@ select json_extract('[{"a": [1,2,3,4]}]', '$[0].a[1 to 100]');
 select json_extract('[{"a": [1,2,3,4]}]', '$[0].a[0 to last]');
 select json_extract('[{"a": [1,2,3,4]}]', '$[0].a[0 to 2]');
 
-<<<<<<< HEAD
-=======
-# TestCastJSONStringToInteger
-drop table if exists t;
-create table t (a json);
-insert into t values ('"-1"');
-insert into t values ('"18446744073709551615"');
-insert into t values ('"18446744073709552000"');
--- sorted_result
-select a, cast(a as unsigned) from t;
--- sorted_result
-select a, cast(a as signed) from t;
-
 # TestCastBinaryStringToJSON
 select cast(binary 'aa' as json);
 drop table if exists t;
@@ -384,4 +371,3 @@ select 1 from t where cast(vc as json) = '1';
 select 1 from t where cast(c as json) = '1';
 select 1 from t where cast(BINARY vc as json) = '1';
 select 1 from t where cast(BINARY c as json) = '1';
->>>>>>> 661f6d61aee (json: don't resize slice to get extra zero when the length is unspecified (#51586))
