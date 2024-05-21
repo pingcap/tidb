@@ -424,7 +424,8 @@ func (s *schemaVersionSyncer) OwnerCheckAllVersions(ctx context.Context, job *mo
 
 		// Check all schema versions.
 		if variable.EnableMDL.Load() {
-			notifyCh := make(chan struct{})
+			notifyCh := make(chan struct{}, 1)
+			var sent atomic.Bool
 			var unmatchedNodeID atomic.Pointer[string]
 			matchFn := func(nodeVersions map[string]int64) bool {
 				if len(nodeVersions) < len(updatedMap) {
@@ -437,7 +438,10 @@ func (s *schemaVersionSyncer) OwnerCheckAllVersions(ctx context.Context, job *mo
 						return false
 					}
 				}
-				close(notifyCh)
+				if !sent.Load() {
+					notifyCh <- struct{}{}
+					sent.Store(true)
+				}
 				return true
 			}
 			item := s.jobSchemaVerMatchOrSet(job, matchFn)
