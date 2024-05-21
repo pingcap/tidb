@@ -1836,4 +1836,3 @@ func checkMPPInExplain(t *testing.T, tk *testkit.TestKit, sql string) {
 	res := resBuff.String()
 	require.Contains(t, res, "mpp[tiflash]")
 }
-
