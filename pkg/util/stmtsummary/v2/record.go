@@ -197,7 +197,7 @@ func NewStmtRecord(info *stmtsummary.StmtExecInfo) *StmtRecord {
 			binPlan = plancodec.BinaryPlanDiscardedEncoded
 		}
 	}
-	additionalInfo := config.GetGlobalConfig().Instance.StmtSummaryAdditionalInfo
+	additionalInfo := config.GetGlobalConfig().StmtSummaryAdditionalInfo
 	return &StmtRecord{
 		SchemaName:    info.SchemaName,
 		Digest:        info.Digest,

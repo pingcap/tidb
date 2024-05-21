@@ -242,6 +242,8 @@ type Config struct {
 	// key will be the default value of the session variable `txn_scope` for this tidb-server.
 	Labels map[string]string `toml:"labels" json:"labels"`
 
+	// StmtSummaryAdditionalInfo will be recorded in the stmtsummary when Instance.StmtSummaryEnablePersistent is true.
+	StmtSummaryAdditionalInfo map[string]string `toml:"stmt-summary-additional-info" json:"stmt-summary-additional-info"`
 	// EnableGlobalIndex is deprecated.
 	EnableGlobalIndex bool `toml:"enable-global-index" json:"enable-global-index"`
 
@@ -536,8 +538,6 @@ type Instance struct {
 	// StmtSummaryFileMaxBackups indicates the maximum number of files written
 	// by stmtsummary when StmtSummaryEnablePersistent is true.
 	StmtSummaryFileMaxBackups int `toml:"tidb_stmt_summary_file_max_backups" json:"tidb_stmt_summary_file_max_backups"`
-	// StmtSummaryAdditionalInfo will be recorded in the stmtsummary when StmtSummaryEnablePersistent is true.
-	StmtSummaryAdditionalInfo map[string]string `toml:"tidb_stmt_summar_additional_info" json:"tidb_stmt_summary_additional_info"`
 
 	// These variables exist in both 'instance' section and another place.
 	// The configuration in 'instance' section takes precedence.

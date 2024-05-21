@@ -26,7 +26,7 @@ func TestStmtRecord(t *testing.T) {
 		"key": "value",
 	}
 	config.UpdateGlobal(func(conf *config.Config) {
-		conf.Instance.StmtSummaryAdditionalInfo = testAdditionalInfo
+		conf.StmtSummaryAdditionalInfo = testAdditionalInfo
 	})
 
 	info := GenerateStmtExecInfo4Test("digest1")
