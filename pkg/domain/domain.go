@@ -225,6 +225,11 @@ func (do *Domain) EtcdClient() *clientv3.Client {
 // 4. the changed table IDs if it is not full load
 // 5. an error if any
 func (do *Domain) loadInfoSchema(startTS uint64) (infoschema.InfoSchema, bool, int64, *transaction.RelatedSchemaChange, error) {
+	st := time.Now()
+	defer func() {
+		logutil.BgLogger().Info("DDL cost analysis",
+			zap.Duration("cost", time.Since(st)), zap.String("call", "loadInfoSchema"))
+	}()
 	beginTime := time.Now()
 	defer func() {
 		infoschema_metrics.LoadSchemaDurationTotal.Observe(time.Since(beginTime).Seconds())
@@ -449,6 +454,11 @@ func (*Domain) fetchSchemasWithTables(schemas []*model.DBInfo, m *meta.Meta, don
 // Return false if the schema can not be loaded by schema diff, then we need to do full load.
 // The second returned value is the delta updated table and partition IDs.
 func (do *Domain) tryLoadSchemaDiffs(m *meta.Meta, usedVersion, newVersion int64, startTS uint64) (infoschema.InfoSchema, *transaction.RelatedSchemaChange, []string, error) {
+	st := time.Now()
+	defer func() {
+		logutil.BgLogger().Info("DDL cost analysis",
+			zap.Duration("cost", time.Since(st)), zap.String("call", "tryLoadSchemaDiffs"))
+	}()
 	var diffs []*model.SchemaDiff
 	for usedVersion < newVersion {
 		usedVersion++
@@ -593,6 +603,11 @@ func getFlashbackStartTSFromErrorMsg(err error) uint64 {
 // Reload reloads InfoSchema.
 // It's public in order to do the test.
 func (do *Domain) Reload() error {
+	st := time.Now()
+	defer func() {
+		logutil.BgLogger().Info("DDL cost analysis",
+			zap.Duration("cost", time.Since(st)), zap.String("call", "DomainReload"))
+	}()
 	failpoint.Inject("ErrorMockReloadFailed", func(val failpoint.Value) {
 		if val.(bool) {
 			failpoint.Return(errors.New("mock reload failed"))
@@ -789,6 +804,11 @@ func (do *Domain) topologySyncerKeeper() {
 }
 
 func (do *Domain) refreshMDLCheckTableInfo() {
+	st := time.Now()
+	defer func() {
+		logutil.BgLogger().Info("DDL cost analysis",
+			zap.Duration("cost", time.Since(st)), zap.String("call", "refreshMDLCheckTableInfo"))
+	}()
 	se, err := do.sysSessionPool.Get()
 
 	if err != nil {
@@ -837,6 +857,7 @@ func (do *Domain) mdlCheckLoop() {
 			return
 		}
 
+		st := time.Now()
 		if !variable.EnableMDL.Load() {
 			continue
 		}
@@ -901,6 +922,8 @@ func (do *Domain) mdlCheckLoop() {
 				jobCache[jobID] = ver
 			}
 		}
+		logutil.BgLogger().Info("DDL cost analysis",
+			zap.Duration("cost", time.Since(st)), zap.String("call", "mdlCheckUpdate"))
 	}
 }
 

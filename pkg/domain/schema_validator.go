@@ -130,6 +130,11 @@ func (s *schemaValidator) Reset() {
 }
 
 func (s *schemaValidator) Update(leaseGrantTS uint64, oldVer, currVer int64, change *transaction.RelatedSchemaChange) {
+	st := time.Now()
+	defer func() {
+		logutil.BgLogger().Info("DDL cost analysis",
+			zap.Duration("cost", time.Since(st)), zap.String("call", "schemaValidatorUpdate"))
+	}()
 	s.mux.Lock()
 	defer s.mux.Unlock()
 
