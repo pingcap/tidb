@@ -103,7 +103,7 @@ func checkColumnStatsUsageForStatsLoad(t *testing.T, is infoschema.InfoSchema, l
 
 func TestSkipSystemTables(t *testing.T) {
 	sql := "select * from mysql.stats_meta where a > 1"
-	res := []string{"stats_meta.a"}
+	res := []string{}
 	s := createPlannerSuite()
 	defer s.Close()
 	ctx := context.Background()
