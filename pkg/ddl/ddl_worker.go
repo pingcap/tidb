@@ -1471,7 +1471,7 @@ func waitSchemaChanged(d *ddlCtx, waitTime time.Duration, latestSchemaVersion in
 			return nil
 		}
 	}
-
+	logutil.DDLLogger().Info("SYNC VERSION for job", zap.Int64("job_id", job.ID), zap.Int64("version", latestSchemaVersion), zap.String("action", "update-global"))
 	return checkAllVersions(d, job, latestSchemaVersion, timeStart)
 }
 
