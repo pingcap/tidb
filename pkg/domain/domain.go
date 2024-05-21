@@ -869,73 +869,77 @@ func (do *Domain) mdlCheckLoop() {
 			return
 		}
 
-		st := time.Now()
-		if !variable.EnableMDL.Load() {
-			continue
-		}
-
-		do.mdlCheckTableInfo.mu.Lock()
-		maxVer := do.mdlCheckTableInfo.newestVer
-		if maxVer > saveMaxSchemaVersion {
-			saveMaxSchemaVersion = maxVer
-		} else if !jobNeedToSync {
-			// Schema doesn't change, and no job to check in the last run.
-			do.mdlCheckTableInfo.mu.Unlock()
-			continue
-		}
-
-		jobNeedToCheckCnt := len(do.mdlCheckTableInfo.jobsVerMap)
-		if jobNeedToCheckCnt == 0 {
-			jobNeedToSync = false
-			do.mdlCheckTableInfo.mu.Unlock()
-			continue
-		}
-
-		jobsVerMap := make(map[int64]int64, len(do.mdlCheckTableInfo.jobsVerMap))
-		jobsIDsMap := make(map[int64]string, len(do.mdlCheckTableInfo.jobsIDsMap))
-		for k, v := range do.mdlCheckTableInfo.jobsVerMap {
-			jobsVerMap[k] = v
-		}
-		for k, v := range do.mdlCheckTableInfo.jobsIDsMap {
-			jobsIDsMap[k] = v
-		}
-		do.mdlCheckTableInfo.mu.Unlock()
-
-		jobNeedToSync = true
-
-		sm := do.InfoSyncer().GetSessionManager()
-		if sm == nil {
-			logutil.BgLogger().Info("session manager is nil")
-		} else {
-			sm.CheckOldRunningTxn(jobsVerMap, jobsIDsMap)
-		}
-
-		if len(jobsVerMap) == jobNeedToCheckCnt {
-			jobNeedToSync = false
-		}
-
-		// Try to gc jobCache.
-		if len(jobCache) > 1000 {
-			jobCache = make(map[int64]int64, 1000)
-		}
-
-		for jobID, ver := range jobsVerMap {
-			if cver, ok := jobCache[jobID]; ok && cver >= ver {
-				// Already update, skip it.
-				continue
+		func() {
+			st := time.Now()
+			defer func() {
+				logutil.BgLogger().Info("DDL cost analysis",
+					zap.Duration("cost", time.Since(st)), zap.String("call", "mdlCheckUpdate"))
+			}()
+			if !variable.EnableMDL.Load() {
+				return
 			}
-			logutil.BgLogger().Info("mdl gets lock, update self version to owner", zap.Int64("jobID", jobID), zap.Int64("version", ver))
-			err := do.ddl.SchemaSyncer().UpdateSelfVersion(context.Background(), jobID, ver)
-			if err != nil {
-				jobNeedToSync = true
-				logutil.BgLogger().Warn("mdl gets lock, update self version to owner failed",
-					zap.Int64("jobID", jobID), zap.Int64("version", ver), zap.Error(err))
+
+			do.mdlCheckTableInfo.mu.Lock()
+			maxVer := do.mdlCheckTableInfo.newestVer
+			if maxVer > saveMaxSchemaVersion {
+				saveMaxSchemaVersion = maxVer
+			} else if !jobNeedToSync {
+				// Schema doesn't change, and no job to check in the last run.
+				do.mdlCheckTableInfo.mu.Unlock()
+				return
+			}
+
+			jobNeedToCheckCnt := len(do.mdlCheckTableInfo.jobsVerMap)
+			if jobNeedToCheckCnt == 0 {
+				jobNeedToSync = false
+				do.mdlCheckTableInfo.mu.Unlock()
+				return
+			}
+
+			jobsVerMap := make(map[int64]int64, len(do.mdlCheckTableInfo.jobsVerMap))
+			jobsIDsMap := make(map[int64]string, len(do.mdlCheckTableInfo.jobsIDsMap))
+			for k, v := range do.mdlCheckTableInfo.jobsVerMap {
+				jobsVerMap[k] = v
+			}
+			for k, v := range do.mdlCheckTableInfo.jobsIDsMap {
+				jobsIDsMap[k] = v
+			}
+			do.mdlCheckTableInfo.mu.Unlock()
+
+			jobNeedToSync = true
+
+			sm := do.InfoSyncer().GetSessionManager()
+			if sm == nil {
+				logutil.BgLogger().Info("session manager is nil")
 			} else {
-				jobCache[jobID] = ver
+				sm.CheckOldRunningTxn(jobsVerMap, jobsIDsMap)
 			}
-		}
-		logutil.BgLogger().Info("DDL cost analysis",
-			zap.Duration("cost", time.Since(st)), zap.String("call", "mdlCheckUpdate"))
+
+			if len(jobsVerMap) == jobNeedToCheckCnt {
+				jobNeedToSync = false
+			}
+
+			// Try to gc jobCache.
+			if len(jobCache) > 1000 {
+				jobCache = make(map[int64]int64, 1000)
+			}
+
+			for jobID, ver := range jobsVerMap {
+				if cver, ok := jobCache[jobID]; ok && cver >= ver {
+					// Already update, skip it.
+					continue
+				}
+				logutil.BgLogger().Info("mdl gets lock, update self version to owner", zap.Int64("jobID", jobID), zap.Int64("version", ver))
+				err := do.ddl.SchemaSyncer().UpdateSelfVersion(context.Background(), jobID, ver)
+				if err != nil {
+					jobNeedToSync = true
+					logutil.BgLogger().Warn("mdl gets lock, update self version to owner failed",
+						zap.Int64("jobID", jobID), zap.Int64("version", ver), zap.Error(err))
+				} else {
+					jobCache[jobID] = ver
+				}
+			}
+		}()
 	}
 }
 
