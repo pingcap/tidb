@@ -75,6 +75,7 @@ func (m *mockBackupBackupSender) SendAsync(
 	request backuppb.BackupRequest,
 	cli backuppb.BackupClient,
 	respCh chan *backup.ResponseAndStore,
+	StateNotifier chan backup.BackupRetryPolicy,
 ) {
 	go func() {
 		defer func() {

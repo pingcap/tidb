@@ -37,7 +37,8 @@ type BackupSender interface {
 		storeID uint64,
 		request backuppb.BackupRequest,
 		cli backuppb.BackupClient,
-		respCh chan *ResponseAndStore)
+		respCh chan *ResponseAndStore,
+		StateNotifier chan BackupRetryPolicy)
 }
 
 type ResponseAndStore struct {

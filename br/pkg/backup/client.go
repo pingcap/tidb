@@ -77,9 +77,7 @@ type MainBackupLoop struct {
 	GetBackupClientCallBack func(ctx context.Context, storeID uint64) (backuppb.BackupClient, error)
 }
 
-type MainBackupSender struct {
-	StateNotifier chan BackupRetryPolicy
-}
+type MainBackupSender struct{}
 
 func (s *MainBackupSender) SendAsync(
 	ctx context.Context,
@@ -88,6 +86,7 @@ func (s *MainBackupSender) SendAsync(
 	request backuppb.BackupRequest,
 	cli backuppb.BackupClient,
 	respCh chan *ResponseAndStore,
+	StateNotifier chan BackupRetryPolicy,
 ) {
 	go func() {
 		defer func() {
@@ -108,7 +107,7 @@ func (s *MainBackupSender) SendAsync(
 				logutil.CL(ctx).Error("store backup failed",
 					zap.Uint64("round", round),
 					zap.Uint64("storeID", storeID), zap.Error(err))
-				s.StateNotifier <- BackupRetryPolicy{One: storeID}
+				StateNotifier <- BackupRetryPolicy{One: storeID}
 			}
 		}
 	}()
@@ -222,7 +221,7 @@ mainLoop:
 			}
 			ch := make(chan *ResponseAndStore)
 			storeBackupResultChMap[storeID] = ch
-			loop.SendAsync(mainCtx, round, storeID, loop.BackupReq, cli, ch)
+			loop.SendAsync(mainCtx, round, storeID, loop.BackupReq, cli, ch, loop.StateNotifier)
 		}
 		// infinite loop to collect region backup response to global channel
 		loop.CollectStoreBackupsAsync(handleCtx, round, storeBackupResultChMap, globalBackupResultCh)
@@ -275,7 +274,7 @@ mainLoop:
 
 					storeBackupResultChMap[storeID] = ch
 					// start backup for this store
-					loop.SendAsync(mainCtx, round, storeID, loop.BackupReq, cli, ch)
+					loop.SendAsync(mainCtx, round, storeID, loop.BackupReq, cli, ch, loop.StateNotifier)
 					// re-create context for new handler loop
 					handleCtx, handleCancel = context.WithCancel(mainCtx)
 					// handleCancel makes the former collect goroutine exits
