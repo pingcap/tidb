@@ -426,7 +426,7 @@ func TestStalenessAndHistoryRead(t *testing.T) {
 }
 
 func TestTimeBoundedStalenessTxn(t *testing.T) {
-	store := testkit.CreateMockStore(t)
+	store, _ := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -489,7 +489,14 @@ func TestTimeBoundedStalenessTxn(t *testing.T) {
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/expression/injectSafeTS"))
 	require.NoError(t, failpoint.Disable("tikvclient/injectSafeTS"))
 
-	tk.MustExec(`drop table if exists t`)
+	//ver, err := store.CurrentVersion(kv.GlobalTxnScope)
+	//require.NoError(t, err)
+	//version := ver.Ver
+	//err = dom.FullReload(version)
+	//require.NoError(t, err)
+
+	//tk.MustExec(`drop table if exists t`)
+	tk.MustExec(`drop view sys.schema_unused_indexes;`)
 }
 
 func TestStalenessTransactionSchemaVer(t *testing.T) {
