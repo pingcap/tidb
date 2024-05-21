@@ -857,7 +857,6 @@ func (do *Domain) refreshMDLCheckTableInfo() {
 func (do *Domain) mdlCheckLoop() {
 	ticker := time.Tick(mdlCheckLookDuration)
 	var saveMaxSchemaVersion int64
-	jobNeedToSync := false
 	jobCache := make(map[int64]int64, 1000)
 
 	for {
@@ -883,15 +882,10 @@ func (do *Domain) mdlCheckLoop() {
 			maxVer := do.mdlCheckTableInfo.newestVer
 			if maxVer > saveMaxSchemaVersion {
 				saveMaxSchemaVersion = maxVer
-			} else if !jobNeedToSync {
-				// Schema doesn't change, and no job to check in the last run.
-				do.mdlCheckTableInfo.mu.Unlock()
-				return
 			}
 
 			jobNeedToCheckCnt := len(do.mdlCheckTableInfo.jobsVerMap)
 			if jobNeedToCheckCnt == 0 {
-				jobNeedToSync = false
 				do.mdlCheckTableInfo.mu.Unlock()
 				return
 			}
@@ -906,8 +900,6 @@ func (do *Domain) mdlCheckLoop() {
 			}
 			do.mdlCheckTableInfo.mu.Unlock()
 
-			jobNeedToSync = true
-
 			sm := do.InfoSyncer().GetSessionManager()
 			if sm == nil {
 				logutil.BgLogger().Info("session manager is nil")
@@ -915,14 +907,10 @@ func (do *Domain) mdlCheckLoop() {
 				sm.CheckOldRunningTxn(jobsVerMap, jobsIDsMap)
 			}
 
-			if len(jobsVerMap) == jobNeedToCheckCnt {
-				jobNeedToSync = false
-			}
-
 			// Try to gc jobCache.
-			if len(jobCache) > 1000 {
-				jobCache = make(map[int64]int64, 1000)
-			}
+			//if len(jobCache) > 1000 {
+			//	jobCache = make(map[int64]int64, 1000)
+			//}
 
 			for jobID, ver := range jobsVerMap {
 				if cver, ok := jobCache[jobID]; ok && cver >= ver {
@@ -932,7 +920,6 @@ func (do *Domain) mdlCheckLoop() {
 				logutil.BgLogger().Info("mdl gets lock, update self version to owner", zap.Int64("jobID", jobID), zap.Int64("version", ver))
 				err := do.ddl.SchemaSyncer().UpdateSelfVersion(context.Background(), jobID, ver)
 				if err != nil {
-					jobNeedToSync = true
 					logutil.BgLogger().Warn("mdl gets lock, update self version to owner failed",
 						zap.Int64("jobID", jobID), zap.Int64("version", ver), zap.Error(err))
 				} else {
