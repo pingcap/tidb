@@ -29,6 +29,7 @@ remaining_row_count=$(( ${uniq_row_count} + ${duplicated_row_count}/2 ))
 
 run_sql 'DROP TABLE IF EXISTS mytest.testtbl'
 run_sql 'DROP TABLE IF EXISTS lightning_task_info.conflict_error_v3'
+run_sql 'DROP VIEW IF EXISTS lightning_task_info.conflict_view'
 
 stderr_file="/tmp/${TEST_NAME}.stderr"
 
@@ -57,6 +58,7 @@ check_contains "COUNT(*): ${duplicated_row_count}"
 
 run_sql 'DROP TABLE IF EXISTS mytest.testtbl'
 run_sql 'DROP TABLE IF EXISTS lightning_task_info.conflict_error_v3'
+run_sql 'DROP VIEW IF EXISTS lightning_task_info.conflict_view'
 
 run_lightning --backend local --config "${mydir}/normal_config.toml"
 
@@ -71,6 +73,7 @@ check_contains "COUNT(*): ${remaining_row_count}"
 
 run_sql 'DROP TABLE IF EXISTS mytest.testtbl'
 run_sql 'DROP TABLE IF EXISTS lightning_task_info.conflict_error_v3'
+run_sql 'DROP VIEW IF EXISTS lightning_task_info.conflict_view'
 
 run_lightning --backend local --config "${mydir}/normal_config_old_style.toml"
 
@@ -83,12 +86,14 @@ check_contains "COUNT(*): ${remaining_row_count}"
 
 # import a fourth time
 run_sql 'DROP TABLE IF EXISTS lightning_task_info.conflict_records'
+run_sql 'DROP VIEW IF EXISTS lightning_task_info.conflict_view'
 ! run_lightning --backend local --config "${mydir}/ignore_config.toml"
 [ $? -eq 0 ]
 tail -n 10 $TEST_DIR/lightning.log | grep "ERROR" | tail -n 1 | grep -Fq "[Lightning:Config:ErrInvalidConfig]conflict.strategy cannot be set to \\\"ignore\\\" when use tikv-importer.backend = \\\"local\\\""
 
 # Check tidb backend record duplicate entry in conflict_records table
 run_sql 'DROP TABLE IF EXISTS lightning_task_info.conflict_records'
+run_sql 'DROP VIEW IF EXISTS lightning_task_info.conflict_view'
 run_lightning --backend tidb --config "${mydir}/tidb.toml"
 run_sql 'SELECT COUNT(*) FROM lightning_task_info.conflict_records'
 check_contains "COUNT(*): 15"
@@ -99,7 +104,7 @@ check_contains "row_data: ('5','bbb05')"
 # Check max-error-record can limit the size of conflict_records table
 run_sql 'DROP DATABASE IF EXISTS lightning_task_info'
 run_sql 'DROP DATABASE IF EXISTS mytest'
-run_lightning --backend tidb --config "${mydir}/tidb-limit-record.toml" 2>&1 | grep "\`lightning_task_info\`.\`conflict_records\`" | grep -q "5"
+run_lightning --backend tidb --config "${mydir}/tidb-limit-record.toml" 2>&1 | grep "\`lightning_task_info\`.\`conflict_view\`" | grep -q "5"
 run_sql 'SELECT COUNT(*) FROM lightning_task_info.conflict_records'
 check_contains "COUNT(*): 5"
 
