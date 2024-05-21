@@ -300,7 +300,7 @@ func BuildHistAndTopN(
 	// Step1: collect topn from samples
 
 	// the topNList is always sorted by count from more to less
-	topNList := make([]TopNMeta, 0, numTopN)
+	topNList := make([]*TopNMeta, 0, numTopN)
 	cur, err := getComparedBytes(samples[0].Value)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
@@ -328,7 +328,7 @@ func BuildHistAndTopN(
 		// case 2, meet a different value: counting for the "current" is complete
 		// case 2-1, now topn is empty: append the "current" count directly
 		if len(topNList) == 0 {
-			topNList = append(topNList, TopNMeta{Encoded: cur, Count: uint64(curCnt)})
+			topNList = append(topNList, NewTopNMeta(cur, uint64(curCnt)))
 			cur, curCnt = sampleBytes, 1
 			continue
 		}
@@ -344,9 +344,9 @@ func BuildHistAndTopN(
 				break
 			}
 		}
-		topNList = append(topNList, TopNMeta{})
+		topNList = append(topNList, NewEmptyTopNMeta())
 		copy(topNList[j+1:], topNList[j:])
-		topNList[j] = TopNMeta{Encoded: cur, Count: uint64(curCnt)}
+		topNList[j] = NewTopNMeta(cur, uint64(curCnt))
 		if len(topNList) > numTopN {
 			topNList = topNList[:numTopN]
 		}
@@ -371,7 +371,7 @@ func BuildHistAndTopN(
 					break
 				}
 			}
-			topNList = append(topNList, TopNMeta{})
+			topNList = append(topNList, NewEmptyTopNMeta())
 			copy(topNList[j+1:], topNList[j:])
 			topNList[j] = NewTopNMeta(cur, uint64(curCnt))
 			if len(topNList) > numTopN {
@@ -456,7 +456,7 @@ func BuildHistAndTopN(
 // pruneTopNItem tries to prune the least common values in the top-n list if it is not significantly more common than the values not in the list.
 //
 //	We assume that the ones not in the top-n list's selectivity is 1/remained_ndv which is the internal implementation of EqualRowCount
-func pruneTopNItem(topns []TopNMeta, ndv, nullCount, sampleRows, totalRows int64) []TopNMeta {
+func pruneTopNItem(topns []*TopNMeta, ndv, nullCount, sampleRows, totalRows int64) []*TopNMeta {
 	// If the sampleRows holds all rows, or NDV of samples equals to actual NDV, we just return the TopN directly.
 	if sampleRows == totalRows || totalRows <= 1 || int64(len(topns)) >= ndv || len(topns) == 0 {
 		return topns

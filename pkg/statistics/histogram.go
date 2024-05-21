@@ -345,7 +345,7 @@ func (hg *Histogram) BinarySearchRemoveVal(valCntPairs TopNMeta) {
 
 // RemoveVals remove the given values from the histogram.
 // This function contains an **ASSUMPTION**: valCntPairs is sorted in ascending order.
-func (hg *Histogram) RemoveVals(valCntPairs []TopNMeta) {
+func (hg *Histogram) RemoveVals(valCntPairs []*TopNMeta) {
 	totalSubCnt := int64(0)
 	var cmpResult int
 	for bktIdx, pairIdx := 0, 0; bktIdx < hg.Len(); bktIdx++ {
@@ -1160,7 +1160,7 @@ func (hg *Histogram) ExtractTopN(cms *CMSketch, topN *TopN, numCols int, numTopN
 	if len(dataCnts) > int(numTopN) {
 		dataCnts = dataCnts[:numTopN]
 	}
-	topN.TopN = make([]TopNMeta, 0, len(dataCnts))
+	topN.TopN = make([]*TopNMeta, 0, len(dataCnts))
 	for _, dataCnt := range dataCnts {
 		h1, h2 := murmur3.Sum128(dataCnt.data)
 		realCnt := cms.queryHashValue(nil, h1, h2)
@@ -1417,7 +1417,7 @@ func (t *TopNMeta) buildBucket4Merging(d *types.Datum) *bucket4Merging {
 }
 
 // MergePartitionHist2GlobalHist merges hists (partition-level Histogram) to a global-level Histogram
-func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histogram, popedTopN []TopNMeta, expBucketNumber int64, isIndex bool) (*Histogram, error) {
+func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histogram, popedTopN []*TopNMeta, expBucketNumber int64, isIndex bool) (*Histogram, error) {
 	var totCount, totNull, bucketNumber, totColSize int64
 	if expBucketNumber == 0 {
 		return nil, errors.Errorf("expBucketNumber can not be zero")

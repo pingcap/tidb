@@ -505,7 +505,7 @@ func (a *AsyncMergePartitionStats2GlobalStats) dealHistogramAndTopN(stmtCtx *stm
 				return nil
 			}
 			var err error
-			var poppedTopN []statistics.TopNMeta
+			var poppedTopN []*statistics.TopNMeta
 			var allhg []*statistics.Histogram
 			wrapper := item.item
 			a.globalStats.TopN[item.idx], poppedTopN, allhg, err = mergeGlobalStatsTopN(a.statsHandle.GPool(), sctx, wrapper,

@@ -29,7 +29,7 @@ import (
 
 func mergeGlobalStatsTopN(gp *gp.Pool, sc sessionctx.Context, wrapper *StatsWrapper,
 	timeZone *time.Location, version int, n uint32, isIndex bool) (*statistics.TopN,
-	[]statistics.TopNMeta, []*statistics.Histogram, error) {
+	[]*statistics.TopNMeta, []*statistics.Histogram, error) {
 	if statistics.CheckEmptyTopNs(wrapper.AllTopN) {
 		return nil, nil, wrapper.AllHg, nil
 	}
@@ -64,7 +64,7 @@ func MergeGlobalStatsTopNByConcurrency(
 	isIndex bool,
 	killer *sqlkiller.SQLKiller,
 ) (*statistics.TopN,
-	[]statistics.TopNMeta, []*statistics.Histogram, error) {
+	[]*statistics.TopNMeta, []*statistics.Histogram, error) {
 	if len(wrapper.AllTopN) < mergeConcurrency {
 		mergeConcurrency = len(wrapper.AllTopN)
 	}
@@ -112,10 +112,10 @@ func MergeGlobalStatsTopNByConcurrency(
 	// fetch the response from each worker and merge them into global topn stats
 	counter := worker.Result()
 	numTop := len(counter)
-	sorted := make([]statistics.TopNMeta, 0, numTop)
+	sorted := make([]*statistics.TopNMeta, 0, numTop)
 	for value, cnt := range counter {
 		data := hack.Slice(string(value))
-		sorted = append(sorted, statistics.TopNMeta{Encoded: data, Count: uint64(cnt)})
+		sorted = append(sorted, statistics.NewTopNMeta(data, uint64(cnt)))
 	}
 	globalTopN, popedTopn := statistics.GetMergedTopNFromSortedSlice(sorted, n)
 	return globalTopN, popedTopn, wrapper.AllHg, nil
@@ -144,7 +144,7 @@ func MergePartTopN2GlobalTopN(
 	hists []*statistics.Histogram,
 	isIndex bool,
 	killer *sqlkiller.SQLKiller,
-) (*statistics.TopN, []statistics.TopNMeta, []*statistics.Histogram, error) {
+) (*statistics.TopN, []*statistics.TopNMeta, []*statistics.Histogram, error) {
 	partNum := len(topNs)
 	// Different TopN structures may hold the same value, we have to merge them.
 	counter := make(map[hack.MutableString]float64)
@@ -204,10 +204,10 @@ func MergePartTopN2GlobalTopN(
 	if numTop == 0 {
 		return nil, nil, hists, nil
 	}
-	sorted := make([]statistics.TopNMeta, 0, numTop)
+	sorted := make([]*statistics.TopNMeta, 0, numTop)
 	for value, cnt := range counter {
 		data := hack.Slice(string(value))
-		sorted = append(sorted, statistics.TopNMeta{Encoded: data, Count: uint64(cnt)})
+		sorted = append(sorted, statistics.NewTopNMeta(data, uint64(cnt)))
 	}
 	globalTopN, leftTopN := statistics.GetMergedTopNFromSortedSlice(sorted, n)
 	return globalTopN, leftTopN, hists, nil

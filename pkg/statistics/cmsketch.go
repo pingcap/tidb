@@ -343,7 +343,7 @@ func (c *CMSketch) queryHashValue(sctx context.PlanContext, h1, h2 uint64) (resu
 }
 
 // MergeTopNAndUpdateCMSketch merges the src TopN into the dst, and spilled values will be inserted into the CMSketch.
-func MergeTopNAndUpdateCMSketch(dst, src *TopN, c *CMSketch, numTop uint32) []TopNMeta {
+func MergeTopNAndUpdateCMSketch(dst, src *TopN, c *CMSketch, numTop uint32) []*TopNMeta {
 	topNs := []*TopN{src, dst}
 	mergedTopN, popedTopNPair := MergeTopN(topNs, numTop)
 	if mergedTopN == nil {
@@ -535,7 +535,7 @@ func (c *CMSketch) CalcDefaultValForAnalyze(ndv uint64) {
 
 // TopN stores most-common values, which is used to estimate point queries.
 type TopN struct {
-	TopN []TopNMeta
+	TopN []*TopNMeta
 }
 
 // Scale scales the TopN by the given factor.
@@ -550,7 +550,7 @@ func (c *TopN) AppendTopN(data []byte, count uint64) {
 	if c == nil {
 		return
 	}
-	c.TopN = append(c.TopN, TopNMeta{data, count})
+	c.TopN = append(c.TopN, NewTopNMeta(data, count))
 }
 
 func (c *TopN) String() string {
@@ -611,11 +611,9 @@ func (c *TopN) Copy() *TopN {
 	if c == nil {
 		return nil
 	}
-	topN := make([]TopNMeta, len(c.TopN))
+	topN := make([]*TopNMeta, len(c.TopN))
 	for i, t := range c.TopN {
-		topN[i].Encoded = make([]byte, len(t.Encoded))
-		copy(topN[i].Encoded, t.Encoded)
-		topN[i].Count = t.Count
+		topN[i] = NewTopNMeta(t.Encoded, t.Count)
 	}
 	return &TopN{
 		TopN: topN,
@@ -637,12 +635,18 @@ type TopNMeta struct {
 	Count   uint64
 }
 
-// NewTopNMeta creates a new TopNMeta.
-func NewTopNMeta(encoded []byte, count uint64) TopNMeta {
+// NewEmptyTopNMeta creates a new empty TopNMeta.
+func NewEmptyTopNMeta() *TopNMeta {
 	topn := topNMetaPool.Get().(*TopNMeta)
-	topn.Encoded = append(topn.Encoded[:0], encoded...)
+	return topn
+}
+
+// NewTopNMeta creates a new TopNMeta.
+func NewTopNMeta(encoded []byte, count uint64) *TopNMeta {
+	topn := topNMetaPool.Get().(*TopNMeta)
+	topn.Encoded = append(topn.Encoded, encoded...)
 	topn.Count = count
-	return *topn
+	return topn
 }
 
 // DestoryAndPutPool resets the TopNMeta and puts it back to the pool.
@@ -695,7 +699,7 @@ func (c *TopN) FindTopN(d []byte) int {
 	if bytes.Compare(c.TopN[0].Encoded, d) > 0 {
 		return -1
 	}
-	idx, match := slices.BinarySearchFunc(c.TopN, d, func(a TopNMeta, b []byte) int {
+	idx, match := slices.BinarySearchFunc(c.TopN, d, func(a *TopNMeta, b []byte) int {
 		return bytes.Compare(a.Encoded, b)
 	})
 	if !match {
@@ -710,7 +714,7 @@ func (c *TopN) LowerBound(d []byte) (idx int, match bool) {
 	if c == nil {
 		return 0, false
 	}
-	idx, match = slices.BinarySearchFunc(c.TopN, d, func(a TopNMeta, b []byte) int {
+	idx, match = slices.BinarySearchFunc(c.TopN, d, func(a *TopNMeta, b []byte) int {
 		return bytes.Compare(a.Encoded, b)
 	})
 	return idx, match
@@ -746,7 +750,7 @@ func (c *TopN) Sort() {
 	if c == nil {
 		return
 	}
-	slices.SortFunc(c.TopN, func(i, j TopNMeta) int {
+	slices.SortFunc(c.TopN, func(i, j *TopNMeta) int {
 		return bytes.Compare(i.Encoded, j.Encoded)
 	})
 }
@@ -828,14 +832,14 @@ func (c *TopN) updateTopNWithDelta(d []byte, delta uint64, increase bool) bool {
 
 // NewTopN creates the new TopN struct by the given size.
 func NewTopN(n int) *TopN {
-	return &TopN{TopN: make([]TopNMeta, 0, n)}
+	return &TopN{TopN: make([]*TopNMeta, 0, n)}
 }
 
 // MergeTopN is used to merge more TopN structures to generate a new TopN struct by the given size.
 // The input parameters are multiple TopN structures to be merged and the size of the new TopN that will be generated.
 // The output parameters are the newly generated TopN structure and the remaining numbers.
 // Notice: The n can be 0. So n has no default value, we must explicitly specify this value.
-func MergeTopN(topNs []*TopN, n uint32) (*TopN, []TopNMeta) {
+func MergeTopN(topNs []*TopN, n uint32) (*TopN, []*TopNMeta) {
 	if CheckEmptyTopNs(topNs) {
 		return nil, nil
 	}
@@ -853,10 +857,10 @@ func MergeTopN(topNs []*TopN, n uint32) (*TopN, []TopNMeta) {
 	if numTop == 0 {
 		return nil, nil
 	}
-	sorted := make([]TopNMeta, 0, numTop)
+	sorted := make([]*TopNMeta, 0, numTop)
 	for value, cnt := range counter {
 		data := hack.Slice(string(value))
-		sorted = append(sorted, TopNMeta{Encoded: data, Count: cnt})
+		sorted = append(sorted, NewTopNMeta(data, cnt))
 	}
 	return GetMergedTopNFromSortedSlice(sorted, n)
 }
@@ -872,8 +876,8 @@ func CheckEmptyTopNs(topNs []*TopN) bool {
 }
 
 // SortTopnMeta sort topnMeta
-func SortTopnMeta(topnMetas []TopNMeta) {
-	slices.SortFunc(topnMetas, func(i, j TopNMeta) int {
+func SortTopnMeta(topnMetas []*TopNMeta) {
+	slices.SortFunc(topnMetas, func(i, j *TopNMeta) int {
 		if i.Count != j.Count {
 			return cmp.Compare(j.Count, i.Count)
 		}
@@ -882,7 +886,7 @@ func SortTopnMeta(topnMetas []TopNMeta) {
 }
 
 // TopnMetaCompare compare topnMeta
-func TopnMetaCompare(i, j TopNMeta) int {
+func TopnMetaCompare(i, j *TopNMeta) int {
 	c := cmp.Compare(j.Count, i.Count)
 	if c != 0 {
 		return c
@@ -891,7 +895,7 @@ func TopnMetaCompare(i, j TopNMeta) int {
 }
 
 // GetMergedTopNFromSortedSlice returns merged topn
-func GetMergedTopNFromSortedSlice(sorted []TopNMeta, n uint32) (*TopN, []TopNMeta) {
+func GetMergedTopNFromSortedSlice(sorted []*TopNMeta, n uint32) (*TopN, []*TopNMeta) {
 	SortTopnMeta(sorted)
 	n = min(uint32(len(sorted)), n)
 
