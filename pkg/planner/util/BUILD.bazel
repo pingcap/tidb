@@ -17,6 +17,12 @@ go_library(
         "//pkg/parser/ast",
         "//pkg/parser/model",
         "//pkg/planner/context",
+<<<<<<< HEAD
+=======
+        "//pkg/planner/core/base",
+        "//pkg/sessionctx/stmtctx",
+        "//pkg/tablecodec",
+>>>>>>> 61a29811293 (Optimizer: Fix null filtering logic for IN list (#53370))
         "//pkg/types",
         "//pkg/util/collate",
         "//pkg/util/ranger",
