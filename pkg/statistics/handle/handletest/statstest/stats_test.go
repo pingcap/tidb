@@ -368,6 +368,9 @@ func initStatsVer2(t *testing.T, isConcurrency bool) {
 		require.Equal(t, uint8(0x33), cols[1].LastAnalyzePos.GetBytes()[0])
 		require.Equal(t, uint8(0x33), cols[2].LastAnalyzePos.GetBytes()[0])
 		require.Equal(t, uint8(0x33), cols[3].LastAnalyzePos.GetBytes()[0])
+		idx := table0.Indices
+		require.Equal(t, uint8(0x3), idx[1].LastAnalyzePos.GetBytes()[0])
+		require.Equal(t, uint8(0x3), idx[2].LastAnalyzePos.GetBytes()[0])
 	}
 	h.Clear()
 	require.NoError(t, h.InitStats(is))
