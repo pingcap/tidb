@@ -297,15 +297,6 @@ func BuildHistAndTopN(
 	// As we use samples to build the histogram, the bucket number and repeat should multiply a factor.
 	sampleFactor := float64(count) / float64(len(samples))
 
-	// If ndv < numBuckets, collect them all as topN
-	collectAll := false
-	if ndv <= int64(numBuckets) {
-		if ndv > int64(numTopN) {
-			numTopN = numBuckets
-		}
-		collectAll = true
-	}
-
 	// Step1: collect topn from samples
 
 	// the topNList is always sorted by count from more to less
@@ -335,8 +326,8 @@ func BuildHistAndTopN(
 			continue
 		}
 		// case 2, meet a different value: counting for the "current" is complete
-		// case 2-1, do not add a count of 1
-		if curCnt == 1 && !collectAll {
+		// case 2-1, do not add a count of 1 if we're sampling
+		if curCnt == 1 && sampleFactor > 1 {
 			cur, curCnt = sampleBytes, 1
 			continue
 		}
@@ -374,7 +365,7 @@ func BuildHistAndTopN(
 
 	// Handle the counting for the last value. Basically equal to the case 2 above.
 	// now topn is empty: append the "current" count directly
-	if numTopN != 0 && (collectAll || curCnt > 1) {
+	if numTopN != 0 && (sampleFactor <= 1 || curCnt > 1) {
 		if len(topNList) == 0 {
 			topNList = append(topNList, TopNMeta{Encoded: cur, Count: uint64(curCnt)})
 		} else if len(topNList) < numTopN || uint64(curCnt) > topNList[len(topNList)-1].Count {
