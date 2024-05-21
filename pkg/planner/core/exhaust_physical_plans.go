@@ -3229,14 +3229,18 @@ func (la *LogicalAggregation) tryToGetMppHashAggs(prop *property.PhysicalPropert
 	// ref: https://github.com/pingcap/tiflash/blob/3ebb102fba17dce3d990d824a9df93d93f1ab
 	// 766/dbms/src/Flash/Coprocessor/AggregationInterpreterHelper.cpp#L26
 	validMppAgg := func(mppAgg *PhysicalHashAgg) bool {
-		isFinalOrCompleteMode := true
-		for _, one := range mppAgg.AggFuncs {
-			if one.Mode == aggregation.FinalMode || one.Mode == aggregation.CompleteMode {
-				continue
-			}
-			isFinalOrCompleteMode = false
+		isFinalAgg := true
+		if mppAgg.AggFuncs[0].Mode != aggregation.FinalMode && mppAgg.AggFuncs[0].Mode != aggregation.CompleteMode {
+			isFinalAgg = false
 		}
-		return isFinalOrCompleteMode
+		for _, one := range mppAgg.AggFuncs[1:] {
+			otherIsFinalAgg := one.Mode == aggregation.FinalMode || one.Mode == aggregation.CompleteMode
+			if isFinalAgg != otherIsFinalAgg {
+				// different agg mode detected in mpp side.
+				return false
+			}
+		}
+		return true
 	}
 
 	if len(la.GroupByItems) > 0 {
