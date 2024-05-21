@@ -123,6 +123,7 @@ go_test(
         "//pkg/parser",
         "//pkg/parser/ast",
         "//pkg/parser/model",
+        "//pkg/sessionctx/stmtctx",
         "//pkg/store/driver/error",
         "//pkg/store/mockstore",
         "//pkg/testkit/testsetup",
