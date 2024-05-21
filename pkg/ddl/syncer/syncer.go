@@ -333,6 +333,7 @@ func (s *schemaVersionSyncer) UpdateSelfVersion(ctx context.Context, jobID int64
 			clientv3.WithLease(s.loadSession().Lease()))
 	}
 
+	logutil.DDLLogger().Info("SYNC VERSION for job", zap.Int64("job_id", jobID), zap.Int64("version", version), zap.String("action", "write-pd"))
 	metrics.UpdateSelfVersionHistogram.WithLabelValues(metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
 	return errors.Trace(err)
 }
@@ -562,6 +563,7 @@ func (s *schemaVersionSyncer) handleJobSchemaVerKV(kv *mvccpb.KeyValue, tp mvccp
 		return
 	}
 	if tp == mvccpb.PUT {
+		logutil.DDLLogger().Info("SYNC VERSION for job", zap.Int64("job_id", jobID), zap.Int64("version", schemaVer), zap.String("action", "receive-event"))
 		s.mu.Lock()
 		item, exists := s.jobNodeVersions[jobID]
 		if !exists {
