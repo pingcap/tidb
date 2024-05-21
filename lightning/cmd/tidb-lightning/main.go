@@ -123,8 +123,7 @@ func main() {
 		}
 	}
 
-	// For the server mode, we should exit with error code 1 when the server is importing data.
-	if err != nil || (!globalCfg.App.ServerMode && !finished) {
+	if err != nil || (globalCfg.App.ServerMode && !finished) {
 		exit(1)
 	}
 }
