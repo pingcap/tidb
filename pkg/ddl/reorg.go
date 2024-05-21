@@ -29,6 +29,8 @@ import (
 	sess "github.com/pingcap/tidb/pkg/ddl/internal/session"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/distsql"
+	exprctx "github.com/pingcap/tidb/pkg/expression/context"
+	"github.com/pingcap/tidb/pkg/expression/contextstatic"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/metrics"
@@ -71,6 +73,19 @@ type reorgCtx struct {
 	}
 
 	references atomicutil.Int32
+}
+
+func newReorgExprCtx() exprctx.ExprContext {
+	evalCtx := contextstatic.NewStaticEvalContext(
+		contextstatic.WithSQLMode(mysql.ModeNone),
+		contextstatic.WithTypeFlags(types.DefaultStmtFlags),
+		contextstatic.WithErrLevelMap(stmtctx.DefaultStmtErrLevels),
+	)
+
+	return contextstatic.NewStaticExprContext(
+		contextstatic.WithEvalCtx(evalCtx),
+		contextstatic.WithUseCache(false),
+	)
 }
 
 func newReorgSessCtx(store kv.Storage) sessionctx.Context {
@@ -601,16 +616,15 @@ func (dc *ddlCtx) GetTableMaxHandle(ctx *JobContext, startTS uint64, tbl table.P
 		// empty table
 		return nil, true, nil
 	}
-	sessCtx := newReorgSessCtx(dc.store)
 	row := chk.GetRow(0)
 	if tblInfo.IsCommonHandle {
-		maxHandle, err = buildCommonHandleFromChunkRow(sessCtx.GetSessionVars().StmtCtx, tblInfo, pkIdx, handleCols, row)
+		maxHandle, err = buildCommonHandleFromChunkRow(time.UTC, tblInfo, pkIdx, handleCols, row)
 		return maxHandle, false, err
 	}
 	return kv.IntHandle(row.GetInt64(0)), false, nil
 }
 
-func buildCommonHandleFromChunkRow(sctx *stmtctx.StatementContext, tblInfo *model.TableInfo, idxInfo *model.IndexInfo,
+func buildCommonHandleFromChunkRow(loc *time.Location, tblInfo *model.TableInfo, idxInfo *model.IndexInfo,
 	cols []*model.ColumnInfo, row chunk.Row) (kv.Handle, error) {
 	fieldTypes := make([]*types.FieldType, 0, len(cols))
 	for _, col := range cols {
@@ -620,8 +634,7 @@ func buildCommonHandleFromChunkRow(sctx *stmtctx.StatementContext, tblInfo *mode
 	tablecodec.TruncateIndexValues(tblInfo, idxInfo, datumRow)
 
 	var handleBytes []byte
-	handleBytes, err := codec.EncodeKey(sctx.TimeZone(), nil, datumRow...)
-	err = sctx.HandleError(err)
+	handleBytes, err := codec.EncodeKey(loc, nil, datumRow...)
 	if err != nil {
 		return nil, err
 	}

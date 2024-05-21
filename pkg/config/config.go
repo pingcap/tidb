@@ -97,6 +97,8 @@ const (
 	DefAuthTokenRefreshInterval = time.Hour
 	// EnvVarKeyspaceName is the system env name for keyspace name.
 	EnvVarKeyspaceName = "KEYSPACE_NAME"
+	// MaxTokenLimit is the max token limit value.
+	MaxTokenLimit = 1024 * 1024
 )
 
 // Valid config maps
@@ -1275,6 +1277,8 @@ func (c *Config) Load(confFile string) error {
 	}
 	if c.TokenLimit == 0 {
 		c.TokenLimit = 1000
+	} else if c.TokenLimit > MaxTokenLimit {
+		c.TokenLimit = MaxTokenLimit
 	}
 	// If any items in confFile file are not mapped into the Config struct, issue
 	// an error and stop the server from starting.

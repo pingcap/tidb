@@ -50,8 +50,7 @@ a	MIN(b)	MAX(b)
 1	11	11
 3	NULL	NULL
 drop table if exists t;
-create table t (a int, b int, c int);
-alter table t add index idx(a, b, c);
+create table t (a int, b int, c int, index idx(a, b, c));
 select count(a) from t group by a;
 count(a)
 select count(a) from t;
