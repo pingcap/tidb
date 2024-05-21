@@ -77,7 +77,11 @@ type MainBackupLoop struct {
 	GetBackupClientCallBack func(ctx context.Context, storeID uint64) (backuppb.BackupClient, error)
 }
 
-func (l *MainBackupLoop) SendAsync(
+type MainBackupSender struct {
+	StateNotifier chan BackupRetryPolicy
+}
+
+func (s *MainBackupSender) SendAsync(
 	ctx context.Context,
 	round uint64,
 	storeID uint64,
@@ -104,7 +108,7 @@ func (l *MainBackupLoop) SendAsync(
 				logutil.CL(ctx).Error("store backup failed",
 					zap.Uint64("round", round),
 					zap.Uint64("storeID", storeID), zap.Error(err))
-				l.StateNotifier <- BackupRetryPolicy{One: storeID}
+				s.StateNotifier <- BackupRetryPolicy{One: storeID}
 			}
 		}
 	}()
@@ -1047,6 +1051,9 @@ func (bc *Client) BackupRanges(
 	ObserveStoreChangesAsync(ctx, stateNotifier, bc.mgr.GetPDClient())
 
 	mainBackupLoop := &MainBackupLoop{
+		BackupSender: &MainBackupSender{
+			StateNotifier: stateNotifier,
+		},
 		BackupReq:          request,
 		GlobalProgressTree: &globalProgressTree,
 		ReplicaReadLabel:   replicaReadLabel,
