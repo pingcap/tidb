@@ -3753,3 +3753,29 @@ func checkGlobalAndPK(t *testing.T, tk *testkit.TestKit, name string, indexes in
 		require.True(t, idxInfo.Primary)
 	}
 }
+func TestReorgPartFailures(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t (c int) partition by range(c) (
+			partition p0 values less than (100),
+			partition p1 values less than (200))`)
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/reorgPartNoneCancel", `return(true)`))
+	tk.MustContainErrMsg(`alter table t reorganize partition p1 into (partition pNoneC values less than (150), partition p2 values less than (300))`, "Injected error by reorgPartNoneCancel")
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/reorgPartNoneCancel"))
+	tt := external.GetTableByName(t, tk, "test", "t")
+	partition := tt.Meta().Partition
+	require.Equal(t, 2, len(partition.Definitions))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/reorgPartNoneRollback", `return(true)`))
+	tk.MustContainErrMsg(`alter table t reorganize partition p1 into (partition pNoneR values less than (150), partition p2 values less than (300))`, "Injected error by reorgPartNoneRollback")
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/reorgPartNoneRollback"))
+	tt = external.GetTableByName(t, tk, "test", "t")
+	partition = tt.Meta().Partition
+	require.Equal(t, 2, len(partition.Definitions))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/reorgPartDeleteOnlyRetry", `return(true)`))
+	tk.MustContainErrMsg(`alter table t reorganize partition p1 into (partition pRetry values less than (150), partition p2 values less than (300))`, "Injected error by reorgPartDeleteOnlyRetry")
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/reorgPartDeleteOnlyRetry"))
+	tt = external.GetTableByName(t, tk, "test", "t")
+	partition = tt.Meta().Partition
+	require.Equal(t, 2, len(partition.Definitions))
+}

@@ -2964,6 +2964,12 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 				tblInfo.Indices = append(tblInfo.Indices, &newIndex)
 			}
 		}
+		failpoint.Inject("reorgPartNoneCancel", func(val failpoint.Value) {
+			if val.(bool) {
+				job.State = model.JobStateCancelled
+				failpoint.Return(ver, errors.New("Injected error by reorgPartNoneCancel"))
+			}
+		})
 		// From now on we cannot just cancel the DDL, we must roll back if changesMade!
 		changesMade := false
 		if tblInfo.TiFlashReplica != nil {
@@ -3006,7 +3012,7 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 		if err != nil {
 			if !changesMade {
 				job.State = model.JobStateCancelled
-				return ver, err
+				return ver, errors.Trace(err)
 			}
 			return convertAddTablePartitionJob2RollbackJob(d, t, job, err, tblInfo)
 		}
@@ -3024,8 +3030,18 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 		tblInfo.Partition.DDLState = model.StateDeleteOnly
 		ver, err = updateVersionAndTableInfoWithCheck(d, t, job, tblInfo, true)
 		if err != nil {
-			return ver, errors.Trace(err)
+			return ver, err
 		}
+		failpoint.Inject("reorgPartNoneRollback", func(val failpoint.Value) {
+			if val.(bool) {
+				err = errors.New("Injected error by reorgPartNoneRollback")
+				if changesMade {
+					failpoint.Return(convertAddTablePartitionJob2RollbackJob(d, t, job, err, tblInfo))
+				}
+				job.State = model.JobStateCancelled
+				failpoint.Return(ver, err)
+			}
+		})
 
 		// Is really both StateDeleteOnly AND StateWriteOnly needed?
 		// If transaction A in WriteOnly inserts row 1 (into both new and old partition set)
@@ -3058,6 +3074,12 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 				// partitions before!
 				return convertAddTablePartitionJob2RollbackJob(d, t, job, err, tblInfo)
 			}
+			failpoint.Inject("reorgPartDeleteOnlyRetry", func(val failpoint.Value) {
+				if val.(bool) {
+					err = errors.New("Injected error by reorgPartDeleteOnlyRetry")
+					failpoint.Return(ver, err)
+				}
+			})
 			if needRetry {
 				// The new added partition hasn't been replicated.
 				// Do nothing to the job this time, wait next worker round.
@@ -3082,6 +3104,12 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 		metrics.GetBackfillProgressByLabel(metrics.LblReorgPartition, job.SchemaName, tblInfo.Name.String()).Set(0.2 / float64(math.MaxUint64))
 		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, true)
 		job.SchemaState = model.StateWriteOnly
+		failpoint.Inject("reorgPartWriteOnlyFail", func(val failpoint.Value) {
+			if val.(bool) {
+				//failpoint.Return(convertAddTablePartitionJob2RollbackJob(d, t, job, err, tblInfo))
+				failpoint.Return(ver, errors.New("Injected error by reorgPartWriteOnlyFail"))
+			}
+		})
 	case model.StateWriteOnly:
 		// Insert this state to confirm all servers can see the new partitions when reorg is running,
 		// so that new data will be updated in both old and new partitions when reorganizing.
