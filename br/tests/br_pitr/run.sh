@@ -107,8 +107,9 @@ check_contains "restore log success summary"
 check_not_contains "rewrite delete range"
 echo "" > $res_file
 echo "check sql result"
-run_sql "select count(*) DELETE_RANGE_CNT from (select * from mysql.gc_delete_range union all select * from mysql.gc_delete_range_done) del_range group by ts order by DELETE_RANGE_CNT desc limit 1;"
-expect_delete_range=$(($incremental_delete_range_count-$prepare_delete_range_count))
+run_sql "select * from mysql.gc_delete_range"
+run_sql "select * from mysql.gc_delete_range_done"
+run_sql "select count(*) DELETE_RANGE_CNT from (select distinct start_key, end_key, ts from (select * from mysql.gc_delete_range union all select * from mysql.gc_delete_range_done)) del_range group by ts order by DELETE_RANGE_CNT desc limit 1;"expect_delete_range=$(($incremental_delete_range_count-$prepare_delete_range_count))
 check_contains "DELETE_RANGE_CNT: $expect_delete_range"
 ## check feature compatibility between PITR and accelerate indexing
 bash $CUR/check/check_ingest_repair.sh
