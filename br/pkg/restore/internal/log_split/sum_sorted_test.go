@@ -29,6 +29,7 @@ func TestSumSorted(t *testing.T) {
 	cases := []struct {
 		values []logsplit.Valued
 		result []uint64
+		strs   []string
 	}{
 		{
 			values: []logsplit.Valued{
@@ -37,6 +38,11 @@ func TestSumSorted(t *testing.T) {
 				v("d", "g", mb(100)),
 			},
 			result: []uint64{0, 250, 25, 75, 50, 0},
+			strs: []string{
+				"([61, 66), 100.00 MB, 100)",
+				"([61, 63), 200.00 MB, 200)",
+				"([64, 67), 100.00 MB, 100)",
+			},
 		},
 		{
 			values: []logsplit.Valued{
@@ -45,6 +51,11 @@ func TestSumSorted(t *testing.T) {
 				v("d", "f", mb(100)),
 			},
 			result: []uint64{0, 250, 25, 125, 0},
+			strs: []string{
+				"([61, 66), 100.00 MB, 100)",
+				"([61, 63), 200.00 MB, 200)",
+				"([64, 66), 100.00 MB, 100)",
+			},
 		},
 		{
 			values: []logsplit.Valued{
@@ -53,6 +64,11 @@ func TestSumSorted(t *testing.T) {
 				v("c", "f", mb(100)),
 			},
 			result: []uint64{0, 250, 150, 0},
+			strs: []string{
+				"([61, 66), 100.00 MB, 100)",
+				"([61, 63), 200.00 MB, 200)",
+				"([63, 66), 100.00 MB, 100)",
+			},
 		},
 		{
 			values: []logsplit.Valued{
@@ -62,6 +78,12 @@ func TestSumSorted(t *testing.T) {
 				v("da", "db", mb(100)),
 			},
 			result: []uint64{0, 250, 50, 150, 50, 0},
+			strs: []string{
+				"([61, 66), 100.00 MB, 100)",
+				"([61, 63), 200.00 MB, 200)",
+				"([63, 66), 100.00 MB, 100)",
+				"([6461, 6462), 100.00 MB, 100)",
+			},
 		},
 		{
 			values: []logsplit.Valued{
@@ -72,6 +94,13 @@ func TestSumSorted(t *testing.T) {
 				v("cb", "db", mb(100)),
 			},
 			result: []uint64{0, 250, 25, 75, 200, 50, 0},
+			strs: []string{
+				"([61, 66), 100.00 MB, 100)",
+				"([61, 63), 200.00 MB, 200)",
+				"([63, 66), 100.00 MB, 100)",
+				"([6461, 6462), 100.00 MB, 100)",
+				"([6362, 6462), 100.00 MB, 100)",
+			},
 		},
 		{
 			values: []logsplit.Valued{
@@ -82,6 +111,13 @@ func TestSumSorted(t *testing.T) {
 				v("cb", "f", mb(150)),
 			},
 			result: []uint64{0, 250, 25, 75, 200, 100, 0},
+			strs: []string{
+				"([61, 66), 100.00 MB, 100)",
+				"([61, 63), 200.00 MB, 200)",
+				"([63, 66), 100.00 MB, 100)",
+				"([6461, 6462), 100.00 MB, 100)",
+				"([6362, 66), 150.00 MB, 150)",
+			},
 		},
 		{
 			values: []logsplit.Valued{
@@ -92,6 +128,13 @@ func TestSumSorted(t *testing.T) {
 				v("cb", "df", mb(150)),
 			},
 			result: []uint64{0, 250, 25, 75, 200, 75, 25, 0},
+			strs: []string{
+				"([61, 66), 100.00 MB, 100)",
+				"([61, 63), 200.00 MB, 200)",
+				"([63, 66), 100.00 MB, 100)",
+				"([6461, 6462), 100.00 MB, 100)",
+				"([6362, 6466), 150.00 MB, 150)",
+			},
 		},
 		{
 			values: []logsplit.Valued{
@@ -102,6 +145,13 @@ func TestSumSorted(t *testing.T) {
 				v("cb", "df", mb(150)),
 			},
 			result: []uint64{0, 250, 25, 75, 200, 75, 25, 0},
+			strs: []string{
+				"([61, 66), 100.00 MB, 100)",
+				"([61, 63), 200.00 MB, 200)",
+				"([63, 66), 100.00 MB, 100)",
+				"([6461, 6462), 100.00 MB, 100)",
+				"([6362, 6466), 150.00 MB, 150)",
+			},
 		},
 		{
 			values: []logsplit.Valued{
@@ -112,6 +162,13 @@ func TestSumSorted(t *testing.T) {
 				v("c", "df", mb(150)),
 			},
 			result: []uint64{0, 250, 100, 200, 75, 25, 0},
+			strs: []string{
+				"([61, 66), 100.00 MB, 100)",
+				"([61, 63), 200.00 MB, 200)",
+				"([63, 66), 100.00 MB, 100)",
+				"([6461, 6462), 100.00 MB, 100)",
+				"([63, 6466), 150.00 MB, 150)",
+			},
 		},
 		{
 			values: []logsplit.Valued{
@@ -122,12 +179,20 @@ func TestSumSorted(t *testing.T) {
 				v("c", "f", mb(150)),
 			},
 			result: []uint64{0, 250, 100, 200, 100, 0},
+			strs: []string{
+				"([61, 66), 100.00 MB, 100)",
+				"([61, 63), 200.00 MB, 200)",
+				"([63, 66), 100.00 MB, 100)",
+				"([6461, 6462), 100.00 MB, 100)",
+				"([63, 66), 150.00 MB, 150)",
+			},
 		},
 	}
 
 	for _, ca := range cases {
 		full := logsplit.NewSplitHelper()
-		for _, v := range ca.values {
+		for i, v := range ca.values {
+			require.Equal(t, ca.strs[i], v.String())
 			full.Merge(v)
 		}
 

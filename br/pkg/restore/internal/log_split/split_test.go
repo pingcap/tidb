@@ -19,12 +19,14 @@ import (
 	"fmt"
 	"testing"
 
+	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
 	logsplit "github.com/pingcap/tidb/br/pkg/restore/internal/log_split"
 	"github.com/pingcap/tidb/br/pkg/restore/internal/utils"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
 	"github.com/pingcap/tidb/br/pkg/utiltest"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/stretchr/testify/require"
@@ -153,4 +155,79 @@ func TestSplitPoint2(t *testing.T) {
 		return nil
 	})
 	require.NoError(t, err)
+}
+
+func fakeFile(tableID, rowID int64, len uint64, num int64) *backuppb.DataFileInfo {
+	return &backuppb.DataFileInfo{
+		StartKey:        fakeRowKey(tableID, rowID),
+		EndKey:          fakeRowKey(tableID, rowID+1),
+		TableId:         tableID,
+		Length:          len,
+		NumberOfEntries: num,
+	}
+}
+
+func fakeRowKey(tableID, rowID int64) kv.Key {
+	return codec.EncodeBytes(nil, tablecodec.EncodeRecordKey(tablecodec.GenTableRecordPrefix(tableID), kv.IntHandle(rowID)))
+}
+
+func fakeMB(n uint64) uint64 {
+	return n * 1024 * 1024
+}
+
+func TestLogSplitHelper(t *testing.T) {
+	ctx := context.Background()
+	rules := map[int64]*restoreutils.RewriteRules{
+		1: {
+			Data: []*import_sstpb.RewriteRule{
+				{
+					OldKeyPrefix: tablecodec.GenTableRecordPrefix(1),
+					NewKeyPrefix: tablecodec.GenTableRecordPrefix(100),
+				},
+			},
+		},
+		2: {
+			Data: []*import_sstpb.RewriteRule{
+				{
+					OldKeyPrefix: tablecodec.GenTableRecordPrefix(2),
+					NewKeyPrefix: tablecodec.GenTableRecordPrefix(200),
+				},
+			},
+		},
+	}
+	oriRegions := [][]byte{
+		{},
+		codec.EncodeBytes(nil, tablecodec.EncodeTablePrefix(100)),
+		codec.EncodeBytes(nil, tablecodec.EncodeTablePrefix(200)),
+		codec.EncodeBytes(nil, tablecodec.EncodeTablePrefix(402)),
+	}
+	mockPDCli := split.NewMockPDClientForSplit()
+	mockPDCli.SetRegions(oriRegions)
+	client := split.NewClient(mockPDCli, nil, nil, 100, 4)
+	helper := logsplit.NewLogSplitHelper(rules, client, fakeMB(4), 400)
+
+	helper.Merge(fakeFile(1, 100, 100, 100))
+	helper.Merge(fakeFile(1, 200, fakeMB(2), 200))
+	helper.Merge(fakeFile(2, 100, fakeMB(3), 300))
+	helper.Merge(fakeFile(3, 100, fakeMB(10), 100000))
+	// different regions, no split happens
+	err := helper.Split(ctx)
+	require.NoError(t, err)
+	regions, err := mockPDCli.ScanRegions(ctx, []byte{}, []byte{}, 0)
+	require.NoError(t, err)
+	require.Len(t, regions, 3)
+	require.Equal(t, []byte{}, regions[0].Meta.StartKey)
+	require.Equal(t, codec.EncodeBytes(nil, tablecodec.EncodeTablePrefix(100)), regions[1].Meta.StartKey)
+	require.Equal(t, codec.EncodeBytes(nil, tablecodec.EncodeTablePrefix(200)), regions[2].Meta.StartKey)
+	require.Equal(t, codec.EncodeBytes(nil, tablecodec.EncodeTablePrefix(402)), regions[2].Meta.EndKey)
+
+	helper.Merge(fakeFile(1, 300, fakeMB(3), 10))
+	helper.Merge(fakeFile(1, 400, fakeMB(4), 10))
+	// trigger to split regions for table 1
+	err = helper.Split(ctx)
+	require.NoError(t, err)
+	regions, err = mockPDCli.ScanRegions(ctx, []byte{}, []byte{}, 0)
+	require.NoError(t, err)
+	require.Len(t, regions, 4)
+	require.Equal(t, fakeRowKey(100, 400), kv.Key(regions[1].Meta.EndKey))
 }
