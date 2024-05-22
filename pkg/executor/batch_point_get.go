@@ -229,19 +229,9 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 			if len(e.planPhysIDs) > 0 {
 				physID = e.planPhysIDs[i]
 			} else {
-<<<<<<< HEAD
-				physID, err = core.GetPhysID(e.tblInfo, e.partExpr, e.partPos, idxVals[e.partPos])
+				physID, err = core.GetPhysID(e.tblInfo, e.partExpr, idxVals[e.partPos])
 				if err != nil {
 					continue
-=======
-				if len(e.planPhysIDs) > 0 {
-					physID = e.planPhysIDs[i]
-				} else {
-					physID, err = core.GetPhysID(e.tblInfo, e.partExpr, idxVals[e.partPos])
-					if err != nil {
-						continue
-					}
->>>>>>> c1befbba610 (executor: fix `BatchPoint` leads to tidb panic when KeyPartition column is part of multi-column index (#51315))
 				}
 			}
 
