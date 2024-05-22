@@ -107,7 +107,10 @@ func (s *MainBackupSender) SendAsync(
 				logutil.CL(ctx).Error("store backup failed",
 					zap.Uint64("round", round),
 					zap.Uint64("storeID", storeID), zap.Error(err))
-				StateNotifier <- BackupRetryPolicy{One: storeID}
+				select {
+				case <-ctx.Done():
+				case StateNotifier <- BackupRetryPolicy{One: storeID}:
+				}
 			}
 		}
 	}()
