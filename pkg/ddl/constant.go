@@ -25,8 +25,6 @@ const (
 	ReorgTable = "tidb_ddl_reorg"
 	// HistoryTable stores the history DDL jobs.
 	HistoryTable = "tidb_ddl_history"
-	// MDLInfoTable stores lock info used by metadata lock.
-	MDLInfoTable = "tidb_mdl_info"
 
 	// JobTableID is the table ID of `tidb_ddl_job`.
 	JobTableID = meta.MaxInt48 - 1

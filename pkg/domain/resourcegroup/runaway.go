@@ -317,7 +317,7 @@ func (rm *RunawayManager) addWatchList(record *QuarantineRecord, ttl time.Durati
 		rm.queryLock.Lock()
 		defer rm.queryLock.Unlock()
 		if item != nil {
-			// check the ID because of the eariler scan.
+			// check the ID because of the earlier scan.
 			if item.ID == record.ID {
 				return
 			}
