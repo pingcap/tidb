@@ -34,3 +34,16 @@ func TestBlockConcurrencyController(t *testing.T) {
 		t.Fatal("TestBlockConcurrencyController failed")
 	}
 }
+
+func TestPanicConcurrencyController(t *testing.T) {
+	cc := NewConcurrencyController(1)
+	cc.Run(func() {
+		panic("test")
+	})
+	select {
+	case <-time.After(10 * time.Millisecond):
+		t.Fatal("TestBlockConcurrencyController failed")
+	case <-cc.ch:
+		return
+	}
+}
