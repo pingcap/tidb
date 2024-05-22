@@ -886,7 +886,7 @@ func (m *MydumperRuntime) adjust() error {
 	}
 	if m.StrictFormat && len(m.CSV.Terminator) == 0 {
 		return common.ErrInvalidConfig.GenWithStack(
-			"strict-format can not be used with empty `mydumper.csv.terminator`. Please set `mydumper.csv.terminator` to a non-empty value like '\r\n'")
+			"strict-format can not be used with empty `mydumper.csv.terminator`. Please set `mydumper.csv.terminator` to a non-empty value like \"\r\n\"")
 	}
 
 	for _, rule := range m.FileRouters {
