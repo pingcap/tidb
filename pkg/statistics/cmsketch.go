@@ -653,7 +653,7 @@ func NewTopNMeta(encoded []byte, count uint64) *TopNMeta {
 
 // DestoryAndPutPool resets the TopNMeta and puts it back to the pool.
 func (t *TopNMeta) DestoryAndPutPool() {
-	clear(t.Encoded)
+	t.Encoded = t.Encoded[:0]
 	t.Count = 0
 	topNMetaPool.Put(t)
 }
