@@ -186,9 +186,9 @@ func (b *builtinInternalFromBinarySig) evalString(row chunk.Row) (res string, is
 		err = errCannotConvertString.GenWithStackByArgs(strHex, charset.CharsetBin, b.tp.GetCharset())
 
 		if b.cannotConvertStringAsWarning {
-			tc := typeCtx(ctx)
-			tc.AppendWarning(err)
-			if sqlMode(ctx).HasStrictMode() {
+			vars := b.ctx.GetSessionVars()
+			vars.StmtCtx.AppendWarning(err)
+			if vars.SQLMode.HasStrictMode() {
 				return "", true, nil
 			}
 
@@ -229,9 +229,9 @@ func (b *builtinInternalFromBinarySig) vecEvalString(input *chunk.Chunk, result 
 			err = errCannotConvertString.GenWithStackByArgs(strHex, charset.CharsetBin, b.tp.GetCharset())
 
 			if b.cannotConvertStringAsWarning {
-				tc := typeCtx(ctx)
-				tc.AppendWarning(err)
-				if sqlMode(ctx).HasStrictMode() {
+				vars := b.ctx.GetSessionVars()
+				vars.StmtCtx.AppendWarning(err)
+				if vars.SQLMode.HasStrictMode() {
 					result.AppendNull()
 					continue
 				}
@@ -263,13 +263,8 @@ func BuildToBinaryFunction(ctx sessionctx.Context, expr Expression) (res Express
 }
 
 // BuildFromBinaryFunction builds from_binary function.
-<<<<<<< HEAD
-func BuildFromBinaryFunction(ctx sessionctx.Context, expr Expression, tp *types.FieldType) (res Expression) {
-	fc := &tidbFromBinaryFunctionClass{baseFunctionClass{InternalFuncFromBinary, 1, 1}, tp}
-=======
-func BuildFromBinaryFunction(ctx BuildContext, expr Expression, tp *types.FieldType, cannotConvertStringAsWarning bool) (res Expression) {
+func BuildFromBinaryFunction(ctx sessionctx.Context, expr Expression, tp *types.FieldType, cannotConvertStringAsWarning bool) (res Expression) {
 	fc := &tidbFromBinaryFunctionClass{baseFunctionClass{InternalFuncFromBinary, 1, 1}, tp, cannotConvertStringAsWarning}
->>>>>>> 4674b125fc7 (expression: fix charset conversion warning and error behavior (#51191))
 	f, err := fc.getFunction(ctx, []Expression{expr})
 	if err != nil {
 		return expr
@@ -341,11 +336,7 @@ func init() {
 }
 
 // HandleBinaryLiteral wraps `expr` with to_binary or from_binary sig.
-<<<<<<< HEAD
-func HandleBinaryLiteral(ctx sessionctx.Context, expr Expression, ec *ExprCollation, funcName string) Expression {
-=======
-func HandleBinaryLiteral(ctx BuildContext, expr Expression, ec *ExprCollation, funcName string, explicitCast bool) Expression {
->>>>>>> 4674b125fc7 (expression: fix charset conversion warning and error behavior (#51191))
+func HandleBinaryLiteral(ctx sessionctx.Context, expr Expression, ec *ExprCollation, funcName string, explicitCast bool) Expression {
 	argChs, dstChs := expr.GetType().GetCharset(), ec.Charset
 	switch convertFuncsMap[funcName] {
 	case funcPropNone:
