@@ -528,7 +528,9 @@ func TestSplitLargeFileSeekInsideCRLF(t *testing.T) {
 	}
 	divideConfig := NewDataDivideConfig(cfg, 1, ioWorker, store, meta)
 
-	// in fact this is the wrong result, just to show the bug. pos mismatch with offsets. and we might read more rows than expected
+	// in fact this is the wrong result, just to show the bug. pos mismatch with
+	// offsets. and we might read more rows than expected because we use == rather
+	// than >= to stop reading.
 	offsets := [][]int64{{0, 3}, {3, 6}, {6, 9}, {9, 12}}
 	pos := []int64{2, 5, 8, 11}
 
