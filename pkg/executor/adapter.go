@@ -145,8 +145,6 @@ func colNames2ResultFields(schema *expression.Schema, names []*types.FieldName, 
 // The reason we need update is that chunk with 0 rows indicating we already finished current query, we need prepare for
 // next query.
 // If stmt is not nil and chunk with some rows inside, we simply update last query found rows by the number of row in chunk.
-// as copIterator.recvFromRespCh doesn't handle context cancel/timeout error correctly,
-// we always return ctx.Err() to avoid return incorrect result.
 func (a *recordSet) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 	defer func() {
 		r := recover()
