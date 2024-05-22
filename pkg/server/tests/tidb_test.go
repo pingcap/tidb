@@ -3134,3 +3134,8 @@ func TestProxyProtocolWithIpNoFallbackable(t *testing.T) {
 	require.NotNil(t, err)
 	db.Close()
 }
+
+func TestTypeAndCharsetOfSendLongData(t *testing.T) {
+	ts := servertestkit.CreateTidbTestSuite(t)
+	ts.RunTestTypeAndCharsetOfSendLongData(t)
+}
