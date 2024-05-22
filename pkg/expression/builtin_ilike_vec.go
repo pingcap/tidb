@@ -57,24 +57,12 @@ func (b *builtinIlikeSig) tryToMemorize(param *funcParam, escape int64) {
 		return
 	}
 
-<<<<<<< HEAD
 	memorization := func() {
 		if b.pattern == nil {
-			b.pattern = collate.ConvertAndGetBinCollation(b.collation).Pattern()
+			b.pattern = collate.ConvertAndGetBinCollator(b.collation).Pattern()
 			b.pattern.Compile(param.getStringVal(0), byte(escape))
 			b.isMemorizedPattern = true
 		}
-=======
-	pattern, err := b.patternCache.getOrInitCache(ctx, func() (collate.WildcardPattern, error) {
-		pattern := collate.ConvertAndGetBinCollator(b.collation).Pattern()
-		pattern.Compile(param.getStringVal(0), byte(escape))
-		return pattern, nil
-	})
-
-	intest.AssertNoError(err)
-	if err != nil {
-		return nil, false
->>>>>>> dcd1fa9d967 (expression: fix the collation of functions with json arguments (#53126))
 	}
 
 	// Only be executed once to achieve thread-safe
@@ -208,17 +196,10 @@ func (b *builtinIlikeSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) e
 	b.lowerExpr(params[0], rowNum)
 	escape = b.lowerPattern(params[1], rowNum, escape)
 
-<<<<<<< HEAD
 	b.tryToMemorize(params[1], escape)
 	if !b.isMemorizedPattern {
-		b.pattern = collate.ConvertAndGetBinCollation(b.collation).Pattern()
+		b.pattern = collate.ConvertAndGetBinCollator(b.collation).Pattern()
 		return b.ilikeWithoutMemorization(params, rowNum, escape, result)
-=======
-	pattern, ok := b.tryToVecMemorize(ctx, params[1], escape)
-	if !ok {
-		pattern = collate.ConvertAndGetBinCollator(b.collation).Pattern()
-		return b.ilikeWithoutMemorization(pattern, params, rowNum, escape, result)
->>>>>>> dcd1fa9d967 (expression: fix the collation of functions with json arguments (#53126))
 	}
 
 	return b.ilikeWithMemorization(params[0], rowNum, result)
