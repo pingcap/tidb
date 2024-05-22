@@ -18,13 +18,29 @@ import (
 	"bytes"
 	"fmt"
 
+<<<<<<< HEAD
+=======
+	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/expression"
+>>>>>>> 69285197c66 (planner: fix mpp final agg couldn't co-exist with other non-final mode (#53455))
 	"github.com/pingcap/tidb/pkg/parser/ast"
 )
 
 // ExplainAggFunc generates explain information for a aggregation function.
 func ExplainAggFunc(agg *AggFuncDesc, normalized bool) string {
 	var buffer bytes.Buffer
-	fmt.Fprintf(&buffer, "%s(", agg.Name)
+	showMode := false
+	failpoint.Inject("show-agg-mode", func(v failpoint.Value) {
+		if v.(bool) {
+			showMode = true
+		}
+	})
+	if showMode {
+		fmt.Fprintf(&buffer, "%s(%s,", agg.Name, agg.Mode.ToString())
+	} else {
+		fmt.Fprintf(&buffer, "%s(", agg.Name)
+	}
+
 	if agg.HasDistinct {
 		buffer.WriteString("distinct ")
 	}
