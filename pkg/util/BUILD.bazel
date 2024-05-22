@@ -66,6 +66,7 @@ go_test(
     name = "util_test",
     timeout = "short",
     srcs = [
+        "concurrency_controller_test.go",
         "errors_test.go",
         "main_test.go",
         "misc_test.go",
