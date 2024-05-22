@@ -31,14 +31,12 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/model"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
 	poolutil "github.com/pingcap/tidb/pkg/resourcemanager/util"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
-	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
@@ -143,14 +141,9 @@ func (b *txnBackfillScheduler) resultChan() <-chan *backfillResult {
 	return b.resultCh
 }
 
-func newSessCtx(
-	store kv.Storage,
-	sqlMode mysql.SQLMode,
-	tzLocation *model.TimeZoneLocation,
-	resourceGroupName string,
-) (sessionctx.Context, error) {
+func newSessCtx(store kv.Storage, reorgMeta *model.DDLReorgMeta) (sessionctx.Context, error) {
 	sessCtx := newReorgSessCtx(store)
-	if err := initSessCtx(sessCtx, sqlMode, tzLocation, resourceGroupName); err != nil {
+	if err := initSessCtx(sessCtx, reorgMeta); err != nil {
 		return nil, errors.Trace(err)
 	}
 	return sessCtx, nil
@@ -182,12 +175,7 @@ func newDefaultReorgDistSQLCtx(kvClient kv.Client) *distsqlctx.DistSQLContext {
 }
 
 // initSessCtx initializes the session context. Be careful to the timezone.
-func initSessCtx(
-	sessCtx sessionctx.Context,
-	sqlMode mysql.SQLMode,
-	tzLocation *model.TimeZoneLocation,
-	resGroupName string,
-) error {
+func initSessCtx(sessCtx sessionctx.Context, reorgMeta *model.DDLReorgMeta) error {
 	// Correct the initial timezone.
 	tz := *time.UTC
 	sessCtx.GetSessionVars().TimeZone = &tz
@@ -197,25 +185,21 @@ func initSessCtx(
 	rowFormat := variable.GetDDLReorgRowFormat()
 	sessCtx.GetSessionVars().RowEncoder.Enable = rowFormat != variable.DefTiDBRowFormatV1
 	// Simulate the sql mode environment in the worker sessionCtx.
+	sqlMode := reorgMeta.SQLMode
 	sessCtx.GetSessionVars().SQLMode = sqlMode
-	if err := setSessCtxLocation(sessCtx, tzLocation); err != nil {
+	loc, err := reorgTimeZoneWithTzLoc(reorgMeta.Location)
+	if err != nil {
 		return errors.Trace(err)
 	}
-	sessCtx.GetSessionVars().StmtCtx.SetTimeZone(sessCtx.GetSessionVars().Location())
+	sessCtx.GetSessionVars().TimeZone = loc
+	sessCtx.GetSessionVars().StmtCtx.SetTimeZone(loc)
 
-	errLevels := sessCtx.GetSessionVars().StmtCtx.ErrLevels()
-	errLevels[errctx.ErrGroupBadNull] = errctx.ResolveErrLevel(false, !sqlMode.HasStrictMode())
-	errLevels[errctx.ErrGroupDividedByZero] =
-		errctx.ResolveErrLevel(!sqlMode.HasErrorForDivisionByZeroMode(), !sqlMode.HasStrictMode())
+	errLevels := reorgErrLevelsWithSQLMode(sqlMode)
 	sessCtx.GetSessionVars().StmtCtx.SetErrLevels(errLevels)
 
-	typeFlags := types.StrictFlags.
-		WithTruncateAsWarning(!sqlMode.HasStrictMode()).
-		WithIgnoreInvalidDateErr(sqlMode.HasAllowInvalidDatesMode()).
-		WithIgnoreZeroInDate(!sqlMode.HasStrictMode() || sqlMode.HasAllowInvalidDatesMode()).
-		WithCastTimeToYearThroughConcat(true)
+	typeFlags := reorgTypeFlagsWithSQLMode(sqlMode)
 	sessCtx.GetSessionVars().StmtCtx.SetTypeFlags(typeFlags)
-	sessCtx.GetSessionVars().StmtCtx.ResourceGroupName = resGroupName
+	sessCtx.GetSessionVars().StmtCtx.ResourceGroupName = reorgMeta.ResourceGroupName
 
 	// Prevent initializing the mock context in the workers concurrently.
 	// For details, see https://github.com/pingcap/tidb/issues/40879.
@@ -268,7 +252,7 @@ func (b *txnBackfillScheduler) adjustWorkerSize() error {
 	workerCnt := b.expectedWorkerSize()
 	// Increase the worker.
 	for i := len(b.workers); i < workerCnt; i++ {
-		sessCtx, err := newSessCtx(reorgInfo.d.store, reorgInfo.ReorgMeta.SQLMode, reorgInfo.ReorgMeta.Location, reorgInfo.ReorgMeta.ResourceGroupName)
+		sessCtx, err := newSessCtx(reorgInfo.d.store, reorgInfo.ReorgMeta)
 		if err != nil {
 			return err
 		}
@@ -505,16 +489,10 @@ func (b *ingestBackfillScheduler) createWorker(
 ) workerpool.Worker[IndexRecordChunk, workerpool.None] {
 	reorgInfo := b.reorgInfo
 	job := reorgInfo.Job
-	sessCtx, err := newSessCtx(reorgInfo.d.store, reorgInfo.ReorgMeta.SQLMode, reorgInfo.ReorgMeta.Location, reorgInfo.ReorgMeta.ResourceGroupName)
-	if err != nil {
-		b.sendResult(&backfillResult{err: err})
-		return nil
-	}
-
 	worker, err := newAddIndexIngestWorker(
-		b.ctx, b.tbl, reorgInfo.d, engines, b.resultCh, job.ID,
-		reorgInfo.SchemaName, indexIDs, b.writerMaxID,
-		b.copReqSenderPool, sessCtx, b.checkpointMgr)
+		b.ctx, b.tbl, reorgInfo, engines, b.resultCh, job.ID,
+		indexIDs, b.writerMaxID,
+		b.copReqSenderPool, b.checkpointMgr)
 	if err != nil {
 		// Return an error only if it is the first worker.
 		if b.writerMaxID == 0 {
@@ -541,7 +519,7 @@ func (b *ingestBackfillScheduler) createCopReqSenderPool() (*copReqSenderPool, e
 		}
 		allIndexInfos = append(allIndexInfos, indexInfo)
 	}
-	sessCtx, err := newSessCtx(ri.d.store, ri.ReorgMeta.SQLMode, ri.ReorgMeta.Location, ri.ReorgMeta.ResourceGroupName)
+	sessCtx, err := newSessCtx(ri.d.store, ri.ReorgMeta)
 	if err != nil {
 		logutil.Logger(b.ctx).Warn("cannot init cop request sender", zap.Error(err))
 		return nil, err

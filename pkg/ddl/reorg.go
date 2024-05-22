@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/distsql"
 	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
+	"github.com/pingcap/tidb/pkg/errctx"
 	exprctx "github.com/pingcap/tidb/pkg/expression/context"
 	"github.com/pingcap/tidb/pkg/expression/contextstatic"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -50,6 +51,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tidb/pkg/util/ranger"
+	"github.com/pingcap/tidb/pkg/util/timeutil"
 	"github.com/pingcap/tipb/go-tipb"
 	atomicutil "go.uber.org/atomic"
 	"go.uber.org/zap"
@@ -87,6 +89,33 @@ func newReorgExprCtx() exprctx.ExprContext {
 		contextstatic.WithEvalCtx(evalCtx),
 		contextstatic.WithUseCache(false),
 	)
+}
+
+func reorgTypeFlagsWithSQLMode(mode mysql.SQLMode) types.Flags {
+	return types.StrictFlags.
+		WithTruncateAsWarning(!mode.HasStrictMode()).
+		WithIgnoreInvalidDateErr(mode.HasAllowInvalidDatesMode()).
+		WithIgnoreZeroInDate(!mode.HasStrictMode() || mode.HasAllowInvalidDatesMode()).
+		WithCastTimeToYearThroughConcat(true)
+}
+
+func reorgErrLevelsWithSQLMode(mode mysql.SQLMode) errctx.LevelMap {
+	return errctx.LevelMap{
+		errctx.ErrGroupTruncate: errctx.ResolveErrLevel(false, !mode.HasStrictMode()),
+		errctx.ErrGroupBadNull:  errctx.ResolveErrLevel(false, !mode.HasStrictMode()),
+		errctx.ErrGroupDividedByZero: errctx.ResolveErrLevel(
+			!mode.HasErrorForDivisionByZeroMode(),
+			!mode.HasStrictMode(),
+		),
+	}
+}
+
+func reorgTimeZoneWithTzLoc(tzLoc *model.TimeZoneLocation) (*time.Location, error) {
+	if tzLoc == nil {
+		// It is set to SystemLocation to be compatible with nil LocationInfo.
+		return timeutil.SystemLocation(), nil
+	}
+	return tzLoc.GetLocation()
 }
 
 func newReorgSessCtx(store kv.Storage) sessionctx.Context {
