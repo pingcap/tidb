@@ -13,3 +13,45 @@
 // limitations under the License.
 
 package join
+
+import (
+	"testing"
+
+	"github.com/pingcap/tidb/pkg/util"
+)
+
+func BenchmarkHashTableBuild(b *testing.B) {
+	b.StopTimer()
+	rowTable, err := createRowTable(3000000)
+	if err != nil {
+		b.Fatal(err)
+	}
+	subTable := newSubTable(rowTable)
+	segmentCount := len(rowTable.segments)
+	b.StartTimer()
+	subTable.build(0, segmentCount)
+}
+
+func BenchmarkHashTableConcurrentBuild(b *testing.B) {
+	b.StopTimer()
+	rowTable, err := createRowTable(3000000)
+	if err != nil {
+		b.Fatal(err)
+	}
+	subTable := newSubTable(rowTable)
+	segmentCount := len(rowTable.segments)
+	buildThreads := 3
+	wg := util.WaitGroupWrapper{}
+	b.StartTimer()
+	for i := 0; i < buildThreads; i++ {
+		segmentStart := segmentCount / buildThreads * i
+		segmentEnd := segmentCount / buildThreads * (i + 1)
+		if i == buildThreads-1 {
+			segmentEnd = segmentCount
+		}
+		wg.Run(func() {
+			subTable.build(segmentStart, segmentEnd)
+		})
+	}
+	wg.Wait()
+}

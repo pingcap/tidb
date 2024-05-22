@@ -49,7 +49,7 @@ func createMockRowTable(maxRowsPerSeg int, segmentCount int, fixedSize bool) *ro
 	return ret
 }
 
-func createRowTable(t *testing.T, rows int) *rowTable {
+func createRowTable(rows int) (*rowTable, error) {
 	tinyTp := types.NewFieldType(mysql.TypeTiny)
 	tinyTp.AddFlag(mysql.NotNullFlag)
 	buildKeyIndex := []int{0}
@@ -83,9 +83,11 @@ func createRowTable(t *testing.T, rows int) *rowTable {
 	hashJoinCtx.SessCtx = mock.NewContext()
 	builder := createRowTableBuilder(buildKeyIndex, buildKeyTypes, partitionNumber, hasNullableKey, false, false)
 	err := builder.processOneChunk(chk, hashJoinCtx.SessCtx.GetSessionVars().StmtCtx.TypeCtx(), hashJoinCtx, 0)
-	require.NoError(t, err)
+	if err != nil {
+		return nil, err
+	}
 	builder.appendRemainingRowLocations(0, hashJoinCtx.hashTableContext)
-	return hashJoinCtx.hashTableContext.rowTables[0][0]
+	return hashJoinCtx.hashTableContext.rowTables[0][0], nil
 }
 
 func TestHashTableSize(t *testing.T) {
@@ -108,7 +110,8 @@ func TestHashTableSize(t *testing.T) {
 }
 
 func TestBuild(t *testing.T) {
-	rowTable := createRowTable(t, 1000000)
+	rowTable, err := createRowTable(1000000)
+	require.NoError(t, err)
 	subTable := newSubTable(rowTable)
 	// single thread build
 	subTable.build(0, len(rowTable.segments))
@@ -135,7 +138,8 @@ func TestBuild(t *testing.T) {
 }
 
 func TestConcurrentBuild(t *testing.T) {
-	rowTable := createRowTable(t, 3000000)
+	rowTable, err := createRowTable(3000000)
+	require.NoError(t, err)
 	subTable := newSubTable(rowTable)
 	segmentCount := len(rowTable.segments)
 	buildThreads := 3
@@ -171,7 +175,8 @@ func TestConcurrentBuild(t *testing.T) {
 }
 
 func TestLookup(t *testing.T) {
-	rowTable := createRowTable(t, 200000)
+	rowTable, err := createRowTable(200000)
+	require.NoError(t, err)
 	subTable := newSubTable(rowTable)
 	// single thread build
 	subTable.build(0, len(rowTable.segments))
