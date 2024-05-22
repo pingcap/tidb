@@ -19,6 +19,7 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
+	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/testkit/external"
 	"strconv"
 	"testing"
@@ -583,7 +584,8 @@ func TestReorgPartitionRollback(t *testing.T) {
 	require.NoError(t, err)
 	noNewTablesAfter(t, tk, ctx, tbl, "")
 }
-func TestReorgPartFailures(t *testing.T) {
+
+func TestRemovePartitionFailures(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -614,19 +616,91 @@ func TestReorgPartFailures(t *testing.T) {
 			"Fail",
 			5,
 		},
-		/*
-			{
-				"Rollback",
-				4,
-			},
-
-		*/
+		{
+			"Rollback",
+			4,
+		},
 	}
 	tOrg := external.GetTableByName(t, tk, "test", "t")
 	partition := tOrg.Meta().Partition
 	idxID := tOrg.Meta().Indices[0].ID
+	oldWaitTimeWhenErrorOccurred := ddl.WaitTimeWhenErrorOccurred
+	defer func() {
+		ddl.WaitTimeWhenErrorOccurred = oldWaitTimeWhenErrorOccurred
+	}()
+	ddl.WaitTimeWhenErrorOccurred = 0
 	for _, test := range tests {
 		for i := 3; i <= test.count; i++ {
+			suffix := test.name + strconv.Itoa(i)
+			name := "github.com/pingcap/tidb/pkg/ddl/reorgPart" + suffix
+			require.NoError(t, failpoint.Enable(name, `return(true)`))
+			err := tk.ExecToErr(`alter table t remove partitioning`)
+			require.Error(t, err, "failpoint reorgPart"+suffix)
+			require.ErrorContains(t, err, "Injected error by reorgPart"+suffix)
+			require.NoError(t, failpoint.Disable(name))
+			tt := external.GetTableByName(t, tk, "test", "t")
+			partition = tt.Meta().Partition
+			require.Equal(t, 2, len(partition.Definitions), suffix)
+			require.Equal(t, 0, len(partition.AddingDefinitions), suffix)
+			require.Equal(t, 0, len(partition.DroppingDefinitions), suffix)
+			require.Equal(t, 1, len(tt.Meta().Indices), suffix)
+			require.Equal(t, idxID, tt.Meta().Indices[0].ID, suffix)
+			noNewTablesAfter(t, tk, tk.Session(), tOrg, suffix)
+			// TODO: Check TiFlash replicas
+			// TODO: Check Label rules
+			// TODO: Check bundles
+			// TODO: Check autoIDs
+			// So if failure will end up as rolling back after enough tries, what happens when
+			// the state changes from DeleteReorganization to StatePublic?
+			// The old data should still be up-to-date, but the question is how the cleanup
+			// of the new data is handled, will it still be seen in DeleteReorganization?
+		}
+	}
+}
+
+func TestPartitionByFailures(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_enable_global_index=true")
+	defer func() {
+		tk.MustExec("set tidb_enable_global_index=default")
+	}()
+	tk.MustExec(`create table t (a int unsigned primary key nonclustered, b int not null, c varchar(255)) partition by range(a) (
+			partition p0 values less than (100),
+			partition p1 values less than (200))`)
+	tk.MustExec(`insert into t values (7,100,"7-100"),(8,8,8),(9,9,9),(127,7,"127-7"),(199,199,199)`)
+	// Fail means we simply inject an error, and set the error count very high to see what happens
+	//   we do expect to do best effort rollback here as well!
+	// Cancel means we set job.State = JobStateCancelled, as in no need to do more
+	// Rollback means we do full rollback before returning error.
+	tests := []struct {
+		name  string
+		count int
+	}{
+		{
+			"Cancel",
+			1,
+		},
+		{
+			"Fail",
+			5,
+		},
+		{
+			"Rollback",
+			4,
+		},
+	}
+	tOrg := external.GetTableByName(t, tk, "test", "t")
+	partition := tOrg.Meta().Partition
+	idxID := tOrg.Meta().Indices[0].ID
+	oldWaitTimeWhenErrorOccurred := ddl.WaitTimeWhenErrorOccurred
+	defer func() {
+		ddl.WaitTimeWhenErrorOccurred = oldWaitTimeWhenErrorOccurred
+	}()
+	ddl.WaitTimeWhenErrorOccurred = 0
+	for _, test := range tests {
+		for i := 1; i <= test.count; i++ {
 			suffix := test.name + strconv.Itoa(i)
 			name := "github.com/pingcap/tidb/pkg/ddl/reorgPart" + suffix
 			require.NoError(t, failpoint.Enable(name, `return(true)`))
@@ -634,6 +708,16 @@ func TestReorgPartFailures(t *testing.T) {
 			require.Error(t, err, "failpoint reorgPart"+suffix)
 			require.ErrorContains(t, err, "Injected error by reorgPart"+suffix)
 			require.NoError(t, failpoint.Disable(name))
+			tk.MustQuery(`show create table t /* ` + suffix + ` */`).Check(testkit.Rows("" +
+				"t CREATE TABLE `t` (\n" +
+				"  `a` int(10) unsigned NOT NULL,\n" +
+				"  `b` int(11) NOT NULL,\n" +
+				"  `c` varchar(255) DEFAULT NULL,\n" +
+				"  PRIMARY KEY (`a`) /*T![clustered_index] NONCLUSTERED */\n" +
+				") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+				"PARTITION BY RANGE (`a`)\n" +
+				"(PARTITION `p0` VALUES LESS THAN (100),\n" +
+				" PARTITION `p1` VALUES LESS THAN (200))"))
 			tt := external.GetTableByName(t, tk, "test", "t")
 			partition = tt.Meta().Partition
 			require.Equal(t, 2, len(partition.Definitions), suffix)

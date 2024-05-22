@@ -213,8 +213,7 @@ func SetSchemaDiffForPartitionModify(diff *model.SchemaDiff, job *model.Job) err
 	if job.SchemaState == model.StateDeleteReorganization {
 		partInfo := &model.PartitionInfo{}
 		var partNames []string
-		var indexIDsNotUsed []int64
-		err := job.DecodeArgs(&partNames, &partInfo, &indexIDsNotUsed)
+		err := job.DecodeArgs(&partNames, &partInfo)
 		if err != nil {
 			return errors.Trace(err)
 		}

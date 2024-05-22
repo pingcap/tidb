@@ -1978,8 +1978,7 @@ func dropLabelRules(d *ddlCtx, schemaName, tableName string, partNames []string)
 func (w *worker) onDropTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	var partNames []string
 	partInfo := model.PartitionInfo{}
-	var unUsedIndexIDs []int64
-	if err := job.DecodeArgs(&partNames, &partInfo, &unUsedIndexIDs); err != nil {
+	if err := job.DecodeArgs(&partNames, &partInfo); err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
@@ -2779,8 +2778,7 @@ func getReorgPartitionInfo(t *meta.Meta, job *model.Job) (*model.TableInfo, []st
 	}
 	partInfo := &model.PartitionInfo{}
 	var partNames []string
-	var nonUsedIdxIDs []int64
-	err = job.DecodeArgs(&partNames, &partInfo, &nonUsedIdxIDs)
+	err = job.DecodeArgs(&partNames, &partInfo)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return nil, nil, nil, nil, nil, errors.Trace(err)

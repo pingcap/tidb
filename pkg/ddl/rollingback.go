@@ -339,13 +339,13 @@ func convertAddTablePartitionJob2RollbackJob(d *ddlCtx, t *meta.Meta, job *model
 	for _, pd := range addingDefinitions {
 		partNames = append(partNames, pd.Name.L)
 	}
+	// WASHERE: move things to rollingbackReorganizePartition
 	if job.Type == model.ActionReorganizePartition ||
 		job.Type == model.ActionAlterTablePartitioning ||
 		job.Type == model.ActionRemovePartitioning {
 		partInfo := &model.PartitionInfo{}
 		var pNames []string
-		var indexIDs []int64
-		err = job.DecodeArgs(&pNames, &partInfo, &indexIDs)
+		err = job.DecodeArgs(&pNames, &partInfo)
 		if err != nil {
 			return ver, err
 		}
@@ -372,11 +372,10 @@ func convertAddTablePartitionJob2RollbackJob(d *ddlCtx, t *meta.Meta, job *model
 		for _, indexInfo := range dropIndices {
 			DropIndexColumnFlag(tblInfo, indexInfo)
 			RemoveDependentHiddenColumns(tblInfo, indexInfo)
-			indexIDs = append(indexIDs, indexInfo.ID)
 			removeIndexInfo(tblInfo, indexInfo)
 		}
 
-		job.Args = []any{partNames, partInfo, indexIDs}
+		job.Args = []any{partNames, partInfo}
 	} else {
 		job.Args = []any{partNames}
 	}
