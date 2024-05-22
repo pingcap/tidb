@@ -3057,8 +3057,6 @@ func TestPointGetKeyPartitioning(t *testing.T) {
 	tk.MustExec(`INSERT INTO t VALUES ('Aa', 'Ab', 'Ac'), ('Ba', 'Bb', 'Bc')`)
 	tk.MustQuery(`SELECT * FROM t WHERE b = 'Ab'`).Check(testkit.Rows("Aa Ab Ac"))
 }
-<<<<<<< HEAD
-=======
 
 func TestExplainPartition(t *testing.T) {
 	store := testkit.CreateMockStore(t)
@@ -3263,4 +3261,3 @@ func TestAlterTablePartitionRollback(t *testing.T) {
 		testFunc(states[:i+1])
 	}
 }
->>>>>>> 0e9e71262d3 (ddl: fix rollback reorganize partition left intermediate state (#51631))

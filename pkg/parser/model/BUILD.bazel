@@ -30,11 +30,7 @@ go_test(
     ],
     embed = [":model"],
     flaky = True,
-<<<<<<< HEAD
-    shard_count = 20,
-=======
-    shard_count = 22,
->>>>>>> 0e9e71262d3 (ddl: fix rollback reorganize partition left intermediate state (#51631))
+    shard_count = 21,
     deps = [
         "//pkg/parser/charset",
         "//pkg/parser/mysql",

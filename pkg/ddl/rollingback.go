@@ -339,9 +339,6 @@ func convertAddTablePartitionJob2RollbackJob(d *ddlCtx, t *meta.Meta, job *model
 	for _, pd := range addingDefinitions {
 		partNames = append(partNames, pd.Name.L)
 	}
-<<<<<<< HEAD
-	job.Args = []interface{}{partNames}
-=======
 	if job.Type == model.ActionReorganizePartition ||
 		job.Type == model.ActionAlterTablePartitioning ||
 		job.Type == model.ActionRemovePartitioning {
@@ -355,7 +352,6 @@ func convertAddTablePartitionJob2RollbackJob(d *ddlCtx, t *meta.Meta, job *model
 	} else {
 		job.Args = []any{partNames}
 	}
->>>>>>> 0e9e71262d3 (ddl: fix rollback reorganize partition left intermediate state (#51631))
 	ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, true)
 	if err != nil {
 		return ver, errors.Trace(err)
