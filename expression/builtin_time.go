@@ -6986,6 +6986,13 @@ func (b *builtinTimestampAddSig) evalString(row chunk.Row) (string, bool, error)
 		tb = tm1.AddDate(0, 0, 7*int(v))
 	case "MONTH":
 		tb = tm1.AddDate(0, int(v), 0)
+
+		// For corner case: timestampadd(month,1,date '2024-01-31') = "2024-02-29", timestampadd(month,1,date '2024-01-30') = "2024-02-29"
+		// `tb.Month()` refers to the actual result, `t.Month()+v` refers to the expect result.
+		// Actual result may be greater than expect result, we need to judge and modify it.
+		for int(tb.Month())%12 != (int(tm1.Month())+int(v))%12 {
+			tb = tb.AddDate(0, 0, -1)
+		}
 	case "QUARTER":
 		tb = tm1.AddDate(0, 3*int(v), 0)
 	case "YEAR":
