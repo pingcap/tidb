@@ -169,30 +169,30 @@ func TestBRIEBuilderOPtions(t *testing.T) {
 	for _, opt := range s.Options {
 		switch opt.Tp {
 		case ast.BRIEOptionChecksumConcurrency:
-			require.True(t, opt.UintValue == 4)
+			require.Equal(t, uint64(4), opt.UintValue)
 		case ast.BRIEOptionCompressionLevel:
-			require.True(t, opt.UintValue == 4)
+			require.Equal(t, uint64(4), opt.UintValue)
 		case ast.BRIEOptionIgnoreStats:
-			require.True(t, opt.UintValue == 1)
+			require.Equal(t, uint64(1), opt.UintValue)
 		case ast.BRIEOptionCompression:
-			require.True(t, opt.StrValue == "lz4")
+			require.Equal(t, "lz4", opt.StrValue)
 		case ast.BRIEOptionEncryptionMethod:
-			require.True(t, opt.StrValue == "aes256-ctr")
+			require.Equal(t, "aes256-ctr", opt.StrValue)
 		case ast.BRIEOptionEncryptionKeyFile:
-			require.True(t, opt.StrValue == "/tmp/keyfile")
+			require.Equal(t, "/tmp/keyfile", opt.StrValue)
 		}
 	}
 	schema := plan.Schema()
 	exec := builder.buildBRIE(s, schema)
 	require.NoError(t, builder.err)
 	e, ok := exec.(*BRIEExec)
-	require.True(t, ok)
-	require.True(t, e.backupCfg.ChecksumConcurrency == 4)
-	require.True(t, e.backupCfg.CompressionLevel == 4)
-	require.True(t, e.backupCfg.IgnoreStats)
-	require.True(t, e.backupCfg.CompressionConfig.CompressionType == backuppb.CompressionType_LZ4)
-	require.True(t, e.backupCfg.CipherInfo.CipherType == encryptionpb.EncryptionMethod_AES256_CTR)
-	require.True(t, len(e.backupCfg.CipherInfo.CipherKey) > 0)
+	require.True(t,ok)
+	require.Equal(t, 4, e.backupCfg.ChecksumConcurrency)
+	require.Equal(t, 4, e.backupCfg.CompressionLevel)
+	require.Equal(t, true, e.backupCfg.IgnoreStats)
+	require.Equal(t, backuppb.CompressionType_LZ4, e.backupCfg.CompressionConfig.CompressionType)
+	require.Equal(t, encryptionpb.EncryptionMethod_AES256_CTR, e.backupCfg.CipherInfo.CipherType)
+	require.Greater(t, len(e.backupCfg.CipherInfo.CipherKey), 0)
 
 	stmt, err = p.ParseOneStmt("RESTORE TABLE `a` FROM 'noop://' CHECKSUM_CONCURRENCY = 4 WAIT_TIFLASH_READY = 1 WITH_SYS_TABLE = 1 LOAD_STATS = 1", "", "")
 	require.NoError(t, err)
@@ -204,13 +204,13 @@ func TestBRIEBuilderOPtions(t *testing.T) {
 	for _, opt := range s.Options {
 		switch opt.Tp {
 		case ast.BRIEOptionChecksumConcurrency:
-			require.True(t, opt.UintValue == 4)
+			require.Equal(t, 4, opt.UintValue)
 		case ast.BRIEOptionWaitTiflashReady:
-			require.True(t, opt.UintValue == 1)
+			require.Equal(t, 1, opt.UintValue)
 		case ast.BRIEOptionWithSysTable:
-			require.True(t, opt.UintValue == 1)
+			require.Equal(t, 1, opt.UintValue)
 		case ast.BRIEOptionLoadStats:
-			require.True(t, opt.UintValue == 1)
+			require.Equal(t, 1, opt.UintValue)
 		}
 	}
 	schema = plan.Schema()
@@ -218,7 +218,7 @@ func TestBRIEBuilderOPtions(t *testing.T) {
 	require.NoError(t, builder.err)
 	e, ok = exec.(*BRIEExec)
 	require.True(t, ok)
-	require.True(t, e.restoreCfg.ChecksumConcurrency == 4)
+	require.Equal(t, 4, e.restoreCfg.ChecksumConcurrency)
 	require.True(t, e.restoreCfg.WaitTiflashReady)
 	require.True(t, e.restoreCfg.WithSysTable)
 	require.True(t, e.restoreCfg.LoadStats)
