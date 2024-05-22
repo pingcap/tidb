@@ -1050,9 +1050,7 @@ func (bc *Client) BackupRanges(
 	ObserveStoreChangesAsync(ctx, stateNotifier, bc.mgr.GetPDClient())
 
 	mainBackupLoop := &MainBackupLoop{
-		BackupSender: &MainBackupSender{
-			StateNotifier: stateNotifier,
-		},
+		BackupSender:       &MainBackupSender{},
 		BackupReq:          request,
 		GlobalProgressTree: &globalProgressTree,
 		ReplicaReadLabel:   replicaReadLabel,
