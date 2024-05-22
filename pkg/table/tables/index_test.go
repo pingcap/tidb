@@ -169,49 +169,6 @@ func buildTableInfo(t *testing.T, sql string) *model.TableInfo {
 	require.NoError(t, err)
 	return tblInfo
 }
-<<<<<<< HEAD
-=======
-
-func TestGenIndexValueFromIndex(t *testing.T) {
-	tblInfo := buildTableInfo(t, "create table a (a int primary key, b int not null, c text, unique key key_b(b));")
-	tblInfo.State = model.StatePublic
-	tbl, err := tables.TableFromMeta(lkv.NewPanickingAllocators(tblInfo.SepAutoInc(), 0), tblInfo)
-	require.NoError(t, err)
-
-	sessionOpts := encode.SessionOptions{
-		SQLMode:   mysql.ModeStrictAllTables,
-		Timestamp: 1234567890,
-	}
-
-	encoder, err := lkv.NewBaseKVEncoder(&encode.EncodingConfig{
-		Table:          tbl,
-		SessionOptions: sessionOpts,
-	})
-	require.NoError(t, err)
-	encoder.SessionCtx.GetSessionVars().RowEncoder.Enable = true
-
-	data1 := []types.Datum{
-		types.NewIntDatum(1),
-		types.NewIntDatum(23),
-		types.NewStringDatum("4.csv"),
-	}
-	tctx := encoder.SessionCtx.GetTableCtx()
-	_, err = encoder.Table.AddRecord(tctx, data1)
-	require.NoError(t, err)
-	kvPairs := encoder.SessionCtx.TakeKvPairs()
-
-	indexKey := kvPairs.Pairs[1].Key
-	indexValue := kvPairs.Pairs[1].Val
-
-	_, idxID, _, err := tablecodec.DecodeIndexKey(indexKey)
-	require.NoError(t, err)
-
-	idxInfo := model.FindIndexInfoByID(tbl.Meta().Indices, idxID)
-
-	valueStr, err := tables.GenIndexValueFromIndex(indexKey, indexValue, tbl.Meta(), idxInfo)
-	require.NoError(t, err)
-	require.Equal(t, []string{"23"}, valueStr)
-}
 
 func TestGenIndexValueWithLargePaddingSize(t *testing.T) {
 	// ref https://github.com/pingcap/tidb/issues/47115
@@ -242,14 +199,14 @@ func TestGenIndexValueWithLargePaddingSize(t *testing.T) {
 	padding := strings.Repeat(" ", 128)
 	idxColVals := types.MakeDatums("abc" + padding)
 	handleColVals := types.MakeDatums(1, 2)
-	encodedHandle, err := codec.EncodeKey(sc.TimeZone(), nil, handleColVals...)
+	encodedHandle, err := codec.EncodeKey(sc, nil, handleColVals...)
 	require.NoError(t, err)
 	commonHandle, err := kv.NewCommonHandle(encodedHandle)
 	require.NoError(t, err)
 
-	key, _, err := idx.GenIndexKey(sc.ErrCtx(), sc.TimeZone(), idxColVals, commonHandle, nil)
+	key, _, err := idx.GenIndexKey(sc, idxColVals, commonHandle, nil)
 	require.NoError(t, err)
-	_, err = idx.Create(mockCtx.GetTableCtx(), txn, idxColVals, commonHandle, nil)
+	_, err = idx.Create(mockCtx, txn, idxColVals, commonHandle, nil)
 	require.NoError(t, err)
 	val, err := txn.Get(context.Background(), key)
 	require.NoError(t, err)
@@ -281,4 +238,3 @@ func TestGenIndexValueWithLargePaddingSize(t *testing.T) {
 	require.False(t, handle.IsInt())
 	require.Equal(t, commonHandle.Encoded(), handle.Encoded())
 }
->>>>>>> 96f9797fca4 (tablecodec: fix the issue that decoding an index value might panic (#53034))
