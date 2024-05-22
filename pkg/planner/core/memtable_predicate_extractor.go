@@ -74,9 +74,6 @@ func (extractHelper) extractColInConsExpr(extractCols map[int64]*types.FieldName
 			return "", nil
 		}
 		v := constant.Value
-		if constant.ParamMarker != nil {
-			v = constant.ParamMarker.GetUserVar()
-		}
 		results = append(results, v)
 	}
 	return name.ColName.L, results
@@ -156,9 +153,6 @@ func (helper *extractHelper) extractColBinaryOpConsExpr(extractCols map[int64]*t
 		return "", nil
 	}
 	v := constant.Value
-	if constant.ParamMarker != nil {
-		v = constant.ParamMarker.GetUserVar()
-	}
 	return name.ColName.L, []types.Datum{v}
 }
 

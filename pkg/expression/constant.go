@@ -19,7 +19,6 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
@@ -130,20 +129,13 @@ type Constant struct {
 
 // ParamMarker indicates param provided by COM_STMT_EXECUTE.
 type ParamMarker struct {
-	ctx   variable.SessionVarsProvider
 	order int
-}
-
-// GetUserVar returns the corresponding user variable presented in the `EXECUTE` statement or `COM_EXECUTE` command.
-func (d *ParamMarker) GetUserVar() types.Datum {
-	sessionVars := d.ctx.GetSessionVars()
-	return sessionVars.PlanCacheParams.GetParamValue(d.order)
 }
 
 // String implements fmt.Stringer interface.
 func (c *Constant) String() string {
 	if c.ParamMarker != nil {
-		dt := c.ParamMarker.GetUserVar()
+		dt := c.Value
 		c.Value.SetValue(dt.GetValue(), c.RetType)
 	} else if c.DeferredExpr != nil {
 		return c.DeferredExpr.String()
@@ -168,7 +160,7 @@ func (c *Constant) GetType() *types.FieldType {
 		// GetType() may be called in multi-threaded context, e.g, in building inner executors of IndexJoin,
 		// so it should avoid data race. We achieve this by returning different FieldType pointer for each call.
 		tp := types.NewFieldType(mysql.TypeUnspecified)
-		dt := c.ParamMarker.GetUserVar()
+		dt := c.Value
 		types.InferParamTypeFromDatum(&dt, tp)
 		return tp
 	}
@@ -233,7 +225,7 @@ func (c *Constant) VecEvalJSON(ctx EvalContext, input *chunk.Chunk, result *chun
 
 func (c *Constant) getLazyDatum(ctx EvalContext, row chunk.Row) (dt types.Datum, isLazy bool, err error) {
 	if c.ParamMarker != nil {
-		return c.ParamMarker.GetUserVar(), true, nil
+		return c.Value, true, nil
 	} else if c.DeferredExpr != nil {
 		dt, err = c.DeferredExpr.Eval(ctx, row)
 		return dt, true, err

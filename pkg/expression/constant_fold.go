@@ -251,7 +251,7 @@ func foldConstant(ctx BuildContext, expr Expression) (Expression, bool) {
 	case *Constant:
 		if x.ParamMarker != nil {
 			return &Constant{
-				Value:        x.ParamMarker.GetUserVar(),
+				Value:        x.Value,
 				RetType:      x.RetType,
 				DeferredExpr: x.DeferredExpr,
 				ParamMarker:  x.ParamMarker,
