@@ -72,6 +72,7 @@ func (s *Sieve[K, V]) logRateLoop(ctx context.Context) {
 			logutil.BgLogger().Info("sieve cache hit rate", zap.Float64("rate", rate))
 			s.all = 0
 			s.hit = 0
+			s.mu.Unlock()
 		}
 	}
 }
