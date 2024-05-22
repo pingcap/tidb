@@ -1151,9 +1151,47 @@ func TestGlobalStatsOutOfRangeEstimationAfterDelete(t *testing.T) {
 		})
 		testKit.MustQuery(input[i]).Check(testkit.Rows(output[i].Result...))
 	}
+<<<<<<< HEAD:statistics/selectivity_test.go
 	testKit.MustExec("analyze table t partition p4 with 1 samplerate, 0 topn")
 	require.Nil(t, h.Update(dom.InfoSchema()))
 	for i := range input {
 		testKit.MustQuery(input[i]).Check(testkit.Rows(output[i].Result...))
 	}
+=======
+}
+
+func TestBuiltinInEstWithoutStats(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	h := dom.StatsHandle()
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int)")
+	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+	tk.MustExec("insert into t values(1), (2), (3), (4), (5), (6), (7), (8), (9), (10)")
+	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	is := dom.InfoSchema()
+	require.NoError(t, h.Update(is))
+
+	tk.MustQuery("explain format='brief' select * from t where a in (1, 2, 3, 4, 5, 6, 7, 8)").Check(testkit.Rows(
+		"TableReader 0.08 root  data:Selection",
+		"└─Selection 0.08 cop[tikv]  in(test.t.a, 1, 2, 3, 4, 5, 6, 7, 8)",
+		"  └─TableFullScan 10.00 cop[tikv] table:t keep order:false, stats:pseudo",
+	))
+
+	h.Clear()
+	require.NoError(t, h.InitStatsLite(is))
+	tk.MustQuery("explain format='brief' select * from t where a in (1, 2, 3, 4, 5, 6, 7, 8)").Check(testkit.Rows(
+		"TableReader 0.08 root  data:Selection",
+		"└─Selection 0.08 cop[tikv]  in(test.t.a, 1, 2, 3, 4, 5, 6, 7, 8)",
+		"  └─TableFullScan 10.00 cop[tikv] table:t keep order:false, stats:pseudo",
+	))
+	h.Clear()
+	require.NoError(t, h.InitStats(is))
+	tk.MustQuery("explain format='brief' select * from t where a in (1, 2, 3, 4, 5, 6, 7, 8)").Check(testkit.Rows(
+		"TableReader 8.00 root  data:Selection",
+		"└─Selection 8.00 cop[tikv]  in(test.t.a, 1, 2, 3, 4, 5, 6, 7, 8)",
+		"  └─TableFullScan 10.00 cop[tikv] table:t keep order:false, stats:pseudo",
+	))
+>>>>>>> e954bcfc74f (*: not load unnecessay data during the non-lite-init-stats (#53399)):pkg/planner/cardinality/selectivity_test.go
 }
