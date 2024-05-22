@@ -815,3 +815,11 @@ select min(id) from t group by str order by str;
 # TestUTF8MB40900AICIStrFunc
 select LOCATE('bar' collate utf8mb4_0900_ai_ci, 'FOOBAR' collate utf8mb4_0900_ai_ci);
 select 'FOOBAR' collate utf8mb4_0900_ai_ci REGEXP 'foo.*' collate utf8mb4_0900_ai_ci;
+
+# TestConvertCharsetFromBinary
+--enable_warnings
+select cast(compress('b') as char);
+set sql_mode='';
+select cast(compress('b') as char);
+--disable_warnings
+set sql_mode=DEFAULT;
