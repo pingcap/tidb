@@ -167,12 +167,12 @@ func (a *recordSet) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 		if a.stmt != nil {
 			a.stmt.Ctx.GetSessionVars().LastFoundRows = a.stmt.Ctx.GetSessionVars().StmtCtx.FoundRows()
 		}
-		return errors.Trace(ctx.Err())
+		return nil
 	}
 	if a.stmt != nil {
 		a.stmt.Ctx.GetSessionVars().StmtCtx.AddFoundRows(uint64(numRows))
 	}
-	return errors.Trace(ctx.Err())
+	return nil
 }
 
 // NewChunk create a chunk base on top-level executor's exec.NewFirstChunk().
