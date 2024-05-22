@@ -52,7 +52,7 @@ func (b *builtinInetNtoaSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, 
 		binary.BigEndian.PutUint32(ip, uint32(val))
 		ipv4 := ip.To4()
 		if ipv4 == nil {
-			// Not a vaild ipv4 address.
+			// Not a valid ipv4 address.
 			result.AppendNull()
 			continue
 		}

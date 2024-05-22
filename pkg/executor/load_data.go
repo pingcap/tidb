@@ -356,7 +356,7 @@ type commitTask struct {
 	rows [][]types.Datum
 }
 
-// processStream always trys to build a parser from channel and process it. When
+// processStream always tries to build a parser from channel and process it. When
 // it returns nil, it means all data is read.
 func (w *encodeWorker) processStream(
 	ctx context.Context,

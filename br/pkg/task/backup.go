@@ -619,7 +619,7 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 
 	summary.CollectInt("backup total ranges", len(ranges))
 
-	approximateRegions, regionCounts, err := getRegionCountOfRanges(ctx, mgr, ranges)
+	approximateRegions, err := getRegionCountOfRanges(ctx, mgr, ranges)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -684,7 +684,7 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 	})
 
 	metawriter.StartWriteMetasAsync(ctx, metautil.AppendDataFile)
-	err = client.BackupRanges(ctx, ranges, regionCounts, req, uint(cfg.Concurrency), cfg.ReplicaReadLabel, metawriter, progressCallBack)
+	err = client.BackupRanges(ctx, ranges, req, uint(cfg.Concurrency), cfg.ReplicaReadLabel, metawriter, progressCallBack)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -748,19 +748,17 @@ func getRegionCountOfRanges(
 	ctx context.Context,
 	mgr *conn.Mgr,
 	ranges []rtree.Range,
-) (int, []int, error) {
+) (int, error) {
 	// The number of regions need to backup
 	approximateRegions := 0
-	// The number array of regions of ranges, thecounts[i] is the number of regions of the range[i].
-	counts := make([]int, 0, len(ranges))
 	for _, r := range ranges {
 		regionCount, err := mgr.GetRegionCount(ctx, r.StartKey, r.EndKey)
 		if err != nil {
-			return 0, nil, errors.Trace(err)
+			return 0, errors.Trace(err)
 		}
-		counts = append(counts, regionCount)
+		approximateRegions += regionCount
 	}
-	return approximateRegions, counts, nil
+	return approximateRegions, nil
 }
 
 // ParseTSString port from tidb setSnapshotTS.

@@ -105,14 +105,23 @@ type MockBackendCtx struct {
 }
 
 // Register implements BackendCtx.Register interface.
-func (m *MockBackendCtx) Register(jobID, indexID int64, _, _ string) (Engine, error) {
-	logutil.DDLIngestLogger().Info("mock backend ctx register", zap.Int64("jobID", jobID), zap.Int64("indexID", indexID))
-	return &MockEngineInfo{sessCtx: m.sessCtx, mu: &m.mu}, nil
+func (m *MockBackendCtx) Register(indexIDs []int64, _ string) ([]Engine, error) {
+	logutil.DDLIngestLogger().Info("mock backend ctx register", zap.Int64("jobID", m.jobID), zap.Int64s("indexIDs", indexIDs))
+	ret := make([]Engine, 0, len(indexIDs))
+	for range indexIDs {
+		ret = append(ret, &MockEngineInfo{sessCtx: m.sessCtx, mu: &m.mu})
+	}
+	return ret, nil
 }
 
-// Unregister implements BackendCtx.Unregister interface.
-func (*MockBackendCtx) Unregister(jobID, indexID int64) {
-	logutil.DDLIngestLogger().Info("mock backend ctx unregister", zap.Int64("jobID", jobID), zap.Int64("indexID", indexID))
+// UnregisterEngines implements BackendCtx.UnregisterEngines interface.
+func (*MockBackendCtx) UnregisterEngines() {
+	logutil.DDLIngestLogger().Info("mock backend ctx unregister")
+}
+
+// FinishedWritingNeedImport implements BackendCtx interface.
+func (*MockBackendCtx) FinishedWritingNeedImport() bool {
+	return false
 }
 
 // CollectRemoteDuplicateRows implements BackendCtx.CollectRemoteDuplicateRows interface.
@@ -127,13 +136,9 @@ func (*MockBackendCtx) FinishImport(indexID int64, _ bool, _ table.Table) error 
 	return nil
 }
 
-// ResetWorkers implements BackendCtx.ResetWorkers interface.
-func (*MockBackendCtx) ResetWorkers(_ int64) {
-}
-
 // Flush implements BackendCtx.Flush interface.
-func (*MockBackendCtx) Flush(_ int64, _ FlushMode) (flushed bool, imported bool, err error) {
-	return false, false, nil
+func (*MockBackendCtx) Flush(_ FlushMode) (flushed bool, imported bool, errIdxID int64, err error) {
+	return false, false, 0, nil
 }
 
 // Done implements BackendCtx.Done interface.
@@ -241,11 +246,6 @@ func (m *MockWriter) WriteRow(_ context.Context, key, idxVal []byte, _ kv.Handle
 // LockForWrite implements Writer.LockForWrite interface.
 func (*MockWriter) LockForWrite() func() {
 	return func() {}
-}
-
-// Close implements Writer.Close interface.
-func (*MockWriter) Close(_ context.Context) error {
-	return nil
 }
 
 // MockExecAfterWriteRow is only used for test.

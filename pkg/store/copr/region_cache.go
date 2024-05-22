@@ -60,7 +60,7 @@ func (c *RegionCache) SplitRegionRanges(bo *Backoffer, keyRanges []kv.KeyRange, 
 	return ret, nil
 }
 
-// LocationKeyRanges wrapps a real Location in PD and its logical ranges info.
+// LocationKeyRanges wraps a real Location in PD and its logical ranges info.
 type LocationKeyRanges struct {
 	// Location is the real location in PD.
 	Location *tikv.KeyLocation

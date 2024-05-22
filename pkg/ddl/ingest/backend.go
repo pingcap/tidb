@@ -17,6 +17,7 @@ package ingest
 import (
 	"context"
 	"fmt"
+	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -33,7 +34,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
-	"github.com/pingcap/tidb/pkg/util/generic"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/client/v3/concurrency"
@@ -41,15 +41,32 @@ import (
 	"go.uber.org/zap"
 )
 
-// BackendCtx is the backend context for add index reorg task.
+// MockDMLExecutionStateBeforeImport is a failpoint to mock the DML execution state before import.
+var MockDMLExecutionStateBeforeImport func()
+
+// BackendCtx is the backend context for one add index reorg task.
 type BackendCtx interface {
-	Register(jobID, indexID int64, schemaName, tableName string) (Engine, error)
-	Unregister(jobID, indexID int64)
+	// Register create a new engineInfo for each index ID and register it to the
+	// backend context. If the index ID is already registered, it will return the
+	// associated engines. Only one group of index ID is allowed to register for a
+	// BackendCtx.
+	Register(indexIDs []int64, tableName string) ([]Engine, error)
+	UnregisterEngines()
+	// FinishImport imports the engine of given index ID into the storage, collects
+	// the duplicate errors if the `unique` is true. Caller should make sure the
+	// first call of FinishImport means no further data will be wrote to all engines.
+	//
+	// TODO(lance6716): refine the interface to let caller don't need to pass the
+	// indexID, and unify with CollectRemoteDuplicateRows.
+	FinishImport(indexID int64, unique bool, tbl table.Table) error
+	// FinishedWritingNeedImport returns true only when all the engines are finished
+	// writing and only need import. Considering the calling usage of FinishImport,
+	// it will return true after a successful call of FinishImport and may return
+	// true after a failed call of FinishImport.
+	FinishedWritingNeedImport() bool
 
 	CollectRemoteDuplicateRows(indexID int64, tbl table.Table) error
-	FinishImport(indexID int64, unique bool, tbl table.Table) error
-	ResetWorkers(jobID int64)
-	Flush(indexID int64, mode FlushMode) (flushed, imported bool, err error)
+	FlushController
 	Done() bool
 	SetDone()
 
@@ -73,19 +90,19 @@ const (
 	FlushModeForceFlushAndImport
 )
 
-// litBackendCtx store a backend info for add index reorg task.
+// litBackendCtx implements BackendCtx.
 type litBackendCtx struct {
-	generic.SyncMap[int64, *engineInfo]
-	MemRoot  MemRoot
-	DiskRoot DiskRoot
+	engines  map[int64]*engineInfo
+	memRoot  MemRoot
+	diskRoot DiskRoot
 	jobID    int64
 	backend  *local.Backend
 	ctx      context.Context
 	cfg      *lightning.Config
 	sysVars  map[string]string
-	diskRoot DiskRoot
 	done     bool
 
+	flushing        atomic.Bool
 	timeOfLastFlush atomicutil.Time
 	updateInterval  time.Duration
 	checkpointMgr   *CheckpointManager
@@ -135,7 +152,7 @@ func (bc *litBackendCtx) CollectRemoteDuplicateRows(indexID int64, tbl table.Tab
 // FinishImport imports all the key-values in engine into the storage, collects the duplicate errors if any, and
 // removes the engine from the backend context.
 func (bc *litBackendCtx) FinishImport(indexID int64, unique bool, tbl table.Table) error {
-	ei, exist := bc.Load(indexID)
+	ei, exist := bc.engines[indexID]
 	if !exist {
 		return dbterror.ErrIngestFailed.FastGenByArgs("ingest engine not found")
 	}
@@ -175,42 +192,39 @@ func acquireLock(ctx context.Context, se *concurrency.Session, key string) (*con
 	return mu, nil
 }
 
-// Flush checks the disk quota and imports the current key-values in engine to the storage.
-func (bc *litBackendCtx) Flush(indexID int64, mode FlushMode) (flushed, imported bool, err error) {
-	ei, exist := bc.Load(indexID)
-	if !exist {
-		logutil.Logger(bc.ctx).Error(LitErrGetEngineFail, zap.Int64("index ID", indexID))
-		return false, false, dbterror.ErrIngestFailed.FastGenByArgs("ingest engine not found")
-	}
-
+// Flush implements FlushController.
+func (bc *litBackendCtx) Flush(mode FlushMode) (flushed, imported bool, errIdxID int64, err error) {
 	shouldFlush, shouldImport := bc.checkFlush(mode)
 	if !shouldFlush {
-		return false, false, nil
+		return false, false, 0, nil
 	}
-	if !ei.flushing.CompareAndSwap(false, true) {
-		return false, false, nil
+	if !bc.flushing.CompareAndSwap(false, true) {
+		return false, false, 0, nil
 	}
-	defer ei.flushing.Store(false)
-	ei.flushLock.Lock()
-	defer ei.flushLock.Unlock()
+	defer bc.flushing.Store(false)
 
-	err = ei.Flush()
-	if err != nil {
-		return false, false, err
+	for indexID, ei := range bc.engines {
+		ei.flushLock.Lock()
+		//nolint: all_revive,revive
+		defer ei.flushLock.Unlock()
+
+		if err = ei.Flush(); err != nil {
+			return false, false, indexID, err
+		}
 	}
 	bc.timeOfLastFlush.Store(time.Now())
 
 	if !shouldImport {
-		return true, false, nil
+		return true, false, 0, nil
 	}
 
 	// Use distributed lock if run in distributed mode).
 	if bc.etcdClient != nil {
-		distLockKey := fmt.Sprintf("/tidb/distributeLock/%d/%d", bc.jobID, indexID)
+		distLockKey := fmt.Sprintf("/tidb/distributeLock/%d", bc.jobID)
 		se, _ := concurrency.NewSession(bc.etcdClient)
 		mu, err := acquireLock(bc.ctx, se, distLockKey)
 		if err != nil {
-			return true, false, errors.Trace(err)
+			return true, false, 0, errors.Trace(err)
 		}
 		logutil.Logger(bc.ctx).Info("acquire distributed flush lock success", zap.Int64("jobID", bc.jobID))
 		defer func() {
@@ -226,25 +240,34 @@ func (bc *litBackendCtx) Flush(indexID int64, mode FlushMode) (flushed, imported
 			}
 		}()
 	}
-	err = bc.unsafeImportAndReset(ei)
-	if err != nil {
-		return true, false, err
+	failpoint.Inject("mockDMLExecutionStateBeforeImport", func(_ failpoint.Value) {
+		if MockDMLExecutionStateBeforeImport != nil {
+			MockDMLExecutionStateBeforeImport()
+		}
+	})
+
+	for indexID, ei := range bc.engines {
+		if err = bc.unsafeImportAndReset(ei); err != nil {
+			return true, false, indexID, err
+		}
 	}
-	return true, true, nil
+
+	return true, true, 0, nil
 }
 
 func (bc *litBackendCtx) unsafeImportAndReset(ei *engineInfo) error {
-	logutil.Logger(bc.ctx).Info(LitInfoUnsafeImport, zap.Int64("index ID", ei.indexID),
-		zap.String("usage info", bc.diskRoot.UsageInfo()))
 	logger := log.FromContext(bc.ctx).With(
 		zap.Stringer("engineUUID", ei.uuid),
 	)
+	logger.Info(LitInfoUnsafeImport,
+		zap.Int64("index ID", ei.indexID),
+		zap.String("usage info", bc.diskRoot.UsageInfo()))
 
-	ei.closedEngine = backend.NewClosedEngine(bc.backend, logger, ei.uuid, 0)
+	closedEngine := backend.NewClosedEngine(bc.backend, logger, ei.uuid, 0)
 
 	regionSplitSize := int64(lightning.SplitRegionSize) * int64(lightning.MaxSplitRegionSizeRatio)
 	regionSplitKeys := int64(lightning.SplitRegionKeys)
-	if err := ei.closedEngine.Import(bc.ctx, regionSplitSize, regionSplitKeys); err != nil {
+	if err := closedEngine.Import(bc.ctx, regionSplitSize, regionSplitKeys); err != nil {
 		logutil.Logger(bc.ctx).Error(LitErrIngestDataErr, zap.Int64("index ID", ei.indexID),
 			zap.String("usage info", bc.diskRoot.UsageInfo()))
 		return err

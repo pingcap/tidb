@@ -875,6 +875,11 @@ func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Jo
 		ver, err = updateVersionAndTableInfo(d, t, job, tbl.Meta(), true)
 		return false, ver, errors.Trace(err)
 	case model.BackfillStateReadyToMerge:
+		failpoint.Inject("mockDMLExecutionStateBeforeMerge", func(_ failpoint.Value) {
+			if MockDMLExecutionStateBeforeMerge != nil {
+				MockDMLExecutionStateBeforeMerge()
+			}
+		})
 		logutil.DDLLogger().Info("index backfill state ready to merge",
 			zap.Int64("job ID", job.ID),
 			zap.String("table", tbl.Meta().Name.O),
@@ -1923,6 +1928,9 @@ var MockDMLExecutionStateMerging func()
 
 // MockDMLExecutionStateBeforeImport is only used for test.
 var MockDMLExecutionStateBeforeImport func()
+
+// MockDMLExecutionStateBeforeMerge is only used for test.
+var MockDMLExecutionStateBeforeMerge func()
 
 func (w *worker) addPhysicalTableIndex(t table.PhysicalTable, reorgInfo *reorgInfo) error {
 	if reorgInfo.mergingTmpIdx {

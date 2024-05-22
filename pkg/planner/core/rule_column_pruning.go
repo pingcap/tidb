@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"slices"
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
@@ -37,7 +38,7 @@ type columnPruner struct {
 
 func (*columnPruner) optimize(_ context.Context, lp base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
 	planChanged := false
-	lp, err := lp.PruneColumns(lp.Schema().Columns, opt)
+	lp, err := lp.PruneColumns(slices.Clone(lp.Schema().Columns), opt)
 	if err != nil {
 		return nil, planChanged, err
 	}

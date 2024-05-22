@@ -133,12 +133,7 @@ func (r *readIndexExecutor) RunSubtask(ctx context.Context, subtask *proto.Subta
 	if opCtx.OperatorErr() != nil {
 		return opCtx.OperatorErr()
 	}
-	if err != nil {
-		return err
-	}
-
-	r.bc.ResetWorkers(r.job.ID)
-	return nil
+	return err
 }
 
 func (r *readIndexExecutor) RealtimeSummary() *execute.SubtaskSummary {
@@ -226,15 +221,17 @@ func (r *readIndexExecutor) buildLocalStorePipeline(
 		return nil, err
 	}
 	d := r.d
-	engines := make([]ingest.Engine, 0, len(r.indexes))
+	indexIDs := make([]int64, 0, len(r.indexes))
 	for _, index := range r.indexes {
-		ei, err := r.bc.Register(r.job.ID, index.ID, r.job.SchemaName, r.job.TableName)
-		if err != nil {
-			tidblogutil.Logger(opCtx).Warn("cannot register new engine", zap.Error(err),
-				zap.Int64("job ID", r.job.ID), zap.Int64("index ID", index.ID))
-			return nil, err
-		}
-		engines = append(engines, ei)
+		indexIDs = append(indexIDs, index.ID)
+	}
+	engines, err := r.bc.Register(indexIDs, r.job.TableName)
+	if err != nil {
+		tidblogutil.Logger(opCtx).Error("cannot register new engine",
+			zap.Error(err),
+			zap.Int64("job ID", r.job.ID),
+			zap.Int64s("index IDs", indexIDs))
+		return nil, err
 	}
 	counter := metrics.BackfillTotalCounter.WithLabelValues(
 		metrics.GenerateReorgLabel("add_idx_rate", r.job.SchemaName, tbl.Meta().Name.O))
