@@ -15,8 +15,10 @@
 package core
 
 import (
+	"cmp"
 	"context"
 	"fmt"
+	"reflect"
 	"sort"
 	"strings"
 	"testing"
@@ -1097,27 +1099,27 @@ func TestVisitInfo(t *testing.T) {
 		{
 			sql: "insert into t (a) values (1)",
 			ans: []visitInfo{
-				{mysql.InsertPriv, "test", "t", "", nil, false, "", false},
+				{mysql.InsertPriv, "test", "t", "", nil, false, []string{""}, false},
 			},
 		},
 		{
 			sql: "delete from t where a = 1",
 			ans: []visitInfo{
-				{mysql.DeletePriv, "test", "t", "", nil, false, "", false},
-				{mysql.SelectPriv, "test", "t", "", nil, false, "", false},
+				{mysql.DeletePriv, "test", "t", "", nil, false, []string{""}, false},
+				{mysql.SelectPriv, "test", "t", "", nil, false, []string{""}, false},
 			},
 		},
 		{
 			sql: "delete from t order by a",
 			ans: []visitInfo{
-				{mysql.DeletePriv, "test", "t", "", nil, false, "", false},
-				{mysql.SelectPriv, "test", "t", "", nil, false, "", false},
+				{mysql.DeletePriv, "test", "t", "", nil, false, []string{""}, false},
+				{mysql.SelectPriv, "test", "t", "", nil, false, []string{""}, false},
 			},
 		},
 		{
 			sql: "delete from t",
 			ans: []visitInfo{
-				{mysql.DeletePriv, "test", "t", "", nil, false, "", false},
+				{mysql.DeletePriv, "test", "t", "", nil, false, []string{""}, false},
 			},
 		},
 		/* Not currently supported. See https://github.com/pingcap/tidb/issues/23644
@@ -1131,234 +1133,234 @@ func TestVisitInfo(t *testing.T) {
 		{
 			sql: "delete from a1 using t as a1 inner join t as a2 where a1.a = a2.a",
 			ans: []visitInfo{
-				{mysql.DeletePriv, "test", "t", "", nil, false, "", false},
-				{mysql.SelectPriv, "test", "t", "", nil, false, "", false},
+				{mysql.DeletePriv, "test", "t", "", nil, false, []string{""}, false},
+				{mysql.SelectPriv, "test", "t", "", nil, false, []string{""}, false},
 			},
 		},
 		{
 			sql: "update t set a = 7 where a = 1",
 			ans: []visitInfo{
-				{mysql.UpdatePriv, "test", "t", "", nil, false, "", false},
-				{mysql.SelectPriv, "test", "t", "", nil, false, "", false},
+				{mysql.UpdatePriv, "test", "t", "", nil, false, []string{""}, false},
+				{mysql.SelectPriv, "test", "t", "", nil, false, []string{""}, false},
 			},
 		},
 		{
 			sql: "update t, (select * from t) a1 set t.a = a1.a;",
 			ans: []visitInfo{
-				{mysql.UpdatePriv, "test", "t", "", nil, false, "", false},
-				{mysql.SelectPriv, "test", "t", "", nil, false, "", false},
+				{mysql.UpdatePriv, "test", "t", "", nil, false, []string{""}, false},
+				{mysql.SelectPriv, "test", "t", "", nil, false, []string{""}, false},
 			},
 		},
 		{
 			sql: "update t a1 set a1.a = a1.a + 1",
 			ans: []visitInfo{
-				{mysql.UpdatePriv, "test", "t", "", nil, false, "", false},
-				{mysql.SelectPriv, "test", "t", "", nil, false, "", false},
+				{mysql.UpdatePriv, "test", "t", "", nil, false, []string{""}, false},
+				{mysql.SelectPriv, "test", "t", "", nil, false, []string{""}, false},
 			},
 		},
 		{
 			sql: "select a, sum(e) from t group by a",
 			ans: []visitInfo{
-				{mysql.SelectPriv, "test", "t", "", nil, false, "", false},
+				{mysql.SelectPriv, "test", "t", "", nil, false, []string{""}, false},
 			},
 		},
 		{
 			sql: "truncate table t",
 			ans: []visitInfo{
-				{mysql.DropPriv, "test", "t", "", nil, false, "", false},
+				{mysql.DropPriv, "test", "t", "", nil, false, []string{""}, false},
 			},
 		},
 		{
 			sql: "drop table t",
 			ans: []visitInfo{
-				{mysql.DropPriv, "test", "t", "", nil, false, "", false},
+				{mysql.DropPriv, "test", "t", "", nil, false, []string{""}, false},
 			},
 		},
 		{
 			sql: "create table t (a int)",
 			ans: []visitInfo{
-				{mysql.CreatePriv, "test", "t", "", nil, false, "", false},
+				{mysql.CreatePriv, "test", "t", "", nil, false, []string{""}, false},
 			},
 		},
 		{
 			sql: "create table t1 like t",
 			ans: []visitInfo{
-				{mysql.CreatePriv, "test", "t1", "", nil, false, "", false},
-				{mysql.SelectPriv, "test", "t", "", nil, false, "", false},
+				{mysql.CreatePriv, "test", "t1", "", nil, false, []string{""}, false},
+				{mysql.SelectPriv, "test", "t", "", nil, false, []string{""}, false},
 			},
 		},
 		{
 			sql: "create database test",
 			ans: []visitInfo{
-				{mysql.CreatePriv, "test", "", "", nil, false, "", false},
+				{mysql.CreatePriv, "test", "", "", nil, false, []string{""}, false},
 			},
 		},
 		{
 			sql: "drop database test",
 			ans: []visitInfo{
-				{mysql.DropPriv, "test", "", "", nil, false, "", false},
+				{mysql.DropPriv, "test", "", "", nil, false, []string{""}, false},
 			},
 		},
 		{
 			sql: "create index t_1 on t (a)",
 			ans: []visitInfo{
-				{mysql.IndexPriv, "test", "t", "", nil, false, "", false},
+				{mysql.IndexPriv, "test", "t", "", nil, false, []string{""}, false},
 			},
 		},
 		{
 			sql: "drop index e on t",
 			ans: []visitInfo{
-				{mysql.IndexPriv, "test", "t", "", nil, false, "", false},
+				{mysql.IndexPriv, "test", "t", "", nil, false, []string{""}, false},
 			},
 		},
 		{
 			sql: `grant all privileges on test.* to 'test'@'%'`,
 			ans: []visitInfo{
-				{mysql.SelectPriv, "test", "", "", nil, false, "", false},
-				{mysql.InsertPriv, "test", "", "", nil, false, "", false},
-				{mysql.UpdatePriv, "test", "", "", nil, false, "", false},
-				{mysql.DeletePriv, "test", "", "", nil, false, "", false},
-				{mysql.CreatePriv, "test", "", "", nil, false, "", false},
-				{mysql.DropPriv, "test", "", "", nil, false, "", false},
-				{mysql.GrantPriv, "test", "", "", nil, false, "", false},
-				{mysql.ReferencesPriv, "test", "", "", nil, false, "", false},
-				{mysql.LockTablesPriv, "test", "", "", nil, false, "", false},
-				{mysql.CreateTMPTablePriv, "test", "", "", nil, false, "", false},
-				{mysql.EventPriv, "test", "", "", nil, false, "", false},
-				{mysql.CreateRoutinePriv, "test", "", "", nil, false, "", false},
-				{mysql.AlterRoutinePriv, "test", "", "", nil, false, "", false},
-				{mysql.AlterPriv, "test", "", "", nil, false, "", false},
-				{mysql.ExecutePriv, "test", "", "", nil, false, "", false},
-				{mysql.IndexPriv, "test", "", "", nil, false, "", false},
-				{mysql.CreateViewPriv, "test", "", "", nil, false, "", false},
-				{mysql.ShowViewPriv, "test", "", "", nil, false, "", false},
-				{mysql.TriggerPriv, "test", "", "", nil, false, "", false},
+				{mysql.SelectPriv, "test", "", "", nil, false, []string{""}, false},
+				{mysql.InsertPriv, "test", "", "", nil, false, []string{""}, false},
+				{mysql.UpdatePriv, "test", "", "", nil, false, []string{""}, false},
+				{mysql.DeletePriv, "test", "", "", nil, false, []string{""}, false},
+				{mysql.CreatePriv, "test", "", "", nil, false, []string{""}, false},
+				{mysql.DropPriv, "test", "", "", nil, false, []string{""}, false},
+				{mysql.GrantPriv, "test", "", "", nil, false, []string{""}, false},
+				{mysql.ReferencesPriv, "test", "", "", nil, false, []string{""}, false},
+				{mysql.LockTablesPriv, "test", "", "", nil, false, []string{""}, false},
+				{mysql.CreateTMPTablePriv, "test", "", "", nil, false, []string{""}, false},
+				{mysql.EventPriv, "test", "", "", nil, false, []string{""}, false},
+				{mysql.CreateRoutinePriv, "test", "", "", nil, false, []string{""}, false},
+				{mysql.AlterRoutinePriv, "test", "", "", nil, false, []string{""}, false},
+				{mysql.AlterPriv, "test", "", "", nil, false, []string{""}, false},
+				{mysql.ExecutePriv, "test", "", "", nil, false, []string{""}, false},
+				{mysql.IndexPriv, "test", "", "", nil, false, []string{""}, false},
+				{mysql.CreateViewPriv, "test", "", "", nil, false, []string{""}, false},
+				{mysql.ShowViewPriv, "test", "", "", nil, false, []string{""}, false},
+				{mysql.TriggerPriv, "test", "", "", nil, false, []string{""}, false},
 			},
 		},
 		{
 			sql: `grant all privileges on *.* to 'test'@'%'`,
 			ans: []visitInfo{
-				{mysql.SelectPriv, "", "", "", nil, false, "", false},
-				{mysql.InsertPriv, "", "", "", nil, false, "", false},
-				{mysql.UpdatePriv, "", "", "", nil, false, "", false},
-				{mysql.DeletePriv, "", "", "", nil, false, "", false},
-				{mysql.CreatePriv, "", "", "", nil, false, "", false},
-				{mysql.DropPriv, "", "", "", nil, false, "", false},
-				{mysql.ProcessPriv, "", "", "", nil, false, "", false},
-				{mysql.ReferencesPriv, "", "", "", nil, false, "", false},
-				{mysql.AlterPriv, "", "", "", nil, false, "", false},
-				{mysql.ShowDBPriv, "", "", "", nil, false, "", false},
-				{mysql.SuperPriv, "", "", "", nil, false, "", false},
-				{mysql.ExecutePriv, "", "", "", nil, false, "", false},
-				{mysql.IndexPriv, "", "", "", nil, false, "", false},
-				{mysql.CreateUserPriv, "", "", "", nil, false, "", false},
-				{mysql.CreateTablespacePriv, "", "", "", nil, false, "", false},
-				{mysql.TriggerPriv, "", "", "", nil, false, "", false},
-				{mysql.CreateViewPriv, "", "", "", nil, false, "", false},
-				{mysql.ShowViewPriv, "", "", "", nil, false, "", false},
-				{mysql.CreateRolePriv, "", "", "", nil, false, "", false},
-				{mysql.DropRolePriv, "", "", "", nil, false, "", false},
-				{mysql.CreateTMPTablePriv, "", "", "", nil, false, "", false},
-				{mysql.LockTablesPriv, "", "", "", nil, false, "", false},
-				{mysql.CreateRoutinePriv, "", "", "", nil, false, "", false},
-				{mysql.AlterRoutinePriv, "", "", "", nil, false, "", false},
-				{mysql.EventPriv, "", "", "", nil, false, "", false},
-				{mysql.ShutdownPriv, "", "", "", nil, false, "", false},
-				{mysql.ReloadPriv, "", "", "", nil, false, "", false},
-				{mysql.FilePriv, "", "", "", nil, false, "", false},
-				{mysql.ConfigPriv, "", "", "", nil, false, "", false},
-				{mysql.ReplicationClientPriv, "", "", "", nil, false, "", false},
-				{mysql.ReplicationSlavePriv, "", "", "", nil, false, "", false},
-				{mysql.GrantPriv, "", "", "", nil, false, "", false},
+				{mysql.SelectPriv, "", "", "", nil, false, []string{""}, false},
+				{mysql.InsertPriv, "", "", "", nil, false, []string{""}, false},
+				{mysql.UpdatePriv, "", "", "", nil, false, []string{""}, false},
+				{mysql.DeletePriv, "", "", "", nil, false, []string{""}, false},
+				{mysql.CreatePriv, "", "", "", nil, false, []string{""}, false},
+				{mysql.DropPriv, "", "", "", nil, false, []string{""}, false},
+				{mysql.ProcessPriv, "", "", "", nil, false, []string{""}, false},
+				{mysql.ReferencesPriv, "", "", "", nil, false, []string{""}, false},
+				{mysql.AlterPriv, "", "", "", nil, false, []string{""}, false},
+				{mysql.ShowDBPriv, "", "", "", nil, false, []string{""}, false},
+				{mysql.SuperPriv, "", "", "", nil, false, []string{""}, false},
+				{mysql.ExecutePriv, "", "", "", nil, false, []string{""}, false},
+				{mysql.IndexPriv, "", "", "", nil, false, []string{""}, false},
+				{mysql.CreateUserPriv, "", "", "", nil, false, []string{""}, false},
+				{mysql.CreateTablespacePriv, "", "", "", nil, false, []string{""}, false},
+				{mysql.TriggerPriv, "", "", "", nil, false, []string{""}, false},
+				{mysql.CreateViewPriv, "", "", "", nil, false, []string{""}, false},
+				{mysql.ShowViewPriv, "", "", "", nil, false, []string{""}, false},
+				{mysql.CreateRolePriv, "", "", "", nil, false, []string{""}, false},
+				{mysql.DropRolePriv, "", "", "", nil, false, []string{""}, false},
+				{mysql.CreateTMPTablePriv, "", "", "", nil, false, []string{""}, false},
+				{mysql.LockTablesPriv, "", "", "", nil, false, []string{""}, false},
+				{mysql.CreateRoutinePriv, "", "", "", nil, false, []string{""}, false},
+				{mysql.AlterRoutinePriv, "", "", "", nil, false, []string{""}, false},
+				{mysql.EventPriv, "", "", "", nil, false, []string{""}, false},
+				{mysql.ShutdownPriv, "", "", "", nil, false, []string{""}, false},
+				{mysql.ReloadPriv, "", "", "", nil, false, []string{""}, false},
+				{mysql.FilePriv, "", "", "", nil, false, []string{""}, false},
+				{mysql.ConfigPriv, "", "", "", nil, false, []string{""}, false},
+				{mysql.ReplicationClientPriv, "", "", "", nil, false, []string{""}, false},
+				{mysql.ReplicationSlavePriv, "", "", "", nil, false, []string{""}, false},
+				{mysql.GrantPriv, "", "", "", nil, false, []string{""}, false},
 			},
 		},
 		{
 			sql: `grant select on test.ttt to 'test'@'%'`,
 			ans: []visitInfo{
-				{mysql.SelectPriv, "test", "ttt", "", nil, false, "", false},
-				{mysql.GrantPriv, "test", "ttt", "", nil, false, "", false},
+				{mysql.SelectPriv, "test", "ttt", "", nil, false, []string{""}, false},
+				{mysql.GrantPriv, "test", "ttt", "", nil, false, []string{""}, false},
 			},
 		},
 		{
 			sql: `grant select on ttt to 'test'@'%'`,
 			ans: []visitInfo{
-				{mysql.SelectPriv, "test", "ttt", "", nil, false, "", false},
-				{mysql.GrantPriv, "test", "ttt", "", nil, false, "", false},
+				{mysql.SelectPriv, "test", "ttt", "", nil, false, []string{""}, false},
+				{mysql.GrantPriv, "test", "ttt", "", nil, false, []string{""}, false},
 			},
 		},
 		{
 			sql: `revoke all privileges on test.* from 'test'@'%'`,
 			ans: []visitInfo{
-				{mysql.SelectPriv, "test", "", "", nil, false, "", false},
-				{mysql.InsertPriv, "test", "", "", nil, false, "", false},
-				{mysql.UpdatePriv, "test", "", "", nil, false, "", false},
-				{mysql.DeletePriv, "test", "", "", nil, false, "", false},
-				{mysql.CreatePriv, "test", "", "", nil, false, "", false},
-				{mysql.DropPriv, "test", "", "", nil, false, "", false},
-				{mysql.GrantPriv, "test", "", "", nil, false, "", false},
-				{mysql.ReferencesPriv, "test", "", "", nil, false, "", false},
-				{mysql.LockTablesPriv, "test", "", "", nil, false, "", false},
-				{mysql.CreateTMPTablePriv, "test", "", "", nil, false, "", false},
-				{mysql.EventPriv, "test", "", "", nil, false, "", false},
-				{mysql.CreateRoutinePriv, "test", "", "", nil, false, "", false},
-				{mysql.AlterRoutinePriv, "test", "", "", nil, false, "", false},
-				{mysql.AlterPriv, "test", "", "", nil, false, "", false},
-				{mysql.ExecutePriv, "test", "", "", nil, false, "", false},
-				{mysql.IndexPriv, "test", "", "", nil, false, "", false},
-				{mysql.CreateViewPriv, "test", "", "", nil, false, "", false},
-				{mysql.ShowViewPriv, "test", "", "", nil, false, "", false},
-				{mysql.TriggerPriv, "test", "", "", nil, false, "", false},
+				{mysql.SelectPriv, "test", "", "", nil, false, []string{""}, false},
+				{mysql.InsertPriv, "test", "", "", nil, false, []string{""}, false},
+				{mysql.UpdatePriv, "test", "", "", nil, false, []string{""}, false},
+				{mysql.DeletePriv, "test", "", "", nil, false, []string{""}, false},
+				{mysql.CreatePriv, "test", "", "", nil, false, []string{""}, false},
+				{mysql.DropPriv, "test", "", "", nil, false, []string{""}, false},
+				{mysql.GrantPriv, "test", "", "", nil, false, []string{""}, false},
+				{mysql.ReferencesPriv, "test", "", "", nil, false, []string{""}, false},
+				{mysql.LockTablesPriv, "test", "", "", nil, false, []string{""}, false},
+				{mysql.CreateTMPTablePriv, "test", "", "", nil, false, []string{""}, false},
+				{mysql.EventPriv, "test", "", "", nil, false, []string{""}, false},
+				{mysql.CreateRoutinePriv, "test", "", "", nil, false, []string{""}, false},
+				{mysql.AlterRoutinePriv, "test", "", "", nil, false, []string{""}, false},
+				{mysql.AlterPriv, "test", "", "", nil, false, []string{""}, false},
+				{mysql.ExecutePriv, "test", "", "", nil, false, []string{""}, false},
+				{mysql.IndexPriv, "test", "", "", nil, false, []string{""}, false},
+				{mysql.CreateViewPriv, "test", "", "", nil, false, []string{""}, false},
+				{mysql.ShowViewPriv, "test", "", "", nil, false, []string{""}, false},
+				{mysql.TriggerPriv, "test", "", "", nil, false, []string{""}, false},
 			},
 		},
 		{
 			sql: `revoke connection_admin on *.* from u1`,
 			ans: []visitInfo{
-				{mysql.ExtendedPriv, "", "", "", nil, false, "CONNECTION_ADMIN", true},
+				{mysql.ExtendedPriv, "", "", "", nil, false, []string{"CONNECTION_ADMIN"}, true},
 			},
 		},
 		{
 			sql: `revoke connection_admin, select on *.* from u1`,
 			ans: []visitInfo{
-				{mysql.ExtendedPriv, "", "", "", nil, false, "CONNECTION_ADMIN", true},
-				{mysql.SelectPriv, "", "", "", nil, false, "", false},
-				{mysql.GrantPriv, "", "", "", nil, false, "", false},
+				{mysql.ExtendedPriv, "", "", "", nil, false, []string{"CONNECTION_ADMIN"}, true},
+				{mysql.SelectPriv, "", "", "", nil, false, []string{""}, false},
+				{mysql.GrantPriv, "", "", "", nil, false, []string{""}, false},
 			},
 		},
 		{
 			sql: `revoke all privileges on *.* FROM u1`,
 			ans: []visitInfo{
-				{mysql.SelectPriv, "", "", "", nil, false, "", false},
-				{mysql.InsertPriv, "", "", "", nil, false, "", false},
-				{mysql.UpdatePriv, "", "", "", nil, false, "", false},
-				{mysql.DeletePriv, "", "", "", nil, false, "", false},
-				{mysql.CreatePriv, "", "", "", nil, false, "", false},
-				{mysql.DropPriv, "", "", "", nil, false, "", false},
-				{mysql.ProcessPriv, "", "", "", nil, false, "", false},
-				{mysql.ReferencesPriv, "", "", "", nil, false, "", false},
-				{mysql.AlterPriv, "", "", "", nil, false, "", false},
-				{mysql.ShowDBPriv, "", "", "", nil, false, "", false},
-				{mysql.SuperPriv, "", "", "", nil, false, "", false},
-				{mysql.ExecutePriv, "", "", "", nil, false, "", false},
-				{mysql.IndexPriv, "", "", "", nil, false, "", false},
-				{mysql.CreateUserPriv, "", "", "", nil, false, "", false},
-				{mysql.CreateTablespacePriv, "", "", "", nil, false, "", false},
-				{mysql.TriggerPriv, "", "", "", nil, false, "", false},
-				{mysql.CreateViewPriv, "", "", "", nil, false, "", false},
-				{mysql.ShowViewPriv, "", "", "", nil, false, "", false},
-				{mysql.CreateRolePriv, "", "", "", nil, false, "", false},
-				{mysql.DropRolePriv, "", "", "", nil, false, "", false},
-				{mysql.CreateTMPTablePriv, "", "", "", nil, false, "", false},
-				{mysql.LockTablesPriv, "", "", "", nil, false, "", false},
-				{mysql.CreateRoutinePriv, "", "", "", nil, false, "", false},
-				{mysql.AlterRoutinePriv, "", "", "", nil, false, "", false},
-				{mysql.EventPriv, "", "", "", nil, false, "", false},
-				{mysql.ShutdownPriv, "", "", "", nil, false, "", false},
-				{mysql.ReloadPriv, "", "", "", nil, false, "", false},
-				{mysql.FilePriv, "", "", "", nil, false, "", false},
-				{mysql.ConfigPriv, "", "", "", nil, false, "", false},
-				{mysql.ReplicationClientPriv, "", "", "", nil, false, "", false},
-				{mysql.ReplicationSlavePriv, "", "", "", nil, false, "", false},
-				{mysql.GrantPriv, "", "", "", nil, false, "", false},
+				{mysql.SelectPriv, "", "", "", nil, false, []string{""}, false},
+				{mysql.InsertPriv, "", "", "", nil, false, []string{""}, false},
+				{mysql.UpdatePriv, "", "", "", nil, false, []string{""}, false},
+				{mysql.DeletePriv, "", "", "", nil, false, []string{""}, false},
+				{mysql.CreatePriv, "", "", "", nil, false, []string{""}, false},
+				{mysql.DropPriv, "", "", "", nil, false, []string{""}, false},
+				{mysql.ProcessPriv, "", "", "", nil, false, []string{""}, false},
+				{mysql.ReferencesPriv, "", "", "", nil, false, []string{""}, false},
+				{mysql.AlterPriv, "", "", "", nil, false, []string{""}, false},
+				{mysql.ShowDBPriv, "", "", "", nil, false, []string{""}, false},
+				{mysql.SuperPriv, "", "", "", nil, false, []string{""}, false},
+				{mysql.ExecutePriv, "", "", "", nil, false, []string{""}, false},
+				{mysql.IndexPriv, "", "", "", nil, false, []string{""}, false},
+				{mysql.CreateUserPriv, "", "", "", nil, false, []string{""}, false},
+				{mysql.CreateTablespacePriv, "", "", "", nil, false, []string{""}, false},
+				{mysql.TriggerPriv, "", "", "", nil, false, []string{""}, false},
+				{mysql.CreateViewPriv, "", "", "", nil, false, []string{""}, false},
+				{mysql.ShowViewPriv, "", "", "", nil, false, []string{""}, false},
+				{mysql.CreateRolePriv, "", "", "", nil, false, []string{""}, false},
+				{mysql.DropRolePriv, "", "", "", nil, false, []string{""}, false},
+				{mysql.CreateTMPTablePriv, "", "", "", nil, false, []string{""}, false},
+				{mysql.LockTablesPriv, "", "", "", nil, false, []string{""}, false},
+				{mysql.CreateRoutinePriv, "", "", "", nil, false, []string{""}, false},
+				{mysql.AlterRoutinePriv, "", "", "", nil, false, []string{""}, false},
+				{mysql.EventPriv, "", "", "", nil, false, []string{""}, false},
+				{mysql.ShutdownPriv, "", "", "", nil, false, []string{""}, false},
+				{mysql.ReloadPriv, "", "", "", nil, false, []string{""}, false},
+				{mysql.FilePriv, "", "", "", nil, false, []string{""}, false},
+				{mysql.ConfigPriv, "", "", "", nil, false, []string{""}, false},
+				{mysql.ReplicationClientPriv, "", "", "", nil, false, []string{""}, false},
+				{mysql.ReplicationSlavePriv, "", "", "", nil, false, []string{""}, false},
+				{mysql.GrantPriv, "", "", "", nil, false, []string{""}, false},
 			},
 		},
 		{
@@ -1368,122 +1370,122 @@ func TestVisitInfo(t *testing.T) {
 		{
 			sql: `show create table test.ttt`,
 			ans: []visitInfo{
-				{mysql.AllPrivMask, "test", "ttt", "", nil, false, "", false},
+				{mysql.AllPrivMask, "test", "ttt", "", nil, false, []string{""}, false},
 			},
 		},
 		{
 			sql: "alter table t add column a int(4)",
 			ans: []visitInfo{
-				{mysql.AlterPriv, "test", "t", "", nil, false, "", false},
+				{mysql.AlterPriv, "test", "t", "", nil, false, []string{""}, false},
 			},
 		},
 		{
 			sql: "rename table t_old to t_new",
 			ans: []visitInfo{
-				{mysql.AlterPriv, "test", "t_old", "", nil, false, "", false},
-				{mysql.DropPriv, "test", "t_old", "", nil, false, "", false},
-				{mysql.CreatePriv, "test", "t_new", "", nil, false, "", false},
-				{mysql.InsertPriv, "test", "t_new", "", nil, false, "", false},
+				{mysql.AlterPriv, "test", "t_old", "", nil, false, []string{""}, false},
+				{mysql.DropPriv, "test", "t_old", "", nil, false, []string{""}, false},
+				{mysql.CreatePriv, "test", "t_new", "", nil, false, []string{""}, false},
+				{mysql.InsertPriv, "test", "t_new", "", nil, false, []string{""}, false},
 			},
 		},
 		{
 			sql: "alter table t_old rename to t_new",
 			ans: []visitInfo{
-				{mysql.AlterPriv, "test", "t_old", "", nil, false, "", false},
-				{mysql.DropPriv, "test", "t_old", "", nil, false, "", false},
-				{mysql.CreatePriv, "test", "t_new", "", nil, false, "", false},
-				{mysql.InsertPriv, "test", "t_new", "", nil, false, "", false},
+				{mysql.AlterPriv, "test", "t_old", "", nil, false, []string{""}, false},
+				{mysql.DropPriv, "test", "t_old", "", nil, false, []string{""}, false},
+				{mysql.CreatePriv, "test", "t_new", "", nil, false, []string{""}, false},
+				{mysql.InsertPriv, "test", "t_new", "", nil, false, []string{""}, false},
 			},
 		},
 		{
 			sql: "alter table t drop partition p0;",
 			ans: []visitInfo{
-				{mysql.AlterPriv, "test", "t", "", nil, false, "", false},
-				{mysql.DropPriv, "test", "t", "", nil, false, "", false},
+				{mysql.AlterPriv, "test", "t", "", nil, false, []string{""}, false},
+				{mysql.DropPriv, "test", "t", "", nil, false, []string{""}, false},
 			},
 		},
 		{
 			sql: "flush privileges",
 			ans: []visitInfo{
-				{mysql.ReloadPriv, "", "", "", plannererrors.ErrSpecificAccessDenied, false, "", false},
+				{mysql.ReloadPriv, "", "", "", plannererrors.ErrSpecificAccessDenied, false, []string{""}, false},
 			},
 		},
 		{
 			sql: "SET GLOBAL wait_timeout=12345",
 			ans: []visitInfo{
-				{mysql.ExtendedPriv, "", "", "", plannererrors.ErrSpecificAccessDenied, false, "SYSTEM_VARIABLES_ADMIN", false},
+				{mysql.ExtendedPriv, "", "", "", plannererrors.ErrSpecificAccessDenied, false, []string{"SYSTEM_VARIABLES_ADMIN"}, false},
 			},
 		},
 		{
 			sql: "create placement policy x LEARNERS=1",
 			ans: []visitInfo{
-				{mysql.ExtendedPriv, "", "", "", plannererrors.ErrSpecificAccessDenied, false, "PLACEMENT_ADMIN", false},
+				{mysql.ExtendedPriv, "", "", "", plannererrors.ErrSpecificAccessDenied, false, []string{"PLACEMENT_ADMIN"}, false},
 			},
 		},
 		{
 			sql: "drop placement policy if exists x",
 			ans: []visitInfo{
-				{mysql.ExtendedPriv, "", "", "", plannererrors.ErrSpecificAccessDenied, false, "PLACEMENT_ADMIN", false},
+				{mysql.ExtendedPriv, "", "", "", plannererrors.ErrSpecificAccessDenied, false, []string{"PLACEMENT_ADMIN"}, false},
 			},
 		},
 		{
 			sql: "BACKUP DATABASE test TO 'local:///tmp/a'",
 			ans: []visitInfo{
-				{mysql.ExtendedPriv, "", "", "", plannererrors.ErrSpecificAccessDenied, false, "BACKUP_ADMIN", false},
+				{mysql.ExtendedPriv, "", "", "", plannererrors.ErrSpecificAccessDenied, false, []string{"BACKUP_ADMIN"}, false},
 			},
 		},
 		{
 			sql: "RESTORE DATABASE test FROM 'local:///tmp/a'",
 			ans: []visitInfo{
-				{mysql.ExtendedPriv, "", "", "", plannererrors.ErrSpecificAccessDenied, false, "RESTORE_ADMIN", false},
+				{mysql.ExtendedPriv, "", "", "", plannererrors.ErrSpecificAccessDenied, false, []string{"RESTORE_ADMIN"}, false},
 			},
 		},
 		{
 			sql: "SHOW BACKUPS",
 			ans: []visitInfo{
-				{mysql.ExtendedPriv, "", "", "", plannererrors.ErrSpecificAccessDenied, false, "BACKUP_ADMIN", false},
+				{mysql.ExtendedPriv, "", "", "", plannererrors.ErrSpecificAccessDenied, false, []string{"BACKUP_ADMIN"}, false},
 			},
 		},
 		{
 			sql: "SHOW RESTORES",
 			ans: []visitInfo{
-				{mysql.ExtendedPriv, "", "", "", plannererrors.ErrSpecificAccessDenied, false, "RESTORE_ADMIN", false},
+				{mysql.ExtendedPriv, "", "", "", plannererrors.ErrSpecificAccessDenied, false, []string{"RESTORE_ADMIN"}, false},
 			},
 		},
 		{
 			sql: "GRANT rolename TO user1",
 			ans: []visitInfo{
-				{mysql.ExtendedPriv, "", "", "", plannererrors.ErrSpecificAccessDenied, false, "ROLE_ADMIN", false},
+				{mysql.ExtendedPriv, "", "", "", plannererrors.ErrSpecificAccessDenied, false, []string{"ROLE_ADMIN"}, false},
 			},
 		},
 		{
 			sql: "REVOKE rolename FROM user1",
 			ans: []visitInfo{
-				{mysql.ExtendedPriv, "", "", "", plannererrors.ErrSpecificAccessDenied, false, "ROLE_ADMIN", false},
+				{mysql.ExtendedPriv, "", "", "", plannererrors.ErrSpecificAccessDenied, false, []string{"ROLE_ADMIN"}, false},
 			},
 		},
 		{
 			sql: "GRANT BACKUP_ADMIN ON *.* TO user1",
 			ans: []visitInfo{
-				{mysql.ExtendedPriv, "", "", "", plannererrors.ErrSpecificAccessDenied, false, "BACKUP_ADMIN", true},
+				{mysql.ExtendedPriv, "", "", "", plannererrors.ErrSpecificAccessDenied, false, []string{"BACKUP_ADMIN"}, true},
 			},
 		},
 		{
 			sql: "GRANT BACKUP_ADMIN ON *.* TO user1 WITH GRANT OPTION",
 			ans: []visitInfo{
-				{mysql.ExtendedPriv, "", "", "", plannererrors.ErrSpecificAccessDenied, false, "BACKUP_ADMIN", true},
+				{mysql.ExtendedPriv, "", "", "", plannererrors.ErrSpecificAccessDenied, false, []string{"BACKUP_ADMIN"}, true},
 			},
 		},
 		{
 			sql: "RENAME USER user1 to user1_tmp",
 			ans: []visitInfo{
-				{mysql.CreateUserPriv, "", "", "", plannererrors.ErrSpecificAccessDenied, false, "", false},
+				{mysql.CreateUserPriv, "", "", "", plannererrors.ErrSpecificAccessDenied, false, []string{""}, false},
 			},
 		},
 		{
 			sql: "SHOW CONFIG",
 			ans: []visitInfo{
-				{mysql.ConfigPriv, "", "", "", plannererrors.ErrSpecificAccessDenied, false, "", false},
+				{mysql.ConfigPriv, "", "", "", plannererrors.ErrSpecificAccessDenied, false, []string{""}, false},
 			},
 		},
 	}
@@ -1545,7 +1547,7 @@ func (v visitInfoArray) Swap(i, j int) {
 func unique(v []visitInfo) []visitInfo {
 	repeat := 0
 	for i := 1; i < len(v); i++ {
-		if v[i] == v[i-1] {
+		if reflect.DeepEqual(v[i], v[i-1]) {
 			repeat++
 		} else {
 			v[i-repeat] = v[i]
