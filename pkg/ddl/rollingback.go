@@ -344,13 +344,45 @@ func convertAddTablePartitionJob2RollbackJob(d *ddlCtx, t *meta.Meta, job *model
 		job.Type == model.ActionRemovePartitioning {
 		partInfo := &model.PartitionInfo{}
 		var pNames []string
-		err = job.DecodeArgs(&pNames, &partInfo)
+		var indexIDs []int64
+		err = job.DecodeArgs(&pNames, &partInfo, &indexIDs)
 		if err != nil {
 			return ver, err
 		}
-		job.Args = []any{partNames, partInfo}
+		var dropIndices []*model.IndexInfo
+		for _, indexInfo := range tblInfo.Indices {
+			if indexInfo.Unique {
+				switch indexInfo.State {
+				case model.StateWriteReorganization, model.StateDeleteOnly,
+					model.StateWriteOnly:
+					dropIndices = append(dropIndices, indexInfo)
+				case model.StateDeleteReorganization:
+					if tblInfo.Partition.DDLState == model.StateDeleteReorganization {
+						// Old index marked to be dropped, rollback by making it public again
+						indexInfo.State = model.StatePublic
+					}
+				case model.StatePublic:
+					if tblInfo.Partition.DDLState == model.StateDeleteReorganization {
+						// New index that was public in this state, drop it
+						dropIndices = append(dropIndices, indexInfo)
+					}
+				}
+			}
+		}
+		for _, indexInfo := range dropIndices {
+			DropIndexColumnFlag(tblInfo, indexInfo)
+			RemoveDependentHiddenColumns(tblInfo, indexInfo)
+			indexIDs = append(indexIDs, indexInfo.ID)
+			removeIndexInfo(tblInfo, indexInfo)
+		}
+
+		job.Args = []any{partNames, partInfo, indexIDs}
 	} else {
 		job.Args = []any{partNames}
+	}
+	_, err = job.Encode(true)
+	if err != nil {
+		return ver, errors.Trace(err)
 	}
 	ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, true)
 	if err != nil {
@@ -459,7 +491,6 @@ func rollingbackReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 	}
 
 	// addingDefinitions is also in tblInfo, here pass the tblInfo as parameter directly.
-	// TODO: Test this with reorganize partition p1 into (partition p1 ...)!
 	return convertAddTablePartitionJob2RollbackJob(d, t, job, dbterror.ErrCancelledDDLJob, tblInfo)
 }
 

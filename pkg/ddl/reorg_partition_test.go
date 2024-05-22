@@ -19,6 +19,8 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
+	"github.com/pingcap/tidb/pkg/testkit/external"
+	"strconv"
 	"testing"
 
 	"github.com/pingcap/failpoint"
@@ -49,7 +51,7 @@ type allTableData struct {
 // Checks that there are no accessible data after an existing table
 // assumes that tableIDs are only increasing.
 // To be used during failure testing of ALTER, to make sure cleanup is done.
-func noNewTablesAfter(t *testing.T, tk *testkit.TestKit, ctx sessionctx.Context, tbl table.Table) {
+func noNewTablesAfter(t *testing.T, tk *testkit.TestKit, ctx sessionctx.Context, tbl table.Table, msg string) {
 	waitForGC := tk.MustQuery(`select start_key, end_key from mysql.gc_delete_range`).Rows()
 	require.NoError(t, sessiontxn.NewTxn(context.Background(), ctx))
 	txn, err := ctx.Txn(true)
@@ -91,7 +93,7 @@ ROW:
 		foundTblID := tablecodec.DecodeTableID(it.Key())
 		// There are internal table ids starting from MaxInt48 -1 and allocating decreasing ids
 		// Allow 0xFF of them, See JobTableID, ReorgTableID, HistoryTableID, MDLTableID
-		require.False(t, it.Key()[0] == 't' && foundTblID < 0xFFFFFFFFFF00, "Found table data after highest physical Table ID %d < %d", tblID, foundTblID)
+		require.False(t, it.Key()[0] == 't' && foundTblID < 0xFFFFFFFFFF00, "Found table data after highest physical Table ID %d < %d "+msg, tblID, foundTblID)
 		break
 	}
 }
@@ -555,7 +557,7 @@ func TestReorgPartitionRollback(t *testing.T) {
 	is := domain.GetDomain(ctx).InfoSchema()
 	tbl, err := is.TableByName(model.NewCIStr(schemaName), model.NewCIStr("t"))
 	require.NoError(t, err)
-	noNewTablesAfter(t, tk, ctx, tbl)
+	noNewTablesAfter(t, tk, ctx, tbl, "")
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/reorgPartitionAfterDataCopy", `return(true)`))
 	defer func() {
 		err := failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/reorgPartitionAfterDataCopy")
@@ -579,5 +581,75 @@ func TestReorgPartitionRollback(t *testing.T) {
 
 	tbl, err = is.TableByName(model.NewCIStr(schemaName), model.NewCIStr("t"))
 	require.NoError(t, err)
-	noNewTablesAfter(t, tk, ctx, tbl)
+	noNewTablesAfter(t, tk, ctx, tbl, "")
+}
+func TestReorgPartFailures(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_enable_global_index=true")
+	defer func() {
+		tk.MustExec("set tidb_enable_global_index=default")
+	}()
+	tk.MustExec(`create table t (a int unsigned primary key nonclustered, b int not null, c varchar(255)) partition by range(a) (
+			partition p0 values less than (100),
+			partition p1 values less than (200))`)
+	tk.MustExec(`insert into t values (7,100,"7-100"),(8,8,8),(9,9,9),(127,7,"127-7"),(199,199,199)`)
+	// Fail means we simply inject an error, and set the error count very high to see what happens
+	//   we do expect to do best effort rollback here as well!
+	// Cancel means we set job.State = JobStateCancelled, as in no need to do more
+	// Rollback means we do full rollback before returning error.
+	tests := []struct {
+		name  string
+		count int
+	}{
+		/*
+			{
+				"Cancel",
+				1,
+			},
+
+		*/
+		{
+			"Fail",
+			5,
+		},
+		/*
+			{
+				"Rollback",
+				4,
+			},
+
+		*/
+	}
+	tOrg := external.GetTableByName(t, tk, "test", "t")
+	partition := tOrg.Meta().Partition
+	idxID := tOrg.Meta().Indices[0].ID
+	for _, test := range tests {
+		for i := 3; i <= test.count; i++ {
+			suffix := test.name + strconv.Itoa(i)
+			name := "github.com/pingcap/tidb/pkg/ddl/reorgPart" + suffix
+			require.NoError(t, failpoint.Enable(name, `return(true)`))
+			err := tk.ExecToErr(`alter table t partition by range (b) (partition pNoneC values less than (150), partition p2 values less than (300))`)
+			require.Error(t, err, "failpoint reorgPart"+suffix)
+			require.ErrorContains(t, err, "Injected error by reorgPart"+suffix)
+			require.NoError(t, failpoint.Disable(name))
+			tt := external.GetTableByName(t, tk, "test", "t")
+			partition = tt.Meta().Partition
+			require.Equal(t, 2, len(partition.Definitions), suffix)
+			require.Equal(t, 0, len(partition.AddingDefinitions), suffix)
+			require.Equal(t, 0, len(partition.DroppingDefinitions), suffix)
+			require.Equal(t, 1, len(tt.Meta().Indices), suffix)
+			require.Equal(t, idxID, tt.Meta().Indices[0].ID, suffix)
+			noNewTablesAfter(t, tk, tk.Session(), tOrg, suffix)
+			// TODO: Check TiFlash replicas
+			// TODO: Check Label rules
+			// TODO: Check bundles
+			// TODO: Check autoIDs
+			// So if failure will end up as rolling back after enough tries, what happens when
+			// the state changes from DeleteReorganization to StatePublic?
+			// The old data should still be up-to-date, but the question is how the cleanup
+			// of the new data is handled, will it still be seen in DeleteReorganization?
+		}
+	}
 }
