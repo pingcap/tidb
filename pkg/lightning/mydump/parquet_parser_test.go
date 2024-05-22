@@ -32,7 +32,7 @@ import (
 
 func TestParquetParser(t *testing.T) {
 	type Test struct {
-		S string `parquet:"name=sS, type=UTF8, encoding=PLAIN_DICTIONARY"`
+		S string `parquet:"name=sS, type=BYTE_ARRAY, convertedtype=UTF8, encoding=PLAIN_DICTIONARY"`
 		A int32  `parquet:"name=a_A, type=INT32"`
 	}
 
