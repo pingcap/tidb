@@ -1125,16 +1125,22 @@ func (p *MySQLPrivilege) HasExplicitlyGrantedDynamicPrivilege(activeRoles []*aut
 }
 
 // RequestDynamicVerification checks all roles for a specific DYNAMIC privilege.
-func (p *MySQLPrivilege) RequestDynamicVerification(activeRoles []*auth.RoleIdentity, user, host, privName string, withGrant bool) bool {
-	privName = strings.ToUpper(privName)
-	if p.HasExplicitlyGrantedDynamicPrivilege(activeRoles, user, host, privName, withGrant) {
-		return true
+func (p *MySQLPrivilege) RequestDynamicVerification(activeRoles []*auth.RoleIdentity, user, host string, privNames []string, withGrant bool) bool {
+	semRestricted := true
+	for _, privName := range privNames {
+		privName = strings.ToUpper(privName)
+		if p.HasExplicitlyGrantedDynamicPrivilege(activeRoles, user, host, privName, withGrant) {
+			return true
+		}
+		// If SEM is enabled, and all the privileges is of type restricted, do not fall through
+		// To using SUPER as a replacement privilege.
+		semRestricted = semRestricted && (sem.IsEnabled() && sem.IsRestrictedPrivilege(privName))
 	}
-	// If SEM is enabled, and the privilege is of type restricted, do not fall through
-	// To using SUPER as a replacement privilege.
-	if sem.IsEnabled() && sem.IsRestrictedPrivilege(privName) {
+
+	if semRestricted {
 		return false
 	}
+
 	// For compatibility reasons, the SUPER privilege also has all DYNAMIC privileges granted to it (dynamic privs are a super replacement)
 	// This may be changed in future, but will require a bootstrap task to assign all dynamic privileges
 	// to users with SUPER, otherwise tasks such as BACKUP and ROLE_ADMIN will start to fail.

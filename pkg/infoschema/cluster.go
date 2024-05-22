@@ -155,7 +155,7 @@ func GetInstanceAddr(ctx sessionctx.Context) (string, error) {
 	addr := net.JoinHostPort(serverInfo.IP, strconv.FormatUint(uint64(serverInfo.StatusPort), 10))
 	if sem.IsEnabled() {
 		checker := privilege.GetPrivilegeManager(ctx)
-		if checker == nil || !checker.RequestDynamicVerification(ctx.GetSessionVars().ActiveRoles, "RESTRICTED_TABLES_ADMIN", false) {
+		if checker == nil || !checker.RequestDynamicVerification(ctx.GetSessionVars().ActiveRoles, []string{"RESTRICTED_TABLES_ADMIN"}, false) {
 			addr = serverInfo.ID
 		}
 	}

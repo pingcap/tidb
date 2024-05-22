@@ -1686,8 +1686,8 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 	}
 	activeRoles := e.Ctx().GetSessionVars().ActiveRoles
 	hasCreateUserPriv := checker.RequestVerification(activeRoles, "", "", "", mysql.CreateUserPriv)
-	hasSystemUserPriv := checker.RequestDynamicVerification(activeRoles, "SYSTEM_USER", false)
-	hasRestrictedUserPriv := checker.RequestDynamicVerification(activeRoles, "RESTRICTED_USER_ADMIN", false)
+	hasSystemUserPriv := checker.RequestDynamicVerification(activeRoles, []string{"SYSTEM_USER"}, false)
+	hasRestrictedUserPriv := checker.RequestDynamicVerification(activeRoles, []string{"RESTRICTED_USER_ADMIN"}, false)
 	hasSystemSchemaPriv := checker.RequestVerification(activeRoles, mysql.SystemDB, mysql.UserTable, "", mysql.UpdatePriv)
 
 	var authTokenOptions []*ast.AuthTokenOrTLSOption
@@ -2216,8 +2216,7 @@ func (e *SimpleExec) executeDropUser(ctx context.Context, s *ast.DropUserStmt) e
 			return plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("CREATE USER")
 		}
 	}
-	hasSystemUserPriv := checker.RequestDynamicVerification(activeRoles, "SYSTEM_USER", false)
-	hasRestrictedUserPriv := checker.RequestDynamicVerification(activeRoles, "RESTRICTED_USER_ADMIN", false)
+	hasSystemOrRestrictedUserPriv := checker.RequestDynamicVerification(activeRoles, []string{"SYSTEM_USER", "RESTRICTED_USER_ADMIN"}, false)
 	failedUsers := make([]string, 0, len(s.UserList))
 	sysSession, err := e.GetSysSession()
 	defer e.ReleaseSysSession(internalCtx, sysSession)
@@ -2249,7 +2248,7 @@ func (e *SimpleExec) executeDropUser(ctx context.Context, s *ast.DropUserStmt) e
 		// Because in TiDB SUPER can be used as a substitute for any dynamic privilege, this effectively means that
 		// any user with SUPER requires a user with SUPER to be able to DROP the user.
 		// We also allow RESTRICTED_USER_ADMIN to count for simplicity.
-		if checker.RequestDynamicVerificationWithUser("SYSTEM_USER", false, user) && !(hasSystemUserPriv || hasRestrictedUserPriv) {
+		if checker.RequestDynamicVerificationWithUser("SYSTEM_USER", false, user) && !hasSystemOrRestrictedUserPriv {
 			if _, err := sqlExecutor.ExecuteInternal(internalCtx, "rollback"); err != nil {
 				return err
 			}
