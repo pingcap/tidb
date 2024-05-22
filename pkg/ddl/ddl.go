@@ -889,7 +889,7 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 	metrics.DDLCounter.WithLabelValues(metrics.CreateDDLInstance).Inc()
 
 	// Start some background routine to manage TiFlash replica.
-	d.wg.Run(d.PollTiFlashRoutine)
+	//d.wg.Run(d.PollTiFlashRoutine)
 
 	ingest.InitGlobalLightningEnv(func(jobIDs []int64) ([]int64, error) {
 		se, err := d.sessPool.Get()

@@ -17,7 +17,10 @@ package infoschema
 import (
 	"container/list"
 	"context"
+	"github.com/pingcap/tidb/pkg/util/logutil"
+	"go.uber.org/zap"
 	"sync"
+	"time"
 
 	"github.com/pingcap/tidb/pkg/infoschema/internal"
 )
@@ -53,6 +56,24 @@ type Sieve[K comparable, V any] struct {
 	items    map[K]*entry[K, V]
 	ll       *list.List
 	hand     *list.Element
+	all      uint64
+	hit      uint64
+}
+
+func (s *Sieve[K, V]) logRateLoop(ctx context.Context) {
+	ticker := time.NewTicker(3 * time.Second)
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			s.mu.Lock()
+			rate := float64(s.hit) / float64(s.all)
+			logutil.BgLogger().Info("sieve cache hit rate", zap.Float64("rate", rate))
+			s.all = 0
+			s.hit = 0
+		}
+	}
 }
 
 func newSieve[K comparable, V any](capacity uint64) *Sieve[K, V] {
@@ -65,6 +86,8 @@ func newSieve[K comparable, V any](capacity uint64) *Sieve[K, V] {
 		items:    make(map[K]*entry[K, V]),
 		ll:       list.New(),
 	}
+
+	go cache.logRateLoop(ctx)
 
 	return cache
 }
@@ -108,7 +131,10 @@ func (s *Sieve[K, V]) Set(key K, value V) {
 func (s *Sieve[K, V]) Get(key K) (value V, ok bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	s.all++
 	if e, ok := s.items[key]; ok {
+		s.hit++
 		e.visited = true
 		return e.value, true
 	}
