@@ -1766,6 +1766,25 @@ type PhysicalLock struct {
 	TblID2PhysTblIDCol map[int64]*expression.Column
 }
 
+func (pl *PhysicalLock) Clone() (base.PhysicalPlan, error) {
+	cloned := new(PhysicalLock)
+	base, err := pl.basePhysicalPlan.cloneWithSelf(cloned)
+	if err != nil {
+		return nil, err
+	}
+	cloned.basePhysicalPlan = *base
+	cloned.Lock = pl.Lock
+	cloned.TblID2Handle = make(map[int64][]util.HandleCols, len(pl.TblID2Handle))
+	for k, v := range pl.TblID2Handle {
+		cloned.TblID2Handle[k] = v
+	}
+	cloned.TblID2PhysTblIDCol = make(map[int64]*expression.Column, len(pl.TblID2PhysTblIDCol))
+	for k, v := range pl.TblID2PhysTblIDCol {
+		cloned.TblID2PhysTblIDCol[k] = v
+	}
+	return cloned, nil
+}
+
 // MemoryUsage return the memory usage of PhysicalLock
 func (pl *PhysicalLock) MemoryUsage() (sum int64) {
 	if pl == nil {
