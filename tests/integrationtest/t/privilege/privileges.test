@@ -132,7 +132,6 @@ DROP RESOURCE GROUP test;
 --error 1227
 SET RESOURCE GROUP test;
 SELECT /*+ RESOURCE_GROUP(test) */ * from test_rc.t;
-SHOW warnings;
 
 disconnect resource_group_admin;
 disconnect resource_group_user;

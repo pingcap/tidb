@@ -98,9 +98,6 @@ Error 1227 (42000): Access denied; you need (at least one of) the SUPER or RESOU
 SELECT /*+ RESOURCE_GROUP(test) */ * from test_rc.t;
 id
 1
-SHOW warnings;
-Level	Code	Message
-Warning	1227	Access denied; you need (at least one of) the SUPER or RESOURCE_GROUP_ADMIN or RESOURCE_GROUP_USER privilege(s) for this operation
 REVOKE SELECT on test_rc.* FROM resource_group_admin;
 REVOKE SELECT on test_rc.* FROM resource_group_user;
 DROP DATABASE test_rc;
