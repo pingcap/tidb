@@ -975,7 +975,9 @@ func (s *session) tryReplaceWriteConflictError(oldErr error) (newErr error) {
 	if !kv.ErrWriteConflict.Equal(oldErr) {
 		return nil
 	}
-	if errors.RedactLogEnabled.Load() {
+
+	mode := errors.RedactLogEnabled.Load()
+	if mode != errors.RedactLogDisable && mode != "" {
 		return nil
 	}
 	originErr := errors.Cause(oldErr)
