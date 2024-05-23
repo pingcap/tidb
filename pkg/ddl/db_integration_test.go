@@ -3080,8 +3080,9 @@ func TestIssue52680(t *testing.T) {
 	tk.MustQuery("select * from issue52680").Check(testkit.Rows("1", "2"))
 
 	is := dom.InfoSchema()
-	ti, err := is.TableInfoByName(model.NewCIStr("test"), model.NewCIStr("issue52680"))
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("issue52680"))
 	require.NoError(t, err)
+	ti := tbl.Meta()
 
 	ddlutil.EmulatorGCDisable()
 	defer ddlutil.EmulatorGCEnable()
@@ -3124,8 +3125,9 @@ func TestIssue52680(t *testing.T) {
 	))
 
 	is = dom.InfoSchema()
-	ti1, err := is.TableInfoByName(model.NewCIStr("test"), model.NewCIStr("issue52680"))
+	tbl1, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("issue52680"))
 	require.NoError(t, err)
+	ti1 := tbl1.Meta()
 	require.Equal(t, ti1.ID, ti.ID)
 
 	tk.MustExec("insert into issue52680 values(default);")
