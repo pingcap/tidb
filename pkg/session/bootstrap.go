@@ -1348,7 +1348,8 @@ func checkDistTask(s sessiontypes.Session, ver int64) {
 		// Not set yet.
 		return
 	} else if req.GetRow(0).GetString(0) == variable.On {
-		logutil.BgLogger().Fatal("check dist task failed, tidb_enable_dist_task is enabled", zap.Error(err))
+		logutil.BgLogger().Fatal("cannot upgrade when tidb_enable_dist_task is enabled, "+
+			"please set tidb_enable_dist_task to off before upgrade", zap.Error(err))
 	}
 
 	// Even if the variable is set to `off`, we still need to check the tidb_global_task.
