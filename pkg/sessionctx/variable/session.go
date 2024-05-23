@@ -1204,7 +1204,7 @@ type SessionVars struct {
 	// PresumeKeyNotExists indicates lazy existence checking is enabled.
 	PresumeKeyNotExists bool
 
-	// EnableParallelApply indicates that thether to use parallel apply.
+	// EnableParallelApply indicates that whether to use parallel apply.
 	EnableParallelApply bool
 
 	// EnableRedactLog indicates that whether redact log. Possible values are 'OFF', 'ON', 'MARKER'.
@@ -1291,7 +1291,7 @@ type SessionVars struct {
 	// ReadStaleness indicates the staleness duration for the following query
 	ReadStaleness time.Duration
 
-	// cachedStmtCtx is used to optimze the object allocation.
+	// cachedStmtCtx is used to optimize the object allocation.
 	cachedStmtCtx [2]stmtctx.StatementContext
 
 	// Rng stores the rand_seed1 and rand_seed2 for Rand() function
@@ -1486,7 +1486,7 @@ type SessionVars struct {
 	shardRand *rand.Rand
 
 	// Resource group name
-	// NOTE: all statement relate opeartion should use StmtCtx.ResourceGroupName instead.
+	// NOTE: all statement relate operation should use StmtCtx.ResourceGroupName instead.
 	ResourceGroupName string
 
 	// PessimisticTransactionFairLocking controls whether fair locking for pessimistic transaction
@@ -1627,7 +1627,7 @@ func (s *SessionVars) IsPlanReplayerCaptureEnabled() bool {
 	return s.EnablePlanReplayerCapture || s.EnablePlanReplayedContinuesCapture
 }
 
-// GetChunkAllocator returns a vaid chunk allocator.
+// GetChunkAllocator returns a valid chunk allocator.
 func (s *SessionVars) GetChunkAllocator() chunk.Allocator {
 	if s.chunkPool == nil {
 		return chunk.NewEmptyAllocator()
@@ -3096,7 +3096,7 @@ const (
 	SlowLogCopBackoffPrefix = "Cop_backoff_"
 	// SlowLogMemMax is the max number bytes of memory used in this statement.
 	SlowLogMemMax = "Mem_max"
-	// SlowLogDiskMax is the nax number bytes of disk used in this statement.
+	// SlowLogDiskMax is the max number bytes of disk used in this statement.
 	SlowLogDiskMax = "Disk_max"
 	// SlowLogPrepared is used to indicate whether this sql execute in prepare.
 	SlowLogPrepared = "Prepared"
@@ -3681,7 +3681,7 @@ func (rfType RuntimeFilterType) String() string {
 // RuntimeFilterTypeStringToType convert RuntimeFilterTypeNameString to RuntimeFilterType
 // If name is legal, it will return Runtime Filter Type and true
 // Else, it will return -1 and false
-// The second param means the convert is ok or not. Ture is ok, false means it is illegal name
+// The second param means the convert is ok or not. True is ok, false means it is illegal name
 // At present, we only support two names: "IN" and "MIN_MAX"
 func RuntimeFilterTypeStringToType(name string) (RuntimeFilterType, bool) {
 	switch name {
@@ -3696,7 +3696,7 @@ func RuntimeFilterTypeStringToType(name string) (RuntimeFilterType, bool) {
 
 // ToRuntimeFilterType convert session var value to RuntimeFilterType list
 // If sessionVarValue is legal, it will return RuntimeFilterType list and true
-// The second param means the convert is ok or not. Ture is ok, false means it is illegal value
+// The second param means the convert is ok or not. True is ok, false means it is illegal value
 // The legal value should be comma-separated, eg: "IN,MIN_MAX"
 func ToRuntimeFilterType(sessionVarValue string) ([]RuntimeFilterType, bool) {
 	typeNameList := strings.Split(sessionVarValue, ",")
@@ -3744,7 +3744,7 @@ func (rfMode RuntimeFilterMode) String() string {
 // RuntimeFilterModeStringToMode convert RuntimeFilterModeString to RuntimeFilterMode
 // If name is legal, it will return Runtime Filter Mode and true
 // Else, it will return -1 and false
-// The second param means the convert is ok or not. Ture is ok, false means it is illegal name
+// The second param means the convert is ok or not. True is ok, false means it is illegal name
 // At present, we only support one name: "OFF", "LOCAL"
 func RuntimeFilterModeStringToMode(name string) (RuntimeFilterMode, bool) {
 	switch name {

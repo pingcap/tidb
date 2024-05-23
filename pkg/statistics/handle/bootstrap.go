@@ -322,7 +322,10 @@ func (h *Handle) initStatsHistogramsByPaging(is infoschema.InfoSchema, cache sta
 		}
 	}()
 	sctx := se.(sessionctx.Context)
-	sql := "select HIGH_PRIORITY table_id, is_index, hist_id, distinct_count, version, null_count, cm_sketch, tot_col_size, stats_ver, correlation, flag, last_analyze_pos from mysql.stats_histograms where table_id >= %? and table_id < %?"
+	// Why do we need to add `is_index=1` in the SQL?
+	// because it is aligned to the `initStatsTopN` function, which only loads the topn of the index too.
+	// the other will be loaded by sync load.
+	sql := "select HIGH_PRIORITY table_id, is_index, hist_id, distinct_count, version, null_count, cm_sketch, tot_col_size, stats_ver, correlation, flag, last_analyze_pos from mysql.stats_histograms where table_id >= %? and table_id < %? and is_index=1"
 	rc, err := util.Exec(sctx, sql, task.StartTid, task.EndTid)
 	if err != nil {
 		return errors.Trace(err)
@@ -751,11 +754,8 @@ func (h *Handle) InitStats(is infoschema.InfoSchema) (err error) {
 	for _, table := range cache.Values() {
 		for _, col := range table.Columns {
 			if col.StatsAvailable() {
-				if mysql.HasPriKeyFlag(col.Info.GetFlag()) {
-					col.StatsLoadedStatus = statistics.NewStatsFullLoadStatus()
-				} else {
-					col.StatsLoadedStatus = statistics.NewStatsAllEvictedStatus()
-				}
+				// primary key column has no stats info, because primary key's is_index is false. so it cannot load the topn
+				col.StatsLoadedStatus = statistics.NewStatsAllEvictedStatus()
 			}
 		}
 	}

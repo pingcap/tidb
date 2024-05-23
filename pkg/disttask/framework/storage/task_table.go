@@ -802,7 +802,7 @@ func (mgr *TaskManager) GetAllSubtasks(ctx context.Context) ([]*proto.SubtaskBas
 // a stuck issue if the new version TiDB has less than 16 CPU count.
 // We don't adjust the concurrency in subtask table because this field does not exist in v7.5.0.
 // For details, see https://github.com/pingcap/tidb/issues/50894.
-// For the following versions, there is a check when submiting a new task. This function should be a no-op.
+// For the following versions, there is a check when submitting a new task. This function should be a no-op.
 func (mgr *TaskManager) AdjustTaskOverflowConcurrency(ctx context.Context, se sessionctx.Context) error {
 	cpuCount, err := mgr.getCPUCountOfNode(ctx, se)
 	if err != nil {

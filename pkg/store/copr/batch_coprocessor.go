@@ -162,7 +162,7 @@ func selectRegion(storeID uint64, candidateRegionInfos []RegionInfo, selected []
 		selected[idx] = true
 		regionInfos = append(regionInfos, candidateRegionInfos[idx])
 	}
-	// Remove regions that has beed selected.
+	// Remove regions that has been selected.
 	storeID2RegionIndex[storeID] = regionIndexes[i:]
 	return regionInfos
 }
@@ -207,7 +207,7 @@ func checkBatchCopTaskBalance(storeTasks map[uint64]*batchCopTask, balanceContin
 // In fact, not absolutely continuous is required, regions' range are closed to store in a TiFlash segment is enough for internal read optimization.
 //
 // First, sort candidateRegionInfos by their key ranges.
-// Second, build a storeID2RegionIndex data structure to fastly locate regions of a store (avoid scanning candidateRegionInfos repeatly).
+// Second, build a storeID2RegionIndex data structure to fastly locate regions of a store (avoid scanning candidateRegionInfos repeatedly).
 // Third, each store will take balanceContinuousRegionCount from the sorted candidateRegionInfos. These regions are stored very close to each other in TiFlash.
 // Fourth, if the region count is not balance between TiFlash, it may fallback to the original balance logic.
 func balanceBatchCopTaskWithContinuity(storeTaskMap map[uint64]*batchCopTask, candidateRegionInfos []RegionInfo, balanceContinuousRegionCount int64) ([]*batchCopTask, int) {

@@ -20,6 +20,7 @@ import (
 	"math/rand"
 	"os"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -492,6 +493,9 @@ func (d *ddl) addBatchDDLJobs(tasks []*limitJobTask) error {
 
 		jobTasks = append(jobTasks, job)
 		injectModifyJobArgFailPoint(job)
+		if !job.LocalMode {
+			d.initJobDoneCh(job.ID)
+		}
 	}
 
 	se.GetSessionVars().SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
@@ -605,32 +609,47 @@ func (w *worker) registerMDLInfo(job *model.Job, ver int64) error {
 	if len(rows) == 0 {
 		return errors.Errorf("can't find ddl job %d", job.ID)
 	}
+	ownerID := w.ownerManager.ID()
 	ids := rows[0].GetString(0)
-	sql := fmt.Sprintf("replace into mysql.tidb_mdl_info (job_id, version, table_ids) values (%d, %d, '%s')", job.ID, ver, ids)
+	var sql string
+	if tidbutil.IsSysDB(strings.ToLower(job.SchemaName)) {
+		// DDLs that modify system tables could only happen in upgrade process,
+		// we should not reference 'owner_id'. Otherwise, there is a circular blocking problem.
+		sql = fmt.Sprintf("replace into mysql.tidb_mdl_info (job_id, version, table_ids) values (%d, %d, '%s')", job.ID, ver, ids)
+	} else {
+		sql = fmt.Sprintf("replace into mysql.tidb_mdl_info (job_id, version, table_ids, owner_id) values (%d, %d, '%s', '%s')", job.ID, ver, ids, ownerID)
+	}
 	_, err = w.sess.Execute(context.Background(), sql, "register-mdl-info")
 	return err
 }
 
 // cleanMDLInfo cleans metadata lock info.
-func cleanMDLInfo(pool *sess.Pool, jobID int64, ec *clientv3.Client, cleanETCD bool) {
+func cleanMDLInfo(pool *sess.Pool, job *model.Job, ec *clientv3.Client, ownerID string, cleanETCD bool) {
 	if !variable.EnableMDL.Load() {
 		return
 	}
-	sql := fmt.Sprintf("delete from mysql.tidb_mdl_info where job_id = %d", jobID)
+	var sql string
+	if tidbutil.IsSysDB(strings.ToLower(job.SchemaName)) {
+		// DDLs that modify system tables could only happen in upgrade process,
+		// we should not reference 'owner_id'. Otherwise, there is a circular blocking problem.
+		sql = fmt.Sprintf("delete from mysql.tidb_mdl_info where job_id = %d", job.ID)
+	} else {
+		sql = fmt.Sprintf("delete from mysql.tidb_mdl_info where job_id = %d and owner_id = '%s'", job.ID, ownerID)
+	}
 	sctx, _ := pool.Get()
 	defer pool.Put(sctx)
 	se := sess.NewSession(sctx)
 	se.GetSessionVars().SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
 	_, err := se.Execute(context.Background(), sql, "delete-mdl-info")
 	if err != nil {
-		logutil.DDLLogger().Warn("unexpected error when clean mdl info", zap.Int64("job ID", jobID), zap.Error(err))
+		logutil.DDLLogger().Warn("unexpected error when clean mdl info", zap.Int64("job ID", job.ID), zap.Error(err))
 		return
 	}
 	if cleanETCD && ec != nil {
-		path := fmt.Sprintf("%s/%d/", util.DDLAllSchemaVersionsByJob, jobID)
+		path := fmt.Sprintf("%s/%d/", util.DDLAllSchemaVersionsByJob, job.ID)
 		_, err = ec.Delete(context.Background(), path, clientv3.WithPrefix())
 		if err != nil {
-			logutil.DDLLogger().Warn("delete versions failed", zap.Int64("job ID", jobID), zap.Error(err))
+			logutil.DDLLogger().Warn("delete versions failed", zap.Int64("job ID", job.ID), zap.Error(err))
 		}
 	}
 }
@@ -859,7 +878,7 @@ func (w *worker) HandleJobDone(d *ddlCtx, job *model.Job, t *meta.Meta) error {
 		return err
 	}
 	CleanupDDLReorgHandles(job, w.sess)
-	asyncNotify(d.ddlJobDoneCh)
+	d.notifyJobDone(job.ID)
 	return nil
 }
 

@@ -22,7 +22,8 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
-	"github.com/pingcap/tidb/pkg/statistics"
+	"github.com/pingcap/tidb/pkg/statistics/asyncload"
+	"github.com/pingcap/tidb/pkg/util/filter"
 	"github.com/pingcap/tidb/pkg/util/intset"
 	"golang.org/x/exp/maps"
 )
@@ -123,6 +124,10 @@ func (c *columnStatsUsageCollector) updateColMapFromExpressions(col *expression.
 }
 
 func (c *columnStatsUsageCollector) collectPredicateColumnsForDataSource(ds *DataSource) {
+	// Skip all system tables.
+	if filter.IsSystemSchema(ds.DBName.L) {
+		return
+	}
 	// For partition tables, no matter whether it is static or dynamic pruning mode, we use table ID rather than partition ID to
 	// set TableColumnID.TableID. In this way, we keep the set of predicate columns consistent between different partitions and global table.
 	tblID := ds.TableInfo().ID
@@ -436,7 +441,7 @@ func CollectColumnStatsUsage(lp base.LogicalPlan, predicate, histNeeded bool) (
 		if histNeeded {
 			collector.histNeededCols[*colToTriggerLoad] = true
 		} else {
-			statistics.HistogramNeededItems.Insert(*colToTriggerLoad)
+			asyncload.AsyncLoadHistogramNeededItems.Insert(*colToTriggerLoad, true)
 		}
 	})
 	var (

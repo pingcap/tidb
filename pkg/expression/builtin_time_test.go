@@ -845,7 +845,7 @@ func TestNowAndUTCTimestamp(t *testing.T) {
 		ts := x.now()
 		require.NoError(t, err)
 		mt := v.GetMysqlTime()
-		// we canot use a constant value to check timestamp funcs, so here
+		// we cannot use a constant value to check timestamp funcs, so here
 		// just to check the fractional seconds part and the time delta.
 		require.False(t, strings.Contains(mt.String(), "."))
 		require.LessOrEqual(t, ts.Sub(gotime(mt, ts.Location())), 5*time.Second)

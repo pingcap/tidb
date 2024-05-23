@@ -109,7 +109,7 @@ var (
 	compactConcurrency = 4
 )
 
-func generateLocalEngineConfig(id int64, dbName, tbName string, ts uint64) *backend.EngineConfig {
+func generateLocalEngineConfig(ts uint64) *backend.EngineConfig {
 	return &backend.EngineConfig{
 		Local: backend.LocalEngineConfig{
 			Compact:            true,
@@ -117,11 +117,7 @@ func generateLocalEngineConfig(id int64, dbName, tbName string, ts uint64) *back
 			CompactConcurrency: compactConcurrency,
 			BlockSize:          16 * 1024, // using default for DDL
 		},
-		TableInfo: &checkpoints.TidbTableInfo{
-			ID:   id,
-			DB:   dbName,
-			Name: tbName,
-		},
+		TableInfo:   &checkpoints.TidbTableInfo{},
 		KeepSortDir: true,
 		TS:          ts,
 	}
