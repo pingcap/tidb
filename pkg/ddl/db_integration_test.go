@@ -3070,14 +3070,6 @@ func TestDefaultCollationForUTF8MB4(t *testing.T) {
 	tk.MustQuery("show create database dby").Check(testkit.Rows(
 		"dby CREATE DATABASE `dby` /*!40100 DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci */"))
 }
-<<<<<<< HEAD
-=======
-
-func TestOptimizeTable(t *testing.T) {
-	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
-	tk := testkit.NewTestKit(t, store)
-	tk.MustGetErrMsg("optimize table t", "[ddl:8200]OPTIMIZE TABLE is not supported")
-}
 
 func TestIssue52680(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
@@ -3139,4 +3131,3 @@ func TestIssue52680(t *testing.T) {
 	tk.MustExec("insert into issue52680 values(default);")
 	tk.MustQuery("select * from issue52680").Check(testkit.Rows("1", "2", "3"))
 }
->>>>>>> 4b6e8ee0306 (meta,ddl: fix duplicate entry error when insert after drop and recover table (#52761))
