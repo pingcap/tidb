@@ -542,7 +542,9 @@ func (p *BatchPointGetPlan) Clone() (base.PhysicalPlan, error) {
 	for i, handle := range p.Handles {
 		cloned.Handles[i] = handle
 	}
-	cloned.HandleType = p.HandleType.Clone()
+	if p.HandleType != nil {
+		cloned.HandleType = p.HandleType.Clone()
+	}
 	cloned.HandleParams = make([]*expression.Constant, len(p.HandleParams))
 	for i, param := range p.HandleParams {
 		cloned.HandleParams[i] = param.Clone().(*expression.Constant)
