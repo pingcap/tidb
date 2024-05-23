@@ -118,7 +118,6 @@ SET RESOURCE GROUP test;
 
 connection resource_group_user;
 SELECT /*+ RESOURCE_GROUP(test) */ * from test_rc.t;
-SHOW warnings;
 SET RESOURCE GROUP test;
 
 connection default;

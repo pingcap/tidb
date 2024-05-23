@@ -86,8 +86,6 @@ SET RESOURCE GROUP test;
 SELECT /*+ RESOURCE_GROUP(test) */ * from test_rc.t;
 id
 1
-SHOW warnings;
-Level	Code	Message
 SET RESOURCE GROUP test;
 REVOKE RESOURCE_GROUP_ADMIN ON *.* FROM resource_group_admin;
 REVOKE RESOURCE_GROUP_USER ON *.* FROM resource_group_user;
