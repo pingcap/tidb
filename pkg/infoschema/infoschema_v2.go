@@ -429,6 +429,7 @@ func (is *infoschemaV2) SchemaTableInfos(schema model.CIStr) []*model.TableInfo 
 		return getTableInfoList(tables)
 	}
 
+retry:
 	dbInfo, ok := is.SchemaByName(schema)
 	if !ok {
 		return nil
@@ -442,6 +443,13 @@ func (is *infoschemaV2) SchemaTableInfos(schema model.CIStr) []*model.TableInfo 
 	if err != nil {
 		if meta.ErrDBNotExists.Equal(err) {
 			return nil
+		}
+		// Flashback statement could cause such kind of error.
+		// In theory that error should be handled in the lower layer, like client-go.
+		// But it's not done, so we retry here.
+		if strings.Contains(err.Error(), "in flashback progress") {
+			time.Sleep(200 * time.Millisecond)
+			goto retry
 		}
 		// TODO: error could happen, so do not panic!
 		panic(err)
