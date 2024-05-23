@@ -2978,6 +2978,7 @@ func (d *ddl) BatchCreateTableWithInfo(ctx sessionctx.Context,
 			return errors.Trace(fmt.Errorf("except table info"))
 		}
 		args = append(args, info)
+		jobs.Query += job.Query
 		jobs.InvolvingSchemaInfo = append(jobs.InvolvingSchemaInfo,
 			model.InvolvingSchemaInfo{
 				Database: dbName.L,
