@@ -991,3 +991,26 @@ INSERT INTO jd3(id) VALUES(1);
 TABLE jd3;
 id	j
 1	"foobar"
+CREATE TABLE jd4 (id SERIAL);
+SHOW CREATE TABLE jd4;
+Table	Create Table
+jd4	CREATE TABLE `jd4` (
+  `id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+  UNIQUE KEY `id` (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+ALTER TABLE jd4 ADD COLUMN j JSON;
+SHOW CREATE TABLE jd4;
+Table	Create Table
+jd4	CREATE TABLE `jd4` (
+  `id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+  `j` json DEFAULT NULL,
+  UNIQUE KEY `id` (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+ALTER TABLE jd4 MODIFY COLUMN j JSON DEFAULT (JSON_QUOTE("foobar"));
+SHOW CREATE TABLE jd4;
+Table	Create Table
+jd4	CREATE TABLE `jd4` (
+  `id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+  `j` json DEFAULT (json_quote(_utf8mb4'foobar')),
+  UNIQUE KEY `id` (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
