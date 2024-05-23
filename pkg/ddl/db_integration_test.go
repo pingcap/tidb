@@ -3083,6 +3083,8 @@ func TestIssue52680(t *testing.T) {
 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("issue52680"))
 	require.NoError(t, err)
 	ti := tbl.Meta()
+	dbInfo, ok := is.SchemaByTable(ti)
+	require.True(t, ok)
 
 	ddlutil.EmulatorGCDisable()
 	defer ddlutil.EmulatorGCEnable()
@@ -3112,7 +3114,7 @@ func TestIssue52680(t *testing.T) {
 		txn, err := store.Begin()
 		require.NoError(t, err)
 		m := meta.NewMeta(txn)
-		idAcc := m.GetAutoIDAccessors(ti.DBID, ti.ID)
+		idAcc := m.GetAutoIDAccessors(dbInfo.ID, ti.ID)
 		ids, err := idAcc.Get()
 		require.NoError(t, err)
 		require.Equal(t, ids, step.expect)
