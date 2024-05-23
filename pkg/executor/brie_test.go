@@ -186,7 +186,7 @@ func TestBRIEBuilderOPtions(t *testing.T) {
 	exec := builder.buildBRIE(s, schema)
 	require.NoError(t, builder.err)
 	e, ok := exec.(*BRIEExec)
-	require.True(t,ok)
+	require.True(t, ok)
 	require.Equal(t, 4, e.backupCfg.ChecksumConcurrency)
 	require.Equal(t, 4, e.backupCfg.CompressionLevel)
 	require.Equal(t, true, e.backupCfg.IgnoreStats)
