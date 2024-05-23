@@ -759,7 +759,7 @@ func (p *Plan) initOptions(ctx context.Context, seCtx sessionctx.Context, option
 	}
 
 	if p.SplitFile && len(p.LinesTerminatedBy) == 0 {
-		return exeerrors.ErrInvalidOptionVal.FastGenByArgs("LINES TERMINATED BY, should not be empty when use WITH split_file")
+		return exeerrors.ErrInvalidOptionVal.FastGenByArgs("lines_terminated_by, should not be empty when use split_file")
 	}
 
 	p.adjustOptions(targetNodeCPUCnt)
