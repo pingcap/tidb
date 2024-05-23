@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package mydump
+package mydump_test
 
 import (
 	"context"
@@ -22,6 +22,7 @@ import (
 
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/lightning/config"
+	. "github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/lightning/worker"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -37,18 +38,6 @@ import (
 /*
 TODO : test with specified 'regionBlockSize' ...
 */
-
-func newConfigWithSourceDir(sourceDir string) *config.Config {
-	path, _ := filepath.Abs(sourceDir)
-	return &config.Config{
-		Mydumper: config.MydumperRuntime{
-			SourceDir:        "file://" + filepath.ToSlash(path),
-			Filter:           []string{"*.*"},
-			DefaultFileRules: true,
-		},
-	}
-}
-
 func TestTableRegion(t *testing.T) {
 	cfg := newConfigWithSourceDir("./examples")
 	loader, _ := NewLoader(context.Background(), NewLoaderCfg(cfg))
@@ -499,7 +488,7 @@ func TestSplitLargeFileOnlyOneChunk(t *testing.T) {
 	}
 }
 
-func TestDetectTerminator(t *testing.T) {
+func TestSplitLargeFileSeekInsideCRLF(t *testing.T) {
 	ctx := context.Background()
 	meta := &MDTableMeta{
 		DB:   "csv",
@@ -507,10 +496,20 @@ func TestDetectTerminator(t *testing.T) {
 	}
 
 	dir := t.TempDir()
+
 	fileName := "test.csv"
 	filePath := filepath.Join(dir, fileName)
 
+	content := []byte("1\r\n2\r\n3\r\n4\r\n")
+	err := os.WriteFile(filePath, content, 0o644)
+	require.NoError(t, err)
+
+	dataFileInfo, err := os.Stat(filePath)
+	require.NoError(t, err)
+	fileSize := dataFileInfo.Size()
+	fileInfo := FileInfo{FileMeta: SourceFileMeta{Path: fileName, Type: SourceTypeCSV, FileSize: fileSize}}
 	ioWorker := worker.NewPool(context.Background(), 4, "io")
+
 	store, err := storage.NewLocalStorage(dir)
 	require.NoError(t, err)
 
@@ -527,45 +526,59 @@ func TestDetectTerminator(t *testing.T) {
 			MaxRegionSize: 2,
 		},
 	}
-
 	divideConfig := NewDataDivideConfig(cfg, 1, ioWorker, store, meta)
 
-	cases := []struct {
-		content    []byte
-		terminator string
-	}{
-		{
-			content:    []byte("1\r\n2\r\n3\r\n4\r\n"),
-			terminator: "\r\n",
-		},
-		{
-			content:    []byte("1\n2\n3\n4\n"),
-			terminator: "\n",
-		},
-		{
-			content:    []byte("1\r2\r3\r4\r"),
-			terminator: "\r",
-		},
-		{
-			content:    []byte(""),
-			terminator: "",
-		},
-		{
-			content:    []byte("1"),
-			terminator: "",
-		},
+	// in fact this is the wrong result, just to show the bug. pos mismatch with
+	// offsets. and we might read more rows than expected because we use == rather
+	// than >= to stop reading.
+	offsets := [][]int64{{0, 3}, {3, 6}, {6, 9}, {9, 12}}
+	pos := []int64{2, 5, 8, 11}
+
+	regions, _, err := SplitLargeCSV(context.Background(), divideConfig, fileInfo)
+	require.NoError(t, err)
+	require.Len(t, regions, len(offsets))
+	for i := range offsets {
+		require.Equal(t, offsets[i][0], regions[i].Chunk.Offset)
+		require.Equal(t, offsets[i][1], regions[i].Chunk.EndOffset)
 	}
 
-	for i, ca := range cases {
-		err = os.WriteFile(filePath, ca.content, 0o644)
-		require.NoError(t, err)
-		dataFileInfo, err := os.Stat(filePath)
-		require.NoError(t, err)
-		fileSize := dataFileInfo.Size()
-		fileInfo := FileInfo{FileMeta: SourceFileMeta{Path: fileName, Type: SourceTypeCSV, FileSize: fileSize}}
+	file, err := os.Open(filePath)
+	require.NoError(t, err)
+	parser, err := NewCSVParser(ctx, &cfg.Mydumper.CSV, file, 128, ioWorker, false, nil)
+	require.NoError(t, err)
 
-		got, err := detectTerminator(ctx, divideConfig, fileInfo)
-		require.NoError(t, err, "case %d", i)
-		require.Equal(t, ca.terminator, got, "case %d", i)
+	for parser.ReadRow() == nil {
+		p, _ := parser.Pos()
+		require.Equal(t, pos[0], p)
+		pos = pos[1:]
 	}
+	require.NoError(t, parser.Close())
+
+	// set terminator to "\r\n"
+
+	cfg.Mydumper.CSV.Terminator = "\r\n"
+	divideConfig = NewDataDivideConfig(cfg, 1, ioWorker, store, meta)
+	// pos is contained in expectedOffsets
+	expectedOffsets := [][]int64{{0, 6}, {6, 12}}
+	pos = []int64{3, 6, 9, 12}
+
+	regions, _, err = SplitLargeCSV(context.Background(), divideConfig, fileInfo)
+	require.NoError(t, err)
+	require.Len(t, regions, len(expectedOffsets))
+	for i := range expectedOffsets {
+		require.Equal(t, expectedOffsets[i][0], regions[i].Chunk.Offset)
+		require.Equal(t, expectedOffsets[i][1], regions[i].Chunk.EndOffset)
+	}
+
+	file, err = os.Open(filePath)
+	require.NoError(t, err)
+	parser, err = NewCSVParser(ctx, &cfg.Mydumper.CSV, file, 128, ioWorker, false, nil)
+	require.NoError(t, err)
+
+	for parser.ReadRow() == nil {
+		p, _ := parser.Pos()
+		require.Equal(t, pos[0], p)
+		pos = pos[1:]
+	}
+	require.NoError(t, parser.Close())
 }

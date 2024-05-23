@@ -97,8 +97,7 @@ type field struct {
 	quoted  bool
 }
 
-// NewCSVParser creates a CSV parser. The ownership of the reader is transferred
-// to the parser.
+// NewCSVParser creates a CSV parser.
 func NewCSVParser(
 	ctx context.Context,
 	cfg *config.CSVConfig,
