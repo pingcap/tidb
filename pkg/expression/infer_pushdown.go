@@ -226,7 +226,7 @@ func scalarExprSupportedByTiKV(sf *ScalarFunction) bool {
 	// open the following switchers if we implement them in coprocessor via `cmath`
 	case ast.Conv:
 		arg0 := sf.GetArgs()[0]
-		// To be aligned with MySQL, tidb handles hybrid type argument specially, tikv can't be consistent with tidb now.
+		// To be aligned with MySQL, tidb handles hybrid type argument and binary literal specially, tikv can't be consistent with tidb now.
 		if f, ok := arg0.(*ScalarFunction); ok {
 			if f.FuncName.L == ast.Cast && (f.GetArgs()[0].GetType().Hybrid() || IsBinaryLiteral(f.GetArgs()[0])) {
 				return false
