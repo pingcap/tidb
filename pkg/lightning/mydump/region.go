@@ -219,12 +219,30 @@ func MakeTableRegions(
 
 	concurrency := max(cfg.Concurrency, 2)
 	var fileRegionsMap sync.Map
+	needDetectCSVTerminator := cfg.StrictFormat && cfg.CSV.Terminator == ""
 
 	eg, egCtx := errgroup.WithContext(ctx)
 	eg.SetLimit(concurrency)
 	meta := cfg.TableMeta
 	for _, info := range meta.DataFiles {
 		info := info
+
+		// because the detection will modify the CSV configuration, we run it before
+		// processing any CSV files to avoid race
+		if needDetectCSVTerminator && info.FileMeta.Type == SourceTypeCSV {
+			needDetectCSVTerminator = false
+			//newTerminator, err := detectTerminator(egCtx, cfg, info)
+			//if err != nil {
+			//	return nil, err
+			//}
+			//log.FromContext(egCtx).Info("detected terminator for strict-format",
+			//	zap.String("used file", info.FileMeta.Path),
+			//	zap.String("terminator", newTerminator))
+			//if newTerminator != "" {
+			//	cfg.CSV.Terminator = newTerminator
+			//}
+		}
+
 		eg.Go(func() error {
 			select {
 			case <-egCtx.Done():
@@ -403,25 +421,38 @@ func SplitLargeCSV(
 	cfg *DataDivideConfig,
 	dataFile FileInfo,
 ) (regions []*TableRegion, dataFileSizes []float64, err error) {
-	maxRegionSize := cfg.MaxChunkSize
+	var (
+		maxRegionSize          = cfg.MaxChunkSize
+		startOffset, endOffset = int64(0), maxRegionSize
+		columns                []string
+		prevRowIdxMax          int64
+		parser                 *CSVParser
+	)
 	dataFileSizes = make([]float64, 0, dataFile.FileMeta.FileSize/maxRegionSize+1)
-	startOffset, endOffset := int64(0), maxRegionSize
-	var columns []string
-	var prevRowIdxMax int64
+
+	defer func() {
+		if parser != nil {
+			parser.Close()
+		}
+	}()
+
 	if cfg.CSV.Header {
-		r, err := cfg.Store.Open(ctx, dataFile.FileMeta.Path, nil)
-		if err != nil {
-			return nil, nil, err
+		if parser == nil {
+			r, err := cfg.Store.Open(ctx, dataFile.FileMeta.Path, nil)
+			if err != nil {
+				return nil, nil, err
+			}
+			// Create a utf8mb4 convertor to encode and decode data with the charset of CSV files.
+			charsetConvertor, err := NewCharsetConvertor(cfg.DataCharacterSet, cfg.DataInvalidCharReplace)
+			if err != nil {
+				return nil, nil, err
+			}
+			parser, err = NewCSVParser(ctx, &cfg.CSV, r, cfg.ReadBlockSize, cfg.IOWorkers, true, charsetConvertor)
+			if err != nil {
+				return nil, nil, err
+			}
 		}
-		// Create a utf8mb4 convertor to encode and decode data with the charset of CSV files.
-		charsetConvertor, err := NewCharsetConvertor(cfg.DataCharacterSet, cfg.DataInvalidCharReplace)
-		if err != nil {
-			return nil, nil, err
-		}
-		parser, err := NewCSVParser(ctx, &cfg.CSV, r, cfg.ReadBlockSize, cfg.IOWorkers, true, charsetConvertor)
-		if err != nil {
-			return nil, nil, err
-		}
+
 		if err = parser.ReadColumns(); err != nil {
 			return nil, nil, err
 		}
@@ -439,19 +470,22 @@ func SplitLargeCSV(
 		curRowsCnt := (endOffset - startOffset) / divisor
 		rowIDMax := prevRowIdxMax + curRowsCnt
 		if endOffset != dataFile.FileMeta.FileSize {
-			r, err := cfg.Store.Open(ctx, dataFile.FileMeta.Path, nil)
-			if err != nil {
-				return nil, nil, err
+			if parser == nil {
+				r, err := cfg.Store.Open(ctx, dataFile.FileMeta.Path, nil)
+				if err != nil {
+					return nil, nil, err
+				}
+				// Create a utf8mb4 convertor to encode and decode data with the charset of CSV files.
+				charsetConvertor, err := NewCharsetConvertor(cfg.DataCharacterSet, cfg.DataInvalidCharReplace)
+				if err != nil {
+					return nil, nil, err
+				}
+				parser, err = NewCSVParser(ctx, &cfg.CSV, r, cfg.ReadBlockSize, cfg.IOWorkers, false, charsetConvertor)
+				if err != nil {
+					return nil, nil, err
+				}
 			}
-			// Create a utf8mb4 convertor to encode and decode data with the charset of CSV files.
-			charsetConvertor, err := NewCharsetConvertor(cfg.DataCharacterSet, cfg.DataInvalidCharReplace)
-			if err != nil {
-				return nil, nil, err
-			}
-			parser, err := NewCSVParser(ctx, &cfg.CSV, r, cfg.ReadBlockSize, cfg.IOWorkers, false, charsetConvertor)
-			if err != nil {
-				return nil, nil, err
-			}
+
 			if err = parser.SetPos(endOffset, 0); err != nil {
 				return nil, nil, err
 			}
@@ -466,7 +500,6 @@ func SplitLargeCSV(
 				pos = dataFile.FileMeta.FileSize
 			}
 			endOffset = pos
-			parser.Close()
 		}
 		regions = append(regions,
 			&TableRegion{
@@ -492,4 +525,53 @@ func SplitLargeCSV(
 		}
 	}
 	return regions, dataFileSizes, nil
+}
+
+// detectTerminator must only be called when cfg.CSV.Terminator is
+// empty(default). Empty terminator will use \r, \n and \r\n which may cause
+// unstable results. So we need to detect the real value this file used first.
+func detectTerminator(
+	ctx context.Context,
+	cfg *DataDivideConfig,
+	dataFile FileInfo,
+) (string, error) {
+	r, err := cfg.Store.Open(ctx, dataFile.FileMeta.Path, nil)
+	if err != nil {
+		return "", err
+	}
+	// Create a utf8mb4 convertor to encode and decode data with the charset of CSV files.
+	charsetConvertor, err := NewCharsetConvertor(cfg.DataCharacterSet, cfg.DataInvalidCharReplace)
+	if err != nil {
+		_ = r.Close()
+		return "", err
+	}
+	parser, err := NewCSVParser(ctx, &cfg.CSV, r, cfg.ReadBlockSize, cfg.IOWorkers, true, charsetConvertor)
+	if err != nil {
+		return "", err
+	}
+	defer parser.Close()
+
+	var firstLine []byte
+	for len(firstLine) == 0 && err == nil {
+		firstLine, _, err = parser.ReadUntilTerminator()
+	}
+	if errors.ErrorEqual(err, io.EOF) {
+		return "", nil
+	}
+
+	if firstLine[len(firstLine)-1] == '\n' {
+		return "\n", nil
+	}
+	if firstLine[len(firstLine)-1] != '\r' {
+		return "", errors.Errorf("unexpected terminator when detect terminator. first non-empty line: %s", firstLine)
+	}
+
+	nextChar, err := parser.peekBytes(1)
+	if errors.ErrorEqual(err, io.EOF) {
+		return "\r", nil
+	}
+	if nextChar[0] == '\n' {
+		return "\r\n", nil
+	}
+	return "\r", nil
 }
