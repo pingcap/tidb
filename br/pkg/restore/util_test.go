@@ -195,6 +195,7 @@ func TestPaginateScanRegion(t *testing.T) {
 					Id:    i + 1,
 					Peers: peers,
 				},
+				Leader: peers[0],
 			}
 
 			if i != 0 {
@@ -222,6 +223,7 @@ func TestPaginateScanRegion(t *testing.T) {
 				StartKey: endKey,
 				EndKey:   []byte{},
 			},
+			Leader: peers[0],
 		}
 		regionsMap[num] = ri
 		regions = append(regions, ri)
