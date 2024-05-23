@@ -15,6 +15,7 @@
 package refresher
 
 import (
+	"runtime"
 	"strings"
 	"time"
 
@@ -86,6 +87,8 @@ func (r *Refresher) PickOneTableAndAnalyzeByPriority() bool {
 	}
 	defer r.statsHandle.SPool().Put(se)
 	sctx := se.(sessionctx.Context)
+	var wg util.WaitGroupWrapper
+	concurrency := min(1, max(runtime.GOMAXPROCS(0)/8, 4))
 	// Pick the table with the highest weight.
 	for r.Jobs.Len() > 0 {
 		job := r.Jobs.Pop()
@@ -99,23 +102,28 @@ func (r *Refresher) PickOneTableAndAnalyzeByPriority() bool {
 			)
 			continue
 		}
-		statslogutil.StatsLogger().Info(
-			"Auto analyze triggered",
-			zap.Stringer("job", job),
-		)
-		err = job.Analyze(
-			r.statsHandle,
-			r.sysProcTracker,
-		)
-		if err != nil {
-			statslogutil.StatsLogger().Error(
-				"Execute auto analyze job failed",
+		concurrency = concurrency - 1
+		wg.Run(func() {
+			statslogutil.StatsLogger().Info(
+				"Auto analyze triggered",
 				zap.Stringer("job", job),
-				zap.Error(err),
 			)
+			err = job.Analyze(
+				r.statsHandle,
+				r.sysProcTracker,
+			)
+			if err != nil {
+				statslogutil.StatsLogger().Error(
+					"Execute auto analyze job failed",
+					zap.Stringer("job", job),
+					zap.Error(err),
+				)
+			}
+		})
+		if concurrency == 0 {
+			wg.Wait()
+			return true
 		}
-		// Only analyze one table each time.
-		return true
 	}
 	statslogutil.SingletonStatsSamplerLogger().Info(
 		"No table to analyze",
