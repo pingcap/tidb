@@ -868,7 +868,6 @@ func filterAccessibleStoresAndBuildRegionInfo(
 	task *copTask,
 	rpcCtx *tikv.RPCContext,
 	aliveStores *aliveStoresBundle,
-	isTiDBLabelZoneSet bool,
 	tiflashReplicaReadPolicy tiflash.ReplicaRead,
 	regionInfoNeedsReloadOnSendFail []RegionInfo,
 	regionsInOtherZones []uint64,
@@ -1005,7 +1004,7 @@ func buildBatchCopTasksCore(bo *backoff.Backoffer, store *kvStore, rangesForEach
 		for idx, task := range tasks {
 			var err error
 			var regionInfo RegionInfo
-			regionInfo, regionInfosNeedReloadOnSendFail, regionIDsInOtherZones, err = filterAccessibleStoresAndBuildRegionInfo(cache, usedTiFlashStores[idx], bo, task, rpcCtxs[idx], aliveStores, isTiDBLabelZoneSet, tiflashReplicaReadPolicy, regionInfosNeedReloadOnSendFail, regionIDsInOtherZones, maxRemoteReadCountAllowed, tidbZone)
+			regionInfo, regionInfosNeedReloadOnSendFail, regionIDsInOtherZones, err = filterAccessibleStoresAndBuildRegionInfo(cache, usedTiFlashStores[idx], bo, task, rpcCtxs[idx], aliveStores, tiflashReplicaReadPolicy, regionInfosNeedReloadOnSendFail, regionIDsInOtherZones, maxRemoteReadCountAllowed, tidbZone)
 			if err != nil {
 				return nil, err
 			}
