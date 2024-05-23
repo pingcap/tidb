@@ -1490,6 +1490,27 @@ type PhysicalIndexJoin struct {
 	InnerHashKeys []*expression.Column
 }
 
+func (p *PhysicalIndexJoin) Clone() (base.PhysicalPlan, error) {
+	cloned := new(PhysicalIndexJoin)
+	base, err := p.basePhysicalJoin.cloneWithSelf(cloned)
+	if err != nil {
+		return nil, err
+	}
+	cloned.basePhysicalJoin = *base
+	cloned.innerTask = p.innerTask
+	cloned.Ranges = p.Ranges
+	cloned.KeyOff2IdxOff = make([]int, len(p.KeyOff2IdxOff))
+	copy(cloned.KeyOff2IdxOff, p.KeyOff2IdxOff)
+	cloned.IdxColLens = make([]int, len(p.IdxColLens))
+	copy(cloned.IdxColLens, p.IdxColLens)
+	if p.CompareFilters != nil {
+		cloned.CompareFilters = p.CompareFilters
+	}
+	cloned.OuterHashKeys = util.CloneCols(p.OuterHashKeys)
+	cloned.InnerHashKeys = util.CloneCols(p.InnerHashKeys)
+	return cloned, nil
+}
+
 // MemoryUsage return the memory usage of PhysicalIndexJoin
 func (p *PhysicalIndexJoin) MemoryUsage() (sum int64) {
 	if p == nil {
