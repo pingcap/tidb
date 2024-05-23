@@ -3115,22 +3115,12 @@ func canPushToCopImpl(p *baseLogicalPlan, storeTp kv.StoreType, considerDual boo
 		switch c := ch.(type) {
 		case *DataSource:
 			validDs := false
-			indexMergeIsIntersection := false
 			for _, path := range c.possibleAccessPaths {
 				if path.StoreType == storeTp {
 					validDs = true
 				}
-				if len(path.PartialIndexPaths) > 0 && path.IndexMergeIsIntersection {
-					indexMergeIsIntersection = true
-				}
 			}
 			ret = ret && validDs
-
-			_, isTopN := p.self.(*LogicalTopN)
-			_, isLimit := p.self.(*LogicalLimit)
-			if (isTopN || isLimit) && indexMergeIsIntersection {
-				return false // TopN and Limit cannot be pushed down to the intersection type IndexMerge
-			}
 
 			if c.tableInfo.TableCacheStatusType != model.TableCacheStatusDisable {
 				// Don't push to cop for cached table, it brings more harm than good:
