@@ -68,11 +68,7 @@ go_test(
     ],
     flaky = True,
     race = "on",
-<<<<<<< HEAD
-    shard_count = 22,
-=======
-    shard_count = 27,
->>>>>>> f01f305fabb (log_backup: fix panic during advancer owner transfer (#52671))
+    shard_count = 23,
     deps = [
         ":streamhelper",
         "//br/pkg/errors",
