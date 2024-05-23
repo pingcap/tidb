@@ -82,8 +82,6 @@ DROP RESOURCE GROUP test2;
 SELECT /*+ RESOURCE_GROUP(test) */ * from test_rc.t;
 id
 1
-SHOW warnings;
-Level	Code	Message
 SET RESOURCE GROUP test;
 SELECT /*+ RESOURCE_GROUP(test) */ * from test_rc.t;
 id
