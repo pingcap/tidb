@@ -165,7 +165,61 @@ func (*PointGetPlan) ToPB(_ *base.BuildPBContext, _ kv.StoreType) (*tipb.Executo
 
 // Clone implements PhysicalPlan interface.
 func (p *PointGetPlan) Clone() (base.PhysicalPlan, error) {
-	return nil, errors.Errorf("%T doesn't support cloning", p)
+	cloned := new(PointGetPlan)
+	*cloned = *p
+	cloned.schema = p.schema.Clone()
+	cloned.TblInfo = p.TblInfo.Clone()
+	cloned.IndexInfo = p.IndexInfo.Clone()
+	cloned.PartitionIdx = new(int)
+	*cloned.PartitionIdx = *p.PartitionIdx
+	cloned.Handle = p.Handle // TODO: clone
+	cloned.HandleConstant = p.HandleConstant.Clone().(*expression.Constant)
+	cloned.handleFieldType = p.handleFieldType.Clone()
+	cloned.IndexValues = make([]types.Datum, len(p.IndexValues))
+	for i, value := range p.IndexValues {
+		cloned.IndexValues[i] = value
+	}
+	cloned.IndexConstants = make([]*expression.Constant, len(p.IndexConstants))
+	for i, constant := range p.IndexConstants {
+		cloned.IndexConstants[i] = constant.Clone().(*expression.Constant)
+	}
+	cloned.ColsFieldType = make([]*types.FieldType, len(p.ColsFieldType))
+	for i, ft := range p.ColsFieldType {
+		cloned.ColsFieldType[i] = ft.Clone()
+	}
+	cloned.IdxCols = make([]*expression.Column, len(p.IdxCols))
+	for i, col := range p.IdxCols {
+		cloned.IdxCols[i] = col.Clone().(*expression.Column)
+	}
+	cloned.IdxColLens = make([]int, len(p.IdxColLens))
+	copy(cloned.IdxColLens, p.IdxColLens)
+	cloned.AccessConditions = make([]expression.Expression, len(p.AccessConditions))
+	for i, cond := range p.AccessConditions {
+		cloned.AccessConditions[i] = cond.Clone()
+	}
+	cloned.outputNames = make([]*types.FieldName, len(p.outputNames))
+	for i, name := range p.outputNames {
+		*cloned.outputNames[i] = *name
+	}
+	cloned.Columns = make([]*model.ColumnInfo, len(p.Columns))
+	for i, col := range p.Columns {
+		cloned.Columns[i] = col.Clone()
+	}
+	cloned.cost = p.cost
+	cloned.planCostInit = p.planCostInit
+	cloned.planCost = p.planCost
+	cloned.planCostVer2 = p.planCostVer2
+	cloned.accessCols = make([]*expression.Column, len(p.accessCols))
+	for i, col := range p.accessCols {
+		cloned.accessCols[i] = col.Clone().(*expression.Column)
+	}
+	cloned.probeParents = make([]base.PhysicalPlan, len(p.probeParents))
+	for i, parent := range p.probeParents {
+		cloned.probeParents[i], _ = parent.Clone()
+	}
+	cloned.PartitionNames = make([]model.CIStr, len(p.PartitionNames))
+	copy(cloned.PartitionNames, p.PartitionNames)
+	return cloned, nil
 }
 
 // ExplainInfo implements Plan interface.
@@ -483,7 +537,68 @@ func (p *BatchPointGetPlan) SetCost(cost float64) {
 
 // Clone implements PhysicalPlan interface.
 func (p *BatchPointGetPlan) Clone() (base.PhysicalPlan, error) {
-	return nil, errors.Errorf("%T doesn't support cloning", p)
+	cloned := new(BatchPointGetPlan)
+	*cloned = *p
+	cloned.TblInfo = p.TblInfo.Clone()
+	cloned.IndexInfo = p.IndexInfo.Clone()
+	cloned.Handles = make([]kv.Handle, len(p.Handles))
+	for i, handle := range p.Handles {
+		cloned.Handles[i] = handle
+	}
+	cloned.HandleType = p.HandleType.Clone()
+	cloned.HandleParams = make([]*expression.Constant, len(p.HandleParams))
+	for i, param := range p.HandleParams {
+		cloned.HandleParams[i] = param.Clone().(*expression.Constant)
+	}
+	cloned.IndexValues = make([][]types.Datum, len(p.IndexValues))
+	for i, values := range p.IndexValues {
+		cloned.IndexValues[i] = make([]types.Datum, len(values))
+		for j, value := range values {
+			cloned.IndexValues[i][j] = value
+		}
+	}
+	cloned.IndexValueParams = make([][]*expression.Constant, len(p.IndexValueParams))
+	for i, params := range p.IndexValueParams {
+		cloned.IndexValueParams[i] = make([]*expression.Constant, len(params))
+		for j, param := range params {
+			cloned.IndexValueParams[i][j] = param.Clone().(*expression.Constant)
+		}
+	}
+	cloned.IndexColTypes = make([]*types.FieldType, len(p.IndexColTypes))
+	for i, ft := range p.IndexColTypes {
+		cloned.IndexColTypes[i] = ft.Clone()
+	}
+	cloned.AccessConditions = make([]expression.Expression, len(p.AccessConditions))
+	for i, cond := range p.AccessConditions {
+		cloned.AccessConditions[i] = cond.Clone()
+	}
+	cloned.IdxCols = make([]*expression.Column, len(p.IdxCols))
+	for i, col := range p.IdxCols {
+		cloned.IdxCols[i] = col.Clone().(*expression.Column)
+	}
+	cloned.IdxColLens = make([]int, len(p.IdxColLens))
+	copy(cloned.IdxColLens, p.IdxColLens)
+	cloned.PartitionIdxs = make([]int, len(p.PartitionIdxs))
+	copy(cloned.PartitionIdxs, p.PartitionIdxs)
+	cloned.Columns = make([]*model.ColumnInfo, len(p.Columns))
+	for i, col := range p.Columns {
+		cloned.Columns[i] = col.Clone()
+	}
+	cloned.cost = p.cost
+	cloned.planCostInit = p.planCostInit
+	cloned.planCost = p.planCost
+	cloned.planCostVer2 = p.planCostVer2
+	cloned.accessCols = make([]*expression.Column, len(p.accessCols))
+	for i, col := range p.accessCols {
+		cloned.accessCols[i] = col.Clone().(*expression.Column)
+	}
+	cloned.probeParents = make([]base.PhysicalPlan, len(p.probeParents))
+	for i, parent := range p.probeParents {
+		cloned.probeParents[i], _ = parent.Clone()
+	}
+	cloned.PartitionNames = make([]model.CIStr, len(p.PartitionNames))
+	copy(cloned.PartitionNames, p.PartitionNames)
+	return cloned, nil
 }
 
 // ExtractCorrelatedCols implements PhysicalPlan interface.
