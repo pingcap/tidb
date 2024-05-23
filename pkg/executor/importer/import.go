@@ -758,6 +758,10 @@ func (p *Plan) initOptions(ctx context.Context, seCtx sessionctx.Context, option
 		return exeerrors.ErrInvalidOptionVal.FastGenByArgs("skip_rows, should be <= 1 when split-file is enabled")
 	}
 
+	if p.SplitFile && len(p.LinesTerminatedBy) == 0 {
+		return exeerrors.ErrInvalidOptionVal.FastGenByArgs("LINES TERMINATED BY, should not be empty when use WITH split_file")
+	}
+
 	p.adjustOptions(targetNodeCPUCnt)
 	return nil
 }
