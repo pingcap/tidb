@@ -253,13 +253,13 @@ func getCachedPlan(sctx sessionctx.Context, isNonPrepared bool, cacheKey kvcache
 		}
 	}
 
-	phyPlan, ok := cachedVal.Plan.(base.PhysicalPlan)
-	if !ok {
-		panic(fmt.Sprintf("%v %v", reflect.TypeOf(phyPlan), phyPlan))
-	}
-	cachedPlan, err := phyPlan.Clone()
-	if err != nil {
-		panic(fmt.Sprintf("%v %v %v", reflect.TypeOf(phyPlan), phyPlan, err))
+	cachedPlan := cachedVal.Plan
+	if phyPlan, ok := cachedVal.Plan.(base.PhysicalPlan); ok {
+		clonedPlan, err := phyPlan.Clone()
+		if err != nil {
+			panic(fmt.Sprintf("%v %v %v", reflect.TypeOf(phyPlan), phyPlan, err))
+		}
+		cachedPlan = clonedPlan
 	}
 
 	if !RebuildPlan4CachedPlan(cachedPlan) {
