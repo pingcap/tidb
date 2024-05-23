@@ -253,16 +253,20 @@ func getCachedPlan(sctx sessionctx.Context, isNonPrepared bool, cacheKey kvcache
 		}
 	}
 
-	cachedPlan := cachedVal.Plan
-	if phyPlan, ok := cachedVal.Plan.(base.PhysicalPlan); ok {
-		clonedPlan, err := phyPlan.Clone()
+	switch x := cachedVal.Plan.(type) {
+	case base.PhysicalPlan:
+		_, err := x.Clone()
 		if err != nil {
-			panic(fmt.Sprintf("%v %v %v", reflect.TypeOf(phyPlan), phyPlan, err))
+			panic(fmt.Sprintf("%v %v %v", reflect.TypeOf(x), x, err))
 		}
-		cachedPlan = clonedPlan
+	case *Update:
+		_, err := x.SelectPlan.Clone()
+		if err != nil {
+			panic(fmt.Sprintf("%v %v %v", reflect.TypeOf(x), x, err))
+		}
 	}
 
-	if !RebuildPlan4CachedPlan(cachedPlan) {
+	if !RebuildPlan4CachedPlan(cachedVal.Plan) {
 		return nil, nil, false, nil
 	}
 	sessVars.FoundInPlanCache = true
@@ -278,7 +282,7 @@ func getCachedPlan(sctx sessionctx.Context, isNonPrepared bool, cacheKey kvcache
 	}
 	stmtCtx.SetPlanDigest(stmt.NormalizedPlan, stmt.PlanDigest)
 	stmtCtx.StmtHints = *cachedVal.stmtHints
-	return cachedPlan, cachedVal.OutputColumns, true, nil
+	return cachedVal.Plan, cachedVal.OutputColumns, true, nil
 }
 
 // generateNewPlan call the optimizer to generate a new plan for current statement
