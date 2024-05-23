@@ -746,7 +746,16 @@ func (sender *copIteratorTaskSender) run() {
 	}
 }
 
+// GlobalSyncChForTest is a global channel for test.
+var GlobalSyncChForTest = make(chan struct{})
+
 func (it *copIterator) recvFromRespCh(ctx context.Context, respCh <-chan *copResponse) (resp *copResponse, ok bool, exit bool) {
+	failpoint.Inject("CtxCancelBeforeReceive", func(_ failpoint.Value) {
+		if ctx.Value("TestContextCancel") == "test" {
+			GlobalSyncChForTest <- struct{}{}
+			<-GlobalSyncChForTest
+		}
+	})
 	ticker := time.NewTicker(3 * time.Second)
 	defer ticker.Stop()
 	for {
@@ -868,7 +877,7 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 		resp, ok, closed = it.recvFromRespCh(ctx, it.respChan)
 		if !ok || closed {
 			it.actionOnExceed.close()
-			return nil, nil
+			return nil, errors.Trace(ctx.Err())
 		}
 		if resp == finCopResp {
 			it.actionOnExceed.destroyTokenIfNeeded(func() {
@@ -886,8 +895,8 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 			task := it.tasks[it.curr]
 			resp, ok, closed = it.recvFromRespCh(ctx, task.respChan)
 			if closed {
-				// Close() is already called, so Next() is invalid.
-				return nil, nil
+				// Close() is called or context cancelled/timeout, so Next() is invalid.
+				return nil, errors.Trace(ctx.Err())
 			}
 			if ok {
 				break
