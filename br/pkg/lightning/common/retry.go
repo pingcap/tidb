@@ -40,6 +40,8 @@ var retryableErrorMsgList = []string{
 	// this error happens on when distsql.Checksum calls TiKV
 	// see https://github.com/pingcap/tidb/blob/2c3d4f1ae418881a95686e8b93d4237f2e76eec6/store/copr/coprocessor.go#L941
 	"coprocessor task terminated due to exceeding the deadline",
+	// fix https://github.com/pingcap/tidb/issues/51383
+	"rate: wait",
 }
 
 func isRetryableFromErrorMessage(err error) bool {
