@@ -16,6 +16,8 @@ package core
 
 import (
 	"context"
+	"fmt"
+	"reflect"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/bindinfo"
@@ -250,7 +252,17 @@ func getCachedPlan(sctx sessionctx.Context, isNonPrepared bool, cacheKey kvcache
 			return nil, nil, false, nil
 		}
 	}
-	if !RebuildPlan4CachedPlan(cachedVal.Plan) {
+
+	phyPlan, ok := cachedVal.Plan.(base.PhysicalPlan)
+	if !ok {
+		panic(fmt.Sprintf("%v %v", reflect.TypeOf(phyPlan), phyPlan))
+	}
+	cachedPlan, err := phyPlan.Clone()
+	if err != nil {
+		panic(fmt.Sprintf("%v %v %v", reflect.TypeOf(phyPlan), phyPlan, err))
+	}
+
+	if !RebuildPlan4CachedPlan(cachedPlan) {
 		return nil, nil, false, nil
 	}
 	sessVars.FoundInPlanCache = true
@@ -266,7 +278,7 @@ func getCachedPlan(sctx sessionctx.Context, isNonPrepared bool, cacheKey kvcache
 	}
 	stmtCtx.SetPlanDigest(stmt.NormalizedPlan, stmt.PlanDigest)
 	stmtCtx.StmtHints = *cachedVal.stmtHints
-	return cachedVal.Plan, cachedVal.OutputColumns, true, nil
+	return cachedPlan, cachedVal.OutputColumns, true, nil
 }
 
 // generateNewPlan call the optimizer to generate a new plan for current statement
