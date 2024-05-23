@@ -170,8 +170,12 @@ func (p *PointGetPlan) Clone() (base.PhysicalPlan, error) {
 	cloned.schema = p.schema.Clone()
 	cloned.TblInfo = p.TblInfo.Clone()
 	cloned.IndexInfo = p.IndexInfo.Clone()
-	cloned.HandleConstant = p.HandleConstant.Clone().(*expression.Constant)
-	cloned.handleFieldType = p.handleFieldType.Clone()
+	if p.HandleConstant != nil {
+		cloned.HandleConstant = p.HandleConstant.Clone().(*expression.Constant)
+	}
+	if p.handleFieldType != nil {
+		cloned.handleFieldType = p.handleFieldType.Clone()
+	}
 	cloned.IndexValues = make([]types.Datum, len(p.IndexValues))
 	for i, value := range p.IndexValues {
 		cloned.IndexValues[i] = value
