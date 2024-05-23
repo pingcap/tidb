@@ -379,7 +379,7 @@ func (p *LogicalJoin) updateEQCond() {
 }
 
 func (p *LogicalProjection) needCast(expr expression.Expression) bool {
-	afterExpr := expression.ColumnSubstitute(expr, p.schema, p.Exprs)
+	afterExpr := expression.ColumnSubstitute(p.SCtx().GetExprCtx(), expr, p.schema, p.Exprs)
 	return afterExpr.GetType() != expr.GetType()
 }
 
