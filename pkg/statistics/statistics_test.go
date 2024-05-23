@@ -501,7 +501,7 @@ func SubTestBuild() func(*testing.T) {
 	return func(t *testing.T) {
 		s := createTestStatisticsSamples(t)
 		bucketCount := int64(256)
-		topNCount := 20
+		topNCount := 100
 		ctx := mock.NewContext()
 		sc := ctx.GetSessionVars().StmtCtx
 		sketch, _, err := buildFMSketch(sc, s.rc.(*recordSet).data, 1000)
