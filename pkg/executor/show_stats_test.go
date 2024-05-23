@@ -292,7 +292,7 @@ func TestShowStatusSnapshot(t *testing.T) {
 	UPDATE variable_value = '%[2]s', comment = '%[3]s'`, safePointName, safePointValue, safePointComment)
 	tk.MustExec(updateSafePoint)
 
-	for _, cacheSize := range []int{1024, 0} {
+	for _, cacheSize := range []int{1024 * 1024 * 1024, 0} {
 		tk.MustExec("set @@global.tidb_schema_cache_size = ?", cacheSize)
 		tk.MustExec("create table t (a int);")
 		snapshotTime := time.Now()
