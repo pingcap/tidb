@@ -1808,6 +1808,6 @@ func TestIndexRange(t *testing.T) {
 	tk.MustExec(`INSERT INTO t0 (id) VALUES (1),(2),(3),(4),(5),(6),(7),(8),(9),(10),(11);`)
 	tk.MustExec("INSERT INTO t1(c0) VALUES (1);")
 	tk.MustExec(`set tidb_enable_non_prepared_plan_cache=1;`)
-	tk.MustQuery(`SELECT t0.* FROM posts WHERE (id = 1 or id = 9223372036854775808);`).Check(testkit.Rows("1"))
-	tk.MustQuery("SELECT t0.c0 FROM t0 WHERE t0.c0!=BIN(-1);").Check(testkit.Rows("1"))
+	tk.MustQuery(`SELECT t0.* FROM t0 WHERE (id = 1 or id = 9223372036854775808);`).Check(testkit.Rows("1"))
+	tk.MustQuery("SELECT t1.c0 FROM t1 WHERE t1.c0!=BIN(-1);").Check(testkit.Rows("1"))
 }
