@@ -182,7 +182,7 @@ func TestGetUint64FromConstant(t *testing.T) {
 	require.Equal(t, uint64(1), num)
 
 	ctx.GetSessionVars().PlanCacheParams.Append(types.NewUintDatum(100))
-	con.ParamMarker = &ParamMarker{ctx: ctx, order: 0}
+	con.ParamMarker = &ParamMarker{order: 0}
 	num, _, _ = GetUint64FromConstant(ctx, con)
 	require.Equal(t, uint64(100), num)
 }

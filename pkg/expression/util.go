@@ -1204,7 +1204,6 @@ func ParamMarkerExpression(ctx variable.SessionVarsProvider, v *driver.ParamMark
 	if useCache || needParam {
 		value.ParamMarker = &ParamMarker{
 			order: v.Order,
-			ctx:   ctx,
 		}
 	}
 	return value, nil

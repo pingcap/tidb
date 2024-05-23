@@ -19,7 +19,6 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
@@ -130,7 +129,6 @@ type Constant struct {
 
 // ParamMarker indicates param provided by COM_STMT_EXECUTE.
 type ParamMarker struct {
-	ctx   variable.SessionVarsProvider
 	order int
 }
 
@@ -139,17 +137,11 @@ func (d *ParamMarker) GetUserVar(ctx EvalContext) types.Datum {
 	return ctx.GetParamValue(d.order)
 }
 
-func (d *ParamMarker) getUserVarWithInternalCtx() types.Datum {
-	// TODO: remove this function in the future
-	sessionVars := d.ctx.GetSessionVars()
-	return sessionVars.PlanCacheParams.GetParamValue(d.order)
-}
-
 // String implements fmt.Stringer interface.
 func (c *Constant) String() string {
 	if c.ParamMarker != nil {
-		dt := c.ParamMarker.getUserVarWithInternalCtx()
-		c.Value.SetValue(dt.GetValue(), c.RetType)
+		// TODO: use a more meaningful value to represent the param marker.
+		return "?"
 	} else if c.DeferredExpr != nil {
 		return c.DeferredExpr.String()
 	}
