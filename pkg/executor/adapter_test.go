@@ -15,13 +15,21 @@
 package executor_test
 
 import (
+	"context"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/pingcap/tidb/pkg/executor"
+	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+<<<<<<< HEAD
+=======
+	"github.com/pingcap/tidb/pkg/store/copr"
+>>>>>>> 3004c07b939 (copIterator: return context error to avoid return incorrect result on context cancel/timeout (#53489))
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/util"
 )
 
 func TestQueryTime(t *testing.T) {
@@ -51,4 +59,31 @@ func TestFormatSQL(t *testing.T) {
 	variable.QueryLogMaxLen.Store(5)
 	val = executor.FormatSQL("aaaaaaaaaaaaaaaaaaaa")
 	require.Equal(t, "aaaaa(len:20)", val.String())
+}
+
+func TestContextCancelWhenReadFromCopIterator(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int)")
+	tk.MustExec("insert into t values(1)")
+
+	testkit.EnableFailPoint(t, "github.com/pingcap/tidb/pkg/store/copr/CtxCancelBeforeReceive", "return(true)")
+	ctx := context.WithValue(context.Background(), "TestContextCancel", "test")
+	ctx, cancelFunc := context.WithCancel(ctx)
+	defer cancelFunc()
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		ctx = util.WithInternalSourceType(ctx, "scheduler")
+		rs, err := tk.Session().ExecuteInternal(ctx, "select * from test.t")
+		require.NoError(t, err)
+		_, err2 := session.ResultSetToStringSlice(ctx, tk.Session(), rs)
+		require.ErrorIs(t, err2, context.Canceled)
+	}()
+	<-copr.GlobalSyncChForTest
+	cancelFunc()
+	copr.GlobalSyncChForTest <- struct{}{}
+	wg.Wait()
 }
