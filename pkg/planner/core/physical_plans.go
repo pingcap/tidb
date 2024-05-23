@@ -2149,6 +2149,18 @@ type PhysicalUnionScan struct {
 	HandleCols util.HandleCols
 }
 
+func (p *PhysicalUnionScan) Clone() (base.PhysicalPlan, error) {
+	cloned := new(PhysicalUnionScan)
+	base, err := p.basePhysicalPlan.cloneWithSelf(cloned)
+	if err != nil {
+		return nil, err
+	}
+	cloned.basePhysicalPlan = *base
+	cloned.Conditions = util.CloneExprs(p.Conditions)
+	cloned.HandleCols = p.HandleCols
+	return cloned, nil
+}
+
 // ExtractCorrelatedCols implements op.PhysicalPlan interface.
 func (p *PhysicalUnionScan) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
 	corCols := make([]*expression.CorrelatedColumn, 0)
