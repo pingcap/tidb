@@ -17,7 +17,6 @@ package core
 import (
 	"context"
 	"fmt"
-	"reflect"
 	"sort"
 	"strings"
 	"testing"
@@ -1546,7 +1545,7 @@ func (v visitInfoArray) Swap(i, j int) {
 func unique(v []visitInfo) []visitInfo {
 	repeat := 0
 	for i := 1; i < len(v); i++ {
-		if reflect.DeepEqual(v[i], v[i-1]) {
+		if v[i].Equals(&v[i-1]) {
 			repeat++
 		} else {
 			v[i-repeat] = v[i]

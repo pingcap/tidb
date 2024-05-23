@@ -19,6 +19,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"math"
+	"reflect"
 	"strconv"
 	"strings"
 
@@ -80,6 +81,17 @@ type visitInfo struct {
 	alterWritable    bool
 	dynamicPrivs     []string
 	dynamicWithGrant bool
+}
+
+func (v *visitInfo) Equals(other *visitInfo) bool {
+	return v.privilege == other.privilege &&
+		v.db == other.db &&
+		v.table == other.table &&
+		v.column == other.column &&
+		v.err == other.err &&
+		v.alterWritable == other.alterWritable &&
+		reflect.DeepEqual(v.dynamicPrivs, other.dynamicPrivs) &&
+		v.dynamicWithGrant == other.dynamicWithGrant
 }
 
 // clauseCode indicates in which clause the column is currently.
