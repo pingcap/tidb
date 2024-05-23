@@ -247,6 +247,30 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression, opt 
 	return ret, p.self
 }
 
+// forceCast checks if an expression is equal condition converted from `if`.
+func (p *LogicalJoin) forceCast(lExpr expression.Expression, rExpr expression.Expression) bool {
+	var lProj, rProj *LogicalProjection
+	result := false
+	lOk := containIf(lExpr)
+	rOk := containIf(rExpr)
+	if lOk {
+		lProj = p.getProj(0)
+		result = lProj.needCast(lExpr)
+	}
+	if rOk {
+		rProj = p.getProj(1)
+		result = rProj.needCast(rExpr)
+	}
+	return result
+}
+
+func containIf(expr expression.Expression) bool {
+	if _, ok := expr.(*expression.ScalarFunction); ok {
+		return true
+	}
+	return false
+}
+
 // updateEQCond will extract the arguments of a equal condition that connect two expressions.
 func (p *LogicalJoin) updateEQCond() {
 	lChild, rChild := p.children[0], p.children[1]
@@ -265,10 +289,16 @@ func (p *LogicalJoin) updateEQCond() {
 			}
 			lExpr, rExpr := eqCond.GetArgs()[0], eqCond.GetArgs()[1]
 			if expression.ExprFromSchema(lExpr, lChild.Schema()) && expression.ExprFromSchema(rExpr, rChild.Schema()) {
+				if p.forceCast(lExpr, rExpr) {
+					continue
+				}
 				lKeys = append(lKeys, lExpr)
 				rKeys = append(rKeys, rExpr)
 				need2Remove = true
 			} else if expression.ExprFromSchema(lExpr, rChild.Schema()) && expression.ExprFromSchema(rExpr, lChild.Schema()) {
+				if p.forceCast(lExpr, rExpr) {
+					continue
+				}
 				lKeys = append(lKeys, rExpr)
 				rKeys = append(rKeys, lExpr)
 				need2Remove = true
@@ -346,6 +376,11 @@ func (p *LogicalJoin) updateEQCond() {
 		// here is for cases like: select (a+1, b*3) not in (select a,b from t2) from t1.
 		adjustKeyForm(lNAKeys, rNAKeys, true)
 	}
+}
+
+func (p *LogicalProjection) needCast(expr expression.Expression) bool {
+	afterExpr := expression.ColumnSubstitute(expr, p.schema, p.Exprs)
+	return afterExpr.GetType() != expr.GetType()
 }
 
 func (p *LogicalProjection) appendExpr(expr expression.Expression) *expression.Column {
