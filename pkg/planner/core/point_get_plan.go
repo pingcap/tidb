@@ -170,9 +170,6 @@ func (p *PointGetPlan) Clone() (base.PhysicalPlan, error) {
 	cloned.schema = p.schema.Clone()
 	cloned.TblInfo = p.TblInfo.Clone()
 	cloned.IndexInfo = p.IndexInfo.Clone()
-	cloned.PartitionIdx = new(int)
-	*cloned.PartitionIdx = *p.PartitionIdx
-	cloned.Handle = p.Handle // TODO: clone
 	cloned.HandleConstant = p.HandleConstant.Clone().(*expression.Constant)
 	cloned.handleFieldType = p.handleFieldType.Clone()
 	cloned.IndexValues = make([]types.Datum, len(p.IndexValues))
@@ -196,10 +193,6 @@ func (p *PointGetPlan) Clone() (base.PhysicalPlan, error) {
 	cloned.AccessConditions = make([]expression.Expression, len(p.AccessConditions))
 	for i, cond := range p.AccessConditions {
 		cloned.AccessConditions[i] = cond.Clone()
-	}
-	cloned.outputNames = make([]*types.FieldName, len(p.outputNames))
-	for i, name := range p.outputNames {
-		*cloned.outputNames[i] = *name
 	}
 	cloned.Columns = make([]*model.ColumnInfo, len(p.Columns))
 	for i, col := range p.Columns {
@@ -561,7 +554,9 @@ func (p *BatchPointGetPlan) Clone() (base.PhysicalPlan, error) {
 	for i, params := range p.IndexValueParams {
 		cloned.IndexValueParams[i] = make([]*expression.Constant, len(params))
 		for j, param := range params {
-			cloned.IndexValueParams[i][j] = param.Clone().(*expression.Constant)
+			if param != nil {
+				cloned.IndexValueParams[i][j] = param.Clone().(*expression.Constant)
+			}
 		}
 	}
 	cloned.IndexColTypes = make([]*types.FieldType, len(p.IndexColTypes))
