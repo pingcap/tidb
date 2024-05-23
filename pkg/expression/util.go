@@ -1172,7 +1172,6 @@ func ParamMarkerExpression(ctx variable.SessionVarsProvider, v *driver.ParamMark
 	if useCache || needParam {
 		value.ParamMarker = &ParamMarker{
 			order: v.Order,
-			ctx:   ctx,
 		}
 	}
 	return value, nil
@@ -1394,7 +1393,7 @@ func GetUint64FromConstant(ctx EvalContext, expr Expression) (uint64, bool, bool
 	}
 	dt := con.Value
 	if con.ParamMarker != nil {
-		dt = con.ParamMarker.GetUserVar()
+		dt = con.ParamMarker.GetUserVar(ctx)
 	} else if con.DeferredExpr != nil {
 		var err error
 		dt, err = con.DeferredExpr.Eval(ctx, chunk.Row{})

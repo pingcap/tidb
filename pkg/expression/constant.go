@@ -19,7 +19,6 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
@@ -130,21 +129,19 @@ type Constant struct {
 
 // ParamMarker indicates param provided by COM_STMT_EXECUTE.
 type ParamMarker struct {
-	ctx   variable.SessionVarsProvider
 	order int
 }
 
 // GetUserVar returns the corresponding user variable presented in the `EXECUTE` statement or `COM_EXECUTE` command.
-func (d *ParamMarker) GetUserVar() types.Datum {
-	sessionVars := d.ctx.GetSessionVars()
-	return sessionVars.PlanCacheParams.GetParamValue(d.order)
+func (d *ParamMarker) GetUserVar(ctx EvalContext) types.Datum {
+	return ctx.GetParamValue(d.order)
 }
 
 // String implements fmt.Stringer interface.
 func (c *Constant) String() string {
 	if c.ParamMarker != nil {
-		dt := c.ParamMarker.GetUserVar()
-		c.Value.SetValue(dt.GetValue(), c.RetType)
+		// TODO: use a more meaningful value to represent the param marker.
+		return "?"
 	} else if c.DeferredExpr != nil {
 		return c.DeferredExpr.String()
 	}
@@ -168,8 +165,9 @@ func (c *Constant) GetType() *types.FieldType {
 		// GetType() may be called in multi-threaded context, e.g, in building inner executors of IndexJoin,
 		// so it should avoid data race. We achieve this by returning different FieldType pointer for each call.
 		tp := types.NewFieldType(mysql.TypeUnspecified)
-		dt := c.ParamMarker.GetUserVar()
-		types.InferParamTypeFromDatum(&dt, tp)
+		// dt := c.ParamMarker.GetUserVar(ctx)
+		// types.InferParamTypeFromDatum(&dt, tp)
+		// TODO: fix GetType
 		return tp
 	}
 	return c.RetType
@@ -233,7 +231,7 @@ func (c *Constant) VecEvalJSON(ctx EvalContext, input *chunk.Chunk, result *chun
 
 func (c *Constant) getLazyDatum(ctx EvalContext, row chunk.Row) (dt types.Datum, isLazy bool, err error) {
 	if c.ParamMarker != nil {
-		return c.ParamMarker.GetUserVar(), true, nil
+		return c.ParamMarker.GetUserVar(ctx), true, nil
 	} else if c.DeferredExpr != nil {
 		dt, err = c.DeferredExpr.Eval(ctx, row)
 		return dt, true, err
