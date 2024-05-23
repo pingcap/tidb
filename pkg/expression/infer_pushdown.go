@@ -228,7 +228,7 @@ func scalarExprSupportedByTiKV(sf *ScalarFunction) bool {
 		arg0 := sf.GetArgs()[0]
 		// To be aligned with MySQL, tidb handles hybrid type argument specially, tikv can't be consistent with tidb now.
 		if f, ok := arg0.(*ScalarFunction); ok {
-			if f.FuncName.L == ast.Cast && f.GetArgs()[0].GetType().Hybrid() {
+			if f.FuncName.L == ast.Cast && (f.GetArgs()[0].GetType().Hybrid() || IsBinaryLiteral(f.GetArgs()[0])) {
 				return false
 			}
 		}
