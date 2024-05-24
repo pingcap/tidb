@@ -407,7 +407,7 @@ func NewNonParitionedKeyRangesWithHint(ranges []KeyRange, hints []int) *KeyRange
 	return rr
 }
 
-// FirstPartitionRange returns the the result of first range.
+// FirstPartitionRange returns the result of first range.
 // We may use some func to generate ranges for both partitioned table and non partitioned table.
 // This method provides a way to fallback to non-partitioned ranges.
 func (rr *KeyRanges) FirstPartitionRange() []KeyRange {

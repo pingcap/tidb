@@ -1442,7 +1442,7 @@ func FilterDDLJobs(allDDLJobs []*model.Job, tables []*metautil.Table) (ddlJobs [
 			if job.BinlogInfo.DBInfo != nil {
 				if dbIDs[job.SchemaID] || dbNames[job.BinlogInfo.DBInfo.Name.String()] {
 					ddlJobs = append(ddlJobs, job)
-					// The the jobs executed with the old id, like the step 2 in the example above.
+					// The jobs executed with the old id, like the step 2 in the example above.
 					dbIDs[job.SchemaID] = true
 					// For the jobs executed after rename, like the step 3 in the example above.
 					dbNames[job.BinlogInfo.DBInfo.Name.String()] = true

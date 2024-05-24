@@ -28,7 +28,7 @@ func BenchmarkNoopLogKV(b *testing.B) {
 	}
 }
 
-// BenchmarkNoopLogKVWithF benchs the the cosst of noop's `LogKV` when
+// BenchmarkNoopLogKVWithF benchs the cosst of noop's `LogKV` when
 // used with `fmt.Sprintf`
 func BenchmarkNoopLogKVWithF(b *testing.B) {
 	sp := noopSpan()

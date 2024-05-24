@@ -850,7 +850,7 @@ func (m *Meta) CreateSequenceAndSetSeqValue(dbID int64, dbName string, tableInfo
 	return errors.Trace(err)
 }
 
-// RestartSequenceValue resets the the sequence value.
+// RestartSequenceValue resets the sequence value.
 func (m *Meta) RestartSequenceValue(dbID int64, tableInfo *model.TableInfo, seqValue int64) error {
 	// Check if db exists.
 	dbKey := m.dbKey(dbID)

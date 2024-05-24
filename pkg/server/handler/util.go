@@ -95,7 +95,7 @@ func WriteData(w http.ResponseWriter, data any) {
 // ExtractTableAndPartitionName extracts table name and partition name from this "table(partition)":
 func ExtractTableAndPartitionName(str string) (table, partition string) {
 	// extract table name and partition name from this "table(partition)":
-	// A sane person would not let the the table name or partition name contain '('.
+	// A sane person would not let the table name or partition name contain '('.
 	start := strings.IndexByte(str, '(')
 	if start == -1 {
 		return str, ""

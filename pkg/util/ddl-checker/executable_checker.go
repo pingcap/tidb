@@ -90,7 +90,7 @@ func (ec *ExecutableChecker) CreateTable(context context.Context, sql string) er
 	return nil
 }
 
-// DropTable drops the the specified table
+// DropTable drops the specified table
 func (ec *ExecutableChecker) DropTable(context context.Context, tableName string) error {
 	err := ec.Execute(context, fmt.Sprintf("drop table if exists `%s`", tableName))
 	if err != nil {
