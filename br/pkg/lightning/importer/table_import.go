@@ -92,7 +92,7 @@ func NewTableImporter(
 	etcdCli *clientv3.Client,
 	logger log.Logger,
 ) (*TableImporter, error) {
-	idAlloc := kv.NewPanickingAllocators(cp.AllocBase)
+	idAlloc := kv.NewPanickingAllocators(tableInfo.Core.SepAutoInc(), cp.AllocBase)
 	tbl, err := tables.TableFromMeta(idAlloc, tableInfo.Core)
 	if err != nil {
 		return nil, errors.Annotatef(err, "failed to tables.TableFromMeta %s", tableName)
@@ -945,26 +945,30 @@ func (tr *TableImporter) postProcess(
 	if cp.Status < checkpoints.CheckpointStatusAlteredAutoInc {
 		tblInfo := tr.tableInfo.Core
 		var err error
+		// TODO why we have to rebase id for tidb backend??? remove it later.
 		if tblInfo.ContainsAutoRandomBits() {
 			ft := &common.GetAutoRandomColumn(tblInfo).FieldType
 			shardFmt := autoid.NewShardIDFormat(ft, tblInfo.AutoRandomBits, tblInfo.AutoRandomRangeBits)
 			maxCap := shardFmt.IncrementalBitsCapacity()
 			err = AlterAutoRandom(ctx, rc.db, tr.tableName, uint64(tr.alloc.Get(autoid.AutoRandomType).Base())+1, maxCap)
 		} else if common.TableHasAutoRowID(tblInfo) || tblInfo.GetAutoIncrementColInfo() != nil {
-			// only alter auto increment id iff table contains auto-increment column or generated handle.
-			// ALTER TABLE xxx AUTO_INCREMENT = yyy has a bad naming.
-			// if a table has implicit _tidb_rowid column & tbl.SepAutoID=false, then it works on _tidb_rowid
-			// allocator, even if the table has NO auto-increment column.
-			newBase := uint64(tr.alloc.Get(autoid.RowIDAllocType).Base()) + 1
-			err = AlterAutoIncrement(ctx, rc.db, tr.tableName, newBase)
-
-			if err == nil && isLocalBackend(rc.cfg) {
+			if isLocalBackend(rc.cfg) {
 				// for TiDB version >= 6.5.0, a table might have separate allocators for auto_increment column and _tidb_rowid,
 				// especially when a table has auto_increment non-clustered PK, it will use both allocators.
 				// And in this case, ALTER TABLE xxx AUTO_INCREMENT = xxx only works on the allocator of auto_increment column,
 				// not for allocator of _tidb_rowid.
 				// So we need to rebase IDs for those 2 allocators explicitly.
-				err = common.RebaseGlobalAutoID(ctx, adjustIDBase(newBase), tr, tr.dbInfo.ID, tr.tableInfo.Core)
+				err = common.RebaseTableAllocators(ctx, map[autoid.AllocatorType]int64{
+					autoid.RowIDAllocType:    tr.alloc.Get(autoid.RowIDAllocType).Base(),
+					autoid.AutoIncrementType: tr.alloc.Get(autoid.AutoIncrementType).Base(),
+				}, tr, tr.dbInfo.ID, tr.tableInfo.Core)
+			} else {
+				// only alter auto increment id iff table contains auto-increment column or generated handle.
+				// ALTER TABLE xxx AUTO_INCREMENT = yyy has a bad naming.
+				// if a table has implicit _tidb_rowid column & tbl.SepAutoID=false, then it works on _tidb_rowid
+				// allocator, even if the table has NO auto-increment column.
+				newBase := uint64(tr.alloc.Get(autoid.RowIDAllocType).Base()) + 1
+				err = AlterAutoIncrement(ctx, rc.db, tr.tableName, newBase)
 			}
 		}
 		saveCpErr := rc.saveStatusCheckpoint(ctx, tr.tableName, checkpoints.WholeTableEngineID, err, checkpoints.CheckpointStatusAlteredAutoInc)

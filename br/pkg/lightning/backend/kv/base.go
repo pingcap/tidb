@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/codec"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
@@ -201,7 +202,7 @@ func (e *BaseKVEncoder) Record2KV(record, originalRow []types.Datum, rowID int64
 	kvPairs := e.SessionCtx.TakeKvPairs()
 	for i := 0; i < len(kvPairs.Pairs); i++ {
 		var encoded [9]byte // The max length of encoded int64 is 9.
-		kvPairs.Pairs[i].RowID = common.EncodeIntRowIDToBuf(encoded[:0], rowID)
+		kvPairs.Pairs[i].RowID = codec.EncodeComparableVarint(encoded[:0], rowID)
 	}
 	e.recordCache = record[:0]
 	return kvPairs, nil

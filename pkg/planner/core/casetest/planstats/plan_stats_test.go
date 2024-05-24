@@ -284,7 +284,7 @@ func TestPlanStatsLoadTimeout(t *testing.T) {
 	tk.MustExec("set global tidb_stats_load_pseudo_timeout=true")
 	require.NoError(t, failpoint.Enable("github.com/pingcap/executor/assertSyncStatsFailed", `return(true)`))
 	tk.MustExec(sql) // not fail sql for timeout when pseudo=true
-	failpoint.Disable("github.com/pingcap/executor/assertSyncStatsFailed")
+	require.NoError(t, failpoint.Disable("github.com/pingcap/executor/assertSyncStatsFailed"))
 
 	plan, _, err := planner.Optimize(context.TODO(), ctx, stmt, is)
 	require.NoError(t, err) // not fail sql for timeout when pseudo=true
