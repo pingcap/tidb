@@ -894,42 +894,31 @@ func GetKeyspaceNameFromTiDB(db *sql.DB) (string, error) {
 		return "", nil
 	}
 
-	getConfigTableSQL := "select  TABLE_NAME  from  INFORMATION_SCHEMA . TABLES  where TABLE_SCHEMA ='INFORMATION_SCHEMA' and  TABLE_NAME ='CLUSTER_CONFIG'"
+	getConfigTableSQL := "select  TABLE_NAME  from  INFORMATION_SCHEMA . TABLES  where TABLE_SCHEMA ='INFORMATION_SCHEMA' and  TABLE_NAME ='KEYSPACE_META'"
 	rows, err := db.Query(getConfigTableSQL)
 	if err != nil {
 		return "", rows.Err()
 	}
+	defer rows.Close()
 	if !rows.Next() {
 		return "", rows.Err()
 	}
 
-	sql := "select * from INFORMATION_SCHEMA.CLUSTER_CONFIG where TYPE='tidb'"
-	log.Info("GetKeyspaceNameFromTiDB", zap.String("sql", sql))
+	sql := "select * from INFORMATION_SCHEMA.KEYSPACE_META"
 	rows, err = db.Query(sql)
 	if err != nil {
 		return "", err
 	}
-	//nolint: errcheck
-	defer rows.Close()
 	var (
-		_type     string
-		_instance string
-		key       string
-		value     string
+		keyspaceName string
+		_keyspaceID  string
 	)
-	for {
-		if !rows.Next() {
-			break
-		}
-		err = rows.Scan(&_type, &_instance, &key, &value)
+	if rows.Next() {
+		err = rows.Scan(&keyspaceName, &_keyspaceID)
 		if err != nil {
 			return "", err
 		}
-		log.Info("get config", zap.String("key", key))
-		if key == "keyspace-name" {
-			return value, rows.Err()
-		}
 	}
-
-	return "", rows.Err()
+	log.Info("get keyspace from TiDB", zap.String("keyspace-name", keyspaceName))
+	return keyspaceName, rows.Err()
 }
