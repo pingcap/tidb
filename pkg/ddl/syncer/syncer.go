@@ -479,7 +479,6 @@ func (s *schemaVersionSyncer) OwnerCheckAllVersions(ctx context.Context, jobID i
 
 // SyncJobSchemaVerLoop implements SchemaSyncer.SyncJobSchemaVerLoop interface.
 func (s *schemaVersionSyncer) SyncJobSchemaVerLoop(ctx context.Context) {
-	s.jobNodeVersions = make(map[int64]*nodeVersions)
 	for {
 		s.syncJobSchemaVer(ctx)
 		logutil.DDLLogger().Info("schema version sync loop interrupted, retrying...")
