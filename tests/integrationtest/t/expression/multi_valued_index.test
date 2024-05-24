@@ -204,11 +204,11 @@ create table t(a json, index idx((cast(a as date array))));
 insert into t values ('[1,2,3]');
 -- error 3903
 insert into t values ('[-1]');
--- error 3903
+-- error 1292
 insert into t values ('["1"]');
--- error 3903
+-- error 1292
 insert into t values ('["a"]');
--- error 3903
+-- error 1292
 insert into t values ('["汉字"]');
 -- error 3903
 insert into t values ('[1.2]');
@@ -250,11 +250,11 @@ create table t(a json, index idx((cast(a as datetime array))));
 insert into t values ('[1,2,3]');
 -- error 3903
 insert into t values ('[-1]');
--- error 3903
+-- error 1292
 insert into t values ('["1"]');
--- error 3903
+-- error 1292
 insert into t values ('["a"]');
--- error 3903
+-- error 1292
 insert into t values ('["汉字"]');
 -- error 3903
 insert into t values ('[1.2]');
@@ -426,11 +426,11 @@ create table t(a json, index idx((cast(a as date array))));
 insert into t values ('[1,2,3]');
 -- error 3903
 insert into t values ('[-1]');
--- error 3903
+-- error 1292
 insert into t values ('["1"]');
--- error 3903
+-- error 1292
 insert into t values ('["a"]');
--- error 3903
+-- error 1292
 insert into t values ('["汉字"]');
 -- error 3903
 insert into t values ('[1.2]');
@@ -472,11 +472,11 @@ create table t(a json, index idx((cast(a as datetime array))));
 insert into t values ('[1,2,3]');
 -- error 3903
 insert into t values ('[-1]');
--- error 3903
+-- error 1292
 insert into t values ('["1"]');
--- error 3903
+-- error 1292
 insert into t values ('["a"]');
--- error 3903
+-- error 1292
 insert into t values ('["汉字"]');
 -- error 3903
 insert into t values ('[1.2]');
@@ -523,3 +523,20 @@ drop table t;
 create table t (j json not null, str varchar(5) collate gbk_chinese_ci,  KEY `idx` ((cast(`j` as unsigned array)),`str`));
 insert into t values ('1', 'abcde');
 drop table t;
+
+# TestImplicitCastTimeType
+drop table if exists t;
+CREATE TABLE t (j JSON, UNIQUE INDEX idx_a ((CAST(j AS DATE ARRAY))) );
+INSERT INTO t VALUES (JSON_ARRAY('2024-05-13', '2020-01-01'));
+-- error 1062
+INSERT INTO t VALUES (JSON_ARRAY('2024-05-13', '2020-01-01'));
+-- error 1062
+INSERT INTO t VALUES (JSON_ARRAY('2024-05-13 12:12:12', '2020-01-01 11:11:11'));
+SELECT * FROM t;
+drop table if exists t;
+CREATE TABLE t (j JSON, UNIQUE INDEX idx_a ((CAST(j AS DATETIME(3) ARRAY))) );
+INSERT INTO t VALUES (JSON_ARRAY('2024-05-13 11:11:11.111111'));
+-- error 1062
+INSERT INTO t VALUES (JSON_ARRAY('2024-05-13 11:11:11.111222'));
+INSERT INTO t VALUES (JSON_ARRAY('2024-05-13 11:11:11.222222'));
+SELECT * FROM t;
