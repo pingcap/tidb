@@ -649,3 +649,15 @@ select 1 from t where cast(BINARY vc as json) = '1';
 1
 select 1 from t where cast(BINARY c as json) = '1';
 1
+drop table if exists t;
+create table t (j json);
+insert into t values (cast(cast("2024-10-24 11:11:11.12346" as datetime(6)) as json));
+select cast(j as datetime(6)) from t;
+cast(j as datetime(6))
+2024-10-24 11:11:11.123460
+select cast(j as datetime(3)) from t;
+cast(j as datetime(3))
+2024-10-24 11:11:11.123
+select cast(j as datetime) from t;
+cast(j as datetime)
+2024-10-24 11:11:11
