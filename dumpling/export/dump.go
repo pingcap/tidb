@@ -339,6 +339,7 @@ func (d *Dumper) Dump() (dumpErr error) {
 }
 
 func (d *Dumper) updateTiDBGlobalConfigKeyspaceName() {
+	d.tctx.L().Info("updateTiDBGlobalConfigKeyspaceName.", zap.Int("d.conf.ServerInfo.ServerType", int(d.conf.ServerInfo.ServerType)))
 	if d.conf.ServerInfo.ServerType == version.ServerTypeTiDB || d.conf.ServerInfo.ServerType == version.ServerTypeUnknown {
 		keyspaceNameInTiDB, err := dbutil.GetKeyspaceNameFromTiDB(d.dbHandle)
 		if err != nil {
