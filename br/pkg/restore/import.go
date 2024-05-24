@@ -335,7 +335,7 @@ func (importer *FileImporter) SetRawRange(startKey, endKey []byte) error {
 	return nil
 }
 
-func getKeyRangeByMode(mode KvMode) func(f *backuppb.File, rules *RewriteRules) ([]byte, []byte, error) {
+func GetKeyRangeByMode(mode KvMode) func(f *backuppb.File, rules *RewriteRules) ([]byte, []byte, error) {
 	switch mode {
 	case Raw:
 		return func(f *backuppb.File, rules *RewriteRules) ([]byte, []byte, error) {
@@ -369,7 +369,7 @@ func (importer *FileImporter) getKeyRangeForFiles(
 		start, end       []byte
 		err              error
 	)
-	getRangeFn := getKeyRangeByMode(importer.kvMode)
+	getRangeFn := GetKeyRangeByMode(importer.kvMode)
 	for _, f := range files {
 		start, end, err = getRangeFn(f, rewriteRules)
 		if err != nil {

@@ -33,7 +33,7 @@ func TestGetKeyRangeByMode(t *testing.T) {
 		StartKey: []byte("t1a"),
 		EndKey:   []byte(""),
 	}
-	rule := &RewriteRules{
+	rule := &restore.RewriteRules{
 		Data: []*import_sstpb.RewriteRule{
 			{
 				OldKeyPrefix: []byte("t1"),
@@ -42,7 +42,7 @@ func TestGetKeyRangeByMode(t *testing.T) {
 		},
 	}
 	// raw kv
-	testRawFn := getKeyRangeByMode(Raw)
+	testRawFn := restore.GetKeyRangeByMode(restore.Raw)
 	start, end, err := testRawFn(file, rule)
 	require.NoError(t, err)
 	require.Equal(t, []byte("t1a"), start)
@@ -54,7 +54,7 @@ func TestGetKeyRangeByMode(t *testing.T) {
 	require.Equal(t, []byte(""), end)
 
 	// txn kv: the keys must be encoded.
-	testTxnFn := getKeyRangeByMode(Txn)
+	testTxnFn := restore.GetKeyRangeByMode(restore.Txn)
 	start, end, err = testTxnFn(file, rule)
 	require.NoError(t, err)
 	require.Equal(t, codec.EncodeBytes(nil, []byte("t1a")), start)
@@ -66,7 +66,7 @@ func TestGetKeyRangeByMode(t *testing.T) {
 	require.Equal(t, []byte(""), end)
 
 	// normal kv: the keys must be encoded.
-	testFn := getKeyRangeByMode(TiDB)
+	testFn := restore.GetKeyRangeByMode(restore.TiDB)
 	start, end, err = testFn(file, rule)
 	require.NoError(t, err)
 	require.Equal(t, codec.EncodeBytes(nil, []byte("t2a")), start)
