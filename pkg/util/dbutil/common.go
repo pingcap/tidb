@@ -893,7 +893,10 @@ func GetKeyspaceNameFromTiDB(db *sql.DB) (string, error) {
 	if db == nil {
 		return "", nil
 	}
-	rows, err := db.Query("show config where Type = \"tidb\" and name = \"keyspace-name\"")
+
+	sql := "show config where Type = 'tidb' and name = 'keyspace-name'"
+	log.Info("GetKeyspaceNameFromTiDB", zap.String("sql", sql))
+	rows, err := db.Query(sql)
 	if err != nil {
 		return "", err
 	}
