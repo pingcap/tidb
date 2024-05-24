@@ -346,14 +346,14 @@ func (p *LogicalProjection) appendExpr(expr expression.Expression) *expression.C
 
 	col := &expression.Column{
 		UniqueID: p.SCtx().GetSessionVars().AllocPlanColumnID(),
-		RetType:  expr.GetType().Clone(),
+		RetType:  expr.GetType(p.SCtx().GetExprCtx().GetEvalCtx()).Clone(),
 	}
 	col.SetCoercibility(expr.Coercibility())
 	col.SetRepertoire(expr.Repertoire())
 	p.schema.Append(col)
 	// reset ParseToJSONFlag in order to keep the flag away from json column
-	if col.GetType().GetType() == mysql.TypeJSON {
-		col.GetType().DelFlag(mysql.ParseToJSONFlag)
+	if col.GetStaticType().GetType() == mysql.TypeJSON {
+		col.GetStaticType().DelFlag(mysql.ParseToJSONFlag)
 	}
 	return col
 }
