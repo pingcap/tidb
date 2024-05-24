@@ -2086,6 +2086,7 @@ var defaultSysVars = []*SysVar{
 		return nil
 	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBRedactLog, Value: BoolToOnOff(DefTiDBRedactLog), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.EnableRedactLog = TiDBOptOn(val)
 		errors.RedactLogEnabled.Store(val)
 		return nil
 	}},
