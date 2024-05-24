@@ -894,7 +894,7 @@ func GetKeyspaceNameFromTiDB(db *sql.DB) (string, error) {
 		return "", nil
 	}
 
-	sql := "show config where Type = 'tidb' and name = 'keyspace-name'"
+	sql := "select * from INFORMATION_SCHEMA.CLUSTER_CONFIG where TYPE='tidb'"
 	log.Info("GetKeyspaceNameFromTiDB", zap.String("sql", sql))
 	rows, err := db.Query(sql)
 	if err != nil {
@@ -905,15 +905,22 @@ func GetKeyspaceNameFromTiDB(db *sql.DB) (string, error) {
 	var (
 		_type     string
 		_instance string
-		_name     string
+		key       string
 		value     string
 	)
-	if rows.Next() {
-		err = rows.Scan(&_type, &_instance, &_name, &value)
+	for {
+		if !rows.Next() {
+			break
+		}
+		err = rows.Scan(&_type, &_instance, &key, &value)
 		if err != nil {
 			return "", err
 		}
+		log.Info("get config", zap.String("key", key))
+		if key == "keyspace-name" {
+			return value, rows.Err()
+		}
 	}
 
-	return value, rows.Err()
+	return "", nil
 }
