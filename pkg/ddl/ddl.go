@@ -408,6 +408,7 @@ type ddlCtx struct {
 		interceptor Interceptor
 	}
 
+	// TODO merge with *waitSchemaSyncedController into another new struct.
 	ddlSeqNumMu struct {
 		sync.Mutex
 		seqNum uint64
@@ -808,7 +809,7 @@ func (d *ddl) newDeleteRangeManager(mock bool) delRangeManager {
 	return delRangeMgr
 }
 
-func (d *ddl) prepareWorkers4ConcurrencyDDL() {
+func (d *ddl) prepareLocalModeWorkers() {
 	workerFactory := func(tp workerType) func() (pools.Resource, error) {
 		return func() (pools.Resource, error) {
 			wk := newWorker(d.ctx, tp, d.sessPool, d.delRangeMgr, d.ddlCtx)
@@ -855,7 +856,7 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 		ddl: d,
 	})
 
-	d.prepareWorkers4ConcurrencyDDL()
+	d.prepareLocalModeWorkers()
 
 	if config.TableLockEnabled() {
 		d.wg.Add(1)
@@ -919,10 +920,10 @@ func (d *ddl) DisableDDL() error {
 }
 
 // GetNextDDLSeqNum return the next DDL seq num.
-func (d *ddl) GetNextDDLSeqNum() (uint64, error) {
+func (s *jobScheduler) GetNextDDLSeqNum() (uint64, error) {
 	var count uint64
-	ctx := kv.WithInternalSourceType(d.ctx, kv.InternalTxnDDL)
-	err := kv.RunInNewTxn(ctx, d.store, true, func(_ context.Context, txn kv.Transaction) error {
+	ctx := kv.WithInternalSourceType(s.schCtx, kv.InternalTxnDDL)
+	err := kv.RunInNewTxn(ctx, s.store, true, func(_ context.Context, txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 		var err error
 		count, err = t.GetHistoryDDLCount()
@@ -1070,7 +1071,7 @@ func getJobCheckInterval(job *model.Job, i int) (time.Duration, bool) {
 	}
 }
 
-func (dc *ddlCtx) asyncNotifyWorker(ch chan struct{}, etcdPath string, jobID int64, jobType string) {
+func (dc *ddlCtx) notifyNewJobSubmitted(ch chan struct{}, etcdPath string, jobID int64, jobType string) {
 	// If the workers don't run, we needn't notify workers.
 	// TODO: It does not affect informing the backfill worker.
 	if !config.GetGlobalConfig().Instance.TiDBEnableDDL.Load() {
@@ -1079,7 +1080,7 @@ func (dc *ddlCtx) asyncNotifyWorker(ch chan struct{}, etcdPath string, jobID int
 	if dc.isOwner() {
 		asyncNotify(ch)
 	} else {
-		dc.asyncNotifyByEtcd(etcdPath, jobID, jobType)
+		dc.notifyNewJobByEtcd(etcdPath, jobID, jobType)
 	}
 }
 
@@ -1186,7 +1187,7 @@ func (d *ddl) DoDDLJob(ctx sessionctx.Context, job *model.Job) error {
 	sessVars.StmtCtx.IsDDLJobInQueue = true
 
 	// Notice worker that we push a new job and wait the job done.
-	d.asyncNotifyWorker(d.ddlJobNotifyCh, addingDDLJobNotifyKey, job.ID, job.Type.String())
+	d.notifyNewJobSubmitted(d.ddlJobNotifyCh, addingDDLJobNotifyKey, job.ID, job.Type.String())
 	logutil.DDLLogger().Info("start DDL job", zap.Stringer("job", job), zap.String("query", job.Query))
 	if !d.shouldCheckHistoryJob(job) {
 		return nil

@@ -94,14 +94,6 @@ type ownerListener struct {
 var _ owner.Listener = (*ownerListener)(nil)
 
 func (l *ownerListener) OnBecomeOwner() {
-	var err error
-	l.ddl.ddlSeqNumMu.Lock()
-	defer l.ddl.ddlSeqNumMu.Unlock()
-	l.ddl.ddlSeqNumMu.seqNum, err = l.ddl.GetNextDDLSeqNum()
-	if err != nil {
-		logutil.DDLLogger().Error("error when getting the ddl history count", zap.Error(err))
-	}
-
 	ctx, cancelFunc := context.WithCancel(l.ddl.ddlCtx.ctx)
 	l.scheduler = &jobScheduler{
 		schCtx:      ctx,
@@ -144,6 +136,14 @@ type jobScheduler struct {
 }
 
 func (s *jobScheduler) start() {
+	var err error
+	s.ddlCtx.ddlSeqNumMu.Lock()
+	defer s.ddlCtx.ddlSeqNumMu.Unlock()
+	s.ddlCtx.ddlSeqNumMu.seqNum, err = s.GetNextDDLSeqNum()
+	if err != nil {
+		logutil.DDLLogger().Error("error when getting the ddl history count", zap.Error(err))
+	}
+
 	workerFactory := func(tp workerType) func() (pools.Resource, error) {
 		return func() (pools.Resource, error) {
 			wk := newWorker(s.schCtx, tp, s.sessPool, s.delRangeMgr, s.ddlCtx)
@@ -528,7 +528,7 @@ func (s *jobScheduler) delivery2Worker(wk *worker, pool *workerPool, job *model.
 				} else if exist {
 					// Release the worker resource.
 					pool.put(wk)
-					err = waitSchemaSyncedForMDL(s.ddlCtx, job, version)
+					err = waitSchemaSyncedForMDL(wk.ctx, s.ddlCtx, job, version)
 					if err != nil {
 						return
 					}
@@ -538,7 +538,7 @@ func (s *jobScheduler) delivery2Worker(wk *worker, pool *workerPool, job *model.
 					return
 				}
 			} else {
-				err := waitSchemaSynced(s.ddlCtx, job, 2*s.lease)
+				err := waitSchemaSynced(wk.ctx, s.ddlCtx, job, 2*s.lease)
 				if err != nil {
 					time.Sleep(time.Second)
 					// Release the worker resource.
