@@ -10,7 +10,11 @@ go_test(
     data = glob(["testdata/**"]),
     flaky = True,
     race = "on",
+<<<<<<< HEAD
     shard_count = 50,
+=======
+    shard_count = 33,
+>>>>>>> 81f414122ee (planner: fix panic error when subquery + always true predicate in where clause (#53525))
     deps = [
         "//pkg/config",
         "//pkg/domain",
