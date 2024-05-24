@@ -580,7 +580,7 @@ func (w *worker) handleUpdateJobError(t *meta.Meta, job *model.Job, err error) e
 
 // updateDDLJob updates the DDL job information.
 // Every time we enter another state except final state, we must call this function.
-func (w *worker) updateDDLJob(job *model.Job, meetErr bool) error {
+func (w *worker) updateDDLJob(job *model.Job, prevState model.JobState, meetErr bool) error {
 	failpoint.Inject("mockErrEntrySizeTooLarge", func(val failpoint.Value) {
 		if val.(bool) {
 			failpoint.Return(kv.ErrEntryTooLarge)
@@ -591,7 +591,7 @@ func (w *worker) updateDDLJob(job *model.Job, meetErr bool) error {
 		w.jobLogger(job).Info("meet something wrong before update DDL job, shouldn't update raw args",
 			zap.String("job", job.String()))
 	}
-	return errors.Trace(updateDDLJob2Table(w.sess, job, updateRawArgs))
+	return errors.Trace(updateDDLJob2Table(w.sess, job, prevState, updateRawArgs))
 }
 
 // registerMDLInfo registers metadata lock info.
@@ -882,7 +882,15 @@ func (w *worker) HandleJobDone(d *ddlCtx, job *model.Job, t *meta.Meta) error {
 	return nil
 }
 
+// BeforeWorkerPrepareTxn is only used for test.
+var BeforeWorkerPrepareTxn func(*model.Job)
+
 func (w *worker) prepareTxn(job *model.Job) (kv.Transaction, error) {
+	failpoint.Inject("mockBeforePrepareTxn", func(val failpoint.Value) {
+		if val.(bool) {
+			BeforeWorkerPrepareTxn(job)
+		}
+	})
 	err := w.sess.Begin()
 	if err != nil {
 		return nil, err
@@ -918,7 +926,9 @@ func (w *worker) HandleDDLJobTable(d *ddlCtx, job *model.Job) (int64, error) {
 		err       error
 		schemaVer int64
 		runJobErr error
+		prevState model.JobState
 	)
+	prevState = job.State
 	defer func() {
 		w.unlockSeqNum(err)
 	}()
@@ -999,7 +1009,7 @@ func (w *worker) HandleDDLJobTable(d *ddlCtx, job *model.Job) (int64, error) {
 		d.unlockSchemaVersion(job.ID)
 		return 0, err
 	}
-	err = w.updateDDLJob(job, runJobErr != nil)
+	err = w.updateDDLJob(job, prevState, runJobErr != nil)
 	if err = w.handleUpdateJobError(t, job, err); err != nil {
 		w.sess.Rollback()
 		d.unlockSchemaVersion(job.ID)

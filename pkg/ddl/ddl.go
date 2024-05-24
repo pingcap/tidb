@@ -1755,10 +1755,12 @@ func resumePausedJob(_ *sess.Session, job *model.Job,
 }
 
 // processJobs command on the Job according to the process
-func processJobs(process func(*sess.Session, *model.Job, model.AdminCommandOperator) (err error),
+func processJobs(
+	process func(*sess.Session, *model.Job, model.AdminCommandOperator) error,
 	sessCtx sessionctx.Context,
 	ids []int64,
-	byWho model.AdminCommandOperator) (jobErrs []error, err error) {
+	byWho model.AdminCommandOperator,
+) (jobErrs []error, err error) {
 	failpoint.Inject("mockFailedCommandOnConcurencyDDL", func(val failpoint.Value) {
 		if val.(bool) {
 			failpoint.Return(nil, errors.New("mock failed admin command on ddl jobs"))
@@ -1807,7 +1809,7 @@ func processJobs(process func(*sess.Session, *model.Job, model.AdminCommandOpera
 				continue
 			}
 
-			err = updateDDLJob2Table(ns, job, false)
+			err = updateDDLJob2Table(ns, job, job.State, false)
 			if err != nil {
 				jobErrs[i] = err
 				continue
@@ -1898,7 +1900,7 @@ func processAllJobs(process func(*sess.Session, *model.Job, model.AdminCommandOp
 				continue
 			}
 
-			err = updateDDLJob2Table(ns, job, false)
+			err = updateDDLJob2Table(ns, job, job.State, false)
 			if err != nil {
 				jobErrs[job.ID] = err
 				continue
