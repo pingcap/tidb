@@ -368,6 +368,7 @@ func (s *jobScheduler) startDispatchLoop() {
 	}
 	ticker := time.NewTicker(dispatchLoopWaitingDuration)
 	defer ticker.Stop()
+	// TODO move waitSchemaSyncedController out of ddlCtx.
 	s.clearOnceMap()
 	for {
 		if s.schCtx.Err() != nil {
@@ -403,11 +404,13 @@ func (s *jobScheduler) startDispatchLoop() {
 	}
 }
 
+// TODO make it run in a separate routine.
 func (s *jobScheduler) checkAndUpdateClusterState(needUpdate bool) error {
 	select {
 	case _, ok := <-s.stateSyncer.WatchChan():
 		if !ok {
-			// TODO
+			// TODO stateSyncer should only be started when we are the owner, and use
+			// the context of scheduler, will refactor it later.
 			s.stateSyncer.Rewatch(s.ddlCtx.ctx)
 		}
 	default:

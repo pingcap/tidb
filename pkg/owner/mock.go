@@ -96,8 +96,8 @@ func (m *mockManager) toBeOwner() {
 
 // RetireOwner implements Manager.RetireOwner interface.
 func (m *mockManager) RetireOwner() {
-	m.listener.OnRetireOwner()
 	util.MockGlobalStateEntry.OwnerKey(m.storeID, m.key).UnsetOwner(m.id)
+	m.listener.OnRetireOwner()
 }
 
 // Cancel implements Manager.Cancel interface.

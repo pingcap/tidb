@@ -214,6 +214,7 @@ func (m *ownerManager) ResignOwner(ctx context.Context) error {
 
 func (m *ownerManager) toBeOwner(elec *concurrency.Election) {
 	m.elec.Store(elec)
+	logutil.Logger(m.logCtx).Info("become owner")
 	if m.listener != nil {
 		m.listener.OnBecomeOwner()
 	}
@@ -222,6 +223,7 @@ func (m *ownerManager) toBeOwner(elec *concurrency.Election) {
 // RetireOwner make the manager to be a not owner.
 func (m *ownerManager) RetireOwner() {
 	m.elec.Store(nil)
+	logutil.Logger(m.logCtx).Info("retire owner")
 	if m.listener != nil {
 		m.listener.OnRetireOwner()
 	}

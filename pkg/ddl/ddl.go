@@ -360,7 +360,6 @@ func (w *waitSchemaSyncedController) clearOnceMap() {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	w.onceMap = make(map[int64]struct{}, jobOnceCapacity)
-
 }
 
 // ddlCtx is the context when we use worker to handle DDL jobs.
