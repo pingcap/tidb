@@ -186,6 +186,7 @@ func (e *SortExec) Open(ctx context.Context) error {
 	return exec.Open(ctx, e.Children(0))
 }
 
+// InitUnparallelModeForTest is for unit test
 func (e *SortExec) InitUnparallelModeForTest() {
 	e.Unparallel.Idx = 0
 	e.Unparallel.sortPartitions = e.Unparallel.sortPartitions[:0]
