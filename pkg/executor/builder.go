@@ -682,6 +682,9 @@ func (b *executorBuilder) buildCleanupIndex(v *plannercore.CleanupIndex) exec.Ex
 	}
 	sessCtx := e.Ctx().GetSessionVars().StmtCtx
 	e.handleCols = buildHandleColsForExec(sessCtx, tblInfo, e.columns)
+	if e.index.Meta().Global {
+		e.columns = append(e.columns, model.NewExtraPartitionIDColInfo())
+	}
 	return e
 }
 
