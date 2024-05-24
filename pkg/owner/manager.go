@@ -39,6 +39,12 @@ import (
 	"go.uber.org/zap"
 )
 
+// Listener is used to listen the ownerManager's owner state.
+type Listener interface {
+	OnBecomeOwner()
+	OnRetireOwner()
+}
+
 // Manager is used to campaign the owner and manage the owner information.
 type Manager interface {
 	// ID returns the ID of the manager.
@@ -61,7 +67,7 @@ type Manager interface {
 	RequireOwner(ctx context.Context) error
 	// CampaignCancel cancels one etcd campaign
 	CampaignCancel()
-	// SetListener sets the listener.
+	// SetListener sets the listener, set before start campaign.
 	SetListener(listener Listener)
 }
 

@@ -43,7 +43,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
-	tidb_util "github.com/pingcap/tidb/pkg/util"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -241,7 +240,7 @@ func (s *jobScheduler) getJob(se *sess.Session, tp jobType, filter func(*model.J
 
 func hasSysDB(job *model.Job) bool {
 	for _, info := range job.GetInvolvingSchemaInfo() {
-		if tidb_util.IsSysDB(info.Database) {
+		if tidbutil.IsSysDB(info.Database) {
 			return true
 		}
 	}
