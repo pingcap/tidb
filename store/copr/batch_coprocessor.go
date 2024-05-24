@@ -343,7 +343,6 @@ func balanceBatchCopTask(ctx context.Context, kvStore *kvStore, usedTiFlashStore
 		}
 	} else {
 		usedStores := getUsedStores(cache, usedTiFlashStoresMap)
-		logutil.BgLogger().Info("detecting available mpp stores")
 		aliveStores := filterAliveStores(ctx, usedStores, ttl, kvStore)
 		for _, s := range aliveStores {
 			storeTaskMap[s.StoreID()] = &batchCopTask{
