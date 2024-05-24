@@ -59,7 +59,6 @@ var (
 // Table represents statistics for a table.
 type Table struct {
 	ExtendedStats *ExtendedStatsColl
-	Name          string
 	HistColl
 	Version uint64
 	// TblInfoUpdateTS is the UpdateTS of the TableInfo used when filling this struct.
@@ -304,7 +303,6 @@ func (t *Table) Copy() *Table {
 	nt := &Table{
 		HistColl:        newHistColl,
 		Version:         t.Version,
-		Name:            t.Name,
 		TblInfoUpdateTS: t.TblInfoUpdateTS,
 	}
 	if t.ExtendedStats != nil {
@@ -336,7 +334,6 @@ func (t *Table) ShallowCopy() *Table {
 	nt := &Table{
 		HistColl:        newHistColl,
 		Version:         t.Version,
-		Name:            t.Name,
 		TblInfoUpdateTS: t.TblInfoUpdateTS,
 		ExtendedStats:   t.ExtendedStats,
 	}
@@ -477,7 +474,7 @@ func (n *neededStatsMap) AllItems() []model.TableItemID {
 	return keys
 }
 
-func (n *neededStatsMap) insert(col model.TableItemID) {
+func (n *neededStatsMap) Insert(col model.TableItemID) {
 	n.m.Lock()
 	n.items[col] = struct{}{}
 	n.m.Unlock()
