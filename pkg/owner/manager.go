@@ -23,7 +23,6 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
-	"unsafe"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -62,9 +61,8 @@ type Manager interface {
 	RequireOwner(ctx context.Context) error
 	// CampaignCancel cancels one etcd campaign
 	CampaignCancel()
-
-	// SetBeOwnerHook sets a hook. The hook is called before becoming an owner.
-	SetBeOwnerHook(hook func())
+	// SetListener sets the listener.
+	SetListener(listener Listener)
 }
 
 const (
@@ -111,12 +109,12 @@ type ownerManager struct {
 	logCtx         context.Context
 	etcdCli        *clientv3.Client
 	cancel         context.CancelFunc
-	elec           unsafe.Pointer
+	elec           atomic.Pointer[concurrency.Election]
 	sessionLease   *atomicutil.Int64
 	wg             sync.WaitGroup
 	campaignCancel context.CancelFunc
 
-	beOwnerHook func()
+	listener Listener
 }
 
 // NewOwnerManager creates a new Manager.
@@ -143,7 +141,7 @@ func (m *ownerManager) ID() string {
 
 // IsOwner implements Manager.IsOwner interface.
 func (m *ownerManager) IsOwner() bool {
-	return atomic.LoadPointer(&m.elec) != unsafe.Pointer(nil)
+	return m.elec.Load() != nil
 }
 
 // Cancel implements Manager.Cancel interface.
@@ -157,8 +155,8 @@ func (*ownerManager) RequireOwner(_ context.Context) error {
 	return nil
 }
 
-func (m *ownerManager) SetBeOwnerHook(hook func()) {
-	m.beOwnerHook = hook
+func (m *ownerManager) SetListener(listener Listener) {
+	m.listener = listener
 }
 
 // ManagerSessionTTL is the etcd session's TTL in seconds. It's exported for testing.
@@ -198,7 +196,7 @@ func (m *ownerManager) CampaignOwner(withTTL ...int) error {
 
 // ResignOwner lets the owner start a new election.
 func (m *ownerManager) ResignOwner(ctx context.Context) error {
-	elec := (*concurrency.Election)(atomic.LoadPointer(&m.elec))
+	elec := m.elec.Load()
 	if elec == nil {
 		return errors.Errorf("This node is not a ddl owner, can't be resigned")
 	}
@@ -215,15 +213,18 @@ func (m *ownerManager) ResignOwner(ctx context.Context) error {
 }
 
 func (m *ownerManager) toBeOwner(elec *concurrency.Election) {
-	if m.beOwnerHook != nil {
-		m.beOwnerHook()
+	m.elec.Store(elec)
+	if m.listener != nil {
+		m.listener.OnBecomeOwner()
 	}
-	atomic.StorePointer(&m.elec, unsafe.Pointer(elec))
 }
 
 // RetireOwner make the manager to be a not owner.
 func (m *ownerManager) RetireOwner() {
-	atomic.StorePointer(&m.elec, nil)
+	m.elec.Store(nil)
+	if m.listener != nil {
+		m.listener.OnRetireOwner()
+	}
 }
 
 // CampaignCancel implements Manager.CampaignCancel interface.

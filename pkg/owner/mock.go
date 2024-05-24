@@ -41,7 +41,7 @@ type mockManager struct {
 	ctx          context.Context
 	wg           sync.WaitGroup
 	cancel       context.CancelFunc
-	beOwnerHook  func()
+	listener     Listener
 	retireHook   func()
 	campaignDone chan struct{}
 	resignDone   chan struct{}
@@ -88,14 +88,15 @@ func (m *mockManager) toBeOwner() {
 	if ok {
 		logutil.BgLogger().Debug("owner manager gets owner", zap.String("category", "ddl"),
 			zap.String("ID", m.id), zap.String("ownerKey", m.key))
-		if m.beOwnerHook != nil {
-			m.beOwnerHook()
+		if m.listener != nil {
+			m.listener.OnBecomeOwner()
 		}
 	}
 }
 
 // RetireOwner implements Manager.RetireOwner interface.
 func (m *mockManager) RetireOwner() {
+	m.listener.OnRetireOwner()
 	util.MockGlobalStateEntry.OwnerKey(m.storeID, m.key).UnsetOwner(m.id)
 }
 
@@ -169,9 +170,9 @@ func (*mockManager) RequireOwner(context.Context) error {
 	return nil
 }
 
-// SetBeOwnerHook implements Manager.SetBeOwnerHook interface.
-func (m *mockManager) SetBeOwnerHook(hook func()) {
-	m.beOwnerHook = hook
+// SetListener implements Manager.SetListener interface.
+func (m *mockManager) SetListener(listener Listener) {
+	m.listener = listener
 }
 
 // CampaignCancel implements Manager.CampaignCancel interface
