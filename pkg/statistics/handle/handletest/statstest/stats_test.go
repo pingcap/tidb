@@ -266,10 +266,6 @@ func TestInitStats(t *testing.T) {
 	require.Equal(t, uint8(0x3), idx[1].LastAnalyzePos.GetBytes()[0])
 	h.Clear()
 	require.NoError(t, h.Update(is))
-<<<<<<< HEAD
-	table1 := h.GetTableStats(tbl.Meta())
-	internal.AssertTableEqual(t, table0, table1)
-=======
 	// Index and pk are loaded.
 	needed := fmt.Sprintf(`Table:%v RealtimeCount:6
 index:1 ndv:6
@@ -280,7 +276,6 @@ num: 1 lower_bound: 4 upper_bound: 4 repeats: 1 ndv: 0
 num: 1 lower_bound: 5 upper_bound: 5 repeats: 1 ndv: 0
 num: 1 lower_bound: 7 upper_bound: 7 repeats: 1 ndv: 0`, tbl.Meta().ID)
 	require.Equal(t, needed, table0.String())
->>>>>>> e954bcfc74f (*: not load unnecessay data during the non-lite-init-stats (#53399))
 	h.SetLease(0)
 }
 
