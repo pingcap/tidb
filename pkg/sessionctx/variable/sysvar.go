@@ -986,12 +986,24 @@ var defaultSysVars = []*SysVar{
 	}},
 	{Scope: ScopeGlobal, Name: SkipNameResolve, Value: Off, Type: TypeBool},
 	{Scope: ScopeGlobal, Name: DefaultAuthPlugin, Value: mysql.AuthNativePassword, Type: TypeEnum, PossibleValues: []string{mysql.AuthNativePassword, mysql.AuthCachingSha2Password, mysql.AuthTiDBSM3Password, mysql.AuthLDAPSASL, mysql.AuthLDAPSimple}},
-	{Scope: ScopeGlobal, Name: TiDBPersistAnalyzeOptions, Value: BoolToOnOff(DefTiDBPersistAnalyzeOptions), Type: TypeBool,
+	{
+		Scope: ScopeGlobal,
+		Name:  TiDBPersistAnalyzeOptions,
+		Value: BoolToOnOff(DefTiDBPersistAnalyzeOptions),
+		Type:  TypeBool,
 		GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
 			return BoolToOnOff(PersistAnalyzeOptions.Load()), nil
 		},
+		Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+			persist := TiDBOptOn(normalizedValue)
+			if !persist && EnableColumnTracking.Load() {
+				return "", errors.Errorf("tidb_persist_analyze_options option cannot be set to OFF when tidb_enable_column_tracking is ON, as this will result in the loss of column tracking information")
+			}
+			return normalizedValue, nil
+		},
 		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
-			PersistAnalyzeOptions.Store(TiDBOptOn(val))
+			persist := TiDBOptOn(val)
+			PersistAnalyzeOptions.Store(persist)
 			return nil
 		},
 	},
@@ -1133,22 +1145,35 @@ var defaultSysVars = []*SysVar{
 			return nil
 		},
 	},
-	{Scope: ScopeGlobal, Name: TiDBEnableColumnTracking, Value: BoolToOnOff(DefTiDBEnableColumnTracking), Type: TypeBool, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
-		return BoolToOnOff(EnableColumnTracking.Load()), nil
-	}, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
-		v := TiDBOptOn(val)
-		// If this is a user initiated statement,
-		// we log that column tracking is disabled.
-		if s.StmtCtx.StmtType == "Set" && !v {
-			// Set the location to UTC to avoid time zone interference.
-			disableTime := time.Now().UTC().Format(types.UTCTimeFormat)
-			if err := setTiDBTableValue(s, TiDBDisableColumnTrackingTime, disableTime, "Record the last time tidb_enable_column_tracking is set off"); err != nil {
-				return err
+	{
+		Scope: ScopeGlobal, Name: TiDBEnableColumnTracking,
+		Value: BoolToOnOff(DefTiDBEnableColumnTracking),
+		Type:  TypeBool,
+		GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
+			return BoolToOnOff(EnableColumnTracking.Load()), nil
+		},
+		Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+			enabled := TiDBOptOn(normalizedValue)
+			persist := PersistAnalyzeOptions.Load()
+			if enabled && !persist {
+				return "", errors.Errorf("tidb_enable_column_tracking option cannot be set to ON when tidb_persist_analyze_options is set to OFF, as this will prevent the preservation of column tracking information")
 			}
-		}
-		EnableColumnTracking.Store(v)
-		return nil
-	}},
+			return normalizedValue, nil
+		},
+		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+			enabled := TiDBOptOn(val)
+			// If this is a user initiated statement,
+			// we log that column tracking is disabled.
+			if s.StmtCtx.StmtType == "Set" && !enabled {
+				// Set the location to UTC to avoid time zone interference.
+				disableTime := time.Now().UTC().Format(types.UTCTimeFormat)
+				if err := setTiDBTableValue(s, TiDBDisableColumnTrackingTime, disableTime, "Record the last time tidb_enable_column_tracking is set off"); err != nil {
+					return err
+				}
+			}
+			EnableColumnTracking.Store(enabled)
+			return nil
+		}},
 	{Scope: ScopeGlobal, Name: RequireSecureTransport, Value: BoolToOnOff(DefRequireSecureTransport), Type: TypeBool,
 		GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
 			return BoolToOnOff(tls.RequireSecureTransport.Load()), nil
@@ -1366,7 +1391,7 @@ var defaultSysVars = []*SysVar{
 		return BoolToOnOff(EnableTmpStorageOnOOM.Load()), nil
 	}},
 	{Scope: ScopeGlobal, Name: TiDBAutoBuildStatsConcurrency, Value: strconv.Itoa(DefTiDBAutoBuildStatsConcurrency), Type: TypeInt, MinValue: 1, MaxValue: MaxConfigurableConcurrency},
-	{Scope: ScopeGlobal, Name: TiDBSysProcScanConcurrency, Value: strconv.Itoa(DefTiDBSysProcScanConcurrency), Type: TypeInt, MinValue: 1, MaxValue: math.MaxInt32},
+	{Scope: ScopeGlobal, Name: TiDBSysProcScanConcurrency, Value: strconv.Itoa(DefTiDBSysProcScanConcurrency), Type: TypeInt, MinValue: 0, MaxValue: math.MaxInt32},
 	{Scope: ScopeGlobal, Name: TiDBMemoryUsageAlarmRatio, Value: strconv.FormatFloat(DefMemoryUsageAlarmRatio, 'f', -1, 64), Type: TypeFloat, MinValue: 0.0, MaxValue: 1.0, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
 		MemoryUsageAlarmRatio.Store(tidbOptFloat64(val, DefMemoryUsageAlarmRatio))
 		return nil
@@ -1821,7 +1846,7 @@ var defaultSysVars = []*SysVar{
 		s.distSQLScanConcurrency = tidbOptPositiveInt32(val, DefDistSQLScanConcurrency)
 		return nil
 	}},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBAnalyzeDistSQLScanConcurrency, Value: strconv.Itoa(DefAnalyzeDistSQLScanConcurrency), Type: TypeUnsigned, MinValue: 1, MaxValue: math.MaxInt32, SetSession: func(s *SessionVars, val string) error {
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBAnalyzeDistSQLScanConcurrency, Value: strconv.Itoa(DefAnalyzeDistSQLScanConcurrency), Type: TypeUnsigned, MinValue: 0, MaxValue: math.MaxInt32, SetSession: func(s *SessionVars, val string) error {
 		s.analyzeDistSQLScanConcurrency = tidbOptPositiveInt32(val, DefAnalyzeDistSQLScanConcurrency)
 		return nil
 	}},
@@ -2842,7 +2867,7 @@ var defaultSysVars = []*SysVar{
 			s.OptimizerFixControl = newMap
 			return nil
 		}},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBAnalyzeSkipColumnTypes, Value: "json,blob,mediumblob,longblob,text,mediumtext,longtext", Type: TypeStr,
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBAnalyzeSkipColumnTypes, Value: "json,blob,mediumblob,longblob,mediumtext,longtext", Type: TypeStr,
 		Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
 			return ValidAnalyzeSkipColumnTypes(normalizedValue)
 		},

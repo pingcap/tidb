@@ -606,7 +606,7 @@ const (
 	// ReplaceOnDup indicates using REPLACE INTO to insert data for TiDB backend.
 	// ReplaceOnDup records all duplicate records, remove some rows with conflict
 	// and reserve other rows that can be kept and not cause conflict anymore for local backend.
-	// Users need to analyze the lightning_task_info.conflict_error_v3 table to check whether the reserved data
+	// Users need to analyze the lightning_task_info.conflict_view table to check whether the reserved data
 	// cater to their need and check whether they need to add back the correct rows.
 	ReplaceOnDup
 	// IgnoreOnDup indicates using INSERT IGNORE INTO to insert data for TiDB backend.
