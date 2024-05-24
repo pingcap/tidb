@@ -970,6 +970,9 @@ func buildBatchCopTasksCore(bo *backoff.Backoffer, store *kvStore, rangesForEach
 
 		aliveStores = getAliveStoresAndStoreIDs(bo.GetCtx(), cache, usedTiFlashStoresMap, ttl, store, tiflashReplicaReadPolicy, tidbZone)
 		if tiflashReplicaReadPolicy.IsClosestReplicas() {
+			if len(aliveStores.storeIDsInTiDBZone) == 0 {
+				return nil, errors.Errorf("There is no region in tidb zone(%s)", tidbZone)
+			}
 			maxRemoteReadCountAllowed = len(aliveStores.storeIDsInTiDBZone) * tiflash.MaxRemoteReadCountPerNodeForClosestReplicas
 		}
 
