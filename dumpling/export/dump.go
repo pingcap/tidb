@@ -18,6 +18,9 @@ import (
 	"time"
 
 	"github.com/coreos/go-semver/semver"
+	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/util/dbutil"
+
 	// import mysql driver
 	"github.com/go-sql-driver/mysql"
 	"github.com/google/uuid"
@@ -334,6 +337,27 @@ func (d *Dumper) Dump() (dumpErr error) {
 	summary.SetSuccessStatus(true)
 	m.recordFinishTime(time.Now())
 	return nil
+}
+
+func (d *Dumper) updateTiDBGlobalConfigKeyspaceName() {
+	if d.conf.ServerInfo.ServerType == version.ServerTypeTiDB || d.conf.ServerInfo.ServerType == version.ServerTypeUnknown {
+		keyspaceNameInTiDB, err := dbutil.GetKeyspaceNameFromTiDB(d.dbHandle)
+		if err != nil {
+			panic(err)
+		}
+
+		if d.conf.KeyspaceName != keyspaceNameInTiDB {
+			panic("the keyspace name in command line is different from keyspace name in TiDB.")
+		}
+
+		if keyspaceNameInTiDB != "" {
+			config.UpdateGlobal(func(conf *config.Config) {
+				conf.KeyspaceName = keyspaceNameInTiDB
+			})
+		}
+
+		d.tctx.L().Info("dumpling using keyspace.", zap.String("keyspaceName", keyspaceNameInTiDB))
+	}
 }
 
 func (d *Dumper) startWriters(tctx *tcontext.Context, wg *errgroup.Group, taskChan <-chan Task,
@@ -1369,6 +1393,9 @@ func openSQLDB(d *Dumper) error {
 		return errors.Trace(err)
 	}
 	d.dbHandle = sql.OpenDB(c)
+
+	// Check that the command line keyspace name is the same as the target tidb keyspace name.
+	d.updateTiDBGlobalConfigKeyspaceName()
 	return nil
 }
 

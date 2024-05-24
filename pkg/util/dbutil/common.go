@@ -887,3 +887,32 @@ func GetParserForDB(ctx context.Context, db QueryExecutor) (*parser.Parser, erro
 	parser2.SetSQLMode(mode)
 	return parser2, nil
 }
+
+// GetKeyspaceNameFromTiDB get keyspace name from TiDB.
+func GetKeyspaceNameFromTiDB(db *sql.DB) (string, error) {
+	if db == nil {
+		return "", nil
+	}
+
+	rows, err := db.Query("show config where Type = 'tidb' and name = 'keyspace-name'")
+	if err != nil {
+		return "", err
+	}
+	//nolint: errcheck
+	defer rows.Close()
+
+	var (
+		_type     string
+		_instance string
+		_name     string
+		value     string
+	)
+	if rows.Next() {
+		err = rows.Scan(&_type, &_instance, &_name, &value)
+		if err != nil {
+			return "", err
+		}
+	}
+
+	return value, rows.Err()
+}
