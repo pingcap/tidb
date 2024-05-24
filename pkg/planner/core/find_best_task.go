@@ -2046,15 +2046,17 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty,
 		}
 
 		if ds.tableInfo.GetPartitionInfo() != nil {
-			// Add sort items for index scan for merge-sort operation between partitions.
-			byItems := make([]*util.ByItems, 0, len(prop.SortItems))
-			for _, si := range prop.SortItems {
-				byItems = append(byItems, &util.ByItems{
-					Expr: si.Col,
-					Desc: si.Desc,
-				})
+			// Add sort items for index scan for merge-sort operation between partitions, only required for local index.
+			if !is.Index.Global {
+				byItems := make([]*util.ByItems, 0, len(prop.SortItems))
+				for _, si := range prop.SortItems {
+					byItems = append(byItems, &util.ByItems{
+						Expr: si.Col,
+						Desc: si.Desc,
+					})
+				}
+				cop.indexPlan.(*PhysicalIndexScan).ByItems = byItems
 			}
-			cop.indexPlan.(*PhysicalIndexScan).ByItems = byItems
 			if cop.tablePlan != nil && ds.SCtx().GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
 				if !is.Index.Global {
 					is.Columns, is.schema, _ = AddExtraPhysTblIDColumn(is.SCtx(), is.Columns, is.Schema())
