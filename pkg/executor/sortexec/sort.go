@@ -759,6 +759,9 @@ func (e *SortExec) buildKeyColumns() {
 func (e *SortExec) lessRow(rowI, rowJ chunk.Row) int {
 	for i, colIdx := range e.keyColumns {
 		cmpFunc := e.keyCmpFuncs[i]
+		if cmpFunc == nil {
+			break
+		}
 		cmp := cmpFunc(rowI, colIdx, rowJ, colIdx)
 		if e.ByItems[i].Desc {
 			cmp = -cmp
