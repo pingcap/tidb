@@ -242,8 +242,10 @@ func TestInitStats(t *testing.T) {
 	originValue := config.GetGlobalConfig().Performance.LiteInitStats
 	defer func() {
 		config.GetGlobalConfig().Performance.LiteInitStats = originValue
+		config.GetGlobalConfig().Performance.ConcurrentlyInitStats = false
 	}()
 	config.GetGlobalConfig().Performance.LiteInitStats = false
+	config.GetGlobalConfig().Performance.ConcurrentlyInitStats = true
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
