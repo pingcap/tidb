@@ -71,6 +71,10 @@ go_test(
     embed = [":copr"],
     flaky = True,
     race = "on",
+<<<<<<< HEAD:store/copr/BUILD.bazel
+=======
+    shard_count = 30,
+>>>>>>> 9657f063168 (store: remove stores that have no region before balance (#52314)):pkg/store/copr/BUILD.bazel
     deps = [
         "//kv",
         "//store/driver/backoff",
@@ -78,6 +82,7 @@ go_test(
         "//util/paging",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_kvproto//pkg/coprocessor",
+        "@com_github_pingcap_kvproto//pkg/metapb",
         "@com_github_pingcap_kvproto//pkg/mpp",
         "@com_github_stretchr_testify//require",
         "@com_github_tikv_client_go_v2//config",
