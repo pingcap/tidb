@@ -399,11 +399,10 @@ func convertReorgPartitionJob2RollbackJob(d *ddlCtx, t *meta.Meta, job *model.Jo
 			// Old index marked to be dropped, rollback by making it public again
 			indexInfo.State = model.StatePublic
 			if indexInfo.Global {
-				if id, ok := globalToUniqueDupMap[indexInfo.Name.L]; !ok {
-					globalToUniqueDupMap[indexInfo.Name.L] = indexInfo.ID
-				} else {
+				if id, ok := globalToUniqueDupMap[indexInfo.Name.L]; ok {
 					return ver, errors.NewNoStackErrorf("Duplicate global index names '%s', %d != %d", indexInfo.Name.O, indexInfo.ID, id)
 				}
+				globalToUniqueDupMap[indexInfo.Name.L] = indexInfo.ID
 			}
 		case model.StatePublic:
 			if pi.DDLState != model.StateDeleteReorganization {
