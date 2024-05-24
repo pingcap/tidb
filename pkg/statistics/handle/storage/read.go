@@ -170,7 +170,7 @@ func CMSketchAndTopNFromStorageWithHighPriority(sctx sessionctx.Context, tblID i
 		return nil, nil, err
 	}
 	// If we are on version higher than 1. Don't read Count-Min Sketch.
-	if statsVer >= statistics.Version1 {
+	if statsVer > statistics.Version1 {
 		return statistics.DecodeCMSketchAndTopN(nil, topNRows)
 	}
 	rows, _, err := util.ExecRows(sctx, "select cm_sketch from mysql.stats_histograms where table_id = %? and is_index = %? and hist_id = %?", tblID, isIndex, histID)
