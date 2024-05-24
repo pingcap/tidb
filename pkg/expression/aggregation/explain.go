@@ -18,11 +18,7 @@ import (
 	"bytes"
 	"fmt"
 
-<<<<<<< HEAD
-=======
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/expression"
->>>>>>> 69285197c66 (planner: fix mpp final agg couldn't co-exist with other non-final mode (#53455))
 	"github.com/pingcap/tidb/pkg/parser/ast"
 )
 
