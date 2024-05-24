@@ -156,13 +156,6 @@ func (ds *DataSource) generateNormalIndexPartialPaths4DNF(
 			// the entire index merge is not valid anymore.
 			return nil, false, usedMap
 		}
-		// prune out global indexes.
-		itemPaths = slices.DeleteFunc(itemPaths, func(path *util.AccessPath) bool {
-			if path.Index != nil && path.Index.Global {
-				return true
-			}
-			return false
-		})
 		partialPath := buildIndexMergePartialPath(itemPaths)
 		if partialPath == nil {
 			// for this dnf item, we couldn't generate an index merge partial path.
@@ -889,9 +882,6 @@ func (ds *DataSource) generateIndexMerge4ComposedIndex(normalPathCnt int, indexM
 	var mvIndexPathCnt int
 	candidateAccessPaths := make([]*util.AccessPath, 0, len(ds.possibleAccessPaths))
 	for idx := 0; idx < normalPathCnt; idx++ {
-		if ds.possibleAccessPaths[idx].Index != nil && ds.possibleAccessPaths[idx].Index.Global {
-			continue
-		}
 		if (ds.possibleAccessPaths[idx].IsTablePath() &&
 			!ds.isInIndexMergeHints("primary")) ||
 			(!ds.possibleAccessPaths[idx].IsTablePath() &&
