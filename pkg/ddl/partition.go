@@ -3234,7 +3234,6 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 		tblInfo.Partition.AddingDefinitions = nil
 		tblInfo.Partition.DDLState = model.StateNone
 
-		var dropIndexIDs []int64
 		var dropIndices []*model.IndexInfo
 		for _, indexInfo := range tblInfo.Indices {
 			if indexInfo.Unique && indexInfo.State == model.StateDeleteReorganization {
@@ -3242,7 +3241,6 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 				indexInfo.State = model.StateNone
 				DropIndexColumnFlag(tblInfo, indexInfo)
 				RemoveDependentHiddenColumns(tblInfo, indexInfo)
-				dropIndexIDs = append(dropIndexIDs, indexInfo.ID)
 				dropIndices = append(dropIndices, indexInfo)
 			}
 		}
@@ -3327,7 +3325,7 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 		}
 		asyncNotifyEvent(d, event)
 		// A background job will be created to delete old partition data.
-		job.Args = []any{physicalTableIDs, partInfo, dropIndexIDs}
+		job.Args = []any{physicalTableIDs}
 
 	default:
 		err = dbterror.ErrInvalidDDLState.GenWithStackByArgs("partition", job.SchemaState)
