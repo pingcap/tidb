@@ -896,9 +896,11 @@ func GetKeyspaceNameFromTiDB(db *sql.DB) (string, error) {
 
 	getConfigTableSQL := "select  TABLE_NAME  from  INFORMATION_SCHEMA . TABLES  where TABLE_SCHEMA ='INFORMATION_SCHEMA' and  TABLE_NAME ='CLUSTER_CONFIG'"
 	rows, err := db.Query(getConfigTableSQL)
-
+	if err != nil {
+		return "", rows.Err()
+	}
 	if !rows.Next() {
-		return "", nil
+		return "", rows.Err()
 	}
 
 	sql := "select * from INFORMATION_SCHEMA.CLUSTER_CONFIG where TYPE='tidb'"
@@ -929,5 +931,5 @@ func GetKeyspaceNameFromTiDB(db *sql.DB) (string, error) {
 		}
 	}
 
-	return "", nil
+	return "", rows.Err()
 }
