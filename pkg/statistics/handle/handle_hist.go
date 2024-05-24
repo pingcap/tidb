@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
+	"golang.org/x/sync/singleflight"
 )
 
 type statsWrapper struct {
@@ -46,7 +47,7 @@ type statsWrapper struct {
 type StatsLoad struct {
 	NeededItemsCh  chan *NeededItemTask
 	TimeoutItemsCh chan *NeededItemTask
-	WorkingColMap  map[model.TableItemID][]chan stmtctx.StatsLoadResult
+	Singleflight   singleflight.Group
 	SubCtxs        []sessionctx.Context
 	sync.Mutex
 }
@@ -221,46 +222,60 @@ func (h *Handle) HandleOneTask(sctx sessionctx.Context, lastTask *NeededItemTask
 	} else {
 		task = lastTask
 	}
-	return h.handleOneItemTask(sctx, task)
+	resultChan := h.StatsLoad.Singleflight.DoChan(task.TableItemID.Key(), func() (any, error) {
+		return h.handleOneItemTask(sctx, task)
+	})
+	timeout := time.Until(task.ToTimeout)
+	select {
+	case result := <-resultChan:
+		if result.Err == nil {
+			slr := result.Val.(*stmtctx.StatsLoadResult)
+			if slr.Error != nil {
+				return task, slr.Error
+			}
+			task.ResultCh <- *slr
+			return nil, nil
+		}
+		return task, result.Err
+	case <-time.After(timeout):
+		return task, nil
+	}
 }
 
-func (h *Handle) handleOneItemTask(sctx sessionctx.Context, task *NeededItemTask) (*NeededItemTask, error) {
-	result := stmtctx.StatsLoadResult{Item: task.TableItemID}
+func (h *Handle) handleOneItemTask(sctx sessionctx.Context, task *NeededItemTask) (result *stmtctx.StatsLoadResult, err error) {
+	defer func() {
+		// recover for each task, worker keeps working
+		if r := recover(); r != nil {
+			logutil.BgLogger().Error("handleOneItemTask panicked", zap.Any("recover", r), zap.Stack("stack"))
+			err = errors.Errorf("stats loading panicked: %v", r)
+		}
+	}()
+	result = &stmtctx.StatsLoadResult{Item: task.TableItemID}
 	item := result.Item
 	tbl, ok := h.Get(item.TableID)
 	if !ok {
-		h.writeToResultChan(task.ResultCh, result)
-		return nil, nil
+		return result, nil
 	}
-	var err error
 	wrapper := &statsWrapper{}
 	if item.IsIndex {
 		index, ok := tbl.Indices[item.ID]
 		if !ok || index.IsFullLoad() {
-			h.writeToResultChan(task.ResultCh, result)
-			return nil, nil
+			return result, nil
 		}
 		wrapper.idx = index
 	} else {
 		col, ok := tbl.Columns[item.ID]
 		if !ok || col.IsFullLoad() {
-			h.writeToResultChan(task.ResultCh, result)
-			return nil, nil
+			return result, nil
 		}
 		wrapper.col = col
-	}
-	// to avoid duplicated handling in concurrent scenario
-	working := h.setWorking(result.Item, task.ResultCh)
-	if !working {
-		h.writeToResultChan(task.ResultCh, result)
-		return nil, nil
 	}
 	t := time.Now()
 	needUpdate := false
 	wrapper, err = h.readStatsForOneItem(sctx, item, wrapper)
 	if err != nil {
 		result.Error = err
-		return task, err
+		return result, err
 	}
 	if item.IsIndex {
 		if wrapper.idx != nil {
@@ -273,9 +288,8 @@ func (h *Handle) handleOneItemTask(sctx sessionctx.Context, task *NeededItemTask
 	}
 	metrics.ReadStatsHistogram.Observe(float64(time.Since(t).Milliseconds()))
 	if needUpdate && h.updateCachedItem(item, wrapper.col, wrapper.idx) {
-		h.writeToResultChan(task.ResultCh, result)
+		return result, nil
 	}
-	h.finishWorking(result)
 	return nil, nil
 }
 
@@ -465,33 +479,4 @@ func (h *Handle) updateCachedItem(item model.TableItemID, colHist *statistics.Co
 	}
 	h.UpdateStatsCache([]*statistics.Table{tbl}, nil)
 	return true
-}
-
-func (h *Handle) setWorking(item model.TableItemID, resultCh chan stmtctx.StatsLoadResult) bool {
-	h.StatsLoad.Lock()
-	defer h.StatsLoad.Unlock()
-	chList, ok := h.StatsLoad.WorkingColMap[item]
-	if ok {
-		if chList[0] == resultCh {
-			return true // just return for duplicate setWorking
-		}
-		h.StatsLoad.WorkingColMap[item] = append(chList, resultCh)
-		return false
-	}
-	chList = []chan stmtctx.StatsLoadResult{}
-	chList = append(chList, resultCh)
-	h.StatsLoad.WorkingColMap[item] = chList
-	return true
-}
-
-func (h *Handle) finishWorking(result stmtctx.StatsLoadResult) {
-	h.StatsLoad.Lock()
-	defer h.StatsLoad.Unlock()
-	if chList, ok := h.StatsLoad.WorkingColMap[result.Item]; ok {
-		list := chList[1:]
-		for _, ch := range list {
-			h.writeToResultChan(ch, result)
-		}
-	}
-	delete(h.StatsLoad.WorkingColMap, result.Item)
 }
