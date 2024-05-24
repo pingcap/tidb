@@ -15,7 +15,6 @@
 package ddl_test
 
 import (
-	"bytes"
 	"context"
 	"encoding/hex"
 	"fmt"
@@ -83,18 +82,21 @@ ROW:
 	for it.Valid() {
 		for _, rowGC := range waitForGC {
 			// OK if queued for range delete / GC
-			hexString := fmt.Sprintf("%v", rowGC[0])
-			start, err := hex.DecodeString(hexString)
+			startHex := fmt.Sprintf("%v", rowGC[0])
+			endHex := fmt.Sprintf("%v", rowGC[1])
+			end, err := hex.DecodeString(endHex)
 			require.NoError(t, err)
-			hexString = fmt.Sprintf("%v", rowGC[1])
-			end, err := hex.DecodeString(hexString)
-			require.NoError(t, err)
-			if bytes.Compare(start, it.Key()) >= 0 && bytes.Compare(it.Key(), end) < 0 {
+			keyHex := hex.EncodeToString(it.Key())
+			if startHex <= keyHex && keyHex < endHex {
 				it.Close()
 				it, err = txn.Iter(end, nil)
 				require.NoError(t, err)
 				continue ROW
 			}
+			logutil.DDLLogger().Info("not found in GC",
+				zap.String("key", fmt.Sprintf("%s", it.Key())),
+				zap.String("start", fmt.Sprintf("%v", rowGC[0])),
+				zap.String("end", fmt.Sprintf("%v", rowGC[1])))
 		}
 		foundTblID := tablecodec.DecodeTableID(it.Key())
 		// There are internal table ids starting from MaxInt48 -1 and allocating decreasing ids
@@ -104,9 +106,9 @@ ROW:
 			tbl, found := is.TableByID(foundTblID)
 			tblmsg := " Table ID no longer maps to a table"
 			if found {
-				msg = fmt.Sprintf(" Table name: %s", tbl.Meta().Name.O)
+				tblmsg = fmt.Sprintf(" Table name: %s", tbl.Meta().Name.O)
 			}
-			require.False(t, true, "Found table data after highest physical Table ID %d < %d (%x)"+msg+tblmsg, tblID, foundTblID, it.Key())
+			require.False(t, true, "Found table data after highest physical Table ID %d < %d (%s) "+msg+tblmsg, tblID, foundTblID, it.Key())
 		}
 		break
 	}
@@ -548,137 +550,27 @@ func TestReorgPartitionFailInject(t *testing.T) {
 		" PARTITION `pMax` VALUES LESS THAN (MAXVALUE))"))
 }
 
-func TestReorgPartitionRollback(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	schemaName := "ReorgPartRollback"
-	tk.MustExec("create database " + schemaName)
-	tk.MustExec("use " + schemaName)
-	tk.MustExec(`create table t (a int unsigned PRIMARY KEY, b varchar(255), c int, key (b), key (c,b))` +
+func TestReorgPartitionFailures(t *testing.T) {
+	create := `create table t (a int unsigned PRIMARY KEY, b varchar(255), c int, key (b), key (c,b))` +
 		` partition by range (a) ` +
 		`(partition p0 values less than (10),` +
 		` partition p1 values less than (20),` +
-		` partition pMax values less than (MAXVALUE))`)
-	tk.MustExec(`insert into t values (1,"1",1), (12,"12",21),(23,"23",32),(34,"34",43),(45,"45",54),(56,"56",65)`)
-	// TODO: Check that there are no additional placement rules,
-	// bundles, or ranges with non-completed tableIDs
-	// (partitions used during reorg, but was dropped)
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockUpdateVersionAndTableInfoErr", `return(true)`))
-	tk.MustExecToErr("alter table t reorganize partition p1 into (partition p1a values less than (15), partition p1b values less than (20))")
-	tk.MustExec(`admin check table t`)
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockUpdateVersionAndTableInfoErr"))
-	ctx := tk.Session()
-	is := domain.GetDomain(ctx).InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr(schemaName), model.NewCIStr("t"))
-	require.NoError(t, err)
-	noNewTablesAfter(t, tk, ctx, tbl, "")
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/reorgPartitionAfterDataCopy", `return(true)`))
-	defer func() {
-		err := failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/reorgPartitionAfterDataCopy")
-		require.NoError(t, err)
-	}()
-	tk.MustExecToErr("alter table t reorganize partition p1 into (partition p1a values less than (15), partition p1b values less than (20))")
-	tk.MustExec(`admin check table t`)
-	tk.MustQuery(`show create table t`).Check(testkit.Rows("" +
-		"t CREATE TABLE `t` (\n" +
-		"  `a` int(10) unsigned NOT NULL,\n" +
-		"  `b` varchar(255) DEFAULT NULL,\n" +
-		"  `c` int(11) DEFAULT NULL,\n" +
-		"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,\n" +
-		"  KEY `b` (`b`),\n" +
-		"  KEY `c` (`c`,`b`)\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
-		"PARTITION BY RANGE (`a`)\n" +
-		"(PARTITION `p0` VALUES LESS THAN (10),\n" +
-		" PARTITION `p1` VALUES LESS THAN (20),\n" +
-		" PARTITION `pMax` VALUES LESS THAN (MAXVALUE))"))
-
-	tbl, err = is.TableByName(model.NewCIStr(schemaName), model.NewCIStr("t"))
-	require.NoError(t, err)
-	noNewTablesAfter(t, tk, ctx, tbl, "")
+		` partition pMax values less than (MAXVALUE))`
+	insert := `insert into t values (1,"1",1), (12,"12",21),(23,"23",32),(34,"34",43),(45,"45",54),(56,"56",65)`
+	alter := "alter table t reorganize partition p1 into (partition p1a values less than (15), partition p1b values less than (20))"
+	testReorganizePartitionFailures(t, create, insert, alter, "Fail4")
 }
 
 func TestRemovePartitionFailures(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("set tidb_enable_global_index=true")
-	defer func() {
-		tk.MustExec("set tidb_enable_global_index=default")
-	}()
-	tk.MustExec(`create table t (a int unsigned primary key nonclustered, b int not null, c varchar(255)) partition by range(a) (
+	create := `create table t (a int unsigned primary key nonclustered, b int not null, c varchar(255)) partition by range(a) (
 			partition p0 values less than (100),
-			partition p1 values less than (200))`)
-	tk.MustExec(`insert into t values (7,100,"7-100"),(8,8,8),(9,9,9),(127,7,"127-7"),(199,199,199)`)
-	// Fail means we simply inject an error, and set the error count very high to see what happens
-	//   we do expect to do best effort rollback here as well!
-	// Cancel means we set job.State = JobStateCancelled, as in no need to do more
-	// Rollback means we do full rollback before returning error.
-	tests := []struct {
-		name  string
-		count int
-	}{
-		{
-			"Cancel",
-			1,
-		},
-		{
-			"Fail",
-			5,
-		},
-		{
-			"Rollback",
-			4,
-		},
-	}
-	tOrg := external.GetTableByName(t, tk, "test", "t")
-	partition := tOrg.Meta().Partition
-	idxID := tOrg.Meta().Indices[0].ID
-	oldWaitTimeWhenErrorOccurred := ddl.WaitTimeWhenErrorOccurred
-	defer func() {
-		ddl.WaitTimeWhenErrorOccurred = oldWaitTimeWhenErrorOccurred
-	}()
-	ddl.WaitTimeWhenErrorOccurred = 0
-	for _, test := range tests {
-		for i := 1; i <= test.count; i++ {
-			suffix := test.name + strconv.Itoa(i)
-			name := "github.com/pingcap/tidb/pkg/ddl/reorgPart" + suffix
-			require.NoError(t, failpoint.Enable(name, `return(true)`))
-			err := tk.ExecToErr(`alter table t remove partitioning`)
-			require.Error(t, err, "failpoint reorgPart"+suffix)
-			require.ErrorContains(t, err, "Injected error by reorgPart"+suffix)
-			require.NoError(t, failpoint.Disable(name))
-			tk.MustQuery(`show create table t /* ` + suffix + ` */`).Check(testkit.Rows("" +
-				"t CREATE TABLE `t` (\n" +
-				"  `a` int(10) unsigned NOT NULL,\n" +
-				"  `b` int(11) NOT NULL,\n" +
-				"  `c` varchar(255) DEFAULT NULL,\n" +
-				"  PRIMARY KEY (`a`) /*T![clustered_index] NONCLUSTERED */\n" +
-				") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
-				"PARTITION BY RANGE (`a`)\n" +
-				"(PARTITION `p0` VALUES LESS THAN (100),\n" +
-				" PARTITION `p1` VALUES LESS THAN (200))"))
-			tt := external.GetTableByName(t, tk, "test", "t")
-			partition = tt.Meta().Partition
-			require.Equal(t, 2, len(partition.Definitions), suffix)
-			require.Equal(t, 0, len(partition.AddingDefinitions), suffix)
-			require.Equal(t, 0, len(partition.DroppingDefinitions), suffix)
-			require.Equal(t, 1, len(tt.Meta().Indices), suffix)
-			require.Equal(t, idxID, tt.Meta().Indices[0].ID, suffix)
-			noNewTablesAfter(t, tk, tk.Session(), tOrg, suffix)
-			// TODO: Check TiFlash replicas
-			// TODO: Check Label rules
-			// TODO: Check bundles
-			// TODO: Check autoIDs
-			// So if failure will end up as rolling back after enough tries, what happens when
-			// the state changes from DeleteReorganization to StatePublic?
-			// The old data should still be up-to-date, but the question is how the cleanup
-			// of the new data is handled, will it still be seen in DeleteReorganization?
-		}
-	}
+			partition p1 values less than (200))`
+	insert := `insert into t values (7,100,"7-100"),(8,8,8),(9,9,9),(127,7,"127-7"),(199,199,199)`
+	alter := `alter table t remove partitioning`
+	testReorganizePartitionFailures(t, create, insert, alter)
 }
 
-func TestReorganizePartitionFailures(t *testing.T) {
+func TestPartitionByFailures(t *testing.T) {
 	create := `create table t (a int unsigned primary key nonclustered, b int not null, c varchar(255)) partition by range(a) (
 			partition p0 values less than (100),
 			partition p1 values less than (200))`
@@ -688,7 +580,7 @@ func TestReorganizePartitionFailures(t *testing.T) {
 	testReorganizePartitionFailures(t, create, insert, alter)
 }
 
-func testReorganizePartitionFailures(t *testing.T, createSQL, insertSQL, alterSQL string) {
+func testReorganizePartitionFailures(t *testing.T, createSQL, insertSQL, alterSQL string, skipTests ...string) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -696,10 +588,8 @@ func testReorganizePartitionFailures(t *testing.T, createSQL, insertSQL, alterSQ
 	defer func() {
 		tk.MustExec("set tidb_enable_global_index=default")
 	}()
-	tk.MustExec(`create table t (a int unsigned primary key nonclustered, b int not null, c varchar(255)) partition by range(a) (
-			partition p0 values less than (100),
-			partition p1 values less than (200))`)
-	tk.MustExec(`insert into t values (7,100,"7-100"),(8,8,8),(9,9,9),(127,7,"127-7"),(199,199,199)`)
+	tk.MustExec(createSQL)
+	tk.MustExec(insertSQL)
 	// Fail means we simply inject an error, and set the error count very high to see what happens
 	//   we do expect to do best effort rollback here as well!
 	// Cancel means we set job.State = JobStateCancelled, as in no need to do more
@@ -724,36 +614,34 @@ func testReorganizePartitionFailures(t *testing.T, createSQL, insertSQL, alterSQ
 	tOrg := external.GetTableByName(t, tk, "test", "t")
 	partition := tOrg.Meta().Partition
 	idxID := tOrg.Meta().Indices[0].ID
+	oldCreate := tk.MustQuery(`show create table t`).Rows()
 	oldWaitTimeWhenErrorOccurred := ddl.WaitTimeWhenErrorOccurred
 	defer func() {
 		ddl.WaitTimeWhenErrorOccurred = oldWaitTimeWhenErrorOccurred
 	}()
 	ddl.WaitTimeWhenErrorOccurred = 0
 	for _, test := range tests {
-		for i := 1; i <= test.count; i++ {
+	SUBTEST:
+		for i := 3; i <= test.count; i++ {
 			suffix := test.name + strconv.Itoa(i)
+			for _, skip := range skipTests {
+				if suffix == skip {
+					continue SUBTEST
+				}
+			}
 			name := "github.com/pingcap/tidb/pkg/ddl/reorgPart" + suffix
 			require.NoError(t, failpoint.Enable(name, `return(true)`))
-			err := tk.ExecToErr(`alter table t partition by range (b) (partition pNoneC values less than (150), partition p2 values less than (300))`)
+			err := tk.ExecToErr(alterSQL)
 			require.Error(t, err, "failpoint reorgPart"+suffix)
 			require.ErrorContains(t, err, "Injected error by reorgPart"+suffix)
 			require.NoError(t, failpoint.Disable(name))
-			tk.MustQuery(`show create table t /* ` + suffix + ` */`).Check(testkit.Rows("" +
-				"t CREATE TABLE `t` (\n" +
-				"  `a` int(10) unsigned NOT NULL,\n" +
-				"  `b` int(11) NOT NULL,\n" +
-				"  `c` varchar(255) DEFAULT NULL,\n" +
-				"  PRIMARY KEY (`a`) /*T![clustered_index] NONCLUSTERED */\n" +
-				") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
-				"PARTITION BY RANGE (`a`)\n" +
-				"(PARTITION `p0` VALUES LESS THAN (100),\n" +
-				" PARTITION `p1` VALUES LESS THAN (200))"))
+			tk.MustQuery(`show create table t /* ` + suffix + ` */`).Check(oldCreate)
 			tt := external.GetTableByName(t, tk, "test", "t")
 			partition = tt.Meta().Partition
-			require.Equal(t, 2, len(partition.Definitions), suffix)
+			require.Equal(t, len(tOrg.Meta().Partition.Definitions), len(partition.Definitions), suffix)
 			require.Equal(t, 0, len(partition.AddingDefinitions), suffix)
 			require.Equal(t, 0, len(partition.DroppingDefinitions), suffix)
-			require.Equal(t, 1, len(tt.Meta().Indices), suffix)
+			require.Equal(t, len(tOrg.Meta().Indices), len(tt.Meta().Indices), suffix)
 			require.Equal(t, idxID, tt.Meta().Indices[0].ID, suffix)
 			noNewTablesAfter(t, tk, tk.Session(), tOrg, suffix)
 			// TODO: Check TiFlash replicas

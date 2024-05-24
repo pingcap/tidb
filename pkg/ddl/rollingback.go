@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
-	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"go.uber.org/zap"
 )
 
@@ -447,17 +446,26 @@ func convertReorgPartitionJob2RollbackJob(d *ddlCtx, t *meta.Meta, job *model.Jo
 			// as was replaced!
 			// If KEY/HASH all are replaced
 			// if LIST TODO: how to get the same order?
-			firstIdx := len(pi.Definitions)
+			restoredDroppingDefinitions := false
 			for _, def := range pi.AddingDefinitions {
 				found := false
 				for i := range pi.Definitions {
 					if def.ID == pi.Definitions[i].ID {
 						if i == len(pi.Definitions)-1 {
 							pi.Definitions = pi.Definitions[:i]
+							if !restoredDroppingDefinitions {
+								pi.Definitions = append(pi.Definitions, pi.DroppingDefinitions...)
+								restoredDroppingDefinitions = true
+							}
 						} else {
-							pi.Definitions = append(pi.Definitions[:i], pi.Definitions[i+1:]...)
+							if !restoredDroppingDefinitions {
+								tmp := append(pi.Definitions[:i], pi.DroppingDefinitions...)
+								pi.Definitions = append(tmp, pi.Definitions[i+1:]...)
+								restoredDroppingDefinitions = true
+							} else {
+								pi.Definitions = append(pi.Definitions[:i], pi.Definitions[i+1:]...)
+							}
 						}
-						firstIdx = mathutil.Min(firstIdx, i)
 						found = true
 						break
 					}
@@ -465,14 +473,6 @@ func convertReorgPartitionJob2RollbackJob(d *ddlCtx, t *meta.Meta, job *model.Jo
 				if !found {
 					panic("FIXME:!!!")
 				}
-			}
-			if firstIdx < len(pi.Definitions)-1 {
-				newDefs := append(pi.Definitions[:firstIdx], pi.DroppingDefinitions...)
-				newDefs = append(newDefs, pi.Definitions[firstIdx:]...)
-				pi.Definitions = newDefs
-			} else {
-				pi.Definitions = append(pi.Definitions[:firstIdx], pi.DroppingDefinitions...)
-
 			}
 			pi.Num = uint64(len(pi.Definitions))
 		} else {
