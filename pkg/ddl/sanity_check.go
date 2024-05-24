@@ -107,12 +107,11 @@ func expectedDeleteRangeCnt(ctx delRangeCntCtx, job *model.Job) (int, error) {
 	case model.ActionReorganizePartition, model.ActionRemovePartitioning,
 		model.ActionAlterTablePartitioning:
 		var physicalTableIDs []int64
-		var indexIDs []int64
 		var partInfo model.PartitionInfo
-		if err := job.DecodeArgs(&physicalTableIDs, &partInfo, &indexIDs); err != nil {
+		if err := job.DecodeArgs(&physicalTableIDs, &partInfo); err != nil {
 			return 0, errors.Trace(err)
 		}
-		return len(physicalTableIDs) + len(indexIDs), nil
+		return len(physicalTableIDs), nil
 	case model.ActionAddIndex, model.ActionAddPrimaryKey:
 		indexID := make([]int64, 1)
 		ifExists := make([]bool, 1)

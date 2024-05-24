@@ -53,7 +53,7 @@ type allTableData struct {
 // assumes that tableIDs are only increasing.
 // To be used during failure testing of ALTER, to make sure cleanup is done.
 func noNewTablesAfter(t *testing.T, tk *testkit.TestKit, ctx sessionctx.Context, tbl table.Table, msg string) {
-	waitForGC := tk.MustQuery(`select start_key, end_key from mysql.gc_delete_range`).Rows()
+	waitForGC := tk.MustQuery(`select start_key, end_key from mysql.gc_delete_range union all select start_key, end_key from mysql.gc_delete_range_done`).Rows()
 	require.NoError(t, sessiontxn.NewTxn(context.Background(), ctx))
 	txn, err := ctx.Txn(true)
 	require.NoError(t, err)
@@ -74,6 +74,11 @@ func noNewTablesAfter(t *testing.T, tk *testkit.TestKit, ctx sessionctx.Context,
 	prefix := tablecodec.EncodeTablePrefix(tblID + 1)
 	it, err := txn.Iter(prefix, nil)
 	require.NoError(t, err)
+	for _, rowGC := range waitForGC {
+		logutil.DDLLogger().Info("GC",
+			zap.String("start", fmt.Sprintf("%v", rowGC[0])),
+			zap.String("end", fmt.Sprintf("%v", rowGC[1])))
+	}
 ROW:
 	for it.Valid() {
 		for _, rowGC := range waitForGC {
@@ -94,7 +99,15 @@ ROW:
 		foundTblID := tablecodec.DecodeTableID(it.Key())
 		// There are internal table ids starting from MaxInt48 -1 and allocating decreasing ids
 		// Allow 0xFF of them, See JobTableID, ReorgTableID, HistoryTableID, MDLTableID
-		require.False(t, it.Key()[0] == 't' && foundTblID < 0xFFFFFFFFFF00, "Found table data after highest physical Table ID %d < %d "+msg, tblID, foundTblID)
+		if it.Key()[0] == 't' && foundTblID < 0xFFFFFFFFFF00 {
+			is := sessiontxn.GetTxnManager(tk.Session()).GetTxnInfoSchema()
+			tbl, found := is.TableByID(foundTblID)
+			tblmsg := " Table ID no longer maps to a table"
+			if found {
+				msg = fmt.Sprintf(" Table name: %s", tbl.Meta().Name.O)
+			}
+			require.False(t, true, "Found table data after highest physical Table ID %d < %d (%x)"+msg+tblmsg, tblID, foundTblID, it.Key())
+		}
 		break
 	}
 }
@@ -605,13 +618,10 @@ func TestRemovePartitionFailures(t *testing.T) {
 		name  string
 		count int
 	}{
-		/*
-			{
-				"Cancel",
-				1,
-			},
-
-		*/
+		{
+			"Cancel",
+			1,
+		},
 		{
 			"Fail",
 			5,
@@ -630,7 +640,7 @@ func TestRemovePartitionFailures(t *testing.T) {
 	}()
 	ddl.WaitTimeWhenErrorOccurred = 0
 	for _, test := range tests {
-		for i := 3; i <= test.count; i++ {
+		for i := 1; i <= test.count; i++ {
 			suffix := test.name + strconv.Itoa(i)
 			name := "github.com/pingcap/tidb/pkg/ddl/reorgPart" + suffix
 			require.NoError(t, failpoint.Enable(name, `return(true)`))
@@ -638,6 +648,16 @@ func TestRemovePartitionFailures(t *testing.T) {
 			require.Error(t, err, "failpoint reorgPart"+suffix)
 			require.ErrorContains(t, err, "Injected error by reorgPart"+suffix)
 			require.NoError(t, failpoint.Disable(name))
+			tk.MustQuery(`show create table t /* ` + suffix + ` */`).Check(testkit.Rows("" +
+				"t CREATE TABLE `t` (\n" +
+				"  `a` int(10) unsigned NOT NULL,\n" +
+				"  `b` int(11) NOT NULL,\n" +
+				"  `c` varchar(255) DEFAULT NULL,\n" +
+				"  PRIMARY KEY (`a`) /*T![clustered_index] NONCLUSTERED */\n" +
+				") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+				"PARTITION BY RANGE (`a`)\n" +
+				"(PARTITION `p0` VALUES LESS THAN (100),\n" +
+				" PARTITION `p1` VALUES LESS THAN (200))"))
 			tt := external.GetTableByName(t, tk, "test", "t")
 			partition = tt.Meta().Partition
 			require.Equal(t, 2, len(partition.Definitions), suffix)
@@ -658,7 +678,17 @@ func TestRemovePartitionFailures(t *testing.T) {
 	}
 }
 
-func TestPartitionByFailures(t *testing.T) {
+func TestReorganizePartitionFailures(t *testing.T) {
+	create := `create table t (a int unsigned primary key nonclustered, b int not null, c varchar(255)) partition by range(a) (
+			partition p0 values less than (100),
+			partition p1 values less than (200))`
+	insert := `insert into t values (7,100,"7-100"),(8,8,8),(9,9,9),(127,7,"127-7"),(199,199,199)`
+	// Fa
+	alter := `alter table t partition by range (b) (partition pNoneC values less than (150), partition p2 values less than (300))`
+	testReorganizePartitionFailures(t, create, insert, alter)
+}
+
+func testReorganizePartitionFailures(t *testing.T, createSQL, insertSQL, alterSQL string) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")

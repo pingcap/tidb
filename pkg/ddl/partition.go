@@ -1986,11 +1986,10 @@ func (w *worker) onDropTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
-	if job.Type == model.ActionAddTablePartition || job.Type == model.ActionReorganizePartition ||
-		job.Type == model.ActionRemovePartitioning || job.Type == model.ActionAlterTablePartitioning {
+	if job.Type != model.ActionDropTablePartition {
 		// It is rollback from reorganize partition, just remove DroppingDefinitions from tableInfo
 		tblInfo.Partition.DroppingDefinitions = nil
-		// It is rollbacked from adding table partition, just remove addingDefinitions from tableInfo.
+		// It is rollback from adding table partition, just remove addingDefinitions from tableInfo.
 		physicalTableIDs, pNames, rollbackBundles := rollbackAddingPartitionInfo(tblInfo)
 		err = infosync.PutRuleBundlesWithDefaultRetry(context.TODO(), rollbackBundles)
 		if err != nil {
@@ -2008,22 +2007,34 @@ func (w *worker) onDropTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (
 			job.State = model.JobStateCancelled
 			return ver, err
 		}
-		// ALTER TABLE ... PARTITION BY
-		if partInfo.Type != model.PartitionTypeNone {
-			// Also remove anything with the new table id
+		if job.Type == model.ActionAlterTablePartitioning {
+			// ALTER TABLE t PARTITION BY ... creates an additional
+			// Table ID
+			// Note, for REMOVE PARTITIONING, it is the same
+			// as for the single partition, to be changed to table.
 			physicalTableIDs = append(physicalTableIDs, partInfo.NewTableID)
-			// Reset if it was normal table before
-			if tblInfo.Partition.Type == model.PartitionTypeNone ||
-				tblInfo.Partition.DDLType == model.PartitionTypeNone {
-				tblInfo.Partition = nil
-			} else {
-				tblInfo.Partition.ClearReorgIntermediateInfo()
-			}
-		} else {
-			// REMOVE PARTITIONING
-			tblInfo.Partition.ClearReorgIntermediateInfo()
 		}
 
+		var dropIndices []*model.IndexInfo
+		for _, indexInfo := range tblInfo.Indices {
+			if indexInfo.Unique &&
+				indexInfo.State == model.StateDeleteReorganization &&
+				tblInfo.Partition.DDLState == model.StateDeleteReorganization {
+				dropIndices = append(dropIndices, indexInfo)
+			}
+		}
+		for _, indexInfo := range dropIndices {
+			DropIndexColumnFlag(tblInfo, indexInfo)
+			RemoveDependentHiddenColumns(tblInfo, indexInfo)
+			removeIndexInfo(tblInfo, indexInfo)
+		}
+
+		// Reset if it was normal table before
+		if tblInfo.Partition.Type == model.PartitionTypeNone {
+			tblInfo.Partition = nil
+		} else {
+			tblInfo.Partition.ClearReorgIntermediateInfo()
+		}
 		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, true)
 		if err != nil {
 			return ver, errors.Trace(err)
@@ -2939,6 +2950,8 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 
 		// All global indexes must be recreated, we cannot update them in-place, since we must have
 		// both old and new set of partition ids in the unique index at the same time!
+		// if a global index is no-longer needed to be global (i.e. after PARTITION BY now contains all partitioning columns), drop unset indexInfo.Global
+		// if a non global index now needs to be global, create a new Global Index to replace it with
 		for _, index := range tblInfo.Indices {
 			if !index.Unique {
 				// for now, only unique index can be global, non-unique indexes are 'local'
@@ -2989,7 +3002,7 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 				job.State = model.JobStateCancelled
 				return ver, errors.Trace(err)
 			}
-			return convertAddTablePartitionJob2RollbackJob(d, t, job, err, tblInfo)
+			return convertReorgPartitionJob2RollbackJob(d, t, job, err, tblInfo)
 		}
 
 		if len(bundles) > 0 {
@@ -2998,7 +3011,7 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 					job.State = model.JobStateCancelled
 					return ver, errors.Wrapf(err, "failed to notify PD the placement rules")
 				}
-				return convertAddTablePartitionJob2RollbackJob(d, t, job, err, tblInfo)
+				return convertReorgPartitionJob2RollbackJob(d, t, job, err, tblInfo)
 			}
 			changesMade = true
 		}
@@ -3014,7 +3027,7 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 				job.State = model.JobStateCancelled
 				return ver, errors.Trace(err)
 			}
-			return convertAddTablePartitionJob2RollbackJob(d, t, job, err, tblInfo)
+			return convertReorgPartitionJob2RollbackJob(d, t, job, err, tblInfo)
 		}
 
 		// Doing the preSplitAndScatter here, since all checks are completed,
@@ -3035,7 +3048,7 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 		failpoint.Inject("reorgPartRollback1", func(val failpoint.Value) {
 			if val.(bool) {
 				err = errors.New("Injected error by reorgPartRollback1")
-				failpoint.Return(convertAddTablePartitionJob2RollbackJob(d, t, job, err, tblInfo))
+				failpoint.Return(convertReorgPartitionJob2RollbackJob(d, t, job, err, tblInfo))
 			}
 		})
 
@@ -3066,7 +3079,7 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 			count := tblInfo.TiFlashReplica.Count
 			needRetry, err := checkPartitionReplica(count, addingDefinitions, d)
 			if err != nil {
-				return convertAddTablePartitionJob2RollbackJob(d, t, job, err, tblInfo)
+				return convertReorgPartitionJob2RollbackJob(d, t, job, err, tblInfo)
 			}
 			if needRetry {
 				// The new added partition hasn't been replicated.
@@ -3093,7 +3106,7 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 		failpoint.Inject("reorgPartRollback2", func(val failpoint.Value) {
 			if val.(bool) {
 				err = errors.New("Injected error by reorgPartRollback2")
-				failpoint.Return(convertAddTablePartitionJob2RollbackJob(d, t, job, err, tblInfo))
+				failpoint.Return(convertReorgPartitionJob2RollbackJob(d, t, job, err, tblInfo))
 			}
 		})
 		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, true)
@@ -3127,7 +3140,7 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 		failpoint.Inject("reorgPartRollback3", func(val failpoint.Value) {
 			if val.(bool) {
 				err = errors.New("Injected error by reorgPartRollback3")
-				failpoint.Return(convertAddTablePartitionJob2RollbackJob(d, t, job, err, tblInfo))
+				failpoint.Return(convertReorgPartitionJob2RollbackJob(d, t, job, err, tblInfo))
 			}
 		})
 		var done bool
@@ -3140,7 +3153,7 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 		failpoint.Inject("reorgPartRollback4", func(val failpoint.Value) {
 			if val.(bool) {
 				err = errors.New("Injected error by reorgPartRollback4")
-				failpoint.Return(convertAddTablePartitionJob2RollbackJob(d, t, job, err, tblInfo))
+				failpoint.Return(convertReorgPartitionJob2RollbackJob(d, t, job, err, tblInfo))
 			}
 			// From now on, we are touching tblInfo, so we cannot call rollback with the same tblInfo
 		})
@@ -3160,7 +3173,7 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 				} else {
 					inAllPartitionColumns, err := checkPartitionKeysConstraint(partInfo, index.Columns, tblInfo)
 					if err != nil {
-						return convertAddTablePartitionJob2RollbackJob(d, t, job, err, tblInfo)
+						return convertReorgPartitionJob2RollbackJob(d, t, job, err, tblInfo)
 					}
 					if !inAllPartitionColumns {
 						// Mark the old unique index as non-readable, and to be dropped,
@@ -3412,7 +3425,7 @@ func doPartitionReorgWork(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job, tb
 				zap.Stringer("job", job), zap.Error(err1))
 		}
 		logutil.DDLLogger().Warn("reorg partition job failed, convert job to rollback", zap.Stringer("job", job), zap.Error(err))
-		ver, err = convertAddTablePartitionJob2RollbackJob(d, t, job, err, tbl.Meta())
+		ver, err = rollbackReorganizePartitionWithErr(d, t, job, err)
 		return false, ver, errors.Trace(err)
 	}
 	return true, ver, err

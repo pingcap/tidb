@@ -16,7 +16,6 @@ package ddl
 
 import (
 	"fmt"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
@@ -27,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"go.uber.org/zap"
 )
 
@@ -339,46 +339,151 @@ func convertAddTablePartitionJob2RollbackJob(d *ddlCtx, t *meta.Meta, job *model
 	for _, pd := range addingDefinitions {
 		partNames = append(partNames, pd.Name.L)
 	}
-	// WASHERE: move things to rollingbackReorganizePartition
-	if job.Type == model.ActionReorganizePartition ||
-		job.Type == model.ActionAlterTablePartitioning ||
-		job.Type == model.ActionRemovePartitioning {
-		partInfo := &model.PartitionInfo{}
-		var pNames []string
-		err = job.DecodeArgs(&pNames, &partInfo)
-		if err != nil {
-			return ver, err
+	job.Args = []any{partNames}
+	_, err = job.Encode(true)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, true)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	job.State = model.JobStateRollingback
+	return ver, errors.Trace(otherwiseErr)
+}
+
+func rollbackReorganizePartitionWithErr(d *ddlCtx, t *meta.Meta, job *model.Job, otherwiseErr error) (ver int64, err error) {
+	if job.SchemaState == model.StateNone {
+		job.State = model.JobStateCancelled
+		return ver, otherwiseErr
+	}
+
+	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, job.SchemaID)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+
+	// addingDefinitions is also in tblInfo, here pass the tblInfo as parameter directly.
+	return convertReorgPartitionJob2RollbackJob(d, t, job, otherwiseErr, tblInfo)
+}
+
+func convertReorgPartitionJob2RollbackJob(d *ddlCtx, t *meta.Meta, job *model.Job, otherwiseErr error, tblInfo *model.TableInfo) (ver int64, err error) {
+	pi := tblInfo.Partition
+	addingDefinitions := pi.AddingDefinitions
+	partNames := make([]string, 0, len(addingDefinitions))
+	for _, pd := range addingDefinitions {
+		partNames = append(partNames, pd.Name.L)
+	}
+	partInfo := &model.PartitionInfo{}
+	var pNames []string
+	err = job.DecodeArgs(&pNames, &partInfo)
+	if err != nil {
+		return ver, err
+	}
+	var dropIndices []*model.IndexInfo
+	// When Global Index is duplicated to a non Global, we later need
+	// to know if if it was Global before (marked to be dropped) or not.
+	globalToUniqueDupMap := make(map[string]int64)
+	for _, indexInfo := range tblInfo.Indices {
+		if !indexInfo.Unique {
+			continue
 		}
-		var dropIndices []*model.IndexInfo
-		for _, indexInfo := range tblInfo.Indices {
-			if indexInfo.Unique {
-				switch indexInfo.State {
-				case model.StateWriteReorganization, model.StateDeleteOnly,
-					model.StateWriteOnly:
-					dropIndices = append(dropIndices, indexInfo)
-				case model.StateDeleteReorganization:
-					if tblInfo.Partition.DDLState == model.StateDeleteReorganization {
-						// Old index marked to be dropped, rollback by making it public again
-						indexInfo.State = model.StatePublic
+		switch indexInfo.State {
+		case model.StateWriteReorganization, model.StateDeleteOnly,
+			model.StateWriteOnly:
+			dropIndices = append(dropIndices, indexInfo)
+		case model.StateDeleteReorganization:
+			if pi.DDLState != model.StateDeleteReorganization {
+				continue
+			}
+			// Old index marked to be dropped, rollback by making it public again
+			indexInfo.State = model.StatePublic
+			if indexInfo.Global {
+				if id, ok := globalToUniqueDupMap[indexInfo.Name.L]; !ok {
+					globalToUniqueDupMap[indexInfo.Name.L] = indexInfo.ID
+				} else {
+					return ver, errors.NewNoStackErrorf("Duplicate global index names '%s', %d != %d", indexInfo.Name.O, indexInfo.ID, id)
+				}
+			}
+		case model.StatePublic:
+			if pi.DDLState != model.StateDeleteReorganization {
+				continue
+			}
+			// We cannot drop the index here, we need to wait until
+			// the next schema version
+			// i.e. rollback in onDropTablePartition
+			// New index that became public in this state,
+			// mark it to be dropped in next schema version
+			if indexInfo.Global {
+				indexInfo.State = model.StateDeleteReorganization
+			} else {
+				// How to know if this index was created as a duplicate or not?
+				if id, ok := globalToUniqueDupMap[indexInfo.Name.L]; ok {
+					// The original index
+					if id >= indexInfo.ID {
+						return ver, errors.NewNoStackErrorf("Indexes in wrong order during rollback, '%s', %d >= %d", indexInfo.Name.O, id, indexInfo.ID)
 					}
-				case model.StatePublic:
-					if tblInfo.Partition.DDLState == model.StateDeleteReorganization {
-						// New index that was public in this state, drop it
-						dropIndices = append(dropIndices, indexInfo)
-					}
+					indexInfo.State = model.StateDeleteReorganization
+				} else {
+					globalToUniqueDupMap[indexInfo.Name.L] = indexInfo.ID
 				}
 			}
 		}
-		for _, indexInfo := range dropIndices {
-			DropIndexColumnFlag(tblInfo, indexInfo)
-			RemoveDependentHiddenColumns(tblInfo, indexInfo)
-			removeIndexInfo(tblInfo, indexInfo)
-		}
-
-		job.Args = []any{partNames, partInfo}
-	} else {
-		job.Args = []any{partNames}
 	}
+	for _, indexInfo := range dropIndices {
+		DropIndexColumnFlag(tblInfo, indexInfo)
+		RemoveDependentHiddenColumns(tblInfo, indexInfo)
+		removeIndexInfo(tblInfo, indexInfo)
+	}
+	if pi.DDLState == model.StateDeleteReorganization {
+		// New partitions are public,
+		// but old is still double written.
+		// OK to revert.
+		// Remove the AddingDefinitions
+		// Add back the DroppingDefinitions
+		if job.Type == model.ActionReorganizePartition {
+			// How to reassemble the list of partitions in the same order?
+			// If RANGE, then there should be the same interval
+			// as was replaced!
+			// If KEY/HASH all are replaced
+			// if LIST TODO: how to get the same order?
+			firstIdx := len(pi.Definitions)
+			for _, def := range pi.AddingDefinitions {
+				found := false
+				for i := range pi.Definitions {
+					if def.ID == pi.Definitions[i].ID {
+						if i == len(pi.Definitions)-1 {
+							pi.Definitions = pi.Definitions[:i]
+						} else {
+							pi.Definitions = append(pi.Definitions[:i], pi.Definitions[i+1:]...)
+						}
+						firstIdx = mathutil.Min(firstIdx, i)
+						found = true
+						break
+					}
+				}
+				if !found {
+					panic("FIXME:!!!")
+				}
+			}
+			if firstIdx < len(pi.Definitions)-1 {
+				newDefs := append(pi.Definitions[:firstIdx], pi.DroppingDefinitions...)
+				newDefs = append(newDefs, pi.Definitions[firstIdx:]...)
+				pi.Definitions = newDefs
+			} else {
+				pi.Definitions = append(pi.Definitions[:firstIdx], pi.DroppingDefinitions...)
+
+			}
+			pi.Num = uint64(len(pi.Definitions))
+		} else {
+			pi.Type, pi.DDLType = pi.DDLType, pi.Type
+			pi.Expr, pi.DDLExpr = pi.DDLExpr, pi.Expr
+			pi.Columns, pi.DDLColumns = pi.DDLColumns, pi.Columns
+			pi.Definitions = pi.DroppingDefinitions
+		}
+	}
+
+	job.Args = []any{partNames, partInfo}
 	_, err = job.Encode(true)
 	if err != nil {
 		return ver, errors.Trace(err)
@@ -478,21 +583,6 @@ func rollingbackTruncateTable(t *meta.Meta, job *model.Job) (ver int64, err erro
 	return cancelOnlyNotHandledJob(job, model.StateNone)
 }
 
-func rollingbackReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
-	if job.SchemaState == model.StateNone {
-		job.State = model.JobStateCancelled
-		return ver, dbterror.ErrCancelledDDLJob
-	}
-
-	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, job.SchemaID)
-	if err != nil {
-		return ver, errors.Trace(err)
-	}
-
-	// addingDefinitions is also in tblInfo, here pass the tblInfo as parameter directly.
-	return convertAddTablePartitionJob2RollbackJob(d, t, job, dbterror.ErrCancelledDDLJob, tblInfo)
-}
-
 func pauseReorgWorkers(w *worker, d *ddlCtx, job *model.Job) (err error) {
 	if needNotifyAndStopReorgWorker(job) {
 		w.jobLogger(job).Info("pausing the DDL job", zap.String("job", job.String()))
@@ -514,7 +604,7 @@ func convertJob2RollbackJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) 
 		ver, err = rollingbackAddTablePartition(d, t, job)
 	case model.ActionReorganizePartition, model.ActionRemovePartitioning,
 		model.ActionAlterTablePartitioning:
-		ver, err = rollingbackReorganizePartition(d, t, job)
+		ver, err = rollbackReorganizePartitionWithErr(d, t, job, dbterror.ErrCancelledDDLJob)
 	case model.ActionDropColumn:
 		ver, err = rollingbackDropColumn(d, t, job)
 	case model.ActionDropIndex, model.ActionDropPrimaryKey:
