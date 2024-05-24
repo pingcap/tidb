@@ -16,6 +16,7 @@ package sortexec
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -97,6 +98,11 @@ type SortExec struct {
 
 // Close implements the Executor Close interface.
 func (e *SortExec) Close() error {
+	defer func() {
+		if r := recover(); r != nil {
+			fmt.Printf("123")
+		}
+	}()
 	// TopN not initializes `e.finishCh` but it will call the Close function
 	if e.finishCh != nil {
 		close(e.finishCh)
@@ -125,11 +131,13 @@ func (e *SortExec) Close() error {
 		// will use `e.Parallel.workers` and `e.Parallel.merger`.
 		channel.Clear(e.Parallel.resultChannel)
 		for i := range e.Parallel.workers {
-			e.Parallel.workers[i].batchRows = nil
-			e.Parallel.workers[i].localSortedRows = nil
-			e.Parallel.workers[i].sortedRowsIter = nil
-			e.Parallel.workers[i].merger = nil
-			e.Parallel.workers[i].memTracker.ReplaceBytesUsed(0)
+			if e.Parallel.workers[i] != nil {
+				e.Parallel.workers[i].batchRows = nil
+				e.Parallel.workers[i].localSortedRows = nil
+				e.Parallel.workers[i].sortedRowsIter = nil
+				e.Parallel.workers[i].merger = nil
+				e.Parallel.workers[i].memTracker.ReplaceBytesUsed(0)
+			}
 		}
 		e.Parallel.merger = nil
 		if e.Parallel.spillAction != nil {
