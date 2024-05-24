@@ -174,9 +174,9 @@ func executeSortExecutor(t *testing.T, exe *sortexec.SortExec, isParallelSort bo
 	tmpCtx := context.Background()
 	err := exe.Open(tmpCtx)
 	require.NoError(t, err)
-	if isParallelSort {
-		exe.IsUnparallel = false
-		exe.InitInParallelModeForTest()
+	if !isParallelSort {
+		exe.IsUnparallel = true
+		exe.InitUnparallelModeForTest()
 	}
 
 	resultChunks := make([]*chunk.Chunk, 0)
@@ -196,9 +196,9 @@ func executeSortExecutorAndManullyTriggerSpill(t *testing.T, exe *sortexec.SortE
 	tmpCtx := context.Background()
 	err := exe.Open(tmpCtx)
 	require.NoError(t, err)
-	if isParallelSort {
-		exe.IsUnparallel = false
-		exe.InitInParallelModeForTest()
+	if !isParallelSort {
+		exe.IsUnparallel = true
+		exe.InitUnparallelModeForTest()
 	}
 
 	resultChunks := make([]*chunk.Chunk, 0)

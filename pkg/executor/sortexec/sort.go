@@ -55,6 +55,7 @@ type SortExec struct {
 	memTracker  *memory.Tracker
 	diskTracker *disk.Tracker
 
+	// TODO delete this variable in the future and remove the unparallel sort
 	IsUnparallel bool
 
 	finishCh chan struct{}
@@ -160,7 +161,7 @@ func (e *SortExec) Open(ctx context.Context) error {
 		e.diskTracker.AttachTo(e.Ctx().GetSessionVars().StmtCtx.DiskTracker)
 	}
 
-	e.IsUnparallel = true
+	e.IsUnparallel = false
 	if e.IsUnparallel {
 		e.Unparallel.Idx = 0
 		e.Unparallel.sortPartitions = e.Unparallel.sortPartitions[:0]
@@ -185,24 +186,9 @@ func (e *SortExec) Open(ctx context.Context) error {
 	return exec.Open(ctx, e.Children(0))
 }
 
-// InitInParallelModeForTest is a function for test
-// After system variable is added, we can delete this function
-func (e *SortExec) InitInParallelModeForTest() {
-	e.Parallel.workers = make([]*parallelSortWorker, e.Ctx().GetSessionVars().ExecutorConcurrency)
-	e.Parallel.chunkChannel = make(chan *chunkWithMemoryUsage, e.Ctx().GetSessionVars().ExecutorConcurrency)
-	e.Parallel.fetcherAndWorkerSyncer = &sync.WaitGroup{}
-	e.Parallel.sortedRowsIters = make([]*chunk.Iterator4Slice, len(e.Parallel.workers))
-	e.Parallel.resultChannel = make(chan rowWithError, e.MaxChunkSize())
-	e.Parallel.closeSync = make(chan struct{})
-	e.Parallel.merger = newMultiWayMerger(&memorySource{sortedRowsIters: e.Parallel.sortedRowsIters}, e.lessRow)
-	e.Parallel.spillHelper = newParallelSortSpillHelper(e, exec.RetTypes(e), e.finishCh, e.lessRow, e.Parallel.resultChannel)
-	e.Parallel.spillAction = newParallelSortSpillDiskAction(e.Parallel.spillHelper)
-	for i := range e.Parallel.sortedRowsIters {
-		e.Parallel.sortedRowsIters[i] = chunk.NewIterator4Slice(nil)
-	}
-	if e.enableTmpStorageOnOOM {
-		e.Ctx().GetSessionVars().MemTracker.FallbackOldAndSetNewAction(e.Parallel.spillAction)
-	}
+func (e *SortExec) InitUnparallelModeForTest() {
+	e.Unparallel.Idx = 0
+	e.Unparallel.sortPartitions = e.Unparallel.sortPartitions[:0]
 }
 
 // Next implements the Executor Next interface.
