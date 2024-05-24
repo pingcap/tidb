@@ -567,7 +567,7 @@ func (s *jobScheduler) delivery2Worker(wk *worker, pool *workerPool, job *model.
 			// Here means the job enters another state (delete only, write only, public, etc...) or is cancelled.
 			// If the job is done or still running or rolling back, we will wait 2 * lease time or util MDL synced to guarantee other servers to update
 			// the newest schema.
-			err := waitSchemaChanged(s.ddlCtx, s.lease*2, schemaVer, job)
+			err := waitSchemaChanged(wk.ctx, s.ddlCtx, s.lease*2, schemaVer, job)
 			if err != nil {
 				return
 			}
