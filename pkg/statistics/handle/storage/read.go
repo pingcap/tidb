@@ -81,6 +81,8 @@ func HistMetaFromStorageWithHighPriority(sctx sessionctx.Context, item *model.Ta
 	return hist, &lastPos, rows[0].GetInt64(4), rows[0].GetInt64(6), nil
 }
 
+// HistogramFromStorageWithPriority wraps the HistogramFromStorage with the given kv.Priority.
+// Sync load and async load will use high priority to get data.
 func HistogramFromStorageWithPriority(
 	sctx sessionctx.Context,
 	tableID int64,
