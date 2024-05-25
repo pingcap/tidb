@@ -33,18 +33,10 @@ type globalStatsKey struct {
 	indexID int64
 }
 
-type globalStatsInfo struct {
-	isIndex int
-	// When the `isIndex == 0`, histIDs will be the column IDs.
-	// Otherwise, histIDs will only contain the index ID.
-	histIDs      []int64
-	statsVersion int
-}
-
 // globalStatsMap is a map used to store which partition tables and the corresponding indexes need global-level stats.
 // The meaning of key in map is the structure that used to store the tableID and indexID.
 // The meaning of value in map is some additional information needed to build global-level stats.
-type globalStatsMap map[globalStatsKey]globalStatsInfo
+type globalStatsMap map[globalStatsKey]globalstats.GlobalStatsInfo
 
 func (e *AnalyzeExec) handleGlobalStats(ctx context.Context, globalStatsMap globalStatsMap) error {
 	globalStatsTableIDs := make(map[int64]struct{}, len(globalStatsMap))
@@ -79,8 +71,8 @@ func (e *AnalyzeExec) handleGlobalStats(ctx context.Context, globalStatsMap glob
 					e.Ctx(),
 					globalOpts, e.Ctx().GetInfoSchema().(infoschema.InfoSchema),
 					globalStatsID.tableID,
-					info.isIndex == 1,
-					info.histIDs,
+					info.IsIndex == 1,
+					info.HistIDs,
 				)
 				if err != nil {
 					logutil.BgLogger().Warn("merge global stats failed",
@@ -103,11 +95,11 @@ func (e *AnalyzeExec) handleGlobalStats(ctx context.Context, globalStatsMap glob
 					err = statsHandle.SaveStatsToStorage(globalStatsID.tableID,
 						globalStats.Count,
 						globalStats.ModifyCount,
-						info.isIndex,
+						info.IsIndex,
 						hg,
 						cms,
 						topN,
-						info.statsVersion,
+						info.StatsVersion,
 						1,
 						true,
 						util.StatsMetaHistorySourceAnalyze,
