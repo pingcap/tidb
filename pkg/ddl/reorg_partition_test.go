@@ -94,9 +94,9 @@ ROW:
 				continue ROW
 			}
 			logutil.DDLLogger().Info("not found in GC",
-				zap.String("key", fmt.Sprintf("%s", it.Key())),
-				zap.String("start", fmt.Sprintf("%v", rowGC[0])),
-				zap.String("end", fmt.Sprintf("%v", rowGC[1])))
+				zap.String("key", keyHex),
+				zap.String("start", startHex),
+				zap.String("end", endHex))
 		}
 		foundTblID := tablecodec.DecodeTableID(it.Key())
 		// There are internal table ids starting from MaxInt48 -1 and allocating decreasing ids
