@@ -361,7 +361,7 @@ func (sm *Manager) startScheduler(basicTask *proto.TaskBase, allocateSlots bool,
 				sm.slotMgr.unReserve(basicTask, reservedExecID)
 			}
 			handle.NotifyTaskChange()
-			sm.logger.Info("task scheduler exist", zap.Int64("task-id", task.ID))
+			sm.logger.Info("task scheduler exit", zap.Int64("task-id", task.ID))
 		}()
 		metrics.UpdateMetricsForRunTask(task)
 		scheduler.ScheduleTask()

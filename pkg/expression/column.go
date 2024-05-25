@@ -276,7 +276,7 @@ func (col *Column) EqualColumn(expr Expression) bool {
 	return false
 }
 
-// EqualByExprAndID extends Equal by comparing virual expression
+// EqualByExprAndID extends Equal by comparing virtual expression
 func (col *Column) EqualByExprAndID(ctx EvalContext, expr Expression) bool {
 	if newCol, ok := expr.(*Column); ok {
 		expr, isOk := col.VirtualExpr.(*ScalarFunction)

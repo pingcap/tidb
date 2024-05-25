@@ -151,7 +151,7 @@ func TestSlowLogFormat(t *testing.T) {
 	seVar.ConnectionInfo = &variable.ConnectionInfo{ClientIP: "192.168.0.1"}
 	seVar.ConnectionID = 1
 	seVar.SessionAlias = "aliasabc"
-	// the out put of the loged CurrentDB should be 'test', should be to lower cased.
+	// the output of the logged CurrentDB should be 'test', should be to lower cased.
 	seVar.CurrentDB = "TeST"
 	seVar.InRestrictedSQL = true
 	seVar.StmtCtx.WaitLockLeaseTime = 1

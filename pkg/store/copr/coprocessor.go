@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"math"
 	"net"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -50,6 +51,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/paging"
+	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/pingcap/tidb/pkg/util/tracing"
 	"github.com/pingcap/tidb/pkg/util/trxevents"
 	"github.com/pingcap/tipb/go-tipb"
@@ -356,7 +358,7 @@ func buildCopTasks(bo *Backoffer, ranges *KeyRanges, opt *buildCopTaskOpt) ([]*c
 		}
 	})
 
-	// TODO(youjiali1995): is there any request type that needn't be splitted by buckets?
+	// TODO(youjiali1995): is there any request type that needn't be split by buckets?
 	locs, err := cache.SplitKeyRangesByBuckets(bo, ranges)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -820,6 +822,10 @@ func (worker *copIteratorWorker) run(ctx context.Context) {
 		})
 		worker.wg.Done()
 	}()
+	// 16KB ballast helps grow the stack to the requirement of copIteratorWorker.
+	// This reduces the `morestack` call during the execution of `handleTask`, thus improvement the efficiency of TiDB.
+	// TODO: remove ballast after global pool is applied.
+	ballast := make([]byte, 16*size.KB)
 	for task := range worker.taskCh {
 		respCh := worker.respChan
 		if respCh == nil {
@@ -838,6 +844,7 @@ func (worker *copIteratorWorker) run(ctx context.Context) {
 			return
 		}
 	}
+	runtime.KeepAlive(ballast)
 }
 
 // open starts workers and sender goroutines.
@@ -928,7 +935,16 @@ func (sender *copIteratorTaskSender) run(connID uint64) {
 	}
 }
 
+// GlobalSyncChForTest is a global channel for test.
+var GlobalSyncChForTest = make(chan struct{})
+
 func (it *copIterator) recvFromRespCh(ctx context.Context, respCh <-chan *copResponse) (resp *copResponse, ok bool, exit bool) {
+	failpoint.Inject("CtxCancelBeforeReceive", func(_ failpoint.Value) {
+		if ctx.Value("TestContextCancel") == "test" {
+			GlobalSyncChForTest <- struct{}{}
+			<-GlobalSyncChForTest
+		}
+	})
 	ticker := time.NewTicker(3 * time.Second)
 	defer ticker.Stop()
 	for {
@@ -1065,7 +1081,7 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 		resp, ok, closed = it.recvFromRespCh(ctx, it.respChan)
 		if !ok || closed {
 			it.actionOnExceed.close()
-			return nil, nil
+			return nil, errors.Trace(ctx.Err())
 		}
 		if resp == finCopResp {
 			it.actionOnExceed.destroyTokenIfNeeded(func() {
@@ -1083,8 +1099,8 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 			task := it.tasks[it.curr]
 			resp, ok, closed = it.recvFromRespCh(ctx, task.respChan)
 			if closed {
-				// Close() is already called, so Next() is invalid.
-				return nil, nil
+				// Close() is called or context cancelled/timeout, so Next() is invalid.
+				return nil, errors.Trace(ctx.Err())
 			}
 			if ok {
 				break
@@ -1530,7 +1546,7 @@ func (worker *copIteratorWorker) handleBatchCopResponse(bo *Backoffer, rpcCtx *t
 	}()
 	appendRemainTasks := func(tasks ...*copTask) {
 		if remainTasks == nil {
-			// allocate size fo remain length
+			// allocate size of remain length
 			remainTasks = make([]*copTask, 0, len(tasks))
 		}
 		remainTasks = append(remainTasks, tasks...)

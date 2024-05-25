@@ -31,6 +31,7 @@ import (
 	sess "github.com/pingcap/tidb/pkg/ddl/internal/session"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/expression"
+	exprctx "github.com/pingcap/tidb/pkg/expression/context"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
@@ -491,11 +492,11 @@ func getModifyColumnInfo(t *meta.Meta, job *model.Job) (*model.DBInfo, *model.Ta
 // Otherwise we set the zero value as original default value.
 // Besides, in insert & update records, we have already implement using the casted value of relative column to insert
 // rather than the original default value.
-func GetOriginDefaultValueForModifyColumn(sessCtx sessionctx.Context, changingCol, oldCol *model.ColumnInfo) (any, error) {
+func GetOriginDefaultValueForModifyColumn(ctx exprctx.BuildContext, changingCol, oldCol *model.ColumnInfo) (any, error) {
 	var err error
 	originDefVal := oldCol.GetOriginDefaultValue()
 	if originDefVal != nil {
-		odv, err := table.CastValue(sessCtx, types.NewDatum(originDefVal), changingCol, false, false)
+		odv, err := table.CastColumnValue(ctx, types.NewDatum(originDefVal), changingCol, false, false)
 		if err != nil {
 			logutil.DDLLogger().Info("cast origin default value failed", zap.Error(err))
 		}
@@ -580,7 +581,7 @@ func (w *worker) onModifyColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 		changingCol.Name = newColName
 		changingCol.ChangeStateInfo = &model.ChangeStateInfo{DependencyColumnOffset: oldCol.Offset}
 
-		originDefVal, err := GetOriginDefaultValueForModifyColumn(newReorgSessCtx(d.store), changingCol, oldCol)
+		originDefVal, err := GetOriginDefaultValueForModifyColumn(newReorgExprCtx(), changingCol, oldCol)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -1803,7 +1804,7 @@ func updateColumnDefaultValue(d *ddlCtx, t *meta.Meta, job *model.Job, newCol *m
 		return ver, infoschema.ErrColumnNotExists.GenWithStackByArgs(newCol.Name, tblInfo.Name)
 	}
 
-	if hasDefaultValue, _, err := checkColumnDefaultValue(newReorgSessCtx(d.store), table.ToColumn(oldCol.Clone()), newCol.DefaultValue); err != nil {
+	if hasDefaultValue, _, err := checkColumnDefaultValue(newReorgExprCtx(), table.ToColumn(oldCol.Clone()), newCol.DefaultValue); err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	} else if !hasDefaultValue {

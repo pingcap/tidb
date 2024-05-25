@@ -47,7 +47,11 @@ func buildKeyInfo(lp base.LogicalPlan) {
 
 // BuildKeyInfo implements base.LogicalPlan BuildKeyInfo interface.
 func (la *LogicalAggregation) BuildKeyInfo(selfSchema *expression.Schema, childSchema []*expression.Schema) {
-	if la.IsPartialModeAgg() {
+	// According to the issue#46962, we can ignore the judgment of partial agg
+	// Sometimes, the agg inside of subquery and there is a true condition in where clause, the agg function is empty.
+	// For example, ``` select xxxx from xxx WHERE TRUE = ALL ( SELECT TRUE GROUP BY 1 LIMIT 1 ) IS NULL IS NOT NULL;
+	// In this case, the agg is complete mode and we can ignore this check.
+	if len(la.AggFuncs) != 0 && la.IsPartialModeAgg() {
 		return
 	}
 	la.logicalSchemaProducer.BuildKeyInfo(selfSchema, childSchema)
