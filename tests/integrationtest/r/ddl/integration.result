@@ -121,15 +121,15 @@ alter table t4 partition by hash(b) partitions 3;
 Error 1503 (HY000): A CLUSTERED INDEX must include all columns in the table's partitioning function
 set tidb_enable_global_index=0;
 alter table t partition by hash(a) partitions 3;
-Error 1503 (HY000): A UNIQUE KEY must include all columns in the table's partitioning function
+Error 1503 (HY000): A UNIQUE INDEX must include all columns in the table's partitioning function
 alter table t partition by key() partitions 3;
-Error 1503 (HY000): A UNIQUE KEY must include all columns in the table's partitioning function
+Error 1503 (HY000): A UNIQUE INDEX must include all columns in the table's partitioning function
 alter table t partition by hash(b) partitions 3;
 Error 1503 (HY000): A PRIMARY KEY must include all columns in the table's partitioning function
 alter table t2 partition by hash(b) partitions 3;
 Error 1503 (HY000): A PRIMARY KEY must include all columns in the table's partitioning function
 alter table t3 partition by key(a) partitions 3;
-Error 1503 (HY000): A UNIQUE KEY must include all columns in the table's partitioning function
+Error 1503 (HY000): A UNIQUE INDEX must include all columns in the table's partitioning function
 alter table t4 partition by hash(b) partitions 3;
 Error 1503 (HY000): A PRIMARY KEY must include all columns in the table's partitioning function
 drop table t, t2, t3, t4;
