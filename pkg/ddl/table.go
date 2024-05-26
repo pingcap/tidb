@@ -1494,17 +1494,25 @@ func onUpdateFlashReplicaStatus(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 }
 
 func checkTableNotExists(d *ddlCtx, t *meta.Meta, schemaID int64, tableName string) error {
-	// Try to use memory schema info to check first.
-	currVer, err := t.GetSchemaVersion()
-	if err != nil {
-		return err
+	// checking using cached info schema should be enough.
+	// as existing tables are correctly checked in the first place. and we calculate
+	// job dependencies before running jobs, so there will not be 2 jobs creating
+	// same table running concurrently.
+	//
+	// if there are 2 owners A and B, we have 2 consecutive jobs J1 and J2 which
+	// are creating the same table. those 2 jobs might be running concurrently when
+	// A sees J1 first and B sees J2 first. But for B sees J2 first, J1 must already
+	// be done and synced, and been deleted from tidb_ddl_job table, as we are querying
+	// jobs in the order of job id. During syncing J1, B should have synced the schema
+	// with the latest schema version, so when B runs J2, below check will see the table
+	// already exists, and J2 will fail.
+	// TODO is above description correct in all cases?
+	if !d.ownerManager.IsOwner() {
+		// TODO: we need to change how background loop are started to avoid checking owner every where.
+		return dbterror.ErrNotOwner
 	}
 	is := d.infoCache.GetLatest()
-	if is.SchemaMetaVersion() == currVer {
-		return checkTableNotExistsFromInfoSchema(is, schemaID, tableName)
-	}
-
-	return checkTableNotExistsFromStore(t, schemaID, tableName)
+	return checkTableNotExistsFromInfoSchema(is, schemaID, tableName)
 }
 
 func checkTableNotExistsByName(d *ddlCtx, t *meta.Meta, schemaID int64, schemaName, tableName string) error {
@@ -1521,6 +1529,11 @@ func checkTableNotExistsByName(d *ddlCtx, t *meta.Meta, schemaID int64, schemaNa
 }
 
 func checkConstraintNamesNotExists(t *meta.Meta, schemaID int64, constraints []*model.ConstraintInfo) error {
+	st := time.Now()
+	defer func() {
+		logutil.DDLLogger().Info("DDL cost analysis",
+			zap.Duration("cost", time.Since(st)), zap.String("call", "checkConstraintNamesNotExists"))
+	}()
 	if len(constraints) == 0 {
 		return nil
 	}
@@ -1557,6 +1570,11 @@ func checkTableIDNotExists(t *meta.Meta, schemaID, tableID int64) error {
 }
 
 func checkTableNotExistsFromInfoSchema(is infoschema.InfoSchema, schemaID int64, tableName string) error {
+	st := time.Now()
+	defer func() {
+		logutil.DDLLogger().Info("DDL cost analysis",
+			zap.Duration("cost", time.Since(st)), zap.String("call", "checkTableNotExistsFromInfoSchema"))
+	}()
 	// Check this table's database.
 	schema, ok := is.SchemaByID(schemaID)
 	if !ok {
@@ -1569,6 +1587,11 @@ func checkTableNotExistsFromInfoSchema(is infoschema.InfoSchema, schemaID int64,
 }
 
 func checkTableNotExistsFromStore(t *meta.Meta, schemaID int64, tableName string) error {
+	st := time.Now()
+	defer func() {
+		logutil.DDLLogger().Info("DDL cost analysis",
+			zap.Duration("cost", time.Since(st)), zap.String("call", "checkTableNotExistsFromStore"))
+	}()
 	// Check this table's database.
 	tbls, err := t.ListSimpleTables(schemaID)
 	if err != nil {

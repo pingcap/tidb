@@ -225,6 +225,11 @@ func (do *Domain) EtcdClient() *clientv3.Client {
 // 4. the changed table IDs if it is not full load
 // 5. an error if any
 func (do *Domain) loadInfoSchema(startTS uint64) (infoschema.InfoSchema, bool, int64, *transaction.RelatedSchemaChange, error) {
+	st := time.Now()
+	defer func() {
+		logutil.BgLogger().Info("DDL cost analysis",
+			zap.Duration("cost", time.Since(st)), zap.String("call", "loadInfoSchema"))
+	}()
 	beginTime := time.Now()
 	defer func() {
 		infoschema_metrics.LoadSchemaDurationTotal.Observe(time.Since(beginTime).Seconds())
@@ -331,6 +336,11 @@ func (do *Domain) loadInfoSchema(startTS uint64) (infoschema.InfoSchema, bool, i
 
 // Returns the timestamp of a schema version, which is the commit timestamp of the schema diff
 func (do *Domain) getTimestampForSchemaVersionWithNonEmptyDiff(m *meta.Meta, version int64, startTS uint64) (uint64, error) {
+	st := time.Now()
+	defer func() {
+		logutil.BgLogger().Info("DDL cost analysis",
+			zap.Duration("cost", time.Since(st)), zap.String("call", "getTimestampForSchemaVersionWithNonEmptyDiff"))
+	}()
 	tikvStore, ok := do.Store().(helper.Storage)
 	if ok {
 		newHelper := helper.NewHelper(tikvStore)
@@ -449,6 +459,11 @@ func (*Domain) fetchSchemasWithTables(schemas []*model.DBInfo, m *meta.Meta, don
 // Return false if the schema can not be loaded by schema diff, then we need to do full load.
 // The second returned value is the delta updated table and partition IDs.
 func (do *Domain) tryLoadSchemaDiffs(m *meta.Meta, usedVersion, newVersion int64, startTS uint64) (infoschema.InfoSchema, *transaction.RelatedSchemaChange, []string, error) {
+	st := time.Now()
+	defer func() {
+		logutil.BgLogger().Info("DDL cost analysis",
+			zap.Duration("cost", time.Since(st)), zap.String("call", "tryLoadSchemaDiffs"))
+	}()
 	var diffs []*model.SchemaDiff
 	for usedVersion < newVersion {
 		usedVersion++
@@ -593,6 +608,11 @@ func getFlashbackStartTSFromErrorMsg(err error) uint64 {
 // Reload reloads InfoSchema.
 // It's public in order to do the test.
 func (do *Domain) Reload() error {
+	st := time.Now()
+	defer func() {
+		logutil.BgLogger().Info("DDL cost analysis",
+			zap.Duration("cost", time.Since(st)), zap.String("call", "DomainReload"))
+	}()
 	failpoint.Inject("ErrorMockReloadFailed", func(val failpoint.Value) {
 		if val.(bool) {
 			failpoint.Return(errors.New("mock reload failed"))
@@ -789,6 +809,11 @@ func (do *Domain) topologySyncerKeeper() {
 }
 
 func (do *Domain) refreshMDLCheckTableInfo() {
+	st := time.Now()
+	defer func() {
+		logutil.BgLogger().Info("DDL cost analysis",
+			zap.Duration("cost", time.Since(st)), zap.String("call", "refreshMDLCheckTableInfo"))
+	}()
 	se, err := do.sysSessionPool.Get()
 
 	if err != nil {
@@ -804,12 +829,17 @@ func (do *Domain) refreshMDLCheckTableInfo() {
 	defer do.sysSessionPool.Put(se)
 	exec := sctx.GetRestrictedSQLExecutor()
 	domainSchemaVer := do.InfoSchema().SchemaMetaVersion()
+	st2 := time.Now()
 	rows, _, err := exec.ExecRestrictedSQL(kv.WithInternalSourceType(context.Background(), kv.InternalTxnMeta), nil,
 		fmt.Sprintf("select job_id, version, table_ids from mysql.tidb_mdl_info where version <= %d", domainSchemaVer))
 	if err != nil {
 		logutil.BgLogger().Warn("get mdl info from tidb_mdl_info failed", zap.Error(err))
 		return
 	}
+	logutil.BgLogger().Info("DDL cost analysis",
+		zap.Duration("cost", time.Since(st2)), zap.String("call", "refreshMDLCheckTableInfo-QueryJobs"))
+
+	st3 := time.Now()
 	do.mdlCheckTableInfo.mu.Lock()
 	defer do.mdlCheckTableInfo.mu.Unlock()
 
@@ -820,12 +850,13 @@ func (do *Domain) refreshMDLCheckTableInfo() {
 		do.mdlCheckTableInfo.jobsVerMap[rows[i].GetInt64(0)] = rows[i].GetInt64(1)
 		do.mdlCheckTableInfo.jobsIDsMap[rows[i].GetInt64(0)] = rows[i].GetString(2)
 	}
+	logutil.BgLogger().Info("DDL cost analysis",
+		zap.Duration("cost", time.Since(st3)), zap.String("call", "refreshMDLCheckTableInfo-updateMap"))
 }
 
 func (do *Domain) mdlCheckLoop() {
 	ticker := time.Tick(mdlCheckLookDuration)
 	var saveMaxSchemaVersion int64
-	jobNeedToSync := false
 	jobCache := make(map[int64]int64, 1000)
 
 	for {
@@ -837,70 +868,65 @@ func (do *Domain) mdlCheckLoop() {
 			return
 		}
 
-		if !variable.EnableMDL.Load() {
-			continue
-		}
-
-		do.mdlCheckTableInfo.mu.Lock()
-		maxVer := do.mdlCheckTableInfo.newestVer
-		if maxVer > saveMaxSchemaVersion {
-			saveMaxSchemaVersion = maxVer
-		} else if !jobNeedToSync {
-			// Schema doesn't change, and no job to check in the last run.
-			do.mdlCheckTableInfo.mu.Unlock()
-			continue
-		}
-
-		jobNeedToCheckCnt := len(do.mdlCheckTableInfo.jobsVerMap)
-		if jobNeedToCheckCnt == 0 {
-			jobNeedToSync = false
-			do.mdlCheckTableInfo.mu.Unlock()
-			continue
-		}
-
-		jobsVerMap := make(map[int64]int64, len(do.mdlCheckTableInfo.jobsVerMap))
-		jobsIDsMap := make(map[int64]string, len(do.mdlCheckTableInfo.jobsIDsMap))
-		for k, v := range do.mdlCheckTableInfo.jobsVerMap {
-			jobsVerMap[k] = v
-		}
-		for k, v := range do.mdlCheckTableInfo.jobsIDsMap {
-			jobsIDsMap[k] = v
-		}
-		do.mdlCheckTableInfo.mu.Unlock()
-
-		jobNeedToSync = true
-
-		sm := do.InfoSyncer().GetSessionManager()
-		if sm == nil {
-			logutil.BgLogger().Info("session manager is nil")
-		} else {
-			sm.CheckOldRunningTxn(jobsVerMap, jobsIDsMap)
-		}
-
-		if len(jobsVerMap) == jobNeedToCheckCnt {
-			jobNeedToSync = false
-		}
-
-		// Try to gc jobCache.
-		if len(jobCache) > 1000 {
-			jobCache = make(map[int64]int64, 1000)
-		}
-
-		for jobID, ver := range jobsVerMap {
-			if cver, ok := jobCache[jobID]; ok && cver >= ver {
-				// Already update, skip it.
-				continue
+		func() {
+			st := time.Now()
+			defer func() {
+				logutil.BgLogger().Info("DDL cost analysis",
+					zap.Duration("cost", time.Since(st)), zap.String("call", "mdlCheckUpdate"))
+			}()
+			if !variable.EnableMDL.Load() {
+				return
 			}
-			logutil.BgLogger().Info("mdl gets lock, update self version to owner", zap.Int64("jobID", jobID), zap.Int64("version", ver))
-			err := do.ddl.SchemaSyncer().UpdateSelfVersion(context.Background(), jobID, ver)
-			if err != nil {
-				jobNeedToSync = true
-				logutil.BgLogger().Warn("mdl gets lock, update self version to owner failed",
-					zap.Int64("jobID", jobID), zap.Int64("version", ver), zap.Error(err))
+
+			do.mdlCheckTableInfo.mu.Lock()
+			maxVer := do.mdlCheckTableInfo.newestVer
+			if maxVer > saveMaxSchemaVersion {
+				saveMaxSchemaVersion = maxVer
+			}
+
+			jobNeedToCheckCnt := len(do.mdlCheckTableInfo.jobsVerMap)
+			if jobNeedToCheckCnt == 0 {
+				do.mdlCheckTableInfo.mu.Unlock()
+				return
+			}
+
+			jobsVerMap := make(map[int64]int64, len(do.mdlCheckTableInfo.jobsVerMap))
+			jobsIDsMap := make(map[int64]string, len(do.mdlCheckTableInfo.jobsIDsMap))
+			for k, v := range do.mdlCheckTableInfo.jobsVerMap {
+				jobsVerMap[k] = v
+			}
+			for k, v := range do.mdlCheckTableInfo.jobsIDsMap {
+				jobsIDsMap[k] = v
+			}
+			do.mdlCheckTableInfo.mu.Unlock()
+
+			sm := do.InfoSyncer().GetSessionManager()
+			if sm == nil {
+				logutil.BgLogger().Info("session manager is nil")
 			} else {
-				jobCache[jobID] = ver
+				sm.CheckOldRunningTxn(jobsVerMap, jobsIDsMap)
 			}
-		}
+
+			// Try to gc jobCache.
+			//if len(jobCache) > 1000 {
+			//	jobCache = make(map[int64]int64, 1000)
+			//}
+
+			for jobID, ver := range jobsVerMap {
+				if cver, ok := jobCache[jobID]; ok && cver >= ver {
+					// Already update, skip it.
+					continue
+				}
+				logutil.BgLogger().Info("mdl gets lock, update self version to owner", zap.Int64("jobID", jobID), zap.Int64("version", ver))
+				err := do.ddl.SchemaSyncer().UpdateSelfVersion(context.Background(), jobID, ver)
+				if err != nil {
+					logutil.BgLogger().Warn("mdl gets lock, update self version to owner failed",
+						zap.Int64("jobID", jobID), zap.Int64("version", ver), zap.Error(err))
+				} else {
+					jobCache[jobID] = ver
+				}
+			}
+		}()
 	}
 }
 
@@ -923,7 +949,10 @@ func (do *Domain) loadSchemaInLoop(ctx context.Context, lease time.Duration) {
 				logutil.BgLogger().Error("reload schema in loop failed", zap.Error(err))
 			}
 		case _, ok := <-syncer.GlobalVersionCh():
+			st := time.Now()
 			err := do.Reload()
+			logutil.BgLogger().Info("DDL cost analysis",
+				zap.Duration("cost", time.Since(st)), zap.String("call", "loadSchemaInLoop-Reload"))
 			if err != nil {
 				logutil.BgLogger().Error("reload schema in loop failed", zap.Error(err))
 			}
@@ -1098,7 +1127,7 @@ func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duratio
 			jobsVerMap: make(map[int64]int64),
 			jobsIDsMap: make(map[int64]string),
 		},
-		mdlCheckCh: make(chan struct{}),
+		mdlCheckCh: make(chan struct{}, 64),
 	}
 
 	do.infoCache = infoschema.NewCache(do, int(variable.SchemaVersionCacheLimit.Load()))

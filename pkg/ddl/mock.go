@@ -111,12 +111,12 @@ func (s *MockSchemaSyncer) OwnerUpdateGlobalVersion(_ context.Context, _ int64) 
 }
 
 // OwnerCheckAllVersions implements SchemaSyncer.OwnerCheckAllVersions interface.
-func (s *MockSchemaSyncer) OwnerCheckAllVersions(ctx context.Context, jobID int64, latestVer int64) error {
+func (s *MockSchemaSyncer) OwnerCheckAllVersions(ctx context.Context, jobID *model.Job, latestVer int64) error {
 	ticker := time.NewTicker(mockCheckVersInterval)
 	defer ticker.Stop()
 
 	failpoint.Inject("mockOwnerCheckAllVersionSlow", func(val failpoint.Value) {
-		if v, ok := val.(int); ok && v == int(jobID) {
+		if v, ok := val.(int); ok && v == int(jobID.ID) {
 			time.Sleep(2 * time.Second)
 		}
 	})

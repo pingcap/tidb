@@ -17,16 +17,25 @@ package ddl
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/ddl/label"
+	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"go.uber.org/zap"
 )
 
 func onCreateSchema(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
+	st := time.Now()
+	defer func() {
+		logutil.DDLLogger().Info("DDL cost analysis",
+			zap.Duration("cost", time.Since(st)), zap.String("call", "onCreateSchema"))
+	}()
 	schemaID := job.SchemaID
 	dbInfo := &model.DBInfo{}
 	if err := job.DecodeArgs(dbInfo); err != nil {
@@ -70,19 +79,26 @@ func onCreateSchema(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error
 }
 
 func checkSchemaNotExists(d *ddlCtx, t *meta.Meta, schemaID int64, dbInfo *model.DBInfo) error {
-	// Try to use memory schema info to check first.
-	currVer, err := t.GetSchemaVersion()
-	if err != nil {
-		return err
+	st := time.Now()
+	defer func() {
+		logutil.DDLLogger().Info("DDL cost analysis",
+			zap.Duration("cost", time.Since(st)), zap.String("call", "checkSchemaNotExists"))
+	}()
+	if !d.ownerManager.IsOwner() {
+		// TODO: we need to change how background loop are started to avoid checking owner every where.
+		return dbterror.ErrNotOwner
 	}
+	// see checkTableNotExists for the rationale for why we check using info schema only.
 	is := d.infoCache.GetLatest()
-	if is.SchemaMetaVersion() == currVer {
-		return checkSchemaNotExistsFromInfoSchema(is, schemaID, dbInfo)
-	}
-	return checkSchemaNotExistsFromStore(t, schemaID, dbInfo)
+	return checkSchemaNotExistsFromInfoSchema(is, schemaID, dbInfo)
 }
 
 func checkSchemaNotExistsFromInfoSchema(is infoschema.InfoSchema, schemaID int64, dbInfo *model.DBInfo) error {
+	st := time.Now()
+	defer func() {
+		logutil.DDLLogger().Info("DDL cost analysis",
+			zap.Duration("cost", time.Since(st)), zap.String("call", "checkSchemaNotExistsFromInfoSchema"))
+	}()
 	// Check database exists by name.
 	if is.SchemaExists(dbInfo.Name) {
 		return infoschema.ErrDatabaseExists.GenWithStackByArgs(dbInfo.Name)
@@ -95,6 +111,11 @@ func checkSchemaNotExistsFromInfoSchema(is infoschema.InfoSchema, schemaID int64
 }
 
 func checkSchemaNotExistsFromStore(t *meta.Meta, schemaID int64, dbInfo *model.DBInfo) error {
+	st := time.Now()
+	defer func() {
+		logutil.DDLLogger().Info("DDL cost analysis",
+			zap.Duration("cost", time.Since(st)), zap.String("call", "checkSchemaNotExistsFromStore"))
+	}()
 	dbs, err := t.ListDatabases()
 	if err != nil {
 		return errors.Trace(err)

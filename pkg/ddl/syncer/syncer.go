@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	disttaskutil "github.com/pingcap/tidb/pkg/util/disttask"
@@ -127,7 +128,7 @@ type SchemaSyncer interface {
 	// OwnerCheckAllVersions checks whether all followers' schema version are equal to
 	// the latest schema version. (exclude the isolated TiDB)
 	// It returns until all servers' versions are equal to the latest version.
-	OwnerCheckAllVersions(ctx context.Context, jobID int64, latestVer int64) error
+	OwnerCheckAllVersions(ctx context.Context, jobID *model.Job, latestVer int64) error
 	// SyncJobSchemaVerLoop syncs the schema versions on all TiDB nodes for DDL jobs.
 	SyncJobSchemaVerLoop(ctx context.Context)
 	// Close ends SchemaSyncer.
@@ -152,6 +153,11 @@ func newNodeVersions(initialCap int, fn func(map[string]int64) bool) *nodeVersio
 }
 
 func (v *nodeVersions) add(nodeID string, ver int64) {
+	st := time.Now()
+	defer func() {
+		logutil.DDLLogger().Info("DDL cost analysis",
+			zap.Duration("cost", time.Since(st)), zap.String("call", "nodeVersions-add"))
+	}()
 	v.Lock()
 	defer v.Unlock()
 	v.nodeVersions[nodeID] = ver
@@ -332,6 +338,7 @@ func (s *schemaVersionSyncer) UpdateSelfVersion(ctx context.Context, jobID int64
 			clientv3.WithLease(s.loadSession().Lease()))
 	}
 
+	logutil.DDLLogger().Info("SYNC VERSION for job", zap.Int64("job_id", jobID), zap.Int64("version", version), zap.String("action", "write-pd"))
 	metrics.UpdateSelfVersionHistogram.WithLabelValues(metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
 	return errors.Trace(err)
 }
@@ -360,7 +367,7 @@ func (s *schemaVersionSyncer) removeSelfVersionPath() error {
 }
 
 // OwnerCheckAllVersions implements SchemaSyncer.OwnerCheckAllVersions interface.
-func (s *schemaVersionSyncer) OwnerCheckAllVersions(ctx context.Context, jobID int64, latestVer int64) error {
+func (s *schemaVersionSyncer) OwnerCheckAllVersions(ctx context.Context, job *model.Job, latestVer int64) error {
 	startTime := time.Now()
 	if !variable.EnableMDL.Load() {
 		time.Sleep(CheckVersFirstWaitTime)
@@ -386,10 +393,14 @@ func (s *schemaVersionSyncer) OwnerCheckAllVersions(ctx context.Context, jobID i
 		}
 
 		if variable.EnableMDL.Load() {
+			st := time.Now()
 			serverInfos, err := infosync.GetAllServerInfo(ctx)
 			if err != nil {
 				return err
 			}
+			logutil.DDLLogger().Info("DDL cost analysis",
+				zap.Duration("cost", time.Since(st)), zap.String("call", "syncSchemaVersion-GetAllServerInfo"),
+				zap.Stringer("job_state", job.State), zap.Int64("job_id", job.ID))
 			updatedMap = make(map[string]string)
 			instance2id := make(map[string]string)
 
@@ -413,7 +424,8 @@ func (s *schemaVersionSyncer) OwnerCheckAllVersions(ctx context.Context, jobID i
 
 		// Check all schema versions.
 		if variable.EnableMDL.Load() {
-			notifyCh := make(chan struct{})
+			notifyCh := make(chan struct{}, 1)
+			var sent atomic.Bool
 			var unmatchedNodeID atomic.Pointer[string]
 			matchFn := func(nodeVersions map[string]int64) bool {
 				if len(nodeVersions) < len(updatedMap) {
@@ -426,12 +438,19 @@ func (s *schemaVersionSyncer) OwnerCheckAllVersions(ctx context.Context, jobID i
 						return false
 					}
 				}
-				close(notifyCh)
+				if !sent.Load() {
+					notifyCh <- struct{}{}
+					sent.Store(true)
+				}
 				return true
 			}
-			item := s.jobSchemaVerMatchOrSet(jobID, matchFn)
+			item := s.jobSchemaVerMatchOrSet(job, matchFn)
+			st := time.Now()
 			select {
 			case <-notifyCh:
+				logutil.DDLLogger().Info("DDL cost analysis",
+					zap.Duration("cost", time.Since(st)), zap.String("call", "syncSchemaVersion-notified"),
+					zap.Stringer("job_state", job.State), zap.Int64("job_id", job.ID))
 				return nil
 			case <-ctx.Done():
 				item.clearMatchFn()
@@ -441,11 +460,11 @@ func (s *schemaVersionSyncer) OwnerCheckAllVersions(ctx context.Context, jobID i
 				if id := unmatchedNodeID.Load(); id != nil {
 					logutil.DDLLogger().Info("syncer check all versions, someone is not synced",
 						zap.String("info", *id),
-						zap.Int64("ddl job id", jobID),
+						zap.Int64("ddl job id", job.ID),
 						zap.Int64("ver", latestVer))
 				} else {
 					logutil.DDLLogger().Info("syncer check all versions, all nodes are not synced",
-						zap.Int64("ddl job id", jobID),
+						zap.Int64("ddl job id", job.ID),
 						zap.Int64("ver", latestVer))
 				}
 			}
@@ -554,6 +573,8 @@ func (s *schemaVersionSyncer) handleJobSchemaVerKV(kv *mvccpb.KeyValue, tp mvccp
 		return
 	}
 	if tp == mvccpb.PUT {
+		logutil.DDLLogger().Info("SYNC VERSION for job", zap.Int64("job_id", jobID), zap.Int64("version", schemaVer), zap.String("action", "receive-event"))
+		st := time.Now()
 		s.mu.Lock()
 		item, exists := s.jobNodeVersions[jobID]
 		if !exists {
@@ -561,8 +582,11 @@ func (s *schemaVersionSyncer) handleJobSchemaVerKV(kv *mvccpb.KeyValue, tp mvccp
 			s.jobNodeVersions[jobID] = item
 		}
 		s.mu.Unlock()
+		logutil.DDLLogger().Info("DDL cost analysis",
+			zap.Duration("cost", time.Since(st)), zap.String("call", "handleJobSchemaVerKV-get-item"))
 		item.add(tidbID, schemaVer)
 	} else { // DELETE
+		st := time.Now()
 		s.mu.Lock()
 		if item, exists := s.jobNodeVersions[jobID]; exists {
 			item.del(tidbID)
@@ -571,19 +595,27 @@ func (s *schemaVersionSyncer) handleJobSchemaVerKV(kv *mvccpb.KeyValue, tp mvccp
 			}
 		}
 		s.mu.Unlock()
+		logutil.DDLLogger().Info("DDL cost analysis",
+			zap.Duration("cost", time.Since(st)), zap.String("call", "handleJobSchemaVerKV-delete-item"))
 	}
 }
 
-func (s *schemaVersionSyncer) jobSchemaVerMatchOrSet(jobID int64, matchFn func(map[string]int64) bool) *nodeVersions {
+func (s *schemaVersionSyncer) jobSchemaVerMatchOrSet(job *model.Job, matchFn func(map[string]int64) bool) *nodeVersions {
+	st := time.Now()
+	defer func() {
+		logutil.DDLLogger().Info("DDL cost analysis",
+			zap.Duration("cost", time.Since(st)), zap.String("call", "syncSchemaVersion-jobSchemaVerMatchOrSet"),
+			zap.Stringer("job_state", job.State), zap.Int64("job_id", job.ID))
+	}()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	item, exists := s.jobNodeVersions[jobID]
+	item, exists := s.jobNodeVersions[job.ID]
 	if exists {
 		item.matchOrSet(matchFn)
 	} else {
 		item = newNodeVersions(1, matchFn)
-		s.jobNodeVersions[jobID] = item
+		s.jobNodeVersions[job.ID] = item
 	}
 	return item
 }
