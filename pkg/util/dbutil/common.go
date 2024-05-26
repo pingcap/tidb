@@ -897,9 +897,14 @@ func GetKeyspaceNameFromTiDB(db *sql.DB) (string, error) {
 	getConfigTableSQL := "select  TABLE_NAME  from  INFORMATION_SCHEMA . TABLES  where TABLE_SCHEMA ='INFORMATION_SCHEMA' and  TABLE_NAME ='KEYSPACE_META'"
 	rows, err := db.Query(getConfigTableSQL)
 	if err != nil {
-		return "", rows.Err()
+		return "", err
 	}
 	defer rows.Close()
+
+	if rows == nil {
+		return "", nil
+	}
+
 	if !rows.Next() {
 		return "", rows.Err()
 	}
@@ -918,7 +923,8 @@ func GetKeyspaceNameFromTiDB(db *sql.DB) (string, error) {
 		if err != nil {
 			return "", err
 		}
+		log.Info("get keyspace from TiDB", zap.String("keyspace-name", keyspaceName))
+		return keyspaceName, rows.Err()
 	}
-	log.Info("get keyspace from TiDB", zap.String("keyspace-name", keyspaceName))
-	return keyspaceName, rows.Err()
+	return "", nil
 }

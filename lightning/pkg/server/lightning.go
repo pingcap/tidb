@@ -22,6 +22,7 @@ import (
 	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
+	"database/sql"
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
@@ -58,7 +59,6 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/tikv"
 	_ "github.com/pingcap/tidb/pkg/planner/core" // init expression.EvalSimpleAst related function
 	"github.com/pingcap/tidb/pkg/util"
-	"github.com/pingcap/tidb/pkg/util/dbutil"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/promutil"
 	"github.com/pingcap/tidb/pkg/util/redact"
@@ -399,6 +399,34 @@ var (
 	taskCfgRecorderKey = "taskCfgRecorderKey"
 )
 
+func getKeyspaceName(db *sql.DB) (string, error) {
+	if db == nil {
+		return "", nil
+	}
+
+	rows, err := db.Query("show config where Type = 'tidb' and name = 'keyspace-name'")
+	if err != nil {
+		return "", err
+	}
+	//nolint: errcheck
+	defer rows.Close()
+
+	var (
+		_type     string
+		_instance string
+		_name     string
+		value     string
+	)
+	if rows.Next() {
+		err = rows.Scan(&_type, &_instance, &_name, &value)
+		if err != nil {
+			return "", err
+		}
+	}
+
+	return value, rows.Err()
+}
+
 func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, o *options) (err error) {
 	build.LogInfo(build.Lightning)
 	o.logger.Info("cfg", zap.Stringer("cfg", taskCfg))
@@ -537,7 +565,7 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, o *opti
 	if taskCfg.TikvImporter.Backend == config.BackendLocal {
 		keyspaceName = taskCfg.TikvImporter.KeyspaceName
 		if keyspaceName == "" {
-			keyspaceName, err = dbutil.GetKeyspaceNameFromTiDB(db)
+			keyspaceName, err = getKeyspaceName(db)
 			if err != nil {
 				o.logger.Warn("unable to get keyspace name, lightning will use empty keyspace name", zap.Error(err))
 			}

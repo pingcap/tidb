@@ -27,7 +27,6 @@ go_library(
         "//pkg/lightning/tikv",
         "//pkg/planner/core",
         "//pkg/util",
-        "//pkg/util/dbutil",
         "//pkg/util/logutil",
         "//pkg/util/promutil",
         "//pkg/util/redact",
