@@ -150,7 +150,11 @@ func (p *PhysicalHashJoin) ResolveIndicesItself() (err error) {
 	for i := 0; i < colsNeedResolving; i++ {
 		findIdx := -1
 		for j := 0; j < len(mergedSchema.Columns); j++ {
+<<<<<<< HEAD
 			if !p.schema.Columns[i].Equal(p.SCtx(), mergedSchema.Columns[j]) || marked[j] {
+=======
+			if !p.schema.Columns[i].EqualColumn(mergedSchema.Columns[j]) || marked[j] {
+>>>>>>> 58e5284b3f4 (planner,executor: fix join resolveIndex won't find its column from children schema & amend join's lused and rused logic for reversed column ref from join schema to its children (#51203))
 				continue
 			}
 			// resolve to a same unique id one, and it not being marked.

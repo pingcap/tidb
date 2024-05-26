@@ -22,7 +22,10 @@ import (
 	"math/rand"
 	"os"
 	"slices"
+<<<<<<< HEAD
 	"sort"
+=======
+>>>>>>> 58e5284b3f4 (planner,executor: fix join resolveIndex won't find its column from children schema & amend join's lused and rused logic for reversed column ref from join schema to its children (#51203))
 	"strconv"
 	"strings"
 	"sync"
@@ -906,7 +909,11 @@ func prepareResolveIndices(joinSchema, lSchema, rSchema *expression.Schema, join
 	for i := 0; i < colsNeedResolving; i++ {
 		findIdx := -1
 		for j := 0; j < len(mergedSchema.Columns); j++ {
+<<<<<<< HEAD
 			if !joinSchema.Columns[i].Equal(nil, mergedSchema.Columns[j]) || marked[j] {
+=======
+			if !joinSchema.Columns[i].EqualColumn(mergedSchema.Columns[j]) || marked[j] {
+>>>>>>> 58e5284b3f4 (planner,executor: fix join resolveIndex won't find its column from children schema & amend join's lused and rused logic for reversed column ref from join schema to its children (#51203))
 				continue
 			}
 			// resolve to a same unique id one, and it not being marked.
@@ -1006,7 +1013,11 @@ func prepare4HashJoin(testCase *hashJoinTestCase, innerExec, outerExec exec.Exec
 
 // markChildrenUsedColsForTest compares each child with the output schema, and mark
 // each column of the child is used by output or not.
+<<<<<<< HEAD
 func markChildrenUsedColsForTest(outputSchema *expression.Schema, childSchemas ...*expression.Schema) (childrenUsed [][]int) {
+=======
+func markChildrenUsedColsForTest(ctx sessionctx.Context, outputSchema *expression.Schema, childSchemas ...*expression.Schema) (childrenUsed [][]int) {
+>>>>>>> 58e5284b3f4 (planner,executor: fix join resolveIndex won't find its column from children schema & amend join's lused and rused logic for reversed column ref from join schema to its children (#51203))
 	childrenUsed = make([][]int, 0, len(childSchemas))
 	markedOffsets := make(map[int]int)
 	for originalIdx, col := range outputSchema.Columns {

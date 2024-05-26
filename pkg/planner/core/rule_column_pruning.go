@@ -34,7 +34,11 @@ type columnPruner struct {
 
 func (*columnPruner) optimize(_ context.Context, lp LogicalPlan, opt *logicalOptimizeOp) (LogicalPlan, bool, error) {
 	planChanged := false
+<<<<<<< HEAD
 	lp, err := lp.PruneColumns(slices.Clone(lp.Schema().Columns), opt)
+=======
+	lp, err := lp.PruneColumns(lp.Schema().Columns, opt)
+>>>>>>> 58e5284b3f4 (planner,executor: fix join resolveIndex won't find its column from children schema & amend join's lused and rused logic for reversed column ref from join schema to its children (#51203))
 	if err != nil {
 		return nil, planChanged, err
 	}
@@ -100,7 +104,11 @@ func (p *LogicalExpand) PruneColumns(parentUsedCols []*expression.Column, opt *l
 // PruneColumns implements LogicalPlan interface.
 // If any expression has SetVar function or Sleep function, we do not prune it.
 func (p *LogicalProjection) PruneColumns(parentUsedCols []*expression.Column, opt *logicalOptimizeOp) (LogicalPlan, error) {
+<<<<<<< HEAD
 	used := expression.GetUsedList(parentUsedCols, p.schema)
+=======
+	used := expression.GetUsedList(p.SCtx(), parentUsedCols, p.schema)
+>>>>>>> 58e5284b3f4 (planner,executor: fix join resolveIndex won't find its column from children schema & amend join's lused and rused logic for reversed column ref from join schema to its children (#51203))
 	prunedColumns := make([]*expression.Column, 0)
 
 	// for implicit projected cols, once the ancestor doesn't use it, the implicit expr will be automatically pruned here.
@@ -292,7 +300,11 @@ func (lt *LogicalTopN) PruneColumns(parentUsedCols []*expression.Column, opt *lo
 
 // PruneColumns implements LogicalPlan interface.
 func (p *LogicalUnionAll) PruneColumns(parentUsedCols []*expression.Column, opt *logicalOptimizeOp) (LogicalPlan, error) {
+<<<<<<< HEAD
 	used := expression.GetUsedList(parentUsedCols, p.schema)
+=======
+	used := expression.GetUsedList(p.SCtx(), parentUsedCols, p.schema)
+>>>>>>> 58e5284b3f4 (planner,executor: fix join resolveIndex won't find its column from children schema & amend join's lused and rused logic for reversed column ref from join schema to its children (#51203))
 	hasBeenUsed := false
 	for i := range used {
 		hasBeenUsed = hasBeenUsed || used[i]
@@ -307,7 +319,10 @@ func (p *LogicalUnionAll) PruneColumns(parentUsedCols []*expression.Column, opt 
 			used[i] = true
 		}
 	}
+<<<<<<< HEAD
 
+=======
+>>>>>>> 58e5284b3f4 (planner,executor: fix join resolveIndex won't find its column from children schema & amend join's lused and rused logic for reversed column ref from join schema to its children (#51203))
 	var err error
 	for i, child := range p.Children() {
 		p.Children()[i], err = child.PruneColumns(parentUsedCols, opt)
@@ -368,7 +383,12 @@ func (p *LogicalUnionScan) PruneColumns(parentUsedCols []*expression.Column, opt
 
 // PruneColumns implements LogicalPlan interface.
 func (ds *DataSource) PruneColumns(parentUsedCols []*expression.Column, opt *logicalOptimizeOp) (LogicalPlan, error) {
+<<<<<<< HEAD
 	used := expression.GetUsedList(parentUsedCols, ds.schema)
+=======
+	used := expression.GetUsedList(ds.SCtx(), parentUsedCols, ds.schema)
+
+>>>>>>> 58e5284b3f4 (planner,executor: fix join resolveIndex won't find its column from children schema & amend join's lused and rused logic for reversed column ref from join schema to its children (#51203))
 	exprCols := expression.ExtractColumnsFromExpressions(nil, ds.allConds, nil)
 	exprUsed := expression.GetUsedList(exprCols, ds.schema)
 	prunedColumns := make([]*expression.Column, 0)
@@ -450,7 +470,11 @@ func (p *LogicalMemTable) PruneColumns(parentUsedCols []*expression.Column, opt 
 
 // PruneColumns implements LogicalPlan interface.
 func (p *LogicalTableDual) PruneColumns(parentUsedCols []*expression.Column, opt *logicalOptimizeOp) (LogicalPlan, error) {
+<<<<<<< HEAD
 	used := expression.GetUsedList(parentUsedCols, p.Schema())
+=======
+	used := expression.GetUsedList(p.SCtx(), parentUsedCols, p.Schema())
+>>>>>>> 58e5284b3f4 (planner,executor: fix join resolveIndex won't find its column from children schema & amend join's lused and rused logic for reversed column ref from join schema to its children (#51203))
 	prunedColumns := make([]*expression.Column, 0)
 	for i := len(used) - 1; i >= 0; i-- {
 		if !used[i] {
@@ -523,8 +547,20 @@ func (p *LogicalJoin) PruneColumns(parentUsedCols []*expression.Column, opt *log
 // PruneColumns implements LogicalPlan interface.
 func (la *LogicalApply) PruneColumns(parentUsedCols []*expression.Column, opt *logicalOptimizeOp) (LogicalPlan, error) {
 	leftCols, rightCols := la.extractUsedCols(parentUsedCols)
+<<<<<<< HEAD
 
 	var err error
+=======
+	allowEliminateApply := fixcontrol.GetBoolWithDefault(la.SCtx().GetSessionVars().GetOptimizerFixControlMap(), fixcontrol.Fix45822, true)
+	var err error
+	if allowEliminateApply && rightCols == nil && la.JoinType == LeftOuterJoin {
+		applyEliminateTraceStep(la.Children()[1], opt)
+		resultPlan := la.Children()[0]
+		// reEnter the new child's column pruning, returning child[0] as a new child here.
+		return resultPlan.PruneColumns(parentUsedCols, opt)
+	}
+
+>>>>>>> 58e5284b3f4 (planner,executor: fix join resolveIndex won't find its column from children schema & amend join's lused and rused logic for reversed column ref from join schema to its children (#51203))
 	// column pruning for child-1.
 	la.children[1], err = la.children[1].PruneColumns(rightCols, opt)
 	if err != nil {
@@ -633,7 +669,10 @@ func (p *LogicalLimit) PruneColumns(parentUsedCols []*expression.Column, opt *lo
 
 	savedUsedCols := make([]*expression.Column, len(parentUsedCols))
 	copy(savedUsedCols, parentUsedCols)
+<<<<<<< HEAD
 
+=======
+>>>>>>> 58e5284b3f4 (planner,executor: fix join resolveIndex won't find its column from children schema & amend join's lused and rused logic for reversed column ref from join schema to its children (#51203))
 	var err error
 	if p.children[0], err = p.children[0].PruneColumns(parentUsedCols, opt); err != nil {
 		return nil, err
@@ -771,6 +810,18 @@ func (p *LogicalSequence) PruneColumns(parentUsedCols []*expression.Column, opt 
 	p.children[len(p.children)-1], err = p.children[len(p.children)-1].PruneColumns(parentUsedCols, opt)
 	if err != nil {
 		return nil, err
+<<<<<<< HEAD
+=======
+	}
+	return p, nil
+}
+
+func applyEliminateTraceStep(lp LogicalPlan, opt *logicalOptimizeOp) {
+	action := func() string {
+		buffer := bytes.NewBufferString(
+			fmt.Sprintf("%v_%v is eliminated.", lp.TP(), lp.ID()))
+		return buffer.String()
+>>>>>>> 58e5284b3f4 (planner,executor: fix join resolveIndex won't find its column from children schema & amend join's lused and rused logic for reversed column ref from join schema to its children (#51203))
 	}
 	return p, nil
 }
