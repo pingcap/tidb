@@ -123,7 +123,7 @@ func init() {
 // NewMockDomain is only used for test
 func NewMockDomain() *Domain {
 	do := &Domain{}
-	do.infoCache = infoschema.NewCache(do, 1)
+	do.infoCache = infoschema.NewCache(do, 1, nil)
 	do.infoCache.Insert(infoschema.MockInfoSchema(nil), 0)
 	return do
 }
@@ -314,7 +314,7 @@ func (do *Domain) loadInfoSchema(startTS uint64) (infoschema.InfoSchema, bool, i
 	}
 	// clear data
 	do.infoCache.Data = infoschema.NewData()
-	newISBuilder, err := infoschema.NewBuilder(do, do.sysFacHack, do.infoCache.Data).InitWithDBInfos(schemas, policies, resourceGroups, neededSchemaVersion)
+	newISBuilder, err := infoschema.NewBuilderV3(do, do.sysFacHack, do.infoCache.Data).InitWithDBInfos(schemas, policies, resourceGroups, neededSchemaVersion)
 	if err != nil {
 		return nil, false, currentSchemaVersion, nil, err
 	}
@@ -463,7 +463,7 @@ func (do *Domain) tryLoadSchemaDiffs(m *meta.Meta, usedVersion, newVersion int64
 		}
 		diffs = append(diffs, diff)
 	}
-	builder, err := infoschema.NewBuilder(do, do.sysFacHack, do.infoCache.Data).InitWithOldInfoSchema(do.infoCache.GetLatest())
+	builder, err := infoschema.NewBuilderV3(do, do.sysFacHack, do.infoCache.Data).InitWithOldInfoSchema(do.infoCache.GetLatest())
 	if err != nil {
 		return nil, nil, nil, errors.Trace(err)
 	}
@@ -1101,7 +1101,7 @@ func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duratio
 		mdlCheckCh: make(chan struct{}),
 	}
 
-	do.infoCache = infoschema.NewCache(do, int(variable.SchemaVersionCacheLimit.Load()))
+	do.infoCache = infoschema.NewCache(do, int(variable.SchemaVersionCacheLimit.Load()), store)
 	do.stopAutoAnalyze.Store(false)
 	do.wg = util.NewWaitGroupEnhancedWrapper("domain", do.exit, config.GetGlobalConfig().TiDBEnableExitCheck)
 	do.SchemaValidator = NewSchemaValidator(ddlLease, do)

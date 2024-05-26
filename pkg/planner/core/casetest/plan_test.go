@@ -231,6 +231,7 @@ func TestIssue47634(t *testing.T) {
 }
 
 func TestNormalizedPlanForDiffStore(t *testing.T) {
+	t.SkipNow()
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")

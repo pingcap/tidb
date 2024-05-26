@@ -11,6 +11,8 @@ go_library(
         "error.go",
         "infoschema.go",
         "infoschema_v2.go",
+        "infoschema_v3.go",
+        "infov3_builder.go",
         "interface.go",
         "metric_table_def.go",
         "metrics_schema.go",

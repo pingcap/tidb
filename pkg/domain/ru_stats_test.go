@@ -75,7 +75,7 @@ func testWriteRUStatisticsTz(t *testing.T, tz *time.Location) {
 	testInfo := &testInfoschema{
 		groups: infoGroups,
 	}
-	testInfoCache := infoschema.NewCache(nil, 1)
+	testInfoCache := infoschema.NewCache(nil, 1, nil)
 	testInfoCache.Insert(testInfo, uint64(time.Now().Unix()))
 	testRUWriter.RMClient = testRMClient
 	testRUWriter.InfoCache = testInfoCache
