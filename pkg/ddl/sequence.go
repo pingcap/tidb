@@ -38,6 +38,7 @@ func onCreateSequence(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ err
 
 	tbInfo.State = model.StateNone
 	err := checkTableNotExists(d, t, schemaID, tbInfo.Name.L)
+	t.ListSimpleTablesWithoutDecode(schemaID)
 	if err != nil {
 		if infoschema.ErrDatabaseNotExists.Equal(err) || infoschema.ErrTableExists.Equal(err) {
 			job.State = model.JobStateCancelled

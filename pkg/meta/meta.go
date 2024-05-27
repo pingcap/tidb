@@ -19,6 +19,8 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"github.com/pingcap/tidb/pkg/util/logutil"
+	"go.uber.org/zap"
 	"math"
 	"strconv"
 	"strings"
@@ -1022,12 +1024,33 @@ func (m *Meta) ListTables(dbID int64) ([]*model.TableInfo, error) {
 	return tables, nil
 }
 
+func (m *Meta) ListSimpleTablesWithoutDecode(dbID int64) ([]*model.TableNameInfo, error) {
+	dbKey := m.dbKey(dbID)
+	if err := m.checkDBExists(dbKey); err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	start := time.Now()
+
+	res, err := m.txn.HGetAll(dbKey)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	tables := make([]*model.TableNameInfo, 0, len(res)/2)
+
+	logutil.BgLogger().Info("ListSimpleTablesWithoutDecode", zap.Duration("time", time.Since(start)))
+	return tables, nil
+}
+
 // ListSimpleTables shows all simple tables in database.
 func (m *Meta) ListSimpleTables(dbID int64) ([]*model.TableNameInfo, error) {
 	dbKey := m.dbKey(dbID)
 	if err := m.checkDBExists(dbKey); err != nil {
 		return nil, errors.Trace(err)
 	}
+
+	start := time.Now()
 
 	res, err := m.txn.HGetAll(dbKey)
 	if err != nil {
@@ -1050,6 +1073,8 @@ func (m *Meta) ListSimpleTables(dbID int64) ([]*model.TableNameInfo, error) {
 
 		tables = append(tables, tbInfo)
 	}
+
+	logutil.BgLogger().Info("ListSimpleTables", zap.Duration("time", time.Since(start)))
 
 	return tables, nil
 }
