@@ -167,6 +167,7 @@ func (bc *Client) RunLoop(ctx context.Context, loop *MainBackupLoop) error {
 mainLoop:
 	for {
 		round += 1
+		logutil.CL(ctx).Info("This round of backup starts...", zap.Uint64("round", round))
 		// initialize the error context every round
 		errContext := utils.NewErrorContext("MainBackupLoop", 10)
 
@@ -185,16 +186,29 @@ mainLoop:
 		handleCtx, handleCancel := context.WithCancel(ctx)
 
 		// Compute the left ranges that not backuped yet
-		iter := loop.GlobalProgressTree.Iter()
-		inCompleteRanges := iter.GetIncompleteRanges()
-		if len(inCompleteRanges) == 0 {
-			// all range backuped
+		start := time.Now()
+
+		var inCompleteRanges []rtree.Range
+		select {
+		case <-ctx.Done():
+			// ctx cancal outside
 			handleCancel()
 			mainCancel()
-			return nil
+			return ctx.Err()
+		default:
+			iter := loop.GlobalProgressTree.Iter()
+			inCompleteRanges = iter.GetIncompleteRanges()
+			if len(inCompleteRanges) == 0 {
+				// all range backuped
+				logutil.CL(ctx).Info("This round finished all backup ranges", zap.Uint64("round", round))
+				handleCancel()
+				mainCancel()
+				return nil
+			}
 		}
 
-		logutil.CL(ctx).Info("backup round start...", zap.Uint64("round", round))
+		logutil.CL(mainCtx).Info("backup ranges", zap.Uint64("round", round),
+			zap.Int("incomplete-ranges", len(inCompleteRanges)), zap.Duration("cost", time.Since(start)))
 
 		loop.BackupReq.SubRanges = getBackupRanges(inCompleteRanges)
 
@@ -881,7 +895,6 @@ func BuildBackupSchemas(
 		}
 
 		if !hasTable {
-			log.Info("backup empty database", zap.Stringer("db", dbInfo.Name))
 			fn(dbInfo, nil)
 		}
 	}
@@ -1109,7 +1122,9 @@ func (bc *Client) OnBackupResponse(
 	resp := r.GetResponse()
 	storeID := r.GetStoreID()
 	if resp.GetError() == nil {
+		start := time.Now()
 		pr, err := globalProgressTree.FindContained(resp.StartKey, resp.EndKey)
+		logutil.CL(ctx).Debug("find the range tree contains reponse ranges", zap.Duration("take", time.Since(start)))
 		if err != nil {
 			logutil.CL(ctx).Error("failed to update the backup response",
 				zap.Reflect("error", err))
