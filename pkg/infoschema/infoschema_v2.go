@@ -17,7 +17,9 @@ package infoschema
 import (
 	"fmt"
 	"math"
+	"strings"
 	"sync"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
@@ -160,6 +162,11 @@ func NewData() *Data {
 	return ret
 }
 
+// CacheCapacity is exported for testing.
+func (isd *Data) CacheCapacity() uint64 {
+	return isd.tableCache.Capacity()
+}
+
 func (isd *Data) add(item tableItem, tbl table.Table) {
 	isd.byID.Set(item)
 	isd.byName.Set(item)
@@ -176,6 +183,7 @@ func (isd *Data) addSpecialDB(di *model.DBInfo, tables *schemaTables) {
 }
 
 func (isd *Data) addDB(schemaVersion int64, dbInfo *model.DBInfo) {
+	dbInfo.Tables = nil
 	isd.schemaMap.Set(schemaItem{schemaVersion: schemaVersion, dbInfo: dbInfo})
 }
 
@@ -252,18 +260,9 @@ type infoschemaV2 struct {
 // NewInfoSchemaV2 create infoschemaV2.
 func NewInfoSchemaV2(r autoid.Requirement, infoData *Data) infoschemaV2 {
 	return infoschemaV2{
-		infoSchema: &infoSchema{
-			infoSchemaMisc: infoSchemaMisc{
-				policyMap:             map[string]*model.PolicyInfo{},
-				resourceGroupMap:      map[string]*model.ResourceGroupInfo{},
-				ruleBundleMap:         map[int64]*placement.Bundle{},
-				referredForeignKeyMap: make(map[SchemaAndTableName][]*model.ReferredFKInfo),
-			},
-			schemaMap:           map[string]*schemaTables{},
-			sortedTablesBuckets: make([]sortedTables, bucketCount),
-		},
-		Data: infoData,
-		r:    r,
+		infoSchema: newInfoSchema(),
+		Data:       infoData,
+		r:          r,
 	}
 }
 
@@ -302,7 +301,17 @@ func (is *infoschemaV2) base() *infoSchema {
 	return is.infoSchema
 }
 
+func (is *infoschemaV2) CloneAndUpdateTS(startTS uint64) *infoschemaV2 {
+	tmp := *is
+	tmp.ts = startTS
+	return &tmp
+}
+
 func (is *infoschemaV2) TableByID(id int64) (val table.Table, ok bool) {
+	return is.tableByID(id, false)
+}
+
+func (is *infoschemaV2) tableByID(id int64, noRefill bool) (val table.Table, ok bool) {
 	if !tableIDIsValid(id) {
 		return
 	}
@@ -332,7 +341,9 @@ func (is *infoschemaV2) TableByID(id int64) (val table.Table, ok bool) {
 	oldKey := tableCacheKey{itm.tableID, itm.schemaVersion}
 	tbl, found = is.tableCache.Get(oldKey)
 	if found && tbl != nil {
-		is.tableCache.Set(key, tbl)
+		if !noRefill {
+			is.tableCache.Set(key, tbl)
+		}
 		return tbl, true
 	}
 
@@ -342,7 +353,9 @@ func (is *infoschemaV2) TableByID(id int64) (val table.Table, ok bool) {
 		return nil, false
 	}
 
-	is.tableCache.Set(key, ret)
+	if !noRefill {
+		is.tableCache.Set(key, ret)
+	}
 	return ret, true
 }
 
@@ -407,7 +420,41 @@ func (is *infoschemaV2) TableInfoByID(id int64) (*model.TableInfo, bool) {
 
 // SchemaTableInfos implements InfoSchema.FindTableInfoByPartitionID
 func (is *infoschemaV2) SchemaTableInfos(schema model.CIStr) []*model.TableInfo {
-	return getTableInfoList(is.SchemaTables(schema))
+	if isSpecialDB(schema.L) {
+		schTbls := is.Data.specials[schema.L]
+		tables := make([]table.Table, 0, len(schTbls.tables))
+		for _, tbl := range schTbls.tables {
+			tables = append(tables, tbl)
+		}
+		return getTableInfoList(tables)
+	}
+
+retry:
+	dbInfo, ok := is.SchemaByName(schema)
+	if !ok {
+		return nil
+	}
+	snapshot := is.r.Store().GetSnapshot(kv.NewVersion(is.ts))
+	// Using the KV timeout read feature to address the issue of potential DDL lease expiration when
+	// the meta region leader is slow.
+	snapshot.SetOption(kv.TiKVClientReadTimeout, uint64(3000)) // 3000ms.
+	m := meta.NewSnapshotMeta(snapshot)
+	tblInfos, err := m.ListTables(dbInfo.ID)
+	if err != nil {
+		if meta.ErrDBNotExists.Equal(err) {
+			return nil
+		}
+		// Flashback statement could cause such kind of error.
+		// In theory that error should be handled in the lower layer, like client-go.
+		// But it's not done, so we retry here.
+		if strings.Contains(err.Error(), "in flashback progress") {
+			time.Sleep(200 * time.Millisecond)
+			goto retry
+		}
+		// TODO: error could happen, so do not panic!
+		panic(err)
+	}
+	return tblInfos
 }
 
 // FindTableInfoByPartitionID implements InfoSchema.FindTableInfoByPartitionID
@@ -576,6 +623,7 @@ func (is *infoschemaV2) SchemaTables(schema model.CIStr) (tables []table.Table) 
 		return tables
 	}
 
+retry:
 	dbInfo, ok := is.SchemaByName(schema)
 	if !ok {
 		return
@@ -590,12 +638,19 @@ func (is *infoschemaV2) SchemaTables(schema model.CIStr) (tables []table.Table) 
 		if meta.ErrDBNotExists.Equal(err) {
 			return nil
 		}
+		// Flashback statement could cause such kind of error.
+		// In theory that error should be handled in the lower layer, like client-go.
+		// But it's not done, so we retry here.
+		if strings.Contains(err.Error(), "in flashback progress") {
+			time.Sleep(200 * time.Millisecond)
+			goto retry
+		}
 		// TODO: error could happen, so do not panic!
 		panic(err)
 	}
 	tables = make([]table.Table, 0, len(tblInfos))
 	for _, tblInfo := range tblInfos {
-		tbl, ok := is.TableByID(tblInfo.ID)
+		tbl, ok := is.tableByID(tblInfo.ID, true)
 		if !ok {
 			// what happen?
 			continue
@@ -608,6 +663,7 @@ func (is *infoschemaV2) SchemaTables(schema model.CIStr) (tables []table.Table) 
 func loadTableInfo(r autoid.Requirement, infoData *Data, tblID, dbID int64, ts uint64, schemaVersion int64) (table.Table, error) {
 	// Try to avoid repeated concurrency loading.
 	res, err, _ := loadTableSF.Do(fmt.Sprintf("%d-%d-%d", dbID, tblID, schemaVersion), func() (any, error) {
+	retry:
 		snapshot := r.Store().GetSnapshot(kv.NewVersion(ts))
 		// Using the KV timeout read feature to address the issue of potential DDL lease expiration when
 		// the meta region leader is slow.
@@ -615,8 +671,15 @@ func loadTableInfo(r autoid.Requirement, infoData *Data, tblID, dbID int64, ts u
 		m := meta.NewSnapshotMeta(snapshot)
 
 		tblInfo, err := m.GetTable(dbID, tblID)
-
 		if err != nil {
+			// Flashback statement could cause such kind of error.
+			// In theory that error should be handled in the lower layer, like client-go.
+			// But it's not done, so we retry here.
+			if strings.Contains(err.Error(), "in flashback progress") {
+				time.Sleep(200 * time.Millisecond)
+				goto retry
+			}
+
 			// TODO load table panic!!!
 			panic(err)
 		}
@@ -662,9 +725,9 @@ func isTableVirtual(id int64) bool {
 }
 
 // IsV2 tells whether an InfoSchema is v2 or not.
-func IsV2(is InfoSchema) bool {
-	_, ok := is.(*infoschemaV2)
-	return ok
+func IsV2(is InfoSchema) (bool, *infoschemaV2) {
+	ret, ok := is.(*infoschemaV2)
+	return ok, ret
 }
 
 func applyTableUpdate(b *Builder, m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
@@ -896,8 +959,8 @@ func (b *bundleInfoBuilder) updateInfoSchemaBundlesV2(is *infoschemaV2) {
 	// TODO: This is quite inefficient! we need some better way or avoid this API.
 	is.ruleBundleMap = make(map[int64]*placement.Bundle)
 	for _, dbInfo := range is.AllSchemas() {
-		for _, tbl := range is.SchemaTables(dbInfo.Name) {
-			b.updateTableBundles(is, tbl.Meta().ID)
+		for _, tbl := range is.SchemaTableInfos(dbInfo.Name) {
+			b.updateTableBundles(is, tbl.ID)
 		}
 	}
 }

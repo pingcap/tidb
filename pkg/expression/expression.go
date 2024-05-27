@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/generatedexpr"
+	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/pingcap/tidb/pkg/util/zeropool"
 )
@@ -218,7 +219,7 @@ type Expression interface {
 	// resolveIndices is called inside the `ResolveIndices` It will perform on the expression itself.
 	resolveIndices(schema *Schema) error
 
-	// ResolveIndicesByVirtualExpr resolves indices by the given schema in terms of virual expression. It will copy the original expression and return the copied one.
+	// ResolveIndicesByVirtualExpr resolves indices by the given schema in terms of virtual expression. It will copy the original expression and return the copied one.
 	ResolveIndicesByVirtualExpr(ctx EvalContext, schema *Schema) (Expression, bool)
 
 	// resolveIndicesByVirtualExpr is called inside the `ResolveIndicesByVirtualExpr` It will perform on the expression itself.
@@ -1213,6 +1214,21 @@ func PropagateType(evalType types.EvalType, args ...Expression) {
 			if args[0].GetType().GetType() == mysql.TypeNewDecimal {
 				if newDecimal > mysql.MaxDecimalScale {
 					newDecimal = mysql.MaxDecimalScale
+				}
+				if oldFlen-oldDecimal > newFlen-newDecimal {
+					// the input data should never be overflow under the new type
+					if newDecimal > oldDecimal {
+						// if the target decimal part is larger than the original decimal part, we try to extend
+						// the decimal part as much as possible while keeping the integer part big enough to hold
+						// the original data. For example, original type is Decimal(50, 0), new type is Decimal(48,30), then
+						// incDecimal = min(30-0, mysql.MaxDecimalWidth-50) = 15
+						// the new target Decimal will be Decimal(50+15, 0+15) = Decimal(65, 15)
+						incDecimal := mathutil.Min(newDecimal-oldDecimal, mysql.MaxDecimalWidth-oldFlen)
+						newFlen = oldFlen + incDecimal
+						newDecimal = oldDecimal + incDecimal
+					} else {
+						newFlen, newDecimal = oldFlen, oldDecimal
+					}
 				}
 			}
 			args[0].GetType().SetFlenUnderLimit(newFlen)

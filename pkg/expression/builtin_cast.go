@@ -328,7 +328,7 @@ func (c *castAsStringFunctionClass) getFunction(ctx BuildContext, args []Express
 	case types.ETString:
 		// When cast from binary to some other charsets, we should check if the binary is valid or not.
 		// so we build a from_binary function to do this check.
-		bf.args[0] = HandleBinaryLiteral(ctx, args[0], &ExprCollation{Charset: c.tp.GetCharset(), Collation: c.tp.GetCollate()}, c.funcName)
+		bf.args[0] = HandleBinaryLiteral(ctx, args[0], &ExprCollation{Charset: c.tp.GetCharset(), Collation: c.tp.GetCollate()}, c.funcName, true)
 		sig = &builtinCastStringAsStringSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastStringAsString)
 	default:
@@ -454,7 +454,7 @@ func (c *castAsArrayFunctionClass) getFunction(ctx BuildContext, args []Expressi
 		return nil, ErrNotSupportedYet.GenWithStackByArgs("specifying charset for multi-valued index")
 	}
 	if arrayType.EvalType() == types.ETString && arrayType.GetFlen() == types.UnspecifiedLength {
-		return nil, ErrNotSupportedYet.GenWithStackByArgs("CAST-ing data to array of char/binary BLOBs")
+		return nil, ErrNotSupportedYet.GenWithStackByArgs("CAST-ing data to array of char/binary BLOBs with unspecified length")
 	}
 
 	bf, err := newBaseBuiltinFunc(ctx, c.funcName, args, c.tp)
@@ -518,7 +518,7 @@ func (b *castJSONAsArrayFunctionSig) evalJSON(ctx EvalContext, row chunk.Row) (r
 	return types.CreateBinaryJSON(arrayVals), false, nil
 }
 
-// ConvertJSON2Tp returns a function that can convert JSON to the specified type.
+// ConvertJSON2Tp converts JSON to the specified type.
 func ConvertJSON2Tp(v types.BinaryJSON, targetType *types.FieldType) (any, error) {
 	convertFunc := convertJSON2Tp(targetType.EvalType())
 	if convertFunc == nil {
@@ -560,7 +560,7 @@ func convertJSON2Tp(evalType types.EvalType) func(*stmtctx.StatementContext, typ
 			if (tp.GetType() == mysql.TypeDatetime && item.TypeCode != types.JSONTypeCodeDatetime) || (tp.GetType() == mysql.TypeDate && item.TypeCode != types.JSONTypeCodeDate) {
 				return nil, ErrInvalidJSONForFuncIndex
 			}
-			res := item.GetTime()
+			res := item.GetTimeWithFsp(tp.GetDecimal())
 			res.SetType(tp.GetType())
 			if tp.GetType() == mysql.TypeDate {
 				// Truncate hh:mm:ss part if the type is Date.
@@ -1929,7 +1929,7 @@ func (b *builtinCastJSONAsTimeSig) evalTime(ctx EvalContext, row chunk.Row) (res
 
 	switch val.TypeCode {
 	case types.JSONTypeCodeDate, types.JSONTypeCodeDatetime, types.JSONTypeCodeTimestamp:
-		res = val.GetTime()
+		res = val.GetTimeWithFsp(b.tp.GetDecimal())
 		res.SetType(b.tp.GetType())
 		if b.tp.GetType() == mysql.TypeDate {
 			// Truncate hh:mm:ss part if the type is Date.
@@ -1991,7 +1991,7 @@ func (b *builtinCastJSONAsDurationSig) evalDuration(ctx EvalContext, row chunk.R
 
 	switch val.TypeCode {
 	case types.JSONTypeCodeDate, types.JSONTypeCodeDatetime, types.JSONTypeCodeTimestamp:
-		time := val.GetTime()
+		time := val.GetTimeWithFsp(b.tp.GetDecimal())
 		res, err = time.ConvertToDuration()
 		if err != nil {
 			return res, false, err

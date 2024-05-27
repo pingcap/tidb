@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/planner/context"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/cost"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
@@ -41,12 +42,6 @@ import (
 	"go.uber.org/zap"
 	"golang.org/x/exp/maps"
 )
-
-func init() {
-	cardinality.CollectFilters4MVIndex = collectFilters4MVIndex
-	cardinality.BuildPartialPaths4MVIndex = buildPartialPaths4MVIndex
-	statistics.PrepareCols4MVIndex = PrepareIdxColsAndUnwrapArrayType
-}
 
 // generateIndexMergePath generates IndexMerge AccessPaths on this DataSource.
 func (ds *DataSource) generateIndexMergePath() error {
@@ -161,13 +156,6 @@ func (ds *DataSource) generateNormalIndexPartialPaths4DNF(
 			// the entire index merge is not valid anymore.
 			return nil, false, usedMap
 		}
-		// prune out global indexes.
-		itemPaths = slices.DeleteFunc(itemPaths, func(path *util.AccessPath) bool {
-			if path.Index != nil && path.Index.Global {
-				return true
-			}
-			return false
-		})
 		partialPath := buildIndexMergePartialPath(itemPaths)
 		if partialPath == nil {
 			// for this dnf item, we couldn't generate an index merge partial path.
@@ -286,7 +274,7 @@ func (ds *DataSource) generateIndexMergeOrPaths(filters []expression.Expression)
 		sel, _, err := cardinality.Selectivity(ds.SCtx(), ds.tableStats.HistColl, []expression.Expression{accessDNF}, nil)
 		if err != nil {
 			logutil.BgLogger().Debug("something wrong happened, use the default selectivity", zap.Error(err))
-			sel = SelectionFactor
+			sel = cost.SelectionFactor
 		}
 
 		possiblePath := buildIndexMergeOrPath(filters, partialAlternativePaths, k, shouldKeepCurrentFilter)
@@ -594,7 +582,7 @@ func (ds *DataSource) generateIndexMergeAndPaths(normalPathCnt int, usedAccessMa
 	sel, _, err := cardinality.Selectivity(ds.SCtx(), ds.tableStats.HistColl, partialFilters, nil)
 	if err != nil {
 		logutil.BgLogger().Debug("something wrong happened, use the default selectivity", zap.Error(err))
-		sel = SelectionFactor
+		sel = cost.SelectionFactor
 	}
 
 	indexMergePath := &util.AccessPath{
@@ -894,9 +882,6 @@ func (ds *DataSource) generateIndexMerge4ComposedIndex(normalPathCnt int, indexM
 	var mvIndexPathCnt int
 	candidateAccessPaths := make([]*util.AccessPath, 0, len(ds.possibleAccessPaths))
 	for idx := 0; idx < normalPathCnt; idx++ {
-		if ds.possibleAccessPaths[idx].Index != nil && ds.possibleAccessPaths[idx].Index.Global {
-			continue
-		}
 		if (ds.possibleAccessPaths[idx].IsTablePath() &&
 			!ds.isInIndexMergeHints("primary")) ||
 			(!ds.possibleAccessPaths[idx].IsTablePath() &&

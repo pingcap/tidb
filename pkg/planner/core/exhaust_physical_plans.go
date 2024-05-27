@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/cost"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
@@ -1078,7 +1079,7 @@ func (p *LogicalJoin) constructInnerTableScanTask(
 		selectivity, _, err = cardinality.Selectivity(ds.SCtx(), ds.tableStats.HistColl, ts.filterCondition, ds.possibleAccessPaths)
 		if err != nil || selectivity <= 0 {
 			logutil.BgLogger().Debug("unexpected selectivity, use selection factor", zap.Float64("selectivity", selectivity), zap.String("table", ts.TableAsName.L))
-			selectivity = SelectionFactor
+			selectivity = cost.SelectionFactor
 		}
 		// rowCount is computed from result row count of join, which has already accounted the filters on DataSource,
 		// i.e, rowCount equals to `countAfterAccess * selectivity`.
@@ -1291,8 +1292,8 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 		}.Init(ds.SCtx(), ds.QueryBlockOffset())
 		ts.schema = is.dataSourceSchema.Clone()
 		if ds.tableInfo.IsCommonHandle {
-			commonHandle := ds.handleCols.(*CommonHandleCols)
-			for _, col := range commonHandle.columns {
+			commonHandle := ds.handleCols.(*util.CommonHandleCols)
+			for _, col := range commonHandle.GetColumns() {
 				if ts.schema.ColumnIndex(col) == -1 {
 					ts.Schema().Append(col)
 					ts.Columns = append(ts.Columns, col.ToInfo())
@@ -1370,7 +1371,7 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 		selectivity, _, err := cardinality.Selectivity(ds.SCtx(), ds.tableStats.HistColl, tblConds, ds.possibleAccessPaths)
 		if err != nil || selectivity <= 0 {
 			logutil.BgLogger().Debug("unexpected selectivity, use selection factor", zap.Float64("selectivity", selectivity), zap.String("table", ds.TableAsName.L))
-			selectivity = SelectionFactor
+			selectivity = cost.SelectionFactor
 		}
 		// rowCount is computed from result row count of join, which has already accounted the filters on DataSource,
 		// i.e, rowCount equals to `countAfterIndex * selectivity`.
@@ -1388,7 +1389,7 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 		selectivity, _, err := cardinality.Selectivity(ds.SCtx(), ds.tableStats.HistColl, indexConds, ds.possibleAccessPaths)
 		if err != nil || selectivity <= 0 {
 			logutil.BgLogger().Debug("unexpected selectivity, use selection factor", zap.Float64("selectivity", selectivity), zap.String("table", ds.TableAsName.L))
-			selectivity = SelectionFactor
+			selectivity = cost.SelectionFactor
 		}
 		cnt := tmpPath.CountAfterIndex / selectivity
 		if rowCountUpperBound > 0 {
@@ -3104,10 +3105,11 @@ func (*baseLogicalPlan) ExhaustPhysicalPlans(*property.PhysicalProperty) ([]base
 // CanPushToCop checks if it can be pushed to some stores. For TiKV, it only checks datasource.
 // For TiFlash, it will check whether the operator is supported, but note that the check might be inaccrate.
 func (p *baseLogicalPlan) CanPushToCop(storeTp kv.StoreType) bool {
-	return p.canPushToCopImpl(storeTp, false)
+	return canPushToCopImpl(p, storeTp, false)
 }
 
-func (p *baseLogicalPlan) canPushToCopImpl(storeTp kv.StoreType, considerDual bool) bool {
+// todo: move canPushToCopImpl to func_pointer_misc when move baseLogicalPlan out of core.
+func canPushToCopImpl(p *baseLogicalPlan, storeTp kv.StoreType, considerDual bool) bool {
 	ret := true
 	for _, ch := range p.children {
 		switch c := ch.(type) {
@@ -3141,23 +3143,23 @@ func (p *baseLogicalPlan) canPushToCopImpl(storeTp kv.StoreType, considerDual bo
 			if storeTp != kv.TiFlash {
 				return false
 			}
-			ret = ret && c.canPushToCopImpl(storeTp, true)
+			ret = ret && canPushToCopImpl(&c.baseLogicalPlan, storeTp, true)
 		case *LogicalSort:
 			if storeTp != kv.TiFlash {
 				return false
 			}
-			ret = ret && c.canPushToCopImpl(storeTp, true)
+			ret = ret && canPushToCopImpl(&c.baseLogicalPlan, storeTp, true)
 		case *LogicalProjection:
 			if storeTp != kv.TiFlash {
 				return false
 			}
-			ret = ret && c.canPushToCopImpl(storeTp, considerDual)
+			ret = ret && canPushToCopImpl(&c.baseLogicalPlan, storeTp, considerDual)
 		case *LogicalExpand:
 			// Expand itself only contains simple col ref and literal projection. (always ok, check its child)
 			if storeTp != kv.TiFlash {
 				return false
 			}
-			ret = ret && c.canPushToCopImpl(storeTp, considerDual)
+			ret = ret && canPushToCopImpl(&c.baseLogicalPlan, storeTp, considerDual)
 		case *LogicalTableDual:
 			return storeTp == kv.TiFlash && considerDual
 		case *LogicalAggregation, *LogicalSelection, *LogicalJoin, *LogicalWindow:
@@ -3380,6 +3382,22 @@ func (la *LogicalAggregation) tryToGetMppHashAggs(prop *property.PhysicalPropert
 			}
 		}
 	}
+	// ref: https://github.com/pingcap/tiflash/blob/3ebb102fba17dce3d990d824a9df93d93f1ab
+	// 766/dbms/src/Flash/Coprocessor/AggregationInterpreterHelper.cpp#L26
+	validMppAgg := func(mppAgg *PhysicalHashAgg) bool {
+		isFinalAgg := true
+		if mppAgg.AggFuncs[0].Mode != aggregation.FinalMode && mppAgg.AggFuncs[0].Mode != aggregation.CompleteMode {
+			isFinalAgg = false
+		}
+		for _, one := range mppAgg.AggFuncs[1:] {
+			otherIsFinalAgg := one.Mode == aggregation.FinalMode || one.Mode == aggregation.CompleteMode
+			if isFinalAgg != otherIsFinalAgg {
+				// different agg mode detected in mpp side.
+				return false
+			}
+		}
+		return true
+	}
 
 	if len(la.GroupByItems) > 0 {
 		partitionCols := la.GetPotentialPartitionKeys()
@@ -3413,7 +3431,9 @@ func (la *LogicalAggregation) tryToGetMppHashAggs(prop *property.PhysicalPropert
 			agg.SetSchema(la.schema.Clone())
 			agg.MppRunMode = Mpp1Phase
 			finalAggAdjust(agg.AggFuncs)
-			hashAggs = append(hashAggs, agg)
+			if validMppAgg(agg) {
+				hashAggs = append(hashAggs, agg)
+			}
 		}
 
 		// Final agg can't be split into multi-stage aggregate, so exit early
@@ -3428,7 +3448,9 @@ func (la *LogicalAggregation) tryToGetMppHashAggs(prop *property.PhysicalPropert
 		agg.SetSchema(la.schema.Clone())
 		agg.MppRunMode = Mpp2Phase
 		agg.MppPartitionCols = partitionCols
-		hashAggs = append(hashAggs, agg)
+		if validMppAgg(agg) {
+			hashAggs = append(hashAggs, agg)
+		}
 
 		// agg runs on TiDB with a partial agg on TiFlash if possible
 		if prop.TaskTp == property.RootTaskType {
@@ -3669,7 +3691,7 @@ func (p *LogicalUnionAll) ExhaustPhysicalPlans(prop *property.PhysicalProperty) 
 	if prop.TaskTp == property.MppTaskType && prop.MPPPartitionTp != property.AnyType {
 		return nil, true, nil
 	}
-	canUseMpp := p.SCtx().GetSessionVars().IsMPPAllowed() && p.canPushToCopImpl(kv.TiFlash, true)
+	canUseMpp := p.SCtx().GetSessionVars().IsMPPAllowed() && canPushToCopImpl(&p.baseLogicalPlan, kv.TiFlash, true)
 	chReqProps := make([]*property.PhysicalProperty, 0, len(p.children))
 	for range p.children {
 		if canUseMpp && prop.TaskTp == property.MppTaskType {
@@ -3746,7 +3768,7 @@ func (ls *LogicalSort) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([]
 			return ret, true, nil
 		}
 	} else if prop.TaskTp == property.MppTaskType && prop.RejectSort {
-		if ls.canPushToCopImpl(kv.TiFlash, true) {
+		if canPushToCopImpl(&ls.baseLogicalPlan, kv.TiFlash, true) {
 			newProp := prop.CloneEssentialFields()
 			newProp.RejectSort = true
 			ps := NominalSort{OnlyColumn: true, ByItems: ls.ByItems}.Init(

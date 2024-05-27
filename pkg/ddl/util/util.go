@@ -56,6 +56,7 @@ const (
 	// DDLAllSchemaVersions is the path on etcd that is used to store all servers current schema versions.
 	DDLAllSchemaVersions = "/tidb/ddl/all_schema_versions"
 	// DDLAllSchemaVersionsByJob is the path on etcd that is used to store all servers current schema versions.
+	// /tidb/ddl/all_schema_by_job_versions/<job-id>/<tidb-id> ---> <schema-version>
 	DDLAllSchemaVersionsByJob = "/tidb/ddl/all_schema_by_job_versions"
 	// DDLGlobalSchemaVersion is the path on etcd that is used to store the latest schema versions.
 	DDLGlobalSchemaVersion = "/tidb/ddl/global_schema_version"

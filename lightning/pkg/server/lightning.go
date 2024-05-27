@@ -92,6 +92,8 @@ type Lightning struct {
 	cancelLock sync.Mutex
 	curTask    *config.Config
 	cancel     context.CancelFunc // for per task context, which maybe different from lightning context
+
+	taskCanceled bool
 }
 
 func initEnv(cfg *config.GlobalConfig) error {
@@ -604,6 +606,7 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, o *opti
 func (l *Lightning) Stop() {
 	l.cancelLock.Lock()
 	if l.cancel != nil {
+		l.taskCanceled = true
 		l.cancel()
 	}
 	l.cancelLock.Unlock()
@@ -611,6 +614,13 @@ func (l *Lightning) Stop() {
 		log.L().Warn("failed to shutdown HTTP server", log.ShortError(err))
 	}
 	l.shutdown()
+}
+
+// TaskCanceled return whether the current task is canceled.
+func (l *Lightning) TaskCanceled() bool {
+	l.cancelLock.Lock()
+	defer l.cancelLock.Unlock()
+	return l.taskCanceled
 }
 
 // Status return the sum size of file which has been imported to TiKV and the total size of source file.
