@@ -1124,7 +1124,7 @@ func (bc *Client) OnBackupResponse(
 	if resp.GetError() == nil {
 		start := time.Now()
 		pr, err := globalProgressTree.FindContained(resp.StartKey, resp.EndKey)
-		logutil.CL(ctx).Debug("find the range tree contains reponse ranges", zap.Duration("take", time.Since(start)))
+		logutil.CL(ctx).Debug("find the range tree contains response ranges", zap.Duration("take", time.Since(start)))
 		if err != nil {
 			logutil.CL(ctx).Error("failed to update the backup response",
 				zap.Reflect("error", err))
