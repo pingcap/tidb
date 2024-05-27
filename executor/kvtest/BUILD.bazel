@@ -8,11 +8,7 @@ go_test(
         "main_test.go",
     ],
     flaky = True,
-<<<<<<< HEAD:executor/kvtest/BUILD.bazel
     race = "on",
-=======
-    shard_count = 8,
->>>>>>> 0ac2ad0252b (infoschema: fix issue of information schema cache miss cause by schema version gap (#53445)):pkg/infoschema/test/cachetest/BUILD.bazel
     deps = [
         "//config",
         "//meta/autoid",
