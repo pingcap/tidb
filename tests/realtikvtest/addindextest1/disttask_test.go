@@ -167,8 +167,7 @@ func TestAddIndexDistPauseAndResume(t *testing.T) {
 	tk.MustExec("insert into t values (), (), (), (), (), ()")
 	tk.MustExec("split table t between (3) and (8646911284551352360) regions 50;")
 
-	// TestSyncChan is used to sync the test.
-	var TestSyncChan = make(chan struct{})
+	var syncChan = make(chan struct{})
 	var counter atomic.Int32
 	require.NoError(t, failpoint.EnableCall("github.com/pingcap/tidb/pkg/ddl/mockDMLExecutionAddIndexSubTaskFinish", func() {
 		if counter.Add(1) <= 3 {
@@ -176,7 +175,7 @@ func TestAddIndexDistPauseAndResume(t *testing.T) {
 			require.Equal(t, 1, len(row))
 			jobID := row[0][0].(string)
 			tk1.MustExec("admin pause ddl jobs " + jobID)
-			<-TestSyncChan
+			<-syncChan
 		}
 	}))
 
@@ -189,7 +188,7 @@ func TestAddIndexDistPauseAndResume(t *testing.T) {
 
 	require.NoError(t, failpoint.EnableCall("github.com/pingcap/tidb/pkg/ddl/syncDDLTaskPause", func() {
 		// make sure the task is paused.
-		TestSyncChan <- struct{}{}
+		syncChan <- struct{}{}
 	}))
 	tk.MustExec(`set global tidb_enable_dist_task=1;`)
 	tk.MustExec("alter table t add index idx1(a);")
