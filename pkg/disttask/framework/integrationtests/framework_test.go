@@ -18,9 +18,11 @@ import (
 	"context"
 	"fmt"
 	"math/rand"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
@@ -151,10 +153,16 @@ func TestFrameworkSubTaskInitEnvFailed(t *testing.T) {
 func TestOwnerChangeWhenSchedule(t *testing.T) {
 	c := testutil.NewTestDXFContext(t, 3, 16, true)
 	testutil.RegisterTaskMeta(t, c.MockCtrl, testutil.GetMockBasicSchedulerExt(c.MockCtrl), c.TestContext, nil)
-	scheduler.MockOwnerChange = func() {
-		c.AsyncChangeOwner()
-	}
-	testkit.EnableFailPoint(t, "github.com/pingcap/tidb/pkg/disttask/framework/scheduler/mockOwnerChange", "1*return(true)")
+	var once sync.Once
+	require.NoError(t, failpoint.EnableCall("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/mockOwnerChange", func() {
+		once.Do(func() {
+			c.AsyncChangeOwner()
+			time.Sleep(time.Second)
+		})
+	}))
+	t.Cleanup(func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/mockOwnerChange"))
+	})
 	submitTaskAndCheckSuccessForBasic(c.Ctx, t, "😊", c.TestContext)
 }
 
