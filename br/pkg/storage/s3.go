@@ -280,7 +280,11 @@ func autoNewCred(qs *backuppb.S3) (cred *credentials.Credentials, err error) {
 	}
 	// if it Contains 'aliyuncs', fetch the sts token.
 	if strings.Contains(endpoint, domainAliyun) {
-		return createOssRAMCred()
+		// if we didn't get the credential, use ali provider.
+		if _,err := cred.Get(); err != nil {
+			return createOssRAMCred()
+		}
+		return cred,nil
 	}
 	// other case ,return no error and run default(aws) follow.
 	return nil, nil
@@ -292,7 +296,11 @@ func createOssRAMCred() (*credentials.Credentials, error) {
 		return nil, errors.Annotate(err, "Alibaba RAM Provider Retrieve")
 	}
 	ncred := cred.(*alicred.StsTokenCredential)
-	return credentials.NewStaticCredentials(ncred.AccessKeyId, ncred.AccessKeySecret, ncred.AccessKeyStsToken), nil
+	return credentials.NewChainCredentials([]credentials.Provider{
+		&credentials.EnvProvider{},
+		&credentials.SharedCredentialsProvider{},
+		&credentials.StaticProvider{Value: credentials.Value{ncred.AccessKeyId, ncred.AccessKeySecret, ncred.AccessKeyStsToken, ""}},
+	}),nil
 }
 
 // NewS3Storage initialize a new s3 storage for metadata.
