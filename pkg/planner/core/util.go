@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/baseimpl"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/table"
@@ -97,7 +98,7 @@ func (a *WindowFuncExtractor) Leave(n ast.Node) (ast.Node, bool) {
 type logicalSchemaProducer struct {
 	schema *expression.Schema
 	names  types.NameSlice
-	baseLogicalPlan
+	logicalop.BaseLogicalPlan
 }
 
 // Schema implements the Plan.Schema interface.
@@ -147,7 +148,7 @@ func (s *logicalSchemaProducer) inlineProjection(parentUsedCols []*expression.Co
 			s.schema.Columns = append(s.Schema().Columns[:i], s.Schema().Columns[i+1:]...)
 		}
 	}
-	appendColumnPruneTraceStep(s.self, prunedColumns, opt)
+	appendColumnPruneTraceStep(s.Self(), prunedColumns, opt)
 }
 
 // physicalSchemaProducer stores the schema for the physical plans who can produce schema directly.
