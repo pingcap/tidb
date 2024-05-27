@@ -1,0 +1,9 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "asyncload",
+    srcs = ["async_load.go"],
+    importpath = "github.com/pingcap/tidb/pkg/statistics/asyncload",
+    visibility = ["//visibility:public"],
+    deps = ["//pkg/parser/model"],
+)

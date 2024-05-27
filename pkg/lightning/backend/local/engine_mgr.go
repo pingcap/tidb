@@ -42,7 +42,6 @@ import (
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
-	"google.golang.org/grpc/status"
 )
 
 var (
@@ -266,6 +265,11 @@ func (em *engineManager) openEngine(ctx context.Context, cfg *backend.EngineConf
 	if err = engine.loadEngineMeta(); err != nil {
 		return errors.Trace(err)
 	}
+	if engine.TS == 0 && cfg.TS > 0 {
+		engine.TS = cfg.TS
+		// we don't saveEngineMeta here, we can rely on the caller use the same TS to
+		// open the engine again.
+	}
 	if err = em.allocateTSIfNotExists(ctx, engine); err != nil {
 		return errors.Trace(err)
 	}
@@ -294,11 +298,14 @@ func (em *engineManager) closeEngine(
 				store.Close()
 			}
 		}()
-		physical, logical, err := em.GetTS(ctx)
-		if err != nil {
-			return err
+		ts := cfg.TS
+		if ts == 0 {
+			physical, logical, err := em.GetTS(ctx)
+			if err != nil {
+				return err
+			}
+			ts = oracle.ComposeTS(physical, logical)
 		}
-		ts := oracle.ComposeTS(physical, logical)
 		externalEngine := external.NewExternalEngine(
 			store,
 			externalCfg.DataFiles,
@@ -343,7 +350,7 @@ func (em *engineManager) closeEngine(
 		engine.db.Store(db)
 		engine.sstIngester = dbSSTIngester{e: engine}
 		if err = engine.loadEngineMeta(); err != nil {
-			return err
+			return errors.Trace(err)
 		}
 		em.engines.Store(engineUUID, engine)
 		return nil
@@ -395,7 +402,11 @@ func (em *engineManager) getExternalEngineKVStatistics(engineUUID uuid.UUID) (
 }
 
 // resetEngine reset the engine and reclaim the space.
-func (em *engineManager) resetEngine(ctx context.Context, engineUUID uuid.UUID) error {
+func (em *engineManager) resetEngine(
+	ctx context.Context,
+	engineUUID uuid.UUID,
+	skipAllocTS bool,
+) error {
 	// the only way to reset the engine + reclaim the space is to delete and reopen it 🤷
 	localEngine := em.lockEngine(engineUUID, importMutexStateClose)
 	if localEngine == nil {
@@ -423,15 +434,11 @@ func (em *engineManager) resetEngine(ctx context.Context, engineUUID uuid.UUID) 
 				return errors.Trace(err)
 			}
 		}
-		if err = em.allocateTSIfNotExists(ctx, localEngine); err != nil {
-			return errors.Trace(err)
+		if !skipAllocTS {
+			if err = em.allocateTSIfNotExists(ctx, localEngine); err != nil {
+				return errors.Trace(err)
+			}
 		}
-		failpoint.Inject("mockAllocateTSErr", func() {
-			// mock generate timestamp error when reset engine.
-			localEngine.TS = 0
-			mockGRPCErr, _ := status.FromError(errors.Errorf("mock generate timestamp error"))
-			failpoint.Return(errors.Trace(mockGRPCErr.Err()))
-		})
 	}
 	localEngine.pendingFileSize.Store(0)
 

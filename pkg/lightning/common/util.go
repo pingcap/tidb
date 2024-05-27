@@ -522,7 +522,7 @@ loop:
 			continue
 		}
 		// Skip index that contains auto-increment column.
-		// Because auto colum must be defined as a key.
+		// Because auto column must be defined as a key.
 		for _, idxCol := range idxInfo.Columns {
 			flag := cols[idxCol.Offset].GetFlag()
 			if tmysql.HasAutoIncrementFlag(flag) {

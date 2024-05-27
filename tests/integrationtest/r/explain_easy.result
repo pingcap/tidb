@@ -198,11 +198,11 @@ HashAgg	24000.00	root		group by:Column#10, funcs:firstrow(Column#11)->Column#10
       └─StreamAgg	8000.00	cop[tikv]		group by:explain_easy.t2.c1, 
         └─IndexFullScan	10000.00	cop[tikv]	table:t2, index:c1(c1)	keep order:true, stats:pseudo
 select * from information_schema.tidb_indexes where table_name='t4' and table_schema='explain_easy';
-TABLE_SCHEMA	TABLE_NAME	NON_UNIQUE	KEY_NAME	SEQ_IN_INDEX	COLUMN_NAME	SUB_PART	INDEX_COMMENT	Expression	INDEX_ID	IS_VISIBLE	CLUSTERED
-explain_easy	t4	0	PRIMARY	1	a	NULL		NULL	0	YES	YES
-explain_easy	t4	1	idx	1	a	NULL		NULL	1	YES	NO
-explain_easy	t4	1	idx	2	b	NULL		NULL	1	YES	NO
-explain_easy	t4	1	expr_idx	1	NULL	NULL		`a` + `b` + 1	2	YES	NO
+TABLE_SCHEMA	TABLE_NAME	NON_UNIQUE	KEY_NAME	SEQ_IN_INDEX	COLUMN_NAME	SUB_PART	INDEX_COMMENT	Expression	INDEX_ID	IS_VISIBLE	CLUSTERED	IS_GLOBAL
+explain_easy	t4	0	PRIMARY	1	a	NULL		NULL	0	YES	YES	0
+explain_easy	t4	1	idx	1	a	NULL		NULL	1	YES	NO	0
+explain_easy	t4	1	idx	2	b	NULL		NULL	1	YES	NO	0
+explain_easy	t4	1	expr_idx	1	NULL	NULL		`a` + `b` + 1	2	YES	NO	0
 explain format = 'brief' select count(1) from (select count(1) from (select * from t1 where c3 = 100) k) k2;
 id	estRows	task	access object	operator info
 StreamAgg	1.00	root		funcs:count(1)->Column#5
@@ -516,7 +516,7 @@ StreamAgg	1.00	root		funcs:count(1)->Column#22
       │   └─Projection	1.00	root		Column#33, Column#34, Column#35, Column#14, Column#15, Column#16
       │     └─HashAgg	1.00	root		group by:explain_easy.test01.region_id, explain_easy.test01.show_date, explain_easy.test01.stat_date, funcs:firstrow(explain_easy.test01.stat_date)->Column#33, funcs:firstrow(explain_easy.test01.show_date)->Column#34, funcs:firstrow(explain_easy.test01.region_id)->Column#35, funcs:firstrow(explain_easy.test01.stat_date)->Column#14, funcs:firstrow(explain_easy.test01.show_date)->Column#15, funcs:firstrow(explain_easy.test01.region_id)->Column#16, funcs:count(1)->Column#39
       │       └─TableReader	0.01	root		data:Selection
-      │         └─Selection	0.01	cop[tikv]		eq(explain_easy.test01.period, 1), ge(explain_easy.test01.stat_date, 20191202), gt(cast(explain_easy.test01.registration_num, bigint(20) BINARY), 0), le(explain_easy.test01.stat_date, 20191202)
+      │         └─Selection	0.01	cop[tikv]		eq(explain_easy.test01.period, 1), ge(explain_easy.test01.stat_date, 20191202), gt(cast(explain_easy.test01.registration_num, decimal(20,0) BINARY), 0), le(explain_easy.test01.stat_date, 20191202)
       │           └─TableFullScan	10000.00	cop[tikv]	table:test01	keep order:false, stats:pseudo
       └─TableReader(Probe)	2.00	root		data:TableRangeScan
         └─TableRangeScan	2.00	cop[tikv]	table:b	range: decided by [Column#16], keep order:false, stats:pseudo

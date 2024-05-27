@@ -96,6 +96,10 @@ func (re *regexpBaseFuncSig) canMemorizeRegexp(matchTypeIdx int) bool {
 
 // buildRegexp builds a new `*regexp.Regexp` from the pattern and matchType
 func (re *regexpBaseFuncSig) buildRegexp(pattern string, matchType string) (reg *regexp.Regexp, err error) {
+	if len(pattern) == 0 {
+		return nil, ErrRegexp.GenWithStackByArgs(emptyPatternErr)
+	}
+
 	matchType, err = getRegexpMatchType(matchType, re.collation)
 	if err != nil {
 		return nil, err
@@ -314,7 +318,8 @@ func (re *builtinRegexpLikeFuncSig) vecEvalInt(ctx EvalContext, input *chunk.Chu
 
 		if !memorized {
 			matchType := params[2].getStringVal(i)
-			reg, err = re.buildRegexp(params[1].getStringVal(i), matchType)
+			pattern := params[1].getStringVal(i)
+			reg, err = re.buildRegexp(pattern, matchType)
 			if err != nil {
 				return err
 			}
@@ -583,8 +588,8 @@ func (re *builtinRegexpSubstrFuncSig) vecEvalString(ctx EvalContext, input *chun
 
 		if !memorized {
 			// Get pattern and match type and then generate regexp
-			pattern := params[1].getStringVal(i)
 			matchType := params[4].getStringVal(i)
+			pattern := params[1].getStringVal(i)
 			if reg, err = re.buildRegexp(pattern, matchType); err != nil {
 				return err
 			}
@@ -915,7 +920,8 @@ func (re *builtinRegexpInStrFuncSig) vecEvalInt(ctx EvalContext, input *chunk.Ch
 		// Get match type and generate regexp
 		if !memorized {
 			matchType := params[5].getStringVal(i)
-			reg, err = re.buildRegexp(params[1].getStringVal(i), matchType)
+			pattern := params[1].getStringVal(i)
+			reg, err = re.buildRegexp(pattern, matchType)
 			if err != nil {
 				return err
 			}
@@ -1401,7 +1407,8 @@ func (re *builtinRegexpReplaceFuncSig) vecEvalString(ctx EvalContext, input *chu
 		// Get match type and generate regexp
 		if !memorized {
 			matchType := params[5].getStringVal(i)
-			reg, err = re.buildRegexp(params[1].getStringVal(i), matchType)
+			pattern := params[1].getStringVal(i)
+			reg, err = re.buildRegexp(pattern, matchType)
 			if err != nil {
 				return err
 			}

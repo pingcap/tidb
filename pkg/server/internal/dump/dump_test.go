@@ -29,7 +29,7 @@ func TestDumpBinaryTime(t *testing.T) {
 	d := BinaryDateTime(nil, parsedTime)
 	require.Equal(t, []byte{0}, d)
 
-	parsedTime, err = types.ParseTimestamp(typeCtx.WithLocation(time.Local), "1991-05-01 01:01:01.100001")
+	parsedTime, err = types.ParseTimestamp(typeCtx.WithLocation(time.UTC), "1991-05-01 01:01:01.100001")
 	require.NoError(t, err)
 	d = BinaryDateTime(nil, parsedTime)
 	// 199 & 7 composed to uint16 1991 (litter-endian)

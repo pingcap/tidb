@@ -121,7 +121,7 @@ func (c *copReqSender) run() {
 		if !ok {
 			return
 		}
-		if p.checkpointMgr != nil && p.checkpointMgr.IsComplete(task.endKey) {
+		if p.checkpointMgr != nil && p.checkpointMgr.IsKeyProcessed(task.endKey) {
 			logutil.Logger(p.ctx).Info("checkpoint detected, skip a cop-request task",
 				zap.Int("task ID", task.id),
 				zap.String("task end key", hex.EncodeToString(task.endKey)))
@@ -163,7 +163,7 @@ func scanRecords(p *copReqSenderPool, task *reorgBackfillTask, se *sess.Session)
 				return err
 			}
 			if p.checkpointMgr != nil {
-				p.checkpointMgr.UpdateTotal(task.id, srcChk.NumRows(), done)
+				p.checkpointMgr.UpdateTotalKeys(task.id, srcChk.NumRows(), done)
 			}
 			idxRs := IndexRecordChunk{ID: task.id, Chunk: srcChk, Done: done}
 			rate := float64(srcChk.MemoryUsage()) / 1024.0 / 1024.0 / time.Since(startTime).Seconds()

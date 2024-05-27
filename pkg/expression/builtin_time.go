@@ -63,10 +63,10 @@ const ( // GET_FORMAT location.
 )
 
 var (
-	// durationPattern checks whether a string matchs the format of duration.
+	// durationPattern checks whether a string matches the format of duration.
 	durationPattern = regexp.MustCompile(`^\s*[-]?(((\d{1,2}\s+)?0*\d{0,3}(:0*\d{1,2}){0,2})|(\d{1,7}))?(\.\d*)?\s*$`)
 
-	// timestampPattern checks whether a string matchs the format of timestamp.
+	// timestampPattern checks whether a string matches the format of timestamp.
 	timestampPattern = regexp.MustCompile(`^\s*0*\d{1,4}([^\d]0*\d{1,2}){2}\s+(0*\d{0,2}([^\d]0*\d{1,2}){2})?(\.\d*)?\s*$`)
 
 	// datePattern determine whether to match the format of date.
@@ -6232,6 +6232,13 @@ func addUnitToTime(unit string, t time.Time, v float64) (time.Time, bool, error)
 			return tb, true, nil
 		}
 		tb = t.AddDate(0, int(v), 0)
+
+		// For corner case: timestampadd(month,1,date '2024-01-31') = "2024-02-29", timestampadd(month,1,date '2024-01-30') = "2024-02-29"
+		// `tb.Month()` refers to the actual result, `t.Month()+v` refers to the expect result.
+		// Actual result may be greater than expect result, we need to judge and modify it.
+		for int(tb.Month())%12 != (int(t.Month())+int(v))%12 {
+			tb = tb.AddDate(0, 0, -1)
+		}
 	case "QUARTER":
 		if !validAddMonth(v*3, t.Year(), int(t.Month())) {
 			return tb, true, nil

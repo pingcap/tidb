@@ -177,7 +177,7 @@ func scalarExprSupportedByTiKV(sf *ScalarFunction) bool {
 		// Rust use the llvm math functions, which have different precision with Golang/MySQL(cmath)
 		// open the following switchers if we implement them in coprocessor via `cmath`
 		ast.Sin, ast.Asin, ast.Cos, ast.Acos /* ast.Tan */, ast.Atan, ast.Atan2, ast.Cot,
-		ast.Radians, ast.Degrees, ast.Conv, ast.CRC32,
+		ast.Radians, ast.Degrees, ast.CRC32,
 
 		// control flow functions.
 		ast.Case, ast.If, ast.Ifnull, ast.Coalesce,
@@ -221,6 +221,17 @@ func scalarExprSupportedByTiKV(sf *ScalarFunction) bool {
 		/*ast.InetNtoa, ast.InetAton, ast.Inet6Ntoa, ast.Inet6Aton, ast.IsIPv4, ast.IsIPv4Compat, ast.IsIPv4Mapped, ast.IsIPv6,*/
 		ast.UUID:
 
+		return true
+	// Rust use the llvm math functions, which have different precision with Golang/MySQL(cmath)
+	// open the following switchers if we implement them in coprocessor via `cmath`
+	case ast.Conv:
+		arg0 := sf.GetArgs()[0]
+		// To be aligned with MySQL, tidb handles hybrid type argument and binary literal specially, tikv can't be consistent with tidb now.
+		if f, ok := arg0.(*ScalarFunction); ok {
+			if f.FuncName.L == ast.Cast && (f.GetArgs()[0].GetType().Hybrid() || IsBinaryLiteral(f.GetArgs()[0])) {
+				return false
+			}
+		}
 		return true
 	case ast.Round:
 		switch sf.Function.PbCode() {
@@ -425,35 +436,22 @@ type PushDownContext struct {
 	groupConcatMaxLen uint64
 }
 
-type pushDownWarnHandler struct {
-	inExplainStmt      bool
-	appendWarning      func(err error)
-	appendExtraWarning func(err error)
-}
-
-func (h *pushDownWarnHandler) AppendWarning(err error) {
-	if h.inExplainStmt {
-		h.appendWarning(err)
-	} else {
-		h.appendExtraWarning(err)
-	}
-}
-
 // NewPushDownContext returns a new PushDownContext
-func NewPushDownContext(evalCtx EvalContext, client kv.Client, inExplainStmt bool, appendWarning func(err error), appendExtraWarning func(err error), groupConcatMaxLen uint64) PushDownContext {
-	var warnHandler contextutil.WarnAppender
-	if appendWarning != nil && appendExtraWarning != nil {
-		warnHandler = &pushDownWarnHandler{
-			inExplainStmt:      inExplainStmt,
-			appendWarning:      appendWarning,
-			appendExtraWarning: appendExtraWarning,
+func NewPushDownContext(evalCtx EvalContext, client kv.Client, inExplainStmt bool,
+	warnHandler contextutil.WarnAppender, extraWarnHandler contextutil.WarnAppender, groupConcatMaxLen uint64) PushDownContext {
+	var newWarnHandler contextutil.WarnAppender
+	if warnHandler != nil && extraWarnHandler != nil {
+		if inExplainStmt {
+			newWarnHandler = warnHandler
+		} else {
+			newWarnHandler = extraWarnHandler
 		}
 	}
 
 	return PushDownContext{
 		evalCtx:           evalCtx,
 		client:            client,
-		warnHandler:       warnHandler,
+		warnHandler:       newWarnHandler,
 		groupConcatMaxLen: groupConcatMaxLen,
 	}
 }
@@ -464,8 +462,8 @@ func NewPushDownContextFromSessionVars(evalCtx EvalContext, sessVars *variable.S
 		evalCtx,
 		client,
 		sessVars.StmtCtx.InExplainStmt,
-		sessVars.StmtCtx.AppendWarning,
-		sessVars.StmtCtx.AppendExtraWarning,
+		sessVars.StmtCtx.WarnHandler,
+		sessVars.StmtCtx.ExtraWarnHandler,
 		sessVars.GroupConcatMaxLen)
 }
 

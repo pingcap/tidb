@@ -31,11 +31,15 @@ go_library(
 go_test(
     name = "util_test",
     timeout = "short",
-    srcs = ["main_test.go"],
+    srcs = [
+        "main_test.go",
+        "util_test.go",
+    ],
     embed = [":util"],
     flaky = True,
     deps = [
         "//pkg/testkit/testsetup",
+        "@com_github_stretchr_testify//require",
         "@org_uber_go_goleak//:goleak",
     ],
 )

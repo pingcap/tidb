@@ -76,7 +76,7 @@ func (ss *RegionBatchRequestSender) SendReqToAddr(bo *Backoffer, rpcCtx *tikv.RP
 	start := time.Now()
 	resp, err = ss.GetClient().SendRequest(ctx, rpcCtx.Addr, req, timout)
 	if ss.Stats != nil && ss.enableCollectExecutionInfo {
-		tikv.RecordRegionRequestRuntimeStats(ss.Stats, req.Type, time.Since(start))
+		ss.Stats.RecordRPCRuntimeStats(req.Type, time.Since(start))
 	}
 	if err != nil {
 		cancel()

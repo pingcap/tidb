@@ -2166,6 +2166,7 @@ func TestShowAanalyzeStatusJobInfo(t *testing.T) {
 		tk.MustExec("delete from mysql.analyze_jobs")
 	}
 	checkJobInfo("analyze table columns b, c, d with 2 buckets, 2 topn, 1 samplerate")
+	tk.MustExec("set global tidb_persist_analyze_options = 1")
 	tk.MustExec("set global tidb_enable_column_tracking = 1")
 	tk.MustExec("select * from t where c > 1")
 	h := dom.StatsHandle()
@@ -2173,8 +2174,7 @@ func TestShowAanalyzeStatusJobInfo(t *testing.T) {
 	tk.MustExec("analyze table t predicate columns with 2 topn, 2 buckets")
 	checkJobInfo("analyze table columns b, c, d with 2 buckets, 2 topn, 1 samplerate")
 	tk.MustExec("analyze table t")
-	checkJobInfo("analyze table all columns with 256 buckets, 500 topn, 1 samplerate")
-	tk.MustExec("set global tidb_persist_analyze_options = 1")
+	checkJobInfo("analyze table columns b, c, d with 2 buckets, 2 topn, 1 samplerate")
 	tk.MustExec("analyze table t columns a with 1 topn, 3 buckets")
 	checkJobInfo("analyze table columns a, b, d with 3 buckets, 1 topn, 1 samplerate")
 	tk.MustExec("analyze table t")

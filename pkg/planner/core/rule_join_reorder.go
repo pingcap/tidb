@@ -514,11 +514,37 @@ func (s *baseSingleGroupJoinOrderSolver) checkConnection(leftPlan, rightPlan bas
 				usedEdges = append(usedEdges, edge)
 			} else {
 				newSf := expression.NewFunctionInternal(s.ctx.GetExprCtx(), ast.EQ, edge.GetType(), rCol, lCol).(*expression.ScalarFunction)
+
+				// after creating the new EQ function, the 2 args might not be column anymore, for example `sf=sf(cast(col))`,
+				// which breaks the assumption that join eq keys must be `col=col`, to handle this, inject 2 projections.
+				_, isCol0 := newSf.GetArgs()[0].(*expression.Column)
+				_, isCol1 := newSf.GetArgs()[1].(*expression.Column)
+				if !isCol0 || !isCol1 {
+					if !isCol0 {
+						leftPlan, rCol = s.injectExpr(leftPlan, newSf.GetArgs()[0])
+					}
+					if !isCol1 {
+						rightPlan, lCol = s.injectExpr(rightPlan, newSf.GetArgs()[1])
+					}
+					leftNode, rightNode = leftPlan, rightPlan
+					newSf = expression.NewFunctionInternal(s.ctx.GetExprCtx(), ast.EQ, edge.GetType(),
+						rCol, lCol).(*expression.ScalarFunction)
+				}
 				usedEdges = append(usedEdges, newSf)
 			}
 		}
 	}
 	return
+}
+
+func (*baseSingleGroupJoinOrderSolver) injectExpr(p base.LogicalPlan, expr expression.Expression) (base.LogicalPlan, *expression.Column) {
+	proj, ok := p.(*LogicalProjection)
+	if !ok {
+		proj = LogicalProjection{Exprs: cols2Exprs(p.Schema().Columns)}.Init(p.SCtx(), p.QueryBlockOffset())
+		proj.SetSchema(p.Schema().Clone())
+		proj.SetChildren(p)
+	}
+	return proj, proj.appendExpr(expr)
 }
 
 // makeJoin build join tree for the nodes which have equal conditions to connect them.

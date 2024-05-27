@@ -528,7 +528,7 @@ func (e *AnalyzeColumnsExecV2) buildSubIndexJobForSpecialIndex(indexInfos []*mod
 	_, offset := timeutil.Zone(e.ctx.GetSessionVars().Location())
 	tasks := make([]*analyzeTask, 0, len(indexInfos))
 	sc := e.ctx.GetSessionVars().StmtCtx
-	concurrency := e.ctx.GetSessionVars().AnalyzeDistSQLScanConcurrency()
+	concurrency := adaptiveAnlayzeDistSQLConcurrency(context.Background(), e.ctx)
 	for _, indexInfo := range indexInfos {
 		base := baseAnalyzeExec{
 			ctx:         e.ctx,

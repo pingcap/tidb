@@ -89,6 +89,9 @@ type EngineConfig struct {
 	// KeepSortDir indicates whether to keep the temporary sort directory
 	// when opening the engine, instead of removing it.
 	KeepSortDir bool
+	// TS is the preset timestamp of data in the engine. When it's 0, the used TS
+	// will be set lazily.
+	TS uint64
 }
 
 // LocalEngineConfig is the configuration used for local backend in OpenEngine.
@@ -236,8 +239,12 @@ func MakeEngineManager(ab Backend) EngineManager {
 }
 
 // OpenEngine opens an engine with the given table name and engine ID.
-func (be EngineManager) OpenEngine(ctx context.Context, config *EngineConfig,
-	tableName string, engineID int32) (*OpenedEngine, error) {
+func (be EngineManager) OpenEngine(
+	ctx context.Context,
+	config *EngineConfig,
+	tableName string,
+	engineID int32,
+) (*OpenedEngine, error) {
 	tag, engineUUID := MakeUUID(tableName, int64(engineID))
 	logger := makeLogger(log.FromContext(ctx), tag, engineUUID)
 
@@ -298,6 +305,13 @@ func (engine *OpenedEngine) Flush(ctx context.Context) error {
 // LocalWriter returns a writer that writes to the local backend.
 func (engine *OpenedEngine) LocalWriter(ctx context.Context, cfg *LocalWriterConfig) (EngineWriter, error) {
 	return engine.backend.LocalWriter(ctx, cfg, engine.uuid)
+}
+
+// SetTS sets the TS of the engine. In most cases if the caller wants to specify
+// TS it should use the TS field in EngineConfig. This method is only used after
+// a ResetEngine.
+func (engine *OpenedEngine) SetTS(ts uint64) {
+	engine.config.TS = ts
 }
 
 // UnsafeCloseEngine closes the engine without first opening it.

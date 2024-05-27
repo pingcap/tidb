@@ -19,6 +19,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/context"
 	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
+	"github.com/pingcap/tidb/pkg/statistics/asyncload"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/twmb/murmur3"
@@ -144,12 +145,12 @@ func IndexStatsIsInvalid(sctx context.PlanContext, idxStats *Index, coll *HistCo
 	// If the given index statistics is nil or we found that the index's statistics hasn't been fully loaded, we add this index to NeededItems.
 	// Also, we need to check that this HistColl has its physical ID and it is permitted to trigger the stats loading.
 	if (idxStats == nil || !idxStats.IsFullLoad()) && !coll.CanNotTriggerLoad {
-		HistogramNeededItems.Insert(model.TableItemID{
+		asyncload.AsyncLoadHistogramNeededItems.Insert(model.TableItemID{
 			TableID:          coll.PhysicalID,
 			ID:               cid,
 			IsIndex:          true,
 			IsSyncLoadFailed: sctx.GetSessionVars().StmtCtx.StatsLoad.Timeout > 0,
-		})
+		}, true)
 		// TODO: we can return true here. But need to fix some tests first.
 	}
 	if idxStats == nil {

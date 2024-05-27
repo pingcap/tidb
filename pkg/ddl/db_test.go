@@ -1076,18 +1076,17 @@ func TestTruncateTableAndSchemaDependence(t *testing.T) {
 	tk.MustExec("create table t(a int);")
 
 	var wg sync.WaitGroup
-
-	hook := &callback.TestDDLCallback{Do: dom}
 	wg.Add(2)
+
 	var timetk2 time.Time
 	var timetk3 time.Time
 
-	one := false
+	first := false
 	f := func(job *model.Job) {
-		if one {
+		if first || job.Type != model.ActionTruncateTable {
 			return
 		}
-		one = true
+		first = true
 		go func() {
 			tk3.MustExec("drop database test")
 			timetk3 = time.Now()
@@ -1096,6 +1095,7 @@ func TestTruncateTableAndSchemaDependence(t *testing.T) {
 		time.Sleep(3 * time.Second)
 	}
 
+	hook := &callback.TestDDLCallback{Do: dom}
 	hook.OnJobUpdatedExported.Store(&f)
 	dom.DDL().SetHook(hook)
 

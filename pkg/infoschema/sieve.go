@@ -75,6 +75,12 @@ func (s *Sieve[K, V]) SetCapacity(capacity uint64) {
 	s.capacity = capacity
 }
 
+func (s *Sieve[K, V]) Capacity() uint64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.capacity
+}
+
 func (s *Sieve[K, V]) Set(key K, value V) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

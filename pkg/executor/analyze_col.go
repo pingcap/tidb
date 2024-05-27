@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core"
+	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
@@ -46,7 +47,7 @@ type AnalyzeColumnsExec struct {
 
 	tableInfo     *model.TableInfo
 	colsInfo      []*model.ColumnInfo
-	handleCols    core.HandleCols
+	handleCols    plannerutil.HandleCols
 	commonHandle  *model.IndexInfo
 	resultHandler *tableResultHandler
 	indexes       []*model.IndexInfo
@@ -379,7 +380,7 @@ func (e *AnalyzeColumnsExecV1) analyzeColumnsPushDownV1() *statistics.AnalyzeRes
 	}
 }
 
-func hasPkHist(handleCols core.HandleCols) bool {
+func hasPkHist(handleCols plannerutil.HandleCols) bool {
 	return handleCols != nil && handleCols.IsInt()
 }
 

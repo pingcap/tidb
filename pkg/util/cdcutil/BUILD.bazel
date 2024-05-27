@@ -6,6 +6,7 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/util/cdcutil",
     visibility = ["//visibility:public"],
     deps = [
+        "//pkg/util/mathutil",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_log//:log",
         "@io_etcd_go_etcd_client_v3//:client",
@@ -16,10 +17,13 @@ go_library(
 go_test(
     name = "cdcutil_test",
     timeout = "short",
-    srcs = ["cdc_test.go"],
+    srcs = [
+        "cdc_test.go",
+        "export_for_test.go",
+    ],
+    embed = [":cdcutil"],
     flaky = True,
     deps = [
-        ":cdcutil",
         "@com_github_stretchr_testify//require",
         "@io_etcd_go_etcd_client_v3//:client",
         "@io_etcd_go_etcd_tests_v3//integration",

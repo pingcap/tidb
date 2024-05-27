@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/expression/contextsession"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/auth"
@@ -153,7 +154,7 @@ func TestBootstrapWithError(t *testing.T) {
 			store:       store,
 			sessionVars: variable.NewSessionVars(nil),
 		}
-		se.exprctx = newExpressionContextImpl(se)
+		se.exprctx = contextsession.NewSessionExprContext(se)
 		se.pctx = newPlanContextImpl(se)
 		se.tblctx = tbctximpl.NewTableContextImpl(se, se.exprctx)
 		globalVarsAccessor := variable.NewMockGlobalAccessor4Tests()
@@ -780,7 +781,7 @@ func TestIndexMergeUpgradeFrom300To540(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int64(ver300), ver)
 
-	// We are now in 3.0.0, check tidb_enable_index_merge shoudle not exist.
+	// We are now in 3.0.0, check tidb_enable_index_merge should not exist.
 	res := MustExecToRecodeSet(t, seV3, fmt.Sprintf("select * from mysql.GLOBAL_VARIABLES where variable_name='%s'", variable.TiDBEnableIndexMerge))
 	chk := res.NewChunk(nil)
 	err = res.Next(ctx, chk)

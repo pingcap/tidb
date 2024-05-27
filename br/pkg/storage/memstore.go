@@ -252,9 +252,6 @@ func (s *MemStorage) Create(ctx context.Context, name string, _ *WriterOption) (
 	}
 	s.rwm.Lock()
 	defer s.rwm.Unlock()
-	if _, ok := s.dataStore[name]; ok {
-		return nil, errors.Errorf("the file already exists: %s", name)
-	}
 	theFile := new(memFile)
 	s.dataStore[name] = theFile
 	return &memFileWriter{

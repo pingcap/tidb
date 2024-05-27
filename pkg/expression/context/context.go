@@ -15,6 +15,7 @@
 package context
 
 import (
+	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/tidb/pkg/errctx"
@@ -25,6 +26,29 @@ import (
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
 )
+
+// PlanColumnIDAllocator allocates column id for plan.
+type PlanColumnIDAllocator interface {
+	// AllocPlanColumnID allocates column id for plan.
+	AllocPlanColumnID() int64
+}
+
+// SimplePlanColumnIDAllocator implements PlanColumnIDAllocator
+type SimplePlanColumnIDAllocator struct {
+	id atomic.Int64
+}
+
+// NewSimplePlanColumnIDAllocator creates a new SimplePlanColumnIDAllocator.
+func NewSimplePlanColumnIDAllocator(offset int64) *SimplePlanColumnIDAllocator {
+	alloc := &SimplePlanColumnIDAllocator{}
+	alloc.id.Store(offset)
+	return alloc
+}
+
+// AllocPlanColumnID allocates column id for plan.
+func (a *SimplePlanColumnIDAllocator) AllocPlanColumnID() int64 {
+	return a.id.Add(1)
+}
 
 // EvalContext is used to evaluate an expression
 type EvalContext interface {
@@ -122,10 +146,11 @@ func (ctx *NullRejectCheckExprContext) IsInNullRejectCheck() bool {
 // AssertLocationWithSessionVars asserts the location in the context and session variables are the same.
 // It is only used for testing.
 func AssertLocationWithSessionVars(ctxLoc *time.Location, vars *variable.SessionVars) {
-	varsLoc := vars.Location()
-	stmtLoc := vars.StmtCtx.TimeZone()
-	intest.Assert(ctxLoc == varsLoc && ctxLoc == stmtLoc,
+	ctxLocStr := ctxLoc.String()
+	varsLocStr := vars.Location().String()
+	stmtLocStr := vars.StmtCtx.TimeZone().String()
+	intest.Assert(ctxLocStr == varsLocStr && ctxLocStr == stmtLocStr,
 		"location mismatch, ctxLoc: %s, varsLoc: %s, stmtLoc: %s",
-		ctxLoc.String(), varsLoc.String(), stmtLoc.String(),
+		ctxLoc.String(), ctxLocStr, stmtLocStr,
 	)
 }

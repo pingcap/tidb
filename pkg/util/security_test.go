@@ -16,7 +16,6 @@ package util_test
 
 import (
 	"bytes"
-	"context"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/tls"
@@ -75,10 +74,8 @@ func TestVerifyCommonNameAndRotate(t *testing.T) {
 		util.WithVerifyCommonName([]string{"client1"}),
 	)
 	require.NoError(t, err)
-	ctx, cancel := context.WithCancel(context.Background())
-	server, port := runServer(ctx, serverTLS, t)
+	server, port := runServer(serverTLS, t)
 	defer func() {
-		cancel()
 		server.Close()
 	}()
 	url := fmt.Sprintf("https://127.0.0.1:%d", port)
@@ -91,6 +88,20 @@ func TestVerifyCommonNameAndRotate(t *testing.T) {
 	resp, err := util.ClientWithTLS(clientTLS1).Get(url)
 	require.NoError(t, err)
 	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.Equal(t, "This an example server", string(body))
+	require.NoError(t, resp.Body.Close())
+
+	// client1 also check server's Common Name
+	clientTLS1Verify, err := util.NewTLSConfig(
+		util.WithCAContent(caData),
+		util.WithCertAndKeyContent(client1Cert, client1Key),
+		util.WithVerifyCommonName([]string{"server"}),
+	)
+	require.NoError(t, err)
+	resp, err = util.ClientWithTLS(clientTLS1Verify).Get(url)
+	require.NoError(t, err)
+	body, err = io.ReadAll(resp.Body)
 	require.NoError(t, err)
 	require.Equal(t, "This an example server", string(body))
 	require.NoError(t, resp.Body.Close())
@@ -140,10 +151,8 @@ func TestTLSVersion(t *testing.T) {
 		util.WithCertAndKeyContent(serverCert, serverKey),
 	)
 	require.NoError(t, err)
-	ctx, cancel := context.WithCancel(context.Background())
-	server, port := runServer(ctx, serverTLS, t)
+	server, port := runServer(serverTLS, t)
 	defer func() {
-		cancel()
 		server.Close()
 	}()
 	url := fmt.Sprintf("https://127.0.0.1:%d", port)
@@ -198,10 +207,8 @@ func TestCA(t *testing.T) {
 		util.WithCertAndKeyContent(serverCert, serverKey),
 	)
 	require.NoError(t, err)
-	ctx, cancel := context.WithCancel(context.Background())
-	server, port := runServer(ctx, serverTLS, t)
+	server, port := runServer(serverTLS, t)
 	defer func() {
-		cancel()
 		server.Close()
 	}()
 	url := fmt.Sprintf("https://127.0.0.1:%d", port)
@@ -256,7 +263,7 @@ func handler(w http.ResponseWriter, req *http.Request) {
 	w.Write([]byte("This an example server"))
 }
 
-func runServer(ctx context.Context, tlsCfg *tls.Config, t *testing.T) (*http.Server, int) {
+func runServer(tlsCfg *tls.Config, t *testing.T) (*http.Server, int) {
 	http.HandleFunc("/", handler)
 	server := &http.Server{Addr: ":0", Handler: nil}
 

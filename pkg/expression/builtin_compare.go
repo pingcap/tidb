@@ -368,7 +368,7 @@ func ResolveType4Between(args [3]Expression) types.EvalType {
 	return cmpTp
 }
 
-// GLCmpStringMode represents Greatest/Least interal string comparison mode
+// GLCmpStringMode represents Greatest/Least integral string comparison mode
 type GLCmpStringMode uint8
 
 const (
@@ -448,7 +448,7 @@ func (c *greatestFunctionClass) getFunction(ctx BuildContext, args []Expression)
 	resTp := resFieldType.EvalType()
 	argTp := resTp
 	if cmpStringMode != GLCmpStringDirectly {
-		// Args are temporal and string mixed, we cast all args as string and parse it to temporal mannualy to compare.
+		// Args are temporal and string mixed, we cast all args as string and parse it to temporal manually to compare.
 		argTp = types.ETString
 	} else if resTp == types.ETJson {
 		unsupportedJSONComparison(ctx, args)
@@ -761,7 +761,7 @@ func (c *leastFunctionClass) getFunction(ctx BuildContext, args []Expression) (s
 	resTp := resFieldType.EvalType()
 	argTp := resTp
 	if cmpStringMode != GLCmpStringDirectly {
-		// Args are temporal and string mixed, we cast all args as string and parse it to temporal mannualy to compare.
+		// Args are temporal and string mixed, we cast all args as string and parse it to temporal manually to compare.
 		argTp = types.ETString
 	} else if resTp == types.ETJson {
 		unsupportedJSONComparison(ctx, args)
@@ -1373,7 +1373,7 @@ func isTemporalColumn(expr Expression) bool {
 
 // tryToConvertConstantInt tries to convert a constant with other type to a int constant.
 // isExceptional indicates whether the 'int column [cmp] const' might be true/false.
-// If isExceptional is true, ExecptionalVal is returned. Or, CorrectVal is returned.
+// If isExceptional is true, ExceptionalVal is returned. Or, CorrectVal is returned.
 // CorrectVal: The computed result. If the constant can be converted to int without exception, return the val. Else return 'con'(the input).
 // ExceptionalVal : It is used to get more information to check whether 'int column [cmp] const' is true/false
 //
@@ -1412,7 +1412,7 @@ func tryToConvertConstantInt(ctx BuildContext, targetFieldType *types.FieldType,
 
 // RefineComparedConstant changes a non-integer constant argument to its ceiling or floor result by the given op.
 // isExceptional indicates whether the 'int column [cmp] const' might be true/false.
-// If isExceptional is true, ExecptionalVal is returned. Or, CorrectVal is returned.
+// If isExceptional is true, ExceptionalVal is returned. Or, CorrectVal is returned.
 // CorrectVal: The computed result. If the constant can be converted to int without exception, return the val. Else return 'con'(the input).
 // ExceptionalVal : It is used to get more information to check whether 'int column [cmp] const' is true/false
 //

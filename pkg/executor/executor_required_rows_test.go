@@ -393,8 +393,9 @@ func buildTopNExec(ctx sessionctx.Context, offset, count int, byItems []*util.By
 		ExecSchema:   src.Schema(),
 	}
 	return &sortexec.TopNExec{
-		SortExec: sortExec,
-		Limit:    &plannercore.PhysicalLimit{Count: uint64(count), Offset: uint64(offset)},
+		SortExec:    sortExec,
+		Limit:       &plannercore.PhysicalLimit{Count: uint64(count), Offset: uint64(offset)},
+		Concurrency: 5,
 	}
 }
 

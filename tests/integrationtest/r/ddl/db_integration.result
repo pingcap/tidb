@@ -407,7 +407,7 @@ show create table t;
 Table	Create Table
 t	CREATE TABLE `t` (
   `c` int(10) DEFAULT NULL,
-  `c1` varchar(256) DEFAULT uuid()
+  `c1` varchar(256) DEFAULT (uuid())
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 drop table if exists t1;
 create table t1 (a int(11) not null auto_increment key, b int(11), c bigint, unique key (a, b, c));

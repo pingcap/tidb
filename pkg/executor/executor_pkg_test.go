@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/executor/aggfuncs"
+	"github.com/pingcap/tidb/pkg/executor/join"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -56,12 +57,12 @@ func TestBuildKvRangesForIndexJoinWithoutCwc(t *testing.T) {
 	indexRanges = append(indexRanges, generateIndexRange(2, 1, 1, 1, 1))
 	indexRanges = append(indexRanges, generateIndexRange(2, 1, 2, 1, 1))
 
-	joinKeyRows := make([]*indexJoinLookUpContent, 0, 5)
-	joinKeyRows = append(joinKeyRows, &indexJoinLookUpContent{keys: generateDatumSlice(1, 1)})
-	joinKeyRows = append(joinKeyRows, &indexJoinLookUpContent{keys: generateDatumSlice(1, 2)})
-	joinKeyRows = append(joinKeyRows, &indexJoinLookUpContent{keys: generateDatumSlice(2, 1)})
-	joinKeyRows = append(joinKeyRows, &indexJoinLookUpContent{keys: generateDatumSlice(2, 2)})
-	joinKeyRows = append(joinKeyRows, &indexJoinLookUpContent{keys: generateDatumSlice(2, 3)})
+	joinKeyRows := make([]*join.IndexJoinLookUpContent, 0, 5)
+	joinKeyRows = append(joinKeyRows, &join.IndexJoinLookUpContent{Keys: generateDatumSlice(1, 1)})
+	joinKeyRows = append(joinKeyRows, &join.IndexJoinLookUpContent{Keys: generateDatumSlice(1, 2)})
+	joinKeyRows = append(joinKeyRows, &join.IndexJoinLookUpContent{Keys: generateDatumSlice(2, 1)})
+	joinKeyRows = append(joinKeyRows, &join.IndexJoinLookUpContent{Keys: generateDatumSlice(2, 2)})
+	joinKeyRows = append(joinKeyRows, &join.IndexJoinLookUpContent{Keys: generateDatumSlice(2, 3)})
 
 	keyOff2IdxOff := []int{1, 3}
 	ctx := mock.NewContext()
@@ -87,9 +88,9 @@ func TestBuildKvRangesForIndexJoinWithoutCwcAndWithMemoryTracker(t *testing.T) {
 
 	bytesConsumed1 := int64(0)
 	{
-		joinKeyRows := make([]*indexJoinLookUpContent, 0, 10)
+		joinKeyRows := make([]*join.IndexJoinLookUpContent, 0, 10)
 		for i := int64(0); i < 10; i++ {
-			joinKeyRows = append(joinKeyRows, &indexJoinLookUpContent{keys: generateDatumSlice(1, i)})
+			joinKeyRows = append(joinKeyRows, &join.IndexJoinLookUpContent{Keys: generateDatumSlice(1, i)})
 		}
 
 		keyOff2IdxOff := []int{1, 3}
@@ -109,9 +110,9 @@ func TestBuildKvRangesForIndexJoinWithoutCwcAndWithMemoryTracker(t *testing.T) {
 
 	bytesConsumed2 := int64(0)
 	{
-		joinKeyRows := make([]*indexJoinLookUpContent, 0, 20)
+		joinKeyRows := make([]*join.IndexJoinLookUpContent, 0, 20)
 		for i := int64(0); i < 20; i++ {
-			joinKeyRows = append(joinKeyRows, &indexJoinLookUpContent{keys: generateDatumSlice(1, i)})
+			joinKeyRows = append(joinKeyRows, &join.IndexJoinLookUpContent{Keys: generateDatumSlice(1, i)})
 		}
 
 		keyOff2IdxOff := []int{1, 3}

@@ -33,6 +33,7 @@ import (
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
+	"github.com/tikv/client-go/v2/config"
 	pd "github.com/tikv/pd/client"
 	"go.etcd.io/etcd/client/pkg/v3/transport"
 	clientv3 "go.etcd.io/etcd/client/v3"
@@ -157,6 +158,15 @@ func (tls *TLSConfig) ToPDSecurityOption() pd.SecurityOption {
 	securityOption.CertPath = tls.Cert
 	securityOption.KeyPath = tls.Key
 	return securityOption
+}
+
+// Convert the TLS config to the PD security option.
+func (tls *TLSConfig) ToKVSecurity() config.Security {
+	return config.Security{
+		ClusterSSLCA:   tls.CA,
+		ClusterSSLCert: tls.Cert,
+		ClusterSSLKey:  tls.Key,
+	}
 }
 
 // ParseFromFlags parses the TLS config from the flag set.

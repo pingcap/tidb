@@ -52,6 +52,7 @@ jobs:
           - 5.7.35
           - 8.0.22
           - 8.0.26
+          - 8.0.37
     runs-on: ubuntu-latest
     timeout-minutes: 15
     services:
@@ -64,13 +65,13 @@ jobs:
         options: --health-cmd="mysqladmin ping" --health-interval=10s --health-timeout=5s --health-retries=3
     steps:
       - name: "checkout repository"
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
       - name: "set up golang"
-        uses: actions/setup-go@v3
+        uses: actions/setup-go@v5
         with:
           go-version-file: 'go.mod'
       - name: "try to use build cache"
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
           path: |
             ~/.cache/go-build

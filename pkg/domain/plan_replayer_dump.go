@@ -754,6 +754,7 @@ func dumpPlanReplayerExplain(ctx sessionctx.Context, zw *zip.Writer, task *PlanR
 	return err
 }
 
+// extractTableNames extracts table names from the given stmts.
 func extractTableNames(ctx context.Context, sctx sessionctx.Context,
 	execStmts []ast.StmtNode, curDB model.CIStr) (map[tableNamePair]struct{}, error) {
 	tableExtractor := &tableNameExtractor{

@@ -1109,9 +1109,6 @@ func (p *TiKVSingleGather) ExplainInfo() string {
 	return buffer.String()
 }
 
-// MetricTableTimeFormat is the time format for metric table explain and format.
-const MetricTableTimeFormat = "2006-01-02 15:04:05.999"
-
 // ExplainInfo implements Plan interface.
 func (p *PhysicalMemTable) ExplainInfo() string {
 	accessObject, operatorInfo := p.AccessObject().String(), p.OperatorInfo(false)
@@ -1124,7 +1121,7 @@ func (p *PhysicalMemTable) ExplainInfo() string {
 // OperatorInfo implements dataAccesser interface.
 func (p *PhysicalMemTable) OperatorInfo(_ bool) string {
 	if p.Extractor != nil {
-		return p.Extractor.explainInfo(p)
+		return p.Extractor.ExplainInfo(p)
 	}
 	return ""
 }

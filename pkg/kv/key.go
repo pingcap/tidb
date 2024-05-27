@@ -553,9 +553,9 @@ func (m *HandleMap) Range(fn func(h Handle, val any) bool) {
 			return
 		}
 	}
-	for _, v := range m.partitionInts {
+	for pid, v := range m.partitionInts {
 		for h, val := range v {
-			if !fn(IntHandle(h), val) {
+			if !fn(NewPartitionHandle(pid, IntHandle(h)), val) {
 				return
 			}
 		}

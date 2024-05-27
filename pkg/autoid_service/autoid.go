@@ -389,22 +389,6 @@ func MockForTest(store kv.Storage) autoid.AutoIDAllocClient {
 // Close closes the Service and clean up resource.
 func (s *Service) Close() {
 	if s.leaderShip != nil && s.leaderShip.IsOwner() {
-		s.autoIDLock.Lock()
-		defer s.autoIDLock.Unlock()
-		for k, v := range s.autoIDMap {
-			v.Lock()
-			if v.base > 0 {
-				err := v.forceRebase(context.Background(), s.store, k.dbID, k.tblID, v.base, v.isUnsigned)
-				if err != nil {
-					logutil.BgLogger().Warn("save cached ID fail when service exit", zap.String("category", "autoid service"),
-						zap.Int64("db id", k.dbID),
-						zap.Int64("table id", k.tblID),
-						zap.Int64("value", v.base),
-						zap.Error(err))
-				}
-			}
-			v.Unlock()
-		}
 		s.leaderShip.Cancel()
 	}
 }

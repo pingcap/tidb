@@ -1,0 +1,9 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "cost",
+    srcs = ["factors_thresholds.go"],
+    importpath = "github.com/pingcap/tidb/pkg/planner/core/cost",
+    visibility = ["//visibility:public"],
+    deps = ["//pkg/parser/ast"],
+)

@@ -89,9 +89,9 @@ func TestEngineManager(t *testing.T) {
 	require.ErrorContains(t, em.closeEngine(ctx, &backend.EngineConfig{}, uuid.New()), "does not exist")
 
 	// reset non-existent engine should work
-	require.NoError(t, em.resetEngine(ctx, uuid.New()))
+	require.NoError(t, em.resetEngine(ctx, uuid.New(), false))
 	storeHelper.EXPECT().GetTS(gomock.Any()).Return(int64(0), int64(0), nil)
-	require.NoError(t, em.resetEngine(ctx, engine1ID))
+	require.NoError(t, em.resetEngine(ctx, engine1ID, false))
 	require.Equal(t, 1, syncMapLen(&em.engines))
 	_, ok = em.engines.Load(engine1ID)
 	require.True(t, ok)

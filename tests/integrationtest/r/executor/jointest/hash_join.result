@@ -215,8 +215,7 @@ a	b	a
 2	NULL	NULL
 drop table if exists t,s;
 create table t(a int primary key auto_increment, b time);
-create table s(a int, b time);
-alter table s add index idx(a,b);
+create table s(a int, b time, index idx(a, b));
 set @@tidb_index_join_batch_size=4;
 set @@tidb_init_chunk_size=1;
 set @@tidb_max_chunk_size=32;

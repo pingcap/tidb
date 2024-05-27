@@ -80,6 +80,24 @@ func (s *Schema) Clone() *Schema {
 	return schema
 }
 
+// ExprReferenceSchema checks if any column of this expression are from the schema.
+func ExprReferenceSchema(expr Expression, schema *Schema) bool {
+	switch v := expr.(type) {
+	case *Column:
+		return schema.Contains(v)
+	case *ScalarFunction:
+		for _, arg := range v.GetArgs() {
+			if ExprReferenceSchema(arg, schema) {
+				return true
+			}
+		}
+		return false
+	case *CorrelatedColumn, *Constant:
+		return false
+	}
+	return false
+}
+
 // ExprFromSchema checks if all columns of this expression are from the same schema.
 func ExprFromSchema(expr Expression, schema *Schema) bool {
 	switch v := expr.(type) {

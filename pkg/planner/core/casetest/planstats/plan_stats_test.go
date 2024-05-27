@@ -234,7 +234,7 @@ func TestPlanStatsLoadTimeout(t *testing.T) {
 	p := parser.New()
 	originConfig := config.GetGlobalConfig()
 	newConfig := config.NewConfig()
-	newConfig.Performance.StatsLoadConcurrency = 0 // no worker to consume channel
+	newConfig.Performance.StatsLoadConcurrency = -1 // no worker to consume channel
 	newConfig.Performance.StatsLoadQueueSize = 1
 	config.StoreGlobalConfig(newConfig)
 	defer config.StoreGlobalConfig(originConfig)

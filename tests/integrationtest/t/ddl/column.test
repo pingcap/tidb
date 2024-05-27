@@ -18,3 +18,24 @@ show create table t1;
 CREATE TABLE `t2`( `id` INTEGER PRIMARY KEY, `authorId` int(11) AUTO_INCREMENT, UNIQUE KEY `authorIdx` (`authorId`));
 show create table t2;
 
+# TestIssue52972
+# Test creating columns with error defaults when sql_mode is empty.
+set @@sql_mode='';
+drop table if exists t1;
+--error 1067
+create table t1(b tinyint default '11111111');
+--error 1067
+create table t1(b tinyint default '11abc');
+--error 1067
+create table t1(b datetime default '11abc');
+--error 1067
+create table t1(b date default '2024-10');
+create table t1(a tinyint, b date default '2024-10-24 12:20');
+--error 1067
+alter table t1 add column(c tinyint default '11111111');
+--error 1067
+alter table t1 add column(c tinyint default '11abc');
+--error 1067
+alter table t1 add column(c datetime default '11abc');
+--error 1067
+alter table t1 add column d date default '2024-10';

@@ -39,6 +39,7 @@ func TestV2Basic(t *testing.T) {
 	is.Data.addDB(1, dbInfo)
 	internal.AddDB(t, r.Store(), dbInfo)
 	tblInfo := internal.MockTableInfo(t, r.Store(), tableName.O)
+	tblInfo.DBID = dbInfo.ID
 	is.Data.add(tableItem{schemaName.L, dbInfo.ID, tableName.L, tblInfo.ID, 2, false}, internal.MockTable(t, r.Store(), tblInfo))
 	internal.AddTable(t, r.Store(), dbInfo, tblInfo)
 	is.base().schemaMetaVersion = 1
@@ -102,7 +103,7 @@ func TestV2Basic(t *testing.T) {
 
 	tblInfos := is.SchemaTableInfos(schemaName)
 	require.Equal(t, 1, len(tblInfos))
-	require.Same(t, tables[0].Meta(), tblInfos[0])
+	require.Equal(t, tables[0].Meta(), tblInfos[0])
 
 	tables = is.SchemaTables(model.NewCIStr("notexist"))
 	require.Equal(t, 0, len(tables))

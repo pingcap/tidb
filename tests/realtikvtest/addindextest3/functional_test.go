@@ -60,6 +60,7 @@ func TestDDLTestEstimateTableRowSize(t *testing.T) {
 		tk.MustExec(insertSQL)
 	}
 	tk.MustQuery("split table t between (0) and (1000000) regions 2;").Check(testkit.Rows("4 1"))
+	tk.MustExec("set global tidb_analyze_skip_column_types=`json,blob,mediumblob,longblob`")
 	tk.MustExec("analyze table t;")
 	tbl, err = dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)

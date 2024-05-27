@@ -8,7 +8,7 @@ go_test(
         "main_test.go",
     ],
     flaky = True,
-    shard_count = 7,
+    shard_count = 8,
     deps = [
         "//pkg/infoschema",
         "//pkg/testkit/testsetup",

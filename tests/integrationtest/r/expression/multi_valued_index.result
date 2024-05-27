@@ -28,9 +28,9 @@ Error 1235 (42000): This version of TiDB doesn't yet support 'Use of CAST( .. AS
 create table t(j json, gc json as (cast(j->'$[*]' as unsigned array)));
 Error 1235 (42000): This version of TiDB doesn't yet support 'Use of CAST( .. AS .. ARRAY) outside of functional index in CREATE(non-SELECT)/ALTER TABLE or in general expressions'
 create table t1(j json, key i1((cast(j->"$" as char array))));
-Error 1235 (42000): This version of TiDB doesn't yet support 'CAST-ing data to array of char/binary BLOBs'
+Error 1235 (42000): This version of TiDB doesn't yet support 'CAST-ing data to array of char/binary BLOBs with unspecified length'
 create table t1(j json, key i1((cast(j->"$" as binary array))));
-Error 1235 (42000): This version of TiDB doesn't yet support 'CAST-ing data to array of char/binary BLOBs'
+Error 1235 (42000): This version of TiDB doesn't yet support 'CAST-ing data to array of char/binary BLOBs with unspecified length'
 create table t1(j json, key i1((cast(j->"$" as float array))));
 Error 1235 (42000): This version of TiDB doesn't yet support 'CAST-ing data to array of float BINARY'
 create table t1(j json, key i1((cast(j->"$" as decimal(4,2) array))));

@@ -287,7 +287,7 @@ func TestParseWithParams(t *testing.T) {
 	se := tk.Session()
 	exec := se.GetRestrictedSQLExecutor()
 
-	// test compatibility with ExcuteInternal
+	// test compatibility with ExecuteInternal
 	_, err := exec.ParseWithParams(context.TODO(), "SELECT 4")
 	require.NoError(t, err)
 

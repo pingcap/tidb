@@ -1406,9 +1406,11 @@ func TestInitStatsLite(t *testing.T) {
 	require.NoError(t, h.LoadNeededHistograms())
 	statsTbl2 := h.GetTableStats(tblInfo)
 	colBStats1 := statsTbl2.Columns[colBID]
+	colCStats := statsTbl2.Columns[colCID]
 	require.True(t, colBStats1.IsFullLoad())
 	idxBStats1 := statsTbl2.Indices[idxBID]
 	require.True(t, idxBStats1.IsFullLoad())
+	require.True(t, colCStats.IsAllEvicted())
 
 	// sync stats load
 	tk.MustExec("set @@tidb_stats_load_sync_wait = 60000")

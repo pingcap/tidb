@@ -55,6 +55,18 @@ func TestSelectIntoFileExists(t *testing.T) {
 	require.True(t, strings.Contains(err.Error(), outfile))
 }
 
+func TestSelectIntoOutfilePointGet(t *testing.T) {
+	outfile := randomSelectFilePath("TestSelectIntoOutfilePointGet")
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec(`create table t (id int not null, primary key (id) /*T![clustered_index] CLUSTERED */ );`)
+	tk.MustExec(`insert into t values(1);`)
+	tk.MustExec(fmt.Sprintf("select * from t where id = 1 into outfile %q", outfile))
+	cmpAndRm("1\n", outfile, t)
+}
+
 func TestSelectIntoOutfileTypes(t *testing.T) {
 	outfile := randomSelectFilePath("TestSelectIntoOutfileTypes")
 	store := testkit.CreateMockStore(t)

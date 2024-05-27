@@ -16,7 +16,6 @@ go_library(
         "//pkg/parser/mysql",
         "//pkg/parser/terror",
         "//pkg/sessionctx",
-        "//pkg/sessionctx/stmtctx",
         "//pkg/sessionctx/sysproctrack",
         "//pkg/statistics",
         "//pkg/statistics/handle/autoanalyze",

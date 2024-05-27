@@ -1,0 +1,20 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "import_client",
+    srcs = ["import_client.go"],
+    importpath = "github.com/pingcap/tidb/br/pkg/restore/internal/import_client",
+    visibility = ["//br/pkg/restore:__subpackages__"],
+    deps = [
+        "//br/pkg/restore/split",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_kvproto//pkg/import_sstpb",
+        "@org_golang_google_grpc//:grpc",
+        "@org_golang_google_grpc//backoff",
+        "@org_golang_google_grpc//codes",
+        "@org_golang_google_grpc//credentials",
+        "@org_golang_google_grpc//credentials/insecure",
+        "@org_golang_google_grpc//keepalive",
+        "@org_golang_google_grpc//status",
+    ],
+)

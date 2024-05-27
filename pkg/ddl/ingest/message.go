@@ -67,8 +67,18 @@ func genBackendAllocMemFailedErr(ctx context.Context, memRoot MemRoot, jobID int
 	return dbterror.ErrIngestFailed.FastGenByArgs("memory used up")
 }
 
-func genEngineAllocMemFailedErr(ctx context.Context, memRoot MemRoot, jobID, idxID int64) error {
-	logutil.Logger(ctx).Warn(LitErrAllocMemFail, zap.Int64("job ID", jobID),
+func genEngineAllocMemFailedErr(ctx context.Context, memRoot MemRoot, jobID int64, idxIDs []int64) error {
+	logutil.Logger(ctx).Warn(LitErrAllocMemFail,
+		zap.Int64("job ID", jobID),
+		zap.Int64s("index IDs", idxIDs),
+		zap.Int64("current memory usage", memRoot.CurrentUsage()),
+		zap.Int64("max memory quota", memRoot.MaxMemoryQuota()))
+	return dbterror.ErrIngestFailed.FastGenByArgs("memory used up")
+}
+
+func genWriterAllocMemFailedErr(ctx context.Context, memRoot MemRoot, jobID int64, idxID int64) error {
+	logutil.Logger(ctx).Warn(LitErrAllocMemFail,
+		zap.Int64("job ID", jobID),
 		zap.Int64("index ID", idxID),
 		zap.Int64("current memory usage", memRoot.CurrentUsage()),
 		zap.Int64("max memory quota", memRoot.MaxMemoryQuota()))

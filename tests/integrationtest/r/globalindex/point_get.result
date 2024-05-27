@@ -1,0 +1,65 @@
+set tidb_enable_global_index=true;
+drop table if exists pt;
+# Non-clustered index table
+create table pt (a int, b int, c int, d int default 0, primary key (a, b) nonclustered, unique key uidx(c))
+partition by range(a) (
+PARTITION p0 VALUES LESS THAN (3),
+PARTITION p1 VALUES LESS THAN (6),
+PARTITION p2 VALUES LESS THAN (9),
+PARTITION p3 VALUES LESS THAN (20)
+);
+insert into pt(a,b,c) values(1,1,1), (2,2,2), (3,3,3), (4,4,4), (5,5,5), (6,6,6), (7,7,7), (8,8,8), (9,9,9), (10,10,10);
+analyze table pt;
+# Test PointGet
+explain select c from pt where c = 1;
+id	estRows	task	access object	operator info
+Point_Get_1	1.00	root	table:pt, index:uidx(c)	
+select c from pt where c = 1;
+c
+1
+explain select c from pt partition(p1) where c = 1;
+id	estRows	task	access object	operator info
+Point_Get_1	1.00	root	table:pt, index:uidx(c)	
+select c from pt partition(p1) where c = 1;
+c
+# Test BatchPointGet
+explain select c from pt where c in (1,2,3);
+id	estRows	task	access object	operator info
+Batch_Point_Get_1	3.00	root	table:pt, index:uidx(c)	keep order:false, desc:false
+select * from pt where c in (1,2,3);
+a	b	c	d
+1	1	1	0
+2	2	2	0
+3	3	3	0
+drop table if exists pt;
+# Clustered index table
+create table pt (a int, b int, c int, d int default 0, primary key (a, b) clustered, unique key uidx(c))
+partition by range(a) (
+PARTITION p0 VALUES LESS THAN (3),
+PARTITION p1 VALUES LESS THAN (6),
+PARTITION p2 VALUES LESS THAN (9),
+PARTITION p3 VALUES LESS THAN (20)
+);
+insert into pt(a,b,c) values(1,1,1), (2,2,2), (3,3,3), (4,4,4), (5,5,5), (6,6,6), (7,7,7), (8,8,8), (9,9,9), (10,10,10);
+analyze table pt;
+# Test PointGet
+explain select c from pt where c = 1;
+id	estRows	task	access object	operator info
+Point_Get_1	1.00	root	table:pt, index:uidx(c)	
+select c from pt where c = 1;
+c
+1
+explain select c from pt partition(p1) where c = 1;
+id	estRows	task	access object	operator info
+Point_Get_1	1.00	root	table:pt, index:uidx(c)	
+select c from pt partition(p1) where c = 1;
+c
+# Test BatchPointGet
+explain select c from pt where c in (1,2,3);
+id	estRows	task	access object	operator info
+Batch_Point_Get_1	3.00	root	table:pt, index:uidx(c)	keep order:false, desc:false
+select * from pt where c in (1,2,3);
+a	b	c	d
+1	1	1	0
+2	2	2	0
+3	3	3	0

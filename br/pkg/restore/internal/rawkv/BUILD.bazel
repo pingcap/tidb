@@ -1,0 +1,32 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "rawkv",
+    srcs = ["rawkv_client.go"],
+    importpath = "github.com/pingcap/tidb/br/pkg/restore/internal/rawkv",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//br/pkg/restore/utils",
+        "//pkg/util/hack",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_tikv_client_go_v2//config",
+        "@com_github_tikv_client_go_v2//rawkv",
+        "@com_github_tikv_pd_client//:client",
+    ],
+)
+
+go_test(
+    name = "rawkv_test",
+    timeout = "short",
+    srcs = ["rawkv_client_test.go"],
+    flaky = True,
+    deps = [
+        ":rawkv",
+        "//br/pkg/errors",
+        "//pkg/kv",
+        "//pkg/util/codec",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_stretchr_testify//require",
+        "@com_github_tikv_client_go_v2//rawkv",
+    ],
+)

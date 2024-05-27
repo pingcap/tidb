@@ -416,7 +416,7 @@ select sum(id) from t1;
 sum(id)
 32896
 SET GLOBAL tidb_mem_oom_action='CANCEL';
-set @@tidb_mem_quota_query=40960;
+set @@tidb_mem_quota_query=81920;
 update t1 set id=id+100000 where id=1;
 Error 8175 (HY000): Your query has been cancelled due to exceeding the allowed memory limit for a single SQL query. Please try narrowing your query scope or increase the tidb_mem_quota_query limit and try again.[conn=<num>]
 select id,pid from t1 where id = 1;
