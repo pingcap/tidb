@@ -16544,7 +16544,7 @@
           "targets": [
             {
               "exemplar": true,
-              "expr": "sum(rate(tidb_statistics_sync_load_total{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) by (type)",
+              "expr": "sum(increase(tidb_statistics_sync_load_total{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) by (type)",
               "format": "time_series",
               "interval": "",
               "intervalFactor": 2,
@@ -16554,7 +16554,7 @@
             },
             {
               "exemplar": true,
-              "expr": "sum(rate(tidb_statistics_sync_load_timeout_total{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) by (type)",
+              "expr": "sum(increase(tidb_statistics_sync_load_timeout_total{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) by (type)",
               "format": "time_series",
               "hide": false,
               "interval": "",
