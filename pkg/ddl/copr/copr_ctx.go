@@ -19,7 +19,6 @@ import (
 	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
 	"github.com/pingcap/tidb/pkg/expression"
 	exprctx "github.com/pingcap/tidb/pkg/expression/context"
-
 	// make sure mock.MockInfoschema is initialized to make sure the test pass
 	_ "github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser/model"

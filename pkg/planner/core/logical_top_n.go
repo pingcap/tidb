@@ -49,8 +49,9 @@ func (lt LogicalTopN) Init(ctx base.PlanContext, offset int) *LogicalTopN {
 
 // ExplainInfo implements Plan interface.
 func (lt *LogicalTopN) ExplainInfo() string {
+	ectx := lt.SCtx().GetExprCtx().GetEvalCtx()
 	buffer := bytes.NewBufferString("")
-	buffer = explainPartitionBy(buffer, lt.GetPartitionBy(), false)
+	buffer = explainPartitionBy(ectx, buffer, lt.GetPartitionBy(), false)
 	if len(lt.GetPartitionBy()) > 0 && len(lt.ByItems) > 0 {
 		buffer.WriteString("order by ")
 	}

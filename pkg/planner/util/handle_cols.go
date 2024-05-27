@@ -48,8 +48,8 @@ type HandleCols interface {
 	ResolveIndices(schema *expression.Schema) (HandleCols, error)
 	// IsInt returns if the HandleCols is a single int column.
 	IsInt() bool
-	// String implements the fmt.Stringer interface.
-	String() string
+	// StringWithCtx implements the expression.StringerWithCtx interface.
+	StringWithCtx(ctx expression.EvalContext) string
 	// GetCol gets the column by idx.
 	GetCol(idx int) *expression.Column
 	// NumCols returns the number of columns.
@@ -161,15 +161,15 @@ func (cb *CommonHandleCols) NumCols() int {
 	return len(cb.columns)
 }
 
-// String implements the kv.HandleCols interface.
-func (cb *CommonHandleCols) String() string {
+// StringWithCtx implements the kv.HandleCols interface.
+func (cb *CommonHandleCols) StringWithCtx(ctx expression.EvalContext) string {
 	b := new(strings.Builder)
 	b.WriteByte('[')
 	for i, col := range cb.columns {
 		if i != 0 {
 			b.WriteByte(',')
 		}
-		b.WriteString(col.ColumnExplainInfo(false))
+		b.WriteString(col.ColumnExplainInfo(ctx, false))
 	}
 	b.WriteByte(']')
 	return b.String()
@@ -283,9 +283,9 @@ func (*IntHandleCols) IsInt() bool {
 	return true
 }
 
-// String implements the kv.HandleCols interface.
-func (ib *IntHandleCols) String() string {
-	return ib.col.ColumnExplainInfo(false)
+// StringWithCtx implements the kv.HandleCols interface.
+func (ib *IntHandleCols) StringWithCtx(ctx expression.EvalContext) string {
+	return ib.col.ColumnExplainInfo(ctx, false)
 }
 
 // GetCol implements the kv.HandleCols interface.

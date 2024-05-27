@@ -388,11 +388,17 @@ func (col *Column) VecEvalJSON(ctx EvalContext, input *chunk.Chunk, result *chun
 
 const columnPrefix = "Column#"
 
+// StringWithCtx implements Expression interface.
+func (col *Column) StringWithCtx(ctx EvalContext) string {
+	return col.String()
+}
+
 // String implements Stringer interface.
 func (col *Column) String() string {
 	if col.IsHidden && col.VirtualExpr != nil {
 		// A hidden column without virtual expression indicates it's a stored type.
-		return col.VirtualExpr.String()
+		// a virtual column should be able to be stringified without context.
+		return col.VirtualExpr.StringWithCtx(nil)
 	}
 	if col.OrigName != "" {
 		return col.OrigName

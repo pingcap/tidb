@@ -19,7 +19,6 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
@@ -130,7 +129,6 @@ type Constant struct {
 
 // ParamMarker indicates param provided by COM_STMT_EXECUTE.
 type ParamMarker struct {
-	ctx   variable.SessionVarsProvider
 	order int
 }
 
@@ -139,19 +137,18 @@ func (d *ParamMarker) GetUserVar(ctx EvalContext) types.Datum {
 	return ctx.GetParamValue(d.order)
 }
 
-func (d *ParamMarker) getUserVarWithInternalCtx() types.Datum {
-	// TODO: remove this function in the future
-	sessionVars := d.ctx.GetSessionVars()
-	return sessionVars.PlanCacheParams.GetParamValue(d.order)
-}
-
-// String implements fmt.Stringer interface.
-func (c *Constant) String() string {
+// StringWithCtx implements Expression interface.
+func (c *Constant) StringWithCtx(ctx EvalContext) string {
 	if c.ParamMarker != nil {
-		dt := c.ParamMarker.getUserVarWithInternalCtx()
+		intest.Assert(ctx != nil, "context is nil for ParamMarker")
+		if ctx == nil {
+			return "?"
+		}
+
+		dt := c.ParamMarker.GetUserVar(ctx)
 		c.Value.SetValue(dt.GetValue(), c.RetType)
 	} else if c.DeferredExpr != nil {
-		return c.DeferredExpr.String()
+		return c.DeferredExpr.StringWithCtx(ctx)
 	}
 	return fmt.Sprintf("%v", c.Value.GetValue())
 }

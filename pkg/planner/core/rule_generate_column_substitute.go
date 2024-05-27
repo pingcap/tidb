@@ -101,12 +101,13 @@ func tryToSubstituteExpr(expr *expression.Expression, lp base.LogicalPlan, candi
 
 func appendSubstituteColumnStep(lp base.LogicalPlan, candidateExpr expression.Expression, col *expression.Column, opt *optimizetrace.LogicalOptimizeOp) {
 	reason := func() string { return "" }
+	ectx := lp.SCtx().GetExprCtx().GetEvalCtx()
 	action := func() string {
 		buffer := bytes.NewBufferString("expression:")
-		buffer.WriteString(candidateExpr.String())
+		buffer.WriteString(candidateExpr.StringWithCtx(ectx))
 		buffer.WriteString(" substituted by")
 		buffer.WriteString(" column:")
-		buffer.WriteString(col.String())
+		buffer.WriteString(col.StringWithCtx(ectx))
 		return buffer.String()
 	}
 	opt.AppendStepToCurrent(lp.ID(), lp.TP(), reason, action)
