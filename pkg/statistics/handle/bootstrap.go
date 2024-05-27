@@ -18,6 +18,7 @@ import (
 	"context"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/config"
@@ -691,6 +692,7 @@ func (h *Handle) InitStatsLite(is infoschema.InfoSchema) (err error) {
 	if err != nil {
 		return err
 	}
+	time.Sleep(30 * time.Minute)
 	cache, err := h.initStatsMeta(is)
 	if err != nil {
 		return errors.Trace(err)
@@ -718,6 +720,7 @@ func (h *Handle) InitStats(is infoschema.InfoSchema) (err error) {
 	if err != nil {
 		return err
 	}
+	time.Sleep(30 * time.Minute)
 	cache, err := h.initStatsMeta(is)
 	if err != nil {
 		return errors.Trace(err)
