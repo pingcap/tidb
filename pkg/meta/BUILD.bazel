@@ -17,9 +17,11 @@ go_library(
         "//pkg/parser/mysql",
         "//pkg/structure",
         "//pkg/util/dbterror",
+        "//pkg/util/logutil",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_kvproto//pkg/kvrpcpb",
         "@com_github_pingcap_kvproto//pkg/resource_manager",
+        @org_uber_go_zap//:zap,
     ],
 )
 
