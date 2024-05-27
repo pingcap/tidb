@@ -1428,7 +1428,7 @@ func RefineComparedConstant(ctx BuildContext, targetFieldType types.FieldType, c
 		targetFieldType = *types.NewFieldType(mysql.TypeLonglong)
 	}
 	var intDatum types.Datum
-	// Enable AllowNegativeToUnsigned to make sure return 0 when underflow happens.
+	// Disable AllowNegativeToUnsigned to make sure return 0 when underflow happens.
 	oriTypeCtx := evalCtx.TypeCtx()
 	newTypeCtx := oriTypeCtx.WithFlags(oriTypeCtx.Flags().WithAllowNegativeToUnsigned(false))
 	intDatum, err = dt.ConvertTo(newTypeCtx, &targetFieldType)
