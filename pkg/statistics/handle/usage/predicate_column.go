@@ -101,8 +101,8 @@ func LoadColumnStatsUsage(sctx sessionctx.Context, loc *time.Location) (map[mode
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
-			// If `last_used_at` is before the time when `set global enable_column_tracking = 0`, we should ignore it because
-			// `set global enable_column_tracking = 0` indicates all the predicate columns collected before.
+			// If `last_used_at` is before the time when `set global tidb_enable_column_tracking = 0`, we should ignore it because
+			// `set global tidb_enable_column_tracking = 0` indicates all the predicate columns collected before.
 			if disableTime == nil || gt.After(*disableTime) {
 				t := types.NewTime(types.FromGoTime(gt.In(loc)), mysql.TypeTimestamp, types.DefaultFsp)
 				statsUsage.LastUsedAt = &t
@@ -123,7 +123,7 @@ func LoadColumnStatsUsage(sctx sessionctx.Context, loc *time.Location) (map[mode
 
 // GetPredicateColumns returns IDs of predicate columns, which are the columns whose stats are used(needed) when generating query plans.
 func GetPredicateColumns(sctx sessionctx.Context, tableID int64) ([]int64, error) {
-	// This time is the time when `set global enable_column_tracking = 0`.
+	// This time is the time when `set global tidb_enable_column_tracking = 0`.
 	disableTime, err := getDisableColumnTrackingTime(sctx)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -148,8 +148,8 @@ func GetPredicateColumns(sctx sessionctx.Context, tableID int64) ([]int64, error
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		// If `last_used_at` is before the time when `set global enable_column_tracking = 0`, we don't regard the column as predicate column because
-		// `set global enable_column_tracking = 0` indicates all the predicate columns collected before.
+		// If `last_used_at` is before the time when `set global tidb_enable_column_tracking = 0`, we don't regard the column as predicate column because
+		// `set global tidb_enable_column_tracking = 0` indicates all the predicate columns collected before.
 		// TODO: Why do we need to do this? If column tracking is already disabled, we should not collect any column usage.
 		// If this refers to re-enabling column tracking, shouldn't we retain the column usage data from before it was disabled?
 		if disableTime == nil || gt.After(*disableTime) {
