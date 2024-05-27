@@ -1059,17 +1059,6 @@
       "select 1,1,1 union all ((select * from employee where dept_id = 1)  union all ( select * from employee where dept_id = 1 order by employee_id ) order by 1 limit 1);",
       "select * from employee where dept_id = 1 union all ( select * from employee where dept_id = 1 order by employee_id) union all ( select * from employee where dept_id = 1 union all ( select * from employee where dept_id = 1 order by employee_id ) limit 1);",
       "select * from employee where dept_id = 1 union all ( select * from employee where dept_id = 1 order by employee_id) union all ( select * from employee where dept_id = 1 union all ( select * from employee where dept_id = 1 order by employee_id ) order by 1 limit 1);"
-<<<<<<< HEAD
-   ]
-=======
-    ]
-  },
-  {
-    "name": "TestPointgetIndexChoosen",
-    "cases": [
-      "select * from t where b=1 and c='1';",
-      "select * from t where b=1 and c='1' and d='1';",
-      "select * from t where b in (1,2,3) and c in ('1');"
     ]
   },
   {
@@ -1079,6 +1068,5 @@
       "explain select * from t WHERE TRUE = ALL ( SELECT TRUE GROUP BY 1 LIMIT 1 ) IS NULL IS NOT NULL;",
       "explain select * from t WHERE TRUE = ALL ( SELECT TRUE from t GROUP BY 1 LIMIT 1 ) is null is not null;"
     ]
->>>>>>> 81f414122ee (planner: fix panic error when subquery + always true predicate in where clause (#53525))
   }
 ]
