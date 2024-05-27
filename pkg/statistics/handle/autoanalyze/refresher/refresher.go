@@ -87,48 +87,43 @@ func (r *Refresher) PickOneTableAndAnalyzeByPriority() bool {
 	}
 	defer r.statsHandle.SPool().Put(se)
 	sctx := se.(sessionctx.Context)
-	var wg util.WaitGroupWrapper
+	jobChan := make(chan priorityqueue.AnalysisJob, 1)
 	concurrency := min(1, max(runtime.GOMAXPROCS(0)/8, 4))
-	// Pick the table with the highest weight.
+	stopChan := time.After(5 * time.Second)
+	worker := NewWorker(r.statsHandle, r.sysProcTracker, jobChan, concurrency)
+	// Pick the table with the highest weight
+JOBLOOP:
 	for r.Jobs.Len() > 0 {
-		job := r.Jobs.Pop()
-		if valid, failReason := job.IsValidToAnalyze(
-			sctx,
-		); !valid {
-			statslogutil.SingletonStatsSamplerLogger().Info(
-				"Table is not ready to analyze",
-				zap.String("failReason", failReason),
-				zap.Stringer("job", job),
-			)
-			continue
-		}
-		concurrency = concurrency - 1
-		wg.Run(func() {
-			statslogutil.StatsLogger().Info(
-				"Auto analyze triggered",
-				zap.Stringer("job", job),
-			)
-			err = job.Analyze(
-				r.statsHandle,
-				r.sysProcTracker,
-			)
-			if err != nil {
-				statslogutil.StatsLogger().Error(
-					"Execute auto analyze job failed",
+		select {
+		case <-stopChan:
+			break JOBLOOP
+		default:
+			job := r.Jobs.Pop()
+			if valid, failReason := job.IsValidToAnalyze(
+				sctx,
+			); !valid {
+				statslogutil.SingletonStatsSamplerLogger().Info(
+					"Table is not ready to analyze",
+					zap.String("failReason", failReason),
 					zap.Stringer("job", job),
-					zap.Error(err),
 				)
+				continue
 			}
-		})
-		if concurrency == 0 {
-			wg.Wait()
-			return true
+			select {
+			case jobChan <- job:
+			default:
+				break JOBLOOP
+			}
 		}
 	}
-	statslogutil.SingletonStatsSamplerLogger().Info(
-		"No table to analyze",
-	)
-	return false
+	worker.close()
+	if worker.CompletedJobsCnt() == 0 {
+		statslogutil.SingletonStatsSamplerLogger().Info(
+			"No table to analyze",
+		)
+		return false
+	}
+	return true
 }
 
 // RebuildTableAnalysisJobQueue rebuilds the priority queue of analysis jobs.
