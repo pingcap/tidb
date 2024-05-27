@@ -998,6 +998,8 @@ func (m *Meta) ListTables(dbID int64) ([]*model.TableInfo, error) {
 		return nil, errors.Trace(err)
 	}
 
+	start := time.Now()
+
 	res, err := m.txn.HGetAll(dbKey)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -1020,6 +1022,28 @@ func (m *Meta) ListTables(dbID int64) ([]*model.TableInfo, error) {
 
 		tables = append(tables, tbInfo)
 	}
+
+	logutil.BgLogger().Info("ListTables", zap.Duration("time", time.Since(start)), zap.Int64("dbID", dbID))
+
+	return tables, nil
+}
+
+// ListTablesWithoutDecode shows all tables in database.
+func (m *Meta) ListTablesWithoutDecode(dbID int64) ([]*model.TableInfo, error) {
+	dbKey := m.dbKey(dbID)
+	if err := m.checkDBExists(dbKey); err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	start := time.Now()
+
+	res, err := m.txn.HGetAll(dbKey)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	tables := make([]*model.TableInfo, 0, len(res)/2)
+	logutil.BgLogger().Info("ListTablesWithoutDecode", zap.Duration("time", time.Since(start)), zap.Int64("dbID", dbID))
 
 	return tables, nil
 }
