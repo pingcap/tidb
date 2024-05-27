@@ -23,7 +23,9 @@ import (
 
 	"github.com/pingcap/tidb/kv"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/testutils"
 	"github.com/tikv/client-go/v2/tikv"
+	"github.com/tikv/client-go/v2/tikvrpc"
 )
 
 // StoreID: [1, storeCount]
@@ -119,13 +121,13 @@ func TestBalanceBatchCopTaskWithContinuity(t *testing.T) {
 func TestBalanceBatchCopTaskWithEmptyTaskSet(t *testing.T) {
 	{
 		var nilTaskSet []*batchCopTask
-		nilResult := balanceBatchCopTask(nil, nil, nilTaskSet, false, time.Second, false, 0)
+		nilResult := balanceBatchCopTask(nil, nil, nil, nilTaskSet, false, time.Second, false, 0)
 		require.True(t, nilResult == nil)
 	}
 
 	{
 		emptyTaskSet := make([]*batchCopTask, 0)
-		emptyResult := balanceBatchCopTask(nil, nil, emptyTaskSet, false, time.Second, false, 0)
+		emptyResult := balanceBatchCopTask(nil, nil, nil, emptyTaskSet, false, time.Second, false, 0)
 		require.True(t, emptyResult != nil)
 		require.True(t, len(emptyResult) == 0)
 	}
@@ -148,5 +150,35 @@ func TestDeepCopyStoreTaskMap(t *testing.T) {
 
 	for _, task := range storeTasks2 {
 		require.Equal(t, 2, len(task.regionInfos))
+	}
+}
+
+func TestGetUsedStores(t *testing.T) {
+	mockClient, _, pdClient, err := testutils.NewMockTiKV("", nil)
+	require.NoError(t, err)
+	defer func() {
+		pdClient.Close()
+		err = mockClient.Close()
+		require.NoError(t, err)
+	}()
+
+	pdCli := &tikv.CodecPDClient{Client: pdClient}
+	defer pdCli.Close()
+
+	cache := NewRegionCache(tikv.NewRegionCache(pdCli))
+	defer cache.Close()
+
+	cache.SetRegionCacheStore(1, tikvrpc.TiFlash, 0, nil)
+	cache.SetRegionCacheStore(2, tikvrpc.TiFlash, 0, nil)
+	cache.SetRegionCacheStore(3, tikvrpc.TiFlash, 0, nil)
+
+	allUsedTiFlashStoresMap := make(map[uint64]struct{})
+	allUsedTiFlashStoresMap[2] = struct{}{}
+	allUsedTiFlashStoresMap[3] = struct{}{}
+	allUsedTiFlashStores := getUsedStores(cache, allUsedTiFlashStoresMap)
+	require.Equal(t, len(allUsedTiFlashStoresMap), len(allUsedTiFlashStores))
+	for _, store := range allUsedTiFlashStores {
+		_, ok := allUsedTiFlashStoresMap[store.StoreID()]
+		require.True(t, ok)
 	}
 }
