@@ -41,7 +41,11 @@ go_test(
         "configlist_test.go",
     ],
     flaky = True,
+<<<<<<< HEAD:br/pkg/lightning/config/BUILD.bazel
     shard_count = 45,
+=======
+    shard_count = 49,
+>>>>>>> 9164182d0b2 (config: must set line terminator when use strict-format (#53444)):pkg/lightning/config/BUILD.bazel
     deps = [
         ":config",
         "//br/pkg/lightning/common",

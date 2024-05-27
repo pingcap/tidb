@@ -680,6 +680,129 @@ type MydumperRuntime struct {
 	DataInvalidCharReplace string `toml:"data-invalid-char-replace" json:"data-invalid-char-replace"`
 }
 
+<<<<<<< HEAD:br/pkg/lightning/config/config.go
+=======
+func (m *MydumperRuntime) adjust() error {
+	if err := m.CSV.adjust(); err != nil {
+		return err
+	}
+	if m.StrictFormat && len(m.CSV.Terminator) == 0 {
+		return common.ErrInvalidConfig.GenWithStack(
+			`mydumper.strict-format can not be used with empty mydumper.csv.terminator. Please set mydumper.csv.terminator to a non-empty value like "\r\n"`)
+	}
+
+	for _, rule := range m.FileRouters {
+		if filepath.IsAbs(rule.Path) {
+			relPath, err := filepath.Rel(m.SourceDir, rule.Path)
+			if err != nil {
+				return common.ErrInvalidConfig.Wrap(err).
+					GenWithStack("cannot find relative path for file route path %s", rule.Path)
+			}
+			// ".." means that this path is not in source dir, so we should return an error
+			if strings.HasPrefix(relPath, "..") {
+				return common.ErrInvalidConfig.GenWithStack(
+					"file route path '%s' is not in source dir '%s'", rule.Path, m.SourceDir)
+			}
+			rule.Path = relPath
+		}
+	}
+
+	// enable default file route rule if no rules are set
+	if len(m.FileRouters) == 0 {
+		m.DefaultFileRules = true
+	}
+
+	if len(m.DataCharacterSet) == 0 {
+		m.DataCharacterSet = defaultCSVDataCharacterSet
+	}
+	charset, err1 := ParseCharset(m.DataCharacterSet)
+	if err1 != nil {
+		return common.ErrInvalidConfig.Wrap(err1).GenWithStack("invalid `mydumper.data-character-set`")
+	}
+	if charset == GBK || charset == GB18030 {
+		log.L().Warn(
+			"incompatible strings may be encountered during the transcoding process and will be replaced, please be aware of the risk of not being able to retain the original information",
+			zap.String("source-character-set", charset.String()),
+			zap.ByteString("invalid-char-replacement", []byte(m.DataInvalidCharReplace)))
+	}
+	if m.BatchImportRatio < 0.0 || m.BatchImportRatio >= 1.0 {
+		m.BatchImportRatio = DefaultBatchImportRatio
+	}
+	if m.ReadBlockSize <= 0 {
+		m.ReadBlockSize = ReadBlockSize
+	}
+	if len(m.CharacterSet) == 0 {
+		m.CharacterSet = "auto"
+	}
+
+	if len(m.IgnoreColumns) != 0 {
+		// Tolower columns cause we use Name.L to compare column in tidb.
+		for _, ig := range m.IgnoreColumns {
+			cols := make([]string, len(ig.Columns))
+			for i, col := range ig.Columns {
+				cols[i] = strings.ToLower(col)
+			}
+			ig.Columns = cols
+		}
+	}
+	return m.adjustFilePath()
+}
+
+// adjustFilePath checks and adjusts the file path.
+func (m *MydumperRuntime) adjustFilePath() error {
+	var u *url.URL
+
+	// An absolute Windows path like "C:\Users\XYZ" would be interpreted as
+	// an URL with scheme "C" and opaque data "\Users\XYZ".
+	// Therefore, we only perform URL parsing if we are sure the path is not
+	// an absolute Windows path.
+	// Here we use the `filepath.VolumeName` which can identify the "C:" part
+	// out of the path. On Linux this method always return an empty string.
+	// On Windows, the drive letter can only be single letters from "A:" to "Z:",
+	// so this won't mistake "S3:" as a Windows path.
+	if len(filepath.VolumeName(m.SourceDir)) == 0 {
+		var err error
+		u, err = url.Parse(m.SourceDir)
+		if err != nil {
+			return common.ErrInvalidConfig.Wrap(err).GenWithStack("cannot parse `mydumper.data-source-dir` %s", m.SourceDir)
+		}
+	} else {
+		u = &url.URL{}
+	}
+
+	// convert path and relative path to a valid file url
+	if u.Scheme == "" {
+		if m.SourceDir == "" {
+			return common.ErrInvalidConfig.GenWithStack("`mydumper.data-source-dir` is not set")
+		}
+		if !common.IsDirExists(m.SourceDir) {
+			return common.ErrInvalidConfig.GenWithStack("'%s': `mydumper.data-source-dir` does not exist", m.SourceDir)
+		}
+		absPath, err := filepath.Abs(m.SourceDir)
+		if err != nil {
+			return common.ErrInvalidConfig.Wrap(err).GenWithStack("covert data-source-dir '%s' to absolute path failed", m.SourceDir)
+		}
+		u.Path = filepath.ToSlash(absPath)
+		u.Scheme = "file"
+		m.SourceDir = u.String()
+	}
+
+	found := false
+	for _, t := range supportedStorageTypes {
+		if u.Scheme == t {
+			found = true
+			break
+		}
+	}
+	if !found {
+		return common.ErrInvalidConfig.GenWithStack(
+			"unsupported data-source-dir url '%s', supported storage types are %s",
+			m.SourceDir, strings.Join(supportedStorageTypes, ","))
+	}
+	return nil
+}
+
+>>>>>>> 9164182d0b2 (config: must set line terminator when use strict-format (#53444)):pkg/lightning/config/config.go
 // AllIgnoreColumns is a slice of IgnoreColumns.
 type AllIgnoreColumns []*IgnoreColumns
 
