@@ -16,11 +16,11 @@ package sortexec
 
 import (
 	"context"
-	"errors"
-	"fmt"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/pingcap/errors"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
@@ -758,7 +758,7 @@ func (e *SortExec) initCompareFuncs() error {
 		keyType := e.ByItems[i].Expr.GetType()
 		e.keyCmpFuncs[i] = chunk.GetCompareFunc(keyType)
 		if e.keyCmpFuncs[i] == nil {
-			return errors.New(fmt.Sprintf("Sort executor not supports type %s", types.TypeStr(keyType.GetType())))
+			return errors.Errorf("Sort executor not supports type %s", types.TypeStr(keyType.GetType()))
 		}
 	}
 	return nil
