@@ -266,14 +266,6 @@ func (bc *litBackendCtx) checkFlush(mode FlushMode) (shouldFlush bool, shouldImp
 	}
 	bc.diskRoot.UpdateUsage()
 	shouldImport = bc.diskRoot.ShouldImport()
-<<<<<<< HEAD
-	if mode == FlushModeForceLocalAndCheckDiskQuota {
-		shouldFlush = true
-	} else {
-		shouldFlush = shouldImport ||
-			time.Since(bc.timeOfLastFlush.Load()) >= bc.updateInterval
-	}
-=======
 	interval := bc.updateInterval
 	// This failpoint will be manually set through HTTP status port.
 	failpoint.Inject("mockSyncIntervalMs", func(val failpoint.Value) {
@@ -283,7 +275,6 @@ func (bc *litBackendCtx) checkFlush(mode FlushMode) (shouldFlush bool, shouldImp
 	})
 	shouldFlush = shouldImport ||
 		time.Since(bc.timeOfLastFlush.Load()) >= interval
->>>>>>> b1b09954485 (ddl: check local file existence before resume checkpoint (#53072))
 	return shouldFlush, shouldImport
 }
 
