@@ -49,11 +49,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
-<<<<<<< HEAD
-=======
-	"github.com/pingcap/tidb/pkg/util/timeutil"
 	"github.com/stretchr/testify/assert"
->>>>>>> fb64325ee52 (executor: handle the corner case that temp index is not exist but the normal index is exist (#51862))
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
