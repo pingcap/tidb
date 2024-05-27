@@ -351,9 +351,9 @@ func (h *Handle) initStatsHistogramsByPaging(is infoschema.InfoSchema, cache sta
 func (h *Handle) initStatsHistogramsConcurrency(is infoschema.InfoSchema, cache statstypes.StatsCache) error {
 	var maxTid = maxTidRecord.tid.Load()
 	tid := int64(0)
-	ls := initstats.NewRangeWorker(func(task initstats.Task) error {
+	ls := initstats.NewRangeWorker("histogram", func(task initstats.Task) error {
 		return h.initStatsHistogramsByPaging(is, cache, task)
-	})
+	}, uint64(maxTid), uint64(initStatsStep))
 	ls.LoadStats()
 	for tid <= maxTid {
 		ls.SendTask(initstats.Task{
@@ -461,9 +461,9 @@ func (h *Handle) initStatsTopNByPaging(cache statstypes.StatsCache, task initsta
 func (h *Handle) initStatsTopNConcurrency(cache statstypes.StatsCache) error {
 	var maxTid = maxTidRecord.tid.Load()
 	tid := int64(0)
-	ls := initstats.NewRangeWorker(func(task initstats.Task) error {
+	ls := initstats.NewRangeWorker("TopN", func(task initstats.Task) error {
 		return h.initStatsTopNByPaging(cache, task)
-	})
+	}, uint64(maxTid), uint64(initStatsStep))
 	ls.LoadStats()
 	for tid <= maxTid {
 		ls.SendTask(initstats.Task{
@@ -664,9 +664,9 @@ func (h *Handle) initStatsBucketsByPaging(cache statstypes.StatsCache, task init
 func (h *Handle) initStatsBucketsConcurrency(cache statstypes.StatsCache) error {
 	var maxTid = maxTidRecord.tid.Load()
 	tid := int64(0)
-	ls := initstats.NewRangeWorker(func(task initstats.Task) error {
+	ls := initstats.NewRangeWorker("bucket", func(task initstats.Task) error {
 		return h.initStatsBucketsByPaging(cache, task)
-	})
+	}, uint64(maxTid), uint64(initStatsStep))
 	ls.LoadStats()
 	for tid <= maxTid {
 		ls.SendTask(initstats.Task{
