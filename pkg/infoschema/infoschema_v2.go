@@ -659,8 +659,12 @@ func loadTableInfo(r autoid.Requirement, infoData *Data, tblID, dbID int64, ts u
 		tblInfo, err := m.GetTable(dbID, tblID)
 
 		if err != nil {
-			// TODO load table panic!!!
-			panic(err)
+			if meta.ErrDBNotExists.Equal(err) {
+				return nil, errors.Trace(ErrDatabaseNotExists.GenWithStackByArgs(
+					fmt.Sprintf("(Schema ID %d)", dbID),
+				))
+			}
+			return nil, errors.Trace(err)
 		}
 
 		// table removed.
