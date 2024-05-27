@@ -398,14 +398,27 @@ func SplitLargeFile(
 		// Create a utf8mb4 convertor to encode and decode data with the charset of CSV files.
 		charsetConvertor, err := NewCharsetConvertor(cfg.Mydumper.DataCharacterSet, cfg.Mydumper.DataInvalidCharReplace)
 		if err != nil {
+<<<<<<< HEAD:br/pkg/lightning/mydump/region.go
 			return 0, nil, nil, err
+=======
+			_ = r.Close()
+			return nil, nil, err
+>>>>>>> 9164182d0b2 (config: must set line terminator when use strict-format (#53444)):pkg/lightning/mydump/region.go
 		}
 		parser, err := NewCSVParser(ctx, &cfg.Mydumper.CSV, r, int64(cfg.Mydumper.ReadBlockSize), ioWorker, true, charsetConvertor)
 		if err != nil {
 			return 0, nil, nil, err
 		}
 		if err = parser.ReadColumns(); err != nil {
+<<<<<<< HEAD:br/pkg/lightning/mydump/region.go
 			return 0, nil, nil, err
+=======
+			_ = parser.Close()
+			return nil, nil, err
+		}
+		if cfg.CSV.HeaderSchemaMatch {
+			columns = parser.Columns()
+>>>>>>> 9164182d0b2 (config: must set line terminator when use strict-format (#53444)):pkg/lightning/mydump/region.go
 		}
 		columns = parser.Columns()
 		startOffset, _ = parser.Pos()
@@ -413,6 +426,7 @@ func SplitLargeFile(
 		if endOffset > dataFile.FileMeta.FileSize {
 			endOffset = dataFile.FileMeta.FileSize
 		}
+		_ = parser.Close()
 	}
 	for {
 		curRowsCnt := (endOffset - startOffset) / divisor
@@ -425,19 +439,35 @@ func SplitLargeFile(
 			// Create a utf8mb4 convertor to encode and decode data with the charset of CSV files.
 			charsetConvertor, err := NewCharsetConvertor(cfg.Mydumper.DataCharacterSet, cfg.Mydumper.DataInvalidCharReplace)
 			if err != nil {
+<<<<<<< HEAD:br/pkg/lightning/mydump/region.go
 				return 0, nil, nil, err
+=======
+				_ = r.Close()
+				return nil, nil, err
+>>>>>>> 9164182d0b2 (config: must set line terminator when use strict-format (#53444)):pkg/lightning/mydump/region.go
 			}
 			parser, err := NewCSVParser(ctx, &cfg.Mydumper.CSV, r, int64(cfg.Mydumper.ReadBlockSize), ioWorker, false, charsetConvertor)
 			if err != nil {
 				return 0, nil, nil, err
 			}
+<<<<<<< HEAD:br/pkg/lightning/mydump/region.go
 			if err = parser.SetPos(endOffset, prevRowIDMax); err != nil {
 				return 0, nil, nil, err
+=======
+			if err = parser.SetPos(endOffset, 0); err != nil {
+				_ = parser.Close()
+				return nil, nil, err
+>>>>>>> 9164182d0b2 (config: must set line terminator when use strict-format (#53444)):pkg/lightning/mydump/region.go
 			}
 			pos, err := parser.ReadUntilTerminator()
 			if err != nil {
 				if !errors.ErrorEqual(err, io.EOF) {
+<<<<<<< HEAD:br/pkg/lightning/mydump/region.go
 					return 0, nil, nil, err
+=======
+					_ = parser.Close()
+					return nil, nil, err
+>>>>>>> 9164182d0b2 (config: must set line terminator when use strict-format (#53444)):pkg/lightning/mydump/region.go
 				}
 				log.FromContext(ctx).Warn("file contains no terminator at end",
 					zap.String("path", dataFile.FileMeta.Path),
@@ -445,7 +475,7 @@ func SplitLargeFile(
 				pos = dataFile.FileMeta.FileSize
 			}
 			endOffset = pos
-			parser.Close()
+			_ = parser.Close()
 		}
 		regions = append(regions,
 			&TableRegion{
