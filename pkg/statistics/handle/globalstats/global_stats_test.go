@@ -224,19 +224,22 @@ partition by range (a) (
 	tk.MustExec("set @@tidb_analyze_version=2")
 	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
 	tk.MustExec("analyze table t")
-	checkModifyAndCount(0, 0, 0, 0, 0, 0)
-	checkHealthy(100, 100, 100)
+	rs := tk.MustQuery("show stats_meta").Rows()
+	require.Equal(t, "0", rs[0][4].(string)) // p0.modify_count
+	require.Equal(t, "0", rs[0][5].(string)) // p0.row_count
+	require.Equal(t, "0", rs[1][4].(string)) // p1.modify_count
+	require.Equal(t, "0", rs[1][5].(string)) // p1.row_count
+	tk.MustQuery("show stats_healthy").Check(testkit.Rows("test t p0 100", "test t p1 100"))
 
 	tk.MustExec("insert into t values (1), (2)") // update p0
-	require.NoError(t, dom.StatsHandle().DumpStatsDeltaToKV(true))
-	require.NoError(t, dom.StatsHandle().Update(dom.InfoSchema()))
-	checkModifyAndCount(2, 2, 2, 2, 0, 0)
-	checkHealthy(0, 0, 100)
+	tk.MustExec("analyze table t")
+	checkModifyAndCount(0, 2, 0, 2, 0, 0)
+	checkHealthy(100, 100, 100)
 
 	tk.MustExec("insert into t values (11), (12), (13), (14)") // update p1
 	require.NoError(t, dom.StatsHandle().DumpStatsDeltaToKV(true))
 	require.NoError(t, dom.StatsHandle().Update(dom.InfoSchema()))
-	checkModifyAndCount(6, 6, 2, 2, 4, 4)
+	checkModifyAndCount(6, 8, 2, 4, 4, 4)
 	checkHealthy(0, 0, 0)
 
 	tk.MustExec("analyze table t")
@@ -626,14 +629,14 @@ func TestGlobalStatsNDV(t *testing.T) {
 	checkNDV := func(ndvs ...int) { // g, p0, ..., p3
 		tk.MustExec("analyze table t")
 		rs := tk.MustQuery(`show stats_histograms where is_index=1`).Rows()
-		require.Len(t, rs, 5)
+		require.Len(t, rs, len(ndvs))
 		for i, ndv := range ndvs {
 			require.Equal(t, fmt.Sprintf("%v", ndv), rs[i][6].(string))
 		}
 	}
 
 	// all partitions are empty
-	checkNDV(0, 0, 0, 0, 0)
+	checkNDV(0, 0, 0, 0)
 
 	// p0 has data while others are empty
 	tk.MustExec("insert into t values (1), (2), (3)")
