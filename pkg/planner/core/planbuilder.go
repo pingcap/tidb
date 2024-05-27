@@ -1949,6 +1949,7 @@ func (b *PlanBuilder) getMustAnalyzedColumns(tbl *ast.TableName, cols *calcOnceM
 }
 
 func (b *PlanBuilder) getPredicateColumns(tbl *ast.TableName, cols *calcOnceMap) (map[int64]struct{}, error) {
+	// Already calculated in the previous call.
 	if cols.calculated {
 		return cols.data, nil
 	}
