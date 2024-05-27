@@ -695,6 +695,14 @@ func (e *SortExec) fetchChunksFromChild(ctx context.Context) {
 			e.Parallel.resultChannel <- rowWithError{err: err}
 		}
 
+		failpoint.Inject("SignalCheckpointForSort", func(val failpoint.Value) {
+			if val.(bool) {
+				if e.Ctx().GetSessionVars().ConnectionID == 123456 {
+					e.Ctx().GetSessionVars().MemTracker.Killer.SendKillSignal(sqlkiller.QueryMemoryExceeded)
+				}
+			}
+		})
+
 		// We must place it after the spill as workers will process its received
 		// chunks after channel is closed and this will cause data race.
 		close(e.Parallel.chunkChannel)
