@@ -30,15 +30,9 @@ type InfoCache struct {
 	mu sync.RWMutex
 	// cache is sorted by both SchemaVersion and timestamp in descending order, assume they have same order
 	cache []schemaAndTimestamp
-<<<<<<< HEAD
-=======
 
 	// emptySchemaVersions stores schema version which has no schema_diff.
 	emptySchemaVersions map[int64]struct{}
-
-	r    autoid.Requirement
-	Data *Data
->>>>>>> 0ac2ad0252b (infoschema: fix issue of information schema cache miss cause by schema version gap (#53445))
 }
 
 type schemaAndTimestamp struct {
@@ -49,14 +43,8 @@ type schemaAndTimestamp struct {
 // NewCache creates a new InfoCache.
 func NewCache(capacity int) *InfoCache {
 	return &InfoCache{
-<<<<<<< HEAD
-		cache: make([]schemaAndTimestamp, 0, capacity),
-=======
 		cache:               make([]schemaAndTimestamp, 0, capacity),
 		emptySchemaVersions: make(map[int64]struct{}),
-		r:                   r,
-		Data:                infoData,
->>>>>>> 0ac2ad0252b (infoschema: fix issue of information schema cache miss cause by schema version gap (#53445))
 	}
 }
 

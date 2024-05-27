@@ -292,7 +292,7 @@ func TestCacheWithSchemaTsZero(t *testing.T) {
 	require.Equal(t, 16, ic.Size())
 
 	// Test cache with schema version hole, which is cause by schema version doesn't has related schema-diff.
-	ic = infoschema.NewCache(nil, 16)
+	ic = infoschema.NewCache(16)
 	require.NotNil(t, ic)
 	for i := 1; i <= 8; i++ {
 		ic.Insert(infoschema.MockInfoSchemaWithSchemaVer(nil, int64(i)), uint64(i))
@@ -316,7 +316,7 @@ func TestCacheWithSchemaTsZero(t *testing.T) {
 }
 
 func TestCacheEmptySchemaVersion(t *testing.T) {
-	ic := infoschema.NewCache(nil, 16)
+	ic := infoschema.NewCache(16)
 	require.NotNil(t, ic)
 	require.Equal(t, 0, len(ic.GetEmptySchemaVersions()))
 	for i := 0; i < 16; i++ {
