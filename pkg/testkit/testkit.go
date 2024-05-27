@@ -120,7 +120,7 @@ func (tk *TestKit) RefreshSession() {
 
 	if intest.InTest {
 		if rand.Intn(10) >= 3 { // 70% chance to run infoschema v2
-			tk.MustExec("set @@global.tidb_schema_cache_size = 1024")
+			tk.MustExec("set @@global.tidb_schema_cache_size = 1024 * 1024 * 1024")
 		}
 	}
 
