@@ -16,6 +16,8 @@ package sortexec
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -257,9 +259,13 @@ func (e *SortExec) InitUnparallelModeForTest() {
 */
 func (e *SortExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	if e.fetched.CompareAndSwap(false, true) {
-		e.initCompareFuncs()
+		err := e.initCompareFuncs()
+		if err != nil {
+			return err
+		}
+
 		e.buildKeyColumns()
-		err := e.fetchChunks(ctx)
+		err = e.fetchChunks(ctx)
 		if err != nil {
 			return err
 		}
@@ -746,12 +752,16 @@ func (e *SortExec) fetchChunksFromChild(ctx context.Context) {
 	}
 }
 
-func (e *SortExec) initCompareFuncs() {
+func (e *SortExec) initCompareFuncs() error {
 	e.keyCmpFuncs = make([]chunk.CompareFunc, len(e.ByItems))
 	for i := range e.ByItems {
 		keyType := e.ByItems[i].Expr.GetType()
 		e.keyCmpFuncs[i] = chunk.GetCompareFunc(keyType)
+		if e.keyCmpFuncs[i] == nil {
+			return errors.New(fmt.Sprintf("Sort executor not supports type %s", types.TypeStr(keyType.GetType())))
+		}
 	}
+	return nil
 }
 
 func (e *SortExec) buildKeyColumns() {
