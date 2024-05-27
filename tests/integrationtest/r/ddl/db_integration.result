@@ -1223,3 +1223,10 @@ alter table t reorganize partition p0 into (partition p01 values less than (10),
 show warnings;
 Level	Code	Message
 Warning	1105	The statistics of related partitions will be outdated after reorganizing partitions. Please use 'ANALYZE TABLE' statement if you want to update it now
+drop table if exists t;
+create table t(a int, b int as ((grouping(a))) stored);
+Error 1111 (HY000): Invalid use of group function
+create table t(a int);
+alter table t add column  b int as ((grouping(a))) stored;
+Error 1111 (HY000): Invalid use of group function
+drop table t;
