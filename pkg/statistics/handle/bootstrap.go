@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/cache"
 	"github.com/pingcap/tidb/pkg/statistics/handle/initstats"
+	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/types"
@@ -724,11 +725,13 @@ func (h *Handle) InitStats(is infoschema.InfoSchema) (err error) {
 	if err != nil {
 		return errors.Trace(err)
 	}
+	statslogutil.StatsLogger().Info("complete to load the meta")
 	if config.GetGlobalConfig().Performance.ConcurrentlyInitStats {
 		err = h.initStatsHistogramsConcurrency(is, cache)
 	} else {
 		err = h.initStatsHistograms(is, cache)
 	}
+	statslogutil.StatsLogger().Info("complete to load the histogram")
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -737,6 +740,7 @@ func (h *Handle) InitStats(is infoschema.InfoSchema) (err error) {
 	} else {
 		err = h.initStatsTopN(cache)
 	}
+	statslogutil.StatsLogger().Info("complete to load the topn")
 	if err != nil {
 		return err
 	}
@@ -745,8 +749,10 @@ func (h *Handle) InitStats(is infoschema.InfoSchema) (err error) {
 		if err != nil {
 			return err
 		}
+		statslogutil.StatsLogger().Info("complete to load the FM Sketch")
 	}
 	err = h.initStatsBuckets(cache)
+	statslogutil.StatsLogger().Info("complete to load the bucket")
 	if err != nil {
 		return errors.Trace(err)
 	}
