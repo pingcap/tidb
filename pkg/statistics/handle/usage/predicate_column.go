@@ -139,6 +139,7 @@ func GetPredicateColumns(sctx sessionctx.Context, tableID int64) ([]int64, error
 	columnIDs := make([]int64, 0, len(rows))
 	for _, row := range rows {
 		// Usually, it should not be NULL.
+		// This only happens when the last_used_at is not a valid time.
 		if row.IsNull(1) {
 			continue
 		}

@@ -61,7 +61,7 @@ type StatsUsage interface {
 	// LoadColumnStatsUsage returns all columns' usage information.
 	LoadColumnStatsUsage(loc *time.Location) (map[model.TableItemID]ColStatsTimeInfo, error)
 
-	// GetPredicateColumns returns the IDs of predicate columns, which are the columns whose statistics are needed when generating query plans.
+	// GetPredicateColumns returns IDs of predicate columns, which are the columns whose stats are used(needed) when generating query plans.
 	GetPredicateColumns(tableID int64) ([]int64, error)
 
 	// CollectColumnsInExtendedStats returns IDs of the columns involved in extended stats.
