@@ -815,7 +815,7 @@ Loop:
 	}
 }
 
-func testUnsafeDestroyRangeForRaftkv2(t *testing.T) {
+func TestUnsafeDestroyRangeForRaftkv2(t *testing.T) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/util/IsRaftKv2", "return(true)"))
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/store/gcworker/mockHistoryJobForGC", "return(1)"))
