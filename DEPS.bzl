@@ -5949,13 +5949,13 @@ def go_deps():
         name = "com_github_pingcap_failpoint",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/pingcap/failpoint",
-        sha256 = "562e9da9138a7014980e8bbcfc577153c616f70729d699e5db3a26232407daf4",
-        strip_prefix = "github.com/pingcap/failpoint@v0.0.0-20240525114139-1363a1b2b316",
+        sha256 = "7ba8f68be702b49ac26b9b7cd14fc7ce0aaf9c2cc4b35d9a80eac7f52a9a0d76",
+        strip_prefix = "github.com/pingcap/failpoint@v0.0.0-20240527053858-9b3b6e34194a",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/pingcap/failpoint/com_github_pingcap_failpoint-v0.0.0-20240525114139-1363a1b2b316.zip",
-            "http://ats.apps.svc/gomod/github.com/pingcap/failpoint/com_github_pingcap_failpoint-v0.0.0-20240525114139-1363a1b2b316.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/pingcap/failpoint/com_github_pingcap_failpoint-v0.0.0-20240525114139-1363a1b2b316.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/pingcap/failpoint/com_github_pingcap_failpoint-v0.0.0-20240525114139-1363a1b2b316.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/pingcap/failpoint/com_github_pingcap_failpoint-v0.0.0-20240527053858-9b3b6e34194a.zip",
+            "http://ats.apps.svc/gomod/github.com/pingcap/failpoint/com_github_pingcap_failpoint-v0.0.0-20240527053858-9b3b6e34194a.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/pingcap/failpoint/com_github_pingcap_failpoint-v0.0.0-20240527053858-9b3b6e34194a.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/pingcap/failpoint/com_github_pingcap_failpoint-v0.0.0-20240527053858-9b3b6e34194a.zip",
         ],
     )
     go_repository(
