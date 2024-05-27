@@ -41,7 +41,7 @@ type ImportScheduler struct {
 func (s *ImportScheduler) InitSubtaskExecEnv(ctx context.Context) error {
 	logutil.BgLogger().Info("InitSubtaskExecEnv", zap.Any("taskMeta", s.taskMeta))
 
-	idAlloc := kv.NewPanickingAllocators(0)
+	idAlloc := kv.NewPanickingAllocators(s.taskMeta.Plan.TableInfo.SepAutoInc(), 0)
 	tbl, err := tables.TableFromMeta(idAlloc, s.taskMeta.Plan.TableInfo)
 	if err != nil {
 		return err

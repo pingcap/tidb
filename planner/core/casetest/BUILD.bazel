@@ -23,6 +23,7 @@ go_test(
         "rule_result_reorder_test.go",
         "stats_test.go",
         "tiflash_selection_late_materialization_test.go",
+        "widow_with_exist_subquery_test.go",
         "window_push_down_test.go",
     ],
     data = glob(["testdata/**"]),

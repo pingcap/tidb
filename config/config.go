@@ -1237,13 +1237,16 @@ func (c *Config) RemovedVariableCheck(confFile string) error {
 // Load loads config options from a toml file.
 func (c *Config) Load(confFile string) error {
 	metaData, err := toml.DecodeFile(confFile, c)
+	if err != nil {
+		return err
+	}
 	if c.TokenLimit == 0 {
 		c.TokenLimit = 1000
 	}
 	// If any items in confFile file are not mapped into the Config struct, issue
 	// an error and stop the server from starting.
 	undecoded := metaData.Undecoded()
-	if len(undecoded) > 0 && err == nil {
+	if len(undecoded) > 0 {
 		var undecodedItems []string
 		for _, item := range undecoded {
 			undecodedItems = append(undecodedItems, item.String())

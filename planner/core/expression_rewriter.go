@@ -1580,7 +1580,10 @@ func (er *expressionRewriter) inToExpression(lLen int, not bool, tp *types.Field
 						continue // no need to refine it
 					}
 					er.sctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.Errorf("'%v' may be converted to INT", c.String()))
-					expression.RemoveMutableConst(er.sctx, []expression.Expression{c})
+					if err := expression.RemoveMutableConst(er.sctx, []expression.Expression{c}); err != nil {
+						er.err = err
+						return
+					}
 				}
 				args[i], isExceptional = expression.RefineComparedConstant(er.sctx, *leftFt, c, opcode.EQ)
 				if isExceptional {
@@ -1649,6 +1652,13 @@ func (er *expressionRewriter) deriveCollationForIn(colLen int, _ int, args []exp
 func (er *expressionRewriter) castCollationForIn(colLen int, elemCnt int, stkLen int, coll *expression.ExprCollation) {
 	// We don't handle the cases if the element is a tuple, such as (a, b, c) in ((x1, y1, z1), (x2, y2, z2)).
 	if colLen != 1 {
+		return
+	}
+	if !collate.NewCollationEnabled() {
+		// See https://github.com/pingcap/tidb/issues/52772
+		// This function will apply CoercibilityExplicit to the casted expression, but some checks(during ColumnSubstituteImpl) is missed when the new
+		// collation is disabled, then lead to panic.
+		// To work around this issue, we can skip the function, it should be good since the collation is disabled.
 		return
 	}
 	for i := stkLen - elemCnt; i < stkLen; i++ {

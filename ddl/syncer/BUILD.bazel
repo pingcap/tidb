@@ -33,6 +33,7 @@ go_test(
         "syncer_test.go",
     ],
     flaky = True,
+    shard_count = 3,
     deps = [
         ":syncer",
         "//ddl",
@@ -50,5 +51,6 @@ go_test(
         "@io_etcd_go_etcd_tests_v3//integration",
         "@org_golang_google_grpc//codes",
         "@org_golang_google_grpc//status",
+        "@org_uber_go_atomic//:atomic",
     ],
 )

@@ -178,6 +178,7 @@ func TestTableSampleWithTiDBRowID(t *testing.T) {
 func TestTableSampleWithPartition(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := createSampleTestkit(t, store)
+	tk.MustExec(`set @@tidb_opt_fix_control = "44262:ON"`)
 	tk.MustExec("create table t (a int, b varchar(255), primary key (a)) partition by hash(a) partitions 2;")
 	tk.MustExec("insert into t values (1, '1'), (2, '2'), (3, '3');")
 	rows := tk.MustQuery("select * from t tablesample regions();").Rows()
