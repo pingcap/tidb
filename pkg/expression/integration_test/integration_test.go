@@ -3032,3 +3032,14 @@ func TestIssue43527(t *testing.T) {
 		"SELECT @total := @total + d FROM (SELECT d FROM test) AS temp, (SELECT @total := b FROM test) AS T1 where @total >= 100",
 	).Check(testkit.Rows("200", "300", "400", "500"))
 }
+
+func TestNegFloatConvertToUnsigned(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t0")
+	tk.MustExec("create table t0(c0 tinyint(1) unsigned not null )")
+	tk.MustExec("insert into t0 values (1)")
+	tk.MustQuery("select * from t0 where case 0 when (t0.c0)>(-1.194192591e9) then null else 1 end;").Check(testkit.Rows("1"))
+	tk.MustQuery("select (t0.c0)>(-1.194192591e9) from t0;").Check(testkit.Rows("1"))
+}
