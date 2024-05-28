@@ -86,7 +86,7 @@ func (m *mockManager) IsOwner() bool {
 func (m *mockManager) toBeOwner() {
 	ok := util.MockGlobalStateEntry.OwnerKey(m.storeID, m.key).SetOwner(m.id)
 	if ok {
-		logutil.BgLogger().Debug("owner manager gets owner", zap.String("category", "ddl"),
+		logutil.BgLogger().Info("owner manager gets owner", zap.String("category", "ddl"),
 			zap.String("ID", m.id), zap.String("ownerKey", m.key))
 		if m.listener != nil {
 			m.listener.OnBecomeOwner()
@@ -97,6 +97,8 @@ func (m *mockManager) toBeOwner() {
 // RetireOwner implements Manager.RetireOwner interface.
 func (m *mockManager) RetireOwner() {
 	util.MockGlobalStateEntry.OwnerKey(m.storeID, m.key).UnsetOwner(m.id)
+	logutil.BgLogger().Info("owner manager retire owner", zap.String("category", "ddl"),
+		zap.String("ID", m.id), zap.String("ownerKey", m.key))
 	if m.listener != nil {
 		m.listener.OnRetireOwner()
 	}
