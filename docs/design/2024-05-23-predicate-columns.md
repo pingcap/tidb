@@ -226,11 +226,23 @@ We continue to collect predicate columns even when the feature is disabled. This
 
 ## Test Design
 
+This feature requires a series of tests to ensure its functionality and compatibility.
+
 ### Functional Tests
+
+1. Test that the predicate columns are correctly collected and stored in the system table.
+2. Test that the predicate columns are correctly used in the analyze process.
+3. Test that the query plan is correct after the predicate columns are used in the analyze process.
+4. Test that the predicate columns are correctly cleaned up when they are no longer exist.
 
 ### Compatibility Tests
 
+1. Test that the feature is compatible with the auto-analyze feature.
+2. Test that the feature is compatible with the rolling upgrade.
+
 ### Performance Tests
+
+Test that the query plan is optimized after the predicate columns are used in the analyze process.
 
 ## Impacts & Risks
 
