@@ -3010,8 +3010,29 @@ func (d *ddl) BatchCreateTableWithInfo(ctx sessionctx.Context,
 	return d.callHookOnChanged(jobs, err)
 }
 
+// BuildQueryStringFromJobs takes a slice of Jobs and concatenates their
+// queries into a single query string.
+// Each query is separated by a semicolon and a space.
+// Trailing spaces are removed from each query, and a semicolon is appended
+// if it's not already present.
+func BuildQueryStringFromJobs(jobs []*model.Job) string {
+	var queryBuilder strings.Builder
+	for i, job := range jobs {
+		q := strings.TrimSpace(job.Query)
+		if !strings.HasSuffix(q, ";") {
+			q += ";"
+		}
+		queryBuilder.WriteString(q)
+
+		if i < len(jobs)-1 {
+			queryBuilder.WriteString(" ")
+		}
+	}
+	return queryBuilder.String()
+}
+
 // BatchCreateTableWithJobs combine CreateTableJobs to BatchCreateTableJob.
-func (*ddl) BatchCreateTableWithJobs(jobs []*model.Job) (*model.Job, error) {
+func BatchCreateTableWithJobs(jobs []*model.Job) (*model.Job, error) {
 	if len(jobs) == 0 {
 		return nil, errors.Trace(fmt.Errorf("expect non-empty jobs"))
 	}
@@ -3055,6 +3076,7 @@ func (*ddl) BatchCreateTableWithJobs(jobs []*model.Job) (*model.Job, error) {
 	combinedJob.Args = append(combinedJob.Args, args)
 	combinedJob.Args = append(combinedJob.Args, foreignKeyChecks)
 	combinedJob.InvolvingSchemaInfo = involvingSchemaInfo
+	combinedJob.Query = BuildQueryStringFromJobs(jobs)
 
 	return combinedJob, nil
 }
