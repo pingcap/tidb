@@ -46,11 +46,13 @@ var fmSketchPool = sync.Pool{
 // TODO: add this attribute to PB and persist it instead of using a fixed number(executor.maxSketchSize)
 const MaxSketchSize = 10000
 
-// FMSketch (Flajolet–Martin Sketch) is a probabilistic data structure that estimates the count of unique elements in a stream.
+// FMSketch (Flajolet-Martin Sketch) is a probabilistic data structure that estimates the count of unique elements in a stream.
 // It employs a hash function to convert each element into a binary number and then counts the trailing zeroes in each hashed value.
 // **This variant of the FM sketch uses a set to store unique hashed values and a binary mask to track the maximum number of trailing zeroes.**
 // The estimated count of distinct values is calculated as 2^r * count, where 'r' is the maximum number of trailing zeroes observed and 'count' is the number of unique hashed values.
-// The underlying concept is that our hash function maps the input domain onto a logarithmic range. Each distinct value is mapped to 'i' with a probability of 2^-(i+1).
+// The fundamental idea is that our hash function maps the input domain onto a logarithmic scale.
+// This is achieved by hashing the input value and counting the number of trailing zeroes in the binary representation of the hash value.
+// Each distinct value is mapped to 'i' with a probability of 2^-(i+1).
 // For example, a value is mapped to 0 with a probability of 1/2, to 1 with a probability of 1/4, to 2 with a probability of 1/8, and so on.
 // This is achieved by hashing the input value and counting the trailing zeroes in the hash value.
 // If we have a set of 'n' distinct values, the count of distinct values with 'r' trailing zeroes is n / 2^r.
@@ -100,7 +102,8 @@ func (s *FMSketch) NDV() int64 {
 		return 0
 	}
 	// The estimated count of distinct values is 2^r * count, where 'r' is the maximum number of trailing zeroes observed and 'count' is the number of unique hashed values.
-	// The fundamental idea is that the hash function maps the input domain onto a logarithmic range.
+	// The fundamental idea is that the hash function maps the input domain onto a logarithmic scale.
+	// This is achieved by hashing the input value and counting the number of trailing zeroes in the binary representation of the hash value.
 	// So the count of distinct values with 'r' trailing zeroes is n / 2^r, where 'n' is the number of distinct values.
 	// Therefore, the estimated count of distinct values is 2^r * count = n.
 	return int64(s.mask+1) * int64(s.hashset.Count())
@@ -108,14 +111,14 @@ func (s *FMSketch) NDV() int64 {
 
 // insertHashValue inserts a hashed value into the sketch.
 func (s *FMSketch) insertHashValue(hashVal uint64) {
-	// If the hashed value is already in the sketch (determined by bitwise AND with the mask), return without inserting.
+	// If the hashed value is already covered by the mask, we can skip it.
 	// This is because the number of trailing zeroes in the hashed value is less than the mask.
 	if (hashVal & s.mask) != 0 {
 		return
 	}
 	// Put the hashed value into the hashset.
 	s.hashset.Put(hashVal, true)
-	// We tracking the unique hashed values level by level to ensure a minimum count of distinct values at each level.
+	// We track the unique hashed values level by level to ensure a minimum count of distinct values at each level.
 	// This way, the final estimation is less likely to be skewed by outliers.
 	if s.hashset.Count() > s.maxSize {
 		// If the size of the hashset exceeds the maximum size, move the mask to the next level.
