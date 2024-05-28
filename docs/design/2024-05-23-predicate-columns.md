@@ -15,7 +15,9 @@
     - [Tracking Predicate Columns](#tracking-predicate-columns)
       - [Collect During Logical Optimization Phase](#collect-during-logical-optimization-phase)
       - [Flush Predicate Columns To The System Table](#flush-predicate-columns-to-the-system-table)
-      - [Dataflow](#dataflow)
+      - [Collection Dataflow](#collection-dataflow)
+    - [Using Predicate Columns](#using-predicate-columns)
+      - [Analysis Dataflow](#analysis-dataflow)
   - [Test Design](#test-design)
     - [Functional Tests](#functional-tests)
     - [Compatibility Tests](#compatibility-tests)
@@ -140,9 +142,55 @@ func (s *statsUsageImpl) DumpColStatsUsageToKV() error {
 
 We can spawn a background worker from the domain and flush the predicate columns to the system table every 5 minutes.
 
-#### Dataflow
+#### Collection Dataflow
 
 ![Dataflow](./imgs/predicate-columns-collect.png)
+
+### Using Predicate Columns
+
+We can use the predicate columns in both automatic statistics collection and manual statistics collection.
+
+- Automatic statistics collection: When we trigger the automatic statistics collection, we can read the predicate columns from the system table and only analyze these columns.
+- Manual statistics collection: When we trigger the manual statistics collection, we can use the `ANALYZE TABLE tbl_name PREDICATE_COLUMNS` syntax to read the predicate columns from the system table and only analyze these columns.
+
+To comprehend the application of predicate columns in automatic statistics collection, it's essential to understand how TiDB persists the analyze options.
+
+In TiDB, we use a system table to store the analyze options, called `mysql.analyze_options`:
+
+```sql
+CREATE TABLE IF NOT EXISTS mysql.analyze_options (
+    table_id BIGINT(64) NOT NULL,
+    sample_num BIGINT(64) NOT NULL DEFAULT 0,
+    sample_rate DOUBLE NOT NULL DEFAULT -1,
+    buckets BIGINT(64) NOT NULL DEFAULT 0,
+    topn BIGINT(64) NOT NULL DEFAULT -1,
+    column_choice enum('DEFAULT','ALL','PREDICATE','LIST') NOT NULL DEFAULT 'DEFAULT',
+    column_ids TEXT(19372),
+    PRIMARY KEY (table_id) CLUSTERED
+);
+```
+
+We can focus on the `column_choice` column, which has three different column options in the analyze statement. The corresponding relations are as follows:
+
+| Analyze Statement                                | column_choice | column_ids    | mysql.column_stats_usage                                                 | Explain                                                                  |
+|--------------------------------------------------|---------------|---------------|--------------------------------------------------------------------------|--------------------------------------------------------------------------|
+| ANALYZE TABLE t;                                 | DEFAULT(ALL)  | None          | None                                                                     | It will analyze all analyzable columns from the table.                   |
+| ANALYZE TABLE t LIST COLUMNS col1, col2;         | LIST          | col1_id, col2 | None                                                                     | It will only analyze col1 and col2.                                      |
+| ANALYZE TABLE t PREDICATE FOR PREDICATE COLUMNS; | PREDICATE     | None          | All predicate columns were collected before in mysql.column_stats_usage. | It will only analyze columns that exist in the mysql.column_stats_usage. |
+
+As you can see, we pick PREDICATE as the column_choice for the ANALYZE TABLE t PREDICATE COLUMNS statement. At the same time, we now consider DEFAULT to be ALL, but to support predicate columns during auto-analyze, we need to change the definition of DEFAULT.
+
+| Predicate Column Feature Status | Predicate Columns in `sys.sql_column_stats_us` | Meaning                                           |
+|---------------------------------|------------------------------------------------|---------------------------------------------------|
+| Enabled                         | Present                                        | Use those predicate columns to analyze the table. |
+| Enabled                         | Absent                                         | Only analyze index columns.                       |
+| Disabled                        | -                                              | Analyze all columns of the table                  |
+
+After we change the definition of DEFAULT, we can use the predicate columns to analyze the table during auto-analyze.
+
+#### Analysis Dataflow
+
+![Dataflow](./imgs/auto-analyze-predicate-columns.png)
 
 ## Test Design
 
