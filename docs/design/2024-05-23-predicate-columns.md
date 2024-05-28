@@ -298,3 +298,5 @@ When you run ANALYZE with the PREDICATE COLUMNS clause, the analyze operation in
 If none of a table's columns are marked as predicates, ANALYZE includes all of the columns, even when PREDICATE COLUMNS is specified. If no columns are marked as predicate columns, it might be because the table has not yet been queried.
 
 ## Unresolved Questions
+
+None
