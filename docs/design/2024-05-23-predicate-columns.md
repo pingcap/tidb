@@ -38,7 +38,7 @@
 
 ## Introduction
 
-TBD
+This document describes the design of the feature that allows TiDB to analyze only the predicate columns when executing the `ANALYZE` statement. This feature is designed to reduce the cost of `ANALYZE` and improve the efficiency of analyzing large tables.
 
 ## Motivation or Background
 
