@@ -58,8 +58,8 @@ const MaxSketchSize = 10000
 // The level-by-level approach increases the accuracy of the estimation by ensuring a minimum count of distinct values at each level.
 // This way, the final estimation is less likely to be skewed by outliers.
 // For more details, refer to the following papers:
-// 1. https://www.vldb.org/conf/2001/P541.pdf
-// 2. https://algo.inria.fr/flajolet/Publications/FlMa85.pdf
+//  1. https://www.vldb.org/conf/2001/P541.pdf
+//  2. https://algo.inria.fr/flajolet/Publications/FlMa85.pdf
 type FMSketch struct {
 	// A set to store unique hashed values.
 	hashset *swiss.Map[uint64, bool]
