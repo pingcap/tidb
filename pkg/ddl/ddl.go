@@ -1201,6 +1201,7 @@ func (d *ddl) DoDDLJob(ctx sessionctx.Context, job *model.Job) error {
 		// The transaction of enqueuing job is failed.
 		return errors.Trace(err)
 	}
+	failpoint.InjectCall("waitJobSubmitted")
 
 	sessVars := ctx.GetSessionVars()
 	sessVars.StmtCtx.IsDDLJobInQueue = true
