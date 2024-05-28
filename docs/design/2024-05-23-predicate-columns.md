@@ -1,8 +1,8 @@
 # Analyze Predicate Columns
 
 - Author(s): [Rustin Liu](http://github.com/hi-rustin)
-- Discussion PR: TBD
-- Tracking Issue: TBD
+- Discussion PR: <https://github.com/pingcap/tidb/pull/53511>
+- Tracking Issue: <https://github.com/pingcap/tidb/issues/53567>
 
 ## Table of **Contents**
 
