@@ -234,7 +234,6 @@ func generateStores() []*metapb.Store {
 			},
 		},
 	}
-
 }
 
 func TestContextManagerOnlineLeave(t *testing.T) {

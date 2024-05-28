@@ -180,7 +180,12 @@ func (fpdc *FakePDClient) GetAllStores(context.Context, ...pd.GetStoreOption) ([
 	return append([]*metapb.Store{}, fpdc.stores...), nil
 }
 
-func (fpdc *FakePDClient) ScanRegions(ctx context.Context, key, endKey []byte, limit int, opts ...pd.GetRegionOption) ([]*pd.Region, error) {
+func (fpdc *FakePDClient) ScanRegions(
+	ctx context.Context,
+	key, endKey []byte,
+	limit int,
+	opts ...pd.GetRegionOption,
+) ([]*pd.Region, error) {
 	regions := make([]*pd.Region, 0, len(fpdc.regions))
 	fpdc.peerStoreId = fpdc.peerStoreId + 1
 	peerStoreId := (fpdc.peerStoreId + 1) / 2

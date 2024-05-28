@@ -157,12 +157,12 @@ func TestSplitPoint2(t *testing.T) {
 	require.NoError(t, err)
 }
 
-func fakeFile(tableID, rowID int64, len uint64, num int64) *backuppb.DataFileInfo {
+func fakeFile(tableID, rowID int64, length uint64, num int64) *backuppb.DataFileInfo {
 	return &backuppb.DataFileInfo{
 		StartKey:        fakeRowKey(tableID, rowID),
 		EndKey:          fakeRowKey(tableID, rowID+1),
 		TableId:         tableID,
-		Length:          len,
+		Length:          length,
 		NumberOfEntries: num,
 	}
 }

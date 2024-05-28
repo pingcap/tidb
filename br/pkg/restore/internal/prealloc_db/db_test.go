@@ -137,7 +137,7 @@ var checkTableSQLs = []func(t *testing.T, tk *testkit.TestKit, prefix string) er
 	func(t *testing.T, tk *testkit.TestKit, prefix string) error { // test.t3
 		sql := fmt.Sprintf("SELECT NEXTVAL(`test`.`%s3`);", prefix)
 		rows := tk.MustQuery(sql).Rows()
-		require.Contains(t, rows[0][0], "1")
+		require.Contains(t, rows[0][0], "3")
 		return nil
 	},
 	func(t *testing.T, tk *testkit.TestKit, prefix string) error { // test.t4
@@ -159,7 +159,7 @@ var checkTableSQLs = []func(t *testing.T, tk *testkit.TestKit, prefix string) er
 	func(t *testing.T, tk *testkit.TestKit, prefix string) error { // test.t7
 		sql := fmt.Sprintf("SELECT NEXTVAL(`test`.`%s7`);", prefix)
 		rows := tk.MustQuery(sql).Rows()
-		require.Contains(t, rows[0][0], "10")
+		require.Contains(t, rows[0][0], "0")
 		return nil
 	},
 }

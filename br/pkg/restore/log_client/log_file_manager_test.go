@@ -561,14 +561,14 @@ func encodekv(prefix string, ts uint64, emptyV bool) []byte {
 	if emptyV {
 		v = ""
 	}
-	kts := codec.EncodeUintDesc([]byte(k), uint64(ts))
+	kts := codec.EncodeUintDesc([]byte(k), ts)
 	return stream.EncodeKVEntry(kts, []byte(v))
 }
 
 func encodekvEntryWithTS(prefix string, ts uint64) *logclient.KvEntryWithTS {
 	k := fmt.Sprintf("%s_%d", prefix, ts)
 	v := "any value"
-	kts := codec.EncodeUintDesc([]byte(k), uint64(ts))
+	kts := codec.EncodeUintDesc([]byte(k), ts)
 	return &logclient.KvEntryWithTS{
 		E: kv.Entry{
 			Key:   kts,
