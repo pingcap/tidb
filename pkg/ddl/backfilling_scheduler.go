@@ -88,20 +88,19 @@ func newBackfillScheduler(
 	sessPool *sess.Pool,
 	tp backfillerType,
 	tbl table.PhysicalTable,
-	sessCtx sessionctx.Context,
 	jobCtx *JobContext,
 ) (backfillScheduler, error) {
 	if tp == typeAddIndexWorker && info.ReorgMeta.ReorgTp == model.ReorgTypeLitMerge {
 		ctx = logutil.WithCategory(ctx, "ddl-ingest")
 		return newIngestBackfillScheduler(ctx, info, sessPool, tbl)
 	}
-	return newTxnBackfillScheduler(ctx, info, sessPool, tp, tbl, sessCtx, jobCtx)
+	return newTxnBackfillScheduler(ctx, info, sessPool, tp, tbl, jobCtx)
 }
 
 func newTxnBackfillScheduler(ctx context.Context, info *reorgInfo, sessPool *sess.Pool,
-	tp backfillerType, tbl table.PhysicalTable, sessCtx sessionctx.Context,
+	tp backfillerType, tbl table.PhysicalTable,
 	jobCtx *JobContext) (backfillScheduler, error) {
-	decColMap, err := makeupDecodeColMap(sessCtx, info.dbInfo.Name, tbl)
+	decColMap, err := makeupDecodeColMap(info.dbInfo.Name, tbl)
 	if err != nil {
 		return nil, err
 	}

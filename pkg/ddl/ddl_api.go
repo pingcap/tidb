@@ -40,6 +40,7 @@ import (
 	rg "github.com/pingcap/tidb/pkg/domain/resourcegroup"
 	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/expression"
+	exprctx "github.com/pingcap/tidb/pkg/expression/context"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
@@ -1023,13 +1024,13 @@ func buildColumnAndConstraint(
 // In non-strict SQL mode, if the default value of the column is an empty string, the default value can be ignored.
 // In strict SQL mode, TEXT/BLOB/JSON can't have not null default values.
 // In NO_ZERO_DATE SQL mode, TIMESTAMP/DATE/DATETIME type can't have zero date like '0000-00-00' or '0000-00-00 00:00:00'.
-func checkColumnDefaultValue(ctx sessionctx.Context, col *table.Column, value any) (bool, any, error) {
+func checkColumnDefaultValue(ctx exprctx.BuildContext, col *table.Column, value any) (bool, any, error) {
 	hasDefaultValue := true
 	if value != nil && (col.GetType() == mysql.TypeJSON ||
 		col.GetType() == mysql.TypeTinyBlob || col.GetType() == mysql.TypeMediumBlob ||
 		col.GetType() == mysql.TypeLongBlob || col.GetType() == mysql.TypeBlob) {
 		// In non-strict SQL mode.
-		if !ctx.GetSessionVars().SQLMode.HasStrictMode() && value == "" {
+		if !ctx.GetEvalCtx().SQLMode().HasStrictMode() && value == "" {
 			if col.GetType() == mysql.TypeBlob || col.GetType() == mysql.TypeLongBlob {
 				// The TEXT/BLOB default value can be ignored.
 				hasDefaultValue = false
@@ -1038,17 +1039,16 @@ func checkColumnDefaultValue(ctx sessionctx.Context, col *table.Column, value an
 			if col.GetType() == mysql.TypeJSON {
 				value = `null`
 			}
-			sc := ctx.GetSessionVars().StmtCtx
-			sc.AppendWarning(dbterror.ErrBlobCantHaveDefault.FastGenByArgs(col.Name.O))
+			ctx.GetEvalCtx().AppendWarning(dbterror.ErrBlobCantHaveDefault.FastGenByArgs(col.Name.O))
 			return hasDefaultValue, value, nil
 		}
 		// In strict SQL mode or default value is not an empty string.
 		return hasDefaultValue, value, dbterror.ErrBlobCantHaveDefault.GenWithStackByArgs(col.Name.O)
 	}
-	if value != nil && ctx.GetSessionVars().SQLMode.HasNoZeroDateMode() &&
-		ctx.GetSessionVars().SQLMode.HasStrictMode() && types.IsTypeTime(col.GetType()) {
+	if value != nil && ctx.GetEvalCtx().SQLMode().HasNoZeroDateMode() &&
+		ctx.GetEvalCtx().SQLMode().HasStrictMode() && types.IsTypeTime(col.GetType()) {
 		if vv, ok := value.(string); ok {
-			timeValue, err := expression.GetTimeValue(ctx.GetExprCtx(), vv, col.GetType(), col.GetDecimal(), nil)
+			timeValue, err := expression.GetTimeValue(ctx, vv, col.GetType(), col.GetDecimal(), nil)
 			if err != nil {
 				return hasDefaultValue, value, errors.Trace(err)
 			}
@@ -1433,7 +1433,7 @@ func getFuncCallDefaultValue(col *table.Column, option *ast.ColumnOption, expr *
 // getDefaultValue will get the default value for column.
 // 1: get the expr restored string for the column which uses sequence next value as default value.
 // 2: get specific default value for the other column.
-func getDefaultValue(ctx sessionctx.Context, col *table.Column, option *ast.ColumnOption) (any, bool, error) {
+func getDefaultValue(ctx exprctx.BuildContext, col *table.Column, option *ast.ColumnOption) (any, bool, error) {
 	// handle default value with function call
 	tp, fsp := col.FieldType.GetType(), col.FieldType.GetDecimal()
 	if x, ok := option.Expr.(*ast.FuncCallExpr); ok {
@@ -1445,7 +1445,7 @@ func getDefaultValue(ctx sessionctx.Context, col *table.Column, option *ast.Colu
 	}
 
 	if tp == mysql.TypeTimestamp || tp == mysql.TypeDatetime || tp == mysql.TypeDate {
-		vd, err := expression.GetTimeValue(ctx.GetExprCtx(), option.Expr, tp, fsp, nil)
+		vd, err := expression.GetTimeValue(ctx, option.Expr, tp, fsp, nil)
 		value := vd.GetValue()
 		if err != nil {
 			return nil, false, dbterror.ErrInvalidDefaultValue.GenWithStackByArgs(col.Name.O)
@@ -1465,7 +1465,7 @@ func getDefaultValue(ctx sessionctx.Context, col *table.Column, option *ast.Colu
 	}
 
 	// evaluate the non-function-call expr to a certain value.
-	v, err := expression.EvalSimpleAst(ctx.GetExprCtx(), option.Expr)
+	v, err := expression.EvalSimpleAst(ctx, option.Expr)
 	if err != nil {
 		return nil, false, errors.Trace(err)
 	}
@@ -1491,7 +1491,7 @@ func getDefaultValue(ctx sessionctx.Context, col *table.Column, option *ast.Colu
 			return str, false, err
 		}
 		// For other kind of fields (e.g. INT), we supply its integer as string value.
-		value, err := v.GetBinaryLiteral().ToInt(ctx.GetSessionVars().StmtCtx.TypeCtx())
+		value, err := v.GetBinaryLiteral().ToInt(ctx.GetEvalCtx().TypeCtx())
 		if err != nil {
 			return nil, false, err
 		}
@@ -1506,7 +1506,7 @@ func getDefaultValue(ctx sessionctx.Context, col *table.Column, option *ast.Colu
 		val, err := getEnumDefaultValue(v, col)
 		return val, false, err
 	case mysql.TypeDuration, mysql.TypeDate:
-		if v, err = v.ConvertTo(ctx.GetSessionVars().StmtCtx.TypeCtx(), &col.FieldType); err != nil {
+		if v, err = v.ConvertTo(ctx.GetEvalCtx().TypeCtx(), &col.FieldType); err != nil {
 			return "", false, errors.Trace(err)
 		}
 	case mysql.TypeBit:
@@ -1518,7 +1518,7 @@ func getDefaultValue(ctx sessionctx.Context, col *table.Column, option *ast.Colu
 		// For these types, convert it to standard format firstly.
 		// like integer fields, convert it into integer string literals. like convert "1.25" into "1" and "2.8" into "3".
 		// if raise a error, we will use original expression. We will handle it in check phase
-		if temp, err := v.ConvertTo(ctx.GetSessionVars().StmtCtx.TypeCtx(), &col.FieldType); err == nil {
+		if temp, err := v.ConvertTo(ctx.GetEvalCtx().TypeCtx(), &col.FieldType); err == nil {
 			v = temp
 		}
 	}
@@ -1665,7 +1665,7 @@ func setNoDefaultValueFlag(c *table.Column, hasDefaultValue bool) {
 	}
 }
 
-func checkDefaultValue(ctx sessionctx.Context, c *table.Column, hasDefaultValue bool) (err error) {
+func checkDefaultValue(ctx exprctx.BuildContext, c *table.Column, hasDefaultValue bool) (err error) {
 	if !hasDefaultValue {
 		return nil
 	}
@@ -1677,9 +1677,10 @@ func checkDefaultValue(ctx sessionctx.Context, c *table.Column, hasDefaultValue 
 			}
 			return nil
 		}
-		handleWithTruncateErr(ctx, func() {
-			_, err = table.GetColDefaultValue(ctx.GetExprCtx(), c.ToInfo())
-		})
+		_, err = table.GetColDefaultValue(
+			exprctx.CtxWithHandleTruncateErrLevel(ctx, errctx.LevelError),
+			c.ToInfo(),
+		)
 		if err != nil {
 			return types.ErrInvalidDefault.GenWithStackByArgs(c.Name)
 		}
@@ -3006,7 +3007,7 @@ func (d *ddl) BatchCreateTableWithInfo(ctx sessionctx.Context,
 		}
 	}
 
-	return nil
+	return d.callHookOnChanged(jobs, err)
 }
 
 // BatchCreateTableWithJobs combine CreateTableJobs to BatchCreateTableJob.
@@ -5518,23 +5519,14 @@ func checkModifyTypes(origin *types.FieldType, to *types.FieldType, needRewriteC
 	return errors.Trace(err)
 }
 
-// handleWithTruncateErr handles the doFunc with FlagTruncateAsWarning and FlagIgnoreTruncateErr flags, both of which are false.
-func handleWithTruncateErr(ctx sessionctx.Context, doFunc func()) {
-	sv := ctx.GetSessionVars().StmtCtx
-	oldTypeFlags := sv.TypeFlags()
-	newTypeFlags := oldTypeFlags.WithTruncateAsWarning(false).WithIgnoreTruncateErr(false)
-	sv.SetTypeFlags(newTypeFlags)
-	doFunc()
-	sv.SetTypeFlags(oldTypeFlags)
-}
-
 // SetDefaultValue sets the default value of the column.
 func SetDefaultValue(ctx sessionctx.Context, col *table.Column, option *ast.ColumnOption) (hasDefaultValue bool, err error) {
 	var value any
 	var isSeqExpr bool
-	handleWithTruncateErr(ctx, func() {
-		value, isSeqExpr, err = getDefaultValue(ctx, col, option)
-	})
+	value, isSeqExpr, err = getDefaultValue(
+		exprctx.CtxWithHandleTruncateErrLevel(ctx.GetExprCtx(), errctx.LevelError),
+		col, option,
+	)
 	if err != nil {
 		return false, errors.Trace(err)
 	}
@@ -5547,7 +5539,7 @@ func SetDefaultValue(ctx sessionctx.Context, col *table.Column, option *ast.Colu
 
 	// When the default value is expression, we skip check and convert.
 	if !col.DefaultIsExpr {
-		if hasDefaultValue, value, err = checkColumnDefaultValue(ctx, col, value); err != nil {
+		if hasDefaultValue, value, err = checkColumnDefaultValue(ctx.GetExprCtx(), col, value); err != nil {
 			return hasDefaultValue, errors.Trace(err)
 		}
 		value, err = convertTimestampDefaultValToUTC(ctx, value, col)
@@ -5685,7 +5677,7 @@ func processAndCheckDefaultValueAndColumn(ctx sessionctx.Context, col *table.Col
 	if err = checkColumnValueConstraint(col, col.GetCollate()); err != nil {
 		return errors.Trace(err)
 	}
-	if err = checkDefaultValue(ctx, col, hasDefaultValue); err != nil {
+	if err = checkDefaultValue(ctx.GetExprCtx(), col, hasDefaultValue); err != nil {
 		return errors.Trace(err)
 	}
 	if err = checkColumnFieldLength(col); err != nil {
@@ -5941,9 +5933,10 @@ func GetModifiableColumnJob(
 				return nil, dbterror.ErrUnsupportedModifyColumn.GenWithStack("cannot parse generated PartitionInfo")
 			}
 			pAst := at.Specs[0].Partition
-			handleWithTruncateErr(sctx, func() {
-				_, err = buildPartitionDefinitionsInfo(sctx.GetExprCtx(), pAst.Definitions, &newTblInfo, uint64(len(newTblInfo.Partition.Definitions)))
-			})
+			_, err = buildPartitionDefinitionsInfo(
+				exprctx.CtxWithHandleTruncateErrLevel(sctx.GetExprCtx(), errctx.LevelError),
+				pAst.Definitions, &newTblInfo, uint64(len(newTblInfo.Partition.Definitions)),
+			)
 			if err != nil {
 				return nil, dbterror.ErrUnsupportedModifyColumn.GenWithStack("New column does not match partition definitions: %s", err.Error())
 			}
@@ -6361,7 +6354,7 @@ func (d *ddl) AlterColumn(ctx sessionctx.Context, ident ast.Ident, spec *ast.Alt
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if err = checkDefaultValue(ctx, col, hasDefaultValue); err != nil {
+		if err = checkDefaultValue(ctx.GetExprCtx(), col, hasDefaultValue); err != nil {
 			return errors.Trace(err)
 		}
 	}

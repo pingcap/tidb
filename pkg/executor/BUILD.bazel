@@ -454,6 +454,7 @@ go_test(
         "//pkg/util/syncutil",
         "//pkg/util/tableutil",
         "//pkg/util/topsql/state",
+        "@com_github_docker_go_units//:go-units",
         "@com_github_gorilla_mux//:mux",
         "@com_github_hashicorp_go_version//:go-version",
         "@com_github_pingcap_errors//:errors",

@@ -171,7 +171,7 @@ func WaitBinlogRecover(timeout time.Duration) error {
 	}
 }
 
-// SkippedCommitterCount returns the number of alive committers whick skipped the binlog writing.
+// SkippedCommitterCount returns the number of alive committers which skipped the binlog writing.
 func SkippedCommitterCount() int32 {
 	return atomic.LoadInt32(&skippedCommitterCounter)
 }
