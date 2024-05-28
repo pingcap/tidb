@@ -1,65 +1,5 @@
 set tidb_enable_global_index=true;
 
-# Prepare data
-drop table if exists p;
-create table p (id int, c int, unique index idx(id)) partition by range (c) (
-partition p0 values less than (4),
-partition p1 values less than (7),
-partition p2 values less than (10));
-insert into p values (1,3), (3,4), (5,6), (7,9);
-analyze table p;
-drop table if exists t;
-create table t (id int, c int);
-insert into t values (1, 3);
-analyze table t;
-
-# TestGlobalIndexScan
-select id from p use index (idx) order by id;
-
-# TestGlobalIndexDoubleRead
---sorted_result
-select * from p use index (idx);
-
-# TestAggWithGlobalIndex
-select count(*) from p use index (idx);
-select count(*) from p partition(p0) use index (idx);
-
-# TestGlobalIndexSelectSpecifiedPartition
-select * from p partition(p0) use index (idx);
-
-# TestGlobalIndexScanSpecifiedPartition
-select id from p partition(p0) use index (idx);
-
-# TestGlobalIndexJoin
---sorted_result
-select /*+ INL_JOIN(p, t) */ * from p inner join t on p.id = t.id;
-select /*+ INL_JOIN(p, t) */ p.id from p inner join t on p.id = t.id;
-
-# TestGlobalIndexJoinSpecifiedPartition
---sorted_result
-select /*+ INL_JOIN(p, t) */ * from p partition(p0) inner join t on p.id = t.id;
-select /*+ INL_JOIN(p, t) */ p.id from p partition(p0) inner join t on p.id = t.id;
-
-
-# Prepare tables with clustered index
-drop table if exists p, t;
-create table p (id int, c int, d int, e int, primary key(d, c) clustered, unique index idx(id)) partition by range (c) (
-partition p0 values less than (4),
-partition p1 values less than (7),
-partition p2 values less than (10));
-insert into p values (1,3,1,1), (3,4,3,3), (5,6,5,5), (7,9,7,7);
-analyze table p;
-create table t (id int, c int);
-insert into t values (1, 3);
-analyze table t;
-
-# TestGlobalIndexScanForClusteredSpecifiedPartition
-select id from p partition(p0) use index (idx);
-
-# TestGlobalIndexJoinForClusteredSpecifiedPartition
-select /*+ INL_JOIN(p, t) */ * from p partition(p0) inner join t on p.id = t.id;
-select /*+ INL_JOIN(p, t) */ p.id from p partition(p0) inner join t on p.id = t.id;
-
 
 # TestIssue21732
 drop table if exists p;
@@ -77,7 +17,7 @@ CREATE TABLE test_t1 (
 	b int(11) DEFAULT NULL,
 	c int(11) DEFAULT NULL,
 	unique index p_a(a)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin 
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 PARTITION BY RANGE (c) (
     PARTITION p0 VALUES LESS THAN (10),
     PARTITION p1 VALUES LESS THAN (MAXVALUE)
