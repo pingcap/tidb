@@ -8095,5 +8095,68 @@
         "Warning": null
       }
     ]
+  },
+  {
+    "Name": "TestIndexMergeIssue52947",
+    "Cases": [
+      {
+        "SQL": "explain format = 'brief' select min(col_304) from (select /*+ use_index_merge( tbl_43 ) */ * from tbl_43 where not( tbl_43.col_304 between 'YEpfYfPVvhMlHGHSMKm' and 'PE' ) or tbl_43.col_304 in ( 'LUBGzGMA' ) and tbl_43.col_304 between 'HpsjfuSReCwBoh' and 'fta' or not( tbl_43.col_304 between 'MFWmuOsoyDv' and 'TSeMYpDXnFIyp' ) order by col_304) x;",
+        "Plan": [
+          "StreamAgg 1.00 root  funcs:min(test.tbl_43.col_304)->Column#2",
+          "└─TopN 1.00 root  test.tbl_43.col_304, offset:0, count:1",
+          "  └─IndexMerge 1.00 root  type: union",
+          "    ├─Selection(Build) 1104.45 cop[tikv]  lt(test.tbl_43.col_304, \"YEpfYfPVvhMlHGHSMKm\")",
+          "    │ └─IndexRangeScan 3323.33 cop[tikv] table:tbl_43, index:idx_259(col_304) range:[-inf,\"YEpfY\"], keep order:false, stats:pseudo",
+          "    ├─Selection(Build) 1111.11 cop[tikv]  gt(test.tbl_43.col_304, \"PE\")",
+          "    │ └─IndexRangeScan 3333.33 cop[tikv] table:tbl_43, index:idx_259(col_304) range:(\"PE\",+inf], keep order:false, stats:pseudo",
+          "    ├─Selection(Build) 1.00 cop[tikv]  1",
+          "    │ └─TableRangeScan 1.00 cop[tikv] table:tbl_43 range:[\"LUBGzGMA\",\"LUBGzGMA\"], keep order:false, stats:pseudo",
+          "    ├─Selection(Build) 1104.45 cop[tikv]  lt(test.tbl_43.col_304, \"MFWmuOsoyDv\")",
+          "    │ └─IndexRangeScan 3323.33 cop[tikv] table:tbl_43, index:idx_259(col_304) range:[-inf,\"MFWmu\"], keep order:false, stats:pseudo",
+          "    ├─Selection(Build) 1111.11 cop[tikv]  gt(test.tbl_43.col_304, \"TSeMYpDXnFIyp\")",
+          "    │ └─IndexRangeScan 3333.33 cop[tikv] table:tbl_43, index:idx_259(col_304) range:[\"TSeMY\",+inf], keep order:false, stats:pseudo",
+          "    └─TopN(Probe) 1.00 cop[tikv]  test.tbl_43.col_304, offset:0, count:1",
+          "      └─Selection 7984.01 cop[tikv]  or(or(lt(test.tbl_43.col_304, \"YEpfYfPVvhMlHGHSMKm\"), gt(test.tbl_43.col_304, \"PE\")), or(and(eq(test.tbl_43.col_304, \"LUBGzGMA\"), 1), or(lt(test.tbl_43.col_304, \"MFWmuOsoyDv\"), gt(test.tbl_43.col_304, \"TSeMYpDXnFIyp\"))))",
+          "        └─TableRowIDScan 9990.00 cop[tikv] table:tbl_43 keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select min(col_304) from (select /*+ use_index_merge( tbl_43 ) */ * from tbl_43 where not( tbl_43.col_304 between 'YEpfYfPVvhMlHGHSMKm' and 'PE' ) or tbl_43.col_304 in ( 'LUBGzGMA' ) and tbl_43.col_304 between 'HpsjfuSReCwBoh' and 'fta' or not( tbl_43.col_304 between 'MFWmuOsoyDv' and 'TSeMYpDXnFIyp' ) order by col_304) x;",
+        "Plan": [
+          "BCmuENPHzSOIMJLPB\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "explain format = 'brief' select max(col_304) from (select /*+ use_index_merge( tbl_43 ) */ * from tbl_43 where not( tbl_43.col_304 between 'YEpfYfPVvhMlHGHSMKm' and 'PE' ) or tbl_43.col_304 in ( 'LUBGzGMA' ) and tbl_43.col_304 between 'HpsjfuSReCwBoh' and 'fta' or not( tbl_43.col_304 between 'MFWmuOsoyDv' and 'TSeMYpDXnFIyp' ) order by col_304) x;",
+        "Plan": [
+          "StreamAgg 1.00 root  funcs:max(test.tbl_43.col_304)->Column#2",
+          "└─TopN 1.00 root  test.tbl_43.col_304:desc, offset:0, count:1",
+          "  └─IndexMerge 1.00 root  type: union",
+          "    ├─Selection(Build) 1104.45 cop[tikv]  lt(test.tbl_43.col_304, \"YEpfYfPVvhMlHGHSMKm\")",
+          "    │ └─IndexRangeScan 3323.33 cop[tikv] table:tbl_43, index:idx_259(col_304) range:[-inf,\"YEpfY\"], keep order:false, stats:pseudo",
+          "    ├─Selection(Build) 1111.11 cop[tikv]  gt(test.tbl_43.col_304, \"PE\")",
+          "    │ └─IndexRangeScan 3333.33 cop[tikv] table:tbl_43, index:idx_259(col_304) range:(\"PE\",+inf], keep order:false, stats:pseudo",
+          "    ├─Selection(Build) 1.00 cop[tikv]  1",
+          "    │ └─TableRangeScan 1.00 cop[tikv] table:tbl_43 range:[\"LUBGzGMA\",\"LUBGzGMA\"], keep order:false, stats:pseudo",
+          "    ├─Selection(Build) 1104.45 cop[tikv]  lt(test.tbl_43.col_304, \"MFWmuOsoyDv\")",
+          "    │ └─IndexRangeScan 3323.33 cop[tikv] table:tbl_43, index:idx_259(col_304) range:[-inf,\"MFWmu\"], keep order:false, stats:pseudo",
+          "    ├─Selection(Build) 1111.11 cop[tikv]  gt(test.tbl_43.col_304, \"TSeMYpDXnFIyp\")",
+          "    │ └─IndexRangeScan 3333.33 cop[tikv] table:tbl_43, index:idx_259(col_304) range:[\"TSeMY\",+inf], keep order:false, stats:pseudo",
+          "    └─TopN(Probe) 1.00 cop[tikv]  test.tbl_43.col_304:desc, offset:0, count:1",
+          "      └─Selection 7984.01 cop[tikv]  or(or(lt(test.tbl_43.col_304, \"YEpfYfPVvhMlHGHSMKm\"), gt(test.tbl_43.col_304, \"PE\")), or(and(eq(test.tbl_43.col_304, \"LUBGzGMA\"), 1), or(lt(test.tbl_43.col_304, \"MFWmuOsoyDv\"), gt(test.tbl_43.col_304, \"TSeMYpDXnFIyp\"))))",
+          "        └─TableRowIDScan 9990.00 cop[tikv] table:tbl_43 keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select max(col_304) from (select /*+ use_index_merge( tbl_43 ) */ * from tbl_43 where not( tbl_43.col_304 between 'YEpfYfPVvhMlHGHSMKm' and 'PE' ) or tbl_43.col_304 in ( 'LUBGzGMA' ) and tbl_43.col_304 between 'HpsjfuSReCwBoh' and 'fta' or not( tbl_43.col_304 between 'MFWmuOsoyDv' and 'TSeMYpDXnFIyp' ) order by col_304) x;",
+        "Plan": [
+          "swLIoWa\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000"
+        ],
+        "Warning": null
+      }
+    ]
   }
 ]
