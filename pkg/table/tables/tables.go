@@ -82,10 +82,6 @@ type TableCommon struct {
 	// recordPrefix and indexPrefix are generated using physicalTableID.
 	recordPrefix kv.Key
 	indexPrefix  kv.Key
-
-	// avoid duplicated calculations of Cols
-	// mode -> cols
-	getColsCache [][]*table.Column
 }
 
 // MockTableFromMeta only serves for test.
@@ -286,57 +282,44 @@ const (
 	visible
 	hidden
 	full
-	// numMode is only used to get the total of modes
-	numMode
 )
 
 func (t *TableCommon) getCols(mode getColsMode) []*table.Column {
-	if t.getColsCache == nil {
-		t.getColsCache = make([][]*table.Column, numMode)
-		for i := range t.getColsCache {
-			t.getColsCache[i] = nil
+	columns := make([]*table.Column, 0, len(t.Columns))
+	for _, col := range t.Columns {
+		if col.State != model.StatePublic {
+			continue
 		}
-	}
-	if t.getColsCache[mode] != nil {
-		return t.getColsCache[mode]
-	} else {
-		columns := make([]*table.Column, 0, len(t.Columns))
-		for _, col := range t.Columns {
-			if col.State != model.StatePublic {
-				continue
-			}
-			if (mode == visible && col.Hidden) || (mode == hidden && !col.Hidden) {
-				continue
-			}
-			columns = append(columns, col)
+		if (mode == visible && col.Hidden) || (mode == hidden && !col.Hidden) {
+			continue
 		}
-		t.getColsCache[mode] = columns
-		return columns
+		columns = append(columns, col)
 	}
+	return columns
 }
 
 // Cols implements table.Table Cols interface.
 func (t *TableCommon) Cols() []*table.Column {
-	if len(t.publicColumns) > 0 {
-		return t.publicColumns
+	if len(t.publicColumns) == 0 {
+		t.publicColumns = t.getCols(full)
 	}
-	return t.getCols(full)
+	return t.publicColumns
 }
 
 // VisibleCols implements table.Table VisibleCols interface.
 func (t *TableCommon) VisibleCols() []*table.Column {
-	if len(t.visibleColumns) > 0 {
-		return t.visibleColumns
+	if len(t.visibleColumns) == 0 {
+		t.visibleColumns = t.getCols(visible)
 	}
-	return t.getCols(visible)
+	return t.visibleColumns
 }
 
 // HiddenCols implements table.Table HiddenCols interface.
 func (t *TableCommon) HiddenCols() []*table.Column {
-	if len(t.hiddenColumns) > 0 {
-		return t.hiddenColumns
+	if len(t.hiddenColumns) == 0 {
+		t.hiddenColumns = t.getCols(hidden)
 	}
-	return t.getCols(hidden)
+	return t.hiddenColumns
 }
 
 // WritableCols implements table WritableCols interface.
@@ -367,7 +350,7 @@ func (t *TableCommon) WritableConstraint() []*table.Constraint {
 	if t.Constraints == nil {
 		return nil
 	}
-	writeableConstraint := make([]*table.Constraint, 0, len(t.Constraints))
+	t.writableConstraints = make([]*table.Constraint, 0, len(t.Constraints))
 	for _, con := range t.Constraints {
 		if !con.Enforced {
 			continue
@@ -375,9 +358,9 @@ func (t *TableCommon) WritableConstraint() []*table.Constraint {
 		if con.State == model.StateDeleteOnly || con.State == model.StateDeleteReorganization {
 			continue
 		}
-		writeableConstraint = append(writeableConstraint, con)
+		t.writableConstraints = append(t.writableConstraints, con)
 	}
-	return writeableConstraint
+	return t.writableConstraints
 }
 
 // CheckRowConstraint verify row check constraints.
@@ -401,13 +384,13 @@ func (t *TableCommon) FullHiddenColsAndVisibleCols() []*table.Column {
 		return t.fullHiddenColsAndVisibleColumns
 	}
 
-	cols := make([]*table.Column, 0, len(t.Columns))
+	t.fullHiddenColsAndVisibleColumns = make([]*table.Column, 0, len(t.Columns))
 	for _, col := range t.Columns {
 		if col.Hidden || col.State == model.StatePublic {
-			cols = append(cols, col)
+			t.fullHiddenColsAndVisibleColumns = append(t.fullHiddenColsAndVisibleColumns, col)
 		}
 	}
-	return cols
+	return t.fullHiddenColsAndVisibleColumns
 }
 
 // RecordPrefix implements table.Table interface.
