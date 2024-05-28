@@ -488,6 +488,8 @@ func (do *Domain) tryLoadSchemaDiffs(m *meta.Meta, usedVersion, newVersion int64
 			// then the TiKV which store schema will become the hot spot.
 			schemaTs, err := do.getTimestampForSchemaVersionWithNonEmptyDiff(m, diff.Version, startTS)
 			if err == nil {
+				// Use `BuildWithoutUpdateBundles` here to avoid `updateInfoSchemaBundles`,
+				// because `builder.Build` will do it later.
 				latestIS := builder.BuildWithoutUpdateBundles(schemaTs)
 				// create a copy of the latest info schema.
 				builder, err := infoschema.NewBuilder(do, do.sysFacHack, do.infoCache.Data).InitWithOldInfoSchema(latestIS)
