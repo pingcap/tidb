@@ -53,7 +53,7 @@ However, only the statistics of some columns are used in creating query plans, w
 ANALYZE TABLE tbl_name PREDICATE_COLUMNS;
 ```
 
-Using this syntax, TiDB will only analyze columns thar appear in the predicate of the query.
+Using this syntax, TiDB will only analyze columns that appear in the predicate of the query.
 
 Compare with other syntaxes:
 
