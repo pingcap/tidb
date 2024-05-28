@@ -61,6 +61,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	decoder "github.com/pingcap/tidb/pkg/util/rowDecoder"
+	"github.com/pkg/errors"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
@@ -908,6 +909,8 @@ func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Jo
 		ver, err = updateVersionAndTableInfo(d, t, job, tbl.Meta(), true)
 		return false, ver, errors.Trace(err)
 	case model.BackfillStateReadyToMerge:
+		logutil.BgLogger().Info("index backfill state ready to merge", zap.String("category", "ddl"), zap.Int64("job ID", job.ID),
+			zap.String("table", tbl.Meta().Name.O), zap.String("index", allIndexInfos[0].Name.O))
 		failpoint.Inject("mockDMLExecutionStateBeforeMerge", func(_ failpoint.Value) {
 			if MockDMLExecutionStateBeforeMerge != nil {
 				MockDMLExecutionStateBeforeMerge()
