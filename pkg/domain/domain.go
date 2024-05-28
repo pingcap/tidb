@@ -473,13 +473,32 @@ func (do *Domain) tryLoadSchemaDiffs(m *meta.Meta, usedVersion, newVersion int64
 	phyTblIDs := make([]int64, 0, len(diffs))
 	actions := make([]uint64, 0, len(diffs))
 	diffTypes := make([]string, 0, len(diffs))
-	for _, diff := range diffs {
+	for i, diff := range diffs {
 		if diff.RegenerateSchemaMap {
 			return nil, nil, nil, errors.Errorf("Meets a schema diff with RegenerateSchemaMap flag")
 		}
 		ids, err := builder.ApplyDiff(m, diff)
 		if err != nil {
 			return nil, nil, nil, err
+		}
+		if i != len(diffs)-1 {
+			// If load multiple schema diffs, we need to insert each schema version into cache,
+			// to make sure the schema version in cache is continuous, otherwise the cache will have holes,
+			// then stale-reqd query will meet schema cache miss, then load snapshot schema from TiKV,
+			// then the TiKV which store schema will become the hot spot.
+			schemaTs, err := do.getTimestampForSchemaVersionWithNonEmptyDiff(m, diff.Version, startTS)
+			if err == nil {
+				latest := builder.BuildWithoutUpdateBundles(schemaTs)
+				// create a copy of the latest info schema.
+				builder, err := infoschema.NewBuilder(do, do.sysFacHack, do.infoCache.Data).InitWithOldInfoSchema(latest)
+				if err == nil {
+					is := builder.BuildWithoutUpdateBundles(schemaTs)
+					do.infoCache.Insert(is, schemaTs)
+				}
+			} else {
+				// ignore the error here, because it doesn't affect the correctness.
+				logutil.BgLogger().Warn("failed to get schema version ts", zap.Error(err), zap.Int64("version", diff.Version))
+			}
 		}
 		if canSkipSchemaCheckerDDL(diff.Type) {
 			continue

@@ -1058,7 +1058,7 @@ func TestSchemaCacheWithConcurrentDDL(t *testing.T) {
 				for i := 0; i < len(versions)-1; i++ {
 					// Following check use to make sure all schema versions are continuous,
 					// if not, it means some schema versions are missing, then stale-raed query will meet schema cache miss,
-					// then load snapshot schema from TiKV, then the TiKV which store schema will become the hot point.
+					// then load snapshot schema from TiKV, then the TiKV which store schema will become the hot spot.
 					require.Equal(t, versions[i], versions[i+1]+1, fmt.Sprintf("all versions: %v", versions))
 				}
 				time.Sleep(50 * time.Millisecond)
