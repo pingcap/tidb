@@ -34,31 +34,6 @@ select * from test_t1 where a = 1;
 a	b	c
 1	1	1
 drop table if exists t;
-CREATE TABLE t (
-a int(11) NOT NULL,
-b int(11) DEFAULT NULL,
-c int(11) DEFAULT NULL,
-d int(11) NOT NULL AUTO_INCREMENT,
-KEY idx_bd (b, c),
-UNIQUE KEY uidx_ac(a)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
-PARTITION BY RANGE (c) (
-PARTITION p0 VALUES LESS THAN (10),
-PARTITION p1 VALUES LESS THAN (MAXVALUE)
-);
-insert into t values (1,1,1,1),(2,2,2,2),(3,3,3,3),(4,4,4,4),(5,5,5,5),(6,6,6,6),(7,7,7,7),(8,8,8,8);
-analyze table t;
-explain select /*+ use_index_merge(t, uidx_ac, idx_bc) */ * from t where a=1 or b=2;
-id	estRows	task	access object	operator info
-IndexMerge_12	1.88	root	partition:all	type: union
-├─IndexRangeScan_8(Build)	1.00	cop[tikv]	table:t, index:uidx_ac(a)	range:[1,1], keep order:false
-├─IndexRangeScan_10(Build)	1.00	cop[tikv]	table:t, index:idx_bd(b, c)	range:[2,2], keep order:false
-└─TableRowIDScan_11(Probe)	1.88	cop[tikv]	table:t	keep order:false
-select /*+ use_index_merge(t, uidx_ac, idx_bc) */ * from t where a=1 or b=2;
-a	b	c	d
-1	1	1	1
-2	2	2	2
-drop table if exists t;
 create table t (a varchar(10), b varchar(1) GENERATED ALWAYS AS (substr(a,1,1)) VIRTUAL) partition by list columns(b) (partition p0 values in ('a','c'), partition p1 values in ('b','d'));
 alter table t add unique index (a);
 insert into t (a) values  ('aaa'),('abc'),('acd');
