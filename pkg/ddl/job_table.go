@@ -128,7 +128,7 @@ type jobScheduler struct {
 	generalDDLWorkerPool *workerPool
 
 	// those fields are shared with 'ddl' instance
-	// TODO ddlCtx is to larger for here, we should remove dependency on it.
+	// TODO ddlCtx is too large for here, we should remove dependency on it.
 	*ddlCtx
 	ddlJobNotifyCh chan struct{}
 	sessPool       *sess.Pool
