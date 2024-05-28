@@ -262,14 +262,14 @@ func TestBatchCreateTableWithJobs(t *testing.T) {
 		SchemaID:   1,
 		Type:       model.ActionCreateTable,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{&model.TableInfo{Name: model.CIStr{O: "t1", L: "t1"}}, false},
+		Args:       []any{&model.TableInfo{Name: model.CIStr{O: "t1", L: "t1"}}, false},
 		Query:      "create table db1.t1 (c1 int, c2 int)",
 	}
 	job2 := &model.Job{
 		SchemaID:   1,
 		Type:       model.ActionCreateTable,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{&model.TableInfo{Name: model.CIStr{O: "t2", L: "t2"}}, &model.TableInfo{}},
+		Args:       []any{&model.TableInfo{Name: model.CIStr{O: "t2", L: "t2"}}, &model.TableInfo{}},
 		Query:      "create table db1.t2 (c1 int, c2 int);",
 	}
 	job, err := ddl.BatchCreateTableWithJobs([]*model.Job{job1, job2})
