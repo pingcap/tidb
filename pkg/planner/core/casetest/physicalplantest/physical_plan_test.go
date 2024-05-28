@@ -2284,7 +2284,6 @@ func TestIndexMergeIssue52947(t *testing.T) {
 	planSuiteData.LoadTestCases(t, &input, &output)
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-
 	tk.MustExec("use test")
 	tk.MustExec("CREATE TABLE `tbl_43` (\n  `col_304` binary(207) NOT NULL DEFAULT 'eIenHx\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0'," +
 		"  PRIMARY KEY (`col_304`) /*T![clustered_index] CLUSTERED */," +
@@ -2303,7 +2302,6 @@ func TestIndexMergeIssue52947(t *testing.T) {
 		tk.MustQuery(ts).Check(testkit.Rows(output[i].Plan...))
 		tk.MustQuery("show warnings").Check(testkit.Rows(output[i].Warning...))
 	}
-
 }
 
 // Test issue #46962 plan
