@@ -194,6 +194,9 @@ func (p *UserPrivileges) RequestVerificationWithUser(db, table, column string, p
 	if SkipWithGrant {
 		return true
 	}
+	if p.user == "" && p.host == "" {
+		return true
+	}
 	if user == nil {
 		return false
 	}
