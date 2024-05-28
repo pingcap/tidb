@@ -332,6 +332,7 @@ go_test(
         "main_test.go",
         "memtable_reader_test.go",
         "metrics_reader_test.go",
+        "opt_rule_balcklist_test.go",
         "parallel_apply_test.go",
         "partition_table_test.go",
         "pkg_test.go",
