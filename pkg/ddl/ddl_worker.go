@@ -529,7 +529,7 @@ func (d *ddl) combineBatchCreateTableJobs(tasks []*limitJobTask) ([]*limitJobTas
 		jobs = append(jobs, task.job)
 	}
 
-	job, err := d.BatchCreateTableWithJobs(jobs)
+	job, err := BatchCreateTableWithJobs(jobs)
 	if err != nil {
 		return tasks, err
 	}
