@@ -774,14 +774,12 @@ func (e *SortExec) buildKeyColumns() {
 func (e *SortExec) lessRow(rowI, rowJ chunk.Row) int {
 	for i, colIdx := range e.keyColumns {
 		cmpFunc := e.keyCmpFuncs[i]
-		if cmpFunc != nil {
-			cmp := cmpFunc(rowI, colIdx, rowJ, colIdx)
-			if e.ByItems[i].Desc {
-				cmp = -cmp
-			}
-			if cmp != 0 {
-				return cmp
-			}
+		cmp := cmpFunc(rowI, colIdx, rowJ, colIdx)
+		if e.ByItems[i].Desc {
+			cmp = -cmp
+		}
+		if cmp != 0 {
+			return cmp
 		}
 	}
 	return 0
@@ -790,14 +788,12 @@ func (e *SortExec) lessRow(rowI, rowJ chunk.Row) int {
 func (e *SortExec) compareRow(rowI, rowJ chunk.Row) int {
 	for i, colIdx := range e.keyColumns {
 		cmpFunc := e.keyCmpFuncs[i]
-		if cmpFunc != nil {
-			cmp := cmpFunc(rowI, colIdx, rowJ, colIdx)
-			if e.ByItems[i].Desc {
-				cmp = -cmp
-			}
-			if cmp != 0 {
-				return cmp
-			}
+		cmp := cmpFunc(rowI, colIdx, rowJ, colIdx)
+		if e.ByItems[i].Desc {
+			cmp = -cmp
+		}
+		if cmp != 0 {
+			return cmp
 		}
 	}
 	return 0
