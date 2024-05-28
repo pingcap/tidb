@@ -67,7 +67,7 @@ type Manager interface {
 	RequireOwner(ctx context.Context) error
 	// CampaignCancel cancels one etcd campaign
 	CampaignCancel()
-	// SetListener sets the listener, set before start campaign.
+	// SetListener sets the listener, set before CampaignOwner.
 	SetListener(listener Listener)
 }
 
