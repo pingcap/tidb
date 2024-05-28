@@ -40,12 +40,9 @@ go_library(
         "//pkg/util/logutil",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
-<<<<<<< HEAD
         "@com_github_tiancaiamao_gp//:gp",
         "@org_golang_x_sync//singleflight",
         "@org_uber_go_atomic//:atomic",
-=======
->>>>>>> bf704fd635c (domain: make the transaction from `initStatsCtx` blocking gc (#53602))
         "@org_uber_go_zap//:zap",
     ],
 )
