@@ -148,7 +148,8 @@ func (s *statsUsageImpl) DumpColStatsUsageToKV() error {
 }
 ```
 
-We can spawn a background worker from the domain and flush the predicate columns to the system table every 5 minutes.
+As illustrated, a ticker triggers the flush operation. This operation retrieves all predicate columns from memory and stores them in the system table. The ticker interval is set to 100 times the lease, where the lease is derived from the [statistics lease](https://docs.pingcap.com/tidb/stable/tidb-configuration-file#stats-lease).
+So it is adjustable according to the [statistics lease](https://docs.pingcap.com/tidb/stable/tidb-configuration-file#stats-lease).
 
 #### Collection Dataflow
 
