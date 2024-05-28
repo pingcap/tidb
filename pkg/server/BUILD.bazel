@@ -16,7 +16,6 @@ go_library(
         "rpc_server.go",
         "server.go",
         "stat.go",
-        "tokenlimiter.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/server",
     visibility = ["//visibility:public"],
