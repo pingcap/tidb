@@ -191,7 +191,7 @@ As you can see, we pick PREDICATE as the column_choice for the ANALYZE TABLE t P
 | Predicate Column Feature Status | Predicate Columns in `sys.sql_column_stats_us` | Meaning                                           |
 |---------------------------------|------------------------------------------------|---------------------------------------------------|
 | Enabled                         | Present                                        | Use those predicate columns to analyze the table. |
-| Enabled                         | Absent                                         | Only analyze index columns.                       |
+| Enabled                         | Absent                                         | Only analyze indexed columns of the table.        |
 | Disabled                        | -                                              | Analyze all columns of the table                  |
 
 After we change the definition of DEFAULT, we can use the predicate columns to analyze the table during auto-analyze.
