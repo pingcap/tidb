@@ -50,7 +50,7 @@ type MaxTidRecord struct {
 }
 
 func (h *Handle) initStatsMeta4Chunk(is infoschema.InfoSchema, cache util.StatsCache, iter *chunk.Iterator4Chunk) {
-	var physicalID int64
+	var physicalID, maxPhysicalID int64
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		physicalID = row.GetInt64(1)
 		// The table is read-only. Please do not modify it.
@@ -59,6 +59,7 @@ func (h *Handle) initStatsMeta4Chunk(is infoschema.InfoSchema, cache util.StatsC
 			logutil.BgLogger().Debug("unknown physical ID in stats meta table, maybe it has been dropped", zap.Int64("ID", physicalID))
 			continue
 		}
+		maxPhysicalID = max(physicalID, maxPhysicalID)
 		tableInfo := table.Meta()
 		newHistColl := statistics.HistColl{
 			PhysicalID:     physicalID,
@@ -76,7 +77,7 @@ func (h *Handle) initStatsMeta4Chunk(is infoschema.InfoSchema, cache util.StatsC
 	}
 	maxTidRecord.mu.Lock()
 	defer maxTidRecord.mu.Unlock()
-	if maxTidRecord.tid.Load() < physicalID {
+	if maxTidRecord.tid.Load() < maxPhysicalID {
 		maxTidRecord.tid.Store(physicalID)
 	}
 }
