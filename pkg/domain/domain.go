@@ -484,16 +484,15 @@ func (do *Domain) tryLoadSchemaDiffs(m *meta.Meta, usedVersion, newVersion int64
 		if i != len(diffs)-1 {
 			// If load multiple schema diffs, we need to insert each schema version into cache,
 			// to make sure the schema version in cache is continuous, otherwise the cache will have holes,
-			// then stale-reqd query will meet schema cache miss, then load snapshot schema from TiKV,
+			// then stale-read query will meet schema cache miss, then load snapshot schema from TiKV,
 			// then the TiKV which store schema will become the hot spot.
 			schemaTs, err := do.getTimestampForSchemaVersionWithNonEmptyDiff(m, diff.Version, startTS)
 			if err == nil {
-				latest := builder.BuildWithoutUpdateBundles(schemaTs)
+				latestIS := builder.BuildWithoutUpdateBundles(schemaTs)
 				// create a copy of the latest info schema.
-				builder, err := infoschema.NewBuilder(do, do.sysFacHack, do.infoCache.Data).InitWithOldInfoSchema(latest)
+				builder, err := infoschema.NewBuilder(do, do.sysFacHack, do.infoCache.Data).InitWithOldInfoSchema(latestIS)
 				if err == nil {
-					is := builder.BuildWithoutUpdateBundles(schemaTs)
-					do.infoCache.Insert(is, schemaTs)
+					do.infoCache.Insert(builder.BuildWithoutUpdateBundles(schemaTs), schemaTs)
 				}
 			} else {
 				// ignore the error here, because it doesn't affect the correctness.
