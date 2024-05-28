@@ -16,6 +16,9 @@ package handle
 
 import (
 	"context"
+	"sync"
+	"sync/atomic"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -33,8 +36,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
-	"sync"
-	"sync/atomic"
 )
 
 // initStatsStep is the step to load stats by paging.
