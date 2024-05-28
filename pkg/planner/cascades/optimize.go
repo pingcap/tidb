@@ -116,11 +116,7 @@ func (opt *Optimizer) FindBestPlan(sctx sessionctx.Context, logical plannercore.
 }
 
 func (*Optimizer) onPhasePreprocessing(_ sessionctx.Context, plan plannercore.LogicalPlan) (plannercore.LogicalPlan, error) {
-<<<<<<< HEAD
-	plan, err := plan.PruneColumns(plan.Schema().Columns, nil)
-=======
 	err := plan.PruneColumns(plan.Schema().Columns, nil, plan)
->>>>>>> 286e8521acf (planner: eliminate useless scalar subqueries in some scenarios of aggregate queries (#47550))
 	if err != nil {
 		return nil, err
 	}
