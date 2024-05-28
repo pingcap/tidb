@@ -106,7 +106,7 @@ type StatsUsage struct {
 
 #### Flush Predicate Columns To The System Table
 
-We use a new system table mysql.column_stats_usage to store predicate columns.
+We use a new system table `mysql.column_stats_usage` to store predicate columns.
 
 ```sql
 CREATE TABLE IF NOT EXISTS mysql.column_stats_usage (
