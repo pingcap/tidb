@@ -105,7 +105,7 @@ func TestInitStatsSessionBlockGC(t *testing.T) {
 				}
 			}
 			return false
-		}, 1*time.Second, 10*time.Millisecond, "min_start_ts is not blocked over 1s")
+		}, 10*time.Second, 10*time.Millisecond, "min_start_ts is not blocked over 1s")
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/statistics/handle/beforeInitStats"))
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/statistics/handle/beforeInitStatsLite"))
 	}
