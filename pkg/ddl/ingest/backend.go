@@ -38,7 +38,10 @@ import (
 	"go.uber.org/zap"
 )
 
-// BackendCtx is the backend context for add index reorg task.
+// MockDMLExecutionStateBeforeImport is a failpoint to mock the DML execution state before import.
+var MockDMLExecutionStateBeforeImport func()
+
+// BackendCtx is the backend context for one add index reorg task.
 type BackendCtx interface {
 	Register(jobID, indexID int64, schemaName, tableName string) (Engine, error)
 	Unregister(jobID, indexID int64)
