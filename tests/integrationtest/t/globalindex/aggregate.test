@@ -21,3 +21,4 @@ select avg(id), max(id), min(id) from p use index(idx) group by c;
 --replace_regex /in\(_tidb_pid, [0-9]+\)/in(_tidb_pid, pid0)/
 explain format='brief' select avg(id), max(id), min(id) from p partition(p0) use index(idx) group by c;
 select avg(id), max(id), min(id) from p partition(p0) use index(idx) group by c;
+

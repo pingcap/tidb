@@ -22,3 +22,4 @@ select * from t use index(idx) where lower(b) > 'c' order by lower(b);
 --replace_regex /in\(_tidb_pid, [0-9]+\)/in(_tidb_pid, pid0)/
 explain format='brief' select * from t partition(p0) use index(idx) where lower(b) > 'c';
 select * from t partition(p0) use index(idx) where lower(b) > 'c';
+
