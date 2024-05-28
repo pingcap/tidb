@@ -193,7 +193,7 @@ func newFunctionImpl(ctx sessionctx.Context, fold int, funcName string, retType 
 	case ast.GetVar:
 		return BuildGetVarFunction(ctx, args[0], retType)
 	case InternalFuncFromBinary:
-		return BuildFromBinaryFunction(ctx, args[0], retType), nil
+		return BuildFromBinaryFunction(ctx, args[0], retType, false), nil
 	case InternalFuncToBinary:
 		return BuildToBinaryFunction(ctx, args[0]), nil
 	case ast.Sysdate:
@@ -366,6 +366,12 @@ func (sf *ScalarFunction) ConstItem(sc *stmtctx.StatementContext) bool {
 	if _, ok := unFoldableFunctions[sf.FuncName.L]; ok {
 		return false
 	}
+
+	if _, ok := sf.Function.(*extensionFuncSig); ok {
+		// we should return false for extension functions for safety, because it may have a side effect.
+		return false
+	}
+
 	for _, arg := range sf.GetArgs() {
 		if !arg.ConstItem(sc) {
 			return false

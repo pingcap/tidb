@@ -439,6 +439,8 @@ func (do *Domain) tryLoadSchemaDiffs(m *meta.Meta, usedVersion, newVersion int64
 		if diff == nil {
 			// Empty diff means the txn of generating schema version is committed, but the txn of `runDDLJob` is not or fail.
 			// It is safe to skip the empty diff because the infoschema is new enough and consistent.
+			logutil.BgLogger().Info("diff load InfoSchema get empty schema diff", zap.Int64("version", usedVersion))
+			do.infoCache.InsertEmptySchemaVersion(usedVersion)
 			continue
 		}
 		diffs = append(diffs, diff)
@@ -2271,9 +2273,26 @@ func (do *Domain) UpdateTableStatsLoop(ctx, initStatsCtx sessionctx.Context) err
 		return nil
 	}
 	do.SetStatsUpdating(true)
+	// The stats updated worker doesn't require the stats initialization to be completed.
+	// This is because the updated worker's primary responsibilities are to update the change delta and handle DDL operations.
+	// These tasks do not interfere with or depend on the initialization process.
 	do.wg.Run(func() { do.updateStatsWorker(ctx, owner) }, "updateStatsWorker")
-	do.wg.Run(func() { do.autoAnalyzeWorker(owner) }, "autoAnalyzeWorker")
-	do.wg.Run(func() { do.gcAnalyzeHistory(owner) }, "gcAnalyzeHistory")
+	// Wait for the stats worker to finish the initialization.
+	// Otherwise, we may start the auto analyze worker before the stats cache is initialized.
+	do.wg.Run(
+		func() {
+			<-do.StatsHandle().InitStatsDone
+			do.autoAnalyzeWorker(owner)
+		},
+		"autoAnalyzeWorker",
+	)
+	do.wg.Run(
+		func() {
+			<-do.StatsHandle().InitStatsDone
+			do.gcAnalyzeHistory(owner)
+		},
+		"gcAnalyzeHistory",
+	)
 	return nil
 }
 

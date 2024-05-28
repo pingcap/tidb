@@ -569,3 +569,9 @@ select
     order by c0 desc limit 1) as c1
 from
   (select 1 as c0) as subq_1;
+
+# TestIssue50614
+use test;
+drop table if exists tt;
+create table tt(a bigint, b bigint, c bigint, d bigint, e bigint, primary key(c,d));
+explain format = brief update tt, (select 1 as c1 ,2 as c2 ,3 as c3, 4 as c4 union all select 2,3,4,5 union all select 3,4,5,6) tmp set tt.a=tmp.c1, tt.b=tmp.c2 where tt.c=tmp.c3 and tt.d=tmp.c4 and (tt.c,tt.d) in ((11,111),(22,222),(33,333),(44,444));
