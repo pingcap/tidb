@@ -19,6 +19,7 @@
     - [Using Predicate Columns](#using-predicate-columns)
       - [Analysis Dataflow](#analysis-dataflow)
     - [Cleanup Outdated Predicate Columns](#cleanup-outdated-predicate-columns)
+    - [Global Variable](#global-variable)
   - [Test Design](#test-design)
     - [Functional Tests](#functional-tests)
     - [Compatibility Tests](#compatibility-tests)
@@ -198,6 +199,24 @@ After we change the definition of DEFAULT, we can use the predicate columns to a
 Users may have made schema changes, requiring the removal of non-existent columns from the `mysql.column_stats_usage` table.
 
 Before initiating the analyze process, we can first retrieve all predicate columns, compare them with the current schema, and remove any columns that no longer exist from the `mysql.column_stats_usage` table.
+
+### Global Variable
+
+In this feature, we introduce a new global variable `tidb_enable_column_tracking` to control whether to use predicate columns in the analyze process.
+
+Users can set this variable to `ON` or `OFF` to enable or disable the feature. The default value is `OFF`. (Will be set to `ON` in the future)
+
+```sql
+SET GLOBAL tidb_enable_column_tracking = ON;
+SET GLOBAL tidb_enable_column_tracking = OFF;
+```
+
+| Value | Description                                                                      |
+|-------|----------------------------------------------------------------------------------|
+| ON    | Use predicate columns in the analyze process.                                    |
+| OFF   | Do not use predicate columns in the analyze process. **But still collect them.** |
+
+We continue to collect predicate columns even when the feature is disabled. This ensures that we can promptly catch up with the latest predicate columns when the feature is re-enabled.
 
 ## Test Design
 
