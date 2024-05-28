@@ -17,11 +17,15 @@ package executor
 import (
 	"context"
 	"fmt"
+	"os"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/pingcap/failpoint"
+	backuppb "github.com/pingcap/kvproto/pkg/brpb"
+	"github.com/pingcap/kvproto/pkg/encryptionpb"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser"
@@ -139,4 +143,83 @@ func TestFetchShowBRIE(t *testing.T) {
 	info2Res := brieTaskInfoToResult(info2)
 	globalBRIEQueue.clearTask(e.Ctx().GetSessionVars().StmtCtx)
 	require.Equal(t, info2Res, fetchShowBRIEResult(t, e, brieColTypes))
+}
+
+func TestBRIEBuilderOPtions(t *testing.T) {
+	sctx := mock.NewContext()
+	sctx.GetSessionVars().User = &auth.UserIdentity{Username: "test"}
+	is := infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable(), core.MockUnsignedTable()})
+	ResetGlobalBRIEQueueForTest()
+	builder := NewMockExecutorBuilderForTest(sctx, is)
+	ctx := context.Background()
+	p := parser.New()
+	p.SetParserConfig(parser.ParserConfig{EnableWindowFunction: true, EnableStrictDoubleTypeCheck: true})
+	failpoint.Enable("github.com/pingcap/tidb/pkg/executor/modifyStore", `return("tikv")`)
+	defer failpoint.Disable("github.com/pingcap/tidb/pkg/executor/modifyStore")
+	err := os.WriteFile("/tmp/keyfile", []byte(strings.Repeat("A", 128)), 0644)
+
+	require.NoError(t, err)
+	stmt, err := p.ParseOneStmt("BACKUP TABLE `a` TO 'noop://' CHECKSUM_CONCURRENCY = 4 IGNORE_STATS = 1 COMPRESSION_LEVEL = 4 COMPRESSION_TYPE = 'lz4' ENCRYPTION_METHOD = 'aes256-ctr' ENCRYPTION_KEYFILE = '/tmp/keyfile'", "", "")
+	require.NoError(t, err)
+	plan, err := core.BuildLogicalPlanForTest(ctx, sctx, stmt, infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable(), core.MockUnsignedTable(), core.MockView()}))
+	require.NoError(t, err)
+	s, ok := stmt.(*ast.BRIEStmt)
+	require.True(t, ok)
+	require.True(t, s.Kind == ast.BRIEKindBackup)
+	for _, opt := range s.Options {
+		switch opt.Tp {
+		case ast.BRIEOptionChecksumConcurrency:
+			require.Equal(t, uint64(4), opt.UintValue)
+		case ast.BRIEOptionCompressionLevel:
+			require.Equal(t, uint64(4), opt.UintValue)
+		case ast.BRIEOptionIgnoreStats:
+			require.Equal(t, uint64(1), opt.UintValue)
+		case ast.BRIEOptionCompression:
+			require.Equal(t, "lz4", opt.StrValue)
+		case ast.BRIEOptionEncryptionMethod:
+			require.Equal(t, "aes256-ctr", opt.StrValue)
+		case ast.BRIEOptionEncryptionKeyFile:
+			require.Equal(t, "/tmp/keyfile", opt.StrValue)
+		}
+	}
+	schema := plan.Schema()
+	exec := builder.buildBRIE(s, schema)
+	require.NoError(t, builder.err)
+	e, ok := exec.(*BRIEExec)
+	require.True(t, ok)
+	require.Equal(t, uint(4), e.backupCfg.ChecksumConcurrency)
+	require.Equal(t, int32(4), e.backupCfg.CompressionLevel)
+	require.Equal(t, true, e.backupCfg.IgnoreStats)
+	require.Equal(t, backuppb.CompressionType_LZ4, e.backupCfg.CompressionConfig.CompressionType)
+	require.Equal(t, encryptionpb.EncryptionMethod_AES256_CTR, e.backupCfg.CipherInfo.CipherType)
+	require.Greater(t, len(e.backupCfg.CipherInfo.CipherKey), 0)
+
+	stmt, err = p.ParseOneStmt("RESTORE TABLE `a` FROM 'noop://' CHECKSUM_CONCURRENCY = 4 WAIT_TIFLASH_READY = 1 WITH_SYS_TABLE = 1 LOAD_STATS = 1", "", "")
+	require.NoError(t, err)
+	plan, err = core.BuildLogicalPlanForTest(ctx, sctx, stmt, infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable(), core.MockUnsignedTable(), core.MockView()}))
+	require.NoError(t, err)
+	s, ok = stmt.(*ast.BRIEStmt)
+	require.True(t, ok)
+	require.True(t, s.Kind == ast.BRIEKindRestore)
+	for _, opt := range s.Options {
+		switch opt.Tp {
+		case ast.BRIEOptionChecksumConcurrency:
+			require.Equal(t, uint64(4), opt.UintValue)
+		case ast.BRIEOptionWaitTiflashReady:
+			require.Equal(t, uint64(1), opt.UintValue)
+		case ast.BRIEOptionWithSysTable:
+			require.Equal(t, uint64(1), opt.UintValue)
+		case ast.BRIEOptionLoadStats:
+			require.Equal(t, uint64(1), opt.UintValue)
+		}
+	}
+	schema = plan.Schema()
+	exec = builder.buildBRIE(s, schema)
+	require.NoError(t, builder.err)
+	e, ok = exec.(*BRIEExec)
+	require.True(t, ok)
+	require.Equal(t, uint(4), e.restoreCfg.ChecksumConcurrency)
+	require.True(t, e.restoreCfg.WaitTiflashReady)
+	require.True(t, e.restoreCfg.WithSysTable)
+	require.True(t, e.restoreCfg.LoadStats)
 }
