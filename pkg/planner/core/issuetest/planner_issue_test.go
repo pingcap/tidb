@@ -173,11 +173,11 @@ FROM (
     (
         WITH RECURSIVE d AS (
             SELECT ub.*
-            FROM udc_branch_temp ub
+            FROM udc_branch_test ub
             WHERE ub.branch_id = 1000102
             UNION ALL
             SELECT ub1.*
-            FROM udc_branch_temp ub1
+            FROM udc_branch_test ub1
             INNER JOIN d ON d.branch_id = ub1.pid
         )
         SELECT d.*
