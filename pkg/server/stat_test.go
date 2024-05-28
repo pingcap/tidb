@@ -82,11 +82,7 @@ func TestInitStatsSessionBlockGC(t *testing.T) {
 		require.NoError(t, err)
 		dom, err := session.BootstrapSession(store)
 		require.NoError(t, err)
-		defer func() {
-			dom.Close()
-			err := store.Close()
-			require.NoError(t, err)
-		}()
+
 		infoSyncer := dom.InfoSyncer()
 		sv := CreateMockServer(t, store)
 		sv.SetDomain(dom)
@@ -106,6 +102,8 @@ func TestInitStatsSessionBlockGC(t *testing.T) {
 			}
 			return false
 		}, 10*time.Second, 10*time.Millisecond, "min_start_ts is not blocked over 1s")
+		dom.Close()
+		require.NoError(t, store.Close())
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/statistics/handle/beforeInitStats"))
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/statistics/handle/beforeInitStatsLite"))
 	}
