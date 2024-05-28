@@ -17,6 +17,9 @@ package ingest
 import (
 	"context"
 	"encoding/hex"
+	"os"
+	"path/filepath"
+	"strconv"
 	"sync"
 
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/local"
@@ -66,6 +69,7 @@ func (m *MockBackendCtxMgr) Register(_ context.Context, _ bool, jobID int64, _ *
 	mockCtx := &MockBackendCtx{
 		mu:      sync.Mutex{},
 		sessCtx: sessCtx,
+		jobID:   jobID,
 	}
 	m.runningJobs[jobID] = mockCtx
 	return mockCtx, nil
@@ -104,6 +108,7 @@ func (m *MockBackendCtxMgr) ResetSessCtx() {
 type MockBackendCtx struct {
 	sessCtx       sessionctx.Context
 	mu            sync.Mutex
+	jobID         int64
 	checkpointMgr *CheckpointManager
 }
 
@@ -159,8 +164,10 @@ func (m *MockBackendCtx) GetCheckpointManager() *CheckpointManager {
 }
 
 // GetLocalBackend returns the local backend.
-func (*MockBackendCtx) GetLocalBackend() *local.Backend {
-	return nil
+func (m *MockBackendCtx) GetLocalBackend() *local.Backend {
+	b := &local.Backend{}
+	b.LocalStoreDir = filepath.Join(os.TempDir(), "mock_backend", strconv.FormatInt(m.jobID, 10))
+	return b
 }
 
 // MockWriteHook the hook for write in mock engine.
