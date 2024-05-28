@@ -36,6 +36,9 @@ type PlanContext = context.PlanContext
 // BuildPBContext is the context for building `*tipb.Executor`.
 type BuildPBContext = context.BuildPBContext
 
+// Note: appending the new adding method to the last, for the convenience of easy
+// locating in other implementor from other package.
+
 // Plan is the description of an execution flow.
 // It is created from ast.Node first, then optimized by the optimizer,
 // finally used by the executor to create a Cursor which executes the statement.
@@ -217,9 +220,6 @@ type LogicalPlan interface {
 	// interface definition should depend on concrete implementation type.
 	PushDownTopN(topN LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) LogicalPlan
 
-	// ConvertOuterToInnerJoin converts outer joins if the unmatching rows are filtered.
-	ConvertOuterToInnerJoin(predicates []expression.Expression) LogicalPlan
-
 	// DeriveTopN derives an implicit TopN from a filter on row_number window function...
 	DeriveTopN(opt *optimizetrace.LogicalOptimizeOp) LogicalPlan
 
@@ -263,7 +263,7 @@ type LogicalPlan interface {
 	// MaxOneRow means whether this operator only returns max one row.
 	MaxOneRow() bool
 
-	// Get all the children.
+	// Children Get all the children.
 	Children() []LogicalPlan
 
 	// SetChildren sets the children for the plan.
@@ -280,4 +280,10 @@ type LogicalPlan interface {
 
 	// ExtractFD derive the FDSet from the tree bottom up.
 	ExtractFD() *fd.FDSet
+
+	// GetBaseLogicalPlan return the baseLogicalPlan inside each logical plan.
+	GetBaseLogicalPlan() LogicalPlan
+
+	// ConvertOuterToInnerJoin converts outer joins if the matching rows are filtered.
+	ConvertOuterToInnerJoin(predicates []expression.Expression) LogicalPlan
 }

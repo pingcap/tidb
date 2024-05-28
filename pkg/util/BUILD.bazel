@@ -16,6 +16,7 @@ go_library(
         "rlimit_other.go",
         "rlimit_windows.go",
         "security.go",
+        "tokenlimiter.go",
         "urls.go",
         "util.go",
         "wait_group_wrapper.go",

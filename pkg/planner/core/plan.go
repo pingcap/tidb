@@ -22,14 +22,11 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/baseimpl"
-	fd "github.com/pingcap/tidb/pkg/planner/funcdep"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
-	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/pingcap/tidb/pkg/util/tracing"
@@ -213,45 +210,6 @@ func optimizeByShuffle4MergeJoin(pp *PhysicalMergeJoin, ctx base.PlanContext) *P
 	return shuffle
 }
 
-type baseLogicalPlan struct {
-	baseimpl.Plan
-
-	taskMap map[string]base.Task
-	// taskMapBak forms a backlog stack of taskMap, used to roll back the taskMap.
-	taskMapBak []string
-	// taskMapBakTS stores the timestamps of logs.
-	taskMapBakTS []uint64
-	self         base.LogicalPlan
-	maxOneRow    bool
-	children     []base.LogicalPlan
-	// fdSet is a set of functional dependencies(FDs) which powers many optimizations,
-	// including eliminating unnecessary DISTINCT operators, simplifying ORDER BY columns,
-	// removing Max1Row operators, and mapping semi-joins to inner-joins.
-	// for now, it's hard to maintain in individual operator, build it from bottom up when using.
-	fdSet *fd.FDSet
-}
-
-// ExtractFD return the children[0]'s fdSet if there are no adding/removing fd in this logic plan.
-func (p *baseLogicalPlan) ExtractFD() *fd.FDSet {
-	if p.fdSet != nil {
-		return p.fdSet
-	}
-	fds := &fd.FDSet{HashCodeToUniqueID: make(map[string]int)}
-	for _, ch := range p.children {
-		fds.AddFrom(ch.ExtractFD())
-	}
-	return fds
-}
-
-func (p *baseLogicalPlan) MaxOneRow() bool {
-	return p.maxOneRow
-}
-
-// ExplainInfo implements Plan interface.
-func (*baseLogicalPlan) ExplainInfo() string {
-	return ""
-}
-
 func getEstimatedProbeCntFromProbeParents(probeParents []base.PhysicalPlan) float64 {
 	res := float64(1)
 	for _, pp := range probeParents {
@@ -394,57 +352,6 @@ func (p *basePhysicalPlan) SetProbeParents(probeParents []base.PhysicalPlan) {
 	p.probeParents = probeParents
 }
 
-// GetLogicalTS4TaskMap get the logical TimeStamp now to help rollback the TaskMap changes after that.
-func (p *baseLogicalPlan) GetLogicalTS4TaskMap() uint64 {
-	p.SCtx().GetSessionVars().StmtCtx.TaskMapBakTS++
-	return p.SCtx().GetSessionVars().StmtCtx.TaskMapBakTS
-}
-
-// RollBackTaskMap implements LogicalPlan interface.
-func (p *baseLogicalPlan) RollBackTaskMap(ts uint64) {
-	if !p.SCtx().GetSessionVars().StmtCtx.StmtHints.TaskMapNeedBackUp() {
-		return
-	}
-	if len(p.taskMapBak) > 0 {
-		// Rollback all the logs with TimeStamp TS.
-		n := len(p.taskMapBak)
-		for i := 0; i < n; i++ {
-			cur := p.taskMapBak[i]
-			if p.taskMapBakTS[i] < ts {
-				continue
-			}
-
-			// Remove the i_th log.
-			p.taskMapBak = append(p.taskMapBak[:i], p.taskMapBak[i+1:]...)
-			p.taskMapBakTS = append(p.taskMapBakTS[:i], p.taskMapBakTS[i+1:]...)
-			i--
-			n--
-
-			// Roll back taskMap.
-			p.taskMap[cur] = nil
-		}
-	}
-	for _, child := range p.children {
-		child.RollBackTaskMap(ts)
-	}
-}
-
-func (p *baseLogicalPlan) getTask(prop *property.PhysicalProperty) base.Task {
-	key := prop.HashCode()
-	return p.taskMap[string(key)]
-}
-
-func (p *baseLogicalPlan) storeTask(prop *property.PhysicalProperty, task base.Task) {
-	key := prop.HashCode()
-	if p.SCtx().GetSessionVars().StmtCtx.StmtHints.TaskMapNeedBackUp() {
-		// Empty string for useless change.
-		ts := p.GetLogicalTS4TaskMap()
-		p.taskMapBakTS = append(p.taskMapBakTS, ts)
-		p.taskMapBak = append(p.taskMapBak, string(key))
-	}
-	p.taskMap[string(key)] = task
-}
-
 // HasMaxOneRow returns if the LogicalPlan will output at most one row.
 func HasMaxOneRow(p base.LogicalPlan, childMaxOneRow []bool) bool {
 	if len(childMaxOneRow) == 0 {
@@ -471,18 +378,9 @@ func HasMaxOneRow(p base.LogicalPlan, childMaxOneRow []bool) bool {
 }
 
 // BuildKeyInfo implements LogicalPlan BuildKeyInfo interface.
-func (p *baseLogicalPlan) BuildKeyInfo(_ *expression.Schema, _ []*expression.Schema) {
-	childMaxOneRow := make([]bool, len(p.children))
-	for i := range p.children {
-		childMaxOneRow[i] = p.children[i].MaxOneRow()
-	}
-	p.maxOneRow = utilfuncp.HasMaxOneRowUtil(p.self, childMaxOneRow)
-}
-
-// BuildKeyInfo implements LogicalPlan BuildKeyInfo interface.
 func (p *logicalSchemaProducer) BuildKeyInfo(selfSchema *expression.Schema, childSchema []*expression.Schema) {
 	selfSchema.Keys = nil
-	p.baseLogicalPlan.BuildKeyInfo(selfSchema, childSchema)
+	p.BaseLogicalPlan.BuildKeyInfo(selfSchema, childSchema)
 
 	// default implementation for plans has only one child: proprgate child keys
 	// multi-children plans are likely to have particular implementation.
@@ -501,16 +399,6 @@ func (p *logicalSchemaProducer) BuildKeyInfo(selfSchema *expression.Schema, chil
 	}
 }
 
-func newBaseLogicalPlan(ctx base.PlanContext, tp string, self base.LogicalPlan, qbOffset int) baseLogicalPlan {
-	return baseLogicalPlan{
-		taskMap:      make(map[string]base.Task),
-		taskMapBak:   make([]string, 0, 10),
-		taskMapBakTS: make([]uint64, 0, 10),
-		Plan:         baseimpl.NewBasePlan(ctx, tp, qbOffset),
-		self:         self,
-	}
-}
-
 func newBasePhysicalPlan(ctx base.PlanContext, tp string, self base.PhysicalPlan, offset int) basePhysicalPlan {
 	return basePhysicalPlan{
 		Plan: baseimpl.NewBasePlan(ctx, tp, offset),
@@ -518,44 +406,9 @@ func newBasePhysicalPlan(ctx base.PlanContext, tp string, self base.PhysicalPlan
 	}
 }
 
-func (*baseLogicalPlan) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
-	return nil
-}
-
-// PruneColumns implements LogicalPlan interface.
-func (p *baseLogicalPlan) PruneColumns(parentUsedCols []*expression.Column, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, error) {
-	if len(p.children) == 0 {
-		return p.self, nil
-	}
-	var err error
-	p.children[0], err = p.children[0].PruneColumns(parentUsedCols, opt)
-	if err != nil {
-		return nil, err
-	}
-	return p.self, nil
-}
-
-// Schema implements Plan Schema interface.
-func (p *baseLogicalPlan) Schema() *expression.Schema {
-	return p.children[0].Schema()
-}
-
-func (p *baseLogicalPlan) OutputNames() types.NameSlice {
-	return p.children[0].OutputNames()
-}
-
-func (p *baseLogicalPlan) SetOutputNames(names types.NameSlice) {
-	p.children[0].SetOutputNames(names)
-}
-
 // Schema implements Plan Schema interface.
 func (p *basePhysicalPlan) Schema() *expression.Schema {
 	return p.children[0].Schema()
-}
-
-// Children implements LogicalPlan Children interface.
-func (p *baseLogicalPlan) Children() []base.LogicalPlan {
-	return p.children
 }
 
 // Children implements op.PhysicalPlan Children interface.
@@ -563,19 +416,9 @@ func (p *basePhysicalPlan) Children() []base.PhysicalPlan {
 	return p.children
 }
 
-// SetChildren implements LogicalPlan SetChildren interface.
-func (p *baseLogicalPlan) SetChildren(children ...base.LogicalPlan) {
-	p.children = children
-}
-
 // SetChildren implements op.PhysicalPlan SetChildren interface.
 func (p *basePhysicalPlan) SetChildren(children ...base.PhysicalPlan) {
 	p.children = children
-}
-
-// SetChild implements LogicalPlan SetChild interface.
-func (p *baseLogicalPlan) SetChild(i int, child base.LogicalPlan) {
-	p.children[i] = child
 }
 
 // SetChild implements op.PhysicalPlan SetChild interface.
@@ -593,15 +436,6 @@ func (p *basePhysicalPlan) BuildPlanTrace() *tracing.PlanTrace {
 	}
 
 	planTrace := &tracing.PlanTrace{ID: p.ID(), TP: tp, ExplainInfo: info}
-	for _, child := range p.Children() {
-		planTrace.Children = append(planTrace.Children, child.BuildPlanTrace())
-	}
-	return planTrace
-}
-
-// BuildPlanTrace implements Plan
-func (p *baseLogicalPlan) BuildPlanTrace() *tracing.PlanTrace {
-	planTrace := &tracing.PlanTrace{ID: p.ID(), TP: p.TP(), ExplainInfo: p.self.ExplainInfo()}
 	for _, child := range p.Children() {
 		planTrace.Children = append(planTrace.Children, child.BuildPlanTrace())
 	}

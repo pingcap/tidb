@@ -20,10 +20,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	contextutil "github.com/pingcap/tidb/pkg/util/context"
+	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 )
 
@@ -143,4 +146,49 @@ func TestReorgExprContext(t *testing.T) {
 	require.Equal(t, evalCtx1.GetMaxAllowedPacket(), evalCtx.GetMaxAllowedPacket())
 	require.Equal(t, evalCtx1.GetDefaultWeekFormatMode(), evalCtx.GetDefaultWeekFormatMode())
 	require.Equal(t, evalCtx1.GetDivPrecisionIncrement(), evalCtx.GetDivPrecisionIncrement())
+}
+
+type mockStorage struct {
+	kv.Storage
+	client kv.Client
+}
+
+func (s *mockStorage) GetClient() kv.Client {
+	return s.client
+}
+
+// TestReorgExprContext is used in refactor stage to make sure the newDefaultReorgDistSQLCtx() is
+// compatible with newReorgSessCtx(nil).GetDistSQLCtx() to make it safe to replace `mock.Context` usage.
+// After refactor, the TestReorgExprContext can be removed.
+func TestReorgDistSQLCtx(t *testing.T) {
+	store := &mockStorage{client: &mock.Client{}}
+	ctx1 := newReorgSessCtx(store).GetDistSQLCtx()
+	ctx2 := newDefaultReorgDistSQLCtx(store.client)
+
+	// set the same warnHandler to make two contexts equal
+	ctx1.WarnHandler = ctx2.WarnHandler
+
+	// set the same KVVars to make two contexts equal
+	require.Equal(t, uint32(0), *ctx1.KVVars.Killed)
+	require.Equal(t, uint32(0), *ctx2.KVVars.Killed)
+	ctx1.KVVars.Killed = ctx2.KVVars.Killed
+
+	// set the same SessionMemTracker to make two contexts equal
+	require.Equal(t, ctx1.SessionMemTracker.Label(), ctx2.SessionMemTracker.Label())
+	require.Equal(t, ctx1.SessionMemTracker.GetBytesLimit(), ctx2.SessionMemTracker.GetBytesLimit())
+	ctx1.SessionMemTracker = ctx2.SessionMemTracker
+
+	// set the same ErrCtx to make two contexts equal
+	require.Equal(t, ctx1.ErrCtx.LevelMap(), ctx2.ErrCtx.LevelMap())
+	require.Equal(t, 0, ctx2.WarnHandler.(contextutil.WarnHandler).WarningCount())
+	ctx2.ErrCtx.AppendWarning(errors.New("warn"))
+	require.Equal(t, 1, ctx2.WarnHandler.(contextutil.WarnHandler).WarningCount())
+	ctx1.ErrCtx = ctx2.ErrCtx
+
+	// set the same ExecDetails to make two contexts equal
+	require.NotNil(t, ctx1.ExecDetails)
+	require.NotNil(t, ctx2.ExecDetails)
+	ctx1.ExecDetails = ctx2.ExecDetails
+
+	require.Equal(t, ctx1, ctx2)
 }

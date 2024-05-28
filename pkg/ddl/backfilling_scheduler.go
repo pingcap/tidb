@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	sess "github.com/pingcap/tidb/pkg/ddl/internal/session"
 	ddllogutil "github.com/pingcap/tidb/pkg/ddl/logutil"
+	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
 	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
@@ -34,15 +35,22 @@ import (
 	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
 	poolutil "github.com/pingcap/tidb/pkg/resourcemanager/util"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
+	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	decoder "github.com/pingcap/tidb/pkg/util/rowDecoder"
+	"github.com/pingcap/tidb/pkg/util/sqlkiller"
+	"github.com/pingcap/tidb/pkg/util/tiflash"
+	tikvstore "github.com/tikv/client-go/v2/kv"
 	"go.uber.org/zap"
 )
 
@@ -146,6 +154,31 @@ func newSessCtx(
 		return nil, errors.Trace(err)
 	}
 	return sessCtx, nil
+}
+
+func newDefaultReorgDistSQLCtx(kvClient kv.Client) *distsqlctx.DistSQLContext {
+	warnHandler := contextutil.NewStaticWarnHandler(0)
+	var sqlKiller sqlkiller.SQLKiller
+	var execDetails execdetails.SyncExecDetails
+	return &distsqlctx.DistSQLContext{
+		WarnHandler:                          warnHandler,
+		Client:                               kvClient,
+		EnableChunkRPC:                       true,
+		EnabledRateLimitAction:               variable.DefTiDBEnableRateLimitAction,
+		KVVars:                               tikvstore.NewVariables(&sqlKiller.Signal),
+		SessionMemTracker:                    memory.NewTracker(memory.LabelForSession, -1),
+		Location:                             time.UTC,
+		SQLKiller:                            &sqlKiller,
+		ErrCtx:                               errctx.NewContextWithLevels(stmtctx.DefaultStmtErrLevels, warnHandler),
+		TiFlashReplicaRead:                   tiflash.GetTiFlashReplicaReadByStr(variable.DefTiFlashReplicaRead),
+		TiFlashMaxThreads:                    variable.DefTiFlashMaxThreads,
+		TiFlashMaxBytesBeforeExternalJoin:    variable.DefTiFlashMaxBytesBeforeExternalJoin,
+		TiFlashMaxBytesBeforeExternalGroupBy: variable.DefTiFlashMaxBytesBeforeExternalGroupBy,
+		TiFlashMaxBytesBeforeExternalSort:    variable.DefTiFlashMaxBytesBeforeExternalSort,
+		TiFlashMaxQueryMemoryPerNode:         variable.DefTiFlashMemQuotaQueryPerNode,
+		TiFlashQuerySpillRatio:               variable.DefTiFlashQuerySpillRatio,
+		ExecDetails:                          &execDetails,
+	}
 }
 
 // initSessCtx initializes the session context. Be careful to the timezone.

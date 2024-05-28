@@ -643,7 +643,7 @@ func (b *PlanBuilder) buildDo(ctx context.Context, v *ast.DoStmt) (base.Plan, er
 		})
 	}
 	proj.SetChildren(p)
-	proj.self = proj
+	proj.SetSelf(proj)
 	proj.SetSchema(schema)
 	proj.CalculateNoDelay = true
 	return proj, nil
@@ -1949,6 +1949,7 @@ func (b *PlanBuilder) getMustAnalyzedColumns(tbl *ast.TableName, cols *calcOnceM
 }
 
 func (b *PlanBuilder) getPredicateColumns(tbl *ast.TableName, cols *calcOnceMap) (map[int64]struct{}, error) {
+	// Already calculated in the previous call.
 	if cols.calculated {
 		return cols.data, nil
 	}
