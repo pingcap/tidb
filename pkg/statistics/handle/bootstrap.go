@@ -49,13 +49,8 @@ type MaxTidRecord struct {
 	tid atomic.Int64
 }
 
-<<<<<<< HEAD
 func (h *Handle) initStatsMeta4Chunk(is infoschema.InfoSchema, cache util.StatsCache, iter *chunk.Iterator4Chunk) {
-	var physicalID int64
-=======
-func (h *Handle) initStatsMeta4Chunk(is infoschema.InfoSchema, cache statstypes.StatsCache, iter *chunk.Iterator4Chunk) {
 	var physicalID, maxPhysicalID int64
->>>>>>> bdb0545f733 (statistics: make sure that get max table id when to init stats (#53606))
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		physicalID = row.GetInt64(1)
 		// The table is read-only. Please do not modify it.
