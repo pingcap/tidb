@@ -25,9 +25,15 @@
     - [Compatibility Tests](#compatibility-tests)
     - [Performance Tests](#performance-tests)
   - [Impacts \& Risks](#impacts--risks)
+    - [If new predicate columns appear, they cannot be analyzed in time](#if-new-predicate-columns-appear-they-cannot-be-analyzed-in-time)
+    - [Use PREDICATE COLUMNS when your workload's query pattern is  relatively stable](#use-predicate-columns-when-your-workloads-query-pattern-is--relatively-stable)
   - [Investigation \& Alternatives](#investigation--alternatives)
     - [CRDB](#crdb)
+      - [Summary](#summary)
+      - [Implementation](#implementation)
     - [Redshift](#redshift)
+      - [Summary](#summary-1)
+      - [Implementation](#implementation-1)
   - [Unresolved Questions](#unresolved-questions)
 
 ## Introduction
@@ -228,10 +234,55 @@ We continue to collect predicate columns even when the feature is disabled. This
 
 ## Impacts & Risks
 
+### If new predicate columns appear, they cannot be analyzed in time
+
+If a table has some new queries that use some new predicate columns, but we have just finished an auto-analysis for this table. Then for a long time, the optimizer cannot get the statistics for the newly used columns until we have enough modification to trigger the auto-analysis again.
+**This problem is more obvious during cluster creation or POC.** But by default, we always collect statistics for all indexes, so we consider this problem to be acceptable.
+
+### Use PREDICATE COLUMNS when your workload's query pattern is  relatively stable
+
+When the query pattern is variable, with different columns frequently being used as predicates, using PREDICATE COLUMNS might temporarily result in stale statistics. Stale statistics can lead to suboptimal query runtime plans and long runtimes.
+
 ## Investigation & Alternatives
 
 ### CRDB
 
+#### Summary
+
+By default, CockroachDB automatically generates table statistics when tables are created, and as they are updated. It does this using a background job that automatically determines which columns to get statistics on — specifically, it chooses:
+
+- Columns that are part of the primary key or an index (in other words, all indexed columns).
+- Up to 100 non-indexed columns.
+
+#### Implementation
+
+If the column list is not specified in the analyze SQL, the default column list will be used to generate statistics.
+To determine a useful set of default column statistics, they rely on information provided by the schema.
+
+1. The presence of an index on a particular set of columns indicates that the workload likely contains queries that involve those columns (e.g., for filters), and it would be useful to have statistics on prefixes of those columns. For example, if a table abc contains indexes on (a ASC, b ASC) and (b ASC, c ASC), we will collect statistics on a, {a, b}, b, and {b, c}. (But if multiColEnabled is  false, they will only collect stats on a and b).
+2. Columns in partial index predicate expressions are also likely to appear in query filters, so stats are collected for those columns as well.
+3. They only collect histograms for index columns, plus any other boolean or enum columns (where the "histogram" is tiny).
+
+See more: <https://github.com/cockroachdb/cockroach/blob/51bbfff84c26be8a2b40e25b4bce3d59ea63dc59/pkg/sql/create_stats.go#L360>
+
 ### Redshift
+
+#### Summary
+
+Amazon Redshift ANALYZE command can optionally collect information only about columns used in previous queries as part of a filter, join condition or a GROUP BY clause, and columns that are part of the distribution or sort keys (predicate columns). There’s a recently introduced option for the ANALYZE command that only analyzes predicate columns:
+
+```sql
+ANALYZE <table name> PREDICATE COLUMNS;
+```
+
+#### Implementation
+
+When you run ANALYZE with the PREDICATE COLUMNS clause, the analyze operation includes only columns that meet the following criteria:
+
+- The column is marked as a predicate column.
+- The column is a distribution key.
+- The column is part of a sort key.
+
+If none of a table's columns are marked as predicates, ANALYZE includes all of the columns, even when PREDICATE COLUMNS is specified. If no columns are marked as predicate columns, it might be because the table has not yet been queried.
 
 ## Unresolved Questions
