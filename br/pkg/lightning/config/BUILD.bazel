@@ -43,11 +43,7 @@ go_test(
     ],
     embed = [":config"],
     flaky = True,
-<<<<<<< HEAD:br/pkg/lightning/config/BUILD.bazel
-    shard_count = 47,
-=======
     shard_count = 49,
->>>>>>> 9164182d0b2 (config: must set line terminator when use strict-format (#53444)):pkg/lightning/config/BUILD.bazel
     deps = [
         "//br/pkg/lightning/common",
         "@com_github_burntsushi_toml//:toml",
