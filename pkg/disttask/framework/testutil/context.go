@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
@@ -107,9 +108,9 @@ func (c *TestDXFContext) init(nodeNum, cpuCount int, reduceCheckInterval bool) {
 	}
 	// all nodes are isometric
 	term := fmt.Sprintf("return(%d)", cpuCount)
-	testkit.EnableFailPoint(c.T, "github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", term)
-	testkit.EnableFailPoint(c.T, "github.com/pingcap/tidb/pkg/domain/MockDisableDistTask", "return(true)")
-	testkit.EnableFailPoint(c.T, "github.com/pingcap/tidb/pkg/disttask/framework/scheduler/mockTaskExecutorNodes", "return()")
+	testfailpoint.Enable(c.T, "github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", term)
+	testfailpoint.Enable(c.T, "github.com/pingcap/tidb/pkg/domain/MockDisableDistTask", "return(true)")
+	testfailpoint.Enable(c.T, "github.com/pingcap/tidb/pkg/disttask/framework/scheduler/mockTaskExecutorNodes", "return()")
 	store := testkit.CreateMockStore(c.T)
 	pool := pools.NewResourcePool(func() (pools.Resource, error) {
 		return testkit.NewSession(c.T, store), nil
@@ -395,7 +396,7 @@ func InitTestContext(t *testing.T, nodeNum int) (context.Context, *gomock.Contro
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 	ctx := util.WithInternalSourceType(context.Background(), "scheduler")
-	testkit.EnableFailPoint(t, "github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(8)")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(8)")
 
 	executionContext := testkit.NewDistExecutionContext(t, nodeNum)
 	testCtx := &TestContext{

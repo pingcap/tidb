@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
@@ -300,7 +301,7 @@ func TestSwitchTaskStepInBatch(t *testing.T) {
 	checkAfterSwitchStep(t, startTime, task1, subtasks1, proto.StepOne)
 
 	// mock another scheduler inserted some subtasks
-	testkit.EnableFailPoint(t, "github.com/pingcap/tidb/pkg/disttask/framework/storage/waitBeforeInsertSubtasks", `1*return(true)`)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/disttask/framework/storage/waitBeforeInsertSubtasks", `1*return(true)`)
 	task2, subtasks2 := prepare("key2")
 	go func() {
 		storage.TestChannel <- struct{}{}
@@ -696,14 +697,14 @@ func TestDistFrameworkMeta(t *testing.T) {
 	// when no node
 	_, err := sm.GetCPUCountOfNode(ctx)
 	require.ErrorContains(t, err, "no managed nodes")
-	testkit.EnableFailPoint(t, "github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(0)")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(0)")
 	require.NoError(t, sm.InitMeta(ctx, ":4000", "background"))
 	_, err = sm.GetCPUCountOfNode(ctx)
 	require.ErrorContains(t, err, "no managed node have enough resource")
 
-	testkit.EnableFailPoint(t, "github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(100)")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(100)")
 	require.NoError(t, sm.InitMeta(ctx, ":4000", "background"))
-	testkit.EnableFailPoint(t, "github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(8)")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(8)")
 	require.NoError(t, sm.InitMeta(ctx, ":4001", ""))
 	require.NoError(t, sm.InitMeta(ctx, ":4002", "background"))
 	nodes, err := sm.GetAllNodes(ctx)
@@ -714,7 +715,7 @@ func TestDistFrameworkMeta(t *testing.T) {
 		{ID: ":4002", Role: "background", CPUCount: 8},
 	}, nodes)
 
-	testkit.EnableFailPoint(t, "github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(100)")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(100)")
 	require.NoError(t, sm.InitMeta(ctx, ":4002", ""))
 	require.NoError(t, sm.InitMeta(ctx, ":4003", "background"))
 
@@ -824,7 +825,7 @@ func TestSubtaskHistoryTable(t *testing.T) {
 	require.Len(t, subTasks, 3)
 
 	// test GC history table.
-	testkit.EnableFailPoint(t, "github.com/pingcap/tidb/pkg/disttask/framework/storage/subtaskHistoryKeepSeconds", "return(1)")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/disttask/framework/storage/subtaskHistoryKeepSeconds", "return(1)")
 	time.Sleep(2 * time.Second)
 
 	testutil.CreateSubTask(t, sm, taskID2, proto.StepInit, tidb1, []byte(meta), proto.TaskTypeExample, 11)

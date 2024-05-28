@@ -944,16 +944,8 @@ func (sender *copIteratorTaskSender) run(connID uint64) {
 	}
 }
 
-// GlobalSyncChForTest is a global channel for test.
-var GlobalSyncChForTest = make(chan struct{})
-
 func (it *copIterator) recvFromRespCh(ctx context.Context, respCh <-chan *copResponse) (resp *copResponse, ok bool, exit bool) {
-	failpoint.Inject("CtxCancelBeforeReceive", func(_ failpoint.Value) {
-		if ctx.Value("TestContextCancel") == "test" {
-			GlobalSyncChForTest <- struct{}{}
-			<-GlobalSyncChForTest
-		}
-	})
+	failpoint.InjectCall("CtxCancelBeforeReceive", ctx)
 	ticker := time.NewTicker(3 * time.Second)
 	defer ticker.Stop()
 	for {

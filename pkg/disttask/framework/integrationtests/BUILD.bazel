@@ -29,6 +29,7 @@ go_test(
         "//pkg/session",
         "//pkg/store/driver",
         "//pkg/testkit",
+        "//pkg/testkit/testfailpoint",
         "//pkg/testkit/testsetup",
         "//pkg/util",
         "@com_github_pingcap_failpoint//:failpoint",

@@ -125,6 +125,7 @@ go_test(
         "//pkg/session",
         "//pkg/store/driver/error",
         "//pkg/testkit",
+        "//pkg/testkit/testfailpoint",
         "//pkg/util/mock",
         "@com_github_docker_go_units//:go-units",
         "@com_github_fsouza_fake_gcs_server//fakestorage",

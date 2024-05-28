@@ -69,6 +69,7 @@ go_test(
         "//pkg/kv",
         "//pkg/sessionctx",
         "//pkg/testkit",
+        "//pkg/testkit/testfailpoint",
         "//pkg/testkit/testsetup",
         "//pkg/util/cpu",
         "//pkg/util/disttask",
