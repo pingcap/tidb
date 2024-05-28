@@ -240,6 +240,10 @@ func (rc *SnapClient) SetConcurrencyPerStore(c uint) {
 	rc.concurrencyPerStore = c
 }
 
+func (rc *SnapClient) GetConcurrencyPerStore() uint {
+	return rc.concurrencyPerStore
+}
+
 func (rc *SnapClient) SetBatchDdlSize(batchDdlsize uint) {
 	rc.batchDdlSize = batchDdlsize
 }
@@ -282,6 +286,10 @@ func (rc *SnapClient) SetPlacementPolicyMode(withPlacementPolicy string) {
 func (rc *SnapClient) SetMergeSplitKeyThreshold(mergeRegionSize, mergeRegionKeyCount uint64) {
 	rc.mergeRegionSize = mergeRegionSize
 	rc.mergeRegionKeyCount = mergeRegionKeyCount
+}
+
+func (rc *SnapClient) GetMergeSplitKeyThreshold() (uint64, uint64) {
+	return rc.mergeRegionSize, rc.mergeRegionKeyCount
 }
 
 // AllocTableIDs would pre-allocate the table's origin ID if exists, so that the TiKV doesn't need to rewrite the key in
