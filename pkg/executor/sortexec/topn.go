@@ -415,17 +415,18 @@ func (e *TopNExec) executeTopNWhenSpillTriggered(ctx context.Context) error {
 	// Wait for the finish of all workers
 	workersWaiter := util.WaitGroupWrapper{}
 
-	// Fetch chunks from child and put chunks into chunkChannel
-	fetcherWaiter.Run(func() {
-		e.fetchChunksFromChild(ctx)
-	})
-
 	for i := range e.spillHelper.workers {
 		worker := e.spillHelper.workers[i]
+		worker.initWorker()
 		workersWaiter.Run(func() {
 			worker.run()
 		})
 	}
+
+	// Fetch chunks from child and put chunks into chunkChannel
+	fetcherWaiter.Run(func() {
+		e.fetchChunksFromChild(ctx)
+	})
 
 	fetcherWaiter.Wait()
 	workersWaiter.Wait()
