@@ -47,6 +47,7 @@ const (
 	columnFlag         byte = 1
 	scalarFunctionFlag byte = 3
 	parameterFlag      byte = 4
+	ScalarSubQFlag     byte = 5
 )
 
 // EvalAstExpr evaluates ast expression directly.

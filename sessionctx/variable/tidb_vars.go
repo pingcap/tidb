@@ -56,6 +56,8 @@ const (
 	// It's unit is bytes, if the size of small table is larger than it, we will not use bcj.
 	TiDBBCJThresholdSize = "tidb_broadcast_join_threshold_size"
 
+	TiDBOptExplainNoEvaledSubQuery = "tidb_opt_enable_non_eval_scalar_subquery"
+
 	// tidb_broadcast_join_threshold_count is used to limit the count of small table for mpp broadcast join.
 	// If we can't estimate the size of one side of join child, we will check if its row number exceeds this limitation.
 	TiDBBCJThresholdCount = "tidb_broadcast_join_threshold_count"
@@ -676,6 +678,7 @@ const (
 	DefOptMPPOuterJoinFixedBuildSide      = false
 	DefOptWriteRowID                      = false
 	DefOptEnableCorrelationAdjustment     = true
+	DefTiDBOptExplainEvaledSubquery       = false
 	DefOptLimitPushDownThreshold          = 100
 	DefOptCorrelationThreshold            = 0.9
 	DefOptCorrelationExpFactor            = 1

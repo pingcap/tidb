@@ -328,6 +328,7 @@ func optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	// build logical plan
 	sctx.GetSessionVars().PlanID = 0
 	sctx.GetSessionVars().PlanColumnID = 0
+	sctx.GetSessionVars().MapScalarSubQ = nil
 	hintProcessor := &hint.BlockHintProcessor{Ctx: sctx}
 	node.Accept(hintProcessor)
 
