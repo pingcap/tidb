@@ -434,6 +434,7 @@ func (s *schemaVersionSyncer) OwnerCheckAllVersions(ctx context.Context, jobID i
 			case <-notifyCh:
 				return nil
 			case <-ctx.Done():
+				item.clearMatchFn()
 				return errors.Trace(ctx.Err())
 			case <-time.After(time.Second):
 				item.clearMatchFn()

@@ -20,6 +20,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/errctx"
+	exprctx "github.com/pingcap/tidb/pkg/expression/context"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -1007,47 +1008,6 @@ func TableInfo2SchemaAndNames(ctx BuildContext, dbName model.CIStr, tbl *model.T
 	return schema, names, nil
 }
 
-type ignoreTruncateExprCtx struct {
-	BuildContext
-	EvalContext
-	tc types.Context
-	ec errctx.Context
-}
-
-// ignoreTruncate returns a new BuildContext that ignores the truncate error.
-func ignoreTruncate(ctx BuildContext) BuildContext {
-	evalCtx := ctx.GetEvalCtx()
-	tc, ec := evalCtx.TypeCtx(), evalCtx.ErrCtx()
-	if tc.Flags().IgnoreTruncateErr() && ec.LevelForGroup(errctx.ErrGroupTruncate) == errctx.LevelIgnore {
-		return ctx
-	}
-
-	tc = tc.WithFlags(tc.Flags().WithIgnoreTruncateErr(true))
-	ec = ec.WithErrGroupLevel(errctx.ErrGroupTruncate, errctx.LevelIgnore)
-
-	return &ignoreTruncateExprCtx{
-		BuildContext: ctx,
-		EvalContext:  evalCtx,
-		tc:           tc,
-		ec:           ec,
-	}
-}
-
-// GetEvalCtx implements the BuildContext.EvalCtx().
-func (ctx *ignoreTruncateExprCtx) GetEvalCtx() EvalContext {
-	return ctx
-}
-
-// TypeCtx implements the EvalContext.TypeCtx().
-func (ctx *ignoreTruncateExprCtx) TypeCtx() types.Context {
-	return ctx.tc
-}
-
-// ErrCtx implements the EvalContext.ErrCtx().
-func (ctx *ignoreTruncateExprCtx) ErrCtx() errctx.Context {
-	return ctx.ec
-}
-
 // ColumnInfos2ColumnsAndNames converts the ColumnInfo to the *Column and NameSlice.
 func ColumnInfos2ColumnsAndNames(ctx BuildContext, dbName, tblName model.CIStr, colInfos []*model.ColumnInfo, tblInfo *model.TableInfo) ([]*Column, types.NameSlice, error) {
 	columns := make([]*Column, 0, len(colInfos))
@@ -1078,7 +1038,7 @@ func ColumnInfos2ColumnsAndNames(ctx BuildContext, dbName, tblName model.CIStr, 
 		if col.IsVirtualGenerated() {
 			if !truncateIgnored {
 				// Ignore redundant warning here.
-				ctx = ignoreTruncate(ctx)
+				ctx = exprctx.CtxWithHandleTruncateErrLevel(ctx, errctx.LevelIgnore)
 				truncateIgnored = true
 			}
 

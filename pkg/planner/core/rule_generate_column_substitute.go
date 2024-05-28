@@ -185,7 +185,7 @@ func (gc *gcSubstituter) substitute(ctx context.Context, lp base.LogicalPlan, ex
 		for i := range x.Exprs {
 			tp = x.Exprs[i].GetType().EvalType()
 			for candidateExpr, column := range exprToColumn {
-				tryToSubstituteExpr(&x.Exprs[i], lp, candidateExpr, tp, x.children[0].Schema(), column, opt)
+				tryToSubstituteExpr(&x.Exprs[i], lp, candidateExpr, tp, x.Children()[0].Schema(), column, opt)
 			}
 		}
 	case *LogicalSort:

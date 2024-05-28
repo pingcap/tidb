@@ -1820,8 +1820,7 @@ func updateColumnDefaultValue(d *ddlCtx, t *meta.Meta, job *model.Job, newCol *m
 		oldCol.AddFlag(mysql.NoDefaultValueFlag)
 	} else {
 		oldCol.DelFlag(mysql.NoDefaultValueFlag)
-		sctx := newReorgSessCtx(d.store)
-		err = checkDefaultValue(sctx, table.ToColumn(oldCol), true)
+		err = checkDefaultValue(newReorgExprCtx(), table.ToColumn(oldCol), true)
 		if err != nil {
 			job.State = model.JobStateCancelled
 			return ver, err

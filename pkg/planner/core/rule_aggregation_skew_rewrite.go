@@ -197,7 +197,7 @@ func (a *skewDistinctAggRewriter) rewriteSkewDistinctAgg(agg *LogicalAggregation
 		GroupByItems:  bottomAggGroupbyItems,
 		PreferAggType: agg.PreferAggType,
 	}.Init(agg.SCtx(), agg.QueryBlockOffset())
-	bottomAgg.SetChildren(agg.children...)
+	bottomAgg.SetChildren(agg.Children()...)
 	bottomAgg.SetSchema(bottomAggSchema)
 
 	topAgg := LogicalAggregation{
