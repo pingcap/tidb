@@ -99,6 +99,9 @@ type StatementContext struct {
 	// or is affected by the tidb_read_staleness session variable, then the statement will be makred as isStaleness
 	// in stmtCtx
 	IsStaleness bool
+
+	IsRefineComparedConstant bool
+
 	// mu struct holds variables that change during execution.
 	mu struct {
 		sync.Mutex
@@ -708,7 +711,7 @@ func (sc *StatementContext) GetExecDetails() execdetails.ExecDetails {
 // This is the case for `insert`, `update`, `alter table`, `create table` and `load data infile` statements, when not in strict SQL mode.
 // see https://dev.mysql.com/doc/refman/5.7/en/out-of-range-and-overflow.html
 func (sc *StatementContext) ShouldClipToZero() bool {
-	return sc.InInsertStmt || sc.InLoadDataStmt || sc.InUpdateStmt || sc.InCreateOrAlterStmt || sc.IsDDLJobInQueue
+	return sc.InInsertStmt || sc.InLoadDataStmt || sc.InUpdateStmt || sc.InCreateOrAlterStmt || sc.IsDDLJobInQueue || sc.IsRefineComparedConstant
 }
 
 // ShouldIgnoreOverflowError indicates whether we should ignore the error when type conversion overflows,
