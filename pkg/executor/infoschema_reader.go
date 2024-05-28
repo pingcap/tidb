@@ -210,6 +210,8 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			e.setDataFromIndexUsage(sctx, dbs)
 		case infoschema.ClusterTableTiDBIndexUsage:
 			err = e.setDataForClusterIndexUsage(sctx, dbs)
+		case infoschema.TableKeyspaceMeta:
+			err = e.setDataForKeyspaceMeta(sctx)
 		}
 		if err != nil {
 			return nil, err
@@ -3629,6 +3631,42 @@ func (e *memtableRetriever) setDataForClusterIndexUsage(ctx sessionctx.Context, 
 	}
 	e.rows = rows
 	return nil
+}
+
+func (e *memtableRetriever) setDataForKeyspaceMeta(sctx sessionctx.Context) (err error) {
+	meta := sctx.GetStore().GetCodec().GetKeyspaceMeta()
+	var (
+		keyspaceName string
+		keyspaceID   string
+		keyspaceCfg  []byte
+	)
+
+	if meta != nil {
+		keyspaceName = meta.Name
+		keyspaceID = fmt.Sprintf("%d", meta.Id)
+		if len(meta.Config) > 0 {
+			keyspaceCfg, err = json.Marshal(meta.Config)
+			if err != nil {
+				return err
+			}
+		}
+	}
+
+	row := make([]types.Datum, 3)
+	// Keyspace name
+	row[0] = types.NewStringDatum(keyspaceName)
+	// Keyspace ID
+	row[1] = types.NewStringDatum(keyspaceID)
+	var bj types.BinaryJSON
+	if len(keyspaceCfg) > 0 {
+		err = bj.UnmarshalJSON(keyspaceCfg)
+		if err != nil {
+			return err
+		}
+	}
+	row[2] = types.NewJSONDatum(bj)
+	e.rows = [][]types.Datum{row}
+	return
 }
 
 func checkRule(rule *label.Rule) (dbName, tableName string, partitionName string, err error) {

@@ -336,6 +336,7 @@ var tableIDMap = map[string]int64{
 	TableKeywords:                        autoid.InformationSchemaDBID + 92,
 	TableTiDBIndexUsage:                  autoid.InformationSchemaDBID + 93,
 	ClusterTableTiDBIndexUsage:           autoid.InformationSchemaDBID + 94,
+	TableKeyspaceMeta:                    autoid.InformationSchemaDBID + 95,
 }
 
 // columnInfo represents the basic column information of all kinds of INFORMATION_SCHEMA tables
@@ -1702,6 +1703,12 @@ var tableTiDBIndexUsage = []columnInfo{
 	{name: "LAST_ACCESS_TIME", tp: mysql.TypeDatetime, size: 21},
 }
 
+var tableKeyspaceMetaCols = []columnInfo{
+	{name: "KEYSPACE_NAME", tp: mysql.TypeVarchar, size: 128},
+	{name: "KEYSPACE_ID", tp: mysql.TypeVarchar, size: 64},
+	{name: "CONFIG", tp: mysql.TypeJSON, size: types.UnspecifiedLength},
+}
+
 // GetShardingInfo returns a nil or description string for the sharding information of given TableInfo.
 // The returned description string may be:
 //   - "NOT_SHARDED": for tables that SHARD_ROW_ID_BITS is not specified.
@@ -2348,6 +2355,7 @@ var tableNameToColumns = map[string][]columnInfo{
 	TableTiDBCheckConstraints:               tableTiDBCheckConstraintsCols,
 	TableKeywords:                           tableKeywords,
 	TableTiDBIndexUsage:                     tableTiDBIndexUsage,
+	TableKeyspaceMeta:                       tableKeyspaceMetaCols,
 }
 
 func createInfoSchemaTable(_ autoid.Allocators, meta *model.TableInfo) (table.Table, error) {
