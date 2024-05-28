@@ -181,11 +181,11 @@ CREATE TABLE IF NOT EXISTS mysql.analyze_options (
 
 We can focus on the `column_choice` column, which has three different column options in the analyze statement. The corresponding relations are as follows:
 
-| Analyze Statement                                | column_choice | column_ids    | mysql.column_stats_usage                                                 | Explain                                                                  |
-|--------------------------------------------------|---------------|---------------|--------------------------------------------------------------------------|--------------------------------------------------------------------------|
-| ANALYZE TABLE t;                                 | DEFAULT(ALL)  | None          | None                                                                     | It will analyze all analyzable columns from the table.                   |
-| ANALYZE TABLE t LIST COLUMNS col1, col2;         | LIST          | col1_id, col2 | None                                                                     | It will only analyze col1 and col2.                                      |
-| ANALYZE TABLE t PREDICATE FOR PREDICATE COLUMNS; | PREDICATE     | None          | All predicate columns were collected before in mysql.column_stats_usage. | It will only analyze columns that exist in the mysql.column_stats_usage. |
+| Analyze Statement                                | column_choice | column_ids | mysql.column_stats_usage                                                 | Explain                                                                  |
+|--------------------------------------------------|---------------|------------|--------------------------------------------------------------------------|--------------------------------------------------------------------------|
+| ANALYZE TABLE t;                                 | DEFAULT(ALL)  | None       | None                                                                     | It will analyze all analyzable columns from the table.                   |
+| ANALYZE TABLE t LIST COLUMNS col1, col2;         | LIST          | col1, col2 | None                                                                     | It will only analyze col1 and col2.                                      |
+| ANALYZE TABLE t PREDICATE FOR PREDICATE COLUMNS; | PREDICATE     | None       | All predicate columns were collected before in mysql.column_stats_usage. | It will only analyze columns that exist in the mysql.column_stats_usage. |
 
 As you can see, we pick PREDICATE as the column_choice for the ANALYZE TABLE t PREDICATE COLUMNS statement. At the same time, we now consider DEFAULT to be ALL, but to support predicate columns during auto-analyze, we need to change the definition of DEFAULT.
 
