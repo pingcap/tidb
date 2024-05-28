@@ -386,7 +386,8 @@ func NewMultiSchemaInfo() *MultiSchemaInfo {
 	}
 }
 
-// SubJob is a representation of one DDL schema change. A Job may contain zero(when multi-schema change is not applicable) or more SubJobs.
+// SubJob is a representation of one DDL schema change. A Job may contain zero
+// (when multi-schema change is not applicable) or more SubJobs.
 type SubJob struct {
 	Type        ActionType      `json:"type"`
 	Args        []interface{}   `json:"-"`

@@ -540,6 +540,38 @@ func moveAndUpdateHiddenColumnsToPublic(tblInfo *model.TableInfo, idxInfo *model
 	}
 }
 
+func decodeAddIndexArgs(job *model.Job) (
+	uniques []bool,
+	indexNames []model.CIStr,
+	indexPartSpecifications [][]*ast.IndexPartSpecification,
+	indexOptions []*ast.IndexOption,
+	hiddenCols [][]*model.ColumnInfo,
+	globals []bool,
+	err error,
+) {
+	var (
+		unique                 bool
+		indexName              model.CIStr
+		indexPartSpecification []*ast.IndexPartSpecification
+		indexOption            *ast.IndexOption
+		hiddenCol              []*model.ColumnInfo
+		global                 bool
+	)
+	err = job.DecodeArgs(&unique, &indexName, &indexPartSpecification, &indexOption, &hiddenCol, &global)
+	if err == nil {
+		return []bool{unique},
+			[]model.CIStr{indexName},
+			[][]*ast.IndexPartSpecification{indexPartSpecification},
+			[]*ast.IndexOption{indexOption},
+			[][]*model.ColumnInfo{hiddenCol},
+			[]bool{global},
+			nil
+	}
+
+	err = job.DecodeArgs(&uniques, &indexNames, &indexPartSpecifications, &indexOptions, &hiddenCols, &globals)
+	return
+}
+
 func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK bool) (ver int64, err error) {
 	// Handle the rolling back job.
 	if job.IsRollingback() {
@@ -573,10 +605,7 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 		// Notice: sqlMode and warnings is used to support non-strict mode.
 		err = job.DecodeArgs(&unique[0], &indexNames[0], &indexPartSpecifications[0], &indexOption[0], &sqlMode, &warnings, &global[0])
 	} else {
-		err = job.DecodeArgs(&unique[0], &indexNames[0], &indexPartSpecifications[0], &indexOption[0], &hiddenCols[0], &global[0])
-		if err != nil {
-			err = job.DecodeArgs(&unique, &indexNames, &indexPartSpecifications, &indexOption, &hiddenCols, &global)
-		}
+		unique, indexNames, indexPartSpecifications, indexOption, hiddenCols, global, err = decodeAddIndexArgs(job)
 	}
 	if err != nil {
 		job.State = model.JobStateCancelled
