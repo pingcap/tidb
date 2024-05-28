@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"go.uber.org/zap"
 )
 
@@ -99,21 +98,7 @@ func (syncWaitStatsLoadPoint) name() string {
 }
 
 // RequestLoadStats send load column/index stats requests to stats handle
-<<<<<<< HEAD
 func RequestLoadStats(ctx sessionctx.Context, neededHistItems []model.TableItemID, syncWait int64) error {
-	stmtCtx := ctx.GetSessionVars().StmtCtx
-	hintMaxExecutionTime := int64(stmtCtx.MaxExecutionTime)
-	if hintMaxExecutionTime <= 0 {
-		hintMaxExecutionTime = maxDuration
-	}
-	sessMaxExecutionTime := int64(ctx.GetSessionVars().MaxExecutionTime)
-	if sessMaxExecutionTime <= 0 {
-		sessMaxExecutionTime = maxDuration
-	}
-	waitTime := mathutil.Min(syncWait, hintMaxExecutionTime, sessMaxExecutionTime)
-	var timeout = time.Duration(waitTime)
-=======
-func RequestLoadStats(ctx PlanContext, neededHistItems []model.TableItemID, syncWait int64) error {
 	maxExecutionTime := ctx.GetSessionVars().GetMaxExecutionTime()
 	if maxExecutionTime > 0 && maxExecutionTime < uint64(syncWait) {
 		syncWait = int64(maxExecutionTime)
@@ -127,7 +112,6 @@ func RequestLoadStats(ctx PlanContext, neededHistItems []model.TableItemID, sync
 	})
 	var timeout = time.Duration(syncWait * time.Millisecond.Nanoseconds())
 	stmtCtx := ctx.GetSessionVars().StmtCtx
->>>>>>> 13bff87d08c (variable: unifiy MaxExecuteTime usage and fix some problem (#50915))
 	err := domain.GetDomain(ctx).StatsHandle().SendLoadRequests(stmtCtx, neededHistItems, timeout)
 	if err != nil {
 		stmtCtx.IsSyncStatsFailed = true
