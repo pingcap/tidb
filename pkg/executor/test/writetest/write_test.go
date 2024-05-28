@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
@@ -1152,7 +1151,7 @@ func TestDelete(t *testing.T) {
 
 	tk.MustExec("create view v as select * from delete_test")
 	err = tk.ExecToErr("delete from v where name = 'aaa'")
-	require.EqualError(t, err, core.ErrViewInvalid.GenWithStackByArgs("test", "v").Error())
+	require.EqualError(t, err, "delete view v is not supported now")
 	tk.MustExec("drop view v")
 
 	tk.MustExec("create sequence seq")
