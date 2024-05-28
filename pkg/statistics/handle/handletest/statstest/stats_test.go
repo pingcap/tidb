@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/statistics/handle/internal"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
@@ -241,6 +242,49 @@ func TestInitStats(t *testing.T) {
 	originValue := config.GetGlobalConfig().Performance.LiteInitStats
 	defer func() {
 		config.GetGlobalConfig().Performance.LiteInitStats = originValue
+		config.GetGlobalConfig().Performance.ConcurrentlyInitStats = false
+	}()
+	config.GetGlobalConfig().Performance.LiteInitStats = false
+	config.GetGlobalConfig().Performance.ConcurrentlyInitStats = true
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	testKit := testkit.NewTestKit(t, store)
+	testKit.MustExec("use test")
+	testKit.MustExec("set @@session.tidb_analyze_version = 1")
+	testKit.MustExec("create table t(a int, b int, c int, primary key(a), key idx(b))")
+	testKit.MustExec("insert into t values (1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5),(6,7,8)")
+	testKit.MustExec("analyze table t")
+	h := dom.StatsHandle()
+	is := dom.InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	// `Update` will not use load by need strategy when `Lease` is 0, and `InitStats` is only called when
+	// `Lease` is not 0, so here we just change it.
+	h.SetLease(time.Millisecond)
+
+	h.Clear()
+	require.NoError(t, h.InitStats(is))
+	table0 := h.GetTableStats(tbl.Meta())
+	idx := table0.Indices
+	require.Equal(t, uint8(0x3), idx[1].LastAnalyzePos.GetBytes()[0])
+	h.Clear()
+	require.NoError(t, h.Update(is))
+	// Index and pk are loaded.
+	needed := fmt.Sprintf(`Table:%v RealtimeCount:6
+index:1 ndv:6
+num: 1 lower_bound: 1 upper_bound: 1 repeats: 1 ndv: 0
+num: 1 lower_bound: 2 upper_bound: 2 repeats: 1 ndv: 0
+num: 1 lower_bound: 3 upper_bound: 3 repeats: 1 ndv: 0
+num: 1 lower_bound: 4 upper_bound: 4 repeats: 1 ndv: 0
+num: 1 lower_bound: 5 upper_bound: 5 repeats: 1 ndv: 0
+num: 1 lower_bound: 7 upper_bound: 7 repeats: 1 ndv: 0`, tbl.Meta().ID)
+	require.Equal(t, needed, table0.String())
+	h.SetLease(0)
+}
+
+func TestInitStats2(t *testing.T) {
+	originValue := config.GetGlobalConfig().Performance.LiteInitStats
+	defer func() {
+		config.GetGlobalConfig().Performance.LiteInitStats = originValue
 	}()
 	config.GetGlobalConfig().Performance.LiteInitStats = false
 	store, dom := testkit.CreateMockStoreAndDomain(t)
@@ -297,29 +341,43 @@ func TestInitStats51358(t *testing.T) {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/statistics/handle/cache/StatsCacheGetNil"))
 	}()
 	require.NoError(t, h.InitStats(is))
+	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	stats := h.GetTableStats(tbl.Meta())
+	for _, column := range stats.Columns {
+		if mysql.HasPriKeyFlag(column.Info.GetFlag()) {
+			// primary key column has no stats info, because primary key's is_index is false. so it cannot load the topn
+			require.Nil(t, column.TopN)
+		}
+		require.False(t, column.IsFullLoad())
+	}
 }
 
 func TestInitStatsVer2(t *testing.T) {
-	restore := config.RestoreFunc()
-	defer restore()
-	config.UpdateGlobal(func(conf *config.Config) {
-		config.GetGlobalConfig().Performance.LiteInitStats = false
-		config.GetGlobalConfig().Performance.ConcurrentlyInitStats = false
-	})
-	initStatsVer2(t)
+	originValue := config.GetGlobalConfig().Performance.LiteInitStats
+	concurrentlyInitStatsValue := config.GetGlobalConfig().Performance.ConcurrentlyInitStats
+	defer func() {
+		config.GetGlobalConfig().Performance.LiteInitStats = originValue
+		config.GetGlobalConfig().Performance.ConcurrentlyInitStats = concurrentlyInitStatsValue
+	}()
+	config.GetGlobalConfig().Performance.LiteInitStats = false
+	config.GetGlobalConfig().Performance.ConcurrentlyInitStats = false
+	initStatsVer2(t, false)
 }
 
 func TestInitStatsVer2Concurrency(t *testing.T) {
-	restore := config.RestoreFunc()
-	defer restore()
-	config.UpdateGlobal(func(conf *config.Config) {
-		config.GetGlobalConfig().Performance.LiteInitStats = false
-		config.GetGlobalConfig().Performance.ConcurrentlyInitStats = true
-	})
-	initStatsVer2(t)
+	originValue := config.GetGlobalConfig().Performance.LiteInitStats
+	concurrentlyInitStatsValue := config.GetGlobalConfig().Performance.ConcurrentlyInitStats
+	defer func() {
+		config.GetGlobalConfig().Performance.LiteInitStats = originValue
+		config.GetGlobalConfig().Performance.ConcurrentlyInitStats = concurrentlyInitStatsValue
+	}()
+	config.GetGlobalConfig().Performance.LiteInitStats = false
+	config.GetGlobalConfig().Performance.ConcurrentlyInitStats = true
+	initStatsVer2(t, true)
 }
 
-func initStatsVer2(t *testing.T) {
+func initStatsVer2(t *testing.T, isConcurrency bool) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -338,10 +396,19 @@ func initStatsVer2(t *testing.T) {
 	h.Clear()
 	require.NoError(t, h.InitStats(is))
 	table0 := h.GetTableStats(tbl.Meta())
-	cols := table0.Columns
-	require.Equal(t, uint8(0x33), cols[1].LastAnalyzePos.GetBytes()[0])
-	require.Equal(t, uint8(0x33), cols[2].LastAnalyzePos.GetBytes()[0])
-	require.Equal(t, uint8(0x33), cols[3].LastAnalyzePos.GetBytes()[0])
+	if isConcurrency {
+		idx := table0.Indices
+		require.Equal(t, uint8(0x3), idx[1].LastAnalyzePos.GetBytes()[0])
+		require.Equal(t, uint8(0x3), idx[2].LastAnalyzePos.GetBytes()[0])
+	} else {
+		cols := table0.Columns
+		require.Equal(t, uint8(0x33), cols[1].LastAnalyzePos.GetBytes()[0])
+		require.Equal(t, uint8(0x33), cols[2].LastAnalyzePos.GetBytes()[0])
+		require.Equal(t, uint8(0x33), cols[3].LastAnalyzePos.GetBytes()[0])
+		idx := table0.Indices
+		require.Equal(t, uint8(0x3), idx[1].LastAnalyzePos.GetBytes()[0])
+		require.Equal(t, uint8(0x3), idx[2].LastAnalyzePos.GetBytes()[0])
+	}
 	h.Clear()
 	require.NoError(t, h.InitStats(is))
 	table1 := h.GetTableStats(tbl.Meta())

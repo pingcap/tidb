@@ -420,6 +420,13 @@ insert into t(c) values (1),(2),(3),(4),(5),(6),(7),(8),(9),(10);
 select count(distinct c1) from t;
 show create table t;
 
+# TestDefaultValueExpressionWithModifyColumn
+drop table if exists t;
+create table t (c int(10), c1 varchar(256) default rand());
+alter table t alter column c1 set default 'xx';
+insert into t values (1, default);
+select c1 from t;
+
 # TestDropAutoIncrementIndex
 drop table if exists t1;
 create table t1 (a int(11) not null auto_increment key, b int(11), c bigint, unique key (a, b, c));
@@ -1019,3 +1026,11 @@ create table t (id bigint, b varchar(20), index idxb(b)) partition by range(id) 
 alter table t reorganize partition p0 into (partition p01 values less than (10), partition p02 values less than (20));
 show warnings;
 
+# Test Generated column use Grouping function, issue #49909.
+drop table if exists t;
+--error 1111
+create table t(a int, b int as ((grouping(a))) stored);
+create table t(a int);
+--error 1111
+alter table t add column  b int as ((grouping(a))) stored;
+drop table t;

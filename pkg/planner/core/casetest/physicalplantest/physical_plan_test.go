@@ -2258,6 +2258,7 @@ func TestIndexMergeSinkLimit(t *testing.T) {
 	tk.MustExec("insert into t2 values(1,2,1),(2,1,1),(3,3,1)")
 	tk.MustExec("create table t(a int, j json, index kj((cast(j as signed array))))")
 	tk.MustExec("insert into t values(1, '[1,2,3]')")
+	tk.MustExec("CREATE TABLE `t3` (\n  `id` int(11) NOT NULL,\n  `aid` bigint(20) DEFAULT NULL,\n  `c1` varchar(255) DEFAULT NULL,\n  `c2` varchar(255) DEFAULT NULL,\n  `d` int(11) DEFAULT NULL,\n  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,\n  KEY `aid_c1` (`aid`,`c1`),\n  KEY `aid_c2` (`aid`,`c2`)\n)")
 
 	for i, ts := range input {
 		testdata.OnRecord(func() {
@@ -2267,5 +2268,31 @@ func TestIndexMergeSinkLimit(t *testing.T) {
 		})
 		tk.MustQuery(ts).Check(testkit.Rows(output[i].Plan...))
 		tk.MustQuery("show warnings").Check(testkit.Rows(output[i].Warning...))
+	}
+}
+
+// Test issue #46962 plan
+func TestAlwaysTruePredicateWithSubquery(t *testing.T) {
+	var (
+		input  []string
+		output []struct {
+			SQL     string
+			Plan    []string
+			Warning []string
+		}
+	)
+	planSuiteData := GetPlanSuiteData()
+	planSuiteData.LoadTestCases(t, &input, &output)
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec(`CREATE TABLE t ( a int NOT NULL ,  b int NOT NULL ) `)
+	for i, ts := range input {
+		testdata.OnRecord(func() {
+			output[i].SQL = ts
+			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery(ts).Rows())
+		})
+		tk.MustQuery(ts).Check(testkit.Rows(output[i].Plan...))
 	}
 }
