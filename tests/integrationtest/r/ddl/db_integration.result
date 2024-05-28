@@ -407,8 +407,15 @@ show create table t;
 Table	Create Table
 t	CREATE TABLE `t` (
   `c` int(10) DEFAULT NULL,
-  `c1` varchar(256) DEFAULT uuid()
+  `c1` varchar(256) DEFAULT (uuid())
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+drop table if exists t;
+create table t (c int(10), c1 varchar(256) default rand());
+alter table t alter column c1 set default 'xx';
+insert into t values (1, default);
+select c1 from t;
+c1
+xx
 drop table if exists t1;
 create table t1 (a int(11) not null auto_increment key, b int(11), c bigint, unique key (a, b, c));
 alter table t1 drop index a;
@@ -1216,3 +1223,10 @@ alter table t reorganize partition p0 into (partition p01 values less than (10),
 show warnings;
 Level	Code	Message
 Warning	1105	The statistics of related partitions will be outdated after reorganizing partitions. Please use 'ANALYZE TABLE' statement if you want to update it now
+drop table if exists t;
+create table t(a int, b int as ((grouping(a))) stored);
+Error 1111 (HY000): Invalid use of group function
+create table t(a int);
+alter table t add column  b int as ((grouping(a))) stored;
+Error 1111 (HY000): Invalid use of group function
+drop table t;

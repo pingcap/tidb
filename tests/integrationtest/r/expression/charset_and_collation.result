@@ -1994,3 +1994,15 @@ LOCATE('bar' collate utf8mb4_0900_ai_ci, 'FOOBAR' collate utf8mb4_0900_ai_ci)
 select 'FOOBAR' collate utf8mb4_0900_ai_ci REGEXP 'foo.*' collate utf8mb4_0900_ai_ci;
 'FOOBAR' collate utf8mb4_0900_ai_ci REGEXP 'foo.*' collate utf8mb4_0900_ai_ci
 1
+select cast(compress('b') as char);
+cast(compress('b') as char)
+NULL
+Level	Code	Message
+Warning	3854	Cannot convert string '   x\x9C...' from binary to utf8mb4
+set sql_mode='';
+select cast(compress('b') as char);
+cast(compress('b') as char)
+   x
+Level	Code	Message
+Warning	3854	Cannot convert string '   x\x9C...' from binary to utf8mb4
+set sql_mode=DEFAULT;
