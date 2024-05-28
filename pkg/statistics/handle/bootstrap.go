@@ -16,10 +16,6 @@ package handle
 
 import (
 	"context"
-	"sync"
-	"sync/atomic"
-	"time"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -37,6 +33,8 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
+	"sync"
+	"sync/atomic"
 )
 
 // initStatsStep is the step to load stats by paging.
@@ -692,7 +690,6 @@ func (h *Handle) InitStatsLite(is infoschema.InfoSchema) (err error) {
 	if err != nil {
 		return err
 	}
-	time.Sleep(30 * time.Minute)
 	cache, err := h.initStatsMeta(is)
 	if err != nil {
 		return errors.Trace(err)
@@ -720,7 +717,6 @@ func (h *Handle) InitStats(is infoschema.InfoSchema) (err error) {
 	if err != nil {
 		return err
 	}
-	time.Sleep(30 * time.Minute)
 	cache, err := h.initStatsMeta(is)
 	if err != nil {
 		return errors.Trace(err)
