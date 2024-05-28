@@ -82,6 +82,10 @@ type TableCommon struct {
 	// recordPrefix and indexPrefix are generated using physicalTableID.
 	recordPrefix kv.Key
 	indexPrefix  kv.Key
+
+	// avoid duplicated calculations of Cols
+	// mode -> cols
+	getColsCache [][]*table.Column
 }
 
 // MockTableFromMeta only serves for test.
@@ -282,20 +286,33 @@ const (
 	visible
 	hidden
 	full
+	// numMode is only used to get the total of modes
+	numMode
 )
 
 func (t *TableCommon) getCols(mode getColsMode) []*table.Column {
-	columns := make([]*table.Column, 0, len(t.Columns))
-	for _, col := range t.Columns {
-		if col.State != model.StatePublic {
-			continue
+	if t.getColsCache == nil {
+		t.getColsCache = make([][]*table.Column, numMode)
+		for i := range t.getColsCache {
+			t.getColsCache[i] = nil
 		}
-		if (mode == visible && col.Hidden) || (mode == hidden && !col.Hidden) {
-			continue
-		}
-		columns = append(columns, col)
 	}
-	return columns
+	if t.getColsCache[mode] != nil {
+		return t.getColsCache[mode]
+	} else {
+		columns := make([]*table.Column, 0, len(t.Columns))
+		for _, col := range t.Columns {
+			if col.State != model.StatePublic {
+				continue
+			}
+			if (mode == visible && col.Hidden) || (mode == hidden && !col.Hidden) {
+				continue
+			}
+			columns = append(columns, col)
+		}
+		t.getColsCache[mode] = columns
+		return columns
+	}
 }
 
 // Cols implements table.Table Cols interface.
