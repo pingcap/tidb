@@ -19,21 +19,14 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
-<<<<<<< HEAD
-	"github.com/pingcap/tidb/pkg/testkit"
-	"github.com/pingcap/tidb/tests/realtikvtest"
-=======
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/ddl/util/callback"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/tests/realtikvtest"
-	"github.com/pingcap/tidb/tests/realtikvtest/addindextestutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/tikv/client-go/v2/tikv"
->>>>>>> e1a6b1d6339 (*: check delete unique key's handle to handle corner case (#52975))
 )
 
 func init() {
@@ -175,55 +168,6 @@ func TestAddUKWithSmallIntHandles(t *testing.T) {
 	tk.MustExec("insert into t values (-9223372036854775808, 1),(-9223372036854775807, 1)")
 	tk.MustContainErrMsg("alter table t add unique index uk(b)", "Duplicate entry '1' for key 't.uk'")
 }
-<<<<<<< HEAD
-=======
-
-func alwaysRemoveFirstJobID(ids []int64) ([]int64, error) {
-	return ids[1:], nil
-}
-
-func TestLitBackendCtxMgr(t *testing.T) {
-	ctx := context.Background()
-	store := realtikvtest.CreateMockStoreAndSetup(t)
-	sortPath := t.TempDir()
-	staleJobDir := filepath.Join(sortPath, "100")
-	staleJobDir2 := filepath.Join(sortPath, "101")
-	err := os.MkdirAll(staleJobDir, 0o700)
-	require.NoError(t, err)
-	err = os.MkdirAll(staleJobDir2, 0o700)
-	require.NoError(t, err)
-
-	mgr := ingest.NewLitBackendCtxMgr(sortPath, 1024*1024*1024, alwaysRemoveFirstJobID)
-
-	ok, err := mgr.CheckMoreTasksAvailable(ctx)
-	require.NoError(t, err)
-	require.True(t, ok)
-
-	// due to alwaysRemoveFirstJobID, the first jobID will be removed
-	require.NoDirExists(t, staleJobDir)
-	require.DirExists(t, staleJobDir2)
-
-	jobID := int64(102)
-	discovery := store.(tikv.Storage).GetRegionCache().PDClient().GetServiceDiscovery()
-	backendCtx, err := mgr.Register(ctx, jobID, false, nil, discovery, "TestLitBackendCtxMgr")
-	require.NoError(t, err)
-	require.NotNil(t, backendCtx)
-
-	expectedDir := filepath.Join(sortPath, "102")
-	require.DirExists(t, staleJobDir2)
-	require.DirExists(t, expectedDir)
-
-	bc, ok := mgr.Load(jobID)
-	require.True(t, ok)
-	require.Equal(t, backendCtx, bc)
-	_, ok = mgr.Load(101)
-	require.False(t, ok)
-
-	mgr.Unregister(jobID)
-	require.NoDirExists(t, expectedDir)
-	_, ok = mgr.Load(jobID)
-	require.False(t, ok)
-}
 
 func TestAddUniqueDuplicateIndexes(t *testing.T) {
 	store, dom := realtikvtest.CreateMockStoreAndDomainAndSetup(t)
@@ -273,4 +217,3 @@ func TestAddUniqueDuplicateIndexes(t *testing.T) {
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/ingest/mockDMLExecutionStateBeforeImport"))
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockDMLExecutionStateBeforeMerge"))
 }
->>>>>>> e1a6b1d6339 (*: check delete unique key's handle to handle corner case (#52975))
