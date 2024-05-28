@@ -82,6 +82,21 @@ type TableCommon struct {
 	// recordPrefix and indexPrefix are generated using physicalTableID.
 	recordPrefix kv.Key
 	indexPrefix  kv.Key
+
+	testingKnob
+}
+
+type testingKnob interface {
+	ClearColumnsCache()
+}
+
+// ClearColumnsCache implements testingKnob interface.
+func (t *TableCommon) ClearColumnsCache() {
+	t.publicColumns = nil
+	t.visibleColumns = nil
+	t.hiddenColumns = nil
+	t.writableColumns = nil
+	t.fullHiddenColsAndVisibleColumns = nil
 }
 
 // MockTableFromMeta only serves for test.
