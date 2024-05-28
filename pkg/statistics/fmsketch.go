@@ -68,7 +68,7 @@ type FMSketch struct {
 	// Every time the size of the hashset exceeds the maximum size, the mask will be moved to the next level.
 	mask uint64
 	// The maximum size of the hashset. If the size exceeds this value, the mask will be moved to the next level.
-	// And the hashset will only keep the hashed values with trailing zeroes less than mask.
+	// And the hashset will only keep the hashed values with trailing zeroes greater than or equal to the new mask.
 	maxSize int
 }
 
