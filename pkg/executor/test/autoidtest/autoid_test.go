@@ -606,7 +606,7 @@ func TestAutoIDIncrementAndOffset(t *testing.T) {
 	for _, str := range []string{"", " AUTO_ID_CACHE 1"} {
 		tk.MustExec(`create table io (a int key auto_increment)` + str)
 		tk.MustExec(`insert into io values (null),(null),(null)`)
-		tk.MustQuery(`select * from io`).Check(testkit.Rows("10", "15", "20"))
+		tk.MustQuery(`select * from io`).Check(testkit.Rows("1", "6", "11"))
 		tk.MustExec(`drop table io`)
 	}
 
@@ -616,23 +616,23 @@ func TestAutoIDIncrementAndOffset(t *testing.T) {
 		tk.Session().GetSessionVars().AutoIncrementOffset = 10
 		tk.Session().GetSessionVars().AutoIncrementIncrement = 2
 		tk.MustExec(`insert into io values (),(),()`)
-		tk.MustQuery(`select * from io`).Check(testkit.Rows("10", "12", "14"))
+		tk.MustQuery(`select * from io`).Check(testkit.Rows("1", "3", "5"))
 		tk.MustExec(`delete from io`)
 
 		// Test reset the increment.
 		tk.Session().GetSessionVars().AutoIncrementIncrement = 5
 		tk.MustExec(`insert into io values (),(),()`)
-		tk.MustQuery(`select * from io`).Check(testkit.Rows("15", "20", "25"))
+		tk.MustQuery(`select * from io`).Check(testkit.Rows("6", "11", "16"))
 		tk.MustExec(`delete from io`)
 
 		tk.Session().GetSessionVars().AutoIncrementIncrement = 10
 		tk.MustExec(`insert into io values (),(),()`)
-		tk.MustQuery(`select * from io`).Check(testkit.Rows("30", "40", "50"))
+		tk.MustQuery(`select * from io`).Check(testkit.Rows("20", "30", "40"))
 		tk.MustExec(`delete from io`)
 
 		tk.Session().GetSessionVars().AutoIncrementIncrement = 5
 		tk.MustExec(`insert into io values (),(),()`)
-		tk.MustQuery(`select * from io`).Check(testkit.Rows("55", "60", "65"))
+		tk.MustQuery(`select * from io`).Check(testkit.Rows("41", "46", "51"))
 		tk.MustExec(`drop table io`)
 	}
 
@@ -643,10 +643,10 @@ func TestAutoIDIncrementAndOffset(t *testing.T) {
 		tk.MustExec(`create table io (a int, b int auto_increment, key(b))` + str)
 		tk.MustExec(`insert into io(b) values (null),(null),(null)`)
 		// AutoID allocation will take increment and offset into consideration.
-		tk.MustQuery(`select b from io`).Check(testkit.Rows("10", "12", "14"))
+		tk.MustQuery(`select b from io`).Check(testkit.Rows("1", "3", "5"))
 		if str == "" {
 			// HandleID allocation will ignore the increment and offset.
-			tk.MustQuery(`select _tidb_rowid from io`).Check(testkit.Rows("15", "16", "17"))
+			tk.MustQuery(`select _tidb_rowid from io`).Check(testkit.Rows("6", "7", "8"))
 		} else {
 			// Separate row id and auto inc id, increment and offset works on auto inc id
 			tk.MustQuery(`select _tidb_rowid from io`).Check(testkit.Rows("1", "2", "3"))
@@ -655,9 +655,9 @@ func TestAutoIDIncrementAndOffset(t *testing.T) {
 
 		tk.Session().GetSessionVars().AutoIncrementIncrement = 10
 		tk.MustExec(`insert into io(b) values (null),(null),(null)`)
-		tk.MustQuery(`select b from io`).Check(testkit.Rows("20", "30", "40"))
+		tk.MustQuery(`select b from io`).Check(testkit.Rows("10", "20", "30"))
 		if str == "" {
-			tk.MustQuery(`select _tidb_rowid from io`).Check(testkit.Rows("41", "42", "43"))
+			tk.MustQuery(`select _tidb_rowid from io`).Check(testkit.Rows("31", "32", "33"))
 		} else {
 			tk.MustQuery(`select _tidb_rowid from io`).Check(testkit.Rows("4", "5", "6"))
 		}
@@ -805,4 +805,44 @@ func TestAutoIDConstraint(t *testing.T) {
 	// Cover case: create table with auto id column as key, and remove it later
 	tk.MustExec("create table tt2 (id int, c int auto_increment, key c_idx(c))")
 	tk.MustExec("alter table tt2 drop index c_idx")
+}
+
+func TestIssue52622(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`set @@auto_increment_increment = 66;`)
+	tk.MustExec(`set @@auto_increment_offset = 9527;`)
+
+	tk.MustQuery(`select @@auto_increment_increment;`).Check(testkit.Rows("66"))
+	tk.MustQuery(`select @@auto_increment_offset;`).Check(testkit.Rows("9527"))
+
+	for i := 0; i < 2; i++ {
+		createTableSQL := "create table issue52622 (id int primary key auto_increment, k int)"
+		if i == 0 {
+			createTableSQL = createTableSQL + " AUTO_ID_CACHE 1"
+		}
+
+		tk.MustExec(createTableSQL)
+		tk.MustExec("insert into issue52622 (k) values (1),(2),(3);")
+		tk.MustQuery("select * from issue52622").Check(testkit.Rows("1 1", "67 2", "133 3"))
+		if i == 0 {
+			tk.MustQuery("show create table issue52622").CheckContain("134")
+		}
+		tk.MustExec("insert into issue52622 (k) values (4);")
+		tk.MustQuery("select * from issue52622").Check(testkit.Rows("1 1", "67 2", "133 3", "199 4"))
+
+		tk.MustExec("truncate table issue52622;")
+		tk.MustExec("insert into issue52622 (k) values (1)")
+		tk.MustExec("insert into issue52622 (k) values (2)")
+		tk.MustExec("insert into issue52622 (k) values (3)")
+		if i == 0 {
+			tk.MustQuery("show create table issue52622").CheckContain("134")
+		}
+		tk.MustExec("insert into issue52622 (k) values (4);")
+		tk.MustQuery("select * from issue52622").Check(testkit.Rows("1 1", "67 2", "133 3", "199 4"))
+
+		tk.MustExec("drop table issue52622;")
+	}
 }

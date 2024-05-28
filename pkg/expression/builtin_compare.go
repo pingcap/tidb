@@ -1431,6 +1431,13 @@ func RefineComparedConstant(ctx sessionctx.Context, targetFieldType types.FieldT
 		targetFieldType = *types.NewFieldType(mysql.TypeLonglong)
 	}
 	var intDatum types.Datum
+
+	// To make sure return zero when underflow happens.
+	oriFlag := sc.IsRefineComparedConstant
+	sc.IsRefineComparedConstant = true
+	defer func() {
+		sc.IsRefineComparedConstant = oriFlag
+	}()
 	intDatum, err = dt.ConvertTo(sc, &targetFieldType)
 	if err != nil {
 		if terror.ErrorEqual(err, types.ErrOverflow) {

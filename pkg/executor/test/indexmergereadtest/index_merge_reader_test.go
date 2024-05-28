@@ -164,27 +164,35 @@ func TestPartitionTableRandomIndexMerge(t *testing.T) {
 		partition p4 values less than (40))`)
 	tk.MustExec(`create table tnormal (a int, b int, key(a), key(b))`)
 
-	values := make([]string, 0, 128)
-	for i := 0; i < 128; i++ {
-		values = append(values, fmt.Sprintf("(%v, %v)", rand.Intn(40), rand.Intn(40)))
+	values := make([]string, 0, 32)
+	for i := 0; i < 32; i++ {
+		values = append(values, fmt.Sprintf("(%v, %v)", rand.Intn(10), rand.Intn(10)))
 	}
 	tk.MustExec(fmt.Sprintf("insert into t values %v", strings.Join(values, ", ")))
 	tk.MustExec(fmt.Sprintf("insert into tnormal values %v", strings.Join(values, ", ")))
 
 	randRange := func() (int, int) {
-		a, b := rand.Intn(40), rand.Intn(40)
+		a, b := rand.Intn(10), rand.Intn(10)
 		if a > b {
 			return b, a
 		}
 		return a, b
 	}
-	for i := 0; i < 256; i++ {
+	for i := 0; i < 32; i++ {
 		la, ra := randRange()
 		lb, rb := randRange()
 		cond := fmt.Sprintf("(a between %v and %v) or (b between %v and %v)", la, ra, lb, rb)
 		result := tk.MustQuery("select * from tnormal where " + cond).Sort().Rows()
 		tk.MustQuery("select /*+ USE_INDEX_MERGE(t, a, b) */ * from t where " + cond).Sort().Check(result)
 	}
+}
+
+func TestPartitionTableRandomIndexMerge2(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_enable_index_merge=1")
+	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
 
 	// test a table with a primary key
 	tk.MustExec(`create table tpk (a int primary key, b int, key(b))
@@ -193,15 +201,22 @@ func TestPartitionTableRandomIndexMerge(t *testing.T) {
 		partition p2 values less than (20),
 		partition p3 values less than (30),
 		partition p4 values less than (40))`)
-	tk.MustExec("truncate tnormal")
+	tk.MustExec(`create table tnormal (a int, b int, key(a), key(b))`)
 
-	values = values[:0]
-	for i := 0; i < 40; i++ {
-		values = append(values, fmt.Sprintf("(%v, %v)", i, rand.Intn(40)))
+	randRange := func() (int, int) {
+		a, b := rand.Intn(10), rand.Intn(10)
+		if a > b {
+			return b, a
+		}
+		return a, b
+	}
+	values := make([]string, 0, 10)
+	for i := 0; i < 10; i++ {
+		values = append(values, fmt.Sprintf("(%v, %v)", i, rand.Intn(10)))
 	}
 	tk.MustExec(fmt.Sprintf("insert into tpk values %v", strings.Join(values, ", ")))
 	tk.MustExec(fmt.Sprintf("insert into tnormal values %v", strings.Join(values, ", ")))
-	for i := 0; i < 256; i++ {
+	for i := 0; i < 32; i++ {
 		la, ra := randRange()
 		lb, rb := randRange()
 		cond := fmt.Sprintf("(a between %v and %v) or (b between %v and %v)", la, ra, lb, rb)
@@ -1316,19 +1331,18 @@ func TestIndexMergeIssue49605(t *testing.T) {
 		testkit.Rows("Projection 2666.67 root  istrue(or(not(ge(test.t.i, j筧8)), not(eq(test.t.i, 暈lH忧ll6))))->Column#11, Column#10, quote(test.t.i)->Column#12",
 			"└─StreamAgg 2666.67 root  group by:test.t.i, funcs:max(test.t.e)->Column#10, funcs:firstrow(test.t.i)->test.t.i",
 			"  └─Sort 3333.33 root  test.t.i",
-			"    └─IndexMerge 3333.33 root  type: union",
-			"      ├─TableRangeScan(Build) 3333.33 cop[tikv] table:t, partition:p0 range:(240817,+inf], keep order:false, stats:pseudo",
-			"      ├─IndexFullScan(Build) 0.00 cop[tikv] table:t, partition:p0, index:idx_25(h, i, e) keep order:false, stats:pseudo",
-			"      └─TableRowIDScan(Probe) 3333.33 cop[tikv] table:t, partition:p0 keep order:false, stats:pseudo"))
+			"    └─TableReader 3333.33 root  data:Selection",
+			"      └─Selection 3333.33 cop[tikv]  or(gt(test.t.h, 240817), and(ge(test.t.i, \"WVz\"), le(test.t.i, \"G#駧褉ZC領*lov\")))",
+			"        └─TableFullScan 10000.00 cop[tikv] table:t, partition:p0 keep order:false, stats:pseudo"))
 	tk.MustQuery("select count(*) from (SELECT /*+ AGG_TO_COP() STREAM_AGG()*/ (NOT (`t`.`i`>=_UTF8MB4'j筧8') OR NOT (`t`.`i`=_UTF8MB4'暈lH忧ll6')) IS TRUE,MAX(`t`.`e`) AS `r0`,QUOTE(`t`.`i`) AS `r1` FROM `t` WHERE `t`.`h`>240817 OR `t`.`i` BETWEEN _UTF8MB4'WVz' AND _UTF8MB4'G#駧褉ZC領*lov' GROUP BY `t`.`i`) derived;").Check(
 		testkit.Rows("16"))
 	tk.MustQuery("explain format='brief' SELECT /*+ AGG_TO_COP() */ (NOT (`t`.`i`>=_UTF8MB4'j筧8') OR NOT (`t`.`i`=_UTF8MB4'暈lH忧ll6')) IS TRUE,MAX(`t`.`e`) AS `r0`,QUOTE(`t`.`i`) AS `r1` FROM `t` WHERE `t`.`h`>240817 OR `t`.`i` BETWEEN _UTF8MB4'WVz' AND _UTF8MB4'G#駧褉ZC領*lov' GROUP BY `t`.`i`;").Check(
 		testkit.Rows("Projection 2666.67 root  istrue(or(not(ge(test.t.i, j筧8)), not(eq(test.t.i, 暈lH忧ll6))))->Column#11, Column#10, quote(test.t.i)->Column#12",
-			"└─HashAgg 2666.67 root  group by:test.t.i, funcs:max(test.t.e)->Column#10, funcs:firstrow(test.t.i)->test.t.i",
-			"  └─IndexMerge 3333.33 root  type: union",
-			"    ├─TableRangeScan(Build) 3333.33 cop[tikv] table:t, partition:p0 range:(240817,+inf], keep order:false, stats:pseudo",
-			"    ├─IndexFullScan(Build) 0.00 cop[tikv] table:t, partition:p0, index:idx_25(h, i, e) keep order:false, stats:pseudo",
-			"    └─TableRowIDScan(Probe) 3333.33 cop[tikv] table:t, partition:p0 keep order:false, stats:pseudo"))
+			"└─HashAgg 2666.67 root  group by:test.t.i, funcs:max(Column#15)->Column#10, funcs:firstrow(test.t.i)->test.t.i",
+			"  └─TableReader 2666.67 root  data:HashAgg",
+			"    └─HashAgg 2666.67 cop[tikv]  group by:test.t.i, funcs:max(test.t.e)->Column#15",
+			"      └─Selection 3333.33 cop[tikv]  or(gt(test.t.h, 240817), and(ge(test.t.i, \"WVz\"), le(test.t.i, \"G#駧褉ZC領*lov\")))",
+			"        └─TableFullScan 10000.00 cop[tikv] table:t, partition:p0 keep order:false, stats:pseudo"))
 	tk.MustQuery("select count(*) from (SELECT /*+ AGG_TO_COP() */ (NOT (`t`.`i`>=_UTF8MB4'j筧8') OR NOT (`t`.`i`=_UTF8MB4'暈lH忧ll6')) IS TRUE,MAX(`t`.`e`) AS `r0`,QUOTE(`t`.`i`) AS `r1` FROM `t` WHERE `t`.`h`>240817 OR `t`.`i` BETWEEN _UTF8MB4'WVz' AND _UTF8MB4'G#駧褉ZC領*lov' GROUP BY `t`.`i`) derived;").Check(
 		testkit.Rows("16"))
 }

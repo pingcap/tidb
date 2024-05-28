@@ -1350,6 +1350,27 @@ func IsMutableEffectsExpr(expr Expression) bool {
 	return false
 }
 
+// IsMutableFunc checks if expr contains function which is mutable or has side effects like `rand()`.
+func IsMutableFunc(expr Expression) bool {
+	switch f := expr.(type) {
+	case *ScalarFunction:
+		if _, ok := unFoldableFunctions[f.FuncName.L]; ok {
+			return true
+		}
+		if _, ok := mutableEffectsFunctions[f.FuncName.L]; ok {
+			return true
+		}
+		for _, arg := range f.GetArgs() {
+			if IsMutableFunc(arg) {
+				return true
+			}
+		}
+	default:
+		return false
+	}
+	return false
+}
+
 // IsInmutableExpr checks whether this expression only consists of foldable functions and inmutable constants.
 // This expression can be evaluated by using `expr.Eval(chunk.Row{})` directly if it's inmutable.
 func IsInmutableExpr(expr Expression) bool {
