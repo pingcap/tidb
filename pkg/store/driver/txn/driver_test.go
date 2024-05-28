@@ -70,7 +70,7 @@ func TestWriteConflictPrettyFormat(t *testing.T) {
 
 	// test log redaction
 	original := errors.RedactLogEnabled.Load()
-	errors.RedactLogEnabled.Store(true)
+	errors.RedactLogEnabled.Store(errors.RedactLogEnable)
 	defer func() { errors.RedactLogEnabled.Store(original) }()
 	expectedStr = "[kv:9007]Write conflict, " +
 		"txnStartTS=399402937522847774, conflictStartTS=399402937719455772, conflictCommitTS=399402937719455773, " +
