@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -1400,4 +1401,42 @@ func TestJSONSchemaValid(t *testing.T) {
 			)
 		}
 	}
+}
+
+// TestJSONSchemaValidCache is to test if the cached schema is used
+func TestJSONSchemaValidCache(t *testing.T) {
+	ctx := createContext(t)
+	fc := funcs[ast.JSONSchemaValid]
+	tbl := []struct {
+		Input    any
+		Expected any
+	}{
+		{[]any{`{}`, `{}`}, 1},
+	}
+	dtbl := tblToDtbl(tbl)
+
+	for _, tt := range dtbl {
+		// Get the function and eval once, ensuring it is cached
+		f, err := fc.getFunction(ctx, datumsToConstants(tt["Input"]))
+		require.NoError(t, err)
+		_, err = evalBuiltinFunc(f, ctx, chunk.Row{})
+		require.NoError(t, err)
+
+		// Disable the cache function
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/expression/jsonSchemaValidDisableCacheRefresh", `return(true)`))
+
+		// This eval should use the cache and not call the function.
+		_, err = evalBuiltinFunc(f, ctx, chunk.Row{})
+		require.NoError(t, err)
+
+		// Now get a new cache by getting the function again.
+		f, err = fc.getFunction(ctx, datumsToConstants(tt["Input"]))
+		require.NoError(t, err)
+
+		// Empty cache, we call the function. This should return an error.
+		_, err = evalBuiltinFunc(f, ctx, chunk.Row{})
+		require.Error(t, err)
+	}
+
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/expression/jsonSchemaValidDisableCacheRefresh"))
 }
