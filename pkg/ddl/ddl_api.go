@@ -3009,10 +3009,10 @@ func (d *ddl) BatchCreateTableWithInfo(ctx sessionctx.Context,
 	return nil
 }
 
-// BuildQueryStringFromJobs takes a slice of Jobs and concatenates their 
-// queries into a single query string. 
-// Each query is separated by a semicolon and a space. 
-// Trailing spaces are removed from each query, and a semicolon is appended 
+// BuildQueryStringFromJobs takes a slice of Jobs and concatenates their
+// queries into a single query string.
+// Each query is separated by a semicolon and a space.
+// Trailing spaces are removed from each query, and a semicolon is appended
 // if it's not already present.
 func BuildQueryStringFromJobs(jobs []*model.Job) string {
 	var queryBuilder strings.Builder
