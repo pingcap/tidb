@@ -59,7 +59,7 @@ Compare with other syntaxes:
 
 | Analyze Statement                   | Explain                                                          |
 |-------------------------------------|------------------------------------------------------------------|
-| ANALYZE TABLE t;                    | It will analyze all analyzable columns from the table.           |
+| ANALYZE TABLE t;                    | It will analyze all columns of the table.                        |
 | ANALYZE TABLE t COLUMNS col1, col2; | It will only analyze col1 and col2.                              |
 | ANALYZE TABLE t PREDICATE COLUMNS;  | It will only analyze columns that exist in the previous queries. |
 
