@@ -100,7 +100,7 @@ type StatementContext struct {
 	// in stmtCtx
 	IsStaleness bool
 
-	IsRefineComparedConstant      bool
+	IsRefineComparedConstant bool
 
 	// mu struct holds variables that change during execution.
 	mu struct {
