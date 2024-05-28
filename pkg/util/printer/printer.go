@@ -19,8 +19,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"runtime"
-	_ "runtime" // import link package
-	_ "unsafe"  // required by go:linkname
 
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
