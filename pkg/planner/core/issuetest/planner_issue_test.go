@@ -18,6 +18,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/planner"
 	"github.com/pingcap/tidb/pkg/planner/core"
@@ -167,7 +168,7 @@ CREATE TABLE udc_branch_temp (
   PRIMARY KEY (branch_id) /*T![clustered_index] CLUSTERED */
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_INCREMENT=1030102 COMMENT='';
 `)
-	tk.MustQuery(`
+	tk.MustGetErrCode(`
 SELECT res.*
 FROM (
     (
@@ -186,5 +187,5 @@ FROM (
 ) AS res
 WHERE res.state != 2
 ORDER BY res.branch_id;
-`)
+`, errno.ErrNotSupportedYet)
 }
