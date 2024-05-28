@@ -2271,6 +2271,39 @@ func TestIndexMergeSinkLimit(t *testing.T) {
 	}
 }
 
+func TestIndexMergeIssue52947(t *testing.T) {
+	var (
+		input  []string
+		output []struct {
+			SQL     string
+			Plan    []string
+			Warning []string
+		}
+	)
+	planSuiteData := GetPlanSuiteData()
+	planSuiteData.LoadTestCases(t, &input, &output)
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE `tbl_43` (\n  `col_304` binary(207) NOT NULL DEFAULT 'eIenHx\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0'," +
+		"  PRIMARY KEY (`col_304`) /*T![clustered_index] CLUSTERED */," +
+		"  UNIQUE KEY `idx_259` (`col_304`(5))," +
+		"  UNIQUE KEY `idx_260` (`col_304`(2))," +
+		"  KEY `idx_261` (`col_304`)," +
+		"  UNIQUE KEY `idx_262` (`col_304`)" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin;")
+	tk.MustExec("insert into tbl_43 values(\"BCmuENPHzSOIMJLPB\"),(\"LDOdXZYpOR\"),(\"R\"),(\"TloTqcHhdgpwvMsSoJ\"),(\"UajN\"),(\"mAwLZbiyq\"),(\"swLIoWa\");")
+	for i, ts := range input {
+		testdata.OnRecord(func() {
+			output[i].SQL = ts
+			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery(ts).Rows())
+			output[i].Warning = testdata.ConvertRowsToStrings(tk.MustQuery("show warnings").Rows())
+		})
+		tk.MustQuery(ts).Check(testkit.Rows(output[i].Plan...))
+		tk.MustQuery("show warnings").Check(testkit.Rows(output[i].Warning...))
+	}
+}
+
 // Test issue #46962 plan
 func TestAlwaysTruePredicateWithSubquery(t *testing.T) {
 	var (

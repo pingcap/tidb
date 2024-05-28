@@ -1068,6 +1068,15 @@
       "SHOW ERRORS WHERE TRUE = ALL ( SELECT TRUE GROUP BY 1 LIMIT 1 ) IS NULL IS NOT NULL;",
       "explain select * from t WHERE TRUE = ALL ( SELECT TRUE GROUP BY 1 LIMIT 1 ) IS NULL IS NOT NULL;",
       "explain select * from t WHERE TRUE = ALL ( SELECT TRUE from t GROUP BY 1 LIMIT 1 ) is null is not null;"
+   ]
+  },
+  {
+    "name": "TestIndexMergeIssue52947",
+    "cases": [
+      "explain format = 'brief' select min(col_304) from (select /*+ use_index_merge( tbl_43 ) */ * from tbl_43 where not( tbl_43.col_304 between 'YEpfYfPVvhMlHGHSMKm' and 'PE' ) or tbl_43.col_304 in ( 'LUBGzGMA' ) and tbl_43.col_304 between 'HpsjfuSReCwBoh' and 'fta' or not( tbl_43.col_304 between 'MFWmuOsoyDv' and 'TSeMYpDXnFIyp' ) order by col_304) x;",
+      "select min(col_304) from (select /*+ use_index_merge( tbl_43 ) */ * from tbl_43 where not( tbl_43.col_304 between 'YEpfYfPVvhMlHGHSMKm' and 'PE' ) or tbl_43.col_304 in ( 'LUBGzGMA' ) and tbl_43.col_304 between 'HpsjfuSReCwBoh' and 'fta' or not( tbl_43.col_304 between 'MFWmuOsoyDv' and 'TSeMYpDXnFIyp' ) order by col_304) x;",
+      "explain format = 'brief' select max(col_304) from (select /*+ use_index_merge( tbl_43 ) */ * from tbl_43 where not( tbl_43.col_304 between 'YEpfYfPVvhMlHGHSMKm' and 'PE' ) or tbl_43.col_304 in ( 'LUBGzGMA' ) and tbl_43.col_304 between 'HpsjfuSReCwBoh' and 'fta' or not( tbl_43.col_304 between 'MFWmuOsoyDv' and 'TSeMYpDXnFIyp' ) order by col_304) x;",
+      "select max(col_304) from (select /*+ use_index_merge( tbl_43 ) */ * from tbl_43 where not( tbl_43.col_304 between 'YEpfYfPVvhMlHGHSMKm' and 'PE' ) or tbl_43.col_304 in ( 'LUBGzGMA' ) and tbl_43.col_304 between 'HpsjfuSReCwBoh' and 'fta' or not( tbl_43.col_304 between 'MFWmuOsoyDv' and 'TSeMYpDXnFIyp' ) order by col_304) x;"
     ]
   }
 ]
