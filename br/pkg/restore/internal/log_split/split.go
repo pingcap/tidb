@@ -195,7 +195,7 @@ func (helper *LogSplitHelper) splitRegionByPoints(
 				startKey = point
 			}
 
-			return regionSplitter.ExecuteSplit(ctx, ranges)
+			return regionSplitter.ExecuteSplit(ctx, ranges, 0, 0)
 		}
 		select {
 		case <-ctx.Done():

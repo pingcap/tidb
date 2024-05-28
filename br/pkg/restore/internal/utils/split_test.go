@@ -26,7 +26,7 @@ func TestScanEmptyRegion(t *testing.T) {
 	regionSplitter := utils.NewRegionSplitter(client)
 
 	ctx := context.Background()
-	err := regionSplitter.ExecuteSplit(ctx, ranges)
+	err := regionSplitter.ExecuteSplit(ctx, ranges, 0, 0)
 	// should not return error with only one range entry
 	require.NoError(t, err)
 }
@@ -54,7 +54,7 @@ func TestSplitAndScatter(t *testing.T) {
 		require.NoError(t, err)
 		ranges[i] = *tmp
 	}
-	err := regionSplitter.ExecuteSplit(ctx, ranges)
+	err := regionSplitter.ExecuteSplit(ctx, ranges, 0, 0)
 	require.NoError(t, err)
 	regions := mockPDCli.Regions.ScanRange(nil, nil, 100)
 	expected := [][]byte{[]byte(""), []byte("aay"), []byte("bba"), []byte("bbf"), []byte("bbh"), []byte("bbj"), []byte("cca"), []byte("xxe"), []byte("xxz"), []byte("")}
@@ -90,7 +90,7 @@ func TestRawSplit(t *testing.T) {
 	client := split.NewClient(mockPDCli, nil, nil, 100, 4, split.WithRawKV())
 
 	regionSplitter := utils.NewRegionSplitter(client)
-	err := regionSplitter.ExecuteSplit(ctx, ranges)
+	err := regionSplitter.ExecuteSplit(ctx, ranges, 0, 0)
 	require.NoError(t, err)
 
 	regions := mockPDCli.Regions.ScanRange(nil, nil, 100)
@@ -107,18 +107,26 @@ func initRanges() []rtree.Range {
 	ranges[0] = rtree.Range{
 		StartKey: []byte("aaa"),
 		EndKey:   []byte("aae"),
+		Size:     1,
+		Count:    1,
 	}
 	ranges[1] = rtree.Range{
 		StartKey: []byte("aae"),
 		EndKey:   []byte("aaz"),
+		Size:     1,
+		Count:    1,
 	}
 	ranges[2] = rtree.Range{
 		StartKey: []byte("ccd"),
 		EndKey:   []byte("ccf"),
+		Size:     1,
+		Count:    1,
 	}
 	ranges[3] = rtree.Range{
 		StartKey: []byte("ccf"),
 		EndKey:   []byte("ccj"),
+		Size:     1,
+		Count:    1,
 	}
 	return ranges[:]
 }
@@ -213,5 +221,61 @@ func rangeEquals(t *testing.T, obtained, expected []rtree.Range) {
 	for i := range obtained {
 		require.Equal(t, expected[i].StartKey, obtained[i].StartKey)
 		require.Equal(t, expected[i].EndKey, obtained[i].EndKey)
+	}
+}
+
+func getKeys(strs ...string) [][]byte {
+	keys := make([][]byte, 0, len(strs))
+	for _, str := range strs {
+		keys = append(keys, []byte(str))
+	}
+	return keys
+}
+
+func TestMergeRanges(t *testing.T) {
+	groupSizeThreshold := uint64(100)
+	groupCountThreshold := uint64(100)
+
+	{
+		// empty ranges
+		sortedRanges := []rtree.Range{}
+		keys := utils.MergeRanges(sortedRanges, groupSizeThreshold, groupCountThreshold)
+		require.Len(t, keys, 0)
+	}
+	{
+		// large ranges
+		sortedRanges := []rtree.Range{
+			{EndKey: []byte("a"), Size: 200, Count: 200},
+			{EndKey: []byte("b"), Size: 200, Count: 200},
+			{EndKey: []byte("c"), Size: 200, Count: 200},
+			{EndKey: []byte("d"), Size: 200, Count: 200},
+			{EndKey: []byte("e"), Size: 200, Count: 200},
+		}
+		keys := utils.MergeRanges(sortedRanges, groupSizeThreshold, groupCountThreshold)
+		require.Equal(t, getKeys("a", "b", "c", "d", "e"), keys)
+	}
+	{
+		// merge some keys
+		sortedRanges := []rtree.Range{
+			{EndKey: []byte("a"), Size: 1, Count: 2},
+			{EndKey: []byte("b"), Size: 1, Count: 2},    // --
+			{EndKey: []byte("c"), Size: 200, Count: 10}, // --
+			{EndKey: []byte("d"), Size: 200, Count: 10}, // --
+			{EndKey: []byte("e"), Size: 10, Count: 200}, // --
+			{EndKey: []byte("f"), Size: 10, Count: 200}, // --
+			{EndKey: []byte("g"), Size: 10, Count: 10},
+			{EndKey: []byte("h"), Size: 2, Count: 10},  // --
+			{EndKey: []byte("i"), Size: 98, Count: 10}, // --
+			{EndKey: []byte("j"), Size: 1, Count: 98},
+			{EndKey: []byte("k"), Size: 5, Count: 1},
+			{EndKey: []byte("l"), Size: 5, Count: 1}, // --
+			{EndKey: []byte("m"), Size: 5, Count: 2},
+			{EndKey: []byte("n"), Size: 5, Count: 3},
+			{EndKey: []byte("o"), Size: 5, Count: 4},
+			{EndKey: []byte("p"), Size: 5, Count: 7},
+			{EndKey: []byte("q"), Size: 5, Count: 1}, // --
+		}
+		keys := utils.MergeRanges(sortedRanges, groupSizeThreshold, groupCountThreshold)
+		require.Equal(t, getKeys("b", "c", "d", "e", "f", "h", "i", "l", "q"), keys)
 	}
 }

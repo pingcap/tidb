@@ -89,6 +89,10 @@ type SnapClient struct {
 	rateLimit           uint64
 	tlsConf             *tls.Config
 
+	// the threshold to merge split keys
+	mergeRegionSize     uint64
+	mergeRegionKeyCount uint64
+
 	switchCh chan struct{}
 
 	storeCount    int
@@ -273,6 +277,11 @@ func (rc *SnapClient) SetPlacementPolicyMode(withPlacementPolicy string) {
 		rc.policyMode = strictPlacementPolicyMode
 	}
 	log.Info("set placement policy mode", zap.String("mode", rc.policyMode))
+}
+
+func (rc *SnapClient) SetMergeSplitKeyThreshold(mergeRegionSize, mergeRegionKeyCount uint64) {
+	rc.mergeRegionSize = mergeRegionSize
+	rc.mergeRegionKeyCount = mergeRegionKeyCount
 }
 
 // AllocTableIDs would pre-allocate the table's origin ID if exists, so that the TiKV doesn't need to rewrite the key in
@@ -1223,5 +1232,5 @@ func (rc *SnapClient) SplitRanges(
 		splitClientOpts...,
 	))
 
-	return splitter.ExecuteSplit(ctx, ranges)
+	return splitter.ExecuteSplit(ctx, ranges, rc.mergeRegionSize, rc.mergeRegionKeyCount)
 }

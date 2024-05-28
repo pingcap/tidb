@@ -42,6 +42,8 @@ func (rs *RegionSplitter) SplitWaitAndScatter(ctx context.Context, region *split
 func (rs *RegionSplitter) ExecuteSplit(
 	ctx context.Context,
 	ranges []rtree.Range,
+	groupSizeThreshold uint64,
+	groupCountThreshold uint64,
 ) error {
 	if len(ranges) == 0 {
 		log.Info("skip split regions, no range")
@@ -64,13 +66,14 @@ func (rs *RegionSplitter) ExecuteSplit(
 		log.Info("skip split regions after sorted, no range")
 		return nil
 	}
-	sortedKeys := make([][]byte, 0, len(sortedRanges))
-	totalRangeSize := uint64(0)
-	for _, r := range sortedRanges {
-		sortedKeys = append(sortedKeys, r.EndKey)
-		totalRangeSize += r.Size
-	}
-	// the range size must be greater than 0 here
+
+	// NOTE: Merge ranges globally instead of merging ranges that are on the same region because
+	// 1. The merging of ranges does not depend on the current region distribution,
+	//   so it is reentrant and will not split any new region keys for restore checkpoint.
+	// 2. In most cases, these ranges will initially be distributed over very few regions. Even
+	//  though in the worst case, it just ignores less split keys but still better than before.
+	sortedKeys := MergeRanges(sortedRanges, groupSizeThreshold, groupCountThreshold)
+
 	return rs.executeSplitByRanges(ctx, sortedKeys)
 }
 
@@ -167,4 +170,36 @@ func SortRanges(ranges []rtree.Range) ([]rtree.Range, error) {
 	}
 	sortedRanges := rangeTree.GetSortedRanges()
 	return sortedRanges, nil
+}
+
+func MergeRanges(sortedRanges []rtree.Range, groupSizeThreshold, groupCountThreshold uint64) [][]byte {
+	var (
+		sortedKeys = make([][]byte, 0, len(sortedRanges))
+
+		groupSize  = uint64(0)
+		groupCount = uint64(0)
+
+		lastKey []byte = nil
+	)
+
+	for _, r := range sortedRanges {
+		afterMergedGroupSize := groupSize + r.Size
+		afterMergedGroupCount := groupCount + r.Count
+		if afterMergedGroupSize > groupSizeThreshold || afterMergedGroupCount > groupCountThreshold {
+			groupSize = r.Size
+			groupCount = r.Count
+			if lastKey != nil {
+				sortedKeys = append(sortedKeys, lastKey)
+			}
+		} else {
+			groupSize = afterMergedGroupSize
+			groupCount = afterMergedGroupCount
+		}
+		lastKey = r.EndKey
+	}
+	// append the key of the last range anyway
+	if lastKey != nil {
+		sortedKeys = append(sortedKeys, lastKey)
+	}
+	return sortedKeys
 }
