@@ -3657,6 +3657,7 @@ func (e *memtableRetriever) setDataForKeyspaceMeta(sctx sessionctx.Context) (err
 	row[0] = types.NewStringDatum(keyspaceName)
 	// Keyspace ID
 	row[1] = types.NewStringDatum(keyspaceID)
+	// Keyspace config
 	var bj types.BinaryJSON
 	if len(keyspaceCfg) > 0 {
 		err = bj.UnmarshalJSON(keyspaceCfg)
