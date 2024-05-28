@@ -37,7 +37,12 @@ start_s3() {
     bin/minio server --address $S3_ENDPOINT "$TEST_DIR/$DB" &
     s3_pid=$!
     i=0
+<<<<<<< HEAD
     while ! curl -o /dev/null -v -s "http://$S3_ENDPOINT/"; do
+=======
+    status="$(curl -o /dev/null -v -s "http://$S3_ENDPOINT/" -w '%{http_code}' || true)"
+    while ! { [ "$status" -gt 0 ] && [ "$status" -lt 500 ]; } ; do
+>>>>>>> b85729315... br: Fix unstable s3 test (again) (#33666)
         i=$(($i+1))
         if [ $i -gt 30 ]; then
             echo 'Failed to start minio'
