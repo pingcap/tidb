@@ -1431,14 +1431,14 @@ func RefineComparedConstant(ctx sessionctx.Context, targetFieldType types.FieldT
 		targetFieldType = *types.NewFieldType(mysql.TypeLonglong)
 	}
 	var intDatum types.Datum
-<<<<<<< HEAD
+
+	// To make sure return zero when underflow happens.
+	oriFlag := sc.IsRefineComparedConstant
+	sc.IsRefineComparedConstant = true
+	defer func() {
+		sc.IsRefineComparedConstant = oriFlag
+	}()
 	intDatum, err = dt.ConvertTo(sc, &targetFieldType)
-=======
-	// Disable AllowNegativeToUnsigned to make sure return 0 when underflow happens.
-	oriTypeCtx := evalCtx.TypeCtx()
-	newTypeCtx := oriTypeCtx.WithFlags(oriTypeCtx.Flags().WithAllowNegativeToUnsigned(false))
-	intDatum, err = dt.ConvertTo(newTypeCtx, &targetFieldType)
->>>>>>> 68d12954fe4 (expression: fix wrong result when convert float to unsigned (#53590))
 	if err != nil {
 		if terror.ErrorEqual(err, types.ErrOverflow) {
 			return &Constant{
