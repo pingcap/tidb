@@ -18,6 +18,7 @@
       - [Collection Dataflow](#collection-dataflow)
     - [Using Predicate Columns](#using-predicate-columns)
       - [Analysis Dataflow](#analysis-dataflow)
+    - [Cleanup Outdated Predicate Columns](#cleanup-outdated-predicate-columns)
   - [Test Design](#test-design)
     - [Functional Tests](#functional-tests)
     - [Compatibility Tests](#compatibility-tests)
@@ -191,6 +192,12 @@ After we change the definition of DEFAULT, we can use the predicate columns to a
 #### Analysis Dataflow
 
 ![Dataflow](./imgs/auto-analyze-predicate-columns.png)
+
+### Cleanup Outdated Predicate Columns
+
+Users may have made schema changes, requiring the removal of non-existent columns from the `mysql.column_stats_usage` table.
+
+Before initiating the analyze process, we can first retrieve all predicate columns, compare them with the current schema, and remove any columns that no longer exist from the `mysql.column_stats_usage` table.
 
 ## Test Design
 
