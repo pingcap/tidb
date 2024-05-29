@@ -105,3 +105,9 @@ insert into t values('{"点赞": "你好"}', '{"点赞": "你好"}', '{"点赞":
 select * from t;
 j	b	s1	s2	st	en
 {"点赞": "你好"}	{"鐐硅禐": "浣犲ソ"}	{"鐐硅禐": "浣犲ソ"}	{"点赞": "你好"}	{"点赞": "你好"}	{"点赞": "你好"}
+set names utf8mb4;
+set @@character_set_client=gbk;
+set @@character_set_connection=gbk;
+select hex('一a'), '一a';
+hex('涓?')	涓?
+E4B83F	涓?
