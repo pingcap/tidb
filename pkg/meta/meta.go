@@ -1056,14 +1056,33 @@ func (m *Meta) ListTablesWithoutDecodeV2(dbID int64) ([]*model.TableInfo, error)
 	}
 
 	start := time.Now()
-
-	res, err := m.txn.HKeys(dbKey)
+	res, err := m.txn.HGetAllOptimized(dbKey)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
 	tables := make([]*model.TableInfo, 0, len(res)/2)
 	logutil.BgLogger().Info("ListTablesWithoutDecodeV2", zap.Duration("time", time.Since(start)), zap.Int64("dbID", dbID))
+
+	return tables, nil
+}
+
+// ListTablesWithoutDecodeV3 shows all tables in database.
+func (m *Meta) ListTablesWithoutDecodeV3(dbID int64) ([]*model.TableInfo, error) {
+	dbKey := m.dbKey(dbID)
+	if err := m.checkDBExists(dbKey); err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	start := time.Now()
+
+	res, err := m.txn.HGetAll(dbKey)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	tables := make([]*model.TableInfo, 0, len(res)/2)
+	logutil.BgLogger().Info("ListTablesWithoutDecode", zap.Duration("time", time.Since(start)), zap.Int64("dbID", dbID))
 
 	return tables, nil
 }
