@@ -189,7 +189,6 @@ func TestBackfillOperatorPipeline(t *testing.T) {
 		sessPool,
 		mockBackendCtx,
 		[]ingest.Engine{mockEngine},
-		tk.Session(),
 		1, // job id
 		tbl.(table.PhysicalTable),
 		[]*model.IndexInfo{idxInfo},
@@ -286,7 +285,6 @@ func TestBackfillOperatorPipelineException(t *testing.T) {
 				sessPool,
 				mockBackendCtx,
 				[]ingest.Engine{mockEngine},
-				tk.Session(),
 				1, // job id
 				tbl.(table.PhysicalTable),
 				[]*model.IndexInfo{idxInfo},
@@ -341,8 +339,10 @@ func prepare(t *testing.T, tk *testkit.TestKit, dom *domain.Domain, regionCnt in
 
 	tblInfo := tbl.Meta()
 	idxInfo = tblInfo.FindIndexByName("idx")
-	copCtx, err = copr.NewCopContextSingleIndex(tblInfo, idxInfo, tk.Session(), "")
+	sctx := tk.Session()
+	copCtx, err = ddl.NewReorgCopContext(dom.Store(), ddl.NewDDLReorgMeta(sctx), tblInfo, []*model.IndexInfo{idxInfo}, "")
 	require.NoError(t, err)
+	require.IsType(t, copCtx, &copr.CopContextSingleIndex{})
 	return tbl, idxInfo, start, end, copCtx
 }
 

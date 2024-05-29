@@ -559,7 +559,7 @@ func GetPreparedStmt(stmt *ast.ExecuteStmt, vars *variable.SessionVars) (*PlanCa
 
 // GetMatchOpts get options to fetch plan or generate new plan
 // we can add more options here
-func GetMatchOpts(sctx sessionctx.Context, is infoschema.InfoSchema, stmt *PlanCacheStmt, params []expression.Expression) (*utilpc.PlanCacheMatchOpts, error) {
+func GetMatchOpts(sctx sessionctx.Context, is infoschema.InfoSchema, stmt *PlanCacheStmt, params []expression.Expression) *utilpc.PlanCacheMatchOpts {
 	var statsVerHash uint64
 	var limitOffsetAndCount []uint64
 
@@ -606,7 +606,7 @@ func GetMatchOpts(sctx sessionctx.Context, is infoschema.InfoSchema, stmt *PlanC
 		StatsVersionHash:    statsVerHash,
 		ParamTypes:          parseParamTypes(sctx, params),
 		ForeignKeyChecks:    sctx.GetSessionVars().ForeignKeyChecks,
-	}, nil
+	}
 }
 
 // CheckTypesCompatibility4PC compares FieldSlice with []*types.FieldType
