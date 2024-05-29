@@ -1081,7 +1081,6 @@ func TestMultiIngest(t *testing.T) {
 					return importCli
 				},
 			},
-			logger: log.L(),
 		}
 		supportMultiIngest, err := checkMultiIngestSupport(context.Background(), local.pdCli, local.importClientFactory)
 		if err != nil {
