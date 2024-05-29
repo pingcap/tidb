@@ -109,7 +109,6 @@ func TestNewCopContextSingleIndex(t *testing.T) {
 			sctx.GetExprCtx(),
 			sctx.GetDistSQLCtx(),
 			sctx.GetSessionVars().StmtCtx.PushDownFlags(),
-			sctx.GetDomainInfoSchema(),
 			sctx.GetTableCtx(),
 			mockTableInfo, mockIdxInfo, "",
 		)

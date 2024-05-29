@@ -157,7 +157,6 @@ func NewReorgCopContext(
 		sessCtx.GetExprCtx(),
 		sessCtx.GetDistSQLCtx(),
 		sessCtx.GetSessionVars().StmtCtx.PushDownFlags(),
-		sessCtx.GetDomainInfoSchema(),
 		sessCtx.GetTableCtx(),
 		tblInfo,
 		allIdxInfo,

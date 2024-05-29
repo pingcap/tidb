@@ -282,7 +282,6 @@ func buildTableScan(ctx context.Context, c *copr.CopContextBase, startTS uint64,
 		SetKeyRanges([]kv.KeyRange{{StartKey: start, EndKey: end}}).
 		SetKeepOrder(true).
 		SetFromSessionVars(c.DistSQLCtx).
-		SetFromInfoSchema(c.InfoSchema).
 		SetConcurrency(1).
 		Build()
 	kvReq.RequestSource.RequestSourceInternal = true
