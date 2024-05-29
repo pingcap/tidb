@@ -1420,7 +1420,6 @@ func restoreStream(
 		downstreamIdset[downstreamId] = struct{}{}
 	}
 
-	//from table id get table info
 	logFilesIter, err := client.LoadDMLFiles(ctx)
 	if err != nil {
 		return errors.Trace(err)
