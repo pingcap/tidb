@@ -1472,17 +1472,15 @@ func ProjectionBenefitsFromPushedDown(exprs []Expression, inputSchemaLen int) bo
 				arg0 := v.GetArgs()[0]
 				// Only `->>` which parsed to JSONUnquote(CAST(JSONExtract() AS string)) can be pushed down to tikv
 				if fChild, ok := arg0.(*ScalarFunction); ok {
-					if fChild.FuncName.L != ast.Cast {
-						return false
-					}
-					if fGrand, ok := fChild.GetArgs()[0].(*ScalarFunction); ok {
-						if fGrand.FuncName.L != ast.JSONExtract {
-							return false
+					if fChild.FuncName.L == ast.Cast {
+						if fGrand, ok := fChild.GetArgs()[0].(*ScalarFunction); ok {
+							if fGrand.FuncName.L == ast.JSONExtract {
+								continue
+							}
 						}
 					}
-				} else {
-					return false
 				}
+				return false
 			default:
 				return false
 			}
