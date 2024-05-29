@@ -94,7 +94,6 @@ func TestDDLTable(t *testing.T) {
 	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t_parent"))
 	require.NoError(t, err)
 	tableInfo = tbl.Meta()
-	h := do.StatsHandle()
 	err = h.HandleDDLEvent(<-h.DDLEventCh())
 	require.NoError(t, err)
 	require.Nil(t, h.Update(is))
