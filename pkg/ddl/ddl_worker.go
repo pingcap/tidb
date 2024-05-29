@@ -1317,10 +1317,7 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 	case model.ActionUpdateTiFlashReplicaStatus:
 		ver, err = onUpdateFlashReplicaStatus(d, t, job)
 	case model.ActionCreateSequence:
-		txn, _ := w.sess.Txn()
-		txn.SetOption(kv.ScanBatchSize, 4096)
 		ver, err = onCreateSequence(d, t, job)
-		txn.SetOption(kv.ScanBatchSize, 256)
 	case model.ActionAlterIndexVisibility:
 		ver, err = onAlterIndexVisibility(d, t, job)
 	case model.ActionAlterSequence:

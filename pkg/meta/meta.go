@@ -1004,8 +1004,10 @@ func (m *Meta) ListTables(dbID int64) ([]*model.TableInfo, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	start2 := time.Now()
 
 	tables := make([]*model.TableInfo, 0, len(res)/2)
+	size := 0
 	for _, r := range res {
 		// only handle table meta
 		tableKey := string(r.Field)
@@ -1018,12 +1020,15 @@ func (m *Meta) ListTables(dbID int64) ([]*model.TableInfo, error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
+		size += len(r.Value)
 		tbInfo.DBID = dbID
 
 		tables = append(tables, tbInfo)
 	}
 
-	logutil.BgLogger().Info("ListTables", zap.Duration("time", time.Since(start)), zap.Int64("dbID", dbID))
+	logutil.BgLogger().Info("ListTables", zap.Duration("time", time.Since(start)), zap.Int64("dbID", dbID),
+		zap.String("read rate", fmt.Sprintf("%.2f MB/s", float64(size)/1024.0/1024.0/(start2.Sub(start).Seconds()))),
+		zap.String("decode rate", fmt.Sprintf("%.2f MB/s", float64(size)/1024.0/1024.0/time.Since(start2).Seconds())))
 
 	return tables, nil
 }
