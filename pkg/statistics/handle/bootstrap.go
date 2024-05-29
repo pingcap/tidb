@@ -698,10 +698,12 @@ func (h *Handle) InitStatsLite(is infoschema.InfoSchema) (err error) {
 	if err != nil {
 		return errors.Trace(err)
 	}
+	statslogutil.StatsLogger().Info("complete to load the meta")
 	err = h.initStatsHistogramsLite(is, cache)
 	if err != nil {
 		return errors.Trace(err)
 	}
+	statslogutil.StatsLogger().Info("complete to load the histogram")
 	h.Replace(cache)
 	return nil
 }
