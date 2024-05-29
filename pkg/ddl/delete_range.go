@@ -312,34 +312,16 @@ func insertJobIntoDeleteRangeTable(ctx context.Context, wrapper DelRangeExecWrap
 			return errors.Trace(doBatchDeleteTablesRange(ctx, wrapper, job.ID, []int64{tableID}, ea, "drop table: table ID"))
 		}
 		return errors.Trace(doBatchDeleteTablesRange(ctx, wrapper, job.ID, []int64{tableID}, ea, "drop table: table ID"))
-	case model.ActionDropTablePartition, model.ActionTruncateTablePartition:
-		var physicalTableIDs []int64
-		// partInfo is not used, but is set in ReorgPartition.
-		// Better to have an additional argument in job.DecodeArgs since it is ignored,
-		// instead of having one too few, which will remove the data from the job arguments...
-		var partInfo model.PartitionInfo
-		if err := job.DecodeArgs(&physicalTableIDs, &partInfo); err != nil {
-			return errors.Trace(err)
-		}
-		return errors.Trace(doBatchDeleteTablesRange(ctx, wrapper, job.ID, physicalTableIDs, ea, "drop partition: physical table ID(s)"))
-	case model.ActionReorganizePartition, model.ActionRemovePartitioning,
+	case model.ActionDropTablePartition, model.ActionTruncateTablePartition,
+		model.ActionReorganizePartition, model.ActionRemovePartitioning,
 		model.ActionAlterTablePartitioning:
 		var physicalTableIDs []int64
-		// In case global index has been recreated, then drop the old ones
-		var indexIDs []int64
-		// partInfo is not used, but is set in ReorgPartition.
-		// Better to have an additional argument in job.DecodeArgs since it is ignored,
-		// instead of having one too few, which will remove the data from the job arguments...
-		var partInfo model.PartitionInfo
-		if err := job.DecodeArgs(&physicalTableIDs, &partInfo, &indexIDs); err != nil {
+		if err := job.DecodeArgs(&physicalTableIDs); err != nil {
 			return errors.Trace(err)
 		}
-		err := doBatchDeleteTablesRange(ctx, wrapper, job.ID, physicalTableIDs, ea, "reorganize partition: physical table ID(s)")
+		err := doBatchDeleteTablesRange(ctx, wrapper, job.ID, physicalTableIDs, ea, "reorganize/drop partition: physical table ID(s)")
 		if err != nil {
 			return errors.Trace(err)
-		}
-		if len(indexIDs) > 0 {
-			return errors.Trace(doBatchDeleteIndiceRange(ctx, wrapper, job.ID, job.TableID, indexIDs, ea, "drop old global index: table ID"))
 		}
 		return nil
 	// ActionAddIndex, ActionAddPrimaryKey needs do it, because it needs to be rolled back when it's canceled.
