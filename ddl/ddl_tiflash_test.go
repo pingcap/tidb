@@ -1049,3 +1049,23 @@ func TestTiFlashAvailableAfterAddPartition(t *testing.T) {
 	require.NotNil(t, pi)
 	require.Equal(t, len(pi.Definitions), 2)
 }
+
+func TestTiFlashAvailableAfterDownOneStore(t *testing.T) {
+	s, teardown := createTiFlashContext(t)
+	defer teardown()
+	tk := testkit.NewTestKit(t, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists ddltiflash")
+	tk.MustExec("create table ddltiflash(z int) PARTITION BY RANGE(z) (PARTITION p0 VALUES LESS THAN (10))")
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/OneTiFlashStoreDown", `return`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/domain/infosync/OneTiFlashStoreDown", `return`))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/OneTiFlashStoreDown"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/domain/infosync/OneTiFlashStoreDown"))
+	}()
+
+	tk.MustExec("alter table ddltiflash set tiflash replica 1")
+	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailable * 3)
+	CheckTableAvailable(s.dom, t, 1, []string{})
+}
