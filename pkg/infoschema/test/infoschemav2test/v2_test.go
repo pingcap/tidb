@@ -16,8 +16,8 @@ package infoschemav2test
 
 import (
 	"slices"
-	"strings"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/pingcap/failpoint"
