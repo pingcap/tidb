@@ -130,7 +130,6 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (_ *ExecS
 		if exec, isExec := finalPlan.(*plannercore.Execute); isExec {
 			if pointPlan, isPointPlan := exec.Plan.(*plannercore.PointGetPlan); isPointPlan {
 				stmt.PsStmt, stmt.Plan = preparedObj, pointPlan // notify to re-use the cached plan
-				stmtCtx.SetPlanDigest(preparedObj.NormalizedPlan, preparedObj.PlanDigest)
 			}
 		}
 	}
