@@ -22,11 +22,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/pkg/testkit"
-	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
 )
 
@@ -800,9 +801,14 @@ func TestColumnNotMatchError(t *testing.T) {
 	tk.MustExec("create table t(id int primary key, a int)")
 	tk.MustExec("insert into t values(1, 2)")
 
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onAddColumnStateWriteReorg", func() {
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/onAddColumnStateWriteReorg", "return()"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/onAddColumnStateWriteReorg"))
+	}()
+	ddl.OnAddColumnStateWriteReorgForTest = func() {
 		tk.MustExec("begin;")
-	})
+	}
+
 	var wg sync.WaitGroup
 	wg.Add(1)
 	go func() {
@@ -813,9 +819,13 @@ func TestColumnNotMatchError(t *testing.T) {
 	tk.MustExec("delete from t where id=1")
 	tk.MustGetErrCode("commit", errno.ErrInfoSchemaChanged)
 
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onDropColumnStateWriteOnly", func() {
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/onDropColumnStateWriteOnly", "return()"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/onDropColumnStateWriteOnly"))
+	}()
+	ddl.OnDropColumnStateWriteOnlyForTest = func() {
 		tk.MustExec("begin;")
-	})
+	}
 	wg.Add(1)
 	go func() {
 		tk2.MustExec("alter table t drop column wait_notify")
