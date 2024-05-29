@@ -28,14 +28,12 @@ import (
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/hack"
+	"github.com/pingcap/tidb/pkg/util/serialization"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 )
 
 const sizeOfNextPtr = int(unsafe.Sizeof(unsafe.Pointer(nil)))
 const sizeOfLengthField = int(unsafe.Sizeof(uint64(1)))
-const sizeOfUInt64 = int(unsafe.Sizeof(uint64(1)))
-const sizeOfInt = int(unsafe.Sizeof(int(1)))
-const sizeOfFloat64 = int(unsafe.Sizeof(float64(1)))
 const usedFlagMaskBigEndian = uint32(1) << 31
 const usedFlagMaskLittleEndian = uint32(1) << 7
 
@@ -73,9 +71,9 @@ type rowTableSegment struct {
 
 func (rts *rowTableSegment) totalUsedBytes() int64 {
 	ret := int64(cap(rts.rawData))
-	ret += int64(cap(rts.hashValues) * sizeOfUInt64)
+	ret += int64(cap(rts.hashValues) * int(serialization.Uint64Len))
 	ret += int64(cap(rts.rowLocations) * sizeOfNextPtr)
-	ret += int64(cap(rts.rowLocations) * sizeOfInt)
+	ret += int64(cap(rts.validJoinKeyPos) * int(serialization.IntLen))
 	return ret
 }
 
@@ -159,7 +157,7 @@ func (meta *TableMeta) getSerializedKeyLength(rowStart unsafe.Pointer) uint64 {
 func (meta *TableMeta) getKeyBytes(rowStart unsafe.Pointer) []byte {
 	switch meta.keyMode {
 	case OneInt64:
-		return hack.GetBytesFromPtr(unsafe.Add(rowStart, meta.nullMapLength+sizeOfNextPtr), sizeOfUInt64)
+		return hack.GetBytesFromPtr(unsafe.Add(rowStart, meta.nullMapLength+sizeOfNextPtr), int(serialization.Uint64Len))
 	case FixedSerializedKey:
 		return hack.GetBytesFromPtr(unsafe.Add(rowStart, meta.nullMapLength+sizeOfNextPtr), meta.joinKeysLength)
 	case VariableSerializedKey:
@@ -249,22 +247,22 @@ func getKeyProp(tp *types.FieldType) *keyProp {
 		return &keyProp{canBeInlined: collate.CanUseRawMemAsKey(collator), keyLength: chunk.VarElemLen, isStringRelatedType: true, isKeyInteger: false, isKeyUnsigned: false}
 	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
 		// date related type will use uint64 as serialized key
-		return &keyProp{canBeInlined: false, keyLength: sizeOfUInt64, isStringRelatedType: false, isKeyInteger: true, isKeyUnsigned: true}
+		return &keyProp{canBeInlined: false, keyLength: int(serialization.Uint64Len), isStringRelatedType: false, isKeyInteger: true, isKeyUnsigned: true}
 	case mysql.TypeFloat:
 		// float will use float64 as serialized key
-		return &keyProp{canBeInlined: false, keyLength: sizeOfFloat64, isStringRelatedType: false, isKeyInteger: false, isKeyUnsigned: false}
+		return &keyProp{canBeInlined: false, keyLength: int(serialization.Float64Len), isStringRelatedType: false, isKeyInteger: false, isKeyUnsigned: false}
 	case mysql.TypeNewDecimal:
 		// Although decimal is fixed length, but its key is not fixed length
 		return &keyProp{canBeInlined: false, keyLength: chunk.VarElemLen, isStringRelatedType: false, isKeyInteger: false, isKeyUnsigned: false}
 	case mysql.TypeEnum:
 		if mysql.HasEnumSetAsIntFlag(tp.GetFlag()) {
 			// enum int type is always unsigned
-			return &keyProp{canBeInlined: false, keyLength: sizeOfUInt64, isStringRelatedType: false, isKeyInteger: true, isKeyUnsigned: true}
+			return &keyProp{canBeInlined: false, keyLength: int(serialization.Uint64Len), isStringRelatedType: false, isKeyInteger: true, isKeyUnsigned: true}
 		}
 		return &keyProp{canBeInlined: false, keyLength: chunk.VarElemLen, isStringRelatedType: false, isKeyInteger: false, isKeyUnsigned: false}
 	case mysql.TypeBit:
 		// bit type is always unsigned
-		return &keyProp{canBeInlined: false, keyLength: sizeOfUInt64, isStringRelatedType: false, isKeyInteger: true, isKeyUnsigned: true}
+		return &keyProp{canBeInlined: false, keyLength: int(serialization.Uint64Len), isStringRelatedType: false, isKeyInteger: true, isKeyUnsigned: true}
 	default:
 		keyLength := chunk.GetFixedLen(tp)
 		return &keyProp{canBeInlined: false, keyLength: keyLength, isStringRelatedType: false, isKeyInteger: false, isKeyUnsigned: false}
