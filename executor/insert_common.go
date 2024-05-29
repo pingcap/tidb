@@ -1114,22 +1114,76 @@ func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.D
 		if r.handleKey != nil {
 			_, err := txn.Get(ctx, r.handleKey.newKey)
 			if err == nil {
+<<<<<<< HEAD
 				e.ctx.GetSessionVars().StmtCtx.AppendWarning(r.handleKey.dupErr)
 				continue
 			}
 			if !kv.IsErrNotFound(err) {
+=======
+				if replace {
+					handle, err := tablecodec.DecodeRowKey(r.handleKey.newKey)
+					if err != nil {
+						return err
+					}
+					_, err2 := e.removeRow(ctx, txn, handle, r, false)
+					if err2 != nil {
+						return err2
+					}
+				} else {
+					e.ctx.GetSessionVars().StmtCtx.AppendWarning(r.handleKey.dupErr)
+					if txnCtx := e.ctx.GetSessionVars().TxnCtx; txnCtx.IsPessimistic {
+						// lock duplicated row key on insert-ignore
+						txnCtx.AddUnchangedRowKey(r.handleKey.newKey)
+					}
+					continue
+				}
+			} else if !kv.IsErrNotFound(err) {
+>>>>>>> 24cd54c7462 (executor: lock duplicated keys on insert-ignore & replace-nothing (#42210))
 				return err
 			}
 		}
 		for _, uk := range r.uniqueKeys {
 			_, err := txn.Get(ctx, uk.newKey)
 			if err == nil {
+<<<<<<< HEAD
 				// If duplicate keys were found in BatchGet, mark row = nil.
 				e.ctx.GetSessionVars().StmtCtx.AppendWarning(uk.dupErr)
 				skip = true
 				break
 			}
 			if !kv.IsErrNotFound(err) {
+=======
+				if replace {
+					_, handle, err := tables.FetchDuplicatedHandle(
+						ctx,
+						uk.newKey,
+						true,
+						txn,
+						e.Table.Meta().ID,
+						uk.commonHandle,
+					)
+					if err != nil {
+						return err
+					}
+					if handle == nil {
+						continue
+					}
+					_, err = e.removeRow(ctx, txn, handle, r, true)
+					if err != nil {
+						return err
+					}
+				} else {
+					// If duplicate keys were found in BatchGet, mark row = nil.
+					e.ctx.GetSessionVars().StmtCtx.AppendWarning(uk.dupErr)
+					if txnCtx := e.ctx.GetSessionVars().TxnCtx; txnCtx.IsPessimistic {
+						// lock duplicated unique key on insert-ignore
+						txnCtx.AddUnchangedRowKey(uk.newKey)
+					}
+					skip = true
+					break
+				}
+			} else if !kv.IsErrNotFound(err) {
+>>>>>>> 24cd54c7462 (executor: lock duplicated keys on insert-ignore & replace-nothing (#42210))
 				return err
 			}
 		}
@@ -1151,6 +1205,80 @@ func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.D
 	return nil
 }
 
+<<<<<<< HEAD
+=======
+// removeRow removes the duplicate row and cleanup its keys in the key-value map.
+// But if the to-be-removed row equals to the to-be-added row, no remove or add
+// things to do and return (true, nil).
+func (e *InsertValues) removeRow(
+	ctx context.Context,
+	txn kv.Transaction,
+	handle kv.Handle,
+	r toBeCheckedRow,
+	inReplace bool,
+) (bool, error) {
+	newRow := r.row
+	oldRow, err := getOldRow(ctx, e.ctx, txn, r.t, handle, e.GenExprs)
+	if err != nil {
+		logutil.BgLogger().Error("get old row failed when replace",
+			zap.String("handle", handle.String()),
+			zap.String("toBeInsertedRow", types.DatumsToStrNoErr(r.row)))
+		if kv.IsErrNotFound(err) {
+			err = errors.NotFoundf("can not be duplicated row, due to old row not found. handle %s", handle)
+		}
+		return false, err
+	}
+
+	identical, err := e.equalDatumsAsBinary(oldRow, newRow)
+	if err != nil {
+		return false, err
+	}
+	if identical {
+		if inReplace {
+			e.ctx.GetSessionVars().StmtCtx.AddAffectedRows(1)
+		}
+		_, err := appendUnchangedRowForLock(e.ctx, r.t, handle, oldRow)
+		if err != nil {
+			return false, err
+		}
+		return true, nil
+	}
+
+	err = r.t.RemoveRecord(e.ctx, handle, oldRow)
+	if err != nil {
+		return false, err
+	}
+	err = onRemoveRowForFK(e.ctx, oldRow, e.fkChecks, e.fkCascades)
+	if err != nil {
+		return false, err
+	}
+	if inReplace {
+		e.ctx.GetSessionVars().StmtCtx.AddAffectedRows(1)
+	} else {
+		e.ctx.GetSessionVars().StmtCtx.AddDeletedRows(1)
+	}
+
+	return false, nil
+}
+
+// equalDatumsAsBinary compare if a and b contains the same datum values in binary collation.
+func (e *InsertValues) equalDatumsAsBinary(a []types.Datum, b []types.Datum) (bool, error) {
+	if len(a) != len(b) {
+		return false, nil
+	}
+	for i, ai := range a {
+		v, err := ai.Compare(e.ctx.GetSessionVars().StmtCtx, &b[i], collate.GetBinaryCollator())
+		if err != nil {
+			return false, errors.Trace(err)
+		}
+		if v != 0 {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
+>>>>>>> 24cd54c7462 (executor: lock duplicated keys on insert-ignore & replace-nothing (#42210))
 func (e *InsertValues) addRecord(ctx context.Context, row []types.Datum) error {
 	return e.addRecordWithAutoIDHint(ctx, row, 0)
 }
