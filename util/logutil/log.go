@@ -27,6 +27,7 @@ import (
 	tlog "github.com/opentracing/opentracing-go/log"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
+	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
@@ -116,6 +117,7 @@ func InitLogger(cfg *LogConfig) error {
 	}
 
 	initGRPCLogger(gl)
+	tikv.SetLogContextKey(CtxLogKey)
 	return nil
 }
 
