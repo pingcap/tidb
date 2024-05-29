@@ -247,6 +247,7 @@ func (p *PhysicalTableScan) AccessObject(normalized bool) string {
 // OperatorInfo implements dataAccesser interface.
 func (p *PhysicalTableScan) OperatorInfo(normalized bool) string {
 	var buffer strings.Builder
+<<<<<<< HEAD:planner/core/explain.go
 	if len(p.rangeDecidedBy) > 0 {
 		buffer.WriteString("range: decided by [")
 		for i, rangeDecidedBy := range p.rangeDecidedBy {
@@ -256,6 +257,14 @@ func (p *PhysicalTableScan) OperatorInfo(normalized bool) string {
 			buffer.WriteString(rangeDecidedBy.String())
 		}
 		buffer.WriteString("], ")
+=======
+	if len(p.rangeInfo) > 0 {
+		if !normalized {
+			buffer.WriteString("range: decided by ")
+			buffer.WriteString(p.rangeInfo)
+			buffer.WriteString(", ")
+		}
+>>>>>>> 0a3cfbcda44 (planner: Fix the issue that may generate many plandigests when the inner table is clustered (#47952)):pkg/planner/core/explain.go
 	} else if p.haveCorCol() {
 		if normalized {
 			buffer.WriteString("range: decided by ")
