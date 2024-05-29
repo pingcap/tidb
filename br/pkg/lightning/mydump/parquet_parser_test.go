@@ -53,10 +53,17 @@ func (s testParquetParserSuite) TestParquetParser(c *C) {
 	c.Assert(reader.Columns(), DeepEquals, []string{"ss", "a_a"})
 
 	verifyRow := func(i int) {
+<<<<<<< HEAD
 		c.Assert(reader.lastRow.RowID, Equals, int64(i+1))
 		c.Assert(len(reader.lastRow.Row), Equals, 2)
 		c.Assert(reader.lastRow.Row[0], DeepEquals, types.NewCollationStringDatum(strconv.Itoa(i), ""))
 		c.Assert(reader.lastRow.Row[1], DeepEquals, types.NewIntDatum(int64(i)))
+=======
+		require.Equal(t, int64(i+1), reader.lastRow.RowID)
+		require.Len(t, reader.lastRow.Row, 2)
+		require.Equal(t, types.NewCollationStringDatum(strconv.Itoa(i), "utf8mb4_bin"), reader.lastRow.Row[0])
+		require.Equal(t, types.NewIntDatum(int64(i)), reader.lastRow.Row[1])
+>>>>>>> 68305e9004 (lightning: specify collation when parquet value to string datum (#38391))
 	}
 
 	// test read some rows
