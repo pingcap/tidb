@@ -809,7 +809,10 @@ func tryCachePointPlan(_ context.Context, sctx base.PlanContext,
 	)
 
 	if plan, _ok := p.(*PointGetPlan); _ok {
-		ok = IsPointGetWithPKOrUniqueKeyByAutoCommit(sctx.GetSessionVars(), p)
+		ok, err = IsPointGetWithPKOrUniqueKeyByAutoCommit(sctx.GetSessionVars(), p)
+		if err != nil {
+			return err
+		}
 		if ok {
 			plan.stmtHints = sctx.GetSessionVars().StmtCtx.StmtHints.Clone()
 		}
@@ -829,24 +832,36 @@ func tryCachePointPlan(_ context.Context, sctx base.PlanContext,
 // IsPointGetPlanShortPathOK check if we can execute using plan cached in prepared structure
 // Be careful with the short path, current precondition is ths cached plan satisfying
 // IsPointGetWithPKOrUniqueKeyByAutoCommit
-func IsPointGetPlanShortPathOK(sctx sessionctx.Context, is infoschema.InfoSchema, stmt *PlanCacheStmt) bool {
+func IsPointGetPlanShortPathOK(sctx sessionctx.Context, is infoschema.InfoSchema, stmt *PlanCacheStmt) (bool, error) {
 	if stmt.PointGet.Plan == nil || staleread.IsStmtStaleness(sctx) {
-		return false
+		return false, nil
 	}
 	// check auto commit
 	if !IsAutoCommitTxn(sctx.GetSessionVars()) {
-		return false
+		return false, nil
 	}
 	if stmt.SchemaVersion != is.SchemaMetaVersion() {
 		stmt.PointGet.Plan = nil
 		stmt.PointGet.ColumnInfos = nil
-		return false
+		return false, nil
 	}
-	// only support simple PointGet Plan now
+	// maybe we'd better check cached plan type here, current
+	// only point select/update will be cached, see "getPhysicalPlan" func
+	var ok bool
+	var err error
 	switch stmt.PointGet.Plan.(type) {
 	case *PointGetPlan:
-		return true
+		ok = true
+	case *Update:
+		pointUpdate := stmt.PointGet.Plan.(*Update)
+		_, ok = pointUpdate.SelectPlan.(*PointGetPlan)
+		if !ok {
+			err = errors.Errorf("cached update plan not point update")
+			stmt.PointGet.Plan = nil
+			return false, err
+		}
 	default:
-		return false
+		ok = false
 	}
+	return ok, err
 }
