@@ -4,10 +4,10 @@
 - Discussion PR: <https://github.com/pingcap/tidb/pull/53511>
 - Tracking Issue: <https://github.com/pingcap/tidb/issues/53567>
 
-## Table of **Contents**
+## Table of Contents
 
 - [Analyze Predicate Columns](#analyze-predicate-columns)
-  - [Table of **Contents**](#table-of-contents)
+  - [Table of Contents](#table-of-contents)
   - [Introduction](#introduction)
   - [Motivation or Background](#motivation-or-background)
   - [Detailed Design](#detailed-design)
