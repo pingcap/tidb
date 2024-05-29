@@ -238,14 +238,9 @@ func GetPlanFromSessionPlanCache(ctx context.Context, sctx sessionctx.Context,
 	return generateNewPlan(ctx, sctx, isNonPrepared, is, stmt, cacheKey, latestSchemaVersion, bindSQL, matchOpts)
 }
 
-func adjustCachedPlan(
-	sctx sessionctx.Context,
-	cachedVal *PlanCacheValue,
-	isNonPrepared bool,
-	cacheKey kvcache.Key,
-	bindSQL string,
-	is infoschema.InfoSchema, stmt *PlanCacheStmt) (
-	base.Plan, []*types.FieldName, bool, error) {
+func adjustCachedPlan(sctx sessionctx.Context, cachedVal *PlanCacheValue, isNonPrepared bool,
+	cacheKey kvcache.Key, bindSQL string, is infoschema.InfoSchema, stmt *PlanCacheStmt) (base.Plan,
+	[]*types.FieldName, bool, error) {
 	sessVars := sctx.GetSessionVars()
 	stmtCtx := sessVars.StmtCtx
 	if err := checkPreparedPriv(sctx, stmt, is); err != nil {
