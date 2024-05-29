@@ -231,6 +231,16 @@ func (cc *clientConn) executePreparedStmtAndWriteResult(ctx context.Context, stm
 	if rs == nil {
 		return false, cc.writeOK(ctx)
 	}
+<<<<<<< HEAD
+=======
+	// since there are multiple implementations of ResultSet (the rs might be wrapped), we have to unwrap the rs before
+	// casting it to *tidbResultSet.
+	if result, ok := unwrapResultSet(rs).(*tidbResultSet); ok {
+		if planCacheStmt, ok := prepStmt.(*plannercore.PlanCacheStmt); ok {
+			result.preparedStmt = planCacheStmt
+		}
+	}
+>>>>>>> 0fe61bd41a (*: prevent cursor read from being cancelled by GC (#39950))
 
 	// if the client wants to use cursor
 	// we should hold the ResultSet in PreparedStatement for next stmt_fetch, and only send back ColumnInfo.
@@ -238,6 +248,12 @@ func (cc *clientConn) executePreparedStmtAndWriteResult(ctx context.Context, stm
 	if useCursor {
 		cc.initResultEncoder(ctx)
 		defer cc.rsEncoder.clean()
+		// fix https://github.com/pingcap/tidb/issues/39447. we need to hold the start-ts here because the process info
+		// will be set to sleep after fetch returned.
+		if pi := cc.ctx.ShowProcess(); pi != nil && pi.ProtectedTSList != nil && pi.CurTxnStartTS > 0 {
+			unhold := pi.HoldTS(pi.CurTxnStartTS)
+			rs = &rsWithHooks{ResultSet: rs, onClosed: unhold}
+		}
 		stmt.StoreResultSet(rs)
 		err = cc.writeColumnInfo(rs.Columns(), mysql.ServerStatusCursorExists)
 		if err != nil {
