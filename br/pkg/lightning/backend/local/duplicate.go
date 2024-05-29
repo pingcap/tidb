@@ -29,11 +29,15 @@ import (
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+<<<<<<< HEAD:br/pkg/lightning/backend/local/duplicate.go
 	pkgkv "github.com/pingcap/tidb/br/pkg/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/errormanager"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
+=======
+	berrors "github.com/pingcap/tidb/br/pkg/errors"
+>>>>>>> 0805e850d41 (br: handle region leader miss (#52822)):pkg/lightning/backend/local/duplicate.go
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/restore"
 	"github.com/pingcap/tidb/br/pkg/utils"
@@ -335,7 +339,8 @@ func getDupDetectClient(
 ) (import_sstpb.ImportSST_DuplicateDetectClient, error) {
 	leader := region.Leader
 	if leader == nil {
-		leader = region.Region.GetPeers()[0]
+		return nil, errors.Annotatef(berrors.ErrPDLeaderNotFound,
+			"region id %d has no leader", region.Region.Id)
 	}
 	importClient, err := importClientFactory.Create(ctx, leader.GetStoreId())
 	if err != nil {
