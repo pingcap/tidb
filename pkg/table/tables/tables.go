@@ -1368,7 +1368,7 @@ func (t *TableCommon) RemoveRecord(ctx table.MutateContext, h kv.Handle, r []typ
 	memBuffer.Release(sh)
 
 	if shouldWriteBinlog(ctx.GetSessionVars(), t.meta) {
-		cols := t.Cols()
+		cols := t.DeletableCols()
 		colIDs := make([]int64, 0, len(cols)+1)
 		for _, col := range cols {
 			colIDs = append(colIDs, col.ID)
