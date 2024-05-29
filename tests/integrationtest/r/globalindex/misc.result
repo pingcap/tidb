@@ -1,4 +1,43 @@
 set tidb_enable_global_index=true;
+drop table if exists test_global;
+create table test_global ( a int, b int, c int, unique key p_b(b))
+partition by range( a ) (
+partition p1 values less than (10),
+partition p2 values less than (20)
+);
+insert into test_global values (1,2,2);
+insert into test_global values (11,2,2);
+Error 1062 (23000): Duplicate entry '2' for key 'test_global.p_b'
+insert into test_global values (11,2,2);
+Error 1062 (23000): Duplicate entry '2' for key 'test_global.p_b'
+# NULL will not get 'duplicate key' error here
+insert into test_global(a,c) values (1,2);
+insert into test_global(a,c) values (11,2);
+drop table if exists test_global;
+create table test_global ( a int, b int, c int, primary key p_b(b) /*T![clustered_index] CLUSTERED */)
+partition by range( a ) (
+partition p1 values less than (10),
+partition p2 values less than (20)
+);
+Error 1503 (HY000): A CLUSTERED INDEX must include all columns in the table's partitioning function
+drop table if exists test_global;
+create table test_global ( a int, b int, c int, primary key p_b_c(b, c) /*T![clustered_index] CLUSTERED */)
+partition by range( a ) (
+partition p1 values less than (10),
+partition p2 values less than (20)
+);
+Error 1503 (HY000): A CLUSTERED INDEX must include all columns in the table's partitioning function
+drop table if exists test_global;
+create table test_global ( a int, b int, c int, primary key (b) /*T![clustered_index] NONCLUSTERED */)
+partition by range( a ) (
+partition p1 values less than (10),
+partition p2 values less than (20)
+);
+insert into test_global values (1,2,2);
+insert into test_global values (11,2,2);
+Error 1062 (23000): Duplicate entry '2' for key 'test_global.PRIMARY'
+insert into test_global values (11,2,2);
+Error 1062 (23000): Duplicate entry '2' for key 'test_global.PRIMARY'
 drop table if exists p;
 create table p (a int, b int GENERATED ALWAYS AS (3*a-2*a) VIRTUAL, unique index idx(a)) partition by hash(b) partitions 2;
 insert into p (a) values  (1),(2),(3);

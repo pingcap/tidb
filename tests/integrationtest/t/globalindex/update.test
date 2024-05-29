@@ -28,4 +28,11 @@ insert into t values (1, 1, 1), (8, 8, 8), (11, 11, 11), (12, 12, 12);
 update t set a = 2, b = 12 where a = 11;
 rollback;
 
+insert into test_global values (1, 1, 1), (8, 8, 8), (11, 11, 11), (12, 12, 12);
+update test_global set a = 2 where a = 11;
+update test_global set a = 13 where a = 12;
+analyze table test_global;
+explain select * from test_global use index(idx_b) order by a;
+select * from test_global use index(idx_b) order by a;
+
 set tidb_enable_global_index=default;

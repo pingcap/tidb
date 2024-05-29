@@ -1,5 +1,50 @@
 set tidb_enable_global_index=true;
 
+# TestCreatePartitionTableWithGlobalIndex
+drop table if exists test_global;
+create table test_global ( a int, b int, c int, unique key p_b(b))
+partition by range( a ) (
+	partition p1 values less than (10),
+	partition p2 values less than (20)
+);
+insert into test_global values (1,2,2);
+-- error 1062
+insert into test_global values (11,2,2);
+-- error 1062
+insert into test_global values (11,2,2);
+
+--echo # NULL will not get 'duplicate key' error here
+insert into test_global(a,c) values (1,2);
+insert into test_global(a,c) values (11,2);
+
+drop table if exists test_global;
+-- error 1503
+create table test_global ( a int, b int, c int, primary key p_b(b) /*T![clustered_index] CLUSTERED */)
+partition by range( a ) (
+	partition p1 values less than (10),
+	partition p2 values less than (20)
+);
+
+drop table if exists test_global;
+-- error 1503
+create table test_global ( a int, b int, c int, primary key p_b_c(b, c) /*T![clustered_index] CLUSTERED */)
+partition by range( a ) (
+	partition p1 values less than (10),
+	partition p2 values less than (20)
+);
+
+drop table if exists test_global;
+create table test_global ( a int, b int, c int, primary key (b) /*T![clustered_index] NONCLUSTERED */)
+partition by range( a ) (
+	partition p1 values less than (10),
+	partition p2 values less than (20)
+);
+insert into test_global values (1,2,2);
+-- error 1062
+insert into test_global values (11,2,2);
+-- error 1062
+insert into test_global values (11,2,2);
+
 
 # TestIssue21732
 drop table if exists p;
