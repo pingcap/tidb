@@ -141,6 +141,29 @@ func (b *txnBackfillScheduler) resultChan() <-chan *backfillResult {
 	return b.resultCh
 }
 
+// NewReorgCopContext creates a CopContext for reorg
+func NewReorgCopContext(
+	store kv.Storage,
+	reorgMeta *model.DDLReorgMeta,
+	tblInfo *model.TableInfo,
+	allIdxInfo []*model.IndexInfo,
+	requestSource string,
+) (copr.CopContext, error) {
+	sessCtx, err := newSessCtx(store, reorgMeta)
+	if err != nil {
+		return nil, err
+	}
+	return copr.NewCopContext(
+		sessCtx.GetExprCtx(),
+		sessCtx.GetDistSQLCtx(),
+		sessCtx.GetSessionVars().StmtCtx.PushDownFlags(),
+		sessCtx.GetTableCtx(),
+		tblInfo,
+		allIdxInfo,
+		requestSource,
+	)
+}
+
 func newSessCtx(store kv.Storage, reorgMeta *model.DDLReorgMeta) (sessionctx.Context, error) {
 	sessCtx := newReorgSessCtx(store)
 	if err := initSessCtx(sessCtx, reorgMeta); err != nil {
@@ -517,18 +540,13 @@ func (b *ingestBackfillScheduler) createCopReqSenderPool() (*copReqSenderPool, e
 		}
 		allIndexInfos = append(allIndexInfos, indexInfo)
 	}
-	sessCtx, err := newSessCtx(ri.d.store, ri.ReorgMeta)
-	if err != nil {
-		logutil.Logger(b.ctx).Warn("cannot init cop request sender", zap.Error(err))
-		return nil, err
-	}
 	reqSrc := getDDLRequestSource(model.ActionAddIndex)
-	copCtx, err := copr.NewCopContext(b.tbl.Meta(), allIndexInfos, sessCtx, reqSrc)
+	copCtx, err := NewReorgCopContext(ri.d.store, ri.ReorgMeta, b.tbl.Meta(), allIndexInfos, reqSrc)
 	if err != nil {
 		logutil.Logger(b.ctx).Warn("cannot init cop request sender", zap.Error(err))
 		return nil, err
 	}
-	return newCopReqSenderPool(b.ctx, copCtx, sessCtx.GetStore(), b.taskCh, b.sessPool, b.checkpointMgr), nil
+	return newCopReqSenderPool(b.ctx, copCtx, ri.d.store, b.taskCh, b.sessPool, b.checkpointMgr), nil
 }
 
 func (b *ingestBackfillScheduler) expectedWorkerSize() (readerSize int, writerSize int) {
