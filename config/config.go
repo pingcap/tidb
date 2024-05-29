@@ -762,7 +762,7 @@ var defaultConf = Config{
 		EnableGlobalKill: false,
 	},
 	EnableCollectExecutionInfo: true,
-	EnableTelemetry:            true,
+	EnableTelemetry:            false,
 	Labels:                     make(map[string]string),
 	EnableGlobalIndex:          false,
 	Security: Security{
