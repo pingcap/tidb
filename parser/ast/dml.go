@@ -1497,6 +1497,8 @@ type SetOprSelectList struct {
 	With             *WithClause
 	AfterSetOperator *SetOprType
 	Selects          []Node
+	Limit            *Limit
+	OrderBy          *OrderByClause
 }
 
 // Restore implements Node interface.
