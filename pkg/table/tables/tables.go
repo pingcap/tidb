@@ -1360,8 +1360,13 @@ func (t *TableCommon) RemoveRecord(ctx sessionctx.Context, h kv.Handle, r []type
 	}
 	memBuffer.Release(sh)
 
+<<<<<<< HEAD
 	if shouldWriteBinlog(ctx, t.meta) {
 		cols := t.Cols()
+=======
+	if shouldWriteBinlog(ctx.GetSessionVars(), t.meta) {
+		cols := t.DeletableCols()
+>>>>>>> 6efce0f061d (executor: sync deletable columns to binlog when remove record (#53617))
 		colIDs := make([]int64, 0, len(cols)+1)
 		for _, col := range cols {
 			colIDs = append(colIDs, col.ID)
