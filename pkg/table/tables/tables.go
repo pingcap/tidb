@@ -1403,21 +1403,6 @@ func (t *TableCommon) RemoveRecord(ctx table.MutateContext, h kv.Handle, r []typ
 	return err
 }
 
-func projectPublicColData(t *TableCommon, deletableData []types.Datum) (publicData []types.Datum, colIDs []int64) {
-	publicColLen := len(t.Cols())
-	publicData = make([]types.Datum, 0, publicColLen)
-	colIDs = make([]int64, 0, publicColLen+1)
-	deletableCols := t.DeletableCols()
-	for i, d := range deletableData {
-		dCol := deletableCols[i]
-		if dCol.State == model.StatePublic {
-			publicData = append(publicData, d)
-			colIDs = append(colIDs, dCol.ID)
-		}
-	}
-	return publicData, colIDs
-}
-
 func (t *TableCommon) addInsertBinlog(ctx table.MutateContext, h kv.Handle, row []types.Datum, colIDs []int64) error {
 	mutation := t.getMutation(ctx)
 	handleData, err := h.Data()
