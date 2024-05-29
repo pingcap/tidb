@@ -50,6 +50,7 @@ go_library(
         "//pkg/util/mvmap",
         "//pkg/util/size",
         "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_pingcap_tipb//go-tipb",
     ],
 )

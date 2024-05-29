@@ -680,7 +680,7 @@ type ExchangerTunnel struct {
 	ErrCh       chan error
 }
 
-// RecvChunk recive tipb chunk
+// RecvChunk receive tipb chunk
 func (tunnel *ExchangerTunnel) RecvChunk() (tipbChunk *tipb.Chunk, err error) {
 	tipbChunk = <-tunnel.DataCh
 	select {

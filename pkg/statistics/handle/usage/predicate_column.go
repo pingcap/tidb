@@ -101,8 +101,8 @@ func LoadColumnStatsUsage(sctx sessionctx.Context, loc *time.Location) (map[mode
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
-			// If `last_used_at` is before the time when `set global enable_column_tracking = 0`, we should ignore it because
-			// `set global enable_column_tracking = 0` indicates all the predicate columns collected before.
+			// If `last_used_at` is before the time when `set global tidb_enable_column_tracking = 0`, we should ignore it because
+			// `set global tidb_enable_column_tracking = 0` indicates all the predicate columns collected before.
 			if disableTime == nil || gt.After(*disableTime) {
 				t := types.NewTime(types.FromGoTime(gt.In(loc)), mysql.TypeTimestamp, types.DefaultFsp)
 				statsUsage.LastUsedAt = &t
@@ -123,17 +123,24 @@ func LoadColumnStatsUsage(sctx sessionctx.Context, loc *time.Location) (map[mode
 
 // GetPredicateColumns returns IDs of predicate columns, which are the columns whose stats are used(needed) when generating query plans.
 func GetPredicateColumns(sctx sessionctx.Context, tableID int64) ([]int64, error) {
+	// This time is the time when `set global tidb_enable_column_tracking = 0`.
 	disableTime, err := getDisableColumnTrackingTime(sctx)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	rows, _, err := utilstats.ExecRows(sctx, "SELECT column_id, CONVERT_TZ(last_used_at, @@TIME_ZONE, '+00:00') FROM mysql.column_stats_usage WHERE table_id = %? AND last_used_at IS NOT NULL", tableID)
+	rows, _, err := utilstats.ExecRows(
+		sctx,
+		"SELECT column_id, CONVERT_TZ(last_used_at, @@TIME_ZONE, '+00:00') FROM mysql.column_stats_usage WHERE table_id = %? AND last_used_at IS NOT NULL",
+		tableID,
+	)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	columnIDs := make([]int64, 0, len(rows))
 	for _, row := range rows {
-		if row.IsNull(0) || row.IsNull(1) {
+		// Usually, it should not be NULL.
+		// This only happens when the last_used_at is not a valid time.
+		if row.IsNull(1) {
 			continue
 		}
 		colID := row.GetInt64(0)
@@ -141,8 +148,10 @@ func GetPredicateColumns(sctx sessionctx.Context, tableID int64) ([]int64, error
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		// If `last_used_at` is before the time when `set global enable_column_tracking = 0`, we don't regard the column as predicate column because
-		// `set global enable_column_tracking = 0` indicates all the predicate columns collected before.
+		// If `last_used_at` is before the time when `set global tidb_enable_column_tracking = 0`, we don't regard the column as predicate column because
+		// `set global tidb_enable_column_tracking = 0` indicates all the predicate columns collected before.
+		// TODO: Why do we need to do this? If column tracking is already disabled, we should not collect any column usage.
+		// If this refers to re-enabling column tracking, shouldn't we retain the column usage data from before it was disabled?
 		if disableTime == nil || gt.After(*disableTime) {
 			columnIDs = append(columnIDs, colID)
 		}
@@ -151,14 +160,22 @@ func GetPredicateColumns(sctx sessionctx.Context, tableID int64) ([]int64, error
 }
 
 // getDisableColumnTrackingTime reads the value of tidb_disable_column_tracking_time from mysql.tidb if it exists.
+// UTC time format is used to store the time.
 func getDisableColumnTrackingTime(sctx sessionctx.Context) (*time.Time, error) {
-	rows, fields, err := utilstats.ExecRows(sctx, "SELECT variable_value FROM %n.%n WHERE variable_name = %?", mysql.SystemDB, mysql.TiDBTable, variable.TiDBDisableColumnTrackingTime)
+	rows, fields, err := utilstats.ExecRows(
+		sctx,
+		"SELECT variable_value FROM %n.%n WHERE variable_name = %?",
+		mysql.SystemDB,
+		mysql.TiDBTable,
+		variable.TiDBDisableColumnTrackingTime,
+	)
 	if err != nil {
 		return nil, err
 	}
 	if len(rows) == 0 {
 		return nil, nil
 	}
+
 	d := rows[0].GetDatum(0, &fields[0].Column.FieldType)
 	// The string represents the UTC time when tidb_enable_column_tracking is set to 0.
 	value, err := d.ToString()
@@ -169,6 +186,7 @@ func getDisableColumnTrackingTime(sctx sessionctx.Context) (*time.Time, error) {
 	if err != nil {
 		return nil, err
 	}
+
 	return &t, nil
 }
 

@@ -25,7 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/util/mock"
+	"github.com/pingcap/tidb/pkg/util/intest"
 )
 
 // Pool is used to new Session.
@@ -40,18 +40,14 @@ type Pool struct {
 
 // NewSessionPool creates a new Session pool.
 func NewSessionPool(resPool *pools.ResourcePool, store kv.Storage) *Pool {
+	intest.AssertNotNil(resPool)
+	intest.AssertNotNil(store)
 	return &Pool{resPool: resPool, store: store}
 }
 
 // Get gets sessionCtx from context resource pool.
 // Please remember to call Put after you finished using sessionCtx.
 func (sg *Pool) Get() (sessionctx.Context, error) {
-	if sg.resPool == nil {
-		ctx := mock.NewContext()
-		ctx.Store = sg.store
-		return ctx, nil
-	}
-
 	sg.mu.Lock()
 	if sg.mu.closed {
 		sg.mu.Unlock()
@@ -78,10 +74,6 @@ func (sg *Pool) Get() (sessionctx.Context, error) {
 
 // Put returns sessionCtx to context resource pool.
 func (sg *Pool) Put(ctx sessionctx.Context) {
-	if sg.resPool == nil {
-		return
-	}
-
 	// no need to protect sg.resPool, even the sg.resPool is closed, the ctx still need to
 	// Put into resPool, because when resPool is closing, it will wait all the ctx returns, then resPool finish closing.
 	sg.resPool.Put(ctx.(pools.Resource))
@@ -93,7 +85,7 @@ func (sg *Pool) Close() {
 	sg.mu.Lock()
 	defer sg.mu.Unlock()
 	// prevent closing resPool twice.
-	if sg.mu.closed || sg.resPool == nil {
+	if sg.mu.closed {
 		return
 	}
 	logutil.DDLLogger().Info("closing session pool")

@@ -92,5 +92,5 @@ region-split-keys = 960000
 # transactions encounter locks, in milliseconds
 wait-for-lock-timeout = 1000
 
-# The duration between waking up lock waiter, in miliseconds
+# The duration between waking up lock waiter, in milliseconds
 wake-up-delay-duration = 100

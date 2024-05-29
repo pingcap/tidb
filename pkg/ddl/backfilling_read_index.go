@@ -105,8 +105,7 @@ func (r *readIndexExecutor) RunSubtask(ctx context.Context, subtask *proto.Subta
 		return err
 	}
 
-	sessCtx, err := newSessCtx(
-		r.d.store, r.job.ReorgMeta.SQLMode, r.job.ReorgMeta.Location, r.job.ReorgMeta.ResourceGroupName)
+	sessCtx, err := newSessCtx(r.d.store, r.job.ReorgMeta)
 	if err != nil {
 		return err
 	}
@@ -149,16 +148,8 @@ func (r *readIndexExecutor) Cleanup(ctx context.Context) error {
 	return nil
 }
 
-// MockDMLExecutionAddIndexSubTaskFinish is used to mock DML execution during distributed add index.
-var MockDMLExecutionAddIndexSubTaskFinish func()
-
 func (r *readIndexExecutor) OnFinished(ctx context.Context, subtask *proto.Subtask) error {
-	failpoint.Inject("mockDMLExecutionAddIndexSubTaskFinish", func(val failpoint.Value) {
-		//nolint:forcetypeassert
-		if val.(bool) {
-			MockDMLExecutionAddIndexSubTaskFinish()
-		}
-	})
+	failpoint.InjectCall("mockDMLExecutionAddIndexSubTaskFinish")
 	if len(r.cloudStorageURI) == 0 {
 		return nil
 	}

@@ -45,41 +45,40 @@ func onCreateSequence(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ err
 		return ver, errors.Trace(err)
 	}
 
-	ver, err = updateSchemaVersion(d, t, job)
+	err = createSequenceWithCheck(t, job, tbInfo)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
 
+	ver, err = updateSchemaVersion(d, t, job)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tbInfo)
+	return ver, nil
+}
+
+func createSequenceWithCheck(t *meta.Meta, job *model.Job, tbInfo *model.TableInfo) error {
 	switch tbInfo.State {
-	case model.StateNone:
+	case model.StateNone, model.StatePublic:
 		// none -> public
 		tbInfo.State = model.StatePublic
 		tbInfo.UpdateTS = t.StartTS
-		err = createSequenceWithCheck(t, job, schemaID, tbInfo)
+		err := checkTableInfoValid(tbInfo)
 		if err != nil {
-			return ver, errors.Trace(err)
+			job.State = model.JobStateCancelled
+			return errors.Trace(err)
 		}
-		// Finish this job.
-		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tbInfo)
-		return ver, nil
+		var sequenceBase int64
+		if tbInfo.Sequence.Increment >= 0 {
+			sequenceBase = tbInfo.Sequence.Start - 1
+		} else {
+			sequenceBase = tbInfo.Sequence.Start + 1
+		}
+		return t.CreateSequenceAndSetSeqValue(job.SchemaID, job.SchemaName, tbInfo, sequenceBase)
 	default:
-		return ver, dbterror.ErrInvalidDDLState.GenWithStackByArgs("sequence", tbInfo.State)
+		return dbterror.ErrInvalidDDLState.GenWithStackByArgs("sequence", tbInfo.State)
 	}
-}
-
-func createSequenceWithCheck(t *meta.Meta, job *model.Job, schemaID int64, tbInfo *model.TableInfo) error {
-	err := checkTableInfoValid(tbInfo)
-	if err != nil {
-		job.State = model.JobStateCancelled
-		return errors.Trace(err)
-	}
-	var sequenceBase int64
-	if tbInfo.Sequence.Increment >= 0 {
-		sequenceBase = tbInfo.Sequence.Start - 1
-	} else {
-		sequenceBase = tbInfo.Sequence.Start + 1
-	}
-	return t.CreateSequenceAndSetSeqValue(schemaID, job.SchemaName, tbInfo, sequenceBase)
 }
 
 func handleSequenceOptions(seqOptions []*ast.SequenceOption, sequenceInfo *model.SequenceInfo) {
