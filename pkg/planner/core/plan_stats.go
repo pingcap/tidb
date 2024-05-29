@@ -22,12 +22,12 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser/model"
-	"github.com/pingcap/tidb/pkg/planner/funcdep"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/table"
+	"github.com/pingcap/tidb/pkg/util/intset"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
@@ -52,7 +52,7 @@ func (collectPredicateColumnsPoint) optimize(_ context.Context, plan LogicalPlan
 	is := sessiontxn.GetTxnManager(plan.SCtx()).GetTxnInfoSchema()
 	statsHandle := domain.GetDomain(plan.SCtx()).StatsHandle()
 	tblID2Tbl := make(map[int64]table.Table)
-	physTblIDsWithNeededCols := funcdep.NewFastIntSet()
+	physTblIDsWithNeededCols := intset.NewFastIntSet()
 	for _, neededCol := range histNeededColumns {
 		physTblIDsWithNeededCols.Insert(int(neededCol.TableID))
 	}

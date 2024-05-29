@@ -17,7 +17,7 @@ package core
 import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/model"
-	"github.com/pingcap/tidb/pkg/planner/funcdep"
+	"github.com/pingcap/tidb/pkg/util/intset"
 	"golang.org/x/exp/maps"
 )
 
@@ -48,7 +48,7 @@ type columnStatsUsageCollector struct {
 
 	// visitedPhysTblIDs all ds.physicalTableID that have been visited.
 	// It's always collected, even collectHistNeededColumns is not set.
-	visitedPhysTblIDs *funcdep.FastIntSet
+	visitedPhysTblIDs *intset.FastIntSet
 
 	// collectVisitedTable indicates whether to collect visited table
 	collectVisitedTable bool
@@ -57,7 +57,7 @@ type columnStatsUsageCollector struct {
 }
 
 func newColumnStatsUsageCollector(collectMode uint64, enabledPlanCapture bool) *columnStatsUsageCollector {
-	set := funcdep.NewFastIntSet()
+	set := intset.NewFastIntSet()
 	collector := &columnStatsUsageCollector{
 		collectMode: collectMode,
 		// Pre-allocate a slice to reduce allocation, 8 doesn't have special meaning.
@@ -309,7 +309,7 @@ func (c *columnStatsUsageCollector) collectFromPlan(lp LogicalPlan) {
 func CollectColumnStatsUsage(lp LogicalPlan, predicate, histNeeded bool) (
 	[]model.TableItemID,
 	[]model.TableItemID,
-	*funcdep.FastIntSet,
+	*intset.FastIntSet,
 ) {
 	var mode uint64
 	if predicate {

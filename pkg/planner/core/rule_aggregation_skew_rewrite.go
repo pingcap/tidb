@@ -21,7 +21,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	fd "github.com/pingcap/tidb/pkg/planner/funcdep"
+	"github.com/pingcap/tidb/pkg/util/intset"
 )
 
 type skewDistinctAggRewriter struct {
@@ -95,7 +95,7 @@ func (a *skewDistinctAggRewriter) rewriteSkewDistinctAgg(agg *LogicalAggregation
 	groupCols := make([]*expression.Column, 0, 3)
 	// columns that should be used by firstrow(), which will be appended to
 	// bottomAgg schema and aggregate functions
-	firstRowCols := fd.NewFastIntSet()
+	firstRowCols := intset.NewFastIntSet()
 	for _, groupByItem := range agg.GroupByItems {
 		usedCols := expression.ExtractColumns(groupByItem)
 		groupCols = append(groupCols, usedCols...)
