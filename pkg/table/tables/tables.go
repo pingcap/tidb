@@ -1368,19 +1368,23 @@ func (t *TableCommon) RemoveRecord(ctx table.MutateContext, h kv.Handle, r []typ
 	memBuffer.Release(sh)
 
 	if shouldWriteBinlog(ctx.GetSessionVars(), t.meta) {
-		publicDt, colIDs := projectPublicColData(t, r)
+		cols := t.DeletableCols()
+		colIDs := make([]int64, 0, len(cols)+1)
+		for _, col := range cols {
+			colIDs = append(colIDs, col.ID)
+		}
 		var binlogRow []types.Datum
 		if !t.meta.PKIsHandle && !t.meta.IsCommonHandle {
 			colIDs = append(colIDs, model.ExtraHandleID)
-			binlogRow = make([]types.Datum, 0, len(publicDt)+1)
-			binlogRow = append(binlogRow, publicDt...)
+			binlogRow = make([]types.Datum, 0, len(r)+1)
+			binlogRow = append(binlogRow, r...)
 			handleData, err := h.Data()
 			if err != nil {
 				return err
 			}
 			binlogRow = append(binlogRow, handleData...)
 		} else {
-			binlogRow = publicDt
+			binlogRow = r
 		}
 		err = t.addDeleteBinlog(ctx, binlogRow, colIDs)
 	}
