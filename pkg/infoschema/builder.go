@@ -977,14 +977,19 @@ func RegisterVirtualTable(dbInfo *model.DBInfo, tableFromMeta tableFromMetaFunc)
 
 // NewBuilder creates a new Builder with a Handle.
 func NewBuilder(r autoid.Requirement, factory func() (pools.Resource, error), infoData *Data) *Builder {
-	return &Builder{
-		enableV2:     variable.SchemaCacheSize.Load() > 0,
+	builder := &Builder{
 		Requirement:  r,
 		infoschemaV2: NewInfoSchemaV2(r, infoData),
 		dirtyDB:      make(map[string]bool),
 		factory:      factory,
 		infoData:     infoData,
 	}
+	schemaCacheSize := variable.SchemaCacheSize.Load()
+	if schemaCacheSize > 0 {
+		infoData.tableCache.SetCapacity(uint64(schemaCacheSize))
+		builder.enableV2 = true
+	}
+	return builder
 }
 
 func tableBucketIdx(tableID int64) int {

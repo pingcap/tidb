@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/cost"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	fd "github.com/pingcap/tidb/pkg/planner/funcdep"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
@@ -202,7 +203,7 @@ func (p *LogicalJoin) ExtractFD() *fd.FDSet {
 func (p *LogicalJoin) extractFDForSemiJoin(filtersFromApply []expression.Expression) *fd.FDSet {
 	// 1: since semi join will keep the part or all rows of the outer table, it's outer FD can be saved.
 	// 2: the un-projected column will be left for the upper layer projection or already be pruned from bottom up.
-	outerFD, _ := p.children[0].ExtractFD(), p.children[1].ExtractFD()
+	outerFD, _ := p.Children()[0].ExtractFD(), p.Children()[1].ExtractFD()
 	fds := outerFD
 
 	eqCondSlice := expression.ScalarFuncs2Exprs(p.EqualConditions)
@@ -214,12 +215,12 @@ func (p *LogicalJoin) extractFDForSemiJoin(filtersFromApply []expression.Express
 
 	fds.MakeNotNull(notNullColsFromFilters)
 	fds.AddConstants(constUniqueIDs)
-	p.fdSet = fds
+	p.SetFDs(fds)
 	return fds
 }
 
 func (p *LogicalJoin) extractFDForInnerJoin(filtersFromApply []expression.Expression) *fd.FDSet {
-	leftFD, rightFD := p.children[0].ExtractFD(), p.children[1].ExtractFD()
+	leftFD, rightFD := p.Children()[0].ExtractFD(), p.Children()[1].ExtractFD()
 	fds := leftFD
 	fds.MakeCartesianProduct(rightFD)
 
@@ -255,19 +256,19 @@ func (p *LogicalJoin) extractFDForInnerJoin(filtersFromApply []expression.Expres
 		fds.GroupByCols.Insert(i)
 	}
 	fds.HasAggBuilt = fds.HasAggBuilt || rightFD.HasAggBuilt
-	p.fdSet = fds
+	p.SetFDs(fds)
 	return fds
 }
 
 func (p *LogicalJoin) extractFDForOuterJoin(filtersFromApply []expression.Expression) *fd.FDSet {
-	outerFD, innerFD := p.children[0].ExtractFD(), p.children[1].ExtractFD()
+	outerFD, innerFD := p.Children()[0].ExtractFD(), p.Children()[1].ExtractFD()
 	innerCondition := p.RightConditions
 	outerCondition := p.LeftConditions
 	outerCols, innerCols := intset.NewFastIntSet(), intset.NewFastIntSet()
-	for _, col := range p.children[0].Schema().Columns {
+	for _, col := range p.Children()[0].Schema().Columns {
 		outerCols.Insert(int(col.UniqueID))
 	}
-	for _, col := range p.children[1].Schema().Columns {
+	for _, col := range p.Children()[1].Schema().Columns {
 		innerCols.Insert(int(col.UniqueID))
 	}
 	if p.JoinType == RightOuterJoin {
@@ -349,7 +350,7 @@ func (p *LogicalJoin) extractFDForOuterJoin(filtersFromApply []expression.Expres
 
 	fds := outerFD
 	fds.MakeOuterJoin(innerFD, filterFD, outerCols, innerCols, &opt)
-	p.fdSet = fds
+	p.SetFDs(fds)
 	return fds
 }
 
@@ -455,7 +456,7 @@ func (p *LogicalJoin) columnSubstituteAll(schema *expression.Schema, exprs []exp
 
 		// If the columns used in the new filter all come from the left child,
 		// we can push this filter to it.
-		if expression.ExprFromSchema(newCond, p.children[0].Schema()) {
+		if expression.ExprFromSchema(newCond, p.Children()[0].Schema()) {
 			p.LeftConditions = append(p.LeftConditions, newCond)
 			p.EqualConditions = append(p.EqualConditions[:i], p.EqualConditions[i+1:]...)
 			continue
@@ -463,7 +464,7 @@ func (p *LogicalJoin) columnSubstituteAll(schema *expression.Schema, exprs []exp
 
 		// If the columns used in the new filter all come from the right
 		// child, we can push this filter to it.
-		if expression.ExprFromSchema(newCond, p.children[1].Schema()) {
+		if expression.ExprFromSchema(newCond, p.Children()[1].Schema()) {
 			p.RightConditions = append(p.RightConditions, newCond)
 			p.EqualConditions = append(p.EqualConditions[:i], p.EqualConditions[i+1:]...)
 			continue
@@ -893,7 +894,7 @@ func (p *LogicalProjection) ExtractFD() *fd.FDSet {
 	// select max(a) from t group by b, we should project both `a` & `b` to maintain the FD down here, even if select-fields only contain `a`.
 	fds.ProjectCols(outputColsUniqueIDs.Union(fds.GroupByCols))
 	// just trace it down in every operator for test checking.
-	p.fdSet = fds
+	p.SetFDs(fds)
 	return fds
 }
 
@@ -1072,7 +1073,7 @@ func (la *LogicalAggregation) ExtractFD() *fd.FDSet {
 	fds.GroupByCols = groupByColsUniqueIDs
 	fds.HasAggBuilt = true
 	// just trace it down in every operator for test checking.
-	la.fdSet = fds
+	la.SetFDs(fds)
 	return fds
 }
 
@@ -1160,7 +1161,7 @@ func (la *LogicalAggregation) GetUsedCols() (usedCols []*expression.Column) {
 
 // LogicalSelection represents a where or having predicate.
 type LogicalSelection struct {
-	baseLogicalPlan
+	logicalop.BaseLogicalPlan
 
 	// Originally the WHERE or ON condition is parsed into a single expression,
 	// but after we converted to CNF(Conjunctive normal form), it can be
@@ -1266,7 +1267,7 @@ func extractEquivalenceCols(conditions []expression.Expression, sctx base.PlanCo
 // ExtractFD implements the LogicalPlan interface.
 func (p *LogicalSelection) ExtractFD() *fd.FDSet {
 	// basically extract the children's fdSet.
-	fds := p.baseLogicalPlan.ExtractFD()
+	fds := p.BaseLogicalPlan.ExtractFD()
 	// collect the output columns' unique ID.
 	outputColsUniqueIDs := intset.NewFastIntSet()
 	notnullColsUniqueIDs := intset.NewFastIntSet()
@@ -1274,7 +1275,7 @@ func (p *LogicalSelection) ExtractFD() *fd.FDSet {
 	// join's schema will miss t2.a while join.full schema has. since selection
 	// itself doesn't contain schema, extracting schema should tell them apart.
 	var columns []*expression.Column
-	if join, ok := p.children[0].(*LogicalJoin); ok && join.fullSchema != nil {
+	if join, ok := p.Children()[0].(*LogicalJoin); ok && join.fullSchema != nil {
 		columns = join.fullSchema.Columns
 	} else {
 		columns = p.Schema().Columns
@@ -1300,7 +1301,7 @@ func (p *LogicalSelection) ExtractFD() *fd.FDSet {
 	}
 	fds.ProjectCols(outputColsUniqueIDs)
 	// just trace it down in every operator for test checking.
-	p.fdSet = fds
+	p.SetFDs(fds)
 	return fds
 }
 
@@ -1326,7 +1327,7 @@ type LogicalApply struct {
 func (la *LogicalApply) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
 	corCols := la.LogicalJoin.ExtractCorrelatedCols()
 	for i := len(corCols) - 1; i >= 0; i-- {
-		if la.children[0].Schema().Contains(&corCols[i].Column) {
+		if la.Children()[0].Schema().Contains(&corCols[i].Column) {
 			corCols = append(corCols[:i], corCols[i+1:]...)
 		}
 	}
@@ -1335,7 +1336,7 @@ func (la *LogicalApply) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
 
 // ExtractFD implements the LogicalPlan interface.
 func (la *LogicalApply) ExtractFD() *fd.FDSet {
-	innerPlan := la.children[1]
+	innerPlan := la.Children()[1]
 	// build the join correlated equal condition for apply join, this equal condition is used for deriving the transitive FD between outer and inner side.
 	correlatedCols := coreusage.ExtractCorrelatedCols4LogicalPlan(innerPlan)
 	deduplicateCorrelatedCols := make(map[int64]*expression.CorrelatedColumn)
@@ -1371,7 +1372,7 @@ func (la *LogicalApply) ExtractFD() *fd.FDSet {
 
 // LogicalMaxOneRow checks if a query returns no more than one row.
 type LogicalMaxOneRow struct {
-	baseLogicalPlan
+	logicalop.BaseLogicalPlan
 }
 
 // LogicalTableDual represents a dual table plan.
@@ -1411,7 +1412,7 @@ type LogicalMemTable struct {
 
 // LogicalUnionScan is used in non read-only txn or for scanning a local temporary table whose snapshot data is located in memory.
 type LogicalUnionScan struct {
-	baseLogicalPlan
+	logicalop.BaseLogicalPlan
 
 	conditions []expression.Expression
 
@@ -1909,7 +1910,7 @@ type LogicalPartitionUnionAll struct {
 
 // LogicalSort stands for the order by plan.
 type LogicalSort struct {
-	baseLogicalPlan
+	logicalop.BaseLogicalPlan
 
 	ByItems []*util.ByItems
 }
@@ -1925,7 +1926,7 @@ func (ls *LogicalSort) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
 
 // LogicalTopN represents a top-n plan.
 type LogicalTopN struct {
-	baseLogicalPlan
+	logicalop.BaseLogicalPlan
 
 	ByItems []*util.ByItems
 	// PartitionBy is used for extended TopN to consider K heaps. Used by rule_derive_topn_from_window
@@ -1972,7 +1973,7 @@ func (lt *LogicalLimit) GetPartitionBy() []property.SortItem {
 
 // LogicalLock represents a select lock plan.
 type LogicalLock struct {
-	baseLogicalPlan
+	logicalop.BaseLogicalPlan
 
 	Lock         *ast.SelectLockInfo
 	tblID2Handle map[int64][]util.HandleCols
@@ -2334,10 +2335,10 @@ func (p *LogicalCTE) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
 //
 // We use this property to do complex optimizations for CTEs.
 type LogicalSequence struct {
-	baseLogicalPlan
+	logicalop.BaseLogicalPlan
 }
 
 // Schema returns its last child(which is the main query plan)'s schema.
 func (p *LogicalSequence) Schema() *expression.Schema {
-	return p.children[len(p.children)-1].Schema()
+	return p.Children()[p.ChildLen()-1].Schema()
 }
