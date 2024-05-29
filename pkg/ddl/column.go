@@ -172,6 +172,9 @@ func onAddColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error)
 	case model.StateWriteReorganization:
 		// reorganization -> public
 		// Adjust table column offset.
+		failpoint.Inject("onAddColumnStateWriteReorg", func() {
+			OnAddColumnStateWriteReorgForTest()
+		})
 		offset, err := LocateOffsetToMove(columnInfo.Offset, pos, tblInfo)
 		if err != nil {
 			return ver, errors.Trace(err)
@@ -192,6 +195,9 @@ func onAddColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error)
 
 	return ver, errors.Trace(err)
 }
+
+// OnAddColumnStateWriteReorgForTest is only used for test.
+var OnAddColumnStateWriteReorgForTest func()
 
 // CheckAfterPositionExists makes sure the column specified in AFTER clause is exists.
 // For example, ALTER TABLE t ADD COLUMN c3 INT AFTER c1.
@@ -266,6 +272,9 @@ func onDropColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) 
 		}
 	case model.StateWriteOnly:
 		// write only -> delete only
+		failpoint.Inject("onDropColumnStateWriteOnly", func() {
+			OnDropColumnStateWriteOnlyForTest()
+		})
 		colInfo.State = model.StateDeleteOnly
 		tblInfo.MoveColumnInfo(colInfo.Offset, len(tblInfo.Columns)-1)
 		if len(idxInfos) > 0 {
@@ -315,6 +324,9 @@ func onDropColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) 
 	job.SchemaState = colInfo.State
 	return ver, errors.Trace(err)
 }
+
+// OnDropColumnStateWriteOnlyForTest is only used for test.
+var OnDropColumnStateWriteOnlyForTest func()
 
 func checkDropColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (*model.TableInfo, *model.ColumnInfo, []*model.IndexInfo, bool /* ifExists */, error) {
 	schemaID := job.SchemaID
