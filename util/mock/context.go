@@ -368,6 +368,44 @@ func (c *Context) ReleaseAllAdvisoryLocks() int {
 	return 0
 }
 
+<<<<<<< HEAD:util/mock/context.go
+=======
+// EncodeSessionStates implements sessionctx.Context EncodeSessionStates interface.
+func (*Context) EncodeSessionStates(context.Context, sessionctx.Context, *sessionstates.SessionStates) error {
+	return errors.Errorf("Not Supported")
+}
+
+// DecodeSessionStates implements sessionctx.Context DecodeSessionStates interface.
+func (*Context) DecodeSessionStates(context.Context, sessionctx.Context, *sessionstates.SessionStates) error {
+	return errors.Errorf("Not Supported")
+}
+
+// GetExtensions returns the `*extension.SessionExtensions` object
+func (*Context) GetExtensions() *extension.SessionExtensions {
+	return nil
+}
+
+// EnableSandBoxMode enable the sandbox mode.
+func (c *Context) EnableSandBoxMode() {
+	c.inSandBoxMode = true
+}
+
+// DisableSandBoxMode enable the sandbox mode.
+func (c *Context) DisableSandBoxMode() {
+	c.inSandBoxMode = false
+}
+
+// InSandBoxMode indicates that this Session is in sandbox mode
+func (c *Context) InSandBoxMode() bool {
+	return c.inSandBoxMode
+}
+
+// SetInfoSchema is to set info shema for the test.
+func (c *Context) SetInfoSchema(is sessionctx.InfoschemaMetaVersion) {
+	c.is = is
+}
+
+>>>>>>> 70452024e78 (planner: use TxnCtx.InfoSchema to prevent schema inconsistency (#49947)):pkg/util/mock/context.go
 // Close implements the sessionctx.Context interface.
 func (c *Context) Close() {
 }
