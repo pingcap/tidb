@@ -2040,7 +2040,7 @@ func (w *worker) executeDistTask(t table.Table, reorgInfo *reorgInfo) error {
 
 	taskType := proto.Backfill
 	taskKey := fmt.Sprintf("ddl/%s/%d", taskType, reorgInfo.Job.ID)
-	g, ctx := errgroup.WithContext(context.Background())
+	g, ctx := errgroup.WithContext(w.ctx)
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalDistTask)
 
 	done := make(chan struct{})
