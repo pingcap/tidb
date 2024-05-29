@@ -1114,15 +1114,17 @@ func (t *TableCommon) AddRecord(sctx table.MutateContext, r []types.Datum, opts 
 		sessVars.TxnCtx.InsertTTLRowsCount += 1
 	}
 
-	colSize := make(map[int64]int64, len(r))
+	colSize := make(
+		[]variable.ColSize, len(t.Cols()),
+	)
 	for id, col := range t.Cols() {
 		size, err := codec.EstimateValueSize(sc.TypeCtx(), r[id])
 		if err != nil {
 			continue
 		}
-		colSize[col.ID] = int64(size) - 1
+		colSize[id] = variable.ColSize{ColId: col.ID, Size: int64(size - 1)}
 	}
-	sessVars.TxnCtx.UpdateDeltaForTable(t.physicalTableID, 1, 1, colSize)
+	sessVars.TxnCtx.UpdateDeltaForTableFromColSlice(t.physicalTableID, 1, 1, colSize)
 	return recordID, nil
 }
 
