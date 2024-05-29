@@ -27,6 +27,13 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
+<<<<<<< HEAD
+=======
+	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/util/dbutil"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+>>>>>>> 6837bd588d7 (lightning: support auto_random column in composite primary key (#41463))
 )
 
 type utilSuite struct{}
@@ -169,4 +176,29 @@ func (s *utilSuite) TestInterpolateMySQLString(c *C) {
 	c.Assert(common.InterpolateMySQLString("123"), Equals, "'123'")
 	c.Assert(common.InterpolateMySQLString("1'23"), Equals, "'1''23'")
 	c.Assert(common.InterpolateMySQLString("1'2''3"), Equals, "'1''2''''3'")
+}
+
+func TestGetAutoRandomColumn(t *testing.T) {
+	tests := []struct {
+		ddl     string
+		colName string
+	}{
+		{"create table t(c int)", ""},
+		{"create table t(c int auto_increment)", ""},
+		{"create table t(c bigint auto_random primary key)", "c"},
+		{"create table t(a int, c bigint auto_random primary key)", "c"},
+		{"create table t(c bigint auto_random, a int, primary key(c,a))", "c"},
+		{"create table t(a int, c bigint auto_random, primary key(c,a))", "c"},
+	}
+	p := parser.New()
+	for _, tt := range tests {
+		tableInfo, err := dbutil.GetTableInfoBySQL(tt.ddl, p)
+		require.NoError(t, err)
+		col := common.GetAutoRandomColumn(tableInfo)
+		if tt.colName == "" {
+			require.Nil(t, col, tt.ddl)
+		} else {
+			require.Equal(t, tt.colName, col.Name.L, tt.ddl)
+		}
+	}
 }
