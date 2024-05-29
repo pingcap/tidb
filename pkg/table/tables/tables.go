@@ -73,7 +73,7 @@ type TableCommon struct {
 	// TODO: we lazily initialize them because they could possibly consume too much unnecessary
 	//  memory. We can move these initialization to initTableCommon after infoschema v2 is enabled.
 	//
-	// sync.Once is needed to avoid data race because TableCommon may accessed concurrently
+	// sync.Once is needed to avoid data race because TableCommon may be accessed concurrently
 	// They are pointers to support copying TableCommon to CachedTable and PartitionedTable
 	publicColumns                       []*table.Column
 	publicColumnsOnce                   *sync.Once
