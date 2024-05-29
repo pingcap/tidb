@@ -177,12 +177,12 @@ func TestGetCPUProfile(t *testing.T) {
 	defer cancel()
 	testutil.MockCPULoad(ctx, "sql", "sql_digest", "plan_digest")
 	var wg sync.WaitGroup
-	for i := 0; i < 3; i++ {
+	for i := 0; i < 10; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			buf := bytes.NewBuffer(nil)
-			err = getCPUProfile(time.Millisecond*400, buf)
+			err = getCPUProfile(time.Millisecond*1000, buf)
 			require.NoError(t, err)
 			profileData, err := profile.Parse(buf)
 			require.NoError(t, err)

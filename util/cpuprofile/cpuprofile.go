@@ -24,6 +24,7 @@ import (
 
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 )
 
 // DefProfileDuration exports for testing.
@@ -56,6 +57,7 @@ func StopCPUProfiler() {
 // Normally, the registered ProfileConsumer will receive the cpu profile data per second.
 // If the ProfileConsumer (channel) is full, the latest cpu profile data will not be sent to it.
 // This function is thread-safe.
+// WARN: ProfileConsumer should not be closed before unregister.
 func Register(ch ProfileConsumer) {
 	globalCPUProfiler.register(ch)
 }
@@ -203,6 +205,13 @@ func (p *parallelCPUProfiler) consumersCount() int {
 
 func (p *parallelCPUProfiler) sendToConsumers(data *ProfileData) {
 	p.Lock()
+	defer func() {
+		p.Unlock()
+		if r := recover(); r != nil {
+			logutil.BgLogger().Error("parallel cpu profiler panic", zap.Any("recover", r))
+		}
+	}()
+
 	for c := range p.cs {
 		select {
 		case c <- data:
@@ -210,5 +219,4 @@ func (p *parallelCPUProfiler) sendToConsumers(data *ProfileData) {
 			// ignore
 		}
 	}
-	p.Unlock()
 }
