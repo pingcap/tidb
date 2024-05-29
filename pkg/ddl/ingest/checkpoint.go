@@ -92,9 +92,12 @@ type taskCheckpoint struct {
 	lastBatchRead bool
 }
 
-// FlushController is an interface to control the flush of the checkpoint.
+// FlushController is an interface to control the flush of data so after it
+// returns caller can save checkpoint.
 type FlushController interface {
-	Flush(indexID int64, mode FlushMode) (flushed, imported bool, err error)
+	// Flush checks if al engines need to be flushed and imported based on given
+	// FlushMode. It's concurrent safe.
+	Flush(mode FlushMode) (flushed, imported bool, errIdxID int64, err error)
 }
 
 // NewCheckpointManager creates a new checkpoint manager.
@@ -203,7 +206,7 @@ func (s *CheckpointManager) UpdateWrittenKeys(taskID int, delta int) error {
 	cp.writtenKeys += delta
 	s.mu.Unlock()
 
-	flushed, imported, _, err := TryFlushAllIndexes(s.flushCtrl, FlushModeAuto, s.indexIDs)
+	flushed, imported, _, err := s.flushCtrl.Flush(FlushModeAuto)
 	if !flushed || err != nil {
 		return err
 	}
@@ -258,7 +261,7 @@ func (s *CheckpointManager) Close() {
 // Flush flushed the data and updates checkpoint.
 func (s *CheckpointManager) Flush() {
 	// use FlushModeForceFlushNoImport to finish the flush process timely.
-	_, _, _, err := TryFlushAllIndexes(s.flushCtrl, FlushModeForceFlushNoImport, s.indexIDs)
+	_, _, _, err := s.flushCtrl.Flush(FlushModeForceFlushNoImport)
 	if err != nil {
 		s.logger.Warn("flush local engine failed", zap.Error(err))
 	}

@@ -978,18 +978,7 @@ func decodeHandleInIndexKey(keySuffix []byte) (kv.Handle, error) {
 }
 
 func decodeHandleInIndexValue(value []byte) (handle kv.Handle, err error) {
-	var seg IndexValueSegments
-	if getIndexVersion(value) == 0 {
-		// For Old Encoding (IntHandle without any others options)
-		if len(value) <= MaxOldEncodeValueLen {
-			return decodeIntHandleInIndexValue(value), nil
-		}
-		// For IndexValueVersion0
-		seg = SplitIndexValue(value)
-	} else {
-		// For IndexValueForClusteredIndexVersion1
-		seg = SplitIndexValueForClusteredIndexVersion1(value)
-	}
+	seg := SplitIndexValue(value)
 	if len(seg.IntHandle) != 0 {
 		handle = decodeIntHandleInIndexValue(seg.IntHandle)
 	}
@@ -1697,7 +1686,7 @@ func DecodeHandleInUniqueIndexValue(data []byte, isCommonHandle bool) (kv.Handle
 		return kv.IntHandle(int64(binary.BigEndian.Uint64(data[dLen-int(data[0]):]))), nil
 	}
 	if getIndexVersion(data) == 1 {
-		seg := SplitIndexValueForClusteredIndexVersion1(data)
+		seg := splitIndexValueForClusteredIndexVersion1(data)
 		h, err := kv.NewCommonHandle(seg.CommonHandle)
 		if err != nil {
 			return nil, err
@@ -1730,8 +1719,23 @@ type IndexValueSegments struct {
 	IntHandle      []byte
 }
 
-// SplitIndexValue splits index value into segments.
+// SplitIndexValue decodes segments in index value for both non-clustered and clustered table.
 func SplitIndexValue(value []byte) (segs IndexValueSegments) {
+	if getIndexVersion(value) == 0 {
+		// For Old Encoding (IntHandle without any others options)
+		if len(value) <= MaxOldEncodeValueLen {
+			segs.IntHandle = value
+			return segs
+		}
+		// For IndexValueVersion0
+		return splitIndexValueForIndexValueVersion0(value)
+	}
+	// For IndexValueForClusteredIndexVersion1
+	return splitIndexValueForClusteredIndexVersion1(value)
+}
+
+// splitIndexValueForIndexValueVersion0 splits index value into segments.
+func splitIndexValueForIndexValueVersion0(value []byte) (segs IndexValueSegments) {
 	tailLen := int(value[0])
 	tail := value[len(value)-tailLen:]
 	value = value[1 : len(value)-tailLen]
@@ -1754,8 +1758,8 @@ func SplitIndexValue(value []byte) (segs IndexValueSegments) {
 	return
 }
 
-// SplitIndexValueForClusteredIndexVersion1 splits index value into segments.
-func SplitIndexValueForClusteredIndexVersion1(value []byte) (segs IndexValueSegments) {
+// splitIndexValueForClusteredIndexVersion1 splits index value into segments.
+func splitIndexValueForClusteredIndexVersion1(value []byte) (segs IndexValueSegments) {
 	tailLen := int(value[0])
 	// Skip the tailLen and version info.
 	value = value[3 : len(value)-tailLen]
@@ -1780,7 +1784,7 @@ func decodeIndexKvForClusteredIndexVersion1(key, value []byte, colsLen int, hdSt
 	var keySuffix []byte
 	var handle kv.Handle
 	var err error
-	segs := SplitIndexValueForClusteredIndexVersion1(value)
+	segs := splitIndexValueForClusteredIndexVersion1(value)
 	resultValues, keySuffix, err = CutIndexKeyNew(key, colsLen)
 	if err != nil {
 		return nil, err
@@ -1830,7 +1834,7 @@ func decodeIndexKvGeneral(key, value []byte, colsLen int, hdStatus HandleStatus,
 	var keySuffix []byte
 	var handle kv.Handle
 	var err error
-	segs := SplitIndexValue(value)
+	segs := splitIndexValueForIndexValueVersion0(value)
 	resultValues, keySuffix, err = CutIndexKeyNew(key, colsLen)
 	if err != nil {
 		return nil, err
@@ -1887,10 +1891,10 @@ func IndexKVIsUnique(value []byte) bool {
 		return len(value) == 8
 	}
 	if getIndexVersion(value) == 1 {
-		segs := SplitIndexValueForClusteredIndexVersion1(value)
+		segs := splitIndexValueForClusteredIndexVersion1(value)
 		return segs.CommonHandle != nil
 	}
-	segs := SplitIndexValue(value)
+	segs := splitIndexValueForIndexValueVersion0(value)
 	return segs.IntHandle != nil || segs.CommonHandle != nil
 }
 

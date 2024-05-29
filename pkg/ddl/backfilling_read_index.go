@@ -105,8 +105,7 @@ func (r *readIndexExecutor) RunSubtask(ctx context.Context, subtask *proto.Subta
 		return err
 	}
 
-	sessCtx, err := newSessCtx(
-		r.d.store, r.job.ReorgMeta.SQLMode, r.job.ReorgMeta.Location, r.job.ReorgMeta.ResourceGroupName)
+	sessCtx, err := newSessCtx(r.d.store, r.job.ReorgMeta)
 	if err != nil {
 		return err
 	}
@@ -133,12 +132,7 @@ func (r *readIndexExecutor) RunSubtask(ctx context.Context, subtask *proto.Subta
 	if opCtx.OperatorErr() != nil {
 		return opCtx.OperatorErr()
 	}
-	if err != nil {
-		return err
-	}
-
-	r.bc.ResetWorkers(r.job.ID)
-	return nil
+	return err
 }
 
 func (r *readIndexExecutor) RealtimeSummary() *execute.SubtaskSummary {
@@ -154,16 +148,8 @@ func (r *readIndexExecutor) Cleanup(ctx context.Context) error {
 	return nil
 }
 
-// MockDMLExecutionAddIndexSubTaskFinish is used to mock DML execution during distributed add index.
-var MockDMLExecutionAddIndexSubTaskFinish func()
-
 func (r *readIndexExecutor) OnFinished(ctx context.Context, subtask *proto.Subtask) error {
-	failpoint.Inject("mockDMLExecutionAddIndexSubTaskFinish", func(val failpoint.Value) {
-		//nolint:forcetypeassert
-		if val.(bool) {
-			MockDMLExecutionAddIndexSubTaskFinish()
-		}
-	})
+	failpoint.InjectCall("mockDMLExecutionAddIndexSubTaskFinish")
 	if len(r.cloudStorageURI) == 0 {
 		return nil
 	}
@@ -226,15 +212,17 @@ func (r *readIndexExecutor) buildLocalStorePipeline(
 		return nil, err
 	}
 	d := r.d
-	engines := make([]ingest.Engine, 0, len(r.indexes))
+	indexIDs := make([]int64, 0, len(r.indexes))
 	for _, index := range r.indexes {
-		ei, err := r.bc.Register(r.job.ID, index.ID, r.job.SchemaName, r.job.TableName)
-		if err != nil {
-			tidblogutil.Logger(opCtx).Warn("cannot register new engine", zap.Error(err),
-				zap.Int64("job ID", r.job.ID), zap.Int64("index ID", index.ID))
-			return nil, err
-		}
-		engines = append(engines, ei)
+		indexIDs = append(indexIDs, index.ID)
+	}
+	engines, err := r.bc.Register(indexIDs, r.job.TableName)
+	if err != nil {
+		tidblogutil.Logger(opCtx).Error("cannot register new engine",
+			zap.Error(err),
+			zap.Int64("job ID", r.job.ID),
+			zap.Int64s("index IDs", indexIDs))
+		return nil, err
 	}
 	counter := metrics.BackfillTotalCounter.WithLabelValues(
 		metrics.GenerateReorgLabel("add_idx_rate", r.job.SchemaName, tbl.Meta().Name.O))

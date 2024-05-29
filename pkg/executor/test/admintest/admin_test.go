@@ -1779,6 +1779,98 @@ func TestAdminCheckTableErrorLocateForClusterIndex(t *testing.T) {
 	}
 }
 
+func TestAdminCleanUpGlobalIndex(t *testing.T) {
+	store, domain := testkit.CreateMockStoreAndDomain(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists admin_test")
+
+	tk.MustExec("set tidb_enable_global_index = true")
+	tk.MustExec("create table admin_test (a int, b int, c int, unique key uidx_a(a)) partition by hash(c) partitions 5")
+	tk.MustExec("insert admin_test values (-10, -20, 1), (-1, -10, 2), (1, 11, 3), (2, 12, 0), (5, 15, -1), (10, 20, -2), (20, 30, -3)")
+	tk.MustExec("analyze table admin_test")
+
+	// Make some corrupted index. Build the index information.
+	sctx := mock.NewContext()
+	sctx.Store = store
+	is := domain.InfoSchema()
+	dbName := model.NewCIStr("test")
+	tblName := model.NewCIStr("admin_test")
+	tbl, err := is.TableByName(dbName, tblName)
+	require.NoError(t, err)
+	tblInfo := tbl.Meta()
+	idxInfo := tblInfo.Indices[0]
+	require.True(t, idxInfo.Global)
+	idx := tbl.Indices()[0]
+	require.NotNil(t, idx)
+
+	// Reduce one row of table.
+	// Index count > table count, (2, 12, 0) is deleted.
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	err = txn.Delete(tablecodec.EncodeRowKey(tblInfo.GetPartitionInfo().Definitions[0].ID, kv.IntHandle(4).Encoded()))
+	require.NoError(t, err)
+	err = txn.Commit(context.Background())
+	require.NoError(t, err)
+	err = tk.ExecToErr("admin check table admin_test")
+	require.Error(t, err)
+	require.True(t, consistency.ErrAdminCheckInconsistent.Equal(err))
+
+	r := tk.MustQuery("admin cleanup index admin_test uidx_a")
+	r.Check(testkit.Rows("1"))
+	err = tk.ExecToErr("admin check table admin_test")
+	require.NoError(t, err)
+	require.Len(t, tk.MustQuery("select * from admin_test use index(uidx_a)").Rows(), 6)
+}
+
+func TestAdminRecoverGlobalIndex(t *testing.T) {
+	store, domain := testkit.CreateMockStoreAndDomain(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists admin_test")
+
+	tk.MustExec("set tidb_enable_global_index = true")
+	tk.MustExec("create table admin_test (a int, b int, c int, unique key uidx_a(a)) partition by hash(c) partitions 5")
+	tk.MustExec("insert admin_test values (-10, -20, 1), (-1, -10, 2), (1, 11, 3), (2, 12, 0), (5, 15, -1), (10, 20, -2), (20, 30, -3)")
+	tk.MustExec("analyze table admin_test")
+
+	// Make some corrupted index. Build the index information.
+	sctx := mock.NewContext()
+	sctx.Store = store
+	is := domain.InfoSchema()
+	dbName := model.NewCIStr("test")
+	tblName := model.NewCIStr("admin_test")
+	tbl, err := is.TableByName(dbName, tblName)
+	require.NoError(t, err)
+	tblInfo := tbl.Meta()
+	idxInfo := tblInfo.Indices[0]
+	require.True(t, idxInfo.Global)
+	idx := tbl.Indices()[0]
+	require.NotNil(t, idx)
+
+	indexOpr := tables.NewIndex(tblInfo.GetPartitionInfo().Definitions[2].ID, tblInfo, idxInfo)
+
+	// Reduce one row of index.
+	// Index count < table count, (-1, -10, 2) is deleted.
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	err = indexOpr.Delete(tk.Session().GetTableCtx(), txn, []types.Datum{types.NewIntDatum(-1)}, kv.IntHandle(2))
+	require.NoError(t, err)
+	err = txn.Commit(context.Background())
+	require.NoError(t, err)
+	err = tk.ExecToErr("admin check table admin_test")
+	require.Error(t, err)
+	require.True(t, consistency.ErrAdminCheckInconsistent.Equal(err))
+
+	r := tk.MustQuery("admin recover index admin_test uidx_a")
+	r.Check(testkit.Rows("1 7"))
+	err = tk.ExecToErr("admin check table admin_test")
+	require.NoError(t, err)
+	require.Len(t, tk.MustQuery("select * from admin_test use index(uidx_a)").Rows(), 7)
+}
+
 func TestAdminCheckGlobalIndex(t *testing.T) {
 	store, domain := testkit.CreateMockStoreAndDomain(t)
 

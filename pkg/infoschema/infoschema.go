@@ -120,6 +120,36 @@ func MockInfoSchema(tbList []*model.TableInfo) InfoSchema {
 		bucketIdx := tableBucketIdx(tb.ID)
 		result.sortedTablesBuckets[bucketIdx] = append(result.sortedTablesBuckets[bucketIdx], tbl)
 	}
+	// Add a system table.
+	tables := []*model.TableInfo{
+		{
+			// Use a very big ID to avoid conflict with normal tables.
+			ID:   9999,
+			Name: model.NewCIStr("stats_meta"),
+			Columns: []*model.ColumnInfo{
+				{
+					State:  model.StatePublic,
+					Offset: 0,
+					Name:   model.NewCIStr("a"),
+					ID:     1,
+				},
+			},
+			State: model.StatePublic,
+		},
+	}
+	mysqlDBInfo := &model.DBInfo{ID: 2, Name: model.NewCIStr("mysql"), Tables: tables}
+	tableNames = &schemaTables{
+		dbInfo: mysqlDBInfo,
+		tables: make(map[string]table.Table),
+	}
+	result.addSchema(tableNames)
+	for _, tb := range tables {
+		tb.DBID = mysqlDBInfo.ID
+		tbl := table.MockTableFromMeta(tb)
+		tableNames.tables[tb.Name.L] = tbl
+		bucketIdx := tableBucketIdx(tb.ID)
+		result.sortedTablesBuckets[bucketIdx] = append(result.sortedTablesBuckets[bucketIdx], tbl)
+	}
 	for i := range result.sortedTablesBuckets {
 		slices.SortFunc(result.sortedTablesBuckets[i], func(i, j table.Table) int {
 			return cmp.Compare(i.Meta().ID, j.Meta().ID)

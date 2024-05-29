@@ -1,0 +1,45 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "prealloc_db",
+    srcs = ["db.go"],
+    importpath = "github.com/pingcap/tidb/br/pkg/restore/internal/prealloc_db",
+    visibility = ["//br/pkg/restore:__subpackages__"],
+    deps = [
+        "//br/pkg/glue",
+        "//br/pkg/metautil",
+        "//br/pkg/restore",
+        "//br/pkg/restore/internal/prealloc_table_id",
+        "//br/pkg/utils",
+        "//pkg/ddl",
+        "//pkg/kv",
+        "//pkg/parser/model",
+        "//pkg/parser/mysql",
+        "//pkg/sessionctx/variable",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_log//:log",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "prealloc_db_test",
+    timeout = "short",
+    srcs = ["db_test.go"],
+    flaky = True,
+    shard_count = 4,
+    deps = [
+        ":prealloc_db",
+        "//br/pkg/gluetidb",
+        "//br/pkg/metautil",
+        "//br/pkg/restore",
+        "//br/pkg/utiltest",
+        "//pkg/meta/autoid",
+        "//pkg/parser/model",
+        "//pkg/parser/mysql",
+        "//pkg/parser/types",
+        "//pkg/testkit",
+        "@com_github_stretchr_testify//assert",
+        "@com_github_stretchr_testify//require",
+    ],
+)

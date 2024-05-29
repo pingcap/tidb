@@ -25,7 +25,6 @@ import (
 	"path"
 	"path/filepath"
 	"sort"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -43,7 +42,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/br/pkg/storage"
-	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
@@ -66,6 +64,14 @@ import (
 	"google.golang.org/grpc/encoding"
 	"google.golang.org/grpc/status"
 )
+
+var GetSplitConfFromStore = getSplitConfFromStore
+
+func SetGetSplitConfFromStoreFunc(
+	fn func(ctx context.Context, host string, tls *common.TLS) (splitSize int64, regionSplitKeys int64, err error),
+) {
+	getSplitConfFromStoreFunc = fn
+}
 
 func TestNextKey(t *testing.T) {
 	require.Equal(t, []byte{}, nextKey([]byte{}))
@@ -1099,39 +1105,6 @@ func TestLocalWriteAndIngestPairsFailFast(t *testing.T) {
 	require.Error(t, err)
 	require.Regexp(t, "the remaining storage capacity of TiKV.*", err.Error())
 	require.Len(t, jobCh, 0)
-}
-
-func TestGetRegionSplitSizeKeys(t *testing.T) {
-	allStores := []*metapb.Store{
-		{
-			Address:       "172.16.102.1:20160",
-			StatusAddress: "0.0.0.0:20180",
-		},
-		{
-			Address:       "172.16.102.2:20160",
-			StatusAddress: "0.0.0.0:20180",
-		},
-		{
-			Address:       "172.16.102.3:20160",
-			StatusAddress: "0.0.0.0:20180",
-		},
-	}
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	cli := utils.FakePDClient{Stores: allStores}
-	defer func() {
-		getSplitConfFromStoreFunc = getSplitConfFromStore
-	}()
-	getSplitConfFromStoreFunc = func(ctx context.Context, host string, tls *common.TLS) (int64, int64, error) {
-		if strings.Contains(host, "172.16.102.3:20180") {
-			return int64(1), int64(2), nil
-		}
-		return 0, 0, errors.New("invalid connection")
-	}
-	splitSize, splitKeys, err := GetRegionSplitSizeKeys(ctx, cli, nil)
-	require.NoError(t, err)
-	require.Equal(t, int64(1), splitSize)
-	require.Equal(t, int64(2), splitKeys)
 }
 
 func TestLocalIsRetryableTiKVWriteError(t *testing.T) {

@@ -17,6 +17,7 @@ package infoschemav2test
 import (
 	"slices"
 	"strings"
+	"strconv"
 	"testing"
 
 	"github.com/pingcap/failpoint"
@@ -25,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
@@ -227,4 +229,30 @@ func checkResult(t *testing.T, tk *testkit.TestKit, result ...string) {
 	}
 	slices.SortFunc(rows, strings.Compare)
 	require.Equal(t, rows, result)
+}
+
+func TestTiDBSchemaCacheSizeVariable(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	dom.Reload() // need this to trigger infoschema rebuild to reset capacity
+	is := dom.InfoSchema()
+	ok, raw := infoschema.IsV2(is)
+	if ok {
+		val := variable.SchemaCacheSize.Load()
+		tk.MustQuery("select @@global.tidb_schema_cache_size").CheckContain(strconv.FormatInt(val, 10))
+
+		// On start, the capacity might not be set correctly because infoschema have not load global variable yet.
+		// cap := raw.Data.CacheCapacity()
+		// require.Equal(t, cap, uint64(val))
+	}
+
+	tk.MustExec("set @@global.tidb_schema_cache_size = 32 * 1024 * 1024")
+	tk.MustQuery("select @@global.tidb_schema_cache_size").CheckContain("33554432")
+	require.Equal(t, variable.SchemaCacheSize.Load(), int64(33554432))
+	tk.MustExec("create table trigger_reload (id int)") // need to trigger infoschema rebuild to reset capacity
+	is = dom.InfoSchema()
+	ok, raw = infoschema.IsV2(is)
+	require.True(t, ok)
+	require.Equal(t, raw.Data.CacheCapacity(), uint64(33554432))
 }

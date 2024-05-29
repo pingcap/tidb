@@ -1,0 +1,51 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "log_split",
+    srcs = [
+        "split.go",
+        "sum_sorted.go",
+    ],
+    importpath = "github.com/pingcap/tidb/br/pkg/restore/internal/log_split",
+    visibility = ["//br/pkg/restore:__subpackages__"],
+    deps = [
+        "//br/pkg/logutil",
+        "//br/pkg/restore/internal/utils",
+        "//br/pkg/restore/split",
+        "//br/pkg/restore/utils",
+        "//br/pkg/rtree",
+        "//br/pkg/utils",
+        "//pkg/kv",
+        "//pkg/tablecodec",
+        "//pkg/util",
+        "//pkg/util/codec",
+        "@com_github_google_btree//:btree",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_kvproto//pkg/brpb",
+        "@com_github_pingcap_log//:log",
+        "@org_golang_x_sync//errgroup",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "log_split_test",
+    timeout = "short",
+    srcs = [
+        "split_test.go",
+        "sum_sorted_test.go",
+    ],
+    flaky = True,
+    shard_count = 3,
+    deps = [
+        ":log_split",
+        "//br/pkg/restore/internal/utils",
+        "//br/pkg/restore/split",
+        "//br/pkg/restore/utils",
+        "//br/pkg/utiltest",
+        "//pkg/tablecodec",
+        "//pkg/util/codec",
+        "@com_github_pingcap_kvproto//pkg/import_sstpb",
+        "@com_github_stretchr_testify//require",
+    ],
+)

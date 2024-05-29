@@ -33,7 +33,7 @@ rollback;
 --echo # CommonHandle
 drop table if exists t;
 CREATE TABLE `t` (
-  `a` year(4) primary key,
+  `a` year(4) primary key CLUSTERED,
   `b` int(11) DEFAULT NULL,
   UNIQUE KEY `idx1` (`b`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin

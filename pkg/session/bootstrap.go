@@ -460,7 +460,7 @@ const (
 		lock_name VARCHAR(64) NOT NULL PRIMARY KEY
 	);`
 	// CreateMDLView is a view about metadata locks.
-	CreateMDLView = `CREATE OR REPLACE VIEW mysql.tidb_mdl_view as (
+	CreateMDLView = `CREATE OR REPLACE SQL SECURITY INVOKER VIEW mysql.tidb_mdl_view as (
 		SELECT tidb_mdl_info.job_id,
 			JSON_UNQUOTE(JSON_EXTRACT(cast(cast(job_meta as char) as json), "$.schema_name")) as db_name,
 			JSON_UNQUOTE(JSON_EXTRACT(cast(cast(job_meta as char) as json), "$.table_name")) as table_name,
@@ -1348,7 +1348,8 @@ func checkDistTask(s sessiontypes.Session, ver int64) {
 		// Not set yet.
 		return
 	} else if req.GetRow(0).GetString(0) == variable.On {
-		logutil.BgLogger().Fatal("check dist task failed, tidb_enable_dist_task is enabled", zap.Error(err))
+		logutil.BgLogger().Fatal("cannot upgrade when tidb_enable_dist_task is enabled, "+
+			"please set tidb_enable_dist_task to off before upgrade", zap.Error(err))
 	}
 
 	// Even if the variable is set to `off`, we still need to check the tidb_global_task.
