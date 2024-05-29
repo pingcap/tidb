@@ -655,6 +655,33 @@ func (e *InsertValues) fillRow(ctx context.Context, row []types.Datum, hasValue 
 			}
 		}
 	}
+<<<<<<< HEAD
+=======
+	tbl := e.Table.Meta()
+	// Handle exchange partition
+	if tbl.ExchangePartitionInfo != nil {
+		is := e.Ctx().GetDomainInfoSchema().(infoschema.InfoSchema)
+		pt, tableFound := is.TableByID(tbl.ExchangePartitionInfo.ExchangePartitionID)
+		if !tableFound {
+			return nil, errors.Errorf("exchange partition process table by id failed")
+		}
+		p, ok := pt.(table.PartitionedTable)
+		if !ok {
+			return nil, errors.Errorf("exchange partition process assert table partition failed")
+		}
+		err := p.CheckForExchangePartition(
+			e.Ctx(),
+			pt.Meta().Partition,
+			row,
+			tbl.ExchangePartitionInfo.ExchangePartitionDefID,
+		)
+		if err != nil {
+			return nil, err
+		}
+	}
+	sc := e.Ctx().GetSessionVars().StmtCtx
+	warnCnt := int(sc.WarningCount())
+>>>>>>> c7c7000165a (ddl: Exchange partition rollback (#45877))
 	for i, gCol := range gCols {
 		colIdx := gCol.ColumnInfo.Offset
 		val, err := e.GenExprs[i].Eval(chunk.MutRowFromDatums(row).ToRow())
