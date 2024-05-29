@@ -1487,7 +1487,6 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 	r, prevR := len(buckets), 0
 	bucketCount := int64(1)
 	gBucketCountThreshold := (totCount / expBucketNumber) * 80 / 100 // expectedBucketSize * 0.8
-	var bucketNDV int64
 	mergeBuffer := make([]*bucket4Merging, 0, (len(buckets)+int(expBucketNumber)-1)/int(expBucketNumber))
 	cutAndFixBuffer := make([]*bucket4Merging, 0, (len(buckets)+int(expBucketNumber))/int(expBucketNumber))
 	var currentLeftMost *types.Datum
@@ -1504,7 +1503,6 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 			}
 		}
 		sum += buckets[i].Count
-		bucketNDV += buckets[i].NDV
 		if sum >= totCount*bucketCount/expBucketNumber && sum-prevSum >= gBucketCountThreshold {
 			// If the buckets have the same upper, we merge them into the same new buckets.
 			// We don't need to update the currentLeftMost in the for loop because the leftmost bucket's lower
@@ -1519,7 +1517,6 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 					break
 				}
 				sum += buckets[i-1].Count
-				bucketNDV += buckets[i-1].NDV
 			}
 			res, err := currentLeftMost.Compare(sc.TypeCtx(), buckets[i].lower, collate.GetBinaryCollator())
 			if err != nil {
@@ -1548,10 +1545,9 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 				if err != nil {
 					return nil, err
 				}
-				// If buckets[i-1].lower >= currentLeftMost, this bucket is totally inside. So it can be totoally merged.
+				// If buckets[i-1].lower >= currentLeftMost, this bucket is totally inside. So it can be totally merged.
 				if res >= 0 {
 					sum += buckets[i-1].Count
-					bucketNDV += buckets[i-1].NDV
 					mergeBuffer = append(mergeBuffer, buckets[i-1])
 					continue
 				}
@@ -1560,7 +1556,6 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 				overlappedCount := int64(float64(buckets[i-1].Count) * overlapping)
 				overlappedNDV := int64(float64(buckets[i-1].NDV) * overlapping)
 				sum += overlappedCount
-				bucketNDV += overlappedNDV
 				buckets[i-1].Count -= overlappedCount
 				buckets[i-1].NDV -= overlappedNDV
 
@@ -1603,7 +1598,6 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 			r = i
 			bucketCount++
 			prevSum = sum
-			bucketNDV = 0
 		}
 	}
 	if r > 0 {
@@ -1677,7 +1671,7 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 }
 
 // sortBucketsByUpperBound the bucket by upper bound first, then by lower bound.
-// If bkt[i].upper = bkt[i+1].upper, then we'll get bkt[i].lower < bukt[i+1].lower.
+// If bkt[i].upper = bkt[i+1].upper, then we'll get bkt[i].lower < bkt[i+1].lower.
 func sortBucketsByUpperBound(ctx types.Context, buckets []*bucket4Merging) error {
 	var sortError error
 	slices.SortFunc(buckets, func(i, j *bucket4Merging) int {
