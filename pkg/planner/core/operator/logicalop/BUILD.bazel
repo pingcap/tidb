@@ -1,0 +1,22 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "logicalop",
+    srcs = ["base_logical_plan.go"],
+    importpath = "github.com/pingcap/tidb/pkg/planner/core/operator/logicalop",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/expression",
+        "//pkg/kv",
+        "//pkg/planner/core/base",
+        "//pkg/planner/core/operator/baseimpl",
+        "//pkg/planner/funcdep",
+        "//pkg/planner/property",
+        "//pkg/planner/util",
+        "//pkg/planner/util/optimizetrace",
+        "//pkg/planner/util/utilfuncp",
+        "//pkg/types",
+        "//pkg/util/dbterror/plannererrors",
+        "//pkg/util/tracing",
+    ],
+)

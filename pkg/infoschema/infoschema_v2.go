@@ -162,6 +162,11 @@ func NewData() *Data {
 	return ret
 }
 
+// CacheCapacity is exported for testing.
+func (isd *Data) CacheCapacity() uint64 {
+	return isd.tableCache.Capacity()
+}
+
 func (isd *Data) add(item tableItem, tbl table.Table) {
 	isd.byID.Set(item)
 	isd.byName.Set(item)
@@ -424,6 +429,7 @@ func (is *infoschemaV2) SchemaTableInfos(schema model.CIStr) []*model.TableInfo 
 		return getTableInfoList(tables)
 	}
 
+retry:
 	dbInfo, ok := is.SchemaByName(schema)
 	if !ok {
 		return nil
@@ -437,6 +443,13 @@ func (is *infoschemaV2) SchemaTableInfos(schema model.CIStr) []*model.TableInfo 
 	if err != nil {
 		if meta.ErrDBNotExists.Equal(err) {
 			return nil
+		}
+		// Flashback statement could cause such kind of error.
+		// In theory that error should be handled in the lower layer, like client-go.
+		// But it's not done, so we retry here.
+		if strings.Contains(err.Error(), "in flashback progress") {
+			time.Sleep(200 * time.Millisecond)
+			goto retry
 		}
 		// TODO: error could happen, so do not panic!
 		panic(err)
@@ -650,6 +663,7 @@ retry:
 func loadTableInfo(r autoid.Requirement, infoData *Data, tblID, dbID int64, ts uint64, schemaVersion int64) (table.Table, error) {
 	// Try to avoid repeated concurrency loading.
 	res, err, _ := loadTableSF.Do(fmt.Sprintf("%d-%d-%d", dbID, tblID, schemaVersion), func() (any, error) {
+	retry:
 		snapshot := r.Store().GetSnapshot(kv.NewVersion(ts))
 		// Using the KV timeout read feature to address the issue of potential DDL lease expiration when
 		// the meta region leader is slow.
@@ -657,8 +671,15 @@ func loadTableInfo(r autoid.Requirement, infoData *Data, tblID, dbID int64, ts u
 		m := meta.NewSnapshotMeta(snapshot)
 
 		tblInfo, err := m.GetTable(dbID, tblID)
-
 		if err != nil {
+			// Flashback statement could cause such kind of error.
+			// In theory that error should be handled in the lower layer, like client-go.
+			// But it's not done, so we retry here.
+			if strings.Contains(err.Error(), "in flashback progress") {
+				time.Sleep(200 * time.Millisecond)
+				goto retry
+			}
+
 			// TODO load table panic!!!
 			panic(err)
 		}

@@ -62,16 +62,6 @@ func (*convertOuterToInnerJoin) optimize(_ context.Context, p base.LogicalPlan, 
 // false for those cases.
 
 // ConvertOuterToInnerJoin implements base.LogicalPlan ConvertOuterToInnerJoin interface.
-func (s *baseLogicalPlan) ConvertOuterToInnerJoin(predicates []expression.Expression) base.LogicalPlan {
-	p := s.self
-	for i, child := range p.Children() {
-		newChild := child.ConvertOuterToInnerJoin(predicates)
-		p.SetChild(i, newChild)
-	}
-	return p
-}
-
-// ConvertOuterToInnerJoin implements base.LogicalPlan ConvertOuterToInnerJoin interface.
 func (p *LogicalJoin) ConvertOuterToInnerJoin(predicates []expression.Expression) base.LogicalPlan {
 	innerTable := p.Children()[0]
 	outerTable := p.Children()[1]
@@ -131,7 +121,7 @@ func (*convertOuterToInnerJoin) name() string {
 
 // ConvertOuterToInnerJoin implements base.LogicalPlan ConvertOuterToInnerJoin interface.
 func (s *LogicalSelection) ConvertOuterToInnerJoin(predicates []expression.Expression) base.LogicalPlan {
-	p := s.self.(*LogicalSelection)
+	p := s.Self().(*LogicalSelection)
 	combinedCond := append(predicates, p.Conditions...)
 	child := p.Children()[0]
 	child = child.ConvertOuterToInnerJoin(combinedCond)
@@ -141,7 +131,7 @@ func (s *LogicalSelection) ConvertOuterToInnerJoin(predicates []expression.Expre
 
 // ConvertOuterToInnerJoin implements base.LogicalPlan ConvertOuterToInnerJoin interface.
 func (s *LogicalProjection) ConvertOuterToInnerJoin(predicates []expression.Expression) base.LogicalPlan {
-	p := s.self.(*LogicalProjection)
+	p := s.Self().(*LogicalProjection)
 	canBePushed, _ := BreakDownPredicates(p, predicates)
 	child := p.Children()[0]
 	child = child.ConvertOuterToInnerJoin(canBePushed)

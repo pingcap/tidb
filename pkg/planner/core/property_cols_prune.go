@@ -134,11 +134,6 @@ func getPossiblePropertyFromByItems(items []*util.ByItems) []*expression.Column 
 }
 
 // PreparePossibleProperties implements base.LogicalPlan PreparePossibleProperties interface.
-func (*baseLogicalPlan) PreparePossibleProperties(_ *expression.Schema, _ ...[][]*expression.Column) [][]*expression.Column {
-	return nil
-}
-
-// PreparePossibleProperties implements base.LogicalPlan PreparePossibleProperties interface.
 func (p *LogicalProjection) PreparePossibleProperties(_ *expression.Schema, childrenProperties ...[][]*expression.Column) [][]*expression.Column {
 	childProperties := childrenProperties[0]
 	oldCols := make([]*expression.Column, 0, p.schema.Len())
