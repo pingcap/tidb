@@ -508,7 +508,19 @@ func (h *Handle) dumpTableStatCountToKV(id int64, delta variable.TableDelta) (up
 		if delta.Delta < 0 {
 			_, err = exec.ExecuteInternal(ctx, "update mysql.stats_meta set version = %?, count = count - %?, modify_count = modify_count + %? where table_id = %? and count >= %?", startTS, -delta.Delta, delta.Count, id, -delta.Delta)
 		} else {
+<<<<<<< HEAD
 			_, err = exec.ExecuteInternal(ctx, "update mysql.stats_meta set version = %?, count = count + %?, modify_count = modify_count + %? where table_id = %?", startTS, delta.Delta, delta.Count, id)
+=======
+			if delta.Delta < 0 {
+				// use INSERT INTO ... ON DUPLICATE KEY UPDATE here to fill missing stats_meta.
+				_, err = exec.ExecuteInternal(ctx, "insert into mysql.stats_meta (version, table_id, modify_count, count) values (%?, %?, %?, 0) on duplicate key "+
+					"update version = values(version), modify_count = modify_count + values(modify_count), count = if(count > %?, count - %?, 0)", startTS, id, delta.Count, -delta.Delta, -delta.Delta)
+			} else {
+				// use INSERT INTO ... ON DUPLICATE KEY UPDATE here to fill missing stats_meta.
+				_, err = exec.ExecuteInternal(ctx, "insert into mysql.stats_meta (version, table_id, modify_count, count) values (%?, %?, %?, %?) on duplicate key "+
+					"update version = values(version), modify_count = modify_count + values(modify_count), count = count + values(count)", startTS, id, delta.Count, delta.Delta)
+			}
+>>>>>>> 6e56bf717c (ddl, statistics: fix stats meta missing when creating many tables at once (#38301))
 		}
 		return errors.Trace(err)
 	}
