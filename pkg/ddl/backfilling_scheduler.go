@@ -276,8 +276,6 @@ func (b *txnBackfillScheduler) adjustWorkerSize() error {
 			runner = newBackfillWorker(b.ctx, tmpIdxWorker)
 			worker = tmpIdxWorker
 		case typeUpdateColumnWorker:
-			// Setting InCreateOrAlterStmt tells the difference between SELECT casting and ALTER COLUMN casting.
-			sessCtx.GetSessionVars().StmtCtx.InCreateOrAlterStmt = true
 			sessCtx.GetSessionVars().StmtCtx.SetTypeFlags(
 				sessCtx.GetSessionVars().StmtCtx.TypeFlags().
 					WithIgnoreZeroDateErr(!reorgInfo.ReorgMeta.SQLMode.HasStrictMode()))
