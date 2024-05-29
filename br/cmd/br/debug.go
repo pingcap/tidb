@@ -89,6 +89,9 @@ func newCheckSumCommand() *cobra.Command {
 				if err != nil {
 					return errors.Trace(err)
 				}
+				if schema.Table == nil {
+					continue
+				}
 				tblInfo := &model.TableInfo{}
 				err = json.Unmarshal(schema.Table, tblInfo)
 				if err != nil {
@@ -216,6 +219,10 @@ func newBackupMetaValidateCommand() *cobra.Command {
 			tableIDMap := make(map[int64]int64)
 			// Simulate to create table
 			for _, table := range tables {
+				if table.Info == nil {
+					// empty database.
+					continue
+				}
 				indexIDAllocator := mockid.NewIDAllocator()
 				newTable := new(model.TableInfo)
 				tableID, _ := tableIDAllocator.Alloc()

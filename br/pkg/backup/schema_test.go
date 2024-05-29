@@ -104,7 +104,7 @@ func (s *testBackupSchemaSuite) TestBuildBackupRangeAndSchema(c *C) {
 	_, backupSchemas, err := backup.BuildBackupRangeAndSchema(
 		s.mock.Storage, testFilter, math.MaxUint64)
 	c.Assert(err, IsNil)
-	c.Assert(backupSchemas, IsNil)
+	c.Assert(backupSchemas, NotNil)
 
 	// Database is not exist.
 	fooFilter, err := filter.Parse([]string{"foo.t1"})
@@ -121,7 +121,7 @@ func (s *testBackupSchemaSuite) TestBuildBackupRangeAndSchema(c *C) {
 	_, backupSchemas, err = backup.BuildBackupRangeAndSchema(
 		s.mock.Storage, noFilter, math.MaxUint64)
 	c.Assert(err, IsNil)
-	c.Assert(backupSchemas, IsNil)
+	c.Assert(backupSchemas, NotNil)
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1;")

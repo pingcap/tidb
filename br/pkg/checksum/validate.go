@@ -54,6 +54,10 @@ func FastChecksum(
 		checksum := uint64(0)
 		totalKvs := uint64(0)
 		totalBytes := uint64(0)
+		if tbl.Info == nil {
+			// empty database
+			continue
+		}
 		for _, file := range tbl.Files {
 			checksum ^= file.Crc64Xor
 			totalKvs += file.TotalKvs
