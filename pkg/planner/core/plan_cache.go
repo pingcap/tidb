@@ -787,9 +787,11 @@ func checkPreparedPriv(sctx sessionctx.Context, stmt *PlanCacheStmt, is infosche
 	return err
 }
 
-// IsSafeToReusePointGetExecutor checks whether this is a PointGet Plan and safe to reuse its executor.
-func IsSafeToReusePointGetExecutor(sctx sessionctx.Context, is infoschema.InfoSchema, stmt *PlanCacheStmt) bool {
-	if staleread.IsStmtStaleness(sctx) {
+// IsPointGetPlanShortPathOK check if we can execute using plan cached in prepared structure
+// Be careful with the short path, current precondition is ths cached plan satisfying
+// IsPointGetWithPKOrUniqueKeyByAutoCommit
+func IsPointGetPlanShortPathOK(sctx sessionctx.Context, is infoschema.InfoSchema, stmt *PlanCacheStmt) bool {
+	if stmt.PointGet.Plan == nil || staleread.IsStmtStaleness(sctx) {
 		return false
 	}
 	// check auto commit
@@ -797,7 +799,15 @@ func IsSafeToReusePointGetExecutor(sctx sessionctx.Context, is infoschema.InfoSc
 		return false
 	}
 	if stmt.SchemaVersion != is.SchemaMetaVersion() {
+		stmt.PointGet.Plan = nil
+		stmt.PointGet.ColumnInfos = nil
 		return false
 	}
-	return true
+	// only support simple PointGet Plan now
+	switch stmt.PointGet.Plan.(type) {
+	case *PointGetPlan:
+		return true
+	default:
+		return false
+	}
 }

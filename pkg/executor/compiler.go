@@ -88,12 +88,16 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (_ *ExecS
 	sessVars := c.Ctx.GetSessionVars()
 	stmtCtx := sessVars.StmtCtx
 	// handle the execute statement
-	var preparedObj *plannercore.PlanCacheStmt
+	var (
+		pointGetPlanShortPathOK bool
+		preparedObj             *plannercore.PlanCacheStmt
+	)
 
 	if execStmt, ok := stmtNode.(*ast.ExecuteStmt); ok {
 		if preparedObj, err = plannercore.GetPreparedStmt(execStmt, sessVars); err != nil {
 			return nil, err
 		}
+		pointGetPlanShortPathOK = plannercore.IsPointGetPlanShortPathOK(c.Ctx, is, preparedObj)
 	}
 	// Build the final physical plan.
 	finalPlan, names, err := planner.Optimize(ctx, c.Ctx, stmtNode, is)
@@ -126,10 +130,16 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (_ *ExecS
 		OutputNames:   names,
 	}
 	// Use cached plan if possible.
-	if preparedObj != nil && plannercore.IsSafeToReusePointGetExecutor(c.Ctx, is, preparedObj) {
-		if exec, isExec := finalPlan.(*plannercore.Execute); isExec {
-			if pointPlan, isPointPlan := exec.Plan.(*plannercore.PointGetPlan); isPointPlan {
-				stmt.PsStmt, stmt.Plan = preparedObj, pointPlan // notify to re-use the cached plan
+	if pointGetPlanShortPathOK {
+		if ep, ok := stmt.Plan.(*plannercore.Execute); ok {
+			if pointPlan, ok := ep.Plan.(*plannercore.PointGetPlan); ok {
+				stmtCtx.SetPlan(stmt.Plan)
+				stmtCtx.SetPlanDigest(preparedObj.NormalizedPlan, preparedObj.PlanDigest)
+				stmt.Plan = pointPlan
+				stmt.PsStmt = preparedObj
+			} else {
+				// invalid the previous cached point plan
+				preparedObj.PointGet.Plan = nil
 			}
 		}
 	}
