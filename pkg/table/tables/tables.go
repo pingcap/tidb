@@ -60,28 +60,67 @@ import (
 )
 
 // TableCommon is shared by both Table and partition.
+// NOTE: when copying this struct, use Copy() to clear its columns cache.
 type TableCommon struct {
 	// TODO: Why do we need tableID, when it is already in meta.ID ?
 	tableID int64
 	// physicalTableID is a unique int64 to identify a physical table.
-	physicalTableID                 int64
-	Columns                         []*table.Column
-	publicColumns                   []*table.Column
-	visibleColumns                  []*table.Column
-	hiddenColumns                   []*table.Column
-	writableColumns                 []*table.Column
-	fullHiddenColsAndVisibleColumns []*table.Column
-	indices                         []table.Index
-	meta                            *model.TableInfo
-	allocs                          autoid.Allocators
-	sequence                        *sequenceCommon
-	dependencyColumnOffsets         []int
-	Constraints                     []*table.Constraint
-	writableConstraints             []*table.Constraint
+	physicalTableID int64
+	Columns         []*table.Column
+
+	// column caches
+	//
+	// TODO: we lazily initialize them because they could possibly consume too much unnecessary
+	//  memory. We can move these initialization to initTableCommon after infoschema v2 is enabled.
+	//
+	// sync.Once is needed to avoid data race because TableCommon may be accessed concurrently
+	// They are pointers to support copying TableCommon to CachedTable and PartitionedTable
+	publicColumns                       []*table.Column
+	publicColumnsOnce                   *sync.Once
+	visibleColumns                      []*table.Column
+	visibleColumnsOnce                  *sync.Once
+	hiddenColumns                       []*table.Column
+	hiddenColumnsOnce                   *sync.Once
+	writableColumns                     []*table.Column
+	writableColumnsOnce                 *sync.Once
+	fullHiddenColsAndVisibleColumns     []*table.Column
+	fullHiddenColsAndVisibleColumnsOnce *sync.Once
+	writableConstraints                 []*table.Constraint
+	writableConstraintsOnce             *sync.Once
+
+	indices                 []table.Index
+	meta                    *model.TableInfo
+	allocs                  autoid.Allocators
+	sequence                *sequenceCommon
+	dependencyColumnOffsets []int
+	Constraints             []*table.Constraint
 
 	// recordPrefix and indexPrefix are generated using physicalTableID.
 	recordPrefix kv.Key
 	indexPrefix  kv.Key
+}
+
+// ClearColumnsCache implements testingKnob interface.
+func (t *TableCommon) ClearColumnsCache() {
+	t.publicColumns = nil
+	t.publicColumnsOnce = new(sync.Once)
+	t.visibleColumns = nil
+	t.visibleColumnsOnce = new(sync.Once)
+	t.hiddenColumns = nil
+	t.hiddenColumnsOnce = new(sync.Once)
+	t.writableColumns = nil
+	t.writableColumnsOnce = new(sync.Once)
+	t.fullHiddenColsAndVisibleColumns = nil
+	t.fullHiddenColsAndVisibleColumnsOnce = new(sync.Once)
+	t.writableConstraints = nil
+	t.writableConstraintsOnce = new(sync.Once)
+}
+
+// Copy copies a TableCommon struct, and reset its column cache. This is not a deep copy.
+func (t *TableCommon) Copy() TableCommon {
+	newTable := *t
+	newTable.ClearColumnsCache()
+	return newTable
 }
 
 // MockTableFromMeta only serves for test.
@@ -214,6 +253,12 @@ func initTableCommon(t *TableCommon, tblInfo *model.TableInfo, physicalTableID i
 			t.dependencyColumnOffsets = append(t.dependencyColumnOffsets, col.ChangeStateInfo.DependencyColumnOffset)
 		}
 	}
+	t.publicColumnsOnce = new(sync.Once)
+	t.visibleColumnsOnce = new(sync.Once)
+	t.hiddenColumnsOnce = new(sync.Once)
+	t.writableColumnsOnce = new(sync.Once)
+	t.fullHiddenColsAndVisibleColumnsOnce = new(sync.Once)
+	t.writableConstraintsOnce = new(sync.Once)
 }
 
 // initTableIndices initializes the indices of the TableCommon.
@@ -300,41 +345,54 @@ func (t *TableCommon) getCols(mode getColsMode) []*table.Column {
 
 // Cols implements table.Table Cols interface.
 func (t *TableCommon) Cols() []*table.Column {
-	if len(t.publicColumns) > 0 {
-		return t.publicColumns
-	}
-	return t.getCols(full)
+	t.publicColumnsOnce.Do(
+		func() {
+			if len(t.publicColumns) == 0 {
+				t.publicColumns = t.getCols(full)
+			}
+		},
+	)
+	return t.publicColumns
 }
 
 // VisibleCols implements table.Table VisibleCols interface.
 func (t *TableCommon) VisibleCols() []*table.Column {
-	if len(t.visibleColumns) > 0 {
-		return t.visibleColumns
-	}
-	return t.getCols(visible)
+	t.visibleColumnsOnce.Do(
+		func() {
+			if len(t.visibleColumns) == 0 {
+				t.visibleColumns = t.getCols(visible)
+			}
+		},
+	)
+	return t.visibleColumns
 }
 
 // HiddenCols implements table.Table HiddenCols interface.
 func (t *TableCommon) HiddenCols() []*table.Column {
-	if len(t.hiddenColumns) > 0 {
-		return t.hiddenColumns
-	}
-	return t.getCols(hidden)
+	t.hiddenColumnsOnce.Do(
+		func() {
+			if len(t.hiddenColumns) == 0 {
+				t.hiddenColumns = t.getCols(hidden)
+			}
+		},
+	)
+	return t.hiddenColumns
 }
 
 // WritableCols implements table WritableCols interface.
 func (t *TableCommon) WritableCols() []*table.Column {
-	if len(t.writableColumns) > 0 {
-		return t.writableColumns
-	}
-	writableColumns := make([]*table.Column, 0, len(t.Columns))
-	for _, col := range t.Columns {
-		if col.State == model.StateDeleteOnly || col.State == model.StateDeleteReorganization {
-			continue
-		}
-		writableColumns = append(writableColumns, col)
-	}
-	return writableColumns
+	t.writableColumnsOnce.Do(
+		func() {
+			t.writableColumns = make([]*table.Column, 0, len(t.Columns))
+			for _, col := range t.Columns {
+				if col.State == model.StateDeleteOnly || col.State == model.StateDeleteReorganization {
+					continue
+				}
+				t.writableColumns = append(t.writableColumns, col)
+			}
+		},
+	)
+	return t.writableColumns
 }
 
 // DeletableCols implements table DeletableCols interface.
@@ -344,23 +402,23 @@ func (t *TableCommon) DeletableCols() []*table.Column {
 
 // WritableConstraint returns constraints of the table in writable states.
 func (t *TableCommon) WritableConstraint() []*table.Constraint {
-	if len(t.writableConstraints) > 0 {
-		return t.writableConstraints
-	}
 	if t.Constraints == nil {
 		return nil
 	}
-	writeableConstraint := make([]*table.Constraint, 0, len(t.Constraints))
-	for _, con := range t.Constraints {
-		if !con.Enforced {
-			continue
-		}
-		if con.State == model.StateDeleteOnly || con.State == model.StateDeleteReorganization {
-			continue
-		}
-		writeableConstraint = append(writeableConstraint, con)
-	}
-	return writeableConstraint
+	t.writableConstraintsOnce.Do(
+		func() {
+			t.writableConstraints = make([]*table.Constraint, 0, len(t.Constraints))
+			for _, con := range t.Constraints {
+				if !con.Enforced {
+					continue
+				}
+				if con.State == model.StateDeleteOnly || con.State == model.StateDeleteReorganization {
+					continue
+				}
+				t.writableConstraints = append(t.writableConstraints, con)
+			}
+		})
+	return t.writableConstraints
 }
 
 // CheckRowConstraint verify row check constraints.
@@ -380,17 +438,15 @@ func (t *TableCommon) CheckRowConstraint(ctx table.MutateContext, rowToCheck []t
 
 // FullHiddenColsAndVisibleCols implements table FullHiddenColsAndVisibleCols interface.
 func (t *TableCommon) FullHiddenColsAndVisibleCols() []*table.Column {
-	if len(t.fullHiddenColsAndVisibleColumns) > 0 {
-		return t.fullHiddenColsAndVisibleColumns
-	}
-
-	cols := make([]*table.Column, 0, len(t.Columns))
-	for _, col := range t.Columns {
-		if col.Hidden || col.State == model.StatePublic {
-			cols = append(cols, col)
+	t.fullHiddenColsAndVisibleColumnsOnce.Do(func() {
+		t.fullHiddenColsAndVisibleColumns = make([]*table.Column, 0, len(t.Columns))
+		for _, col := range t.Columns {
+			if col.Hidden || col.State == model.StatePublic {
+				t.fullHiddenColsAndVisibleColumns = append(t.fullHiddenColsAndVisibleColumns, col)
+			}
 		}
-	}
-	return cols
+	})
+	return t.fullHiddenColsAndVisibleColumns
 }
 
 // RecordPrefix implements table.Table interface.
