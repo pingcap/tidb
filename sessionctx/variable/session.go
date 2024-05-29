@@ -1002,6 +1002,348 @@ type SessionVars struct {
 
 	// StatsLoadSyncWait indicates how long to wait for stats load before timeout.
 	StatsLoadSyncWait int64
+<<<<<<< HEAD
+=======
+
+	// SysdateIsNow indicates whether Sysdate is an alias of Now function
+	SysdateIsNow bool
+	// EnableMutationChecker indicates whether to check data consistency for mutations
+	EnableMutationChecker bool
+	// AssertionLevel controls how strict the assertions on data mutations should be.
+	AssertionLevel AssertionLevel
+	// IgnorePreparedCacheCloseStmt controls if ignore the close-stmt command for prepared statement.
+	IgnorePreparedCacheCloseStmt bool
+	// EnableNewCostInterface is a internal switch to indicates whether to use the new cost calculation interface.
+	EnableNewCostInterface bool
+	// CostModelVersion is a internal switch to indicates the Cost Model Version.
+	CostModelVersion int
+	// IndexJoinDoubleReadPenaltyCostRate indicates whether to add some penalty cost to IndexJoin and how much of it.
+	IndexJoinDoubleReadPenaltyCostRate float64
+
+	// BatchPendingTiFlashCount shows the threshold of pending TiFlash tables when batch adding.
+	BatchPendingTiFlashCount int
+	// RcWriteCheckTS indicates whether some special write statements don't get latest tso from PD at RC
+	RcWriteCheckTS bool
+	// RemoveOrderbyInSubquery indicates whether to remove ORDER BY in subquery.
+	RemoveOrderbyInSubquery bool
+	// NonTransactionalIgnoreError indicates whether to ignore error in non-transactional statements.
+	// When set to false, returns immediately when it meets the first error.
+	NonTransactionalIgnoreError bool
+
+	// MaxAllowedPacket indicates the maximum size of a packet for the MySQL protocol.
+	MaxAllowedPacket uint64
+
+	// TiFlash related optimization, only for MPP.
+	TiFlashFineGrainedShuffleStreamCount int64
+	TiFlashFineGrainedShuffleBatchSize   uint64
+
+	// RequestSourceType is the type of inner request.
+	RequestSourceType string
+
+	// MemoryDebugModeMinHeapInUse indicated the minimum heapInUse threshold that triggers the memoryDebugMode.
+	MemoryDebugModeMinHeapInUse int64
+	// MemoryDebugModeAlarmRatio indicated the allowable bias ratio of memory tracking accuracy check.
+	// When `(memory trakced by tidb) * (1+MemoryDebugModeAlarmRatio) < actual heapInUse`, an alarm log will be recorded.
+	MemoryDebugModeAlarmRatio int64
+
+	// EnableAnalyzeSnapshot indicates whether to read data on snapshot when collecting statistics.
+	// When it is false, ANALYZE reads the latest data.
+	// When it is true, ANALYZE reads data on the snapshot at the beginning of ANALYZE.
+	EnableAnalyzeSnapshot bool
+
+	// DefaultStrMatchSelectivity adjust the estimation strategy for string matching expressions that can't be estimated by building into range.
+	// when > 0: it's the selectivity for the expression.
+	// when = 0: try to use TopN to evaluate the like expression to estimate the selectivity.
+	DefaultStrMatchSelectivity float64
+
+	// TiFlashFastScan indicates whether use fast scan in TiFlash
+	TiFlashFastScan bool
+
+	// PrimaryKeyRequired indicates if sql_require_primary_key sysvar is set
+	PrimaryKeyRequired bool
+
+	// EnablePreparedPlanCache indicates whether to enable prepared plan cache.
+	EnablePreparedPlanCache bool
+
+	// PreparedPlanCacheSize controls the size of prepared plan cache.
+	PreparedPlanCacheSize uint64
+
+	// PreparedPlanCacheMonitor indicates whether to enable prepared plan cache monitor.
+	EnablePreparedPlanCacheMemoryMonitor bool
+
+	// EnablePlanCacheForParamLimit controls whether the prepare statement with parameterized limit can be cached
+	EnablePlanCacheForParamLimit bool
+
+	// EnablePlanCacheForSubquery controls whether the prepare statement with sub query can be cached
+	EnablePlanCacheForSubquery bool
+
+	// EnableNonPreparedPlanCache indicates whether to enable non-prepared plan cache.
+	EnableNonPreparedPlanCache bool
+
+	// EnableNonPreparedPlanCacheForDML indicates whether to enable non-prepared plan cache for DML statements.
+	EnableNonPreparedPlanCacheForDML bool
+
+	// PlanCacheInvalidationOnFreshStats controls if plan cache will be invalidated automatically when
+	// related stats are analyzed after the plan cache is generated.
+	PlanCacheInvalidationOnFreshStats bool
+
+	// NonPreparedPlanCacheSize controls the size of non-prepared plan cache.
+	NonPreparedPlanCacheSize uint64
+
+	// PlanCacheMaxPlanSize controls the maximum size of a plan that can be cached.
+	PlanCacheMaxPlanSize uint64
+
+	// SessionPlanCacheSize controls the size of session plan cache.
+	SessionPlanCacheSize uint64
+
+	// ConstraintCheckInPlacePessimistic controls whether to skip the locking of some keys in pessimistic transactions.
+	// Postpone the conflict check and constraint check to prewrite or later pessimistic locking requests.
+	ConstraintCheckInPlacePessimistic bool
+
+	// EnableTiFlashReadForWriteStmt indicates whether to enable TiFlash to read for write statements.
+	EnableTiFlashReadForWriteStmt bool
+
+	// EnableUnsafeSubstitute indicates whether to enable generate column takes unsafe substitute.
+	EnableUnsafeSubstitute bool
+
+	// ForeignKeyChecks indicates whether to enable foreign key constraint check.
+	ForeignKeyChecks bool
+
+	// RangeMaxSize is the max memory limit for ranges. When the optimizer estimates that the memory usage of complete
+	// ranges would exceed the limit, it chooses less accurate ranges such as full range. 0 indicates that there is no
+	// memory limit for ranges.
+	RangeMaxSize int64
+
+	// LastPlanReplayerToken indicates the last plan replayer token
+	LastPlanReplayerToken string
+
+	// InPlanReplayer means we are now executing a statement for a PLAN REPLAYER SQL.
+	// Note that PLAN REPLAYER CAPTURE is not included here.
+	InPlanReplayer bool
+
+	// AnalyzePartitionConcurrency indicates concurrency for partitions in Analyze
+	AnalyzePartitionConcurrency int
+	// AnalyzePartitionMergeConcurrency indicates concurrency for merging partition stats
+	AnalyzePartitionMergeConcurrency int
+
+	// EnableExternalTSRead indicates whether to enable read through external ts
+	EnableExternalTSRead bool
+
+	HookContext
+
+	// MemTracker indicates the memory tracker of current session.
+	MemTracker *memory.Tracker
+	// MemDBDBFootprint tracks the memory footprint of memdb, and is attached to `MemTracker`
+	MemDBFootprint *memory.Tracker
+	DiskTracker    *memory.Tracker
+
+	// OptPrefixIndexSingleScan indicates whether to do some optimizations to avoid double scan for prefix index.
+	// When set to true, `col is (not) null`(`col` is index prefix column) is regarded as index filter rather than table filter.
+	OptPrefixIndexSingleScan bool
+
+	// ChunkPool Several chunks and columns are cached
+	ChunkPool ReuseChunkPool
+	// EnableReuseCheck indicates  request chunk whether use chunk alloc
+	EnableReuseCheck bool
+
+	// EnableAdvancedJoinHint indicates whether the join method hint is compatible with join order hint.
+	EnableAdvancedJoinHint bool
+
+	// preuseChunkAlloc indicates whether pre statement use chunk alloc
+	// like select @@last_sql_use_alloc
+	preUseChunkAlloc bool
+
+	// EnablePlanReplayerCapture indicates whether enabled plan replayer capture
+	EnablePlanReplayerCapture bool
+
+	// EnablePlanReplayedContinuesCapture indicates whether enabled plan replayer continues capture
+	EnablePlanReplayedContinuesCapture bool
+
+	// PlanReplayerFinishedTaskKey used to record the finished plan replayer task key in order not to record the
+	// duplicate task in plan replayer continues capture
+	PlanReplayerFinishedTaskKey map[replayer.PlanReplayerTaskKey]struct{}
+
+	// StoreBatchSize indicates the batch size limit of store batch, set this field to 0 to disable store batch.
+	StoreBatchSize int
+
+	// shardRand is used by TxnCtx, for the GetCurrentShard() method.
+	shardRand *rand.Rand
+
+	// Resource group name
+	ResourceGroupName string
+
+	// PessimisticTransactionFairLocking controls whether fair locking for pessimistic transaction
+	// is enabled.
+	PessimisticTransactionFairLocking bool
+
+	// EnableINLJoinInnerMultiPattern indicates whether enable multi pattern for index join inner side
+	// For now it is not public to user
+	EnableINLJoinInnerMultiPattern bool
+
+	// Enable late materialization: push down some selection condition to tablescan.
+	EnableLateMaterialization bool
+
+	// EnableRowLevelChecksum indicates whether row level checksum is enabled.
+	EnableRowLevelChecksum bool
+
+	// TiFlashComputeDispatchPolicy indicates how to dipatch task to tiflash_compute nodes.
+	// Only for disaggregated-tiflash mode.
+	TiFlashComputeDispatchPolicy tiflashcompute.DispatchPolicy
+
+	// SlowTxnThreshold is the threshold of slow transaction logs
+	SlowTxnThreshold uint64
+
+	// LoadBasedReplicaReadThreshold is the threshold for the estimated wait duration of a store.
+	// If exceeding the threshold, try other stores using replica read.
+	LoadBasedReplicaReadThreshold time.Duration
+
+	// OptOrderingIdxSelThresh is the threshold for optimizer to consider the ordering index.
+	// If there exists an index whose estimated selectivity is smaller than this threshold, the optimizer won't
+	// use the ExpectedCnt to adjust the estimated row count for index scan.
+	OptOrderingIdxSelThresh float64
+
+	// EnableMPPSharedCTEExecution indicates whether we enable the shared CTE execution strategy on MPP side.
+	EnableMPPSharedCTEExecution bool
+
+	// OptimizerFixControl control some details of the optimizer behavior through the tidb_opt_fix_control variable.
+	OptimizerFixControl map[uint64]string
+
+	// HypoIndexes are for the Index Advisor.
+	HypoIndexes map[string]map[string]map[string]*model.IndexInfo // dbName -> tblName -> idxName -> idxInfo
+
+	// Runtime Filter Group
+	// Runtime filter type: only support IN or MIN_MAX now.
+	// Runtime filter type can take multiple values at the same time.
+	runtimeFilterTypes []RuntimeFilterType
+	// Runtime filter mode: only support OFF, LOCAL now
+	runtimeFilterMode RuntimeFilterMode
+}
+
+var (
+	// variables below are for the optimizer fix control.
+
+	// TiDBOptFixControl44262 controls whether to allow to use dynamic-mode to access partitioning tables without global-stats (#44262).
+	TiDBOptFixControl44262 uint64 = 44262
+	// TiDBOptFixControl44389 controls whether to consider non-point ranges of some CNF item when building ranges.
+	TiDBOptFixControl44389 uint64 = 44389
+)
+
+// GetOptimizerFixControlValue returns the specified value of the optimizer fix control.
+func (s *SessionVars) GetOptimizerFixControlValue(key uint64) (value string, exist bool) {
+	if s.OptimizerFixControl == nil {
+		return "", false
+	}
+	value, exist = s.OptimizerFixControl[key]
+	return
+}
+
+// planReplayerSessionFinishedTaskKeyLen is used to control the max size for the finished plan replayer task key in session
+// in order to control the used memory
+const planReplayerSessionFinishedTaskKeyLen = 128
+
+// AddPlanReplayerFinishedTaskKey record finished task key in session
+func (s *SessionVars) AddPlanReplayerFinishedTaskKey(key replayer.PlanReplayerTaskKey) {
+	if len(s.PlanReplayerFinishedTaskKey) >= planReplayerSessionFinishedTaskKeyLen {
+		s.initializePlanReplayerFinishedTaskKey()
+	}
+	s.PlanReplayerFinishedTaskKey[key] = struct{}{}
+}
+
+func (s *SessionVars) initializePlanReplayerFinishedTaskKey() {
+	s.PlanReplayerFinishedTaskKey = make(map[replayer.PlanReplayerTaskKey]struct{}, planReplayerSessionFinishedTaskKeyLen)
+}
+
+// CheckPlanReplayerFinishedTaskKey check whether the key exists
+func (s *SessionVars) CheckPlanReplayerFinishedTaskKey(key replayer.PlanReplayerTaskKey) bool {
+	if s.PlanReplayerFinishedTaskKey == nil {
+		s.initializePlanReplayerFinishedTaskKey()
+		return false
+	}
+	_, ok := s.PlanReplayerFinishedTaskKey[key]
+	return ok
+}
+
+// IsPlanReplayerCaptureEnabled indicates whether capture or continues capture enabled
+func (s *SessionVars) IsPlanReplayerCaptureEnabled() bool {
+	return s.EnablePlanReplayerCapture || s.EnablePlanReplayedContinuesCapture
+}
+
+// GetNewChunkWithCapacity Attempt to request memory from the chunk pool
+// thread safety
+func (s *SessionVars) GetNewChunkWithCapacity(fields []*types.FieldType, capacity int, maxCachesize int, pool chunk.Allocator) *chunk.Chunk {
+	if pool == nil {
+		return chunk.New(fields, capacity, maxCachesize)
+	}
+	s.ChunkPool.mu.Lock()
+	defer s.ChunkPool.mu.Unlock()
+	if pool.CheckReuseAllocSize() && (!s.GetUseChunkAlloc()) {
+		s.StmtCtx.SetUseChunkAlloc()
+	}
+	chk := pool.Alloc(fields, capacity, maxCachesize)
+	return chk
+}
+
+// ExchangeChunkStatus give the status to preUseChunkAlloc
+func (s *SessionVars) ExchangeChunkStatus() {
+	s.preUseChunkAlloc = s.GetUseChunkAlloc()
+}
+
+// GetUseChunkAlloc return useChunkAlloc status
+func (s *SessionVars) GetUseChunkAlloc() bool {
+	return s.StmtCtx.GetUseChunkAllocStatus()
+}
+
+// SetAlloc Attempt to set the buffer pool address
+func (s *SessionVars) SetAlloc(alloc chunk.Allocator) {
+	if !s.EnableReuseCheck {
+		return
+	}
+	s.ChunkPool.Alloc = alloc
+}
+
+// IsAllocValid check if chunk reuse is enable or ChunkPool is inused.
+func (s *SessionVars) IsAllocValid() bool {
+	if !s.EnableReuseCheck {
+		return false
+	}
+	s.ChunkPool.mu.Lock()
+	defer s.ChunkPool.mu.Unlock()
+	return s.ChunkPool.Alloc != nil
+}
+
+// ClearAlloc indicates stop reuse chunk
+func (s *SessionVars) ClearAlloc(alloc *chunk.Allocator, b bool) {
+	if !b {
+		s.ChunkPool.Alloc = nil
+		return
+	}
+
+	// If an error is reported, re-apply for alloc
+	// Prevent the goroutine left before, affecting the execution of the next sql
+	// issuse 38918
+	s.ChunkPool.mu.Lock()
+	s.ChunkPool.Alloc = nil
+	s.ChunkPool.mu.Unlock()
+	*alloc = chunk.NewAllocator()
+}
+
+// GetPreparedStmtByName returns the prepared statement specified by stmtName.
+func (s *SessionVars) GetPreparedStmtByName(stmtName string) (interface{}, error) {
+	stmtID, ok := s.PreparedStmtNameToID[stmtName]
+	if !ok {
+		return nil, ErrStmtNotFound
+	}
+	return s.GetPreparedStmtByID(stmtID)
+}
+
+// GetPreparedStmtByID returns the prepared statement specified by stmtID.
+func (s *SessionVars) GetPreparedStmtByID(stmtID uint32) (interface{}, error) {
+	stmt, ok := s.PreparedStmts[stmtID]
+	if !ok {
+		return nil, ErrStmtNotFound
+	}
+	return stmt, nil
+>>>>>>> 85d6323e3a3 (util/ranger: consider good non-point ranges from CNF item (#44384))
 }
 
 // InitStatementContext initializes a StatementContext, the object is reused to reduce allocation.

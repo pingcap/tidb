@@ -689,5 +689,38 @@
         ]
       }
     ]
+  },
+  {
+    "Name": "TestIssue44389",
+    "Cases": [
+      {
+        "SQL": "select * from t where c = 10 and (a = 'xx' or (a = 'kk' and b = 1))",
+        "Plan": [
+          "IndexLookUp_11 0.01 root  ",
+          "├─IndexRangeScan_8(Build) 10.10 cop[tikv] table:t, index:idx_ab(a, b) range:[\"kk\" 1,\"kk\" 1], [\"xx\",\"xx\"], keep order:false, stats:pseudo",
+          "└─Selection_10(Probe) 0.01 cop[tikv]  eq(test.t.c, 10)",
+          "  └─TableRowIDScan_9 10.10 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "kk 1 10",
+          "xx 4 10"
+        ]
+      },
+      {
+        "SQL": "select * from t where c = 10 and ((a = 'xx' or a = 'yy') or ((a = 'kk' and b = 1) or (a = 'hh' and b = 2)))",
+        "Plan": [
+          "IndexLookUp_11 0.02 root  ",
+          "├─IndexRangeScan_8(Build) 20.20 cop[tikv] table:t, index:idx_ab(a, b) range:[\"hh\" 2,\"hh\" 2], [\"kk\" 1,\"kk\" 1], [\"xx\",\"xx\"], [\"yy\",\"yy\"], keep order:false, stats:pseudo",
+          "└─Selection_10(Probe) 0.02 cop[tikv]  eq(test.t.c, 10)",
+          "  └─TableRowIDScan_9 20.20 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "hh 2 10",
+          "kk 1 10",
+          "xx 4 10",
+          "yy 5 10"
+        ]
+      }
+    ]
   }
 ]
