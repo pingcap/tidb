@@ -1393,7 +1393,7 @@ func TestWrapWithCastAsString(t *testing.T) {
 
 	cases := []struct {
 		expr Expression
-		err  bool
+		warn bool
 		ret  string
 	}{
 		{
@@ -1432,11 +1432,14 @@ func TestWrapWithCastAsString(t *testing.T) {
 			"-127",
 		},
 	}
+	lastWarningLen := 0
 	for _, c := range cases {
 		expr := BuildCastFunction(ctx, c.expr, types.NewFieldType(mysql.TypeVarString))
-		res, _, err := expr.EvalString(ctx, chunk.Row{})
-		if c.err {
-			require.Error(t, err)
+		res, _, _ := expr.EvalString(ctx, chunk.Row{})
+		if c.warn {
+			warns := ctx.GetSessionVars().StmtCtx.GetWarnings()
+			require.Greater(t, len(warns), lastWarningLen)
+			lastWarningLen = len(warns)
 		} else {
 			require.Equal(t, c.ret, res)
 		}
@@ -1690,7 +1693,7 @@ func TestCastArrayFunc(t *testing.T) {
 		},
 	}
 	for _, tt := range tbl {
-		f, err := BuildCastFunctionWithCheck(ctx, datumsToConstants(types.MakeDatums(types.CreateBinaryJSON(tt.input)))[0], tt.tp)
+		f, err := BuildCastFunctionWithCheck(ctx, datumsToConstants(types.MakeDatums(types.CreateBinaryJSON(tt.input)))[0], tt.tp, false)
 		if !tt.buildFuncSuccess {
 			require.Error(t, err, tt.input)
 			continue

@@ -15,7 +15,6 @@
 package tables
 
 import (
-	"bytes"
 	"context"
 	"sync"
 	"time"
@@ -29,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
-	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
 	"github.com/pingcap/tidb/pkg/util/tracing"
 )
@@ -355,15 +353,6 @@ func (c *index) Create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 			}
 			continue
 		}
-		if c.idxInfo.Global && len(value) != 0 && !bytes.Equal(value, idxVal) {
-			val := idxVal
-			err = txn.GetMemBuffer().Set(key, val)
-			if err != nil {
-				return nil, err
-			}
-			continue
-		}
-
 		if keyIsTempIdxKey && !tempIdxVal.IsEmpty() {
 			value = tempIdxVal.Current().Value
 		}
@@ -416,30 +405,32 @@ func (c *index) Delete(ctx table.MutateContext, txn kv.Transaction, indexedValue
 				return err
 			}
 		}
-		tempValElem := tablecodec.TempIndexValueElem{Handle: h, KeyVer: tempKeyVer, Delete: true, Distinct: distinct}
 
-		// If index is global, decode the pid from value (if exists) and compare with c.physicalID.
-		// Only when pid in value equals to c.physicalID, the key can be deleted.
-		if c.idxInfo.Global {
-			if val, err := txn.GetMemBuffer().Get(context.Background(), key); err == nil {
-				segs := tablecodec.SplitIndexValue(val)
-				if len(segs.PartitionID) != 0 {
-					_, pid, err := codec.DecodeInt(segs.PartitionID)
+		tempValElem := tablecodec.TempIndexValueElem{Handle: h, KeyVer: tempKeyVer, Delete: true, Distinct: distinct}
+		if distinct {
+			if len(key) > 0 {
+				okToDelete := true
+				if c.idxInfo.BackfillState != model.BackfillStateInapplicable {
+					// #52914: the delete key is covered by the new ingested key, which shouldn't be deleted.
+					originVal, err := getKeyInTxn(context.TODO(), txn, key)
 					if err != nil {
 						return err
 					}
-					if pid != c.phyTblID {
-						continue
+					if len(originVal) > 0 {
+						oh, err := tablecodec.DecodeHandleInUniqueIndexValue(originVal, c.tblInfo.IsCommonHandle)
+						if err != nil {
+							return err
+						}
+						if !h.Equal(oh) {
+							okToDelete = false
+						}
 					}
 				}
-			}
-		}
-
-		if distinct {
-			if len(key) > 0 {
-				err = txn.GetMemBuffer().DeleteWithFlags(key, kv.SetNeedLocked)
-				if err != nil {
-					return err
+				if okToDelete {
+					err = txn.GetMemBuffer().DeleteWithFlags(key, kv.SetNeedLocked)
+					if err != nil {
+						return err
+					}
 				}
 			}
 			if len(tempKey) > 0 {

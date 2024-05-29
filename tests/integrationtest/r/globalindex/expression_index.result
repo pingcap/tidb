@@ -1,0 +1,39 @@
+set tidb_enable_global_index=true;
+drop table if exists t;
+CREATE TABLE `t` (
+`a` int(11) DEFAULT NULL,
+`b` char(11) DEFAULT NULL,
+UNIQUE KEY `idx` ((lower(`b`)))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY HASH (`a`) PARTITIONS 5;
+insert into t values (1, 'a'), (2, 'b'), (3, 'C'), (4, 'd'), (5, 'x');
+insert into t values (3, 'c');
+Error 1062 (23000): Duplicate entry 'c' for key 't.idx'
+explain format='brief' select * from t use index(idx) where lower(b) = 'c';
+id	estRows	task	access object	operator info
+Projection	1.00	root		globalindex__expression_index.t.a, globalindex__expression_index.t.b
+└─Point_Get	1.00	root	table:t, index:idx(lower(`b`))	
+select * from t use index(idx) where lower(b) = 'c';
+a	b
+3	C
+explain format='brief' select * from t use index(idx) where lower(b) > 'c' order by lower(b);
+id	estRows	task	access object	operator info
+Projection	3333.33	root		globalindex__expression_index.t.a, globalindex__expression_index.t.b
+└─Projection	3333.33	root		globalindex__expression_index.t.a, globalindex__expression_index.t.b, lower(globalindex__expression_index.t.b)
+  └─IndexLookUp	3333.33	root	partition:all	
+    ├─IndexRangeScan(Build)	3333.33	cop[tikv]	table:t, index:idx(lower(`b`))	range:("c",+inf], keep order:true, stats:pseudo
+    └─TableRowIDScan(Probe)	3333.33	cop[tikv]	table:t	keep order:false, stats:pseudo
+select * from t use index(idx) where lower(b) > 'c' order by lower(b);
+a	b
+4	d
+5	x
+explain format='brief' select * from t partition(p0) use index(idx) where lower(b) > 'c';
+id	estRows	task	access object	operator info
+Projection	3333.33	root	NULL	globalindex__expression_index.t.a, globalindex__expression_index.t.b
+└─IndexLookUp	3333.33	root	partition:p0	NULL
+  ├─Selection(Build)	3333.33	cop[tikv]	NULL	in(_tidb_pid, pid0)
+  │ └─IndexRangeScan	3333.33	cop[tikv]	table:t, index:idx(lower(`b`))	range:("c",+inf], keep order:false, stats:pseudo
+  └─TableRowIDScan(Probe)	3333.33	cop[tikv]	table:t	keep order:false, stats:pseudo
+select * from t partition(p0) use index(idx) where lower(b) > 'c';
+a	b
+5	x

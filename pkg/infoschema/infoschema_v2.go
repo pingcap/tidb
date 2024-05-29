@@ -17,7 +17,9 @@ package infoschema
 import (
 	"fmt"
 	"math"
+	"strings"
 	"sync"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
@@ -28,8 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/util"
-	fifo "github.com/scalalang2/golang-fifo"
-	"github.com/scalalang2/golang-fifo/sieve"
+	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/tidwall/btree"
 	"golang.org/x/sync/singleflight"
 )
@@ -85,7 +86,7 @@ type Data struct {
 	// Stores the full data in memory.
 	schemaMap *btree.BTreeG[schemaItem]
 
-	tableCache fifo.Cache[tableCacheKey, table.Table]
+	tableCache *Sieve[tableCacheKey, table.Table]
 
 	// sorted by both SchemaVersion and timestamp in descending order, assume they have same order
 	mu struct {
@@ -95,6 +96,17 @@ type Data struct {
 
 	// For information_schema/metrics_schema/performance_schema etc
 	specials map[string]*schemaTables
+
+	// pid2tid is used by FindTableInfoByPartitionID, it stores {partitionID, schemaVersion} => table ID
+	// Need full data in memory!
+	pid2tid *btree.BTreeG[partitionItem]
+}
+
+type partitionItem struct {
+	partitionID   int64
+	schemaVersion int64
+	tableID       int64
+	tomb          bool
 }
 
 func (isd *Data) getVersionByTS(ts uint64) (int64, bool) {
@@ -140,20 +152,30 @@ type tableCacheKey struct {
 // NewData creates an infoschema V2 data struct.
 func NewData() *Data {
 	ret := &Data{
-		byID:      btree.NewBTreeG[tableItem](compareByID),
-		byName:    btree.NewBTreeG[tableItem](compareByName),
-		schemaMap: btree.NewBTreeG[schemaItem](compareSchemaItem),
-		// TODO: limit by size instead of by table count.
-		tableCache: sieve.New[tableCacheKey, table.Table](1000),
+		byID:       btree.NewBTreeG[tableItem](compareByID),
+		byName:     btree.NewBTreeG[tableItem](compareByName),
+		schemaMap:  btree.NewBTreeG[schemaItem](compareSchemaItem),
+		tableCache: newSieve[tableCacheKey, table.Table](1024 * 1024 * size.MB),
 		specials:   make(map[string]*schemaTables),
+		pid2tid:    btree.NewBTreeG[partitionItem](comparePartitionItem),
 	}
 	return ret
+}
+
+// CacheCapacity is exported for testing.
+func (isd *Data) CacheCapacity() uint64 {
+	return isd.tableCache.Capacity()
 }
 
 func (isd *Data) add(item tableItem, tbl table.Table) {
 	isd.byID.Set(item)
 	isd.byName.Set(item)
 	isd.tableCache.Set(tableCacheKey{item.tableID, item.schemaVersion}, tbl)
+	if pi := tbl.Meta().GetPartitionInfo(); pi != nil {
+		for _, def := range pi.Definitions {
+			isd.pid2tid.Set(partitionItem{def.ID, item.schemaVersion, tbl.Meta().ID, false})
+		}
+	}
 }
 
 func (isd *Data) addSpecialDB(di *model.DBInfo, tables *schemaTables) {
@@ -161,6 +183,7 @@ func (isd *Data) addSpecialDB(di *model.DBInfo, tables *schemaTables) {
 }
 
 func (isd *Data) addDB(schemaVersion int64, dbInfo *model.DBInfo) {
+	dbInfo.Tables = nil
 	isd.schemaMap.Set(schemaItem{schemaVersion: schemaVersion, dbInfo: dbInfo})
 }
 
@@ -205,6 +228,16 @@ func compareByName(a, b tableItem) bool {
 	return a.schemaVersion < b.schemaVersion
 }
 
+func comparePartitionItem(a, b partitionItem) bool {
+	if a.partitionID < b.partitionID {
+		return true
+	}
+	if a.partitionID > b.partitionID {
+		return false
+	}
+	return a.schemaVersion < b.schemaVersion
+}
+
 func compareSchemaItem(a, b schemaItem) bool {
 	if a.Name() < b.Name() {
 		return true
@@ -227,18 +260,9 @@ type infoschemaV2 struct {
 // NewInfoSchemaV2 create infoschemaV2.
 func NewInfoSchemaV2(r autoid.Requirement, infoData *Data) infoschemaV2 {
 	return infoschemaV2{
-		infoSchema: &infoSchema{
-			infoSchemaMisc: infoSchemaMisc{
-				policyMap:             map[string]*model.PolicyInfo{},
-				resourceGroupMap:      map[string]*model.ResourceGroupInfo{},
-				ruleBundleMap:         map[int64]*placement.Bundle{},
-				referredForeignKeyMap: make(map[SchemaAndTableName][]*model.ReferredFKInfo),
-			},
-			schemaMap:           map[string]*schemaTables{},
-			sortedTablesBuckets: make([]sortedTables, bucketCount),
-		},
-		Data: infoData,
-		r:    r,
+		infoSchema: newInfoSchema(),
+		Data:       infoData,
+		r:          r,
 	}
 }
 
@@ -277,7 +301,17 @@ func (is *infoschemaV2) base() *infoSchema {
 	return is.infoSchema
 }
 
+func (is *infoschemaV2) CloneAndUpdateTS(startTS uint64) *infoschemaV2 {
+	tmp := *is
+	tmp.ts = startTS
+	return &tmp
+}
+
 func (is *infoschemaV2) TableByID(id int64) (val table.Table, ok bool) {
+	return is.tableByID(id, false)
+}
+
+func (is *infoschemaV2) tableByID(id int64, noRefill bool) (val table.Table, ok bool) {
 	if !tableIDIsValid(id) {
 		return
 	}
@@ -307,7 +341,9 @@ func (is *infoschemaV2) TableByID(id int64) (val table.Table, ok bool) {
 	oldKey := tableCacheKey{itm.tableID, itm.schemaVersion}
 	tbl, found = is.tableCache.Get(oldKey)
 	if found && tbl != nil {
-		is.tableCache.Set(key, tbl)
+		if !noRefill {
+			is.tableCache.Set(key, tbl)
+		}
 		return tbl, true
 	}
 
@@ -317,7 +353,9 @@ func (is *infoschemaV2) TableByID(id int64) (val table.Table, ok bool) {
 		return nil, false
 	}
 
-	is.tableCache.Set(key, ret)
+	if !noRefill {
+		is.tableCache.Set(key, ret)
+	}
 	return ret, true
 }
 
@@ -382,7 +420,41 @@ func (is *infoschemaV2) TableInfoByID(id int64) (*model.TableInfo, bool) {
 
 // SchemaTableInfos implements InfoSchema.FindTableInfoByPartitionID
 func (is *infoschemaV2) SchemaTableInfos(schema model.CIStr) []*model.TableInfo {
-	return getTableInfoList(is.SchemaTables(schema))
+	if isSpecialDB(schema.L) {
+		schTbls := is.Data.specials[schema.L]
+		tables := make([]table.Table, 0, len(schTbls.tables))
+		for _, tbl := range schTbls.tables {
+			tables = append(tables, tbl)
+		}
+		return getTableInfoList(tables)
+	}
+
+retry:
+	dbInfo, ok := is.SchemaByName(schema)
+	if !ok {
+		return nil
+	}
+	snapshot := is.r.Store().GetSnapshot(kv.NewVersion(is.ts))
+	// Using the KV timeout read feature to address the issue of potential DDL lease expiration when
+	// the meta region leader is slow.
+	snapshot.SetOption(kv.TiKVClientReadTimeout, uint64(3000)) // 3000ms.
+	m := meta.NewSnapshotMeta(snapshot)
+	tblInfos, err := m.ListTables(dbInfo.ID)
+	if err != nil {
+		if meta.ErrDBNotExists.Equal(err) {
+			return nil
+		}
+		// Flashback statement could cause such kind of error.
+		// In theory that error should be handled in the lower layer, like client-go.
+		// But it's not done, so we retry here.
+		if strings.Contains(err.Error(), "in flashback progress") {
+			time.Sleep(200 * time.Millisecond)
+			goto retry
+		}
+		// TODO: error could happen, so do not panic!
+		panic(err)
+	}
+	return tblInfos
 }
 
 // FindTableInfoByPartitionID implements InfoSchema.FindTableInfoByPartitionID
@@ -462,23 +534,52 @@ func (is *infoschemaV2) SchemaExists(schema model.CIStr) bool {
 }
 
 func (is *infoschemaV2) FindTableByPartitionID(partitionID int64) (table.Table, *model.DBInfo, *model.PartitionDefinition) {
-	// TODO: This is quite inefficient! we need some better way or avoid this API.
-	dbInfos := is.AllSchemas()
-	for _, dbInfo := range dbInfos {
-		tbls := is.SchemaTables(dbInfo.Name)
-		for _, tbl := range tbls {
-			pi := tbl.Meta().GetPartitionInfo()
-			if pi == nil {
-				continue
+	var ok bool
+	var pi partitionItem
+	is.pid2tid.Descend(partitionItem{partitionID: partitionID, schemaVersion: math.MaxInt64},
+		func(item partitionItem) bool {
+			if item.partitionID != partitionID {
+				return false
 			}
-			for _, p := range pi.Definitions {
-				if p.ID == partitionID {
-					return tbl, dbInfo, &p
-				}
+			if item.schemaVersion > is.infoSchema.schemaMetaVersion {
+				// Skip the record.
+				return true
 			}
+			if item.schemaVersion <= is.infoSchema.schemaMetaVersion {
+				ok = !item.tomb
+				pi = item
+				return false
+			}
+			return true
+		})
+	if !ok {
+		return nil, nil, nil
+	}
+
+	tbl, ok := is.TableByID(pi.tableID)
+	if !ok {
+		// something wrong?
+		return nil, nil, nil
+	}
+
+	dbID := tbl.Meta().DBID
+	dbInfo, ok := is.SchemaByID(dbID)
+	if !ok {
+		// something wrong?
+		return nil, nil, nil
+	}
+
+	partInfo := tbl.Meta().GetPartitionInfo()
+	var def *model.PartitionDefinition
+	for i := 0; i < len(partInfo.Definitions); i++ {
+		pdef := &partInfo.Definitions[i]
+		if pdef.ID == partitionID {
+			def = pdef
+			break
 		}
 	}
-	return nil, nil, nil
+
+	return tbl, dbInfo, def
 }
 
 func (is *infoschemaV2) TableExists(schema, table model.CIStr) bool {
@@ -522,6 +623,7 @@ func (is *infoschemaV2) SchemaTables(schema model.CIStr) (tables []table.Table) 
 		return tables
 	}
 
+retry:
 	dbInfo, ok := is.SchemaByName(schema)
 	if !ok {
 		return
@@ -536,12 +638,19 @@ func (is *infoschemaV2) SchemaTables(schema model.CIStr) (tables []table.Table) 
 		if meta.ErrDBNotExists.Equal(err) {
 			return nil
 		}
+		// Flashback statement could cause such kind of error.
+		// In theory that error should be handled in the lower layer, like client-go.
+		// But it's not done, so we retry here.
+		if strings.Contains(err.Error(), "in flashback progress") {
+			time.Sleep(200 * time.Millisecond)
+			goto retry
+		}
 		// TODO: error could happen, so do not panic!
 		panic(err)
 	}
 	tables = make([]table.Table, 0, len(tblInfos))
 	for _, tblInfo := range tblInfos {
-		tbl, ok := is.TableByID(tblInfo.ID)
+		tbl, ok := is.tableByID(tblInfo.ID, true)
 		if !ok {
 			// what happen?
 			continue
@@ -554,6 +663,7 @@ func (is *infoschemaV2) SchemaTables(schema model.CIStr) (tables []table.Table) 
 func loadTableInfo(r autoid.Requirement, infoData *Data, tblID, dbID int64, ts uint64, schemaVersion int64) (table.Table, error) {
 	// Try to avoid repeated concurrency loading.
 	res, err, _ := loadTableSF.Do(fmt.Sprintf("%d-%d-%d", dbID, tblID, schemaVersion), func() (any, error) {
+	retry:
 		snapshot := r.Store().GetSnapshot(kv.NewVersion(ts))
 		// Using the KV timeout read feature to address the issue of potential DDL lease expiration when
 		// the meta region leader is slow.
@@ -561,8 +671,15 @@ func loadTableInfo(r autoid.Requirement, infoData *Data, tblID, dbID int64, ts u
 		m := meta.NewSnapshotMeta(snapshot)
 
 		tblInfo, err := m.GetTable(dbID, tblID)
-
 		if err != nil {
+			// Flashback statement could cause such kind of error.
+			// In theory that error should be handled in the lower layer, like client-go.
+			// But it's not done, so we retry here.
+			if strings.Contains(err.Error(), "in flashback progress") {
+				time.Sleep(200 * time.Millisecond)
+				goto retry
+			}
+
 			// TODO load table panic!!!
 			panic(err)
 		}
@@ -608,9 +725,9 @@ func isTableVirtual(id int64) bool {
 }
 
 // IsV2 tells whether an InfoSchema is v2 or not.
-func IsV2(is InfoSchema) bool {
-	_, ok := is.(*infoschemaV2)
-	return ok
+func IsV2(is InfoSchema) (bool, *infoschemaV2) {
+	ret, ok := is.(*infoschemaV2)
+	return ok, ret
 }
 
 func applyTableUpdate(b *Builder, m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
@@ -775,6 +892,12 @@ func (b *Builder) applyDropTableV2(diff *model.SchemaDiff, dbInfo *model.DBInfo,
 	// The old DBInfo still holds a reference to old table info, we need to remove it.
 	b.infoSchema.deleteReferredForeignKeys(dbInfo.Name, table.Meta())
 
+	if pi := table.Meta().GetPartitionInfo(); pi != nil {
+		for _, def := range pi.Definitions {
+			b.infoData.pid2tid.Set(partitionItem{def.ID, diff.Version, table.Meta().ID, true})
+		}
+	}
+
 	b.infoData.remove(tableItem{
 		dbName:        dbInfo.Name.L,
 		dbID:          dbInfo.ID,
@@ -836,8 +959,8 @@ func (b *bundleInfoBuilder) updateInfoSchemaBundlesV2(is *infoschemaV2) {
 	// TODO: This is quite inefficient! we need some better way or avoid this API.
 	is.ruleBundleMap = make(map[int64]*placement.Bundle)
 	for _, dbInfo := range is.AllSchemas() {
-		for _, tbl := range is.SchemaTables(dbInfo.Name) {
-			b.updateTableBundles(is, tbl.Meta().ID)
+		for _, tbl := range is.SchemaTableInfos(dbInfo.Name) {
+			b.updateTableBundles(is, tbl.ID)
 		}
 	}
 }

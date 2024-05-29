@@ -16,10 +16,10 @@ package expression
 
 import (
 	"cmp"
+	"fmt"
 	"math"
 	"strings"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/opcode"
@@ -368,7 +368,7 @@ func ResolveType4Between(args [3]Expression) types.EvalType {
 	return cmpTp
 }
 
-// GLCmpStringMode represents Greatest/Least interal string comparison mode
+// GLCmpStringMode represents Greatest/Least integral string comparison mode
 type GLCmpStringMode uint8
 
 const (
@@ -448,7 +448,7 @@ func (c *greatestFunctionClass) getFunction(ctx BuildContext, args []Expression)
 	resTp := resFieldType.EvalType()
 	argTp := resTp
 	if cmpStringMode != GLCmpStringDirectly {
-		// Args are temporal and string mixed, we cast all args as string and parse it to temporal mannualy to compare.
+		// Args are temporal and string mixed, we cast all args as string and parse it to temporal manually to compare.
 		argTp = types.ETString
 	} else if resTp == types.ETJson {
 		unsupportedJSONComparison(ctx, args)
@@ -761,7 +761,7 @@ func (c *leastFunctionClass) getFunction(ctx BuildContext, args []Expression) (s
 	resTp := resFieldType.EvalType()
 	argTp := resTp
 	if cmpStringMode != GLCmpStringDirectly {
-		// Args are temporal and string mixed, we cast all args as string and parse it to temporal mannualy to compare.
+		// Args are temporal and string mixed, we cast all args as string and parse it to temporal manually to compare.
 		argTp = types.ETString
 	} else if resTp == types.ETJson {
 		unsupportedJSONComparison(ctx, args)
@@ -1373,7 +1373,7 @@ func isTemporalColumn(expr Expression) bool {
 
 // tryToConvertConstantInt tries to convert a constant with other type to a int constant.
 // isExceptional indicates whether the 'int column [cmp] const' might be true/false.
-// If isExceptional is true, ExecptionalVal is returned. Or, CorrectVal is returned.
+// If isExceptional is true, ExceptionalVal is returned. Or, CorrectVal is returned.
 // CorrectVal: The computed result. If the constant can be converted to int without exception, return the val. Else return 'con'(the input).
 // ExceptionalVal : It is used to get more information to check whether 'int column [cmp] const' is true/false
 //
@@ -1412,7 +1412,7 @@ func tryToConvertConstantInt(ctx BuildContext, targetFieldType *types.FieldType,
 
 // RefineComparedConstant changes a non-integer constant argument to its ceiling or floor result by the given op.
 // isExceptional indicates whether the 'int column [cmp] const' might be true/false.
-// If isExceptional is true, ExecptionalVal is returned. Or, CorrectVal is returned.
+// If isExceptional is true, ExceptionalVal is returned. Or, CorrectVal is returned.
 // CorrectVal: The computed result. If the constant can be converted to int without exception, return the val. Else return 'con'(the input).
 // ExceptionalVal : It is used to get more information to check whether 'int column [cmp] const' is true/false
 //
@@ -1428,7 +1428,10 @@ func RefineComparedConstant(ctx BuildContext, targetFieldType types.FieldType, c
 		targetFieldType = *types.NewFieldType(mysql.TypeLonglong)
 	}
 	var intDatum types.Datum
-	intDatum, err = dt.ConvertTo(evalCtx.TypeCtx(), &targetFieldType)
+	// Disable AllowNegativeToUnsigned to make sure return 0 when underflow happens.
+	oriTypeCtx := evalCtx.TypeCtx()
+	newTypeCtx := oriTypeCtx.WithFlags(oriTypeCtx.Flags().WithAllowNegativeToUnsigned(false))
+	intDatum, err = dt.ConvertTo(newTypeCtx, &targetFieldType)
 	if err != nil {
 		if terror.ErrorEqual(err, types.ErrOverflow) {
 			return &Constant{
@@ -1532,8 +1535,7 @@ func allowCmpArgsRefining4PlanCache(ctx BuildContext, args []Expression) (allowR
 		exprType := args[1-conIdx].GetType()
 		exprEvalType := exprType.EvalType()
 		if exprType.GetType() == mysql.TypeYear {
-			reason := errors.NewNoStackErrorf("'%v' may be converted to INT", args[conIdx].String())
-			ctx.SetSkipPlanCache(reason)
+			ctx.SetSkipPlanCache(fmt.Sprintf("'%v' may be converted to INT", args[conIdx].String()))
 			return true
 		}
 
@@ -1542,8 +1544,7 @@ func allowCmpArgsRefining4PlanCache(ctx BuildContext, args []Expression) (allowR
 		conEvalType := args[conIdx].GetType().EvalType()
 		if exprEvalType == types.ETInt &&
 			(conEvalType == types.ETString || conEvalType == types.ETReal || conEvalType == types.ETDecimal) {
-			reason := errors.NewNoStackErrorf("'%v' may be converted to INT", args[conIdx].String())
-			ctx.SetSkipPlanCache(reason)
+			ctx.SetSkipPlanCache(fmt.Sprintf("'%v' may be converted to INT", args[conIdx].String()))
 			return true
 		}
 
@@ -1552,8 +1553,7 @@ func allowCmpArgsRefining4PlanCache(ctx BuildContext, args []Expression) (allowR
 		// see https://github.com/pingcap/tidb/issues/38361 for more details
 		_, exprIsCon := args[1-conIdx].(*Constant)
 		if !exprIsCon && matchRefineRule3Pattern(conEvalType, exprType) {
-			reason := errors.Errorf("'%v' may be converted to datetime", args[conIdx].String())
-			ctx.SetSkipPlanCache(reason)
+			ctx.SetSkipPlanCache(fmt.Sprintf("'%v' may be converted to datetime", args[conIdx].String()))
 			return true
 		}
 	}

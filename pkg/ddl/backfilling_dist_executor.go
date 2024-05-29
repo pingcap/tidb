@@ -20,6 +20,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
+	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
@@ -29,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
-	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
 )
@@ -59,6 +59,7 @@ type BackfillSubTaskMeta struct {
 	RangeSplitKeys [][]byte `json:"range_split_keys,omitempty"`
 	DataFiles      []string `json:"data-files,omitempty"`
 	StatFiles      []string `json:"stat-files,omitempty"`
+	TS             uint64   `json:"ts,omitempty"`
 	// Each group of MetaGroups represents a different index kvs meta.
 	MetaGroups []*external.SortedKVMeta `json:"meta_groups,omitempty"`
 	// Only used for adding one single index.
@@ -101,8 +102,9 @@ func (s *backfillDistExecutor) newBackfillSubtaskExecutor(
 	for _, eid := range eleIDs {
 		indexInfo := model.FindIndexInfoByID(tbl.Meta().Indices, eid)
 		if indexInfo == nil {
-			logutil.BgLogger().Warn("index info not found", zap.String("category", "ddl-ingest"),
-				zap.Int64("table ID", tbl.Meta().ID), zap.Int64("index ID", eid))
+			logutil.DDLIngestLogger().Warn("index info not found",
+				zap.Int64("table ID", tbl.Meta().ID),
+				zap.Int64("index ID", eid))
 			return nil, errors.Errorf("index info not found: %d", eid)
 		}
 		indexInfos = append(indexInfos, indexInfo)
@@ -117,7 +119,7 @@ func (s *backfillDistExecutor) newBackfillSubtaskExecutor(
 		ddlObj.setDDLSourceForDiagnosis(jobMeta.ID, jobMeta.Type)
 		return newReadIndexExecutor(ddlObj, jobMeta, indexInfos, tbl, jc, s.getBackendCtx, cloudStorageURI, estRowSize)
 	case proto.BackfillStepMergeSort:
-		return newMergeSortExecutor(jobMeta.ID, len(indexInfos), tbl, cloudStorageURI, estRowSize)
+		return newMergeSortExecutor(jobMeta.ID, len(indexInfos), tbl, cloudStorageURI)
 	case proto.BackfillStepWriteAndIngest:
 		if len(cloudStorageURI) == 0 {
 			return nil, errors.Errorf("local import does not have write & ingest step")

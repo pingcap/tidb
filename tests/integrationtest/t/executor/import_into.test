@@ -78,6 +78,8 @@ import into t from '/file.csv' with skip_rows=true;
 -- error 8164
 import into t from '/file.csv' with split_file='aa';
 -- error 8164
+import into t from '/file.csv' with split_file;
+-- error 8164
 import into t from '/file.csv' with split_file, skip_rows=2;
 -- error 8164
 import into t from '/file.csv' with disk_quota='aa';

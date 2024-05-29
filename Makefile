@@ -312,7 +312,7 @@ tools/bin/revive:
 
 .PHONY: tools/bin/failpoint-ctl
 tools/bin/failpoint-ctl:
-	GOBIN=$(shell pwd)/tools/bin $(GO) install github.com/pingcap/failpoint/failpoint-ctl@2eaa328
+	GOBIN=$(shell pwd)/tools/bin $(GO) install github.com/pingcap/failpoint/failpoint-ctl@9b3b6e3
 
 .PHONY: tools/bin/errdoc-gen
 tools/bin/errdoc-gen:
@@ -759,6 +759,14 @@ bazel_pipelineddmltest: failpoint-enable bazel_ci_simple_prepare
 	bazel $(BAZEL_GLOBAL_CONFIG) coverage $(BAZEL_CMD_CONFIG) $(BAZEL_INSTRUMENTATION_FILTER) --test_output=all --test_arg=-with-real-tikv --define gotags=deadlock,intest \
 	--@io_bazel_rules_go//go/config:cover_format=go_cover \
 		-- //tests/realtikvtest/pipelineddmltest/...
+	./build/jenkins_collect_coverage.sh
+
+# on timeout, bazel won't print log sometimes, so we use --test_output=all to print log always
+.PHONY: bazel_flashbacktest
+bazel_flashbacktest: failpoint-enable bazel_ci_simple_prepare
+	bazel $(BAZEL_GLOBAL_CONFIG) coverage $(BAZEL_CMD_CONFIG) $(BAZEL_INSTRUMENTATION_FILTER) --test_output=all --test_arg=-with-real-tikv --define gotags=deadlock,intest \
+	--@io_bazel_rules_go//go/config:cover_format=go_cover \
+		-- //tests/realtikvtest/flashbacktest/...
 	./build/jenkins_collect_coverage.sh
 
 .PHONY: bazel_lint

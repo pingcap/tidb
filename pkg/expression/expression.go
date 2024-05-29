@@ -19,6 +19,8 @@ import (
 	"fmt"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/errctx"
+	exprctx "github.com/pingcap/tidb/pkg/expression/context"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -27,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/generatedexpr"
+	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/pingcap/tidb/pkg/util/zeropool"
 )
@@ -217,7 +220,7 @@ type Expression interface {
 	// resolveIndices is called inside the `ResolveIndices` It will perform on the expression itself.
 	resolveIndices(schema *Schema) error
 
-	// ResolveIndicesByVirtualExpr resolves indices by the given schema in terms of virual expression. It will copy the original expression and return the copied one.
+	// ResolveIndicesByVirtualExpr resolves indices by the given schema in terms of virtual expression. It will copy the original expression and return the copied one.
 	ResolveIndicesByVirtualExpr(ctx EvalContext, schema *Schema) (Expression, bool)
 
 	// resolveIndicesByVirtualExpr is called inside the `ResolveIndicesByVirtualExpr` It will perform on the expression itself.
@@ -863,7 +866,7 @@ func SplitDNFItems(onExpr Expression) []Expression {
 // If the Expression is a non-constant value, it means the result is unknown.
 func EvaluateExprWithNull(ctx BuildContext, schema *Schema, expr Expression) Expression {
 	if MaybeOverOptimized4PlanCache(ctx, []Expression{expr}) {
-		ctx.SetSkipPlanCache(errors.NewNoStackError("%v affects null check"))
+		ctx.SetSkipPlanCache(fmt.Sprintf("%v affects null check", expr.String()))
 	}
 	if ctx.IsInNullRejectCheck() {
 		expr, _ = evaluateExprWithNullInNullRejectCheck(ctx, schema, expr)
@@ -1006,8 +1009,6 @@ func TableInfo2SchemaAndNames(ctx BuildContext, dbName model.CIStr, tbl *model.T
 }
 
 // ColumnInfos2ColumnsAndNames converts the ColumnInfo to the *Column and NameSlice.
-// This function is **unsafe** to be called concurrently, unless the `IgnoreTruncate` has been set to `true`. The only
-// known case which will call this function concurrently is `CheckTableExec`. Ref #18408 and #42341.
 func ColumnInfos2ColumnsAndNames(ctx BuildContext, dbName, tblName model.CIStr, colInfos []*model.ColumnInfo, tblInfo *model.TableInfo) ([]*Column, types.NameSlice, error) {
 	columns := make([]*Column, 0, len(colInfos))
 	names := make([]*types.FieldName, 0, len(colInfos))
@@ -1031,17 +1032,16 @@ func ColumnInfos2ColumnsAndNames(ctx BuildContext, dbName, tblName model.CIStr, 
 	}
 	// Resolve virtual generated column.
 	mockSchema := NewSchema(columns...)
-	// Ignore redundant warning here.
-	flags := ctx.GetSessionVars().StmtCtx.TypeFlags()
-	if !flags.IgnoreTruncateErr() {
-		defer func() {
-			ctx.GetSessionVars().StmtCtx.SetTypeFlags(flags)
-		}()
-		ctx.GetSessionVars().StmtCtx.SetTypeFlags(flags.WithIgnoreTruncateErr(true))
-	}
 
+	truncateIgnored := false
 	for i, col := range colInfos {
 		if col.IsVirtualGenerated() {
+			if !truncateIgnored {
+				// Ignore redundant warning here.
+				ctx = exprctx.CtxWithHandleTruncateErrLevel(ctx, errctx.LevelIgnore)
+				truncateIgnored = true
+			}
+
 			expr, err := generatedexpr.ParseExpression(col.GeneratedExprString)
 			if err != nil {
 				return nil, nil, errors.Trace(err)
@@ -1174,6 +1174,21 @@ func PropagateType(evalType types.EvalType, args ...Expression) {
 			if args[0].GetType().GetType() == mysql.TypeNewDecimal {
 				if newDecimal > mysql.MaxDecimalScale {
 					newDecimal = mysql.MaxDecimalScale
+				}
+				if oldFlen-oldDecimal > newFlen-newDecimal {
+					// the input data should never be overflow under the new type
+					if newDecimal > oldDecimal {
+						// if the target decimal part is larger than the original decimal part, we try to extend
+						// the decimal part as much as possible while keeping the integer part big enough to hold
+						// the original data. For example, original type is Decimal(50, 0), new type is Decimal(48,30), then
+						// incDecimal = min(30-0, mysql.MaxDecimalWidth-50) = 15
+						// the new target Decimal will be Decimal(50+15, 0+15) = Decimal(65, 15)
+						incDecimal := mathutil.Min(newDecimal-oldDecimal, mysql.MaxDecimalWidth-oldFlen)
+						newFlen = oldFlen + incDecimal
+						newDecimal = oldDecimal + incDecimal
+					} else {
+						newFlen, newDecimal = oldFlen, oldDecimal
+					}
 				}
 			}
 			args[0].GetType().SetFlenUnderLimit(newFlen)

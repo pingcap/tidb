@@ -1,0 +1,63 @@
+set tidb_enable_global_index=true;
+
+--echo # IntHandle
+drop table if exists t;
+CREATE TABLE `t` (
+  `a` int(11) DEFAULT NULL,
+  `b` int(11) DEFAULT NULL,
+  UNIQUE KEY `idx1` (`b`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY HASH (`a`) PARTITIONS 5;
+
+insert into t values (1, 2), (2, 3), (3, 4), (4, 5);
+
+begin;
+insert into t values (5, 1);
+
+explain select b from t use index(idx1) where b > 2;
+--sorted_result
+select b from t use index(idx1) where b > 2;
+
+--replace_regex /in\(_tidb_pid, [0-9]+\)/in(_tidb_pid, pid0)/
+explain select b from t partition(p0) use index(idx1) where b <= 2;
+--sorted_result
+select b from t partition(p0) use index(idx1) where b <= 2;
+
+--replace_regex /in\(_tidb_pid, [0-9]+, [0-9]+\)/in(_tidb_pid, pid0, pid1)/
+explain select b from t partition(p0, p1) use index(idx1) where b <= 2;
+--sorted_result
+select b from t partition(p0, p1) use index(idx1) where b <= 2;
+
+rollback;
+
+--echo # CommonHandle
+drop table if exists t;
+CREATE TABLE `t` (
+  `a` year(4) primary key CLUSTERED,
+  `b` int(11) DEFAULT NULL,
+  UNIQUE KEY `idx1` (`b`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY HASH (`a`) PARTITIONS 5;
+
+insert into t values (2001, 2), (2002, 3), (2003, 4), (2004, 5);
+
+begin;
+insert into t values (2005, 1);
+
+explain select b from t use index(idx1) where b > 2;
+--sorted_result
+select b from t use index(idx1) where b > 2;
+
+--replace_regex /in\(_tidb_pid, [0-9]+\)/in(_tidb_pid, pid0)/
+explain select b from t partition(p0) use index(idx1) where b <= 2;
+--sorted_result
+select b from t partition(p0) use index(idx1) where b <= 2;
+
+--replace_regex /in\(_tidb_pid, [0-9]+, [0-9]+\)/in(_tidb_pid, pid0, pid1)/
+explain select b from t partition(p0, p1) use index(idx1) where b <= 2;
+--sorted_result
+select b from t partition(p0, p1) use index(idx1) where b <= 2;
+
+rollback;
+
+

@@ -869,6 +869,7 @@ var tableTiDBIndexesCols = []columnInfo{
 	{name: "INDEX_ID", tp: mysql.TypeLonglong, size: 21},
 	{name: "IS_VISIBLE", tp: mysql.TypeVarchar, size: 64},
 	{name: "CLUSTERED", tp: mysql.TypeVarchar, size: 64},
+	{name: "IS_GLOBAL", tp: mysql.TypeLonglong, size: 21},
 }
 
 var slowQueryCols = []columnInfo{
@@ -1263,9 +1264,9 @@ var tableDDLJobsCols = []columnInfo{
 	{name: "SCHEMA_ID", tp: mysql.TypeLonglong, size: 21},
 	{name: "TABLE_ID", tp: mysql.TypeLonglong, size: 21},
 	{name: "ROW_COUNT", tp: mysql.TypeLonglong, size: 21},
-	{name: "CREATE_TIME", tp: mysql.TypeDatetime, size: 19},
-	{name: "START_TIME", tp: mysql.TypeDatetime, size: 19},
-	{name: "END_TIME", tp: mysql.TypeDatetime, size: 19},
+	{name: "CREATE_TIME", tp: mysql.TypeDatetime, size: 26, decimal: 6},
+	{name: "START_TIME", tp: mysql.TypeDatetime, size: 26, decimal: 6},
+	{name: "END_TIME", tp: mysql.TypeDatetime, size: 26, decimal: 6},
 	{name: "STATE", tp: mysql.TypeVarchar, size: 64},
 	{name: "QUERY", tp: mysql.TypeBlob, size: types.UnspecifiedLength},
 }
@@ -1387,6 +1388,8 @@ var tableStatementsSummaryCols = []columnInfo{
 	{name: stmtsummary.MaxQueuedRcTimeStr, tp: mysql.TypeLonglong, size: 22, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Max time of waiting for available request-units"},
 	{name: stmtsummary.AvgQueuedRcTimeStr, tp: mysql.TypeLonglong, size: 22, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Max time of waiting for available request-units"},
 	{name: stmtsummary.ResourceGroupName, tp: mysql.TypeVarchar, size: 64, comment: "Bind resource group name"},
+	{name: stmtsummary.PlanCacheUnqualifiedStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.NotNullFlag, comment: "The number of times that these statements are not supported by the plan cache"},
+	{name: stmtsummary.LastPlanCacheUnqualifiedStr, tp: mysql.TypeBlob, size: types.UnspecifiedLength, comment: "The last reason why the statement is not supported by the plan cache"},
 }
 
 var tableStorageStatsCols = []columnInfo{
@@ -1405,7 +1408,7 @@ var tableTableTiFlashTablesCols = []columnInfo{
 	{name: "TABLE", tp: mysql.TypeVarchar, size: 64},
 	{name: "TIDB_DATABASE", tp: mysql.TypeVarchar, size: 64},
 	{name: "TIDB_TABLE", tp: mysql.TypeVarchar, size: 64},
-	{name: "TABLE_ID", tp: mysql.TypeLonglong, size: 64},
+	{name: "TABLE_ID", tp: mysql.TypeLonglong, size: 21},
 	{name: "IS_TOMBSTONE", tp: mysql.TypeLonglong, size: 64},
 	{name: "SEGMENT_COUNT", tp: mysql.TypeLonglong, size: 64},
 	{name: "TOTAL_ROWS", tp: mysql.TypeLonglong, size: 64},
@@ -1462,7 +1465,7 @@ var tableTableTiFlashSegmentsCols = []columnInfo{
 	{name: "TABLE", tp: mysql.TypeVarchar, size: 64},
 	{name: "TIDB_DATABASE", tp: mysql.TypeVarchar, size: 64},
 	{name: "TIDB_TABLE", tp: mysql.TypeVarchar, size: 64},
-	{name: "TABLE_ID", tp: mysql.TypeLonglong, size: 64},
+	{name: "TABLE_ID", tp: mysql.TypeLonglong, size: 21},
 	{name: "IS_TOMBSTONE", tp: mysql.TypeLonglong, size: 64},
 	{name: "SEGMENT_ID", tp: mysql.TypeLonglong, size: 64},
 	{name: "RANGE", tp: mysql.TypeVarchar, size: 64},
@@ -1713,18 +1716,16 @@ func GetShardingInfo(dbInfo model.CIStr, tableInfo *model.TableInfo) any {
 		return nil
 	}
 	shardingInfo := "NOT_SHARDED"
-	if tableInfo.PKIsHandle {
-		if tableInfo.ContainsAutoRandomBits() {
-			shardingInfo = "PK_AUTO_RANDOM_BITS=" + strconv.Itoa(int(tableInfo.AutoRandomBits))
-			rangeBits := tableInfo.AutoRandomRangeBits
-			if rangeBits != 0 && rangeBits != autoid.AutoRandomRangeBitsDefault {
-				shardingInfo = fmt.Sprintf("%s, RANGE BITS=%d", shardingInfo, rangeBits)
-			}
-		} else {
-			shardingInfo = "NOT_SHARDED(PK_IS_HANDLE)"
+	if tableInfo.ContainsAutoRandomBits() {
+		shardingInfo = "PK_AUTO_RANDOM_BITS=" + strconv.Itoa(int(tableInfo.AutoRandomBits))
+		rangeBits := tableInfo.AutoRandomRangeBits
+		if rangeBits != 0 && rangeBits != autoid.AutoRandomRangeBitsDefault {
+			shardingInfo = fmt.Sprintf("%s, RANGE BITS=%d", shardingInfo, rangeBits)
 		}
 	} else if tableInfo.ShardRowIDBits > 0 {
 		shardingInfo = "SHARD_BITS=" + strconv.Itoa(int(tableInfo.ShardRowIDBits))
+	} else if tableInfo.PKIsHandle {
+		shardingInfo = "NOT_SHARDED(PK_IS_HANDLE)"
 	}
 	return shardingInfo
 }
@@ -1988,13 +1989,13 @@ func getMicroServiceServerInfo(ctx sessionctx.Context, serviceName string) ([]Se
 		}
 		req.Header.Add("PD-Allow-follower-handle", "true")
 		resp, err := util.InternalHTTPClient().Do(req)
-		if resp == nil || resp.StatusCode != http.StatusOK {
-			terror.Log(resp.Body.Close())
-			return servers, nil
-		}
 		if err != nil {
 			ctx.GetSessionVars().StmtCtx.AppendWarning(err)
 			logutil.BgLogger().Warn("request microservice server info error", zap.String("service", serviceName), zap.String("url", url), zap.Error(err))
+			continue
+		}
+		if resp.StatusCode != http.StatusOK {
+			terror.Log(resp.Body.Close())
 			continue
 		}
 		var content = []struct {

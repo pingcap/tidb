@@ -554,7 +554,7 @@ func NewBackend(
 		pdCli.GetServiceDiscovery(),
 		pdhttp.WithTLSConfig(tls.TLSConfig()),
 	).WithBackoffer(retry.InitialBackoffer(time.Second, time.Second, pdutil.PDRequestRetryTime*time.Second))
-	splitCli := split.NewClient(pdCli, pdHTTPCli, tls.TLSConfig(), false, config.RegionSplitBatchSize, config.RegionSplitConcurrency)
+	splitCli := split.NewClient(pdCli, pdHTTPCli, tls.TLSConfig(), config.RegionSplitBatchSize, config.RegionSplitConcurrency)
 	importClientFactory := newImportClientFactoryImpl(splitCli, tls, config.MaxConnPerStore, config.ConnCompressType)
 	var writeLimiter StoreWriteLimiter
 	if config.StoreWriteBWLimit > 0 {
@@ -1478,7 +1478,14 @@ func (local *Backend) GetExternalEngineKVStatistics(engineUUID uuid.UUID) (
 
 // ResetEngine reset the engine and reclaim the space.
 func (local *Backend) ResetEngine(ctx context.Context, engineUUID uuid.UUID) error {
-	return local.engineMgr.resetEngine(ctx, engineUUID)
+	return local.engineMgr.resetEngine(ctx, engineUUID, false)
+}
+
+// ResetEngineSkipAllocTS is like ResetEngine but the inner TS of the engine is
+// invalid. Caller must use OpenedEngine.SetTS to set a valid TS before import
+// the engine.
+func (local *Backend) ResetEngineSkipAllocTS(ctx context.Context, engineUUID uuid.UUID) error {
+	return local.engineMgr.resetEngine(ctx, engineUUID, true)
 }
 
 // CleanupEngine cleanup the engine and reclaim the space.
@@ -1517,7 +1524,7 @@ func (local *Backend) UnsafeImportAndReset(ctx context.Context, engineUUID uuid.
 	if err := closedEngine.Import(ctx, regionSplitSize, regionSplitKeys); err != nil {
 		return err
 	}
-	return local.engineMgr.resetEngine(ctx, engineUUID)
+	return local.engineMgr.resetEngine(ctx, engineUUID, false)
 }
 
 func engineSSTDir(storeDir string, engineUUID uuid.UUID) string {

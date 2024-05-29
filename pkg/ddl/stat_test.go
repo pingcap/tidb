@@ -46,9 +46,7 @@ func TestGetDDLInfo(t *testing.T) {
 	require.NoError(t, err)
 
 	dbInfo2 := &model.DBInfo{
-		ID:    2,
-		Name:  model.NewCIStr("b"),
-		State: model.StateNone,
+		ID: 2,
 	}
 	job := &model.Job{
 		ID:       1,

@@ -207,3 +207,20 @@ pk	v
 500	a
 9223372036854775809	b
 set @@global.tidb_scatter_region=default;
+drop table if exists t;
+create table t (a int, b varchar(255), primary key (a)) partition by hash(a) partitions 2;
+insert into t values (1, '1'), (2, '2'), (3, '3');
+select sleep(0.5);
+sleep(0.5)
+0
+set @@tidb_partition_prune_mode='static';
+select * from t tablesample regions() order by a;
+a	b
+1	1
+2	2
+set @@tidb_partition_prune_mode='dynamic';
+select * from t tablesample regions() order by a;
+a	b
+1	1
+2	2
+set @@tidb_partition_prune_mode=default;

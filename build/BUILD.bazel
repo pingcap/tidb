@@ -105,6 +105,7 @@ nogo(
     config = ":nogo_config.json",
     visibility = ["//visibility:public"],  # must have public visibility
     deps = [
+               "@org_golang_x_tools//go/analysis/passes/appends:go_default_library",
                "@org_golang_x_tools//go/analysis/passes/asmdecl:go_default_library",
                "@org_golang_x_tools//go/analysis/passes/assign:go_default_library",
                "@org_golang_x_tools//go/analysis/passes/atomic:go_default_library",
@@ -142,6 +143,7 @@ nogo(
                "@org_golang_x_tools//go/analysis/passes/unreachable:go_default_library",
                "@org_golang_x_tools//go/analysis/passes/unsafeptr:go_default_library",
                "@org_golang_x_tools//go/analysis/passes/unusedresult:go_default_library",
+               "@org_golang_x_tools//go/analysis/passes/unusedwrite:go_default_library",
                "//build/linter/asciicheck",
                "//build/linter/bodyclose",
                "//build/linter/bootstrap",
@@ -176,7 +178,6 @@ nogo(
            }) +
            select({
                "//build:without_rbe": [
-                   "//build/linter/filepermission",
                ],
                "//conditions:default": [],
            }),

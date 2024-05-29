@@ -16,6 +16,7 @@ package ranger
 
 import (
 	"bytes"
+	"fmt"
 	"math"
 	"regexp"
 	"slices"
@@ -164,17 +165,18 @@ func convertPoint(sctx *rangerctx.RangerContext, point *point, newTp *types.Fiel
 	if err != nil {
 		if sctx.InPreparedPlanBuilding {
 			// skip plan cache in this case for safety.
-			sctx.SetSkipPlanCache(errors.Errorf("%s when converting %v", err.Error(), point.value))
+			sctx.SetSkipPlanCache(fmt.Sprintf("%s when converting %v", err.Error(), point.value))
 		}
 		//revive:disable:empty-block
 		if newTp.GetType() == mysql.TypeYear && terror.ErrorEqual(err, types.ErrWarnDataOutOfRange) {
 			// see issue #20101: overflow when converting integer to year
 		} else if newTp.GetType() == mysql.TypeBit && terror.ErrorEqual(err, types.ErrDataTooLong) {
 			// see issue #19067: we should ignore the types.ErrDataTooLong when we convert value to TypeBit value
-		} else if newTp.GetType() == mysql.TypeNewDecimal && terror.ErrorEqual(err, types.ErrOverflow) {
-			// Ignore the types.ErrOverflow when we convert TypeNewDecimal values.
+		} else if (newTp.GetType() == mysql.TypeNewDecimal || mysql.IsIntegerType(newTp.GetType()) || newTp.GetType() == mysql.TypeFloat) && terror.ErrorEqual(err, types.ErrOverflow) {
+			// Ignore the types.ErrOverflow when we convert TypeNewDecimal/TypeTiny/TypeShort/TypeInt24/TypeLong/TypeLonglong/TypeFloat values.
 			// A trimmed valid boundary point value would be returned then. Accordingly, the `excl` of the point
 			// would be adjusted. Impossible ranges would be skipped by the `validInterval` call later.
+			// tests in TestIndexRange/TestIndexRangeForDecimal
 		} else if point.value.Kind() == types.KindMysqlTime && newTp.GetType() == mysql.TypeTimestamp && terror.ErrorEqual(err, types.ErrWrongValue) {
 			// See issue #28424: query failed after add index
 			// Ignore conversion from Date[Time] to Timestamp since it must be either out of range or impossible date, which will not match a point select

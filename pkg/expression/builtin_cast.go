@@ -111,7 +111,8 @@ var (
 type castAsIntFunctionClass struct {
 	baseFunctionClass
 
-	tp *types.FieldType
+	tp      *types.FieldType
+	inUnion bool
 }
 
 func (c *castAsIntFunctionClass) getFunction(ctx BuildContext, args []Expression) (sig builtinFunc, err error) {
@@ -122,7 +123,7 @@ func (c *castAsIntFunctionClass) getFunction(ctx BuildContext, args []Expression
 	if err != nil {
 		return nil, err
 	}
-	bf := newBaseBuiltinCastFunc(b, ctx.IsInUnionCast())
+	bf := newBaseBuiltinCastFunc(b, c.inUnion)
 	if args[0].GetType().Hybrid() || IsBinaryLiteral(args[0]) {
 		sig = &builtinCastIntAsIntSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastIntAsInt)
@@ -160,7 +161,8 @@ func (c *castAsIntFunctionClass) getFunction(ctx BuildContext, args []Expression
 type castAsRealFunctionClass struct {
 	baseFunctionClass
 
-	tp *types.FieldType
+	tp      *types.FieldType
+	inUnion bool
 }
 
 func (c *castAsRealFunctionClass) getFunction(ctx BuildContext, args []Expression) (sig builtinFunc, err error) {
@@ -171,7 +173,7 @@ func (c *castAsRealFunctionClass) getFunction(ctx BuildContext, args []Expressio
 	if err != nil {
 		return nil, err
 	}
-	bf := newBaseBuiltinCastFunc(b, ctx.IsInUnionCast())
+	bf := newBaseBuiltinCastFunc(b, c.inUnion)
 	if IsBinaryLiteral(args[0]) {
 		sig = &builtinCastRealAsRealSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastRealAsReal)
@@ -215,7 +217,8 @@ func (c *castAsRealFunctionClass) getFunction(ctx BuildContext, args []Expressio
 type castAsDecimalFunctionClass struct {
 	baseFunctionClass
 
-	tp *types.FieldType
+	tp      *types.FieldType
+	inUnion bool
 }
 
 func (c *castAsDecimalFunctionClass) getFunction(ctx BuildContext, args []Expression) (sig builtinFunc, err error) {
@@ -226,7 +229,7 @@ func (c *castAsDecimalFunctionClass) getFunction(ctx BuildContext, args []Expres
 	if err != nil {
 		return nil, err
 	}
-	bf := newBaseBuiltinCastFunc(b, ctx.IsInUnionCast())
+	bf := newBaseBuiltinCastFunc(b, c.inUnion)
 	if IsBinaryLiteral(args[0]) {
 		sig = &builtinCastDecimalAsDecimalSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastDecimalAsDecimal)
@@ -325,7 +328,7 @@ func (c *castAsStringFunctionClass) getFunction(ctx BuildContext, args []Express
 	case types.ETString:
 		// When cast from binary to some other charsets, we should check if the binary is valid or not.
 		// so we build a from_binary function to do this check.
-		bf.args[0] = HandleBinaryLiteral(ctx, args[0], &ExprCollation{Charset: c.tp.GetCharset(), Collation: c.tp.GetCollate()}, c.funcName)
+		bf.args[0] = HandleBinaryLiteral(ctx, args[0], &ExprCollation{Charset: c.tp.GetCharset(), Collation: c.tp.GetCollate()}, c.funcName, true)
 		sig = &builtinCastStringAsStringSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastStringAsString)
 	default:
@@ -451,7 +454,7 @@ func (c *castAsArrayFunctionClass) getFunction(ctx BuildContext, args []Expressi
 		return nil, ErrNotSupportedYet.GenWithStackByArgs("specifying charset for multi-valued index")
 	}
 	if arrayType.EvalType() == types.ETString && arrayType.GetFlen() == types.UnspecifiedLength {
-		return nil, ErrNotSupportedYet.GenWithStackByArgs("CAST-ing data to array of char/binary BLOBs")
+		return nil, ErrNotSupportedYet.GenWithStackByArgs("CAST-ing data to array of char/binary BLOBs with unspecified length")
 	}
 
 	bf, err := newBaseBuiltinFunc(ctx, c.funcName, args, c.tp)
@@ -515,7 +518,7 @@ func (b *castJSONAsArrayFunctionSig) evalJSON(ctx EvalContext, row chunk.Row) (r
 	return types.CreateBinaryJSON(arrayVals), false, nil
 }
 
-// ConvertJSON2Tp returns a function that can convert JSON to the specified type.
+// ConvertJSON2Tp converts JSON to the specified type.
 func ConvertJSON2Tp(v types.BinaryJSON, targetType *types.FieldType) (any, error) {
 	convertFunc := convertJSON2Tp(targetType.EvalType())
 	if convertFunc == nil {
@@ -557,7 +560,7 @@ func convertJSON2Tp(evalType types.EvalType) func(*stmtctx.StatementContext, typ
 			if (tp.GetType() == mysql.TypeDatetime && item.TypeCode != types.JSONTypeCodeDatetime) || (tp.GetType() == mysql.TypeDate && item.TypeCode != types.JSONTypeCodeDate) {
 				return nil, ErrInvalidJSONForFuncIndex
 			}
-			res := item.GetTime()
+			res := item.GetTimeWithFsp(tp.GetDecimal())
 			res.SetType(tp.GetType())
 			if tp.GetType() == mysql.TypeDate {
 				// Truncate hh:mm:ss part if the type is Date.
@@ -1926,7 +1929,7 @@ func (b *builtinCastJSONAsTimeSig) evalTime(ctx EvalContext, row chunk.Row) (res
 
 	switch val.TypeCode {
 	case types.JSONTypeCodeDate, types.JSONTypeCodeDatetime, types.JSONTypeCodeTimestamp:
-		res = val.GetTime()
+		res = val.GetTimeWithFsp(b.tp.GetDecimal())
 		res.SetType(b.tp.GetType())
 		if b.tp.GetType() == mysql.TypeDate {
 			// Truncate hh:mm:ss part if the type is Date.
@@ -1988,7 +1991,7 @@ func (b *builtinCastJSONAsDurationSig) evalDuration(ctx EvalContext, row chunk.R
 
 	switch val.TypeCode {
 	case types.JSONTypeCodeDate, types.JSONTypeCodeDatetime, types.JSONTypeCodeTimestamp:
-		time := val.GetTime()
+		time := val.GetTimeWithFsp(b.tp.GetDecimal())
 		res, err = time.ConvertToDuration()
 		if err != nil {
 			return res, false, err
@@ -2052,11 +2055,9 @@ func CanImplicitEvalReal(expr Expression) bool {
 // BuildCastFunction4Union build a implicitly CAST ScalarFunction from the Union
 // Expression.
 func BuildCastFunction4Union(ctx BuildContext, expr Expression, tp *types.FieldType) (res Expression) {
-	if !ctx.IsInUnionCast() {
-		ctx.SetInUnionCast(true)
-		defer ctx.SetInUnionCast(false)
-	}
-	return BuildCastFunction(ctx, expr, tp)
+	res, err := BuildCastFunctionWithCheck(ctx, expr, tp, true)
+	terror.Log(err)
+	return
 }
 
 // BuildCastCollationFunction builds a ScalarFunction which casts the collation.
@@ -2091,13 +2092,13 @@ func BuildCastCollationFunction(ctx BuildContext, expr Expression, ec *ExprColla
 
 // BuildCastFunction builds a CAST ScalarFunction from the Expression.
 func BuildCastFunction(ctx BuildContext, expr Expression, tp *types.FieldType) (res Expression) {
-	res, err := BuildCastFunctionWithCheck(ctx, expr, tp)
+	res, err := BuildCastFunctionWithCheck(ctx, expr, tp, false)
 	terror.Log(err)
 	return
 }
 
 // BuildCastFunctionWithCheck builds a CAST ScalarFunction from the Expression and return error if any.
-func BuildCastFunctionWithCheck(ctx BuildContext, expr Expression, tp *types.FieldType) (res Expression, err error) {
+func BuildCastFunctionWithCheck(ctx BuildContext, expr Expression, tp *types.FieldType, inUnion bool) (res Expression, err error) {
 	argType := expr.GetType()
 	// If source argument's nullable, then target type should be nullable
 	if !mysql.HasNotNullFlag(argType.GetFlag()) {
@@ -2107,11 +2108,11 @@ func BuildCastFunctionWithCheck(ctx BuildContext, expr Expression, tp *types.Fie
 	var fc functionClass
 	switch tp.EvalType() {
 	case types.ETInt:
-		fc = &castAsIntFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
+		fc = &castAsIntFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp, inUnion}
 	case types.ETDecimal:
-		fc = &castAsDecimalFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
+		fc = &castAsDecimalFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp, inUnion}
 	case types.ETReal:
-		fc = &castAsRealFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
+		fc = &castAsRealFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp, inUnion}
 	case types.ETDatetime, types.ETTimestamp:
 		fc = &castAsTimeFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
 	case types.ETDuration:

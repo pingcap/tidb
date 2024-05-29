@@ -72,7 +72,7 @@ func getTableImporter(
 	taskMeta *TaskMeta,
 	store tidbkv.Storage,
 ) (*importer.TableImporter, error) {
-	idAlloc := kv.NewPanickingAllocators(0)
+	idAlloc := kv.NewPanickingAllocators(taskMeta.Plan.TableInfo.SepAutoInc(), 0)
 	tbl, err := tables.TableFromMeta(idAlloc, taskMeta.Plan.TableInfo)
 	if err != nil {
 		return nil, err
@@ -417,6 +417,7 @@ func (e *writeAndIngestStepExecutor) RunSubtask(ctx context.Context, subtask *pr
 			TotalKVCount:    0,
 			CheckHotspot:    false,
 		},
+		TS: sm.TS,
 	}, engineUUID)
 	if err != nil {
 		return err

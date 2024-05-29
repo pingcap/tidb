@@ -699,7 +699,7 @@ func TestDeleteRangesFailure(t *testing.T) {
 
 			sendReqCh := make(chan SentReq, 20)
 
-			// The request sent to the specified key and store wil fail.
+			// The request sent to the specified key and store will fail.
 			var (
 				failKey   []byte
 				failStore *metapb.Store

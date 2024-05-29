@@ -24,7 +24,7 @@ LOG_FILE1="$TEST_DIR/lightning_duplicate_resolution_merge1.log"
 LOG_FILE2="$TEST_DIR/lightning_duplicate_resolution_merge2.log"
 
 # let lightning run a bit slow to avoid some table in the first lightning finish too fast.
-export GO_FAILPOINTS="github.com/pingcap/tidb/lightning/pkg/importer/SlowDownImport=sleep(250)"
+export GO_FAILPOINTS="github.com/pingcap/tidb/lightning/pkg/importer/SlowDownImport=sleep(1000)"
 
 run_lightning --backend local --sorted-kv-dir "$TEST_DIR/lightning_duplicate_resolution_merge.sorted1" \
   -d "$CUR/data1" --log-file "$LOG_FILE1" --config "$CUR/config.toml" &
@@ -45,5 +45,14 @@ check_contains 'count(*): 10'
 run_sql 'select count(*) from lightning_task_info.conflict_records'
 check_contains 'count(*): 16'
 
-run_sql 'select count(*) from lightning_task_info.conflict_error_v2'
+run_sql 'select count(*) from lightning_task_info.conflict_error_v3'
+check_contains 'count(*): 4'
+
+run_sql 'select count(*) from lightning_task_info.conflict_view'
+check_contains 'count(*): 20'
+
+run_sql 'select count(*) from lightning_task_info.conflict_view where is_precheck_conflict = 1'
+check_contains 'count(*): 16'
+
+run_sql 'select count(*) from lightning_task_info.conflict_view where is_precheck_conflict = 0'
 check_contains 'count(*): 4'

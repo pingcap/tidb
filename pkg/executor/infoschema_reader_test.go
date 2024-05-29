@@ -610,3 +610,20 @@ func newGetTiFlashSystemTableRequestMocker(t *testing.T) *getTiFlashSystemTableR
 		t:        t,
 	}
 }
+
+// https://github.com/pingcap/tidb/issues/52350
+func TestReferencedTableSchemaWithForeignKey(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database if not exists test;")
+	tk.MustExec("create database if not exists test2;")
+	tk.MustExec("drop table if exists test.t1;")
+	tk.MustExec("drop table if exists test2.t2;")
+	tk.MustExec("create table test.t1(id int primary key);")
+	tk.MustExec("create table test2.t2(i int, id int, foreign key (id) references test.t1(id));")
+
+	tk.MustQuery(`SELECT column_name, referenced_column_name, referenced_table_name, table_schema, referenced_table_schema 
+	FROM information_schema.key_column_usage
+	WHERE table_name = 't2' AND table_schema = 'test2';`).Check(testkit.Rows(
+		"id id t1 test2 test"))
+}

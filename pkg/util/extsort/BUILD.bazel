@@ -12,6 +12,7 @@ go_library(
         "//pkg/util/generic",
         "//pkg/util/syncutil",
         "@com_github_cockroachdb_pebble//:pebble",
+        "@com_github_cockroachdb_pebble//objstorage/objstorageprovider",
         "@com_github_cockroachdb_pebble//sstable",
         "@com_github_cockroachdb_pebble//vfs",
         "@com_github_pingcap_errors//:errors",

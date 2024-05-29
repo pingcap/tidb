@@ -177,10 +177,7 @@ func RunBackupTxn(c context.Context, g glue.Glue, cmdName string, cfg *TxnKvConf
 	updateCh := g.StartProgress(
 		ctx, cmdName, int64(approximateRegions), !cfg.LogProgress)
 
-	progressCallBack := func(unit backup.ProgressUnit) {
-		if unit == backup.RangeUnit {
-			return
-		}
+	progressCallBack := func() {
 		updateCh.Inc()
 	}
 	backupTS, err := client.GetCurrentTS(ctx)
@@ -204,7 +201,7 @@ func RunBackupTxn(c context.Context, g glue.Glue, cmdName string, cfg *TxnKvConf
 
 	metaWriter := metautil.NewMetaWriter(client.GetStorage(), metautil.MetaFileSize, false, metautil.MetaFile, &cfg.CipherInfo)
 	metaWriter.StartWriteMetasAsync(ctx, metautil.AppendDataFile)
-	err = client.BackupRanges(ctx, backupRanges, req, uint(cfg.Concurrency), nil, metaWriter, progressCallBack)
+	err = client.BackupRanges(ctx, backupRanges, req, 1, nil, metaWriter, progressCallBack)
 	if err != nil {
 		return errors.Trace(err)
 	}

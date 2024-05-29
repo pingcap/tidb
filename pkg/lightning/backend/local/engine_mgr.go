@@ -19,9 +19,12 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
+	"time"
 
 	"github.com/cockroachdb/pebble"
+	"github.com/cockroachdb/pebble/vfs"
 	"github.com/docker/go-units"
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
@@ -33,12 +36,12 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/manual"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/tikv/client-go/v2/oracle"
 	tikvclient "github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
-	"google.golang.org/grpc/status"
 )
 
 var (
@@ -191,10 +194,10 @@ func (em *engineManager) flushAllEngines(parentCtx context.Context) (err error) 
 
 func (em *engineManager) openEngineDB(engineUUID uuid.UUID, readOnly bool) (*pebble.DB, error) {
 	opt := &pebble.Options{
-		MemTableSize: em.MemTableSize,
+		MemTableSize: uint64(em.MemTableSize),
 		// the default threshold value may cause write stall.
 		MemTableStopWritesThreshold: 8,
-		MaxConcurrentCompactions:    16,
+		MaxConcurrentCompactions:    func() int { return 16 },
 		// set threshold to half of the max open files to avoid trigger compaction
 		L0CompactionThreshold: math.MaxInt32,
 		L0StopWritesThreshold: math.MaxInt32,
@@ -262,6 +265,11 @@ func (em *engineManager) openEngine(ctx context.Context, cfg *backend.EngineConf
 	if err = engine.loadEngineMeta(); err != nil {
 		return errors.Trace(err)
 	}
+	if engine.TS == 0 && cfg.TS > 0 {
+		engine.TS = cfg.TS
+		// we don't saveEngineMeta here, we can rely on the caller use the same TS to
+		// open the engine again.
+	}
 	if err = em.allocateTSIfNotExists(ctx, engine); err != nil {
 		return errors.Trace(err)
 	}
@@ -290,11 +298,14 @@ func (em *engineManager) closeEngine(
 				store.Close()
 			}
 		}()
-		physical, logical, err := em.GetTS(ctx)
-		if err != nil {
-			return err
+		ts := cfg.TS
+		if ts == 0 {
+			physical, logical, err := em.GetTS(ctx)
+			if err != nil {
+				return err
+			}
+			ts = oracle.ComposeTS(physical, logical)
 		}
-		ts := oracle.ComposeTS(physical, logical)
 		externalEngine := external.NewExternalEngine(
 			store,
 			externalCfg.DataFiles,
@@ -339,7 +350,7 @@ func (em *engineManager) closeEngine(
 		engine.db.Store(db)
 		engine.sstIngester = dbSSTIngester{e: engine}
 		if err = engine.loadEngineMeta(); err != nil {
-			return err
+			return errors.Trace(err)
 		}
 		em.engines.Store(engineUUID, engine)
 		return nil
@@ -391,7 +402,11 @@ func (em *engineManager) getExternalEngineKVStatistics(engineUUID uuid.UUID) (
 }
 
 // resetEngine reset the engine and reclaim the space.
-func (em *engineManager) resetEngine(ctx context.Context, engineUUID uuid.UUID) error {
+func (em *engineManager) resetEngine(
+	ctx context.Context,
+	engineUUID uuid.UUID,
+	skipAllocTS bool,
+) error {
 	// the only way to reset the engine + reclaim the space is to delete and reopen it 🤷
 	localEngine := em.lockEngine(engineUUID, importMutexStateClose)
 	if localEngine == nil {
@@ -419,15 +434,11 @@ func (em *engineManager) resetEngine(ctx context.Context, engineUUID uuid.UUID) 
 				return errors.Trace(err)
 			}
 		}
-		if err = em.allocateTSIfNotExists(ctx, localEngine); err != nil {
-			return errors.Trace(err)
+		if !skipAllocTS {
+			if err = em.allocateTSIfNotExists(ctx, localEngine); err != nil {
+				return errors.Trace(err)
+			}
 		}
-		failpoint.Inject("mockAllocateTSErr", func() {
-			// mock generate timestamp error when reset engine.
-			localEngine.TS = 0
-			mockGRPCErr, _ := status.FromError(errors.Errorf("mock generate timestamp error"))
-			failpoint.Return(errors.Trace(mockGRPCErr.Err()))
-		})
 	}
 	localEngine.pendingFileSize.Store(0)
 
@@ -514,7 +525,10 @@ func (em *engineManager) close() {
 
 	if em.duplicateDB != nil {
 		// Check if there are duplicates that are not collected.
-		iter := em.duplicateDB.NewIter(&pebble.IterOptions{})
+		iter, err := em.duplicateDB.NewIter(&pebble.IterOptions{})
+		if err != nil {
+			em.logger.Panic("fail to create iterator")
+		}
 		hasDuplicates := iter.First()
 		allIsWell := true
 		if err := iter.Error(); err != nil {
@@ -578,6 +592,25 @@ func (em *engineManager) getBufferPool() *membuf.Pool {
 	return em.bufferPool
 }
 
+// only used in tests
+type slowCreateFS struct {
+	vfs.FS
+}
+
+// WaitRMFolderChForTest is a channel for testing.
+var WaitRMFolderChForTest = make(chan struct{})
+
+func (s slowCreateFS) Create(name string) (vfs.File, error) {
+	if strings.Contains(name, "temporary") {
+		select {
+		case <-WaitRMFolderChForTest:
+		case <-time.After(1 * time.Second):
+			logutil.BgLogger().Info("no one removes folder")
+		}
+	}
+	return s.FS.Create(name)
+}
+
 func openDuplicateDB(storeDir string) (*pebble.DB, error) {
 	dbPath := filepath.Join(storeDir, duplicateDBName)
 	// TODO: Optimize the opts for better write.
@@ -586,6 +619,9 @@ func openDuplicateDB(storeDir string) (*pebble.DB, error) {
 			newRangePropertiesCollector,
 		},
 	}
+	failpoint.Inject("slowCreateFS", func() {
+		opts.FS = slowCreateFS{vfs.Default}
+	})
 	return pebble.Open(dbPath, opts)
 }
 
