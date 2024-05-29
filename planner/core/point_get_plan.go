@@ -88,6 +88,8 @@ type PointGetPlan struct {
 	planCost     float64
 	// accessCols represents actual columns the PointGet will access, which are used to calculate row-size
 	accessCols []*expression.Column
+	// stmtHints should restore in executing context.
+	stmtHints *stmtctx.StmtHints
 }
 
 type nameValuePair struct {
