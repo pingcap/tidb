@@ -1259,6 +1259,7 @@ func TestCreateTableWithKeyPartition(t *testing.T) {
 	tk.MustExec(`drop table if exists tm2`)
 	tk.MustGetErrMsg(`create table tm2 (a char(5), unique key(a(5))) partition by key() partitions 5`,
 		"Table partition metadata not correct, neither partition expression or list of partition columns")
+	tk.MustExec(`create table tm2 (a char(5) not null, unique key(a(5))) partition by key() partitions 5`)
 }
 
 func TestDropPartitionWithGlobalIndex(t *testing.T) {
@@ -1512,20 +1513,20 @@ func TestGlobalIndexUpdateInTruncatePartition(t *testing.T) {
 	originalHook := dom.DDL().GetHook()
 	defer dom.DDL().SetHook(originalHook)
 
-	var err error
 	hook := &callback.TestDDLCallback{Do: dom}
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
 		assert.Equal(t, model.ActionTruncateTablePartition, job.Type)
 		if job.SchemaState == model.StateDeleteOnly {
 			tk1 := testkit.NewTestKit(t, store)
 			tk1.MustExec("use test")
-			err = tk1.ExecToErr("update test_global set a = 2 where a = 11")
+			err := tk1.ExecToErr("update test_global set a = 2 where a = 11")
 			assert.NotNil(t, err)
 		}
 	}
 	dom.DDL().SetHook(hook)
 
 	tk.MustExec("alter table test_global truncate partition p1")
+	tk.MustQuery("select * from test_global use index(idx_b) order by a").Check(testkit.Rows("11 11 11", "12 12 12"))
 }
 
 func TestGlobalIndexUpdateInTruncatePartition4Hash(t *testing.T) {
@@ -1564,7 +1565,7 @@ func TestGlobalIndexUpdateInTruncatePartition4Hash(t *testing.T) {
 	tk.MustExec("alter table test_global truncate partition p1")
 }
 
-func TestGlobalIndexReaderInTruncatePartition(t *testing.T) {
+func TestGlobalIndexReaderAndIndexLookUpInTruncatePartition(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1591,6 +1592,9 @@ func TestGlobalIndexReaderInTruncatePartition(t *testing.T) {
 			tk1.MustExec("use test")
 
 			tk1.MustQuery("select b from test_global use index(idx_b)").Sort().Check(testkit.Rows("11", "12"))
+			tk1.MustQuery("select * from test_global use index(idx_b)").Sort().Check(testkit.Rows("11 11 11", "12 12 12"))
+			tk1.MustQuery("select * from test_global use index(idx_b) order by a").Check(testkit.Rows("11 11 11", "12 12 12"))
+			tk1.MustQuery("select * from test_global use index(idx_b) order by b").Check(testkit.Rows("11 11 11", "12 12 12"))
 		}
 	}
 	dom.DDL().SetHook(hook)

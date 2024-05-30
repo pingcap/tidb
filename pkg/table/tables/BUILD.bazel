@@ -65,6 +65,7 @@ go_test(
     name = "tables_test",
     timeout = "short",
     srcs = [
+        "bench_test.go",
         "cache_test.go",
         "index_test.go",
         "main_test.go",
@@ -106,6 +107,7 @@ go_test(
         "//pkg/util",
         "//pkg/util/codec",
         "//pkg/util/collate",
+        "//pkg/util/context",
         "//pkg/util/mock",
         "//pkg/util/rowcodec",
         "//pkg/util/stmtsummary",

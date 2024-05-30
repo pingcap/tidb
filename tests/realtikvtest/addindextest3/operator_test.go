@@ -189,7 +189,6 @@ func TestBackfillOperatorPipeline(t *testing.T) {
 		sessPool,
 		mockBackendCtx,
 		[]ingest.Engine{mockEngine},
-		tk.Session(),
 		1, // job id
 		tbl.(table.PhysicalTable),
 		[]*model.IndexInfo{idxInfo},
@@ -256,14 +255,16 @@ func TestBackfillOperatorPipelineException(t *testing.T) {
 
 	for _, tc := range testCase {
 		t.Run(tc.failPointPath, func(t *testing.T) {
-			require.NoError(t, failpoint.Enable(tc.failPointPath, `return`))
 			defer func() {
 				require.NoError(t, failpoint.Disable(tc.failPointPath))
 			}()
 			ctx, cancel := context.WithCancel(context.Background())
 			if strings.Contains(tc.failPointPath, "writeLocalExec") {
 				var counter atomic.Int32
-				ddl.OperatorCallBackForTest = func() {
+				require.NoError(t, failpoint.EnableCall(tc.failPointPath, func(done bool) {
+					if !done {
+						return
+					}
 					// we need to want all tableScanWorkers finish scanning, else
 					// fetchTableScanResult will might return context error, and cause
 					// the case fail.
@@ -272,11 +273,11 @@ func TestBackfillOperatorPipelineException(t *testing.T) {
 					if counter.Load() == 10 {
 						cancel()
 					}
-				}
+				}))
+			} else if strings.Contains(tc.failPointPath, "scanRecordExec") {
+				require.NoError(t, failpoint.EnableCall(tc.failPointPath, func() { cancel() }))
 			} else {
-				ddl.OperatorCallBackForTest = func() {
-					cancel()
-				}
+				require.NoError(t, failpoint.Enable(tc.failPointPath, `return`))
 			}
 			opCtx := ddl.NewOperatorCtx(ctx, 1, 1)
 			pipeline, err := ddl.NewAddIndexIngestPipeline(
@@ -284,7 +285,6 @@ func TestBackfillOperatorPipelineException(t *testing.T) {
 				sessPool,
 				mockBackendCtx,
 				[]ingest.Engine{mockEngine},
-				tk.Session(),
 				1, // job id
 				tbl.(table.PhysicalTable),
 				[]*model.IndexInfo{idxInfo},
@@ -339,8 +339,10 @@ func prepare(t *testing.T, tk *testkit.TestKit, dom *domain.Domain, regionCnt in
 
 	tblInfo := tbl.Meta()
 	idxInfo = tblInfo.FindIndexByName("idx")
-	copCtx, err = copr.NewCopContextSingleIndex(tblInfo, idxInfo, tk.Session(), "")
+	sctx := tk.Session()
+	copCtx, err = ddl.NewReorgCopContext(dom.Store(), ddl.NewDDLReorgMeta(sctx), tblInfo, []*model.IndexInfo{idxInfo}, "")
 	require.NoError(t, err)
+	require.IsType(t, copCtx, &copr.CopContextSingleIndex{})
 	return tbl, idxInfo, start, end, copCtx
 }
 

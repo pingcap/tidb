@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/cost"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
@@ -455,7 +456,7 @@ func (p *LogicalJoin) getHashJoin(prop *property.PhysicalProperty, innerIdx int,
 	chReqProps[1-innerIdx] = &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64, CTEProducerStatus: prop.CTEProducerStatus}
 	if prop.ExpectedCnt < p.StatsInfo().RowCount {
 		expCntScale := prop.ExpectedCnt / p.StatsInfo().RowCount
-		chReqProps[1-innerIdx].ExpectedCnt = p.children[1-innerIdx].StatsInfo().RowCount * expCntScale
+		chReqProps[1-innerIdx].ExpectedCnt = p.Children()[1-innerIdx].StatsInfo().RowCount * expCntScale
 	}
 	hashJoin := NewPhysicalHashJoin(p, innerIdx, useOuterToBuild, p.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), chReqProps...)
 	hashJoin.SetSchema(p.schema)
@@ -498,7 +499,7 @@ func (p *LogicalJoin) constructIndexJoin(
 	chReqProps[outerIdx] = &property.PhysicalProperty{TaskTp: property.RootTaskType, ExpectedCnt: math.MaxFloat64, SortItems: prop.SortItems, CTEProducerStatus: prop.CTEProducerStatus}
 	if prop.ExpectedCnt < p.StatsInfo().RowCount {
 		expCntScale := prop.ExpectedCnt / p.StatsInfo().RowCount
-		chReqProps[outerIdx].ExpectedCnt = p.children[outerIdx].StatsInfo().RowCount * expCntScale
+		chReqProps[outerIdx].ExpectedCnt = p.Children()[outerIdx].StatsInfo().RowCount * expCntScale
 	}
 	newInnerKeys := make([]*expression.Column, 0, len(innerJoinKeys))
 	newOuterKeys := make([]*expression.Column, 0, len(outerJoinKeys))
@@ -714,7 +715,7 @@ func (p *LogicalJoin) constructIndexHashJoin(
 // Then, we will extract the join keys of p's equal conditions. Then check whether all of them are just the primary key
 // or match some part of on index. If so we will choose the best one and construct a index join.
 func (p *LogicalJoin) getIndexJoinByOuterIdx(prop *property.PhysicalProperty, outerIdx int) (joins []base.PhysicalPlan) {
-	outerChild, innerChild := p.children[outerIdx], p.children[1-outerIdx]
+	outerChild, innerChild := p.Children()[outerIdx], p.Children()[1-outerIdx]
 	all, _ := prop.AllSameOrder()
 	// If the order by columns are not all from outer child, index join cannot promise the order.
 	if !prop.AllColsFromSchema(outerChild.Schema()) || !all {
@@ -2318,8 +2319,8 @@ func calcHashExchangeSizeByChild(p1 base.Plan, p2 base.Plan, mppStoreCnt int) (r
 // Set a scale factor (`mppStoreCnt^*`) when estimating broadcast join in `isJoinFitMPPBCJ` and `isJoinChildFitMPPBCJ` (based on TPCH benchmark, it has been verified in Q9).
 
 func isJoinFitMPPBCJ(p *LogicalJoin, mppStoreCnt int) bool {
-	rowBC, szBC, hasSizeBC := calcBroadcastExchangeSizeByChild(p.children[0], p.children[1], mppStoreCnt)
-	rowHash, szHash, hasSizeHash := calcHashExchangeSizeByChild(p.children[0], p.children[1], mppStoreCnt)
+	rowBC, szBC, hasSizeBC := calcBroadcastExchangeSizeByChild(p.Children()[0], p.Children()[1], mppStoreCnt)
+	rowHash, szHash, hasSizeHash := calcHashExchangeSizeByChild(p.Children()[0], p.Children()[1], mppStoreCnt)
 	if hasSizeBC && hasSizeHash {
 		return szBC*float64(mppStoreCnt) <= szHash
 	}
@@ -2327,8 +2328,8 @@ func isJoinFitMPPBCJ(p *LogicalJoin, mppStoreCnt int) bool {
 }
 
 func isJoinChildFitMPPBCJ(p *LogicalJoin, childIndexToBC int, mppStoreCnt int) bool {
-	rowBC, szBC, hasSizeBC := calcBroadcastExchangeSize(p.children[childIndexToBC], mppStoreCnt)
-	rowHash, szHash, hasSizeHash := calcHashExchangeSizeByChild(p.children[0], p.children[1], mppStoreCnt)
+	rowBC, szBC, hasSizeBC := calcBroadcastExchangeSize(p.Children()[childIndexToBC], mppStoreCnt)
+	rowHash, szHash, hasSizeHash := calcHashExchangeSizeByChild(p.Children()[0], p.Children()[1], mppStoreCnt)
 
 	if hasSizeBC && hasSizeHash {
 		return szBC*float64(mppStoreCnt) <= szHash
@@ -2368,11 +2369,11 @@ func (p *LogicalJoin) preferMppBCJ() bool {
 	}
 
 	if onlyCheckChild1 {
-		return checkChildFitBC(p.children[1])
+		return checkChildFitBC(p.Children()[1])
 	} else if onlyCheckChild0 {
-		return checkChildFitBC(p.children[0])
+		return checkChildFitBC(p.Children()[0])
 	}
-	return checkChildFitBC(p.children[0]) || checkChildFitBC(p.children[1])
+	return checkChildFitBC(p.Children()[0]) || checkChildFitBC(p.Children()[1])
 }
 
 // ExhaustPhysicalPlans implements LogicalPlan interface
@@ -2445,7 +2446,7 @@ func (p *LogicalJoin) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([]b
 
 	if !p.isNAAJ() {
 		// naaj refuse merge join and index join.
-		mergeJoins := p.GetMergeJoin(prop, p.schema, p.StatsInfo(), p.children[0].StatsInfo(), p.children[1].StatsInfo())
+		mergeJoins := p.GetMergeJoin(prop, p.schema, p.StatsInfo(), p.Children()[0].StatsInfo(), p.Children()[1].StatsInfo())
 		if (p.preferJoinType&h.PreferMergeJoin) > 0 && len(mergeJoins) > 0 {
 			return mergeJoins, true, nil
 		}
@@ -2566,7 +2567,7 @@ func (p *LogicalJoin) tryToGetMppHashJoin(prop *property.PhysicalProperty, useBC
 	preferredBuildIndex := 0
 	fixedBuildSide := false // Used to indicate whether the build side for the MPP join is fixed or not.
 	if p.JoinType == InnerJoin {
-		if p.children[0].StatsInfo().Count() > p.children[1].StatsInfo().Count() {
+		if p.Children()[0].StatsInfo().Count() > p.Children()[1].StatsInfo().Count() {
 			preferredBuildIndex = 1
 		}
 	} else if p.JoinType.IsSemiJoin() {
@@ -2575,7 +2576,7 @@ func (p *LogicalJoin) tryToGetMppHashJoin(prop *property.PhysicalProperty, useBC
 			preferredBuildIndex = 1
 			// MPPOuterJoinFixedBuildSide default value is false
 			// use MPPOuterJoinFixedBuildSide here as a way to disable using left table as build side
-			if !p.SCtx().GetSessionVars().MPPOuterJoinFixedBuildSide && p.children[1].StatsInfo().Count() > p.children[0].StatsInfo().Count() {
+			if !p.SCtx().GetSessionVars().MPPOuterJoinFixedBuildSide && p.Children()[1].StatsInfo().Count() > p.Children()[0].StatsInfo().Count() {
 				preferredBuildIndex = 0
 			}
 		} else {
@@ -2597,7 +2598,7 @@ func (p *LogicalJoin) tryToGetMppHashJoin(prop *property.PhysicalProperty, useBC
 			if p.JoinType == LeftOuterJoin {
 				preferredBuildIndex = 1
 			}
-		} else if p.children[0].StatsInfo().Count() > p.children[1].StatsInfo().Count() {
+		} else if p.Children()[0].StatsInfo().Count() > p.Children()[1].StatsInfo().Count() {
 			preferredBuildIndex = 1
 		}
 	}
@@ -2630,7 +2631,7 @@ func (p *LogicalJoin) tryToGetMppHashJoin(prop *property.PhysicalProperty, useBC
 		expCnt := math.MaxFloat64
 		if prop.ExpectedCnt < p.StatsInfo().RowCount {
 			expCntScale := prop.ExpectedCnt / p.StatsInfo().RowCount
-			expCnt = p.children[1-preferredBuildIndex].StatsInfo().RowCount * expCntScale
+			expCnt = p.Children()[1-preferredBuildIndex].StatsInfo().RowCount * expCntScale
 		}
 		if prop.MPPPartitionTp == property.HashType {
 			lPartitionKeys, rPartitionKeys := p.GetPotentialPartitionKeys()
@@ -2887,7 +2888,7 @@ func (la *LogicalApply) GetHashJoin(prop *property.PhysicalProperty) *PhysicalHa
 
 // ExhaustPhysicalPlans implements LogicalPlan interface.
 func (la *LogicalApply) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
-	if !prop.AllColsFromSchema(la.children[0].Schema()) || prop.IsFlashProp() { // for convenient, we don't pass through any prop
+	if !prop.AllColsFromSchema(la.Children()[0].Schema()) || prop.IsFlashProp() { // for convenient, we don't pass through any prop
 		la.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced(
 			"MPP mode may be blocked because operator `Apply` is not supported now.")
 		return nil, true, nil
@@ -2896,7 +2897,7 @@ func (la *LogicalApply) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([
 		la.SCtx().GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("Parallel Apply rejects the possible order properties of its outer child currently"))
 		return nil, true, nil
 	}
-	disableAggPushDownToCop(la.children[0])
+	disableAggPushDownToCop(la.Children()[0])
 	join := la.GetHashJoin(prop)
 	var columns = make([]*expression.Column, 0, len(la.CorCols))
 	for _, colColumn := range la.CorCols {
@@ -3097,21 +3098,10 @@ func (lw *LogicalWindow) ExhaustPhysicalPlans(prop *property.PhysicalProperty) (
 	return windows, true, nil
 }
 
-// ExhaustPhysicalPlans is only for implementing interface. DataSource and Dual generate task in `findBestTask` directly.
-func (*baseLogicalPlan) ExhaustPhysicalPlans(*property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
-	panic("baseLogicalPlan.ExhaustPhysicalPlans() should never be called.")
-}
-
-// CanPushToCop checks if it can be pushed to some stores. For TiKV, it only checks datasource.
-// For TiFlash, it will check whether the operator is supported, but note that the check might be inaccrate.
-func (p *baseLogicalPlan) CanPushToCop(storeTp kv.StoreType) bool {
-	return canPushToCopImpl(p, storeTp, false)
-}
-
-// todo: move canPushToCopImpl to func_pointer_misc when move baseLogicalPlan out of core.
-func canPushToCopImpl(p *baseLogicalPlan, storeTp kv.StoreType, considerDual bool) bool {
+func canPushToCopImpl(lp base.LogicalPlan, storeTp kv.StoreType, considerDual bool) bool {
+	p := lp.GetBaseLogicalPlan().(*logicalop.BaseLogicalPlan)
 	ret := true
-	for _, ch := range p.children {
+	for _, ch := range p.Children() {
 		switch c := ch.(type) {
 		case *DataSource:
 			validDs := false
@@ -3126,8 +3116,8 @@ func canPushToCopImpl(p *baseLogicalPlan, storeTp kv.StoreType, considerDual boo
 			}
 			ret = ret && validDs
 
-			_, isTopN := p.self.(*LogicalTopN)
-			_, isLimit := p.self.(*LogicalLimit)
+			_, isTopN := p.Self().(*LogicalTopN)
+			_, isLimit := p.Self().(*LogicalLimit)
 			if (isTopN || isLimit) && indexMergeIsIntersection {
 				return false // TopN and Limit cannot be pushed down to the intersection type IndexMerge
 			}
@@ -3143,23 +3133,23 @@ func canPushToCopImpl(p *baseLogicalPlan, storeTp kv.StoreType, considerDual boo
 			if storeTp != kv.TiFlash {
 				return false
 			}
-			ret = ret && canPushToCopImpl(&c.baseLogicalPlan, storeTp, true)
+			ret = ret && canPushToCopImpl(&c.BaseLogicalPlan, storeTp, true)
 		case *LogicalSort:
 			if storeTp != kv.TiFlash {
 				return false
 			}
-			ret = ret && canPushToCopImpl(&c.baseLogicalPlan, storeTp, true)
+			ret = ret && canPushToCopImpl(&c.BaseLogicalPlan, storeTp, true)
 		case *LogicalProjection:
 			if storeTp != kv.TiFlash {
 				return false
 			}
-			ret = ret && canPushToCopImpl(&c.baseLogicalPlan, storeTp, considerDual)
+			ret = ret && canPushToCopImpl(&c.BaseLogicalPlan, storeTp, considerDual)
 		case *LogicalExpand:
 			// Expand itself only contains simple col ref and literal projection. (always ok, check its child)
 			if storeTp != kv.TiFlash {
 				return false
 			}
-			ret = ret && canPushToCopImpl(&c.baseLogicalPlan, storeTp, considerDual)
+			ret = ret && canPushToCopImpl(&c.BaseLogicalPlan, storeTp, considerDual)
 		case *LogicalTableDual:
 			return storeTp == kv.TiFlash && considerDual
 		case *LogicalAggregation, *LogicalSelection, *LogicalJoin, *LogicalWindow:
@@ -3191,7 +3181,7 @@ func canPushToCopImpl(p *baseLogicalPlan, storeTp kv.StoreType, considerDual boo
 
 // CanPushToCop implements LogicalPlan interface.
 func (la *LogicalAggregation) CanPushToCop(storeTp kv.StoreType) bool {
-	return la.baseLogicalPlan.CanPushToCop(storeTp) && !la.noCopPushDown
+	return la.BaseLogicalPlan.CanPushToCop(storeTp) && !la.noCopPushDown
 }
 
 func (la *LogicalAggregation) getEnforcedStreamAggs(prop *property.PhysicalProperty) []base.PhysicalPlan {
@@ -3691,9 +3681,9 @@ func (p *LogicalUnionAll) ExhaustPhysicalPlans(prop *property.PhysicalProperty) 
 	if prop.TaskTp == property.MppTaskType && prop.MPPPartitionTp != property.AnyType {
 		return nil, true, nil
 	}
-	canUseMpp := p.SCtx().GetSessionVars().IsMPPAllowed() && canPushToCopImpl(&p.baseLogicalPlan, kv.TiFlash, true)
-	chReqProps := make([]*property.PhysicalProperty, 0, len(p.children))
-	for range p.children {
+	canUseMpp := p.SCtx().GetSessionVars().IsMPPAllowed() && canPushToCopImpl(&p.BaseLogicalPlan, kv.TiFlash, true)
+	chReqProps := make([]*property.PhysicalProperty, 0, p.ChildLen())
+	for range p.Children() {
 		if canUseMpp && prop.TaskTp == property.MppTaskType {
 			chReqProps = append(chReqProps, &property.PhysicalProperty{
 				ExpectedCnt:       prop.ExpectedCnt,
@@ -3710,8 +3700,8 @@ func (p *LogicalUnionAll) ExhaustPhysicalPlans(prop *property.PhysicalProperty) 
 	}.Init(p.SCtx(), p.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), p.QueryBlockOffset(), chReqProps...)
 	ua.SetSchema(p.Schema())
 	if canUseMpp && prop.TaskTp == property.RootTaskType {
-		chReqProps = make([]*property.PhysicalProperty, 0, len(p.children))
-		for range p.children {
+		chReqProps = make([]*property.PhysicalProperty, 0, p.ChildLen())
+		for range p.Children() {
 			chReqProps = append(chReqProps, &property.PhysicalProperty{
 				ExpectedCnt:       prop.ExpectedCnt,
 				TaskTp:            property.MppTaskType,
@@ -3768,7 +3758,7 @@ func (ls *LogicalSort) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([]
 			return ret, true, nil
 		}
 	} else if prop.TaskTp == property.MppTaskType && prop.RejectSort {
-		if canPushToCopImpl(&ls.baseLogicalPlan, kv.TiFlash, true) {
+		if canPushToCopImpl(&ls.BaseLogicalPlan, kv.TiFlash, true) {
 			newProp := prop.CloneEssentialFields()
 			newProp.RejectSort = true
 			ps := NominalSort{OnlyColumn: true, ByItems: ls.ByItems}.Init(
@@ -3824,13 +3814,13 @@ func (p *LogicalSequence) ExhaustPhysicalPlans(prop *property.PhysicalProperty) 
 	}
 	seqs := make([]base.PhysicalPlan, 0, 2)
 	for _, propChoice := range possibleChildrenProps {
-		childReqs := make([]*property.PhysicalProperty, 0, len(p.children))
-		for i := 0; i < len(p.children)-1; i++ {
+		childReqs := make([]*property.PhysicalProperty, 0, p.ChildLen())
+		for i := 0; i < p.ChildLen()-1; i++ {
 			childReqs = append(childReqs, propChoice[0].CloneEssentialFields())
 		}
 		childReqs = append(childReqs, propChoice[1])
 		seq := PhysicalSequence{}.Init(p.SCtx(), p.StatsInfo(), p.QueryBlockOffset(), childReqs...)
-		seq.SetSchema(p.children[len(p.children)-1].Schema())
+		seq.SetSchema(p.Children()[p.ChildLen()-1].Schema())
 		seqs = append(seqs, seq)
 	}
 	return seqs, true, nil

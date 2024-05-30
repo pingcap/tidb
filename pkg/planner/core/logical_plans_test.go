@@ -161,7 +161,7 @@ func TestImplicitCastNotNullFlag(t *testing.T) {
 	p, err = logicalOptimize(context.TODO(), flagPredicatePushDown|flagJoinReOrder|flagPrunColumns|flagEliminateProjection, p.(base.LogicalPlan))
 	require.NoError(t, err)
 	// AggFuncs[0] is count; AggFuncs[1] is bit_and, args[0] is return type of the implicit cast
-	castNotNullFlag := (p.(*LogicalProjection).children[0].(*LogicalSelection).children[0].(*LogicalAggregation).AggFuncs[1].Args[0].GetType().GetFlag()) & mysql.NotNullFlag
+	castNotNullFlag := (p.(*LogicalProjection).Children()[0].(*LogicalSelection).Children()[0].(*LogicalAggregation).AggFuncs[1].Args[0].GetType().GetFlag()) & mysql.NotNullFlag
 	var nullableFlag uint = 0
 	require.Equal(t, nullableFlag, castNotNullFlag)
 }
@@ -179,8 +179,8 @@ func TestEliminateProjectionUnderUnion(t *testing.T) {
 	p, err = logicalOptimize(context.TODO(), flagPredicatePushDown|flagJoinReOrder|flagPrunColumns|flagEliminateProjection, p.(base.LogicalPlan))
 	require.NoError(t, err)
 	// after folding constants, the null flag should keep the same with the old one's (i.e., the schema's).
-	schemaNullFlag := p.(*LogicalProjection).children[0].(*LogicalJoin).children[1].Children()[1].(*LogicalProjection).schema.Columns[0].RetType.GetFlag() & mysql.NotNullFlag
-	exprNullFlag := p.(*LogicalProjection).children[0].(*LogicalJoin).children[1].Children()[1].(*LogicalProjection).Exprs[0].GetType().GetFlag() & mysql.NotNullFlag
+	schemaNullFlag := p.(*LogicalProjection).Children()[0].(*LogicalJoin).Children()[1].Children()[1].(*LogicalProjection).schema.Columns[0].RetType.GetFlag() & mysql.NotNullFlag
+	exprNullFlag := p.(*LogicalProjection).Children()[0].(*LogicalJoin).Children()[1].Children()[1].(*LogicalProjection).Exprs[0].GetType().GetFlag() & mysql.NotNullFlag
 	require.Equal(t, exprNullFlag, schemaNullFlag)
 }
 
@@ -207,11 +207,11 @@ func TestJoinPredicatePushDown(t *testing.T) {
 		require.NoError(t, err, comment)
 		proj, ok := p.(*LogicalProjection)
 		require.True(t, ok, comment)
-		join, ok := proj.children[0].(*LogicalJoin)
+		join, ok := proj.Children()[0].(*LogicalJoin)
 		require.True(t, ok, comment)
-		leftPlan, ok := join.children[0].(*DataSource)
+		leftPlan, ok := join.Children()[0].(*DataSource)
 		require.True(t, ok, comment)
-		rightPlan, ok := join.children[1].(*DataSource)
+		rightPlan, ok := join.Children()[1].(*DataSource)
 		require.True(t, ok, comment)
 		leftCond := fmt.Sprintf("%s", leftPlan.pushedDownConds)
 		rightCond := fmt.Sprintf("%s", rightPlan.pushedDownConds)
@@ -247,18 +247,18 @@ func TestOuterWherePredicatePushDown(t *testing.T) {
 		require.NoError(t, err, comment)
 		proj, ok := p.(*LogicalProjection)
 		require.True(t, ok, comment)
-		selection, ok := proj.children[0].(*LogicalSelection)
+		selection, ok := proj.Children()[0].(*LogicalSelection)
 		require.True(t, ok, comment)
 		selCond := fmt.Sprintf("%s", selection.Conditions)
 		testdata.OnRecord(func() {
 			output[i].Sel = selCond
 		})
 		require.Equal(t, output[i].Sel, selCond, comment)
-		join, ok := selection.children[0].(*LogicalJoin)
+		join, ok := selection.Children()[0].(*LogicalJoin)
 		require.True(t, ok, comment)
-		leftPlan, ok := join.children[0].(*DataSource)
+		leftPlan, ok := join.Children()[0].(*DataSource)
 		require.True(t, ok, comment)
-		rightPlan, ok := join.children[1].(*DataSource)
+		rightPlan, ok := join.Children()[1].(*DataSource)
 		require.True(t, ok, comment)
 		leftCond := fmt.Sprintf("%s", leftPlan.pushedDownConds)
 		rightCond := fmt.Sprintf("%s", rightPlan.pushedDownConds)
@@ -387,7 +387,7 @@ func TestExtraPKNotNullFlag(t *testing.T) {
 	require.NoError(t, err, comment)
 	p, err := BuildLogicalPlanForTest(ctx, s.sctx, stmt, s.is)
 	require.NoError(t, err, comment)
-	ds := p.(*LogicalProjection).children[0].(*LogicalAggregation).children[0].(*DataSource)
+	ds := p.(*LogicalProjection).Children()[0].(*LogicalAggregation).Children()[0].(*DataSource)
 	require.Equal(t, "_tidb_rowid", ds.Columns[2].Name.L)
 	require.Equal(t, mysql.PriKeyFlag|mysql.NotNullFlag, ds.Columns[2].GetFlag())
 	require.Equal(t, mysql.PriKeyFlag|mysql.NotNullFlag, ds.schema.Columns[2].RetType.GetFlag())
@@ -474,9 +474,9 @@ func TestDupRandJoinCondsPushDown(t *testing.T) {
 	require.NoError(t, err, comment)
 	proj, ok := p.(*LogicalProjection)
 	require.True(t, ok, comment)
-	join, ok := proj.children[0].(*LogicalJoin)
+	join, ok := proj.Children()[0].(*LogicalJoin)
 	require.True(t, ok, comment)
-	leftPlan, ok := join.children[0].(*LogicalSelection)
+	leftPlan, ok := join.Children()[0].(*LogicalSelection)
 	require.True(t, ok, comment)
 	leftCond := fmt.Sprintf("%s", leftPlan.Conditions)
 	// Condition with mutable function cannot be de-duplicated when push down join conds.

@@ -508,7 +508,7 @@ func (b *builtinCastJSONAsTimeSig) vecEvalTime(ctx EvalContext, input *chunk.Chu
 
 		switch val.TypeCode {
 		case types.JSONTypeCodeDate, types.JSONTypeCodeDatetime, types.JSONTypeCodeTimestamp:
-			tm := val.GetTime()
+			tm := val.GetTimeWithFsp(b.tp.GetDecimal())
 			times[i] = tm
 			times[i].SetType(b.tp.GetType())
 			if b.tp.GetType() == mysql.TypeDate {
@@ -1975,7 +1975,7 @@ func (b *builtinCastJSONAsDurationSig) vecEvalDuration(ctx EvalContext, input *c
 
 		switch val.TypeCode {
 		case types.JSONTypeCodeDate, types.JSONTypeCodeDatetime, types.JSONTypeCodeTimestamp:
-			time := val.GetTime()
+			time := val.GetTimeWithFsp(b.tp.GetDecimal())
 			d, err := time.ConvertToDuration()
 			if err != nil {
 				return err

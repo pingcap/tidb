@@ -67,7 +67,7 @@ func (a *aggregationEliminateChecker) tryToEliminateAggregation(agg *LogicalAggr
 	schemaByGroupby := expression.NewSchema(agg.GetGroupByCols()...)
 	coveredByUniqueKey := false
 	var uniqueKey expression.KeyInfo
-	for _, key := range agg.children[0].Schema().Keys {
+	for _, key := range agg.Children()[0].Schema().Keys {
 		if schemaByGroupby.ColumnsIndices(key) != nil {
 			coveredByUniqueKey = true
 			uniqueKey = key
@@ -80,7 +80,7 @@ func (a *aggregationEliminateChecker) tryToEliminateAggregation(agg *LogicalAggr
 		}
 		// GroupByCols has unique key, so this aggregation can be removed.
 		if ok, proj := ConvertAggToProj(agg, agg.schema); ok {
-			proj.SetChildren(agg.children[0])
+			proj.SetChildren(agg.Children()[0])
 			appendAggregationEliminateTraceStep(agg, proj, uniqueKey, opt)
 			return proj
 		}
@@ -107,14 +107,14 @@ func (*aggregationEliminateChecker) tryToEliminateDistinct(agg *LogicalAggregati
 				distinctByUniqueKey := false
 				schemaByDistinct := expression.NewSchema(cols...)
 				var uniqueKey expression.KeyInfo
-				for _, key := range agg.children[0].Schema().Keys {
+				for _, key := range agg.Children()[0].Schema().Keys {
 					if schemaByDistinct.ColumnsIndices(key) != nil {
 						distinctByUniqueKey = true
 						uniqueKey = key
 						break
 					}
 				}
-				for _, key := range agg.children[0].Schema().UniqueKeys {
+				for _, key := range agg.Children()[0].Schema().UniqueKeys {
 					if schemaByDistinct.ColumnsIndices(key) != nil {
 						distinctByUniqueKey = true
 						uniqueKey = key
