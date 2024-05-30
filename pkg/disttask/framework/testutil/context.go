@@ -390,6 +390,7 @@ type TestContext struct {
 	CallTime int
 }
 
+<<<<<<< HEAD
 // InitTestContext inits test context for disttask tests.
 func InitTestContext(t *testing.T, nodeNum int) (context.Context, *gomock.Controller, *TestContext, *testkit.DistExecutionContext) {
 	ctrl := gomock.NewController(t)
@@ -404,6 +405,8 @@ func InitTestContext(t *testing.T, nodeNum int) (context.Context, *gomock.Contro
 	return ctx, ctrl, testCtx, executionContext
 }
 
+=======
+>>>>>>> 04c66ee9508 (ddl: decouple job scheduler from 'ddl' and make it run/exit as owner changes (#53548))
 // CollectSubtask collects subtask info
 func (c *TestContext) CollectSubtask(subtask *proto.Subtask) {
 	key := getTaskStepKey(subtask.TaskID, subtask.Step)

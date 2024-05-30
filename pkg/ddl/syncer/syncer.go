@@ -378,7 +378,137 @@ func (s *schemaVersionSyncer) OwnerCheckAllVersions(ctx context.Context, jobID i
 	}
 }
 
+<<<<<<< HEAD
 func isUpdatedLatestVersion(key, val string, latestVer int64, notMatchVerCnt, intervalCnt int, isUpdated bool) bool {
+=======
+// SyncJobSchemaVerLoop implements SchemaSyncer.SyncJobSchemaVerLoop interface.
+func (s *schemaVersionSyncer) SyncJobSchemaVerLoop(ctx context.Context) {
+	for {
+		s.syncJobSchemaVer(ctx)
+		logutil.DDLLogger().Info("schema version sync loop interrupted, retrying...")
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(time.Second):
+		}
+	}
+}
+
+func (s *schemaVersionSyncer) syncJobSchemaVer(ctx context.Context) {
+	resp, err := s.etcdCli.Get(ctx, s.jobNodeVerPrefix, clientv3.WithPrefix())
+	if err != nil {
+		logutil.DDLLogger().Info("get all job versions failed", zap.Error(err))
+		return
+	}
+	s.mu.Lock()
+	for jobID, item := range s.jobNodeVersions {
+		item.clearData()
+		// we might miss some DELETE events during retry, some items might be emptyAndNotUsed, remove them.
+		if item.emptyAndNotUsed() {
+			delete(s.jobNodeVersions, jobID)
+		}
+	}
+	s.mu.Unlock()
+	for _, oneKV := range resp.Kvs {
+		s.handleJobSchemaVerKV(oneKV, mvccpb.PUT)
+	}
+
+	startRev := resp.Header.Revision + 1
+	watchCtx, watchCtxCancel := context.WithCancel(ctx)
+	defer watchCtxCancel()
+	watchCtx = clientv3.WithRequireLeader(watchCtx)
+	watchCh := s.etcdCli.Watch(watchCtx, s.jobNodeVerPrefix, clientv3.WithPrefix(), clientv3.WithRev(startRev))
+	for {
+		var (
+			wresp clientv3.WatchResponse
+			ok    bool
+		)
+		select {
+		case <-watchCtx.Done():
+			return
+		case wresp, ok = <-watchCh:
+			if !ok {
+				// ctx must be cancelled, else we should have received a response
+				// with err and caught by below err check.
+				return
+			}
+		}
+		failpoint.Inject("mockCompaction", func() {
+			wresp.CompactRevision = 123
+		})
+		if err := wresp.Err(); err != nil {
+			logutil.DDLLogger().Warn("watch job version failed", zap.Error(err))
+			return
+		}
+		for _, ev := range wresp.Events {
+			s.handleJobSchemaVerKV(ev.Kv, ev.Type)
+		}
+	}
+}
+
+func (s *schemaVersionSyncer) handleJobSchemaVerKV(kv *mvccpb.KeyValue, tp mvccpb.Event_EventType) {
+	jobID, tidbID, schemaVer, valid := decodeJobVersionEvent(kv, tp, s.jobNodeVerPrefix)
+	if !valid {
+		logutil.DDLLogger().Error("invalid job version kv", zap.Stringer("kv", kv), zap.Stringer("type", tp))
+		return
+	}
+	if tp == mvccpb.PUT {
+		s.mu.Lock()
+		item, exists := s.jobNodeVersions[jobID]
+		if !exists {
+			item = newNodeVersions(1, nil)
+			s.jobNodeVersions[jobID] = item
+		}
+		s.mu.Unlock()
+		item.add(tidbID, schemaVer)
+	} else { // DELETE
+		s.mu.Lock()
+		if item, exists := s.jobNodeVersions[jobID]; exists {
+			item.del(tidbID)
+			if item.len() == 0 {
+				delete(s.jobNodeVersions, jobID)
+			}
+		}
+		s.mu.Unlock()
+	}
+}
+
+func (s *schemaVersionSyncer) jobSchemaVerMatchOrSet(jobID int64, matchFn func(map[string]int64) bool) *nodeVersions {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	item, exists := s.jobNodeVersions[jobID]
+	if exists {
+		item.matchOrSet(matchFn)
+	} else {
+		item = newNodeVersions(1, matchFn)
+		s.jobNodeVersions[jobID] = item
+	}
+	return item
+}
+
+func decodeJobVersionEvent(kv *mvccpb.KeyValue, tp mvccpb.Event_EventType, prefix string) (jobID int64, tidbID string, schemaVer int64, valid bool) {
+	left := strings.TrimPrefix(string(kv.Key), prefix)
+	parts := strings.Split(left, "/")
+	if len(parts) != 2 {
+		return 0, "", 0, false
+	}
+	jobID, err := strconv.ParseInt(parts[0], 10, 64)
+	if err != nil {
+		return 0, "", 0, false
+	}
+	// there is no Value in DELETE event, so we need to check it.
+	if tp == mvccpb.PUT {
+		schemaVer, err = strconv.ParseInt(string(kv.Value), 10, 64)
+		if err != nil {
+			return 0, "", 0, false
+		}
+	}
+	return jobID, parts[1], schemaVer, true
+}
+
+func isUpdatedLatestVersion(key, val string, latestVer int64, notMatchVerCnt, intervalCnt int, nodeAlive bool) bool {
+>>>>>>> 04c66ee9508 (ddl: decouple job scheduler from 'ddl' and make it run/exit as owner changes (#53548))
 	ver, err := strconv.Atoi(val)
 	if err != nil {
 		logutil.DDLLogger().Info("syncer check all versions, convert value to int failed, continue checking.",

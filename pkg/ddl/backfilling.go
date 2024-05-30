@@ -679,10 +679,20 @@ func SetBackfillTaskChanSizeForTest(n int) {
 //
 // The above operations are completed in a transaction.
 // Finally, update the concurrent processing of the total number of rows, and store the completed handle value.
+<<<<<<< HEAD
 func (dc *ddlCtx) writePhysicalTableRecord(sessPool *sess.Pool, t table.PhysicalTable, bfWorkerType backfillerType, reorgInfo *reorgInfo) error {
 	job := reorgInfo.Job
 	totalAddedCount := job.GetRowCount()
 
+=======
+func (dc *ddlCtx) writePhysicalTableRecord(
+	ctx context.Context,
+	sessPool *sess.Pool,
+	t table.PhysicalTable,
+	bfWorkerType backfillerType,
+	reorgInfo *reorgInfo,
+) error {
+>>>>>>> 04c66ee9508 (ddl: decouple job scheduler from 'ddl' and make it run/exit as owner changes (#53548))
 	startKey, endKey := reorgInfo.StartKey, reorgInfo.EndKey
 
 	if err := dc.isReorgRunnable(reorgInfo.Job.ID, false); err != nil {
@@ -697,8 +707,15 @@ func (dc *ddlCtx) writePhysicalTableRecord(sessPool *sess.Pool, t table.Physical
 	})
 
 	jc := reorgInfo.NewJobContext()
+<<<<<<< HEAD
 	sessCtx := newContext(reorgInfo.d.store)
 	scheduler, err := newBackfillScheduler(dc.ctx, reorgInfo, sessPool, bfWorkerType, t, sessCtx, jc)
+=======
+
+	eg, egCtx := util.NewErrorGroupWithRecoverWithCtx(ctx)
+
+	scheduler, err := newBackfillScheduler(egCtx, reorgInfo, sessPool, bfWorkerType, t, jc)
+>>>>>>> 04c66ee9508 (ddl: decouple job scheduler from 'ddl' and make it run/exit as owner changes (#53548))
 	if err != nil {
 		return errors.Trace(err)
 	}
