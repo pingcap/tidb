@@ -52,6 +52,5 @@ func TestCleanupPredicateColumns(t *testing.T) {
 	require.NoError(t, err)
 	columns, err := h.GetPredicateColumns(tbl.Meta().ID)
 	require.NoError(t, err)
-	// FIXME: cleanup predicate columns.
-	require.Len(t, columns, 2)
+	require.Len(t, columns, 1)
 }
