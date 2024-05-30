@@ -170,8 +170,8 @@ alter table tt add index t(a), add column b int;
 select db_name, table_name, job_type from information_schema.DDL_JOBS limit 3;
 db_name	table_name	job_type
 test_ddl_jobs	tt	alter table multi-schema change
-test_ddl_jobs	tt	add column /* subjob */
 test_ddl_jobs	tt	add index /* subjob */ /* txn */
+test_ddl_jobs	tt	add column /* subjob */
 drop database test_ddl_jobs;
 use executor__infoschema_reader;
 set global tidb_ddl_enable_fast_reorg = default;
