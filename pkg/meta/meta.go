@@ -1020,6 +1020,8 @@ func (m *Meta) ListTables(dbID int64) ([]*model.TableInfo, error) {
 }
 
 // ListTablesByFilter return all tables that does not filtered by filter in a database.
+// Note(dongmen): This method is used by TiCDC to reduce the time of changefeed initialization.
+// Ref: https://github.com/pingcap/tiflow/issues/11109
 func (m *Meta) ListTablesByFilter(
 	dbID int64,
 	filter func(info *model.TableNameInfo) bool) ([]*model.TableInfo, error) {
