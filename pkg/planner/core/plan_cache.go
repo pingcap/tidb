@@ -219,9 +219,15 @@ func GetPlanFromSessionPlanCache(ctx context.Context, sctx sessionctx.Context,
 	if stmtCtx.UseCache() {
 		var cacheVal kvcache.Value
 		var hit, isPointPlan bool
-		if stmt.PointGet.Executor != nil { // if it's PointGet Plan, no need to use MatchOpts
-			cacheVal, hit = sctx.GetSessionPlanCache().Get(cacheKey, nil)
+		if stmt.PointGet.PointPlan != nil { // if it's PointGet Plan, no need to use MatchOpts
+			cacheVal = &PlanCacheValue{
+				Plan:          stmt.PointGet.PointPlan,
+				OutputColumns: stmt.PointGet.ColumnNames,
+				stmtHints:     stmt.PointGet.PointPlanHints,
+			}
+			//cacheVal, hit = sctx.GetSessionPlanCache().Get(cacheKey, nil)
 			isPointPlan = true
+			hit = true
 		} else {
 			matchOpts = GetMatchOpts(sctx, is, stmt, params)
 			cacheVal, hit = sctx.GetSessionPlanCache().Get(cacheKey, matchOpts)
@@ -316,6 +322,11 @@ func generateNewPlan(ctx context.Context, sctx sessionctx.Context, isNonPrepared
 		stmtCtx.SetPlan(p)
 		stmtCtx.SetPlanDigest(stmt.NormalizedPlan, stmt.PlanDigest)
 		sctx.GetSessionPlanCache().Put(cacheKey, cached, matchOpts)
+		if _, ok := p.(*PointGetPlan); ok {
+			stmt.PointGet.PointPlan = p
+			stmt.PointGet.ColumnNames = names
+			stmt.PointGet.PointPlanHints = stmtCtx.StmtHints.Clone()
+		}
 	}
 	sessVars.FoundInPlanCache = false
 	return p, names, err
