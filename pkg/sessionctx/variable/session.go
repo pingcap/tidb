@@ -325,7 +325,7 @@ func (tc *TransactionContext) UpdateDeltaForTable(physicalTableID int64, delta i
 	tc.TableDeltaMap[physicalTableID] = item
 }
 
-// A data struct to store the delta information for a table.
+// ColSize is a data struct to store the delta information for a table.
 type ColSize struct {
 	ColID int64
 	Size  int64
