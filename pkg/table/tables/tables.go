@@ -682,7 +682,7 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx table.MutateContext
 			continue
 		}
 		oldLen := size - 1
-		colSize[id] = variable.ColSize{ColId: col.ID, Size: int64(newLen - oldLen)}
+		colSize[id] = variable.ColSize{ColID: col.ID, Size: int64(newLen - oldLen)}
 	}
 	sessVars.TxnCtx.UpdateDeltaForTableFromColSlice(t.physicalTableID, 0, 1, colSize)
 	return nil
@@ -1176,7 +1176,7 @@ func (t *TableCommon) AddRecord(sctx table.MutateContext, r []types.Datum, opts 
 		if err != nil {
 			continue
 		}
-		colSize[id] = variable.ColSize{ColId: col.ID, Size: int64(size - 1)}
+		colSize[id] = variable.ColSize{ColID: col.ID, Size: int64(size - 1)}
 	}
 	sessVars.TxnCtx.UpdateDeltaForTableFromColSlice(t.physicalTableID, 1, 1, colSize)
 	return recordID, nil
@@ -1453,7 +1453,7 @@ func (t *TableCommon) RemoveRecord(ctx table.MutateContext, h kv.Handle, r []typ
 		if err != nil {
 			continue
 		}
-		colSize[id] = variable.ColSize{ColId: col.ID, Size: -int64(size - 1)}
+		colSize[id] = variable.ColSize{ColID: col.ID, Size: -int64(size - 1)}
 	}
 	ctx.GetSessionVars().TxnCtx.UpdateDeltaForTableFromColSlice(t.physicalTableID, -1, 1, colSize)
 	return err
