@@ -225,9 +225,7 @@ func GetPlanFromSessionPlanCache(ctx context.Context, sctx sessionctx.Context,
 				OutputColumns: stmt.PointGet.ColumnNames,
 				stmtHints:     stmt.PointGet.PointPlanHints,
 			}
-			//cacheVal, hit = sctx.GetSessionPlanCache().Get(cacheKey, nil)
-			isPointPlan = true
-			hit = true
+			isPointPlan, hit = true, true
 		} else {
 			matchOpts = GetMatchOpts(sctx, is, stmt, params)
 			cacheVal, hit = sctx.GetSessionPlanCache().Get(cacheKey, matchOpts)
