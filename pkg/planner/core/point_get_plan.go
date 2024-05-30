@@ -228,9 +228,8 @@ func (*PointGetPlan) StatsCount() float64 {
 // StatsInfo will return the RowCount of property.StatsInfo for this plan.
 func (p *PointGetPlan) StatsInfo() *property.StatsInfo {
 	if p.Plan.StatsInfo() == nil {
-		p.Plan.SetStats(&property.StatsInfo{})
+		p.Plan.SetStats(&property.StatsInfo{RowCount: 1})
 	}
-	p.Plan.StatsInfo().RowCount = 1
 	return p.Plan.StatsInfo()
 }
 
@@ -1485,6 +1484,7 @@ func newPointGetPlan(ctx PlanContext, dbName string, schema *expression.Schema, 
 		outputNames:  names,
 		LockWaitTime: ctx.GetSessionVars().LockWaitTimeout,
 	}
+	p.Plan.SetStats(&property.StatsInfo{RowCount: 1})
 	ctx.GetSessionVars().StmtCtx.Tables = []stmtctx.TableEntry{{DB: dbName, Table: tbl.Name.L}}
 	return p
 }
