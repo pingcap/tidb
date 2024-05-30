@@ -1298,6 +1298,55 @@ func TestIssue47133(t *testing.T) {
 	require.Equal(t, cnt, 2)
 }
 
+<<<<<<< HEAD
+=======
+func TestPlanCacheBindingIgnore(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`create database test1`)
+	tk.MustExec(`use test1`)
+	tk.MustExec(`create table t (a int)`)
+	tk.MustExec(`create database test2`)
+	tk.MustExec(`use test2`)
+	tk.MustExec(`create table t (a int)`)
+
+	tk.MustExec(`prepare st1 from 'select * from test1.t'`)
+	tk.MustExec(`execute st1`)
+	tk.MustExec(`execute st1`)
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+	tk.MustExec(`prepare st2 from 'select * from test2.t'`)
+	tk.MustExec(`execute st2`)
+	tk.MustExec(`execute st2`)
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+
+	tk.MustExec(`create global binding using select /*+ ignore_plan_cache() */ * from test1.t`)
+	tk.MustExec(`execute st1`)
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+	tk.MustExec(`execute st1`)
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+	tk.MustExec(`create global binding using select /*+ ignore_plan_cache() */ * from test2.t`)
+	tk.MustExec(`execute st2`)
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+	tk.MustExec(`execute st2`)
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+}
+
+func TestIssue53505(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t (v varchar(16))`)
+	tk.MustExec(`insert into t values ('156')`)
+	tk.MustExec(`prepare stmt7 from 'select * from t where v = conv(?, 16, 8)'`)
+	tk.MustExec(`set @arg=0x6E`)
+	tk.MustQuery(`execute stmt7 using @arg`).Check(testkit.Rows("156"))
+	tk.MustQuery(`execute stmt7 using @arg`).Check(testkit.Rows("156"))
+	tk.MustExec(`set @arg=0x70`)
+	tk.MustQuery(`execute stmt7 using @arg`).Check(testkit.Rows()) // empty
+}
+
+>>>>>>> d860287a2b4 (expression: fix the wrong behavior of `conv` function (#53681))
 func TestBuiltinFuncFlen(t *testing.T) {
 	// same as TestIssue45378 and TestIssue45253
 	store := testkit.CreateMockStore(t)
