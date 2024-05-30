@@ -246,8 +246,8 @@ func RestoreCharset(w io.StringWriter) {
 	_, _ = w.WriteString("SET collation_connection = @PREV_COLLATION_CONNECTION;\n")
 }
 
-// UpdateSpecifiedTablesMeta updates DatabaseTables with correct table type and avg row size.
-func UpdateSpecifiedTablesMeta(tctx *tcontext.Context, db *sql.Conn, dbTables DatabaseTables, listType listTableType) error {
+// updateSpecifiedTablesMeta updates DatabaseTables with correct table type and avg row size.
+func updateSpecifiedTablesMeta(tctx *tcontext.Context, db *sql.Conn, dbTables DatabaseTables, listType listTableType) error {
 	var (
 		schema, table, tableTypeStr string
 		tableType                   TableType
@@ -292,7 +292,6 @@ func UpdateSpecifiedTablesMeta(tctx *tcontext.Context, db *sql.Conn, dbTables Da
 		return nil
 	case listTableByShowFullTables:
 		for schema, tbls := range dbTables {
-			dbTables[schema] = make([]*TableInfo, 0)
 			query := fmt.Sprintf("SHOW FULL TABLES FROM `%s`",
 				escapeString(schema))
 			if err := simpleQueryWithArgs(tctx, db, func(rows *sql.Rows) error {
