@@ -5,6 +5,7 @@ package checksum_test
 import (
 	"context"
 	"math"
+	"strings"
 	"testing"
 
 	"github.com/pingcap/failpoint"
@@ -17,9 +18,20 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
+	"github.com/tidwall/gjson"
 )
 
 func getTableInfo(t *testing.T, mock *mock.Cluster, db, table string) *model.TableInfo {
+	info, err := mock.Domain.GetSnapshotInfoSchema(math.MaxUint64)
+	require.NoError(t, err)
+	cDBName := model.NewCIStr(db)
+	cTableName := model.NewCIStr(table)
+	tableInfo, err := info.TableByName(cDBName, cTableName)
+	require.NoError(t, err)
+	return tableInfo.Meta()
+}
+
+func getTableInfo2(t *testing.B, mock *mock.Cluster, db, table string) *model.TableInfo {
 	info, err := mock.Domain.GetSnapshotInfoSchema(math.MaxUint64)
 	require.NoError(t, err)
 	cDBName := model.NewCIStr(db)
@@ -146,4 +158,165 @@ func TestChecksum(t *testing.T) {
 	resp4, err := exe4.Execute(context.TODO(), mock.Storage.GetClient(), func() {})
 	require.NoError(t, err)
 	require.NotNil(t, resp4)
+}
+
+func BenchmarkDecodeTableInfo(b *testing.B) {
+	rawJson := `{
+ "id": 106,
+ "name": {
+  "O": "tp",
+  "L": "tp"
+ },
+ "charset": "utf8mb4",
+ "collate": "utf8mb4_bin",
+ "cols": [
+  {
+   "id": 1,
+   "name": {
+    "O": "a",
+    "L": "a"
+   },
+   "offset": 0,
+   "origin_default": null,
+   "origin_default_bit": null,
+   "default": null,
+   "default_bit": null,
+   "default_is_expr": false,
+   "generated_expr_string": "",
+   "generated_stored": false,
+   "dependences": null,
+   "type": {
+    "Tp": 3,
+    "Flag": 0,
+    "Flen": 11,
+    "Decimal": 0,
+    "Charset": "binary",
+    "Collate": "binary",
+    "Elems": null,
+    "ElemsIsBinaryLit": null,
+    "Array": false
+   },
+   "state": 5,
+   "comment": "",
+   "hidden": false,
+   "change_state_info": null,
+   "version": 2
+  }
+ ],
+ "index_info": null,
+ "constraint_info": null,
+ "fk_info": null,
+ "state": 5,
+ "pk_is_handle": false,
+ "is_common_handle": false,
+ "common_handle_version": 0,
+ "comment": "",
+ "auto_inc_id": 0,
+ "auto_id_cache": 0,
+ "auto_rand_id": 0,
+ "max_col_id": 1,
+ "max_idx_id": 0,
+ "max_fk_id": 0,
+ "max_cst_id": 0,
+ "update_timestamp": 450117177897648130,
+ "ShardRowIDBits": 0,
+ "max_shard_row_id_bits": 0,
+ "auto_random_bits": 0,
+ "auto_random_range_bits": 0,
+ "pre_split_regions": 0,
+ "partition": {
+  "type": 2,
+  "expr": "a",
+  "columns": null,
+  "enable": true,
+  "is_empty_columns": false,
+  "definitions": [
+   {
+    "id": 107,
+    "name": {
+     "O": "p0",
+     "L": "p0"
+    },
+    "less_than": null,
+    "in_values": null,
+    "policy_ref_info": null
+   },
+   {
+    "id": 108,
+    "name": {
+     "O": "p1",
+     "L": "p1"
+    },
+    "less_than": null,
+    "in_values": null,
+    "policy_ref_info": null
+   },
+   {
+    "id": 109,
+    "name": {
+     "O": "p2",
+     "L": "p2"
+    },
+    "less_than": null,
+    "in_values": null,
+    "policy_ref_info": null
+   },
+   {
+    "id": 110,
+    "name": {
+     "O": "p3",
+     "L": "p3"
+    },
+    "less_than": null,
+    "in_values": null,
+    "policy_ref_info": null
+   }
+  ],
+  "adding_definitions": null,
+  "dropping_definitions": null,
+  "NewPartitionIDs": null,
+  "states": null,
+  "num": 4,
+  "ddl_state": 0,
+  "new_table_id": 0,
+  "ddl_type": 0,
+  "ddl_expr": "",
+  "ddl_columns": null
+ },
+ "compression": "",
+ "view": null,
+ "sequence": null,
+ "Lock": null,
+ "version": 5,
+ "tiflash_replica": null,
+ "is_columnar": false,
+ "temp_table_type": 0,
+ "cache_table_status": 0,
+ "policy_ref_info": null,
+ "stats_options": null,
+ "exchange_partition_info": null,
+ "ttl_info": null,
+ "revision": 0
+}
+`
+
+	p := gjson.Parse(rawJson)
+	value := p.Get("partition")
+	value = p.Get("tiflash_replica")
+	value.Exists()
+
+	//emptyRegex := regexp.MustCompile(`\"partition\": {"`)
+
+	//var m model.TableInfo
+	for i := 0; i < b.N; i++ {
+		strings.Contains(rawJson, "\"partition\": {")
+		//p := gjson.Parse(string(hack.String(rawJson)))
+		//value := gjson.Get(string(hack.String(rawJson)), "[partition, tiflash_replica, ttl_info]")
+		//value = p.Get("tiflash_replica")
+		//_ = emptyRegex.MatchString(rawJson)
+
+		//value := gjson.Get(string(hack.String(rawJson)), "partition")
+		//value.Exists()
+		//json.Unmarshal(hack.Slice(rawJson), &m)
+	}
 }

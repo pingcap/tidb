@@ -106,6 +106,7 @@ require (
 	github.com/tdakkota/asciicheck v0.2.0
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
 	github.com/tidwall/btree v1.7.0
+	github.com/tidwall/gjson v1.17.1
 	github.com/tikv/client-go/v2 v2.0.8-0.20240516031922-38e0dca30c8c
 	github.com/tikv/pd/client v0.0.0-20240430080403-1679dbca25b3
 	github.com/timakin/bodyclose v0.0.0-20240125160201-f835fa56326a
@@ -148,6 +149,8 @@ require (
 require (
 	github.com/cockroachdb/tokenbucket v0.0.0-20230807174530-cc333fc44b06 // indirect
 	github.com/getsentry/sentry-go v0.27.0 // indirect
+	github.com/tidwall/match v1.1.1 // indirect
+	github.com/tidwall/pretty v1.2.0 // indirect
 )
 
 require (
