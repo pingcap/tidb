@@ -2057,9 +2057,8 @@ func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.Stm
 			return nil, nil
 		}
 		// TODO: the preprocess is run twice, we should find some way to avoid do it again.
-		// TODO: handle the PreprocessorReturn.
 		if err = plannercore.Preprocess(ctx, cc.getCtx(), stmt); err != nil {
-			return nil, err
+			return nil, nil
 		}
 		p := plannercore.TryFastPlan(cc.ctx.Session, stmt)
 		pointPlans[i] = p
