@@ -42,7 +42,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	decoder "github.com/pingcap/tidb/pkg/util/rowDecoder"
-	"github.com/pingcap/tidb/pkg/util/timeutil"
 	"github.com/pingcap/tidb/pkg/util/topsql"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/tikv/client-go/v2/tikv"
@@ -543,24 +542,6 @@ func makeupDecodeColMap(dbName model.CIStr, t table.Table) (map[int64]decoder.Co
 	return decodeColMap, nil
 }
 
-func setSessCtxLocation(sctx sessionctx.Context, tzLocation *model.TimeZoneLocation) error {
-	// It is set to SystemLocation to be compatible with nil LocationInfo.
-	tz := *timeutil.SystemLocation()
-	if sctx.GetSessionVars().TimeZone == nil {
-		sctx.GetSessionVars().TimeZone = &tz
-	} else {
-		*sctx.GetSessionVars().TimeZone = tz
-	}
-	if tzLocation != nil {
-		loc, err := tzLocation.GetLocation()
-		if err != nil {
-			return errors.Trace(err)
-		}
-		*sctx.GetSessionVars().TimeZone = *loc
-	}
-	return nil
-}
-
 var backfillTaskChanSize = 128
 
 // SetBackfillTaskChanSizeForTest is only used for test.
@@ -584,6 +565,7 @@ func SetBackfillTaskChanSizeForTest(n int) {
 // The above operations are completed in a transaction.
 // Finally, update the concurrent processing of the total number of rows, and store the completed handle value.
 func (dc *ddlCtx) writePhysicalTableRecord(
+	ctx context.Context,
 	sessPool *sess.Pool,
 	t table.PhysicalTable,
 	bfWorkerType backfillerType,
@@ -604,7 +586,7 @@ func (dc *ddlCtx) writePhysicalTableRecord(
 
 	jc := reorgInfo.NewJobContext()
 
-	eg, egCtx := util.NewErrorGroupWithRecoverWithCtx(dc.ctx)
+	eg, egCtx := util.NewErrorGroupWithRecoverWithCtx(ctx)
 
 	scheduler, err := newBackfillScheduler(egCtx, reorgInfo, sessPool, bfWorkerType, t, jc)
 	if err != nil {
@@ -612,7 +594,7 @@ func (dc *ddlCtx) writePhysicalTableRecord(
 	}
 	defer scheduler.close(true)
 	if lit, ok := scheduler.(*ingestBackfillScheduler); ok {
-		if lit.finishedWritingNeedImport() {
+		if lit.importStarted() {
 			return nil
 		}
 	}

@@ -119,8 +119,8 @@ func (*MockBackendCtx) UnregisterEngines() {
 	logutil.DDLIngestLogger().Info("mock backend ctx unregister")
 }
 
-// FinishedWritingNeedImport implements BackendCtx interface.
-func (*MockBackendCtx) FinishedWritingNeedImport() bool {
+// ImportStarted implements BackendCtx interface.
+func (*MockBackendCtx) ImportStarted() bool {
 	return false
 }
 
