@@ -877,10 +877,12 @@ func (p *PhysicalLimit) attach2Task(tasks ...task) task {
 		} else if !cop.idxMergeIsIntersection {
 			// We only support push part of the order prop down to index merge build case.
 			if len(cop.rootTaskConds) == 0 {
-				if cop.indexPlanFinished {
-					// when the index plan is finished, sink the limit to the index merge table side.
+				// For double read which requires order being kept, the limit cannot be pushed down to the table side,
+				// because handles would be reordered before being sent to table scan.
+				if cop.indexPlanFinished && !cop.keepOrder {
+					// when the index plan is finished and index plan is not ordered, sink the limit to the index merge table side.
 					suspendLimitAboveTablePlan()
-				} else {
+				} else if !cop.indexPlanFinished {
 					// cop.indexPlanFinished = false indicates the table side is a pure table-scan, sink the limit to the index merge index side.
 					newCount := p.Offset + p.Count
 					limitChildren := make([]PhysicalPlan, 0, len(cop.idxMergePartPlans))
@@ -893,6 +895,10 @@ func (p *PhysicalLimit) attach2Task(tasks ...task) task {
 						limitChildren = append(limitChildren, pushedDownLimit)
 					}
 					cop.idxMergePartPlans = limitChildren
+					t = cop.convertToRootTask(p.SCtx())
+					sunk = p.sinkIntoIndexMerge(t)
+				} else {
+					// when there are some limitations, just sink the limit upon the index merge reader.
 					t = cop.convertToRootTask(p.SCtx())
 					sunk = p.sinkIntoIndexMerge(t)
 				}
@@ -915,7 +921,7 @@ func (p *PhysicalLimit) attach2Task(tasks ...task) task {
 					sunk = p.sinkIntoIndexMerge(t)
 				}
 			} else {
-				// otherwise, suspend the limit out of index merge reader.
+				// Otherwise, suspend the limit out of index merge reader.
 				t = cop.convertToRootTask(p.SCtx())
 				sunk = p.sinkIntoIndexMerge(t)
 			}

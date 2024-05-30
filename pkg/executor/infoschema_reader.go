@@ -94,6 +94,7 @@ type memtableRetriever struct {
 	retrieved   bool
 	initialized bool
 	extractor   plannercore.MemTablePredicateExtractor
+	memTracker  *memory.Tracker
 }
 
 // retrieve implements the infoschemaRetriever interface
@@ -201,6 +202,9 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			return nil, err
 		}
 		e.initialized = true
+		if e.memTracker != nil {
+			e.memTracker.Consume(calculateDatumsSize(e.rows))
+		}
 	}
 
 	// Adjust the amount of each return
@@ -1737,11 +1741,11 @@ func (e *memtableRetriever) setDataForTiDBHotRegions(ctx sessionctx.Context) err
 	if !ok {
 		return errors.New("Information about hot region can be gotten only when the storage is TiKV")
 	}
-	allSchemas := ctx.GetInfoSchema().(infoschema.InfoSchema).AllSchemas()
 	tikvHelper := &helper.Helper{
 		Store:       tikvStore,
 		RegionCache: tikvStore.GetRegionCache(),
 	}
+	allSchemas := tikvHelper.FilterMemDBs(ctx.GetInfoSchema().(infoschema.InfoSchema).AllSchemas())
 	metrics, err := tikvHelper.ScrapeHotInfo(pdapi.HotRead, allSchemas)
 	if err != nil {
 		return err

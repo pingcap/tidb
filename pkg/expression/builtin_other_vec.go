@@ -386,6 +386,8 @@ func (b *builtinGetRealVarSig) vectorized() bool {
 	return true
 }
 
+// NOTE: get/set variable vectorized eval was disabled. See more in
+// https://github.com/pingcap/tidb/pull/8412
 func (b *builtinGetRealVarSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	buf0, err := b.bufAllocator.get()
@@ -406,7 +408,11 @@ func (b *builtinGetRealVarSig) vecEvalReal(input *chunk.Chunk, result *chunk.Col
 		}
 		varName := strings.ToLower(buf0.GetString(i))
 		if v, ok := sessionVars.GetUserVarVal(varName); ok {
-			f64s[i] = v.GetFloat64()
+			d, err := v.ToFloat64(sessionVars.StmtCtx)
+			if err != nil {
+				return err
+			}
+			f64s[i] = d
 			continue
 		}
 		result.SetNull(i, true)
@@ -418,6 +424,8 @@ func (b *builtinGetDecimalVarSig) vectorized() bool {
 	return true
 }
 
+// NOTE: get/set variable vectorized eval was disabled. See more in
+// https://github.com/pingcap/tidb/pull/8412
 func (b *builtinGetDecimalVarSig) vecEvalDecimal(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	buf0, err := b.bufAllocator.get()
@@ -438,7 +446,11 @@ func (b *builtinGetDecimalVarSig) vecEvalDecimal(input *chunk.Chunk, result *chu
 		}
 		varName := strings.ToLower(buf0.GetString(i))
 		if v, ok := sessionVars.GetUserVarVal(varName); ok {
-			decs[i] = *v.GetMysqlDecimal()
+			d, err := v.ToDecimal(sessionVars.StmtCtx)
+			if err != nil {
+				return err
+			}
+			decs[i] = *d
 			continue
 		}
 		result.SetNull(i, true)
