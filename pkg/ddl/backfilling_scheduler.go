@@ -422,7 +422,14 @@ func (b *ingestBackfillScheduler) setupWorkers() error {
 	for _, e := range b.reorgInfo.elements {
 		indexIDs = append(indexIDs, e.ID)
 	}
-	uniques := job.Args[0].([]bool)
+	var uniques []bool
+	switch v := job.Args[0].(type) {
+	case *bool:
+		uniques = make([]bool, 1)
+		uniques[0] = *v
+	case []bool:
+		uniques = v
+	}
 	engines, err := b.backendCtx.Register(indexIDs, uniques, job.TableName)
 	if err != nil {
 		return errors.Trace(err)
