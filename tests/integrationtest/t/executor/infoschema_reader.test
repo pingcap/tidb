@@ -130,6 +130,8 @@ connection default;
 create table tt (a int);
 alter table tt add index t(a), add column b int;
 select db_name, table_name, job_type from information_schema.DDL_JOBS limit 3;
+alter table tt add index t2(a), add unique index tb(b), add column c int;
+select db_name, table_name, job_type from information_schema.DDL_JOBS limit 4;
 
 disconnect conn1;
 drop database test_ddl_jobs;
