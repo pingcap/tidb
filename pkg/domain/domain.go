@@ -438,15 +438,14 @@ func (*Domain) fetchSchemasWithTables(schemas []*model.DBInfo, m *meta.Meta, don
 			infoschema.ConvertCharsetCollateToLowerCaseIfNeed(tbl)
 			// Check whether the table is in repair mode.
 			if domainutil.RepairInfo.InRepairMode() && domainutil.RepairInfo.CheckAndFetchRepairedTable(di, tbl) {
-				if tbl.State == model.StatePublic {
-					// If the state is public, it means that the DDL job is done, but the table
-					// haven't been deleted from the repair table list.
-					// Since the repairment is done and table is visible, we should load it.
-				} else {
+				if !tbl.State == model.StatePublic {
 					// Do not load it because we are reparing the table and the table info could be `bad`
 					// before repair is done.
 					continue
 				}
+				// If the state is public, it means that the DDL job is done, but the table
+				// haven't been deleted from the repair table list.
+				// Since the repairment is done and table is visible, we should load it.
 			}
 			di.Tables = append(di.Tables, tbl)
 		}
