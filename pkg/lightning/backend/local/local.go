@@ -516,6 +516,43 @@ func NewBackend(
 	config BackendConfig,
 	pdSvcDiscovery pd.ServiceDiscovery,
 ) (b *Backend, err error) {
+	var (
+		pdCli                pd.Client
+		spkv                 *tikvclient.EtcdSafePointKV
+		pdCliForTiKV         *tikvclient.CodecPDClient
+		rpcCli               tikvclient.Client
+		tikvCli              *tikvclient.KVStore
+		pdHTTPCli            pdhttp.Client
+		importClientFactory  *importClientFactoryImpl
+		multiIngestSupported bool
+	)
+	defer func() {
+		if err == nil {
+			return
+		}
+		if importClientFactory != nil {
+			importClientFactory.Close()
+		}
+		if pdHTTPCli != nil {
+			pdHTTPCli.Close()
+		}
+		if tikvCli != nil {
+			// tikvCli uses pdCliForTiKV(which wraps pdCli) , spkv and rpcCli, so
+			// close tikvCli will close all of them.
+			_ = tikvCli.Close()
+		} else {
+			if rpcCli != nil {
+				_ = rpcCli.Close()
+			}
+			if spkv != nil {
+				_ = spkv.Close()
+			}
+			// pdCliForTiKV wraps pdCli, so we only need close pdCli
+			if pdCli != nil {
+				pdCli.Close()
+			}
+		}
+	}()
 	config.adjust()
 	var pdAddrs []string
 	if pdSvcDiscovery != nil {
@@ -525,7 +562,7 @@ func NewBackend(
 	} else {
 		pdAddrs = strings.Split(config.PDAddr, ",")
 	}
-	pdCli, err := pd.NewClientWithContext(
+	pdCli, err = pd.NewClientWithContext(
 		ctx, pdAddrs, tls.ToPDSecurityOption(),
 		pd.WithGRPCDialOptions(maxCallMsgSize...),
 		// If the time too short, we may scatter a region many times, because
@@ -537,12 +574,11 @@ func NewBackend(
 	}
 
 	// The following copies tikv.NewTxnClient without creating yet another pdClient.
-	spkv, err := tikvclient.NewEtcdSafePointKV(strings.Split(config.PDAddr, ","), tls.TLSConfig())
+	spkv, err = tikvclient.NewEtcdSafePointKV(strings.Split(config.PDAddr, ","), tls.TLSConfig())
 	if err != nil {
 		return nil, common.ErrCreateKVClient.Wrap(err).GenWithStackByArgs()
 	}
 
-	var pdCliForTiKV *tikvclient.CodecPDClient
 	if config.KeyspaceName == "" {
 		pdCliForTiKV = tikvclient.NewCodecPDClient(tikvclient.ModeTxn, pdCli)
 	} else {
@@ -553,18 +589,24 @@ func NewBackend(
 	}
 
 	tikvCodec := pdCliForTiKV.GetCodec()
-	rpcCli := tikvclient.NewRPCClient(tikvclient.WithSecurity(tls.ToTiKVSecurityConfig()), tikvclient.WithCodec(tikvCodec))
-	tikvCli, err := tikvclient.NewKVStore("lightning-local-backend", pdCliForTiKV, spkv, rpcCli)
+	rpcCli = tikvclient.NewRPCClient(tikvclient.WithSecurity(tls.ToTiKVSecurityConfig()), tikvclient.WithCodec(tikvCodec))
+	tikvCli, err = tikvclient.NewKVStore("lightning-local-backend", pdCliForTiKV, spkv, rpcCli)
 	if err != nil {
 		return nil, common.ErrCreateKVClient.Wrap(err).GenWithStackByArgs()
 	}
-	pdHTTPCli := pdhttp.NewClientWithServiceDiscovery(
+	pdHTTPCli = pdhttp.NewClientWithServiceDiscovery(
 		"lightning",
 		pdCli.GetServiceDiscovery(),
 		pdhttp.WithTLSConfig(tls.TLSConfig()),
 	).WithBackoffer(retry.InitialBackoffer(time.Second, time.Second, pdutil.PDRequestRetryTime*time.Second))
 	splitCli := split.NewClient(pdCli, pdHTTPCli, tls.TLSConfig(), config.RegionSplitBatchSize, config.RegionSplitConcurrency)
-	importClientFactory := newImportClientFactoryImpl(splitCli, tls, config.MaxConnPerStore, config.ConnCompressType)
+	importClientFactory = newImportClientFactoryImpl(splitCli, tls, config.MaxConnPerStore, config.ConnCompressType)
+
+	multiIngestSupported, err = checkMultiIngestSupport(ctx, pdCli, importClientFactory)
+	if err != nil {
+		return nil, common.ErrCheckMultiIngest.Wrap(err).GenWithStackByArgs()
+	}
+
 	var writeLimiter StoreWriteLimiter
 	if config.StoreWriteBWLimit > 0 {
 		writeLimiter = newStoreWriteLimiter(config.StoreWriteBWLimit)
@@ -581,20 +623,17 @@ func NewBackend(
 
 		BackendConfig: config,
 
+		supportMultiIngest:  multiIngestSupported,
 		importClientFactory: importClientFactory,
 		writeLimiter:        writeLimiter,
 		logger:              log.FromContext(ctx),
 	}
-	engineMgr, err := newEngineManager(config, local, local.logger)
+	local.engineMgr, err = newEngineManager(config, local, local.logger)
 	if err != nil {
 		return nil, err
 	}
-	local.engineMgr = engineMgr
 	if m, ok := metric.GetCommonMetric(ctx); ok {
 		local.metrics = m
-	}
-	if err = local.checkMultiIngestSupport(ctx); err != nil {
-		return nil, common.ErrCheckMultiIngest.Wrap(err).GenWithStackByArgs()
 	}
 	local.tikvSideCheckFreeSpace(ctx)
 
@@ -627,10 +666,10 @@ func (local *Backend) TotalMemoryConsume() int64 {
 	return local.engineMgr.totalMemoryConsume()
 }
 
-func (local *Backend) checkMultiIngestSupport(ctx context.Context) error {
-	stores, err := local.pdCli.GetAllStores(ctx, pd.WithExcludeTombstone())
+func checkMultiIngestSupport(ctx context.Context, pdCli pd.Client, importClientFactory ImportClientFactory) (bool, error) {
+	stores, err := pdCli.GetAllStores(ctx, pd.WithExcludeTombstone())
 	if err != nil {
-		return errors.Trace(err)
+		return false, errors.Trace(err)
 	}
 
 	hasTiFlash := false
@@ -652,10 +691,10 @@ func (local *Backend) checkMultiIngestSupport(ctx context.Context) error {
 				select {
 				case <-time.After(100 * time.Millisecond):
 				case <-ctx.Done():
-					return ctx.Err()
+					return false, ctx.Err()
 				}
 			}
-			client, err1 := local.getImportClient(ctx, s.Id)
+			client, err1 := importClientFactory.Create(ctx, s.Id)
 			if err1 != nil {
 				err = err1
 				log.FromContext(ctx).Warn("get import client failed", zap.Error(err), zap.String("store", s.Address))
@@ -668,8 +707,7 @@ func (local *Backend) checkMultiIngestSupport(ctx context.Context) error {
 			if st, ok := status.FromError(err); ok {
 				if st.Code() == codes.Unimplemented {
 					log.FromContext(ctx).Info("multi ingest not support", zap.Any("unsupported store", s))
-					local.supportMultiIngest = false
-					return nil
+					return false, nil
 				}
 			}
 			log.FromContext(ctx).Warn("check multi ingest support failed", zap.Error(err), zap.String("store", s.Address),
@@ -679,17 +717,15 @@ func (local *Backend) checkMultiIngestSupport(ctx context.Context) error {
 			// if the cluster contains no TiFlash store, we don't need the multi-ingest feature,
 			// so in this condition, downgrade the logic instead of return an error.
 			if hasTiFlash {
-				return errors.Trace(err)
+				return false, errors.Trace(err)
 			}
 			log.FromContext(ctx).Warn("check multi failed all retry, fallback to false", log.ShortError(err))
-			local.supportMultiIngest = false
-			return nil
+			return false, nil
 		}
 	}
 
-	local.supportMultiIngest = true
 	log.FromContext(ctx).Info("multi ingest support")
-	return nil
+	return true, nil
 }
 
 func (local *Backend) tikvSideCheckFreeSpace(ctx context.Context) {
