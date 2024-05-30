@@ -1022,6 +1022,49 @@ func (m *Meta) ListTables(dbID int64) ([]*model.TableInfo, error) {
 	return tables, nil
 }
 
+// ListTablesByFilter return all tables that does not filtered by filter in a database.
+func (m *Meta) ListTablesByFilter(
+	dbID int64,
+	filter func(info *model.TableNameInfo) bool) ([]*model.TableInfo, error) {
+	dbKey := m.dbKey(dbID)
+	if err := m.checkDBExists(dbKey); err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	res, err := m.txn.HGetAll(dbKey)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	tables := make([]*model.TableInfo, 0, len(res)/2)
+	for _, r := range res {
+		// only handle table meta
+		tableKey := string(r.Field)
+		if !strings.HasPrefix(tableKey, mTablePrefix) {
+			continue
+		}
+		tbName := &model.TableNameInfo{}
+		err = json.Unmarshal(r.Value, tbName)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if filter(tbName) {
+			continue
+		}
+
+		tbInfo := &model.TableInfo{}
+		err = json.Unmarshal(r.Value, tbInfo)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		tbInfo.DBID = dbID
+
+		tables = append(tables, tbInfo)
+	}
+
+	return tables, nil
+}
+
 // ListSimpleTables shows all simple tables in database.
 func (m *Meta) ListSimpleTables(dbID int64) ([]*model.TableNameInfo, error) {
 	dbKey := m.dbKey(dbID)
