@@ -72,6 +72,7 @@ func NewDynamicTokenLimiter(concurrency, maxCnt uint) *DynamicTokenLimiter {
 }
 
 // SetToken sets the concurrency of the DynamicTokenLimiter.
+// SetToken will await the completion of the changes.
 func (c *DynamicTokenLimiter) SetToken(concurrency uint) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
