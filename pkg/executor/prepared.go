@@ -206,15 +206,9 @@ func (e *DeallocateExec) Next(context.Context, *chunk.Chunk) error {
 	prepared := preparedObj.PreparedAst
 	delete(vars.PreparedStmtNameToID, e.Name)
 	if e.Ctx().GetSessionVars().EnablePreparedPlanCache {
-<<<<<<< HEAD
 		bindSQL, _ := plannercore.GetBindSQL4PlanCache(e.Ctx(), preparedObj)
 		cacheKey, err := plannercore.NewPlanCacheKey(vars, preparedObj.StmtText, preparedObj.StmtDB, prepared.SchemaVersion,
-			0, bindSQL, expression.ExprPushDownBlackListReloadTimeStamp.Load())
-=======
-		bindSQL, _ := bindinfo.MatchSQLBindingForPlanCache(e.Ctx(), preparedObj.PreparedAst.Stmt, &preparedObj.BindingInfo)
-		cacheKey, err := plannercore.NewPlanCacheKey(vars, preparedObj.StmtText, preparedObj.StmtDB, preparedObj.SchemaVersion,
 			0, bindSQL, expression.ExprPushDownBlackListReloadTimeStamp.Load(), preparedObj.RelateVersion)
->>>>>>> 70a825397f3 (*: add metadata lock when using the plan cache (#51897))
 		if err != nil {
 			return err
 		}

@@ -215,14 +215,9 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 		StmtCacheable:       cacheable,
 		UncacheableReason:   reason,
 		QueryFeatures:       features,
-<<<<<<< HEAD
-=======
 		dbName:              dbName,
 		tbls:                tbls,
-		SchemaVersion:       ret.InfoSchema.SchemaMetaVersion(),
 		RelateVersion:       relateVersion,
-		Params:              extractor.markers,
->>>>>>> 70a825397f3 (*: add metadata lock when using the plan cache (#51897))
 	}
 	if err = CheckPreparedPriv(sctx, preparedObj, ret.InfoSchema); err != nil {
 		return nil, nil, 0, err
