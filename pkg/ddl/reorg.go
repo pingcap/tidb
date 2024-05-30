@@ -289,11 +289,6 @@ func (w *worker) runReorgJob(reorgInfo *reorgInfo, tblInfo *model.TableInfo,
 		if err != nil {
 			return errors.Trace(err)
 		}
-	case <-w.ctx.Done():
-		logutil.DDLLogger().Info("run reorg job quit")
-		d.removeReorgCtx(job.ID)
-		// We return dbterror.ErrWaitReorgTimeout here too, so that outer loop will break.
-		return dbterror.ErrWaitReorgTimeout
 	case <-time.After(waitTimeout):
 		rowCount := rc.getRowCount()
 		job.SetRowCount(rowCount)

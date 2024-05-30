@@ -15,14 +15,15 @@
 package ddl
 
 import (
+	"context"
 	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/parser/model"
-	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"go.uber.org/zap"
 )
@@ -359,7 +360,7 @@ func updateSchemaVersion(d *ddlCtx, t *meta.Meta, job *model.Job, multiInfos ...
 	return schemaVersion, errors.Trace(err)
 }
 
-func checkAllVersions(d *ddlCtx, job *model.Job, latestSchemaVersion int64, timeStart time.Time) error {
+func checkAllVersions(ctx context.Context, d *ddlCtx, job *model.Job, latestSchemaVersion int64, timeStart time.Time) error {
 	failpoint.Inject("checkDownBeforeUpdateGlobalVersion", func(val failpoint.Value) {
 		if val.(bool) {
 			if mockDDLErrOnce > 0 && mockDDLErrOnce != latestSchemaVersion {
@@ -370,13 +371,13 @@ func checkAllVersions(d *ddlCtx, job *model.Job, latestSchemaVersion int64, time
 	})
 
 	// OwnerCheckAllVersions returns only when all TiDB schemas are synced(exclude the isolated TiDB).
-	err := d.schemaSyncer.OwnerCheckAllVersions(d.ctx, job.ID, latestSchemaVersion)
+	err := d.schemaSyncer.OwnerCheckAllVersions(ctx, job.ID, latestSchemaVersion)
 	if err != nil {
-		logutil.Logger(d.ctx).Info("wait latest schema version encounter error", zap.String("category", "ddl"), zap.Int64("ver", latestSchemaVersion),
+		logutil.DDLLogger().Info("wait latest schema version encounter error", zap.Int64("ver", latestSchemaVersion),
 			zap.Int64("jobID", job.ID), zap.Duration("take time", time.Since(timeStart)), zap.Error(err))
 		return err
 	}
-	logutil.Logger(d.ctx).Info("wait latest schema version changed(get the metadata lock if tidb_enable_metadata_lock is true)", zap.String("category", "ddl"),
+	logutil.DDLLogger().Info("wait latest schema version changed(get the metadata lock if tidb_enable_metadata_lock is true)",
 		zap.Int64("ver", latestSchemaVersion),
 		zap.Duration("take time", time.Since(timeStart)),
 		zap.String("job", job.String()))
@@ -389,7 +390,7 @@ func checkAllVersions(d *ddlCtx, job *model.Job, latestSchemaVersion int64, time
 // but in this case we don't wait enough 2 * lease time to let other servers update the schema.
 // So here we get the latest schema version to make sure all servers' schema version update to the latest schema version
 // in a cluster, or to wait for 2 * lease time.
-func waitSchemaSynced(d *ddlCtx, job *model.Job, waitTime time.Duration) error {
+func waitSchemaSynced(ctx context.Context, d *ddlCtx, job *model.Job, waitTime time.Duration) error {
 	if !job.IsRunning() && !job.IsRollingback() && !job.IsDone() && !job.IsRollbackDone() {
 		return nil
 	}
@@ -399,7 +400,7 @@ func waitSchemaSynced(d *ddlCtx, job *model.Job, waitTime time.Duration) error {
 	m := meta.NewSnapshotMeta(snapshot)
 	latestSchemaVersion, err := m.GetSchemaVersionWithNonEmptyDiff()
 	if err != nil {
-		logutil.Logger(d.ctx).Warn("get global version failed", zap.String("category", "ddl"), zap.Int64("jobID", job.ID), zap.Error(err))
+		logutil.DDLLogger().Warn("get global version failed", zap.Int64("jobID", job.ID), zap.Error(err))
 		return err
 	}
 
@@ -412,5 +413,5 @@ func waitSchemaSynced(d *ddlCtx, job *model.Job, waitTime time.Duration) error {
 		}
 	})
 
-	return waitSchemaChanged(d, waitTime, latestSchemaVersion, job)
+	return waitSchemaChanged(ctx, d, waitTime, latestSchemaVersion, job)
 }
