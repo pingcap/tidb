@@ -34,7 +34,7 @@ type worker struct {
 	jobCnt         atomic.Int64
 }
 
-func NewWorker(statsHandle statstypes.StatsHandle, sysProcTracker sysproctrack.Tracker, jobChan chan priorityqueue.AnalysisJob, concurrency int) *worker {
+func newWorker(statsHandle statstypes.StatsHandle, sysProcTracker sysproctrack.Tracker, jobChan chan priorityqueue.AnalysisJob, concurrency int) *worker {
 	result := &worker{
 		statsHandle:    statsHandle,
 		sysProcTracker: sysProcTracker,

@@ -90,7 +90,7 @@ func (r *Refresher) PickOneTableAndAnalyzeByPriority() bool {
 	jobChan := make(chan priorityqueue.AnalysisJob, 1)
 	concurrency := min(1, max(runtime.GOMAXPROCS(0)/8, 4))
 	stopChan := time.After(5 * time.Second)
-	worker := NewWorker(r.statsHandle, r.sysProcTracker, jobChan, concurrency)
+	worker := newWorker(r.statsHandle, r.sysProcTracker, jobChan, concurrency)
 	// Pick the table with the highest weight
 JOBLOOP:
 	for r.Jobs.Len() > 0 {
