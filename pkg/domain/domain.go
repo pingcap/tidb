@@ -438,7 +438,7 @@ func (*Domain) fetchSchemasWithTables(schemas []*model.DBInfo, m *meta.Meta, don
 			infoschema.ConvertCharsetCollateToLowerCaseIfNeed(tbl)
 			// Check whether the table is in repair mode.
 			if domainutil.RepairInfo.InRepairMode() && domainutil.RepairInfo.CheckAndFetchRepairedTable(di, tbl) {
-				if !tbl.State == model.StatePublic {
+				if tbl.State != model.StatePublic {
 					// Do not load it because we are reparing the table and the table info could be `bad`
 					// before repair is done.
 					continue
