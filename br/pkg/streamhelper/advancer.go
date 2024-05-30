@@ -426,7 +426,7 @@ func (c *CheckpointAdvancer) onTaskEvent(ctx context.Context, e TaskEvent) error
 		c.setCheckpoints(spans.Sorted(spans.NewFullWith(e.Ranges, 0)))
 		globalCheckpointTs,ok := c.env.GetGlobalCheckpointForTask(ctx, c.task.Name)
 		if ok != nil {
-			log.Warn("failed to get global checkpoint", zap.String("category", "log backup advancer"))
+			log.Warn("Advancer failed to get global checkpoint")
 			globalCheckpointTs = 0
 		}
 		if globalCheckpointTs < c.task.StartTs {
