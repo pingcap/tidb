@@ -16,34 +16,20 @@ package util
 
 import (
 	"testing"
-	"time"
+
+	"github.com/stretchr/testify/require"
 )
 
-func TestBlockConcurrencyController(t *testing.T) {
-	cc := NewConcurrencyController(10)
-	exit := make(chan struct{})
+func TestDynamicTokenLimiter(t *testing.T) {
+	cc := NewDynamicTokenLimiter(10, 100)
 	for i := 0; i < 10; i++ {
-		cc.Run(func() {
-			<-exit
-		})
+		cc.Get()
 	}
-	select {
-	case <-time.After(10 * time.Millisecond):
-		close(exit)
-	case <-cc.ch:
-		t.Fatal("TestBlockConcurrencyController failed")
-	}
-}
-
-func TestPanicConcurrencyController(t *testing.T) {
-	cc := NewConcurrencyController(1)
-	cc.Run(func() {
-		panic("test")
-	})
-	select {
-	case <-time.After(10 * time.Millisecond):
-		t.Fatal("TestBlockConcurrencyController failed")
-	case <-cc.ch:
-		return
-	}
+	_, ok := cc.TryGet()
+	require.False(t, ok)
+	cc.SetToken(11)
+	_, ok = cc.TryGet()
+	require.True(t, ok)
+	_, ok = cc.TryGet()
+	require.False(t, ok)
 }

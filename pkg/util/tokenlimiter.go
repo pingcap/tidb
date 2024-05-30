@@ -14,6 +14,11 @@
 
 package util
 
+import (
+	"errors"
+	"sync"
+)
+
 // Token is used as a permission to keep on running.
 type Token struct {
 }
@@ -42,4 +47,82 @@ func NewTokenLimiter(count uint) *TokenLimiter {
 	}
 
 	return tl
+}
+
+// DynamicTokenLimiter is a controller to control the concurrency of the function.
+type DynamicTokenLimiter struct {
+	ch       chan Token
+	count    uint
+	maxCount uint
+	mu       sync.Mutex
+}
+
+// NewDynamicTokenLimiter creates a DynamicTokenLimiter.
+func NewDynamicTokenLimiter(concurrency, maxCnt uint) *DynamicTokenLimiter {
+	maxCnt = min(maxCnt, 1024*1024)
+	result := &DynamicTokenLimiter{
+		ch:       make(chan Token, maxCnt),
+		maxCount: maxCnt,
+		count:    concurrency,
+	}
+	for i := uint(0); i < concurrency; i++ {
+		result.ch <- Token{}
+	}
+	return result
+}
+
+// SetToken sets the concurrency of the DynamicTokenLimiter.
+func (c *DynamicTokenLimiter) SetToken(concurrency uint) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if concurrency == 0 {
+		return errors.New("concurrency should be greater than 0")
+	}
+	if c.count == concurrency {
+		return nil
+	}
+	if concurrency > c.maxCount {
+		concurrency = c.maxCount
+	}
+	if concurrency > c.count {
+		for i := uint(0); i < concurrency-c.count; i++ {
+			c.ch <- struct{}{}
+		}
+	} else {
+		for i := uint(0); i < c.count-concurrency; i++ {
+			<-c.ch
+		}
+	}
+	c.count = concurrency
+	return nil
+}
+
+// Get returns a token.
+func (c *DynamicTokenLimiter) Get() Token {
+	return <-c.ch
+}
+
+// TryGet tries to get a token, if the token is not acquired, it will return false.
+func (c *DynamicTokenLimiter) TryGet() (*Token, bool) {
+	select {
+	case tk := <-c.ch:
+		return &tk, true
+	default:
+		return nil, false
+	}
+}
+
+// Put releases the token.
+func (c *DynamicTokenLimiter) Put(tk Token) {
+	c.ch <- tk
+}
+
+// TryPut tries to release the token, if the token is not acquired, it will return false.
+func (c *DynamicTokenLimiter) TryPut(tk Token) bool {
+	select {
+	case c.ch <- tk:
+		return true
+	default:
+		return false
+	}
 }
