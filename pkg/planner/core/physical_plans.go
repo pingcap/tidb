@@ -680,8 +680,14 @@ func (p *PhysicalIndexMergeReader) MemoryUsage() (sum int64) {
 
 // LoadTableStats preloads the stats data for the physical table
 func (p *PhysicalIndexMergeReader) LoadTableStats(ctx sessionctx.Context) {
-	ts := p.TablePlans[0].(*PhysicalTableScan)
-	loadTableStats(ctx, ts.Table, ts.physicalTableID)
+	if p.tablePlan == nil {
+		is := p.partialPlans[0].(*PhysicalIndexScan)
+		loadTableStats(ctx, is.Table, is.physicalTableID)
+	} else {
+		ts := p.TablePlans[0].(*PhysicalTableScan)
+		loadTableStats(ctx, ts.Table, ts.physicalTableID)
+	}
+
 }
 
 // PhysicalIndexScan represents an index scan plan.
@@ -728,6 +734,7 @@ type PhysicalIndexScan struct {
 	// tblColHists contains all columns before pruning, which are used to calculate row-size
 	tblColHists   *statistics.HistColl
 	pkIsHandleCol *expression.Column
+	TblHandleCols *util.HandleCols
 
 	// constColsByCond records the constant part of the index columns caused by the access conds.
 	// e.g. the index is (a, b, c) and there's filter a = 1 and b = 2, then the column a and b are const part.
@@ -738,6 +745,11 @@ type PhysicalIndexScan struct {
 	// usedStatsInfo records stats status of this physical table.
 	// It's for printing stats related information when display execution plan.
 	usedStatsInfo *stmtctx.UsedStatsInfoForTable
+}
+
+// GetPhysicalID GetPhysicalID interface.
+func (p *PhysicalIndexScan) GetPhysicalTableID() int64 {
+	return p.physicalTableID
 }
 
 // Clone implements op.PhysicalPlan interface.
@@ -920,6 +932,11 @@ type PhysicalTableScan struct {
 	// for runtime filter
 	runtimeFilterList []*RuntimeFilter
 	maxWaitTimeMs     int
+}
+
+// GetPhysicalID GetPhysicalID interface.
+func (p *PhysicalTableScan) GetHandleCols() util.HandleCols {
+	return p.HandleCols
 }
 
 // Clone implements op.PhysicalPlan interface.

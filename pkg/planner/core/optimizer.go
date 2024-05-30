@@ -925,7 +925,9 @@ func propagateProbeParents(plan base.PhysicalPlan, probeParents []base.PhysicalP
 		for _, pchild := range x.partialPlans {
 			propagateProbeParents(pchild, probeParents)
 		}
-		propagateProbeParents(x.tablePlan, probeParents)
+		if x.tablePlan != nil {
+			propagateProbeParents(x.tablePlan, probeParents)
+		}
 	default:
 		for _, child := range plan.Children() {
 			propagateProbeParents(child, probeParents)

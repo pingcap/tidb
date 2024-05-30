@@ -359,16 +359,39 @@ func (t *CopTask) convertToRootTaskImpl(ctx base.PlanContext) *RootTask {
 		}
 	}
 	newTask := &RootTask{}
+	var isSingleScan bool
+	if con, ok := t.tablePlan.(*PhysicalTableScan); ok && t.idxMergePartPlans != nil {
+		if len(con.AccessCondition) == 0 && len(con.filterCondition) == 0 && t.idxMergeIsIntersection {
+			if con1, ok := t.idxMergePartPlans[0].(*PhysicalIndexScan); ok {
+				con1.TblHandleCols = &con.HandleCols
+			}
+			isSingleScan = true
+		}
+	}
+	var p *PhysicalIndexMergeReader
 	if t.idxMergePartPlans != nil {
-		p := PhysicalIndexMergeReader{
-			partialPlans:       t.idxMergePartPlans,
-			tablePlan:          t.tablePlan,
-			IsIntersectionType: t.idxMergeIsIntersection,
-			AccessMVIndex:      t.idxMergeAccessMVIndex,
-			KeepOrder:          t.keepOrder,
-		}.Init(ctx, t.idxMergePartPlans[0].QueryBlockOffset())
+		if isSingleScan {
+			p = PhysicalIndexMergeReader{
+				partialPlans:       t.idxMergePartPlans,
+				tablePlan:          nil,
+				IsIntersectionType: t.idxMergeIsIntersection,
+				AccessMVIndex:      t.idxMergeAccessMVIndex,
+				KeepOrder:          t.keepOrder,
+			}.Init(ctx, t.idxMergePartPlans[0].QueryBlockOffset())
+		} else {
+			p = PhysicalIndexMergeReader{
+				partialPlans:       t.idxMergePartPlans,
+				tablePlan:          t.tablePlan,
+				IsIntersectionType: t.idxMergeIsIntersection,
+				AccessMVIndex:      t.idxMergeAccessMVIndex,
+				KeepOrder:          t.keepOrder,
+			}.Init(ctx, t.idxMergePartPlans[0].QueryBlockOffset())
+		}
+
 		p.PlanPartInfo = t.physPlanPartInfo
-		setTableScanToTableRowIDScan(p.tablePlan)
+		if !isSingleScan {
+			setTableScanToTableRowIDScan(p.tablePlan)
+		}
 		newTask.SetPlan(p)
 		t.handleRootTaskConds(ctx, newTask)
 		if t.needExtraProj {

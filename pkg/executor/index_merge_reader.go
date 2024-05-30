@@ -179,8 +179,14 @@ func (e *IndexMergeReaderExecutor) Open(_ context.Context) (err error) {
 	}
 
 	if !e.partitionTableMode {
-		if e.keyRanges, err = e.buildKeyRangesForTable(e.table); err != nil {
-			return err
+		if e.table != nil {
+			if e.keyRanges, err = e.buildKeyRangesForTable(e.table); err != nil {
+				return err
+			}
+		} else {
+			if e.keyRanges, err = e.buildKeyRangesForIndex(); err != nil {
+				return err
+			}
 		}
 	} else {
 		e.partitionKeyRanges = make([][][]kv.KeyRange, len(e.indexes))
@@ -259,6 +265,21 @@ func (e *IndexMergeReaderExecutor) buildKeyRangesForTable(tbl table.Table) (rang
 			return nil, err
 		}
 		ranges = append(ranges, keyRange.FirstPartitionRange())
+	}
+	return ranges, nil
+}
+
+func (e *IndexMergeReaderExecutor) buildKeyRangesForIndex() (ranges [][]kv.KeyRange, err error) {
+	dctx := e.Ctx().GetDistSQLCtx()
+	for i, plan := range e.partialPlans {
+		if con, ok := plan[0].(*plannercore.PhysicalIndexScan); ok {
+			keyRange, err := distsql.IndexRangesToKVRanges(dctx, con.GetPhysicalTableID(), e.indexes[i].ID, e.ranges[i])
+			if err != nil {
+				return nil, err
+			}
+			ranges = append(ranges, keyRange.FirstPartitionRange())
+		}
+
 	}
 	return ranges, nil
 }
@@ -446,7 +467,9 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 				}
 				ctx1, cancel := context.WithCancel(ctx)
 				// this error is reported in fetchHandles(), so ignore it here.
-				_, _ = worker.fetchHandles(ctx1, results, exitCh, fetchCh, e.finished, e.handleCols, workID)
+				if e.tblPlans != nil {
+					_, _ = worker.fetchHandles(ctx1, results, exitCh, fetchCh, e.finished, e.handleCols, workID)
+				}
 				cancel()
 			},
 			handleWorkerPanic(ctx, e.finished, nil, fetchCh, nil, partialIndexWorkerType),
@@ -929,7 +952,7 @@ func (e *IndexMergeReaderExecutor) Close() error {
 				continue
 			}
 
-			e.indexUsageReporter.ReportCopIndexUsageForTable(e.table, is.Index.ID, is.ID())
+			e.indexUsageReporter.ReportCopIndexUsageForTable(e.table, is.Index.ID, is.ID(), is)
 		}
 	}
 	if e.finished == nil {
@@ -1704,18 +1727,21 @@ func syncErr(ctx context.Context, finished <-chan struct{}, errCh chan<- *indexM
 func (w *partialIndexWorker) needPartitionHandle() (bool, error) {
 	cols := w.plan[0].Schema().Columns
 	outputOffsets := w.dagPB.OutputOffsets
-	col := cols[outputOffsets[len(outputOffsets)-1]]
+	if len(outputOffsets) > 0 {
+		col := cols[outputOffsets[len(outputOffsets)-1]]
+		needPartitionHandle := w.partitionTableMode && len(w.byItems) > 0
+		hasExtraCol := col.ID == model.ExtraPidColID || col.ID == model.ExtraPhysTblID
 
-	needPartitionHandle := w.partitionTableMode && len(w.byItems) > 0
-	hasExtraCol := col.ID == model.ExtraPidColID || col.ID == model.ExtraPhysTblID
-
-	// There will be two needPartitionHandle != hasExtraCol situations.
-	// Only `needPartitionHandle` == true and `hasExtraCol` == false are not allowed.
-	// `ExtraPhysTblID` will be used in `SelectLock` when `needPartitionHandle` == false and `hasExtraCol` == true.
-	if needPartitionHandle && !hasExtraCol {
-		return needPartitionHandle, errors.Errorf("Internal error, needPartitionHandle != ret")
+		// There will be two needPartitionHandle != hasExtraCol situations.
+		// Only `needPartitionHandle` == true and `hasExtraCol` == false are not allowed.
+		// `ExtraPhysTblID` will be used in `SelectLock` when `needPartitionHandle` == false and `hasExtraCol` == true.
+		if needPartitionHandle && !hasExtraCol {
+			return needPartitionHandle, errors.Errorf("Internal error, needPartitionHandle != ret")
+		}
+		return needPartitionHandle || (col.ID == model.ExtraPidColID), nil
 	}
-	return needPartitionHandle || (col.ID == model.ExtraPidColID), nil
+	return false, nil
+
 }
 
 func (w *partialIndexWorker) fetchHandles(

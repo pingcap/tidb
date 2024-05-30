@@ -3925,6 +3925,87 @@ func buildNoRangeIndexMergeReader(b *executorBuilder, v *plannercore.PhysicalInd
 	return e, nil
 }
 
+func buildSingleIndexMergeReader(b *executorBuilder, v *plannercore.PhysicalIndexMergeReader) (*IndexMergeReaderExecutor, error) {
+	partialPlanCount := len(v.PartialPlans)
+	partialReqs := make([]*tipb.DAGRequest, 0, partialPlanCount)
+	partialDataSizes := make([]float64, 0, partialPlanCount)
+	indexes := make([]*model.IndexInfo, 0, partialPlanCount)
+	descs := make([]bool, 0, partialPlanCount)
+	ts := v.PartialPlans[0][0].(*plannercore.PhysicalIndexScan)
+	isCorColInPartialFilters := make([]bool, 0, partialPlanCount)
+	isCorColInPartialAccess := make([]bool, 0, partialPlanCount)
+	hasGlobalIndex := false
+	for i := 0; i < partialPlanCount; i++ {
+		var tempReq *tipb.DAGRequest
+		var err error
+
+		if is, ok := v.PartialPlans[i][0].(*plannercore.PhysicalIndexScan); ok {
+			tempReq, err = buildIndexReq(b.ctx, is.Index.Columns, 0, v.PartialPlans[i])
+			descs = append(descs, is.Desc)
+			indexes = append(indexes, is.Index)
+			if is.Index.Global {
+				hasGlobalIndex = true
+			}
+		} else {
+			ts := v.PartialPlans[i][0].(*plannercore.PhysicalTableScan)
+			tempReq, _, err = buildTableReq(b, len(ts.Columns), v.PartialPlans[i])
+			descs = append(descs, ts.Desc)
+			indexes = append(indexes, nil)
+		}
+		if err != nil {
+			return nil, err
+		}
+		collect := false
+		tempReq.CollectRangeCounts = &collect
+		partialReqs = append(partialReqs, tempReq)
+		isCorColInPartialFilters = append(isCorColInPartialFilters, b.corColInDistPlan(v.PartialPlans[i]))
+		isCorColInPartialAccess = append(isCorColInPartialAccess, b.corColInAccess(v.PartialPlans[i][0]))
+		partialDataSizes = append(partialDataSizes, v.GetPartialReaderNetDataSize(v.PartialPlans[i][0]))
+	}
+	var tableReq tipb.DAGRequest
+	var tblInfo table.Table
+	startTS, err := b.getSnapshotTS()
+	if err != nil {
+		return nil, err
+	}
+
+	readerBuilder, err := b.newDataReaderBuilder(nil)
+	if err != nil {
+		return nil, err
+	}
+
+	paging := b.ctx.GetSessionVars().EnablePaging
+	e := &IndexMergeReaderExecutor{
+		BaseExecutor:             exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID()),
+		indexUsageReporter:       b.buildIndexUsageReporter(v),
+		dagPBs:                   partialReqs,
+		startTS:                  startTS,
+		table:                    tblInfo,
+		indexes:                  indexes,
+		descs:                    descs,
+		tableRequest:             &tableReq,
+		columns:                  ts.Columns,
+		partialPlans:             v.PartialPlans,
+		tblPlans:                 v.TablePlans,
+		partialNetDataSizes:      partialDataSizes,
+		dataAvgRowSize:           0.0,
+		dataReaderBuilder:        readerBuilder,
+		paging:                   paging,
+		handleCols:               *ts.TblHandleCols,
+		isCorColInPartialFilters: isCorColInPartialFilters,
+		isCorColInTableFilter:    false,
+		isCorColInPartialAccess:  isCorColInPartialAccess,
+		isIntersection:           v.IsIntersectionType,
+		byItems:                  v.ByItems,
+		pushedLimit:              v.PushedLimit,
+		keepOrder:                v.KeepOrder,
+		hasGlobalIndex:           hasGlobalIndex,
+	}
+	collectTable := false
+	e.tableRequest.CollectRangeCounts = &collectTable
+	return e, nil
+}
+
 type tableStatsPreloader interface {
 	LoadTableStats(sessionctx.Context)
 }
@@ -3947,13 +4028,22 @@ func (b *executorBuilder) buildIndexUsageReporter(plan tableStatsPreloader) (ind
 }
 
 func (b *executorBuilder) buildIndexMergeReader(v *plannercore.PhysicalIndexMergeReader) exec.Executor {
-	ts := v.TablePlans[0].(*plannercore.PhysicalTableScan)
+	ts := v.PartialPlans[0][0].(*plannercore.PhysicalIndexScan)
 	if err := b.validCanReadTemporaryOrCacheTable(ts.Table); err != nil {
 		b.err = err
 		return nil
 	}
+	var (
+		ret *IndexMergeReaderExecutor
+		err error
+	)
 
-	ret, err := buildNoRangeIndexMergeReader(b, v)
+	if v.TablePlans != nil {
+		ret, err = buildNoRangeIndexMergeReader(b, v)
+	} else {
+		ret, err = buildSingleIndexMergeReader(b, v)
+	}
+	// buildSingleIndexMergeReader
 	if err != nil {
 		b.err = err
 		return nil

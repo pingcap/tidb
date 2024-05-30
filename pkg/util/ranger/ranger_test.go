@@ -1412,6 +1412,7 @@ create table t(
 			for i, cond := range selection.Conditions {
 				conds[i] = expression.PushDownNot(sctx.GetExprCtx(), cond)
 			}
+<<<<<<< HEAD
 			cols, lengths := expression.IndexInfo2PrefixCols(tbl.Columns, selection.Schema().Columns, tbl.Indices[tt.indexPos])
 			require.NotNil(t, cols)
 			res, err := ranger.DetachCondAndBuildRangeForIndex(sctx.GetRangerCtx(), conds, cols, lengths, 0)
@@ -1420,6 +1421,8 @@ create table t(
 			require.Equal(t, tt.filterConds, fmt.Sprintf("%s", res.RemainedConds))
 			got := fmt.Sprintf("%v", res.Ranges)
 			require.Equal(t, tt.resultStr, got)
+=======
+>>>>>>> 945eb4bb88 (draft version)
 		})
 	}
 }

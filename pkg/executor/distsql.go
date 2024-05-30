@@ -228,7 +228,7 @@ func (e *IndexReaderExecutor) setDummy() {
 // Close clears all resources hold by current object.
 func (e *IndexReaderExecutor) Close() (err error) {
 	if e.indexUsageReporter != nil {
-		e.indexUsageReporter.ReportCopIndexUsageForTable(e.table, e.index.ID, e.plans[0].ID())
+		e.indexUsageReporter.ReportCopIndexUsageForTable(e.table, e.index.ID, e.plans[0].ID(), nil)
 	}
 
 	if e.result != nil {
@@ -803,7 +803,7 @@ func (e *IndexLookUpExecutor) Close() error {
 		e.indexUsageReporter.ReportCopIndexUsageForTable(
 			e.table,
 			e.index.ID,
-			e.idxPlans[0].ID())
+			e.idxPlans[0].ID(), nil)
 	}
 	e.kvRanges = e.kvRanges[:0]
 	if e.dummy {

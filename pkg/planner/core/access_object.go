@@ -485,16 +485,29 @@ func (p *PhysicalIndexMergeReader) accessObject(sctx base.PlanContext) base.Acce
 	if !sctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
 		return DynamicPartitionAccessObjects(nil)
 	}
-	ts := p.TablePlans[0].(*PhysicalTableScan)
-	asName := ""
-	if ts.TableAsName != nil && len(ts.TableAsName.O) > 0 {
-		asName = ts.TableAsName.O
+	if p.TablePlans != nil {
+		ts := p.TablePlans[0].(*PhysicalTableScan)
+		asName := ""
+		if ts.TableAsName != nil && len(ts.TableAsName.O) > 0 {
+			asName = ts.TableAsName.O
+		}
+		res := getDynamicAccessPartition(sctx, ts.Table, &p.PlanPartInfo, asName)
+		if res == nil {
+			return DynamicPartitionAccessObjects(nil)
+		}
+		return DynamicPartitionAccessObjects{res}
+	} else {
+		ts := p.partialPlans[0].(*PhysicalIndexScan)
+		asName := ""
+		if ts.TableAsName != nil && len(ts.TableAsName.O) > 0 {
+			asName = ts.TableAsName.O
+		}
+		res := getDynamicAccessPartition(sctx, ts.Table, &p.PlanPartInfo, asName)
+		if res == nil {
+			return DynamicPartitionAccessObjects(nil)
+		}
+		return DynamicPartitionAccessObjects{res}
 	}
-	res := getDynamicAccessPartition(sctx, ts.Table, &p.PlanPartInfo, asName)
-	if res == nil {
-		return DynamicPartitionAccessObjects(nil)
-	}
-	return DynamicPartitionAccessObjects{res}
 }
 
 // AccessObject implements physicalScan interface.

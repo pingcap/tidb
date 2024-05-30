@@ -221,9 +221,14 @@ func (*FlatPhysicalPlan) flattenSingle(p base.Plan, info *operatorCtx) *FlatOper
 	// Some operators are not initialized and given an ExplainID. So their explain IDs are "_0"
 	// (when in EXPLAIN FORMAT = 'brief' it will be ""), we skip such operators.
 	// Examples: Explain, Execute
-	if len(p.TP()) == 0 && p.ID() == 0 {
+	if p != nil {
+		if len(p.TP()) == 0 && p.ID() == 0 {
+			return nil
+		}
+	} else {
 		return nil
 	}
+
 	res := &FlatOperator{
 		Origin:         p,
 		Label:          info.label,
@@ -352,16 +357,30 @@ func (f *FlatPhysicalPlan) flattenRecursively(p base.Plan, info *operatorCtx, ta
 		childCtx.isRoot = false
 		childCtx.reqType = Cop
 		childCtx.storeType = kv.TiKV
-		for _, pchild := range plan.partialPlans {
-			childCtx.label = BuildSide
-			childCtx.isLastChild = false
-			target, childIdx = f.flattenRecursively(pchild, childCtx, target)
+		if plan.tablePlan == nil {
+			for i, pchild := range plan.partialPlans {
+				if i == len(plan.partialPlans)-1 {
+					childCtx.label = ProbeSide
+					childCtx.isLastChild = true
+				} else {
+					childCtx.label = BuildSide
+					childCtx.isLastChild = false
+				}
+				target, childIdx = f.flattenRecursively(pchild, childCtx, target)
+				childIdxs = append(childIdxs, childIdx)
+			}
+		} else {
+			for _, pchild := range plan.partialPlans {
+				childCtx.label = BuildSide
+				childCtx.isLastChild = false
+				target, childIdx = f.flattenRecursively(pchild, childCtx, target)
+				childIdxs = append(childIdxs, childIdx)
+			}
+			childCtx.label = ProbeSide
+			childCtx.isLastChild = true
+			target, childIdx = f.flattenRecursively(plan.tablePlan, childCtx, target)
 			childIdxs = append(childIdxs, childIdx)
 		}
-		childCtx.label = ProbeSide
-		childCtx.isLastChild = true
-		target, childIdx = f.flattenRecursively(plan.tablePlan, childCtx, target)
-		childIdxs = append(childIdxs, childIdx)
 	case *PhysicalShuffleReceiverStub:
 		childCtx.isRoot = true
 		childCtx.label = Empty

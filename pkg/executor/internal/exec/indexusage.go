@@ -15,6 +15,7 @@
 package exec
 
 import (
+	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/usage/indexusage"
@@ -43,14 +44,20 @@ func NewIndexUsageReporter(reporter *indexusage.StmtIndexUsageCollector,
 // ReportCopIndexUsageForTable wraps around `ReportCopIndexUsage` to get `tableID` and `physicalTableID` from the
 // `table.Table`. If it's expected to calculate the percentage according to the size of partition, the `tbl` argument
 // should be a `table.PhysicalTable`, or the percentage will be calculated using the size of whole table.
-func (e *IndexUsageReporter) ReportCopIndexUsageForTable(tbl table.Table, indexID int64, planID int) {
-	tableID := tbl.Meta().ID
-	physicalTableID := tableID
-	if physicalTable, ok := tbl.(table.PhysicalTable); ok {
-		physicalTableID = physicalTable.GetPhysicalID()
+func (e *IndexUsageReporter) ReportCopIndexUsageForTable(tbl table.Table, indexID int64, planID int, is *core.PhysicalIndexScan) {
+	if tbl != nil {
+		tableID := tbl.Meta().ID
+		physicalTableID := tableID
+		if physicalTable, ok := tbl.(table.PhysicalTable); ok {
+			physicalTableID = physicalTable.GetPhysicalID()
+		}
+		e.ReportCopIndexUsage(tableID, physicalTableID, indexID, planID)
+	} else {
+		tableID := is.Table.ID
+		physicalTableID := is.GetPhysicalTableID()
+		e.ReportCopIndexUsage(tableID, physicalTableID, indexID, planID)
 	}
 
-	e.ReportCopIndexUsage(tableID, physicalTableID, indexID, planID)
 }
 
 // ReportCopIndexUsage reports the index usage to the inside collector. The index usage will be recorded in the
