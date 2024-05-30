@@ -730,7 +730,8 @@ func (job *Job) Decode(b []byte) error {
 	return errors.Trace(err)
 }
 
-// DecodeArgs decodes job args.
+// DecodeArgs decodes serialized job arguments from job.RawArgs into the given
+// variables, and also save the result in job.Args.
 func (job *Job) DecodeArgs(args ...interface{}) error {
 	var rawArgs []json.RawMessage
 	if err := json.Unmarshal(job.RawArgs, &rawArgs); err != nil {

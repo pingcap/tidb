@@ -592,7 +592,7 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 		return ver, errors.Trace(dbterror.ErrOptOnCacheTable.GenWithStackByArgs("Create Index"))
 	}
 
-	unique := make([]bool, 1)
+	uniques := make([]bool, 1)
 	global := make([]bool, 1)
 	indexNames := make([]model.CIStr, 1)
 	indexPartSpecifications := make([][]*ast.IndexPartSpecification, 1)
@@ -603,9 +603,9 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 
 	if isPK {
 		// Notice: sqlMode and warnings is used to support non-strict mode.
-		err = job.DecodeArgs(&unique[0], &indexNames[0], &indexPartSpecifications[0], &indexOption[0], &sqlMode, &warnings, &global[0])
+		err = job.DecodeArgs(&uniques[0], &indexNames[0], &indexPartSpecifications[0], &indexOption[0], &sqlMode, &warnings, &global[0])
 	} else {
-		unique, indexNames, indexPartSpecifications, indexOption, hiddenCols, global, err = decodeAddIndexArgs(job)
+		uniques, indexNames, indexPartSpecifications, indexOption, hiddenCols, global, err = decodeAddIndexArgs(job)
 	}
 	if err != nil {
 		job.State = model.JobStateCancelled
@@ -649,7 +649,7 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 				tblInfo.Columns,
 				indexName,
 				isPK,
-				unique[i],
+				uniques[i],
 				global[i],
 				indexPartSpecifications[i],
 				indexOption[i],
@@ -979,23 +979,22 @@ func runIngestReorgJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 	if !done {
 		return false, ver, nil
 	}
-	for _, indexInfo := range allIndexInfos {
-		err = bc.FinishImport(indexInfo.ID, indexInfo.Unique, tbl)
-		if err != nil {
-			if common.ErrFoundDuplicateKeys.Equal(err) {
-				err = convertToKeyExistsErr(err, indexInfo, tbl.Meta())
-			}
-			if kv.ErrKeyExists.Equal(err) {
-				logutil.DDLLogger().Warn("import index duplicate key, convert job to rollback", zap.Stringer("job", job), zap.Error(err))
-				ver, err = convertAddIdxJob2RollbackJob(d, t, job, tbl.Meta(), allIndexInfos, err)
-			} else {
-				logutil.DDLLogger().Warn("lightning import error", zap.Error(err))
-				if !errorIsRetryable(err, job) {
-					ver, err = convertAddIdxJob2RollbackJob(d, t, job, tbl.Meta(), allIndexInfos, err)
-				}
-			}
-			return false, ver, errors.Trace(err)
+
+	err = bc.FinishImport(tbl)
+	if err != nil {
+		if common.ErrFoundDuplicateKeys.Equal(err) {
+			err = convertToKeyExistsErr(err, indexInfo, tbl.Meta())
 		}
+		if kv.ErrKeyExists.Equal(err) {
+			logutil.DDLLogger().Warn("import index duplicate key, convert job to rollback", zap.Stringer("job", job), zap.Error(err))
+			ver, err = convertAddIdxJob2RollbackJob(d, t, job, tbl.Meta(), allIndexInfos, err)
+		} else {
+			logutil.DDLLogger().Warn("lightning import error", zap.Error(err))
+			if !errorIsRetryable(err, job) {
+				ver, err = convertAddIdxJob2RollbackJob(d, t, job, tbl.Meta(), allIndexInfos, err)
+			}
+		}
+		return false, ver, errors.Trace(err)
 	}
 	bc.SetDone()
 	return true, ver, nil
