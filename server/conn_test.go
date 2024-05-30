@@ -1581,7 +1581,7 @@ func TestMaxAllowedPacket(t *testing.T) {
 	bytes := append([]byte{0x00, 0x04, 0x00, 0x00}, []byte(fmt.Sprintf("SELECT length('%s') as len;", strings.Repeat("a", 999)))...)
 	_, err := inBuffer.Write(bytes)
 	require.NoError(t, err)
-	brc := newBufferedReadConn(&bytesConn{inBuffer})
+	brc := newBufferedReadConn(&bytesConn{b: inBuffer})
 	pkt := newPacketIO(brc)
 	pkt.setMaxAllowedPacket(maxAllowedPacket)
 	readBytes, err = pkt.readPacket()
@@ -1594,7 +1594,7 @@ func TestMaxAllowedPacket(t *testing.T) {
 	bytes = append([]byte{0x01, 0x04, 0x00, 0x00}, []byte(fmt.Sprintf("SELECT length('%s') as len;", strings.Repeat("a", 1000)))...)
 	_, err = inBuffer.Write(bytes)
 	require.NoError(t, err)
-	brc = newBufferedReadConn(&bytesConn{inBuffer})
+	brc = newBufferedReadConn(&bytesConn{b: inBuffer})
 	pkt = newPacketIO(brc)
 	pkt.setMaxAllowedPacket(maxAllowedPacket)
 	_, err = pkt.readPacket()
@@ -1606,7 +1606,7 @@ func TestMaxAllowedPacket(t *testing.T) {
 	bytes = append([]byte{0x01, 0x02, 0x00, 0x00}, []byte(fmt.Sprintf("SELECT length('%s') as len;", strings.Repeat("a", 488)))...)
 	_, err = inBuffer.Write(bytes)
 	require.NoError(t, err)
-	brc = newBufferedReadConn(&bytesConn{inBuffer})
+	brc = newBufferedReadConn(&bytesConn{b: inBuffer})
 	pkt = newPacketIO(brc)
 	pkt.setMaxAllowedPacket(maxAllowedPacket)
 	readBytes, err = pkt.readPacket()
@@ -1617,7 +1617,7 @@ func TestMaxAllowedPacket(t *testing.T) {
 	bytes = append([]byte{0x01, 0x02, 0x00, 0x01}, []byte(fmt.Sprintf("SELECT length('%s') as len;", strings.Repeat("b", 488)))...)
 	_, err = inBuffer.Write(bytes)
 	require.NoError(t, err)
-	brc = newBufferedReadConn(&bytesConn{inBuffer})
+	brc = newBufferedReadConn(&bytesConn{b: inBuffer})
 	pkt.setBufferedReadConn(brc)
 	readBytes, err = pkt.readPacket()
 	require.NoError(t, err)
@@ -1830,6 +1830,7 @@ func TestProcessInfoForExecuteCommand(t *testing.T) {
 		0x0A, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0}))
 	require.Equal(t, cc.ctx.Session.ShowProcess().Info, "select sum(col1) from t where col1 < ? and col1 > 100")
 }
+
 func TestCloseConn(t *testing.T) {
 	var outBuffer bytes.Buffer
 
@@ -1840,7 +1841,12 @@ func TestCloseConn(t *testing.T) {
 	drv := NewTiDBDriver(store)
 	server, err := NewServer(cfg, drv)
 	require.NoError(t, err)
-
+	var inBuffer bytes.Buffer
+	_, err = inBuffer.Write([]byte{0x01, 0x00, 0x00, 0x00, 0x01})
+	require.NoError(t, err)
+	// Test read one packet
+	brc := newBufferedReadConn(&bytesConn{b: inBuffer})
+	require.NoError(t, err)
 	cc := &clientConn{
 		connectionID: 0,
 		salt: []byte{
@@ -1851,11 +1857,12 @@ func TestCloseConn(t *testing.T) {
 		pkt: &packetIO{
 			bufWriter: bufio.NewWriter(&outBuffer),
 		},
-		collation:  mysql.DefaultCollationID,
-		peerHost:   "localhost",
-		alloc:      arena.NewAllocator(512),
-		chunkAlloc: chunk.NewAllocator(),
-		capability: mysql.ClientProtocol41,
+		collation:   mysql.DefaultCollationID,
+		peerHost:    "localhost",
+		alloc:       arena.NewAllocator(512),
+		chunkAlloc:  chunk.NewAllocator(),
+		capability:  mysql.ClientProtocol41,
+		bufReadConn: brc,
 	}
 
 	var wg sync.WaitGroup
