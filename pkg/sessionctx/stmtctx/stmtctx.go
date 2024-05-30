@@ -434,7 +434,7 @@ type StatementContext struct {
 	}
 
 	// MDLRelatedTableIDs is used to store the table IDs that are related to the current MDL lock.
-	MDLRelatedTableIDs map[int64]struct{}
+	MDLRelatedTableIDs map[int64]int64
 }
 
 // NewStmtCtx creates a new statement context

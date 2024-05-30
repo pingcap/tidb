@@ -109,13 +109,13 @@ func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isNonPrep
 		if !ok {
 			tblByName, err := is.TableByName(stmt.dbName[i], stmt.tbls[i].Meta().Name)
 			if err != nil {
-				return plannererrors.ErrSchemaChanged.GenWithStack("Schema change caused error: %s", err.Error())
+				return ErrSchemaChanged.GenWithStack("Schema change caused error: %s", err.Error())
 			}
 			delete(stmt.RelateVersion, stmt.tbls[i].Meta().ID)
 			stmt.tbls[i] = tblByName
 			stmt.RelateVersion[tblByName.Meta().ID] = tblByName.Meta().Revision
 		}
-		newTbl, err := tryLockMDLAndUpdateSchemaIfNecessary(sctx.GetPlanCtx(), stmt.dbName[i], stmt.tbls[i], is)
+		newTbl, err := tryLockMDLAndUpdateSchemaIfNecessary(sctx, stmt.dbName[i], stmt.tbls[i], is)
 		if err != nil {
 			schemaNotMatch = true
 			continue
@@ -128,7 +128,7 @@ func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isNonPrep
 	}
 
 	// step 4: check schema version
-	if schemaNotMatch || stmt.SchemaVersion != is.SchemaMetaVersion() {
+	if schemaNotMatch || stmt.PreparedAst.SchemaVersion != is.SchemaMetaVersion() {
 		// In order to avoid some correctness issues, we have to clear the
 		// cached plan once the schema version is changed.
 		// Cached plan in prepared struct does NOT have a "cache key" with
