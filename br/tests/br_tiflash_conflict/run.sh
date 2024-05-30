@@ -92,7 +92,10 @@ run_br restore point -s "local://$pitr_dir" --full-backup-storage "local://$back
 # pitr restore to tso1
 echo "pitr restore to tso1"
 RESTORE_LOG=$TEST_DIR/restore.log
-run_br restore point -s "local://$pitr_dir" --start-ts $start_ts 2> $RESTORE_LOG
+if run_br restore point -s "local://$pitr_dir" --start-ts $start_ts 2> $RESTORE_LOG; then
+    echo "TEST: [$TEST_NAME] restore success, but it should fail"
+    exit 1
+fi
 
 run_sql "DROP DATABASE IF EXISTS test;"
 
