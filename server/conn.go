@@ -361,14 +361,6 @@ func closeConn(cc *clientConn, connections int) error {
 				// This is because closeConn() might be called after a connection read-timeout.
 				logutil.Logger(context.Background()).Debug("could not close connection", zap.Error(err))
 			}
-			if cc.bufReadConn != nil {
-				err = cc.bufReadConn.Close()
-				if err != nil {
-					// We need to expect connection might have already disconnected.
-					// This is because closeConn() might be called after a connection read-timeout.
-					logutil.Logger(context.Background()).Debug("could not close connection", zap.Error(err))
-				}
-			}
 			// Close statements and session
 			// This will release advisory locks, row locks, etc.
 			if ctx := cc.getCtx(); ctx != nil {
@@ -2065,9 +2057,9 @@ func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.Stm
 			return nil, nil
 		}
 		// TODO: the preprocess is run twice, we should find some way to avoid do it again.
+		// TODO: handle the PreprocessorReturn.
 		if err = plannercore.Preprocess(ctx, cc.getCtx(), stmt); err != nil {
-			// error might happen, see https://github.com/pingcap/tidb/issues/39664
-			return nil, nil
+			return nil, err
 		}
 		p := plannercore.TryFastPlan(cc.ctx.Session, stmt)
 		pointPlans[i] = p
