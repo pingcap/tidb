@@ -341,7 +341,7 @@ func (tc *TransactionContext) UpdateDeltaForTableFromColSlice(
 		tc.TableDeltaMap = make(map[int64]TableDelta)
 	}
 	item := tc.TableDeltaMap[physicalTableID]
-	if item.ColSize == nil && colSizes != nil {
+	if item.ColSize == nil && len(colSizes) > 0 {
 		item.ColSize = make(map[int64]int64, len(colSizes))
 	}
 	item.Delta += delta
