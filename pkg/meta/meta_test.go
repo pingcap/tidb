@@ -293,6 +293,16 @@ func TestMeta(t *testing.T) {
 		})
 		require.NoError(t, err)
 	}
+
+	// Test ListTableByFilter
+	filter := func(tableName *model.TableNameInfo) bool {
+		return tableName.Name != tblName.Name
+	}
+	filteredTables, err := m.ListTablesByFilter(1, filter)
+	require.NoError(t, err)
+	require.Len(t, filteredTables, 1)
+	require.Equal(t, tblName.Name, filteredTables[0].Name)
+
 	// Generate an auto id.
 	n, err = m.GetAutoIDAccessors(1, 2).RowID().Inc(10)
 	require.NoError(t, err)
