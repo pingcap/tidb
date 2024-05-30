@@ -140,6 +140,16 @@ http_archive(
     ],
 )
 
+# Required by toolchains_protoc.
+http_archive(
+    name = "platforms",
+    sha256 = "218efe8ee736d26a3572663b374a253c012b716d8af0c07e842e82f238a0a7ee",
+    urls = [
+        "https://mirror.bazel.build/github.com/bazelbuild/platforms/releases/download/0.0.10/platforms-0.0.10.tar.gz",
+        "https://github.com/bazelbuild/platforms/releases/download/0.0.10/platforms-0.0.10.tar.gz",
+    ],
+)
+
 http_archive(
     name = "bazel_features",
     sha256 = "d7787da289a7fb497352211ad200ec9f698822a9e0757a4976fd9f713ff372b3",
