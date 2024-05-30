@@ -111,7 +111,7 @@ func newPartitionedTable(tbl *TableCommon, tblInfo *model.TableInfo) (table.Part
 	if pi == nil || len(pi.Definitions) == 0 {
 		return nil, table.ErrUnknownPartition
 	}
-	ret := &partitionedTable{TableCommon: *tbl}
+	ret := &partitionedTable{TableCommon: tbl.Copy()}
 	partitionExpr, err := newPartitionExpr(tblInfo, pi.Type, pi.Expr, pi.Columns, pi.Definitions)
 	if err != nil {
 		return nil, errors.Trace(err)

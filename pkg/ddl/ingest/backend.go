@@ -59,11 +59,11 @@ type BackendCtx interface {
 	// TODO(lance6716): refine the interface to let caller don't need to pass the
 	// indexID, and unify with CollectRemoteDuplicateRows.
 	FinishImport(indexID int64, unique bool, tbl table.Table) error
-	// FinishedWritingNeedImport returns true only when all the engines are finished
-	// writing and only need import. Considering the calling usage of FinishImport,
-	// it will return true after a successful call of FinishImport and may return
-	// true after a failed call of FinishImport.
-	FinishedWritingNeedImport() bool
+	// ImportStarted returns true only when all the engines are finished writing and
+	// import is started by FinishImport. Considering the calling usage of
+	// FinishImport, it will return true after a successful call of FinishImport and
+	// may return true after a failed call of FinishImport.
+	ImportStarted() bool
 
 	CollectRemoteDuplicateRows(indexID int64, tbl table.Table) error
 	FlushController
