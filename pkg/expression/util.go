@@ -36,9 +36,9 @@ import (
 	driver "github.com/pingcap/tidb/pkg/types/parser_driver"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
+	"github.com/pingcap/tidb/pkg/util/intset"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
-	"golang.org/x/tools/container/intsets"
 )
 
 // cowExprRef is a copy-on-write slice ref util using in `ColumnSubstitute`
@@ -372,15 +372,15 @@ func ExtractColumnsAndCorColumnsFromExpressions(result []*Column, list []Express
 }
 
 // ExtractColumnSet extracts the different values of `UniqueId` for columns in expressions.
-func ExtractColumnSet(exprs ...Expression) *intsets.Sparse {
-	set := &intsets.Sparse{}
+func ExtractColumnSet(exprs ...Expression) intset.FastIntSet {
+	set := intset.NewFastIntSet()
 	for _, expr := range exprs {
-		extractColumnSet(expr, set)
+		extractColumnSet(expr, &set)
 	}
 	return set
 }
 
-func extractColumnSet(expr Expression, set *intsets.Sparse) {
+func extractColumnSet(expr Expression, set *intset.FastIntSet) {
 	switch v := expr.(type) {
 	case *Column:
 		set.Insert(int(v.UniqueID))
@@ -997,7 +997,7 @@ func Contains(exprs []Expression, e Expression) bool {
 
 // ExtractFiltersFromDNFs checks whether the cond is DNF. If so, it will get the extracted part and the remained part.
 // The original DNF will be replaced by the remained part or just be deleted if remained part is nil.
-// And the extracted part will be appended to the end of the orignal slice.
+// And the extracted part will be appended to the end of the original slice.
 func ExtractFiltersFromDNFs(ctx BuildContext, conditions []Expression) []Expression {
 	var allExtracted []Expression
 	for i := len(conditions) - 1; i >= 0; i-- {
@@ -1249,7 +1249,7 @@ func GetStringFromConstant(ctx EvalContext, value Expression) (string, bool, err
 	return str, false, nil
 }
 
-// GetIntFromConstant gets an interger value from the Constant expression.
+// GetIntFromConstant gets an integer value from the Constant expression.
 func GetIntFromConstant(ctx EvalContext, value Expression) (int, bool, error) {
 	str, isNull, err := GetStringFromConstant(ctx, value)
 	if err != nil || isNull {
@@ -1494,7 +1494,7 @@ func RemoveMutableConst(ctx BuildContext, exprs []Expression) (err error) {
 		case *Constant:
 			v.ParamMarker = nil
 			if v.DeferredExpr != nil { // evaluate and update v.Value to convert v to a complete immutable constant.
-				// TODO: remove or hide DefferedExpr since it's too dangerous (hard to be consistent with v.Value all the time).
+				// TODO: remove or hide DeferredExpr since it's too dangerous (hard to be consistent with v.Value all the time).
 				v.Value, err = v.DeferredExpr.Eval(ctx.GetEvalCtx(), chunk.Row{})
 				if err != nil {
 					return err

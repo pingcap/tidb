@@ -215,32 +215,39 @@ func GetPlanFromSessionPlanCache(ctx context.Context, sctx sessionctx.Context,
 		}
 	}
 
-	matchOpts, err := GetMatchOpts(sctx, is, stmt, params)
-	if err != nil {
-		return nil, nil, err
-	}
+	var matchOpts *utilpc.PlanCacheMatchOpts
 	if stmtCtx.UseCache() {
-		if plan, names, ok, err := getCachedPlan(sctx, isNonPrepared, cacheKey, bindSQL, is, stmt, matchOpts); err != nil || ok {
-			return plan, names, err
+		var cacheVal kvcache.Value
+		var hit, isPointPlan bool
+		if stmt.PointGet.Executor != nil { // if it's PointGet Plan, no need to use MatchOpts
+			cacheVal, hit = sctx.GetSessionPlanCache().Get(cacheKey, nil)
+			isPointPlan = true
+		} else {
+			matchOpts = GetMatchOpts(sctx, is, stmt, params)
+			cacheVal, hit = sctx.GetSessionPlanCache().Get(cacheKey, matchOpts)
 		}
+		if hit {
+			if plan, names, ok, err := adjustCachedPlan(sctx, cacheVal.(*PlanCacheValue), isNonPrepared, isPointPlan, cacheKey, bindSQL, is, stmt); err != nil || ok {
+				return plan, names, err
+			}
+		}
+	}
+	if matchOpts == nil {
+		matchOpts = GetMatchOpts(sctx, is, stmt, params)
 	}
 
 	return generateNewPlan(ctx, sctx, isNonPrepared, is, stmt, cacheKey, latestSchemaVersion, bindSQL, matchOpts)
 }
 
-func getCachedPlan(sctx sessionctx.Context, isNonPrepared bool, cacheKey kvcache.Key, bindSQL string,
-	is infoschema.InfoSchema, stmt *PlanCacheStmt, matchOpts *utilpc.PlanCacheMatchOpts) (base.Plan,
+func adjustCachedPlan(sctx sessionctx.Context, cachedVal *PlanCacheValue, isNonPrepared, isPointPlan bool,
+	cacheKey kvcache.Key, bindSQL string, is infoschema.InfoSchema, stmt *PlanCacheStmt) (base.Plan,
 	[]*types.FieldName, bool, error) {
 	sessVars := sctx.GetSessionVars()
 	stmtCtx := sessVars.StmtCtx
-
-	candidate, exist := sctx.GetSessionPlanCache().Get(cacheKey, matchOpts)
-	if !exist {
-		return nil, nil, false, nil
-	}
-	cachedVal := candidate.(*PlanCacheValue)
-	if err := checkPreparedPriv(sctx, stmt, is); err != nil {
-		return nil, nil, false, err
+	if !isPointPlan { // keep the prior behavior
+		if err := checkPreparedPriv(sctx, stmt, is); err != nil {
+			return nil, nil, false, err
+		}
 	}
 	for tblInfo, unionScan := range cachedVal.TblInfo2UnionScan {
 		if !unionScan && tableHasDirtyContent(sctx.GetPlanCtx(), tblInfo) {

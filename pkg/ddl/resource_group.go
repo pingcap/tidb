@@ -38,7 +38,7 @@ const (
 	alreadyExists = "already exists"
 )
 
-func onCreateResourceGroup(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
+func onCreateResourceGroup(ctx context.Context, d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	groupInfo := &model.ResourceGroupInfo{}
 	if err := job.DecodeArgs(groupInfo); err != nil {
 		job.State = model.JobStateCancelled
@@ -63,7 +63,7 @@ func onCreateResourceGroup(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 			return ver, errors.Trace(err)
 		}
 
-		ctx, cancel := context.WithTimeout(d.ctx, defaultInfosyncTimeout)
+		ctx, cancel := context.WithTimeout(ctx, defaultInfosyncTimeout)
 		defer cancel()
 		err = infosync.AddResourceGroup(ctx, protoGroup)
 		if err != nil {

@@ -24,15 +24,6 @@ import (
 )
 
 // HashCode implements LogicalPlan interface.
-func (p *baseLogicalPlan) HashCode() []byte {
-	// We use PlanID for the default hash, so if two plans do not have
-	// the same id, the hash value will never be the same.
-	result := make([]byte, 0, 4)
-	result = util.EncodeIntAsUint32(result, p.ID())
-	return result
-}
-
-// HashCode implements LogicalPlan interface.
 func (p *LogicalProjection) HashCode() []byte {
 	// PlanType + SelectOffset + ExprNum + [Exprs]
 	// Expressions are commonly `Column`s, whose hashcode has the length 9, so

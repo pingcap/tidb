@@ -460,7 +460,7 @@ const (
 		lock_name VARCHAR(64) NOT NULL PRIMARY KEY
 	);`
 	// CreateMDLView is a view about metadata locks.
-	CreateMDLView = `CREATE OR REPLACE VIEW mysql.tidb_mdl_view as (
+	CreateMDLView = `CREATE OR REPLACE SQL SECURITY INVOKER VIEW mysql.tidb_mdl_view as (
 		SELECT tidb_mdl_info.job_id,
 			JSON_UNQUOTE(JSON_EXTRACT(cast(cast(job_meta as char) as json), "$.schema_name")) as db_name,
 			JSON_UNQUOTE(JSON_EXTRACT(cast(cast(job_meta as char) as json), "$.table_name")) as table_name,
@@ -1093,11 +1093,15 @@ const (
 	// version 197
 	//   replace `mysql.tidb_mdl_view` table
 	version197 = 197
+
+	// version 198
+	//   add column `owner_id` for `mysql.tidb_mdl_info` table
+	version198 = 198
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version197
+var currentBootstrapVersion int64 = version198
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1260,6 +1264,7 @@ var (
 		upgradeToVer195,
 		upgradeToVer196,
 		upgradeToVer197,
+		upgradeToVer198,
 	}
 )
 
@@ -1343,7 +1348,8 @@ func checkDistTask(s sessiontypes.Session, ver int64) {
 		// Not set yet.
 		return
 	} else if req.GetRow(0).GetString(0) == variable.On {
-		logutil.BgLogger().Fatal("check dist task failed, tidb_enable_dist_task is enabled", zap.Error(err))
+		logutil.BgLogger().Fatal("cannot upgrade when tidb_enable_dist_task is enabled, "+
+			"please set tidb_enable_dist_task to off before upgrade", zap.Error(err))
 	}
 
 	// Even if the variable is set to `off`, we still need to check the tidb_global_task.
@@ -3101,6 +3107,14 @@ func upgradeToVer197(s sessiontypes.Session, ver int64) {
 	}
 
 	doReentrantDDL(s, CreateMDLView)
+}
+
+func upgradeToVer198(s sessiontypes.Session, ver int64) {
+	if ver >= version198 {
+		return
+	}
+
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_mdl_info ADD COLUMN owner_id VARCHAR(64) NOT NULL DEFAULT '';", infoschema.ErrColumnExists)
 }
 
 func writeOOMAction(s sessiontypes.Session) {

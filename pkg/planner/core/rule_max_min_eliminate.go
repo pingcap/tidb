@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/types"
@@ -67,7 +68,7 @@ func (a *maxMinEliminator) checkColCanUseIndex(plan base.LogicalPlan, col *expre
 	switch p := plan.(type) {
 	case *LogicalSelection:
 		conditions = append(conditions, p.Conditions...)
-		return a.checkColCanUseIndex(p.children[0], col, conditions)
+		return a.checkColCanUseIndex(p.Children()[0], col, conditions)
 	case *DataSource:
 		// Check whether there is an AccessPath can use index for col.
 		for _, path := range p.possibleAccessPaths {
@@ -113,13 +114,13 @@ func (a *maxMinEliminator) cloneSubPlans(plan base.LogicalPlan) base.LogicalPlan
 		newConditions := make([]expression.Expression, len(p.Conditions))
 		copy(newConditions, p.Conditions)
 		sel := LogicalSelection{Conditions: newConditions}.Init(p.SCtx(), p.QueryBlockOffset())
-		sel.SetChildren(a.cloneSubPlans(p.children[0]))
+		sel.SetChildren(a.cloneSubPlans(p.Children()[0]))
 		return sel
 	case *DataSource:
 		// Quick clone a DataSource.
 		// ReadOnly fields uses a shallow copy, while the fields which will be overwritten must use a deep copy.
 		newDs := *p
-		newDs.baseLogicalPlan = newBaseLogicalPlan(p.SCtx(), p.TP(), &newDs, p.QueryBlockOffset())
+		newDs.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(p.SCtx(), p.TP(), &newDs, p.QueryBlockOffset())
 		newDs.schema = p.schema.Clone()
 		newDs.Columns = make([]*model.ColumnInfo, len(p.Columns))
 		copy(newDs.Columns, p.Columns)
@@ -147,7 +148,7 @@ func (a *maxMinEliminator) splitAggFuncAndCheckIndices(agg *LogicalAggregation, 
 		if !ok {
 			return nil, false
 		}
-		if !a.checkColCanUseIndex(agg.children[0], col, make([]expression.Expression, 0)) {
+		if !a.checkColCanUseIndex(agg.Children()[0], col, make([]expression.Expression, 0)) {
 			return nil, false
 		}
 	}
@@ -155,7 +156,7 @@ func (a *maxMinEliminator) splitAggFuncAndCheckIndices(agg *LogicalAggregation, 
 	// we can split the aggregation only if all of the aggFuncs pass the check.
 	for i, f := range agg.AggFuncs {
 		newAgg := LogicalAggregation{AggFuncs: []*aggregation.AggFuncDesc{f}}.Init(agg.SCtx(), agg.QueryBlockOffset())
-		newAgg.SetChildren(a.cloneSubPlans(agg.children[0]))
+		newAgg.SetChildren(a.cloneSubPlans(agg.Children()[0]))
 		newAgg.schema = expression.NewSchema(agg.schema.Columns[i])
 		// Since LogicalAggregation doesn’t use the parent base.LogicalPlan, passing an incorrect parameter here won’t affect subsequent optimizations.
 		var (

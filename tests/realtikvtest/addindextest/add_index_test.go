@@ -20,11 +20,16 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
+	"github.com/pingcap/tidb/pkg/ddl/util/callback"
+	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/pingcap/tidb/tests/realtikvtest/addindextestutil"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikv"
 )
@@ -199,4 +204,53 @@ func TestLitBackendCtxMgr(t *testing.T) {
 	require.NoDirExists(t, expectedDir)
 	_, ok = mgr.Load(jobID)
 	require.False(t, ok)
+}
+
+func TestAddUniqueDuplicateIndexes(t *testing.T) {
+	store, dom := realtikvtest.CreateMockStoreAndDomainAndSetup(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int DEFAULT '-13202', b varchar(221) NOT NULL DEFAULT 'duplicatevalue', " +
+		"c int NOT NULL DEFAULT '0');")
+
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
+
+	d := dom.DDL()
+	originalCallback := d.GetHook()
+	defer d.SetHook(originalCallback)
+	callback := &callback.TestDDLCallback{}
+
+	tk1.Exec("INSERT INTO t VALUES (-18585,'duplicatevalue',0);")
+
+	onJobUpdatedExportedFunc := func(job *model.Job) {
+		switch job.SchemaState {
+		case model.StateDeleteOnly:
+			_, err := tk1.Exec("delete from t where c = 0;")
+			assert.NoError(t, err)
+			_, err = tk1.Exec("insert INTO t VALUES (-18585,'duplicatevalue',1);")
+			assert.NoError(t, err)
+		}
+	}
+	callback.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
+	d.SetHook(callback)
+
+	tk3 := testkit.NewTestKit(t, store)
+	tk3.MustExec("use test")
+	ingest.MockDMLExecutionStateBeforeImport = func() {
+		tk3.MustExec("replace INTO t VALUES (-18585,'duplicatevalue',4);")
+		tk3.MustQuery("select * from t;").Check(testkit.Rows("-18585 duplicatevalue 1", "-18585 duplicatevalue 4"))
+	}
+	ddl.MockDMLExecutionStateBeforeMerge = func() {
+		tk3.MustQuery("select * from t;").Check(testkit.Rows("-18585 duplicatevalue 1", "-18585 duplicatevalue 4"))
+		tk3.MustExec("replace into t values (-18585,'duplicatevalue',0);")
+	}
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/ingest/mockDMLExecutionStateBeforeImport", "1*return"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockDMLExecutionStateBeforeMerge", "return(true)"))
+	tk.MustExec("alter table t add unique index idx(b);")
+	tk.MustExec("admin check table t;")
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/ingest/mockDMLExecutionStateBeforeImport"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockDMLExecutionStateBeforeMerge"))
 }

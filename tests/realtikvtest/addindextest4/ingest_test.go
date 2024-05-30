@@ -376,6 +376,7 @@ func TestAddIndexFinishImportError(t *testing.T) {
 	tk.MustExec("create database addindexlit;")
 	tk.MustExec("use addindexlit;")
 	tk.MustExec(`set global tidb_ddl_enable_fast_reorg=on;`)
+	tk.MustExec("set global tidb_enable_dist_task = off;")
 
 	tk.MustExec("create table t (a int primary key, b int);")
 	for i := 0; i < 4; i++ {
@@ -546,6 +547,7 @@ func TestFirstLitSlowStart(t *testing.T) {
 	tk.MustExec("create database addindexlit;")
 	tk.MustExec("use addindexlit;")
 	tk.MustExec(`set global tidb_ddl_enable_fast_reorg=on;`)
+	tk.MustExec(`set global tidb_enable_dist_task=off;`)
 
 	tk.MustExec("create table t(a int, b int);")
 	tk.MustExec("insert into t values (1, 1), (2, 2), (3, 3);")

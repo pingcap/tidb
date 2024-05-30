@@ -20,6 +20,7 @@ import (
 	"math/rand"
 	"os"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -96,8 +97,9 @@ type worker struct {
 	tp              workerType
 	addingDDLJobKey string
 	ddlJobCh        chan struct{}
-	ctx             context.Context
-	wg              sync.WaitGroup
+	// for local mode worker, it's ctx of 'ddl', else it's the ctx of 'job scheduler'.
+	ctx context.Context
+	wg  sync.WaitGroup
 
 	sessPool        *sess.Pool    // sessPool is used to new sessions to execute SQL in ddl package.
 	sess            *sess.Session // sess is used and only used in running DDL job.
@@ -186,7 +188,7 @@ func (w *worker) Close() {
 	tidblogutil.Logger(w.logCtx).Info("DDL worker closed", zap.Duration("take time", time.Since(startTime)))
 }
 
-func (dc *ddlCtx) asyncNotifyByEtcd(etcdPath string, jobID int64, jobType string) {
+func (dc *ddlCtx) notifyNewJobByEtcd(etcdPath string, jobID int64, jobType string) {
 	if dc.etcdCli == nil {
 		return
 	}
@@ -418,7 +420,7 @@ func (d *ddl) addBatchDDLJobs(tasks []*limitJobTask) error {
 		bdrRole = string(ast.BDRRoleNone)
 	)
 
-	if newTasks, err := d.combineBatchCreateTableJobs(tasks); err == nil {
+	if newTasks, err := combineBatchCreateTableJobs(tasks); err == nil {
 		tasks = newTasks
 	}
 
@@ -492,6 +494,9 @@ func (d *ddl) addBatchDDLJobs(tasks []*limitJobTask) error {
 
 		jobTasks = append(jobTasks, job)
 		injectModifyJobArgFailPoint(job)
+		if !job.LocalMode {
+			d.initJobDoneCh(job.ID)
+		}
 	}
 
 	se.GetSessionVars().SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
@@ -507,7 +512,7 @@ func (d *ddl) addBatchDDLJobs(tasks []*limitJobTask) error {
 
 // combineBatchCreateTableJobs combine batch jobs to another batch jobs.
 // currently it only support combine CreateTable to CreateTables.
-func (d *ddl) combineBatchCreateTableJobs(tasks []*limitJobTask) ([]*limitJobTask, error) {
+func combineBatchCreateTableJobs(tasks []*limitJobTask) ([]*limitJobTask, error) {
 	if len(tasks) <= 1 || !tasks[0].job.LocalMode {
 		return tasks, nil
 	}
@@ -525,7 +530,7 @@ func (d *ddl) combineBatchCreateTableJobs(tasks []*limitJobTask) ([]*limitJobTas
 		jobs = append(jobs, task.job)
 	}
 
-	job, err := d.BatchCreateTableWithJobs(jobs)
+	job, err := BatchCreateTableWithJobs(jobs)
 	if err != nil {
 		return tasks, err
 	}
@@ -605,32 +610,47 @@ func (w *worker) registerMDLInfo(job *model.Job, ver int64) error {
 	if len(rows) == 0 {
 		return errors.Errorf("can't find ddl job %d", job.ID)
 	}
+	ownerID := w.ownerManager.ID()
 	ids := rows[0].GetString(0)
-	sql := fmt.Sprintf("replace into mysql.tidb_mdl_info (job_id, version, table_ids) values (%d, %d, '%s')", job.ID, ver, ids)
+	var sql string
+	if tidbutil.IsSysDB(strings.ToLower(job.SchemaName)) {
+		// DDLs that modify system tables could only happen in upgrade process,
+		// we should not reference 'owner_id'. Otherwise, there is a circular blocking problem.
+		sql = fmt.Sprintf("replace into mysql.tidb_mdl_info (job_id, version, table_ids) values (%d, %d, '%s')", job.ID, ver, ids)
+	} else {
+		sql = fmt.Sprintf("replace into mysql.tidb_mdl_info (job_id, version, table_ids, owner_id) values (%d, %d, '%s', '%s')", job.ID, ver, ids, ownerID)
+	}
 	_, err = w.sess.Execute(context.Background(), sql, "register-mdl-info")
 	return err
 }
 
 // cleanMDLInfo cleans metadata lock info.
-func cleanMDLInfo(pool *sess.Pool, jobID int64, ec *clientv3.Client, cleanETCD bool) {
+func cleanMDLInfo(pool *sess.Pool, job *model.Job, ec *clientv3.Client, ownerID string, cleanETCD bool) {
 	if !variable.EnableMDL.Load() {
 		return
 	}
-	sql := fmt.Sprintf("delete from mysql.tidb_mdl_info where job_id = %d", jobID)
+	var sql string
+	if tidbutil.IsSysDB(strings.ToLower(job.SchemaName)) {
+		// DDLs that modify system tables could only happen in upgrade process,
+		// we should not reference 'owner_id'. Otherwise, there is a circular blocking problem.
+		sql = fmt.Sprintf("delete from mysql.tidb_mdl_info where job_id = %d", job.ID)
+	} else {
+		sql = fmt.Sprintf("delete from mysql.tidb_mdl_info where job_id = %d and owner_id = '%s'", job.ID, ownerID)
+	}
 	sctx, _ := pool.Get()
 	defer pool.Put(sctx)
 	se := sess.NewSession(sctx)
 	se.GetSessionVars().SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
 	_, err := se.Execute(context.Background(), sql, "delete-mdl-info")
 	if err != nil {
-		logutil.DDLLogger().Warn("unexpected error when clean mdl info", zap.Int64("job ID", jobID), zap.Error(err))
+		logutil.DDLLogger().Warn("unexpected error when clean mdl info", zap.Int64("job ID", job.ID), zap.Error(err))
 		return
 	}
 	if cleanETCD && ec != nil {
-		path := fmt.Sprintf("%s/%d/", util.DDLAllSchemaVersionsByJob, jobID)
+		path := fmt.Sprintf("%s/%d/", util.DDLAllSchemaVersionsByJob, job.ID)
 		_, err = ec.Delete(context.Background(), path, clientv3.WithPrefix())
 		if err != nil {
-			logutil.DDLLogger().Warn("delete versions failed", zap.Int64("job ID", jobID), zap.Error(err))
+			logutil.DDLLogger().Warn("delete versions failed", zap.Int64("job ID", job.ID), zap.Error(err))
 		}
 	}
 }
@@ -859,7 +879,7 @@ func (w *worker) HandleJobDone(d *ddlCtx, job *model.Job, t *meta.Meta) error {
 		return err
 	}
 	CleanupDDLReorgHandles(job, w.sess)
-	asyncNotify(d.ddlJobDoneCh)
+	d.notifyJobDone(job.ID)
 	return nil
 }
 
@@ -1320,7 +1340,7 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 	case model.ActionAlterTablePlacement:
 		ver, err = onAlterTablePlacement(d, t, job)
 	case model.ActionCreateResourceGroup:
-		ver, err = onCreateResourceGroup(d, t, job)
+		ver, err = onCreateResourceGroup(w.ctx, d, t, job)
 	case model.ActionAlterResourceGroup:
 		ver, err = onAlterResourceGroup(d, t, job)
 	case model.ActionDropResourceGroup:
@@ -1383,7 +1403,7 @@ func toTError(err error) *terror.Error {
 
 // waitSchemaChanged waits for the completion of updating all servers' schema or MDL synced. In order to make sure that happens,
 // we wait at most 2 * lease time(sessionTTL, 90 seconds).
-func waitSchemaChanged(d *ddlCtx, waitTime time.Duration, latestSchemaVersion int64, job *model.Job) error {
+func waitSchemaChanged(ctx context.Context, d *ddlCtx, waitTime time.Duration, latestSchemaVersion int64, job *model.Job) error {
 	if !job.IsRunning() && !job.IsRollingback() && !job.IsDone() && !job.IsRollbackDone() {
 		return nil
 	}
@@ -1398,13 +1418,13 @@ func waitSchemaChanged(d *ddlCtx, waitTime time.Duration, latestSchemaVersion in
 	}()
 
 	if latestSchemaVersion == 0 {
-		tidblogutil.Logger(d.ctx).Info("schema version doesn't change", zap.String("category", "ddl"), zap.Int64("jobID", job.ID))
+		logutil.DDLLogger().Info("schema version doesn't change", zap.Int64("jobID", job.ID))
 		return nil
 	}
 
-	err = d.schemaSyncer.OwnerUpdateGlobalVersion(d.ctx, latestSchemaVersion)
+	err = d.schemaSyncer.OwnerUpdateGlobalVersion(ctx, latestSchemaVersion)
 	if err != nil {
-		tidblogutil.Logger(d.ctx).Info("update latest schema version failed", zap.String("category", "ddl"), zap.Int64("ver", latestSchemaVersion), zap.Error(err))
+		logutil.DDLLogger().Info("update latest schema version failed", zap.Int64("ver", latestSchemaVersion), zap.Error(err))
 		if variable.EnableMDL.Load() {
 			return err
 		}
@@ -1415,13 +1435,13 @@ func waitSchemaChanged(d *ddlCtx, waitTime time.Duration, latestSchemaVersion in
 		}
 	}
 
-	return checkAllVersions(d, job, latestSchemaVersion, timeStart)
+	return checkAllVersions(ctx, d, job, latestSchemaVersion, timeStart)
 }
 
 // waitSchemaSyncedForMDL likes waitSchemaSynced, but it waits for getting the metadata lock of the latest version of this DDL.
-func waitSchemaSyncedForMDL(d *ddlCtx, job *model.Job, latestSchemaVersion int64) error {
+func waitSchemaSyncedForMDL(ctx context.Context, d *ddlCtx, job *model.Job, latestSchemaVersion int64) error {
 	timeStart := time.Now()
-	return checkAllVersions(d, job, latestSchemaVersion, timeStart)
+	return checkAllVersions(ctx, d, job, latestSchemaVersion, timeStart)
 }
 
 func buildPlacementAffects(oldIDs []int64, newIDs []int64) []*model.AffectedOption {

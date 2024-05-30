@@ -1064,8 +1064,7 @@ GROUP BY
 
 	noRecordTables := make([]string, 0)
 	for _, dbName := range is.AllSchemaNames() {
-		for _, tbl := range is.SchemaTables(dbName) {
-			tblInfo := tbl.Meta()
+		for _, tblInfo := range is.SchemaTableInfos(dbName) {
 			if tblInfo.TTLInfo == nil {
 				continue
 			}

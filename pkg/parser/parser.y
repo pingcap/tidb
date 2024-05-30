@@ -682,6 +682,15 @@ import (
 	workload              "WORKLOAD"
 	x509                  "X509"
 	yearType              "YEAR"
+	withSysTable          "WITH_SYS_TABLE"
+	waitTiflashReady      "WAIT_TIFLASH_READY"
+	ignoreStats           "IGNORE_STATS"
+	loadStats             "LOAD_STATS"
+	checksumConcurrency   "CHECKSUM_CONCURRENCY"
+	compressionLevel      "COMPRESSION_LEVEL"
+	compressionType       "COMPRESSION_TYPE"
+	encryptionMethod      "ENCRYPTION_METHOD"
+	encryptionKeyFile     "ENCRYPTION_KEYFILE"
 
 	/* The following tokens belong to NotKeywordToken. Notice: make sure these tokens are contained in NotKeywordToken. */
 	addDate               "ADDDATE"
@@ -5589,6 +5598,14 @@ BRIEIntegerOptionName:
 	{
 		$$ = ast.BRIEOptionResume
 	}
+|	"CHECKSUM_CONCURRENCY"
+	{
+		$$ = ast.BRIEOptionChecksumConcurrency
+	}
+|	"COMPRESSION_LEVEL"
+	{
+		$$ = ast.BRIEOptionCompressionLevel
+	}
 
 BRIEBooleanOptionName:
 	"SEND_CREDENTIALS_TO_TIKV"
@@ -5623,6 +5640,22 @@ BRIEBooleanOptionName:
 	{
 		$$ = ast.BRIEOptionCSVTrimLastSeparators
 	}
+|	"WAIT_TIFLASH_READY"
+	{
+		$$ = ast.BRIEOptionWaitTiflashReady
+	}
+|	"WITH_SYS_TABLE"
+	{
+		$$ = ast.BRIEOptionWithSysTable
+	}
+|	"IGNORE_STATS"
+	{
+		$$ = ast.BRIEOptionIgnoreStats
+	}
+|	"LOAD_STATS"
+	{
+		$$ = ast.BRIEOptionLoadStats
+	}
 
 BRIEStringOptionName:
 	"TIKV_IMPORTER"
@@ -5640,6 +5673,18 @@ BRIEStringOptionName:
 |	"CSV_NULL"
 	{
 		$$ = ast.BRIEOptionCSVNull
+	}
+|	"COMPRESSION_TYPE"
+	{
+		$$ = ast.BRIEOptionCompression
+	}
+|	"ENCRYPTION_METHOD"
+	{
+		$$ = ast.BRIEOptionEncryptionMethod
+	}
+|	"ENCRYPTION_KEYFILE"
+	{
+		$$ = ast.BRIEOptionEncryptionKeyFile
 	}
 
 BRIEKeywordOptionName:
@@ -6917,6 +6962,15 @@ UnReservedKeyword:
 |	"OLTP_READ_ONLY"
 |	"OLTP_WRITE_ONLY"
 |	"TPCH_10"
+|	"WITH_SYS_TABLE"
+|	"WAIT_TIFLASH_READY"
+|	"IGNORE_STATS"
+|	"LOAD_STATS"
+|	"CHECKSUM_CONCURRENCY"
+|	"COMPRESSION_LEVEL"
+|	"COMPRESSION_TYPE"
+|	"ENCRYPTION_METHOD"
+|	"ENCRYPTION_KEYFILE"
 
 TiDBKeyword:
 	"ADMIN"
@@ -8364,7 +8418,11 @@ SumExpr:
 	}
 |	builtinVarSamp '(' BuggyDefaultFalseDistinctOpt Expression ')' OptWindowingClause
 	{
-		$$ = &ast.AggregateFuncExpr{F: $1, Args: []ast.ExprNode{$4}, Distinct: $3.(bool)}
+		if $6 != nil {
+			$$ = &ast.WindowFuncExpr{Name: $1, Args: []ast.ExprNode{$4}, Distinct: $3.(bool), Spec: *($6.(*ast.WindowSpec))}
+		} else {
+			$$ = &ast.AggregateFuncExpr{F: $1, Args: []ast.ExprNode{$4}, Distinct: $3.(bool)}
+		}
 	}
 |	"JSON_ARRAYAGG" '(' Expression ')' OptWindowingClause
 	{

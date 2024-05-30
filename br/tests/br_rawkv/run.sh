@@ -186,5 +186,3 @@ run_test ""
 
 # ingest "region error" to trigger fineGrainedBackup, only one region error.
 run_test "github.com/pingcap/tidb/br/pkg/backup/tikv-region-error=1*return(\"region error\")"
-# all regions failed.
-run_test "github.com/pingcap/tidb/br/pkg/backup/tikv-region-error=return(\"region error\")"

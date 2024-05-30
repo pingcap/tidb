@@ -747,7 +747,7 @@ func (s *session) commitTxnWithTemporaryData(ctx context.Context, txn kv.Transac
 	return nil
 }
 
-// errIsNoisy is used to filter DUPLCATE KEY errors.
+// errIsNoisy is used to filter DUPLICATE KEY errors.
 // These can observed by users in INFORMATION_SCHEMA.CLIENT_ERRORS_SUMMARY_GLOBAL instead.
 //
 // The rationale for filtering these errors is because they are "client generated errors". i.e.
@@ -2340,7 +2340,7 @@ const ExecStmtVarKey ExecStmtVarKeyType = 0
 // execStmtResult is the return value of ExecuteStmt and it implements the sqlexec.RecordSet interface.
 // Why we need a struct to wrap a RecordSet and provide another RecordSet?
 // This is because there are so many session state related things that definitely not belongs to the original
-// RecordSet, so this struct exists and RecordSet.Close() is overrided handle that.
+// RecordSet, so this struct exists and RecordSet.Close() is overridden to handle that.
 type execStmtResult struct {
 	sqlexec.RecordSet
 	se     *session
@@ -2553,7 +2553,7 @@ func (s *session) GetDistSQLCtx() *distsqlctx.DistSQLContext {
 
 	return sc.GetOrInitDistSQLFromCache(func() *distsqlctx.DistSQLContext {
 		return &distsqlctx.DistSQLContext{
-			AppendWarning:   sc.AppendWarning,
+			WarnHandler:     sc.WarnHandler,
 			InRestrictedSQL: sc.InRestrictedSQL,
 			Client:          s.GetClient(),
 
@@ -2645,10 +2645,10 @@ func (s *session) GetBuildPBCtx() *planctx.BuildPBContext {
 			// the following fields are used to build `expression.PushDownContext`.
 			// TODO: it'd be better to embed `expression.PushDownContext` in `BuildPBContext`. But `expression` already
 			// depends on this package, so we need to move `expression.PushDownContext` to a standalone package first.
-			GroupConcatMaxLen:  s.GetSessionVars().GroupConcatMaxLen,
-			InExplainStmt:      s.GetSessionVars().StmtCtx.InExplainStmt,
-			AppendWarning:      s.GetSessionVars().StmtCtx.AppendWarning,
-			AppendExtraWarning: s.GetSessionVars().StmtCtx.AppendExtraWarning,
+			GroupConcatMaxLen: s.GetSessionVars().GroupConcatMaxLen,
+			InExplainStmt:     s.GetSessionVars().StmtCtx.InExplainStmt,
+			WarnHandler:       s.GetSessionVars().StmtCtx.WarnHandler,
+			ExtraWarnghandler: s.GetSessionVars().StmtCtx.ExtraWarnHandler,
 		}
 	})
 
@@ -3150,7 +3150,8 @@ var (
 	mdlTable = `create table mysql.tidb_mdl_info(
 		job_id BIGINT NOT NULL PRIMARY KEY,
 		version BIGINT NOT NULL,
-		table_ids text(65535)
+		table_ids text(65535),
+		owner_id varchar(64) NOT NULL DEFAULT ''
 	);`
 )
 

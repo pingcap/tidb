@@ -217,6 +217,11 @@ func createTableWithForeignKeys(d *ddlCtx, t *meta.Meta, job *model.Job, tbInfo 
 			return ver, errors.Trace(err)
 		}
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tbInfo)
+		createTableEvent := statsutil.NewCreateTableEvent(
+			job.SchemaID,
+			tbInfo,
+		)
+		asyncNotifyEvent(d, createTableEvent)
 		return ver, nil
 	default:
 		return ver, errors.Trace(dbterror.ErrInvalidDDLJob.GenWithStackByArgs("table", tbInfo.State))
@@ -239,18 +244,26 @@ func onCreateTables(d *ddlCtx, t *meta.Meta, job *model.Job) (int64, error) {
 	// We don't construct jobs for every table, but only tableInfo
 	// The following loop creates a stub job for every table
 	//
-	// &*job clones a stub job from the ActionCreateTables job
-	stubJob := &*job
+	// it clones a stub job from the ActionCreateTables job
+	stubJob := job.Clone()
 	stubJob.Args = make([]any, 1)
 	for i := range args {
 		stubJob.TableID = args[i].ID
 		stubJob.Args[0] = args[i]
-		tbInfo, err := createTable(d, t, stubJob, fkCheck)
-		if err != nil {
-			job.State = model.JobStateCancelled
-			return ver, errors.Trace(err)
+		if args[i].Sequence != nil {
+			err := createSequenceWithCheck(t, stubJob, args[i])
+			if err != nil {
+				job.State = model.JobStateCancelled
+				return ver, errors.Trace(err)
+			}
+		} else {
+			tbInfo, err := createTable(d, t, stubJob, fkCheck)
+			if err != nil {
+				job.State = model.JobStateCancelled
+				return ver, errors.Trace(err)
+			}
+			args[i] = tbInfo
 		}
-		args[i] = tbInfo
 	}
 
 	ver, err = updateSchemaVersion(d, t, job)

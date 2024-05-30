@@ -1173,6 +1173,44 @@ func TestTableColumnCountLimit(t *testing.T) {
 	checkValid(DefMaxOfTableColumnCountLimit+1, false)
 }
 
+func TestTokenLimit(t *testing.T) {
+	storeDir := t.TempDir()
+	configFile := filepath.Join(storeDir, "config.toml")
+	f, err := os.Create(configFile)
+	require.NoError(t, err)
+	defer func(configFile string) {
+		require.NoError(t, os.Remove(configFile))
+	}(configFile)
+
+	tests := []struct {
+		tokenLimit         uint
+		expectedTokenLimit uint
+	}{
+		{
+			0,
+			1000,
+		},
+		{
+			99999999999,
+			MaxTokenLimit,
+		},
+	}
+
+	for _, test := range tests {
+		require.NoError(t, f.Truncate(0))
+		_, err = f.Seek(0, 0)
+		require.NoError(t, err)
+		_, err = f.WriteString(fmt.Sprintf(`
+token-limit = %d
+`, test.tokenLimit))
+		require.NoError(t, err)
+		require.NoError(t, f.Sync())
+		conf := NewConfig()
+		require.NoError(t, conf.Load(configFile))
+		require.Equal(t, test.expectedTokenLimit, conf.TokenLimit)
+	}
+}
+
 func TestEncodeDefTempStorageDir(t *testing.T) {
 	tests := []struct {
 		host       string

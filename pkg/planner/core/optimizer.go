@@ -80,6 +80,7 @@ const (
 	flagEliminateProjection
 	flagMaxMinEliminate
 	flagConstantPropagation
+	flagConvertOuterToInnerJoin
 	flagPredicatePushDown
 	flagEliminateOuterJoin
 	flagPartitionProcessor
@@ -107,6 +108,7 @@ var optRuleList = []logicalOptRule{
 	&projectionEliminator{},
 	&maxMinEliminator{},
 	&constantPropagationSolver{},
+	&convertOuterToInnerJoin{},
 	&ppdSolver{},
 	&outerJoinEliminator{},
 	&partitionProcessor{},
