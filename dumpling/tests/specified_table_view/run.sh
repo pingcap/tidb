@@ -11,7 +11,7 @@ VIEW_NAME="v"
 
 run_sql "drop database if exists \`$DB_NAME\`;"
 run_sql "create database \`$DB_NAME\`;"
-run_sql "create table \`$DB_NAME\`.\`$TABLE_NAME\` (a iqnt);"
+run_sql "create table \`$DB_NAME\`.\`$TABLE_NAME\` (a int);"
 run_sql "create view \`$DB_NAME\`.\`$VIEW_NAME\` as select * from \`$DB_NAME\`.\`$TABLE_NAME\`;"
 
 set +e
