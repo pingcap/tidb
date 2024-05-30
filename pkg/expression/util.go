@@ -1452,16 +1452,15 @@ func ContainCorrelatedColumn(exprs []Expression) bool {
 
 // ProjectionBenefitsFromPushedDown evaluates if the expressions can improve performance when pushed down to TiKV
 // Projections are not pushed down to tikv by default, thus we need to check strictly here to avoid potential performance degradation.
+// Note: virtual column is not considered here, since this function cares performance instead of functionality
 func ProjectionBenefitsFromPushedDown(exprs []Expression, inputSchemaLen int) bool {
 	allColRef := true
 	colRefCount := 0
 	for _, expr := range exprs {
 		switch v := expr.(type) {
 		case *Column:
-			if v.VirtualExpr != nil {
-				return false
-			}
 			colRefCount = colRefCount + 1
+			continue
 		case *ScalarFunction:
 			allColRef = false
 			switch v.FuncName.L {
