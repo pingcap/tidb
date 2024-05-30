@@ -3,7 +3,6 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "util",
     srcs = [
-        "concurrency_controller.go",
         "cpu_posix.go",
         "cpu_windows.go",
         "errors.go",
@@ -66,7 +65,6 @@ go_test(
     name = "util_test",
     timeout = "short",
     srcs = [
-        "concurrency_controller_test.go",
         "errors_test.go",
         "main_test.go",
         "misc_test.go",
@@ -74,6 +72,7 @@ go_test(
         "processinfo_test.go",
         "security_test.go",
         "session_pool_test.go",
+        "tokenlimiter_test.go",
         "urls_test.go",
         "util_test.go",
         "wait_group_wrapper_test.go",
