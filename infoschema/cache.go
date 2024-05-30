@@ -126,6 +126,7 @@ func (h *InfoCache) getSchemaByTimestampNoLock(ts uint64) (InfoSchema, bool) {
 		// ts >= is.timestamp must be true after the above condition.
 		if i == 0 {
 			// the first element is the latest schema, so we can return it directly.
+
 			return is.infoschema, true
 		}
 
