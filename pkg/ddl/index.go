@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	sess "github.com/pingcap/tidb/pkg/ddl/internal/session"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
+	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
@@ -42,7 +43,6 @@ import (
 	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -983,9 +983,6 @@ func runIngestReorgJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 
 	err = bc.FinishImport(tbl)
 	if err != nil {
-		if common.ErrFoundDuplicateKeys.Equal(err) {
-			err = convertToKeyExistsErr(err, indexInfo, tbl.Meta())
-		}
 		if kv.ErrKeyExists.Equal(err) {
 			logutil.DDLLogger().Warn("import index duplicate key, convert job to rollback", zap.Stringer("job", job), zap.Error(err))
 			ver, err = convertAddIdxJob2RollbackJob(d, t, job, tbl.Meta(), allIndexInfos, err)
@@ -1013,22 +1010,6 @@ func errorIsRetryable(err error, job *model.Job) bool {
 	}
 	// For the unknown errors, we should retry.
 	return true
-}
-
-func convertToKeyExistsErr(originErr error, idxInfo *model.IndexInfo, tblInfo *model.TableInfo) error {
-	tErr, ok := errors.Cause(originErr).(*terror.Error)
-	if !ok {
-		return originErr
-	}
-	if len(tErr.Args()) != 2 {
-		return originErr
-	}
-	key, keyIsByte := tErr.Args()[0].([]byte)
-	value, valIsByte := tErr.Args()[1].([]byte)
-	if !keyIsByte || !valIsByte {
-		return originErr
-	}
-	return genKeyExistsErr(key, value, idxInfo, tblInfo)
 }
 
 func runReorgJobAndHandleErr(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
@@ -1082,10 +1063,8 @@ func runReorgJobAndHandleErr(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 			// if timeout, we should return, check for the owner and re-wait job done.
 			return false, ver, nil
 		}
-		if common.ErrFoundDuplicateKeys.Equal(err) {
-			// TODO(tangenta): get duplicate column and match index.
-			err = convertToKeyExistsErr(err, allIndexInfos[0], tbl.Meta())
-		}
+		// TODO(tangenta): get duplicate column and match index.
+		err = ingest.TryConvertToKeyExistsErr(err, allIndexInfos[0], tbl.Meta())
 		if !errorIsRetryable(err, job) {
 			logutil.DDLLogger().Warn("run add index job failed, convert job to rollback", zap.Stringer("job", job), zap.Error(err))
 			ver, err = convertAddIdxJob2RollbackJob(d, t, job, tbl.Meta(), allIndexInfos, err)
@@ -1582,18 +1561,7 @@ func (w *addIndexTxnWorker) checkHandleExists(idxInfo *model.IndexInfo, key kv.K
 	if hasBeenBackFilled {
 		return nil
 	}
-	return genKeyExistsErr(key, value, idxInfo, tblInfo)
-}
-
-func genKeyExistsErr(key, value []byte, idxInfo *model.IndexInfo, tblInfo *model.TableInfo) error {
-	indexName := fmt.Sprintf("%s.%s", tblInfo.Name.String(), idxInfo.Name.String())
-	valueStr, err := tables.GenIndexValueFromIndex(key, value, tblInfo, idxInfo)
-	if err != nil {
-		logutil.DDLLogger().Warn("decode index key value / column value failed", zap.String("index", indexName),
-			zap.String("key", hex.EncodeToString(key)), zap.String("value", hex.EncodeToString(value)), zap.Error(err))
-		return errors.Trace(kv.ErrKeyExists.FastGenByArgs(key, indexName))
-	}
-	return kv.ErrKeyExists.FastGenByArgs(strings.Join(valueStr, "-"), indexName)
+	return ddlutil.GenKeyExistsErr(key, value, idxInfo, tblInfo)
 }
 
 // batchCheckUniqueKey checks the unique keys in the batch.

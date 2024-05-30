@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
-	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/table"
@@ -102,10 +101,7 @@ func (m *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Sub
 	}
 	local.WorkerConcurrency = subtask.Concurrency * 2
 	err = local.ImportEngine(ctx, engineUUID, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
-	if common.ErrFoundDuplicateKeys.Equal(err) {
-		err = convertToKeyExistsErr(err, m.index, m.ptbl.Meta())
-	}
-	return err
+	return ingest.TryConvertToKeyExistsErr(err, m.index, m.ptbl.Meta())
 }
 
 func (m *cloudImportExecutor) Cleanup(ctx context.Context) error {

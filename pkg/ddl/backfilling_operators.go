@@ -822,6 +822,7 @@ func (s *indexWriteResultSink) flush() error {
 	failpoint.Inject("mockFlushError", func(_ failpoint.Value) {
 		failpoint.Return(errors.New("mock flush error"))
 	})
+	// TODO(lance6716): convert to ErrKeyExists inside Flush
 	_, _, errIdxID, err := s.backendCtx.Flush(ingest.FlushModeForceFlushAndImport)
 	if err != nil {
 		if common.ErrFoundDuplicateKeys.Equal(err) {
@@ -836,7 +837,7 @@ func (s *indexWriteResultSink) flush() error {
 				logutil.Logger(s.ctx).Error("index not found", zap.Int64("indexID", errIdxID))
 				return kv.ErrKeyExists
 			}
-			return convertToKeyExistsErr(err, idxInfo.Meta(), s.tbl.Meta())
+			return ingest.TryConvertToKeyExistsErr(err, idxInfo.Meta(), s.tbl.Meta())
 		}
 		logutil.Logger(s.ctx).Error("flush error",
 			zap.String("category", "ddl"), zap.Error(err))

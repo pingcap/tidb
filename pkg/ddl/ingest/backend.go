@@ -30,6 +30,7 @@ import (
 	lightning "github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/errormanager"
 	"github.com/pingcap/tidb/pkg/lightning/log"
+	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/table"
@@ -151,12 +152,14 @@ func (bc *litBackendCtx) CollectRemoteDuplicateRows(indexID int64, tbl table.Tab
 	return bc.handleErrorAfterCollectRemoteDuplicateRows(err, indexID, tbl, hasDupe)
 }
 
-// FinishImport imports all the key-values in engine into the storage, collects the duplicate errors if any, and
-// removes the engine from the backend context.
+// FinishImport imports all the key-values in engine into the storage, collects
+// the duplicate errors if any, and removes the engine from the backend context.
+// When duplicate errors are found, it will return ErrKeyExists error.
 func (bc *litBackendCtx) FinishImport(tbl table.Table) error {
 	for _, ei := range bc.engines {
 		if err := ei.ImportAndClean(); err != nil {
-			return err
+			indexInfo := model.FindIndexInfoByID(tbl.Meta().Indices, ei.indexID)
+			return TryConvertToKeyExistsErr(err, indexInfo, tbl.Meta())
 		}
 		failpoint.Inject("mockFinishImportErr", func() {
 			failpoint.Return(fmt.Errorf("mock finish import error"))
