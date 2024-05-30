@@ -570,6 +570,26 @@ func TestUnregisterAfterPause(t *testing.T) {
 	}, 5*time.Second, 300*time.Millisecond)
 }
 
+func TestAddTaskWithLaggedStartTS(t *testing.T) {
+	c := createFakeCluster(t, 4, false)
+	defer func() {
+		fmt.Println(c)
+	}()
+	c.splitAndScatter("01", "02", "022", "023", "033", "04", "043")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	env := &testEnv{fakeCluster: c, testCtx: t}
+	adv := streamhelper.NewCheckpointAdvancer(env)
+	adv.UpdateConfigWith(func(c *config.Config) {
+		c.CheckPointLagLimit = 1 * time.Minute
+	})
+	c.advanceClusterTimeBy(5 * time.Minute)
+	c.advanceCheckpointBy(5 * time.Minute)
+	env.advanceCheckpointBy(0 * time.Minute)
+	adv.StartTaskListener(ctx)
+	require.NoError(t, adv.OnTick(ctx))
+}
+
 func TestOwnershipLost(t *testing.T) {
 	c := createFakeCluster(t, 4, false)
 	c.splitAndScatter(manyRegions(0, 10240)...)

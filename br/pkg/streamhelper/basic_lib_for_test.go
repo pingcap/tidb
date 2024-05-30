@@ -714,6 +714,13 @@ func (t *testEnv) getCheckpoint() uint64 {
 	return t.checkpoint
 }
 
+func (t *testEnv) advanceCheckpointBy(duration time.Duration) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	t.checkpoint = oracle.GoTimeToTS(oracle.GetTimeFromTS(t.checkpoint).Add(duration))
+}
+
 func (t *testEnv) unregisterTask() {
 	t.taskCh <- streamhelper.TaskEvent{
 		Type: streamhelper.EventDel,
