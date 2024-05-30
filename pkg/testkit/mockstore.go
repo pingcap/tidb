@@ -22,10 +22,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/ddl/schematracker"
 	"github.com/pingcap/tidb/pkg/domain"
-	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/resourcemanager"
 	"github.com/pingcap/tidb/pkg/session"
@@ -71,6 +69,7 @@ func CreateMockStore(t testing.TB, opts ...mockstore.MockTiKVStoreOption) kv.Sto
 
 // DistExecutionContext is the context
 // that used in Distributed execution test for Dist task framework and DDL.
+// TODO remove it after we can start multiple DDL job scheduler separately.
 type DistExecutionContext struct {
 	Store          kv.Storage
 	domains        []*domain.Domain
@@ -79,30 +78,17 @@ type DistExecutionContext struct {
 	mu             sync.Mutex
 }
 
-// InitOwner select the last domain as DDL owner.
-func (d *DistExecutionContext) InitOwner() {
+// TriggerOwnerChange set one mock domain to DDL Owner by idx.
+func (d *DistExecutionContext) TriggerOwnerChange() {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	for _, dom := range d.domains {
-		dom.DDL().OwnerManager().RetireOwner()
+		om := dom.DDL().OwnerManager()
+		if om.IsOwner() {
+			_ = om.ResignOwner(nil)
+			break
+		}
 	}
-	err := d.domains[len(d.domains)-1].DDL().OwnerManager().CampaignOwner()
-	require.NoError(d.t, err)
-}
-
-// SetOwner set one mock domain to DDL Owner by idx.
-func (d *DistExecutionContext) SetOwner(idx int) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	if idx >= len(d.domains) || idx < 0 {
-		require.NoError(d.t, errors.New("server idx out of bound"))
-		return
-	}
-	for _, dom := range d.domains {
-		dom.DDL().OwnerManager().RetireOwner()
-	}
-	err := d.domains[idx].DDL().OwnerManager().CampaignOwner()
-	require.NoError(d.t, err)
 }
 
 // AddDomain add 1 domain which is not ddl owner.
@@ -113,31 +99,6 @@ func (d *DistExecutionContext) AddDomain() {
 	dom.InfoSyncer().SetSessionManager(d.domains[0].InfoSyncer().GetSessionManager())
 	dom.DDL().OwnerManager().RetireOwner()
 	d.domains = append(d.domains, dom)
-}
-
-// DeleteDomain delete 1 domain by idx, set server0 as ddl owner if the deleted owner is ddl owner.
-func (d *DistExecutionContext) DeleteDomain(idx int) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	if idx >= len(d.domains) || idx < 0 {
-		require.NoError(d.t, errors.New("server idx out of bound"))
-		return
-	}
-	if len(d.domains) == 1 {
-		require.NoError(d.t, errors.New("can't delete server, since server num = 1"))
-		return
-	}
-	if d.domains[idx].DDL().OwnerManager().IsOwner() {
-		d.mu.Unlock()
-		d.SetOwner(0)
-		d.mu.Lock()
-	}
-
-	d.deletedDomains = append(d.deletedDomains, d.domains[idx])
-	d.domains = append(d.domains[:idx], d.domains[idx+1:]...)
-
-	err := infosync.MockGlobalServerInfoManagerEntry.Delete(idx)
-	require.NoError(d.t, err)
 }
 
 // Close cleanup running goroutines, release resources used.
@@ -189,7 +150,6 @@ func NewDistExecutionContext(t testing.TB, serverNum int) *DistExecutionContext 
 
 	res := DistExecutionContext{
 		schematracker.UnwrapStorage(store), domains, []*domain.Domain{}, t, sync.Mutex{}}
-	res.InitOwner()
 	return &res
 }
 

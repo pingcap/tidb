@@ -65,11 +65,19 @@ func TestBackfillingDispatcherLocalMode(t *testing.T) {
 	tblInfo := tbl.Meta()
 
 	// 1.1 OnNextSubtasksBatch
+<<<<<<< HEAD:pkg/ddl/backfilling_dispatcher_test.go
 	gTask.Step = dsp.GetNextStep(gTask)
 	require.Equal(t, ddl.StepReadIndex, gTask.Step)
 	serverInfos, _, err := dsp.GetEligibleInstances(context.Background(), gTask)
 	require.NoError(t, err)
 	metas, err := dsp.OnNextSubtasksBatch(context.Background(), nil, gTask, serverInfos, gTask.Step)
+=======
+	task.Step = sch.GetNextStep(&task.TaskBase)
+	require.Equal(t, proto.BackfillStepReadIndex, task.Step)
+	execIDs := []string{":4000"}
+	ctx := util.WithInternalSourceType(context.Background(), "backfill")
+	metas, err := sch.OnNextSubtasksBatch(ctx, nil, task, execIDs, task.Step)
+>>>>>>> 04c66ee9508 (ddl: decouple job scheduler from 'ddl' and make it run/exit as owner changes (#53548)):pkg/ddl/backfilling_dist_scheduler_test.go
 	require.NoError(t, err)
 	require.Equal(t, len(tblInfo.Partition.Definitions), len(metas))
 	for i, par := range tblInfo.Partition.Definitions {
@@ -78,11 +86,19 @@ func TestBackfillingDispatcherLocalMode(t *testing.T) {
 		require.Equal(t, par.ID, subTask.PhysicalTableID)
 	}
 
+<<<<<<< HEAD:pkg/ddl/backfilling_dispatcher_test.go
 	// 1.2 test partition table OnNextSubtasksBatch after StepReadIndex
 	gTask.State = proto.TaskStateRunning
 	gTask.Step = dsp.GetNextStep(gTask)
 	require.Equal(t, proto.StepDone, gTask.Step)
 	metas, err = dsp.OnNextSubtasksBatch(context.Background(), nil, gTask, serverInfos, gTask.Step)
+=======
+	// 1.2 test partition table OnNextSubtasksBatch after BackfillStepReadIndex
+	task.State = proto.TaskStateRunning
+	task.Step = sch.GetNextStep(&task.TaskBase)
+	require.Equal(t, proto.StepDone, task.Step)
+	metas, err = sch.OnNextSubtasksBatch(ctx, nil, task, execIDs, task.Step)
+>>>>>>> 04c66ee9508 (ddl: decouple job scheduler from 'ddl' and make it run/exit as owner changes (#53548)):pkg/ddl/backfilling_dist_scheduler_test.go
 	require.NoError(t, err)
 	require.Len(t, metas, 0)
 
@@ -93,8 +109,13 @@ func TestBackfillingDispatcherLocalMode(t *testing.T) {
 	/// 2. test non partition table.
 	// 2.1 empty table
 	tk.MustExec("create table t1(id int primary key, v int)")
+<<<<<<< HEAD:pkg/ddl/backfilling_dispatcher_test.go
 	gTask = createAddIndexGlobalTask(t, dom, "test", "t1", proto.Backfill, false)
 	metas, err = dsp.OnNextSubtasksBatch(context.Background(), nil, gTask, serverInfos, gTask.Step)
+=======
+	task = createAddIndexTask(t, dom, "test", "t1", proto.Backfill, false)
+	metas, err = sch.OnNextSubtasksBatch(ctx, nil, task, execIDs, task.Step)
+>>>>>>> 04c66ee9508 (ddl: decouple job scheduler from 'ddl' and make it run/exit as owner changes (#53548)):pkg/ddl/backfilling_dist_scheduler_test.go
 	require.NoError(t, err)
 	require.Equal(t, 0, len(metas))
 	// 2.2 non empty table.
@@ -105,6 +126,7 @@ func TestBackfillingDispatcherLocalMode(t *testing.T) {
 	tk.MustExec("insert into t2 values (), (), (), (), (), ()")
 	gTask = createAddIndexGlobalTask(t, dom, "test", "t2", proto.Backfill, false)
 	// 2.2.1 stepInit
+<<<<<<< HEAD:pkg/ddl/backfilling_dispatcher_test.go
 	gTask.Step = dsp.GetNextStep(gTask)
 	metas, err = dsp.OnNextSubtasksBatch(context.Background(), nil, gTask, serverInfos, gTask.Step)
 	require.NoError(t, err)
@@ -115,6 +137,18 @@ func TestBackfillingDispatcherLocalMode(t *testing.T) {
 	gTask.Step = dsp.GetNextStep(gTask)
 	require.Equal(t, proto.StepDone, gTask.Step)
 	metas, err = dsp.OnNextSubtasksBatch(context.Background(), nil, gTask, serverInfos, gTask.Step)
+=======
+	task.Step = sch.GetNextStep(&task.TaskBase)
+	metas, err = sch.OnNextSubtasksBatch(ctx, nil, task, execIDs, task.Step)
+	require.NoError(t, err)
+	require.Equal(t, 1, len(metas))
+	require.Equal(t, proto.BackfillStepReadIndex, task.Step)
+	// 2.2.2 BackfillStepReadIndex
+	task.State = proto.TaskStateRunning
+	task.Step = sch.GetNextStep(&task.TaskBase)
+	require.Equal(t, proto.StepDone, task.Step)
+	metas, err = sch.OnNextSubtasksBatch(ctx, nil, task, execIDs, task.Step)
+>>>>>>> 04c66ee9508 (ddl: decouple job scheduler from 'ddl' and make it run/exit as owner changes (#53548)):pkg/ddl/backfilling_dist_scheduler_test.go
 	require.NoError(t, err)
 	require.Equal(t, 0, len(metas))
 }

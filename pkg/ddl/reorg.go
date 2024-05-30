@@ -246,11 +246,14 @@ func (w *worker) runReorgJob(reorgInfo *reorgInfo, tblInfo *model.TableInfo,
 		if err != nil {
 			return errors.Trace(err)
 		}
+<<<<<<< HEAD
 	case <-w.ctx.Done():
 		logutil.BgLogger().Info("run reorg job quit", zap.String("category", "ddl"))
 		d.removeReorgCtx(job.ID)
 		// We return dbterror.ErrWaitReorgTimeout here too, so that outer loop will break.
 		return dbterror.ErrWaitReorgTimeout
+=======
+>>>>>>> 04c66ee9508 (ddl: decouple job scheduler from 'ddl' and make it run/exit as owner changes (#53548))
 	case <-time.After(waitTimeout):
 		rowCount := rc.getRowCount()
 		job.SetRowCount(rowCount)

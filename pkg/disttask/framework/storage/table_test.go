@@ -507,10 +507,6 @@ func TestSubtaskHistoryTable(t *testing.T) {
 	const (
 		taskID       = 1
 		taskID2      = 2
-		subTask1     = 1
-		subTask2     = 2
-		subTask3     = 3
-		subTask4     = 4 // taskID2
 		tidb1        = "tidb1"
 		tidb2        = "tidb2"
 		tidb3        = "tidb3"
@@ -518,12 +514,21 @@ func TestSubtaskHistoryTable(t *testing.T) {
 		finishedMeta = "finished"
 	)
 
+<<<<<<< HEAD
 	require.NoError(t, sm.AddNewSubTask(ctx, taskID, proto.StepInit, tidb1, []byte(meta), proto.TaskTypeExample, false))
 	require.NoError(t, sm.FinishSubtask(ctx, tidb1, subTask1, []byte(finishedMeta)))
 	require.NoError(t, sm.AddNewSubTask(ctx, taskID, proto.StepInit, tidb2, []byte(meta), proto.TaskTypeExample, false))
 	require.NoError(t, sm.UpdateSubtaskStateAndError(ctx, tidb2, subTask2, proto.TaskStateCanceled, nil))
 	require.NoError(t, sm.AddNewSubTask(ctx, taskID, proto.StepInit, tidb3, []byte(meta), proto.TaskTypeExample, false))
 	require.NoError(t, sm.UpdateSubtaskStateAndError(ctx, tidb3, subTask3, proto.TaskStateFailed, nil))
+=======
+	subTask1 := testutil.CreateSubTask(t, sm, taskID, proto.StepInit, tidb1, []byte(meta), proto.TaskTypeExample, 11)
+	require.NoError(t, sm.FinishSubtask(ctx, tidb1, subTask1, []byte(finishedMeta)))
+	subTask2 := testutil.CreateSubTask(t, sm, taskID, proto.StepInit, tidb2, []byte(meta), proto.TaskTypeExample, 11)
+	require.NoError(t, sm.UpdateSubtaskStateAndError(ctx, tidb2, subTask2, proto.SubtaskStateCanceled, nil))
+	subTask3 := testutil.CreateSubTask(t, sm, taskID, proto.StepInit, tidb3, []byte(meta), proto.TaskTypeExample, 11)
+	require.NoError(t, sm.UpdateSubtaskStateAndError(ctx, tidb3, subTask3, proto.SubtaskStateFailed, nil))
+>>>>>>> 04c66ee9508 (ddl: decouple job scheduler from 'ddl' and make it run/exit as owner changes (#53548))
 
 	subTasks, err := storage.GetSubtasksByTaskIDForTest(ctx, sm, taskID)
 	require.NoError(t, err)
@@ -555,9 +560,15 @@ func TestSubtaskHistoryTable(t *testing.T) {
 	}()
 	time.Sleep(2 * time.Second)
 
+<<<<<<< HEAD
 	require.NoError(t, sm.AddNewSubTask(ctx, taskID2, proto.StepInit, tidb1, []byte(meta), proto.TaskTypeExample, false))
 	require.NoError(t, sm.UpdateSubtaskStateAndError(ctx, tidb1, subTask4, proto.TaskStateFailed, nil))
 	require.NoError(t, sm.TransferSubTasks2History(ctx, taskID2))
+=======
+	subTask4 := testutil.CreateSubTask(t, sm, taskID2, proto.StepInit, tidb1, []byte(meta), proto.TaskTypeExample, 11)
+	require.NoError(t, sm.UpdateSubtaskStateAndError(ctx, tidb1, subTask4, proto.SubtaskStateFailed, nil))
+	require.NoError(t, testutil.TransferSubTasks2History(ctx, sm, taskID2))
+>>>>>>> 04c66ee9508 (ddl: decouple job scheduler from 'ddl' and make it run/exit as owner changes (#53548))
 
 	require.NoError(t, sm.GCSubtasks(ctx))
 

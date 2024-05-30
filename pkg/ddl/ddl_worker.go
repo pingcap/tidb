@@ -96,8 +96,9 @@ type worker struct {
 	tp              workerType
 	addingDDLJobKey string
 	ddlJobCh        chan struct{}
-	ctx             context.Context
-	wg              sync.WaitGroup
+	// for local mode worker, it's ctx of 'ddl', else it's the ctx of 'job scheduler'.
+	ctx context.Context
+	wg  sync.WaitGroup
 
 	sessPool        *sess.Pool    // sessPool is used to new sessions to execute SQL in ddl package.
 	sess            *sess.Session // sess is used and only used in running DDL job.
@@ -184,7 +185,7 @@ func (w *worker) Close() {
 	logutil.Logger(w.logCtx).Info("DDL worker closed", zap.Duration("take time", time.Since(startTime)))
 }
 
-func (dc *ddlCtx) asyncNotifyByEtcd(etcdPath string, jobID int64, jobType string) {
+func (dc *ddlCtx) notifyNewJobByEtcd(etcdPath string, jobID int64, jobType string) {
 	if dc.etcdCli == nil {
 		return
 	}
@@ -1153,7 +1154,7 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 	case model.ActionAlterTablePlacement:
 		ver, err = onAlterTablePlacement(d, t, job)
 	case model.ActionCreateResourceGroup:
-		ver, err = onCreateResourceGroup(d, t, job)
+		ver, err = onCreateResourceGroup(w.ctx, d, t, job)
 	case model.ActionAlterResourceGroup:
 		ver, err = onAlterResourceGroup(d, t, job)
 	case model.ActionDropResourceGroup:
@@ -1216,7 +1217,7 @@ func toTError(err error) *terror.Error {
 
 // waitSchemaChanged waits for the completion of updating all servers' schema or MDL synced. In order to make sure that happens,
 // we wait at most 2 * lease time(sessionTTL, 90 seconds).
-func waitSchemaChanged(d *ddlCtx, waitTime time.Duration, latestSchemaVersion int64, job *model.Job) error {
+func waitSchemaChanged(ctx context.Context, d *ddlCtx, waitTime time.Duration, latestSchemaVersion int64, job *model.Job) error {
 	if !job.IsRunning() && !job.IsRollingback() && !job.IsDone() && !job.IsRollbackDone() {
 		return nil
 	}
@@ -1231,13 +1232,21 @@ func waitSchemaChanged(d *ddlCtx, waitTime time.Duration, latestSchemaVersion in
 	}()
 
 	if latestSchemaVersion == 0 {
+<<<<<<< HEAD
 		logutil.Logger(d.ctx).Info("schema version doesn't change", zap.String("category", "ddl"))
+=======
+		logutil.DDLLogger().Info("schema version doesn't change", zap.Int64("jobID", job.ID))
+>>>>>>> 04c66ee9508 (ddl: decouple job scheduler from 'ddl' and make it run/exit as owner changes (#53548))
 		return nil
 	}
 
-	err = d.schemaSyncer.OwnerUpdateGlobalVersion(d.ctx, latestSchemaVersion)
+	err = d.schemaSyncer.OwnerUpdateGlobalVersion(ctx, latestSchemaVersion)
 	if err != nil {
+<<<<<<< HEAD
 		logutil.Logger(d.ctx).Info("update latest schema version failed", zap.String("category", "ddl"), zap.Int64("ver", latestSchemaVersion), zap.Error(err))
+=======
+		logutil.DDLLogger().Info("update latest schema version failed", zap.Int64("ver", latestSchemaVersion), zap.Error(err))
+>>>>>>> 04c66ee9508 (ddl: decouple job scheduler from 'ddl' and make it run/exit as owner changes (#53548))
 		if variable.EnableMDL.Load() {
 			return err
 		}
@@ -1248,6 +1257,7 @@ func waitSchemaChanged(d *ddlCtx, waitTime time.Duration, latestSchemaVersion in
 		}
 	}
 
+<<<<<<< HEAD
 	// OwnerCheckAllVersions returns only when all TiDB schemas are synced(exclude the isolated TiDB).
 	err = d.schemaSyncer.OwnerCheckAllVersions(d.ctx, job.ID, latestSchemaVersion)
 	if err != nil {
@@ -1318,6 +1328,15 @@ func waitSchemaSynced(d *ddlCtx, job *model.Job, waitTime time.Duration) error {
 	})
 
 	return waitSchemaChanged(d, waitTime, latestSchemaVersion, job)
+=======
+	return checkAllVersions(ctx, d, job, latestSchemaVersion, timeStart)
+}
+
+// waitSchemaSyncedForMDL likes waitSchemaSynced, but it waits for getting the metadata lock of the latest version of this DDL.
+func waitSchemaSyncedForMDL(ctx context.Context, d *ddlCtx, job *model.Job, latestSchemaVersion int64) error {
+	timeStart := time.Now()
+	return checkAllVersions(ctx, d, job, latestSchemaVersion, timeStart)
+>>>>>>> 04c66ee9508 (ddl: decouple job scheduler from 'ddl' and make it run/exit as owner changes (#53548))
 }
 
 func buildPlacementAffects(oldIDs []int64, newIDs []int64) []*model.AffectedOption {

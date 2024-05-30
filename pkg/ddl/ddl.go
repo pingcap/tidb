@@ -279,10 +279,21 @@ type ddl struct {
 	delRangeMgr       delRangeManager
 	enableTiFlashPoll *atomicutil.Bool
 	// used in the concurrency ddl.
+<<<<<<< HEAD
 	reorgWorkerPool      *workerPool
 	generalDDLWorkerPool *workerPool
 	// get notification if any DDL coming.
 	ddlJobCh chan struct{}
+=======
+	localWorkerPool *workerPool
+	// get notification if any DDL job submitted or finished.
+	ddlJobNotifyCh chan struct{}
+
+	// localJobCh is used to delivery job in local TiDB nodes.
+	localJobCh chan *limitJobTask
+	// globalIDLocal locks global id to reduce write conflict.
+	globalIDLock sync.Mutex
+>>>>>>> 04c66ee9508 (ddl: decouple job scheduler from 'ddl' and make it run/exit as owner changes (#53548))
 }
 
 // waitSchemaSyncedController is to control whether to waitSchemaSynced or not.
@@ -339,6 +350,12 @@ func (w *waitSchemaSyncedController) setAlreadyRunOnce(id int64) {
 	w.onceMap[id] = struct{}{}
 }
 
+func (w *waitSchemaSyncedController) clearOnceMap() {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.onceMap = make(map[int64]struct{}, jobOnceCapacity)
+}
+
 // ddlCtx is the context when we use worker to handle DDL jobs.
 type ddlCtx struct {
 	ctx          context.Context
@@ -361,8 +378,6 @@ type ddlCtx struct {
 	*waitSchemaSyncedController
 	*schemaVersionManager
 
-	runningJobs *runningJobs
-
 	// reorgCtx is used for reorganization.
 	reorgCtx reorgContexts
 	// backfillCtx is used for backfill workers.
@@ -384,6 +399,7 @@ type ddlCtx struct {
 		interceptor Interceptor
 	}
 
+	// TODO merge with *waitSchemaSyncedController into another new struct.
 	ddlSeqNumMu struct {
 		sync.Mutex
 		seqNum uint64
@@ -654,7 +670,6 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 		autoidCli:                  opt.AutoIDClient,
 		schemaVersionManager:       newSchemaVersionManager(),
 		waitSchemaSyncedController: newWaitSchemaSyncedController(),
-		runningJobs:                newRunningJobs(),
 	}
 	ddlCtx.reorgCtx.reorgCtxMap = make(map[int64]*reorgCtx)
 	ddlCtx.jobCtx.jobCtxMap = make(map[int64]*JobContext)
@@ -667,7 +682,12 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 		ddlCtx:            ddlCtx,
 		limitJobCh:        make(chan *limitJobTask, batchAddingJobs),
 		enableTiFlashPoll: atomicutil.NewBool(true),
+<<<<<<< HEAD
 		ddlJobCh:          make(chan struct{}, 100),
+=======
+		ddlJobNotifyCh:    make(chan struct{}, 100),
+		localJobCh:        make(chan *limitJobTask, 1),
+>>>>>>> 04c66ee9508 (ddl: decouple job scheduler from 'ddl' and make it run/exit as owner changes (#53548))
 	}
 
 	scheduler.RegisterTaskType(proto.Backfill,
@@ -712,7 +732,7 @@ func (d *ddl) newDeleteRangeManager(mock bool) delRangeManager {
 	return delRangeMgr
 }
 
-func (d *ddl) prepareWorkers4ConcurrencyDDL() {
+func (d *ddl) prepareLocalModeWorkers() {
 	workerFactory := func(tp workerType) func() (pools.Resource, error) {
 		return func() (pools.Resource, error) {
 			wk := newWorker(d.ctx, tp, d.sessPool, d.delRangeMgr, d.ddlCtx)
@@ -726,16 +746,26 @@ func (d *ddl) prepareWorkers4ConcurrencyDDL() {
 			return wk, nil
 		}
 	}
+<<<<<<< HEAD
 	// reorg worker count at least 1 at most 10.
 	reorgCnt := min(max(runtime.GOMAXPROCS(0)/4, 1), reorgWorkerCnt)
 	d.reorgWorkerPool = newDDLWorkerPool(pools.NewResourcePool(workerFactory(addIdxWorker), reorgCnt, reorgCnt, 0), jobTypeReorg)
 	d.generalDDLWorkerPool = newDDLWorkerPool(pools.NewResourcePool(workerFactory(generalWorker), generalWorkerCnt, generalWorkerCnt, 0), jobTypeGeneral)
+=======
+	// local worker count at least 2 at most 10.
+	localCnt := min(max(runtime.GOMAXPROCS(0)/4, 2), localWorkerCnt)
+	d.localWorkerPool = newDDLWorkerPool(pools.NewResourcePool(workerFactory(localWorker), localCnt, localCnt, 0), jobTypeLocal)
+>>>>>>> 04c66ee9508 (ddl: decouple job scheduler from 'ddl' and make it run/exit as owner changes (#53548))
 	failpoint.Inject("NoDDLDispatchLoop", func(val failpoint.Value) {
 		if val.(bool) {
 			failpoint.Return()
 		}
 	})
+<<<<<<< HEAD
 	d.wg.Run(d.startDispatchLoop)
+=======
+	d.wg.Run(d.startLocalWorkerLoop)
+>>>>>>> 04c66ee9508 (ddl: decouple job scheduler from 'ddl' and make it run/exit as owner changes (#53548))
 }
 
 // Start implements DDL.Start interface.
@@ -744,6 +774,7 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 
 	d.wg.Run(d.limitDDLJobs)
 	d.sessPool = sess.NewSessionPool(ctxPool, d.store)
+<<<<<<< HEAD
 	d.ownerManager.SetBeOwnerHook(func() {
 		var err error
 		d.ddlSeqNumMu.Lock()
@@ -754,6 +785,8 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 		}
 		d.runningJobs.clear()
 	})
+=======
+>>>>>>> 04c66ee9508 (ddl: decouple job scheduler from 'ddl' and make it run/exit as owner changes (#53548))
 
 	d.delRangeMgr = d.newDeleteRangeManager(ctxPool == nil)
 
@@ -761,8 +794,11 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 		logutil.BgLogger().Warn("start DDL init state syncer failed", zap.String("category", "ddl"), zap.Error(err))
 		return errors.Trace(err)
 	}
+	d.ownerManager.SetListener(&ownerListener{
+		ddl: d,
+	})
 
-	d.prepareWorkers4ConcurrencyDDL()
+	d.prepareLocalModeWorkers()
 
 	if config.TableLockEnabled() {
 		d.wg.Add(1)
@@ -825,10 +861,15 @@ func (d *ddl) DisableDDL() error {
 }
 
 // GetNextDDLSeqNum return the next DDL seq num.
-func (d *ddl) GetNextDDLSeqNum() (uint64, error) {
+func (s *jobScheduler) GetNextDDLSeqNum() (uint64, error) {
 	var count uint64
+<<<<<<< HEAD
 	ctx := kv.WithInternalSourceType(d.ctx, kv.InternalTxnDDL)
 	err := kv.RunInNewTxn(ctx, d.store, true, func(ctx context.Context, txn kv.Transaction) error {
+=======
+	ctx := kv.WithInternalSourceType(s.schCtx, kv.InternalTxnDDL)
+	err := kv.RunInNewTxn(ctx, s.store, true, func(_ context.Context, txn kv.Transaction) error {
+>>>>>>> 04c66ee9508 (ddl: decouple job scheduler from 'ddl' and make it run/exit as owner changes (#53548))
 		t := meta.NewMeta(txn)
 		var err error
 		count, err = t.GetHistoryDDLCount()
@@ -847,11 +888,16 @@ func (d *ddl) close() {
 	d.wg.Wait()
 	d.ownerManager.Cancel()
 	d.schemaSyncer.Close()
+<<<<<<< HEAD
 	if d.reorgWorkerPool != nil {
 		d.reorgWorkerPool.close()
 	}
 	if d.generalDDLWorkerPool != nil {
 		d.generalDDLWorkerPool.close()
+=======
+	if d.localWorkerPool != nil {
+		d.localWorkerPool.close()
+>>>>>>> 04c66ee9508 (ddl: decouple job scheduler from 'ddl' and make it run/exit as owner changes (#53548))
 	}
 
 	// d.delRangeMgr using sessions from d.sessPool.
@@ -976,7 +1022,7 @@ func getJobCheckInterval(job *model.Job, i int) (time.Duration, bool) {
 	}
 }
 
-func (dc *ddlCtx) asyncNotifyWorker(ch chan struct{}, etcdPath string, jobID int64, jobType string) {
+func (dc *ddlCtx) notifyNewJobSubmitted(ch chan struct{}, etcdPath string, jobID int64, jobType string) {
 	// If the workers don't run, we needn't notify workers.
 	// TODO: It does not affect informing the backfill worker.
 	if !config.GetGlobalConfig().Instance.TiDBEnableDDL.Load() {
@@ -985,7 +1031,7 @@ func (dc *ddlCtx) asyncNotifyWorker(ch chan struct{}, etcdPath string, jobID int
 	if dc.isOwner() {
 		asyncNotify(ch)
 	} else {
-		dc.asyncNotifyByEtcd(etcdPath, jobID, jobType)
+		dc.notifyNewJobByEtcd(etcdPath, jobID, jobType)
 	}
 }
 
@@ -1058,8 +1104,16 @@ func (d *ddl) DoDDLJob(ctx sessionctx.Context, job *model.Job) error {
 	sessVars.StmtCtx.IsDDLJobInQueue = true
 
 	// Notice worker that we push a new job and wait the job done.
+<<<<<<< HEAD
 	d.asyncNotifyWorker(d.ddlJobCh, addingDDLJobConcurrent, job.ID, job.Type.String())
 	logutil.BgLogger().Info("start DDL job", zap.String("category", "ddl"), zap.String("job", job.String()), zap.String("query", job.Query))
+=======
+	d.notifyNewJobSubmitted(d.ddlJobNotifyCh, addingDDLJobNotifyKey, job.ID, job.Type.String())
+	logutil.DDLLogger().Info("start DDL job", zap.Stringer("job", job), zap.String("query", job.Query))
+	if !d.shouldCheckHistoryJob(job) {
+		return nil
+	}
+>>>>>>> 04c66ee9508 (ddl: decouple job scheduler from 'ddl' and make it run/exit as owner changes (#53548))
 
 	var historyJob *model.Job
 	jobID := job.ID

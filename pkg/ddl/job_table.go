@@ -20,11 +20,13 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
@@ -40,7 +42,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
-	tidb_util "github.com/pingcap/tidb/pkg/util"
+	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -49,7 +51,9 @@ import (
 )
 
 var (
-	addingDDLJobConcurrent      = "/tidb/ddl/add_ddl_job_general"
+	// addingDDLJobNotifyKey is the key in etcd to notify DDL scheduler that there
+	// is a new DDL job.
+	addingDDLJobNotifyKey       = "/tidb/ddl/add_ddl_job_general"
 	dispatchLoopWaitingDuration = 1 * time.Second
 )
 
@@ -77,7 +81,99 @@ const (
 	jobTypeReorg
 )
 
-func (d *ddl) getJob(se *sess.Session, tp jobType, filter func(*model.Job) (bool, error)) (*model.Job, error) {
+type ownerListener struct {
+	ddl       *ddl
+	scheduler *jobScheduler
+}
+
+var _ owner.Listener = (*ownerListener)(nil)
+
+func (l *ownerListener) OnBecomeOwner() {
+	ctx, cancelFunc := context.WithCancel(l.ddl.ddlCtx.ctx)
+	l.scheduler = &jobScheduler{
+		schCtx:      ctx,
+		cancel:      cancelFunc,
+		runningJobs: newRunningJobs(),
+
+		ddlCtx:         l.ddl.ddlCtx,
+		ddlJobNotifyCh: l.ddl.ddlJobNotifyCh,
+		sessPool:       l.ddl.sessPool,
+		delRangeMgr:    l.ddl.delRangeMgr,
+	}
+	l.scheduler.start()
+}
+
+func (l *ownerListener) OnRetireOwner() {
+	if l.scheduler == nil {
+		return
+	}
+	l.scheduler.close()
+}
+
+// jobScheduler is used to schedule the DDL jobs, it's only run on the DDL owner.
+type jobScheduler struct {
+	// *ddlCtx already have context named as "ctx", so we use "schCtx" here to avoid confusion.
+	schCtx      context.Context
+	cancel      context.CancelFunc
+	wg          tidbutil.WaitGroupWrapper
+	runningJobs *runningJobs
+
+	// those fields are created on start
+	reorgWorkerPool      *workerPool
+	generalDDLWorkerPool *workerPool
+
+	// those fields are shared with 'ddl' instance
+	// TODO ddlCtx is too large for here, we should remove dependency on it.
+	*ddlCtx
+	ddlJobNotifyCh chan struct{}
+	sessPool       *sess.Pool
+	delRangeMgr    delRangeManager
+}
+
+func (s *jobScheduler) start() {
+	var err error
+	s.ddlCtx.ddlSeqNumMu.Lock()
+	defer s.ddlCtx.ddlSeqNumMu.Unlock()
+	s.ddlCtx.ddlSeqNumMu.seqNum, err = s.GetNextDDLSeqNum()
+	if err != nil {
+		logutil.DDLLogger().Error("error when getting the ddl history count", zap.Error(err))
+	}
+
+	workerFactory := func(tp workerType) func() (pools.Resource, error) {
+		return func() (pools.Resource, error) {
+			wk := newWorker(s.schCtx, tp, s.sessPool, s.delRangeMgr, s.ddlCtx)
+			sessForJob, err := s.sessPool.Get()
+			if err != nil {
+				return nil, err
+			}
+			sessForJob.GetSessionVars().SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
+			wk.sess = sess.NewSession(sessForJob)
+			metrics.DDLCounter.WithLabelValues(fmt.Sprintf("%s_%s", metrics.CreateDDL, wk.String())).Inc()
+			return wk, nil
+		}
+	}
+	// reorg worker count at least 1 at most 10.
+	reorgCnt := min(max(runtime.GOMAXPROCS(0)/4, 1), reorgWorkerCnt)
+	s.reorgWorkerPool = newDDLWorkerPool(pools.NewResourcePool(workerFactory(addIdxWorker), reorgCnt, reorgCnt, 0), jobTypeReorg)
+	s.generalDDLWorkerPool = newDDLWorkerPool(pools.NewResourcePool(workerFactory(generalWorker), generalWorkerCnt, generalWorkerCnt, 0), jobTypeGeneral)
+	s.wg.RunWithLog(s.startDispatchLoop)
+	s.wg.RunWithLog(func() {
+		s.schemaSyncer.SyncJobSchemaVerLoop(s.schCtx)
+	})
+}
+
+func (s *jobScheduler) close() {
+	s.cancel()
+	s.wg.Wait()
+	if s.reorgWorkerPool != nil {
+		s.reorgWorkerPool.close()
+	}
+	if s.generalDDLWorkerPool != nil {
+		s.generalDDLWorkerPool.close()
+	}
+}
+
+func (s *jobScheduler) getJob(se *sess.Session, tp jobType, filter func(*model.Job) (bool, error)) (*model.Job, error) {
 	not := "not"
 	label := "get_job_general"
 	if tp == jobTypeReorg {
@@ -88,7 +184,7 @@ func (d *ddl) getJob(se *sess.Session, tp jobType, filter func(*model.Job) (bool
 		(select min(job_id) from mysql.tidb_ddl_job group by schema_ids, table_ids, processing)
 		and %s reorg %s order by processing desc, job_id`
 	var excludedJobIDs string
-	if ids := d.runningJobs.allIDs(); len(ids) > 0 {
+	if ids := s.runningJobs.allIDs(); len(ids) > 0 {
 		excludedJobIDs = fmt.Sprintf("and job_id not in (%s)", ids)
 	}
 	sql := fmt.Sprintf(getJobSQL, not, excludedJobIDs)
@@ -106,7 +202,7 @@ func (d *ddl) getJob(se *sess.Session, tp jobType, filter func(*model.Job) (bool
 			return nil, errors.Trace(err)
 		}
 
-		isRunnable, err := d.processJobDuringUpgrade(se, &job)
+		isRunnable, err := s.processJobDuringUpgrade(se, &job)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -124,8 +220,13 @@ func (d *ddl) getJob(se *sess.Session, tp jobType, filter func(*model.Job) (bool
 			return nil, errors.Trace(err)
 		}
 		if b {
+<<<<<<< HEAD
 			if err = d.markJobProcessing(se, &job); err != nil {
 				logutil.BgLogger().Warn(
+=======
+			if err = s.markJobProcessing(se, &job); err != nil {
+				logutil.DDLLogger().Warn(
+>>>>>>> 04c66ee9508 (ddl: decouple job scheduler from 'ddl' and make it run/exit as owner changes (#53548))
 					"[ddl] handle ddl job failed: mark job is processing meet error",
 					zap.Error(err),
 					zap.String("job", job.String()))
@@ -139,15 +240,15 @@ func (d *ddl) getJob(se *sess.Session, tp jobType, filter func(*model.Job) (bool
 
 func hasSysDB(job *model.Job) bool {
 	for _, info := range job.GetInvolvingSchemaInfo() {
-		if tidb_util.IsSysDB(info.Database) {
+		if tidbutil.IsSysDB(info.Database) {
 			return true
 		}
 	}
 	return false
 }
 
-func (d *ddl) processJobDuringUpgrade(sess *sess.Session, job *model.Job) (isRunnable bool, err error) {
-	if d.stateSyncer.IsUpgradingState() {
+func (s *jobScheduler) processJobDuringUpgrade(sess *sess.Session, job *model.Job) (isRunnable bool, err error) {
+	if s.stateSyncer.IsUpgradingState() {
 		if job.IsPaused() {
 			return false, nil
 		}
@@ -199,29 +300,29 @@ func (d *ddl) processJobDuringUpgrade(sess *sess.Session, job *model.Job) (isRun
 	return true, nil
 }
 
-func (d *ddl) getGeneralJob(sess *sess.Session) (*model.Job, error) {
-	return d.getJob(sess, jobTypeGeneral, func(job *model.Job) (bool, error) {
-		if !d.runningJobs.checkRunnable(job) {
+func (s *jobScheduler) getGeneralJob(sess *sess.Session) (*model.Job, error) {
+	return s.getJob(sess, jobTypeGeneral, func(job *model.Job) (bool, error) {
+		if !s.runningJobs.checkRunnable(job) {
 			return false, nil
 		}
 		if job.Type == model.ActionDropSchema {
 			// Check if there is any reorg job on this schema.
 			sql := fmt.Sprintf("select job_id from mysql.tidb_ddl_job where CONCAT(',', schema_ids, ',') REGEXP CONCAT(',', %s, ',') != 0 and processing limit 1", strconv.Quote(strconv.FormatInt(job.SchemaID, 10)))
-			rows, err := sess.Execute(d.ctx, sql, "check conflict jobs")
+			rows, err := sess.Execute(s.schCtx, sql, "check conflict jobs")
 			return len(rows) == 0, err
 		}
 		// Check if there is any running job works on the same table.
 		sql := fmt.Sprintf("select job_id from mysql.tidb_ddl_job t1, (select table_ids from mysql.tidb_ddl_job where job_id = %d) t2 where "+
 			"(processing and CONCAT(',', t2.table_ids, ',') REGEXP CONCAT(',', REPLACE(t1.table_ids, ',', '|'), ',') != 0)"+
 			"or (type = %d and processing)", job.ID, model.ActionFlashbackCluster)
-		rows, err := sess.Execute(d.ctx, sql, "check conflict jobs")
+		rows, err := sess.Execute(s.schCtx, sql, "check conflict jobs")
 		return len(rows) == 0, err
 	})
 }
 
-func (d *ddl) getReorgJob(sess *sess.Session) (*model.Job, error) {
-	return d.getJob(sess, jobTypeReorg, func(job *model.Job) (bool, error) {
-		if !d.runningJobs.checkRunnable(job) {
+func (s *jobScheduler) getReorgJob(sess *sess.Session) (*model.Job, error) {
+	return s.getJob(sess, jobTypeReorg, func(job *model.Job) (bool, error) {
+		if !s.runningJobs.checkRunnable(job) {
 			return false, nil
 		}
 		// Check if there is any block ddl running, like drop schema and flashback cluster.
@@ -230,41 +331,65 @@ func (d *ddl) getReorgJob(sess *sess.Session) (*model.Job, error) {
 			"or (CONCAT(',', table_ids, ',') REGEXP CONCAT(',', %s, ',') != 0 and processing) "+
 			"or (type = %d and processing) limit 1",
 			strconv.Quote(strconv.FormatInt(job.SchemaID, 10)), model.ActionDropSchema, strconv.Quote(strconv.FormatInt(job.TableID, 10)), model.ActionFlashbackCluster)
-		rows, err := sess.Execute(d.ctx, sql, "check conflict jobs")
+		rows, err := sess.Execute(s.schCtx, sql, "check conflict jobs")
 		return len(rows) == 0, err
 	})
 }
 
+<<<<<<< HEAD
 func (d *ddl) startDispatchLoop() {
 	sessCtx, err := d.sessPool.Get()
+=======
+// startLocalWorkerLoop starts the local worker loop to run the DDL job of v2.
+func (d *ddl) startLocalWorkerLoop() {
+	for {
+		select {
+		case <-d.ctx.Done():
+			return
+		case task, ok := <-d.localJobCh:
+			if !ok {
+				return
+			}
+			d.delivery2LocalWorker(d.localWorkerPool, task)
+		}
+	}
+}
+
+func (s *jobScheduler) startDispatchLoop() {
+	sessCtx, err := s.sessPool.Get()
+>>>>>>> 04c66ee9508 (ddl: decouple job scheduler from 'ddl' and make it run/exit as owner changes (#53548))
 	if err != nil {
 		logutil.BgLogger().Fatal("dispatch loop get session failed, it should not happen, please try restart TiDB", zap.Error(err))
 	}
-	defer d.sessPool.Put(sessCtx)
+	defer s.sessPool.Put(sessCtx)
 	se := sess.NewSession(sessCtx)
 	var notifyDDLJobByEtcdCh clientv3.WatchChan
-	if d.etcdCli != nil {
-		notifyDDLJobByEtcdCh = d.etcdCli.Watch(d.ctx, addingDDLJobConcurrent)
+	if s.etcdCli != nil {
+		notifyDDLJobByEtcdCh = s.etcdCli.Watch(s.schCtx, addingDDLJobNotifyKey)
 	}
+<<<<<<< HEAD
 	if err := d.checkAndUpdateClusterState(true); err != nil {
 		logutil.BgLogger().Fatal("dispatch loop get cluster state failed, it should not happen, please try restart TiDB", zap.Error(err))
+=======
+	if err := s.checkAndUpdateClusterState(true); err != nil {
+		logutil.DDLLogger().Fatal("dispatch loop get cluster state failed, it should not happen, please try restart TiDB", zap.Error(err))
+>>>>>>> 04c66ee9508 (ddl: decouple job scheduler from 'ddl' and make it run/exit as owner changes (#53548))
 	}
 	ticker := time.NewTicker(dispatchLoopWaitingDuration)
 	defer ticker.Stop()
-	isOnce := false
+	// TODO move waitSchemaSyncedController out of ddlCtx.
+	s.clearOnceMap()
 	for {
+<<<<<<< HEAD
 		if isChanClosed(d.ctx.Done()) {
+=======
+		if s.schCtx.Err() != nil {
+>>>>>>> 04c66ee9508 (ddl: decouple job scheduler from 'ddl' and make it run/exit as owner changes (#53548))
 			return
-		}
-		if !d.isOwner() {
-			isOnce = true
-			d.onceMap = make(map[int64]struct{}, jobOnceCapacity)
-			time.Sleep(dispatchLoopWaitingDuration)
-			continue
 		}
 		failpoint.Inject("ownerResignAfterDispatchLoopCheck", func() {
 			if ingest.ResignOwnerForTest.Load() {
-				err2 := d.ownerManager.ResignOwner(context.Background())
+				err2 := s.ownerManager.ResignOwner(context.Background())
 				if err2 != nil {
 					logutil.BgLogger().Info("resign meet error", zap.Error(err2))
 				}
@@ -272,32 +397,39 @@ func (d *ddl) startDispatchLoop() {
 			}
 		})
 		select {
-		case <-d.ddlJobCh:
+		case <-s.ddlJobNotifyCh:
 		case <-ticker.C:
 		case _, ok := <-notifyDDLJobByEtcdCh:
 			if !ok {
+<<<<<<< HEAD
 				logutil.BgLogger().Warn("start worker watch channel closed", zap.String("category", "ddl"), zap.String("watch key", addingDDLJobConcurrent))
 				notifyDDLJobByEtcdCh = d.etcdCli.Watch(d.ctx, addingDDLJobConcurrent)
+=======
+				logutil.DDLLogger().Warn("start worker watch channel closed", zap.String("watch key", addingDDLJobNotifyKey))
+				notifyDDLJobByEtcdCh = s.etcdCli.Watch(s.schCtx, addingDDLJobNotifyKey)
+>>>>>>> 04c66ee9508 (ddl: decouple job scheduler from 'ddl' and make it run/exit as owner changes (#53548))
 				time.Sleep(time.Second)
 				continue
 			}
-		case <-d.ctx.Done():
+		case <-s.schCtx.Done():
 			return
 		}
-		if err := d.checkAndUpdateClusterState(isOnce); err != nil {
+		if err := s.checkAndUpdateClusterState(false); err != nil {
 			continue
 		}
-		isOnce = false
-		d.loadDDLJobAndRun(se, d.generalDDLWorkerPool, d.getGeneralJob)
-		d.loadDDLJobAndRun(se, d.reorgWorkerPool, d.getReorgJob)
+		s.loadDDLJobAndRun(se, s.generalDDLWorkerPool, s.getGeneralJob)
+		s.loadDDLJobAndRun(se, s.reorgWorkerPool, s.getReorgJob)
 	}
 }
 
-func (d *ddl) checkAndUpdateClusterState(needUpdate bool) error {
+// TODO make it run in a separate routine.
+func (s *jobScheduler) checkAndUpdateClusterState(needUpdate bool) error {
 	select {
-	case _, ok := <-d.stateSyncer.WatchChan():
+	case _, ok := <-s.stateSyncer.WatchChan():
 		if !ok {
-			d.stateSyncer.Rewatch(d.ctx)
+			// TODO stateSyncer should only be started when we are the owner, and use
+			// the context of scheduler, will refactor it later.
+			s.stateSyncer.Rewatch(s.ddlCtx.ctx)
 		}
 	default:
 		if !needUpdate {
@@ -305,23 +437,28 @@ func (d *ddl) checkAndUpdateClusterState(needUpdate bool) error {
 		}
 	}
 
-	oldState := d.stateSyncer.IsUpgradingState()
-	stateInfo, err := d.stateSyncer.GetGlobalState(d.ctx)
+	oldState := s.stateSyncer.IsUpgradingState()
+	stateInfo, err := s.stateSyncer.GetGlobalState(s.schCtx)
 	if err != nil {
 		logutil.BgLogger().Warn("get global state failed", zap.String("category", "ddl"), zap.Error(err))
 		return errors.Trace(err)
 	}
+<<<<<<< HEAD
 	logutil.BgLogger().Info("get global state and global state change", zap.String("category", "ddl"),
 		zap.Bool("oldState", oldState), zap.Bool("currState", d.stateSyncer.IsUpgradingState()))
 	if !d.isOwner() {
 		return nil
 	}
+=======
+	logutil.DDLLogger().Info("get global state and global state change",
+		zap.Bool("oldState", oldState), zap.Bool("currState", s.stateSyncer.IsUpgradingState()))
+>>>>>>> 04c66ee9508 (ddl: decouple job scheduler from 'ddl' and make it run/exit as owner changes (#53548))
 
 	ownerOp := owner.OpNone
 	if stateInfo.State == syncer.StateUpgrading {
 		ownerOp = owner.OpSyncUpgradingState
 	}
-	err = d.ownerManager.SetOwnerOpValue(d.ctx, ownerOp)
+	err = s.ownerManager.SetOwnerOpValue(s.schCtx, ownerOp)
 	if err != nil {
 		logutil.BgLogger().Warn("the owner sets global state to owner operator value failed", zap.String("category", "ddl"), zap.Error(err))
 		return errors.Trace(err)
@@ -330,16 +467,16 @@ func (d *ddl) checkAndUpdateClusterState(needUpdate bool) error {
 	return nil
 }
 
-func (d *ddl) loadDDLJobAndRun(se *sess.Session, pool *workerPool, getJob func(*sess.Session) (*model.Job, error)) {
+func (s *jobScheduler) loadDDLJobAndRun(se *sess.Session, pool *workerPool, getJob func(*sess.Session) (*model.Job, error)) {
 	wk, err := pool.get()
 	if err != nil || wk == nil {
 		logutil.BgLogger().Debug(fmt.Sprintf("[ddl] no %v worker available now", pool.tp()), zap.Error(err))
 		return
 	}
 
-	d.mu.RLock()
-	d.mu.hook.OnGetJobBefore(pool.tp().String())
-	d.mu.RUnlock()
+	s.mu.RLock()
+	s.mu.hook.OnGetJobBefore(pool.tp().String())
+	s.mu.RUnlock()
 
 	job, err := getJob(se)
 	if job == nil || err != nil {
@@ -349,28 +486,84 @@ func (d *ddl) loadDDLJobAndRun(se *sess.Session, pool *workerPool, getJob func(*
 		pool.put(wk)
 		return
 	}
-	d.mu.RLock()
-	d.mu.hook.OnGetJobAfter(pool.tp().String(), job)
-	d.mu.RUnlock()
+	s.mu.RLock()
+	s.mu.hook.OnGetJobAfter(pool.tp().String(), job)
+	s.mu.RUnlock()
 
+<<<<<<< HEAD
 	d.delivery2worker(wk, pool, job)
 }
 
 // delivery2worker owns the worker, need to put it back to the pool in this function.
 func (d *ddl) delivery2worker(wk *worker, pool *workerPool, job *model.Job) {
-	injectFailPointForGetJob(job)
-	d.runningJobs.add(job)
+=======
+	s.delivery2Worker(wk, pool, job)
+}
+
+// delivery2LocalWorker runs the DDL job of v2 in local.
+// send the result to the error channels in the task.
+// delivery2Localworker owns the worker, need to put it back to the pool in this function.
+func (d *ddl) delivery2LocalWorker(pool *workerPool, task *limitJobTask) {
+	job := task.job
+	wk, err := pool.get()
+	if err != nil {
+		task.NotifyError(err)
+		return
+	}
+	for wk == nil {
+		select {
+		case <-d.ctx.Done():
+			return
+		case <-time.After(localWorkerWaitingDuration):
+		}
+		wk, err = pool.get()
+		if err != nil {
+			task.NotifyError(err)
+			return
+		}
+	}
 	d.wg.Run(func() {
 		metrics.DDLRunningJobCount.WithLabelValues(pool.tp().String()).Inc()
 		defer func() {
-			d.runningJobs.remove(job)
-			asyncNotify(d.ddlJobCh)
 			metrics.DDLRunningJobCount.WithLabelValues(pool.tp().String()).Dec()
 		}()
+
+		err := wk.HandleLocalDDLJob(d.ddlCtx, job)
+		pool.put(wk)
+		if err != nil {
+			logutil.DDLLogger().Info("handle ddl job failed", zap.Error(err), zap.Stringer("job", job))
+		}
+		task.NotifyError(err)
+	})
+}
+
+// delivery2Worker owns the worker, need to put it back to the pool in this function.
+func (s *jobScheduler) delivery2Worker(wk *worker, pool *workerPool, job *model.Job) {
+>>>>>>> 04c66ee9508 (ddl: decouple job scheduler from 'ddl' and make it run/exit as owner changes (#53548))
+	injectFailPointForGetJob(job)
+	s.runningJobs.add(job)
+	s.wg.Run(func() {
+		metrics.DDLRunningJobCount.WithLabelValues(pool.tp().String()).Inc()
+		defer func() {
+			s.runningJobs.remove(job)
+			asyncNotify(s.ddlJobNotifyCh)
+			metrics.DDLRunningJobCount.WithLabelValues(pool.tp().String()).Dec()
+			if wk.ctx.Err() != nil && ingest.LitBackCtxMgr != nil {
+				// if ctx cancelled, i.e. owner changed, we need to Unregister the backend
+				// as litBackendCtx is holding this very 'ctx', and it cannot reuse now.
+				// TODO make LitBackCtxMgr a local value of the job scheduler, it makes
+				// it much harder to test multiple owners in 1 unit test.
+				ingest.LitBackCtxMgr.Unregister(job.ID)
+			}
+		}()
+<<<<<<< HEAD
+=======
+		ownerID := s.ownerManager.ID()
+>>>>>>> 04c66ee9508 (ddl: decouple job scheduler from 'ddl' and make it run/exit as owner changes (#53548))
 		// check if this ddl job is synced to all servers.
-		if !job.NotStarted() && (!d.isSynced(job) || !d.maybeAlreadyRunOnce(job.ID)) {
+		if !job.NotStarted() && (!s.isSynced(job) || !s.maybeAlreadyRunOnce(job.ID)) {
 			if variable.EnableMDL.Load() {
-				exist, version, err := checkMDLInfo(job.ID, d.sessPool)
+				exist, version, err := checkMDLInfo(job.ID, s.sessPool)
 				if err != nil {
 					logutil.BgLogger().Warn("check MDL info failed", zap.String("category", "ddl"), zap.Error(err), zap.String("job", job.String()))
 					// Release the worker resource.
@@ -379,17 +572,22 @@ func (d *ddl) delivery2worker(wk *worker, pool *workerPool, job *model.Job) {
 				} else if exist {
 					// Release the worker resource.
 					pool.put(wk)
-					err = waitSchemaSyncedForMDL(d.ddlCtx, job, version)
+					err = waitSchemaSyncedForMDL(wk.ctx, s.ddlCtx, job, version)
 					if err != nil {
 						return
 					}
+<<<<<<< HEAD
 					d.setAlreadyRunOnce(job.ID)
 					cleanMDLInfo(d.sessPool, job.ID, d.etcdCli, job.State == model.JobStateSynced)
+=======
+					s.setAlreadyRunOnce(job.ID)
+					cleanMDLInfo(s.sessPool, job, s.etcdCli, ownerID, job.State == model.JobStateSynced)
+>>>>>>> 04c66ee9508 (ddl: decouple job scheduler from 'ddl' and make it run/exit as owner changes (#53548))
 					// Don't have a worker now.
 					return
 				}
 			} else {
-				err := waitSchemaSynced(d.ddlCtx, job, 2*d.lease)
+				err := waitSchemaSynced(wk.ctx, s.ddlCtx, job, 2*s.lease)
 				if err != nil {
 					logutil.BgLogger().Warn("wait ddl job sync failed", zap.String("category", "ddl"), zap.Error(err), zap.String("job", job.String()))
 					time.Sleep(time.Second)
@@ -397,11 +595,16 @@ func (d *ddl) delivery2worker(wk *worker, pool *workerPool, job *model.Job) {
 					pool.put(wk)
 					return
 				}
-				d.setAlreadyRunOnce(job.ID)
+				s.setAlreadyRunOnce(job.ID)
 			}
 		}
 
+<<<<<<< HEAD
 		schemaVer, err := wk.HandleDDLJobTable(d.ddlCtx, job)
+=======
+		schemaVer, err := wk.HandleDDLJobTable(s.ddlCtx, job)
+		logCtx := wk.logCtx
+>>>>>>> 04c66ee9508 (ddl: decouple job scheduler from 'ddl' and make it run/exit as owner changes (#53548))
 		pool.put(wk)
 		if err != nil {
 			logutil.BgLogger().Info("handle ddl job failed", zap.String("category", "ddl"), zap.Error(err), zap.String("job", job.String()))
@@ -418,31 +621,41 @@ func (d *ddl) delivery2worker(wk *worker, pool *workerPool, job *model.Job) {
 			// Here means the job enters another state (delete only, write only, public, etc...) or is cancelled.
 			// If the job is done or still running or rolling back, we will wait 2 * lease time or util MDL synced to guarantee other servers to update
 			// the newest schema.
-			err := waitSchemaChanged(d.ddlCtx, d.lease*2, schemaVer, job)
+			err := waitSchemaChanged(wk.ctx, s.ddlCtx, s.lease*2, schemaVer, job)
 			if err != nil {
 				// May be caused by server closing, shouldn't clean the MDL info.
 				logutil.BgLogger().Info("wait latest schema version error", zap.String("category", "ddl"), zap.Error(err))
 				return
 			}
+<<<<<<< HEAD
 			cleanMDLInfo(d.sessPool, job.ID, d.etcdCli, job.State == model.JobStateSynced)
 			d.synced(job)
+=======
+			cleanMDLInfo(s.sessPool, job, s.etcdCli, ownerID, job.State == model.JobStateSynced)
+			s.synced(job)
+>>>>>>> 04c66ee9508 (ddl: decouple job scheduler from 'ddl' and make it run/exit as owner changes (#53548))
 
 			if RunInGoTest {
-				// d.mu.hook is initialed from domain / test callback, which will force the owner host update schema diff synchronously.
-				d.mu.RLock()
-				d.mu.hook.OnSchemaStateChanged(schemaVer)
-				d.mu.RUnlock()
+				// s.mu.hook is initialed from domain / test callback, which will force the owner host update schema diff synchronously.
+				s.mu.RLock()
+				s.mu.hook.OnSchemaStateChanged(schemaVer)
+				s.mu.RUnlock()
 			}
 
-			d.mu.RLock()
-			d.mu.hook.OnJobUpdated(job)
-			d.mu.RUnlock()
+			s.mu.RLock()
+			s.mu.hook.OnJobUpdated(job)
+			s.mu.RUnlock()
 		}
 	})
 }
 
+<<<<<<< HEAD
 func (*ddl) markJobProcessing(se *sess.Session, job *model.Job) error {
 	se.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
+=======
+func (*jobScheduler) markJobProcessing(se *sess.Session, job *model.Job) error {
+	se.GetSessionVars().SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
+>>>>>>> 04c66ee9508 (ddl: decouple job scheduler from 'ddl' and make it run/exit as owner changes (#53548))
 	_, err := se.Execute(context.Background(), fmt.Sprintf(
 		"update mysql.tidb_ddl_job set processing = 1 where job_id = %d", job.ID),
 		"mark_job_processing")
