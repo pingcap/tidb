@@ -262,8 +262,14 @@ type targetInfoGetter struct {
 	pdHTTPCli pdhttp.Client
 }
 
-// NewTargetInfoGetter creates an TargetInfoGetter with local backend implementation.
-func NewTargetInfoGetter(tls *common.TLS, db *sql.DB, pdHTTPCli pdhttp.Client) backend.TargetInfoGetter {
+// NewTargetInfoGetter creates an TargetInfoGetter with local backend
+// implementation. `pdHTTPCli` should not be nil when need to check component
+// versions in CheckRequirements.
+func NewTargetInfoGetter(
+	tls *common.TLS,
+	db *sql.DB,
+	pdHTTPCli pdhttp.Client,
+) backend.TargetInfoGetter {
 	return &targetInfoGetter{
 		tls:       tls,
 		targetDB:  db,
@@ -292,6 +298,9 @@ func (g *targetInfoGetter) CheckRequirements(ctx context.Context, checkCtx *back
 	}
 	if err := checkTiDBVersion(ctx, versionStr, localMinTiDBVersion, localMaxTiDBVersion); err != nil {
 		return err
+	}
+	if g.pdHTTPCli == nil {
+		return common.ErrUnknown.GenWithStack("pd HTTP client is required for component version check in local backend")
 	}
 	if err := tikv.CheckPDVersion(ctx, g.pdHTTPCli, localMinPDVersion, localMaxPDVersion); err != nil {
 		return err
