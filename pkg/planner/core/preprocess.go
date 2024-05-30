@@ -1814,11 +1814,11 @@ func tryLockMDLAndUpdateSchemaIfNecessary(sctx sessionctx.Context, dbName model.
 	var err error
 	defer func() {
 		if err == nil && !skipLock {
-			dbId, ok := is.SchemaByName(dbName)
+			dbID, ok := is.SchemaByName(dbName)
 			if !ok {
 				return
 			}
-			sctx.GetSessionVars().StmtCtx.MDLRelatedTableIDs[tbl.Meta().ID] = dbId.ID
+			sctx.GetSessionVars().StmtCtx.MDLRelatedTableIDs[tbl.Meta().ID] = dbID.ID
 		}
 	}()
 	if _, ok := sctx.GetSessionVars().GetRelatedTableForMDL().Load(tableInfo.ID); !ok {
