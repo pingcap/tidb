@@ -113,13 +113,10 @@ http_archive(
 
 http_archive(
     name = "rules_proto",
-    sha256 = "aa1ee19226f707d44bee44c720915199c20c84a23318bb0597ed4e5c873ccbd5",
-    strip_prefix = "rules_proto-40298556293ae502c66579620a7ce867d5f57311",
+    sha256 = "303e86e722a520f6f326a50b41cfc16b98fe6d1955ce46642a5b7a67c11c0f5d",
+    strip_prefix = "rules_proto-6.0.0",
     urls = [
-        "http://bazel-cache.pingcap.net:8080/gomod/rules/rules_proto/rules_proto-40298556293ae502c66579620a7ce867d5f57311.tar.gz",
-        "http://ats.apps.svc/gomod/gomod/rules/rules_proto/rules_proto-40298556293ae502c66579620a7ce867d5f57311.tar.gz",
-        "https://mirror.bazel.build/github.com/bazelbuild/rules_proto/archive/40298556293ae502c66579620a7ce867d5f57311.tar.gz",
-        "https://github.com/bazelbuild/rules_proto/archive/40298556293ae502c66579620a7ce867d5f57311.tar.gz",
+        "https://github.com/bazelbuild/rules_proto/releases/download/6.0.0/rules_proto-6.0.0.tar.gz",
     ],
 )
 
