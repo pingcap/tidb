@@ -565,6 +565,7 @@ func SetBackfillTaskChanSizeForTest(n int) {
 // The above operations are completed in a transaction.
 // Finally, update the concurrent processing of the total number of rows, and store the completed handle value.
 func (dc *ddlCtx) writePhysicalTableRecord(
+	ctx context.Context,
 	sessPool *sess.Pool,
 	t table.PhysicalTable,
 	bfWorkerType backfillerType,
@@ -585,7 +586,7 @@ func (dc *ddlCtx) writePhysicalTableRecord(
 
 	jc := reorgInfo.NewJobContext()
 
-	eg, egCtx := util.NewErrorGroupWithRecoverWithCtx(dc.ctx)
+	eg, egCtx := util.NewErrorGroupWithRecoverWithCtx(ctx)
 
 	scheduler, err := newBackfillScheduler(egCtx, reorgInfo, sessPool, bfWorkerType, t, jc)
 	if err != nil {
