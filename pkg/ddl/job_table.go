@@ -514,7 +514,7 @@ func (s *jobScheduler) delivery2Worker(wk *worker, pool *workerPool, job *model.
 			s.runningJobs.remove(job)
 			asyncNotify(s.ddlJobNotifyCh)
 			metrics.DDLRunningJobCount.WithLabelValues(pool.tp().String()).Dec()
-			if wk.ctx.Err() != nil {
+			if wk.ctx.Err() != nil && ingest.LitBackCtxMgr != nil {
 				// if ctx cancelled, i.e. owner changed, we need to Unregister the backend
 				// as litBackendCtx is holding this very 'ctx', and it cannot reuse now.
 				// TODO make LitBackCtxMgr a local value of the job scheduler, it makes
