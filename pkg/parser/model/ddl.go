@@ -953,6 +953,14 @@ func (job *Job) NotStarted() bool {
 	return job.State == JobStateNone || job.State == JobStateQueueing
 }
 
+// InTerminalState returns whether the job is in a terminal state.
+// TODO JobStateRollbackDone is not a terminal state, maybe we should add a JobStateRollbackSynced
+// state to diff between the entrance of JobStateRollbackDone and move the job to
+// history where the job is in terminal state.
+func (job *Job) InTerminalState() bool {
+	return job.State == JobStateSynced || job.State == JobStateCancelled || job.State == JobStatePaused
+}
+
 // MayNeedReorg indicates that this job may need to reorganize the data.
 func (job *Job) MayNeedReorg() bool {
 	switch job.Type {
@@ -1040,6 +1048,9 @@ const (
 	JobStateCancelled    JobState = 5
 	// JobStateSynced is used to mark the information about the completion of this job
 	// has been synchronized to all servers.
+	// job of this state will not be written to the tidb_ddl_job table, when job
+	// is in `done` state and version synchronized, the job will be deleted from
+	// tidb_ddl_job table, and we insert a `synced` job to the history table and queue directly.
 	JobStateSynced JobState = 6
 	// JobStateCancelling is used to mark the DDL job is cancelled by the client, but the DDL work hasn't handle it.
 	JobStateCancelling JobState = 7

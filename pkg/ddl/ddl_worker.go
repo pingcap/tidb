@@ -625,7 +625,7 @@ func (w *worker) registerMDLInfo(job *model.Job, ver int64) error {
 }
 
 // cleanMDLInfo cleans metadata lock info.
-func cleanMDLInfo(pool *sess.Pool, job *model.Job, ec *clientv3.Client, ownerID string, cleanETCD bool) {
+func (s *jobScheduler) cleanMDLInfo(job *model.Job, ownerID string) {
 	if !variable.EnableMDL.Load() {
 		return
 	}
@@ -637,18 +637,19 @@ func cleanMDLInfo(pool *sess.Pool, job *model.Job, ec *clientv3.Client, ownerID 
 	} else {
 		sql = fmt.Sprintf("delete from mysql.tidb_mdl_info where job_id = %d and owner_id = '%s'", job.ID, ownerID)
 	}
-	sctx, _ := pool.Get()
-	defer pool.Put(sctx)
+	sctx, _ := s.sessPool.Get()
+	defer s.sessPool.Put(sctx)
 	se := sess.NewSession(sctx)
 	se.GetSessionVars().SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
-	_, err := se.Execute(context.Background(), sql, "delete-mdl-info")
+	_, err := se.Execute(s.schCtx, sql, "delete-mdl-info")
 	if err != nil {
 		logutil.DDLLogger().Warn("unexpected error when clean mdl info", zap.Int64("job ID", job.ID), zap.Error(err))
 		return
 	}
-	if cleanETCD && ec != nil {
+	// TODO do we need clean it for JobStateRollbackDone?
+	if job.State == model.JobStateSynced && s.etcdCli != nil {
 		path := fmt.Sprintf("%s/%d/", util.DDLAllSchemaVersionsByJob, job.ID)
-		_, err = ec.Delete(context.Background(), path, clientv3.WithPrefix())
+		_, err = s.etcdCli.Delete(s.schCtx, path, clientv3.WithPrefix())
 		if err != nil {
 			logutil.DDLLogger().Warn("delete versions failed", zap.Int64("job ID", job.ID), zap.Error(err))
 		}
