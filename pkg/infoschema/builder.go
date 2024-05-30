@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/util/domainutil"
 	"github.com/pingcap/tidb/pkg/util/intest"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 )
 
 // Builder builds a new InfoSchema.
@@ -417,7 +418,27 @@ func (b *Builder) applyTableUpdate(m *meta.Meta, diff *model.SchemaDiff) ([]int6
 			fmt.Sprintf("(Schema ID %d)", diff.SchemaID),
 		)
 	}
-	dbInfo := b.getSchemaAndCopyIfNecessary(roDBInfo.Name.L)
+	tblInfo, err := m.GetTable(roDBInfo.ID, diff.TableID)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	tblName := ""
+	ver := ""
+	if tblInfo != nil && tblInfo.Name.L == "stock" {
+		tblName = tblInfo.Name.L
+		ver = fmt.Sprintf("%d", diff.Version)
+		if tblInfo != nil && tblInfo.Name.L == "stock" {
+			tblName = tblInfo.Name.L
+			ver = fmt.Sprintf("%d", diff.Version)
+			if tblName == "stock" {
+				logutil.BgLogger().Warn(fmt.Sprintf("xxx builder------------------------------------ ver:%v, tbl:%x, tbl:%v",
+					ver, &tblInfo, tblInfo))
+			}
+		}
+
+	}
+
+	dbInfo := b.getSchemaAndCopyIfNecessary(roDBInfo.Name.L, tblName, ver)
 	oldTableID, newTableID := b.getTableIDs(diff)
 	b.updateBundleForTableUpdate(diff, newTableID, oldTableID)
 	b.copySortedTables(oldTableID, newTableID)
@@ -434,6 +455,15 @@ func (b *Builder) applyTableUpdate(m *meta.Meta, diff *model.SchemaDiff) ([]int6
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
+		if tblInfo != nil && tblInfo.Name.L == "stock" {
+			tblName = tblInfo.Name.L
+			ver = fmt.Sprintf("%d", diff.Version)
+			if tblName == "stock" {
+				logutil.BgLogger().Warn(fmt.Sprintf("xxx builder------------------------------------ ver:%v, tbl:%x, tbl:%v, db:%x, db:%v",
+					ver, &tblInfo, tblInfo, &dbInfo, dbInfo))
+			}
+		}
+
 	}
 	return tblIDs, nil
 }
@@ -826,7 +856,14 @@ func (b *Builder) copySchemasMap(oldIS *infoSchema) {
 // It also does modifications on the new one because old schemaTables must be read-only.
 // And it will only copy the changed database once in the lifespan of the Builder.
 // NOTE: please make sure the dbName is in lowercase.
-func (b *Builder) getSchemaAndCopyIfNecessary(dbName string) *model.DBInfo {
+func (b *Builder) getSchemaAndCopyIfNecessary(dbNames ...string) *model.DBInfo {
+	dbName := dbNames[0]
+	tblName := ""
+	ver := ""
+	if len(dbNames) > 2 {
+		tblName = dbNames[1]
+		ver = dbNames[2]
+	}
 	if !b.dirtyDB[dbName] {
 		b.dirtyDB[dbName] = true
 		oldSchemaTables := b.infoSchema.schemaMap[dbName]
@@ -838,6 +875,10 @@ func (b *Builder) getSchemaAndCopyIfNecessary(dbName string) *model.DBInfo {
 			newSchemaTables.tables[k] = v
 		}
 		b.infoSchema.addSchema(newSchemaTables)
+		if tblName == "stock" {
+			logutil.BgLogger().Warn(fmt.Sprintf("xxx builder------------------------------------ ver:%v, db:%x, db:%v",
+				ver, &newSchemaTables.dbInfo, newSchemaTables.dbInfo))
+		}
 		return newSchemaTables.dbInfo
 	}
 	return b.infoSchema.schemaMap[dbName].dbInfo

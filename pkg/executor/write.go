@@ -16,6 +16,7 @@ package executor
 
 import (
 	"context"
+	"fmt"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -35,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/collate"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/tracing"
 )
@@ -201,6 +203,20 @@ func updateRecord(
 			}
 			return false, err
 		}
+		if t.Meta().Name.L == "stock" {
+			str := ""
+			for _, col := range t.Meta().Columns {
+				str += fmt.Sprintf("col:%#v;", col)
+			}
+			txn, err := sctx.Txn(true)
+			if err != nil {
+				return false, err
+			}
+			tm := t.Meta()
+			logutil.BgLogger().Warn(fmt.Sprintf("xxx update------------------------------------ ts:%v, ver:%v, tbl name:%s, id:%d, cols:%v, tbl:%x",
+				sctx.GetInfoSchema().SchemaMetaVersion(), txn.StartTS(), t.Meta().Name, t.Meta().ID, str, &tm))
+		}
+
 		if sctx.GetSessionVars().LockUnchangedKeys {
 			// Lock unique keys when handle unchanged
 			if _, err := addUnchangedKeysForLockByRow(sctx, t, h, oldData, lockUniqueKeys); err != nil {

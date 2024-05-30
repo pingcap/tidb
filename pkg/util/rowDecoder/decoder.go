@@ -116,6 +116,21 @@ func (rd *RowDecoder) DecodeAndEvalRowWithMap(ctx sessionctx.Context, handle kv.
 	return rd.EvalRemainedExprColumnMap(ctx, row)
 }
 
+// DecodeAndEvalRowWithMap decodes a byte slice into datums and evaluates the generated column value.
+func (rd *RowDecoder) DecodeAndEvalRowWithMapX(handle kv.Handle, b []byte, decodeLoc *time.Location, row map[int64]types.Datum) (map[int64]types.Datum, error) {
+	var err error
+	if rowcodec.IsNewFormat(b) {
+		row, err = tablecodec.DecodeRowWithMapNew(b, rd.colTypes, decodeLoc, row)
+	} else {
+		row, err = tablecodec.DecodeRowWithMap(b, rd.colTypes, decodeLoc, row)
+	}
+	if err != nil {
+		return nil, err
+	}
+	row, err = tablecodec.DecodeHandleToDatumMap(handle, rd.pkCols, rd.colTypes, decodeLoc, row)
+	return row, err
+}
+
 // BuildFullDecodeColMap builds a map that contains [columnID -> struct{*table.Column, expression.Expression}] from all columns.
 func BuildFullDecodeColMap(cols []*table.Column, schema *expression.Schema) map[int64]Column {
 	decodeColMap := make(map[int64]Column, len(cols))
