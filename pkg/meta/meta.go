@@ -1003,7 +1003,7 @@ func (m *Meta) GetMetasByDBID(dbID int64) ([]structure.HashPair, error) {
 
 // ListTables shows all tables in database.
 func (m *Meta) ListTables(dbID int64) ([]*model.TableInfo, error) {
-	res, err := m.GetDBMeta(dbID)
+	res, err := m.GetMetasByDBID(dbID)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1031,7 +1031,7 @@ func (m *Meta) ListTables(dbID int64) ([]*model.TableInfo, error) {
 
 // ListSimpleTables shows all simple tables in database.
 func (m *Meta) ListSimpleTables(dbID int64) ([]*model.TableNameInfo, error) {
-	res, err := m.GetDBMeta(dbID)
+	res, err := m.GetMetasByDBID(dbID)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
