@@ -216,7 +216,7 @@ func (w *worker) runReorgJob(
 	reorgInfo *reorgInfo,
 	tblInfo *model.TableInfo,
 	lease time.Duration,
-	reorgJob func() error,
+	reorgFn func() error,
 ) error {
 	job := reorgInfo.Job
 	d := reorgInfo.d
@@ -251,7 +251,7 @@ func (w *worker) runReorgJob(
 		w.wg.Add(1)
 		go func() {
 			defer w.wg.Done()
-			rc.doneCh <- reorgJob()
+			rc.doneCh <- reorgFn()
 		}()
 	}
 
