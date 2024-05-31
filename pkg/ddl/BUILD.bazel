@@ -164,7 +164,6 @@ go_library(
         "//pkg/util/sqlexec",
         "//pkg/util/sqlkiller",
         "//pkg/util/stringutil",
-        "//pkg/util/syncutil",
         "//pkg/util/tiflash",
         "//pkg/util/timeutil",
         "//pkg/util/topsql",
