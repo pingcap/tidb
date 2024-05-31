@@ -16,7 +16,9 @@ package core
 
 import (
 	"context"
+	"go.uber.org/zap"
 	"math"
+	"sort"
 	"strconv"
 	"time"
 	"unsafe"
@@ -34,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
+	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/codec"
@@ -41,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/util/hint"
 	"github.com/pingcap/tidb/util/intest"
 	"github.com/pingcap/tidb/util/kvcache"
+	"github.com/pingcap/tidb/util/logutil"
 	utilpc "github.com/pingcap/tidb/util/plancache"
 	"github.com/pingcap/tidb/util/size"
 	atomic2 "go.uber.org/atomic"
@@ -176,6 +180,26 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 	features := new(PlanCacheQueryFeatures)
 	paramStmt.Accept(features)
 
+	// Collect information for metadata lock.
+	dbName := make([]model.CIStr, 0, len(vars.StmtCtx.MDLRelatedTableIDs))
+	tbls := make([]table.Table, 0, len(vars.StmtCtx.MDLRelatedTableIDs))
+	relateVersion := make(map[int64]uint64, len(vars.StmtCtx.MDLRelatedTableIDs))
+	for id, dbID := range vars.StmtCtx.MDLRelatedTableIDs {
+		tbl, ok := is.TableByID(id)
+		if !ok {
+			logutil.BgLogger().Error("table not found in info schema", zap.Int64("tableID", id))
+			return nil, nil, 0, errors.New("table not found in info schema")
+		}
+		db, ok := is.SchemaByID(dbID)
+		if !ok {
+			logutil.BgLogger().Error("database not found in info schema", zap.Int64("dbID", dbID))
+			return nil, nil, 0, errors.New("database not found in info schema")
+		}
+		dbName = append(dbName, db.Name)
+		tbls = append(tbls, tbl)
+		relateVersion[id] = tbl.Meta().Revision
+	}
+
 	preparedObj := &PlanCacheStmt{
 		PreparedAst:         prepared,
 		StmtDB:              vars.CurrentDB,
@@ -190,6 +214,9 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 		StmtCacheable:       cacheable,
 		UncacheableReason:   reason,
 		QueryFeatures:       features,
+		dbName:              dbName,
+		tbls:                tbls,
+		RelateVersion:       relateVersion,
 	}
 	if err = CheckPreparedPriv(sctx, preparedObj, ret.InfoSchema); err != nil {
 		return nil, nil, 0, err
@@ -207,6 +234,7 @@ type planCacheKey struct {
 	connID        uint64
 	stmtText      string
 	schemaVersion int64
+	tblVersionMap map[int64]uint64
 
 	// Only be set in rc or for update read and leave it default otherwise.
 	// In Rc or ForUpdateRead, we should check whether the information schema has been changed when using plan cache.
@@ -227,6 +255,23 @@ type planCacheKey struct {
 	hash        []byte
 }
 
+func hashInt64Uint64Map(b []byte, m map[int64]uint64) []byte {
+	keys := make([]int64, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Slice(keys, func(i, j int) bool {
+		return keys[i] < keys[j]
+	})
+
+	for _, k := range keys {
+		v := m[k]
+		b = codec.EncodeInt(b, k)
+		b = codec.EncodeUint(b, v)
+	}
+	return b
+}
+
 // Hash implements Key interface.
 func (key *planCacheKey) Hash() []byte {
 	if len(key.hash) == 0 {
@@ -237,6 +282,7 @@ func (key *planCacheKey) Hash() []byte {
 		key.hash = codec.EncodeInt(key.hash, int64(key.connID))
 		key.hash = append(key.hash, hack.Slice(key.stmtText)...)
 		key.hash = codec.EncodeInt(key.hash, key.schemaVersion)
+		key.hash = hashInt64Uint64Map(key.hash, key.tblVersionMap)
 		key.hash = codec.EncodeInt(key.hash, key.lastUpdatedSchemaVersion)
 		key.hash = codec.EncodeInt(key.hash, int64(key.sqlMode))
 		key.hash = codec.EncodeInt(key.hash, int64(key.timezoneOffset))
@@ -295,8 +341,7 @@ func SetPstmtIDSchemaVersion(key kvcache.Key, stmtText string, schemaVersion int
 // NewPlanCacheKey creates a new planCacheKey object.
 // Note: lastUpdatedSchemaVersion will only be set in the case of rc or for update read in order to
 // differentiate the cache key. In other cases, it will be 0.
-func NewPlanCacheKey(sessionVars *variable.SessionVars, stmtText, stmtDB string, schemaVersion int64,
-	lastUpdatedSchemaVersion int64, bindSQL string, exprBlacklistTS int64) (kvcache.Key, error) {
+func NewPlanCacheKey(sessionVars *variable.SessionVars, stmtText, stmtDB string, schemaVersion, lastUpdatedSchemaVersion int64, bindSQL string, exprBlacklistTS int64, relatedSchemaVersion map[int64]uint64) (kvcache.Key, error) {
 	if stmtText == "" {
 		return nil, errors.New("no statement text")
 	}
@@ -315,6 +360,7 @@ func NewPlanCacheKey(sessionVars *variable.SessionVars, stmtText, stmtDB string,
 		connID:                   sessionVars.ConnectionID,
 		stmtText:                 stmtText,
 		schemaVersion:            schemaVersion,
+		tblVersionMap:            make(map[int64]uint64),
 		lastUpdatedSchemaVersion: lastUpdatedSchemaVersion,
 		sqlMode:                  sessionVars.SQLMode,
 		timezoneOffset:           timezoneOffset,
@@ -328,6 +374,9 @@ func NewPlanCacheKey(sessionVars *variable.SessionVars, stmtText, stmtDB string,
 	}
 	for k, v := range sessionVars.IsolationReadEngines {
 		key.isolationReadEngines[k] = v
+	}
+	for k, v := range relatedSchemaVersion {
+		key.tblVersionMap[k] = v
 	}
 	return key, nil
 }
@@ -447,6 +496,9 @@ type PlanCacheStmt struct {
 	// If the current plan is not PointGet or does not use MaxTS optimization, this value should be nil here.
 	Executor interface{}
 
+	// RelateVersion stores the true cache plan table schema version, since each table schema can be updated separately in transaction.
+	RelateVersion map[int64]uint64
+
 	StmtCacheable     bool   // Whether this stmt is cacheable.
 	UncacheableReason string // Why this stmt is uncacheable.
 	QueryFeatures     *PlanCacheQueryFeatures
@@ -466,6 +518,10 @@ type PlanCacheStmt struct {
 	//  NormalizedSQL4PC: select * from `test` . `t` where `a` > ? and `b` < ? --> schema name is added,
 	//  StmtText: select * from t where a>1 and b <? --> just format the original query;
 	StmtText string
+
+	// dbName and tbls are used to add metadata lock.
+	dbName []model.CIStr
+	tbls   []table.Table
 }
 
 // GetPreparedStmt extract the prepared statement from the execute statement.

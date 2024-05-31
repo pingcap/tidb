@@ -62,7 +62,7 @@ go_test(
     ],
     embed = [":ingest"],
     flaky = True,
-    shard_count = 13,
+    shard_count = 15,
     deps = [
         "//config",
         "//ddl/internal/session",
@@ -70,6 +70,7 @@ go_test(
         "//errno",
         "//kv",
         "//parser/model",
+        "//server",
         "//sessionctx",
         "//testkit",
         "//tests/realtikvtest",
