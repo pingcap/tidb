@@ -317,17 +317,15 @@ func onCreateView(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) 
 	tbInfo.State = model.StateNone
 
 	oldTableID, err := findOldTableID(d, t, schemaID, tbInfo.Name.L)
+	err = ignoreTableNotExistsErr(err)
 	if err != nil {
-		shouldContinue := false
 		if infoschema.ErrDatabaseNotExists.Equal(err) {
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
-		} else if infoschema.ErrTableNotExists.Equal(err) {
-			shouldContinue = true
 		} else if !infoschema.ErrTableExists.Equal(err) {
 			return ver, errors.Trace(err)
 		}
-		if !orReplace && !shouldContinue {
+		if !orReplace {
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
 		}
@@ -364,6 +362,13 @@ func onCreateView(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) 
 	default:
 		return ver, dbterror.ErrInvalidDDLState.GenWithStackByArgs("table", tbInfo.State)
 	}
+}
+
+func ignoreTableNotExistsErr(err error) error {
+	if infoschema.ErrTableNotExists.Equal(err) {
+		return nil
+	}
+	return err
 }
 
 func onDropTableOrView(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
