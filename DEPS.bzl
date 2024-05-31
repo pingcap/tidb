@@ -3024,10 +3024,6 @@ def go_deps():
         name = "com_github_golang_protobuf",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/golang/protobuf",
-        patch_args = ["-p1"],
-        patches = [
-            "//build/patches:com_github_golang_protobuf.patch",
-        ],
         sha256 = "9a2f43d3eac8ceda506ebbeb4f229254b87235ce90346692a0e233614182190b",
         strip_prefix = "github.com/golang/protobuf@v1.5.4",
         urls = [
@@ -9537,10 +9533,6 @@ def go_deps():
         name = "io_etcd_go_etcd_api_v3",
         build_file_proto_mode = "disable",
         importpath = "go.etcd.io/etcd/api/v3",
-        patch_args = ["-p2"],
-        patches = [
-            "//build/patches:io_etcd_go_etcd_api_v3.patch",
-        ],
         sha256 = "d935e64c70766be57ab28611ef071285f1aed5f62172dd5a2acf5b1aa536684c",
         strip_prefix = "go.etcd.io/etcd/api/v3@v3.5.12",
         urls = [
