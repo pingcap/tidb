@@ -1244,12 +1244,12 @@ func restoreStream(
 		} else {
 			totalDureTime := time.Since(startTime)
 			summary.Log("restore log success summary", zap.Duration("total-take", totalDureTime),
-				zap.Uint64("restore-from-point", cfg.StartTS),
-				zap.Uint64("restore-to-point", cfg.RestoreTS),
-				zap.Uint64("RestoreTS-point", currentTS),
-				zap.String("restore-from", stream.FormatDate(oracle.GetTimeFromTS(cfg.StartTS))),
-				zap.String("restore-to", stream.FormatDate(oracle.GetTimeFromTS(cfg.RestoreTS))),
-				zap.String("RestoreTS", stream.FormatDate(oracle.GetTimeFromTS(currentTS))),
+				zap.Uint64("source-start-point", cfg.StartTS),
+				zap.Uint64("source-end-point", cfg.RestoreTS),
+				zap.Uint64("target-end-point", currentTS),
+				zap.String("source-start", stream.FormatDate(oracle.GetTimeFromTS(cfg.StartTS))),
+				zap.String("source-end", stream.FormatDate(oracle.GetTimeFromTS(cfg.RestoreTS))),
+				zap.String("target-end", stream.FormatDate(oracle.GetTimeFromTS(currentTS))),
 				zap.Uint64("total-kv-count", totalKVCount),
 				zap.Uint64("skipped-kv-count-by-checkpoint", checkpointTotalKVCount),
 				zap.String("total-size", units.HumanSize(float64(totalSize))),
