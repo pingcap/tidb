@@ -42,8 +42,8 @@ func NewSession(s sessionctx.Context) *Session {
 // TODO(lance6716): provide a NewSessionWithCtx
 
 // Begin starts a transaction.
-func (s *Session) Begin() error {
-	err := sessiontxn.NewTxn(context.Background(), s.Context)
+func (s *Session) Begin(ctx context.Context) error {
+	err := sessiontxn.NewTxn(ctx, s.Context)
 	if err != nil {
 		return err
 	}
@@ -52,9 +52,9 @@ func (s *Session) Begin() error {
 }
 
 // Commit commits the transaction.
-func (s *Session) Commit() error {
-	s.StmtCommit(context.Background())
-	return s.CommitTxn(context.Background())
+func (s *Session) Commit(ctx context.Context) error {
+	s.StmtCommit(ctx)
+	return s.CommitTxn(ctx)
 }
 
 // Txn activate and returns the current transaction.
@@ -107,7 +107,7 @@ func (s *Session) Session() sessionctx.Context {
 
 // RunInTxn runs a function in a transaction.
 func (s *Session) RunInTxn(f func(*Session) error) (err error) {
-	err = s.Begin()
+	err = s.Begin(context.Background())
 	if err != nil {
 		return err
 	}
@@ -128,7 +128,7 @@ func (s *Session) RunInTxn(f func(*Session) error) (err error) {
 		s.Rollback()
 		return
 	}
-	return errors.Trace(s.Commit())
+	return errors.Trace(s.Commit(context.Background()))
 }
 
 var (

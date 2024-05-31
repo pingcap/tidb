@@ -46,7 +46,7 @@ func TestDDLHistoryBasic(t *testing.T) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnLightning)
 	err = kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
-		return ddl.AddHistoryDDLJob(sess, t, &model.Job{
+		return ddl.AddHistoryDDLJob(context.Background(), sess, t, &model.Job{
 			ID: 1,
 		}, false)
 	})
@@ -55,7 +55,7 @@ func TestDDLHistoryBasic(t *testing.T) {
 
 	err = kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
-		return ddl.AddHistoryDDLJob(sess, t, &model.Job{
+		return ddl.AddHistoryDDLJob(context.Background(), sess, t, &model.Job{
 			ID: 2,
 		}, false)
 	})

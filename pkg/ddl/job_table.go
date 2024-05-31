@@ -34,6 +34,7 @@ import (
 	sess "github.com/pingcap/tidb/pkg/ddl/internal/session"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/ddl/syncer"
+	"github.com/pingcap/tidb/pkg/ddl/systable"
 	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
@@ -57,10 +58,6 @@ var (
 	addingDDLJobNotifyKey       = "/tidb/ddl/add_ddl_job_general"
 	dispatchLoopWaitingDuration = 1 * time.Second
 	localWorkerWaitingDuration  = 10 * time.Millisecond
-
-	// errJobNotFound is the error when we can't found the job.
-	// might happen when there are multiple owners and 1 of them run and delete it.
-	errJobNotFound = errors.New("job not found")
 )
 
 func init() {
@@ -103,6 +100,7 @@ func (l *ownerListener) OnBecomeOwner() {
 		schCtx:      ctx,
 		cancel:      cancelFunc,
 		runningJobs: newRunningJobs(),
+		sysTblMgr:   systable.NewManager(l.ddl.sessPool),
 
 		ddlCtx:         l.ddl.ddlCtx,
 		ddlJobNotifyCh: l.ddl.ddlJobNotifyCh,
@@ -126,6 +124,7 @@ type jobScheduler struct {
 	cancel      context.CancelFunc
 	wg          tidbutil.WaitGroupWrapper
 	runningJobs *runningJobs
+	sysTblMgr   systable.Manager
 
 	// those fields are created on start
 	reorgWorkerPool      *workerPool
@@ -539,13 +538,13 @@ func (s *jobScheduler) delivery2Worker(wk *worker, pool *workerPool, job *model.
 			// TODO for JobStateRollbackDone we have to query 1 additional time when the
 			// job is already moved to history.
 			for {
-				job, err = s.getJobByID(job.ID)
+				job, err = s.sysTblMgr.GetJobByID(s.schCtx, job.ID)
 				if err == nil {
 					break
 				}
 
-				if err == errJobNotFound {
-					logutil.DDLLogger().Info("job is not found, might already finished",
+				if err == systable.ErrNotFound {
+					logutil.DDLLogger().Info("job not found, might already finished",
 						zap.Int64("job_id", job.ID), zap.Stringer("state", job.State))
 					return
 				}
@@ -565,12 +564,14 @@ func (s *jobScheduler) runJobWithWorker(wk *worker, job *model.Job) error {
 	// suppose we failed to sync version last time, we need to check and sync it before run
 	if !job.NotStarted() && (!s.isSynced(job) || !s.maybeAlreadyRunOnce(job.ID)) {
 		if variable.EnableMDL.Load() {
-			exist, version, err := checkMDLInfo(job.ID, s.sessPool)
+			version, err := s.sysTblMgr.GetMDLVer(s.schCtx, job.ID)
 			if err != nil {
-				wk.jobLogger(job).Warn("check MDL info failed", zap.Error(err))
-				// Release the worker resource.
-				return err
-			} else if exist {
+				if err != systable.ErrNotFound {
+					wk.jobLogger(job).Warn("check MDL info failed", zap.Error(err))
+					// Release the worker resource.
+					return err
+				}
+			} else {
 				// Release the worker resource.
 				err = waitSchemaSyncedForMDL(wk.ctx, s.ddlCtx, job, version)
 				if err != nil {
@@ -659,32 +660,6 @@ const (
 	addDDLJobSQL    = "insert into mysql.tidb_ddl_job(job_id, reorg, schema_ids, table_ids, job_meta, type, processing) values"
 	updateDDLJobSQL = "update mysql.tidb_ddl_job set job_meta = %s where job_id = %d"
 )
-
-func (s *jobScheduler) getJobByID(jobID int64) (*model.Job, error) {
-	sessCtx, err := s.sessPool.Get()
-	if err != nil {
-		logutil.DDLLogger().Fatal("dispatch loop get session failed, it should not happen, please try restart TiDB", zap.Error(err))
-	}
-	defer s.sessPool.Put(sessCtx)
-	se := sess.NewSession(sessCtx)
-
-	sql := fmt.Sprintf(`select job_meta from mysql.tidb_ddl_job where job_id = %d`, jobID)
-	rows, err := se.Execute(s.schCtx, sql, "get-job-by-id")
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	if len(rows) == 0 {
-		return nil, errJobNotFound
-	}
-	jobBinary := rows[0].GetBytes(0)
-
-	job := model.Job{}
-	err = job.Decode(jobBinary)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	return &job, nil
-}
 
 func insertDDLJobs2Table(se *sess.Session, updateRawArgs bool, jobs ...*model.Job) error {
 	failpoint.Inject("mockAddBatchDDLJobsErr", func(val failpoint.Value) {
