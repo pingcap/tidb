@@ -989,51 +989,24 @@ func (m *Meta) IterTables(dbID int64, fn func(info *model.TableInfo) error) erro
 	return errors.Trace(err)
 }
 
-// ListTables shows all tables in database.
-func (m *Meta) ListTables(dbID int64) ([]*model.TableInfo, error) {
-	dbKey := m.dbKey(dbID)
-	if err := m.checkDBExists(dbKey); err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	res, err := m.txn.HGetAll(dbKey)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	tables := make([]*model.TableInfo, 0, len(res)/2)
-	for _, r := range res {
-		// only handle table meta
-		tableKey := string(r.Field)
-		if !strings.HasPrefix(tableKey, mTablePrefix) {
-			continue
-		}
-
-		tbInfo := &model.TableInfo{}
-		err = json.Unmarshal(r.Value, tbInfo)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		tbInfo.DBID = dbID
-
-		tables = append(tables, tbInfo)
-	}
-
-	return tables, nil
-}
-
-// ListTablesByFilter return all tables that does not filtered by filter in a database.
+// GetDBMeta return all meta information of a database.
 // Note(dongmen): This method is used by TiCDC to reduce the time of changefeed initialization.
 // Ref: https://github.com/pingcap/tiflow/issues/11109
-func (m *Meta) ListTablesByFilter(
-	dbID int64,
-	filter func(info *model.TableNameInfo) bool) ([]*model.TableInfo, error) {
+func (m *Meta) GetDBMeta(dbID int64) ([]structure.HashPair, error) {
 	dbKey := m.dbKey(dbID)
 	if err := m.checkDBExists(dbKey); err != nil {
 		return nil, errors.Trace(err)
 	}
-
 	res, err := m.txn.HGetAll(dbKey)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return res, nil
+}
+
+// ListTables shows all tables in database.
+func (m *Meta) ListTables(dbID int64) ([]*model.TableInfo, error) {
+	res, err := m.GetDBMeta(dbID)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1043,14 +1016,6 @@ func (m *Meta) ListTablesByFilter(
 		// only handle table meta
 		tableKey := string(r.Field)
 		if !strings.HasPrefix(tableKey, mTablePrefix) {
-			continue
-		}
-		tbName := &model.TableNameInfo{}
-		err = json.Unmarshal(r.Value, tbName)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		if filter(tbName) {
 			continue
 		}
 
@@ -1069,12 +1034,7 @@ func (m *Meta) ListTablesByFilter(
 
 // ListSimpleTables shows all simple tables in database.
 func (m *Meta) ListSimpleTables(dbID int64) ([]*model.TableNameInfo, error) {
-	dbKey := m.dbKey(dbID)
-	if err := m.checkDBExists(dbKey); err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	res, err := m.txn.HGetAll(dbKey)
+	res, err := m.GetDBMeta(dbID)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
