@@ -228,7 +228,7 @@ func TestGRPC(t *testing.T) {
 	}()
 	defer grpcServer.Stop()
 
-	grpcConn, err := grpc.Dial(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	grpcConn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	require.NoError(t, err)
 	cli := autoid.NewAutoIDAllocClient(grpcConn)
 	_, err = cli.AllocAutoID(context.Background(), &autoid.AutoIDRequest{

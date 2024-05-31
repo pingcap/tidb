@@ -232,7 +232,7 @@ func (c *client) getOrCreateConn(addr string) (*grpc.ClientConn, error) {
 	if err != nil {
 		return nil, err
 	}
-	cc, err := grpc.Dial(u.Host, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	cc, err := grpc.NewClient(u.Host, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		return nil, err
 	}

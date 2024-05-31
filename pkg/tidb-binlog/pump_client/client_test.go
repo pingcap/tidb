@@ -177,7 +177,7 @@ func TestWriteBinlog(t *testing.T) {
 		opt := grpc.WithDialer(func(addr string, timeout time.Duration) (net.Conn, error) {
 			return net.DialTimeout(cfg.serverMode, addr, timeout)
 		})
-		clientCon, err := grpc.Dial(cfg.addr, opt, grpc.WithTransportCredentials(insecure.NewCredentials()))
+		clientCon, err := grpc.NewClient(cfg.addr, opt, grpc.WithTransportCredentials(insecure.NewCredentials()))
 		require.NoError(t, err)
 		require.NotNil(t, clientCon)
 		pumpClient := mockPumpsClient(binlog.NewPumpClient(clientCon), true)
