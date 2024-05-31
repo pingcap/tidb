@@ -1244,9 +1244,9 @@ func restoreStream(
 		} else {
 			totalDureTime := time.Since(startTime)
 			summary.Log("restore log success summary", zap.Duration("total-take", totalDureTime),
-				zap.Uint64("restore-from-tso", cfg.StartTS),
-				zap.Uint64("restore-to-tso", cfg.RestoreTS),
-				zap.Uint64("RestoreTS-tso", currentTS),
+				zap.Uint64("restore-from-point", cfg.StartTS),
+				zap.Uint64("restore-to-point", cfg.RestoreTS),
+				zap.Uint64("RestoreTS-point", currentTS),
 				zap.String("restore-from", stream.FormatDate(oracle.GetTimeFromTS(cfg.StartTS))),
 				zap.String("restore-to", stream.FormatDate(oracle.GetTimeFromTS(cfg.RestoreTS))),
 				zap.String("RestoreTS", stream.FormatDate(oracle.GetTimeFromTS(currentTS))),
