@@ -106,8 +106,8 @@ require (
 	github.com/tdakkota/asciicheck v0.2.0
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
 	github.com/tidwall/btree v1.7.0
-	github.com/tikv/client-go/v2 v2.0.8-0.20240530095257-1f814b7a4591
-	github.com/tikv/pd/client v0.0.0-20240430080403-1679dbca25b3
+	github.com/tikv/client-go/v2 v2.0.8-0.20240531102121-cb580bc4ea29
+	github.com/tikv/pd/client v0.0.0-20240531082952-199b01792159
 	github.com/timakin/bodyclose v0.0.0-20240125160201-f835fa56326a
 	github.com/twmb/murmur3 v1.1.6
 	github.com/uber/jaeger-client-go v2.22.1+incompatible
