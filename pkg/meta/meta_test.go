@@ -293,7 +293,6 @@ func TestMeta(t *testing.T) {
 		})
 		require.NoError(t, err)
 	}
-
 	// Generate an auto id.
 	n, err = m.GetAutoIDAccessors(1, 2).RowID().Inc(10)
 	require.NoError(t, err)
