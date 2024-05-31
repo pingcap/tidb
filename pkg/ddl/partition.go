@@ -1987,9 +1987,9 @@ func (w *worker) onDropTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (
 		return ver, errors.Trace(err)
 	}
 	if job.Type != model.ActionDropTablePartition {
-		// It is rollback from reorganize partition, just remove DroppingDefinitions from tableInfo
+		// If rollback from reorganize partition, remove DroppingDefinitions from tableInfo
 		tblInfo.Partition.DroppingDefinitions = nil
-		// It is rollback from adding table partition, just remove addingDefinitions from tableInfo.
+		// If rollback from adding table partition, remove addingDefinitions from tableInfo.
 		physicalTableIDs, pNames, rollbackBundles := rollbackAddingPartitionInfo(tblInfo)
 		err = infosync.PutRuleBundlesWithDefaultRetry(context.TODO(), rollbackBundles)
 		if err != nil {
@@ -4148,7 +4148,7 @@ func checkPartitioningKeysConstraints(sctx sessionctx.Context, s *ast.CreateTabl
 		if index.Unique && !checkUniqueKeyIncludePartKey(partCols, index.Columns) {
 			if index.Primary {
 				// global index does not support clustered index
-				if tblInfo.PKIsHandle || tblInfo.IsCommonHandle {
+				if tblInfo.IsCommonHandle {
 					return dbterror.ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs("CLUSTERED INDEX")
 				}
 				if !sctx.GetSessionVars().EnableGlobalIndex {

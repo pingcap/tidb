@@ -4654,7 +4654,7 @@ func (d *ddl) AlterTablePartitioning(ctx sessionctx.Context, ident ast.Ident, sp
 					if index.Primary {
 						indexTp = "PRIMARY KEY"
 					} else {
-						indexTp = "UNIQUE KEY"
+						indexTp = "UNIQUE INDEX"
 					}
 				} else if t.Meta().IsCommonHandle {
 					indexTp = "CLUSTERED INDEX"
