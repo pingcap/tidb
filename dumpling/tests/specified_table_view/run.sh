@@ -16,18 +16,16 @@ run_sql "create view \`$DB_NAME\`.\`$VIEW_NAME\` as select * from \`$DB_NAME\`.\
 
 set +e
 rm -rf "$DUMPLING_OUTPUT_DIR"
-run_dumpling --consistency=lock -T="specified_table_view.t,specified_table_view.v"
-#-L ${DUMPLING_OUTPUT_DIR}/dumpling.log
+run_dumpling --consistency=lock -T="$DB_NAME.$TABLE_NAME,$DB_NAME.$VIEW_NAME" -L ${DUMPLING_OUTPUT_DIR}/dumpling.log
 set -e
 
-file_should_exist "$DUMPLING_OUTPUT_DIR/specified_table_view.$TABLE_NAME-schema.sql"
-file_should_exist "$DUMPLING_OUTPUT_DIR/specified_table_view.$VIEW_NAME-schema-view.sql"
+file_should_exist "$DUMPLING_OUTPUT_DIR/$DB_NAME.$TABLE_NAME-schema.sql"
+file_should_exist "$DUMPLING_OUTPUT_DIR/$DB_NAME.$VIEW_NAME-schema-view.sql"
 
 set +e
 rm -rf "$DUMPLING_OUTPUT_DIR"
-run_dumpling --consistency=none -T="specified_table_view.t,specified_table_view.v"
-#-L ${DUMPLING_OUTPUT_DIR}/dumpling.log
+run_dumpling --consistency=lock -T="$DB_NAME.$TABLE_NAME,$DB_NAME.$VIEW_NAME" -L ${DUMPLING_OUTPUT_DIR}/dumpling.log
 set -e
 
-file_should_exist "$DUMPLING_OUTPUT_DIR/specified_table_view.$TABLE_NAME-schema.sql"
-file_should_exist "$DUMPLING_OUTPUT_DIR/specified_table_view.$VIEW_NAME-schema-view.sql"
+file_should_exist "$DUMPLING_OUTPUT_DIR/$DB_NAME.$TABLE_NAME-schema.sql"
+file_should_exist "$DUMPLING_OUTPUT_DIR/$DB_NAME.$VIEW_NAME-schema-view.sql"

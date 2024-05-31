@@ -256,7 +256,11 @@ func updateSpecifiedTablesMeta(tctx *tcontext.Context, db *sql.Conn, dbTables Da
 	)
 	switch listType {
 	case listTableByInfoSchema:
-		query := "SELECT TABLE_SCHEMA,TABLE_NAME,TABLE_TYPE,AVG_ROW_LENGTH FROM INFORMATION_SCHEMA.TABLES"
+		dbNames := make([]string, 0, len(dbTables))
+		for db := range dbTables {
+			dbNames = append(dbNames, fmt.Sprintf("'%s'", db))
+		}
+		query := fmt.Sprintf("SELECT TABLE_SCHEMA,TABLE_NAME,TABLE_TYPE,AVG_ROW_LENGTH FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA IN (%s)", strings.Join(dbNames, ","))
 		if err := simpleQueryWithArgs(tctx, db, func(rows *sql.Rows) error {
 			var (
 				sqlAvgRowLength sql.NullInt64
