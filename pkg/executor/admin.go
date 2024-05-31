@@ -381,6 +381,9 @@ func (e *RecoverIndexExec) fetchRecoverRows(ctx context.Context, srcResult dists
 			if err != nil {
 				return nil, err
 			}
+			if e.index.Meta().Global {
+				handle = kv.NewPartitionHandle(e.physicalID, handle)
+			}
 			idxVals, err := e.buildIndexedValues(row, e.idxValsBufs[result.scanRowCount], e.colFieldTypes, idxValLen)
 			if err != nil {
 				return nil, err
@@ -614,11 +617,7 @@ func (e *CleanupIndexExec) getIdxColTypes() []*types.FieldType {
 
 func (e *CleanupIndexExec) batchGetRecord(txn kv.Transaction) (map[string][]byte, error) {
 	e.idxValues.Range(func(h kv.Handle, _ any) bool {
-		if ph, ok := h.(kv.PartitionHandle); ok {
-			e.batchKeys = append(e.batchKeys, tablecodec.EncodeRecordKey(tablecodec.GenTableRecordPrefix(ph.PartitionID), ph.Handle))
-		} else {
-			e.batchKeys = append(e.batchKeys, tablecodec.EncodeRecordKey(e.table.RecordPrefix(), h))
-		}
+		e.batchKeys = append(e.batchKeys, tablecodec.EncodeRecordKey(e.table.RecordPrefix(), h))
 		return true
 	})
 	values, err := txn.BatchGet(context.Background(), e.batchKeys)
