@@ -283,8 +283,10 @@ func (do *Domain) loadInfoSchema(startTS uint64) (infoschema.InfoSchema, bool, i
 		is, relatedChanges, diffTypes, err := do.tryLoadSchemaDiffs(m, currentSchemaVersion, neededSchemaVersion, startTS)
 		if err == nil {
 			infoschema_metrics.LoadSchemaDurationLoadDiff.Observe(time.Since(startTime).Seconds())
+			isV2, _ := infoschema.IsV2(is)
 			do.infoCache.Insert(is, schemaTs)
 			logutil.BgLogger().Info("diff load InfoSchema success",
+				zap.Bool("isV2", isV2),
 				zap.Int64("currentSchemaVersion", currentSchemaVersion),
 				zap.Int64("neededSchemaVersion", neededSchemaVersion),
 				zap.Duration("start time", time.Since(startTime)),
@@ -436,7 +438,14 @@ func (*Domain) fetchSchemasWithTables(schemas []*model.DBInfo, m *meta.Meta, don
 			infoschema.ConvertCharsetCollateToLowerCaseIfNeed(tbl)
 			// Check whether the table is in repair mode.
 			if domainutil.RepairInfo.InRepairMode() && domainutil.RepairInfo.CheckAndFetchRepairedTable(di, tbl) {
-				continue
+				if tbl.State != model.StatePublic {
+					// Do not load it because we are reparing the table and the table info could be `bad`
+					// before repair is done.
+					continue
+				}
+				// If the state is public, it means that the DDL job is done, but the table
+				// haven't been deleted from the repair table list.
+				// Since the repairment is done and table is visible, we should load it.
 			}
 			di.Tables = append(di.Tables, tbl)
 		}
