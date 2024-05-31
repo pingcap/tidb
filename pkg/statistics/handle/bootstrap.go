@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/cache"
 	"github.com/pingcap/tidb/pkg/statistics/handle/initstats"
+	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/types"
@@ -352,9 +353,9 @@ func (h *Handle) initStatsHistogramsByPaging(is infoschema.InfoSchema, cache sta
 func (h *Handle) initStatsHistogramsConcurrency(is infoschema.InfoSchema, cache statstypes.StatsCache) error {
 	var maxTid = maxTidRecord.tid.Load()
 	tid := int64(0)
-	ls := initstats.NewRangeWorker(func(task initstats.Task) error {
+	ls := initstats.NewRangeWorker("histogram", func(task initstats.Task) error {
 		return h.initStatsHistogramsByPaging(is, cache, task)
-	})
+	}, uint64(maxTid), uint64(initStatsStep))
 	ls.LoadStats()
 	for tid <= maxTid {
 		ls.SendTask(initstats.Task{
@@ -462,9 +463,9 @@ func (h *Handle) initStatsTopNByPaging(cache statstypes.StatsCache, task initsta
 func (h *Handle) initStatsTopNConcurrency(cache statstypes.StatsCache) error {
 	var maxTid = maxTidRecord.tid.Load()
 	tid := int64(0)
-	ls := initstats.NewRangeWorker(func(task initstats.Task) error {
+	ls := initstats.NewRangeWorker("TopN", func(task initstats.Task) error {
 		return h.initStatsTopNByPaging(cache, task)
-	})
+	}, uint64(maxTid), uint64(initStatsStep))
 	ls.LoadStats()
 	for tid <= maxTid {
 		ls.SendTask(initstats.Task{
@@ -665,9 +666,9 @@ func (h *Handle) initStatsBucketsByPaging(cache statstypes.StatsCache, task init
 func (h *Handle) initStatsBucketsConcurrency(cache statstypes.StatsCache) error {
 	var maxTid = maxTidRecord.tid.Load()
 	tid := int64(0)
-	ls := initstats.NewRangeWorker(func(task initstats.Task) error {
+	ls := initstats.NewRangeWorker("bucket", func(task initstats.Task) error {
 		return h.initStatsBucketsByPaging(cache, task)
-	})
+	}, uint64(maxTid), uint64(initStatsStep))
 	ls.LoadStats()
 	for tid <= maxTid {
 		ls.SendTask(initstats.Task{
@@ -700,10 +701,12 @@ func (h *Handle) InitStatsLite(is infoschema.InfoSchema) (err error) {
 	if err != nil {
 		return errors.Trace(err)
 	}
+	statslogutil.StatsLogger().Info("complete to load the meta in the lite mode")
 	err = h.initStatsHistogramsLite(is, cache)
 	if err != nil {
 		return errors.Trace(err)
 	}
+	statslogutil.StatsLogger().Info("complete to load the histogram in the lite mode")
 	h.Replace(cache)
 	return nil
 }
@@ -728,11 +731,13 @@ func (h *Handle) InitStats(is infoschema.InfoSchema) (err error) {
 	if err != nil {
 		return errors.Trace(err)
 	}
+	statslogutil.StatsLogger().Info("complete to load the meta")
 	if config.GetGlobalConfig().Performance.ConcurrentlyInitStats {
 		err = h.initStatsHistogramsConcurrency(is, cache)
 	} else {
 		err = h.initStatsHistograms(is, cache)
 	}
+	statslogutil.StatsLogger().Info("complete to load the histogram")
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -741,6 +746,7 @@ func (h *Handle) InitStats(is infoschema.InfoSchema) (err error) {
 	} else {
 		err = h.initStatsTopN(cache)
 	}
+	statslogutil.StatsLogger().Info("complete to load the topn")
 	if err != nil {
 		return err
 	}
@@ -749,8 +755,10 @@ func (h *Handle) InitStats(is infoschema.InfoSchema) (err error) {
 		if err != nil {
 			return err
 		}
+		statslogutil.StatsLogger().Info("complete to load the FM Sketch")
 	}
 	err = h.initStatsBuckets(cache)
+	statslogutil.StatsLogger().Info("complete to load the bucket")
 	if err != nil {
 		return errors.Trace(err)
 	}

@@ -546,7 +546,10 @@ type Job struct {
 	// Priority is only used to set the operation priority of adding indices.
 	Priority int `json:"priority"`
 
-	// SeqNum is the total order in all DDLs, it's used to identify the order of DDL.
+	// SeqNum is the total order in all DDLs, it's used to identify the order of
+	// moving the job into DDL history, not the order of the job execution.
+	// fast create table doesn't honor this field, there might duplicate seq_num in this case.
+	// TODO: deprecated it, as it forces 'moving jobs into DDL history' part to be serial.
 	SeqNum uint64 `json:"seq_num"`
 
 	// Charset is the charset when the DDL Job is created.

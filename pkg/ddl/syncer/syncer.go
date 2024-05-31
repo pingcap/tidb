@@ -479,10 +479,6 @@ func (s *schemaVersionSyncer) OwnerCheckAllVersions(ctx context.Context, jobID i
 }
 
 // SyncJobSchemaVerLoop implements SchemaSyncer.SyncJobSchemaVerLoop interface.
-// this loop is quite light-weighted, so it's run on every node, and we don't need
-// to check whether it's the owner.
-// TODO run it on owner only when we refactor how DDL starts it's loop in a way similar
-// to DXF.
 func (s *schemaVersionSyncer) SyncJobSchemaVerLoop(ctx context.Context) {
 	for {
 		s.syncJobSchemaVer(ctx)
