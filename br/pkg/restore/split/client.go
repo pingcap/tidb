@@ -366,7 +366,7 @@ func sendSplitRegionRequest(
 	if c.tlsConf != nil {
 		opt = grpc.WithTransportCredentials(credentials.NewTLS(c.tlsConf))
 	}
-	conn, err := grpc.NewClient(store.GetAddress(), opt,
+	conn, err := grpc.Dial(store.GetAddress(), opt,
 		config.DefaultGrpcKeepaliveParams)
 	if err != nil {
 		return false, nil, err

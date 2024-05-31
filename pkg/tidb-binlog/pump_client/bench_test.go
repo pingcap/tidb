@@ -87,7 +87,7 @@ func createMockPumpsClientAndServer(b *testing.B) (*PumpsClient, *mockPumpServer
 		return net.DialTimeout("tcp", addr, timeout)
 	})
 
-	clientCon, err := grpc.NewClient(addr, opt, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	clientCon, err := grpc.Dial(addr, opt, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		b.Fatal(err)
 	}

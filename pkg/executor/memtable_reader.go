@@ -478,7 +478,7 @@ func (e *clusterLogRetriever) startRetrieving(
 				if serverType == "tidb" || serverType == "tiproxy" {
 					remote = statusAddr
 				}
-				conn, err := grpc.NewClient(remote, opt)
+				conn, err := grpc.Dial(remote, opt)
 				if err != nil {
 					ch <- logStreamResult{addr: address, typ: serverType, err: err}
 					return

@@ -101,7 +101,7 @@ func (dt *DetectorClient) rebuildStreamClient() error {
 	if err != nil {
 		return err
 	}
-	cc, err := grpc.NewClient(leaderAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	cc, err := grpc.Dial(leaderAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		return err
 	}

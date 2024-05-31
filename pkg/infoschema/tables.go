@@ -2636,7 +2636,7 @@ func getServerInfoByGRPC(ctx context.Context, address string, tp diagnosticspb.S
 		}
 		opt = grpc.WithTransportCredentials(credentials.NewTLS(tlsConfig))
 	}
-	conn, err := grpc.NewClient(address, opt)
+	conn, err := grpc.Dial(address, opt)
 	if err != nil {
 		return nil, err
 	}

@@ -101,7 +101,7 @@ func createBinlogSuite(t *testing.T) (s *binlogSuite) {
 	opt := grpc.WithDialer(func(addr string, timeout time.Duration) (net.Conn, error) {
 		return net.DialTimeout("unix", addr, timeout)
 	})
-	clientCon, err := grpc.NewClient(unixFile, opt, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	clientCon, err := grpc.Dial(unixFile, opt, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	require.NoError(t, err)
 	require.NotNil(t, clientCon)
 
