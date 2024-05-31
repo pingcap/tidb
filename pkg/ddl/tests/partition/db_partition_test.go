@@ -3465,3 +3465,144 @@ func TestExchangeValidateHandleNullValue(t *testing.T) {
 	tk.MustExec(`alter table t5 EXCHANGE PARTITION p0 WITH TABLE t6`)
 	// TODO: add "partition by range columns(a, b, c)" test cases.
 }
+
+func TestMultiSchemaVerDML(t *testing.T) {
+	// Last domain will be the DDLOwner
+	distCtx := testkit.NewDistExecutionContextWithLease(t, 2, 15*time.Second)
+	store := distCtx.Store
+	dom1 := distCtx.GetDomain(0)
+	dom2 := distCtx.GetDomain(1)
+	defer func() {
+		dom1.Close()
+		dom2.Close()
+		store.Close()
+	}()
+
+	ddlJobsSQL := `admin show ddl jobs where db_name = 'test' and table_name = 't' and job_type = 'alter table partition by'`
+
+	se1, err := session.CreateSessionWithDomain(store, dom1)
+	require.NoError(t, err)
+	se2, err := session.CreateSessionWithDomain(store, dom2)
+	require.NoError(t, err)
+
+	// Session on non DDL owner domain (~ TiDB Server)
+	tk1 := testkit.NewTestKitWithSession(t, store, se1)
+	// Session on DDL owner domain (~ TiDB Server), used for concurrent DDL
+	tk2 := testkit.NewTestKitWithSession(t, store, se2)
+	// Session on DDL owner domain (~ TiDB Server), used for queries
+	tk3 := testkit.NewTestKitWithSession(t, store, se2)
+	tk1.MustExec(`use test`)
+	tk2.MustExec(`use test`)
+	tk3.MustExec(`use test`)
+	// The DDL Owner will be the last created domain, so use tk2.
+	tk2.MustExec(`create table t (a int primary key, b varchar(255))`)
+	dom1.Reload()
+	dom2.Reload()
+	verStart := dom2.InfoSchema().SchemaMetaVersion()
+	alterChan := make(chan struct{})
+	originHook := dom2.DDL().GetHook()
+	// This will cause a dom2.Reload during callbacks! Not needed?
+	hook := &callback.TestDDLCallback{Do: dom2}
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		alterChan <- struct{}{}
+		<-alterChan
+	}
+	dom2.DDL().SetHook(hook)
+	defer dom2.DDL().SetHook(originHook)
+	go func() {
+		tk2.MustExec(`alter table t partition by hash(a) partitions 3`)
+		alterChan <- struct{}{}
+	}()
+	// Wait for the first state change to begin
+	<-alterChan
+	alterChan <- struct{}{}
+	// Doing the first State change
+	stateChange := int64(1)
+	<-alterChan
+	// Waiting before running the second State change
+	verCurr := dom2.InfoSchema().SchemaMetaVersion()
+	require.Equal(t, stateChange, verCurr-verStart)
+	require.Equal(t, verStart, dom1.InfoSchema().SchemaMetaVersion())
+	tk1.MustQuery(`show create table t`).Check(testkit.Rows("" +
+		"t CREATE TABLE `t` (\n" +
+		"  `a` int(11) NOT NULL,\n" +
+		"  `b` varchar(255) DEFAULT NULL,\n" +
+		"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	dom1.Reload()
+	require.Equal(t, verCurr, dom1.InfoSchema().SchemaMetaVersion())
+	tk1.MustQuery(`show create table t`).Check(testkit.Rows("" +
+		"t CREATE TABLE `t` (\n" +
+		"  `a` int(11) NOT NULL,\n" +
+		"  `b` varchar(255) DEFAULT NULL,\n" +
+		"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY NONE ()\n" +
+		"(PARTITION `pFullTable` COMMENT 'Intermediate partition during ALTER TABLE ... PARTITION BY ...')"))
+	tk1.MustQuery(ddlJobsSQL).CheckAt([]int{4, 11}, [][]any{{"delete only", "running"}})
+	alterChan <- struct{}{}
+	// doing second State change
+	stateChange++
+	<-alterChan
+	// Waiting before running the third State change
+	verCurr = dom2.InfoSchema().SchemaMetaVersion()
+	require.Equal(t, stateChange, verCurr-verStart)
+	dom1.Reload()
+	require.Equal(t, verCurr, dom1.InfoSchema().SchemaMetaVersion())
+	tk1.MustQuery(`show create table t`).Check(testkit.Rows("" +
+		"t CREATE TABLE `t` (\n" +
+		"  `a` int(11) NOT NULL,\n" +
+		"  `b` varchar(255) DEFAULT NULL,\n" +
+		"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY NONE ()\n" +
+		"(PARTITION `pFullTable` COMMENT 'Intermediate partition during ALTER TABLE ... PARTITION BY ...')"))
+	tk1.MustQuery(ddlJobsSQL).CheckAt([]int{4, 11}, [][]any{{"write only", "running"}})
+	alterChan <- struct{}{}
+	<-alterChan
+	stateChange++
+	verCurr = dom2.InfoSchema().SchemaMetaVersion()
+	require.Equal(t, stateChange, verCurr-verStart)
+	dom1.Reload()
+	require.Equal(t, verCurr, dom1.InfoSchema().SchemaMetaVersion())
+	tk1.MustQuery(`show create table t`).Check(testkit.Rows("" +
+		"t CREATE TABLE `t` (\n" +
+		"  `a` int(11) NOT NULL,\n" +
+		"  `b` varchar(255) DEFAULT NULL,\n" +
+		"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY NONE ()\n" +
+		"(PARTITION `pFullTable` COMMENT 'Intermediate partition during ALTER TABLE ... PARTITION BY ...')"))
+	tk1.MustQuery(ddlJobsSQL).CheckAt([]int{4, 11}, [][]any{{"write reorganization", "running"}})
+	alterChan <- struct{}{}
+	<-alterChan
+	stateChange++
+	verCurr = dom2.InfoSchema().SchemaMetaVersion()
+	require.Equal(t, stateChange, verCurr-verStart)
+	dom1.Reload()
+	require.Equal(t, verCurr, dom1.InfoSchema().SchemaMetaVersion())
+	tk1.MustQuery(`show create table t`).Check(testkit.Rows("" +
+		"t CREATE TABLE `t` (\n" +
+		"  `a` int(11) NOT NULL,\n" +
+		"  `b` varchar(255) DEFAULT NULL,\n" +
+		"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY HASH (`a`) PARTITIONS 3"))
+	tk1.MustQuery(ddlJobsSQL).CheckAt([]int{4, 11}, [][]any{{"delete reorganization", "running"}})
+	alterChan <- struct{}{}
+	<-alterChan
+	// Alter done!
+	stateChange++
+	verCurr = dom2.InfoSchema().SchemaMetaVersion()
+	require.Equal(t, stateChange, verCurr-verStart)
+	dom1.Reload()
+	require.Equal(t, verCurr, dom1.InfoSchema().SchemaMetaVersion())
+	tk1.MustQuery(`show create table t`).Check(testkit.Rows("" +
+		"t CREATE TABLE `t` (\n" +
+		"  `a` int(11) NOT NULL,\n" +
+		"  `b` varchar(255) DEFAULT NULL,\n" +
+		"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY HASH (`a`) PARTITIONS 3"))
+	tk1.MustQuery(ddlJobsSQL).CheckAt([]int{4, 11}, [][]any{{"none", "synced"}})
+}
