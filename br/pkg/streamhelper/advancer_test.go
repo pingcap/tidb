@@ -584,9 +584,11 @@ func TestAddTaskWithLaggedStartTS(t *testing.T) {
 		c.CheckPointLagLimit = 1 * time.Minute
 	})
 	c.advanceClusterTimeBy(5 * time.Minute)
-	c.advanceCheckpointBy(5 * time.Minute)
-	env.advanceCheckpointBy(0 * time.Minute)
+	c.advanceCheckpointBy(0 * time.Minute)
+	env.advanceCheckpointBy(5 * time.Minute)
 	adv.StartTaskListener(ctx)
+	require.NoError(t, adv.OnTick(ctx))
+	require.NoError(t, adv.OnTick(ctx))
 	require.NoError(t, adv.OnTick(ctx))
 }
 
