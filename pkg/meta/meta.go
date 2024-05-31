@@ -992,7 +992,7 @@ func (m *Meta) IterTables(dbID int64, fn func(info *model.TableInfo) error) erro
 // GetDBMeta return all meta information of a database.
 // Note(dongmen): This method is used by TiCDC to reduce the time of changefeed initialization.
 // Ref: https://github.com/pingcap/tiflow/issues/11109
-func (m *Meta) GetDBMeta(dbID int64) ([]structure.HashPair, error) {
+func (m *Meta) GetMetasByDBID(dbID int64) ([]structure.HashPair, error) {
 	dbKey := m.dbKey(dbID)
 	if err := m.checkDBExists(dbKey); err != nil {
 		return nil, errors.Trace(err)
