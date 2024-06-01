@@ -21,9 +21,7 @@ import (
 	exprctx "github.com/pingcap/tidb/pkg/expression/context"
 	// make sure mock.MockInfoschema is initialized to make sure the test pass
 	_ "github.com/pingcap/tidb/pkg/infoschema"
-	infoschema "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/parser/model"
-	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/types"
 )
@@ -43,10 +41,7 @@ type CopContextBase struct {
 	ExprCtx        exprctx.BuildContext
 	DistSQLCtx     *distsqlctx.DistSQLContext
 	PushDownFlags  uint64
-	InfoSchema     infoschema.MetaOnlyInfoSchema
-	TableCtx       table.MutateContext
-
-	RequestSource string
+	RequestSource  string
 
 	ColumnInfos []*model.ColumnInfo
 	FieldTypes  []*types.FieldType
@@ -78,7 +73,6 @@ func NewCopContextBase(
 	exprCtx exprctx.BuildContext,
 	distSQLCtx *distsqlctx.DistSQLContext,
 	pushDownFlags uint64,
-	tableCtx table.MutateContext,
 	tblInfo *model.TableInfo,
 	idxCols []*model.IndexColumn,
 	requestSource string,
@@ -141,7 +135,6 @@ func NewCopContextBase(
 		ExprCtx:                     exprCtx,
 		DistSQLCtx:                  distSQLCtx,
 		PushDownFlags:               pushDownFlags,
-		TableCtx:                    tableCtx,
 		RequestSource:               requestSource,
 		ColumnInfos:                 colInfos,
 		FieldTypes:                  fieldTps,
@@ -157,15 +150,14 @@ func NewCopContext(
 	exprCtx exprctx.BuildContext,
 	distSQLCtx *distsqlctx.DistSQLContext,
 	pushDownFlags uint64,
-	tableCtx table.MutateContext,
 	tblInfo *model.TableInfo,
 	allIdxInfo []*model.IndexInfo,
 	requestSource string,
 ) (CopContext, error) {
 	if len(allIdxInfo) == 1 {
-		return NewCopContextSingleIndex(exprCtx, distSQLCtx, pushDownFlags, tableCtx, tblInfo, allIdxInfo[0], requestSource)
+		return NewCopContextSingleIndex(exprCtx, distSQLCtx, pushDownFlags, tblInfo, allIdxInfo[0], requestSource)
 	}
-	return NewCopContextMultiIndex(exprCtx, distSQLCtx, pushDownFlags, tableCtx, tblInfo, allIdxInfo, requestSource)
+	return NewCopContextMultiIndex(exprCtx, distSQLCtx, pushDownFlags, tblInfo, allIdxInfo, requestSource)
 }
 
 // NewCopContextSingleIndex creates a CopContextSingleIndex.
@@ -173,12 +165,11 @@ func NewCopContextSingleIndex(
 	exprCtx exprctx.BuildContext,
 	distSQLCtx *distsqlctx.DistSQLContext,
 	pushDownFlags uint64,
-	tableCtx table.MutateContext,
 	tblInfo *model.TableInfo,
 	idxInfo *model.IndexInfo,
 	requestSource string,
 ) (*CopContextSingleIndex, error) {
-	base, err := NewCopContextBase(exprCtx, distSQLCtx, pushDownFlags, tableCtx, tblInfo, idxInfo.Columns, requestSource)
+	base, err := NewCopContextBase(exprCtx, distSQLCtx, pushDownFlags, tblInfo, idxInfo.Columns, requestSource)
 	if err != nil {
 		return nil, err
 	}
@@ -210,7 +201,6 @@ func NewCopContextMultiIndex(
 	exprCtx exprctx.BuildContext,
 	distSQLCtx *distsqlctx.DistSQLContext,
 	pushDownFlags uint64,
-	tableCtx table.MutateContext,
 	tblInfo *model.TableInfo,
 	allIdxInfo []*model.IndexInfo,
 	requestSource string,
@@ -230,7 +220,7 @@ func NewCopContextMultiIndex(
 		}
 	}
 
-	base, err := NewCopContextBase(exprCtx, distSQLCtx, pushDownFlags, tableCtx, tblInfo, allIdxCols, requestSource)
+	base, err := NewCopContextBase(exprCtx, distSQLCtx, pushDownFlags, tblInfo, allIdxCols, requestSource)
 	if err != nil {
 		return nil, err
 	}

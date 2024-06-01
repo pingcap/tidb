@@ -343,8 +343,8 @@ func TestFlashbackCreateDropSchema(t *testing.T) {
 
 		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/injectSafeTS",
 			fmt.Sprintf("return(%v)", injectSafeTS)))
-		tk.MustExec(fmt.Sprintf("flashback cluster to timestamp '%s'", oracle.GetTimeFromTS(ts).Format(types.TimeFSPFormat)))
 
+		tk.MustExec(fmt.Sprintf("flashback cluster to timestamp '%s'", oracle.GetTimeFromTS(ts).Format(types.TimeFSPFormat)))
 		tk.MustExec("admin check table test.t")
 		res := tk.MustQuery("select max(a) from test.t").Rows()
 		require.Equal(t, res[0][0], "2")

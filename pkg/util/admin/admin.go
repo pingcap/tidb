@@ -235,7 +235,7 @@ func iterRecords(sessCtx sessionctx.Context, retriever kv.Retriever, t table.Tab
 			return errors.Trace(err)
 		}
 
-		rowMap, err := rowDecoder.DecodeAndEvalRowWithMap(sessCtx, handle, it.Value(), sessCtx.GetSessionVars().Location(), nil)
+		rowMap, err := rowDecoder.DecodeAndEvalRowWithMap(sessCtx.GetExprCtx(), handle, it.Value(), sessCtx.GetSessionVars().Location(), nil)
 		if err != nil {
 			return errors.Trace(err)
 		}
