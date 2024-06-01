@@ -29,7 +29,10 @@ import (
 func BenchmarkAddRecordInPipelinedDML(b *testing.B) {
 	store, dom := testkit.CreateMockStoreAndDomain(b)
 	tk := testkit.NewTestKit(b, store)
-	_, err := tk.Session().Execute(context.Background(), "CREATE TABLE test.t (a int primary key auto_increment, b varchar(255))")
+	_, err := tk.Session().Execute(
+		context.Background(),
+		"CREATE TABLE test.t (a int primary key auto_increment, b varchar(255))",
+	)
 	require.NoError(b, err)
 	ctx := tk.Session()
 	vars := ctx.GetSessionVars()

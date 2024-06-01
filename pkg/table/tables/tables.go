@@ -671,7 +671,7 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx table.MutateContext
 			return err
 		}
 	}
-	colSize := make(map[int64]int64, len(t.Cols()))
+	colSize := make([]variable.ColSize, len(t.Cols()))
 	for id, col := range t.Cols() {
 		size, err := codec.EstimateValueSize(sc.TypeCtx(), newData[id])
 		if err != nil {
@@ -683,9 +683,9 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx table.MutateContext
 			continue
 		}
 		oldLen := size - 1
-		colSize[col.ID] = int64(newLen - oldLen)
+		colSize[id] = variable.ColSize{ColID: col.ID, Size: int64(newLen - oldLen)}
 	}
-	sessVars.TxnCtx.UpdateDeltaForTable(t.physicalTableID, 0, 1, colSize)
+	sessVars.TxnCtx.UpdateDeltaForTableFromColSlice(t.physicalTableID, 0, 1, colSize)
 	return nil
 }
 
@@ -1171,15 +1171,15 @@ func (t *TableCommon) AddRecord(sctx table.MutateContext, r []types.Datum, opts 
 		sessVars.TxnCtx.InsertTTLRowsCount += 1
 	}
 
-	colSize := make(map[int64]int64, len(r))
+	colSize := make([]variable.ColSize, len(t.Cols()))
 	for id, col := range t.Cols() {
 		size, err := codec.EstimateValueSize(sc.TypeCtx(), r[id])
 		if err != nil {
 			continue
 		}
-		colSize[col.ID] = int64(size) - 1
+		colSize[id] = variable.ColSize{ColID: col.ID, Size: int64(size - 1)}
 	}
-	sessVars.TxnCtx.UpdateDeltaForTable(t.physicalTableID, 1, 1, colSize)
+	sessVars.TxnCtx.UpdateDeltaForTableFromColSlice(t.physicalTableID, 1, 1, colSize)
 	return recordID, nil
 }
 
@@ -1448,15 +1448,15 @@ func (t *TableCommon) RemoveRecord(ctx table.MutateContext, h kv.Handle, r []typ
 	if ctx.GetSessionVars().TxnCtx == nil {
 		return nil
 	}
-	colSize := make(map[int64]int64, len(t.Cols()))
+	colSize := make([]variable.ColSize, len(t.Cols()))
 	for id, col := range t.Cols() {
 		size, err := codec.EstimateValueSize(sc.TypeCtx(), r[id])
 		if err != nil {
 			continue
 		}
-		colSize[col.ID] = -int64(size - 1)
+		colSize[id] = variable.ColSize{ColID: col.ID, Size: -int64(size - 1)}
 	}
-	ctx.GetSessionVars().TxnCtx.UpdateDeltaForTable(t.physicalTableID, -1, 1, colSize)
+	ctx.GetSessionVars().TxnCtx.UpdateDeltaForTableFromColSlice(t.physicalTableID, -1, 1, colSize)
 	return err
 }
 
