@@ -8,7 +8,11 @@ go_test(
         "password_management_test.go",
     ],
     flaky = True,
+<<<<<<< HEAD
     shard_count = 16,
+=======
+    shard_count = 9,
+>>>>>>> 20696515fdd (parser: Accept `PASSWORD REQUIRE CURRENT DEFAULT` (#53306))
     deps = [
         "//pkg/domain",
         "//pkg/errno",
