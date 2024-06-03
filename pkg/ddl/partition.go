@@ -2493,8 +2493,10 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 		ptID           int64
 		partName       string
 		withValidation bool
+		prevState      model.JobState
 	)
 
+	prevState = job.State
 	if err := job.DecodeArgs(&defID, &ptSchemaID, &ptID, &partName, &withValidation); err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
@@ -2560,7 +2562,7 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 				zap.Stringer("job", job), zap.Int64("defID", defID), zap.Int64("partDef.ID", partDef.ID))
 			job.Args[0] = partDef.ID
 			defID = partDef.ID
-			err = updateDDLJob2Table(w.sess, job, true)
+			err = updateDDLJob2Table(w.sess, job, prevState, true)
 			if err != nil {
 				return ver, errors.Trace(err)
 			}
@@ -2603,7 +2605,7 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 			zap.Stringer("job", job), zap.Int64("defID", defID), zap.Int64("partDef.ID", partDef.ID))
 		job.Args[0] = partDef.ID
 		defID = partDef.ID
-		err = updateDDLJob2Table(w.sess, job, true)
+		err = updateDDLJob2Table(w.sess, job, prevState, true)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}

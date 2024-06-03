@@ -1162,3 +1162,35 @@ func TestDDLJobErrEntrySizeTooLarge(t *testing.T) {
 	tk.MustExec("create table t1 (a int);")
 	tk.MustExec("alter table t add column b int;") // Should not block.
 }
+
+func TestDDLCancelJobOverridden(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int);")
+
+	testkit.EnableFailPoint(t, "github.com/pingcap/tidb/pkg/ddl/mockBeforePrepareTxn", `return(true)`)
+	var (
+		cancelErr error
+		jobID     int64
+		once      bool
+	)
+	ddl.BeforeWorkerPrepareTxn = func(job *model.Job) {
+		if job.Type == model.ActionTruncateTable && job.State == model.JobStateQueueing && !once {
+			once = true
+			jobID = job.ID
+			tk1 := testkit.NewTestKit(t, store)
+			cancelJob := fmt.Sprintf("admin cancel ddl jobs %d", jobID)
+			_, cancelErr = tk1.Exec(cancelJob)
+		}
+	}
+
+	tk.MustExec("truncate table t;")
+	require.True(t, once)
+	require.NoError(t, cancelErr)
+	rs := tk.MustQuery(fmt.Sprintf("admin show ddl jobs where job_id = %d", jobID)).Rows()
+	require.Len(t, rs, 1, fmt.Sprintf("jobID: %d", jobID))
+	jobState := rs[0][4].(string)
+	require.Equal(t, jobState, "cancelled")
+}

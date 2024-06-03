@@ -48,6 +48,7 @@ const (
 		job_meta longblob,
 		type int,
 		processing int,
+		job_state int,
 		primary key(job_id))`
 	// ReorgTableSQL is the CREATE TABLE SQL of `tidb_ddl_reorg`.
 	ReorgTableSQL = "create table " + ReorgTable + `(
