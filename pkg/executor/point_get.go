@@ -448,7 +448,7 @@ func fillRowChecksum(
 		columnFt[col.ID] = &col.FieldType
 	}
 	tz := sctx.GetSessionVars().TimeZone
-	ft := []*types.FieldType{schema.Columns[checksumColumnIndex].GetType()}
+	ft := []*types.FieldType{schema.Columns[checksumColumnIndex].GetType(sctx.GetExprCtx().GetEvalCtx())}
 	checksumCols := chunk.NewChunkWithCapacity(ft, req.Capacity())
 	for i := start; i < end; i++ {
 		handle, val := handles[i], values[i]

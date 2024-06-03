@@ -922,7 +922,7 @@ ForColumnsTag:
 				idx := expression.FindFieldNameIdxByColName(e.viewOutputNamesMap[tbl.ID], col.Name.L)
 				if idx >= 0 {
 					col1 := e.viewSchemaMap[tbl.ID].Columns[idx]
-					ft = col1.GetType()
+					ft = col1.GetType(sctx.GetExprCtx().GetEvalCtx())
 				}
 			}
 			e.viewMu.RUnlock()

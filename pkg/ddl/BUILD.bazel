@@ -283,6 +283,7 @@ go_test(
         "//pkg/errctx",
         "//pkg/errno",
         "//pkg/executor",
+        "//pkg/expression",
         "//pkg/infoschema",
         "//pkg/keyspace",
         "//pkg/kv",

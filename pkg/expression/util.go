@@ -462,7 +462,7 @@ func ColumnSubstituteImpl(ctx BuildContext, expr Expression, schema *Schema, new
 					e.(*ScalarFunction).Function.getArgs()[0] = newArg
 				}
 				e.SetCoercibility(v.Coercibility())
-				e.GetType().SetFlag(flag)
+				e.GetType(ctx.GetEvalCtx()).SetFlag(flag)
 				return true, false, e
 			}
 			return false, false, v
@@ -496,11 +496,11 @@ func ColumnSubstituteImpl(ctx BuildContext, expr Expression, schema *Schema, new
 					return false, failed, v
 				}
 				if oldCollEt.Collation == newCollEt.Collation {
-					if newFuncExpr.GetType().GetCollate() == arg.GetType().GetCollate() && newFuncExpr.Coercibility() == arg.Coercibility() {
+					if newFuncExpr.GetType(ctx.GetEvalCtx()).GetCollate() == arg.GetType(ctx.GetEvalCtx()).GetCollate() && newFuncExpr.Coercibility() == arg.Coercibility() {
 						// It's safe to use the new expression, otherwise some cases in projection push-down will be wrong.
 						changed = true
 					} else {
-						changed = checkCollationStrictness(oldCollEt.Collation, newFuncExpr.GetType().GetCollate())
+						changed = checkCollationStrictness(oldCollEt.Collation, newFuncExpr.GetType(ctx.GetEvalCtx()).GetCollate())
 					}
 				}
 			}
@@ -609,7 +609,7 @@ func SubstituteCorCol2Constant(ctx BuildContext, expr Expression) (Expression, e
 			if err != nil {
 				return nil, err
 			}
-			return &Constant{Value: val, RetType: x.GetType()}, nil
+			return &Constant{Value: val, RetType: x.GetType(ctx.GetEvalCtx())}, nil
 		}
 		var (
 			err   error
@@ -621,15 +621,15 @@ func SubstituteCorCol2Constant(ctx BuildContext, expr Expression) (Expression, e
 			newSf = x.Clone()
 			newSf.(*ScalarFunction).GetArgs()[0] = newArgs[0]
 		} else {
-			newSf, err = NewFunction(ctx, x.FuncName.L, x.GetType(), newArgs...)
+			newSf, err = NewFunction(ctx, x.FuncName.L, x.GetType(ctx.GetEvalCtx()), newArgs...)
 		}
 		return newSf, err
 	case *CorrelatedColumn:
-		return &Constant{Value: *x.Data, RetType: x.GetType()}, nil
+		return &Constant{Value: *x.Data, RetType: x.GetType(ctx.GetEvalCtx())}, nil
 	case *Constant:
 		if x.DeferredExpr != nil {
 			newExpr := FoldConstant(ctx, x)
-			return &Constant{Value: newExpr.(*Constant).Value, RetType: x.GetType()}, nil
+			return &Constant{Value: newExpr.(*Constant).Value, RetType: x.GetType(ctx.GetEvalCtx())}, nil
 		}
 	}
 	return expr, nil
@@ -891,13 +891,13 @@ func pushNotAcrossExpr(ctx BuildContext, expr Expression, not bool) (_ Expressio
 			return childExpr, true
 		case ast.LT, ast.GE, ast.GT, ast.LE, ast.EQ, ast.NE:
 			if not {
-				return NewFunctionInternal(ctx, oppositeOp[f.FuncName.L], f.GetType(), f.GetArgs()...), true
+				return NewFunctionInternal(ctx, oppositeOp[f.FuncName.L], f.GetType(ctx.GetEvalCtx()), f.GetArgs()...), true
 			}
 			newArgs, changed := pushNotAcrossArgs(ctx, f.GetArgs(), false)
 			if !changed {
 				return f, false
 			}
-			return NewFunctionInternal(ctx, f.FuncName.L, f.GetType(), newArgs...), true
+			return NewFunctionInternal(ctx, f.FuncName.L, f.GetType(ctx.GetEvalCtx()), newArgs...), true
 		case ast.LogicAnd, ast.LogicOr:
 			var (
 				newArgs []Expression
@@ -914,7 +914,7 @@ func pushNotAcrossExpr(ctx BuildContext, expr Expression, not bool) (_ Expressio
 			if !changed {
 				return f, false
 			}
-			return NewFunctionInternal(ctx, funcName, f.GetType(), newArgs...), true
+			return NewFunctionInternal(ctx, funcName, f.GetType(ctx.GetEvalCtx()), newArgs...), true
 		}
 	}
 	if not {
@@ -1154,7 +1154,7 @@ func PopRowFirstArg(ctx BuildContext, e Expression) (ret Expression, err error) 
 		if len(args) == 2 {
 			return args[1], nil
 		}
-		ret, err = NewFunction(ctx, ast.RowFunc, f.GetType(), args[1:]...)
+		ret, err = NewFunction(ctx, ast.RowFunc, f.GetType(ctx.GetEvalCtx()), args[1:]...)
 		return ret, err
 	}
 	return
@@ -1208,14 +1208,14 @@ func (pc *ParamMarkerInPrepareChecker) Leave(in ast.Node) (out ast.Node, ok bool
 // it. Moreover, Column.RetType refers to the infoschema, if we modify it, data
 // race may happen if another goroutine read from the infoschema at the same
 // time.
-func DisableParseJSONFlag4Expr(expr Expression) {
+func DisableParseJSONFlag4Expr(ctx EvalContext, expr Expression) {
 	if _, isColumn := expr.(*Column); isColumn {
 		return
 	}
 	if _, isCorCol := expr.(*CorrelatedColumn); isCorCol {
 		return
 	}
-	expr.GetType().SetFlag(expr.GetType().GetFlag() & ^mysql.ParseToJSONFlag)
+	expr.GetType(ctx).SetFlag(expr.GetType(ctx).GetFlag() & ^mysql.ParseToJSONFlag)
 }
 
 // ConstructPositionExpr constructs PositionExpr with the given ParamMarkerExpr.
@@ -1398,7 +1398,7 @@ func GetUint64FromConstant(ctx EvalContext, expr Expression) (uint64, bool, bool
 	}
 	dt := con.Value
 	if con.ParamMarker != nil {
-		dt = con.ParamMarker.GetUserVar()
+		dt = con.ParamMarker.GetUserVar(ctx)
 	} else if con.DeferredExpr != nil {
 		var err error
 		dt, err = con.DeferredExpr.Eval(ctx, chunk.Row{})
