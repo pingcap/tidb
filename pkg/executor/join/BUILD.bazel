@@ -49,6 +49,7 @@ go_library(
         "//pkg/util/memory",
         "//pkg/util/mvmap",
         "//pkg/util/ranger",
+        "//pkg/util/serialization",
         "//pkg/util/sqlkiller",
         "//pkg/util/syncutil",
         "@com_github_pingcap_errors//:errors",
