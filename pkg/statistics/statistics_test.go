@@ -683,4 +683,16 @@ func TestPruneTopN(t *testing.T) {
 	totalRows = 10_000_000
 	topnOut = pruneTopNItem(topnIn, totalNDV, nullCnt, sampleRows, totalRows)
 	require.Equal(t, topnIn, topnOut)
+
+	// case 4 - test TopN pruning for small table
+	topnIn = []TopNMeta{
+		{[]byte{1}, 3_000},
+		{[]byte{2}, 3_000},
+	}
+	totalNDV = 4002
+	nullCnt = 0
+	sampleRows = 10_000
+	totalRows = 10_000
+	topnOut = pruneTopNItem(topnIn, totalNDV, nullCnt, sampleRows, totalRows)
+	require.Equal(t, topnIn, topnOut)
 }
