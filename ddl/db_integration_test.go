@@ -29,6 +29,7 @@ import (
 	_ "github.com/pingcap/tidb/autoid_service"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/schematracker"
+	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/ddl/util/callback"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
@@ -4428,11 +4429,14 @@ func TestIssue52680(t *testing.T) {
 	tk.MustQuery("select * from issue52680").Check(testkit.Rows("1", "2"))
 
 	is := dom.InfoSchema()
-	ti, err := is.TableInfoByName(model.NewCIStr("test"), model.NewCIStr("issue52680"))
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("issue52680"))
+	ti := tbl.Meta()
 	require.NoError(t, err)
+	dbInfo, ok := is.SchemaByName(model.NewCIStr("test"))
+	require.True(t, ok)
 
-	ddlutil.EmulatorGCDisable()
-	defer ddlutil.EmulatorGCEnable()
+	util.EmulatorGCDisable()
+	defer util.EmulatorGCEnable()
 
 	// For mocktikv, safe point is not initialized, we manually insert it for snapshot to use.
 	safePointName := "tikv_gc_safe_point"
@@ -4459,7 +4463,7 @@ func TestIssue52680(t *testing.T) {
 		txn, err := store.Begin()
 		require.NoError(t, err)
 		m := meta.NewMeta(txn)
-		idAcc := m.GetAutoIDAccessors(ti.DBID, ti.ID)
+		idAcc := m.GetAutoIDAccessors(dbInfo.ID, ti.ID)
 		ids, err := idAcc.Get()
 		require.NoError(t, err)
 		require.Equal(t, ids, step.expect)
@@ -4472,8 +4476,9 @@ func TestIssue52680(t *testing.T) {
 	))
 
 	is = dom.InfoSchema()
-	ti1, err := is.TableInfoByName(model.NewCIStr("test"), model.NewCIStr("issue52680"))
+	tbl1, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("issue52680"))
 	require.NoError(t, err)
+	ti1 := tbl1.Meta()
 	require.Equal(t, ti1.ID, ti.ID)
 
 	tk.MustExec("insert into issue52680 values(default);")
