@@ -767,7 +767,7 @@ func (tr *TableRestore) postProcess(
 				// And in this case, ALTER TABLE xxx AUTO_INCREMENT = xxx only works on the allocator of auto_increment column,
 				// not for allocator of _tidb_rowid.
 				// So we need to rebase IDs for those 2 allocators explicitly.
-				err = common.RebaseTableAllocators(ctx, map[autoid.AllocatorType]int64{
+				err = rebaseTableAllocators(ctx, map[autoid.AllocatorType]int64{
 					autoid.RowIDAllocType:    tr.alloc.Get(autoid.RowIDAllocType).Base(),
 					autoid.AutoIncrementType: tr.alloc.Get(autoid.AutoIncrementType).Base(),
 				}, tr, tr.dbInfo.ID, tr.tableInfo.Core)
