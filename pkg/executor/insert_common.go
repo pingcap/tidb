@@ -1373,7 +1373,11 @@ func (e *InsertValues) removeRow(
 		return true, nil
 	}
 
-	err = r.t.RemoveRecord(e.Ctx().GetTableCtx(), handle, oldRow)
+	if ph, ok := handle.(kv.PartitionHandle); ok {
+		err = e.Table.(table.PartitionedTable).GetPartition(ph.PartitionID).RemoveRecord(e.Ctx().GetTableCtx(), handle, oldRow)
+	} else {
+		err = r.t.RemoveRecord(e.Ctx().GetTableCtx(), handle, oldRow)
+	}
 	if err != nil {
 		return false, err
 	}
