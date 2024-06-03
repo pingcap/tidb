@@ -312,6 +312,9 @@ func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) 
 	default:
 	}
 
+	failpoint.Inject("modifyStore", func(v failpoint.Value) {
+		tidbCfg.Store = v.(string)
+	})
 	if tidbCfg.Store != "tikv" {
 		b.err = errors.Errorf("%s requires tikv store, not %s", s.Kind, tidbCfg.Store)
 		return nil
@@ -330,6 +333,28 @@ func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) 
 			cfg.Checksum = opt.UintValue != 0
 		case ast.BRIEOptionSendCreds:
 			cfg.SendCreds = opt.UintValue != 0
+		case ast.BRIEOptionChecksumConcurrency:
+			cfg.ChecksumConcurrency = uint(opt.UintValue)
+		case ast.BRIEOptionEncryptionKeyFile:
+			cfg.CipherInfo.CipherKey, err = task.GetCipherKeyContent("", opt.StrValue)
+			if err != nil {
+				b.err = err
+				return nil
+			}
+		case ast.BRIEOptionEncryptionMethod:
+			switch opt.StrValue {
+			case "aes128-ctr":
+				cfg.CipherInfo.CipherType = encryptionpb.EncryptionMethod_AES128_CTR
+			case "aes192-ctr":
+				cfg.CipherInfo.CipherType = encryptionpb.EncryptionMethod_AES192_CTR
+			case "aes256-ctr":
+				cfg.CipherInfo.CipherType = encryptionpb.EncryptionMethod_AES256_CTR
+			case "plaintext":
+				cfg.CipherInfo.CipherType = encryptionpb.EncryptionMethod_PLAINTEXT
+			default:
+				b.err = errors.Errorf("unsupported encryption method: %s", opt.StrValue)
+				return nil
+			}
 		}
 	}
 
@@ -383,6 +408,22 @@ func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) 
 					return nil
 				}
 				e.backupCfg.BackupTS = tso
+			case ast.BRIEOptionCompression:
+				switch opt.StrValue {
+				case "zstd":
+					e.backupCfg.CompressionConfig.CompressionType = backuppb.CompressionType_ZSTD
+				case "snappy":
+					e.backupCfg.CompressionConfig.CompressionType = backuppb.CompressionType_SNAPPY
+				case "lz4":
+					e.backupCfg.CompressionConfig.CompressionType = backuppb.CompressionType_LZ4
+				default:
+					b.err = errors.Errorf("unsupported compression type: %s", opt.StrValue)
+					return nil
+				}
+			case ast.BRIEOptionCompressionLevel:
+				e.backupCfg.CompressionConfig.CompressionLevel = int32(opt.UintValue)
+			case ast.BRIEOptionIgnoreStats:
+				e.backupCfg.IgnoreStats = opt.UintValue != 0
 			}
 		}
 
@@ -391,8 +432,15 @@ func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) 
 		rcfg.Config = cfg
 		e.restoreCfg = &rcfg
 		for _, opt := range s.Options {
-			if opt.Tp == ast.BRIEOptionOnline {
+			switch opt.Tp {
+			case ast.BRIEOptionOnline:
 				e.restoreCfg.Online = opt.UintValue != 0
+			case ast.BRIEOptionWaitTiflashReady:
+				e.restoreCfg.WaitTiflashReady = opt.UintValue != 0
+			case ast.BRIEOptionWithSysTable:
+				e.restoreCfg.WithSysTable = opt.UintValue != 0
+			case ast.BRIEOptionLoadStats:
+				e.restoreCfg.LoadStats = opt.UintValue != 0
 			}
 		}
 

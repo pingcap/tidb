@@ -288,19 +288,11 @@ func dumpPatchArgsForRepo(repoName string) error {
 	}
 	candidate := filepath.Join(runfiles, "build", "patches", repoName+".patch")
 	if _, err := os.Stat(candidate); err == nil {
-		if repoName == "io_etcd_go_etcd_api_v3" {
-			fmt.Printf(`        patch_args = ["-p2"],
+		fmt.Printf(`        patch_args = ["-p1"],
         patches = [
             "//build/patches:%s.patch",
         ],
 `, repoName)
-		} else {
-			fmt.Printf(`        patch_args = ["-p1"],
-        patches = [
-            "//build/patches:%s.patch",
-        ],
-`, repoName)
-		}
 	} else if !os.IsNotExist(err) {
 		return err
 	}

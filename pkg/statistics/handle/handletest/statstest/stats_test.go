@@ -262,23 +262,12 @@ func TestInitStats(t *testing.T) {
 	h.Clear()
 	require.NoError(t, h.InitStats(is))
 	table0 := h.GetTableStats(tbl.Meta())
-	cols := table0.Columns
-	require.Equal(t, uint8(0x36), cols[1].LastAnalyzePos.GetBytes()[0])
-	require.Equal(t, uint8(0x37), cols[2].LastAnalyzePos.GetBytes()[0])
-	require.Equal(t, uint8(0x38), cols[3].LastAnalyzePos.GetBytes()[0])
+	idx := table0.Indices
+	require.Equal(t, uint8(0x3), idx[1].LastAnalyzePos.GetBytes()[0])
 	h.Clear()
 	require.NoError(t, h.Update(is))
 	// Index and pk are loaded.
 	needed := fmt.Sprintf(`Table:%v RealtimeCount:6
-column:1 ndv:6 totColSize:0
-num: 1 lower_bound: 1 upper_bound: 1 repeats: 1 ndv: 0
-num: 1 lower_bound: 2 upper_bound: 2 repeats: 1 ndv: 0
-num: 1 lower_bound: 3 upper_bound: 3 repeats: 1 ndv: 0
-num: 1 lower_bound: 4 upper_bound: 4 repeats: 1 ndv: 0
-num: 1 lower_bound: 5 upper_bound: 5 repeats: 1 ndv: 0
-num: 1 lower_bound: 6 upper_bound: 6 repeats: 1 ndv: 0
-column:2 ndv:6 totColSize:6
-column:3 ndv:6 totColSize:6
 index:1 ndv:6
 num: 1 lower_bound: 1 upper_bound: 1 repeats: 1 ndv: 0
 num: 1 lower_bound: 2 upper_bound: 2 repeats: 1 ndv: 0
@@ -328,26 +317,30 @@ func TestInitStats51358(t *testing.T) {
 }
 
 func TestInitStatsVer2(t *testing.T) {
-	restore := config.RestoreFunc()
-	defer restore()
-	config.UpdateGlobal(func(conf *config.Config) {
-		config.GetGlobalConfig().Performance.LiteInitStats = false
-		config.GetGlobalConfig().Performance.ConcurrentlyInitStats = false
-	})
-	initStatsVer2(t)
+	originValue := config.GetGlobalConfig().Performance.LiteInitStats
+	concurrentlyInitStatsValue := config.GetGlobalConfig().Performance.ConcurrentlyInitStats
+	defer func() {
+		config.GetGlobalConfig().Performance.LiteInitStats = originValue
+		config.GetGlobalConfig().Performance.ConcurrentlyInitStats = concurrentlyInitStatsValue
+	}()
+	config.GetGlobalConfig().Performance.LiteInitStats = false
+	config.GetGlobalConfig().Performance.ConcurrentlyInitStats = false
+	initStatsVer2(t, false)
 }
 
 func TestInitStatsVer2Concurrency(t *testing.T) {
-	restore := config.RestoreFunc()
-	defer restore()
-	config.UpdateGlobal(func(conf *config.Config) {
-		config.GetGlobalConfig().Performance.LiteInitStats = false
-		config.GetGlobalConfig().Performance.ConcurrentlyInitStats = true
-	})
-	initStatsVer2(t)
+	originValue := config.GetGlobalConfig().Performance.LiteInitStats
+	concurrentlyInitStatsValue := config.GetGlobalConfig().Performance.ConcurrentlyInitStats
+	defer func() {
+		config.GetGlobalConfig().Performance.LiteInitStats = originValue
+		config.GetGlobalConfig().Performance.ConcurrentlyInitStats = concurrentlyInitStatsValue
+	}()
+	config.GetGlobalConfig().Performance.LiteInitStats = false
+	config.GetGlobalConfig().Performance.ConcurrentlyInitStats = true
+	initStatsVer2(t, true)
 }
 
-func initStatsVer2(t *testing.T) {
+func initStatsVer2(t *testing.T, isConcurrency bool) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -366,10 +359,19 @@ func initStatsVer2(t *testing.T) {
 	h.Clear()
 	require.NoError(t, h.InitStats(is))
 	table0 := h.GetTableStats(tbl.Meta())
-	cols := table0.Columns
-	require.Equal(t, uint8(0x33), cols[1].LastAnalyzePos.GetBytes()[0])
-	require.Equal(t, uint8(0x33), cols[2].LastAnalyzePos.GetBytes()[0])
-	require.Equal(t, uint8(0x33), cols[3].LastAnalyzePos.GetBytes()[0])
+	if isConcurrency {
+		idx := table0.Indices
+		require.Equal(t, uint8(0x3), idx[1].LastAnalyzePos.GetBytes()[0])
+		require.Equal(t, uint8(0x3), idx[2].LastAnalyzePos.GetBytes()[0])
+	} else {
+		cols := table0.Columns
+		require.Equal(t, uint8(0x33), cols[1].LastAnalyzePos.GetBytes()[0])
+		require.Equal(t, uint8(0x33), cols[2].LastAnalyzePos.GetBytes()[0])
+		require.Equal(t, uint8(0x33), cols[3].LastAnalyzePos.GetBytes()[0])
+		idx := table0.Indices
+		require.Equal(t, uint8(0x3), idx[1].LastAnalyzePos.GetBytes()[0])
+		require.Equal(t, uint8(0x3), idx[2].LastAnalyzePos.GetBytes()[0])
+	}
 	h.Clear()
 	require.NoError(t, h.InitStats(is))
 	table1 := h.GetTableStats(tbl.Meta())

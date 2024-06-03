@@ -92,6 +92,8 @@ func (s *backfillDistExecutor) newBackfillSubtaskExecutor(
 	jobMeta := &s.taskMeta.Job
 	ddlObj := s.d
 
+	// TODO getTableByTxn is using DDL ctx which is never cancelled except when shutdown.
+	// we should move this operation out of GetStepExecutor, and put into Init.
 	_, tblIface, err := ddlObj.getTableByTxn((*asAutoIDRequirement)(ddlObj.ddlCtx), jobMeta.SchemaID, jobMeta.TableID)
 	if err != nil {
 		return nil, err

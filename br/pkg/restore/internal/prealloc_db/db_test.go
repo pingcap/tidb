@@ -161,3 +161,103 @@ func TestDB_ExecDDL(t *testing.T) {
 		assert.NoError(t, err)
 	}
 }
+
+func TestCreateTableConsistent(t *testing.T) {
+	ctx := context.Background()
+	s := utiltest.CreateRestoreSchemaSuite(t)
+	tk := testkit.NewTestKit(t, s.Mock.Storage)
+	tk.MustExec("use test")
+	tk.MustExec("set @@sql_mode=''")
+
+	db, supportPolicy, err := preallocdb.NewDB(gluetidb.New(), s.Mock.Storage, "STRICT")
+	require.NoError(t, err)
+	require.True(t, supportPolicy)
+	defer db.Close()
+
+	getTableInfo := func(name string) (*model.DBInfo, *model.TableInfo) {
+		info, err := s.Mock.Domain.GetSnapshotInfoSchema(math.MaxUint64)
+		require.NoError(t, err)
+		dbInfo, exists := info.SchemaByName(model.NewCIStr("test"))
+		require.True(t, exists)
+		tableInfo, err := info.TableByName(model.NewCIStr("test"), model.NewCIStr(name))
+		require.NoError(t, err)
+		return dbInfo, tableInfo.Meta()
+	}
+	tk.MustExec("create sequence test.s increment by 1 minvalue = 10;")
+	dbInfo, seqInfo := getTableInfo("s")
+	tk.MustExec("drop sequence test.s;")
+
+	newSeqInfo := seqInfo.Clone()
+	newSeqInfo.ID += 100
+	newTables := []*metautil.Table{
+		{
+			DB:   dbInfo.Clone(),
+			Info: newSeqInfo,
+		},
+	}
+	err = db.CreateTables(ctx, newTables, nil, false, nil)
+	require.NoError(t, err)
+	r11 := tk.MustQuery("select nextval(s)").Rows()
+	r12 := tk.MustQuery("show create table test.s").Rows()
+
+	tk.MustExec("drop sequence test.s;")
+
+	newSeqInfo = seqInfo.Clone()
+	newSeqInfo.ID += 100
+	newTable := &metautil.Table{DB: dbInfo.Clone(), Info: newSeqInfo}
+	err = db.CreateTable(ctx, newTable, nil, false, nil)
+	require.NoError(t, err)
+	r21 := tk.MustQuery("select nextval(s)").Rows()
+	r22 := tk.MustQuery("show create table test.s").Rows()
+
+	require.Equal(t, r11, r21)
+	require.Equal(t, r12, r22)
+
+	tk.MustExec("drop sequence test.s;")
+	tk.MustExec("create table t (a int);")
+	tk.MustExec("create view v as select * from t;")
+
+	_, tblInfo := getTableInfo("t")
+	_, viewInfo := getTableInfo("v")
+	tk.MustExec("drop table t;")
+	tk.MustExec("drop view v;")
+
+	newTblInfo := tblInfo.Clone()
+	newTblInfo.ID += 100
+	newViewInfo := viewInfo.Clone()
+	newViewInfo.ID += 100
+	newTables = []*metautil.Table{
+		{
+			DB:   dbInfo.Clone(),
+			Info: newTblInfo,
+		},
+		{
+			DB:   dbInfo.Clone(),
+			Info: newViewInfo,
+		},
+	}
+	err = db.CreateTables(ctx, newTables, nil, false, nil)
+	require.NoError(t, err)
+	r11 = tk.MustQuery("show create table t;").Rows()
+	r12 = tk.MustQuery("show create view v;").Rows()
+
+	tk.MustExec("drop table t;")
+	tk.MustExec("drop view v;")
+
+	newTblInfo = tblInfo.Clone()
+	newTblInfo.ID += 200
+	newTable = &metautil.Table{DB: dbInfo.Clone(), Info: newTblInfo}
+	err = db.CreateTable(ctx, newTable, nil, false, nil)
+	require.NoError(t, err)
+	newViewInfo = viewInfo.Clone()
+	newViewInfo.ID += 200
+	newTable = &metautil.Table{DB: dbInfo.Clone(), Info: newViewInfo}
+	err = db.CreateTable(ctx, newTable, nil, false, nil)
+	require.NoError(t, err)
+
+	r21 = tk.MustQuery("show create table t;").Rows()
+	r22 = tk.MustQuery("show create view v;").Rows()
+
+	require.Equal(t, r11, r21)
+	require.Equal(t, r12, r22)
+}

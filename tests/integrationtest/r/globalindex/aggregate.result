@@ -1,0 +1,50 @@
+set tidb_enable_global_index=true;
+drop table if exists p;
+create table p (id int, c int, unique index idx(id)) partition by range (c) (
+partition p0 values less than (4),
+partition p1 values less than (7),
+partition p2 values less than (10));
+insert into p values (1,3), (2,3), (3,4), (4,4), (5,6), (7,9), (8,9);
+explain format='brief' select count(*), max(id), min(id) from p use index(idx);
+id	estRows	task	access object	operator info
+HashAgg	1.00	root		funcs:count(Column#9)->Column#4, funcs:max(Column#10)->Column#5, funcs:min(Column#11)->Column#6
+└─IndexReader	1.00	root	partition:all	index:HashAgg
+  └─HashAgg	1.00	cop[tikv]		funcs:count(1)->Column#9, funcs:max(globalindex__aggregate.p.id)->Column#10, funcs:min(globalindex__aggregate.p.id)->Column#11
+    └─IndexFullScan	10000.00	cop[tikv]	table:p, index:idx(id)	keep order:false, stats:pseudo
+select count(*), max(id), min(id) from p use index(idx);
+count(*)	max(id)	min(id)
+7	8	1
+explain format='brief' select count(*), max(id), min(id) from p partition(p0) use index(idx);
+id	estRows	task	access object	operator info
+HashAgg	1.00	root	NULL	funcs:count(Column#9)->Column#4, funcs:max(Column#10)->Column#5, funcs:min(Column#11)->Column#6
+└─IndexReader	1.00	root	partition:p0	index:HashAgg
+  └─HashAgg	1.00	cop[tikv]	NULL	funcs:count(1)->Column#9, funcs:max(globalindex__aggregate.p.id)->Column#10, funcs:min(globalindex__aggregate.p.id)->Column#11
+    └─Selection	10000.00	cop[tikv]	NULL	in(_tidb_pid, pid0)
+      └─IndexFullScan	10000.00	cop[tikv]	table:p, index:idx(id)	keep order:false, stats:pseudo
+select count(*), max(id), min(id) from p partition(p0) use index(idx);
+count(*)	max(id)	min(id)
+2	2	1
+explain format='brief' select avg(id), max(id), min(id) from p use index(idx) group by c;
+id	estRows	task	access object	operator info
+HashAgg	8000.00	root		group by:globalindex__aggregate.p.c, funcs:avg(Column#9, Column#10)->Column#4, funcs:max(Column#11)->Column#5, funcs:min(Column#12)->Column#6
+└─IndexLookUp	8000.00	root	partition:all	
+  ├─IndexFullScan(Build)	10000.00	cop[tikv]	table:p, index:idx(id)	keep order:false, stats:pseudo
+  └─HashAgg(Probe)	8000.00	cop[tikv]		group by:globalindex__aggregate.p.c, funcs:count(globalindex__aggregate.p.id)->Column#9, funcs:sum(globalindex__aggregate.p.id)->Column#10, funcs:max(globalindex__aggregate.p.id)->Column#11, funcs:min(globalindex__aggregate.p.id)->Column#12
+    └─TableRowIDScan	10000.00	cop[tikv]	table:p	keep order:false, stats:pseudo
+select avg(id), max(id), min(id) from p use index(idx) group by c;
+avg(id)	max(id)	min(id)
+1.5000	2	1
+3.5000	4	3
+5.0000	5	5
+7.5000	8	7
+explain format='brief' select avg(id), max(id), min(id) from p partition(p0) use index(idx) group by c;
+id	estRows	task	access object	operator info
+HashAgg	8000.00	root	NULL	group by:globalindex__aggregate.p.c, funcs:avg(Column#9, Column#10)->Column#4, funcs:max(Column#11)->Column#5, funcs:min(Column#12)->Column#6
+└─IndexLookUp	8000.00	root	partition:p0	NULL
+  ├─Selection(Build)	10000.00	cop[tikv]	NULL	in(_tidb_pid, pid0)
+  │ └─IndexFullScan	10000.00	cop[tikv]	table:p, index:idx(id)	keep order:false, stats:pseudo
+  └─HashAgg(Probe)	8000.00	cop[tikv]	NULL	group by:globalindex__aggregate.p.c, funcs:count(globalindex__aggregate.p.id)->Column#9, funcs:sum(globalindex__aggregate.p.id)->Column#10, funcs:max(globalindex__aggregate.p.id)->Column#11, funcs:min(globalindex__aggregate.p.id)->Column#12
+    └─TableRowIDScan	10000.00	cop[tikv]	table:p	keep order:false, stats:pseudo
+select avg(id), max(id), min(id) from p partition(p0) use index(idx) group by c;
+avg(id)	max(id)	min(id)
+1.5000	2	1
