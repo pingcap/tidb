@@ -160,8 +160,7 @@ So it is adjustable according to the [statistics lease](https://docs.pingcap.com
 
 We can use the predicate columns in both automatic statistics collection and manual statistics collection.
 
-- Automatic statistics collection: When we trigger the automatic statistics collection, we can read the predicate columns from the system table and only analyze these columns.
-- Manual statistics collection: When we trigger the manual statistics collection, we can use the `ANALYZE TABLE tbl_name PREDICATE_COLUMNS` syntax to read the predicate columns from the system table and only analyze these columns.
+Whether the statistics collection is triggered automatically or manually, it reads the predicate columns from the system table and only analyzes these columns, provided that the PREDICATE COLUMNS have already been configured in the analyze options.
 
 To comprehend the application of predicate columns in automatic statistics collection, it's essential to understand how TiDB persists the analyze options.
 
