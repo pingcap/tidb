@@ -272,7 +272,7 @@ func (e *SortExec) InitInParallelModeForTest() {
 */
 func (e *SortExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	if e.fetched.CompareAndSwap(false, true) {
-		e.initCompareFuncs()
+		e.initCompareFuncs(e.Ctx().GetExprCtx().GetEvalCtx())
 		e.buildKeyColumns()
 		err := e.fetchChunks(ctx)
 		if err != nil {
@@ -753,10 +753,10 @@ func (e *SortExec) fetchChunksFromChild(ctx context.Context) {
 	}
 }
 
-func (e *SortExec) initCompareFuncs() {
+func (e *SortExec) initCompareFuncs(ctx expression.EvalContext) {
 	e.keyCmpFuncs = make([]chunk.CompareFunc, len(e.ByItems))
 	for i := range e.ByItems {
-		keyType := e.ByItems[i].Expr.GetType()
+		keyType := e.ByItems[i].Expr.GetType(ctx)
 		e.keyCmpFuncs[i] = chunk.GetCompareFunc(keyType)
 	}
 }

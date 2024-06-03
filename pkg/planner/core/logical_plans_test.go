@@ -161,7 +161,7 @@ func TestImplicitCastNotNullFlag(t *testing.T) {
 	p, err = logicalOptimize(context.TODO(), flagPredicatePushDown|flagJoinReOrder|flagPrunColumns|flagEliminateProjection, p.(base.LogicalPlan))
 	require.NoError(t, err)
 	// AggFuncs[0] is count; AggFuncs[1] is bit_and, args[0] is return type of the implicit cast
-	castNotNullFlag := (p.(*LogicalProjection).Children()[0].(*LogicalSelection).Children()[0].(*LogicalAggregation).AggFuncs[1].Args[0].GetType().GetFlag()) & mysql.NotNullFlag
+	castNotNullFlag := (p.(*LogicalProjection).Children()[0].(*LogicalSelection).Children()[0].(*LogicalAggregation).AggFuncs[1].Args[0].GetType(s.ctx.GetExprCtx().GetEvalCtx()).GetFlag()) & mysql.NotNullFlag
 	var nullableFlag uint = 0
 	require.Equal(t, nullableFlag, castNotNullFlag)
 }
@@ -180,7 +180,7 @@ func TestEliminateProjectionUnderUnion(t *testing.T) {
 	require.NoError(t, err)
 	// after folding constants, the null flag should keep the same with the old one's (i.e., the schema's).
 	schemaNullFlag := p.(*LogicalProjection).Children()[0].(*LogicalJoin).Children()[1].Children()[1].(*LogicalProjection).schema.Columns[0].RetType.GetFlag() & mysql.NotNullFlag
-	exprNullFlag := p.(*LogicalProjection).Children()[0].(*LogicalJoin).Children()[1].Children()[1].(*LogicalProjection).Exprs[0].GetType().GetFlag() & mysql.NotNullFlag
+	exprNullFlag := p.(*LogicalProjection).Children()[0].(*LogicalJoin).Children()[1].Children()[1].(*LogicalProjection).Exprs[0].GetType(s.ctx.GetExprCtx().GetEvalCtx()).GetFlag() & mysql.NotNullFlag
 	require.Equal(t, exprNullFlag, schemaNullFlag)
 }
 

@@ -695,7 +695,7 @@ func getPartitionIntervalFromTable(ctx expression.BuildContext, tbInfo *model.Ta
 			return nil
 		}
 	} else {
-		if !isPartExprUnsigned(tbInfo) {
+		if !isPartExprUnsigned(ctx.GetEvalCtx(), tbInfo) {
 			minVal = "-9223372036854775808"
 		}
 	}
@@ -985,7 +985,7 @@ func generatePartitionDefinitionsFromInterval(ctx expression.BuildContext, partO
 			if partCol != nil {
 				min = getLowerBoundInt(partCol)
 			} else {
-				if !isPartExprUnsigned(tbInfo) {
+				if !isPartExprUnsigned(ctx.GetEvalCtx(), tbInfo) {
 					min = math.MinInt64
 				}
 			}
@@ -1476,7 +1476,7 @@ func buildRangePartitionDefinitions(ctx expression.BuildContext, defs []*ast.Par
 
 func checkPartitionValuesIsInt(ctx expression.BuildContext, defName any, exprs []ast.ExprNode, tbInfo *model.TableInfo) error {
 	tp := types.NewFieldType(mysql.TypeLonglong)
-	if isPartExprUnsigned(tbInfo) {
+	if isPartExprUnsigned(ctx.GetEvalCtx(), tbInfo) {
 		tp.AddFlag(mysql.UnsignedFlag)
 	}
 	for _, exp := range exprs {
@@ -1642,7 +1642,7 @@ func checkPartitionFuncType(ctx sessionctx.Context, expr ast.ExprNode, schema st
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if e.GetType().EvalType() == types.ETInt {
+	if e.GetType(ctx.GetExprCtx().GetEvalCtx()).EvalType() == types.ETInt {
 		return nil
 	}
 
@@ -1665,7 +1665,7 @@ func checkRangePartitionValue(ctx sessionctx.Context, tblInfo *model.TableInfo) 
 	if strings.EqualFold(defs[len(defs)-1].LessThan[0], partitionMaxValue) {
 		defs = defs[:len(defs)-1]
 	}
-	isUnsigned := isPartExprUnsigned(tblInfo)
+	isUnsigned := isPartExprUnsigned(ctx.GetExprCtx().GetEvalCtx(), tblInfo)
 	var prevRangeValue any
 	for i := 0; i < len(defs); i++ {
 		if strings.EqualFold(defs[i].LessThan[0], partitionMaxValue) {
@@ -1728,7 +1728,7 @@ func formatListPartitionValue(ctx expression.BuildContext, tblInfo *model.TableI
 	cols := make([]*model.ColumnInfo, 0, len(pi.Columns))
 	if len(pi.Columns) == 0 {
 		tp := types.NewFieldType(mysql.TypeLonglong)
-		if isPartExprUnsigned(tblInfo) {
+		if isPartExprUnsigned(ctx.GetEvalCtx(), tblInfo) {
 			tp.AddFlag(mysql.UnsignedFlag)
 		}
 		colTps = []*types.FieldType{tp}
@@ -3238,7 +3238,11 @@ type reorgPartitionWorker struct {
 	reorgedTbl        table.PartitionedTable
 }
 
-func newReorgPartitionWorker(sessCtx sessionctx.Context, i int, t table.PhysicalTable, decodeColMap map[int64]decoder.Column, reorgInfo *reorgInfo, jc *JobContext) (*reorgPartitionWorker, error) {
+func newReorgPartitionWorker(i int, t table.PhysicalTable, decodeColMap map[int64]decoder.Column, reorgInfo *reorgInfo, jc *JobContext) (*reorgPartitionWorker, error) {
+	bCtx, err := newBackfillCtx(i, reorgInfo, reorgInfo.SchemaName, t, jc, "reorg_partition_rate", false)
+	if err != nil {
+		return nil, err
+	}
 	reorgedTbl, err := tables.GetReorganizedPartitionedTable(t)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -3262,7 +3266,7 @@ func newReorgPartitionWorker(sessCtx sessionctx.Context, i int, t table.Physical
 		maxOffset = mathutil.Max[int](maxOffset, offset)
 	}
 	return &reorgPartitionWorker{
-		backfillCtx:       newBackfillCtx(reorgInfo.d, i, sessCtx, reorgInfo.SchemaName, t, jc, "reorg_partition_rate", false),
+		backfillCtx:       bCtx,
 		rowDecoder:        decoder.NewRowDecoder(t, t.WritableCols(), decodeColMap),
 		rowMap:            make(map[int64]types.Datum, len(decodeColMap)),
 		writeColOffsetMap: writeColOffsetMap,
@@ -3274,7 +3278,7 @@ func newReorgPartitionWorker(sessCtx sessionctx.Context, i int, t table.Physical
 func (w *reorgPartitionWorker) BackfillData(handleRange reorgBackfillTask) (taskCtx backfillTaskContext, errInTxn error) {
 	oprStartTime := time.Now()
 	ctx := kv.WithInternalSourceAndTaskType(context.Background(), w.jobContext.ddlJobSourceType(), kvutil.ExplicitTypeDDL)
-	errInTxn = kv.RunInNewTxn(ctx, w.sessCtx.GetStore(), true, func(_ context.Context, txn kv.Transaction) error {
+	errInTxn = kv.RunInNewTxn(ctx, w.ddlCtx.store, true, func(_ context.Context, txn kv.Transaction) error {
 		taskCtx.addedCount = 0
 		taskCtx.scanCount = 0
 		updateTxnEntrySizeLimitIfNeeded(txn)
@@ -3334,12 +3338,12 @@ func (w *reorgPartitionWorker) fetchRowColVals(txn kv.Transaction, taskRange reo
 
 	// taskDone means that the added handle is out of taskRange.endHandle.
 	taskDone := false
-	sysTZ := w.sessCtx.GetSessionVars().StmtCtx.TimeZone()
+	sysTZ := w.loc
 
 	tmpRow := make([]types.Datum, w.maxOffset+1)
 	var lastAccessedHandle kv.Key
 	oprStartTime := startTime
-	err := iterateSnapshotKeys(w.jobContext, w.sessCtx.GetStore(), taskRange.priority, w.table.RecordPrefix(), txn.StartTS(), taskRange.startKey, taskRange.endKey,
+	err := iterateSnapshotKeys(w.jobContext, w.ddlCtx.store, taskRange.priority, w.table.RecordPrefix(), txn.StartTS(), taskRange.startKey, taskRange.endKey,
 		func(handle kv.Handle, recordKey kv.Key, rawRow []byte) (bool, error) {
 			oprEndTime := time.Now()
 			logSlowOperations(oprEndTime.Sub(oprStartTime), "iterateSnapshotKeys in reorgPartitionWorker fetchRowColVals", 0)
@@ -3353,7 +3357,7 @@ func (w *reorgPartitionWorker) fetchRowColVals(txn kv.Transaction, taskRange reo
 
 			// TODO: Extend for normal tables
 			// TODO: Extend for REMOVE PARTITIONING
-			_, err := w.rowDecoder.DecodeTheExistedColumnMap(w.sessCtx, handle, rawRow, sysTZ, w.rowMap)
+			_, err := w.rowDecoder.DecodeTheExistedColumnMap(w.exprCtx, handle, rawRow, sysTZ, w.rowMap)
 			if err != nil {
 				return false, errors.Trace(err)
 			}
@@ -3366,7 +3370,7 @@ func (w *reorgPartitionWorker) fetchRowColVals(txn kv.Transaction, taskRange reo
 				}
 				tmpRow[offset] = d
 			}
-			p, err := w.reorgedTbl.GetPartitionByRow(w.sessCtx.GetExprCtx().GetEvalCtx(), tmpRow)
+			p, err := w.reorgedTbl.GetPartitionByRow(w.exprCtx.GetEvalCtx(), tmpRow)
 			if err != nil {
 				return false, errors.Trace(err)
 			}
@@ -4047,7 +4051,7 @@ func (cns columnNameSlice) At(i int) string {
 	return cns[i].Name.L
 }
 
-func isPartExprUnsigned(tbInfo *model.TableInfo) bool {
+func isPartExprUnsigned(ectx expression.EvalContext, tbInfo *model.TableInfo) bool {
 	// We should not rely on any configuration, system or session variables, so use a mock ctx!
 	// Same as in tables.newPartitionExpr
 	ctx := mock.NewContext()
@@ -4056,7 +4060,7 @@ func isPartExprUnsigned(tbInfo *model.TableInfo) bool {
 		logutil.DDLLogger().Error("isPartExpr failed parsing expression!", zap.Error(err))
 		return false
 	}
-	if mysql.HasUnsignedFlag(expr.GetType().GetFlag()) {
+	if mysql.HasUnsignedFlag(expr.GetType(ectx).GetFlag()) {
 		return true
 	}
 	return false

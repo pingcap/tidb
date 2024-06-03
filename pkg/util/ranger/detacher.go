@@ -631,8 +631,8 @@ func ExtractEqAndInCondition(sctx *rangerctx.RangerContext, conditions []express
 		}
 		// Multiple Eq/In conditions for one column in CNF, apply intersection on them
 		// Lazily compute the points for the previously visited Eq/In
-		newTp := newFieldType(cols[offset].GetType())
-		collator := collate.GetCollator(cols[offset].GetType().GetCollate())
+		newTp := newFieldType(cols[offset].GetType(sctx.ExprCtx.GetEvalCtx()))
+		collator := collate.GetCollator(cols[offset].GetType(sctx.ExprCtx.GetEvalCtx()).GetCollate())
 		if mergedAccesses[offset] == nil {
 			mergedAccesses[offset] = accesses[offset]
 			// Note that this is a relatively special usage of build(). We will restore the points back to Expression for
@@ -704,7 +704,7 @@ func ExtractEqAndInCondition(sctx *rangerctx.RangerContext, conditions []express
 		// However, please notice that if you're implementing this, please (1) set StatementContext.OptimDependOnMutableConst to true,
 		// or (2) don't do this optimization when StatementContext.UseCache is true. That's because this plan is affected by
 		// flen of user variable, we cannot cache this plan.
-		isFullLength := lengths[i] == types.UnspecifiedLength || lengths[i] == cols[i].GetType().GetFlen()
+		isFullLength := lengths[i] == types.UnspecifiedLength || lengths[i] == cols[i].GetType(sctx.ExprCtx.GetEvalCtx()).GetFlen()
 		if !isFullLength {
 			filters = append(filters, cond)
 		}

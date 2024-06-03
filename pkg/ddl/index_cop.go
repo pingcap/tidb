@@ -369,10 +369,10 @@ func constructTableScanPB(ctx exprctx.BuildContext, tblInfo *model.TableInfo, co
 	return &tipb.Executor{Tp: tipb.ExecType_TypeTableScan, TblScan: tblScan}, err
 }
 
-func extractDatumByOffsets(row chunk.Row, offsets []int, expCols []*expression.Column, buf []types.Datum) []types.Datum {
+func extractDatumByOffsets(ctx expression.EvalContext, row chunk.Row, offsets []int, expCols []*expression.Column, buf []types.Datum) []types.Datum {
 	for i, offset := range offsets {
 		c := expCols[offset]
-		row.DatumWithBuffer(offset, c.GetType(), &buf[i])
+		row.DatumWithBuffer(offset, c.GetType(ctx), &buf[i])
 	}
 	return buf
 }
