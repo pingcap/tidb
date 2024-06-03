@@ -3466,7 +3466,7 @@ func TestExchangeValidateHandleNullValue(t *testing.T) {
 	// TODO: add "partition by range columns(a, b, c)" test cases.
 }
 
-func TestMultiSchemaVerDML(t *testing.T) {
+func TestMultiSchemaVerPartitionBy(t *testing.T) {
 	// Last domain will be the DDLOwner
 	distCtx := testkit.NewDistExecutionContextWithLease(t, 2, 15*time.Second)
 	store := distCtx.Store
@@ -3605,4 +3605,106 @@ func TestMultiSchemaVerDML(t *testing.T) {
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
 		"PARTITION BY HASH (`a`) PARTITIONS 3"))
 	tk1.MustQuery(ddlJobsSQL).CheckAt([]int{4, 11}, [][]any{{"none", "synced"}})
+}
+
+func TestMultiSchemaVerAddPartition(t *testing.T) {
+	// Last domain will be the DDLOwner
+	distCtx := testkit.NewDistExecutionContextWithLease(t, 2, 15*time.Second)
+	store := distCtx.Store
+	dom1 := distCtx.GetDomain(0)
+	dom2 := distCtx.GetDomain(1)
+	defer func() {
+		dom1.Close()
+		dom2.Close()
+		store.Close()
+	}()
+
+	ddlJobsSQL := `admin show ddl jobs where db_name = 'test' and table_name = 't' and job_type = 'add partition'`
+
+	se1, err := session.CreateSessionWithDomain(store, dom1)
+	require.NoError(t, err)
+	se2, err := session.CreateSessionWithDomain(store, dom2)
+	require.NoError(t, err)
+
+	// Session on non DDL owner domain (~ TiDB Server)
+	tk1 := testkit.NewTestKitWithSession(t, store, se1)
+	tk1.MustExec(`use test`)
+	tk1.MustExec(`set @@global.tidb_enable_global_index = 1`)
+	tk1.MustExec(`set @@session.tidb_enable_global_index = 1`)
+	// Session on DDL owner domain (~ TiDB Server), used for concurrent DDL
+	tk2 := testkit.NewTestKitWithSession(t, store, se2)
+	tk2.MustExec(`use test`)
+	tk2.MustExec(`set @@session.tidb_enable_global_index = 1`)
+	// Session on DDL owner domain (~ TiDB Server), used for queries
+	tk3 := testkit.NewTestKitWithSession(t, store, se2)
+	tk3.MustExec(`use test`)
+	// The DDL Owner will be the last created domain, so use tk2.
+	tk2.MustExec(`create table t (a int primary key nonclustered, b varchar(255) charset utf8mb4 collate utf8mb4_0900_ai_ci) partition by range columns (b) (partition p0 values less than ("m"))`)
+	dom1.Reload()
+	dom2.Reload()
+	verStart := dom2.InfoSchema().SchemaMetaVersion()
+	alterChan := make(chan struct{})
+	originHook := dom2.DDL().GetHook()
+	// This will cause a dom2.Reload during callbacks! Not needed?
+	hook := &callback.TestDDLCallback{Do: dom2}
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		alterChan <- struct{}{}
+		<-alterChan
+	}
+	dom2.DDL().SetHook(hook)
+	defer dom2.DDL().SetHook(originHook)
+	go func() {
+		tk2.MustExec(`alter table t add partition (partition p1 values less than ("p"))`)
+		alterChan <- struct{}{}
+	}()
+	// Wait for the first state change to begin
+	<-alterChan
+	alterChan <- struct{}{}
+	// Doing the first State change
+	stateChange := int64(1)
+	<-alterChan
+	// Waiting before running the second State change
+	verCurr := dom2.InfoSchema().SchemaMetaVersion()
+	require.Equal(t, stateChange, verCurr-verStart)
+	require.Equal(t, verStart, dom1.InfoSchema().SchemaMetaVersion())
+	tk1.MustQuery(`show create table t`).Check(testkit.Rows("" +
+		"t CREATE TABLE `t` (\n" +
+		"  `a` int(11) NOT NULL,\n" +
+		"  `b` varchar(255) COLLATE utf8mb4_0900_ai_ci DEFAULT NULL,\n" +
+		"  PRIMARY KEY (`a`) /*T![clustered_index] NONCLUSTERED */\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY RANGE COLUMNS(`b`)\n" +
+		"(PARTITION `p0` VALUES LESS THAN ('m'))"))
+	dom1.Reload()
+	require.Equal(t, verCurr, dom1.InfoSchema().SchemaMetaVersion())
+	tk1.MustQuery(`show create table t`).Check(testkit.Rows("" +
+		"t CREATE TABLE `t` (\n" +
+		"  `a` int(11) NOT NULL,\n" +
+		"  `b` varchar(255) COLLATE utf8mb4_0900_ai_ci DEFAULT NULL,\n" +
+		"  PRIMARY KEY (`a`) /*T![clustered_index] NONCLUSTERED */\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY RANGE COLUMNS(`b`)\n" +
+		"(PARTITION `p0` VALUES LESS THAN ('m'))"))
+	tk1.MustQuery(ddlJobsSQL).CheckAt([]int{4, 11}, [][]any{{"replica only", "running"}})
+	alterChan <- struct{}{}
+	stateChange++
+	<-alterChan
+	verCurr = dom2.InfoSchema().SchemaMetaVersion()
+	require.Equal(t, stateChange, verCurr-verStart)
+	tk3.MustExec(`insert into t values (1,"Matt"),(2,"Anne")`)
+	tk1.MustQuery(`select /*+ USE_INDEX(t, primary) */ a from t`).Sort().Check(testkit.Rows("1"))
+	tk1.MustQuery(`select * from t`).Sort().Check(testkit.Rows())
+	dom1.Reload()
+	require.Equal(t, verCurr, dom1.InfoSchema().SchemaMetaVersion())
+	tk1.MustQuery(`show create table t`).Check(testkit.Rows("" +
+		"t CREATE TABLE `t` (\n" +
+		"  `a` int(11) NOT NULL,\n" +
+		"  `b` varchar(255) COLLATE utf8mb4_0900_ai_ci DEFAULT NULL,\n" +
+		"  PRIMARY KEY (`a`) /*T![clustered_index] NONCLUSTERED */\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY RANGE COLUMNS(`b`)\n" +
+		"(PARTITION `p0` VALUES LESS THAN ('m'),\n" +
+		" PARTITION `p1` VALUES LESS THAN ('p'))"))
+	tk1.MustQuery(ddlJobsSQL).CheckAt([]int{4, 11}, [][]any{{"public", "synced"}})
+	tk1.MustQuery(`select /*+ USE_INDEX(t, primary) */ a from t`).Sort().Check(testkit.Rows("1"))
 }
