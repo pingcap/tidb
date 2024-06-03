@@ -1374,7 +1374,7 @@ func (e *InsertValues) removeRow(
 	}
 
 	if ph, ok := handle.(kv.PartitionHandle); ok {
-		err = e.Table.(table.PartitionedTable).GetPartition(ph.PartitionID).RemoveRecord(e.Ctx().GetTableCtx(), handle, oldRow)
+		err = e.Table.(table.PartitionedTable).GetPartition(ph.PartitionID).RemoveRecord(e.Ctx().GetTableCtx(), ph.Handle, oldRow)
 	} else {
 		err = r.t.RemoveRecord(e.Ctx().GetTableCtx(), handle, oldRow)
 	}
