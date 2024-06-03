@@ -734,7 +734,7 @@ func TestLogKVConvertFailed(t *testing.T) {
 	c1 := &model.ColumnInfo{ID: 1, Name: modelName, State: modelState, Offset: 0, FieldType: modelFieldType}
 	cols := []*model.ColumnInfo{c1}
 	tblInfo := &model.TableInfo{ID: 1, Columns: cols, PKIsHandle: false, State: model.StatePublic}
-	_, err = tables.TableFromMeta(lkv.NewPanickingAllocators(0), tblInfo)
+	_, err = tables.TableFromMeta(lkv.NewPanickingAllocators(tblInfo.SepAutoInc(), 0), tblInfo)
 	require.NoError(t, err)
 
 	var newString strings.Builder
