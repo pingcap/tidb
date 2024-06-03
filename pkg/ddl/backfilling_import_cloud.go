@@ -121,7 +121,6 @@ func (m *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Sub
 	// name here. And fix TestGlobalSortMultiSchemaChange/ingest_dist_gs_backfill
 	//return ingest.TryConvertToKeyExistsErr(err, currentIdx, m.ptbl.Meta())
 	return kv.ErrKeyExists
-
 }
 
 func (m *cloudImportExecutor) Cleanup(ctx context.Context) error {
