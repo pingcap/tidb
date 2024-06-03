@@ -961,7 +961,7 @@ func TestGlobalStatsAndSQLBindingWithConcurrency(t *testing.T) {
 }
 
 func TestBlockCheckFMSketch(t *testing.T) {
-	store, _ := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@tidb_enable_async_merge_global_stats=OFF;")
@@ -972,7 +972,7 @@ func TestBlockCheckFMSketch(t *testing.T) {
 }
 
 func TestAsyncCheckFMSketch(t *testing.T) {
-	store, _ := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@tidb_enable_async_merge_global_stats=ON;")
