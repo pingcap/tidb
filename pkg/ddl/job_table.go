@@ -559,27 +559,26 @@ func (s *jobScheduler) delivery2Worker(wk *worker, pool *workerPool, job *model.
 		}
 	})
 }
+
 func (s *jobScheduler) runJobWithWorker(wk *worker, job *model.Job) error {
 	ownerID := s.ownerManager.ID()
-	// suppose we failed to sync version last time, we need to check and sync it before run
+	// suppose we failed to sync version last time, we need to check and sync it
+	// before run to maintain the 2-version invariant.
 	if !job.NotStarted() && (!s.isSynced(job) || !s.maybeAlreadyRunOnce(job.ID)) {
 		if variable.EnableMDL.Load() {
 			version, err := s.sysTblMgr.GetMDLVer(s.schCtx, job.ID)
 			if err != nil {
 				if err != systable.ErrNotFound {
 					wk.jobLogger(job).Warn("check MDL info failed", zap.Error(err))
-					// Release the worker resource.
 					return err
 				}
 			} else {
-				// Release the worker resource.
 				err = waitSchemaSyncedForMDL(wk.ctx, s.ddlCtx, job, version)
 				if err != nil {
 					return err
 				}
 				s.setAlreadyRunOnce(job.ID)
 				s.cleanMDLInfo(job, ownerID)
-				// Don't have a worker now.
 				return nil
 			}
 		} else {

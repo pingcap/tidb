@@ -36,6 +36,7 @@ var (
 type Manager interface {
 	// GetJobByID gets the job by ID, returns ErrNotFound if the job does not exist.
 	GetJobByID(ctx context.Context, jobID int64) (*model.Job, error)
+	// GetMDLVer gets the MDL version by job ID, returns ErrNotFound if the MDL info does not exist.
 	GetMDLVer(ctx context.Context, jobID int64) (int64, error)
 }
 
