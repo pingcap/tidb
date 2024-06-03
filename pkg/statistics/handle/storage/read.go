@@ -104,23 +104,6 @@ func HistogramFromStorageWithPriority(
 	case kv.PriorityLow:
 		selectPrefix += "low_priority "
 	}
-	return HistogramFromStorage(sctx, tableID, colID, tp, distinct, isIndex, ver, nullCount, totColSize, corr, selectPrefix)
-}
-
-// HistogramFromStorage reads histogram from storage.
-func HistogramFromStorage(
-	sctx sessionctx.Context,
-	tableID int64,
-	colID int64,
-	tp *types.FieldType,
-	distinct int64,
-	isIndex int,
-	ver uint64,
-	nullCount int64,
-	totColSize int64,
-	corr float64,
-	selectPrefix string,
-) (_ *statistics.Histogram, err error) {
 	rows, fields, err := util.ExecRows(sctx, selectPrefix+"count, repeats, lower_bound, upper_bound, ndv from mysql.stats_buckets where table_id = %? and is_index = %? and hist_id = %? order by bucket_id", tableID, isIndex, colID)
 	if err != nil {
 		return nil, errors.Trace(err)
