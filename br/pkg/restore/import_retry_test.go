@@ -242,7 +242,7 @@ func TestEpochNotMatch(t *testing.T) {
 			EndKey:   right.Region.EndKey,
 			Id:       42,
 			Peers: []*metapb.Peer{
-				{Id: 43},
+				{Id: 43, StoreId: 1},
 			},
 		},
 		Leader: &metapb.Peer{Id: 43, StoreId: 1},
