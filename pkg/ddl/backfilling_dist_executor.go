@@ -135,28 +135,27 @@ func (s *backfillDistExecutor) newBackfillSubtaskExecutor(
 
 func (s *backfillDistExecutor) getBackendCtx() (ingest.BackendCtx, error) {
 	job := &s.taskMeta.Job
-	unique, err := decodeIndexUniqueness(job)
+	hasUnique, err := hasUniqueIndex(job)
 	if err != nil {
 		return nil, err
 	}
 	ddlObj := s.d
 	discovery := ddlObj.store.(tikv.Storage).GetRegionCache().PDClient().GetServiceDiscovery()
 
-	return ingest.LitBackCtxMgr.Register(s.BaseTaskExecutor.Ctx(), job.ID, unique, ddlObj.etcdCli, discovery, job.ReorgMeta.ResourceGroupName)
+	return ingest.LitBackCtxMgr.Register(s.BaseTaskExecutor.Ctx(), job.ID, hasUnique, ddlObj.etcdCli, discovery, job.ReorgMeta.ResourceGroupName)
 }
 
-func decodeIndexUniqueness(job *model.Job) (bool, error) {
-	unique := make([]bool, 1)
-	err := job.DecodeArgs(&unique[0])
+func hasUniqueIndex(job *model.Job) (bool, error) {
+	uniques, _, _, _, _, _, err := decodeAddIndexArgs(job)
 	if err != nil {
-		err = job.DecodeArgs(&unique)
+		return false, err
 	}
-	if err != nil {
-		return false, errors.Trace(err)
+	for _, b := range uniques {
+		if b {
+			return true, nil
+		}
 	}
-	// We only support adding multiple unique indexes or multiple non-unique indexes,
-	// we use the first index uniqueness here.
-	return unique[0], nil
+	return false, nil
 }
 
 type backfillDistExecutor struct {
