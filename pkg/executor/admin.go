@@ -381,6 +381,9 @@ func (e *RecoverIndexExec) fetchRecoverRows(ctx context.Context, srcResult dists
 			if err != nil {
 				return nil, err
 			}
+			if e.index.Meta().Global {
+				handle = kv.NewPartitionHandle(e.physicalID, handle)
+			}
 			idxVals, err := e.buildIndexedValues(row, e.idxValsBufs[result.scanRowCount], e.colFieldTypes, idxValLen)
 			if err != nil {
 				return nil, err
@@ -472,12 +475,11 @@ func (e *RecoverIndexExec) batchMarkDup(txn kv.Transaction, rows []recoverRows) 
 	// 1. unique-key is duplicate and the handle is equal, skip it.
 	// 2. unique-key is duplicate and the handle is not equal, data is not consistent, log it and skip it.
 	// 3. non-unique-key is duplicate, skip it.
-	isCommonHandle := e.table.Meta().IsCommonHandle
 	for i, key := range e.batchKeys {
 		val, found := values[string(key)]
 		if found {
 			if distinctFlags[i] {
-				handle, err1 := tablecodec.DecodeHandleInUniqueIndexValue(val, isCommonHandle)
+				handle, err1 := tablecodec.DecodeHandleInIndexValue(val)
 				if err1 != nil {
 					return err1
 				}
@@ -614,11 +616,7 @@ func (e *CleanupIndexExec) getIdxColTypes() []*types.FieldType {
 
 func (e *CleanupIndexExec) batchGetRecord(txn kv.Transaction) (map[string][]byte, error) {
 	e.idxValues.Range(func(h kv.Handle, _ any) bool {
-		if ph, ok := h.(kv.PartitionHandle); ok {
-			e.batchKeys = append(e.batchKeys, tablecodec.EncodeRecordKey(tablecodec.GenTableRecordPrefix(ph.PartitionID), ph.Handle))
-		} else {
-			e.batchKeys = append(e.batchKeys, tablecodec.EncodeRecordKey(e.table.RecordPrefix(), h))
-		}
+		e.batchKeys = append(e.batchKeys, tablecodec.EncodeRecordKey(e.table.RecordPrefix(), h))
 		return true
 	})
 	values, err := txn.BatchGet(context.Background(), e.batchKeys)
