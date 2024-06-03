@@ -37,6 +37,7 @@ import (
 	sst "github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
+	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
@@ -1165,7 +1166,8 @@ func (local *local) WriteToTiKV(
 func (local *local) Ingest(ctx context.Context, metas []*sst.SSTMeta, region *split.RegionInfo) (*sst.IngestResponse, error) {
 	leader := region.Leader
 	if leader == nil {
-		leader = region.Region.GetPeers()[0]
+		return nil, errors.Annotatef(berrors.ErrPDLeaderNotFound,
+			"region %d has no leader", region.Region.Id)
 	}
 
 	cli, err := local.getImportClient(ctx, leader.StoreId)
