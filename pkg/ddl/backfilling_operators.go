@@ -510,16 +510,26 @@ func NewWriteExternalStoreOperator(
 	memoryQuota uint64,
 	reorgMeta *model.DDLReorgMeta,
 ) *WriteExternalStoreOperator {
+	// due to multi-schema-change, we may merge processing multiple indexes into one
+	// local backend.
+	hasUnique := false
+	for _, index := range indexes {
+		if index.Meta().Unique {
+			hasUnique = true
+			break
+		}
+	}
+
 	pool := workerpool.NewWorkerPool(
 		"WriteExternalStoreOperator",
 		util.DDL,
 		concurrency,
 		func() workerpool.Worker[IndexRecordChunk, IndexWriteResult] {
 			writers := make([]ingest.Writer, 0, len(indexes))
-			for i, index := range indexes {
+			for i := range indexes {
 				builder := external.NewWriterBuilder().
 					SetOnCloseFunc(onClose).
-					SetKeyDuplicationEncoding(index.Meta().Unique).
+					SetKeyDuplicationEncoding(hasUnique).
 					SetMemorySizeLimit(memoryQuota).
 					SetGroupOffset(i)
 				writerID := uuid.New().String()

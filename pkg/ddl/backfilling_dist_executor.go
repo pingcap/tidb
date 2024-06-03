@@ -126,7 +126,7 @@ func (s *backfillDistExecutor) newBackfillSubtaskExecutor(
 		if len(cloudStorageURI) == 0 {
 			return nil, errors.Errorf("local import does not have write & ingest step")
 		}
-		return newCloudImportExecutor(jobMeta, indexInfos[0], tbl, s.getBackendCtx, cloudStorageURI)
+		return newCloudImportExecutor(jobMeta, indexInfos, tbl, s.getBackendCtx, cloudStorageURI)
 	default:
 		// should not happen, caller has checked the stage
 		return nil, errors.Errorf("unknown step %d for job %d", stage, jobMeta.ID)
@@ -146,9 +146,16 @@ func (s *backfillDistExecutor) getBackendCtx() (ingest.BackendCtx, error) {
 }
 
 func hasUniqueIndex(job *model.Job) (bool, error) {
-	uniques, _, _, _, _, _, err := decodeAddIndexArgs(job)
+	var unique bool
+	err := job.DecodeArgs(&unique)
+	if err == nil {
+		return unique, nil
+	}
+
+	var uniques []bool
+	err = job.DecodeArgs(&uniques)
 	if err != nil {
-		return false, err
+		return false, errors.Trace(err)
 	}
 	for _, b := range uniques {
 		if b {
