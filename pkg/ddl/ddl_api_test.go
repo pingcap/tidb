@@ -21,7 +21,6 @@ import (
 	"slices"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl"
@@ -157,8 +156,6 @@ func TestCreateViewConcurrently(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk1 := testkit.NewTestKit(t, store)
-	tk1.MustExec("use test")
 
 	tk.MustExec("create table t (a int);")
 	tk.MustExec("create view v as select * from t;")
@@ -172,7 +169,6 @@ func TestCreateViewConcurrently(t *testing.T) {
 			counterErr = fmt.Errorf("create view job should not run concurrently")
 			return
 		}
-		<-time.After(300 * time.Millisecond)
 	})
 	failpoint.EnableCall("github.com/pingcap/tidb/pkg/ddl/afterDelivery2Worker", func(job *model.Job) {
 		if job.Type == model.ActionCreateView {
