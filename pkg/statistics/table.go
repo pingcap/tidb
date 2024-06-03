@@ -255,6 +255,8 @@ func NewHistColl(id int64, havePhysicalID bool, realtimeCnt, modifyCnt int64, co
 		indices:            make(map[int64]*Index, idxNum),
 		PhysicalID:         id,
 		HavePhysicalID:     havePhysicalID,
+		RealtimeCount:      realtimeCnt,
+		ModifyCount:        modifyCnt,
 		Idx2ColUniqueIDs:   make(map[int64][]int64),
 		ColUniqueID2IdxIDs: make(map[int64][]int64),
 		UniqueID2colInfoID: make(map[int64]int64),
@@ -316,7 +318,6 @@ func (coll *HistColl) ForEachIndex(f func(int64, *Index) bool) {
 			return
 		}
 	}
-	return
 }
 
 // ColNum returns the number of columns in the HistColl.

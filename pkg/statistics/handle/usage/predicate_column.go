@@ -16,9 +16,11 @@ package usage
 
 import (
 	"encoding/json"
+	"fmt"
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -65,7 +67,7 @@ func (u *statsUsageImpl) GetPredicateColumns(tableID int64) (columnIDs []int64, 
 	err = utilstats.CallWithSCtx(u.statsHandle.SPool(), func(sctx sessionctx.Context) error {
 		columnIDs, err = GetPredicateColumns(sctx, tableID)
 		return err
-	})
+	}, utilstats.FlagWrapTxn)
 	return
 }
 
@@ -123,6 +125,11 @@ func LoadColumnStatsUsage(sctx sessionctx.Context, loc *time.Location) (map[mode
 
 // GetPredicateColumns returns IDs of predicate columns, which are the columns whose stats are used(needed) when generating query plans.
 func GetPredicateColumns(sctx sessionctx.Context, tableID int64) ([]int64, error) {
+	// Each time we retrieve the predicate columns, we also attempt to remove any column stats usage information whose column is dropped.
+	err := cleanupDroppedColumnStatsUsage(sctx, tableID)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 	// This time is the time when `set global tidb_enable_column_tracking = 0`.
 	disableTime, err := getDisableColumnTrackingTime(sctx)
 	if err != nil {
@@ -157,6 +164,33 @@ func GetPredicateColumns(sctx sessionctx.Context, tableID int64) ([]int64, error
 		}
 	}
 	return columnIDs, nil
+}
+
+// cleanupDroppedColumnStatsUsage deletes the column stats usage information whose column is dropped.
+func cleanupDroppedColumnStatsUsage(sctx sessionctx.Context, tableID int64) error {
+	is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
+	table, ok := is.TableByID(tableID)
+	if !ok {
+		// Usually, it should not happen.
+		// But if it happens, we can safely do nothing.
+		return nil
+	}
+	allColumns := table.Meta().Columns
+	// Due to SQL limitations, column IDs must be converted to strings for proper escaping in the query :(
+	columnIDs := make([]string, 0, len(allColumns))
+	for _, col := range allColumns {
+		columnIDs = append(columnIDs, fmt.Sprintf("%d", col.ID))
+	}
+
+	// Delete the column stats usage information whose column is dropped.
+	_, _, err := utilstats.ExecRows(
+		sctx,
+		"DELETE FROM mysql.column_stats_usage WHERE table_id = %? AND column_id NOT IN (%?)",
+		tableID,
+		columnIDs,
+	)
+
+	return err
 }
 
 // getDisableColumnTrackingTime reads the value of tidb_disable_column_tracking_time from mysql.tidb if it exists.

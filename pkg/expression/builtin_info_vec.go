@@ -268,7 +268,7 @@ func (b *builtinBenchmarkSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, re
 	n := input.NumRows()
 	loopCount := b.constLoopCount
 	arg := b.args[1]
-	evalType := arg.GetType().EvalType()
+	evalType := arg.GetType(ctx).EvalType()
 	buf, err := b.bufAllocator.get()
 	if err != nil {
 		return err

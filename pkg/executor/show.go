@@ -2355,7 +2355,7 @@ func tryFillViewColumnType(ctx context.Context, sctx sessionctx.Context, is info
 		for _, col := range tbl.Columns {
 			idx := expression.FindFieldNameIdxByColName(viewOutputNames, col.Name.L)
 			if idx >= 0 {
-				col.FieldType = *viewSchema.Columns[idx].GetType()
+				col.FieldType = *viewSchema.Columns[idx].GetType(sctx.GetExprCtx().GetEvalCtx())
 			}
 			if col.GetType() == mysql.TypeVarString {
 				col.SetType(mysql.TypeVarchar)

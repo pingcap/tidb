@@ -1665,7 +1665,7 @@ func (ijHelper *indexJoinBuildHelper) resetContextForIndex(innerKeys []*expressi
 				if err != nil {
 					logutil.BgLogger().Error("Unexpected error happened during constructing index join", zap.Stack("stack"))
 				}
-				if !collate.CompatibleCollate(idxCol.GetType().GetCollate(), et.Collation) {
+				if !collate.CompatibleCollate(idxCol.GetStaticType().GetCollate(), et.Collation) {
 					ijHelper.curIdxOff2KeyOff[i] = -1
 				}
 			}
@@ -2946,7 +2946,7 @@ func (lw *LogicalWindow) GetPartitionKeys() []*property.MPPPartitionColumn {
 	for _, item := range lw.PartitionBy {
 		partitionByCols = append(partitionByCols, &property.MPPPartitionColumn{
 			Col:       item.Col,
-			CollateID: property.GetCollateIDByNameForPartition(item.Col.GetType().GetCollate()),
+			CollateID: property.GetCollateIDByNameForPartition(item.Col.GetStaticType().GetCollate()),
 		})
 	}
 
@@ -2956,8 +2956,8 @@ func (lw *LogicalWindow) GetPartitionKeys() []*property.MPPPartitionColumn {
 // Duration vs Datetime is invalid comparison as TiFlash can't handle it so far.
 func (lw *LogicalWindow) checkComparisonForTiFlash(frameBound *FrameBound) bool {
 	if len(frameBound.CompareCols) > 0 {
-		orderByEvalType := lw.OrderBy[0].Col.GetType().EvalType()
-		calFuncEvalType := frameBound.CalcFuncs[0].GetType().EvalType()
+		orderByEvalType := lw.OrderBy[0].Col.GetStaticType().EvalType()
+		calFuncEvalType := frameBound.CalcFuncs[0].GetType(lw.SCtx().GetExprCtx().GetEvalCtx()).EvalType()
 
 		if orderByEvalType == types.ETDuration && (calFuncEvalType == types.ETDatetime || calFuncEvalType == types.ETTimestamp) {
 			return false

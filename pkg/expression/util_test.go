@@ -182,7 +182,7 @@ func TestGetUint64FromConstant(t *testing.T) {
 	require.Equal(t, uint64(1), num)
 
 	ctx.GetSessionVars().PlanCacheParams.Append(types.NewUintDatum(100))
-	con.ParamMarker = &ParamMarker{order: 0, ctx: ctx}
+	con.ParamMarker = &ParamMarker{ctx: ctx, order: 0}
 	num, _, _ = GetUint64FromConstant(ctx, con)
 	require.Equal(t, uint64(100), num)
 }
@@ -351,7 +351,7 @@ func TestHashGroupKey(t *testing.T) {
 			bufs[j] = bufs[j][:0]
 		}
 		var err error
-		err = EvalExpr(ctx, ctx.GetSessionVars().EnableVectorizedExpression, colExpr, colExpr.GetType().EvalType(), input, colBuf)
+		err = EvalExpr(ctx, ctx.GetSessionVars().EnableVectorizedExpression, colExpr, colExpr.GetType(ctx).EvalType(), input, colBuf)
 		require.NoError(t, err)
 		bufs, err = codec.HashGroupKey(sc.TimeZone(), 1024, colBuf, bufs, ft)
 		require.NoError(t, err)
@@ -376,21 +376,22 @@ func isLogicOrFunction(e Expression) bool {
 
 func TestDisableParseJSONFlag4Expr(t *testing.T) {
 	var expr Expression
+	ctx := createContext(t)
 	expr = &Column{RetType: newIntFieldType()}
-	ft := expr.GetType()
+	ft := expr.GetType(ctx)
 	ft.AddFlag(mysql.ParseToJSONFlag)
-	DisableParseJSONFlag4Expr(expr)
+	DisableParseJSONFlag4Expr(ctx, expr)
 	require.True(t, mysql.HasParseToJSONFlag(ft.GetFlag()))
 
 	expr = &CorrelatedColumn{Column: Column{RetType: newIntFieldType()}}
-	ft = expr.GetType()
+	ft = expr.GetType(ctx)
 	ft.AddFlag(mysql.ParseToJSONFlag)
-	DisableParseJSONFlag4Expr(expr)
+	DisableParseJSONFlag4Expr(ctx, expr)
 	require.True(t, mysql.HasParseToJSONFlag(ft.GetFlag()))
 	expr = &ScalarFunction{RetType: newIntFieldType()}
-	ft = expr.GetType()
+	ft = expr.GetType(ctx)
 	ft.AddFlag(mysql.ParseToJSONFlag)
-	DisableParseJSONFlag4Expr(expr)
+	DisableParseJSONFlag4Expr(ctx, expr)
 	require.False(t, mysql.HasParseToJSONFlag(ft.GetFlag()))
 }
 
@@ -567,7 +568,7 @@ func (m *MockExpr) EvalJSON(ctx EvalContext, row chunk.Row) (val types.BinaryJSO
 	}
 	return types.BinaryJSON{}, m.i == nil, m.err
 }
-func (m *MockExpr) GetType() *types.FieldType                         { return m.t }
+func (m *MockExpr) GetType(_ EvalContext) *types.FieldType            { return m.t }
 func (m *MockExpr) Clone() Expression                                 { return nil }
 func (m *MockExpr) Equal(ctx EvalContext, e Expression) bool          { return false }
 func (m *MockExpr) IsCorrelated() bool                                { return false }
