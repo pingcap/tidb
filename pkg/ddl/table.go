@@ -274,14 +274,19 @@ func onCreateView(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) 
 	schemaID := job.SchemaID
 	tbInfo := &model.TableInfo{}
 	var orReplace bool
-	var oldTbInfoID int64
-	if err := job.DecodeArgs(tbInfo, &orReplace, &oldTbInfoID); err != nil {
+	var _placeholder int64 // oldTblInfoID
+	if err := job.DecodeArgs(tbInfo, &orReplace, &_placeholder); err != nil {
 		// Invalid arguments, cancel this job.
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
 	tbInfo.State = model.StateNone
-	err := checkTableNotExists(d, t, schemaID, tbInfo.Name.L)
+
+	oldTableID, err := findTableIDByName(d, t, schemaID, tbInfo.Name.L)
+	if infoschema.ErrTableNotExists.Equal(err) {
+		err = nil
+	}
+	failpoint.InjectCall("onDDLCreateView", job)
 	if err != nil {
 		if infoschema.ErrDatabaseNotExists.Equal(err) {
 			job.State = model.JobStateCancelled
@@ -303,13 +308,18 @@ func onCreateView(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) 
 		// none -> public
 		tbInfo.State = model.StatePublic
 		tbInfo.UpdateTS = t.StartTS
+<<<<<<< HEAD
 		if oldTbInfoID > 0 && orReplace {
 			err = t.DropTableOrView(schemaID, oldTbInfoID)
+=======
+		if oldTableID > 0 && orReplace {
+			err = t.DropTableOrView(schemaID, job.SchemaName, oldTableID, tbInfo.Name.L)
+>>>>>>> 44c9096efbc (ddl: get latest old table ID before replace view (#53720))
 			if err != nil {
 				job.State = model.JobStateCancelled
 				return ver, errors.Trace(err)
 			}
-			err = t.GetAutoIDAccessors(schemaID, oldTbInfoID).Del()
+			err = t.GetAutoIDAccessors(schemaID, oldTableID).Del()
 			if err != nil {
 				job.State = model.JobStateCancelled
 				return ver, errors.Trace(err)
@@ -1473,13 +1483,51 @@ func checkTableNotExists(d *ddlCtx, t *meta.Meta, schemaID int64, tableName stri
 		return err
 	}
 	is := d.infoCache.GetLatest()
-	if is.SchemaMetaVersion() == currVer {
+	if is != nil && is.SchemaMetaVersion() == currVer {
 		return checkTableNotExistsFromInfoSchema(is, schemaID, tableName)
 	}
 
 	return checkTableNotExistsFromStore(t, schemaID, tableName)
 }
 
+<<<<<<< HEAD
+=======
+func checkTableNotExistsByName(d *ddlCtx, t *meta.Meta, schemaID int64, schemaName, tableName string) error {
+	// Try to use memory schema info to check first.
+	currVer, err := t.GetSchemaVersion()
+	if err != nil {
+		return err
+	}
+	is := d.infoCache.GetLatest()
+	if is != nil && is.SchemaMetaVersion() == currVer {
+		return checkTableNotExistsFromInfoSchema(is, schemaID, tableName)
+	}
+	return t.CheckTableNameNotExists(t.TableNameKey(schemaName, tableName))
+}
+
+func checkConstraintNamesNotExists(t *meta.Meta, schemaID int64, constraints []*model.ConstraintInfo) error {
+	if len(constraints) == 0 {
+		return nil
+	}
+	tbInfos, err := t.ListTables(schemaID)
+	if err != nil {
+		return err
+	}
+
+	for _, tb := range tbInfos {
+		for _, constraint := range constraints {
+			if constraint.State != model.StateWriteOnly {
+				if constraintInfo := tb.FindConstraintInfoByName(constraint.Name.L); constraintInfo != nil {
+					return infoschema.ErrCheckConstraintDupName.GenWithStackByArgs(constraint.Name.L)
+				}
+			}
+		}
+	}
+
+	return nil
+}
+
+>>>>>>> 44c9096efbc (ddl: get latest old table ID before replace view (#53720))
 func checkTableIDNotExists(t *meta.Meta, schemaID, tableID int64) error {
 	tbl, err := t.GetTable(schemaID, tableID)
 	if err != nil {
@@ -1524,6 +1572,48 @@ func checkTableNotExistsFromStore(t *meta.Meta, schemaID int64, tableName string
 	}
 
 	return nil
+}
+
+func findTableIDByName(d *ddlCtx, t *meta.Meta, schemaID int64, tableName string) (int64, error) {
+	// Try to use memory schema info to check first.
+	currVer, err := t.GetSchemaVersion()
+	if err != nil {
+		return 0, err
+	}
+	is := d.infoCache.GetLatest()
+	if is != nil && is.SchemaMetaVersion() == currVer {
+		return findTableIDFromInfoSchema(is, schemaID, tableName)
+	}
+
+	return findTableIDFromStore(t, schemaID, tableName)
+}
+
+func findTableIDFromInfoSchema(is infoschema.InfoSchema, schemaID int64, tableName string) (int64, error) {
+	schema, ok := is.SchemaByID(schemaID)
+	if !ok {
+		return 0, infoschema.ErrDatabaseNotExists.GenWithStackByArgs("")
+	}
+	tbl, err := is.TableByName(schema.Name, model.NewCIStr(tableName))
+	if err != nil {
+		return 0, err
+	}
+	return tbl.Meta().ID, nil
+}
+
+func findTableIDFromStore(t *meta.Meta, schemaID int64, tableName string) (int64, error) {
+	tbls, err := t.ListSimpleTables(schemaID)
+	if err != nil {
+		if meta.ErrDBNotExists.Equal(err) {
+			return 0, infoschema.ErrDatabaseNotExists.GenWithStackByArgs("")
+		}
+		return 0, errors.Trace(err)
+	}
+	for _, tbl := range tbls {
+		if tbl.Name.L == tableName {
+			return tbl.ID, nil
+		}
+	}
+	return 0, infoschema.ErrTableNotExists.FastGenByArgs(tableName)
 }
 
 // updateVersionAndTableInfoWithCheck checks table info validate and updates the schema version and the table information
