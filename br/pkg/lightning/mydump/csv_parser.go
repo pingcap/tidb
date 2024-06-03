@@ -82,7 +82,8 @@ type CSVParser struct {
 	shouldParseHeader bool
 }
 
-// NewCSVParser creates a CSV parser.
+// NewCSVParser creates a CSV parser. The ownership of the reader is transferred
+// to the parser.
 func NewCSVParser(
 	ctx context.Context,
 	cfg *config.CSVConfig,

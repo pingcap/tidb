@@ -920,7 +920,9 @@ func (cfg *Config) Adjust(ctx context.Context) error {
 	if err := cfg.CheckAndAdjustTiDBPort(ctx, mustHaveInternalConnections); err != nil {
 		return err
 	}
-	cfg.AdjustMydumper()
+	if err := cfg.AdjustMydumper(); err != nil {
+		return err
+	}
 	cfg.AdjustCheckPoint()
 	return cfg.CheckAndAdjustFilePath()
 }
@@ -1155,7 +1157,11 @@ func (cfg *Config) AdjustCheckPoint() {
 	}
 }
 
-func (cfg *Config) AdjustMydumper() {
+func (cfg *Config) AdjustMydumper() error {
+	if cfg.Mydumper.StrictFormat && len(cfg.Mydumper.CSV.Terminator) == 0 {
+		return common.ErrInvalidConfig.GenWithStack("" +
+			`mydumper.strict-format can not be used with empty mydumper.csv.terminator. Please set mydumper.csv.terminator to a non-empty value like "\r\n"`)
+	}
 	if cfg.Mydumper.BatchImportRatio < 0.0 || cfg.Mydumper.BatchImportRatio >= 1.0 {
 		cfg.Mydumper.BatchImportRatio = 0.75
 	}
@@ -1176,6 +1182,7 @@ func (cfg *Config) AdjustMydumper() {
 			ig.Columns = cols
 		}
 	}
+	return nil
 }
 
 func (cfg *Config) CheckAndAdjustSecurity() error {
