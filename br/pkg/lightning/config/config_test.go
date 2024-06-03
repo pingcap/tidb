@@ -83,16 +83,24 @@ func TestAdjustPdAddrAndPort(t *testing.T) {
 	require.Equal(t, "123.45.67.89:1234", cfg.TiDB.PdAddr)
 }
 
+<<<<<<< HEAD
 func TestPausePDSchedulerScope(t *testing.T) {
+=======
+func TestStrictFormat(t *testing.T) {
+>>>>>>> 87b40850785 (config: must set line terminator when use strict-format (#53444) (#53740))
 	ts, host, port := startMockServer(t, http.StatusOK,
 		`{"port":4444,"advertise-address":"","path":"123.45.67.89:1234,56.78.90.12:3456"}`,
 	)
 	defer ts.Close()
+<<<<<<< HEAD
 	tmpDir := t.TempDir()
+=======
+>>>>>>> 87b40850785 (config: must set line terminator when use strict-format (#53444) (#53740))
 
 	cfg := config.NewConfig()
 	cfg.TiDB.Host = host
 	cfg.TiDB.StatusPort = port
+<<<<<<< HEAD
 	cfg.TikvImporter.Backend = config.BackendLocal
 	cfg.TikvImporter.SortedKVDir = "test"
 	cfg.Mydumper.SourceDir = tmpDir
@@ -113,6 +121,21 @@ func TestPausePDSchedulerScope(t *testing.T) {
 	cfg.TikvImporter.PausePDSchedulerScope = "globAL"
 	require.NoError(t, cfg.Adjust(context.Background()))
 	require.Equal(t, config.PausePDSchedulerScopeGlobal, cfg.TikvImporter.PausePDSchedulerScope)
+=======
+	cfg.Mydumper.SourceDir = "."
+	cfg.TikvImporter.Backend = config.BackendLocal
+	cfg.TikvImporter.SortedKVDir = "."
+	cfg.TiDB.DistSQLScanConcurrency = 1
+	cfg.Mydumper.StrictFormat = true
+
+	err := cfg.Adjust(context.Background())
+	require.ErrorContains(t, err, "mydumper.strict-format can not be used with empty mydumper.csv.terminator")
+	t.Log(err.Error())
+
+	cfg.Mydumper.CSV.Terminator = "\r\n"
+	err = cfg.Adjust(context.Background())
+	require.NoError(t, err)
+>>>>>>> 87b40850785 (config: must set line terminator when use strict-format (#53444) (#53740))
 }
 
 func TestAdjustPdAddrAndPortViaAdvertiseAddr(t *testing.T) {
