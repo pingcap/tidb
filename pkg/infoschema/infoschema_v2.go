@@ -196,11 +196,11 @@ func (isd *Data) add(item tableItem, tbl table.Table) {
 	}
 	if hasSpecialAttributes(ti) {
 		isd.tableInfoResident.Set(tableInfoItem{
-			dbName:    item.dbName,
-			tableID:      item.tableID,
+			dbName:        item.dbName,
+			tableID:       item.tableID,
 			schemaVersion: item.schemaVersion,
-			tableInfo:   ti,
-			tomb:      false})
+			tableInfo:     ti,
+			tomb:          false})
 	}
 }
 
@@ -218,11 +218,11 @@ func (isd *Data) remove(item tableItem) {
 	isd.byID.Set(item)
 	isd.byName.Set(item)
 	isd.tableInfoResident.Set(tableInfoItem{
-		dbName:    item.dbName,
-		tableID:      item.tableID,
+		dbName:        item.dbName,
+		tableID:       item.tableID,
 		schemaVersion: item.schemaVersion,
-		tableInfo:   nil,
-		tomb:      true})
+		tableInfo:     nil,
+		tomb:          true})
 	isd.tableCache.Remove(tableCacheKey{item.tableID, item.schemaVersion})
 }
 
