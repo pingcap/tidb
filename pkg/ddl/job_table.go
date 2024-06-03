@@ -539,6 +539,7 @@ func (s *jobScheduler) delivery2Worker(wk *worker, pool *workerPool, job *model.
 			// job is already moved to history.
 			for {
 				job, err = s.sysTblMgr.GetJobByID(s.schCtx, job.ID)
+				failpoint.InjectCall("mockGetJobByIDFail", &err)
 				if err == nil {
 					break
 				}
@@ -600,7 +601,7 @@ func (s *jobScheduler) runJobWithWorker(wk *worker, job *model.Job) error {
 		if val.(bool) {
 			if mockDDLErrOnce == 0 {
 				mockDDLErrOnce = schemaVer
-				failpoint.Return()
+				failpoint.Return(errors.New("mock down before update global version"))
 			}
 		}
 	})
