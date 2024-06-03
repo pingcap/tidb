@@ -79,10 +79,7 @@ func TestAdjustPdAddrAndPort(t *testing.T) {
 	err := cfg.Adjust(context.Background())
 	require.NoError(t, err)
 	require.Equal(t, 4444, cfg.TiDB.Port)
-<<<<<<< HEAD:br/pkg/lightning/config/config_test.go
 	require.Equal(t, "123.45.67.89:1234", cfg.TiDB.PdAddr)
-=======
-	require.Equal(t, "123.45.67.89:1234,56.78.90.12:3456", cfg.TiDB.PdAddr)
 }
 
 func TestStrictFormat(t *testing.T) {
@@ -91,11 +88,11 @@ func TestStrictFormat(t *testing.T) {
 	)
 	defer ts.Close()
 
-	cfg := NewConfig()
+	cfg := config.NewConfig()
 	cfg.TiDB.Host = host
 	cfg.TiDB.StatusPort = port
 	cfg.Mydumper.SourceDir = "."
-	cfg.TikvImporter.Backend = BackendLocal
+	cfg.TikvImporter.Backend = config.BackendLocal
 	cfg.TikvImporter.SortedKVDir = "."
 	cfg.TiDB.DistSQLScanConcurrency = 1
 	cfg.Mydumper.StrictFormat = true
@@ -107,39 +104,6 @@ func TestStrictFormat(t *testing.T) {
 	cfg.Mydumper.CSV.Terminator = "\r\n"
 	err = cfg.Adjust(context.Background())
 	require.NoError(t, err)
-}
-
-func TestPausePDSchedulerScope(t *testing.T) {
-	ts, host, port := startMockServer(t, http.StatusOK,
-		`{"port":4444,"advertise-address":"","path":"123.45.67.89:1234,56.78.90.12:3456"}`,
-	)
-	defer ts.Close()
-	tmpDir := t.TempDir()
-
-	cfg := NewConfig()
-	cfg.TiDB.Host = host
-	cfg.TiDB.StatusPort = port
-	cfg.TikvImporter.Backend = BackendLocal
-	cfg.TikvImporter.SortedKVDir = "test"
-	cfg.Mydumper.SourceDir = tmpDir
-	require.Equal(t, PausePDSchedulerScopeTable, cfg.TikvImporter.PausePDSchedulerScope)
-
-	cfg.TikvImporter.PausePDSchedulerScope = ""
-	err := cfg.Adjust(context.Background())
-	require.ErrorContains(t, err, "pause-pd-scheduler-scope is invalid")
-
-	cfg.TikvImporter.PausePDSchedulerScope = "xxx"
-	err = cfg.Adjust(context.Background())
-	require.ErrorContains(t, err, "pause-pd-scheduler-scope is invalid")
-
-	cfg.TikvImporter.PausePDSchedulerScope = "TABLE"
-	require.NoError(t, cfg.Adjust(context.Background()))
-	require.Equal(t, PausePDSchedulerScopeTable, cfg.TikvImporter.PausePDSchedulerScope)
-
-	cfg.TikvImporter.PausePDSchedulerScope = "globAL"
-	require.NoError(t, cfg.Adjust(context.Background()))
-	require.Equal(t, PausePDSchedulerScopeGlobal, cfg.TikvImporter.PausePDSchedulerScope)
->>>>>>> 9164182d0b2 (config: must set line terminator when use strict-format (#53444)):pkg/lightning/config/config_test.go
 }
 
 func TestAdjustPdAddrAndPortViaAdvertiseAddr(t *testing.T) {
