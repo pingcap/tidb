@@ -1,0 +1,2379 @@
+# TestShowSubquery
+set tidb_cost_model_version=2;
+drop table if exists t;
+create table t(a varchar(10), b int, c int);
+show columns from t where true;
+show columns from t where field = 'b';
+show columns from t where field in (select 'b');
+show columns from t where field in (select 'b') and true;
+show columns from t where field in (select 'b') and false;
+insert into t values('c', 0, 0);
+show columns from t where field < all (select a from t);
+insert into t values('b', 0, 0);
+show columns from t where field < all (select a from t);
+
+
+# TestJoinOperatorRightAssociative
+drop table if exists t;
+create table t(a int, b int);
+insert into t values(1,10),(2,20);
+--error 1054
+select t1.* from t t0 cross join (t t1 join t t2 on 100=t0.a);
+
+
+# TestPpdWithSetVar
+drop table if exists t;
+create table t(c1 int, c2 varchar(255));
+insert into t values(1,'a'),(2,'d'),(3,'c');
+select t01.c1,t01.c2,t01.c3 from (select t1.*,@c3:=@c3+1 as c3 from (select t.*,@c3:=0 from t order by t.c1)t1)t01 where t01.c3=1 and t01.c2='d';
+select t01.c1,t01.c2,t01.c3 from (select t1.*,@c3:=@c3+1 as c3 from (select t.*,@c3:=0 from t order by t.c1)t1)t01 where t01.c3=2 and t01.c2='d';
+
+
+# TestBitColErrorMessage
+drop table if exists bit_col_t;
+create table bit_col_t (a bit(64));
+drop table bit_col_t;
+create table bit_col_t (a bit(1));
+drop table bit_col_t;
+--error 3013
+create table bit_col_t (a bit(0));
+--error 1439
+create table bit_col_t (a bit(65));
+
+
+# TestAggPushDownLeftJoin
+set tidb_cost_model_version=2;
+drop table if exists customer;
+create table customer (C_CUSTKEY bigint(20) NOT NULL, C_NAME varchar(25) NOT NULL, C_ADDRESS varchar(25) NOT NULL, PRIMARY KEY (`C_CUSTKEY`) /*T![clustered_index] CLUSTERED */);
+drop table if exists orders;
+create table orders (O_ORDERKEY bigint(20) NOT NULL, O_CUSTKEY bigint(20) NOT NULL, O_TOTALPRICE decimal(15,2) NOT NULL, PRIMARY KEY (`O_ORDERKEY`) /*T![clustered_index] CLUSTERED */);
+insert into customer values (6, "xiao zhang", "address1");
+set @@tidb_opt_agg_push_down=1;
+select c_custkey, count(o_orderkey) as c_count from customer left outer join orders on c_custkey = o_custkey group by c_custkey;
+explain format='brief' select c_custkey, count(o_orderkey) as c_count from customer left outer join orders on c_custkey = o_custkey group by c_custkey;
+select c_custkey, count(o_orderkey) as c_count from orders right outer join customer on c_custkey = o_custkey group by c_custkey;
+explain format='brief' select c_custkey, count(o_orderkey) as c_count from orders right outer join customer on c_custkey = o_custkey group by c_custkey;
+
+
+# TestIssue22298
+drop table if exists t;
+create table t(a int, b int);
+--error 1054
+select * from t where 0 and c = 10;
+
+
+# TestIssue24571
+create view v as select 1 as b;
+drop table if exists t;
+create table t (a int);
+update v, t set a=2;
+--error 1288
+update v, t set b=2;
+create database db1;
+use db1;
+update planner__core__integration.t, (select 1 as a) as t set planner__core__integration.t.a=1;
+update (select 1 as a) as t, planner__core__integration.t set planner__core__integration.t.a=1;
+
+
+# TestBuildUpdateListResolver
+drop table if exists t;
+drop table if exists t1;
+create table t(a int);
+create table t1(b int);
+--error 1288
+update (select 1 as a) as t set a=1;
+--error 1288
+update (select 1 as a) as t, t1 set a=1;
+drop table if exists t;
+drop table if exists t1;
+create table t(a int default -1, c int as (a+10) stored);
+insert into t(a) values(1);
+update planner__core__integration.t, (select 1 as b) as t set planner__core__integration.t.a=default;
+select * from t;
+drop table if exists t;
+
+
+# TestIssue22828
+drop table if exists t1;
+create table t (c int);
+--error 1054
+select group_concat((select concat(c,group_concat(c)) FROM t where xxx=xxx)) FROM t;
+
+
+# TestIssue35623
+drop table if exists t1;
+drop view if exists v1;
+CREATE TABLE t1(c0 INT UNIQUE);
+CREATE definer='root'@'localhost' VIEW v1(c0) AS SELECT 1 FROM t1;
+SELECT v1.c0 FROM v1 WHERE (true)LIKE(v1.c0);
+SELECT v2.c0 FROM (select 1 as c0 from t1) v2 WHERE (v2.c0)like(True);
+
+
+# TestIssue37971
+drop table if exists t3;
+CREATE TABLE t3(c0 INT, primary key(c0));
+SELECT v2.c0 FROM (select 1 as c0 from t3) v2 WHERE (v2.c0)like(True);
+
+
+# TestJoinNotNullFlag
+drop table if exists t1, t2;
+create table t1(x int not null);
+create table t2(x int);
+insert into t2 values (1);
+select IFNULL((select t1.x from t1 where t1.x = t2.x), 'xxx') as col1 from t2;
+select ifnull(t1.x, 'xxx') from t2 left join t1 using(x);
+select ifnull(t1.x, 'xxx') from t2 natural left join t1;
+
+
+# TestAntiJoinConstProp
+drop table if exists t1, t2;
+create table t1(a int not null, b int not null);
+insert into t1 values (1,1);
+create table t2(a int not null, b int not null);
+insert into t2 values (2,2);
+select * from t1 where t1.a not in (select a from t2 where t2.a = t1.a and t2.a > 1);
+select * from t1 where t1.a not in (select a from t2 where t2.b = t1.b and t2.a > 1);
+select * from t1 where t1.a not in (select a from t2 where t2.b = t1.b and t2.b > 1);
+select q.a in (select count(*) from t1 s where not exists (select 1 from t1 p where q.a > 1 and p.a = s.a)) from t1 q;
+select q.a in (select not exists (select 1 from t1 p where q.a > 1 and p.a = s.a) from t1 s) from t1 q;
+drop table t1, t2;
+create table t1(a int not null, b int);
+insert into t1 values (1,null);
+create table t2(a int not null, b int);
+insert into t2 values (2,2);
+select * from t1 where t1.a not in (select a from t2 where t2.b > t1.b);
+select * from t1 where t1.a not in (select a from t2 where t1.a = 2);
+
+
+# TestPartitionTableDynamicModeUnderNewCollation
+create database test_new_collation;
+use test_new_collation;
+set @@tidb_partition_prune_mode = 'dynamic';
+CREATE TABLE thash (a int, c varchar(20) charset utf8mb4 collate utf8mb4_general_ci, key(a)) partition by hash(a) partitions 4;
+CREATE TABLE trange (a int, c varchar(20) charset utf8mb4 collate utf8mb4_general_ci, key(a)) partition by range(a) (
+						partition p0 values less than (10),
+						partition p1 values less than (20),
+						partition p2 values less than (30),
+						partition p3 values less than (40));
+insert into thash values (1, 'a'), (1, 'A'), (11, 'a'), (11, 'A'), (21, 'a'), (21, 'A'), (31, 'a'), (31, 'A');
+insert into trange values (1, 'a'), (1, 'A'), (11, 'a'), (11, 'A'), (21, 'a'), (21, 'A'), (31, 'a'), (31, 'A');
+--sorted_result
+select * from thash use index(a) where a in (1, 11, 31) and c='a';
+--sorted_result
+select * from thash ignore index(a) where a in (1, 11, 31) and c='a';
+--sorted_result
+select * from trange use index(a) where a in (1, 11, 31) and c='a';
+--sorted_result
+select * from trange ignore index(a) where a in (1, 11, 31) and c='a';
+create table strrange(a varchar(10) charset utf8mb4 collate utf8mb4_general_ci, b int) partition by range columns(a) (
+						partition p0 values less than ('a'),
+						partition p1 values less than ('k'),
+						partition p2 values less than ('z'));
+insert into strrange values ('a', 1), ('A', 1), ('y', 1), ('Y', 1), ('q', 1);
+--sorted_result
+select * from strrange where a in ('a', 'y');
+## need to run with collation enabled.
+create table strlist(a varchar(10) charset utf8mb4 collate utf8mb4_general_ci, b int) partition by list columns (a) (
+						partition p0 values in ('a', 'b'),
+						partition p1 values in ('c', 'd'),
+						partition p2 values in ('e', 'f'));
+insert into strlist values ('a', 1), ('A', 1), ('d', 1), ('D', 1), ('e', 1);
+--sorted_result
+select * from strlist where a='a';
+--sorted_result
+select * from strlist where a in ('D', 'e');
+use planner__core__integration;
+
+# TestIssue40910
+drop table if exists t;
+create table t(a int, b int, index idx_a(a), index idx_b(b));
+select * from t where a > 1 and a < 10 order by b;
+select @@last_plan_from_binding;
+create session binding for select * from t where a > 1 and a < 10 order by b using select /*+ use_index(t, idx_a) */ * from t where a > 1 and a < 10 order by b;
+select * from t where a > 1 and a < 10 order by b;
+select @@last_plan_from_binding;
+select /*+ use_index(t, idx_b) */ * from t where a > 1 and a < 10 order by b;
+select @@last_plan_from_binding;
+--enable_warnings
+select /*+ use_index(t, idx_b) */ * from t where a > 1 and a < 10 order by b;
+--disable_warnings
+
+
+# TestSplitJoinHint
+drop table if exists t;
+create table t(a int, b int, index idx_a(a), index idx_b(b));
+set @@tidb_opt_advanced_join_hint=0;
+--enable_warnings
+select /*+ hash_join(t1) merge_join(t2) */ * from t t1 join t t2 join t t3 where t1.a = t2.a and t2.a=t3.a;
+--disable_warnings
+set @@tidb_opt_advanced_join_hint=1;
+--enable_warnings
+select /*+ hash_join(t1) merge_join(t2) */ * from t t1 join t t2 join t t3 where t1.a = t2.a and t2.a=t3.a;
+--disable_warnings
+set @@tidb_opt_advanced_join_hint=DEFAULT;
+
+
+# TestINLJHintSmallTable
+drop table if exists t1, t2;
+create table t1(a int not null, b int, key(a));
+insert into t1 values(1,1),(2,2);
+create table t2(a int not null, b int, key(a));
+insert into t2 values(1,1),(2,2),(3,3),(4,4),(5,5);
+analyze table t1, t2;
+explain format = 'brief' select /*+ TIDB_INLJ(t1) */ * from t1 join t2 on t1.a = t2.a;
+
+
+# TestIssue46580
+drop table if exists t0,t1;
+CREATE TABLE t0(c0 INT);
+CREATE TABLE t1(c0 BOOL, c1 BOOL);
+INSERT INTO t1 VALUES (false, true);
+INSERT INTO t1 VALUES (true, true);
+CREATE definer='root'@'localhost'  VIEW v0(c0, c1, c2) AS SELECT t1.c0, LOG10(t0.c0), t1.c0 FROM t0, t1;
+INSERT INTO t0(c0) VALUES (3);
+SELECT /*+ MERGE_JOIN(t1, t0, v0)*/v0.c2, t1.c0 FROM v0,  t0 CROSS JOIN t1 ORDER BY -v0.c1;
+
+
+# TestTopNByConstFunc
+select max(t.col) from (select 'a' as col union all select '' as col) as t;
+
+
+# TestIssue32672
+drop table if exists t;
+create table t(a int);
+explain format='verbose' select /*+ stream_agg() */ count(*) from t;
+explain format='verbose' select /*+ hash_agg() */ count(*) from t;
+
+
+# TestIssue15546
+drop table if exists t, pt, vt;
+create table t(a int, b int);
+insert into t values(1, 1);
+create table pt(a int primary key, b int) partition by range(a) (PARTITION `p0` VALUES LESS THAN (10), PARTITION `p1` VALUES LESS THAN (20), PARTITION `p2` VALUES LESS THAN (30));
+insert into pt values(1, 1), (11, 11), (21, 21);
+create definer='root'@'localhost' view vt(a, b) as select a, b from t;
+select * from pt, vt where pt.a = vt.a;
+
+
+# TestApproxCountDistinctInPartitionTable
+drop table if exists t;
+create table t(a int(11), b int) partition by range (a) (partition p0 values less than (3), partition p1 values less than maxvalue);
+insert into t values(1, 1), (2, 1), (3, 1), (4, 2), (4, 2);
+set session tidb_opt_agg_push_down=1;
+set @@tidb_partition_prune_mode='static';
+explain format = 'brief' select approx_count_distinct(a), b from t group by b order by b desc;
+select approx_count_distinct(a), b from t group by b order by b desc;
+
+
+# TestIssue17813
+drop table if exists hash_partition_overflow;
+create table hash_partition_overflow (c0 bigint unsigned) partition by hash(c0) partitions 3;
+insert into hash_partition_overflow values (9223372036854775808);
+select * from hash_partition_overflow where c0 = 9223372036854775808;
+select * from hash_partition_overflow where c0 in (1, 9223372036854775808);
+
+
+# TestIssue15813
+drop table if exists t0, t1;
+create table t0(c0 int primary key);
+create table t1(c0 int primary key);
+CREATE INDEX i0 ON t0(c0);
+CREATE INDEX i0 ON t1(c0);
+select /*+ MERGE_JOIN(t0, t1) */ * from t0, t1 where t0.c0 = t1.c0;
+
+
+# TestIssue31261
+drop table if exists PK_MULTI_COL_5177;
+	CREATE TABLE PK_MULTI_COL_5177 (
+		COL1 binary(10) NOT NULL,
+		COL2 varbinary(10) NOT NULL,
+		COL3 smallint(45) NOT NULL,
+		PRIMARY KEY (COL1(5),COL2,COL3),
+		UNIQUE KEY UIDXM (COL1(5),COL2),
+		UNIQUE KEY UIDX (COL2),
+		KEY IDX3 (COL3),
+		KEY IDXM (COL3,COL2));
+insert into PK_MULTI_COL_5177(col1, col2, col3) values(0x00000000000000000000, 0x002B200DF5BA03E59F82, 1);
+select col1, col2 from PK_MULTI_COL_5177 where col1 = 0x00000000000000000000 and col2 in (0x002B200DF5BA03E59F82, 0x002B200DF5BA03E59F82, 0x002B200DF5BA03E59F82);
+select col1, col2 from PK_MULTI_COL_5177 where col1 = 0x00000000000000000000 and col2 = 0x002B200DF5BA03E59F82;
+
+
+# TestFullGroupByOrderBy
+drop table if exists t;
+create table t(a int, b int);
+select count(a) as b from t group by a order by b;
+--error 1055
+select count(a) as cnt from t group by a order by b;
+
+
+# TestIssue15858
+drop table if exists t;
+create table t(a int primary key);
+select * from t t1, (select a from t order by a+1) t2 where t1.a = t2.a;
+
+
+# TestIssue15846
+drop table if exists t0, t1;
+CREATE TABLE t0(t0 INT UNIQUE);
+CREATE TABLE t1(c0 FLOAT);
+INSERT INTO t1(c0) VALUES (0);
+INSERT INTO t0(t0) VALUES (NULL), (NULL);
+SELECT t1.c0 FROM t1 LEFT JOIN t0 ON 1;
+drop table if exists t0, t1;
+CREATE TABLE t0(t0 INT);
+CREATE TABLE t1(c0 FLOAT);
+INSERT INTO t1(c0) VALUES (0);
+INSERT INTO t0(t0) VALUES (NULL), (NULL);
+SELECT t1.c0 FROM t1 LEFT JOIN t0 ON 1;
+drop table if exists t0, t1;
+CREATE TABLE t0(t0 INT);
+CREATE TABLE t1(c0 FLOAT);
+create unique index idx on t0(t0);
+INSERT INTO t1(c0) VALUES (0);
+INSERT INTO t0(t0) VALUES (NULL), (NULL);
+SELECT t1.c0 FROM t1 LEFT JOIN t0 ON 1;
+
+
+# TestFloorUnixTimestampPruning
+drop table if exists floor_unix_timestamp;
+create table floor_unix_timestamp (ts timestamp(3))
+partition by range (floor(unix_timestamp(ts))) (
+partition p0 values less than (unix_timestamp('2020-04-05 00:00:00')),
+partition p1 values less than (unix_timestamp('2020-04-12 00:00:00')),
+partition p2 values less than (unix_timestamp('2020-04-15 00:00:00')));
+insert into floor_unix_timestamp values ('2020-04-04 00:00:00');
+insert into floor_unix_timestamp values ('2020-04-04 23:59:59.999');
+insert into floor_unix_timestamp values ('2020-04-05 00:00:00');
+insert into floor_unix_timestamp values ('2020-04-05 00:00:00.001');
+insert into floor_unix_timestamp values ('2020-04-12 01:02:03.456');
+insert into floor_unix_timestamp values ('2020-04-14 00:00:42');
+select count(*) from floor_unix_timestamp where '2020-04-05 00:00:00.001' = ts;
+select * from floor_unix_timestamp where ts > '2020-04-05 00:00:00' order by ts;
+select count(*) from floor_unix_timestamp where ts <= '2020-04-05 23:00:00';
+select * from floor_unix_timestamp partition(p1, p2) where ts > '2020-04-14 00:00:00';
+
+
+# TestIssue16290And16292
+drop table if exists t;
+create table t(a int, b int, primary key(a));
+insert into t values(1, 1);
+set session tidb_opt_agg_push_down = 0;
+select avg(a) from (select * from t ta union all select * from t tb) t;
+select avg(b) from (select * from t ta union all select * from t tb) t;
+select count(distinct a) from (select * from t ta union all select * from t tb) t;
+select count(distinct b) from (select * from t ta union all select * from t tb) t;
+set session tidb_opt_agg_push_down = 1;
+select avg(a) from (select * from t ta union all select * from t tb) t;
+select avg(b) from (select * from t ta union all select * from t tb) t;
+select count(distinct a) from (select * from t ta union all select * from t tb) t;
+select count(distinct b) from (select * from t ta union all select * from t tb) t;
+
+
+# TestTableDualWithRequiredProperty
+drop table if exists t1, t2;
+create table t1 (a int, b int) partition by range(a) (partition p0 values less than(10), partition p1 values less than MAXVALUE);
+create table t2 (a int, b int);
+select /*+ MERGE_JOIN(t1, t2) */ * from t1 partition (p0), t2  where t1.a > 100 and t1.a = t2.a;
+
+
+# TestIssue16837
+drop table if exists t;
+create table t(a int,b int,c int,d int,e int,unique key idx_ab(a,b),unique key(c),unique key(d));
+--enable_warnings
+explain format = 'brief' select /*+ use_index_merge(t,c,idx_ab) */ * from t where a = 1 or (e = 1 and c = 1);
+--disable_warnings
+insert into t values (2, 1, 1, 1, 2);
+select /*+ use_index_merge(t,c,idx_ab) */ * from t where a = 1 or (e = 1 and c = 1);
+
+
+# TestIndexMergePartialScansClusteredIndex
+drop table if exists t;
+create table t (a int, b int, c int, primary key (a, b) clustered, key idx_c(c));
+insert into t values (1, 1, 1), (10, 10, 10), (100, 100, 100);
+explain select /*+ use_index_merge(t) */ a from t where a < 2 or c > 10000 order by a, b;
+select /*+ use_index_merge(t) */ a from t where a < 2 or c > 10000 order by a, b;
+explain select /*+ use_index_merge(t) */ a from t where a < 2 or a > 88 or c > 10000 order by a, b;
+select /*+ use_index_merge(t) */ a from t where a < 2 or a > 88 or c > 10000 order by a, b;
+explain select /*+ use_index_merge(t) */ a from t where a < 2 or (a >= 10 and b >= 10) or c > 100 or c < 1 order by a, b;
+select /*+ use_index_merge(t) */ a from t where a < 2 or (a >= 10 and b >= 10) or c > 100 or c < 1 order by a, b;
+explain select /*+ use_index_merge(t) */ a from t where a < 2 or (a >= 10 and b >= 10) or (a >= 20 and b < 10) or c > 100 or c < 1 order by a, b;
+select /*+ use_index_merge(t) */ a from t where a < 2 or (a >= 10 and b >= 10) or (a >= 20 and b < 10) or c > 100 or c < 1 order by a, b;
+explain select /*+ use_index_merge(t) */ b from t where a < 2 or c > 10000 order by a, b;
+select /*+ use_index_merge(t) */ b from t where a < 2 or c > 10000 order by a, b;
+explain select /*+ use_index_merge(t) */ b from t where a < 2 or a > 88 or c > 10000 order by a, b;
+select /*+ use_index_merge(t) */ b from t where a < 2 or a > 88 or c > 10000 order by a, b;
+explain select /*+ use_index_merge(t) */ b from t where a < 2 or (a >= 10 and b >= 10) or c > 100 or c < 1 order by a, b;
+select /*+ use_index_merge(t) */ b from t where a < 2 or (a >= 10 and b >= 10) or c > 100 or c < 1 order by a, b;
+explain select /*+ use_index_merge(t) */ b from t where a < 2 or (a >= 10 and b >= 10) or (a >= 20 and b < 10) or c > 100 or c < 1 order by a, b;
+select /*+ use_index_merge(t) */ b from t where a < 2 or (a >= 10 and b >= 10) or (a >= 20 and b < 10) or c > 100 or c < 1 order by a, b;
+explain select /*+ use_index_merge(t) */ c from t where a < 2 or c > 10000 order by a, b;
+select /*+ use_index_merge(t) */ c from t where a < 2 or c > 10000 order by a, b;
+explain select /*+ use_index_merge(t) */ c from t where a < 2 or a > 88 or c > 10000 order by a, b;
+select /*+ use_index_merge(t) */ c from t where a < 2 or a > 88 or c > 10000 order by a, b;
+explain select /*+ use_index_merge(t) */ c from t where a < 2 or (a >= 10 and b >= 10) or c > 100 or c < 1 order by a, b;
+select /*+ use_index_merge(t) */ c from t where a < 2 or (a >= 10 and b >= 10) or c > 100 or c < 1 order by a, b;
+explain select /*+ use_index_merge(t) */ c from t where a < 2 or (a >= 10 and b >= 10) or (a >= 20 and b < 10) or c > 100 or c < 1 order by a, b;
+select /*+ use_index_merge(t) */ c from t where a < 2 or (a >= 10 and b >= 10) or (a >= 20 and b < 10) or c > 100 or c < 1 order by a, b;
+explain select /*+ use_index_merge(t) */ a,b from t where a < 2 or c > 10000 order by a, b;
+select /*+ use_index_merge(t) */ a,b from t where a < 2 or c > 10000 order by a, b;
+explain select /*+ use_index_merge(t) */ a,b from t where a < 2 or a > 88 or c > 10000 order by a, b;
+select /*+ use_index_merge(t) */ a,b from t where a < 2 or a > 88 or c > 10000 order by a, b;
+explain select /*+ use_index_merge(t) */ a,b from t where a < 2 or (a >= 10 and b >= 10) or c > 100 or c < 1 order by a, b;
+select /*+ use_index_merge(t) */ a,b from t where a < 2 or (a >= 10 and b >= 10) or c > 100 or c < 1 order by a, b;
+explain select /*+ use_index_merge(t) */ a,b from t where a < 2 or (a >= 10 and b >= 10) or (a >= 20 and b < 10) or c > 100 or c < 1 order by a, b;
+select /*+ use_index_merge(t) */ a,b from t where a < 2 or (a >= 10 and b >= 10) or (a >= 20 and b < 10) or c > 100 or c < 1 order by a, b;
+explain select /*+ use_index_merge(t) */ b,c from t where a < 2 or c > 10000 order by a, b;
+select /*+ use_index_merge(t) */ b,c from t where a < 2 or c > 10000 order by a, b;
+explain select /*+ use_index_merge(t) */ b,c from t where a < 2 or a > 88 or c > 10000 order by a, b;
+select /*+ use_index_merge(t) */ b,c from t where a < 2 or a > 88 or c > 10000 order by a, b;
+explain select /*+ use_index_merge(t) */ b,c from t where a < 2 or (a >= 10 and b >= 10) or c > 100 or c < 1 order by a, b;
+select /*+ use_index_merge(t) */ b,c from t where a < 2 or (a >= 10 and b >= 10) or c > 100 or c < 1 order by a, b;
+explain select /*+ use_index_merge(t) */ b,c from t where a < 2 or (a >= 10 and b >= 10) or (a >= 20 and b < 10) or c > 100 or c < 1 order by a, b;
+select /*+ use_index_merge(t) */ b,c from t where a < 2 or (a >= 10 and b >= 10) or (a >= 20 and b < 10) or c > 100 or c < 1 order by a, b;
+explain select /*+ use_index_merge(t) */ c,a from t where a < 2 or c > 10000 order by a, b;
+select /*+ use_index_merge(t) */ c,a from t where a < 2 or c > 10000 order by a, b;
+explain select /*+ use_index_merge(t) */ c,a from t where a < 2 or a > 88 or c > 10000 order by a, b;
+select /*+ use_index_merge(t) */ c,a from t where a < 2 or a > 88 or c > 10000 order by a, b;
+explain select /*+ use_index_merge(t) */ c,a from t where a < 2 or (a >= 10 and b >= 10) or c > 100 or c < 1 order by a, b;
+select /*+ use_index_merge(t) */ c,a from t where a < 2 or (a >= 10 and b >= 10) or c > 100 or c < 1 order by a, b;
+explain select /*+ use_index_merge(t) */ c,a from t where a < 2 or (a >= 10 and b >= 10) or (a >= 20 and b < 10) or c > 100 or c < 1 order by a, b;
+select /*+ use_index_merge(t) */ c,a from t where a < 2 or (a >= 10 and b >= 10) or (a >= 20 and b < 10) or c > 100 or c < 1 order by a, b;
+explain select /*+ use_index_merge(t) */ b,a,c from t where a < 2 or c > 10000 order by a, b;
+select /*+ use_index_merge(t) */ b,a,c from t where a < 2 or c > 10000 order by a, b;
+explain select /*+ use_index_merge(t) */ b,a,c from t where a < 2 or a > 88 or c > 10000 order by a, b;
+select /*+ use_index_merge(t) */ b,a,c from t where a < 2 or a > 88 or c > 10000 order by a, b;
+explain select /*+ use_index_merge(t) */ b,a,c from t where a < 2 or (a >= 10 and b >= 10) or c > 100 or c < 1 order by a, b;
+select /*+ use_index_merge(t) */ b,a,c from t where a < 2 or (a >= 10 and b >= 10) or c > 100 or c < 1 order by a, b;
+explain select /*+ use_index_merge(t) */ b,a,c from t where a < 2 or (a >= 10 and b >= 10) or (a >= 20 and b < 10) or c > 100 or c < 1 order by a, b;
+select /*+ use_index_merge(t) */ b,a,c from t where a < 2 or (a >= 10 and b >= 10) or (a >= 20 and b < 10) or c > 100 or c < 1 order by a, b;
+
+
+# TestIndexMergePartialScansTiDBRowID
+drop table if exists t;
+create table t (a int, b int, c int, unique key (a, b), key idx_c(c));
+insert into t values (1, 1, 1), (10, 10, 10), (100, 100, 100);
+explain select /*+ use_index_merge(t) */ a from t where c < 10 or a < 2 order by a;
+select /*+ use_index_merge(t) */ a from t where c < 10 or a < 2 order by a;
+explain select /*+ use_index_merge(t) */ a from t where _tidb_rowid < 2 or c > 10000 order by a;
+select /*+ use_index_merge(t) */ a from t where _tidb_rowid < 2 or c > 10000 order by a;
+explain select /*+ use_index_merge(t) */ a from t where _tidb_rowid < 2 or _tidb_rowid < 10 or c > 11 order by a;
+select /*+ use_index_merge(t) */ a from t where _tidb_rowid < 2 or _tidb_rowid < 10 or c > 11 order by a;
+explain select /*+ use_index_merge(t) */ a from t where _tidb_rowid < 2 or (a >= 10 and b >= 10) or c > 100 or c < 1 order by a;
+select /*+ use_index_merge(t) */ a from t where _tidb_rowid < 2 or (a >= 10 and b >= 10) or c > 100 or c < 1 order by a;
+explain select /*+ use_index_merge(t) */ a from t where _tidb_rowid < 2 or (a >= 10 and b >= 10) or (a >= 20 and b < 10) or c > 100 or c < 1 order by a;
+select /*+ use_index_merge(t) */ a from t where _tidb_rowid < 2 or (a >= 10 and b >= 10) or (a >= 20 and b < 10) or c > 100 or c < 1 order by a;
+explain select /*+ use_index_merge(t) */ b from t where c < 10 or a < 2 order by a;
+select /*+ use_index_merge(t) */ b from t where c < 10 or a < 2 order by a;
+explain select /*+ use_index_merge(t) */ b from t where _tidb_rowid < 2 or c > 10000 order by a;
+select /*+ use_index_merge(t) */ b from t where _tidb_rowid < 2 or c > 10000 order by a;
+explain select /*+ use_index_merge(t) */ b from t where _tidb_rowid < 2 or _tidb_rowid < 10 or c > 11 order by a;
+select /*+ use_index_merge(t) */ b from t where _tidb_rowid < 2 or _tidb_rowid < 10 or c > 11 order by a;
+explain select /*+ use_index_merge(t) */ b from t where _tidb_rowid < 2 or (a >= 10 and b >= 10) or c > 100 or c < 1 order by a;
+select /*+ use_index_merge(t) */ b from t where _tidb_rowid < 2 or (a >= 10 and b >= 10) or c > 100 or c < 1 order by a;
+explain select /*+ use_index_merge(t) */ b from t where _tidb_rowid < 2 or (a >= 10 and b >= 10) or (a >= 20 and b < 10) or c > 100 or c < 1 order by a;
+select /*+ use_index_merge(t) */ b from t where _tidb_rowid < 2 or (a >= 10 and b >= 10) or (a >= 20 and b < 10) or c > 100 or c < 1 order by a;
+explain select /*+ use_index_merge(t) */ c from t where c < 10 or a < 2 order by a;
+select /*+ use_index_merge(t) */ c from t where c < 10 or a < 2 order by a;
+explain select /*+ use_index_merge(t) */ c from t where _tidb_rowid < 2 or c > 10000 order by a;
+select /*+ use_index_merge(t) */ c from t where _tidb_rowid < 2 or c > 10000 order by a;
+explain select /*+ use_index_merge(t) */ c from t where _tidb_rowid < 2 or _tidb_rowid < 10 or c > 11 order by a;
+select /*+ use_index_merge(t) */ c from t where _tidb_rowid < 2 or _tidb_rowid < 10 or c > 11 order by a;
+explain select /*+ use_index_merge(t) */ c from t where _tidb_rowid < 2 or (a >= 10 and b >= 10) or c > 100 or c < 1 order by a;
+select /*+ use_index_merge(t) */ c from t where _tidb_rowid < 2 or (a >= 10 and b >= 10) or c > 100 or c < 1 order by a;
+explain select /*+ use_index_merge(t) */ c from t where _tidb_rowid < 2 or (a >= 10 and b >= 10) or (a >= 20 and b < 10) or c > 100 or c < 1 order by a;
+select /*+ use_index_merge(t) */ c from t where _tidb_rowid < 2 or (a >= 10 and b >= 10) or (a >= 20 and b < 10) or c > 100 or c < 1 order by a;
+explain select /*+ use_index_merge(t) */ a,b from t where c < 10 or a < 2 order by a;
+select /*+ use_index_merge(t) */ a,b from t where c < 10 or a < 2 order by a;
+explain select /*+ use_index_merge(t) */ a,b from t where _tidb_rowid < 2 or c > 10000 order by a;
+select /*+ use_index_merge(t) */ a,b from t where _tidb_rowid < 2 or c > 10000 order by a;
+explain select /*+ use_index_merge(t) */ a,b from t where _tidb_rowid < 2 or _tidb_rowid < 10 or c > 11 order by a;
+select /*+ use_index_merge(t) */ a,b from t where _tidb_rowid < 2 or _tidb_rowid < 10 or c > 11 order by a;
+explain select /*+ use_index_merge(t) */ a,b from t where _tidb_rowid < 2 or (a >= 10 and b >= 10) or c > 100 or c < 1 order by a;
+select /*+ use_index_merge(t) */ a,b from t where _tidb_rowid < 2 or (a >= 10 and b >= 10) or c > 100 or c < 1 order by a;
+explain select /*+ use_index_merge(t) */ a,b from t where _tidb_rowid < 2 or (a >= 10 and b >= 10) or (a >= 20 and b < 10) or c > 100 or c < 1 order by a;
+select /*+ use_index_merge(t) */ a,b from t where _tidb_rowid < 2 or (a >= 10 and b >= 10) or (a >= 20 and b < 10) or c > 100 or c < 1 order by a;
+explain select /*+ use_index_merge(t) */ b,c from t where c < 10 or a < 2 order by a;
+select /*+ use_index_merge(t) */ b,c from t where c < 10 or a < 2 order by a;
+explain select /*+ use_index_merge(t) */ b,c from t where _tidb_rowid < 2 or c > 10000 order by a;
+select /*+ use_index_merge(t) */ b,c from t where _tidb_rowid < 2 or c > 10000 order by a;
+explain select /*+ use_index_merge(t) */ b,c from t where _tidb_rowid < 2 or _tidb_rowid < 10 or c > 11 order by a;
+select /*+ use_index_merge(t) */ b,c from t where _tidb_rowid < 2 or _tidb_rowid < 10 or c > 11 order by a;
+explain select /*+ use_index_merge(t) */ b,c from t where _tidb_rowid < 2 or (a >= 10 and b >= 10) or c > 100 or c < 1 order by a;
+select /*+ use_index_merge(t) */ b,c from t where _tidb_rowid < 2 or (a >= 10 and b >= 10) or c > 100 or c < 1 order by a;
+explain select /*+ use_index_merge(t) */ b,c from t where _tidb_rowid < 2 or (a >= 10 and b >= 10) or (a >= 20 and b < 10) or c > 100 or c < 1 order by a;
+select /*+ use_index_merge(t) */ b,c from t where _tidb_rowid < 2 or (a >= 10 and b >= 10) or (a >= 20 and b < 10) or c > 100 or c < 1 order by a;
+explain select /*+ use_index_merge(t) */ c,a from t where c < 10 or a < 2 order by a;
+select /*+ use_index_merge(t) */ c,a from t where c < 10 or a < 2 order by a;
+explain select /*+ use_index_merge(t) */ c,a from t where _tidb_rowid < 2 or c > 10000 order by a;
+select /*+ use_index_merge(t) */ c,a from t where _tidb_rowid < 2 or c > 10000 order by a;
+explain select /*+ use_index_merge(t) */ c,a from t where _tidb_rowid < 2 or _tidb_rowid < 10 or c > 11 order by a;
+select /*+ use_index_merge(t) */ c,a from t where _tidb_rowid < 2 or _tidb_rowid < 10 or c > 11 order by a;
+explain select /*+ use_index_merge(t) */ c,a from t where _tidb_rowid < 2 or (a >= 10 and b >= 10) or c > 100 or c < 1 order by a;
+select /*+ use_index_merge(t) */ c,a from t where _tidb_rowid < 2 or (a >= 10 and b >= 10) or c > 100 or c < 1 order by a;
+explain select /*+ use_index_merge(t) */ c,a from t where _tidb_rowid < 2 or (a >= 10 and b >= 10) or (a >= 20 and b < 10) or c > 100 or c < 1 order by a;
+select /*+ use_index_merge(t) */ c,a from t where _tidb_rowid < 2 or (a >= 10 and b >= 10) or (a >= 20 and b < 10) or c > 100 or c < 1 order by a;
+explain select /*+ use_index_merge(t) */ b,a,c from t where c < 10 or a < 2 order by a;
+select /*+ use_index_merge(t) */ b,a,c from t where c < 10 or a < 2 order by a;
+explain select /*+ use_index_merge(t) */ b,a,c from t where _tidb_rowid < 2 or c > 10000 order by a;
+select /*+ use_index_merge(t) */ b,a,c from t where _tidb_rowid < 2 or c > 10000 order by a;
+explain select /*+ use_index_merge(t) */ b,a,c from t where _tidb_rowid < 2 or _tidb_rowid < 10 or c > 11 order by a;
+select /*+ use_index_merge(t) */ b,a,c from t where _tidb_rowid < 2 or _tidb_rowid < 10 or c > 11 order by a;
+explain select /*+ use_index_merge(t) */ b,a,c from t where _tidb_rowid < 2 or (a >= 10 and b >= 10) or c > 100 or c < 1 order by a;
+select /*+ use_index_merge(t) */ b,a,c from t where _tidb_rowid < 2 or (a >= 10 and b >= 10) or c > 100 or c < 1 order by a;
+explain select /*+ use_index_merge(t) */ b,a,c from t where _tidb_rowid < 2 or (a >= 10 and b >= 10) or (a >= 20 and b < 10) or c > 100 or c < 1 order by a;
+select /*+ use_index_merge(t) */ b,a,c from t where _tidb_rowid < 2 or (a >= 10 and b >= 10) or (a >= 20 and b < 10) or c > 100 or c < 1 order by a;
+
+
+# TestIndexMergePartialScansPKIsHandle
+drop table if exists t;
+create table t (a int, b int, c int, primary key (a), unique key (b), key idx_c(c));
+insert into t values (1, 1, 1), (10, 10, 10), (100, 100, 100);
+explain select /*+ use_index_merge(t) */ a from t where b < 10 or c < 11 or c > 50 order by b;
+select /*+ use_index_merge(t) */ a from t where b < 10 or c < 11 or c > 50 order by b;
+explain select /*+ use_index_merge(t) */ a from t where a < 2 or c > 10000 order by b;
+select /*+ use_index_merge(t) */ a from t where a < 2 or c > 10000 order by b;
+explain select /*+ use_index_merge(t) */ a from t where a < 2 or a < 10 or b > 11 order by b;
+select /*+ use_index_merge(t) */ a from t where a < 2 or a < 10 or b > 11 order by b;
+explain select /*+ use_index_merge(t) */ a from t where a < 2 or b >= 10 or c > 100 or c < 1 order by b;
+select /*+ use_index_merge(t) */ a from t where a < 2 or b >= 10 or c > 100 or c < 1 order by b;
+explain select /*+ use_index_merge(t) */ a from t where a < 2 or a >= 10 or a >= 20 or c > 100 or b < 1 order by b;
+select /*+ use_index_merge(t) */ a from t where a < 2 or a >= 10 or a >= 20 or c > 100 or b < 1 order by b;
+explain select /*+ use_index_merge(t) */ b from t where b < 10 or c < 11 or c > 50 order by b;
+select /*+ use_index_merge(t) */ b from t where b < 10 or c < 11 or c > 50 order by b;
+explain select /*+ use_index_merge(t) */ b from t where a < 2 or c > 10000 order by b;
+select /*+ use_index_merge(t) */ b from t where a < 2 or c > 10000 order by b;
+explain select /*+ use_index_merge(t) */ b from t where a < 2 or a < 10 or b > 11 order by b;
+select /*+ use_index_merge(t) */ b from t where a < 2 or a < 10 or b > 11 order by b;
+explain select /*+ use_index_merge(t) */ b from t where a < 2 or b >= 10 or c > 100 or c < 1 order by b;
+select /*+ use_index_merge(t) */ b from t where a < 2 or b >= 10 or c > 100 or c < 1 order by b;
+explain select /*+ use_index_merge(t) */ b from t where a < 2 or a >= 10 or a >= 20 or c > 100 or b < 1 order by b;
+select /*+ use_index_merge(t) */ b from t where a < 2 or a >= 10 or a >= 20 or c > 100 or b < 1 order by b;
+explain select /*+ use_index_merge(t) */ c from t where b < 10 or c < 11 or c > 50 order by b;
+select /*+ use_index_merge(t) */ c from t where b < 10 or c < 11 or c > 50 order by b;
+explain select /*+ use_index_merge(t) */ c from t where a < 2 or c > 10000 order by b;
+select /*+ use_index_merge(t) */ c from t where a < 2 or c > 10000 order by b;
+explain select /*+ use_index_merge(t) */ c from t where a < 2 or a < 10 or b > 11 order by b;
+select /*+ use_index_merge(t) */ c from t where a < 2 or a < 10 or b > 11 order by b;
+explain select /*+ use_index_merge(t) */ c from t where a < 2 or b >= 10 or c > 100 or c < 1 order by b;
+select /*+ use_index_merge(t) */ c from t where a < 2 or b >= 10 or c > 100 or c < 1 order by b;
+explain select /*+ use_index_merge(t) */ c from t where a < 2 or a >= 10 or a >= 20 or c > 100 or b < 1 order by b;
+select /*+ use_index_merge(t) */ c from t where a < 2 or a >= 10 or a >= 20 or c > 100 or b < 1 order by b;
+explain select /*+ use_index_merge(t) */ a,b from t where b < 10 or c < 11 or c > 50 order by b;
+select /*+ use_index_merge(t) */ a,b from t where b < 10 or c < 11 or c > 50 order by b;
+explain select /*+ use_index_merge(t) */ a,b from t where a < 2 or c > 10000 order by b;
+select /*+ use_index_merge(t) */ a,b from t where a < 2 or c > 10000 order by b;
+explain select /*+ use_index_merge(t) */ a,b from t where a < 2 or a < 10 or b > 11 order by b;
+select /*+ use_index_merge(t) */ a,b from t where a < 2 or a < 10 or b > 11 order by b;
+explain select /*+ use_index_merge(t) */ a,b from t where a < 2 or b >= 10 or c > 100 or c < 1 order by b;
+select /*+ use_index_merge(t) */ a,b from t where a < 2 or b >= 10 or c > 100 or c < 1 order by b;
+explain select /*+ use_index_merge(t) */ a,b from t where a < 2 or a >= 10 or a >= 20 or c > 100 or b < 1 order by b;
+select /*+ use_index_merge(t) */ a,b from t where a < 2 or a >= 10 or a >= 20 or c > 100 or b < 1 order by b;
+explain select /*+ use_index_merge(t) */ b,c from t where b < 10 or c < 11 or c > 50 order by b;
+select /*+ use_index_merge(t) */ b,c from t where b < 10 or c < 11 or c > 50 order by b;
+explain select /*+ use_index_merge(t) */ b,c from t where a < 2 or c > 10000 order by b;
+select /*+ use_index_merge(t) */ b,c from t where a < 2 or c > 10000 order by b;
+explain select /*+ use_index_merge(t) */ b,c from t where a < 2 or a < 10 or b > 11 order by b;
+select /*+ use_index_merge(t) */ b,c from t where a < 2 or a < 10 or b > 11 order by b;
+explain select /*+ use_index_merge(t) */ b,c from t where a < 2 or b >= 10 or c > 100 or c < 1 order by b;
+select /*+ use_index_merge(t) */ b,c from t where a < 2 or b >= 10 or c > 100 or c < 1 order by b;
+explain select /*+ use_index_merge(t) */ b,c from t where a < 2 or a >= 10 or a >= 20 or c > 100 or b < 1 order by b;
+select /*+ use_index_merge(t) */ b,c from t where a < 2 or a >= 10 or a >= 20 or c > 100 or b < 1 order by b;
+explain select /*+ use_index_merge(t) */ c,a from t where b < 10 or c < 11 or c > 50 order by b;
+select /*+ use_index_merge(t) */ c,a from t where b < 10 or c < 11 or c > 50 order by b;
+explain select /*+ use_index_merge(t) */ c,a from t where a < 2 or c > 10000 order by b;
+select /*+ use_index_merge(t) */ c,a from t where a < 2 or c > 10000 order by b;
+explain select /*+ use_index_merge(t) */ c,a from t where a < 2 or a < 10 or b > 11 order by b;
+select /*+ use_index_merge(t) */ c,a from t where a < 2 or a < 10 or b > 11 order by b;
+explain select /*+ use_index_merge(t) */ c,a from t where a < 2 or b >= 10 or c > 100 or c < 1 order by b;
+select /*+ use_index_merge(t) */ c,a from t where a < 2 or b >= 10 or c > 100 or c < 1 order by b;
+explain select /*+ use_index_merge(t) */ c,a from t where a < 2 or a >= 10 or a >= 20 or c > 100 or b < 1 order by b;
+select /*+ use_index_merge(t) */ c,a from t where a < 2 or a >= 10 or a >= 20 or c > 100 or b < 1 order by b;
+explain select /*+ use_index_merge(t) */ b,a,c from t where b < 10 or c < 11 or c > 50 order by b;
+select /*+ use_index_merge(t) */ b,a,c from t where b < 10 or c < 11 or c > 50 order by b;
+explain select /*+ use_index_merge(t) */ b,a,c from t where a < 2 or c > 10000 order by b;
+select /*+ use_index_merge(t) */ b,a,c from t where a < 2 or c > 10000 order by b;
+explain select /*+ use_index_merge(t) */ b,a,c from t where a < 2 or a < 10 or b > 11 order by b;
+select /*+ use_index_merge(t) */ b,a,c from t where a < 2 or a < 10 or b > 11 order by b;
+explain select /*+ use_index_merge(t) */ b,a,c from t where a < 2 or b >= 10 or c > 100 or c < 1 order by b;
+select /*+ use_index_merge(t) */ b,a,c from t where a < 2 or b >= 10 or c > 100 or c < 1 order by b;
+explain select /*+ use_index_merge(t) */ b,a,c from t where a < 2 or a >= 10 or a >= 20 or c > 100 or b < 1 order by b;
+select /*+ use_index_merge(t) */ b,a,c from t where a < 2 or a >= 10 or a >= 20 or c > 100 or b < 1 order by b;
+
+
+# TestIssue23919
+drop table if exists t;
+create table t (a int, b int, index(a), index(b)) partition by hash (a) partitions 2;
+insert into t values (1, 5);
+select /*+ use_index_merge( t ) */ * from t where a in (3) or b in (5) order by a;
+drop table if exists t;
+CREATE TABLE t (
+  col_5 text NOT NULL,
+  col_6 tinyint(3) unsigned DEFAULT NULL,
+  col_7 float DEFAULT '4779.165058537128',
+  col_8 smallint(6) NOT NULL DEFAULT '-24790',
+  col_9 date DEFAULT '2031-01-15',
+  col_37 int(11) DEFAULT '1350204687',
+  PRIMARY KEY (col_5(6),col_8) /*T![clustered_index] NONCLUSTERED */,
+  UNIQUE KEY idx_6 (col_9,col_7,col_8),
+  KEY idx_8 (col_8,col_6,col_5(6),col_9,col_7),
+  KEY idx_9 (col_9,col_7,col_8)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY RANGE ( col_8 ) (
+  PARTITION p0 VALUES LESS THAN (-17650),
+  PARTITION p1 VALUES LESS THAN (-13033),
+  PARTITION p2 VALUES LESS THAN (2521),
+  PARTITION p3 VALUES LESS THAN (7510)
+);
+insert into t values ('', NULL, 6304.0146, -24790, '2031-01-15', 1350204687);
+select  var_samp(col_7) aggCol from (select  /*+ use_index_merge( t ) */ * from t where t.col_9 in ( '2002-06-22' ) or t.col_5 in ( 'PkfzI'  ) or t.col_8 in ( -24874 ) and t.col_6 > null and t.col_5 > 'r' and t.col_9 in ( '1979-09-04' ) and t.col_7 < 8143.667552769195 or t.col_5 in ( 'iZhfEjRWci' , 'T' , ''  ) or t.col_9 <> '1976-09-11' and t.col_7 = 8796.436181615773 and t.col_8 = 7372 order by col_5,col_8  ) ordered_tbl group by col_6;
+
+
+# TestIssue16407
+drop table if exists t;
+create table t(a int,b char(100),key(a),key(b(10)));
+--enable_warnings;
+explain format = 'brief' select /*+ use_index_merge(t) */ * from t where a=10 or b='x';
+--disable_warnings;
+insert into t values (1, 'xx');
+select /*+ use_index_merge(t) */ * from t where a=10 or b='x';
+
+
+# TestSelectLimit
+set tidb_cost_model_version=2;
+drop table if exists t;
+create table t(a int);
+insert into t values(1),(1),(2);
+set @@session.sql_select_limit=1;
+--sorted_result
+select * from t order by a;
+--sorted_result
+select * from t order by a limit 2;
+set @@session.sql_select_limit=default;
+--sorted_result
+select * from t order by a;
+set @@session.sql_select_limit=1;
+--sorted_result
+select * from (select * from t) s order by a;
+--sorted_result
+select * from (select * from t limit 2) s order by a;
+--sorted_result
+select (select * from t limit 1) s;
+--sorted_result
+select * from t where t.a in (select * from t) limit 3;
+--sorted_result
+select * from (select * from t) s limit 3;
+--sorted_result
+select * from t union all select * from t limit 2;
+--sorted_result
+select * from t union all (select * from t limit 2);
+prepare s1 from 'select * from t where a = ?';
+set @a = 1;
+--sorted_result
+execute s1 using @a;
+set @@session.sql_select_limit=default;
+--sorted_result
+execute s1 using @a;
+set @@session.sql_select_limit=1;
+prepare s2 from 'select * from t where a = ? limit 3';
+--sorted_result
+execute s2 using @a;
+set @@session.sql_select_limit=1;
+create definer='root'@'localhost' view s as select * from t;
+--sorted_result
+select * from s;
+set @@session.sql_select_limit=default;
+--sorted_result
+select * from s;
+set @@session.sql_select_limit=1;
+create table b (a int);
+insert into b select * from t;
+--sorted_result
+select * from b limit 3;
+update b set a = 2 where a = 1;
+--sorted_result
+select * from b limit 3;
+--sorted_result
+select * from b;
+delete from b where a = 2;
+--sorted_result
+select * from b;
+set @@session.sql_select_limit=DEFAULT;
+
+
+# TestHintParserWarnings
+drop table if exists t;
+create table t(a int, b int, key(a), key(b));
+--enable_warnings;
+select /*+ use_index_merge() */ * from t where a = 1 or b = 1;
+--disable_warnings;
+
+
+# TestIssue16935
+drop table if exists t0;
+drop view if exists v0;
+CREATE TABLE t0(c0 INT);
+INSERT INTO t0(c0) VALUES (1), (1), (1), (1), (1), (1);
+CREATE definer='root'@'localhost' VIEW v0(c0) AS SELECT NULL FROM t0;
+SELECT * FROM t0 LEFT JOIN v0 ON TRUE WHERE v0.c0 IS NULL;
+
+
+# TestClusterIndexUniqueDoubleRead
+create database cluster_idx_unique_double_read;
+use cluster_idx_unique_double_read;
+set @@tidb_enable_clustered_index = 'ON';
+drop table if exists t;
+create table t (a varchar(64), b varchar(64), uk int, v int, primary key(a, b), unique key uuk(uk));
+insert t values ('a', 'a1', 1, 11), ('b', 'b1', 2, 22), ('c', 'c1', 3, 33);
+select * from t use index (uuk);
+drop database cluster_idx_unique_double_read;
+set @@tidb_enable_clustered_index = DEFAULT;
+use planner__core__integration
+
+
+# TestIssue18984
+drop table if exists t, t2;
+set @@tidb_enable_clustered_index = 'ON';
+create table t(a int, b int, c int, primary key(a, b));
+create table t2(a int, b int, c int, d int, primary key(a,b), index idx(c));
+insert into t values(1,1,1), (2,2,2), (3,3,3);
+insert into t2 values(1,2,3,4), (2,4,3,5), (1,3,1,1);
+select /*+ INL_MERGE_JOIN(t) */ * from t right outer join t2 on t.a=t2.c;
+select /*+ INL_MERGE_JOIN(t2) */ * from t left outer join t2 on t.a=t2.c;
+set @@tidb_enable_clustered_index = DEFAULT;
+
+
+# TestDistinctScalarFunctionPushDown
+drop table if exists t;
+create table t (a int not null, b int not null, c int not null, primary key (a,c)) partition by range (c) (partition p0 values less than (5), partition p1 values less than (10));
+insert into t values(1,1,1),(2,2,2),(3,1,3),(7,1,7),(8,2,8),(9,2,9);
+select count(distinct b+1) as col from t;
+
+
+# TestPartialBatchPointGet
+drop table if exists t;
+create table t (c_int int, c_str varchar(40), primary key(c_int, c_str));
+insert into t values (3, 'bose');
+select * from t where c_int in (3);
+select * from t where c_int in (3) or c_str in ('yalow') and c_int in (1, 2);
+
+
+# TestIssue19926
+drop table if exists ta;
+drop table if exists tb;
+drop table if exists tc;
+drop view if exists v;
+CREATE TABLE `ta`  (
+  `id` varchar(36) NOT NULL ,
+  `status` varchar(1) NOT NULL
+);
+CREATE TABLE `tb`  (
+  `id` varchar(36) NOT NULL ,
+  `status` varchar(1) NOT NULL
+);
+CREATE TABLE `tc`  (
+  `id` varchar(36) NOT NULL ,
+  `status` varchar(1) NOT NULL
+);
+insert into ta values('1','1');
+insert into tb values('1','1');
+insert into tc values('1','1');
+create definer='root'@'localhost' view v as
+select
+concat(`ta`.`status`,`tb`.`status`) AS `status`,
+`ta`.`id` AS `id`  from (`ta` join `tb`)
+where (`ta`.`id` = `tb`.`id`);
+SELECT tc.status,v.id FROM tc, v WHERE tc.id = v.id AND v.status = '11';
+
+
+# TestDeleteUsingJoin
+drop table if exists t1, t2;
+create table t1(a int primary key, b int);
+create table t2(a int primary key, b int);
+insert into t1 values(1,1),(2,2);
+insert into t2 values(2,2);
+delete t1.* from t1 join t2 using (a);
+select * from t1;
+select * from t2;
+
+
+# Test19942
+drop table if exists t;
+set @@tidb_enable_clustered_index = 'ON';
+CREATE TABLE planner__core__integration.`t` (  `a` int(11) NOT NULL,  `b` varchar(10) COLLATE utf8_general_ci NOT NULL,  `c` varchar(50) COLLATE utf8_general_ci NOT NULL,  `d` char(10) NOT NULL,  PRIMARY KEY (`c`),  UNIQUE KEY `a_uniq` (`a`),  UNIQUE KEY `b_uniq` (`b`),  UNIQUE KEY `d_uniq` (`d`),  KEY `a_idx` (`a`),  KEY `b_idx` (`b`),  KEY `d_idx` (`d`)) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_general_ci;
+INSERT INTO planner__core__integration.t (a, b, c, d) VALUES (1, '1', '0', '1');
+INSERT INTO planner__core__integration.t (a, b, c, d) VALUES (2, ' 2', ' 0', ' 2');
+INSERT INTO planner__core__integration.t (a, b, c, d) VALUES (3, '  3 ', '  3 ', '  3 ');
+INSERT INTO planner__core__integration.t (a, b, c, d) VALUES (4, 'a', 'a   ', 'a');
+INSERT INTO planner__core__integration.t (a, b, c, d) VALUES (5, ' A  ', ' A   ', ' A  ');
+INSERT INTO planner__core__integration.t (a, b, c, d) VALUES (6, ' E', 'é        ', ' E');
+SELECT * FROM `planner__core__integration`.`t` FORCE INDEX(`a_uniq`);
+SELECT * FROM `planner__core__integration`.`t` FORCE INDEX(`b_uniq`);
+SELECT * FROM `planner__core__integration`.`t` FORCE INDEX(`d_uniq`);
+SELECT * FROM `planner__core__integration`.`t` FORCE INDEX(`a_idx`);
+SELECT * FROM `planner__core__integration`.`t` FORCE INDEX(`b_idx`);
+SELECT * FROM `planner__core__integration`.`t` FORCE INDEX(`d_idx`);
+admin check table t;
+set @@tidb_enable_clustered_index = DEFAULT;
+
+
+# TestPartitionUnionWithPPruningColumn
+drop table if exists t;
+CREATE TABLE `t` (
+  `fid` bigint(36) NOT NULL,
+  `oty` varchar(30) DEFAULT NULL,
+  `oid` int(11) DEFAULT NULL,
+  `pid` bigint(20) DEFAULT NULL,
+  `bid` int(11) DEFAULT NULL,
+  `r5` varchar(240) DEFAULT '',
+  PRIMARY KEY (`fid`)
+)PARTITION BY HASH( `fid` ) PARTITIONS 4;
+INSERT INTO t (fid, oty, oid, pid, bid, r5) VALUES (59, 'm',  441, 1,  2143,  'LE1264_r5');
+INSERT INTO t (fid, oty, oid, pid, bid, r5) VALUES (135, 'm',  1121, 1,  2423,  'LE2008_r5');
+INSERT INTO t (fid, oty, oid, pid, bid, r5) VALUES (139, 'm',  1125, 1,  2432, 'LE2005_r5');
+INSERT INTO t (fid, oty, oid, pid, bid, r5) VALUES (143, 'm',  1129, 1,  2438,  'LE2006_r5');
+INSERT INTO t (fid, oty, oid, pid, bid, r5) VALUES (147, 'm',  1133, 1,  2446,  'LE2014_r5');
+INSERT INTO t (fid, oty, oid, pid, bid, r5) VALUES (167, 'm',  1178, 1,  2512,  'LE2055_r5');
+INSERT INTO t (fid, oty, oid, pid, bid, r5) VALUES (171, 'm',  1321, 1,  2542,  'LE1006_r5');
+INSERT INTO t (fid, oty, oid, pid, bid, r5) VALUES (179, 'm',  1466, 1,  2648,  'LE2171_r5');
+INSERT INTO t (fid, oty, oid, pid, bid, r5) VALUES (187, 'm',  1567, 1,  2690,  'LE1293_r5');
+INSERT INTO t (fid, oty, oid, pid, bid, r5) VALUES (57, 'm',  341, 1,  2102,  'LE1001_r5');
+INSERT INTO t (fid, oty, oid, pid, bid, r5) VALUES (137, 'm',  1123, 1,  2427,  'LE2003_r5');
+INSERT INTO t (fid, oty, oid, pid, bid, r5) VALUES (145, 'm',  1131, 1,  2442,  'LE2048_r5');
+INSERT INTO t (fid, oty, oid, pid, bid, r5) VALUES (138, 'm',  1124, 1,  2429,  'LE2004_r5');
+INSERT INTO t (fid, oty, oid, pid, bid, r5) VALUES (142, 'm',  1128, 1,  2436,  'LE2049_r5');
+INSERT INTO t (fid, oty, oid, pid, bid, r5) VALUES (174, 'm',  1381, 1,  2602,  'LE2170_r5');
+INSERT INTO t (fid, oty, oid, pid, bid, r5) VALUES (28, 'm',  81, 1,  2023,  'LE1009_r5');
+INSERT INTO t (fid, oty, oid, pid, bid, r5) VALUES (60, 'm',  442, 1,  2145,  'LE1263_r5');
+INSERT INTO t (fid, oty, oid, pid, bid, r5) VALUES (136, 'm',  1122, 1,  2425,  'LE2002_r5');
+INSERT INTO t (fid, oty, oid, pid, bid, r5) VALUES (140, 'm',  1126, 1,  2434,  'LE2001_r5');
+INSERT INTO t (fid, oty, oid, pid, bid, r5) VALUES (168, 'm',  1179, 1,  2514,  'LE2052_r5');
+INSERT INTO t (fid, oty, oid, pid, bid, r5) VALUES (196, 'm',  3380, 1,  2890,  'LE1300_r5');
+INSERT INTO t (fid, oty, oid, pid, bid, r5) VALUES (208, 'm',  3861, 1,  3150,  'LE1323_r5');
+INSERT INTO t (fid, oty, oid, pid, bid, r5) VALUES (432, 'm',  4060, 1,  3290,  'LE1327_r5');
+--sorted_result
+SELECT DISTINCT t.bid, t.r5 FROM t left join t parent on parent.oid = t.pid WHERE t.oty = 'm';
+
+
+
+# TestIssue14481
+drop table if exists t;
+create table t(a int default null, b int default null, c int default null);
+explain format = 'brief' select * from t where a = 1 and a = 2;
+drop table t;
+
+
+# TestQueryBlockTableAliasInHint
+explain select /*+ HASH_JOIN(@sel_1 t2) */ * FROM (select 1) t1 NATURAL LEFT JOIN (select 2) t2;
+--enable_warnings
+select /*+ HASH_JOIN(@sel_1 t2) */ * FROM (select 1) t1 NATURAL LEFT JOIN (select 2) t2;
+--disable_warnings
+
+
+# TestIssue10448
+drop table if exists t;
+create table t(pk int(11) primary key);
+insert into t values(1),(2),(3);
+select a from (select pk as a from t) t1 where a = 18446744073709551615;
+
+
+# TestMultiUpdateOnPrimaryKey
+drop table if exists t;
+create table t (a int not null primary key);
+insert into t values (1);
+-- error 1706
+UPDATE t m, t n SET m.a = m.a + 10, n.a = n.a + 10;
+drop table if exists t;
+create table t (a varchar(10) not null primary key);
+insert into t values ('abc');
+-- error 1706
+UPDATE t m, t n SET m.a = 'def', n.a = 'xyz';
+drop table if exists t;
+create table t (a int, b int, primary key (a, b));
+insert into t values (1, 2);
+-- error 1706
+UPDATE t m, t n SET m.a = m.a + 10, n.b = n.b + 10;
+drop table if exists t;
+create table t (a int primary key, b int);
+insert into t values (1, 2);
+-- error 1706
+UPDATE t m, t n SET m.a = m.a + 10, n.a = n.a + 10;
+UPDATE t m, t n SET m.b = m.b + 10, n.b = n.b + 10;
+SELECT * FROM t;
+-- error 1706
+UPDATE t m, t n SET m.a = m.a + 1, n.b = n.b + 10;
+-- error 1706
+UPDATE t m, t n, t q SET m.a = m.a + 1, n.b = n.b + 10, q.b = q.b - 10;
+-- error 1706
+UPDATE t m, t n, t q SET m.b = m.b + 1, n.a = n.a + 10, q.b = q.b - 10;
+-- error 1706
+UPDATE t m, t n, t q SET m.b = m.b + 1, n.b = n.b + 10, q.a = q.a - 10;
+-- error 1706
+UPDATE t q, t n, t m SET m.b = m.b + 1, n.b = n.b + 10, q.a = q.a - 10;
+update t m, t n set m.a = n.a+10 where m.a=n.a;
+select * from t;
+
+
+# TestOrderByHavingNotInSelect
+drop table if exists ttest;
+create table ttest (v1 int, v2 int);
+insert into ttest values(1, 2), (4,6), (1, 7);
+-- error 3029
+select v1 from ttest order by count(v2);
+-- error 8123
+select v1 from ttest having count(v2);
+-- error 1055
+select v2, v1 from (select * from ttest) t1 join (select 1, 2) t2 group by v1;
+-- error 1055
+select v2, v1 from (select t1.v1, t2.v2 from ttest t1 join ttest t2) t3 join (select 1, 2) t2 group by v1;
+
+
+# TestUpdateSetDefault
+create table tt (x int, z int as (x+10) stored);
+insert into tt(x) values (1);
+update tt set x=2, z = default;
+update tt set x=2, z = default(z);
+select * from tt;
+-- error 3105
+update tt set x=2, z = default(x);
+-- error 3105
+update tt set z = 123;
+-- error 3105
+update tt as ss set z = 123;
+-- error 3105
+update tt as ss set x = 3, z = 13;
+-- error 3105
+update tt as s1, tt as s2 set s1.z = default, s2.z = 456;
+
+
+# TestExtendedStatsSwitch
+drop table if exists t;
+create table t(a int not null, b int not null, key(a), key(b));
+insert into t values(1,1),(2,2),(3,3),(4,4),(5,5),(6,6);
+set session tidb_enable_extended_stats = off;
+-- error 1105
+alter table t add stats_extended s1 correlation(a,b);
+-- error 1105
+alter table t drop stats_extended s1;
+-- error 1105
+admin reload stats_extended;
+set session tidb_enable_extended_stats = on;
+alter table t add stats_extended s1 correlation(a,b);
+select stats, status from mysql.stats_extended where name = 's1';
+set session tidb_enable_extended_stats = off;
+analyze table t;
+select stats, status from mysql.stats_extended where name = 's1';
+set session tidb_enable_extended_stats = on;
+analyze table t;
+select stats, status from mysql.stats_extended where name = 's1';
+explain format = 'brief' select * from t use index(b) where a > 3 order by b limit 1;
+set session tidb_enable_extended_stats = off;
+explain format = 'brief' select * from t use index(b) where a > 3 order by b limit 1;
+
+
+# TestOrderByNotInSelectDistinct
+drop table if exists ttest;
+create table ttest (v1 int, v2 int);
+insert into ttest values(1, 2), (4,6), (1, 7);
+-- error 3065
+select distinct v1 from ttest order by v2;
+-- error 3065
+select distinct v1+1 from ttest order by v1;
+-- error 3065
+select distinct v1+1 from ttest order by 1+v1;
+-- error 3065
+select distinct v1+1 from ttest order by v1+2;
+-- error 3066
+select distinct count(v1) from ttest group by v2 order by sum(v1);
+-- error 3066
+select distinct sum(v1)+1 from ttest group by v2 order by sum(v1);
+select distinct v1+1 from ttest order by v1+1;
+select distinct count(v1) from ttest order by count(v1);
+select distinct count(v1) from ttest group by v2 order by count(v1);
+select distinct sum(v1) from ttest group by v2 order by sum(v1);
+select distinct v1, v2 from ttest order by 1, 2;
+select distinct v1, v2 from ttest order by 2, 1;
+select distinct v1 from ttest order by v1+1;
+select distinct v1, v2 from ttest order by v1+1, v2;
+select distinct v1+1 as z, v2 from ttest order by v1+1, z+v2;
+select distinct sum(v1) as z from ttest group by v2 order by z+1;
+select distinct sum(v1)+1 from ttest group by v2 order by sum(v1)+1;
+select distinct v1 as z from ttest order by v1+z;
+
+
+# TestInvalidNamedWindowSpec
+DROP TABLE IF EXISTS temptest;
+create table temptest (val int, val1 int);
+SELECT val FROM temptest WINDOW w AS (ORDER BY val RANGE 1 PRECEDING);
+-- error 3587
+SELECT val FROM temptest WINDOW w AS (ORDER BY val, val1 RANGE 1 PRECEDING);
+-- error 1054
+select val1, avg(val1) as a from temptest group by val1 window w as (order by a);
+-- error 1054
+select val1, avg(val1) as a from temptest group by val1 window w as (partition by a);
+
+
+# TestCorrelatedAggregate
+DROP TABLE IF EXISTS tab, tab2;
+CREATE TABLE tab(i INT);
+CREATE TABLE tab2(j INT);
+insert into tab values(1),(2),(3);
+insert into tab2 values(1),(2),(3),(15);
+SELECT m.i,
+       (SELECT COUNT(n.j)
+           FROM tab2 WHERE j=15) AS o
+    FROM tab m, tab2 n GROUP BY 1 order by m.i;
+SELECT
+         (SELECT COUNT(n.j)
+             FROM tab2 WHERE j=15) AS o
+    FROM tab m, tab2 n order by m.i;
+drop table if exists t1, t2;
+create table t1 (a int, b int);
+create table t2 (m int, n int);
+insert into t1 values (2,2), (2,2), (3,3), (3,3), (3,3), (4,4);
+insert into t2 values (1,11), (2,22), (3,32), (4,44), (4,44);
+set @@sql_mode='TRADITIONAL';
+select count(*) c, a,
+		( select group_concat(count(a)) from t2 where m = a )
+		from t1 group by a order by a;
+drop table if exists t;
+create table t (a int, b int);
+insert into t values (1,1),(2,1),(2,2),(3,1),(3,2),(3,3);
+select (select count(a)) from t;
+select (select (select (select count(a)))) from t;
+select (select (select count(n.a)) from t m order by count(m.b)) from t n;
+select (select count(n.a) from t where count(n.a)=3) from t n;
+select (select count(a) from t where count(distinct n.a)=3) from t n;
+select (select count(n.a) from t having count(n.a)=6 limit 1) from t n;
+select (select count(n.a) from t having count(distinct n.b)=3 limit 1) from t n;
+select (select sum(distinct n.a) from t having count(distinct n.b)=3 limit 1) from t n;
+select (select sum(distinct n.a) from t having count(distinct n.b)=6 limit 1) from t n;
+select (select count(n.a) from t order by count(n.b) limit 1) from t n;
+select (select count(distinct n.b) from t order by count(n.b) limit 1) from t n;
+select (select cnt from (select count(a) cnt) s) from t;
+select (select count(cnt) from (select count(a) cnt) s) from t;
+select (select sum((select count(a)))) from t;
+select (select sum((select count(a))+sum(a))) from t;
+select (select count(a) from t group by count(n.a)) from t n;
+select (select count(distinct a) from t group by count(n.a)) from t n;
+select sum(a) from t having (select count(a)) = 0;
+select sum(a) from t having (select count(a)) > 0;
+select count(a) from t group by b order by (select count(a));
+select count(a) from t group by b order by (select -count(a));
+select (select sum(count(a))) from t;
+select (select sum(sum(a))) from t;
+select count(a), (select count(a)) from t;
+select sum(distinct b), count(a), (select count(a)), (select cnt from (select sum(distinct b) as cnt) n) from t;
+set @@sql_mode=DEFAULT;
+
+
+# TestCorrelatedColumnAggFuncPushDown
+drop table if exists t;
+create table t (a int, b int);
+insert into t values (1,1);
+select (select count(n.a + a) from t) from t n;
+
+
+
+# TestNonaggregateColumnWithSingleValueInOnlyFullGroupByMode
+drop table if exists t;
+create table t (a int, b int, c int);
+insert into t values (1, 2, 3), (4, 5, 6), (7, 8, 9);
+select a, count(b) from t where a = 1;
+select a, count(b) from t where a = 10;
+select a, c, sum(b) from t where a = 1 group by c;
+-- error 3029
+select a from t where a = 1 order by count(b);
+select a from t where a = 1 having count(b) > 0;
+
+
+# TestIssue22040
+drop table if exists t;
+create table t (a int, b int, primary key(a,b));
+select * from t where (a,b) in ((1,2),(1,2));
+-- error 1241
+select * from t where (a,b) in (1,2);
+-- error 1241
+select * from t where (a,b) in ((1,2),1);
+
+
+# TestIssue22071
+drop table if exists t;
+create table t (a int);
+insert into t values(1),(2),(5);
+select n in (1,2) from (select a in (1,2) as n from t) g;
+select n in (1,n) from (select a in (1,2) as n from t) g;
+
+
+# TestIssue22199
+drop table if exists t1, t2;
+create table t1(i int primary key, j int, index idx_j(j));
+create table t2(i int primary key, j int, index idx_j(j));
+-- error 1051
+select t1.*, (select t2.* from t1) from t1;
+
+
+# TestIssue22892
+set @@tidb_partition_prune_mode='static';
+drop table if exists t1;
+create table t1(a int) partition by hash (a) partitions 5;
+insert into t1 values (0);
+select * from t1 where a not between 1 and 2;
+set @@tidb_partition_prune_mode='dynamic';
+drop table if exists t2;
+create table t2(a int) partition by hash (a) partitions 5;
+insert into t2 values (0);
+select * from t2 where a not between 1 and 2;
+set @@tidb_partition_prune_mode=DEFAULT;
+
+
+# TestIssue26719
+create table tx (a int) partition by range (a) (partition p0 values less than (10), partition p1 values less than (20));
+insert into tx values (1);
+set @@tidb_partition_prune_mode='dynamic';
+begin;
+delete from tx where a in (1);
+select * from tx PARTITION(p0);
+select * from tx;
+rollback;
+
+
+# TestIssue32428
+drop table if exists t1;
+create table `t1` (`a` enum('aa') DEFAULT NULL, KEY `k` (`a`));
+insert into t1 values('aa');
+insert into t1 values(null);
+select a from t1 where a<=>'aa';
+select a from t1 where a<=>null;
+CREATE TABLE IDT_MULTI15860STROBJSTROBJ (
+	  COL1 enum('aa') DEFAULT NULL,
+	  COL2 int(41) DEFAULT NULL,
+	  COL3 year(4) DEFAULT NULL,
+	  KEY U_M_COL4 (COL1,COL2),
+	  KEY U_M_COL5 (COL3,COL2));
+insert into IDT_MULTI15860STROBJSTROBJ  values("aa", 1013610488, 1982);
+SELECT * FROM IDT_MULTI15860STROBJSTROBJ t1 RIGHT JOIN IDT_MULTI15860STROBJSTROBJ t2 ON t1.col1 <=> t2.col1 where t1.col1 is null and t2.col1 = "aa";
+prepare stmt from "SELECT * FROM IDT_MULTI15860STROBJSTROBJ t1 RIGHT JOIN IDT_MULTI15860STROBJSTROBJ t2 ON t1.col1 <=> t2.col1 where t1.col1 is null and t2.col1 = ?";
+set @a="aa";
+execute stmt using @a;
+
+
+# TestDeleteStmt
+drop table if exists t;
+create table t(a int);
+delete t from t;
+delete t from planner__core__integration.t as t;
+-- error 1109
+delete planner__core__integration.t from planner__core__integration.t as t;
+delete planner__core__integration.t from t;
+drop database if exists db1;
+create database db1;
+use db1;
+create table t(a int);
+-- error 1109
+delete planner__core__integration.t from t;
+use planner__core__integration;
+
+
+# TestIndexMergeConstantTrue
+drop table if exists t;
+create table t(a int primary key, b int not null, key(b));
+delete /*+ use_index_merge(t) */ FROM t WHERE a=1 OR (b < SOME (SELECT /*+ use_index_merge(t)*/ b FROM t WHERE a<2 OR b<2));
+drop table if exists t;
+create table t(a int not null, b int not null, key(a), key(b));
+delete /*+ use_index_merge(t) */ FROM t WHERE a=1 OR (b < SOME (SELECT /*+ use_index_merge(t)*/ b FROM t WHERE a<2 OR b<2));
+drop table if exists t;
+create table t(a int primary key, b int not null, c int, key(a), key(b,c));
+delete /*+ use_index_merge(t) */ FROM t WHERE a=1 OR (a<2 and b<2);
+
+
+# TestIndexMergeTableFilter
+drop table if exists t;
+create table t(a int, b int, c int, d int, key(a), key(b));
+insert into t values(10,1,1,10);
+explain format = 'brief' select /*+ use_index_merge(t) */ * from t where a=10 or (b=10 and c=10);
+select /*+ use_index_merge(t) */ * from t where a=10 or (b=10 and c=10);
+explain format = 'brief' select /*+ use_index_merge(t) */ * from t where (a=10 and d=10) or (b=10 and c=10);
+select /*+ use_index_merge(t) */ * from t where (a=10 and d=10) or (b=10 and c=10);
+
+
+# TestIssue22850
+drop table if exists t1;
+CREATE TABLE t1 (a int(11));
+SELECT @v:=(SELECT 1 FROM t1 t2 LEFT JOIN t1 ON t1.a GROUP BY t1.a) FROM t1;
+
+
+# TestJoinSchemaChange
+drop table if exists t1, t2;
+create table t1(a int(11));
+create table t2(a decimal(40,20) unsigned, b decimal(40,20));
+select count(*) as x from t1 group by a having x not in (select a from t2 where x = t2.b);
+
+
+# TestGetVarExprWithHexLiteral
+drop table if exists t1_no_idx;
+create table t1_no_idx(id int, col_bit bit(16));
+insert into t1_no_idx values(1, 0x3135);
+insert into t1_no_idx values(2, 0x0f);
+prepare stmt from 'select id from t1_no_idx where col_bit = ?';
+set @a = 0x3135;
+execute stmt using @a;
+set @a = 0x0F;
+execute stmt using @a;
+prepare stmt from 'select id from t1_no_idx where col_bit in (?)';
+set @a = 0x3135;
+execute stmt using @a;
+set @a = 0x0F;
+execute stmt using @a;
+drop table if exists t2_idx;
+create table t2_idx(id int, col_bit bit(16), key(col_bit));
+insert into t2_idx values(1, 0x3135);
+insert into t2_idx values(2, 0x0f);
+prepare stmt from 'select id from t2_idx where col_bit = ?';
+set @a = 0x3135;
+execute stmt using @a;
+set @a = 0x0F;
+execute stmt using @a;
+prepare stmt from 'select id from t2_idx where col_bit in (?)';
+set @a = 0x3135;
+execute stmt using @a;
+set @a = 0x0F;
+execute stmt using @a;
+drop table if exists t_varchar;
+create table t_varchar(id int, col_varchar varchar(100), key(col_varchar));
+insert into t_varchar values(1, '15');
+prepare stmt from 'select id from t_varchar where col_varchar = ?';
+set @a = 0x3135;
+execute stmt using @a;
+
+
+# TestGetVarExprWithBitLiteral
+drop table if exists t1_no_idx;
+create table t1_no_idx(id int, col_bit bit(16));
+insert into t1_no_idx values(1, 0x3135);
+insert into t1_no_idx values(2, 0x0f);
+prepare stmt from 'select id from t1_no_idx where col_bit = ?';
+set @a = 0b11000100110101;
+execute stmt using @a;
+prepare stmt from 'select id from t1_no_idx where col_bit in (?)';
+set @a = 0b11000100110101;
+execute stmt using @a;
+
+
+# TestIndexMergeClusterIndex
+drop table if exists t;
+create table t (c1 float, c2 int, c3 int, primary key (c1) /*T![clustered_index] CLUSTERED */, key idx_1 (c2), key idx_2 (c3));
+insert into t values(1.0,1,2),(2.0,2,1),(3.0,1,1),(4.0,2,2);
+--sorted_result
+select /*+ use_index_merge(t) */ c3 from t where c3 = 1 or c2 = 1;
+drop table t;
+create table t (a int, b int, c int, primary key (a,b) /*T![clustered_index] CLUSTERED */, key idx_c(c));
+insert into t values (0,1,2);
+--sorted_result
+select /*+ use_index_merge(t) */ c from t where c > 10 or a < 1;
+
+
+# TestIssue23736
+drop table if exists t0, t1;
+create table t0(a int, b int, c int as (a + b) virtual, unique index (c) invisible);
+create table t1(a int, b int, c int as (a + b) virtual);
+insert into t0(a, b) values (12, -1), (8, 7);
+insert into t1(a, b) values (12, -1), (8, 7);
+select /*+ stream_agg() */ count(1) from t0 where c > 10 and b < 2;
+select /*+ stream_agg() */ count(1) from t1 where c > 10 and b < 2;
+delete from t0;
+insert into t0(a, b) values (5, 1);
+select /*+ nth_plan(3) */ count(1) from t0 where c > 10 and b < 2;
+explain select /*+ stream_agg() */ count(1) from t0 where c > 10 and b < 2;
+
+
+# TestPanicWhileQueryTableWithIsNull
+drop table if exists NT_HP27193;
+CREATE TABLE `NT_HP27193` (  `COL1` int(20) DEFAULT NULL,  `COL2` varchar(20) DEFAULT NULL,  `COL4` datetime DEFAULT NULL,  `COL3` bigint(20) DEFAULT NULL,  `COL5` float DEFAULT NULL) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin PARTITION BY HASH ( `COL1`%`COL3` ) PARTITIONS 10;
+select col1 from NT_HP27193 where col1 is null;
+INSERT INTO NT_HP27193 (COL2, COL4, COL3, COL5) VALUES ('m',  '2020-05-04 13:15:27', 8,  2602);
+select col1 from NT_HP27193 where col1 is null;
+drop table if exists NT_HP27193;
+
+
+# TestIssue23846
+drop table if exists t;
+create table t(a varbinary(10),UNIQUE KEY(a));
+insert into t values(0x00A4EEF4FA55D6706ED5);
+select count(*) from t where a=0x00A4EEF4FA55D6706ED5;
+select * from t where a=0x00A4EEF4FA55D6706ED5;
+
+
+# TestIssue23839
+drop table if exists BB;
+CREATE TABLE `BB` (
+	`col_int` int(11) DEFAULT NULL,
+	`col_varchar_10` varchar(10) DEFAULT NULL,
+	`pk` int(11) NOT NULL AUTO_INCREMENT,
+	`col_int_not_null` int(11) NOT NULL,
+	`col_decimal` decimal(10,0) DEFAULT NULL,
+	`col_datetime` datetime DEFAULT NULL,
+	`col_decimal_not_null` decimal(10,0) NOT NULL,
+	`col_datetime_not_null` datetime NOT NULL,
+	`col_varchar_10_not_null` varchar(10) NOT NULL,
+	PRIMARY KEY (`pk`) /*T![clustered_index] CLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_INCREMENT=2000001;
+--error 1055
+explain SELECT OUTR . col2 AS X FROM (SELECT INNR . col1 as col1, SUM( INNR . col2 ) as col2 FROM (SELECT INNR . `col_int_not_null` + 1 as col1, INNR . `pk` as col2 FROM BB AS INNR) AS INNR GROUP BY col1) AS OUTR2 INNER JOIN (SELECT INNR . col1 as col1, MAX( INNR . col2 ) as col2 FROM (SELECT INNR . `col_int_not_null` + 1 as col1, INNR . `pk` as col2 FROM BB AS INNR) AS INNR GROUP BY col1) AS OUTR ON OUTR2.col1 = OUTR.col1 GROUP BY OUTR . col1, OUTR2 . col1 HAVING X <> 'b';
+
+
+# TestIssue24281
+drop table if exists member, agent, deposit, view_member_agents;
+create table member(login varchar(50) NOT NULL, agent_login varchar(100) DEFAULT NULL, PRIMARY KEY(login));
+create table agent(login varchar(50) NOT NULL, data varchar(100) DEFAULT NULL, share_login varchar(50) NOT NULL, PRIMARY KEY(login));
+create table deposit(id varchar(50) NOT NULL, member_login varchar(50) NOT NULL, transfer_amount int NOT NULL, PRIMARY KEY(id), KEY midx(member_login, transfer_amount));
+create definer='root'@'localhost' view view_member_agents (member, share_login) as select m.login as member, a.share_login AS share_login from member as m join agent as a on m.agent_login = a.login;
+ select s.member_login as v1, SUM(s.transfer_amount) AS v2 FROM deposit AS s JOIN view_member_agents AS v ON s.member_login = v.member WHERE 1 = 1 AND v.share_login = 'somevalue' GROUP BY s.member_login UNION select 1 as v1, 2 as v2;
+
+
+# TestIssue25799
+drop table if exists t1, t2;
+create table t1 (a float default null, b smallint(6) DEFAULT NULL);
+insert into t1 values (1, 1);
+create table t2 (a float default null, b tinyint(4) DEFAULT NULL, key b (b));
+insert into t2 values (null, 1);
+explain select /*+ TIDB_INLJ(t2@sel_2) */ t1.a, t1.b from t1 where t1.a not in (select t2.a from t2 where t1.b=t2.b);
+select /*+ TIDB_INLJ(t2@sel_2) */ t1.a, t1.b from t1 where t1.a not in (select t2.a from t2 where t1.b=t2.b);
+
+
+# TestLimitWindowColPrune
+drop table if exists t;
+create table t(a int);
+insert into t values(1);
+select count(a) f1, row_number() over (order by count(a)) as f2 from t limit 1;
+
+
+# TestIssue27167
+set names utf8mb4;
+drop table if exists all_types;
+CREATE TABLE `all_types` (`id` int(11) NOT NULL,`d_tinyint` tinyint(4) DEFAULT NULL,`d_smallint` smallint(6) DEFAULT NULL,`d_int` int(11) DEFAULT NULL,`d_bigint` bigint(20) DEFAULT NULL,`d_float` float DEFAULT NULL,`d_double` double DEFAULT NULL,`d_decimal` decimal(10,2) DEFAULT NULL,`d_bit` bit(10) DEFAULT NULL,`d_binary` binary(10) DEFAULT NULL,`d_date` date DEFAULT NULL,`d_datetime` datetime DEFAULT NULL,`d_timestamp` timestamp NULL DEFAULT NULL,`d_varchar` varchar(20) NULL default NULL,PRIMARY KEY (`id`));
+select @@collation_connection;
+insert into all_types values(0, 0, 1, 2, 3, 1.5, 2.2, 10.23, 12, 'xy', '2021-12-12', '2021-12-12 12:00:00', '2021-12-12 12:00:00', '123');
+select collation(c) from (select d_date c from all_types union select d_int c from all_types) t;
+select collation(c) from (select d_date c from all_types union select d_int collate binary c from all_types) t;
+select collation(c) from (select d_date c from all_types union select d_float c from all_types) t;
+select collation(c) from (select d_timestamp c from all_types union select d_float c from all_types) t;
+
+
+# TestIssue25300
+drop table if exists t;
+create table t (a char(65) collate utf8_unicode_ci, b text collate utf8_general_ci not null);
+insert into t values ('a', 'A');
+insert into t values ('b', 'B');
+-- error 1271
+(select a from t) union ( select b from t);
+-- error 1271
+(select 'a' collate utf8mb4_unicode_ci) union (select 'b' collate utf8mb4_general_ci);
+-- error 1271
+(select a from t) union ( select b from t) union all select 'a';
+-- error 1271
+(select a from t) union ( select b from t) union select 'a';
+-- error 1271
+(select a from t) union ( select b from t) union select 'a' except select 'd';
+
+
+# TestIssue26250
+create table tp (id int primary key) partition by range (id) (partition p0 values less than (100));
+create table tn (id int primary key);
+insert into tp values(1),(2);
+insert into tn values(1),(2);
+select * from tp,tn where tp.id=tn.id and tn.id=1 for update;
+
+
+# TestCorrelationAdjustment4Limit
+drop table if exists t;
+create table t (pk int primary key auto_increment, year int, c varchar(256), index idx_year(year));
+insert into t (year, c) values (2000, space(256));
+insert into t (year, c) values (2000, space(256));
+insert into t (year, c) values (2000, space(256));
+insert into t (year, c) values (2000, space(256));
+insert into t (year, c) values (2000, space(256));
+insert into t (year, c) values (2000, space(256));
+insert into t (year, c) values (2000, space(256));
+insert into t (year, c) values (2000, space(256));
+insert into t (year, c) values (2000, space(256));
+insert into t (year, c) values (2000, space(256));
+insert into t (year, c) values (2001, space(256));
+insert into t (year, c) values (2001, space(256));
+insert into t (year, c) values (2001, space(256));
+insert into t (year, c) values (2001, space(256));
+insert into t (year, c) values (2001, space(256));
+insert into t (year, c) values (2001, space(256));
+insert into t (year, c) values (2001, space(256));
+insert into t (year, c) values (2001, space(256));
+insert into t (year, c) values (2001, space(256));
+insert into t (year, c) values (2001, space(256));
+insert into t (year, c) values (2002, space(256));
+insert into t (year, c) values (2002, space(256));
+insert into t (year, c) values (2002, space(256));
+insert into t (year, c) values (2002, space(256));
+insert into t (year, c) values (2002, space(256));
+insert into t (year, c) values (2002, space(256));
+insert into t (year, c) values (2002, space(256));
+insert into t (year, c) values (2002, space(256));
+insert into t (year, c) values (2002, space(256));
+insert into t (year, c) values (2002, space(256));
+analyze table t;
+set @@tidb_opt_enable_correlation_adjustment = false;
+explain format=brief select * from t use index(primary) where year=2002 limit 1;
+set @@tidb_opt_enable_correlation_adjustment = true;
+explain format=brief select * from t use index(primary) where year=2002 limit 1;
+truncate table t;
+insert into t (year, c) values (2000, space(256));
+insert into t (year, c) values (2000, space(256));
+insert into t (year, c) values (2001, space(256));
+insert into t (year, c) values (2001, space(256));
+insert into t (year, c) values (2002, space(256));
+insert into t (year, c) values (2002, space(256));
+insert into t (year, c) values (2003, space(256));
+insert into t (year, c) values (2003, space(256));
+insert into t (year, c) values (2004, space(256));
+insert into t (year, c) values (2004, space(256));
+insert into t (year, c) values (2005, space(256));
+insert into t (year, c) values (2005, space(256));
+insert into t (year, c) values (2006, space(256));
+insert into t (year, c) values (2006, space(256));
+insert into t (year, c) values (2007, space(256));
+insert into t (year, c) values (2007, space(256));
+insert into t (year, c) values (2008, space(256));
+insert into t (year, c) values (2008, space(256));
+insert into t (year, c) values (2009, space(256));
+insert into t (year, c) values (2009, space(256));
+insert into t (year, c) values (2010, space(256));
+insert into t (year, c) values (2010, space(256));
+insert into t (year, c) values (2011, space(256));
+insert into t (year, c) values (2011, space(256));
+insert into t (year, c) values (2012, space(256));
+insert into t (year, c) values (2012, space(256));
+insert into t (year, c) values (2013, space(256));
+insert into t (year, c) values (2013, space(256));
+insert into t (year, c) values (2014, space(256));
+insert into t (year, c) values (2014, space(256));
+insert into t (year, c) values (2015, space(256));
+insert into t (year, c) values (2015, space(256));
+insert into t (year, c) values (2016, space(256));
+insert into t (year, c) values (2016, space(256));
+insert into t (year, c) values (2017, space(256));
+insert into t (year, c) values (2017, space(256));
+insert into t (year, c) values (2018, space(256));
+insert into t (year, c) values (2018, space(256));
+insert into t (year, c) values (2019, space(256));
+insert into t (year, c) values (2019, space(256));
+insert into t (year, c) values (2020, space(256));
+insert into t (year, c) values (2020, space(256));
+insert into t (year, c) values (2021, space(256));
+insert into t (year, c) values (2021, space(256));
+insert into t (year, c) values (2022, space(256));
+insert into t (year, c) values (2022, space(256));
+insert into t (year, c) values (2023, space(256));
+insert into t (year, c) values (2023, space(256));
+insert into t (year, c) values (2024, space(256));
+insert into t (year, c) values (2024, space(256));
+insert into t (year, c) values (2025, space(256));
+insert into t (year, c) values (2025, space(256));
+insert into t (year, c) values (2026, space(256));
+insert into t (year, c) values (2026, space(256));
+insert into t (year, c) values (2027, space(256));
+insert into t (year, c) values (2027, space(256));
+insert into t (year, c) values (2028, space(256));
+insert into t (year, c) values (2028, space(256));
+insert into t (year, c) values (2029, space(256));
+insert into t (year, c) values (2029, space(256));
+insert into t (year, c) values (2030, space(256));
+insert into t (year, c) values (2030, space(256));
+insert into t (year, c) values (2031, space(256));
+insert into t (year, c) values (2031, space(256));
+insert into t (year, c) values (2032, space(256));
+insert into t (year, c) values (2032, space(256));
+insert into t (year, c) values (2033, space(256));
+insert into t (year, c) values (2033, space(256));
+insert into t (year, c) values (2034, space(256));
+insert into t (year, c) values (2034, space(256));
+insert into t (year, c) values (2035, space(256));
+insert into t (year, c) values (2035, space(256));
+insert into t (year, c) values (2036, space(256));
+insert into t (year, c) values (2036, space(256));
+insert into t (year, c) values (2037, space(256));
+insert into t (year, c) values (2037, space(256));
+insert into t (year, c) values (2038, space(256));
+insert into t (year, c) values (2038, space(256));
+insert into t (year, c) values (2039, space(256));
+insert into t (year, c) values (2039, space(256));
+insert into t (year, c) values (2040, space(256));
+insert into t (year, c) values (2040, space(256));
+insert into t (year, c) values (2041, space(256));
+insert into t (year, c) values (2041, space(256));
+insert into t (year, c) values (2042, space(256));
+insert into t (year, c) values (2042, space(256));
+insert into t (year, c) values (2043, space(256));
+insert into t (year, c) values (2043, space(256));
+insert into t (year, c) values (2044, space(256));
+insert into t (year, c) values (2044, space(256));
+insert into t (year, c) values (2045, space(256));
+insert into t (year, c) values (2045, space(256));
+insert into t (year, c) values (2046, space(256));
+insert into t (year, c) values (2046, space(256));
+insert into t (year, c) values (2047, space(256));
+insert into t (year, c) values (2047, space(256));
+insert into t (year, c) values (2048, space(256));
+insert into t (year, c) values (2048, space(256));
+insert into t (year, c) values (2049, space(256));
+insert into t (year, c) values (2049, space(256));
+insert into t (year, c) values (2050, space(256));
+insert into t (year, c) values (2050, space(256));
+analyze table t;
+explain format=brief select * from t use index(primary) where year=2000 limit 1;
+
+
+# TestCTESelfJoin
+drop table if exists t1, t2, t3;
+create table t1(t1a int, t1b int, t1c int);
+create table t2(t2a int, t2b int, t2c int);
+create table t3(t3a int, t3b int, t3c int);
+
+		with inv as
+		(select t1a , t3a, sum(t2c)
+			from t1, t2, t3
+			where t2a = t1a
+				and t2b = t3b
+				and t3c = 1998
+			group by t1a, t3a)
+		select inv1.t1a, inv2.t3a
+		from inv inv1, inv inv2
+		where inv1.t1a = inv2.t1a
+			and inv1.t3a = 4
+			and inv2.t3a = 4+1;
+
+
+# TestIssue26214
+drop table if exists t;
+create table `t` (`a` int(11) default null, `b` int(11) default null, `c` int(11) default null, key `expression_index` ((case when `a` < 0 then 1 else 2 end)));
+-- error 1054
+select * from t  where case when a < 0 then 1 else 2 end <= 1 order by 4;
+
+
+# TestCreateViewWithWindowFunc
+drop table if exists t6;
+CREATE TABLE t6(t TIME, ts TIMESTAMP);
+INSERT INTO t6 VALUES ('12:30', '2016-07-05 08:30:42');
+drop view if exists v;
+CREATE definer='root'@'localhost' VIEW v AS SELECT COUNT(*) OVER w0, COUNT(*) OVER w from t6 WINDOW w0 AS (), w  AS (w0 ORDER BY t);
+select * from v;
+
+
+# TestIssue29834
+drop table if exists IDT_MC21814;
+CREATE TABLE `IDT_MC21814` (`COL1` year(4) DEFAULT NULL,`COL2` year(4) DEFAULT NULL,KEY `U_M_COL` (`COL1`,`COL2`)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+insert into IDT_MC21814 values(1901, 2119), (2155, 2000);
+SELECT/*+ INL_JOIN(t1, t2), nth_plan(1) */ t2.* FROM IDT_MC21814 t1 LEFT JOIN IDT_MC21814 t2 ON t1.col1 = t2.col1 WHERE t2.col2 BETWEEN 2593 AND 1971 AND t1.col1 IN (2155, 1901, 1967);
+--enable_warnings
+SELECT/*+ INL_JOIN(t1, t2), nth_plan(2) */ t2.* FROM IDT_MC21814 t1 LEFT JOIN IDT_MC21814 t2 ON t1.col1 = t2.col1 WHERE t2.col2 BETWEEN 2593 AND 1971 AND t1.col1 IN (2155, 1901, 1967);
+--disable_warnings
+
+
+# TestLimitPushDown
+drop table if exists t;
+create table t (a int);
+insert into t values (1);
+analyze table t;
+set tidb_opt_limit_push_down_threshold=0;
+explain format=brief select a from t order by a desc limit 10;
+set tidb_opt_limit_push_down_threshold=10;
+explain format=brief select a from t order by a desc limit 10;
+explain format=brief select a from t order by a desc limit 11;
+explain format=brief select /*+ limit_to_cop() */ a from t order by a desc limit 11;
+
+
+# TestIssue26559
+drop table if exists t;
+create table t(a timestamp, b datetime);
+insert into t values('2020-07-29 09:07:01', '2020-07-27 16:57:36');
+--sorted_result
+select greatest(a, b) from t union select null;
+
+
+
+# TestIssues27130
+drop table if exists t1;
+set tidb_cost_model_version=2;
+create table t1( a enum('y','b','Abc','null'),b enum('y','b','Abc','null'),key(a));
+explain format=brief select * from t1 where a like "A%";
+explain format=brief select * from t1 where b like "A%";
+drop table if exists t2;
+create table t2( a enum('y','b','Abc','null'),b enum('y','b','Abc','null'),key(a, b));
+explain format=brief select * from t2 where a like "A%";
+explain format=brief select * from t2 where a like "A%" and b like "A%";
+drop table if exists t3;
+create table t3( a int,b enum('y','b','Abc','null'), c enum('y','b','Abc','null'),key(a, b, c));
+explain format=brief select * from t3 where a = 1 and b like "A%";
+
+
+# TestIssue27242
+drop table if exists UK_MU16407;
+CREATE TABLE UK_MU16407 (COL3 timestamp NULL DEFAULT NULL, UNIQUE KEY U3(COL3));
+insert into UK_MU16407 values("1985-08-31 18:03:27");
+SELECT COL3 FROM UK_MU16407 WHERE COL3>_utf8mb4'2039-1-19 3:14:40';
+DROP TABLE UK_MU16407;
+
+
+# TestIssue28424
+drop table if exists t28424, dt28242;
+set time_zone='+00:00';
+drop table if exists t28424,dt28424;
+create table t28424 (t timestamp);
+insert into t28424 values ("2038-01-19 03:14:07"), ("1970-01-01 00:00:01");
+-- sorted_result
+select * from t28424 where t != "2038-1-19 3:14:08";
+-- sorted_result
+select * from t28424 where t < "2038-1-19 3:14:08";
+-- sorted_result
+select * from t28424 where t <= "2038-1-19 3:14:08";
+-- sorted_result
+select * from t28424 where t >= "2038-1-19 3:14:08";
+-- sorted_result
+select * from t28424 where t > "2038-1-19 3:14:08";
+-- sorted_result
+select * from t28424 where t != "1970-1-1 0:0:0";
+-- sorted_result
+select * from t28424 where t < "1970-1-1 0:0:0";
+-- sorted_result
+select * from t28424 where t <= "1970-1-1 0:0:0";
+-- sorted_result
+select * from t28424 where t >= "1970-1-1 0:0:0";
+-- sorted_result
+select * from t28424 where t > "1970-1-1 0:0:0";
+alter table t28424 add unique index (t);
+-- sorted_result
+select * from t28424 where t != "2038-1-19 3:14:08";
+-- sorted_result
+select * from t28424 where t < "2038-1-19 3:14:08";
+-- sorted_result
+select * from t28424 where t <= "2038-1-19 3:14:08";
+-- sorted_result
+select * from t28424 where t >= "2038-1-19 3:14:08";
+-- sorted_result
+select * from t28424 where t > "2038-1-19 3:14:08";
+-- sorted_result
+select * from t28424 where t != "1970-1-1 0:0:0";
+-- sorted_result
+select * from t28424 where t < "1970-1-1 0:0:0";
+-- sorted_result
+select * from t28424 where t <= "1970-1-1 0:0:0";
+-- sorted_result
+select * from t28424 where t >= "1970-1-1 0:0:0";
+-- sorted_result
+select * from t28424 where t > "1970-1-1 0:0:0";
+create table dt28424 (dt datetime);
+insert into dt28424 values ("2038-01-19 03:14:07"), ("1970-01-01 00:00:01");
+insert into dt28424 values ("1969-12-31 23:59:59"), ("1970-01-01 00:00:00"), ("2038-03-19 03:14:08");
+-- sorted_result
+select * from t28424 right join dt28424 on t28424.t = dt28424.dt;
+DROP TABLE dt28424;
+DROP TABLE t28424;
+
+
+# TestTemporaryTableForCte
+create temporary table tmp1(a int, b int, c int);
+insert into tmp1 values (1,1,1),(2,2,2),(3,3,3),(4,4,4);
+with cte1 as (with cte2 as (select * from tmp1) select * from cte2) select * from cte1 left join tmp1 on cte1.c=tmp1.c;
+with cte1 as (with cte2 as (select * from tmp1) select * from cte2) select * from cte1 t1 left join cte1 t2 on t1.c=t2.c;
+WITH RECURSIVE cte(a) AS (SELECT 1 UNION SELECT a+1 FROM tmp1 WHERE a < 5) SELECT * FROM cte order by a;
+
+
+# TestIssue27797
+SELECT @@session.tidb_partition_prune_mode;
+set @@session.tidb_partition_prune_mode = 'static';
+drop table if exists t27797;
+create table t27797(a int, b int, c int, d int) partition by range columns(d) (partition p0 values less than (20),partition p1 values less than(40),partition p2 values less than(60));
+insert into t27797 values(1,1,1,1), (2,2,2,2), (22,22,22,22), (44,44,44,44);
+set sql_mode='';
+select count(*) from (select a, b from t27797 where d > 1 and d < 60 and b > 0 group by b, c) tt;
+drop table if exists IDT_HP24172;
+CREATE TABLE `IDT_HP24172` ( `COL1` mediumint(16) DEFAULT NULL, `COL2` varchar(20) DEFAULT NULL, `COL4` datetime DEFAULT NULL, `COL3` bigint(20) DEFAULT NULL, `COL5` float DEFAULT NULL, KEY `UM_COL` (`COL1`,`COL3`) ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin PARTITION BY HASH( `COL1`+`COL3` ) PARTITIONS 8;
+insert into IDT_HP24172(col1) values(8388607);
+select col2 from IDT_HP24172 where col1 = 8388607 and col1 in (select col1 from IDT_HP24172);
+set @@session.tidb_partition_prune_mode = DEFAULT;
+set sql_mode=DEFAULT;
+
+
+# TestIssue28154
+drop table if exists t;
+create table t(a TEXT);
+insert into t values('abc');
+select * from t where from_base64('');
+-- error 1292
+update t set a = 'def' where from_base64('');
+select * from t where from_base64('invalidbase64');
+update t set a = 'hig' where from_base64('invalidbase64');
+select * from t where from_base64('test');
+-- error 1292
+update t set a = 'xyz' where from_base64('test');
+select * from t;
+drop table if exists t;
+
+
+# TestIssues29711
+drop table if exists tbl_29711;
+CREATE TABLE `tbl_29711` (`col_250` text COLLATE utf8_unicode_ci NOT NULL,`col_251` enum('Alice','Bob','Charlie','David') COLLATE utf8_unicode_ci NOT NULL DEFAULT 'Charlie',PRIMARY KEY (`col_251`,`col_250`(1)) NONCLUSTERED);
+explain format=brief select col_250,col_251 from tbl_29711 use index (primary) where col_251 between 'Bob' and 'David' order by col_250,col_251 limit 6;
+drop table if exists t29711;
+CREATE TABLE `t29711` (`a` varchar(10) DEFAULT NULL,`b` int(11) DEFAULT NULL,`c` int(11) DEFAULT NULL,KEY `ia` (`a`(2)));
+explain format=brief select * from t29711 use index (ia) order by a limit 10;
+
+
+# TestIssue27313
+drop table if exists t;
+create table t(a varchar(100), b int, c int, index idx1(a(2), b), index idx2(a));
+--enable_warnings
+explain format = 'verbose' select * from t where a = 'abcdefghijk' and b > 4;
+--disable_warnings
+
+
+# TestIssue30094
+drop table if exists t30094;
+create table t30094(a varchar(10));
+explain format = 'brief' select * from t30094 where cast(a as float) and cast(a as char);
+explain format = 'brief' select * from t30094 where  concat(a,'1') = _binary 0xe59388e59388e59388 collate binary and concat(a,'1') = _binary 0xe598bfe598bfe598bf collate binary;
+
+
+# TestIssue29705
+SELECT @@session.tidb_partition_prune_mode;
+set @@session.tidb_partition_prune_mode = 'static';
+drop table if exists t;
+create table t(id int) partition by hash(id) partitions 4;
+insert into t values(1);
+SELECT COUNT(1) FROM ( SELECT COUNT(1) FROM t b GROUP BY id) a;
+set @@session.tidb_partition_prune_mode = DEFAULT;
+
+
+# TestIssue30271
+drop table if exists t;
+create table t(a char(10), b char(10), c char(10), index (a, b, c)) collate utf8mb4_bin;
+insert into t values ('b', 'a', '1'), ('b', 'A', '2'), ('c', 'a', '3');
+set names utf8mb4 collate utf8mb4_general_ci;
+select * from t where (a>'a' and b='a') or (b = 'A' and a < 'd') order by a,c;
+
+
+# TestIssue30804
+drop table if exists t1, t2;
+create table t1(a int, b int);
+create table t2(a int, b int);
+select avg(0) over w from t1 window w as (order by (select 1));
+-- error 3579
+select avg(0) over w from t1 where b > (select sum(t2.a) over w from t2) window w as (partition by t1.b);
+select avg(0) over w1 from t1 where b > (select sum(t2.a) over w2 from t2 window w2 as (partition by t2.b)) window w1 as (partition by t1.b);
+
+
+# TestIndexMergeWarning
+drop table if exists t1;
+create table t1(c1 int, c2 int);
+--enable_warnings
+select /*+ use_index_merge(t1) */ * from t1 where c1 < 1 or c2 < 1;
+drop table if exists t1;
+create table t1(c1 int, c2 int, key(c1), key(c2));
+select /*+ use_index_merge(t1), no_index_merge() */ * from t1 where c1 < 1 or c2 < 1;
+drop table if exists t1;
+create temporary table t1(c1 int, c2 int, key(c1), key(c2));
+select /*+ use_index_merge(t1) */ * from t1 where c1 < 1 or c2 < 1;
+--disable_warnings
+
+
+# TestIssue20510
+drop table if exists t1, t2;
+CREATE TABLE t1 (a int PRIMARY KEY, b int);
+CREATE TABLE t2 (a int PRIMARY KEY, b int);
+INSERT INTO t1 VALUES (1,1), (2,1), (3,1), (4,2);
+INSERT INTO t2 VALUES (1,2), (2,2);
+explain format=brief SELECT * FROM t1 LEFT JOIN t2 ON t1.a=t2.a WHERE not(0+(t1.a=30 and t2.b=1));
+SELECT * FROM t1 LEFT JOIN t2 ON t1.a=t2.a WHERE not(0+(t1.a=30 and t2.b=1));
+
+
+# TestIssue31035
+drop table if exists t1;
+create table t1(c1 longtext, c2 decimal(37, 4), unique key(c1(10)), unique key(c2));
+insert into t1 values('眐', -962541614831459.7458);
+select * from t1 order by c2 + 10;
+
+
+# TestDNFCondSelectivityWithConst
+drop table if exists t1;
+create table t1(a int, b int, c int);
+insert into t1 value(10,10,10);
+insert into t1 select * from t1;
+insert into t1 select * from t1;
+insert into t1 select * from t1;
+insert into t1 select * from t1;
+insert into t1 select * from t1;
+insert into t1 select * from t1;
+insert into t1 select * from t1;
+insert into t1 value(1,1,1);
+analyze table t1;
+explain format = 'brief' select * from t1 where a=1 or b=1;
+explain format = 'brief' select * from t1 where 0=1 or a=1 or b=1;
+explain format = 'brief' select * from t1 where null or a=1 or b=1;
+explain format = 'brief' select * from t1 where a=1 or false or b=1;
+explain format = 'brief' select * from t1 where a=1 or b=1 or "false";
+explain format = 'brief' select * from t1 where 1=1 or a=1 or b=1;
+explain format = 'brief' select * from t1 where a=1 or b=1 or 1=1;
+drop table if exists t1;
+
+
+# TestNaturalJoinUpdateSameTable
+create database natural_join_update;
+use natural_join_update;
+create table t1(a int, b int);
+insert into t1 values (1,1),(2,2);
+update t1 as a natural join t1 b SET a.a = 2, b.b = 3;
+--sorted_result
+select * from t1;
+drop table t1;
+create table t1 (a int primary key, b int);
+insert into t1 values (1,1),(2,2);
+--error 1706
+update t1 as a natural join t1 b SET a.a = 2, b.b = 3;
+drop table t1;
+create table t1 (a int, b int) partition by hash (a) partitions 3;
+insert into t1 values (1,1),(2,2);
+--error 1706
+update t1 as a natural join t1 b SET a.a = 2, b.b = 3;
+drop table t1;
+create table t1 (A int, b int) partition by hash (b) partitions 3;
+insert into t1 values (1,1),(2,2);
+--error 1706
+update t1 as a natural join t1 B SET a.A = 2, b.b = 3;
+--error 1706
+update t1 as a natural join t1 B SET a.A = 2, b.b = 3;
+drop table t1;
+create table t1 (A int, b int) partition by RANGE COLUMNS (b) (partition `pNeg` values less than (0),partition `pPos` values less than MAXVALUE);
+insert into t1 values (1,1),(2,2);
+--error 1706
+update t1 as a natural join t1 B SET a.A = 2, b.b = 3;
+drop table t1;
+drop database natural_join_update;
+use planner__core__integration;
+
+
+# TestIssue33042
+drop table if exists t1, t2;
+create table t1(id int primary key, col1 int);
+create table t2(id int primary key, col1 int);
+explain format='brief' SELECT /*+ merge_join(t1, t2)*/ * FROM (t1 LEFT JOIN t2 ON t1.col1=t2.id) order by t2.id;
+
+
+# TestIssue29663
+drop table if exists t1;
+drop table if exists t2;
+create table t1 (a int, b int);
+create table t2 (c int, d int);
+insert into t1 values(1, 1), (1,2),(2,1),(2,2);
+insert into t2 values(1, 3), (1,4),(2,5),(2,6);
+explain select one.a from t1 one order by (select two.d from t2 two where two.c = one.b);
+
+
+# TestIssue31609
+explain select rank() over (partition by table_name) from information_schema.tables;
+
+
+# TestDecimalOverflow
+drop table if exists t;
+create table deci (a decimal(65,30),b decimal(65,0));
+insert into deci values (1234567890.123456789012345678901234567890,987654321098765432109876543210987654321098765432109876543210);
+--sorted_result
+select a from deci union ALL select b from deci;
+
+
+# TestIssue25813
+drop table if exists t;
+create table t(a json);
+insert into t values('{"id": "ish"}');
+select t2.a from t t1 left join t t2 on t1.a=t2.a where t2.a->'$.id'='ish';
+explain format = 'brief' select * from t t1 left join t t2 on t1.a=t2.a where t2.a->'$.id'='ish';
+
+
+# TestPartitionTableFallBackStatic
+drop table if exists t, t2;
+set @@tidb_partition_prune_mode='static';
+CREATE TABLE t (a int) PARTITION BY RANGE (a) (PARTITION p0 VALUES LESS THAN (6),PARTITION p1 VALUES LESS THAN (11));
+insert into t values (1),(2),(3),(4),(7),(8),(9),(10);
+analyze table t;
+explain format='brief' select * from t;
+CREATE TABLE t2 (a int) PARTITION BY RANGE (a) (PARTITION p0 VALUES LESS THAN (6),PARTITION p1 VALUES LESS THAN (11));
+insert into t2 values (1),(2),(3),(4),(7),(8),(9),(10);
+analyze table t2;
+set @@tidb_partition_prune_mode='dynamic';
+explain format='brief' select * from t;
+analyze table t;
+explain format='brief' select * from t;
+explain format='brief' select  * from t union all select * from t2;
+set @@tidb_partition_prune_mode=DEFAULT;
+
+
+# TestTableRangeFallback
+drop table if exists t1, t2;
+create table t1 (a int primary key, b int);
+create table t2 (c int);
+explain format='brief' select * from t1 where a in (10, 20, 30, 40, 50) and b > 1;
+explain format='brief' select * from t1 join t2 on t1.b = t2.c where t1.a in (10, 20, 30, 40, 50);
+set @@tidb_opt_range_max_size=10;
+--enable_warnings
+explain format='brief' select * from t1 where a in (10, 20, 30, 40, 50) and b > 1;
+explain format='brief' select * from t1 join t2 on t1.b = t2.c where t1.a in (10, 20, 30, 40, 50);
+--disable_warnings
+
+
+# TestIndexRangeFallback
+drop table if exists t1, t2, t3, t4;
+create table t1 (a varchar(10), b varchar(10), c varchar(10), index idx_a_b(a(2), b(2)));
+create table t2 (d varchar(10));
+create table t3 (pk int primary key, a int, key(a));
+create table t4 (a int, b int, c int, index idx_a_b(a, b));
+set @@tidb_opt_range_max_size=0;
+--enable_warnings
+explain format='brief' select * from t1 where a in ('aaa', 'bbb', 'ccc') and b in ('ddd', 'eee', 'fff');
+set @@tidb_opt_range_max_size=1000;
+explain format='brief' select * from t1 where a in ('aaa', 'bbb', 'ccc') and b in ('ddd', 'eee', 'fff');
+set @@tidb_opt_range_max_size=0;
+explain format='brief' select * from t1 join t2 on t1.c = t2.d where a in ('aaa', 'bbb', 'ccc') and b in ('ddd', 'eee', 'fff');
+set @@tidb_opt_range_max_size=1000;
+explain format='brief' select * from t1 join t2 on t1.c = t2.d where a in ('aaa', 'bbb', 'ccc') and b in ('ddd', 'eee', 'fff');
+set @@tidb_opt_range_max_size=0;
+explain format='brief' select /*+ use_index(t3, a) */ * from t3 where a in (1, 3, 5) and pk in (2, 4, 6);
+set @@tidb_opt_range_max_size=1000;
+explain format='brief' select /*+ use_index(t3, a) */ * from t3 where a in (1, 3, 5) and pk in (2, 4, 6);
+set @@tidb_opt_range_max_size=0;
+explain format='brief' select /*+ use_index(t4, idx_a_b) */ * from t4 where a in (1, 3, 5) and b = 2;
+set @@tidb_opt_range_max_size=1000;
+explain format='brief' select /*+ use_index(t4, idx_a_b) */ * from t4 where a in (1, 3, 5) and b = 2;
+--disable_warnings
+set @@tidb_opt_range_max_size=DEFAULT;
+
+
+# TestPlanCacheForTableRangeFallback
+set @@tidb_enable_prepared_plan_cache=1;
+drop table if exists t;
+create table t (a int primary key, b int);
+set @@tidb_opt_range_max_size=10;
+prepare stmt from 'select * from t where a in (?, ?, ?, ?, ?) and b > 1';
+set @a=10, @b=20, @c=30, @d=40, @e=50;
+execute stmt using @a, @b, @c, @d, @e;
+--enable_warnings
+execute stmt using @a, @b, @c, @d, @e;
+--disable_warnings
+select @@last_plan_from_cache;
+
+
+# TestIssue37760
+drop table if exists t;
+create table t(a int primary key);
+insert into t values (2), (4), (6);
+set @@tidb_opt_range_max_size=1;
+--enable_warnings
+select * from t where a;
+--disable_warnings
+set @@tidb_opt_range_max_size=DEFAULT;
+
+
+# TestOuterJoinEliminationForIssue18216
+drop table if exists t1, t2;
+create table t1 (a int, c int);
+insert into t1 values (1, 1), (1, 2), (2, 3), (2, 4);
+create table t2 (a int, c int);
+insert into t2 values (1, 1), (1, 2), (2, 3), (2, 4);
+select group_concat(c order by (select group_concat(c order by a) from t2 where a=t1.a)) from t1;
+select group_concat(c order by (select group_concat(c order by c) from t2 where a=t1.a), c desc) from t1;
+
+
+# TestIssue36888
+drop table if exists t0, t1;
+CREATE TABLE t0(c0 INT);
+CREATE TABLE t1(c0 INT);
+INSERT INTO t0 VALUES (NULL);
+SELECT t0.c0 FROM t0 LEFT JOIN t1 ON t0.c0>=t1.c0 WHERE (CONCAT_WS(t0.c0, t1.c0) IS NULL);
+
+
+# TestIssue40285
+drop table if exists t;
+CREATE TABLE t(col1 enum('p5', '9a33x') NOT NULL DEFAULT 'p5',col2 tinyblob DEFAULT NULL) ENGINE = InnoDB DEFAULT CHARSET = latin1 COLLATE = latin1_bin;
+(select last_value(col1) over () as r0 from t) union all (select col2 as r0 from t);
+
+# TestIssue43116
+CREATE TABLE `sbtest1` ( `id` bigint(20) NOT NULL AUTO_INCREMENT, `k` int(11) NOT NULL DEFAULT '0', `c` char(120) NOT NULL DEFAULT '', `pad` char(60) NOT NULL DEFAULT '', PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */ , KEY `k_1` (`k`) );
+set @@tidb_opt_range_max_size = 111;
+-- enable_warnings
+explain format='brief' select * from planner__core__integration.sbtest1 a where pad in ('1','1','1','1','1') and id in (1,1,1,1,1);
+-- disable_warnings
+set @@tidb_opt_range_max_size = DEFAULT;
+
+
+# TestIssue45033
+drop table if exists t1, t2, t3, t4;
+create table t1 (c1 int, c2 int, c3 int, primary key(c1, c2));
+create table t2 (c2 int, c1 int, primary key(c2, c1));
+create table t3 (c4 int, key(c4));
+create table t4 (c2 varchar(20) , test_col varchar(50), gen_col varchar(50) generated always as(concat(test_col,'')) virtual not null, unique key(gen_col));
+select count(1)
+				 from   (select ( case
+				                    when count(1)
+				                           over(
+				                             partition by a.c2) >= 50 then 1
+				                    else 0
+				                  end ) alias1,
+				                b.c2    as alias_col1
+				         from   t1 a
+				                left join (select c2
+				                           from   t4 f) k
+				                       on k.c2 = a.c2
+				                inner join t2 b
+				                        on b.c1 = a.c3) alias2
+				 where  exists (select 1
+				                from   (select distinct alias3.c4 as c2
+				                        from   t3 alias3) alias4
+				                where  alias4.c2 = alias2.alias_col1);
+
+
+# TestIssue46298
+drop table if exists planner__core__integration.first_range;
+create table planner__core__integration.first_range(p int not null, o tinyint not null, v int not null);
+insert into planner__core__integration.first_range (p, o, v) values (0, 0, 0), (1, 1, 1), (1, 2, 2), (1, 4, 4), (1, 8, 8), (2, 0, 0), (2, 3, 3), (2, 10, 10), (2, 13, 13), (2, 15, 15), (3, 1, 1), (3, 3, 3), (3, 5, 5), (3, 9, 9), (3, 15, 15), (3, 20, 20), (3, 31, 31);
+--sorted_result
+select *, first_value(v) over (partition by p order by o range between 3.1 preceding and 2.9 following) as a from planner__core__integration.first_range;
+set @@tidb_enable_pipelined_window_function=0;
+--sorted_result
+select *, first_value(v) over (partition by p order by o range between 3.1 preceding and 2.9 following) as a from planner__core__integration.first_range;
+set @@tidb_enable_pipelined_window_function=DEFAULT;
+
+
+# TestPartitionPruningWithDateType
+drop table if exists t;
+create table t(a datetime) partition by range columns (a) (partition p1 values less than ('20000101'), partition p2 values less than ('2000-10-01'));
+insert into t values ('20000201'), ('19000101');
+analyze table t;
+desc format='brief' select * from t where a < '2000-01-01';
+
+
+# TestErrNoDB
+drop user if exists test;
+
+connect (conn1, localhost, root,,);
+create user test;
+--error 1046
+grant select on test1111 to test@'%';
+--error 1046
+grant select on * to test@'%';
+--error 1046
+revoke select on * from test@'%';
+
+use planner__core__integration;
+create table test1111 (id int);
+grant select on test1111 to test@'%';
+disconnect conn1;
+
+
+# TestExplainAnalyzePointGet
+drop table if exists t;
+create table t(a int primary key, b varchar(20));
+insert into t values (1,1);
+--replace_regex /:[ ]?[.0-9]+[µms]*/:<num>/ /},.*}/}/
+explain analyze select * from t where a=1;
+--replace_regex /:[ ]?[.0-9]+[µms]*/:<num>/ /},.*}/}/
+explain analyze select * from t where a in (1,2,3);
+
+
+# TestExplainAnalyzeDML
+drop table if exists t;
+create table t (a int, b int, unique index (a));
+insert into t values (1,1);
+--replace_regex /:[ ]?[.0-9]+[µms]*/:<num>/ /},.*}/}/
+explain analyze select * from t where a=1;
+--replace_regex /:[ ]?[.0-9]+[µms]*/:<num>/ /},.*}/}}}/ /[0-9]+ Bytes/<num> Bytes/
+explain analyze insert ignore into t values (1,1),(2,2),(3,3),(4,4);
+
+
+# TestConditionColPruneInPhysicalUnionScan
+# https://github.com/pingcap/tidb/issues/21607
+drop table if exists t;
+create table t (a int, b int);
+insert into t values (1, 2);
+select count(*) from t where b = 1 and b in (3);
+drop table t;
+create table t (a int, b int as (a + 1), c int as (b + 1));
+begin;
+insert into t (a) values (1);
+select count(*) from t where b = 1 and b in (3);
+select count(*) from t where c = 1 and c in (3);
+
+
+# TestCreateViewIsolationRead
+drop table if exists t;
+drop view if exists v0;
+create table t(a int, b int);
+set session tidb_isolation_read_engines='tiflash,tidb';
+create view v0 (a, avg_b) as select a, avg(b) from t group by a;
+--error 1815
+select * from v0;
+set session tidb_isolation_read_engines='tikv,tiflash,tidb';
+select * from v0;
+set session tidb_isolation_read_engines=default;
+
+
+# TestSelectIgnoreTemporaryTableInView
+drop table if exists t1, t2;
+drop view if exists v1, v2, v3, v4, v5;
+create table t1 (a int, b int);
+create table t2 (c int, d int);
+create view v1 as select * from t1 order by a limit 5;
+create view v2 as select * from ((select * from t1) union (select * from t2)) as tt order by a, b limit 5;
+create view v3 as select * from v1 order by a limit 5;
+create view v4 as select * from t1, t2 where t1.a = t2.c order by a, b limit 5;
+create view v5 as select * from (select * from t1) as t1 order by a limit 5;
+insert into t1 values (1, 2), (3, 4);
+insert into t2 values (3, 5), (6, 7);
+create temporary table t1 (a int, b int);
+create temporary table t2 (c int, d int);
+select * from t1;
+select * from t2;
+select * from v1;
+select * from v2;
+select * from v3;
+select * from v4;
+select * from v5;
+drop table t1, t2;
+
+
+# TestIssue27949
+drop table if exists t27949;
+create table t27949 (a int, b int, key(b));
+explain format = 'brief' select * from t27949 where b=1;
+create global binding for select * from t27949 where b=1 using select * from t27949 ignore index(b) where b=1;
+explain format = 'brief' select * from t27949 where b=1;
+set @@sql_select_limit=100;
+explain format = 'brief' select * from t27949 where b=1;
+drop table if exists t;
+create table t(a int, index idx_a(a));
+create binding for select * from t  using select * from t use index(idx_a);
+select * from t;
+select @@last_plan_from_binding;
+prepare stmt from 'select * from t';
+execute stmt;
+select @@last_plan_from_binding;
+drop global binding for select * from t27949 where b=1;
+
+set @@sql_select_limit=default;
+
+# TestIssue30804
+drop table if exists t1, t2;
+create table t1(a int, b int);
+create table t2(a int, b int);
+select avg(0) over w from t1 window w as (order by (select 1));
+-- error 3579
+select avg(0) over w from t1 where b > (select sum(t2.a) over w from t2) window w as (partition by t1.b);
+select avg(0) over w1 from t1 where b > (select sum(t2.a) over w2 from t2 window w2 as (partition by t2.b)) window w1 as (partition by t1.b);
+
+
+# TestNaturalJoinUpdateSameTable
+drop table if exists t1;
+create table t1(a int, b int);
+insert into t1 values (1,1),(2,2);
+update t1 as a natural join t1 b SET a.a = 2, b.b = 3;
+select * from t1;
+drop table t1;
+create table t1 (a int primary key, b int);
+insert into t1 values (1,1),(2,2);
+-- error 1706
+update t1 as a natural join t1 b SET a.a = 2, b.b = 3;
+drop table t1;
+create table t1 (a int, b int) partition by hash (a) partitions 3;
+insert into t1 values (1,1),(2,2);
+-- error 1706
+update t1 as a natural join t1 b SET a.a = 2, b.b = 3;
+drop table t1;
+create table t1 (A int, b int) partition by hash (b) partitions 3;
+insert into t1 values (1,1),(2,2);
+-- error 1706
+update t1 as a natural join t1 B SET a.A = 2, b.b = 3;
+-- error 1706
+update t1 as a natural join t1 B SET a.A = 2, b.b = 3;
+drop table t1;
+create table t1 (A int, b int) partition by RANGE COLUMNS (b) (partition `pNeg` values less than (0),partition `pPos` values less than MAXVALUE);
+insert into t1 values (1,1),(2,2);
+-- error 1706
+update t1 as a natural join t1 B SET a.A = 2, b.b = 3;
+drop table t1;
+
+
+# TestIssue36609
+drop table if exists t1, t2, t3, t4, t5;
+create table t1(a int, b int, c int, d int, index ia(a), index ib(b), index ic(c), index id(d));
+create table t2(a int, b int, c int, d int, index ia(a), index ib(b), index ic(c), index id(d));
+create table t3(a int, b int, c int, d int, index ia(a), index ib(b), index ic(c), index id(d));
+create table t4(a int, b int, c int, d int, index ia(a), index ib(b), index ic(c), index id(d));
+create table t5(a int, b int, c int, d int, index ia(a), index ib(b), index ic(c), index id(d));
+select * from t3 straight_join t4 on t3.a = t4.b straight_join t2 on t3.d = t2.c straight_join t1 on t1.a = t2.b straight_join t5 on t4.c = t5.d where t2.b < 100 and t4.a = 10;
+--disable_result_log
+select * from information_schema.statements_summary;
+--enable_result_log
+
+
+# TestIssue38295
+# https://github.com/pingcap/tidb/issues/38295.
+drop table if exists t0;
+drop view if exists v0;
+CREATE TABLE t0(c0 BLOB(298) , c1 BLOB(182) , c2 NUMERIC);
+CREATE VIEW v0(c0) AS SELECT t0.c1 FROM t0;
+INSERT INTO t0 VALUES (-1, 'a', '2046549365');
+CREATE INDEX i0 ON t0(c2);
+--replace_regex /#2/#1/ /c2/c1/
+-- error 1055
+SELECT t0.c1, t0.c2 FROM t0 GROUP BY MOD(t0.c0, DEFAULT(t0.c2));
+UPDATE t0 SET c2=1413;
+
+
+# TestIssue41273
+drop table if exists t;
+CREATE TABLE t (
+	a set('nwbk','r5','1ad3u','van','ir1z','y','9m','f1','z','e6yd','wfev') NOT NULL DEFAULT 'ir1z,f1,e6yd',
+	b enum('soo2','4s4j','qi9om','8ue','i71o','qon','3','3feh','6o1i','5yebx','d') NOT NULL DEFAULT '8ue',
+	c varchar(66) DEFAULT '13mdezixgcn',
+	PRIMARY KEY (a,b) /*T![clustered_index] CLUSTERED */,
+	UNIQUE KEY ib(b),
+	KEY ia(a)
+)ENGINE=InnoDB DEFAULT CHARSET=ascii COLLATE=ascii_bin;
+INSERT INTO t VALUES('ir1z,f1,e6yd','i71o','13mdezixgcn'),('ir1z,f1,e6yd','d','13mdezixgcn'),('nwbk','8ue','13mdezixgcn');
+--sorted_result
+select * from t where a between 'e6yd' and 'z' or b <> '8ue';
+--sorted_result
+select /*+ use_index_merge(t) */ * from t where a between 'e6yd' and 'z' or b <> '8ue';
+
+--echo ## For now tidb doesn't support push set type to TiKV, and column a is a set type, so we shouldn't generate a IndexMerge path.
+explain format='brief' select /*+ use_index_merge(t) */ * from t where a between 'e6yd' and 'z' or b <> '8ue';
+
+
+# TestIssue46298
+drop table if exists planner__core__integration.first_range;
+create table planner__core__integration.first_range(p int not null, o tinyint not null, v int not null);
+insert into planner__core__integration.first_range (p, o, v) values (0, 0, 0), (1, 1, 1), (1, 2, 2), (1, 4, 4), (1, 8, 8), (2, 0, 0), (2, 3, 3), (2, 10, 10), (2, 13, 13), (2, 15, 15), (3, 1, 1), (3, 3, 3), (3, 5, 5), (3, 9, 9), (3, 15, 15), (3, 20, 20), (3, 31, 31);
+--sorted_result
+select *, first_value(v) over (partition by p order by o range between 3.1 preceding and 2.9 following) as a from planner__core__integration.first_range;
+set @@tidb_enable_pipelined_window_function=0;
+--sorted_result
+select *, first_value(v) over (partition by p order by o range between 3.1 preceding and 2.9 following) as a from planner__core__integration.first_range;
+set @@tidb_enable_pipelined_window_function=DEFAULT;
+
+
+# TestIssue45044
+drop table if exists t1;
+set tidb_enable_ordered_result_mode = on;
+create table t1(c1 int);
+select * from t1 group by t1.c1 having count(1) > 1 order by count(1) limit 10;
+set tidb_enable_ordered_result_mode = DEFAULT;
+
+
+# TestViewHintWithBinding
+set tidb_cost_model_version=2;
+drop view if exists v, v1, v2;
+drop table if exists t, t1, t2, t3;
+create table t(a int, b int);
+create table t1(a int, b int);
+create table t2(a int, b int);
+create table t3(a int, b int);
+create definer='root'@'localhost' view v as select t.a, t.b from t join (select count(*) as a from t1 join t2 join t3 where t1.b=t2.b and t2.a = t3.a group by t2.a) tt on t.a = tt.a;
+create definer='root'@'localhost' view v1 as select t.a, t.b from t join (select count(*) as a from t1 join v on t1.b=v.b group by v.a) tt on t.a = tt.a;
+create definer='root'@'localhost' view v2 as select t.a, t.b from t join (select count(*) as a from t1 join v1 on t1.b=v1.b group by v1.a) tt on t.a = tt.a;
+select * from v2;
+select @@last_plan_from_binding;
+create global binding for select * from v2 using select /*+ qb_name(qb_v_2, v2.v1@sel_2 .v@sel_2 .@sel_2), merge_join(t1@qb_v_2), stream_agg(@qb_v_2), qb_name(qb_v_1, v2. v1@sel_2 .v@sel_2 .@sel_1), merge_join(t@qb_v_1) */ * from v2;
+select * from v2;
+select @@last_plan_from_binding;
+--replace_column 5 <create_time> 6 <update_time>
+show global bindings where original_sql like '%planner__core__integration%';
+drop global binding for select * from v2;
+select * from v2;
+select @@last_plan_from_binding;
+--replace_column 5 <create_time> 6 <update_time>
+show global bindings where original_sql like '%planner__core__integration%';
+
+set tidb_cost_model_version=default;
+
+
+# TestKeepOrderHintWithBinding
+set tidb_cost_model_version=2;
+drop table if exists t1;
+create table t1(a int, b int, index idx_a(a));
+--echo
+--echo ## create binding for order_index hint
+select * from t1 where a<10 order by a limit 1;
+select @@last_plan_from_binding;
+create global binding for select * from t1 where a<10 order by a limit 1 using select /*+ order_index(t1, idx_a) */ * from t1 where a<10 order by a limit 1;
+select * from t1 where a<10 order by a limit 1;
+select @@last_plan_from_binding;
+--replace_column 5 <create_time> 6 <update_time>
+show global bindings where original_sql like '%planner__core__integration%';
+--echo
+drop global binding for select * from t1 where a<10 order by a limit 1;
+select * from t1 where a<10 order by a limit 1;
+select @@last_plan_from_binding;
+--replace_column 5 <create_time> 6 <update_time>
+show global bindings where original_sql like '%planner__core__integration%';
+--echo
+--echo ## create binding for no_order_index hint
+create global binding for select * from t1 where a<10 order by a limit 1 using select /*+ no_order_index(t1, idx_a) */ * from t1 where a<10 order by a limit 1;
+select * from t1 where a<10 order by a limit 1;
+select @@last_plan_from_binding;
+--replace_column 5 <create_time> 6 <update_time>
+show global bindings where original_sql like '%planner__core__integration%';
+--echo
+drop global binding for select * from t1 where a<10 order by a limit 1;
+select * from t1 where a<10 order by a limit 1;
+select @@last_plan_from_binding;
+--replace_column 5 <create_time> 6 <update_time>
+show global bindings where original_sql like '%planner__core__integration%';
+
+set tidb_cost_model_version=default;
+
+
+# TestIssue20139
+drop table if exists t;
+set tidb_opt_fix_control='44262:ON';
+create table t (id int, c int) partition by range (id) (partition p0 values less than (4), partition p1 values less than (7));
+insert into t values(3, 3), (5, 5);
+explain format = 'brief' select * from t where c = 1 and id = c;
+
+
+# TestIssue46177
+drop table if exists sbtest;
+CREATE TABLE sbtest (
+  id int(10) unsigned NOT NULL AUTO_INCREMENT,
+  k int(10) unsigned NOT NULL DEFAULT '0',
+  c char(120) NOT NULL DEFAULT '',
+  pad char(60) NOT NULL DEFAULT '',
+  PRIMARY KEY (id) /*T![clustered_index] CLUSTERED */,
+  KEY k (k)
+);
+## cannot choose the best plan with RangeScan.
+set @@tidb_opt_fix_control = '46177:off';
+explain format='brief'  select row_number() over(order by a.k) from (select * from sbtest where id<10) a;
+explain format='brief' select /*+ stream_agg() */ count(1) from sbtest where id<1 group by k;
+set @@tidb_opt_fix_control = '46177:on';
+explain format='brief'  select row_number() over(order by a.k) from (select * from sbtest where id<10) a;
+explain format='brief' select /*+ stream_agg() */ count(1) from sbtest where id<1 group by k;
+set @@tidb_opt_fix_control = default;
+
+# TestSysIsAccessibleWithTiFlashReadIsolation
+create table sys.t (id int);
+insert into sys.t values (1),(2);
+set tidb_isolation_read_engines='tiflash';
+select * from sys.t;
+drop table sys.t;
+set tidb_isolation_read_engines=DEFAULT;
+
+# TestIssue53580
+drop table if exists t;
+create table t (col TEXT);
+select 1 from (select t.col as c0, 46578369 as c1 from t) as t where
+  case when (
+    t.c0 in (t.c0, cast((cast(1 as unsigned) - cast(t.c1 as signed)) as char))
+  ) then 1 else 2 end;
