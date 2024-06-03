@@ -22,30 +22,16 @@ import (
 	"context"
 	"time"
 
-<<<<<<< HEAD:table/table.go
 	"github.com/opentracing/opentracing-go"
 	mysql "github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/sqlexec"
-=======
-	mysql "github.com/pingcap/tidb/pkg/errno"
-	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/meta/autoid"
-	"github.com/pingcap/tidb/pkg/parser/model"
-	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
-	tbctx "github.com/pingcap/tidb/pkg/table/context"
-	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/dbterror"
-	"github.com/pingcap/tidb/pkg/util/sqlexec"
-	"github.com/pingcap/tidb/pkg/util/tracing"
->>>>>>> f5e591d107b (*: fix 'Duplicate entry' error when @@auto_increment_increment and @@auto_increment_offset is set (#52626)):pkg/table/table.go
 )
 
 // Type is used to distinguish between different tables that store data in different ways.
@@ -227,20 +213,12 @@ func getIncrementAndOffset(vars *variable.SessionVars) (int, int) {
 
 // AllocAutoIncrementValue allocates an auto_increment value for a new row.
 func AllocAutoIncrementValue(ctx context.Context, t Table, sctx sessionctx.Context) (int64, error) {
-<<<<<<< HEAD:table/table.go
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("table.AllocAutoIncrementValue", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
 	}
-	increment := sctx.GetSessionVars().AutoIncrementIncrement
-	offset := sctx.GetSessionVars().AutoIncrementOffset
-	alloc := t.Allocators(sctx).Get(autoid.AutoIncrementType)
-=======
-	r, ctx := tracing.StartRegionEx(ctx, "table.AllocAutoIncrementValue")
-	defer r.End()
 	increment, offset := getIncrementAndOffset(sctx.GetSessionVars())
-	alloc := t.Allocators(sctx.GetTableCtx()).Get(autoid.AutoIncrementType)
->>>>>>> f5e591d107b (*: fix 'Duplicate entry' error when @@auto_increment_increment and @@auto_increment_offset is set (#52626)):pkg/table/table.go
+	alloc := t.Allocators(sctx).Get(autoid.AutoIncrementType)
 	_, max, err := alloc.Alloc(ctx, uint64(1), int64(increment), int64(offset))
 	if err != nil {
 		return 0, err
@@ -250,18 +228,10 @@ func AllocAutoIncrementValue(ctx context.Context, t Table, sctx sessionctx.Conte
 
 // AllocBatchAutoIncrementValue allocates batch auto_increment value for rows, returning firstID, increment and err.
 // The caller can derive the autoID by adding increment to firstID for N-1 times.
-<<<<<<< HEAD:table/table.go
-func AllocBatchAutoIncrementValue(ctx context.Context, t Table, sctx sessionctx.Context, N int) (firstID int64, increment int64, err error) {
-	increment = int64(sctx.GetSessionVars().AutoIncrementIncrement)
-	offset := int64(sctx.GetSessionVars().AutoIncrementOffset)
-	alloc := t.Allocators(sctx).Get(autoid.AutoIncrementType)
-	min, max, err := alloc.Alloc(ctx, uint64(N), increment, offset)
-=======
 func AllocBatchAutoIncrementValue(ctx context.Context, t Table, sctx sessionctx.Context, N int) ( /* firstID */ int64 /* increment */, int64 /* err */, error) {
 	increment1, offset := getIncrementAndOffset(sctx.GetSessionVars())
-	alloc := t.Allocators(sctx.GetTableCtx()).Get(autoid.AutoIncrementType)
+	alloc := t.Allocators(sctx).Get(autoid.AutoIncrementType)
 	min, max, err := alloc.Alloc(ctx, uint64(N), int64(increment1), int64(offset))
->>>>>>> f5e591d107b (*: fix 'Duplicate entry' error when @@auto_increment_increment and @@auto_increment_offset is set (#52626)):pkg/table/table.go
 	if err != nil {
 		return min, max, err
 	}
