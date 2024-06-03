@@ -166,7 +166,6 @@ type BuildWorkerV2 struct {
 	BuildTypes     []*types.FieldType
 	HasNullableKey bool
 	WorkerID       uint
-	rtBuilder      *rowTableBuilder
 }
 
 // NewJoinBuildWorkerV2 create a BuildWorkerV2

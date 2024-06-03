@@ -248,7 +248,7 @@ func TestRowIter(t *testing.T) {
 			rt := createMockRowTable(1024, 16, false)
 			rowTables = append(rowTables, rt)
 		}
-		joinedHashTable := newJoinHashTable(rowTables)
+		joinedHashTable := newJoinHashTableForTest(rowTables)
 		checkRowIter(t, joinedHashTable, partitionNumber)
 	}
 	// case with empty row table
@@ -265,7 +265,7 @@ func TestRowIter(t *testing.T) {
 					rowTables = append(rowTables, rt)
 				}
 			}
-			joinedHashTable := newJoinHashTable(rowTables)
+			joinedHashTable := newJoinHashTableForTest(rowTables)
 			checkRowIter(t, joinedHashTable, partitionNumber)
 		}
 	}

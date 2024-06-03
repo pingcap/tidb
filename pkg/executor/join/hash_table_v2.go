@@ -139,7 +139,7 @@ func (ri *rowIter) isEnd() bool {
 	return !(ri.currentPos.subTableIndex < ri.endPos.subTableIndex || ri.currentPos.rowSegmentIndex < ri.endPos.rowSegmentIndex || ri.currentPos.rowIndex < ri.endPos.rowIndex)
 }
 
-func newJoinHashTable(partitionedRowTables []*rowTable) *hashTableV2 {
+func newJoinHashTableForTest(partitionedRowTables []*rowTable) *hashTableV2 {
 	// first make sure there is no nil rowTable
 	jht := &hashTableV2{
 		tables:          make([]*subTable, len(partitionedRowTables)),
@@ -206,7 +206,7 @@ func (jht *hashTableV2) totalRowCount() uint64 {
 	return ret
 }
 
-func (jht *hashTableV2) buildHashTable(partitionIndex int, startSegmentIndex int, segmentStep int) {
+func (jht *hashTableV2) buildHashTableForTest(partitionIndex int, startSegmentIndex int, segmentStep int) {
 	jht.tables[partitionIndex].build(startSegmentIndex, segmentStep)
 }
 
