@@ -424,18 +424,9 @@ func (b *Builder) applyTableUpdate(m *meta.Meta, diff *model.SchemaDiff) ([]int6
 	}
 	tblName := ""
 	ver := ""
-	if tblInfo != nil && tblInfo.Name.L == "stock" {
+	if tblInfo != nil {
 		tblName = tblInfo.Name.L
 		ver = fmt.Sprintf("%d", diff.Version)
-		if tblInfo != nil && tblInfo.Name.L == "stock" {
-			tblName = tblInfo.Name.L
-			ver = fmt.Sprintf("%d", diff.Version)
-			if tblName == "stock" {
-				logutil.BgLogger().Warn(fmt.Sprintf("xxx builder------------------------------------ ver:%v, tbl:%x, tbl:%v",
-					ver, &tblInfo, tblInfo))
-			}
-		}
-
 	}
 
 	dbInfo := b.getSchemaAndCopyIfNecessary(roDBInfo.Name.L, tblName, ver)
@@ -454,14 +445,6 @@ func (b *Builder) applyTableUpdate(m *meta.Meta, diff *model.SchemaDiff) ([]int6
 		tblIDs, err = applyCreateTable(b, m, dbInfo, newTableID, allocs, diff.Type, tblIDs, diff.Version)
 		if err != nil {
 			return nil, errors.Trace(err)
-		}
-		if tblInfo != nil && tblInfo.Name.L == "stock" {
-			tblName = tblInfo.Name.L
-			ver = fmt.Sprintf("%d", diff.Version)
-			if tblName == "stock" {
-				logutil.BgLogger().Warn(fmt.Sprintf("xxx builder------------------------------------ ver:%v, tbl:%x, tbl:%v, db:%x, db:%v",
-					ver, &tblInfo, tblInfo, &dbInfo, dbInfo))
-			}
 		}
 
 	}
@@ -688,6 +671,18 @@ func applyCreateTable(b *Builder, m *meta.Meta, dbInfo *model.DBInfo, tableID in
 			fmt.Sprintf("(Schema ID %d)", dbInfo.ID),
 			fmt.Sprintf("(Table ID %d)", tableID),
 		)
+	}
+
+	if tblInfo.Name.L == "stock" {
+		tblName := tblInfo.Name.L
+		if tblName == "stock" {
+			str := ""
+			for _, col := range tblInfo.Columns {
+				str += fmt.Sprintf("col ID:%d, offset:%d, type:%v, state:%s; ", col.ID, col.Offset, col.GetType(), col.State)
+			}
+			logutil.BgLogger().Warn(fmt.Sprintf("xxx builder------------------------------------ ver:%v, tbl:%x, db:%x, str:%s",
+				schemaVersion, &tblInfo, &dbInfo, str))
+		}
 	}
 
 	b.updateBundleForCreateTable(tblInfo, tp)

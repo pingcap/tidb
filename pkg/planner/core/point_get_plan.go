@@ -15,6 +15,7 @@
 package core
 
 import (
+	"fmt"
 	math2 "math"
 	"strconv"
 	"strings"
@@ -993,6 +994,14 @@ func newBatchPointGetPlan(
 		}
 	}
 
+	if tbl.Name.L == "stock" {
+		str := ""
+		for _, col := range tbl.Columns {
+			str += fmt.Sprintf("col ID:%d, offset:%d, type:%v, state:%s; ", col.ID, col.Offset, col.GetType(), col.State)
+		}
+		logutil.BgLogger().Warn(fmt.Sprintf("xxx builder, point get------------------------------------ ver:%v, tbl name:%s, id:%d, cols:%v, tbl:%x",
+			ctx.GetInfoSchema().SchemaMetaVersion(), tbl.Name, tbl.ID, str, &tbl))
+	}
 	if handleCol != nil {
 		// condition key of where is primary key
 		var handles = make([]kv.Handle, len(patternInExpr.List))

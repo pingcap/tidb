@@ -618,10 +618,10 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx table.MutateContext
 	if t.Meta().Name.L == "stock" {
 		str := ""
 		for _, col := range t.Meta().Columns {
-			str += fmt.Sprintf("col ID:%d, offset:%d, type:%v; ", col.ID, col.Offset, col.GetType())
+			str += fmt.Sprintf("col ID:%d, offset:%d, type:%v, state:%s; ", col.ID, col.Offset, col.GetType(), col.State)
 		}
-		logutil.BgLogger().Warn(fmt.Sprintf("xxx update------------------------------------ ts:%v, tbl name:%s, id:%d, cols:%v colIDs:%v, row:%v, tbl:%x",
-			txn.StartTS(), t.Meta().Name, t.Meta().ID, str, colIDs, row, &t.meta))
+		logutil.BgLogger().Warn(fmt.Sprintf("xxx update------------------------------------ ts:%v, tbl name:%s, id:%d, cols:%v colIDs:%v, row:%v, tbl:%x, oldData:%v",
+			txn.StartTS(), t.Meta().Name, t.Meta().ID, str, colIDs, row, &t.meta, oldData))
 	}
 
 	writeBufs := sessVars.GetWriteStmtBufs()
