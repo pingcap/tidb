@@ -415,7 +415,8 @@ func (c *CheckpointAdvancer) setCheckpoints(cps *spans.ValueSortedFull) {
 	c.checkpointsMu.Unlock()
 }
 
-func (c *CheckpointAdvancer) GetGlobalCheckpointWithRetry(ctx context.Context, maxRetry uint, interval time.Duration) (uint64, error) {
+func (c *CheckpointAdvancer) GetGlobalCheckpointWithRetry(
+	ctx context.Context, maxRetry uint, interval time.Duration) (uint64, error) {
 	var globalCheckpointTs uint64
 	var err error
 	var i uint = 0
