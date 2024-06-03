@@ -6244,13 +6244,13 @@ def go_deps():
         name = "com_github_prometheus_procfs",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/prometheus/procfs",
-        sha256 = "6fe923fc0ca170a60524d1031cf9ee634cb2eba16798edcbe1ed02e591994cfa",
-        strip_prefix = "github.com/prometheus/procfs@v0.13.0",
+        sha256 = "d31ad13f1ae121d842ff0f243d029c247e68710edab8a358d6366a67b7feaa6d",
+        strip_prefix = "github.com/prometheus/procfs@v0.15.1",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/prometheus/procfs/com_github_prometheus_procfs-v0.13.0.zip",
-            "http://ats.apps.svc/gomod/github.com/prometheus/procfs/com_github_prometheus_procfs-v0.13.0.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/prometheus/procfs/com_github_prometheus_procfs-v0.13.0.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/prometheus/procfs/com_github_prometheus_procfs-v0.13.0.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/prometheus/procfs/com_github_prometheus_procfs-v0.15.1.zip",
+            "http://ats.apps.svc/gomod/github.com/prometheus/procfs/com_github_prometheus_procfs-v0.15.1.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/prometheus/procfs/com_github_prometheus_procfs-v0.15.1.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/prometheus/procfs/com_github_prometheus_procfs-v0.15.1.zip",
         ],
     )
     go_repository(
@@ -6264,6 +6264,32 @@ def go_deps():
             "http://ats.apps.svc/gomod/github.com/prometheus/prometheus/com_github_prometheus_prometheus-v0.50.1.zip",
             "https://cache.hawkingrei.com/gomod/github.com/prometheus/prometheus/com_github_prometheus_prometheus-v0.50.1.zip",
             "https://storage.googleapis.com/pingcapmirror/gomod/github.com/prometheus/prometheus/com_github_prometheus_prometheus-v0.50.1.zip",
+        ],
+    )
+    go_repository(
+        name = "com_github_qri_io_jsonpointer",
+        build_file_proto_mode = "disable_global",
+        importpath = "github.com/qri-io/jsonpointer",
+        sha256 = "6870d4b9fc5ac8efb9226447975fecfb07241133e23c7e661f5aac1a3088f338",
+        strip_prefix = "github.com/qri-io/jsonpointer@v0.1.1",
+        urls = [
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/qri-io/jsonpointer/com_github_qri_io_jsonpointer-v0.1.1.zip",
+            "http://ats.apps.svc/gomod/github.com/qri-io/jsonpointer/com_github_qri_io_jsonpointer-v0.1.1.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/qri-io/jsonpointer/com_github_qri_io_jsonpointer-v0.1.1.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/qri-io/jsonpointer/com_github_qri_io_jsonpointer-v0.1.1.zip",
+        ],
+    )
+    go_repository(
+        name = "com_github_qri_io_jsonschema",
+        build_file_proto_mode = "disable_global",
+        importpath = "github.com/qri-io/jsonschema",
+        sha256 = "51305cc45fd383b24de94e2eb421ffba8d83679520c18348842c4255025c5940",
+        strip_prefix = "github.com/qri-io/jsonschema@v0.2.1",
+        urls = [
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/qri-io/jsonschema/com_github_qri_io_jsonschema-v0.2.1.zip",
+            "http://ats.apps.svc/gomod/github.com/qri-io/jsonschema/com_github_qri_io_jsonschema-v0.2.1.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/qri-io/jsonschema/com_github_qri_io_jsonschema-v0.2.1.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/qri-io/jsonschema/com_github_qri_io_jsonschema-v0.2.1.zip",
         ],
     )
     go_repository(

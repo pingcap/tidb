@@ -639,7 +639,7 @@ func (b *PlanBuilder) buildDo(ctx context.Context, v *ast.DoStmt) (base.Plan, er
 		proj.Exprs = append(proj.Exprs, expr)
 		schema.Append(&expression.Column{
 			UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
-			RetType:  expr.GetType(),
+			RetType:  expr.GetType(b.ctx.GetExprCtx().GetEvalCtx()),
 		})
 	}
 	proj.SetChildren(p)
@@ -692,7 +692,7 @@ func (b *PlanBuilder) buildSet(ctx context.Context, v *ast.SetStmt) (base.Plan, 
 				}
 				constant := &expression.Constant{
 					Value:   row[0],
-					RetType: assign.Expr.GetType(),
+					RetType: assign.Expr.GetType(b.ctx.GetExprCtx().GetEvalCtx()),
 				}
 				assign.Expr = constant
 			}

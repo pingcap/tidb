@@ -1027,7 +1027,7 @@ func (s *partitionProcessor) pruneRangePartition(ctx base.PlanContext, pi *model
 	pruner := rangePruner{
 		lessThan: lessThanDataInt{
 			data:     partExpr.ForRangePruning.LessThan,
-			unsigned: mysql.HasUnsignedFlag(col.GetType().GetFlag()),
+			unsigned: mysql.HasUnsignedFlag(col.GetStaticType().GetFlag()),
 			maxvalue: partExpr.ForRangePruning.MaxValue,
 		},
 		col:        col,
@@ -1161,7 +1161,7 @@ func minCmp(ctx base.PlanContext, lowVal []types.Datum, columnsPruner *rangeColu
 							return false
 						}
 					} else {
-						if con.Value.GetInt64() == types.IntergerSignedLowerBound(col.GetType().GetType()) {
+						if con.Value.GetInt64() == types.IntergerSignedLowerBound(col.GetStaticType().GetType()) {
 							return false
 						}
 					}
@@ -1422,10 +1422,10 @@ func partitionRangeForInExpr(sctx base.PlanContext, args []expression.Expression
 			// replace fn(col) to fn(const)
 			partFnConst := replaceColumnWithConst(pruner.partFn, constExpr)
 			val, _, err = partFnConst.EvalInt(sctx.GetExprCtx().GetEvalCtx(), chunk.Row{})
-			unsigned = mysql.HasUnsignedFlag(partFnConst.GetType().GetFlag())
+			unsigned = mysql.HasUnsignedFlag(partFnConst.GetStaticType().GetFlag())
 		} else {
 			val, _, err = constExpr.EvalInt(sctx.GetExprCtx().GetEvalCtx(), chunk.Row{})
-			unsigned = mysql.HasUnsignedFlag(constExpr.GetType().GetFlag())
+			unsigned = mysql.HasUnsignedFlag(constExpr.GetType(sctx.GetExprCtx().GetEvalCtx()).GetFlag())
 		}
 		if err != nil {
 			return pruner.fullRange()
@@ -1543,7 +1543,7 @@ func (p *rangePruner) extractDataForPrune(sctx base.PlanContext, expr expression
 	c, isNull, err := constExpr.EvalInt(sctx.GetExprCtx().GetEvalCtx(), chunk.Row{})
 	if err == nil && !isNull {
 		ret.c = c
-		ret.unsigned = mysql.HasUnsignedFlag(constExpr.GetType().GetFlag())
+		ret.unsigned = mysql.HasUnsignedFlag(constExpr.GetType(sctx.GetExprCtx().GetEvalCtx()).GetFlag())
 		return ret, true
 	}
 	return ret, false

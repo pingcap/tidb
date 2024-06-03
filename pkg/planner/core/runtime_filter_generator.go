@@ -208,14 +208,14 @@ func (*RuntimeFilterGenerator) matchEQPredicate(eqPredicate *expression.ScalarFu
 		return false
 	}
 	// match data type
-	srcColumnType := srcColumn.GetType().GetType()
+	srcColumnType := srcColumn.GetStaticType().GetType()
 	if srcColumnType == mysql.TypeJSON || srcColumnType == mysql.TypeBlob ||
 		srcColumnType == mysql.TypeLongBlob || srcColumnType == mysql.TypeMediumBlob ||
-		srcColumnType == mysql.TypeTinyBlob || srcColumn.GetType().Hybrid() || srcColumn.GetType().IsArray() {
+		srcColumnType == mysql.TypeTinyBlob || srcColumn.GetStaticType().Hybrid() || srcColumn.GetStaticType().IsArray() {
 		logutil.BgLogger().Debug("Src column type does not match RF pattern",
 			zap.String("EQPredicate", eqPredicate.String()),
 			zap.String("SrcColumn", srcColumn.String()),
-			zap.String("SrcColumnType", srcColumn.GetType().String()))
+			zap.String("SrcColumnType", srcColumn.GetStaticType().String()))
 		return false
 	}
 	return true

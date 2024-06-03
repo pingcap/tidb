@@ -479,11 +479,11 @@ func TestBuildExpression(t *testing.T) {
 	// WithCastExprTo
 	expr, err = buildExpr(t, ctx, "1+2+3")
 	require.NoError(t, err)
-	require.Equal(t, mysql.TypeLonglong, expr.GetType().GetType())
+	require.Equal(t, mysql.TypeLonglong, expr.GetType(ctx).GetType())
 	castTo := types.NewFieldType(mysql.TypeVarchar)
 	expr, err = buildExpr(t, ctx, "1+2+3", expression.WithCastExprTo(castTo))
 	require.NoError(t, err)
-	require.Equal(t, mysql.TypeVarchar, expr.GetType().GetType())
+	require.Equal(t, mysql.TypeVarchar, expr.GetType(ctx).GetType())
 	v, err := expr.Eval(ctx, chunk.Row{})
 	require.NoError(t, err)
 	require.Equal(t, types.KindString, v.Kind())
