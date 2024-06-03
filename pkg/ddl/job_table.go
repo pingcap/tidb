@@ -568,12 +568,7 @@ func (s *jobScheduler) runJobWithWorker(wk *worker, job *model.Job) error {
 	if !job.NotStarted() && (!s.isSynced(job) || !s.maybeAlreadyRunOnce(job.ID)) {
 		if variable.EnableMDL.Load() {
 			version, err := s.sysTblMgr.GetMDLVer(s.schCtx, job.ID)
-			if err != nil {
-				if err != systable.ErrNotFound {
-					wk.jobLogger(job).Warn("check MDL info failed", zap.Error(err))
-					return err
-				}
-			} else {
+			if err == nil {
 				err = waitSchemaSyncedForMDL(wk.ctx, s.ddlCtx, job, version)
 				if err != nil {
 					return err
@@ -581,6 +576,9 @@ func (s *jobScheduler) runJobWithWorker(wk *worker, job *model.Job) error {
 				s.setAlreadyRunOnce(job.ID)
 				s.cleanMDLInfo(job, ownerID)
 				return nil
+			} else if err != systable.ErrNotFound {
+				wk.jobLogger(job).Warn("check MDL info failed", zap.Error(err))
+				return err
 			}
 		} else {
 			err := waitSchemaSynced(wk.ctx, s.ddlCtx, job, 2*s.lease)
