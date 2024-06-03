@@ -184,6 +184,7 @@ We can focus on the `column_choice` column, which has three different column opt
 | Analyze Statement                                | column_choice | column_ids | mysql.column_stats_usage                                                 | Explain                                                                  |
 |--------------------------------------------------|---------------|------------|--------------------------------------------------------------------------|--------------------------------------------------------------------------|
 | ANALYZE TABLE t;                                 | DEFAULT(ALL)  | None       | None                                                                     | It will analyze all analyzable columns from the table.                   |
+| ANALYZE TABLE t ALL COLUMNS;                     | ALL           | None       | None                                                                     | It will analyze all columns from the table.                              |
 | ANALYZE TABLE t LIST COLUMNS col1, col2;         | LIST          | col1, col2 | None                                                                     | It will only analyze col1 and col2.                                      |
 | ANALYZE TABLE t PREDICATE FOR PREDICATE COLUMNS; | PREDICATE     | None       | All predicate columns were collected before in mysql.column_stats_usage. | It will only analyze columns that exist in the mysql.column_stats_usage. |
 
