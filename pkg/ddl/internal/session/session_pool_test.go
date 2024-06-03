@@ -32,7 +32,7 @@ func TestSessionPool(t *testing.T) {
 		newTk := testkit.NewTestKit(t, store)
 		return newTk.Session(), nil
 	}, 4, 4, 0)
-	pool := session.NewSessionPool(resourcePool, store)
+	pool := session.NewSessionPool(resourcePool)
 	sessCtx, err := pool.Get()
 	require.NoError(t, err)
 	se := session.NewSession(sessCtx)

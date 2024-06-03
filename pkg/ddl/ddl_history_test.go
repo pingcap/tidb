@@ -38,7 +38,7 @@ func TestDDLHistoryBasic(t *testing.T) {
 		newTk := testkit.NewTestKit(t, store)
 		return newTk.Session(), nil
 	}, 8, 8, 0)
-	sessPool := session.NewSessionPool(rs, store)
+	sessPool := session.NewSessionPool(rs)
 	sessCtx, err := sessPool.Get()
 	require.NoError(t, err)
 	sess := session.NewSession(sessCtx)

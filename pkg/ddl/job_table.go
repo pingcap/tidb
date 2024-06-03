@@ -530,7 +530,7 @@ func (s *jobScheduler) delivery2Worker(wk *worker, pool *workerPool, job *model.
 			err := s.runJobWithWorker(wk, job)
 			if err != nil {
 				logutil.DDLLogger().Info("run job failed", zap.Error(err), zap.Stringer("job", job))
-			} else if job.InTerminalState() {
+			} else if job.InFinalState() {
 				return
 			}
 			// we have to refresh the job, to handle cases like job cancel or pause

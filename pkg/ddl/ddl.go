@@ -844,7 +844,7 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 	d.wg.Run(func() {
 		d.limitDDLJobs(d.limitJobChV2, d.addBatchLocalDDLJobs)
 	})
-	d.sessPool = sess.NewSessionPool(ctxPool, d.store)
+	d.sessPool = sess.NewSessionPool(ctxPool)
 
 	d.delRangeMgr = d.newDeleteRangeManager(ctxPool == nil)
 
