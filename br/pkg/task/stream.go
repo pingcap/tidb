@@ -1412,10 +1412,6 @@ func restoreStream(
 	downstreamIdset := make(map[int64]struct{})
 	for upstreamId, rule := range rewriteRules {
 		downstreamId := restoreutils.GetRewriteTableID(upstreamId, rule)
-		info, ok := mgr.GetDomain().InfoSchema().TableInfoByID(downstreamId)
-		if ok && info.TiFlashReplica != nil && info.TiFlashReplica.Count > 0 {
-			return errors.Errorf("table %s has tiflash replica, please remove it before restore", info.Name)
-		}
 		idrules[upstreamId] = downstreamId
 		downstreamIdset[downstreamId] = struct{}{}
 	}
