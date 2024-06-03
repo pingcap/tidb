@@ -166,6 +166,28 @@ func (t *TxStructure) HGetAll(key []byte) ([]HashPair, error) {
 	return res, errors.Trace(err)
 }
 
+// HGetAllOptimized gets all the fields and values in a hash.
+func (t *TxStructure) HGetAllOptimized(key []byte) ([]HashPair, error) {
+	preAlloc := 1024 * 1024
+	var res = make([]HashPair, preAlloc)
+	i := 0
+	err := t.iterateHash(key, func(field []byte, value []byte) error {
+		if i >= len(res) {
+			pair := HashPair{
+				Field: append([]byte{}, field...),
+				Value: append([]byte{}, value...),
+			}
+			res = append(res, pair)
+		} else {
+			res[i].Field = append(res[i].Field[:0], field...)
+			res[i].Value = append(res[i].Value[:0], value...)
+		}
+		return nil
+	})
+
+	return res, errors.Trace(err)
+}
+
 // HGetIter iterates all the fields and values in hash.
 func (t *TxStructure) HGetIter(key []byte, fn func(pair HashPair) error) error {
 	return t.iterateHash(key, func(field []byte, value []byte) error {

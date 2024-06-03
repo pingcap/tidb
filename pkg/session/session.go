@@ -3530,7 +3530,7 @@ func bootstrapSessionImpl(store kv.Storage, createSessionsImpl func(store kv.Sto
 		}
 		return s
 	}
-	dom.StartTTLJobManager()
+	//dom.StartTTLJobManager()
 
 	analyzeCtxs, err := createSessions(store, analyzeConcurrencyQuota)
 	if err != nil {

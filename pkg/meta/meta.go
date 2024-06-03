@@ -19,6 +19,8 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"github.com/pingcap/tidb/pkg/util/logutil"
+	"go.uber.org/zap"
 	"math"
 	"strconv"
 	"strings"
@@ -996,12 +998,16 @@ func (m *Meta) ListTables(dbID int64) ([]*model.TableInfo, error) {
 		return nil, errors.Trace(err)
 	}
 
+	start := time.Now()
+
 	res, err := m.txn.HGetAll(dbKey)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	start2 := time.Now()
 
 	tables := make([]*model.TableInfo, 0, len(res)/2)
+	size := 0
 	for _, r := range res {
 		// only handle table meta
 		tableKey := string(r.Field)
@@ -1014,11 +1020,94 @@ func (m *Meta) ListTables(dbID int64) ([]*model.TableInfo, error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
+		size += len(r.Value)
 		tbInfo.DBID = dbID
 
 		tables = append(tables, tbInfo)
 	}
 
+	logutil.BgLogger().Info("ListTables", zap.Duration("time", time.Since(start)), zap.Int64("dbID", dbID),
+		zap.String("read rate", fmt.Sprintf("%.2f MB/s", float64(size)/1024.0/1024.0/(start2.Sub(start).Seconds()))),
+		zap.String("decode rate", fmt.Sprintf("%.2f MB/s", float64(size)/1024.0/1024.0/time.Since(start2).Seconds())))
+
+	return tables, nil
+}
+
+// ListTablesWithoutDecode shows all tables in database.
+func (m *Meta) ListTablesWithoutDecode(dbID int64) ([]*model.TableInfo, error) {
+	dbKey := m.dbKey(dbID)
+	if err := m.checkDBExists(dbKey); err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	start := time.Now()
+
+	res, err := m.txn.HGetAll(dbKey)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	tables := make([]*model.TableInfo, 0, len(res)/2)
+	logutil.BgLogger().Info("ListTablesWithoutDecode", zap.Duration("time", time.Since(start)), zap.Int64("dbID", dbID))
+
+	return tables, nil
+}
+
+// ListTablesWithoutDecodeV2 shows all tables in database.
+func (m *Meta) ListTablesWithoutDecodeV2(dbID int64) ([]*model.TableInfo, error) {
+	dbKey := m.dbKey(dbID)
+	if err := m.checkDBExists(dbKey); err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	start := time.Now()
+	res, err := m.txn.HGetAllOptimized(dbKey)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	tables := make([]*model.TableInfo, 0, len(res)/2)
+	logutil.BgLogger().Info("ListTablesWithoutDecodeV2", zap.Duration("time", time.Since(start)), zap.Int64("dbID", dbID))
+
+	return tables, nil
+}
+
+// ListTablesWithoutDecodeV3 shows all tables in database.
+func (m *Meta) ListTablesWithoutDecodeV3(dbID int64) ([]*model.TableInfo, error) {
+	dbKey := m.dbKey(dbID)
+	if err := m.checkDBExists(dbKey); err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	start := time.Now()
+
+	res, err := m.txn.HGetAll(dbKey)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	tables := make([]*model.TableInfo, 0, len(res)/2)
+	logutil.BgLogger().Info("ListTablesWithoutDecode", zap.Duration("time", time.Since(start)), zap.Int64("dbID", dbID))
+
+	return tables, nil
+}
+
+func (m *Meta) ListSimpleTablesWithoutDecode(dbID int64) ([]*model.TableNameInfo, error) {
+	dbKey := m.dbKey(dbID)
+	if err := m.checkDBExists(dbKey); err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	start := time.Now()
+
+	res, err := m.txn.HGetAll(dbKey)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	tables := make([]*model.TableNameInfo, 0, len(res)/2)
+
+	logutil.BgLogger().Info("ListSimpleTablesWithoutDecode", zap.Duration("time", time.Since(start)))
 	return tables, nil
 }
 
@@ -1028,6 +1117,8 @@ func (m *Meta) ListSimpleTables(dbID int64) ([]*model.TableNameInfo, error) {
 	if err := m.checkDBExists(dbKey); err != nil {
 		return nil, errors.Trace(err)
 	}
+
+	start := time.Now()
 
 	res, err := m.txn.HGetAll(dbKey)
 	if err != nil {
@@ -1050,6 +1141,8 @@ func (m *Meta) ListSimpleTables(dbID int64) ([]*model.TableNameInfo, error) {
 
 		tables = append(tables, tbInfo)
 	}
+
+	logutil.BgLogger().Info("ListSimpleTables", zap.Duration("time", time.Since(start)))
 
 	return tables, nil
 }
