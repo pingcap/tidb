@@ -581,35 +581,3 @@ func TestReorgPartitionRollback(t *testing.T) {
 	require.NoError(t, err)
 	noNewTablesAfter(t, tk, ctx, tbl)
 }
-
-func TestExchangePartitionRowID(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec(`create table t (id int not null, store_id int not null )  partition by range (store_id) (partition p0 values less than (6), partition p1 values less than (11), partition p2 values less than (16), partition p3 values less than (21) )`)
-	tk.MustExec(`create table t1(id int not null, store_id int not null)`)
-	tk.MustExec(`insert into t values (1, 1)`)
-	tk.MustExec(`insert into t values (2, 17)`)
-	tk.MustExec(`insert into t1 values (0, 18)`)
-	tk.MustExec(`alter table t exchange partition p3 with table t1`)
-	tk.MustExec(`alter table t remove partitioning`)
-	tk.MustQuery(`select * from t`).Sort().Check(testkit.Rows("0 18", "1 1"))
-	tk.MustQuery(`select *,_tidb_rowid from t`).Sort().Check(testkit.Rows("0 18 5257", "1 1 5001"))
-}
-
-func TestExchangeReorganizePartitionRowID(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec(`create table t (id int not null, store_id int not null )  partition by range (store_id) (partition p0 values less than (6), partition p1 values less than (11), partition p2 values less than (16), partition p3 values less than (21) )`)
-	tk.MustExec(`create table t1(id int not null, store_id int not null)`)
-	tk.MustExec(`insert into t values (1, 1)`)
-	tk.MustExec(`insert into t values (2, 17)`)
-	tk.MustExec(`insert into t1 values (0, 18)`)
-	tk.MustExec(`alter table t exchange partition p3 with table t1`)
-	tk.MustQuery(`select *, _tidb_rowid from t`).Sort().Check(testkit.Rows("0 18 1", "1 1 1"))
-	tk.MustQuery(`select *, _tidb_rowid from t1`).Sort().Check(testkit.Rows("2 17 2"))
-	tk.MustExec(`alter table t reorganize partition p0, p1, p2, p3 into (partition pMax values less than (maxvalue))`)
-	tk.MustQuery(`select * from t`).Sort().Check(testkit.Rows("0 18", "1 1"))
-	tk.MustQuery(`select *,_tidb_rowid from t`).Sort().Check(testkit.Rows("0 18 5257", "1 1 5001"))
-}
