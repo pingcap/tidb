@@ -1,0 +1,47 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "meta",
+    srcs = [
+        "meta.go",
+        "meta_autoid.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/meta",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/domain/resourcegroup",
+        "//pkg/errno",
+        "//pkg/kv",
+        "//pkg/metrics",
+        "//pkg/parser/model",
+        "//pkg/parser/mysql",
+        "//pkg/structure",
+        "//pkg/util/dbterror",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_kvproto//pkg/kvrpcpb",
+        "@com_github_pingcap_kvproto//pkg/resource_manager",
+    ],
+)
+
+go_test(
+    name = "meta_test",
+    timeout = "short",
+    srcs = [
+        "main_test.go",
+        "meta_test.go",
+    ],
+    embed = [":meta"],
+    flaky = True,
+    shard_count = 12,
+    deps = [
+        "//pkg/kv",
+        "//pkg/parser/ast",
+        "//pkg/parser/model",
+        "//pkg/store/mockstore",
+        "//pkg/testkit/testsetup",
+        "//pkg/util",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

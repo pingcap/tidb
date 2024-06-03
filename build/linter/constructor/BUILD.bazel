@@ -1,0 +1,25 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "constructor",
+    srcs = ["analyzer.go"],
+    importpath = "github.com/pingcap/tidb/build/linter/constructor",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//build/linter/util",
+        "@com_github_fatih_structtag//:structtag",
+        "@org_golang_x_tools//go/analysis",
+        "@org_golang_x_tools//go/ast/inspector",
+    ],
+)
+
+go_test(
+    name = "constructor_test",
+    timeout = "short",
+    srcs = ["analyzer_test.go"],
+    flaky = True,
+    deps = [
+        ":constructor",
+        "@org_golang_x_tools//go/analysis/analysistest",
+    ],
+)

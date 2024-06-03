@@ -23,8 +23,8 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
-	"github.com/pingcap/tidb/executor"
-	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/pkg/executor"
+	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap/zapcore"
 )
@@ -67,7 +67,7 @@ func TestShowBackupQueryRedact(t *testing.T) {
 	tk := initTestKit(t)
 
 	executor.ResetGlobalBRIEQueueForTest()
-	failpoint.Enable("github.com/pingcap/tidb/executor/block-on-brie", "return")
+	failpoint.Enable("github.com/pingcap/tidb/pkg/executor/block-on-brie", "return")
 	ch := make(chan any)
 	go func() {
 		tk := testkit.NewTestKit(t, tk.Session().GetStore())
@@ -101,7 +101,7 @@ func TestCancel(t *testing.T) {
 	tk := initTestKit(t)
 	executor.ResetGlobalBRIEQueueForTest()
 	tk.MustExec("use test;")
-	failpoint.Enable("github.com/pingcap/tidb/executor/block-on-brie", "return")
+	failpoint.Enable("github.com/pingcap/tidb/pkg/executor/block-on-brie", "return")
 
 	req := require.New(t)
 	ch := make(chan struct{})

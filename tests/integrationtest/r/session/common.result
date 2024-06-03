@@ -1,0 +1,306 @@
+create database xxx;
+drop database xxx;
+drop database if exists xxx;
+create database xxx;
+create database if not exists xxx;
+drop database if exists xxx;
+create schema xxx;
+drop schema xxx;
+drop schema if exists xxx;
+create schema xxx;
+create schema if not exists xxx;
+drop schema if exists xxx;
+drop table if exists t;
+create table t (c1 varchar(3073), index(c1)) charset = ascii;
+Error 1071 (42000): Specified key was too long (3073 bytes); max key length is 3072 bytes
+create table t (c1 varchar(3073)) charset = ascii;
+create index idx_c1 on t(c1) ;
+Error 1071 (42000): Specified key was too long (3073 bytes); max key length is 3072 bytes
+drop table t;
+create table t (c1 varchar(3072), c2 varchar(1), index(c1, c2)) charset = ascii;
+Error 1071 (42000): Specified key was too long (3073 bytes); max key length is 3072 bytes
+create table t (c1 varchar(3072), c2 char(1), index(c1, c2)) charset = ascii;
+Error 1071 (42000): Specified key was too long (3073 bytes); max key length is 3072 bytes
+create table t (c1 varchar(3072), c2 char, index(c1, c2)) charset = ascii;
+Error 1071 (42000): Specified key was too long (3073 bytes); max key length is 3072 bytes
+create table t (c1 varchar(3072), c2 date, index(c1, c2)) charset = ascii;
+Error 1071 (42000): Specified key was too long (3075 bytes); max key length is 3072 bytes
+create table t (c1 varchar(3069), c2 timestamp(1), index(c1, c2)) charset = ascii;
+Error 1071 (42000): Specified key was too long (3073 bytes); max key length is 3072 bytes
+create table t (c1 varchar(3068), c2 bit(26), index(c1, c2)) charset = ascii;
+drop table t;
+create table t (c1 varchar(3068), c2 bit(32), index(c1, c2)) charset = ascii;
+drop table t;
+create table t (c1 varchar(3068), c2 bit(33), index(c1, c2)) charset = ascii;
+Error 1071 (42000): Specified key was too long (3073 bytes); max key length is 3072 bytes
+create table t (c1 varchar(3072), c2 varchar(1)) charset = ascii;
+create index idx_c1_c2 on t(c1, c2);
+Error 1071 (42000): Specified key was too long (3073 bytes); max key length is 3072 bytes
+drop table t;
+create table t (c1 varchar(3072), c2 char(1)) charset = ascii;
+create index idx_c1_c2 on t(c1, c2);
+Error 1071 (42000): Specified key was too long (3073 bytes); max key length is 3072 bytes
+drop table t;
+create table t (c1 varchar(3072), c2 char) charset = ascii;
+create index idx_c1_c2 on t(c1, c2);
+Error 1071 (42000): Specified key was too long (3073 bytes); max key length is 3072 bytes
+drop table t;
+create table t (c1 varchar(3072), c2 date) charset = ascii;
+create index idx_c1_c2 on t(c1, c2);
+Error 1071 (42000): Specified key was too long (3075 bytes); max key length is 3072 bytes
+drop table t;
+create table t (c1 varchar(3069), c2 timestamp(1)) charset = ascii;
+create index idx_c1_c2 on t(c1, c2);
+Error 1071 (42000): Specified key was too long (3073 bytes); max key length is 3072 bytes
+drop table t;
+create table t (a varchar(3073) primary key) charset=binary;
+Error 1071 (42000): Specified key was too long (3073 bytes); max key length is 3072 bytes
+create table t (a varchar(3072) primary key) charset=binary;
+drop table if exists t;
+create table t (a varchar(3073) primary key) charset=latin1;
+Error 1071 (42000): Specified key was too long (3073 bytes); max key length is 3072 bytes
+create table t (a varchar(3072) primary key) charset=latin1;
+drop table if exists t;
+create table t (a varchar(1025) primary key) charset=utf8;
+Error 1071 (42000): Specified key was too long (3075 bytes); max key length is 3072 bytes
+create table t (a varchar(1024) primary key) charset=utf8;
+drop table if exists t;
+create table t (a varchar(769) primary key) charset=utf8mb4;
+Error 1071 (42000): Specified key was too long (3076 bytes); max key length is 3072 bytes
+create table t (a varchar(768) primary key) charset=utf8mb4;
+drop table if exists t;
+create table t (a blob(10000), b tinyint, index idx(a(3072), b));
+Error 1071 (42000): Specified key was too long (3073 bytes); max key length is 3072 bytes
+create table t (a blob(10000), b tinyint, index idx(a(3071), b));
+drop table if exists t;
+create table t (a blob(10000), b smallint, index idx(a(3071), b));
+Error 1071 (42000): Specified key was too long (3073 bytes); max key length is 3072 bytes
+create table t (a blob(10000), b smallint, index idx(a(3070), b));
+drop table if exists t;
+create table t (a blob(10000), b mediumint, index idx(a(3070), b));
+Error 1071 (42000): Specified key was too long (3073 bytes); max key length is 3072 bytes
+create table t (a blob(10000), b mediumint, index idx(a(3069), b));
+drop table if exists t;
+create table t (a blob(10000), b int, index idx(a(3069), b));
+Error 1071 (42000): Specified key was too long (3073 bytes); max key length is 3072 bytes
+create table t (a blob(10000), b int, index idx(a(3068), b));
+drop table if exists t;
+create table t (a blob(10000), b integer, index idx(a(3069), b));
+Error 1071 (42000): Specified key was too long (3073 bytes); max key length is 3072 bytes
+create table t (a blob(10000), b integer, index idx(a(3068), b));
+drop table if exists t;
+create table t (a blob(10000), b bigint, index idx(a(3065), b));
+Error 1071 (42000): Specified key was too long (3073 bytes); max key length is 3072 bytes
+create table t (a blob(10000), b bigint, index idx(a(3064), b));
+drop table if exists t;
+create table t (a blob(10000), b float, index idx(a(3069), b));
+Error 1071 (42000): Specified key was too long (3073 bytes); max key length is 3072 bytes
+create table t (a blob(10000), b float, index idx(a(3068), b));
+drop table if exists t;
+create table t (a blob(10000), b float(24), index idx(a(3069), b));
+Error 1071 (42000): Specified key was too long (3073 bytes); max key length is 3072 bytes
+create table t (a blob(10000), b float(24), index idx(a(3068), b));
+drop table if exists t;
+create table t (a blob(10000), b float(25), index idx(a(3065), b));
+Error 1071 (42000): Specified key was too long (3073 bytes); max key length is 3072 bytes
+create table t (a blob(10000), b float(25), index idx(a(3064), b));
+drop table if exists t;
+create table t (a blob(10000), b decimal(9), index idx(a(3069), b));
+Error 1071 (42000): Specified key was too long (3073 bytes); max key length is 3072 bytes
+create table t (a blob(10000), b decimal(9), index idx(a(3068), b));
+drop table if exists t;
+create table t (a blob(10000), b decimal(10), index idx(a(3068), b));
+Error 1071 (42000): Specified key was too long (3073 bytes); max key length is 3072 bytes
+create table t (a blob(10000), b decimal(10), index idx(a(3067), b));
+drop table if exists t;
+create table t (a blob(10000), b decimal(17), index idx(a(3065), b));
+Error 1071 (42000): Specified key was too long (3073 bytes); max key length is 3072 bytes
+create table t (a blob(10000), b decimal(17), index idx(a(3064), b));
+drop table if exists t;
+create table t (a blob(10000), b year, index idx(a(3072), b));
+Error 1071 (42000): Specified key was too long (3073 bytes); max key length is 3072 bytes
+create table t (a blob(10000), b year, index idx(a(3071), b));
+drop table if exists t;
+create table t (a blob(10000), b date, index idx(a(3070), b));
+Error 1071 (42000): Specified key was too long (3073 bytes); max key length is 3072 bytes
+create table t (a blob(10000), b date, index idx(a(3069), b));
+drop table if exists t;
+create table t (a blob(10000), b time, index idx(a(3070), b));
+Error 1071 (42000): Specified key was too long (3073 bytes); max key length is 3072 bytes
+create table t (a blob(10000), b time, index idx(a(3069), b));
+drop table if exists t;
+create table t (a blob(10000), b datetime, index idx(a(3065), b));
+Error 1071 (42000): Specified key was too long (3073 bytes); max key length is 3072 bytes
+create table t (a blob(10000), b datetime, index idx(a(3064), b));
+drop table if exists t;
+create table t (a blob(10000), b timestamp, index idx(a(3069), b));
+Error 1071 (42000): Specified key was too long (3073 bytes); max key length is 3072 bytes
+create table t (a blob(10000), b timestamp, index idx(a(3068), b));
+drop table if exists t;
+drop table if exists t1; create table t1(id int ); insert into t1 values (1);
+select * from t1;
+id
+1
+drop table if exists t;
+create table t (a decimal unique);
+insert t values ('100');
+insert t values ('1e2');
+Error 1062 (23000): Duplicate entry '100' for key 't.a'
+drop table if exists t1, t2;
+CREATE TABLE `t1` ( `a` char(3) NOT NULL default '', `b` char(3) NOT NULL default '', `c` char(3) NOT NULL default '', PRIMARY KEY  (`a`,`b`,`c`)) ENGINE=InnoDB;
+CREATE TABLE `t2` ( `a` char(3) NOT NULL default '', `b` char(3) NOT NULL default '', `c` char(3) NOT NULL default '', PRIMARY KEY  (`a`,`b`,`c`)) ENGINE=InnoDB;
+INSERT INTO t1 VALUES (1,1,1);
+INSERT INTO t2 VALUES (1,1,1);
+PREPARE my_stmt FROM "SELECT t1.b, count(*) FROM t1 group by t1.b having count(*) > ALL (SELECT COUNT(*) FROM t2 WHERE t2.a=1 GROUP By t2.b)";
+EXECUTE my_stmt;
+b	count(*)
+EXECUTE my_stmt;
+b	count(*)
+deallocate prepare my_stmt;
+drop table t1,t2;
+drop table if exists t;
+drop table if exists t1;
+create table t1 (c1 int, c2 int, c3 int);
+insert into t1 set c1=1, c2=2, c3=1;
+create table t (c1 int, c2 int, c3 int, primary key (c1));
+insert into t set c1=1, c2=4;
+insert into t select * from t1 limit 1 on duplicate key update c3=3333;
+drop table if exists t;
+drop table if exists t1;
+create table t1 (c1 int, c2 int, c3 int);
+replace into t1 set c1=1, c2=2, c3=1;
+create table t (c1 int, c2 int, c3 int, primary key (c1));
+replace into t set c1=1, c2=4;
+replace into t select * from t1 limit 1;
+create database session__common1;
+use session__common1;
+create table t (F1 VARCHAR(30));
+insert into t (F1) values ('1'), ('4');
+drop table if exists t;
+create table t (F1 VARCHAR(30));
+insert into t (F1) values ('1'), ('2');
+delete m1 from t m2,t m1 where m1.F1>1;
+select * from t;
+F1
+1
+drop table if exists t;
+create table t (F1 VARCHAR(30));
+insert into t (F1) values ('1'), ('2');
+delete m1 from t m1,t m2 where true and m1.F1<2;
+select * from t;
+F1
+2
+drop table if exists t;
+create table t (F1 VARCHAR(30));
+insert into t (F1) values ('1'), ('2');
+delete m1 from t m1,t m2 where false;
+select * from t;
+F1
+1
+2
+drop table if exists t;
+create table t (F1 VARCHAR(30));
+insert into t (F1) values ('1'), ('2');
+delete m1, m2 from t m1,t m2 where m1.F1>m2.F1;
+select * from t;
+F1
+drop table if exists t;
+create table t (F1 VARCHAR(30));
+insert into t (F1) values ('1'), ('2');
+delete session__common1.t from session__common1.t inner join session__common.t where session__common1.t.F1 > session__common.t.F1;
+select * from t;
+F1
+1
+set @tmp = 0;
+set @tmp := @tmp + 1;
+select @tmp;
+@tmp
+1
+select @tmp1 = 1, @tmp2 := 2;
+@tmp1 = 1	@tmp2 := 2
+NULL	2
+select @tmp1 := 11, @tmp2;
+@tmp1 := 11	@tmp2
+11	2
+drop table if exists t;
+create table t (c int);
+insert into t values (1),(2);
+update t set c = 3 WHERE c = @var:= 1;
+select * from t;
+c
+3
+2
+select @tmp := count(*) from t;
+@tmp := count(*)
+2
+select @tmp := c-2 from t where c=3;
+@tmp := c-2
+1
+select 0x01 + 1, x'4D7953514C' = "MySQL";
+0x01 + 1	x'4D7953514C' = "MySQL"
+2	1
+select 0b01 + 1, 0b01000001 = "A";
+0b01 + 1	0b01000001 = "A"
+2	1
+drop table if exists address;
+CREATE TABLE address (
+id bigint(20) NOT NULL AUTO_INCREMENT,
+PRIMARY KEY (id));
+insert into address values ('10');
+select cast(0.5 as unsigned);
+cast(0.5 as unsigned)
+1
+select cast(-0.5 as signed);
+cast(-0.5 as signed)
+-1
+select hex(cast(0x10 as binary(2)));
+hex(cast(0x10 as binary(2)))
+1000
+select cast('0000-00-00' as TIME);
+cast('0000-00-00' as TIME)
+00:00:00
+select cast('1234x' as TIME);
+cast('1234x' as TIME)
+00:12:34
+Level	Code	Message
+Warning	1292	Truncated incorrect time value: '1234x'
+select cast('a' as TIME);
+cast('a' as TIME)
+NULL
+select cast('' as TIME);
+cast('' as TIME)
+NULL
+select cast('1234xxxxxxx' as TIME);
+cast('1234xxxxxxx' as TIME)
+00:12:34
+select cast('1234xxxxxxxx' as TIME);
+cast('1234xxxxxxxx' as TIME)
+NULL
+select cast('-1234xxxxxxx' as TIME);
+cast('-1234xxxxxxx' as TIME)
+-00:12:34
+select cast('-1234xxxxxxxx' as TIME);
+cast('-1234xxxxxxxx' as TIME)
+NULL
+drop table if exists T;
+create table T (a text, B int);
+insert t (A, b) values ('aaa', 1);
+select * from t;
+a	B
+aaa	1
+select A, b from t;
+A	b
+aaa	1
+select a as A from t where A > 0;
+A
+update T set b = B + 1;
+update T set B = b + 1;
+select b from T;
+b
+3
+select count(ORDINAL_POSITION) from INFORMATION_SCHEMA.COLUMNS;
+count(ORDINAL_POSITION)
+1
+SELECT CHARACTER_SET_NAME FROM INFORMATION_SCHEMA.CHARACTER_SETS WHERE CHARACTER_SET_NAME = 'utf8mb4';
+CHARACTER_SET_NAME
+utf8mb4

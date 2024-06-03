@@ -1,0 +1,619 @@
+CREATE TABLE viewsecurity(c int);
+CREATE USER 'selectusr'@'localhost';
+GRANT CREATE VIEW ON privilege__privileges.* TO  'selectusr'@'localhost';
+GRANT SELECT ON privilege__privileges.viewsecurity TO  'selectusr'@'localhost';
+SELECT * FROM privilege__privileges.viewsecurity;
+c
+CREATE ALGORITHM = UNDEFINED SQL SECURITY DEFINER VIEW privilege__privileges.selectviewsecurity as select * FROM privilege__privileges.viewsecurity;
+SELECT * FROM privilege__privileges.selectviewsecurity;
+c
+REVOKE Select ON privilege__privileges.viewsecurity FROM  'selectusr'@'localhost';
+select * from privilege__privileges.selectviewsecurity;
+Error 1356 (HY000): View 'privilege__privileges.selectviewsecurity' references invalid table(s) or column(s) or function(s) or definer/invoker of view lack rights to use them
+CREATE USER 'testnotexist'@'localhost';
+CREATE DATABASE IF NOT EXISTS privilege__privileges;
+CREATE TABLE privilege__privileges.t1 (a int);
+SELECT * FROM privilege__privileges.t1;
+Error 1142 (42000): SELECT command denied to user 'testnotexist'@'localhost' for table 't1'
+SELECT * FROM dbnotexists.t1;
+Error 1142 (42000): SELECT command denied to user 'testnotexist'@'localhost' for table 't1'
+SHOW CREATE TABLE privilege__privileges.t1;
+Error 1142 (42000): SHOW command denied to user 'testnotexist'@'localhost' for table 't1'
+SHOW CREATE TABLE dbnotexists.t1;
+Error 1142 (42000): SHOW command denied to user 'testnotexist'@'localhost' for table 't1'
+DELETE FROM privilege__privileges.t1 WHERE a=0;
+Error 1142 (42000): SELECT command denied to user 'testnotexist'@'localhost' for table 't1'
+DELETE FROM dbnotexists.t1 WHERE a=0;
+Error 1142 (42000): DELETE command denied to user 'testnotexist'@'localhost' for table 't1'
+DELETE FROM privilege__privileges.t1;
+Error 1142 (42000): DELETE command denied to user 'testnotexist'@'localhost' for table 't1'
+DELETE FROM dbnotexists.t1;
+Error 1142 (42000): DELETE command denied to user 'testnotexist'@'localhost' for table 't1'
+drop table t1;
+drop user if exists u1;
+CREATE USER u1;
+CREATE TABLE routine_table (a int);
+GRANT CREATE ROUTINE on privilege__privileges.* to u1;
+GRANT CREATE ROUTINE on *.* to u1;
+GRANT ALTER ROUTINE on privilege__privileges.* to u1;
+GRANT ALTER ROUTINE on *.* to u1;
+SHOW GRANTS FOR u1;
+Grants for u1@%
+GRANT CREATE ROUTINE,ALTER ROUTINE ON *.* TO 'u1'@'%'
+GRANT CREATE ROUTINE,ALTER ROUTINE ON `privilege__privileges`.* TO 'u1'@'%'
+DROP USER u1;
+drop placement policy if exists x;
+CREATE USER super_user, placement_user, empty_user;
+GRANT ALL ON *.* TO super_user;
+GRANT PLACEMENT_ADMIN ON *.* TO placement_user;
+create placement policy x PRIMARY_REGION="cn-east-1" REGIONS="cn-east-1";
+Error 1227 (42000): Access denied; you need (at least one of) the SUPER or PLACEMENT_ADMIN privilege(s) for this operation
+drop placement policy if exists x;
+Error 1227 (42000): Access denied; you need (at least one of) the SUPER or PLACEMENT_ADMIN privilege(s) for this operation
+create placement policy x PRIMARY_REGION="cn-east-1" REGIONS="cn-east-1";
+drop placement policy if exists x;
+create placement policy x PRIMARY_REGION="cn-east-1" REGIONS="cn-east-1";
+drop placement policy if exists x;
+drop user placement_user;
+CREATE USER resource_group_user;
+set @@global.tidb_enable_resource_control = 1;
+CREATE RESOURCE GROUP test RU_PER_SEC = 666;
+Error 1227 (42000): Access denied; you need (at least one of) the SUPER or RESOURCE_GROUP_ADMIN privilege(s) for this operation
+GRANT RESOURCE_GROUP_ADMIN ON *.* TO resource_group_user;
+SHOW GRANTS FOR resource_group_user;
+Grants for resource_group_user@%
+GRANT USAGE ON *.* TO 'resource_group_user'@'%'
+GRANT RESOURCE_GROUP_ADMIN ON *.* TO 'resource_group_user'@'%'
+CREATE RESOURCE GROUP test RU_PER_SEC = 666;
+CREATE RESOURCE GROUP test2 RU_PER_SEC = 999;
+ALTER RESOURCE GROUP test2 RU_PER_SEC = 1000;
+DROP RESOURCE GROUP test2;
+REVOKE RESOURCE_GROUP_ADMIN ON *.* FROM resource_group_user;
+ALTER RESOURCE GROUP test RU_PER_SEC = 667;
+Error 1227 (42000): Access denied; you need (at least one of) the SUPER or RESOURCE_GROUP_ADMIN privilege(s) for this operation
+DROP RESOURCE GROUP test;
+Error 1227 (42000): Access denied; you need (at least one of) the SUPER or RESOURCE_GROUP_ADMIN privilege(s) for this operation
+CREATE SCHEMA IF NOT EXISTS privilege__privileges;
+USE privilege__privileges;
+CREATE TABLE reftest (a int);
+CREATE USER referencesUser;
+GRANT REFERENCES ON *.* TO referencesUser;
+GRANT REFERENCES ON privilege__privileges.* TO referencesUser;
+GRANT REFERENCES ON privilege__privileges.reftest TO referencesUser;
+SHOW GRANTS FOR referencesUser;
+Grants for referencesUser@%
+GRANT REFERENCES ON *.* TO 'referencesUser'@'%'
+GRANT REFERENCES ON `privilege__privileges`.* TO 'referencesUser'@'%'
+GRANT REFERENCES ON `privilege__privileges`.`reftest` TO 'referencesUser'@'%'
+DROP USER referencesUser;
+create database if not exists privilege__privileges;
+create database if not exists privilege__privileges_test1;
+CREATE TABLE IF NOT EXISTS privilege__privileges.test(id INT NOT NULL DEFAULT 1, name varchar(255), PRIMARY KEY(id));
+CREATE USER 'show'@'localhost' identified by '123';
+GRANT Index ON *.* TO  'show'@'localhost';
+GRANT Select ON *.* TO  'show'@'localhost';
+GRANT Update ON *.* TO  'show'@'localhost';
+GRANT ALL ON *.* TO  'show'@'localhost';
+GRANT ALL ON *.* TO 'show'@'localhost' WITH GRANT OPTION;
+REVOKE GRANT OPTION ON *.* FROM 'show'@'localhost';
+GRANT Select ON privilege__privileges.* TO  'show'@'localhost';
+GRANT Index ON privilege__privileges_test1.* TO  'show'@'localhost';
+GRANT Delete ON privilege__privileges_test1.* TO  'show'@'localhost';
+GRANT ALL ON privilege__privileges_test1.* TO  'show'@'localhost';
+GRANT Update ON privilege__privileges.test TO  'show'@'localhost';
+REVOKE SELECT ON privilege__privileges.* FROM 'show'@'localhost';
+GRANT Select ON privilege__privileges.test TO  'show'@'localhost';
+REVOKE ALL PRIVILEGES ON *.* FROM 'show'@'localhost';
+REVOKE ALL ON privilege__privileges_test1.* FROM 'show'@'localhost';
+REVOKE UPDATE, SELECT on privilege__privileges.test FROM 'show'@'localhost';
+DROP USER 'show'@'localhost';
+CREATE ROLE 'r1', 'r2';
+GRANT SELECT ON privilege__privileges.* TO 'r1';
+GRANT INSERT, UPDATE ON privilege__privileges.* TO 'r2';
+CREATE USER 'testrole'@'localhost' IDENTIFIED BY 'u1pass';
+GRANT 'r1', 'r2' TO 'testrole'@'localhost';
+GRANT DELETE ON privilege__privileges.* TO 'testrole'@'localhost';
+GRANT INSERT, DELETE ON privilege__privileges.test TO 'r2';
+create table privilege__privileges.b (id int);
+GRANT UPDATE ON privilege__privileges.b TO 'testrole'@'localhost';
+DROP ROLE 'r1', 'r2';
+DROP USER 'testrole'@'localhost';
+CREATE ROLE 'r1', 'r2';
+GRANT SELECT ON privilege__privileges.* TO 'r2';
+CREATE USER 'testrole'@'localhost' IDENTIFIED BY 'u1pass';
+GRANT 'r1' TO 'testrole'@'localhost';
+GRANT 'r2' TO 'r1';
+CREATE USER test_user1;
+grant select on metrics_schema.up to test_user1;
+CREATE USER setglobal_a@localhost;
+CREATE USER setglobal_b@localhost;
+GRANT SUPER ON *.* to setglobal_a@localhost;
+set global innodb_commit_concurrency=16;
+set global innodb_commit_concurrency=16;
+Error 1227 (42000): Access denied; you need (at least one of) the SUPER or SYSTEM_VARIABLES_ADMIN privilege(s) for this operation
+# TestCheckPointGetDBPrivilege
+CREATE USER 'tester'@'localhost';
+GRANT SELECT,UPDATE ON privilege__privileges2.* TO  'tester'@'localhost';
+create database if not exists privilege__privileges;
+create table privilege__privileges.t(id int, v int, primary key(id));
+insert into privilege__privileges.t(id, v) values(1, 1);
+select * from privilege__privileges.t where id = 1;
+Error 1142 (42000): SELECT command denied to user 'tester'@'localhost' for table 't'
+update privilege__privileges.t set v = 2 where id = 1;
+Error 1142 (42000): SELECT command denied to user 'tester'@'localhost' for table 't'
+DROP USER 'tester'@'localhost';
+CREATE DATABASE if not exists privilege__privileges;
+USE privilege__privileges;
+CREATE TABLE lock_tables_table (a int);
+CREATE USER lock_tables_user;
+GRANT LOCK TABLES ON *.* TO lock_tables_user;
+GRANT LOCK TABLES ON privilege__privileges.* TO lock_tables_user;
+SHOW GRANTS FOR lock_tables_user;
+Grants for lock_tables_user@%
+GRANT LOCK TABLES ON *.* TO 'lock_tables_user'@'%'
+GRANT LOCK TABLES ON `privilege__privileges`.* TO 'lock_tables_user'@'%'
+DROP USER lock_tables_user;
+CREATE USER 'nofile'@'localhost';
+select 1 into outfile '/tmp/doesntmatter-no-permissions';
+Error 1227 (42000): Access denied; you need (at least one of) the FILE privilege(s) for this operation
+drop user if exists u4, 'hasgrant', 'withoutgrant';
+CREATE USER 'hasgrant';
+CREATE USER 'withoutgrant';
+GRANT ALL ON *.* TO 'hasgrant';
+GRANT ALL ON mysql.* TO 'withoutgrant';
+REVOKE SELECT ON mysql.* FROM 'withoutgrant';
+Error 8121 (HY000): privilege check for 'Grant Option' fail
+GRANT ALL ON *.* TO 'hasgrant' WITH GRANT OPTION;
+REVOKE SELECT ON mysql.* FROM 'withoutgrant';
+REVOKE ALL ON mysql.* FROM withoutgrant;
+CREATE USER u4;
+GRANT ALL ON *.* TO u4 WITH GRANT OPTION;
+REVOKE ALL ON *.* FROM CURRENT_USER();
+drop user if exists ss1;
+create user ss1;
+revoke all privileges, grant option from ss1;
+show grants for ss1;
+Grants for ss1@%
+GRANT USAGE ON *.* TO 'ss1'@'%'
+# TestCheckExchangePartitionDBPrivilege
+CREATE USER 'tester'@'localhost';
+GRANT SELECT ON privilege__privileges.* TO  'tester'@'localhost';
+create table pt (a varchar(3)) partition by range columns (a) (
+partition p0 values less than ('3'),
+partition p1 values less than ('6')
+);
+create table nt (a varchar(3));
+alter table pt exchange partition p0 with table nt;
+Error 1142 (42000): ALTER command denied to user 'tester'@'localhost' for table 'pt'
+alter table pt exchange partition p0 with table nt;
+Error 1142 (42000): ALTER command denied to user 'tester'@'localhost' for table 'pt'
+alter table pt exchange partition p0 with table nt;
+Error 1142 (42000): ALTER command denied to user 'tester'@'localhost' for table 'pt'
+GRANT CREATE ON privilege__privileges.* TO  'tester'@'localhost';
+GRANT ALTER ON privilege__privileges.* TO  'tester'@'localhost';
+GRANT INSERT ON privilege__privileges.* TO  'tester'@'localhost';
+GRANT DROP ON privilege__privileges.* TO  'tester'@'localhost';
+alter table pt exchange partition p0 with table nt;
+CREATE USER 'test_import_into'@'localhost';
+GRANT SELECT ON privilege__privileges.* TO 'test_import_into'@'localhost';
+CREATE TABLE IF NOT EXISTS t(a int);
+IMPORT INTO t FROM '/file.csv';
+Error 1142 (42000): UPDATE command denied to user 'test_import_into'@'localhost' for table 't'
+GRANT SELECT on *.* to 'test_import_into'@'localhost';
+IMPORT INTO t FROM '/file.csv';
+Error 1142 (42000): UPDATE command denied to user 'test_import_into'@'localhost' for table 't'
+GRANT UPDATE on *.* to 'test_import_into'@'localhost';
+IMPORT INTO t FROM '/file.csv';
+Error 1142 (42000): INSERT command denied to user 'test_import_into'@'localhost' for table 't'
+GRANT INSERT on *.* to 'test_import_into'@'localhost';
+IMPORT INTO t FROM '/file.csv';
+Error 1142 (42000): DELETE command denied to user 'test_import_into'@'localhost' for table 't'
+GRANT DELETE on *.* to 'test_import_into'@'localhost';
+IMPORT INTO t FROM '/file.csv';
+Error 1142 (42000): ALTER command denied to user 'test_import_into'@'localhost' for table 't'
+GRANT ALTER on *.* to 'test_import_into'@'localhost';
+IMPORT INTO t FROM '/file.csv';
+Error 1227 (42000): Access denied; you need (at least one of) the FILE privilege(s) for this operation
+DROP USER 'test_import_into'@'localhost';
+CREATE USER 'test_import_into'@'localhost';
+GRANT FILE on *.* to 'test_import_into'@'localhost';
+IMPORT INTO t FROM '/file.csv';
+Error 1142 (42000): SELECT command denied to user 'test_import_into'@'localhost' for table 't'
+drop table if exists t;
+create user u1;
+create table t (a int);
+insert into t values(1);
+prepare s from 'select * from privilege__privileges.t';
+Error 1142 (42000): SELECT command denied to user 'u1'@'%' for table 't'
+execute s;
+Error 8111 (HY000): Prepared statement not found
+grant SELECT ON privilege__privileges.t TO  'u1'@'%';
+prepare s from 'select * from privilege__privileges.t';
+execute s;
+a
+1
+drop user if exists tcd1, tcd2, tcd3, usr1;
+drop resource group if exists rg1;
+CREATE USER tcd1, tcd2;
+GRANT ALL ON *.* to tcd2 WITH GRANT OPTION;
+CREATE USER acdc;
+Error 1227 (42000): Access denied; you need (at least one of) the CREATE User privilege(s) for this operation
+DROP USER tcd2;
+Error 1227 (42000): Access denied; you need (at least one of) the CREATE USER privilege(s) for this operation
+DROP USER tcd1;
+CREATE USER tcd1;
+GRANT tcd2 TO tcd1;
+SET ROLE tcd2;
+CREATE USER tcd3;
+DROP USER tcd3;
+CREATE USER usr1;
+SELECT User_attributes FROM mysql.user WHERE User = "usr1";
+User_attributes
+{}
+DROP USER usr1;
+CREATE RESOURCE GROUP rg1 ru_per_sec=1000;
+CREATE USER usr1 RESOURCE GROUP rg1;
+SELECT User_attributes FROM mysql.user WHERE User = "usr1";
+User_attributes
+{"resource_group": "rg1"}
+DROP USER usr1;
+drop resource group rg1;
+create database privilege__privileges_db1;
+create database privilege__privileges_db2;
+create table a(id int);
+create table privilege__privileges_db1.a(id int primary key,name varchar(20));
+create table privilege__privileges_db2.b(id int primary key,address varchar(50));
+CREATE USER 'delTest'@'localhost';
+grant all on privilege__privileges_db1.* to delTest@'localhost';
+grant all on privilege__privileges_db2.* to delTest@'localhost';
+grant select on privilege__privileges.* to delTest@'localhost';
+delete from privilege__privileges_db1.a as A where exists(select 1 from privilege__privileges_db2.b as B where A.id = B.id);
+delete from privilege__privileges.a as A;
+Error 1142 (42000): DELETE command denied to user 'delTest'@'localhost' for table 'a'
+CREATE USER unostatus, ustatus;
+GRANT RESTRICTED_STATUS_ADMIN ON *.* to ustatus;
+CREATE USER 'ar1'@'localhost';
+CREATE USER 'ar2'@'localhost';
+GRANT ALL ON *.* to ar1@localhost;
+create role r_test1@localhost;
+create role r_test2@localhost;
+Error 1227 (42000): Access denied; you need (at least one of) the CREATE ROLE or CREATE USER privilege(s) for this operation
+drop user 'ar1'@'localhost';
+drop user 'ar2'@'localhost';
+DROP VIEW IF EXISTS privilege__privileges.v;
+create user test_user;
+create view privilege__privileges.v as select 1;
+grant show view on privilege__privileges.v to test_user;
+select count(*) from information_schema.columns where table_schema='privilege__privileges' and table_name='v';
+count(*)
+0
+desc privilege__privileges.v;
+Error 1142 (42000): SELECT command denied to user 'test_user'@'%' for table 'v'
+explain privilege__privileges.v;
+Error 1142 (42000): SELECT command denied to user 'test_user'@'%' for table 'v'
+grant update on privilege__privileges.v to test_user;
+grant select on privilege__privileges.v to test_user;
+select count(*) from information_schema.columns where table_schema='privilege__privileges' and table_name='v';
+count(*)
+1
+select count(*) from information_schema.columns where table_schema='privilege__privileges' and table_name='V';
+count(*)
+1
+select privileges from information_schema.columns where table_schema='privilege__privileges' and table_name='v';
+privileges
+select,update
+select privileges from information_schema.columns where table_schema='privilege__privileges' and table_name='V';
+privileges
+select,update
+desc privilege__privileges.v;
+Field	Type	Null	Key	Default	Extra
+1	bigint(1)	NO		NULL	
+explain privilege__privileges.v;
+Field	Type	Null	Key	Default	Extra
+1	bigint(1)	NO		NULL	
+CREATE USER ucorrect1, ucorrect2;
+CREATE TABLE privilege__privileges.trigger_table (a int);
+GRANT CREATE TEMPORARY TABLES,DELETE,EXECUTE,INSERT,SELECT,SHOW VIEW,TRIGGER,UPDATE ON privilege__privileges.* TO ucorrect1;
+GRANT TRIGGER ON privilege__privileges.trigger_table TO ucorrect2;
+DROP TABLE privilege__privileges.trigger_table;
+GRANT CREATE TEMPORARY TABLES,DELETE,EXECUTE,INSERT,SELECT,SHOW VIEW,TRIGGER,UPDATE ON privilege__privileges.* TO uincorrect;
+Error 1410 (42000): You are not allowed to create a user with GRANT
+CREATE USER 'column'@'%';
+CREATE TABLE column_table (a int, b int, c int);
+GRANT Select(a),Update(a,b),Insert(c) ON privilege__privileges.column_table TO  'column'@'%';
+SHOW GRANTS;
+Grants for User
+GRANT USAGE ON *.* TO 'column'@'%'
+GRANT SELECT(a), INSERT(c), UPDATE(a, b) ON `privilege__privileges`.`column_table` TO 'column'@'%'
+CREATE USER 'tableaccess'@'localhost';
+CREATE TABLE fieldlistt1 (a int);
+desc privilege__privileges.fieldlistt1;
+Error 1142 (42000): SELECT command denied to user 'tableaccess'@'localhost' for table 'fieldlistt1'
+CREATE USER tr_insert;
+CREATE USER tr_update;
+CREATE USER tr_delete;
+CREATE TABLE t1 (a int primary key, b int);
+GRANT INSERT ON t1 TO tr_insert;
+GRANT UPDATE ON t1 TO tr_update;
+GRANT DELETE ON t1 TO tr_delete;
+REPLACE INTO t1 VALUES (1, 2);
+Error 1142 (42000): DELETE command denied to user 'tr_insert'@'%' for table 't1'
+INSERT INTO t1 VALUES (3, 4) ON DUPLICATE KEY UPDATE b = 5;
+Error 1142 (42000): UPDATE command denied to user 'tr_insert'@'%' for table 't1'
+INSERT INTO t1 VALUES (6, 7);
+REPLACE INTO t1 VALUES (8, 9);
+Error 1142 (42000): INSERT command denied to user 'tr_delete'@'%' for table 't1'
+INSERT INTO t1 VALUES (10, 11) ON DUPLICATE KEY UPDATE b = 12;
+Error 1142 (42000): INSERT command denied to user 'tr_update'@'%' for table 't1'
+CREATE DATABASE placement_db;
+USE placement_db;
+CREATE TABLE placement_table (a int);
+CREATE USER placement_user;
+GRANT PLACEMENT_ADMIN ON *.* TO placement_user;
+SHOW GRANTS FOR placement_user;
+Grants for placement_user@%
+GRANT USAGE ON *.* TO 'placement_user'@'%'
+GRANT PLACEMENT_ADMIN ON *.* TO 'placement_user'@'%'
+DROP USER placement_user;
+DROP DATABASE placement_db;
+CREATE USER superuser2, nobodyuser2, nobodyuser3, nobodyuser4, nobodyuser5, semuser1, semuser2, semuser3, semuser4;
+GRANT ALL ON *.* TO superuser2;
+GRANT CREATE USER ON *.* TO nobodyuser2;
+GRANT SYSTEM_USER ON *.* TO nobodyuser4;
+GRANT UPDATE ON mysql.user TO nobodyuser5, semuser1;
+GRANT RESTRICTED_TABLES_ADMIN ON *.* TO semuser1;
+GRANT RESTRICTED_USER_ADMIN ON *.* TO semuser1, semuser2, semuser3;
+GRANT SYSTEM_USER ON *.* to semuser3;
+CREATE RESOURCE GROUP rg1 ru_per_sec=1000;
+ALTER USER 'semuser1' RESOURCE GROUP rg1;
+SELECT User_attributes FROM mysql.user WHERE User = "semuser1";
+User_attributes
+{"resource_group": "rg1"}
+ALTER USER 'semuser1' COMMENT 'comment1';
+SELECT User_attributes FROM mysql.user WHERE User = "semuser1";
+User_attributes
+{"metadata": {"comment": "comment1"}, "resource_group": "rg1"}
+ALTER USER 'nobodyuser2' IDENTIFIED BY 'newpassword';
+ALTER USER 'nobodyuser2' IDENTIFIED BY '';
+ALTER USER 'nobodyuser2' IDENTIFIED BY 'newpassword';
+ALTER USER 'nobodyuser2' IDENTIFIED BY '';
+ALTER USER 'nobodyuser3' IDENTIFIED BY '';
+ALTER USER 'nobodyuser4' IDENTIFIED BY 'newpassword';
+Error 1227 (42000): Access denied; you need (at least one of) the SYSTEM_USER or SUPER privilege(s) for this operation
+ALTER USER 'superuser2' IDENTIFIED BY 'newpassword';
+Error 1227 (42000): Access denied; you need (at least one of) the SYSTEM_USER or SUPER privilege(s) for this operation
+ALTER USER 'nobodyuser3' IDENTIFIED BY '';
+ALTER USER 'nobodyuser4' IDENTIFIED BY 'newpassword';
+Error 1227 (42000): Access denied; you need (at least one of) the CREATE USER privilege(s) for this operation
+ALTER USER 'superuser2' IDENTIFIED BY 'newpassword';
+Error 1227 (42000): Access denied; you need (at least one of) the CREATE USER privilege(s) for this operation
+ALTER USER 'nobodyuser2' IDENTIFIED BY '';
+ALTER USER 'nobodyuser3' IDENTIFIED BY '';
+ALTER USER 'nobodyuser4' IDENTIFIED BY 'newpassword';
+Error 1227 (42000): Access denied; you need (at least one of) the SYSTEM_USER or SUPER privilege(s) for this operation
+ALTER USER 'semuser1' IDENTIFIED BY '';
+ALTER USER 'semuser2' IDENTIFIED BY '';
+ALTER USER 'semuser3' IDENTIFIED BY '';
+DROP USER IF EXISTS 'ru1'@'localhost';
+DROP USER IF EXISTS ru3;
+DROP USER IF EXISTS ru6@localhost;
+CREATE USER 'ru1'@'localhost';
+CREATE USER ru3;
+CREATE USER ru6@localhost;
+RENAME USER ru3 TO ru4;
+Error 1227 (42000): Access denied; you need (at least one of) the CREATE USER privilege(s) for this operation
+GRANT UPDATE ON mysql.user TO 'ru1'@'localhost';
+RENAME USER ru3 TO ru4;
+Error 1227 (42000): Access denied; you need (at least one of) the CREATE USER privilege(s) for this operation
+GRANT CREATE USER ON *.* TO 'ru1'@'localhost';
+RENAME USER ru3 TO ru4;
+RENAME USER 'ru4'@'%' TO 'ru3'@'localhost';
+RENAME USER 'ru3'@'localhost' TO 'ru3'@'%';
+RENAME USER ru3 TO ru1@localhost;
+Error 1396 (HY000): Operation RENAME USER failed for ru3@% TO ru1@localhost new did exist
+RENAME USER ru4 TO ru5@localhost;
+Error 1396 (HY000): Operation RENAME USER failed for ru4@% TO ru5@localhost old did not exist
+RENAME USER ru3 TO ru3;
+Error 1396 (HY000): Operation RENAME USER failed for ru3@% TO ru3@% new did exist
+RENAME USER ru3 TO ru5@localhost, ru4 TO ru7;
+Error 1396 (HY000): Operation RENAME USER failed for ru4@% TO ru7@% old did not exist
+RENAME USER ru3 TO ru5@localhost, ru6@localhost TO ru1@localhost;
+Error 1396 (HY000): Operation RENAME USER failed for ru6@localhost TO ru1@localhost new did exist
+RENAME USER 'ru3' TO 'ru3_tmp', ru6@localhost TO ru3, 'ru3_tmp' to ru6@localhost;
+RENAME USER 'ru6@localhost' TO '1234567890abcdefGHIKL1234567890abcdefGHIKL@localhost';
+Error 1470 (HY000): String '1234567890abcdefGHIKL1234567890abcdefGHIKL@localhost' is too long for user name (should be no longer than 32)
+RENAME USER 'ru6@localhost' TO 'some_user_name@host_1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890X';
+Error 1470 (HY000): String 'some_user_name@host_1234567890abcdefghij1234567890abcdefghij1234567890' is too long for user name (should be no longer than 32)
+DROP USER ru6@localhost;
+DROP USER ru3;
+DROP USER 'ru1'@'localhost';
+CREATE USER ccnobody, ccconfig, ccprocess;
+GRANT CONFIG ON *.* TO ccconfig;
+GRANT Process ON *.* TO ccprocess;
+SHOW GRANTS;
+Grants for User
+GRANT USAGE ON *.* TO 'ccnobody'@'%'
+SELECT * FROM information_schema.cluster_config;
+Error 1227 (42000): Access denied; you need (at least one of) the CONFIG privilege(s) for this operation
+SELECT * FROM information_schema.cluster_hardware;
+Error 1227 (42000): Access denied; you need (at least one of) the CONFIG privilege(s) for this operation
+SELECT * FROM information_schema.cluster_info;
+Error 1227 (42000): Access denied; you need (at least one of) the PROCESS privilege(s) for this operation
+SELECT * FROM information_schema.cluster_load;
+Error 1227 (42000): Access denied; you need (at least one of) the PROCESS privilege(s) for this operation
+SELECT * FROM information_schema.cluster_systeminfo;
+Error 1227 (42000): Access denied; you need (at least one of) the PROCESS privilege(s) for this operation
+SELECT * FROM information_schema.cluster_log WHERE time BETWEEN '2021-07-13 00:00:00' AND '2021-07-13 02:00:00' AND message like '%';
+Error 1227 (42000): Access denied; you need (at least one of) the PROCESS privilege(s) for this operation
+SHOW GRANTS;
+Grants for User
+GRANT CONFIG ON *.* TO 'ccconfig'@'%'
+SELECT * FROM information_schema.cluster_config limit 0;
+TYPE	INSTANCE	KEY	VALUE
+SELECT * FROM information_schema.cluster_HARDWARE limit 0;
+TYPE	INSTANCE	DEVICE_TYPE	DEVICE_NAME	NAME	VALUE
+SELECT * FROM information_schema.cluster_INFO;
+Error 1227 (42000): Access denied; you need (at least one of) the PROCESS privilege(s) for this operation
+SELECT * FROM information_schema.cluster_LOAD;
+Error 1227 (42000): Access denied; you need (at least one of) the PROCESS privilege(s) for this operation
+SELECT * FROM information_schema.cluster_SYSTEMINFO;
+Error 1227 (42000): Access denied; you need (at least one of) the PROCESS privilege(s) for this operation
+SELECT * FROM information_schema.cluster_LOG WHERE time BETWEEN '2021-07-13 00:00:00' AND '2021-07-13 02:00:00' AND message like '%';
+Error 1227 (42000): Access denied; you need (at least one of) the PROCESS privilege(s) for this operation
+SHOW GRANTS;
+Grants for User
+GRANT PROCESS ON *.* TO 'ccprocess'@'%'
+SELECT * FROM information_schema.CLUSTER_info limit 0;
+TYPE	INSTANCE	STATUS_ADDRESS	VERSION	GIT_HASH	START_TIME	UPTIME	SERVER_ID
+SELECT * FROM information_schema.CLUSTER_load limit 0;
+TYPE	INSTANCE	DEVICE_TYPE	DEVICE_NAME	NAME	VALUE
+SELECT * FROM information_schema.CLUSTER_systeminfo limit 0;
+TYPE	INSTANCE	SYSTEM_TYPE	SYSTEM_NAME	NAME	VALUE
+SELECT * FROM information_schema.CLUSTER_log WHERE time BETWEEN '1970-07-13 00:00:00' AND '1970-07-13 02:00:00' AND message like '%';
+TIME	TYPE	INSTANCE	LEVEL	MESSAGE
+SELECT * FROM information_schema.CLUSTER_config;
+Error 1227 (42000): Access denied; you need (at least one of) the CONFIG privilege(s) for this operation
+SELECT * FROM information_schema.CLUSTER_hardware;
+Error 1227 (42000): Access denied; you need (at least one of) the CONFIG privilege(s) for this operation
+CREATE USER 'superuser';
+CREATE USER 'nobodyuser';
+GRANT ALL ON *.* TO 'superuser';
+SET PASSWORD for 'nobodyuser' = 'newpassword';
+SET PASSWORD for 'nobodyuser' = '';
+SET PASSWORD for 'superuser' = 'newpassword';
+Error 1044 (42000): Access denied for user 'superuser'@'%' to database 'mysql'
+CREATE ROLE tsg_r1;
+CREATE USER tsg_u1, tsg_u2;
+GRANT CONNECTION_ADMIN, ROLE_ADMIN, SYSTEM_VARIABLES_ADMIN, PROCESS ON *.* TO tsg_r1;
+GRANT CONNECTION_ADMIN ON *.* TO tsg_u1 WITH GRANT OPTION;
+GRANT CONNECTION_ADMIN ON *.* TO tsg_u2 WITH GRANT OPTION;
+GRANT ROLE_ADMIN ON *.* TO tsg_u1;
+GRANT ROLE_ADMIN ON *.* TO tsg_u2;
+GRANT ROLE_ADMIN ON *.* TO tsg_r1 WITH GRANT OPTION;
+GRANT CONFIG ON *.* TO tsg_r1;
+GRANT tsg_r1 TO tsg_u1, tsg_u2;
+SET DEFAULT ROLE tsg_r1 TO tsg_u1;
+SHOW GRANTS;
+Grants for User
+GRANT PROCESS,CONFIG ON *.* TO 'tsg_u1'@'%'
+GRANT 'tsg_r1'@'%' TO 'tsg_u1'@'%'
+GRANT SYSTEM_VARIABLES_ADMIN ON *.* TO 'tsg_u1'@'%'
+GRANT CONNECTION_ADMIN,ROLE_ADMIN ON *.* TO 'tsg_u1'@'%' WITH GRANT OPTION
+SHOW GRANTS FOR CURRENT_USER();
+Grants for tsg_u1@%
+GRANT PROCESS,CONFIG ON *.* TO 'tsg_u1'@'%'
+GRANT 'tsg_r1'@'%' TO 'tsg_u1'@'%'
+GRANT SYSTEM_VARIABLES_ADMIN ON *.* TO 'tsg_u1'@'%'
+GRANT CONNECTION_ADMIN,ROLE_ADMIN ON *.* TO 'tsg_u1'@'%' WITH GRANT OPTION
+SHOW GRANTS FOR 'tsg_u1';
+Grants for tsg_u1@%
+GRANT USAGE ON *.* TO 'tsg_u1'@'%'
+GRANT 'tsg_r1'@'%' TO 'tsg_u1'@'%'
+GRANT ROLE_ADMIN ON *.* TO 'tsg_u1'@'%'
+GRANT CONNECTION_ADMIN ON *.* TO 'tsg_u1'@'%' WITH GRANT OPTION
+SHOW GRANTS;
+Grants for User
+GRANT USAGE ON *.* TO 'tsg_u2'@'%'
+GRANT 'tsg_r1'@'%' TO 'tsg_u2'@'%'
+GRANT ROLE_ADMIN ON *.* TO 'tsg_u2'@'%'
+GRANT CONNECTION_ADMIN ON *.* TO 'tsg_u2'@'%' WITH GRANT OPTION
+SHOW GRANTS FOR CURRENT_USER();
+Grants for tsg_u2@%
+GRANT USAGE ON *.* TO 'tsg_u2'@'%'
+GRANT 'tsg_r1'@'%' TO 'tsg_u2'@'%'
+GRANT ROLE_ADMIN ON *.* TO 'tsg_u2'@'%'
+GRANT CONNECTION_ADMIN ON *.* TO 'tsg_u2'@'%' WITH GRANT OPTION
+SHOW GRANTS FOR 'tsg_u2';
+Grants for tsg_u2@%
+GRANT USAGE ON *.* TO 'tsg_u2'@'%'
+GRANT 'tsg_r1'@'%' TO 'tsg_u2'@'%'
+GRANT ROLE_ADMIN ON *.* TO 'tsg_u2'@'%'
+GRANT CONNECTION_ADMIN ON *.* TO 'tsg_u2'@'%' WITH GRANT OPTION
+SET ROLE tsg_r1;
+SHOW GRANTS;
+Grants for User
+GRANT PROCESS,CONFIG ON *.* TO 'tsg_u2'@'%'
+GRANT 'tsg_r1'@'%' TO 'tsg_u2'@'%'
+GRANT SYSTEM_VARIABLES_ADMIN ON *.* TO 'tsg_u2'@'%'
+GRANT CONNECTION_ADMIN,ROLE_ADMIN ON *.* TO 'tsg_u2'@'%' WITH GRANT OPTION
+SHOW GRANTS FOR CURRENT_USER();
+Grants for tsg_u2@%
+GRANT PROCESS,CONFIG ON *.* TO 'tsg_u2'@'%'
+GRANT 'tsg_r1'@'%' TO 'tsg_u2'@'%'
+GRANT SYSTEM_VARIABLES_ADMIN ON *.* TO 'tsg_u2'@'%'
+GRANT CONNECTION_ADMIN,ROLE_ADMIN ON *.* TO 'tsg_u2'@'%' WITH GRANT OPTION
+SHOW GRANTS FOR 'tsg_u2';
+Grants for tsg_u2@%
+GRANT USAGE ON *.* TO 'tsg_u2'@'%'
+GRANT 'tsg_r1'@'%' TO 'tsg_u2'@'%'
+GRANT ROLE_ADMIN ON *.* TO 'tsg_u2'@'%'
+GRANT CONNECTION_ADMIN ON *.* TO 'tsg_u2'@'%' WITH GRANT OPTION
+CREATE USER 'test_encode_u'@'localhost' identified by 'root';
+select authentication_string from mysql.user where user='test_encode_u';
+authentication_string
+*81F5E21E35407D884A6CD4A731AEBFB6AF209E1B
+DROP USER IF EXISTS joe, engineering, notgranted, otherrole, delete_stuff_privilege;
+CREATE USER joe;
+CREATE ROLE engineering;
+CREATE ROLE admins;
+CREATE ROLE notgranted;
+CREATE ROLE otherrole;
+GRANT INSERT ON test.* TO engineering;
+GRANT DELETE ON test.* TO admins;
+GRANT SELECT on test.* to joe;
+GRANT engineering TO joe;
+GRANT admins TO joe;
+SET DEFAULT ROLE admins TO joe;
+GRANT otherrole TO joe;
+GRANT UPDATE ON role.* TO otherrole;
+GRANT SELECT ON mysql.user TO otherrole;
+CREATE ROLE delete_stuff_privilege;
+GRANT DELETE ON mysql.user TO delete_stuff_privilege;
+GRANT delete_stuff_privilege TO otherrole;
+SHOW GRANTS FOR CURRENT_USER() USING notgranted;
+Error 3530 (HY000): `notgranted`@`%` is not granted to joe@%
+SHOW GRANTS FOR current_user() USING otherrole;
+Grants for joe@%
+GRANT USAGE ON *.* TO 'joe'@'%'
+GRANT SELECT ON `test`.* TO 'joe'@'%'
+GRANT UPDATE ON `role`.* TO 'joe'@'%'
+GRANT SELECT,DELETE ON `mysql`.`user` TO 'joe'@'%'
+GRANT 'admins'@'%', 'engineering'@'%', 'otherrole'@'%' TO 'joe'@'%'
+SHOW GRANTS FOR joe USING otherrole;
+Grants for joe@%
+GRANT USAGE ON *.* TO 'joe'@'%'
+GRANT SELECT ON `test`.* TO 'joe'@'%'
+GRANT UPDATE ON `role`.* TO 'joe'@'%'
+GRANT SELECT,DELETE ON `mysql`.`user` TO 'joe'@'%'
+GRANT 'admins'@'%', 'engineering'@'%', 'otherrole'@'%' TO 'joe'@'%'
+set global tidb_enable_resource_control = default;
+create table privilege__privileges.admin(a int, KEY idx_a (`a`));
+create user without_super;
+admin set bdr role primary;
+Error 8121 (HY000): privilege check for 'Super' fail
+admin show bdr role;
+Error 8121 (HY000): privilege check for 'Super' fail
+admin unset bdr role;
+Error 8121 (HY000): privilege check for 'Super' fail
+admin cancel ddl jobs 10;
+Error 8121 (HY000): privilege check for 'Super' fail
+admin pause ddl jobs 10;
+Error 8121 (HY000): privilege check for 'Super' fail
+admin resume ddl jobs 10;
+Error 8121 (HY000): privilege check for 'Super' fail
+admin checksum table privilege__privileges.admin;
+Error 8121 (HY000): privilege check for 'Super' fail
+admin check table privilege__privileges.admin;
+Error 8121 (HY000): privilege check for 'Super' fail
+admin check index privilege__privileges.admin idx_a;
+Error 8121 (HY000): privilege check for 'Super' fail
+admin show ddl jobs;
+Error 8121 (HY000): privilege check for 'Super' fail
+admin show ddl job queries 10;
+Error 8121 (HY000): privilege check for 'Super' fail
+ADMIN SHOW privilege__privileges.admin NEXT_ROW_ID;
+Error 8121 (HY000): privilege check for 'Super' fail
+ADMIN SHOW SLOW RECENT 3;
+Error 8121 (HY000): privilege check for 'Super' fail
+ADMIN SHOW SLOW TOP ALL 3;
+Error 8121 (HY000): privilege check for 'Super' fail

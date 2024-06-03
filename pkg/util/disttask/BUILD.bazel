@@ -1,0 +1,21 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "disttask",
+    srcs = ["idservice.go"],
+    importpath = "github.com/pingcap/tidb/pkg/util/disttask",
+    visibility = ["//visibility:public"],
+    deps = ["//pkg/domain/infosync"],
+)
+
+go_test(
+    name = "disttask_test",
+    timeout = "short",
+    srcs = ["idservice_test.go"],
+    embed = [":disttask"],
+    flaky = True,
+    deps = [
+        "//pkg/domain/infosync",
+        "@com_github_stretchr_testify//require",
+    ],
+)

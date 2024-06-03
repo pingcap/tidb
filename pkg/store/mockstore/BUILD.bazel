@@ -1,0 +1,57 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "mockstore",
+    srcs = [
+        "mockstore.go",
+        "redirector.go",
+        "tikv.go",
+        "unistore.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/store/mockstore",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/config",
+        "//pkg/kv",
+        "//pkg/store/mockstore/mockcopr",
+        "//pkg/store/mockstore/mockstorage",
+        "//pkg/store/mockstore/unistore",
+        "//pkg/testkit/testenv",
+        "@com_github_otiai10_copy//:copy",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_tikv_client_go_v2//testutils",
+        "@com_github_tikv_client_go_v2//tikv",
+        "@com_github_tikv_client_go_v2//tikvrpc",
+        "@com_github_tikv_client_go_v2//util",
+        "@com_github_tikv_pd_client//:client",
+    ],
+)
+
+go_test(
+    name = "mockstore_test",
+    timeout = "short",
+    srcs = [
+        "cluster_test.go",
+        "main_test.go",
+        "tikv_test.go",
+    ],
+    embed = [":mockstore"],
+    flaky = True,
+    deps = [
+        "//pkg/config",
+        "//pkg/kv",
+        "//pkg/sessionctx/stmtctx",
+        "//pkg/tablecodec",
+        "//pkg/testkit/testmain",
+        "//pkg/testkit/testsetup",
+        "//pkg/types",
+        "//pkg/util/codec",
+        "//pkg/util/rowcodec",
+        "@com_github_pingcap_kvproto//pkg/kvrpcpb",
+        "@com_github_stretchr_testify//require",
+        "@com_github_tikv_client_go_v2//config",
+        "@com_github_tikv_client_go_v2//testutils",
+        "@com_github_tikv_client_go_v2//tikv",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

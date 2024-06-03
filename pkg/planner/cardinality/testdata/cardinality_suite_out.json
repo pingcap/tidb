@@ -1,0 +1,4074 @@
+[
+  {
+    "Name": "TestCollationColumnEstimate",
+    "Cases": [
+      [
+        "test t  a 0 \u0000A\u0000A\u0000A 2",
+        "test t  a 0 \u0000B\u0000B\u0000B 2"
+      ],
+      [
+        "TableReader_7 2.00 root  data:Selection_6",
+        "└─Selection_6 2.00 cop[tikv]  eq(test.t.a, \"aÄa\")",
+        "  └─TableFullScan_5 4.00 cop[tikv] table:t keep order:false"
+      ],
+      [
+        "TableReader_7 2.00 root  data:Selection_6",
+        "└─Selection_6 2.00 cop[tikv]  gt(test.t.a, \"aÄa\")",
+        "  └─TableFullScan_5 4.00 cop[tikv] table:t keep order:false"
+      ]
+    ]
+  },
+  {
+    "Name": "TestOutOfRangeEstimation",
+    "Cases": [
+      {
+        "Start": 800,
+        "End": 900,
+        "Count": 735.504166655054
+      },
+      {
+        "Start": 900,
+        "End": 950,
+        "Count": 247.04782734719248
+      },
+      {
+        "Start": 950,
+        "End": 1000,
+        "Count": 226.14487557169574
+      },
+      {
+        "Start": 1000,
+        "End": 1050,
+        "Count": 205.24192379619902
+      },
+      {
+        "Start": 1050,
+        "End": 1100,
+        "Count": 184.33897202070227
+      },
+      {
+        "Start": 1150,
+        "End": 1200,
+        "Count": 142.53306846970884
+      },
+      {
+        "Start": 1200,
+        "End": 1300,
+        "Count": 214.85728161292752
+      },
+      {
+        "Start": 1300,
+        "End": 1400,
+        "Count": 131.2454745109406
+      },
+      {
+        "Start": 1400,
+        "End": 1500,
+        "Count": 47.650389770374105
+      },
+      {
+        "Start": 1500,
+        "End": 1600,
+        "Count": 7.5
+      },
+      {
+        "Start": 300,
+        "End": 899,
+        "Count": 4500
+      },
+      {
+        "Start": 800,
+        "End": 1000,
+        "Count": 1193.696869573942
+      },
+      {
+        "Start": 900,
+        "End": 1500,
+        "Count": 1502.495833344946
+      },
+      {
+        "Start": 300,
+        "End": 1500,
+        "Count": 4500
+      },
+      {
+        "Start": 200,
+        "End": 300,
+        "Count": 466.52882098990807
+      },
+      {
+        "Start": 100,
+        "End": 200,
+        "Count": 382.91701388792114
+      },
+      {
+        "Start": 200,
+        "End": 400,
+        "Count": 1237.5288209899081
+      },
+      {
+        "Start": 200,
+        "End": 1000,
+        "Count": 4500
+      },
+      {
+        "Start": 0,
+        "End": 100,
+        "Count": 299.3052067859343
+      },
+      {
+        "Start": -100,
+        "End": 100,
+        "Count": 299.3052067859343
+      },
+      {
+        "Start": -100,
+        "End": 0,
+        "Count": 7.5
+      }
+    ]
+  },
+  {
+    "Name": "TestOutOfRangeEstimationAfterDelete",
+    "Cases": [
+      {
+        "SQL": "explain format = 'brief' select * from t where a <= 300",
+        "Result": [
+          "TableReader 1003.33 root  data:Selection",
+          "└─Selection 1003.33 cop[tikv]  le(test.t.a, 300)",
+          "  └─TableFullScan 2000.00 cop[tikv] table:t keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t where a < 300",
+        "Result": [
+          "TableReader 1000.00 root  data:Selection",
+          "└─Selection 1000.00 cop[tikv]  lt(test.t.a, 300)",
+          "  └─TableFullScan 2000.00 cop[tikv] table:t keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t where a <= 500",
+        "Result": [
+          "TableReader 1670.00 root  data:Selection",
+          "└─Selection 1670.00 cop[tikv]  le(test.t.a, 500)",
+          "  └─TableFullScan 2000.00 cop[tikv] table:t keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t where a >= 300 and a <= 900",
+        "Result": [
+          "TableReader 2000.00 root  data:Selection",
+          "└─Selection 2000.00 cop[tikv]  ge(test.t.a, 300), le(test.t.a, 900)",
+          "  └─TableFullScan 2000.00 cop[tikv] table:t keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t where a >= 900",
+        "Result": [
+          "TableReader 1000.00 root  data:Selection",
+          "└─Selection 1000.00 cop[tikv]  ge(test.t.a, 900)",
+          "  └─TableFullScan 2000.00 cop[tikv] table:t keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t where a > 900",
+        "Result": [
+          "TableReader 1000.00 root  data:Selection",
+          "└─Selection 1000.00 cop[tikv]  gt(test.t.a, 900)",
+          "  └─TableFullScan 2000.00 cop[tikv] table:t keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t where a >= 300",
+        "Result": [
+          "TableReader 2000.00 root  data:Selection",
+          "└─Selection 2000.00 cop[tikv]  ge(test.t.a, 300)",
+          "  └─TableFullScan 2000.00 cop[tikv] table:t keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t where a <= 900",
+        "Result": [
+          "TableReader 2000.00 root  data:Selection",
+          "└─Selection 2000.00 cop[tikv]  le(test.t.a, 900)",
+          "  └─TableFullScan 2000.00 cop[tikv] table:t keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t where a > 800 and a < 1000",
+        "Result": [
+          "TableReader 793.20 root  data:Selection",
+          "└─Selection 793.20 cop[tikv]  gt(test.t.a, 800), lt(test.t.a, 1000)",
+          "  └─TableFullScan 2000.00 cop[tikv] table:t keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t where a > 900 and a < 1000",
+        "Result": [
+          "TableReader 458.19 root  data:Selection",
+          "└─Selection 458.19 cop[tikv]  gt(test.t.a, 900), lt(test.t.a, 1000)",
+          "  └─TableFullScan 2000.00 cop[tikv] table:t keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t where a > 900 and a < 1100",
+        "Result": [
+          "TableReader 832.77 root  data:Selection",
+          "└─Selection 832.77 cop[tikv]  gt(test.t.a, 900), lt(test.t.a, 1100)",
+          "  └─TableFullScan 2000.00 cop[tikv] table:t keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t where a > 200 and a < 300",
+        "Result": [
+          "TableReader 459.03 root  data:Selection",
+          "└─Selection 459.03 cop[tikv]  gt(test.t.a, 200), lt(test.t.a, 300)",
+          "  └─TableFullScan 2000.00 cop[tikv] table:t keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t where a > 100 and a < 300",
+        "Result": [
+          "TableReader 834.45 root  data:Selection",
+          "└─Selection 834.45 cop[tikv]  gt(test.t.a, 100), lt(test.t.a, 300)",
+          "  └─TableFullScan 2000.00 cop[tikv] table:t keep order:false"
+        ]
+      },
+      {
+        "SQL": "set @@tidb_opt_objective = 'determinate'",
+        "Result": null
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t where a <= 300",
+        "Result": [
+          "TableReader 10.00 root  data:Selection",
+          "└─Selection 10.00 cop[tikv]  le(test.t.a, 300)",
+          "  └─TableFullScan 3000.00 cop[tikv] table:t keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t where a <= 500",
+        "Result": [
+          "TableReader 1010.00 root  data:Selection",
+          "└─Selection 1010.00 cop[tikv]  le(test.t.a, 500)",
+          "  └─TableFullScan 3000.00 cop[tikv] table:t keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t where a > 900",
+        "Result": [
+          "TableReader 5.00 root  data:Selection",
+          "└─Selection 5.00 cop[tikv]  gt(test.t.a, 900)",
+          "  └─TableFullScan 3000.00 cop[tikv] table:t keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t where a <= 900",
+        "Result": [
+          "TableReader 3000.00 root  data:Selection",
+          "└─Selection 3000.00 cop[tikv]  le(test.t.a, 900)",
+          "  └─TableFullScan 3000.00 cop[tikv] table:t keep order:false"
+        ]
+      }
+    ]
+  },
+  {
+    "Name": "TestColumnIndexNullEstimation",
+    "Cases": [
+      [
+        "IndexReader_6 4.00 root  index:IndexRangeScan_5",
+        "└─IndexRangeScan_5 4.00 cop[tikv] table:t, index:idx_b(b) range:[NULL,NULL], keep order:false"
+      ],
+      [
+        "IndexReader_6 1.00 root  index:IndexFullScan_5",
+        "└─IndexFullScan_5 1.00 cop[tikv] table:t, index:idx_b(b) keep order:false"
+      ],
+      [
+        "IndexReader_6 4.00 root  index:IndexRangeScan_5",
+        "└─IndexRangeScan_5 4.00 cop[tikv] table:t, index:idx_b(b) range:[NULL,NULL], (3,+inf], keep order:false"
+      ],
+      [
+        "IndexReader_5 5.00 root  index:IndexFullScan_4",
+        "└─IndexFullScan_4 5.00 cop[tikv] table:t, index:idx_b(b) keep order:false"
+      ],
+      [
+        "IndexReader_6 1.00 root  index:IndexRangeScan_5",
+        "└─IndexRangeScan_5 1.00 cop[tikv] table:t, index:idx_b(b) range:[-inf,4), keep order:false"
+      ],
+      [
+        "TableReader_7 1.00 root  data:Selection_6",
+        "└─Selection_6 1.00 cop[tikv]  isnull(test.t.a)",
+        "  └─TableFullScan_5 5.00 cop[tikv] table:t keep order:false"
+      ],
+      [
+        "TableReader_7 4.00 root  data:Selection_6",
+        "└─Selection_6 4.00 cop[tikv]  not(isnull(test.t.a))",
+        "  └─TableFullScan_5 5.00 cop[tikv] table:t keep order:false"
+      ],
+      [
+        "TableReader_7 2.00 root  data:Selection_6",
+        "└─Selection_6 2.00 cop[tikv]  or(isnull(test.t.a), gt(test.t.a, 3))",
+        "  └─TableFullScan_5 5.00 cop[tikv] table:t keep order:false"
+      ],
+      [
+        "TableReader_5 5.00 root  data:TableFullScan_4",
+        "└─TableFullScan_4 5.00 cop[tikv] table:t keep order:false"
+      ],
+      [
+        "TableReader_7 3.00 root  data:Selection_6",
+        "└─Selection_6 3.00 cop[tikv]  lt(test.t.a, 4)",
+        "  └─TableFullScan_5 5.00 cop[tikv] table:t keep order:false"
+      ]
+    ]
+  },
+  {
+    "Name": "TestUniqCompEqualEst",
+    "Cases": [
+      [
+        "Point_Get_5 1.00 root table:t, clustered index:PRIMARY(a, b) "
+      ]
+    ]
+  },
+  {
+    "Name": "TestDNFCondSelectivity",
+    "Cases": [
+      {
+        "SQL": "select * from t where b > 7 or c < 4",
+        "Selectivity": 0.34375
+      },
+      {
+        "SQL": "select * from t where d < 5 or b > 6",
+        "Selectivity": 0.625
+      },
+      {
+        "SQL": "select * from t where a > 8 or d < 4 or c > 7 or b < 5",
+        "Selectivity": 0.82421875
+      },
+      {
+        "SQL": "select * from t where a < 8 and (b > 10 or c < 3 or b > 4) and a > 2",
+        "Selectivity": 0.3125
+      }
+    ]
+  },
+  {
+    "Name": "TestSmallRangeEstimation",
+    "Cases": [
+      {
+        "Start": 5,
+        "End": 5,
+        "Count": 3
+      },
+      {
+        "Start": 5,
+        "End": 6,
+        "Count": 6
+      },
+      {
+        "Start": 5,
+        "End": 10,
+        "Count": 18
+      },
+      {
+        "Start": 5,
+        "End": 15,
+        "Count": 33
+      },
+      {
+        "Start": 10,
+        "End": 15,
+        "Count": 18
+      },
+      {
+        "Start": 5,
+        "End": 25,
+        "Count": 63
+      },
+      {
+        "Start": 25,
+        "End": 25,
+        "Count": 3
+      }
+    ]
+  },
+  {
+    "Name": "TestTopNAssistedEstimationWithoutNewCollation",
+    "Cases": [
+      {
+        "SQL": "explain format = 'brief' select * from t where a like '%111%'",
+        "Result": [
+          "TableReader 30.00 root  data:Selection",
+          "└─Selection 30.00 cop[tikv]  like(test.t.a, \"%111%\", 92)",
+          "  └─TableFullScan 40.00 cop[tikv] table:t keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t where a not like '%111%'",
+        "Result": [
+          "TableReader 7.00 root  data:Selection",
+          "└─Selection 7.00 cop[tikv]  not(like(test.t.a, \"%111%\", 92))",
+          "  └─TableFullScan 40.00 cop[tikv] table:t keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t where a regexp '.*111.*'",
+        "Result": [
+          "TableReader 30.00 root  data:Selection",
+          "└─Selection 30.00 cop[tikv]  regexp(test.t.a, \".*111.*\")",
+          "  └─TableFullScan 40.00 cop[tikv] table:t keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t where a not regexp '.*111.*'",
+        "Result": [
+          "TableReader 7.00 root  data:Selection",
+          "└─Selection 7.00 cop[tikv]  not(istrue_with_null(regexp(test.t.a, \".*111.*\")))",
+          "  └─TableFullScan 40.00 cop[tikv] table:t keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t where ifnull(a, '1111') like '%111%'",
+        "Result": [
+          "TableReader 33.00 root  data:Selection",
+          "└─Selection 33.00 cop[tikv]  like(ifnull(test.t.a, \"1111\"), \"%111%\", 92)",
+          "  └─TableFullScan 40.00 cop[tikv] table:t keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t where f like '%111%'",
+        "Result": [
+          "TableReader 30.00 root  data:Selection",
+          "└─Selection 30.00 cop[tikv]  like(test.t.f, \"%111%\", 92)",
+          "  └─TableFullScan 40.00 cop[tikv] table:t keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t where f not like '%111%'",
+        "Result": [
+          "TableReader 7.00 root  data:Selection",
+          "└─Selection 7.00 cop[tikv]  not(like(test.t.f, \"%111%\", 92))",
+          "  └─TableFullScan 40.00 cop[tikv] table:t keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t where f regexp '.*111.*'",
+        "Result": [
+          "Selection 32.00 root  regexp(test.t.f, \".*111.*\")",
+          "└─TableReader 40.00 root  data:TableFullScan",
+          "  └─TableFullScan 40.00 cop[tikv] table:t keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t where f not regexp '.*111.*'",
+        "Result": [
+          "Selection 32.00 root  not(regexp(test.t.f, \".*111.*\"))",
+          "└─TableReader 40.00 root  data:TableFullScan",
+          "  └─TableFullScan 40.00 cop[tikv] table:t keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t where ifnull(f, '1111') like '%111%'",
+        "Result": [
+          "TableReader 33.00 root  data:Selection",
+          "└─Selection 33.00 cop[tikv]  like(ifnull(test.t.f, \"1111\"), \"%111%\", 92)",
+          "  └─TableFullScan 40.00 cop[tikv] table:t keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t where a like '%111%' and f rlike '.*111.*'",
+        "Result": [
+          "Selection 24.00 root  regexp(test.t.f, \".*111.*\")",
+          "└─TableReader 30.00 root  data:Selection",
+          "  └─Selection 30.00 cop[tikv]  like(test.t.a, \"%111%\", 92)",
+          "    └─TableFullScan 40.00 cop[tikv] table:t keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t where a like '%111%' or f like '%111%'",
+        "Result": [
+          "TableReader 37.50 root  data:Selection",
+          "└─Selection 37.50 cop[tikv]  or(like(test.t.a, \"%111%\", 92), like(test.t.f, \"%111%\", 92))",
+          "  └─TableFullScan 40.00 cop[tikv] table:t keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t where b like '%111%'",
+        "Result": [
+          "TableReader 30.00 root  data:Selection",
+          "└─Selection 30.00 cop[tikv]  like(test.t.b, \"%111%\", 92)",
+          "  └─TableFullScan 40.00 cop[tikv] table:t keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t where b not like '%111%'",
+        "Result": [
+          "TableReader 7.00 root  data:Selection",
+          "└─Selection 7.00 cop[tikv]  not(like(test.t.b, \"%111%\", 92))",
+          "  └─TableFullScan 40.00 cop[tikv] table:t keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t where b regexp '.*111.*'",
+        "Result": [
+          "TableReader 30.00 root  data:Selection",
+          "└─Selection 30.00 cop[tikv]  regexp(test.t.b, \".*111.*\")",
+          "  └─TableFullScan 40.00 cop[tikv] table:t keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t where b not regexp '.*111.*'",
+        "Result": [
+          "TableReader 7.00 root  data:Selection",
+          "└─Selection 7.00 cop[tikv]  not(istrue_with_null(regexp(test.t.b, \".*111.*\")))",
+          "  └─TableFullScan 40.00 cop[tikv] table:t keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t where ifnull(b, '1111') like '%111%'",
+        "Result": [
+          "TableReader 33.00 root  data:Selection",
+          "└─Selection 33.00 cop[tikv]  like(ifnull(test.t.b, \"1111\"), \"%111%\", 92)",
+          "  └─TableFullScan 40.00 cop[tikv] table:t keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t where b like '%111%' and f like '%111%'",
+        "Result": [
+          "TableReader 22.50 root  data:Selection",
+          "└─Selection 22.50 cop[tikv]  like(test.t.b, \"%111%\", 92), like(test.t.f, \"%111%\", 92)",
+          "  └─TableFullScan 40.00 cop[tikv] table:t keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t where b like '%111%' or f like '%111%'",
+        "Result": [
+          "TableReader 37.50 root  data:Selection",
+          "└─Selection 37.50 cop[tikv]  or(like(test.t.b, \"%111%\", 92), like(test.t.f, \"%111%\", 92))",
+          "  └─TableFullScan 40.00 cop[tikv] table:t keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t where c like '%111%'",
+        "Result": [
+          "TableReader 30.00 root  data:Selection",
+          "└─Selection 30.00 cop[tikv]  like(test.t.c, \"%111%\", 92)",
+          "  └─TableFullScan 40.00 cop[tikv] table:t keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t where c not like '%111%'",
+        "Result": [
+          "TableReader 7.00 root  data:Selection",
+          "└─Selection 7.00 cop[tikv]  not(like(test.t.c, \"%111%\", 92))",
+          "  └─TableFullScan 40.00 cop[tikv] table:t keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t where ifnull(c, '1111') like '%111%'",
+        "Result": [
+          "TableReader 33.00 root  data:Selection",
+          "└─Selection 33.00 cop[tikv]  like(ifnull(test.t.c, \"1111\"), \"%111%\", 92)",
+          "  └─TableFullScan 40.00 cop[tikv] table:t keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t where d like '%111%'",
+        "Result": [
+          "TableReader 30.00 root  data:Selection",
+          "└─Selection 30.00 cop[tikv]  like(test.t.d, \"%111%\", 92)",
+          "  └─TableFullScan 40.00 cop[tikv] table:t keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t where d not like '%111%'",
+        "Result": [
+          "TableReader 7.00 root  data:Selection",
+          "└─Selection 7.00 cop[tikv]  not(like(test.t.d, \"%111%\", 92))",
+          "  └─TableFullScan 40.00 cop[tikv] table:t keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t where ifnull(c, '1111') like '%111%'",
+        "Result": [
+          "TableReader 33.00 root  data:Selection",
+          "└─Selection 33.00 cop[tikv]  like(ifnull(test.t.c, \"1111\"), \"%111%\", 92)",
+          "  └─TableFullScan 40.00 cop[tikv] table:t keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t where e like '%111%'",
+        "Result": [
+          "TableReader 30.00 root  data:Selection",
+          "└─Selection 30.00 cop[tikv]  like(test.t.e, \"%111%\", 92)",
+          "  └─TableFullScan 40.00 cop[tikv] table:t keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t where e not like '%111%'",
+        "Result": [
+          "TableReader 7.00 root  data:Selection",
+          "└─Selection 7.00 cop[tikv]  not(like(test.t.e, \"%111%\", 92))",
+          "  └─TableFullScan 40.00 cop[tikv] table:t keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t where ifnull(e, '1111') like '%111%'",
+        "Result": [
+          "TableReader 33.00 root  data:Selection",
+          "└─Selection 33.00 cop[tikv]  like(ifnull(test.t.e, \"1111\"), \"%111%\", 92)",
+          "  └─TableFullScan 40.00 cop[tikv] table:t keep order:false"
+        ]
+      }
+    ]
+  },
+  {
+    "Name": "TestTopNAssistedEstimationWithNewCollation",
+    "Cases": [
+      {
+        "SQL": "explain format = 'brief' select * from t where a like '%111%'",
+        "Result": [
+          "TableReader 30.00 root  data:Selection",
+          "└─Selection 30.00 cop[tikv]  like(test.t.a, \"%111%\", 92)",
+          "  └─TableFullScan 40.00 cop[tikv] table:t keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t where a not like '%111%'",
+        "Result": [
+          "TableReader 7.00 root  data:Selection",
+          "└─Selection 7.00 cop[tikv]  not(like(test.t.a, \"%111%\", 92))",
+          "  └─TableFullScan 40.00 cop[tikv] table:t keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t where a regexp '.*111.*'",
+        "Result": [
+          "TableReader 30.00 root  data:Selection",
+          "└─Selection 30.00 cop[tikv]  regexp(test.t.a, \".*111.*\")",
+          "  └─TableFullScan 40.00 cop[tikv] table:t keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t where a not regexp '.*111.*'",
+        "Result": [
+          "TableReader 7.00 root  data:Selection",
+          "└─Selection 7.00 cop[tikv]  not(istrue_with_null(regexp(test.t.a, \".*111.*\")))",
+          "  └─TableFullScan 40.00 cop[tikv] table:t keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t where ifnull(a, '1111') like '%111%'",
+        "Result": [
+          "TableReader 33.00 root  data:Selection",
+          "└─Selection 33.00 cop[tikv]  like(ifnull(test.t.a, \"1111\"), \"%111%\", 92)",
+          "  └─TableFullScan 40.00 cop[tikv] table:t keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t where f like '%111%'",
+        "Result": [
+          "TableReader 30.00 root  data:Selection",
+          "└─Selection 30.00 cop[tikv]  like(test.t.f, \"%111%\", 92)",
+          "  └─TableFullScan 40.00 cop[tikv] table:t keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t where f not like '%111%'",
+        "Result": [
+          "TableReader 7.00 root  data:Selection",
+          "└─Selection 7.00 cop[tikv]  not(like(test.t.f, \"%111%\", 92))",
+          "  └─TableFullScan 40.00 cop[tikv] table:t keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t where f regexp '.*111.*'",
+        "Result": [
+          "Selection 32.00 root  regexp(test.t.f, \".*111.*\")",
+          "└─TableReader 40.00 root  data:TableFullScan",
+          "  └─TableFullScan 40.00 cop[tikv] table:t keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t where f not regexp '.*111.*'",
+        "Result": [
+          "Selection 32.00 root  not(regexp(test.t.f, \".*111.*\"))",
+          "└─TableReader 40.00 root  data:TableFullScan",
+          "  └─TableFullScan 40.00 cop[tikv] table:t keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t where ifnull(f, '1111') like '%111%'",
+        "Result": [
+          "TableReader 33.00 root  data:Selection",
+          "└─Selection 33.00 cop[tikv]  like(ifnull(test.t.f, \"1111\"), \"%111%\", 92)",
+          "  └─TableFullScan 40.00 cop[tikv] table:t keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t where a like '%111%' and f rlike '.*111.*'",
+        "Result": [
+          "Selection 24.00 root  regexp(test.t.f, \".*111.*\")",
+          "└─TableReader 30.00 root  data:Selection",
+          "  └─Selection 30.00 cop[tikv]  like(test.t.a, \"%111%\", 92)",
+          "    └─TableFullScan 40.00 cop[tikv] table:t keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t where a like '%111%' or f like '%111%'",
+        "Result": [
+          "TableReader 37.50 root  data:Selection",
+          "└─Selection 37.50 cop[tikv]  or(like(test.t.a, \"%111%\", 92), like(test.t.f, \"%111%\", 92))",
+          "  └─TableFullScan 40.00 cop[tikv] table:t keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t where b like '%111%'",
+        "Result": [
+          "TableReader 4.00 root  data:Selection",
+          "└─Selection 4.00 cop[tikv]  like(test.t.b, \"%111%\", 92)",
+          "  └─TableFullScan 40.00 cop[tikv] table:t keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t where b not like '%111%'",
+        "Result": [
+          "TableReader 36.00 root  data:Selection",
+          "└─Selection 36.00 cop[tikv]  not(like(test.t.b, \"%111%\", 92))",
+          "  └─TableFullScan 40.00 cop[tikv] table:t keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t where b regexp '.*111.*'",
+        "Result": [
+          "TableReader 4.00 root  data:Selection",
+          "└─Selection 4.00 cop[tikv]  regexp(test.t.b, \".*111.*\")",
+          "  └─TableFullScan 40.00 cop[tikv] table:t keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t where b not regexp '.*111.*'",
+        "Result": [
+          "TableReader 36.00 root  data:Selection",
+          "└─Selection 36.00 cop[tikv]  not(istrue_with_null(regexp(test.t.b, \".*111.*\")))",
+          "  └─TableFullScan 40.00 cop[tikv] table:t keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t where ifnull(b, '1111') like '%111%'",
+        "Result": [
+          "TableReader 4.00 root  data:Selection",
+          "└─Selection 4.00 cop[tikv]  like(ifnull(test.t.b, \"1111\"), \"%111%\", 92)",
+          "  └─TableFullScan 40.00 cop[tikv] table:t keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t where b like '%111%' and f like '%111%'",
+        "Result": [
+          "TableReader 3.00 root  data:Selection",
+          "└─Selection 3.00 cop[tikv]  like(test.t.b, \"%111%\", 92), like(test.t.f, \"%111%\", 92)",
+          "  └─TableFullScan 40.00 cop[tikv] table:t keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t where b like '%111%' or f like '%111%'",
+        "Result": [
+          "TableReader 31.00 root  data:Selection",
+          "└─Selection 31.00 cop[tikv]  or(like(test.t.b, \"%111%\", 92), like(test.t.f, \"%111%\", 92))",
+          "  └─TableFullScan 40.00 cop[tikv] table:t keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t where c like '%111%'",
+        "Result": [
+          "TableReader 4.00 root  data:Selection",
+          "└─Selection 4.00 cop[tikv]  like(test.t.c, \"%111%\", 92)",
+          "  └─TableFullScan 40.00 cop[tikv] table:t keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t where c not like '%111%'",
+        "Result": [
+          "TableReader 36.00 root  data:Selection",
+          "└─Selection 36.00 cop[tikv]  not(like(test.t.c, \"%111%\", 92))",
+          "  └─TableFullScan 40.00 cop[tikv] table:t keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t where ifnull(c, '1111') like '%111%'",
+        "Result": [
+          "TableReader 4.00 root  data:Selection",
+          "└─Selection 4.00 cop[tikv]  like(ifnull(test.t.c, \"1111\"), \"%111%\", 92)",
+          "  └─TableFullScan 40.00 cop[tikv] table:t keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t where d like '%111%'",
+        "Result": [
+          "TableReader 4.00 root  data:Selection",
+          "└─Selection 4.00 cop[tikv]  like(test.t.d, \"%111%\", 92)",
+          "  └─TableFullScan 40.00 cop[tikv] table:t keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t where d not like '%111%'",
+        "Result": [
+          "TableReader 36.00 root  data:Selection",
+          "└─Selection 36.00 cop[tikv]  not(like(test.t.d, \"%111%\", 92))",
+          "  └─TableFullScan 40.00 cop[tikv] table:t keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t where ifnull(c, '1111') like '%111%'",
+        "Result": [
+          "TableReader 4.00 root  data:Selection",
+          "└─Selection 4.00 cop[tikv]  like(ifnull(test.t.c, \"1111\"), \"%111%\", 92)",
+          "  └─TableFullScan 40.00 cop[tikv] table:t keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t where e like '%111%'",
+        "Result": [
+          "TableReader 4.00 root  data:Selection",
+          "└─Selection 4.00 cop[tikv]  like(test.t.e, \"%111%\", 92)",
+          "  └─TableFullScan 40.00 cop[tikv] table:t keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t where e not like '%111%'",
+        "Result": [
+          "TableReader 36.00 root  data:Selection",
+          "└─Selection 36.00 cop[tikv]  not(like(test.t.e, \"%111%\", 92))",
+          "  └─TableFullScan 40.00 cop[tikv] table:t keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t where ifnull(e, '1111') like '%111%'",
+        "Result": [
+          "TableReader 4.00 root  data:Selection",
+          "└─Selection 4.00 cop[tikv]  like(ifnull(test.t.e, \"1111\"), \"%111%\", 92)",
+          "  └─TableFullScan 40.00 cop[tikv] table:t keep order:false"
+        ]
+      }
+    ]
+  },
+  {
+    "Name": "TestGlobalStatsOutOfRangeEstimationAfterDelete",
+    "Cases": [
+      {
+        "SQL": "explain format = 'brief' select * from t where a <= 300",
+        "Result": [
+          "TableReader 1003.33 root partition:p0 data:Selection",
+          "└─Selection 1003.33 cop[tikv]  le(test.t.a, 300)",
+          "  └─TableFullScan 2000.00 cop[tikv] table:t keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t where a < 300",
+        "Result": [
+          "TableReader 1000.00 root partition:p0 data:Selection",
+          "└─Selection 1000.00 cop[tikv]  lt(test.t.a, 300)",
+          "  └─TableFullScan 2000.00 cop[tikv] table:t keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t where a <= 500",
+        "Result": [
+          "TableReader 1670.00 root partition:p0,p1 data:Selection",
+          "└─Selection 1670.00 cop[tikv]  le(test.t.a, 500)",
+          "  └─TableFullScan 2000.00 cop[tikv] table:t keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t where a >= 300 and a <= 900",
+        "Result": [
+          "TableReader 2000.00 root partition:p0,p1,p2,p3 data:Selection",
+          "└─Selection 2000.00 cop[tikv]  ge(test.t.a, 300), le(test.t.a, 900)",
+          "  └─TableFullScan 2000.00 cop[tikv] table:t keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t where a >= 900",
+        "Result": [
+          "TableReader 1000.00 root partition:p3,p4 data:Selection",
+          "└─Selection 1000.00 cop[tikv]  ge(test.t.a, 900)",
+          "  └─TableFullScan 2000.00 cop[tikv] table:t keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t where a > 900",
+        "Result": [
+          "TableReader 1000.00 root partition:p3,p4 data:Selection",
+          "└─Selection 1000.00 cop[tikv]  gt(test.t.a, 900)",
+          "  └─TableFullScan 2000.00 cop[tikv] table:t keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t where a >= 300",
+        "Result": [
+          "TableReader 2000.00 root partition:all data:Selection",
+          "└─Selection 2000.00 cop[tikv]  ge(test.t.a, 300)",
+          "  └─TableFullScan 2000.00 cop[tikv] table:t keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t where a <= 900",
+        "Result": [
+          "TableReader 2000.00 root partition:p0,p1,p2,p3 data:Selection",
+          "└─Selection 2000.00 cop[tikv]  le(test.t.a, 900)",
+          "  └─TableFullScan 2000.00 cop[tikv] table:t keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t where a > 800 and a < 1000",
+        "Result": [
+          "TableReader 793.20 root partition:p3 data:Selection",
+          "└─Selection 793.20 cop[tikv]  gt(test.t.a, 800), lt(test.t.a, 1000)",
+          "  └─TableFullScan 2000.00 cop[tikv] table:t keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t where a > 900 and a < 1000",
+        "Result": [
+          "TableReader 458.19 root partition:p3 data:Selection",
+          "└─Selection 458.19 cop[tikv]  gt(test.t.a, 900), lt(test.t.a, 1000)",
+          "  └─TableFullScan 2000.00 cop[tikv] table:t keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t where a > 900 and a < 1100",
+        "Result": [
+          "TableReader 832.77 root partition:p3,p4 data:Selection",
+          "└─Selection 832.77 cop[tikv]  gt(test.t.a, 900), lt(test.t.a, 1100)",
+          "  └─TableFullScan 2000.00 cop[tikv] table:t keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t where a > 200 and a < 300",
+        "Result": [
+          "TableReader 459.03 root partition:p0 data:Selection",
+          "└─Selection 459.03 cop[tikv]  gt(test.t.a, 200), lt(test.t.a, 300)",
+          "  └─TableFullScan 2000.00 cop[tikv] table:t keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t where a > 100 and a < 300",
+        "Result": [
+          "TableReader 834.45 root partition:p0 data:Selection",
+          "└─Selection 834.45 cop[tikv]  gt(test.t.a, 100), lt(test.t.a, 300)",
+          "  └─TableFullScan 2000.00 cop[tikv] table:t keep order:false"
+        ]
+      }
+    ]
+  },
+  {
+    "Name": "TestOrderingIdxSelectivityThreshold",
+    "Cases": [
+      {
+        "Query": "set @@tidb_opt_ordering_index_selectivity_ratio = -1",
+        "Result": null
+      },
+      {
+        "Query": "set @@tidb_opt_ordering_index_selectivity_threshold = 0",
+        "Result": null
+      },
+      {
+        "Query": "explain format = 'brief' select * from t where b >= 9950 order by c limit 1",
+        "Result": [
+          "Limit 1.00 root  offset:0, count:1",
+          "└─IndexLookUp 1.00 root  ",
+          "  ├─IndexFullScan(Build) 200.00 cop[tikv] table:t, index:ic(c) keep order:true, stats:pseudo",
+          "  └─Selection(Probe) 1.00 cop[tikv]  ge(test.t.b, 9950)",
+          "    └─TableRowIDScan 200.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "Query": "explain format = 'brief' select * from t where b >= 9950 order by c desc limit 1",
+        "Result": [
+          "Limit 1.00 root  offset:0, count:1",
+          "└─IndexLookUp 1.00 root  ",
+          "  ├─IndexFullScan(Build) 200.00 cop[tikv] table:t, index:ic(c) keep order:true, desc, stats:pseudo",
+          "  └─Selection(Probe) 1.00 cop[tikv]  ge(test.t.b, 9950)",
+          "    └─TableRowIDScan 200.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "Query": "explain format = 'brief' select * from t where b >= 8999 order by c limit 1",
+        "Result": [
+          "Limit 1.00 root  offset:0, count:1",
+          "└─IndexLookUp 1.00 root  ",
+          "  ├─IndexFullScan(Build) 9.99 cop[tikv] table:t, index:ic(c) keep order:true, stats:pseudo",
+          "  └─Selection(Probe) 1.00 cop[tikv]  ge(test.t.b, 8999)",
+          "    └─TableRowIDScan 9.99 cop[tikv] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "Query": "explain format = 'brief' select * from t where b >= 9000 order by c limit 1",
+        "Result": [
+          "Limit 1.00 root  offset:0, count:1",
+          "└─IndexLookUp 1.00 root  ",
+          "  ├─IndexFullScan(Build) 10.00 cop[tikv] table:t, index:ic(c) keep order:true, stats:pseudo",
+          "  └─Selection(Probe) 1.00 cop[tikv]  ge(test.t.b, 9000)",
+          "    └─TableRowIDScan 10.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "Query": "explain format = 'brief' select * from t where b >= 9001 order by c limit 1",
+        "Result": [
+          "Limit 1.00 root  offset:0, count:1",
+          "└─IndexLookUp 1.00 root  ",
+          "  ├─IndexFullScan(Build) 10.01 cop[tikv] table:t, index:ic(c) keep order:true, stats:pseudo",
+          "  └─Selection(Probe) 1.00 cop[tikv]  ge(test.t.b, 9001)",
+          "    └─TableRowIDScan 10.01 cop[tikv] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "Query": "explain format = 'brief' select * from t where a < 10001 order by c limit 1",
+        "Result": [
+          "IndexLookUp 1.00 root  limit embedded(offset:0, count:1)",
+          "├─Limit(Build) 1.00 cop[tikv]  offset:0, count:1",
+          "│ └─Selection 1.00 cop[tikv]  lt(test.t.a, 10001)",
+          "│   └─IndexFullScan 10.00 cop[tikv] table:t, index:ic(c) keep order:true, stats:pseudo",
+          "└─TableRowIDScan(Probe) 1.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "Query": "explain format = 'brief' select * from t where a < 10000 order by c limit 1",
+        "Result": [
+          "IndexLookUp 1.00 root  limit embedded(offset:0, count:1)",
+          "├─Limit(Build) 1.00 cop[tikv]  offset:0, count:1",
+          "│ └─Selection 1.00 cop[tikv]  lt(test.t.a, 10000)",
+          "│   └─IndexFullScan 10.00 cop[tikv] table:t, index:ic(c) keep order:true, stats:pseudo",
+          "└─TableRowIDScan(Probe) 1.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "Query": "explain format = 'brief' select * from t where a < 9999 order by c limit 1",
+        "Result": [
+          "IndexLookUp 1.00 root  limit embedded(offset:0, count:1)",
+          "├─Limit(Build) 1.00 cop[tikv]  offset:0, count:1",
+          "│ └─Selection 1.00 cop[tikv]  lt(test.t.a, 9999)",
+          "│   └─IndexFullScan 10.00 cop[tikv] table:t, index:ic(c) keep order:true, stats:pseudo",
+          "└─TableRowIDScan(Probe) 1.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "Query": "explain format = 'brief' select * from t where b >= 0 and b <= 100 or c >= 0 and c <= 100 order by c limit 1",
+        "Result": [
+          "Limit 1.00 root  offset:0, count:1",
+          "└─IndexLookUp 1.00 root  ",
+          "  ├─IndexFullScan(Build) 49.76 cop[tikv] table:t, index:ic(c) keep order:true, stats:pseudo",
+          "  └─Selection(Probe) 1.00 cop[tikv]  or(and(ge(test.t.b, 0), le(test.t.b, 100)), and(ge(test.t.c, 0), le(test.t.c, 100)))",
+          "    └─TableRowIDScan 49.76 cop[tikv] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "Query": "explain format = 'brief' select * from t where a < 1000 and c < 100 limit 1",
+        "Result": [
+          "Limit 1.00 root  offset:0, count:1",
+          "└─TableReader 1.00 root  data:Limit",
+          "  └─Limit 1.00 cop[tikv]  offset:0, count:1",
+          "    └─Selection 1.00 cop[tikv]  lt(test.t.c, 100)",
+          "      └─TableRangeScan 100.00 cop[tikv] table:t range:[-inf,1000), keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "Query": "set @@tidb_opt_ordering_index_selectivity_threshold = 0.1",
+        "Result": null
+      },
+      {
+        "Query": "explain format = 'brief' select * from t where b >= 9950 order by c limit 1",
+        "Result": [
+          "TopN 1.00 root  test.t.c, offset:0, count:1",
+          "└─IndexLookUp 1.00 root  ",
+          "  ├─IndexRangeScan(Build) 500.00 cop[tikv] table:t, index:ib(b) range:[9950,+inf], keep order:false, stats:pseudo",
+          "  └─TopN(Probe) 1.00 cop[tikv]  test.t.c, offset:0, count:1",
+          "    └─TableRowIDScan 500.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "Query": "explain format = 'brief' select * from t where b >= 9950 order by c desc limit 1",
+        "Result": [
+          "TopN 1.00 root  test.t.c:desc, offset:0, count:1",
+          "└─IndexLookUp 1.00 root  ",
+          "  ├─IndexRangeScan(Build) 500.00 cop[tikv] table:t, index:ib(b) range:[9950,+inf], keep order:false, stats:pseudo",
+          "  └─TopN(Probe) 1.00 cop[tikv]  test.t.c:desc, offset:0, count:1",
+          "    └─TableRowIDScan 500.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "Query": "explain format = 'brief' select * from t where b >= 8999 order by c limit 1",
+        "Result": [
+          "Limit 1.00 root  offset:0, count:1",
+          "└─IndexLookUp 1.00 root  ",
+          "  ├─IndexFullScan(Build) 9.99 cop[tikv] table:t, index:ic(c) keep order:true, stats:pseudo",
+          "  └─Selection(Probe) 1.00 cop[tikv]  ge(test.t.b, 8999)",
+          "    └─TableRowIDScan 9.99 cop[tikv] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "Query": "explain format = 'brief' select * from t where b >= 9000 order by c limit 1",
+        "Result": [
+          "Limit 1.00 root  offset:0, count:1",
+          "└─IndexLookUp 1.00 root  ",
+          "  ├─IndexFullScan(Build) 10.00 cop[tikv] table:t, index:ic(c) keep order:true, stats:pseudo",
+          "  └─Selection(Probe) 1.00 cop[tikv]  ge(test.t.b, 9000)",
+          "    └─TableRowIDScan 10.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "Query": "explain format = 'brief' select * from t where b >= 9001 order by c limit 1",
+        "Result": [
+          "TopN 1.00 root  test.t.c, offset:0, count:1",
+          "└─TableReader 1.00 root  data:TopN",
+          "  └─TopN 1.00 cop[tikv]  test.t.c, offset:0, count:1",
+          "    └─Selection 9990.00 cop[tikv]  ge(test.t.b, 9001)",
+          "      └─TableFullScan 100000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "Query": "explain format = 'brief' select * from t where a < 10001 order by c limit 1",
+        "Result": [
+          "IndexLookUp 1.00 root  limit embedded(offset:0, count:1)",
+          "├─Limit(Build) 1.00 cop[tikv]  offset:0, count:1",
+          "│ └─Selection 1.00 cop[tikv]  lt(test.t.a, 10001)",
+          "│   └─IndexFullScan 10.00 cop[tikv] table:t, index:ic(c) keep order:true, stats:pseudo",
+          "└─TableRowIDScan(Probe) 1.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "Query": "explain format = 'brief' select * from t where a < 10000 order by c limit 1",
+        "Result": [
+          "IndexLookUp 1.00 root  limit embedded(offset:0, count:1)",
+          "├─Limit(Build) 1.00 cop[tikv]  offset:0, count:1",
+          "│ └─Selection 1.00 cop[tikv]  lt(test.t.a, 10000)",
+          "│   └─IndexFullScan 10.00 cop[tikv] table:t, index:ic(c) keep order:true, stats:pseudo",
+          "└─TableRowIDScan(Probe) 1.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "Query": "explain format = 'brief' select * from t where a < 9999 order by c limit 1",
+        "Result": [
+          "TopN 1.00 root  test.t.c, offset:0, count:1",
+          "└─TableReader 1.00 root  data:TopN",
+          "  └─TopN 1.00 cop[tikv]  test.t.c, offset:0, count:1",
+          "    └─TableRangeScan 9999.00 cop[tikv] table:t range:[-inf,9999), keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "Query": "explain format = 'brief' select * from t where b >= 0 and b <= 50 or c >= 0 and c <= 50 order by c limit 1",
+        "Result": [
+          "TopN 1.00 root  test.t.c, offset:0, count:1",
+          "└─IndexMerge 1.00 root  type: union",
+          "  ├─IndexRangeScan(Build) 510.00 cop[tikv] table:t, index:ib(b) range:[0,50], keep order:false, stats:pseudo",
+          "  ├─IndexRangeScan(Build) 510.00 cop[tikv] table:t, index:ic(c) range:[0,50], keep order:false, stats:pseudo",
+          "  └─TopN(Probe) 1.00 cop[tikv]  test.t.c, offset:0, count:1",
+          "    └─TableRowIDScan 1017.40 cop[tikv] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "Query": "explain format = 'brief' select * from t where b >= 9950 and c >= 9950 order by c limit 1",
+        "Result": [
+          "Limit 1.00 root  offset:0, count:1",
+          "└─IndexLookUp 1.00 root  ",
+          "  ├─IndexRangeScan(Build) 500.00 cop[tikv] table:t, index:ic(c) range:[9950,+inf], keep order:true, stats:pseudo",
+          "  └─Selection(Probe) 1.00 cop[tikv]  ge(test.t.b, 9950)",
+          "    └─TableRowIDScan 500.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "Query": "explain format = 'brief' select * from t where b >= 9950 and c >= 9900 order by c limit 1",
+        "Result": [
+          "TopN 1.00 root  test.t.c, offset:0, count:1",
+          "└─IndexLookUp 1.00 root  ",
+          "  ├─IndexRangeScan(Build) 500.00 cop[tikv] table:t, index:ib(b) range:[9950,+inf], keep order:false, stats:pseudo",
+          "  └─TopN(Probe) 1.00 cop[tikv]  test.t.c, offset:0, count:1",
+          "    └─Selection 5.00 cop[tikv]  ge(test.t.c, 9900)",
+          "      └─TableRowIDScan 500.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "Query": "explain format = 'brief' select * from t where a < 1000 and c < 100 limit 1",
+        "Result": [
+          "Limit 1.00 root  offset:0, count:1",
+          "└─TableReader 1.00 root  data:Limit",
+          "  └─Limit 1.00 cop[tikv]  offset:0, count:1",
+          "    └─Selection 1.00 cop[tikv]  lt(test.t.c, 100)",
+          "      └─TableRangeScan 100.00 cop[tikv] table:t range:[-inf,1000), keep order:false, stats:pseudo"
+        ]
+      }
+    ]
+  },
+  {
+    "Name": "TestOrderingIdxSelectivityRatio",
+    "Cases": [
+      {
+        "Query": "set @@tidb_opt_ordering_index_selectivity_threshold = 0",
+        "Result": null
+      },
+      {
+        "Query": "set @@tidb_opt_ordering_index_selectivity_ratio = -1",
+        "Result": null
+      },
+      {
+        "Query": "explain format = 'brief' select * from t use index (ic) where b >= 900 order by c limit 1",
+        "Result": [
+          "Limit 1.00 root  offset:0, count:1",
+          "└─IndexLookUp 1.00 root  ",
+          "  ├─IndexFullScan(Build) 10.00 cop[tikv] table:t, index:ic(c) keep order:true, stats:pseudo",
+          "  └─Selection(Probe) 1.00 cop[tikv]  ge(test.t.b, 900)",
+          "    └─TableRowIDScan 10.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "Query": "explain format = 'brief' select * from t use index (ic) where b >= 900 order by c limit 10",
+        "Result": [
+          "Limit 10.00 root  offset:0, count:10",
+          "└─IndexLookUp 10.00 root  ",
+          "  ├─IndexFullScan(Build) 100.00 cop[tikv] table:t, index:ic(c) keep order:true, stats:pseudo",
+          "  └─Selection(Probe) 10.00 cop[tikv]  ge(test.t.b, 900)",
+          "    └─TableRowIDScan 100.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "Query": "explain format = 'brief' select * from t where a < 500 and c < 100 limit 1",
+        "Result": [
+          "Limit 1.00 root  offset:0, count:1",
+          "└─TableReader 1.00 root  data:Limit",
+          "  └─Limit 1.00 cop[tikv]  offset:0, count:1",
+          "    └─Selection 1.00 cop[tikv]  lt(test.t.c, 100)",
+          "      └─TableRangeScan 10.00 cop[tikv] table:t range:[-inf,500), keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "Query": "set @@tidb_opt_ordering_index_selectivity_ratio = 0",
+        "Result": null
+      },
+      {
+        "Query": "explain format = 'brief' select * from t use index (ic) where b >= 900 order by c limit 1",
+        "Result": [
+          "Limit 1.00 root  offset:0, count:1",
+          "└─IndexLookUp 1.00 root  ",
+          "  ├─IndexFullScan(Build) 1.00 cop[tikv] table:t, index:ic(c) keep order:true, stats:pseudo",
+          "  └─Selection(Probe) 1.00 cop[tikv]  ge(test.t.b, 900)",
+          "    └─TableRowIDScan 1.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "Query": "explain format = 'brief' select * from t use index (ic) where b >= 900 order by c limit 10",
+        "Result": [
+          "Limit 10.00 root  offset:0, count:10",
+          "└─IndexLookUp 10.00 root  ",
+          "  ├─IndexFullScan(Build) 10.00 cop[tikv] table:t, index:ic(c) keep order:true, stats:pseudo",
+          "  └─Selection(Probe) 10.00 cop[tikv]  ge(test.t.b, 900)",
+          "    └─TableRowIDScan 10.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "Query": "explain format = 'brief' select * from t where a < 500 and c < 100 limit 1",
+        "Result": [
+          "Limit 1.00 root  offset:0, count:1",
+          "└─TableReader 1.00 root  data:Limit",
+          "  └─Limit 1.00 cop[tikv]  offset:0, count:1",
+          "    └─Selection 1.00 cop[tikv]  lt(test.t.c, 100)",
+          "      └─TableRangeScan 10.00 cop[tikv] table:t range:[-inf,500), keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "Query": "set @@tidb_opt_ordering_index_selectivity_ratio = 0.1",
+        "Result": null
+      },
+      {
+        "Query": "explain format = 'brief' select * from t use index (ic) where b >= 900 order by c limit 1",
+        "Result": [
+          "Limit 1.00 root  offset:0, count:1",
+          "└─IndexLookUp 1.00 root  ",
+          "  ├─IndexFullScan(Build) 91.00 cop[tikv] table:t, index:ic(c) keep order:true, stats:pseudo",
+          "  └─Selection(Probe) 1.00 cop[tikv]  ge(test.t.b, 900)",
+          "    └─TableRowIDScan 91.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "Query": "explain format = 'brief' select * from t use index (ic) where b >= 900 order by c limit 10",
+        "Result": [
+          "Limit 10.00 root  offset:0, count:10",
+          "└─IndexLookUp 10.00 root  ",
+          "  ├─IndexFullScan(Build) 100.00 cop[tikv] table:t, index:ic(c) keep order:true, stats:pseudo",
+          "  └─Selection(Probe) 10.00 cop[tikv]  ge(test.t.b, 900)",
+          "    └─TableRowIDScan 100.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "Query": "explain format = 'brief' select * from t where a < 500 and c < 100 limit 1",
+        "Result": [
+          "Limit 1.00 root  offset:0, count:1",
+          "└─TableReader 1.00 root  data:Limit",
+          "  └─Limit 1.00 cop[tikv]  offset:0, count:1",
+          "    └─Selection 1.00 cop[tikv]  lt(test.t.c, 100)",
+          "      └─TableRangeScan 10.00 cop[tikv] table:t range:[-inf,500), keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "Query": "set @@tidb_opt_ordering_index_selectivity_ratio = 0.5",
+        "Result": null
+      },
+      {
+        "Query": "explain format = 'brief' select * from t use index (ic) where b >= 900 order by c limit 1",
+        "Result": [
+          "Limit 1.00 root  offset:0, count:1",
+          "└─IndexLookUp 1.00 root  ",
+          "  ├─IndexFullScan(Build) 451.00 cop[tikv] table:t, index:ic(c) keep order:true, stats:pseudo",
+          "  └─Selection(Probe) 1.00 cop[tikv]  ge(test.t.b, 900)",
+          "    └─TableRowIDScan 451.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "Query": "explain format = 'brief' select * from t use index (ic) where b >= 900 order by c limit 10",
+        "Result": [
+          "Limit 10.00 root  offset:0, count:10",
+          "└─IndexLookUp 10.00 root  ",
+          "  ├─IndexFullScan(Build) 460.00 cop[tikv] table:t, index:ic(c) keep order:true, stats:pseudo",
+          "  └─Selection(Probe) 10.00 cop[tikv]  ge(test.t.b, 900)",
+          "    └─TableRowIDScan 460.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "Query": "explain format = 'brief' select * from t where a < 500 and c < 100 limit 1",
+        "Result": [
+          "Limit 1.00 root  offset:0, count:1",
+          "└─TableReader 1.00 root  data:Limit",
+          "  └─Limit 1.00 cop[tikv]  offset:0, count:1",
+          "    └─Selection 1.00 cop[tikv]  lt(test.t.c, 100)",
+          "      └─TableRangeScan 10.00 cop[tikv] table:t range:[-inf,500), keep order:false, stats:pseudo"
+        ]
+      }
+    ]
+  },
+  {
+    "Name": "TestTraceCE",
+    "Cases": [
+      {
+        "Expr": "a > 0 and a < 2",
+        "Trace": [
+          {
+            "table_name": "t",
+            "type": "Column Stats-Point",
+            "expr": "((a = 1))",
+            "row_count": 4
+          },
+          {
+            "table_name": "t",
+            "type": "Column Stats-Range",
+            "expr": "((a > 0 and a < 2))",
+            "row_count": 4
+          },
+          {
+            "table_name": "t",
+            "type": "Index Stats-Point",
+            "expr": "((a = 1))",
+            "row_count": 4
+          },
+          {
+            "table_name": "t",
+            "type": "Table Stats-Expression-CNF",
+            "expr": "`and`(`gt`(test.t.a, 0), `lt`(test.t.a, 2))",
+            "row_count": 4
+          }
+        ]
+      },
+      {
+        "Expr": "a >= 1 and a < 10",
+        "Trace": [
+          {
+            "table_name": "t",
+            "type": "Column Stats-Range",
+            "expr": "((a >= 1 and a < 10))",
+            "row_count": 6
+          },
+          {
+            "table_name": "t",
+            "type": "Index Stats-Range",
+            "expr": "((a >= 1 and a < 10))",
+            "row_count": 6
+          },
+          {
+            "table_name": "t",
+            "type": "Table Stats-Expression-CNF",
+            "expr": "`and`(`ge`(test.t.a, 1), `lt`(test.t.a, 10))",
+            "row_count": 6
+          }
+        ]
+      },
+      {
+        "Expr": "a < 3 or b < 4",
+        "Trace": [
+          {
+            "table_name": "t",
+            "type": "Column Stats-Range",
+            "expr": "((a < 3))",
+            "row_count": 6
+          },
+          {
+            "table_name": "t",
+            "type": "Column Stats-Range",
+            "expr": "((b < 4))",
+            "row_count": 6
+          },
+          {
+            "table_name": "t",
+            "type": "Index Stats-Range",
+            "expr": "((a < 3))",
+            "row_count": 6
+          },
+          {
+            "table_name": "t",
+            "type": "Table Stats-Expression-CNF",
+            "expr": "`lt`(test.t.a, 3)",
+            "row_count": 6
+          },
+          {
+            "table_name": "t",
+            "type": "Table Stats-Expression-CNF",
+            "expr": "`lt`(test.t.b, 4)",
+            "row_count": 6
+          },
+          {
+            "table_name": "t",
+            "type": "Table Stats-Expression-CNF",
+            "expr": "`or`(`lt`(test.t.a, 3), `lt`(test.t.b, 4))",
+            "row_count": 6
+          },
+          {
+            "table_name": "t",
+            "type": "Table Stats-Expression-DNF",
+            "expr": "`or`(`lt`(test.t.a, 3), `lt`(test.t.b, 4))",
+            "row_count": 6
+          }
+        ]
+      },
+      {
+        "Expr": "a = 1 and b = 2",
+        "Trace": [
+          {
+            "table_name": "t",
+            "type": "Column Stats-Point",
+            "expr": "((a = 1))",
+            "row_count": 4
+          },
+          {
+            "table_name": "t",
+            "type": "Column Stats-Point",
+            "expr": "((b = 2))",
+            "row_count": 3
+          },
+          {
+            "table_name": "t",
+            "type": "Index Stats-Point",
+            "expr": "((a = 1) and (b = 2))",
+            "row_count": 2
+          },
+          {
+            "table_name": "t",
+            "type": "Table Stats-Expression-CNF",
+            "expr": "`and`(`eq`(test.t.a, 1), `eq`(test.t.b, 2))",
+            "row_count": 2
+          }
+        ]
+      },
+      {
+        "Expr": "a < 5 or a > 10",
+        "Trace": [
+          {
+            "table_name": "t",
+            "type": "Column Stats-Range",
+            "expr": "((a < 5)) or ((a > 10 and true))",
+            "row_count": 6
+          },
+          {
+            "table_name": "t",
+            "type": "Index Stats-Range",
+            "expr": "((a < 5)) or ((a > 10 and true))",
+            "row_count": 6
+          },
+          {
+            "table_name": "t",
+            "type": "Table Stats-Expression-CNF",
+            "expr": "`or`(`lt`(test.t.a, 5), `gt`(test.t.a, 10))",
+            "row_count": 6
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "Name": "TestTraceDebugSelectivity",
+    "Cases": [
+      {
+        "ResultForV1": [
+          {
+            "github.com/pingcap/tidb/pkg/planner/cardinality.Selectivity": [
+              {
+                "Input Expressions": [
+                  "eq(test.t.a, 100)",
+                  "eq(test.t.b, 350)"
+                ]
+              },
+              {
+                "github.com/pingcap/tidb/pkg/planner/cardinality.GetRowCountByColumnRanges": [
+                  {
+                    "ID": 1,
+                    "Ranges": [
+                      "[100,100]"
+                    ]
+                  },
+                  {
+                    "github.com/pingcap/tidb/pkg/statistics.ColumnStatsIsInvalid": {
+                      "EssentialLoaded": true,
+                      "InValidForCollPseudo": false,
+                      "IsInvalid": false,
+                      "NDV": 2001,
+                      "TotalCount": 3080
+                    }
+                  },
+                  {
+                    "Histogram NotNull Count": 3080,
+                    "Increase Factor": 1,
+                    "TopN total count": 1095
+                  },
+                  {
+                    "github.com/pingcap/tidb/pkg/planner/cardinality.GetColumnRowCount": [
+                      {
+                        "Start estimate range": {
+                          "CurrentRowCount": 0,
+                          "HighValueEncoded": "A4AAAAAAAABk",
+                          "LowValueEncoded": "A4AAAAAAAABk",
+                          "Range": "[100,100]"
+                        }
+                      },
+                      {
+                        "github.com/pingcap/tidb/pkg/planner/cardinality.equalRowCountOnColumn": [
+                          {
+                            "Encoded": "A4AAAAAAAABk",
+                            "Value": "KindInt64 100"
+                          },
+                          {
+                            "github.com/pingcap/tidb/pkg/statistics.(*TopN).QueryTopN": [
+                              {
+                                "FindTopN idx": 13
+                              },
+                              {
+                                "Found": true,
+                                "Result": 50
+                              }
+                            ]
+                          },
+                          {
+                            "Error": null,
+                            "Result": 50
+                          }
+                        ]
+                      },
+                      {
+                        "End estimate range": {
+                          "RowCount": 50,
+                          "Type": "Point"
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "Name": "a",
+                    "Result": 50
+                  }
+                ]
+              },
+              {
+                "github.com/pingcap/tidb/pkg/planner/cardinality.GetRowCountByColumnRanges": [
+                  {
+                    "ID": 2,
+                    "Ranges": [
+                      "[350,350]"
+                    ]
+                  },
+                  {
+                    "github.com/pingcap/tidb/pkg/statistics.ColumnStatsIsInvalid": {
+                      "EssentialLoaded": true,
+                      "InValidForCollPseudo": false,
+                      "IsInvalid": false,
+                      "NDV": 2001,
+                      "TotalCount": 3080
+                    }
+                  },
+                  {
+                    "Histogram NotNull Count": 3080,
+                    "Increase Factor": 1,
+                    "TopN total count": 1098
+                  },
+                  {
+                    "github.com/pingcap/tidb/pkg/planner/cardinality.GetColumnRowCount": [
+                      {
+                        "Start estimate range": {
+                          "CurrentRowCount": 0,
+                          "HighValueEncoded": "A4AAAAAAAAFe",
+                          "LowValueEncoded": "A4AAAAAAAAFe",
+                          "Range": "[350,350]"
+                        }
+                      },
+                      {
+                        "github.com/pingcap/tidb/pkg/planner/cardinality.equalRowCountOnColumn": [
+                          {
+                            "Encoded": "A4AAAAAAAAFe",
+                            "Value": "KindInt64 350"
+                          },
+                          {
+                            "github.com/pingcap/tidb/pkg/statistics.(*TopN).QueryTopN": [
+                              {
+                                "FindTopN idx": -1
+                              },
+                              {
+                                "Found": false,
+                                "Result": 0
+                              }
+                            ]
+                          },
+                          {
+                            "github.com/pingcap/tidb/pkg/statistics.(*CMSketch).queryHashValue": {
+                              "Origin Values": [
+                                3,
+                                3,
+                                2,
+                                1,
+                                1
+                              ],
+                              "Result": 1,
+                              "Use default value": false,
+                              "Values": [
+                                2,
+                                2,
+                                3,
+                                4,
+                                4
+                              ]
+                            }
+                          },
+                          {
+                            "Error": null,
+                            "Result": 1
+                          }
+                        ]
+                      },
+                      {
+                        "End estimate range": {
+                          "RowCount": 1,
+                          "Type": "Point"
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "Name": "b",
+                    "Result": 1
+                  }
+                ]
+              },
+              {
+                "github.com/pingcap/tidb/pkg/planner/cardinality.GetRowCountByIndexRanges": [
+                  {
+                    "ID": 1,
+                    "Ranges": [
+                      "[100 350,100 350]"
+                    ]
+                  },
+                  {
+                    "github.com/pingcap/tidb/pkg/statistics.IndexStatsIsInvalid": {
+                      "CollPseudo": false,
+                      "IsInvalid": false,
+                      "TotalCount": 3080
+                    }
+                  },
+                  {
+                    "Histogram NotNull Count": 3080,
+                    "Increase Factor": 1,
+                    "TopN total count": 0
+                  },
+                  {
+                    "github.com/pingcap/tidb/pkg/planner/cardinality.getIndexRowCountForStatsV1": [
+                      {
+                        "Start estimate range": {
+                          "CurrentRowCount": 0,
+                          "HighValueEncoded": null,
+                          "LowValueEncoded": null,
+                          "Range": "[100 350,100 350]"
+                        }
+                      },
+                      {
+                        "github.com/pingcap/tidb/pkg/planner/cardinality.getEqualCondSelectivity": [
+                          {
+                            "github.com/pingcap/tidb/pkg/planner/cardinality.crossValidationSelectivity": [
+                              {
+                                "github.com/pingcap/tidb/pkg/statistics.ColumnStatsIsInvalid": {
+                                  "EssentialLoaded": true,
+                                  "InValidForCollPseudo": false,
+                                  "IsInvalid": false,
+                                  "NDV": 2001,
+                                  "TotalCount": 3080
+                                }
+                              },
+                              {
+                                "github.com/pingcap/tidb/pkg/planner/cardinality.GetColumnRowCount": [
+                                  {
+                                    "Start estimate range": {
+                                      "CurrentRowCount": 0,
+                                      "HighValueEncoded": "A4AAAAAAAABk",
+                                      "LowValueEncoded": "A4AAAAAAAABk",
+                                      "Range": "[100,100]"
+                                    }
+                                  },
+                                  {
+                                    "github.com/pingcap/tidb/pkg/planner/cardinality.equalRowCountOnColumn": [
+                                      {
+                                        "Encoded": "A4AAAAAAAABk",
+                                        "Value": "KindInt64 100"
+                                      },
+                                      {
+                                        "github.com/pingcap/tidb/pkg/statistics.(*TopN).QueryTopN": [
+                                          {
+                                            "FindTopN idx": 13
+                                          },
+                                          {
+                                            "Found": true,
+                                            "Result": 50
+                                          }
+                                        ]
+                                      },
+                                      {
+                                        "Error": null,
+                                        "Result": 50
+                                      }
+                                    ]
+                                  },
+                                  {
+                                    "End estimate range": {
+                                      "RowCount": 50,
+                                      "Type": "Point"
+                                    }
+                                  }
+                                ]
+                              },
+                              {
+                                "github.com/pingcap/tidb/pkg/statistics.ColumnStatsIsInvalid": {
+                                  "EssentialLoaded": true,
+                                  "InValidForCollPseudo": false,
+                                  "IsInvalid": false,
+                                  "NDV": 2001,
+                                  "TotalCount": 3080
+                                }
+                              },
+                              {
+                                "github.com/pingcap/tidb/pkg/planner/cardinality.GetColumnRowCount": [
+                                  {
+                                    "Start estimate range": {
+                                      "CurrentRowCount": 0,
+                                      "HighValueEncoded": "A4AAAAAAAAFe",
+                                      "LowValueEncoded": "A4AAAAAAAAFe",
+                                      "Range": "[350,350]"
+                                    }
+                                  },
+                                  {
+                                    "github.com/pingcap/tidb/pkg/planner/cardinality.equalRowCountOnColumn": [
+                                      {
+                                        "Encoded": "A4AAAAAAAAFe",
+                                        "Value": "KindInt64 350"
+                                      },
+                                      {
+                                        "github.com/pingcap/tidb/pkg/statistics.(*TopN).QueryTopN": [
+                                          {
+                                            "FindTopN idx": -1
+                                          },
+                                          {
+                                            "Found": false,
+                                            "Result": 0
+                                          }
+                                        ]
+                                      },
+                                      {
+                                        "github.com/pingcap/tidb/pkg/statistics.(*CMSketch).queryHashValue": {
+                                          "Origin Values": [
+                                            3,
+                                            3,
+                                            2,
+                                            1,
+                                            1
+                                          ],
+                                          "Result": 1,
+                                          "Use default value": false,
+                                          "Values": [
+                                            2,
+                                            2,
+                                            3,
+                                            4,
+                                            4
+                                          ]
+                                        }
+                                      },
+                                      {
+                                        "Error": null,
+                                        "Result": 1
+                                      }
+                                    ]
+                                  },
+                                  {
+                                    "End estimate range": {
+                                      "RowCount": 1,
+                                      "Type": "Point"
+                                    }
+                                  }
+                                ]
+                              },
+                              {
+                                "Index Name": "iab",
+                                "crossValidationSelectivity": 0.0000052707033226513745,
+                                "error": null,
+                                "minRowCount": 1
+                              }
+                            ]
+                          },
+                          {
+                            "github.com/pingcap/tidb/pkg/statistics.(*Index).QueryBytes": [
+                              {
+                                "github.com/pingcap/tidb/pkg/statistics.(*CMSketch).queryHashValue": {
+                                  "Origin Values": [
+                                    3,
+                                    3,
+                                    0,
+                                    2,
+                                    2
+                                  ],
+                                  "Result": 3,
+                                  "Use default value": true,
+                                  "Values": [
+                                    0,
+                                    1,
+                                    1,
+                                    1,
+                                    1
+                                  ]
+                                }
+                              },
+                              {
+                                "Result": 3
+                              }
+                            ]
+                          },
+                          {
+                            "Encoded": "A4AAAAAAAABkA4AAAAAAAAFe",
+                            "Index Name": "iab",
+                            "Range": "[100 350,100 350]",
+                            "Result": 0.0000052707033226513745,
+                            "UsedColLen": 2,
+                            "error": null
+                          }
+                        ]
+                      },
+                      {
+                        "End estimate range": {
+                          "RowCount": 0.016233766233766232,
+                          "Type": "Range"
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "Name": "iab",
+                    "Result": 0.016233766233766232
+                  }
+                ]
+              },
+              {
+                "github.com/pingcap/tidb/pkg/planner/cardinality.GetRowCountByIndexRanges": [
+                  {
+                    "ID": 2,
+                    "Ranges": [
+                      "[350,350]"
+                    ]
+                  },
+                  {
+                    "github.com/pingcap/tidb/pkg/statistics.IndexStatsIsInvalid": {
+                      "CollPseudo": false,
+                      "IsInvalid": false,
+                      "TotalCount": 3080
+                    }
+                  },
+                  {
+                    "Histogram NotNull Count": 3080,
+                    "Increase Factor": 1,
+                    "TopN total count": 0
+                  },
+                  {
+                    "github.com/pingcap/tidb/pkg/planner/cardinality.getIndexRowCountForStatsV1": [
+                      {
+                        "Start estimate range": {
+                          "CurrentRowCount": 0,
+                          "HighValueEncoded": null,
+                          "LowValueEncoded": null,
+                          "Range": "[350,350]"
+                        }
+                      },
+                      {
+                        "github.com/pingcap/tidb/pkg/planner/cardinality.getEqualCondSelectivity": [
+                          {
+                            "github.com/pingcap/tidb/pkg/planner/cardinality.crossValidationSelectivity": [
+                              {
+                                "github.com/pingcap/tidb/pkg/statistics.ColumnStatsIsInvalid": {
+                                  "EssentialLoaded": true,
+                                  "InValidForCollPseudo": false,
+                                  "IsInvalid": false,
+                                  "NDV": 2001,
+                                  "TotalCount": 3080
+                                }
+                              },
+                              {
+                                "github.com/pingcap/tidb/pkg/planner/cardinality.GetColumnRowCount": [
+                                  {
+                                    "Start estimate range": {
+                                      "CurrentRowCount": 0,
+                                      "HighValueEncoded": "A4AAAAAAAAFe",
+                                      "LowValueEncoded": "A4AAAAAAAAFe",
+                                      "Range": "[350,350]"
+                                    }
+                                  },
+                                  {
+                                    "github.com/pingcap/tidb/pkg/planner/cardinality.equalRowCountOnColumn": [
+                                      {
+                                        "Encoded": "A4AAAAAAAAFe",
+                                        "Value": "KindInt64 350"
+                                      },
+                                      {
+                                        "github.com/pingcap/tidb/pkg/statistics.(*TopN).QueryTopN": [
+                                          {
+                                            "FindTopN idx": -1
+                                          },
+                                          {
+                                            "Found": false,
+                                            "Result": 0
+                                          }
+                                        ]
+                                      },
+                                      {
+                                        "github.com/pingcap/tidb/pkg/statistics.(*CMSketch).queryHashValue": {
+                                          "Origin Values": [
+                                            3,
+                                            3,
+                                            2,
+                                            1,
+                                            1
+                                          ],
+                                          "Result": 1,
+                                          "Use default value": false,
+                                          "Values": [
+                                            2,
+                                            2,
+                                            3,
+                                            4,
+                                            4
+                                          ]
+                                        }
+                                      },
+                                      {
+                                        "Error": null,
+                                        "Result": 1
+                                      }
+                                    ]
+                                  },
+                                  {
+                                    "End estimate range": {
+                                      "RowCount": 1,
+                                      "Type": "Point"
+                                    }
+                                  }
+                                ]
+                              },
+                              {
+                                "Index Name": "ib",
+                                "crossValidationSelectivity": 0.0003246753246753247,
+                                "error": null,
+                                "minRowCount": 1
+                              }
+                            ]
+                          },
+                          {
+                            "github.com/pingcap/tidb/pkg/statistics.(*Index).QueryBytes": [
+                              {
+                                "github.com/pingcap/tidb/pkg/statistics.(*CMSketch).queryHashValue": {
+                                  "Origin Values": [
+                                    2,
+                                    2,
+                                    1,
+                                    1,
+                                    1
+                                  ],
+                                  "Result": 1,
+                                  "Use default value": true,
+                                  "Values": [
+                                    1,
+                                    1,
+                                    1,
+                                    2,
+                                    2
+                                  ]
+                                }
+                              },
+                              {
+                                "Result": 1
+                              }
+                            ]
+                          },
+                          {
+                            "Encoded": "A4AAAAAAAAFe",
+                            "Index Name": "ib",
+                            "Range": "[350,350]",
+                            "Result": 0.0003246753246753247,
+                            "UsedColLen": 1,
+                            "error": null
+                          }
+                        ]
+                      },
+                      {
+                        "End estimate range": {
+                          "RowCount": 1,
+                          "Type": "Range"
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "Name": "ib",
+                    "Result": 1
+                  }
+                ]
+              },
+              {
+                "Expressions": [
+                  "eq(test.t.a, 100)",
+                  "eq(test.t.b, 350)"
+                ],
+                "Selectivity": 0.0000052707033226513745,
+                "partial cover": false
+              },
+              {
+                "Result": 0.0000052707033226513745
+              }
+            ]
+          }
+        ],
+        "ResultForV2": [
+          {
+            "github.com/pingcap/tidb/pkg/planner/cardinality.Selectivity": [
+              {
+                "Input Expressions": [
+                  "eq(test.t.a, 100)",
+                  "eq(test.t.b, 350)"
+                ]
+              },
+              {
+                "github.com/pingcap/tidb/pkg/planner/cardinality.GetRowCountByColumnRanges": [
+                  {
+                    "ID": 1,
+                    "Ranges": [
+                      "[100,100]"
+                    ]
+                  },
+                  {
+                    "github.com/pingcap/tidb/pkg/statistics.ColumnStatsIsInvalid": {
+                      "EssentialLoaded": true,
+                      "InValidForCollPseudo": false,
+                      "IsInvalid": false,
+                      "NDV": 2000,
+                      "TotalCount": 2980
+                    }
+                  },
+                  {
+                    "Histogram NotNull Count": 1980,
+                    "Increase Factor": 1.0335570469798658,
+                    "TopN total count": 1000
+                  },
+                  {
+                    "github.com/pingcap/tidb/pkg/planner/cardinality.GetColumnRowCount": [
+                      {
+                        "Start estimate range": {
+                          "CurrentRowCount": 0,
+                          "HighValueEncoded": "A4AAAAAAAABk",
+                          "LowValueEncoded": "A4AAAAAAAABk",
+                          "Range": "[100,100]"
+                        }
+                      },
+                      {
+                        "github.com/pingcap/tidb/pkg/planner/cardinality.equalRowCountOnColumn": [
+                          {
+                            "Encoded": "A4AAAAAAAABk",
+                            "Value": "KindInt64 100"
+                          },
+                          {
+                            "github.com/pingcap/tidb/pkg/statistics.(*TopN).QueryTopN": [
+                              {
+                                "FindTopN idx": 11
+                              },
+                              {
+                                "Found": true,
+                                "Result": 50
+                              }
+                            ]
+                          },
+                          {
+                            "Error": null,
+                            "Result": 50
+                          }
+                        ]
+                      },
+                      {
+                        "End estimate range": {
+                          "RowCount": 51.67785234899329,
+                          "Type": "Point"
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "Name": "a",
+                    "Result": 51.67785234899329
+                  }
+                ]
+              },
+              {
+                "github.com/pingcap/tidb/pkg/planner/cardinality.GetRowCountByColumnRanges": [
+                  {
+                    "ID": 2,
+                    "Ranges": [
+                      "[350,350]"
+                    ]
+                  },
+                  {
+                    "github.com/pingcap/tidb/pkg/statistics.ColumnStatsIsInvalid": {
+                      "EssentialLoaded": true,
+                      "InValidForCollPseudo": false,
+                      "IsInvalid": false,
+                      "NDV": 2000,
+                      "TotalCount": 2980
+                    }
+                  },
+                  {
+                    "Histogram NotNull Count": 1980,
+                    "Increase Factor": 1.0335570469798658,
+                    "TopN total count": 1000
+                  },
+                  {
+                    "github.com/pingcap/tidb/pkg/planner/cardinality.GetColumnRowCount": [
+                      {
+                        "Start estimate range": {
+                          "CurrentRowCount": 0,
+                          "HighValueEncoded": "A4AAAAAAAAFe",
+                          "LowValueEncoded": "A4AAAAAAAAFe",
+                          "Range": "[350,350]"
+                        }
+                      },
+                      {
+                        "github.com/pingcap/tidb/pkg/planner/cardinality.equalRowCountOnColumn": [
+                          {
+                            "Encoded": "A4AAAAAAAAFe",
+                            "Value": "KindInt64 350"
+                          },
+                          {
+                            "github.com/pingcap/tidb/pkg/statistics.(*TopN).QueryTopN": [
+                              {
+                                "FindTopN idx": -1
+                              },
+                              {
+                                "Found": false,
+                                "Result": 0
+                              }
+                            ]
+                          },
+                          {
+                            "github.com/pingcap/tidb/pkg/statistics.(*Histogram).EqualRowCount": [
+                              {
+                                "Locate value in buckets": {
+                                  "BucketIdx": 105,
+                                  "Exceed": false,
+                                  "InBucket": true,
+                                  "MatchLastValue": false,
+                                  "Value": "KindInt64 350"
+                                }
+                              },
+                              {
+                                "Related Buckets in Histogram": [
+                                  {
+                                    "Count": 848,
+                                    "Index": 105,
+                                    "Repeat": 1
+                                  }
+                                ]
+                              },
+                              {
+                                "Count": 0.99,
+                                "Matched": false
+                              }
+                            ]
+                          },
+                          {
+                            "Error": null,
+                            "Result": 1
+                          }
+                        ]
+                      },
+                      {
+                        "End estimate range": {
+                          "RowCount": 1.0335570469798658,
+                          "Type": "Point"
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "Name": "b",
+                    "Result": 1.0335570469798658
+                  }
+                ]
+              },
+              {
+                "github.com/pingcap/tidb/pkg/planner/cardinality.GetRowCountByIndexRanges": [
+                  {
+                    "ID": 1,
+                    "Ranges": [
+                      "[100 350,100 350]"
+                    ]
+                  },
+                  {
+                    "github.com/pingcap/tidb/pkg/statistics.IndexStatsIsInvalid": {
+                      "CollPseudo": false,
+                      "IsInvalid": false,
+                      "TotalCount": 2980
+                    }
+                  },
+                  {
+                    "Histogram NotNull Count": 1980,
+                    "Increase Factor": 1.0335570469798658,
+                    "TopN total count": 1000
+                  },
+                  {
+                    "github.com/pingcap/tidb/pkg/planner/cardinality.getIndexRowCountForStatsV2": [
+                      {
+                        "Start estimate range": {
+                          "CurrentRowCount": 0,
+                          "HighValueEncoded": "A4AAAAAAAABkA4AAAAAAAAFe",
+                          "LowValueEncoded": "A4AAAAAAAABkA4AAAAAAAAFe",
+                          "Range": "[100 350,100 350]"
+                        }
+                      },
+                      {
+                        "github.com/pingcap/tidb/pkg/planner/cardinality.equalRowCountOnIndex": [
+                          {
+                            "Encoded Value": "A4AAAAAAAABkA4AAAAAAAAFe"
+                          },
+                          {
+                            "github.com/pingcap/tidb/pkg/statistics.(*TopN).QueryTopN": [
+                              {
+                                "FindTopN idx": -1
+                              },
+                              {
+                                "Found": false,
+                                "Result": 0
+                              }
+                            ]
+                          },
+                          {
+                            "github.com/pingcap/tidb/pkg/statistics.(*Histogram).EqualRowCount": [
+                              {
+                                "Locate value in buckets": {
+                                  "BucketIdx": 136,
+                                  "Exceed": false,
+                                  "InBucket": true,
+                                  "MatchLastValue": false,
+                                  "Value": "KindBytes \\x03\\x80\\x00\\x00\\x00\\x00\\x00\\x00d\\x03\\x80\\x00\\x00\\x00\\x00\\x00\\x01^"
+                                }
+                              },
+                              {
+                                "Related Buckets in Histogram": [
+                                  {
+                                    "Count": 1096,
+                                    "Index": 136,
+                                    "Repeat": 1
+                                  }
+                                ]
+                              },
+                              {
+                                "Count": 0.99,
+                                "Matched": false
+                              }
+                            ]
+                          },
+                          {
+                            "Result": 1
+                          }
+                        ]
+                      },
+                      {
+                        "End estimate range": {
+                          "RowCount": 1.0335570469798658,
+                          "Type": "Point"
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "Name": "iab",
+                    "Result": 1.0335570469798658
+                  }
+                ]
+              },
+              {
+                "github.com/pingcap/tidb/pkg/planner/cardinality.GetRowCountByIndexRanges": [
+                  {
+                    "ID": 2,
+                    "Ranges": [
+                      "[350,350]"
+                    ]
+                  },
+                  {
+                    "github.com/pingcap/tidb/pkg/statistics.IndexStatsIsInvalid": {
+                      "CollPseudo": false,
+                      "IsInvalid": false,
+                      "TotalCount": 2980
+                    }
+                  },
+                  {
+                    "Histogram NotNull Count": 1980,
+                    "Increase Factor": 1.0335570469798658,
+                    "TopN total count": 1000
+                  },
+                  {
+                    "github.com/pingcap/tidb/pkg/planner/cardinality.getIndexRowCountForStatsV2": [
+                      {
+                        "Start estimate range": {
+                          "CurrentRowCount": 0,
+                          "HighValueEncoded": "A4AAAAAAAAFe",
+                          "LowValueEncoded": "A4AAAAAAAAFe",
+                          "Range": "[350,350]"
+                        }
+                      },
+                      {
+                        "github.com/pingcap/tidb/pkg/planner/cardinality.equalRowCountOnIndex": [
+                          {
+                            "Encoded Value": "A4AAAAAAAAFe"
+                          },
+                          {
+                            "github.com/pingcap/tidb/pkg/statistics.(*TopN).QueryTopN": [
+                              {
+                                "FindTopN idx": -1
+                              },
+                              {
+                                "Found": false,
+                                "Result": 0
+                              }
+                            ]
+                          },
+                          {
+                            "github.com/pingcap/tidb/pkg/statistics.(*Histogram).EqualRowCount": [
+                              {
+                                "Locate value in buckets": {
+                                  "BucketIdx": 105,
+                                  "Exceed": false,
+                                  "InBucket": true,
+                                  "MatchLastValue": false,
+                                  "Value": "KindBytes \\x03\\x80\\x00\\x00\\x00\\x00\\x00\\x01^"
+                                }
+                              },
+                              {
+                                "Related Buckets in Histogram": [
+                                  {
+                                    "Count": 848,
+                                    "Index": 105,
+                                    "Repeat": 1
+                                  }
+                                ]
+                              },
+                              {
+                                "Count": 0.99,
+                                "Matched": false
+                              }
+                            ]
+                          },
+                          {
+                            "Result": 1
+                          }
+                        ]
+                      },
+                      {
+                        "End estimate range": {
+                          "RowCount": 1.0335570469798658,
+                          "Type": "Point"
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "Name": "ib",
+                    "Result": 1.0335570469798658
+                  }
+                ]
+              },
+              {
+                "Expressions": [
+                  "eq(test.t.a, 100)",
+                  "eq(test.t.b, 350)"
+                ],
+                "Selectivity": 0.00033557046979865775,
+                "partial cover": false
+              },
+              {
+                "Result": 0.00033557046979865775
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "ResultForV1": [
+          {
+            "github.com/pingcap/tidb/pkg/planner/cardinality.Selectivity": [
+              {
+                "Input Expressions": [
+                  "lt(test.t.a, -1500)",
+                  "gt(test.t.b, 400)",
+                  "lt(test.t.b, 403)"
+                ]
+              },
+              {
+                "github.com/pingcap/tidb/pkg/planner/cardinality.GetRowCountByColumnRanges": [
+                  {
+                    "ID": 1,
+                    "Ranges": [
+                      "[-inf,-1500)"
+                    ]
+                  },
+                  {
+                    "github.com/pingcap/tidb/pkg/statistics.ColumnStatsIsInvalid": {
+                      "EssentialLoaded": true,
+                      "InValidForCollPseudo": false,
+                      "IsInvalid": false,
+                      "NDV": 2001,
+                      "TotalCount": 3080
+                    }
+                  },
+                  {
+                    "Histogram NotNull Count": 3080,
+                    "Increase Factor": 1,
+                    "TopN total count": 1095
+                  },
+                  {
+                    "github.com/pingcap/tidb/pkg/planner/cardinality.GetColumnRowCount": [
+                      {
+                        "Start estimate range": {
+                          "CurrentRowCount": 0,
+                          "HighValueEncoded": "A3////////ok",
+                          "LowValueEncoded": "AQ==",
+                          "Range": "[-inf,-1500)"
+                        }
+                      },
+                      {
+                        "github.com/pingcap/tidb/pkg/statistics.(*Histogram).LessRowCountWithBktIdx": [
+                          {
+                            "Locate value in buckets": {
+                              "BucketIdx": 0,
+                              "Exceed": false,
+                              "InBucket": false,
+                              "MatchLastValue": false,
+                              "Value": "KindMinNotNull <nil>"
+                            }
+                          },
+                          {
+                            "Related Buckets in Histogram": [
+                              {
+                                "Count": -1,
+                                "Index": -1,
+                                "Repeat": -1
+                              },
+                              {
+                                "Count": 50,
+                                "Index": 0,
+                                "Repeat": 50
+                              }
+                            ]
+                          },
+                          {
+                            "Bucket idx": 0,
+                            "Result": 0
+                          }
+                        ]
+                      },
+                      {
+                        "github.com/pingcap/tidb/pkg/statistics.(*Histogram).LessRowCountWithBktIdx": [
+                          {
+                            "Locate value in buckets": {
+                              "BucketIdx": 0,
+                              "Exceed": false,
+                              "InBucket": false,
+                              "MatchLastValue": false,
+                              "Value": "KindInt64 -1500"
+                            }
+                          },
+                          {
+                            "Related Buckets in Histogram": [
+                              {
+                                "Count": -1,
+                                "Index": -1,
+                                "Repeat": -1
+                              },
+                              {
+                                "Count": 50,
+                                "Index": 0,
+                                "Repeat": 50
+                              }
+                            ]
+                          },
+                          {
+                            "Bucket idx": 0,
+                            "Result": 0
+                          }
+                        ]
+                      },
+                      {
+                        "github.com/pingcap/tidb/pkg/statistics.(*Histogram).OutOfRangeRowCount": [
+                          {
+                            "lDatum": "KindMinNotNull <nil>",
+                            "modifyCount": 0,
+                            "rDatum": "KindInt64 -1500"
+                          },
+                          {
+                            "commonPrefix": 0,
+                            "lScalar": -1.7976931348623157e+308,
+                            "rScalar": -1500,
+                            "unsigned": false
+                          },
+                          {
+                            "boundL": -7000,
+                            "boundR": 11000,
+                            "histL": -1000,
+                            "histR": 5000,
+                            "lPercent": 0.8402777777777778,
+                            "rPercent": 0,
+                            "rowCount": 1294.0277777777778
+                          },
+                          {
+                            "Result": 0
+                          }
+                        ]
+                      },
+                      {
+                        "End estimate range": {
+                          "RowCount": 0,
+                          "Type": "Range"
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "Name": "a",
+                    "Result": 0
+                  }
+                ]
+              },
+              {
+                "github.com/pingcap/tidb/pkg/planner/cardinality.GetRowCountByColumnRanges": [
+                  {
+                    "ID": 2,
+                    "Ranges": [
+                      "(400,403)"
+                    ]
+                  },
+                  {
+                    "github.com/pingcap/tidb/pkg/statistics.ColumnStatsIsInvalid": {
+                      "EssentialLoaded": true,
+                      "InValidForCollPseudo": false,
+                      "IsInvalid": false,
+                      "NDV": 2001,
+                      "TotalCount": 3080
+                    }
+                  },
+                  {
+                    "Histogram NotNull Count": 3080,
+                    "Increase Factor": 1,
+                    "TopN total count": 1098
+                  },
+                  {
+                    "github.com/pingcap/tidb/pkg/planner/cardinality.GetColumnRowCount": [
+                      {
+                        "Start estimate range": {
+                          "CurrentRowCount": 0,
+                          "HighValueEncoded": "A4AAAAAAAAGT",
+                          "LowValueEncoded": "A4AAAAAAAAGQ",
+                          "Range": "(400,403)"
+                        }
+                      },
+                      {
+                        "github.com/pingcap/tidb/pkg/planner/cardinality.equalRowCountOnColumn": [
+                          {
+                            "Encoded": "A4AAAAAAAAGQ",
+                            "Value": "KindInt64 401"
+                          },
+                          {
+                            "github.com/pingcap/tidb/pkg/statistics.(*TopN).QueryTopN": [
+                              {
+                                "FindTopN idx": -1
+                              },
+                              {
+                                "Found": false,
+                                "Result": 0
+                              }
+                            ]
+                          },
+                          {
+                            "github.com/pingcap/tidb/pkg/statistics.(*CMSketch).queryHashValue": {
+                              "Origin Values": [
+                                1,
+                                2,
+                                2,
+                                1,
+                                1
+                              ],
+                              "Result": 1,
+                              "Use default value": false,
+                              "Values": [
+                                2,
+                                2,
+                                2,
+                                3,
+                                3
+                              ]
+                            }
+                          },
+                          {
+                            "Error": null,
+                            "Result": 1
+                          }
+                        ]
+                      },
+                      {
+                        "End estimate range": {
+                          "RowCount": 1,
+                          "Type": "Small range in ver1 stats"
+                        }
+                      },
+                      {
+                        "github.com/pingcap/tidb/pkg/planner/cardinality.equalRowCountOnColumn": [
+                          {
+                            "Encoded": "A4AAAAAAAAGQ",
+                            "Value": "KindInt64 402"
+                          },
+                          {
+                            "github.com/pingcap/tidb/pkg/statistics.(*TopN).QueryTopN": [
+                              {
+                                "FindTopN idx": -1
+                              },
+                              {
+                                "Found": false,
+                                "Result": 0
+                              }
+                            ]
+                          },
+                          {
+                            "github.com/pingcap/tidb/pkg/statistics.(*CMSketch).queryHashValue": {
+                              "Origin Values": [
+                                1,
+                                3,
+                                2,
+                                2,
+                                2
+                              ],
+                              "Result": 1,
+                              "Use default value": false,
+                              "Values": [
+                                2,
+                                3,
+                                3,
+                                3,
+                                4
+                              ]
+                            }
+                          },
+                          {
+                            "Error": null,
+                            "Result": 1
+                          }
+                        ]
+                      },
+                      {
+                        "End estimate range": {
+                          "RowCount": 1,
+                          "Type": "Small range in ver1 stats"
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "Name": "b",
+                    "Result": 2
+                  }
+                ]
+              },
+              {
+                "github.com/pingcap/tidb/pkg/planner/cardinality.GetRowCountByIndexRanges": [
+                  {
+                    "ID": 1,
+                    "Ranges": [
+                      "[-inf,-1500)"
+                    ]
+                  },
+                  {
+                    "github.com/pingcap/tidb/pkg/statistics.IndexStatsIsInvalid": {
+                      "CollPseudo": false,
+                      "IsInvalid": false,
+                      "TotalCount": 3080
+                    }
+                  },
+                  {
+                    "Histogram NotNull Count": 3080,
+                    "Increase Factor": 1,
+                    "TopN total count": 0
+                  },
+                  {
+                    "github.com/pingcap/tidb/pkg/planner/cardinality.getIndexRowCountForStatsV1": [
+                      {
+                        "Start estimate range": {
+                          "CurrentRowCount": 0,
+                          "HighValueEncoded": null,
+                          "LowValueEncoded": null,
+                          "Range": "[-inf,-1500)"
+                        }
+                      },
+                      {
+                        "github.com/pingcap/tidb/pkg/planner/cardinality.getIndexRowCountForStatsV2": [
+                          {
+                            "Start estimate range": {
+                              "CurrentRowCount": 0,
+                              "HighValueEncoded": "A3////////ok",
+                              "LowValueEncoded": "AQ==",
+                              "Range": "[-inf,-1500)"
+                            }
+                          },
+                          {
+                            "github.com/pingcap/tidb/pkg/statistics.(*Histogram).LessRowCountWithBktIdx": [
+                              {
+                                "Locate value in buckets": {
+                                  "BucketIdx": 0,
+                                  "Exceed": false,
+                                  "InBucket": false,
+                                  "MatchLastValue": false,
+                                  "Value": "KindBytes \\x01"
+                                }
+                              },
+                              {
+                                "Related Buckets in Histogram": [
+                                  {
+                                    "Count": -1,
+                                    "Index": -1,
+                                    "Repeat": -1
+                                  },
+                                  {
+                                    "Count": 57,
+                                    "Index": 0,
+                                    "Repeat": 1
+                                  }
+                                ]
+                              },
+                              {
+                                "Bucket idx": 0,
+                                "Result": 0
+                              }
+                            ]
+                          },
+                          {
+                            "github.com/pingcap/tidb/pkg/statistics.(*Histogram).LessRowCountWithBktIdx": [
+                              {
+                                "Locate value in buckets": {
+                                  "BucketIdx": 0,
+                                  "Exceed": false,
+                                  "InBucket": false,
+                                  "MatchLastValue": false,
+                                  "Value": "KindBytes \\x03\\x7f\\xff\\xff\\xff\\xff\\xff\\xfa$"
+                                }
+                              },
+                              {
+                                "Related Buckets in Histogram": [
+                                  {
+                                    "Count": -1,
+                                    "Index": -1,
+                                    "Repeat": -1
+                                  },
+                                  {
+                                    "Count": 57,
+                                    "Index": 0,
+                                    "Repeat": 1
+                                  }
+                                ]
+                              },
+                              {
+                                "Bucket idx": 0,
+                                "Result": 0
+                              }
+                            ]
+                          },
+                          {
+                            "github.com/pingcap/tidb/pkg/statistics.(*Histogram).OutOfRangeRowCount": [
+                              {
+                                "lDatum": "KindBytes \\x01",
+                                "modifyCount": 0,
+                                "rDatum": "KindBytes \\x03\\x7f\\xff\\xff\\xff\\xff\\xff\\xfa$"
+                              },
+                              {
+                                "commonPrefix": 0,
+                                "lScalar": 72057594037927940,
+                                "rScalar": 252201579132747780,
+                                "unsigned": false
+                              },
+                              {
+                                "boundL": 252201579132747740,
+                                "boundR": 252201579132747840,
+                                "histL": 252201579132747780,
+                                "histR": 252201579132747800,
+                                "lPercent": 1,
+                                "rPercent": 0,
+                                "rowCount": 1540
+                              },
+                              {
+                                "Result": 0
+                              }
+                            ]
+                          },
+                          {
+                            "End estimate range": {
+                              "RowCount": 0,
+                              "Type": "Range"
+                            }
+                          }
+                        ]
+                      },
+                      {
+                        "End estimate range": {
+                          "RowCount": 0,
+                          "Type": "Range"
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "Name": "iab",
+                    "Result": 0
+                  }
+                ]
+              },
+              {
+                "github.com/pingcap/tidb/pkg/planner/cardinality.GetRowCountByIndexRanges": [
+                  {
+                    "ID": 2,
+                    "Ranges": [
+                      "(400,403)"
+                    ]
+                  },
+                  {
+                    "github.com/pingcap/tidb/pkg/statistics.IndexStatsIsInvalid": {
+                      "CollPseudo": false,
+                      "IsInvalid": false,
+                      "TotalCount": 3080
+                    }
+                  },
+                  {
+                    "Histogram NotNull Count": 3080,
+                    "Increase Factor": 1,
+                    "TopN total count": 0
+                  },
+                  {
+                    "github.com/pingcap/tidb/pkg/planner/cardinality.getIndexRowCountForStatsV1": [
+                      {
+                        "Start estimate range": {
+                          "CurrentRowCount": 0,
+                          "HighValueEncoded": null,
+                          "LowValueEncoded": null,
+                          "Range": "(400,403)"
+                        }
+                      },
+                      {
+                        "github.com/pingcap/tidb/pkg/planner/cardinality.getEqualCondSelectivity": [
+                          {
+                            "github.com/pingcap/tidb/pkg/planner/cardinality.crossValidationSelectivity": [
+                              {
+                                "github.com/pingcap/tidb/pkg/statistics.ColumnStatsIsInvalid": {
+                                  "EssentialLoaded": true,
+                                  "InValidForCollPseudo": false,
+                                  "IsInvalid": false,
+                                  "NDV": 2001,
+                                  "TotalCount": 3080
+                                }
+                              },
+                              {
+                                "github.com/pingcap/tidb/pkg/planner/cardinality.GetColumnRowCount": [
+                                  {
+                                    "Start estimate range": {
+                                      "CurrentRowCount": 0,
+                                      "HighValueEncoded": "A4AAAAAAAAGT",
+                                      "LowValueEncoded": "A4AAAAAAAAGQ",
+                                      "Range": "[400,403]"
+                                    }
+                                  },
+                                  {
+                                    "github.com/pingcap/tidb/pkg/planner/cardinality.equalRowCountOnColumn": [
+                                      {
+                                        "Encoded": "A4AAAAAAAAGQ",
+                                        "Value": "KindInt64 400"
+                                      },
+                                      {
+                                        "github.com/pingcap/tidb/pkg/statistics.(*TopN).QueryTopN": [
+                                          {
+                                            "FindTopN idx": 7
+                                          },
+                                          {
+                                            "Found": true,
+                                            "Result": 50
+                                          }
+                                        ]
+                                      },
+                                      {
+                                        "Error": null,
+                                        "Result": 50
+                                      }
+                                    ]
+                                  },
+                                  {
+                                    "End estimate range": {
+                                      "RowCount": 50,
+                                      "Type": "Small range in ver1 stats"
+                                    }
+                                  },
+                                  {
+                                    "github.com/pingcap/tidb/pkg/planner/cardinality.equalRowCountOnColumn": [
+                                      {
+                                        "Encoded": "A4AAAAAAAAGQ",
+                                        "Value": "KindInt64 401"
+                                      },
+                                      {
+                                        "github.com/pingcap/tidb/pkg/statistics.(*TopN).QueryTopN": [
+                                          {
+                                            "FindTopN idx": -1
+                                          },
+                                          {
+                                            "Found": false,
+                                            "Result": 0
+                                          }
+                                        ]
+                                      },
+                                      {
+                                        "github.com/pingcap/tidb/pkg/statistics.(*CMSketch).queryHashValue": {
+                                          "Origin Values": [
+                                            1,
+                                            2,
+                                            2,
+                                            1,
+                                            1
+                                          ],
+                                          "Result": 1,
+                                          "Use default value": false,
+                                          "Values": [
+                                            2,
+                                            2,
+                                            2,
+                                            3,
+                                            3
+                                          ]
+                                        }
+                                      },
+                                      {
+                                        "Error": null,
+                                        "Result": 1
+                                      }
+                                    ]
+                                  },
+                                  {
+                                    "End estimate range": {
+                                      "RowCount": 1,
+                                      "Type": "Small range in ver1 stats"
+                                    }
+                                  },
+                                  {
+                                    "github.com/pingcap/tidb/pkg/planner/cardinality.equalRowCountOnColumn": [
+                                      {
+                                        "Encoded": "A4AAAAAAAAGQ",
+                                        "Value": "KindInt64 402"
+                                      },
+                                      {
+                                        "github.com/pingcap/tidb/pkg/statistics.(*TopN).QueryTopN": [
+                                          {
+                                            "FindTopN idx": -1
+                                          },
+                                          {
+                                            "Found": false,
+                                            "Result": 0
+                                          }
+                                        ]
+                                      },
+                                      {
+                                        "github.com/pingcap/tidb/pkg/statistics.(*CMSketch).queryHashValue": {
+                                          "Origin Values": [
+                                            1,
+                                            3,
+                                            2,
+                                            2,
+                                            2
+                                          ],
+                                          "Result": 1,
+                                          "Use default value": false,
+                                          "Values": [
+                                            2,
+                                            3,
+                                            3,
+                                            3,
+                                            4
+                                          ]
+                                        }
+                                      },
+                                      {
+                                        "Error": null,
+                                        "Result": 1
+                                      }
+                                    ]
+                                  },
+                                  {
+                                    "End estimate range": {
+                                      "RowCount": 1,
+                                      "Type": "Small range in ver1 stats"
+                                    }
+                                  },
+                                  {
+                                    "github.com/pingcap/tidb/pkg/planner/cardinality.equalRowCountOnColumn": [
+                                      {
+                                        "Encoded": "A4AAAAAAAAGQ",
+                                        "Value": "KindInt64 403"
+                                      },
+                                      {
+                                        "github.com/pingcap/tidb/pkg/statistics.(*TopN).QueryTopN": [
+                                          {
+                                            "FindTopN idx": -1
+                                          },
+                                          {
+                                            "Found": false,
+                                            "Result": 0
+                                          }
+                                        ]
+                                      },
+                                      {
+                                        "github.com/pingcap/tidb/pkg/statistics.(*CMSketch).queryHashValue": {
+                                          "Origin Values": [
+                                            2,
+                                            2,
+                                            1,
+                                            2,
+                                            1
+                                          ],
+                                          "Result": 1,
+                                          "Use default value": false,
+                                          "Values": [
+                                            2,
+                                            2,
+                                            3,
+                                            3,
+                                            3
+                                          ]
+                                        }
+                                      },
+                                      {
+                                        "Error": null,
+                                        "Result": 1
+                                      }
+                                    ]
+                                  },
+                                  {
+                                    "End estimate range": {
+                                      "RowCount": 1,
+                                      "Type": "Small range in ver1 stats"
+                                    }
+                                  }
+                                ]
+                              },
+                              {
+                                "Index Name": "ib",
+                                "crossValidationSelectivity": 0.017207792207792207,
+                                "error": null,
+                                "minRowCount": 53
+                              }
+                            ]
+                          },
+                          {
+                            "github.com/pingcap/tidb/pkg/statistics.(*Index).QueryBytes": [
+                              {
+                                "github.com/pingcap/tidb/pkg/statistics.(*CMSketch).queryHashValue": {
+                                  "Origin Values": [
+                                    1,
+                                    2,
+                                    2,
+                                    1,
+                                    3
+                                  ],
+                                  "Result": 1,
+                                  "Use default value": false,
+                                  "Values": [
+                                    1,
+                                    1,
+                                    2,
+                                    2,
+                                    3
+                                  ]
+                                }
+                              },
+                              {
+                                "Result": 1
+                              }
+                            ]
+                          },
+                          {
+                            "Encoded": "A4AAAAAAAAGS",
+                            "Index Name": "ib",
+                            "Range": "(400,403)",
+                            "Result": 0.0003246753246753247,
+                            "UsedColLen": 1,
+                            "error": null
+                          }
+                        ]
+                      },
+                      {
+                        "github.com/pingcap/tidb/pkg/planner/cardinality.getEqualCondSelectivity": [
+                          {
+                            "github.com/pingcap/tidb/pkg/planner/cardinality.crossValidationSelectivity": [
+                              {
+                                "github.com/pingcap/tidb/pkg/statistics.ColumnStatsIsInvalid": {
+                                  "EssentialLoaded": true,
+                                  "InValidForCollPseudo": false,
+                                  "IsInvalid": false,
+                                  "NDV": 2001,
+                                  "TotalCount": 3080
+                                }
+                              },
+                              {
+                                "github.com/pingcap/tidb/pkg/planner/cardinality.GetColumnRowCount": [
+                                  {
+                                    "Start estimate range": {
+                                      "CurrentRowCount": 0,
+                                      "HighValueEncoded": "A4AAAAAAAAGT",
+                                      "LowValueEncoded": "A4AAAAAAAAGQ",
+                                      "Range": "[400,403]"
+                                    }
+                                  },
+                                  {
+                                    "github.com/pingcap/tidb/pkg/planner/cardinality.equalRowCountOnColumn": [
+                                      {
+                                        "Encoded": "A4AAAAAAAAGQ",
+                                        "Value": "KindInt64 400"
+                                      },
+                                      {
+                                        "github.com/pingcap/tidb/pkg/statistics.(*TopN).QueryTopN": [
+                                          {
+                                            "FindTopN idx": 7
+                                          },
+                                          {
+                                            "Found": true,
+                                            "Result": 50
+                                          }
+                                        ]
+                                      },
+                                      {
+                                        "Error": null,
+                                        "Result": 50
+                                      }
+                                    ]
+                                  },
+                                  {
+                                    "End estimate range": {
+                                      "RowCount": 50,
+                                      "Type": "Small range in ver1 stats"
+                                    }
+                                  },
+                                  {
+                                    "github.com/pingcap/tidb/pkg/planner/cardinality.equalRowCountOnColumn": [
+                                      {
+                                        "Encoded": "A4AAAAAAAAGQ",
+                                        "Value": "KindInt64 401"
+                                      },
+                                      {
+                                        "github.com/pingcap/tidb/pkg/statistics.(*TopN).QueryTopN": [
+                                          {
+                                            "FindTopN idx": -1
+                                          },
+                                          {
+                                            "Found": false,
+                                            "Result": 0
+                                          }
+                                        ]
+                                      },
+                                      {
+                                        "github.com/pingcap/tidb/pkg/statistics.(*CMSketch).queryHashValue": {
+                                          "Origin Values": [
+                                            1,
+                                            2,
+                                            2,
+                                            1,
+                                            1
+                                          ],
+                                          "Result": 1,
+                                          "Use default value": false,
+                                          "Values": [
+                                            2,
+                                            2,
+                                            2,
+                                            3,
+                                            3
+                                          ]
+                                        }
+                                      },
+                                      {
+                                        "Error": null,
+                                        "Result": 1
+                                      }
+                                    ]
+                                  },
+                                  {
+                                    "End estimate range": {
+                                      "RowCount": 1,
+                                      "Type": "Small range in ver1 stats"
+                                    }
+                                  },
+                                  {
+                                    "github.com/pingcap/tidb/pkg/planner/cardinality.equalRowCountOnColumn": [
+                                      {
+                                        "Encoded": "A4AAAAAAAAGQ",
+                                        "Value": "KindInt64 402"
+                                      },
+                                      {
+                                        "github.com/pingcap/tidb/pkg/statistics.(*TopN).QueryTopN": [
+                                          {
+                                            "FindTopN idx": -1
+                                          },
+                                          {
+                                            "Found": false,
+                                            "Result": 0
+                                          }
+                                        ]
+                                      },
+                                      {
+                                        "github.com/pingcap/tidb/pkg/statistics.(*CMSketch).queryHashValue": {
+                                          "Origin Values": [
+                                            1,
+                                            3,
+                                            2,
+                                            2,
+                                            2
+                                          ],
+                                          "Result": 1,
+                                          "Use default value": false,
+                                          "Values": [
+                                            2,
+                                            3,
+                                            3,
+                                            3,
+                                            4
+                                          ]
+                                        }
+                                      },
+                                      {
+                                        "Error": null,
+                                        "Result": 1
+                                      }
+                                    ]
+                                  },
+                                  {
+                                    "End estimate range": {
+                                      "RowCount": 1,
+                                      "Type": "Small range in ver1 stats"
+                                    }
+                                  },
+                                  {
+                                    "github.com/pingcap/tidb/pkg/planner/cardinality.equalRowCountOnColumn": [
+                                      {
+                                        "Encoded": "A4AAAAAAAAGQ",
+                                        "Value": "KindInt64 403"
+                                      },
+                                      {
+                                        "github.com/pingcap/tidb/pkg/statistics.(*TopN).QueryTopN": [
+                                          {
+                                            "FindTopN idx": -1
+                                          },
+                                          {
+                                            "Found": false,
+                                            "Result": 0
+                                          }
+                                        ]
+                                      },
+                                      {
+                                        "github.com/pingcap/tidb/pkg/statistics.(*CMSketch).queryHashValue": {
+                                          "Origin Values": [
+                                            2,
+                                            2,
+                                            1,
+                                            2,
+                                            1
+                                          ],
+                                          "Result": 1,
+                                          "Use default value": false,
+                                          "Values": [
+                                            2,
+                                            2,
+                                            3,
+                                            3,
+                                            3
+                                          ]
+                                        }
+                                      },
+                                      {
+                                        "Error": null,
+                                        "Result": 1
+                                      }
+                                    ]
+                                  },
+                                  {
+                                    "End estimate range": {
+                                      "RowCount": 1,
+                                      "Type": "Small range in ver1 stats"
+                                    }
+                                  }
+                                ]
+                              },
+                              {
+                                "Index Name": "ib",
+                                "crossValidationSelectivity": 0.017207792207792207,
+                                "error": null,
+                                "minRowCount": 53
+                              }
+                            ]
+                          },
+                          {
+                            "github.com/pingcap/tidb/pkg/statistics.(*Index).QueryBytes": [
+                              {
+                                "github.com/pingcap/tidb/pkg/statistics.(*CMSketch).queryHashValue": {
+                                  "Origin Values": [
+                                    2,
+                                    3,
+                                    1,
+                                    3,
+                                    1
+                                  ],
+                                  "Result": 1,
+                                  "Use default value": false,
+                                  "Values": [
+                                    1,
+                                    1,
+                                    2,
+                                    3,
+                                    3
+                                  ]
+                                }
+                              },
+                              {
+                                "Result": 1
+                              }
+                            ]
+                          },
+                          {
+                            "Encoded": "A4AAAAAAAAGS",
+                            "Index Name": "ib",
+                            "Range": "(400,403)",
+                            "Result": 0.0003246753246753247,
+                            "UsedColLen": 1,
+                            "error": null
+                          }
+                        ]
+                      },
+                      {
+                        "End estimate range": {
+                          "RowCount": 2,
+                          "Type": "Range"
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "Name": "ib",
+                    "Result": 2
+                  }
+                ]
+              },
+              {
+                "Expressions": [
+                  "gt(test.t.b, 400)",
+                  "lt(test.t.b, 403)"
+                ],
+                "Selectivity": 0.0006493506493506494,
+                "partial cover": false
+              },
+              {
+                "Expressions": [
+                  "lt(test.t.a, -1500)"
+                ],
+                "Selectivity": 0,
+                "partial cover": false
+              },
+              {
+                "Result": 0
+              }
+            ]
+          }
+        ],
+        "ResultForV2": [
+          {
+            "github.com/pingcap/tidb/pkg/planner/cardinality.Selectivity": [
+              {
+                "Input Expressions": [
+                  "lt(test.t.a, -1500)",
+                  "gt(test.t.b, 400)",
+                  "lt(test.t.b, 403)"
+                ]
+              },
+              {
+                "github.com/pingcap/tidb/pkg/planner/cardinality.GetRowCountByColumnRanges": [
+                  {
+                    "ID": 1,
+                    "Ranges": [
+                      "[-inf,-1500)"
+                    ]
+                  },
+                  {
+                    "github.com/pingcap/tidb/pkg/statistics.ColumnStatsIsInvalid": {
+                      "EssentialLoaded": true,
+                      "InValidForCollPseudo": false,
+                      "IsInvalid": false,
+                      "NDV": 2000,
+                      "TotalCount": 2980
+                    }
+                  },
+                  {
+                    "Histogram NotNull Count": 1980,
+                    "Increase Factor": 1.0335570469798658,
+                    "TopN total count": 1000
+                  },
+                  {
+                    "github.com/pingcap/tidb/pkg/planner/cardinality.GetColumnRowCount": [
+                      {
+                        "Start estimate range": {
+                          "CurrentRowCount": 0,
+                          "HighValueEncoded": "A3////////ok",
+                          "LowValueEncoded": "AQ==",
+                          "Range": "[-inf,-1500)"
+                        }
+                      },
+                      {
+                        "github.com/pingcap/tidb/pkg/statistics.(*Histogram).LessRowCountWithBktIdx": [
+                          {
+                            "Locate value in buckets": {
+                              "BucketIdx": 0,
+                              "Exceed": false,
+                              "InBucket": false,
+                              "MatchLastValue": false,
+                              "Value": "KindMinNotNull <nil>"
+                            }
+                          },
+                          {
+                            "Related Buckets in Histogram": [
+                              {
+                                "Count": -1,
+                                "Index": -1,
+                                "Repeat": -1
+                              },
+                              {
+                                "Count": 8,
+                                "Index": 0,
+                                "Repeat": 1
+                              }
+                            ]
+                          },
+                          {
+                            "Bucket idx": 0,
+                            "Result": 0
+                          }
+                        ]
+                      },
+                      {
+                        "github.com/pingcap/tidb/pkg/statistics.(*Histogram).LessRowCountWithBktIdx": [
+                          {
+                            "Locate value in buckets": {
+                              "BucketIdx": 0,
+                              "Exceed": false,
+                              "InBucket": false,
+                              "MatchLastValue": false,
+                              "Value": "KindInt64 -1500"
+                            }
+                          },
+                          {
+                            "Related Buckets in Histogram": [
+                              {
+                                "Count": -1,
+                                "Index": -1,
+                                "Repeat": -1
+                              },
+                              {
+                                "Count": 8,
+                                "Index": 0,
+                                "Repeat": 1
+                              }
+                            ]
+                          },
+                          {
+                            "Bucket idx": 0,
+                            "Result": 0
+                          }
+                        ]
+                      },
+                      {
+                        "github.com/pingcap/tidb/pkg/statistics.(*TopN).BetweenCount": {
+                          "Result": 0
+                        }
+                      },
+                      {
+                        "github.com/pingcap/tidb/pkg/statistics.(*Histogram).OutOfRangeRowCount": [
+                          {
+                            "lDatum": "KindMinNotNull <nil>",
+                            "modifyCount": 100,
+                            "rDatum": "KindInt64 -1500"
+                          },
+                          {
+                            "commonPrefix": 0,
+                            "lScalar": -1.7976931348623157e+308,
+                            "rScalar": -1500,
+                            "unsigned": false
+                          },
+                          {
+                            "boundL": -2997,
+                            "boundR": 2997,
+                            "histL": -999,
+                            "histR": 999,
+                            "lPercent": 0.5613744375005636,
+                            "rPercent": 0,
+                            "rowCount": 555.760693125558
+                          },
+                          {
+                            "Result": 100
+                          }
+                        ]
+                      },
+                      {
+                        "End estimate range": {
+                          "RowCount": 100,
+                          "Type": "Range"
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "Name": "a",
+                    "Result": 100
+                  }
+                ]
+              },
+              {
+                "github.com/pingcap/tidb/pkg/planner/cardinality.GetRowCountByColumnRanges": [
+                  {
+                    "ID": 2,
+                    "Ranges": [
+                      "(400,403)"
+                    ]
+                  },
+                  {
+                    "github.com/pingcap/tidb/pkg/statistics.ColumnStatsIsInvalid": {
+                      "EssentialLoaded": true,
+                      "InValidForCollPseudo": false,
+                      "IsInvalid": false,
+                      "NDV": 2000,
+                      "TotalCount": 2980
+                    }
+                  },
+                  {
+                    "Histogram NotNull Count": 1980,
+                    "Increase Factor": 1.0335570469798658,
+                    "TopN total count": 1000
+                  },
+                  {
+                    "github.com/pingcap/tidb/pkg/planner/cardinality.GetColumnRowCount": [
+                      {
+                        "Start estimate range": {
+                          "CurrentRowCount": 0,
+                          "HighValueEncoded": "A4AAAAAAAAGT",
+                          "LowValueEncoded": "A4AAAAAAAAGQ",
+                          "Range": "(400,403)"
+                        }
+                      },
+                      {
+                        "github.com/pingcap/tidb/pkg/statistics.(*Histogram).LessRowCountWithBktIdx": [
+                          {
+                            "Locate value in buckets": {
+                              "BucketIdx": 111,
+                              "Exceed": false,
+                              "InBucket": true,
+                              "MatchLastValue": false,
+                              "Value": "KindInt64 400"
+                            }
+                          },
+                          {
+                            "Related Buckets in Histogram": [
+                              {
+                                "Count": 888,
+                                "Index": 110,
+                                "Repeat": 1
+                              },
+                              {
+                                "Count": 896,
+                                "Index": 111,
+                                "Repeat": 1
+                              }
+                            ]
+                          },
+                          {
+                            "Bucket idx": 111,
+                            "Result": 890.625
+                          }
+                        ]
+                      },
+                      {
+                        "github.com/pingcap/tidb/pkg/statistics.(*Histogram).LessRowCountWithBktIdx": [
+                          {
+                            "Locate value in buckets": {
+                              "BucketIdx": 111,
+                              "Exceed": false,
+                              "InBucket": true,
+                              "MatchLastValue": false,
+                              "Value": "KindInt64 403"
+                            }
+                          },
+                          {
+                            "Related Buckets in Histogram": [
+                              {
+                                "Count": 888,
+                                "Index": 110,
+                                "Repeat": 1
+                              },
+                              {
+                                "Count": 896,
+                                "Index": 111,
+                                "Repeat": 1
+                              }
+                            ]
+                          },
+                          {
+                            "Bucket idx": 111,
+                            "Result": 893.25
+                          }
+                        ]
+                      },
+                      {
+                        "github.com/pingcap/tidb/pkg/statistics.(*TopN).BetweenCount": [
+                          {
+                            "Related TopN Range": {
+                              "Count": [
+                                50
+                              ],
+                              "FirstEncoded": "A4AAAAAAAAGQ",
+                              "FirstIdx": 9,
+                              "LastEncoded": "A4AAAAAAAAGQ",
+                              "LastIdx": 9
+                            }
+                          },
+                          {
+                            "Result": 50
+                          }
+                        ]
+                      },
+                      {
+                        "github.com/pingcap/tidb/pkg/planner/cardinality.equalRowCountOnColumn": [
+                          {
+                            "Encoded": "A4AAAAAAAAGQ",
+                            "Value": "KindInt64 400"
+                          },
+                          {
+                            "github.com/pingcap/tidb/pkg/statistics.(*TopN).QueryTopN": [
+                              {
+                                "FindTopN idx": 9
+                              },
+                              {
+                                "Found": true,
+                                "Result": 50
+                              }
+                            ]
+                          },
+                          {
+                            "Error": null,
+                            "Result": 50
+                          }
+                        ]
+                      },
+                      {
+                        "End estimate range": {
+                          "RowCount": 2.713087248322148,
+                          "Type": "Range"
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "Name": "b",
+                    "Result": 2.713087248322148
+                  }
+                ]
+              },
+              {
+                "github.com/pingcap/tidb/pkg/planner/cardinality.GetRowCountByIndexRanges": [
+                  {
+                    "ID": 1,
+                    "Ranges": [
+                      "[-inf,-1500)"
+                    ]
+                  },
+                  {
+                    "github.com/pingcap/tidb/pkg/statistics.IndexStatsIsInvalid": {
+                      "CollPseudo": false,
+                      "IsInvalid": false,
+                      "TotalCount": 2980
+                    }
+                  },
+                  {
+                    "Histogram NotNull Count": 1980,
+                    "Increase Factor": 1.0335570469798658,
+                    "TopN total count": 1000
+                  },
+                  {
+                    "github.com/pingcap/tidb/pkg/planner/cardinality.getIndexRowCountForStatsV2": [
+                      {
+                        "Start estimate range": {
+                          "CurrentRowCount": 0,
+                          "HighValueEncoded": "A3////////ok",
+                          "LowValueEncoded": "AQ==",
+                          "Range": "[-inf,-1500)"
+                        }
+                      },
+                      {
+                        "github.com/pingcap/tidb/pkg/statistics.(*Histogram).LessRowCountWithBktIdx": [
+                          {
+                            "Locate value in buckets": {
+                              "BucketIdx": 0,
+                              "Exceed": false,
+                              "InBucket": false,
+                              "MatchLastValue": false,
+                              "Value": "KindBytes \\x01"
+                            }
+                          },
+                          {
+                            "Related Buckets in Histogram": [
+                              {
+                                "Count": -1,
+                                "Index": -1,
+                                "Repeat": -1
+                              },
+                              {
+                                "Count": 8,
+                                "Index": 0,
+                                "Repeat": 1
+                              }
+                            ]
+                          },
+                          {
+                            "Bucket idx": 0,
+                            "Result": 0
+                          }
+                        ]
+                      },
+                      {
+                        "github.com/pingcap/tidb/pkg/statistics.(*Histogram).LessRowCountWithBktIdx": [
+                          {
+                            "Locate value in buckets": {
+                              "BucketIdx": 0,
+                              "Exceed": false,
+                              "InBucket": false,
+                              "MatchLastValue": false,
+                              "Value": "KindBytes \\x03\\x7f\\xff\\xff\\xff\\xff\\xff\\xfa$"
+                            }
+                          },
+                          {
+                            "Related Buckets in Histogram": [
+                              {
+                                "Count": -1,
+                                "Index": -1,
+                                "Repeat": -1
+                              },
+                              {
+                                "Count": 8,
+                                "Index": 0,
+                                "Repeat": 1
+                              }
+                            ]
+                          },
+                          {
+                            "Bucket idx": 0,
+                            "Result": 0
+                          }
+                        ]
+                      },
+                      {
+                        "github.com/pingcap/tidb/pkg/statistics.(*TopN).BetweenCount": {
+                          "Result": 0
+                        }
+                      },
+                      {
+                        "github.com/pingcap/tidb/pkg/statistics.(*Histogram).OutOfRangeRowCount": [
+                          {
+                            "lDatum": "KindBytes \\x01",
+                            "modifyCount": 100,
+                            "rDatum": "KindBytes \\x03\\x7f\\xff\\xff\\xff\\xff\\xff\\xfa$"
+                          },
+                          {
+                            "commonPrefix": 0,
+                            "lScalar": 72057594037927940,
+                            "rScalar": 252201579132747780,
+                            "unsigned": false
+                          },
+                          {
+                            "Result": 0
+                          }
+                        ]
+                      },
+                      {
+                        "End estimate range": {
+                          "RowCount": 0,
+                          "Type": "Range"
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "Name": "iab",
+                    "Result": 0
+                  }
+                ]
+              },
+              {
+                "github.com/pingcap/tidb/pkg/planner/cardinality.GetRowCountByIndexRanges": [
+                  {
+                    "ID": 2,
+                    "Ranges": [
+                      "(400,403)"
+                    ]
+                  },
+                  {
+                    "github.com/pingcap/tidb/pkg/statistics.IndexStatsIsInvalid": {
+                      "CollPseudo": false,
+                      "IsInvalid": false,
+                      "TotalCount": 2980
+                    }
+                  },
+                  {
+                    "Histogram NotNull Count": 1980,
+                    "Increase Factor": 1.0335570469798658,
+                    "TopN total count": 1000
+                  },
+                  {
+                    "github.com/pingcap/tidb/pkg/planner/cardinality.getIndexRowCountForStatsV2": [
+                      {
+                        "Start estimate range": {
+                          "CurrentRowCount": 0,
+                          "HighValueEncoded": "A4AAAAAAAAGT",
+                          "LowValueEncoded": "A4AAAAAAAAGQ",
+                          "Range": "(400,403)"
+                        }
+                      },
+                      {
+                        "github.com/pingcap/tidb/pkg/statistics.(*Histogram).LessRowCountWithBktIdx": [
+                          {
+                            "Locate value in buckets": {
+                              "BucketIdx": 111,
+                              "Exceed": false,
+                              "InBucket": true,
+                              "MatchLastValue": false,
+                              "Value": "KindBytes \\x03\\x80\\x00\\x00\\x00\\x00\\x00\\x01\\x91"
+                            }
+                          },
+                          {
+                            "Related Buckets in Histogram": [
+                              {
+                                "Count": 888,
+                                "Index": 110,
+                                "Repeat": 1
+                              },
+                              {
+                                "Count": 896,
+                                "Index": 111,
+                                "Repeat": 1
+                              }
+                            ]
+                          },
+                          {
+                            "Bucket idx": 111,
+                            "Result": 891.5
+                          }
+                        ]
+                      },
+                      {
+                        "github.com/pingcap/tidb/pkg/statistics.(*Histogram).LessRowCountWithBktIdx": [
+                          {
+                            "Locate value in buckets": {
+                              "BucketIdx": 111,
+                              "Exceed": false,
+                              "InBucket": true,
+                              "MatchLastValue": false,
+                              "Value": "KindBytes \\x03\\x80\\x00\\x00\\x00\\x00\\x00\\x01\\x93"
+                            }
+                          },
+                          {
+                            "Related Buckets in Histogram": [
+                              {
+                                "Count": 888,
+                                "Index": 110,
+                                "Repeat": 1
+                              },
+                              {
+                                "Count": 896,
+                                "Index": 111,
+                                "Repeat": 1
+                              }
+                            ]
+                          },
+                          {
+                            "Bucket idx": 111,
+                            "Result": 893.25
+                          }
+                        ]
+                      },
+                      {
+                        "github.com/pingcap/tidb/pkg/statistics.(*TopN).BetweenCount": {
+                          "Result": 0
+                        }
+                      },
+                      {
+                        "End estimate range": {
+                          "RowCount": 1.8087248322147653,
+                          "Type": "Range"
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "Name": "ib",
+                    "Result": 1.8087248322147653
+                  }
+                ]
+              },
+              {
+                "Expressions": [
+                  "gt(test.t.b, 400)",
+                  "lt(test.t.b, 403)"
+                ],
+                "Selectivity": 0.0005872483221476511,
+                "partial cover": false
+              },
+              {
+                "Expressions": [
+                  "lt(test.t.a, -1500)"
+                ],
+                "Selectivity": 0,
+                "partial cover": false
+              },
+              {
+                "Result": 0
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "Name": "TestIndexJoinInnerRowCountUpperBound",
+    "Cases": [
+      {
+        "Query": "explain format = 'brief' select /*+ inl_join(t2) */ * from (select * from t where t.a < 1) as t1 join t t2 where t2.a = 0 and t1.a = t2.b",
+        "Result": [
+          "Projection 2000.00 root  test.t.a, test.t.b, test.t.a, test.t.b",
+          "└─IndexJoin 2000.00 root  inner join, inner:IndexLookUp, outer key:test.t.a, inner key:test.t.b, equal cond:eq(test.t.a, test.t.b)",
+          "  ├─TableReader(Build) 1000.00 root  data:Selection",
+          "  │ └─Selection 1000.00 cop[tikv]  lt(test.t.a, 1), not(isnull(test.t.a))",
+          "  │   └─TableFullScan 500000.00 cop[tikv] table:t keep order:false, stats:pseudo",
+          "  └─IndexLookUp(Probe) 2000.00 root  ",
+          "    ├─Selection(Build) 1000000.00 cop[tikv]  lt(test.t.b, 1), not(isnull(test.t.b))",
+          "    │ └─IndexRangeScan 500000000.00 cop[tikv] table:t2, index:idx(b) range: decided by [eq(test.t.b, test.t.a)], keep order:false, stats:pseudo",
+          "    └─Selection(Probe) 2000.00 cop[tikv]  eq(test.t.a, 0)",
+          "      └─TableRowIDScan 1000000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "Query": "set @@tidb_opt_fix_control = '44855:ON'",
+        "Result": null
+      },
+      {
+        "Query": "explain format = 'brief' select /*+ inl_join(t2) */ * from (select * from t where t.a < 1) as t1 join t t2 where t2.a = 0 and t1.a = t2.b",
+        "Result": [
+          "Projection 2000.00 root  test.t.a, test.t.b, test.t.a, test.t.b",
+          "└─IndexJoin 2000.00 root  inner join, inner:IndexLookUp, outer key:test.t.a, inner key:test.t.b, equal cond:eq(test.t.a, test.t.b)",
+          "  ├─TableReader(Build) 1000.00 root  data:Selection",
+          "  │ └─Selection 1000.00 cop[tikv]  lt(test.t.a, 1), not(isnull(test.t.a))",
+          "  │   └─TableFullScan 500000.00 cop[tikv] table:t keep order:false, stats:pseudo",
+          "  └─IndexLookUp(Probe) 2000.00 root  ",
+          "    ├─Selection(Build) 1000000.00 cop[tikv]  lt(test.t.b, 1), not(isnull(test.t.b))",
+          "    │ └─IndexRangeScan 1000000.00 cop[tikv] table:t2, index:idx(b) range: decided by [eq(test.t.b, test.t.a)], keep order:false, stats:pseudo",
+          "    └─Selection(Probe) 2000.00 cop[tikv]  eq(test.t.a, 0)",
+          "      └─TableRowIDScan 1000000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ]
+      }
+    ]
+  },
+  {
+    "Name": "TestSubsetIdxCardinality",
+    "Cases": [
+      {
+        "Query": "explain format = 'brief' select distinct a from t",
+        "Result": [
+          "StreamAgg 31.00 root  group by:test.t.a, funcs:firstrow(test.t.a)->test.t.a",
+          "└─IndexReader 31.00 root  index:StreamAgg",
+          "  └─StreamAgg 31.00 cop[tikv]  group by:test.t.a, ",
+          "    └─IndexFullScan 1280.00 cop[tikv] table:t, index:iabc(a, b, c) keep order:true"
+        ]
+      },
+      {
+        "Query": "explain format = 'brief' select distinct b from t",
+        "Result": [
+          "HashAgg 14.00 root  group by:test.t.b, funcs:firstrow(test.t.b)->test.t.b",
+          "└─IndexReader 14.00 root  index:HashAgg",
+          "  └─HashAgg 14.00 cop[tikv]  group by:test.t.b, ",
+          "    └─IndexFullScan 1280.00 cop[tikv] table:t, index:iabc(a, b, c) keep order:false"
+        ]
+      },
+      {
+        "Query": "explain format = 'brief' select distinct a, b, c from t",
+        "Result": [
+          "StreamAgg 70.00 root  group by:test.t.a, test.t.b, test.t.c, funcs:firstrow(test.t.a)->test.t.a, funcs:firstrow(test.t.b)->test.t.b, funcs:firstrow(test.t.c)->test.t.c",
+          "└─IndexReader 70.00 root  index:StreamAgg",
+          "  └─StreamAgg 70.00 cop[tikv]  group by:test.t.a, test.t.b, test.t.c, ",
+          "    └─IndexFullScan 1280.00 cop[tikv] table:t, index:iabc(a, b, c) keep order:true"
+        ]
+      },
+      {
+        "Query": "explain format = 'brief' select a, b from t where a = 1 and b = 1 and c = 1",
+        "Result": [
+          "Projection 16.00 root  test.t.a, test.t.b",
+          "└─IndexReader 16.00 root  index:IndexRangeScan",
+          "  └─IndexRangeScan 16.00 cop[tikv] table:t, index:iabc(a, b, c) range:[1 1 1,1 1 1], keep order:false"
+        ]
+      },
+      {
+        "Query": "explain format = 'brief' select a, b from t where a = 1 and b = 1",
+        "Result": [
+          "IndexReader 20.32 root  index:IndexRangeScan",
+          "└─IndexRangeScan 20.32 cop[tikv] table:t, index:iabc(a, b, c) range:[1 1,1 1], keep order:false"
+        ]
+      }
+    ]
+  }
+]

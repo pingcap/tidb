@@ -1,0 +1,14 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_binary", "go_library")
+
+go_library(
+    name = "fake-oauth_lib",
+    srcs = ["main.go"],
+    importpath = "github.com/pingcap/tidb/tools/fake-oauth",
+    visibility = ["//visibility:private"],
+)
+
+go_binary(
+    name = "fake-oauth",
+    embed = [":fake-oauth_lib"],
+    visibility = ["//visibility:public"],
+)

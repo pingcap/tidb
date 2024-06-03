@@ -8,26 +8,29 @@ import (
 	"runtime"
 
 	"github.com/pingcap/log"
-	"github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/util/israce"
-	"github.com/pingcap/tidb/util/versioninfo"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/util/israce"
+	"github.com/pingcap/tidb/pkg/util/versioninfo"
 	"go.uber.org/zap"
 )
 
 // Version information.
 var (
-	ReleaseVersion = getReleaseVersion()
-	BuildTS        = versioninfo.TiDBBuildTS
-	GitHash        = versioninfo.TiDBGitHash
-	GitBranch      = versioninfo.TiDBGitBranch
-	goVersion      = runtime.Version()
+	ReleaseVersion        = getReleaseVersion()
+	BuildTS               = versioninfo.TiDBBuildTS
+	GitHash               = versioninfo.TiDBGitHash
+	GitBranch             = versioninfo.TiDBGitBranch
+	goVersion             = runtime.Version()
+	ReleaseVersionForTest = "nightly-dirty"
 )
 
 func getReleaseVersion() string {
 	if mysql.TiDBReleaseVersion != "None" {
 		return mysql.TiDBReleaseVersion
 	}
-	return "v7.0.0-master"
+	// it's unreachable for normal path, only for realtikv tests
+	// we need to set the ReleaseVersion manually.
+	return ReleaseVersionForTest
 }
 
 // AppName is a name of a built binary.

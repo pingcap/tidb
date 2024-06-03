@@ -1,0 +1,10 @@
+# See the OWNERS docs at https://go.k8s.io/owners
+options:
+  no_parent_owners: true
+filters:
+  "(parser\\.y)$":
+    approvers:
+      - sig-critical-approvers-parser
+  ".*":
+    approvers:
+      - sig-approvers-parser

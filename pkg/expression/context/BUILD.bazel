@@ -1,0 +1,38 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "context",
+    srcs = [
+        "context.go",
+        "optional.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/expression/context",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/errctx",
+        "//pkg/parser/mysql",
+        "//pkg/sessionctx/variable",
+        "//pkg/types",
+        "//pkg/util/context",
+        "//pkg/util/intest",
+        "//pkg/util/mathutil",
+    ],
+)
+
+go_test(
+    name = "context_test",
+    timeout = "short",
+    srcs = [
+        "context_override_test.go",
+        "optional_test.go",
+    ],
+    embed = [":context"],
+    flaky = True,
+    shard_count = 4,
+    deps = [
+        "//pkg/errctx",
+        "//pkg/expression/contextstatic",
+        "//pkg/types",
+        "@com_github_stretchr_testify//require",
+    ],
+)

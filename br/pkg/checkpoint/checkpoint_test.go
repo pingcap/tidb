@@ -26,7 +26,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/checkpoint"
 	"github.com/pingcap/tidb/br/pkg/pdutil"
 	"github.com/pingcap/tidb/br/pkg/storage"
-	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
 )
@@ -54,7 +54,7 @@ func TestCheckpointMeta(t *testing.T) {
 	checkpointMetaForRestore := &checkpoint.CheckpointMetadataForRestore{
 		SchedulersConfig: &pdutil.ClusterConfig{
 			Schedulers: []string{"1", "2"},
-			ScheduleCfg: map[string]interface{}{
+			ScheduleCfg: map[string]any{
 				"1": "2",
 				"2": "1",
 			},
@@ -99,7 +99,7 @@ func TestCheckpointMeta(t *testing.T) {
 				TableName:  model.NewCIStr("3"),
 				IndexName:  "4",
 				AddSQL:     "5",
-				AddArgs:    []interface{}{"6", "7", "8"},
+				AddArgs:    []any{"6", "7", "8"},
 			},
 		},
 	}, "123")
@@ -111,7 +111,7 @@ func TestCheckpointMeta(t *testing.T) {
 	require.Equal(t, repairSQLs.SQLs[0].TableName, model.NewCIStr("3"))
 	require.Equal(t, repairSQLs.SQLs[0].IndexName, "4")
 	require.Equal(t, repairSQLs.SQLs[0].AddSQL, "5")
-	require.Equal(t, repairSQLs.SQLs[0].AddArgs, []interface{}{"6", "7", "8"})
+	require.Equal(t, repairSQLs.SQLs[0].AddArgs, []any{"6", "7", "8"})
 }
 
 type mockTimer struct {

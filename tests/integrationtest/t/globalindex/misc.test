@@ -1,0 +1,129 @@
+set tidb_enable_global_index=true;
+
+# TestCreatePartitionTableWithGlobalIndex
+drop table if exists test_global;
+create table test_global ( a int, b int, c int, unique key p_b(b))
+partition by range( a ) (
+	partition p1 values less than (10),
+	partition p2 values less than (20)
+);
+insert into test_global values (1,2,2);
+-- error 1062
+insert into test_global values (11,2,2);
+-- error 1062
+insert into test_global values (11,2,2);
+
+--echo # NULL will not get 'duplicate key' error here
+insert into test_global(a,c) values (1,2);
+insert into test_global(a,c) values (11,2);
+
+drop table if exists test_global;
+-- error 1503
+create table test_global ( a int, b int, c int, primary key p_b(b) /*T![clustered_index] CLUSTERED */)
+partition by range( a ) (
+	partition p1 values less than (10),
+	partition p2 values less than (20)
+);
+
+drop table if exists test_global;
+-- error 1503
+create table test_global ( a int, b int, c int, primary key p_b_c(b, c) /*T![clustered_index] CLUSTERED */)
+partition by range( a ) (
+	partition p1 values less than (10),
+	partition p2 values less than (20)
+);
+
+drop table if exists test_global;
+create table test_global ( a int, b int, c int, primary key (b) /*T![clustered_index] NONCLUSTERED */)
+partition by range( a ) (
+	partition p1 values less than (10),
+	partition p2 values less than (20)
+);
+insert into test_global values (1,2,2);
+-- error 1062
+insert into test_global values (11,2,2);
+-- error 1062
+insert into test_global values (11,2,2);
+
+
+# TestIssue21732
+drop table if exists p;
+create table p (a int, b int GENERATED ALWAYS AS (3*a-2*a) VIRTUAL, unique index idx(a)) partition by hash(b) partitions 2;
+insert into p (a) values  (1),(2),(3);
+analyze table p;
+--sorted_result
+select * from p use index (idx);
+
+
+# TestGlobalIndexForIssue40149
+drop table if exists test_t1;
+CREATE TABLE test_t1 (
+	a int(11) NOT NULL,
+	b int(11) DEFAULT NULL,
+	c int(11) DEFAULT NULL,
+	unique index p_a(a)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY RANGE (c) (
+    PARTITION p0 VALUES LESS THAN (10),
+    PARTITION p1 VALUES LESS THAN (MAXVALUE)
+);
+insert into test_t1 values (1,1,1);
+
+explain format='brief' select * from test_t1 where a = 1;
+select * from test_t1 where a = 1;
+
+analyze table test_t1;
+explain format='brief' select * from test_t1 where a = 1;
+select * from test_t1 where a = 1;
+
+
+# TestListColumnsPartitionWithGlobalIndex
+## Test generated column with global index
+drop table if exists t;
+## Test for virtual generated column with global index
+create table t (a varchar(10), b varchar(1) GENERATED ALWAYS AS (substr(a,1,1)) VIRTUAL) partition by list columns(b) (partition p0 values in ('a','c'), partition p1 values in ('b','d'));
+alter table t add unique index (a);
+insert into t (a) values  ('aaa'),('abc'),('acd');
+analyze table t;
+select a from t partition (p0) order by a;
+select * from t where a = 'abc' order by a;
+update t set a='bbb' where a = 'aaa';
+admin check table t;
+select a from t order by a;
+select a from t partition (p0) order by a;
+select a from t partition (p1) order by a;
+select * from t where a = 'bbb' order by a;
+-- error 1062
+insert into t (a) values  ('abc');
+insert into t (a) values ('abc') on duplicate key update a='bbc';
+select a from t order by a;
+select * from t where a = 'bbc';
+select a from t partition (p0) order by a;
+select a from t partition (p1) order by a;
+--replace_regex /in\(_tidb_pid, [0-9]+\)/in(_tidb_pid, pid1)/
+explain format = 'brief' select a from t partition (p1) order by a;
+
+drop table if exists t;
+## Test for stored generated column with global index
+create table t (a varchar(10), b varchar(1) GENERATED ALWAYS AS (substr(a,1,1)) STORED) partition by list columns(b) (partition p0 values in ('a','c'), partition p1 values in ('b','d'));
+alter table t add unique index (a);
+insert into t (a) values  ('aaa'),('abc'),('acd');
+analyze table t;
+select a from t partition (p0) order by a;
+select * from t where a = 'abc' order by a;
+update t set a='bbb' where a = 'aaa';
+admin check table t;
+select a from t order by a;
+select a from t partition (p0) order by a;
+select a from t partition (p1) order by a;
+select * from t where a = 'bbb' order by a;
+-- error 1062
+insert into t (a) values  ('abc');
+insert into t (a) values ('abc') on duplicate key update a='bbc';
+select a from t order by a;
+select * from t where a = 'bbc';
+select a from t partition (p0) order by a;
+select a from t partition (p1) order by a;
+--replace_regex /in\(_tidb_pid, [0-9]+\)/in(_tidb_pid, pid1)/
+explain format = 'brief' select a from t partition (p1) order by a;
+

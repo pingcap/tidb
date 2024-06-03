@@ -1,0 +1,623 @@
+[
+  {
+    "name": "TestMPPHints",
+    "cases": [
+      "select /*+ MPP_1PHASE_AGG() */ a, sum(b) from t group by a, c",
+      "select /*+ MPP_2PHASE_AGG() */ a, sum(b) from t group by a, c",
+      "select /*+ shuffle_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a",
+      "select /*+ broadcast_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a",
+
+      // READ_FROM_STORAGE hint
+      "select /*+ read_from_storage(tiflash[t]), MPP_1PHASE_AGG() */ a, sum(b) from t group by a, c",
+      "select /*+ read_from_storage(tiflash[t]), MPP_2PHASE_AGG() */ a, sum(b) from t group by a, c",
+      "select /*+ read_from_storage(tiflash[t1, t2]), shuffle_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a",
+      "select /*+ read_from_storage(tiflash[t1, t2]), broadcast_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a",
+
+      // Join hint
+      "select /*+ read_from_storage(tiflash[t1, t2]), shuffle_join(t1, t2), hash_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a",
+      "select /*+ read_from_storage(tiflash[t1, t2]), broadcast_join(t1, t2), hash_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a",
+
+      "select /*+ read_from_storage(tiflash[t1, t2]), shuffle_join(t1, t2), hash_join_build(t1) */ * from t t1, t t2 where t1.a=t2.a",
+      "select /*+ read_from_storage(tiflash[t1, t2]), broadcast_join(t1, t2), hash_join_build(t2) */ * from t t1, t t2 where t1.a=t2.a",
+      "select /*+ read_from_storage(tiflash[t1, t2]), broadcast_join(t1, t2), hash_join_build(t1) */ * from t t1, t t2 where t1.a=t2.a",
+
+      "select /*+ read_from_storage(tiflash[t1, t2]), shuffle_join(t1, t2), hash_join_probe(t1) */ * from t t1, t t2 where t1.a=t2.a",
+      "select /*+ read_from_storage(tiflash[t1, t2]), broadcast_join(t1, t2), hash_join_probe(t2) */ * from t t1, t t2 where t1.a=t2.a",
+      "select /*+ read_from_storage(tiflash[t1, t2]), broadcast_join(t1, t2), hash_join_probe(t1) */ * from t t1, t t2 where t1.a=t2.a",
+
+      "select /*+ read_from_storage(tiflash[t1, t2]), shuffle_join(t1, t2), merge_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a",
+      "select /*+ read_from_storage(tiflash[t1, t2]), broadcast_join(t1, t2), merge_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a",
+
+      "select /*+ read_from_storage(tiflash[t1, t2]), shuffle_join(t1, t2), INL_JOIN(t1, t2) */ * from t t1, t t2 where t1.a=t2.a",
+      "select /*+ read_from_storage(tiflash[t1, t2]), broadcast_join(t1, t2), INL_JOIN(t1, t2) */ * from t t1, t t2 where t1.a=t2.a",
+
+      // AGG hint
+      "select /*+ read_from_storage(tiflash[t]), MPP_1PHASE_AGG(), hash_agg() */ a, sum(b) from t group by a, c",
+      "select /*+ read_from_storage(tiflash[t]), MPP_2PHASE_AGG(), stream_agg() */ a, sum(b) from t group by a, c",
+
+      // Index hint
+      "select /*+ read_from_storage(tiflash[t]), MPP_1PHASE_AGG(), use_index(t, idx_a) */ a, sum(b) from t where a > 1 group by a, c",
+      "select /*+ read_from_storage(tiflash[t]), MPP_1PHASE_AGG(), ignore_index(t, idx_a) */ a, sum(b) from t where a > 1 group by a, c",
+      "select /*+ read_from_storage(tiflash[t]), MPP_2PHASE_AGG(), force_index(t, idx_b) */ a, sum(b) from t where b < 2 group by a, c",
+      "select /*+ read_from_storage(tiflash[t]), MPP_2PHASE_AGG(), index_merge(t, idx_b, idx_a) */ a, sum(b) from t where b < 2 or a > 2 group by a, c",
+
+      // Join Order hint
+      "select /*+ read_from_storage(tiflash[t1, t2, t3]), shuffle_join(t1, t2, t3), straight_join() */ * from t t1, t t2, t t3 where t1.a=t2.a and t2.b=t3.b",
+      "select /*+ read_from_storage(tiflash[t1, t2, t3]), shuffle_join(t1, t2, t3), leading(t3, t1) */ * from t t1, t t2, t t3 where t1.a=t2.a and t2.b=t3.b",
+      "select /*+ read_from_storage(tiflash[t1, t2, t3]), broadcast_join(t1, t2, t3), straight_join() */ * from t t2, t t1, t t3 where t1.a=t2.a and t2.b=t3.b",
+      "select /*+ read_from_storage(tiflash[t1, t2, t3]), broadcast_join(t1, t2, t3), leading(t2, t3) */ * from t t1, t t2, t t3 where t1.a=t2.a and t2.b=t3.b",
+
+      // View Hint
+      "select /*+ qb_name(qb, v), MPP_1PHASE_AGG(@qb) */ * from v",
+      "select /*+ qb_name(qb, v), MPP_2PHASE_AGG(@qb) */ * from v",
+      "select /*+ qb_name(qb, v1), shuffle_join(t1@qb, t2@qb) */ * from v1",
+      "select /*+ qb_name(qb, v1), broadcast_join(t1@qb, t2@qb) */ * from v1",
+
+      // Subquery hint
+      "SELECT /*+ shuffle_join(t) */ * FROM t WHERE EXISTS (SELECT /*+ SEMI_JOIN_REWRITE() */ 1 FROM t t1 WHERE t1.b = t.b);",
+      "SELECT /*+ broadcast_join(t) */ * FROM t WHERE EXISTS (SELECT /*+ SEMI_JOIN_REWRITE() */ 1 FROM t t1 WHERE t1.b = t.b);",
+      "select * from t t1 where t1.a < (select /*+ MPP_1PHASE_AGG() */ sum(t2.a) from t t2 where t2.b = t1.b);",
+      "select * from t t1 where t1.a < (select /*+ MPP_2PHASE_AGG() */ sum(t2.a) from t t2 where t2.b = t1.b);",
+
+      // CTE
+      "WITH CTE AS (SELECT /*+ MPP_1PHASE_AGG() */ count(*) as a, b FROM t WHERE t.a < 60 group by b) SELECT * FROM CTE WHERE CTE.a <18 union select * from cte where cte.b > 1;",
+      "WITH CTE AS (SELECT /*+ MPP_2PHASE_AGG() */ count(*) as a, b FROM t WHERE t.a < 60 group by b) SELECT * FROM CTE WHERE CTE.a <18 union select * from cte where cte.b > 1;",
+      "WITH CTE AS (SELECT /*+ shuffle_join(t1, t) */ t.a, t.b FROM t join t t1 where t.a = t1.a) SELECT * FROM CTE WHERE CTE.a <18 union select * from cte where cte.b > 1;",
+      "WITH CTE AS (SELECT /*+ broadcast_join(t1, t) */ t.a, t.b FROM t join t t1 where t.a = t1.a) SELECT * FROM CTE WHERE CTE.a <18 union select * from cte where cte.b > 1;",
+      "WITH CTE AS (SELECT /*+ MERGE(), MPP_1PHASE_AGG() */ count(*) as a, b FROM t WHERE t.a < 60 group by b) SELECT * FROM CTE WHERE CTE.a <18 union select * from cte where cte.b > 1;",
+      "WITH CTE AS (SELECT /*+ MERGE(), MPP_2PHASE_AGG() */ count(*) as a, b FROM t WHERE t.a < 60 group by b) SELECT * FROM CTE WHERE CTE.a <18 union select * from cte where cte.b > 1;",
+      "WITH CTE AS (SELECT /*+ MERGE(), shuffle_join(t1, t) */ t.a, t.b FROM t join t t1 where t.a = t1.a) SELECT * FROM CTE WHERE CTE.a <18 union select * from cte where cte.b > 1;",
+      "WITH CTE AS (SELECT /*+ MERGE(), broadcast_join(t1, t) */ t.a, t.b FROM t join t t1 where t.a = t1.a) SELECT * FROM CTE WHERE CTE.a <18 union select * from cte where cte.b > 1;",
+
+
+      // Test MPP Hints with hash_join_build and hash_join_probe hints
+      // TestMPPOuterJoinBuildSideForBroadcastJoin
+      "select /*+ read_from_storage(tiflash[t1, t2]), broadcast_join(t1, t2), hash_join_build(t2) */ * from t t1 left join t t2 on t1.a=t2.a",
+      "select /*+ read_from_storage(tiflash[t1, t2]), broadcast_join(t1, t2), hash_join_build(t2), hash_join_probe(t2) */ * from t t1 left join t t2 on t1.a=t2.a",
+      "select /*+ read_from_storage(tiflash[t1, t2]), broadcast_join(t1, t2), hash_join_build(t1) */ * from t t1 right join t t2 on t1.a=t2.a",
+      "select /*+ read_from_storage(tiflash[t1, t2]), broadcast_join(t1, t2), hash_join_probe(t2) */ * from t t1 left join t t2 on t1.a=t2.a",
+      "select /*+ read_from_storage(tiflash[t1, t2]), broadcast_join(t1, t2), hash_join_probe(t1) */ * from t t1 right join t t2 on t1.a=t2.a",
+
+      // TestMPPOuterJoinBuildSideForShuffleJoinWithFixedBuildSide
+      "set @@session.tidb_opt_mpp_outer_join_fixed_build_side = 1",
+      "select /*+ read_from_storage(tiflash[t1, t2]), shuffle_join(t1, t2), hash_join_build(t2) */ * from t t1 left join t t2 on t1.a=t2.a",
+      "select /*+ read_from_storage(tiflash[t1, t2]), shuffle_join(t1, t2), hash_join_build(t1) */ * from t t1 right join t t2 on t1.a=t2.a",
+      "select /*+ read_from_storage(tiflash[t1, t2]), shuffle_join(t1, t2), hash_join_probe(t2) */ * from t t1 left join t t2 on t1.a=t2.a",
+      "select /*+ read_from_storage(tiflash[t1, t2]), shuffle_join(t1, t2), hash_join_probe(t1) */ * from t t1 right join t t2 on t1.a=t2.a",
+
+      // TestMPPOuterJoinBuildSideForShuffleJoin
+      "set @@session.tidb_opt_mpp_outer_join_fixed_build_side = 0",
+      "select /*+ read_from_storage(tiflash[t1, t2]), shuffle_join(t1, t2), hash_join_build(t2) */ * from t t1 left join t t2 on t1.a=t2.a",
+      "select /*+ read_from_storage(tiflash[t1, t2]), shuffle_join(t1, t2), hash_join_build(t1) */ * from t t1 right join t t2 on t1.a=t2.a",
+      "select /*+ read_from_storage(tiflash[t1, t2]), shuffle_join(t1, t2), hash_join_probe(t2) */ * from t t1 left join t t2 on t1.a=t2.a",
+      "select /*+ read_from_storage(tiflash[t1, t2]), shuffle_join(t1, t2), hash_join_probe(t1) */ * from t t1 right join t t2 on t1.a=t2.a",
+
+      // Semi Join
+      "select /*+ shuffle_join(t1, t2@sel_2), hash_join_build(t2@sel_2) */ a from t t1 where t1.a>1 or t1.a in (select a from t t2);",
+      "select /*+ shuffle_join(t1, t2@sel_2), hash_join_build(t1) */ a from t t1 where t1.a>1 or t1.a not in (select a from t t2);",
+      "select /*+ shuffle_join(t1, t2@sel_2), hash_join_probe(t2@sel_2) */ a from t t1 where t1.a>1 or t1.a in (select a from t t2);",
+      "select /*+ shuffle_join(t1, t2@sel_2), hash_join_probe(t1) */ a from t t1 where t1.a>1 or t1.a not in (select a from t t2);"
+    ]
+  },
+  {
+    "name": "TestMPPHintsScope",
+    "cases": [
+      "set @@session.tidb_allow_mpp=true",
+      "explain select /*+ MPP_1PHASE_AGG() */ a, sum(b) from t group by a, c",
+      "explain select /*+ MPP_2PHASE_AGG() */ a, sum(b) from t group by a, c",
+      "explain select /*+ shuffle_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a",
+      "explain select /*+ broadcast_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a",
+
+      "set @@session.tidb_enforce_mpp=true",
+      "explain select /*+ hash_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a",
+      "explain select /*+ merge_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a",
+
+      "set @@session.tidb_enforce_mpp=false",
+      "explain select /*+ hash_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a",
+      "explain select /*+ merge_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a",
+      "explain select /*+ read_from_storage(tiflash[t1, t2]) hash_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a",
+      "explain select /*+ read_from_storage(tiflash[t1, t2]) merge_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a",
+
+      "set @@session.tidb_allow_mpp=false",
+      "explain select /*+ MPP_1PHASE_AGG() */ a, sum(b) from t group by a, c",
+      "explain select /*+ MPP_2PHASE_AGG() */ a, sum(b) from t group by a, c",
+      "explain select /*+ shuffle_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a",
+      "explain select /*+ broadcast_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a"
+    ]
+  },
+  {
+    "name": "TestMPPBCJModel",
+    "cases": [
+      "set @@session.tidb_allow_mpp=true",
+      "set @@session.tidb_prefer_broadcast_join_by_exchange_data_size=0",
+      "explain select * from t t1, t t2 where t1.a=t2.a",
+      "set @@session.tidb_prefer_broadcast_join_by_exchange_data_size=1",
+      "explain select * from t t1, t t2 where t1.a=t2.a"
+    ]
+  },
+  {
+    "name": "TestMPPPreferBCJ",
+    "cases": [
+      "explain select * from t1, t2 where t1.a=t2.b",
+      "set @@session.tidb_prefer_broadcast_join_by_exchange_data_size=1",
+      "explain select * from t1, t2 where t1.a=t2.b",
+      "insert into t2 values (9); analyze table t2;",
+      "explain select * from t1, t2 where t1.a=t2.b"
+    ]
+  },
+  {
+    "name": "TestMPPBCJModelOneTiFlash",
+    "cases": [
+      "set @@session.tidb_allow_mpp=true",
+      "set @@session.tidb_prefer_broadcast_join_by_exchange_data_size=0",
+      "explain select * from t t1, t t2 where t1.a=t2.a",
+      "set @@session.tidb_prefer_broadcast_join_by_exchange_data_size=1",
+      "explain select * from t t1, t t2 where t1.a=t2.a"
+    ]
+  },
+  {
+    "name": "TestMPPRightSemiJoin",
+    "cases": [
+      "set @@session.tidb_allow_mpp=true",
+      "explain select * from t1 where exists (select * from t2 where t1.a=t2.b)",
+      "set @@session.tidb_prefer_broadcast_join_by_exchange_data_size=0",
+      "set @@session.tidb_broadcast_join_threshold_size=0",
+      "set @@session.tidb_broadcast_join_threshold_count=0",
+      "explain select * from t1 where exists (select * from t2 where t1.a=t2.b)"
+    ]
+  },
+  {
+    "name": "TestMPPRightOuterJoin",
+    "cases": [
+      "set @@session.tidb_allow_mpp=true",
+      "explain select * from t1 right join t2 on t1.a=t2.b and t1.c < t2.d",
+      "set @@session.tidb_prefer_broadcast_join_by_exchange_data_size=0",
+      "set @@session.tidb_broadcast_join_threshold_size=0",
+      "set @@session.tidb_broadcast_join_threshold_count=0",
+      "explain select * from t1 right join t2 on t1.a=t2.b and t1.c < t2.d"
+    ]
+  },
+  {
+    "name": "TestIssue37520",
+    "cases": [
+      "select /*+ inl_join(t1@sel_2) */ a, (select b from t1 where t1.a = t2.b) from t2;",
+      "select /*+ inl_join(t2) */ a, (select b from t1 where t1.a = t2.b) from t2;",
+      "select /*+ inl_join(t2@sel_2) */ * from t1 where exists ( select /*+ semi_join_rewrite() */ * from t2 where t1.a = t2.a);",
+      "select /*+ inl_join(t1) */ * from t1 where exists ( select /*+ semi_join_rewrite() */ * from t2 where t1.a = t2.a);"
+    ]
+  },
+  {
+    "name": "TestHintScope",
+    "cases": [
+      // join hints
+      "select /*+ MERGE_JOIN(t1) */ t1.a, t1.b from t t1, (select /*+ INL_JOIN(t3) */ t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
+      "select /*+ MERGE_JOIN(test.t1) */ t1.a, t1.b from t t1, (select /*+ INL_JOIN(test.t3) */ t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
+      "select /*+ MERGE_JOIN(t1) */ t1.a, t1.b from t t1, (select /*+ HASH_JOIN(t2) */ t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
+      "select /*+ INL_JOIN(t1) */ t1.a, t1.b from t t1, (select /*+ HASH_JOIN(t2) */ t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
+      "select /*+ INL_JOIN(test.t1) */ t1.a, t1.b from t t1, (select /*+ HASH_JOIN(test.t2) */ t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
+      "select /*+ INL_JOIN(t1) */ t1.a, t1.b from t t1, (select /*+ MERGE_JOIN(t2) */ t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
+      "select /*+ HASH_JOIN(t1) */ t1.a, t1.b from t t1, (select /*+ MERGE_JOIN(t2) */ t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
+      "select /*+ HASH_JOIN(test.t1) */ t1.a, t1.b from t t1, (select /*+ MERGE_JOIN(test.t2) */ t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
+      "select /*+ HASH_JOIN(t1) */ t1.a, t1.b from t t1, (select /*+ INL_JOIN(t2) */ t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
+      "select /*+ MERGE_JOIN(t1) */ t1.a, t1.b from t t1, (select t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
+      "select /*+ INL_JOIN(t1) */ t1.a, t1.b from t t1, (select t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
+      "select /*+ HASH_JOIN(t1) */ t1.a, t1.b from t t1, (select t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
+      "select /*+ HASH_JOIN(@sel_2 t1@sel_2, t2@sel_2), MERGE_JOIN(@sel_1 t1@sel_1, t2@sel_1) */ * from (select t1.a, t1.b from t t1, t t2 where t1.a = t2.a) t1, t t2 where t1.b = t2.b",
+      // aggregation hints
+      "select /*+ STREAM_AGG() */ s, count(s) from (select /*+ HASH_AGG() */ sum(t1.a) as s from t t1, t t2 where t1.a = t2.b group by t1.a) p group by s",
+      "select /*+ HASH_AGG() */ s, count(s) from (select /*+ STREAM_AGG() */ sum(t1.a) as s from t t1, t t2 where t1.a = t2.b group by t1.a) p group by s",
+      "select /*+ HASH_AGG() */ s, count(s) from (select sum(t1.a) as s from t t1, t t2 where t1.a = t2.b group by t1.a) p group by s",
+      "select /*+ STREAM_AGG() */ s, count(s) from (select sum(t1.a) as s from t t1, t t2 where t1.a = t2.b group by t1.a) p group by s"
+    ]
+  },
+  {
+    "name": "TestIndexHint",
+    "cases": [
+      // simple case
+      "select /*+ USE_INDEX(t, c_d_e) */ * from t",
+      "select /*+ USE_INDEX(test.t, c_d_e) */ * from t",
+      "select /*+ IGNORE_INDEX(t, c_d_e) */ c from t order by c",
+      "select /*+ IGNORE_INDEX(test.t, c_d_e) */ c from t order by c",
+      "select /*+ FORCE_INDEX(t, c_d_e) */ * from t",
+      "select /*+ FORCE_INDEX(test.t, c_d_e) */ * from t",
+      "select /*+ USE_INDEX(t, c_d_e) */ * from t t1",
+      "select /*+ IGNORE_INDEX(t, c_d_e) */ t1.c from t t1 order by t1.c",
+      "select /*+ FORCE_INDEX(t, c_d_e) */ * from t t1",
+      "select /*+ USE_INDEX(t1, c_d_e) */ * from t t1",
+      "select /*+ IGNORE_INDEX(t1, c_d_e) */ t1.c from t t1 order by t1.c",
+      "select /*+ FORCE_INDEX(t1, c_d_e) */ * from t t1",
+      "select /*+ USE_INDEX(t1, c_d_e), USE_INDEX(t2, f) */ * from t t1, t t2 where t1.a = t2.b",
+      "select /*+ IGNORE_INDEX(t1, c_d_e), IGNORE_INDEX(t2, f), HASH_JOIN(t1) */ * from t t1, t t2 where t1.a = t2.b",
+      "select /*+ FORCE_INDEX(t1, c_d_e), FORCE_INDEX(t2, f) */ * from t t1, t t2 where t1.a = t2.b",
+      // test multiple indexes
+      "select /*+ USE_INDEX(t, c_d_e, f, g) */ * from t order by f",
+      "select /*+ FORCE_INDEX(t, c_d_e, f, g) */ * from t order by f",
+      // use TablePath when the hint only contains table.
+      "select /*+ USE_INDEX(t) */ f from t where f > 10",
+      "select /*+ FORCE_INDEX(t) */ f from t where f > 10",
+      // there will be a warning instead of error when index not exist
+      "select /*+ USE_INDEX(t, no_such_index) */ * from t",
+      "select /*+ IGNORE_INDEX(t, no_such_index) */ * from t",
+      "select /*+ FORCE_INDEX(t, no_such_index) */ * from t",
+      // use both use_index and ignore_index, same as index hints in sql.
+      "select /*+ USE_INDEX(t, c_d_e), IGNORE_INDEX(t, f) */ c from t order by c",
+      "select /*+ USE_INDEX(t, f), IGNORE_INDEX(t, f) */ c from t order by c",
+      "select /*+ USE_INDEX(t, c_d_e), IGNORE_INDEX(t, c_d_e) */ c from t order by c",
+      "select /*+ USE_INDEX(t, c_d_e, f), IGNORE_INDEX(t, c_d_e) */ c from t order by c",
+      // use both force_index and ignore_index, same as index hints in sql.
+      "select /*+ FORCE_INDEX(t, c_d_e), IGNORE_INDEX(t, f) */ c from t order by c",
+      "select /*+ FORCE_INDEX(t, f), IGNORE_INDEX(t, f) */ c from t order by c",
+      "select /*+ FORCE_INDEX(t, c_d_e), IGNORE_INDEX(t, c_d_e) */ c from t order by c",
+      "select /*+ FORCE_INDEX(t, c_d_e, f), IGNORE_INDEX(t, c_d_e) */ c from t order by c"
+    ]
+  },
+  {
+    "name": "TestIndexMergeHint",
+    "cases": [
+      "select /*+ USE_INDEX_MERGE(t, c_d_e, f_g) */ * from t where c < 1 or f > 2",
+      "select /*+ USE_INDEX_MERGE(t, primary, f_g) */ * from t where a < 1 or f > 2",
+      "select /*+ USE_INDEX_MERGE(t, primary, f_g, c_d_e) */ * from t where a < 1 or f > 2",
+      "select /*+ NO_INDEX_MERGE(), USE_INDEX_MERGE(t, primary, f_g, c_d_e) */ * from t where a < 1 or f > 2",
+      "select /*+ USE_INDEX_MERGE(t1, c_d_e, f_g) */ * from t where c < 1 or f > 2",
+      "select /*+ NO_INDEX_MERGE(), USE_INDEX_MERGE(t, primary, f_g, c_d_e) */ * from t where a < 1 or f > 2",
+      "select /*+ USE_INDEX_MERGE(t) USE_INDEX_MERGE(t) */ * from t where c < 1 or f > 2",
+      "select /*+ USE_INDEX_MERGE(db2.t) */ * from t where c < 1 or f > 2",
+      "select /*+ USE_INDEX_MERGE(db2.t, c_d_e, f_g) */ * from t where c < 1 or f > 2"
+    ]
+  },
+  {
+    "name": "TestRefine",
+    "cases": [
+      "select a from t where c is not null",
+      "select a from t where c >= 4",
+      "select a from t where c <= 4",
+      "select a from t where c = 4 and d = 5 and e = 6",
+      "select a from t where d = 4 and c = 5",
+      "select a from t where c = 4 and e < 5",
+      "select a from t where c = 4 and d <= 5 and d > 3",
+      "select a from t where d <= 5 and d > 3",
+      "select a from t where c between 1 and 2",
+      "select a from t where c not between 1 and 2",
+      "select a from t where c <= 5 and c >= 3 and d = 1",
+      "select a from t where c = 1 or c = 2 or c = 3",
+      "select b from t where c = 1 or c = 2 or c = 3 or c = 4 or c = 5",
+      "select a from t where c = 5",
+      "select a from t where c = 5 and b = 1",
+      "select a from t where not a",
+      "select a from t where c in (1)",
+      "select a from t where c in ('1')",
+      "select a from t where c = 1.0",
+      "select a from t where c in (1) and d > 3",
+      "select a from t where c in (1, 2, 3) and (d > 3 and d < 4 or d > 5 and d < 6)",
+      "select a from t where c in (1, 2, 3) and (d > 2 and d < 4 or d > 5 and d < 7)",
+      "select a from t where c in (1, 2, 3)",
+      "select a from t where c in (1, 2, 3) and d in (1,2) and e = 1",
+      "select a from t where d in (1, 2, 3)",
+      "select a from t where c not in (1)",
+      "select a from t use index(c_d_e) where c != 1",
+      // test like
+      "select a from t where c_str like ''",
+      "select a from t where c_str like 'abc'",
+      "select a from t where c_str not like 'abc'",
+      "select a from t where not (c_str like 'abc' or c_str like 'abd')",
+      "select a from t where c_str like '_abc'",
+      "select a from t where c_str like 'abc%'",
+      "select a from t where c_str like 'abc_'",
+      "select a from t where c_str like 'abc%af'",
+      "select a from t where c_str like 'abc\\_' escape ''",
+      "select a from t where c_str like 'abc\\_'",
+      "select a from t where c_str like 'abc\\\\_'",
+      "select a from t where c_str like 'abc\\_%'",
+      "select a from t where c_str like 'abc=_%' escape '='",
+      "select a from t where c_str like 'abc\\__'",
+      // Check that 123 is converted to string '123'. index can be used.
+      "select a from t where c_str like 123",
+      "select a from t where c = 1.9 and d > 3",
+      "select a from t where c < 1.1",
+      "select a from t where c <= 1.9",
+      "select a from t where c >= 1.1",
+      "select a from t where c > 1.9",
+      "select a from t where c = 123456789098765432101234",
+      "select a from t where c = 'hanfei'"
+    ]
+  },
+  {
+    "name": "TestAggEliminator",
+    "cases": [
+      // Max to Limit + Sort-Desc.
+      "select max(a) from t;",
+      // Min to Limit + Sort.
+      "select min(a) from t;",
+      // Min to Limit + Sort, and isnull() should be added.
+      "select min(c_str) from t;",
+      // Do nothing to max + firstrow.
+      "select max(a), b from t;",
+      // If max/min contains scalar function, we can still do transformation.
+      "select max(a+1) from t;",
+      // Min + Max to Limit + Sort + Join.
+      "select max(a), min(a) from t;",
+      // Min + Max with range condition.
+      "select max(a), min(a) from t where a > 10",
+      // Min + Max with unified index range condition.
+      "select max(d), min(d) from t where c = 1 and d > 10",
+      // Min + Max with multiple columns
+      "select max(a), max(c), min(f) from t",
+      // Do nothing if any column has no index.
+      "select max(a), max(b) from t",
+      // Do nothing if any column has a non-range condition.
+      "select max(a), max(c) from t where c > 10",
+      // Do nothing if the condition cannot be pushed down to range.
+      "select max(a), min(a) from t where a * 3 + 10 < 100",
+      // Do nothing to max with groupby.
+      "select max(a) from t group by b;",
+      // If inner is not a data source, we can still do transformation.
+      "select max(a) from (select t1.a from t t1 join t t2 on t1.a=t2.a) t"
+    ]
+  },
+  {
+    "name": "TestRuleColumnPruningLogicalApply",
+    "cases": [
+      "SELECT COUNT(*) FROM (SELECT a, (SELECT t2.b FROM t t2, t t3 WHERE t2.a = t3.a AND t1.a = t2.a LIMIT 1) t FROM t t1) t",
+      "SELECT COUNT(a) FROM (SELECT a, (SELECT t2.b FROM t t2, t t3 WHERE t2.a = t3.a AND t1.a = t2.a LIMIT 1) t FROM t t1) t",
+      "SELECT COUNT(t) FROM (SELECT a, (SELECT t2.b FROM t t2, t t3 WHERE t2.a = t3.a AND t1.a = t2.a LIMIT 1) t FROM t t1) t",
+      "SELECT COUNT(a) FROM t t1 WHERE t1.a IN (SELECT t2.a FROM t t2, t t3 WHERE t2.b = t3.b)",
+      "SELECT a FROM (SELECT a, (SELECT t2.b FROM t t2, t t3 WHERE t2.a = t3.a AND t1.a = t2.a LIMIT 1) t FROM t t1) t",
+      "SELECT a FROM t WHERE b IN (SELECT t2.b FROM t t2, t t3 WHERE t2.a = t3.a)",
+      "SELECT a FROM t WHERE EXISTS (SELECT t2.b FROM t t2, t t3 WHERE t2.a = t3.a AND t2.b=t.b)",
+      "SELECT a FROM t WHERE NOT EXISTS (SELECT t2.b FROM t t2, t t3 WHERE t2.a = t3.a AND t2.b=t.b)",
+      "SELECT a FROM t WHERE b IN (SELECT b FROM t WHERE b = 1 AND a IN (SELECT a FROM t WHERE a > 0))",
+      "SELECT a FROM t WHERE b IN (SELECT b FROM t WHERE b = 1 AND a IN (SELECT t2.a FROM (SELECT t1.a, (SELECT t2.b FROM t t2, t t3 WHERE t2.a = t3.a AND t1.a = t2.a LIMIT 1) t FROM t t1) t2))"
+    ]
+  },
+  {
+    "name": "TestUnmatchedTableInHint",
+    "cases": [
+      "SELECT /*+ TIDB_SMJ(t3, t4) */ * from t t1, t t2 where t1.a = t2.a",
+      "SELECT /*+ TIDB_HJ(t3, t4) */ * from t t1, t t2 where t1.a = t2.a",
+      "SELECT /*+ TIDB_INLJ(t3, t4) */ * from t t1, t t2 where t1.a = t2.a",
+      "SELECT /*+ TIDB_SMJ(t1, t2) */ * from t t1, t t2 where t1.a = t2.a",
+      "SELECT /*+ TIDB_SMJ(t3, t4) */ * from t t1, t t2, t t3 where t1.a = t2.a and t2.a = t3.a"
+    ]
+  },
+  {
+    "name": "TestJoinHints",
+    "cases": [
+      "select /*+ TIDB_INLJ(t1) */ t1.a, t2.a, t3.a from t t1, t t2, t t3 where t1.a = t2.a and t2.a = t3.a;",
+      "select /*+ TIDB_INLJ(test.t1) */ t1.a, t2.a, t3.a from t t1, t t2, t t3 where t1.a = t2.a and t2.a = t3.a;",
+      "select /*+ TIDB_INLJ(t1) */ t1.b, t2.a from t t1, t t2 where t1.b = t2.a;",
+      "select /*+ TIDB_INLJ(t2) */ t1.b, t2.a from t2 t1, t2 t2 where t1.b=t2.b and t2.c=-1;"
+    ]
+  },
+  {
+    "name": "TestAggregationHints",
+    "cases": [
+      // without Aggregation hints
+      {
+        "SQL": "select count(*) from t t1, t t2 where t1.a = t2.b"
+      },
+      {
+        "SQL": "select count(t1.a) from t t1, t t2 where t1.a = t2.a*2 group by t1.a"
+      },
+      // with Aggregation hints
+      {
+        "SQL": "select /*+ HASH_AGG() */ count(*) from t t1, t t2 where t1.a = t2.b"
+      },
+      {
+        "SQL": "select /*+ STREAM_AGG() */ count(t1.a) from t t1, t t2 where t1.a = t2.a*2 group by t1.a"
+      },
+      // test conflict warning
+      {
+        "SQL": "select /*+ HASH_AGG() STREAM_AGG() */ count(*) from t t1, t t2 where t1.a = t2.b"
+      },
+      {
+        "SQL": "select /*+ STREAM_AGG() */ distinct a from t"
+      },
+      // additional test
+      {
+        "SQL": "select /*+ HASH_AGG() */ t1.a from t t1 where t1.a < any(select t2.b from t t2)"
+      },
+      {
+        "SQL": "select /*+ hash_agg() */ t1.a from t t1 where t1.a != any(select t2.b from t t2)"
+      },
+      {
+        "SQL": "select /*+ hash_agg() */ t1.a from t t1 where t1.a = all(select t2.b from t t2)"
+      },
+      {
+        "SQL": "select /*+ STREAM_AGG() */ sum(t1.a) from t t1 join t t2 on t1.b = t2.b group by t1.b",
+        "AggPushDown": true
+      },
+      {
+        "SQL": "select /*+ STREAM_AGG() */ e, sum(b) from t group by e"
+      }
+    ]
+  },
+  {
+    "name": "TestQueryBlockHint",
+    "cases": [
+      "select /*+ MERGE_JOIN(@sel_1 t1), INL_JOIN(@sel_2 t3) */ t1.a, t1.b from t t1, (select t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
+      "select /*+ MERGE_JOIN(@sel_1 t1), INL_JOIN(@qb t3) */ t1.a, t1.b from t t1, (select /*+ QB_NAME(qb) */ t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
+      "select /*+ HASH_JOIN(@sel_1 t1), MERGE_JOIN(@sel_2 t2) */ t1.a, t1.b from t t1, (select t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
+      "select /*+ HASH_JOIN(@sel_1 t1), MERGE_JOIN(@qb t2) */ t1.a, t1.b from t t1, (select /*+ QB_NAME(qb) */ t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
+      "select /*+ INL_JOIN(@sel_1 t1), HASH_JOIN(@sel_2 t2) */ t1.a, t1.b from t t1, (select t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
+      "select /*+ INL_JOIN(@sel_1 t1), HASH_JOIN(@qb t2) */ t1.a, t1.b from t t1, (select /*+ QB_NAME(qb) */ t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
+      "select /*+ HASH_AGG(@sel_1), STREAM_AGG(@sel_2) */ count(*) from t t1 where t1.a < (select count(*) from t t2 where t1.a > t2.a)",
+      "select /*+ STREAM_AGG(@sel_1), HASH_AGG(@qb) */ count(*) from t t1 where t1.a < (select /*+ QB_NAME(qb) */ count(*) from t t2 where t1.a > t2.a)",
+      "select /*+ HASH_AGG(@sel_2) */ a, (select count(*) from t t1 where t1.b > t.a) from t where b > (select b from t t2 where t2.b = t.a limit 1)",
+      "select /*+ HASH_JOIN(@sel_1 t1), HASH_JOIN(@sel_2 t1) */ t1.b, t2.a, t2.aa from t t1, (select t1.a as a, t2.a as aa from t t1, t t2) t2 where t1.a = t2.aa;",
+      "select /*+ HASH_JOIN(@sel_2 t1@sel_2, t2@sel_2), MERGE_JOIN(@sel_1 t1@sel_1, t2@sel_1) */ * from (select t1.a, t1.b from t t1, t t2 where t1.a = t2.a) t1, t t2 where t1.b = t2.b"
+    ]
+  },
+  {
+    "name": "TestSemiJoinToInner",
+    "cases": [
+      "select t1.a, (select count(t2.a) from t t2 where t2.g in (select t3.d from t t3 where t3.c = t1.a)) as agg_col from t t1;"
+    ]
+  },
+  {
+    "name": "TestIndexJoinHint",
+    "cases": [
+      "select /*+ INL_JOIN(t1) */ * from t1 join t2 on t1.a = t2.a;",
+      "select /*+ INL_HASH_JOIN(t1) */ * from t1 join t2 on t1.a = t2.a;",
+      "select /*+ INL_MERGE_JOIN(t1) */ * from t1 join t2 on t1.a = t2.a;",
+      // Issue 15484
+      "select /*+ inl_merge_join(t2) */ t1.a, t2.a from t t1 left join t t2 use index(g_2) on t1.g=t2.g",
+      "select /*+inl_merge_join(t2)*/ t1.a, t2.a from t t1 left join t t2 use index(g_2) on t1.g=t2.g order by t1.a"
+    ]
+  },
+  {
+    "name": "TestAggToCopHint",
+    "cases": [
+      "select /*+ AGG_TO_COP(), HASH_AGG(), USE_INDEX(t) */ sum(a) from ta group by a",
+      "select /*+ AGG_TO_COP(), USE_INDEX(t) */ sum(b) from ta group by b",
+      "select /*+ AGG_TO_COP(), HASH_AGG(), USE_INDEX(t) */ distinct a from ta group by a",
+      "select /*+ AGG_TO_COP(), HASH_AGG(), HASH_JOIN(t1), USE_INDEX(t1), USE_INDEX(t2) */ sum(t1.a) from ta t1, ta t2 where t1.a = t2.b group by t1.a"
+    ]
+  },
+  {
+    "name": "TestGroupConcatOrderby",
+    "cases": [
+      "select /*+ agg_to_cop */ group_concat(name ORDER BY name desc SEPARATOR '++'), group_concat(id ORDER BY name desc, id asc SEPARATOR '--') from test;",
+      "select /*+ agg_to_cop */ group_concat(name ORDER BY name desc SEPARATOR '++'), group_concat(id ORDER BY name desc, id asc SEPARATOR '--') from ptest;",
+      "select /*+ agg_to_cop */ group_concat(distinct name order by name desc) from test;",
+      "select /*+ agg_to_cop */ group_concat(distinct name order by name desc) from ptest;"
+    ]
+  },
+  {
+    "name": "TestInlineProjection",
+    "cases":[
+      "select /*+ HASH_JOIN(t1) */ t1.b, t2.b from t1, t2 where t1.a = t2.a;",
+      "select /*+ HASH_JOIN(t1) */ t1.b, t2.b from t1 inner join t2 on t1.a = t2.a;",
+      "select /*+ HASH_JOIN(t1) */ t1.b, t2.b from t1 left outer join t2 on t1.a = t2.a;",
+      "select /*+ HASH_JOIN(t1) */ t1.b, t2.b from t1 right outer join t2 on t1.a = t2.a;",
+      "select 1 from (select /*+ HASH_JOIN(t1) */ t1.a in (select t2.a from t2) from t1) x;",
+      "select 1 from (select /*+ HASH_JOIN(t1) */ t1.a not in (select t2.a from t2) from t1) x;",
+      "select /*+ INL_JOIN(t1) */ t1.b, t2.b from t1 inner join t2 on t1.a = t2.a;",
+      "select /*+ INL_HASH_JOIN(t1) */ t1.b, t2.b from t1 inner join t2 on t1.a = t2.a;",
+      "select /*+ INL_MERGE_JOIN(t1) */ t1.b, t2.b from t1 inner join t2 on t1.a = t2.a;",
+      "select /*+ MERGE_JOIN(t1) */ t1.b, t2.b from t1 inner join t2 on t1.a = t2.a;"
+    ]
+  },
+  {
+    "name": "TestHintFromDiffDatabase",
+    "cases": [
+      "select /*+ inl_hash_join(test.t1) */ * from test.t2 join test.t1 on test.t2.a = test.t1.a"
+    ]
+  },
+  {
+    "name": "TestMPPSinglePartitionType",
+    "cases": [
+      "select * from employee where deptid>1",
+      "select deptid+5, empid*10  from employee where deptid>1",
+      // test normal aggregation, MPP2Phase.
+      "select count(*) from employee group by deptid+1",
+      // test normal aggregation, MPPScalar.
+      "select count(distinct deptid) a from employee",
+      // test normal join, Broadcast.
+      "select * from employee join employee e1 using(deptid)",
+      // test redundant collect exchange can be eliminated.
+      "select count(distinct a) from (select count(distinct deptid) a from employee) x",
+      // test mppScalar agg below mpp2Phase agg.
+      "select count(a) from (select count(distinct deptid) a, count(distinct empid) b from employee) x group by b+1",
+      // test mppScalar agg below mpp1Phase agg, TODO: add hint to enforce
+      // test mppScalar agg below mppTiDB agg, TODO: add hint to enforce
+      "select count(a) from (select count(distinct deptid) a, count(distinct empid) b from employee) x group by b",
+      // test mppScalar agg below join
+      "select * from employee join (select count(distinct deptid) a, count(distinct empid) b from employee) e1",
+      "select * from employee e1 join (select count(distinct deptid) a from employee) e2 on e1.deptid = e2.a",
+      "select * from (select count(distinct deptid) a from employee) e1 join employee e2 on e1.a = e2.deptid",
+      "select * from (select count(distinct deptid) a from employee) e1 join (select count(distinct deptid) b from employee) e2 on e1.a=e2.b",
+      // test mpp2Phase agg below join
+      "select * from employee e1 join employee e2 on e1.deptid = e2.deptid",
+      "select * from (select deptid+1 d, count(empid) a from employee group by d) e1 join employee e2 on e1.d = e2.deptid",
+      "select * from employee e1 join (select deptid+1 d, count(empid) a from employee group by d) e2 on e1.deptid = e2.d",
+      "select * from (select deptid+1 d, count(empid) a from employee group by d) e1 join (select deptid+1 d, count(empid) a from employee group by d) e2 on e1.d = e2.d",
+      // non-broadcast join
+      "set tidb_broadcast_join_threshold_count=1",
+      "set tidb_broadcast_join_threshold_size=1",
+      "select * from (select count(distinct deptid) a from employee) e1 join employee e2 on e1.a = e2.deptid",
+      "select * from (select count(distinct deptid) a from employee) e1 join (select count(distinct deptid) b from employee) e2 on e1.a=e2.b",
+      "select * from employee e1 join employee e2 on e1.deptid = e2.deptid",
+      "select * from (select deptid+1 d, count(empid) a from employee group by d) e1 join employee e2 on e1.d = e2.deptid",
+      "select * from employee e1 join (select deptid+1 d, count(empid) a from employee group by d) e2 on e1.deptid = e2.d",
+      "select * from (select deptid+1 d, count(empid) a from employee group by d) e1 join (select deptid+1 d, count(empid) a from employee group by d) e2 on e1.d = e2.d"
+    ]
+  },
+  {
+    "name": "TestSemiJoinRewriteHints",
+    "cases": [
+      "select /*+ SEMI_JOIN_REWRITE() */ * from t",
+      "select * from t where a > (select /*+ SEMI_JOIN_REWRITE() */ min(b) from t t1 where t1.c = t.c)",
+      "select * from t where exists (select /*+ SEMI_JOIN_REWRITE() */ 1 from t t1 where t1.a=t.a)",
+      "select * from t where exists (select /*+ SEMI_JOIN_REWRITE() */ t.b from t t1 where t1.a=t.a)",
+      "select exists(select /*+ SEMI_JOIN_REWRITE() */ * from t t1 where t1.a=t.a) from t",
+      "select * from t where exists (select /*+ SEMI_JOIN_REWRITE() */ 1 from t t1 where t1.a > t.a)"
+    ]
+  },
+  {
+    "name": "TestHJBuildAndProbeHint4DynamicPartitionTable",
+    "cases": [
+      "select /*+ hash_join_build(t2) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b",
+      "select /*+ hash_join_probe(t2) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b",
+      "select /*+ hash_join_build(t1) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b",
+      "select /*+ hash_join_probe(t1) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b"
+    ]
+  },
+  {
+    "name": "TestHJBuildAndProbeHint4TiFlash",
+    "cases": [
+      "select /*+ hash_join_build(t2) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b",
+      "select /*+ hash_join_probe(t2) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b",
+      "select /*+ hash_join_build(t1) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b",
+      "select /*+ hash_join_probe(t1) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b"
+    ]
+  },
+  {
+    "name": "TestCountStarForTiFlash",
+    "cases": [
+      "select count(*) from t",
+      "select count(1), count(3.1415), count(0), count(null) from t -- every count but count(null) can be rewritten",
+      "select count(*) from t where a=1",
+      "select count(*) from t_pick_row_id",
+      "select t.b, t.c from (select count(*) as c from t) a, t where a.c=t.a -- test recursive",
+      "select * from t outTable where outTable.a > (select count(*) from t inn where inn.a = outTable.b) -- shouldn't be rewritten for correlated sub query",
+      "select count(*) from t t1, t t2 where t1.a=t2.e -- shouldn't be rewritten when join under agg",
+      "select count(distinct 1) from t -- shouldn't be rewritten",
+      "select count(1), count(a), count(b) from t -- keep count(1)",
+      "select a, count(*) from t group by a -- shouldn't be rewritten",
+      "select sum(a) from t -- sum shouldn't be rewritten"
+    ]
+  },
+  {
+    "name": "TestHashAggPushdownToTiFlashCompute",
+    "cases": [
+      "select  /*+ agg_to_cop() hash_agg() */  avg( distinct  tbl_15.col_96 ) as r0 , min(   tbl_15.col_92 ) as r1 , sum( distinct  tbl_15.col_91 ) as r2 , max(   tbl_15.col_92 ) as r3 from tbl_15 where tbl_15.col_94 != '2033-01-09' and tbl_15.col_93 > 7623.679908049186   order by r0,r1,r2,r3 limit 79 ;",
+      "select  /*+ agg_to_cop() hash_agg() */  count(1) from tbl_15 ;",
+      "select  /*+ agg_to_cop() stream_agg() */  avg(   tbl_16.col_100 ) as r0 from tbl_16 where tbl_16.col_100 in ( 10672141 ) or tbl_16.col_104 in ( 'yfEG1t!*b' ,'C1*bqx_qyO' ,'vQ^yUpKHr&j#~' ) group by tbl_16.col_100  order by r0 limit 20 ;"
+    ]
+  },
+  {
+    "name": "TestIssues49377Plan",
+    "cases": [
+      "select 1,1,1 union all ((select * from employee where dept_id = 1)  union all ( select * from employee where dept_id = 1 order by employee_id ) order by 1 );",
+      "select 1,1,1 union all ((select * from employee where dept_id = 1)  union all ( select * from employee where dept_id = 1 order by employee_id ) order by 1 limit 1);",
+      "select * from employee where dept_id = 1 union all ( select * from employee where dept_id = 1 order by employee_id) union all ( select * from employee where dept_id = 1 union all ( select * from employee where dept_id = 1 order by employee_id ) limit 1);",
+      "select * from employee where dept_id = 1 union all ( select * from employee where dept_id = 1 order by employee_id) union all ( select * from employee where dept_id = 1 union all ( select * from employee where dept_id = 1 order by employee_id ) order by 1 limit 1);"
+    ]
+  },
+  {
+    "name": "TestPointgetIndexChoosen",
+    "cases": [
+      "select * from t where b=1 and c='1';",
+      "select * from t where b=1 and c='1' and d='1';",
+      "select * from t where b in (1,2,3) and c in ('1');"
+    ]
+  },
+  {
+    "name": "TestAlwaysTruePredicateWithSubquery",
+    "cases" : [
+      "SHOW ERRORS WHERE TRUE = ALL ( SELECT TRUE GROUP BY 1 LIMIT 1 ) IS NULL IS NOT NULL;",
+      "explain select * from t WHERE TRUE = ALL ( SELECT TRUE GROUP BY 1 LIMIT 1 ) IS NULL IS NOT NULL;",
+      "explain select * from t WHERE TRUE = ALL ( SELECT TRUE from t GROUP BY 1 LIMIT 1 ) is null is not null;"
+    ]
+  }
+]

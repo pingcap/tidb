@@ -1,0 +1,32 @@
+# TestDuplicateForeignKey
+drop table if exists t, t1;
+create table t(id int key);
+-- error 1826
+create table t1(id int, id_fk int, CONSTRAINT `fk_aaa` FOREIGN KEY (`id_fk`) REFERENCES `t` (`id`), CONSTRAINT `fk_aaa` FOREIGN KEY (`id_fk`) REFERENCES `t` (`id`));
+-- error 1826
+create table t1(id int, id_fk int, CONSTRAINT `fk_aaa` FOREIGN KEY (`id_fk`) REFERENCES `t` (`id`), CONSTRAINT `fk_aaA` FOREIGN KEY (`id_fk`) REFERENCES `t` (`id`));
+create table t1(id int, id_fk int, CONSTRAINT `fk_aaa` FOREIGN KEY (`id_fk`) REFERENCES `t` (`id`));
+-- error 1826
+alter table t1 add CONSTRAINT `fk_aaa` FOREIGN KEY (`id_fk`) REFERENCES `t` (`id`);
+-- error 1826
+alter table t1 add CONSTRAINT `fk_aAa` FOREIGN KEY (`id_fk`) REFERENCES `t` (`id`);
+drop table if exists t, t1;
+
+# TestTemporaryTableForeignKey
+drop table if exists t1;
+create table t1 (a int, b int);
+drop table if exists t1_tmp;
+create global temporary table t1_tmp (a int, b int) on commit delete rows;
+create temporary table t2_tmp (a int, b int);
+drop table if exists t2;
+create table t2 (a int, b int);
+-- error 1215
+alter table t1_tmp add foreign key (c) REFERENCES t2(a);
+-- error 8200
+alter table t2_tmp add foreign key (c) REFERENCES t2(a);
+-- error 1215
+create global temporary table t3 (c int,d int,foreign key (d) references t1 (b)) on commit delete rows;
+-- error 1215
+create temporary table t4(c int,d int,foreign key (d) references t1 (b));
+drop table if exists t1,t2,t3,t4,t1_tmp,t2_tmp;
+

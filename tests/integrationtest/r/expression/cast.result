@@ -1,0 +1,150 @@
+select cast('' as signed);
+cast('' as signed)
+0
+Level	Code	Message
+Warning	1292	Truncated incorrect INTEGER value: ''
+select cast('12345abcde' as signed);
+cast('12345abcde' as signed)
+12345
+Level	Code	Message
+Warning	1292	Truncated incorrect INTEGER value: '12345abcde'
+select cast('123e456' as signed);
+cast('123e456' as signed)
+123
+Level	Code	Message
+Warning	1292	Truncated incorrect INTEGER value: '123e456'
+select cast('-12345abcde' as signed);
+cast('-12345abcde' as signed)
+-12345
+Level	Code	Message
+Warning	1292	Truncated incorrect INTEGER value: '-12345abcde'
+select cast('-123e456' as signed);
+cast('-123e456' as signed)
+-123
+Level	Code	Message
+Warning	1292	Truncated incorrect INTEGER value: '-123e456'
+select coercibility(binary('a'));
+coercibility(binary('a'))
+2
+select coercibility(cast('a' as char(10)));
+coercibility(cast('a' as char(10)))
+2
+select coercibility(convert('abc', char(10)));
+coercibility(convert('abc', char(10)))
+2
+drop table if exists t;
+create table t(d1 double, f float, d2 decimal(24,8));
+insert into t values(0, 0, 0);
+select cast(111.1 as datetime) from t;
+cast(111.1 as datetime)
+2000-01-11 00:00:00
+select cast(1311.1 as datetime) from t;
+cast(1311.1 as datetime)
+NULL
+insert into t values(111.1, 1122.1, 31212.111);
+insert into t values(121212.1111, 1121212.111111, 11121212.111111);
+insert into t values(99991111.1111111, 101.1111111, 20121212121212.1111111);
+insert into t values(NULL, NULL, NULL);
+insert into t values(1.1, 48.1, 100.1);
+insert into t values(1301.11, 1131.111, 100001111.111);
+insert into t values(20121212121260.1111111, 20121212126012.1111111, 20121212241212.1111111);
+select cast(d1 as datetime), cast(f as datetime), cast(d2 as datetime) from t;
+cast(d1 as datetime)	cast(f as datetime)	cast(d2 as datetime)
+NULL	NULL	NULL
+NULL	NULL	NULL
+NULL	NULL	NULL
+NULL	NULL	NULL
+0000-00-00 00:00:00	0000-00-00 00:00:00	0000-00-00 00:00:00
+2000-01-11 00:00:00	2000-11-22 00:00:00	2003-12-12 00:00:00
+2012-12-12 00:00:00	0112-12-12 00:00:00	1112-12-12 00:00:00
+9999-11-11 00:00:00	2000-01-01 00:00:00	2012-12-12 12:12:12
+drop table if exists t;
+create table t (col1 bigint, col2 double, col3 decimal, col4 varchar(20), col5 json);
+insert into t values (1, 1, 1, "1", "1");
+insert into t values (null, null, null, null, null);
+select cast(col1 as time), cast(col2 as time), cast(col3 as time), cast(col4 as time), cast(col5 as time) from t where col1 = 1;
+cast(col1 as time)	cast(col2 as time)	cast(col3 as time)	cast(col4 as time)	cast(col5 as time)
+00:00:01	00:00:01	00:00:01	00:00:01	NULL
+select cast(col1 as time), cast(col2 as time), cast(col3 as time), cast(col4 as time), cast(col5 as time) from t where col1 is null;
+cast(col1 as time)	cast(col2 as time)	cast(col3 as time)	cast(col4 as time)	cast(col5 as time)
+NULL	NULL	NULL	NULL	NULL
+select cast(col1 as time(31)) from t where col1 is null;
+Error 1426 (42000): Too big precision 31 specified for column 'CAST'. Maximum is 6.
+select cast(col2 as time(31)) from t where col1 is null;
+Error 1426 (42000): Too big precision 31 specified for column 'CAST'. Maximum is 6.
+select cast(col3 as time(31)) from t where col1 is null;
+Error 1426 (42000): Too big precision 31 specified for column 'CAST'. Maximum is 6.
+select cast(col4 as time(31)) from t where col1 is null;
+Error 1426 (42000): Too big precision 31 specified for column 'CAST'. Maximum is 6.
+select cast(col5 as time(31)) from t where col1 is null;
+Error 1426 (42000): Too big precision 31 specified for column 'CAST'. Maximum is 6.
+drop table if exists t;
+create table t(a varchar(50));
+insert into t values ('2020-01-01 12:00:00.123456 +0600 PST');
+insert into t values ('2020-01-01 12:00:00.123456 -0600 PST');
+insert into t values ('2020-01-01 12:00:00.123456');
+select cast(a as datetime(3)) from t;
+cast(a as datetime(3))
+2020-01-01 12:00:00.123
+2020-01-01 12:00:00.123
+2020-01-01 12:00:00.123
+drop table if exists t1;
+create table t1 (c1 text);
+insert into t1 values ('a');
+update t1 set c1 = cast('61qw' as decimal);
+Error 1292 (22007): Truncated incorrect DECIMAL value: '61qw'
+select cast('61qw' as decimal);
+cast('61qw' as decimal)
+61
+Level	Code	Message
+Warning	1292	Truncated incorrect DECIMAL value: '61qw'
+drop table if exists t;
+create table t (y year);
+insert into t values (cast('14:15' as time));
+select 1 from t where y = YEAR(CURDATE());
+1
+1
+select cast(cast('14:15' as time) as year) = YEAR(CURDATE());
+cast(cast('14:15' as time) as year) = YEAR(CURDATE())
+1
+explain select null as a union all select 'a' as a;
+id	estRows	task	access object	operator info
+Union_8	2.00	root		
+├─Projection_10	1.00	root		<nil>->Column#3
+│ └─TableDual_11	1.00	root		rows:1
+└─Projection_12	1.00	root		a->Column#3
+  └─TableDual_13	1.00	root		rows:1
+select null as a union all select 'a' as a;
+a
+NULL
+a
+drop table if exists t0;
+create table t0(c0 tinyint(1) unsigned not null );
+insert into t0 values (1);
+select * from t0 where case 0 when t0.c0 > -1.194192591e9 then null else 1 end;
+c0
+1
+select t0.c0 > -1.194192591e9 from t0;
+t0.c0 > -1.194192591e9
+1
+select t0.c0 < -1.194192591e9 from t0;
+t0.c0 < -1.194192591e9
+0
+select -1.194192591e9 > t0.c0 from t0;
+-1.194192591e9 > t0.c0
+0
+select -1.194192591e9 < t0.c0 from t0;
+-1.194192591e9 < t0.c0
+1
+select t0.c0 > 1.194192591e9 from t0;
+t0.c0 > 1.194192591e9
+0
+select t0.c0 < 1.194192591e9 from t0;
+t0.c0 < 1.194192591e9
+1
+select 1.194192591e9 > t0.c0 from t0;
+1.194192591e9 > t0.c0
+1
+select 1.194192591e9 < t0.c0 from t0;
+1.194192591e9 < t0.c0
+0

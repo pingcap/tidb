@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/http"
 	"regexp"
 	"strconv"
 	"sync"
@@ -231,7 +232,7 @@ func (p *printByJSON) PrintTasks() {
 			LastErrors:   se,
 		}
 	}
-	mustMarshal := func(i interface{}) string {
+	mustMarshal := func(i any) string {
 		r, err := json.Marshal(i)
 		if err != nil {
 			log.Panic("Failed to marshal a trivial struct to json", zap.Reflect("object", i), zap.Error(err))
@@ -257,7 +258,7 @@ type PDInfoProvider interface {
 // TODO: this is a temporary solution(aha, like in a Hackthon),
 //
 //	we MUST find a better way for providing this information.
-func MaybeQPS(ctx context.Context, mgr PDInfoProvider) (float64, error) {
+func MaybeQPS(ctx context.Context, mgr PDInfoProvider, client *http.Client) (float64, error) {
 	c := mgr.GetPDClient()
 	prefix := "http://"
 	if mgr.GetTLSConfig() != nil {
@@ -267,9 +268,8 @@ func MaybeQPS(ctx context.Context, mgr PDInfoProvider) (float64, error) {
 	if err != nil {
 		return 0, err
 	}
-	cli := httputil.NewClient(mgr.GetTLSConfig())
 	getCount := func(statusAddr string) (uint64, error) {
-		before, err := cli.Get(prefix + statusAddr + "/metrics")
+		before, err := client.Get(prefix + statusAddr + "/metrics")
 		if err != nil {
 			return 0, err
 		}
@@ -321,7 +321,7 @@ func MaybeQPS(ctx context.Context, mgr PDInfoProvider) (float64, error) {
 		log.Warn("failed to get est QPS", logutil.ShortError(err))
 	}
 	qps := 0.0
-	qpsMap.Range(func(key, value interface{}) bool {
+	qpsMap.Range(func(key, value any) bool {
 		qps += value.(float64)
 		return true
 	})
@@ -344,8 +344,17 @@ func NewStatusController(meta *MetaDataClient, mgr PDInfoProvider, view TaskPrin
 	}
 }
 
+func (ctl *StatusController) Close() error {
+	if ctl.meta != nil {
+		if err := ctl.meta.Close(); err != nil {
+			return errors.Trace(err)
+		}
+	}
+	return nil
+}
+
 // fillTask queries and fills the extra information for a raw task.
-func (ctl *StatusController) fillTask(ctx context.Context, task Task) (TaskStatus, error) {
+func (ctl *StatusController) fillTask(ctx context.Context, task Task, client *http.Client) (TaskStatus, error) {
 	var err error
 	s := TaskStatus{
 		Info: task.Info,
@@ -368,7 +377,7 @@ func (ctl *StatusController) fillTask(ctx context.Context, task Task) (TaskStatu
 		return s, err
 	}
 
-	s.QPS, err = MaybeQPS(ctx, ctl.mgr)
+	s.QPS, err = MaybeQPS(ctx, ctl.mgr, client)
 	if err != nil {
 		return s, errors.Annotatef(err, "failed to get QPS of task %s", s.Info.Name)
 	}
@@ -377,16 +386,16 @@ func (ctl *StatusController) fillTask(ctx context.Context, task Task) (TaskStatu
 
 // getTask fetches the task by the name, if the name is the wildcard ("*"), fetch all tasks.
 func (ctl *StatusController) getTask(ctx context.Context, name string) ([]TaskStatus, error) {
+	client := httputil.NewClient(ctl.mgr.GetTLSConfig())
 	if name == WildCard {
 		// get status about all of tasks
 		tasks, err := ctl.meta.GetAllTasks(ctx)
 		if err != nil {
 			return nil, err
 		}
-
 		result := make([]TaskStatus, 0, len(tasks))
 		for _, task := range tasks {
-			status, err := ctl.fillTask(ctx, task)
+			status, err := ctl.fillTask(ctx, task, client)
 			if err != nil {
 				return nil, err
 			}
@@ -399,7 +408,7 @@ func (ctl *StatusController) getTask(ctx context.Context, name string) ([]TaskSt
 	if err != nil {
 		return nil, err
 	}
-	status, err := ctl.fillTask(ctx, *task)
+	status, err := ctl.fillTask(ctx, *task, client)
 	if err != nil {
 		return nil, err
 	}

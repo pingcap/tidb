@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/aws"
 	"github.com/pingcap/tidb/br/pkg/backup"
+	preparesnap "github.com/pingcap/tidb/br/pkg/backup/prepare_snap"
 	"github.com/pingcap/tidb/br/pkg/common"
 	"github.com/pingcap/tidb/br/pkg/config"
 	"github.com/pingcap/tidb/br/pkg/conn"
@@ -32,8 +33,10 @@ import (
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version"
-	"github.com/pingcap/tidb/util/mathutil"
+	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/spf13/pflag"
+	"github.com/tikv/client-go/v2/tikv"
+	"go.uber.org/multierr"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 	"google.golang.org/grpc"
@@ -136,26 +139,38 @@ func RunBackupEBS(c context.Context, g glue.Glue, cfg *BackupConfig) error {
 
 	// Step.1.1 stop scheduler as much as possible.
 	log.Info("starting to remove some PD schedulers and pausing GC", zap.Bool("already-paused-by-operator", cfg.SkipPauseGCAndScheduler))
-	var restoreFunc pdutil.UndoFunc
+	var (
+		restoreFunc  pdutil.UndoFunc
+		finalizeOnce sync.Once
+		preparer     = preparesnap.New(preparesnap.CliEnv{
+			Cache: tikv.NewRegionCache(mgr.PDClient()),
+			Mgr:   mgr.StoreManager,
+		})
+		goBackupToNormal = func(ctx context.Context) error {
+			var err error
+			finalizeOnce.Do(func() {
+				var restoreE error
+				if restoreFunc != nil {
+					restoreE = restoreFunc(ctx)
+				}
+				err = multierr.Combine(preparer.Finalize(ctx), restoreE)
+			})
+			return err
+		}
+	)
 
+	// NOTE: we need to use the same technique as the `operator` command did.
+	// But it is impossible for now due to importing cycle.
 	if !cfg.SkipPauseGCAndScheduler {
 		var e error
 		restoreFunc, e = mgr.RemoveAllPDSchedulers(ctx)
 		if e != nil {
 			return errors.Trace(err)
 		}
-		defer func() {
-			if ctx.Err() != nil {
-				log.Warn("context canceled, doing clean work with background context")
-				ctx = context.Background()
-			}
-			if restoreFunc == nil {
-				return
-			}
-			if restoreE := restoreFunc(ctx); restoreE != nil {
-				log.Warn("failed to restore removed schedulers, you may need to restore them manually", zap.Error(restoreE))
-			}
-		}()
+		if err := preparer.DriveLoopAndWaitPrepare(ctx); err != nil {
+			return err
+		}
+		defer utils.WithCleanUp(nil, 2*time.Minute, goBackupToNormal)
 	}
 
 	if err := waitAllScheduleStoppedAndNoRegionHole(ctx, cfg.Config, mgr); err != nil {
@@ -231,11 +246,8 @@ func RunBackupEBS(c context.Context, g glue.Glue, cfg *BackupConfig) error {
 
 		if !cfg.SkipPauseGCAndScheduler {
 			log.Info("snapshot started, restore schedule")
-			if restoreE := restoreFunc(ctx); restoreE != nil {
+			if restoreE := goBackupToNormal(ctx); restoreE != nil {
 				log.Warn("failed to restore removed schedulers, you may need to restore them manually", zap.Error(restoreE))
-			} else {
-				// Clear the restore func, so we won't execute it many times.
-				restoreFunc = nil
 			}
 		}
 
@@ -328,8 +340,8 @@ func isRegionsHasHole(allRegions []*metapb.Region) bool {
 }
 
 func waitUntilAllScheduleStopped(ctx context.Context, cfg Config, allStores []*metapb.Store, mgr *conn.Mgr) ([]*metapb.Region, error) {
-	concurrency := mathutil.Min(len(allStores), common.MaxStoreConcurrency)
-	workerPool := utils.NewWorkerPool(uint(concurrency), "collect schedule info")
+	concurrency := min(len(allStores), common.MaxStoreConcurrency)
+	workerPool := tidbutil.NewWorkerPool(uint(concurrency), "collect schedule info")
 	eg, ectx := errgroup.WithContext(ctx)
 
 	// init this slice with guess that there are 100 leaders on each store

@@ -1,0 +1,36 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "utils",
+    srcs = ["split.go"],
+    importpath = "github.com/pingcap/tidb/br/pkg/restore/internal/utils",
+    visibility = ["//br/pkg/restore:__subpackages__"],
+    deps = [
+        "//br/pkg/errors",
+        "//br/pkg/logutil",
+        "//br/pkg/restore/split",
+        "//br/pkg/rtree",
+        "@com_github_opentracing_opentracing_go//:opentracing-go",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_log//:log",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "utils_test",
+    timeout = "short",
+    srcs = ["split_test.go"],
+    flaky = True,
+    shard_count = 4,
+    deps = [
+        ":utils",
+        "//br/pkg/restore/split",
+        "//br/pkg/restore/utils",
+        "//br/pkg/rtree",
+        "//pkg/tablecodec",
+        "//pkg/util/codec",
+        "@com_github_pingcap_kvproto//pkg/import_sstpb",
+        "@com_github_stretchr_testify//require",
+    ],
+)

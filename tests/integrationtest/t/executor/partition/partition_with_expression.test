@@ -1,0 +1,454 @@
+# TestDateColWithUnequalExpression
+drop table if exists tp, t;
+set tidb_partition_prune_mode='dynamic';
+create table tp(a datetime, b int) partition by range columns (a) (partition p0 values less than("2012-12-10 00:00:00"), partition p1 values less than("2022-12-30 00:00:00"), partition p2 values less than("2025-12-12 00:00:00"));
+create table t(a datetime, b int) partition by range columns (a) (partition p0 values less than("2012-12-10 00:00:00"), partition p1 values less than("2022-12-30 00:00:00"), partition p2 values less than("2025-12-12 00:00:00"));
+insert into tp values("2015-09-09 00:00:00", 1), ("2020-08-08 19:00:01", 2), ("2024-01-01 01:01:01", 3);
+insert into t values("2015-09-09 00:00:00", 1), ("2020-08-08 19:00:01", 2), ("2024-01-01 01:01:01", 3);
+analyze table tp;
+analyze table t;
+explain format='brief' select * from tp where a != '2024-01-01 01:01:01';
+--sorted_result
+select * from tp where a != '2024-01-01 01:01:01';
+--sorted_result
+select * from t where a != '2024-01-01 01:01:01';
+explain format='brief' select * from tp where a != '2024-01-01 01:01:01' and a > '2015-09-09 00:00:00';
+--sorted_result
+select * from tp where a != '2024-01-01 01:01:01' and a > '2015-09-09 00:00:00';
+--sorted_result
+select * from t where a != '2024-01-01 01:01:01' and a > '2015-09-09 00:00:00';
+set tidb_partition_prune_mode=default;
+
+# TestWeekdayWithExpression
+drop table if exists tp, t;
+set tidb_partition_prune_mode='dynamic';
+create table tp(a datetime, b int) partition by range(weekday(a)) (partition p0 values less than(3), partition p1 values less than(5), partition p2 values less than(8));
+create table t(a datetime, b int);
+insert into tp values("2020-08-17 00:00:00", 1), ("2020-08-18 00:00:00", 2), ("2020-08-19 00:00:00", 4), ("2020-08-20 00:00:00", 5), ("2020-08-21 00:00:00", 6), ("2020-08-22 00:00:00", 0);
+insert into t values("2020-08-17 00:00:00", 1), ("2020-08-18 00:00:00", 2), ("2020-08-19 00:00:00", 4), ("2020-08-20 00:00:00", 5), ("2020-08-21 00:00:00", 6), ("2020-08-22 00:00:00", 0);
+analyze table tp;
+analyze table t;
+explain format='brief' select * from tp where a = '2020-08-17 00:00:00';
+--sorted_result
+select * from tp where a = '2020-08-17 00:00:00';
+--sorted_result
+select * from t where a = '2020-08-17 00:00:00';
+explain format='brief' select * from tp where a= '2020-08-20 00:00:00' and a < '2020-08-22 00:00:00';
+--sorted_result
+select * from tp where a= '2020-08-20 00:00:00' and a < '2020-08-22 00:00:00';
+--sorted_result
+select * from t where a= '2020-08-20 00:00:00' and a < '2020-08-22 00:00:00';
+explain format='brief' select * from tp where a < '2020-08-19 00:00:00';
+--sorted_result
+select * from tp where a < '2020-08-19 00:00:00';
+--sorted_result
+select * from t where a < '2020-08-19 00:00:00';
+set tidb_partition_prune_mode=default;
+
+# TestFloorUnixTimestampAndIntColWithExpression
+drop table if exists tp, t;
+set tidb_partition_prune_mode='dynamic';
+create table tp(a timestamp, b int) partition by range(floor(unix_timestamp(a))) (partition p0 values less than(1580670000), partition p1 values less than(1597622400), partition p2 values less than(1629158400));
+create table t(a timestamp, b int);
+insert into tp values('2020-01-01 19:00:00', 1),('2020-08-15 00:00:00', -1), ('2020-08-18 05:00:01', 2), ('2020-10-01 14:13:15', 3);
+insert into t values('2020-01-01 19:00:00', 1),('2020-08-15 00:00:00', -1), ('2020-08-18 05:00:01', 2), ('2020-10-01 14:13:15', 3);
+analyze table tp;
+analyze table t;
+explain select * from tp where a > '2020-09-11 00:00:00';
+--sorted_result
+select * from tp where a > '2020-09-11 00:00:00';
+--sorted_result
+select * from t where a > '2020-09-11 00:00:00';
+explain select * from tp where a < '2020-07-07 01:00:00';
+--sorted_result
+select * from tp where a < '2020-07-07 01:00:00';
+--sorted_result
+select * from t where a < '2020-07-07 01:00:00';
+set tidb_partition_prune_mode=default;
+
+# TestUnixTimestampAndIntColWithExpression
+drop table if exists tp, t;
+set tidb_partition_prune_mode='dynamic';
+create table tp(a timestamp, b int) partition by range(unix_timestamp(a)) (partition p0 values less than(1580670000), partition p1 values less than(1597622400), partition p2 values less than(1629158400));
+create table t(a timestamp, b int);
+insert into tp values('2020-01-01 19:00:00', 1),('2020-08-15 00:00:00', -1), ('2020-08-18 05:00:01', 2), ('2020-10-01 14:13:15', 3);
+insert into t values('2020-01-01 19:00:00', 1),('2020-08-15 00:00:00', -1), ('2020-08-18 05:00:01', 2), ('2020-10-01 14:13:15', 3);
+analyze table tp;
+analyze table t;
+explain select * from tp where a > '2020-09-11 00:00:00';
+--sorted_result
+select * from tp where a > '2020-09-11 00:00:00';
+--sorted_result
+select * from t where a > '2020-09-11 00:00:00';
+explain select * from tp where a < '2020-07-07 01:00:00';
+--sorted_result
+select * from tp where a < '2020-07-07 01:00:00';
+--sorted_result
+select * from t where a < '2020-07-07 01:00:00';
+set tidb_partition_prune_mode=default;
+
+# TestDatetimeColAndIntColWithExpression
+drop table if exists tp, t;
+set tidb_partition_prune_mode='dynamic';
+create table tp(a datetime, b int) partition by range columns(a) (partition p0 values less than('2020-02-02 00:00:00'), partition p1 values less than('2020-09-01 00:00:00'), partition p2 values less than('2020-12-20 00:00:00'));
+create table t(a datetime, b int);
+insert into tp values('2020-01-01 12:00:00', 1), ('2020-08-22 10:00:00', 2), ('2020-09-09 11:00:00', 3), ('2020-10-01 00:00:00', 4);
+insert into t values('2020-01-01 12:00:00', 1), ('2020-08-22 10:00:00', 2), ('2020-09-09 11:00:00', 3), ('2020-10-01 00:00:00', 4);
+analyze table tp;
+analyze table t;
+explain select * from tp where a < '2020-09-01 00:00:00';
+--sorted_result
+select * from tp where a < '2020-09-01 00:00:00';
+--sorted_result
+select * from t where a < '2020-09-01 00:00:00';
+explain select * from tp where a > '2020-07-07 01:00:00';
+--sorted_result
+select * from tp where a > '2020-07-07 01:00:00';
+--sorted_result
+select * from t where a > '2020-07-07 01:00:00';
+set tidb_partition_prune_mode=default;
+
+# TestVarcharColAndIntColWithExpression
+drop table if exists tp, t;
+set tidb_partition_prune_mode='dynamic';
+create table tp(a varchar(255), b int) partition by range columns(a) (partition p0 values less than('ddd'), partition p1 values less than('ggggg'), partition p2 values less than('mmmmmm'));
+create table t(a varchar(255), b int);
+insert into tp values('aaa', 1), ('bbbb', 2), ('ccc', 3), ('dfg', 4), ('kkkk', 5), ('10', 6);
+insert into t values('aaa', 1), ('bbbb', 2), ('ccc', 3), ('dfg', 4), ('kkkk', 5), ('10', 6);
+analyze table tp;
+analyze table t;
+explain select * from tp where a < '10';
+--sorted_result
+select * from tp where a < '10';
+--sorted_result
+select * from t where a < '10';
+explain select * from tp where a > 0;
+--sorted_result
+select * from tp where a > 0;
+--sorted_result
+select * from t where a > 0;
+explain select * from tp where a < 0;
+--sorted_result
+select * from tp where a < 0;
+--sorted_result
+select * from t where a < 0;
+set tidb_partition_prune_mode=default;
+
+# TestDynamicPruneModeWithExpression
+drop table if exists trange, thash, t;
+create table trange(a int, b int) partition by range(a) (partition p0 values less than(3), partition p1 values less than (5), partition p2 values less than(11));
+create table thash(a int, b int) partition by hash(a) partitions 4;
+create table t(a int, b int);
+insert into trange values(1, NULL), (1, NULL), (1, 1), (2, 1), (3, 2), (4, 3), (5, 5), (6, 7), (7, 7), (7, 7), (10, NULL), (NULL, NULL), (NULL, 1);
+insert into thash values(1, NULL), (1, NULL), (1, 1), (2, 1), (3, 2), (4, 3), (5, 5), (6, 7), (7, 7), (7, 7), (10, NULL), (NULL, NULL), (NULL, 1);
+insert into t values(1, NULL), (1, NULL), (1, 1), (2, 1), (3, 2), (4, 3), (5, 5), (6, 7), (7, 7), (7, 7), (10, NULL), (NULL, NULL), (NULL, 1);
+set session tidb_partition_prune_mode='dynamic';
+analyze table trange;
+analyze table thash;
+analyze table t;
+--sorted_result
+SELECT * from t where a = 2;
+explain format='brief' select * from trange where a = 2;
+--sorted_result
+SELECT * from trange where a = 2;
+explain format='brief' select * from thash where a = 2;
+--sorted_result
+SELECT * from thash where a = 2;
+--sorted_result
+SELECT * from t where a = 4 or a = 1;
+explain format='brief' select * from trange where a = 4 or a = 1;
+--sorted_result
+SELECT * from trange where a = 4 or a = 1;
+explain format='brief' select * from thash where a = 4 or a = 1;
+--sorted_result
+SELECT * from thash where a = 4 or a = 1;
+--sorted_result
+SELECT * from t where a = -1;
+explain format='brief' select * from trange where a = -1;
+--sorted_result
+SELECT * from trange where a = -1;
+explain format='brief' select * from thash where a = -1;
+--sorted_result
+SELECT * from thash where a = -1;
+--sorted_result
+SELECT * from t where a is NULL;
+explain format='brief' select * from trange where a is NULL;
+--sorted_result
+SELECT * from trange where a is NULL;
+explain format='brief' select * from thash where a is NULL;
+--sorted_result
+SELECT * from thash where a is NULL;
+--sorted_result
+SELECT * from t where b is NULL;
+explain format='brief' select * from trange where b is NULL;
+--sorted_result
+SELECT * from trange where b is NULL;
+explain format='brief' select * from thash where b is NULL;
+--sorted_result
+SELECT * from thash where b is NULL;
+--sorted_result
+SELECT * from t where a > -1;
+explain format='brief' select * from trange where a > -1;
+--sorted_result
+SELECT * from trange where a > -1;
+explain format='brief' select * from thash where a > -1;
+--sorted_result
+SELECT * from thash where a > -1;
+--sorted_result
+SELECT * from t where a >= 4 and a <= 5;
+explain format='brief' select * from trange where a >= 4 and a <= 5;
+--sorted_result
+SELECT * from trange where a >= 4 and a <= 5;
+explain format='brief' select * from thash where a >= 4 and a <= 5;
+--sorted_result
+SELECT * from thash where a >= 4 and a <= 5;
+--sorted_result
+SELECT * from t where a > 10;
+explain format='brief' select * from trange where a > 10;
+--sorted_result
+SELECT * from trange where a > 10;
+explain format='brief' select * from thash where a > 10;
+--sorted_result
+SELECT * from thash where a > 10;
+--sorted_result
+SELECT * from t where a >=2 and a <= 3;
+explain format='brief' select * from trange where a >=2 and a <= 3;
+--sorted_result
+SELECT * from trange where a >=2 and a <= 3;
+explain format='brief' select * from thash where a >=2 and a <= 3;
+--sorted_result
+SELECT * from thash where a >=2 and a <= 3;
+--sorted_result
+SELECT * from t where a between 2 and 3;
+explain format='brief' select * from trange where a between 2 and 3;
+--sorted_result
+SELECT * from trange where a between 2 and 3;
+explain format='brief' select * from thash where a between 2 and 3;
+--sorted_result
+SELECT * from thash where a between 2 and 3;
+--sorted_result
+SELECT * from t where a < 2;
+explain format='brief' select * from trange where a < 2;
+--sorted_result
+SELECT * from trange where a < 2;
+explain format='brief' select * from thash where a < 2;
+--sorted_result
+SELECT * from thash where a < 2;
+--sorted_result
+SELECT * from t where a <= 3;
+explain format='brief' select * from trange where a <= 3;
+--sorted_result
+SELECT * from trange where a <= 3;
+explain format='brief' select * from thash where a <= 3;
+--sorted_result
+SELECT * from thash where a <= 3;
+--sorted_result
+SELECT * from t where a in (2, 3);
+explain format='brief' select * from trange where a in (2, 3);
+--sorted_result
+SELECT * from trange where a in (2, 3);
+explain format='brief' select * from thash where a in (2, 3);
+--sorted_result
+SELECT * from thash where a in (2, 3);
+--sorted_result
+SELECT * from t where a in (1, 5);
+explain format='brief' select * from trange where a in (1, 5);
+--sorted_result
+SELECT * from trange where a in (1, 5);
+explain format='brief' select * from thash where a in (1, 5);
+--sorted_result
+SELECT * from thash where a in (1, 5);
+--sorted_result
+SELECT * from t where a not in (1, 5);
+explain format='brief' select * from trange where a not in (1, 5);
+--sorted_result
+SELECT * from trange where a not in (1, 5);
+explain format='brief' select * from thash where a not in (1, 5);
+--sorted_result
+SELECT * from thash where a not in (1, 5);
+--sorted_result
+SELECT * from t where a = 2 and a = 2;
+explain format='brief' select * from trange where a = 2 and a = 2;
+--sorted_result
+SELECT * from trange where a = 2 and a = 2;
+explain format='brief' select * from thash where a = 2 and a = 2;
+--sorted_result
+SELECT * from thash where a = 2 and a = 2;
+--sorted_result
+SELECT * from t where a = 2 and a = 3;
+explain format='brief' select * from trange where a = 2 and a = 3;
+--sorted_result
+SELECT * from trange where a = 2 and a = 3;
+explain format='brief' select * from thash where a = 2 and a = 3;
+--sorted_result
+SELECT * from thash where a = 2 and a = 3;
+--sorted_result
+SELECT * from t where a < 2 and a > 0;
+explain format='brief' select * from trange where a < 2 and a > 0;
+--sorted_result
+SELECT * from trange where a < 2 and a > 0;
+explain format='brief' select * from thash where a < 2 and a > 0;
+--sorted_result
+SELECT * from thash where a < 2 and a > 0;
+--sorted_result
+SELECT * from t where a < 2 and a < 3;
+explain format='brief' select * from trange where a < 2 and a < 3;
+--sorted_result
+SELECT * from trange where a < 2 and a < 3;
+explain format='brief' select * from thash where a < 2 and a < 3;
+--sorted_result
+SELECT * from thash where a < 2 and a < 3;
+--sorted_result
+SELECT * from t where a > 1 and a > 2;
+explain format='brief' select * from trange where a > 1 and a > 2;
+--sorted_result
+SELECT * from trange where a > 1 and a > 2;
+explain format='brief' select * from thash where a > 1 and a > 2;
+--sorted_result
+SELECT * from thash where a > 1 and a > 2;
+--sorted_result
+SELECT * from t where a = 2 or a = 3;
+explain format='brief' select * from trange where a = 2 or a = 3;
+--sorted_result
+SELECT * from trange where a = 2 or a = 3;
+explain format='brief' select * from thash where a = 2 or a = 3;
+--sorted_result
+SELECT * from thash where a = 2 or a = 3;
+--sorted_result
+SELECT * from t where a = 2 or a in (3);
+explain format='brief' select * from trange where a = 2 or a in (3);
+--sorted_result
+SELECT * from trange where a = 2 or a in (3);
+explain format='brief' select * from thash where a = 2 or a in (3);
+--sorted_result
+SELECT * from thash where a = 2 or a in (3);
+--sorted_result
+SELECT * from t where a = 2 or a > 3;
+explain format='brief' select * from trange where a = 2 or a > 3;
+--sorted_result
+SELECT * from trange where a = 2 or a > 3;
+explain format='brief' select * from thash where a = 2 or a > 3;
+--sorted_result
+SELECT * from thash where a = 2 or a > 3;
+--sorted_result
+SELECT * from t where a = 2 or a <= 1;
+explain format='brief' select * from trange where a = 2 or a <= 1;
+--sorted_result
+SELECT * from trange where a = 2 or a <= 1;
+explain format='brief' select * from thash where a = 2 or a <= 1;
+--sorted_result
+SELECT * from thash where a = 2 or a <= 1;
+--sorted_result
+SELECT * from t where a = 2 or a between 2 and 2;
+explain format='brief' select * from trange where a = 2 or a between 2 and 2;
+--sorted_result
+SELECT * from trange where a = 2 or a between 2 and 2;
+explain format='brief' select * from thash where a = 2 or a between 2 and 2;
+--sorted_result
+SELECT * from thash where a = 2 or a between 2 and 2;
+--sorted_result
+SELECT * from t where a != 2;
+explain format='brief' select * from trange where a != 2;
+--sorted_result
+SELECT * from trange where a != 2;
+explain format='brief' select * from thash where a != 2;
+--sorted_result
+SELECT * from thash where a != 2;
+--sorted_result
+SELECT * from t where a != 2 and a > 4;
+explain format='brief' select * from trange where a != 2 and a > 4;
+--sorted_result
+SELECT * from trange where a != 2 and a > 4;
+explain format='brief' select * from thash where a != 2 and a > 4;
+--sorted_result
+SELECT * from thash where a != 2 and a > 4;
+--sorted_result
+SELECT * from t where a != 2 and a != 3;
+explain format='brief' select * from trange where a != 2 and a != 3;
+--sorted_result
+SELECT * from trange where a != 2 and a != 3;
+explain format='brief' select * from thash where a != 2 and a != 3;
+--sorted_result
+SELECT * from thash where a != 2 and a != 3;
+--sorted_result
+SELECT * from t where a != 2 and a = 3;
+explain format='brief' select * from trange where a != 2 and a = 3;
+--sorted_result
+SELECT * from trange where a != 2 and a = 3;
+explain format='brief' select * from thash where a != 2 and a = 3;
+--sorted_result
+SELECT * from thash where a != 2 and a = 3;
+--sorted_result
+SELECT * from t where not (a = 2);
+explain format='brief' select * from trange where not (a = 2);
+--sorted_result
+SELECT * from trange where not (a = 2);
+explain format='brief' select * from thash where not (a = 2);
+--sorted_result
+SELECT * from thash where not (a = 2);
+--sorted_result
+SELECT * from t where not (a > 2);
+explain format='brief' select * from trange where not (a > 2);
+--sorted_result
+SELECT * from trange where not (a > 2);
+explain format='brief' select * from thash where not (a > 2);
+--sorted_result
+SELECT * from thash where not (a > 2);
+--sorted_result
+SELECT * from t where not (a < 2);
+explain format='brief' select * from trange where not (a < 2);
+--sorted_result
+SELECT * from trange where not (a < 2);
+explain format='brief' select * from thash where not (a < 2);
+--sorted_result
+SELECT * from thash where not (a < 2);
+--sorted_result
+SELECT * from t where a + 1 > 4;
+explain format='brief' select * from trange where a + 1 > 4;
+--sorted_result
+SELECT * from trange where a + 1 > 4;
+explain format='brief' select * from thash where a + 1 > 4;
+--sorted_result
+SELECT * from thash where a + 1 > 4;
+--sorted_result
+SELECT * from t where a - 1 > 0;
+explain format='brief' select * from trange where a - 1 > 0;
+--sorted_result
+SELECT * from trange where a - 1 > 0;
+explain format='brief' select * from thash where a - 1 > 0;
+--sorted_result
+SELECT * from thash where a - 1 > 0;
+--sorted_result
+SELECT * from t where a * 2 < 0;
+explain format='brief' select * from trange where a * 2 < 0;
+--sorted_result
+SELECT * from trange where a * 2 < 0;
+explain format='brief' select * from thash where a * 2 < 0;
+--sorted_result
+SELECT * from thash where a * 2 < 0;
+--sorted_result
+SELECT * from t where a << 1 < 0;
+explain format='brief' select * from trange where a << 1 < 0;
+--sorted_result
+SELECT * from trange where a << 1 < 0;
+explain format='brief' select * from thash where a << 1 < 0;
+--sorted_result
+SELECT * from thash where a << 1 < 0;
+--sorted_result
+SELECT * from t where a > '10';
+explain format='brief' select * from trange where a > '10';
+--sorted_result
+SELECT * from trange where a > '10';
+explain format='brief' select * from thash where a > '10';
+--sorted_result
+SELECT * from thash where a > '10';
+--sorted_result
+SELECT * from t where a > '10ab';
+explain format='brief' select * from trange where a > '10ab';
+--sorted_result
+SELECT * from trange where a > '10ab';
+explain format='brief' select * from thash where a > '10ab';
+--sorted_result
+SELECT * from thash where a > '10ab';
+set tidb_partition_prune_mode=default;
+

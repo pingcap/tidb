@@ -1,0 +1,27 @@
+set tidb_cost_model_version=1;
+drop table if exists t;
+create table t(
+    customer_id bigint,
+    id bigint,
+    expected_shard bigint unsigned,
+    computed_shard bigint unsigned null,
+    primary key (customer_id, id)
+);
+create index t_vitess_shard on t((vitess_hash(customer_id) >> 56));
+explain format = 'brief' select customer_id from t where (vitess_hash(customer_id) >> 56) = x'd6' ORDER BY id;
+explain format = 'brief' select id from t where (vitess_hash(customer_id) >> 56) IN (x'e0', x'e1') AND id BETWEEN 2 AND 5 ORDER BY id;
+explain format = 'brief' select hex(vitess_hash(1123)) from t;
+
+# TestVitessHash
+drop table if exists t_int;
+create table t_int(id int, a bigint unsigned null);
+insert into t_int values (1, 30375298039), (2, 1123), (3, 30573721600), (4, 18446744073709551615), (5, 116), (6, null);
+select hex(vitess_hash(a)) from t_int order by id;
+select hex(vitess_hash(convert(a, decimal(8,4)))) from t_int where id = 5;
+
+# TestVitessHashMatchesVitessShards
+drop table if exists t;
+create table t(customer_id bigint, id bigint, expected_shard bigint unsigned, computed_shard bigint unsigned null, primary key (customer_id, id));
+insert into t (customer_id, id, expected_shard) values (30370720100, 1, x'd6'), (30370670010, 2, x'd6'), (30370689320, 3, x'e1'), (30370693008, 4, x'e0'), (30370656005, 5, x'89'), (30370702638, 6, x'89'), (30370658809, 7, x'ce'), (30370665369, 8, x'cf'), (30370706138, 9, x'85'), (30370708769, 10, x'85'), (30370711915, 11, x'a3'), (30370712595, 12, x'a3'), (30370656340, 13, x'7d'), (30370660143, 14, x'7c'), (30371738450, 15, x'fc'), (30371683979, 16, x'fd'), (30370664597, 17, x'92'), (30370667361, 18, x'93'), (30370656406, 19, x'd2'), (30370716959, 20, x'd3'), (30375207698, 21, x'9a'), (30375168766, 22, x'9a'), (30370711813, 23, x'ca'), (30370721803, 24, x'ca'), (30370717957, 25, x'97'), (30370734969, 26, x'96'), (30375203572, 27, x'98'), (30375292643, 28, x'99');
+update t set computed_shard =  (vitess_hash(customer_id) >> 56);
+select customer_id, id, hex(expected_shard), hex(computed_shard) from t where expected_shard <> computed_shard;

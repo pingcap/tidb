@@ -33,7 +33,7 @@ go_test(
     shard_count = 4,
     deps = [
         ":show",
-        "//testkit",
+        "//pkg/testkit",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_kvproto//pkg/brpb",
         "@com_github_pingcap_kvproto//pkg/encryptionpb",

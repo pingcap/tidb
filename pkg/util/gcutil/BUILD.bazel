@@ -1,0 +1,17 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "gcutil",
+    srcs = ["gcutil.go"],
+    importpath = "github.com/pingcap/tidb/pkg/util/gcutil",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/kv",
+        "//pkg/parser/model",
+        "//pkg/sessionctx",
+        "//pkg/sessionctx/variable",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_tikv_client_go_v2//oracle",
+        "@com_github_tikv_client_go_v2//util",
+    ],
+)

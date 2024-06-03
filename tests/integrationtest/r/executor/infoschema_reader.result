@@ -1,0 +1,332 @@
+select * from information_schema.profiling;
+QUERY_ID	SEQ	STATE	DURATION	CPU_USER	CPU_SYSTEM	CONTEXT_VOLUNTARY	CONTEXT_INVOLUNTARY	BLOCK_OPS_IN	BLOCK_OPS_OUT	MESSAGES_SENT	MESSAGES_RECEIVED	PAGE_FAULTS_MAJOR	PAGE_FAULTS_MINOR	SWAPS	SOURCE_FUNCTION	SOURCE_FILE	SOURCE_LINE
+set @@profiling=1;
+select * from information_schema.profiling;
+QUERY_ID	SEQ	STATE	DURATION	CPU_USER	CPU_SYSTEM	CONTEXT_VOLUNTARY	CONTEXT_INVOLUNTARY	BLOCK_OPS_IN	BLOCK_OPS_OUT	MESSAGES_SENT	MESSAGES_RECEIVED	PAGE_FAULTS_MAJOR	PAGE_FAULTS_MINOR	SWAPS	SOURCE_FUNCTION	SOURCE_FILE	SOURCE_LINE
+0	0		0	0	0	0	0	0	0	0	0	0	0	0			0
+select * from information_schema.SCHEMATA where schema_name='mysql';
+CATALOG_NAME	SCHEMA_NAME	DEFAULT_CHARACTER_SET_NAME	DEFAULT_COLLATION_NAME	SQL_PATH	TIDB_PLACEMENT_POLICY_NAME
+def	mysql	utf8mb4	utf8mb4_bin	NULL	NULL
+drop user if exists schemata_tester;
+create user schemata_tester;
+select count(*) from information_schema.SCHEMATA;
+count(*)
+1
+select * from information_schema.SCHEMATA where schema_name='mysql';
+CATALOG_NAME	SCHEMA_NAME	DEFAULT_CHARACTER_SET_NAME	DEFAULT_COLLATION_NAME	SQL_PATH	TIDB_PLACEMENT_POLICY_NAME
+select * from information_schema.SCHEMATA where schema_name='INFORMATION_SCHEMA';
+CATALOG_NAME	SCHEMA_NAME	DEFAULT_CHARACTER_SET_NAME	DEFAULT_COLLATION_NAME	SQL_PATH	TIDB_PLACEMENT_POLICY_NAME
+def	INFORMATION_SCHEMA	utf8mb4	utf8mb4_bin	NULL	NULL
+CREATE ROLE r_mysql_priv;
+GRANT ALL PRIVILEGES ON mysql.* TO r_mysql_priv;
+GRANT r_mysql_priv TO schemata_tester;
+set role r_mysql_priv;
+select count(*) from information_schema.SCHEMATA;
+count(*)
+2
+select * from information_schema.SCHEMATA;
+CATALOG_NAME	SCHEMA_NAME	DEFAULT_CHARACTER_SET_NAME	DEFAULT_COLLATION_NAME	SQL_PATH	TIDB_PLACEMENT_POLICY_NAME
+def	INFORMATION_SCHEMA	utf8mb4	utf8mb4_bin	NULL	NULL
+def	mysql	utf8mb4	utf8mb4_bin	NULL	NULL
+drop table if exists executor__infoschema_reader.t;
+create table executor__infoschema_reader.t (a int, b int, primary key(a), key k1(b));
+select index_id from information_schema.tidb_indexes where table_schema = 'executor__infoschema_reader' and table_name = 't';
+index_id
+0
+1
+select tidb_table_id > 0 from information_schema.tables where table_schema = 'executor__infoschema_reader' and table_name = 't';
+tidb_table_id > 0
+1
+drop database if exists `foo`;
+CREATE DATABASE `foo` DEFAULT CHARACTER SET = 'utf8mb4';
+select default_character_set_name, default_collation_name FROM information_schema.SCHEMATA  WHERE schema_name = 'foo';
+default_character_set_name	default_collation_name
+utf8mb4	utf8mb4_bin
+drop database `foo`;
+drop view if exists executor__infoschema_reader.v1;
+CREATE DEFINER='root'@'localhost' VIEW executor__infoschema_reader.v1 AS SELECT 1;
+select TABLE_COLLATION is null from INFORMATION_SCHEMA.TABLES WHERE TABLE_TYPE='VIEW';
+TABLE_COLLATION is null
+1
+1
+1
+SELECT * FROM information_schema.views WHERE table_schema='executor__infoschema_reader' AND table_name='v1';
+TABLE_CATALOG	TABLE_SCHEMA	TABLE_NAME	VIEW_DEFINITION	CHECK_OPTION	IS_UPDATABLE	DEFINER	SECURITY_TYPE	CHARACTER_SET_CLIENT	COLLATION_CONNECTION
+def	executor__infoschema_reader	v1	SELECT 1 AS `1`	CASCADED	NO	root@localhost	DEFINER	utf8mb4	utf8mb4_general_ci
+SELECT table_catalog, table_schema, table_name, table_type, engine, version, row_format, table_rows, avg_row_length, data_length, max_data_length, index_length, data_free, auto_increment, update_time, check_time, table_collation, checksum, create_options, table_comment FROM information_schema.tables WHERE table_schema='executor__infoschema_reader' AND table_name='v1';
+table_catalog	table_schema	table_name	table_type	engine	version	row_format	table_rows	avg_row_length	data_length	max_data_length	index_length	data_free	auto_increment	update_time	check_time	table_collation	checksum	create_options	table_comment
+def	executor__infoschema_reader	v1	VIEW	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	VIEW
+drop table if exists t;
+create table t (bit bit(10) DEFAULT b'100');
+SELECT * FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = 'executor__infoschema_reader' AND TABLE_NAME = 't';
+TABLE_CATALOG	TABLE_SCHEMA	TABLE_NAME	COLUMN_NAME	ORDINAL_POSITION	COLUMN_DEFAULT	IS_NULLABLE	DATA_TYPE	CHARACTER_MAXIMUM_LENGTH	CHARACTER_OCTET_LENGTH	NUMERIC_PRECISION	NUMERIC_SCALE	DATETIME_PRECISION	CHARACTER_SET_NAME	COLLATION_NAME	COLUMN_TYPE	COLUMN_KEY	EXTRA	PRIVILEGES	COLUMN_COMMENT	GENERATION_EXPRESSION
+def	executor__infoschema_reader	t	bit	1	b'100'	YES	bit	NULL	NULL	10	0	NULL	NULL	NULL	bit(10)			select,insert,update,references		
+drop table if exists t;
+set time_zone='+08:00';
+drop table if exists t;
+create table t (b timestamp(3) NOT NULL DEFAULT '1970-01-01 08:00:01.000');
+select column_default from information_schema.columns where TABLE_NAME='t' and TABLE_SCHEMA='executor__infoschema_reader';
+column_default
+1970-01-01 08:00:01.000
+set time_zone='+04:00';
+select column_default from information_schema.columns where TABLE_NAME='t' and TABLE_SCHEMA='executor__infoschema_reader';
+column_default
+1970-01-01 04:00:01.000
+set time_zone=default;
+drop table if exists t;
+create table t (a bit DEFAULT (rand()));
+select column_default from information_schema.columns where TABLE_NAME='t' and TABLE_SCHEMA='executor__infoschema_reader';
+column_default
+rand()
+drop table if exists t;
+CREATE TABLE t (`COL3` bit(1) NOT NULL,b year) ;
+select column_type from  information_schema.columns where TABLE_SCHEMA = 'executor__infoschema_reader' and TABLE_NAME = 't';
+column_type
+bit(1)
+year(4)
+select ordinal_position from information_schema.columns where table_schema=database() and table_name='t' and column_name='b';
+ordinal_position
+2
+select * from information_schema.ENGINES;
+ENGINE	SUPPORT	COMMENT	TRANSACTIONS	XA	SAVEPOINTS
+InnoDB	DEFAULT	Supports transactions, row-level locking, and foreign keys	YES	YES	YES
+drop table if exists t;
+create table t (a varchar(255) collate ascii_bin);
+select character_maximum_length, character_octet_length from information_schema.columns where table_schema=(select database()) and table_name='t';
+character_maximum_length	character_octet_length
+255	255
+drop table t;
+create table t (a varchar(255) collate utf8mb4_bin);
+select character_maximum_length, character_octet_length from information_schema.columns where table_schema=(select database()) and table_name='t';
+character_maximum_length	character_octet_length
+255	1020
+drop table t;
+create table t (a varchar(255) collate utf8_bin);
+select character_maximum_length, character_octet_length from information_schema.columns where table_schema=(select database()) and table_name='t';
+character_maximum_length	character_octet_length
+255	765
+drop table t;
+create table t (a char(10) collate ascii_bin);
+select character_maximum_length, character_octet_length from information_schema.columns where table_schema=(select database()) and table_name='t';
+character_maximum_length	character_octet_length
+10	10
+drop table t;
+create table t (a char(10) collate utf8mb4_bin);
+select character_maximum_length, character_octet_length from information_schema.columns where table_schema=(select database()) and table_name='t';
+character_maximum_length	character_octet_length
+10	40
+drop table t;
+create table t (a set('a', 'b', 'cccc') collate ascii_bin);
+select character_maximum_length, character_octet_length from information_schema.columns where table_schema=(select database()) and table_name='t';
+character_maximum_length	character_octet_length
+8	8
+drop table t;
+create table t (a set('a', 'b', 'cccc') collate utf8mb4_bin);
+select character_maximum_length, character_octet_length from information_schema.columns where table_schema=(select database()) and table_name='t';
+character_maximum_length	character_octet_length
+8	32
+drop table t;
+create table t (a enum('a', 'b', 'cccc') collate ascii_bin);
+select character_maximum_length, character_octet_length from information_schema.columns where table_schema=(select database()) and table_name='t';
+character_maximum_length	character_octet_length
+4	4
+drop table t;
+create table t (a enum('a', 'b', 'cccc') collate utf8mb4_bin);
+select character_maximum_length, character_octet_length from information_schema.columns where table_schema=(select database()) and table_name='t';
+character_maximum_length	character_octet_length
+4	16
+drop table t;
+set global tidb_ddl_enable_fast_reorg = false;
+set global tidb_enable_dist_task = false;
+drop database if exists test_ddl_jobs;
+create database test_ddl_jobs;
+select db_name, job_type from information_schema.DDL_JOBS limit 1;
+db_name	job_type
+test_ddl_jobs	create schema
+use test_ddl_jobs;
+create table t (a int);
+select db_name, table_name, job_type from information_schema.DDL_JOBS where DB_NAME = 'test_ddl_jobs' and table_name = 't';
+db_name	table_name	job_type
+test_ddl_jobs	t	create table
+select job_type from information_schema.DDL_JOBS group by job_type having job_type = 'create table';
+job_type
+create table
+select distinct job_type from information_schema.DDL_JOBS where job_type = 'create table' and start_time > str_to_date('20190101','%Y%m%d%H%i%s');
+job_type
+create table
+drop user if exists DDL_JOBS_tester;
+create user DDL_JOBS_tester;
+select DB_NAME, TABLE_NAME from information_schema.DDL_JOBS where DB_NAME = 'test_ddl_jobs' and TABLE_NAME = 't';
+DB_NAME	TABLE_NAME
+CREATE ROLE r_priv;
+GRANT ALL PRIVILEGES ON test_ddl_jobs.* TO r_priv;
+GRANT r_priv TO DDL_JOBS_tester;
+set role r_priv;
+select DB_NAME, TABLE_NAME from information_schema.DDL_JOBS where DB_NAME = 'test_ddl_jobs' and TABLE_NAME = 't';
+DB_NAME	TABLE_NAME
+test_ddl_jobs	t
+create table tt (a int);
+alter table tt add index t(a), add column b int;
+select db_name, table_name, job_type from information_schema.DDL_JOBS limit 3;
+db_name	table_name	job_type
+test_ddl_jobs	tt	alter table multi-schema change
+test_ddl_jobs	tt	add column /* subjob */
+test_ddl_jobs	tt	add index /* subjob */ /* txn */
+drop database test_ddl_jobs;
+use executor__infoschema_reader;
+set global tidb_ddl_enable_fast_reorg = default;
+set global tidb_enable_dist_task = default;
+select * from information_schema.KEY_COLUMN_USAGE where TABLE_NAME='stats_meta' and COLUMN_NAME='table_id';
+CONSTRAINT_CATALOG	CONSTRAINT_SCHEMA	CONSTRAINT_NAME	TABLE_CATALOG	TABLE_SCHEMA	TABLE_NAME	COLUMN_NAME	ORDINAL_POSITION	POSITION_IN_UNIQUE_CONSTRAINT	REFERENCED_TABLE_SCHEMA	REFERENCED_TABLE_NAME	REFERENCED_COLUMN_NAME
+def	mysql	tbl	def	mysql	stats_meta	table_id	1	NULL	NULL	NULL	NULL
+create user key_column_tester;
+select * from information_schema.KEY_COLUMN_USAGE where TABLE_NAME != 'CLUSTER_SLOW_QUERY';
+CONSTRAINT_CATALOG	CONSTRAINT_SCHEMA	CONSTRAINT_NAME	TABLE_CATALOG	TABLE_SCHEMA	TABLE_NAME	COLUMN_NAME	ORDINAL_POSITION	POSITION_IN_UNIQUE_CONSTRAINT	REFERENCED_TABLE_SCHEMA	REFERENCED_TABLE_NAME	REFERENCED_COLUMN_NAME
+CREATE ROLE r_stats_meta ;
+GRANT ALL PRIVILEGES ON mysql.stats_meta TO r_stats_meta;
+GRANT r_stats_meta TO key_column_tester;
+set role r_stats_meta;
+select count(*)>0 from information_schema.KEY_COLUMN_USAGE where TABLE_NAME='stats_meta';
+count(*)>0
+1
+select count(*)>0 from information_schema.KEY_COLUMN_USAGE where upper(TABLE_NAME)='STATS_META';
+count(*)>0
+1
+select count(*)>0 from information_schema.KEY_COLUMN_USAGE where lower(TABLE_NAME)='stats_meta';
+count(*)>0
+1
+drop table if exists e, e2;
+CREATE TABLE e ( id INT NOT NULL, fname VARCHAR(30), lname VARCHAR(30)) PARTITION BY RANGE (id) (
+PARTITION p0 VALUES LESS THAN (50),
+PARTITION p1 VALUES LESS THAN (100),
+PARTITION p2 VALUES LESS THAN (150),
+PARTITION p3 VALUES LESS THAN (MAXVALUE));
+CREATE TABLE e2 ( id INT NOT NULL, fname VARCHAR(30), lname VARCHAR(30));
+SELECT PARTITION_NAME, TABLE_ROWS FROM INFORMATION_SCHEMA.PARTITIONS WHERE TABLE_NAME = 'e' and table_schema=(select database());
+PARTITION_NAME	TABLE_ROWS
+p0	0
+p1	0
+p2	0
+p3	0
+INSERT INTO e VALUES (1669, "Jim", "Smith"), (337, "Mary", "Jones"), (16, "Frank", "White"), (2005, "Linda", "Black");
+set tidb_enable_exchange_partition='on';
+ALTER TABLE e EXCHANGE PARTITION p0 WITH TABLE e2;
+INSERT INTO e VALUES (41, "Michael", "Green");
+analyze table e;
+SELECT PARTITION_NAME, TABLE_ROWS FROM INFORMATION_SCHEMA.PARTITIONS WHERE TABLE_NAME = 'e';
+PARTITION_NAME	TABLE_ROWS
+p0	1
+p1	0
+p2	0
+p3	3
+set tidb_enable_exchange_partition=default;
+select count(*) > 0 from information_schema.`METRICS_TABLES`;
+count(*) > 0
+1
+select * from information_schema.`METRICS_TABLES` where table_name='tidb_qps';
+TABLE_NAME	PROMQL	LABELS	QUANTILE	COMMENT
+tidb_qps	sum(rate(tidb_server_query_total{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (result,type,instance)	instance,type,result	0	TiDB query processing numbers per second
+select * from information_schema.TABLE_CONSTRAINTS where TABLE_NAME='gc_delete_range';
+CONSTRAINT_CATALOG	CONSTRAINT_SCHEMA	CONSTRAINT_NAME	TABLE_SCHEMA	TABLE_NAME	CONSTRAINT_TYPE
+def	mysql	delete_range_index	mysql	gc_delete_range	UNIQUE
+select * from information_schema.SESSION_VARIABLES where VARIABLE_NAME='tidb_retry_limit';
+VARIABLE_NAME	VARIABLE_VALUE
+tidb_retry_limit	10
+drop sequence if exists seq, seq2;
+CREATE SEQUENCE seq maxvalue 10000000;
+SELECT * FROM information_schema.sequences WHERE sequence_schema='executor__infoschema_reader' AND sequence_name='seq';
+TABLE_CATALOG	SEQUENCE_SCHEMA	SEQUENCE_NAME	CACHE	CACHE_VALUE	CYCLE	INCREMENT	MAX_VALUE	MIN_VALUE	START	COMMENT
+def	executor__infoschema_reader	seq	1	1000	0	1	10000000	1	1	
+DROP SEQUENCE seq;
+CREATE SEQUENCE seq start = -1 minvalue -1 maxvalue 10 increment 1 cache 10;
+SELECT * FROM information_schema.sequences WHERE sequence_schema='executor__infoschema_reader' AND sequence_name='seq';
+TABLE_CATALOG	SEQUENCE_SCHEMA	SEQUENCE_NAME	CACHE	CACHE_VALUE	CYCLE	INCREMENT	MAX_VALUE	MIN_VALUE	START	COMMENT
+def	executor__infoschema_reader	seq	1	10	0	1	10	-1	-1	
+CREATE SEQUENCE seq2 start = -9 minvalue -10 maxvalue 10 increment -1 cache 15;
+SELECT * FROM information_schema.sequences WHERE sequence_schema='executor__infoschema_reader' AND sequence_name='seq2';
+TABLE_CATALOG	SEQUENCE_SCHEMA	SEQUENCE_NAME	CACHE	CACHE_VALUE	CYCLE	INCREMENT	MAX_VALUE	MIN_VALUE	START	COMMENT
+def	executor__infoschema_reader	seq2	1	15	0	-1	10	-10	-9	
+SELECT TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME , TABLE_TYPE, ENGINE, TABLE_ROWS FROM information_schema.tables WHERE TABLE_TYPE='SEQUENCE' AND TABLE_NAME='seq2' and table_schema='executor__infoschema_reader';
+TABLE_CATALOG	TABLE_SCHEMA	TABLE_NAME	TABLE_TYPE	ENGINE	TABLE_ROWS
+def	executor__infoschema_reader	seq2	SEQUENCE	InnoDB	1
+drop table if exists t_int, t_implicit, t_common;
+create table t_int (a int primary key, b int);
+SELECT TIDB_PK_TYPE FROM information_schema.tables where table_schema = 'executor__infoschema_reader' and table_name = 't_int';
+TIDB_PK_TYPE
+CLUSTERED
+set tidb_enable_clustered_index=int_only;
+create table t_implicit (a varchar(64) primary key, b int);
+SELECT TIDB_PK_TYPE FROM information_schema.tables where table_schema = 'executor__infoschema_reader' and table_name = 't_implicit';
+TIDB_PK_TYPE
+NONCLUSTERED
+set tidb_enable_clustered_index=on;
+create table t_common (a varchar(64) primary key, b int);
+SELECT TIDB_PK_TYPE FROM information_schema.tables where table_schema = 'executor__infoschema_reader' and table_name = 't_common';
+TIDB_PK_TYPE
+CLUSTERED
+SELECT TIDB_PK_TYPE FROM information_schema.tables where table_schema = 'INFORMATION_SCHEMA' and table_name = 'TABLES';
+TIDB_PK_TYPE
+NONCLUSTERED
+set tidb_enable_clustered_index=default;
+drop table if exists t;
+CREATE TABLE t ( id int DEFAULT NULL);
+CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`1.1.1.1` SQL SECURITY DEFINER VIEW `v_test` (`type`) AS SELECT NULL AS `type` FROM `t` AS `f`;
+select * from  information_schema.columns where TABLE_SCHEMA = 'executor__infoschema_reader' and TABLE_NAME = 'v_test';
+TABLE_CATALOG	TABLE_SCHEMA	TABLE_NAME	COLUMN_NAME	ORDINAL_POSITION	COLUMN_DEFAULT	IS_NULLABLE	DATA_TYPE	CHARACTER_MAXIMUM_LENGTH	CHARACTER_OCTET_LENGTH	NUMERIC_PRECISION	NUMERIC_SCALE	DATETIME_PRECISION	CHARACTER_SET_NAME	COLLATION_NAME	COLUMN_TYPE	COLUMN_KEY	EXTRA	PRIVILEGES	COLUMN_COMMENT	GENERATION_EXPRESSION
+def	executor__infoschema_reader	v_test	type	1	NULL	YES	binary	0	0	NULL	NULL	NULL	NULL	NULL	binary(0)			select,insert,update,references		
+drop user if exists usageuser;
+create user usageuser;
+SELECT * FROM information_schema.user_privileges WHERE grantee="'usageuser'@'%'";
+GRANTEE	TABLE_CATALOG	PRIVILEGE_TYPE	IS_GRANTABLE
+'usageuser'@'%'	def	USAGE	NO
+GRANT SELECT ON *.* to usageuser;
+SELECT * FROM information_schema.user_privileges WHERE grantee="'usageuser'@'%'";
+GRANTEE	TABLE_CATALOG	PRIVILEGE_TYPE	IS_GRANTABLE
+'usageuser'@'%'	def	SELECT	NO
+GRANT SELECT ON *.* to usageuser WITH GRANT OPTION;
+SELECT * FROM information_schema.user_privileges WHERE grantee="'usageuser'@'%'";
+GRANTEE	TABLE_CATALOG	PRIVILEGE_TYPE	IS_GRANTABLE
+'usageuser'@'%'	def	SELECT	YES
+GRANT BACKUP_ADMIN ON *.* to usageuser;
+SELECT * FROM information_schema.user_privileges WHERE grantee="'usageuser'@'%'" ORDER BY privilege_type;
+GRANTEE	TABLE_CATALOG	PRIVILEGE_TYPE	IS_GRANTABLE
+'usageuser'@'%'	def	BACKUP_ADMIN	NO
+'usageuser'@'%'	def	SELECT	YES
+select VARIABLE_NAME from information_schema.VARIABLES_INFO where DEFAULT_VALUE = CURRENT_VALUE and variable_name in ('tidb_enable_async_commit','tidb_enable_1pc', 'tidb_mem_oom_action', 'tidb_enable_auto_analyze', 'tidb_row_format_version', 'tidb_txn_assertion_level', 'tidb_enable_mutation_checker', 'tidb_pessimistic_txn_fair_locking') order by VARIABLE_NAME;
+VARIABLE_NAME
+tidb_enable_1pc
+tidb_enable_async_commit
+tidb_enable_auto_analyze
+tidb_enable_mutation_checker
+tidb_mem_oom_action
+tidb_pessimistic_txn_fair_locking
+tidb_row_format_version
+tidb_txn_assertion_level
+set global tidb_enable_async_commit = default;
+set global tidb_enable_1pc = default;
+set global tidb_mem_oom_action = default;
+set global tidb_enable_auto_analyze = default;
+set global tidb_row_format_version = default;
+set global tidb_txn_assertion_level = default;
+set global tidb_enable_mutation_checker = default;
+set global tidb_pessimistic_txn_fair_locking = default;
+select a.VARIABLE_NAME from information_schema.VARIABLES_INFO as a, mysql.GLOBAL_VARIABLES as b where a.VARIABLE_NAME = b.VARIABLE_NAME and a.DEFAULT_VALUE = b.VARIABLE_VALUE and a.CURRENT_VALUE = b.VARIABLE_VALUE and a.variable_name in ('tidb_enable_async_commit','tidb_enable_1pc', 'tidb_mem_oom_action', 'tidb_enable_auto_analyze', 'tidb_row_format_version', 'tidb_txn_assertion_level', 'tidb_enable_mutation_checker', 'tidb_pessimistic_txn_fair_locking') order by VARIABLE_NAME;
+VARIABLE_NAME
+tidb_enable_1pc
+tidb_enable_async_commit
+tidb_enable_auto_analyze
+tidb_enable_mutation_checker
+tidb_mem_oom_action
+tidb_pessimistic_txn_fair_locking
+tidb_row_format_version
+tidb_txn_assertion_level
+drop table if exists t;
+CREATE TABLE t (a int, b int, c varchar(5), primary key(a), index idx(c)) PARTITION BY RANGE (a) (PARTITION p0 VALUES LESS THAN (6), PARTITION p1 VALUES LESS THAN (11), PARTITION p2 VALUES LESS THAN (16));
+insert into t(a, b, c) values(1, 2, 'c'), (7, 3, 'd'), (12, 4, 'e');
+analyze table t;
+select sleep(1);
+sleep(1)
+0
+select table_rows, avg_row_length, data_length, index_length from information_schema.tables where table_name='t' AND TABLE_SCHEMA='executor__infoschema_reader';
+table_rows	avg_row_length	data_length	index_length
+3	18	54	6

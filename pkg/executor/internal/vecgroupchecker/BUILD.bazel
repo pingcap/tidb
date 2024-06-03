@@ -1,0 +1,39 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "vecgroupchecker",
+    srcs = ["vec_group_checker.go"],
+    importpath = "github.com/pingcap/tidb/pkg/executor/internal/vecgroupchecker",
+    visibility = ["//pkg/executor:__subpackages__"],
+    deps = [
+        "//pkg/expression",
+        "//pkg/types",
+        "//pkg/util/chunk",
+        "//pkg/util/codec",
+    ],
+)
+
+go_test(
+    name = "vecgroupchecker_test",
+    timeout = "short",
+    srcs = [
+        "main_test.go",
+        "vec_group_checker_test.go",
+    ],
+    embed = [":vecgroupchecker"],
+    flaky = True,
+    shard_count = 3,
+    deps = [
+        "//pkg/config",
+        "//pkg/expression",
+        "//pkg/meta/autoid",
+        "//pkg/parser/mysql",
+        "//pkg/testkit/testsetup",
+        "//pkg/types",
+        "//pkg/util/chunk",
+        "//pkg/util/mock",
+        "@com_github_stretchr_testify//require",
+        "@com_github_tikv_client_go_v2//tikv",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

@@ -25,6 +25,7 @@ linters:
     - predeclared
     - revive
     - lll
+    - gofmt
 
 linters-settings:
   staticcheck:
@@ -389,6 +390,13 @@ linters-settings:
       - name: waitgroup-by-value
         severity: warning
         disabled: false
+  gofmt:
+    # https://golangci-lint.run/usage/linters/#gofmt
+    # disable for faster check
+    simplify: false
+    rewrite-rules:
+      - pattern: 'interface{}'
+        replacement: 'any'
 issues:
   exclude-rules:
     - path: _test\.go

@@ -5,11 +5,11 @@ package glue
 import (
 	"context"
 
-	"github.com/pingcap/tidb/ddl"
-	"github.com/pingcap/tidb/domain"
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	pd "github.com/tikv/pd/client"
 )
 
@@ -41,7 +41,7 @@ type Glue interface {
 // Session is an abstraction of the session.Session interface.
 type Session interface {
 	Execute(ctx context.Context, sql string) error
-	ExecuteInternal(ctx context.Context, sql string, args ...interface{}) error
+	ExecuteInternal(ctx context.Context, sql string, args ...any) error
 	CreateDatabase(ctx context.Context, schema *model.DBInfo) error
 	CreateTable(ctx context.Context, dbName model.CIStr, table *model.TableInfo,
 		cs ...ddl.CreateTableWithInfoConfigurier) error

@@ -4,7 +4,7 @@
 
 package utils
 
-import tidbutils "github.com/pingcap/tidb/util"
+import tidbutils "github.com/pingcap/tidb/pkg/util"
 
 // StartDynamicPProfListener starts the listener that will enable pprof when received `startPProfSignal`
 func StartDynamicPProfListener(tls *tidbutils.TLS) {

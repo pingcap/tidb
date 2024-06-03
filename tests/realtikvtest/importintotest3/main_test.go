@@ -19,12 +19,11 @@ import (
 	"testing"
 
 	"github.com/fsouza/fake-gcs-server/fakestorage"
-	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/disttask/framework/testutil"
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/tests/realtikvtest"
-	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 )
 
@@ -45,12 +44,13 @@ var (
 	gcsEndpoint       = fmt.Sprintf(gcsEndpointFormat, gcsHost, gcsPort)
 )
 
-func TestLoadRemote(t *testing.T) {
+func TestImportInto(t *testing.T) {
 	suite.Run(t, &mockGCSSuite{})
 }
 
 func (s *mockGCSSuite) SetupSuite() {
 	s.Require().True(*realtikvtest.WithRealTiKV)
+	testutil.ReduceCheckInterval(s.T())
 	var err error
 	opt := fakestorage.Options{
 		Scheme:     "http",
@@ -68,17 +68,16 @@ func (s *mockGCSSuite) TearDownSuite() {
 	s.server.Stop()
 }
 
-func (s *mockGCSSuite) enableFailpoint(path, term string) {
-	require.NoError(s.T(), failpoint.Enable(path, term))
-	s.T().Cleanup(func() {
-		_ = failpoint.Disable(path)
-	})
-}
-
 func (s *mockGCSSuite) cleanupSysTables() {
 	s.tk.MustExec("delete from mysql.tidb_import_jobs")
 	s.tk.MustExec("delete from mysql.tidb_global_task")
 	s.tk.MustExec("delete from mysql.tidb_background_subtask")
+}
+
+func (s *mockGCSSuite) prepareAndUseDB(db string) {
+	s.tk.MustExec("drop database if exists " + db)
+	s.tk.MustExec("create database " + db)
+	s.tk.MustExec("use " + db)
 }
 
 func init() {

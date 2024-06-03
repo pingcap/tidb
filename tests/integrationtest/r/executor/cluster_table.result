@@ -1,0 +1,77 @@
+drop table if exists test_func_encode_sql_digest;
+create table test_func_encode_sql_digest(id int primary key, v int);
+select tidb_encode_sql_digest("begin");
+tidb_encode_sql_digest("begin")
+e6f07d43b5c21db0fbb9a31feac2dc599787763393dd5acbfad80e247eb02ad5
+select tidb_encode_sql_digest("select @@tidb_current_ts");
+tidb_encode_sql_digest("select @@tidb_current_ts")
+58f3717da2d79c14773a1e3094aaddeff2b11747d3aef95741151af9acba9d44
+select tidb_encode_sql_digest("select id, v from test_func_decode_sql_digests where id = 1 for update");
+tidb_encode_sql_digest("select id, v from test_func_decode_sql_digests where id = 1 for update")
+7e9f826ed22a09940940a42d1aca47a75b3adc3c3fde252f4b912ac886194eb9
+select tidb_encode_sql_digest(null);
+tidb_encode_sql_digest(null)
+NULL
+select tidb_encode_sql_digest();
+Error 1582 (42000): Incorrect parameter count in the call to native function 'tidb_encode_sql_digest'
+select (select tidb_encode_sql_digest('select 1')) = tidb_encode_sql_digest('select 1;');
+(select tidb_encode_sql_digest('select 1')) = tidb_encode_sql_digest('select 1;')
+1
+select (select tidb_encode_sql_digest('select 1')) = tidb_encode_sql_digest('select 1 ;');
+(select tidb_encode_sql_digest('select 1')) = tidb_encode_sql_digest('select 1 ;')
+1
+select (select tidb_encode_sql_digest('select 1')) = tidb_encode_sql_digest('select 2 ;');
+(select tidb_encode_sql_digest('select 1')) = tidb_encode_sql_digest('select 2 ;')
+1
+drop user if exists 'testuser'@'localhost';
+create user 'testuser'@'localhost';
+select tidb_decode_sql_digests('["aa"]');
+Error 1227 (42000): Access denied; you need (at least one of) the PROCESS privilege(s) for this operation
+grant process on *.* to 'testuser'@'localhost';
+select tidb_decode_sql_digests('["aa"]');
+tidb_decode_sql_digests('["aa"]')
+[null]
+drop user 'testuser'@'localhost';
+set global tidb_enable_stmt_summary = 1;
+select @@global.tidb_enable_stmt_summary;
+@@global.tidb_enable_stmt_summary
+1
+drop table if exists test_func_decode_sql_digests;
+create table test_func_decode_sql_digests(id int primary key, v int);
+begin;
+select @@tidb_current_ts;
+select id, v from test_func_decode_sql_digests where id = 1 for update;
+id	v
+rollback;
+select tidb_decode_sql_digests('["e6f07d43b5c21db0fbb9a31feac2dc599787763393dd5acbfad80e247eb02ad5","58f3717da2d79c14773a1e3094aaddeff2b11747d3aef95741151af9acba9d44","7e9f826ed22a09940940a42d1aca47a75b3adc3c3fde252f4b912ac886194eb9"]', 0);
+tidb_decode_sql_digests('["e6f07d43b5c21db0fbb9a31feac2dc599787763393dd5acbfad80e247eb02ad5","58f3717da2d79c14773a1e3094aaddeff2b11747d3aef95741151af9acba9d44","7e9f826ed22a09940940a42d1aca47a75b3adc3c3fde252f4b912ac886194eb9"]', 0)
+["begin","select @@tidb_current_ts","select `id` , `v` from `test_func_decode_sql_digests` where `id` = ? for update"]
+select tidb_decode_sql_digests('["e6f07d43b5c21db0fbb9a31feac2dc599787763393dd5acbfad80e247eb02ad5","58f3717da2d79c14773a1e3094aaddeff2b11747d3aef95741151af9acba9d44","7e9f826ed22a09940940a42d1aca47a75b3adc3c3fde252f4b912ac886194eb9"]', 24);
+tidb_decode_sql_digests('["e6f07d43b5c21db0fbb9a31feac2dc599787763393dd5acbfad80e247eb02ad5","58f3717da2d79c14773a1e3094aaddeff2b11747d3aef95741151af9acba9d44","7e9f826ed22a09940940a42d1aca47a75b3adc3c3fde252f4b912ac886194eb9"]', 24)
+["begin","select @@tidb_current_ts","select `id` , `v` from `..."]
+select tidb_decode_sql_digests('[]');
+tidb_decode_sql_digests('[]')
+[]
+select tidb_decode_sql_digests(null);
+tidb_decode_sql_digests(null)
+NULL
+select tidb_decode_sql_digests('["e6f07d43b5c21db0fbb9a31feac2dc599787763393dd5acbfad80e247eb02ad5",1,null,"58f3717da2d79c14773a1e3094aaddeff2b11747d3aef95741151af9acba9d44",{"a":1},[2],"7e9f826ed22a09940940a42d1aca47a75b3adc3c3fde252f4b912ac886194eb9","","abcde"]');
+tidb_decode_sql_digests('["e6f07d43b5c21db0fbb9a31feac2dc599787763393dd5acbfad80e247eb02ad5",1,null,"58f3717da2d79c14773a1e3094aaddeff2b11747d3aef95741151af9acba9d44",{"a":1},[2],"7e9f826ed22a09940940a42d1aca47a75b3adc3c3fde252f4b912ac886194eb9","","abcde"
+["begin",null,null,"select @@tidb_current_ts",null,null,"select `id` , `v` from `test_func_decode_sql_digests` where `id` = ? for update",null,null]
+select tidb_decode_sql_digests('{"a":1}');
+tidb_decode_sql_digests('{"a":1}')
+NULL
+show warnings;
+Level	Code	Message
+Warning	1210	The argument can't be unmarshalled as JSON array: '{"a":1}'
+select tidb_decode_sql_digests('aabbccdd');
+tidb_decode_sql_digests('aabbccdd')
+NULL
+show warnings;
+Level	Code	Message
+Warning	1210	The argument can't be unmarshalled as JSON array: 'aabbccdd'
+select tidb_decode_sql_digests('a', 1, 2);
+Error 1582 (42000): Incorrect parameter count in the call to native function 'tidb_decode_sql_digests'
+select tidb_decode_sql_digests();
+Error 1582 (42000): Incorrect parameter count in the call to native function 'tidb_decode_sql_digests'
+set global tidb_enable_stmt_summary = default;

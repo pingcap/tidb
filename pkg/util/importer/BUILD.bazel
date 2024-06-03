@@ -1,0 +1,28 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "importer",
+    srcs = [
+        "config.go",
+        "data.go",
+        "db.go",
+        "importer.go",
+        "job.go",
+        "parser.go",
+        "rand.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/util/importer",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/parser",
+        "//pkg/parser/ast",
+        "//pkg/parser/mysql",
+        "//pkg/parser/types",
+        "//pkg/types/parser_driver",
+        "//pkg/util/dbutil",
+        "@com_github_go_sql_driver_mysql//:mysql",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_log//:log",
+        "@org_uber_go_zap//:zap",
+    ],
+)

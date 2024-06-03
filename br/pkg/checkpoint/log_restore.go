@@ -24,7 +24,7 @@ import (
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/storage"
-	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/model"
 	"go.uber.org/zap"
 )
 
@@ -247,12 +247,12 @@ func removeCheckpointTaskInfoForLogRestore(ctx context.Context, s storage.Extern
 }
 
 type CheckpointIngestIndexRepairSQL struct {
-	IndexID    int64         `json:"index-id"`
-	SchemaName model.CIStr   `json:"schema-name"`
-	TableName  model.CIStr   `json:"table-name"`
-	IndexName  string        `json:"index-name"`
-	AddSQL     string        `json:"add-sql"`
-	AddArgs    []interface{} `json:"add-args"`
+	IndexID    int64       `json:"index-id"`
+	SchemaName model.CIStr `json:"schema-name"`
+	TableName  model.CIStr `json:"table-name"`
+	IndexName  string      `json:"index-name"`
+	AddSQL     string      `json:"add-sql"`
+	AddArgs    []any       `json:"add-args"`
 }
 
 type CheckpointIngestIndexRepairSQLs struct {

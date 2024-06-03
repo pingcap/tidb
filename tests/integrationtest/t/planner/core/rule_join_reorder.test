@@ -1,0 +1,120 @@
+# TestAdditionOtherConditionsRemained4OuterJoin
+drop table if exists queries_identifier, queries_program, queries_channel, t, t1, t2, t3, t4;
+CREATE TABLE `queries_identifier` (
+   `id` int(11) NOT NULL AUTO_INCREMENT,
+   `name` varchar(100) COLLATE utf8mb4_general_ci NOT NULL,
+   PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */
+ ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+CREATE TABLE `queries_program` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `identifier_id` int(11) NOT NULL,
+  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,
+  UNIQUE KEY `identifier_id` (`identifier_id`),
+  CONSTRAINT `queries_program_identifier_id_70ff12a6_fk_queries_identifier_id` FOREIGN KEY (`identifier_id`) REFERENCES `planner__core__rule_join_reorder`.`queries_identifier` (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+CREATE TABLE `queries_channel` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `identifier_id` int(11) NOT NULL,
+  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,
+  UNIQUE KEY `identifier_id` (`identifier_id`),
+  CONSTRAINT `queries_channel_identifier_id_06ac3513_fk_queries_identifier_id` FOREIGN KEY (`identifier_id`) REFERENCES `planner__core__rule_join_reorder`.`queries_identifier` (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+INSERT  INTO queries_identifier(`id`, `name`) values(13, 'i1'), (14, 'i2'), (15, 'i3');
+INSERT  INTO queries_program(`id`, `identifier_id`) values(8, 13), (9, 14);
+INSERT  INTO queries_channel(`id`, `identifier_id`) values(5, 13);
+create table t(a int);
+create table t1(a int, b int);
+create table t2(a int, b int, c int);
+create table t3(a int, b int);
+create table t4(a int, b int);
+SELECT `queries_identifier`.`id`, `queries_identifier`.`name` FROM `queries_identifier` LEFT OUTER JOIN `queries_channel` ON (`queries_identifier`.`id` = `queries_channel`.`identifier_id`) INNER JOIN `queries_program` ON (`queries_identifier`.`id` = `queries_program`.`identifier_id`) WHERE ((`queries_channel`.`id` = 5 AND `queries_program`.`id` = 9) OR `queries_program`.`id` = 8) ORDER BY `queries_identifier`.`id` ASC;
+SELECT `queries_identifier`.`id`, `queries_identifier`.`name` FROM `queries_identifier` RIGHT OUTER JOIN `queries_channel` ON (`queries_identifier`.`id` = `queries_channel`.`identifier_id`) INNER JOIN `queries_program` ON (`queries_identifier`.`id` = `queries_program`.`identifier_id`) WHERE ((`queries_channel`.`id` = 5 AND `queries_program`.`id` = 9) OR `queries_program`.`id` = 8) ORDER BY `queries_identifier`.`id` ASC;
+explain format = 'brief' SELECT `queries_identifier`.`id`, `queries_identifier`.`name` FROM `queries_identifier` LEFT OUTER JOIN `queries_channel` ON (`queries_identifier`.`id` = `queries_channel`.`identifier_id`) INNER JOIN `queries_program` ON (`queries_identifier`.`id` = `queries_program`.`identifier_id`) WHERE ((`queries_channel`.`id` = 5 AND `queries_program`.`id` = 9) OR `queries_program`.`id` = 8) ORDER BY `queries_identifier`.`id` ASC;
+explain format='brief' select * from t left join t1 on t.a=t1.a inner join t2 on t.a=t2.a and t2.c = 100 left join t3 on t2.a=t3.a and t3.b > 1 left join t4 on t2.a = t4.a where (t2.b > 100 or t.a > 10 or t1.b < 10);
+
+
+# TestOuterJoinWIthEqCondCrossInnerJoin
+drop table if exists t1, t2, t3;
+CREATE TABLE `t1` (`data_status` tinyint(1) DEFAULT '0',`part` tinyint(255) unsigned DEFAULT NULL);
+CREATE TABLE `t2` (`id` bigint(20) NOT NULL AUTO_INCREMENT,`routing_rule_switch` tinyint(1) DEFAULT '0',PRIMARY KEY (`id`));
+CREATE TABLE `t3` (`fk_id` bigint(20) DEFAULT NULL,`offer_pbu_id` varchar(255) DEFAULT NULL ,`market_id` smallint(6) DEFAULT NULL ,`te_partition` tinyint(255) DEFAULT NULL ,UNIQUE KEY `t_pbu_partition_id` (`offer_pbu_id`,`market_id`,`te_partition`));
+insert into t1 values(1,1);
+insert into t2 values(1,0);
+insert into t3 values(8,'a',3,6);
+
+SELECT tt.market_id,
+	tt.offer_pbu_id
+FROM   t3 tt
+	RIGHT JOIN (SELECT pp.offer_pbu_id,
+			   pp.market_id,
+			   t.partition_no
+		    FROM   (SELECT p.offer_pbu_id,
+				   p.market_id
+			    FROM   t3 p
+				   INNER JOIN t2 e
+					   ON p.fk_id = e.id
+					      AND e.routing_rule_switch = 1) pp,
+			   (SELECT part AS partition_no
+			    FROM   t1) t) o
+		ON tt.market_id = o.market_id
+		   AND tt.offer_pbu_id = o.offer_pbu_id
+		   AND tt.te_partition = o.partition_no;
+explain format=brief
+SELECT tt.market_id,
+	tt.offer_pbu_id
+FROM   t3 tt
+	RIGHT JOIN (SELECT pp.offer_pbu_id,
+			   pp.market_id,
+			   t.partition_no
+		    FROM   (SELECT p.offer_pbu_id,
+				   p.market_id
+			    FROM   t3 p
+				   INNER JOIN t2 e
+					   ON p.fk_id = e.id
+					      AND e.routing_rule_switch = 1) pp,
+			   (SELECT part AS partition_no
+			    FROM   t1) t) o
+		ON tt.market_id = o.market_id
+		   AND tt.offer_pbu_id = o.offer_pbu_id
+		   AND tt.te_partition = o.partition_no;
+
+
+
+# TestJoinOrderHintWithBinding
+drop table if exists t, t1, t2, t3;
+create table t(a int, b int, key(a));
+create table t1(a int, b int, key(a));
+create table t2(a int, b int, key(a));
+create table t3(a int, b int, key(a));
+
+select * from t1 join t2 on t1.a=t2.a join t3 on t2.b=t3.b;
+select @@last_plan_from_binding;
+create global binding for select * from t1 join t2 on t1.a=t2.a join t3 on t2.b=t3.b using select /*+ straight_join() */ * from t1 join t2 on t1.a=t2.a join t3 on t2.b=t3.b;
+select * from t1 join t2 on t1.a=t2.a join t3 on t2.b=t3.b;
+select @@last_plan_from_binding;
+--replace_column 5 <create_time> 6 <update_time>
+show global bindings where original_sql like '%planner__core__rule_join_reorder%';
+
+drop global binding for select * from t1 join t2 on t1.a=t2.a join t3 on t2.b=t3.b;
+select * from t1 join t2 on t1.a=t2.a join t3 on t2.b=t3.b;
+select @@last_plan_from_binding;
+--replace_column 5 <create_time> 6 <update_time>
+show global bindings where original_sql like '%planner__core__rule_join_reorder%';
+
+create global binding for select * from t1 join t2 on t1.a=t2.a join t3 on t2.b=t3.b using select /*+ leading(t3) */ * from t1 join t2 on t1.a=t2.a join t3 on t2.b=t3.b;
+select * from t1 join t2 on t1.a=t2.a join t3 on t2.b=t3.b;
+select @@last_plan_from_binding;
+--replace_column 5 <create_time> 6 <update_time>
+show global bindings where original_sql like '%planner__core__rule_join_reorder%';
+drop global binding for select * from t1 join t2 on t1.a=t2.a join t3 on t2.b=t3.b;
+
+select * from t1 join t2 on t1.a=t2.a left join t3 on t2.b=t3.b;
+select @@last_plan_from_binding;
+--replace_column 5 <create_time> 6 <update_time>
+show global bindings where original_sql like '%planner__core__rule_join_reorder%';
+
+create global binding for select * from t1 join t2 on t1.a=t2.a left join t3 on t2.b=t3.b using select /*+ leading(t2) */ * from t1 join t2 on t1.a=t2.a left join t3 on t2.b=t3.b;
+select * from t1 join t2 on t1.a=t2.a left join t3 on t2.b=t3.b;
+select @@last_plan_from_binding;
+--replace_column 5 <create_time> 6 <update_time>
+show global bindings where original_sql like '%planner__core__rule_join_reorder%';

@@ -1,0 +1,55 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "handle",
+    srcs = [
+        "bootstrap.go",
+        "handle.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/statistics/handle",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/config",
+        "//pkg/infoschema",
+        "//pkg/kv",
+        "//pkg/parser/model",
+        "//pkg/parser/mysql",
+        "//pkg/parser/terror",
+        "//pkg/sessionctx",
+        "//pkg/sessionctx/sysproctrack",
+        "//pkg/statistics",
+        "//pkg/statistics/handle/autoanalyze",
+        "//pkg/statistics/handle/cache",
+        "//pkg/statistics/handle/ddl",
+        "//pkg/statistics/handle/globalstats",
+        "//pkg/statistics/handle/history",
+        "//pkg/statistics/handle/initstats",
+        "//pkg/statistics/handle/lockstats",
+        "//pkg/statistics/handle/logutil",
+        "//pkg/statistics/handle/storage",
+        "//pkg/statistics/handle/syncload",
+        "//pkg/statistics/handle/types",
+        "//pkg/statistics/handle/usage",
+        "//pkg/statistics/handle/util",
+        "//pkg/types",
+        "//pkg/util/chunk",
+        "//pkg/util/logutil",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "handle_test",
+    timeout = "short",
+    srcs = ["main_test.go"],
+    embed = [":handle"],
+    flaky = True,
+    race = "on",
+    shard_count = 4,
+    deps = [
+        "//pkg/testkit/testsetup",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

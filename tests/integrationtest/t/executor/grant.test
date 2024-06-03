@@ -1,0 +1,292 @@
+# TestWithGrantOption
+drop user if exists 'testWithGrant'@'localhost';
+CREATE USER 'testWithGrant'@'localhost' IDENTIFIED BY '123';
+SELECT * FROM mysql.db WHERE User="testWithGrant" and host="localhost";
+GRANT select ON executor__grant.* TO 'testWithGrant'@'localhost' WITH GRANT OPTION;
+SELECT grant_priv FROM mysql.DB WHERE User="testWithGrant" and host="localhost" and db="executor__grant";
+drop user if exists 'testWithGrant1';
+CREATE USER 'testWithGrant1';
+SELECT grant_priv FROM mysql.user WHERE User="testWithGrant1";
+GRANT ALL ON *.* TO 'testWithGrant1';
+SELECT grant_priv FROM mysql.user WHERE User="testWithGrant1";
+GRANT ALL ON *.* TO 'testWithGrant1' WITH GRANT OPTION;
+SELECT grant_priv FROM mysql.user WHERE User="testWithGrant1";
+
+# TestIssue2456
+drop user if exists 'dduser'@'%';
+drop DATABASE if exists `dddb_%`;
+CREATE USER 'dduser'@'%' IDENTIFIED by '123456';
+CREATE DATABASE `dddb_%`;
+CREATE table `dddb_%`.`te%` (id int);
+GRANT ALL PRIVILEGES ON `dddb_%`.* TO 'dduser'@'%';
+GRANT ALL PRIVILEGES ON `dddb_%`.`te%` to 'dduser'@'%';
+
+# TestNoAutoCreateUser
+DROP USER IF EXISTS 'test'@'%';
+SET sql_mode='NO_AUTO_CREATE_USER';
+-- error 1410
+GRANT ALL PRIVILEGES ON *.* to 'test'@'%' IDENTIFIED BY 'xxx';
+set sql_mode=default;
+
+# TestCreateUserWhenGrant
+DROP USER IF EXISTS 'test'@'%';
+# This only applies to sql_mode:NO_AUTO_CREATE_USER off
+SET SQL_MODE='';
+GRANT ALL PRIVILEGES ON *.* to 'test'@'%' IDENTIFIED BY 'xxx';
+# Make sure user is created automatically when grant to a non-exists one.
+SELECT user FROM mysql.user WHERE user='test' and host='%';
+DROP USER IF EXISTS 'test'@'%';
+# Grant without a password.
+GRANT ALL PRIVILEGES ON *.* to 'test'@'%';
+# Make sure user is created automatically when grant to a non-exists one.
+SELECT user, plugin FROM mysql.user WHERE user='test' and host='%';
+DROP USER IF EXISTS 'test'@'%';
+set sql_mode=default;
+
+# TestCreateUserWithTooLongName
+-- error 1470
+CREATE USER '1234567890abcdefGHIKL1234567890abcdefGHIKL@localhost';
+-- error 1470
+CREATE USER 'some_user_name@host_1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890X';
+
+# TestGrantPrivilegeAtomic
+drop role if exists r1, r2, r3, r4;
+create role r1, r2, r3;
+create table executor__grant.testatomic(x int);
+-- error 1410
+grant update, select, insert, delete on *.* to r1, r2, r4;
+select Update_priv, Select_priv, Insert_priv, Delete_priv from mysql.user where user in ('r1', 'r2', 'r3', 'r4') and host = "%";
+grant update, select, insert, delete on *.* to r1, r2, r3;
+-- error 1105
+revoke all on *.* from r1, r2, r4, r3;
+select Update_priv, Select_priv, Insert_priv, Delete_priv from mysql.user where user in ('r1', 'r2', 'r3', 'r4') and host = "%";
+-- error 1410
+grant update, select, insert, delete on executor__grant.* to r1, r2, r4;
+select Update_priv, Select_priv, Insert_priv, Delete_priv from mysql.db where user in ('r1', 'r2', 'r3', 'r4') and host = "%";
+grant update, select, insert, delete on executor__grant.* to r1, r2, r3;
+-- error 1105
+revoke all on *.* from r1, r2, r4, r3;
+select Update_priv, Select_priv, Insert_priv, Delete_priv from mysql.db where user in ('r1', 'r2', 'r3', 'r4') and host = "%";
+-- error 1410
+grant update, select, insert, delete on executor__grant.testatomic to r1, r2, r4;
+select Table_priv from mysql.tables_priv where user in ('r1', 'r2', 'r3', 'r4') and host = "%";
+grant update, select, insert, delete on executor__grant.testatomic to r1, r2, r3;
+-- error 1105
+revoke all on *.* from r1, r2, r4, r3;
+select Table_priv from mysql.tables_priv where user in ('r1', 'r2', 'r3', 'r4') and host = "%";
+drop role if exists r1, r2, r3, r4;
+drop table executor__grant.testatomic;
+
+# TestIssue2654
+DROP USER IF EXISTS 'test'@'%';
+CREATE USER 'test'@'%' IDENTIFIED BY 'test';
+GRANT SELECT ON executor__grant.* to 'test';
+SELECT user,host FROM mysql.user WHERE user='test' and host='%';
+
+# TestGrantUnderANSIQuotes
+SET SQL_MODE='ANSI_QUOTES';
+# Fix a bug that the GrantExec fails in ANSI_QUOTES sql mode
+# The bug is caused by the improper usage of double quotes like:
+# INSERT INTO mysql.user ... VALUES ("..", "..", "..")
+GRANT ALL PRIVILEGES ON video_ulimit.* TO web@'%' IDENTIFIED BY 'eDrkrhZ>l2sV';
+REVOKE ALL PRIVILEGES ON video_ulimit.* FROM web@'%';
+DROP USER IF EXISTS 'web'@'%';
+set sql_mode=default;
+
+# TestMaintainRequire
+DROP USER if exists 'ssl_auser'@'%';
+DROP USER if exists 'ssl_buser'@'%';
+DROP USER if exists 'ssl_cuser'@'%';
+DROP USER if exists 'ssl_duser'@'%';
+DROP USER if exists 'ssl_euser'@'%';
+DROP USER if exists 'ssl_fuser'@'%';
+DROP USER if exists 'ssl_guser'@'%';
+drop user if exists 'u1'@'%';
+drop user if exists 'u2'@'%';
+drop user if exists 'u3'@'%';
+CREATE USER 'ssl_auser'@'%' require issuer '/CN=TiDB admin/OU=TiDB/O=PingCAP/L=San Francisco/ST=California/C=US' subject '/CN=tester1/OU=TiDB/O=PingCAP.Inc/L=Haidian/ST=Beijing/C=ZH' cipher 'AES128-GCM-SHA256';
+CREATE USER 'ssl_buser'@'%' require subject '/CN=tester1/OU=TiDB/O=PingCAP.Inc/L=Haidian/ST=Beijing/C=ZH' cipher 'AES128-GCM-SHA256';
+CREATE USER 'ssl_cuser'@'%' require cipher 'AES128-GCM-SHA256';
+CREATE USER 'ssl_duser'@'%';
+CREATE USER 'ssl_euser'@'%' require none;
+CREATE USER 'ssl_fuser'@'%' require ssl;
+CREATE USER 'ssl_guser'@'%' require x509;
+select * from mysql.global_priv where `user` like 'ssl_%';
+CREATE USER 'u1'@'%';
+GRANT ALL ON *.* TO 'u1'@'%' require issuer '/CN=TiDB admin/OU=TiDB/O=PingCAP/L=San Francisco/ST=California/C=US' and subject '/CN=tester1/OU=TiDB/O=PingCAP.Inc/L=Haidian/ST=Beijing/C=ZH';
+select priv from mysql.global_priv where `Host` = '%' and `User` = 'u1';
+GRANT ALL ON *.* TO 'u1'@'%' require cipher 'AES128-GCM-SHA256';
+select priv from mysql.global_priv where `Host` = '%' and `User` = 'u1';
+GRANT select ON *.* TO 'u1'@'%';
+select priv from mysql.global_priv where `Host` = '%' and `User` = 'u1';
+GRANT ALL ON *.* TO 'u1'@'%' require none;
+select priv from mysql.global_priv where `Host` = '%' and `User` = 'u1';
+CREATE USER 'u2'@'%';
+alter user 'u2'@'%' require ssl;
+select priv from mysql.global_priv where `Host` = '%' and `User` = 'u2';
+alter user 'u2'@'%' require x509;
+select priv from mysql.global_priv where `Host` = '%' and `User` = 'u2';
+alter user 'u2'@'%' require issuer '/CN=TiDB admin/OU=TiDB/O=PingCAP/L=San Francisco/ST=California/C=US' subject '/CN=tester1/OU=TiDB/O=PingCAP.Inc/L=Haidian/ST=Beijing/C=ZH' cipher 'AES128-GCM-SHA256';
+select priv from mysql.global_priv where `Host` = '%' and `User` = 'u2';
+alter user 'u2'@'%' require none;
+select priv from mysql.global_priv where `Host` = '%' and `User` = 'u2';
+CREATE USER 'u3'@'%' require issuer '/CN=TiDB admin/OU=TiDB/O=PingCAP/L=San Francisco/ST=California/C=US' subject '/CN=tester1/OU=TiDB/O=PingCAP.Inc/L=Haidian/ST=Beijing/C=ZH' cipher 'AES128-GCM-SHA256';
+show create user 'u3';
+-- error 1105
+CREATE USER 'u4'@'%' require issuer 'CN=TiDB,OU=PingCAP';
+-- error 1105
+CREATE USER 'u5'@'%' require subject '/CN=TiDB\OU=PingCAP';
+-- error 1105
+CREATE USER 'u6'@'%' require subject '/CN=TiDB\NC=PingCAP';
+-- error 1105
+CREATE USER 'u7'@'%' require cipher 'AES128-GCM-SHA1';
+-- error 1105
+CREATE USER 'u8'@'%' require subject '/CN';
+-- error 1105
+CREATE USER 'u9'@'%' require cipher 'TLS_AES_256_GCM_SHA384' cipher 'RC4-SHA';
+-- error 1105
+CREATE USER 'u9'@'%' require issuer 'CN=TiDB,OU=PingCAP' issuer 'CN=TiDB,OU=PingCAP2';
+-- error 1105
+CREATE USER 'u9'@'%' require subject '/CN=TiDB\OU=PingCAP' subject '/CN=TiDB\OU=PingCAP2';
+-- error 1064
+CREATE USER 'u9'@'%' require ssl ssl;
+-- error 1064
+CREATE USER 'u9'@'%' require x509 x509;
+
+# TestMaintainAuthString
+drop user if exists 'maint_auth_str1'@'%';
+CREATE USER 'maint_auth_str1'@'%' IDENTIFIED BY 'foo';
+SELECT authentication_string FROM mysql.user WHERE `Host` = '%' and `User` = 'maint_auth_str1';
+ALTER USER 'maint_auth_str1'@'%' REQUIRE SSL;
+SELECT authentication_string FROM mysql.user WHERE `Host` = '%' and `User` = 'maint_auth_str1';
+
+# TestIssue22721
+drop table if exists xx;
+drop user if exists 'sync_ci_data'@'%';
+create table xx (id int);
+CREATE USER 'sync_ci_data'@'%' IDENTIFIED BY 'sNGNQo12fEHe0n3vU';
+GRANT USAGE ON *.* TO 'sync_ci_data'@'%';
+GRANT USAGE ON sync_ci_data.* TO 'sync_ci_data'@'%';
+GRANT USAGE ON executor__grant.* TO 'sync_ci_data'@'%';
+GRANT USAGE ON executor__grant.xx TO 'sync_ci_data'@'%';
+
+# TestPerformanceSchemaPrivGrant
+drop user if exists issue27867;
+create user issue27867;
+-- error 1044
+grant all on performance_schema.* to issue27867;
+-- error 1044
+grant all on PERFormanCE_scHemA.* to issue27867;
+grant select on performance_schema.* to issue27867;
+-- error 1044
+grant insert on performance_schema.* to issue27867;
+-- error 1044
+grant update on performance_schema.* to issue27867;
+-- error 1044
+grant delete on performance_schema.* to issue27867;
+-- error 1044
+grant drop on performance_schema.* to issue27867;
+-- error 1044
+grant lock tables on performance_schema.* to issue27867;
+-- error 1044
+grant create on performance_schema.* to issue27867;
+-- error 1044
+grant references on performance_schema.* to issue27867;
+-- error 1044
+grant alter on PERFormAnCE_scHemA.* to issue27867;
+-- error 1044
+grant execute on performance_schema.* to issue27867;
+-- error 1044
+grant index on PERFormanCE_scHemA.* to issue27867;
+-- error 1044
+grant create view on performance_schema.* to issue27867;
+-- error 1044
+grant show view on performance_schema.* to issue27867;
+drop user issue27867;
+
+# TestGrantDynamicPrivs
+drop user if exists dyn;
+create user dyn;
+-- error 3619
+GRANT BACKUP_ADMIN ON executor__grant.* TO dyn;
+-- error 3929
+GRANT BOGUS_GRANT ON *.* TO dyn;
+GRANT BACKUP_Admin ON *.* TO dyn;
+SELECT * FROM mysql.global_grants WHERE `Host` = '%' AND `User` = 'dyn' ORDER BY user,host,priv,with_grant_option;
+GRANT SYSTEM_VARIABLES_ADMIN, BACKUP_ADMIN ON *.* TO dyn;
+SELECT * FROM mysql.global_grants WHERE `Host` = '%' AND `User` = 'dyn' ORDER BY user,host,priv,with_grant_option;
+GRANT ROLE_ADMIN, BACKUP_ADMIN ON *.* TO dyn WITH GRANT OPTION;
+SELECT * FROM mysql.global_grants WHERE `Host` = '%' AND `User` = 'dyn' ORDER BY user,host,priv,with_grant_option;
+GRANT SYSTEM_VARIABLES_ADMIN, Select, ROLE_ADMIN ON *.* TO dyn;
+SELECT Grant_Priv FROM mysql.user WHERE `Host` = '%' AND `User` = 'dyn';
+SELECT WITH_GRANT_OPTION FROM mysql.global_grants WHERE `Host` = '%' AND `User` = 'dyn' AND Priv='SYSTEM_VARIABLES_ADMIN';
+GRANT CONNECTION_ADMIN, Insert ON *.* TO dyn WITH GRANT OPTION;
+SELECT Grant_Priv FROM mysql.user WHERE `Host` = '%' AND `User` = 'dyn';
+SELECT WITH_GRANT_OPTION FROM mysql.global_grants WHERE `Host` = '%' AND `User` = 'dyn' AND Priv='CONNECTION_ADMIN';
+
+# TestNonExistTableIllegalGrant
+drop user if exists u29302;
+create user u29302;
+-- error 1144
+grant create temporary tables on NotExistsD29302.NotExistsT29302 to u29302;
+-- error 1144
+grant lock tables on executor__grant.NotExistsT29302 to u29302;
+-- error 1221
+grant create temporary tables (NotExistsCol) on NotExistsD29302.NotExistsT29302 to u29302;
+drop user u29302;
+
+# TestIssue34610
+drop table if exists t1;
+drop user if exists user_1@localhost;
+CREATE USER user_1@localhost;
+CREATE TABLE T1(f1 INT);
+-- error 1050
+CREATE TABLE t1(f1 INT);
+GRANT SELECT ON T1 to user_1@localhost;
+GRANT SELECT ON t1 to user_1@localhost;
+
+# TestIssue38293
+DROP USER IF EXISTS test;
+CREATE USER test;
+GRANT SELECT ON `mysql`.`db` TO test;
+SELECT `Grantor` FROM `mysql`.`tables_priv` WHERE User = 'test';
+
+# TestGrantOnNonExistTable
+drop user if exists genius;
+drop user if exists u29268;
+create user genius;
+-- error 1146
+select * from nonexist;
+-- error 1146
+grant Select,Insert on nonexist to 'genius';
+create table if not exists xx (id int);
+grant Select,Insert on XX to 'genius';
+grant Select,Insert on xx to 'genius';
+grant Select,Update on executor__grant.xx to 'genius';
+CREATE DATABASE d29268;
+USE d29268;
+CREATE USER u29268;
+-- error 1146
+GRANT SELECT ON t29268 TO u29268;
+-- error 1146
+GRANT DROP, INSERT ON t29268 TO u29268;
+-- error 1146
+GRANT UPDATE, CREATE VIEW, SHOW VIEW ON t29268 TO u29268;
+-- error 1146
+GRANT DELETE, REFERENCES, ALTER ON t29268 TO u29268;
+GRANT CREATE ON t29268 TO u29268;
+GRANT CREATE, SELECT ON t29268 TO u29268;
+GRANT CREATE, DROP, INSERT ON t29268 TO u29268;
+
+connect (conn1, localhost, u29268,, d29268);
+CREATE TABLE t29268 (c1 int);
+INSERT INTO t29268 VALUES (1), (2);
+SELECT c1 FROM t29268;
+DROP TABLE t29268;
+disconnect conn1;
+
+GRANT ALL ON t29268 TO u29268;
+DROP USER u29268;
+DROP DATABASE IF EXISTS d29268;
+use executor__grant;
+

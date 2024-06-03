@@ -1,0 +1,287 @@
+# TestMergeJoin
+drop table if exists t;
+drop table if exists t1;
+create table t(c1 int, c2 int);
+create table t1(c1 int, c2 int);
+insert into t values(1,1),(2,2);
+insert into t1 values(2,3),(4,4);
+explain format = 'brief' select /*+ TIDB_SMJ(t) */ * from t left outer join t1 on t.c1 = t1.c1 where t.c1 = 1 or t1.c2 > 20;
+select /*+ TIDB_SMJ(t) */ * from t left outer join t1 on t.c1 = t1.c1 where t.c1 = 1 or t1.c2 > 20;
+explain format = 'brief' select /*+ TIDB_SMJ(t) */ * from t1 right outer join t on t.c1 = t1.c1 where t.c1 = 1 or t1.c2 > 20;
+select /*+ TIDB_SMJ(t) */ * from t1 right outer join t on t.c1 = t1.c1 where t.c1 = 1 or t1.c2 > 20;
+explain format = 'brief' select /*+ TIDB_SMJ(t) */ * from t right outer join t1 on t.c1 = t1.c1 where t.c1 = 1 or t1.c2 > 20;
+select /*+ TIDB_SMJ(t) */ * from t right outer join t1 on t.c1 = t1.c1 where t.c1 = 1 or t1.c2 > 20;
+explain format = 'brief' select /*+ TIDB_SMJ(t) */ * from t left outer join t1 on t.c1 = t1.c1 where t1.c1 = 3 or false;
+select /*+ TIDB_SMJ(t) */ * from t left outer join t1 on t.c1 = t1.c1 where t1.c1 = 3 or false;
+explain format = 'brief' select /*+ TIDB_SMJ(t) */ * from t left outer join t1 on t.c1 = t1.c1 and t.c1 != 1 order by t1.c1;
+select /*+ TIDB_SMJ(t) */ * from t left outer join t1 on t.c1 = t1.c1 and t.c1 != 1 order by t1.c1;
+drop table if exists t1;
+drop table if exists t2;
+drop table if exists t3;
+create table t1 (c1 int, c2 int);
+create table t2 (c1 int, c2 int);
+create table t3 (c1 int, c2 int);
+insert into t1 values (1,1), (2,2), (3,3);
+insert into t2 values (1,1), (3,3), (5,5);
+insert into t3 values (1,1), (5,5), (9,9);
+select /*+ TIDB_SMJ(t1,t2,t3) */ * from t1 left join t2 on t1.c1 = t2.c1 right join t3 on t2.c1 = t3.c1 order by t1.c1, t1.c2, t2.c1, t2.c2, t3.c1, t3.c2;
+drop table if exists t1;
+create table t1 (c1 int);
+insert into t1 values (1), (1), (1);
+select/*+ TIDB_SMJ(t) */  * from t1 a join t1 b on a.c1 = b.c1;
+drop table if exists t;
+drop table if exists t1;
+create table t(c1 int, index k(c1));
+create table t1(c1 int);
+insert into t values (1),(2),(3),(4),(5),(6),(7);
+insert into t1 values (1),(2),(3),(4),(5),(6),(7);
+select /*+ TIDB_SMJ(a,b) */ a.c1 from t a , t1 b where a.c1 = b.c1 order by a.c1;
+select /*+ TIDB_SMJ(a, b) */ a.c1 from t a , (select * from t1 limit 3) b where a.c1 = b.c1 order by b.c1;
+## Test LogicalSelection under LogicalJoin.
+select /*+ TIDB_SMJ(a, b) */ a.c1 from t a , (select * from t1 limit 3) b where a.c1 = b.c1 and b.c1 is not null order by b.c1;
+begin;
+## Test LogicalLock under LogicalJoin.
+select /*+ TIDB_SMJ(a, b) */ a.c1 from t a , (select * from t1 for update) b where a.c1 = b.c1 order by a.c1;
+## Test LogicalUnionScan under LogicalJoin.
+insert into t1 values(8);
+select /*+ TIDB_SMJ(a, b) */ a.c1 from t a , t1 b where a.c1 = b.c1;
+rollback;
+drop table if exists t;
+drop table if exists t1;
+create table t(c1 int);
+create table t1(c1 int unsigned);
+insert into t values (1);
+insert into t1 values (1);
+select /*+ TIDB_SMJ(t,t1) */ t.c1 from t , t1 where t.c1 = t1.c1;
+drop table if exists t;
+create table t(a int, b int, index a(a), index b(b));
+insert into t values(1, 2);
+select /*+ TIDB_SMJ(t, t1) */ t.a, t1.b from t right join t t1 on t.a = t1.b order by t.a;
+drop table if exists t;
+drop table if exists s;
+create table t(a int, b int, primary key(a, b));
+insert into t value(1,1),(1,2),(1,3),(1,4);
+create table s(a int, primary key(a));
+insert into s value(1);
+select /*+ TIDB_SMJ(t, s) */ count(*) from t join s on t.a = s.a;
+drop table if exists t;
+create table t(a int);
+insert into t value(1),(2);
+## Test TIDB_SMJ for cartesian product.
+explain format = 'brief' select /*+ TIDB_SMJ(t1, t2) */ * from t t1 join t t2 order by t1.a, t2.a;
+select /*+ TIDB_SMJ(t1, t2) */ * from t t1 join t t2 order by t1.a, t2.a;
+drop table if exists t;
+drop table if exists s;
+create table t(a int, b int);
+insert into t values(1,1),(1,2);
+create table s(a int, b int);
+insert into s values(1,1);
+explain format = 'brief' select /*+ TIDB_SMJ(t, s) */ a in (select a from s where s.b >= t.b) from t;
+select /*+ TIDB_SMJ(t, s) */ a in (select a from s where s.b >= t.b) from t;
+## Test TIDB_SMJ for join with order by desc, see https://github.com/pingcap/tidb/issues/14483
+drop table if exists t;
+drop table if exists t1;
+create table t (a int, key(a));
+create table t1 (a int, key(a));
+insert into t values (1), (2), (3);
+insert into t1 values (1), (2), (3);
+select /*+ TIDB_SMJ(t1, t2) */ t.a from t, t1 where t.a = t1.a order by t1.a desc;
+drop table if exists t;
+create table t (a int, b int, key(a), key(b));
+insert into t values (1,1),(1,2),(1,3),(2,1),(2,2),(3,1),(3,2),(3,3);
+select /*+ TIDB_SMJ(t1, t2) */ t1.a from t t1, t t2 where t1.a = t2.b order by t1.a desc;
+drop table if exists s;
+create table s (a int);
+insert into s values (4), (1), (3), (2);
+explain format = 'brief' select s1.a1 from (select a as a1 from s order by s.a desc) as s1 join (select a as a2 from s order by s.a desc) as s2 on s1.a1 = s2.a2 order by s1.a1 desc;
+select s1.a1 from (select a as a1 from s order by s.a desc) as s1 join (select a as a2 from s order by s.a desc) as s2 on s1.a1 = s2.a2 order by s1.a1 desc;
+
+# TestShuffleMergeJoin
+## Same as TestMergeJoin except `tidb_merge_join_concurrency = 4;`
+set @@session.tidb_merge_join_concurrency = 4;
+drop table if exists t;
+drop table if exists t1;
+create table t(c1 int, c2 int);
+create table t1(c1 int, c2 int);
+insert into t values(1,1),(2,2);
+insert into t1 values(2,3),(4,4);
+explain format = 'brief' select /*+ TIDB_SMJ(t) */ * from t left outer join t1 on t.c1 = t1.c1 where t.c1 = 1 or t1.c2 > 20;
+select /*+ TIDB_SMJ(t) */ * from t left outer join t1 on t.c1 = t1.c1 where t.c1 = 1 or t1.c2 > 20;
+explain format = 'brief' select /*+ TIDB_SMJ(t) */ * from t1 right outer join t on t.c1 = t1.c1 where t.c1 = 1 or t1.c2 > 20;
+select /*+ TIDB_SMJ(t) */ * from t1 right outer join t on t.c1 = t1.c1 where t.c1 = 1 or t1.c2 > 20;
+explain format = 'brief' select /*+ TIDB_SMJ(t) */ * from t right outer join t1 on t.c1 = t1.c1 where t.c1 = 1 or t1.c2 > 20;
+select /*+ TIDB_SMJ(t) */ * from t right outer join t1 on t.c1 = t1.c1 where t.c1 = 1 or t1.c2 > 20;
+explain format = 'brief' select /*+ TIDB_SMJ(t) */ * from t left outer join t1 on t.c1 = t1.c1 where t1.c1 = 3 or false;
+select /*+ TIDB_SMJ(t) */ * from t left outer join t1 on t.c1 = t1.c1 where t1.c1 = 3 or false;
+explain format = 'brief' select /*+ TIDB_SMJ(t) */ * from t left outer join t1 on t.c1 = t1.c1 and t.c1 != 1 order by t1.c1;
+select /*+ TIDB_SMJ(t) */ * from t left outer join t1 on t.c1 = t1.c1 and t.c1 != 1 order by t1.c1;
+drop table if exists t1;
+drop table if exists t2;
+drop table if exists t3;
+create table t1 (c1 int, c2 int);
+create table t2 (c1 int, c2 int);
+create table t3 (c1 int, c2 int);
+insert into t1 values (1,1), (2,2), (3,3);
+insert into t2 values (1,1), (3,3), (5,5);
+insert into t3 values (1,1), (5,5), (9,9);
+select /*+ TIDB_SMJ(t1,t2,t3) */ * from t1 left join t2 on t1.c1 = t2.c1 right join t3 on t2.c1 = t3.c1 order by t1.c1, t1.c2, t2.c1, t2.c2, t3.c1, t3.c2;
+drop table if exists t1;
+create table t1 (c1 int);
+insert into t1 values (1), (1), (1);
+select/*+ TIDB_SMJ(t) */  * from t1 a join t1 b on a.c1 = b.c1;
+drop table if exists t;
+drop table if exists t1;
+create table t(c1 int, index k(c1));
+create table t1(c1 int);
+insert into t values (1),(2),(3),(4),(5),(6),(7);
+insert into t1 values (1),(2),(3),(4),(5),(6),(7);
+select /*+ TIDB_SMJ(a,b) */ a.c1 from t a , t1 b where a.c1 = b.c1 order by a.c1;
+select /*+ TIDB_SMJ(a, b) */ a.c1 from t a , (select * from t1 limit 3) b where a.c1 = b.c1 order by b.c1;
+select /*+ TIDB_SMJ(a, b) */ a.c1 from t a , (select * from t1 limit 3) b where a.c1 = b.c1 and b.c1 is not null order by b.c1;
+begin;
+select /*+ TIDB_SMJ(a, b) */ a.c1 from t a , (select * from t1 for update) b where a.c1 = b.c1 order by a.c1;
+insert into t1 values(8);
+select /*+ TIDB_SMJ(a, b) */ a.c1 from t a , t1 b where a.c1 = b.c1;
+rollback;
+drop table if exists t;
+drop table if exists t1;
+create table t(c1 int);
+create table t1(c1 int unsigned);
+insert into t values (1);
+insert into t1 values (1);
+select /*+ TIDB_SMJ(t,t1) */ t.c1 from t , t1 where t.c1 = t1.c1;
+drop table if exists t;
+create table t(a int, b int, index a(a), index b(b));
+insert into t values(1, 2);
+select /*+ TIDB_SMJ(t, t1) */ t.a, t1.b from t right join t t1 on t.a = t1.b order by t.a;
+drop table if exists t;
+drop table if exists s;
+create table t(a int, b int, primary key(a, b));
+insert into t value(1,1),(1,2),(1,3),(1,4);
+create table s(a int, primary key(a));
+insert into s value(1);
+select /*+ TIDB_SMJ(t, s) */ count(*) from t join s on t.a = s.a;
+drop table if exists t;
+create table t(a int);
+insert into t value(1),(2);
+explain format = 'brief' select /*+ TIDB_SMJ(t1, t2) */ * from t t1 join t t2 order by t1.a, t2.a;
+select /*+ TIDB_SMJ(t1, t2) */ * from t t1 join t t2 order by t1.a, t2.a;
+drop table if exists t;
+drop table if exists s;
+create table t(a int, b int);
+insert into t values(1,1),(1,2);
+create table s(a int, b int);
+insert into s values(1,1);
+explain format = 'brief' select /*+ TIDB_SMJ(t, s) */ a in (select a from s where s.b >= t.b) from t;
+select /*+ TIDB_SMJ(t, s) */ a in (select a from s where s.b >= t.b) from t;
+drop table if exists t;
+drop table if exists t1;
+create table t (a int, key(a));
+create table t1 (a int, key(a));
+insert into t values (1), (2), (3);
+insert into t1 values (1), (2), (3);
+select /*+ TIDB_SMJ(t1, t2) */ t.a from t, t1 where t.a = t1.a order by t1.a desc;
+drop table if exists t;
+create table t (a int, b int, key(a), key(b));
+insert into t values (1,1),(1,2),(1,3),(2,1),(2,2),(3,1),(3,2),(3,3);
+select /*+ TIDB_SMJ(t1, t2) */ t1.a from t t1, t t2 where t1.a = t2.b order by t1.a desc;
+drop table if exists s;
+create table s (a int);
+insert into s values (4), (1), (3), (2);
+explain format = 'brief' select s1.a1 from (select a as a1 from s order by s.a desc) as s1 join (select a as a2 from s order by s.a desc) as s2 on s1.a1 = s2.a2 order by s1.a1 desc;
+select s1.a1 from (select a as a1 from s order by s.a desc) as s1 join (select a as a2 from s order by s.a desc) as s2 on s1.a1 = s2.a2 order by s1.a1 desc;
+set @@session.tidb_merge_join_concurrency = default;
+
+# Test3WaysMergeJoin
+drop table if exists t1;
+drop table if exists t2;
+drop table if exists t3;
+create table t1(c1 int, c2 int, PRIMARY KEY (c1));
+create table t2(c1 int, c2 int, PRIMARY KEY (c1));
+create table t3(c1 int, c2 int, PRIMARY KEY (c1));
+insert into t1 values(1,1),(2,2),(3,3);
+insert into t2 values(2,3),(3,4),(4,5);
+insert into t3 values(1,2),(2,4),(3,10);
+explain format = 'brief' select /*+ TIDB_SMJ(t1,t2,t3) */ * from t1 join t2 on t1.c1 = t2.c1 join t3 on t2.c1 = t3.c1 order by 1;
+select /*+ TIDB_SMJ(t1,t2,t3) */ * from t1 join t2 on t1.c1 = t2.c1 join t3 on t2.c1 = t3.c1 order by 1;
+explain format = 'brief' select /*+ TIDB_SMJ(t1,t2,t3) */ * from t1 right outer join t2 on t1.c1 = t2.c1 join t3 on t2.c1 = t3.c1 order by 1;
+select /*+ TIDB_SMJ(t1,t2,t3) */ * from t1 right outer join t2 on t1.c1 = t2.c1 join t3 on t2.c1 = t3.c1 order by 1;
+# In below case, t1 side filled with null when no matched join, so that order is not kept and sort appended
+# On the other hand, t1 order kept so no final sort appended
+explain format = 'brief' select /*+ TIDB_SMJ(t1,t2,t3) */ * from t1 right outer join t2 on t1.c1 = t2.c1 join t3 on t1.c1 = t3.c1 order by 1;
+select /*+ TIDB_SMJ(t1,t2,t3) */ * from t1 right outer join t2 on t1.c1 = t2.c1 join t3 on t1.c1 = t3.c1 order by 1;
+
+# Test3WaysShuffleMergeJoin
+set @@session.tidb_merge_join_concurrency = 4;
+drop table if exists t1;
+drop table if exists t2;
+drop table if exists t3;
+create table t1(c1 int, c2 int, PRIMARY KEY (c1));
+create table t2(c1 int, c2 int, PRIMARY KEY (c1));
+create table t3(c1 int, c2 int, PRIMARY KEY (c1));
+insert into t1 values(1,1),(2,2),(3,3);
+insert into t2 values(2,3),(3,4),(4,5);
+insert into t3 values(1,2),(2,4),(3,10);
+explain format = 'brief' select /*+ TIDB_SMJ(t1,t2,t3) */ * from t1 join t2 on t1.c1 = t2.c1 join t3 on t2.c1 = t3.c1 order by 1;
+select /*+ TIDB_SMJ(t1,t2,t3) */ * from t1 join t2 on t1.c1 = t2.c1 join t3 on t2.c1 = t3.c1 order by 1;
+explain format = 'brief' select /*+ TIDB_SMJ(t1,t2,t3) */ * from t1 right outer join t2 on t1.c1 = t2.c1 join t3 on t2.c1 = t3.c1 order by 1;
+select /*+ TIDB_SMJ(t1,t2,t3) */ * from t1 right outer join t2 on t1.c1 = t2.c1 join t3 on t2.c1 = t3.c1 order by 1;
+# In below case, t1 side filled with null when no matched join, so that order is not kept and sort appended
+# On the other hand, t1 order kept so no final sort appended
+explain format = 'brief' select /*+ TIDB_SMJ(t1,t2,t3) */ * from t1 right outer join t2 on t1.c1 = t2.c1 join t3 on t1.c1 = t3.c1 order by 1;
+select /*+ TIDB_SMJ(t1,t2,t3) */ * from t1 right outer join t2 on t1.c1 = t2.c1 join t3 on t1.c1 = t3.c1 order by 1;
+set @@session.tidb_merge_join_concurrency = default;
+
+# TestMergeJoinDifferentTypes
+set @@session.tidb_executor_concurrency = 4;
+set @@session.tidb_hash_join_concurrency = 5;
+set @@session.tidb_distsql_scan_concurrency = 15;
+drop table if exists t1;
+drop table if exists t2;
+create table t1(a bigint, b bit(1), index idx_a(a));
+create table t2(a bit(1) not null, b bit(1), index idx_a(a));
+insert into t1 values(1, 1);
+insert into t2 values(1, 1);
+select hex(t1.a), hex(t2.a) from t1 inner join t2 on t1.a=t2.a;
+drop table if exists t1;
+drop table if exists t2;
+create table t1(a float, b double, index idx_a(a));
+create table t2(a double not null, b double, index idx_a(a));
+insert into t1 values(1, 1);
+insert into t2 values(1, 1);
+select t1.a, t2.a from t1 inner join t2 on t1.a=t2.a;
+drop table if exists t1;
+drop table if exists t2;
+create table t1(a bigint signed, b bigint, index idx_a(a));
+create table t2(a bigint unsigned, b bigint, index idx_a(a));
+insert into t1 values(-1, 0), (-1, 0), (0, 0), (0, 0), (pow(2, 63), 0), (pow(2, 63), 0);
+insert into t2 values(18446744073709551615, 0), (18446744073709551615, 0), (0, 0), (0, 0), (pow(2, 63), 0), (pow(2, 63), 0);
+select t1.a, t2.a from t1 join t2 on t1.a=t2.a order by t1.a;
+set @@session.tidb_executor_concurrency = default;
+set @@session.tidb_hash_join_concurrency = default;
+set @@session.tidb_distsql_scan_concurrency = default;
+
+# TestMergeJoinWithOtherConditions
+drop table if exists R;
+drop table if exists Y;
+create table Y (a int primary key, b int, index id_b(b));
+insert into Y values (0,2),(2,2);
+create table R (a int primary key, b int);
+insert into R values (2,2);
+# the max() limits the required rows at most one
+# TODO(fangzhuhe): specify Y as the build side using hints
+select /*+tidb_smj(R)*/ max(Y.a) from R join Y  on R.a=Y.b where R.b <= Y.a;
+
+# TestShuffleMergeJoinWithOtherConditions
+set @@session.tidb_merge_join_concurrency = 4;
+drop table if exists R;
+drop table if exists Y;
+create table Y (a int primary key, b int, index id_b(b));
+insert into Y values (0,2),(2,2);
+create table R (a int primary key, b int);
+insert into R values (2,2);
+# the max() limits the required rows at most one
+# TODO(fangzhuhe): specify Y as the build side using hints
+select /*+tidb_smj(R)*/ max(Y.a) from R join Y  on R.a=Y.b where R.b <= Y.a;
+set @@session.tidb_merge_join_concurrency = default;
+

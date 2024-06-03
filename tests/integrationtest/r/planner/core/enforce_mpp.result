@@ -1,0 +1,13 @@
+set tidb_cost_model_version=2;
+set @@tidb_opt_tiflash_concurrency_factor = 0;
+SHOW WARNINGS;
+Level	Code	Message
+Warning	1292	Truncated incorrect tidb_opt_tiflash_concurrency_factor value: '0'
+select @@tidb_opt_tiflash_concurrency_factor;
+@@tidb_opt_tiflash_concurrency_factor
+1
+set @@tidb_allow_mpp = 0;
+set @@tidb_enforce_mpp = 1;
+Error 1231 (42000): Variable 'tidb_enforce_mpp' can't be set to the value of '1' but tidb_allow_mpp is 0, please activate tidb_allow_mpp at first.'
+set @@tidb_allow_mpp = 1; set @@tidb_enforce_mpp = 1;
+set @@tidb_allow_mpp = 0;

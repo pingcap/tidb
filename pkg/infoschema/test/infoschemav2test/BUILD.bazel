@@ -1,0 +1,24 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "infoschemav2test_test",
+    timeout = "short",
+    srcs = [
+        "main_test.go",
+        "v2_test.go",
+    ],
+    flaky = True,
+    shard_count = 3,
+    deps = [
+        "//pkg/domain",
+        "//pkg/infoschema",
+        "//pkg/parser/auth",
+        "//pkg/parser/model",
+        "//pkg/sessionctx/variable",
+        "//pkg/table",
+        "//pkg/testkit",
+        "//pkg/testkit/testsetup",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

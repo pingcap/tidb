@@ -1,0 +1,14 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "testutil",
+    srcs = ["testutil.go"],
+    importpath = "github.com/pingcap/tidb/pkg/ddl/ingest/testutil",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/ddl/ingest",
+        "//pkg/kv",
+        "//pkg/sessionctx",
+        "//pkg/testkit",
+    ],
+)
