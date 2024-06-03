@@ -510,12 +510,13 @@ func (d *ddl) delivery2LocalWorker(pool *workerPool, task *limitJobTask) {
 // delivery2Worker owns the worker, need to put it back to the pool in this function.
 func (s *jobScheduler) delivery2Worker(wk *worker, pool *workerPool, job *model.Job) {
 	injectFailPointForGetJob(job)
-	s.runningJobs.add(job)
+	jobID, involvedSchemaInfos := job.ID, job.GetInvolvingSchemaInfo()
+	s.runningJobs.add(jobID, involvedSchemaInfos)
 	metrics.DDLRunningJobCount.WithLabelValues(pool.tp().String()).Inc()
 	s.wg.RunWithLog(func() {
 		defer func() {
 			pool.put(wk)
-			s.runningJobs.remove(job)
+			s.runningJobs.remove(jobID, involvedSchemaInfos)
 			asyncNotify(s.ddlJobNotifyCh)
 			metrics.DDLRunningJobCount.WithLabelValues(pool.tp().String()).Dec()
 			if wk.ctx.Err() != nil && ingest.LitBackCtxMgr != nil {
@@ -523,7 +524,7 @@ func (s *jobScheduler) delivery2Worker(wk *worker, pool *workerPool, job *model.
 				// as litBackendCtx is holding this very 'ctx', and it cannot reuse now.
 				// TODO make LitBackCtxMgr a local value of the job scheduler, it makes
 				// it much harder to test multiple owners in 1 unit test.
-				ingest.LitBackCtxMgr.Unregister(job.ID)
+				ingest.LitBackCtxMgr.Unregister(jobID)
 			}
 		}()
 		for {

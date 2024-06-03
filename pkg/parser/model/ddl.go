@@ -1045,7 +1045,9 @@ const (
 	JobStateRollingback  JobState = 2
 	JobStateRollbackDone JobState = 3
 	JobStateDone         JobState = 4
-	JobStateCancelled    JobState = 5
+	// JobStateCancelled is the state to do the job is cancelled, this state only
+	// persisted to history table and queue too.
+	JobStateCancelled JobState = 5
 	// JobStateSynced means the job is done and has been synchronized to all servers.
 	// job of this state will not be written to the tidb_ddl_job table, when job
 	// is in `done` state and version synchronized, the job will be deleted from

@@ -646,7 +646,7 @@ func (s *jobScheduler) cleanMDLInfo(job *model.Job, ownerID string) {
 		logutil.DDLLogger().Warn("unexpected error when clean mdl info", zap.Int64("job ID", job.ID), zap.Error(err))
 		return
 	}
-	// TODO do we need clean it for JobStateRollbackDone?
+	// TODO we need clean it when version of JobStateRollbackDone is synced also.
 	if job.State == model.JobStateSynced && s.etcdCli != nil {
 		path := fmt.Sprintf("%s/%d/", util.DDLAllSchemaVersionsByJob, job.ID)
 		_, err = s.etcdCli.Delete(s.schCtx, path, clientv3.WithPrefix())
