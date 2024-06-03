@@ -123,7 +123,7 @@ The detailed explanation:
 | Column Name      | Description                                          |
 |------------------|------------------------------------------------------|
 | table_id         | The physical table ID.                               |
-| column_id        | The column ID is from schema information.            |
+| column_id        | The column ID from schema information.            |
 | last_used_at     | The timestamp when the column statistics were used.  |
 | last_analyzed_at | The timestamp at when the column stats were updated. |
 
