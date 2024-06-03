@@ -17,7 +17,7 @@ package kv
 import (
 	"testing"
 
-	"github.com/pingcap/tidb/pkg/meta/autoid"
+	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/stretchr/testify/require"
 )
 
