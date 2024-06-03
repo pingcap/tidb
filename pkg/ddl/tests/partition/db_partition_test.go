@@ -3501,8 +3501,7 @@ func TestMultiSchemaVerPartitionBy(t *testing.T) {
 	verStart := dom2.InfoSchema().SchemaMetaVersion()
 	alterChan := make(chan struct{})
 	originHook := dom2.DDL().GetHook()
-	// This will cause a dom2.Reload during callbacks! Not needed?
-	hook := &callback.TestDDLCallback{Do: dom2}
+	hook := &callback.TestDDLCallback{Do: nil}
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
 		alterChan <- struct{}{}
 		<-alterChan
@@ -3645,8 +3644,7 @@ func TestMultiSchemaVerAddPartition(t *testing.T) {
 	verStart := dom2.InfoSchema().SchemaMetaVersion()
 	alterChan := make(chan struct{})
 	originHook := dom2.DDL().GetHook()
-	// This will cause a dom2.Reload during callbacks! Not needed?
-	hook := &callback.TestDDLCallback{Do: dom2}
+	hook := &callback.TestDDLCallback{Do: nil}
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
 		alterChan <- struct{}{}
 		<-alterChan
@@ -3692,8 +3690,8 @@ func TestMultiSchemaVerAddPartition(t *testing.T) {
 	verCurr = dom2.InfoSchema().SchemaMetaVersion()
 	require.Equal(t, stateChange, verCurr-verStart)
 	tk3.MustExec(`insert into t values (1,"Matt"),(2,"Anne")`)
-	tk1.MustQuery(`select /*+ USE_INDEX(t, primary) */ a from t`).Sort().Check(testkit.Rows("1"))
-	tk1.MustQuery(`select * from t`).Sort().Check(testkit.Rows())
+	tk1.MustQuery(`select /*+ USE_INDEX(t, PRIMARY) */ a from t`).Check(testkit.Rows("2"))
+	tk1.MustQuery(`select * from t`).Check(testkit.Rows("2 Anne"))
 	dom1.Reload()
 	require.Equal(t, verCurr, dom1.InfoSchema().SchemaMetaVersion())
 	tk1.MustQuery(`show create table t`).Check(testkit.Rows("" +
@@ -3706,5 +3704,6 @@ func TestMultiSchemaVerAddPartition(t *testing.T) {
 		"(PARTITION `p0` VALUES LESS THAN ('m'),\n" +
 		" PARTITION `p1` VALUES LESS THAN ('p'))"))
 	tk1.MustQuery(ddlJobsSQL).CheckAt([]int{4, 11}, [][]any{{"public", "synced"}})
-	tk1.MustQuery(`select /*+ USE_INDEX(t, primary) */ a from t`).Sort().Check(testkit.Rows("1"))
+	tk1.MustQuery(`select /*+ USE_INDEX(t, PRIMARY) */ a from t`).Check(testkit.Rows("1", "2"))
+	tk1.MustQuery(`select * from t`).Sort().Check(testkit.Rows("1 Matt", "2 Anne"))
 }
