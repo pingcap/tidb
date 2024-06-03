@@ -18,7 +18,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"math"
 	"os"
 	"os/user"
 	"path/filepath"
@@ -808,7 +807,7 @@ max_connections = 200
 	require.Equal(t, int64(8192), conf.TiKVClient.TTLRefreshedTxnSize)
 	require.Equal(t, false, conf.TiKVClient.EnableReplicaSelectorV2)
 	require.Equal(t, true, defaultConf.TiKVClient.EnableReplicaSelectorV2)
-	require.Equal(t, uint(math.MaxUint), conf.TokenLimit)
+	require.Equal(t, uint(MaxTokenLimit), conf.TokenLimit)
 	require.True(t, conf.EnableTableLock)
 	require.Equal(t, uint64(5), conf.DelayCleanTableLock)
 	require.Equal(t, uint64(10000), conf.SplitRegionMaxNum)
@@ -1189,6 +1188,10 @@ func TestTokenLimit(t *testing.T) {
 	}{
 		{
 			0,
+			MaxTokenLimit,
+		},
+		{
+			1000,
 			1000,
 		},
 		{

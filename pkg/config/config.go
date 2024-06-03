@@ -912,7 +912,7 @@ var defaultConf = Config{
 	RunDDL:                       true,
 	SplitTable:                   true,
 	Lease:                        "45s",
-	TokenLimit:                   math.MaxUint,
+	TokenLimit:                   MaxTokenLimit,
 	OOMUseTmpStorage:             true,
 	TempDir:                      DefTempDir,
 	TempStorageQuota:             -1,
@@ -1276,7 +1276,7 @@ func (c *Config) Load(confFile string) error {
 		return err
 	}
 	if c.TokenLimit == 0 {
-		c.TokenLimit = math.MaxUint
+		c.TokenLimit = MaxTokenLimit
 	} else if c.TokenLimit > MaxTokenLimit {
 		c.TokenLimit = MaxTokenLimit
 	}
