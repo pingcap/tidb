@@ -963,7 +963,7 @@ func DecodeIndexHandle(key, value []byte, colsLen int) (kv.Handle, error) {
 	if len(b) > 0 {
 		return decodeHandleInIndexKey(b)
 	} else if len(value) >= 8 {
-		return decodeHandleInIndexValue(value)
+		return DecodeHandleInIndexValue(value)
 	}
 	// Should never execute to here.
 	return nil, errors.Errorf("no handle in index key: %v, value: %v", key, value)
@@ -980,7 +980,11 @@ func decodeHandleInIndexKey(keySuffix []byte) (kv.Handle, error) {
 	return kv.NewCommonHandle(keySuffix)
 }
 
-func decodeHandleInIndexValue(value []byte) (handle kv.Handle, err error) {
+// DecodeHandleInIndexValue decodes handle in unqiue index value.
+func DecodeHandleInIndexValue(value []byte) (handle kv.Handle, err error) {
+	if len(value) <= MaxOldEncodeValueLen {
+		return decodeIntHandleInIndexValue(value), nil
+	}
 	seg := SplitIndexValue(value)
 	if len(seg.IntHandle) != 0 {
 		handle = decodeIntHandleInIndexValue(seg.IntHandle)
@@ -1677,11 +1681,6 @@ func encodeCommonHandle(idxVal []byte, h kv.Handle) []byte {
 	idxVal = append(idxVal, byte(hLen>>8), byte(hLen))
 	idxVal = append(idxVal, h.Encoded()...)
 	return idxVal
-}
-
-// DecodeHandleInUniqueIndexValue decodes handle in data.
-func DecodeHandleInUniqueIndexValue(data []byte, isCommonHandle bool) (kv.Handle, error) {
-	return decodeHandleInIndexValue(data)
 }
 
 func encodePartitionID(idxVal []byte, partitionID int64) []byte {

@@ -1178,7 +1178,7 @@ func (e *InsertValues) handleDuplicateKey(ctx context.Context, txn kv.Transactio
 		}
 		return true, nil
 	}
-	_, handle, err := tables.FetchDuplicatedHandle(ctx, uk.newKey, true, txn, e.Table.Meta().ID, uk.commonHandle)
+	_, handle, err := tables.FetchDuplicatedHandle(ctx, uk.newKey, true, txn, e.Table.Meta().ID)
 	if err != nil {
 		return false, err
 	}

@@ -475,12 +475,11 @@ func (e *RecoverIndexExec) batchMarkDup(txn kv.Transaction, rows []recoverRows) 
 	// 1. unique-key is duplicate and the handle is equal, skip it.
 	// 2. unique-key is duplicate and the handle is not equal, data is not consistent, log it and skip it.
 	// 3. non-unique-key is duplicate, skip it.
-	isCommonHandle := e.table.Meta().IsCommonHandle
 	for i, key := range e.batchKeys {
 		val, found := values[string(key)]
 		if found {
 			if distinctFlags[i] {
-				handle, err1 := tablecodec.DecodeHandleInUniqueIndexValue(val, isCommonHandle)
+				handle, err1 := tablecodec.DecodeHandleInIndexValue(val)
 				if err1 != nil {
 					return err1
 				}
