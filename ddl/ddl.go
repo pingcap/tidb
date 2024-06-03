@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+<<<<<<< HEAD:ddl/ddl.go
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/ingest"
 	sess "github.com/pingcap/tidb/ddl/internal/session"
@@ -65,6 +66,40 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/syncutil"
+=======
+	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/ddl/ingest"
+	sess "github.com/pingcap/tidb/pkg/ddl/internal/session"
+	"github.com/pingcap/tidb/pkg/ddl/logutil"
+	"github.com/pingcap/tidb/pkg/ddl/syncer"
+	"github.com/pingcap/tidb/pkg/ddl/util"
+	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
+	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
+	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
+	"github.com/pingcap/tidb/pkg/domain/infosync"
+	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/pingcap/tidb/pkg/meta/autoid"
+	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/owner"
+	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/binloginfo"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/statistics/handle"
+	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
+	"github.com/pingcap/tidb/pkg/table"
+	pumpcli "github.com/pingcap/tidb/pkg/tidb-binlog/pump_client"
+	tidbutil "github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
+	"github.com/pingcap/tidb/pkg/util/gcutil"
+	"github.com/pingcap/tidb/pkg/util/generic"
+>>>>>>> 44c9096efbc (ddl: get latest old table ID before replace view (#53720)):pkg/ddl/ddl.go
 	"github.com/tikv/client-go/v2/tikvrpc"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	atomicutil "go.uber.org/atomic"
@@ -367,11 +402,6 @@ type ddlCtx struct {
 
 	// reorgCtx is used for reorganization.
 	reorgCtx reorgContexts
-	// backfillCtx is used for backfill workers.
-	backfillCtx struct {
-		syncutil.RWMutex
-		jobCtxMap map[int64]*JobContext
-	}
 
 	jobCtx struct {
 		sync.RWMutex
