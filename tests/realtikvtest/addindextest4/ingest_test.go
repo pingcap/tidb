@@ -491,8 +491,8 @@ func TestAddIndexIngestFailures(t *testing.T) {
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/ingest/mockIngestCheckEnvFailed"))
 
 	// Test reset engine failed.
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/ingest/mockResetEngineFailed", "1*return(true)"))
-	tk.MustGetErrMsg("alter table t add index idx(b);", "[0]mock failed")
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/ingest/mockResetEngineFailed", "return"))
+	tk.MustGetErrMsg("alter table t add index idx(b);", "[0]mock reset engine failed")
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/ingest/mockResetEngineFailed"))
 }
 
