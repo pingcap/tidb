@@ -321,7 +321,7 @@ func newWithCli(selfAddr string, cli *clientv3.Client, store kv.Storage) *Servic
 		// improperly use the stale map to serve the autoid requests.
 		// See https://github.com/pingcap/tidb/issues/52600
 		service.autoIDLock.Lock()
-		for k, _ := range service.autoIDMap {
+		for k := range service.autoIDMap {
 			delete(service.autoIDMap, k)
 		}
 		service.autoIDLock.Unlock()
