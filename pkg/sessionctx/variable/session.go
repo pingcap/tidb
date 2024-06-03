@@ -256,6 +256,9 @@ type TxnCtxNoNeedToRestore struct {
 	// Read results cannot be directly written into pessimisticLockCache because failed statement need to rollback
 	// its pessimistic locks.
 	CurrentStmtPessimisticLockCache map[string][]byte
+
+	// MemHookAlreadySet indicates whether the memory hook has been set for memdb.
+	MemHookAlreadySet bool
 }
 
 // SavepointRecord indicates a transaction's savepoint record.
