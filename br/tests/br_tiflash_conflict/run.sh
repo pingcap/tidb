@@ -101,8 +101,8 @@ run_sql "DROP DATABASE IF EXISTS test;"
 
 # check if contain the error message
 echo "check br log"
-if ! grep -q "has tiflash replica, please remove it before restore" "$RESTORE_LOG"; then
-    echo "The log doesn't contains the message: 'has tiflash replica, please remove it before restore'"
+if ! grep -q "have tiflash replica, please remove it before restore" "$RESTORE_LOG"; then
+    echo "The log doesn't contains the message: 'have tiflash replica, please remove it before restore'"
     exit 1
 fi
 

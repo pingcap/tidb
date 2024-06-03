@@ -1,4 +1,4 @@
--- Switch to the new database
+-- Switch to the test database
 USE test;
 
 -- Insert data into table1
