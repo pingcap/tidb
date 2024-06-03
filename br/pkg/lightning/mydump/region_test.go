@@ -460,6 +460,8 @@ func TestSplitLargeFileSeekInsideCRLF(t *testing.T) {
 	require.NoError(t, err)
 	fileSize := dataFileInfo.Size()
 	fileInfo := FileInfo{FileMeta: SourceFileMeta{Path: fileName, Type: SourceTypeCSV, FileSize: fileSize}}
+	colCnt := int64(2)
+	prevRowIdxMax := int64(0)
 	ioWorker := worker.NewPool(context.Background(), 4, "io")
 
 	store, err := storage.NewLocalStorage(dir)
@@ -478,7 +480,6 @@ func TestSplitLargeFileSeekInsideCRLF(t *testing.T) {
 			MaxRegionSize: 2,
 		},
 	}
-	divideConfig := NewDataDivideConfig(cfg, 1, ioWorker, store, meta)
 
 	// in fact this is the wrong result, just to show the bug. pos mismatch with
 	// offsets. and we might read more rows than expected because we use == rather
@@ -486,7 +487,16 @@ func TestSplitLargeFileSeekInsideCRLF(t *testing.T) {
 	offsets := [][]int64{{0, 3}, {3, 6}, {6, 9}, {9, 12}}
 	pos := []int64{2, 5, 8, 11}
 
-	regions, _, err := SplitLargeCSV(context.Background(), divideConfig, fileInfo)
+	_, regions, _, err := SplitLargeFile(
+		context.Background(),
+		meta,
+		cfg,
+		fileInfo,
+		colCnt,
+		prevRowIdxMax,
+		ioWorker,
+		store,
+	)
 	require.NoError(t, err)
 	require.Len(t, regions, len(offsets))
 	for i := range offsets {
@@ -509,12 +519,20 @@ func TestSplitLargeFileSeekInsideCRLF(t *testing.T) {
 	// set terminator to "\r\n"
 
 	cfg.Mydumper.CSV.Terminator = "\r\n"
-	divideConfig = NewDataDivideConfig(cfg, 1, ioWorker, store, meta)
 	// pos is contained in expectedOffsets
 	expectedOffsets := [][]int64{{0, 6}, {6, 12}}
 	pos = []int64{3, 6, 9, 12}
 
-	regions, _, err = SplitLargeCSV(context.Background(), divideConfig, fileInfo)
+	_, regions, _, err = SplitLargeFile(
+		context.Background(),
+		meta,
+		cfg,
+		fileInfo,
+		colCnt,
+		prevRowIdxMax,
+		ioWorker,
+		store,
+	)
 	require.NoError(t, err)
 	require.Len(t, regions, len(expectedOffsets))
 	for i := range expectedOffsets {
