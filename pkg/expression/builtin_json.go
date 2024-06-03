@@ -16,11 +16,13 @@ package expression
 
 import (
 	"bytes"
+	"context"
 	goJSON "encoding/json"
 	"strconv"
 	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -28,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tipb/go-tipb"
+	"github.com/qri-io/jsonschema"
 )
 
 var (
@@ -53,6 +56,7 @@ var (
 	_ functionClass = &jsonMergePreserveFunctionClass{}
 	_ functionClass = &jsonPrettyFunctionClass{}
 	_ functionClass = &jsonQuoteFunctionClass{}
+	_ functionClass = &jsonSchemaValidFunctionClass{}
 	_ functionClass = &jsonSearchFunctionClass{}
 	_ functionClass = &jsonStorageSizeFunctionClass{}
 	_ functionClass = &jsonDepthFunctionClass{}
@@ -77,6 +81,7 @@ var (
 	_ builtinFunc = &builtinJSONOverlapsSig{}
 	_ builtinFunc = &builtinJSONStorageSizeSig{}
 	_ builtinFunc = &builtinJSONDepthSig{}
+	_ builtinFunc = &builtinJSONSchemaValidSig{}
 	_ builtinFunc = &builtinJSONSearchSig{}
 	_ builtinFunc = &builtinJSONKeysSig{}
 	_ builtinFunc = &builtinJSONKeys2ArgsSig{}
@@ -1795,4 +1800,95 @@ func (b *builtinJSONLengthSig) evalInt(ctx EvalContext, row chunk.Row) (res int6
 		return 1, false, nil
 	}
 	return int64(obj.GetElemCount()), false, nil
+}
+
+type jsonSchemaValidFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *jsonSchemaValidFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETJson, types.ETJson)
+	if err != nil {
+		return nil, err
+	}
+
+	sig := &builtinJSONSchemaValidSig{baseBuiltinFunc: bf}
+	return sig, nil
+}
+
+type builtinJSONSchemaValidSig struct {
+	baseBuiltinFunc
+
+	schemaCache builtinFuncCache[jsonschema.Schema]
+}
+
+func (b *builtinJSONSchemaValidSig) Clone() builtinFunc {
+	newSig := &builtinJSONSchemaValidSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+func (b *builtinJSONSchemaValidSig) evalInt(ctx EvalContext, row chunk.Row) (res int64, isNull bool, err error) {
+	var schema jsonschema.Schema
+
+	// First argument is the schema
+	schemaData, schemaIsNull, err := b.args[0].EvalJSON(ctx, row)
+	if err != nil {
+		return res, false, err
+	}
+	if schemaIsNull {
+		return res, true, err
+	}
+
+	if b.args[0].ConstLevel() >= ConstOnlyInContext {
+		schema, err = b.schemaCache.getOrInitCache(ctx, func() (jsonschema.Schema, error) {
+			failpoint.Inject("jsonSchemaValidDisableCacheRefresh", func() {
+				failpoint.Return(jsonschema.Schema{}, errors.New("Cache refresh disabled by failpoint"))
+			})
+			dataBin, err := schemaData.MarshalJSON()
+			if err != nil {
+				return jsonschema.Schema{}, err
+			}
+			if err := goJSON.Unmarshal(dataBin, &schema); err != nil {
+				return jsonschema.Schema{}, err
+			}
+			return schema, nil
+		})
+		if err != nil {
+			return res, false, err
+		}
+	} else {
+		dataBin, err := schemaData.MarshalJSON()
+		if err != nil {
+			return res, false, err
+		}
+		if err := goJSON.Unmarshal(dataBin, &schema); err != nil {
+			return res, false, err
+		}
+	}
+
+	// Second argument is the JSON document
+	docData, docIsNull, err := b.args[1].EvalJSON(ctx, row)
+	if err != nil {
+		return res, false, err
+	}
+	if docIsNull {
+		return res, true, err
+	}
+	docDataBin, err := docData.MarshalJSON()
+	if err != nil {
+		return res, false, err
+	}
+	errs, err := schema.ValidateBytes(context.Background(), docDataBin)
+	if err != nil {
+		return res, false, err
+	}
+	if len(errs) > 0 {
+		return res, false, nil
+	}
+	res = 1
+	return res, false, nil
 }
