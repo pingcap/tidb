@@ -36,6 +36,7 @@ import (
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/server/v3/etcdserver"
 	"go.etcd.io/etcd/tests/v3/integration"
+	"golang.org/x/sync/errgroup"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -202,7 +203,7 @@ func TestPutKVToEtcdMono(t *testing.T) {
 	err = util2.PutKVToEtcdMono(ctx, cli, 3, "testKey", strconv.Itoa(3))
 	require.NoError(t, err)
 
-	eg := util.NewErrorGroupWithRecover()
+	eg := errgroup.Group{}
 	for i := 0; i < 30; i++ {
 		eg.Go(func() error {
 			err := util2.PutKVToEtcdMono(ctx, cli, 1, "testKey", strconv.Itoa(5))
@@ -212,7 +213,7 @@ func TestPutKVToEtcdMono(t *testing.T) {
 	// PutKVToEtcdMono should be conflicted and get errors.
 	require.Error(t, eg.Wait())
 
-	eg = util.NewErrorGroupWithRecover()
+	eg = errgroup.Group{}
 	for i := 0; i < 30; i++ {
 		eg.Go(func() error {
 			err := util2.PutKVToEtcd(ctx, cli, 1, "testKey", strconv.Itoa(5))
