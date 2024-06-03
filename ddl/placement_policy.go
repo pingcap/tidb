@@ -118,7 +118,7 @@ func getPlacementPolicyByName(d *ddlCtx, t *meta.Meta, policyName model.CIStr) (
 	}
 
 	is := d.infoCache.GetLatest()
-	if is.SchemaMetaVersion() == currVer {
+	if is != nil && is.SchemaMetaVersion() == currVer {
 		// Use cached policy.
 		policy, ok := is.PolicyByName(policyName)
 		if ok {
@@ -319,8 +319,15 @@ func checkPlacementPolicyNotInUse(d *ddlCtx, t *meta.Meta, policy *model.PolicyI
 		return err
 	}
 	is := d.infoCache.GetLatest()
+<<<<<<< HEAD:ddl/placement_policy.go
 	if is.SchemaMetaVersion() == currVer {
 		return CheckPlacementPolicyNotInUseFromInfoSchema(is, policy)
+=======
+	if is != nil && is.SchemaMetaVersion() == currVer {
+		err = CheckPlacementPolicyNotInUseFromInfoSchema(is, policy)
+	} else {
+		err = CheckPlacementPolicyNotInUseFromMeta(t, policy)
+>>>>>>> 44c9096efbc (ddl: get latest old table ID before replace view (#53720)):pkg/ddl/placement_policy.go
 	}
 
 	return CheckPlacementPolicyNotInUseFromMeta(t, policy)
