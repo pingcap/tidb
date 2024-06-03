@@ -1758,6 +1758,8 @@ func AllocHandle(ctx context.Context, mctx table.MutateContext, t table.Table) (
 	return kv.IntHandle(rowID), err
 }
 
+// AllocHandleIDs allocates n handle ids (_tidb_rowid), and caches the range
+// in the table.MutateContext.
 func AllocHandleIDs(ctx context.Context, mctx table.MutateContext, t table.Table, n uint64) (int64, int64, error) {
 	meta := t.Meta()
 	base, maxID, err := t.Allocators(mctx).Get(autoid.RowIDAllocType).Alloc(ctx, n, 1, 1)
