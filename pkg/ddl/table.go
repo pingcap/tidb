@@ -316,8 +316,11 @@ func onCreateView(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) 
 	}
 	tbInfo.State = model.StateNone
 
-	oldTableID, err := findOldTableID(d, t, schemaID, tbInfo.Name.L)
-	err = ignoreTableNotExistsErr(err)
+	oldTableID, err := findTableIDByName(d, t, schemaID, tbInfo.Name.L)
+	if infoschema.ErrTableNotExists.Equal(err) {
+		err = nil
+	}
+	failpoint.InjectCall("onDDLCreateView", job)
 	if err != nil {
 		if infoschema.ErrDatabaseNotExists.Equal(err) {
 			job.State = model.JobStateCancelled
@@ -362,13 +365,6 @@ func onCreateView(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) 
 	default:
 		return ver, dbterror.ErrInvalidDDLState.GenWithStackByArgs("table", tbInfo.State)
 	}
-}
-
-func ignoreTableNotExistsErr(err error) error {
-	if infoschema.ErrTableNotExists.Equal(err) {
-		return nil
-	}
-	return err
 }
 
 func onDropTableOrView(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
@@ -1522,7 +1518,7 @@ func checkTableNotExists(d *ddlCtx, t *meta.Meta, schemaID int64, tableName stri
 		return err
 	}
 	is := d.infoCache.GetLatest()
-	if is.SchemaMetaVersion() == currVer {
+	if is != nil && is.SchemaMetaVersion() == currVer {
 		return checkTableNotExistsFromInfoSchema(is, schemaID, tableName)
 	}
 
@@ -1536,7 +1532,7 @@ func checkTableNotExistsByName(d *ddlCtx, t *meta.Meta, schemaID int64, schemaNa
 		return err
 	}
 	is := d.infoCache.GetLatest()
-	if is.SchemaMetaVersion() == currVer {
+	if is != nil && is.SchemaMetaVersion() == currVer {
 		return checkTableNotExistsFromInfoSchema(is, schemaID, tableName)
 	}
 	return t.CheckTableNameNotExists(t.TableNameKey(schemaName, tableName))
@@ -1610,14 +1606,14 @@ func checkTableNotExistsFromStore(t *meta.Meta, schemaID int64, tableName string
 	return nil
 }
 
-func findOldTableID(d *ddlCtx, t *meta.Meta, schemaID int64, tableName string) (int64, error) {
+func findTableIDByName(d *ddlCtx, t *meta.Meta, schemaID int64, tableName string) (int64, error) {
 	// Try to use memory schema info to check first.
 	currVer, err := t.GetSchemaVersion()
 	if err != nil {
 		return 0, err
 	}
 	is := d.infoCache.GetLatest()
-	if is.SchemaMetaVersion() == currVer {
+	if is != nil && is.SchemaMetaVersion() == currVer {
 		return findTableIDFromInfoSchema(is, schemaID, tableName)
 	}
 
