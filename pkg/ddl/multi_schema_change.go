@@ -374,7 +374,7 @@ func checkOperateSameColAndIdx(info *model.MultiSchemaInfo) error {
 }
 
 func mergeAddIndex(info *model.MultiSchemaInfo) {
-	var newSubJob *model.SubJob
+	var mergedSubJob *model.SubJob
 	var mergeCnt int
 	for _, subJob := range info.SubJobs {
 		if subJob.Type == model.ActionAddForeignKey {
@@ -383,11 +383,11 @@ func mergeAddIndex(info *model.MultiSchemaInfo) {
 		}
 		if subJob.Type == model.ActionAddIndex {
 			mergeCnt++
-			if newSubJob == nil {
+			if mergedSubJob == nil {
 				clonedSubJob := *subJob
-				newSubJob = &clonedSubJob
-				newSubJob.Args = nil
-				newSubJob.RawArgs = nil
+				mergedSubJob = &clonedSubJob
+				mergedSubJob.Args = nil
+				mergedSubJob.RawArgs = nil
 			}
 		}
 	}
@@ -418,9 +418,9 @@ func mergeAddIndex(info *model.MultiSchemaInfo) {
 		}
 	}
 
-	newSubJob.Args = []any{unique, indexNames, indexPartSpecifications, indexOption, hiddenCols, global}
+	mergedSubJob.Args = []any{unique, indexNames, indexPartSpecifications, indexOption, hiddenCols, global}
 	// place the merged add index job at the end of the sub-jobs.
-	newSubJobs = append(newSubJobs, newSubJob)
+	newSubJobs = append(newSubJobs, mergedSubJob)
 	info.SubJobs = newSubJobs
 }
 

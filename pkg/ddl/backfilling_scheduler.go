@@ -425,11 +425,9 @@ func (b *ingestBackfillScheduler) setupWorkers() error {
 	var uniques []bool
 	switch v := job.Args[0].(type) {
 	case bool:
-		uniques = make([]bool, 1)
-		uniques[0] = v
+		uniques = []bool{v}
 	case *bool:
-		uniques = make([]bool, 1)
-		uniques[0] = *v
+		uniques = []bool{*v}
 	case []bool:
 		uniques = v
 	case *[]bool:
