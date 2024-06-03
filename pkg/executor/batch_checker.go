@@ -37,8 +37,8 @@ import (
 )
 
 type keyValueWithDupInfo struct {
-	newKey       kv.Key
-	dupErr       error
+	newKey kv.Key
+	dupErr error
 }
 
 type toBeCheckedRow struct {
