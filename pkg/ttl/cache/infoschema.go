@@ -52,7 +52,7 @@ func (isc *InfoSchemaCache) Update(se session.Session) error {
 
 	ch := is.ListTablesWithSpecialAttribute(infoschema.TTLAttribute)
 	for v := range ch {
-		for _, tblInfo := range v.TableInfo {
+		for _, tblInfo := range v.TableInfos {
 			if tblInfo.TTLInfo == nil || !tblInfo.TTLInfo.Enable || tblInfo.State != model.StatePublic {
 				continue
 			}

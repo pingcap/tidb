@@ -1065,7 +1065,7 @@ GROUP BY
 	noRecordTables := make([]string, 0)
 	ch := is.ListTablesWithSpecialAttribute(infoschema.TTLAttribute)
 	for v := range ch {
-		for _, tblInfo := range v.TableInfo {
+		for _, tblInfo := range v.TableInfos {
 			interval, err := tblInfo.TTLInfo.GetJobInterval()
 			if err != nil {
 				logutil.Logger(ctx).Error("failed to get table's job interval",

@@ -321,8 +321,8 @@ func (is *infoSchema) SchemaTableInfos(schema model.CIStr) []*model.TableInfo {
 }
 
 type tableInfoResult struct {
-	DBName    string
-	TableInfo []*model.TableInfo
+	DBName     string
+	TableInfos []*model.TableInfo
 }
 
 func (is *infoSchema) ListTablesWithSpecialAttribute(filter specialAttributeFilter) <-chan tableInfoResult {
@@ -335,7 +335,7 @@ func (is *infoSchema) ListTablesWithSpecialAttribute(filter specialAttributeFilt
 				if !filter(tblInfo) {
 					continue
 				}
-				res.TableInfo = append(res.TableInfo, tblInfo)
+				res.TableInfos = append(res.TableInfos, tblInfo)
 			}
 			ch <- res
 		}

@@ -195,7 +195,12 @@ func (isd *Data) add(item tableItem, tbl table.Table) {
 		}
 	}
 	if hasSpecialAttributes(ti) {
-		isd.tableInfoResident.Set(tableInfoItem{item.dbName, item.tableID, item.schemaVersion, ti, false})
+		isd.tableInfoResident.Set(tableInfoItem{
+			dbName:    item.dbName,
+			tableID:      item.tableID,
+			schemaVersion: item.schemaVersion,
+			tableInfo:   ti,
+			tomb:      false})
 	}
 }
 
@@ -212,7 +217,12 @@ func (isd *Data) remove(item tableItem) {
 	item.tomb = true
 	isd.byID.Set(item)
 	isd.byName.Set(item)
-	isd.tableInfoResident.Set(tableInfoItem{item.dbName, item.tableID, item.schemaVersion, nil, true})
+	isd.tableInfoResident.Set(tableInfoItem{
+		dbName:    item.dbName,
+		tableID:      item.tableID,
+		schemaVersion: item.schemaVersion,
+		tableInfo:   nil,
+		tomb:      true})
 	isd.tableCache.Remove(tableCacheKey{item.tableID, item.schemaVersion})
 }
 
@@ -511,7 +521,10 @@ func (is *infoschemaV2) SchemaByName(schema model.CIStr) (val *model.DBInfo, ok 
 
 	var dbInfo model.DBInfo
 	dbInfo.Name = schema
-	is.Data.schemaMap.Descend(schemaItem{dbInfo: &dbInfo, schemaVersion: math.MaxInt64}, func(item schemaItem) bool {
+	is.Data.schemaMap.Descend(schemaItem{
+		dbInfo:        &dbInfo,
+		schemaVersion: math.MaxInt64,
+	}, func(item schemaItem) bool {
 		if item.Name() != schema.L {
 			ok = false
 			return false
@@ -1079,17 +1092,17 @@ func (is *infoschemaV2) ListTablesWithSpecialAttribute(filter specialAttributeFi
 			if currDB == "" {
 				currDB = item.dbName
 				res = tableInfoResult{DBName: item.dbName}
-				res.TableInfo = append(res.TableInfo, item.tableInfo)
+				res.TableInfos = append(res.TableInfos, item.tableInfo)
 			} else if currDB == item.dbName {
-				res.TableInfo = append(res.TableInfo, item.tableInfo)
+				res.TableInfos = append(res.TableInfos, item.tableInfo)
 			} else {
 				ch <- res
 				res = tableInfoResult{DBName: item.dbName}
-				res.TableInfo = append(res.TableInfo, item.tableInfo)
+				res.TableInfos = append(res.TableInfos, item.tableInfo)
 			}
 			return true
 		})
-		if len(res.TableInfo) > 0 {
+		if len(res.TableInfos) > 0 {
 			ch <- res
 		}
 	}()
