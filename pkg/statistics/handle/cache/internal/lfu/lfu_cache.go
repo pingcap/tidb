@@ -169,12 +169,14 @@ func (s *LFU) dropMemory(item *ristretto.Item) {
 	// because the onexit function is also called when the evict event occurs.
 	// TODO(hawkingrei): not copy the useless part.
 	table := item.Value.(*statistics.Table).Copy()
-	for _, column := range table.Columns {
-		DropEvicted(column)
-	}
-	for _, indix := range table.Indices {
-		DropEvicted(indix)
-	}
+	table.ForEachColumn(func(_ int64, col *statistics.Column) bool {
+		DropEvicted(col)
+		return false
+	})
+	table.ForEachIndex(func(_ int64, idx *statistics.Index) bool {
+		DropEvicted(idx)
+		return false
+	})
 	s.resultKeySet.AddKeyValue(int64(item.Key), table)
 	after := table.MemoryUsage().TotalTrackingMemUsage()
 	// why add before again? because the cost will be subtracted in onExit.

@@ -115,7 +115,7 @@ func TestAnalyzeStaticPartitionedTableIndexes(t *testing.T) {
 	require.NoError(t, err)
 	pid := tbl.Meta().GetPartitionInfo().Definitions[0].ID
 	tblStats := handle.GetPartitionStats(tbl.Meta(), pid)
-	require.False(t, tblStats.Indices[1].IsAnalyzed())
+	require.False(t, tblStats.GetIdx(1).IsAnalyzed())
 
 	job.Analyze(handle, dom.SysProcTracker())
 	// Check the result of analyze.
@@ -124,10 +124,10 @@ func TestAnalyzeStaticPartitionedTableIndexes(t *testing.T) {
 	require.NoError(t, err)
 	pid = tbl.Meta().GetPartitionInfo().Definitions[0].ID
 	tblStats = handle.GetPartitionStats(tbl.Meta(), pid)
-	require.NotNil(t, tblStats.Indices[1])
-	require.True(t, tblStats.Indices[1].IsAnalyzed())
-	require.NotNil(t, tblStats.Indices[2])
-	require.True(t, tblStats.Indices[2].IsAnalyzed())
+	require.NotNil(t, tblStats.GetIdx(1))
+	require.True(t, tblStats.GetIdx(1).IsAnalyzed())
+	require.NotNil(t, tblStats.GetIdx(2))
+	require.True(t, tblStats.GetIdx(2).IsAnalyzed())
 	// Check analyze jobs are created.
 	rows := tk.MustQuery("select * from mysql.analyze_jobs").Rows()
 	// Because analyze one index will analyze all indexes and all columns together, so there are 4 jobs.

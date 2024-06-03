@@ -62,14 +62,7 @@ func (h *Handle) initStatsMeta4Chunk(is infoschema.InfoSchema, cache statstypes.
 		}
 		maxPhysicalID = max(physicalID, maxPhysicalID)
 		tableInfo := table.Meta()
-		newHistColl := statistics.HistColl{
-			PhysicalID:     physicalID,
-			HavePhysicalID: true,
-			RealtimeCount:  row.GetInt64(3),
-			ModifyCount:    row.GetInt64(2),
-			Columns:        make(map[int64]*statistics.Column, 4),
-			Indices:        make(map[int64]*statistics.Index, 4),
-		}
+		newHistColl := *statistics.NewHistColl(physicalID, true, row.GetInt64(3), row.GetInt64(2), 4, 4)
 		tbl := &statistics.Table{
 			HistColl:              newHistColl,
 			Version:               row.GetUint64(0),
@@ -230,7 +223,7 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache stats
 				table.LastAnalyzeVersion = max(table.LastAnalyzeVersion, version)
 			}
 			lastAnalyzePos.Copy(&index.LastAnalyzePos)
-			table.Indices[hist.ID] = index
+			table.SetIdx(idxInfo.ID, index)
 			table.ColAndIdxExistenceMap.InsertIndex(idxInfo.ID, idxInfo, statsVer != statistics.Version0)
 		} else {
 			var colInfo *model.ColumnInfo
@@ -254,7 +247,7 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache stats
 				StatsVer:   statsVer,
 			}
 			lastAnalyzePos.Copy(&col.LastAnalyzePos)
-			table.Columns[hist.ID] = col
+			table.SetCol(hist.ID, col)
 			table.ColAndIdxExistenceMap.InsertCol(colInfo.ID, colInfo, statsVer != statistics.Version0 || ndv > 0 || nullCount > 0)
 			if statsVer != statistics.Version0 {
 				// The LastAnalyzeVersion is added by ALTER table so its value might be 0.
@@ -383,8 +376,8 @@ func (*Handle) initStatsTopN4Chunk(cache statstypes.StatsCache, iter *chunk.Iter
 			}
 			table = table.Copy()
 		}
-		idx, ok := table.Indices[row.GetInt64(1)]
-		if !ok || (idx.CMSketch == nil && idx.StatsVer <= statistics.Version1) {
+		idx := table.GetIdx(row.GetInt64(1))
+		if idx == nil || (idx.CMSketch == nil && idx.StatsVer <= statistics.Version1) {
 			continue
 		}
 		if idx.TopN == nil {
@@ -492,11 +485,11 @@ func (*Handle) initStatsFMSketch4Chunk(cache statstypes.StatsCache, iter *chunk.
 		isIndex := row.GetInt64(1)
 		id := row.GetInt64(2)
 		if isIndex == 1 {
-			if idxStats, ok := table.Indices[id]; ok {
+			if idxStats := table.GetIdx(id); idxStats != nil {
 				idxStats.FMSketch = fms
 			}
 		} else {
-			if colStats, ok := table.Columns[id]; ok {
+			if colStats := table.GetCol(id); colStats != nil {
 				colStats.FMSketch = fms
 			}
 		}
@@ -545,15 +538,15 @@ func (*Handle) initStatsBuckets4Chunk(cache statstypes.StatsCache, iter *chunk.I
 		var lower, upper types.Datum
 		var hist *statistics.Histogram
 		if isIndex > 0 {
-			index, ok := table.Indices[histID]
-			if !ok {
+			index := table.GetIdx(histID)
+			if index == nil {
 				continue
 			}
 			hist = &index.Histogram
 			lower, upper = types.NewBytesDatum(row.GetBytes(5)), types.NewBytesDatum(row.GetBytes(6))
 		} else {
-			column, ok := table.Columns[histID]
-			if !ok {
+			column := table.GetCol(histID)
+			if column == nil {
 				continue
 			}
 			if !mysql.HasPriKeyFlag(column.Info.GetFlag()) {
@@ -565,14 +558,14 @@ func (*Handle) initStatsBuckets4Chunk(cache statstypes.StatsCache, iter *chunk.I
 			lower, err = d.ConvertTo(statistics.UTCWithAllowInvalidDateCtx, &column.Info.FieldType)
 			if err != nil {
 				logutil.BgLogger().Debug("decode bucket lower bound failed", zap.Error(err))
-				delete(table.Columns, histID)
+				table.DelCol(histID)
 				continue
 			}
 			d = types.NewBytesDatum(row.GetBytes(6))
 			upper, err = d.ConvertTo(statistics.UTCWithAllowInvalidDateCtx, &column.Info.FieldType)
 			if err != nil {
 				logutil.BgLogger().Debug("decode bucket upper bound failed", zap.Error(err))
-				delete(table.Columns, histID)
+				table.DelCol(histID)
 				continue
 			}
 		}
@@ -612,18 +605,20 @@ func (h *Handle) initStatsBuckets(cache statstypes.StatsCache) error {
 	}
 	tables := cache.Values()
 	for _, table := range tables {
-		for _, idx := range table.Indices {
+		table.ForEachIndex(func(_ int64, idx *statistics.Index) bool {
 			for i := 1; i < idx.Len(); i++ {
 				idx.Buckets[i].Count += idx.Buckets[i-1].Count
 			}
 			idx.PreCalculateScalar()
-		}
-		for _, col := range table.Columns {
+			return false
+		})
+		table.ForEachColumn(func(_ int64, col *statistics.Column) bool {
 			for i := 1; i < col.Len(); i++ {
 				col.Buckets[i].Count += col.Buckets[i-1].Count
 			}
 			col.PreCalculateScalar()
-		}
+			return false
+		})
 		cache.Put(table.PhysicalID, table) // put this table in the cache because all statstics of the table have been read.
 	}
 	return nil
@@ -756,12 +751,13 @@ func (h *Handle) InitStats(is infoschema.InfoSchema) (err error) {
 	}
 	// Set columns' stats status.
 	for _, table := range cache.Values() {
-		for _, col := range table.Columns {
+		table.ForEachColumn(func(_ int64, col *statistics.Column) bool {
 			if col.StatsAvailable() {
 				// primary key column has no stats info, because primary key's is_index is false. so it cannot load the topn
 				col.StatsLoadedStatus = statistics.NewStatsAllEvictedStatus()
 			}
-		}
+			return false
+		})
 	}
 	h.Replace(cache)
 	return nil
