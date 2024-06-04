@@ -84,7 +84,7 @@ func checkTempIndexKey(txn kv.Transaction, tmpRec *temporaryIndexRecord, originI
 		return nil
 	}
 	// For distinct index key values, prevent deleting an unexpected index KV in original index.
-	hdInVal, err := tablecodec.DecodeHandleInUniqueIndexValue(originIdxVal, tblInfo.Meta().IsCommonHandle)
+	hdInVal, err := tablecodec.DecodeHandleInIndexValue(originIdxVal)
 	if err != nil {
 		return errors.Trace(err)
 	}

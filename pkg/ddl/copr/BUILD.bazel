@@ -26,6 +26,7 @@ go_test(
     shard_count = 3,
     deps = [
         "//pkg/expression",
+        "//pkg/expression/contextstatic",
         "//pkg/parser/model",
         "//pkg/parser/mysql",
         "//pkg/types",

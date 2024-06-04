@@ -695,7 +695,7 @@ func getPartitionIntervalFromTable(ctx expression.BuildContext, tbInfo *model.Ta
 			return nil
 		}
 	} else {
-		if !isPartExprUnsigned(tbInfo) {
+		if !isPartExprUnsigned(ctx.GetEvalCtx(), tbInfo) {
 			minVal = "-9223372036854775808"
 		}
 	}
@@ -985,7 +985,7 @@ func generatePartitionDefinitionsFromInterval(ctx expression.BuildContext, partO
 			if partCol != nil {
 				min = getLowerBoundInt(partCol)
 			} else {
-				if !isPartExprUnsigned(tbInfo) {
+				if !isPartExprUnsigned(ctx.GetEvalCtx(), tbInfo) {
 					min = math.MinInt64
 				}
 			}
@@ -1476,7 +1476,7 @@ func buildRangePartitionDefinitions(ctx expression.BuildContext, defs []*ast.Par
 
 func checkPartitionValuesIsInt(ctx expression.BuildContext, defName any, exprs []ast.ExprNode, tbInfo *model.TableInfo) error {
 	tp := types.NewFieldType(mysql.TypeLonglong)
-	if isPartExprUnsigned(tbInfo) {
+	if isPartExprUnsigned(ctx.GetEvalCtx(), tbInfo) {
 		tp.AddFlag(mysql.UnsignedFlag)
 	}
 	for _, exp := range exprs {
@@ -1642,7 +1642,7 @@ func checkPartitionFuncType(ctx sessionctx.Context, expr ast.ExprNode, schema st
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if e.GetType().EvalType() == types.ETInt {
+	if e.GetType(ctx.GetExprCtx().GetEvalCtx()).EvalType() == types.ETInt {
 		return nil
 	}
 
@@ -1665,7 +1665,7 @@ func checkRangePartitionValue(ctx sessionctx.Context, tblInfo *model.TableInfo) 
 	if strings.EqualFold(defs[len(defs)-1].LessThan[0], partitionMaxValue) {
 		defs = defs[:len(defs)-1]
 	}
-	isUnsigned := isPartExprUnsigned(tblInfo)
+	isUnsigned := isPartExprUnsigned(ctx.GetExprCtx().GetEvalCtx(), tblInfo)
 	var prevRangeValue any
 	for i := 0; i < len(defs); i++ {
 		if strings.EqualFold(defs[i].LessThan[0], partitionMaxValue) {
@@ -1728,7 +1728,7 @@ func formatListPartitionValue(ctx expression.BuildContext, tblInfo *model.TableI
 	cols := make([]*model.ColumnInfo, 0, len(pi.Columns))
 	if len(pi.Columns) == 0 {
 		tp := types.NewFieldType(mysql.TypeLonglong)
-		if isPartExprUnsigned(tblInfo) {
+		if isPartExprUnsigned(ctx.GetEvalCtx(), tblInfo) {
 			tp.AddFlag(mysql.UnsignedFlag)
 		}
 		colTps = []*types.FieldType{tp}
@@ -4051,7 +4051,7 @@ func (cns columnNameSlice) At(i int) string {
 	return cns[i].Name.L
 }
 
-func isPartExprUnsigned(tbInfo *model.TableInfo) bool {
+func isPartExprUnsigned(ectx expression.EvalContext, tbInfo *model.TableInfo) bool {
 	// We should not rely on any configuration, system or session variables, so use a mock ctx!
 	// Same as in tables.newPartitionExpr
 	ctx := mock.NewContext()
@@ -4060,7 +4060,7 @@ func isPartExprUnsigned(tbInfo *model.TableInfo) bool {
 		logutil.DDLLogger().Error("isPartExpr failed parsing expression!", zap.Error(err))
 		return false
 	}
-	if mysql.HasUnsignedFlag(expr.GetType().GetFlag()) {
+	if mysql.HasUnsignedFlag(expr.GetType(ectx).GetFlag()) {
 		return true
 	}
 	return false

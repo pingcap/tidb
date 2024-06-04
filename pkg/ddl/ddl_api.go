@@ -2252,7 +2252,7 @@ func BuildTableInfo(
 				return nil, errors.Trace(err)
 			}
 			// check if the expression is bool type
-			if err := table.IfCheckConstraintExprBoolType(constraintInfo, tbInfo); err != nil {
+			if err := table.IfCheckConstraintExprBoolType(ctx.GetExprCtx().GetEvalCtx(), constraintInfo, tbInfo); err != nil {
 				return nil, err
 			}
 			constraintInfo.ID = allocateConstraintID(tbInfo)
@@ -4890,7 +4890,7 @@ func checkReorgPartitionDefs(ctx sessionctx.Context, action model.ActionType, tb
 				return nil
 			}
 
-			isUnsigned := isPartExprUnsigned(tblInfo)
+			isUnsigned := isPartExprUnsigned(ctx.GetExprCtx().GetEvalCtx(), tblInfo)
 			currentRangeValue, _, err := getRangeValue(ctx.GetExprCtx(), pi.Definitions[lastPartIdx].LessThan[0], isUnsigned)
 			if err != nil {
 				return errors.Trace(err)
@@ -7561,7 +7561,7 @@ func BuildHiddenColumnInfo(ctx sessionctx.Context, indexPartSpecifications []*as
 			Version:             model.CurrLatestColumnInfoVersion,
 			Dependences:         make(map[string]struct{}),
 			Hidden:              true,
-			FieldType:           *expr.GetType(),
+			FieldType:           *expr.GetType(ctx.GetExprCtx().GetEvalCtx()),
 		}
 		// Reset some flag, it may be caused by wrong type infer. But it's not easy to fix them all, so reset them here for safety.
 		colInfo.DelFlag(mysql.PriKeyFlag | mysql.UniqueKeyFlag | mysql.AutoIncrementFlag)
@@ -9405,7 +9405,7 @@ func (d *ddl) CreateCheckConstraint(ctx sessionctx.Context, ti ast.Ident, constr
 		return errors.Trace(err)
 	}
 	// check if the expression is bool type
-	if err := table.IfCheckConstraintExprBoolType(constraintInfo, tblInfo); err != nil {
+	if err := table.IfCheckConstraintExprBoolType(ctx.GetExprCtx().GetEvalCtx(), constraintInfo, tblInfo); err != nil {
 		return err
 	}
 	job := &model.Job{

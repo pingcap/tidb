@@ -319,7 +319,7 @@ func TestHandleFineGrainedShuffle(t *testing.T) {
 	var partitionCols = make([]*property.MPPPartitionColumn, 0, 1)
 	partitionCols = append(partitionCols, &property.MPPPartitionColumn{
 		Col:       col0,
-		CollateID: property.GetCollateIDByNameForPartition(col0.GetType().GetCollate()),
+		CollateID: property.GetCollateIDByNameForPartition(col0.GetType(sctx).GetCollate()),
 	})
 
 	// HashAgg(x) <- ExchangeReceiver <- ExchangeSender

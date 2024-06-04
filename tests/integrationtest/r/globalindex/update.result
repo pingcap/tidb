@@ -40,4 +40,11 @@ a	b	c
 2	11	11
 8	8	8
 13	12	12
+drop table t;
+create table t(a varchar(70), b mediumint(9), unique index idx_a(a), unique index idx_b(b)) partition by key(b) partitions 5;
+insert into t values ('',826534 );
+replace into t values ('',826536 );
+select * from t;
+a	b
+	826536
 set tidb_enable_global_index=default;

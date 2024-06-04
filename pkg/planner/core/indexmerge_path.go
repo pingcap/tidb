@@ -1087,10 +1087,12 @@ func buildPartialPaths4MVIndex(
 	ok bool,
 	err error,
 ) {
+	evalCtx := sctx.GetExprCtx().GetEvalCtx()
+
 	var virColID = -1
 	for i := range idxCols {
 		// index column may contain other virtual column.
-		if idxCols[i].VirtualExpr != nil && idxCols[i].VirtualExpr.GetType().IsArray() {
+		if idxCols[i].VirtualExpr != nil && idxCols[i].VirtualExpr.GetType(evalCtx).IsArray() {
 			virColID = i
 			break
 		}
@@ -1111,7 +1113,7 @@ func buildPartialPaths4MVIndex(
 	// worrying whether the row with empty array will be lost in the result.
 
 	virCol := idxCols[virColID]
-	jsonType := virCol.GetType().ArrayType()
+	jsonType := virCol.GetType(evalCtx).ArrayType()
 	targetJSONPath, ok := unwrapJSONCast(virCol.VirtualExpr)
 	if !ok {
 		return nil, false, false, nil
@@ -1169,7 +1171,7 @@ func buildPartialPaths4MVIndex(
 	}
 
 	for _, v := range virColVals {
-		if !isSafeTypeConversion4MVIndexRange(v.GetType(), virCol.GetType()) {
+		if !isSafeTypeConversion4MVIndexRange(v.GetType(evalCtx), virCol.GetType(evalCtx)) {
 			return nil, false, false, nil
 		}
 	}
@@ -1254,10 +1256,10 @@ func PrepareIdxColsAndUnwrapArrayType(
 		if col == nil { // unexpected, no vir-col on this MVIndex
 			return nil, false
 		}
-		if col.GetType().IsArray() {
+		if col.GetStaticType().IsArray() {
 			virColNum++
 			col = col.Clone().(*expression.Column)
-			col.RetType = col.GetType().ArrayType() // use the underlying type directly: JSON-ARRAY(INT) --> INT
+			col.RetType = col.GetStaticType().ArrayType() // use the underlying type directly: JSON-ARRAY(INT) --> INT
 			col.RetType.SetCharset(charset.CharsetBin)
 			col.RetType.SetCollate(charset.CollationBin)
 		}
@@ -1360,7 +1362,7 @@ func CollectFilters4MVIndexMutations(sctx base.PlanContext, filters []expression
 				continue
 			}
 			if ok, _ := checkAccessFilter4IdxCol(sctx, f, col); ok {
-				if col.VirtualExpr != nil && col.VirtualExpr.GetType().IsArray() {
+				if col.VirtualExpr != nil && col.VirtualExpr.GetType(sctx.GetExprCtx().GetEvalCtx()).IsArray() {
 					// assert jsonColOffset should always be the same.
 					// if the filter is from virtual expression, it means it is about the mv json col.
 					mvFilterMutations = append(mvFilterMutations, f)
@@ -1473,7 +1475,7 @@ func checkAccessFilter4IdxCol(
 			return false, unspecifiedFilterTp
 		}
 		var virColVals []expression.Expression
-		jsonType := idxCol.GetType().ArrayType()
+		jsonType := idxCol.GetStaticType().ArrayType()
 		var tp int
 		switch sf.FuncName.L {
 		case ast.JSONMemberOf: // (1 member of a)
@@ -1526,7 +1528,7 @@ func checkAccessFilter4IdxCol(
 			return false, unspecifiedFilterTp
 		}
 		for _, v := range virColVals {
-			if !isSafeTypeConversion4MVIndexRange(v.GetType(), idxCol.GetType()) {
+			if !isSafeTypeConversion4MVIndexRange(v.GetType(sctx.GetExprCtx().GetEvalCtx()), idxCol.GetStaticType()) {
 				return false, unspecifiedFilterTp
 			}
 		}
@@ -1575,7 +1577,7 @@ func jsonArrayExpr2Exprs(
 		// skip plan cache and try to generate the best plan in this case.
 		sctx.SetSkipPlanCache(jsonFuncName + " function with immutable parameters can affect index selection")
 	}
-	if !expression.IsImmutableFunc(jsonArrayExpr) || jsonArrayExpr.GetType().EvalType() != types.ETJson {
+	if !expression.IsImmutableFunc(jsonArrayExpr) || jsonArrayExpr.GetType(sctx.GetEvalCtx()).EvalType() != types.ETJson {
 		return nil, false
 	}
 
@@ -1620,7 +1622,7 @@ func unwrapJSONCast(expr expression.Expression) (expression.Expression, bool) {
 	if !ok {
 		return nil, false
 	}
-	if sf == nil || sf.FuncName.L != ast.Cast || sf.GetType().EvalType() != types.ETJson {
+	if sf == nil || sf.FuncName.L != ast.Cast || sf.GetStaticType().EvalType() != types.ETJson {
 		return nil, false
 	}
 	return sf.GetArgs()[0], true

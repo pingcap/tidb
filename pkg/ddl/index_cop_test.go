@@ -60,7 +60,7 @@ func TestAddIndexFetchRowsFromCoprocessor(t *testing.T) {
 		idxDataBuf := make([]types.Datum, len(idxInfo.Columns))
 
 		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-			handle, idxDatum, err := ddl.ConvertRowToHandleAndIndexDatum(handleDataBuf, idxDataBuf, row, copCtx, idxInfo.ID)
+			handle, idxDatum, err := ddl.ConvertRowToHandleAndIndexDatum(tk.Session().GetExprCtx().GetEvalCtx(), handleDataBuf, idxDataBuf, row, copCtx, idxInfo.ID)
 			require.NoError(t, err)
 			handles = append(handles, handle)
 			copiedIdxDatum := make([]types.Datum, len(idxDatum))

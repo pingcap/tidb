@@ -389,7 +389,7 @@ func testMultiArgsMergePartialResult(t *testing.T, ctx *mock.Context, p multiArg
 			{Expr: args[0], Desc: true},
 		}
 	}
-	ctor := collate.GetCollator(args[0].GetType().GetCollate())
+	ctor := collate.GetCollator(args[0].GetType(ctx).GetCollate())
 	partialDesc, finalDesc := desc.Split([]int{0, 1})
 
 	// build partial func for partial phase.
@@ -684,7 +684,7 @@ func testMultiArgsAggFunc(t *testing.T, ctx *mock.Context, p multiArgsAggTest) {
 			{Expr: args[0], Desc: true},
 		}
 	}
-	ctor := collate.GetCollator(args[0].GetType().GetCollate())
+	ctor := collate.GetCollator(args[0].GetType(ctx).GetCollate())
 	finalFunc := aggfuncs.Build(ctx, desc, 0)
 	finalPr, _ := finalFunc.AllocPartialResult()
 	resultChk := chunk.NewChunkWithCapacity([]*types.FieldType{desc.RetTp}, 1)

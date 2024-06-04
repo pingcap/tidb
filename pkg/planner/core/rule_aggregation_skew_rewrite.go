@@ -224,8 +224,8 @@ func (a *skewDistinctAggRewriter) rewriteSkewDistinctAgg(agg *LogicalAggregation
 
 	// wrap sum() with cast function to keep output data type same
 	for _, index := range cntIndexes {
-		exprType := proj.Exprs[index].GetType()
-		targetType := agg.schema.Columns[index].GetType()
+		exprType := proj.Exprs[index].GetType(agg.SCtx().GetExprCtx().GetEvalCtx())
+		targetType := agg.schema.Columns[index].GetStaticType()
 		if !exprType.Equal(targetType) {
 			proj.Exprs[index] = expression.BuildCastFunction(agg.SCtx().GetExprCtx(), proj.Exprs[index], targetType)
 		}
