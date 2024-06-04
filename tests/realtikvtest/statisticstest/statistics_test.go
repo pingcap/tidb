@@ -191,18 +191,6 @@ func TestBlockMergeFMSketch(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("set @@tidb_enable_async_merge_global_stats=OFF;")
-	defer func() {
-		tk.MustExec("set @@tidb_enable_async_merge_global_stats=ON;")
-	}()
-	checkFMSketch(tk)
-}
-
-func TestAsyncMergeFMSketch(t *testing.T) {
-	store := realtikvtest.CreateMockStoreAndSetup(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("set @@tidb_enable_async_merge_global_stats=ON;")
 	checkFMSketch(tk)
 }
 
