@@ -2951,7 +2951,7 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 				// Duplicate the unique indexes with new index ids.
 				// If previously was Global or will be Global:
 				// it must be recreated with new index ID
-				newIndex := *index
+				newIndex := index.Clone()
 				newIndex.State = model.StateDeleteOnly
 				newIndex.ID = AllocateIndexID(tblInfo)
 				if inAllPartitionColumns {
@@ -2960,7 +2960,7 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 					// If not including all partitioning columns, make it Global
 					newIndex.Global = true
 				}
-				tblInfo.Indices = append(tblInfo.Indices, &newIndex)
+				tblInfo.Indices = append(tblInfo.Indices, newIndex)
 			}
 		}
 		// From now on we cannot just cancel the DDL, we must roll back if changesMade!
