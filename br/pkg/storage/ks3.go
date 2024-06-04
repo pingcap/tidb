@@ -38,10 +38,7 @@ import (
 	"go.uber.org/zap"
 )
 
-const (
-	// ks3 sdk does not expose context, we use hardcoded timeout for network request
-	ks3SDKProvider = "ks3-sdk"
-)
+const ks3SDKEndpoint = "ksyuncs.com"
 
 // KS3Storage acts almost same as S3Storage except it's used for kingsoft s3.
 type KS3Storage struct {
@@ -58,6 +55,7 @@ func NewKS3Storage(
 	qs := *backend
 	awsConfig := aws.DefaultConfig
 	awsConfig.S3ForcePathStyle = qs.ForcePathStyle
+	awsConfig.DomainMode = qs.ForcePathStyle
 	if qs.Region == "" {
 		return nil, errors.New("ks3 region is empty")
 	}
