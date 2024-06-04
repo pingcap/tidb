@@ -973,7 +973,7 @@ func TestGlobalStatsAndSQLBindingWithConcurrency(t *testing.T) {
 	testGlobalStatsAndSQLBinding(tk)
 }
 
-func TestBlockCheckFMSketch(t *testing.T) {
+func TestBlockMergeFMSketch(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
