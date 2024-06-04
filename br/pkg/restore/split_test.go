@@ -526,7 +526,8 @@ func initTestClient(isRawKv bool) *TestClient {
 		}
 		regions[i] = &split.RegionInfo{
 			Leader: &metapb.Peer{
-				Id: i,
+				Id:      i,
+				StoreId: 1,
 			},
 			Region: &metapb.Region{
 				Id:       i,
@@ -691,11 +692,71 @@ func TestRegionConsistency(t *testing.T) {
 						StartKey: codec.EncodeBytes([]byte{}, []byte("b")),
 						EndKey:   codec.EncodeBytes([]byte{}, []byte("d")),
 					},
+					Leader: &metapb.Peer{
+						Id:      6,
+						StoreId: 1,
+					},
 				},
 				{
 					Region: &metapb.Region{
 						StartKey: codec.EncodeBytes([]byte{}, []byte("e")),
 						EndKey:   codec.EncodeBytes([]byte{}, []byte("f")),
+					},
+					Leader: &metapb.Peer{
+						Id:      6,
+						StoreId: 1,
+					},
+				},
+			},
+		},
+		{
+			codec.EncodeBytes([]byte{}, []byte("c")),
+			codec.EncodeBytes([]byte{}, []byte("e")),
+			"region 6's leader is nil(.*?)",
+			[]*split.RegionInfo{
+				{
+					Region: &metapb.Region{
+						Id:          6,
+						StartKey:    codec.EncodeBytes([]byte{}, []byte("c")),
+						EndKey:      codec.EncodeBytes([]byte{}, []byte("d")),
+						RegionEpoch: nil,
+					},
+				},
+				{
+					Region: &metapb.Region{
+						Id:       8,
+						StartKey: codec.EncodeBytes([]byte{}, []byte("d")),
+						EndKey:   codec.EncodeBytes([]byte{}, []byte("e")),
+					},
+				},
+			},
+		},
+		{
+			codec.EncodeBytes([]byte{}, []byte("c")),
+			codec.EncodeBytes([]byte{}, []byte("e")),
+			"region 6's leader's store id is 0(.*?)",
+			[]*split.RegionInfo{
+				{
+					Leader: &metapb.Peer{
+						Id:      6,
+						StoreId: 0,
+					},
+					Region: &metapb.Region{
+						Id:          6,
+						StartKey:    codec.EncodeBytes([]byte{}, []byte("c")),
+						EndKey:      codec.EncodeBytes([]byte{}, []byte("d")),
+						RegionEpoch: nil,
+					},
+				},
+				{
+					Leader: &metapb.Peer{
+						Id:      6,
+						StoreId: 0,
+					},
+					Region: &metapb.Region{
+						Id:       8,
+						StartKey: codec.EncodeBytes([]byte{}, []byte("d")),
+						EndKey:   codec.EncodeBytes([]byte{}, []byte("e")),
 					},
 				},
 			},
