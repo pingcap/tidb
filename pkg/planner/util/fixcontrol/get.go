@@ -24,7 +24,7 @@ const (
 	// tables (both prepared statments and non-prepared statements)
 	// See #33031
 	Fix33031 uint64 = 33031
-	// Fix43817 controls whether to allow the optimizer to evaluate non-correlated sub-queries during the optimization phase.
+	// Fix43817 controls whether to allow optimizer to evaluate non-correlated sub-queries in the optimization phase.
 	// If it is not allowed, the optimizer will return a particular error when encountering non-correlated sub-queries.
 	// This fix-control is mainly for Index Advisor.
 	Fix43817 uint64 = 43817
