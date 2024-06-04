@@ -874,7 +874,6 @@ func TestMDLPreparePlanCacheInvalid(t *testing.T) {
 
 func TestMDLPreparePlanCacheExecute(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
-	defer ingesttestutil.InjectMockBackendMgr(t, store)()
 
 	sv := server.CreateMockServer(t, store)
 
@@ -926,7 +925,6 @@ func TestMDLPreparePlanCacheExecute(t *testing.T) {
 
 func TestMDLPreparePlanCacheExecute2(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
-	defer ingesttestutil.InjectMockBackendMgr(t, store)()
 
 	sv := server.CreateMockServer(t, store)
 
