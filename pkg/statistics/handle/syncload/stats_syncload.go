@@ -109,6 +109,7 @@ func (s *statsSyncLoad) SendLoadRequests(sc *stmtctx.StatementContext, neededHis
 			}
 			select {
 			case s.StatsLoad.NeededItemsCh <- task:
+				metrics.SyncLoadDedupCounter.Inc()
 				result, ok := <-task.ResultCh
 				intest.Assert(ok, "task.ResultCh cannot be closed")
 				return result, nil
@@ -139,12 +140,12 @@ func (*statsSyncLoad) SyncWaitStatsLoad(sc *stmtctx.StatementContext) error {
 	for _, col := range sc.StatsLoad.NeededItems {
 		resultCheckMap[col.TableItemID] = struct{}{}
 	}
-	metrics.SyncLoadCounter.Inc()
 	timer := time.NewTimer(sc.StatsLoad.Timeout)
 	defer timer.Stop()
 	for _, resultCh := range sc.StatsLoad.ResultCh {
 		select {
 		case result, ok := <-resultCh:
+			metrics.SyncLoadCounter.Inc()
 			if !ok {
 				return errors.New("sync load stats channel closed unexpectedly")
 			}
@@ -161,6 +162,7 @@ func (*statsSyncLoad) SyncWaitStatsLoad(sc *stmtctx.StatementContext) error {
 				delete(resultCheckMap, val.Item)
 			}
 		case <-timer.C:
+			metrics.SyncLoadCounter.Inc()
 			metrics.SyncLoadTimeoutCounter.Inc()
 			return errors.New("sync load stats timeout")
 		}

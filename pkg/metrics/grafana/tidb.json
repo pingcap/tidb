@@ -16548,7 +16548,7 @@
               "format": "time_series",
               "interval": "",
               "intervalFactor": 2,
-              "legendFormat": "sync-load",
+              "legendFormat": "total sync-load",
               "refId": "A",
               "step": 30
             },
@@ -16561,6 +16561,16 @@
               "intervalFactor": 2,
               "legendFormat": "timeout",
               "refId": "B",
+              "step": 30
+            },
+            {
+              "exemplar": true,
+              "expr": "sum(increase(tidb_statistics_sync_load_dedup_total{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) by (type)",
+              "format": "time_series",
+              "interval": "",
+              "intervalFactor": 2,
+              "legendFormat": "dedup sync-load",
+              "refId": "C",
               "step": 30
             }
           ],
