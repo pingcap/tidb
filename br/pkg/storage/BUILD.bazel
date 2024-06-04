@@ -87,6 +87,7 @@ go_test(
         "azblob_test.go",
         "compress_test.go",
         "gcs_test.go",
+        "ks3_test.go",
         "local_test.go",
         "locking_test.go",
         "memstore_test.go",
