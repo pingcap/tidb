@@ -618,7 +618,7 @@ func (p *PreRestoreInfoGetterImpl) sampleDataFromTable(
 	if err != nil {
 		return 0.0, false, errors.Trace(err)
 	}
-	idAlloc := kv.NewPanickingAllocators(0)
+	idAlloc := kv.NewPanickingAllocators(tableInfo.SepAutoInc(), 0)
 	tbl, err := tables.TableFromMeta(idAlloc, tableInfo)
 	if err != nil {
 		return 0.0, false, errors.Trace(err)

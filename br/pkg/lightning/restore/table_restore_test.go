@@ -357,7 +357,7 @@ func (s *tableRestoreSuite) TestRestoreEngineFailed() {
 	err := s.tr.populateChunks(ctx, rc, cp)
 	require.NoError(s.T(), err)
 
-	tbl, err := tables.TableFromMeta(kv.NewPanickingAllocators(0), s.tableInfo.Core)
+	tbl, err := tables.TableFromMeta(kv.NewPanickingAllocators(s.tableInfo.Core.SepAutoInc(), 0), s.tableInfo.Core)
 	require.NoError(s.T(), err)
 	_, indexUUID := backend.MakeUUID("`db`.`table`", -1)
 	_, dataUUID := backend.MakeUUID("`db`.`table`", 0)
@@ -1410,7 +1410,7 @@ func (s *tableRestoreSuite) TestEstimate() {
 	controller := gomock.NewController(s.T())
 	defer controller.Finish()
 	mockBackend := mock.NewMockAbstractBackend(controller)
-	idAlloc := kv.NewPanickingAllocators(0)
+	idAlloc := kv.NewPanickingAllocators(s.tableInfo.Core.SepAutoInc(), 0)
 	tbl, err := tables.TableFromMeta(idAlloc, s.tableInfo.Core)
 	require.NoError(s.T(), err)
 

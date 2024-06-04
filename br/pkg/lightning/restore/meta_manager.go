@@ -254,6 +254,8 @@ func (m *dbTableMetaMgr) AllocTableRowIDs(ctx context.Context, rawRowIDMax int64
 			if curStatus == metaStatusInitial {
 				if needAutoID {
 					// maxRowIDMax is the max row_id that other tasks has allocated, we need to rebase the global autoid base first.
+					// TODO this is not right when AUTO_ID_CACHE=1 and have auto row id,
+					// the id allocators are separated in this case.
 					if err := rebaseGlobalAutoID(ctx, maxRowIDMax, m.tr, m.tr.dbInfo.ID, m.tr.tableInfo.Core); err != nil {
 						return errors.Trace(err)
 					}
@@ -1183,6 +1185,30 @@ func rebaseGlobalAutoID(ctx context.Context, newBase int64, r autoid.Requirement
 	}
 	for _, alloc := range allocators {
 		err = alloc.Rebase(ctx, newBase, false)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// rebaseTableAllocators rebase the allocators of a table.
+// This function only rebase a table allocator when its new base is given in
+// `bases` param, else it will be skipped.
+// base is the max id that have been used by the table, the next usable id will
+// be base + 1, see Allocator.Alloc.
+func rebaseTableAllocators(ctx context.Context, bases map[autoid.AllocatorType]int64, r autoid.Requirement, dbID int64,
+	tblInfo *model.TableInfo) error {
+	allocators, err := getGlobalAutoIDAlloc(r, dbID, tblInfo)
+	if err != nil {
+		return err
+	}
+	for _, alloc := range allocators {
+		base, ok := bases[alloc.GetType()]
+		if !ok {
+			continue
+		}
+		err = alloc.Rebase(ctx, base, false)
 		if err != nil {
 			return err
 		}
