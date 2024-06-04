@@ -260,6 +260,12 @@ func initTableCommon(t *TableCommon, tblInfo *model.TableInfo, physicalTableID i
 	t.writableColumnsOnce = new(sync.Once)
 	t.fullHiddenColsAndVisibleColumnsOnce = new(sync.Once)
 	t.writableConstraintsOnce = new(sync.Once)
+	_ = t.Cols()
+	_ = t.VisibleCols()
+	_ = t.HiddenCols()
+	_ = t.WritableCols()
+	_ = t.FullHiddenColsAndVisibleCols()
+	_ = t.WritableConstraint()
 }
 
 // initTableIndices initializes the indices of the TableCommon.
