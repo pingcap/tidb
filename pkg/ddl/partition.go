@@ -2817,7 +2817,7 @@ func getReorgPartitionInfo(t *meta.Meta, job *model.Job) (*model.TableInfo, []st
 //	Makes a partitioned table non-partitioned, by first collapsing all partitions into a
 //	single partition and then converts that partition to a non-partitioned table
 //
-// ALTER TABLE T PARTITION BY ...
+// ALTER TABLE t PARTITION BY ...
 //
 //	Changes the partitioning to the newly defined partitioning type and definitions,
 //	works for both partitioned and non-partitioned tables.
