@@ -16563,7 +16563,7 @@
               "refId": "B",
               "step": 30
             },
-                        {
+            {
               "exemplar": true,
               "expr": "sum(increase(tidb_statistics_sync_load_dedup_total{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) by (type)",
               "format": "time_series",
