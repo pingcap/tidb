@@ -694,7 +694,7 @@ func TestRegionConsistency(t *testing.T) {
 					},
 					Leader: &metapb.Peer{
 						Id:      6,
-						StoreId: 0,
+						StoreId: 1,
 					},
 				},
 				{
@@ -704,7 +704,7 @@ func TestRegionConsistency(t *testing.T) {
 					},
 					Leader: &metapb.Peer{
 						Id:      6,
-						StoreId: 0,
+						StoreId: 1,
 					},
 				},
 			},
