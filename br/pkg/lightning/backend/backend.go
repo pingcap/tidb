@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/util/cmp"
 	"go.uber.org/zap"
 	"golang.org/x/exp/slices"
 )
@@ -311,11 +312,14 @@ func (be Backend) CheckDiskQuota(quota int64) (
 	totalMemSize int64,
 ) {
 	sizes := be.abstract.EngineFileSizes()
-	slices.SortFunc(sizes, func(i, j EngineFileSize) bool {
+	slices.SortFunc(sizes, func(i, j EngineFileSize) int {
 		if i.IsImporting != j.IsImporting {
-			return i.IsImporting
+			if i.IsImporting {
+				return -1
+			}
+			return 1
 		}
-		return i.DiskSize+i.MemSize < j.DiskSize+j.MemSize
+		return cmp.Compare(i.DiskSize+i.MemSize, j.DiskSize+j.MemSize)
 	})
 	for _, size := range sizes {
 		totalDiskSize += size.DiskSize

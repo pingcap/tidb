@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pingcap/tidb/util/cmp"
 	"github.com/pingcap/tidb/util/filter"
 	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/pingcap/tidb/util/logutil"
@@ -274,8 +275,8 @@ func GetFlashbackKeyRanges(sess sessionctx.Context) ([]kv.KeyRange, error) {
 		}
 	}
 
-	slices.SortFunc(flashbackIDs, func(a, b flashbackID) bool {
-		return a.id < b.id
+	slices.SortFunc(flashbackIDs, func(a, b flashbackID) int {
+		return cmp.Compare(a.id, b.id)
 	})
 
 	lastExcludeIdx := -1

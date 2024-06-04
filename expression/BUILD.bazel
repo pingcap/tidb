@@ -86,6 +86,7 @@ go_library(
         "//types/parser_driver",
         "//util",
         "//util/chunk",
+        "//util/cmp",
         "//util/codec",
         "//util/collate",
         "//util/dbterror",

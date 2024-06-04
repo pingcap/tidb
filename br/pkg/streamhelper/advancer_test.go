@@ -283,6 +283,7 @@ func TestBlocked(t *testing.T) {
 		s.onGetRegionCheckpoint = func(glftrr *logbackup.GetLastFlushTSOfRegionRequest) error {
 			// blocking the thread.
 			// this may happen when TiKV goes down or too busy.
+			//nolint:nilness
 			<-(chan struct{})(nil)
 			return nil
 		}
