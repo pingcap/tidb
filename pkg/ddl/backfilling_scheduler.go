@@ -141,6 +141,28 @@ func (b *txnBackfillScheduler) resultChan() <-chan *backfillResult {
 	return b.resultCh
 }
 
+// NewReorgCopContext creates a CopContext for reorg
+func NewReorgCopContext(
+	store kv.Storage,
+	reorgMeta *model.DDLReorgMeta,
+	tblInfo *model.TableInfo,
+	allIdxInfo []*model.IndexInfo,
+	requestSource string,
+) (copr.CopContext, error) {
+	sessCtx, err := newSessCtx(store, reorgMeta)
+	if err != nil {
+		return nil, err
+	}
+	return copr.NewCopContext(
+		sessCtx.GetExprCtx(),
+		sessCtx.GetDistSQLCtx(),
+		sessCtx.GetSessionVars().StmtCtx.PushDownFlags(),
+		tblInfo,
+		allIdxInfo,
+		requestSource,
+	)
+}
+
 func newSessCtx(store kv.Storage, reorgMeta *model.DDLReorgMeta) (sessionctx.Context, error) {
 	sessCtx := newReorgSessCtx(store)
 	if err := initSessCtx(sessCtx, reorgMeta); err != nil {
@@ -252,17 +274,17 @@ func (b *txnBackfillScheduler) adjustWorkerSize() error {
 	workerCnt := b.expectedWorkerSize()
 	// Increase the worker.
 	for i := len(b.workers); i < workerCnt; i++ {
-		sessCtx, err := newSessCtx(reorgInfo.d.store, reorgInfo.ReorgMeta)
-		if err != nil {
-			return err
-		}
 		var (
 			runner *backfillWorker
 			worker backfiller
 		)
 		switch b.tp {
 		case typeAddIndexWorker:
-			backfillCtx := newBackfillCtx(reorgInfo.d, i, sessCtx, job.SchemaName, b.tbl, jc, "add_idx_rate", false)
+			backfillCtx, err := newBackfillCtx(i, reorgInfo, job.SchemaName, b.tbl, jc, "add_idx_rate", false)
+			if err != nil {
+				return err
+			}
+
 			idxWorker, err := newAddIndexTxnWorker(b.decodeColMap, b.tbl, backfillCtx,
 				job.ID, reorgInfo.elements, reorgInfo.currElement.TypeKey)
 			if err != nil {
@@ -271,25 +293,29 @@ func (b *txnBackfillScheduler) adjustWorkerSize() error {
 			runner = newBackfillWorker(b.ctx, idxWorker)
 			worker = idxWorker
 		case typeAddIndexMergeTmpWorker:
-			backfillCtx := newBackfillCtx(reorgInfo.d, i, sessCtx, job.SchemaName, b.tbl, jc, "merge_tmp_idx_rate", false)
+			backfillCtx, err := newBackfillCtx(i, reorgInfo, job.SchemaName, b.tbl, jc, "merge_tmp_idx_rate", false)
+			if err != nil {
+				return err
+			}
 			tmpIdxWorker := newMergeTempIndexWorker(backfillCtx, b.tbl, reorgInfo.elements)
 			runner = newBackfillWorker(b.ctx, tmpIdxWorker)
 			worker = tmpIdxWorker
 		case typeUpdateColumnWorker:
-			// Setting InCreateOrAlterStmt tells the difference between SELECT casting and ALTER COLUMN casting.
-			sessCtx.GetSessionVars().StmtCtx.InCreateOrAlterStmt = true
-			sessCtx.GetSessionVars().StmtCtx.SetTypeFlags(
-				sessCtx.GetSessionVars().StmtCtx.TypeFlags().
-					WithIgnoreZeroDateErr(!reorgInfo.ReorgMeta.SQLMode.HasStrictMode()))
-			updateWorker := newUpdateColumnWorker(sessCtx, i, b.tbl, b.decodeColMap, reorgInfo, jc)
+			updateWorker, err := newUpdateColumnWorker(i, b.tbl, b.decodeColMap, reorgInfo, jc)
+			if err != nil {
+				return err
+			}
 			runner = newBackfillWorker(b.ctx, updateWorker)
 			worker = updateWorker
 		case typeCleanUpIndexWorker:
-			idxWorker := newCleanUpIndexWorker(sessCtx, i, b.tbl, b.decodeColMap, reorgInfo, jc)
+			idxWorker, err := newCleanUpIndexWorker(i, b.tbl, b.decodeColMap, reorgInfo, jc)
+			if err != nil {
+				return err
+			}
 			runner = newBackfillWorker(b.ctx, idxWorker)
 			worker = idxWorker
 		case typeReorgPartitionWorker:
-			partWorker, err := newReorgPartitionWorker(sessCtx, i, b.tbl, b.decodeColMap, reorgInfo, jc)
+			partWorker, err := newReorgPartitionWorker(i, b.tbl, b.decodeColMap, reorgInfo, jc)
 			if err != nil {
 				return err
 			}
@@ -519,18 +545,13 @@ func (b *ingestBackfillScheduler) createCopReqSenderPool() (*copReqSenderPool, e
 		}
 		allIndexInfos = append(allIndexInfos, indexInfo)
 	}
-	sessCtx, err := newSessCtx(ri.d.store, ri.ReorgMeta)
-	if err != nil {
-		logutil.Logger(b.ctx).Warn("cannot init cop request sender", zap.Error(err))
-		return nil, err
-	}
 	reqSrc := getDDLRequestSource(model.ActionAddIndex)
-	copCtx, err := copr.NewCopContext(b.tbl.Meta(), allIndexInfos, sessCtx, reqSrc)
+	copCtx, err := NewReorgCopContext(ri.d.store, ri.ReorgMeta, b.tbl.Meta(), allIndexInfos, reqSrc)
 	if err != nil {
 		logutil.Logger(b.ctx).Warn("cannot init cop request sender", zap.Error(err))
 		return nil, err
 	}
-	return newCopReqSenderPool(b.ctx, copCtx, sessCtx.GetStore(), b.taskCh, b.sessPool, b.checkpointMgr), nil
+	return newCopReqSenderPool(b.ctx, copCtx, ri.d.store, b.taskCh, b.sessPool, b.checkpointMgr), nil
 }
 
 func (b *ingestBackfillScheduler) expectedWorkerSize() (readerSize int, writerSize int) {

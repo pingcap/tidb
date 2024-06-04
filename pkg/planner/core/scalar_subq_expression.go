@@ -151,7 +151,7 @@ func (*ScalarSubQueryExpr) EvalJSON(_ expression.EvalContext, _ chunk.Row) (val 
 }
 
 // GetType implements the Expression interface.
-func (s *ScalarSubQueryExpr) GetType() *types.FieldType {
+func (s *ScalarSubQueryExpr) GetType(_ expression.EvalContext) *types.FieldType {
 	return s.RetType
 }
 

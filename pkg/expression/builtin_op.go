@@ -450,7 +450,7 @@ func (c *isTrueOrFalseFunctionClass) getFunction(ctx BuildContext, args []Expres
 		return nil, err
 	}
 
-	argTp := args[0].GetType().EvalType()
+	argTp := args[0].GetType(ctx.GetEvalCtx()).EvalType()
 	if argTp == types.ETTimestamp || argTp == types.ETDatetime || argTp == types.ETDuration || argTp == types.ETJson || argTp == types.ETString {
 		argTp = types.ETReal
 	}
@@ -714,7 +714,7 @@ func (c *unaryNotFunctionClass) getFunction(ctx BuildContext, args []Expression)
 		return nil, err
 	}
 
-	argTp := args[0].GetType().EvalType()
+	argTp := args[0].GetType(ctx.GetEvalCtx()).EvalType()
 	if argTp == types.ETTimestamp || argTp == types.ETDatetime || argTp == types.ETDuration {
 		argTp = types.ETInt
 	} else if argTp == types.ETString {
@@ -837,8 +837,8 @@ type unaryMinusFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *unaryMinusFunctionClass) handleIntOverflow(arg *Constant) (overflow bool) {
-	if mysql.HasUnsignedFlag(arg.GetType().GetFlag()) {
+func (c *unaryMinusFunctionClass) handleIntOverflow(ctx EvalContext, arg *Constant) (overflow bool) {
+	if mysql.HasUnsignedFlag(arg.GetType(ctx).GetFlag()) {
 		uval := arg.Value.GetUint64()
 		// -math.MinInt64 is 9223372036854775808, so if uval is more than 9223372036854775808, like
 		// 9223372036854775809, -9223372036854775809 is less than math.MinInt64, overflow occurs.
@@ -858,8 +858,8 @@ func (c *unaryMinusFunctionClass) handleIntOverflow(arg *Constant) (overflow boo
 
 // typeInfer infers unaryMinus function return type. when the arg is an int constant and overflow,
 // typerInfer will infers the return type as types.ETDecimal, not types.ETInt.
-func (c *unaryMinusFunctionClass) typeInfer(argExpr Expression) (types.EvalType, bool) {
-	tp := argExpr.GetType().EvalType()
+func (c *unaryMinusFunctionClass) typeInfer(ctx EvalContext, argExpr Expression) (types.EvalType, bool) {
+	tp := argExpr.GetType(ctx).EvalType()
 	if tp != types.ETInt && tp != types.ETDecimal {
 		tp = types.ETReal
 	}
@@ -867,7 +867,7 @@ func (c *unaryMinusFunctionClass) typeInfer(argExpr Expression) (types.EvalType,
 	overflow := false
 	// TODO: Handle float overflow.
 	if arg, ok := argExpr.(*Constant); ok && tp == types.ETInt {
-		overflow = c.handleIntOverflow(arg)
+		overflow = c.handleIntOverflow(ctx, arg)
 		if overflow {
 			tp = types.ETDecimal
 		}
@@ -880,8 +880,8 @@ func (c *unaryMinusFunctionClass) getFunction(ctx BuildContext, args []Expressio
 		return nil, err
 	}
 
-	argExpr, argExprTp := args[0], args[0].GetType()
-	_, intOverflow := c.typeInfer(argExpr)
+	argExpr, argExprTp := args[0], args[0].GetType(ctx.GetEvalCtx())
+	_, intOverflow := c.typeInfer(ctx.GetEvalCtx(), argExpr)
 
 	var bf baseBuiltinFunc
 	evalType := argExprTp.EvalType()
@@ -956,7 +956,7 @@ func (b *builtinUnaryMinusIntSig) evalInt(ctx EvalContext, row chunk.Row) (res i
 		return val, isNull, err
 	}
 
-	if mysql.HasUnsignedFlag(b.args[0].GetType().GetFlag()) {
+	if mysql.HasUnsignedFlag(b.args[0].GetType(ctx).GetFlag()) {
 		uval := uint64(val)
 		if uval > uint64(-math.MinInt64) {
 			return 0, false, types.ErrOverflow.GenWithStackByArgs("BIGINT", fmt.Sprintf("-%v", uval))
@@ -1012,7 +1012,7 @@ func (c *isNullFunctionClass) getFunction(ctx BuildContext, args []Expression) (
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	argTp := args[0].GetType().EvalType()
+	argTp := args[0].GetType(ctx.GetEvalCtx()).EvalType()
 	if argTp == types.ETTimestamp {
 		argTp = types.ETDatetime
 	} else if argTp == types.ETJson {

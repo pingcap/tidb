@@ -106,7 +106,7 @@ func DebugTraceReceivedCommand(s base.PlanContext, cmd byte, stmtNode ast.StmtNo
 	if len(binaryParams) > 0 {
 		execInfo.BinaryParamsInfo = make([]binaryParamInfo, len(binaryParams))
 		for i, param := range binaryParams {
-			execInfo.BinaryParamsInfo[i].Type = param.GetType().String()
+			execInfo.BinaryParamsInfo[i].Type = param.GetType(s.GetExprCtx().GetEvalCtx()).String()
 			execInfo.BinaryParamsInfo[i].Value = param.String()
 		}
 	}
