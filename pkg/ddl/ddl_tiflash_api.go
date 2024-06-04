@@ -452,7 +452,7 @@ func (d *ddl) refreshTiFlashTicker(ctx sessionctx.Context, pollTiFlashContext *T
 
 	// Collect TiFlash Replica info, for every table.
 	ch := schema.ListTablesWithSpecialAttribute(infoschema.TiFlashAttribute)
-	for v := range ch {
+	for _, v := range ch {
 		for _, tblInfo := range v.TableInfos {
 			LoadTiFlashReplicaInfo(tblInfo, &tableList)
 		}

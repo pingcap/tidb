@@ -1063,48 +1063,45 @@ func hasSpecialAttributes(t *model.TableInfo) bool {
 // AllSpecialAttribute marks a model.TableInfo with any special attributes.
 var AllSpecialAttribute specialAttributeFilter = hasSpecialAttributes
 
-func (is *infoschemaV2) ListTablesWithSpecialAttribute(filter specialAttributeFilter) <-chan tableInfoResult {
-	ch := make(chan tableInfoResult)
-	go func() {
-		defer close(ch)
-		var currDB string
-		var lastTableID int64
-		var res tableInfoResult
-		is.Data.tableInfoResident.Reverse(func(item tableInfoItem) bool {
-			if item.schemaVersion > is.infoSchema.schemaMetaVersion {
-				// Skip the versions that we are not looking for.
-				return true
-			}
-			// Dedup the same record of different versions.
-			if lastTableID != 0 && lastTableID == item.tableID {
-				return true
-			}
-			lastTableID = item.tableID
-
-			if item.tomb {
-				return true
-			}
-
-			if !filter(item.tableInfo) {
-				return true
-			}
-
-			if currDB == "" {
-				currDB = item.dbName
-				res = tableInfoResult{DBName: item.dbName}
-				res.TableInfos = append(res.TableInfos, item.tableInfo)
-			} else if currDB == item.dbName {
-				res.TableInfos = append(res.TableInfos, item.tableInfo)
-			} else {
-				ch <- res
-				res = tableInfoResult{DBName: item.dbName}
-				res.TableInfos = append(res.TableInfos, item.tableInfo)
-			}
+func (is *infoschemaV2) ListTablesWithSpecialAttribute(filter specialAttributeFilter) []tableInfoResult {
+	ret := make([]tableInfoResult, 0, 10)
+	var currDB string
+	var lastTableID int64
+	var res tableInfoResult
+	is.Data.tableInfoResident.Reverse(func(item tableInfoItem) bool {
+		if item.schemaVersion > is.infoSchema.schemaMetaVersion {
+			// Skip the versions that we are not looking for.
 			return true
-		})
-		if len(res.TableInfos) > 0 {
-			ch <- res
 		}
-	}()
-	return ch
+		// Dedup the same record of different versions.
+		if lastTableID != 0 && lastTableID == item.tableID {
+			return true
+		}
+		lastTableID = item.tableID
+
+		if item.tomb {
+			return true
+		}
+
+		if !filter(item.tableInfo) {
+			return true
+		}
+
+		if currDB == "" {
+			currDB = item.dbName
+			res = tableInfoResult{DBName: item.dbName}
+			res.TableInfos = append(res.TableInfos, item.tableInfo)
+		} else if currDB == item.dbName {
+			res.TableInfos = append(res.TableInfos, item.tableInfo)
+		} else {
+			ret = append(ret, res)
+			res = tableInfoResult{DBName: item.dbName}
+			res.TableInfos = append(res.TableInfos, item.tableInfo)
+		}
+		return true
+	})
+	if len(res.TableInfos) > 0 {
+		ret = append(ret, res)
+	}
+	return ret
 }

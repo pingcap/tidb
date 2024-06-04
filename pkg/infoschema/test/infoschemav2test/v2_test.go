@@ -222,7 +222,7 @@ func checkResult(t *testing.T, tk *testkit.TestKit, result ...string) {
 	is := domain.GetDomain(tk.Session()).InfoSchema()
 	ch := is.ListTablesWithSpecialAttribute(infoschema.AllSpecialAttribute)
 	var rows []string
-	for v := range ch {
+	for _, v := range ch {
 		for _, tblInfo := range v.TableInfos {
 			rows = append(rows, v.DBName+" "+tblInfo.Name.L)
 		}

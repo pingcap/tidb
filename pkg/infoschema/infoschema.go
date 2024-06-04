@@ -325,22 +325,19 @@ type tableInfoResult struct {
 	TableInfos []*model.TableInfo
 }
 
-func (is *infoSchema) ListTablesWithSpecialAttribute(filter specialAttributeFilter) <-chan tableInfoResult {
-	ch := make(chan tableInfoResult)
-	go func() {
-		defer close(ch)
-		for _, dbName := range is.AllSchemaNames() {
-			res := tableInfoResult{DBName: dbName.O}
-			for _, tblInfo := range is.SchemaTableInfos(dbName) {
-				if !filter(tblInfo) {
-					continue
-				}
-				res.TableInfos = append(res.TableInfos, tblInfo)
+func (is *infoSchema) ListTablesWithSpecialAttribute(filter specialAttributeFilter) []tableInfoResult {
+	ret := make([]tableInfoResult, 0, 10)
+	for _, dbName := range is.AllSchemaNames() {
+		res := tableInfoResult{DBName: dbName.O}
+		for _, tblInfo := range is.SchemaTableInfos(dbName) {
+			if !filter(tblInfo) {
+				continue
 			}
-			ch <- res
+			res.TableInfos = append(res.TableInfos, tblInfo)
 		}
-	}()
-	return ch
+		ret = append(ret, res)
+	}
+	return ret
 }
 
 // AllSchemaNames returns all the schemas' names.
