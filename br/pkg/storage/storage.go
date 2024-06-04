@@ -237,7 +237,7 @@ func New(ctx context.Context, backend *backuppb.StorageBackend, opts *ExternalSt
 		if backend.S3 == nil {
 			return nil, errors.Annotate(berrors.ErrStorageInvalidConfig, "s3 config not found")
 		}
-		if strings.Contains(backend.S3.Endpoint, ks3SDKEndpoint) {
+		if strings.Contains(backend.S3.Endpoint, ks3SDKEndpoint) && backend.S3.ForcePathStyle {
 			log.FromContext(ctx).Info("the endpoint is belong to ks3 server, so use ks3 sdk.",
 				zap.String("endpoint", backend.S3.Endpoint))
 			return NewKS3Storage(ctx, backend.S3, opts)
