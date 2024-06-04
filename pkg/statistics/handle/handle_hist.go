@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -336,11 +337,42 @@ func (*Handle) readStatsForOneItem(sctx sessionctx.Context, item model.TableItem
 	var hg *statistics.Histogram
 	var err error
 	isIndexFlag := int64(0)
+<<<<<<< HEAD:pkg/statistics/handle/handle_hist.go
 	if item.IsIndex {
 		isIndexFlag = 1
 	}
 	if item.IsIndex {
 		hg, err = storage.HistogramFromStorage(sctx, item.TableID, item.ID, types.NewFieldType(mysql.TypeBlob), index.Histogram.NDV, int(isIndexFlag), index.LastUpdateVersion, index.NullCount, index.TotColSize, index.Correlation)
+=======
+	hg, lastAnalyzePos, statsVer, flag, err := storage.HistMetaFromStorageWithHighPriority(sctx, &item, w.colInfo)
+	if err != nil {
+		return nil, err
+	}
+	if hg == nil {
+		logutil.BgLogger().Error("fail to get hist meta for this histogram, possibly a deleted one", zap.Int64("table_id", item.TableID),
+			zap.Int64("hist_id", item.ID), zap.Bool("is_index", item.IsIndex))
+		return nil, errors.Trace(fmt.Errorf("fail to get hist meta for this histogram, table_id:%v, hist_id:%v, is_index:%v", item.TableID, item.ID, item.IsIndex))
+	}
+	if item.IsIndex {
+		isIndexFlag = 1
+	}
+	var cms *statistics.CMSketch
+	var topN *statistics.TopN
+	var fms *statistics.FMSketch
+	if fullLoad {
+		if item.IsIndex {
+			hg, err = storage.HistogramFromStorageWithPriority(sctx, item.TableID, item.ID, types.NewFieldType(mysql.TypeBlob), hg.NDV, int(isIndexFlag), hg.LastUpdateVersion, hg.NullCount, hg.TotColSize, hg.Correlation, kv.PriorityHigh)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+		} else {
+			hg, err = storage.HistogramFromStorageWithPriority(sctx, item.TableID, item.ID, &w.colInfo.FieldType, hg.NDV, int(isIndexFlag), hg.LastUpdateVersion, hg.NullCount, hg.TotColSize, hg.Correlation, kv.PriorityHigh)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+		}
+		cms, topN, err = storage.CMSketchAndTopNFromStorageWithHighPriority(sctx, item.TableID, isIndexFlag, item.ID, statsVer)
+>>>>>>> a44d4090645 (planner, stats: assign high priority for sync load related internal SQLs (#51636)):pkg/statistics/handle/syncload/stats_syncload.go
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
