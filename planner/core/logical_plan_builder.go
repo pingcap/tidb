@@ -5304,24 +5304,14 @@ func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName model.
 	}()
 	selectLogicalPlan, err := b.Build(ctx, selectNode)
 	if err != nil {
-<<<<<<< HEAD:planner/core/logical_plan_builder.go
 		if terror.ErrorNotEqual(err, ErrViewRecursive) &&
 			terror.ErrorNotEqual(err, ErrNoSuchTable) &&
 			terror.ErrorNotEqual(err, ErrInternal) &&
 			terror.ErrorNotEqual(err, ErrFieldNotInGroupBy) &&
 			terror.ErrorNotEqual(err, ErrMixOfGroupFuncAndFields) &&
-			terror.ErrorNotEqual(err, ErrViewNoExplain) {
+			terror.ErrorNotEqual(err, ErrViewNoExplain) &&
+			terror.ErrorNotEqual(err, ErrNotSupportedYet) {
 			err = ErrViewInvalid.GenWithStackByArgs(dbName.O, tableInfo.Name.O)
-=======
-		if terror.ErrorNotEqual(err, plannererrors.ErrViewRecursive) &&
-			terror.ErrorNotEqual(err, plannererrors.ErrNoSuchTable) &&
-			terror.ErrorNotEqual(err, plannererrors.ErrInternal) &&
-			terror.ErrorNotEqual(err, plannererrors.ErrFieldNotInGroupBy) &&
-			terror.ErrorNotEqual(err, plannererrors.ErrMixOfGroupFuncAndFields) &&
-			terror.ErrorNotEqual(err, plannererrors.ErrViewNoExplain) &&
-			terror.ErrorNotEqual(err, plannererrors.ErrNotSupportedYet) {
-			err = plannererrors.ErrViewInvalid.GenWithStackByArgs(dbName.O, tableInfo.Name.O)
->>>>>>> d2d12574a35 (planner: fix privilege for the view in the CTE and  wrong error handle (#53556)):pkg/planner/core/logical_plan_builder.go
 		}
 		return nil, err
 	}
