@@ -335,6 +335,30 @@ func (importer *FileImporter) SetRawRange(startKey, endKey []byte) error {
 	return nil
 }
 
+func GetKeyRangeByMode(mode KvMode) func(f *backuppb.File, rules *RewriteRules) ([]byte, []byte, error) {
+	switch mode {
+	case Raw:
+		return func(f *backuppb.File, rules *RewriteRules) ([]byte, []byte, error) {
+			return f.GetStartKey(), f.GetEndKey(), nil
+		}
+	case Txn:
+		return func(f *backuppb.File, rules *RewriteRules) ([]byte, []byte, error) {
+			start, end := f.GetStartKey(), f.GetEndKey()
+			if len(start) != 0 {
+				start = codec.EncodeBytes([]byte{}, f.GetStartKey())
+			}
+			if len(end) != 0 {
+				end = codec.EncodeBytes([]byte{}, f.GetEndKey())
+			}
+			return start, end, nil
+		}
+	default:
+		return func(f *backuppb.File, rules *RewriteRules) ([]byte, []byte, error) {
+			return GetRewriteRawKeys(f, rules)
+		}
+	}
+}
+
 // getKeyRangeForFiles gets the maximum range on files.
 func (importer *FileImporter) getKeyRangeForFiles(
 	files []*backuppb.File,
@@ -345,20 +369,12 @@ func (importer *FileImporter) getKeyRangeForFiles(
 		start, end       []byte
 		err              error
 	)
-
+	getRangeFn := GetKeyRangeByMode(importer.kvMode)
 	for _, f := range files {
-		if importer.kvMode == Raw {
-			start, end = f.GetStartKey(), f.GetEndKey()
-		} else if importer.kvMode == Txn {
-			start = codec.EncodeBytes([]byte{}, f.GetStartKey())
-			end = codec.EncodeBytes([]byte{}, f.GetEndKey())
-		} else {
-			start, end, err = GetRewriteRawKeys(f, rewriteRules)
-			if err != nil {
-				return nil, nil, errors.Trace(err)
-			}
+		start, end, err = getRangeFn(f, rewriteRules)
+		if err != nil {
+			return nil, nil, errors.Trace(err)
 		}
-
 		if len(startKey) == 0 || bytes.Compare(start, startKey) < 0 {
 			startKey = start
 		}
@@ -526,11 +542,9 @@ func (importer *FileImporter) ImportSSTFiles(
 	}
 
 	err = utils.WithRetry(ctx, func() error {
-		tctx, cancel := context.WithTimeout(ctx, importScanRegionTime)
-		defer cancel()
 		// Scan regions covered by the file range
 		regionInfos, errScanRegion := split.PaginateScanRegion(
-			tctx, importer.metaClient, startKey, endKey, split.ScanRegionPaginationLimit)
+			ctx, importer.metaClient, startKey, endKey, split.ScanRegionPaginationLimit)
 		if errScanRegion != nil {
 			return errors.Trace(errScanRegion)
 		}
@@ -899,7 +913,8 @@ func (importer *FileImporter) ingestSSTs(
 ) (*import_sstpb.IngestResponse, error) {
 	leader := regionInfo.Leader
 	if leader == nil {
-		leader = regionInfo.Region.GetPeers()[0]
+		return nil, errors.Annotatef(berrors.ErrPDLeaderNotFound,
+			"region id %d has no leader", regionInfo.Region.Id)
 	}
 	reqCtx := &kvrpcpb.Context{
 		RegionId:    regionInfo.Region.GetId(),

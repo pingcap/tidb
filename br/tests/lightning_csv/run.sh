@@ -46,7 +46,7 @@ function run_with() {
   run_sql 'SELECT id FROM csv.empty_strings WHERE b <> ""'
   check_not_contains 'id:'
 
-  for table in clustered nonclustered clustered_cache1 nonclustered_cache1; do
+  for table in clustered nonclustered clustered_cache1 nonclustered_cache1 nonclustered_cache1_shard_autorowid; do
     run_sql "select count(*) from auto_incr_id.$table"
     check_contains 'count(*): 3'
     # insert should work

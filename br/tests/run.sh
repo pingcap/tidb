@@ -19,6 +19,7 @@ CUR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 export PATH="$PATH:$CUR/../../bin:$CUR/../bin:$CUR/_utils"
 export TEST_DIR=/tmp/backup_restore_test
 export COV_DIR="/tmp/group_cover"
+mkdir -p $COV_DIR || true
 source $CUR/_utils/run_services
 
 # Create COV_DIR if not exists

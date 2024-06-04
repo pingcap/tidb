@@ -2004,6 +2004,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	vars.DiskTracker.ResetMaxConsumed()
 	vars.MemTracker.SessionID.Store(vars.ConnectionID)
 	vars.StmtCtx.TableStats = make(map[int64]interface{})
+	sc.MDLRelatedTableIDs = make(map[int64]int64)
 
 	isAnalyze := false
 	if execStmt, ok := s.(*ast.ExecuteStmt); ok {

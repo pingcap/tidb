@@ -763,17 +763,23 @@ func (m *Meta) GetMetadataLock() (enable bool, isNull bool, err error) {
 
 // CreateTableAndSetAutoID creates a table with tableInfo in database,
 // and rebases the table autoID.
-func (m *Meta) CreateTableAndSetAutoID(dbID int64, tableInfo *model.TableInfo, autoIncID, autoRandID int64) error {
+func (m *Meta) CreateTableAndSetAutoID(dbID int64, tableInfo *model.TableInfo, autoIDs AutoIDGroup) error {
 	err := m.CreateTableOrView(dbID, tableInfo)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	_, err = m.txn.HInc(m.dbKey(dbID), m.autoTableIDKey(tableInfo.ID), autoIncID)
+	_, err = m.txn.HInc(m.dbKey(dbID), m.autoTableIDKey(tableInfo.ID), autoIDs.RowID)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	if tableInfo.AutoRandomBits > 0 {
-		_, err = m.txn.HInc(m.dbKey(dbID), m.autoRandomTableIDKey(tableInfo.ID), autoRandID)
+		_, err = m.txn.HInc(m.dbKey(dbID), m.autoRandomTableIDKey(tableInfo.ID), autoIDs.RandomID)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+	if tableInfo.SepAutoInc() && tableInfo.GetAutoIncrementColInfo() != nil {
+		_, err = m.txn.HInc(m.dbKey(dbID), m.autoIncrementIDKey(tableInfo.ID), autoIDs.IncrementID)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -886,6 +892,8 @@ func (m *Meta) UpdateTable(dbID int64, tableInfo *model.TableInfo) error {
 		return errors.Trace(err)
 	}
 
+	tableInfo.Revision++
+
 	data, err := json.Marshal(tableInfo)
 	if err != nil {
 		return errors.Trace(err)
@@ -942,6 +950,38 @@ func (m *Meta) ListTables(dbID int64) ([]*model.TableInfo, error) {
 		}
 
 		tbInfo := &model.TableInfo{}
+		err = json.Unmarshal(r.Value, tbInfo)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+
+		tables = append(tables, tbInfo)
+	}
+
+	return tables, nil
+}
+
+// ListSimpleTables shows all simple tables in database.
+func (m *Meta) ListSimpleTables(dbID int64) ([]*model.TableNameInfo, error) {
+	dbKey := m.dbKey(dbID)
+	if err := m.checkDBExists(dbKey); err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	res, err := m.txn.HGetAll(dbKey)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	tables := make([]*model.TableNameInfo, 0, len(res)/2)
+	for _, r := range res {
+		// only handle table meta
+		tableKey := string(r.Field)
+		if !strings.HasPrefix(tableKey, mTablePrefix) {
+			continue
+		}
+
+		tbInfo := &model.TableNameInfo{}
 		err = json.Unmarshal(r.Value, tbInfo)
 		if err != nil {
 			return nil, errors.Trace(err)

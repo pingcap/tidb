@@ -20,3 +20,8 @@ insert into t values (4, 3, 3);
 set @@tidb_txn_assertion_level=default;
 set @@tidb_constraint_check_in_place=default;
 
+# Test Issue 47115.
+drop table if exists t;
+create table t (a int, b int, k varchar(255), primary key (a, b), key k (k));
+insert into t values (1, 1, 'abc                                                                                                                                ');
+drop table t;

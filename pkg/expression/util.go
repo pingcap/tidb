@@ -35,10 +35,10 @@ import (
 	driver "github.com/pingcap/tidb/pkg/types/parser_driver"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
+	"github.com/pingcap/tidb/pkg/util/intset"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"go.uber.org/zap"
-	"golang.org/x/tools/container/intsets"
 )
 
 // cowExprRef is a copy-on-write slice ref util using in `ColumnSubstitute`
@@ -372,15 +372,15 @@ func ExtractColumnsAndCorColumnsFromExpressions(result []*Column, list []Express
 }
 
 // ExtractColumnSet extracts the different values of `UniqueId` for columns in expressions.
-func ExtractColumnSet(exprs ...Expression) *intsets.Sparse {
-	set := &intsets.Sparse{}
+func ExtractColumnSet(exprs ...Expression) intset.FastIntSet {
+	set := intset.NewFastIntSet()
 	for _, expr := range exprs {
-		extractColumnSet(expr, set)
+		extractColumnSet(expr, &set)
 	}
 	return set
 }
 
-func extractColumnSet(expr Expression, set *intsets.Sparse) {
+func extractColumnSet(expr Expression, set *intset.FastIntSet) {
 	switch v := expr.(type) {
 	case *Column:
 		set.Insert(int(v.UniqueID))
@@ -1346,6 +1346,27 @@ func IsMutableEffectsExpr(expr Expression) bool {
 		if x.DeferredExpr != nil {
 			return IsMutableEffectsExpr(x.DeferredExpr)
 		}
+	}
+	return false
+}
+
+// IsMutableFunc checks if expr contains function which is mutable or has side effects like `rand()`.
+func IsMutableFunc(expr Expression) bool {
+	switch f := expr.(type) {
+	case *ScalarFunction:
+		if _, ok := unFoldableFunctions[f.FuncName.L]; ok {
+			return true
+		}
+		if _, ok := mutableEffectsFunctions[f.FuncName.L]; ok {
+			return true
+		}
+		for _, arg := range f.GetArgs() {
+			if IsMutableFunc(arg) {
+				return true
+			}
+		}
+	default:
+		return false
 	}
 	return false
 }
