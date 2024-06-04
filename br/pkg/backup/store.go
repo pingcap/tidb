@@ -206,14 +206,24 @@ func getBackupRanges(ranges []rtree.Range) []*kvrpcpb.KeyRange {
 
 func ObserveStoreChangesAsync(ctx context.Context, stateNotifier chan BackupRetryPolicy, pdCli pd.Client) {
 	go func() {
+		sendAll := false
+		newJoinStoresMap := make(map[uint64]struct{})
 		cb := storewatch.MakeCallback(storewatch.WithOnReboot(func(s *metapb.Store) {
-			stateNotifier <- BackupRetryPolicy{All: true}
+			sendAll = true
 		}), storewatch.WithOnDisconnect(func(s *metapb.Store) {
-			stateNotifier <- BackupRetryPolicy{All: true}
+			sendAll = true
 		}), storewatch.WithOnNewStoreRegistered(func(s *metapb.Store) {
 			// only backup for this store
-			stateNotifier <- BackupRetryPolicy{One: s.Id}
+			newJoinStoresMap[s.Id] = struct{}{}
 		}))
+
+		notifyFn := func(ctx context.Context, sendPolicy BackupRetryPolicy) {
+			select {
+			case <-ctx.Done():
+			case stateNotifier <- sendPolicy:
+			}
+		}
+
 		watcher := storewatch.New(pdCli, cb)
 		tick := time.NewTicker(30 * time.Second)
 		for {
@@ -226,6 +236,15 @@ func ObserveStoreChangesAsync(ctx context.Context, stateNotifier chan BackupRetr
 				if err != nil {
 					logutil.CL(ctx).Warn("failed to watch store changes, ignore it", zap.Error(err))
 				}
+				if sendAll {
+					notifyFn(ctx, BackupRetryPolicy{All: true})
+				} else if len(newJoinStoresMap) > 0 {
+					for storeID := range newJoinStoresMap {
+						notifyFn(ctx, BackupRetryPolicy{One: storeID})
+					}
+				}
+				sendAll = false
+				clear(newJoinStoresMap)
 			}
 		}
 	}()
