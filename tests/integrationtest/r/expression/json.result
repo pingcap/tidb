@@ -180,19 +180,19 @@ select json_valid('"2019-8-19"');
 json_valid('"2019-8-19"')
 1
 select json_merge(1, 2);
-Error 3146 (HY000): Invalid data type for JSON data in argument 0 to function json_merge; a JSON string or JSON type is required.
+Error 3146 (22032): Invalid data type for JSON data in argument 0 to function json_merge; a JSON string or JSON type is required.
 select json_merge_preserve(1, 2);
-Error 3146 (HY000): Invalid data type for JSON data in argument 0 to function json_merge_preserve; a JSON string or JSON type is required.
+Error 3146 (22032): Invalid data type for JSON data in argument 0 to function json_merge_preserve; a JSON string or JSON type is required.
 select json_merge_patch(1, 2);
-Error 3146 (HY000): Invalid data type for JSON data in argument 0 to function json_merge_patch; a JSON string or JSON type is required.
+Error 3146 (22032): Invalid data type for JSON data in argument 0 to function json_merge_patch; a JSON string or JSON type is required.
 select JSON_CONTAINS_PATH(1, 'one', '$.a');
-Error 3146 (HY000): Invalid data type for JSON data in argument 0 to function json_contains_path; a JSON string or JSON type is required.
+Error 3146 (22032): Invalid data type for JSON data in argument 0 to function json_contains_path; a JSON string or JSON type is required.
 select json_search(1, 'one', '$.a');
-Error 3146 (HY000): Invalid data type for JSON data in argument 0 to function json_search; a JSON string or JSON type is required.
+Error 3146 (22032): Invalid data type for JSON data in argument 0 to function json_search; a JSON string or JSON type is required.
 select json_keys(1, '$.a');
-Error 3146 (HY000): Invalid data type for JSON data in argument 0 to function json_keys; a JSON string or JSON type is required.
+Error 3146 (22032): Invalid data type for JSON data in argument 0 to function json_keys; a JSON string or JSON type is required.
 select JSON_extract(1, '$.a');
-Error 3146 (HY000): Invalid data type for JSON data in argument 0 to function json_extract; a JSON string or JSON type is required.
+Error 3146 (22032): Invalid data type for JSON data in argument 0 to function json_extract; a JSON string or JSON type is required.
 DROP TABLE IF EXISTS table_json;
 CREATE TABLE table_json(a json, b VARCHAR(255));
 INSERT INTO table_json values('{"\\"hello\\"": "world", "a": [1, "2", {"aa": "bb"}, 4.0, {"aa": "cc"}], "b": true, "c": ["d"]}', '{"\\"hello\\"": "world", "a": [1, "2", {"aa": "bb"}, 4.0, {"aa": "cc"}], "b": true, "c": ["d"]}');
