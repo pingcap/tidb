@@ -649,7 +649,7 @@ func (b *rowTableBuilder) appendRemainingRowLocations(workerID int, htCtx *hashT
 	}
 }
 
-func (b *rowTableBuilder) fillNullMap(rowTableMeta *TableMeta, row *chunk.Row, seg *rowTableSegment) int {
+func fillNullMap(rowTableMeta *TableMeta, row *chunk.Row, seg *rowTableSegment) int {
 	if nullMapLength := rowTableMeta.nullMapLength; nullMapLength > 0 {
 		bitmap := make([]byte, nullMapLength)
 		for colIndexInRowTable, colIndexInRow := range rowTableMeta.rowColumnsOrder {
@@ -664,7 +664,7 @@ func (b *rowTableBuilder) fillNullMap(rowTableMeta *TableMeta, row *chunk.Row, s
 	return 0
 }
 
-func (b *rowTableBuilder) fillNextRowPtr(seg *rowTableSegment) int {
+func fillNextRowPtr(seg *rowTableSegment) int {
 	seg.rawData = append(seg.rawData, fakeAddrPlaceHolder...)
 	return sizeOfNextPtr
 }
@@ -704,7 +704,7 @@ func (b *rowTableBuilder) fillSerializedKeyAndKeyLengthIfNeeded(rowTableMeta *Ta
 	return appendRowLength
 }
 
-func (b *rowTableBuilder) fillRowData(rowTableMeta *TableMeta, row *chunk.Row, seg *rowTableSegment) int {
+func fillRowData(rowTableMeta *TableMeta, row *chunk.Row, seg *rowTableSegment) int {
 	appendRowLength := 0
 	for index, colIdx := range rowTableMeta.rowColumnsOrder {
 		if rowTableMeta.columnsSize[index] > 0 {
@@ -753,13 +753,13 @@ func (b *rowTableBuilder) appendToRowTable(chk *chunk.Chunk, hashJoinCtx *HashJo
 		b.startPosInRawData[partIdx] = append(b.startPosInRawData[partIdx], uint64(len(seg.rawData)))
 		rowLength := 0
 		// fill next_row_ptr field
-		rowLength += b.fillNextRowPtr(seg)
+		rowLength += fillNextRowPtr(seg)
 		// fill null_map
-		rowLength += b.fillNullMap(rowTableMeta, &row, seg)
+		rowLength += fillNullMap(rowTableMeta, &row, seg)
 		// fill serialized key and key length if needed
 		rowLength += b.fillSerializedKeyAndKeyLengthIfNeeded(rowTableMeta, hasValidKey, logicalRowIndex, seg)
 		// fill row data
-		rowLength += b.fillRowData(rowTableMeta, &row, seg)
+		rowLength += fillRowData(rowTableMeta, &row, seg)
 		// to make sure rowLength is 8 bit alignment
 		if rowLength%8 != 0 {
 			seg.rawData = append(seg.rawData, fakeAddrPlaceHolder[:8-rowLength%8]...)
