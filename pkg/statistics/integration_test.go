@@ -170,11 +170,11 @@ func TestChangeVerTo2BehaviorWithPersistedOptions(t *testing.T) {
 	require.NoError(t, h.Update(is))
 	statsTblT = h.GetTableStats(tblT.Meta())
 	statsTblT.ForEachColumn(func(_ int64, col *statistics.Column) bool {
-		require.Equal(t, int64(1), col.GetStatsVer())
+		require.Equal(t, int64(2), col.GetStatsVer())
 		return false
 	})
 	statsTblT.ForEachIndex(func(_ int64, idx *statistics.Index) bool {
-		require.Equal(t, int64(1), idx.GetStatsVer())
+		require.Equal(t, int64(2), idx.GetStatsVer())
 		return false
 	})
 	tk.MustExec("set @@session.tidb_analyze_version = 1")

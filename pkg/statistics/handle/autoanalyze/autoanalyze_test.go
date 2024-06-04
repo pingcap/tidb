@@ -154,7 +154,7 @@ func TestAutoAnalyzeOnChangeAnalyzeVer(t *testing.T) {
 		require.Equal(t, int64(1), idx.GetStatsVer())
 		return false
 	})
-	require.Equal(t, int64(1), statsTbl1.StatsVer)
+	require.Equal(t, 1, statsTbl1.StatsVer)
 	tk.MustExec("set @@global.tidb_analyze_version = 2")
 	tk.MustExec("insert into t values(1), (2), (3), (4)")
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
@@ -173,7 +173,7 @@ func TestAutoAnalyzeOnChangeAnalyzeVer(t *testing.T) {
 		require.Equal(t, int64(1), idx.GetStatsVer())
 		return false
 	})
-	require.Equal(t, int64(1), statsTbl1.StatsVer)
+	require.Equal(t, 1, statsTbl1.StatsVer)
 	// Add a new table after the analyze version set to 2.
 	tk.MustExec("create table tt(a int, index idx(a))")
 	tk.MustExec("insert into tt values(1), (2), (3), (4), (5)")
@@ -196,7 +196,7 @@ func TestAutoAnalyzeOnChangeAnalyzeVer(t *testing.T) {
 		require.Equal(t, int64(2), idx.GetStatsVer())
 		return false
 	})
-	require.Equal(t, int64(2), statsTbl2.StatsVer)
+	require.Equal(t, 2, statsTbl2.StatsVer)
 	tk.MustExec("set @@global.tidb_analyze_version = 1")
 }
 
