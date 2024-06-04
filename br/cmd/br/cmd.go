@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -24,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/redact"
 	"github.com/spf13/cobra"
+	"go.uber.org/zap"
 )
 
 var (
@@ -162,6 +164,31 @@ func Init(cmd *cobra.Command) (err error) {
 		}
 		log.ReplaceGlobals(lg, p)
 		memory.InitMemoryHook()
+		if debug.SetMemoryLimit(-1) == 0 {
+			memtotal, e := memory.MemTotal()
+			if e != nil {
+				err = e
+				return
+			}
+			memused, e := memory.MemUsed()
+			if e != nil {
+				err = e
+				return
+			}
+			halfGB := uint64(512 * 1024 * 1024)
+			// 0     memused          memtotal-512MB     memtotal
+			// +--------+--------------------+--------------+
+			//                       br mem upper limit
+			memleft := memtotal - memused - halfGB
+			// 0       512MB               +inf
+			// +--------+-------------------->
+			//          ^____________________>
+			//             GOMEMLIMIT range
+			if memleft > halfGB {
+				log.Info("set memory limit", zap.Uint64("limit", memleft))
+				debug.SetMemoryLimit(int64(memleft))
+			}
+		}
 
 		redactLog, e := cmd.Flags().GetBool(FlagRedactLog)
 		if e != nil {
