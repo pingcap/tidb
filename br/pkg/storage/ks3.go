@@ -340,11 +340,9 @@ func (rs *KS3Storage) FileExists(ctx context.Context, file string) (bool, error)
 
 	_, err := rs.svc.HeadObjectWithContext(ctx, input)
 	if err != nil {
-		if aerr, ok := errors.Cause(err).(awserr.Error); ok { // nolint:errorlint
-			switch aerr.Code() {
-			case s3.ErrCodeNoSuchBucket, s3.ErrCodeNoSuchKey, notFound:
-				return false, nil
-			}
+		if strings.Contains(err.Error(), "status code: 404") {
+			log.Info("response status code 404, file does not exist")
+			return false, nil
 		}
 		return false, errors.Trace(err)
 	}
