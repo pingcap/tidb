@@ -305,10 +305,15 @@ func blockingMergePartitionStats2GlobalStats(
 		}
 		// FMSketch use many memory, so we first deal with it and then destroy it.
 		// Merge FMSketch.
+		// NOTE: allFms maybe contain empty.
 		globalStats.Fms[i] = allFms[i][0]
 		for j := 1; j < len(allFms[i]); j++ {
-			globalStats.Fms[i].MergeFMSketch(allFms[i][j])
-			allFms[i][j].DestroyAndPutToPool()
+			if globalStats.Fms[i] == nil {
+				globalStats.Fms[i] = allFms[i][j]
+			} else {
+				globalStats.Fms[i].MergeFMSketch(allFms[i][j])
+				allFms[i][j].DestroyAndPutToPool()
+			}
 		}
 
 		// Update the global NDV.
