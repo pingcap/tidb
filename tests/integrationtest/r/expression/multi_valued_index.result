@@ -16,7 +16,7 @@ Error 1235 (42000): This version of TiDB doesn't yet support 'Use of CAST( .. AS
 CREATE TABLE t1 (f1 json, primary key mvi((cast(cast(f1 as unsigned array) as unsigned array))));
 Error 1235 (42000): This version of TiDB doesn't yet support 'Use of CAST( .. AS .. ARRAY) outside of functional index in CREATE(non-SELECT)/ALTER TABLE or in general expressions'
 CREATE TABLE t1 (f1 json, key mvi((cast(f1->>'$[*]' as unsigned array))));
-Error 3146 (HY000): Invalid data type for JSON data in argument 1 to function cast_as_array; a JSON string or JSON type is required.
+Error 3146 (22032): Invalid data type for JSON data in argument 1 to function cast_as_array; a JSON string or JSON type is required.
 CREATE TABLE t1 (f1 json, key mvi((cast(f1->'$[*]' as year array))));
 Error 1235 (42000): This version of TiDB doesn't yet support 'CAST-ing data to array of year(-1) BINARY'
 CREATE TABLE t1 (f1 json, key mvi((cast(f1->'$[*]' as json array))));
