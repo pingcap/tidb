@@ -768,7 +768,7 @@ func (c *jsonMemberOfFunctionClass) verifyArgs(ctx EvalContext, args []Expressio
 		return err
 	}
 	if evalType := args[1].GetType(ctx).EvalType(); evalType != types.ETJson && evalType != types.ETString {
-		return types.ErrInvalidJSONData.GenWithStackByArgs(2, "member of")
+		return ErrInvalidTypeForJSON.GenWithStackByArgs(2, "member of")
 	}
 	return nil
 }
@@ -831,10 +831,10 @@ func (c *jsonContainsFunctionClass) verifyArgs(ctx EvalContext, args []Expressio
 		return err
 	}
 	if evalType := args[0].GetType(ctx).EvalType(); evalType != types.ETJson && evalType != types.ETString {
-		return types.ErrInvalidJSONData.GenWithStackByArgs(1, "json_contains")
+		return ErrInvalidTypeForJSON.GenWithStackByArgs(1, "json_contains")
 	}
 	if evalType := args[1].GetType(ctx).EvalType(); evalType != types.ETJson && evalType != types.ETString {
-		return types.ErrInvalidJSONData.GenWithStackByArgs(2, "json_contains")
+		return ErrInvalidTypeForJSON.GenWithStackByArgs(2, "json_contains")
 	}
 	return nil
 }
@@ -911,10 +911,10 @@ func (c *jsonOverlapsFunctionClass) verifyArgs(ctx EvalContext, args []Expressio
 		return err
 	}
 	if evalType := args[0].GetType(ctx).EvalType(); evalType != types.ETJson && evalType != types.ETString {
-		return types.ErrInvalidJSONData.GenWithStackByArgs(1, "json_overlaps")
+		return ErrInvalidTypeForJSON.GenWithStackByArgs(1, "json_overlaps")
 	}
 	if evalType := args[1].GetType(ctx).EvalType(); evalType != types.ETJson && evalType != types.ETString {
-		return types.ErrInvalidJSONData.GenWithStackByArgs(2, "json_overlaps")
+		return ErrInvalidTypeForJSON.GenWithStackByArgs(2, "json_overlaps")
 	}
 	return nil
 }
