@@ -539,6 +539,7 @@ func (s *jobScheduler) delivery2Worker(wk *worker, pool *workerPool, job *model.
 			// or the job is finished by another owner.
 			// TODO for JobStateRollbackDone we have to query 1 additional time when the
 			// job is already moved to history.
+			failpoint.InjectCall("beforeRefreshJob", job)
 			for {
 				job, err = s.sysTblMgr.GetJobByID(s.schCtx, job.ID)
 				failpoint.InjectCall("mockGetJobByIDFail", &err)
