@@ -2235,7 +2235,6 @@ func (do *Domain) UpdateTableStatsLoop(ctx, initStatsCtx sessionctx.Context) err
 	// These tasks do not interfere with or depend on the initialization process.
 	do.wg.Run(func() { do.updateStatsWorker(ctx, owner) }, "updateStatsWorker")
 	do.wg.Run(func() {
-		<-do.StatsHandle().InitStatsDone
 		do.handleDDLEvent()
 	}, "handleDDLEvent")
 	// Wait for the stats worker to finish the initialization.
