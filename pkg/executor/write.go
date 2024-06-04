@@ -213,8 +213,9 @@ func updateRecord(
 				return false, err
 			}
 			tm := t.Meta()
-			logutil.BgLogger().Warn(fmt.Sprintf("xxx update------------------------------------ ts:%v, ver:%v, tbl name:%s, id:%d, cols:%v, tbl:%x",
-				sctx.GetInfoSchema().SchemaMetaVersion(), txn.StartTS(), t.Meta().Name, t.Meta().ID, str, &tm))
+			is := sctx.GetInfoSchema()
+			logutil.BgLogger().Warn(fmt.Sprintf("xxx update------------------------------------ ts:%v, ver:%v, tbl name:%s, id:%d, cols:%v, tbl:%p, is:%p",
+				is.SchemaMetaVersion(), txn.StartTS(), t.Meta().Name, t.Meta().ID, str, tm, is))
 		}
 
 		if sctx.GetSessionVars().LockUnchangedKeys {

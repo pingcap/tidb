@@ -81,6 +81,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	rangerctx "github.com/pingcap/tidb/pkg/util/ranger/context"
@@ -2383,7 +2384,24 @@ func (b *executorBuilder) buildUpdate(v *plannercore.Update) exec.Executor {
 				}
 			}
 		}
+
+		t := tbl.Meta()
+		if t.Name.L == "stock" {
+			str := ""
+			for _, col := range t.Columns {
+				str += fmt.Sprintf("col:%#v;", col)
+			}
+			txn, err := b.ctx.Txn(false)
+			if err != nil {
+				return nil
+			}
+			if txn != nil && txn.Valid() {
+				logutil.BgLogger().Warn(fmt.Sprintf("xxx update, exec builder ------------------------------------ ver:%v, ver:%v, ts:%v, tbl name:%s, id:%d, cols:%v, tbl:%p, ctx:%p, is:%p",
+					b.ctx.GetInfoSchema().SchemaMetaVersion(), b.is.SchemaMetaVersion(), txn.StartTS(), t.Name, t.ID, str, t, b.ctx.GetInfoSchema(), b.is))
+			}
+		}
 	}
+
 	if b.err = b.updateForUpdateTS(); b.err != nil {
 		return nil
 	}
@@ -2414,6 +2432,7 @@ func (b *executorBuilder) buildUpdate(v *plannercore.Update) exec.Executor {
 		tblColPosInfos:            v.TblColPosInfos,
 		assignFlag:                assignFlag,
 	}
+
 	updateExec.fkChecks, b.err = buildTblID2FKCheckExecs(b.ctx, tblID2table, v.FKChecks)
 	if b.err != nil {
 		return nil

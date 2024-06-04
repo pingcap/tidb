@@ -999,8 +999,14 @@ func newBatchPointGetPlan(
 		for _, col := range tbl.Columns {
 			str += fmt.Sprintf("col ID:%d, offset:%d, type:%v, state:%s; ", col.ID, col.Offset, col.GetType(), col.State)
 		}
-		logutil.BgLogger().Warn(fmt.Sprintf("xxx builder, point get------------------------------------ ver:%v, tbl name:%s, id:%d, cols:%v, tbl:%x",
-			ctx.GetInfoSchema().SchemaMetaVersion(), tbl.Name, tbl.ID, str, &tbl))
+		txn, err := ctx.Txn(false)
+		if err != nil {
+			return nil
+		}
+		if txn != nil && txn.Valid() {
+			logutil.BgLogger().Warn(fmt.Sprintf("xxx builder, point get------------------------------------ ver:%v, ts:%d, tbl name:%s, id:%d, cols:%v, tbl:%p, ctx:%p",
+				ctx.GetInfoSchema().SchemaMetaVersion(), txn.StartTS(), tbl.Name, tbl.ID, str, tbl, ctx.GetInfoSchema()))
+		}
 	}
 	if handleCol != nil {
 		// condition key of where is primary key
@@ -1957,6 +1963,21 @@ func buildPointUpdatePlan(ctx base.PlanContext, pointPlan base.PhysicalPlan, dbN
 	updatePlan.tblID2Table = map[int64]table.Table{
 		tbl.ID: t,
 	}
+	if tbl.Name.L == "stock" {
+		str := ""
+		for _, col := range tbl.Columns {
+			str += fmt.Sprintf("col ID:%d, offset:%d, type:%v, state:%s; ", col.ID, col.Offset, col.GetType(), col.State)
+		}
+		txn, err := ctx.Txn(false)
+		if err != nil {
+			return nil
+		}
+		if txn != nil && txn.Valid() {
+			logutil.BgLogger().Warn(fmt.Sprintf("xxx builder, point get------------------------------------ ver:%v, ver:%v, ts:%d, tbl name:%s, id:%d, cols:%v, tbl:%p, ctx:%p, is:%p",
+				is.SchemaMetaVersion(), pointPlan.SCtx().GetInfoSchema().SchemaMetaVersion(), txn.StartTS(), tbl.Name, tbl.ID, str, tbl, ctx.GetInfoSchema(), pointPlan.SCtx().GetInfoSchema()))
+		}
+	}
+
 	if tbl.GetPartitionInfo() != nil {
 		pt := t.(table.PartitionedTable)
 		updateTableList := ExtractTableList(updateStmt.TableRefs.TableRefs, true)

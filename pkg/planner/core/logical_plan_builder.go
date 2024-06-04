@@ -5828,6 +5828,24 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 	tblID2table := make(map[int64]table.Table, len(tblID2Handle))
 	for id := range tblID2Handle {
 		tblID2table[id], _ = b.is.TableByID(id)
+		if tblID2table[id].Meta().Name.L == "stock" {
+			str := ""
+			tbl := tblID2table[id].Meta()
+			for _, col := range tbl.Columns {
+				str += fmt.Sprintf("col ID:%d, offset:%d, type:%v, state:%s; ", col.ID, col.Offset, col.GetType(), col.State)
+			}
+			txn, err := b.ctx.Txn(false)
+			if err != nil {
+				return nil, err
+			}
+			if txn != nil && txn.Valid() {
+				logutil.BgLogger().Warn(fmt.Sprintf("xxx builder, update plan ------------------------------------ ver:%v, ts:%d, tbl name:%s, id:%d, cols:%v, tbl:%p, ctx:%x, is:%p",
+					b.ctx.GetInfoSchema().SchemaMetaVersion(), txn.StartTS(), tbl.Name, tbl.ID, str, tblID2table[id], b.ctx.GetInfoSchema(), b.is))
+			} else {
+				logutil.BgLogger().Warn(fmt.Sprintf("xxx builder, update plan ------------------------------------ ver:%v, tbl name:%s, id:%d, cols:%v, tbl:%p, ctx:%x, is:%p",
+					b.ctx.GetInfoSchema().SchemaMetaVersion(), tbl.Name, tbl.ID, str, tblID2table[id], b.ctx.GetInfoSchema(), b.is))
+			}
+		}
 	}
 	updt.TblColPosInfos, err = buildColumns2Handle(updt.OutputNames(), tblID2Handle, tblID2table, true)
 	if err != nil {

@@ -19,6 +19,7 @@ import (
 	"context"
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/ngaut/pools"
@@ -418,18 +419,11 @@ func (b *Builder) applyTableUpdate(m *meta.Meta, diff *model.SchemaDiff) ([]int6
 			fmt.Sprintf("(Schema ID %d)", diff.SchemaID),
 		)
 	}
-	tblInfo, err := m.GetTable(roDBInfo.ID, diff.TableID)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	tblName := ""
-	ver := ""
-	if tblInfo != nil {
-		tblName = tblInfo.Name.L
-		ver = fmt.Sprintf("%d", diff.Version)
-	}
 
-	dbInfo := b.getSchemaAndCopyIfNecessary(roDBInfo.Name.L, tblName, ver)
+	tID := strconv.Itoa(int(diff.TableID))
+	ver := strconv.Itoa(int(diff.Version))
+
+	dbInfo := b.getSchemaAndCopyIfNecessary(roDBInfo.Name.L, tID, ver)
 	oldTableID, newTableID := b.getTableIDs(diff)
 	b.updateBundleForTableUpdate(diff, newTableID, oldTableID)
 	b.copySortedTables(oldTableID, newTableID)
@@ -673,18 +667,6 @@ func applyCreateTable(b *Builder, m *meta.Meta, dbInfo *model.DBInfo, tableID in
 		)
 	}
 
-	if tblInfo.Name.L == "stock" {
-		tblName := tblInfo.Name.L
-		if tblName == "stock" {
-			str := ""
-			for _, col := range tblInfo.Columns {
-				str += fmt.Sprintf("col ID:%d, offset:%d, type:%v, state:%s; ", col.ID, col.Offset, col.GetType(), col.State)
-			}
-			logutil.BgLogger().Warn(fmt.Sprintf("xxx builder------------------------------------ ver:%v, tbl:%x, db:%x, str:%s",
-				schemaVersion, &tblInfo, &dbInfo, str))
-		}
-	}
-
 	b.updateBundleForCreateTable(tblInfo, tp)
 
 	if tp != model.ActionTruncateTablePartition {
@@ -709,6 +691,15 @@ func applyCreateTable(b *Builder, m *meta.Meta, dbInfo *model.DBInfo, tableID in
 	tbl, err := b.tableFromMeta(allocs, tblInfo)
 	if err != nil {
 		return nil, errors.Trace(err)
+	}
+
+	if tblInfo.Name.L == "stock" {
+		str := ""
+		for _, col := range tblInfo.Columns {
+			str += fmt.Sprintf("col ID:%d, offset:%d, type:%v, state:%s; ", col.ID, col.Offset, col.GetType(), col.State)
+		}
+		logutil.BgLogger().Warn(fmt.Sprintf("xxx builder, info schema------------------------------------ ver:%v, tbl:%p, db:%p, str:%s, enable v2:%v",
+			schemaVersion, tblInfo, dbInfo, str, b.enableV2))
 	}
 
 	b.infoSchema.addReferredForeignKeys(dbInfo.Name, tblInfo)
@@ -853,10 +844,10 @@ func (b *Builder) copySchemasMap(oldIS *infoSchema) {
 // NOTE: please make sure the dbName is in lowercase.
 func (b *Builder) getSchemaAndCopyIfNecessary(dbNames ...string) *model.DBInfo {
 	dbName := dbNames[0]
-	tblName := ""
+	tblID := ""
 	ver := ""
 	if len(dbNames) > 2 {
-		tblName = dbNames[1]
+		tblID = dbNames[1]
 		ver = dbNames[2]
 	}
 	if !b.dirtyDB[dbName] {
@@ -870,9 +861,9 @@ func (b *Builder) getSchemaAndCopyIfNecessary(dbNames ...string) *model.DBInfo {
 			newSchemaTables.tables[k] = v
 		}
 		b.infoSchema.addSchema(newSchemaTables)
-		if tblName == "stock" {
-			logutil.BgLogger().Warn(fmt.Sprintf("xxx builder------------------------------------ ver:%v, db:%x, db:%v",
-				ver, &newSchemaTables.dbInfo, newSchemaTables.dbInfo))
+		if tblID == "120" {
+			logutil.BgLogger().Warn(fmt.Sprintf("xxx builder, info schema------------------------------------ ver:%v, db:%p, db:%v",
+				ver, newSchemaTables.dbInfo, newSchemaTables.dbInfo))
 		}
 		return newSchemaTables.dbInfo
 	}
