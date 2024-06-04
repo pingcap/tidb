@@ -21,6 +21,8 @@ import (
 
 type columnEvaluator struct {
 	inputIdxToOutputIdxes map[int][]int
+	// mergedInputIdxToOutputIdxes is only determined in runtime when saw the input chunk.
+	mergedInputIdxToOutputIdxes map[int][]int
 }
 
 // run evaluates "Column" expressions.
@@ -28,7 +30,11 @@ type columnEvaluator struct {
 //
 //	since it will change the content of the input Chunk.
 func (e *columnEvaluator) run(ctx EvalContext, input, output *chunk.Chunk) error {
-	for inputIdx, outputIdxes := range e.inputIdxToOutputIdxes {
+	// mergedInputIdxToOutputIdxes only can be determined in runtime when we saw the input chunk structure.
+	if e.mergedInputIdxToOutputIdxes == nil {
+		e.mergeInputIdxToOutputIdxes(input, e.inputIdxToOutputIdxes)
+	}
+	for inputIdx, outputIdxes := range e.mergedInputIdxToOutputIdxes {
 		if err := output.SwapColumn(outputIdxes[0], input, inputIdx); err != nil {
 			return err
 		}
@@ -37,6 +43,93 @@ func (e *columnEvaluator) run(ctx EvalContext, input, output *chunk.Chunk) error
 		}
 	}
 	return nil
+}
+
+// mergeInputIdxToOutputIdxes try to merge two separate inputIdxToOutputIdxes item together when we find
+// there is some column-ref inside the input chunk.
+// imaging a case:
+//
+// scan:                       a(addr: ???)
+//
+//	_________________________//            \\
+//
+// proj1:          a1(addr:0xe)              a2(addr:0xe)
+//
+//	_________________//  \\                      //  \\
+//
+// proj2:   a3(addr:0xe) a4(addr:0xe)   a3(addr:0xe) a4(addr:0xe)
+//
+// when we done with proj1 we can output a chunk with two column2 inside[a1, a2], since this two
+// is derived from single column a from scan, they are already made as column ref with same addr
+// in projection1. say the addr is 0xe for both a1 and a2 here.
+//
+// when we start the projection2, we have two separate <inputIdx,[]outputIdxes> items here, like
+// <0, [0,1]> means project input chunk's 0th column twice, put them in 0th and 1st of output chunk.
+// <1, [2,3]> means project input chunk's 1st column twice, put them in 2nd and 3rd of output chunk.
+//
+// since we do have swap column logic inside projection for each <inputIdx,[]outputIdxes>, after the
+// <0, [0,1]> is applied, the input chunk a1 and a2's address will be swapped as a fake column. like
+//
+// proj1:          a1(addr:invalid)             a2(addr:invalid)
+//
+// ___________________//  \\                      //  \\
+//
+// proj2:   a3(addr:0xe) a4(addr:0xe)   a3(addr:???) a4(addr:???)
+//
+// then when we start the projection for second <1, [2,3]>, the targeted column a2 addr has already been
+// swapped as an invalid one. so swapping between a2 <-> a3 and a4 is not safe anymore.
+//
+// keypoint: we should identify the original column ref from input chunk, and merge current inputIdxToOutputIdxes
+// as soon as possible. since input chunk's 0 and 1 is column referred. the final inputIdxToOutputIdxes should
+// be like: <0, [0,1,3,4]>.
+func (e *columnEvaluator) mergeInputIdxToOutputIdxes(input *chunk.Chunk, inputIdxToOutputIdxes map[int][]int) {
+	// step1: we should detect the self column-ref inside input chunk.
+	selfRef := make(map[int][]int)
+	flag := make([]bool, input.NumCols())
+	for i := 0; i < input.NumCols(); i++ {
+		if flag[i] {
+			continue
+		}
+		for j := i; j < input.NumCols(); j++ {
+			if input.Column(i) == input.Column(j) {
+				// mark referred column to avoid successive detection.
+				flag[j] = true
+				selfRef[i] = append(selfRef[i], j)
+			}
+		}
+	}
+	// step2: leverage this self column-refs to merge inputIdxToOutputIdxes if possible.
+	rootIdxToOutputIdxes := make(map[int][]int)
+	var (
+		find bool
+		root int
+	)
+	for inputIdx, outputIdxes := range inputIdxToOutputIdxes {
+		find = false
+		root = inputIdx
+		for k, v := range selfRef {
+			for _, one := range v {
+				// if current inputIdx is in the value set of one selfRef. output the Root.
+				if inputIdx == one {
+					find = true
+					root = k
+					break
+				}
+			}
+			if find {
+				break
+			}
+		}
+		// if we found, root should be redirected to real root of inputIdx (link the real root)
+		// if we didn't, root should be the original inputIdx as it was. (inputIdx itself is a root)
+		if _, ok := rootIdxToOutputIdxes[root]; ok {
+			rootIdxToOutputIdxes[root] = append(rootIdxToOutputIdxes[root], outputIdxes...)
+		} else {
+			// if not find in any value set, it means input idx itself is a root.
+			rootIdxToOutputIdxes[root] = append(rootIdxToOutputIdxes[root], outputIdxes...)
+		}
+	}
+	e.mergedInputIdxToOutputIdxes = rootIdxToOutputIdxes
 }
 
 type defaultEvaluator struct {
