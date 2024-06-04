@@ -5,6 +5,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"runtime/debug"
@@ -164,7 +165,7 @@ func Init(cmd *cobra.Command) (err error) {
 		}
 		log.ReplaceGlobals(lg, p)
 		memory.InitMemoryHook()
-		if debug.SetMemoryLimit(-1) == 0 {
+		if debug.SetMemoryLimit(-1) == math.MaxInt64 {
 			memtotal, e := memory.MemTotal()
 			if e != nil {
 				err = e
@@ -184,6 +185,7 @@ func Init(cmd *cobra.Command) (err error) {
 			// +--------+-------------------->
 			//          ^____________________>
 			//             GOMEMLIMIT range
+			log.Info("calculate the rest memory", zap.Uint64("memtotal", memtotal), zap.Uint64("memused", memused))
 			if memleft > halfGB {
 				log.Info("set memory limit", zap.Uint64("limit", memleft))
 				debug.SetMemoryLimit(int64(memleft))
