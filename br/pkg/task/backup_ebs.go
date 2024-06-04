@@ -8,6 +8,7 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
+	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"io"
 	"os"
 	"sort"
@@ -100,7 +101,7 @@ func RunBackupEBS(c context.Context, g glue.Glue, cfg *BackupConfig) error {
 	storeCount := backupInfo.GetStoreCount()
 	if storeCount == 0 {
 		log.Info("nothing to backup")
-		return nil
+		return errors.Annotate(berrors.ErrInvalidArgument, "store count is 0")
 	}
 
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
