@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/testkit"
@@ -215,7 +214,7 @@ func TestConcurrentLoadHistWithPanicAndFail(t *testing.T) {
 		require.NoError(t, err3)
 		require.Nil(t, task3)
 
-		task, err3 := h.HandleOneTask(nil, testKit.Session().(sessionctx.Context), nil, exitCh)
+		task, err3 := h.HandleOneTask(nil, readerCtx, testKit.Session().(sqlexec.RestrictedSQLExecutor), exitCh)
 		require.NoError(t, err3)
 		require.Nil(t, task)
 
