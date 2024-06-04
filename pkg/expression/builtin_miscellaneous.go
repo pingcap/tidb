@@ -337,12 +337,12 @@ func (c *anyValueFunctionClass) getFunction(ctx BuildContext, args []Expression)
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	argTp := args[0].GetType().EvalType()
+	argTp := args[0].GetType(ctx.GetEvalCtx()).EvalType()
 	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, argTp, argTp)
 	if err != nil {
 		return nil, err
 	}
-	ft := args[0].GetType().Clone()
+	ft := args[0].GetType(ctx.GetEvalCtx()).Clone()
 	ft.AddFlag(bf.tp.GetFlag())
 	*bf.tp = *ft
 	var sig builtinFunc
@@ -1145,12 +1145,12 @@ func (c *nameConstFunctionClass) getFunction(ctx BuildContext, args []Expression
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	argTp := args[1].GetType().EvalType()
+	argTp := args[1].GetType(ctx.GetEvalCtx()).EvalType()
 	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, argTp, types.ETString, argTp)
 	if err != nil {
 		return nil, err
 	}
-	*bf.tp = *args[1].GetType()
+	*bf.tp = *args[1].GetType(ctx.GetEvalCtx())
 	var sig builtinFunc
 	switch argTp {
 	case types.ETDecimal:

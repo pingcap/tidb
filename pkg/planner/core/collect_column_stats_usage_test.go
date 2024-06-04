@@ -101,6 +101,29 @@ func checkColumnStatsUsageForStatsLoad(t *testing.T, is infoschema.InfoSchema, l
 	require.Equal(t, expected, cols, comment+", we get %v", cols)
 }
 
+func TestSkipSystemTables(t *testing.T) {
+	sql := "select * from mysql.stats_meta where a > 1"
+	res := []string{}
+	s := createPlannerSuite()
+	defer s.Close()
+	ctx := context.Background()
+	stmt, err := s.p.ParseOneStmt(sql, "", "")
+	require.NoError(t, err)
+	err = Preprocess(context.Background(), s.sctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
+	require.NoError(t, err)
+	builder, _ := NewPlanBuilder().Init(s.ctx, s.is, hint.NewQBHintHandler(nil))
+	p, err := builder.Build(ctx, stmt)
+	require.NoError(t, err)
+	lp, ok := p.(base.LogicalPlan)
+	require.True(t, ok)
+	// We check predicate columns twice, before and after logical optimization. Some logical plan patterns may occur before
+	// logical optimization while others may occur after logical optimization.
+	checkColumnStatsUsageForPredicates(t, s.is, lp, res, sql)
+	lp, err = logicalOptimize(ctx, builder.GetOptFlag(), lp)
+	require.NoError(t, err)
+	checkColumnStatsUsageForPredicates(t, s.is, lp, res, sql)
+}
+
 func TestCollectPredicateColumns(t *testing.T) {
 	tests := []struct {
 		pruneMode string

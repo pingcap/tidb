@@ -47,7 +47,11 @@ func buildKeyInfo(lp base.LogicalPlan) {
 
 // BuildKeyInfo implements base.LogicalPlan BuildKeyInfo interface.
 func (la *LogicalAggregation) BuildKeyInfo(selfSchema *expression.Schema, childSchema []*expression.Schema) {
-	if la.IsPartialModeAgg() {
+	// According to the issue#46962, we can ignore the judgment of partial agg
+	// Sometimes, the agg inside of subquery and there is a true condition in where clause, the agg function is empty.
+	// For example, ``` select xxxx from xxx WHERE TRUE = ALL ( SELECT TRUE GROUP BY 1 LIMIT 1 ) IS NULL IS NOT NULL;
+	// In this case, the agg is complete mode and we can ignore this check.
+	if len(la.AggFuncs) != 0 && la.IsPartialModeAgg() {
 		return
 	}
 	la.logicalSchemaProducer.BuildKeyInfo(selfSchema, childSchema)
@@ -67,7 +71,7 @@ func (la *LogicalAggregation) buildSelfKeyInfo(selfSchema *expression.Schema) {
 		}
 	}
 	if len(la.GroupByItems) == 0 {
-		la.maxOneRow = true
+		la.SetMaxOneRow(true)
 	}
 }
 
@@ -99,8 +103,8 @@ func (*LogicalSelection) checkMaxOneRowCond(eqColIDs map[int64]struct{}, childSc
 
 // BuildKeyInfo implements base.LogicalPlan BuildKeyInfo interface.
 func (p *LogicalSelection) BuildKeyInfo(selfSchema *expression.Schema, childSchema []*expression.Schema) {
-	p.baseLogicalPlan.BuildKeyInfo(selfSchema, childSchema)
-	if p.maxOneRow {
+	p.BaseLogicalPlan.BuildKeyInfo(selfSchema, childSchema)
+	if p.MaxOneRow() {
 		return
 	}
 	eqCols := make(map[int64]struct{}, len(childSchema[0].Columns))
@@ -118,30 +122,30 @@ func (p *LogicalSelection) BuildKeyInfo(selfSchema *expression.Schema, childSche
 			}
 		}
 	}
-	p.maxOneRow = p.checkMaxOneRowCond(eqCols, childSchema[0])
+	p.SetMaxOneRow(p.checkMaxOneRowCond(eqCols, childSchema[0]))
 }
 
 // BuildKeyInfo implements base.LogicalPlan BuildKeyInfo interface.
 func (p *LogicalLimit) BuildKeyInfo(selfSchema *expression.Schema, childSchema []*expression.Schema) {
 	p.logicalSchemaProducer.BuildKeyInfo(selfSchema, childSchema)
 	if p.Count == 1 {
-		p.maxOneRow = true
+		p.SetMaxOneRow(true)
 	}
 }
 
 // BuildKeyInfo implements base.LogicalPlan BuildKeyInfo interface.
 func (lt *LogicalTopN) BuildKeyInfo(selfSchema *expression.Schema, childSchema []*expression.Schema) {
-	lt.baseLogicalPlan.BuildKeyInfo(selfSchema, childSchema)
+	lt.BaseLogicalPlan.BuildKeyInfo(selfSchema, childSchema)
 	if lt.Count == 1 {
-		lt.maxOneRow = true
+		lt.SetMaxOneRow(true)
 	}
 }
 
 // BuildKeyInfo implements base.LogicalPlan BuildKeyInfo interface.
 func (p *LogicalTableDual) BuildKeyInfo(selfSchema *expression.Schema, childSchema []*expression.Schema) {
-	p.baseLogicalPlan.BuildKeyInfo(selfSchema, childSchema)
+	p.BaseLogicalPlan.BuildKeyInfo(selfSchema, childSchema)
 	if p.RowCount == 1 {
-		p.maxOneRow = true
+		p.SetMaxOneRow(true)
 	}
 }
 
@@ -156,7 +160,7 @@ func (p *LogicalProjection) buildSchemaByExprs(selfSchema *expression.Schema) *e
 			// If the expression is not a column, we add a column to occupy the position.
 			schema.Append(&expression.Column{
 				UniqueID: p.SCtx().GetSessionVars().AllocPlanColumnID(),
-				RetType:  expr.GetType(),
+				RetType:  expr.GetType(p.SCtx().GetExprCtx().GetEvalCtx()),
 			})
 		}
 	}
@@ -167,7 +171,7 @@ func (p *LogicalProjection) buildSchemaByExprs(selfSchema *expression.Schema) *e
 func (p *LogicalProjection) BuildKeyInfo(selfSchema *expression.Schema, childSchema []*expression.Schema) {
 	// `LogicalProjection` use schema from `Exprs` to build key info. See `buildSchemaByExprs`.
 	// So call `baseLogicalPlan.BuildKeyInfo` here to avoid duplicated building key info.
-	p.baseLogicalPlan.BuildKeyInfo(selfSchema, childSchema)
+	p.BaseLogicalPlan.BuildKeyInfo(selfSchema, childSchema)
 	selfSchema.Keys = nil
 	schema := p.buildSchemaByExprs(selfSchema)
 	for _, key := range childSchema[0].Keys {

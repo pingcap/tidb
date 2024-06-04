@@ -59,7 +59,7 @@ func (c *tidbToBinaryFunctionClass) getFunction(ctx BuildContext, args []Express
 	if err := c.verifyArgs(args); err != nil {
 		return nil, c.verifyArgs(args)
 	}
-	argTp := args[0].GetType().EvalType()
+	argTp := args[0].GetType(ctx.GetEvalCtx()).EvalType()
 	var sig builtinFunc
 	switch argTp {
 	case types.ETString:
@@ -67,7 +67,7 @@ func (c *tidbToBinaryFunctionClass) getFunction(ctx BuildContext, args []Express
 		if err != nil {
 			return nil, err
 		}
-		bf.tp = args[0].GetType().Clone()
+		bf.tp = args[0].GetType(ctx.GetEvalCtx()).Clone()
 		bf.tp.SetType(mysql.TypeVarString)
 		bf.tp.SetCharset(charset.CharsetBin)
 		bf.tp.SetCollate(charset.CollationBin)
@@ -94,7 +94,7 @@ func (b *builtinInternalToBinarySig) evalString(ctx EvalContext, row chunk.Row) 
 	if isNull || err != nil {
 		return res, isNull, err
 	}
-	tp := b.args[0].GetType()
+	tp := b.args[0].GetType(ctx)
 	enc := charset.FindEncoding(tp.GetCharset())
 	ret, err := enc.Transform(nil, hack.Slice(val), charset.OpEncode)
 	return string(ret), false, err
@@ -114,7 +114,7 @@ func (b *builtinInternalToBinarySig) vecEvalString(ctx EvalContext, input *chunk
 	if err := b.args[0].VecEvalString(ctx, input, buf); err != nil {
 		return err
 	}
-	enc := charset.FindEncoding(b.args[0].GetType().GetCharset())
+	enc := charset.FindEncoding(b.args[0].GetType(ctx).GetCharset())
 	result.ReserveString(n)
 	encodedBuf := &bytes.Buffer{}
 	for i := 0; i < n; i++ {
@@ -142,7 +142,7 @@ func (c *tidbFromBinaryFunctionClass) getFunction(ctx BuildContext, args []Expre
 	if err := c.verifyArgs(args); err != nil {
 		return nil, c.verifyArgs(args)
 	}
-	argTp := args[0].GetType().EvalType()
+	argTp := args[0].GetType(ctx.GetEvalCtx()).EvalType()
 	var sig builtinFunc
 	switch argTp {
 	case types.ETString:
@@ -336,7 +336,7 @@ func init() {
 
 // HandleBinaryLiteral wraps `expr` with to_binary or from_binary sig.
 func HandleBinaryLiteral(ctx BuildContext, expr Expression, ec *ExprCollation, funcName string, explicitCast bool) Expression {
-	argChs, dstChs := expr.GetType().GetCharset(), ec.Charset
+	argChs, dstChs := expr.GetType(ctx.GetEvalCtx()).GetCharset(), ec.Charset
 	switch convertFuncsMap[funcName] {
 	case funcPropNone:
 		return expr
@@ -352,8 +352,8 @@ func HandleBinaryLiteral(ctx BuildContext, expr Expression, ec *ExprCollation, f
 			}
 			return BuildToBinaryFunction(ctx, expr)
 		} else if argChs == charset.CharsetBin && dstChs != charset.CharsetBin &&
-			expr.GetType().GetType() != mysql.TypeNull {
-			ft := expr.GetType().Clone()
+			expr.GetType(ctx.GetEvalCtx()).GetType() != mysql.TypeNull {
+			ft := expr.GetType(ctx.GetEvalCtx()).Clone()
 			ft.SetCharset(ec.Charset)
 			ft.SetCollate(ec.Collation)
 			return BuildFromBinaryFunction(ctx, expr, ft, explicitCast)

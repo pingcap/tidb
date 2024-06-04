@@ -464,7 +464,7 @@ func (b *mppExecBuilder) buildMPPProj(proj *tipb.Projection) (*projExec, error) 
 			return nil, errors.Trace(err)
 		}
 		e.exprs = append(e.exprs, expr)
-		e.fieldTypes = append(e.fieldTypes, expr.GetType())
+		e.fieldTypes = append(e.fieldTypes, expr.GetType(b.sctx.GetExprCtx().GetEvalCtx()))
 	}
 	return e, nil
 }
