@@ -106,8 +106,13 @@ func (d *ClientDiscover) GetClient(ctx context.Context) (autoid.AutoIDAllocClien
 		}
 		opt = grpc.WithTransportCredentials(credentials.NewTLS(tlsConfig))
 	}
+<<<<<<< HEAD:meta/autoid/autoid_service.go
 	logutil.BgLogger().Info("[autoid client] connect to leader", zap.String("addr", addr))
 	grpcConn, err := grpc.Dial(addr, opt)
+=======
+	logutil.BgLogger().Info("connect to leader", zap.String("category", "autoid client"), zap.String("addr", addr))
+	grpcConn, err := grpc.NewClient(addr, opt)
+>>>>>>> 6b66e985cf5 (*: update tikv/client-go (#53698)):pkg/meta/autoid/autoid_service.go
 	if err != nil {
 		return nil, 0, errors.Trace(err)
 	}

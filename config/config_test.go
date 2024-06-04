@@ -750,6 +750,10 @@ region-cache-ttl=6000
 store-limit=0
 ttl-refreshed-txn-size=8192
 resolve-lock-lite-threshold = 16
+<<<<<<< HEAD:config/config_test.go
+=======
+copr-req-timeout = "120s"
+>>>>>>> 6b66e985cf5 (*: update tikv/client-go (#53698)):pkg/config/config_test.go
 [tikv-client.async-commit]
 keys-limit=123
 total-key-size-limit=1024
