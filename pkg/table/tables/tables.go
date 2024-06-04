@@ -265,7 +265,6 @@ func initTableCommon(t *TableCommon, tblInfo *model.TableInfo, physicalTableID i
 	_ = t.HiddenCols()
 	_ = t.WritableCols()
 	_ = t.FullHiddenColsAndVisibleCols()
-	_ = t.WritableConstraint()
 }
 
 // initTableIndices initializes the indices of the TableCommon.
