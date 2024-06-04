@@ -999,7 +999,7 @@ func checkFMSketch(tk *testkit.TestKit) {
     ('Mark', 'Morgan', 3, 3), ('Karen', 'Cole', 3, 2);`)
 	tk.MustExec("ANALYZE TABLE employees;")
 	tk.MustExec("select * from employees;")
-	tk.MustExec("alter table employees truncate   partition p0 ; ")
+	tk.MustExec("alter table employees truncate partition p0;")
 	tk.MustExec("select * from employees;")
 	tk.MustExec("analyze table employees partition p3;")
 	tk.MustExec("select * from employees;")
