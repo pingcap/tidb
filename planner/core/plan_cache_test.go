@@ -588,3 +588,14 @@ func TestIssue44830(t *testing.T) {
 	tk.MustQuery(`execute st using @a, @a, @b, @b, @b, @b`).Sort().Check(testkit.Rows("1 1", "2 2"))
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0")) // contain duplicated values in the in-list
 }
+
+func TestIndexRange(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+
+	tk.MustExec(`CREATE TABLE posts (id bigint NOT NULL AUTO_INCREMENT PRIMARY KEY)`)
+	tk.MustExec(`INSERT INTO posts (id) VALUES (1),(2),(3),(4),(5),(6),(7),(8),(9),(10),(11);`)
+	tk.MustExec(`set tidb_enable_non_prepared_plan_cache=1;`)
+	tk.MustQuery(`SELECT posts.* FROM posts WHERE (id = 1 or id = 9223372036854775808);`).Check(testkit.Rows("1"))
+}
