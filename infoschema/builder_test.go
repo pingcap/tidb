@@ -18,8 +18,8 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/pingcap/tidb/pkg/meta/autoid"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/meta/autoid"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/stretchr/testify/require"
 )
 
