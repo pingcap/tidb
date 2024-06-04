@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library")
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "cmp",
@@ -6,4 +6,11 @@ go_library(
     importpath = "github.com/pingcap/tidb/util/cmp",
     visibility = ["//visibility:public"],
     deps = ["@org_golang_x_exp//constraints"],
+)
+
+go_test(
+    name = "cmp_test",
+    srcs = ["compare_test.go"],
+    embed = [":cmp"],
+    deps = ["@com_github_stretchr_testify//require"],
 )
