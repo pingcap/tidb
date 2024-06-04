@@ -475,7 +475,7 @@ func TestAddIndexBackfillLostUpdate(t *testing.T) {
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockDMLExecutionStateBeforeImport"))
 }
 
-func TestAddIndexPreCheckFailed(t *testing.T) {
+func TestAddIndexIngestFailures(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("drop database if exists addindexlit;")
@@ -485,9 +485,18 @@ func TestAddIndexPreCheckFailed(t *testing.T) {
 
 	tk.MustExec("create table t(id int primary key, b int, k int);")
 	tk.MustExec("insert into t values (1, 1, 1);")
+
+	// Test precheck failed.
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/ingest/mockIngestCheckEnvFailed", "return"))
 	tk.MustGetErrMsg("alter table t add index idx(b);", "[ddl:8256]Check ingest environment failed: mock error")
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/ingest/mockIngestCheckEnvFailed"))
+
+	tk.MustExec(`set global tidb_enable_dist_task=on;`)
+	// Test reset engine failed.
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/ingest/mockResetEngineFailed", "return"))
+	tk.MustGetErrMsg("alter table t add index idx(b);", "[0]mock reset engine failed")
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/ingest/mockResetEngineFailed"))
+	tk.MustExec(`set global tidb_enable_dist_task=off;`)
 }
 
 func TestAddIndexImportFailed(t *testing.T) {

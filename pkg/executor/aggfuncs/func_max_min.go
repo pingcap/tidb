@@ -1081,7 +1081,7 @@ func (e *maxMin4String) AppendFinalResult2Chunk(_ AggFuncUpdateContext, pr Parti
 
 func (e *maxMin4String) UpdatePartialResult(sctx AggFuncUpdateContext, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
 	p := (*partialResult4MaxMinString)(pr)
-	tp := e.args[0].GetType()
+	tp := e.args[0].GetType(sctx)
 	for _, row := range rowsInGroup {
 		input, isNull, err := e.args[0].EvalString(sctx, row)
 		if err != nil {
@@ -1111,7 +1111,7 @@ func (e *maxMin4String) UpdatePartialResult(sctx AggFuncUpdateContext, rowsInGro
 	return memDelta, nil
 }
 
-func (e *maxMin4String) MergePartialResult(_ AggFuncUpdateContext, src, dst PartialResult) (memDelta int64, err error) {
+func (e *maxMin4String) MergePartialResult(ctx AggFuncUpdateContext, src, dst PartialResult) (memDelta int64, err error) {
 	p1, p2 := (*partialResult4MaxMinString)(src), (*partialResult4MaxMinString)(dst)
 	if p1.isNull {
 		return 0, nil
@@ -1120,7 +1120,7 @@ func (e *maxMin4String) MergePartialResult(_ AggFuncUpdateContext, src, dst Part
 		*p2 = *p1
 		return 0, nil
 	}
-	tp := e.args[0].GetType()
+	tp := e.args[0].GetType(ctx)
 	cmp := types.CompareString(p1.val, p2.val, tp.GetCollate())
 	if e.isMax && cmp > 0 || !e.isMax && cmp < 0 {
 		p2.val, p2.isNull = p1.val, false
@@ -1151,13 +1151,13 @@ func (e *maxMin4String) deserializeForSpill(helper *deserializeHelper) (PartialR
 type maxMin4StringSliding struct {
 	maxMin4String
 	windowInfo
+	collate string
 }
 
 func (e *maxMin4StringSliding) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	p, memDelta := e.maxMin4String.AllocPartialResult()
-	tp := e.args[0].GetType()
 	(*partialResult4MaxMinString)(p).deque = NewDeque(e.isMax, func(i, j any) int {
-		return types.CompareString(i.(string), j.(string), tp.GetCollate())
+		return types.CompareString(i.(string), j.(string), e.collate)
 	})
 	return p, memDelta + DefMaxMinDequeSize
 }

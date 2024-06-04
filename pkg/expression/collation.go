@@ -236,7 +236,7 @@ func deriveCollation(ctx BuildContext, funcName string, args []Expression, retTy
 		ec.Repe = ASCII
 		return ec, nil
 	case ast.In:
-		if args[0].GetType().EvalType() == types.ETString {
+		if args[0].GetType(ctx.GetEvalCtx()).EvalType() == types.ETString {
 			return CheckAndDeriveCollationFromExprs(ctx, funcName, types.ETInt, args...)
 		}
 	case ast.DateFormat, ast.TimeFormat:
@@ -244,7 +244,7 @@ func deriveCollation(ctx BuildContext, funcName string, args []Expression, retTy
 		return &ExprCollation{args[1].Coercibility(), args[1].Repertoire(), charsetInfo, collation}, nil
 	case ast.Cast:
 		// We assume all the cast are implicit.
-		ec = &ExprCollation{args[0].Coercibility(), args[0].Repertoire(), args[0].GetType().GetCharset(), args[0].GetType().GetCollate()}
+		ec = &ExprCollation{args[0].Coercibility(), args[0].Repertoire(), args[0].GetType(ctx.GetEvalCtx()).GetCharset(), args[0].GetType(ctx.GetEvalCtx()).GetCollate()}
 		// Non-string type cast to string type should use @@character_set_connection and @@collation_connection.
 		// String type cast to string type should keep its original charset and collation. It should not happen.
 		if retType == types.ETString && argTps[0] != types.ETString {
@@ -302,13 +302,13 @@ func deriveCollation(ctx BuildContext, funcName string, args []Expression, retTy
 
 // CheckAndDeriveCollationFromExprs derives collation information from these expressions, return error if derives collation error.
 func CheckAndDeriveCollationFromExprs(ctx BuildContext, funcName string, evalType types.EvalType, args ...Expression) (et *ExprCollation, err error) {
-	ec := inferCollation(args...)
+	ec := inferCollation(ctx.GetEvalCtx(), args...)
 	if ec == nil {
-		return nil, illegalMixCollationErr(funcName, args)
+		return nil, illegalMixCollationErr(ctx.GetEvalCtx(), funcName, args)
 	}
 
 	if evalType != types.ETString && ec.Coer == CoercibilityNone {
-		return nil, illegalMixCollationErr(funcName, args)
+		return nil, illegalMixCollationErr(ctx.GetEvalCtx(), funcName, args)
 	}
 
 	if evalType == types.ETString && ec.Coer == CoercibilityNumeric {
@@ -318,10 +318,10 @@ func CheckAndDeriveCollationFromExprs(ctx BuildContext, funcName string, evalTyp
 	}
 
 	if !safeConvert(ctx, ec, args...) {
-		return nil, illegalMixCollationErr(funcName, args)
+		return nil, illegalMixCollationErr(ctx.GetEvalCtx(), funcName, args)
 	}
 
-	return fixStringTypeForMaxLength(funcName, args, ec), nil
+	return fixStringTypeForMaxLength(ctx.GetEvalCtx(), funcName, args, ec), nil
 }
 
 // fixStringTypeForMaxLength changes the type of string from `VARCHAR` to `MEDIUM BLOB` or `LONG BLOB` according to the max length of
@@ -332,27 +332,27 @@ func CheckAndDeriveCollationFromExprs(ctx BuildContext, funcName string, evalTyp
 // TODO: also consider types other than `JSON`. And also think about when it'll become `MEDIUM BLOB`. This function only handles the collation, but
 // not change the type and binary flag.
 // TODO: some function will generate big values, like `repeat` and `space`. They should be handled according to the argument if it's a constant.
-func fixStringTypeForMaxLength(funcName string, args []Expression, ec *ExprCollation) *ExprCollation {
+func fixStringTypeForMaxLength(ctx EvalContext, funcName string, args []Expression, ec *ExprCollation) *ExprCollation {
 	// Be careful that the `args` is not all arguments of the `funcName`. You should check `deriveCollation` function to see which arguments are passed
 	// to the `CheckAndDeriveCollationFromExprs` function, and then passed here.
 	shouldChangeToBin := false
 
 	switch funcName {
 	case ast.Reverse, ast.Lower, ast.Upper, ast.SubstringIndex, ast.Trim, ast.Quote, ast.InsertFunc, ast.Substr, ast.Repeat, ast.Replace:
-		shouldChangeToBin = args[0].GetType().EvalType() == types.ETJson
+		shouldChangeToBin = args[0].GetType(ctx).EvalType() == types.ETJson
 	case ast.Concat, ast.ConcatWS, ast.Elt, ast.MakeSet:
 		for _, arg := range args {
-			if arg.GetType().EvalType() == types.ETJson {
+			if arg.GetType(ctx).EvalType() == types.ETJson {
 				shouldChangeToBin = true
 				break
 			}
 		}
 	case ast.ExportSet:
 		if len(args) >= 2 {
-			shouldChangeToBin = args[0].GetType().EvalType() == types.ETJson || args[1].GetType().EvalType() == types.ETJson
+			shouldChangeToBin = args[0].GetType(ctx).EvalType() == types.ETJson || args[1].GetType(ctx).EvalType() == types.ETJson
 		}
 		if len(args) >= 3 {
-			shouldChangeToBin = shouldChangeToBin || args[2].GetType().EvalType() == types.ETJson
+			shouldChangeToBin = shouldChangeToBin || args[2].GetType(ctx).EvalType() == types.ETJson
 		}
 	}
 
@@ -365,12 +365,12 @@ func fixStringTypeForMaxLength(funcName string, args []Expression, ec *ExprColla
 func safeConvert(ctx BuildContext, ec *ExprCollation, args ...Expression) bool {
 	enc := charset.FindEncodingTakeUTF8AsNoop(ec.Charset)
 	for _, arg := range args {
-		if arg.GetType().GetCharset() == ec.Charset {
+		if arg.GetType(ctx.GetEvalCtx()).GetCharset() == ec.Charset {
 			continue
 		}
 
 		// If value has ASCII repertoire, or it is binary string, just skip it.
-		if arg.Repertoire() == ASCII || types.IsBinaryStr(arg.GetType()) {
+		if arg.Repertoire() == ASCII || types.IsBinaryStr(arg.GetType(ctx.GetEvalCtx())) {
 			continue
 		}
 
@@ -386,7 +386,7 @@ func safeConvert(ctx BuildContext, ec *ExprCollation, args ...Expression) bool {
 				return false
 			}
 		} else {
-			if arg.GetType().GetCollate() != charset.CharsetBin && ec.Charset != charset.CharsetBin && !isUnicodeCollation(ec.Charset) {
+			if arg.GetType(ctx.GetEvalCtx()).GetCollate() != charset.CharsetBin && ec.Charset != charset.CharsetBin && !isUnicodeCollation(ec.Charset) {
 				return false
 			}
 		}
@@ -396,7 +396,7 @@ func safeConvert(ctx BuildContext, ec *ExprCollation, args ...Expression) bool {
 }
 
 // inferCollation infers collation, charset, coercibility and check the legitimacy.
-func inferCollation(exprs ...Expression) *ExprCollation {
+func inferCollation(ctx EvalContext, exprs ...Expression) *ExprCollation {
 	if len(exprs) == 0 {
 		// TODO: see if any function with no arguments could run here.
 		dstCharset, dstCollation := charset.GetDefaultCharsetAndCollate()
@@ -410,22 +410,22 @@ func inferCollation(exprs ...Expression) *ExprCollation {
 
 	repertoire := exprs[0].Repertoire()
 	coercibility := exprs[0].Coercibility()
-	dstCharset, dstCollation := exprs[0].GetType().GetCharset(), exprs[0].GetType().GetCollate()
-	if exprs[0].GetType().EvalType() == types.ETJson {
+	dstCharset, dstCollation := exprs[0].GetType(ctx).GetCharset(), exprs[0].GetType(ctx).GetCollate()
+	if exprs[0].GetType(ctx).EvalType() == types.ETJson {
 		dstCharset, dstCollation = charset.CharsetUTF8MB4, charset.CollationUTF8MB4
-	} else if types.IsTypeBit(exprs[0].GetType()) {
+	} else if types.IsTypeBit(exprs[0].GetType(ctx)) {
 		dstCharset, dstCollation = charset.CharsetBin, charset.CollationBin
 	}
 	unknownCS := false
 
 	// Aggregate arguments one by one, agg(a, b, c) := agg(agg(a, b), c).
 	for _, arg := range exprs[1:] {
-		argCharset, argCollation := arg.GetType().GetCharset(), arg.GetType().GetCollate()
+		argCharset, argCollation := arg.GetType(ctx).GetCharset(), arg.GetType(ctx).GetCollate()
 		// The collation of JSON is always utf8mb4_bin in builtin-func which is same as MySQL
 		// see details https://github.com/pingcap/tidb/issues/31320#issuecomment-1010599311
-		if arg.GetType().EvalType() == types.ETJson {
+		if arg.GetType(ctx).EvalType() == types.ETJson {
 			argCharset, argCollation = charset.CharsetUTF8MB4, charset.CollationUTF8MB4
-		} else if types.IsTypeBit(arg.GetType()) {
+		} else if types.IsTypeBit(arg.GetType(ctx)) {
 			argCharset, argCollation = charset.CharsetBin, charset.CollationBin
 		}
 		// If one of the arguments is binary charset, we allow it can be used with other charsets.
@@ -543,14 +543,14 @@ var (
 	coerString = []string{"EXPLICIT", "NONE", "IMPLICIT", "SYSCONST", "COERCIBLE", "NUMERIC", "IGNORABLE"}
 )
 
-func illegalMixCollationErr(funcName string, args []Expression) error {
+func illegalMixCollationErr(ctx EvalContext, funcName string, args []Expression) error {
 	funcName = GetDisplayName(funcName)
 
 	switch len(args) {
 	case 2:
-		return collate.ErrIllegalMix2Collation.GenWithStackByArgs(args[0].GetType().GetCollate(), coerString[args[0].Coercibility()], args[1].GetType().GetCollate(), coerString[args[1].Coercibility()], funcName)
+		return collate.ErrIllegalMix2Collation.GenWithStackByArgs(args[0].GetType(ctx).GetCollate(), coerString[args[0].Coercibility()], args[1].GetType(ctx).GetCollate(), coerString[args[1].Coercibility()], funcName)
 	case 3:
-		return collate.ErrIllegalMix3Collation.GenWithStackByArgs(args[0].GetType().GetCollate(), coerString[args[0].Coercibility()], args[1].GetType().GetCollate(), coerString[args[1].Coercibility()], args[2].GetType().GetCollate(), coerString[args[2].Coercibility()], funcName)
+		return collate.ErrIllegalMix3Collation.GenWithStackByArgs(args[0].GetType(ctx).GetCollate(), coerString[args[0].Coercibility()], args[1].GetType(ctx).GetCollate(), coerString[args[1].Coercibility()], args[2].GetType(ctx).GetCollate(), coerString[args[2].Coercibility()], funcName)
 	default:
 		return collate.ErrIllegalMixCollation.GenWithStackByArgs(funcName)
 	}

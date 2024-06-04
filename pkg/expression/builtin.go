@@ -89,7 +89,7 @@ func (b *baseBuiltinFunc) collator() collate.Collator {
 	return b.ctor
 }
 
-func adjustNullFlagForReturnType(funcName string, args []Expression, bf baseBuiltinFunc) {
+func adjustNullFlagForReturnType(ctx EvalContext, funcName string, args []Expression, bf baseBuiltinFunc) {
 	if functionSetForReturnTypeAlwaysNotNull.Exist(funcName) {
 		bf.tp.AddFlag(mysql.NotNullFlag)
 	} else if functionSetForReturnTypeAlwaysNullable.Exist(funcName) {
@@ -97,7 +97,7 @@ func adjustNullFlagForReturnType(funcName string, args []Expression, bf baseBuil
 	} else if functionSetForReturnTypeNotNullOnNotNull.Exist(funcName) {
 		returnNullable := false
 		for _, arg := range args {
-			if !mysql.HasNotNullFlag(arg.GetType().GetFlag()) {
+			if !mysql.HasNotNullFlag(arg.GetType(ctx).GetFlag()) {
 				returnNullable = true
 				break
 			}
@@ -131,7 +131,7 @@ func newBaseBuiltinFunc(ctx BuildContext, funcName string, args []Expression, tp
 	bf.setCollator(collate.GetCollator(ec.Collation))
 	bf.SetCoercibility(ec.Coer)
 	bf.SetRepertoire(ec.Repe)
-	adjustNullFlagForReturnType(funcName, args, bf)
+	adjustNullFlagForReturnType(ctx.GetEvalCtx(), funcName, args, bf)
 	return bf, nil
 }
 
@@ -218,7 +218,7 @@ func newBaseBuiltinFuncWithTp(ctx BuildContext, funcName string, args []Expressi
 	bf.SetCoercibility(ec.Coer)
 	bf.SetRepertoire(ec.Repe)
 	// note this function must be called after wrap cast function to the args
-	adjustNullFlagForReturnType(funcName, args, bf)
+	adjustNullFlagForReturnType(ctx.GetEvalCtx(), funcName, args, bf)
 	return bf, nil
 }
 
@@ -260,7 +260,7 @@ func newBaseBuiltinFuncWithFieldTypes(ctx BuildContext, funcName string, args []
 		// For decimal/datetime/timestamp/duration types, it is necessary to ensure that decimal are consistent with the output type,
 		// so adding a cast function here.
 		case types.ETDecimal, types.ETDatetime, types.ETTimestamp, types.ETDuration:
-			if !args[i].GetType().Equal(argTps[i]) {
+			if !args[i].GetType(ctx.GetEvalCtx()).Equal(argTps[i]) {
 				args[i] = BuildCastFunction(ctx, args[i], argTps[i])
 			}
 		}
@@ -279,7 +279,7 @@ func newBaseBuiltinFuncWithFieldTypes(ctx BuildContext, funcName string, args []
 	bf.SetCoercibility(ec.Coer)
 	bf.SetRepertoire(ec.Repe)
 	// note this function must be called after wrap cast function to the args
-	adjustNullFlagForReturnType(funcName, args, bf)
+	adjustNullFlagForReturnType(ctx.GetEvalCtx(), funcName, args, bf)
 	return bf, nil
 }
 

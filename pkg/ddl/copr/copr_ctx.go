@@ -127,7 +127,7 @@ func NewCopContextBase(
 		return nil, err
 	}
 	hdColOffsets := resolveIndicesForHandle(expColInfos, handleIDs)
-	vColOffsets, vColFts := collectVirtualColumnOffsetsAndTypes(expColInfos)
+	vColOffsets, vColFts := collectVirtualColumnOffsetsAndTypes(exprCtx.GetEvalCtx(), expColInfos)
 
 	return &CopContextBase{
 		TableInfo:                   tblInfo,
@@ -319,13 +319,13 @@ func resolveIndicesForHandle(cols []*expression.Column, handleIDs []int64) []int
 	return offsets
 }
 
-func collectVirtualColumnOffsetsAndTypes(cols []*expression.Column) ([]int, []*types.FieldType) {
+func collectVirtualColumnOffsetsAndTypes(ctx expression.EvalContext, cols []*expression.Column) ([]int, []*types.FieldType) {
 	var offsets []int
 	var fts []*types.FieldType
 	for i, col := range cols {
 		if col.VirtualExpr != nil {
 			offsets = append(offsets, i)
-			fts = append(fts, col.GetType())
+			fts = append(fts, col.GetType(ctx))
 		}
 	}
 	return offsets, fts

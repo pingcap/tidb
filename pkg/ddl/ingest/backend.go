@@ -284,9 +284,12 @@ func (bc *litBackendCtx) unsafeImportAndReset(ei *engineInfo) error {
 	}
 
 	err := resetFn(bc.ctx, ei.uuid)
+	failpoint.Inject("mockResetEngineFailed", func() {
+		err = fmt.Errorf("mock reset engine failed")
+	})
 	if err != nil {
 		logutil.Logger(bc.ctx).Error(LitErrResetEngineFail, zap.Int64("index ID", ei.indexID))
-		err1 := ei.closedEngine.Cleanup(bc.ctx)
+		err1 := closedEngine.Cleanup(bc.ctx)
 		if err1 != nil {
 			logutil.Logger(ei.ctx).Error(LitErrCleanEngineErr, zap.Error(err1),
 				zap.Int64("job ID", ei.jobID), zap.Int64("index ID", ei.indexID))

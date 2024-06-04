@@ -146,18 +146,18 @@ func (b *builtinJSONExtractSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (c *jsonExtractFunctionClass) verifyArgs(args []Expression) error {
+func (c *jsonExtractFunctionClass) verifyArgs(ctx EvalContext, args []Expression) error {
 	if err := c.baseFunctionClass.verifyArgs(args); err != nil {
 		return err
 	}
-	if evalType := args[0].GetType().EvalType(); evalType != types.ETString && evalType != types.ETJson {
+	if evalType := args[0].GetType(ctx).EvalType(); evalType != types.ETString && evalType != types.ETJson {
 		return ErrInvalidTypeForJSON.GenWithStackByArgs(0, "json_extract")
 	}
 	return nil
 }
 
 func (c *jsonExtractFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
-	if err := c.verifyArgs(args); err != nil {
+	if err := c.verifyArgs(ctx.GetEvalCtx(), args); err != nil {
 		return nil, err
 	}
 	argTps := make([]types.EvalType, 0, len(args))
@@ -213,27 +213,27 @@ func (b *builtinJSONUnquoteSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (c *jsonUnquoteFunctionClass) verifyArgs(args []Expression) error {
+func (c *jsonUnquoteFunctionClass) verifyArgs(ctx EvalContext, args []Expression) error {
 	if err := c.baseFunctionClass.verifyArgs(args); err != nil {
 		return err
 	}
-	if evalType := args[0].GetType().EvalType(); evalType != types.ETString && evalType != types.ETJson {
+	if evalType := args[0].GetType(ctx).EvalType(); evalType != types.ETString && evalType != types.ETJson {
 		return ErrIncorrectType.GenWithStackByArgs("1", "json_unquote")
 	}
 	return nil
 }
 
 func (c *jsonUnquoteFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
-	if err := c.verifyArgs(args); err != nil {
+	if err := c.verifyArgs(ctx.GetEvalCtx(), args); err != nil {
 		return nil, err
 	}
 	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETString)
 	if err != nil {
 		return nil, err
 	}
-	bf.tp.SetFlen(args[0].GetType().GetFlen())
+	bf.tp.SetFlen(args[0].GetType(ctx.GetEvalCtx()).GetFlen())
 	bf.tp.AddFlag(mysql.BinaryFlag)
-	DisableParseJSONFlag4Expr(args[0])
+	DisableParseJSONFlag4Expr(ctx.GetEvalCtx(), args[0])
 	sig := &builtinJSONUnquoteSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_JsonUnquoteSig)
 	return sig, nil
@@ -285,7 +285,7 @@ func (c *jsonSetFunctionClass) getFunction(ctx BuildContext, args []Expression) 
 		return nil, err
 	}
 	for i := 2; i < len(args); i += 2 {
-		DisableParseJSONFlag4Expr(args[i])
+		DisableParseJSONFlag4Expr(ctx.GetEvalCtx(), args[i])
 	}
 	sig := &builtinJSONSetSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_JsonSetSig)
@@ -328,7 +328,7 @@ func (c *jsonInsertFunctionClass) getFunction(ctx BuildContext, args []Expressio
 		return nil, err
 	}
 	for i := 2; i < len(args); i += 2 {
-		DisableParseJSONFlag4Expr(args[i])
+		DisableParseJSONFlag4Expr(ctx.GetEvalCtx(), args[i])
 	}
 	sig := &builtinJSONInsertSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_JsonInsertSig)
@@ -371,7 +371,7 @@ func (c *jsonReplaceFunctionClass) getFunction(ctx BuildContext, args []Expressi
 		return nil, err
 	}
 	for i := 2; i < len(args); i += 2 {
-		DisableParseJSONFlag4Expr(args[i])
+		DisableParseJSONFlag4Expr(ctx.GetEvalCtx(), args[i])
 	}
 	sig := &builtinJSONReplaceSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_JsonReplaceSig)
@@ -445,12 +445,12 @@ type jsonMergeFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *jsonMergeFunctionClass) verifyArgs(args []Expression) error {
+func (c *jsonMergeFunctionClass) verifyArgs(ctx EvalContext, args []Expression) error {
 	if err := c.baseFunctionClass.verifyArgs(args); err != nil {
 		return err
 	}
 	for i, arg := range args {
-		if evalType := arg.GetType().EvalType(); evalType != types.ETString && evalType != types.ETJson {
+		if evalType := arg.GetType(ctx).EvalType(); evalType != types.ETString && evalType != types.ETJson {
 			return ErrInvalidTypeForJSON.GenWithStackByArgs(i, "json_merge")
 		}
 	}
@@ -468,7 +468,7 @@ func (b *builtinJSONMergeSig) Clone() builtinFunc {
 }
 
 func (c *jsonMergeFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
-	if err := c.verifyArgs(args); err != nil {
+	if err := c.verifyArgs(ctx.GetEvalCtx(), args); err != nil {
 		return nil, err
 	}
 	argTps := make([]types.EvalType, 0, len(args))
@@ -527,8 +527,8 @@ func (c *jsonObjectFunctionClass) getFunction(ctx BuildContext, args []Expressio
 	}
 	argTps := make([]types.EvalType, 0, len(args))
 	for i := 0; i < len(args)-1; i += 2 {
-		if args[i].GetType().EvalType() == types.ETString && args[i].GetType().GetCharset() == charset.CharsetBin {
-			return nil, types.ErrInvalidJSONCharset.GenWithStackByArgs(args[i].GetType().GetCharset())
+		if args[i].GetType(ctx.GetEvalCtx()).EvalType() == types.ETString && args[i].GetType(ctx.GetEvalCtx()).GetCharset() == charset.CharsetBin {
+			return nil, types.ErrInvalidJSONCharset.GenWithStackByArgs(args[i].GetType(ctx.GetEvalCtx()).GetCharset())
 		}
 		argTps = append(argTps, types.ETString, types.ETJson)
 	}
@@ -537,7 +537,7 @@ func (c *jsonObjectFunctionClass) getFunction(ctx BuildContext, args []Expressio
 		return nil, err
 	}
 	for i := 1; i < len(args); i += 2 {
-		DisableParseJSONFlag4Expr(args[i])
+		DisableParseJSONFlag4Expr(ctx.GetEvalCtx(), args[i])
 	}
 	sig := &builtinJSONObjectSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_JsonObjectSig)
@@ -607,7 +607,7 @@ func (c *jsonArrayFunctionClass) getFunction(ctx BuildContext, args []Expression
 		return nil, err
 	}
 	for i := range args {
-		DisableParseJSONFlag4Expr(args[i])
+		DisableParseJSONFlag4Expr(ctx.GetEvalCtx(), args[i])
 	}
 	sig := &builtinJSONArraySig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_JsonArraySig)
@@ -647,18 +647,18 @@ func (b *builtinJSONContainsPathSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (c *jsonContainsPathFunctionClass) verifyArgs(args []Expression) error {
+func (c *jsonContainsPathFunctionClass) verifyArgs(ctx EvalContext, args []Expression) error {
 	if err := c.baseFunctionClass.verifyArgs(args); err != nil {
 		return err
 	}
-	if evalType := args[0].GetType().EvalType(); evalType != types.ETString && evalType != types.ETJson {
+	if evalType := args[0].GetType(ctx).EvalType(); evalType != types.ETString && evalType != types.ETJson {
 		return ErrInvalidTypeForJSON.GenWithStackByArgs(0, "json_contains_path")
 	}
 	return nil
 }
 
 func (c *jsonContainsPathFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
-	if err := c.verifyArgs(args); err != nil {
+	if err := c.verifyArgs(ctx.GetEvalCtx(), args); err != nil {
 		return nil, err
 	}
 	argTps := []types.EvalType{types.ETJson, types.ETString}
@@ -763,18 +763,18 @@ func (b *builtinJSONMemberOfSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (c *jsonMemberOfFunctionClass) verifyArgs(args []Expression) error {
+func (c *jsonMemberOfFunctionClass) verifyArgs(ctx EvalContext, args []Expression) error {
 	if err := c.baseFunctionClass.verifyArgs(args); err != nil {
 		return err
 	}
-	if evalType := args[1].GetType().EvalType(); evalType != types.ETJson && evalType != types.ETString {
+	if evalType := args[1].GetType(ctx).EvalType(); evalType != types.ETJson && evalType != types.ETString {
 		return types.ErrInvalidJSONData.GenWithStackByArgs(2, "member of")
 	}
 	return nil
 }
 
 func (c *jsonMemberOfFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
-	if err := c.verifyArgs(args); err != nil {
+	if err := c.verifyArgs(ctx.GetEvalCtx(), args); err != nil {
 		return nil, err
 	}
 	argTps := []types.EvalType{types.ETJson, types.ETJson}
@@ -782,7 +782,7 @@ func (c *jsonMemberOfFunctionClass) getFunction(ctx BuildContext, args []Express
 	if err != nil {
 		return nil, err
 	}
-	DisableParseJSONFlag4Expr(args[0])
+	DisableParseJSONFlag4Expr(ctx.GetEvalCtx(), args[0])
 	sig := &builtinJSONMemberOfSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_JsonMemberOfSig)
 	return sig, nil
@@ -826,21 +826,21 @@ func (b *builtinJSONContainsSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (c *jsonContainsFunctionClass) verifyArgs(args []Expression) error {
+func (c *jsonContainsFunctionClass) verifyArgs(ctx EvalContext, args []Expression) error {
 	if err := c.baseFunctionClass.verifyArgs(args); err != nil {
 		return err
 	}
-	if evalType := args[0].GetType().EvalType(); evalType != types.ETJson && evalType != types.ETString {
+	if evalType := args[0].GetType(ctx).EvalType(); evalType != types.ETJson && evalType != types.ETString {
 		return types.ErrInvalidJSONData.GenWithStackByArgs(1, "json_contains")
 	}
-	if evalType := args[1].GetType().EvalType(); evalType != types.ETJson && evalType != types.ETString {
+	if evalType := args[1].GetType(ctx).EvalType(); evalType != types.ETJson && evalType != types.ETString {
 		return types.ErrInvalidJSONData.GenWithStackByArgs(2, "json_contains")
 	}
 	return nil
 }
 
 func (c *jsonContainsFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
-	if err := c.verifyArgs(args); err != nil {
+	if err := c.verifyArgs(ctx.GetEvalCtx(), args); err != nil {
 		return nil, err
 	}
 
@@ -906,21 +906,21 @@ func (b *builtinJSONOverlapsSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (c *jsonOverlapsFunctionClass) verifyArgs(args []Expression) error {
+func (c *jsonOverlapsFunctionClass) verifyArgs(ctx EvalContext, args []Expression) error {
 	if err := c.baseFunctionClass.verifyArgs(args); err != nil {
 		return err
 	}
-	if evalType := args[0].GetType().EvalType(); evalType != types.ETJson && evalType != types.ETString {
+	if evalType := args[0].GetType(ctx).EvalType(); evalType != types.ETJson && evalType != types.ETString {
 		return types.ErrInvalidJSONData.GenWithStackByArgs(1, "json_overlaps")
 	}
-	if evalType := args[1].GetType().EvalType(); evalType != types.ETJson && evalType != types.ETString {
+	if evalType := args[1].GetType(ctx).EvalType(); evalType != types.ETJson && evalType != types.ETString {
 		return types.ErrInvalidJSONData.GenWithStackByArgs(2, "json_overlaps")
 	}
 	return nil
 }
 
 func (c *jsonOverlapsFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
-	if err := c.verifyArgs(args); err != nil {
+	if err := c.verifyArgs(ctx.GetEvalCtx(), args); err != nil {
 		return nil, err
 	}
 
@@ -958,7 +958,7 @@ func (c *jsonValidFunctionClass) getFunction(ctx BuildContext, args []Expression
 	}
 
 	var sig builtinFunc
-	argType := args[0].GetType().EvalType()
+	argType := args[0].GetType(ctx.GetEvalCtx()).EvalType()
 	switch argType {
 	case types.ETJson:
 		bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETJson)
@@ -1051,7 +1051,7 @@ type builtinJSONArrayAppendSig struct {
 	baseBuiltinFunc
 }
 
-func (c *jsonArrayAppendFunctionClass) verifyArgs(args []Expression) error {
+func (c *jsonArrayAppendFunctionClass) verifyArgs(ctx EvalContext, args []Expression) error {
 	if len(args) < 3 || (len(args)&1 != 1) {
 		return ErrIncorrectParameterCount.GenWithStackByArgs(c.funcName)
 	}
@@ -1059,7 +1059,7 @@ func (c *jsonArrayAppendFunctionClass) verifyArgs(args []Expression) error {
 }
 
 func (c *jsonArrayAppendFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
-	if err := c.verifyArgs(args); err != nil {
+	if err := c.verifyArgs(ctx.GetEvalCtx(), args); err != nil {
 		return nil, err
 	}
 	argTps := make([]types.EvalType, 0, len(args))
@@ -1072,7 +1072,7 @@ func (c *jsonArrayAppendFunctionClass) getFunction(ctx BuildContext, args []Expr
 		return nil, err
 	}
 	for i := 2; i < len(args); i += 2 {
-		DisableParseJSONFlag4Expr(args[i])
+		DisableParseJSONFlag4Expr(ctx.GetEvalCtx(), args[i])
 	}
 	sig := &builtinJSONArrayAppendSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_JsonArrayAppendSig)
@@ -1169,7 +1169,7 @@ func (c *jsonArrayInsertFunctionClass) getFunction(ctx BuildContext, args []Expr
 		return nil, err
 	}
 	for i := 2; i < len(args); i += 2 {
-		DisableParseJSONFlag4Expr(args[i])
+		DisableParseJSONFlag4Expr(ctx.GetEvalCtx(), args[i])
 	}
 	sig := &builtinJSONArrayInsertSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_JsonArrayInsertSig)
@@ -1224,12 +1224,12 @@ type jsonMergePatchFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *jsonMergePatchFunctionClass) verifyArgs(args []Expression) error {
+func (c *jsonMergePatchFunctionClass) verifyArgs(ctx EvalContext, args []Expression) error {
 	if err := c.baseFunctionClass.verifyArgs(args); err != nil {
 		return err
 	}
 	for i, arg := range args {
-		if evalType := arg.GetType().EvalType(); evalType != types.ETString && evalType != types.ETJson {
+		if evalType := arg.GetType(ctx).EvalType(); evalType != types.ETString && evalType != types.ETJson {
 			return ErrInvalidTypeForJSON.GenWithStackByArgs(i, "json_merge_patch")
 		}
 	}
@@ -1237,7 +1237,7 @@ func (c *jsonMergePatchFunctionClass) verifyArgs(args []Expression) error {
 }
 
 func (c *jsonMergePatchFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
-	if err := c.verifyArgs(args); err != nil {
+	if err := c.verifyArgs(ctx.GetEvalCtx(), args); err != nil {
 		return nil, err
 	}
 	argTps := make([]types.EvalType, 0, len(args))
@@ -1293,12 +1293,12 @@ type jsonMergePreserveFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *jsonMergePreserveFunctionClass) verifyArgs(args []Expression) error {
+func (c *jsonMergePreserveFunctionClass) verifyArgs(ctx EvalContext, args []Expression) error {
 	if err := c.baseFunctionClass.verifyArgs(args); err != nil {
 		return err
 	}
 	for i, arg := range args {
-		if evalType := arg.GetType().EvalType(); evalType != types.ETString && evalType != types.ETJson {
+		if evalType := arg.GetType(ctx).EvalType(); evalType != types.ETString && evalType != types.ETJson {
 			return ErrInvalidTypeForJSON.GenWithStackByArgs(i, "json_merge_preserve")
 		}
 	}
@@ -1306,7 +1306,7 @@ func (c *jsonMergePreserveFunctionClass) verifyArgs(args []Expression) error {
 }
 
 func (c *jsonMergePreserveFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
-	if err := c.verifyArgs(args); err != nil {
+	if err := c.verifyArgs(ctx.GetEvalCtx(), args); err != nil {
 		return nil, err
 	}
 	argTps := make([]types.EvalType, 0, len(args))
@@ -1383,27 +1383,27 @@ func (b *builtinJSONQuoteSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (c *jsonQuoteFunctionClass) verifyArgs(args []Expression) error {
+func (c *jsonQuoteFunctionClass) verifyArgs(ctx EvalContext, args []Expression) error {
 	if err := c.baseFunctionClass.verifyArgs(args); err != nil {
 		return err
 	}
-	if evalType := args[0].GetType().EvalType(); evalType != types.ETString {
+	if evalType := args[0].GetType(ctx).EvalType(); evalType != types.ETString {
 		return ErrIncorrectType.GenWithStackByArgs("1", "json_quote")
 	}
 	return nil
 }
 
 func (c *jsonQuoteFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
-	if err := c.verifyArgs(args); err != nil {
+	if err := c.verifyArgs(ctx.GetEvalCtx(), args); err != nil {
 		return nil, err
 	}
 	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETString)
 	if err != nil {
 		return nil, err
 	}
-	DisableParseJSONFlag4Expr(args[0])
+	DisableParseJSONFlag4Expr(ctx.GetEvalCtx(), args[0])
 	bf.tp.AddFlag(mysql.BinaryFlag)
-	bf.tp.SetFlen(args[0].GetType().GetFlen()*6 + 2)
+	bf.tp.SetFlen(args[0].GetType(ctx.GetEvalCtx()).GetFlen()*6 + 2)
 	sig := &builtinJSONQuoteSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_JsonQuoteSig)
 	return sig, nil
@@ -1431,18 +1431,18 @@ func (b *builtinJSONSearchSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (c *jsonSearchFunctionClass) verifyArgs(args []Expression) error {
+func (c *jsonSearchFunctionClass) verifyArgs(ctx EvalContext, args []Expression) error {
 	if err := c.baseFunctionClass.verifyArgs(args); err != nil {
 		return err
 	}
-	if evalType := args[0].GetType().EvalType(); evalType != types.ETString && evalType != types.ETJson {
+	if evalType := args[0].GetType(ctx).EvalType(); evalType != types.ETString && evalType != types.ETJson {
 		return ErrInvalidTypeForJSON.GenWithStackByArgs(0, "json_search")
 	}
 	return nil
 }
 
 func (c *jsonSearchFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
-	if err := c.verifyArgs(args); err != nil {
+	if err := c.verifyArgs(ctx.GetEvalCtx(), args); err != nil {
 		return nil, err
 	}
 	// json_doc, one_or_all, search_str[, escape_char[, path] ...])
@@ -1640,18 +1640,18 @@ type jsonKeysFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *jsonKeysFunctionClass) verifyArgs(args []Expression) error {
+func (c *jsonKeysFunctionClass) verifyArgs(ctx EvalContext, args []Expression) error {
 	if err := c.baseFunctionClass.verifyArgs(args); err != nil {
 		return err
 	}
-	if evalType := args[0].GetType().EvalType(); evalType != types.ETString && evalType != types.ETJson {
+	if evalType := args[0].GetType(ctx).EvalType(); evalType != types.ETString && evalType != types.ETJson {
 		return ErrInvalidTypeForJSON.GenWithStackByArgs(0, "json_keys")
 	}
 	return nil
 }
 
 func (c *jsonKeysFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
-	if err := c.verifyArgs(args); err != nil {
+	if err := c.verifyArgs(ctx.GetEvalCtx(), args); err != nil {
 		return nil, err
 	}
 	argTps := []types.EvalType{types.ETJson}
