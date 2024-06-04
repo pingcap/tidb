@@ -33,6 +33,7 @@ go_library(
         "//types",
         "//util",
         "//util/chunk",
+        "//util/cmp",
         "//util/codec",
         "//util/collate",
         "//util/mock",

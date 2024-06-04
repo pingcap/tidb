@@ -40,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/cmp"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"golang.org/x/exp/slices"
@@ -186,8 +187,8 @@ func collectGeneratedColumns(se *session, meta *model.TableInfo, cols []*table.C
 	}
 
 	// order the result by column offset so they match the evaluation order.
-	slices.SortFunc(genCols, func(i, j genCol) bool {
-		return cols[i.index].Offset < cols[j.index].Offset
+	slices.SortFunc(genCols, func(i, j genCol) int {
+		return cmp.Compare(cols[i.index].Offset, cols[j.index].Offset)
 	})
 	return genCols, nil
 }

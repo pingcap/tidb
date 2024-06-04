@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/cmp"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/size"
 	"golang.org/x/exp/slices"
@@ -725,8 +726,8 @@ func (col *Column) Repertoire() Repertoire {
 func SortColumns(cols []*Column) []*Column {
 	sorted := make([]*Column, len(cols))
 	copy(sorted, cols)
-	slices.SortFunc(sorted, func(i, j *Column) bool {
-		return i.UniqueID < j.UniqueID
+	slices.SortFunc(sorted, func(i, j *Column) int {
+		return cmp.Compare(i.UniqueID, j.UniqueID)
 	})
 	return sorted
 }

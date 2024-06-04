@@ -161,6 +161,7 @@ go_library(
         "//util/breakpoint",
         "//util/channel",
         "//util/chunk",
+        "//util/cmp",
         "//util/codec",
         "//util/collate",
         "//util/cteutil",

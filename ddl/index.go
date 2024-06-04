@@ -47,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/cmp"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/logutil"
 	decoder "github.com/pingcap/tidb/util/rowDecoder"
@@ -1055,7 +1056,7 @@ func RemoveDependentHiddenColumns(tblInfo *model.TableInfo, idxInfo *model.Index
 		}
 	}
 	// Sort the offset in descending order.
-	slices.SortFunc(hiddenColOffs, func(a, b int) bool { return a > b })
+	slices.SortFunc(hiddenColOffs, func(a, b int) int { return cmp.Compare(b, a) })
 	// Move all the dependent hidden columns to the end.
 	endOffset := len(tblInfo.Columns) - 1
 	for _, offset := range hiddenColOffs {

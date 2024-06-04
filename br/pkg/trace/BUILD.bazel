@@ -6,6 +6,7 @@ go_library(
     importpath = "github.com/pingcap/tidb/br/pkg/trace",
     visibility = ["//visibility:public"],
     deps = [
+        "//util/cmp",
         "@com_github_cheynewallace_tabby//:tabby",
         "@com_github_opentracing_opentracing_go//:opentracing-go",
         "@com_github_pingcap_log//:log",

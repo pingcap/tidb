@@ -325,8 +325,8 @@ func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges *kv.KeyRanges) 
 		e.memTracker = memory.NewTracker(e.id, -1)
 	}
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
-	kvRanges.SortByFunc(func(i, j kv.KeyRange) bool {
-		return bytes.Compare(i.StartKey, j.StartKey) < 0
+	kvRanges.SortByFunc(func(i, j kv.KeyRange) int {
+		return bytes.Compare(i.StartKey, j.StartKey)
 	})
 	var builder distsql.RequestBuilder
 	builder.SetWrappedKeyRanges(kvRanges).
@@ -636,8 +636,8 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, workCh chan<
 
 			// init kvReq, result and worker for this partition
 			// The key ranges should be ordered.
-			slices.SortFunc(kvRange, func(i, j kv.KeyRange) bool {
-				return bytes.Compare(i.StartKey, j.StartKey) < 0
+			slices.SortFunc(kvRange, func(i, j kv.KeyRange) int {
+				return bytes.Compare(i.StartKey, j.StartKey)
 			})
 			kvReq, err := builder.SetKeyRanges(kvRange).Build()
 			if err != nil {

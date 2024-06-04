@@ -25,6 +25,7 @@ go_library(
         "//types",
         "//util",
         "//util/chunk",
+        "//util/cmp",
         "//util/dbterror",
         "//util/hack",
         "//util/logutil",

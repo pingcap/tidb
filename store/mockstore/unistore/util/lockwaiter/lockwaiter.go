@@ -51,8 +51,13 @@ type queue struct {
 
 func (q *queue) getOldestWaiter() (*Waiter, []*Waiter) {
 	// make the waiters in start ts order
-	slices.SortFunc(q.waiters, func(i, j *Waiter) bool {
-		return i.startTS < j.startTS
+	slices.SortFunc(q.waiters, func(i, j *Waiter) int {
+		if i.startTS < j.startTS {
+			return -1
+		} else if i.startTS > j.startTS {
+			return 1
+		}
+		return 0
 	})
 	oldestWaiter := q.waiters[0]
 	remainWaiter := q.waiters[1:]

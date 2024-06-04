@@ -35,6 +35,7 @@ go_library(
         "//table/tables",
         "//types",
         "//util",
+        "//util/cmp",
         "//util/dbterror",
         "//util/deadlockhistory",
         "//util/domainutil",

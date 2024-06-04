@@ -32,6 +32,7 @@ go_library(
         "//tablecodec",
         "//types",
         "//util/chunk",
+        "//util/cmp",
         "//util/mathutil",
         "//util/topsql/stmtstats",
         "@com_github_docker_go_units//:go-units",

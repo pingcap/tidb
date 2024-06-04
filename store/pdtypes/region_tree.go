@@ -52,8 +52,8 @@ func (t *RegionTree) SetRegion(region *Region) {
 // ScanRange scans regions intersecting [start key, end key), returns at most
 // `limit` regions. limit <= 0 means no limit.
 func (t *RegionTree) ScanRange(startKey, endKey []byte, limit int) []*Region {
-	slices.SortFunc(t.Regions, func(i, j *Region) bool {
-		return bytes.Compare(i.Meta.StartKey, j.Meta.StartKey) < 0
+	slices.SortFunc(t.Regions, func(i, j *Region) int {
+		return bytes.Compare(i.Meta.StartKey, j.Meta.StartKey)
 	})
 	pivot := NewRegionInfo(&metapb.Region{StartKey: startKey, EndKey: endKey}, nil)
 	var res []*Region
