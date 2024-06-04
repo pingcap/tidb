@@ -984,7 +984,7 @@ func TestBlockCheckFMSketch(t *testing.T) {
 	checkFMSketch(tk)
 }
 
-func TestAsyncCheckFMSketch(t *testing.T) {
+func TestAsyncMergeFMSketch(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
