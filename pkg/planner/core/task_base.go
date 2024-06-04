@@ -363,7 +363,7 @@ func (t *CopTask) convertToRootTaskImpl(ctx base.PlanContext) *RootTask {
 	if con, ok := t.tablePlan.(*PhysicalTableScan); ok && t.idxMergePartPlans != nil {
 		if len(con.AccessCondition) == 0 && len(con.filterCondition) == 0 && t.idxMergeIsIntersection {
 			if con1, ok := t.idxMergePartPlans[0].(*PhysicalIndexScan); ok {
-				con1.TblHandleCols = &con.HandleCols
+				con1.TblHandleCols = con.HandleCols
 			}
 			isSingleScan = true
 		}

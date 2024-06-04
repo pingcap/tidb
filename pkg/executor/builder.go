@@ -3940,7 +3940,7 @@ func buildSingleIndexMergeReader(b *executorBuilder, v *plannercore.PhysicalInde
 		var err error
 
 		if is, ok := v.PartialPlans[i][0].(*plannercore.PhysicalIndexScan); ok {
-			tempReq, err = buildIndexReq(b.ctx, is.Index.Columns, 0, v.PartialPlans[i])
+			tempReq, err = buildIndexReq(b.ctx, is.Index.Columns, ts.TblHandleCols.NumCols(), v.PartialPlans[i])
 			descs = append(descs, is.Desc)
 			indexes = append(indexes, is.Index)
 			if is.Index.Global {
@@ -3991,7 +3991,7 @@ func buildSingleIndexMergeReader(b *executorBuilder, v *plannercore.PhysicalInde
 		dataAvgRowSize:           0.0,
 		dataReaderBuilder:        readerBuilder,
 		paging:                   paging,
-		handleCols:               *ts.TblHandleCols,
+		handleCols:               ts.TblHandleCols,
 		isCorColInPartialFilters: isCorColInPartialFilters,
 		isCorColInTableFilter:    false,
 		isCorColInPartialAccess:  isCorColInPartialAccess,

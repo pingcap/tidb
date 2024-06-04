@@ -467,9 +467,10 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 				}
 				ctx1, cancel := context.WithCancel(ctx)
 				// this error is reported in fetchHandles(), so ignore it here.
-				if e.tblPlans != nil {
-					_, _ = worker.fetchHandles(ctx1, results, exitCh, fetchCh, e.finished, e.handleCols, workID)
-				}
+				// if e.tblPlans != nil {
+				// 	_, _ = worker.fetchHandles(ctx1, results, exitCh, fetchCh, e.finished, e.handleCols, workID)
+				// }
+				_, _ = worker.fetchHandles(ctx1, results, exitCh, fetchCh, e.finished, e.handleCols, workID)
 				cancel()
 			},
 			handleWorkerPanic(ctx, e.finished, nil, fetchCh, nil, partialIndexWorkerType),
