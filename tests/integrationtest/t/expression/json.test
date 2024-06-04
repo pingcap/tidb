@@ -417,3 +417,16 @@ SELECT JSON_SCHEMA_VALID('{"properties": {"a": {"type": "number", "minimum": 5}}
 SELECT JSON_SCHEMA_VALID('{"properties": {"a": {"type": "number", "minimum": 5}}}', '{"a": 6}');
 SELECT JSON_SCHEMA_VALID('{"properties": {"a": {"pattern": "^a"}}}', '{"a": "abc"}');
 SELECT JSON_SCHEMA_VALID('{"properties": {"a": {"pattern": "^a"}}}', '{"a": "cba"}');
+
+# Test argment errors
+# https://github.com/pingcap/tidb/issues/53799
+-- error 3146
+SELECT JSON_CONTAINS(123, '');
+-- error 3146
+SELECT JSON_CONTAINS('{}', 123);
+-- error 3146
+SELECT JSON_OVERLAPS(123, '');
+-- error 3146
+SELECT JSON_OVERLAPS('{}', 123);
+-- error 3146
+SELECT 'abc' MEMBER OF(123);

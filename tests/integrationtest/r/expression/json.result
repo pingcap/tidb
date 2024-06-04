@@ -703,3 +703,13 @@ JSON_SCHEMA_VALID('{"properties": {"a": {"pattern": "^a"}}}', '{"a": "abc"}')
 SELECT JSON_SCHEMA_VALID('{"properties": {"a": {"pattern": "^a"}}}', '{"a": "cba"}');
 JSON_SCHEMA_VALID('{"properties": {"a": {"pattern": "^a"}}}', '{"a": "cba"}')
 0
+SELECT JSON_CONTAINS(123, '');
+Error 3146 (22032): Invalid data type for JSON data in argument 1 to function json_contains; a JSON string or JSON type is required.
+SELECT JSON_CONTAINS('{}', 123);
+Error 3146 (22032): Invalid data type for JSON data in argument 2 to function json_contains; a JSON string or JSON type is required.
+SELECT JSON_OVERLAPS(123, '');
+Error 3146 (22032): Invalid data type for JSON data in argument 1 to function json_overlaps; a JSON string or JSON type is required.
+SELECT JSON_OVERLAPS('{}', 123);
+Error 3146 (22032): Invalid data type for JSON data in argument 2 to function json_overlaps; a JSON string or JSON type is required.
+SELECT 'abc' MEMBER OF(123);
+Error 3146 (22032): Invalid data type for JSON data in argument 2 to function member of; a JSON string or JSON type is required.
