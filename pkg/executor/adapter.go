@@ -88,13 +88,17 @@ type processinfoSetter interface {
 
 // recordSet wraps an executor, implements sqlexec.RecordSet interface
 type recordSet struct {
-	fields     []*ast.ResultField
-	executor   exec.Executor
+	fields   []*ast.ResultField
+	executor exec.Executor
+	// `Fields` maybe call after `Close`, and executor will clear in `Close` function, so we need to store the schema in recordSet to avoid null pointer exception.
 	schema     *expression.Schema
 	stmt       *ExecStmt
 	lastErrs   []error
 	txnStartTS uint64
 	once       sync.Once
+	// finishLock is a mutex used to synchronize access to the `Next` and `Finish` function of the adapter.
+	// It ensures that only one goroutine can access to the `Next` and `Finish` function at a time, preventing race conditions.
+	// When we terminate the current SQL externally(e.g. kill query), we may use an additional goroutine to call the Finish function.
 	finishLock sync.Mutex
 }
 
