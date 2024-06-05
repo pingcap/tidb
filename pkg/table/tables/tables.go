@@ -517,7 +517,6 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx table.MutateContext
 	var checksums []uint32
 	numColsCap := len(newData) + 1 // +1 for the extra handle column that we may need to append.
 	buffer := sctx.GetSessionVars().TablesBufferPool.Update
-	// colIDs = make([]int64, 0, numColsCap)
 	if cap(buffer.ColIDs) < numColsCap {
 		buffer.ColIDs = make([]int64, 0, numColsCap)
 	} else {

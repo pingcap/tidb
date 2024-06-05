@@ -1627,9 +1627,9 @@ type SessionVars struct {
 // TablesBufferPool is a memory pool for table related memory allocation that aims to reuse memory
 // and saves allocation
 type TablesBufferPool struct {
-	Update UpdatePool
-	Add    AddPool
-	Remove RemovePool
+	Update *UpdatePool
+	Add    *AddPool
+	Remove *RemovePool
 }
 
 // RemovePool is for RemoveRecord
@@ -2174,6 +2174,11 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		vars.EnableRowLevelChecksum = true
 	}
 	vars.systems[CharacterSetConnection], vars.systems[CollationConnection] = charset.GetDefaultCharsetAndCollate()
+	vars.TablesBufferPool = TablesBufferPool{
+		Update: &UpdatePool{},
+		Add:    &AddPool{},
+		Remove: &RemovePool{},
+	}
 	return vars
 }
 
