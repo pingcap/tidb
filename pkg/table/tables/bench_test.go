@@ -18,16 +18,19 @@ import (
 	"context"
 	"testing"
 
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/types"
 	_ "github.com/pingcap/tidb/pkg/util/context"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/stretchr/testify/require"
 )
 
 func BenchmarkAddRecordInPipelinedDML(b *testing.B) {
+	logutil.InitLogger(&logutil.LogConfig{Config: log.Config{Level: "fatal"}})
 	store, dom := testkit.CreateMockStoreAndDomain(b)
 	tk := testkit.NewTestKit(b, store)
 	_, err := tk.Session().Execute(
@@ -57,6 +60,7 @@ func BenchmarkAddRecordInPipelinedDML(b *testing.B) {
 }
 
 func BenchmarkRemoveRecordInPipelinedDML(b *testing.B) {
+	logutil.InitLogger(&logutil.LogConfig{Config: log.Config{Level: "fatal"}})
 	store, dom := testkit.CreateMockStoreAndDomain(b)
 	tk := testkit.NewTestKit(b, store)
 	_, err := tk.Session().Execute(
@@ -94,6 +98,7 @@ func BenchmarkRemoveRecordInPipelinedDML(b *testing.B) {
 }
 
 func BenchmarkUpdateRecordInPipelinedDML(b *testing.B) {
+	logutil.InitLogger(&logutil.LogConfig{Config: log.Config{Level: "fatal"}})
 	store, dom := testkit.CreateMockStoreAndDomain(b)
 	tk := testkit.NewTestKit(b, store)
 	_, err := tk.Session().Execute(
