@@ -23,7 +23,17 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
+<<<<<<< HEAD
+=======
+	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/lightning/backend"
+	"github.com/pingcap/tidb/pkg/lightning/backend/external"
+	"github.com/pingcap/tidb/pkg/lightning/common"
+	"github.com/pingcap/tidb/pkg/lightning/config"
+>>>>>>> 98a0a755fbc (ddl: unify merging unique and non-unique index for multi-schema change (#53632))
 	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
@@ -31,8 +41,12 @@ import (
 
 type cloudImportExecutor struct {
 	job           *model.Job
+<<<<<<< HEAD
 	jobID         int64
 	index         *model.IndexInfo
+=======
+	indexes       []*model.IndexInfo
+>>>>>>> 98a0a755fbc (ddl: unify merging unique and non-unique index for multi-schema change (#53632))
 	ptbl          table.PhysicalTable
 	bc            ingest.BackendCtx
 	cloudStoreURI string
@@ -40,16 +54,24 @@ type cloudImportExecutor struct {
 
 func newCloudImportExecutor(
 	job *model.Job,
+<<<<<<< HEAD
 	jobID int64,
 	index *model.IndexInfo,
+=======
+	indexes []*model.IndexInfo,
+>>>>>>> 98a0a755fbc (ddl: unify merging unique and non-unique index for multi-schema change (#53632))
 	ptbl table.PhysicalTable,
 	bc ingest.BackendCtx,
 	cloudStoreURI string,
 ) (*cloudImportExecutor, error) {
 	return &cloudImportExecutor{
 		job:           job,
+<<<<<<< HEAD
 		jobID:         jobID,
 		index:         index,
+=======
+		indexes:       indexes,
+>>>>>>> 98a0a755fbc (ddl: unify merging unique and non-unique index for multi-schema change (#53632))
 		ptbl:          ptbl,
 		bc:            bc,
 		cloudStoreURI: cloudStoreURI,
@@ -77,7 +99,20 @@ func (m *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Sub
 	if local == nil {
 		return errors.Errorf("local backend not found")
 	}
+<<<<<<< HEAD
 	_, engineUUID := backend.MakeUUID(m.ptbl.Meta().Name.L, m.index.ID)
+=======
+	// TODO(lance6716): find the correct index, so "duplicate entry" error can have index name
+	currentIdx := m.indexes[0]
+
+	_, engineUUID := backend.MakeUUID(m.ptbl.Meta().Name.L, currentIdx.ID)
+
+	all := external.SortedKVMeta{}
+	for _, g := range sm.MetaGroups {
+		all.Merge(g)
+	}
+
+>>>>>>> 98a0a755fbc (ddl: unify merging unique and non-unique index for multi-schema change (#53632))
 	err = local.CloseEngine(ctx, &backend.EngineConfig{
 		External: &backend.ExternalEngineConfig{
 			StorageURI:    m.cloudStoreURI,
@@ -95,7 +130,28 @@ func (m *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Sub
 		return err
 	}
 	err = local.ImportEngine(ctx, engineUUID, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
+<<<<<<< HEAD
 	return err
+=======
+	if err == nil {
+		return nil
+	}
+
+	if len(m.indexes) == 1 {
+		return ingest.TryConvertToKeyExistsErr(err, currentIdx, m.ptbl.Meta())
+	}
+
+	// TODO(lance6716): after we can find the correct index, we can use the index
+	// name here. And fix TestGlobalSortMultiSchemaChange/ingest_dist_gs_backfill
+	tErr, ok := errors.Cause(err).(*terror.Error)
+	if !ok {
+		return err
+	}
+	if tErr.ID() != common.ErrFoundDuplicateKeys.ID() {
+		return err
+	}
+	return kv.ErrKeyExists
+>>>>>>> 98a0a755fbc (ddl: unify merging unique and non-unique index for multi-schema change (#53632))
 }
 
 func (*cloudImportExecutor) Cleanup(ctx context.Context) error {

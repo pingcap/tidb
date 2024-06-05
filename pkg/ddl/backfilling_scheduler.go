@@ -353,6 +353,32 @@ func (b *ingestBackfillScheduler) setupWorkers() error {
 	if err != nil {
 		return errors.Trace(err)
 	}
+<<<<<<< HEAD
+=======
+
+	indexIDs := make([]int64, 0, len(b.reorgInfo.elements))
+	for _, e := range b.reorgInfo.elements {
+		indexIDs = append(indexIDs, e.ID)
+	}
+	var uniques []bool
+	switch v := job.Args[0].(type) {
+	case bool:
+		uniques = []bool{v}
+	case *bool:
+		uniques = []bool{*v}
+	case []bool:
+		uniques = v
+	case *[]bool:
+		uniques = *v
+	default:
+		return errors.Errorf("unexpected argument type, got %T", job.Args[0])
+	}
+	engines, err := b.backendCtx.Register(indexIDs, uniques, job.TableName)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+>>>>>>> 98a0a755fbc (ddl: unify merging unique and non-unique index for multi-schema change (#53632))
 	b.copReqSenderPool = copReqSenderPool
 	readerCnt, writerCnt := b.expectedWorkerSize()
 	writerPool := workerpool.NewWorkerPool[IndexRecordChunk]("ingest_writer",

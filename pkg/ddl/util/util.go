@@ -26,9 +26,11 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
@@ -416,4 +418,16 @@ func IsRaftKv2(ctx context.Context, sctx sessionctx.Context) (bool, error) {
 func FolderNotEmpty(path string) bool {
 	entries, _ := os.ReadDir(path)
 	return len(entries) > 0
+}
+
+// GenKeyExistsErr builds a ErrKeyExists error.
+func GenKeyExistsErr(key, value []byte, idxInfo *model.IndexInfo, tblInfo *model.TableInfo) error {
+	indexName := fmt.Sprintf("%s.%s", tblInfo.Name.String(), idxInfo.Name.String())
+	valueStr, err := tables.GenIndexValueFromIndex(key, value, tblInfo, idxInfo)
+	if err != nil {
+		logutil.DDLLogger().Warn("decode index key value / column value failed", zap.String("index", indexName),
+			zap.String("key", hex.EncodeToString(key)), zap.String("value", hex.EncodeToString(value)), zap.Error(err))
+		return errors.Trace(kv.ErrKeyExists.FastGenByArgs(key, indexName))
+	}
+	return kv.ErrKeyExists.FastGenByArgs(strings.Join(valueStr, "-"), indexName)
 }

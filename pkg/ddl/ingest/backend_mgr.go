@@ -33,8 +33,24 @@ import (
 
 // BackendCtxMgr is used to manage the backend context.
 type BackendCtxMgr interface {
+<<<<<<< HEAD
 	CheckAvailable() (bool, error)
 	Register(ctx context.Context, unique bool, jobID int64, etcdClient *clientv3.Client, pdAddr string, resourceGroupName string) (BackendCtx, error)
+=======
+	// CheckMoreTasksAvailable checks if it can run more ingest backfill tasks.
+	CheckMoreTasksAvailable(ctx context.Context) (bool, error)
+	// Register uses jobID to identify the BackendCtx. If there's already a
+	// BackendCtx with the same jobID, it will be returned. Otherwise, a new
+	// BackendCtx will be created and returned.
+	Register(
+		ctx context.Context,
+		jobID int64,
+		hasUnique bool,
+		etcdClient *clientv3.Client,
+		pdSvcDiscovery pd.ServiceDiscovery,
+		resourceGroupName string,
+	) (BackendCtx, error)
+>>>>>>> 98a0a755fbc (ddl: unify merging unique and non-unique index for multi-schema change (#53632))
 	Unregister(jobID int64)
 	Load(jobID int64) (BackendCtx, bool)
 }
@@ -76,6 +92,7 @@ func (m *litBackendCtxMgr) CheckAvailable() (bool, error) {
 var ResignOwnerForTest = atomic.NewBool(false)
 
 // Register creates a new backend and registers it to the backend context.
+<<<<<<< HEAD
 func (m *litBackendCtxMgr) Register(ctx context.Context, unique bool, jobID int64, etcdClient *clientv3.Client, pdAddr string, resourceGroupName string) (BackendCtx, error) {
 	bc, exist := m.Load(jobID)
 	if !exist {
@@ -83,6 +100,80 @@ func (m *litBackendCtxMgr) Register(ctx context.Context, unique bool, jobID int6
 		ok := m.memRoot.CheckConsume(StructSizeBackendCtx)
 		if !ok {
 			return nil, genBackendAllocMemFailedErr(ctx, m.memRoot, jobID)
+=======
+func (m *litBackendCtxMgr) Register(
+	ctx context.Context,
+	jobID int64,
+	hasUnique bool,
+	etcdClient *clientv3.Client,
+	pdSvcDiscovery pd.ServiceDiscovery,
+	resourceGroupName string,
+) (BackendCtx, error) {
+	bc, exist := m.Load(jobID)
+	if exist {
+		return bc, nil
+	}
+
+	m.memRoot.RefreshConsumption()
+	ok := m.memRoot.CheckConsume(structSizeBackendCtx)
+	if !ok {
+		return nil, genBackendAllocMemFailedErr(ctx, m.memRoot, jobID)
+	}
+	cfg, err := genConfig(ctx, m.encodeJobSortPath(jobID), m.memRoot, hasUnique, resourceGroupName)
+	if err != nil {
+		logutil.Logger(ctx).Warn(LitWarnConfigError, zap.Int64("job ID", jobID), zap.Error(err))
+		return nil, err
+	}
+	failpoint.Inject("beforeCreateLocalBackend", func() {
+		ResignOwnerForTest.Store(true)
+	})
+	// lock backends because createLocalBackend will let lightning create the sort
+	// folder, which may cause cleanupSortPath wrongly delete the sort folder if only
+	// checking the existence of the entry in backends.
+	m.backends.mu.Lock()
+	bd, err := createLocalBackend(ctx, cfg, pdSvcDiscovery)
+	if err != nil {
+		m.backends.mu.Unlock()
+		logutil.Logger(ctx).Error(LitErrCreateBackendFail, zap.Int64("job ID", jobID), zap.Error(err))
+		return nil, err
+	}
+
+	bcCtx := newBackendContext(ctx, jobID, bd, cfg.lightning, defaultImportantVariables, m.memRoot, m.diskRoot, etcdClient)
+	m.backends.m[jobID] = bcCtx
+	m.memRoot.Consume(structSizeBackendCtx)
+	m.backends.mu.Unlock()
+
+	logutil.Logger(ctx).Info(LitInfoCreateBackend, zap.Int64("job ID", jobID),
+		zap.Int64("current memory usage", m.memRoot.CurrentUsage()),
+		zap.Int64("max memory quota", m.memRoot.MaxMemoryQuota()),
+		zap.Bool("has unique index", hasUnique))
+	return bcCtx, nil
+}
+
+func (m *litBackendCtxMgr) encodeJobSortPath(jobID int64) string {
+	return filepath.Join(m.path, encodeBackendTag(jobID))
+}
+
+// cleanupSortPath is used to clean up the temp data of the previous jobs.
+// Because we don't remove all the files after the support of checkpoint, there
+// maybe some stale files in the sort path if TiDB is killed during the backfill
+// process.
+func (m *litBackendCtxMgr) cleanupSortPath(ctx context.Context) {
+	err := os.MkdirAll(m.path, 0700)
+	if err != nil {
+		logutil.Logger(ctx).Error(LitErrCreateDirFail, zap.Error(err))
+		return
+	}
+	entries, err := os.ReadDir(m.path)
+	if err != nil {
+		logutil.Logger(ctx).Error(LitErrReadSortPath, zap.Error(err))
+		return
+	}
+	toCheckJobIDs := make(map[int64]struct{}, len(entries))
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+>>>>>>> 98a0a755fbc (ddl: unify merging unique and non-unique index for multi-schema change (#53632))
 		}
 		cfg, err := genConfig(ctx, m.memRoot, jobID, unique)
 		if err != nil {

@@ -327,8 +327,37 @@ build_lightning:
 	CGO_ENABLED=1 $(GOBUILD) $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o $(LIGHTNING_BIN) br/cmd/tidb-lightning/main.go
 
 build_lightning-ctl:
+<<<<<<< HEAD
 	CGO_ENABLED=1 $(GOBUILD) $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o $(LIGHTNING_CTL_BIN) br/cmd/tidb-lightning-ctl/main.go
+=======
+	CGO_ENABLED=1 $(GOBUILD) $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o $(LIGHTNING_CTL_BIN) ./lightning/cmd/tidb-lightning-ctl
 
+.PHONY: build_for_lightning_integration_test
+build_for_lightning_integration_test:
+	@make failpoint-enable
+	($(GOTEST) -c -cover -covermode=count \
+		-coverpkg=github.com/pingcap/tidb/lightning/...,github.com/pingcap/tidb/pkg/lightning/... \
+		-o $(LIGHTNING_BIN).test \
+		github.com/pingcap/tidb/lightning/cmd/tidb-lightning && \
+	$(GOTEST) -c -cover -covermode=count \
+		-coverpkg=github.com/pingcap/tidb/lightning/...,github.com/pingcap/tidb/pkg/lightning/... \
+		-o $(LIGHTNING_CTL_BIN).test \
+		github.com/pingcap/tidb/lightning/cmd/tidb-lightning-ctl && \
+	$(GOBUILD) $(RACE_FLAG) -o bin/fake-oauth tools/fake-oauth/main.go && \
+	$(GOBUILD) $(RACE_FLAG) -o bin/parquet_gen tools/gen-parquet/main.go \
+	) || (make failpoint-disable && exit 1)
+	@make failpoint-disable
+
+.PHONY: lightning_integration_test
+lightning_integration_test: build_lightning build_for_lightning_integration_test
+	lightning/tests/run.sh
+>>>>>>> 98a0a755fbc (ddl: unify merging unique and non-unique index for multi-schema change (#53632))
+
+.PHONY: lightning_integration_test_debug
+lightning_integration_test_debug:
+	lightning/tests/run.sh --no-tiflash
+
+.PHONY: build_for_br_integration_test
 build_for_br_integration_test:
 	@make failpoint-enable
 	($(GOTEST) -c -cover -covermode=count \

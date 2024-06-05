@@ -55,6 +55,7 @@ type engineInfo struct {
 	ctx          context.Context
 	jobID        int64
 	indexID      int64
+	unique       bool
 	openedEngine *backend.OpenedEngine
 	closedEngine *backend.ClosedEngine
 	uuid         uuid.UUID
@@ -67,12 +68,26 @@ type engineInfo struct {
 }
 
 // newEngineInfo create a new engineInfo struct.
+<<<<<<< HEAD
 func newEngineInfo(ctx context.Context, jobID, indexID int64, cfg *backend.EngineConfig,
 	en *backend.OpenedEngine, uuid uuid.UUID, wCnt int, memRoot MemRoot) *engineInfo {
+=======
+func newEngineInfo(
+	ctx context.Context,
+	jobID, indexID int64,
+	unique bool,
+	cfg *backend.EngineConfig,
+	litCfg *config.Config,
+	en *backend.OpenedEngine,
+	uuid uuid.UUID,
+	memRoot MemRoot,
+) *engineInfo {
+>>>>>>> 98a0a755fbc (ddl: unify merging unique and non-unique index for multi-schema change (#53632))
 	return &engineInfo{
 		ctx:          ctx,
 		jobID:        jobID,
 		indexID:      indexID,
+		unique:       unique,
 		cfg:          cfg,
 		openedEngine: en,
 		uuid:         uuid,

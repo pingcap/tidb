@@ -37,7 +37,12 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/copr"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	sess "github.com/pingcap/tidb/pkg/ddl/internal/session"
+<<<<<<< HEAD
 	"github.com/pingcap/tidb/pkg/disttask/framework/dispatcher"
+=======
+	"github.com/pingcap/tidb/pkg/ddl/logutil"
+	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
+>>>>>>> 98a0a755fbc (ddl: unify merging unique and non-unique index for multi-schema change (#53632))
 	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
@@ -519,6 +524,38 @@ func moveAndUpdateHiddenColumnsToPublic(tblInfo *model.TableInfo, idxInfo *model
 	}
 }
 
+func decodeAddIndexArgs(job *model.Job) (
+	uniques []bool,
+	indexNames []model.CIStr,
+	indexPartSpecifications [][]*ast.IndexPartSpecification,
+	indexOptions []*ast.IndexOption,
+	hiddenCols [][]*model.ColumnInfo,
+	globals []bool,
+	err error,
+) {
+	var (
+		unique                 bool
+		indexName              model.CIStr
+		indexPartSpecification []*ast.IndexPartSpecification
+		indexOption            *ast.IndexOption
+		hiddenCol              []*model.ColumnInfo
+		global                 bool
+	)
+	err = job.DecodeArgs(&unique, &indexName, &indexPartSpecification, &indexOption, &hiddenCol, &global)
+	if err == nil {
+		return []bool{unique},
+			[]model.CIStr{indexName},
+			[][]*ast.IndexPartSpecification{indexPartSpecification},
+			[]*ast.IndexOption{indexOption},
+			[][]*model.ColumnInfo{hiddenCol},
+			[]bool{global},
+			nil
+	}
+
+	err = job.DecodeArgs(&uniques, &indexNames, &indexPartSpecifications, &indexOptions, &hiddenCols, &globals)
+	return
+}
+
 func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK bool) (ver int64, err error) {
 	// Handle the rolling back job.
 	if job.IsRollingback() {
@@ -539,7 +576,7 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 		return ver, errors.Trace(dbterror.ErrOptOnCacheTable.GenWithStackByArgs("Create Index"))
 	}
 
-	unique := make([]bool, 1)
+	uniques := make([]bool, 1)
 	global := make([]bool, 1)
 	indexNames := make([]model.CIStr, 1)
 	indexPartSpecifications := make([][]*ast.IndexPartSpecification, 1)
@@ -550,12 +587,9 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 
 	if isPK {
 		// Notice: sqlMode and warnings is used to support non-strict mode.
-		err = job.DecodeArgs(&unique[0], &indexNames[0], &indexPartSpecifications[0], &indexOption[0], &sqlMode, &warnings, &global[0])
+		err = job.DecodeArgs(&uniques[0], &indexNames[0], &indexPartSpecifications[0], &indexOption[0], &sqlMode, &warnings, &global[0])
 	} else {
-		err = job.DecodeArgs(&unique[0], &indexNames[0], &indexPartSpecifications[0], &indexOption[0], &hiddenCols[0], &global[0])
-		if err != nil {
-			err = job.DecodeArgs(&unique, &indexNames, &indexPartSpecifications, &indexOption, &hiddenCols, &global)
-		}
+		uniques, indexNames, indexPartSpecifications, indexOption, hiddenCols, global, err = decodeAddIndexArgs(job)
 	}
 	if err != nil {
 		job.State = model.JobStateCancelled
@@ -599,7 +633,7 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 				tblInfo.Columns,
 				indexName,
 				isPK,
-				unique[i],
+				uniques[i],
 				global[i],
 				indexPartSpecifications[i],
 				indexOption[i],
@@ -959,7 +993,18 @@ func runIngestReorgJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 		//nolint:forcetypeassert
 		pdLeaderAddr = d.store.(tikv.Storage).GetRegionCache().PDClient().GetLeaderAddr()
 	}
+<<<<<<< HEAD
 	bc, err = ingest.LitBackCtxMgr.Register(ctx, allIndexInfos[0].Unique, job.ID, nil, pdLeaderAddr, job.ReorgMeta.ResourceGroupName)
+=======
+	hasUnique := false
+	for _, indexInfo := range allIndexInfos {
+		if indexInfo.Unique {
+			hasUnique = true
+			break
+		}
+	}
+	bc, err = ingest.LitBackCtxMgr.Register(ctx, job.ID, hasUnique, nil, discovery, job.ReorgMeta.ResourceGroupName)
+>>>>>>> 98a0a755fbc (ddl: unify merging unique and non-unique index for multi-schema change (#53632))
 	if err != nil {
 		ver, err = convertAddIdxJob2RollbackJob(d, t, job, tbl.Meta(), allIndexInfos, err)
 		return false, ver, errors.Trace(err)
@@ -976,6 +1021,7 @@ func runIngestReorgJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 	if !done {
 		return false, ver, nil
 	}
+<<<<<<< HEAD
 	for _, indexInfo := range allIndexInfos {
 		err = bc.FinishImport(indexInfo.ID, indexInfo.Unique, tbl)
 		if err != nil {
@@ -990,9 +1036,21 @@ func runIngestReorgJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 				if !errorIsRetryable(err, job) {
 					ver, err = convertAddIdxJob2RollbackJob(d, t, job, tbl.Meta(), allIndexInfos, err)
 				}
+=======
+
+	err = bc.FinishImport(tbl)
+	if err != nil {
+		if kv.ErrKeyExists.Equal(err) {
+			logutil.DDLLogger().Warn("import index duplicate key, convert job to rollback", zap.Stringer("job", job), zap.Error(err))
+			ver, err = convertAddIdxJob2RollbackJob(d, t, job, tbl.Meta(), allIndexInfos, err)
+		} else {
+			logutil.DDLLogger().Warn("lightning import error", zap.Error(err))
+			if !errorIsRetryable(err, job) {
+				ver, err = convertAddIdxJob2RollbackJob(d, t, job, tbl.Meta(), allIndexInfos, err)
+>>>>>>> 98a0a755fbc (ddl: unify merging unique and non-unique index for multi-schema change (#53632))
 			}
-			return false, ver, errors.Trace(err)
 		}
+		return false, ver, errors.Trace(err)
 	}
 	bc.SetDone()
 	return true, ver, nil
@@ -1010,22 +1068,6 @@ func errorIsRetryable(err error, job *model.Job) bool {
 	}
 	// For the unknown errors, we should retry.
 	return true
-}
-
-func convertToKeyExistsErr(originErr error, idxInfo *model.IndexInfo, tblInfo *model.TableInfo) error {
-	tErr, ok := errors.Cause(originErr).(*terror.Error)
-	if !ok {
-		return originErr
-	}
-	if len(tErr.Args()) != 2 {
-		return originErr
-	}
-	key, keyIsByte := tErr.Args()[0].([]byte)
-	value, valIsByte := tErr.Args()[1].([]byte)
-	if !keyIsByte || !valIsByte {
-		return originErr
-	}
-	return genKeyExistsErr(key, value, idxInfo, tblInfo)
 }
 
 func runReorgJobAndHandleErr(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
@@ -1079,10 +1121,8 @@ func runReorgJobAndHandleErr(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 			// if timeout, we should return, check for the owner and re-wait job done.
 			return false, ver, nil
 		}
-		if common.ErrFoundDuplicateKeys.Equal(err) {
-			// TODO(tangenta): get duplicate column and match index.
-			err = convertToKeyExistsErr(err, allIndexInfos[0], tbl.Meta())
-		}
+		// TODO(tangenta): get duplicate column and match index.
+		err = ingest.TryConvertToKeyExistsErr(err, allIndexInfos[0], tbl.Meta())
 		if !errorIsRetryable(err, job) {
 			logutil.BgLogger().Warn("run add index job failed, convert job to rollback", zap.String("category", "ddl"), zap.String("job", job.String()), zap.Error(err))
 			ver, err = convertAddIdxJob2RollbackJob(d, t, job, tbl.Meta(), allIndexInfos, err)
@@ -1579,6 +1619,7 @@ func (w *addIndexTxnWorker) checkHandleExists(idxInfo *model.IndexInfo, key kv.K
 	if hasBeenBackFilled {
 		return nil
 	}
+<<<<<<< HEAD
 	return genKeyExistsErr(key, value, idxInfo, tblInfo)
 }
 
@@ -1610,6 +1651,9 @@ func genKeyExistsErr(key, value []byte, idxInfo *model.IndexInfo, tblInfo *model
 		valueStr = append(valueStr, str)
 	}
 	return kv.ErrKeyExists.FastGenByArgs(strings.Join(valueStr, "-"), indexName)
+=======
+	return ddlutil.GenKeyExistsErr(key, value, idxInfo, tblInfo)
+>>>>>>> 98a0a755fbc (ddl: unify merging unique and non-unique index for multi-schema change (#53632))
 }
 
 // batchCheckUniqueKey checks the unique keys in the batch.
@@ -1870,9 +1914,6 @@ func writeOneKVToLocal(
 		failpoint.Inject("mockLocalWriterPanic", func() {
 			panic("mock panic")
 		})
-		if !index.Meta().Unique {
-			handle = nil
-		}
 		err = writer.WriteRow(ctx, key, idxVal, handle)
 		if err != nil {
 			return errors.Trace(err)

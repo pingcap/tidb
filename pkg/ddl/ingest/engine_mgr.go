@@ -24,16 +24,45 @@ import (
 	"go.uber.org/zap"
 )
 
+<<<<<<< HEAD
 // Register create a new engineInfo and register it to the backend context.
 func (bc *litBackendCtx) Register(jobID, indexID int64, schemaName, tableName string) (Engine, error) {
 	// Calculate lightning concurrency degree and set memory usage
 	// and pre-allocate memory usage for worker.
 	bc.MemRoot.RefreshConsumption()
 	ok := bc.MemRoot.CheckConsume(int64(bc.cfg.TikvImporter.LocalWriterMemCacheSize))
+=======
+// Register implements BackendCtx.
+func (bc *litBackendCtx) Register(indexIDs []int64, uniques []bool, tableName string) ([]Engine, error) {
+	ret := make([]Engine, 0, len(indexIDs))
+
+	for _, indexID := range indexIDs {
+		en, ok := bc.engines[indexID]
+		if !ok {
+			continue
+		}
+		ret = append(ret, en)
+	}
+	if l := len(ret); l > 0 {
+		if l != len(indexIDs) {
+			return nil, errors.Errorf(
+				"engines index ID number mismatch: job ID %d, required number of index IDs: %d, actual number of engines: %d",
+				bc.jobID, len(indexIDs), l,
+			)
+		}
+		return ret, nil
+	}
+
+	bc.memRoot.RefreshConsumption()
+	numIdx := int64(len(indexIDs))
+	engineCacheSize := int64(bc.cfg.TikvImporter.EngineMemCacheSize)
+	ok := bc.memRoot.CheckConsume(numIdx * (structSizeEngineInfo + engineCacheSize))
+>>>>>>> 98a0a755fbc (ddl: unify merging unique and non-unique index for multi-schema change (#53632))
 	if !ok {
 		return nil, genEngineAllocMemFailedErr(bc.ctx, bc.MemRoot, bc.jobID, indexID)
 	}
 
+<<<<<<< HEAD
 	var info string
 	en, exist := bc.Load(indexID)
 	if !exist || en.openedEngine == nil {
@@ -42,6 +71,27 @@ func (bc *litBackendCtx) Register(jobID, indexID int64, schemaName, tableName st
 			err := en.ImportAndClean()
 			if err != nil {
 				return nil, errors.Trace(err)
+=======
+	mgr := backend.MakeEngineManager(bc.backend)
+	ts := uint64(0)
+	if c := bc.checkpointMgr; c != nil {
+		ts = c.GetTS()
+	}
+	cfg := generateLocalEngineConfig(ts)
+
+	openedEngines := make(map[int64]*engineInfo, numIdx)
+
+	for i, indexID := range indexIDs {
+		openedEngine, err := mgr.OpenEngine(bc.ctx, cfg, tableName, int32(indexID))
+		if err != nil {
+			logutil.Logger(bc.ctx).Warn(LitErrCreateEngineFail,
+				zap.Int64("job ID", bc.jobID),
+				zap.Int64("index ID", indexID),
+				zap.Error(err))
+
+			for _, e := range openedEngines {
+				e.Clean()
+>>>>>>> 98a0a755fbc (ddl: unify merging unique and non-unique index for multi-schema change (#53632))
 			}
 		}
 		engineCacheSize := int64(bc.cfg.TikvImporter.EngineMemCacheSize)
@@ -58,6 +108,7 @@ func (bc *litBackendCtx) Register(jobID, indexID int64, schemaName, tableName st
 				zap.Int64("index ID", indexID), zap.Error(err))
 			return nil, errors.Trace(err)
 		}
+<<<<<<< HEAD
 		id := openedEn.GetEngineUUID()
 		en = newEngineInfo(bc.ctx, jobID, indexID, cfg, openedEn, id, 1, bc.MemRoot)
 		bc.Store(indexID, en)
@@ -70,6 +121,56 @@ func (bc *litBackendCtx) Register(jobID, indexID int64, schemaName, tableName st
 				zap.Int64("index ID", indexID),
 				zap.Int("concurrency", bc.cfg.TikvImporter.RangeConcurrency))
 			return nil, dbterror.ErrIngestFailed.FastGenByArgs("concurrency quota exceeded")
+=======
+
+		openedEngines[indexID] = newEngineInfo(
+			bc.ctx,
+			bc.jobID,
+			indexID,
+			uniques[i],
+			cfg,
+			bc.cfg,
+			openedEngine,
+			openedEngine.GetEngineUUID(),
+			bc.memRoot,
+		)
+	}
+
+	for _, indexID := range indexIDs {
+		ei := openedEngines[indexID]
+		ret = append(ret, ei)
+		bc.engines[indexID] = ei
+	}
+	bc.memRoot.Consume(numIdx * (structSizeEngineInfo + engineCacheSize))
+
+	logutil.Logger(bc.ctx).Info(LitInfoOpenEngine, zap.Int64("job ID", bc.jobID),
+		zap.Int64s("index IDs", indexIDs),
+		zap.Int64("current memory usage", bc.memRoot.CurrentUsage()),
+		zap.Int64("memory limitation", bc.memRoot.MaxMemoryQuota()))
+	return ret, nil
+}
+
+// UnregisterEngines implements BackendCtx.
+func (bc *litBackendCtx) UnregisterEngines() {
+	numIdx := int64(len(bc.engines))
+	for _, ei := range bc.engines {
+		ei.Clean()
+	}
+	bc.engines = make(map[int64]*engineInfo, 10)
+
+	engineCacheSize := int64(bc.cfg.TikvImporter.EngineMemCacheSize)
+	bc.memRoot.Release(numIdx * (structSizeEngineInfo + engineCacheSize))
+}
+
+// ImportStarted implements BackendCtx.
+func (bc *litBackendCtx) ImportStarted() bool {
+	if len(bc.engines) == 0 {
+		return false
+	}
+	for _, ei := range bc.engines {
+		if ei.openedEngine == nil {
+			return true
+>>>>>>> 98a0a755fbc (ddl: unify merging unique and non-unique index for multi-schema change (#53632))
 		}
 		en.writerCount++
 		info = LitInfoAddWriter

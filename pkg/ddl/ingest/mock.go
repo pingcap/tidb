@@ -104,9 +104,19 @@ type MockBackendCtx struct {
 }
 
 // Register implements BackendCtx.Register interface.
+<<<<<<< HEAD
 func (m *MockBackendCtx) Register(jobID, indexID int64, _, _ string) (Engine, error) {
 	logutil.BgLogger().Info("mock backend ctx register", zap.Int64("jobID", jobID), zap.Int64("indexID", indexID))
 	return &MockEngineInfo{sessCtx: m.sessCtx, mu: &m.mu}, nil
+=======
+func (m *MockBackendCtx) Register(indexIDs []int64, _ []bool, _ string) ([]Engine, error) {
+	logutil.DDLIngestLogger().Info("mock backend ctx register", zap.Int64("jobID", m.jobID), zap.Int64s("indexIDs", indexIDs))
+	ret := make([]Engine, 0, len(indexIDs))
+	for range indexIDs {
+		ret = append(ret, &MockEngineInfo{sessCtx: m.sessCtx, mu: &m.mu})
+	}
+	return ret, nil
+>>>>>>> 98a0a755fbc (ddl: unify merging unique and non-unique index for multi-schema change (#53632))
 }
 
 // Unregister implements BackendCtx.Unregister interface.
@@ -121,8 +131,13 @@ func (*MockBackendCtx) CollectRemoteDuplicateRows(indexID int64, _ table.Table) 
 }
 
 // FinishImport implements BackendCtx.FinishImport interface.
+<<<<<<< HEAD
 func (*MockBackendCtx) FinishImport(indexID int64, _ bool, _ table.Table) error {
 	logutil.BgLogger().Info("mock backend ctx finish import", zap.Int64("indexID", indexID))
+=======
+func (*MockBackendCtx) FinishImport(_ table.Table) error {
+	logutil.DDLIngestLogger().Info("mock backend ctx finish import")
+>>>>>>> 98a0a755fbc (ddl: unify merging unique and non-unique index for multi-schema change (#53632))
 	return nil
 }
 
