@@ -206,10 +206,12 @@ func (r *readIndexExecutor) buildLocalStorePipeline(
 	}
 	d := r.d
 	indexIDs := make([]int64, 0, len(r.indexes))
+	uniques := make([]bool, 0, len(r.indexes))
 	for _, index := range r.indexes {
 		indexIDs = append(indexIDs, index.ID)
+		uniques = append(uniques, index.Unique)
 	}
-	engines, err := r.bc.Register(indexIDs, r.job.TableName)
+	engines, err := r.bc.Register(indexIDs, uniques, r.job.TableName)
 	if err != nil {
 		tidblogutil.Logger(opCtx).Error("cannot register new engine",
 			zap.Error(err),
