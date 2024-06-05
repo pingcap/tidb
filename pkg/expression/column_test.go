@@ -36,10 +36,6 @@ func TestColumn(t *testing.T) {
 	require.False(t, col.IsCorrelated())
 	require.True(t, col.EqualColumn(col.Decorrelate(nil)))
 
-	marshal, err := col.MarshalJSON()
-	require.NoError(t, err)
-	require.EqualValues(t, []byte{0x22, 0x43, 0x6f, 0x6c, 0x75, 0x6d, 0x6e, 0x23, 0x31, 0x22}, marshal)
-
 	intDatum := types.NewIntDatum(1)
 	corCol := &CorrelatedColumn{Column: *col, Data: &intDatum}
 	invalidCorCol := &CorrelatedColumn{Column: Column{}}

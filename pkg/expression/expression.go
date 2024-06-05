@@ -15,7 +15,6 @@
 package expression
 
 import (
-	goJSON "encoding/json"
 	"fmt"
 
 	"github.com/pingcap/errors"
@@ -166,7 +165,6 @@ const (
 // Expression represents all scalar expression in SQL.
 type Expression interface {
 	fmt.Stringer
-	goJSON.Marshaler
 	VecExpr
 	CollationInfo
 

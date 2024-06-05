@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/intest"
+	"github.com/pingcap/tidb/pkg/util/linter/nomarshal"
 )
 
 // NewOne stands for a number 1.
@@ -114,6 +115,10 @@ func NewNullWithFieldType(fieldType *types.FieldType) *Constant {
 
 // Constant stands for a constant value.
 type Constant struct {
+	// `Constant` is marked as `NoMarshal` because it's quite complicated, and needs a special context to give a correct
+	// value
+	nomarshal.NoMarshal
+
 	Value   types.Datum
 	RetType *types.FieldType
 	// DeferredExpr holds deferred function in PlanCache cached plan.
@@ -154,11 +159,6 @@ func (c *Constant) String() string {
 		return c.DeferredExpr.String()
 	}
 	return fmt.Sprintf("%v", c.Value.GetValue())
-}
-
-// MarshalJSON implements json.Marshaler interface.
-func (c *Constant) MarshalJSON() ([]byte, error) {
-	return []byte(fmt.Sprintf("%q", c)), nil
 }
 
 // Clone implements Expression interface.
