@@ -110,6 +110,13 @@ func (m *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Sub
 	if err == nil {
 		return nil
 	}
+
+	if len(m.indexes) == 1 {
+		return ingest.TryConvertToKeyExistsErr(err, currentIdx, m.ptbl.Meta())
+	}
+
+	// TODO(lance6716): after we can find the correct index, we can use the index
+	// name here. And fix TestGlobalSortMultiSchemaChange/ingest_dist_gs_backfill
 	tErr, ok := errors.Cause(err).(*terror.Error)
 	if !ok {
 		return err
@@ -117,9 +124,6 @@ func (m *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Sub
 	if tErr.ID() != common.ErrFoundDuplicateKeys.ID() {
 		return err
 	}
-	// TODO(lance6716): after we can find the correct index, we can use the index
-	// name here. And fix TestGlobalSortMultiSchemaChange/ingest_dist_gs_backfill
-	//return ingest.TryConvertToKeyExistsErr(err, currentIdx, m.ptbl.Meta())
 	return kv.ErrKeyExists
 }
 
