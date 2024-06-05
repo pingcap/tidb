@@ -1006,7 +1006,7 @@ var defaultConf = Config{
 		TxnEntrySizeLimit:                 DefTxnEntrySizeLimit,
 		TxnTotalSizeLimit:                 DefTxnTotalSizeLimit,
 		DistinctAggPushDown:               false,
-		ProjectionPushDown:                false,
+		ProjectionPushDown:                true,
 		CommitterConcurrency:              defTiKVCfg.CommitterConcurrency,
 		MaxTxnTTL:                         defTiKVCfg.MaxTxnTTL, // 1hour
 		GOGC:                              100,
