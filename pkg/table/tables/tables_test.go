@@ -590,9 +590,6 @@ func TestAddRecordWithCtx(t *testing.T) {
 	require.Nil(t, sessiontxn.NewTxn(context.Background(), tk.Session()))
 	_, err = tk.Session().Txn(true)
 	require.NoError(t, err)
-	recordCtx := tables.NewCommonAddRecordCtx(len(tb.Cols()))
-	tables.SetAddRecordCtx(tk.Session(), recordCtx)
-	defer tables.ClearAddRecordCtx(tk.Session())
 
 	records := [][]types.Datum{types.MakeDatums(uint64(1), "abc"), types.MakeDatums(uint64(2), "abcd")}
 	for _, r := range records {

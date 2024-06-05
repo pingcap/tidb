@@ -1628,6 +1628,14 @@ type SessionVars struct {
 // and saves allocation
 type TablesBufferPool struct {
 	Update UpdatePool
+	Add    AddPool
+}
+
+// AddPool is for AddRecord
+type AddPool struct {
+	ColIDs  []int64
+	Row     []types.Datum
+	ColSize []ColSize
 }
 
 // UpdatePool is for UpdateRecord

@@ -802,27 +802,6 @@ func (c commonAddRecordKey) String() string {
 	return "_common_add_record_context_key"
 }
 
-// addRecordCtxKey is key in `sessionctx.Context` for CommonAddRecordCtx
-var addRecordCtxKey = commonAddRecordKey{}
-
-// SetAddRecordCtx set a CommonAddRecordCtx to session context
-func SetAddRecordCtx(ctx sessionctx.Context, r *CommonAddRecordCtx) {
-	ctx.SetValue(addRecordCtxKey, r)
-}
-
-// ClearAddRecordCtx remove `CommonAddRecordCtx` from session context
-func ClearAddRecordCtx(ctx sessionctx.Context) {
-	ctx.ClearValue(addRecordCtxKey)
-}
-
-// NewCommonAddRecordCtx create a context used for `AddRecord`
-func NewCommonAddRecordCtx(size int) *CommonAddRecordCtx {
-	return &CommonAddRecordCtx{
-		colIDs: make([]int64, 0, size),
-		row:    make([]types.Datum, 0, size),
-	}
-}
-
 // TryGetCommonPkColumnIds get the IDs of primary key column if the table has common handle.
 func TryGetCommonPkColumnIds(tbl *model.TableInfo) []int64 {
 	if !tbl.IsCommonHandle {
@@ -901,6 +880,7 @@ func (t *TableCommon) AddRecord(sctx table.MutateContext, r []types.Datum, opts 
 		return nil, err
 	}
 
+	// TODO: optimize the allocation (and calculation) of opt.
 	var opt table.AddRecordOpt
 	for _, fn := range opts {
 		fn.ApplyOn(&opt)
@@ -979,15 +959,19 @@ func (t *TableCommon) AddRecord(sctx table.MutateContext, r []types.Datum, opts 
 		}
 	}
 
-	var colIDs, binlogColIDs []int64
-	var row, binlogRow []types.Datum
+	var binlogColIDs []int64
+	var binlogRow []types.Datum
 	var checksums []uint32
-	if recordCtx, ok := sctx.Value(addRecordCtxKey).(*CommonAddRecordCtx); ok {
-		colIDs = recordCtx.colIDs[:0]
-		row = recordCtx.row[:0]
+	buffer := sctx.GetSessionVars().TablesBufferPool.Add
+	if cap(buffer.ColIDs) < len(r) {
+		buffer.ColIDs = make([]int64, 0, len(r))
 	} else {
-		colIDs = make([]int64, 0, len(r))
-		row = make([]types.Datum, 0, len(r))
+		buffer.ColIDs = buffer.ColIDs[:0]
+	}
+	if cap(buffer.Row) < len(r) {
+		buffer.Row = make([]types.Datum, 0, len(r))
+	} else {
+		buffer.Row = buffer.Row[:0]
 	}
 	memBuffer := txn.GetMemBuffer()
 	sh := memBuffer.Staging()
@@ -1031,8 +1015,8 @@ func (t *TableCommon) AddRecord(sctx table.MutateContext, r []types.Datum, opts 
 			} else {
 				r[col.Offset] = value
 			}
-			row = append(row, value)
-			colIDs = append(colIDs, col.ID)
+			buffer.Row = append(buffer.Row, value)
+			buffer.ColIDs = append(buffer.ColIDs, col.ID)
 			checksumData = t.appendInChangeColForChecksum(sctx, recordID, checksumData, col.ToInfo(), &r[col.DependencyColumnOffset], &value)
 			continue
 		}
@@ -1065,8 +1049,8 @@ func (t *TableCommon) AddRecord(sctx table.MutateContext, r []types.Datum, opts 
 			checksumData = t.appendNonPublicColForChecksum(sctx, recordID, checksumData, col.ToInfo(), &value)
 		}
 		if !t.canSkip(col, &value) {
-			colIDs = append(colIDs, col.ID)
-			row = append(row, value)
+			buffer.ColIDs = append(buffer.ColIDs, col.ID)
+			buffer.Row = append(buffer.Row, value)
 		}
 	}
 	// check data constraint
@@ -1075,13 +1059,12 @@ func (t *TableCommon) AddRecord(sctx table.MutateContext, r []types.Datum, opts 
 		return nil, err
 	}
 	writeBufs := sessVars.GetWriteStmtBufs()
-	adjustRowValuesBuf(writeBufs, len(row))
+	adjustRowValuesBuf(writeBufs, len(buffer.Row))
 	key := t.RecordKey(recordID)
-	logutil.BgLogger().Debug("addRecord",
-		zap.Stringer("key", key))
 	sc, rd := sessVars.StmtCtx, &sessVars.RowEncoder
 	checksums, writeBufs.RowValBuf = t.calcChecksums(sctx, recordID, checksumData, writeBufs.RowValBuf)
-	writeBufs.RowValBuf, err = tablecodec.EncodeRow(sc.TimeZone(), row, colIDs, writeBufs.RowValBuf, writeBufs.AddRowValues, rd, checksums...)
+	writeBufs.RowValBuf, err = tablecodec.EncodeRow(sc.TimeZone(), buffer.Row, buffer.ColIDs,
+		writeBufs.RowValBuf, writeBufs.AddRowValues, rd, checksums...)
 	err = sc.HandleError(err)
 	if err != nil {
 		return nil, err
@@ -1175,8 +1158,8 @@ func (t *TableCommon) AddRecord(sctx table.MutateContext, r []types.Datum, opts 
 
 	if shouldWriteBinlog(sctx.GetSessionVars(), t.meta) {
 		// For insert, TiDB and Binlog can use same row and schema.
-		binlogRow = row
-		binlogColIDs = colIDs
+		binlogRow = buffer.Row
+		binlogColIDs = buffer.ColIDs
 		err = t.addInsertBinlog(sctx, recordID, binlogRow, binlogColIDs)
 		if err != nil {
 			return nil, err
@@ -1191,15 +1174,20 @@ func (t *TableCommon) AddRecord(sctx table.MutateContext, r []types.Datum, opts 
 		sessVars.TxnCtx.InsertTTLRowsCount += 1
 	}
 
-	colSize := make([]variable.ColSize, len(t.Cols()))
+	if cap(buffer.ColSize) < len(t.Cols()) {
+		buffer.ColSize = make([]variable.ColSize, len(t.Cols()))
+	} else {
+		buffer.ColSize = buffer.ColSize[:len(t.Cols())]
+	}
+
 	for id, col := range t.Cols() {
 		size, err := codec.EstimateValueSize(sc.TypeCtx(), r[id])
 		if err != nil {
 			continue
 		}
-		colSize[id] = variable.ColSize{ColID: col.ID, Size: int64(size - 1)}
+		buffer.ColSize[id] = variable.ColSize{ColID: col.ID, Size: int64(size - 1)}
 	}
-	sessVars.TxnCtx.UpdateDeltaForTableFromColSlice(t.physicalTableID, 1, 1, colSize)
+	sessVars.TxnCtx.UpdateDeltaForTableFromColSlice(t.physicalTableID, 1, 1, buffer.ColSize)
 	return recordID, nil
 }
 
