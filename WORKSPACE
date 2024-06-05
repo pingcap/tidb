@@ -64,7 +64,11 @@ go_download_sdk(
         "https://mirrors.aliyun.com/golang/{}",
         "https://dl.google.com/go/{}",
     ],
+<<<<<<< HEAD
     version = "1.21.8",
+=======
+    version = "1.21.11",
+>>>>>>> 5086e0906ce (*: upgrade go1.21.11 (#53829))
 )
 
 go_register_toolchains(
