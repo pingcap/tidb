@@ -274,8 +274,8 @@ func TestRetry(t *testing.T) {
 
 	h := dom.StatsHandle()
 
-	neededColumns := make([]model.StatsLoadItem, 1)
-	neededColumns[0] = model.StatsLoadItem{TableItemID: model.TableItemID{TableID: tableInfo.ID, ID: tableInfo.Columns[2].ID, IsIndex: false}, FullLoad: true}
+	neededColumns := make([]model.TableItemID, 1)
+	neededColumns[0] = model.TableItemID{TableID: tableInfo.ID, ID: tableInfo.Columns[2].ID, IsIndex: false}
 	timeout := time.Nanosecond * mathutil.MaxInt
 
 	// clear statsCache
@@ -287,20 +287,20 @@ func TestRetry(t *testing.T) {
 	c, ok := stat.Columns[tableInfo.Columns[2].ID]
 	require.True(t, !ok || (c.Histogram.Len()+c.TopN.Num() == 0))
 
-	stmtCtx1 := stmtctx.NewStmtCtx()
+	stmtCtx1 := &stmtctx.StatementContext{}
 	h.SendLoadRequests(stmtCtx1, neededColumns, timeout)
-	stmtCtx2 := stmtctx.NewStmtCtx()
+	stmtCtx2 := &stmtctx.StatementContext{}
 	h.SendLoadRequests(stmtCtx2, neededColumns, timeout)
 
 	exitCh := make(chan struct{})
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/statistics/handle/syncload/mockReadStatsForOneFail", "return(true)"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/statistics/handle/mockReadStatsForOneFail", "return(true)"))
 	var (
-		task1 *types.NeededItemTask
+		task1 *handle.NeededItemTask
 		err1  error
 	)
-
-	for i := 0; i < syncload.RetryCount; i++ {
-		task1, err1 = h.HandleOneTask(testKit.Session().(sessionctx.Context), task1, exitCh)
+	readerCtx := &handle.StatsReaderContext{}
+	for i := 0; i < handle.RetryCount; i++ {
+		task1, err1 = h.HandleOneTask(task1, readerCtx, testKit.Session().(sqlexec.RestrictedSQLExecutor), exitCh)
 		require.Error(t, err1)
 		require.NotNil(t, task1)
 		select {
@@ -310,7 +310,7 @@ func TestRetry(t *testing.T) {
 		default:
 		}
 	}
-	result, err1 := h.HandleOneTask(testKit.Session().(sessionctx.Context), task1, exitCh)
+	result, err1 := h.HandleOneTask(task1, readerCtx, testKit.Session().(sqlexec.RestrictedSQLExecutor), exitCh)
 	require.NoError(t, err1)
 	require.Nil(t, result)
 	select {
@@ -319,5 +319,5 @@ func TestRetry(t *testing.T) {
 		t.Logf("task1.ResultCh should get nothing")
 		t.FailNow()
 	}
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/statistics/handle/syncload/mockReadStatsForOneFail"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/statistics/handle/mockReadStatsForOneFail"))
 }
