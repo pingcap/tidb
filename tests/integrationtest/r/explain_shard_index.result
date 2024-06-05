@@ -35,14 +35,14 @@ Projection	8000.00	root		explain_shard_index.test3.id, explain_shard_index.test3
     └─TableFullScan	10000.00	cop[tikv]	table:test3	keep order:false, stats:pseudo
 explain format=brief select * from test3 where ((a=100 and b = 100) or a = 200) and b = 300;
 id	estRows	task	access object	operator info
-Projection	0.01	root		explain_shard_index.test3.id, explain_shard_index.test3.a, explain_shard_index.test3.b
-└─TableReader	0.01	root		data:Selection
+TableReader	0.01	root		data:Projection
+└─Projection	0.01	cop[tikv]		explain_shard_index.test3.id, explain_shard_index.test3.a, explain_shard_index.test3.b
   └─Selection	0.01	cop[tikv]		eq(explain_shard_index.test3.b, 300), or(0, eq(explain_shard_index.test3.a, 200))
     └─TableFullScan	10000.00	cop[tikv]	table:test3	keep order:false, stats:pseudo
 explain format=brief select * from test3 where a = b;
 id	estRows	task	access object	operator info
-Projection	8000.00	root		explain_shard_index.test3.id, explain_shard_index.test3.a, explain_shard_index.test3.b
-└─TableReader	8000.00	root		data:Selection
+TableReader	8000.00	root		data:Projection
+└─Projection	8000.00	cop[tikv]		explain_shard_index.test3.id, explain_shard_index.test3.a, explain_shard_index.test3.b
   └─Selection	8000.00	cop[tikv]		eq(explain_shard_index.test3.a, explain_shard_index.test3.b)
     └─TableFullScan	10000.00	cop[tikv]	table:test3	keep order:false, stats:pseudo
 explain format=brief select * from test3 where a = b and b = 100;
