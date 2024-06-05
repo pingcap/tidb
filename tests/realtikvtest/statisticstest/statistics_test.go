@@ -186,3 +186,38 @@ func TestNewCollationStatsWithPrefixIndex(t *testing.T) {
 		"1 3 15 0 2 0",
 	))
 }
+
+func TestBlockMergeFMSketch(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	checkFMSketch(tk)
+}
+
+func checkFMSketch(tk *testkit.TestKit) {
+	tk.MustExec(`CREATE TABLE employees  (id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,fname VARCHAR(25) NOT NULL,lname VARCHAR(25) NOT NULL,store_id INT NOT NULL,department_id INT NOT NULL
+) PARTITION BY RANGE(id)  (
+    PARTITION p0 VALUES LESS THAN (5),
+    PARTITION p1 VALUES LESS THAN (10),
+    PARTITION p2 VALUES LESS THAN (15),
+    PARTITION p3 VALUES LESS THAN MAXVALUE
+);`)
+	tk.MustExec(`INSERT INTO employees(FNAME,LNAME,STORE_ID,DEPARTMENT_ID) VALUES
+    ('Bob', 'Taylor', 3, 2), ('Frank', 'Williams', 1, 2),
+    ('Ellen', 'Johnson', 3, 4), ('Jim', 'Smith', 2, 4),
+    ('Mary', 'Jones', 1, 1), ('Linda', 'Black', 2, 3),
+    ('Ed', 'Jones', 2, 1), ('June', 'Wilson', 3, 1),
+    ('Andy', 'Smith', 1, 3), ('Lou', 'Waters', 2, 4),
+    ('Jill', 'Stone', 1, 4), ('Roger', 'White', 3, 2),
+    ('Howard', 'Andrews', 1, 2), ('Fred', 'Goldberg', 3, 3),
+    ('Barbara', 'Brown', 2, 3), ('Alice', 'Rogers', 2, 2),
+    ('Mark', 'Morgan', 3, 3), ('Karen', 'Cole', 3, 2);`)
+	tk.MustExec("ANALYZE TABLE employees;")
+	tk.MustExec("select * from employees;")
+	tk.MustExec("alter table employees truncate partition p0;")
+	tk.MustExec("select * from employees;")
+	tk.MustExec("analyze table employees partition p3;")
+	tk.MustExec("select * from employees;")
+	tk.MustQuery(`SHOW STATS_HISTOGRAMS WHERE TABLE_NAME='employees' and partition_name="global"  and column_name="id"`).CheckAt([]int{6}, [][]any{
+		{"14"}})
+}
