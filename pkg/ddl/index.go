@@ -1841,9 +1841,6 @@ func writeOneKVToLocal(
 		failpoint.Inject("mockLocalWriterPanic", func() {
 			panic("mock panic")
 		})
-		if !index.Meta().Unique {
-			handle = nil
-		}
 		err = writer.WriteRow(ctx, key, idxVal, handle)
 		if err != nil {
 			return errors.Trace(err)
