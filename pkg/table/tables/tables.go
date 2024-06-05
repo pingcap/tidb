@@ -536,7 +536,11 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx table.MutateContext
 	}
 	checksumData := t.initChecksumData(sctx, h)
 	needChecksum := len(checksumData) > 0
-	rowToCheck := make([]types.Datum, 0, numColsCap)
+	if cap(buffer.RowToCheck) < numColsCap {
+		buffer.RowToCheck = make([]types.Datum, 0, numColsCap)
+	} else {
+		buffer.RowToCheck = buffer.RowToCheck[:0]
+	}
 
 	for _, col := range t.Columns {
 		var value types.Datum
@@ -595,7 +599,7 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx table.MutateContext
 			buffer.ColIDs = append(buffer.ColIDs, col.ID)
 			buffer.Row = append(buffer.Row, value)
 		}
-		rowToCheck = append(rowToCheck, value)
+		buffer.RowToCheck = append(buffer.RowToCheck, value)
 		if shouldWriteBinlog(sctx.GetSessionVars(), t.meta) && !t.canSkipUpdateBinlog(col, value) {
 			binlogColIDs = append(binlogColIDs, col.ID)
 			binlogOldRow = append(binlogOldRow, oldData[col.Offset])
@@ -603,7 +607,7 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx table.MutateContext
 		}
 	}
 	// check data constraint
-	err = t.CheckRowConstraint(sctx, rowToCheck)
+	err = t.CheckRowConstraint(sctx, buffer.RowToCheck)
 	if err != nil {
 		return err
 	}
@@ -683,7 +687,11 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx table.MutateContext
 			return err
 		}
 	}
-	colSize := make([]variable.ColSize, len(t.Cols()))
+	if cap(buffer.ColSize) < len(t.Cols()) {
+		buffer.ColSize = make([]variable.ColSize, len(t.Cols()))
+	} else {
+		buffer.ColSize = buffer.ColSize[:len(t.Cols())]
+	}
 	for id, col := range t.Cols() {
 		size, err := codec.EstimateValueSize(sc.TypeCtx(), newData[id])
 		if err != nil {
@@ -695,9 +703,9 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx table.MutateContext
 			continue
 		}
 		oldLen := size - 1
-		colSize[id] = variable.ColSize{ColID: col.ID, Size: int64(newLen - oldLen)}
+		buffer.ColSize[id] = variable.ColSize{ColID: col.ID, Size: int64(newLen - oldLen)}
 	}
-	sessVars.TxnCtx.UpdateDeltaForTableFromColSlice(t.physicalTableID, 0, 1, colSize)
+	sessVars.TxnCtx.UpdateDeltaForTableFromColSlice(t.physicalTableID, 0, 1, buffer.ColSize)
 	return nil
 }
 
