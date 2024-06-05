@@ -352,9 +352,8 @@ func (d *ddl) startLocalWorkerLoop() {
 }
 
 func (s *jobScheduler) startDispatchLoopWithRetry() {
-	const maxRetry = 10
 	const retryInterval = 3 * time.Second
-	for i := 0; i < maxRetry; i++ {
+	for {
 		err := s.startDispatchLoop()
 		if err == nil {
 			return
@@ -364,7 +363,6 @@ func (s *jobScheduler) startDispatchLoopWithRetry() {
 			return
 		}
 		logutil.DDLLogger().Warn("startDispatchLoop failed, retrying",
-			zap.Int("retryCnt", i),
 			zap.Error(err))
 
 		select {
