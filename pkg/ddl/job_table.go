@@ -161,7 +161,7 @@ func (s *jobScheduler) start() {
 	reorgCnt := min(max(runtime.GOMAXPROCS(0)/4, 1), reorgWorkerCnt)
 	s.reorgWorkerPool = newDDLWorkerPool(pools.NewResourcePool(workerFactory(addIdxWorker), reorgCnt, reorgCnt, 0), jobTypeReorg)
 	s.generalDDLWorkerPool = newDDLWorkerPool(pools.NewResourcePool(workerFactory(generalWorker), generalWorkerCnt, generalWorkerCnt, 0), jobTypeGeneral)
-	s.wg.RunWithLog(s.startDispatchLoop)
+	s.wg.RunWithLog(s.startDispatchLoopWithRetry)
 	s.wg.RunWithLog(func() {
 		s.schemaSyncer.SyncJobSchemaVerLoop(s.schCtx)
 	})
@@ -351,11 +351,35 @@ func (d *ddl) startLocalWorkerLoop() {
 	}
 }
 
-func (s *jobScheduler) startDispatchLoop() {
+func (s *jobScheduler) startDispatchLoopWithRetry() {
+	const maxRetry = 10
+	const retryInterval = 3 * time.Second
+	for i := 0; i < maxRetry; i++ {
+		err := s.startDispatchLoop()
+		if err == nil {
+			return
+		}
+		if err == context.Canceled {
+			logutil.DDLLogger().Info("startDispatchLoop quit due to context canceled")
+			return
+		}
+		logutil.DDLLogger().Warn("startDispatchLoop failed, retrying",
+			zap.Int("retryCnt", i),
+			zap.Error(err))
+
+		select {
+		case <-s.schCtx.Done():
+			logutil.DDLLogger().Info("startDispatchLoop quit due to context done")
+			return
+		case <-time.After(retryInterval):
+		}
+	}
+}
+
+func (s *jobScheduler) startDispatchLoop() error {
 	sessCtx, err := s.sessPool.Get()
 	if err != nil {
-		logutil.DDLLogger().Warn("dispatch loop get session failed, quit", zap.Error(err))
-		return
+		return errors.Trace(err)
 	}
 	defer s.sessPool.Put(sessCtx)
 	se := sess.NewSession(sessCtx)
@@ -364,16 +388,15 @@ func (s *jobScheduler) startDispatchLoop() {
 		notifyDDLJobByEtcdCh = s.etcdCli.Watch(s.schCtx, addingDDLJobNotifyKey)
 	}
 	if err := s.checkAndUpdateClusterState(true); err != nil {
-		logutil.DDLLogger().Warn("dispatch loop get cluster state failed, quit", zap.Error(err))
-		return
+		return errors.Trace(err)
 	}
 	ticker := time.NewTicker(dispatchLoopWaitingDuration)
 	defer ticker.Stop()
 	// TODO move waitSchemaSyncedController out of ddlCtx.
 	s.clearOnceMap()
 	for {
-		if s.schCtx.Err() != nil {
-			return
+		if err := s.schCtx.Err(); err != nil {
+			return err
 		}
 		failpoint.Inject("ownerResignAfterDispatchLoopCheck", func() {
 			if ingest.ResignOwnerForTest.Load() {
@@ -395,7 +418,7 @@ func (s *jobScheduler) startDispatchLoop() {
 				continue
 			}
 		case <-s.schCtx.Done():
-			return
+			return nil
 		}
 		if err := s.checkAndUpdateClusterState(false); err != nil {
 			continue
