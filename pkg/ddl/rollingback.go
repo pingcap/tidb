@@ -441,37 +441,67 @@ func convertReorgPartitionJob2RollbackJob(d *ddlCtx, t *meta.Meta, job *model.Jo
 		// Remove the AddingDefinitions
 		// Add back the DroppingDefinitions
 		if job.Type == model.ActionReorganizePartition {
-			// How to reassemble the list of partitions in the same order?
+			// Reassemble the list of partitions in the same order:
 			// If RANGE, then there should be the same interval
 			// as was replaced!
 			// If KEY/HASH all are replaced
-			// if LIST TODO: how to get the same order?
-			restoredDroppingDefinitions := false
-			for _, def := range pi.AddingDefinitions {
-				found := false
-				for i := range pi.Definitions {
-					if def.ID == pi.Definitions[i].ID {
-						if i == len(pi.Definitions)-1 {
-							pi.Definitions = pi.Definitions[:i]
-							if !restoredDroppingDefinitions {
-								pi.Definitions = append(pi.Definitions, pi.DroppingDefinitions...)
-								restoredDroppingDefinitions = true
-							}
-						} else {
-							if !restoredDroppingDefinitions {
-								tmp := append(pi.Definitions[:i], pi.DroppingDefinitions...)
-								pi.Definitions = append(tmp, pi.Definitions[i+1:]...)
-								restoredDroppingDefinitions = true
-							} else {
-								pi.Definitions = append(pi.Definitions[:i], pi.Definitions[i+1:]...)
-							}
+			// if LIST it needs the following special handling.
+			if pi.Type == model.PartitionTypeList {
+				// Special handling, since the original partitions might not be in order
+				// they should be in the same order within the two arrays.
+				defPos := 0
+				dropPos := 0
+				newDefs := make([]model.PartitionDefinition, 0, len(pi.OriginalPartitionIDsOrder))
+				for _, id := range pi.OriginalPartitionIDsOrder {
+					if defPos < len(pi.Definitions) && pi.Definitions[defPos].ID == id {
+						newDefs = append(newDefs, pi.Definitions[defPos])
+						defPos++
+						continue
+					}
+					if dropPos < len(pi.DroppingDefinitions) && id == pi.DroppingDefinitions[dropPos].ID {
+						newDefs = append(newDefs, pi.DroppingDefinitions[dropPos])
+						dropPos++
+						continue
+					}
+					for {
+						defPos++
+						if defPos < len(pi.Definitions) && pi.Definitions[defPos].ID == id {
+							newDefs = append(newDefs, pi.Definitions[defPos])
+							break
 						}
-						found = true
-						break
 					}
 				}
-				if !found {
-					panic("FIXME:!!!")
+				pi.Definitions = newDefs
+			} else {
+				restoredDroppingDefinitions := false
+				for _, def := range pi.AddingDefinitions {
+					found := false
+					for i := range pi.Definitions {
+						if def.ID == pi.Definitions[i].ID {
+							if i == len(pi.Definitions)-1 {
+								pi.Definitions = pi.Definitions[:i]
+								if !restoredDroppingDefinitions {
+									pi.Definitions = append(pi.Definitions, pi.DroppingDefinitions...)
+									restoredDroppingDefinitions = true
+								}
+							} else {
+								if !restoredDroppingDefinitions {
+									var tmp []model.PartitionDefinition
+									tmp = append(tmp, pi.Definitions[:i]...)
+									tmp = append(tmp, pi.DroppingDefinitions...)
+									pi.Definitions = append(tmp, pi.Definitions[i+1:]...)
+									restoredDroppingDefinitions = true
+								} else {
+									pi.Definitions = append(pi.Definitions[:i], pi.Definitions[i+1:]...)
+								}
+							}
+							found = true
+							break
+						}
+					}
+					if !found {
+						return ver, errors.Trace(errors.New("Internal error, failed to find original partition definitions, partition name: " + def.Name.String()))
+					}
 				}
 			}
 			pi.Num = uint64(len(pi.Definitions))

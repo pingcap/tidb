@@ -575,8 +575,26 @@ func TestPartitionByFailures(t *testing.T) {
 			partition p0 values less than (100),
 			partition p1 values less than (200))`
 	insert := `insert into t values (7,100,"7-100"),(8,8,8),(9,9,9),(127,7,"127-7"),(199,199,199)`
-	// Fa
 	alter := `alter table t partition by range (b) (partition pNoneC values less than (150), partition p2 values less than (300))`
+	testReorganizePartitionFailures(t, create, insert, alter)
+}
+
+func TestReoganizePartitionListFailures(t *testing.T) {
+	create := `create table t (a int unsigned primary key nonclustered, b int not null, c varchar(255), unique index (c)) partition by list(b) (
+			partition p0 values in (100, 199),
+			partition p1 values in (8, 7),
+			partition p2 values in (200, 9))`
+	insert := `insert into t values (7,100,"7-100"),(8,8,8),(9,9,9),(127,7,"127-7"),(199,199,199),(200,200,200)`
+	alter := `alter table t reorganize partition p0,p2 into (partition pNone1 values in (9,10), partition pNone2 values in (100), partition pNone3 values in (200,199))`
+	testReorganizePartitionFailures(t, create, insert, alter, "Fail4")
+}
+
+func TestPartitionByListFailures(t *testing.T) {
+	create := `create table t (a int unsigned primary key nonclustered, b int not null, c varchar(255), unique index (b), unique index (c)) partition by list(b) (
+			partition p0 values in (100, 199),
+			partition p1 values in (200, 8, 9, 7))`
+	insert := `insert into t values (7,100,"7-100"),(8,8,8),(9,9,9),(127,7,"127-7"),(199,199,199)`
+	alter := `alter table t partition by list columns (c) (partition pNone1 values in ("7-100", "127-7","200"), partition pNone2 values in ("8","9","199"))`
 	testReorganizePartitionFailures(t, create, insert, alter)
 }
 
@@ -622,7 +640,7 @@ func testReorganizePartitionFailures(t *testing.T, createSQL, insertSQL, alterSQ
 	ddl.WaitTimeWhenErrorOccurred = 0
 	for _, test := range tests {
 	SUBTEST:
-		for i := 3; i <= test.count; i++ {
+		for i := 1; i <= test.count; i++ {
 			suffix := test.name + strconv.Itoa(i)
 			for _, skip := range skipTests {
 				if suffix == skip {

@@ -1211,6 +1211,9 @@ type PartitionInfo struct {
 	DroppingDefinitions []PartitionDefinition `json:"dropping_definitions"`
 	// NewPartitionIDs is filled when truncating partitions that is in the mid state.
 	NewPartitionIDs []int64
+	// OriginalPartitionIDsOrder is only needed for rollback of Reorganize Partition for
+	// LIST partitions, since in StateDeleteReorganize we don't know where the old order any longer.
+	OriginalPartitionIDsOrder []int64
 
 	States []PartitionState `json:"states"`
 	Num    uint64           `json:"num"`
@@ -1328,6 +1331,16 @@ func (pi *PartitionInfo) ClearReorgIntermediateInfo() {
 	pi.DDLExpr = ""
 	pi.DDLColumns = nil
 	pi.NewTableID = 0
+}
+
+// SetOriginalPartitionIDs sets the order of the original partition IDs
+// in case it needs to be rolled back. LIST Partitioning would not know otherwise.
+func (pi *PartitionInfo) SetOriginalPartitionIDs() {
+	ids := make([]int64, 0, len(pi.Definitions))
+	for _, def := range pi.Definitions {
+		ids = append(ids, def.ID)
+	}
+	pi.OriginalPartitionIDsOrder = ids
 }
 
 // PartitionState is the state of the partition.
