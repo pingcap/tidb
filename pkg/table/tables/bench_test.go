@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/types"
@@ -29,115 +30,194 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+const batchSize = 10000
+
 func BenchmarkAddRecordInPipelinedDML(b *testing.B) {
 	logutil.InitLogger(&logutil.LogConfig{Config: log.Config{Level: "fatal"}})
 	store, dom := testkit.CreateMockStoreAndDomain(b)
 	tk := testkit.NewTestKit(b, store)
+
+	// Create the table
 	_, err := tk.Session().Execute(
 		context.Background(),
-		"CREATE TABLE test.t (a int primary key auto_increment, b varchar(255))",
+		"CREATE TABLE IF NOT EXISTS test.t (a int primary key auto_increment, b varchar(255))",
 	)
 	require.NoError(b, err)
-	ctx := tk.Session()
-	vars := ctx.GetSessionVars()
-	vars.BulkDMLEnabled = true
-	vars.TxnCtx.EnableMDL = true
-	vars.StmtCtx.InInsertStmt = true
-	require.Nil(b, sessiontxn.NewTxn(context.Background(), tk.Session()))
-	txn, _ := ctx.Txn(true)
-	require.True(b, txn.IsPipelined())
 	tb, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(b, err)
 
-	b.ResetTimer()
+	variable.EnableMDL.Store(true)
 
-	for i := 0; i < b.N; i++ {
-		_, err := tb.AddRecord(ctx.GetTableCtx(), types.MakeDatums(i, "test"))
-		if err != nil {
-			b.Fatal(err)
-		}
+	// Pre-create data to be inserted
+	records := make([][]types.Datum, batchSize)
+	for j := 0; j < batchSize; j++ {
+		records[j] = types.MakeDatums(j, "test")
 	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		// Reset environment for each batch
+		b.StopTimer()
+
+		ctx := tk.Session()
+		vars := ctx.GetSessionVars()
+		vars.BulkDMLEnabled = true
+		vars.TxnCtx.EnableMDL = true
+		vars.StmtCtx.InUpdateStmt = true
+		require.Nil(b, sessiontxn.NewTxn(context.Background(), tk.Session()))
+		txn, _ := ctx.Txn(true)
+		require.True(b, txn.IsPipelined())
+
+		b.StartTimer()
+		for j := 0; j < batchSize; j++ {
+			_, err := tb.AddRecord(ctx.GetTableCtx(), records[j])
+			if err != nil {
+				b.Fatal(err)
+			}
+		}
+		b.StopTimer()
+
+		// Rollback the transaction to avoid interference between batches
+		ctx.RollbackTxn(context.Background())
+	}
+
+	totalRecords := batchSize * b.N
+	avgTimePerRecord := float64(b.Elapsed().Nanoseconds()) / float64(totalRecords)
+	b.ReportMetric(avgTimePerRecord, "ns/record")
 }
 
 func BenchmarkRemoveRecordInPipelinedDML(b *testing.B) {
 	logutil.InitLogger(&logutil.LogConfig{Config: log.Config{Level: "fatal"}})
 	store, dom := testkit.CreateMockStoreAndDomain(b)
 	tk := testkit.NewTestKit(b, store)
+
+	// Create the table
 	_, err := tk.Session().Execute(
 		context.Background(),
-		"CREATE TABLE test.t (a int primary key auto_increment, b varchar(255))",
+		"CREATE TABLE IF NOT EXISTS test.t (a int primary key auto_increment, b varchar(255))",
 	)
 	require.NoError(b, err)
-	ctx := tk.Session()
-	vars := ctx.GetSessionVars()
-	vars.BulkDMLEnabled = true
-	vars.TxnCtx.EnableMDL = true
-	vars.StmtCtx.InDeleteStmt = true
-	require.Nil(b, sessiontxn.NewTxn(context.Background(), ctx))
-	txn, _ := ctx.Txn(true)
-	require.True(b, txn.IsPipelined())
 	tb, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(b, err)
 
-	// Add initial records
-	for i := 0; i < b.N; i++ {
-		_, err := tb.AddRecord(ctx.GetTableCtx(), types.MakeDatums(i, "test"))
-		require.NoError(b, err)
+	variable.EnableMDL.Store(true)
+
+	// Pre-create and add initial records
+	records := make([][]types.Datum, batchSize)
+	for j := 0; j < batchSize; j++ {
+		records[j] = types.MakeDatums(j, "test")
 	}
 
 	b.ResetTimer()
-
 	for i := 0; i < b.N; i++ {
-		// Remove record
-		handle := kv.IntHandle(i)
-		err := tb.RemoveRecord(ctx.GetTableCtx(), handle, types.MakeDatums(i, "test"))
-		if err != nil {
-			b.Fatal(err)
+		// Reset environment for each batch
+		b.StopTimer()
+
+		ctx := tk.Session()
+		vars := ctx.GetSessionVars()
+		vars.BulkDMLEnabled = true
+		vars.TxnCtx.EnableMDL = true
+		vars.StmtCtx.InUpdateStmt = true
+		require.Nil(b, sessiontxn.NewTxn(context.Background(), tk.Session()))
+		txn, _ := ctx.Txn(true)
+		require.True(b, txn.IsPipelined())
+
+		// Add initial records
+		for j := 0; j < batchSize; j++ {
+			_, err := tb.AddRecord(ctx.GetTableCtx(), records[j])
+			require.NoError(b, err)
 		}
+
+		b.StartTimer()
+		for j := 0; j < batchSize; j++ {
+			// Remove record
+			handle := kv.IntHandle(j)
+			err := tb.RemoveRecord(ctx.GetTableCtx(), handle, records[j])
+			if err != nil {
+				b.Fatal(err)
+			}
+		}
+		b.StopTimer()
+
+		// Rollback the transaction to avoid interference between batches
+		ctx.RollbackTxn(context.Background())
+		require.NoError(b, err)
 	}
+
+	totalRecords := batchSize * b.N
+	avgTimePerRecord := float64(b.Elapsed().Nanoseconds()) / float64(totalRecords)
+	b.ReportMetric(avgTimePerRecord, "ns/record")
 }
 
 func BenchmarkUpdateRecordInPipelinedDML(b *testing.B) {
 	logutil.InitLogger(&logutil.LogConfig{Config: log.Config{Level: "fatal"}})
 	store, dom := testkit.CreateMockStoreAndDomain(b)
 	tk := testkit.NewTestKit(b, store)
+
+	// Create the table
 	_, err := tk.Session().Execute(
 		context.Background(),
-		"CREATE TABLE test.t (a int primary key auto_increment, b varchar(255))",
+		"CREATE TABLE IF NOT EXISTS test.t (a int primary key auto_increment, b varchar(255))",
 	)
 	require.NoError(b, err)
-	ctx := tk.Session()
-	vars := ctx.GetSessionVars()
-	vars.BulkDMLEnabled = true
-	vars.TxnCtx.EnableMDL = true
-	vars.StmtCtx.InUpdateStmt = true
-	require.Nil(b, sessiontxn.NewTxn(context.Background(), ctx))
-	txn, _ := ctx.Txn(true)
-	require.True(b, txn.IsPipelined())
 	tb, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(b, err)
 
-	// Add initial records
-	for i := 0; i < b.N; i++ {
-		_, err := tb.AddRecord(ctx.GetTableCtx(), types.MakeDatums(i, "test"))
-		require.NoError(b, err)
+	// Pre-create data to be inserted and then updated
+	records := make([][]types.Datum, batchSize)
+	for j := 0; j < batchSize; j++ {
+		records[j] = types.MakeDatums(j, "test")
+	}
+
+	// Pre-create new data
+	newData := make([][]types.Datum, batchSize)
+	for j := 0; j < batchSize; j++ {
+		newData[j] = types.MakeDatums(j, "updated")
 	}
 
 	b.ResetTimer()
-
-	touched := make([]bool, len(tb.Meta().Columns))
-	touched[1] = true
-
 	for i := 0; i < b.N; i++ {
-		// Update record
-		handle := kv.IntHandle(i)
-		oldData := types.MakeDatums(i, "test")
-		newData := types.MakeDatums(i, "updated")
-		err := tb.UpdateRecord(context.TODO(), ctx.GetTableCtx(), handle, oldData, newData, touched)
-		if err != nil {
-			b.Fatal(err)
+		// Reset environment for each batch
+		b.StopTimer()
+
+		ctx := tk.Session()
+		vars := ctx.GetSessionVars()
+		vars.BulkDMLEnabled = true
+		vars.TxnCtx.EnableMDL = true
+		vars.StmtCtx.InUpdateStmt = true
+		require.Nil(b, sessiontxn.NewTxn(context.Background(), tk.Session()))
+
+		txn, _ := ctx.Txn(true)
+		require.True(b, txn.IsPipelined())
+
+		// Add initial records
+		for j := 0; j < batchSize; j++ {
+			_, err := tb.AddRecord(ctx.GetTableCtx(), records[j])
+			require.NoError(b, err)
 		}
+
+		touched := make([]bool, len(tb.Meta().Columns))
+		touched[1] = true
+
+		b.StartTimer()
+		for j := 0; j < batchSize; j++ {
+			// Update record
+			handle := kv.IntHandle(j)
+			err := tb.UpdateRecord(context.TODO(), ctx.GetTableCtx(), handle, records[j], newData[j], touched)
+			if err != nil {
+				b.Fatal(err)
+			}
+		}
+		b.StopTimer()
+
+		// Rollback the transaction to avoid interference between batches
+		ctx.RollbackTxn(context.Background())
+		require.NoError(b, err)
 	}
+
+	totalRecords := batchSize * b.N
+	avgTimePerRecord := float64(b.Elapsed().Nanoseconds()) / float64(totalRecords)
+	b.ReportMetric(avgTimePerRecord, "ns/record")
 }
 
 func allocateInLoop(numCols int) []types.Datum {
