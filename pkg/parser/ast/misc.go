@@ -1589,6 +1589,7 @@ const (
 	PasswordLockTimeUnbounded
 	UserCommentType
 	UserAttributeType
+	PasswordRequireCurrentDefault
 
 	UserResourceGroupName
 )

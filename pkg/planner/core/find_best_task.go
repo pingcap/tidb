@@ -1884,14 +1884,15 @@ func (ds *DataSource) indexCoveringColumn(column *expression.Column, indexColumn
 	if column.ID == model.ExtraHandleID || column.ID == model.ExtraPhysTblID {
 		return true
 	}
-	coveredByPlainIndex := isIndexColsCoveringCol(ds.SCtx().GetExprCtx().GetEvalCtx(), column, indexColumns, idxColLens, ignoreLen)
-	coveredByClusteredIndex := isIndexColsCoveringCol(ds.SCtx().GetExprCtx().GetEvalCtx(), column, ds.commonHandleCols, ds.commonHandleLens, ignoreLen)
+	evalCtx := ds.SCtx().GetExprCtx().GetEvalCtx()
+	coveredByPlainIndex := isIndexColsCoveringCol(evalCtx, column, indexColumns, idxColLens, ignoreLen)
+	coveredByClusteredIndex := isIndexColsCoveringCol(evalCtx, column, ds.commonHandleCols, ds.commonHandleLens, ignoreLen)
 	if !coveredByPlainIndex && !coveredByClusteredIndex {
 		return false
 	}
 	isClusteredNewCollationIdx := collate.NewCollationEnabled() &&
-		column.GetType().EvalType() == types.ETString &&
-		!mysql.HasBinaryFlag(column.GetType().GetFlag())
+		column.GetType(evalCtx).EvalType() == types.ETString &&
+		!mysql.HasBinaryFlag(column.GetType(evalCtx).GetFlag())
 	if !coveredByPlainIndex && coveredByClusteredIndex && isClusteredNewCollationIdx && ds.table.Meta().CommonHandleVersion == 0 {
 		return false
 	}

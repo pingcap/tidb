@@ -130,6 +130,9 @@ func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isNonPrep
 		// cached plan once the schema version is changed.
 		// Cached plan in prepared struct does NOT have a "cache key" with
 		// schema version like prepared plan cache key
+		stmt.PointGet.pointPlan = nil
+		stmt.PointGet.columnNames = nil
+		stmt.PointGet.pointPlanHints = nil
 		stmt.PointGet.Executor = nil
 		stmt.PointGet.ColumnInfos = nil
 		// If the schema version has changed we need to preprocess it again,
@@ -219,9 +222,13 @@ func GetPlanFromSessionPlanCache(ctx context.Context, sctx sessionctx.Context,
 	if stmtCtx.UseCache() {
 		var cacheVal kvcache.Value
 		var hit, isPointPlan bool
-		if stmt.PointGet.Executor != nil { // if it's PointGet Plan, no need to use MatchOpts
-			cacheVal, hit = sctx.GetSessionPlanCache().Get(cacheKey, nil)
-			isPointPlan = true
+		if stmt.PointGet.pointPlan != nil { // if it's PointGet Plan, no need to use MatchOpts
+			cacheVal = &PlanCacheValue{
+				Plan:          stmt.PointGet.pointPlan,
+				OutputColumns: stmt.PointGet.columnNames,
+				stmtHints:     stmt.PointGet.pointPlanHints,
+			}
+			isPointPlan, hit = true, true
 		} else {
 			matchOpts = GetMatchOpts(sctx, is, stmt, params)
 			cacheVal, hit = sctx.GetSessionPlanCache().Get(cacheKey, matchOpts)
@@ -316,6 +323,11 @@ func generateNewPlan(ctx context.Context, sctx sessionctx.Context, isNonPrepared
 		stmtCtx.SetPlan(p)
 		stmtCtx.SetPlanDigest(stmt.NormalizedPlan, stmt.PlanDigest)
 		sctx.GetSessionPlanCache().Put(cacheKey, cached, matchOpts)
+		if _, ok := p.(*PointGetPlan); ok {
+			stmt.PointGet.pointPlan = p
+			stmt.PointGet.columnNames = names
+			stmt.PointGet.pointPlanHints = stmtCtx.StmtHints.Clone()
+		}
 	}
 	sessVars.FoundInPlanCache = false
 	return p, names, err

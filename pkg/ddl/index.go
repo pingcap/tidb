@@ -1452,7 +1452,7 @@ func (w *baseIndexWorker) getIndexRecord(idxInfo *model.IndexInfo, handle kv.Han
 			idxVal[j] = idxColumnVal
 			continue
 		}
-		idxColumnVal, err = tables.GetColDefaultValue(w.sessCtx, col, w.defaultVals)
+		idxColumnVal, err = tables.GetColDefaultValue(w.exprCtx, col, w.defaultVals)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -1483,8 +1483,8 @@ func (w *baseIndexWorker) getNextKey(taskRange reorgBackfillTask, taskDone bool)
 }
 
 func (w *baseIndexWorker) updateRowDecoder(handle kv.Handle, rawRecord []byte) error {
-	sysZone := w.sessCtx.GetSessionVars().StmtCtx.TimeZone()
-	_, err := w.rowDecoder.DecodeAndEvalRowWithMap(w.sessCtx, handle, rawRecord, sysZone, w.rowMap)
+	sysZone := w.loc
+	_, err := w.rowDecoder.DecodeAndEvalRowWithMap(w.exprCtx, handle, rawRecord, sysZone, w.rowMap)
 	return errors.Trace(err)
 }
 
@@ -1502,7 +1502,7 @@ func (w *baseIndexWorker) fetchRowColVals(txn kv.Transaction, taskRange reorgBac
 	// taskDone means that the reorged handle is out of taskRange.endHandle.
 	taskDone := false
 	oprStartTime := startTime
-	err := iterateSnapshotKeys(w.jobContext, w.sessCtx.GetStore(), taskRange.priority, taskRange.physicalTable.RecordPrefix(), txn.StartTS(),
+	err := iterateSnapshotKeys(w.jobContext, w.ddlCtx.store, taskRange.priority, taskRange.physicalTable.RecordPrefix(), txn.StartTS(),
 		taskRange.startKey, taskRange.endKey, func(handle kv.Handle, recordKey kv.Key, rawRow []byte) (bool, error) {
 			oprEndTime := time.Now()
 			logSlowOperations(oprEndTime.Sub(oprStartTime), "iterateSnapshotKeys in baseIndexWorker fetchRowColVals", 0)
@@ -1575,7 +1575,8 @@ func (w *addIndexTxnWorker) checkHandleExists(idxInfo *model.IndexInfo, key kv.K
 // Note that `idxRecords` may belong to multiple indexes.
 func (w *addIndexTxnWorker) batchCheckUniqueKey(txn kv.Transaction, idxRecords []*indexRecord) error {
 	w.initBatchCheckBufs(len(idxRecords))
-	stmtCtx := w.sessCtx.GetSessionVars().StmtCtx
+	evalCtx := w.exprCtx.GetEvalCtx()
+	ec := evalCtx.ErrCtx()
 	uniqueBatchKeys := make([]kv.Key, 0, len(idxRecords))
 	cnt := 0
 	for i, record := range idxRecords {
@@ -1591,7 +1592,7 @@ func (w *addIndexTxnWorker) batchCheckUniqueKey(txn kv.Transaction, idxRecords [
 		}
 		// skip by default.
 		idxRecords[i].skip = true
-		iter := idx.GenIndexKVIter(stmtCtx.ErrCtx(), stmtCtx.TimeZone(), record.vals, record.handle, idxRecords[i].rsData)
+		iter := idx.GenIndexKVIter(ec, w.loc, record.vals, record.handle, idxRecords[i].rsData)
 		for iter.Valid() {
 			var buf []byte
 			if cnt < len(w.idxKeyBufs) {
@@ -1647,7 +1648,7 @@ func (w *addIndexTxnWorker) batchCheckUniqueKey(txn kv.Transaction, idxRecords [
 		idxRecords[w.recordIdx[i]].skip = found && idxRecords[w.recordIdx[i]].skip
 	}
 	// Constrains is already checked.
-	stmtCtx.BatchCheck = true
+	w.tblCtx.GetSessionVars().StmtCtx.BatchCheck = true
 	return nil
 }
 
@@ -1748,6 +1749,7 @@ func writeChunkToLocal(
 ) (int, kv.Handle, error) {
 	iter := chunk.NewIterator4Chunk(copChunk)
 	c := copCtx.GetBase()
+	ectx := c.ExprCtx.GetEvalCtx()
 
 	maxIdxColCnt := maxIndexColumnCount(indexes)
 	idxDataBuf := make([]types.Datum, maxIdxColCnt)
@@ -1780,7 +1782,7 @@ func writeChunkToLocal(
 		restoreDataBuf = make([]types.Datum, len(c.HandleOutputOffsets))
 	}
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-		handleDataBuf := extractDatumByOffsets(row, c.HandleOutputOffsets, c.ExprColumnInfos, handleDataBuf)
+		handleDataBuf := extractDatumByOffsets(ectx, row, c.HandleOutputOffsets, c.ExprColumnInfos, handleDataBuf)
 		if restore {
 			// restoreDataBuf should not truncate index values.
 			for i, datum := range handleDataBuf {
@@ -1793,7 +1795,7 @@ func writeChunkToLocal(
 		}
 		for i, index := range indexes {
 			idxID := index.Meta().ID
-			idxDataBuf = extractDatumByOffsets(
+			idxDataBuf = extractDatumByOffsets(ectx,
 				row, copCtx.IndexColumnOutputOffsets(idxID), c.ExprColumnInfos, idxDataBuf)
 			idxData := idxDataBuf[:len(index.Meta().Columns)]
 			var rsData []types.Datum
@@ -1868,7 +1870,7 @@ func (w *addIndexTxnWorker) BackfillData(handleRange reorgBackfillTask) (taskCtx
 	oprStartTime := time.Now()
 	jobID := handleRange.getJobID()
 	ctx := kv.WithInternalSourceAndTaskType(context.Background(), w.jobContext.ddlJobSourceType(), kvutil.ExplicitTypeDDL)
-	errInTxn = kv.RunInNewTxn(ctx, w.sessCtx.GetStore(), true, func(_ context.Context, txn kv.Transaction) (err error) {
+	errInTxn = kv.RunInNewTxn(ctx, w.ddlCtx.store, true, func(_ context.Context, txn kv.Transaction) (err error) {
 		taskCtx.finishTS = txn.StartTS()
 		taskCtx.addedCount = 0
 		taskCtx.scanCount = 0
@@ -1901,13 +1903,15 @@ func (w *addIndexTxnWorker) BackfillData(handleRange reorgBackfillTask) (taskCtx
 
 			// We need to add this lock to make sure pessimistic transaction can realize this operation.
 			// For the normal pessimistic transaction, it's ok. But if async commit is used, it may lead to inconsistent data and index.
+			// TODO: For global index, lock the correct key?! Currently it locks the partition (phyTblID) and the handle or actual key?
+			// but should really lock the table's ID + key col(s)
 			err := txn.LockKeys(context.Background(), new(kv.LockCtx), idxRecord.key)
 			if err != nil {
 				return errors.Trace(err)
 			}
 
 			handle, err := w.indexes[i%len(w.indexes)].Create(
-				w.sessCtx.GetTableCtx(), txn, idxRecord.vals, idxRecord.handle, idxRecord.rsData, table.WithIgnoreAssertion, table.FromBackfill)
+				w.tblCtx, txn, idxRecord.vals, idxRecord.handle, idxRecord.rsData, table.WithIgnoreAssertion, table.FromBackfill)
 			if err != nil {
 				if kv.ErrKeyExists.Equal(err) && idxRecord.handle.Equal(handle) {
 					// Index already exists, skip it.
@@ -2290,16 +2294,35 @@ func getNextPartitionInfo(reorg *reorgInfo, t table.PartitionedTable, currPhysic
 		return 0, nil, nil, nil
 	}
 
-	// During data copying, copy data from partitions to be dropped
-	nextPartitionDefs := pi.DroppingDefinitions
+	// This will be used in multiple different scenarios/ALTER TABLE:
+	// ADD INDEX - no change in partitions, just use pi.Definitions (1)
+	// REORGANIZE PARTITION - copy data from partitions to be dropped (2)
+	// REORGANIZE PARTITION - (re)create indexes on partitions to be added (3)
+	// REORGANIZE PARTITION - Update new Global indexes with data from non-touched partitions (4)
+	// (i.e. pi.Definitions - pi.DroppingDefinitions)
+	var pid int64
+	var err error
 	if bytes.Equal(reorg.currElement.TypeKey, meta.IndexElementKey) {
-		// During index re-creation, process data from partitions to be added
-		nextPartitionDefs = pi.AddingDefinitions
+		// case 1, 3 or 4
+		if len(pi.AddingDefinitions) == 0 {
+			// case 1
+			// Simply AddIndex, without any partitions added or dropped!
+			pid, err = findNextPartitionID(currPhysicalTableID, pi.Definitions)
+		} else {
+			// case 3 (or if not found AddingDefinitions; 4)
+			// check if recreating Global Index (during Reorg Partition)
+			pid, err = findNextPartitionID(currPhysicalTableID, pi.AddingDefinitions)
+			if err != nil {
+				// case 4
+				// Not a partition in the AddingDefinitions, so it must be an existing
+				// non-touched partition, i.e. recreating Global Index for the non-touched partitions
+				pid, err = findNextNonTouchedPartitionID(currPhysicalTableID, pi)
+			}
+		}
+	} else {
+		// case 2
+		pid, err = findNextPartitionID(currPhysicalTableID, pi.DroppingDefinitions)
 	}
-	if len(nextPartitionDefs) == 0 {
-		nextPartitionDefs = pi.Definitions
-	}
-	pid, err := findNextPartitionID(currPhysicalTableID, nextPartitionDefs)
 	if err != nil {
 		// Fatal error, should not run here.
 		logutil.DDLLogger().Error("find next partition ID failed", zap.Reflect("table", t), zap.Error(err))
@@ -2380,6 +2403,24 @@ func findNextPartitionID(currentPartition int64, defs []model.PartitionDefinitio
 	return 0, errors.Errorf("partition id not found %d", currentPartition)
 }
 
+func findNextNonTouchedPartitionID(currPartitionID int64, pi *model.PartitionInfo) (int64, error) {
+	pid, err := findNextPartitionID(currPartitionID, pi.Definitions)
+	if err != nil {
+		return 0, err
+	}
+	if pid == 0 {
+		return 0, nil
+	}
+	for _, notFoundErr := findNextPartitionID(pid, pi.DroppingDefinitions); notFoundErr == nil; {
+		// This can be optimized, but it is not frequently called, so keeping as-is
+		pid, err = findNextPartitionID(pid, pi.Definitions)
+		if pid == 0 {
+			break
+		}
+	}
+	return pid, err
+}
+
 // AllocateIndexID allocates an index ID from TableInfo.
 func AllocateIndexID(tblInfo *model.TableInfo) int64 {
 	tblInfo.MaxIndexID++
@@ -2417,7 +2458,12 @@ type cleanUpIndexWorker struct {
 	baseIndexWorker
 }
 
-func newCleanUpIndexWorker(sessCtx sessionctx.Context, id int, t table.PhysicalTable, decodeColMap map[int64]decoder.Column, reorgInfo *reorgInfo, jc *JobContext) *cleanUpIndexWorker {
+func newCleanUpIndexWorker(id int, t table.PhysicalTable, decodeColMap map[int64]decoder.Column, reorgInfo *reorgInfo, jc *JobContext) (*cleanUpIndexWorker, error) {
+	bCtx, err := newBackfillCtx(id, reorgInfo, reorgInfo.SchemaName, t, jc, "cleanup_idx_rate", false)
+	if err != nil {
+		return nil, err
+	}
+
 	indexes := make([]table.Index, 0, len(t.Indices()))
 	rowDecoder := decoder.NewRowDecoder(t, t.WritableCols(), decodeColMap)
 	for _, index := range t.Indices() {
@@ -2427,13 +2473,13 @@ func newCleanUpIndexWorker(sessCtx sessionctx.Context, id int, t table.PhysicalT
 	}
 	return &cleanUpIndexWorker{
 		baseIndexWorker: baseIndexWorker{
-			backfillCtx: newBackfillCtx(reorgInfo.d, id, sessCtx, reorgInfo.SchemaName, t, jc, "cleanup_idx_rate", false),
+			backfillCtx: bCtx,
 			indexes:     indexes,
 			rowDecoder:  rowDecoder,
 			defaultVals: make([]types.Datum, len(t.WritableCols())),
 			rowMap:      make(map[int64]types.Datum, len(decodeColMap)),
 		},
-	}
+	}, nil
 }
 
 func (w *cleanUpIndexWorker) BackfillData(handleRange reorgBackfillTask) (taskCtx backfillTaskContext, errInTxn error) {
@@ -2446,7 +2492,7 @@ func (w *cleanUpIndexWorker) BackfillData(handleRange reorgBackfillTask) (taskCt
 
 	oprStartTime := time.Now()
 	ctx := kv.WithInternalSourceAndTaskType(context.Background(), w.jobContext.ddlJobSourceType(), kvutil.ExplicitTypeDDL)
-	errInTxn = kv.RunInNewTxn(ctx, w.sessCtx.GetStore(), true, func(_ context.Context, txn kv.Transaction) error {
+	errInTxn = kv.RunInNewTxn(ctx, w.ddlCtx.store, true, func(_ context.Context, txn kv.Transaction) error {
 		taskCtx.addedCount = 0
 		taskCtx.scanCount = 0
 		updateTxnEntrySizeLimitIfNeeded(txn)
@@ -2471,7 +2517,7 @@ func (w *cleanUpIndexWorker) BackfillData(handleRange reorgBackfillTask) (taskCt
 			// we fetch records row by row, so records will belong to
 			// index[0], index[1] ... index[n-1], index[0], index[1] ...
 			// respectively. So indexes[i%n] is the index of idxRecords[i].
-			err := w.indexes[i%n].Delete(w.sessCtx.GetTableCtx(), txn, idxRecord.vals, idxRecord.handle)
+			err := w.indexes[i%n].Delete(w.tblCtx, txn, idxRecord.vals, idxRecord.handle)
 			if err != nil {
 				return errors.Trace(err)
 			}
