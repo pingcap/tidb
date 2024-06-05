@@ -33,12 +33,12 @@ import (
 )
 
 type testCancelJob struct {
-	sql         string
-	ok          bool
-	cancelState any // model.SchemaState | []model.SchemaState
-	onJobBefore bool
-	onJobUpdate bool
-	prepareSQL  []string
+	sql             string
+	expectCancelled bool
+	cancelState     any // model.SchemaState | []model.SchemaState
+	onJobBefore     bool
+	onJobUpdate     bool
+	prepareSQL      []string
 }
 
 var allTestCase = []testCancelJob{
@@ -244,28 +244,30 @@ func TestCancel(t *testing.T) {
 
 	hook := &callback.TestDDLCallback{Do: dom}
 	i := atomicutil.NewInt64(0)
-	cancel := atomicutil.NewBool(false)
+	canceled := atomicutil.NewBool(false)
 	cancelResult := atomicutil.NewBool(false)
 	cancelWhenReorgNotStart := atomicutil.NewBool(false)
 
+	// there might be a time gap between tk.MustExec return and the calling of OnJobUpdated,
+	// and it causes we call the hook with an unexpected prepare job.
 	hookFunc := func(job *model.Job) {
-		if testutil.TestMatchCancelState(t, job, allTestCase[i.Load()].cancelState, allTestCase[i.Load()].sql) && !cancel.Load() {
+		if testutil.TestMatchCancelState(t, job, allTestCase[i.Load()].cancelState, allTestCase[i.Load()].sql) && !canceled.Load() {
 			if !cancelWhenReorgNotStart.Load() && job.SchemaState == model.StateWriteReorganization && job.MayNeedReorg() && job.RowCount == 0 {
 				return
 			}
 			rs := tkCancel.MustQuery(fmt.Sprintf("admin cancel ddl jobs %d", job.ID))
 			cancelResult.Store(cancelSuccess(rs))
-			cancel.Store(true)
+			canceled.Store(true)
 		}
 	}
 	dom.DDL().SetHook(hook.Clone())
 
-	restHook := func(h *callback.TestDDLCallback) {
+	resetHook := func(h *callback.TestDDLCallback) {
 		h.OnJobRunBeforeExported = nil
 		h.OnJobUpdatedExported.Store(nil)
 		dom.DDL().SetHook(h.Clone())
 	}
-	registHook := func(h *callback.TestDDLCallback, onJobRunBefore bool) {
+	registerHook := func(h *callback.TestDDLCallback, onJobRunBefore bool) {
 		if onJobRunBefore {
 			h.OnJobRunBeforeExported = hookFunc
 		} else {
@@ -278,37 +280,37 @@ func TestCancel(t *testing.T) {
 		i.Store(int64(j))
 		msg := fmt.Sprintf("sql: %s, state: %s", tc.sql, tc.cancelState)
 		if tc.onJobBefore {
-			restHook(hook)
+			resetHook(hook)
 			for _, prepareSQL := range tc.prepareSQL {
 				tk.MustExec(prepareSQL)
 			}
-			cancel.Store(false)
+			canceled.Store(false)
 			cancelWhenReorgNotStart.Store(true)
-			registHook(hook, true)
-			if tc.ok {
+			registerHook(hook, true)
+			if tc.expectCancelled {
 				tk.MustGetErrCode(tc.sql, errno.ErrCancelledDDLJob)
 			} else {
 				tk.MustExec(tc.sql)
 			}
-			if cancel.Load() {
-				require.Equal(t, tc.ok, cancelResult.Load(), msg)
+			if canceled.Load() {
+				require.Equal(t, tc.expectCancelled, cancelResult.Load(), msg)
 			}
 		}
 		if tc.onJobUpdate {
-			restHook(hook)
+			resetHook(hook)
 			for _, prepareSQL := range tc.prepareSQL {
 				tk.MustExec(prepareSQL)
 			}
-			cancel.Store(false)
+			canceled.Store(false)
 			cancelWhenReorgNotStart.Store(false)
-			registHook(hook, false)
-			if tc.ok {
+			registerHook(hook, false)
+			if tc.expectCancelled {
 				tk.MustGetErrCode(tc.sql, errno.ErrCancelledDDLJob)
 			} else {
 				tk.MustExec(tc.sql)
 			}
-			if cancel.Load() {
-				require.Equal(t, tc.ok, cancelResult.Load(), msg)
+			if canceled.Load() {
+				require.Equal(t, tc.expectCancelled, cancelResult.Load(), msg)
 			}
 		}
 	}
