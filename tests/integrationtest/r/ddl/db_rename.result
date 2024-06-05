@@ -1,0 +1,27 @@
+drop table if exists t;
+create table t (pk int primary key, c int default 1, c1 int default 1, unique key k1(c), key k2(c1));
+alter table t rename index k1 to k3;
+admin check index t k3;
+alter table t rename index k3 to k3;
+admin check index t k3;
+alter table t rename index x to x;
+Error 1176 (42000): Key 'x' doesn't exist in table 't'
+alter table t rename index k3 to k2;
+Error 1061 (42000): Duplicate key name 'k2'
+alter table t rename index k2 to K2;
+alter table t rename key k3 to K2;
+Error 1061 (42000): Duplicate key name 'K2'
+drop table t;
+create table t(j json);
+alter table t add index idx1((cast(j as char(10) array)));
+alter table t rename index idx1 to idx2;
+alter table t add index idx1((cast(j as char(10) array)));
+insert into t values ('["1"]');
+alter table t add index IDX3((cast(j as char(10) array)));
+alter table t rename index IDX3 to IDX4;
+alter table t add index IDX3((cast(j as char(10) array)));
+insert into t values ('["2"]');
+select * from t;
+j
+["1"]
+["2"]
