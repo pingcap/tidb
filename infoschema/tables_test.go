@@ -1420,37 +1420,12 @@ func TestTiDBTrx(t *testing.T) {
 	sm.TxnInfo[1].BlockStartTime.Time = blockTime2
 	tk.Session().SetSessionManager(sm)
 
-<<<<<<< HEAD:infoschema/tables_test.go
 	tk.MustQuery("select * from information_schema.TIDB_TRX;").Check(testkit.Rows(
 		"424768545227014155 2021-05-07 12:56:48.001000 "+digest.String()+" update `test_tidb_trx` set `i` = `i` + ? Idle <nil> 1 19 2 root test [] ",
 		"425070846483628033 2021-05-20 21:16:35.778000 <nil> <nil> LockWaiting 2021-05-20 13:18:30.123456 0 19 10 user1 db1 [\"sql1\",\"sql2\",\""+digest.String()+"\"] "))
-=======
-	tk.MustQuery(`select ID,
-	START_TIME,
-	CURRENT_SQL_DIGEST,
-	CURRENT_SQL_DIGEST_TEXT,
-	STATE,
-	WAITING_START_TIME,
-	MEM_BUFFER_KEYS,
-	MEM_BUFFER_BYTES,
-	SESSION_ID,
-	USER,
-	DB,
-	ALL_SQL_DIGESTS,
-	RELATED_TABLE_IDS
-	from information_schema.TIDB_TRX`).Check(testkit.Rows(
-		"424768545227014144 "+t1.Local().Format(types.TimeFSPFormat)+" "+digest.String()+" update `test_tidb_trx` set `i` = `i` + ? Idle <nil> 1 19 2 root test [] ",
-		"425070846483628032 "+t2.Local().Format(types.TimeFSPFormat)+" <nil> <nil> LockWaiting "+
-			// `WAITING_START_TIME` will not be affected by time_zone, it is in memory and we assume that the system time zone will not change.
-			blockTime2.Format(types.TimeFSPFormat)+
-			" 0 19 10 user1 db1 [\"sql1\",\"sql2\",\""+digest.String()+"\"] "))
+
 	tk.MustQuery(`select state from information_schema.tidb_trx as trx  union select state from information_schema.tidb_trx as trx`).
 		Check(testkit.Rows(txninfo.TxnRunningStateStrs[txninfo.TxnLockAcquiring], txninfo.TxnRunningStateStrs[txninfo.TxnIdle]))
-
-	rows := tk.MustQuery(`select WAITING_TIME from information_schema.TIDB_TRX where WAITING_TIME is not null`)
-	require.Len(t, rows.Rows(), 1)
->>>>>>> a6e1a2e1133 (infoschema: fix the issue txn state size is not defined (#53801)):pkg/infoschema/test/clustertablestest/tables_test.go
-
 	// Test the all_sql_digests column can be directly passed to the tidb_decode_sql_digests function.
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/expression/sqlDigestRetrieverSkipRetrieveGlobal", "return"))
 	defer func() {
