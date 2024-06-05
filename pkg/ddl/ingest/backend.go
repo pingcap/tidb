@@ -29,11 +29,15 @@ import (
 	lightning "github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/errormanager"
 	"github.com/pingcap/tidb/pkg/lightning/log"
+	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/table"
+<<<<<<< HEAD
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/generic"
+=======
+>>>>>>> 98a0a755fbc (ddl: unify merging unique and non-unique index for multi-schema change (#53632))
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/client/v3/concurrency"
@@ -46,8 +50,27 @@ var MockDMLExecutionStateBeforeImport func()
 
 // BackendCtx is the backend context for one add index reorg task.
 type BackendCtx interface {
+<<<<<<< HEAD
 	Register(jobID, indexID int64, schemaName, tableName string) (Engine, error)
 	Unregister(jobID, indexID int64)
+=======
+	// Register create a new engineInfo for each index ID and register it to the
+	// backend context. If the index ID is already registered, it will return the
+	// associated engines. Only one group of index ID is allowed to register for a
+	// BackendCtx.
+	Register(indexIDs []int64, uniques []bool, tableName string) ([]Engine, error)
+	UnregisterEngines()
+	// FinishImport imports all Register-ed engines of into the storage, collects
+	// the duplicate errors for unique engines.
+	//
+	// TODO(lance6716): unify with CollectRemoteDuplicateRows.
+	FinishImport(tbl table.Table) error
+	// ImportStarted returns true only when all the engines are finished writing and
+	// import is started by FinishImport. Considering the calling usage of
+	// FinishImport, it will return true after a successful call of FinishImport and
+	// may return true after a failed call of FinishImport.
+	ImportStarted() bool
+>>>>>>> 98a0a755fbc (ddl: unify merging unique and non-unique index for multi-schema change (#53632))
 
 	CollectRemoteDuplicateRows(indexID int64, tbl table.Table) error
 	FinishImport(indexID int64, unique bool, tbl table.Table) error
@@ -95,7 +118,12 @@ type litBackendCtx struct {
 	etcdClient      *clientv3.Client
 }
 
-func (bc *litBackendCtx) handleErrorAfterCollectRemoteDuplicateRows(err error, indexID int64, tbl table.Table, hasDupe bool) error {
+func (bc *litBackendCtx) handleErrorAfterCollectRemoteDuplicateRows(
+	err error,
+	indexID int64,
+	tbl table.Table,
+	hasDupe bool,
+) error {
 	if err != nil && !common.ErrFoundIndexConflictRecords.Equal(err) {
 		logutil.Logger(bc.ctx).Error(LitInfoRemoteDupCheck, zap.Error(err),
 			zap.String("table", tbl.Meta().Name.O), zap.Int64("index ID", indexID))
@@ -125,7 +153,6 @@ func (bc *litBackendCtx) handleErrorAfterCollectRemoteDuplicateRows(err error, i
 // CollectRemoteDuplicateRows collects duplicate rows from remote TiKV.
 func (bc *litBackendCtx) CollectRemoteDuplicateRows(indexID int64, tbl table.Table) error {
 	errorMgr := errormanager.New(nil, bc.cfg, log.Logger{Logger: logutil.Logger(bc.ctx)})
-	// backend must be a local backend.
 	dupeController := bc.backend.GetDupeController(bc.cfg.TikvImporter.RangeConcurrency*2, errorMgr)
 	hasDupe, err := dupeController.CollectRemoteDuplicateRows(bc.ctx, tbl, tbl.Meta().Name.L, &encode.SessionOptions{
 		SQLMode: mysql.ModeStrictAllTables,
@@ -135,37 +162,40 @@ func (bc *litBackendCtx) CollectRemoteDuplicateRows(indexID int64, tbl table.Tab
 	return bc.handleErrorAfterCollectRemoteDuplicateRows(err, indexID, tbl, hasDupe)
 }
 
+<<<<<<< HEAD
 // FinishImport imports all the key-values in engine into the storage, collects the duplicate errors if any, and
 // removes the engine from the backend context.
 func (bc *litBackendCtx) FinishImport(indexID int64, unique bool, tbl table.Table) error {
 	ei, exist := bc.Load(indexID)
 	if !exist {
 		return dbterror.ErrIngestFailed.FastGenByArgs("ingest engine not found")
+=======
+// FinishImport imports all the key-values in engine into the storage, collects
+// the duplicate errors if any, and removes the engine from the backend context.
+// When duplicate errors are found, it will return ErrKeyExists error.
+func (bc *litBackendCtx) FinishImport(tbl table.Table) error {
+	for _, ei := range bc.engines {
+		if err := ei.ImportAndClean(); err != nil {
+			indexInfo := model.FindIndexInfoByID(tbl.Meta().Indices, ei.indexID)
+			return TryConvertToKeyExistsErr(err, indexInfo, tbl.Meta())
+		}
+		failpoint.Inject("mockFinishImportErr", func() {
+			failpoint.Return(fmt.Errorf("mock finish import error"))
+		})
+
+		if ei.unique {
+			errorMgr := errormanager.New(nil, bc.cfg, log.Logger{Logger: logutil.Logger(bc.ctx)})
+			dupeController := bc.backend.GetDupeController(bc.cfg.TikvImporter.RangeConcurrency*2, errorMgr)
+			hasDupe, err := dupeController.CollectRemoteDuplicateRows(bc.ctx, tbl, tbl.Meta().Name.L, &encode.SessionOptions{
+				SQLMode: mysql.ModeStrictAllTables,
+				SysVars: bc.sysVars,
+				IndexID: ei.indexID,
+			}, lightning.ErrorOnDup)
+			return bc.handleErrorAfterCollectRemoteDuplicateRows(err, ei.indexID, tbl, hasDupe)
+		}
+>>>>>>> 98a0a755fbc (ddl: unify merging unique and non-unique index for multi-schema change (#53632))
 	}
 
-	err := ei.ImportAndClean()
-	if err != nil {
-		return err
-	}
-
-	failpoint.Inject("mockFinishImportErr", func() {
-		failpoint.Return(fmt.Errorf("mock finish import error"))
-	})
-
-	// Check remote duplicate value for the index.
-	if unique {
-		errorMgr := errormanager.New(nil, bc.cfg, log.Logger{Logger: logutil.Logger(bc.ctx)})
-		// backend must be a local backend.
-		// todo: when we can separate local backend completely from tidb backend, will remove this cast.
-		//nolint:forcetypeassert
-		dupeController := bc.backend.GetDupeController(bc.cfg.TikvImporter.RangeConcurrency*2, errorMgr)
-		hasDupe, err := dupeController.CollectRemoteDuplicateRows(bc.ctx, tbl, tbl.Meta().Name.L, &encode.SessionOptions{
-			SQLMode: mysql.ModeStrictAllTables,
-			SysVars: bc.sysVars,
-			IndexID: ei.indexID,
-		}, lightning.ErrorOnDup)
-		return bc.handleErrorAfterCollectRemoteDuplicateRows(err, indexID, tbl, hasDupe)
-	}
 	return nil
 }
 

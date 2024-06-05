@@ -226,6 +226,7 @@ func (r *readIndexExecutor) buildLocalStorePipeline(
 		return nil, err
 	}
 	d := r.d
+<<<<<<< HEAD
 	engines := make([]ingest.Engine, 0, len(r.indexes))
 	for _, index := range r.indexes {
 		ei, err := r.bc.Register(r.job.ID, index.ID, r.job.SchemaName, r.job.TableName)
@@ -235,6 +236,21 @@ func (r *readIndexExecutor) buildLocalStorePipeline(
 			return nil, err
 		}
 		engines = append(engines, ei)
+=======
+	indexIDs := make([]int64, 0, len(r.indexes))
+	uniques := make([]bool, 0, len(r.indexes))
+	for _, index := range r.indexes {
+		indexIDs = append(indexIDs, index.ID)
+		uniques = append(uniques, index.Unique)
+	}
+	engines, err := r.bc.Register(indexIDs, uniques, r.job.TableName)
+	if err != nil {
+		tidblogutil.Logger(opCtx).Error("cannot register new engine",
+			zap.Error(err),
+			zap.Int64("job ID", r.job.ID),
+			zap.Int64s("index IDs", indexIDs))
+		return nil, err
+>>>>>>> 98a0a755fbc (ddl: unify merging unique and non-unique index for multi-schema change (#53632))
 	}
 	counter := metrics.BackfillTotalCounter.WithLabelValues(
 		metrics.GenerateReorgLabel("add_idx_rate", r.job.SchemaName, tbl.Meta().Name.O))

@@ -374,26 +374,29 @@ func checkOperateSameColAndIdx(info *model.MultiSchemaInfo) error {
 }
 
 func mergeAddIndex(info *model.MultiSchemaInfo) {
-	consistentUnique := false
-	for i, subJob := range info.SubJobs {
+	var mergedSubJob *model.SubJob
+	var mergeCnt int
+	for _, subJob := range info.SubJobs {
 		if subJob.Type == model.ActionAddForeignKey {
 			// Foreign key requires the order of adding indexes is unchanged.
 			return
 		}
-		if subJob.Type == model.ActionAddIndex || subJob.Type == model.ActionAddPrimaryKey {
-			if i == 0 {
-				consistentUnique = subJob.Args[0].(bool)
-			} else {
-				if consistentUnique != subJob.Args[0].(bool) {
-					// Some indexes are unique, others are not.
-					// There are problems with the mix usage of unique and non-unique backend,
-					// we don't merge these sub-jobs for now.
-					return
-				}
+		if subJob.Type == model.ActionAddIndex {
+			mergeCnt++
+			if mergedSubJob == nil {
+				clonedSubJob := *subJob
+				mergedSubJob = &clonedSubJob
+				mergedSubJob.Args = nil
+				mergedSubJob.RawArgs = nil
 			}
 		}
 	}
-	var newSubJob *model.SubJob
+
+	if mergeCnt <= 1 {
+		// no add index job in this multi-schema change.
+		return
+	}
+
 	var unique []bool
 	var indexNames []model.CIStr
 	var indexPartSpecifications [][]*ast.IndexPartSpecification
@@ -404,12 +407,6 @@ func mergeAddIndex(info *model.MultiSchemaInfo) {
 	newSubJobs := make([]*model.SubJob, 0, len(info.SubJobs))
 	for _, subJob := range info.SubJobs {
 		if subJob.Type == model.ActionAddIndex {
-			if newSubJob == nil {
-				clonedSubJob := *subJob
-				newSubJob = &clonedSubJob
-				newSubJob.Args = nil
-				newSubJob.RawArgs = nil
-			}
 			unique = append(unique, subJob.Args[0].(bool))
 			indexNames = append(indexNames, subJob.Args[1].(model.CIStr))
 			indexPartSpecifications = append(indexPartSpecifications, subJob.Args[2].([]*ast.IndexPartSpecification))
@@ -420,11 +417,11 @@ func mergeAddIndex(info *model.MultiSchemaInfo) {
 			newSubJobs = append(newSubJobs, subJob)
 		}
 	}
-	if newSubJob != nil {
-		newSubJob.Args = []any{unique, indexNames, indexPartSpecifications, indexOption, hiddenCols, global}
-		newSubJobs = append(newSubJobs, newSubJob)
-		info.SubJobs = newSubJobs
-	}
+
+	mergedSubJob.Args = []any{unique, indexNames, indexPartSpecifications, indexOption, hiddenCols, global}
+	// place the merged add index job at the end of the sub-jobs.
+	newSubJobs = append(newSubJobs, mergedSubJob)
+	info.SubJobs = newSubJobs
 }
 
 func checkOperateDropIndexUseByForeignKey(info *model.MultiSchemaInfo, t table.Table) error {

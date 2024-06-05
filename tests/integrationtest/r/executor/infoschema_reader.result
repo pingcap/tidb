@@ -165,11 +165,12 @@ set role r_priv;
 select DB_NAME, TABLE_NAME from information_schema.DDL_JOBS where DB_NAME = 'test_ddl_jobs' and TABLE_NAME = 't';
 DB_NAME	TABLE_NAME
 test_ddl_jobs	t
-create table tt (a int);
-alter table tt add index t(a), add column b int;
-select db_name, table_name, job_type from information_schema.DDL_JOBS limit 3;
+create table tt (a int, b int);
+alter table tt add index ta(a), add column c int, add unique index tb(b), add column d int;
+select db_name, table_name, job_type from information_schema.DDL_JOBS limit 4;
 db_name	table_name	job_type
 test_ddl_jobs	tt	alter table multi-schema change
+test_ddl_jobs	tt	add column /* subjob */
 test_ddl_jobs	tt	add column /* subjob */
 test_ddl_jobs	tt	add index /* subjob */ /* txn */
 drop database test_ddl_jobs;
