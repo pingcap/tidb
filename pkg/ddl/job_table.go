@@ -354,7 +354,8 @@ func (d *ddl) startLocalWorkerLoop() {
 func (s *jobScheduler) startDispatchLoop() {
 	sessCtx, err := s.sessPool.Get()
 	if err != nil {
-		logutil.DDLLogger().Fatal("dispatch loop get session failed, it should not happen, please try restart TiDB", zap.Error(err))
+		logutil.DDLLogger().Warn("dispatch loop get session failed, quit", zap.Error(err))
+		return
 	}
 	defer s.sessPool.Put(sessCtx)
 	se := sess.NewSession(sessCtx)
@@ -363,7 +364,8 @@ func (s *jobScheduler) startDispatchLoop() {
 		notifyDDLJobByEtcdCh = s.etcdCli.Watch(s.schCtx, addingDDLJobNotifyKey)
 	}
 	if err := s.checkAndUpdateClusterState(true); err != nil {
-		logutil.DDLLogger().Fatal("dispatch loop get cluster state failed, it should not happen, please try restart TiDB", zap.Error(err))
+		logutil.DDLLogger().Warn("dispatch loop get cluster state failed, quit", zap.Error(err))
+		return
 	}
 	ticker := time.NewTicker(dispatchLoopWaitingDuration)
 	defer ticker.Stop()
