@@ -113,6 +113,8 @@ func killSessIfNeeded(s *sessionToBeKilled, bt uint64, sm util.SessionManager) {
 					s.lastLogTime = time.Now()
 
 					if seconds := time.Since(s.killStartTime) / time.Second; seconds >= 60 {
+						// If kill sql fails after 60 seconds, the current SQL may be stuck in the write packet network stack.
+						// Now, we can reclaim the resource by calling `Finish` and start looking for the next SQL with large memory usage.
 						logutil.BgLogger().Warn(fmt.Sprintf("global memory controller failed to kill the top-consumer in %ds, try to close the executors force", seconds))
 						s.sessionTracker.Killer.FinishResultSet()
 						goto Succ
