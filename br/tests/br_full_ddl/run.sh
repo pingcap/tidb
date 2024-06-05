@@ -89,6 +89,7 @@ run_sql "analyze table $DB.$TABLE;"
 #  }
 # }
 
+sleep 7 # sleep until analyze update.
 run_curl https://$TIDB_STATUS_ADDR/stats/dump/$DB/$TABLE | jq '{columns,indices} | map_values(with_entries(del(.value.last_update_version, .value.correlation)))' > $BACKUP_STAT
 
 # ensure buckets in stats
