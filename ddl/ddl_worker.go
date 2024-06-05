@@ -525,11 +525,7 @@ func (w *worker) registerMDLInfo(job *model.Job, ver int64) error {
 }
 
 // cleanMDLInfo cleans metadata lock info.
-<<<<<<< HEAD:ddl/ddl_worker.go
-func cleanMDLInfo(pool *sessionPool, jobID int64, ec *clientv3.Client) {
-=======
-func cleanMDLInfo(pool *sess.Pool, jobID int64, ec *clientv3.Client, cleanETCD bool) {
->>>>>>> 5bb8ed75efa (ddl: fix unexpected delete ETCD value (#52504)):pkg/ddl/ddl_worker.go
+func cleanMDLInfo(pool *sessionPool, jobID int64, ec *clientv3.Client, cleanETCD bool) {
 	if !variable.EnableMDL.Load() {
 		return
 	}
