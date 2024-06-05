@@ -58,6 +58,7 @@ var (
 	addingDDLJobNotifyKey       = "/tidb/ddl/add_ddl_job_general"
 	dispatchLoopWaitingDuration = 1 * time.Second
 	localWorkerWaitingDuration  = 10 * time.Millisecond
+	schedulerLoopRetryInterval  = time.Second
 )
 
 func init() {
@@ -487,7 +488,7 @@ func (s *jobScheduler) mustReloadSchemas() {
 		select {
 		case <-s.schCtx.Done():
 			return
-		case <-time.After(dispatchLoopWaitingDuration):
+		case <-time.After(schedulerLoopRetryInterval):
 		}
 	}
 }
