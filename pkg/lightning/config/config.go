@@ -884,6 +884,11 @@ func (m *MydumperRuntime) adjust() error {
 	if err := m.CSV.adjust(); err != nil {
 		return err
 	}
+	if m.StrictFormat && len(m.CSV.Terminator) == 0 {
+		return common.ErrInvalidConfig.GenWithStack(
+			`mydumper.strict-format can not be used with empty mydumper.csv.terminator. Please set mydumper.csv.terminator to a non-empty value like "\r\n"`)
+	}
+
 	for _, rule := range m.FileRouters {
 		if filepath.IsAbs(rule.Path) {
 			relPath, err := filepath.Rel(m.SourceDir, rule.Path)

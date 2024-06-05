@@ -22,7 +22,7 @@ import (
 )
 
 // Register implements BackendCtx.
-func (bc *litBackendCtx) Register(indexIDs []int64, tableName string) ([]Engine, error) {
+func (bc *litBackendCtx) Register(indexIDs []int64, uniques []bool, tableName string) ([]Engine, error) {
 	ret := make([]Engine, 0, len(indexIDs))
 
 	for _, indexID := range indexIDs {
@@ -59,7 +59,7 @@ func (bc *litBackendCtx) Register(indexIDs []int64, tableName string) ([]Engine,
 
 	openedEngines := make(map[int64]*engineInfo, numIdx)
 
-	for _, indexID := range indexIDs {
+	for i, indexID := range indexIDs {
 		openedEngine, err := mgr.OpenEngine(bc.ctx, cfg, tableName, int32(indexID))
 		if err != nil {
 			logutil.Logger(bc.ctx).Warn(LitErrCreateEngineFail,
@@ -77,6 +77,7 @@ func (bc *litBackendCtx) Register(indexIDs []int64, tableName string) ([]Engine,
 			bc.ctx,
 			bc.jobID,
 			indexID,
+			uniques[i],
 			cfg,
 			bc.cfg,
 			openedEngine,
@@ -111,13 +112,13 @@ func (bc *litBackendCtx) UnregisterEngines() {
 	bc.memRoot.Release(numIdx * (structSizeEngineInfo + engineCacheSize))
 }
 
-// FinishedWritingNeedImport implements BackendCtx.
-func (bc *litBackendCtx) FinishedWritingNeedImport() bool {
+// ImportStarted implements BackendCtx.
+func (bc *litBackendCtx) ImportStarted() bool {
 	if len(bc.engines) == 0 {
 		return false
 	}
 	for _, ei := range bc.engines {
-		if ei.closedEngine != nil {
+		if ei.openedEngine == nil {
 			return true
 		}
 	}

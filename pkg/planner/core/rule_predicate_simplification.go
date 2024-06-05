@@ -70,16 +70,6 @@ func (*predicateSimplification) optimize(_ context.Context, p base.LogicalPlan, 
 	return p.PredicateSimplification(opt), planChanged, nil
 }
 
-// PredicateSimplification implements the LogicalPlan interface.
-func (s *baseLogicalPlan) PredicateSimplification(opt *optimizetrace.LogicalOptimizeOp) base.LogicalPlan {
-	p := s.self
-	for i, child := range p.Children() {
-		newChild := child.PredicateSimplification(opt)
-		p.SetChild(i, newChild)
-	}
-	return p
-}
-
 // updateInPredicate applies intersection of an in list with <> value. It returns updated In list and a flag for
 // a special case if an element in the inlist is not removed to keep the list not empty.
 func updateInPredicate(ctx base.PlanContext, inPredicate expression.Expression, notEQPredicate expression.Expression) (expression.Expression, bool) {
@@ -158,7 +148,7 @@ func applyPredicateSimplification(sctx base.PlanContext, predicates []expression
 
 // PredicateSimplification implements the LogicalPlan interface.
 func (ds *DataSource) PredicateSimplification(*optimizetrace.LogicalOptimizeOp) base.LogicalPlan {
-	p := ds.self.(*DataSource)
+	p := ds.Self().(*DataSource)
 	p.pushedDownConds = applyPredicateSimplification(p.SCtx(), p.pushedDownConds)
 	p.allConds = applyPredicateSimplification(p.SCtx(), p.allConds)
 	return p

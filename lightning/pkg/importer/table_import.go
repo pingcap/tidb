@@ -1188,7 +1188,9 @@ func getChunkCompressedSizeForParquet(
 	chunk *checkpoints.ChunkCheckpoint,
 	store storage.ExternalStorage,
 ) (int64, error) {
-	reader, err := mydump.OpenReader(ctx, &chunk.FileMeta, store, storage.DecompressConfig{})
+	reader, err := mydump.OpenReader(ctx, &chunk.FileMeta, store, storage.DecompressConfig{
+		ZStdDecodeConcurrency: 1,
+	})
 	if err != nil {
 		return 0, errors.Trace(err)
 	}

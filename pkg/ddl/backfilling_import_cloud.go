@@ -21,11 +21,13 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 )
@@ -33,7 +35,7 @@ import (
 type cloudImportExecutor struct {
 	taskexecutor.EmptyStepExecutor
 	job           *model.Job
-	index         *model.IndexInfo
+	indexes       []*model.IndexInfo
 	ptbl          table.PhysicalTable
 	bc            ingest.BackendCtx
 	cloudStoreURI string
@@ -41,7 +43,7 @@ type cloudImportExecutor struct {
 
 func newCloudImportExecutor(
 	job *model.Job,
-	index *model.IndexInfo,
+	indexes []*model.IndexInfo,
 	ptbl table.PhysicalTable,
 	bcGetter func() (ingest.BackendCtx, error),
 	cloudStoreURI string,
@@ -52,7 +54,7 @@ func newCloudImportExecutor(
 	}
 	return &cloudImportExecutor{
 		job:           job,
-		index:         index,
+		indexes:       indexes,
 		ptbl:          ptbl,
 		bc:            bc,
 		cloudStoreURI: cloudStoreURI,
@@ -76,7 +78,10 @@ func (m *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Sub
 	if local == nil {
 		return errors.Errorf("local backend not found")
 	}
-	_, engineUUID := backend.MakeUUID(m.ptbl.Meta().Name.L, m.index.ID)
+	// TODO(lance6716): find the correct index, so "duplicate entry" error can have index name
+	currentIdx := m.indexes[0]
+
+	_, engineUUID := backend.MakeUUID(m.ptbl.Meta().Name.L, currentIdx.ID)
 
 	all := external.SortedKVMeta{}
 	for _, g := range sm.MetaGroups {
@@ -102,10 +107,24 @@ func (m *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Sub
 	}
 	local.WorkerConcurrency = subtask.Concurrency * 2
 	err = local.ImportEngine(ctx, engineUUID, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
-	if common.ErrFoundDuplicateKeys.Equal(err) {
-		err = convertToKeyExistsErr(err, m.index, m.ptbl.Meta())
+	if err == nil {
+		return nil
 	}
-	return err
+
+	if len(m.indexes) == 1 {
+		return ingest.TryConvertToKeyExistsErr(err, currentIdx, m.ptbl.Meta())
+	}
+
+	// TODO(lance6716): after we can find the correct index, we can use the index
+	// name here. And fix TestGlobalSortMultiSchemaChange/ingest_dist_gs_backfill
+	tErr, ok := errors.Cause(err).(*terror.Error)
+	if !ok {
+		return err
+	}
+	if tErr.ID() != common.ErrFoundDuplicateKeys.ID() {
+		return err
+	}
+	return kv.ErrKeyExists
 }
 
 func (m *cloudImportExecutor) Cleanup(ctx context.Context) error {

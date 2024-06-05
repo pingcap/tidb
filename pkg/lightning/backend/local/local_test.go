@@ -1081,13 +1081,12 @@ func TestMultiIngest(t *testing.T) {
 					return importCli
 				},
 			},
-			logger: log.L(),
 		}
-		err := local.checkMultiIngestSupport(context.Background())
+		supportMultiIngest, err := checkMultiIngestSupport(context.Background(), local.pdCli, local.importClientFactory)
 		if err != nil {
 			require.Contains(t, err.Error(), testCase.retErr)
 		} else {
-			require.Equal(t, testCase.supportMutliIngest, local.supportMultiIngest)
+			require.Equal(t, testCase.supportMutliIngest, supportMultiIngest)
 		}
 	}
 }
