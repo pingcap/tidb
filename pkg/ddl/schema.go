@@ -38,7 +38,7 @@ func onCreateSchema(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error
 	dbInfo.ID = schemaID
 	dbInfo.State = model.StateNone
 
-	err := checkSchemaNotExists(d, t, schemaID, dbInfo)
+	err := checkSchemaNotExists(d, schemaID, dbInfo)
 	if err != nil {
 		if infoschema.ErrDatabaseExists.Equal(err) {
 			// The database already exists, can't create it, we should cancel this job now.
@@ -69,20 +69,10 @@ func onCreateSchema(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error
 	}
 }
 
-func checkSchemaNotExists(d *ddlCtx, t *meta.Meta, schemaID int64, dbInfo *model.DBInfo) error {
-	// Try to use memory schema info to check first.
-	currVer, err := t.GetSchemaVersion()
-	if err != nil {
-		return err
-	}
+// checkSchemaNotExists checks whether the database already exists.
+// see checkTableNotExists for the rationale of why we check using info schema only.
+func checkSchemaNotExists(d *ddlCtx, schemaID int64, dbInfo *model.DBInfo) error {
 	is := d.infoCache.GetLatest()
-	if is != nil && is.SchemaMetaVersion() == currVer {
-		return checkSchemaNotExistsFromInfoSchema(is, schemaID, dbInfo)
-	}
-	return checkSchemaNotExistsFromStore(t, schemaID, dbInfo)
-}
-
-func checkSchemaNotExistsFromInfoSchema(is infoschema.InfoSchema, schemaID int64, dbInfo *model.DBInfo) error {
 	// Check database exists by name.
 	if is.SchemaExists(dbInfo.Name) {
 		return infoschema.ErrDatabaseExists.GenWithStackByArgs(dbInfo.Name)
@@ -90,23 +80,6 @@ func checkSchemaNotExistsFromInfoSchema(is infoschema.InfoSchema, schemaID int64
 	// Check database exists by ID.
 	if _, ok := is.SchemaByID(schemaID); ok {
 		return infoschema.ErrDatabaseExists.GenWithStackByArgs(dbInfo.Name)
-	}
-	return nil
-}
-
-func checkSchemaNotExistsFromStore(t *meta.Meta, schemaID int64, dbInfo *model.DBInfo) error {
-	dbs, err := t.ListDatabases()
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	for _, db := range dbs {
-		if db.Name.L == dbInfo.Name.L {
-			if db.ID != schemaID {
-				return infoschema.ErrDatabaseExists.GenWithStackByArgs(db.Name)
-			}
-			dbInfo = db
-		}
 	}
 	return nil
 }
