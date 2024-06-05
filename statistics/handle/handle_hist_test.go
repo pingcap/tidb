@@ -208,9 +208,6 @@ func TestConcurrentLoadHistWithPanicAndFail(t *testing.T) {
 		task1, err1 := h.HandleOneTask(nil, readerCtx, testKit.Session().(sqlexec.RestrictedSQLExecutor), exitCh)
 		require.Error(t, err1)
 		require.NotNil(t, task1)
-<<<<<<< HEAD:statistics/handle/handle_hist_test.go
-
-=======
 		for _, resultCh := range stmtCtx1.StatsLoad.ResultCh {
 			select {
 			case <-resultCh:
@@ -227,7 +224,6 @@ func TestConcurrentLoadHistWithPanicAndFail(t *testing.T) {
 			default:
 			}
 		}
->>>>>>> cd90f818809 (statistics: support global singleflight for sync load (#52796)):pkg/statistics/handle/syncload/stats_syncload_test.go
 		select {
 		case <-task1.ResultCh:
 			t.Logf("task1.ResultCh should not get anything")
@@ -239,32 +235,18 @@ func TestConcurrentLoadHistWithPanicAndFail(t *testing.T) {
 		task3, err3 := h.HandleOneTask(task1, readerCtx, testKit.Session().(sqlexec.RestrictedSQLExecutor), exitCh)
 		require.NoError(t, err3)
 		require.Nil(t, task3)
-<<<<<<< HEAD:statistics/handle/handle_hist_test.go
-
-		task, err3 := h.HandleOneTask(nil, readerCtx, testKit.Session().(sqlexec.RestrictedSQLExecutor), exitCh)
-		require.NoError(t, err3)
-		require.Nil(t, task)
-
-		rs1, ok1 := <-stmtCtx1.StatsLoad.ResultCh
-		require.True(t, ok1)
-		require.Equal(t, neededColumns[0], rs1.Item)
-		rs2, ok2 := <-stmtCtx2.StatsLoad.ResultCh
-		require.True(t, ok2)
-		require.Equal(t, neededColumns[0], rs2.Item)
-=======
 		for _, resultCh := range stmtCtx1.StatsLoad.ResultCh {
 			rs1, ok1 := <-resultCh
 			require.True(t, rs1.Shared)
 			require.True(t, ok1)
-			require.Equal(t, neededColumns[0].TableItemID, rs1.Val.(stmtctx.StatsLoadResult).Item)
+			require.Equal(t, neededColumns[0].ID, rs1.Val.(stmtctx.StatsLoadResult).Item)
 		}
 		for _, resultCh := range stmtCtx2.StatsLoad.ResultCh {
 			rs1, ok1 := <-resultCh
 			require.True(t, rs1.Shared)
 			require.True(t, ok1)
-			require.Equal(t, neededColumns[0].TableItemID, rs1.Val.(stmtctx.StatsLoadResult).Item)
+			require.Equal(t, neededColumns[0].ID, rs1.Val.(stmtctx.StatsLoadResult).Item)
 		}
->>>>>>> cd90f818809 (statistics: support global singleflight for sync load (#52796)):pkg/statistics/handle/syncload/stats_syncload_test.go
 
 		stat = h.GetTableStats(tableInfo)
 		hg = stat.Columns[tableInfo.Columns[2].ID].Histogram
