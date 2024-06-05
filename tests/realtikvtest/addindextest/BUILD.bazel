@@ -33,7 +33,6 @@ go_test(
     ],
     embed = [":addindextest"],
     deps = [
-<<<<<<< HEAD
         "//br/pkg/lightning/backend/local",
         "//config",
         "//ddl",
@@ -42,18 +41,6 @@ go_test(
         "//testkit",
         "//tests/realtikvtest",
         "@com_github_pingcap_failpoint//:failpoint",
-=======
-        "//pkg/config",
-        "//pkg/ddl",
-        "//pkg/ddl/ingest",
-        "//pkg/ddl/util/callback",
-        "//pkg/parser/model",
-        "//pkg/testkit",
-        "//tests/realtikvtest",
-        "//tests/realtikvtest/addindextestutil",
-        "@com_github_pingcap_failpoint//:failpoint",
-        "@com_github_stretchr_testify//assert",
->>>>>>> e1a6b1d6339 (*: check delete unique key's handle to handle corner case (#52975))
         "@com_github_stretchr_testify//require",
     ],
 )
