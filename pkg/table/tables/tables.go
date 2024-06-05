@@ -1386,8 +1386,6 @@ func (t *TableCommon) RemoveRecord(ctx table.MutateContext, h kv.Handle, r []typ
 	sh := memBuffer.Staging()
 	defer memBuffer.Cleanup(sh)
 
-	logutil.BgLogger().Debug("RemoveRecord",
-		zap.Stringer("key", t.RecordKey(h)))
 	err = t.removeRowData(ctx, h)
 	if err != nil {
 		return err
@@ -1456,15 +1454,22 @@ func (t *TableCommon) RemoveRecord(ctx table.MutateContext, h kv.Handle, r []typ
 	if ctx.GetSessionVars().TxnCtx == nil {
 		return nil
 	}
-	colSize := make([]variable.ColSize, len(t.Cols()))
+	buffer := sessVars.TablesBufferPool.Remove
+	if cap(buffer.ColSize) < len(t.Cols()) {
+		buffer.ColSize = make([]variable.ColSize, len(t.Cols()))
+	} else {
+		buffer.ColSize = buffer.ColSize[:len(t.Cols())]
+	}
 	for id, col := range t.Cols() {
 		size, err := codec.EstimateValueSize(sc.TypeCtx(), r[id])
 		if err != nil {
 			continue
 		}
-		colSize[id] = variable.ColSize{ColID: col.ID, Size: -int64(size - 1)}
+		buffer.ColSize[id] = variable.ColSize{ColID: col.ID, Size: -int64(size - 1)}
 	}
-	ctx.GetSessionVars().TxnCtx.UpdateDeltaForTableFromColSlice(t.physicalTableID, -1, 1, colSize)
+	ctx.GetSessionVars().TxnCtx.UpdateDeltaForTableFromColSlice(
+		t.physicalTableID, -1, 1, buffer.ColSize,
+	)
 	return err
 }
 

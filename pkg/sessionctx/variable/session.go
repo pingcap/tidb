@@ -1629,6 +1629,12 @@ type SessionVars struct {
 type TablesBufferPool struct {
 	Update UpdatePool
 	Add    AddPool
+	Remove RemovePool
+}
+
+// RemovePool is for RemoveRecord
+type RemovePool struct {
+	ColSize []ColSize
 }
 
 // AddPool is for AddRecord
