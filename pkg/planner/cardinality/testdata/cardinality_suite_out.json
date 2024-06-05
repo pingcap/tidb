@@ -4177,8 +4177,8 @@
       {
         "Query": "explain format = 'brief' select a, b from t where a = 1 and b = 1 and c = 1",
         "Result": [
-          "Projection 16.00 root  test.t.a, test.t.b",
-          "└─IndexReader 16.00 root  index:IndexRangeScan",
+          "IndexReader 16.00 root  index:Projection",
+          "└─Projection 16.00 cop[tikv]  test.t.a, test.t.b",
           "  └─IndexRangeScan 16.00 cop[tikv] table:t, index:iabc(a, b, c) range:[1 1 1,1 1 1], keep order:false"
         ]
       },
