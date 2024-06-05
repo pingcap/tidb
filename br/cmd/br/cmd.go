@@ -110,6 +110,23 @@ func AddFlags(cmd *cobra.Command) {
 	_ = cmd.PersistentFlags().MarkHidden(FlagRedactLog)
 }
 
+func calculateMemoryLimit(memleft uint64) uint64 {
+	const halfGB = uint64(512 * 1024 * 1024)
+	const fourGB = 8 * halfGB
+	// memreserved = f(memleft) = 512MB * memleft / (memleft + 4GB)
+	//  * f(0) = 0
+	//  * f(4GB) = 256MB
+	//  * f(+inf) -> 512MB
+	memreserved := halfGB / (1 + fourGB/(memleft+1))
+	// 0     memused          memtotal-memreserved  memtotal
+	// +--------+--------------------+----------------+
+	//          ^            br mem upper limit
+	//          +--------------------^
+	//             GOMEMLIMIT range
+	memlimit := memleft - memreserved
+	return memlimit
+}
+
 // Init initializes BR cli.
 func Init(cmd *cobra.Command) (err error) {
 	initOnce.Do(func() {
@@ -176,20 +193,11 @@ func Init(cmd *cobra.Command) (err error) {
 				err = e
 				return
 			}
-			halfGB := uint64(512 * 1024 * 1024)
-			// 0     memused          memtotal-512MB     memtotal
-			// +--------+--------------------+--------------+
-			//                       br mem upper limit
-			memleft := memtotal - memused - halfGB
-			// 0       512MB               +inf
-			// +--------+-------------------->
-			//          ^____________________>
-			//             GOMEMLIMIT range
-			log.Info("calculate the rest memory", zap.Uint64("memtotal", memtotal), zap.Uint64("memused", memused))
-			if memleft > halfGB {
-				log.Info("set memory limit", zap.Uint64("limit", memleft))
-				debug.SetMemoryLimit(int64(memleft))
-			}
+			memleft := memtotal - memused
+			memlimit := calculateMemoryLimit(memleft)
+			log.Info("calculate the rest memory",
+				zap.Uint64("memtotal", memtotal), zap.Uint64("memused", memused), zap.Uint64("memlimit", memlimit))
+			debug.SetMemoryLimit(int64(memlimit))
 		}
 
 		redactLog, e := cmd.Flags().GetBool(FlagRedactLog)
