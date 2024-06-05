@@ -1618,6 +1618,21 @@ type SessionVars struct {
 
 	// GroupConcatMaxLen represents the maximum length of the result of GROUP_CONCAT.
 	GroupConcatMaxLen uint64
+
+	// TablesBufferPool is a memory pool for table related memory allocation that aims to reuse memory
+	// and saves allocation
+	TablesBufferPool TablesBufferPool
+}
+
+// TablesBufferPool is a memory pool for table related memory allocation that aims to reuse memory
+// and saves allocation
+type TablesBufferPool struct {
+	Update UpdatePool
+}
+
+// UpdatePool is for UpdateRecord
+type UpdatePool struct {
+	ColIDs []int64
 }
 
 // GetOptimizerFixControlMap returns the specified value of the optimizer fix control.

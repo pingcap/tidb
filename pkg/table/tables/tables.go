@@ -512,11 +512,17 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx table.MutateContext
 		}
 	}
 
-	var colIDs, binlogColIDs []int64
+	var binlogColIDs []int64
 	var row, binlogOldRow, binlogNewRow []types.Datum
 	var checksums []uint32
 	numColsCap := len(newData) + 1 // +1 for the extra handle column that we may need to append.
-	colIDs = make([]int64, 0, numColsCap)
+	buffer := sctx.GetSessionVars().TablesBufferPool.Update
+	// colIDs = make([]int64, 0, numColsCap)
+	if cap(buffer.ColIDs) < numColsCap {
+		buffer.ColIDs = make([]int64, 0, numColsCap)
+	} else {
+		buffer.ColIDs = buffer.ColIDs[:0]
+	}
 	row = make([]types.Datum, 0, numColsCap)
 	if shouldWriteBinlog(sctx.GetSessionVars(), t.meta) {
 		binlogColIDs = make([]int64, 0, numColsCap)
@@ -581,7 +587,7 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx table.MutateContext
 			checksumData = t.appendPublicColForChecksum(sctx, h, checksumData, col.ToInfo(), &value)
 		}
 		if !t.canSkip(col, &value) {
-			colIDs = append(colIDs, col.ID)
+			buffer.ColIDs = append(buffer.ColIDs, col.ID)
 			row = append(row, value)
 		}
 		rowToCheck = append(rowToCheck, value)
@@ -620,7 +626,8 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx table.MutateContext
 	key := t.RecordKey(h)
 	sc, rd := sessVars.StmtCtx, &sessVars.RowEncoder
 	checksums, writeBufs.RowValBuf = t.calcChecksums(sctx, h, checksumData, writeBufs.RowValBuf)
-	writeBufs.RowValBuf, err = tablecodec.EncodeRow(sc.TimeZone(), row, colIDs, writeBufs.RowValBuf, writeBufs.AddRowValues, rd, checksums...)
+	writeBufs.RowValBuf, err = tablecodec.EncodeRow(sc.TimeZone(), row, buffer.ColIDs,
+		writeBufs.RowValBuf, writeBufs.AddRowValues, rd, checksums...)
 	err = sc.HandleError(err)
 	if err != nil {
 		return err
