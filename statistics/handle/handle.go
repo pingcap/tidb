@@ -842,7 +842,7 @@ func (h *Handle) mergePartitionStats2GlobalStats(sc sessionctx.Context,
 		globalStats.Fms[i] = allFms[i][0].Copy()
 		for j := 1; j < partitionNum; j++ {
 			if globalStats.Fms[i] == nil {
-				globalStats.Fms[i] = allFms[i][0].Copy()
+				globalStats.Fms[i] = allFms[i][j].Copy()
 			} else {
 				globalStats.Fms[i].MergeFMSketch(allFms[i][j])
 			}
