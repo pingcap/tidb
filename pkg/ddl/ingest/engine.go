@@ -52,6 +52,7 @@ type engineInfo struct {
 	ctx          context.Context
 	jobID        int64
 	indexID      int64
+	unique       bool
 	openedEngine *backend.OpenedEngine
 	// closedEngine is set only when all data is finished written and all writers are
 	// closed.
@@ -68,6 +69,7 @@ type engineInfo struct {
 func newEngineInfo(
 	ctx context.Context,
 	jobID, indexID int64,
+	unique bool,
 	cfg *backend.EngineConfig,
 	litCfg *config.Config,
 	en *backend.OpenedEngine,
@@ -78,6 +80,7 @@ func newEngineInfo(
 		ctx:          ctx,
 		jobID:        jobID,
 		indexID:      indexID,
+		unique:       unique,
 		cfg:          cfg,
 		litCfg:       litCfg,
 		openedEngine: en,

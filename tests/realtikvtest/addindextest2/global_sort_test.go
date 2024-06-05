@@ -170,6 +170,9 @@ func TestGlobalSortMultiSchemaChange(t *testing.T) {
 		tk.MustExec(fmt.Sprintf("insert into t_common_handle values (%d, %d, '%d');", i, i, i))
 		tk.MustExec(fmt.Sprintf("insert into t_partition values (%d, %d, '%d');", i, i, i))
 	}
+	tk.MustExec("create table t_dup (a int, b bigint);")
+	tk.MustExec(fmt.Sprintf("insert into t_dup values (%d, %d), (%d, %d);", 1, 2, 2, 2))
+
 	tableNames := []string{"t_rowid", "t_int_handle", "t_common_handle", "t_partition"}
 
 	testCases := []struct {
@@ -194,6 +197,15 @@ func TestGlobalSortMultiSchemaChange(t *testing.T) {
 				tk.MustExec("admin check table " + tn + ";")
 				tk.MustExec("alter table " + tn + " drop index idx_1, drop index idx_2;")
 			}
+			expected := "Duplicate entry '2' for key 't_dup.idx2'"
+			if tc.name == "ingest_dist_gs_backfill" {
+				expected = "Duplicate entry"
+			}
+
+			tk.MustContainErrMsg(
+				"alter table t_dup add index idx(a), add unique index idx2(b);",
+				expected,
+			)
 		})
 	}
 
