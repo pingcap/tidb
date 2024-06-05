@@ -1633,6 +1633,7 @@ type TablesBufferPool struct {
 // UpdatePool is for UpdateRecord
 type UpdatePool struct {
 	ColIDs []int64
+	Row    []types.Datum
 }
 
 // GetOptimizerFixControlMap returns the specified value of the optimizer fix control.

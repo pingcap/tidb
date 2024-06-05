@@ -513,7 +513,7 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx table.MutateContext
 	}
 
 	var binlogColIDs []int64
-	var row, binlogOldRow, binlogNewRow []types.Datum
+	var binlogOldRow, binlogNewRow []types.Datum
 	var checksums []uint32
 	numColsCap := len(newData) + 1 // +1 for the extra handle column that we may need to append.
 	buffer := sctx.GetSessionVars().TablesBufferPool.Update
@@ -523,7 +523,12 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx table.MutateContext
 	} else {
 		buffer.ColIDs = buffer.ColIDs[:0]
 	}
-	row = make([]types.Datum, 0, numColsCap)
+
+	if cap(buffer.Row) < numColsCap {
+		buffer.Row = make([]types.Datum, 0, numColsCap)
+	} else {
+		buffer.Row = buffer.Row[:0]
+	}
 	if shouldWriteBinlog(sctx.GetSessionVars(), t.meta) {
 		binlogColIDs = make([]int64, 0, numColsCap)
 		binlogOldRow = make([]types.Datum, 0, numColsCap)
@@ -588,7 +593,7 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx table.MutateContext
 		}
 		if !t.canSkip(col, &value) {
 			buffer.ColIDs = append(buffer.ColIDs, col.ID)
-			row = append(row, value)
+			buffer.Row = append(buffer.Row, value)
 		}
 		rowToCheck = append(rowToCheck, value)
 		if shouldWriteBinlog(sctx.GetSessionVars(), t.meta) && !t.canSkipUpdateBinlog(col, value) {
@@ -622,11 +627,11 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx table.MutateContext
 	}
 
 	writeBufs := sessVars.GetWriteStmtBufs()
-	adjustRowValuesBuf(writeBufs, len(row))
+	adjustRowValuesBuf(writeBufs, len(buffer.Row))
 	key := t.RecordKey(h)
 	sc, rd := sessVars.StmtCtx, &sessVars.RowEncoder
 	checksums, writeBufs.RowValBuf = t.calcChecksums(sctx, h, checksumData, writeBufs.RowValBuf)
-	writeBufs.RowValBuf, err = tablecodec.EncodeRow(sc.TimeZone(), row, buffer.ColIDs,
+	writeBufs.RowValBuf, err = tablecodec.EncodeRow(sc.TimeZone(), buffer.Row, buffer.ColIDs,
 		writeBufs.RowValBuf, writeBufs.AddRowValues, rd, checksums...)
 	err = sc.HandleError(err)
 	if err != nil {
