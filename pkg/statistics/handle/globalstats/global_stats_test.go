@@ -827,8 +827,8 @@ func TestGlobalStats(t *testing.T) {
 	tk.MustExec("analyze table t;")
 	// test the indexScan
 	tk.MustQuery("explain format = 'brief' select b from t where a > 5 and b > 10;").Check(testkit.Rows(
-		"Projection 2.67 root  test.t.b",
-		"└─IndexReader 2.67 root partition:all index:Selection",
+		"IndexReader 2.67 root partition:all index:Projection",
+		"└─Projection 2.67 cop[tikv]  test.t.b",
 		"  └─Selection 2.67 cop[tikv]  gt(test.t.b, 10)",
 		"    └─IndexRangeScan 4.00 cop[tikv] table:t, index:idx_ab(a, b) range:(5,+inf], keep order:false"))
 	// test the indexLookUp
