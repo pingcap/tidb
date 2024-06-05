@@ -344,7 +344,7 @@ func testJoinProbe(t *testing.T, withSel bool, leftKeyIndex []int, rightKeyIndex
 	hashJoinCtx.hashTableContext.mergeRowTablesToHashTable(hashJoinCtx.hashTableMeta, hashJoinCtx.PartitionNumber)
 	// build hash table
 	for i := 0; i < partitionNumber; i++ {
-		hashJoinCtx.hashTableContext.hashTable.buildHashTable(i, 0, len(hashJoinCtx.hashTableContext.hashTable.tables[i].rowData.segments))
+		hashJoinCtx.hashTableContext.hashTable.buildHashTableForTest(i, 0, len(hashJoinCtx.hashTableContext.hashTable.tables[i].rowData.segments))
 	}
 	// probe
 	resultChunks := make([]*chunk.Chunk, 0)

@@ -614,7 +614,11 @@ func (e *CleanupIndexExec) getIdxColTypes() []*types.FieldType {
 
 func (e *CleanupIndexExec) batchGetRecord(txn kv.Transaction) (map[string][]byte, error) {
 	e.idxValues.Range(func(h kv.Handle, _ any) bool {
-		e.batchKeys = append(e.batchKeys, tablecodec.EncodeRecordKey(e.table.RecordPrefix(), h))
+		if ph, ok := h.(kv.PartitionHandle); ok {
+			e.batchKeys = append(e.batchKeys, tablecodec.EncodeRecordKey(tablecodec.GenTableRecordPrefix(ph.PartitionID), ph.Handle))
+		} else {
+			e.batchKeys = append(e.batchKeys, tablecodec.EncodeRecordKey(e.table.RecordPrefix(), h))
+		}
 		return true
 	})
 	values, err := txn.BatchGet(context.Background(), e.batchKeys)
@@ -627,9 +631,12 @@ func (e *CleanupIndexExec) batchGetRecord(txn kv.Transaction) (map[string][]byte
 func (e *CleanupIndexExec) deleteDanglingIdx(txn kv.Transaction, values map[string][]byte) error {
 	for _, k := range e.batchKeys {
 		if _, found := values[string(k)]; !found {
-			_, handle, err := tablecodec.DecodeRecordKey(k)
+			pid, handle, err := tablecodec.DecodeRecordKey(k)
 			if err != nil {
 				return err
+			}
+			if e.index.Meta().Global {
+				handle = kv.NewPartitionHandle(pid, handle)
 			}
 			handleIdxValsGroup, ok := e.idxValues.Get(handle)
 			if !ok {
@@ -688,6 +695,9 @@ func (e *CleanupIndexExec) fetchIndex(ctx context.Context, txn kv.Transaction) e
 			if err != nil {
 				return err
 			}
+			if e.index.Meta().Global {
+				handle = kv.NewPartitionHandle(row.GetInt64(row.Len()-1), handle)
+			}
 			idxVals := extractIdxVals(row, e.idxValsBufs[e.scanRowCnt], e.idxColFieldTypes, idxColLen)
 			e.idxValsBufs[e.scanRowCnt] = idxVals
 			existingIdxVals, ok := e.idxValues.Get(handle)
@@ -724,7 +734,7 @@ func (e *CleanupIndexExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 
 	var err error
-	if tbl, ok := e.table.(table.PartitionedTable); ok {
+	if tbl, ok := e.table.(table.PartitionedTable); ok && !e.index.Meta().Global {
 		pi := e.table.Meta().GetPartitionInfo()
 		for _, p := range pi.Definitions {
 			e.table = tbl.GetPartition(p.ID)

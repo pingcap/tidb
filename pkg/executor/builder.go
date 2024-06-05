@@ -682,6 +682,9 @@ func (b *executorBuilder) buildCleanupIndex(v *plannercore.CleanupIndex) exec.Ex
 	}
 	sessCtx := e.Ctx().GetSessionVars().StmtCtx
 	e.handleCols = buildHandleColsForExec(sessCtx, tblInfo, e.columns)
+	if e.index.Meta().Global {
+		e.columns = append(e.columns, model.NewExtraPartitionIDColInfo())
+	}
 	return e
 }
 
@@ -3719,7 +3722,7 @@ func (builder *dataReaderBuilder) prunePartitionForInnerExecutor(tbl table.Table
 		for i, data := range content.Keys {
 			locateKey[keyColOffsets[i]] = data
 		}
-		p, err := partitionTbl.GetPartitionByRow(exprCtx, locateKey)
+		p, err := partitionTbl.GetPartitionByRow(exprCtx.GetEvalCtx(), locateKey)
 		if table.ErrNoPartitionForGivenValue.Equal(err) {
 			continue
 		}
@@ -4358,7 +4361,7 @@ func (builder *dataReaderBuilder) buildTableReaderForIndexJoin(ctx context.Conte
 				for i, data := range content.Keys {
 					locateKey[keyColOffsets[i]] = data
 				}
-				p, err := pt.GetPartitionByRow(exprCtx, locateKey)
+				p, err := pt.GetPartitionByRow(exprCtx.GetEvalCtx(), locateKey)
 				if table.ErrNoPartitionForGivenValue.Equal(err) {
 					continue
 				}
@@ -4406,7 +4409,7 @@ func (builder *dataReaderBuilder) buildTableReaderForIndexJoin(ctx context.Conte
 			for i, data := range content.Keys {
 				locateKey[keyColOffsets[i]] = data
 			}
-			p, err := pt.GetPartitionByRow(exprCtx, locateKey)
+			p, err := pt.GetPartitionByRow(exprCtx.GetEvalCtx(), locateKey)
 			if table.ErrNoPartitionForGivenValue.Equal(err) {
 				continue
 			}

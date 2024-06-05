@@ -268,12 +268,12 @@ type PhysicalTable interface {
 type PartitionedTable interface {
 	Table
 	GetPartition(physicalID int64) PhysicalTable
-	GetPartitionByRow(expression.BuildContext, []types.Datum) (PhysicalTable, error)
-	GetPartitionIdxByRow(expression.BuildContext, []types.Datum) (int, error)
+	GetPartitionByRow(expression.EvalContext, []types.Datum) (PhysicalTable, error)
+	GetPartitionIdxByRow(expression.EvalContext, []types.Datum) (int, error)
 	GetAllPartitionIDs() []int64
 	GetPartitionColumnIDs() []int64
 	GetPartitionColumnNames() []model.CIStr
-	CheckForExchangePartition(ctx expression.BuildContext, pi *model.PartitionInfo, r []types.Datum, partID, ntID int64) error
+	CheckForExchangePartition(ctx expression.EvalContext, pi *model.PartitionInfo, r []types.Datum, partID, ntID int64) error
 }
 
 // TableFromMeta builds a table.Table from *model.TableInfo.

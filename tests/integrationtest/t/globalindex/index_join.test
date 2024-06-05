@@ -1,0 +1,59 @@
+set tidb_enable_global_index=true;
+
+--echo # Prepare data
+drop table if exists p;
+create table p (id int, c int, unique index idx(id)) partition by range (c) (
+partition p0 values less than (4),
+partition p1 values less than (7),
+partition p2 values less than (10));
+insert into p values (1,3), (3,4), (5,6), (7,9);
+analyze table p;
+drop table if exists t;
+create table t (id int, c int);
+insert into t values (1, 3);
+analyze table t;
+
+--echo # TestGlobalIndexJoin
+explain format='brief' select * from p inner join t on p.id = t.id;
+select * from p inner join t on p.id = t.id;
+
+explain format='brief' select * from p inner join t on p.id = t.id;
+select p.id from p inner join t on p.id = t.id;
+
+--echo # TestGlobalIndexJoinSpecifiedPartition
+--replace_regex /in\(_tidb_pid, [0-9]+\)/in(_tidb_pid, pid1)/
+explain format='brief' select * from p partition(p1) inner join t on p.id = t.id;
+select * from p partition(p1) inner join t on p.id = t.id;
+
+--replace_regex /in\(_tidb_pid, [0-9]+\)/in(_tidb_pid, pid1)/
+explain format='brief' select p.id from p partition(p1) inner join t on p.id = t.id;
+select p.id from p partition(p1) inner join t on p.id = t.id;
+
+--echo # Prepare tables with clustered index
+drop table if exists p, t;
+create table p (id int, c int, d int, e int, primary key(d, c) clustered, unique index idx(id)) partition by range (c) (
+partition p0 values less than (4),
+partition p1 values less than (7),
+partition p2 values less than (10));
+insert into p values (1,3,1,1), (3,4,3,3), (5,6,5,5), (7,9,7,7);
+analyze table p;
+create table t (id int, c int);
+insert into t values (1, 3);
+analyze table t;
+
+--echo # TestGlobalIndexJoinForClusteredIndex
+explain format='brief' select * from p inner join t on p.id = t.id;
+select * from p inner join t on p.id = t.id;
+
+explain format='brief' select * from p inner join t on p.id = t.id;
+select p.id from p inner join t on p.id = t.id;
+
+--echo # TestGlobalIndexJoinForClusteredSpecifiedPartition
+--replace_regex /in\(_tidb_pid, [0-9]+\)/in(_tidb_pid, pid1)/
+explain format='brief' select * from p partition(p1) inner join t on p.id = t.id;
+select * from p partition(p1) inner join t on p.id = t.id;
+
+--replace_regex /in\(_tidb_pid, [0-9]+\)/in(_tidb_pid, pid1)/
+explain format='brief' select p.id from p partition(p1) inner join t on p.id = t.id;
+select p.id from p partition(p1) inner join t on p.id = t.id;
+

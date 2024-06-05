@@ -416,6 +416,7 @@ func SplitLargeCSV(
 		// Create a utf8mb4 convertor to encode and decode data with the charset of CSV files.
 		charsetConvertor, err := NewCharsetConvertor(cfg.DataCharacterSet, cfg.DataInvalidCharReplace)
 		if err != nil {
+			_ = r.Close()
 			return nil, nil, err
 		}
 		parser, err := NewCSVParser(ctx, &cfg.CSV, r, cfg.ReadBlockSize, cfg.IOWorkers, true, charsetConvertor)
@@ -423,6 +424,7 @@ func SplitLargeCSV(
 			return nil, nil, err
 		}
 		if err = parser.ReadColumns(); err != nil {
+			_ = parser.Close()
 			return nil, nil, err
 		}
 		if cfg.CSV.HeaderSchemaMatch {
@@ -433,6 +435,7 @@ func SplitLargeCSV(
 		if endOffset > dataFile.FileMeta.FileSize {
 			endOffset = dataFile.FileMeta.FileSize
 		}
+		_ = parser.Close()
 	}
 	divisor := int64(cfg.ColumnCnt)
 	for {
@@ -446,6 +449,7 @@ func SplitLargeCSV(
 			// Create a utf8mb4 convertor to encode and decode data with the charset of CSV files.
 			charsetConvertor, err := NewCharsetConvertor(cfg.DataCharacterSet, cfg.DataInvalidCharReplace)
 			if err != nil {
+				_ = r.Close()
 				return nil, nil, err
 			}
 			parser, err := NewCSVParser(ctx, &cfg.CSV, r, cfg.ReadBlockSize, cfg.IOWorkers, false, charsetConvertor)
@@ -453,11 +457,13 @@ func SplitLargeCSV(
 				return nil, nil, err
 			}
 			if err = parser.SetPos(endOffset, 0); err != nil {
+				_ = parser.Close()
 				return nil, nil, err
 			}
 			_, pos, err := parser.ReadUntilTerminator()
 			if err != nil {
 				if !errors.ErrorEqual(err, io.EOF) {
+					_ = parser.Close()
 					return nil, nil, err
 				}
 				log.FromContext(ctx).Warn("file contains no terminator at end",
@@ -466,7 +472,7 @@ func SplitLargeCSV(
 				pos = dataFile.FileMeta.FileSize
 			}
 			endOffset = pos
-			parser.Close()
+			_ = parser.Close()
 		}
 		regions = append(regions,
 			&TableRegion{

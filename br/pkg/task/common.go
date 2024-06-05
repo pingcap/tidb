@@ -415,12 +415,12 @@ func parseCipherType(t string) (encryptionpb.EncryptionMethod, error) {
 func checkCipherKey(cipherKey, cipherKeyFile string) error {
 	if (len(cipherKey) == 0) == (len(cipherKeyFile) == 0) {
 		return errors.Annotate(berrors.ErrInvalidArgument,
-			"exactly one of --crypter.key or --crypter.key-file should be provided")
+			"exactly one of cipher key or keyfile path should be provided")
 	}
 	return nil
 }
 
-func getCipherKeyContent(cipherKey, cipherKeyFile string) ([]byte, error) {
+func GetCipherKeyContent(cipherKey, cipherKeyFile string) ([]byte, error) {
 	if err := checkCipherKey(cipherKey, cipherKeyFile); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -480,7 +480,7 @@ func (cfg *Config) parseCipherInfo(flags *pflag.FlagSet) error {
 		return errors.Trace(err)
 	}
 
-	cfg.CipherInfo.CipherKey, err = getCipherKeyContent(key, keyFilePath)
+	cfg.CipherInfo.CipherKey, err = GetCipherKeyContent(key, keyFilePath)
 	if err != nil {
 		return errors.Trace(err)
 	}
