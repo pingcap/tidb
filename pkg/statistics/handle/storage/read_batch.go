@@ -16,6 +16,7 @@ package storage
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -124,30 +125,19 @@ type BatchLoadMeta struct {
 	possibleColInfo *model.ColumnInfo
 }
 
+func generateHistPredict(conditions []BatchLoadMeta) string {
+	var sqlParts []string
+	template := "(table_id = '%s' and hist_id = '%s' and is_index = '%s')"
+
+	for _, cond := range conditions {
+		part := fmt.Sprintf(template, cond, cond.HistID, cond.IsIndex)
+		sqlParts = append(sqlParts, part)
+	}
+
+	return strings.Join(sqlParts, " or ")
+}
+
 // HistMetasFromStorage reads the meta info of the histogram from the storage.
 func HistMetasFromStorage(sctx sessionctx.Context, items BatchLoadMeta) (*statistics.Histogram, *types.Datum, int64, int64, error) {
-	isIndex := 0
-	var tp *types.FieldType
-	if item.IsIndex {
-		isIndex = 1
-		tp = types.NewFieldType(mysql.TypeBlob)
-	} else {
-		tp = &possibleColInfo.FieldType
-	}
-	rows, _, err := util.ExecRows(sctx,
-		"select distinct_count, version, null_count, tot_col_size, stats_ver, correlation, flag, last_analyze_pos from mysql.stats_histograms where table_id = %? and hist_id = %? and is_index = %?",
-		item.TableID,
-		item.ID,
-		isIndex,
-	)
-	if err != nil {
-		return nil, nil, 0, 0, err
-	}
-	if len(rows) == 0 {
-		return nil, nil, 0, 0, nil
-	}
-	hist := statistics.NewHistogram(item.ID, rows[0].GetInt64(0), rows[0].GetInt64(2), rows[0].GetUint64(1), tp, chunk.InitialCapacity, rows[0].GetInt64(3))
-	hist.Correlation = rows[0].GetFloat64(5)
-	lastPos := rows[0].GetDatum(7, types.NewFieldType(mysql.TypeBlob))
-	return hist, &lastPos, rows[0].GetInt64(4), rows[0].GetInt64(6), nil
+
 }
