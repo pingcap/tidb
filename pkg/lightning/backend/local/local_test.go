@@ -22,9 +22,11 @@ import (
 	"io"
 	"math"
 	"math/rand"
+	"os"
 	"path"
 	"path/filepath"
 	"runtime"
+	"runtime/pprof"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -2442,20 +2444,51 @@ func TestTotalMemoryConsume(t *testing.T) {
 	require.NoError(t, err)
 	checkMemoryConsume("after open 1 engine", 0)
 
-	writer, err := b.LocalWriter(ctx, &backend.LocalWriterConfig{IsKVSorted: false}, engineID)
+	unsortedWriter, err := b.LocalWriter(ctx, &backend.LocalWriterConfig{IsKVSorted: false}, engineID)
 	require.NoError(t, err)
-	// 72 MiB from writer.writeBatch
-	checkMemoryConsume("after create 1 engine writer", 72*units.MiB)
+	sortedWriter, err := b.LocalWriter(ctx, &backend.LocalWriterConfig{IsKVSorted: true}, engineID)
+	require.NoError(t, err)
+	// 72 MiB from unsortedWriter.writeBatch
+	checkMemoryConsume("after create engine writers", 72*units.MiB)
 
-	err = writer.AppendRows(ctx, []string{"a", "b", "c"}, kv.MakeRowsFromKvPairs([]common.KvPair{
-		{Key: []byte("a"), Val: []byte("a")}, {Key: []byte("b"), Val: []byte("b")}, {Key: []byte("c"), Val: []byte("c")},
+	err = unsortedWriter.AppendRows(ctx, []string{"a", "b", "c"}, kv.MakeRowsFromKvPairs([]common.KvPair{
+		{Key: []byte("k1"), Val: []byte("v1")},
+		{Key: []byte("k3"), Val: []byte("v3")},
+		{Key: []byte("k2"), Val: []byte("v2")},
 	}))
 	require.NoError(t, err)
-	// 72 MiB from writer.writeBatch, 1MB from bufferPool
-	checkMemoryConsume("after write 1 row", 73*units.MiB)
-
-	_, err = writer.Close(ctx)
+	err = sortedWriter.AppendRows(ctx, []string{"a", "b", "c"}, kv.MakeRowsFromKvPairs([]common.KvPair{
+		{Key: []byte("k4"), Val: []byte("v4")},
+		{Key: []byte("k5"), Val: []byte("v5")},
+		{Key: []byte("k6"), Val: []byte("v6")},
+	}))
 	require.NoError(t, err)
-	// 1MB from bufferPool
-	checkMemoryConsume("after close 1 writer", units.MiB)
+	// 72 MiB from unsortedWriter.writeBatch, 1 MiB from bufferPool of unsortedWriter
+	checkMemoryConsume("after write a bit rows", 73*units.MiB)
+
+	_, err = unsortedWriter.Close(ctx)
+	require.NoError(t, err)
+	_, err = sortedWriter.Close(ctx)
+	require.NoError(t, err)
+	// 1 MiB from bufferPool of unsortedWriter
+	checkMemoryConsume("after close all writers", 1*units.MiB)
+
+	unsortedWriter, err = b.LocalWriter(ctx, &backend.LocalWriterConfig{IsKVSorted: false}, engineID)
+	require.NoError(t, err)
+	// write about 150MiB data
+	for i := 0; i < 1024*1024; i++ {
+		err = unsortedWriter.AppendRows(ctx, []string{"a", "b", "c"}, kv.MakeRowsFromKvPairs([]common.KvPair{
+			{Key: []byte(fmt.Sprintf("key_a_%09d", i)), Val: make([]byte, 35)},
+			{Key: []byte(fmt.Sprintf("key_b_%09d", i)), Val: make([]byte, 35)},
+			{Key: []byte(fmt.Sprintf("key_c_%09d", i)), Val: make([]byte, 35)},
+		}))
+		require.NoError(t, err)
+	}
+	// 119 MiB from bufferPool, 72 k * 2048910 from unsortedWriter.writeBatch
+	f, err := os.Create("/tmp/heap.prof")
+	require.NoError(t, err)
+	defer f.Close()
+	pprof.WriteHeapProfile(f)
+
+	checkMemoryConsume("after write many rows", 272302064)
 }
