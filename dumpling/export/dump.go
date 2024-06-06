@@ -1126,11 +1126,7 @@ func getListTableTypeByConf(conf *Config) listTableType {
 }
 
 func prepareTableListToDump(tctx *tcontext.Context, conf *Config, db *sql.Conn) error {
-<<<<<<< HEAD
-	if conf.specifiedTables || conf.SQL != "" {
-=======
 	if conf.SQL != "" {
->>>>>>> 073f74629ba (dumpling: check table-list types before dumping (#53683))
 		return nil
 	}
 
