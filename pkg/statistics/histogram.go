@@ -593,14 +593,16 @@ func (hg *Histogram) LessRowCount(sctx context.PlanContext, value types.Datum) f
 func (hg *Histogram) BetweenRowCount(sctx context.PlanContext, a, b types.Datum) float64 {
 	lessCountA := hg.LessRowCount(sctx, a)
 	lessCountB := hg.LessRowCount(sctx, b)
-	// If lessCountA is not less than lessCountB, it may be that they fall to the same bucket and we cannot estimate
-	// the fraction, so we use `totalCount / NDV` to estimate the row count, but the result should not greater than
-	// lessCountB or notNullCount-lessCountA.
-	if lessCountA >= lessCountB && hg.NDV > 0 {
+	rangeEst := lessCountB - lessCountA
+	aEqual, _ := hg.EqualRowCount(sctx, a, false)
+	bEqual, _ := hg.EqualRowCount(sctx, b, false)
+	// If the estimated range is low, it may be that they fall to the same bucket and we cannot estimate the fraction, so we try to
+	// estimate each value as an equals predicate, but the result should not greater than lessCountB or notNullCount-lessCountA.
+	if rangeEst < math.Max(aEqual, bEqual) && hg.NDV > 0 {
 		result := math.Min(lessCountB, hg.NotNullCount()-lessCountA)
-		return math.Min(result, hg.NotNullCount()/float64(hg.NDV))
+		return min(result, aEqual+bEqual)
 	}
-	return lessCountB - lessCountA
+	return rangeEst
 }
 
 // TotalRowCount returns the total count of this histogram.
