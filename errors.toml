@@ -3266,6 +3266,11 @@ error = '''
 Invalid size for column '%s'.
 '''
 
+["types:3154"]
+error = '''
+The oneOrAll argument to %s may take these values: 'one' or 'all'.
+'''
+
 ["types:8029"]
 error = '''
 Bad Number
