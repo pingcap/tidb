@@ -330,17 +330,20 @@ func (mgr *Mgr) GetMergeRegionSizeAndCount(ctx context.Context, client *http.Cli
 // IsLogBackupEnabled is used for br to check whether tikv has enabled log backup.
 func (mgr *Mgr) IsLogBackupEnabled(ctx context.Context, client *http.Client) (bool, error) {
 	logbackupEnable := true
+	type logbackup struct {
+		Enable bool `json:"enable"`
+	}
+	type config struct {
+		LogBackup logbackup `json:"log-backup"`
+	}
 	err := mgr.GetConfigFromTiKV(ctx, client, func(resp *http.Response) error {
-		respBytes, err := io.ReadAll(resp.Body)
-		if err != nil {
-			return err
+		c := &config{}
+		e := json.NewDecoder(resp.Body).Decode(c)
+		if e != nil {
+			log.Warn("Failed to parse log-backup enable from config", logutil.ShortError(e))
+			return e
 		}
-		enable, err := kvconfig.ParseLogBackupEnableFromConfig(respBytes)
-		if err != nil {
-			log.Warn("Failed to parse log-backup enable from config", logutil.ShortError(err))
-			return err
-		}
-		logbackupEnable = logbackupEnable && enable
+		logbackupEnable = logbackupEnable && c.LogBackup.Enable
 		return nil
 	})
 	return logbackupEnable, errors.Trace(err)
