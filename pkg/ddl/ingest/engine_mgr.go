@@ -101,6 +101,12 @@ func (bc *litBackendCtx) Register(indexIDs []int64, tableName string) ([]Engine,
 
 // UnregisterEngines implements BackendCtx.
 func (bc *litBackendCtx) UnregisterEngines() {
+	bc.unregisterMu.Lock()
+	defer bc.unregisterMu.Unlock()
+
+	if len(bc.engines) == 0 {
+		return
+	}
 	numIdx := int64(len(bc.engines))
 	for _, ei := range bc.engines {
 		ei.Clean()
