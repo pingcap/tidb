@@ -64,7 +64,6 @@ type Session interface {
 	SetCompressionAlgorithm(int)
 	SetCompressionLevel(int)
 	SetProcessInfo(string, time.Time, byte, uint64)
-	UpdateProcessInfo()
 	SetTLSState(*tls.ConnectionState)
 	SetCollation(coID int) error
 	SetSessionManager(util.SessionManager)
