@@ -2398,7 +2398,7 @@ func (mockStoreHelper) GetTiKVCodec() tikv.Codec {
 }
 
 func TestTotalMemoryConsume(t *testing.T) {
-	//t.Skip("this test is manually run to calibrate the real memory usage with TotalMemoryConsume")
+	t.Skip("this test is manually run to calibrate the real memory usage with TotalMemoryConsume")
 
 	inMemTest = true
 	getMemoryInUse := func() int64 {
