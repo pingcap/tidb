@@ -2397,7 +2397,7 @@ func (b *executorBuilder) buildUpdate(v *plannercore.Update) exec.Executor {
 			}
 			if txn != nil && txn.Valid() {
 				logutil.BgLogger().Warn(fmt.Sprintf("xxx update, exec builder ------------------------------------ ver:%v, ver:%v, ts:%v, tbl name:%s, id:%d, cols:%v, tbl:%p, ctx:%p, is:%p",
-					b.ctx.GetInfoSchema().SchemaMetaVersion(), b.is.SchemaMetaVersion(), txn.StartTS(), t.Name, t.ID, str, t, b.ctx.GetInfoSchema(), b.is))
+					b.ctx.GetInfoSchema().SchemaMetaVersion(), b.is.SchemaMetaVersion(), txn.StartTS(), t.Name, t.ID, str, tbl, b.ctx.GetInfoSchema(), b.is))
 			}
 		}
 	}

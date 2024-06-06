@@ -3982,7 +3982,7 @@ func logGeneralQuery(execStmt *executor.ExecStmt, s *session, isPrepared bool) {
 		if vars.EnableRedactLog != errors.RedactLogEnable {
 			query += redact.String(vars.EnableRedactLog, vars.PlanCacheParams.String())
 		}
-		logutil.GeneralLogger.Info(fmt.Sprintf("GENERAL_LOG, ctx:%p, is:%p, is:%p", execStmt.Ctx.GetInfoSchema(), execStmt.InfoSchema, s.GetInfoSchema()),
+		logutil.GeneralLogger.Info(fmt.Sprintf("GENERAL_LOG, is:%p, is:%p", execStmt.InfoSchema, s.GetInfoSchema()),
 			zap.Uint64("conn", vars.ConnectionID),
 			zap.String("session_alias", vars.SessionAlias),
 			zap.String("user", vars.User.LoginString()),

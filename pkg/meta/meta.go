@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/structure"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 )
 
 var (
@@ -1232,6 +1233,14 @@ func (m *Meta) GetTable(dbID int64, tableID int64) (*model.TableInfo, error) {
 	tableInfo := &model.TableInfo{}
 	err = json.Unmarshal(value, tableInfo)
 	tableInfo.DBID = dbID
+	if tableInfo.Name.L == "stock" {
+		str := ""
+		for _, col := range tableInfo.Columns {
+			str += fmt.Sprintf("col ID:%d, offset:%d, type:%v, state:%s; ", col.ID, col.Offset, col.GetType(), col.State)
+		}
+		logutil.BgLogger().Warn(fmt.Sprintf("xxx builder, info schema, get table ------------------------------------ ts:%d, tbl:%p, str:%s",
+			m.StartTS, tableInfo, str))
+	}
 	return tableInfo, errors.Trace(err)
 }
 
