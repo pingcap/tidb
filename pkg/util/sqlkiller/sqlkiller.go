@@ -47,8 +47,13 @@ type SQLKiller struct {
 // SendKillSignal sends a kill signal to the query.
 func (killer *SQLKiller) SendKillSignal(reason killSignal) {
 	if atomic.CompareAndSwapUint32(&killer.Signal, 0, reason) {
-		logutil.BgLogger().Warn("kill query", zap.Uint64("conn", killer.ConnID), zap.Uint32("reason", uint32(reason)))
+		logutil.BgLogger().Warn("kill query start", zap.Uint64("conn", killer.ConnID), zap.Uint32("reason", uint32(reason)))
 	}
+}
+
+// GetKillSignal gets the kill signal.
+func (killer *SQLKiller) GetKillSignal() killSignal {
+	return killSignal(atomic.LoadUint32(&killer.Signal))
 }
 
 // FinishResultSet is used to finish the result set.

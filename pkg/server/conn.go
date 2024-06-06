@@ -1245,6 +1245,9 @@ func (cc *clientConn) addMetrics(cmd byte, startTime time.Time, err error) {
 func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 	defer func() {
 		// reset killed for each request
+		if cc.ctx.GetSessionVars().SQLKiller.GetKillSignal() != 0 {
+			logutil.BgLogger().Warn("kill query finished", zap.Uint64("conn", cc.connectionID))
+		}
 		cc.ctx.GetSessionVars().SQLKiller.Reset()
 	}()
 	t := time.Now()
