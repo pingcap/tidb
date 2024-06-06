@@ -258,7 +258,7 @@ func (e *SortExec) InitUnparallelModeForTest() {
 */
 func (e *SortExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	if e.fetched.CompareAndSwap(false, true) {
-		err := e.initCompareFuncs()
+		err := e.initCompareFuncs(e.Ctx().GetExprCtx().GetEvalCtx())
 		if err != nil {
 			return err
 		}
@@ -751,10 +751,10 @@ func (e *SortExec) fetchChunksFromChild(ctx context.Context) {
 	}
 }
 
-func (e *SortExec) initCompareFuncs() error {
+func (e *SortExec) initCompareFuncs(ctx expression.EvalContext) error {
 	e.keyCmpFuncs = make([]chunk.CompareFunc, len(e.ByItems))
 	for i := range e.ByItems {
-		keyType := e.ByItems[i].Expr.GetType()
+		keyType := e.ByItems[i].Expr.GetType(ctx)
 		e.keyCmpFuncs[i] = chunk.GetCompareFunc(keyType)
 		if e.keyCmpFuncs[i] == nil {
 			return errors.Errorf("Sort executor not supports type %s", types.TypeStr(keyType.GetType()))

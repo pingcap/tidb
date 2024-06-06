@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/internal/testutil"
 	"github.com/pingcap/tidb/pkg/executor/sortexec"
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/expression/contextstatic"
 	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -99,6 +100,8 @@ func (r *resultChecker) initRowPtrs() {
 }
 
 func (r *resultChecker) check(resultChunks []*chunk.Chunk, offset int64, count int64) bool {
+	ctx := contextstatic.NewStaticEvalContext()
+
 	if r.rowPtrs == nil {
 		r.initRowPtrs()
 		sort.Slice(r.rowPtrs, r.keyColumnsLess)
@@ -114,7 +117,7 @@ func (r *resultChecker) check(resultChunks []*chunk.Chunk, offset int64, count i
 	cursor := 0
 	fieldTypes := make([]*types.FieldType, 0)
 	for _, col := range r.schema.Columns {
-		fieldTypes = append(fieldTypes, col.GetType())
+		fieldTypes = append(fieldTypes, col.GetType(ctx))
 	}
 
 	// Check row number

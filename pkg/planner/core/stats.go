@@ -41,7 +41,6 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics/asyncload"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	h "github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/ranger"
@@ -126,51 +125,6 @@ func RecursiveDeriveStats4Test(p base.LogicalPlan) (*property.StatsInfo, error) 
 // GetStats4Test is a exporter just for test.
 func GetStats4Test(p base.LogicalPlan) *property.StatsInfo {
 	return p.StatsInfo()
-}
-
-// RecursiveDeriveStats implements LogicalPlan interface.
-func (p *baseLogicalPlan) RecursiveDeriveStats(colGroups [][]*expression.Column) (*property.StatsInfo, error) {
-	childStats := make([]*property.StatsInfo, len(p.children))
-	childSchema := make([]*expression.Schema, len(p.children))
-	cumColGroups := p.self.ExtractColGroups(colGroups)
-	for i, child := range p.children {
-		childProfile, err := child.RecursiveDeriveStats(cumColGroups)
-		if err != nil {
-			return nil, err
-		}
-		childStats[i] = childProfile
-		childSchema[i] = child.Schema()
-	}
-	return p.self.DeriveStats(childStats, p.self.Schema(), childSchema, colGroups)
-}
-
-// ExtractColGroups implements LogicalPlan ExtractColGroups interface.
-func (*baseLogicalPlan) ExtractColGroups(_ [][]*expression.Column) [][]*expression.Column {
-	return nil
-}
-
-// DeriveStats implement LogicalPlan DeriveStats interface.
-func (p *baseLogicalPlan) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, _ []*expression.Schema, _ [][]*expression.Column) (*property.StatsInfo, error) {
-	if len(childStats) == 1 {
-		p.SetStats(childStats[0])
-		return p.StatsInfo(), nil
-	}
-	if len(childStats) > 1 {
-		err := plannererrors.ErrInternal.GenWithStack("LogicalPlans with more than one child should implement their own DeriveStats().")
-		return nil, err
-	}
-	if p.StatsInfo() != nil {
-		return p.StatsInfo(), nil
-	}
-	profile := &property.StatsInfo{
-		RowCount: float64(1),
-		ColNDVs:  make(map[int64]float64, selfSchema.Len()),
-	}
-	for _, col := range selfSchema.Columns {
-		profile.ColNDVs[col.UniqueID] = 1
-	}
-	p.SetStats(profile)
-	return profile, nil
 }
 
 func (ds *DataSource) getGroupNDVs(colGroups [][]*expression.Column) []property.GroupNDV {

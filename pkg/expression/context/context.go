@@ -82,6 +82,8 @@ type EvalContext interface {
 	GetOptionalPropSet() OptionalEvalPropKeySet
 	// GetOptionalPropProvider gets the optional property provider by key
 	GetOptionalPropProvider(OptionalEvalPropKey) (OptionalEvalPropProvider, bool)
+	// GetParamValue returns the value of the parameter by index.
+	GetParamValue(idx int) types.Datum
 }
 
 // BuildContext is used to build an expression
@@ -141,6 +143,65 @@ func WithNullRejectCheck(ctx ExprContext) *NullRejectCheckExprContext {
 // IsInNullRejectCheck always returns true for `NullRejectCheckExprContext`
 func (ctx *NullRejectCheckExprContext) IsInNullRejectCheck() bool {
 	return true
+}
+
+type innerOverrideEvalContext struct {
+	EvalContext
+	typeCtx types.Context
+	errCtx  errctx.Context
+}
+
+// TypeCtx implements EvalContext.TypeCtx
+func (ctx *innerOverrideEvalContext) TypeCtx() types.Context {
+	return ctx.typeCtx
+}
+
+// ErrCtx implements EvalContext.GetEvalCtx
+func (ctx *innerOverrideEvalContext) ErrCtx() errctx.Context {
+	return ctx.errCtx
+}
+
+type innerOverrideBuildContext struct {
+	BuildContext
+	evalCtx EvalContext
+}
+
+// GetEvalCtx implements BuildContext.GetEvalCtx
+func (ctx *innerOverrideBuildContext) GetEvalCtx() EvalContext {
+	return ctx.evalCtx
+}
+
+// CtxWithHandleTruncateErrLevel returns a new BuildContext with the specified level for handling truncate error.
+func CtxWithHandleTruncateErrLevel(ctx BuildContext, level errctx.Level) BuildContext {
+	truncateAsWarnings, ignoreTruncate := false, false
+	switch level {
+	case errctx.LevelWarn:
+		truncateAsWarnings = true
+	case errctx.LevelIgnore:
+		ignoreTruncate = true
+	default:
+	}
+
+	evalCtx := ctx.GetEvalCtx()
+	tc, ec := evalCtx.TypeCtx(), evalCtx.ErrCtx()
+
+	flags := tc.Flags().
+		WithTruncateAsWarning(truncateAsWarnings).
+		WithIgnoreTruncateErr(ignoreTruncate)
+
+	if tc.Flags() == flags && ec.LevelForGroup(errctx.ErrGroupTruncate) == level {
+		// We do not need to create a new context if the flags and level are the same.
+		return ctx
+	}
+
+	return &innerOverrideBuildContext{
+		BuildContext: ctx,
+		evalCtx: &innerOverrideEvalContext{
+			EvalContext: evalCtx,
+			typeCtx:     tc.WithFlags(flags),
+			errCtx:      ec.WithErrGroupLevel(errctx.ErrGroupTruncate, level),
+		},
+	}
 }
 
 // AssertLocationWithSessionVars asserts the location in the context and session variables are the same.
