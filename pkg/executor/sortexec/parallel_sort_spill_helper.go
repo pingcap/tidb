@@ -52,7 +52,7 @@ func newParallelSortSpillHelper(sortExec *SortExec, fieldTypes []*types.FieldTyp
 		errOutputChan: errOutputChan,
 		finishCh:      finishCh,
 		fieldTypes:    fieldTypes,
-		tmpSpillChunk: chunk.NewChunkWithCapacity(fieldTypes, spillChunkSize),
+		tmpSpillChunk: chunk.NewChunkFromPoolWithCapacity(fieldTypes, spillChunkSize),
 	}
 }
 
@@ -60,6 +60,7 @@ func (p *parallelSortSpillHelper) close() {
 	for _, inDisk := range p.sortedRowsInDisk {
 		inDisk.Close()
 	}
+	p.tmpSpillChunk.Destroy(spillChunkSize, p.fieldTypes)
 }
 
 func (p *parallelSortSpillHelper) isNotSpilledNoLock() bool {
