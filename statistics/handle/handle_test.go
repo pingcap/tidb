@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
@@ -505,9 +506,17 @@ func TestInitStats(t *testing.T) {
 	require.Equal(t, uint8(0x36), cols[1].LastAnalyzePos.GetBytes()[0])
 	require.Equal(t, uint8(0x37), cols[2].LastAnalyzePos.GetBytes()[0])
 	require.Equal(t, uint8(0x38), cols[3].LastAnalyzePos.GetBytes()[0])
+	table1 := h.GetTableStats(tbl.Meta())
+	for _, column := range table1.Columns {
+		if mysql.HasPriKeyFlag(column.Info.GetFlag()) {
+			// primary key column has no stats info, because primary key's is_index is false. so it cannot load the topn
+			require.Nil(t, column.TopN)
+		}
+		require.False(t, column.IsFullLoad())
+	}
 	h.Clear()
 	require.NoError(t, h.Update(is))
-	table1 := h.GetTableStats(tbl.Meta())
+	table1 = h.GetTableStats(tbl.Meta())
 	assertTableEqual(t, table0, table1)
 	h.SetLease(0)
 }
