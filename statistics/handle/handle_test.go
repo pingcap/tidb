@@ -519,7 +519,6 @@ func TestInitStats(t *testing.T) {
 	table1 = h.GetTableStats(tbl.Meta())
 	assertTableEqual(t, table0, table1)
 	h.SetLease(0)
-
 }
 
 func TestInitStatsVer2(t *testing.T) {
