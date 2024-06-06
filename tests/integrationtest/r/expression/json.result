@@ -385,7 +385,7 @@ select json_contains('{"a": 1}', '1', "$.c"), json_contains('{"a": [1, 2]}', '1'
 json_contains('{"a": 1}', '1', "$.c")	json_contains('{"a": [1, 2]}', '1', "$.a[2]")	json_contains('{"a": [1, {"a": 1}]}', '1', "$.a[1].b")
 NULL	NULL	NULL
 select json_contains('1','1','$.*');
-Error 3149 (42000): In this situation, path expressions may not contain the * and ** tokens or range selection.
+Error 3149 (42000): In this situation, path expressions may not contain the * and ** tokens or an array range.
 select
 json_contains_path(NULL, 'one', "$.c"),
 json_contains_path(NULL, 'all', "$.c"),
@@ -719,3 +719,9 @@ SELECT JSON_ARRAY_APPEND('[]','abc','def');
 Error 3143 (42000): Invalid JSON path expression. The error is around character position 1.
 SELECT JSON_ARRAY_INSERT('{}','abc','def');
 Error 3143 (42000): Invalid JSON path expression. The error is around character position 1.
+SELECT JSON_REMOVE('{}','$');
+Error 3153 (42000): The path expression '$' is not allowed in this context.
+SELECT JSON_REMOVE('{}','$.*');
+Error 3149 (42000): In this situation, path expressions may not contain the * and ** tokens or an array range.
+SELECT JSON_SET('{}','$.*','');
+Error 3149 (42000): In this situation, path expressions may not contain the * and ** tokens or an array range.
