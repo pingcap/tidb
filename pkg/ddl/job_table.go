@@ -161,7 +161,7 @@ func (s *jobScheduler) start() {
 	reorgCnt := min(max(runtime.GOMAXPROCS(0)/4, 1), reorgWorkerCnt)
 	s.reorgWorkerPool = newDDLWorkerPool(pools.NewResourcePool(workerFactory(addIdxWorker), reorgCnt, reorgCnt, 0), jobTypeReorg)
 	s.generalDDLWorkerPool = newDDLWorkerPool(pools.NewResourcePool(workerFactory(generalWorker), generalWorkerCnt, generalWorkerCnt, 0), jobTypeGeneral)
-	s.wg.RunWithLog(s.startDispatchLoopWithRetry)
+	s.wg.RunWithLog(s.startDispatchLoop)
 	s.wg.RunWithLog(func() {
 		s.schemaSyncer.SyncJobSchemaVerLoop(s.schCtx)
 	})
@@ -351,13 +351,10 @@ func (d *ddl) startLocalWorkerLoop() {
 	}
 }
 
-func (s *jobScheduler) startDispatchLoopWithRetry() {
+func (s *jobScheduler) startDispatchLoop() {
 	const retryInterval = 3 * time.Second
 	for {
-		err := s.startDispatchLoop()
-		if err == nil {
-			return
-		}
+		err := s.startDispatch()
 		if err == context.Canceled {
 			logutil.DDLLogger().Info("startDispatchLoop quit due to context canceled")
 			return
@@ -374,7 +371,7 @@ func (s *jobScheduler) startDispatchLoopWithRetry() {
 	}
 }
 
-func (s *jobScheduler) startDispatchLoop() error {
+func (s *jobScheduler) startDispatch() error {
 	sessCtx, err := s.sessPool.Get()
 	if err != nil {
 		return errors.Trace(err)
@@ -416,7 +413,7 @@ func (s *jobScheduler) startDispatchLoop() error {
 				continue
 			}
 		case <-s.schCtx.Done():
-			return nil
+			return s.schCtx.Err()
 		}
 		if err := s.checkAndUpdateClusterState(false); err != nil {
 			continue
