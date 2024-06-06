@@ -442,3 +442,7 @@ SELECT JSON_REMOVE('{}','$');
 SELECT JSON_REMOVE('{}','$.*');
 -- error 3149
 SELECT JSON_SET('{}','$.*','');
+-- error 3154
+SELECT JSON_CONTAINS_PATH('{}', 'on', '$.a');
+-- error 3154
+SELECT JSON_SEARCH('{}', 'on', '$.a');

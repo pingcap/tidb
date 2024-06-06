@@ -725,3 +725,7 @@ SELECT JSON_REMOVE('{}','$.*');
 Error 3149 (42000): In this situation, path expressions may not contain the * and ** tokens or an array range.
 SELECT JSON_SET('{}','$.*','');
 Error 3149 (42000): In this situation, path expressions may not contain the * and ** tokens or an array range.
+SELECT JSON_CONTAINS_PATH('{}', 'on', '$.a');
+Error 3154 (42000): The oneOrAll argument to json_contains may take these values: 'one' or 'all'.
+SELECT JSON_SEARCH('{}', 'on', '$.a');
+Error 3154 (42000): The oneOrAll argument to json_search may take these values: 'one' or 'all'.
