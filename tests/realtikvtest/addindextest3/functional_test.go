@@ -83,7 +83,12 @@ func TestBackendCtxConcurrentUnregister(t *testing.T) {
 	discovery := store.(tikv.Storage).GetRegionCache().PDClient().GetServiceDiscovery()
 	bCtx, err := ingest.LitBackCtxMgr.Register(context.Background(), 1, false, nil, discovery, "test")
 	require.NoError(t, err)
-	_, err = bCtx.Register([]int64{1, 2, 3, 4, 5, 6, 7}, "t")
+	idxIDs := []int64{1, 2, 3, 4, 5, 6, 7}
+	uniques := make([]bool, 0, len(idxIDs))
+	for _ = range idxIDs {
+		uniques = append(uniques, false)
+	}
+	_, err = bCtx.Register([]int64{1, 2, 3, 4, 5, 6, 7}, uniques, "t")
 	require.NoError(t, err)
 
 	wg := sync.WaitGroup{}
