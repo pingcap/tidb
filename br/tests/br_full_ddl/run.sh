@@ -43,7 +43,7 @@ done
 # wait until the index creation/drop is done
 retry_cnt=0
 while true; do
-    run_sql "ADMIN SHOW DDL JOBS WHERE DB_NAME = '$DB' AND TABLE_NAME = '$TABLE' AND STATE != 'sync';"
+    run_sql "ADMIN SHOW DDL JOBS WHERE DB_NAME = '$DB' AND TABLE_NAME = '$TABLE' AND STATE != 'synced';"
     if grep -Fq "1. row" $res_file; then
         cat $res_file
         retry_cnt=$((retry_cnt+1))
