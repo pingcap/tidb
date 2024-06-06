@@ -95,6 +95,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrTooLongKey:                               mysql.Message("Specified key was too long (%d bytes); max key length is %d bytes", nil),
 	ErrKeyColumnDoesNotExits:                    mysql.Message("Key column '%-.192s' doesn't exist in table", nil),
 	ErrBlobUsedAsKey:                            mysql.Message("BLOB column '%-.192s' can't be used in key specification with the used table type", nil),
+	ErrJSONBadOneOrAllArg:                       mysql.Message("The oneOrAll argument to %s may take these values: 'one' or 'all'.", nil),
 	ErrTooBigFieldlength:                        mysql.Message("Column length too big for column '%-.192s' (max = %d); use BLOB or TEXT instead", nil),
 	ErrWrongAutoKey:                             mysql.Message("Incorrect table definition; there can be only one auto column and it must be defined as a key", nil),
 	ErrReady:                                    mysql.Message("%s: ready for connections.\nVersion: '%s'  socket: '%s'  port: %d", nil),

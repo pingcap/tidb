@@ -1188,7 +1188,7 @@ func (bj BinaryJSON) GetElemDepth() int {
 // [https://dev.mysql.com/doc/refman/5.7/en/json-search-functions.html#function_json-search]
 func (bj BinaryJSON) Search(containType string, search string, escape byte, pathExpres []JSONPathExpression) (res BinaryJSON, isNull bool, err error) {
 	if containType != JSONContainsPathOne && containType != JSONContainsPathAll {
-		return res, true, ErrInvalidJSONPath
+		return res, true, ErrJSONBadOneOrAllArg.GenWithStackByArgs("json_search")
 	}
 	patChars, patTypes := stringutil.CompilePattern(search, escape)
 

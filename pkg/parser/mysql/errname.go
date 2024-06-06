@@ -100,6 +100,7 @@ var MySQLErrName = map[uint16]*ErrMessage{
 	ErrTooLongKey:                               Message("Specified key was too long (%d bytes); max key length is %d bytes", nil),
 	ErrKeyColumnDoesNotExits:                    Message("Key column '%-.192s' doesn't exist in table", nil),
 	ErrBlobUsedAsKey:                            Message("BLOB column '%-.192s' can't be used in key specification with the used table type", nil),
+	ErrJSONBadOneOrAllArg:                       Message("The oneOrAll argument to %s may take these values: 'one' or 'all'.", nil),
 	ErrTooBigFieldlength:                        Message("Column length too big for column '%-.192s' (max = %d); use BLOB or TEXT instead", nil),
 	ErrWrongAutoKey:                             Message("Incorrect table definition; there can be only one auto column and it must be defined as a key", nil),
 	ErrReady:                                    Message("%s: ready for connections.\nVersion: '%s'  socket: '%s'  port: %d", nil),

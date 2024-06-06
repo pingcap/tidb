@@ -94,4 +94,6 @@ var (
 	ErrPartitionColumnStatsMissing = dbterror.ClassTypes.NewStd(mysql.ErrPartitionColumnStatsMissing)
 	// ErrIncorrectDatetimeValue is returned when the input value is in wrong format for datetime.
 	ErrIncorrectDatetimeValue = dbterror.ClassTypes.NewStd(mysql.ErrIncorrectDatetimeValue)
+	// ErrJSONBadOneOrAllArg is returned when the one_or_all argument isn't 'one' or 'all'.
+	ErrJSONBadOneOrAllArg = dbterror.ClassTypes.NewStd(mysql.ErrJSONBadOneOrAllArg)
 )
