@@ -95,7 +95,7 @@ func (h *Handle) SendLoadRequests(sc *stmtctx.StatementContext, neededHistItems 
 			}
 			select {
 			case h.StatsLoad.NeededItemsCh <- task:
-				result, _ := <-task.ResultCh
+				result := <-task.ResultCh
 				return result, nil
 			case <-timer.C:
 				return nil, errors.New("sync load stats channel is full and timeout sending task to channel")
