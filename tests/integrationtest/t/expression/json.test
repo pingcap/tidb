@@ -432,3 +432,5 @@ SELECT JSON_OVERLAPS('{}', 123);
 SELECT 'abc' MEMBER OF(123);
 -- error 3154
 SELECT JSON_SEARCH('{}',3,4);
+-- error 3143
+SELECT JSON_ARRAY_APPEND('[]','abc','b');
