@@ -644,6 +644,11 @@ func TestDeleteRangesFailure(t *testing.T) {
 				require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/store/gcworker/mockHistoryJobForGC"))
 			}()
 
+			require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/store/gcworker/mockHistoryJob", "return(\"schema/d1/t1\")"))
+			defer func() {
+				require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/gcworker/mockHistoryJob"))
+			}()
+
 			// Put some delete range tasks.
 			se := createSession(s.gcWorker.store)
 			defer se.Close()
@@ -800,6 +805,128 @@ Loop:
 	}
 }
 
+<<<<<<< HEAD:store/gcworker/gc_worker_test.go
+=======
+func TestUnsafeDestroyRangeForRaftkv2(t *testing.T) {
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/util/IsRaftKv2", "return(true)"))
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/store/gcworker/mockHistoryJobForGC", "return(1)"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/gcworker/mockHistoryJobForGC"))
+	}()
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/store/gcworker/mockHistoryJob", "return(\"schema/d1/t1\")"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/gcworker/mockHistoryJob"))
+	}()
+
+	s := createGCWorkerSuite(t)
+	// Put some delete range tasks.
+	se := createSession(s.gcWorker.store)
+	defer se.Close()
+	_, err := se.Execute(gcContext(), `INSERT INTO mysql.gc_delete_range VALUES
+("1", "2", "31", "32", "5"),
+("3", "4", "33", "34", "10"),
+("5", "6", "35", "36", "15"),
+("7", "8", "37", "38", "15")`)
+	require.NoError(t, err)
+
+	ranges := []util.DelRangeTask{
+		{
+			JobID:     1,
+			ElementID: 2,
+			StartKey:  []byte("1"),
+			EndKey:    []byte("2"),
+		},
+		{
+			JobID:     3,
+			ElementID: 4,
+			StartKey:  []byte("3"),
+			EndKey:    []byte("4"),
+		},
+		{
+			JobID:     5,
+			ElementID: 6,
+			StartKey:  []byte("5"),
+			EndKey:    []byte("6"),
+		},
+		{
+			JobID:     7,
+			ElementID: 8,
+			StartKey:  []byte("7"),
+			EndKey:    []byte("8"),
+		},
+	}
+
+	// Check the DeleteRanges tasks.
+	preparedRanges, err := util.LoadDeleteRanges(gcContext(), se, 20)
+	se.Close()
+	require.NoError(t, err)
+	require.Equal(t, ranges, preparedRanges)
+
+	sendReqCh := make(chan SentReq, 20)
+	s.client.deleteRangeHandler = func(addr string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
+		sendReqCh <- SentReq{req, addr}
+		resp := &tikvrpc.Response{
+			Resp: &kvrpcpb.DeleteRangeResponse{},
+		}
+		return resp, nil
+	}
+	defer func() { s.client.deleteRangeHandler = nil }()
+
+	err = s.gcWorker.deleteRanges(gcContext(), 8, 1)
+	require.NoError(t, err)
+
+	s.checkDestroyRangeReqV2(t, sendReqCh, ranges[:1])
+
+	se = createSession(s.gcWorker.store)
+	remainingRanges, err := util.LoadDeleteRanges(gcContext(), se, 20)
+	se.Close()
+	require.NoError(t, err)
+	require.Equal(t, ranges[1:], remainingRanges)
+
+	err = s.gcWorker.deleteRanges(gcContext(), 20, 1)
+	require.NoError(t, err)
+
+	s.checkDestroyRangeReqV2(t, sendReqCh, ranges[1:])
+
+	// In v2, they should not be recorded in done ranges
+	doneRanges, err := util.LoadDoneDeleteRanges(gcContext(), se, 20)
+	se.Close()
+	require.NoError(t, err)
+	require.True(t, len(doneRanges) == 0)
+}
+
+// checkDestroyRangeReqV2 checks whether given sentReq matches given ranges and stores when raft-kv2 is enabled.
+func (s *mockGCWorkerSuite) checkDestroyRangeReqV2(t *testing.T, sendReqCh chan SentReq, expectedRanges []util.DelRangeTask) {
+	sentReq := make([]SentReq, 0, 5)
+Loop:
+	for {
+		select {
+		case req := <-sendReqCh:
+			sentReq = append(sentReq, req)
+		default:
+			break Loop
+		}
+	}
+
+	sort.Slice(sentReq, func(i, j int) bool {
+		cmp := bytes.Compare(sentReq[i].req.DeleteRange().StartKey, sentReq[j].req.DeleteRange().StartKey)
+		return cmp < 0 || (cmp == 0 && sentReq[i].addr < sentReq[j].addr)
+	})
+
+	sortedRanges := append([]util.DelRangeTask{}, expectedRanges...)
+	sort.Slice(sortedRanges, func(i, j int) bool {
+		return bytes.Compare(sortedRanges[i].StartKey, sortedRanges[j].StartKey) < 0
+	})
+
+	for rangeIndex := range sortedRanges {
+		require.Equal(t, sortedRanges[rangeIndex].StartKey, kv.Key(sentReq[rangeIndex].req.DeleteRange().GetStartKey()))
+		require.Equal(t, sortedRanges[rangeIndex].EndKey, kv.Key(sentReq[rangeIndex].req.DeleteRange().GetEndKey()))
+	}
+}
+
+>>>>>>> a865c866ebd (GC : fix issue of delete range could not be executed again if the cleaning rules failed (#53368)):pkg/store/gcworker/gc_worker_test.go
 func TestLeaderTick(t *testing.T) {
 	s, clean := createGCWorkerSuite(t)
 	defer clean()
