@@ -219,36 +219,3 @@ func BenchmarkUpdateRecordInPipelinedDML(b *testing.B) {
 	avgTimePerRecord := float64(b.Elapsed().Nanoseconds()) / float64(totalRecords)
 	b.ReportMetric(avgTimePerRecord, "ns/record")
 }
-
-func allocateInLoop(numCols int) []types.Datum {
-	row := make([]types.Datum, 0, numCols)
-	for i := 0; i < numCols; i++ {
-		var value types.Datum
-		value.SetInt64(0)
-		row = append(row, value)
-	}
-	return row
-}
-
-func allocateOutsideLoop(numCols int) []types.Datum {
-	row := make([]types.Datum, numCols)
-	for i := 0; i < numCols; i++ {
-		value := &row[i]
-		value.SetInt64(0)
-	}
-	return row
-}
-
-var numCols int = 20
-
-func BenchmarkAllocateInLoop(b *testing.B) {
-	for n := 0; n < b.N; n++ {
-		allocateInLoop(numCols)
-	}
-}
-
-func BenchmarkAllocateOutsideLoop(b *testing.B) {
-	for n := 0; n < b.N; n++ {
-		allocateOutsideLoop(numCols)
-	}
-}
