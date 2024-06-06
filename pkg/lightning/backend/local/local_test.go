@@ -22,11 +22,9 @@ import (
 	"io"
 	"math"
 	"math/rand"
-	"os"
 	"path"
 	"path/filepath"
 	"runtime"
-	"runtime/pprof"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -2402,12 +2400,11 @@ func (mockStoreHelper) GetTiKVCodec() tikv.Codec {
 func TestTotalMemoryConsume(t *testing.T) {
 	//t.Skip("this test is manually run to calibrate the real memory usage with TotalMemoryConsume")
 
-	heapCnt := 0
+	inMemTest = true
 	getMemoryInUse := func() int64 {
 		runtime.GC()
 		s := runtime.MemStats{}
 		runtime.ReadMemStats(&s)
-		heapCnt++
 		return int64(s.HeapInuse)
 	}
 	memInUseBase := getMemoryInUse()
@@ -2476,19 +2473,29 @@ func TestTotalMemoryConsume(t *testing.T) {
 	unsortedWriter, err = b.LocalWriter(ctx, &backend.LocalWriterConfig{IsKVSorted: false}, engineID)
 	require.NoError(t, err)
 	// write about 150MiB data
+	val := make([]byte, 35)
 	for i := 0; i < 1024*1024; i++ {
 		err = unsortedWriter.AppendRows(ctx, []string{"a", "b", "c"}, kv.MakeRowsFromKvPairs([]common.KvPair{
-			{Key: []byte(fmt.Sprintf("key_a_%09d", i)), Val: make([]byte, 35)},
-			{Key: []byte(fmt.Sprintf("key_b_%09d", i)), Val: make([]byte, 35)},
-			{Key: []byte(fmt.Sprintf("key_c_%09d", i)), Val: make([]byte, 35)},
+			{Key: []byte(fmt.Sprintf("key_a_%09d", i)), Val: val},
+			{Key: []byte(fmt.Sprintf("key_b_%09d", i)), Val: val},
+			{Key: []byte(fmt.Sprintf("key_c_%09d", i)), Val: val},
 		}))
 		require.NoError(t, err)
 	}
-	// 119 MiB from bufferPool, 72 k * 2048910 from unsortedWriter.writeBatch
-	f, err := os.Create("/tmp/heap.prof")
-	require.NoError(t, err)
-	defer f.Close()
-	pprof.WriteHeapProfile(f)
 
+	// wait to make test more stable, maybe related to release memory
+	runtime.GC()
+	time.Sleep(time.Second)
+	// 119 MiB from bufferPool, 72 k * 2048910 from unsortedWriter.writeBatch
 	checkMemoryConsume("after write many rows", 272302064)
+
+	_, err = unsortedWriter.Close(ctx)
+	require.NoError(t, err)
+	runtime.GC()
+	time.Sleep(time.Second)
+	checkMemoryConsume("after close all writers", 119*units.MiB)
+
+	err = b.CloseEngine(ctx, &backend.EngineConfig{}, engineID)
+	require.NoError(t, err)
+	b.CloseEngineMgr()
 }
