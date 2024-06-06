@@ -33,11 +33,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/pdpb"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
-<<<<<<< HEAD
-=======
 	"github.com/pingcap/tidb/br/pkg/lightning/metric"
-	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
->>>>>>> 252bc7383ac (lightning: fix some grafana panel json (#43356))
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/util/codec"
@@ -94,12 +90,7 @@ func (local *local) SplitAndScatterRegionByRanges(
 	ctx context.Context,
 	ranges []Range,
 	needSplit bool,
-<<<<<<< HEAD
-) error {
-=======
-	regionSplitSize int64,
 ) (err error) {
->>>>>>> 252bc7383ac (lightning: fix some grafana panel json (#43356))
 	if len(ranges) == 0 {
 		return nil
 	}

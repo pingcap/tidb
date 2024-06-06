@@ -1141,11 +1141,15 @@ func (local *local) WriteToTiKV(
 		return nil, Range{}, stats, common.ErrNoLeader.GenWithStackByArgs(region.Region.Id, leaderID)
 	}
 
+	takeTime := time.Since(begin)
 	log.FromContext(ctx).Debug("write to kv", zap.Reflect("region", region), zap.Uint64("leader", leaderID),
 		zap.Reflect("meta", meta), zap.Reflect("return metas", leaderPeerMetas),
 		zap.Int64("kv_pairs", totalCount), zap.Int64("total_bytes", size),
 		zap.Int64("buf_size", bytesBuf.TotalSize()),
-		zap.Stringer("takeTime", time.Since(begin)))
+		zap.Stringer("takeTime", takeTime))
+	if m, ok := metric.FromContext(ctx); ok {
+		m.SSTSecondsHistogram.WithLabelValues(metric.SSTProcessWrite).Observe(takeTime.Seconds())
+	}
 
 	finishedRange := regionRange
 	if iter.Valid() && iter.Next() {
@@ -1162,7 +1166,16 @@ func (local *local) WriteToTiKV(
 	return leaderPeerMetas, finishedRange, stats, nil
 }
 
-func (local *local) Ingest(ctx context.Context, metas []*sst.SSTMeta, region *split.RegionInfo) (*sst.IngestResponse, error) {
+func (local *local) Ingest(ctx context.Context, metas []*sst.SSTMeta, region *split.RegionInfo) (resp *sst.IngestResponse, err error) {
+	if m, ok := metric.FromContext(ctx); ok {
+		begin := time.Now()
+		defer func() {
+			if err == nil {
+				m.SSTSecondsHistogram.WithLabelValues(metric.SSTProcessIngest).Observe(time.Since(begin).Seconds())
+			}
+		}()
+	}
+
 	leader := region.Leader
 	if leader == nil {
 		leader = region.Region.GetPeers()[0]
@@ -1213,7 +1226,7 @@ func (local *local) Ingest(ctx context.Context, metas []*sst.SSTMeta, region *sp
 		Context: reqCtx,
 		Ssts:    metas,
 	}
-	resp, err := cli.MultiIngest(ctx, req)
+	resp, err = cli.MultiIngest(ctx, req)
 	return resp, errors.Trace(err)
 }
 
