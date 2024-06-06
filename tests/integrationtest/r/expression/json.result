@@ -715,5 +715,7 @@ SELECT 'abc' MEMBER OF(123);
 Error 3146 (22032): Invalid data type for JSON data in argument 2 to function member of; a JSON string or JSON type is required.
 SELECT JSON_SEARCH('{}',3,4);
 Error 3154 (42000): The oneOrAll argument to json_search may take these values: 'one' or 'all'.
-SELECT JSON_ARRAY_APPEND('[]','abc','b');
+SELECT JSON_ARRAY_APPEND('[]','abc','def');
+Error 3143 (42000): Invalid JSON path expression. The error is around character position 1.
+SELECT JSON_ARRAY_INSERT('{}','abc','def');
 Error 3143 (42000): Invalid JSON path expression. The error is around character position 1.

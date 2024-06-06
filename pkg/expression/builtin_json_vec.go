@@ -569,7 +569,7 @@ func (b *builtinJSONSearchSig) vecEvalJSON(ctx EvalContext, input *chunk.Chunk, 
 				}
 				pathExpr, err := types.ParseJSONPathExpr(pathBufs[j].GetString(i))
 				if err != nil {
-					return types.ErrInvalidJSONPath.GenWithStackByArgs(pathBufs[j].GetString(i))
+					return err
 				}
 				pathExprs = append(pathExprs, pathExpr)
 			}
@@ -729,7 +729,7 @@ func (b *builtinJSONArrayInsertSig) vecEvalJSON(ctx EvalContext, input *chunk.Ch
 			}
 			pathExpr, err = types.ParseJSONPathExpr(pathBufs[j].GetString(i))
 			if err != nil {
-				return types.ErrInvalidJSONPath.GenWithStackByArgs(pathBufs[j].GetString(i))
+				return err
 			}
 			if pathExpr.CouldMatchMultipleValues() {
 				return types.ErrInvalidJSONPathMultipleSelection
