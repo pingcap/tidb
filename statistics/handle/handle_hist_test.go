@@ -239,13 +239,13 @@ func TestConcurrentLoadHistWithPanicAndFail(t *testing.T) {
 			rs1, ok1 := <-resultCh
 			require.True(t, rs1.Shared)
 			require.True(t, ok1)
-			require.Equal(t, neededColumns[0].ID, rs1.Val.(stmtctx.StatsLoadResult).Item)
+			require.Equal(t, neededColumns[0].ID, rs1.Val.(stmtctx.StatsLoadResult).Item.ID)
 		}
 		for _, resultCh := range stmtCtx2.StatsLoad.ResultCh {
 			rs1, ok1 := <-resultCh
 			require.True(t, rs1.Shared)
 			require.True(t, ok1)
-			require.Equal(t, neededColumns[0].ID, rs1.Val.(stmtctx.StatsLoadResult).Item)
+			require.Equal(t, neededColumns[0].ID, rs1.Val.(stmtctx.StatsLoadResult).Item.ID)
 		}
 
 		stat = h.GetTableStats(tableInfo)
