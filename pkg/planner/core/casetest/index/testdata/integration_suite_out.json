@@ -182,8 +182,8 @@
       {
         "SQL": "select b from t3 where a = 1 and b is not null",
         "Plan": [
-          "Projection 10.00 root  test.t3.b",
-          "└─TableReader 10.00 root  data:TableRangeScan",
+          "TableReader 10.00 root  data:Projection",
+          "└─Projection 10.00 cop[tikv]  test.t3.b",
           "  └─TableRangeScan 10.00 cop[tikv] table:t3 range:[1,1], keep order:false, stats:pseudo"
         ],
         "Result": [
