@@ -85,7 +85,7 @@ func TestBackendCtxConcurrentUnregister(t *testing.T) {
 	require.NoError(t, err)
 	idxIDs := []int64{1, 2, 3, 4, 5, 6, 7}
 	uniques := make([]bool, 0, len(idxIDs))
-	for _ = range idxIDs {
+	for range idxIDs {
 		uniques = append(uniques, false)
 	}
 	_, err = bCtx.Register([]int64{1, 2, 3, 4, 5, 6, 7}, uniques, "t")
