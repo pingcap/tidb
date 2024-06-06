@@ -13,14 +13,33 @@ import (
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/rtree"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/br/pkg/utils/storewatch"
+	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
+
+type BackupRetryPolicy struct {
+	One uint64
+	All bool
+}
+
+type BackupSender interface {
+	SendAsync(
+		ctx context.Context,
+		round uint64,
+		storeID uint64,
+		request backuppb.BackupRequest,
+		cli backuppb.BackupClient,
+		respCh chan *ResponseAndStore,
+		StateNotifier chan BackupRetryPolicy)
+}
 
 type ResponseAndStore struct {
 	Resp    *backuppb.BackupResponse
@@ -106,7 +125,7 @@ func doSendBackup(
 	}
 }
 
-func startStoreBackup(
+func startBackup(
 	ctx context.Context,
 	storeID uint64,
 	backupReq backuppb.BackupRequest,
@@ -183,4 +202,50 @@ func getBackupRanges(ranges []rtree.Range) []*kvrpcpb.KeyRange {
 		})
 	}
 	return requestRanges
+}
+
+func ObserveStoreChangesAsync(ctx context.Context, stateNotifier chan BackupRetryPolicy, pdCli pd.Client) {
+	go func() {
+		sendAll := false
+		newJoinStoresMap := make(map[uint64]struct{})
+		cb := storewatch.MakeCallback(storewatch.WithOnReboot(func(s *metapb.Store) {
+			sendAll = true
+		}), storewatch.WithOnDisconnect(func(s *metapb.Store) {
+			sendAll = true
+		}), storewatch.WithOnNewStoreRegistered(func(s *metapb.Store) {
+			// only backup for this store
+			newJoinStoresMap[s.Id] = struct{}{}
+		}))
+
+		notifyFn := func(ctx context.Context, sendPolicy BackupRetryPolicy) {
+			select {
+			case <-ctx.Done():
+			case stateNotifier <- sendPolicy:
+			}
+		}
+
+		watcher := storewatch.New(pdCli, cb)
+		tick := time.NewTicker(30 * time.Second)
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-tick.C:
+				logutil.CL(ctx).Info("check store changes by tick")
+				err := watcher.Step(ctx)
+				if err != nil {
+					logutil.CL(ctx).Warn("failed to watch store changes, ignore it", zap.Error(err))
+				}
+				if sendAll {
+					notifyFn(ctx, BackupRetryPolicy{All: true})
+				} else if len(newJoinStoresMap) > 0 {
+					for storeID := range newJoinStoresMap {
+						notifyFn(ctx, BackupRetryPolicy{One: storeID})
+					}
+				}
+				sendAll = false
+				clear(newJoinStoresMap)
+			}
+		}
+	}()
 }
