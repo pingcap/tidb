@@ -685,7 +685,7 @@ func (b *builtinJSONContainsPathSig) evalInt(ctx EvalContext, row chunk.Row) (re
 	}
 	containType = strings.ToLower(containType)
 	if containType != types.JSONContainsPathAll && containType != types.JSONContainsPathOne {
-		return res, true, types.ErrJSONBadOneOrAllArg.GenWithStackByArgs("json_contains")
+		return res, true, types.ErrJSONBadOneOrAllArg.GenWithStackByArgs("json_contains_path")
 	}
 	var pathExpr types.JSONPathExpression
 	contains := int64(1)

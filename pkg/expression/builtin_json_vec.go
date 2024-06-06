@@ -1152,7 +1152,7 @@ func (b *builtinJSONContainsPathSig) vecEvalInt(ctx EvalContext, input *chunk.Ch
 		}
 		containType := strings.ToLower(typeBuf.GetString(i))
 		if containType != types.JSONContainsPathAll && containType != types.JSONContainsPathOne {
-			return types.ErrJSONBadOneOrAllArg.GenWithStackByArgs("json_contains")
+			return types.ErrJSONBadOneOrAllArg.GenWithStackByArgs("json_contains_path")
 		}
 		obj := jsonBuf.GetJSON(i)
 		contains := int64(1)
