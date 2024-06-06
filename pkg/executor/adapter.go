@@ -210,6 +210,13 @@ func (a *recordSet) Finish() error {
 				err = cteErr
 			}
 			a.executor = nil
+			if a.stmt != nil {
+				status := a.stmt.Ctx.GetSessionVars().SQLKiller.GetKillSignal()
+				inWriteResultSet := a.stmt.Ctx.GetSessionVars().SQLKiller.InWriteResultSet.Load()
+				if status > 0 && inWriteResultSet {
+					logutil.BgLogger().Warn("kill query, this SQL may be stuck in the network I/O stack.", zap.Uint64("conn", a.stmt.Ctx.GetSessionVars().ConnectionID))
+				}
+			}
 		})
 	}
 	if err != nil {

@@ -39,9 +39,10 @@ const (
 
 // SQLKiller is used to kill a query.
 type SQLKiller struct {
-	Signal killSignal
-	ConnID uint64
-	Finish func()
+	Signal           killSignal
+	ConnID           uint64
+	Finish           func()
+	InWriteResultSet atomic.Bool
 }
 
 // SendKillSignal sends a kill signal to the query.
@@ -55,7 +56,7 @@ func (killer *SQLKiller) SendKillSignal(reason killSignal) {
 
 // GetKillSignal gets the kill signal.
 func (killer *SQLKiller) GetKillSignal() killSignal {
-	return killSignal(atomic.LoadUint32(&killer.Signal))
+	return atomic.LoadUint32(&killer.Signal)
 }
 
 // getKillError gets the error according to the kill signal.
@@ -95,8 +96,7 @@ func (killer *SQLKiller) HandleSignal() error {
 	})
 	status := atomic.LoadUint32(&killer.Signal)
 	err := killer.getKillError(status)
-	switch status {
-	case ServerMemoryExceeded:
+	if status == ServerMemoryExceeded {
 		logutil.BgLogger().Warn("global memory controller, NeedKill signal is received successfully",
 			zap.Uint64("conn", killer.ConnID))
 	}
@@ -105,6 +105,9 @@ func (killer *SQLKiller) HandleSignal() error {
 
 // Reset resets the SqlKiller.
 func (killer *SQLKiller) Reset() {
+	if atomic.LoadUint32(&killer.Signal) != 0 {
+		logutil.BgLogger().Warn("kill query finished", zap.Uint64("conn", killer.ConnID))
+	}
 	atomic.StoreUint32(&killer.Signal, 0)
 	killer.Finish = nil
 }
