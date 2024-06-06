@@ -1593,17 +1593,17 @@ func TestDefaultColumnWithRand(t *testing.T) {
 	tk.MustQuery("show create table t").Check(testkit.Rows(
 		"t CREATE TABLE `t` (\n" +
 			"  `c` int(10) DEFAULT NULL,\n" +
-			"  `c1` int(11) DEFAULT rand()\n" +
+			"  `c1` int(11) DEFAULT (rand())\n" +
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 	tk.MustQuery("show create table t1").Check(testkit.Rows(
 		"t1 CREATE TABLE `t1` (\n" +
 			"  `c` int(11) DEFAULT NULL,\n" +
-			"  `c1` double DEFAULT rand()\n" +
+			"  `c1` double DEFAULT (rand())\n" +
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 	tk.MustQuery("show create table t2").Check(testkit.Rows(
 		"t2 CREATE TABLE `t2` (\n" +
 			"  `c` int(11) DEFAULT NULL,\n" +
-			"  `c1` double DEFAULT rand(1)\n" +
+			"  `c1` double DEFAULT (rand(1))\n" +
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 
 	// use a non-existent function name
@@ -3081,4 +3081,32 @@ func TestIssue52680(t *testing.T) {
 
 	tk.MustExec("insert into issue52680 values(default);")
 	tk.MustQuery("select * from issue52680").Check(testkit.Rows("1", "2", "3"))
+}
+
+func TestCreateIndexWithChangeMaxIndexLength(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	originCfg := config.GetGlobalConfig()
+	defer func() {
+		config.StoreGlobalConfig(originCfg)
+	}()
+
+	originHook := dom.DDL().GetHook()
+	defer dom.DDL().SetHook(originHook)
+	hook := &callback.TestDDLCallback{Do: dom}
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		if job.Type != model.ActionAddIndex {
+			return
+		}
+		if job.SchemaState == model.StateNone {
+			newCfg := *originCfg
+			newCfg.MaxIndexLength = 1000
+			config.StoreGlobalConfig(&newCfg)
+		}
+	}
+	dom.DDL().SetHook(hook)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("create table t(id int, a json DEFAULT NULL, b varchar(2) DEFAULT NULL);")
+	tk.MustGetErrMsg("CREATE INDEX idx_test on t ((cast(a as char(2000) array)),b);", "[ddl:1071]Specified key was too long (2000 bytes); max key length is 1000 bytes")
 }

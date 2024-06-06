@@ -1145,8 +1145,23 @@ func getListTableTypeByConf(conf *Config) listTableType {
 }
 
 func prepareTableListToDump(tctx *tcontext.Context, conf *Config, db *sql.Conn) error {
-	if conf.SpecifiedTables || conf.SQL != "" {
+	if conf.SQL != "" {
 		return nil
+	}
+
+	ifSeqExists, err := CheckIfSeqExists(db)
+	if err != nil {
+		return err
+	}
+	var listType listTableType
+	if ifSeqExists {
+		listType = listTableByShowFullTables
+	} else {
+		listType = getListTableTypeByConf(conf)
+	}
+
+	if conf.SpecifiedTables {
+		return updateSpecifiedTablesMeta(tctx, db, conf.Tables, listType)
 	}
 	databases, err := prepareDumpingDatabases(tctx, conf, db)
 	if err != nil {
@@ -1159,17 +1174,6 @@ func prepareTableListToDump(tctx *tcontext.Context, conf *Config, db *sql.Conn) 
 	}
 	if !conf.NoSequences {
 		tableTypes = append(tableTypes, TableTypeSequence)
-	}
-
-	ifSeqExists, err := CheckIfSeqExists(db)
-	if err != nil {
-		return err
-	}
-	var listType listTableType
-	if ifSeqExists {
-		listType = listTableByShowFullTables
-	} else {
-		listType = getListTableTypeByConf(conf)
 	}
 
 	conf.Tables, err = ListAllDatabasesTables(tctx, db, databases, listType, tableTypes...)

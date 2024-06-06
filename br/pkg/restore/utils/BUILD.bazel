@@ -1,0 +1,57 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "utils",
+    srcs = [
+        "merge.go",
+        "misc.go",
+        "rewrite_rule.go",
+    ],
+    importpath = "github.com/pingcap/tidb/br/pkg/restore/utils",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//br/pkg/errors",
+        "//br/pkg/logutil",
+        "//br/pkg/rtree",
+        "//pkg/parser/model",
+        "//pkg/tablecodec",
+        "//pkg/util/codec",
+        "//pkg/util/redact",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_kvproto//pkg/brpb",
+        "@com_github_pingcap_kvproto//pkg/import_sstpb",
+        "@com_github_pingcap_log//:log",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "utils_test",
+    timeout = "short",
+    srcs = [
+        "merge_test.go",
+        "misc_test.go",
+        "rewrite_rule_test.go",
+    ],
+    flaky = True,
+    shard_count = 9,
+    deps = [
+        ":utils",
+        "//br/pkg/conn",
+        "//br/pkg/errors",
+        "//br/pkg/restore",
+        "//br/pkg/restore/split",
+        "//br/pkg/rtree",
+        "//br/pkg/utiltest",
+        "//pkg/sessionctx/stmtctx",
+        "//pkg/tablecodec",
+        "//pkg/types",
+        "//pkg/util/codec",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_pingcap_kvproto//pkg/brpb",
+        "@com_github_pingcap_kvproto//pkg/import_sstpb",
+        "@com_github_pingcap_kvproto//pkg/metapb",
+        "@com_github_stretchr_testify//require",
+    ],
+)

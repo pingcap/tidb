@@ -246,7 +246,7 @@ func addUnchangedKeysForLockByRow(
 	count := 0
 	physicalID := t.Meta().ID
 	if pt, ok := t.(table.PartitionedTable); ok {
-		p, err := pt.GetPartitionByRow(sctx.GetExprCtx(), row)
+		p, err := pt.GetPartitionByRow(sctx.GetExprCtx().GetEvalCtx(), row)
 		if err != nil {
 			return 0, err
 		}
@@ -313,7 +313,7 @@ func rebaseAutoRandomValue(
 // types.ErrDataTooLong is produced in types.ProduceStrWithSpecifiedTp, there is no column info in there,
 // so we reset the error msg here, and wrap old err with errors.Wrap.
 func resetErrDataTooLong(colName string, rowIdx int, _ error) error {
-	newErr := types.ErrDataTooLong.GenWithStack("Data too long for column '%v' at row %v", colName, rowIdx)
+	newErr := types.ErrDataTooLong.FastGen("Data too long for column '%v' at row %v", colName, rowIdx)
 	return newErr
 }
 
@@ -330,7 +330,7 @@ func checkRowForExchangePartition(sctx table.MutateContext, row []types.Datum, t
 		return errors.Errorf("exchange partition process assert table partition failed")
 	}
 	err := p.CheckForExchangePartition(
-		sctx.GetExprCtx(),
+		sctx.GetExprCtx().GetEvalCtx(),
 		pt.Meta().Partition,
 		row,
 		tbl.ExchangePartitionInfo.ExchangePartitionDefID,

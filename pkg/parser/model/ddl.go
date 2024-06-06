@@ -386,7 +386,8 @@ func NewMultiSchemaInfo() *MultiSchemaInfo {
 	}
 }
 
-// SubJob is a representation of one DDL schema change. A Job may contain zero(when multi-schema change is not applicable) or more SubJobs.
+// SubJob is a representation of one DDL schema change. A Job may contain zero
+// (when multi-schema change is not applicable) or more SubJobs.
 type SubJob struct {
 	Type        ActionType      `json:"type"`
 	Args        []interface{}   `json:"-"`
@@ -546,7 +547,10 @@ type Job struct {
 	// Priority is only used to set the operation priority of adding indices.
 	Priority int `json:"priority"`
 
-	// SeqNum is the total order in all DDLs, it's used to identify the order of DDL.
+	// SeqNum is the total order in all DDLs, it's used to identify the order of
+	// moving the job into DDL history, not the order of the job execution.
+	// fast create table doesn't honor this field, there might duplicate seq_num in this case.
+	// TODO: deprecated it, as it forces 'moving jobs into DDL history' part to be serial.
 	SeqNum uint64 `json:"seq_num"`
 
 	// Charset is the charset when the DDL Job is created.
@@ -729,7 +733,8 @@ func (job *Job) Decode(b []byte) error {
 	return errors.Trace(err)
 }
 
-// DecodeArgs decodes job args.
+// DecodeArgs decodes serialized job arguments from job.RawArgs into the given
+// variables, and also save the result in job.Args.
 func (job *Job) DecodeArgs(args ...interface{}) error {
 	var rawArgs []json.RawMessage
 	if err := json.Unmarshal(job.RawArgs, &rawArgs); err != nil {
@@ -746,6 +751,9 @@ func (job *Job) DecodeArgs(args ...interface{}) error {
 			return errors.Trace(err)
 		}
 	}
+	// TODO(lance6716): don't assign to job.Args here, because the types of argument
+	// `args` are always pointer type. But sometimes in the `job` literals we don't
+	// use pointer
 	job.Args = args[:sz]
 	return nil
 }
@@ -1138,6 +1146,12 @@ type SchemaDiff struct {
 	SchemaID int64      `json:"schema_id"`
 	TableID  int64      `json:"table_id"`
 
+	// SubActionTypes is the list of action types done together within a multiple schema
+	// change job. As the job might contain multiple steps that changes schema version,
+	// if some step only contains one action, Type will be that action, and SubActionTypes
+	// will be empty.
+	// for other types of job, it will always be empty.
+	SubActionTypes []ActionType `json:"sub_action_types,omitempty"`
 	// OldTableID is the table ID before truncate, only used by truncate table DDL.
 	OldTableID int64 `json:"old_table_id"`
 	// OldSchemaID is the schema ID before rename table, only used by rename table DDL.

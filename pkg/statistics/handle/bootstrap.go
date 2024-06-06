@@ -18,9 +18,9 @@ import (
 	"context"
 	"sync"
 	"sync/atomic"
-	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -28,10 +28,10 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/cache"
 	"github.com/pingcap/tidb/pkg/statistics/handle/initstats"
+	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/types"
@@ -52,7 +52,7 @@ type MaxTidRecord struct {
 }
 
 func (h *Handle) initStatsMeta4Chunk(is infoschema.InfoSchema, cache statstypes.StatsCache, iter *chunk.Iterator4Chunk) {
-	var physicalID int64
+	var physicalID, maxPhysicalID int64
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		physicalID = row.GetInt64(1)
 		// The table is read-only. Please do not modify it.
@@ -61,6 +61,7 @@ func (h *Handle) initStatsMeta4Chunk(is infoschema.InfoSchema, cache statstypes.
 			logutil.BgLogger().Debug("unknown physical ID in stats meta table, maybe it has been dropped", zap.Int64("ID", physicalID))
 			continue
 		}
+		maxPhysicalID = max(physicalID, maxPhysicalID)
 		tableInfo := table.Meta()
 		newHistColl := statistics.HistColl{
 			PhysicalID:     physicalID,
@@ -80,7 +81,7 @@ func (h *Handle) initStatsMeta4Chunk(is infoschema.InfoSchema, cache statstypes.
 	}
 	maxTidRecord.mu.Lock()
 	defer maxTidRecord.mu.Unlock()
-	if maxTidRecord.tid.Load() < physicalID {
+	if maxTidRecord.tid.Load() < maxPhysicalID {
 		maxTidRecord.tid.Store(physicalID)
 	}
 }
@@ -324,7 +325,10 @@ func (h *Handle) initStatsHistogramsByPaging(is infoschema.InfoSchema, cache sta
 		}
 	}()
 	sctx := se.(sessionctx.Context)
-	sql := "select HIGH_PRIORITY table_id, is_index, hist_id, distinct_count, version, null_count, cm_sketch, tot_col_size, stats_ver, correlation, flag, last_analyze_pos from mysql.stats_histograms where table_id >= %? and table_id < %?"
+	// Why do we need to add `is_index=1` in the SQL?
+	// because it is aligned to the `initStatsTopN` function, which only loads the topn of the index too.
+	// the other will be loaded by sync load.
+	sql := "select HIGH_PRIORITY table_id, is_index, hist_id, distinct_count, version, null_count, cm_sketch, tot_col_size, stats_ver, correlation, flag, last_analyze_pos from mysql.stats_histograms where table_id >= %? and table_id < %? and is_index=1"
 	rc, err := util.Exec(sctx, sql, task.StartTid, task.EndTid)
 	if err != nil {
 		return errors.Trace(err)
@@ -349,9 +353,9 @@ func (h *Handle) initStatsHistogramsByPaging(is infoschema.InfoSchema, cache sta
 func (h *Handle) initStatsHistogramsConcurrency(is infoschema.InfoSchema, cache statstypes.StatsCache) error {
 	var maxTid = maxTidRecord.tid.Load()
 	tid := int64(0)
-	ls := initstats.NewRangeWorker(func(task initstats.Task) error {
+	ls := initstats.NewRangeWorker("histogram", func(task initstats.Task) error {
 		return h.initStatsHistogramsByPaging(is, cache, task)
-	})
+	}, uint64(maxTid), uint64(initStatsStep))
 	ls.LoadStats()
 	for tid <= maxTid {
 		ls.SendTask(initstats.Task{
@@ -459,9 +463,9 @@ func (h *Handle) initStatsTopNByPaging(cache statstypes.StatsCache, task initsta
 func (h *Handle) initStatsTopNConcurrency(cache statstypes.StatsCache) error {
 	var maxTid = maxTidRecord.tid.Load()
 	tid := int64(0)
-	ls := initstats.NewRangeWorker(func(task initstats.Task) error {
+	ls := initstats.NewRangeWorker("TopN", func(task initstats.Task) error {
 		return h.initStatsTopNByPaging(cache, task)
-	})
+	}, uint64(maxTid), uint64(initStatsStep))
 	ls.LoadStats()
 	for tid <= maxTid {
 		ls.SendTask(initstats.Task{
@@ -558,19 +562,15 @@ func (*Handle) initStatsBuckets4Chunk(cache statstypes.StatsCache, iter *chunk.I
 			}
 			hist = &column.Histogram
 			d := types.NewBytesDatum(row.GetBytes(5))
-			// Setting TimeZone to time.UTC aligns with HistogramFromStorage and can fix #41938. However, #41985 still exist.
-			// TODO: do the correct time zone conversion for timestamp-type columns' upper/lower bounds.
-			sc := stmtctx.NewStmtCtxWithTimeZone(time.UTC)
-			sc.SetTypeFlags(sc.TypeFlags().WithIgnoreInvalidDateErr(true).WithIgnoreZeroInDate(true))
 			var err error
-			lower, err = d.ConvertTo(sc.TypeCtx(), &column.Info.FieldType)
+			lower, err = d.ConvertTo(statistics.UTCWithAllowInvalidDateCtx, &column.Info.FieldType)
 			if err != nil {
 				logutil.BgLogger().Debug("decode bucket lower bound failed", zap.Error(err))
 				delete(table.Columns, histID)
 				continue
 			}
 			d = types.NewBytesDatum(row.GetBytes(6))
-			upper, err = d.ConvertTo(sc.TypeCtx(), &column.Info.FieldType)
+			upper, err = d.ConvertTo(statistics.UTCWithAllowInvalidDateCtx, &column.Info.FieldType)
 			if err != nil {
 				logutil.BgLogger().Debug("decode bucket upper bound failed", zap.Error(err))
 				delete(table.Columns, histID)
@@ -666,9 +666,9 @@ func (h *Handle) initStatsBucketsByPaging(cache statstypes.StatsCache, task init
 func (h *Handle) initStatsBucketsConcurrency(cache statstypes.StatsCache) error {
 	var maxTid = maxTidRecord.tid.Load()
 	tid := int64(0)
-	ls := initstats.NewRangeWorker(func(task initstats.Task) error {
+	ls := initstats.NewRangeWorker("bucket", func(task initstats.Task) error {
 		return h.initStatsBucketsByPaging(cache, task)
-	})
+	}, uint64(maxTid), uint64(initStatsStep))
 	ls.LoadStats()
 	for tid <= maxTid {
 		ls.SendTask(initstats.Task{
@@ -696,14 +696,17 @@ func (h *Handle) InitStatsLite(is infoschema.InfoSchema) (err error) {
 	if err != nil {
 		return err
 	}
+	failpoint.Inject("beforeInitStatsLite", func() {})
 	cache, err := h.initStatsMeta(is)
 	if err != nil {
 		return errors.Trace(err)
 	}
+	statslogutil.StatsLogger().Info("complete to load the meta in the lite mode")
 	err = h.initStatsHistogramsLite(is, cache)
 	if err != nil {
 		return errors.Trace(err)
 	}
+	statslogutil.StatsLogger().Info("complete to load the histogram in the lite mode")
 	h.Replace(cache)
 	return nil
 }
@@ -723,15 +726,18 @@ func (h *Handle) InitStats(is infoschema.InfoSchema) (err error) {
 	if err != nil {
 		return err
 	}
+	failpoint.Inject("beforeInitStats", func() {})
 	cache, err := h.initStatsMeta(is)
 	if err != nil {
 		return errors.Trace(err)
 	}
+	statslogutil.StatsLogger().Info("complete to load the meta")
 	if config.GetGlobalConfig().Performance.ConcurrentlyInitStats {
 		err = h.initStatsHistogramsConcurrency(is, cache)
 	} else {
 		err = h.initStatsHistograms(is, cache)
 	}
+	statslogutil.StatsLogger().Info("complete to load the histogram")
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -740,6 +746,7 @@ func (h *Handle) InitStats(is infoschema.InfoSchema) (err error) {
 	} else {
 		err = h.initStatsTopN(cache)
 	}
+	statslogutil.StatsLogger().Info("complete to load the topn")
 	if err != nil {
 		return err
 	}
@@ -748,8 +755,10 @@ func (h *Handle) InitStats(is infoschema.InfoSchema) (err error) {
 		if err != nil {
 			return err
 		}
+		statslogutil.StatsLogger().Info("complete to load the FM Sketch")
 	}
 	err = h.initStatsBuckets(cache)
+	statslogutil.StatsLogger().Info("complete to load the bucket")
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -757,11 +766,8 @@ func (h *Handle) InitStats(is infoschema.InfoSchema) (err error) {
 	for _, table := range cache.Values() {
 		for _, col := range table.Columns {
 			if col.StatsAvailable() {
-				if mysql.HasPriKeyFlag(col.Info.GetFlag()) {
-					col.StatsLoadedStatus = statistics.NewStatsFullLoadStatus()
-				} else {
-					col.StatsLoadedStatus = statistics.NewStatsAllEvictedStatus()
-				}
+				// primary key column has no stats info, because primary key's is_index is false. so it cannot load the topn
+				col.StatsLoadedStatus = statistics.NewStatsAllEvictedStatus()
 			}
 		}
 	}

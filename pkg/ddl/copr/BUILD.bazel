@@ -6,9 +6,11 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/ddl/copr",
     visibility = ["//visibility:public"],
     deps = [
+        "//pkg/distsql/context",
         "//pkg/expression",
+        "//pkg/expression/context",
+        "//pkg/infoschema",
         "//pkg/parser/model",
-        "//pkg/sessionctx",
         "//pkg/table/tables",
         "//pkg/types",
         "@com_github_pingcap_errors//:errors",
@@ -24,6 +26,7 @@ go_test(
     shard_count = 3,
     deps = [
         "//pkg/expression",
+        "//pkg/expression/contextstatic",
         "//pkg/parser/model",
         "//pkg/parser/mysql",
         "//pkg/types",

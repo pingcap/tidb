@@ -26,7 +26,8 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/baseimpl"
-	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -97,7 +98,7 @@ func (a *WindowFuncExtractor) Leave(n ast.Node) (ast.Node, bool) {
 type logicalSchemaProducer struct {
 	schema *expression.Schema
 	names  types.NameSlice
-	baseLogicalPlan
+	logicalop.BaseLogicalPlan
 }
 
 // Schema implements the Plan.Schema interface.
@@ -138,7 +139,7 @@ func (s *logicalSchemaProducer) setSchemaAndNames(schema *expression.Schema, nam
 }
 
 // inlineProjection prunes unneeded columns inline a executor.
-func (s *logicalSchemaProducer) inlineProjection(parentUsedCols []*expression.Column, opt *coreusage.LogicalOptimizeOp) {
+func (s *logicalSchemaProducer) inlineProjection(parentUsedCols []*expression.Column, opt *optimizetrace.LogicalOptimizeOp) {
 	prunedColumns := make([]*expression.Column, 0)
 	used := expression.GetUsedList(s.SCtx().GetExprCtx().GetEvalCtx(), parentUsedCols, s.Schema())
 	for i := len(used) - 1; i >= 0; i-- {
@@ -147,7 +148,7 @@ func (s *logicalSchemaProducer) inlineProjection(parentUsedCols []*expression.Co
 			s.schema.Columns = append(s.Schema().Columns[:i], s.Schema().Columns[i+1:]...)
 		}
 	}
-	appendColumnPruneTraceStep(s.self, prunedColumns, opt)
+	appendColumnPruneTraceStep(s.Self(), prunedColumns, opt)
 }
 
 // physicalSchemaProducer stores the schema for the physical plans who can produce schema directly.
@@ -479,5 +480,5 @@ func GetPushDownCtx(pctx base.PlanContext) expression.PushDownContext {
 
 // GetPushDownCtxFromBuildPBContext creates a PushDownContext from BuildPBContext
 func GetPushDownCtxFromBuildPBContext(bctx *base.BuildPBContext) expression.PushDownContext {
-	return expression.NewPushDownContext(bctx.GetExprCtx().GetEvalCtx(), bctx.GetClient(), bctx.InExplainStmt, bctx.AppendWarning, bctx.AppendExtraWarning, bctx.GroupConcatMaxLen)
+	return expression.NewPushDownContext(bctx.GetExprCtx().GetEvalCtx(), bctx.GetClient(), bctx.InExplainStmt, bctx.WarnHandler, bctx.ExtraWarnghandler, bctx.GroupConcatMaxLen)
 }

@@ -30,7 +30,8 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/types"
@@ -63,13 +64,13 @@ const FullRange = -1
 // partitionProcessor is here because it's easier to prune partition after predicate push down.
 type partitionProcessor struct{}
 
-func (s *partitionProcessor) optimize(_ context.Context, lp base.LogicalPlan, opt *coreusage.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
+func (s *partitionProcessor) optimize(_ context.Context, lp base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
 	planChanged := false
 	p, err := s.rewriteDataSource(lp, opt)
 	return p, planChanged, err
 }
 
-func (s *partitionProcessor) rewriteDataSource(lp base.LogicalPlan, opt *coreusage.LogicalOptimizeOp) (base.LogicalPlan, error) {
+func (s *partitionProcessor) rewriteDataSource(lp base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, error) {
 	// Assert there will not be sel -> sel in the ast.
 	switch p := lp.(type) {
 	case *DataSource:
@@ -503,7 +504,7 @@ func (*partitionProcessor) reconstructTableColNames(ds *DataSource) ([]*types.Fi
 	return names, nil
 }
 
-func (s *partitionProcessor) processHashOrKeyPartition(ds *DataSource, pi *model.PartitionInfo, opt *coreusage.LogicalOptimizeOp) (base.LogicalPlan, error) {
+func (s *partitionProcessor) processHashOrKeyPartition(ds *DataSource, pi *model.PartitionInfo, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, error) {
 	names, err := s.reconstructTableColNames(ds)
 	if err != nil {
 		return nil, err
@@ -825,7 +826,7 @@ func (s *partitionProcessor) pruneListPartition(ctx base.PlanContext, tbl table.
 	return used, nil
 }
 
-func (s *partitionProcessor) prune(ds *DataSource, opt *coreusage.LogicalOptimizeOp) (base.LogicalPlan, error) {
+func (s *partitionProcessor) prune(ds *DataSource, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, error) {
 	pi := ds.tableInfo.GetPartitionInfo()
 	if pi == nil {
 		return ds, nil
@@ -1026,7 +1027,7 @@ func (s *partitionProcessor) pruneRangePartition(ctx base.PlanContext, pi *model
 	pruner := rangePruner{
 		lessThan: lessThanDataInt{
 			data:     partExpr.ForRangePruning.LessThan,
-			unsigned: mysql.HasUnsignedFlag(col.GetType().GetFlag()),
+			unsigned: mysql.HasUnsignedFlag(col.GetStaticType().GetFlag()),
 			maxvalue: partExpr.ForRangePruning.MaxValue,
 		},
 		col:        col,
@@ -1038,7 +1039,7 @@ func (s *partitionProcessor) pruneRangePartition(ctx base.PlanContext, pi *model
 	return result, nil
 }
 
-func (s *partitionProcessor) processRangePartition(ds *DataSource, pi *model.PartitionInfo, opt *coreusage.LogicalOptimizeOp) (base.LogicalPlan, error) {
+func (s *partitionProcessor) processRangePartition(ds *DataSource, pi *model.PartitionInfo, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, error) {
 	used, err := s.pruneRangePartition(ds.SCtx(), pi, ds.table.(table.PartitionedTable), ds.allConds, ds.TblCols, ds.names)
 	if err != nil {
 		return nil, err
@@ -1046,7 +1047,7 @@ func (s *partitionProcessor) processRangePartition(ds *DataSource, pi *model.Par
 	return s.makeUnionAllChildren(ds, pi, used, opt)
 }
 
-func (s *partitionProcessor) processListPartition(ds *DataSource, pi *model.PartitionInfo, opt *coreusage.LogicalOptimizeOp) (base.LogicalPlan, error) {
+func (s *partitionProcessor) processListPartition(ds *DataSource, pi *model.PartitionInfo, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, error) {
 	used, err := s.pruneListPartition(ds.SCtx(), ds.table, ds.partitionNames, ds.allConds, ds.TblCols)
 	if err != nil {
 		return nil, err
@@ -1160,7 +1161,7 @@ func minCmp(ctx base.PlanContext, lowVal []types.Datum, columnsPruner *rangeColu
 							return false
 						}
 					} else {
-						if con.Value.GetInt64() == types.IntergerSignedLowerBound(col.GetType().GetType()) {
+						if con.Value.GetInt64() == types.IntergerSignedLowerBound(col.GetStaticType().GetType()) {
 							return false
 						}
 					}
@@ -1421,10 +1422,10 @@ func partitionRangeForInExpr(sctx base.PlanContext, args []expression.Expression
 			// replace fn(col) to fn(const)
 			partFnConst := replaceColumnWithConst(pruner.partFn, constExpr)
 			val, _, err = partFnConst.EvalInt(sctx.GetExprCtx().GetEvalCtx(), chunk.Row{})
-			unsigned = mysql.HasUnsignedFlag(partFnConst.GetType().GetFlag())
+			unsigned = mysql.HasUnsignedFlag(partFnConst.GetStaticType().GetFlag())
 		} else {
 			val, _, err = constExpr.EvalInt(sctx.GetExprCtx().GetEvalCtx(), chunk.Row{})
-			unsigned = mysql.HasUnsignedFlag(constExpr.GetType().GetFlag())
+			unsigned = mysql.HasUnsignedFlag(constExpr.GetType(sctx.GetExprCtx().GetEvalCtx()).GetFlag())
 		}
 		if err != nil {
 			return pruner.fullRange()
@@ -1542,7 +1543,7 @@ func (p *rangePruner) extractDataForPrune(sctx base.PlanContext, expr expression
 	c, isNull, err := constExpr.EvalInt(sctx.GetExprCtx().GetEvalCtx(), chunk.Row{})
 	if err == nil && !isNull {
 		ret.c = c
-		ret.unsigned = mysql.HasUnsignedFlag(constExpr.GetType().GetFlag())
+		ret.unsigned = mysql.HasUnsignedFlag(constExpr.GetType(sctx.GetExprCtx().GetEvalCtx()).GetFlag())
 		return ret, true
 	}
 	return ret, false
@@ -1768,7 +1769,7 @@ func (*partitionProcessor) checkHintsApplicable(ds *DataSource, partitionSet set
 	appendWarnForUnknownPartitions(ds.SCtx(), h.HintReadFromStorage, unknownPartitions)
 }
 
-func (s *partitionProcessor) makeUnionAllChildren(ds *DataSource, pi *model.PartitionInfo, or partitionRangeOR, opt *coreusage.LogicalOptimizeOp) (base.LogicalPlan, error) {
+func (s *partitionProcessor) makeUnionAllChildren(ds *DataSource, pi *model.PartitionInfo, or partitionRangeOR, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, error) {
 	children := make([]base.LogicalPlan, 0, len(pi.Definitions))
 	partitionNameSet := make(set.StringSet)
 	usedDefinition := make(map[int64]model.PartitionDefinition)
@@ -1782,7 +1783,7 @@ func (s *partitionProcessor) makeUnionAllChildren(ds *DataSource, pi *model.Part
 			}
 			// Not a deep copy.
 			newDataSource := *ds
-			newDataSource.baseLogicalPlan = newBaseLogicalPlan(ds.SCtx(), plancodec.TypeTableScan, &newDataSource, ds.QueryBlockOffset())
+			newDataSource.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(ds.SCtx(), plancodec.TypeTableScan, &newDataSource, ds.QueryBlockOffset())
 			newDataSource.schema = ds.schema.Clone()
 			newDataSource.Columns = make([]*model.ColumnInfo, len(ds.Columns))
 			copy(newDataSource.Columns, ds.Columns)
@@ -2004,7 +2005,7 @@ func (p *rangeColumnsPruner) pruneUseBinarySearch(sctx base.PlanContext, op stri
 	return start, end
 }
 
-func appendMakeUnionAllChildrenTranceStep(origin *DataSource, usedMap map[int64]model.PartitionDefinition, plan base.LogicalPlan, children []base.LogicalPlan, opt *coreusage.LogicalOptimizeOp) {
+func appendMakeUnionAllChildrenTranceStep(origin *DataSource, usedMap map[int64]model.PartitionDefinition, plan base.LogicalPlan, children []base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) {
 	if opt.TracerIsNil() {
 		return
 	}
@@ -2060,7 +2061,7 @@ func appendMakeUnionAllChildrenTranceStep(origin *DataSource, usedMap map[int64]
 	opt.AppendStepToCurrent(origin.ID(), origin.TP(), reason, action)
 }
 
-func appendNoPartitionChildTraceStep(ds *DataSource, dual base.LogicalPlan, opt *coreusage.LogicalOptimizeOp) {
+func appendNoPartitionChildTraceStep(ds *DataSource, dual base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) {
 	action := func() string {
 		return fmt.Sprintf("%v_%v becomes %v_%v", ds.TP(), ds.ID(), dual.TP(), dual.ID())
 	}

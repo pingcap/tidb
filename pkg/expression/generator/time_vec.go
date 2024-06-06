@@ -107,7 +107,7 @@ func (b *{{.SigName}}) vecEval{{ .Output.TypeName }}(ctx EvalContext, input *chu
 {{ end }}
 
 {{ if or (eq .SigName "builtinAddStringAndStringSig") (eq .SigName "builtinSubStringAndStringSig") }}
-	arg1Type := b.args[1].GetType()
+	arg1Type := b.args[1].GetType(ctx)
 	if mysql.HasBinaryFlag(arg1Type.GetFlag()) {
 		result.Reserve{{ .Output.TypeNameInColumn }}(n)
 		for i := 0; i < n; i++ {
@@ -232,7 +232,7 @@ func (b *{{.SigName}}) vecEval{{ .Output.TypeName }}(ctx EvalContext, input *chu
 		{{ end }}
 	{{ else if or (eq .SigName "builtinAddStringAndDurationSig") (eq .SigName "builtinSubStringAndDurationSig") }}
 		tc := typeCtx(ctx)
-		fsp1 := b.args[1].GetType().GetDecimal()
+		fsp1 := b.args[1].GetType(ctx).GetDecimal()
 		arg1Duration := types.Duration{Duration: arg1, Fsp: fsp1}
 		var output string
 		var isNull bool
@@ -299,8 +299,8 @@ func (b *{{.SigName}}) vecEval{{ .Output.TypeName }}(ctx EvalContext, input *chu
 			}
 		}
 	{{ else if or (eq .SigName "builtinAddDateAndDurationSig") (eq .SigName "builtinSubDateAndDurationSig") }}
-		fsp0 := b.args[0].GetType().GetDecimal()
-		fsp1 := b.args[1].GetType().GetDecimal()
+		fsp0 := b.args[0].GetType(ctx).GetDecimal()
+		fsp1 := b.args[1].GetType(ctx).GetDecimal()
 		arg1Duration := types.Duration{Duration: arg1, Fsp: fsp1}
 		{{ if eq $.FuncName "AddTime" }}
 		sum, err := types.Duration{Duration: arg0, Fsp: fsp0}.Add(arg1Duration)
@@ -313,7 +313,7 @@ func (b *{{.SigName}}) vecEval{{ .Output.TypeName }}(ctx EvalContext, input *chu
 		output := sum.String()
 	{{ else if or (eq .SigName "builtinAddDateAndStringSig") (eq .SigName "builtinSubDateAndStringSig") }}
 		{{ template "ConvertStringToDuration" . }}
-		fsp0 := b.args[0].GetType().GetDecimal()
+		fsp0 := b.args[0].GetType(ctx).GetDecimal()
 		{{ if eq $.FuncName "AddTime" }}
 		sum, err := types.Duration{Duration: arg0, Fsp: fsp0}.Add(arg1Duration)
 		{{ else }}

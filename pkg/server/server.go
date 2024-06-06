@@ -119,7 +119,7 @@ type Server struct {
 	driver            IDriver
 	listener          net.Listener
 	socket            net.Listener
-	concurrentLimiter *TokenLimiter
+	concurrentLimiter *util.TokenLimiter
 
 	rwlock  sync.RWMutex
 	clients map[uint64]*clientConn
@@ -201,7 +201,7 @@ func (s *Server) ConnectionCount() int {
 	return cnt
 }
 
-func (s *Server) getToken() *Token {
+func (s *Server) getToken() *util.Token {
 	start := time.Now()
 	tok := s.concurrentLimiter.Get()
 	metrics.TokenGauge.Inc()
@@ -210,7 +210,7 @@ func (s *Server) getToken() *Token {
 	return tok
 }
 
-func (s *Server) releaseToken(token *Token) {
+func (s *Server) releaseToken(token *util.Token) {
 	s.concurrentLimiter.Put(token)
 	metrics.TokenGauge.Dec()
 }
@@ -242,7 +242,7 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 	s := &Server{
 		cfg:               cfg,
 		driver:            driver,
-		concurrentLimiter: NewTokenLimiter(cfg.TokenLimit),
+		concurrentLimiter: util.NewTokenLimiter(cfg.TokenLimit),
 		clients:           make(map[uint64]*clientConn),
 		internalSessions:  make(map[any]struct{}, 100),
 		health:            uatomic.NewBool(false),

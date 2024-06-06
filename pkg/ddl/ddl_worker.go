@@ -20,6 +20,7 @@ import (
 	"math/rand"
 	"os"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -28,6 +29,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	sess "github.com/pingcap/tidb/pkg/ddl/internal/session"
+	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
@@ -42,7 +44,7 @@ import (
 	pumpcli "github.com/pingcap/tidb/pkg/tidb-binlog/pump_client"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
-	"github.com/pingcap/tidb/pkg/util/logutil"
+	tidblogutil "github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/resourcegrouptag"
 	"github.com/pingcap/tidb/pkg/util/topsql"
 	topsqlstate "github.com/pingcap/tidb/pkg/util/topsql/state"
@@ -95,8 +97,9 @@ type worker struct {
 	tp              workerType
 	addingDDLJobKey string
 	ddlJobCh        chan struct{}
-	ctx             context.Context
-	wg              sync.WaitGroup
+	// for local mode worker, it's ctx of 'ddl', else it's the ctx of 'job scheduler'.
+	ctx context.Context
+	wg  sync.WaitGroup
 
 	sessPool        *sess.Pool    // sessPool is used to new sessions to execute SQL in ddl package.
 	sess            *sess.Session // sess is used and only used in running DDL job.
@@ -142,14 +145,14 @@ func newWorker(ctx context.Context, tp workerType, sessPool *sess.Pool, delRange
 		delRangeManager: delRangeMgr,
 	}
 	worker.addingDDLJobKey = addingDDLJobPrefix + worker.typeStr()
-	worker.logCtx = logutil.WithFields(context.Background(), zap.String("worker", worker.String()), zap.String("category", "ddl"))
+	worker.logCtx = tidblogutil.WithFields(context.Background(), zap.String("worker", worker.String()), zap.String("category", "ddl"))
 	return worker
 }
 
 func (w *worker) jobLogger(job *model.Job) *zap.Logger {
-	logger := logutil.Logger(w.logCtx)
+	logger := tidblogutil.Logger(w.logCtx)
 	if job != nil {
-		logger = logutil.LoggerWithTraceInfo(
+		logger = tidblogutil.LoggerWithTraceInfo(
 			logger.With(zap.Int64("jobID", job.ID)),
 			job.TraceInfo,
 		)
@@ -182,10 +185,10 @@ func (w *worker) Close() {
 		w.sessPool.Put(w.sess.Session())
 	}
 	w.wg.Wait()
-	logutil.Logger(w.logCtx).Info("DDL worker closed", zap.Duration("take time", time.Since(startTime)))
+	tidblogutil.Logger(w.logCtx).Info("DDL worker closed", zap.Duration("take time", time.Since(startTime)))
 }
 
-func (dc *ddlCtx) asyncNotifyByEtcd(etcdPath string, jobID int64, jobType string) {
+func (dc *ddlCtx) notifyNewJobByEtcd(etcdPath string, jobID int64, jobType string) {
 	if dc.etcdCli == nil {
 		return
 	}
@@ -194,8 +197,11 @@ func (dc *ddlCtx) asyncNotifyByEtcd(etcdPath string, jobID int64, jobType string
 	timeStart := time.Now()
 	err := util.PutKVToEtcd(dc.ctx, dc.etcdCli, 1, etcdPath, jobIDStr)
 	if err != nil {
-		logutil.BgLogger().Info("notify handling DDL job failed", zap.String("category", "ddl"),
-			zap.String("etcdPath", etcdPath), zap.Int64("jobID", jobID), zap.String("type", jobType), zap.Error(err))
+		logutil.DDLLogger().Info("notify handling DDL job failed",
+			zap.String("etcdPath", etcdPath),
+			zap.Int64("jobID", jobID),
+			zap.String("type", jobType),
+			zap.Error(err))
 	}
 	metrics.DDLWorkerHistogram.WithLabelValues(metrics.WorkerNotifyDDLJob, jobType, metrics.RetLabel(err)).Observe(time.Since(timeStart).Seconds())
 }
@@ -250,9 +256,12 @@ func (d *ddl) addBatchDDLJobsV1(tasks []*limitJobTask) {
 			metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
 	}
 	if err != nil {
-		logutil.BgLogger().Warn("add DDL jobs failed", zap.String("category", "ddl"), zap.String("jobs", jobs), zap.Error(err))
+		logutil.DDLLogger().Warn("add DDL jobs failed", zap.String("jobs", jobs), zap.Error(err))
 	} else {
-		logutil.BgLogger().Info("add DDL jobs", zap.String("category", "ddl"), zap.Int("batch count", len(tasks)), zap.String("jobs", jobs), zap.Bool("table", toTable))
+		logutil.DDLLogger().Info("add DDL jobs",
+			zap.Int("batch count", len(tasks)),
+			zap.String("jobs", jobs),
+			zap.Bool("table", toTable))
 	}
 }
 
@@ -263,9 +272,11 @@ func (d *ddl) addBatchLocalDDLJobs(tasks []*limitJobTask) {
 		for _, task := range tasks {
 			task.NotifyError(err)
 		}
-		logutil.BgLogger().Error("add DDL jobs failed", zap.String("category", "ddl"), zap.Bool("local_mode", true), zap.Error(err))
+		logutil.DDLLogger().Error("add DDL jobs failed", zap.Bool("local_mode", true), zap.Error(err))
 	} else {
-		logutil.BgLogger().Info("add DDL jobs", zap.String("category", "ddl"), zap.Bool("local_mode", true), zap.Int("batch count", len(tasks)))
+		logutil.DDLLogger().Info("add DDL jobs",
+			zap.Bool("local_mode", true),
+			zap.Int("batch count", len(tasks)))
 	}
 }
 
@@ -292,7 +303,9 @@ func buildJobDependence(t *meta.Meta, curJob *model.Job) error {
 			return errors.Trace(err)
 		}
 		if isDependent {
-			logutil.BgLogger().Info("current DDL job depends on other job", zap.String("category", "ddl"), zap.String("currentJob", curJob.String()), zap.String("dependentJob", job.String()))
+			logutil.DDLLogger().Info("current DDL job depends on other job",
+				zap.Stringer("currentJob", curJob),
+				zap.Stringer("dependentJob", job))
 			curJob.DependencyID = job.ID
 			break
 		}
@@ -407,7 +420,7 @@ func (d *ddl) addBatchDDLJobs(tasks []*limitJobTask) error {
 		bdrRole = string(ast.BDRRoleNone)
 	)
 
-	if newTasks, err := d.combineBatchCreateTableJobs(tasks); err == nil {
+	if newTasks, err := combineBatchCreateTableJobs(tasks); err == nil {
 		tasks = newTasks
 	}
 
@@ -468,11 +481,11 @@ func (d *ddl) addBatchDDLJobs(tasks []*limitJobTask) error {
 		// currently doesn't support pause job in local mode.
 		if d.stateSyncer.IsUpgradingState() && !hasSysDB(job) && !job.LocalMode {
 			if err = pauseRunningJob(sess.NewSession(se), job, model.AdminCommandBySystem); err != nil {
-				logutil.BgLogger().Warn("pause user DDL by system failed", zap.String("category", "ddl-upgrading"), zap.Stringer("job", job), zap.Error(err))
+				logutil.DDLUpgradingLogger().Warn("pause user DDL by system failed", zap.Stringer("job", job), zap.Error(err))
 				task.cacheErr = err
 				continue
 			}
-			logutil.BgLogger().Info("pause user DDL by system successful", zap.String("category", "ddl-upgrading"), zap.Stringer("job", job))
+			logutil.DDLUpgradingLogger().Info("pause user DDL by system successful", zap.Stringer("job", job))
 		}
 
 		if _, err := job.Encode(true); err != nil {
@@ -481,6 +494,9 @@ func (d *ddl) addBatchDDLJobs(tasks []*limitJobTask) error {
 
 		jobTasks = append(jobTasks, job)
 		injectModifyJobArgFailPoint(job)
+		if !job.LocalMode {
+			d.initJobDoneCh(job.ID)
+		}
 	}
 
 	se.GetSessionVars().SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
@@ -496,7 +512,7 @@ func (d *ddl) addBatchDDLJobs(tasks []*limitJobTask) error {
 
 // combineBatchCreateTableJobs combine batch jobs to another batch jobs.
 // currently it only support combine CreateTable to CreateTables.
-func (d *ddl) combineBatchCreateTableJobs(tasks []*limitJobTask) ([]*limitJobTask, error) {
+func combineBatchCreateTableJobs(tasks []*limitJobTask) ([]*limitJobTask, error) {
 	if len(tasks) <= 1 || !tasks[0].job.LocalMode {
 		return tasks, nil
 	}
@@ -514,11 +530,11 @@ func (d *ddl) combineBatchCreateTableJobs(tasks []*limitJobTask) ([]*limitJobTas
 		jobs = append(jobs, task.job)
 	}
 
-	job, err := d.BatchCreateTableWithJobs(jobs)
+	job, err := BatchCreateTableWithJobs(jobs)
 	if err != nil {
 		return tasks, err
 	}
-	logutil.BgLogger().Info("combine jobs to batch create table job", zap.String("category", "ddl"), zap.Int("len", len(tasks)))
+	logutil.DDLLogger().Info("combine jobs to batch create table job", zap.Int("len", len(tasks)))
 
 	jobTask := &limitJobTask{job, []chan error{}, nil}
 	// combine the error chans.
@@ -594,32 +610,47 @@ func (w *worker) registerMDLInfo(job *model.Job, ver int64) error {
 	if len(rows) == 0 {
 		return errors.Errorf("can't find ddl job %d", job.ID)
 	}
+	ownerID := w.ownerManager.ID()
 	ids := rows[0].GetString(0)
-	sql := fmt.Sprintf("replace into mysql.tidb_mdl_info (job_id, version, table_ids) values (%d, %d, '%s')", job.ID, ver, ids)
+	var sql string
+	if tidbutil.IsSysDB(strings.ToLower(job.SchemaName)) {
+		// DDLs that modify system tables could only happen in upgrade process,
+		// we should not reference 'owner_id'. Otherwise, there is a circular blocking problem.
+		sql = fmt.Sprintf("replace into mysql.tidb_mdl_info (job_id, version, table_ids) values (%d, %d, '%s')", job.ID, ver, ids)
+	} else {
+		sql = fmt.Sprintf("replace into mysql.tidb_mdl_info (job_id, version, table_ids, owner_id) values (%d, %d, '%s', '%s')", job.ID, ver, ids, ownerID)
+	}
 	_, err = w.sess.Execute(context.Background(), sql, "register-mdl-info")
 	return err
 }
 
 // cleanMDLInfo cleans metadata lock info.
-func cleanMDLInfo(pool *sess.Pool, jobID int64, ec *clientv3.Client, cleanETCD bool) {
+func cleanMDLInfo(pool *sess.Pool, job *model.Job, ec *clientv3.Client, ownerID string, cleanETCD bool) {
 	if !variable.EnableMDL.Load() {
 		return
 	}
-	sql := fmt.Sprintf("delete from mysql.tidb_mdl_info where job_id = %d", jobID)
+	var sql string
+	if tidbutil.IsSysDB(strings.ToLower(job.SchemaName)) {
+		// DDLs that modify system tables could only happen in upgrade process,
+		// we should not reference 'owner_id'. Otherwise, there is a circular blocking problem.
+		sql = fmt.Sprintf("delete from mysql.tidb_mdl_info where job_id = %d", job.ID)
+	} else {
+		sql = fmt.Sprintf("delete from mysql.tidb_mdl_info where job_id = %d and owner_id = '%s'", job.ID, ownerID)
+	}
 	sctx, _ := pool.Get()
 	defer pool.Put(sctx)
 	se := sess.NewSession(sctx)
 	se.GetSessionVars().SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
 	_, err := se.Execute(context.Background(), sql, "delete-mdl-info")
 	if err != nil {
-		logutil.BgLogger().Warn("unexpected error when clean mdl info", zap.Int64("job ID", jobID), zap.Error(err))
+		logutil.DDLLogger().Warn("unexpected error when clean mdl info", zap.Int64("job ID", job.ID), zap.Error(err))
 		return
 	}
 	if cleanETCD && ec != nil {
-		path := fmt.Sprintf("%s/%d/", util.DDLAllSchemaVersionsByJob, jobID)
+		path := fmt.Sprintf("%s/%d/", util.DDLAllSchemaVersionsByJob, job.ID)
 		_, err = ec.Delete(context.Background(), path, clientv3.WithPrefix())
 		if err != nil {
-			logutil.BgLogger().Warn("delete versions failed", zap.String("category", "ddl"), zap.Int64("job ID", jobID), zap.Error(err))
+			logutil.DDLLogger().Warn("delete versions failed", zap.Int64("job ID", job.ID), zap.Error(err))
 		}
 	}
 }
@@ -834,7 +865,7 @@ func (w *JobContext) setDDLLabelForDiagnosis(jobType model.ActionType) {
 }
 
 func (w *worker) HandleJobDone(d *ddlCtx, job *model.Job, t *meta.Meta) error {
-	if err := w.checkOwnerBeforeCommit(); err != nil {
+	if err := w.checkBeforeCommit(); err != nil {
 		return err
 	}
 	err := w.finishDDLJob(t, job)
@@ -848,7 +879,7 @@ func (w *worker) HandleJobDone(d *ddlCtx, job *model.Job, t *meta.Meta) error {
 		return err
 	}
 	CleanupDDLReorgHandles(job, w.sess)
-	asyncNotify(d.ddlJobDoneCh)
+	d.notifyJobDone(job.ID)
 	return nil
 }
 
@@ -945,7 +976,7 @@ func (w *worker) HandleDDLJobTable(d *ddlCtx, job *model.Job) (int64, error) {
 		return 0, err
 	}
 
-	if err = w.checkOwnerBeforeCommit(); err != nil {
+	if err = w.checkBeforeCommit(); err != nil {
 		d.unlockSchemaVersion(job.ID)
 		return 0, err
 	}
@@ -997,12 +1028,17 @@ func (w *worker) HandleDDLJobTable(d *ddlCtx, job *model.Job) (int64, error) {
 	return schemaVer, nil
 }
 
-func (w *worker) checkOwnerBeforeCommit() error {
+func (w *worker) checkBeforeCommit() error {
 	if !w.ddlCtx.isOwner() && w.tp != localWorker {
 		// Since this TiDB instance is not a DDL owner anymore,
 		// it should not commit any transaction.
 		w.sess.Rollback()
 		return dbterror.ErrNotOwner
+	}
+
+	if err := w.ctx.Err(); err != nil {
+		// The worker context is canceled, it should not commit any transaction.
+		return err
 	}
 	return nil
 }
@@ -1304,7 +1340,7 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 	case model.ActionAlterTablePlacement:
 		ver, err = onAlterTablePlacement(d, t, job)
 	case model.ActionCreateResourceGroup:
-		ver, err = onCreateResourceGroup(d, t, job)
+		ver, err = onCreateResourceGroup(w.ctx, d, t, job)
 	case model.ActionAlterResourceGroup:
 		ver, err = onAlterResourceGroup(d, t, job)
 	case model.ActionDropResourceGroup:
@@ -1367,7 +1403,7 @@ func toTError(err error) *terror.Error {
 
 // waitSchemaChanged waits for the completion of updating all servers' schema or MDL synced. In order to make sure that happens,
 // we wait at most 2 * lease time(sessionTTL, 90 seconds).
-func waitSchemaChanged(d *ddlCtx, waitTime time.Duration, latestSchemaVersion int64, job *model.Job) error {
+func waitSchemaChanged(ctx context.Context, d *ddlCtx, waitTime time.Duration, latestSchemaVersion int64, job *model.Job) error {
 	if !job.IsRunning() && !job.IsRollingback() && !job.IsDone() && !job.IsRollbackDone() {
 		return nil
 	}
@@ -1382,13 +1418,13 @@ func waitSchemaChanged(d *ddlCtx, waitTime time.Duration, latestSchemaVersion in
 	}()
 
 	if latestSchemaVersion == 0 {
-		logutil.Logger(d.ctx).Info("schema version doesn't change", zap.String("category", "ddl"), zap.Int64("jobID", job.ID))
+		logutil.DDLLogger().Info("schema version doesn't change", zap.Int64("jobID", job.ID))
 		return nil
 	}
 
-	err = d.schemaSyncer.OwnerUpdateGlobalVersion(d.ctx, latestSchemaVersion)
+	err = d.schemaSyncer.OwnerUpdateGlobalVersion(ctx, latestSchemaVersion)
 	if err != nil {
-		logutil.Logger(d.ctx).Info("update latest schema version failed", zap.String("category", "ddl"), zap.Int64("ver", latestSchemaVersion), zap.Error(err))
+		logutil.DDLLogger().Info("update latest schema version failed", zap.Int64("ver", latestSchemaVersion), zap.Error(err))
 		if variable.EnableMDL.Load() {
 			return err
 		}
@@ -1399,13 +1435,13 @@ func waitSchemaChanged(d *ddlCtx, waitTime time.Duration, latestSchemaVersion in
 		}
 	}
 
-	return checkAllVersions(d, job, latestSchemaVersion, timeStart)
+	return checkAllVersions(ctx, d, job, latestSchemaVersion, timeStart)
 }
 
 // waitSchemaSyncedForMDL likes waitSchemaSynced, but it waits for getting the metadata lock of the latest version of this DDL.
-func waitSchemaSyncedForMDL(d *ddlCtx, job *model.Job, latestSchemaVersion int64) error {
+func waitSchemaSyncedForMDL(ctx context.Context, d *ddlCtx, job *model.Job, latestSchemaVersion int64) error {
 	timeStart := time.Now()
-	return checkAllVersions(d, job, latestSchemaVersion, timeStart)
+	return checkAllVersions(ctx, d, job, latestSchemaVersion, timeStart)
 }
 
 func buildPlacementAffects(oldIDs []int64, newIDs []int64) []*model.AffectedOption {

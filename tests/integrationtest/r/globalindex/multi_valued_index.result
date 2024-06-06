@@ -1,0 +1,55 @@
+set tidb_enable_global_index = true;
+CREATE TABLE `customers` (
+`id` bigint(20),
+`name` char(10) DEFAULT NULL,
+`custinfo` json DEFAULT NULL,
+KEY idx(`id`),
+UNIQUE KEY `zips` ((cast(json_extract(`custinfo`, _utf8'$.zipcode') as unsigned array)))
+) PARTITION BY HASH (`id`) PARTITIONS 5;
+INSERT INTO customers VALUES (1, 'pingcap', '{"zipcode": [1,2]}');
+INSERT INTO customers VALUES (2, 'pingcap', '{"zipcode": [2,3]}');
+Error 1062 (23000): Duplicate entry '2' for key 'customers.zips'
+INSERT INTO customers VALUES (2, 'pingcap', '{"zipcode": [3,3,4]}');
+INSERT INTO customers VALUES (3, 'pingcap', '{"zipcode": [5,6]}');
+explain select * from customers where (1 member of (custinfo->'$.zipcode'));
+id	estRows	task	access object	operator info
+IndexMerge_11	1.00	root	partition:all	type: union
+├─IndexRangeScan_8(Build)	1.00	cop[tikv]	table:customers, index:zips(cast(json_extract(`custinfo`, _utf8'$.zipcode') as unsigned array))	range:[1,1], keep order:false, stats:pseudo
+└─TableRowIDScan_10(Probe)	1.00	cop[tikv]	table:customers	keep order:false, stats:pseudo
+select * from customers where (1 member of (custinfo->'$.zipcode'));
+id	name	custinfo
+1	pingcap	{"zipcode": [1, 2]}
+explain select * from customers where json_overlaps("[1, 3, 7, 10]", custinfo->'$.zipcode');
+id	estRows	task	access object	operator info
+Selection_5	3.20	root		json_overlaps(cast("[1, 3, 7, 10]", json BINARY), json_extract(globalindex__multi_valued_index.customers.custinfo, "$.zipcode"))
+└─IndexMerge_17	4.00	root	partition:all	type: union
+  ├─IndexRangeScan_8(Build)	1.00	cop[tikv]	table:customers, index:zips(cast(json_extract(`custinfo`, _utf8'$.zipcode') as unsigned array))	range:[1,1], keep order:false, stats:pseudo
+  ├─IndexRangeScan_10(Build)	1.00	cop[tikv]	table:customers, index:zips(cast(json_extract(`custinfo`, _utf8'$.zipcode') as unsigned array))	range:[3,3], keep order:false, stats:pseudo
+  ├─IndexRangeScan_12(Build)	1.00	cop[tikv]	table:customers, index:zips(cast(json_extract(`custinfo`, _utf8'$.zipcode') as unsigned array))	range:[7,7], keep order:false, stats:pseudo
+  ├─IndexRangeScan_14(Build)	1.00	cop[tikv]	table:customers, index:zips(cast(json_extract(`custinfo`, _utf8'$.zipcode') as unsigned array))	range:[10,10], keep order:false, stats:pseudo
+  └─TableRowIDScan_16(Probe)	4.00	cop[tikv]	table:customers	keep order:false, stats:pseudo
+select * from customers where json_overlaps("[1, 3, 7, 10]", custinfo->'$.zipcode');
+id	name	custinfo
+1	pingcap	{"zipcode": [1, 2]}
+2	pingcap	{"zipcode": [3, 3, 4]}
+explain select * from customers where json_overlaps("[1, 6, 10]", custinfo->'$.zipcode') and id > 1;
+id	estRows	task	access object	operator info
+Selection_5	2.40	root		json_overlaps(cast("[1, 6, 10]", json BINARY), json_extract(globalindex__multi_valued_index.customers.custinfo, "$.zipcode"))
+└─IndexMerge_20	1.00	root	partition:all	type: union
+  ├─IndexRangeScan_12(Build)	1.00	cop[tikv]	table:customers, index:zips(cast(json_extract(`custinfo`, _utf8'$.zipcode') as unsigned array))	range:[1,1], keep order:false, stats:pseudo
+  ├─IndexRangeScan_14(Build)	1.00	cop[tikv]	table:customers, index:zips(cast(json_extract(`custinfo`, _utf8'$.zipcode') as unsigned array))	range:[6,6], keep order:false, stats:pseudo
+  ├─IndexRangeScan_16(Build)	1.00	cop[tikv]	table:customers, index:zips(cast(json_extract(`custinfo`, _utf8'$.zipcode') as unsigned array))	range:[10,10], keep order:false, stats:pseudo
+  └─Selection_19(Probe)	1.00	cop[tikv]		gt(globalindex__multi_valued_index.customers.id, 1)
+    └─TableRowIDScan_18	3.00	cop[tikv]	table:customers	keep order:false, stats:pseudo
+select * from customers where json_overlaps("[1, 6, 10]", custinfo->'$.zipcode') and id > 1;
+id	name	custinfo
+3	pingcap	{"zipcode": [5, 6]}
+explain select /*+ USE_INDEX_MERGE(customers, idx, zips) */* from customers where (1 member of (custinfo->'$.zipcode')) and id > 0;
+id	estRows	task	access object	operator info
+IndexMerge_9	0.33	root	partition:all	type: intersection
+├─IndexRangeScan_5(Build)	3333.33	cop[tikv]	table:customers, index:idx(id)	range:(0,+inf], keep order:false, stats:pseudo
+├─IndexRangeScan_6(Build)	1.00	cop[tikv]	table:customers, index:zips(cast(json_extract(`custinfo`, _utf8'$.zipcode') as unsigned array))	range:[1,1], keep order:false, stats:pseudo
+└─TableRowIDScan_8(Probe)	0.33	cop[tikv]	table:customers	keep order:false, stats:pseudo
+select /*+ USE_INDEX_MERGE(customers, idx, zips) */* from customers where (1 member of (custinfo->'$.zipcode')) and id > 0;
+id	name	custinfo
+1	pingcap	{"zipcode": [1, 2]}

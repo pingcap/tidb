@@ -16,7 +16,6 @@ go_library(
     deps = [
         "//pkg/ddl/schematracker",
         "//pkg/domain",
-        "//pkg/domain/infosync",
         "//pkg/expression",
         "//pkg/kv",
         "//pkg/parser/ast",

@@ -56,21 +56,21 @@ func needIncludeChildrenString(plan base.Plan) bool {
 func fdToString(in base.LogicalPlan, strs []string, idxs []int) ([]string, []int) {
 	switch x := in.(type) {
 	case *LogicalProjection:
-		strs = append(strs, "{"+x.fdSet.String()+"}")
+		strs = append(strs, "{"+x.FDs().String()+"}")
 		for _, child := range x.Children() {
 			strs, idxs = fdToString(child, strs, idxs)
 		}
 	case *LogicalAggregation:
-		strs = append(strs, "{"+x.fdSet.String()+"}")
+		strs = append(strs, "{"+x.FDs().String()+"}")
 		for _, child := range x.Children() {
 			strs, idxs = fdToString(child, strs, idxs)
 		}
 	case *DataSource:
-		strs = append(strs, "{"+x.fdSet.String()+"}")
+		strs = append(strs, "{"+x.FDs().String()+"}")
 	case *LogicalApply:
-		strs = append(strs, "{"+x.fdSet.String()+"}")
+		strs = append(strs, "{"+x.FDs().String()+"}")
 	case *LogicalJoin:
-		strs = append(strs, "{"+x.fdSet.String()+"}")
+		strs = append(strs, "{"+x.FDs().String()+"}")
 	default:
 	}
 	return strs, idxs
@@ -168,12 +168,12 @@ func toString(in base.Plan, strs []string, idxs []int) ([]string, []int) {
 	case *LogicalShow:
 		str = "Show"
 		if pl := in.(*LogicalShow); pl.Extractor != nil {
-			str = str + "(" + pl.Extractor.explainInfo() + ")"
+			str = str + "(" + pl.Extractor.ExplainInfo() + ")"
 		}
 	case *PhysicalShow:
 		str = "Show"
 		if pl := in.(*PhysicalShow); pl.Extractor != nil {
-			str = str + "(" + pl.Extractor.explainInfo() + ")"
+			str = str + "(" + pl.Extractor.ExplainInfo() + ")"
 		}
 	case *LogicalShowDDLJobs, *PhysicalShowDDLJobs:
 		str = "ShowDDLJobs"

@@ -23,7 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
+	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	h "github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/tracing"
@@ -79,11 +79,11 @@ func extractJoinGroup(p base.LogicalPlan) *joinGroupResult {
 	if isJoin && p.SCtx().GetSessionVars().EnableAdvancedJoinHint && join.preferJoinType > uint(0) {
 		// If the current join node has the join method hint, we should store the hint information and restore it when we have finished the join reorder process.
 		if join.leftPreferJoinType > uint(0) {
-			joinMethodHintInfo[join.children[0].ID()] = &joinMethodHint{join.leftPreferJoinType, join.hintInfo}
+			joinMethodHintInfo[join.Children()[0].ID()] = &joinMethodHint{join.leftPreferJoinType, join.hintInfo}
 			leftHasHint = true
 		}
 		if join.rightPreferJoinType > uint(0) {
-			joinMethodHintInfo[join.children[1].ID()] = &joinMethodHint{join.rightPreferJoinType, join.hintInfo}
+			joinMethodHintInfo[join.Children()[1].ID()] = &joinMethodHint{join.rightPreferJoinType, join.hintInfo}
 			rightHasHint = true
 		}
 	}
@@ -92,7 +92,7 @@ func extractJoinGroup(p base.LogicalPlan) *joinGroupResult {
 	// For example: `select .. from t1 join t2 join (select .. from t3 join t4) t5 where ..;` If there are some join method hints related to `t5`, we can't split `t5` into `t3` and `t4`.
 	// So we don't need to split the left child part. The right child part is the same.
 	if join.JoinType != RightOuterJoin && !leftHasHint {
-		lhsJoinGroupResult := extractJoinGroup(join.children[0])
+		lhsJoinGroupResult := extractJoinGroup(join.Children()[0])
 		lhsGroup, lhsEqualConds, lhsOtherConds, lhsJoinTypes, lhsJoinOrderHintInfo, lhsJoinMethodHintInfo, lhsHasOuterJoin := lhsJoinGroupResult.group, lhsJoinGroupResult.eqEdges, lhsJoinGroupResult.otherConds, lhsJoinGroupResult.joinTypes, lhsJoinGroupResult.joinOrderHintInfo, lhsJoinGroupResult.joinMethodHintInfo, lhsJoinGroupResult.hasOuterJoin
 		noExpand := false
 		// If the filters of the outer join is related with multiple leaves of the outer join side. We don't reorder it for now.
@@ -131,12 +131,12 @@ func extractJoinGroup(p base.LogicalPlan) *joinGroupResult {
 		}
 		hasOuterJoin = hasOuterJoin || lhsHasOuterJoin
 	} else {
-		group = append(group, join.children[0])
+		group = append(group, join.Children()[0])
 	}
 
 	// You can see the comments in the upside part which we try to split the left child part. It's the same here.
 	if join.JoinType != LeftOuterJoin && !rightHasHint {
-		rhsJoinGroupResult := extractJoinGroup(join.children[1])
+		rhsJoinGroupResult := extractJoinGroup(join.Children()[1])
 		rhsGroup, rhsEqualConds, rhsOtherConds, rhsJoinTypes, rhsJoinOrderHintInfo, rhsJoinMethodHintInfo, rhsHasOuterJoin := rhsJoinGroupResult.group, rhsJoinGroupResult.eqEdges, rhsJoinGroupResult.otherConds, rhsJoinGroupResult.joinTypes, rhsJoinGroupResult.joinOrderHintInfo, rhsJoinGroupResult.joinMethodHintInfo, rhsJoinGroupResult.hasOuterJoin
 		noExpand := false
 		// If the filters of the outer join is related with multiple leaves of the outer join side. We don't reorder it for now.
@@ -175,7 +175,7 @@ func extractJoinGroup(p base.LogicalPlan) *joinGroupResult {
 		}
 		hasOuterJoin = hasOuterJoin || rhsHasOuterJoin
 	} else {
-		group = append(group, join.children[1])
+		group = append(group, join.Children()[1])
 	}
 
 	eqEdges = append(eqEdges, join.EqualConditions...)
@@ -224,7 +224,7 @@ type joinTypeWithExtMsg struct {
 	outerBindCondition []expression.Expression
 }
 
-func (s *joinReOrderSolver) optimize(_ context.Context, p base.LogicalPlan, opt *coreusage.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
+func (s *joinReOrderSolver) optimize(_ context.Context, p base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
 	planChanged := false
 	tracer := &joinReorderTrace{cost: map[string]float64{}, opt: opt}
 	tracer.traceJoinReorder(p)
@@ -513,12 +513,38 @@ func (s *baseSingleGroupJoinOrderSolver) checkConnection(leftPlan, rightPlan bas
 				rightNode, leftNode = leftPlan, rightPlan
 				usedEdges = append(usedEdges, edge)
 			} else {
-				newSf := expression.NewFunctionInternal(s.ctx.GetExprCtx(), ast.EQ, edge.GetType(), rCol, lCol).(*expression.ScalarFunction)
+				newSf := expression.NewFunctionInternal(s.ctx.GetExprCtx(), ast.EQ, edge.GetStaticType(), rCol, lCol).(*expression.ScalarFunction)
+
+				// after creating the new EQ function, the 2 args might not be column anymore, for example `sf=sf(cast(col))`,
+				// which breaks the assumption that join eq keys must be `col=col`, to handle this, inject 2 projections.
+				_, isCol0 := newSf.GetArgs()[0].(*expression.Column)
+				_, isCol1 := newSf.GetArgs()[1].(*expression.Column)
+				if !isCol0 || !isCol1 {
+					if !isCol0 {
+						leftPlan, rCol = s.injectExpr(leftPlan, newSf.GetArgs()[0])
+					}
+					if !isCol1 {
+						rightPlan, lCol = s.injectExpr(rightPlan, newSf.GetArgs()[1])
+					}
+					leftNode, rightNode = leftPlan, rightPlan
+					newSf = expression.NewFunctionInternal(s.ctx.GetExprCtx(), ast.EQ, edge.GetStaticType(),
+						rCol, lCol).(*expression.ScalarFunction)
+				}
 				usedEdges = append(usedEdges, newSf)
 			}
 		}
 	}
 	return
+}
+
+func (*baseSingleGroupJoinOrderSolver) injectExpr(p base.LogicalPlan, expr expression.Expression) (base.LogicalPlan, *expression.Column) {
+	proj, ok := p.(*LogicalProjection)
+	if !ok {
+		proj = LogicalProjection{Exprs: cols2Exprs(p.Schema().Columns)}.Init(p.SCtx(), p.QueryBlockOffset())
+		proj.SetSchema(p.Schema().Clone())
+		proj.SetChildren(p)
+	}
+	return proj, proj.appendExpr(expr)
 }
 
 // makeJoin build join tree for the nodes which have equal conditions to connect them.
@@ -664,7 +690,7 @@ func (*joinReOrderSolver) name() string {
 	return "join_reorder"
 }
 
-func appendJoinReorderTraceStep(tracer *joinReorderTrace, plan base.LogicalPlan, opt *coreusage.LogicalOptimizeOp) {
+func appendJoinReorderTraceStep(tracer *joinReorderTrace, plan base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) {
 	if len(tracer.initial) < 1 || len(tracer.final) < 1 {
 		return
 	}
@@ -774,7 +800,7 @@ func findRoots(t *tracing.PlanTrace) []*tracing.PlanTrace {
 }
 
 type joinReorderTrace struct {
-	opt     *coreusage.LogicalOptimizeOp
+	opt     *optimizetrace.LogicalOptimizeOp
 	initial string
 	final   string
 	cost    map[string]float64

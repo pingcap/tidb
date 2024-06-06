@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
+	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 )
@@ -38,7 +39,7 @@ func (la *LogicalApply) canPullUpAgg() bool {
 	if len(la.EqualConditions)+len(la.LeftConditions)+len(la.RightConditions)+len(la.OtherConditions) > 0 {
 		return false
 	}
-	return len(la.children[0].Schema().Keys) > 0
+	return len(la.Children()[0].Schema().Keys) > 0
 }
 
 // canPullUp checks if an aggregation can be pulled up. An aggregate function like count(*) cannot be pulled up.
@@ -48,7 +49,7 @@ func (la *LogicalAggregation) canPullUp() bool {
 	}
 	for _, f := range la.AggFuncs {
 		for _, arg := range f.Args {
-			expr := expression.EvaluateExprWithNull(la.SCtx().GetExprCtx(), la.children[0].Schema(), arg)
+			expr := expression.EvaluateExprWithNull(la.SCtx().GetExprCtx(), la.Children()[0].Schema(), arg)
 			if con, ok := expr.(*expression.Constant); !ok || !con.Value.IsNull() {
 				return false
 			}
@@ -85,26 +86,6 @@ func (la *LogicalApply) deCorColFromEqExpr(expr expression.Expression) expressio
 		}
 	}
 	return nil
-}
-
-// ExtractCorrelatedCols4LogicalPlan recursively extracts all of the correlated columns
-// from a plan tree by calling base.LogicalPlan.ExtractCorrelatedCols.
-func ExtractCorrelatedCols4LogicalPlan(p base.LogicalPlan) []*expression.CorrelatedColumn {
-	corCols := p.ExtractCorrelatedCols()
-	for _, child := range p.Children() {
-		corCols = append(corCols, ExtractCorrelatedCols4LogicalPlan(child)...)
-	}
-	return corCols
-}
-
-// ExtractCorrelatedCols4PhysicalPlan recursively extracts all of the correlated columns
-// from a plan tree by calling PhysicalPlan.ExtractCorrelatedCols.
-func ExtractCorrelatedCols4PhysicalPlan(p base.PhysicalPlan) []*expression.CorrelatedColumn {
-	corCols := p.ExtractCorrelatedCols()
-	for _, child := range p.Children() {
-		corCols = append(corCols, ExtractCorrelatedCols4PhysicalPlan(child)...)
-	}
-	return corCols
 }
 
 // ExtractOuterApplyCorrelatedCols only extract the correlated columns whose corresponding Apply operator is outside the plan.
@@ -195,16 +176,16 @@ func (*decorrelateSolver) aggDefaultValueMap(agg *LogicalAggregation) map[int]*e
 }
 
 // optimize implements logicalOptRule interface.
-func (s *decorrelateSolver) optimize(ctx context.Context, p base.LogicalPlan, opt *coreusage.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
+func (s *decorrelateSolver) optimize(ctx context.Context, p base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
 	planChanged := false
 	if apply, ok := p.(*LogicalApply); ok {
-		outerPlan := apply.children[0]
-		innerPlan := apply.children[1]
-		apply.CorCols = extractCorColumnsBySchema4LogicalPlan(apply.children[1], apply.children[0].Schema())
+		outerPlan := apply.Children()[0]
+		innerPlan := apply.Children()[1]
+		apply.CorCols = coreusage.ExtractCorColumnsBySchema4LogicalPlan(apply.Children()[1], apply.Children()[0].Schema())
 		if len(apply.CorCols) == 0 {
 			// If the inner plan is non-correlated, the apply will be simplified to join.
 			join := &apply.LogicalJoin
-			join.self = join
+			join.SetSelf(join)
 			join.SetTP(plancodec.TypeJoin)
 			p = join
 			appendApplySimplifiedTraceStep(apply, join, opt)
@@ -218,13 +199,13 @@ func (s *decorrelateSolver) optimize(ctx context.Context, p base.LogicalPlan, op
 				newConds = append(newConds, cond.Decorrelate(outerPlan.Schema()))
 			}
 			apply.AttachOnConds(newConds)
-			innerPlan = sel.children[0]
+			innerPlan = sel.Children()[0]
 			apply.SetChildren(outerPlan, innerPlan)
 			appendRemoveSelectionTraceStep(apply, sel, opt)
 			return s.optimize(ctx, p, opt)
 		} else if m, ok := innerPlan.(*LogicalMaxOneRow); ok {
-			if m.children[0].MaxOneRow() {
-				innerPlan = m.children[0]
+			if m.Children()[0].MaxOneRow() {
+				innerPlan = m.Children()[0]
 				apply.SetChildren(outerPlan, innerPlan)
 				appendRemoveMaxOneRowTraceStep(m, opt)
 				return s.optimize(ctx, p, opt)
@@ -269,7 +250,7 @@ func (s *decorrelateSolver) optimize(ctx context.Context, p base.LogicalPlan, op
 			}
 			apply.decorrelate(outerPlan.Schema())
 
-			innerPlan = proj.children[0]
+			innerPlan = proj.Children()[0]
 			apply.SetChildren(outerPlan, innerPlan)
 			if apply.JoinType != SemiJoin && apply.JoinType != LeftOuterSemiJoin && apply.JoinType != AntiSemiJoin && apply.JoinType != AntiLeftOuterSemiJoin {
 				proj.SetSchema(apply.Schema())
@@ -298,14 +279,14 @@ func (s *decorrelateSolver) optimize(ctx context.Context, p base.LogicalPlan, op
 			}
 			// Limit with non-0 offset will conduct an impact of itself on the final result set from its sub-child, consequently determining the bool value of the exist subquery.
 			if li.Offset == 0 {
-				innerPlan = li.children[0]
+				innerPlan = li.Children()[0]
 				apply.SetChildren(outerPlan, innerPlan)
 				appendRemoveLimitTraceStep(li, opt)
 				return s.optimize(ctx, p, opt)
 			}
 		} else if agg, ok := innerPlan.(*LogicalAggregation); ok {
 			if apply.canPullUpAgg() && agg.canPullUp() {
-				innerPlan = agg.children[0]
+				innerPlan = agg.Children()[0]
 				apply.JoinType = LeftOuterJoin
 				apply.SetChildren(outerPlan, innerPlan)
 				agg.SetSchema(apply.Schema())
@@ -363,7 +344,7 @@ func (s *decorrelateSolver) optimize(ctx context.Context, p base.LogicalPlan, op
 			}
 			// We can pull up the equal conditions below the aggregation as the join key of the apply, if only
 			// the equal conditions contain the correlated column of this apply.
-			if sel, ok := agg.children[0].(*LogicalSelection); ok && apply.JoinType == LeftOuterJoin {
+			if sel, ok := agg.Children()[0].(*LogicalSelection); ok && apply.JoinType == LeftOuterJoin {
 				var (
 					eqCondWithCorCol []*expression.ScalarFunction
 					remainedExpr     []expression.Expression
@@ -379,7 +360,7 @@ func (s *decorrelateSolver) optimize(ctx context.Context, p base.LogicalPlan, op
 				if len(eqCondWithCorCol) > 0 {
 					originalExpr := sel.Conditions
 					sel.Conditions = remainedExpr
-					apply.CorCols = extractCorColumnsBySchema4LogicalPlan(apply.children[1], apply.children[0].Schema())
+					apply.CorCols = coreusage.ExtractCorColumnsBySchema4LogicalPlan(apply.Children()[1], apply.Children()[0].Schema())
 					// There's no other correlated column.
 					groupByCols := expression.NewSchema(agg.GetGroupByCols()...)
 					if len(apply.CorCols) == 0 {
@@ -410,7 +391,7 @@ func (s *decorrelateSolver) optimize(ctx context.Context, p base.LogicalPlan, op
 						}
 						// The selection may be useless, check and remove it.
 						if len(sel.Conditions) == 0 {
-							agg.SetChildren(sel.children[0])
+							agg.SetChildren(sel.Children()[0])
 							appendRemoveSelectionTraceStep(agg, sel, opt)
 						}
 						defaultValueMap := s.aggDefaultValueMap(agg)
@@ -432,13 +413,13 @@ func (s *decorrelateSolver) optimize(ctx context.Context, p base.LogicalPlan, op
 						return s.optimize(ctx, p, opt)
 					}
 					sel.Conditions = originalExpr
-					apply.CorCols = extractCorColumnsBySchema4LogicalPlan(apply.children[1], apply.children[0].Schema())
+					apply.CorCols = coreusage.ExtractCorColumnsBySchema4LogicalPlan(apply.Children()[1], apply.Children()[0].Schema())
 				}
 			}
 		} else if sort, ok := innerPlan.(*LogicalSort); ok {
 			// Since we only pull up Selection, Projection, Aggregation, MaxOneRow,
 			// the top level Sort has no effect on the subquery's result.
-			innerPlan = sort.children[0]
+			innerPlan = sort.Children()[0]
 			apply.SetChildren(outerPlan, innerPlan)
 			appendRemoveSortTraceStep(sort, opt)
 			return s.optimize(ctx, p, opt)
@@ -465,7 +446,7 @@ func (*decorrelateSolver) name() string {
 	return "decorrelate"
 }
 
-func appendApplySimplifiedTraceStep(p *LogicalApply, j *LogicalJoin, opt *coreusage.LogicalOptimizeOp) {
+func appendApplySimplifiedTraceStep(p *LogicalApply, j *LogicalJoin, opt *optimizetrace.LogicalOptimizeOp) {
 	action := func() string {
 		return fmt.Sprintf("%v_%v simplified into %v_%v", plancodec.TypeApply, p.ID(), plancodec.TypeJoin, j.ID())
 	}
@@ -475,7 +456,7 @@ func appendApplySimplifiedTraceStep(p *LogicalApply, j *LogicalJoin, opt *coreus
 	opt.AppendStepToCurrent(p.ID(), p.TP(), reason, action)
 }
 
-func appendRemoveSelectionTraceStep(p base.LogicalPlan, s *LogicalSelection, opt *coreusage.LogicalOptimizeOp) {
+func appendRemoveSelectionTraceStep(p base.LogicalPlan, s *LogicalSelection, opt *optimizetrace.LogicalOptimizeOp) {
 	action := func() string {
 		return fmt.Sprintf("%v_%v removed from plan tree", s.TP(), s.ID())
 	}
@@ -485,7 +466,7 @@ func appendRemoveSelectionTraceStep(p base.LogicalPlan, s *LogicalSelection, opt
 	opt.AppendStepToCurrent(s.ID(), s.TP(), reason, action)
 }
 
-func appendRemoveMaxOneRowTraceStep(m *LogicalMaxOneRow, opt *coreusage.LogicalOptimizeOp) {
+func appendRemoveMaxOneRowTraceStep(m *LogicalMaxOneRow, opt *optimizetrace.LogicalOptimizeOp) {
 	action := func() string {
 		return fmt.Sprintf("%v_%v removed from plan tree", m.TP(), m.ID())
 	}
@@ -495,7 +476,7 @@ func appendRemoveMaxOneRowTraceStep(m *LogicalMaxOneRow, opt *coreusage.LogicalO
 	opt.AppendStepToCurrent(m.ID(), m.TP(), reason, action)
 }
 
-func appendRemoveLimitTraceStep(limit *LogicalLimit, opt *coreusage.LogicalOptimizeOp) {
+func appendRemoveLimitTraceStep(limit *LogicalLimit, opt *optimizetrace.LogicalOptimizeOp) {
 	action := func() string {
 		return fmt.Sprintf("%v_%v removed from plan tree", limit.TP(), limit.ID())
 	}
@@ -505,7 +486,7 @@ func appendRemoveLimitTraceStep(limit *LogicalLimit, opt *coreusage.LogicalOptim
 	opt.AppendStepToCurrent(limit.ID(), limit.TP(), reason, action)
 }
 
-func appendRemoveProjTraceStep(p *LogicalApply, proj *LogicalProjection, opt *coreusage.LogicalOptimizeOp) {
+func appendRemoveProjTraceStep(p *LogicalApply, proj *LogicalProjection, opt *optimizetrace.LogicalOptimizeOp) {
 	action := func() string {
 		return fmt.Sprintf("%v_%v removed from plan tree", proj.TP(), proj.ID())
 	}
@@ -515,7 +496,7 @@ func appendRemoveProjTraceStep(p *LogicalApply, proj *LogicalProjection, opt *co
 	opt.AppendStepToCurrent(proj.ID(), proj.TP(), reason, action)
 }
 
-func appendMoveProjTraceStep(p *LogicalApply, np base.LogicalPlan, proj *LogicalProjection, opt *coreusage.LogicalOptimizeOp) {
+func appendMoveProjTraceStep(p *LogicalApply, np base.LogicalPlan, proj *LogicalProjection, opt *optimizetrace.LogicalOptimizeOp) {
 	action := func() string {
 		return fmt.Sprintf("%v_%v is moved as %v_%v's parent", proj.TP(), proj.ID(), np.TP(), np.ID())
 	}
@@ -525,7 +506,7 @@ func appendMoveProjTraceStep(p *LogicalApply, np base.LogicalPlan, proj *Logical
 	opt.AppendStepToCurrent(proj.ID(), proj.TP(), reason, action)
 }
 
-func appendRemoveSortTraceStep(sort *LogicalSort, opt *coreusage.LogicalOptimizeOp) {
+func appendRemoveSortTraceStep(sort *LogicalSort, opt *optimizetrace.LogicalOptimizeOp) {
 	action := func() string {
 		return fmt.Sprintf("%v_%v removed from plan tree", sort.TP(), sort.ID())
 	}
@@ -535,7 +516,7 @@ func appendRemoveSortTraceStep(sort *LogicalSort, opt *coreusage.LogicalOptimize
 	opt.AppendStepToCurrent(sort.ID(), sort.TP(), reason, action)
 }
 
-func appendPullUpAggTraceStep(p *LogicalApply, np base.LogicalPlan, agg *LogicalAggregation, opt *coreusage.LogicalOptimizeOp) {
+func appendPullUpAggTraceStep(p *LogicalApply, np base.LogicalPlan, agg *LogicalAggregation, opt *optimizetrace.LogicalOptimizeOp) {
 	action := func() string {
 		return fmt.Sprintf("%v_%v pulled up as %v_%v's parent, and %v_%v's join type becomes %v",
 			agg.TP(), agg.ID(), np.TP(), np.ID(), p.TP(), p.ID(), p.JoinType.String())
@@ -547,7 +528,7 @@ func appendPullUpAggTraceStep(p *LogicalApply, np base.LogicalPlan, agg *Logical
 	opt.AppendStepToCurrent(agg.ID(), agg.TP(), reason, action)
 }
 
-func appendAddProjTraceStep(p *LogicalApply, proj *LogicalProjection, opt *coreusage.LogicalOptimizeOp) {
+func appendAddProjTraceStep(p *LogicalApply, proj *LogicalProjection, opt *optimizetrace.LogicalOptimizeOp) {
 	action := func() string {
 		return fmt.Sprintf("%v_%v is added as %v_%v's parent", proj.TP(), proj.ID(), p.TP(), p.ID())
 	}
@@ -559,7 +540,7 @@ func appendAddProjTraceStep(p *LogicalApply, proj *LogicalProjection, opt *coreu
 
 func appendModifyAggTraceStep(outerPlan base.LogicalPlan, p *LogicalApply, agg *LogicalAggregation, sel *LogicalSelection,
 	appendedGroupByCols *expression.Schema, appendedAggFuncs []*aggregation.AggFuncDesc,
-	eqCondWithCorCol []*expression.ScalarFunction, opt *coreusage.LogicalOptimizeOp) {
+	eqCondWithCorCol []*expression.ScalarFunction, opt *optimizetrace.LogicalOptimizeOp) {
 	action := func() string {
 		buffer := bytes.NewBufferString(fmt.Sprintf("%v_%v's groupby items added [", agg.TP(), agg.ID()))
 		for i, col := range appendedGroupByCols.Columns {

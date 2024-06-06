@@ -40,9 +40,8 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/property"
-	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
-	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
 	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
+	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -81,6 +80,7 @@ const (
 	flagEliminateProjection
 	flagMaxMinEliminate
 	flagConstantPropagation
+	flagConvertOuterToInnerJoin
 	flagPredicatePushDown
 	flagEliminateOuterJoin
 	flagPartitionProcessor
@@ -108,6 +108,7 @@ var optRuleList = []logicalOptRule{
 	&projectionEliminator{},
 	&maxMinEliminator{},
 	&constantPropagationSolver{},
+	&convertOuterToInnerJoin{},
 	&ppdSolver{},
 	&outerJoinEliminator{},
 	&partitionProcessor{},
@@ -139,7 +140,7 @@ type logicalOptRule interface {
 		 The default value is false. It means that no interaction rule will be triggered.
 	3. error: If there is error during the rule optimizer, it will be thrown
 	*/
-	optimize(context.Context, base.LogicalPlan, *coreusage.LogicalOptimizeOp) (base.LogicalPlan, bool, error)
+	optimize(context.Context, base.LogicalPlan, *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error)
 	name() string
 }
 
@@ -978,7 +979,7 @@ func logicalOptimize(ctx context.Context, flag uint64, logic base.LogicalPlan) (
 		debugtrace.EnterContextCommon(logic.SCtx())
 		defer debugtrace.LeaveContextCommon(logic.SCtx())
 	}
-	opt := coreusage.DefaultLogicalOptimizeOption()
+	opt := optimizetrace.DefaultLogicalOptimizeOption()
 	vars := logic.SCtx().GetSessionVars()
 	if vars.StmtCtx.EnableOptimizeTrace {
 		vars.StmtCtx.OptimizeTracer = &tracing.OptimizeTracer{}
@@ -1046,7 +1047,7 @@ func physicalOptimize(logic base.LogicalPlan, planCounter *base.PlanCounterTp) (
 		ExpectedCnt: math.MaxFloat64,
 	}
 
-	opt := coreusage.DefaultPhysicalOptimizeOption()
+	opt := optimizetrace.DefaultPhysicalOptimizeOption()
 	stmtCtx := logic.SCtx().GetSessionVars().StmtCtx
 	if stmtCtx.EnableOptimizeTrace {
 		tracer := &tracing.PhysicalOptimizeTracer{
@@ -1085,7 +1086,7 @@ func physicalOptimize(logic base.LogicalPlan, planCounter *base.PlanCounterTp) (
 	if err = t.Plan().ResolveIndices(); err != nil {
 		return nil, 0, err
 	}
-	cost, err = getPlanCost(t.Plan(), property.RootTaskType, coreusage.NewDefaultPlanCostOption())
+	cost, err = getPlanCost(t.Plan(), property.RootTaskType, optimizetrace.NewDefaultPlanCostOption())
 	return t.Plan(), cost, err
 }
 
@@ -1171,16 +1172,6 @@ func existsCartesianProduct(p base.LogicalPlan) bool {
 
 // DefaultDisabledLogicalRulesList indicates the logical rules which should be banned.
 var DefaultDisabledLogicalRulesList *atomic.Value
-
-func init() {
-	expression.EvalSimpleAst = evalAstExpr
-	expression.BuildSimpleExpr = buildSimpleExpr
-	expression.DecodeKeyFromString = decodeKeyFromString
-	plannerutil.EvalAstExprWithPlanCtx = evalAstExprWithPlanCtx
-	plannerutil.RewriteAstExprWithPlanCtx = rewriteAstExprWithPlanCtx
-	DefaultDisabledLogicalRulesList = new(atomic.Value)
-	DefaultDisabledLogicalRulesList.Store(set.NewStringSet())
-}
 
 func disableReuseChunkIfNeeded(sctx base.PlanContext, plan base.PhysicalPlan) {
 	if !sctx.GetSessionVars().IsAllocValid() {

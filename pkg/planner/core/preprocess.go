@@ -243,6 +243,7 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		if node.With != nil {
 			p.preprocessWith.cteStack = append(p.preprocessWith.cteStack, node.With.CTEs)
 		}
+		p.checkSelectNoopFuncs(node)
 	case *ast.SetOprStmt:
 		if node.With != nil {
 			p.preprocessWith.cteStack = append(p.preprocessWith.cteStack, node.With.CTEs)
@@ -534,7 +535,7 @@ func (p *preprocessor) checkBindGrammar(originNode, hintedNode ast.StmtNode, def
 	}
 
 	// Check the bind operation is not on any temporary table.
-	tblNames := extractTableList(originNode, nil, false)
+	tblNames := ExtractTableList(originNode, false)
 	for _, tn := range tblNames {
 		tbl, err := p.tableByName(tn)
 		if err != nil {
@@ -705,30 +706,6 @@ func checkAutoIncrementOp(colDef *ast.ColumnDef, index int) (bool, error) {
 	}
 
 	return hasAutoIncrement, nil
-}
-
-func isConstraintKeyTp(constraints []*ast.Constraint, colDef *ast.ColumnDef) bool {
-	for _, c := range constraints {
-		// ignore constraint check
-		if c.Tp == ast.ConstraintCheck {
-			continue
-		}
-		if c.Keys[0].Expr != nil {
-			continue
-		}
-		// If the constraint as follows: primary key(c1, c2)
-		// we only support c1 column can be auto_increment.
-		if colDef.Name.Name.L != c.Keys[0].Column.Name.L {
-			continue
-		}
-		switch c.Tp {
-		case ast.ConstraintPrimaryKey, ast.ConstraintKey, ast.ConstraintIndex,
-			ast.ConstraintUniq, ast.ConstraintUniqIndex, ast.ConstraintUniqKey:
-			return true
-		}
-	}
-
-	return false
 }
 
 func (p *preprocessor) checkAutoIncrement(stmt *ast.CreateTableStmt) {
@@ -1149,6 +1126,31 @@ func (p *preprocessor) checkCreateIndexGrammar(stmt *ast.CreateIndexStmt) {
 		return
 	}
 	p.err = checkIndexInfo(stmt.IndexName, stmt.IndexPartSpecifications)
+}
+
+func (p *preprocessor) checkSelectNoopFuncs(stmt *ast.SelectStmt) {
+	noopFuncsMode := p.sctx.GetSessionVars().NoopFuncsMode
+	if noopFuncsMode == variable.OnInt {
+		return
+	}
+	if stmt.SelectStmtOpts != nil && stmt.SelectStmtOpts.CalcFoundRows {
+		err := expression.ErrFunctionsNoopImpl.GenWithStackByArgs("SQL_CALC_FOUND_ROWS")
+		if noopFuncsMode == variable.OffInt {
+			p.err = err
+			return
+		}
+		// NoopFuncsMode is Warn, append an error
+		p.sctx.GetSessionVars().StmtCtx.AppendWarning(err)
+	}
+	if stmt.LockInfo != nil && stmt.LockInfo.LockType == ast.SelectLockForShare {
+		err := expression.ErrFunctionsNoopImpl.GenWithStackByArgs("LOCK IN SHARE MODE")
+		if noopFuncsMode == variable.OffInt {
+			p.err = err
+			return
+		}
+		// NoopFuncsMode is Warn, append an error
+		p.sctx.GetSessionVars().StmtCtx.AppendWarning(err)
+	}
 }
 
 func (p *preprocessor) checkGroupBy(stmt *ast.GroupByClause) {
@@ -1820,6 +1822,12 @@ func tryLockMDLAndUpdateSchemaIfNecessary(sctx base.PlanContext, dbName model.CI
 		return tbl, nil
 	}
 	tableInfo := tbl.Meta()
+	var err error
+	defer func() {
+		if err == nil && !skipLock {
+			sctx.GetSessionVars().StmtCtx.MDLRelatedTableIDs[tbl.Meta().ID] = struct{}{}
+		}
+	}()
 	if _, ok := sctx.GetSessionVars().GetRelatedTableForMDL().Load(tableInfo.ID); !ok {
 		if se, ok := is.(*infoschema.SessionExtendedInfoSchema); ok && skipLock && se.MdlTables != nil {
 			if _, ok := se.MdlTables.TableByID(tableInfo.ID); ok {
@@ -1838,7 +1846,6 @@ func tryLockMDLAndUpdateSchemaIfNecessary(sctx base.PlanContext, dbName model.CI
 		dom := domain.GetDomain(sctx)
 		domainSchema := dom.InfoSchema()
 		domainSchemaVer := domainSchema.SchemaMetaVersion()
-		var err error
 		tbl, err = domainSchema.TableByName(dbName, tableInfo.Name)
 		if err != nil {
 			if !skipLock {

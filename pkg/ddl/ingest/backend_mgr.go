@@ -25,9 +25,9 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
+	ddllogutil "github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/pkg/lightning/config"
-	"github.com/pingcap/tidb/pkg/util/generic"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	kvutil "github.com/tikv/client-go/v2/util"
 	pd "github.com/tikv/pd/client"
@@ -47,7 +47,7 @@ type BackendCtxMgr interface {
 	Register(
 		ctx context.Context,
 		jobID int64,
-		unique bool,
+		hasUnique bool,
 		etcdClient *clientv3.Client,
 		pdSvcDiscovery pd.ServiceDiscovery,
 		resourceGroupName string,
@@ -96,7 +96,7 @@ func NewLitBackendCtxMgr(path string, memQuota uint64, getProcessingJobIDs Filte
 	litDiskRoot.UpdateUsage()
 	err := litDiskRoot.StartupCheck()
 	if err != nil {
-		litLogger.Warn("ingest backfill may not be available", zap.Error(err))
+		ddllogutil.DDLIngestLogger().Warn("ingest backfill may not be available", zap.Error(err))
 	}
 	return mgr
 }
@@ -105,7 +105,7 @@ func NewLitBackendCtxMgr(path string, memQuota uint64, getProcessingJobIDs Filte
 func (m *litBackendCtxMgr) CheckMoreTasksAvailable(ctx context.Context) (bool, error) {
 	m.cleanupSortPath(ctx)
 	if err := m.diskRoot.PreCheckUsage(); err != nil {
-		litLogger.Info("ingest backfill is not available", zap.Error(err))
+		ddllogutil.DDLIngestLogger().Info("ingest backfill is not available", zap.Error(err))
 		return false, err
 	}
 	return true, nil
@@ -118,7 +118,7 @@ var ResignOwnerForTest = atomic.NewBool(false)
 func (m *litBackendCtxMgr) Register(
 	ctx context.Context,
 	jobID int64,
-	unique bool,
+	hasUnique bool,
 	etcdClient *clientv3.Client,
 	pdSvcDiscovery pd.ServiceDiscovery,
 	resourceGroupName string,
@@ -129,11 +129,11 @@ func (m *litBackendCtxMgr) Register(
 	}
 
 	m.memRoot.RefreshConsumption()
-	ok := m.memRoot.CheckConsume(StructSizeBackendCtx)
+	ok := m.memRoot.CheckConsume(structSizeBackendCtx)
 	if !ok {
 		return nil, genBackendAllocMemFailedErr(ctx, m.memRoot, jobID)
 	}
-	cfg, err := genConfig(ctx, m.encodeJobSortPath(jobID), m.memRoot, unique, resourceGroupName)
+	cfg, err := genConfig(ctx, m.encodeJobSortPath(jobID), m.memRoot, hasUnique, resourceGroupName)
 	if err != nil {
 		logutil.Logger(ctx).Warn(LitWarnConfigError, zap.Int64("job ID", jobID), zap.Error(err))
 		return nil, err
@@ -154,13 +154,13 @@ func (m *litBackendCtxMgr) Register(
 
 	bcCtx := newBackendContext(ctx, jobID, bd, cfg.lightning, defaultImportantVariables, m.memRoot, m.diskRoot, etcdClient)
 	m.backends.m[jobID] = bcCtx
-	m.memRoot.Consume(StructSizeBackendCtx)
+	m.memRoot.Consume(structSizeBackendCtx)
 	m.backends.mu.Unlock()
 
 	logutil.Logger(ctx).Info(LitInfoCreateBackend, zap.Int64("job ID", jobID),
 		zap.Int64("current memory usage", m.memRoot.CurrentUsage()),
 		zap.Int64("max memory quota", m.memRoot.MaxMemoryQuota()),
-		zap.Bool("is unique index", unique))
+		zap.Bool("has unique index", hasUnique))
 	return bcCtx, nil
 }
 
@@ -244,7 +244,7 @@ func createLocalBackend(
 		return nil, err
 	}
 
-	litLogger.Info("create local backend for adding index",
+	ddllogutil.DDLIngestLogger().Info("create local backend for adding index",
 		zap.String("sortDir", cfg.lightning.TikvImporter.SortedKVDir),
 		zap.String("keyspaceName", cfg.keyspaceName))
 	// We disable the switch TiKV mode feature for now,
@@ -267,15 +267,14 @@ func newBackendContext(
 	etcdClient *clientv3.Client,
 ) *litBackendCtx {
 	bCtx := &litBackendCtx{
-		SyncMap:        generic.NewSyncMap[int64, *engineInfo](10),
-		MemRoot:        memRoot,
-		DiskRoot:       diskRoot,
+		engines:        make(map[int64]*engineInfo, 10),
+		memRoot:        memRoot,
+		diskRoot:       diskRoot,
 		jobID:          jobID,
 		backend:        be,
 		ctx:            ctx,
 		cfg:            cfg,
 		sysVars:        vars,
-		diskRoot:       diskRoot,
 		updateInterval: checkpointUpdateInterval,
 		etcdClient:     etcdClient,
 	}
@@ -298,12 +297,12 @@ func (m *litBackendCtxMgr) Unregister(jobID int64) {
 	if !exist {
 		return
 	}
-	bc.unregisterAll(jobID)
+	bc.UnregisterEngines()
 	bc.backend.Close()
 	if bc.checkpointMgr != nil {
 		bc.checkpointMgr.Close()
 	}
-	m.memRoot.Release(StructSizeBackendCtx)
+	m.memRoot.Release(structSizeBackendCtx)
 	m.memRoot.ReleaseWithTag(encodeBackendTag(jobID))
 	logutil.Logger(bc.ctx).Info(LitInfoCloseBackend, zap.Int64("job ID", jobID),
 		zap.Int64("current memory usage", m.memRoot.CurrentUsage()),

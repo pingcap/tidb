@@ -93,7 +93,7 @@ func primitiveValsToConstants(ctx BuildContext, args []any) []Expression {
 	cons := datumsToConstants(types.MakeDatums(args...))
 	char, col := ctx.GetCharsetInfo()
 	for i, arg := range args {
-		types.DefaultTypeForValue(arg, cons[i].GetType(), char, col)
+		types.DefaultTypeForValue(arg, cons[i].GetType(ctx.GetEvalCtx()), char, col)
 	}
 	return cons
 }
