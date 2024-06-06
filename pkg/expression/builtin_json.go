@@ -151,7 +151,7 @@ func (c *jsonExtractFunctionClass) verifyArgs(ctx EvalContext, args []Expression
 		return err
 	}
 	if evalType := args[0].GetType(ctx).EvalType(); evalType != types.ETString && evalType != types.ETJson {
-		return ErrInvalidTypeForJSON.GenWithStackByArgs(0, "json_extract")
+		return ErrInvalidTypeForJSON.GenWithStackByArgs(1, "json_extract")
 	}
 	return nil
 }
@@ -451,7 +451,7 @@ func (c *jsonMergeFunctionClass) verifyArgs(ctx EvalContext, args []Expression) 
 	}
 	for i, arg := range args {
 		if evalType := arg.GetType(ctx).EvalType(); evalType != types.ETString && evalType != types.ETJson {
-			return ErrInvalidTypeForJSON.GenWithStackByArgs(i, "json_merge")
+			return ErrInvalidTypeForJSON.GenWithStackByArgs(i+1, "json_merge")
 		}
 	}
 	return nil
@@ -652,7 +652,7 @@ func (c *jsonContainsPathFunctionClass) verifyArgs(ctx EvalContext, args []Expre
 		return err
 	}
 	if evalType := args[0].GetType(ctx).EvalType(); evalType != types.ETString && evalType != types.ETJson {
-		return ErrInvalidTypeForJSON.GenWithStackByArgs(0, "json_contains_path")
+		return ErrInvalidTypeForJSON.GenWithStackByArgs(1, "json_contains_path")
 	}
 	return nil
 }
@@ -1230,7 +1230,7 @@ func (c *jsonMergePatchFunctionClass) verifyArgs(ctx EvalContext, args []Express
 	}
 	for i, arg := range args {
 		if evalType := arg.GetType(ctx).EvalType(); evalType != types.ETString && evalType != types.ETJson {
-			return ErrInvalidTypeForJSON.GenWithStackByArgs(i, "json_merge_patch")
+			return ErrInvalidTypeForJSON.GenWithStackByArgs(i+1, "json_merge_patch")
 		}
 	}
 	return nil
@@ -1299,7 +1299,7 @@ func (c *jsonMergePreserveFunctionClass) verifyArgs(ctx EvalContext, args []Expr
 	}
 	for i, arg := range args {
 		if evalType := arg.GetType(ctx).EvalType(); evalType != types.ETString && evalType != types.ETJson {
-			return ErrInvalidTypeForJSON.GenWithStackByArgs(i, "json_merge_preserve")
+			return ErrInvalidTypeForJSON.GenWithStackByArgs(i+1, "json_merge_preserve")
 		}
 	}
 	return nil
@@ -1436,7 +1436,7 @@ func (c *jsonSearchFunctionClass) verifyArgs(ctx EvalContext, args []Expression)
 		return err
 	}
 	if evalType := args[0].GetType(ctx).EvalType(); evalType != types.ETString && evalType != types.ETJson {
-		return ErrInvalidTypeForJSON.GenWithStackByArgs(0, "json_search")
+		return ErrInvalidTypeForJSON.GenWithStackByArgs(1, "json_search")
 	}
 	return nil
 }
@@ -1645,7 +1645,7 @@ func (c *jsonKeysFunctionClass) verifyArgs(ctx EvalContext, args []Expression) e
 		return err
 	}
 	if evalType := args[0].GetType(ctx).EvalType(); evalType != types.ETString && evalType != types.ETJson {
-		return ErrInvalidTypeForJSON.GenWithStackByArgs(0, "json_keys")
+		return ErrInvalidTypeForJSON.GenWithStackByArgs(1, "json_keys")
 	}
 	return nil
 }
