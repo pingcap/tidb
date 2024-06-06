@@ -1141,7 +1141,7 @@ func prepareTableListToDump(tctx *tcontext.Context, conf *Config, db *sql.Conn) 
 		listType = getListTableTypeByConf(conf)
 	}
 
-	if conf.SpecifiedTables {
+	if conf.specifiedTables {
 		return updateSpecifiedTablesMeta(tctx, db, conf.Tables, listType)
 	}
 	databases, err := prepareDumpingDatabases(tctx, conf, db)
