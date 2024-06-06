@@ -47,13 +47,30 @@ type SQLKiller struct {
 // SendKillSignal sends a kill signal to the query.
 func (killer *SQLKiller) SendKillSignal(reason killSignal) {
 	if atomic.CompareAndSwapUint32(&killer.Signal, 0, reason) {
-		logutil.BgLogger().Warn("kill query start", zap.Uint64("conn", killer.ConnID), zap.Uint32("reason", uint32(reason)))
+		status := atomic.LoadUint32(&killer.Signal)
+		err := killer.getKillError(status)
+		logutil.BgLogger().Warn("kill query started", zap.Uint64("conn", killer.ConnID), zap.String("reason", err.Error()))
 	}
 }
 
 // GetKillSignal gets the kill signal.
 func (killer *SQLKiller) GetKillSignal() killSignal {
 	return killSignal(atomic.LoadUint32(&killer.Signal))
+}
+
+// getKillError gets the error according to the kill signal.
+func (killer *SQLKiller) getKillError(status killSignal) error {
+	switch status {
+	case QueryInterrupted:
+		return exeerrors.ErrQueryInterrupted.GenWithStackByArgs()
+	case MaxExecTimeExceeded:
+		return exeerrors.ErrMaxExecTimeExceeded.GenWithStackByArgs()
+	case QueryMemoryExceeded:
+		return exeerrors.ErrMemoryExceedForQuery.GenWithStackByArgs(killer.ConnID)
+	case ServerMemoryExceeded:
+		return exeerrors.ErrMemoryExceedForInstance.GenWithStackByArgs(killer.ConnID)
+	}
+	return nil
 }
 
 // FinishResultSet is used to finish the result set.
@@ -77,19 +94,13 @@ func (killer *SQLKiller) HandleSignal() error {
 		}
 	})
 	status := atomic.LoadUint32(&killer.Signal)
+	err := killer.getKillError(status)
 	switch status {
-	case QueryInterrupted:
-		return exeerrors.ErrQueryInterrupted.GenWithStackByArgs()
-	case MaxExecTimeExceeded:
-		return exeerrors.ErrMaxExecTimeExceeded.GenWithStackByArgs()
-	case QueryMemoryExceeded:
-		return exeerrors.ErrMemoryExceedForQuery.GenWithStackByArgs(killer.ConnID)
 	case ServerMemoryExceeded:
 		logutil.BgLogger().Warn("global memory controller, NeedKill signal is received successfully",
 			zap.Uint64("conn", killer.ConnID))
-		return exeerrors.ErrMemoryExceedForInstance.GenWithStackByArgs(killer.ConnID)
 	}
-	return nil
+	return err
 }
 
 // Reset resets the SqlKiller.
