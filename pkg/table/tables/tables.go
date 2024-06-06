@@ -687,7 +687,7 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx table.MutateContext
 			return err
 		}
 	}
-	colSize := make(map[int64]int64, len(t.Cols()))
+	colSize := make([]variable.ColSize, len(t.Cols()))
 	for id, col := range t.Cols() {
 		size, err := codec.EstimateValueSize(sc.TypeCtx(), newData[id])
 		if err != nil {
@@ -699,9 +699,9 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx table.MutateContext
 			continue
 		}
 		oldLen := size - 1
-		colSize[col.ID] = int64(newLen - oldLen)
+		colSize[id] = variable.ColSize{ColID: col.ID, Size: int64(newLen - oldLen)}
 	}
-	sessVars.TxnCtx.UpdateDeltaForTable(t.physicalTableID, 0, 1, colSize)
+	sessVars.TxnCtx.UpdateDeltaForTableFromColSlice(t.physicalTableID, 0, 1, colSize)
 	return nil
 }
 
@@ -1256,15 +1256,15 @@ func (t *TableCommon) AddRecord(sctx table.MutateContext, r []types.Datum, opts 
 		sessVars.TxnCtx.InsertTTLRowsCount += 1
 	}
 
-	colSize := make(map[int64]int64, len(r))
+	colSize := make([]variable.ColSize, len(t.Cols()))
 	for id, col := range t.Cols() {
 		size, err := codec.EstimateValueSize(sc.TypeCtx(), r[id])
 		if err != nil {
 			continue
 		}
-		colSize[col.ID] = int64(size) - 1
+		colSize[id] = variable.ColSize{ColID: col.ID, Size: int64(size - 1)}
 	}
-	sessVars.TxnCtx.UpdateDeltaForTable(t.physicalTableID, 1, 1, colSize)
+	sessVars.TxnCtx.UpdateDeltaForTableFromColSlice(t.physicalTableID, 1, 1, colSize)
 	return recordID, nil
 }
 
@@ -1415,9 +1415,9 @@ func DecodeRawRowData(ctx sessionctx.Context, meta *model.TableInfo, h kv.Handle
 			continue
 		}
 		if col.ChangeStateInfo != nil {
-			v[i], _, err = GetChangingColVal(ctx, cols, col, rowMap, defaultVals)
+			v[i], _, err = GetChangingColVal(ctx.GetExprCtx(), cols, col, rowMap, defaultVals)
 		} else {
-			v[i], err = GetColDefaultValue(ctx, col, defaultVals)
+			v[i], err = GetColDefaultValue(ctx.GetExprCtx(), col, defaultVals)
 		}
 		if err != nil {
 			return nil, rowMap, err
@@ -1432,11 +1432,11 @@ func DecodeRawRowData(ctx sessionctx.Context, meta *model.TableInfo, h kv.Handle
 // old row : a-b-[nil]
 // new row : a-b-[a'/default]
 // Thus the writable new row is corresponding to Write-Only constraints.
-func GetChangingColVal(ctx sessionctx.Context, cols []*table.Column, col *table.Column, rowMap map[int64]types.Datum, defaultVals []types.Datum) (_ types.Datum, isDefaultVal bool, err error) {
+func GetChangingColVal(ctx exprctx.BuildContext, cols []*table.Column, col *table.Column, rowMap map[int64]types.Datum, defaultVals []types.Datum) (_ types.Datum, isDefaultVal bool, err error) {
 	relativeCol := cols[col.ChangeStateInfo.DependencyColumnOffset]
 	idxColumnVal, ok := rowMap[relativeCol.ID]
 	if ok {
-		idxColumnVal, err = table.CastValue(ctx, idxColumnVal, col.ColumnInfo, false, false)
+		idxColumnVal, err = table.CastColumnValue(ctx, idxColumnVal, col.ColumnInfo, false, false)
 		// TODO: Consider sql_mode and the error msg(encounter this error check whether to rollback).
 		if err != nil {
 			return idxColumnVal, false, errors.Trace(err)
@@ -1533,15 +1533,15 @@ func (t *TableCommon) RemoveRecord(ctx table.MutateContext, h kv.Handle, r []typ
 	if ctx.GetSessionVars().TxnCtx == nil {
 		return nil
 	}
-	colSize := make(map[int64]int64, len(t.Cols()))
+	colSize := make([]variable.ColSize, len(t.Cols()))
 	for id, col := range t.Cols() {
 		size, err := codec.EstimateValueSize(sc.TypeCtx(), r[id])
 		if err != nil {
 			continue
 		}
-		colSize[col.ID] = -int64(size - 1)
+		colSize[id] = variable.ColSize{ColID: col.ID, Size: -int64(size - 1)}
 	}
-	ctx.GetSessionVars().TxnCtx.UpdateDeltaForTable(t.physicalTableID, -1, 1, colSize)
+	ctx.GetSessionVars().TxnCtx.UpdateDeltaForTableFromColSlice(t.physicalTableID, -1, 1, colSize)
 	return err
 }
 
@@ -1769,7 +1769,7 @@ func IterRecords(t table.Table, ctx sessionctx.Context, cols []*table.Column,
 				data[col.Offset] = rowMap[col.ID]
 				continue
 			}
-			data[col.Offset], err = GetColDefaultValue(ctx, col, defaultVals)
+			data[col.Offset], err = GetColDefaultValue(ctx.GetExprCtx(), col, defaultVals)
 			if err != nil {
 				return err
 			}
@@ -1808,13 +1808,13 @@ func tryDecodeColumnFromCommonHandle(col *table.Column, handle kv.Handle, pkIds 
 
 // GetColDefaultValue gets a column default value.
 // The defaultVals is used to avoid calculating the default value multiple times.
-func GetColDefaultValue(ctx sessionctx.Context, col *table.Column, defaultVals []types.Datum) (
+func GetColDefaultValue(ctx exprctx.BuildContext, col *table.Column, defaultVals []types.Datum) (
 	colVal types.Datum, err error) {
 	if col.GetOriginDefaultValue() == nil && mysql.HasNotNullFlag(col.GetFlag()) {
 		return colVal, errors.New("Miss column")
 	}
 	if defaultVals[col.Offset].IsNull() {
-		colVal, err = table.GetColOriginDefaultValue(ctx.GetExprCtx(), col.ToInfo())
+		colVal, err = table.GetColOriginDefaultValue(ctx, col.ToInfo())
 		if err != nil {
 			return colVal, err
 		}

@@ -97,7 +97,7 @@ func (col *CorrelatedColumn) EvalInt(ctx EvalContext, row chunk.Row) (int64, boo
 	if col.Data.IsNull() {
 		return 0, true, nil
 	}
-	if col.GetType().Hybrid() {
+	if col.GetType(ctx).Hybrid() {
 		res, err := col.Data.ToInt64(typeCtx(ctx))
 		return res, err != nil, err
 	}
@@ -312,7 +312,7 @@ func (col *Column) VecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk
 func (col *Column) VecEvalReal(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	src := input.Column(col.Index)
-	if col.GetType().GetType() == mysql.TypeFloat {
+	if col.GetType(ctx).GetType() == mysql.TypeFloat {
 		result.ResizeFloat64(n, false)
 		f32s := src.Float32s()
 		f64s := result.Float64s()
@@ -408,7 +408,12 @@ func (col *Column) MarshalJSON() ([]byte, error) {
 }
 
 // GetType implements Expression interface.
-func (col *Column) GetType() *types.FieldType {
+func (col *Column) GetType(_ EvalContext) *types.FieldType {
+	return col.GetStaticType()
+}
+
+// GetStaticType returns the type without considering the context.
+func (col *Column) GetStaticType() *types.FieldType {
 	return col.RetType
 }
 
@@ -424,7 +429,7 @@ func (col *Column) Eval(_ EvalContext, row chunk.Row) (types.Datum, error) {
 
 // EvalInt returns int representation of Column.
 func (col *Column) EvalInt(ctx EvalContext, row chunk.Row) (int64, bool, error) {
-	if col.GetType().Hybrid() {
+	if col.GetType(ctx).Hybrid() {
 		val := row.GetDatum(col.Index, col.RetType)
 		if val.IsNull() {
 			return 0, true, nil
@@ -447,7 +452,7 @@ func (col *Column) EvalReal(ctx EvalContext, row chunk.Row) (float64, bool, erro
 	if row.IsNull(col.Index) {
 		return 0, true, nil
 	}
-	if col.GetType().GetType() == mysql.TypeFloat {
+	if col.GetType(ctx).GetType() == mysql.TypeFloat {
 		return float64(row.GetFloat32(col.Index)), false, nil
 	}
 	return row.GetFloat64(col.Index), false, nil
@@ -460,7 +465,7 @@ func (col *Column) EvalString(ctx EvalContext, row chunk.Row) (string, bool, err
 	}
 
 	// Specially handle the ENUM/SET/BIT input value.
-	if col.GetType().Hybrid() {
+	if col.GetType(ctx).Hybrid() {
 		val := row.GetDatum(col.Index, col.RetType)
 		res, err := val.ToString()
 		return res, err != nil, err

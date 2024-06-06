@@ -375,7 +375,7 @@ func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 			}
 			results = append(results, result)
 		}
-		e.result = distsql.NewSortedSelectResults(results, e.Schema(), e.byItems, e.memTracker)
+		e.result = distsql.NewSortedSelectResults(e.Ctx().GetExprCtx().GetEvalCtx(), results, e.Schema(), e.byItems, e.memTracker)
 	}
 	return nil
 }
@@ -620,7 +620,7 @@ func (e *IndexLookUpExecutor) getRetTpsForIndexReader() []*types.FieldType {
 	var tps []*types.FieldType
 	if len(e.byItems) != 0 {
 		for _, item := range e.byItems {
-			tps = append(tps, item.Expr.GetType())
+			tps = append(tps, item.Expr.GetType(e.Ctx().GetExprCtx().GetEvalCtx()))
 		}
 	}
 	if e.isCommonHandle() {
@@ -686,6 +686,14 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, workCh chan<
 			SetMemTracker(tracker).
 			SetConnIDAndConnAlias(e.Ctx().GetSessionVars().ConnectionID, e.Ctx().GetSessionVars().SessionAlias)
 
+		if builder.Request.Paging.Enable && builder.Request.Paging.MinPagingSize < uint64(initBatchSize) {
+			// when paging enabled and Paging.MinPagingSize less than initBatchSize, change Paging.MinPagingSize to
+			// initBatchSize to avoid redundant paging RPC, see more detail in https://github.com/pingcap/tidb/issues/53827
+			builder.Request.Paging.MinPagingSize = uint64(initBatchSize)
+			if builder.Request.Paging.MaxPagingSize < uint64(initBatchSize) {
+				builder.Request.Paging.MaxPagingSize = uint64(initBatchSize)
+			}
+		}
 		results := make([]distsql.SelectResult, 0, len(kvRanges))
 		for _, kvRange := range kvRanges {
 			// check if executor is closed
@@ -719,7 +727,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, workCh chan<
 		worker.batchSize = min(initBatchSize, worker.maxBatchSize)
 		if len(results) > 1 && len(e.byItems) != 0 {
 			// e.Schema() not the output schema for indexReader, and we put byItems related column at first in `buildIndexReq`, so use nil here.
-			ssr := distsql.NewSortedSelectResults(results, nil, e.byItems, e.memTracker)
+			ssr := distsql.NewSortedSelectResults(e.Ctx().GetExprCtx().GetEvalCtx(), results, nil, e.byItems, e.memTracker)
 			results = []distsql.SelectResult{ssr}
 		}
 		ctx1, cancel := context.WithCancel(ctx)

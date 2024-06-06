@@ -65,7 +65,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/gcutil"
 	"github.com/pingcap/tidb/pkg/util/generic"
-	"github.com/pingcap/tidb/pkg/util/syncutil"
 	"github.com/tikv/client-go/v2/tikvrpc"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/client/v3/concurrency"
@@ -388,11 +387,6 @@ type ddlCtx struct {
 
 	// reorgCtx is used for reorganization.
 	reorgCtx reorgContexts
-	// backfillCtx is used for backfill workers.
-	backfillCtx struct {
-		syncutil.RWMutex
-		jobCtxMap map[int64]*JobContext
-	}
 
 	jobCtx struct {
 		sync.RWMutex

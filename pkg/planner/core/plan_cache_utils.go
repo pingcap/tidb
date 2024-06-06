@@ -494,6 +494,13 @@ func (*PlanCacheQueryFeatures) Leave(in ast.Node) (out ast.Node, ok bool) {
 // PointGetExecutorCache caches the PointGetExecutor to further improve its performance.
 // Don't forget to reset this executor when the prior plan is invalid.
 type PointGetExecutorCache struct {
+	// Special (or tricky) optimization for PointGet Plan.
+	// Store the PointGet Plan in PlanCacheStmt directly to bypass the LRU Cache to gain some performance improvement.
+	// There is around 3% improvement, BenchmarkPreparedPointGet: 6450 ns/op --> 6250 ns/op.
+	pointPlan      base.Plan
+	pointPlanHints *hint.StmtHints
+	columnNames    types.NameSlice
+
 	ColumnInfos any
 	// Executor is only used for point get scene.
 	// Notice that we should only cache the PointGetExecutor that have a snapshot with MaxTS in it.
@@ -729,7 +736,7 @@ func parseParamTypes(sctx sessionctx.Context, params []expression.Expression) (p
 	paramTypes = make([]*types.FieldType, 0, len(params))
 	for _, param := range params {
 		if c, ok := param.(*expression.Constant); ok { // from binary protocol
-			paramTypes = append(paramTypes, c.GetType())
+			paramTypes = append(paramTypes, c.GetType(sctx.GetExprCtx().GetEvalCtx()))
 			continue
 		}
 

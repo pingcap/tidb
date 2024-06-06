@@ -325,6 +325,35 @@ func (tc *TransactionContext) UpdateDeltaForTable(physicalTableID int64, delta i
 	tc.TableDeltaMap[physicalTableID] = item
 }
 
+// ColSize is a data struct to store the delta information for a table.
+type ColSize struct {
+	ColID int64
+	Size  int64
+}
+
+// UpdateDeltaForTableFromColSlice is the same as UpdateDeltaForTable, but it accepts a slice of column size.
+func (tc *TransactionContext) UpdateDeltaForTableFromColSlice(
+	physicalTableID int64, delta int64,
+	count int64, colSizes []ColSize,
+) {
+	tc.tdmLock.Lock()
+	defer tc.tdmLock.Unlock()
+	if tc.TableDeltaMap == nil {
+		tc.TableDeltaMap = make(map[int64]TableDelta)
+	}
+	item := tc.TableDeltaMap[physicalTableID]
+	if item.ColSize == nil && len(colSizes) > 0 {
+		item.ColSize = make(map[int64]int64, len(colSizes))
+	}
+	item.Delta += delta
+	item.Count += count
+	item.TableID = physicalTableID
+	for _, s := range colSizes {
+		item.ColSize[s.ColID] += s.Size
+	}
+	tc.TableDeltaMap[physicalTableID] = item
+}
+
 // GetKeyInPessimisticLockCache gets a key in pessimistic lock cache.
 func (tc *TransactionContext) GetKeyInPessimisticLockCache(key kv.Key) (val []byte, ok bool) {
 	if tc.pessimisticLockCache == nil && tc.CurrentStmtPessimisticLockCache == nil {

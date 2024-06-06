@@ -619,12 +619,13 @@ func (a *aggregationPushDownSolver) aggPushDown(p base.LogicalPlan, opt *optimiz
 						}
 					}
 				}
+				ectx := p.SCtx().GetExprCtx().GetEvalCtx()
 				for i, funcsArgs := range oldAggFuncsArgs {
 					if !noSideEffects {
 						break
 					}
 					for j := range funcsArgs {
-						if oldAggFuncsArgs[i][j].GetType().EvalType() != newAggFuncsArgs[i][j].GetType().EvalType() {
+						if oldAggFuncsArgs[i][j].GetType(ectx).EvalType() != newAggFuncsArgs[i][j].GetType(ectx).EvalType() {
 							noSideEffects = false
 							break
 						}
@@ -634,7 +635,7 @@ func (a *aggregationPushDownSolver) aggPushDown(p base.LogicalPlan, opt *optimiz
 							continue
 						}
 						// substitution happened, check the eval type compatibility.
-						if oldAggOrderItems[i][j].Expr.GetType().EvalType() != newAggOrderItems[i][j].Expr.GetType().EvalType() {
+						if oldAggOrderItems[i][j].Expr.GetType(ectx).EvalType() != newAggOrderItems[i][j].Expr.GetType(ectx).EvalType() {
 							noSideEffects = false
 							break
 						}

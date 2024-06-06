@@ -212,8 +212,12 @@ func (rc *reorgCtx) getRowCount() int64 {
 // the additional ddl round.
 //
 // After that, we can make sure that the worker goroutine is correctly shut down.
-func (w *worker) runReorgJob(reorgInfo *reorgInfo, tblInfo *model.TableInfo,
-	lease time.Duration, f func() error) error {
+func (w *worker) runReorgJob(
+	reorgInfo *reorgInfo,
+	tblInfo *model.TableInfo,
+	lease time.Duration,
+	reorgFn func() error,
+) error {
 	job := reorgInfo.Job
 	d := reorgInfo.d
 	// This is for tests compatible, because most of the early tests try to build the reorg job manually
@@ -247,7 +251,7 @@ func (w *worker) runReorgJob(reorgInfo *reorgInfo, tblInfo *model.TableInfo,
 		w.wg.Add(1)
 		go func() {
 			defer w.wg.Done()
-			rc.doneCh <- f()
+			rc.doneCh <- reorgFn()
 		}()
 	}
 

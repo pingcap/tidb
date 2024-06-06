@@ -82,6 +82,8 @@ type EvalContext interface {
 	GetOptionalPropSet() OptionalEvalPropKeySet
 	// GetOptionalPropProvider gets the optional property provider by key
 	GetOptionalPropProvider(OptionalEvalPropKey) (OptionalEvalPropProvider, bool)
+	// GetParamValue returns the value of the parameter by index.
+	GetParamValue(idx int) types.Datum
 }
 
 // BuildContext is used to build an expression

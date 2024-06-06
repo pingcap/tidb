@@ -173,7 +173,7 @@ func (selection *LogicalSelection) PullUpConstantPredicates() []expression.Expre
 	var result []expression.Expression
 	for _, candidatePredicate := range selection.Conditions {
 		// the candidate predicate should be a constant and compare predicate
-		match := validCompareConstantPredicate(candidatePredicate)
+		match := validCompareConstantPredicate(selection.SCtx().GetExprCtx().GetEvalCtx(), candidatePredicate)
 		if match {
 			result = append(result, candidatePredicate)
 		}
@@ -220,7 +220,7 @@ func (projection *LogicalProjection) PullUpConstantPredicates() []expression.Exp
 // validComparePredicate checks if the predicate is an expression like [column '>'|'>='|'<'|'<='|'=' constant].
 // return param1: return true, if the predicate is a compare constant predicate.
 // return param2: return the column side of predicate.
-func validCompareConstantPredicate(candidatePredicate expression.Expression) bool {
+func validCompareConstantPredicate(ctx expression.EvalContext, candidatePredicate expression.Expression) bool {
 	scalarFunction, ok := candidatePredicate.(*expression.ScalarFunction)
 	if !ok {
 		return false
@@ -230,9 +230,9 @@ func validCompareConstantPredicate(candidatePredicate expression.Expression) boo
 		scalarFunction.FuncName.L != ast.EQ {
 		return false
 	}
-	column, _ := expression.ValidCompareConstantPredicateHelper(scalarFunction, true)
+	column, _ := expression.ValidCompareConstantPredicateHelper(ctx, scalarFunction, true)
 	if column == nil {
-		column, _ = expression.ValidCompareConstantPredicateHelper(scalarFunction, false)
+		column, _ = expression.ValidCompareConstantPredicateHelper(ctx, scalarFunction, false)
 	}
 	if column == nil {
 		return false

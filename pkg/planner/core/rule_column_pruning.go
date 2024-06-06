@@ -250,7 +250,7 @@ func pruneByItems(p base.LogicalPlan, old []*util.ByItems, opt *optimizetrace.Lo
 					pruned = false
 					byItems = append(byItems, byItem)
 				}
-			} else if byItem.Expr.GetType().GetType() != mysql.TypeNull {
+			} else if byItem.Expr.GetType(p.SCtx().GetExprCtx().GetEvalCtx()).GetType() != mysql.TypeNull {
 				pruned = false
 				parentUsedCols = append(parentUsedCols, cols...)
 				byItems = append(byItems, byItem)
@@ -687,11 +687,11 @@ func addConstOneForEmptyProjection(p base.LogicalPlan) {
 	constOne := expression.NewOne()
 	proj.schema.Append(&expression.Column{
 		UniqueID: proj.SCtx().GetSessionVars().AllocPlanColumnID(),
-		RetType:  constOne.GetType(),
+		RetType:  constOne.GetType(p.SCtx().GetExprCtx().GetEvalCtx()),
 	})
 	proj.Exprs = append(proj.Exprs, &expression.Constant{
 		Value:   constOne.Value,
-		RetType: constOne.GetType(),
+		RetType: constOne.GetType(p.SCtx().GetExprCtx().GetEvalCtx()),
 	})
 }
 
