@@ -24,6 +24,7 @@ import (
 	"math/rand"
 	"path"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -38,6 +39,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	sst "github.com/pingcap/kvproto/pkg/import_sstpb"
+	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
@@ -56,7 +58,9 @@ import (
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/engine"
 	"github.com/pingcap/tidb/pkg/util/hack"
+	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
 	"github.com/tikv/pd/client/http"
 	"google.golang.org/grpc"
@@ -2380,4 +2384,78 @@ func TestCheckDiskAvail(t *testing.T) {
 	store = &http.StoreInfo{Status: http.StoreStatus{LeaderWeight: 1.0, RegionWeight: 1.0}}
 	err = checkDiskAvail(ctx, store)
 	require.NoError(t, err)
+}
+
+type mockStoreHelper struct{}
+
+func (mockStoreHelper) GetTS(context.Context) (physical, logical int64, err error) {
+	return 12345, 67890, nil
+}
+
+func (mockStoreHelper) GetTiKVCodec() tikv.Codec {
+	c, _ := tikv.NewCodecV2(tikv.ModeTxn, &keyspacepb.KeyspaceMeta{})
+	return c
+}
+
+func TestTotalMemoryConsume(t *testing.T) {
+	//t.Skip("this test is manually run to calibrate the real memory usage with TotalMemoryConsume")
+
+	heapCnt := 0
+	getMemoryInUse := func() int64 {
+		runtime.GC()
+		s := runtime.MemStats{}
+		runtime.ReadMemStats(&s)
+		heapCnt++
+		return int64(s.HeapInuse)
+	}
+	memInUseBase := getMemoryInUse()
+
+	ctx := context.Background()
+	cfg := BackendConfig{
+		LocalStoreDir:           t.TempDir(),
+		CheckpointEnabled:       true,
+		DupeDetectEnabled:       true,
+		MemTableSize:            100 * units.MiB,
+		LocalWriterMemCacheSize: 100 * units.MiB,
+	}
+	b, err := NewBackendForTest(ctx, cfg, mockStoreHelper{})
+	require.NoError(t, err)
+
+	checkMemoryConsume := func(tag string, expected int64) {
+		expectedMemConsume := expected
+		require.EqualValues(t, expectedMemConsume, b.TotalMemoryConsume())
+		memInUse := getMemoryInUse()
+		diff := memInUse - memInUseBase
+		t.Logf("%s, memInUse %d, memInUseBase %d, diff %d", tag, memInUse, memInUseBase, diff)
+		require.Less(t, mathutil.Abs(diff-expectedMemConsume), int64(10*units.MiB))
+	}
+
+	// 1. test local engine write phase
+
+	engineCfg := &backend.EngineConfig{
+		Local: backend.LocalEngineConfig{
+			BlockSize: 100 * units.MiB,
+		},
+	}
+	engineID := uuid.New()
+	err = b.OpenEngine(ctx, engineCfg, engineID)
+	require.NoError(t, err)
+	checkMemoryConsume("after open 1 engine", 0)
+
+	writer, err := b.LocalWriter(ctx, &backend.LocalWriterConfig{IsKVSorted: false}, engineID)
+	require.NoError(t, err)
+	// 72 MiB from writer.writeBatch
+	checkMemoryConsume("after create 1 engine writer", 72*units.MiB)
+
+	err = writer.AppendRows(ctx, []string{"a", "b", "c"}, kv.MakeRowsFromKvPairs([]common.KvPair{
+		{Key: []byte("a"), Val: []byte("a")}, {Key: []byte("b"), Val: []byte("b")}, {Key: []byte("c"), Val: []byte("c")},
+	}))
+	require.NoError(t, err)
+	// 72 MiB from writer.writeBatch, 1MB from bufferPool
+	checkMemoryConsume("after write 1 row", 73*units.MiB)
+
+	_, err = writer.Close(ctx)
+	require.NoError(t, err)
+	// 1MB from bufferPool
+	checkMemoryConsume("after close 1 writer", units.MiB)
 }
