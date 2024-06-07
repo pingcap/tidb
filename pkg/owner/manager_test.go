@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/owner"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -52,8 +51,6 @@ func newTestInfo(t *testing.T) *testInfo {
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)
 	cluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 4})
-	domain, err := session.GetDomain(store)
-	require.NoError(t, err)
 
 	cli := cluster.Client(0)
 	ic := infoschema.NewCache(nil, 2)
@@ -64,7 +61,6 @@ func newTestInfo(t *testing.T) *testInfo {
 		WithStore(store),
 		WithLease(testLease),
 		WithInfoCache(ic),
-		WithSchemaLoader(domain),
 	)
 
 	return &testInfo{
@@ -247,8 +243,6 @@ func TestCluster(t *testing.T) {
 	store, cluster, d := tInfo.store, tInfo.cluster, tInfo.ddl
 	defer tInfo.Close(t)
 	require.NoError(t, d.OwnerManager().CampaignOwner())
-	domain, err := session.GetDomain(store)
-	require.NoError(t, err)
 
 	isOwner := checkOwner(d, true)
 	require.True(t, isOwner)
@@ -262,7 +256,6 @@ func TestCluster(t *testing.T) {
 		WithStore(store),
 		WithLease(testLease),
 		WithInfoCache(ic2),
-		WithSchemaLoader(domain),
 	)
 	require.NoError(t, d1.OwnerManager().CampaignOwner())
 
@@ -271,7 +264,7 @@ func TestCluster(t *testing.T) {
 
 	// Delete the leader key, the d1 become the owner.
 	cliRW := cluster.Client(2)
-	err = deleteLeader(cliRW, DDLOwnerKey)
+	err := deleteLeader(cliRW, DDLOwnerKey)
 	require.NoError(t, err)
 
 	isOwner = checkOwner(d, false)
@@ -288,7 +281,6 @@ func TestCluster(t *testing.T) {
 		WithStore(store),
 		WithLease(testLease),
 		WithInfoCache(ic3),
-		WithSchemaLoader(domain),
 	)
 	require.NoError(t, d3.OwnerManager().CampaignOwner())
 

@@ -43,7 +43,6 @@ go_test(
         "//pkg/infoschema",
         "//pkg/kv",
         "//pkg/parser/terror",
-        "//pkg/session",
         "//pkg/store/mockstore",
         "//pkg/testkit",
         "//pkg/testkit/testsetup",
