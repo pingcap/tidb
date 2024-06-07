@@ -98,6 +98,7 @@ func newEngineManager(config BackendConfig, storeHelper StoreHelper, logger log.
 	}
 	var opts = make([]membuf.Option, 0, 1)
 	if !inMemTest {
+		// otherwise, we use the default allocator that can be tracked by golang runtime.
 		opts = append(opts, membuf.WithAllocator(alloc))
 	}
 	return &engineManager{

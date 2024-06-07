@@ -408,7 +408,10 @@ type BackendConfig struct {
 	CheckpointEnabled      bool
 	// memory table size of pebble. since pebble can have multiple mem tables, the max memory used is
 	// MemTableSize * MemTableStopWritesThreshold, see pebble.Options for more details.
-	MemTableSize            int
+	MemTableSize int
+	// LocalWriterMemCacheSize is the memory threshold for one local writer of
+	// engines. If the KV payload size exceeds LocalWriterMemCacheSize, local writer
+	// will flush them into the engine.
 	LocalWriterMemCacheSize int64
 	// whether check TiKV capacity before write & ingest.
 	ShouldCheckTiKV    bool

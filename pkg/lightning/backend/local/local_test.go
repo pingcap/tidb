@@ -2402,7 +2402,12 @@ func TestTotalMemoryConsume(t *testing.T) {
 
 	inMemTest = true
 	getMemoryInUse := func() int64 {
+		// wait to make test more stable, maybe related to release memory. I don't know
+		// why 🤷‍
 		runtime.GC()
+		time.Sleep(time.Second)
+		runtime.GC()
+
 		s := runtime.MemStats{}
 		runtime.ReadMemStats(&s)
 		return int64(s.HeapInuse)
@@ -2445,7 +2450,7 @@ func TestTotalMemoryConsume(t *testing.T) {
 	require.NoError(t, err)
 	sortedWriter, err := b.LocalWriter(ctx, &backend.LocalWriterConfig{IsKVSorted: true}, engineID)
 	require.NoError(t, err)
-	// 72 MiB from unsortedWriter.writeBatch
+	// 72 B * 1 Mi from unsortedWriter.writeBatch
 	checkMemoryConsume("after create engine writers", 72*units.MiB)
 
 	err = unsortedWriter.AppendRows(ctx, []string{"a", "b", "c"}, kv.MakeRowsFromKvPairs([]common.KvPair{
@@ -2472,7 +2477,7 @@ func TestTotalMemoryConsume(t *testing.T) {
 
 	unsortedWriter, err = b.LocalWriter(ctx, &backend.LocalWriterConfig{IsKVSorted: false}, engineID)
 	require.NoError(t, err)
-	// write about 150MiB data
+	// write about 150 MiB data
 	val := make([]byte, 35)
 	for i := 0; i < 1024*1024; i++ {
 		err = unsortedWriter.AppendRows(ctx, []string{"a", "b", "c"}, kv.MakeRowsFromKvPairs([]common.KvPair{
@@ -2483,16 +2488,11 @@ func TestTotalMemoryConsume(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	// wait to make test more stable, maybe related to release memory
-	runtime.GC()
-	time.Sleep(time.Second)
-	// 119 MiB from bufferPool, 72 k * 2048910 from unsortedWriter.writeBatch
+	// 119 MiB from bufferPool, 72 B * 2048910 from unsortedWriter.writeBatch
 	checkMemoryConsume("after write many rows", 272302064)
 
 	_, err = unsortedWriter.Close(ctx)
 	require.NoError(t, err)
-	runtime.GC()
-	time.Sleep(time.Second)
 	checkMemoryConsume("after close all writers", 119*units.MiB)
 
 	err = b.CloseEngine(ctx, &backend.EngineConfig{}, engineID)
