@@ -228,12 +228,14 @@ func TestCreateViewConcurrently(t *testing.T) {
 	tk.MustExec("create view v as select * from t;")
 	var (
 		counterErr error
+		errJob     *model.Job
 		counter    int
 	)
 	ddl.OnCreateViewForTest = func(job *model.Job) {
 		counter++
 		if counter > 1 {
 			counterErr = fmt.Errorf("create view job should not run concurrently")
+			errJob = job
 			return
 		}
 	}
@@ -266,7 +268,7 @@ func TestCreateViewConcurrently(t *testing.T) {
 	}
 	err := eg.Wait()
 	require.NoError(t, err)
-	require.NoError(t, counterErr)
+	require.NoError(t, counterErr, errJob.String())
 }
 
 func TestCreateDropCreateTable(t *testing.T) {
