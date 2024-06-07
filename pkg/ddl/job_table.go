@@ -515,7 +515,6 @@ func (s *jobScheduler) delivery2Worker(wk *worker, pool *workerPool, job *model.
 	metrics.DDLRunningJobCount.WithLabelValues(pool.tp().String()).Inc()
 	s.wg.RunWithLog(func() {
 		defer func() {
-			pool.put(wk)
 			failpoint.InjectCall("afterDelivery2Worker", job)
 			s.runningJobs.remove(jobID, involvedSchemaInfos)
 			asyncNotify(s.ddlJobNotifyCh)
@@ -527,6 +526,7 @@ func (s *jobScheduler) delivery2Worker(wk *worker, pool *workerPool, job *model.
 				// it much harder to test multiple owners in 1 unit test.
 				ingest.LitBackCtxMgr.Unregister(jobID)
 			}
+			pool.put(wk)
 		}()
 		for {
 			err := s.runJobWithWorker(wk, job)
