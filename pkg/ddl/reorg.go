@@ -15,6 +15,7 @@
 package ddl
 
 import (
+	"context"
 	"encoding/hex"
 	"fmt"
 	"strconv"
@@ -896,13 +897,13 @@ func (r *reorgInfo) UpdateReorgMeta(startKey kv.Key, pool *sess.Pool) (err error
 	defer pool.Put(sctx)
 
 	se := sess.NewSession(sctx)
-	err = se.Begin()
+	err = se.Begin(context.Background())
 	if err != nil {
 		return
 	}
 	rh := newReorgHandler(se)
 	err = updateDDLReorgHandle(rh.s, r.Job.ID, startKey, r.EndKey, r.PhysicalTableID, r.currElement)
-	err1 := se.Commit()
+	err1 := se.Commit(context.Background())
 	if err == nil {
 		err = err1
 	}
