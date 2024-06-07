@@ -17,6 +17,11 @@ package ingest
 import (
 	"context"
 	"fmt"
+<<<<<<< HEAD
+=======
+	"sync"
+	"sync/atomic"
+>>>>>>> 9c500ad9cb5 (ddl/ingest: add synchronization to `UnregisterEngines` (#53849))
 	"time"
 
 	"github.com/pingcap/errors"
@@ -93,6 +98,10 @@ type litBackendCtx struct {
 	updateInterval  time.Duration
 	checkpointMgr   *CheckpointManager
 	etcdClient      *clientv3.Client
+
+	// unregisterMu prevents concurrent calls of `UnregisterEngines`.
+	// For details, see https://github.com/pingcap/tidb/issues/53843.
+	unregisterMu sync.Mutex
 }
 
 func (bc *litBackendCtx) handleErrorAfterCollectRemoteDuplicateRows(err error, indexID int64, tbl table.Table, hasDupe bool) error {

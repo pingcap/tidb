@@ -65,6 +65,7 @@ func (bc *litBackendCtx) Register(jobID, indexID int64, schemaName, tableName st
 				zap.Int64("index ID", indexID), zap.Error(err))
 			return nil, errors.Trace(err)
 		}
+<<<<<<< HEAD
 		id := openedEn.GetEngineUUID()
 		en = newEngineInfo(bc.ctx, jobID, indexID, cfg, openedEn, id, 1, bc.MemRoot)
 		bc.Store(indexID, en)
@@ -77,6 +78,62 @@ func (bc *litBackendCtx) Register(jobID, indexID int64, schemaName, tableName st
 				zap.Int64("index ID", indexID),
 				zap.Int("concurrency", bc.cfg.TikvImporter.RangeConcurrency))
 			return nil, dbterror.ErrIngestFailed.FastGenByArgs("concurrency quota exceeded")
+=======
+
+		openedEngines[indexID] = newEngineInfo(
+			bc.ctx,
+			bc.jobID,
+			indexID,
+			uniques[i],
+			cfg,
+			bc.cfg,
+			openedEngine,
+			openedEngine.GetEngineUUID(),
+			bc.memRoot,
+		)
+	}
+
+	for _, indexID := range indexIDs {
+		ei := openedEngines[indexID]
+		ret = append(ret, ei)
+		bc.engines[indexID] = ei
+	}
+	bc.memRoot.Consume(numIdx * (structSizeEngineInfo + engineCacheSize))
+
+	logutil.Logger(bc.ctx).Info(LitInfoOpenEngine, zap.Int64("job ID", bc.jobID),
+		zap.Int64s("index IDs", indexIDs),
+		zap.Int64("current memory usage", bc.memRoot.CurrentUsage()),
+		zap.Int64("memory limitation", bc.memRoot.MaxMemoryQuota()))
+	return ret, nil
+}
+
+// UnregisterEngines implements BackendCtx.
+func (bc *litBackendCtx) UnregisterEngines() {
+	bc.unregisterMu.Lock()
+	defer bc.unregisterMu.Unlock()
+
+	if len(bc.engines) == 0 {
+		return
+	}
+	numIdx := int64(len(bc.engines))
+	for _, ei := range bc.engines {
+		ei.Clean()
+	}
+	bc.engines = make(map[int64]*engineInfo, 10)
+
+	engineCacheSize := int64(bc.cfg.TikvImporter.EngineMemCacheSize)
+	bc.memRoot.Release(numIdx * (structSizeEngineInfo + engineCacheSize))
+}
+
+// ImportStarted implements BackendCtx.
+func (bc *litBackendCtx) ImportStarted() bool {
+	if len(bc.engines) == 0 {
+		return false
+	}
+	for _, ei := range bc.engines {
+		if ei.openedEngine == nil {
+			return true
+>>>>>>> 9c500ad9cb5 (ddl/ingest: add synchronization to `UnregisterEngines` (#53849))
 		}
 		en.writerCount++
 		info = LitInfoAddWriter
