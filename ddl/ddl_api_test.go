@@ -29,11 +29,8 @@ import (
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/stretchr/testify/require"
-<<<<<<< HEAD:ddl/ddl_api_test.go
 	"golang.org/x/exp/slices"
-=======
 	"golang.org/x/sync/errgroup"
->>>>>>> 44c9096efbc (ddl: get latest old table ID before replace view (#53720)):pkg/ddl/ddl_api_test.go
 )
 
 func TestGetDDLJobs(t *testing.T) {
@@ -233,18 +230,28 @@ func TestCreateViewConcurrently(t *testing.T) {
 		counterErr error
 		counter    int
 	)
-	failpoint.EnableCall("github.com/pingcap/tidb/pkg/ddl/onDDLCreateView", func(job *model.Job) {
+	ddl.OnCreateViewForTest = func(job *model.Job) {
 		counter++
 		if counter > 1 {
 			counterErr = fmt.Errorf("create view job should not run concurrently")
 			return
 		}
-	})
-	failpoint.EnableCall("github.com/pingcap/tidb/pkg/ddl/afterDelivery2Worker", func(job *model.Job) {
+	}
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/onDDLCreateView", "return"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/onDDLCreateView"))
+	}()
+
+	ddl.AfterDelivery2WorkerForTest = func(job *model.Job) {
 		if job.Type == model.ActionCreateView {
 			counter--
 		}
-	})
+	}
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/afterDelivery2Worker", "return"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/afterDelivery2Worker"))
+	}()
+
 	var eg errgroup.Group
 	for i := 0; i < 5; i++ {
 		eg.Go(func() error {

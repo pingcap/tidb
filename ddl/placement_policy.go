@@ -319,15 +319,8 @@ func checkPlacementPolicyNotInUse(d *ddlCtx, t *meta.Meta, policy *model.PolicyI
 		return err
 	}
 	is := d.infoCache.GetLatest()
-<<<<<<< HEAD:ddl/placement_policy.go
-	if is.SchemaMetaVersion() == currVer {
-		return CheckPlacementPolicyNotInUseFromInfoSchema(is, policy)
-=======
 	if is != nil && is.SchemaMetaVersion() == currVer {
-		err = CheckPlacementPolicyNotInUseFromInfoSchema(is, policy)
-	} else {
-		err = CheckPlacementPolicyNotInUseFromMeta(t, policy)
->>>>>>> 44c9096efbc (ddl: get latest old table ID before replace view (#53720)):pkg/ddl/placement_policy.go
+		return CheckPlacementPolicyNotInUseFromInfoSchema(is, policy)
 	}
 
 	return CheckPlacementPolicyNotInUseFromMeta(t, policy)
