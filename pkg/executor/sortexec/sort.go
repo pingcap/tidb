@@ -20,6 +20,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -55,6 +56,7 @@ type SortExec struct {
 	memTracker  *memory.Tracker
 	diskTracker *disk.Tracker
 
+	// TODO delete this variable in the future and remove the unparallel sort
 	IsUnparallel bool
 
 	finishCh chan struct{}
@@ -124,11 +126,9 @@ func (e *SortExec) Close() error {
 		// will use `e.Parallel.workers` and `e.Parallel.merger`.
 		channel.Clear(e.Parallel.resultChannel)
 		for i := range e.Parallel.workers {
-			e.Parallel.workers[i].batchRows = nil
-			e.Parallel.workers[i].localSortedRows = nil
-			e.Parallel.workers[i].sortedRowsIter = nil
-			e.Parallel.workers[i].merger = nil
-			e.Parallel.workers[i].memTracker.ReplaceBytesUsed(0)
+			if e.Parallel.workers[i] != nil {
+				e.Parallel.workers[i].reset()
+			}
 		}
 		e.Parallel.merger = nil
 		if e.Parallel.spillAction != nil {
@@ -160,7 +160,7 @@ func (e *SortExec) Open(ctx context.Context) error {
 		e.diskTracker.AttachTo(e.Ctx().GetSessionVars().StmtCtx.DiskTracker)
 	}
 
-	e.IsUnparallel = true
+	e.IsUnparallel = false
 	if e.IsUnparallel {
 		e.Unparallel.Idx = 0
 		e.Unparallel.sortPartitions = e.Unparallel.sortPartitions[:0]
@@ -185,24 +185,10 @@ func (e *SortExec) Open(ctx context.Context) error {
 	return exec.Open(ctx, e.Children(0))
 }
 
-// InitInParallelModeForTest is a function for test
-// After system variable is added, we can delete this function
-func (e *SortExec) InitInParallelModeForTest() {
-	e.Parallel.workers = make([]*parallelSortWorker, e.Ctx().GetSessionVars().ExecutorConcurrency)
-	e.Parallel.chunkChannel = make(chan *chunkWithMemoryUsage, e.Ctx().GetSessionVars().ExecutorConcurrency)
-	e.Parallel.fetcherAndWorkerSyncer = &sync.WaitGroup{}
-	e.Parallel.sortedRowsIters = make([]*chunk.Iterator4Slice, len(e.Parallel.workers))
-	e.Parallel.resultChannel = make(chan rowWithError, e.MaxChunkSize())
-	e.Parallel.closeSync = make(chan struct{})
-	e.Parallel.merger = newMultiWayMerger(&memorySource{sortedRowsIters: e.Parallel.sortedRowsIters}, e.lessRow)
-	e.Parallel.spillHelper = newParallelSortSpillHelper(e, exec.RetTypes(e), e.finishCh, e.lessRow, e.Parallel.resultChannel)
-	e.Parallel.spillAction = newParallelSortSpillDiskAction(e.Parallel.spillHelper)
-	for i := range e.Parallel.sortedRowsIters {
-		e.Parallel.sortedRowsIters[i] = chunk.NewIterator4Slice(nil)
-	}
-	if e.enableTmpStorageOnOOM {
-		e.Ctx().GetSessionVars().MemTracker.FallbackOldAndSetNewAction(e.Parallel.spillAction)
-	}
+// InitUnparallelModeForTest is for unit test
+func (e *SortExec) InitUnparallelModeForTest() {
+	e.Unparallel.Idx = 0
+	e.Unparallel.sortPartitions = e.Unparallel.sortPartitions[:0]
 }
 
 // Next implements the Executor Next interface.
@@ -272,9 +258,13 @@ func (e *SortExec) InitInParallelModeForTest() {
 */
 func (e *SortExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	if e.fetched.CompareAndSwap(false, true) {
-		e.initCompareFuncs(e.Ctx().GetExprCtx().GetEvalCtx())
+		err := e.initCompareFuncs(e.Ctx().GetExprCtx().GetEvalCtx())
+		if err != nil {
+			return err
+		}
+
 		e.buildKeyColumns()
-		err := e.fetchChunks(ctx)
+		err = e.fetchChunks(ctx)
 		if err != nil {
 			return err
 		}
@@ -710,6 +700,14 @@ func (e *SortExec) fetchChunksFromChild(ctx context.Context) {
 			e.Parallel.resultChannel <- rowWithError{err: err}
 		}
 
+		failpoint.Inject("SignalCheckpointForSort", func(val failpoint.Value) {
+			if val.(bool) {
+				if e.Ctx().GetSessionVars().ConnectionID == 123456 {
+					e.Ctx().GetSessionVars().MemTracker.Killer.SendKillSignal(sqlkiller.QueryMemoryExceeded)
+				}
+			}
+		})
+
 		// We must place it after the spill as workers will process its received
 		// chunks after channel is closed and this will cause data race.
 		close(e.Parallel.chunkChannel)
@@ -753,12 +751,16 @@ func (e *SortExec) fetchChunksFromChild(ctx context.Context) {
 	}
 }
 
-func (e *SortExec) initCompareFuncs(ctx expression.EvalContext) {
+func (e *SortExec) initCompareFuncs(ctx expression.EvalContext) error {
 	e.keyCmpFuncs = make([]chunk.CompareFunc, len(e.ByItems))
 	for i := range e.ByItems {
 		keyType := e.ByItems[i].Expr.GetType(ctx)
 		e.keyCmpFuncs[i] = chunk.GetCompareFunc(keyType)
+		if e.keyCmpFuncs[i] == nil {
+			return errors.Errorf("Sort executor not supports type %s", types.TypeStr(keyType.GetType()))
+		}
 	}
+	return nil
 }
 
 func (e *SortExec) buildKeyColumns() {

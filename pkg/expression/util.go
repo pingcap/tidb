@@ -1454,6 +1454,57 @@ func ContainCorrelatedColumn(exprs []Expression) bool {
 	return false
 }
 
+func jsonUnquoteFunctionBenefitsFromPushedDown(sf *ScalarFunction) bool {
+	arg0 := sf.GetArgs()[0]
+	// Only `->>` which parsed to JSONUnquote(CAST(JSONExtract() AS string)) can be pushed down to tikv
+	if fChild, ok := arg0.(*ScalarFunction); ok {
+		if fChild.FuncName.L == ast.Cast {
+			if fGrand, ok := fChild.GetArgs()[0].(*ScalarFunction); ok {
+				if fGrand.FuncName.L == ast.JSONExtract {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+// ProjectionBenefitsFromPushedDown evaluates if the expressions can improve performance when pushed down to TiKV
+// Projections are not pushed down to tikv by default, thus we need to check strictly here to avoid potential performance degradation.
+// Note: virtual column is not considered here, since this function cares performance instead of functionality
+func ProjectionBenefitsFromPushedDown(exprs []Expression, inputSchemaLen int) bool {
+	allColRef := true
+	colRefCount := 0
+	for _, expr := range exprs {
+		switch v := expr.(type) {
+		case *Column:
+			colRefCount = colRefCount + 1
+			continue
+		case *ScalarFunction:
+			allColRef = false
+			switch v.FuncName.L {
+			case ast.JSONDepth, ast.JSONLength, ast.JSONType, ast.JSONValid, ast.JSONContains, ast.JSONContainsPath,
+				ast.JSONExtract, ast.JSONKeys, ast.JSONSearch, ast.JSONMemberOf, ast.JSONOverlaps:
+				continue
+			case ast.JSONUnquote:
+				if jsonUnquoteFunctionBenefitsFromPushedDown(v) {
+					continue
+				}
+				return false
+			default:
+				return false
+			}
+		default:
+			return false
+		}
+	}
+	// For all col refs, only push down column pruning projections
+	if allColRef {
+		return colRefCount < inputSchemaLen
+	}
+	return true
+}
+
 // MaybeOverOptimized4PlanCache used to check whether an optimization can work
 // for the statement when we enable the plan cache.
 // In some situations, some optimizations maybe over-optimize and cache an

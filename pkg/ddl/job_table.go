@@ -358,9 +358,29 @@ func (d *ddl) startLocalWorkerLoop() {
 }
 
 func (s *jobScheduler) startDispatchLoop() {
+	const retryInterval = 3 * time.Second
+	for {
+		err := s.startDispatch()
+		if err == context.Canceled {
+			logutil.DDLLogger().Info("startDispatchLoop quit due to context canceled")
+			return
+		}
+		logutil.DDLLogger().Warn("startDispatchLoop failed, retrying",
+			zap.Error(err))
+
+		select {
+		case <-s.schCtx.Done():
+			logutil.DDLLogger().Info("startDispatchLoop quit due to context done")
+			return
+		case <-time.After(retryInterval):
+		}
+	}
+}
+
+func (s *jobScheduler) startDispatch() error {
 	sessCtx, err := s.sessPool.Get()
 	if err != nil {
-		logutil.DDLLogger().Fatal("dispatch loop get session failed, it should not happen, please try restart TiDB", zap.Error(err))
+		return errors.Trace(err)
 	}
 	defer s.sessPool.Put(sessCtx)
 	se := sess.NewSession(sessCtx)
@@ -369,7 +389,7 @@ func (s *jobScheduler) startDispatchLoop() {
 		notifyDDLJobByEtcdCh = s.etcdCli.Watch(s.schCtx, addingDDLJobNotifyKey)
 	}
 	if err := s.checkAndUpdateClusterState(true); err != nil {
-		logutil.DDLLogger().Fatal("dispatch loop get cluster state failed, it should not happen, please try restart TiDB", zap.Error(err))
+		return errors.Trace(err)
 	}
 	ticker := time.NewTicker(dispatchLoopWaitingDuration)
 	defer ticker.Stop()
@@ -377,8 +397,8 @@ func (s *jobScheduler) startDispatchLoop() {
 	s.clearOnceMap()
 	s.mustReloadSchemas()
 	for {
-		if s.schCtx.Err() != nil {
-			return
+		if err := s.schCtx.Err(); err != nil {
+			return err
 		}
 		failpoint.Inject("ownerResignAfterDispatchLoopCheck", func() {
 			if ingest.ResignOwnerForTest.Load() {
@@ -400,7 +420,7 @@ func (s *jobScheduler) startDispatchLoop() {
 				continue
 			}
 		case <-s.schCtx.Done():
-			return
+			return s.schCtx.Err()
 		}
 		if err := s.checkAndUpdateClusterState(false); err != nil {
 			continue
@@ -551,6 +571,7 @@ func (s *jobScheduler) delivery2Worker(wk *worker, pool *workerPool, job *model.
 				// it much harder to test multiple owners in 1 unit test.
 				ingest.LitBackCtxMgr.Unregister(jobID)
 			}
+			pool.put(wk)
 		}()
 		for {
 			err := s.runJobWithWorker(wk, job)

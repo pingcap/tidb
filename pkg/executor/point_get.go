@@ -329,7 +329,7 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 			}
 
 			var iv kv.Handle
-			iv, err = tablecodec.DecodeHandleInUniqueIndexValue(e.handleVal, e.tblInfo.IsCommonHandle)
+			iv, err = tablecodec.DecodeHandleInIndexValue(e.handleVal)
 			if err != nil {
 				return err
 			}
