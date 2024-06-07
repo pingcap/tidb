@@ -15,7 +15,7 @@ func cloneSubJobs(subJobs []*model.SubJob) []*model.SubJob {
 	for i, j := range subJobs {
 		cloned := *j
 		if len(j.Args) > 0 {
-			cloned.Args = make([]interface{}, len(j.Args))
+			cloned.Args = make([]any, len(j.Args))
 			copy(cloned.Args, j.Args)
 		}
 		ret[i] = &cloned
@@ -25,17 +25,17 @@ func cloneSubJobs(subJobs []*model.SubJob) []*model.SubJob {
 
 func TestMergeAddIndex(t *testing.T) {
 	subJobs := []*model.SubJob{
-		{Type: model.ActionAddIndex, Args: []interface{}{
+		{Type: model.ActionAddIndex, Args: []any{
 			false, model.NewCIStr("job1"), []*ast.IndexPartSpecification{}, &ast.IndexOption{}, []*model.ColumnInfo{}, false,
 		}},
 		{Type: model.ActionAddColumn},
-		{Type: model.ActionAddIndex, Args: []interface{}{
+		{Type: model.ActionAddIndex, Args: []any{
 			false, model.NewCIStr("job2"), []*ast.IndexPartSpecification{}, &ast.IndexOption{}, []*model.ColumnInfo{}, false,
 		}},
-		{Type: model.ActionAddIndex, Args: []interface{}{
+		{Type: model.ActionAddIndex, Args: []any{
 			false, model.NewCIStr("job3"), []*ast.IndexPartSpecification{}, &ast.IndexOption{}, []*model.ColumnInfo{}, false,
 		}},
-		{Type: model.ActionAddIndex, Args: []interface{}{
+		{Type: model.ActionAddIndex, Args: []any{
 			false, model.NewCIStr("job4"), []*ast.IndexPartSpecification{}, &ast.IndexOption{}, []*model.ColumnInfo{}, false,
 		}},
 	}
