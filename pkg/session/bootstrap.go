@@ -688,7 +688,24 @@ const (
 		error_message TEXT DEFAULT NULL,
 		PRIMARY KEY (id),
 		KEY (created_by),
-		KEY (status));`
+		KEY (status)
+	);`
+
+	//CreateBrJobs is a table that BR uses.
+	CreateBrJobs = `CREATE TABLE IF NOT EXISTS mysql.tidb_br_jobs (
+		id          BIGINT UNSIGNED PRIMARY KEY,
+		query       VARCHAR(255),           -- Only available in SQL Query
+		queueTime   TIMESTAMP,              -- Only available in SQL Query
+		execTime    TIMESTAMP,
+		finishTime  TIMESTAMP,
+		kind        ENUM('Backup', 'Restore', 'Import', 'Export'),  -- Assuming possible values for BRIEKind
+		storage     VARCHAR(255),           -- For retrieving metadata
+		connID      BIGINT UNSIGNED,
+		backupTS    BIGINT UNSIGNED,
+		restoreTS   BIGINT UNSIGNED,
+		archiveSize BIGINT UNSIGNED,
+		message     TEXT
+	);`
 
 	// DropMySQLIndexUsageTable removes the table `mysql.schema_index_usage`
 	DropMySQLIndexUsageTable = "DROP TABLE IF EXISTS mysql.schema_index_usage"
@@ -3206,6 +3223,8 @@ func doDDLWorks(s sessiontypes.Session) {
 	mustExecute(s, CreateGlobalTaskHistory)
 	// Create tidb_import_jobs
 	mustExecute(s, CreateImportJobs)
+	// Create tidb_br_jobs
+	mustExecute(s, CreateBrJobs)
 	// create runaway_watch
 	mustExecute(s, CreateRunawayWatchTable)
 	// create runaway_queries
