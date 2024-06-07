@@ -163,8 +163,7 @@ func (a *recordSet) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 	a.finishLock.Lock()
 	defer a.finishLock.Unlock()
 	if a.stmt != nil {
-		err = a.stmt.Ctx.GetSessionVars().SQLKiller.HandleSignal()
-		if err != nil {
+		if err := a.stmt.Ctx.GetSessionVars().SQLKiller.HandleSignal(); err != nil {
 			return err
 		}
 	}
