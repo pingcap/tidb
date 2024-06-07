@@ -816,7 +816,8 @@ SwitchIndexState:
 	return ver, errors.Trace(err)
 }
 
-// pickBackfillType determines which backfill process will be used.
+// pickBackfillType determines which backfill process will be used. The result is
+// both stored in job.ReorgMeta.ReorgTp and returned.
 func pickBackfillType(ctx context.Context, job *model.Job) (model.ReorgType, error) {
 	if job.ReorgMeta.ReorgTp != model.ReorgTypeNone {
 		// The backfill task has been started.

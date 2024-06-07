@@ -446,7 +446,7 @@ func (b *ingestBackfillScheduler) setupWorkers() error {
 	}
 
 	b.copReqSenderPool = copReqSenderPool
-	readerCnt, writerCnt := b.expectedWorkerSize()
+	readerCnt, writerCnt := b.expectedWorkerCnt()
 	writerPool := workerpool.NewWorkerPool[IndexRecordChunk](
 		"ingest_writer",
 		poolutil.DDL,
@@ -516,7 +516,7 @@ func (b *ingestBackfillScheduler) currentWorkerSize() int {
 }
 
 func (b *ingestBackfillScheduler) adjustWorkerSize() error {
-	readerCnt, writer := b.expectedWorkerSize()
+	readerCnt, writer := b.expectedWorkerCnt()
 	b.writerPool.Tune(int32(writer))
 	b.copReqSenderPool.adjustSize(readerCnt)
 	return nil
@@ -567,7 +567,7 @@ func (b *ingestBackfillScheduler) createCopReqSenderPool() (*copReqSenderPool, e
 	return newCopReqSenderPool(b.ctx, copCtx, ri.d.store, b.taskCh, b.sessPool, b.checkpointMgr), nil
 }
 
-func (b *ingestBackfillScheduler) expectedWorkerSize() (readerSize int, writerSize int) {
+func (b *ingestBackfillScheduler) expectedWorkerCnt() (readerCnt int, writerCnt int) {
 	return expectedIngestWorkerCnt(int(variable.GetDDLReorgWorkerCounter()), b.avgRowSize)
 }
 
