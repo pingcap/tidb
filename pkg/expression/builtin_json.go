@@ -559,8 +559,7 @@ func (b *builtinJSONObjectSig) evalJSON(ctx EvalContext, row chunk.Row) (res typ
 				return res, true, err
 			}
 			if isNull {
-				err = errors.New("JSON documents may not contain NULL member names")
-				return res, true, err
+				return res, true, types.ErrJSONDocumentNULLKey
 			}
 		} else {
 			value, isNull, err = arg.EvalJSON(ctx, row)

@@ -20,7 +20,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -650,8 +649,7 @@ func (b *builtinJSONObjectSig) vecEvalJSON(ctx EvalContext, input *chunk.Chunk, 
 			var value types.BinaryJSON
 			for j := 0; j < nr; j++ {
 				if keyCol.IsNull(j) {
-					err := errors.New("JSON documents may not contain NULL member names")
-					return err
+					return types.ErrJSONDocumentNULLKey
 				}
 				key = keyCol.GetString(j)
 				if valueCol.IsNull(j) {

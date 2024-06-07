@@ -446,3 +446,5 @@ SELECT JSON_SET('{}','$.*','');
 SELECT JSON_CONTAINS_PATH('{}', 'on', '$.a');
 -- error 3154
 SELECT JSON_SEARCH('{}', 'on', '$.a');
+-- error 3158
+SELECT JSON_OBJECT(NULL,'abc');

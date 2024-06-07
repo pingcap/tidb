@@ -729,3 +729,5 @@ SELECT JSON_CONTAINS_PATH('{}', 'on', '$.a');
 Error 3154 (42000): The oneOrAll argument to json_contains_path may take these values: 'one' or 'all'.
 SELECT JSON_SEARCH('{}', 'on', '$.a');
 Error 3154 (42000): The oneOrAll argument to json_search may take these values: 'one' or 'all'.
+SELECT JSON_OBJECT(NULL,'abc');
+Error 3158 (22032): JSON documents may not contain NULL member names.
