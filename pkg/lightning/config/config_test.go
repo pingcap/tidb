@@ -692,7 +692,7 @@ func TestMaxErrorUnmarshal(t *testing.T) {
 		},
 		{
 			TOMLStr:      `max-error = "abcde"`,
-			ExpectErrStr: "invalid max-error 'abcde', should be an integer or a map of string:int64",
+			ExpectErrStr: "toml: line 1 (last key \"max-error\"): invalid max-error 'abcde', should be an integer or a map of string:int64",
 			CaseName:     "Abnormal_String",
 		},
 		{
