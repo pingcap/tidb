@@ -73,7 +73,13 @@ func (d *ddl) MultiSchemaChange(ctx sessionctx.Context, ti ast.Ident, info *mode
 
 	litMergeMemLimit, litMergeWriterCnt := int64(0), 0
 	if reorgTp == model.ReorgTypeLitMerge {
-		litMergeMemLimit = ingest.LitMemRoot.MaxMemoryQuota()
+		if memRoot := ingest.LitMemRoot; memRoot != nil {
+			litMergeMemLimit = ingest.LitMemRoot.MaxMemoryQuota()
+		} else {
+			// this is the case in unit test
+			litMergeMemLimit = math.MaxInt64
+		}
+
 		// TODO(lance6716): the real worker count is decided by expectedIngestWorkerCnt,
 		// will refine the task worker related configuration later.
 		litMergeWriterCnt = int(variable.GetDDLReorgWorkerCounter())
