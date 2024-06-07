@@ -39,9 +39,11 @@ const (
 
 // SQLKiller is used to kill a query.
 type SQLKiller struct {
-	Signal           killSignal
-	ConnID           uint64
-	Finish           func()
+	Signal killSignal
+	ConnID uint64
+	Finish func()
+	// InWriteResultSet is used to mark whether the query is calling clientConn.writeResultSet().
+	// If the query is in writeResultSet, and Finish() can acquire rs.finishLock, we can think the query is waiting for network IO.
 	InWriteResultSet atomic.Bool
 }
 
