@@ -405,6 +405,7 @@ func (s *jobScheduler) startDispatchLoop() {
 		if err := s.checkAndUpdateClusterState(false); err != nil {
 			continue
 		}
+		failpoint.InjectCall("beforeAllLoadDDLJobAndRun")
 		s.loadDDLJobAndRun(se, s.generalDDLWorkerPool, s.getGeneralJob)
 		s.loadDDLJobAndRun(se, s.reorgWorkerPool, s.getReorgJob)
 	}
@@ -480,11 +481,11 @@ func (s *jobScheduler) loadDDLJobAndRun(se *sess.Session, pool *workerPool, getJ
 // Domain also have a similar method 'mustReload', but its methods don't accept context.
 func (s *jobScheduler) mustReloadSchemas() {
 	for {
-		if err := s.schemaLoader.Reload(); err == nil {
+		err := s.schemaLoader.Reload()
+		if err == nil {
 			return
-		} else {
-			logutil.DDLLogger().Warn("reload schema failed, will retry later", zap.Error(err))
 		}
+		logutil.DDLLogger().Warn("reload schema failed, will retry later", zap.Error(err))
 		select {
 		case <-s.schCtx.Done():
 			return
@@ -588,6 +589,7 @@ func (s *jobScheduler) delivery2Worker(wk *worker, pool *workerPool, job *model.
 }
 
 func (s *jobScheduler) runJobWithWorker(wk *worker, job *model.Job) error {
+	failpoint.InjectCall("beforeRunJobWithWorker")
 	ownerID := s.ownerManager.ID()
 	// suppose we failed to sync version last time, we need to check and sync it
 	// before run to maintain the 2-version invariant.

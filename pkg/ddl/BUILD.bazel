@@ -236,6 +236,7 @@ go_test(
         "index_cop_test.go",
         "index_modify_test.go",
         "integration_test.go",
+        "job_scheduler_test.go",
         "job_table_test.go",
         "main_test.go",
         "modify_column_test.go",
@@ -270,6 +271,7 @@ go_test(
         "//pkg/ddl/ingest",
         "//pkg/ddl/internal/session",
         "//pkg/ddl/logutil",
+        "//pkg/ddl/mock",
         "//pkg/ddl/placement",
         "//pkg/ddl/schematracker",
         "//pkg/ddl/syncer",
@@ -345,6 +347,7 @@ go_test(
         "@org_golang_x_sync//errgroup",
         "@org_uber_go_atomic//:atomic",
         "@org_uber_go_goleak//:goleak",
+        "@org_uber_go_mock//gomock",
         "@org_uber_go_zap//:zap",
     ],
 )
