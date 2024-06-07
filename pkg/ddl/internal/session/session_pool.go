@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
-	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -35,14 +34,12 @@ type Pool struct {
 		closed bool
 	}
 	resPool *pools.ResourcePool
-	store   kv.Storage
 }
 
 // NewSessionPool creates a new Session pool.
-func NewSessionPool(resPool *pools.ResourcePool, store kv.Storage) *Pool {
+func NewSessionPool(resPool *pools.ResourcePool) *Pool {
 	intest.AssertNotNil(resPool)
-	intest.AssertNotNil(store)
-	return &Pool{resPool: resPool, store: store}
+	return &Pool{resPool: resPool}
 }
 
 // Get gets sessionCtx from context resource pool.

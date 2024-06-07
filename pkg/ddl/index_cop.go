@@ -181,7 +181,7 @@ func scanRecords(p *copReqSenderPool, task *reorgBackfillTask, se *sess.Session)
 }
 
 func wrapInBeginRollback(se *sess.Session, f func(startTS uint64) error) error {
-	err := se.Begin()
+	err := se.Begin(context.Background())
 	if err != nil {
 		return errors.Trace(err)
 	}
