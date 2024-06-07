@@ -248,8 +248,6 @@ func TestCancel(t *testing.T) {
 	cancelResult := atomicutil.NewBool(false)
 	cancelWhenReorgNotStart := atomicutil.NewBool(false)
 
-	// there might be a time gap between tk.MustExec return and the calling of OnJobUpdated,
-	// and it causes we call the hook with an unexpected prepare job.
 	hookFunc := func(job *model.Job) {
 		if testutil.TestMatchCancelState(t, job, allTestCase[i.Load()].cancelState, allTestCase[i.Load()].sql) && !canceled.Load() {
 			if !cancelWhenReorgNotStart.Load() && job.SchemaState == model.StateWriteReorganization && job.MayNeedReorg() && job.RowCount == 0 {
@@ -277,6 +275,7 @@ func TestCancel(t *testing.T) {
 	}
 
 	for j, tc := range allTestCase {
+		t.Logf("running test case %d: %s", j, tc.sql)
 		i.Store(int64(j))
 		msg := fmt.Sprintf("sql: %s, state: %s", tc.sql, tc.cancelState)
 		if tc.onJobBefore {

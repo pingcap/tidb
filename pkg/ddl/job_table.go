@@ -561,7 +561,7 @@ func (s *jobScheduler) delivery2Worker(wk *worker, pool *workerPool, job *model.
 			// job is already moved to history.
 			failpoint.InjectCall("beforeRefreshJob", job)
 			for {
-				job, err = s.sysTblMgr.GetJobByID(s.schCtx, job.ID)
+				job, err = s.sysTblMgr.GetJobByID(s.schCtx, jobID)
 				failpoint.InjectCall("mockGetJobByIDFail", &err)
 				if err == nil {
 					break
@@ -569,10 +569,10 @@ func (s *jobScheduler) delivery2Worker(wk *worker, pool *workerPool, job *model.
 
 				if err == systable.ErrNotFound {
 					logutil.DDLLogger().Info("job not found, might already finished",
-						zap.Int64("job_id", job.ID), zap.Stringer("state", job.State))
+						zap.Int64("job_id", jobID))
 					return
 				}
-				logutil.DDLLogger().Error("get job failed", zap.Error(err))
+				logutil.DDLLogger().Error("get job failed", zap.Int64("job_id", jobID), zap.Error(err))
 				select {
 				case <-s.schCtx.Done():
 					return
