@@ -17,6 +17,7 @@ package ddl_test
 import (
 	"fmt"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -28,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/external"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
 	atomicutil "go.uber.org/atomic"
 )
@@ -204,6 +206,14 @@ func cancelSuccess(rs *testkit.Result) bool {
 }
 
 func TestCancel(t *testing.T) {
+	var enterCnt, exitCnt atomic.Int32
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeDelivery2Worker", func(job *model.Job) { enterCnt.Add(1) })
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterDelivery2Worker", func(job *model.Job) { exitCnt.Add(1) })
+	waitDDLWorkerExisted := func() {
+		require.Eventually(t, func() bool {
+			return enterCnt.Load() == exitCnt.Load()
+		}, 10*time.Second, 10*time.Millisecond)
+	}
 	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 100*time.Millisecond)
 	tk := testkit.NewTestKit(t, store)
 	tkCancel := testkit.NewTestKit(t, store)
@@ -274,6 +284,7 @@ func TestCancel(t *testing.T) {
 		dom.DDL().SetHook(h.Clone())
 	}
 
+	waitDDLWorkerExisted()
 	for j, tc := range allTestCase {
 		t.Logf("running test case %d: %s", j, tc.sql)
 		i.Store(int64(j))
@@ -283,6 +294,7 @@ func TestCancel(t *testing.T) {
 			for _, prepareSQL := range tc.prepareSQL {
 				tk.MustExec(prepareSQL)
 			}
+			waitDDLWorkerExisted()
 			canceled.Store(false)
 			cancelWhenReorgNotStart.Store(true)
 			registerHook(hook, true)
@@ -291,6 +303,7 @@ func TestCancel(t *testing.T) {
 			} else {
 				tk.MustExec(tc.sql)
 			}
+			waitDDLWorkerExisted()
 			if canceled.Load() {
 				require.Equal(t, tc.expectCancelled, cancelResult.Load(), msg)
 			}
@@ -300,6 +313,7 @@ func TestCancel(t *testing.T) {
 			for _, prepareSQL := range tc.prepareSQL {
 				tk.MustExec(prepareSQL)
 			}
+			waitDDLWorkerExisted()
 			canceled.Store(false)
 			cancelWhenReorgNotStart.Store(false)
 			registerHook(hook, false)
@@ -308,6 +322,7 @@ func TestCancel(t *testing.T) {
 			} else {
 				tk.MustExec(tc.sql)
 			}
+			waitDDLWorkerExisted()
 			if canceled.Load() {
 				require.Equal(t, tc.expectCancelled, cancelResult.Load(), msg)
 			}

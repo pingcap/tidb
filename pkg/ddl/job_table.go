@@ -529,6 +529,7 @@ func (d *ddl) delivery2LocalWorker(pool *workerPool, task *limitJobTask) {
 
 // delivery2Worker owns the worker, need to put it back to the pool in this function.
 func (s *jobScheduler) delivery2Worker(wk *worker, pool *workerPool, job *model.Job) {
+	failpoint.InjectCall("beforeDelivery2Worker", job)
 	injectFailPointForGetJob(job)
 	jobID, involvedSchemaInfos := job.ID, job.GetInvolvingSchemaInfo()
 	s.runningJobs.add(jobID, involvedSchemaInfos)
