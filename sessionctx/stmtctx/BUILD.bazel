@@ -11,6 +11,7 @@ go_library(
         "//parser/model",
         "//parser/mysql",
         "//parser/terror",
+        "//planner/funcdep",
         "//util/disk",
         "//util/execdetails",
         "//util/memory",
