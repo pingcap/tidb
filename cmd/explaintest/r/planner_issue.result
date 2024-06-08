@@ -26,7 +26,7 @@ IndexReader	250.00	root		index:Selection
   └─IndexRangeScan	250.00	cop[tikv]	table:t1, index:ia(a)	range:["xxx","xxy"), keep order:false, stats:pseudo
 select * from t1 use index (ia) where a like 'xxx_';
 a
-xxx 
+xxx
 CREATE TABLE `t_o9_7_f` (
 `c_ob5k0` int(11) NOT NULL,
 `c_r5axbk` tinyint(4) DEFAULT NULL,
@@ -187,3 +187,26 @@ t_q1 as ref_14
 where (ref_14.c_z like 'o%fiah')))
 where (t_kg74.c_obnq8s7_s2 = case when (t_kg74.c_a1tv2 is NULL) then t_kg74.c_g else t_kg74.c_obnq8s7_s2 end
 );
+drop table if exists t1, t2;
+create table t1(id int primary key, a varchar(128));
+create table t2(id int primary key, b varchar(128), c varchar(128));
+UPDATE
+t1
+SET
+t1.a = IFNULL(
+(
+SELECT
+t2.c
+FROM
+t2
+WHERE
+t2.b = t1.a
+ORDER BY
+t2.b DESC,
+t2.c DESC
+LIMIT
+1
+), ''
+)
+WHERE
+t1.id = 1;
