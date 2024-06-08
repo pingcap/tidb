@@ -50,10 +50,11 @@ import (
 %token	<ident>
 
 	/*yy:token "%c"     */
-	identifier           "identifier"
-	asof                 "AS OF"
-	toTimestamp          "TO TIMESTAMP"
-	toTSO                "TO TSO"
+	identifier  "identifier"
+	asof        "AS OF"
+	toTimestamp "TO TIMESTAMP"
+	toTSO       "TO TSO"
+
 	/*yy:token "_%c"    */
 	underscoreCS "UNDERSCORE_CHARSET"
 
@@ -2621,23 +2622,23 @@ FlashbackToTimestampStmt:
 	"FLASHBACK" "CLUSTER" toTimestamp stringLit
 	{
 		$$ = &ast.FlashBackToTimestampStmt{
-			FlashbackTS: ast.NewValueExpr($4, "", ""),
+			FlashbackTS:  ast.NewValueExpr($4, "", ""),
 			FlashbackTSO: 0,
 		}
 	}
 |	"FLASHBACK" "TABLE" TableNameList toTimestamp stringLit
 	{
 		$$ = &ast.FlashBackToTimestampStmt{
-			Tables:      $3.([]*ast.TableName),
-			FlashbackTS: ast.NewValueExpr($5, "", ""),
+			Tables:       $3.([]*ast.TableName),
+			FlashbackTS:  ast.NewValueExpr($5, "", ""),
 			FlashbackTSO: 0,
 		}
 	}
 |	"FLASHBACK" DatabaseSym DBName toTimestamp stringLit
 	{
 		$$ = &ast.FlashBackToTimestampStmt{
-			DBName:      model.NewCIStr($3),
-			FlashbackTS: ast.NewValueExpr($5, "", ""),
+			DBName:       model.NewCIStr($3),
+			FlashbackTS:  ast.NewValueExpr($5, "", ""),
 			FlashbackTSO: 0,
 		}
 	}
@@ -2645,20 +2646,20 @@ FlashbackToTimestampStmt:
 	{
 		if tsoValue, ok := $4.(uint64); ok && tsoValue > 0 {
 			$$ = &ast.FlashBackToTimestampStmt{
-        		FlashbackTSO: tsoValue,
-        	}
+				FlashbackTSO: tsoValue,
+			}
 		} else {
-    		yylex.AppendError(yylex.Errorf("Invalid TSO value provided: %d", $4))
-    		return 1
+			yylex.AppendError(yylex.Errorf("Invalid TSO value provided: %d", $4))
+			return 1
 		}
 	}
 |	"FLASHBACK" "TABLE" TableNameList toTSO LengthNum
 	{
 		if tsoValue, ok := $5.(uint64); ok && tsoValue > 0 {
 			$$ = &ast.FlashBackToTimestampStmt{
-            	Tables:      $3.([]*ast.TableName),
-            	FlashbackTSO: tsoValue,
-            }
+				Tables:       $3.([]*ast.TableName),
+				FlashbackTSO: tsoValue,
+			}
 		} else {
 			yylex.AppendError(yylex.Errorf("Invalid TSO value provided: %d", $5))
 			return 1
@@ -2668,15 +2669,14 @@ FlashbackToTimestampStmt:
 	{
 		if tsoValue, ok := $5.(uint64); ok && tsoValue > 0 {
 			$$ = &ast.FlashBackToTimestampStmt{
-            	DBName:      model.NewCIStr($3),
-            	FlashbackTSO: tsoValue,
+				DBName:       model.NewCIStr($3),
+				FlashbackTSO: tsoValue,
 			}
 		} else {
 			yylex.AppendError(yylex.Errorf("Invalid TSO value provided: %d", $5))
 			return 1
 		}
 	}
-
 
 /*******************************************************************
  *
@@ -9776,8 +9776,8 @@ SetOprStmtWoutLimitOrderBy:
 			setOprList2 = []ast.Node{x}
 			with2 = x.With
 		case *ast.SetOprStmt:
-		    // child setOprStmt's limit and order should also make sense
-		    // we should separate it out from other normal SetOprSelectList.
+			// child setOprStmt's limit and order should also make sense
+			// we should separate it out from other normal SetOprSelectList.
 			setOprList2 = x.SelectList.Selects
 			with2 = x.With
 			limit2 = x.Limit
