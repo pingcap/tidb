@@ -335,11 +335,11 @@ func TestIssue52813(t *testing.T) {
 	tk.MustExec(`create table b(id int key)`)
 	tk.MustExec(`create binding for select * from a, b where a.id=b.id using select /*+ no_merge_join(a,b) */ * from a, b where a.id=b.id;`)
 	tk.MustQuery(`explain select * from a, b where a.id=b.id`).Check(testkit.Rows(
-		`HashJoin_27 12500.00 root  inner join, equal:[eq(test.a.id, test.b.id)]`,
-		`├─TableReader_32(Build) 10000.00 root  data:TableFullScan_31`,
-		`│ └─TableFullScan_31 10000.00 cop[tikv] table:b keep order:false, stats:pseudo`,
-		`└─TableReader_30(Probe) 10000.00 root  data:TableFullScan_29`,
-		`  └─TableFullScan_29 10000.00 cop[tikv] table:a keep order:false, stats:pseudo`))
+		`HashJoin_26 12500.00 root  inner join, equal:[eq(test.a.id, test.b.id)]`,
+		`├─TableReader_31(Build) 10000.00 root  data:TableFullScan_30`,
+		`│ └─TableFullScan_30 10000.00 cop[tikv] table:b keep order:false, stats:pseudo`,
+		`└─TableReader_29(Probe) 10000.00 root  data:TableFullScan_28`,
+		`  └─TableFullScan_28 10000.00 cop[tikv] table:a keep order:false, stats:pseudo`))
 	tk.MustQuery(`show warnings`).Check(testkit.Rows()) // no warning, the binding can work correctly
 }
 
