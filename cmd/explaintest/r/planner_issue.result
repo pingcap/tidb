@@ -26,7 +26,7 @@ IndexReader	250.00	root		index:Selection
   └─IndexRangeScan	250.00	cop[tikv]	table:t1, index:ia(a)	range:["xxx","xxy"), keep order:false, stats:pseudo
 select * from t1 use index (ia) where a like 'xxx_';
 a
-xxx
+xxx 
 CREATE TABLE `t_o9_7_f` (
 `c_ob5k0` int(11) NOT NULL,
 `c_r5axbk` tinyint(4) DEFAULT NULL,
