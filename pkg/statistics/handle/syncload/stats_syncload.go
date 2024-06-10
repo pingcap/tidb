@@ -99,6 +99,7 @@ func (s *statsSyncLoad) SendLoadRequests(sc *stmtctx.StatementContext, neededHis
 	sc.StatsLoad.NeededItems = remainedItems
 	sc.StatsLoad.ResultCh = make([]<-chan singleflight.Result, 0, len(remainedItems))
 	for _, item := range remainedItems {
+		intest.Assert(item.FullLoad, "sync load should be full load")
 		localItem := item
 		resultCh := globalStatsSyncLoadSingleFlight.DoChan(localItem.Key(), func() (any, error) {
 			timer := time.NewTimer(timeout)
