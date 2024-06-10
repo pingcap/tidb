@@ -3386,11 +3386,7 @@ func (w *reorgPartitionWorker) fetchRowColVals(txn kv.Transaction, taskRange reo
 				stmtCtx := w.sessCtx.GetSessionVars().StmtCtx
 				if stmtCtx.BaseRowID >= stmtCtx.MaxRowID {
 					// TODO: Which autoid allocator to use?
-					ids := uint64(1)
-					cacheIDs := w.batchCnt - len(w.rowRecords)
-					if cacheIDs > 1 {
-						ids = uint64(cacheIDs)
-					}
+					ids := uint64(max(1, w.batchCnt - len(w.rowRecords)))
 					// Keep using the original table's allocator
 					stmtCtx.BaseRowID, stmtCtx.MaxRowID, err = tables.AllocHandleIDs(w.ctx, w.tblCtx, w.reorgedTbl, ids)
 					if err != nil {
