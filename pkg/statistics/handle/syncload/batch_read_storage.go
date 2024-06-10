@@ -41,7 +41,7 @@ func generateMetaPredict(conditions []*batchSyncLoadTask) string {
 	return strings.Join(sqlParts, " or ")
 }
 
-func BatchHistMetaFromStorageWithHighPriority(sctx sessionctx.Context, bc batchContext, tasks []*batchSyncLoadTask) (ok bool, err error) {
+func batchHistMetaFromStorageWithHighPriority(sctx sessionctx.Context, bc *batchContext, tasks []*batchSyncLoadTask) (ok bool, err error) {
 	rows, _, err := util.ExecRows(sctx,
 		"select high_priority distinct_count, version, null_count, tot_col_size, stats_ver, correlation, flag, last_analyze_pos, table_id, hist_id, is_index from mysql.stats_histograms where "+
 			generateMetaPredict(tasks),
@@ -52,17 +52,25 @@ func BatchHistMetaFromStorageWithHighPriority(sctx sessionctx.Context, bc batchC
 	if len(rows) == 0 {
 		return false, nil
 	}
+	var tp *types.FieldType
 	for _, row := range rows {
-		id := rows[0].GetInt64(8)
-		hist_id := rows[0].GetInt64(9)
-		is_index := rows[0].GetInt64(10)
-		hist := statistics.NewHistogram(id, rows[0].GetInt64(0), rows[0].GetInt64(2), rows[0].GetUint64(1), tp, chunk.InitialCapacity, rows[0].GetInt64(3))
-		hist.Correlation = rows[0].GetFloat64(5)
-		lastPos := rows[0].GetDatum(7, types.NewFieldType(mysql.TypeBlob))
+		id := row.GetInt64(8)
+		hist_id := row.GetInt64(9)
+		is_index := row.GetInt64(10)
+		if is_index == 1 {
+			tp = types.NewFieldType(mysql.TypeBlob)
+		} else {
+			tp = bc.tables[id].columns[hist_id].Tp
+		}
+		fullLoad := bc.GetFullLoad(id, hist_id)
+
+		hist := statistics.NewHistogram(id, row.GetInt64(0), row.GetInt64(2), row.GetUint64(1), tp, chunk.InitialCapacity, row.GetInt64(3))
+		hist.Correlation = row.GetFloat64(5)
+		lastPos := row.GetDatum(7, types.NewFieldType(mysql.TypeBlob))
 
 		lastAnalyzePos := &lastPos
-		statsVer := rows[0].GetInt64(4)
-		flag := rows[0].GetInt64(6)
+		statsVer := row.GetInt64(4)
+		flag := row.GetInt64(6)
 		if is_index == 1 {
 			idxHist := &statistics.Index{
 				Histogram:  *hist,
@@ -82,7 +90,13 @@ func BatchHistMetaFromStorageWithHighPriority(sctx sessionctx.Context, bc batchC
 				}
 			}
 			lastAnalyzePos.Copy(&idxHist.LastAnalyzePos)
+			bc.tables[id].indexs[hist_id] = idxHist
 		} else {
+			isPkIsHandle := bc.tableInfo[id].IsPkIsHandle
+			wrapper, ok := bc.GetStatsWrapper(id, hist_id)
+			if !ok {
+				continue
+			}
 			colHist := &statistics.Column{
 				PhysicalID: id,
 				Histogram:  *hist,
@@ -90,7 +104,7 @@ func BatchHistMetaFromStorageWithHighPriority(sctx sessionctx.Context, bc batchC
 				CMSketch:   nil,
 				TopN:       nil,
 				FMSketch:   nil,
-				IsHandle:   isPkIsHandle && mysql.HasPriKeyFlag(w.colInfo.GetFlag()),
+				IsHandle:   isPkIsHandle && mysql.HasPriKeyFlag(wrapper.colInfo.GetFlag()),
 				StatsVer:   statsVer,
 			}
 			if colHist.StatsAvailable() {
@@ -100,10 +114,8 @@ func BatchHistMetaFromStorageWithHighPriority(sctx sessionctx.Context, bc batchC
 					colHist.StatsLoadedStatus = statistics.NewStatsAllEvictedStatus()
 				}
 			}
-			w.col = colHist
+			bc.tables[id].columns[hist_id] = colHist
 		}
-		bc.tables[id]
-
 	}
-
+	return true, nil
 }
