@@ -126,47 +126,20 @@ func batchHistMetaFromStorageWithHighPriority(sctx sessionctx.Context, bc *batch
 func HistogramFromStorageWithPriority(
 	sctx sessionctx.Context,
 	bc *batchContext, tasks []*batchSyncLoadTask,
-) (*statistics.Histogram, error) {
-	rows, fields, err := util.ExecRows(sctx, "select high_priority count, repeats, lower_bound, upper_bound, ndv from mysql.stats_buckets,table_id,is_index,hist_id where "+generateMetaPredict(tasks)+" order by table_id,is_index,bucket_id")
+) error {
+	rows, fields, err := util.ExecRows(sctx, "select high_priority count, repeats, lower_bound, upper_bound, ndv, table_id, hist_id, is_index from mysql.stats_bucketswhere "+generateMetaPredict(tasks)+" order by table_id,is_index,bucket_id")
 	if err != nil {
-		return nil, errors.Trace(err)
+		return errors.Trace(err)
 	}
-	bucketSize := len(rows)
-	hg := statistics.NewHistogram(colID, distinct, nullCount, ver, tp, bucketSize, totColSize)
-	hg.Correlation = corr
-	totalCount := int64(0)
-	for i := 0; i < bucketSize; i++ {
-		count := rows[i].GetInt64(0)
-		repeats := rows[i].GetInt64(1)
-		var upperBound, lowerBound types.Datum
-		if isIndex == 1 {
-			lowerBound = rows[i].GetDatum(2, &fields[2].Column.FieldType)
-			upperBound = rows[i].GetDatum(3, &fields[3].Column.FieldType)
-		} else {
-			d := rows[i].GetDatum(2, &fields[2].Column.FieldType)
-			// For new collation data, when storing the bounds of the histogram, we store the collate key instead of the
-			// original value.
-			// But there's additional conversion logic for new collation data, and the collate key might be longer than
-			// the FieldType.flen.
-			// If we use the original FieldType here, there might be errors like "Invalid utf8mb4 character string"
-			// or "Data too long".
-			// So we change it to TypeBlob to bypass those logics here.
-			if tp.EvalType() == types.ETString && tp.GetType() != mysql.TypeEnum && tp.GetType() != mysql.TypeSet {
-				tp = types.NewFieldType(mysql.TypeBlob)
-			}
-			lowerBound, err = d.ConvertTo(statistics.UTCWithAllowInvalidDateCtx, tp)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			d = rows[i].GetDatum(3, &fields[3].Column.FieldType)
-			upperBound, err = d.ConvertTo(statistics.UTCWithAllowInvalidDateCtx, tp)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
+	var table_id, hist_id int64
+	for idx, row := range rows {
+		tid := row.GetInt64(5)
+		hid := row.GetInt64(6)
+		row.GetInt64(7)
+		if table_id != tid || hist_id != hid {
+			table_id = tid
+			hist_id = hid
 		}
-		totalCount += count
-		hg.AppendBucketWithNDV(&lowerBound, &upperBound, totalCount, repeats, rows[i].GetInt64(4))
 	}
-	hg.PreCalculateScalar()
-	return hg, nil
+
 }
