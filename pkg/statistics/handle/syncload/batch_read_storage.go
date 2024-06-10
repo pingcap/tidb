@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics"
@@ -118,4 +119,54 @@ func batchHistMetaFromStorageWithHighPriority(sctx sessionctx.Context, bc *batch
 		}
 	}
 	return true, nil
+}
+
+// HistogramFromStorageWithPriority wraps the HistogramFromStorage with the given kv.Priority.
+// Sync load and async load will use high priority to get data.
+func HistogramFromStorageWithPriority(
+	sctx sessionctx.Context,
+	bc *batchContext, tasks []*batchSyncLoadTask,
+) (*statistics.Histogram, error) {
+	rows, fields, err := util.ExecRows(sctx, "select high_priority count, repeats, lower_bound, upper_bound, ndv from mysql.stats_buckets,table_id,is_index,hist_id where "+generateMetaPredict(tasks)+" order by table_id,is_index,bucket_id")
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	bucketSize := len(rows)
+	hg := statistics.NewHistogram(colID, distinct, nullCount, ver, tp, bucketSize, totColSize)
+	hg.Correlation = corr
+	totalCount := int64(0)
+	for i := 0; i < bucketSize; i++ {
+		count := rows[i].GetInt64(0)
+		repeats := rows[i].GetInt64(1)
+		var upperBound, lowerBound types.Datum
+		if isIndex == 1 {
+			lowerBound = rows[i].GetDatum(2, &fields[2].Column.FieldType)
+			upperBound = rows[i].GetDatum(3, &fields[3].Column.FieldType)
+		} else {
+			d := rows[i].GetDatum(2, &fields[2].Column.FieldType)
+			// For new collation data, when storing the bounds of the histogram, we store the collate key instead of the
+			// original value.
+			// But there's additional conversion logic for new collation data, and the collate key might be longer than
+			// the FieldType.flen.
+			// If we use the original FieldType here, there might be errors like "Invalid utf8mb4 character string"
+			// or "Data too long".
+			// So we change it to TypeBlob to bypass those logics here.
+			if tp.EvalType() == types.ETString && tp.GetType() != mysql.TypeEnum && tp.GetType() != mysql.TypeSet {
+				tp = types.NewFieldType(mysql.TypeBlob)
+			}
+			lowerBound, err = d.ConvertTo(statistics.UTCWithAllowInvalidDateCtx, tp)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			d = rows[i].GetDatum(3, &fields[3].Column.FieldType)
+			upperBound, err = d.ConvertTo(statistics.UTCWithAllowInvalidDateCtx, tp)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+		}
+		totalCount += count
+		hg.AppendBucketWithNDV(&lowerBound, &upperBound, totalCount, repeats, rows[i].GetInt64(4))
+	}
+	hg.PreCalculateScalar()
+	return hg, nil
 }
