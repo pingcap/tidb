@@ -34,64 +34,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-<<<<<<< HEAD:bindinfo/bind_test.go
-=======
-func TestBindingInListOperation(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec(`create table t (a int, b int, c int, d int)`)
-
-	// only 1 binding will be left
-	tk.MustExec(`create binding for select * from t where a in(1) using select * from t where a in(1)`)
-	tk.MustExec(`create binding for select * from t where a in(1,2) using select * from t where a in(1)`)
-	tk.MustExec(`create binding for select * from t where a in(1) using select * from t where a in(1,2)`)
-	tk.MustExec(`create binding for select * from t where a in(1,2) using select * from t where a in(1,2)`)
-	tk.MustExec(`create binding for select * from t where a in(1,2,3) using select * from t where a in(1,2,3)`)
-	require.Equal(t, 1, len(tk.MustQuery(`show bindings`).Rows()))
-	tk.MustExec(`drop binding for select * from t where a in(1)`)
-	require.Equal(t, 0, len(tk.MustQuery(`show bindings`).Rows()))
-
-	// create and drop
-	tk.MustExec(`create binding for select * from t where a in(1,2,3) using select * from t where a in(1)`)
-	require.Equal(t, 1, len(tk.MustQuery(`show bindings`).Rows()))
-	tk.MustExec(`drop binding for select * from t where a in(1)`)
-	require.Equal(t, 0, len(tk.MustQuery(`show bindings`).Rows()))
-	tk.MustExec(`create binding for select * from t where a in(1) using select * from t where a in(1)`)
-	require.Equal(t, 1, len(tk.MustQuery(`show bindings`).Rows()))
-	tk.MustExec(`drop binding for select * from t where a in(1,2,3)`)
-	require.Equal(t, 0, len(tk.MustQuery(`show bindings`).Rows()))
-	tk.MustExec(`create binding for select * from t where a in(1) using select * from t where a in(1)`)
-	require.Equal(t, 1, len(tk.MustQuery(`show bindings`).Rows()))
-	tk.MustExec(`drop binding for select * from t where a in(1,2,3,4,5,6,7,8,9,0,11,12)`)
-	require.Equal(t, 0, len(tk.MustQuery(`show bindings`).Rows()))
-
-	// create and set status
-	tk.MustExec(`create global binding for select * from t where a in(1,2,3) using select * from t where a in(1)`)
-	require.Equal(t, "enabled", tk.MustQuery(`show global bindings`).Rows()[0][3].(string))
-	tk.MustExec(`set binding disabled for select * from t where a in(1)`)
-	require.Equal(t, "disabled", tk.MustQuery(`show global bindings`).Rows()[0][3].(string))
-	tk.MustExec(`set binding enabled for select * from t where a in(1,2,3,4,5)`)
-	require.Equal(t, "enabled", tk.MustQuery(`show global bindings`).Rows()[0][3].(string))
-}
-
-func TestIssue52813(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec(`use test`)
-	tk.MustExec(`create table a(id int key);`)
-	tk.MustExec(`create table b(id int key)`)
-	tk.MustExec(`create binding for select * from a, b where a.id=b.id using select /*+ no_merge_join(a,b) */ * from a, b where a.id=b.id;`)
-	tk.MustQuery(`explain select * from a, b where a.id=b.id`).Check(testkit.Rows(
-		`HashJoin_27 12500.00 root  inner join, equal:[eq(test.a.id, test.b.id)]`,
-		`├─TableReader_32(Build) 10000.00 root  data:TableFullScan_31`,
-		`│ └─TableFullScan_31 10000.00 cop[tikv] table:b keep order:false, stats:pseudo`,
-		`└─TableReader_30(Probe) 10000.00 root  data:TableFullScan_29`,
-		`  └─TableFullScan_29 10000.00 cop[tikv] table:a keep order:false, stats:pseudo`))
-	tk.MustQuery(`show warnings`).Check(testkit.Rows()) // no warning, the binding can work correctly
-}
-
->>>>>>> e5a8ea0b5ae (parser: ignore schema name if WithoutSchemaNameFlag is set when restoring hints (#49587) (#53433)):pkg/bindinfo/tests/bind_test.go
 func TestPrepareCacheWithBinding(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -383,6 +325,22 @@ func TestExplain(t *testing.T) {
 	require.True(t, tk.HasPlan("SELECT * from t1 union SELECT * from t1", "IndexReader"))
 
 	tk.MustExec("drop global binding for SELECT * from t1 union SELECT * from t1")
+}
+
+func TestIssue52813(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table a(id int key);`)
+	tk.MustExec(`create table b(id int key)`)
+	tk.MustExec(`create binding for select * from a, b where a.id=b.id using select /*+ no_merge_join(a,b) */ * from a, b where a.id=b.id;`)
+	tk.MustQuery(`explain select * from a, b where a.id=b.id`).Check(testkit.Rows(
+		`HashJoin_27 12500.00 root  inner join, equal:[eq(test.a.id, test.b.id)]`,
+		`├─TableReader_32(Build) 10000.00 root  data:TableFullScan_31`,
+		`│ └─TableFullScan_31 10000.00 cop[tikv] table:b keep order:false, stats:pseudo`,
+		`└─TableReader_30(Probe) 10000.00 root  data:TableFullScan_29`,
+		`  └─TableFullScan_29 10000.00 cop[tikv] table:a keep order:false, stats:pseudo`))
+	tk.MustQuery(`show warnings`).Check(testkit.Rows()) // no warning, the binding can work correctly
 }
 
 func TestBindSemiJoinRewrite(t *testing.T) {
