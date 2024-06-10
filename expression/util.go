@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/parser/terror"
+	fd "github.com/pingcap/tidb/planner/funcdep"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
@@ -38,7 +39,6 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"go.uber.org/zap"
-	"golang.org/x/tools/container/intsets"
 )
 
 // cowExprRef is a copy-on-write slice ref util using in `ColumnSubstitute`
@@ -347,15 +347,15 @@ func ExtractColumnsAndCorColumnsFromExpressions(result []*Column, list []Express
 }
 
 // ExtractColumnSet extracts the different values of `UniqueId` for columns in expressions.
-func ExtractColumnSet(exprs ...Expression) *intsets.Sparse {
-	set := &intsets.Sparse{}
+func ExtractColumnSet(exprs ...Expression) fd.FastIntSet {
+	set := fd.NewFastIntSet()
 	for _, expr := range exprs {
-		extractColumnSet(expr, set)
+		extractColumnSet(expr, &set)
 	}
 	return set
 }
 
-func extractColumnSet(expr Expression, set *intsets.Sparse) {
+func extractColumnSet(expr Expression, set *fd.FastIntSet) {
 	switch v := expr.(type) {
 	case *Column:
 		set.Insert(int(v.UniqueID))
