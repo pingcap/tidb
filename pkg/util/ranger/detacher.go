@@ -277,6 +277,7 @@ func extractBestCNFItemRanges(sctx *rangerctx.RangerContext, conds []expression.
 			bestRes = curRes
 		}
 	}
+
 	if bestRes != nil && bestRes.rangeResult != nil {
 		bestRes.rangeResult.IsDNFCond = false
 	}
@@ -462,6 +463,18 @@ func (d *rangeDetacher) detachCNFCondAndBuildRangeForIndex(conditions []expressi
 		// TODO: we will optimize it later.
 		res.RemainedConds = AppendConditionsIfNotExist(res.RemainedConds, remainedConds)
 		res.Ranges = ranges
+		if bestCNFItemRes != nil {
+			bestCNFIsSubset := bestCNFItemRes.rangeResult.Ranges.Subset(d.sctx.TypeCtx, res.Ranges)
+			pointRangeIsSubset := res.Ranges.Subset(d.sctx.TypeCtx, bestCNFItemRes.rangeResult.Ranges)
+			// Pick bestCNFIsSubset if it is more selective than point ranges(res).
+			// Only optimization if it is a proper subset bestCNFIsSubset and !pointRangeIsSubset.
+			if bestCNFIsSubset && !pointRangeIsSubset {
+				// Update final result and just update: Ranges, AccessConds and RemainedConds
+				res.RemainedConds = removeConditions(res.RemainedConds, bestCNFItemRes.rangeResult.AccessConds)
+				res.Ranges = bestCNFItemRes.rangeResult.Ranges
+				res.AccessConds = bestCNFItemRes.rangeResult.AccessConds
+			}
+		}
 		return res, nil
 	}
 	for _, cond := range newConditions {

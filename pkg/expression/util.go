@@ -17,6 +17,7 @@ package expression
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"math"
 	"strconv"
 	"strings"
@@ -992,7 +993,10 @@ func containOuterNot(expr Expression, not bool) bool {
 // Contains tests if `exprs` contains `e`.
 func Contains(exprs []Expression, e Expression) bool {
 	for _, expr := range exprs {
-		if e == expr {
+		// Check string equivalence if one of the expressions is a clone.
+		str1 := fmt.Sprintf("", e)
+		str2 := fmt.Sprintf("", expr)
+		if e == expr || (str1 == str2) {
 			return true
 		}
 	}
