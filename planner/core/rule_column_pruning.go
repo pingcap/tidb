@@ -87,7 +87,12 @@ func (p *LogicalProjection) PruneColumns(parentUsedCols []*expression.Column, op
 func (p *LogicalSelection) PruneColumns(parentUsedCols []*expression.Column, opt *logicalOptimizeOp) error {
 	child := p.children[0]
 	parentUsedCols = expression.ExtractColumnsFromExpressions(parentUsedCols, p.Conditions, nil)
-	return child.PruneColumns(parentUsedCols, opt)
+	err := child.PruneColumns(parentUsedCols, opt)
+	if err != nil {
+		return err
+	}
+	addConstOneForEmptyProjection(p.children[0])
+	return nil
 }
 
 // PruneColumns implements LogicalPlan interface.
