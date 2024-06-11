@@ -13,3 +13,25 @@
 // limitations under the License.
 
 package join
+
+import "github.com/pingcap/tidb/pkg/util/memory"
+
+type hashJoinSpillAction struct {
+	memory.BaseOOMAction
+	spillHelper *hashJoinSpillHelper
+}
+
+func newHashJoinSpillDiskAction(spillHelper *hashJoinSpillHelper) *hashJoinSpillAction {
+	return &hashJoinSpillAction{
+		spillHelper: spillHelper,
+	}
+}
+
+// GetPriority get the priority of the Action.
+func (*hashJoinSpillAction) GetPriority() int64 {
+	return memory.DefSpillPriority
+}
+
+func (s *hashJoinSpillAction) Action(t *memory.Tracker) {
+	// TODO need implementation
+}

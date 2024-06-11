@@ -19,6 +19,7 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -200,7 +201,7 @@ type buildWorkerBase struct {
 
 // fetchBuildSideRows fetches all rows from build side executor, and append them
 // to e.buildSideResult.
-func (w *buildWorkerBase) fetchBuildSideRows(ctx context.Context, hashJoinCtx *hashJoinCtxBase, chkCh chan<- *chunk.Chunk, errCh chan<- error, doneCh <-chan struct{}) {
+func (w *buildWorkerBase) fetchBuildSideRows(ctx context.Context, hashJoinCtx *hashJoinCtxBase, fetcherAndWorkerSyncer *sync.WaitGroup, chkCh chan<- *chunk.Chunk, errCh chan<- error, doneCh <-chan struct{}) {
 	defer close(chkCh)
 	var err error
 	failpoint.Inject("issue30289", func(val failpoint.Value) {
@@ -226,6 +227,10 @@ func (w *buildWorkerBase) fetchBuildSideRows(ctx context.Context, hashJoinCtx *h
 		}
 	})
 	for {
+		if fetcherAndWorkerSyncer != nil {
+			// TODO check spill and execute spill when spill is triggered
+		}
+
 		if hashJoinCtx.finished.Load() {
 			return
 		}
@@ -251,6 +256,9 @@ func (w *buildWorkerBase) fetchBuildSideRows(ctx context.Context, hashJoinCtx *h
 		case <-hashJoinCtx.closeCh:
 			return
 		case chkCh <- chk:
+			if fetcherAndWorkerSyncer != nil {
+				fetcherAndWorkerSyncer.Add(1)
+			}
 		}
 	}
 }

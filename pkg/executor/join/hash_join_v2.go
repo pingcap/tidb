@@ -295,7 +295,7 @@ func (fetcher *ProbeSideTupleFetcherV2) shouldLimitProbeFetchSize() bool {
 	return false
 }
 
-func (w *BuildWorkerV2) splitPartitionAndAppendToRowTable(typeCtx types.Context, srcChkCh chan *chunk.Chunk) (err error) {
+func (w *BuildWorkerV2) splitPartitionAndAppendToRowTable(typeCtx types.Context, srcChkCh chan *chunk.Chunk, fetcherAndWorkerSyncer *sync.WaitGroup) (err error) {
 	cost := int64(0)
 	defer func() {
 		if w.HashJoinCtx.stats != nil {
@@ -309,6 +309,7 @@ func (w *BuildWorkerV2) splitPartitionAndAppendToRowTable(typeCtx types.Context,
 	builder := createRowTableBuilder(w.BuildKeyColIdx, hashJoinCtx.BuildKeyTypes, partitionNumber, w.HasNullableKey, hashJoinCtx.BuildFilter != nil, hashJoinCtx.needScanRowTableAfterProbeDone)
 
 	for chk := range srcChkCh {
+		fetcherAndWorkerSyncer.Done()
 		start := time.Now()
 		err = builder.processOneChunk(chk, typeCtx, w.HashJoinCtx, int(w.WorkerID))
 		failpoint.Inject("splitPartitionPanic", nil)
@@ -623,8 +624,8 @@ func (e *HashJoinV2Exec) fetchAndBuildHashTable(ctx context.Context) {
 	errCh := make(chan error, 1+e.Concurrency)
 	// doneCh is used by the consumer(splitAndAppendToRowTable) to info the producer(fetchBuildSideRows) that the consumer meet error and stop consume data
 	doneCh := make(chan struct{}, e.Concurrency)
-	srcChkCh := e.fetchBuildSideRows(ctx, wg, errCh, doneCh)
-	e.splitAndAppendToRowTable(srcChkCh, wg, errCh, doneCh)
+	srcChkCh, fetcherAndWorkerSyncer := e.fetchBuildSideRows(ctx, wg, errCh, doneCh)
+	e.splitAndAppendToRowTable(srcChkCh, fetcherAndWorkerSyncer, wg, errCh, doneCh)
 	wg.Wait()
 	close(errCh)
 	if err := <-errCh; err != nil {
@@ -646,14 +647,16 @@ func (e *HashJoinV2Exec) fetchAndBuildHashTable(ctx context.Context) {
 	}
 }
 
-func (e *HashJoinV2Exec) fetchBuildSideRows(ctx context.Context, wg *sync.WaitGroup, errCh chan error, doneCh chan struct{}) chan *chunk.Chunk {
+func (e *HashJoinV2Exec) fetchBuildSideRows(ctx context.Context, wg *sync.WaitGroup, errCh chan error, doneCh chan struct{}) (chan *chunk.Chunk, *sync.WaitGroup) {
 	srcChkCh := make(chan *chunk.Chunk, 1)
+	// It's useful when spill is triggered and the fetcher could know when workers finish their works.
+	fetcherAndWorkerSyncer := &sync.WaitGroup{} // TODO initialize it
 	wg.Add(1)
 	e.workerWg.RunWithRecover(
 		func() {
 			defer trace.StartRegion(ctx, "HashJoinBuildSideFetcher").End()
 			fetcher := e.BuildWorkers[0]
-			fetcher.fetchBuildSideRows(ctx, &fetcher.HashJoinCtx.hashJoinCtxBase, srcChkCh, errCh, doneCh)
+			fetcher.fetchBuildSideRows(ctx, &fetcher.HashJoinCtx.hashJoinCtxBase, fetcherAndWorkerSyncer, srcChkCh, errCh, doneCh)
 		},
 		func(r any) {
 			if r != nil {
@@ -662,16 +665,16 @@ func (e *HashJoinV2Exec) fetchBuildSideRows(ctx context.Context, wg *sync.WaitGr
 			wg.Done()
 		},
 	)
-	return srcChkCh
+	return srcChkCh, fetcherAndWorkerSyncer
 }
 
-func (e *HashJoinV2Exec) splitAndAppendToRowTable(srcChkCh chan *chunk.Chunk, wg *sync.WaitGroup, errCh chan error, doneCh chan struct{}) {
+func (e *HashJoinV2Exec) splitAndAppendToRowTable(srcChkCh chan *chunk.Chunk, fetcherAndWorkerSyncer *sync.WaitGroup, wg *sync.WaitGroup, errCh chan error, doneCh chan struct{}) {
 	for i := uint(0); i < e.Concurrency; i++ {
 		wg.Add(1)
 		workIndex := i
 		e.workerWg.RunWithRecover(
 			func() {
-				err := e.BuildWorkers[workIndex].splitPartitionAndAppendToRowTable(e.SessCtx.GetSessionVars().StmtCtx.TypeCtx(), srcChkCh)
+				err := e.BuildWorkers[workIndex].splitPartitionAndAppendToRowTable(e.SessCtx.GetSessionVars().StmtCtx.TypeCtx(), srcChkCh, fetcherAndWorkerSyncer)
 				if err != nil {
 					errCh <- err
 					doneCh <- struct{}{}
