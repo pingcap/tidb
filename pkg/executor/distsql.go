@@ -685,13 +685,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, workCh chan<
 			SetMemTracker(tracker).
 			SetConnIDAndConnAlias(e.Ctx().GetSessionVars().ConnectionID, e.Ctx().GetSessionVars().SessionAlias)
 
-		if e.indexPaging || (len(e.idxPlans) > 0 && e.idxPlans[0].StatsCount() <= float64(initBatchSize)) {
-			// If e.indexPaging is true means this query has limit, so use initBatchSize to avoid scan some unnecessary data.
-			// If e.idxPlans[0].StatsCount() less than initBatchSize, use initBatchSize to reduce some memory allocation.
-			worker.batchSize = min(initBatchSize, worker.maxBatchSize)
-		} else {
-			worker.batchSize = worker.maxBatchSize
-		}
+		worker.batchSize = e.calculateBatchSize(initBatchSize, worker.maxBatchSize)
 		if builder.Request.Paging.Enable && builder.Request.Paging.MinPagingSize < uint64(worker.batchSize) {
 			// when paging enabled and Paging.MinPagingSize less than initBatchSize, change Paging.MinPagingSize to
 			// initBatchSize to avoid redundant paging RPC, see more detail in https://github.com/pingcap/tidb/issues/53827
@@ -749,6 +743,30 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, workCh chan<
 		e.idxWorkerWg.Done()
 	}()
 	return nil
+}
+
+// calculateBatchSize calculates a suitable initial batch size.
+func (e *IndexLookUpExecutor) calculateBatchSize(initBatchSize, maxBatchSize int) int {
+	var estRows int
+	if len(e.idxPlans) > 0 {
+		estRows = int(e.idxPlans[0].StatsCount())
+	}
+	batchSize := min(initBatchSize, maxBatchSize)
+	if e.indexPaging {
+		// If e.indexPaging is true means this query has limit, so use initBatchSize to avoid scan some unnecessary data.
+		return batchSize
+	}
+	if estRows >= maxBatchSize {
+		return maxBatchSize
+	}
+	for batchSize < estRows {
+		// If batchSize less than estRows, increase batch size to avoid unnecessary rpc.
+		batchSize = batchSize * 2
+		if batchSize >= maxBatchSize {
+			return maxBatchSize
+		}
+	}
+	return batchSize
 }
 
 // startTableWorker launches some background goroutines which pick tasks from workCh and execute the task.
