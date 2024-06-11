@@ -402,6 +402,17 @@ type StatementContext struct {
 
 	// MDLRelatedTableIDs is used to store the table IDs that are related to the current MDL lock.
 	MDLRelatedTableIDs map[int64]struct{}
+
+	// StartTime is the start time of the last query.
+	StartTime time.Time
+	// DurationParse is the duration of parsing SQL string to AST of the last query.
+	DurationParse time.Duration
+	// DurationCompile is the duration of compiling AST to execution plan of the last query.
+	DurationCompile time.Duration
+	// DurationOptimization is the duration of optimizing a query.
+	DurationOptimization time.Duration
+	// DurationWaitTS is the duration of waiting for a snapshot TS
+	DurationWaitTS time.Duration
 }
 
 // DefaultStmtErrLevels is the default error levels for statement

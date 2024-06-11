@@ -112,7 +112,7 @@ func (a *ExecStmtRuntime) logAudit() {
 		audit := plugin.DeclareAuditManifest(p.Manifest)
 		if audit.OnGeneralEvent != nil {
 			cmd := mysql.Command2Str[byte(atomic.LoadUint32(&a.Ctx.GetSessionVars().CommandValue))]
-			ctx := context.WithValue(context.Background(), plugin.ExecStartTimeCtxKey, a.Ctx.GetSessionVars().StartTime)
+			ctx := context.WithValue(context.Background(), plugin.ExecStartTimeCtxKey, a.Ctx.GetSessionVars().StmtCtx.StartTime)
 			audit.OnGeneralEvent(ctx, sessVars, plugin.Completed, cmd)
 		}
 		return nil
@@ -215,14 +215,12 @@ func (a *ExecStmtRuntime) FinishExecuteStmt(txnTS uint64, err error, hasMoreResu
 	sessVars.PrevStmt = FormatSQL(a.GetTextToLog(false))
 	a.recordLastQueryInfo(err)
 	a.observePhaseDurations(sessVars.InRestrictedSQL, execDetail.CommitDetail)
-	executeDuration := time.Since(sessVars.StartTime) - sessVars.DurationCompile
+	executeDuration := time.Since(sessVars.StmtCtx.StartTime) - sessVars.StmtCtx.DurationCompile
 	if sessVars.InRestrictedSQL {
 		executor_metrics.SessionExecuteRunDurationInternal.Observe(executeDuration.Seconds())
 	} else {
 		executor_metrics.SessionExecuteRunDurationGeneral.Observe(executeDuration.Seconds())
 	}
-	// Reset DurationParse due to the next statement may not need to be parsed (not a text protocol query).
-	sessVars.DurationParse = 0
 
 	if sessVars.StmtCtx.ReadFromTableCache {
 		metrics.ReadFromTableCacheCounter.Inc()
@@ -315,7 +313,7 @@ func (a *ExecStmtRuntime) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults b
 	stmtCtx := sessVars.StmtCtx
 	level := log.GetLevel()
 	cfg := config.GetGlobalConfig()
-	costTime := time.Since(sessVars.StartTime) + sessVars.DurationParse
+	costTime := time.Since(sessVars.StmtCtx.StartTime) + sessVars.StmtCtx.DurationParse
 	threshold := time.Duration(atomic.LoadUint64(&cfg.Instance.SlowThreshold)) * time.Millisecond
 	enable := cfg.Instance.EnableSlowLog.Load()
 	// if the level is Debug, or trace is enabled, print slow logs anyway
@@ -397,10 +395,10 @@ func (a *ExecStmtRuntime) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults b
 		SQL:               sql.String(),
 		Digest:            digest.String(),
 		TimeTotal:         costTime,
-		TimeParse:         sessVars.DurationParse,
-		TimeCompile:       sessVars.DurationCompile,
-		TimeOptimize:      sessVars.DurationOptimization,
-		TimeWaitTS:        sessVars.DurationWaitTS,
+		TimeParse:         sessVars.StmtCtx.DurationParse,
+		TimeCompile:       sessVars.StmtCtx.DurationCompile,
+		TimeOptimize:      sessVars.StmtCtx.DurationOptimization,
+		TimeWaitTS:        sessVars.StmtCtx.DurationWaitTS,
 		IndexNames:        indexNames,
 		CopTasks:          copTaskInfo,
 		ExecDetail:        execDetail,
@@ -439,7 +437,7 @@ func (a *ExecStmtRuntime) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults b
 		}
 	})
 	if a.retryCount > 0 {
-		slowItems.ExecRetryTime = costTime - sessVars.DurationParse - sessVars.DurationCompile - time.Since(a.retryStartTime)
+		slowItems.ExecRetryTime = costTime - sessVars.StmtCtx.DurationParse - sessVars.StmtCtx.DurationCompile - time.Since(a.retryStartTime)
 	}
 	if _, ok := a.StmtNode.(*ast.CommitStmt); ok && sessVars.PrevStmt != nil {
 		slowItems.PrevStmt = sessVars.PrevStmt.String()
@@ -473,7 +471,7 @@ func (a *ExecStmtRuntime) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults b
 		domain.GetDomain(a.Ctx).LogSlowQuery(&domain.SlowQueryInfo{
 			SQL:        sql.String(),
 			Digest:     digest.String(),
-			Start:      sessVars.StartTime,
+			Start:      sessVars.StmtCtx.StartTime,
 			Duration:   costTime,
 			Detail:     stmtCtx.GetExecDetails(),
 			Succ:       succ,
@@ -512,7 +510,7 @@ func (a *ExecStmtRuntime) SummaryStmt(succ bool) {
 		stmtCtx.StmtType = ast.GetStmtLabel(a.StmtNode)
 	}
 	normalizedSQL, digest := stmtCtx.SQLDigest()
-	costTime := time.Since(sessVars.StartTime) + sessVars.DurationParse
+	costTime := time.Since(sessVars.StmtCtx.StartTime) + sessVars.StmtCtx.DurationParse
 	charset, collation := sessVars.GetCharsetInfo()
 
 	var prevSQL, prevSQLDigest string
@@ -616,14 +614,14 @@ func (a *ExecStmtRuntime) SummaryStmt(succ bool) {
 		PlanDigestGen:       planDigestGen,
 		User:                userString,
 		TotalLatency:        costTime,
-		ParseLatency:        sessVars.DurationParse,
-		CompileLatency:      sessVars.DurationCompile,
+		ParseLatency:        sessVars.StmtCtx.DurationParse,
+		CompileLatency:      sessVars.StmtCtx.DurationCompile,
 		StmtCtx:             stmtCtx,
 		CopTasks:            copTaskInfo,
 		ExecDetail:          &execDetail,
 		MemMax:              memMax,
 		DiskMax:             diskMax,
-		StartTime:           sessVars.StartTime,
+		StartTime:           sessVars.StmtCtx.StartTime,
 		IsInternal:          sessVars.InRestrictedSQL,
 		Succeed:             succ,
 		PlanInCache:         sessVars.FoundInPlanCache,
@@ -641,7 +639,7 @@ func (a *ExecStmtRuntime) SummaryStmt(succ bool) {
 		PlanCacheUnqualified: sessVars.StmtCtx.PlanCacheUnqualified(),
 	}
 	if a.retryCount > 0 {
-		stmtExecInfo.ExecRetryTime = costTime - sessVars.DurationParse - sessVars.DurationCompile - time.Since(a.retryStartTime)
+		stmtExecInfo.ExecRetryTime = costTime - sessVars.StmtCtx.DurationParse - sessVars.StmtCtx.DurationCompile - time.Since(a.retryStartTime)
 	}
 	stmtsummaryv2.Add(stmtExecInfo)
 }
@@ -672,7 +670,7 @@ func (a *ExecStmtRuntime) observeStmtFinishedForTopSQL() {
 	}
 	if stats := a.Ctx.GetStmtStats(); stats != nil && topsqlstate.TopSQLEnabled() {
 		sqlDigest, planDigest := a.getSQLPlanDigest()
-		execDuration := time.Since(vars.StartTime) + vars.DurationParse
+		execDuration := time.Since(vars.StmtCtx.StartTime) + vars.StmtCtx.DurationParse
 		stats.OnExecutionFinished(sqlDigest, planDigest, execDuration)
 	}
 }

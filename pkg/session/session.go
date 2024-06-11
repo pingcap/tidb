@@ -1577,7 +1577,7 @@ func (s *session) Parse(ctx context.Context, sql string) ([]ast.StmtNode, error)
 	}
 
 	durParse := time.Since(parseStartTime)
-	s.GetSessionVars().DurationParse = durParse
+	s.GetSessionVars().StmtCtx.DurationParse = durParse
 	isInternal := s.isInternal()
 	if isInternal {
 		session_metrics.SessionExecuteParseDurationInternal.Observe(durParse.Seconds())
@@ -2010,7 +2010,6 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 	}
 
 	sessVars := s.sessionVars
-	sessVars.StartTime = time.Now()
 
 	// Some executions are done in compile stage, so we reset them before compile.
 	if err := executor.ResetContextOfStmt(s, stmtNode); err != nil {
@@ -2120,8 +2119,8 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 		return nil, err
 	}
 
-	durCompile := time.Since(s.sessionVars.StartTime)
-	s.GetSessionVars().DurationCompile = durCompile
+	durCompile := time.Since(s.sessionVars.StmtCtx.StartTime)
+	s.GetSessionVars().StmtCtx.DurationCompile = durCompile
 	if s.isInternal() {
 		session_metrics.SessionExecuteCompileDurationInternal.Observe(durCompile.Seconds())
 	} else {

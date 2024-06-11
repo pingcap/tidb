@@ -598,7 +598,7 @@ func (txn *LazyTxn) Wait(ctx context.Context, sctx sessionctx.Context) (kv.Trans
 	}
 	if txn.pending() {
 		defer func(begin time.Time) {
-			sctx.GetSessionVars().DurationWaitTS = time.Since(begin)
+			sctx.GetSessionVars().StmtCtx.DurationWaitTS = time.Since(begin)
 		}(time.Now())
 
 		// Transaction is lazy initialized.

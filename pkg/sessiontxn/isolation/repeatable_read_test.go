@@ -690,11 +690,11 @@ func TestRRWaitTSTimeInSlowLog(t *testing.T) {
 	tk.MustExec("insert into t values (1, 1)")
 
 	tk.MustExec("begin pessimistic")
-	waitTS1 := se.GetSessionVars().DurationWaitTS
+	waitTS1 := se.GetSessionVars().StmtCtx.DurationWaitTS
 	tk.MustExec("update t set v = v + 10 where id = 1")
-	waitTS2 := se.GetSessionVars().DurationWaitTS
+	waitTS2 := se.GetSessionVars().StmtCtx.DurationWaitTS
 	tk.MustExec("delete from t")
-	waitTS3 := se.GetSessionVars().DurationWaitTS
+	waitTS3 := se.GetSessionVars().StmtCtx.DurationWaitTS
 	tk.MustExec("commit")
 	require.NotEqual(t, waitTS1, waitTS2)
 	require.NotEqual(t, waitTS1, waitTS3)

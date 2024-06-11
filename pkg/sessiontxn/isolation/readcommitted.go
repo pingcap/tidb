@@ -190,7 +190,7 @@ func (p *PessimisticRCTxnContextProvider) getStmtTS() (ts uint64, err error) {
 	if ts, err = p.stmtTSFuture.Wait(); err != nil {
 		return 0, err
 	}
-	p.sctx.GetSessionVars().DurationWaitTS += time.Since(start)
+	p.sctx.GetSessionVars().StmtCtx.DurationWaitTS += time.Since(start)
 
 	txn.SetOption(kv.SnapshotTS, ts)
 	p.stmtTS = ts

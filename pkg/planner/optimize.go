@@ -503,7 +503,7 @@ func optimize(ctx context.Context, sctx pctx.PlanContext, node ast.Node, is info
 	finalPlan, cost, err := core.DoOptimize(ctx, sctx, builder.GetOptFlag(), logic)
 	// TODO: capture plan replayer here if it matches sql and plan digest
 
-	sessVars.DurationOptimization = time.Since(beginOpt)
+	sessVars.StmtCtx.DurationOptimization = time.Since(beginOpt)
 	return finalPlan, names, cost, err
 }
 

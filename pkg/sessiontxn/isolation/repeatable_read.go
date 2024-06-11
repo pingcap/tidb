@@ -91,7 +91,7 @@ func (p *PessimisticRRTxnContextProvider) getForUpdateTs() (ts uint64, err error
 	if ts, err = futureTS.Wait(); err != nil {
 		return 0, err
 	}
-	p.sctx.GetSessionVars().DurationWaitTS += time.Since(start)
+	p.sctx.GetSessionVars().StmtCtx.DurationWaitTS += time.Since(start)
 
 	txnCtx.SetForUpdateTS(ts)
 	txn.SetOption(kv.SnapshotTS, ts)

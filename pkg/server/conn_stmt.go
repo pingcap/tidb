@@ -425,7 +425,7 @@ func (cc *clientConn) executePreparedStmtAndWriteResult(ctx context.Context, stm
 }
 
 func (cc *clientConn) handleStmtFetch(ctx context.Context, data []byte) (err error) {
-	cc.ctx.GetSessionVars().StartTime = time.Now()
+	cc.ctx.GetSessionVars().StmtCtx.StartTime = time.Now()
 	cc.ctx.GetSessionVars().ClearAlloc(nil, false)
 	cc.ctx.GetSessionVars().SetStatusFlag(mysql.ServerStatusCursorExists, true)
 	defer cc.ctx.GetSessionVars().SetStatusFlag(mysql.ServerStatusCursorExists, false)
