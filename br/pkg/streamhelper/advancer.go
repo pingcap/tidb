@@ -425,14 +425,14 @@ func (c *CheckpointAdvancer) onTaskEvent(ctx context.Context, e TaskEvent) error
 		c.taskRange = spans.Collapse(len(e.Ranges), func(i int) kv.KeyRange { return e.Ranges[i] })
 		c.setCheckpoints(spans.Sorted(spans.NewFullWith(e.Ranges, 0)))
 		globalCheckpointTs, err := c.env.GetGlobalCheckpointForTask(ctx, e.Name)
-		if globalCheckpointTs < c.task.StartTs {
-			globalCheckpointTs = c.task.StartTs
-		}
-		log.Info("get global checkpoint", zap.Uint64("checkpoint", globalCheckpointTs))
 		if err != nil {
 			log.Error("failed to get global checkpoint, skipping.", logutil.ShortError(err))
 			return err
 		}
+		if globalCheckpointTs < c.task.StartTs {
+			globalCheckpointTs = c.task.StartTs
+		}
+		log.Info("get global checkpoint", zap.Uint64("checkpoint", globalCheckpointTs))
 		c.lastCheckpoint = newCheckpointWithTS(globalCheckpointTs)
 		p, err := c.env.BlockGCUntil(ctx, globalCheckpointTs)
 		if err != nil {
