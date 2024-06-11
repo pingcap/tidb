@@ -836,8 +836,6 @@
           "                        └─TableFullScan 10000.00 mpp[tiflash] table:t1 pushed down filter:empty, keep order:false, stats:pseudo"
         ],
         "Warn": [
-          "[planner:1815]There are no matching table names for (t1, t) in optimizer hint /*+ SHUFFLE_JOIN(t1, t, t1, t) */ or /*+ SHUFFLE_JOIN(t1, t, t1, t) */. Maybe you can use the table alias name",
-          "[planner:1815]There are no matching table names for (t1, t, t1, t) in optimizer hint /*+ SHUFFLE_JOIN(t1, t, t1, t, t1, t) */ or /*+ SHUFFLE_JOIN(t1, t, t1, t, t1, t) */. Maybe you can use the table alias name"
         ]
       },
       {
