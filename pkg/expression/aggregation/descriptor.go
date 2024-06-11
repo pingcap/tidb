@@ -60,7 +60,7 @@ func NewAggFuncDescForWindowFunc(ctx expression.BuildContext, desc *WindowFuncDe
 }
 
 // StringWithCtx returns the string representation within given ctx.
-func (a *AggFuncDesc) StringWithCtx(ctx expression.EvalContext) string {
+func (a *AggFuncDesc) StringWithCtx(ctx expression.ParamValues) string {
 	buffer := bytes.NewBufferString(a.Name)
 	buffer.WriteString("(")
 	if a.HasDistinct {

@@ -21,6 +21,7 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/errors"
+	exprctx "github.com/pingcap/tidb/pkg/expression/context"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -119,7 +120,7 @@ func (sf *ScalarFunction) Vectorized() bool {
 }
 
 // StringWithCtx implements Expression interface.
-func (sf *ScalarFunction) StringWithCtx(ctx EvalContext) string {
+func (sf *ScalarFunction) StringWithCtx(ctx ParamValues) string {
 	var buffer bytes.Buffer
 	fmt.Fprintf(&buffer, "%s(", sf.FuncName.L)
 	switch sf.FuncName.L {
@@ -143,25 +144,7 @@ func (sf *ScalarFunction) StringWithCtx(ctx EvalContext) string {
 
 // String returns the string representation of the function
 func (sf *ScalarFunction) String() string {
-	var buffer bytes.Buffer
-	fmt.Fprintf(&buffer, "%s(", sf.FuncName.L)
-	switch sf.FuncName.L {
-	case ast.Cast:
-		for _, arg := range sf.GetArgs() {
-			buffer.WriteString(arg.StringWithCtx(nil))
-			buffer.WriteString(", ")
-			buffer.WriteString(sf.RetType.String())
-		}
-	default:
-		for i, arg := range sf.GetArgs() {
-			buffer.WriteString(arg.StringWithCtx(nil))
-			if i+1 != len(sf.GetArgs()) {
-				buffer.WriteString(", ")
-			}
-		}
-	}
-	buffer.WriteString(")")
-	return buffer.String()
+	return sf.StringWithCtx(exprctx.EmptyParamValues)
 }
 
 // typeInferForNull infers the NULL constants field type and set the field type

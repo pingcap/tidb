@@ -33,6 +33,8 @@ import (
 
 // HandleCols is the interface that holds handle columns.
 type HandleCols interface {
+	expression.StringerWithCtx
+
 	// BuildHandle builds a Handle from a row.
 	BuildHandle(row chunk.Row) (kv.Handle, error)
 	// BuildHandleByDatums builds a Handle from a datum slice.
@@ -48,8 +50,6 @@ type HandleCols interface {
 	ResolveIndices(schema *expression.Schema) (HandleCols, error)
 	// IsInt returns if the HandleCols is a single int column.
 	IsInt() bool
-	// StringWithCtx implements the expression.StringerWithCtx interface.
-	StringWithCtx(ctx expression.EvalContext) string
 	// GetCol gets the column by idx.
 	GetCol(idx int) *expression.Column
 	// NumCols returns the number of columns.
@@ -162,7 +162,7 @@ func (cb *CommonHandleCols) NumCols() int {
 }
 
 // StringWithCtx implements the kv.HandleCols interface.
-func (cb *CommonHandleCols) StringWithCtx(ctx expression.EvalContext) string {
+func (cb *CommonHandleCols) StringWithCtx(ctx expression.ParamValues) string {
 	b := new(strings.Builder)
 	b.WriteByte('[')
 	for i, col := range cb.columns {
@@ -284,7 +284,7 @@ func (*IntHandleCols) IsInt() bool {
 }
 
 // StringWithCtx implements the kv.HandleCols interface.
-func (ib *IntHandleCols) StringWithCtx(ctx expression.EvalContext) string {
+func (ib *IntHandleCols) StringWithCtx(ctx expression.ParamValues) string {
 	return ib.col.ColumnExplainInfo(ctx, false)
 }
 

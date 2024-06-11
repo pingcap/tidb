@@ -25,6 +25,9 @@ import (
 	"github.com/pingcap/tidb/pkg/util/intest"
 )
 
+// ParamValues is used to store the values of params in context
+type ParamValues = context.ParamValues
+
 // EvalContext is used to evaluate an expression
 type EvalContext = context.EvalContext
 
@@ -118,5 +121,5 @@ func (ctx *assertionEvalContext) GetOptionalPropProvider(key OptionalEvalPropKey
 type StringerWithCtx interface {
 	// StringWithCtx returns the string representation of the expression with context.
 	// NOTE: any implementation of `StringWithCtx` should not panic if the context is nil.
-	StringWithCtx(ctx EvalContext) string
+	StringWithCtx(ctx ParamValues) string
 }

@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
 	"github.com/pingcap/tidb/pkg/util/set"
@@ -75,7 +76,13 @@ func (extractHelper) extractColInConsExpr(ctx base.PlanContext, extractCols map[
 		}
 		v := constant.Value
 		if constant.ParamMarker != nil {
-			v = constant.ParamMarker.GetUserVar(ctx.GetExprCtx().GetEvalCtx())
+			var err error
+			v, err = constant.ParamMarker.GetUserVar(ctx.GetExprCtx().GetEvalCtx())
+			intest.AssertNoError(err, "fail to get param")
+			if err != nil {
+				logutil.BgLogger().Warn("fail to get param", zap.Error(err))
+				return "", nil
+			}
 		}
 		results = append(results, v)
 	}
@@ -157,7 +164,13 @@ func (helper *extractHelper) extractColBinaryOpConsExpr(ctx base.PlanContext, ex
 	}
 	v := constant.Value
 	if constant.ParamMarker != nil {
-		v = constant.ParamMarker.GetUserVar(ctx.GetExprCtx().GetEvalCtx())
+		var err error
+		v, err = constant.ParamMarker.GetUserVar(ctx.GetExprCtx().GetEvalCtx())
+		intest.AssertNoError(err, "fail to get param")
+		if err != nil {
+			logutil.BgLogger().Warn("fail to get param", zap.Error(err))
+			return "", nil
+		}
 	}
 	return name.ColName.L, []types.Datum{v}
 }

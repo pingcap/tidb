@@ -1425,7 +1425,12 @@ func GetUint64FromConstant(ctx EvalContext, expr Expression) (uint64, bool, bool
 	}
 	dt := con.Value
 	if con.ParamMarker != nil {
-		dt = con.ParamMarker.GetUserVar(ctx)
+		var err error
+		dt, err = con.ParamMarker.GetUserVar(ctx)
+		if err != nil {
+			logutil.BgLogger().Warn("get param failed", zap.Error(err))
+			return 0, false, false
+		}
 	} else if con.DeferredExpr != nil {
 		var err error
 		dt, err = con.DeferredExpr.Eval(ctx, chunk.Row{})
