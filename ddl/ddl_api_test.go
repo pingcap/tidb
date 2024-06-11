@@ -29,7 +29,9 @@ import (
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/cmp"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
 	"golang.org/x/exp/slices"
 	"golang.org/x/sync/errgroup"
 )
@@ -232,6 +234,7 @@ func TestCreateViewConcurrently(t *testing.T) {
 		counter    int
 	)
 	ddl.OnCreateViewForTest = func(job *model.Job) {
+		logutil.BgLogger().Info("OnCreateViewForTest", zap.Int("counter", counter), zap.Int64("jobID", job.ID))
 		counter++
 		if counter > 1 {
 			counterErr = fmt.Errorf("create view job should not run concurrently")
@@ -245,6 +248,7 @@ func TestCreateViewConcurrently(t *testing.T) {
 
 	ddl.AfterDelivery2WorkerForTest = func(job *model.Job) {
 		if job.Type == model.ActionCreateView {
+			logutil.BgLogger().Info("AfterDelivery2WorkerForTest", zap.Int("counter", counter), zap.Int64("jobID", job.ID))
 			counter--
 		}
 	}

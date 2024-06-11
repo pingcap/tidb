@@ -104,7 +104,9 @@ func (d *ddl) getJob(sess *session, tp jobType, filter func(*model.Job) (bool, e
 
 func (d *ddl) getGeneralJob(sess *session) (*model.Job, error) {
 	return d.getJob(sess, general, func(job *model.Job) (bool, error) {
-		if !d.runningJobs.checkRunnable(job) {
+		runnable := d.runningJobs.checkRunnable(job)
+		logutil.BgLogger().Info("getGeneralJob", zap.Bool("runnable", runnable), zap.Reflect("involving_schema_info", job.GetInvolvingSchemaInfo()))
+		if !runnable {
 			return false, nil
 		}
 		if job.Type == model.ActionDropSchema {
