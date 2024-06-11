@@ -595,6 +595,7 @@ func NewIndexIngestOperator(
 				writer, err := engines[i].CreateWriter(writerID)
 				if err != nil {
 					logutil.Logger(ctx).Error("create index ingest worker failed", zap.Error(err))
+					ctx.onError(err)
 					return nil
 				}
 				writers = append(writers, writer)
