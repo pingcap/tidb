@@ -54,6 +54,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/syncutil"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	"github.com/tikv/client-go/v2/oracle"
+	"github.com/tikv/client-go/v2/util"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
 )
@@ -567,6 +568,55 @@ func (e *showMetaExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	return nil
 }
 
+func escapeString(s string) string {
+    return strings.ReplaceAll(s, "'", "''")
+}
+
+func (e *BRIEExec) insert() string {
+    // Format the time fields as strings
+	task := e.info
+	var (
+		queueTime string = "NULL"
+		execTime string = "NULL"
+		finishTime string = "NULL"
+	)
+	if time := task.queueTime; !time.IsZero() {
+		queueTime = task.queueTime.String()
+	}
+	if time := task.execTime; !time.IsZero() {
+		execTime = task.execTime.String()
+	}
+	if time := task.finishTime; !time.IsZero() {
+		finishTime = task.finishTime.String()
+	}
+
+    // Construct the SQL statement with escaped strings
+    insertStmt := fmt.Sprintf(`
+    INSERT INTO mysql.tidb_br_jobs (
+        taskID, query, queueTime, execTime, finishTime, kind, storage, connID, backupTS, restoreTS, archiveSize, message
+    ) VALUES (
+        %d, '%s', %s, %s, %s, %s, '%s', %d, %d, %d, %d, '%s'
+    );
+    `,
+        task.id,
+        escapeString(task.query),
+        queueTime,
+        execTime,
+        finishTime,
+		task.kind,
+        escapeString(task.storage),
+        task.connID,
+        task.backupTS,
+        task.restoreTS,
+        task.archiveSize,
+        escapeString(task.message),
+    )
+
+	log.Info("Generated SQL statement", zap.String("SQL", insertStmt))
+
+    return insertStmt
+}
+
 // Next implements the Executor Next interface.
 func (e *BRIEExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.Reset()
@@ -604,6 +654,9 @@ func (e *BRIEExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			}
 		}
 	}()
+	ctx = util.WithInternalSourceType(ctx, kv.InternalTxnBR)
+	e.Ctx().GetSQLExecutor().ExecuteInternal(ctx, e.insert())
+	return nil
 
 	progress, err := bq.acquireTask(taskCtx, taskID)
 	if err != nil {
