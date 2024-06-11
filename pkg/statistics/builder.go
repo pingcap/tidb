@@ -154,7 +154,7 @@ func buildHist(sc *stmtctx.StatementContext, hg *Histogram, samples []*SampleIte
 	// Since bucket count is increased by sampleFactor, so the actual max values per bucket is
 	// floor(valuesPerBucket/sampleFactor)*sampleFactor, which may less than valuesPerBucket,
 	// thus we need to add a sampleFactor to avoid building too many buckets.
-	valuesPerBucket := float64(count)/float64(numBuckets) + sampleFactor
+	valuesPerBucket := math.Ceil(float64(count)/float64(numBuckets) + sampleFactor)
 
 	bucketIdx := 0
 	var lastCount int64
