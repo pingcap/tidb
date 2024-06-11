@@ -24,6 +24,7 @@ go_test(
     name = "syncer_test",
     srcs = ["syncer_test.go"],
     flaky = True,
+    shard_count = 3,
     deps = [
         ":syncer",
         "//ddl",
@@ -41,5 +42,6 @@ go_test(
         "@io_etcd_go_etcd_tests_v3//integration",
         "@org_golang_google_grpc//codes",
         "@org_golang_google_grpc//status",
+        "@org_golang_x_sync//errgroup",
     ],
 )

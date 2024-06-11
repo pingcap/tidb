@@ -36,6 +36,7 @@ import (
 	verify "github.com/pingcap/tidb/br/pkg/lightning/verification"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/version/build"
+	"github.com/pingcap/tidb/util/cmp"
 	"github.com/pingcap/tidb/util/mathutil"
 	"go.uber.org/zap"
 	"golang.org/x/exp/slices"
@@ -227,6 +228,13 @@ type ChunkCheckpointKey struct {
 
 func (key *ChunkCheckpointKey) String() string {
 	return fmt.Sprintf("%s:%d", key.Path, key.Offset)
+}
+
+func (key *ChunkCheckpointKey) compare(other *ChunkCheckpointKey) int {
+	if c := cmp.Compare(key.Path, other.Path); c != 0 {
+		return c
+	}
+	return cmp.Compare(key.Offset, other.Offset)
 }
 
 func (key *ChunkCheckpointKey) less(other *ChunkCheckpointKey) bool {
@@ -1257,8 +1265,8 @@ func (cpdb *FileCheckpointsDB) Get(_ context.Context, tableName string) (*TableC
 			})
 		}
 
-		slices.SortFunc(engine.Chunks, func(i, j *ChunkCheckpoint) bool {
-			return i.Key.less(&j.Key)
+		slices.SortFunc(engine.Chunks, func(i, j *ChunkCheckpoint) int {
+			return i.Key.compare(&j.Key)
 		})
 
 		cp.Engines[engineID] = engine

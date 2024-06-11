@@ -7127,6 +7127,31 @@ func TestTiFlashFineGrainedShuffleWithMaxTiFlashThreads(t *testing.T) {
 	require.Equal(t, uint64(16), streamCount[0])
 }
 
+func TestIssue37986(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec(`drop table if exists t3`)
+	tk.MustExec(`CREATE TABLE t3(c0 INT, primary key(c0))`)
+	tk.MustExec(`insert into t3 values(1), (2), (3), (4), (5), (6), (7), (8), (9), (10)`)
+	rs := tk.MustQuery(`SELECT v2.c0 FROM (select rand() as c0 from t3) v2 order by v2.c0 limit 10`).Rows()
+	lastVal := -1.0
+	for _, r := range rs {
+		v := r[0].(string)
+		val, err := strconv.ParseFloat(v, 64)
+		require.NoError(t, err)
+		require.True(t, val >= lastVal)
+		lastVal = val
+	}
+
+	tk.MustQuery(`explain format='brief' SELECT v2.c0 FROM (select rand() as c0 from t3) v2 order by v2.c0 limit 10`).
+		Check(testkit.Rows(`TopN 10.00 root  Column#2, offset:0, count:10`,
+			`└─Projection 10000.00 root  rand()->Column#2`,
+			`  └─TableReader 10000.00 root  data:TableFullScan`,
+			`    └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo`))
+}
+
 func TestIssue33175(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -7353,6 +7378,15 @@ func TestRepeatPushDownToTiFlash(t *testing.T) {
 		{"    └─TableFullScan_7", "mpp[tiflash]", "keep order:false, stats:pseudo"},
 	}
 	tk.MustQuery("explain select repeat(a,b) from t;").CheckAt([]int{0, 2, 4}, rows)
+}
+
+func TestIssue50235(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table tt (c year(4) NOT NULL DEFAULT '2016', primary key(c));`)
+	tk.MustExec(`insert into tt values (2016);`)
+	tk.MustQuery(`select * from tt where c < 16212511333665770580`).Check(testkit.Rows("2016"))
 }
 
 func TestIssue36194(t *testing.T) {
@@ -8458,6 +8492,23 @@ func TestIssue45044(t *testing.T) {
 	tk.MustQuery(`select * from t1 group by t1.c1 having count(1) > 1 order by count(1) limit 10`).Check(testkit.Rows()) // no error
 }
 
+func TestIssue46556(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`CREATE TABLE t0(c0 BLOB);`)
+	tk.MustExec(`CREATE definer='root'@'localhost' VIEW v0(c0) AS SELECT NULL FROM t0 GROUP BY NULL;`)
+	tk.MustExec(`SELECT t0.c0 FROM t0 NATURAL JOIN v0 WHERE v0.c0 LIKE v0.c0;`) // no error
+	tk.MustQuery(`explain format='brief' SELECT t0.c0 FROM t0 NATURAL JOIN v0 WHERE v0.c0 LIKE v0.c0`).Check(
+		testkit.Rows(`HashJoin 0.00 root  inner join, equal:[eq(Column#9, Column#10)]`,
+			`├─Projection(Build) 0.00 root  <nil>->Column#9`,
+			`│ └─TableDual 0.00 root  rows:0`,
+			`└─Projection(Probe) 9990.00 root  test.t0.c0, cast(test.t0.c0, double BINARY)->Column#10`,
+			`  └─TableReader 9990.00 root  data:Selection`,
+			`    └─Selection 9990.00 cop[tikv]  not(isnull(test.t0.c0))`,
+			`      └─TableFullScan 10000.00 cop[tikv] table:t0 keep order:false, stats:pseudo`))
+}
+
 // https://github.com/pingcap/tidb/issues/41458
 func TestIssue41458(t *testing.T) {
 	store := testkit.CreateMockStore(t)
@@ -8601,4 +8652,134 @@ func TestDowncastPointGetOrRangeScan(t *testing.T) {
 		tk.MustQuery("explain format='brief' " + tt).Check(testkit.Rows(output[i].Plan...))
 		tk.MustQuery(tt).Sort().Check(testkit.Rows(output[i].Result...))
 	}
+}
+
+func TestCTEErrNotSupportedYet(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`
+CREATE TABLE pub_branch (
+  id int(5) NOT NULL,
+  code varchar(12) NOT NULL,
+  type_id int(3) DEFAULT NULL,
+  name varchar(64) NOT NULL,
+  short_name varchar(32) DEFAULT NULL,
+  organ_code varchar(15) DEFAULT NULL,
+  parent_code varchar(12) DEFAULT NULL,
+  organ_layer tinyint(1) NOT NULL,
+  inputcode1 varchar(12) DEFAULT NULL,
+  inputcode2 varchar(12) DEFAULT NULL,
+  state tinyint(1) NOT NULL,
+  modify_empid int(9) NOT NULL,
+  modify_time datetime NOT NULL,
+  organ_level int(9) DEFAULT NULL,
+  address varchar(256) DEFAULT NULL,
+  db_user varchar(32) DEFAULT NULL,
+  db_password varchar(64) DEFAULT NULL,
+  org_no int(3) DEFAULT NULL,
+  ord int(5) DEFAULT NULL,
+  org_code_mpa varchar(10) DEFAULT NULL,
+  org_code_gb varchar(30) DEFAULT NULL,
+  wdchis_id int(5) DEFAULT NULL,
+  medins_code varchar(32) DEFAULT NULL,
+  PRIMARY KEY (id),
+  UNIQUE KEY pub_barnch_unique (code),
+  KEY idx_pub_branch_parent (parent_code)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+`)
+	tk.MustExec(`
+CREATE VIEW udc_branch_test (
+  branch_id,
+  his_branch_id,
+  branch_code,
+  branch_name,
+  pid,
+  his_pid,
+  short_name,
+  inputcode1,
+  inputcode2,
+  org_no,
+  org_code,
+  org_level,
+  org_layer,
+  address,
+  state,
+  modify_by,
+  modify_time,
+  remark
+)
+AS
+SELECT a.id AS branch_id, a.id AS his_branch_id, a.code AS branch_code, a.name AS branch_name
+  , a.id + 1000000 AS pid, id AS his_pid, a.short_name AS short_name
+  , a.inputcode1 AS inputcode1, a.inputcode2 AS inputcode2, a.id AS org_no, a.code AS org_code, a.organ_level AS org_level
+  , a.organ_layer AS org_layer, a.address AS address, a.state AS state, a.modify_empid AS modify_by, a.modify_time AS modify_time
+  , NULL AS remark
+FROM pub_branch a
+WHERE organ_layer = 4
+UNION ALL
+SELECT a.id + 1000000 AS branch_id, a.id AS his_branch_id, a.code AS branch_code
+  , CONCAT(a.name, _UTF8MB4 '(中心)') AS branch_name
+  , (
+    SELECT id AS id
+    FROM pub_branch a
+    WHERE organ_layer = 2
+      AND state = 1
+    LIMIT 1
+  ) AS pid, id AS his_pid, a.short_name AS short_name, a.inputcode1 AS inputcode1, a.inputcode2 AS inputcode2
+  , a.id AS org_no, a.code AS org_code, a.organ_level AS org_level, a.organ_layer AS org_layer, a.address AS address
+  , a.state AS state, 1 AS modify_by, a.modify_time AS modify_time, NULL AS remark
+FROM pub_branch a
+WHERE organ_layer = 4
+UNION ALL
+SELECT a.id AS branch_id, a.id AS his_branch_id, a.code AS branch_code, a.name AS branch_name, NULL AS pid
+  , id AS his_pid, a.short_name AS short_name, a.inputcode1 AS inputcode1, a.inputcode2 AS inputcode2, a.id AS org_no
+  , a.code AS org_code, a.organ_level AS org_level, a.organ_layer AS org_layer, a.address AS address, a.state AS state
+  , a.modify_empid AS modify_by, a.modify_time AS modify_time, NULL AS remark
+FROM pub_branch a
+WHERE organ_layer = 2;
+`)
+	tk.MustExec(`
+CREATE TABLE udc_branch_temp (
+  branch_id int(11) NOT NULL AUTO_INCREMENT COMMENT '',
+  his_branch_id varchar(20) DEFAULT NULL COMMENT '',
+  branch_code varchar(20) DEFAULT NULL COMMENT '',
+  branch_name varchar(64) NOT NULL COMMENT '',
+  pid int(11) DEFAULT NULL COMMENT '',
+  his_pid varchar(20) DEFAULT NULL COMMENT '',
+  short_name varchar(64) DEFAULT NULL COMMENT '',
+  inputcode1 varchar(12) DEFAULT NULL COMMENT '辅码1',
+  inputcode2 varchar(12) DEFAULT NULL COMMENT '辅码2',
+  org_no int(11) DEFAULT NULL COMMENT '',
+  org_code varchar(20) DEFAULT NULL COMMENT ',',
+  org_level tinyint(4) DEFAULT NULL COMMENT '',
+  org_layer tinyint(4) DEFAULT NULL COMMENT '',
+  address varchar(255) DEFAULT NULL COMMENT '机构地址',
+  state tinyint(4) NOT NULL DEFAULT '1' COMMENT '',
+  modify_by int(11) NOT NULL COMMENT '',
+  modify_time datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '修改时间',
+  remark varchar(255) DEFAULT NULL COMMENT '备注',
+  PRIMARY KEY (branch_id) /*T![clustered_index] CLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_INCREMENT=1030102 COMMENT='';
+`)
+	tk.MustGetErrCode(`
+SELECT res.*
+FROM (
+    (
+        WITH RECURSIVE d AS (
+            SELECT ub.*
+            FROM udc_branch_test ub
+            WHERE ub.branch_id = 1000102
+            UNION ALL
+            SELECT ub1.*
+            FROM udc_branch_test ub1
+            INNER JOIN d ON d.branch_id = ub1.pid
+        )
+        SELECT d.*
+        FROM d
+    )
+) AS res
+WHERE res.state != 2
+ORDER BY res.branch_id;
+`, errno.ErrNotSupportedYet)
 }

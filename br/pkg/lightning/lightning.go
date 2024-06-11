@@ -53,6 +53,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/version/build"
 	_ "github.com/pingcap/tidb/expression" // get rid of `import cycle`: just init expression.RewriteAstExpr,and called at package `backend.kv`.
 	_ "github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/util/cmp"
 	"github.com/pingcap/tidb/util/promutil"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/collectors"
@@ -693,8 +694,7 @@ func (l *Lightning) handlePostTask(w http.ResponseWriter, req *http.Request) {
 		writeJSONError(w, http.StatusBadRequest, "cannot read request", err)
 		return
 	}
-	filteredData := utils.HideSensitive(string(data))
-	log.L().Info("received task config", zap.String("content", filteredData))
+	log.L().Info("received task config")
 
 	cfg := config.NewConfig()
 	if err = cfg.LoadFromGlobal(l.globalCfg); err != nil {
@@ -900,8 +900,8 @@ func checkSystemRequirement(cfg *config.Config, dbsMeta []*mydump.MDDatabaseMeta
 				tableTotalSizes = append(tableTotalSizes, tb.TotalSize)
 			}
 		}
-		slices.SortFunc(tableTotalSizes, func(i, j int64) bool {
-			return i > j
+		slices.SortFunc(tableTotalSizes, func(i, j int64) int {
+			return cmp.Compare(j, i)
 		})
 		topNTotalSize := int64(0)
 		for i := 0; i < len(tableTotalSizes) && i < cfg.App.TableConcurrency; i++ {

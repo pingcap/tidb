@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/pdpb"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
+	"github.com/pingcap/tidb/br/pkg/lightning/metric"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/util/codec"
@@ -89,12 +90,19 @@ func (local *local) SplitAndScatterRegionByRanges(
 	ctx context.Context,
 	ranges []Range,
 	needSplit bool,
-) error {
+) (err error) {
 	if len(ranges) == 0 {
 		return nil
 	}
 
-	var err error
+	if m, ok := metric.FromContext(ctx); ok {
+		begin := time.Now()
+		defer func() {
+			if err == nil {
+				m.SSTSecondsHistogram.WithLabelValues(metric.SSTProcessSplit).Observe(time.Since(begin).Seconds())
+			}
+		}()
+	}
 
 	minKey := codec.EncodeBytes([]byte{}, ranges[0].start)
 	maxKey := codec.EncodeBytes([]byte{}, ranges[len(ranges)-1].end)
@@ -203,8 +211,8 @@ func (local *local) SplitAndScatterRegionByRanges(
 					var err1 error
 					region := sp.region
 					keys := sp.keys
-					slices.SortFunc(keys, func(i, j []byte) bool {
-						return bytes.Compare(i, j) < 0
+					slices.SortFunc(keys, func(i, j []byte) int {
+						return bytes.Compare(i, j)
 					})
 					splitRegion := region
 					startIdx := 0
@@ -247,8 +255,8 @@ func (local *local) SplitAndScatterRegionByRanges(
 							log.FromContext(ctx).Info("batch split region", zap.Uint64("region_id", splitRegion.Region.Id),
 								zap.Int("keys", endIdx-startIdx), zap.Binary("firstKey", keys[startIdx]),
 								zap.Binary("end", keys[endIdx-1]))
-							slices.SortFunc(newRegions, func(i, j *split.RegionInfo) bool {
-								return bytes.Compare(i.Region.StartKey, j.Region.StartKey) < 0
+							slices.SortFunc(newRegions, func(i, j *split.RegionInfo) int {
+								return bytes.Compare(i.Region.StartKey, j.Region.StartKey)
 							})
 							syncLock.Lock()
 							scatterRegions = append(scatterRegions, newRegions...)
@@ -293,8 +301,8 @@ func (local *local) SplitAndScatterRegionByRanges(
 		if len(retryKeys) == 0 {
 			break
 		}
-		slices.SortFunc(retryKeys, func(i, j []byte) bool {
-			return bytes.Compare(i, j) < 0
+		slices.SortFunc(retryKeys, func(i, j []byte) int {
+			return bytes.Compare(i, j)
 		})
 		minKey = codec.EncodeBytes([]byte{}, retryKeys[0])
 		maxKey = codec.EncodeBytes([]byte{}, nextKey(retryKeys[len(retryKeys)-1]))

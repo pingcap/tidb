@@ -9,6 +9,7 @@ go_library(
         "//config",
         "//sessionctx/variable",
         "//util",
+        "//util/cmp",
         "//util/disk",
         "//util/logutil",
         "//util/memory",

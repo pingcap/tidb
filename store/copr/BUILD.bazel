@@ -26,6 +26,7 @@ go_library(
         "//store/driver/error",
         "//store/driver/options",
         "//util",
+        "//util/cmp",
         "//util/execdetails",
         "//util/logutil",
         "//util/mathutil",

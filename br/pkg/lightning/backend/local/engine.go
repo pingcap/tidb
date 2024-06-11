@@ -752,8 +752,8 @@ func (e *Engine) batchIngestSSTs(metas []*sstMeta) error {
 	if len(metas) == 0 {
 		return nil
 	}
-	slices.SortFunc(metas, func(i, j *sstMeta) bool {
-		return bytes.Compare(i.minKey, j.minKey) < 0
+	slices.SortFunc(metas, func(i, j *sstMeta) int {
+		return bytes.Compare(i.minKey, j.minKey)
 	})
 
 	metaLevels := make([][]*sstMeta, 0)
@@ -914,8 +914,8 @@ func sortAndMergeRanges(ranges []Range) []Range {
 		return ranges
 	}
 
-	slices.SortFunc(ranges, func(i, j Range) bool {
-		return bytes.Compare(i.start, j.start) < 0
+	slices.SortFunc(ranges, func(i, j Range) int {
+		return bytes.Compare(i.start, j.start)
 	})
 
 	curEnd := ranges[0].end
@@ -1181,8 +1181,8 @@ func (w *Writer) flushKVs(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 	if !w.isWriteBatchSorted {
-		slices.SortFunc(w.writeBatch[:w.batchCount], func(i, j common.KvPair) bool {
-			return bytes.Compare(i.Key, j.Key) < 0
+		slices.SortFunc(w.writeBatch[:w.batchCount], func(i, j common.KvPair) int {
+			return bytes.Compare(i.Key, j.Key)
 		})
 		w.isWriteBatchSorted = true
 	}

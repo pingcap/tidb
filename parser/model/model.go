@@ -1675,8 +1675,8 @@ func (db *DBInfo) Copy() *DBInfo {
 }
 
 // LessDBInfo is used for sorting DBInfo by DBInfo.Name.
-func LessDBInfo(a *DBInfo, b *DBInfo) bool {
-	return a.Name.L < b.Name.L
+func LessDBInfo(a *DBInfo, b *DBInfo) int {
+	return strings.Compare(a.Name.L, b.Name.L)
 }
 
 // CIStr is case insensitive string.
@@ -1730,6 +1730,11 @@ type TableItemID struct {
 	TableID int64
 	ID      int64
 	IsIndex bool
+}
+
+// Key is used to generate unique key for TableItemID to use in the syncload
+func (t TableItemID) Key() string {
+	return fmt.Sprintf("%d#%d#%t", t.ID, t.TableID, t.IsIndex)
 }
 
 // PolicyRefInfo is the struct to refer the placement policy.

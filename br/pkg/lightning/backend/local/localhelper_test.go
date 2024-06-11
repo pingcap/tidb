@@ -147,6 +147,10 @@ func (c *testSplitClient) SplitRegion(
 				ConfVer: target.Region.RegionEpoch.ConfVer + 1,
 			},
 		},
+		Leader: &metapb.Peer{
+			Id:      target.Leader.Id,
+			StoreId: target.Leader.StoreId,
+		},
 	}
 	c.regions[c.nextRegionID] = newRegion
 	c.regionsInfo.SetRegion(pdtypes.NewRegionInfo(newRegion.Region, newRegion.Leader))
@@ -207,6 +211,10 @@ func (c *testSplitClient) BatchSplitRegionsWithOrigin(
 				Id:       c.nextRegionID,
 				StartKey: startKey,
 				EndKey:   key,
+			},
+			Leader: &metapb.Peer{
+				Id:      target.Leader.Id,
+				StoreId: target.Leader.StoreId,
 			},
 		}
 		c.regions[c.nextRegionID] = newRegion

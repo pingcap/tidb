@@ -490,11 +490,9 @@ func (importer *FileImporter) ImportSSTFiles(
 	}
 
 	err = utils.WithRetry(ctx, func() error {
-		tctx, cancel := context.WithTimeout(ctx, importScanRegionTime)
-		defer cancel()
 		// Scan regions covered by the file range
 		regionInfos, errScanRegion := split.PaginateScanRegion(
-			tctx, importer.metaClient, startKey, endKey, split.ScanRegionPaginationLimit)
+			ctx, importer.metaClient, startKey, endKey, split.ScanRegionPaginationLimit)
 		if errScanRegion != nil {
 			return errors.Trace(errScanRegion)
 		}
@@ -825,7 +823,8 @@ func (importer *FileImporter) ingestSSTs(
 ) (*import_sstpb.IngestResponse, error) {
 	leader := regionInfo.Leader
 	if leader == nil {
-		leader = regionInfo.Region.GetPeers()[0]
+		return nil, errors.Annotatef(berrors.ErrPDLeaderNotFound,
+			"region id %d has no leader", regionInfo.Region.Id)
 	}
 	reqCtx := &kvrpcpb.Context{
 		RegionId:    regionInfo.Region.GetId(),
