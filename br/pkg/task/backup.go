@@ -618,19 +618,19 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 	}
 
 	summary.CollectInt("backup total ranges", len(ranges))
-
-	approximateRegions, err := getRegionCountOfRanges(ctx, mgr, ranges)
+	progressTotalCount, progressUnit, err := getProgressCountOfRanges(ctx, mgr, ranges)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	// Redirect to log if there is no log file to avoid unreadable output.
 	updateCh := g.StartProgress(
-		ctx, cmdName, int64(approximateRegions), !cfg.LogProgress)
-	summary.CollectInt("backup total regions", approximateRegions)
+		ctx, cmdName, int64(progressTotalCount), !cfg.LogProgress)
 
 	progressCount := uint64(0)
-	progressCallBack := func() {
-		updateCh.Inc()
+	progressCallBack := func(callBackUnit backup.ProgressUnit) {
+		if progressUnit == callBackUnit {
+			updateCh.Inc()
+		}
 		failpoint.Inject("progress-call-back", func(v failpoint.Value) {
 			log.Info("failpoint progress-call-back injected")
 			atomic.AddUint64(&progressCount, 1)
@@ -744,21 +744,25 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 	return nil
 }
 
-func getRegionCountOfRanges(
+func getProgressCountOfRanges(
 	ctx context.Context,
 	mgr *conn.Mgr,
 	ranges []rtree.Range,
-) (int, error) {
+) (int, backup.ProgressUnit, error) {
+	if len(ranges) > 100 {
+		return len(ranges), backup.RangeUnit, nil
+	}
 	// The number of regions need to backup
 	approximateRegions := 0
 	for _, r := range ranges {
 		regionCount, err := mgr.GetRegionCount(ctx, r.StartKey, r.EndKey)
 		if err != nil {
-			return 0, errors.Trace(err)
+			return 0, backup.RegionUnit, errors.Trace(err)
 		}
 		approximateRegions += regionCount
 	}
-	return approximateRegions, nil
+	summary.CollectInt("backup total regions", approximateRegions)
+	return approximateRegions, backup.RegionUnit, nil
 }
 
 // ParseTSString port from tidb setSnapshotTS.
