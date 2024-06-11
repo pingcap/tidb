@@ -226,6 +226,7 @@ func TestTaskRanges(t *testing.T) {
 	c.flushAllExcept("0000", "0049")
 	env := newTestEnv(c, t)
 	env.ranges = []kv.KeyRange{{StartKey: []byte("0002"), EndKey: []byte("0048")}}
+	env.task.Ranges = env.ranges
 	adv := streamhelper.NewCheckpointAdvancer(env)
 	adv.StartTaskListener(ctx)
 
@@ -244,6 +245,7 @@ func TestTaskRangesWithSplit(t *testing.T) {
 	c.flushAllExcept("0049")
 	env := newTestEnv(c, t)
 	env.ranges = []kv.KeyRange{{StartKey: []byte("0002"), EndKey: []byte("0048")}}
+	env.task.Ranges = env.ranges
 	adv := streamhelper.NewCheckpointAdvancer(env)
 	adv.StartTaskListener(ctx)
 
