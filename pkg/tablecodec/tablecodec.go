@@ -344,13 +344,13 @@ func EncodeValue(loc *time.Location, b []byte, raw types.Datum) ([]byte, error) 
 // EncodeRow will allocate it.
 // This function may return both a valid encoded bytes and an error (actually `"pingcap/errors".ErrorGroup`). If the caller
 // expects to handle these errors according to `SQL_MODE` or other configuration, please refer to `pkg/errctx`.
-func EncodeRow(loc *time.Location, row []types.Datum, colIDs []int64, valBuf []byte, values []types.Datum, e *rowcodec.Encoder, key kv.Key, checksums ...uint32) ([]byte, error) {
+func EncodeRow(loc *time.Location, row []types.Datum, colIDs []int64, valBuf []byte, values []types.Datum, e *rowcodec.Encoder, key kv.Key) ([]byte, error) {
 	if len(row) != len(colIDs) {
 		return nil, errors.Errorf("EncodeRow error: data and columnID count not match %d vs %d", len(row), len(colIDs))
 	}
 	if e.Enable {
 		valBuf = valBuf[:0]
-		return e.Encode(loc, colIDs, row, valBuf, key, checksums...)
+		return e.Encode(loc, colIDs, row, valBuf, key)
 	}
 	return EncodeOldRow(loc, row, colIDs, valBuf, values)
 }
