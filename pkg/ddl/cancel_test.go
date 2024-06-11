@@ -209,7 +209,7 @@ func TestCancel(t *testing.T) {
 	var enterCnt, exitCnt atomic.Int32
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeDelivery2Worker", func(job *model.Job) { enterCnt.Add(1) })
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterDelivery2Worker", func(job *model.Job) { exitCnt.Add(1) })
-	waitDDLWorkerExisted := func() {
+	waitDDLWorkerExited := func() {
 		require.Eventually(t, func() bool {
 			return enterCnt.Load() == exitCnt.Load()
 		}, 10*time.Second, 10*time.Millisecond)
@@ -284,7 +284,7 @@ func TestCancel(t *testing.T) {
 		dom.DDL().SetHook(h.Clone())
 	}
 
-	waitDDLWorkerExisted()
+	waitDDLWorkerExited()
 	for j, tc := range allTestCase {
 		t.Logf("running test case %d: %s", j, tc.sql)
 		i.Store(int64(j))
@@ -294,7 +294,7 @@ func TestCancel(t *testing.T) {
 			for _, prepareSQL := range tc.prepareSQL {
 				tk.MustExec(prepareSQL)
 			}
-			waitDDLWorkerExisted()
+			waitDDLWorkerExited()
 			canceled.Store(false)
 			cancelWhenReorgNotStart.Store(true)
 			registerHook(hook, true)
@@ -303,7 +303,7 @@ func TestCancel(t *testing.T) {
 			} else {
 				tk.MustExec(tc.sql)
 			}
-			waitDDLWorkerExisted()
+			waitDDLWorkerExited()
 			if canceled.Load() {
 				require.Equal(t, tc.expectCancelled, cancelResult.Load(), msg)
 			}
@@ -313,7 +313,7 @@ func TestCancel(t *testing.T) {
 			for _, prepareSQL := range tc.prepareSQL {
 				tk.MustExec(prepareSQL)
 			}
-			waitDDLWorkerExisted()
+			waitDDLWorkerExited()
 			canceled.Store(false)
 			cancelWhenReorgNotStart.Store(false)
 			registerHook(hook, false)
@@ -322,7 +322,7 @@ func TestCancel(t *testing.T) {
 			} else {
 				tk.MustExec(tc.sql)
 			}
-			waitDDLWorkerExisted()
+			waitDDLWorkerExited()
 			if canceled.Load() {
 				require.Equal(t, tc.expectCancelled, cancelResult.Load(), msg)
 			}
