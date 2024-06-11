@@ -223,13 +223,6 @@ func (a *ExecStmtRuntime) FinishExecuteStmt(txnTS uint64, err error, hasMoreResu
 	}
 	// Reset DurationParse due to the next statement may not need to be parsed (not a text protocol query).
 	sessVars.DurationParse = 0
-	// Clean the stale read flag when statement execution finish
-	sessVars.StmtCtx.IsStaleness = false
-	// Clean the MPP query info
-	sessVars.StmtCtx.MPPQueryInfo.QueryID.Store(0)
-	sessVars.StmtCtx.MPPQueryInfo.QueryTS.Store(0)
-	sessVars.StmtCtx.MPPQueryInfo.AllocatedMPPTaskID.Store(0)
-	sessVars.StmtCtx.MPPQueryInfo.AllocatedMPPGatherID.Store(0)
 
 	if sessVars.StmtCtx.ReadFromTableCache {
 		metrics.ReadFromTableCacheCounter.Inc()

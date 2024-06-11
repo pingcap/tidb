@@ -209,6 +209,17 @@ func (a *recordSet) OnFetchReturned() {
 type ExecStmt struct {
 	ExecStmtRuntime
 
+	// GoCtx stores parent go context.Context for a stmt.
+	GoCtx context.Context
+	// InfoSchema stores a reference to the schema information.
+	InfoSchema infoschema.InfoSchema
+	// Plan stores a reference to the final physical plan.
+	Plan base.Plan
+	// Text represents the origin query text.
+	Text string
+
+	Ctx sessionctx.Context
+
 	// LowerPriority represents whether to lower the execution priority of a query.
 	LowerPriority     bool
 	isSelectForUpdate bool

@@ -125,6 +125,11 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (_ *ExecS
 			Ctx:         c.Ctx,
 			OutputNames: names,
 		},
+		GoCtx:         ctx,
+		InfoSchema:    is,
+		Plan:          finalPlan,
+		Text:          stmtNode.Text(),
+		Ctx:           c.Ctx,
 		LowerPriority: lowerPriority,
 	}
 	// Use cached plan if possible.
