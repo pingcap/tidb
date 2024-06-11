@@ -3024,7 +3024,7 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 		if err != nil {
 			if !changesMade {
 				job.State = model.JobStateCancelled
-				return ver, errors.Trace(err)
+				return ver, err
 			}
 			return rollbackReorganizePartitionWithErr(d, t, job, err)
 		}
@@ -3046,7 +3046,7 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 		tblInfo.Partition.DDLState = model.StateDeleteOnly
 		ver, err = updateVersionAndTableInfoWithCheck(d, t, job, tblInfo, true)
 		if err != nil {
-			return ver, err
+			return ver, errors.Trace(err)
 		}
 		failpoint.Inject("reorgPartRollback1", func(val failpoint.Value) {
 			if val.(bool) {
