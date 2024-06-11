@@ -59,6 +59,7 @@ go_library(
         "reload_expr_pushdown_blacklist.go",
         "replace.go",
         "revoke.go",
+        "runtime.go",
         "sample.go",
         "select_into.go",
         "set.go",

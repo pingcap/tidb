@@ -116,14 +116,16 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (_ *ExecS
 	}
 	stmtCtx.SetPlan(finalPlan)
 	stmt := &ExecStmt{
-		GoCtx:         ctx,
-		InfoSchema:    is,
-		Plan:          finalPlan,
+		ExecStmtRuntime: ExecStmtRuntime{
+			GoCtx:       ctx,
+			InfoSchema:  is,
+			Plan:        finalPlan,
+			Text:        stmtNode.Text(),
+			StmtNode:    stmtNode,
+			Ctx:         c.Ctx,
+			OutputNames: names,
+		},
 		LowerPriority: lowerPriority,
-		Text:          stmtNode.Text(),
-		StmtNode:      stmtNode,
-		Ctx:           c.Ctx,
-		OutputNames:   names,
 	}
 	// Use cached plan if possible.
 	if preparedObj != nil && plannercore.IsSafeToReusePointGetExecutor(c.Ctx, is, preparedObj) {
