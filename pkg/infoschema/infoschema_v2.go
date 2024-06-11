@@ -1009,10 +1009,10 @@ func (b *bundleInfoBuilder) updateInfoSchemaBundlesV2(is *infoschemaV2) {
 	}
 
 	// do full update bundles
-	// TODO: This is quite inefficient! we need some better way or avoid this API.
 	is.ruleBundleMap = make(map[int64]*placement.Bundle)
-	for _, dbInfo := range is.AllSchemas() {
-		for _, tbl := range is.SchemaTableInfos(dbInfo.Name) {
+	tmp := is.ListTablesWithSpecialAttribute(PlacementPolicyAttribute)
+	for _, v := range tmp {
+		for _, tbl := range v.TableInfos {
 			b.updateTableBundles(is, tbl.ID)
 		}
 	}
@@ -1056,8 +1056,23 @@ var TiFlashAttribute specialAttributeFilter = func(t *model.TableInfo) bool {
 	return t.TiFlashReplica != nil
 }
 
+// PlacementPolicyAttribute is the Placement Policy attribute filter used by ListTablesWithSpecialAttribute.
+var PlacementPolicyAttribute specialAttributeFilter = func(t *model.TableInfo) bool {
+	if t.PlacementPolicyRef != nil {
+		return true
+	}
+	if parInfo := t.GetPartitionInfo(); parInfo != nil {
+		for _, def := range parInfo.Definitions {
+			if def.PlacementPolicyRef != nil {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func hasSpecialAttributes(t *model.TableInfo) bool {
-	return TTLAttribute(t) || TiFlashAttribute(t)
+	return TTLAttribute(t) || TiFlashAttribute(t) || PlacementPolicyAttribute(t)
 }
 
 // AllSpecialAttribute marks a model.TableInfo with any special attributes.

@@ -2060,17 +2060,19 @@ func TestAdminCheckGlobalIndexDuringDDL(t *testing.T) {
 
 	var schemaMap = make(map[model.SchemaState]struct{})
 
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
 	hook := &callback.TestDDLCallback{Do: dom}
 	onJobUpdatedExportedFunc := func(job *model.Job) {
 		schemaMap[job.SchemaState] = struct{}{}
-		_, err := tk.Exec("admin check table admin_test")
+		_, err := tk1.Exec("admin check table admin_test")
 		assert.NoError(t, err)
 	}
 	hook.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
 
 	// check table after delete some index key/value pairs.
 	ddl.MockDMLExecution = func() {
-		_, err := tk.Exec("admin check table admin_test")
+		_, err := tk1.Exec("admin check table admin_test")
 		assert.NoError(t, err)
 	}
 
