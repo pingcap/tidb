@@ -827,11 +827,16 @@ func TestUserSpecEncodePasswordWithPluginFn(t *testing.T) {
 		},
 	}
 
-	p := func(s string) (string, bool) {
-		if s == "xxx" {
-			return "xxxxxxx", true
-		}
-		return "", false
+	p := &ast.ExtAuthPluginSpec{
+		ValidateHash: func(s string) bool {
+			return false
+		},
+		EncodePassword: func(s string) (string, bool) {
+			if s == "xxx" {
+				return "xxxxxxx", true
+			}
+			return "", false
+		},
 	}
 
 	u.AuthOpt.ByAuthString = false

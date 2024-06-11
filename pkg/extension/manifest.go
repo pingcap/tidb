@@ -16,6 +16,7 @@ package extension
 
 import (
 	"context"
+	"slices"
 
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
@@ -67,18 +68,6 @@ func WithCustomAccessCheck(fn AccessCheckFunc) Option {
 
 // WithCustomAuthPlugins specifies the custom authentication plugins available for the system.
 func WithCustomAuthPlugins(authPlugins map[string]*AuthPlugin) Option {
-	// Validate required functions for the auth plugins
-	for pluginName, p := range authPlugins {
-		if p.Name == "" {
-			panic("auth plugin name cannot be empty for " + pluginName)
-		}
-		if p.AuthenticateUser == nil {
-			panic("auth plugin AuthenticateUser function cannot be nil for " + pluginName)
-		}
-		if p.GenerateAuthString == nil {
-			panic("auth plugin GenerateAuthString function cannot be nil for " + pluginName)
-		}
-	}
 	return func(m *Manifest) {
 		m.authPlugins = authPlugins
 	}
@@ -232,6 +221,35 @@ func newManifestWithSetup(name string, factory func() ([]Option, error)) (_ *Man
 
 		if err != nil {
 			return nil, nil, err
+		}
+	}
+
+	pluginNames := make(map[string]bool)
+	defaultAuthPlugins := variable.GetSysVar(variable.DefaultAuthPlugin).PossibleValues
+	// Validate required functions for the auth plugins
+	for pluginName, p := range m.authPlugins {
+		err = clearBuilder.DoWithCollectClear(func() (func(), error) {
+			if p.Name == "" {
+				return nil, errors.Errorf("auth plugin name cannot be empty for %s", pluginName)
+			}
+			if pluginNames[p.Name] {
+				return nil, errors.Errorf("auth plugin name %s has already been registered", p.Name)
+			}
+			pluginNames[p.Name] = true
+			if slices.Contains(defaultAuthPlugins, p.Name) {
+				return nil, errors.Errorf("auth plugin name %s is a reserved name for default auth plugins", p.Name)
+			}
+			if p.AuthenticateUser == nil {
+				return nil, errors.Errorf("auth plugin AuthenticateUser function cannot be nil for %s", pluginName)
+			}
+			if p.GenerateAuthString == nil {
+				return nil, errors.Errorf("auth plugin GenerateAuthString function cannot be nil for %s", pluginName)
+			}
+			return nil, nil
+		})
+
+		if err != nil {
+			return nil, func() {}, err
 		}
 	}
 

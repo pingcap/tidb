@@ -1741,11 +1741,6 @@ func (s *session) SetExtensions(extensions *extension.SessionExtensions) {
 	s.extensions = extensions
 }
 
-// GetAuthPlugins returns the `map[string]extension.AuthPlugin` object
-func (s *session) GetAuthPlugins() map[string]*extension.AuthPlugin {
-	return s.authPlugins
-}
-
 // SetAuthPlugins sets the `map[string]extension.AuthPlugin` object
 func (s *session) SetAuthPlugins(authPlugins map[string]*extension.AuthPlugin) {
 	s.authPlugins = authPlugins

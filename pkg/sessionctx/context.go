@@ -135,9 +135,6 @@ type Context interface {
 
 	GetSessionManager() util.SessionManager
 
-	// GetAuthPlugins returns all the registered authentication plugins
-	GetAuthPlugins() map[string]*extension.AuthPlugin
-
 	// RefreshTxnCtx commits old transaction without retry,
 	// and creates a new transaction.
 	// now just for load data and batch insert.

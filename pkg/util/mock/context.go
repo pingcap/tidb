@@ -570,11 +570,6 @@ func (*Context) GetExtensions() *extension.SessionExtensions {
 	return nil
 }
 
-// GetAuthPlugins returns the `map[string]*extension.AuthPlugin` object
-func (*Context) GetAuthPlugins() map[string]*extension.AuthPlugin {
-	return make(map[string]*extension.AuthPlugin)
-}
-
 // EnableSandBoxMode enable the sandbox mode.
 func (c *Context) EnableSandBoxMode() {
 	c.inSandBoxMode = true

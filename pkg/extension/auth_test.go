@@ -2,12 +2,10 @@ package extension_test
 
 import (
 	"crypto/sha1"
-	"crypto/tls"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/extension"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/privilege/conn"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/mock"
@@ -24,8 +22,8 @@ func (p *MockAuthPlugin) Name() string {
 	return p.Called().String(0)
 }
 
-func (p *MockAuthPlugin) AuthenticateUser(authUser string, pwd string, auth, salt []byte, connState *tls.ConnectionState, authConn conn.AuthConn) error {
-	return p.Called(authUser, pwd, auth, salt, connState, authConn).Error(0)
+func (p *MockAuthPlugin) AuthenticateUser(ctx *extension.AuthenticateContext) error {
+	return p.Called(ctx).Error(0)
 }
 
 func (p *MockAuthPlugin) ValidateAuthString(hash string) bool {
@@ -37,12 +35,12 @@ func (p *MockAuthPlugin) GenerateAuthString(password string) (string, bool) {
 	return args.String(0), args.Bool(1)
 }
 
-func (p *MockAuthPlugin) VerifyDynamicPrivilege(activeRoles []*auth.RoleIdentity, user, host, privName string, withGrant bool, connState *tls.ConnectionState) bool {
-	return p.Called(activeRoles, user, host, privName, withGrant, connState).Bool(0)
+func (p *MockAuthPlugin) VerifyDynamicPrivilege(ctx *extension.AuthorizeContext) bool {
+	return p.Called(ctx).Bool(0)
 }
 
-func (p *MockAuthPlugin) VerifyPrivilege(roles []*auth.RoleIdentity, user, host, db, table, column string, priv mysql.PrivilegeType, connState *tls.ConnectionState) bool {
-	return p.Called(roles, user, host, db, table, column, priv, connState).Bool(0)
+func (p *MockAuthPlugin) VerifyPrivilege(ctx *extension.AuthorizeContext) bool {
+	return p.Called(ctx).Bool(0)
 }
 
 func sha1Password(s string) []byte {
@@ -68,6 +66,8 @@ func TestAuthPlugin(t *testing.T) {
 	authChecks := map[string]*extension.AuthPlugin{}
 	p := new(MockAuthPlugin)
 	p.On("Name").Return("authentication_test_plugin")
+	p.On("AuthenticateUser", mock.Anything).Return(nil)
+
 	p.On("AuthenticateUser", "u2", "encodedpassword", []byte("1"), mock.Anything, mock.Anything, mock.Anything).Return(nil)
 	p.On("AuthenticateUser", "u2", "encodedpassword", []byte("2"), mock.Anything, mock.Anything, mock.Anything).Return(errors.New("authentication failed"))
 	p.On("AuthenticateUser", "u2", "anotherencodedpassword", []byte("1"), mock.Anything, mock.Anything, mock.Anything).Return(nil)
@@ -110,10 +110,12 @@ func TestAuthPlugin(t *testing.T) {
 		}),
 	))
 	require.NoError(t, extension.Setup())
+	ext, err := extension.GetExtensions()
+	require.NoError(t, err)
 
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	tk.Session().SetAuthPlugins(authChecks)
+	tk.Session().SetExtensions(ext.NewSessionExtensions())
 	tk.MustExec("use test")
 
 	// Create user with an invalid plugin should not work.
@@ -122,7 +124,7 @@ func TestAuthPlugin(t *testing.T) {
 	// Create user with a valid plugin should work.
 	tk.MustExec("create user 'u2'@'localhost' identified with 'authentication_test_plugin' as 'rawpassword'")
 	tk.MustQuery(`SELECT user, plugin FROM mysql.user WHERE user='u2' and host='localhost'`).Check(testkit.Rows("u2 authentication_test_plugin"))
-	p.AssertCalled(t, "GenerateAuthString", "rawpassword")
+	p.AssertCalled(t, "ValidateAuthString", "rawpassword")
 
 	// Alter user with an invalid plugin should not work.
 	tk.MustContainErrMsg("alter user 'u2'@'localhost' identified with 'bad_plugin' by 'rawpassword'", "[executor:1524]Plugin 'bad_plugin' is not loaded")
@@ -134,19 +136,20 @@ func TestAuthPlugin(t *testing.T) {
 
 	// Authentication tests.
 	tk2 := testkit.NewTestKit(t, store)
-	tk2.Session().SetAuthPlugins(authChecks)
+	tk.Session().SetExtensions(ext.NewSessionExtensions())
 	// Login using wrong password should fail
 	require.EqualError(t, tk2.Session().Auth(&auth.UserIdentity{Username: "u2", Hostname: "localhost"}, []byte("2"), nil, nil), "[privilege:1045]Access denied for user 'u2'@'localhost' (using password: YES)")
-	// Corret password should pass
+	// Correct password should pass
 	require.NoError(t, tk2.Session().Auth(&auth.UserIdentity{Username: "u2", Hostname: "localhost"}, []byte("1"), nil, nil))
 	// Should authenticate using plugin impl.
 	p.AssertNumberOfCalls(t, "AuthenticateUser", 2)
-	p.AssertCalled(t, "ValidateAuthString", "encodedpassword")
+	p.AssertCalled(t, "ValidateAuthString", "rawpassword")
+	p.AssertNumberOfCalls(t, "ValidateAuthString", 2)
 
 	// Change password should work using ALTER USER statement.
 	tk.MustExec("alter user 'u2'@'localhost' identified with 'authentication_test_plugin' by 'anotherrawpassword'")
 	p.AssertCalled(t, "GenerateAuthString", "anotherrawpassword")
-	// Corret password should pass
+	// Correct password should pass
 	require.NoError(t, tk2.Session().Auth(&auth.UserIdentity{Username: "u2", Hostname: "localhost"}, []byte("1"), nil, nil))
 	// Should authenticate using plugin impl.
 	p.AssertNumberOfCalls(t, "AuthenticateUser", 3)
@@ -164,7 +167,7 @@ func TestAuthPlugin(t *testing.T) {
 	// Change password using SET PASSWORD statement should work using the user itself.
 	tk2.MustExec("set password='yetanotherrawpassword2'")
 	p.AssertCalled(t, "GenerateAuthString", "yetanotherrawpassword2")
-	// Corret password should pass
+	// Correct password should pass
 	require.NoError(t, tk2.Session().Auth(&auth.UserIdentity{Username: "u2", Hostname: "localhost"}, []byte("1"), nil, nil))
 	// Should authenticate using plugin impl.
 	p.AssertNumberOfCalls(t, "AuthenticateUser", 5)
@@ -245,11 +248,14 @@ func TestAuthPluginSwitchPlugins(t *testing.T) {
 			return nil
 		}),
 	))
+	ext, err := extension.GetExtensions()
+	require.NoError(t, err)
+
 	require.NoError(t, extension.Setup())
 
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	tk.Session().SetAuthPlugins(authChecks)
+	tk.Session().SetExtensions(ext.NewSessionExtensions())
 	tk.MustExec("use test")
 
 	// Create user with a valid plugin should work.
@@ -265,7 +271,7 @@ func TestAuthPluginSwitchPlugins(t *testing.T) {
 	// Authentication tests.
 	tk2 := testkit.NewTestKit(t, store)
 	tk2.Session().SetAuthPlugins(authChecks)
-	// Corret password should pass
+	// Correct password should pass
 	require.NoError(t, tk2.Session().Auth(&auth.UserIdentity{Username: "u2", Hostname: "localhost"}, []byte("1"), nil, nil))
 	// Should authenticate using plugin impl.
 	p.AssertNumberOfCalls(t, "AuthenticateUser", 1)
@@ -349,10 +355,12 @@ func TestCreateUserWhenGrant(t *testing.T) {
 		}),
 	))
 	require.NoError(t, extension.Setup())
+	ext, err := extension.GetExtensions()
+	require.NoError(t, err)
 
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	tk.Session().SetAuthPlugins(authChecks)
+	tk.Session().SetExtensions(ext.NewSessionExtensions())
 	tk.MustExec(`DROP USER IF EXISTS 'test'@'%'`)
 	// This only applies to sql_mode:NO_AUTO_CREATE_USER off
 	tk.MustExec(`SET SQL_MODE=''`)
@@ -369,4 +377,9 @@ func TestCreateUserWhenGrant(t *testing.T) {
 		testkit.Rows("test mysql_native_password"),
 	)
 	tk.MustExec(`DROP USER IF EXISTS 'test'@'%'`)
+}
+
+func TestCreateViewWithPluginUser(t *testing.T) {
+	defer extension.Reset()
+	extension.Reset()
 }

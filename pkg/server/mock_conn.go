@@ -127,7 +127,7 @@ func CreateMockConn(t *testing.T, server *Server) MockConn {
 		pkt:          internal.NewPacketIOForTest(bufio.NewWriter(bytes.NewBuffer(nil))),
 		extensions:   tc.GetExtensions(),
 
-		registeredAuthPlugins: tc.GetAuthPlugins(),
+		registeredAuthPlugins: tc.GetExtensions().GetAuthPlugins(),
 	}
 	cc.SetCtx(tc)
 	cc.server.rwlock.Lock()
