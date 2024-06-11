@@ -680,18 +680,22 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, workCh chan<
 			SetReadReplicaScope(e.readReplicaScope).
 			SetIsStaleness(e.isStaleness).
 			SetFromSessionVars(e.Ctx().GetDistSQLCtx()).
-			SetPaging(e.indexPaging).
 			SetFromInfoSchema(e.Ctx().GetInfoSchema()).
 			SetClosestReplicaReadAdjuster(newClosestReadAdjuster(e.Ctx().GetDistSQLCtx(), &builder.Request, e.idxNetDataSize/float64(len(kvRanges)))).
 			SetMemTracker(tracker).
 			SetConnIDAndConnAlias(e.Ctx().GetSessionVars().ConnectionID, e.Ctx().GetSessionVars().SessionAlias)
 
-		if builder.Request.Paging.Enable && builder.Request.Paging.MinPagingSize < uint64(initBatchSize) {
+		if e.indexPaging || e.Ctx().GetSessionVars().MemQuotaQuery < 1024*1024 {
+			worker.batchSize = min(initBatchSize, worker.maxBatchSize)
+		} else {
+			worker.batchSize = worker.maxBatchSize
+		}
+		if builder.Request.Paging.Enable && builder.Request.Paging.MinPagingSize < uint64(worker.batchSize) {
 			// when paging enabled and Paging.MinPagingSize less than initBatchSize, change Paging.MinPagingSize to
 			// initBatchSize to avoid redundant paging RPC, see more detail in https://github.com/pingcap/tidb/issues/53827
-			builder.Request.Paging.MinPagingSize = uint64(initBatchSize)
-			if builder.Request.Paging.MaxPagingSize < uint64(initBatchSize) {
-				builder.Request.Paging.MaxPagingSize = uint64(initBatchSize)
+			builder.Request.Paging.MinPagingSize = uint64(worker.batchSize)
+			if builder.Request.Paging.MaxPagingSize < uint64(worker.batchSize) {
+				builder.Request.Paging.MaxPagingSize = uint64(worker.batchSize)
 			}
 		}
 		results := make([]distsql.SelectResult, 0, len(kvRanges))
@@ -724,11 +728,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, workCh chan<
 			}
 			results = append(results, result)
 		}
-		if e.indexPaging {
-			worker.batchSize = min(initBatchSize, worker.maxBatchSize)
-		} else {
-			worker.batchSize = worker.maxBatchSize
-		}
+
 		if len(results) > 1 && len(e.byItems) != 0 {
 			// e.Schema() not the output schema for indexReader, and we put byItems related column at first in `buildIndexReq`, so use nil here.
 			ssr := distsql.NewSortedSelectResults(e.Ctx().GetExprCtx().GetEvalCtx(), results, nil, e.byItems, e.memTracker)
