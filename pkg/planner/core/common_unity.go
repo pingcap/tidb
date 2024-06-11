@@ -4,6 +4,7 @@ import (
 	context2 "context"
 	"encoding/json"
 	"fmt"
+	"github.com/pingcap/tidb/pkg/types"
 	"strings"
 
 	"github.com/pingcap/tidb/pkg/expression"
@@ -35,11 +36,17 @@ type UnityColumnInfo struct {
 	Min       string
 	Max       string
 	Histogram []UnityHistBucket
+	MCVs      []UnityMCV
 }
 
 type UnityIndexInfo struct {
 	NDV   int
 	Nulls int
+}
+
+type UnityMCV struct {
+	Value string
+	Count int64
 }
 
 type UnityHistBucket struct {
@@ -207,7 +214,7 @@ func collectUnityInfo(p base.LogicalPlan, o *UnityOutput) {
 	}
 }
 
-func fillUpStats(o *UnityOutput) {
+func fillUpStats(ctx context.PlanContext, o *UnityOutput) {
 	for _, tblInfo := range o.Tables {
 		tblStats := tblInfo.stats
 		tblInfo.ModifiedRows = tblStats.ModifyCount
@@ -237,6 +244,17 @@ func fillUpStats(o *UnityOutput) {
 			if len(buckets) > 0 {
 				col.Min = buckets[0].Lower
 				col.Max = buckets[len(buckets)-1].Upper
+			}
+
+			for i := 0; i < len(colStats.TopN.TopN); i++ {
+				var tmpDatum types.Datum
+				tmpDatum.SetBytes(colStats.TopN.TopN[i].Encoded)
+				valStr, err := statistics.ValueToString(ctx.GetSessionVars(), &tmpDatum, 1, []byte{colStats.Histogram.Tp.GetType()})
+				must(err)
+				col.MCVs = append(col.MCVs, UnityMCV{
+					Value: valStr,
+					Count: int64(colStats.TopN.TopN[i].Count),
+				})
 			}
 		}
 		for idxName, idx := range tblInfo.Indexes {
@@ -332,7 +350,7 @@ func prepareForUnity(ctx context.PlanContext, p base.LogicalPlan) string {
 		joins:  make(map[string]string),
 	}
 	collectUnityInfo(p, o)
-	fillUpStats(o)
+	fillUpStats(ctx, o)
 	getPossibleHints(ctx, o)
 
 	v, err := json.Marshal(o)
