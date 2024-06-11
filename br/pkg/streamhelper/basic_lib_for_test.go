@@ -644,6 +644,7 @@ type testEnv struct {
 	testCtx        *testing.T
 	ranges         []kv.KeyRange
 	taskCh         chan<- streamhelper.TaskEvent
+	task           streamhelper.TaskEvent
 
 	resolveLocks func([]*txnlock.Lock, *tikv.KeyLocation) (*tikv.KeyLocation, error)
 
@@ -651,12 +652,16 @@ type testEnv struct {
 	pd.Client
 }
 
-func (t *testEnv) Begin(ctx context.Context, ch chan<- streamhelper.TaskEvent) error {
-	rngs := t.ranges
+func newTestEnv(c *fakeCluster, t *testing.T) *testEnv {
+	env := &testEnv{
+		fakeCluster: c,
+		testCtx:     t,
+	}
+	rngs := env.ranges
 	if len(rngs) == 0 {
 		rngs = []kv.KeyRange{{}}
 	}
-	tsk := streamhelper.TaskEvent{
+	env.task = streamhelper.TaskEvent{
 		Type: streamhelper.EventAdd,
 		Name: "whole",
 		Info: &backup.StreamBackupTaskInfo{
@@ -664,7 +669,11 @@ func (t *testEnv) Begin(ctx context.Context, ch chan<- streamhelper.TaskEvent) e
 		},
 		Ranges: rngs,
 	}
-	ch <- tsk
+	return env
+}
+
+func (t *testEnv) Begin(ctx context.Context, ch chan<- streamhelper.TaskEvent) error {
+	ch <- t.task
 	t.taskCh = ch
 	return nil
 }

@@ -12,6 +12,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	backup "github.com/pingcap/kvproto/pkg/brpb"
 	logbackup "github.com/pingcap/kvproto/pkg/logbackuppb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/streamhelper"
@@ -20,9 +21,11 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/txnkv/txnlock"
 	"go.uber.org/atomic"
+	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -171,7 +174,7 @@ func TestOneStoreFailure(t *testing.T) {
 	c.splitAndScatter(splitKeys...)
 	c.flushAll()
 
-	env := &testEnv{fakeCluster: c, testCtx: t}
+	env := newTestEnv(c, t)
 	adv := streamhelper.NewCheckpointAdvancer(env)
 	adv.StartTaskListener(ctx)
 	require.NoError(t, adv.OnTick(ctx))
@@ -195,7 +198,7 @@ func TestGCServiceSafePoint(t *testing.T) {
 	c := createFakeCluster(t, 4, true)
 	ctx := context.Background()
 	c.splitAndScatter("01", "02", "022", "023", "033", "04", "043")
-	env := &testEnv{fakeCluster: c, testCtx: t}
+	env := newTestEnv(c, t)
 
 	adv := streamhelper.NewCheckpointAdvancer(env)
 	adv.StartTaskListener(ctx)
@@ -221,7 +224,8 @@ func TestTaskRanges(t *testing.T) {
 	c.splitAndScatter("0001", "0002", "0012", "0034", "0048")
 	c.advanceCheckpoints()
 	c.flushAllExcept("0000", "0049")
-	env := &testEnv{fakeCluster: c, testCtx: t, ranges: []kv.KeyRange{{StartKey: []byte("0002"), EndKey: []byte("0048")}}}
+	env := newTestEnv(c, t)
+	env.ranges = []kv.KeyRange{{StartKey: []byte("0002"), EndKey: []byte("0048")}}
 	adv := streamhelper.NewCheckpointAdvancer(env)
 	adv.StartTaskListener(ctx)
 
@@ -238,7 +242,8 @@ func TestTaskRangesWithSplit(t *testing.T) {
 	c.splitAndScatter("0012", "0034", "0048")
 	c.advanceCheckpoints()
 	c.flushAllExcept("0049")
-	env := &testEnv{fakeCluster: c, testCtx: t, ranges: []kv.KeyRange{{StartKey: []byte("0002"), EndKey: []byte("0048")}}}
+	env := newTestEnv(c, t)
+	env.ranges = []kv.KeyRange{{StartKey: []byte("0002"), EndKey: []byte("0048")}}
 	adv := streamhelper.NewCheckpointAdvancer(env)
 	adv.StartTaskListener(ctx)
 
@@ -281,7 +286,7 @@ func TestClearCache(t *testing.T) {
 		}
 		s.clientMu.Unlock()
 	}
-	env := &testEnv{fakeCluster: c, testCtx: t}
+	env := newTestEnv(c, t)
 	adv := streamhelper.NewCheckpointAdvancer(env)
 	adv.StartTaskListener(ctx)
 	var err error
@@ -312,7 +317,7 @@ func TestBlocked(t *testing.T) {
 		marked = true
 	}
 	req.True(marked, "failed to mark the cluster: ")
-	env := &testEnv{fakeCluster: c, testCtx: t}
+	env := newTestEnv(c, t)
 	adv := streamhelper.NewCheckpointAdvancer(env)
 	adv.StartTaskListener(ctx)
 	adv.UpdateConfigWith(func(c *config.Config) {
@@ -343,7 +348,7 @@ func TestResolveLock(t *testing.T) {
 	c.splitAndScatter("01", "02", "022", "023", "033", "04", "043")
 	ctx := context.Background()
 	minCheckpoint := c.advanceCheckpoints()
-	env := &testEnv{fakeCluster: c, testCtx: t}
+	env := newTestEnv(c, t)
 
 	lockRegion := c.findRegionByKey([]byte("01"))
 	allLocks := []*txnlock.Lock{
@@ -409,7 +414,7 @@ func TestOwnerDropped(t *testing.T) {
 	c := createFakeCluster(t, 4, false)
 	c.splitAndScatter("01", "02", "022", "023", "033", "04", "043")
 	installSubscribeSupport(c)
-	env := &testEnv{testCtx: t, fakeCluster: c}
+	env := newTestEnv(c, t)
 	fp := "github.com/pingcap/tidb/br/pkg/streamhelper/get_subscriber"
 	defer func() {
 		if t.Failed() {
@@ -445,10 +450,7 @@ func TestRemoveTaskAndFlush(t *testing.T) {
 	ctx := context.Background()
 	c := createFakeCluster(t, 4, true)
 	installSubscribeSupport(c)
-	env := &testEnv{
-		fakeCluster: c,
-		testCtx:     t,
-	}
+	env := newTestEnv(c, t)
 	adv := streamhelper.NewCheckpointAdvancer(env)
 	adv.StartTaskListener(ctx)
 	adv.SpawnSubscriptionHandler(ctx)
@@ -473,11 +475,29 @@ func TestEnableCheckPointLimit(t *testing.T) {
 	c.splitAndScatter("01", "02", "022", "023", "033", "04", "043")
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	env := &testEnv{fakeCluster: c, testCtx: t}
+
+	env := newTestEnv(c, t)
+	rngs := env.ranges
+	if len(rngs) == 0 {
+		rngs = []kv.KeyRange{{}}
+	}
+	env.task = streamhelper.TaskEvent{
+		Type: streamhelper.EventAdd,
+		Name: "whole",
+		Info: &backup.StreamBackupTaskInfo{
+			Name:    "whole",
+			StartTs: oracle.GoTimeToTS(oracle.GetTimeFromTS(0).Add(1 * time.Minute)),
+		},
+		Ranges: rngs,
+	}
+	log.Info("Start Time:", zap.Uint64("StartTs", env.task.Info.StartTs))
+
 	adv := streamhelper.NewCheckpointAdvancer(env)
 	adv.UpdateConfigWith(func(c *config.Config) {
 		c.CheckPointLagLimit = 1 * time.Minute
 	})
+	c.advanceClusterTimeBy(1 * time.Minute)
+	c.advanceCheckpointBy(1 * time.Minute)
 	adv.StartTaskListener(ctx)
 	for i := 0; i < 5; i++ {
 		c.advanceClusterTimeBy(30 * time.Second)
@@ -494,13 +514,28 @@ func TestCheckPointLagged(t *testing.T) {
 	c.splitAndScatter("01", "02", "022", "023", "033", "04", "043")
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	env := &testEnv{fakeCluster: c, testCtx: t}
+
+	env := newTestEnv(c, t)
+	rngs := env.ranges
+	if len(rngs) == 0 {
+		rngs = []kv.KeyRange{{}}
+	}
+	env.task = streamhelper.TaskEvent{
+		Type: streamhelper.EventAdd,
+		Name: "whole",
+		Info: &backup.StreamBackupTaskInfo{
+			Name:    "whole",
+			StartTs: oracle.GoTimeToTS(oracle.GetTimeFromTS(0).Add(1 * time.Minute)),
+		},
+		Ranges: rngs,
+	}
+
 	adv := streamhelper.NewCheckpointAdvancer(env)
 	adv.UpdateConfigWith(func(c *config.Config) {
 		c.CheckPointLagLimit = 1 * time.Minute
 	})
 	adv.StartTaskListener(ctx)
-	c.advanceClusterTimeBy(1 * time.Minute)
+	c.advanceClusterTimeBy(2 * time.Minute)
 	require.NoError(t, adv.OnTick(ctx))
 	c.advanceClusterTimeBy(1 * time.Minute)
 	require.ErrorContains(t, adv.OnTick(ctx), "lagged too large")
@@ -510,6 +545,7 @@ func TestCheckPointLagged(t *testing.T) {
 	}, 5*time.Second, 100*time.Millisecond)
 }
 
+// If the paused task are manually resumed, it should run normally
 func TestCheckPointResume(t *testing.T) {
 	c := createFakeCluster(t, 4, false)
 	defer func() {
@@ -518,7 +554,7 @@ func TestCheckPointResume(t *testing.T) {
 	c.splitAndScatter("01", "02", "022", "023", "033", "04", "043")
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	env := &testEnv{fakeCluster: c, testCtx: t}
+	env := newTestEnv(c, t)
 	adv := streamhelper.NewCheckpointAdvancer(env)
 	adv.UpdateConfigWith(func(c *config.Config) {
 		c.CheckPointLagLimit = 1 * time.Minute
@@ -550,7 +586,7 @@ func TestUnregisterAfterPause(t *testing.T) {
 	c.splitAndScatter("01", "02", "022", "023", "033", "04", "043")
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	env := &testEnv{fakeCluster: c, testCtx: t}
+	env := newTestEnv(c, t)
 	adv := streamhelper.NewCheckpointAdvancer(env)
 	adv.UpdateConfigWith(func(c *config.Config) {
 		c.CheckPointLagLimit = 1 * time.Minute
@@ -570,7 +606,8 @@ func TestUnregisterAfterPause(t *testing.T) {
 	}, 5*time.Second, 300*time.Millisecond)
 }
 
-func TestAddTaskWithLaggedStartTS(t *testing.T) {
+// If the start ts is *NOT* lagged, even both the cluster and pd are lagged, the task should run normally.
+func TestAddTaskWithLongRunTask0(t *testing.T) {
 	c := createFakeCluster(t, 4, false)
 	defer func() {
 		fmt.Println(c)
@@ -578,46 +615,154 @@ func TestAddTaskWithLaggedStartTS(t *testing.T) {
 	c.splitAndScatter("01", "02", "022", "023", "033", "04", "043")
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	env := &testEnv{fakeCluster: c, testCtx: t}
-	adv := streamhelper.NewCheckpointAdvancer(env)
-	adv.UpdateConfigWith(func(c *config.Config) {
-		c.CheckPointLagLimit = 1 * time.Minute
-	})
-	c.advanceClusterTimeBy(5 * time.Minute)
-	env.advanceCheckpointBy(5 * time.Minute)
-	// Global checkpoint lagged
-	c.advanceCheckpointBy(0 * time.Minute)
-	adv.StartTaskListener(ctx)
-	// Try update checkpoint
-	require.NoError(t, adv.OnTick(ctx))
-	// Verify no err raised
-	require.NoError(t, adv.OnTick(ctx))
-	require.NoError(t, adv.OnTick(ctx))
-}
 
-func TestAddTaskWithLaggedStartTSFailed(t *testing.T) {
-	c := createFakeCluster(t, 4, false)
-	defer func() {
-		fmt.Println(c)
-	}()
-	c.splitAndScatter("01", "02", "022", "023", "033", "04", "043")
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	env := &testEnv{fakeCluster: c, testCtx: t}
+	env := newTestEnv(c, t)
+	rngs := env.ranges
+	if len(rngs) == 0 {
+		rngs = []kv.KeyRange{{}}
+	}
+	env.task = streamhelper.TaskEvent{
+		Type: streamhelper.EventAdd,
+		Name: "whole",
+		Info: &backup.StreamBackupTaskInfo{
+			Name:    "whole",
+			StartTs: oracle.GoTimeToTS(oracle.GetTimeFromTS(0).Add(2 * time.Minute)),
+		},
+		Ranges: rngs,
+	}
+
 	adv := streamhelper.NewCheckpointAdvancer(env)
 	adv.UpdateConfigWith(func(c *config.Config) {
 		c.CheckPointLagLimit = 1 * time.Minute
 	})
-	c.advanceClusterTimeBy(5 * time.Minute)
-	env.advanceCheckpointBy(5 * time.Minute)
-	// Global checkpoint lagged
-	c.advanceCheckpointBy(0 * time.Minute)
+	c.advanceClusterTimeBy(3 * time.Minute)
+	c.advanceCheckpointBy(1 * time.Minute)
+	env.advanceCheckpointBy(1 * time.Minute)
 	env.mockPDConnectionError()
 	adv.StartTaskListener(ctx)
 	// Try update checkpoint
 	require.NoError(t, adv.OnTick(ctx))
 	// Verify no err raised
 	require.NoError(t, adv.OnTick(ctx))
+}
+
+// If the start ts is lagged, as long as cluster has advanced, the task should run normally.
+func TestAddTaskWithLongRunTask1(t *testing.T) {
+	c := createFakeCluster(t, 4, false)
+	defer func() {
+		fmt.Println(c)
+	}()
+	c.splitAndScatter("01", "02", "022", "023", "033", "04", "043")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	env := newTestEnv(c, t)
+	rngs := env.ranges
+	if len(rngs) == 0 {
+		rngs = []kv.KeyRange{{}}
+	}
+	env.task = streamhelper.TaskEvent{
+		Type: streamhelper.EventAdd,
+		Name: "whole",
+		Info: &backup.StreamBackupTaskInfo{
+			Name:    "whole",
+			StartTs: oracle.GoTimeToTS(oracle.GetTimeFromTS(0).Add(1 * time.Minute)),
+		},
+		Ranges: rngs,
+	}
+
+	adv := streamhelper.NewCheckpointAdvancer(env)
+	adv.UpdateConfigWith(func(c *config.Config) {
+		c.CheckPointLagLimit = 1 * time.Minute
+	})
+	c.advanceClusterTimeBy(3 * time.Minute)
+	c.advanceCheckpointBy(2 * time.Minute)
+	env.advanceCheckpointBy(1 * time.Minute)
+	adv.StartTaskListener(ctx)
+	// Try update checkpoint
+	require.NoError(t, adv.OnTick(ctx))
+	// Verify no err raised
+	require.NoError(t, adv.OnTick(ctx))
+}
+
+// If the start ts is lagged, as long as pd stored the advanced checkpoint, the task should run normally.
+// Also, temporary connection error won't affect the task.
+func TestAddTaskWithLongRunTask2(t *testing.T) {
+	c := createFakeCluster(t, 4, false)
+	defer func() {
+		fmt.Println(c)
+	}()
+	c.splitAndScatter("01", "02", "022", "023", "033", "04", "043")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	env := newTestEnv(c, t)
+	rngs := env.ranges
+	if len(rngs) == 0 {
+		rngs = []kv.KeyRange{{}}
+	}
+	env.task = streamhelper.TaskEvent{
+		Type: streamhelper.EventAdd,
+		Name: "whole",
+		Info: &backup.StreamBackupTaskInfo{
+			Name:    "whole",
+			StartTs: oracle.GoTimeToTS(oracle.GetTimeFromTS(0).Add(1 * time.Minute)),
+		},
+		Ranges: rngs,
+	}
+
+	adv := streamhelper.NewCheckpointAdvancer(env)
+	adv.UpdateConfigWith(func(c *config.Config) {
+		c.CheckPointLagLimit = 1 * time.Minute
+	})
+	c.advanceClusterTimeBy(3 * time.Minute)
+	c.advanceCheckpointBy(1 * time.Minute)
+	env.advanceCheckpointBy(2 * time.Minute)
+	env.mockPDConnectionError()
+	adv.StartTaskListener(ctx)
+	// Try update checkpoint
+	require.NoError(t, adv.OnTick(ctx))
+	// Verify no err raised
+	require.NoError(t, adv.OnTick(ctx))
+}
+
+// If the start ts, pd, and cluster checkpoint are all lagged, the task should pause.
+func TestAddTaskWithLongRunTask3(t *testing.T) {
+	c := createFakeCluster(t, 4, false)
+	defer func() {
+		fmt.Println(c)
+	}()
+	c.splitAndScatter("01", "02", "022", "023", "033", "04", "043")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	env := newTestEnv(c, t)
+	rngs := env.ranges
+	if len(rngs) == 0 {
+		rngs = []kv.KeyRange{{}}
+	}
+	env.task = streamhelper.TaskEvent{
+		Type: streamhelper.EventAdd,
+		Name: "whole",
+		Info: &backup.StreamBackupTaskInfo{
+			Name:    "whole",
+			StartTs: oracle.GoTimeToTS(oracle.GetTimeFromTS(0).Add(1 * time.Minute)),
+		},
+		Ranges: rngs,
+	}
+
+	adv := streamhelper.NewCheckpointAdvancer(env)
+	adv.UpdateConfigWith(func(c *config.Config) {
+		c.CheckPointLagLimit = 1 * time.Minute
+	})
+	c.advanceClusterTimeBy(3 * time.Minute)
+	c.advanceCheckpointBy(1 * time.Minute)
+	env.advanceCheckpointBy(1 * time.Minute)
+	env.mockPDConnectionError()
+	adv.StartTaskListener(ctx)
+	// Try update checkpoint
+	require.NoError(t, adv.OnTick(ctx))
+	// Verify no err raised
 	require.NoError(t, adv.OnTick(ctx))
 }
 
@@ -626,7 +771,7 @@ func TestOwnershipLost(t *testing.T) {
 	c.splitAndScatter(manyRegions(0, 10240)...)
 	installSubscribeSupport(c)
 	ctx, cancel := context.WithCancel(context.Background())
-	env := &testEnv{fakeCluster: c, testCtx: t}
+	env := newTestEnv(c, t)
 	adv := streamhelper.NewCheckpointAdvancer(env)
 	adv.OnStart(ctx)
 	adv.OnBecomeOwner(ctx)
@@ -647,7 +792,7 @@ func TestSubscriptionPanic(t *testing.T) {
 	c.splitAndScatter(manyRegions(0, 20)...)
 	installSubscribeSupport(c)
 	ctx, cancel := context.WithCancel(context.Background())
-	env := &testEnv{fakeCluster: c, testCtx: t}
+	env := newTestEnv(c, t)
 	adv := streamhelper.NewCheckpointAdvancer(env)
 	adv.OnStart(ctx)
 	adv.OnBecomeOwner(ctx)
