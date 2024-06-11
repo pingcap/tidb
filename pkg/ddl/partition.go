@@ -3036,7 +3036,7 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 			splitPartitionTableRegion(w.sess.Context, s, tblInfo, partInfo.Definitions, true)
 		}
 
-		if job.Type == model.ActionReorganizePartition && tblInfo.Partition.Type == model.PartitionTypeList {
+		if job.Type == model.ActionReorganizePartition {
 			tblInfo.Partition.SetOriginalPartitionIDs()
 		}
 

@@ -555,8 +555,9 @@ func TestReorgPartitionFailures(t *testing.T) {
 		` partition by range (a) ` +
 		`(partition p0 values less than (10),` +
 		` partition p1 values less than (20),` +
+		` partition p2 values less than (30),` +
 		` partition pMax values less than (MAXVALUE))`
-	alter := "alter table t reorganize partition p1 into (partition p1a values less than (15), partition p1b values less than (20))"
+	alter := "alter table t reorganize partition p1,p2 into (partition p1 values less than (17), partition p1b values less than (24), partition p2 values less than (30))"
 	beforeDML := []string{
 		`insert into t values (1,"1",1),(2,"2",2),(12,"12",21),(13,"13",13),(17,"17",17),(18,"18",18),(23,"23",32),(34,"34",43),(45,"45",54),(56,"56",65)`,
 		`update t set a = 11, b = "11", c = 11 where a = 17`,

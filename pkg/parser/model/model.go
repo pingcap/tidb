@@ -1210,10 +1210,10 @@ type PartitionInfo struct {
 	// DroppingDefinitions is filled when dropping/truncating partitions that is in the mid state.
 	DroppingDefinitions []PartitionDefinition `json:"dropping_definitions"`
 	// NewPartitionIDs is filled when truncating partitions that is in the mid state.
-	NewPartitionIDs []int64
+	NewPartitionIDs []int64 `json:"new_partition_ids"`
 	// OriginalPartitionIDsOrder is only needed for rollback of Reorganize Partition for
-	// LIST partitions, since in StateDeleteReorganize we don't know where the old order any longer.
-	OriginalPartitionIDsOrder []int64
+	// LIST partitions, since in StateDeleteReorganize we don't know the old order any longer.
+	OriginalPartitionIDsOrder []int64 `json:"original_partition_ids_order"`
 
 	States []PartitionState `json:"states"`
 	Num    uint64           `json:"num"`
