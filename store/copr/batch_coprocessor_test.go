@@ -168,9 +168,9 @@ func TestGetUsedStores(t *testing.T) {
 	cache := NewRegionCache(tikv.NewRegionCache(pdCli))
 	defer cache.Close()
 
-	cache.SetRegionCacheStore(1, tikvrpc.TiFlash, 0, nil)
-	cache.SetRegionCacheStore(2, tikvrpc.TiFlash, 0, nil)
-	cache.SetRegionCacheStore(3, tikvrpc.TiFlash, 0, nil)
+	cache.SetRegionCacheStore(1, tikvrpc.TiFlash, 1, nil)
+	cache.SetRegionCacheStore(2, tikvrpc.TiFlash, 1, nil)
+	cache.SetRegionCacheStore(3, tikvrpc.TiFlash, 1, nil)
 
 	allUsedTiFlashStoresMap := make(map[uint64]struct{})
 	allUsedTiFlashStoresMap[2] = struct{}{}
