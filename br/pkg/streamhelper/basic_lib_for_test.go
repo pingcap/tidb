@@ -640,7 +640,7 @@ func (f *fakeCluster) String() string {
 type testEnv struct {
 	*fakeCluster
 	checkpoint     uint64
-	pdDisconnected bool
+	pdDisconnected atomic.Bool
 	testCtx        *testing.T
 	ranges         []kv.KeyRange
 	taskCh         chan<- streamhelper.TaskEvent
@@ -681,14 +681,14 @@ func (t *testEnv) UploadV3GlobalCheckpointForTask(ctx context.Context, _ string,
 }
 
 func (t *testEnv) mockPDConnectionError() {
-	t.pdDisconnected = true
+	t.pdDisconnected.Store(true)
 }
 
 func (t *testEnv) connectPD() bool {
-	if !t.pdDisconnected {
+	if !t.pdDisconnected.Load() {
 		return true
 	}
-	t.pdDisconnected = false
+	t.pdDisconnected.Store(false)
 	return false
 }
 
