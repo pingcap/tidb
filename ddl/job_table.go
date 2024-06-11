@@ -204,6 +204,9 @@ func (d *ddl) loadDDLJobAndRun(sess *session, pool *workerPool, getJob func(*ses
 	d.delivery2worker(wk, pool, job)
 }
 
+// AfterDelivery2WorkerForTest is only used for test.
+var AfterDelivery2WorkerForTest func(*model.Job)
+
 // delivery2worker owns the worker, need to put it back to the pool in this function.
 func (d *ddl) delivery2worker(wk *worker, pool *workerPool, job *model.Job) {
 	injectFailPointForGetJob(job)
@@ -211,6 +214,9 @@ func (d *ddl) delivery2worker(wk *worker, pool *workerPool, job *model.Job) {
 	d.wg.Run(func() {
 		metrics.DDLRunningJobCount.WithLabelValues(pool.tp().String()).Inc()
 		defer func() {
+			failpoint.Inject("afterDelivery2Worker", func() {
+				AfterDelivery2WorkerForTest(job)
+			})
 			d.runningJobs.remove(job)
 			asyncNotify(d.ddlJobCh)
 			metrics.DDLRunningJobCount.WithLabelValues(pool.tp().String()).Dec()
