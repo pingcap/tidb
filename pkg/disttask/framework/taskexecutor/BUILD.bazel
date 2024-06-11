@@ -62,6 +62,7 @@ go_test(
         "//pkg/disttask/framework/testutil",
         "//pkg/kv",
         "//pkg/testkit",
+        "//pkg/testkit/testfailpoint",
         "//pkg/testkit/testsetup",
         "//pkg/util/logutil",
         "//pkg/util/memory",

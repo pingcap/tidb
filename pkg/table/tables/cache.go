@@ -119,7 +119,7 @@ func (c *cachedTable) TryReadFromCache(ts uint64, leaseDuration time.Duration) (
 // newCachedTable creates a new CachedTable Instance
 func newCachedTable(tbl *TableCommon) (table.Table, error) {
 	ret := &cachedTable{
-		TableCommon: *tbl,
+		TableCommon: tbl.Copy(),
 		tokenLimit:  make(chan StateRemote, 1),
 	}
 	return ret, nil

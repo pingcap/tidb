@@ -384,8 +384,8 @@ func (b *builtinArithmeticMinusIntSig) vecEvalInt(ctx EvalContext, input *chunk.
 	resulti64s := result.Int64s()
 
 	forceToSigned := sqlMode(ctx).HasNoUnsignedSubtractionMode()
-	isLHSUnsigned := mysql.HasUnsignedFlag(b.args[0].GetType().GetFlag())
-	isRHSUnsigned := mysql.HasUnsignedFlag(b.args[1].GetType().GetFlag())
+	isLHSUnsigned := mysql.HasUnsignedFlag(b.args[0].GetType(ctx).GetFlag())
+	isRHSUnsigned := mysql.HasUnsignedFlag(b.args[1].GetType(ctx).GetFlag())
 
 	errType := "BIGINT UNSIGNED"
 	signed := forceToSigned || (!isLHSUnsigned && !isRHSUnsigned)
@@ -583,8 +583,8 @@ func (b *builtinArithmeticIntDivideDecimalSig) vecEvalInt(ctx EvalContext, input
 		num[i] = buf[i].Decimals()
 	}
 
-	isLHSUnsigned := mysql.HasUnsignedFlag(b.args[0].GetType().GetFlag())
-	isRHSUnsigned := mysql.HasUnsignedFlag(b.args[1].GetType().GetFlag())
+	isLHSUnsigned := mysql.HasUnsignedFlag(b.args[0].GetType(ctx).GetFlag())
+	isRHSUnsigned := mysql.HasUnsignedFlag(b.args[1].GetType(ctx).GetFlag())
 	isUnsigned := isLHSUnsigned || isRHSUnsigned
 
 	result.ResizeInt64(n, false)
@@ -745,8 +745,8 @@ func (b *builtinArithmeticIntDivideIntSig) vecEvalInt(ctx EvalContext, input *ch
 	rhsI64s := rhsBuf.Int64s()
 	resultI64s := result.Int64s()
 
-	isLHSUnsigned := mysql.HasUnsignedFlag(b.args[0].GetType().GetFlag())
-	isRHSUnsigned := mysql.HasUnsignedFlag(b.args[1].GetType().GetFlag())
+	isLHSUnsigned := mysql.HasUnsignedFlag(b.args[0].GetType(ctx).GetFlag())
+	isRHSUnsigned := mysql.HasUnsignedFlag(b.args[1].GetType(ctx).GetFlag())
 
 	switch {
 	case isLHSUnsigned && isRHSUnsigned:
@@ -875,8 +875,8 @@ func (b *builtinArithmeticPlusIntSig) vecEvalInt(ctx EvalContext, input *chunk.C
 	rhi64s := rh.Int64s()
 	resulti64s := result.Int64s()
 
-	isLHSUnsigned := mysql.HasUnsignedFlag(b.args[0].GetType().GetFlag())
-	isRHSUnsigned := mysql.HasUnsignedFlag(b.args[1].GetType().GetFlag())
+	isLHSUnsigned := mysql.HasUnsignedFlag(b.args[0].GetType(ctx).GetFlag())
+	isRHSUnsigned := mysql.HasUnsignedFlag(b.args[1].GetType(ctx).GetFlag())
 
 	switch {
 	case isLHSUnsigned && isRHSUnsigned:

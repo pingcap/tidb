@@ -127,6 +127,7 @@ func onMultiSchemaChange(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 		subJobs := make([]model.SubJob, len(job.MultiSchemaInfo.SubJobs))
 		// Step the sub-jobs to the non-revertible states all at once.
 		// We only generate 1 schema version for these sub-job.
+		actionTypes := make([]model.ActionType, 0, len(job.MultiSchemaInfo.SubJobs))
 		for i, sub := range job.MultiSchemaInfo.SubJobs {
 			if sub.IsFinished() {
 				continue
@@ -144,12 +145,35 @@ func onMultiSchemaChange(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 			sub.FromProxyJob(&proxyJob, proxyJobVer)
 			if err != nil || proxyJob.Error != nil {
 				for j := i - 1; j >= 0; j-- {
+					// TODO if some sub-job is finished, this will empty them
+					// also some sub-job cannot be rollback completely, maybe keep them?
 					job.MultiSchemaInfo.SubJobs[j] = &subJobs[j]
 				}
 				handleRevertibleException(job, sub, proxyJob.Error)
 				// The TableInfo and sub-jobs should be restored
 				// because some schema changes update the transaction aggressively.
+				// TODO this error handling cannot handle below case:
+				// suppose the job is for "alter table t auto_increment = 100, add column c int".
+				// if we fail on "add column c int", the allocator is rebased to 100
+				// which cannot be rollback, but it's table-info.AutoIncID is rollback by below call.
+				// TODO we should also change schema diff of 'ver' if len(actionTypes) > 1.
 				return updateVersionAndTableInfo(d, t, job, tblInfo, true)
+			}
+			actionTypes = append(actionTypes, sub.Type)
+		}
+		if len(actionTypes) > 1 {
+			// only single table schema changes can be put into a multi-schema-change
+			// job except AddForeignKey which is handled separately in the first loop.
+			// so this diff is enough, but it wound be better to accumulate all the diffs,
+			// and then merge them into a single diff.
+			if err = t.SetSchemaDiff(&model.SchemaDiff{
+				Version:        ver,
+				Type:           job.Type,
+				TableID:        job.TableID,
+				SchemaID:       job.SchemaID,
+				SubActionTypes: actionTypes,
+			}); err != nil {
+				return ver, err
 			}
 		}
 		// All the sub-jobs are non-revertible.
@@ -350,26 +374,29 @@ func checkOperateSameColAndIdx(info *model.MultiSchemaInfo) error {
 }
 
 func mergeAddIndex(info *model.MultiSchemaInfo) {
-	consistentUnique := false
-	for i, subJob := range info.SubJobs {
+	var mergedSubJob *model.SubJob
+	var mergeCnt int
+	for _, subJob := range info.SubJobs {
 		if subJob.Type == model.ActionAddForeignKey {
 			// Foreign key requires the order of adding indexes is unchanged.
 			return
 		}
-		if subJob.Type == model.ActionAddIndex || subJob.Type == model.ActionAddPrimaryKey {
-			if i == 0 {
-				consistentUnique = subJob.Args[0].(bool)
-			} else {
-				if consistentUnique != subJob.Args[0].(bool) {
-					// Some indexes are unique, others are not.
-					// There are problems with the mix usage of unique and non-unique backend,
-					// we don't merge these sub-jobs for now.
-					return
-				}
+		if subJob.Type == model.ActionAddIndex {
+			mergeCnt++
+			if mergedSubJob == nil {
+				clonedSubJob := *subJob
+				mergedSubJob = &clonedSubJob
+				mergedSubJob.Args = nil
+				mergedSubJob.RawArgs = nil
 			}
 		}
 	}
-	var newSubJob *model.SubJob
+
+	if mergeCnt <= 1 {
+		// no add index job in this multi-schema change.
+		return
+	}
+
 	var unique []bool
 	var indexNames []model.CIStr
 	var indexPartSpecifications [][]*ast.IndexPartSpecification
@@ -380,12 +407,6 @@ func mergeAddIndex(info *model.MultiSchemaInfo) {
 	newSubJobs := make([]*model.SubJob, 0, len(info.SubJobs))
 	for _, subJob := range info.SubJobs {
 		if subJob.Type == model.ActionAddIndex {
-			if newSubJob == nil {
-				clonedSubJob := *subJob
-				newSubJob = &clonedSubJob
-				newSubJob.Args = nil
-				newSubJob.RawArgs = nil
-			}
 			unique = append(unique, subJob.Args[0].(bool))
 			indexNames = append(indexNames, subJob.Args[1].(model.CIStr))
 			indexPartSpecifications = append(indexPartSpecifications, subJob.Args[2].([]*ast.IndexPartSpecification))
@@ -396,11 +417,11 @@ func mergeAddIndex(info *model.MultiSchemaInfo) {
 			newSubJobs = append(newSubJobs, subJob)
 		}
 	}
-	if newSubJob != nil {
-		newSubJob.Args = []any{unique, indexNames, indexPartSpecifications, indexOption, hiddenCols, global}
-		newSubJobs = append(newSubJobs, newSubJob)
-		info.SubJobs = newSubJobs
-	}
+
+	mergedSubJob.Args = []any{unique, indexNames, indexPartSpecifications, indexOption, hiddenCols, global}
+	// place the merged add index job at the end of the sub-jobs.
+	newSubJobs = append(newSubJobs, mergedSubJob)
+	info.SubJobs = newSubJobs
 }
 
 func checkOperateDropIndexUseByForeignKey(info *model.MultiSchemaInfo, t table.Table) error {

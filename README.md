@@ -47,9 +47,9 @@ TiDB (/’taɪdiːbi:/, "Ti" stands for Titanium) is an open-source distributed 
 - [Architecture](#architecture)
 - [MySQL compatibility](https://docs.pingcap.com/tidb/stable/mysql-compatibility)
 
-See what TiDB is capable ONLINE at [TiDB Playground](https://play.tidbcloud.com/?utm_source=github&utm_medium=tidb_readme).
+See what TiDB is capable of ONLINE at the [TiDB Playground](https://play.tidbcloud.com/?utm_source=github&utm_medium=tidb_readme).
 
-For more details and latest updates, see [TiDB documentation](https://docs.pingcap.com/tidb/stable) and [release notes](https://docs.pingcap.com/tidb/dev/release-notes).
+For more details and the latest updates, see the [TiDB documentation](https://docs.pingcap.com/tidb/stable) and [release notes](https://docs.pingcap.com/tidb/dev/release-notes).
 
 For future plans, see the [TiDB roadmap](roadmap.md).
 
@@ -61,15 +61,15 @@ TiDB Cloud is the fully-managed service of TiDB, currently available on AWS and 
 
 Quickly check out TiDB Cloud with [a free trial](https://tidbcloud.com/free-trial).
 
-See [TiDB Cloud Quick Start Guide](https://docs.pingcap.com/tidbcloud/tidb-cloud-quickstart).
+See the [TiDB Cloud Quick Start Guide](https://docs.pingcap.com/tidbcloud/tidb-cloud-quickstart).
 
 ### Start with TiDB
 
 See [TiDB Quick Start Guide](https://docs.pingcap.com/tidb/stable/quick-start-with-tidb).
 
-### Start developing TiDB
+### Start developing with TiDB
 
-See the [Get Started](https://pingcap.github.io/tidb-dev-guide/get-started/introduction.html) chapter of [TiDB Development Guide](https://pingcap.github.io/tidb-dev-guide/index.html).
+See [TiDB Developer Guide](https://docs.pingcap.com/tidb/stable/dev-guide-overview) and [TiDB Cloud Developer Guide](https://docs.pingcap.com/tidbcloud/dev-guide-overview).
 
 ## Community
 
@@ -96,7 +96,7 @@ Contributions are welcomed and greatly appreciated. You can get started with one
 
 [<img src="docs/contribution-map.png" alt="contribution-map" width="180">](https://github.com/pingcap/tidb-map/blob/master/maps/contribution-map.md#tidb-is-an-open-source-distributed-htap-database-compatible-with-the-mysql-protocol)
 
-Every contributor is welcome to claim your contribution swag by filling in and submitting this [form](https://forms.pingcap.com/f/tidb-contribution-swag).
+Every contributor is welcome to claim their contribution swag by filling in and submitting this [form](https://forms.pingcap.com/f/tidb-contribution-swag).
 
 <a href="https://next.ossinsight.io/widgets/official/compose-activity-trends?repo_id=41986369" target="_blank" style="display: block" align="center">
   <picture>

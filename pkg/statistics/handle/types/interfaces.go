@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
-	"golang.org/x/sync/singleflight"
 )
 
 // StatsGC is used to GC unnecessary stats.
@@ -370,6 +369,7 @@ type NeededItemTask struct {
 	ToTimeout time.Time
 	ResultCh  chan stmtctx.StatsLoadResult
 	Item      model.StatsLoadItem
+	Retry     int
 }
 
 // StatsLoad is used to load stats concurrently
@@ -397,7 +397,6 @@ type NeededItemTask struct {
 type StatsLoad struct {
 	NeededItemsCh  chan *NeededItemTask
 	TimeoutItemsCh chan *NeededItemTask
-	Singleflight   singleflight.Group
 	sync.Mutex
 }
 
@@ -419,15 +418,23 @@ type StatsSyncLoad interface {
 	HandleOneTask(sctx sessionctx.Context, lastTask *NeededItemTask, exit chan struct{}) (task *NeededItemTask, err error)
 }
 
+// GlobalStatsInfo represents the contextual information pertaining to global statistics.
+type GlobalStatsInfo struct {
+	HistIDs []int64
+	// When the `isIndex == 0`, HistIDs will be the column IDs.
+	// Otherwise, HistIDs will only contain the index ID.
+	IsIndex      int
+	StatsVersion int
+}
+
 // StatsGlobal is used to manage partition table global stats.
 type StatsGlobal interface {
 	// MergePartitionStats2GlobalStatsByTableID merges partition stats to global stats by table ID.
-	MergePartitionStats2GlobalStatsByTableID(sctx sessionctx.Context,
+	MergePartitionStats2GlobalStatsByTableID(sc sessionctx.Context,
 		opts map[ast.AnalyzeOptionType]uint64, is infoschema.InfoSchema,
+		info *GlobalStatsInfo,
 		physicalID int64,
-		isIndex bool,
-		histIDs []int64,
-	) (globalStats any, err error)
+	) (err error)
 }
 
 // DDL is used to handle ddl events.

@@ -19,6 +19,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -29,7 +30,7 @@ import (
 type RuntimeFilterGenerator struct {
 	rfIDGenerator                 *util.IDGenerator
 	columnUniqueIDToRF            map[int64][]*RuntimeFilter
-	parentPhysicalPlan            PhysicalPlan
+	parentPhysicalPlan            base.PhysicalPlan
 	childIdxForParentPhysicalPlan int
 }
 
@@ -55,7 +56,7 @@ PhysicalPlanTree:
  TableScan   ExchangeNode
 (assign RF1)
 */
-func (generator *RuntimeFilterGenerator) GenerateRuntimeFilter(plan PhysicalPlan) {
+func (generator *RuntimeFilterGenerator) GenerateRuntimeFilter(plan base.PhysicalPlan) {
 	switch physicalPlan := plan.(type) {
 	case *PhysicalHashJoin:
 		generator.generateRuntimeFilterInterval(physicalPlan)
@@ -207,14 +208,14 @@ func (*RuntimeFilterGenerator) matchEQPredicate(eqPredicate *expression.ScalarFu
 		return false
 	}
 	// match data type
-	srcColumnType := srcColumn.GetType().GetType()
+	srcColumnType := srcColumn.GetStaticType().GetType()
 	if srcColumnType == mysql.TypeJSON || srcColumnType == mysql.TypeBlob ||
 		srcColumnType == mysql.TypeLongBlob || srcColumnType == mysql.TypeMediumBlob ||
-		srcColumnType == mysql.TypeTinyBlob || srcColumn.GetType().Hybrid() || srcColumn.GetType().IsArray() {
+		srcColumnType == mysql.TypeTinyBlob || srcColumn.GetStaticType().Hybrid() || srcColumn.GetStaticType().IsArray() {
 		logutil.BgLogger().Debug("Src column type does not match RF pattern",
 			zap.String("EQPredicate", eqPredicate.String()),
 			zap.String("SrcColumn", srcColumn.String()),
-			zap.String("SrcColumnType", srcColumn.GetType().String()))
+			zap.String("SrcColumnType", srcColumn.GetStaticType().String()))
 		return false
 	}
 	return true
@@ -227,7 +228,7 @@ func (generator *RuntimeFilterGenerator) calculateRFMode(buildNode *PhysicalHash
 	return variable.RFGlobal
 }
 
-func (generator *RuntimeFilterGenerator) belongsToSameFragment(currentNode PhysicalPlan, targetNode *PhysicalTableScan) bool {
+func (generator *RuntimeFilterGenerator) belongsToSameFragment(currentNode base.PhysicalPlan, targetNode *PhysicalTableScan) bool {
 	switch currentNode.(type) {
 	case *PhysicalExchangeReceiver:
 		// terminal traversal

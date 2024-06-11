@@ -30,15 +30,17 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/cost"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/statistics"
+	"github.com/pingcap/tidb/pkg/statistics/asyncload"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	h "github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/ranger"
@@ -116,57 +118,13 @@ func (p *LogicalShowDDLJobs) DeriveStats(_ []*property.StatsInfo, selfSchema *ex
 }
 
 // RecursiveDeriveStats4Test is a exporter just for test.
-func RecursiveDeriveStats4Test(p LogicalPlan) (*property.StatsInfo, error) {
-	return p.recursiveDeriveStats(nil)
+func RecursiveDeriveStats4Test(p base.LogicalPlan) (*property.StatsInfo, error) {
+	return p.RecursiveDeriveStats(nil)
 }
 
 // GetStats4Test is a exporter just for test.
-func GetStats4Test(p LogicalPlan) *property.StatsInfo {
+func GetStats4Test(p base.LogicalPlan) *property.StatsInfo {
 	return p.StatsInfo()
-}
-
-func (p *baseLogicalPlan) recursiveDeriveStats(colGroups [][]*expression.Column) (*property.StatsInfo, error) {
-	childStats := make([]*property.StatsInfo, len(p.children))
-	childSchema := make([]*expression.Schema, len(p.children))
-	cumColGroups := p.self.ExtractColGroups(colGroups)
-	for i, child := range p.children {
-		childProfile, err := child.recursiveDeriveStats(cumColGroups)
-		if err != nil {
-			return nil, err
-		}
-		childStats[i] = childProfile
-		childSchema[i] = child.Schema()
-	}
-	return p.self.DeriveStats(childStats, p.self.Schema(), childSchema, colGroups)
-}
-
-// ExtractColGroups implements LogicalPlan ExtractColGroups interface.
-func (*baseLogicalPlan) ExtractColGroups(_ [][]*expression.Column) [][]*expression.Column {
-	return nil
-}
-
-// DeriveStats implement LogicalPlan DeriveStats interface.
-func (p *baseLogicalPlan) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, _ []*expression.Schema, _ [][]*expression.Column) (*property.StatsInfo, error) {
-	if len(childStats) == 1 {
-		p.SetStats(childStats[0])
-		return p.StatsInfo(), nil
-	}
-	if len(childStats) > 1 {
-		err := plannererrors.ErrInternal.GenWithStack("LogicalPlans with more than one child should implement their own DeriveStats().")
-		return nil, err
-	}
-	if p.StatsInfo() != nil {
-		return p.StatsInfo(), nil
-	}
-	profile := &property.StatsInfo{
-		RowCount: float64(1),
-		ColNDVs:  make(map[int64]float64, selfSchema.Len()),
-	}
-	for _, col := range selfSchema.Columns {
-		profile.ColNDVs[col.UniqueID] = 1
-	}
-	p.SetStats(profile)
-	return profile, nil
 }
 
 func (ds *DataSource) getGroupNDVs(colGroups [][]*expression.Column) []property.GroupNDV {
@@ -214,13 +172,8 @@ func (ds *DataSource) getGroupNDVs(colGroups [][]*expression.Column) []property.
 	return ndvs
 }
 
-func init() {
-	// To handle cycle import, we have to define this function here.
-	cardinality.GetTblInfoForUsedStatsByPhysicalID = getTblInfoForUsedStatsByPhysicalID
-}
-
 // getTblInfoForUsedStatsByPhysicalID get table name, partition name and HintedTable that will be used to record used stats.
-func getTblInfoForUsedStatsByPhysicalID(sctx PlanContext, id int64) (fullName string, tblInfo *model.TableInfo) {
+func getTblInfoForUsedStatsByPhysicalID(sctx base.PlanContext, id int64) (fullName string, tblInfo *model.TableInfo) {
 	fullName = "tableID " + strconv.FormatInt(id, 10)
 
 	is := domain.GetDomain(sctx).InfoSchema()
@@ -277,6 +230,21 @@ func (ds *DataSource) initStats(colGroups [][]*expression.Column) {
 	ds.tableStats = tableStats
 	ds.tableStats.GroupNDVs = ds.getGroupNDVs(colGroups)
 	ds.TblColHists = ds.statisticTable.ID2UniqueID(ds.TblCols)
+	for _, col := range ds.tableInfo.Columns {
+		if col.State != model.StatePublic {
+			continue
+		}
+		// If we enable lite stats init or we just found out the meta info of the column is missed, we need to register columns for async load.
+		_, isLoadNeeded, _ := ds.statisticTable.ColumnIsLoadNeeded(col.ID, false)
+		if isLoadNeeded {
+			asyncload.AsyncLoadHistogramNeededItems.Insert(model.TableItemID{
+				TableID:          ds.tableInfo.ID,
+				ID:               col.ID,
+				IsIndex:          false,
+				IsSyncLoadFailed: ds.SCtx().GetSessionVars().StmtCtx.StatsLoad.Timeout > 0,
+			}, false)
+		}
+	}
 }
 
 func (ds *DataSource) deriveStatsByFilter(conds expression.CNFExprs, filledPaths []*util.AccessPath) *property.StatsInfo {
@@ -287,7 +255,7 @@ func (ds *DataSource) deriveStatsByFilter(conds expression.CNFExprs, filledPaths
 	selectivity, _, err := cardinality.Selectivity(ds.SCtx(), ds.tableStats.HistColl, conds, filledPaths)
 	if err != nil {
 		logutil.BgLogger().Debug("something wrong happened, use the default selectivity", zap.Error(err))
-		selectivity = SelectionFactor
+		selectivity = cost.SelectionFactor
 	}
 	// TODO: remove NewHistCollBySelectivity later on.
 	// if ds.SCtx().GetSessionVars().OptimizerSelectivityLevel >= 1 {
@@ -537,7 +505,7 @@ func (ts *LogicalTableScan) DeriveStats(_ []*property.StatsInfo, _ *expression.S
 	// TODO: support clustered index.
 	if ts.HandleCols != nil {
 		// TODO: restrict mem usage of table ranges.
-		ts.Ranges, _, _, err = ranger.BuildTableRange(ts.AccessConds, ts.SCtx(), ts.HandleCols.GetCol(0).RetType, 0)
+		ts.Ranges, _, _, err = ranger.BuildTableRange(ts.AccessConds, ts.SCtx().GetRangerCtx(), ts.HandleCols.GetCol(0).RetType, 0)
 	} else {
 		isUnsigned := false
 		if ts.Source.tableInfo.PKIsHandle {
@@ -581,7 +549,7 @@ func (p *LogicalSelection) DeriveStats(childStats []*property.StatsInfo, _ *expr
 	if p.StatsInfo() != nil {
 		return p.StatsInfo(), nil
 	}
-	p.SetStats(childStats[0].Scale(SelectionFactor))
+	p.SetStats(childStats[0].Scale(cost.SelectionFactor))
 	p.StatsInfo().GroupNDVs = nil
 	return p.StatsInfo(), nil
 }
@@ -813,11 +781,11 @@ func (p *LogicalJoin) DeriveStats(childStats []*property.StatsInfo, selfSchema *
 		nil, nil)
 	if p.JoinType == SemiJoin || p.JoinType == AntiSemiJoin {
 		p.SetStats(&property.StatsInfo{
-			RowCount: leftProfile.RowCount * SelectionFactor,
+			RowCount: leftProfile.RowCount * cost.SelectionFactor,
 			ColNDVs:  make(map[int64]float64, len(leftProfile.ColNDVs)),
 		})
 		for id, c := range leftProfile.ColNDVs {
-			p.StatsInfo().ColNDVs[id] = c * SelectionFactor
+			p.StatsInfo().ColNDVs[id] = c * cost.SelectionFactor
 		}
 		return p.StatsInfo(), nil
 	}
@@ -1081,7 +1049,16 @@ func loadTableStats(ctx sessionctx.Context, tblInfo *model.TableInfo, pid int64)
 
 	pctx := ctx.GetPlanCtx()
 	tableStats := getStatsTable(pctx, tblInfo, pid)
-	name, _ := getTblInfoForUsedStatsByPhysicalID(pctx, pid)
+
+	name := tblInfo.Name.O
+	partInfo := tblInfo.GetPartitionInfo()
+	if partInfo != nil {
+		for _, p := range partInfo.Definitions {
+			if p.ID == pid {
+				name += " " + p.Name.O
+			}
+		}
+	}
 	usedStats := &stmtctx.UsedStatsInfoForTable{
 		Name:          name,
 		TblInfo:       tblInfo,

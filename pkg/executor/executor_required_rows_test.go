@@ -393,8 +393,9 @@ func buildTopNExec(ctx sessionctx.Context, offset, count int, byItems []*util.By
 		ExecSchema:   src.Schema(),
 	}
 	return &sortexec.TopNExec{
-		SortExec: sortExec,
-		Limit:    &plannercore.PhysicalLimit{Count: uint64(count), Offset: uint64(offset)},
+		SortExec:    sortExec,
+		Limit:       &plannercore.PhysicalLimit{Count: uint64(count), Offset: uint64(offset)},
+		Concurrency: 5,
 	}
 }
 
@@ -733,7 +734,7 @@ func buildMergeJoinExec(ctx sessionctx.Context, joinType plannercore.JoinType, i
 
 	j.CompareFuncs = make([]expression.CompareFunc, 0, len(j.LeftJoinKeys))
 	for i := range j.LeftJoinKeys {
-		j.CompareFuncs = append(j.CompareFuncs, expression.GetCmpFunction(nil, j.LeftJoinKeys[i], j.RightJoinKeys[i]))
+		j.CompareFuncs = append(j.CompareFuncs, expression.GetCmpFunction(ctx.GetExprCtx(), j.LeftJoinKeys[i], j.RightJoinKeys[i]))
 	}
 
 	b := newExecutorBuilder(ctx, nil)

@@ -1,0 +1,134 @@
+set tidb_enable_global_index = true;
+--echo ## Test IntHandle
+CREATE TABLE `tpk2` (
+  `a` int(11) DEFAULT NULL,
+  `b` int(11) DEFAULT NULL,
+  `c` int(11) NOT NULL,
+  `d` int(11) NOT NULL AUTO_INCREMENT,
+  KEY `idx_bc` (`b`,`c`),
+  UNIQUE KEY `uidx_a` (`a`),
+  UNIQUE KEY `uidx_ac` (`a`, `c`),
+  KEY `idx_c` (`c`)
+) PARTITION BY HASH (`c`) PARTITIONS 5;
+
+insert into tpk2 values (1, 2, 1, 1), (3, 6, 3, 3);
+
+begin;
+insert into tpk2 values (2, 4, 2, 2);
+
+--echo ## for indexMerge union
+explain select /*+ use_index_merge(tpk2, uidx_a, idx_bc) */ * from tpk2 where a=1 or b=4;
+--sorted_result
+select /*+ use_index_merge(tpk2, uidx_a, idx_bc) */ * from tpk2 where a=1 or b=4;
+--sorted_result
+select /*+ use_index_merge(tpk2, uidx_a, idx_bc) */ * from tpk2 where a=2 or b=4;
+
+--echo ## for indexMerge intersection
+explain select /*+ use_index_merge(tpk2, uidx_a, idx_c) */ * from tpk2 where a > 1 and c > 1;
+--sorted_result
+select /*+ use_index_merge(tpk2, uidx_a, idx_c) */ * from tpk2 where a > 1 and c > 1;
+--sorted_result
+select /*+ use_index_merge(tpk2, uidx_a, idx_c) */ * from tpk2 where a > 0 and c > 0;
+
+--echo ## for indexMerge union with specified PARTITION
+--replace_regex /in\(_tidb_pid, [0-9]+\)/in(_tidb_pid, pid1)/
+explain select /*+ use_index_merge(tpk2, uidx_a, idx_bc) */ * from tpk2 partition(p1) where a=1 or b=4;
+--sorted_result
+select /*+ use_index_merge(tpk2, uidx_a, idx_bc) */ * from tpk2 partition(p1) where a=1 or b=4;
+
+--echo ## for indexMerge intersection with specified PARTITION
+--replace_regex /in\(_tidb_pid, [0-9]+\)/in(_tidb_pid, pid1)/
+explain select /*+ use_index_merge(tpk2, uidx_a, idx_c) */ * from tpk2 partition(p1) where a > 1 and c > 1;
+--sorted_result
+select /*+ use_index_merge(tpk2, uidx_a, idx_c) */ * from tpk2 partition(p1) where a > 1 and c > 1;
+--sorted_result
+select /*+ use_index_merge(tpk2, uidx_a, idx_c) */ * from tpk2 partition(p1) where a > 0 and c > 0;
+
+rollback;
+
+--echo ## Test CommonHandle
+drop table tpk2;
+CREATE TABLE `tpk2` (
+  `a` int(11) DEFAULT NULL,
+  `b` int(11) DEFAULT NULL,
+  `c` int(11) NOT NULL,
+  `d` int(11) NOT NULL,
+  KEY `idx_bc` (`b`,`c`),
+  UNIQUE KEY `uidx_a` (`a`),
+  UNIQUE KEY `uidx_ac` (`a`, `c`),
+  KEY `idx_c` (`c`),
+  PRIMARY KEY(`d`, `c`) clustered
+) PARTITION BY HASH (`d`) PARTITIONS 5;
+
+insert into tpk2 values (1, 2, 1, 1), (3, 6, 3, 3);
+
+begin;
+insert into tpk2 values (2, 4, 2, 2);
+
+--echo ## for indexMerge union
+explain select /*+ use_index_merge(tpk2, uidx_a, idx_bc) */ * from tpk2 where a=1 or b=4;
+--sorted_result
+select /*+ use_index_merge(tpk2, uidx_a, idx_bc) */ * from tpk2 where a=1 or b=4;
+--sorted_result
+select /*+ use_index_merge(tpk2, uidx_a, idx_bc) */ * from tpk2 where a=2 or b=4;
+
+--echo ## for indexMerge intersection
+explain select /*+ use_index_merge(tpk2, uidx_a, idx_c) */ * from tpk2 where a > 1 and c > 1;
+--sorted_result
+select /*+ use_index_merge(tpk2, uidx_a, idx_c) */ * from tpk2 where a > 1 and c > 1;
+--sorted_result
+select /*+ use_index_merge(tpk2, uidx_a, idx_c) */ * from tpk2 where a > 0 and c > 0;
+
+--echo ## for indexMerge union with specified PARTITION
+--replace_regex /in\(_tidb_pid, [0-9]+\)/in(_tidb_pid, pid1)/
+explain select /*+ use_index_merge(tpk2, uidx_a, idx_bc) */ * from tpk2 partition(p1) where a=1 or b=4;
+--sorted_result
+select /*+ use_index_merge(tpk2, uidx_a, idx_bc) */ * from tpk2 partition(p1) where a=1 or b=4;
+
+--echo ## for indexMerge intersection with specified PARTITION
+--replace_regex /in\(_tidb_pid, [0-9]+\)/in(_tidb_pid, pid1)/
+explain select /*+ use_index_merge(tpk2, uidx_a, idx_c) */ * from tpk2 partition(p1) where a > 1 and c > 1;
+--sorted_result
+select /*+ use_index_merge(tpk2, uidx_a, idx_c) */ * from tpk2 partition(p1) where a > 1 and c > 1;
+--sorted_result
+select /*+ use_index_merge(tpk2, uidx_a, idx_c) */ * from tpk2 partition(p1) where a > 0 and c > 0;
+
+--echo ## for indexMerge union in txn with order by limit
+explain select /*+ use_index_merge(tpk2, uidx_ac, idx_bc) */ * from tpk2 where a = 1 or b = 4 order by c limit 1;
+select /*+ use_index_merge(tpk2, uidx_ac, idx_bc) */ * from tpk2 where a = 1 or b = 4 order by c limit 1;
+explain select /*+ use_index_merge(tpk2, uidx_ac, idx_bc) */ * from tpk2 where a = 1 or b = 4 order by c desc limit 1;
+select /*+ use_index_merge(tpk2, uidx_ac, idx_bc) */ * from tpk2 where a = 1 or b = 4 order by c desc limit 1;
+
+commit;
+
+--echo ## for indexMerge union with order by limit
+explain select /*+ use_index_merge(tpk2, uidx_ac, idx_bc) */ * from tpk2 where a = 1 or b = 4 order by c limit 1;
+select /*+ use_index_merge(tpk2, uidx_ac, idx_bc) */ * from tpk2 where a = 1 or b = 4 order by c limit 1;
+explain select /*+ use_index_merge(tpk2, uidx_ac, idx_bc) */ * from tpk2 where a = 1 or b = 4 order by c desc limit 1;
+select /*+ use_index_merge(tpk2, uidx_ac, idx_bc) */ * from tpk2 where a = 1 or b = 4 order by c desc limit 1;
+
+--echo ## Test IndexWorker + TableWorker
+drop table tpk2;
+CREATE TABLE `tpk2` (
+  `a` int(11) DEFAULT NULL,
+  `b` int(11),
+  `c` int(11) NOT NULL,
+  `d` int(11) NOT NULL AUTO_INCREMENT,
+  PRIMARY KEY (`b`),
+  UNIQUE KEY `uidx_a` (`a`)
+) PARTITION BY HASH (`b`) PARTITIONS 5;
+
+insert into tpk2 values (1, 2, 1, 1), (3, 6, 3, 3);
+
+begin;
+insert into tpk2 values (2, 4, 2, 2);
+
+--echo ## for indexMerge union
+explain select /*+ use_index_merge(tpk2, uidx_a, primary) */ * from tpk2 where a=1 or b=4;
+--sorted_result
+select /*+ use_index_merge(tpk2, uidx_a, primary) */ * from tpk2 where a=1 or b=4;
+--sorted_result
+select /*+ use_index_merge(tpk2, uidx_a, primary) */ * from tpk2 where a=2 or b=4;
+
+rollback;
+

@@ -1,0 +1,50 @@
+set tidb_enable_global_index=true;
+drop table if exists t;
+CREATE TABLE `t` (
+`a` int(11) NOT NULL,
+`b` int(11) DEFAULT NULL,
+`c` int(11) DEFAULT NULL,
+PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,
+UNIQUE KEY `idx1` (`b`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY HASH (`a`) PARTITIONS 5;
+begin;
+insert into t values (1, 2, 3);
+insert into t values (2, 2, 3);
+Error 1062 (23000): Duplicate entry '2' for key 't.idx1'
+rollback;
+drop table if exists t;
+create table t ( a int, b int, c int, unique key idx(b))
+partition by range( a ) (
+partition p1 values less than (10),
+partition p2 values less than (20),
+partition p3 values less than (30)
+);
+begin;
+insert into t values (1, 1, 1), (8, 8, 8), (11, 11, 11), (12, 12, 12);
+update t set a = 2, b = 12 where a = 11;
+Error 1062 (23000): Duplicate entry '12' for key 't.idx'
+rollback;
+insert into t values (1, 1, 1), (8, 8, 8), (11, 11, 11), (12, 12, 12);
+update t set a = 2 where a = 11;
+update t set a = 13 where a = 12;
+explain select * from t use index(idx) order by a;
+id	estRows	task	access object	operator info
+Sort_4	10000.00	root		globalindex__update.t.a
+└─IndexLookUp_10	10000.00	root	partition:all	
+  ├─IndexFullScan_7(Build)	10000.00	cop[tikv]	table:t, index:idx(b)	keep order:false, stats:pseudo
+  └─TableRowIDScan_8(Probe)	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+select * from t use index(idx) order by a;
+a	b	c
+1	1	1
+2	11	11
+8	8	8
+13	12	12
+drop table t;
+create table t(a varchar(70), b mediumint(9), unique index idx_a(a), unique index idx_b(b)) partition by key(b) partitions 5;
+insert into t values ('',826534 );
+replace into t values ('',826536 );
+select * from t;
+a	b
+	826536
+set tidb_enable_global_index=default;

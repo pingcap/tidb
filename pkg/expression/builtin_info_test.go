@@ -287,7 +287,7 @@ func TestLastInsertID(t *testing.T) {
 		} else {
 			f, err = newFunctionForTest(ctx, ast.LastInsertId)
 		}
-		tp := f.GetType()
+		tp := f.GetType(ctx)
 		require.NoError(t, err)
 		require.Equal(t, mysql.TypeLonglong, tp.GetType())
 		require.Equal(t, charset.CharsetBin, tp.GetCharset())

@@ -9,6 +9,7 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/ddl/internal/session",
     visibility = ["//pkg/ddl:__subpackages__"],
     deps = [
+        "//pkg/ddl/logutil",
         "//pkg/domain/infosync",
         "//pkg/kv",
         "//pkg/metrics",
@@ -17,13 +18,11 @@ go_library(
         "//pkg/sessionctx",
         "//pkg/sessiontxn",
         "//pkg/util/chunk",
-        "//pkg/util/logutil",
-        "//pkg/util/mock",
+        "//pkg/util/intest",
         "//pkg/util/sqlexec",
         "@com_github_ngaut_pools//:pools",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
-        "@org_uber_go_zap//:zap",
     ],
 )
 

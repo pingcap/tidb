@@ -47,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/plugin"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
@@ -58,6 +59,7 @@ import (
 	util2 "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/breakpoint"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/hint"
@@ -221,7 +223,7 @@ type ExecStmt struct {
 	// InfoSchema stores a reference to the schema information.
 	InfoSchema infoschema.InfoSchema
 	// Plan stores a reference to the final physical plan.
-	Plan plannercore.Plan
+	Plan base.Plan
 	// Text represents the origin query text.
 	Text string
 
@@ -291,7 +293,7 @@ func (a *ExecStmt) PointGet(ctx context.Context) (*recordSet, error) {
 			a.PsStmt.PointGet.Executor = nil
 		} else {
 			// CachedPlan type is already checked in last step
-			pointGetPlan := a.PsStmt.PointGet.Plan.(*plannercore.PointGetPlan)
+			pointGetPlan := a.Plan.(*plannercore.PointGetPlan)
 			exec.Init(pointGetPlan)
 			a.PsStmt.PointGet.Executor = exec
 			executor = exec
@@ -393,7 +395,7 @@ func (a *ExecStmt) RebuildPlan(ctx context.Context) (int64, error) {
 }
 
 // IsFastPlan exports for testing.
-func IsFastPlan(p plannercore.Plan) bool {
+func IsFastPlan(p base.Plan) bool {
 	if proj, ok := p.(*plannercore.PhysicalProjection); ok {
 		p = proj.Children()[0]
 	}
@@ -802,7 +804,7 @@ func (a *ExecStmt) handleNoDelay(ctx context.Context, e exec.Executor, isPessimi
 	return false, nil, nil
 }
 
-func isNoResultPlan(p plannercore.Plan) bool {
+func isNoResultPlan(p base.Plan) bool {
 	if p.Schema().Len() == 0 {
 		return true
 	}
@@ -1579,6 +1581,10 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	if !keyspace.IsKeyspaceNameEmpty(keyspaceName) {
 		keyspaceID = uint32(a.Ctx.GetStore().GetCodec().GetKeyspaceID())
 	}
+	if txnTS == 0 {
+		// TODO: txnTS maybe ambiguous, consider logging stale-read-ts with a new field in the slow log.
+		txnTS = sessVars.TxnCtx.StaleReadTs
+	}
 
 	slowItems := &variable.SlowQueryLogItems{
 		TxnTS:             txnTS,
@@ -1679,7 +1685,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	}
 }
 
-func extractMsgFromSQLWarn(sqlWarn *stmtctx.SQLWarn) string {
+func extractMsgFromSQLWarn(sqlWarn *contextutil.SQLWarn) string {
 	// Currently, this function is only used in collectWarningsForSlowLog.
 	// collectWarningsForSlowLog can make sure SQLWarn is not nil so no need to add a nil check here.
 	warn := errors.Cause(sqlWarn.Err)
@@ -1707,7 +1713,7 @@ func collectWarningsForSlowLog(stmtCtx *stmtctx.StatementContext) []variable.JSO
 }
 
 // GetResultRowsCount gets the count of the statement result rows.
-func GetResultRowsCount(stmtCtx *stmtctx.StatementContext, p plannercore.Plan) int64 {
+func GetResultRowsCount(stmtCtx *stmtctx.StatementContext, p base.Plan) int64 {
 	runtimeStatsColl := stmtCtx.RuntimeStatsColl
 	if runtimeStatsColl == nil {
 		return 0
@@ -1731,7 +1737,7 @@ func getFlatPlan(stmtCtx *stmtctx.StatementContext) *plannercore.FlatPhysicalPla
 		f := flat.(*plannercore.FlatPhysicalPlan)
 		return f
 	}
-	p := pp.(plannercore.Plan)
+	p := pp.(base.Plan)
 	flat := plannercore.FlattenPhysicalPlan(p, false)
 	if flat != nil {
 		stmtCtx.SetFlatPlan(flat)
@@ -1852,8 +1858,17 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 	sessVars.SetPrevStmtDigest(digest.String())
 
 	// No need to encode every time, so encode lazily.
-	planGenerator := func() (string, string) {
-		return getEncodedPlan(stmtCtx, !sessVars.InRestrictedSQL)
+	planGenerator := func() (p string, h string, e any) {
+		defer func() {
+			e = recover()
+			if e != nil {
+				logutil.BgLogger().Warn("fail to generate plan info",
+					zap.Stack("backtrace"),
+					zap.Any("error", e))
+			}
+		}()
+		p, h = getEncodedPlan(stmtCtx, !sessVars.InRestrictedSQL)
+		return
 	}
 	var binPlanGen func() string
 	if variable.GenerateBinaryPlan.Load() {
@@ -1953,6 +1968,8 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 		KeyspaceID:          keyspaceID,
 		RUDetail:            ruDetail,
 		ResourceGroupName:   sessVars.StmtCtx.ResourceGroupName,
+
+		PlanCacheUnqualified: sessVars.StmtCtx.PlanCacheUnqualified(),
 	}
 	if a.retryCount > 0 {
 		stmtExecInfo.ExecRetryTime = costTime - sessVars.DurationParse - sessVars.DurationCompile - time.Since(a.retryStartTime)

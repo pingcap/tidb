@@ -24,7 +24,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
 	exprctx "github.com/pingcap/tidb/pkg/expression/context"
-	exprctximpl "github.com/pingcap/tidb/pkg/expression/contextimpl"
+	exprctximpl "github.com/pingcap/tidb/pkg/expression/contextsession"
 	"github.com/pingcap/tidb/pkg/extension"
 	infoschema "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -42,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/disk"
 	"github.com/pingcap/tidb/pkg/util/memory"
+	rangerctx "github.com/pingcap/tidb/pkg/util/ranger/context"
 	"github.com/pingcap/tidb/pkg/util/sli"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/pkg/util/topsql/stmtstats"
@@ -59,7 +60,7 @@ var (
 // Context represents mocked sessionctx.Context.
 type Context struct {
 	planctx.EmptyPlanContextExtended
-	*exprctximpl.ExprCtxExtendedImpl
+	*exprctximpl.SessionExprContext
 	txn           wrapTxn    // mock global variable
 	Store         kv.Storage // mock global variable
 	ctx           context.Context
@@ -228,6 +229,11 @@ func (c *Context) GetPlanCtx() planctx.PlanContext {
 	return c
 }
 
+// GetNullRejectCheckExprCtx gets the expression context with null rejected check.
+func (c *Context) GetNullRejectCheckExprCtx() exprctx.ExprContext {
+	return exprctx.WithNullRejectCheck(c)
+}
+
 // GetExprCtx returns the expression context of the session.
 func (c *Context) GetExprCtx() exprctx.ExprContext {
 	return c
@@ -244,7 +250,7 @@ func (c *Context) GetDistSQLCtx() *distsqlctx.DistSQLContext {
 	sc := vars.StmtCtx
 
 	return &distsqlctx.DistSQLContext{
-		AppendWarning:                        sc.AppendWarning,
+		WarnHandler:                          sc.WarnHandler,
 		InRestrictedSQL:                      sc.InRestrictedSQL,
 		Client:                               c.GetClient(),
 		EnabledRateLimitAction:               vars.EnabledRateLimitAction,
@@ -265,6 +271,42 @@ func (c *Context) GetDistSQLCtx() *distsqlctx.DistSQLContext {
 		TiFlashMaxQueryMemoryPerNode:         vars.TiFlashMaxQueryMemoryPerNode,
 		TiFlashQuerySpillRatio:               vars.TiFlashQuerySpillRatio,
 		ExecDetails:                          &sc.SyncExecDetails,
+	}
+}
+
+// GetRangerCtx returns the context used in `ranger` related functions
+func (c *Context) GetRangerCtx() *rangerctx.RangerContext {
+	return &rangerctx.RangerContext{
+		ExprCtx: c.GetExprCtx(),
+		TypeCtx: c.GetSessionVars().StmtCtx.TypeCtx(),
+		ErrCtx:  c.GetSessionVars().StmtCtx.ErrCtx(),
+
+		InPreparedPlanBuilding:   c.GetSessionVars().StmtCtx.InPreparedPlanBuilding,
+		RegardNULLAsPoint:        c.GetSessionVars().RegardNULLAsPoint,
+		OptPrefixIndexSingleScan: c.GetSessionVars().OptPrefixIndexSingleScan,
+		OptimizerFixControl:      c.GetSessionVars().OptimizerFixControl,
+
+		PlanCacheTracker:     &c.GetSessionVars().StmtCtx.PlanCacheTracker,
+		RangeFallbackHandler: &c.GetSessionVars().StmtCtx.RangeFallbackHandler,
+	}
+}
+
+// GetBuildPBCtx returns the `ToPB` context of the session
+func (c *Context) GetBuildPBCtx() *planctx.BuildPBContext {
+	return &planctx.BuildPBContext{
+		ExprCtx: c.GetExprCtx(),
+		Client:  c.GetClient(),
+
+		TiFlashFastScan:                    c.GetSessionVars().TiFlashFastScan,
+		TiFlashFineGrainedShuffleBatchSize: c.GetSessionVars().TiFlashFineGrainedShuffleBatchSize,
+
+		// the following fields are used to build `expression.PushDownContext`.
+		// TODO: it'd be better to embed `expression.PushDownContext` in `BuildPBContext`. But `expression` already
+		// depends on this package, so we need to move `expression.PushDownContext` to a standalone package first.
+		GroupConcatMaxLen: c.GetSessionVars().GroupConcatMaxLen,
+		InExplainStmt:     c.GetSessionVars().StmtCtx.InExplainStmt,
+		WarnHandler:       c.GetSessionVars().StmtCtx.WarnHandler,
+		ExtraWarnghandler: c.GetSessionVars().StmtCtx.ExtraWarnHandler,
 	}
 }
 
@@ -575,7 +617,7 @@ func NewContext() *Context {
 	}
 	vars := variable.NewSessionVars(sctx)
 	sctx.sessionVars = vars
-	sctx.ExprCtxExtendedImpl = exprctximpl.NewExprExtendedImpl(sctx)
+	sctx.SessionExprContext = exprctximpl.NewSessionExprContext(sctx)
 	sctx.tblctx = tbctximpl.NewTableContextImpl(sctx, sctx)
 	vars.InitChunkSize = 2
 	vars.MaxChunkSize = 32

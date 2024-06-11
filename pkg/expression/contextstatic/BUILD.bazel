@@ -1,0 +1,50 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "contextstatic",
+    srcs = [
+        "evalctx.go",
+        "exprctx.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/expression/contextstatic",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/errctx",
+        "//pkg/expression/context",
+        "//pkg/expression/contextopt",
+        "//pkg/parser/charset",
+        "//pkg/parser/mysql",
+        "//pkg/sessionctx/variable",
+        "//pkg/types",
+        "//pkg/util/context",
+        "//pkg/util/intest",
+        "//pkg/util/mathutil",
+    ],
+)
+
+go_test(
+    name = "contextstatic_test",
+    timeout = "short",
+    srcs = [
+        "evalctx_test.go",
+        "exprctx_test.go",
+    ],
+    embed = [":contextstatic"],
+    flaky = True,
+    shard_count = 10,
+    deps = [
+        "//pkg/errctx",
+        "//pkg/expression/context",
+        "//pkg/expression/contextopt",
+        "//pkg/infoschema/context",
+        "//pkg/parser/auth",
+        "//pkg/parser/charset",
+        "//pkg/parser/mysql",
+        "//pkg/sessionctx/variable",
+        "//pkg/types",
+        "//pkg/util/context",
+        "//pkg/util/mathutil",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_stretchr_testify//require",
+    ],
+)

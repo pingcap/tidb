@@ -19,6 +19,7 @@ package testkit
 import (
 	"context"
 	"fmt"
+	"math/rand"
 	"net"
 	"net/http"
 	"net/http/pprof"
@@ -29,7 +30,6 @@ import (
 
 	"github.com/gorilla/mux"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -116,6 +116,13 @@ func NewTestKitWithSession(t testing.TB, store kv.Storage, se sessiontypes.Sessi
 // RefreshSession set a new session for the testkit
 func (tk *TestKit) RefreshSession() {
 	tk.session = NewSession(tk.t, tk.store)
+
+	if intest.InTest {
+		if rand.Intn(10) >= 3 { // 70% chance to run infoschema v2
+			tk.MustExec("set @@global.tidb_schema_cache_size = 1024 * 1024 * 1024")
+		}
+	}
+
 	// enforce sysvar cache loading, ref loadCommonGlobalVariableIfNeeded
 	tk.MustExec("select 3")
 }
@@ -696,14 +703,6 @@ func buildRowsRecordSet(ctx context.Context, rs sqlexec.RecordSet) sqlexec.Recor
 		rows:   rows,
 		idx:    0,
 	}
-}
-
-// EnableFailPoint enables fail-point, and disable it when test finished.
-func EnableFailPoint(t testing.TB, name, expr string) {
-	require.NoError(t, failpoint.Enable(name, expr))
-	t.Cleanup(func() {
-		require.NoError(t, failpoint.Disable(name))
-	})
 }
 
 // MockTiDBStatusPort mock the TiDB server status port to have metrics.

@@ -42,10 +42,35 @@ var fmSketchPool = sync.Pool{
 	},
 }
 
-// FMSketch is used to count the number of distinct elements in a set.
+// MaxSketchSize is the maximum size of the hashset in the FM sketch.
+// TODO: add this attribute to PB and persist it instead of using a fixed number(executor.maxSketchSize)
+const MaxSketchSize = 10000
+
+// FMSketch (Flajolet-Martin Sketch) is a probabilistic data structure that estimates the count of unique elements in a stream.
+// It employs a hash function to convert each element into a binary number and then counts the trailing zeroes in each hashed value.
+// **This variant of the FM sketch uses a set to store unique hashed values and a binary mask to track the maximum number of trailing zeroes.**
+// The estimated count of distinct values is calculated as 2^r * count, where 'r' is the maximum number of trailing zeroes observed and 'count' is the number of unique hashed values.
+// The fundamental idea is that our hash function maps the input domain onto a logarithmic scale.
+// This is achieved by hashing the input value and counting the number of trailing zeroes in the binary representation of the hash value.
+// Each distinct value is mapped to 'i' with a probability of 2^-(i+1).
+// For example, a value is mapped to 0 with a probability of 1/2, to 1 with a probability of 1/4, to 2 with a probability of 1/8, and so on.
+// This is achieved by hashing the input value and counting the trailing zeroes in the hash value.
+// If we have a set of 'n' distinct values, the count of distinct values with 'r' trailing zeroes is n / 2^r.
+// Therefore, the estimated count of distinct values is 2^r * count = n.
+// The level-by-level approach increases the accuracy of the estimation by ensuring a minimum count of distinct values at each level.
+// This way, the final estimation is less likely to be skewed by outliers.
+// For more details, refer to the following papers:
+//  1. https://www.vldb.org/conf/2001/P541.pdf
+//  2. https://algo.inria.fr/flajolet/Publications/FlMa85.pdf
 type FMSketch struct {
+	// A set to store unique hashed values.
 	hashset *swiss.Map[uint64, bool]
-	mask    uint64
+	// A binary mask used to track the maximum number of trailing zeroes in the hashed values.
+	// Also used to track the level of the sketch.
+	// Every time the size of the hashset exceeds the maximum size, the mask will be moved to the next level.
+	mask uint64
+	// The maximum size of the hashset. If the size exceeds this value, the mask will be moved to the next level.
+	// And the hashset will only keep the hashed values with trailing zeroes greater than or equal to the new mask.
 	maxSize int
 }
 
@@ -71,21 +96,34 @@ func (s *FMSketch) Copy() *FMSketch {
 	return result
 }
 
-// NDV returns the ndv of the sketch.
+// NDV returns the estimated number of distinct values (NDV) in the sketch.
 func (s *FMSketch) NDV() int64 {
 	if s == nil {
 		return 0
 	}
+	// The estimated count of distinct values is 2^r * count, where 'r' is the maximum number of trailing zeroes observed and 'count' is the number of unique hashed values.
+	// The fundamental idea is that the hash function maps the input domain onto a logarithmic scale.
+	// This is achieved by hashing the input value and counting the number of trailing zeroes in the binary representation of the hash value.
+	// So the count of distinct values with 'r' trailing zeroes is n / 2^r, where 'n' is the number of distinct values.
+	// Therefore, the estimated count of distinct values is 2^r * count = n.
 	return int64(s.mask+1) * int64(s.hashset.Count())
 }
 
+// insertHashValue inserts a hashed value into the sketch.
 func (s *FMSketch) insertHashValue(hashVal uint64) {
+	// If the hashed value is already covered by the mask, we can skip it.
+	// This is because the number of trailing zeroes in the hashed value is less than the mask.
 	if (hashVal & s.mask) != 0 {
 		return
 	}
+	// Put the hashed value into the hashset.
 	s.hashset.Put(hashVal, true)
+	// We track the unique hashed values level by level to ensure a minimum count of distinct values at each level.
+	// This way, the final estimation is less likely to be skewed by outliers.
 	if s.hashset.Count() > s.maxSize {
+		// If the size of the hashset exceeds the maximum size, move the mask to the next level.
 		s.mask = s.mask*2 + 1
+		// Clean up the hashset by removing the hashed values with trailing zeroes less than the new mask.
 		s.hashset.Iter(func(k uint64, _ bool) (stop bool) {
 			if (k & s.mask) != 0 {
 				s.hashset.Delete(k)
@@ -204,7 +242,7 @@ func DecodeFMSketch(data []byte) (*FMSketch, error) {
 		return nil, errors.Trace(err)
 	}
 	fm := FMSketchFromProto(p)
-	fm.maxSize = 10000 // TODO: add this attribute to PB and persist it instead of using a fixed number(executor.maxSketchSize)
+	fm.maxSize = MaxSketchSize
 	return fm, nil
 }
 

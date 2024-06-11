@@ -37,9 +37,8 @@ import (
 )
 
 type keyValueWithDupInfo struct {
-	newKey       kv.Key
-	dupErr       error
-	commonHandle bool
+	newKey kv.Key
+	dupErr error
 }
 
 type toBeCheckedRow struct {
@@ -98,7 +97,7 @@ func getKeysNeedCheckOneRow(ctx sessionctx.Context, t table.Table, row []types.D
 	pkIdxInfo *model.IndexInfo, result []toBeCheckedRow) ([]toBeCheckedRow, error) {
 	var err error
 	if p, ok := t.(table.PartitionedTable); ok {
-		t, err = p.GetPartitionByRow(ctx.GetExprCtx(), row)
+		t, err = p.GetPartitionByRow(ctx.GetExprCtx().GetEvalCtx(), row)
 		if err != nil {
 			if terr, ok := errors.Cause(err).(*terror.Error); ok && (terr.Code() == errno.ErrNoPartitionForGivenValue || terr.Code() == errno.ErrRowDoesNotMatchGivenPartitionSet) {
 				ec := ctx.GetSessionVars().StmtCtx.ErrCtx()
@@ -213,9 +212,8 @@ func getKeysNeedCheckOneRow(ctx sessionctx.Context, t table.Table, row []types.D
 				return nil, err1
 			}
 			uniqueKeys = append(uniqueKeys, &keyValueWithDupInfo{
-				newKey:       key,
-				dupErr:       kv.ErrKeyExists.FastGenByArgs(colValStr, fmt.Sprintf("%s.%s", v.TableMeta().Name.String(), v.Meta().Name.String())),
-				commonHandle: t.Meta().IsCommonHandle,
+				newKey: key,
+				dupErr: kv.ErrKeyExists.FastGenByArgs(colValStr, fmt.Sprintf("%s.%s", v.TableMeta().Name.String(), v.Meta().Name.String())),
 			})
 		}
 	}

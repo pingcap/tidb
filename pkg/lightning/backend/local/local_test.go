@@ -25,7 +25,6 @@ import (
 	"path"
 	"path/filepath"
 	"sort"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -43,7 +42,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/br/pkg/storage"
-	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
@@ -66,6 +64,14 @@ import (
 	"google.golang.org/grpc/encoding"
 	"google.golang.org/grpc/status"
 )
+
+var GetSplitConfFromStore = getSplitConfFromStore
+
+func SetGetSplitConfFromStoreFunc(
+	fn func(ctx context.Context, host string, tls *common.TLS) (splitSize int64, regionSplitKeys int64, err error),
+) {
+	getSplitConfFromStoreFunc = fn
+}
 
 func TestNextKey(t *testing.T) {
 	require.Equal(t, []byte{}, nextKey([]byte{}))
@@ -259,7 +265,7 @@ func TestRangePropertiesWithPebble(t *testing.T) {
 	keysDistance := uint64(20)
 	opt := &pebble.Options{
 		MemTableSize:             512 * units.MiB,
-		MaxConcurrentCompactions: 16,
+		MaxConcurrentCompactions: func() int { return 16 },
 		L0CompactionThreshold:    math.MaxInt32, // set to max try to disable compaction
 		L0StopWritesThreshold:    math.MaxInt32, // set to max try to disable compaction
 		MaxOpenFiles:             10000,
@@ -321,7 +327,7 @@ func TestRangePropertiesWithPebble(t *testing.T) {
 func testLocalWriter(t *testing.T, needSort bool, partitialSort bool) {
 	opt := &pebble.Options{
 		MemTableSize:             1024 * 1024,
-		MaxConcurrentCompactions: 16,
+		MaxConcurrentCompactions: func() int { return 16 },
 		L0CompactionThreshold:    math.MaxInt32, // set to max try to disable compaction
 		L0StopWritesThreshold:    math.MaxInt32, // set to max try to disable compaction
 		DisableWAL:               true,
@@ -404,7 +410,7 @@ func testLocalWriter(t *testing.T, needSort bool, partitialSort bool) {
 	require.NoError(t, f.flushEngineWithoutLock(ctx))
 	require.True(t, flushStatus.Flushed())
 	o := &pebble.IterOptions{}
-	it := db.NewIter(o)
+	it, _ := db.NewIter(o)
 
 	sort.Slice(keys, func(i, j int) bool {
 		return bytes.Compare(keys[i], keys[j]) < 0
@@ -476,7 +482,7 @@ func (i testIngester) ingest([]*sstMeta) error {
 func TestLocalIngestLoop(t *testing.T) {
 	opt := &pebble.Options{
 		MemTableSize:             1024 * 1024,
-		MaxConcurrentCompactions: 16,
+		MaxConcurrentCompactions: func() int { return 16 },
 		L0CompactionThreshold:    math.MaxInt32, // set to max try to disable compaction
 		L0StopWritesThreshold:    math.MaxInt32, // set to max try to disable compaction
 		DisableWAL:               true,
@@ -565,7 +571,7 @@ func makeRanges(input []string) []common.Range {
 func testMergeSSTs(t *testing.T, kvs [][]common.KvPair, meta *sstMeta) {
 	opt := &pebble.Options{
 		MemTableSize:             1024 * 1024,
-		MaxConcurrentCompactions: 16,
+		MaxConcurrentCompactions: func() int { return 16 },
 		L0CompactionThreshold:    math.MaxInt32, // set to max try to disable compaction
 		L0StopWritesThreshold:    math.MaxInt32, // set to max try to disable compaction
 		DisableWAL:               true,
@@ -1075,13 +1081,12 @@ func TestMultiIngest(t *testing.T) {
 					return importCli
 				},
 			},
-			logger: log.L(),
 		}
-		err := local.checkMultiIngestSupport(context.Background())
+		supportMultiIngest, err := checkMultiIngestSupport(context.Background(), local.pdCli, local.importClientFactory)
 		if err != nil {
 			require.Contains(t, err.Error(), testCase.retErr)
 		} else {
-			require.Equal(t, testCase.supportMutliIngest, local.supportMultiIngest)
+			require.Equal(t, testCase.supportMutliIngest, supportMultiIngest)
 		}
 	}
 }
@@ -1099,39 +1104,6 @@ func TestLocalWriteAndIngestPairsFailFast(t *testing.T) {
 	require.Error(t, err)
 	require.Regexp(t, "the remaining storage capacity of TiKV.*", err.Error())
 	require.Len(t, jobCh, 0)
-}
-
-func TestGetRegionSplitSizeKeys(t *testing.T) {
-	allStores := []*metapb.Store{
-		{
-			Address:       "172.16.102.1:20160",
-			StatusAddress: "0.0.0.0:20180",
-		},
-		{
-			Address:       "172.16.102.2:20160",
-			StatusAddress: "0.0.0.0:20180",
-		},
-		{
-			Address:       "172.16.102.3:20160",
-			StatusAddress: "0.0.0.0:20180",
-		},
-	}
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	cli := utils.FakePDClient{Stores: allStores}
-	defer func() {
-		getSplitConfFromStoreFunc = getSplitConfFromStore
-	}()
-	getSplitConfFromStoreFunc = func(ctx context.Context, host string, tls *common.TLS) (int64, int64, error) {
-		if strings.Contains(host, "172.16.102.3:20180") {
-			return int64(1), int64(2), nil
-		}
-		return 0, 0, errors.New("invalid connection")
-	}
-	splitSize, splitKeys, err := GetRegionSplitSizeKeys(ctx, cli, nil)
-	require.NoError(t, err)
-	require.Equal(t, int64(1), splitSize)
-	require.Equal(t, int64(2), splitKeys)
 }
 
 func TestLocalIsRetryableTiKVWriteError(t *testing.T) {

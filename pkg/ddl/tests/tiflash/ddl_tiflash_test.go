@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
 	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/domain"
@@ -46,7 +47,6 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit/external"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
-	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
@@ -801,6 +801,20 @@ func TestAlterDatabaseBasic(t *testing.T) {
 
 	// There is less TiFlash store
 	tk.MustGetErrMsg("alter database tiflash_ddl set tiflash replica 3", "the tiflash replica count: 3 should be less than the total tiflash server count: 2")
+
+	// Test Issue #51990, alter database skip set tiflash replica on sequence and view.
+	tk.MustExec("create database tiflash_ddl_skip;")
+	tk.MustExec("use tiflash_ddl_skip")
+	tk.MustExec("create table t (id int);")
+	tk.MustExec("create sequence t_seq;")
+	tk.MustExec("create view t_view as select id from t;")
+	tk.MustExec("create global temporary table t_temp (id int) on commit delete rows;")
+	tk.MustExec("alter database tiflash_ddl_skip set tiflash replica 1;")
+	require.Equal(t, "In total 4 tables: 1 succeed, 0 failed, 3 skipped", tk.Session().GetSessionVars().StmtCtx.GetMessage())
+	tk.MustQuery(`show warnings;`).Sort().Check(testkit.Rows(
+		"Note 1347 'tiflash_ddl_skip.t_seq' is not BASE TABLE",
+		"Note 1347 'tiflash_ddl_skip.t_view' is not BASE TABLE",
+		"Note 8006 `set on tiflash` is unsupported on temporary tables."))
 }
 
 func execWithTimeout(t *testing.T, tk *testkit.TestKit, to time.Duration, sql string) (bool, error) {
@@ -819,7 +833,7 @@ func execWithTimeout(t *testing.T, tk *testkit.TestKit, to time.Duration, sql st
 		return false, e
 	case <-ctx.Done():
 		// Exceed given timeout
-		logutil.BgLogger().Info("execWithTimeout meet timeout", zap.String("sql", sql))
+		logutil.DDLLogger().Info("execWithTimeout meet timeout", zap.String("sql", sql))
 		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/BatchAddTiFlashSendDone", "return(true)"))
 	}
 
@@ -897,7 +911,7 @@ func TestTiFlashBatchRateLimiter(t *testing.T) {
 		mu.Lock()
 		defer mu.Unlock()
 		tk.Session().Close()
-		logutil.BgLogger().Info("session closed")
+		logutil.DDLLogger().Info("session closed")
 	})
 	mu.Lock()
 	timeOut, err = execWithTimeout(t, tk, time.Second*2, "alter database tiflash_ddl_limit set tiflash replica 1")
@@ -1384,7 +1398,7 @@ type TestDDLCallback struct {
 
 // OnJobRunBefore is used to run the user customized logic of `onJobRunBefore` first.
 func (tc *TestDDLCallback) OnJobRunBefore(job *model.Job) {
-	logutil.BgLogger().Info("on job run before", zap.String("job", job.String()))
+	logutil.DDLLogger().Info("on job run before", zap.String("job", job.String()))
 	if tc.OnJobRunBeforeExported != nil {
 		tc.OnJobRunBeforeExported(job)
 		return

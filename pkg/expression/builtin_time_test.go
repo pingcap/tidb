@@ -796,7 +796,7 @@ func TestTime(t *testing.T) {
 	for _, c := range cases {
 		f, err := newFunctionForTest(ctx, ast.Time, primitiveValsToConstants(ctx, []any{c.args})...)
 		require.NoError(t, err)
-		tp := f.GetType()
+		tp := f.GetType(ctx)
 		require.Equal(t, mysql.TypeDuration, tp.GetType())
 		require.Equal(t, charset.CharsetBin, tp.GetCharset())
 		require.Equal(t, charset.CollationBin, tp.GetCollate())
@@ -845,7 +845,7 @@ func TestNowAndUTCTimestamp(t *testing.T) {
 		ts := x.now()
 		require.NoError(t, err)
 		mt := v.GetMysqlTime()
-		// we canot use a constant value to check timestamp funcs, so here
+		// we cannot use a constant value to check timestamp funcs, so here
 		// just to check the fractional seconds part and the time delta.
 		require.False(t, strings.Contains(mt.String(), "."))
 		require.LessOrEqual(t, ts.Sub(gotime(mt, ts.Location())), 5*time.Second)
@@ -1266,7 +1266,7 @@ func TestFromUnixTime(t *testing.T) {
 		if len(c.format) == 0 {
 			constants := datumsToConstants([]types.Datum{timestamp})
 			if !c.isDecimal {
-				constants[0].GetType().SetDecimal(0)
+				constants[0].GetType(ctx).SetDecimal(0)
 			}
 
 			f, err := fc.getFunction(ctx, constants)
@@ -1280,7 +1280,7 @@ func TestFromUnixTime(t *testing.T) {
 			format := types.NewStringDatum(c.format)
 			constants := datumsToConstants([]types.Datum{timestamp, format})
 			if !c.isDecimal {
-				constants[0].GetType().SetDecimal(0)
+				constants[0].GetType(ctx).SetDecimal(0)
 			}
 			f, err := fc.getFunction(ctx, constants)
 			require.NoError(t, err)
@@ -1632,7 +1632,7 @@ func TestTimeDiff(t *testing.T) {
 		preWarningCnt := ctx.GetSessionVars().StmtCtx.WarningCount()
 		f, err := newFunctionForTest(ctx, ast.TimeDiff, primitiveValsToConstants(ctx, c.args)...)
 		require.NoError(t, err)
-		tp := f.GetType()
+		tp := f.GetType(ctx)
 		require.Equal(t, mysql.TypeDuration, tp.GetType())
 		require.Equal(t, charset.CharsetBin, tp.GetCharset())
 		require.Equal(t, charset.CollationBin, tp.GetCollate())
@@ -1873,7 +1873,7 @@ func TestUnixTimestamp(t *testing.T) {
 
 	for _, test := range tests {
 		expr := datumsToConstants([]types.Datum{test.input})
-		expr[0].GetType().SetDecimal(test.inputDecimal)
+		expr[0].GetType(ctx).SetDecimal(test.inputDecimal)
 		resetStmtContext(ctx)
 		f, err := fc.getFunction(ctx, expr)
 		require.NoErrorf(t, err, "%+v", test)
@@ -2265,7 +2265,7 @@ func TestMakeDate(t *testing.T) {
 	for _, c := range cases {
 		f, err := newFunctionForTest(ctx, ast.MakeDate, primitiveValsToConstants(ctx, c.args)...)
 		require.NoError(t, err)
-		tp := f.GetType()
+		tp := f.GetType(ctx)
 		require.Equal(t, mysql.TypeDate, tp.GetType())
 		require.Equal(t, charset.CharsetBin, tp.GetCharset())
 		require.Equal(t, charset.CollationBin, tp.GetCollate())
@@ -2580,6 +2580,18 @@ func TestTimestampAdd(t *testing.T) {
 		{"MINUTE", 1.5, "1995-05-01 00:00:00", "1995-05-01 00:02:00"},
 		{"MINUTE", 1.5, "1995-05-01 00:00:00.000000", "1995-05-01 00:02:00"},
 		{"MICROSECOND", -100, "1995-05-01 00:00:00.0001", "1995-05-01 00:00:00"},
+
+		// issue41052
+		{"MONTH", 1, "2024-01-31", "2024-02-29 00:00:00"},
+		{"MONTH", 1, "2024-01-30", "2024-02-29 00:00:00"},
+		{"MONTH", 1, "2024-01-29", "2024-02-29 00:00:00"},
+		{"MONTH", 1, "2024-01-28", "2024-02-28 00:00:00"},
+		{"MONTH", 1, "2024-10-31", "2024-11-30 00:00:00"},
+		{"MONTH", 3, "2024-01-31", "2024-04-30 00:00:00"},
+		{"MONTH", 15, "2024-01-31", "2025-04-30 00:00:00"},
+		{"MONTH", 10, "2024-10-31", "2025-08-31 00:00:00"},
+		{"MONTH", 1, "2024-11-30", "2024-12-30 00:00:00"},
+		{"MONTH", 13, "2024-11-30", "2025-12-30 00:00:00"},
 	}
 
 	fc := funcs[ast.TimestampAdd]
@@ -2757,7 +2769,7 @@ func TestSecToTime(t *testing.T) {
 	for _, test := range tests {
 		comment := fmt.Sprintf("%+v", test)
 		expr := datumsToConstants([]types.Datum{test.input})
-		expr[0].GetType().SetDecimal(test.inputDecimal)
+		expr[0].GetType(ctx).SetDecimal(test.inputDecimal)
 		f, err := fc.getFunction(ctx, expr)
 		require.NoError(t, err, comment)
 		d, err := evalBuiltinFunc(f, ctx, chunk.Row{})

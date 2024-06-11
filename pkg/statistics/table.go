@@ -19,7 +19,6 @@ import (
 	"fmt"
 	"slices"
 	"strings"
-	"sync"
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -61,7 +60,6 @@ type Table struct {
 	ExtendedStats *ExtendedStatsColl
 
 	ColAndIdxExistenceMap *ColAndIdxExistenceMap
-	Name                  string
 	HistColl
 	Version uint64
 	// It's the timestamp of the last analyze time.
@@ -427,7 +425,6 @@ func (t *Table) Copy() *Table {
 	nt := &Table{
 		HistColl:           newHistColl,
 		Version:            t.Version,
-		Name:               t.Name,
 		TblInfoUpdateTS:    t.TblInfoUpdateTS,
 		IsPkIsHandle:       t.IsPkIsHandle,
 		LastAnalyzeVersion: t.LastAnalyzeVersion,
@@ -465,7 +462,6 @@ func (t *Table) ShallowCopy() *Table {
 	nt := &Table{
 		HistColl:              newHistColl,
 		Version:               t.Version,
-		Name:                  t.Name,
 		TblInfoUpdateTS:       t.TblInfoUpdateTS,
 		ExtendedStats:         t.ExtendedStats,
 		ColAndIdxExistenceMap: t.ColAndIdxExistenceMap,
@@ -629,13 +625,25 @@ func (t *Table) GetStatsHealthy() (int64, bool) {
 // The Column should be visible in the table and really has analyzed statistics in the stroage.
 // Also, if the stats has been loaded into the memory, we also don't need to load it.
 // We return the Column together with the checking result, to avoid accessing the map multiple times.
-func (t *Table) ColumnIsLoadNeeded(id int64, fullLoad bool) (*Column, bool) {
+// The first bool is whether we have it in memory. The second bool is whether this column has stats in the system table or not.
+func (t *Table) ColumnIsLoadNeeded(id int64, fullLoad bool) (*Column, bool, bool) {
+	if t.Pseudo {
+		return nil, false, false
+	}
 	col, ok := t.Columns[id]
 	hasAnalyzed := t.ColAndIdxExistenceMap.HasAnalyzed(id, false)
 
-	// If it's not analyzed yet. Don't need to load it.
+	// If it's not analyzed yet.
 	if !hasAnalyzed {
-		return nil, false
+		// If we don't have it in memory, we create a fake hist for pseudo estimation (see handleOneItemTask()).
+		if !ok {
+			// If we don't have this column. We skip it.
+			// It's something ridiculous. But it's possible that the stats don't have some ColumnInfo.
+			// We need to find a way to maintain it more correctly.
+			return nil, t.ColAndIdxExistenceMap.Has(id, false), false
+		}
+		// Otherwise we don't need to load it.
+		return nil, false, false
 	}
 
 	// Restore the condition from the simplified form:
@@ -643,11 +651,11 @@ func (t *Table) ColumnIsLoadNeeded(id int64, fullLoad bool) (*Column, bool) {
 	// 2. ok && hasAnalyzed && fullLoad && !col.IsFullLoad => need load
 	// 3. ok && hasAnalyzed && !fullLoad && !col.statsInitialized => need load
 	if !ok || (fullLoad && !col.IsFullLoad()) || (!fullLoad && !col.statsInitialized) {
-		return col, true
+		return col, true, true
 	}
 
 	// Otherwise don't need load it.
-	return col, false
+	return col, false, true
 }
 
 // IndexIsLoadNeeded checks whether the index needs trigger the async/sync load.
@@ -665,90 +673,6 @@ func (t *Table) IndexIsLoadNeeded(id int64) (*Index, bool) {
 		return idx, true
 	}
 	return idx, false
-}
-
-type neededStatsInternalMap struct {
-	items map[model.TableItemID]struct{}
-	m     sync.RWMutex
-}
-
-func (n *neededStatsInternalMap) AllItems() []model.TableItemID {
-	n.m.RLock()
-	keys := make([]model.TableItemID, 0, len(n.items))
-	for key := range n.items {
-		keys = append(keys, key)
-	}
-	n.m.RUnlock()
-	return keys
-}
-
-func (n *neededStatsInternalMap) Insert(col model.TableItemID) {
-	n.m.Lock()
-	n.items[col] = struct{}{}
-	n.m.Unlock()
-}
-
-func (n *neededStatsInternalMap) Delete(col model.TableItemID) {
-	n.m.Lock()
-	delete(n.items, col)
-	n.m.Unlock()
-}
-
-func (n *neededStatsInternalMap) Length() int {
-	n.m.RLock()
-	defer n.m.RUnlock()
-	return len(n.items)
-}
-
-const shardCnt = 128
-
-type neededStatsMap struct {
-	items [shardCnt]neededStatsInternalMap
-}
-
-func getIdx(tbl model.TableItemID) int64 {
-	var id int64
-	if tbl.ID < 0 {
-		id = -tbl.ID
-	} else {
-		id = tbl.ID
-	}
-	return id % shardCnt
-}
-
-func newNeededStatsMap() *neededStatsMap {
-	result := neededStatsMap{}
-	for i := 0; i < shardCnt; i++ {
-		result.items[i] = neededStatsInternalMap{
-			items: make(map[model.TableItemID]struct{}),
-		}
-	}
-	return &result
-}
-
-func (n *neededStatsMap) AllItems() []model.TableItemID {
-	var result []model.TableItemID
-	for i := 0; i < shardCnt; i++ {
-		keys := n.items[i].AllItems()
-		result = append(result, keys...)
-	}
-	return result
-}
-
-func (n *neededStatsMap) Insert(col model.TableItemID) {
-	n.items[getIdx(col)].Insert(col)
-}
-
-func (n *neededStatsMap) Delete(col model.TableItemID) {
-	n.items[getIdx(col)].Delete(col)
-}
-
-func (n *neededStatsMap) Length() int {
-	var result int
-	for i := 0; i < shardCnt; i++ {
-		result += n.items[i].Length()
-	}
-	return result
 }
 
 // RatioOfPseudoEstimate means if modifyCount / statsTblCount is greater than this ratio, we think the stats is invalid

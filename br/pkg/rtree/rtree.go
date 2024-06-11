@@ -11,6 +11,8 @@ import (
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/tablecodec"
+	"github.com/pingcap/tidb/pkg/util/redact"
+	"github.com/pkg/errors"
 )
 
 // Range represents a backup response.
@@ -67,6 +69,13 @@ func (rg *Range) Contains(key []byte) bool {
 	start, end := rg.StartKey, rg.EndKey
 	return bytes.Compare(key, start) >= 0 &&
 		(len(end) == 0 || bytes.Compare(key, end) < 0)
+}
+
+// ContainsRange check if the range contains the region's key range.
+func (rg *Range) ContainsRange(startKey, endKey []byte) bool {
+	start, end := rg.StartKey, rg.EndKey
+	return bytes.Compare(startKey, start) >= 0 &&
+		(len(end) == 0 || bytes.Compare(endKey, end) <= 0)
 }
 
 // Less impls btree.Item.
@@ -292,4 +301,121 @@ type ProgressRange struct {
 	Incomplete []Range
 	Origin     Range
 	GroupKey   string
+}
+
+// Less impls btree.Item.
+func (pr *ProgressRange) Less(than *ProgressRange) bool {
+	// pr.StartKey <= than.StartKey
+	return bytes.Compare(pr.Origin.StartKey, than.Origin.StartKey) < 0
+}
+
+// ProgressRangeTree is a sorted tree for ProgressRanges.
+// All the progress ranges it sorted do not overlap.
+type ProgressRangeTree struct {
+	*btree.BTreeG[*ProgressRange]
+}
+
+// NewProgressRangeTree returns an empty range tree.
+func NewProgressRangeTree() ProgressRangeTree {
+	return ProgressRangeTree{
+		BTreeG: btree.NewG[*ProgressRange](32, (*ProgressRange).Less),
+	}
+}
+
+// find is a helper function to find an item that contains the range.
+func (rangeTree *ProgressRangeTree) find(pr *ProgressRange) *ProgressRange {
+	var ret *ProgressRange
+	rangeTree.DescendLessOrEqual(pr, func(item *ProgressRange) bool {
+		ret = item
+		return false
+	})
+
+	if ret == nil || !ret.Origin.Contains(pr.Origin.StartKey) {
+		return nil
+	}
+
+	return ret
+}
+
+// Insert inserts a ProgressRange into the tree, it will return an error if there is a overlapping range.
+func (rangeTree *ProgressRangeTree) Insert(pr *ProgressRange) error {
+	overlap := rangeTree.find(pr)
+	if overlap != nil {
+		return errors.Errorf("failed to insert the progress range into range tree, "+
+			"because there is a overlapping range. The insert item start key: %s; "+
+			"The overlapped item start key: %s, end key: %s.",
+			redact.Key(pr.Origin.StartKey), redact.Key(overlap.Origin.StartKey), redact.Key(overlap.Origin.EndKey))
+	}
+	rangeTree.ReplaceOrInsert(pr)
+	return nil
+}
+
+// FindContained finds if there is a progress range containing the key range [startKey, endKey).
+func (rangeTree *ProgressRangeTree) FindContained(startKey, endKey []byte) (*ProgressRange, error) {
+	startPr := &ProgressRange{
+		Origin: Range{
+			StartKey: startKey,
+			EndKey:   endKey,
+		},
+	}
+	ret := rangeTree.find(startPr)
+
+	if ret == nil {
+		return nil, errors.Errorf("Cannot find progress range that contains the start key: %s", redact.Key(startKey))
+	}
+
+	if !ret.Origin.ContainsRange(startKey, endKey) {
+		return nil, errors.Errorf("The given region is not contained in the found progress range. "+
+			"The region start key is %s; The progress range start key is %s, end key is %s.",
+			startKey, redact.Key(ret.Origin.StartKey), redact.Key(ret.Origin.EndKey))
+	}
+
+	return ret, nil
+}
+
+type incompleteRangesFetcherItem struct {
+	pr       *ProgressRange
+	complete bool
+}
+
+type IncompleteRangesFetcher struct {
+	items []*incompleteRangesFetcherItem
+	left  int
+}
+
+func (rangeTree *ProgressRangeTree) Iter() *IncompleteRangesFetcher {
+	items := make([]*incompleteRangesFetcherItem, 0, rangeTree.Len())
+	rangeTree.Ascend(func(item *ProgressRange) bool {
+		items = append(items, &incompleteRangesFetcherItem{
+			pr:       item,
+			complete: false,
+		})
+		return true
+	})
+	return &IncompleteRangesFetcher{
+		items: items,
+		left:  len(items),
+	}
+}
+
+func (iter *IncompleteRangesFetcher) GetIncompleteRanges() []Range {
+	incompleteRanges := make([]Range, 0, 64*len(iter.items))
+	for _, item := range iter.items {
+		if item.complete {
+			continue
+		}
+
+		incomplete := item.pr.Res.GetIncompleteRange(item.pr.Origin.StartKey, item.pr.Origin.EndKey)
+		if len(incomplete) == 0 {
+			item.complete = true
+			iter.left -= 1
+			continue
+		}
+		incompleteRanges = append(incompleteRanges, incomplete...)
+	}
+	return incompleteRanges
+}
+
+func (iter *IncompleteRangesFetcher) Len() int {
+	return iter.left
 }

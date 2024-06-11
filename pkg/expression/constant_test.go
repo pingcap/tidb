@@ -21,6 +21,7 @@ import (
 	"testing"
 	"time"
 
+	exprctx "github.com/pingcap/tidb/pkg/expression/context"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
@@ -194,8 +195,9 @@ func TestConstantPropagation(t *testing.T) {
 
 func TestConstantFolding(t *testing.T) {
 	tests := []struct {
-		condition func(ctx BuildContext) Expression
-		result    string
+		condition       func(ctx BuildContext) Expression
+		result          string
+		nullRejectCheck bool
 	}{
 		{
 			condition: func(ctx BuildContext) Expression {
@@ -236,15 +238,20 @@ func TestConstantFolding(t *testing.T) {
 		{
 			condition: func(ctx BuildContext) Expression {
 				expr := newFunction(ctx, ast.ConcatWS, newColumn(0), NewNull())
-				ctx.GetSessionVars().StmtCtx.InNullRejectCheck = true
 				return expr
 			},
-			result: "concat_ws(cast(Column#0, var_string(20)), <nil>)",
+			nullRejectCheck: true,
+			result:          "concat_ws(cast(Column#0, var_string(20)), <nil>)",
 		},
 	}
 	for _, tt := range tests {
-		ctx := mock.NewContext()
+		ctx := mock.NewContext().GetExprCtx()
+		require.False(t, ctx.IsInNullRejectCheck())
 		expr := tt.condition(ctx)
+		if tt.nullRejectCheck {
+			ctx = exprctx.WithNullRejectCheck(ctx)
+			require.True(t, ctx.IsInNullRejectCheck())
+		}
 		newConds := FoldConstant(ctx, expr)
 		require.Equalf(t, tt.result, newConds.String(), "different for expr %s", tt.condition)
 	}
@@ -342,18 +349,18 @@ func TestDeferredParamNotNull(t *testing.T) {
 	cstBit := &Constant{ParamMarker: &ParamMarker{ctx: ctx, order: 10}, RetType: newBinaryLiteralFieldType()}
 	cstEnum := &Constant{ParamMarker: &ParamMarker{ctx: ctx, order: 11}, RetType: newEnumFieldType()}
 
-	require.Equal(t, mysql.TypeVarString, cstJSON.GetType().GetType())
-	require.Equal(t, mysql.TypeNewDecimal, cstDec.GetType().GetType())
-	require.Equal(t, mysql.TypeLonglong, cstInt.GetType().GetType())
-	require.Equal(t, mysql.TypeLonglong, cstUint.GetType().GetType())
-	require.Equal(t, mysql.TypeTimestamp, cstTime.GetType().GetType())
-	require.Equal(t, mysql.TypeDuration, cstDuration.GetType().GetType())
-	require.Equal(t, mysql.TypeBlob, cstBytes.GetType().GetType())
-	require.Equal(t, mysql.TypeVarString, cstBinary.GetType().GetType())
-	require.Equal(t, mysql.TypeVarString, cstBit.GetType().GetType())
-	require.Equal(t, mysql.TypeFloat, cstFloat32.GetType().GetType())
-	require.Equal(t, mysql.TypeDouble, cstFloat64.GetType().GetType())
-	require.Equal(t, mysql.TypeEnum, cstEnum.GetType().GetType())
+	require.Equal(t, mysql.TypeVarString, cstJSON.GetType(ctx).GetType())
+	require.Equal(t, mysql.TypeNewDecimal, cstDec.GetType(ctx).GetType())
+	require.Equal(t, mysql.TypeLonglong, cstInt.GetType(ctx).GetType())
+	require.Equal(t, mysql.TypeLonglong, cstUint.GetType(ctx).GetType())
+	require.Equal(t, mysql.TypeTimestamp, cstTime.GetType(ctx).GetType())
+	require.Equal(t, mysql.TypeDuration, cstDuration.GetType(ctx).GetType())
+	require.Equal(t, mysql.TypeBlob, cstBytes.GetType(ctx).GetType())
+	require.Equal(t, mysql.TypeVarString, cstBinary.GetType(ctx).GetType())
+	require.Equal(t, mysql.TypeVarString, cstBit.GetType(ctx).GetType())
+	require.Equal(t, mysql.TypeFloat, cstFloat32.GetType(ctx).GetType())
+	require.Equal(t, mysql.TypeDouble, cstFloat64.GetType(ctx).GetType())
+	require.Equal(t, mysql.TypeEnum, cstEnum.GetType(ctx).GetType())
 
 	d, _, err := cstInt.EvalInt(ctx, chunk.Row{})
 	require.NoError(t, err)
@@ -513,8 +520,8 @@ func TestGetTypeThreadSafe(t *testing.T) {
 	ctx := mock.NewContext()
 	ctx.GetSessionVars().PlanCacheParams.Append(types.NewIntDatum(1))
 	con := &Constant{ParamMarker: &ParamMarker{ctx: ctx, order: 0}, RetType: newStringFieldType()}
-	ft1 := con.GetType()
-	ft2 := con.GetType()
+	ft1 := con.GetType(ctx)
+	ft2 := con.GetType(ctx)
 	require.NotSame(t, ft1, ft2)
 }
 

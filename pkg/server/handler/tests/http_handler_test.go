@@ -40,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
+	"github.com/pingcap/tidb/pkg/executor/mppcoordmanager"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
@@ -1129,7 +1130,7 @@ func TestWriteDBTablesData(t *testing.T) {
 	// No table in a schema.
 	info := infoschema.MockInfoSchema([]*model.TableInfo{})
 	rc := httptest.NewRecorder()
-	tbs := info.SchemaTables(model.NewCIStr("test"))
+	tbs := info.SchemaTableInfos(model.NewCIStr("test"))
 	require.Equal(t, 0, len(tbs))
 	tikvhandler.WriteDBTablesData(rc, tbs)
 	var ti []*model.TableInfo
@@ -1141,30 +1142,30 @@ func TestWriteDBTablesData(t *testing.T) {
 	// One table in a schema.
 	info = infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable()})
 	rc = httptest.NewRecorder()
-	tbs = info.SchemaTables(model.NewCIStr("test"))
+	tbs = info.SchemaTableInfos(model.NewCIStr("test"))
 	require.Equal(t, 1, len(tbs))
 	tikvhandler.WriteDBTablesData(rc, tbs)
 	decoder = json.NewDecoder(rc.Body)
 	err = decoder.Decode(&ti)
 	require.NoError(t, err)
 	require.Equal(t, 1, len(ti))
-	require.Equal(t, ti[0].ID, tbs[0].Meta().ID)
-	require.Equal(t, ti[0].Name.String(), tbs[0].Meta().Name.String())
+	require.Equal(t, ti[0].ID, tbs[0].ID)
+	require.Equal(t, ti[0].Name.String(), tbs[0].Name.String())
 
 	// Two tables in a schema.
 	info = infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable(), core.MockUnsignedTable()})
 	rc = httptest.NewRecorder()
-	tbs = info.SchemaTables(model.NewCIStr("test"))
+	tbs = info.SchemaTableInfos(model.NewCIStr("test"))
 	require.Equal(t, 2, len(tbs))
 	tikvhandler.WriteDBTablesData(rc, tbs)
 	decoder = json.NewDecoder(rc.Body)
 	err = decoder.Decode(&ti)
 	require.NoError(t, err)
 	require.Equal(t, 2, len(ti))
-	require.Equal(t, ti[0].ID, tbs[0].Meta().ID)
-	require.Equal(t, ti[1].ID, tbs[1].Meta().ID)
-	require.Equal(t, ti[0].Name.String(), tbs[0].Meta().Name.String())
-	require.Equal(t, ti[1].Name.String(), tbs[1].Meta().Name.String())
+	require.Equal(t, ti[0].ID, tbs[0].ID)
+	require.Equal(t, ti[1].ID, tbs[1].ID)
+	require.Equal(t, ti[0].Name.String(), tbs[0].Name.String())
+	require.Equal(t, ti[1].Name.String(), tbs[1].Name.String())
 }
 
 func TestSetLabels(t *testing.T) {
@@ -1501,4 +1502,14 @@ func testUpgradeShow(t *testing.T, ts *basicHTTPHandlerTestSuite) {
 	mockedAllServerInfos["s2"].GitHash = mockedAllServerInfos["s0"].GitHash
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/domain/infosync/mockGetAllServerInfo", makeFailpointRes(mockedAllServerInfos)))
 	checkUpgradeShow(3, 100, 0)
+}
+
+func TestIssue52608(t *testing.T) {
+	ts := createBasicHTTPHandlerTestSuite()
+
+	ts.startServer(t)
+	defer ts.stopServer(t)
+	on, addr := mppcoordmanager.InstanceMPPCoordinatorManager.GetServerAddr()
+	require.Equal(t, on, true)
+	require.Equal(t, addr[:10], "127.0.0.1:")
 }

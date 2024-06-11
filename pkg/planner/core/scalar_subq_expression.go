@@ -22,7 +22,8 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
-	"github.com/pingcap/tidb/pkg/planner/core/internal/base"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/baseimpl"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
@@ -30,10 +31,10 @@ import (
 
 // ScalarSubqueryEvalCtx store the plan for the subquery, used by ScalarSubQueryExpr.
 type ScalarSubqueryEvalCtx struct {
-	base.Plan
+	baseimpl.Plan
 
 	// The context for evaluating the subquery.
-	scalarSubQuery PhysicalPlan
+	scalarSubQuery base.PhysicalPlan
 	ctx            context.Context
 	is             infoschema.InfoSchema
 	evalErr        error
@@ -150,7 +151,7 @@ func (*ScalarSubQueryExpr) EvalJSON(_ expression.EvalContext, _ chunk.Row) (val 
 }
 
 // GetType implements the Expression interface.
-func (s *ScalarSubQueryExpr) GetType() *types.FieldType {
+func (s *ScalarSubQueryExpr) GetType(_ expression.EvalContext) *types.FieldType {
 	return s.RetType
 }
 

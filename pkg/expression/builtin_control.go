@@ -142,7 +142,7 @@ func addCollateAndCharsetAndFlagFromArgs(ctx BuildContext, funcName string, eval
 			panic("unexpected length of args for if/ifnull/lead/lag")
 		}
 		lexp, rexp := args[0], args[1]
-		lhs, rhs := lexp.GetType(), rexp.GetType()
+		lhs, rhs := lexp.GetType(ctx.GetEvalCtx()), rexp.GetType(ctx.GetEvalCtx())
 		if types.IsNonBinaryStr(lhs) && !types.IsBinaryStr(rhs) {
 			ec, err := CheckAndDeriveCollationFromExprs(ctx, funcName, evalType, lexp, rexp)
 			if err != nil {
@@ -183,7 +183,7 @@ func addCollateAndCharsetAndFlagFromArgs(ctx BuildContext, funcName string, eval
 		resultFieldType.SetCollate(ec.Collation)
 		resultFieldType.SetCharset(ec.Charset)
 		for i := range args {
-			if mysql.HasBinaryFlag(args[i].GetType().GetFlag()) || !types.IsNonBinaryStr(args[i].GetType()) {
+			if mysql.HasBinaryFlag(args[i].GetType(ctx.GetEvalCtx()).GetFlag()) || !types.IsNonBinaryStr(args[i].GetType(ctx.GetEvalCtx())) {
 				resultFieldType.AddFlag(mysql.BinaryFlag)
 				break
 			}
@@ -191,7 +191,7 @@ func addCollateAndCharsetAndFlagFromArgs(ctx BuildContext, funcName string, eval
 	case ast.Coalesce: // TODO ast.Case and ast.Coalesce should be merged into the same branch
 		argTypes := make([]*types.FieldType, 0)
 		for _, arg := range args {
-			argTypes = append(argTypes, arg.GetType())
+			argTypes = append(argTypes, arg.GetType(ctx.GetEvalCtx()))
 		}
 
 		nonBinaryStrExist := hasNonBinaryStr(argTypes)
@@ -239,10 +239,10 @@ func InferType4ControlFuncs(ctx BuildContext, funcName string, args ...Expressio
 	nullFields := make([]*types.FieldType, 0, argsNum)
 	notNullFields := make([]*types.FieldType, 0, argsNum)
 	for i := range args {
-		if args[i].GetType().GetType() == mysql.TypeNull {
-			nullFields = append(nullFields, args[i].GetType())
+		if args[i].GetType(ctx.GetEvalCtx()).GetType() == mysql.TypeNull {
+			nullFields = append(nullFields, args[i].GetType(ctx.GetEvalCtx()))
 		} else {
-			notNullFields = append(notNullFields, args[i].GetType())
+			notNullFields = append(notNullFields, args[i].GetType(ctx.GetEvalCtx()))
 		}
 	}
 	resultFieldType := &types.FieldType{}
@@ -335,7 +335,7 @@ func (c *caseWhenFunctionClass) getFunction(ctx BuildContext, args []Expression)
 		if args[i], err = wrapWithIsTrue(ctx, true, args[i], false); err != nil {
 			return nil, err
 		}
-		argTps = append(argTps, args[i].GetType(), fieldTp.Clone())
+		argTps = append(argTps, args[i].GetType(ctx.GetEvalCtx()), fieldTp.Clone())
 	}
 	if l%2 == 1 {
 		argTps = append(argTps, fieldTp.Clone())
@@ -645,7 +645,7 @@ func (c *ifFunctionClass) getFunction(ctx BuildContext, args []Expression) (sig 
 		return nil, err
 	}
 
-	bf, err := newBaseBuiltinFuncWithFieldTypes(ctx, c.funcName, args, evalTps, args[0].GetType().Clone(), retTp.Clone(), retTp.Clone())
+	bf, err := newBaseBuiltinFuncWithFieldTypes(ctx, c.funcName, args, evalTps, args[0].GetType(ctx.GetEvalCtx()).Clone(), retTp.Clone(), retTp.Clone())
 	if err != nil {
 		return nil, err
 	}
@@ -832,7 +832,7 @@ func (c *ifNullFunctionClass) getFunction(ctx BuildContext, args []Expression) (
 	if err = c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	lhs, rhs := args[0].GetType(), args[1].GetType()
+	lhs, rhs := args[0].GetType(ctx.GetEvalCtx()), args[1].GetType(ctx.GetEvalCtx())
 	retTp, err := InferType4ControlFuncs(ctx, c.funcName, args[0], args[1])
 	if err != nil {
 		return nil, err

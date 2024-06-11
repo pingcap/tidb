@@ -357,7 +357,7 @@ func TestGetSplitKeyPerRegion(t *testing.T) {
 			},
 		},
 	}
-	result := GetSplitKeysOfRegions(sortedKeys, sortedRegions, false)
+	result := getSplitKeysOfRegions(sortedKeys, sortedRegions, false)
 	require.Equal(t, 3, len(result))
 	require.Equal(t, [][]byte{[]byte("b"), []byte("d")}, result[sortedRegions[0]])
 	require.Equal(t, [][]byte{[]byte("g"), []byte("j")}, result[sortedRegions[1]])
@@ -414,7 +414,7 @@ func TestGetSplitKeyPerRegion(t *testing.T) {
 		slices.SortFunc(expected[i], bytes.Compare)
 	}
 
-	got := GetSplitKeysOfRegions(sortedKeys, sortedRegions, false)
+	got := getSplitKeysOfRegions(sortedKeys, sortedRegions, false)
 	require.Equal(t, len(expected), len(got))
 	for region, gotKeys := range got {
 		require.Equal(t, expected[region.Region.GetId()], gotKeys)
@@ -504,12 +504,20 @@ func TestPaginateScanRegion(t *testing.T) {
 			StartKey: []byte{1},
 			EndKey:   []byte{2},
 		},
+		Leader: &metapb.Peer{
+			Id:      1,
+			StoreId: 1,
+		},
 	})
 	mockPDClient.Regions.SetRegion(&pdtypes.Region{
 		Meta: &metapb.Region{
 			Id:       4,
 			StartKey: []byte{4},
 			EndKey:   []byte{5},
+		},
+		Leader: &metapb.Peer{
+			Id:      4,
+			StoreId: 1,
 		},
 	})
 
@@ -525,12 +533,20 @@ func TestPaginateScanRegion(t *testing.T) {
 				StartKey: []byte{2},
 				EndKey:   []byte{3},
 			},
+			Leader: &metapb.Peer{
+				Id:      2,
+				StoreId: 1,
+			},
 		},
 		{
 			Meta: &metapb.Region{
 				Id:       3,
 				StartKey: []byte{3},
 				EndKey:   []byte{4},
+			},
+			Leader: &metapb.Peer{
+				Id:      3,
+				StoreId: 1,
 			},
 		},
 	}
@@ -590,6 +606,10 @@ func TestRegionConsistency(t *testing.T) {
 			"region 6's endKey not equal to next region 8's startKey(.*?)",
 			[]*RegionInfo{
 				{
+					Leader: &metapb.Peer{
+						Id:      6,
+						StoreId: 1,
+					},
 					Region: &metapb.Region{
 						Id:          6,
 						StartKey:    codec.EncodeBytes([]byte{}, []byte("b")),
@@ -598,6 +618,10 @@ func TestRegionConsistency(t *testing.T) {
 					},
 				},
 				{
+					Leader: &metapb.Peer{
+						Id:      8,
+						StoreId: 1,
+					},
 					Region: &metapb.Region{
 						Id:       8,
 						StartKey: codec.EncodeBytes([]byte{}, []byte("e")),
@@ -606,9 +630,61 @@ func TestRegionConsistency(t *testing.T) {
 				},
 			},
 		},
+		{
+			codec.EncodeBytes([]byte{}, []byte("c")),
+			codec.EncodeBytes([]byte{}, []byte("e")),
+			"region 6's leader is nil(.*?)",
+			[]*RegionInfo{
+				{
+					Region: &metapb.Region{
+						Id:          6,
+						StartKey:    codec.EncodeBytes([]byte{}, []byte("c")),
+						EndKey:      codec.EncodeBytes([]byte{}, []byte("d")),
+						RegionEpoch: nil,
+					},
+				},
+				{
+					Region: &metapb.Region{
+						Id:       8,
+						StartKey: codec.EncodeBytes([]byte{}, []byte("d")),
+						EndKey:   codec.EncodeBytes([]byte{}, []byte("e")),
+					},
+				},
+			},
+		},
+		{
+			codec.EncodeBytes([]byte{}, []byte("c")),
+			codec.EncodeBytes([]byte{}, []byte("e")),
+			"region 6's leader's store id is 0(.*?)",
+			[]*RegionInfo{
+				{
+					Leader: &metapb.Peer{
+						Id:      6,
+						StoreId: 0,
+					},
+					Region: &metapb.Region{
+						Id:          6,
+						StartKey:    codec.EncodeBytes([]byte{}, []byte("c")),
+						EndKey:      codec.EncodeBytes([]byte{}, []byte("d")),
+						RegionEpoch: nil,
+					},
+				},
+				{
+					Leader: &metapb.Peer{
+						Id:      6,
+						StoreId: 0,
+					},
+					Region: &metapb.Region{
+						Id:       8,
+						StartKey: codec.EncodeBytes([]byte{}, []byte("d")),
+						EndKey:   codec.EncodeBytes([]byte{}, []byte("e")),
+					},
+				},
+			},
+		},
 	}
 	for _, ca := range cases {
-		err := CheckRegionConsistency(ca.startKey, ca.endKey, ca.regions)
+		err := checkRegionConsistency(ca.startKey, ca.endKey, ca.regions)
 		require.Error(t, err)
 		require.Regexp(t, ca.err, err.Error())
 	}
