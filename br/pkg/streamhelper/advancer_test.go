@@ -763,9 +763,12 @@ func TestAddTaskWithLongRunTask3(t *testing.T) {
 	env.mockPDConnectionError()
 	adv.StartTaskListener(ctx)
 	// Try update checkpoint
-	require.NoError(t, adv.OnTick(ctx))
-	// Verify no err raised
-	require.NoError(t, adv.OnTick(ctx))
+	require.ErrorContains(t, adv.OnTick(ctx), "lagged too large")
+	// Verify no err raised after paused
+	require.Eventually(t, func() bool {
+		err := adv.OnTick(ctx)
+		return err == nil
+	}, 5*time.Second, 300*time.Millisecond)
 }
 
 func TestOwnershipLost(t *testing.T) {
