@@ -680,16 +680,20 @@ func (t *testEnv) UploadV3GlobalCheckpointForTask(ctx context.Context, _ string,
 	return nil
 }
 
-func (t *testEnv) mockPDConnectionError(duration time.Duration) {
+func (t *testEnv) mockPDConnectionError() {
 	t.pdDisconnected = true
-	go func() {
-		time.Sleep(duration)
-		t.pdDisconnected = false
-	}()
+}
+
+func (t *testEnv) connectPD() bool {
+	if !t.pdDisconnected {
+		return true
+	}
+	t.pdDisconnected = false
+	return false
 }
 
 func (t *testEnv) GetGlobalCheckpointForTask(ctx context.Context, taskName string) (uint64, error) {
-	if t.pdDisconnected {
+	if !t.connectPD() {
 		return 0, status.Error(codes.Unavailable, "pd disconnected")
 	}
 	return t.checkpoint, nil

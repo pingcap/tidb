@@ -612,8 +612,7 @@ func TestAddTaskWithLaggedStartTSFailed(t *testing.T) {
 	env.advanceCheckpointBy(5 * time.Minute)
 	// Global checkpoint lagged
 	c.advanceCheckpointBy(0 * time.Minute)
-	// PD lost connection and will resume after some time
-	env.mockPDConnectionError(500 * time.Millisecond)
+	env.mockPDConnectionError()
 	adv.StartTaskListener(ctx)
 	// Try update checkpoint
 	require.NoError(t, adv.OnTick(ctx))
