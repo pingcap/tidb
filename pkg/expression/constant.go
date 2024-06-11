@@ -24,6 +24,8 @@ import (
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/intest"
+	"github.com/pingcap/tidb/pkg/util/logutil"
+	"go.uber.org/zap"
 )
 
 // NewOne stands for a number 1.
@@ -133,19 +135,18 @@ type ParamMarker struct {
 }
 
 // GetUserVar returns the corresponding user variable presented in the `EXECUTE` statement or `COM_EXECUTE` command.
-func (d *ParamMarker) GetUserVar(ctx EvalContext) types.Datum {
+func (d *ParamMarker) GetUserVar(ctx ParamValues) (types.Datum, error) {
 	return ctx.GetParamValue(d.order)
 }
 
 // StringWithCtx implements Expression interface.
-func (c *Constant) StringWithCtx(ctx EvalContext) string {
+func (c *Constant) StringWithCtx(ctx ParamValues) string {
 	if c.ParamMarker != nil {
-		intest.Assert(ctx != nil, "context is nil for ParamMarker")
-		if ctx == nil {
+		dt, err := c.ParamMarker.GetUserVar(ctx)
+		intest.AssertNoError(err, "fail to get param")
+		if err != nil {
 			return "?"
 		}
-
-		dt := c.ParamMarker.GetUserVar(ctx)
 		c.Value.SetValue(dt.GetValue(), c.RetType)
 	} else if c.DeferredExpr != nil {
 		return c.DeferredExpr.StringWithCtx(ctx)
@@ -165,7 +166,12 @@ func (c *Constant) GetType(ctx EvalContext) *types.FieldType {
 		// GetType() may be called in multi-threaded context, e.g, in building inner executors of IndexJoin,
 		// so it should avoid data race. We achieve this by returning different FieldType pointer for each call.
 		tp := types.NewFieldType(mysql.TypeUnspecified)
-		dt := c.ParamMarker.GetUserVar(ctx)
+		dt, err := c.ParamMarker.GetUserVar(ctx)
+		intest.AssertNoError(err, "fail to get param")
+		if err != nil {
+			logutil.BgLogger().Warn("fail to get param", zap.Error(err))
+			return nil
+		}
 		types.InferParamTypeFromDatum(&dt, tp)
 		return tp
 	}
@@ -230,7 +236,12 @@ func (c *Constant) VecEvalJSON(ctx EvalContext, input *chunk.Chunk, result *chun
 
 func (c *Constant) getLazyDatum(ctx EvalContext, row chunk.Row) (dt types.Datum, isLazy bool, err error) {
 	if c.ParamMarker != nil {
-		return c.ParamMarker.GetUserVar(ctx), true, nil
+		val, err := c.ParamMarker.GetUserVar(ctx)
+		intest.AssertNoError(err, "fail to get param")
+		if err != nil {
+			return val, true, err
+		}
+		return val, true, nil
 	} else if c.DeferredExpr != nil {
 		dt, err = c.DeferredExpr.Eval(ctx, row)
 		return dt, true, err

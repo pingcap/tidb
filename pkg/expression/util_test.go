@@ -558,12 +558,7 @@ func (m *MockExpr) VecEvalJSON(ctx EvalContext, input *chunk.Chunk, result *chun
 	return nil
 }
 
-<<<<<<< Updated upstream
-func (m *MockExpr) StringWithCtx(EvalContext) string { return "" }
-func (m *MockExpr) MarshalJSON() ([]byte, error)     { return nil, nil }
-=======
 func (m *MockExpr) StringWithCtx(ParamValues) string { return "" }
->>>>>>> Stashed changes
 func (m *MockExpr) Eval(ctx EvalContext, row chunk.Row) (types.Datum, error) {
 	return types.NewDatum(m.i), m.err
 }

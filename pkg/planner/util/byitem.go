@@ -29,7 +29,7 @@ type ByItems struct {
 }
 
 // StringWithCtx implements expression.StringerWithCtx interface.
-func (by *ByItems) StringWithCtx(ctx expression.EvalContext) string {
+func (by *ByItems) StringWithCtx(ctx expression.ParamValues) string {
 	if by.Desc {
 		return fmt.Sprintf("%s true", by.Expr.StringWithCtx(ctx))
 	}

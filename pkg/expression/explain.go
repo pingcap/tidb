@@ -105,7 +105,7 @@ func (expr *ScalarFunction) ExplainNormalizedInfo4InList() string {
 }
 
 // ColumnExplainInfo returns the explained info for column.
-func (col *Column) ColumnExplainInfo(ctx EvalContext, normalized bool) string {
+func (col *Column) ColumnExplainInfo(ctx ParamValues, normalized bool) string {
 	if normalized {
 		return col.ColumnExplainInfoNormalized()
 	}

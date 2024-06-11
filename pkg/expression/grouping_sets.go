@@ -262,7 +262,7 @@ func (gs GroupingSet) Clone() GroupingSet {
 }
 
 // StringWithCtx is used to output a string which simply described current grouping set.
-func (gs GroupingSet) StringWithCtx(ctx EvalContext) string {
+func (gs GroupingSet) StringWithCtx(ctx ParamValues) string {
 	var str strings.Builder
 	str.WriteString("{")
 	for i, one := range gs {
@@ -320,7 +320,7 @@ func (gss GroupingSets) AllSetsColIDs() *intset.FastIntSet {
 }
 
 // StringWithCtx is used to output a string which simply described current grouping sets.
-func (gss GroupingSets) StringWithCtx(ctx EvalContext) string {
+func (gss GroupingSets) StringWithCtx(ctx ParamValues) string {
 	var str strings.Builder
 	str.WriteString("[")
 	for i, gs := range gss {
@@ -389,7 +389,7 @@ func (g GroupingExprs) Clone() GroupingExprs {
 }
 
 // StringWithCtx is used to output a string which simply described current grouping expressions.
-func (g GroupingExprs) StringWithCtx(ctx EvalContext) string {
+func (g GroupingExprs) StringWithCtx(ctx ParamValues) string {
 	var str strings.Builder
 	str.WriteString("<")
 	for i, one := range g {

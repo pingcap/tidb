@@ -71,7 +71,7 @@ func (a *baseFuncDesc) clone() *baseFuncDesc {
 }
 
 // StringWithCtx returns the string within given context.
-func (a *baseFuncDesc) StringWithCtx(ctx expression.EvalContext) string {
+func (a *baseFuncDesc) StringWithCtx(ctx expression.ParamValues) string {
 	buffer := bytes.NewBufferString(a.Name)
 	buffer.WriteString("(")
 	for i, arg := range a.Args {
