@@ -428,7 +428,24 @@ func (c *CheckpointAdvancer) onTaskEvent(ctx context.Context, e TaskEvent) error
 		c.task = e.Info
 		c.taskRange = spans.Collapse(len(e.Ranges), func(i int) kv.KeyRange { return e.Ranges[i] })
 		c.setCheckpoints(spans.Sorted(spans.NewFullWith(e.Ranges, 0)))
+<<<<<<< HEAD
 		c.lastCheckpoint = newCheckpointWithTS(e.Info.StartTs)
+=======
+		globalCheckpointTs, err := c.env.GetGlobalCheckpointForTask(ctx, e.Name)
+		if err != nil {
+			log.Error("failed to get global checkpoint, skipping.", logutil.ShortError(err))
+			return err
+		}
+		if globalCheckpointTs < c.task.StartTs {
+			globalCheckpointTs = c.task.StartTs
+		}
+		log.Info("get global checkpoint", zap.Uint64("checkpoint", globalCheckpointTs))
+		c.lastCheckpoint = newCheckpointWithTS(globalCheckpointTs)
+		p, err := c.env.BlockGCUntil(ctx, globalCheckpointTs)
+		if err != nil {
+			log.Warn("failed to upload service GC safepoint, skipping.", logutil.ShortError(err))
+		}
+>>>>>>> 64f5427448b (br: fix Log Backup unexpected paused when adding a already long-running task (#53695))
 		log.Info("added event", zap.Stringer("task", e.Info),
 			zap.Stringer("ranges", logutil.StringifyKeys(c.taskRange)))
 	case EventDel:
