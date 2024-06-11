@@ -100,8 +100,10 @@ func (r *row) setChecksums(checksums ...uint32) {
 	}
 }
 
-func (r *row) getData(i int) []byte {
-	var start, end uint32
+func (r *row) getOffsets(i int) (uint32, uint32) {
+	var (
+		start, end uint32
+	)
 	if r.large() {
 		if i > 0 {
 			start = r.offsets32[i-1]
@@ -113,6 +115,11 @@ func (r *row) getData(i int) []byte {
 		}
 		end = uint32(r.offsets[i])
 	}
+	return start, end
+}
+
+func (r *row) getData(i int) []byte {
+	start, end := r.getOffsets(i)
 	return r.data[start:end]
 }
 
@@ -151,16 +158,15 @@ func (r *row) fromBytes(rowData []byte) error {
 
 	if r.hasChecksum() {
 		r.checksumHeader = rowData[cursor]
-		if r.ChecksumVersion() != 0 {
+		checksumVersion := r.ChecksumVersion()
+		if checksumVersion != 0 && checksumVersion != 1 {
 			return errInvalidChecksumVer
 		}
 		cursor++
 		r.checksum1 = binary.LittleEndian.Uint32(rowData[cursor:])
-		cursor += 4
 		if r.hasExtraChecksum() {
+			cursor += 4
 			r.checksum2 = binary.LittleEndian.Uint32(rowData[cursor:])
-		} else {
-			r.checksum2 = 0
 		}
 	} else {
 		r.checksumHeader = 0
@@ -183,13 +189,6 @@ func (r *row) toBytes(buf []byte) []byte {
 		buf = append(buf, u16SliceToBytes(r.offsets)...)
 	}
 	buf = append(buf, r.data...)
-	if r.hasChecksum() {
-		buf = append(buf, r.checksumHeader)
-		buf = binary.LittleEndian.AppendUint32(buf, r.checksum1)
-		if r.hasExtraChecksum() {
-			buf = binary.LittleEndian.AppendUint32(buf, r.checksum2)
-		}
-	}
 	return buf
 }
 
