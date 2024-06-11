@@ -39,6 +39,7 @@ go_test(
         "//pkg/errno",
         "//pkg/parser/model",
         "//pkg/testkit",
+        "//pkg/testkit/testfailpoint",
         "//pkg/testkit/testsetup",
         "//pkg/util/sqlexec",
         "@com_github_pingcap_failpoint//:failpoint",
