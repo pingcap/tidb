@@ -225,26 +225,34 @@ func ObserveStoreChangesAsync(ctx context.Context, stateNotifier chan BackupRetr
 		}
 
 		watcher := storewatch.New(pdCli, cb)
+		// make a first step, and make the state correct for next 30s check
+		err := watcher.Step(ctx)
+		if err != nil {
+			logutil.CL(ctx).Warn("failed to watch store changes at beginning, ignore it", zap.Error(err))
+		}
 		tick := time.NewTicker(30 * time.Second)
 		for {
 			select {
 			case <-ctx.Done():
 				return
 			case <-tick.C:
-				logutil.CL(ctx).Info("check store changes by tick")
+				// reset the state
+				sendAll = false
+				clear(newJoinStoresMap)
+				logutil.CL(ctx).Info("check store changes every tick")
 				err := watcher.Step(ctx)
 				if err != nil {
 					logutil.CL(ctx).Warn("failed to watch store changes, ignore it", zap.Error(err))
 				}
 				if sendAll {
+					logutil.CL(ctx).Info("detect some store(s) restarted or disconnected, notify with all stores")
 					notifyFn(ctx, BackupRetryPolicy{All: true})
 				} else if len(newJoinStoresMap) > 0 {
 					for storeID := range newJoinStoresMap {
+						logutil.CL(ctx).Info("detect a new registered store, notify with this store", zap.Uint64("storeID", storeID))
 						notifyFn(ctx, BackupRetryPolicy{One: storeID})
 					}
 				}
-				sendAll = false
-				clear(newJoinStoresMap)
 			}
 		}
 	}()

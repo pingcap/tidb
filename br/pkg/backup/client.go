@@ -90,7 +90,7 @@ func (s *MainBackupSender) SendAsync(
 ) {
 	go func() {
 		defer func() {
-			logutil.CL(ctx).Info("exit store backup goroutine", zap.Uint64("store", storeID))
+			logutil.CL(ctx).Info("store backup goroutine exits", zap.Uint64("store", storeID))
 			close(respCh)
 		}()
 		err := startBackup(ctx, storeID, request, cli, respCh)
@@ -125,7 +125,7 @@ func (l *MainBackupLoop) CollectStoreBackupsAsync(
 ) {
 	go func() {
 		defer func() {
-			logutil.CL(ctx).Info("exit collect backups goroutine", zap.Uint64("round", round))
+			logutil.CL(ctx).Info("collect backups goroutine exits", zap.Uint64("round", round))
 			close(globalCh)
 		}()
 		cases := make([]reflect.SelectCase, 0)
@@ -260,6 +260,8 @@ mainLoop:
 				}
 				if storeBackupInfo.One != 0 {
 					storeID := storeBackupInfo.One
+					logutil.CL(mainCtx).Info("receive notifaction and retry backup on this store",
+						zap.Uint64("storeID", storeID), zap.Uint64("round", round))
 					store, err := bc.mgr.GetPDClient().GetStore(mainCtx, storeID)
 					if err != nil {
 						// cannot get store, maybe store has scaled-in.
