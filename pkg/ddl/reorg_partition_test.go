@@ -605,8 +605,6 @@ func TestRemovePartitionFailures(t *testing.T) {
 	testReorganizePartitionFailures(t, create, alter, beforeDML, beforeResult, afterDML, afterResult, "Fail4")
 }
 
-/*
-Skipping until https://github.com/pingcap/tidb/pull/53770 is merged
 func TestPartitionByFailures(t *testing.T) {
 	create := `create table t (a int unsigned primary key nonclustered, b int not null, c varchar(255)) partition by range(a) (
 			partition p0 values less than (100),
@@ -631,7 +629,6 @@ func TestPartitionByFailures(t *testing.T) {
 	afterResult := testkit.Rows("1 1 1", "101 101 101", "2 2 2", "3 3 3", "4 4 4", "9 9 104")
 	testReorganizePartitionFailures(t, create, alter, beforeDML, beforeResult, afterDML, afterResult)
 }
-*/
 
 func TestReorganizePartitionListFailures(t *testing.T) {
 	create := `create table t (a int unsigned primary key nonclustered, b int not null, c varchar(255), unique index (c)) partition by list(b) (
@@ -707,8 +704,6 @@ func TestAddHashPartitionFailures(t *testing.T) {
 	testReorganizePartitionFailures(t, create, alter, beforeDML, beforeResult, afterDML, afterResult, "Fail4")
 }
 
-/*
-Skipping until https://github.com/pingcap/tidb/pull/53770 is merged
 func TestCoalesceKeyPartitionFailures(t *testing.T) {
 	create := `create table t (a int unsigned primary key nonclustered, b int not null, c varchar(255), unique index (b), unique index (c)) partition by key(c) partitions 5`
 	alter := `alter table t coalesce partition 2`
@@ -731,7 +726,6 @@ func TestCoalesceKeyPartitionFailures(t *testing.T) {
 	afterResult := testkit.Rows("1 1 1", "2 2 2", "6 6 9", "7 7 7", "8 8 8")
 	testReorganizePartitionFailures(t, create, alter, beforeDML, beforeResult, afterDML, afterResult, "Fail4")
 }
-*/
 
 func testReorganizePartitionFailures(t *testing.T, createSQL, alterSQL string, beforeDML []string, beforeResult [][]any, afterDML []string, afterResult [][]any, skipTests ...string) {
 	store := testkit.CreateMockStore(t)
@@ -810,10 +804,6 @@ func testReorganizePartitionFailures(t *testing.T, createSQL, alterSQL string, b
 			// TODO: Check Label rules
 			// TODO: Check bundles
 			// TODO: Check autoIDs
-			// So if failure will end up as rolling back after enough tries, what happens when
-			// the state changes from DeleteReorganization to StatePublic?
-			// The old data should still be up-to-date, but the question is how the cleanup
-			// of the new data is handled, will it still be seen in DeleteReorganization?
 		}
 	}
 }
