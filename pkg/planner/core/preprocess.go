@@ -148,7 +148,9 @@ const (
 	inPrepare preprocessorFlag = 1 << iota
 	// inTxnRetry is set when visiting in transaction retry.
 	inTxnRetry
-	// inCreateOrDropTable is set when visiting create/drop table statement.
+	// inCreateOrDropTable is set when visiting create/drop table/view/sequence,
+	// rename table, alter table add foreign key, and BR restore.
+	// TODO need a better name to clarify it's meaning
 	inCreateOrDropTable
 	// parentIsJoin is set when visiting node's parent is join.
 	parentIsJoin
@@ -927,6 +929,8 @@ func (p *preprocessor) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
 	}
 	if stmt.Select != nil {
 		// FIXME: a temp error noticing 'not implemented' (issue 4754)
+		// Note: if we implement it later, please clear it's MDL related tables for
+		// it like what CREATE VIEW does.
 		p.err = errors.New("'CREATE TABLE ... SELECT' is not implemented yet")
 		return
 	} else if len(stmt.Cols) == 0 && stmt.ReferTable == nil {
