@@ -674,7 +674,6 @@ func TestConstraintCheckForUniqueIndex(t *testing.T) {
 	// Unrelated to the test logic, just wait for the goroutine to exit to avoid leak in test
 	require.Equal(t, 2, <-ch)
 }
-
 func TestViewColumns(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
