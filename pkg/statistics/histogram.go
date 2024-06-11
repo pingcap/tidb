@@ -600,7 +600,7 @@ func (hg *Histogram) BetweenRowCount(sctx context.PlanContext, a, b types.Datum)
 	// estimate each value as an equals predicate, but the result should not greater than lessCountB or notNullCount-lessCountA.
 	if rangeEst < math.Max(aEqual, bEqual) && hg.NDV > 0 {
 		result := math.Min(lessCountB, hg.NotNullCount()-lessCountA)
-		return min(result, aEqual+bEqual)
+		return math.Min(result, aEqual+bEqual)
 	}
 	return rangeEst
 }
