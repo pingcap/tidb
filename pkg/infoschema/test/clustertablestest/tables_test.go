@@ -1229,7 +1229,7 @@ func TestTiDBTrx(t *testing.T) {
 			blockTime2.Format(types.TimeFSPFormat)+
 			" 0 19 10 user1 db1 [\"sql1\",\"sql2\",\""+digest.String()+"\"] "))
 	tk.MustQuery(`select state from information_schema.tidb_trx as trx  union select state from information_schema.tidb_trx as trx`).Sort().
-		Check(testkit.Rows(txninfo.TxnRunningStateStrs[txninfo.TxnLockAcquiring], txninfo.TxnRunningStateStrs[txninfo.TxnIdle]))
+		Check(testkit.Rows(txninfo.TxnRunningStateStrs[txninfo.TxnIdle], txninfo.TxnRunningStateStrs[txninfo.TxnLockAcquiring]))
 
 	rows := tk.MustQuery(`select WAITING_TIME from information_schema.TIDB_TRX where WAITING_TIME is not null`)
 	require.Len(t, rows.Rows(), 1)
