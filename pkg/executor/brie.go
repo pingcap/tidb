@@ -577,15 +577,21 @@ func (e *BRIEExec) insert() string {
 		finishTime string
 	)
 
-	if !task.queueTime.IsZero() {
+	if task.queueTime.IsZero() {
+		queueTime = "NULL"
+	} else {
 		queueTime = fmt.Sprintf("'%s'", task.queueTime.String())
 	}
 
-	if !task.execTime.IsZero() {
+	if task.execTime.IsZero() {
+		execTime = "NULL"
+	} else {
 		execTime = fmt.Sprintf("'%s'", task.execTime.String())
 	}
 
-	if !task.finishTime.IsZero() {
+	if task.finishTime.IsZero() {
+		finishTime = "NULL"
+	} else {
 		finishTime = fmt.Sprintf("'%s'", task.finishTime.String())
 	}
 
@@ -607,9 +613,9 @@ func (e *BRIEExec) insert() string {
     `,
         task.id,
         escapedQuery,
-        escapeString(queueTime),
-        escapeString(execTime),
-        escapeString(finishTime),
+        queueTime,
+		execTime,
+		finishTime,
         task.kind,
         escapeString(task.storage),
         task.connID,
