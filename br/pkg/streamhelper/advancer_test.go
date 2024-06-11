@@ -193,8 +193,6 @@ func TestOneStoreFailure(t *testing.T) {
 	require.Equal(t, cp, env.checkpoint)
 }
 
-<<<<<<< HEAD
-=======
 func TestGCServiceSafePoint(t *testing.T) {
 	req := require.New(t)
 	c := createFakeCluster(t, 4, true)
@@ -218,7 +216,6 @@ func TestGCServiceSafePoint(t *testing.T) {
 	}, 3*time.Second, 100*time.Millisecond)
 }
 
->>>>>>> 64f5427448b (br: fix Log Backup unexpected paused when adding a already long-running task (#53695))
 func TestTaskRanges(t *testing.T) {
 	log.SetLevel(zapcore.DebugLevel)
 	c := createFakeCluster(t, 4, true)
