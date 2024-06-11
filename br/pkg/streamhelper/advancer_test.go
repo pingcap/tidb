@@ -41,7 +41,7 @@ func TestBasic(t *testing.T) {
 	c.splitAndScatter("01", "02", "022", "023", "033", "04", "043")
 	ctx := context.Background()
 	minCheckpoint := c.advanceCheckpoints()
-	env := &testEnv{fakeCluster: c, testCtx: t}
+	env := newTestEnv(c, t)
 	adv := streamhelper.NewCheckpointAdvancer(env)
 	coll := streamhelper.NewClusterCollector(ctx, env)
 	err := adv.GetCheckpointInRange(ctx, []byte{}, []byte{}, coll)
@@ -60,7 +60,7 @@ func TestTick(t *testing.T) {
 	c.splitAndScatter("01", "02", "022", "023", "033", "04", "043")
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	env := &testEnv{fakeCluster: c, testCtx: t}
+	env := newTestEnv(c, t)
 	adv := streamhelper.NewCheckpointAdvancer(env)
 	adv.StartTaskListener(ctx)
 	require.NoError(t, adv.OnTick(ctx))
@@ -82,7 +82,7 @@ func TestWithFailure(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	env := &testEnv{fakeCluster: c, testCtx: t}
+	env := newTestEnv(c, t)
 	adv := streamhelper.NewCheckpointAdvancer(env)
 	adv.StartTaskListener(ctx)
 	require.NoError(t, adv.OnTick(ctx))
@@ -133,7 +133,7 @@ func TestCollectorFailure(t *testing.T) {
 	}
 	c.splitAndScatter(splitKeys...)
 
-	env := &testEnv{fakeCluster: c, testCtx: t}
+	env := newTestEnv(c, t)
 	adv := streamhelper.NewCheckpointAdvancer(env)
 	coll := streamhelper.NewClusterCollector(ctx, env)
 
