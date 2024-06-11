@@ -22,6 +22,7 @@ go_test(
         "//pkg/table",
         "//pkg/table/tables",
         "//pkg/testkit",
+        "//pkg/testkit/testfailpoint",
         "//pkg/util/chunk",
         "//tests/realtikvtest",
         "@com_github_ngaut_pools//:pools",
