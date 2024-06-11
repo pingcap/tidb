@@ -568,42 +568,49 @@ func (e *showMetaExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	return nil
 }
 
-func escapeString(s string) string {
-    return strings.ReplaceAll(s, "'", "''")
-}
-
 func (e *BRIEExec) insert() string {
-    // Format the time fields as strings
+    // Format the time fields as strings or NULL
 	task := e.info
 	var (
-		queueTime string = "NULL"
-		execTime string = "NULL"
-		finishTime string = "NULL"
+		queueTime string
+		execTime string
+		finishTime string
 	)
-	if time := task.queueTime; !time.IsZero() {
-		queueTime = task.queueTime.String()
+
+	if !task.queueTime.IsZero() {
+		queueTime = fmt.Sprintf("'%s'", task.queueTime.String())
 	}
-	if time := task.execTime; !time.IsZero() {
-		execTime = task.execTime.String()
+
+	if !task.execTime.IsZero() {
+		execTime = fmt.Sprintf("'%s'", task.execTime.String())
 	}
-	if time := task.finishTime; !time.IsZero() {
-		finishTime = task.finishTime.String()
+
+	if !task.finishTime.IsZero() {
+		finishTime = fmt.Sprintf("'%s'", task.finishTime.String())
 	}
+
+	escapeString := func(str string) string {
+		if str == "" {
+			return "NULL"
+		}
+		return fmt.Sprintf("'%s'", str)
+	}
+
+	// Escape query string with double single quotes for SQL
+	escapedQuery := strings.ReplaceAll(task.query, "'", "''")
 
     // Construct the SQL statement with escaped strings
     insertStmt := fmt.Sprintf(`
     INSERT INTO mysql.tidb_br_jobs (
         taskID, query, queueTime, execTime, finishTime, kind, storage, connID, backupTS, restoreTS, archiveSize, message
-    ) VALUES (
-        %d, '%s', %s, %s, %s, %s, '%s', %d, %d, %d, %d, '%s'
-    );
+    ) VALUES (%d, '%s', %s, %s, %s, '%s', %s, %d, %d, %d, %d, %s);
     `,
         task.id,
-        escapeString(task.query),
-        queueTime,
-        execTime,
-        finishTime,
-		task.kind,
+        escapedQuery,
+        escapeString(queueTime),
+        escapeString(execTime),
+        escapeString(finishTime),
+        task.kind,
         escapeString(task.storage),
         task.connID,
         task.backupTS,
@@ -655,8 +662,12 @@ func (e *BRIEExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		}
 	}()
 	ctx = util.WithInternalSourceType(ctx, kv.InternalTxnBR)
-	e.Ctx().GetSQLExecutor().ExecuteInternal(ctx, e.insert())
-	return nil
+	_,err := e.Ctx().GetSQLExecutor().ExecuteInternal(ctx, e.insert())
+	if err != nil {
+		log.Error("Failed to insert BRIE task into tidb_br_jobs", zap.Error(err))
+		return err
+	}
+
 
 	progress, err := bq.acquireTask(taskCtx, taskID)
 	if err != nil {
