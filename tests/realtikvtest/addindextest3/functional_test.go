@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikv"
@@ -101,4 +102,14 @@ func TestBackendCtxConcurrentUnregister(t *testing.T) {
 	}
 	wg.Wait()
 	ingest.LitBackCtxMgr.Unregister(1)
+}
+
+func TestMockMemoryUsedUp(t *testing.T) {
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/ingest/setMemTotalInMB", "return(1100)")
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("create table t (c int, c2 int, c3 int, c4 int);")
+	tk.MustExec("insert into t values (1,1,1,1), (2,2,2,2), (3,3,3,3);")
+	tk.MustGetErrMsg("alter table t add index i(c), add index i2(c2);", "[ddl:8247]Ingest failed: memory used up")
 }

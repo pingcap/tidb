@@ -529,6 +529,7 @@ func (d *ddl) delivery2LocalWorker(pool *workerPool, task *limitJobTask) {
 
 // delivery2Worker owns the worker, need to put it back to the pool in this function.
 func (s *jobScheduler) delivery2Worker(wk *worker, pool *workerPool, job *model.Job) {
+	failpoint.InjectCall("beforeDelivery2Worker", job)
 	injectFailPointForGetJob(job)
 	jobID, involvedSchemaInfos := job.ID, job.GetInvolvingSchemaInfo()
 	s.runningJobs.add(jobID, involvedSchemaInfos)
@@ -561,7 +562,7 @@ func (s *jobScheduler) delivery2Worker(wk *worker, pool *workerPool, job *model.
 			// job is already moved to history.
 			failpoint.InjectCall("beforeRefreshJob", job)
 			for {
-				job, err = s.sysTblMgr.GetJobByID(s.schCtx, job.ID)
+				job, err = s.sysTblMgr.GetJobByID(s.schCtx, jobID)
 				failpoint.InjectCall("mockGetJobByIDFail", &err)
 				if err == nil {
 					break
@@ -569,10 +570,10 @@ func (s *jobScheduler) delivery2Worker(wk *worker, pool *workerPool, job *model.
 
 				if err == systable.ErrNotFound {
 					logutil.DDLLogger().Info("job not found, might already finished",
-						zap.Int64("job_id", job.ID), zap.Stringer("state", job.State))
+						zap.Int64("job_id", jobID))
 					return
 				}
-				logutil.DDLLogger().Error("get job failed", zap.Error(err))
+				logutil.DDLLogger().Error("get job failed", zap.Int64("job_id", jobID), zap.Error(err))
 				select {
 				case <-s.schCtx.Done():
 					return
