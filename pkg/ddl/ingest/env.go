@@ -19,7 +19,11 @@ import (
 	"path/filepath"
 	"strconv"
 
+<<<<<<< HEAD
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
+=======
+	"github.com/pingcap/failpoint"
+>>>>>>> 0b5407136bf (ddl: handle create writer error for index ingest operator (#53916))
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -72,8 +76,18 @@ func InitGlobalLightningEnv() {
 	} else {
 		memTotal = memTotal / 2
 	}
+<<<<<<< HEAD
 	LitBackCtxMgr = newLitBackendCtxMgr(LitSortPath, memTotal)
 	LitRLimit = util.GenRLimit("ddl-ingest")
+=======
+	failpoint.Inject("setMemTotalInMB", func(val failpoint.Value) {
+		//nolint: forcetypeassert
+		i := val.(int)
+		memTotal = uint64(i) * size.MB
+	})
+	LitBackCtxMgr = NewLitBackendCtxMgr(sortPath, memTotal, filterProcessingJobIDs)
+	litRLimit = util.GenRLimit("ddl-ingest")
+>>>>>>> 0b5407136bf (ddl: handle create writer error for index ingest operator (#53916))
 	LitInitialized = true
 	logutil.BgLogger().Info(LitInfoEnvInitSucc,
 		zap.String("category", "ddl-ingest"),
