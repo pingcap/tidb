@@ -17,13 +17,16 @@ package addindextest
 import (
 	"context"
 	"fmt"
+	"sync"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/util"
 )
 
@@ -73,4 +76,29 @@ func TestDDLTestEstimateTableRowSize(t *testing.T) {
 		size = ddl.EstimateTableRowSizeForTest(ctx, store, exec, partition)
 		require.Equal(t, 19, size)
 	}
+}
+
+func TestBackendCtxConcurrentUnregister(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	discovery := store.(tikv.Storage).GetRegionCache().PDClient().GetServiceDiscovery()
+	bCtx, err := ingest.LitBackCtxMgr.Register(context.Background(), 1, false, nil, discovery, "test")
+	require.NoError(t, err)
+	idxIDs := []int64{1, 2, 3, 4, 5, 6, 7}
+	uniques := make([]bool, 0, len(idxIDs))
+	for range idxIDs {
+		uniques = append(uniques, false)
+	}
+	_, err = bCtx.Register([]int64{1, 2, 3, 4, 5, 6, 7}, uniques, "t")
+	require.NoError(t, err)
+
+	wg := sync.WaitGroup{}
+	wg.Add(3)
+	for i := 0; i < 3; i++ {
+		go func() {
+			bCtx.UnregisterEngines()
+			wg.Done()
+		}()
+	}
+	wg.Wait()
+	ingest.LitBackCtxMgr.Unregister(1)
 }

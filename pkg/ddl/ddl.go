@@ -65,7 +65,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/gcutil"
 	"github.com/pingcap/tidb/pkg/util/generic"
-	"github.com/pingcap/tidb/pkg/util/syncutil"
 	"github.com/tikv/client-go/v2/tikvrpc"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/client/v3/concurrency"
@@ -388,11 +387,6 @@ type ddlCtx struct {
 
 	// reorgCtx is used for reorganization.
 	reorgCtx reorgContexts
-	// backfillCtx is used for backfill workers.
-	backfillCtx struct {
-		syncutil.RWMutex
-		jobCtxMap map[int64]*JobContext
-	}
 
 	jobCtx struct {
 		sync.RWMutex
@@ -844,7 +838,7 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 	d.wg.Run(func() {
 		d.limitDDLJobs(d.limitJobChV2, d.addBatchLocalDDLJobs)
 	})
-	d.sessPool = sess.NewSessionPool(ctxPool, d.store)
+	d.sessPool = sess.NewSessionPool(ctxPool)
 
 	d.delRangeMgr = d.newDeleteRangeManager(ctxPool == nil)
 
@@ -1603,7 +1597,7 @@ type Info struct {
 // GetDDLInfoWithNewTxn returns DDL information using a new txn.
 func GetDDLInfoWithNewTxn(s sessionctx.Context) (*Info, error) {
 	se := sess.NewSession(s)
-	err := se.Begin()
+	err := se.Begin(context.Background())
 	if err != nil {
 		return nil, err
 	}
@@ -1763,7 +1757,7 @@ func processJobs(process func(*sess.Session, *model.Job, model.AdminCommandOpera
 			idsStr = append(idsStr, strconv.FormatInt(id, 10))
 		}
 
-		err = ns.Begin()
+		err = ns.Begin(context.Background())
 		if err != nil {
 			return nil, err
 		}
@@ -1803,7 +1797,7 @@ func processJobs(process func(*sess.Session, *model.Job, model.AdminCommandOpera
 		})
 
 		// There may be some conflict during the update, try it again
-		if err = ns.Commit(); err != nil {
+		if err = ns.Commit(context.Background()); err != nil {
 			continue
 		}
 
@@ -1854,7 +1848,7 @@ func processAllJobs(process func(*sess.Session, *model.Job, model.AdminCommandOp
 	var jobErrs = make(map[int64]error)
 
 	ns := sess.NewSession(se)
-	err = ns.Begin()
+	err = ns.Begin(context.Background())
 	if err != nil {
 		return nil, err
 	}
@@ -1900,7 +1894,7 @@ func processAllJobs(process func(*sess.Session, *model.Job, model.AdminCommandOp
 		jobID = jobIDMax + 1
 	}
 
-	err = ns.Commit()
+	err = ns.Commit(context.Background())
 	if err != nil {
 		return nil, err
 	}

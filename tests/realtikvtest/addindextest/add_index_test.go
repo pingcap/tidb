@@ -211,6 +211,7 @@ func TestAddUniqueDuplicateIndexes(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec(`set global tidb_ddl_enable_fast_reorg=1;`)
 	tk.MustExec("create table t(a int DEFAULT '-13202', b varchar(221) NOT NULL DEFAULT 'duplicatevalue', " +
 		"c int NOT NULL DEFAULT '0');")
 

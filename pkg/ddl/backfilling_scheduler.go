@@ -427,7 +427,20 @@ func (b *ingestBackfillScheduler) setupWorkers() error {
 	for _, e := range b.reorgInfo.elements {
 		indexIDs = append(indexIDs, e.ID)
 	}
-	engines, err := b.backendCtx.Register(indexIDs, job.TableName)
+	var uniques []bool
+	switch v := job.Args[0].(type) {
+	case bool:
+		uniques = []bool{v}
+	case *bool:
+		uniques = []bool{*v}
+	case []bool:
+		uniques = v
+	case *[]bool:
+		uniques = *v
+	default:
+		return errors.Errorf("unexpected argument type, got %T", job.Args[0])
+	}
+	engines, err := b.backendCtx.Register(indexIDs, uniques, job.TableName)
 	if err != nil {
 		return errors.Trace(err)
 	}

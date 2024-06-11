@@ -736,7 +736,7 @@ func parseParamTypes(sctx sessionctx.Context, params []expression.Expression) (p
 	paramTypes = make([]*types.FieldType, 0, len(params))
 	for _, param := range params {
 		if c, ok := param.(*expression.Constant); ok { // from binary protocol
-			paramTypes = append(paramTypes, c.GetType())
+			paramTypes = append(paramTypes, c.GetType(sctx.GetExprCtx().GetEvalCtx()))
 			continue
 		}
 

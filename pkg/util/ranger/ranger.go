@@ -732,7 +732,7 @@ func newFieldType(tp *types.FieldType) *types.FieldType {
 func points2EqOrInCond(ctx expression.BuildContext, points []*point, col *expression.Column) expression.Expression {
 	// len(points) cannot be 0 here, since we impose early termination in ExtractEqAndInCondition
 	// Constant and Column args should have same RetType, simply get from first arg
-	retType := col.GetType()
+	retType := col.GetType(ctx.GetEvalCtx())
 	args := make([]expression.Expression, 0, len(points)/2)
 	args = append(args, col)
 	for i := 0; i < len(points); i = i + 2 {
@@ -746,7 +746,7 @@ func points2EqOrInCond(ctx expression.BuildContext, points []*point, col *expres
 	if len(args) > 2 {
 		funcName = ast.In
 	}
-	return expression.NewFunctionInternal(ctx, funcName, col.GetType(), args...)
+	return expression.NewFunctionInternal(ctx, funcName, col.GetType(ctx.GetEvalCtx()), args...)
 }
 
 // RangesToString print a list of Ranges into a string which can appear in an SQL as a condition.
