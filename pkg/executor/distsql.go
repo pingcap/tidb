@@ -686,6 +686,8 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, workCh chan<
 			SetConnIDAndConnAlias(e.Ctx().GetSessionVars().ConnectionID, e.Ctx().GetSessionVars().SessionAlias)
 
 		if e.indexPaging || (len(e.idxPlans) > 0 && e.idxPlans[0].StatsCount() <= float64(initBatchSize)) {
+			// If e.indexPaging is true means this query has limit, so use initBatchSize to avoid scan some unnecessary data.
+			// If e.idxPlans[0].StatsCount() less than initBatchSize, use initBatchSize to reduce some memory allocation.
 			worker.batchSize = min(initBatchSize, worker.maxBatchSize)
 		} else {
 			worker.batchSize = worker.maxBatchSize
