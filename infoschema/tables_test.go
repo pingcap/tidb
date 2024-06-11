@@ -1425,7 +1425,7 @@ func TestTiDBTrx(t *testing.T) {
 		"425070846483628033 2021-05-20 21:16:35.778000 <nil> <nil> LockWaiting 2021-05-20 13:18:30.123456 0 19 10 user1 db1 [\"sql1\",\"sql2\",\""+digest.String()+"\"] "))
 
 	tk.MustQuery(`select state from information_schema.tidb_trx as trx  union select state from information_schema.tidb_trx as trx`).
-		Check(testkit.Rows(txninfo.TxnRunningStateStrs[txninfo.TxnLockAcquiring], txninfo.TxnRunningStateStrs[txninfo.TxnIdle]))
+		Check(testkit.Rows(txninfo.TxnRunningStateStrs[txninfo.TxnIdle], txninfo.TxnRunningStateStrs[txninfo.TxnLockAcquiring]))
 	// Test the all_sql_digests column can be directly passed to the tidb_decode_sql_digests function.
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/expression/sqlDigestRetrieverSkipRetrieveGlobal", "return"))
 	defer func() {
