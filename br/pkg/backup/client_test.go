@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/golang/protobuf/proto"
+	"github.com/pingcap/failpoint"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/encryptionpb"
 	"github.com/pingcap/tidb/br/pkg/backup"
@@ -665,4 +666,50 @@ func TestBuildProgressRangeTree(t *testing.T) {
 	require.Equal(t, []byte("aa"), contained.Origin.StartKey)
 	require.Equal(t, []byte("b"), contained.Origin.EndKey)
 	require.NoError(t, err)
+}
+
+func TestObserveStoreChangesAsync(t *testing.T) {
+	s := createBackupSuite(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// test 2 stores backup
+	s.mockCluster.AddStore(1, "127.0.0.1:20160")
+	s.mockCluster.AddStore(2, "127.0.0.1:20161")
+
+	stores, err := s.mockPDClient.GetAllStores(ctx)
+	require.NoError(t, err)
+	require.Len(t, stores, 2)
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/br/pkg/backup/backup-store-change-tick", `return(true)`))
+
+	// case #1: nothing happened
+	ch := make(chan backup.BackupRetryPolicy, 1)
+	backup.ObserveStoreChangesAsync(ctx, ch, s.mockPDClient)
+	// the channel never receive any message
+	require.Never(t, func() bool { return len(ch) > 0 }, time.Second, 100*time.Millisecond)
+
+	// case #2: new store joined
+	s.mockCluster.AddStore(3, "127.0.0.1:20162")
+	// the channel received the new store
+	require.Eventually(t, func() bool {
+		if len(ch) == 0 {
+			return false
+		}
+		res := <-ch
+		return res.One == 3
+	}, time.Second, 100*time.Millisecond)
+
+	// case #3: one store disconnected
+	s.mockCluster.StopStore(2)
+	// the channel received the store disconnected
+	require.Eventually(t, func() bool {
+		if len(ch) == 0 {
+			return false
+		}
+		res := <-ch
+		return res.All
+	}, time.Second, 100*time.Millisecond)
+
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/backup/backup-store-change-tick"))
 }

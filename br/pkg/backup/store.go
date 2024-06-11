@@ -230,7 +230,14 @@ func ObserveStoreChangesAsync(ctx context.Context, stateNotifier chan BackupRetr
 		if err != nil {
 			logutil.CL(ctx).Warn("failed to watch store changes at beginning, ignore it", zap.Error(err))
 		}
-		tick := time.NewTicker(30 * time.Second)
+		tickInterval := 30 * time.Second
+		failpoint.Inject("backup-store-change-tick", func(val failpoint.Value) {
+			if val.(bool) {
+				tickInterval = 100 * time.Millisecond
+			}
+			logutil.CL(ctx).Info("failpoint backup-store-change-tick injected.", zap.Duration("interval", tickInterval))
+		})
+		tick := time.NewTicker(tickInterval)
 		for {
 			select {
 			case <-ctx.Done():
