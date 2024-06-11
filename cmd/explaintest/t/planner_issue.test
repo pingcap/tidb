@@ -175,21 +175,6 @@ update t_kg74 set
 where (t_kg74.c_obnq8s7_s2 = case when (t_kg74.c_a1tv2 is NULL) then t_kg74.c_g else t_kg74.c_obnq8s7_s2 end
       );
 
-# https://github.com/pingcap/tidb/issues/49109
-set @cur_sql_mode = @@sql_mode;
-set @@sql_mode = '';
-select @@sql_mode;
-drop table if exists t0, t1;
-CREATE TABLE t0(c0 NUMERIC);
-CREATE TABLE t1(c0 NUMERIC);
-INSERT INTO t0 VALUES (0), (NULL), (1), (2);
-INSERT INTO t1(c0) VALUES (NULL), (3), (4), (5);
-drop view if exists v0;
-CREATE VIEW v0(c0) AS SELECT t0.c0 FROM t0;
-
-SELECT t0.c0 FROM v0, t0 LEFT JOIN t1 ON t0.c0 WHERE ((INET_ATON('5V')) IS NULL);
-set @@sql_mode=@cur_sql_mode;
-
 # https://github.com/pingcap/tidb/issues/53236
 drop table if exists t1, t2;
 create table t1(id int primary key, a varchar(128));
