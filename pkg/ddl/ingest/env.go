@@ -70,6 +70,7 @@ func InitGlobalLightningEnv(filterProcessingJobIDs FilterProcessingJobIDsFunc) {
 		memTotal = memTotal / 2
 	}
 	failpoint.Inject("setMemTotalInMB", func(val failpoint.Value) {
+		//nolint: forcetypeassert
 		i := val.(int)
 		memTotal = uint64(i) * size.MB
 	})
