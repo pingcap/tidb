@@ -639,10 +639,11 @@ func (f *fakeCluster) String() string {
 
 type testEnv struct {
 	*fakeCluster
-	checkpoint uint64
-	testCtx    *testing.T
-	ranges     []kv.KeyRange
-	taskCh     chan<- streamhelper.TaskEvent
+	checkpoint     uint64
+	pdDisconnected bool
+	testCtx        *testing.T
+	ranges         []kv.KeyRange
+	taskCh         chan<- streamhelper.TaskEvent
 
 	resolveLocks func([]*txnlock.Lock, *tikv.KeyLocation) (*tikv.KeyLocation, error)
 
@@ -679,7 +680,18 @@ func (t *testEnv) UploadV3GlobalCheckpointForTask(ctx context.Context, _ string,
 	return nil
 }
 
+func (t *testEnv) mockPDConnectionError(duration time.Duration) {
+	t.pdDisconnected = true
+	go func() {
+		time.Sleep(duration)
+		t.pdDisconnected = false
+	}()
+}
+
 func (t *testEnv) GetGlobalCheckpointForTask(ctx context.Context, taskName string) (uint64, error) {
+	if t.pdDisconnected {
+		return 0, status.Error(codes.Unavailable, "pd disconnected")
+	}
 	return t.checkpoint, nil
 }
 

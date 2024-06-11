@@ -415,25 +415,6 @@ func (c *CheckpointAdvancer) setCheckpoints(cps *spans.ValueSortedFull) {
 	c.checkpointsMu.Unlock()
 }
 
-func (c *CheckpointAdvancer) GetGlobalCheckpointWithRetry(
-	ctx context.Context, maxRetry uint, interval time.Duration) (uint64, error) {
-	var globalCheckpointTs uint64
-	var err error
-	var i uint = 0
-	for ; i < maxRetry; i++ {
-		globalCheckpointTs, err = c.env.GetGlobalCheckpointForTask(ctx, c.task.Name)
-		if err == nil {
-			break
-		}
-		time.Sleep(interval)
-	}
-
-	if globalCheckpointTs < c.task.StartTs {
-		globalCheckpointTs = c.task.StartTs
-	}
-	return globalCheckpointTs, err
-}
-
 func (c *CheckpointAdvancer) onTaskEvent(ctx context.Context, e TaskEvent) error {
 	c.taskMu.Lock()
 	defer c.taskMu.Unlock()
@@ -443,9 +424,10 @@ func (c *CheckpointAdvancer) onTaskEvent(ctx context.Context, e TaskEvent) error
 		c.task = e.Info
 		c.taskRange = spans.Collapse(len(e.Ranges), func(i int) kv.KeyRange { return e.Ranges[i] })
 		c.setCheckpoints(spans.Sorted(spans.NewFullWith(e.Ranges, 0)))
-		globalCheckpointTs, err := c.GetGlobalCheckpointWithRetry(ctx, 3, 100*time.Millisecond)
+		globalCheckpointTs, err := c.env.GetGlobalCheckpointForTask(ctx, e.Name)
 		if err != nil {
-			log.Warn("failed to get global checkpoint, skipping.", logutil.ShortError(err))
+			log.Error("failed to get global checkpoint, skipping.", logutil.ShortError(err))
+			return err
 		}
 		c.lastCheckpoint = newCheckpointWithTS(globalCheckpointTs)
 		p, err := c.env.BlockGCUntil(ctx, globalCheckpointTs)

@@ -584,10 +584,40 @@ func TestAddTaskWithLaggedStartTS(t *testing.T) {
 		c.CheckPointLagLimit = 1 * time.Minute
 	})
 	c.advanceClusterTimeBy(5 * time.Minute)
-	c.advanceCheckpointBy(0 * time.Minute)
 	env.advanceCheckpointBy(5 * time.Minute)
+	// Global checkpoint lagged
+	c.advanceCheckpointBy(0 * time.Minute)
 	adv.StartTaskListener(ctx)
+	// Try update checkpoint
 	require.NoError(t, adv.OnTick(ctx))
+	// Verify no err raised
+	require.NoError(t, adv.OnTick(ctx))
+	require.NoError(t, adv.OnTick(ctx))
+}
+
+func TestAddTaskWithLaggedStartTSFailed(t *testing.T) {
+	c := createFakeCluster(t, 4, false)
+	defer func() {
+		fmt.Println(c)
+	}()
+	c.splitAndScatter("01", "02", "022", "023", "033", "04", "043")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	env := &testEnv{fakeCluster: c, testCtx: t}
+	adv := streamhelper.NewCheckpointAdvancer(env)
+	adv.UpdateConfigWith(func(c *config.Config) {
+		c.CheckPointLagLimit = 1 * time.Minute
+	})
+	c.advanceClusterTimeBy(5 * time.Minute)
+	env.advanceCheckpointBy(5 * time.Minute)
+	// Global checkpoint lagged
+	c.advanceCheckpointBy(0 * time.Minute)
+	// PD lost connection and will resume after some time
+	env.mockPDConnectionError(500 * time.Millisecond)
+	adv.StartTaskListener(ctx)
+	// Try update checkpoint
+	require.NoError(t, adv.OnTick(ctx))
+	// Verify no err raised
 	require.NoError(t, adv.OnTick(ctx))
 	require.NoError(t, adv.OnTick(ctx))
 }
