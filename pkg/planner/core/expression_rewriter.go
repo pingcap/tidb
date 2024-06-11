@@ -412,29 +412,40 @@ func (er *expressionRewriter) constructBinaryOpFunction(l expression.Expression,
 		}
 		return expression.ComposeCNFCondition(er.sctx, funcs...), nil
 	default:
-		larg0, rarg0 := expression.GetFuncArg(l, 0), expression.GetFuncArg(r, 0)
-		var expr1, expr2, expr3, expr4, expr5 expression.Expression
-		expr1 = expression.NewFunctionInternal(er.sctx, ast.NE, types.NewFieldType(mysql.TypeTiny), larg0, rarg0)
-		expr2 = expression.NewFunctionInternal(er.sctx, op, types.NewFieldType(mysql.TypeTiny), larg0, rarg0)
-		expr3 = expression.NewFunctionInternal(er.sctx, ast.IsNull, types.NewFieldType(mysql.TypeTiny), expr1)
-		var err error
-		l, err = expression.PopRowFirstArg(er.sctx, l)
-		if err != nil {
-			return nil, err
+		resultDNFList := make([]expression.Expression, 0, lLen)
+		for i := 0; i < lLen; i++ {
+			exprList := make([]expression.Expression, 0, lLen)
+			// build prefix equal conditions
+			// (l[0], ... , l[i-1], ...) op (r[0], ... , r[i-1], ...) should be convert to
+			// l[0] = r[0] and l[1] = r[1] and ... and l[i-1] = r[i-1]
+			for j := 0; j < i; j++ {
+				jExpr, err := er.constructBinaryOpFunction(expression.GetFuncArg(l, j), expression.GetFuncArg(r, j), ast.EQ)
+				if err != nil {
+					return nil, err
+				}
+				exprList = append(exprList, jExpr)
+			}
+
+			// (x,y,z) >= (a,b,c) should be convert to (x > a) or (x = a and y > b) or (x = a and y = b and z >= c)
+			// The only different between >= and > is that >= additional include the (x,y,z) = (a,b,c).
+			degeneratedOp := op
+			if i < lLen-1 {
+				switch op {
+				case ast.GE:
+					degeneratedOp = ast.GT
+				case ast.LE:
+					degeneratedOp = ast.LT
+				}
+			}
+			currentIndexExpr, err := er.constructBinaryOpFunction(expression.GetFuncArg(l, i), expression.GetFuncArg(r, i), degeneratedOp)
+			if err != nil {
+				return nil, err
+			}
+			exprList = append(exprList, currentIndexExpr)
+			currentExpr := expression.ComposeCNFCondition(er.sctx, exprList...)
+			resultDNFList = append(resultDNFList, currentExpr)
 		}
-		r, err = expression.PopRowFirstArg(er.sctx, r)
-		if err != nil {
-			return nil, err
-		}
-		expr4, err = er.constructBinaryOpFunction(l, r, op)
-		if err != nil {
-			return nil, err
-		}
-		expr5, err = er.newFunction(ast.If, types.NewFieldType(mysql.TypeTiny), expr3, expression.NewNull(), expr4)
-		if err != nil {
-			return nil, err
-		}
-		return er.newFunction(ast.If, types.NewFieldType(mysql.TypeTiny), expr1, expr2, expr5)
+		return expression.ComposeDNFCondition(er.sctx, resultDNFList...), nil
 	}
 }
 
