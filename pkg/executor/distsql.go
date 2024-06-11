@@ -685,7 +685,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, workCh chan<
 			SetMemTracker(tracker).
 			SetConnIDAndConnAlias(e.Ctx().GetSessionVars().ConnectionID, e.Ctx().GetSessionVars().SessionAlias)
 
-		if e.indexPaging || e.Ctx().GetSessionVars().MemQuotaQuery < 1024*1024 || (len(e.idxPlans) > 0 && e.idxPlans[0].StatsCount() <= float64(initBatchSize)) {
+		if e.indexPaging || (len(e.idxPlans) > 0 && e.idxPlans[0].StatsCount() <= float64(initBatchSize)) {
 			worker.batchSize = min(initBatchSize, worker.maxBatchSize)
 		} else {
 			worker.batchSize = worker.maxBatchSize
