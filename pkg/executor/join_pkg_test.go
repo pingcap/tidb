@@ -27,6 +27,59 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestHashJoinV2UnderApply(t *testing.T) {
+	colTypes := []*types.FieldType{
+		types.NewFieldType(mysql.TypeLonglong),
+		types.NewFieldType(mysql.TypeDouble),
+	}
+	casTest := defaultHashJoinTestCase(colTypes, 0, false)
+	opt1 := testutil.MockDataSourceParameters{
+		Rows: casTest.rows,
+		Ctx:  casTest.ctx,
+		GenDataFunc: func(row int, typ *types.FieldType) any {
+			switch typ.GetType() {
+			case mysql.TypeLong, mysql.TypeLonglong:
+				return int64(row)
+			case mysql.TypeDouble:
+				return float64(row)
+			default:
+				panic("not implement")
+			}
+		},
+	}
+	opt2 := opt1
+	opt1.DataSchema = expression.NewSchema(casTest.columns()...)
+	opt2.DataSchema = expression.NewSchema(casTest.columns()...)
+	dataSource1 := testutil.BuildMockDataSource(opt1)
+	dataSource2 := testutil.BuildMockDataSource(opt2)
+	dataSource1.PrepareChunks()
+	dataSource2.PrepareChunks()
+
+	executor := prepare4HashJoin(casTest, dataSource1, dataSource2)
+	ctx := context.Background()
+	for i := 0; i < 10; i++ {
+		// when in apply, the same executor will be open/closed multiple times
+		chk := exec.NewFirstChunk(executor)
+		err := executor.Open(ctx)
+		require.NoError(t, err)
+		for {
+			err = executor.Next(ctx, chk)
+			require.NoError(t, err)
+			if chk.NumRows() == 0 {
+				break
+			}
+		}
+		err = executor.Close()
+		require.NoError(t, err)
+		newDataSource1 := testutil.BuildMockDataSource(opt1)
+		newDataSource2 := testutil.BuildMockDataSource(opt2)
+		newDataSource1.PrepareChunks()
+		newDataSource2.PrepareChunks()
+		executor.SetChildren(0, newDataSource1)
+		executor.SetChildren(1, newDataSource2)
+	}
+}
+
 func TestJoinExec(t *testing.T) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/join/testRowContainerSpill", "return(true)"))
 	defer func() {
