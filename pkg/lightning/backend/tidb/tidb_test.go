@@ -755,7 +755,7 @@ func TestDuplicateThreshold(t *testing.T) {
 	s.mockDB.
 		ExpectExec("\\QINSERT IGNORE INTO `foo`.`bar`(`a`) VALUES(1),(2),(3),(4),(5)\\E").
 		WillReturnResult(sqlmock.NewResult(5, 0))
-	writer, err := engine.LocalWriter(ctx, writerCfg)
+	writer, err = engine.LocalWriter(ctx, writerCfg)
 	require.NoError(t, err)
 	err = writer.AppendRows(ctx, []string{"a"}, dataRows)
 	require.ErrorContains(t, err, "The number of conflict errors exceeds the threshold configured by `conflict.threshold`: '5'")
