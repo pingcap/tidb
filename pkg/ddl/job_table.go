@@ -421,6 +421,7 @@ func (s *jobScheduler) startDispatch() error {
 		if err := s.checkAndUpdateClusterState(false); err != nil {
 			continue
 		}
+		failpoint.InjectCall("beforeAllLoadDDLJobAndRun")
 		s.loadDDLJobAndRun(se, s.generalDDLWorkerPool, s.getGeneralJob)
 		s.loadDDLJobAndRun(se, s.reorgWorkerPool, s.getReorgJob)
 	}
