@@ -143,7 +143,7 @@ func TestIndexLookUpIssue53871(t *testing.T) {
 	tk.MustExec("create table t (id int key auto_increment, b int, c int, index idx (b))")
 	tk.MustExec(" insert into t () values (), (), (), (), (), (), (), ();")
 	for i := 0; i < 9; i++ {
-		tk.MustExec(fmt.Sprintf("insert into t (b) select b from t;"))
+		tk.MustExec("insert into t (b) select b from t;")
 	}
 	tk.MustExec(`update t set b = rand() * 100000, c = id;`)
 	// Index lookup query with paging enabled.
