@@ -145,7 +145,7 @@ func TestIndexLookUpIssue53871(t *testing.T) {
 	for i := 0; i < 9; i++ {
 		tk.MustExec("insert into t (b) select b from t;")
 	}
-	tk.MustExec(`update t set b = rand() * 100000, c = id;`)
+	tk.MustExec(`update t set b = rand() * 10000, c = id;`)
 	// Index lookup query with paging enabled.
 	tk.MustExec(`set @@tidb_enable_paging=1`)
 	tk.MustExec(`set @@tidb_min_paging_size=128`)
@@ -153,7 +153,7 @@ func TestIndexLookUpIssue53871(t *testing.T) {
 	tk.MustQuery("select count(c) from t use index(idx);").Check(testkit.Rows("4096")) // full scan to resolve uncommitted lock.
 	tk.MustQuery("select count(c) from t ignore index(idx)").Check(testkit.Rows("4096"))
 	tk.MustExec("analyze table t")
-	rows := tk.MustQuery("explain analyze select * from t use index(idx) where b > 0 and b < 100000;").Rows()
+	rows := tk.MustQuery("explain analyze select * from t use index(idx) where b > 0;").Rows()
 	require.Len(t, rows, 3)
 	require.Regexp(t, ".*IndexLookUp.*table_task: {total_time: .*, num: 1, .*", fmt.Sprintf("%v", rows[0]))
 	require.Regexp(t, ".*IndexRangeScan.*rpc_info.*Cop:{num_rpc:1, total_time:.*", fmt.Sprintf("%v", rows[1]))
