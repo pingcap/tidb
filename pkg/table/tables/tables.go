@@ -527,6 +527,7 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx table.MutateContext
 	needChecksum := len(checksumData) > 0
 	rowToCheck := make([]types.Datum, 0, numColsCap)
 
+	nonPublicColStr := ""
 	for _, col := range t.Columns {
 		var value types.Datum
 		if col.State == model.StateDeleteOnly || col.State == model.StateDeleteReorganization {
@@ -576,6 +577,7 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx table.MutateContext
 			} else if needChecksum {
 				checksumData = t.appendNonPublicColForChecksum(sctx, h, checksumData, col.ToInfo(), &value)
 			}
+			nonPublicColStr += fmt.Sprintf("col:%s, ID:%d, offset:%d, value:%v, canskip:%v", col.Name, col.ID, col.Offset, value, t.canSkip(col, &value))
 		} else {
 			value = newData[col.Offset]
 			checksumData = t.appendPublicColForChecksum(sctx, h, checksumData, col.ToInfo(), &value)
@@ -620,8 +622,8 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx table.MutateContext
 		for _, col := range t.Meta().Columns {
 			str += fmt.Sprintf("col ID:%d, offset:%d, type:%v, state:%s; ", col.ID, col.Offset, col.GetType(), col.State)
 		}
-		logutil.BgLogger().Warn(fmt.Sprintf("xxx update------------------------------------ ts:%v, tbl name:%s, id:%d, cols:%v colIDs:%v, row:%v, tbl:%p, oldData:%v",
-			txn.StartTS(), t.Meta().Name, t.Meta().ID, str, colIDs, row, t, oldData))
+		logutil.BgLogger().Warn(fmt.Sprintf("xxx update------------------------------------ ts:%v, tbl name:%s, id:%d, cols:%v colIDs:%v, row:%v, tbl:%p, oldData:%v, newData:%v, nonPublicColStr:%v",
+			txn.StartTS(), t.Meta().Name, t.Meta().ID, str, colIDs, row, t, oldData, newData, nonPublicColStr))
 	}
 
 	writeBufs := sessVars.GetWriteStmtBufs()

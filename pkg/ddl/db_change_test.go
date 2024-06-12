@@ -40,8 +40,10 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/external"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
 )
 
 // TestShowCreateTable tests the result of "show create table" when we are running "add index" or "add column".
@@ -802,16 +804,20 @@ func runTestInSchemaState(
 			return
 		}
 		prevState = jobStateOrLastSubJobState(job)
-		if prevState != state {
+		if prevState != model.StatePublic {
 			return
 		}
-		for _, sqlWithErr := range sqlWithErrs {
-			_, err1 := se.Execute(context.Background(), sqlWithErr.sql)
-			if !terror.ErrorEqual(err1, sqlWithErr.expectErr) {
-				checkErr = errors.Errorf("sql: %s, expect err: %v, got err: %v", sqlWithErr.sql, sqlWithErr.expectErr, err1)
-				break
-			}
+		logutil.BgLogger().Info("zzz--------------------------------------------------------------------------------------------------------- 1", zap.Int64("ver", se.GetInfoSchema().SchemaMetaVersion()), zap.Stringer("x", prevState))
+		sqlWithErr := sqlWithErrs[0]
+		_, err1 := se.Execute(context.Background(), sqlWithErr.sql)
+		if !terror.ErrorEqual(err1, sqlWithErr.expectErr) {
+			checkErr = errors.Errorf("sql: %s, expect err: %v, got err: %v", sqlWithErr.sql, sqlWithErr.expectErr, err1)
 		}
+		// logutil.BgLogger().Info("zzz--------------------------------------------------------------------------------------------------------- 2", zap.Int64("ver", se.GetInfoSchema().SchemaMetaVersion()), zap.Stringer("x", prevState))
+		// _, err1 = se.Execute(context.Background(), "select * from stock")
+		// if !terror.ErrorEqual(err1, sqlWithErr.expectErr) {
+		// 	checkErr = errors.Errorf("sql: %s, expect err: %v, got err: %v", sqlWithErr.sql, sqlWithErr.expectErr, err1)
+		// }
 	}
 	if isOnJobUpdated {
 		callback.OnJobUpdatedExported.Store(&cbFunc)
@@ -821,7 +827,38 @@ func runTestInSchemaState(
 	d := dom.DDL()
 	originalCallback := d.GetHook()
 	d.SetHook(callback)
+
 	tk.MustExec(alterTableSQL)
+	require.NoError(t, checkErr)
+
+	prevState = model.StateNone
+	state = model.StateWriteOnly
+	cbFunc1 := func(job *model.Job) {
+		if jobStateOrLastSubJobState(job) == prevState || checkErr != nil {
+			return
+		}
+		prevState = jobStateOrLastSubJobState(job)
+		if prevState != state {
+			return
+		}
+		sqls := sqlWithErrs[1:]
+		for i, sqlWithErr := range sqls {
+			logutil.BgLogger().Info("zzz--------------------------------------------------------------------------------------------------------- 3",
+				zap.Int64("ver", se.GetInfoSchema().SchemaMetaVersion()), zap.Int("no.", i), zap.String("sql", sqlWithErr.sql))
+			_, err1 := se.Execute(context.Background(), sqlWithErr.sql)
+			if !terror.ErrorEqual(err1, sqlWithErr.expectErr) {
+				checkErr = errors.Errorf("sql: %s, expect err: %v, got err: %v", sqlWithErr.sql, sqlWithErr.expectErr, err1)
+				break
+			}
+		}
+	}
+	if isOnJobUpdated {
+		callback.OnJobUpdatedExported.Store(&cbFunc1)
+	} else {
+		callback.OnJobRunBeforeExported = cbFunc1
+	}
+	d.SetHook(callback)
+	tk.MustExec("alter table stock drop column cct_1")
 	require.NoError(t, checkErr)
 	d.SetHook(originalCallback)
 
@@ -1618,20 +1655,55 @@ func TestWriteReorgForColumnTypeChange(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
 	tk.MustExec("use test_db_state")
-	tk.MustExec(`CREATE TABLE t_ctc (
+	tk.MustExec(`CREATE TABLE stock (
   a DOUBLE NULL DEFAULT '1.732088511183121',
   c char(30) NOT NULL,
   KEY idx (a,c)
 ) ENGINE=InnoDB DEFAULT CHARSET=latin1 COLLATE=latin1_bin COMMENT='…comment';
 `)
-	defer tk.MustExec("drop table t_ctc")
+	defer tk.MustExec("drop table stock")
 
 	sqls := make([]sqlWithErr, 2)
-	sqls[0] = sqlWithErr{"INSERT INTO t_ctc SET c = 'zr36f7ywjquj1curxh9gyrwnx', a = '1.9897043136824033';", nil}
-	sqls[1] = sqlWithErr{"DELETE FROM t_ctc;", nil}
-	dropColumnsSQL := "alter table t_ctc change column a ddd TIME NULL DEFAULT '18:21:32' AFTER c;"
-	query := &expectQuery{sql: "admin check table t_ctc;", rows: nil}
+	sqls[0] = sqlWithErr{"INSERT INTO stock SET c = 'zr36f7ywjquj1curxh9gyrwnx', a = '1.9897043136824033';", nil}
+	sqls[1] = sqlWithErr{"DELETE FROM stock;", nil}
+	dropColumnsSQL := "alter table stock change column a ddd TIME NULL DEFAULT '18:21:32' AFTER c;"
+	query := &expectQuery{sql: "admin check table stock;", rows: nil}
 	runTestInSchemaState(t, tk, store, dom, model.StateWriteReorganization, false, dropColumnsSQL, sqls, query)
+}
+
+func TestXxxWriteReorgForColumnTypeChange(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
+	tk.MustExec("use test_db_state")
+	tk.MustExec(`CREATE TABLE stock (
+  a int NOT NULL,
+  b char(30) NOT NULL,
+  c int,
+  d char(64),
+  PRIMARY KEY(a,b)
+) ENGINE=InnoDB DEFAULT CHARSET=latin1 COLLATE=latin1_bin COMMENT='…comment';
+`)
+	// tk.MustExec("insert into stock values(0, 'a0', 10, 'w')")
+	tk.MustExec("insert into stock values(1, 'a', 11, 'x'), (2, 'b', 22, 'y')")
+	tk.MustExec("alter table stock add column cct_1 int default 10")
+	tk.MustExec("alter table stock modify cct_1 json")
+	// tk.MustExec("alter table stock add column adc_1 smallint")
+	defer tk.MustExec("drop table stock")
+
+	sqls := make([]sqlWithErr, 6)
+	sqls[0] = sqlWithErr{"begin", nil}
+	sqls[1] = sqlWithErr{"select a, c, d from stock where (a, b) IN ((1, 'a'),(2, 'b')) FOR UPDATE", nil}
+	sqls[2] = sqlWithErr{"UPDATE stock SET c = 11 WHERE a= 1 AND b = 'a'", nil}
+	sqls[3] = sqlWithErr{"UPDATE stock SET c = 12, d = 'z' WHERE a= 2 AND b = 'b'", nil}
+	sqls[4] = sqlWithErr{"select * FROM stock;", nil}
+	sqls[5] = sqlWithErr{"commit", nil}
+	// dropColumnsSQL := "alter table stock drop column cct_1"
+	dropColumnsSQL := "alter table stock add column adc_1 smallint"
+	query := &expectQuery{sql: "admin check table stock;", rows: nil}
+	// query := &expectQuery{sql: "admin show ddl jobs;", rows: nil}
+	runTestInSchemaState(t, tk, store, dom, model.StateWriteReorganization, true, dropColumnsSQL, sqls, query)
+	tk.MustExec("select * FROM stock;")
 }
 
 func TestCreateExpressionIndex(t *testing.T) {

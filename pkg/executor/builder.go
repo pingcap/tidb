@@ -2387,17 +2387,13 @@ func (b *executorBuilder) buildUpdate(v *plannercore.Update) exec.Executor {
 
 		t := tbl.Meta()
 		if t.Name.L == "stock" {
-			str := ""
-			for _, col := range t.Columns {
-				str += fmt.Sprintf("col:%#v;", col)
-			}
 			txn, err := b.ctx.Txn(false)
 			if err != nil {
 				return nil
 			}
 			if txn != nil && txn.Valid() {
-				logutil.BgLogger().Warn(fmt.Sprintf("xxx update, exec builder ------------------------------------ ver:%v, ver:%v, ts:%v, tbl name:%s, id:%d, cols:%v, tbl:%p, ctx:%p, is:%p",
-					b.ctx.GetInfoSchema().SchemaMetaVersion(), b.is.SchemaMetaVersion(), txn.StartTS(), t.Name, t.ID, str, tbl, b.ctx.GetInfoSchema(), b.is))
+				logutil.BgLogger().Warn(fmt.Sprintf("xxx update, exec builder ------------------------------------ ver:%v, ver:%v, ts:%v, tbl name:%s, id:%d, tbl:%p, ctx:%p, is:%p",
+					b.ctx.GetInfoSchema().SchemaMetaVersion(), b.is.SchemaMetaVersion(), txn.StartTS(), t.Name, t.ID, tbl, b.ctx.GetInfoSchema(), b.is))
 			}
 		}
 	}
@@ -5008,6 +5004,21 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 		handles:            handles,
 		idxVals:            plan.IndexValues,
 		partitionNames:     plan.PartitionNames,
+	}
+
+	if e.tblInfo.Name.L == "stock" {
+		str := ""
+		for _, col := range e.tblInfo.Columns {
+			str += fmt.Sprintf("col ID:%d, offset:%d, type:%v, state:%s; ", col.ID, col.Offset, col.GetType(), col.State)
+		}
+		txn, err := e.Ctx().Txn(false)
+		if err != nil {
+			return nil
+		}
+		if txn != nil && txn.Valid() {
+			logutil.BgLogger().Warn(fmt.Sprintf("xxx builder, batch point get build------------------------------------ ver:%v, ts:%d, tbl name:%s, id:%d, cols:%v, tbl:%p",
+				e.Ctx().GetInfoSchema().SchemaMetaVersion(), txn.StartTS(), e.tblInfo.Name, e.tblInfo.ID, str, e.tblInfo))
+		}
 	}
 
 	e.snapshot, err = b.getSnapshot()

@@ -1243,8 +1243,8 @@ func (m *Meta) GetTable(dbID int64, tableID int64) (*model.TableInfo, error) {
 		for _, col := range tableInfo.Columns {
 			str += fmt.Sprintf("col ID:%d, offset:%d, type:%v, state:%s; ", col.ID, col.Offset, col.GetType(), col.State)
 		}
-		logutil.BgLogger().Warn(fmt.Sprintf("xxx builder, info schema, get table ------------------------------------ ts:%d, tbl:%p, str:%s",
-			m.StartTS, tableInfo, str))
+		logutil.BgLogger().Warn(fmt.Sprintf("xxx builder, info schema, get table ------------------------------------ ts:%d, tbl ID:%d, tbl:%p, str:%s",
+			m.StartTS, tableID, tableInfo, str))
 	}
 	return tableInfo, errors.Trace(err)
 }

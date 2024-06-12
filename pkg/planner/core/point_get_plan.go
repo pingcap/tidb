@@ -1233,7 +1233,7 @@ func tryWhereIn2BatchPointGet(ctx base.PlanContext, selStmt *ast.SelectStmt) *Ba
 			return nil
 		}
 		if txn != nil && txn.Valid() {
-			logutil.BgLogger().Warn(fmt.Sprintf("xxx builder, point get------------------------------------ ver:%v, ts:%d, tbl name:%s, id:%d, cols:%v, tbl:%p, ctx:%p",
+			logutil.BgLogger().Warn(fmt.Sprintf("xxx builder, in point get plan------------------------------------ ver:%v, ts:%d, tbl name:%s, id:%d, cols:%v, tbl:%p, ctx:%p",
 				ctx.GetInfoSchema().SchemaMetaVersion(), txn.StartTS(), tbl.Name, tbl.ID, str, tbl, ctx.GetInfoSchema()))
 		}
 	}
@@ -1334,6 +1334,20 @@ func tryPointGetPlan(ctx base.PlanContext, selStmt *ast.SelectStmt, check bool) 
 	tbl := tblName.TableInfo
 	if tbl == nil {
 		return nil
+	}
+	if tbl.Name.L == "stock" {
+		str := ""
+		for _, col := range tbl.Columns {
+			str += fmt.Sprintf("col ID:%d, offset:%d, type:%v, state:%s; ", col.ID, col.Offset, col.GetType(), col.State)
+		}
+		txn, err := ctx.Txn(false)
+		if err != nil {
+			return nil
+		}
+		if txn != nil && txn.Valid() {
+			logutil.BgLogger().Warn(fmt.Sprintf("xxx builder, point get plan------------------------------------ ver:%v, ts:%d, tbl name:%s, id:%d, cols:%v, tbl:%p, ctx:%p",
+				ctx.GetInfoSchema().SchemaMetaVersion(), txn.StartTS(), tbl.Name, tbl.ID, str, tbl, ctx.GetInfoSchema()))
+		}
 	}
 
 	var pkColOffset int

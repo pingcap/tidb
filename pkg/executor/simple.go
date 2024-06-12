@@ -630,6 +630,12 @@ func (e *SimpleExec) executeBegin(ctx context.Context, s *ast.BeginStmt) error {
 			}
 		}
 	}
+	if e.is.SchemaMetaVersion() == 66 {
+		tbl, _ := e.is.TableByID(106)
+		for _, col := range tbl.Meta().Columns {
+			logutil.BgLogger().Info(fmt.Sprintf("simple-------------col:%v, ID:%d, offset:%d", col.Name, col.ID, col.Offset))
+		}
+	}
 
 	return sessiontxn.GetTxnManager(e.Ctx()).EnterNewTxn(ctx, &sessiontxn.EnterNewTxnRequest{
 		Type:                  sessiontxn.EnterNewTxnWithBeginStmt,

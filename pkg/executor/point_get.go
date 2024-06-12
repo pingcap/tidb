@@ -40,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/intest"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/logutil/consistency"
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
 	"github.com/tikv/client-go/v2/tikvrpc"
@@ -81,6 +82,21 @@ func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) exec.Execut
 	e.SetInitCap(1)
 	e.SetMaxChunkSize(1)
 	e.Init(p)
+
+	if e.tblInfo.Name.L == "stock" {
+		str := ""
+		for _, col := range e.tblInfo.Columns {
+			str += fmt.Sprintf("col ID:%d, offset:%d, type:%v, state:%s; ", col.ID, col.Offset, col.GetType(), col.State)
+		}
+		txn, err := e.Ctx().Txn(false)
+		if err != nil {
+			return nil
+		}
+		if txn != nil && txn.Valid() {
+			logutil.BgLogger().Warn(fmt.Sprintf("xxx builder, point get build ------------------------------------ ver:%v, ts:%d, tbl name:%s, id:%d, cols:%v, tbl:%p",
+				e.Ctx().GetInfoSchema().SchemaMetaVersion(), txn.StartTS(), e.tblInfo.Name, e.tblInfo.ID, str, e.tblInfo))
+		}
+	}
 
 	e.snapshot, err = b.getSnapshot()
 	if err != nil {

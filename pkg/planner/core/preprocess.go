@@ -495,20 +495,6 @@ func (p *preprocessor) tableByName(tn *ast.TableName) (table.Table, error) {
 	}
 
 	tbl, err := is.TableByName(sName, tn.Name)
-	if tbl.Meta().Name.L == "stock" {
-		str := ""
-		for _, col := range tbl.Meta().Columns {
-			str += fmt.Sprintf("col ID:%d, offset:%d, type:%v, state:%s; ", col.ID, col.Offset, col.GetType(), col.State)
-		}
-		txn, err := p.sctx.Txn(false)
-		if err != nil {
-			return nil, err
-		}
-		if txn != nil && txn.Valid() {
-			logutil.BgLogger().Warn(fmt.Sprintf("xxx builder, preprocessor ------------------------------------ ver:%v, ts:%d, cols:%v, tbl:%p, is:%p, txn is:%p",
-				is.SchemaMetaVersion(), txn.StartTS(), str, tbl, p.InfoSchema, is))
-		}
-	}
 	if err != nil {
 		// We should never leak that the table doesn't exist (i.e. attachplannererrors.ErrTableNotExists)
 		// unless we know that the user has permissions to it, should it exist.
@@ -1594,11 +1580,34 @@ func (p *preprocessor) handleTableName(tn *ast.TableName) {
 		return
 	}
 
+	tblStr := ""
+	if table.Meta().Name.L == "stock" {
+		for _, col := range table.Meta().Columns {
+			tblStr += fmt.Sprintf("col ID:%d, offset:%d, type:%v, state:%s; ", col.ID, col.Offset, col.GetType(), col.State)
+		}
+		tblStr += fmt.Sprintf(" tbl:%p", table)
+	}
+
 	if !p.skipLockMDL() {
 		table, err = tryLockMDLAndUpdateSchemaIfNecessary(p.sctx.GetPlanCtx(), model.NewCIStr(tn.Schema.L), table, p.ensureInfoSchema())
 		if err != nil {
 			p.err = err
 			return
+		}
+	}
+	if table.Meta().Name.L == "stock" {
+		str := ""
+		for _, col := range table.Meta().Columns {
+			str += fmt.Sprintf("col ID:%d, offset:%d, type:%v, state:%s; ", col.ID, col.Offset, col.GetType(), col.State)
+		}
+		txn, err := p.sctx.Txn(false)
+		if err != nil {
+			p.err = err
+			return
+		}
+		if txn != nil && txn.Valid() {
+			logutil.BgLogger().Warn(fmt.Sprintf("xxx builder, preprocessor ------------------------------------ ver:%v, ts:%d, %s, cols:%v, t:%p, is:%p, txn is:%p",
+				p.InfoSchema.SchemaMetaVersion(), txn.StartTS(), tblStr, str, table, p.InfoSchema, p.InfoSchema))
 		}
 	}
 

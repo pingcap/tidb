@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
 )
@@ -200,6 +201,19 @@ func (e *UpdateExec) exec(ctx context.Context, _ *expression.Schema, row, newDat
 		fkChecks := e.fkChecks[content.TblID]
 		fkCascades := e.fkCascades[content.TblID]
 		changed, err1 := updateRecord(ctx, e.Ctx(), handle, oldData, newTableData, flags, tbl, false, e.memTracker, fkChecks, fkCascades)
+		if tbl.Meta().Name.L == "stock" {
+			str := ""
+			for _, col := range tbl.Meta().Columns {
+				str += fmt.Sprintf("col:%#v;", col)
+			}
+			txn, err := e.Ctx().Txn(true)
+			if err != nil {
+				return err
+			}
+			is := e.Ctx().GetInfoSchema()
+			logutil.BgLogger().Warn(fmt.Sprintf("xxx update------------------------------------ ts:%v, ver:%v, tbl name:%s, id:%d, cols:%v, tbl:%p, is:%p",
+				is.SchemaMetaVersion(), txn.StartTS(), tbl.Meta().Name, tbl.Meta().ID, str, tbl, e.Ctx().GetInfoSchema()))
+		}
 		if err1 == nil {
 			_, exist := e.updatedRowKeys[content.Start].Get(handle)
 			memDelta := e.updatedRowKeys[content.Start].Set(handle, changed)
