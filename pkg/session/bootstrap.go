@@ -706,7 +706,7 @@ const (
 		backupTS    BIGINT UNSIGNED NULL,
 		restoreTS   BIGINT UNSIGNED NULL,
 		archiveSize BIGINT UNSIGNED NULL,
-		message     TEXT NULL,
+		message     TEXT NULL
 	);`
 
 	// DropMySQLIndexUsageTable removes the table `mysql.schema_index_usage`

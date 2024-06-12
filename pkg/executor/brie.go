@@ -739,7 +739,7 @@ func (e *BRIEExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	glue := &tidbGlue{se: e.Ctx(), progress: progress, info: e.info}
 
 	stmtCtx := util.WithInternalSourceType(ctx, kv.InternalTxnBR)
-	_,err = e.Ctx().GetSQLExecutor().ExecuteInternal(stmtCtx, "UPDATE mysql.tidb_br_jobs SET execTime = %? WHERE id = %?;", e.info.execTime, e.info.id)
+	_,err = e.Ctx().GetSQLExecutor().ExecuteInternal(stmtCtx, "UPDATE mysql.tidb_br_jobs SET execTime = %? WHERE id = %?;", e.info.execTime.String(), e.info.id)
 	if err != nil {
 		log.Error("Failed to insert BRIE task into tidb_br_jobs", zap.Error(err))
 		return err
@@ -754,7 +754,7 @@ func (e *BRIEExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		err = errors.Errorf("unsupported BRIE statement kind: %s", e.info.kind)
 	}
 	e.info.finishTime = types.CurrentTime(mysql.TypeDatetime)
-	_,err = e.Ctx().GetSQLExecutor().ExecuteInternal(stmtCtx, "UPDATE mysql.tidb_br_jobs SET finishTime = %?, message = %? WHERE id = %?;", e.info.finishTime, err.Error(), e.info.id)
+	_,err = e.Ctx().GetSQLExecutor().ExecuteInternal(stmtCtx, "UPDATE mysql.tidb_br_jobs SET finishTime = %?, message = %? WHERE id = %?;", e.info.finishTime.String(), err.Error(), e.info.id)
 	if err != nil {
 		log.Error("Failed to insert BRIE task into tidb_br_jobs", zap.Error(err))
 		return err
