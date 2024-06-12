@@ -199,10 +199,30 @@ type buildWorkerBase struct {
 	BuildKeyColIdx []int
 }
 
+func syncerAdd(syncer *sync.WaitGroup) {
+	if syncer != nil {
+		syncer.Add(1)
+	}
+}
+
+func syncerDone(syncer *sync.WaitGroup) {
+	if syncer != nil {
+		syncer.Done()
+	}
+}
+
 // fetchBuildSideRows fetches all rows from build side executor, and append them
 // to e.buildSideResult.
-func (w *buildWorkerBase) fetchBuildSideRows(ctx context.Context, hashJoinCtx *hashJoinCtxBase, fetcherAndWorkerSyncer *sync.WaitGroup, chkCh chan<- *chunk.Chunk, errCh chan<- error, doneCh <-chan struct{}) {
-	defer close(chkCh)
+func (w *buildWorkerBase) fetchBuildSideRows(ctx context.Context, hashJoinCtx *hashJoinCtxBase, fetcherAndWorkerSyncer *sync.WaitGroup, workerWaiter *sync.WaitGroup, chkCh chan<- *chunk.Chunk, errCh chan<- error, doneCh <-chan struct{}) {
+	defer func() {
+		close(chkCh)
+
+		if fetcherAndWorkerSyncer != nil {
+			workerWaiter.Wait()
+			// TODO wait for the finish of workers and spill remaining rows to disk
+		}
+	}()
+
 	var err error
 	failpoint.Inject("issue30289", func(val failpoint.Value) {
 		if val.(bool) {
@@ -220,12 +240,13 @@ func (w *buildWorkerBase) fetchBuildSideRows(ctx context.Context, hashJoinCtx *h
 			return
 		}
 	})
-	sessVars := hashJoinCtx.SessCtx.GetSessionVars()
 	failpoint.Inject("issue51998", func(val failpoint.Value) {
 		if val.(bool) {
 			time.Sleep(2 * time.Second)
 		}
 	})
+
+	sessVars := hashJoinCtx.SessCtx.GetSessionVars()
 	for {
 		if fetcherAndWorkerSyncer != nil {
 			// TODO check spill and execute spill when spill is triggered
@@ -234,31 +255,37 @@ func (w *buildWorkerBase) fetchBuildSideRows(ctx context.Context, hashJoinCtx *h
 		if hashJoinCtx.finished.Load() {
 			return
 		}
+
 		chk := hashJoinCtx.ChunkAllocPool.Alloc(w.BuildSideExec.RetFieldTypes(), sessVars.MaxChunkSize, sessVars.MaxChunkSize)
 		err = exec.Next(ctx, w.BuildSideExec, chk)
+
 		failpoint.Inject("issue51998", func(val failpoint.Value) {
 			if val.(bool) {
 				err = errors.Errorf("issue51998 build return error")
 			}
 		})
+
 		if err != nil {
 			errCh <- errors.Trace(err)
 			return
 		}
+
 		failpoint.Inject("errorFetchBuildSideRowsMockOOMPanic", nil)
 		failpoint.Inject("ConsumeRandomPanic", nil)
+
 		if chk.NumRows() == 0 {
 			return
 		}
+
+		syncerAdd(fetcherAndWorkerSyncer)
 		select {
 		case <-doneCh:
+			syncerDone(fetcherAndWorkerSyncer)
 			return
 		case <-hashJoinCtx.closeCh:
+			syncerDone(fetcherAndWorkerSyncer)
 			return
 		case chkCh <- chk:
-			if fetcherAndWorkerSyncer != nil {
-				fetcherAndWorkerSyncer.Add(1)
-			}
 		}
 	}
 }

@@ -295,6 +295,18 @@ func (fetcher *ProbeSideTupleFetcherV2) shouldLimitProbeFetchSize() bool {
 	return false
 }
 
+func (w *BuildWorkerV2) processOneChunk(typeCtx types.Context, builder *rowTableBuilder, chk *chunk.Chunk, fetcherAndWorkerSyncer *sync.WaitGroup, cost *int64) error {
+	defer func() {
+		fetcherAndWorkerSyncer.Done()
+	}()
+
+	start := time.Now()
+	err := builder.processOneChunk(chk, typeCtx, w.HashJoinCtx, int(w.WorkerID))
+	failpoint.Inject("splitPartitionPanic", nil)
+	*cost += int64(time.Since(start))
+	return err
+}
+
 func (w *BuildWorkerV2) splitPartitionAndAppendToRowTable(typeCtx types.Context, srcChkCh chan *chunk.Chunk, fetcherAndWorkerSyncer *sync.WaitGroup) (err error) {
 	cost := int64(0)
 	defer func() {
@@ -309,16 +321,13 @@ func (w *BuildWorkerV2) splitPartitionAndAppendToRowTable(typeCtx types.Context,
 	builder := createRowTableBuilder(w.BuildKeyColIdx, hashJoinCtx.BuildKeyTypes, partitionNumber, w.HasNullableKey, hashJoinCtx.BuildFilter != nil, hashJoinCtx.needScanRowTableAfterProbeDone)
 
 	for chk := range srcChkCh {
-		fetcherAndWorkerSyncer.Done()
-		start := time.Now()
-		err = builder.processOneChunk(chk, typeCtx, w.HashJoinCtx, int(w.WorkerID))
-		failpoint.Inject("splitPartitionPanic", nil)
-		cost += int64(time.Since(start))
+		err = w.processOneChunk(typeCtx, builder, chk, fetcherAndWorkerSyncer, &cost)
 		if err != nil {
 			return err
 		}
 	}
 	start := time.Now()
+	// TODO fetcher should wait for this operation
 	builder.appendRemainingRowLocations(int(w.WorkerID), w.HashJoinCtx.hashTableContext)
 	cost += int64(time.Since(start))
 	return nil
@@ -612,6 +621,13 @@ func (e *HashJoinV2Exec) createTasks(buildTaskCh chan<- *buildTask, totalSegment
 	}
 }
 
+func (e *HashJoinV2Exec) processErrInBuildStage(errCh chan error) {
+	close(errCh)
+	if err := <-errCh; err != nil {
+		e.buildFinished <- err
+	}
+}
+
 func (e *HashJoinV2Exec) fetchAndBuildHashTable(ctx context.Context) {
 	if e.stats != nil {
 		start := time.Now()
@@ -620,57 +636,61 @@ func (e *HashJoinV2Exec) fetchAndBuildHashTable(ctx context.Context) {
 		}()
 	}
 
-	wg := new(sync.WaitGroup)
-	errCh := make(chan error, 1+e.Concurrency)
 	// doneCh is used by the consumer(splitAndAppendToRowTable) to info the producer(fetchBuildSideRows) that the consumer meet error and stop consume data
 	doneCh := make(chan struct{}, e.Concurrency)
-	srcChkCh, fetcherAndWorkerSyncer := e.fetchBuildSideRows(ctx, wg, errCh, doneCh)
-	e.splitAndAppendToRowTable(srcChkCh, fetcherAndWorkerSyncer, wg, errCh, doneCh)
-	wg.Wait()
-	close(errCh)
-	if err := <-errCh; err != nil {
-		e.buildFinished <- err
-	}
+	errCh := make(chan error, 1+e.Concurrency)
+
+	fetcherWaiter := new(sync.WaitGroup)
+	workerWaiter := new(sync.WaitGroup)
+
+	srcChkCh, fetcherAndWorkerSyncer := e.fetchBuildSideRows(ctx, fetcherWaiter, workerWaiter, errCh, doneCh)
+	e.splitAndAppendToRowTable(srcChkCh, fetcherAndWorkerSyncer, workerWaiter, errCh, doneCh)
+
+	// Only when all workers exist, the fetcher will exist. So we can only wait fetcher here
+	workerWaiter.Wait()
+
+	e.processErrInBuildStage(errCh)
+
+	// TODO -------------------- Put these two area codes into two functions in the future --------------------
 
 	totalSegmentCnt := e.hashTableContext.mergeRowTablesToHashTable(e.hashTableMeta, e.PartitionNumber)
 
-	wg = new(sync.WaitGroup)
-	errCh = make(chan error, 1+e.Concurrency)
 	// doneCh is used by the consumer(buildHashTable) to info the producer(createBuildTasks) that the consumer meet error and stop consume data
 	doneCh = make(chan struct{}, e.Concurrency)
+	errCh = make(chan error, 1+e.Concurrency)
+
+	wg := new(sync.WaitGroup)
 	buildTaskCh := e.createBuildTasks(totalSegmentCnt, wg, errCh, doneCh)
 	e.buildHashTable(buildTaskCh, wg, errCh, doneCh)
 	wg.Wait()
-	close(errCh)
-	if err := <-errCh; err != nil {
-		e.buildFinished <- err
-	}
+
+	e.processErrInBuildStage(errCh)
 }
 
-func (e *HashJoinV2Exec) fetchBuildSideRows(ctx context.Context, wg *sync.WaitGroup, errCh chan error, doneCh chan struct{}) (chan *chunk.Chunk, *sync.WaitGroup) {
+func (e *HashJoinV2Exec) fetchBuildSideRows(ctx context.Context, fetcherWaiter *sync.WaitGroup, workerWaiter *sync.WaitGroup, errCh chan error, doneCh chan struct{}) (chan *chunk.Chunk, *sync.WaitGroup) {
 	srcChkCh := make(chan *chunk.Chunk, 1)
 	// It's useful when spill is triggered and the fetcher could know when workers finish their works.
-	fetcherAndWorkerSyncer := &sync.WaitGroup{} // TODO initialize it
-	wg.Add(1)
+	fetcherAndWorkerSyncer := &sync.WaitGroup{}
+	fetcherWaiter.Add(1)
 	e.workerWg.RunWithRecover(
 		func() {
 			defer trace.StartRegion(ctx, "HashJoinBuildSideFetcher").End()
 			fetcher := e.BuildWorkers[0]
-			fetcher.fetchBuildSideRows(ctx, &fetcher.HashJoinCtx.hashJoinCtxBase, fetcherAndWorkerSyncer, srcChkCh, errCh, doneCh)
+			fetcher.fetchBuildSideRows(ctx, &fetcher.HashJoinCtx.hashJoinCtxBase, fetcherAndWorkerSyncer, workerWaiter, srcChkCh, errCh, doneCh)
 		},
 		func(r any) {
 			if r != nil {
 				errCh <- util.GetRecoverError(r)
 			}
-			wg.Done()
+			fetcherWaiter.Done()
 		},
 	)
 	return srcChkCh, fetcherAndWorkerSyncer
 }
 
-func (e *HashJoinV2Exec) splitAndAppendToRowTable(srcChkCh chan *chunk.Chunk, fetcherAndWorkerSyncer *sync.WaitGroup, wg *sync.WaitGroup, errCh chan error, doneCh chan struct{}) {
+func (e *HashJoinV2Exec) splitAndAppendToRowTable(srcChkCh chan *chunk.Chunk, fetcherAndWorkerSyncer *sync.WaitGroup, workerWaiter *sync.WaitGroup, errCh chan error, doneCh chan struct{}) {
 	for i := uint(0); i < e.Concurrency; i++ {
-		wg.Add(1)
+		workerWaiter.Add(1)
 		workIndex := i
 		e.workerWg.RunWithRecover(
 			func() {
@@ -685,7 +705,7 @@ func (e *HashJoinV2Exec) splitAndAppendToRowTable(srcChkCh chan *chunk.Chunk, fe
 					errCh <- util.GetRecoverError(r)
 					doneCh <- struct{}{}
 				}
-				wg.Done()
+				workerWaiter.Done()
 			},
 		)
 	}
