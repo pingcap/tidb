@@ -197,7 +197,7 @@ func TestGlobalSortMultiSchemaChange(t *testing.T) {
 				tk.MustExec("admin check table " + tn + ";")
 				tk.MustExec("alter table " + tn + " drop index idx_1, drop index idx_2;")
 			}
-			
+
 			tk.MustContainErrMsg(
 				"alter table t_dup add index idx(a), add unique index idx2(b);",
 				"Duplicate entry '2' for key 't_dup.idx2'",
