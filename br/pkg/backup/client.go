@@ -43,6 +43,12 @@ import (
 	"go.uber.org/zap"
 )
 
+const (
+	// MaxResolveLocksbackupOffSleep is the maximum sleep time for resolving locks.
+	// 10 minutes for every round.
+	MaxResolveLocksbackupOffSleepMs = 600000
+)
+
 // ClientMgr manages connections needed by backup.
 type ClientMgr interface {
 	GetBackupClient(ctx context.Context, storeID uint64) (backuppb.BackupClient, error)
@@ -189,6 +195,7 @@ mainLoop:
 		start := time.Now()
 
 		var inCompleteRanges []rtree.Range
+		var allTxnLocks []*txnlock.Lock
 		select {
 		case <-ctx.Done():
 			// ctx cancal outside
@@ -304,10 +311,17 @@ mainLoop:
 				}
 			case respAndStore, ok := <-globalBackupResultCh:
 				if !ok {
+					// resolve all txn lock before next round starts
+					bo := utils.AdaptTiKVBackoffer(handleCtx, MaxResolveLocksbackupOffSleepMs, berrors.ErrUnknown)
+					_, _, _, err = bc.mgr.GetLockResolver().ResolveLocksForRead(bo.Inner(), 0, allTxnLocks, true)
+					if err != nil {
+						logutil.CL(handleCtx).Warn("failed to resolve locks, ignore and wait for next round to resolve",
+							zap.Uint64("round", round), zap.Error(err))
+					}
 					// this round backup finished. break and check incomplete ranges in mainLoop.
 					break handleLoop
 				}
-				err = bc.OnBackupResponse(handleCtx, respAndStore, errContext, loop.GlobalProgressTree)
+				lock, err := bc.OnBackupResponse(handleCtx, respAndStore, errContext, loop.GlobalProgressTree)
 				if err != nil {
 					// if error occurred here, stop the backup process
 					// because only 3 kinds of errors will be returned here:
@@ -318,6 +332,7 @@ mainLoop:
 					mainCancel()
 					return err
 				}
+				allTxnLocks = append(allTxnLocks, lock)
 				loop.ProgressCallBack()
 			}
 		}
@@ -1116,11 +1131,12 @@ func (bc *Client) OnBackupResponse(
 	r *ResponseAndStore,
 	errContext *utils.ErrorContext,
 	globalProgressTree *rtree.ProgressRangeTree,
-) error {
+) (*txnlock.Lock, error) {
 	if r == nil || r.GetResponse() == nil {
-		return nil
+		return nil, nil
 	}
 
+	var txnLock *txnlock.Lock
 	resp := r.GetResponse()
 	storeID := r.GetStoreID()
 	if resp.GetError() == nil {
@@ -1130,7 +1146,7 @@ func (bc *Client) OnBackupResponse(
 		if err != nil {
 			logutil.CL(ctx).Error("failed to update the backup response",
 				zap.Reflect("error", err))
-			return err
+			return nil, err
 		}
 		if bc.checkpointRunner != nil {
 			if err := checkpoint.AppendForBackup(
@@ -1143,7 +1159,7 @@ func (bc *Client) OnBackupResponse(
 			); err != nil {
 				// flush checkpoint failed,
 				logutil.CL(ctx).Error("failed to flush checkpoint", zap.Error(err))
-				return err
+				return nil, err
 			}
 		}
 		pr.Res.Put(resp.StartKey, resp.EndKey, resp.Files)
@@ -1151,6 +1167,13 @@ func (bc *Client) OnBackupResponse(
 		bc.SetApiVersion(apiVersion)
 	} else {
 		errPb := resp.GetError()
+		switch v := errPb.Detail.(type) {
+		case *backuppb.Error_KvError:
+			if lockErr := v.KvError.Locked; lockErr != nil {
+				// collect locks for later resolving in this round
+				txnLock = txnlock.NewLock(lockErr)
+			}
+		}
 		res := errContext.HandleIgnorableError(errPb, storeID)
 		switch res.Strategy {
 		case utils.GiveUpStrategy:
@@ -1159,13 +1182,13 @@ func (bc *Client) OnBackupResponse(
 				errMsg = errPb.Msg
 			}
 			// TODO output a precise store address. @3pointer
-			return errors.Annotatef(berrors.ErrKVStorage, "error happen in store %v: %s",
+			return nil, errors.Annotatef(berrors.ErrKVStorage, "error happen in store %v: %s",
 				storeID,
 				errMsg,
 			)
 		}
 	}
-	return nil
+	return txnLock, nil
 }
 
 func collectRangeFiles(progressRangeTree *rtree.ProgressRangeTree, metaWriter *metautil.MetaWriter) error {
