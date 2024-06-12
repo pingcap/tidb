@@ -97,7 +97,7 @@ func (j *leftOuterJoinProbe) ScanRowTable(joinResult *hashjoinWorkerResult, sqlK
 		}
 		j.rowIter.next()
 	}
-	err := probeCheckSQLKiller(sqlKiller)
+	err := checkSQLKiller(sqlKiller, "killedDuringProbe")
 	if err != nil {
 		joinResult.err = err
 		return joinResult
@@ -238,7 +238,7 @@ func (j *leftOuterJoinProbe) probeForRightBuild(chk, joinedChk *chunk.Chunk, rem
 		remainCap--
 	}
 
-	err = probeCheckSQLKiller(sqlKiller)
+	err = checkSQLKiller(sqlKiller, "killedDuringProbe")
 	if err != nil {
 		return err
 	}
@@ -291,7 +291,7 @@ func (j *leftOuterJoinProbe) probeForLeftBuild(chk, joinedChk *chunk.Chunk, rema
 			j.currentProbeRow++
 		}
 	}
-	err = probeCheckSQLKiller(sqlKiller)
+	err = checkSQLKiller(sqlKiller, "killedDuringProbe")
 	if err != nil {
 		return err
 	}
