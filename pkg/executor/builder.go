@@ -1279,7 +1279,6 @@ func (b *executorBuilder) buildUnionScanFromReader(reader exec.Executor, v *plan
 	us.mutableRow = chunk.MutRowFromTypes(exec.RetTypes(us))
 
 	// If the push-downed condition contains virtual column, we may build a selection upon reader
-	originReader := reader
 	if sel, ok := reader.(*SelectionExec); ok {
 		reader = sel.Children(0)
 	}
@@ -1370,8 +1369,8 @@ func (b *executorBuilder) buildUnionScanFromReader(reader exec.Executor, v *plan
 		us.table = x.table
 		us.virtualColumnIndex = buildVirtualColumnIndex(us.Schema(), us.columns)
 	default:
-		// The mem table will not be written by sql directly, so we can omit the union scan to avoid err reporting.
-		return originReader
+		b.err = errors.NewNoStackErrorf("unexpected operator %T under UnionScan", reader)
+		return nil
 	}
 	return us
 }
@@ -4114,6 +4113,9 @@ func (builder *dataReaderBuilder) buildUnionScanForIndexJoin(ctx context.Context
 	}
 
 	ret := builder.buildUnionScanFromReader(reader, v)
+	if builder.err != nil {
+		return nil, builder.err
+	}
 	if us, ok := ret.(*UnionScanExec); ok {
 		err = us.open(ctx)
 	}
