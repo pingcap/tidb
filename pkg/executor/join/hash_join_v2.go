@@ -200,6 +200,8 @@ type HashJoinV2Exec struct {
 	workerWg util.WaitGroupWrapper
 	waiterWg util.WaitGroupWrapper
 
+	spillHelper *hashJoinSpillHelper // TODO initialize it
+
 	prepared bool
 }
 
@@ -327,7 +329,7 @@ func (w *BuildWorkerV2) splitPartitionAndAppendToRowTable(typeCtx types.Context,
 		}
 	}
 	start := time.Now()
-	// TODO fetcher should wait for this operation
+	// TODO it's important to control the time point of closing srcChkCh
 	builder.appendRemainingRowLocations(int(w.WorkerID), w.HashJoinCtx.hashTableContext)
 	cost += int64(time.Since(start))
 	return nil
@@ -676,7 +678,7 @@ func (e *HashJoinV2Exec) fetchBuildSideRows(ctx context.Context, fetcherWaiter *
 		func() {
 			defer trace.StartRegion(ctx, "HashJoinBuildSideFetcher").End()
 			fetcher := e.BuildWorkers[0]
-			fetcher.fetchBuildSideRows(ctx, &fetcher.HashJoinCtx.hashJoinCtxBase, fetcherAndWorkerSyncer, workerWaiter, srcChkCh, errCh, doneCh)
+			fetcher.fetchBuildSideRows(ctx, &fetcher.HashJoinCtx.hashJoinCtxBase, fetcherAndWorkerSyncer, workerWaiter, e.spillHelper, srcChkCh, errCh, doneCh)
 		},
 		func(r any) {
 			if r != nil {

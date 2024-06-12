@@ -213,14 +213,15 @@ func syncerDone(syncer *sync.WaitGroup) {
 
 // fetchBuildSideRows fetches all rows from build side executor, and append them
 // to e.buildSideResult.
-func (w *buildWorkerBase) fetchBuildSideRows(ctx context.Context, hashJoinCtx *hashJoinCtxBase, fetcherAndWorkerSyncer *sync.WaitGroup, workerWaiter *sync.WaitGroup, chkCh chan<- *chunk.Chunk, errCh chan<- error, doneCh <-chan struct{}) {
+func (w *buildWorkerBase) fetchBuildSideRows(ctx context.Context, hashJoinCtx *hashJoinCtxBase, fetcherAndWorkerSyncer *sync.WaitGroup, workerWaiter *sync.WaitGroup, spillHelper *hashJoinSpillHelper, chkCh chan<- *chunk.Chunk, errCh chan<- error, doneCh <-chan struct{}) {
 	defer func() {
-		close(chkCh)
-
-		if fetcherAndWorkerSyncer != nil {
-			workerWaiter.Wait()
-			// TODO wait for the finish of workers and spill remaining rows to disk
+		if workerWaiter != nil {
+			err := w.spillRemainingRows(workerWaiter, spillHelper)
+			errCh <- errors.Trace(err)
 		}
+
+		// TODO explain why we need to put the close operation at here
+		close(chkCh)
 	}()
 
 	var err error
@@ -249,7 +250,11 @@ func (w *buildWorkerBase) fetchBuildSideRows(ctx context.Context, hashJoinCtx *h
 	sessVars := hashJoinCtx.SessCtx.GetSessionVars()
 	for {
 		if fetcherAndWorkerSyncer != nil {
-			// TODO check spill and execute spill when spill is triggered
+			err := w.checkSpillAndExecute(fetcherAndWorkerSyncer, spillHelper)
+			if err != nil {
+				errCh <- errors.Trace(err)
+				return
+			}
 		}
 
 		if hashJoinCtx.finished.Load() {
@@ -288,6 +293,23 @@ func (w *buildWorkerBase) fetchBuildSideRows(ctx context.Context, hashJoinCtx *h
 		case chkCh <- chk:
 		}
 	}
+}
+
+func (w *buildWorkerBase) checkSpillAndExecute(fetcherAndWorkerSyncer *sync.WaitGroup, spillHelper *hashJoinSpillHelper) error {
+	if spillHelper.isInSpilling() {
+		// Wait for the stop of all workers
+		fetcherAndWorkerSyncer.Wait()
+		return spillHelper.spill()
+	}
+	return nil
+}
+
+func (w *buildWorkerBase) spillRemainingRows(workerWaiter *sync.WaitGroup, spillHelper *hashJoinSpillHelper) error {
+	if spillHelper.isSpillTriggered() {
+		workerWaiter.Wait()
+		return nil // TODO implement it
+	}
+	return nil
 }
 
 // probeChkResource stores the result of the join probe side fetch worker,

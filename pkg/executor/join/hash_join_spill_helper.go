@@ -21,10 +21,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 )
 
-const (
-	spillPartitionNum = 32
-)
-
 type hashJoinSpillHelper struct {
 	cond         *sync.Cond
 	spillStatus  int
@@ -51,4 +47,21 @@ func (h *hashJoinSpillHelper) isNotSpilledNoLock() bool {
 
 func (h *hashJoinSpillHelper) isInSpillingNoLock() bool {
 	return h.spillStatus == inSpilling
+}
+
+func (h *hashJoinSpillHelper) isInSpilling() bool {
+	h.cond.L.Lock()
+	defer h.cond.L.Unlock()
+	return h.spillStatus == inSpilling
+}
+
+func (h *hashJoinSpillHelper) isSpillTriggered() bool {
+	h.cond.L.Lock()
+	defer h.cond.L.Unlock()
+	return len(h.buildRowsInDisk) > 0
+}
+
+func (h *hashJoinSpillHelper) spill() (err error) {
+	// TODO reset the spill status to notSpill
+	return nil // TODO implement it
 }
