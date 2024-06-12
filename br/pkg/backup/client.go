@@ -1107,9 +1107,8 @@ func (bc *Client) BackupRanges(
 		GetBackupClientCallBack: func(ctx context.Context, storeID uint64, reset bool) (backuppb.BackupClient, error) {
 			if reset {
 				return bc.mgr.ResetBackupClient(ctx, storeID)
-			} else {
-				return bc.mgr.GetBackupClient(ctx, storeID)
 			}
+			return bc.mgr.GetBackupClient(ctx, storeID)
 		},
 	}
 
