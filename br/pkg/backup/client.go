@@ -80,7 +80,7 @@ type MainBackupLoop struct {
 	StateNotifier      chan BackupRetryPolicy
 
 	ProgressCallBack        func()
-	GetBackupClientCallBack func(ctx context.Context, storeID uint64) (backuppb.BackupClient, error)
+	GetBackupClientCallBack func(ctx context.Context, storeID uint64, reset bool) (backuppb.BackupClient, error)
 }
 
 type MainBackupSender struct{}
@@ -170,6 +170,8 @@ func (bc *Client) RunLoop(ctx context.Context, loop *MainBackupLoop) error {
 	// ideally, backup should be finished in one round
 	// unless the cluster state changed or some kv errors occurred.
 	round := uint64(0)
+	// reset grpc connection every round except key_locked error.
+	reset := true
 mainLoop:
 	for {
 		round += 1
@@ -225,6 +227,7 @@ mainLoop:
 			// so this error must be retryable, just make infinite retry here
 			logutil.CL(mainCtx).Error("failed to get backup stores", zap.Uint64("round", round), zap.Error(err))
 			mainCancel()
+			reset = true
 			continue mainLoop
 		}
 		for _, store := range allStores {
@@ -235,12 +238,13 @@ mainLoop:
 			}
 			storeID := store.GetId()
 			// reset backup client every round, to get a clean grpc connection.
-			cli, err := loop.GetBackupClientCallBack(mainCtx, storeID)
+			cli, err := loop.GetBackupClientCallBack(mainCtx, storeID, reset)
 			if err != nil {
 				// because the we get store info from pd.
 				// there is no customer setting here, so make infinite retry.
 				logutil.CL(ctx).Error("failed to reset backup client", zap.Uint64("round", round), zap.Uint64("storeID", storeID), zap.Error(err))
 				mainCancel()
+				reset = true
 				continue mainLoop
 			}
 			ch := make(chan *ResponseAndStore)
@@ -263,6 +267,7 @@ mainLoop:
 					handleCancel()
 					mainCancel()
 					// start next round backups
+					reset = true
 					continue mainLoop
 				}
 				if storeBackupInfo.One != 0 {
@@ -276,21 +281,24 @@ mainLoop:
 						// try next round
 						handleCancel()
 						mainCancel()
+						reset = true
 						continue mainLoop
 					}
 					if err = utils.CheckStoreLiveness(store); err != nil {
 						// skip this store in this round.
 						logutil.CL(mainCtx).Warn("store not alive, skip backup it in this round", zap.Uint64("round", round), zap.Error(err))
+						reset = true
 						continue mainLoop
 					}
 					// reset backup client. store address could change but store id remained.
-					cli, err := loop.GetBackupClientCallBack(mainCtx, storeID)
+					cli, err := loop.GetBackupClientCallBack(mainCtx, storeID, reset)
 					if err != nil {
 						logutil.CL(mainCtx).Error("failed to reset backup client", zap.Uint64("round", round), zap.Uint64("storeID", storeID), zap.Error(err))
 						handleCancel()
 						mainCancel()
 						// receive new store info but failed to get backup client.
 						// start next round backups to get all tikv stores and reset all client connections.
+						reset = true
 						continue mainLoop
 					}
 
@@ -319,6 +327,7 @@ mainLoop:
 							logutil.CL(handleCtx).Warn("failed to resolve locks, ignore and wait for next round to resolve",
 								zap.Uint64("round", round), zap.Error(err))
 						}
+						reset = false
 					}
 					// this round backup finished. break and check incomplete ranges in mainLoop.
 					break handleLoop
@@ -1095,7 +1104,13 @@ func (bc *Client) BackupRanges(
 		ProgressCallBack:   progressCallBack,
 		// always use reset connection here.
 		// because we need to reset connection when store state changed.
-		GetBackupClientCallBack: bc.mgr.ResetBackupClient,
+		GetBackupClientCallBack: func(ctx context.Context, storeID uint64, reset bool) (backuppb.BackupClient, error) {
+			if reset {
+				return bc.mgr.ResetBackupClient(ctx, storeID)
+			} else {
+				return bc.mgr.GetBackupClient(ctx, storeID)
+			}
+		},
 	}
 
 	err = bc.RunLoop(ctx, mainBackupLoop)

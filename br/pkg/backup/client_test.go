@@ -56,7 +56,7 @@ var connectedStore map[uint64]int
 
 var _ backup.BackupSender = (*mockBackupBackupSender)(nil)
 
-func mockGetBackupClientCallBack(ctx context.Context, storeID uint64) (backuppb.BackupClient, error) {
+func mockGetBackupClientCallBack(ctx context.Context, storeID uint64, reset bool) (backuppb.BackupClient, error) {
 	lock.Lock()
 	defer lock.Unlock()
 	connectedStore[storeID] += 1
