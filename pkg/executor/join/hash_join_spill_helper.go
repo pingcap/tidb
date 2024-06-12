@@ -14,13 +14,41 @@
 
 package join
 
-import "github.com/pingcap/tidb/pkg/util/chunk"
+import (
+	"sync"
+
+	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/chunk"
+)
 
 const (
 	spillPartitionNum = 32
 )
 
 type hashJoinSpillHelper struct {
+	cond         *sync.Cond
+	spillStatus  int
+	hashJoinExec *HashJoinV2Exec
+
 	buildRowsInDisk []*chunk.DataInDiskByChunks
 	probeRowsInDisk []*chunk.DataInDiskByChunks
+
+	fieldTypes    []*types.FieldType
+	tmpSpillChunk *chunk.Chunk
+}
+
+func newHashJoinSpillHelper() *hashJoinSpillHelper {
+	return nil // TODO implement it
+}
+
+func (h *hashJoinSpillHelper) setInSpillingNoLock() {
+	h.spillStatus = inSpilling
+}
+
+func (h *hashJoinSpillHelper) isNotSpilledNoLock() bool {
+	return h.spillStatus == notSpilled
+}
+
+func (h *hashJoinSpillHelper) isInSpillingNoLock() bool {
+	return h.spillStatus == inSpilling
 }

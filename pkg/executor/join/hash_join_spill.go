@@ -16,6 +16,13 @@ package join
 
 import "github.com/pingcap/tidb/pkg/util/memory"
 
+const spillChunkSize = 1024
+
+const (
+	notSpilled = iota
+	inSpilling
+)
+
 type hashJoinSpillAction struct {
 	memory.BaseOOMAction
 	spillHelper *hashJoinSpillHelper
@@ -32,6 +39,33 @@ func (*hashJoinSpillAction) GetPriority() int64 {
 	return memory.DefSpillPriority
 }
 
-func (s *hashJoinSpillAction) Action(t *memory.Tracker) {
-	// TODO need implementation
+func (h *hashJoinSpillAction) Action(t *memory.Tracker) {
+	if h.actionImpl(t) {
+		return
+	}
+
+	if t.CheckExceed() {
+		h.GetFallback().Action(t)
+	}
+}
+
+// Return true if it successfully sets spill flag
+func (h *hashJoinSpillAction) actionImpl(t *memory.Tracker) bool {
+	h.spillHelper.cond.L.Lock()
+	defer h.spillHelper.cond.L.Unlock()
+
+	for h.spillHelper.isInSpillingNoLock() {
+		h.spillHelper.cond.Wait()
+	}
+
+	if t.CheckExceed() && hasEnoughDataToSpill(h.spillHelper.hashJoinExec.memTracker, t) {
+		h.spillHelper.setInSpillingNoLock()
+		return true
+	}
+
+	return false
+}
+
+func hasEnoughDataToSpill(hashJoinTracker *memory.Tracker, passedInTracker *memory.Tracker) bool {
+	return hashJoinTracker.BytesConsumed() >= passedInTracker.GetBytesLimit()/10
 }
