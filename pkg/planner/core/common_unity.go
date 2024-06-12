@@ -246,15 +246,17 @@ func fillUpStats(ctx context.PlanContext, o *UnityOutput) {
 				col.Max = buckets[len(buckets)-1].Upper
 			}
 
-			for i := 0; i < len(colStats.TopN.TopN); i++ {
-				var tmpDatum types.Datum
-				tmpDatum.SetBytes(colStats.TopN.TopN[i].Encoded)
-				valStr, err := statistics.ValueToString(ctx.GetSessionVars(), &tmpDatum, 1, []byte{colStats.Histogram.Tp.GetType()})
-				must(err)
-				col.MCVs = append(col.MCVs, UnityMCV{
-					Value: valStr,
-					Count: int64(colStats.TopN.TopN[i].Count),
-				})
+			if colStats != nil && colStats.TopN != nil {
+				for i := 0; i < len(colStats.TopN.TopN); i++ {
+					var tmpDatum types.Datum
+					tmpDatum.SetBytes(colStats.TopN.TopN[i].Encoded)
+					valStr, err := statistics.ValueToString(ctx.GetSessionVars(), &tmpDatum, 1, []byte{colStats.Histogram.Tp.GetType()})
+					must(err)
+					col.MCVs = append(col.MCVs, UnityMCV{
+						Value: valStr,
+						Count: int64(colStats.TopN.TopN[i].Count),
+					})
+				}
 			}
 		}
 		for idxName, idx := range tblInfo.Indexes {
