@@ -16,6 +16,7 @@ import (
 	"github.com/pingcap/failpoint"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/encryptionpb"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/br/pkg/backup"
 	"github.com/pingcap/tidb/br/pkg/conn"
 	gluemock "github.com/pingcap/tidb/br/pkg/gluetidb/mock"
@@ -284,7 +285,9 @@ func TestOnBackupResponse(t *testing.T) {
 	}
 
 	errContext := utils.NewErrorContext("test", 1)
-	require.Nil(t, s.backupClient.OnBackupResponse(ctx, nil, errContext, nil))
+	lock, err := s.backupClient.OnBackupResponse(ctx, nil, errContext, nil)
+	require.NoError(t, err)
+	require.Nil(t, lock)
 
 	tree := rtree.NewProgressRangeTree()
 	r := &backup.ResponseAndStore{
@@ -297,9 +300,12 @@ func TestOnBackupResponse(t *testing.T) {
 	}
 	// case #1: error resposne
 	// first error can be ignored due to errContext.
-	require.NoError(t, s.backupClient.OnBackupResponse(ctx, r, errContext, &tree))
+	lock, err = s.backupClient.OnBackupResponse(ctx, r, errContext, &tree)
+	require.NoError(t, err)
+	require.Nil(t, lock)
 	// second error cannot be ignored.
-	require.Error(t, s.backupClient.OnBackupResponse(ctx, r, errContext, &tree))
+	_, err = s.backupClient.OnBackupResponse(ctx, r, errContext, &tree)
+	require.Error(t, err)
 
 	// case #2: normal resposne
 	r = &backup.ResponseAndStore{
@@ -312,11 +318,14 @@ func TestOnBackupResponse(t *testing.T) {
 
 	require.NoError(t, tree.Insert(buildProgressRangeFn([]byte("aa"), []byte("c"))))
 	// error due to the tree range does not match response range.
-	require.Error(t, s.backupClient.OnBackupResponse(ctx, r, errContext, &tree))
+	_, err = s.backupClient.OnBackupResponse(ctx, r, errContext, &tree)
+	require.Error(t, err)
 
 	// case #3: partial range success case, find incomplete range
 	r.Resp.StartKey = []byte("aa")
-	require.NoError(t, s.backupClient.OnBackupResponse(ctx, r, errContext, &tree))
+	lock, err = s.backupClient.OnBackupResponse(ctx, r, errContext, &tree)
+	require.NoError(t, err)
+	require.Nil(t, lock)
 
 	incomplete := tree.Iter().GetIncompleteRanges()
 	require.Len(t, incomplete, 1)
@@ -326,9 +335,35 @@ func TestOnBackupResponse(t *testing.T) {
 	// case #4: success case, make up incomplete range
 	r.Resp.StartKey = []byte("b")
 	r.Resp.EndKey = []byte("c")
-	require.NoError(t, s.backupClient.OnBackupResponse(ctx, r, errContext, &tree))
+	lock, err = s.backupClient.OnBackupResponse(ctx, r, errContext, &tree)
+	require.NoError(t, err)
+	require.Nil(t, lock)
 	incomplete = tree.Iter().GetIncompleteRanges()
 	require.Len(t, incomplete, 0)
+
+	// case #5: failed case, key is locked
+	r = &backup.ResponseAndStore{
+		StoreID: 0,
+		Resp: &backuppb.BackupResponse{
+			Error: &backuppb.Error{
+				Detail: &backuppb.Error_KvError{
+					KvError: &kvrpcpb.KeyError{
+						Locked: &kvrpcpb.LockInfo{
+							PrimaryLock: []byte("b"),
+							LockVersion: 0,
+							Key:         []byte("b"),
+							LockTtl:     50,
+							TxnSize:     1,
+							LockType:    kvrpcpb.Op_Put,
+						},
+					},
+				},
+			},
+		},
+	}
+	lock, err = s.backupClient.OnBackupResponse(ctx, r, errContext, &tree)
+	require.NoError(t, err)
+	require.Equal(t, []byte("b"), lock.Primary)
 }
 
 func TestMainBackupLoop(t *testing.T) {
