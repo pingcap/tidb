@@ -1308,6 +1308,9 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 
 		cc.server.releaseToken(token)
 		cc.lastActive = time.Now()
+		if cc.server.StandbyController != nil {
+			cc.server.StandbyController.OnConnActive()
+		}
 	}()
 
 	vars := cc.ctx.GetSessionVars()

@@ -1,0 +1,17 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "standby_test",
+    timeout = "short",
+    srcs = ["standby_test.go"],
+    flaky = True,
+    deps = [
+        "//pkg/server",
+        "//pkg/server/internal/testserverclient",
+        "//pkg/server/internal/testutil",
+        "//pkg/server/internal/util",
+        "//pkg/session",
+        "//pkg/testkit",
+        "@com_github_stretchr_testify//require",
+    ],
+)
