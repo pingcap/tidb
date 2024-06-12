@@ -1375,7 +1375,12 @@ func (b *executorBuilder) buildUnionScanFromReader(reader exec.Executor, v *plan
 	case *TableDualExec:
 		// If TableDual, the result must be empty, so we can skip UnionScan and use TableDual directly here.
 		return originReader
+	case *TableSampleExecutor:
+		// TableSample only supports sampling from disk data, don't need to consider in-memory txn data for simplicity.
+		// TODO: TableSample supports sampling from in-memory txn data.
+		return originReader
 	default:
+		// TODO: consider more operators like Projection.
 		b.err = errors.NewNoStackErrorf("unexpected operator %T under UnionScan", reader)
 		return nil
 	}
