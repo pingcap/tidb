@@ -17,7 +17,6 @@ package expression
 import (
 	"bytes"
 	goJSON "encoding/json"
-	"strconv"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -477,7 +476,11 @@ func (b *builtinJSONQuoteSig) vecEvalString(ctx EvalContext, input *chunk.Chunk,
 			result.AppendNull()
 			continue
 		}
-		result.AppendString(strconv.Quote(buf.GetString(i)))
+		r, err := goJSON.Marshal(buf.GetString(i))
+		if err != nil {
+			return err
+		}
+		result.AppendString(string(r))
 	}
 	return nil
 }
