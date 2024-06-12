@@ -20,7 +20,6 @@ import (
 	"encoding/hex"
 	"fmt"
 	"math/bits"
-	"sort"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -1411,38 +1410,6 @@ func (w *updateColumnWorker) getRowRecord(handle kv.Handle, recordKey []byte, ra
 	w.rowRecords = append(w.rowRecords, &rowRecord{key: recordKey, vals: newRowVal, warning: recordWarning})
 	w.cleanRowMap()
 	return nil
-}
-
-func (w *updateColumnWorker) calcChecksums() []uint32 {
-	if !w.checksumNeeded {
-		return nil
-	}
-	// when w.checksumNeeded is true, it indicates that there is only one write-reorg column (the new column) and other
-	// columns are public, thus we have to calculate two checksums that one of which only contains the old column and
-	// the other only contains the new column.
-	var checksums [2]uint32
-	for i, id := range []int64{w.newColInfo.ID, w.oldColInfo.ID} {
-		if len(w.checksumBuffer.Cols) > 0 {
-			w.checksumBuffer.Cols = w.checksumBuffer.Cols[:0]
-		}
-		for _, col := range w.table.DeletableCols() {
-			if col.ID == id || (col.IsVirtualGenerated()) {
-				continue
-			}
-			d := w.rowMap[col.ID]
-			w.checksumBuffer.Cols = append(w.checksumBuffer.Cols, rowcodec.ColData{ColumnInfo: col.ToInfo(), Datum: &d})
-		}
-		if !sort.IsSorted(w.checksumBuffer) {
-			sort.Sort(w.checksumBuffer)
-		}
-		checksum, err := w.checksumBuffer.Checksum(w.loc)
-		if err != nil {
-			logutil.DDLLogger().Warn("skip checksum in update-column backfill due to encode error", zap.Error(err))
-			return nil
-		}
-		checksums[i] = checksum
-	}
-	return checksums[:]
 }
 
 // reformatErrors casted error because `convertTo` function couldn't package column name and datum value for some errors.
