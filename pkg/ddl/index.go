@@ -43,6 +43,8 @@ import (
 	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/lightning/backend"
+	litconfig "github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -1680,6 +1682,7 @@ func newAddIndexIngestWorker(
 	jobID int64,
 	indexIDs []int64,
 	writerID int,
+	writerCnt int,
 	copReqSenderPool *copReqSenderPool,
 	checkpointMgr *ingest.CheckpointManager,
 ) (*addIndexIngestWorker, error) {
@@ -1690,10 +1693,16 @@ func newAddIndexIngestWorker(
 
 	indexes := make([]table.Index, 0, len(indexIDs))
 	writers := make([]ingest.Writer, 0, len(indexIDs))
+	availMem := ingest.LitMemRoot.MaxMemoryQuota() - ingest.LitMemRoot.CurrentUsage()
+	memLimitPerWriter := availMem / int64(len(indexIDs)) / int64(writerCnt)
+	memLimitPerWriter = min(memLimitPerWriter, litconfig.DefaultLocalWriterMemCacheSize)
+	writerCfg := &backend.LocalWriterConfig{}
+	writerCfg.Local.MemCacheSize = memLimitPerWriter
+
 	for i, indexID := range indexIDs {
 		indexInfo := model.FindIndexInfoByID(t.Meta().Indices, indexID)
 		index := tables.NewIndex(t.GetPhysicalID(), t.Meta(), indexInfo)
-		lw, err := engines[i].CreateWriter(writerID)
+		lw, err := engines[i].CreateWriter(writerID, writerCfg)
 		if err != nil {
 			return nil, err
 		}

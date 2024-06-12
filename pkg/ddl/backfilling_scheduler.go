@@ -452,7 +452,7 @@ func (b *ingestBackfillScheduler) setupWorkers() error {
 		poolutil.DDL,
 		writerCnt,
 		func() workerpool.Worker[IndexRecordChunk, workerpool.None] {
-			return b.createWorker(indexIDs, engines)
+			return b.createWorker(indexIDs, engines, writerCnt)
 		},
 	)
 	writerPool.Start(b.ctx)
@@ -525,12 +525,13 @@ func (b *ingestBackfillScheduler) adjustWorkerSize() error {
 func (b *ingestBackfillScheduler) createWorker(
 	indexIDs []int64,
 	engines []ingest.Engine,
+	writerCnt int,
 ) workerpool.Worker[IndexRecordChunk, workerpool.None] {
 	reorgInfo := b.reorgInfo
 	job := reorgInfo.Job
 	worker, err := newAddIndexIngestWorker(
 		b.ctx, b.tbl, reorgInfo, engines, b.resultCh, job.ID,
-		indexIDs, b.writerMaxID,
+		indexIDs, b.writerMaxID, writerCnt,
 		b.copReqSenderPool, b.checkpointMgr)
 	if err != nil {
 		// Return an error only if it is the first worker.

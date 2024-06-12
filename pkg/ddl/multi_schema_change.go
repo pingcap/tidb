@@ -15,17 +15,12 @@
 package ddl
 
 import (
-	"math"
-
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/ddl/ingest"
-	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 )
@@ -66,25 +61,7 @@ func (d *ddl) MultiSchemaChange(ctx sessionctx.Context, ti ast.Ident, info *mode
 	if err != nil {
 		return errors.Trace(err)
 	}
-	reorgTp, err := pickBackfillType(d.ctx, job)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	litMergeMemLimit, litMergeWriterCnt := int64(0), 0
-	if reorgTp == model.ReorgTypeLitMerge {
-		if memRoot := ingest.LitMemRoot; memRoot != nil {
-			litMergeMemLimit = ingest.LitMemRoot.MaxMemoryQuota()
-		} else {
-			// this is the case in unit test
-			litMergeMemLimit = math.MaxInt64
-		}
-
-		// TODO(lance6716): the real worker count is decided by expectedIngestWorkerCnt,
-		// will refine the task worker related configuration later.
-		litMergeWriterCnt = int(variable.GetDDLReorgWorkerCounter())
-	}
-	mergeAddIndex(info, reorgTp, litMergeMemLimit, litMergeWriterCnt)
+	mergeAddIndex(info)
 	err = d.DoDDLJob(ctx, job)
 	return d.callHookOnChanged(job, err)
 }
@@ -395,45 +372,28 @@ func checkOperateSameColAndIdx(info *model.MultiSchemaInfo) error {
 	return checkIndexes(info.AlterIndexes, true)
 }
 
-func mergeAddIndex(
-	info *model.MultiSchemaInfo,
-	reorgTp model.ReorgType,
-	litMergeMemLimit int64,
-	litMergeWriterCnt int,
-) {
-	var addIndexSubJobGroup *model.SubJob
-	var addIndexCnt int
+func mergeAddIndex(info *model.MultiSchemaInfo) {
+	var mergedSubJob *model.SubJob
+	var mergeCnt int
 	for _, subJob := range info.SubJobs {
 		if subJob.Type == model.ActionAddForeignKey {
 			// Foreign key requires the order of adding indexes is unchanged.
 			return
 		}
 		if subJob.Type == model.ActionAddIndex {
-			addIndexCnt++
-			if addIndexSubJobGroup == nil {
+			mergeCnt++
+			if mergedSubJob == nil {
 				clonedSubJob := *subJob
-				addIndexSubJobGroup = &clonedSubJob
-				addIndexSubJobGroup.Args = nil
-				addIndexSubJobGroup.RawArgs = nil
+				mergedSubJob = &clonedSubJob
+				mergedSubJob.Args = nil
+				mergedSubJob.RawArgs = nil
 			}
 		}
 	}
 
-	if addIndexCnt <= 1 {
+	if mergeCnt <= 1 {
 		// no add index job in this multi-schema change.
 		return
-	}
-
-	addIndexSubJobGroupSize := math.MaxInt64
-	if reorgTp == model.ReorgTypeLitMerge {
-		// TODO(lance6716): improve the memory usage estimation.
-		maxMemUsagePerTask := litMergeWriterCnt * config.DefaultLocalWriterMemCacheSize
-
-		addIndexSubJobGroupSize = int(litMergeMemLimit / int64(maxMemUsagePerTask))
-		if addIndexSubJobGroupSize <= 1 {
-			// no need to merge now.
-			return
-		}
 	}
 
 	var unique []bool
@@ -452,31 +412,14 @@ func mergeAddIndex(
 			indexOption = append(indexOption, subJob.Args[3].(*ast.IndexOption))
 			hiddenCols = append(hiddenCols, subJob.Args[4].([]*model.ColumnInfo))
 			global = append(global, subJob.Args[5].(bool))
-
-			if len(unique) == addIndexSubJobGroupSize {
-				addIndexSubJobGroup.Args = []any{unique, indexNames, indexPartSpecifications, indexOption, hiddenCols, global}
-				newSubJobs = append(newSubJobs, addIndexSubJobGroup)
-				// reset variables for next group
-				clonedSubJob := *subJob
-				addIndexSubJobGroup = &clonedSubJob
-				addIndexSubJobGroup.Args = nil
-				addIndexSubJobGroup.RawArgs = nil
-				unique = nil
-				indexNames = nil
-				indexPartSpecifications = nil
-				indexOption = nil
-				hiddenCols = nil
-				global = nil
-			}
 		} else {
 			newSubJobs = append(newSubJobs, subJob)
 		}
 	}
 
-	if len(unique) > 0 {
-		addIndexSubJobGroup.Args = []any{unique, indexNames, indexPartSpecifications, indexOption, hiddenCols, global}
-		newSubJobs = append(newSubJobs, addIndexSubJobGroup)
-	}
+	mergedSubJob.Args = []any{unique, indexNames, indexPartSpecifications, indexOption, hiddenCols, global}
+	// place the merged add index job at the end of the sub-jobs.
+	newSubJobs = append(newSubJobs, mergedSubJob)
 	info.SubJobs = newSubJobs
 }
 

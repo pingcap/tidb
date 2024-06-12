@@ -34,8 +34,10 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/operator"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/lightning/common"
+	litconfig "github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -584,6 +586,13 @@ func NewIndexIngestOperator(
 	reorgMeta *model.DDLReorgMeta,
 ) *IndexIngestOperator {
 	var writerIDAlloc atomic.Int32
+
+	availMem := ingest.LitMemRoot.MaxMemoryQuota() - ingest.LitMemRoot.CurrentUsage()
+	memLimitPerWriter := availMem / int64(len(indexes)) / int64(concurrency)
+	memLimitPerWriter = min(memLimitPerWriter, litconfig.DefaultLocalWriterMemCacheSize)
+	writerCfg := &backend.LocalWriterConfig{}
+	writerCfg.Local.MemCacheSize = memLimitPerWriter
+
 	pool := workerpool.NewWorkerPool(
 		"indexIngestOperator",
 		util.DDL,
@@ -592,7 +601,7 @@ func NewIndexIngestOperator(
 			writers := make([]ingest.Writer, 0, len(indexes))
 			for i := range indexes {
 				writerID := int(writerIDAlloc.Add(1))
-				writer, err := engines[i].CreateWriter(writerID)
+				writer, err := engines[i].CreateWriter(writerID, writerCfg)
 				if err != nil {
 					logutil.Logger(ctx).Error("create index ingest worker failed", zap.Error(err))
 					ctx.onError(err)
