@@ -925,7 +925,7 @@ func (e *closureExecutor) indexScanProcessCore(key, value []byte) error {
 	}
 	// Add ExtraPhysTblID if requested
 	// Assumes it is always last!
-	if e.columnInfos[len(e.columnInfos)-1].ColumnId == model.ExtraPhysTblID {
+	if e.columnInfos[len(e.columnInfos)-1].ColumnId == model.ExtraPhysTblID && min(len(e.fieldTps), len(values)) < len(e.columnInfos) {
 		var tblID int64
 		if pid := tablecodec.SplitIndexValue(value).PartitionID; len(pid) != 0 {
 			_, tblID, err = codec.DecodeInt(pid)

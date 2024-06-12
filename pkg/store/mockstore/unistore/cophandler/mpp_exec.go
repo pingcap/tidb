@@ -313,9 +313,18 @@ func (e *indexScanExec) Process(key, value []byte) error {
 			}
 		}
 	}
-	// when index is a global index, pid is included in values and already filled in e.chk
-	if e.physTblIDColIdx != nil && *e.physTblIDColIdx >= len(values) {
-		tblID := tablecodec.DecodeTableID(key)
+
+	// when *e.physTblIDColIdx < min(len(e.fieldTypes), len(values)), pid is included in values and already filled in e.chk
+	if e.physTblIDColIdx != nil && *e.physTblIDColIdx >= min(len(e.fieldTypes), len(values)) {
+		var tblID int64
+		if pid := tablecodec.SplitIndexValue(value).PartitionID; len(pid) != 0 {
+			_, tblID, err = codec.DecodeInt(pid)
+			if err != nil {
+				return err
+			}
+		} else {
+			tblID = tablecodec.DecodeTableID(key)
+		}
 		e.chk.AppendInt64(*e.physTblIDColIdx, tblID)
 	}
 	if e.chk.IsFull() {
