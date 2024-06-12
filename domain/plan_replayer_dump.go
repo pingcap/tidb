@@ -526,6 +526,7 @@ func dumpExplain(ctx sessionctx.Context, zw *zip.Writer, execStmts []ast.StmtNod
 	return nil
 }
 
+// extractTableNames extracts table names from the given stmts.
 func extractTableNames(ctx context.Context, sctx sessionctx.Context,
 	ExecStmts []ast.StmtNode, curDB model.CIStr) (map[tableNamePair]struct{}, error) {
 	tableExtractor := &tableNameExtractor{
