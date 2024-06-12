@@ -90,15 +90,16 @@ type processinfoSetter interface {
 type recordSet struct {
 	fields   []*ast.ResultField
 	executor exec.Executor
-	// `Fields` maybe call after `Close`, and executor will clear in `Close` function, so we need to store the schema in recordSet to avoid null pointer exception.
+	// The `Fields` method may be called after `Close`, and the executor is cleared in the `Close` function.
+	// Therefore, we need to store the schema in `recordSet` to avoid a null pointer exception when calling `executor.Schema()`.
 	schema     *expression.Schema
 	stmt       *ExecStmt
 	lastErrs   []error
 	txnStartTS uint64
 	once       sync.Once
-	// finishLock is a mutex used to synchronize access to the `Next` and `Finish` function of the adapter.
-	// It ensures that only one goroutine can access to the `Next` and `Finish` function at a time, preventing race conditions.
-	// When we terminate the current SQL externally(e.g. kill query), we may use an additional goroutine to call the Finish function.
+	// finishLock is a mutex used to synchronize access to the `Next` and `Finish` functions of the adapter.
+	// It ensures that only one goroutine can access the `Next` and `Finish` functions at a time, preventing race conditions.
+	// When we terminate the current SQL externally (e.g., kill query), an additional goroutine would be used to call the `Finish` function.
 	finishLock sync.Mutex
 }
 
@@ -213,7 +214,7 @@ func (a *recordSet) Finish() error {
 				status := a.stmt.Ctx.GetSessionVars().SQLKiller.GetKillSignal()
 				inWriteResultSet := a.stmt.Ctx.GetSessionVars().SQLKiller.InWriteResultSet.Load()
 				if status > 0 && inWriteResultSet {
-					logutil.BgLogger().Warn("kill query, this SQL may be stuck in the network I/O stack.", zap.Uint64("conn", a.stmt.Ctx.GetSessionVars().ConnectionID))
+					logutil.BgLogger().Warn("kill, this SQL might be stuck in the network stack while writing packets to the client.", zap.Uint64("connection ID", a.stmt.Ctx.GetSessionVars().ConnectionID))
 				}
 			}
 		})

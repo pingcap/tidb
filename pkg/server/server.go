@@ -909,7 +909,8 @@ func (s *Server) Kill(connectionID uint64, query bool, maxExecutionTime bool) {
 		// this, it will end the dispatch loop and exit.
 		conn.setStatus(connStatusWaitShutdown)
 		if conn.bufReadConn != nil {
-			// When we try `kill connection` and tidb is stuck in the write packet network stack, we can quickly exit the network stack and end the SQL by setting WriteDeadline.
+			// When attempting to 'kill connection' and TiDB is stuck in the network stack while writing packets,
+			// we can quickly exit the network stack and terminate the SQL execution by setting WriteDeadline.
 			if err := conn.bufReadConn.SetWriteDeadline(time.Now()); err != nil {
 				logutil.BgLogger().Warn("error setting write deadline for kill.", zap.Error(err))
 			}
