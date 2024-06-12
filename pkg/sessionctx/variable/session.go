@@ -3636,6 +3636,16 @@ func (s *SessionVars) GetRelatedTableForMDL() *sync.Map {
 	return s.TxnCtx.relatedTableForMDL
 }
 
+// ClearRelatedTableForMDL clears the related table for MDL.
+// related tables for MDL is filled during build logical plan or Preprocess for all DataSources,
+// even for queries inside DDLs like `create view as select xxx` and `create table as select xxx`.
+// it should be cleared before we execute the DDL statement.
+func (s *SessionVars) ClearRelatedTableForMDL() {
+	s.TxnCtx.tdmLock.Lock()
+	defer s.TxnCtx.tdmLock.Unlock()
+	s.TxnCtx.relatedTableForMDL = nil
+}
+
 // EnableForceInlineCTE returns the session variable enableForceInlineCTE
 func (s *SessionVars) EnableForceInlineCTE() bool {
 	return s.enableForceInlineCTE
