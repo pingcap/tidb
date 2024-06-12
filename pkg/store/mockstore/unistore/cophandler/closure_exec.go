@@ -305,13 +305,6 @@ func (e *closureExecutor) initIdxScanCtx(idxScan *tipb.IndexScan) {
 		lastColumn = e.columnInfos[e.idxScanCtx.columnLen-1]
 	}
 
-	// Here it is required that ExtraPidColID
-	// is after all other columns except ExtraPhysTblID
-	if lastColumn.GetColumnId() == model.ExtraPidColID {
-		e.idxScanCtx.columnLen--
-		lastColumn = e.columnInfos[e.idxScanCtx.columnLen-1]
-	}
-
 	if len(e.idxScanCtx.primaryColumnIds) == 0 {
 		if lastColumn.GetPkHandle() {
 			if mysql.HasUnsignedFlag(uint(lastColumn.GetFlag())) {
@@ -933,7 +926,15 @@ func (e *closureExecutor) indexScanProcessCore(key, value []byte) error {
 	// Add ExtraPhysTblID if requested
 	// Assumes it is always last!
 	if e.columnInfos[len(e.columnInfos)-1].ColumnId == model.ExtraPhysTblID {
-		tblID := tablecodec.DecodeTableID(key)
+		var tblID int64
+		if pid := tablecodec.SplitIndexValue(value).PartitionID; len(pid) != 0 {
+			_, tblID, err = codec.DecodeInt(pid)
+			if err != nil {
+				return err
+			}
+		} else {
+			tblID = tablecodec.DecodeTableID(key)
+		}
 		chk.AppendInt64(len(e.columnInfos)-1, tblID)
 	}
 	gotRow = true

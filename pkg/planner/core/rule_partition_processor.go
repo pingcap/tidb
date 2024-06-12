@@ -471,15 +471,6 @@ func (*partitionProcessor) reconstructTableColNames(ds *DataSource) ([]*types.Fi
 			})
 			continue
 		}
-		if colExpr.ID == model.ExtraPidColID {
-			names = append(names, &types.FieldName{
-				DBName:      ds.DBName,
-				TblName:     ds.tableInfo.Name,
-				ColName:     model.ExtraPartitionIdName,
-				OrigColName: model.ExtraPartitionIdName,
-			})
-			continue
-		}
 		if colExpr.ID == model.ExtraPhysTblID {
 			names = append(names, &types.FieldName{
 				DBName:      ds.DBName,

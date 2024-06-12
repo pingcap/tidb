@@ -130,7 +130,7 @@ func (e *DeleteExec) deleteSingleTableByChunk(ctx context.Context) error {
 
 			datumRow := make([]types.Datum, 0, len(fields))
 			for i, field := range fields {
-				if columns[i].ID == model.ExtraPidColID || columns[i].ID == model.ExtraPhysTblID {
+				if columns[i].ID == model.ExtraPhysTblID {
 					continue
 				}
 

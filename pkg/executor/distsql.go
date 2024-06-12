@@ -581,14 +581,13 @@ func (e *IndexLookUpExecutor) startWorkers(ctx context.Context, initBatchSize in
 
 func (e *IndexLookUpExecutor) needPartitionHandle(tp getHandleType) (bool, error) {
 	var col *expression.Column
-	var needPartitionHandle, hasExtraCol bool
+	var needPartitionHandle bool
 	if tp == getHandleFromIndex {
 		cols := e.idxPlans[0].Schema().Columns
 		outputOffsets := e.dagPB.OutputOffsets
 		col = cols[outputOffsets[len(outputOffsets)-1]]
 		// For indexScan, need partitionHandle when global index or keepOrder with partitionTable
 		needPartitionHandle = e.index.Global || e.partitionTableMode && e.keepOrder
-		hasExtraCol = col.ID == model.ExtraPhysTblID || col.ID == model.ExtraPidColID
 	} else {
 		cols := e.tblPlans[0].Schema().Columns
 		outputOffsets := e.tableRequest.OutputOffsets
@@ -596,9 +595,8 @@ func (e *IndexLookUpExecutor) needPartitionHandle(tp getHandleType) (bool, error
 
 		// For TableScan, need partitionHandle in `indexOrder` when e.keepOrder == true or execute `admin check [table|index]` with global index
 		needPartitionHandle = ((e.index.Global || e.partitionTableMode) && e.keepOrder) || (e.index.Global && e.checkIndexValue != nil)
-		// no ExtraPidColID here, because TableScan shouldn't contain them.
-		hasExtraCol = col.ID == model.ExtraPhysTblID
 	}
+	hasExtraCol := col.ID == model.ExtraPhysTblID
 
 	// There will be two needPartitionHandle != hasExtraCol situations.
 	// Only `needPartitionHandle` == true and `hasExtraCol` == false are not allowed.

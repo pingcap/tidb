@@ -313,7 +313,8 @@ func (e *indexScanExec) Process(key, value []byte) error {
 			}
 		}
 	}
-	if e.physTblIDColIdx != nil {
+	// when index is a global index, pid is included in values and already filled in e.chk
+	if e.physTblIDColIdx != nil && *e.physTblIDColIdx >= len(values) {
 		tblID := tablecodec.DecodeTableID(key)
 		e.chk.AppendInt64(*e.physTblIDColIdx, tblID)
 	}

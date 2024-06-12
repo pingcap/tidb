@@ -138,10 +138,6 @@ func (b *mppExecBuilder) buildIdxScan(pb *tipb.IndexScan) (*indexScanExec, error
 		*physTblIDColIdx = numIdxCols
 		lastCol = pb.Columns[numIdxCols-1]
 	}
-	if lastCol.GetColumnId() == model.ExtraPidColID {
-		numIdxCols--
-		lastCol = pb.Columns[numIdxCols-1]
-	}
 
 	hdlStatus := tablecodec.HandleDefault
 	if len(primaryColIds) == 0 {
