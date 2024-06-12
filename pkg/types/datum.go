@@ -1095,7 +1095,7 @@ func ProduceStrWithSpecifiedTp(s string, tp *FieldType, ctx Context, padZero boo
 		// overflowed part is all whitespaces
 		var overflowed string
 		var characterLen int
-		var needRecalculateLen bool
+		var needCalculateLen bool
 
 		// For  mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob, mysql.TypeBlob(defined in tidb)
 		// and tinytext, text, mediumtext, longtext(not explicitly defined in tidb, corresponding to blob(s) in tidb) flen is the store length limit regardless of charset.
@@ -1148,7 +1148,7 @@ func ProduceStrWithSpecifiedTp(s string, tp *FieldType, ctx Context, padZero boo
 						overflowed = s[truncateLen:]
 						s = truncateStr(s, truncateLen)
 					} else {
-						needRecalculateLen = true
+						needCalculateLen = true
 					}
 				}
 			}
@@ -1159,16 +1159,16 @@ func ProduceStrWithSpecifiedTp(s string, tp *FieldType, ctx Context, padZero boo
 		}
 
 		if len(overflowed) != 0 {
-			trimed := strings.TrimRight(overflowed, " \t\n\r")
-			if len(trimed) == 0 && !IsBinaryStr(tp) && IsTypeChar(tp.GetType()) {
+			trimmed := strings.TrimRight(overflowed, " \t\n\r")
+			if len(trimmed) == 0 && !IsBinaryStr(tp) && IsTypeChar(tp.GetType()) {
 				if tp.GetType() == mysql.TypeVarchar {
-					if needRecalculateLen {
+					if needCalculateLen {
 						characterLen = utf8.RuneCountInString(s)
 					}
 					ctx.AppendWarning(ErrTruncated.FastGen("Data truncated, field len %d, data len %d", flen, characterLen))
 				}
 			} else {
-				if needRecalculateLen {
+				if needCalculateLen {
 					characterLen = utf8.RuneCountInString(s)
 				}
 				err = ErrDataTooLong.FastGen("Data Too Long, field len %d, data len %d", flen, characterLen)
