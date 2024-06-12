@@ -1413,11 +1413,14 @@ func (b *builtinJSONQuoteSig) evalString(ctx EvalContext, row chunk.Row) (string
 	if isNull || err != nil {
 		return "", isNull, err
 	}
-	r, err := goJSON.Marshal(str)
+	buffer := &bytes.Buffer{}
+	encoder := goJSON.NewEncoder(buffer)
+	encoder.SetEscapeHTML(false)
+	err = encoder.Encode(str)
 	if err != nil {
 		return "", isNull, err
 	}
-	return string(r), false, nil
+	return string(bytes.TrimSuffix(buffer.Bytes(), []byte("\n"))), false, nil
 }
 
 type jsonSearchFunctionClass struct {

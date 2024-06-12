@@ -476,11 +476,14 @@ func (b *builtinJSONQuoteSig) vecEvalString(ctx EvalContext, input *chunk.Chunk,
 			result.AppendNull()
 			continue
 		}
-		r, err := goJSON.Marshal(buf.GetString(i))
+		buffer := &bytes.Buffer{}
+		encoder := goJSON.NewEncoder(buffer)
+		encoder.SetEscapeHTML(false)
+		err = encoder.Encode(buf.GetString(i))
 		if err != nil {
 			return err
 		}
-		result.AppendString(string(r))
+		result.AppendString(string(bytes.TrimSuffix(buffer.Bytes(), []byte("\n"))))
 	}
 	return nil
 }
