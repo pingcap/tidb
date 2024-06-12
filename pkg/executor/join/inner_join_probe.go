@@ -58,7 +58,7 @@ func (j *innerJoinProbe) Probe(joinResult *hashjoinWorkerResult, sqlKiller sqlki
 		}
 	}
 
-	err = probeCheckSQLKiller(sqlKiller)
+	err = checkSQLKiller(sqlKiller, "killedDuringProbe")
 	if err != nil {
 		joinResult.err = err
 		return false, joinResult
