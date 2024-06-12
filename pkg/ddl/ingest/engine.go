@@ -206,7 +206,7 @@ func (ei *engineInfo) CreateWriter(id int, writerCfg *backend.LocalWriterConfig)
 	ei.memRoot.Consume(structSizeWriterCtx)
 	logutil.Logger(ei.ctx).Info(LitInfoCreateWrite, zap.Int64("job ID", ei.jobID),
 		zap.Int64("index ID", ei.indexID), zap.Int("worker ID", id),
-		zap.Int64("allocate memory", structSizeWriterCtx),
+		zap.Int64("allocate memory", structSizeWriterCtx+writerCfg.Local.MemCacheSize),
 		zap.Int64("current memory usage", ei.memRoot.CurrentUsage()),
 		zap.Int64("max memory quota", ei.memRoot.MaxMemoryQuota()))
 	return wCtx, err

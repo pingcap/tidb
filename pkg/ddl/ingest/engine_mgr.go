@@ -113,8 +113,7 @@ func (bc *litBackendCtx) UnregisterEngines() {
 	}
 	bc.engines = make(map[int64]*engineInfo, 10)
 
-	engineCacheSize := int64(bc.cfg.TikvImporter.EngineMemCacheSize)
-	bc.memRoot.Release(numIdx * (structSizeEngineInfo + engineCacheSize))
+	bc.memRoot.Release(numIdx * structSizeEngineInfo)
 }
 
 // ImportStarted implements BackendCtx.
