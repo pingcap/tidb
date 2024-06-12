@@ -100,10 +100,7 @@ func (r *row) setChecksums(checksums ...uint32) {
 	}
 }
 
-func (r *row) getOffsets(i int) (uint32, uint32) {
-	var (
-		start, end uint32
-	)
+func (r *row) getOffsets(i int) (start uint32, end uint32) {
 	if r.large() {
 		if i > 0 {
 			start = r.offsets32[i-1]

@@ -76,7 +76,7 @@ go_test(
     ],
     embed = [":tables"],
     flaky = True,
-    shard_count = 32,
+    shard_count = 31,
     deps = [
         "//pkg/ddl",
         "//pkg/ddl/util/callback",
