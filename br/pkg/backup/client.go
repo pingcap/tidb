@@ -332,7 +332,9 @@ mainLoop:
 					mainCancel()
 					return err
 				}
-				allTxnLocks = append(allTxnLocks, lock)
+				if lock != nil {
+					allTxnLocks = append(allTxnLocks, lock)
+				}
 				loop.ProgressCallBack()
 			}
 		}
@@ -1136,7 +1138,6 @@ func (bc *Client) OnBackupResponse(
 		return nil, nil
 	}
 
-	var txnLock *txnlock.Lock
 	resp := r.GetResponse()
 	storeID := r.GetStoreID()
 	if resp.GetError() == nil {
@@ -1170,8 +1171,8 @@ func (bc *Client) OnBackupResponse(
 		switch v := errPb.Detail.(type) {
 		case *backuppb.Error_KvError:
 			if lockErr := v.KvError.Locked; lockErr != nil {
-				// collect locks for later resolving in this round
-				txnLock = txnlock.NewLock(lockErr)
+				// return lock for later resolving in this round
+				return txnlock.NewLock(lockErr), nil
 			}
 		}
 		res := errContext.HandleIgnorableError(errPb, storeID)
@@ -1188,7 +1189,7 @@ func (bc *Client) OnBackupResponse(
 			)
 		}
 	}
-	return txnLock, nil
+	return nil, nil
 }
 
 func collectRangeFiles(progressRangeTree *rtree.ProgressRangeTree, metaWriter *metautil.MetaWriter) error {
