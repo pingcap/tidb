@@ -69,9 +69,15 @@ var outdatedDuration = types.Duration{
 
 // brieTaskProgress tracks a task's current progress.
 type brieTaskProgress struct {
+	taskID uint64
 	// current progress of the task.
 	// this field is atomically updated outside of the lock below.
 	current int64
+
+	executor *exec.BaseExecutor
+
+	// lastUpdate is the timestamp of the last progress update
+	lastUpdate int64
 
 	// lock is the mutex protected the two fields below.
 	lock syncutil.Mutex
@@ -80,21 +86,28 @@ type brieTaskProgress struct {
 	// total is the total progress of the task.
 	// the percentage of completeness is `(100%) * current / total`.
 	total int64
-
-	executor *BRIEExec
 }
 
 // Inc implements glue.Progress
 func (p *brieTaskProgress) Inc() {
-	current := atomic.AddInt64(&p.current, 1) *100 / atomic.LoadInt64(&p.total)
-	log.Info("BRIE task progress", zap.Int64("current", current), zap.Int64("total", p.total))
-	if current % 10 == 0 {
-		ctx := util.WithInternalSourceType(context.Background(), kv.InternalTxnBR)
-		_,err := p.executor.Ctx().GetSQLExecutor().ExecuteInternal(ctx, "UPDATE mysql.tidb_br_jobs SET progress = %? WHERE id = %?;", current, p.executor.info.id)
-		if err != nil {
-			log.Error("Failed to update BRIE task progress", zap.Error(err))
-		}
-	}
+    current := atomic.AddInt64(&p.current, 1) * 100 / atomic.LoadInt64(&p.total)
+    if p.executor == nil {
+        return
+    }
+
+    now := time.Now().Unix()
+    lastUpdate := atomic.LoadInt64(&p.lastUpdate)
+
+    // set a 60s interval to avoid update too frequently
+    if now-lastUpdate >= 60 {
+        if atomic.CompareAndSwapInt64(&p.lastUpdate, lastUpdate, now) {
+            ctx := util.WithInternalSourceType(context.Background(), kv.InternalTxnBR)
+            _, err := p.executor.Ctx().GetSQLExecutor().ExecuteInternal(ctx, "UPDATE mysql.tidb_br_jobs SET progress = %? WHERE id = %?;", current, p.taskID)
+            if err != nil {
+                log.Error("Failed to update BRIE task progress", zap.Error(err))
+            }
+        }
+    }
 }
 
 // IncBy implements glue.Progress
@@ -116,11 +129,14 @@ func (p *brieTaskProgress) Close() {
 	}
 	atomic.StoreInt64(&p.current, p.total)
 
-	// ctx := util.WithInternalSourceType(context.Background(), kv.InternalTxnBR)
-	// _,err := p.executor.Ctx().GetSQLExecutor().ExecuteInternal(ctx, "UPDATE mysql.tidb_br_jobs SET state = %? WHERE id = %?;", p.cmd, p.executor.info.id)
-	// if err != nil {
-	// 	log.Error("Failed to update BRIE task progress", zap.Error(err))
-	// }
+	if p.executor == nil {
+		return
+	}
+	ctx := util.WithInternalSourceType(context.Background(), kv.InternalTxnBR)
+	_,err := p.executor.Ctx().GetSQLExecutor().ExecuteInternal(ctx, "UPDATE mysql.tidb_br_jobs SET state = %?, progress = %? WHERE id = %?;", p.cmd, current * 100 / p.total, p.taskID)
+	if err != nil {
+		log.Error("Failed to update BRIE task progress", zap.Error(err))
+	}
 	p.lock.Unlock()
 }
 
@@ -208,6 +224,7 @@ func (bq *brieQueue) registerTask(
 	}
 
 	taskID = rows[0].GetUint64(0)
+	item.progress.taskID = taskID
 	bq.tasks.Store(taskID, item)
 	info.id = taskID
 
@@ -235,7 +252,7 @@ func (bq *brieQueue) acquireTask(taskCtx context.Context, taskID uint64, e *BRIE
 			bq.releaseTask()
 			return nil, errors.Errorf("backup/restore task %d is canceled", taskID)
 		}
-		item.(*brieQueueItem).progress.executor = e
+		item.(*brieQueueItem).progress.executor = &e.BaseExecutor
 		return item.(*brieQueueItem).progress, nil
 	case <-taskCtx.Done():
 		return nil, taskCtx.Err()
@@ -670,79 +687,6 @@ func (e *BRIEExec) insert() string {
     return insertStmt
 }
 
-func (e *BRIEExec) update(id uint64, progress *brieTaskProgress) string {
-    // Format the time fields as strings or NULL
-	task := e.info
-	var (
-		queueTime   string
-		execTime    string
-		finishTime  string
-	)
-
-	if task.queueTime.IsZero() {
-		queueTime = "NULL"
-	} else {
-		queueTime = fmt.Sprintf("'%s'", task.queueTime.String())
-	}
-
-	if task.execTime.IsZero() {
-		execTime = "NULL"
-	} else {
-		execTime = fmt.Sprintf("'%s'", task.execTime.String())
-	}
-
-	if task.finishTime.IsZero() {
-		finishTime = "NULL"
-	} else {
-		finishTime = fmt.Sprintf("'%s'", task.finishTime.String())
-	}
-
-	escapeString := func(str string) string {
-		if str == "" {
-			return "NULL"
-		}
-		return fmt.Sprintf("'%s'", str)
-	}
-
-	// Escape query string with double single quotes for SQL
-	escapedQuery := strings.ReplaceAll(task.query, "'", "''")
-
-	updateStmt := fmt.Sprintf(`
-	UPDATE mysql.tidb_br_jobs
-	SET 
-		query = '%s',
-		queueTime = %s,
-		state = '%s',
-		execTime = %s,
-		finishTime = %s,
-		kind = '%s',
-		storage = %s,
-		connID = %d,
-		backupTS = %d,
-		restoreTS = %d,
-		archiveSize = %d,
-		message = %s
-	WHERE id = %d;
-	`, escapedQuery,
-		queueTime,
-		progress.cmd,
-		execTime,
-		finishTime,
-		task.kind,
-		escapeString(task.storage),
-		task.connID,
-		task.backupTS,
-		task.restoreTS,
-		task.archiveSize,
-		escapeString(task.message),
-		id,
-	)
-
-	log.Info("Generated SQL statements", zap.String("SQL UPDATE", updateStmt))
-
-	return updateStmt
-}
-
 // Next implements the Executor Next interface.
 func (e *BRIEExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.Reset()
@@ -795,7 +739,7 @@ func (e *BRIEExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	glue := &tidbGlue{se: e.Ctx(), progress: progress, info: e.info}
 
 	stmtCtx := util.WithInternalSourceType(ctx, kv.InternalTxnBR)
-	_,err = e.Ctx().GetSQLExecutor().ExecuteInternal(stmtCtx, e.update(taskID,progress))
+	_,err = e.Ctx().GetSQLExecutor().ExecuteInternal(stmtCtx, "UPDATE mysql.tidb_br_jobs SET execTime = %? WHERE id = %?;", e.info.execTime, e.info.id)
 	if err != nil {
 		log.Error("Failed to insert BRIE task into tidb_br_jobs", zap.Error(err))
 		return err
@@ -810,6 +754,11 @@ func (e *BRIEExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		err = errors.Errorf("unsupported BRIE statement kind: %s", e.info.kind)
 	}
 	e.info.finishTime = types.CurrentTime(mysql.TypeDatetime)
+	_,err = e.Ctx().GetSQLExecutor().ExecuteInternal(stmtCtx, "UPDATE mysql.tidb_br_jobs SET finishTime = %?, message = %? WHERE id = %?;", e.info.finishTime, err.Error(), e.info.id)
+	if err != nil {
+		log.Error("Failed to insert BRIE task into tidb_br_jobs", zap.Error(err))
+		return err
+	}
 	if err != nil {
 		e.info.message = err.Error()
 		return err
@@ -828,12 +777,6 @@ func (e *BRIEExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		req.AppendUint64(3, e.info.restoreTS)
 		req.AppendTime(4, e.info.queueTime)
 		req.AppendTime(5, e.info.execTime)
-	}
-
-	_,err = e.Ctx().GetSQLExecutor().ExecuteInternal(stmtCtx, e.update(taskID,progress))
-	if err != nil {
-		log.Error("Failed to insert BRIE task into tidb_br_jobs", zap.Error(err))
-		return err
 	}
 	
 	e.info = nil
@@ -912,6 +855,16 @@ func (gs *tidbGlue) StartProgress(_ context.Context, cmdName string, total int64
 	gs.progress.total = total
 	atomic.StoreInt64(&gs.progress.current, 0)
 	gs.progress.lock.Unlock()
+
+	if gs.progress.executor == nil {
+	return gs.progress
+	}
+	atomic.StoreInt64(&gs.progress.lastUpdate, time.Now().Unix())
+	ctx := util.WithInternalSourceType(context.Background(), kv.InternalTxnBR)
+	_, err := gs.progress.executor.Ctx().GetSQLExecutor().ExecuteInternal(ctx, "UPDATE mysql.tidb_br_jobs SET state = %?, progress = %? WHERE id = %?;", cmdName, 0, gs.progress.taskID)
+	if err != nil {
+		log.Error("Failed to update BRIE task progress", zap.Error(err))
+	}
 	return gs.progress
 }
 

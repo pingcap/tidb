@@ -696,17 +696,17 @@ const (
 		id          BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
 		queueTime   TIMESTAMP,  
 		kind        ENUM('BACKUP', 'RESTORE'), 
-		state       VARCHAR(255), 
 		query       VARCHAR(255),
 		storage     VARCHAR(255),           
 		execTime    TIMESTAMP NULL,
+		state       VARCHAR(255), 
 		progress    INT,
 		finishTime  TIMESTAMP NULL,         
 		connID      BIGINT UNSIGNED,
 		backupTS    BIGINT UNSIGNED NULL,
 		restoreTS   BIGINT UNSIGNED NULL,
 		archiveSize BIGINT UNSIGNED NULL,
-		message     TEXT
+		message     TEXT NULL,
 	);`
 
 	// DropMySQLIndexUsageTable removes the table `mysql.schema_index_usage`
