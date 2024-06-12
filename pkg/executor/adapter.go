@@ -87,16 +87,27 @@ type processinfoSetter interface {
 
 // recordSet wraps an executor, implements sqlexec.RecordSet interface
 type recordSet struct {
-	fields     []*ast.ResultField
-	executor   exec.Executor
+	fields   []*ast.ResultField
+	executor exec.Executor
+	// The `Fields` method may be called after `Close`, and the executor is cleared in the `Close` function.
+	// Therefore, we need to store the schema in `recordSet` to avoid a null pointer exception when calling `executor.Schema()`.
+	schema     *expression.Schema
 	stmt       *ExecStmt
 	lastErr    error
 	txnStartTS uint64
+<<<<<<< HEAD
+=======
+	once       sync.Once
+	// finishLock is a mutex used to synchronize access to the `Next` and `Finish` functions of the adapter.
+	// It ensures that only one goroutine can access the `Next` and `Finish` functions at a time, preventing race conditions.
+	// When we terminate the current SQL externally (e.g., kill query), an additional goroutine would be used to call the `Finish` function.
+	finishLock sync.Mutex
+>>>>>>> e9da2c08879 (server: handle kill signal during write result to connection (#52882))
 }
 
 func (a *recordSet) Fields() []*ast.ResultField {
 	if len(a.fields) == 0 {
-		a.fields = colNames2ResultFields(a.executor.Schema(), a.stmt.OutputNames, a.stmt.Ctx.GetSessionVars().CurrentDB)
+		a.fields = colNames2ResultFields(a.schema, a.stmt.OutputNames, a.stmt.Ctx.GetSessionVars().CurrentDB)
 	}
 	return a.fields
 }
@@ -152,6 +163,13 @@ func (a *recordSet) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 		err = errors.Errorf("%v", r)
 		logutil.Logger(ctx).Error("execute sql panic", zap.String("sql", a.stmt.GetTextToLog(false)), zap.Stack("stack"))
 	}()
+	a.finishLock.Lock()
+	defer a.finishLock.Unlock()
+	if a.stmt != nil {
+		if err := a.stmt.Ctx.GetSessionVars().SQLKiller.HandleSignal(); err != nil {
+			return err
+		}
+	}
 
 	err = a.stmt.next(ctx, a.executor, req)
 	if err != nil {
@@ -177,8 +195,41 @@ func (a *recordSet) NewChunk(alloc chunk.Allocator) *chunk.Chunk {
 		return exec.NewFirstChunk(a.executor)
 	}
 
+<<<<<<< HEAD
 	base := a.executor.Base()
 	return alloc.Alloc(base.RetFieldTypes(), base.InitCap(), base.MaxChunkSize())
+=======
+	return alloc.Alloc(a.executor.RetFieldTypes(), a.executor.InitCap(), a.executor.MaxChunkSize())
+}
+
+func (a *recordSet) Finish() error {
+	var err error
+	if a.finishLock.TryLock() {
+		defer a.finishLock.Unlock()
+		a.once.Do(func() {
+			err = exec.Close(a.executor)
+			cteErr := resetCTEStorageMap(a.stmt.Ctx)
+			if cteErr != nil {
+				logutil.BgLogger().Error("got error when reset cte storage, should check if the spill disk file deleted or not", zap.Error(cteErr))
+			}
+			if err == nil {
+				err = cteErr
+			}
+			a.executor = nil
+			if a.stmt != nil {
+				status := a.stmt.Ctx.GetSessionVars().SQLKiller.GetKillSignal()
+				inWriteResultSet := a.stmt.Ctx.GetSessionVars().SQLKiller.InWriteResultSet.Load()
+				if status > 0 && inWriteResultSet {
+					logutil.BgLogger().Warn("kill, this SQL might be stuck in the network stack while writing packets to the client.", zap.Uint64("connection ID", a.stmt.Ctx.GetSessionVars().ConnectionID))
+				}
+			}
+		})
+	}
+	if err != nil {
+		a.lastErrs = append(a.lastErrs, err)
+	}
+	return err
+>>>>>>> e9da2c08879 (server: handle kill signal during write result to connection (#52882))
 }
 
 func (a *recordSet) Close() error {
@@ -355,7 +406,12 @@ func (a *ExecStmt) PointGet(ctx context.Context) (*recordSet, error) {
 	}
 
 	return &recordSet{
+<<<<<<< HEAD
 		executor:   pointExecutor,
+=======
+		executor:   executor,
+		schema:     executor.Schema(),
+>>>>>>> e9da2c08879 (server: handle kill signal during write result to connection (#52882))
 		stmt:       a,
 		txnStartTS: startTs,
 	}, nil
@@ -593,6 +649,7 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 
 	return &recordSet{
 		executor:   e,
+		schema:     e.Schema(),
 		stmt:       a,
 		txnStartTS: txnStartTS,
 	}, nil
