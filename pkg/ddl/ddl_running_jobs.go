@@ -53,18 +53,18 @@ func (j *runningJobs) clear() {
 	j.unfinishedSchema = make(map[string]map[string]struct{})
 }
 
-func (j *runningJobs) add(job *model.Job) {
+func (j *runningJobs) add(jobID int64, involvedSchemaInfos []model.InvolvingSchemaInfo) {
 	j.Lock()
 	defer j.Unlock()
-	j.processingIDs[job.ID] = struct{}{}
+	j.processingIDs[jobID] = struct{}{}
 	j.updateInternalRunningJobIDs()
 
-	if _, ok := j.unfinishedIDs[job.ID]; ok {
+	if _, ok := j.unfinishedIDs[jobID]; ok {
 		// Already exists, no need to add it again.
 		return
 	}
-	j.unfinishedIDs[job.ID] = struct{}{}
-	for _, info := range job.GetInvolvingSchemaInfo() {
+	j.unfinishedIDs[jobID] = struct{}{}
+	for _, info := range involvedSchemaInfos {
 		if _, ok := j.unfinishedSchema[info.Database]; !ok {
 			j.unfinishedSchema[info.Database] = make(map[string]struct{})
 		}
@@ -72,21 +72,19 @@ func (j *runningJobs) add(job *model.Job) {
 	}
 }
 
-func (j *runningJobs) remove(job *model.Job) {
+func (j *runningJobs) remove(jobID int64, involvedSchemaInfos []model.InvolvingSchemaInfo) {
 	j.Lock()
 	defer j.Unlock()
-	delete(j.processingIDs, job.ID)
+	delete(j.processingIDs, jobID)
 	j.updateInternalRunningJobIDs()
 
-	if job.IsFinished() || job.IsSynced() {
-		delete(j.unfinishedIDs, job.ID)
-		for _, info := range job.GetInvolvingSchemaInfo() {
-			if db, ok := j.unfinishedSchema[info.Database]; ok {
-				delete(db, info.Table)
-			}
-			if len(j.unfinishedSchema[info.Database]) == 0 {
-				delete(j.unfinishedSchema, info.Database)
-			}
+	delete(j.unfinishedIDs, jobID)
+	for _, info := range involvedSchemaInfos {
+		if db, ok := j.unfinishedSchema[info.Database]; ok {
+			delete(db, info.Table)
+		}
+		if len(j.unfinishedSchema[info.Database]) == 0 {
+			delete(j.unfinishedSchema, info.Database)
 		}
 	}
 }
