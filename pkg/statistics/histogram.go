@@ -595,13 +595,13 @@ func (hg *Histogram) BetweenRowCount(sctx context.PlanContext, a, b types.Datum)
 	lessCountB := hg.LessRowCount(sctx, b)
 	rangeEst := lessCountB - lessCountA
 	lowEqual, _ := hg.EqualRowCount(sctx, a, false)
-	NDVAvg := hg.NotNullCount() / float64(hg.NDV)
+	ndvAvg := hg.NotNullCount() / float64(hg.NDV)
 	// If values fall in the same bucket, we may underestimate the fractional result. So estimate the low value (a) as an equals, and
 	// estimate the high value as the default (because the input high value may be "larger" than the true high value). The range should
 	// not be less than both the low+high - or the lesser of the estimate for the individual range of a or b is used as a bound.
-	if rangeEst < math.Max(lowEqual, NDVAvg) && hg.NDV > 0 {
+	if rangeEst < math.Max(lowEqual, ndvAvg) && hg.NDV > 0 {
 		result := math.Min(lessCountB, hg.NotNullCount()-lessCountA)
-		return math.Min(result, lowEqual+NDVAvg)
+		return math.Min(result, lowEqual+ndvAvg)
 	}
 	return rangeEst
 }
