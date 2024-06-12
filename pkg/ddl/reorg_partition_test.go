@@ -777,7 +777,6 @@ func testReorganizePartitionFailures(t *testing.T, createSQL, alterSQL string, b
 			}
 			tk.MustQuery(`select * from t /* ` + suffix + ` */`).Sort().Check(beforeResult)
 			tOrg := external.GetTableByName(t, tk, "test", "t")
-			partition := tOrg.Meta().Partition
 			idxID := tOrg.Meta().Indices[0].ID
 			oldCreate := tk.MustQuery(`show create table t`).Rows()
 			name := "github.com/pingcap/tidb/pkg/ddl/reorgPart" + suffix
@@ -788,7 +787,7 @@ func testReorganizePartitionFailures(t *testing.T, createSQL, alterSQL string, b
 			require.NoError(t, failpoint.Disable(name))
 			tk.MustQuery(`show create table t /* ` + suffix + ` */`).Check(oldCreate)
 			tt := external.GetTableByName(t, tk, "test", "t")
-			partition = tt.Meta().Partition
+			partition := tt.Meta().Partition
 			require.Equal(t, len(tOrg.Meta().Partition.Definitions), len(partition.Definitions), suffix)
 			require.Equal(t, 0, len(partition.AddingDefinitions), suffix)
 			require.Equal(t, 0, len(partition.DroppingDefinitions), suffix)
