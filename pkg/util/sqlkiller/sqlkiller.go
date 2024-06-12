@@ -42,8 +42,8 @@ type SQLKiller struct {
 	Signal killSignal
 	ConnID uint64
 	Finish func()
-	// InWriteResultSet is used to mark whether the query is calling clientConn.writeResultSet().
-	// If the query is in writeResultSet, and Finish() can acquire rs.finishLock, we can assume the query is waiting for network IO.
+	// InWriteResultSet is used to indicate whether the query is currently calling clientConn.writeResultSet().
+	// If the query is in writeResultSet and Finish() can acquire rs.finishLock, we can assume the query is waiting for the client to receive data from the server over network I/O.
 	InWriteResultSet atomic.Bool
 }
 
@@ -52,7 +52,7 @@ func (killer *SQLKiller) SendKillSignal(reason killSignal) {
 	if atomic.CompareAndSwapUint32(&killer.Signal, 0, reason) {
 		status := atomic.LoadUint32(&killer.Signal)
 		err := killer.getKillError(status)
-		logutil.BgLogger().Warn("kill query started", zap.Uint64("conn", killer.ConnID), zap.String("reason", err.Error()))
+		logutil.BgLogger().Warn("kill initiated", zap.Uint64("connection ID", killer.ConnID), zap.String("reason", err.Error()))
 	}
 }
 
@@ -76,8 +76,9 @@ func (killer *SQLKiller) getKillError(status killSignal) error {
 	return nil
 }
 
-// FinishResultSet is used to finish the result set.
-// If the cancel signal is received and SQL is waiting for network IO, resource released can be performed first.
+// FinishResultSet is used to close the result set.
+// If a kill signal is sent but the SQL query is stuck in the network stack while writing packets to the client,
+// encountering some bugs that cause it to hang, or failing to detect the kill signal, we can call Finish to release resources used during the SQL execution process.
 func (killer *SQLKiller) FinishResultSet() {
 	if killer.Finish != nil {
 		killer.Finish()
@@ -108,7 +109,7 @@ func (killer *SQLKiller) HandleSignal() error {
 // Reset resets the SqlKiller.
 func (killer *SQLKiller) Reset() {
 	if atomic.LoadUint32(&killer.Signal) != 0 {
-		logutil.BgLogger().Warn("kill query finished", zap.Uint64("conn", killer.ConnID))
+		logutil.BgLogger().Warn("kill finished", zap.Uint64("conn", killer.ConnID))
 	}
 	atomic.StoreUint32(&killer.Signal, 0)
 	killer.Finish = nil
