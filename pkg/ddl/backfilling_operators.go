@@ -587,11 +587,14 @@ func NewIndexIngestOperator(
 ) *IndexIngestOperator {
 	var writerIDAlloc atomic.Int32
 
-	availMem := ingest.LitMemRoot.MaxMemoryQuota() - ingest.LitMemRoot.CurrentUsage()
-	memLimitPerWriter := availMem / int64(len(indexes)) / int64(concurrency)
-	memLimitPerWriter = min(memLimitPerWriter, litconfig.DefaultLocalWriterMemCacheSize)
 	writerCfg := &backend.LocalWriterConfig{}
-	writerCfg.Local.MemCacheSize = memLimitPerWriter
+	// avoid unit test panic
+	if memRoot := ingest.LitMemRoot; memRoot != nil {
+		availMem := memRoot.MaxMemoryQuota() - memRoot.CurrentUsage()
+		memLimitPerWriter := availMem / int64(len(indexes)) / int64(concurrency)
+		memLimitPerWriter = min(memLimitPerWriter, litconfig.DefaultLocalWriterMemCacheSize)
+		writerCfg.Local.MemCacheSize = memLimitPerWriter
+	}
 
 	pool := workerpool.NewWorkerPool(
 		"indexIngestOperator",
