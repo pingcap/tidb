@@ -433,7 +433,7 @@ func TestIssue53951(t *testing.T) {
 	tk.MustExec(`INSERT INTO gholla_dummy2 (id,mark,deleted_at,account_id,metastore_id) VALUES ('ABC', 1, '1970-01-01 01:00:01.000', 'ABC', 'ABC');`)
 	tk.MustExec(`start transaction;`)
 	tk.MustExec(`update gholla_dummy2 set deleted_at = NOW(), mark=2 where account_id = 'ABC' and metastore_id = 'ABC' and id = 'ABC';`)
-	tk.MustContainErrMsg(`select
+	err := tk.QueryToErr(`select
   /*+ INL_JOIN(g1, g2) */
   g1.account_id,
   g2.mark
@@ -449,7 +449,8 @@ WHERE
   g1.account_id = 'ABC' AND
   g1.metastore_id = 'ABC' AND
   g1.is_deleted = FALSE AND
-  g2.is_deleted = FALSE;`, "xx")
+  g2.is_deleted = FALSE;`)
+	require.ErrorContains(t, err, "unexpected operator *executor.ProjectionExec under UnionScan")
 }
 
 func TestFixControl45132(t *testing.T) {
