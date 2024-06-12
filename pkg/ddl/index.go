@@ -1673,6 +1673,21 @@ type addIndexIngestWorker struct {
 	jobID    int64
 }
 
+func getLocalWriterConfig(indexCnt, writerCnt int) *backend.LocalWriterConfig {
+	writerCfg := &backend.LocalWriterConfig{}
+	// avoid unit test panic
+	memRoot := ingest.LitMemRoot
+	if memRoot == nil {
+		return writerCfg
+	}
+
+	availMem := memRoot.MaxMemoryQuota() - memRoot.CurrentUsage()
+	memLimitPerWriter := availMem / int64(indexCnt) / int64(writerCnt)
+	memLimitPerWriter = min(memLimitPerWriter, litconfig.DefaultLocalWriterMemCacheSize)
+	writerCfg.Local.MemCacheSize = memLimitPerWriter
+	return writerCfg
+}
+
 func newAddIndexIngestWorker(
 	ctx context.Context,
 	t table.PhysicalTable,
@@ -1693,11 +1708,7 @@ func newAddIndexIngestWorker(
 
 	indexes := make([]table.Index, 0, len(indexIDs))
 	writers := make([]ingest.Writer, 0, len(indexIDs))
-	availMem := ingest.LitMemRoot.MaxMemoryQuota() - ingest.LitMemRoot.CurrentUsage()
-	memLimitPerWriter := availMem / int64(len(indexIDs)) / int64(writerCnt)
-	memLimitPerWriter = min(memLimitPerWriter, litconfig.DefaultLocalWriterMemCacheSize)
-	writerCfg := &backend.LocalWriterConfig{}
-	writerCfg.Local.MemCacheSize = memLimitPerWriter
+	writerCfg := getLocalWriterConfig(len(indexIDs), writerCnt)
 
 	for i, indexID := range indexIDs {
 		indexInfo := model.FindIndexInfoByID(t.Meta().Indices, indexID)

@@ -34,10 +34,8 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/operator"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/lightning/common"
-	litconfig "github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -585,17 +583,9 @@ func NewIndexIngestOperator(
 	concurrency int,
 	reorgMeta *model.DDLReorgMeta,
 ) *IndexIngestOperator {
+	writerCfg := getLocalWriterConfig(len(indexes), concurrency)
+
 	var writerIDAlloc atomic.Int32
-
-	writerCfg := &backend.LocalWriterConfig{}
-	// avoid unit test panic
-	if memRoot := ingest.LitMemRoot; memRoot != nil {
-		availMem := memRoot.MaxMemoryQuota() - memRoot.CurrentUsage()
-		memLimitPerWriter := availMem / int64(len(indexes)) / int64(concurrency)
-		memLimitPerWriter = min(memLimitPerWriter, litconfig.DefaultLocalWriterMemCacheSize)
-		writerCfg.Local.MemCacheSize = memLimitPerWriter
-	}
-
 	pool := workerpool.NewWorkerPool(
 		"indexIngestOperator",
 		util.DDL,

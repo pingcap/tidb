@@ -76,7 +76,8 @@ type LocalWriterConfig struct {
 		// is the chunk KV written to this LocalWriter sent in order
 		IsKVSorted bool
 		// MemCacheSize specifies the estimated memory cache limit used by this local
-		// writer. It has higher priority than BackendConfig.LocalWriterMemCacheSize.
+		// writer. It has higher priority than BackendConfig.LocalWriterMemCacheSize if
+		// set.
 		MemCacheSize int64
 	}
 	// TiDB backend specified configuration
