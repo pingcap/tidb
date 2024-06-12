@@ -313,7 +313,7 @@ mainLoop:
 				if !ok {
 					// resolve all txn lock before next round starts
 					bo := utils.AdaptTiKVBackoffer(handleCtx, MaxResolveLocksbackupOffSleepMs, berrors.ErrUnknown)
-					_, _, _, err = bc.mgr.GetLockResolver().ResolveLocksForRead(bo.Inner(), 0, allTxnLocks, true)
+					_, err = bc.mgr.GetLockResolver().ResolveLocks(bo.Inner(), 0, allTxnLocks)
 					if err != nil {
 						logutil.CL(handleCtx).Warn("failed to resolve locks, ignore and wait for next round to resolve",
 							zap.Uint64("round", round), zap.Error(err))
