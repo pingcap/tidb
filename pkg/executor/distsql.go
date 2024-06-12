@@ -751,9 +751,14 @@ func (e *IndexLookUpExecutor) calculateBatchSize(initBatchSize, maxBatchSize int
 	if len(e.idxPlans) > 0 {
 		estRows = int(e.idxPlans[0].StatsCount())
 	}
+	return CalculateBatchSize(e.indexPaging, estRows, initBatchSize, maxBatchSize)
+}
+
+// CalculateBatchSize calculates a suitable initial batch size. It exports for testing.
+func CalculateBatchSize(indexPaging bool, estRows, initBatchSize, maxBatchSize int) int {
 	batchSize := min(initBatchSize, maxBatchSize)
-	if e.indexPaging {
-		// If e.indexPaging is true means this query has limit, so use initBatchSize to avoid scan some unnecessary data.
+	if indexPaging {
+		// If indexPaging is true means this query has limit, so use initBatchSize to avoid scan some unnecessary data.
 		return batchSize
 	}
 	if estRows >= maxBatchSize {

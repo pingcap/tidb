@@ -591,3 +591,15 @@ func TestCoprCacheWithoutExecutionInfo(t *testing.T) {
 	tk.MustQuery("select * from t").Check(testkit.Rows("1", "2", "3"))
 	tk.MustQueryWithContext(ctx, "select * from t").Check(testkit.Rows("1", "2", "3"))
 }
+
+func TestCalculateBatchSize(t *testing.T) {
+	require.Equal(t, 1024, executor.CalculateBatchSize(true, 5000, 1024, 20000))
+	require.Equal(t, 1024, executor.CalculateBatchSize(true, 1024, 1024, 20000))
+	require.Equal(t, 1024, executor.CalculateBatchSize(true, 10, 1024, 20000))
+	require.Equal(t, 258, executor.CalculateBatchSize(true, 10, 1024, 258))
+	require.Equal(t, 20000, executor.CalculateBatchSize(false, 50000, 1024, 20000))
+	require.Equal(t, 8192, executor.CalculateBatchSize(false, 5000, 1024, 20000))
+	require.Equal(t, 1024, executor.CalculateBatchSize(false, 1024, 1024, 20000))
+	require.Equal(t, 1024, executor.CalculateBatchSize(false, 10, 1024, 20000))
+	require.Equal(t, 258, executor.CalculateBatchSize(false, 10, 1024, 258))
+}
