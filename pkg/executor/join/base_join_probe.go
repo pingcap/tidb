@@ -240,9 +240,9 @@ func (j *baseJoinProbe) finishLookupCurrentProbeRow() {
 	j.matchedRowsForCurrentProbeRow = 0
 }
 
-func probeCheckSQLKiller(killer sqlkiller.SQLKiller) error {
+func checkSQLKiller(killer sqlkiller.SQLKiller, fpName string) error {
 	err := killer.HandleSignal()
-	failpoint.Inject("killedDuringProbe", func(val failpoint.Value) {
+	failpoint.Inject(fpName, func(val failpoint.Value) {
 		if val.(bool) {
 			err = exeerrors.ErrQueryInterrupted
 		}
