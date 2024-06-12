@@ -1279,6 +1279,7 @@ func (b *executorBuilder) buildUnionScanFromReader(reader exec.Executor, v *plan
 	us.mutableRow = chunk.MutRowFromTypes(exec.RetTypes(us))
 
 	// If the push-downed condition contains virtual column, we may build a selection upon reader
+	originReader := reader
 	if sel, ok := reader.(*SelectionExec); ok {
 		reader = sel.Children(0)
 	}
@@ -1368,6 +1369,12 @@ func (b *executorBuilder) buildUnionScanFromReader(reader exec.Executor, v *plan
 		us.columns = x.columns
 		us.table = x.table
 		us.virtualColumnIndex = buildVirtualColumnIndex(us.Schema(), us.columns)
+	case *PointGetExecutor, *BatchPointGetExec:
+		// PointGet and BatchPoint can handle virtual columns and dirty txn data themselves.
+		return originReader
+	case *TableDualExec:
+		// If TableDual, the result must be empty, so we can skip UnionScan and use TableDual directly here.
+		return originReader
 	default:
 		b.err = errors.NewNoStackErrorf("unexpected operator %T under UnionScan", reader)
 		return nil
