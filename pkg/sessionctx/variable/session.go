@@ -1621,6 +1621,8 @@ type SessionVars struct {
 
 	// TablesBufferPool is a memory pool for table related memory allocation that aims to reuse memory
 	// and saves allocation
+	// The buffers are supposed to be used inside AddRecord/UpdateRecord/RemoveRecord.
+	// It's users duty to reset them before use.
 	TablesBufferPool TablesBufferPool
 }
 
