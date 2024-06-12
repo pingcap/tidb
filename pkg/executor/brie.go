@@ -51,6 +51,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/printer"
 	"github.com/pingcap/tidb/pkg/util/sem"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/pkg/util/syncutil"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	"github.com/tikv/client-go/v2/oracle"
@@ -79,11 +80,21 @@ type brieTaskProgress struct {
 	// total is the total progress of the task.
 	// the percentage of completeness is `(100%) * current / total`.
 	total int64
+
+	executor *BRIEExec
 }
 
 // Inc implements glue.Progress
 func (p *brieTaskProgress) Inc() {
-	atomic.AddInt64(&p.current, 1)
+	current := atomic.AddInt64(&p.current, 1) *100 / atomic.LoadInt64(&p.total)
+	log.Info("BRIE task progress", zap.Int64("current", current), zap.Int64("total", p.total))
+	if current % 10 == 0 {
+		ctx := util.WithInternalSourceType(context.Background(), kv.InternalTxnBR)
+		_,err := p.executor.Ctx().GetSQLExecutor().ExecuteInternal(ctx, "UPDATE mysql.tidb_br_jobs SET progress = %? WHERE id = %?;", current, p.executor.info.id)
+		if err != nil {
+			log.Error("Failed to update BRIE task progress", zap.Error(err))
+		}
+	}
 }
 
 // IncBy implements glue.Progress
@@ -104,6 +115,12 @@ func (p *brieTaskProgress) Close() {
 		p.cmd = fmt.Sprintf("%s Canceled", p.cmd)
 	}
 	atomic.StoreInt64(&p.current, p.total)
+
+	// ctx := util.WithInternalSourceType(context.Background(), kv.InternalTxnBR)
+	// _,err := p.executor.Ctx().GetSQLExecutor().ExecuteInternal(ctx, "UPDATE mysql.tidb_br_jobs SET state = %? WHERE id = %?;", p.cmd, p.executor.info.id)
+	// if err != nil {
+	// 	log.Error("Failed to update BRIE task progress", zap.Error(err))
+	// }
 	p.lock.Unlock()
 }
 
@@ -156,8 +173,10 @@ func ResetGlobalBRIEQueueForTest() {
 func (bq *brieQueue) registerTask(
 	ctx context.Context,
 	info *brieTaskInfo,
-) (context.Context, uint64) {
+	e *BRIEExec,
+) (context.Context, uint64, error) {
 	taskCtx, taskCancel := context.WithCancel(ctx)
+	var taskID uint64
 	item := &brieQueueItem{
 		info:   info,
 		cancel: taskCancel,
@@ -167,11 +186,32 @@ func (bq *brieQueue) registerTask(
 		},
 	}
 
-	taskID := atomic.AddUint64(&bq.nextID, 1)
+	ctx = util.WithInternalSourceType(ctx, kv.InternalTxnBR)
+	_,err := e.Ctx().GetSQLExecutor().ExecuteInternal(ctx, e.insert())
+	if err != nil {
+		log.Error("Failed to insert BRIE task into tidb_br_jobs", zap.Error(err))
+		return taskCtx,taskID,err
+	}
+
+	rs, err := e.Ctx().GetSQLExecutor().ExecuteInternal(ctx, `SELECT LAST_INSERT_ID();`)
+	if err != nil {
+		return taskCtx, taskID, err
+	}
+	defer terror.Call(rs.Close)
+
+	rows, err := sqlexec.DrainRecordSet(ctx, rs, 1)
+	if err != nil {
+		return taskCtx, taskID, err
+	}
+	if len(rows) != 1 {
+		return taskCtx, taskID, errors.Errorf("unexpected result length: %d", len(rows))
+	}
+
+	taskID = rows[0].GetUint64(0)
 	bq.tasks.Store(taskID, item)
 	info.id = taskID
 
-	return taskCtx, taskID
+	return taskCtx, taskID, nil
 }
 
 // query task queries a task from the queue.
@@ -186,16 +226,17 @@ func (bq *brieQueue) queryTask(taskID uint64) (*brieTaskInfo, bool) {
 // executed at a time, and this function blocks until the task is ready.
 //
 // Returns an object to track the task's progress.
-func (bq *brieQueue) acquireTask(taskCtx context.Context, taskID uint64) (*brieTaskProgress, error) {
+func (bq *brieQueue) acquireTask(taskCtx context.Context, taskID uint64, e *BRIEExec) (*brieTaskProgress, error) {
 	// wait until we are at the front of the queue.
 	select {
 	case bq.workerCh <- struct{}{}:
-		if item, ok := bq.tasks.Load(taskID); ok {
-			return item.(*brieQueueItem).progress, nil
+		item, ok := bq.tasks.Load(taskID);
+		if !ok {
+			bq.releaseTask()
+			return nil, errors.Errorf("backup/restore task %d is canceled", taskID)
 		}
-		// cannot find task, perhaps it has been canceled. allow the next task to run.
-		bq.releaseTask()
-		return nil, errors.Errorf("backup/restore task %d is canceled", taskID)
+		item.(*brieQueueItem).progress.executor = e
+		return item.(*brieQueueItem).progress, nil
 	case <-taskCtx.Done():
 		return nil, taskCtx.Err()
 	}
@@ -608,11 +649,9 @@ func (e *BRIEExec) insert() string {
     // Construct the SQL statement with escaped strings
     insertStmt := fmt.Sprintf(`
     INSERT INTO mysql.tidb_br_jobs (
-        taskID, query, queueTime, execTime, finishTime, kind, storage, connID, backupTS, restoreTS, archiveSize, message
-    ) VALUES (%d, '%s', %s, %s, %s, '%s', %s, %d, %d, %d, %d, %s);
-    `,
-        task.id,
-        escapedQuery,
+         query, queueTime, execTime, finishTime, kind, storage, connID, backupTS, restoreTS, archiveSize, message, state
+    ) VALUES ('%s', %s, %s, %s, '%s', %s, %d, %d, %d, %d, %s, '%s');
+    `,  escapedQuery,
         queueTime,
 		execTime,
 		finishTime,
@@ -623,11 +662,85 @@ func (e *BRIEExec) insert() string {
         task.restoreTS,
         task.archiveSize,
         escapeString(task.message),
+		"Wait",
     )
 
 	log.Info("Generated SQL statement", zap.String("SQL", insertStmt))
 
     return insertStmt
+}
+
+func (e *BRIEExec) update(id uint64, progress *brieTaskProgress) string {
+    // Format the time fields as strings or NULL
+	task := e.info
+	var (
+		queueTime   string
+		execTime    string
+		finishTime  string
+	)
+
+	if task.queueTime.IsZero() {
+		queueTime = "NULL"
+	} else {
+		queueTime = fmt.Sprintf("'%s'", task.queueTime.String())
+	}
+
+	if task.execTime.IsZero() {
+		execTime = "NULL"
+	} else {
+		execTime = fmt.Sprintf("'%s'", task.execTime.String())
+	}
+
+	if task.finishTime.IsZero() {
+		finishTime = "NULL"
+	} else {
+		finishTime = fmt.Sprintf("'%s'", task.finishTime.String())
+	}
+
+	escapeString := func(str string) string {
+		if str == "" {
+			return "NULL"
+		}
+		return fmt.Sprintf("'%s'", str)
+	}
+
+	// Escape query string with double single quotes for SQL
+	escapedQuery := strings.ReplaceAll(task.query, "'", "''")
+
+	updateStmt := fmt.Sprintf(`
+	UPDATE mysql.tidb_br_jobs
+	SET 
+		query = '%s',
+		queueTime = %s,
+		state = '%s',
+		execTime = %s,
+		finishTime = %s,
+		kind = '%s',
+		storage = %s,
+		connID = %d,
+		backupTS = %d,
+		restoreTS = %d,
+		archiveSize = %d,
+		message = %s
+	WHERE id = %d;
+	`, escapedQuery,
+		queueTime,
+		progress.cmd,
+		execTime,
+		finishTime,
+		task.kind,
+		escapeString(task.storage),
+		task.connID,
+		task.backupTS,
+		task.restoreTS,
+		task.archiveSize,
+		escapeString(task.message),
+		id,
+	)
+
+	log.Info("Generated SQL statements", zap.String("SQL UPDATE", updateStmt))
+
+	return updateStmt
 }
 
 // Next implements the Executor Next interface.
@@ -642,7 +755,11 @@ func (e *BRIEExec) Next(ctx context.Context, req *chunk.Chunk) error {
 
 	e.info.connID = e.Ctx().GetSessionVars().ConnectionID
 	e.info.queueTime = types.CurrentTime(mysql.TypeDatetime)
-	taskCtx, taskID := bq.registerTask(ctx, e.info)
+	taskCtx, taskID,err := bq.registerTask(ctx, e.info,e)
+	if err != nil {
+		log.Error("Failed to register BRIE task", zap.Error(err))
+		return err
+	}
 	defer bq.cancelTask(taskID)
 	failpoint.Inject("block-on-brie", func() {
 		log.Warn("You shall not pass, nya. :3")
@@ -667,15 +784,8 @@ func (e *BRIEExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			}
 		}
 	}()
-	ctx = util.WithInternalSourceType(ctx, kv.InternalTxnBR)
-	_,err := e.Ctx().GetSQLExecutor().ExecuteInternal(ctx, e.insert())
-	if err != nil {
-		log.Error("Failed to insert BRIE task into tidb_br_jobs", zap.Error(err))
-		return err
-	}
 
-
-	progress, err := bq.acquireTask(taskCtx, taskID)
+	progress, err := bq.acquireTask(taskCtx, taskID, e)
 	if err != nil {
 		return err
 	}
@@ -683,6 +793,13 @@ func (e *BRIEExec) Next(ctx context.Context, req *chunk.Chunk) error {
 
 	e.info.execTime = types.CurrentTime(mysql.TypeDatetime)
 	glue := &tidbGlue{se: e.Ctx(), progress: progress, info: e.info}
+
+	stmtCtx := util.WithInternalSourceType(ctx, kv.InternalTxnBR)
+	_,err = e.Ctx().GetSQLExecutor().ExecuteInternal(stmtCtx, e.update(taskID,progress))
+	if err != nil {
+		log.Error("Failed to insert BRIE task into tidb_br_jobs", zap.Error(err))
+		return err
+	}
 
 	switch e.info.kind {
 	case ast.BRIEKindBackup:
@@ -712,6 +829,13 @@ func (e *BRIEExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		req.AppendTime(4, e.info.queueTime)
 		req.AppendTime(5, e.info.execTime)
 	}
+
+	_,err = e.Ctx().GetSQLExecutor().ExecuteInternal(stmtCtx, e.update(taskID,progress))
+	if err != nil {
+		log.Error("Failed to insert BRIE task into tidb_br_jobs", zap.Error(err))
+		return err
+	}
+	
 	e.info = nil
 	return nil
 }
