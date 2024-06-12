@@ -16,8 +16,6 @@ package executor
 
 import (
 	"context"
-	"testing"
-
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/executor/internal/testutil"
@@ -25,6 +23,10 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/stretchr/testify/require"
+	"math/rand"
+	"sync"
+	"testing"
+	"time"
 )
 
 func TestHashJoinV2UnderApply(t *testing.T) {
@@ -77,6 +79,78 @@ func TestHashJoinV2UnderApply(t *testing.T) {
 		newDataSource2.PrepareChunks()
 		executor.SetChildren(0, newDataSource1)
 		executor.SetChildren(1, newDataSource2)
+	}
+}
+
+func TestHashJoinV2CloseRandomly(t *testing.T) {
+	for times := 0; times < 20; times++ {
+		colTypes := []*types.FieldType{
+			types.NewFieldType(mysql.TypeLonglong),
+			types.NewFieldType(mysql.TypeDouble),
+		}
+		casTest := defaultHashJoinTestCase(colTypes, 0, false)
+		casTest.rows = 500000
+		opt1 := testutil.MockDataSourceParameters{
+			Rows: casTest.rows,
+			Ctx:  casTest.ctx,
+			GenDataFunc: func(row int, typ *types.FieldType) any {
+				switch typ.GetType() {
+				case mysql.TypeLong, mysql.TypeLonglong:
+					return int64(row)
+				case mysql.TypeDouble:
+					return float64(row)
+				default:
+					panic("not implement")
+				}
+			},
+		}
+		opt2 := opt1
+		opt1.DataSchema = expression.NewSchema(casTest.columns()...)
+		opt2.DataSchema = expression.NewSchema(casTest.columns()...)
+		dataSource1 := testutil.BuildMockDataSource(opt1)
+		dataSource2 := testutil.BuildMockDataSource(opt2)
+		dataSource1.PrepareChunks()
+		dataSource2.PrepareChunks()
+
+		executor := prepare4HashJoin(casTest, dataSource1, dataSource2)
+		ctx := context.Background()
+		// when in apply, the same executor will be open/closed multiple times
+		chk := exec.NewFirstChunk(executor)
+		err := executor.Open(ctx)
+		require.NoError(t, err)
+
+		goRoutineWaiter := sync.WaitGroup{}
+		goRoutineWaiter.Add(1)
+		defer goRoutineWaiter.Wait()
+
+		once := sync.Once{}
+
+		go func() {
+			time.Sleep(time.Duration(rand.Int31n(1000)) * time.Millisecond)
+			once.Do(func() {
+				executor.Close()
+			})
+			goRoutineWaiter.Done()
+		}()
+
+		for {
+			err = executor.Next(ctx, chk)
+			if err != nil {
+				once.Do(func() {
+					err = executor.Close()
+					println("aaa")
+					require.Equal(t, nil, err)
+				})
+				break
+			}
+			if chk.NumRows() == 0 {
+				break
+			}
+			chk.Reset()
+		}
+		once.Do(func() {
+			executor.Close()
+		})
 	}
 }
 
