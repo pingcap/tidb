@@ -1369,15 +1369,9 @@ func (b *executorBuilder) buildUnionScanFromReader(reader exec.Executor, v *plan
 		us.columns = x.columns
 		us.table = x.table
 		us.virtualColumnIndex = buildVirtualColumnIndex(us.Schema(), us.columns)
-	case *PointGetExecutor, *BatchPointGetExec:
-		// PointGet and BatchPoint can handle virtual columns and dirty txn data themselves.
-		return originReader
-	case *TableDualExec:
-		// If TableDual, the result must be empty, so we can skip UnionScan and use TableDual directly here.
-		return originReader
-	case *TableSampleExecutor:
-		// TableSample only supports sampling from disk data, don't need to consider in-memory txn data for simplicity.
-		// TODO: TableSample supports sampling from in-memory txn data.
+	case *PointGetExecutor, *BatchPointGetExec, // PointGet and BatchPoint can handle virtual columns and dirty txn data themselves.
+		*TableDualExec,       // If TableDual, the result must be empty, so we can skip UnionScan and use TableDual directly here.
+		*TableSampleExecutor: // TableSample only supports sampling from disk, don't need to consider in-memory txn data for simplicity.
 		return originReader
 	default:
 		// TODO: consider more operators like Projection.
