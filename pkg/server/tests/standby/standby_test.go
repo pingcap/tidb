@@ -120,6 +120,7 @@ func TestStandby(t *testing.T) {
 
 	resp, err := client.FetchStatus("/mock-standby/status")
 	require.NoError(t, err)
+	defer resp.Body.Close()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 
 	client.RunTestInitConnect(t)
