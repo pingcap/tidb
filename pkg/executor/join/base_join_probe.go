@@ -54,12 +54,12 @@ type ProbeV2 interface {
 	// SetChunkForProbe will do some pre-work when start probing a chunk
 	SetChunkForProbe(chunk *chunk.Chunk) error
 	// Probe is to probe current chunk, the result chunk is set in result.chk, and Probe need to make sure result.chk.NumRows() <= result.chk.RequiredRows()
-	Probe(joinResult *hashjoinWorkerResult, sqlKiller sqlkiller.SQLKiller) (ok bool, result *hashjoinWorkerResult)
+	Probe(joinResult *hashjoinWorkerResult, sqlKiller *sqlkiller.SQLKiller) (ok bool, result *hashjoinWorkerResult)
 	// IsCurrentChunkProbeDone returns true if current probe chunk is all probed
 	IsCurrentChunkProbeDone() bool
 	// ScanRowTable is called after all the probe chunks are probed. It is used in some special joins, like left outer join with left side to build, after all
 	// the probe side chunks are handled, it needs to scan the row table to return the un-matched rows
-	ScanRowTable(joinResult *hashjoinWorkerResult, sqlKiller sqlkiller.SQLKiller) (result *hashjoinWorkerResult)
+	ScanRowTable(joinResult *hashjoinWorkerResult, sqlKiller *sqlkiller.SQLKiller) (result *hashjoinWorkerResult)
 	// IsScanRowTableDone returns true after scan row table is done
 	IsScanRowTableDone() bool
 	// NeedScanRowTable returns true if current join need to scan row table after all the probe side chunks are handled
@@ -240,7 +240,7 @@ func (j *baseJoinProbe) finishLookupCurrentProbeRow() {
 	j.matchedRowsForCurrentProbeRow = 0
 }
 
-func checkSQLKiller(killer sqlkiller.SQLKiller, fpName string) error {
+func checkSQLKiller(killer *sqlkiller.SQLKiller, fpName string) error {
 	err := killer.HandleSignal()
 	failpoint.Inject(fpName, func(val failpoint.Value) {
 		if val.(bool) {
@@ -537,11 +537,11 @@ func (*mockJoinProbe) SetChunkForProbe(*chunk.Chunk) error {
 	return errors.New("not supported")
 }
 
-func (*mockJoinProbe) Probe(*hashjoinWorkerResult, sqlkiller.SQLKiller) (ok bool, result *hashjoinWorkerResult) {
+func (*mockJoinProbe) Probe(*hashjoinWorkerResult, *sqlkiller.SQLKiller) (ok bool, result *hashjoinWorkerResult) {
 	panic("not supported")
 }
 
-func (*mockJoinProbe) ScanRowTable(*hashjoinWorkerResult, sqlkiller.SQLKiller) (result *hashjoinWorkerResult) {
+func (*mockJoinProbe) ScanRowTable(*hashjoinWorkerResult, *sqlkiller.SQLKiller) (result *hashjoinWorkerResult) {
 	panic("not supported")
 }
 

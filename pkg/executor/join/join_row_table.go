@@ -472,7 +472,6 @@ func newTableMeta(buildKeyIndex []int, buildTypes, buildKeyTypes, probeKeyTypes 
 type rowTableBuilder struct {
 	buildKeyIndex    []int
 	buildKeyTypes    []*types.FieldType
-	buildSchema      *expression.Schema
 	hasNullableKey   bool
 	hasFilter        bool
 	keepFilteredRows bool
@@ -552,7 +551,7 @@ func (b *rowTableBuilder) processOneChunk(chk *chunk.Chunk, typeCtx types.Contex
 			return err
 		}
 	}
-	err = checkSQLKiller(hashJoinCtx.SessCtx.GetSessionVars().SQLKiller, "killedDuringBuild")
+	err = checkSQLKiller(&hashJoinCtx.SessCtx.GetSessionVars().SQLKiller, "killedDuringBuild")
 	if err != nil {
 		return err
 	}
@@ -563,7 +562,7 @@ func (b *rowTableBuilder) processOneChunk(chk *chunk.Chunk, typeCtx types.Contex
 			return err
 		}
 	}
-	err = checkSQLKiller(hashJoinCtx.SessCtx.GetSessionVars().SQLKiller, "killedDuringBuild")
+	err = checkSQLKiller(&hashJoinCtx.SessCtx.GetSessionVars().SQLKiller, "killedDuringBuild")
 	if err != nil {
 		return err
 	}
@@ -711,7 +710,7 @@ func (b *rowTableBuilder) appendToRowTable(chk *chunk.Chunk, hashJoinCtx *HashJo
 	rowTableMeta := hashJoinCtx.hashTableMeta
 	for logicalRowIndex, physicalRowIndex := range b.usedRows {
 		if logicalRowIndex%10 == 0 || logicalRowIndex == len(b.usedRows)-1 {
-			err := checkSQLKiller(hashJoinCtx.SessCtx.GetSessionVars().SQLKiller, "killedDuringBuild")
+			err := checkSQLKiller(&hashJoinCtx.SessCtx.GetSessionVars().SQLKiller, "killedDuringBuild")
 			if err != nil {
 				return err
 			}

@@ -421,7 +421,7 @@ func (w *ProbeWorkerV2) scanRowTableAfterProbeDone() {
 		return
 	}
 	for !w.JoinProbe.IsScanRowTableDone() {
-		joinResult = w.JoinProbe.ScanRowTable(joinResult, w.HashJoinCtx.SessCtx.GetSessionVars().SQLKiller)
+		joinResult = w.JoinProbe.ScanRowTable(joinResult, &w.HashJoinCtx.SessCtx.GetSessionVars().SQLKiller)
 		if joinResult.err != nil {
 			w.HashJoinCtx.joinResultCh <- joinResult
 			return
@@ -448,7 +448,7 @@ func (w *ProbeWorkerV2) processOneProbeChunk(probeChunk *chunk.Chunk, joinResult
 		return false, waitTime, joinResult
 	}
 	for !w.JoinProbe.IsCurrentChunkProbeDone() {
-		ok, joinResult = w.JoinProbe.Probe(joinResult, w.HashJoinCtx.SessCtx.GetSessionVars().SQLKiller)
+		ok, joinResult = w.JoinProbe.Probe(joinResult, &w.HashJoinCtx.SessCtx.GetSessionVars().SQLKiller)
 		if !ok || joinResult.err != nil {
 			return ok, waitTime, joinResult
 		}
@@ -628,19 +628,22 @@ func (e *HashJoinV2Exec) createTasks(buildTaskCh chan<- *buildTask, totalSegment
 	}
 }
 
-func (e *HashJoinV2Exec) processErrInBuildStage(errCh chan error) {
-	close(errCh)
-	if err := <-errCh; err != nil {
-		e.buildFinished <- err
-	}
-}
-
 func (e *HashJoinV2Exec) fetchAndBuildHashTable(ctx context.Context) {
 	if e.stats != nil {
 		start := time.Now()
 		defer func() {
 			e.stats.fetchAndBuildHashTable = time.Since(start)
 		}()
+	}
+
+	waitJobDone := func(wg *sync.WaitGroup, errCh chan error) bool {
+		wg.Wait()
+		close(errCh)
+		if err := <-errCh; err != nil {
+			e.buildFinished <- err
+			return false
+		}
+		return true
 	}
 
 	// doneCh is used by the consumer(splitAndAppendToRowTable) to info the producer(fetchBuildSideRows) that the consumer meet error and stop consume data
@@ -654,9 +657,10 @@ func (e *HashJoinV2Exec) fetchAndBuildHashTable(ctx context.Context) {
 	e.splitAndAppendToRowTable(srcChkCh, fetcherAndWorkerSyncer, workerWaiter, errCh, doneCh)
 
 	// Only when all workers exist, the fetcher will exist. So we can only wait fetcher here
-	workerWaiter.Wait()
-
-	e.processErrInBuildStage(errCh)
+	success := waitJobDone(fetcherWaiter, errCh)
+	if !success {
+		return
+	}
 
 	// TODO -------------------- Put these two area codes into two functions in the future --------------------
 
@@ -669,9 +673,7 @@ func (e *HashJoinV2Exec) fetchAndBuildHashTable(ctx context.Context) {
 	wg := new(sync.WaitGroup)
 	buildTaskCh := e.createBuildTasks(totalSegmentCnt, wg, errCh, doneCh)
 	e.buildHashTable(buildTaskCh, wg, errCh, doneCh)
-	wg.Wait()
-
-	e.processErrInBuildStage(errCh)
+	waitJobDone(wg, errCh)
 }
 
 func (e *HashJoinV2Exec) fetchBuildSideRows(ctx context.Context, fetcherWaiter *sync.WaitGroup, workerWaiter *sync.WaitGroup, errCh chan error, doneCh chan struct{}) (chan *chunk.Chunk, *sync.WaitGroup) {
@@ -797,18 +799,6 @@ func setMaxValue(addr *int64, currentValue int64) {
 			return
 		}
 		if atomic.CompareAndSwapInt64(addr, value, currentValue) {
-			return
-		}
-	}
-}
-
-func (e *hashJoinRuntimeStatsV2) setMaxFetchAndProbeTime(t int64) {
-	for {
-		value := atomic.LoadInt64(&e.maxFetchAndProbe)
-		if t <= value {
-			return
-		}
-		if atomic.CompareAndSwapInt64(&e.maxFetchAndProbe, value, t) {
 			return
 		}
 	}

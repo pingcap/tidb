@@ -26,7 +26,7 @@ type innerJoinProbe struct {
 	baseJoinProbe
 }
 
-func (j *innerJoinProbe) Probe(joinResult *hashjoinWorkerResult, sqlKiller sqlkiller.SQLKiller) (ok bool, _ *hashjoinWorkerResult) {
+func (j *innerJoinProbe) Probe(joinResult *hashjoinWorkerResult, sqlKiller *sqlkiller.SQLKiller) (ok bool, _ *hashjoinWorkerResult) {
 	if joinResult.chk.IsFull() {
 		return true, joinResult
 	}
@@ -37,6 +37,12 @@ func (j *innerJoinProbe) Probe(joinResult *hashjoinWorkerResult, sqlKiller sqlki
 		return false, joinResult
 	}
 	meta := j.ctx.hashTableMeta
+	isInCompleteChunk := joinedChk.IsInCompleteChunk()
+	// in case that virtual rows is not maintained correctly
+	joinedChk.SetNumVirtualRows(joinedChk.NumRows())
+	// always set in complete chunk during probe
+	joinedChk.SetInCompleteChunk(true)
+	defer joinedChk.SetInCompleteChunk(isInCompleteChunk)
 
 	for remainCap > 0 && j.currentProbeRow < j.chunkRows {
 		if j.matchedRowsHeaders[j.currentProbeRow] != nil {
@@ -86,7 +92,7 @@ func (*innerJoinProbe) NeedScanRowTable() bool {
 	return false
 }
 
-func (*innerJoinProbe) ScanRowTable(*hashjoinWorkerResult, sqlkiller.SQLKiller) *hashjoinWorkerResult {
+func (*innerJoinProbe) ScanRowTable(*hashjoinWorkerResult, *sqlkiller.SQLKiller) *hashjoinWorkerResult {
 	panic("should not reach here")
 }
 

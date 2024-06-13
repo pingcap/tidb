@@ -74,7 +74,7 @@ func (j *leftOuterJoinProbe) InitForScanRowTable() {
 	j.rowIter = j.ctx.hashTableContext.hashTable.createRowIter(startIndex, endIndex)
 }
 
-func (j *leftOuterJoinProbe) ScanRowTable(joinResult *hashjoinWorkerResult, sqlKiller sqlkiller.SQLKiller) *hashjoinWorkerResult {
+func (j *leftOuterJoinProbe) ScanRowTable(joinResult *hashjoinWorkerResult, sqlKiller *sqlkiller.SQLKiller) *hashjoinWorkerResult {
 	if j.rightAsBuildSide {
 		panic("should not reach here")
 	}
@@ -205,7 +205,7 @@ func (j *leftOuterJoinProbe) buildResultForNotMatchedRows(chk *chunk.Chunk, star
 	}
 }
 
-func (j *leftOuterJoinProbe) probeForRightBuild(chk, joinedChk *chunk.Chunk, remainCap int, sqlKiller sqlkiller.SQLKiller) (err error) {
+func (j *leftOuterJoinProbe) probeForRightBuild(chk, joinedChk *chunk.Chunk, remainCap int, sqlKiller *sqlkiller.SQLKiller) (err error) {
 	meta := j.ctx.hashTableMeta
 	startProbeRow := j.currentProbeRow
 	hasOtherCondition := j.ctx.hasOtherCondition()
@@ -263,7 +263,7 @@ func (j *leftOuterJoinProbe) probeForRightBuild(chk, joinedChk *chunk.Chunk, rem
 	return
 }
 
-func (j *leftOuterJoinProbe) probeForLeftBuild(chk, joinedChk *chunk.Chunk, remainCap int, sqlKiller sqlkiller.SQLKiller) (err error) {
+func (j *leftOuterJoinProbe) probeForLeftBuild(chk, joinedChk *chunk.Chunk, remainCap int, sqlKiller *sqlkiller.SQLKiller) (err error) {
 	meta := j.ctx.hashTableMeta
 	hasOtherCondition := j.ctx.hasOtherCondition()
 
@@ -312,7 +312,7 @@ func (j *leftOuterJoinProbe) probeForLeftBuild(chk, joinedChk *chunk.Chunk, rema
 	return
 }
 
-func (j *leftOuterJoinProbe) Probe(joinResult *hashjoinWorkerResult, sqlKiller sqlkiller.SQLKiller) (ok bool, _ *hashjoinWorkerResult) {
+func (j *leftOuterJoinProbe) Probe(joinResult *hashjoinWorkerResult, sqlKiller *sqlkiller.SQLKiller) (ok bool, _ *hashjoinWorkerResult) {
 	if joinResult.chk.IsFull() {
 		return true, joinResult
 	}
@@ -321,6 +321,12 @@ func (j *leftOuterJoinProbe) Probe(joinResult *hashjoinWorkerResult, sqlKiller s
 		joinResult.err = err
 		return false, joinResult
 	}
+	isInCompleteChunk := joinedChk.IsInCompleteChunk()
+	// in case that virtual rows is not maintained correctly
+	joinedChk.SetNumVirtualRows(joinedChk.NumRows())
+	// always set in complete chunk during probe
+	joinedChk.SetInCompleteChunk(true)
+	defer joinedChk.SetInCompleteChunk(isInCompleteChunk)
 	if j.rightAsBuildSide {
 		err = j.probeForRightBuild(joinResult.chk, joinedChk, remainCap, sqlKiller)
 	} else {
