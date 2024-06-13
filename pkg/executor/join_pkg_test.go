@@ -16,6 +16,8 @@ package executor
 
 import (
 	"context"
+	"testing"
+
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/executor/internal/testutil"
@@ -23,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/stretchr/testify/require"
-	"testing"
 )
 
 func TestHashJoinV2UnderApply(t *testing.T) {
