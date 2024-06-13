@@ -1401,7 +1401,7 @@ func (w *updateColumnWorker) getRowRecord(handle kv.Handle, recordKey []byte, ra
 	}
 	rd := &w.tblCtx.GetSessionVars().RowEncoder
 	ec := w.exprCtx.GetEvalCtx().ErrCtx()
-	newRowVal, err := tablecodec.EncodeRow(w.loc, newRow, newColumnIDs, nil, nil, rd, recordKey)
+	newRowVal, err := tablecodec.EncodeRow(w.loc, newRow, newColumnIDs, nil, nil, recordKey, rd)
 	err = ec.HandleError(err)
 	if err != nil {
 		return errors.Trace(err)

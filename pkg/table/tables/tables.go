@@ -599,7 +599,7 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx table.MutateContext
 	if needChecksum {
 		checksumKey = key
 	}
-	writeBufs.RowValBuf, err = tablecodec.EncodeRow(sc.TimeZone(), row, colIDs, writeBufs.RowValBuf, writeBufs.AddRowValues, rd, checksumKey)
+	writeBufs.RowValBuf, err = tablecodec.EncodeRow(sc.TimeZone(), row, colIDs, writeBufs.RowValBuf, writeBufs.AddRowValues, checksumKey, rd)
 	err = sc.HandleError(err)
 	if err != nil {
 		return err
@@ -1021,7 +1021,7 @@ func (t *TableCommon) AddRecord(sctx table.MutateContext, r []types.Datum, opts 
 	if needChecksum {
 		checksumKey = key
 	}
-	writeBufs.RowValBuf, err = tablecodec.EncodeRow(sc.TimeZone(), row, colIDs, writeBufs.RowValBuf, writeBufs.AddRowValues, rd, checksumKey)
+	writeBufs.RowValBuf, err = tablecodec.EncodeRow(sc.TimeZone(), row, colIDs, writeBufs.RowValBuf, writeBufs.AddRowValues, checksumKey, rd)
 	err = sc.HandleError(err)
 	if err != nil {
 		return nil, err

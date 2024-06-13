@@ -57,7 +57,7 @@ func BenchmarkEncode(b *testing.B) {
 	var err error
 	for i := 0; i < b.N; i++ {
 		buf = buf[:0]
-		buf, err = xb.Encode(nil, colIDs, oldRow, buf, nil)
+		buf, err = xb.Encode(nil, colIDs, oldRow, nil, buf)
 		if err != nil {
 			b.Fatal(err)
 		}
