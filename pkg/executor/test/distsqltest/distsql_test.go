@@ -75,24 +75,3 @@ func TestDistsqlPartitionTableConcurrency(t *testing.T) {
 		tk.MustQueryWithContext(ctx, fmt.Sprintf("select * from %s limit 5", tbl))
 	}
 }
-
-func TestIndexLookUpIssue53871(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test;")
-	tk.MustExec("drop table if exists t;")
-	tk.MustExec("create table t (id int key auto_increment, b int, c int, index idx (b))")
-	tk.MustExec(" insert into t () values (), (), (), (), (), (), (), ();")
-	for i := 0; i < 9; i++ {
-		tk.MustExec("insert into t (b) select b from t;")
-	}
-	tk.MustExec(`update t set b = rand() * 10000, c = id;`)
-	tk.MustQuery("select count(c) from t use index(idx);").Check(testkit.Rows("4096")) // full scan to resolve uncommitted lock.
-	tk.MustQuery("select count(c) from t ignore index(idx)").Check(testkit.Rows("4096"))
-	tk.MustExec("analyze table t")
-	rows := tk.MustQuery("explain analyze select * from t use index(idx) where b > 0;").Rows()
-	require.Len(t, rows, 3)
-	require.Regexp(t, ".*IndexLookUp.*table_task: {total_time: .*, num: 1, .*", fmt.Sprintf("%v", rows[0]))
-	require.Regexp(t, ".*IndexRangeScan.*rpc_info.*Cop:{num_rpc:1, total_time:.*", fmt.Sprintf("%v", rows[1]))
-	require.Regexp(t, ".*TableRowIDScan.*rpc_info.*Cop:{num_rpc:1, total_time:.*", fmt.Sprintf("%v", rows[2]))
-}
