@@ -117,8 +117,8 @@ func (p *LogicalSelection) PredicatePushDown(predicates []expression.Expression,
 // PredicatePushDown implements base.LogicalPlan PredicatePushDown interface.
 func (p *LogicalUnionScan) PredicatePushDown(predicates []expression.Expression, opt *optimizetrace.LogicalOptimizeOp) ([]expression.Expression, base.LogicalPlan) {
 	if expression.ContainVirtualColumn(predicates) {
-		// predicates with virtual columns can't be pushed down to TiKV/TiFlash then they'll be push into a Projection
-		// under the UnionScan, but the current UnionScan doesn't support placing Projection below it, see #53951.
+		// predicates with virtual columns can't be pushed down to TiKV/TiFlash so they'll be put into a Projection
+		// below the UnionScan, but the current UnionScan doesn't support placing Projection below it, see #53951.
 		return predicates, p
 	}
 	retainedPredicates, _ := p.Children()[0].PredicatePushDown(predicates, opt)
