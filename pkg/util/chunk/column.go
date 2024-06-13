@@ -225,8 +225,8 @@ func (c *Column) appendNullBitmap(notNull bool) {
 	}
 }
 
-// AppendCellNtimes append the pos-th Cell in source column to target column N times
-func (c *Column) AppendCellNtimes(src *Column, pos, times int) {
+// AppendCellNTimes append the pos-th Cell in source column to target column N times
+func (c *Column) AppendCellNTimes(src *Column, pos, times int) {
 	notNull := !src.IsNull(pos)
 	if times == 1 {
 		c.appendNullBitmap(notNull)
