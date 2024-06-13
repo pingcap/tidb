@@ -416,7 +416,7 @@ func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) 
 	case len(s.Schemas) != 0:
 		cfg.TableFilter = filter.NewSchemasFilter(s.Schemas...)
 	default:
-		defaultFilter,err := filter.Parse([]string{"!mysql.tidb_br_jobs"})
+		defaultFilter,err := filter.Parse([]string{"*.*","!mysql.tidb_br_jobs"})
 		if err != nil {
 			b.err = err
 			return nil
