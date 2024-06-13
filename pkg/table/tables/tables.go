@@ -516,6 +516,10 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx table.MutateContext
 	var binlogOldRow, binlogNewRow []types.Datum
 	var checksums []uint32
 	numColsCap := len(newData) + 1 // +1 for the extra handle column that we may need to append.
+
+	// a reusable buffer to save malloc
+	// Note: The buffer should not be referenced or modified outside this function.
+	// It can only act as a temporary buffer for the current function call.
 	buffer := sctx.GetSessionVars().TablesBufferPool.Update
 	if cap(buffer.ColIDs) < numColsCap {
 		buffer.ColIDs = make([]int64, 0, numColsCap)
@@ -961,6 +965,10 @@ func (t *TableCommon) AddRecord(sctx table.MutateContext, r []types.Datum, opts 
 	var binlogColIDs []int64
 	var binlogRow []types.Datum
 	var checksums []uint32
+
+	// a reusable buffer to save malloc
+	// Note: The buffer should not be referenced or modified outside this function.
+	// It can only act as a temporary buffer for the current function call.
 	buffer := sctx.GetSessionVars().TablesBufferPool.Add
 	if cap(buffer.ColIDs) < len(r) {
 		buffer.ColIDs = make([]int64, 0, len(r))
@@ -1453,6 +1461,10 @@ func (t *TableCommon) RemoveRecord(ctx table.MutateContext, h kv.Handle, r []typ
 	if ctx.GetSessionVars().TxnCtx == nil {
 		return nil
 	}
+
+	// a reusable buffer to save malloc
+	// Note: The buffer should not be referenced or modified outside this function.
+	// It can only act as a temporary buffer for the current function call.
 	buffer := sessVars.TablesBufferPool.Remove
 	if cap(buffer.ColSize) < len(t.Cols()) {
 		buffer.ColSize = make([]variable.ColSize, len(t.Cols()))
