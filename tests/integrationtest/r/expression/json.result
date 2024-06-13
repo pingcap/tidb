@@ -731,3 +731,7 @@ SELECT JSON_SEARCH('{}', 'on', '$.a');
 Error 3154 (42000): The oneOrAll argument to json_search may take these values: 'one' or 'all'.
 SELECT JSON_OBJECT(NULL,'abc');
 Error 3158 (22032): JSON documents may not contain NULL member names.
+SELECT JSON_SCHEMA_VALID(1, '{}');
+Error 3146 (22032): Invalid data type for JSON data in argument 1 to function json_schema_valid; a JSON string or JSON type is required.
+SELECT JSON_SCHEMA_VALID('{}', 1);
+Error 3146 (22032): Invalid data type for JSON data in argument 2 to function json_schema_valid; a JSON string or JSON type is required.

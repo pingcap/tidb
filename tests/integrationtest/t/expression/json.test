@@ -448,3 +448,7 @@ SELECT JSON_CONTAINS_PATH('{}', 'on', '$.a');
 SELECT JSON_SEARCH('{}', 'on', '$.a');
 -- error 3158
 SELECT JSON_OBJECT(NULL,'abc');
+-- error 3146
+SELECT JSON_SCHEMA_VALID(1, '{}');
+-- error 3146
+SELECT JSON_SCHEMA_VALID('{}', 1);

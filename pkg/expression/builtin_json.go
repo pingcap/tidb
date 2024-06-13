@@ -1805,8 +1805,21 @@ type jsonSchemaValidFunctionClass struct {
 	baseFunctionClass
 }
 
+func (c *jsonSchemaValidFunctionClass) verifyArgs(ctx EvalContext, args []Expression) error {
+	if err := c.baseFunctionClass.verifyArgs(args); err != nil {
+		return err
+	}
+	if evalType := args[0].GetType(ctx).EvalType(); evalType != types.ETString && evalType != types.ETJson {
+		return ErrInvalidTypeForJSON.GenWithStackByArgs(1, "json_schema_valid")
+	}
+	if evalType := args[1].GetType(ctx).EvalType(); evalType != types.ETString && evalType != types.ETJson {
+		return ErrInvalidTypeForJSON.GenWithStackByArgs(2, "json_schema_valid")
+	}
+	return nil
+}
+
 func (c *jsonSchemaValidFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
-	if err := c.verifyArgs(args); err != nil {
+	if err := c.verifyArgs(ctx.GetEvalCtx(), args); err != nil {
 		return nil, err
 	}
 	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETJson, types.ETJson)
