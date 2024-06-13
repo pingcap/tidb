@@ -942,7 +942,7 @@ func (cc *clientConn) PeerHost(hasPassword string, update bool) (host, port stri
 func (cc *clientConn) skipInitConnect() bool {
 	checker := privilege.GetPrivilegeManager(cc.ctx.Session)
 	activeRoles := cc.ctx.GetSessionVars().ActiveRoles
-	return checker != nil && checker.RequestDynamicVerification(activeRoles, []string{"CONNECTION_ADMIN"}, false)
+	return checker != nil && checker.RequestDynamicVerification(activeRoles, "CONNECTION_ADMIN", false)
 }
 
 // initResultEncoder initialize the result encoder for current connection.

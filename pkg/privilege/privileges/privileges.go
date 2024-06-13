@@ -100,7 +100,7 @@ func (p *UserPrivileges) RequestDynamicVerificationWithUser(privName string, gra
 
 	mysqlPriv := p.Handle.Get()
 	roles := mysqlPriv.getDefaultRoles(user.Username, user.Hostname)
-	return mysqlPriv.RequestDynamicVerification(roles, user.Username, user.Hostname, []string{privName}, grantable)
+	return mysqlPriv.RequestDynamicVerification(roles, user.Username, user.Hostname, privName, grantable)
 }
 
 // HasExplicitlyGrantedDynamicPrivilege checks if a user has a DYNAMIC privilege
@@ -118,7 +118,7 @@ func (p *UserPrivileges) HasExplicitlyGrantedDynamicPrivilege(activeRoles []*aut
 }
 
 // RequestDynamicVerification implements the Manager interface.
-func (p *UserPrivileges) RequestDynamicVerification(activeRoles []*auth.RoleIdentity, privNames []string, grantable bool) bool {
+func (p *UserPrivileges) RequestDynamicVerification(activeRoles []*auth.RoleIdentity, privName string, grantable bool) bool {
 	if SkipWithGrant {
 		return true
 	}
@@ -127,7 +127,7 @@ func (p *UserPrivileges) RequestDynamicVerification(activeRoles []*auth.RoleIden
 	}
 
 	mysqlPriv := p.Handle.Get()
-	return mysqlPriv.RequestDynamicVerification(activeRoles, p.user, p.host, privNames, grantable)
+	return mysqlPriv.RequestDynamicVerification(activeRoles, p.user, p.host, privName, grantable)
 }
 
 // RequestVerification implements the Manager interface.
@@ -148,7 +148,7 @@ func (p *UserPrivileges) RequestVerification(activeRoles []*auth.RoleIdentity, d
 	// If SEM is enabled and the user does not have the RESTRICTED_TABLES_ADMIN privilege
 	// There are some hard rules which overwrite system tables and schemas as read-only at most.
 	semEnabled := sem.IsEnabled()
-	if semEnabled && !p.RequestDynamicVerification(activeRoles, []string{"RESTRICTED_TABLES_ADMIN"}, false) {
+	if semEnabled && !p.RequestDynamicVerification(activeRoles, "RESTRICTED_TABLES_ADMIN", false) {
 		if sem.IsInvisibleTable(dbLowerName, tblLowerName) {
 			return false
 		}
@@ -180,7 +180,7 @@ func (p *UserPrivileges) RequestVerification(activeRoles []*auth.RoleIdentity, d
 
 	for _, fn := range p.extensionAccessCheckFuncs {
 		for _, dynPriv := range fn(db, table, column, priv, semEnabled) {
-			if !p.RequestDynamicVerification(activeRoles, []string{dynPriv}, false) {
+			if !p.RequestDynamicVerification(activeRoles, dynPriv, false) {
 				return false
 			}
 		}
@@ -807,7 +807,7 @@ func (p *UserPrivileges) DBIsVisible(activeRoles []*auth.RoleIdentity, db string
 	}
 	// If SEM is enabled, respect hard rules about certain schemas being invisible
 	// Before checking if the user has permissions granted to them.
-	if sem.IsEnabled() && !p.RequestDynamicVerification(activeRoles, []string{"RESTRICTED_TABLES_ADMIN"}, false) {
+	if sem.IsEnabled() && !p.RequestDynamicVerification(activeRoles, "RESTRICTED_TABLES_ADMIN", false) {
 		if sem.IsInvisibleSchema(db) {
 			return false
 		}

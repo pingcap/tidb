@@ -4218,7 +4218,7 @@ func (s *session) EncodeSessionStates(ctx context.Context,
 
 	hasRestrictVarPriv := false
 	checker := privilege.GetPrivilegeManager(s)
-	if checker == nil || checker.RequestDynamicVerification(s.sessionVars.ActiveRoles, []string{"RESTRICTED_VARIABLES_ADMIN"}, false) {
+	if checker == nil || checker.RequestDynamicVerification(s.sessionVars.ActiveRoles, "RESTRICTED_VARIABLES_ADMIN", false) {
 		hasRestrictVarPriv = true
 	}
 	// Encode session variables. We put it here instead of SessionVars to avoid cycle import.

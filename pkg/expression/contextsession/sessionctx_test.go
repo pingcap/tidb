@@ -207,11 +207,11 @@ func TestSessionEvalContextPrivilegeCheck(t *testing.T) {
 	require.False(t, impl.RequestVerification("db2", "t2", "c2", mysql.SuperPriv))
 	mgr.AssertExpectations(t)
 
-	mgr.On("RequestDynamicVerification", activeRoles, []string{"RESTRICTED_USER_ADMIN"}, false).
+	mgr.On("RequestDynamicVerification", activeRoles, "RESTRICTED_USER_ADMIN", false).
 		Return(true).Once()
 	require.True(t, impl.RequestDynamicVerification("RESTRICTED_USER_ADMIN", false))
 
-	mgr.On("RequestDynamicVerification", activeRoles, []string{"RESTRICTED_CONNECTION_ADMIN"}, true).
+	mgr.On("RequestDynamicVerification", activeRoles, "RESTRICTED_CONNECTION_ADMIN", true).
 		Return(false).Once()
 	require.False(t, impl.RequestDynamicVerification("RESTRICTED_CONNECTION_ADMIN", true))
 }

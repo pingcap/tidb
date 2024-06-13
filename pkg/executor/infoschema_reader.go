@@ -1395,7 +1395,7 @@ func (e *memtableRetriever) dataForTiKVStoreStatus(ctx context.Context, sctx ses
 		if sem.IsEnabled() {
 			// Patch out IP addresses etc if the user does not have the RESTRICTED_TABLES_ADMIN privilege
 			checker := privilege.GetPrivilegeManager(sctx)
-			if checker == nil || !checker.RequestDynamicVerification(sctx.GetSessionVars().ActiveRoles, []string{"RESTRICTED_TABLES_ADMIN"}, false) {
+			if checker == nil || !checker.RequestDynamicVerification(sctx.GetSessionVars().ActiveRoles, "RESTRICTED_TABLES_ADMIN", false) {
 				row[1].SetString(strconv.FormatInt(storeStat.Store.ID, 10), mysql.DefaultCollationName)
 				row[1].SetNull()
 				row[6].SetNull()
@@ -1579,7 +1579,7 @@ func (e *memtableRetriever) dataForTiDBClusterInfo(ctx sessionctx.Context) error
 		)
 		if sem.IsEnabled() {
 			checker := privilege.GetPrivilegeManager(ctx)
-			if checker == nil || !checker.RequestDynamicVerification(ctx.GetSessionVars().ActiveRoles, []string{"RESTRICTED_TABLES_ADMIN"}, false) {
+			if checker == nil || !checker.RequestDynamicVerification(ctx.GetSessionVars().ActiveRoles, "RESTRICTED_TABLES_ADMIN", false) {
 				row[1].SetString(strconv.FormatUint(server.ServerID, 10), mysql.DefaultCollationName)
 				row[2].SetNull()
 				row[5].SetNull()
@@ -2430,7 +2430,7 @@ func (e *memtableRetriever) setDataForServersInfo(ctx sessionctx.Context) error 
 		)
 		if sem.IsEnabled() {
 			checker := privilege.GetPrivilegeManager(ctx)
-			if checker == nil || !checker.RequestDynamicVerification(ctx.GetSessionVars().ActiveRoles, []string{"RESTRICTED_TABLES_ADMIN"}, false) {
+			if checker == nil || !checker.RequestDynamicVerification(ctx.GetSessionVars().ActiveRoles, "RESTRICTED_TABLES_ADMIN", false) {
 				row[1].SetNull() // clear IP
 			}
 		}

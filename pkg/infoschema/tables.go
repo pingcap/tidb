@@ -2205,7 +2205,7 @@ func SysVarHiddenForSem(ctx sessionctx.Context, sysVarNameInLower string) bool {
 		return false
 	}
 	checker := privilege.GetPrivilegeManager(ctx)
-	if checker == nil || checker.RequestDynamicVerification(ctx.GetSessionVars().ActiveRoles, []string{"RESTRICTED_VARIABLES_ADMIN"}, false) {
+	if checker == nil || checker.RequestDynamicVerification(ctx.GetSessionVars().ActiveRoles, "RESTRICTED_VARIABLES_ADMIN", false) {
 		return false
 	}
 	return true

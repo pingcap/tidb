@@ -270,7 +270,7 @@ func (ctx *SessionEvalContext) RequestDynamicVerification(privName string, grant
 	if checker == nil {
 		return true
 	}
-	return checker.RequestDynamicVerification(ctx.sctx.GetSessionVars().ActiveRoles, []string{privName}, grantable)
+	return checker.RequestDynamicVerification(ctx.sctx.GetSessionVars().ActiveRoles, privName, grantable)
 }
 
 func getStmtTimestamp(ctx sessionctx.Context) (time.Time, error) {

@@ -921,7 +921,7 @@ func (e *ShowExec) fetchShowStatus() error {
 		}
 		// Skip invisible status vars if permission fails.
 		if sem.IsEnabled() && sem.IsInvisibleStatusVar(status) {
-			if checker == nil || !checker.RequestDynamicVerification(sessionVars.ActiveRoles, []string{"RESTRICTED_STATUS_ADMIN"}, false) {
+			if checker == nil || !checker.RequestDynamicVerification(sessionVars.ActiveRoles, "RESTRICTED_STATUS_ADMIN", false) {
 				continue
 			}
 		}

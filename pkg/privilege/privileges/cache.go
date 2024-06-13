@@ -1125,19 +1125,14 @@ func (p *MySQLPrivilege) HasExplicitlyGrantedDynamicPrivilege(activeRoles []*aut
 }
 
 // RequestDynamicVerification checks all roles for a specific DYNAMIC privilege.
-func (p *MySQLPrivilege) RequestDynamicVerification(activeRoles []*auth.RoleIdentity, user, host string, privNames []string, withGrant bool) bool {
-	semRestricted := true
-	for _, privName := range privNames {
-		privName = strings.ToUpper(privName)
-		if p.HasExplicitlyGrantedDynamicPrivilege(activeRoles, user, host, privName, withGrant) {
-			return true
-		}
-		// If SEM is enabled, and all the privileges is of type restricted, do not fall through
-		// To using SUPER as a replacement privilege.
-		semRestricted = semRestricted && (sem.IsEnabled() && sem.IsRestrictedPrivilege(privName))
+func (p *MySQLPrivilege) RequestDynamicVerification(activeRoles []*auth.RoleIdentity, user, host string, privName string, withGrant bool) bool {
+	privName = strings.ToUpper(privName)
+	if p.HasExplicitlyGrantedDynamicPrivilege(activeRoles, user, host, privName, withGrant) {
+		return true
 	}
-
-	if semRestricted {
+	// If SEM is enabled, and the privilege is of type restricted, do not fall through
+	// To using SUPER as a replacement privilege.
+	if sem.IsEnabled() && sem.IsRestrictedPrivilege(privName) {
 		return false
 	}
 

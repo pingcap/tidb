@@ -163,7 +163,11 @@ func BuildLogicalPlanForTest(ctx context.Context, sctx sessionctx.Context, node 
 func CheckPrivilege(activeRoles []*auth.RoleIdentity, pm privilege.Manager, vs []visitInfo) error {
 	for _, v := range vs {
 		if v.privilege == mysql.ExtendedPriv {
-			if !pm.RequestDynamicVerification(activeRoles, v.dynamicPrivs, v.dynamicWithGrant) {
+			hasPriv := false
+			for _, priv := range v.dynamicPrivs {
+				hasPriv = hasPriv || pm.RequestDynamicVerification(activeRoles, priv, v.dynamicWithGrant)
+			}
+			if !hasPriv {
 				if v.err == nil {
 					return plannererrors.ErrPrivilegeCheckFail.GenWithStackByArgs(v.dynamicPrivs)
 				}
