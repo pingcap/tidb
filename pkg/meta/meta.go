@@ -1121,7 +1121,7 @@ func (m *Meta) ListTableName2TableIDV2(dbID int64) (map[string]int, error) {
 
 	start := time.Now()
 	res, err := m.txn.HGetAllNameToID(dbKey)
-	logutil.BgLogger().Info("ListTableName2TableIDV2", zap.Duration("time", time.Since(start)), zap.Int("size", len(ress)))
+	logutil.BgLogger().Info("ListTableName2TableIDV2", zap.Duration("time", time.Since(start)), zap.Int("size", len(res)))
 	return res, err
 }
 
