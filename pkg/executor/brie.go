@@ -51,7 +51,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/printer"
 	"github.com/pingcap/tidb/pkg/util/sem"
-	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/pkg/util/syncutil"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	"github.com/tikv/client-go/v2/oracle"
@@ -99,15 +98,11 @@ func (p *brieTaskProgress) Inc() {
     now := time.Now().Unix()
     lastUpdate := atomic.LoadInt64(&p.lastUpdate)
 
-    // set a 60s interval to avoid update too frequently
-    if now-lastUpdate >= 60 {
-        if atomic.CompareAndSwapInt64(&p.lastUpdate, lastUpdate, now) {
-            ctx := util.WithInternalSourceType(context.Background(), kv.InternalTxnBR)
-            _, err := p.executor.Ctx().GetSQLExecutor().ExecuteInternal(ctx, "UPDATE mysql.tidb_br_jobs SET progress = %? WHERE id = %?;", current, p.taskID)
-            if err != nil {
-                log.Error("Failed to update BRIE task progress", zap.Error(err))
-            }
-        }
+    // set an interval to avoid update too frequently
+    if now-lastUpdate >= 120 && atomic.CompareAndSwapInt64(&p.lastUpdate, lastUpdate, now) {
+		updateMetaTable(context.Background(), p.executor, p.taskID, map[string]interface{}{
+			"progress": current,
+		})
     }
 }
 
@@ -128,7 +123,8 @@ func (p *brieTaskProgress) Close() {
 	total := atomic.LoadInt64(&p.total)
 	cmd := p.cmd
 	if current < total {
-		p.cmd = fmt.Sprintf("%s Canceled", cmd)
+		cmd = fmt.Sprintf("%s Canceled", cmd)
+		p.cmd = cmd
 	}
 	atomic.StoreInt64(&current, total)
 	p.lock.Unlock()
@@ -137,11 +133,10 @@ func (p *brieTaskProgress) Close() {
 		log.Error("BRIE task executor is nil", zap.Uint64("task id", p.taskID))
 		return
 	}
-	ctx := util.WithInternalSourceType(context.Background(), kv.InternalTxnBR)
-	_,err := p.executor.Ctx().GetSQLExecutor().ExecuteInternal(ctx, "UPDATE mysql.tidb_br_jobs SET state = %?, progress = %? WHERE id = %?;", cmd, current * 100 / total, p.taskID)
-	if err != nil {
-		log.Error("Failed to update BRIE task progress", zap.Error(err))
-	}
+	updateMetaTable(context.Background(), p.executor, p.taskID, map[string]interface{}{
+		"progress": current * 100 / total,
+		"state":    cmd,
+	})
 }
 
 type brieTaskInfo struct {
@@ -166,7 +161,7 @@ type brieQueueItem struct {
 }
 
 type brieQueue struct {
-	nextID uint64
+	// nextID uint64
 	tasks  sync.Map
 
 	lastClearTime time.Time
@@ -608,79 +603,6 @@ func (e *showMetaExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		req.AppendTime(5, types.NewTime(types.FromGoTime(endTime.In(e.Ctx().GetSessionVars().Location())), mysql.TypeDatetime, 0))
 	}
 	return nil
-}
-
-func updateMetaTable(ctx context.Context, e *exec.BaseExecutor, id uint64, updates map[string]interface{}) error {
-    // Construct the SET clause dynamically based on the updates map
-    setClauses := make([]string, 0, len(updates))
-    args := make([]interface{}, 0, len(updates))
-    
-    for column, value := range updates {
-        setClauses = append(setClauses, fmt.Sprintf("%s = %%?", column))
-        args = append(args, value)
-    }
-    
-    // Construct the final SQL query
-    query := fmt.Sprintf("UPDATE mysql.tidb_br_jobs SET %s WHERE id = %d", strings.Join(setClauses, ", "), id)
-    
-	stmtCtx := util.WithInternalSourceType(ctx, kv.InternalTxnBR)
-	_,err := e.Ctx().GetSQLExecutor().ExecuteInternal(stmtCtx, query, args...)
-    if err != nil {
-        log.Error("Failed to insert BRIE task into tidb_br_jobs", zap.Error(err), zap.String("query", query))
-        return err
-    }
-    
-    return nil
-}
-
-func addTaskToMetaTable(ctx context.Context, e *BRIEExec) (uint64,error) {
-	if e.info.queueTime.IsZero() {
-		return 0,errors.New("queueTime is not set")
-	}
-	if e.info.storage == "" {
-		return 0,errors.New("storage is not set")
-	}
-
-	escapedStorage := fmt.Sprintf("'%s'", e.info.storage)
-	escapedQuery := strings.ReplaceAll(e.info.query, "'", "''")
-
-    // Construct the SQL statement with escaped strings
-    insertStmt := fmt.Sprintf(`
-    INSERT INTO mysql.tidb_br_jobs (
-         query, queueTime, kind, storage, connID, state, progress
-    ) VALUES ('%s', '%s', '%s', %s, %d, '%s', %d);
-    `,  escapedQuery,
-		e.info.queueTime,
-        e.info.kind,
-        escapedStorage,
-        e.info.connID,
-		"Wait",
-		0,
-    )
-
-	stmtCtx := util.WithInternalSourceType(ctx, kv.InternalTxnBR)
-	_,err := e.Ctx().GetSQLExecutor().ExecuteInternal(stmtCtx, insertStmt)
-	if err != nil {
-		log.Error("Failed to insert BRIE task into tidb_br_jobs", zap.Error(err))
-		return 0,err
-	}
-
-	//FIXME: is this a safe way to get id?
-	rs, err := e.Ctx().GetSQLExecutor().ExecuteInternal(ctx, `SELECT LAST_INSERT_ID();`)
-	if err != nil {
-		return 0, err
-	}
-	defer terror.Call(rs.Close)
-
-	rows, err := sqlexec.DrainRecordSet(ctx, rs, 1)
-	if err != nil {
-		return 0, err
-	}
-	if len(rows) != 1 {
-		return 0, errors.Errorf("unexpected result length: %d", len(rows))
-	}
-
-    return rows[0].GetUint64(0), nil
 }
 
 // Next implements the Executor Next interface.
