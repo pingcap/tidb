@@ -5,6 +5,7 @@ package checksum_test
 import (
 	"context"
 	"math"
+	"regexp"
 	"testing"
 
 	"github.com/pingcap/failpoint"
@@ -303,14 +304,16 @@ func BenchmarkDecodeTableInfo(b *testing.B) {
 	value := p.Get("partition")
 	value = p.Get("tiflash_replica")
 	value.Exists()
-	//idPattern := `"L":\s*"([^"]+)"`
-	//idRegex := regexp.MustCompile(idPattern)
+	idPattern := `"L":\s*"([^"]+)"`
+	idRegex := regexp.MustCompile(idPattern)
+	//idRegex = regexp.MustCompile(`"id": (\d+),\s+"name": {\s+"O": "[^"]+",\s+"L": "([^"]+)"`)
+	//idRegex = regexp.MustCompile(`"L": "([^"]+)"`)
 
 	//emptyRegex := regexp.MustCompile(`\"partition\": {"`)
 
 	//var m model.TableInfo
 	for i := 0; i < b.N; i++ {
-		//nameLMatches = idRegex.FindStringSubmatch(rawJson)
+		idRegex.FindStringSubmatch(rawJson[0:50])
 		//if len(nameLMatches) > 1 {
 		//	nameL := nameLMatches[1]
 		//	//fmt.Println("Name.L:", nameL)

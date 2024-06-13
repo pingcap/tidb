@@ -1136,8 +1136,6 @@ func (m *Meta) ListTableName2TableID(dbID int64) (map[string]int, error) {
 			continue
 		}
 
-		println(string(hack.String(r.Value)))
-
 		idMatch := idRegex.FindStringSubmatch(string(hack.String(r.Value)))
 
 		nameLMatch := nameLRegex.FindStringSubmatch(string(hack.String(r.Value)))
