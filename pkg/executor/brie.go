@@ -204,7 +204,7 @@ func (bq *brieQueue) registerTask(
 			total: 1,
 		},
 	}
-	taskID,err := e.addTaskToMetaTable(ctx)
+	taskID,err := addTaskToMetaTable(ctx,e)
 	if err != nil {
 		return taskCtx, 0, err
 	}
@@ -613,30 +613,27 @@ func (e *showMetaExec) Next(ctx context.Context, req *chunk.Chunk) error {
 func updateMetaTable(ctx context.Context, e *exec.BaseExecutor, id uint64, updates map[string]interface{}) error {
     // Construct the SET clause dynamically based on the updates map
     setClauses := make([]string, 0, len(updates))
-    args := make([]interface{}, 0, len(updates)+1) // +1 for the WHERE id = ?
+    args := make([]interface{}, 0, len(updates))
     
     for column, value := range updates {
-        setClauses = append(setClauses, fmt.Sprintf("%s = ?", column))
+        setClauses = append(setClauses, fmt.Sprintf("%s = %%?", column))
         args = append(args, value)
     }
     
-    // Add the id to the arguments list for the WHERE clause
-    args = append(args, id)
-    
     // Construct the final SQL query
-    query := fmt.Sprintf("UPDATE mysql.tidb_br_jobs SET %s WHERE id = ?", strings.Join(setClauses, ", "))
+    query := fmt.Sprintf("UPDATE mysql.tidb_br_jobs SET %s WHERE id = %d", strings.Join(setClauses, ", "), id)
     
 	stmtCtx := util.WithInternalSourceType(ctx, kv.InternalTxnBR)
 	_,err := e.Ctx().GetSQLExecutor().ExecuteInternal(stmtCtx, query, args...)
     if err != nil {
-        log.Error("Failed to insert BRIE task into tidb_br_jobs", zap.Error(err))
+        log.Error("Failed to insert BRIE task into tidb_br_jobs", zap.Error(err), zap.String("query", query))
         return err
     }
     
     return nil
 }
 
-func (e *BRIEExec) addTaskToMetaTable(ctx context.Context) (uint64,error) {
+func addTaskToMetaTable(ctx context.Context, e *BRIEExec) (uint64,error) {
 	if e.info.queueTime.IsZero() {
 		return 0,errors.New("queueTime is not set")
 	}
@@ -737,11 +734,11 @@ func (e *BRIEExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	e.info.execTime = types.CurrentTime(mysql.TypeDatetime)
 	glue := &tidbGlue{se: e.Ctx(), progress: progress, info: e.info}
 
-	stmtCtx := util.WithInternalSourceType(ctx, kv.InternalTxnBR)
-	_,err = e.Ctx().GetSQLExecutor().ExecuteInternal(stmtCtx, "UPDATE mysql.tidb_br_jobs SET execTime = %? WHERE id = %?;",
-	 e.info.execTime.String(), e.info.id)
+	err = updateMetaTable(ctx, &e.BaseExecutor, taskID, map[string]interface{}{
+		"execTime": e.info.execTime.String(),
+    	},
+	)
 	if err != nil {
-		log.Error("Failed to insert BRIE task into tidb_br_jobs", zap.Error(err))
 		return err
 	}
 
@@ -759,10 +756,14 @@ func (e *BRIEExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			e.info.message = ""
 	}
 	e.info.finishTime = types.CurrentTime(mysql.TypeDatetime)
-	_,retErr := e.Ctx().GetSQLExecutor().ExecuteInternal(stmtCtx, "UPDATE mysql.tidb_br_jobs SET finishTime = %?, message = %?, backupTS = %?, restoreTS = %?, archiveSize = %? WHERE id = %?;",
-	 e.info.finishTime.String(), e.info.message, e.info.backupTS, e.info.restoreTS, e.info.archiveSize, e.info.id)
+	retErr := updateMetaTable(ctx, &e.BaseExecutor, e.info.id, map[string]interface{}{
+		"finishTime": e.info.finishTime.String(),
+		"message": e.info.message,
+		"backupTS": e.info.backupTS,
+		"restoreTS": e.info.restoreTS,
+		"archiveSize": e.info.archiveSize,
+	})
 	if retErr != nil {
-		log.Error("Failed to insert BRIE task into tidb_br_jobs", zap.Error(err))
 		return retErr
 	}
 	//err exit delay to here to ensure the finishTime is updated
