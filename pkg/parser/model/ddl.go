@@ -1037,7 +1037,7 @@ func (job *Job) GetInvolvingSchemaInfo() []InvolvingSchemaInfo {
 		table = InvolvingAll
 	}
 	return []InvolvingSchemaInfo{
-		{Database: job.SchemaName, Table: job.TableName},
+		{Database: job.SchemaName, Table: table},
 	}
 }
 
