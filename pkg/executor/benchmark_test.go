@@ -693,8 +693,10 @@ func prepare4HashJoinV2(testCase *hashJoinTestCase, innerExec, outerExec exec.Ex
 	probeKeysColIdx := make([]int, 0, len(testCase.keyIdx))
 	probeKeysColIdx = append(probeKeysColIdx, testCase.keyIdx...)
 	probeKeyTypes := make([]*types.FieldType, 0, len(probeKeysColIdx))
+	buildKeyTypes := make([]*types.FieldType, 0, len(probeKeysColIdx))
 	for _, i := range testCase.keyIdx {
 		probeKeyTypes = append(probeKeyTypes, outerTypes[i])
+		buildKeyTypes = append(buildKeyTypes, innerTypes[i])
 	}
 	hashJoinCtx := &join.HashJoinCtxV2{
 		OtherCondition:  nil,
@@ -705,6 +707,8 @@ func prepare4HashJoinV2(testCase *hashJoinTestCase, innerExec, outerExec exec.Ex
 	hashJoinCtx.Concurrency = uint(testCase.concurrency)
 	hashJoinCtx.ChunkAllocPool = chunk.NewEmptyAllocator()
 	hashJoinCtx.RightAsBuildSide = false
+	hashJoinCtx.BuildKeyTypes = buildKeyTypes
+	hashJoinCtx.ProbeKeyTypes = probeKeyTypes
 	e := &join.HashJoinV2Exec{
 		BaseExecutor:          exec.NewBaseExecutor(testCase.ctx, joinSchema, 5, innerExec, outerExec),
 		ProbeSideTupleFetcher: &join.ProbeSideTupleFetcherV2{},
