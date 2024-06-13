@@ -180,9 +180,9 @@ func (t *TxStructure) HGetAllNameToID(key []byte) (map[string]int, error) {
 			return nil
 		}
 
-		idMatch := idRegex.FindStringSubmatch(string(hack.String(r.Value)))
+		idMatch := idRegex.FindStringSubmatch(string(hack.String(value)))
 
-		nameLMatch := nameLRegex.FindStringSubmatch(string(hack.String(r.Value)))
+		nameLMatch := nameLRegex.FindStringSubmatch(string(hack.String(value)))
 		id, err := strconv.Atoi(idMatch[1])
 		if err != nil {
 			return errors.Trace(err)
