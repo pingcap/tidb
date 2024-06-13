@@ -134,7 +134,7 @@ func (p *brieTaskProgress) Close() {
 		cmd = fmt.Sprintf("%s Canceled", cmd)
 		p.cmd = cmd
 	}
-	atomic.StoreInt64(&current, total)
+	atomic.StoreInt64(&p.current, p.total)
 	p.lock.Unlock()
 
 	if p.executor == nil {
