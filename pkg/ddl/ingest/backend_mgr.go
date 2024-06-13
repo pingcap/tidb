@@ -47,7 +47,7 @@ type BackendCtxMgr interface {
 	Register(
 		ctx context.Context,
 		jobID int64,
-		unique bool,
+		hasUnique bool,
 		etcdClient *clientv3.Client,
 		pdSvcDiscovery pd.ServiceDiscovery,
 		resourceGroupName string,
@@ -118,7 +118,7 @@ var ResignOwnerForTest = atomic.NewBool(false)
 func (m *litBackendCtxMgr) Register(
 	ctx context.Context,
 	jobID int64,
-	unique bool,
+	hasUnique bool,
 	etcdClient *clientv3.Client,
 	pdSvcDiscovery pd.ServiceDiscovery,
 	resourceGroupName string,
@@ -133,7 +133,7 @@ func (m *litBackendCtxMgr) Register(
 	if !ok {
 		return nil, genBackendAllocMemFailedErr(ctx, m.memRoot, jobID)
 	}
-	cfg, err := genConfig(ctx, m.encodeJobSortPath(jobID), m.memRoot, unique, resourceGroupName)
+	cfg, err := genConfig(ctx, m.encodeJobSortPath(jobID), m.memRoot, hasUnique, resourceGroupName)
 	if err != nil {
 		logutil.Logger(ctx).Warn(LitWarnConfigError, zap.Int64("job ID", jobID), zap.Error(err))
 		return nil, err
@@ -160,7 +160,7 @@ func (m *litBackendCtxMgr) Register(
 	logutil.Logger(ctx).Info(LitInfoCreateBackend, zap.Int64("job ID", jobID),
 		zap.Int64("current memory usage", m.memRoot.CurrentUsage()),
 		zap.Int64("max memory quota", m.memRoot.MaxMemoryQuota()),
-		zap.Bool("is unique index", unique))
+		zap.Bool("has unique index", hasUnique))
 	return bcCtx, nil
 }
 

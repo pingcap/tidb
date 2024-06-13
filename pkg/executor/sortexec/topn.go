@@ -261,7 +261,11 @@ func (e *TopNExec) fetchChunks(ctx context.Context) error {
 }
 
 func (e *TopNExec) loadChunksUntilTotalLimit(ctx context.Context) error {
-	e.initCompareFuncs(e.Ctx().GetExprCtx().GetEvalCtx())
+	err := e.initCompareFuncs(e.Ctx().GetExprCtx().GetEvalCtx())
+	if err != nil {
+		return err
+	}
+
 	e.buildKeyColumns()
 	e.chkHeap.init(e, e.memTracker, e.Limit.Offset+e.Limit.Count, int(e.Limit.Offset), e.greaterRow, e.RetFieldTypes())
 	for uint64(e.chkHeap.rowChunks.Len()) < e.chkHeap.totalLimit {

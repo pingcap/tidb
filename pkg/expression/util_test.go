@@ -457,6 +457,43 @@ func TestSQLDigestTextRetriever(t *testing.T) {
 	require.Equal(t, expectedGlobalResult, r.SQLDigestsMap)
 }
 
+func TestProjectionBenefitsFromPushedDown(t *testing.T) {
+	type testDataType struct {
+		exprs          []Expression
+		inputSchemaLen int
+		expectResult   bool
+	}
+	castFunc, _ := NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeString), newFunctionWithMockCtx(ast.JSONExtract, newColJSON(), newColString("str", "binary")))
+	testDataArray := []testDataType{
+		{[]Expression{newColumn(0), newColumn(1)}, 5, true},
+		{[]Expression{newColumn(0), newColumn(1)}, 2, false},
+		{[]Expression{
+			newColumn(0),
+			newFunctionWithMockCtx(ast.JSONExtract, newColJSON(), newColString("str", "binary")),
+			newFunctionWithMockCtx(ast.JSONDepth, newColJSON()),
+			newFunctionWithMockCtx(ast.JSONLength, newColJSON()),
+			newFunctionWithMockCtx(ast.JSONType, newColJSON()),
+			newFunctionWithMockCtx(ast.JSONValid, newColJSON()),
+			newFunctionWithMockCtx(ast.JSONContains, newColJSON(), newColString("str", "binary")),
+			newFunctionWithMockCtx(ast.JSONContainsPath, newColJSON(), newConstString("str", CoercibilityNone, "str", "binary"), newColString("str", "binary"), newColString("str", "binary")),
+			newFunctionWithMockCtx(ast.JSONKeys, newColJSON()),
+			newFunctionWithMockCtx(ast.JSONSearch, newColJSON(), newConstString("str", CoercibilityNone, "str", "binary"), newColString("str", "binary")),
+			newFunctionWithMockCtx(ast.JSONMemberOf, newColString("str", "binary"), newColJSON()),
+			newFunctionWithMockCtx(ast.JSONOverlaps, newColJSON(), newColJSON()),
+		}, 3, true},
+		{[]Expression{
+			newFunctionWithMockCtx(ast.JSONUnquote, newColString("str", "binary")),
+		}, 3, false},
+		{[]Expression{
+			newFunctionWithMockCtx(ast.JSONUnquote, castFunc),
+		}, 3, true},
+	}
+	for _, testData := range testDataArray {
+		result := ProjectionBenefitsFromPushedDown(testData.exprs, testData.inputSchemaLen)
+		require.Equal(t, result, testData.expectResult)
+	}
+}
+
 func BenchmarkExtractColumns(b *testing.B) {
 	conditions := []Expression{
 		newFunctionWithMockCtx(ast.EQ, newColumn(0), newColumn(1)),
