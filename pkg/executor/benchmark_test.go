@@ -658,6 +658,88 @@ func prepareResolveIndices(joinSchema, lSchema, rSchema *expression.Schema, join
 	return joinSchema
 }
 
+func prepare4HashJoinV2(testCase *hashJoinTestCase, innerExec, outerExec exec.Executor) *join.HashJoinV2Exec {
+	cols0 := innerExec.Schema().Columns
+	cols1 := outerExec.Schema().Columns
+
+	innerTypes, outerTypes := exec.RetTypes(innerExec), exec.RetTypes(outerExec)
+	joinedTypes := make([]*types.FieldType, 0, len(innerTypes)+len(outerTypes))
+	joinedTypes = append(joinedTypes, innerTypes...)
+	joinedTypes = append(joinedTypes, outerTypes...)
+
+	joinSchema := expression.NewSchema()
+	if testCase.childrenUsedSchema != nil {
+		for i, used := range testCase.childrenUsedSchema[0] {
+			if used {
+				joinSchema.Append(cols0[i])
+			}
+		}
+		for i, used := range testCase.childrenUsedSchema[1] {
+			if used {
+				joinSchema.Append(cols1[i])
+			}
+		}
+	} else {
+		joinSchema.Append(cols0...)
+		joinSchema.Append(cols1...)
+	}
+	// todo: need systematic way to protect.
+	// physical join should resolveIndices to get right schema column index.
+	// otherwise, markChildrenUsedColsForTest will fail below.
+	joinSchema = prepareResolveIndices(joinSchema, innerExec.Schema(), outerExec.Schema(), core.InnerJoin)
+
+	joinKeysColIdx := make([]int, 0, len(testCase.keyIdx))
+	joinKeysColIdx = append(joinKeysColIdx, testCase.keyIdx...)
+	probeKeysColIdx := make([]int, 0, len(testCase.keyIdx))
+	probeKeysColIdx = append(probeKeysColIdx, testCase.keyIdx...)
+	probeKeyTypes := make([]*types.FieldType, 0, len(probeKeysColIdx))
+	buildKeyTypes := make([]*types.FieldType, 0, len(probeKeysColIdx))
+	for _, i := range testCase.keyIdx {
+		probeKeyTypes = append(probeKeyTypes, outerTypes[i])
+		buildKeyTypes = append(buildKeyTypes, innerTypes[i])
+	}
+	hashJoinCtx := &join.HashJoinCtxV2{
+		OtherCondition:  nil,
+		PartitionNumber: min(testCase.concurrency, 16),
+	}
+	hashJoinCtx.SessCtx = testCase.ctx
+	hashJoinCtx.JoinType = testCase.joinType
+	hashJoinCtx.Concurrency = uint(testCase.concurrency)
+	hashJoinCtx.ChunkAllocPool = chunk.NewEmptyAllocator()
+	hashJoinCtx.RightAsBuildSide = false
+	hashJoinCtx.BuildKeyTypes = buildKeyTypes
+	hashJoinCtx.ProbeKeyTypes = probeKeyTypes
+	e := &join.HashJoinV2Exec{
+		BaseExecutor:          exec.NewBaseExecutor(testCase.ctx, joinSchema, 5, innerExec, outerExec),
+		ProbeSideTupleFetcher: &join.ProbeSideTupleFetcherV2{},
+		ProbeWorkers:          make([]*join.ProbeWorkerV2, testCase.concurrency),
+		BuildWorkers:          make([]*join.BuildWorkerV2, testCase.concurrency),
+		HashJoinCtxV2:         hashJoinCtx,
+	}
+	e.ProbeSideTupleFetcher.ProbeSideExec = outerExec
+
+	for i := 0; i < testCase.concurrency; i++ {
+		e.ProbeWorkers[i] = &join.ProbeWorkerV2{
+			HashJoinCtx: e.HashJoinCtxV2,
+			JoinProbe:   join.NewJoinProbe(e.HashJoinCtxV2, uint(i), testCase.joinType, probeKeysColIdx, joinedTypes, probeKeyTypes, false),
+		}
+		e.ProbeWorkers[i].WorkerID = uint(i)
+		e.BuildWorkers[i] = join.NewJoinBuildWorkerV2(e.HashJoinCtxV2, uint(i), innerExec, joinKeysColIdx, innerTypes)
+	}
+	memLimit := int64(-1)
+	if testCase.disk {
+		memLimit = 1
+	}
+	t := memory.NewTracker(-1, memLimit)
+	t.SetActionOnExceed(nil)
+	t2 := disk.NewTracker(-1, -1)
+	e.Ctx().GetSessionVars().MemTracker = t
+	e.Ctx().GetSessionVars().StmtCtx.MemTracker.AttachTo(t)
+	e.Ctx().GetSessionVars().DiskTracker = t2
+	e.Ctx().GetSessionVars().StmtCtx.DiskTracker.AttachTo(t2)
+	return e
+}
+
 func prepare4HashJoin(testCase *hashJoinTestCase, innerExec, outerExec exec.Executor) *join.HashJoinV1Exec {
 	if testCase.useOuterToBuild {
 		innerExec, outerExec = outerExec, innerExec

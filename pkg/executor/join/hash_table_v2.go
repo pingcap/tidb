@@ -55,9 +55,9 @@ func newSubTable(table *rowTable) *subTable {
 	if table.validKeyCount() == 0 {
 		ret.isHashTableEmpty = true
 	}
-	capacity := max(nextPowerOfTwo(table.validKeyCount()), uint64(1024))
-	ret.hashTable = make([]unsafe.Pointer, capacity)
-	ret.posMask = capacity - 1
+	hashTableLength := max(nextPowerOfTwo(table.validKeyCount()), uint64(1024))
+	ret.hashTable = make([]unsafe.Pointer, hashTableLength)
+	ret.posMask = hashTableLength - 1
 	return ret
 }
 
