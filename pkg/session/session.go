@@ -1259,6 +1259,7 @@ func (s *session) getTableValue(ctx context.Context, tblName string, varName str
 	}
 	rows, fields, err := s.ExecRestrictedSQL(ctx, nil, "SELECT VARIABLE_VALUE FROM %n.%n WHERE VARIABLE_NAME=%?", mysql.SystemDB, tblName, varName)
 	if err != nil {
+		fmt.Println("exec restricted err fail???, err is", err.Error(), errors.ErrorStack(err))
 		return "", err
 	}
 	if len(rows) == 0 {
@@ -3093,6 +3094,7 @@ func CreateSessionWithOpt(store kv.Storage, opt *Opt) (types.Session, error) {
 	if err != nil {
 		return nil, err
 	}
+	fmt.Println("in create session with opt, after domap get")
 	extensions, err := extension.GetExtensions()
 	if err != nil {
 		return nil, err
@@ -3335,18 +3337,22 @@ func bootstrapSessionImpl(store kv.Storage, createSessionsImpl func(store kv.Sto
 			return nil, err
 		}
 	}
+	fmt.Println("init ddl job tables")
 	err := InitDDLJobTables(store, meta.BaseDDLTableVersion)
 	if err != nil {
 		return nil, err
 	}
+	fmt.Println("init mdl job tables")
 	err = InitMDLTable(store)
 	if err != nil {
 		return nil, err
 	}
+	fmt.Println("init ddlllll job tables")
 	err = InitDDLJobTables(store, meta.BackfillTableVersion)
 	if err != nil {
 		return nil, err
 	}
+	fmt.Println("get store bootstrap version")
 	ver := getStoreBootstrapVersion(store)
 	if ver == notBootstrapped {
 		runInBootstrapSession(store, bootstrap)
@@ -3358,6 +3364,7 @@ func bootstrapSessionImpl(store kv.Storage, createSessionsImpl func(store kv.Sto
 			return nil, err
 		}
 	}
+	fmt.Println("====================")
 
 	// initiate disttask framework components which need a store
 	scheduler.RegisterSchedulerFactory(
@@ -3383,11 +3390,14 @@ func bootstrapSessionImpl(store kv.Storage, createSessionsImpl func(store kv.Sto
 		concurrency = 0
 	}
 
+	fmt.Println("create session impl>>>")
 	ses, err := createSessionsImpl(store, 10)
 	if err != nil {
 		return nil, err
 	}
 	ses[0].GetSessionVars().InRestrictedSQL = true
+
+	fmt.Println("create session impl<<<")
 
 	// get system tz from mysql.tidb
 	tz, err := ses[0].getTableValue(ctx, mysql.TiDBTable, tidbSystemTZ)
@@ -3396,6 +3406,7 @@ func bootstrapSessionImpl(store kv.Storage, createSessionsImpl func(store kv.Sto
 	}
 	timeutil.SetSystemTZ(tz)
 
+	fmt.Println("before load collation parameter>>>")
 	// get the flag from `mysql`.`tidb` which indicating if new collations are enabled.
 	newCollationEnabled, err := loadCollationParameter(ctx, ses[0])
 	if err != nil {
@@ -3405,7 +3416,11 @@ func bootstrapSessionImpl(store kv.Storage, createSessionsImpl func(store kv.Sto
 	// To deal with the location partition failure caused by inconsistent NewCollationEnabled values(see issue #32416).
 	rebuildAllPartitionValueMapAndSorted(ses[0])
 
+	fmt.Println("after rebuild all partition, before get domain")
+
 	dom := domain.GetDomain(ses[0])
+
+	fmt.Println("get domain done")
 
 	// We should make the load bind-info loop before other loops which has internal SQL.
 	// Because the internal SQL may access the global bind-info handler. As the result, the data race occurs here as the
@@ -3446,6 +3461,7 @@ func bootstrapSessionImpl(store kv.Storage, createSessionsImpl func(store kv.Sto
 			return nil, err
 		}
 	}
+	fmt.Println("extension imple bootstrap finish")
 
 	err = executor.LoadExprPushdownBlacklist(ses[5])
 	if err != nil {
@@ -3506,6 +3522,9 @@ func bootstrapSessionImpl(store kv.Storage, createSessionsImpl func(store kv.Sto
 		extractWorkerSctxs = append(extractWorkerSctxs, sctx)
 	}
 	dom.SetupExtractHandle(extractWorkerSctxs)
+
+
+	fmt.Println("before stats loader==")
 
 	// setup init stats loader
 	initStatsCtx, err := createSession(store)

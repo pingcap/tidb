@@ -19,6 +19,7 @@
 package session
 
 import (
+	"fmt"
 	"context"
 	"sync"
 	"sync/atomic"
@@ -72,6 +73,7 @@ func (dm *domainMap) Get(store kv.Storage) (d *domain.Domain, err error) {
 	if d != nil {
 		return
 	}
+	fmt.Println("in domap Get ...")
 
 	ddlLease := time.Duration(atomic.LoadInt64(&schemaLease))
 	statisticLease := time.Duration(atomic.LoadInt64(&statsLease))
@@ -83,6 +85,7 @@ func (dm *domainMap) Get(store kv.Storage) (d *domain.Domain, err error) {
 			zap.Stringer("stats lease", statisticLease))
 		factory := createSessionFunc(store)
 		sysFactory := createSessionWithDomainFunc(store)
+		fmt.Println("before new domain??")
 		d = domain.NewDomain(store, ddlLease, statisticLease, planReplayerGCLease, factory)
 
 		var ddlInjector func(ddl.DDL) *schematracker.Checker

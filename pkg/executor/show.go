@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/ddl"
 	fstorage "github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/disttask/importinto"
@@ -79,7 +80,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/sem"
-	"github.com/pingcap/tidb/pkg/util/set"
+	// "github.com/pingcap/tidb/pkg/util/set"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 	"github.com/tikv/client-go/v2/oracle"
@@ -1402,24 +1403,38 @@ var TestShowClusterConfigKey stringutil.StringerStr = "TestShowClusterConfigKey"
 type TestShowClusterConfigFunc func() ([][]types.Datum, error)
 
 func (e *ShowExec) fetchShowClusterConfigs() error {
-	emptySet := set.NewStringSet()
-	var confItems [][]types.Datum
-	var err error
-	if f := e.Ctx().Value(TestShowClusterConfigKey); f != nil {
-		confItems, err = f.(TestShowClusterConfigFunc)()
-	} else {
-		confItems, err = fetchClusterConfig(e.Ctx(), emptySet, emptySet)
-	}
-	if err != nil {
+	store := e.Ctx().GetStore()
+
+	err := kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), store, true, func(_ context.Context, txn kv.Transaction) error {
+		m := meta.NewMeta(txn)
+		fmt.Println("begin to backfill")
+		err := m.Backfill()
+		fmt.Println("backfill === ok? err =", err)
 		return err
+	})
+
+	if err != nil {
+		fmt.Println("back faill failed. ..err=", err)
 	}
-	for _, items := range confItems {
-		row := make([]any, 0, 4)
-		for _, item := range items {
-			row = append(row, item.GetString())
-		}
-		e.appendRow(row)
-	}
+
+	// emptySet := set.NewStringSet()
+	// var confItems [][]types.Datum
+	// var err error
+	// if f := e.Ctx().Value(TestShowClusterConfigKey); f != nil {
+	// 	confItems, err = f.(TestShowClusterConfigFunc)()
+	// } else {
+	// 	confItems, err = fetchClusterConfig(e.Ctx(), emptySet, emptySet)
+	// }
+	// if err != nil {
+	// 	return err
+	// }
+	// for _, items := range confItems {
+	// 	row := make([]any, 0, 4)
+	// 	for _, item := range items {
+	// 		row = append(row, item.GetString())
+	// 	}
+	// 	e.appendRow(row)
+	// }
 	return nil
 }
 

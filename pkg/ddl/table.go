@@ -292,6 +292,9 @@ func createTableOrViewWithCheck(t *meta.Meta, job *model.Job, schemaID int64, tb
 		job.State = model.JobStateCancelled
 		return errors.Trace(err)
 	}
+	if variable.EnableFastCreateTable.Load() {
+		tbInfo.HasTableNameMetaKey = true
+	}
 	return t.CreateTableOrView(schemaID, job.SchemaName, tbInfo)
 }
 
@@ -1535,7 +1538,7 @@ func checkTableNotExistsByName(d *ddlCtx, t *meta.Meta, schemaID int64, schemaNa
 	if is != nil && is.SchemaMetaVersion() == currVer {
 		return checkTableNotExistsFromInfoSchema(is, schemaID, tableName)
 	}
-	return t.CheckTableNameNotExists(t.TableNameKey(schemaName, tableName))
+	return t.CheckTableNameNotExists(meta.TableNameKey(schemaName, tableName))
 }
 
 func checkConstraintNamesNotExists(t *meta.Meta, schemaID int64, constraints []*model.ConstraintInfo) error {

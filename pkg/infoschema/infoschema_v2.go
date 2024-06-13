@@ -15,8 +15,11 @@
 package infoschema
 
 import (
+	// "runtime/debug"
+	// "context"
 	"fmt"
 	"math"
+	// "strconv"
 	"strings"
 	"sync"
 	"time"
@@ -24,6 +27,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/tikv/client-go/v2/tikv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -360,7 +364,7 @@ func (is *infoschemaV2) TableByID(id int64) (val table.Table, ok bool) {
 	return is.tableByID(id, false)
 }
 
-func (is *infoschemaV2) tableByID(id int64, noRefill bool) (val table.Table, ok bool) {
+func (is *infoschemaV2) tableByID(id int64, noRefill bool, dbID ...int64) (val table.Table, ok bool) {
 	if !tableIDIsValid(id) {
 		return
 	}
@@ -375,25 +379,29 @@ func (is *infoschemaV2) tableByID(id int64, noRefill bool) (val table.Table, ok 
 	eq := func(a, b *tableItem) bool { return a.tableID == b.tableID }
 	itm, ok := search(is.byID, is.infoSchema.schemaMetaVersion, tableItem{tableID: id, schemaVersion: math.MaxInt64}, eq)
 	if !ok {
-		// TODO: in the future, this may happen and we need to check tikv to see whether table exists.
-		return nil, false
-	}
-
-	if isTableVirtual(id) {
-		if schTbls, exist := is.Data.specials[itm.dbName]; exist {
-			val, ok = schTbls.tables[itm.tableName]
-			return
+		// This may happen and we need to check tikv to see whether table exists.
+		if len(dbID) == 1 {
+			itm.dbID = dbID[0]
+		} else {
+			return nil, false
 		}
-		return nil, false
-	}
-	// get cache with old key
-	oldKey := tableCacheKey{itm.tableID, itm.schemaVersion}
-	tbl, found = is.tableCache.Get(oldKey)
-	if found && tbl != nil {
-		if !noRefill {
-			is.tableCache.Set(key, tbl)
+	} else {
+		// get cache with old key
+		oldKey := tableCacheKey{itm.tableID, itm.schemaVersion}
+		tbl, found = is.tableCache.Get(oldKey)
+		if found && tbl != nil {
+			if !noRefill {
+				is.tableCache.Set(key, tbl)
+			}
+			return tbl, true
 		}
-		return tbl, true
+		if isTableVirtual(id) {
+			if schTbls, exist := is.Data.specials[itm.dbName]; exist {
+				val, ok = schTbls.tables[itm.tableName]
+				return
+			}
+			return nil, false
+		}
 	}
 
 	// Maybe the table is evicted? need to reload.
@@ -421,14 +429,34 @@ func (is *infoschemaV2) TableByName(schema, tbl model.CIStr) (t table.Table, err
 				return
 			}
 		}
-		return nil, ErrTableNotExists.FastGenByArgs(schema, tbl)
+		return nil, ErrTableNotExists.GenWithStackByArgs(schema, tbl)
 	}
 
 	eq := func(a, b *tableItem) bool { return a.dbName == b.dbName && a.tableName == b.tableName }
 	itm, ok := search(is.byName, is.infoSchema.schemaMetaVersion, tableItem{dbName: schema.L, tableName: tbl.L, schemaVersion: math.MaxInt64}, eq)
 	if !ok {
-		// TODO: in the future, this may happen and we need to check tikv to see whether table exists.
-		return nil, ErrTableNotExists.FastGenByArgs(schema, tbl)
+		store := is.r.Store()
+		fmt.Println("use infoschema ts ===", is.ts)
+		txn, err := store.Begin(tikv.WithStartTS(is.ts))
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		// fmt.Println("key ===", string(key), schema.L, tbl.L, txn.StartTS())
+		m := meta.NewMeta(txn)
+		tableID, dbID, err := m.GetTableIDByName(schema.L, tbl.L)
+		// v, err := txn.Get(context.Background(), key)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		// if v == nil {
+		// 	return nil, ErrTableNotExists.GenWithStackByArgs(schema, tbl)
+		// }
+		// tableID, err := strconv.ParseInt(string(v), 10, 64)
+		// if err != nil {
+		// 	return nil, errors.Trace(err)
+		// }
+		itm.tableID = tableID
+		itm.dbID = dbID
 	}
 
 	// Get from the cache.
@@ -666,6 +694,8 @@ func (is *infoschemaV2) SchemaByID(id int64) (*model.DBInfo, bool) {
 }
 
 func (is *infoschemaV2) SchemaTables(schema model.CIStr) (tables []table.Table) {
+	fmt.Println("schema table called")
+	// debug.PrintStack()
 	if isSpecialDB(schema.L) {
 		schTbls := is.Data.specials[schema.L]
 		tables := make([]table.Table, 0, len(schTbls.tables))
@@ -703,7 +733,7 @@ retry:
 
 	tables = make([]table.Table, 0, len(tblInfos))
 	for _, tblInfo := range tblInfos {
-		tbl, ok := is.tableByID(tblInfo.ID, true)
+		tbl, ok := is.tableByID(tblInfo.ID, true, dbInfo.ID)
 		if !ok {
 			// what happen?
 			continue
@@ -739,7 +769,7 @@ func loadTableInfo(r autoid.Requirement, infoData *Data, tblID, dbID int64, ts u
 
 		// table removed.
 		if tblInfo == nil {
-			return nil, errors.Trace(ErrTableNotExists.FastGenByArgs(
+			return nil, errors.Trace(ErrTableNotExists.GenWithStackByArgs(
 				fmt.Sprintf("(Schema ID %d)", dbID),
 				fmt.Sprintf("(Table ID %d)", tblID),
 			))
@@ -760,7 +790,7 @@ func loadTableInfo(r autoid.Requirement, infoData *Data, tblID, dbID int64, ts u
 		return nil, errors.Trace(err)
 	}
 	if res == nil {
-		return nil, errors.Trace(ErrTableNotExists.FastGenByArgs(
+		return nil, errors.Trace(ErrTableNotExists.GenWithStackByArgs(
 			fmt.Sprintf("(Schema ID %d)", dbID),
 			fmt.Sprintf("(Table ID %d)", tblID),
 		))

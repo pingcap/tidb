@@ -17,14 +17,20 @@ package meta
 import (
 	"bytes"
 	"encoding/binary"
-	"encoding/json"
+	// "encoding/json"
 	"fmt"
 	"math"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+	"runtime/debug"
 
+	"github.com/goccy/go-json"
+	// jsoniter "github.com/json-iterator/go"
+	// "github.com/tidwall/gjson"
+	"go.uber.org/zap"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
@@ -42,6 +48,8 @@ var (
 	globalIDMutex sync.Mutex
 	policyIDMutex sync.Mutex
 )
+
+// var json = jsoniter.ConfigCompatibleWithStandardLibrary
 
 // Meta structure:
 //	NextGlobalID -> int64
@@ -173,18 +181,18 @@ type Option func(m *Meta)
 
 // WithUpdateTableName is for updating the name of the table.
 // Only used for ddl v2.
-func WithUpdateTableName() Option {
-	return func(m *Meta) {
-		m.needUpdateName = true
-	}
-}
+// func WithUpdateTableName() Option {
+// 	return func(m *Meta) {
+// 		m.needUpdateName = true
+// 	}
+// }
 
 // Meta is for handling meta information in a transaction.
 type Meta struct {
 	txn            *structure.TxStructure
 	StartTS        uint64 // StartTS is the txn's start TS.
 	jobListKey     JobListKeyType
-	needUpdateName bool
+	// needUpdateName bool
 }
 
 // NewMeta creates a Meta in transaction txn.
@@ -193,7 +201,8 @@ func NewMeta(txn kv.Transaction, options ...Option) *Meta {
 	txn.SetOption(kv.Priority, kv.PriorityHigh)
 	txn.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
 	t := structure.NewStructure(txn, txn, mMetaPrefix)
-	m := &Meta{txn: t,
+	m := &Meta{
+		txn: t,
 		StartTS:    txn.StartTS(),
 		jobListKey: DefaultJobListKey,
 	}
@@ -706,12 +715,17 @@ func (m *Meta) CreateTableOrView(dbID int64, dbName string, tableInfo *model.Tab
 		return errors.Trace(err)
 	}
 
+	if tableInfo.HasTableNameMetaKey {
+		err = m.CreateTableName(dbName, tableInfo.Name.O, tableInfo.ID, dbID)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+
 	if err := m.txn.HSet(dbKey, tableKey, data); err != nil {
 		return errors.Trace(err)
 	}
-	if m.needUpdateName {
-		return errors.Trace(m.CreateTableName(dbName, tableInfo.Name.L, tableInfo.ID))
-	}
+
 	return nil
 }
 
@@ -891,9 +905,9 @@ func (m *Meta) DropDatabase(dbID int64, dbName string) error {
 		return errors.Trace(err)
 	}
 
-	if m.needUpdateName {
+	// if m.needUpdateName {
 		return errors.Trace(m.DropDatabaseName(dbName))
-	}
+	// }
 	return nil
 }
 
@@ -928,11 +942,66 @@ func (m *Meta) DropTableOrView(dbID int64, dbName string, tblID int64, tbName st
 		return errors.Trace(err)
 	}
 
+	value, err := m.txn.HGet(dbKey, tableKey)
+	if err != nil || value == nil {
+		return errors.Trace(err)
+	}
+	tableInfo := &model.TableInfo{}
+	err = json.Unmarshal(value, tableInfo)
+
 	if err := m.txn.HDel(dbKey, tableKey); err != nil {
 		return errors.Trace(err)
 	}
-	if m.needUpdateName {
+	if tableInfo.HasTableNameMetaKey {
 		return errors.Trace(m.DropTableName(dbName, tbName))
+	}
+	return nil
+}
+
+
+func (m *Meta) Backfill() error {
+	dbs, err := m.ListDatabases()
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	for _, dbInfo := range dbs {
+		tables, err := m.ListTables(dbInfo.ID)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		fmt.Println("backfill for db ==", dbInfo.Name.L, dbInfo.ID)
+		for _, tableInfo := range tables {
+			// if err := m.CreateTableName(dbInfo.Name.L, tableInfo.Name.L, tableInfo.ID, dbInfo.ID); err != nil {
+			// 	return errors.Trace(err)
+			// }
+
+			if tableInfo.HasTableNameMetaKey {
+				continue
+			}
+
+			key := TableNameKey(dbInfo.Name.O, tableInfo.Name.O)
+
+			fmt.Println("create table key ===", string(key), "the start ts is", m.StartTS)
+			err = m.txn.Set(key, []byte(strconv.FormatInt(tableInfo.ID, 10)+":"+strconv.FormatInt(dbInfo.ID, 10)))
+			if err != nil {
+				return errors.Trace(err)
+			}
+
+
+			tableInfo.HasTableNameMetaKey = true
+			data, err := json.Marshal(tableInfo)
+			if err != nil {
+				return errors.Trace(err)
+			}
+
+			dbKey := m.dbKey(dbInfo.ID)
+			tableKey := m.tableKey(tableInfo.ID)
+			err = m.txn.HSet(dbKey, tableKey, data)
+			if err != nil {
+				return errors.Trace(err)
+			}
+		}
 	}
 	return nil
 }
@@ -1006,7 +1075,19 @@ func (m *Meta) GetMetasByDBID(dbID int64) ([]structure.HashPair, error) {
 
 // ListTables shows all tables in database.
 func (m *Meta) ListTables(dbID int64) ([]*model.TableInfo, error) {
+	return m.listTables(dbID, false)
+}
+
+func (m *Meta) ListTablesInComplete(dbID int64) ([]*model.TableInfo, error) {
+	return m.listTables(dbID, true)
+}
+
+func (m *Meta) listTables(dbID int64, canSkip bool) ([]*model.TableInfo, error) {
+	start := time.Now()
 	res, err := m.GetMetasByDBID(dbID)
+	logutil.BgLogger().Info("meta data by id takes",
+		zap.Int64("dbName", dbID),
+		zap.Duration("duration", time.Since(start)))
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1017,6 +1098,38 @@ func (m *Meta) ListTables(dbID int64) ([]*model.TableInfo, error) {
 		tableKey := string(r.Field)
 		if !strings.HasPrefix(tableKey, mTablePrefix) {
 			continue
+		}
+
+		if canSkip {
+			// results := gjson.GetManyBytes(r.Value, "ttl_info", "tiflash_replica", "policy_ref_info")
+			// exist := false
+			// for _, res := range results {
+			// 	if res.Exists() {
+			// 		exist = true
+			// 		break
+			// 	}
+			// }
+			// if !exist {
+			// 	continue
+			// } else {
+			// 	fmt.Println("unmarshal error??")
+			// }
+
+			var specialInfo model.TableSpecialAttributeInfo
+			err1 := json.Unmarshal(r.Value, &specialInfo)
+			if err1 == nil {
+				if specialInfo.HasTableNameMetaKey {
+					if specialInfo.TTLInfo == nil &&
+						specialInfo.TiFlashReplica == nil &&
+						specialInfo.PlacementPolicyRef  == nil {
+						// Skip this table
+						// fmt.Println("skip load table ===")
+						continue
+					}
+				}
+			} else {
+				fmt.Println("unmarshal error??")
+			}
 		}
 
 		tbInfo := &model.TableInfo{}
@@ -1551,19 +1664,45 @@ func (m *Meta) SetSchemaDiff(diff *model.SchemaDiff) error {
 }
 
 // TableNameKey constructs the key for table name.
-func (*Meta) TableNameKey(dbName string, tableName string) kv.Key {
+func TableNameKey(dbName string, tableName string) kv.Key {
 	var sb strings.Builder
 	sb.Write(mNames)
 	sb.WriteByte(':')
 	sb.WriteString(strings.ToLower(dbName))
 	sb.Write(mNameSep)
 	sb.WriteString(strings.ToLower(tableName))
-	return kv.Key(sb.String())
+	ret :=  kv.Key(sb.String())
+	fmt.Println("TableNameKey called and the key is:", ret)
+	return ret
+}
+
+
+// GetTableIDByName checks if the table name exists.
+func (m *Meta) GetTableIDByName(db, tbl string) (int64, int64, error) {
+	nameKey := TableNameKey(db, tbl)
+	v, err := m.txn.Get(nameKey)
+	if err != nil {
+		return 0, 0, errors.Trace(err)
+	}
+	if v == nil {
+		return 0, 0, ErrTableNotExists.FastGenByArgs(db, tbl)
+	}
+	tmp := strings.Split(string(v), ":")
+	tableID, err := strconv.ParseInt(tmp[0], 10, 64)
+	if err != nil {
+		return 0, 0, errors.Trace(err)
+	}
+	dbID, err := strconv.ParseInt(tmp[1], 10, 64)
+	if err != nil {
+		return 0, 0, errors.Trace(err)
+	}
+	return tableID, dbID, nil
 }
 
 // CheckTableNameExists checks if the table name exists.
 func (m *Meta) CheckTableNameExists(name []byte) error {
 	v, err := m.txn.Get(name)
+	fmt.Println("In checktablenameexists ... Get!!", v, err)
 	if err == nil && v == nil {
 		err = ErrTableNotExists.FastGenByArgs(string(name))
 	}
@@ -1581,20 +1720,22 @@ func (m *Meta) CheckTableNameNotExists(name []byte) error {
 
 // CreateTableName creates a table name.
 // Used by CreateTable/RenameTable/TruncateTable/RecoverTable/RecoverSchema/CreateView...
-func (m *Meta) CreateTableName(dbName string, tableName string, tableID int64) error {
+func (m *Meta) CreateTableName(dbName string, tableName string, tableID int64, dbID int64) error {
 	// Check if table exists.
-	key := m.TableNameKey(dbName, tableName)
+	key := TableNameKey(dbName, tableName)
 	if err := m.CheckTableNameNotExists(key); err != nil {
 		return errors.Trace(err)
 	}
-	return m.txn.Set(key, []byte(strconv.FormatInt(tableID, 10)))
+	debug.PrintStack()
+	fmt.Println("create table key ===", string(key), "the start ts is", m.StartTS)
+	return m.txn.Set(key, []byte(strconv.FormatInt(tableID, 10)+":"+strconv.FormatInt(dbID, 10)))
 }
 
 // DropTableName drops a table name.
 // Used by DropTable/RenameTable/TruncateTable/DropView...
 func (m *Meta) DropTableName(dbName string, tableName string) error {
 	// Check if table exists.
-	key := m.TableNameKey(dbName, tableName)
+	key := TableNameKey(dbName, tableName)
 	if err := m.CheckTableNameExists(key); err != nil {
 		return errors.Trace(err)
 	}
@@ -1605,7 +1746,7 @@ func (m *Meta) DropTableName(dbName string, tableName string) error {
 // Used by DropDatabase.
 func (m *Meta) DropDatabaseName(dbName string) error {
 	// iterate all tables
-	prefix := m.TableNameKey(dbName, "")
+	prefix := TableNameKey(dbName, "")
 	return m.txn.Iterate(prefix, prefix.PrefixNext(), func(key []byte, _ []byte) error {
 		return m.txn.Clear(key)
 	})

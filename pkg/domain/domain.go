@@ -299,22 +299,28 @@ func (do *Domain) loadInfoSchema(startTS uint64) (infoschema.InfoSchema, bool, i
 		// We can fall back to full load, don't need to return the error.
 		logutil.BgLogger().Error("failed to load schema diff", zap.Error(err))
 	}
+
+	newISBuilder := infoschema.NewBuilder(do, do.sysFacHack, do.infoCache.Data)
 	// full load.
-	schemas, err := do.fetchAllSchemasWithTables(m)
+	start := time.Now()
+	schemas, err := do.fetchAllSchemasWithTables(m, newISBuilder.IsV2())
 	if err != nil {
 		return nil, false, currentSchemaVersion, nil, err
 	}
+	logutil.BgLogger().Info("fetch all schemas takes", zap.Duration("duration", time.Since(start)))
 
+	start = time.Now()
 	policies, err := do.fetchPolicies(m)
 	if err != nil {
 		return nil, false, currentSchemaVersion, nil, err
 	}
+	logutil.BgLogger().Info("fetch policies takes", zap.Duration("duration", time.Since(start)))
 
 	resourceGroups, err := do.fetchResourceGroups(m)
 	if err != nil {
 		return nil, false, currentSchemaVersion, nil, err
 	}
-	newISBuilder, err := infoschema.NewBuilder(do, do.sysFacHack, do.infoCache.Data).InitWithDBInfos(schemas, policies, resourceGroups, neededSchemaVersion)
+	newISBuilder.InitWithDBInfos(schemas, policies, resourceGroups, neededSchemaVersion)
 	if err != nil {
 		return nil, false, currentSchemaVersion, nil, err
 	}
@@ -324,7 +330,9 @@ func (do *Domain) loadInfoSchema(startTS uint64) (infoschema.InfoSchema, bool, i
 		zap.Int64("neededSchemaVersion", neededSchemaVersion),
 		zap.Duration("start time", time.Since(startTime)))
 
+	start = time.Now()
 	is := newISBuilder.Build(startTS)
+	logutil.BgLogger().Info("builder.Build() takes", zap.Duration("duration", time.Since(start)))
 	do.infoCache.Insert(is, schemaTs)
 	return is, false, currentSchemaVersion, nil, nil
 }
@@ -372,7 +380,7 @@ func (*Domain) fetchResourceGroups(m *meta.Meta) ([]*model.ResourceGroupInfo, er
 	return allResourceGroups, nil
 }
 
-func (do *Domain) fetchAllSchemasWithTables(m *meta.Meta) ([]*model.DBInfo, error) {
+func (do *Domain) fetchAllSchemasWithTables(m *meta.Meta, canSkip bool) ([]*model.DBInfo, error) {
 	allSchemas, err := m.ListDatabases()
 	if err != nil {
 		return nil, err
@@ -380,7 +388,7 @@ func (do *Domain) fetchAllSchemasWithTables(m *meta.Meta) ([]*model.DBInfo, erro
 	splittedSchemas := do.splitForConcurrentFetch(allSchemas)
 	doneCh := make(chan error, len(splittedSchemas))
 	for _, schemas := range splittedSchemas {
-		go do.fetchSchemasWithTables(schemas, m, doneCh)
+		go do.fetchSchemasWithTables(schemas, m, canSkip, doneCh)
 	}
 	for range splittedSchemas {
 		err = <-doneCh
@@ -410,13 +418,24 @@ func (*Domain) splitForConcurrentFetch(schemas []*model.DBInfo) [][]*model.DBInf
 	return splitted
 }
 
-func (*Domain) fetchSchemasWithTables(schemas []*model.DBInfo, m *meta.Meta, done chan error) {
+func (*Domain) fetchSchemasWithTables(schemas []*model.DBInfo, m *meta.Meta, canSkip bool, done chan error) {
 	for _, di := range schemas {
 		if di.State != model.StatePublic {
 			// schema is not public, can't be used outside.
 			continue
 		}
-		tables, err := m.ListTables(di.ID)
+		start := time.Now()
+		var tables []*model.TableInfo
+		var err error
+		if canSkip {
+			tables, err = m.ListTablesInComplete(di.ID)
+		} else {
+			tables, err = m.ListTables(di.ID)
+		}
+		logutil.BgLogger().Info("list table takes:",
+			zap.String("dbName", di.Name.L),
+			zap.Int64("dbID", di.ID),
+			zap.Duration("duration", time.Since(start)))
 		if err != nil {
 			done <- err
 			return

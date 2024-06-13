@@ -418,6 +418,7 @@ func createStoreAndDomain(keyspaceName string) (kv.Storage, *domain.Domain) {
 	mppcoordmanager.InstanceMPPCoordinatorManager.Run()
 	// Bootstrap a session to load information schema.
 	dom, err := session.BootstrapSession(storage)
+	// fmt.Println("err is ..", err.Error())
 	terror.MustNil(err)
 	return storage, dom
 }

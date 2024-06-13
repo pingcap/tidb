@@ -1272,7 +1272,7 @@ func checkBootstrapped(s sessiontypes.Session) (bool, error) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
 	//  Check if system db exists.
 	_, err := s.ExecuteInternal(ctx, "USE %n", mysql.SystemDB)
-	if err != nil && infoschema.ErrDatabaseNotExists.NotEqual(err) {
+	if err != nil && terror.ErrorNotEqual(infoschema.ErrDatabaseNotExists, err) {
 		logutil.BgLogger().Fatal("check bootstrap error",
 			zap.Error(err))
 	}

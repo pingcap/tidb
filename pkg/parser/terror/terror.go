@@ -289,8 +289,10 @@ func ErrorEqual(err1, err2 error) bool {
 	te1, ok1 := e1.(*Error)
 	te2, ok2 := e2.(*Error)
 	if ok1 && ok2 {
+		fmt.Println("ok both are Error, now check rfc code ==", te1.RFCCode(), te2.RFCCode)
 		return te1.RFCCode() == te2.RFCCode()
 	}
+	fmt.Println("here error equal??", e1.Error(), e2.Error())
 
 	return e1.Error() == e2.Error()
 }

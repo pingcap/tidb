@@ -15,6 +15,7 @@
 package infoschema
 
 import (
+	"time"
 	"cmp"
 	"context"
 	"fmt"
@@ -654,7 +655,7 @@ func applyCreateTable(b *Builder, m *meta.Meta, dbInfo *model.DBInfo, tableID in
 	if tblInfo == nil {
 		// When we apply an old schema diff, the table may has been dropped already, so we need to fall back to
 		// full load.
-		return nil, ErrTableNotExists.FastGenByArgs(
+		return nil, ErrTableNotExists.GenWithStackByArgs(
 			fmt.Sprintf("(Schema ID %d)", dbInfo.ID),
 			fmt.Sprintf("(Table ID %d)", tableID),
 		)
@@ -779,11 +780,17 @@ func (b *Builder) deleteReferredForeignKeys(dbInfo *model.DBInfo, tableID int64)
 	}
 }
 
+func (b *Builder) IsV2() bool {
+	return b.enableV2
+}
+
 // Build builds and returns the built infoschema.
 func (b *Builder) Build(schemaTS uint64) InfoSchema {
+	start := time.Now()
 	if b.enableV2 {
 		b.infoschemaV2.ts = schemaTS
 		updateInfoSchemaBundles(b)
+		fmt.Println("update bundle takes ==", time.Since(start))
 		return &b.infoschemaV2
 	}
 	updateInfoSchemaBundles(b)
@@ -916,7 +923,16 @@ func (b *Builder) createSchemaTablesForDB(di *model.DBInfo, tableFromMeta tableF
 		dbInfo: di,
 		tables: make(map[string]table.Table, len(di.Tables)),
 	}
+	special := isSpecialDB(di.Name.L)
 	for _, t := range di.Tables {
+		pi := t.GetPartitionInfo()
+		if !special && di.Name.L != "mysql" {
+			if pi == nil && !hasSpecialAttributes(t)  {
+				fmt.Println("skip create table ==", di.Name.L, t.Name.L)
+				continue
+			}
+		}
+
 		allocs := autoid.NewAllocatorsFromTblInfo(b.Requirement, di.ID, t)
 		var tbl table.Table
 		tbl, err := tableFromMeta(allocs, t)

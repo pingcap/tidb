@@ -15,6 +15,7 @@
 package ddl
 
 import (
+	"runtime/debug"
 	"context"
 	"fmt"
 	"math/rand"
@@ -878,6 +879,32 @@ func (w *worker) HandleJobDone(d *ddlCtx, job *model.Job, t *meta.Meta) error {
 	if err != nil {
 		return err
 	}
+
+	kv.RunInNewTxn(d.ctx, d.store, false, func(_ context.Context, txn kv.Transaction) error {
+		debug.PrintStack()
+		key := meta.TableNameKey("db2", "tb8")
+		fmt.Println("============ key ===", string(key), txn.StartTS())
+		v, err := txn.Get(context.Background(), key)
+		if err != nil {
+			m := meta.NewMeta(txn)
+			exist := m.CheckTableNameExists(key)
+
+
+			fmt.Println("............. get key err??", err, "and exist is ---", exist)
+		}
+		if v == nil {
+			fmt.Println("v is nil  err is nil???")
+			return nil
+		} else {
+			tableID, err := strconv.ParseInt(string(v), 10, 64)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			fmt.Println("tableID ....", tableID)
+		}
+		return nil
+	})
+
 	CleanupDDLReorgHandles(job, w.sess)
 	d.notifyJobDone(job.ID)
 	return nil
@@ -930,11 +957,11 @@ func (w *worker) HandleDDLJobTable(d *ddlCtx, job *model.Job) (int64, error) {
 	}
 
 	var t *meta.Meta
-	if variable.EnableFastCreateTable.Load() {
-		t = meta.NewMeta(txn, meta.WithUpdateTableName())
-	} else {
+	// if variable.EnableFastCreateTable.Load() {
+	// 	t = meta.NewMeta(txn, meta.WithUpdateTableName())
+	// } else {
 		t = meta.NewMeta(txn)
-	}
+	// }
 	if job.IsDone() || job.IsRollbackDone() {
 		if job.IsDone() {
 			job.State = model.JobStateSynced
@@ -1010,6 +1037,28 @@ func (w *worker) HandleDDLJobTable(d *ddlCtx, job *model.Job) (int64, error) {
 	// reset the SQL digest to make topsql work right.
 	w.sess.GetSessionVars().StmtCtx.ResetSQLDigest(job.Query)
 	err = w.sess.Commit()
+
+	kv.RunInNewTxn(d.ctx, d.store, false, func(_ context.Context, txn kv.Transaction) error {
+		debug.PrintStack()
+		key := meta.TableNameKey("db2", "tb5")
+		fmt.Println("key ===", string(key), txn.StartTS())
+		v, err := txn.Get(context.Background(), key)
+		if err != nil {
+			fmt.Println("............. get key err??", err)
+		}
+		if v == nil {
+			fmt.Println("v is nil  err is nil???")
+			return nil
+		} else {
+			tableID, err := strconv.ParseInt(string(v), 10, 64)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			fmt.Println("tableID ....", tableID)
+		}
+		return nil
+	})
+
 	d.unlockSchemaVersion(job.ID)
 	if err != nil {
 		return 0, err
@@ -1058,7 +1107,8 @@ func (w *worker) HandleLocalDDLJob(d *ddlCtx, job *model.Job) (err error) {
 		return err
 	}
 
-	t := meta.NewMeta(txn, meta.WithUpdateTableName())
+	// t := meta.NewMeta(txn, meta.WithUpdateTableName())
+	t := meta.NewMeta(txn)
 	d.mu.RLock()
 	d.mu.hook.OnJobRunBefore(job)
 	d.mu.RUnlock()

@@ -546,12 +546,22 @@ type TableInfo struct {
 	Revision uint64 `json:"revision"`
 
 	DBID int64 `json:"-"`
+
+	// When @@tidb_enable_fast_create_table is on, then table name to table ID key is created.
+	HasTableNameMetaKey bool `json:"has_table_name_meta_key"`
 }
 
 // TableNameInfo provides meta data describing a table name info.
 type TableNameInfo struct {
 	ID   int64 `json:"id"`
 	Name CIStr `json:"name"`
+}
+
+type TableSpecialAttributeInfo struct {
+	TTLInfo *TTLInfo `json:"ttl_info"`
+	TiFlashReplica *TiFlashReplicaInfo `json:"tiflash_replica"`
+	PlacementPolicyRef   *PolicyRefInfo `json:"policy_ref_info"`
+	HasTableNameMetaKey bool `json:"has_table_name_meta_key"`
 }
 
 // SepAutoInc decides whether _rowid and auto_increment id use separate allocator.
