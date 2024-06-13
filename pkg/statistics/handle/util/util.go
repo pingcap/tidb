@@ -105,6 +105,24 @@ func CallWithSCtx(pool SessionPool, f func(sctx sessionctx.Context) error, flags
 
 // UpdateSCtxVarsForStats updates all necessary variables that may affect the behavior of statistics.
 func UpdateSCtxVarsForStats(sctx sessionctx.Context) error {
+	// async merge global stats
+	enableAsyncMergeGlobalStats, err := sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBEnableAsyncMergeGlobalStats)
+	if err != nil {
+		return err
+	}
+	sctx.GetSessionVars().EnableAsyncMergeGlobalStats = variable.TiDBOptOn(enableAsyncMergeGlobalStats)
+
+	// concurrency of save stats to storage
+	analyzePartitionConcurrency, err := sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBAnalyzePartitionConcurrency)
+	if err != nil {
+		return err
+	}
+	c, err := strconv.ParseInt(analyzePartitionConcurrency, 10, 64)
+	if err != nil {
+		return err
+	}
+	sctx.GetSessionVars().AnalyzePartitionConcurrency = int(c)
+
 	// analyzer version
 	verInString, err := sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBAnalyzeVersion)
 	if err != nil {

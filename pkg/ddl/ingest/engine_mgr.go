@@ -44,8 +44,7 @@ func (bc *litBackendCtx) Register(indexIDs []int64, uniques []bool, tableName st
 
 	bc.memRoot.RefreshConsumption()
 	numIdx := int64(len(indexIDs))
-	engineCacheSize := int64(bc.cfg.TikvImporter.EngineMemCacheSize)
-	ok := bc.memRoot.CheckConsume(numIdx * (structSizeEngineInfo + engineCacheSize))
+	ok := bc.memRoot.CheckConsume(numIdx * structSizeEngineInfo)
 	if !ok {
 		return nil, genEngineAllocMemFailedErr(bc.ctx, bc.memRoot, bc.jobID, indexIDs)
 	}
@@ -91,7 +90,7 @@ func (bc *litBackendCtx) Register(indexIDs []int64, uniques []bool, tableName st
 		ret = append(ret, ei)
 		bc.engines[indexID] = ei
 	}
-	bc.memRoot.Consume(numIdx * (structSizeEngineInfo + engineCacheSize))
+	bc.memRoot.Consume(numIdx * structSizeEngineInfo)
 
 	logutil.Logger(bc.ctx).Info(LitInfoOpenEngine, zap.Int64("job ID", bc.jobID),
 		zap.Int64s("index IDs", indexIDs),
@@ -114,8 +113,7 @@ func (bc *litBackendCtx) UnregisterEngines() {
 	}
 	bc.engines = make(map[int64]*engineInfo, 10)
 
-	engineCacheSize := int64(bc.cfg.TikvImporter.EngineMemCacheSize)
-	bc.memRoot.Release(numIdx * (structSizeEngineInfo + engineCacheSize))
+	bc.memRoot.Release(numIdx * structSizeEngineInfo)
 }
 
 // ImportStarted implements BackendCtx.

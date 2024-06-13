@@ -446,13 +446,13 @@ func (b *ingestBackfillScheduler) setupWorkers() error {
 	}
 
 	b.copReqSenderPool = copReqSenderPool
-	readerCnt, writerCnt := b.expectedWorkerSize()
+	readerCnt, writerCnt := b.expectedWorkerCnt()
 	writerPool := workerpool.NewWorkerPool[IndexRecordChunk](
 		"ingest_writer",
 		poolutil.DDL,
 		writerCnt,
 		func() workerpool.Worker[IndexRecordChunk, workerpool.None] {
-			return b.createWorker(indexIDs, engines)
+			return b.createWorker(indexIDs, engines, writerCnt)
 		},
 	)
 	writerPool.Start(b.ctx)
@@ -516,7 +516,7 @@ func (b *ingestBackfillScheduler) currentWorkerSize() int {
 }
 
 func (b *ingestBackfillScheduler) adjustWorkerSize() error {
-	readerCnt, writer := b.expectedWorkerSize()
+	readerCnt, writer := b.expectedWorkerCnt()
 	b.writerPool.Tune(int32(writer))
 	b.copReqSenderPool.adjustSize(readerCnt)
 	return nil
@@ -525,12 +525,13 @@ func (b *ingestBackfillScheduler) adjustWorkerSize() error {
 func (b *ingestBackfillScheduler) createWorker(
 	indexIDs []int64,
 	engines []ingest.Engine,
+	writerCnt int,
 ) workerpool.Worker[IndexRecordChunk, workerpool.None] {
 	reorgInfo := b.reorgInfo
 	job := reorgInfo.Job
 	worker, err := newAddIndexIngestWorker(
 		b.ctx, b.tbl, reorgInfo, engines, b.resultCh, job.ID,
-		indexIDs, b.writerMaxID,
+		indexIDs, b.writerMaxID, writerCnt,
 		b.copReqSenderPool, b.checkpointMgr)
 	if err != nil {
 		// Return an error only if it is the first worker.
@@ -567,7 +568,7 @@ func (b *ingestBackfillScheduler) createCopReqSenderPool() (*copReqSenderPool, e
 	return newCopReqSenderPool(b.ctx, copCtx, ri.d.store, b.taskCh, b.sessPool, b.checkpointMgr), nil
 }
 
-func (b *ingestBackfillScheduler) expectedWorkerSize() (readerSize int, writerSize int) {
+func (b *ingestBackfillScheduler) expectedWorkerCnt() (readerCnt int, writerCnt int) {
 	return expectedIngestWorkerCnt(int(variable.GetDDLReorgWorkerCounter()), b.avgRowSize)
 }
 

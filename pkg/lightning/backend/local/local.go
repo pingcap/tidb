@@ -408,7 +408,12 @@ type BackendConfig struct {
 	CheckpointEnabled      bool
 	// memory table size of pebble. since pebble can have multiple mem tables, the max memory used is
 	// MemTableSize * MemTableStopWritesThreshold, see pebble.Options for more details.
-	MemTableSize            int
+	MemTableSize int
+	// LocalWriterMemCacheSize is the memory threshold for one local writer of
+	// engines. If the KV payload size exceeds LocalWriterMemCacheSize, local writer
+	// will flush them into the engine.
+	//
+	// It has lower priority than LocalWriterConfig.Local.MemCacheSize.
 	LocalWriterMemCacheSize int64
 	// whether check TiKV capacity before write & ingest.
 	ShouldCheckTiKV    bool
@@ -1631,12 +1636,13 @@ func openLocalWriter(cfg *backend.LocalWriterConfig, engine *Engine, tikvCodec t
 		engine:             engine,
 		memtableSizeLimit:  cacheSize,
 		kvBuffer:           kvBuffer,
-		isKVSorted:         cfg.IsKVSorted,
+		isKVSorted:         cfg.Local.IsKVSorted,
 		isWriteBatchSorted: true,
 		tikvCodec:          tikvCodec,
 	}
 	// pre-allocate a long enough buffer to avoid a lot of runtime.growslice
 	// this can help save about 3% of CPU.
+	// TODO(lance6716): split the cacheSize to take writeBatch into consideration
 	if !w.isKVSorted {
 		w.writeBatch = make([]common.KvPair, units.MiB)
 	}

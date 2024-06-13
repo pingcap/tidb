@@ -357,7 +357,9 @@ func testLocalWriter(t *testing.T, needSort bool, partitialSort bool) {
 	pool := membuf.NewPool()
 	defer pool.Destroy()
 	kvBuffer := pool.NewBuffer()
-	w, err := openLocalWriter(&backend.LocalWriterConfig{IsKVSorted: sorted}, f, keyspace.CodecV1, 1024, kvBuffer)
+	writerCfg := &backend.LocalWriterConfig{}
+	writerCfg.Local.IsKVSorted = sorted
+	w, err := openLocalWriter(writerCfg, f, keyspace.CodecV1, 1024, kvBuffer)
 	require.NoError(t, err)
 
 	ctx := context.Background()

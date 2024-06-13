@@ -3893,6 +3893,9 @@ func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt *ast
 	}
 
 	if len(validSpecs) > 1 {
+		// after MultiSchemaInfo is set, DoDDLJob will collect all jobs into
+		// MultiSchemaInfo and skip running them. Then we will run them in
+		// d.MultiSchemaChange all at once.
 		sctx.GetSessionVars().StmtCtx.MultiSchemaInfo = model.NewMultiSchemaInfo()
 	}
 	for _, spec := range validSpecs {
@@ -4117,7 +4120,9 @@ func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt *ast
 	}
 
 	if sctx.GetSessionVars().StmtCtx.MultiSchemaInfo != nil {
-		err = d.MultiSchemaChange(sctx, ident)
+		info := sctx.GetSessionVars().StmtCtx.MultiSchemaInfo
+		sctx.GetSessionVars().StmtCtx.MultiSchemaInfo = nil
+		err = d.MultiSchemaChange(sctx, ident, info)
 		if err != nil {
 			return errors.Trace(err)
 		}

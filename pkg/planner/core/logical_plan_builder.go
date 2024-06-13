@@ -6219,16 +6219,6 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, ds *ast.DeleteStmt) (base
 	}.Init(b.ctx)
 
 	del.names = p.OutputNames()
-	del.SelectPlan, _, err = DoOptimize(ctx, b.ctx, b.optFlag, p)
-	if err != nil {
-		return nil, err
-	}
-
-	tblID2Handle, err := resolveIndicesForTblID2Handle(handleColsMap, del.SelectPlan.Schema())
-	if err != nil {
-		return nil, err
-	}
-
 	// Collect visitInfo.
 	if ds.Tables != nil {
 		// Delete a, b from a, b, c, d... add a and b.
@@ -6294,6 +6284,16 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, ds *ast.DeleteStmt) (base
 			}
 			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.DeletePriv, dbName, v.Name.L, "", authErr)
 		}
+	}
+
+	del.SelectPlan, _, err = DoOptimize(ctx, b.ctx, b.optFlag, p)
+	if err != nil {
+		return nil, err
+	}
+
+	tblID2Handle, err := resolveIndicesForTblID2Handle(handleColsMap, del.SelectPlan.Schema())
+	if err != nil {
+		return nil, err
 	}
 	if del.IsMultiTable {
 		// tblID2TableName is the table map value is an array which contains table aliases.

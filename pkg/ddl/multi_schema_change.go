@@ -25,8 +25,8 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 )
 
-func (d *ddl) MultiSchemaChange(ctx sessionctx.Context, ti ast.Ident) error {
-	subJobs := ctx.GetSessionVars().StmtCtx.MultiSchemaInfo.SubJobs
+func (d *ddl) MultiSchemaChange(ctx sessionctx.Context, ti ast.Ident, info *model.MultiSchemaInfo) error {
+	subJobs := info.SubJobs
 	if len(subJobs) == 0 {
 		return nil
 	}
@@ -43,7 +43,7 @@ func (d *ddl) MultiSchemaChange(ctx sessionctx.Context, ti ast.Ident) error {
 		Type:            model.ActionMultiSchemaChange,
 		BinlogInfo:      &model.HistoryInfo{},
 		Args:            nil,
-		MultiSchemaInfo: ctx.GetSessionVars().StmtCtx.MultiSchemaInfo,
+		MultiSchemaInfo: info,
 		ReorgMeta:       nil,
 		CDCWriteSource:  ctx.GetSessionVars().CDCWriteSource,
 		SQLMode:         ctx.GetSessionVars().SQLMode,
@@ -57,12 +57,11 @@ func (d *ddl) MultiSchemaChange(ctx sessionctx.Context, ti ast.Ident) error {
 		job.ReorgMeta = NewDDLReorgMeta(ctx)
 	}
 
-	err = checkMultiSchemaInfo(ctx.GetSessionVars().StmtCtx.MultiSchemaInfo, t)
+	err = checkMultiSchemaInfo(info, t)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	mergeAddIndex(ctx.GetSessionVars().StmtCtx.MultiSchemaInfo)
-	ctx.GetSessionVars().StmtCtx.MultiSchemaInfo = nil
+	mergeAddIndex(info)
 	err = d.DoDDLJob(ctx, job)
 	return d.callHookOnChanged(job, err)
 }

@@ -50,7 +50,6 @@ const (
 	LitInfoCreateBackend    string = "create one backend for an DDL job"
 	LitInfoCloseBackend     string = "close one backend for DDL job"
 	LitInfoOpenEngine       string = "open an engine for index reorg task"
-	LitInfoAddWriter        string = "reuse engine and add a writer for index reorg task"
 	LitInfoCreateWrite      string = "create one local writer for index reorg task"
 	LitInfoCloseEngine      string = "flush all writer and get closed engine"
 	LitInfoRemoteDupCheck   string = "start remote duplicate checking"
