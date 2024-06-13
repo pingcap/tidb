@@ -355,7 +355,7 @@ func testJoinProbe(t *testing.T, withSel bool, leftKeyIndex []int, rightKeyIndex
 		err := joinProbe.SetChunkForProbe(probeChunk)
 		require.NoError(t, err, "unexpected error during SetChunkForProbe")
 		for !joinProbe.IsCurrentChunkProbeDone() {
-			_, joinResult = joinProbe.Probe(joinResult, sqlkiller.SQLKiller{})
+			_, joinResult = joinProbe.Probe(joinResult, &sqlkiller.SQLKiller{})
 			require.NoError(t, joinResult.err, "unexpected error during join probe")
 			if joinResult.chk.IsFull() {
 				resultChunks = append(resultChunks, joinResult.chk)
@@ -371,7 +371,7 @@ func testJoinProbe(t *testing.T, withSel bool, leftKeyIndex []int, rightKeyIndex
 		for _, prober := range joinProbes {
 			prober.InitForScanRowTable()
 			for !prober.IsScanRowTableDone() {
-				joinResult = prober.ScanRowTable(joinResult, sqlkiller.SQLKiller{})
+				joinResult = prober.ScanRowTable(joinResult, &sqlkiller.SQLKiller{})
 				require.NoError(t, joinResult.err, "unexpected error during scan row table")
 				if joinResult.chk.IsFull() {
 					resultChunks = append(resultChunks, joinResult.chk)

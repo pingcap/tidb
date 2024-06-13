@@ -26,7 +26,7 @@ type innerJoinProbe struct {
 	baseJoinProbe
 }
 
-func (j *innerJoinProbe) Probe(joinResult *hashjoinWorkerResult, sqlKiller sqlkiller.SQLKiller) (ok bool, _ *hashjoinWorkerResult) {
+func (j *innerJoinProbe) Probe(joinResult *hashjoinWorkerResult, sqlKiller *sqlkiller.SQLKiller) (ok bool, _ *hashjoinWorkerResult) {
 	if joinResult.chk.IsFull() {
 		return true, joinResult
 	}
@@ -86,7 +86,7 @@ func (*innerJoinProbe) NeedScanRowTable() bool {
 	return false
 }
 
-func (*innerJoinProbe) ScanRowTable(*hashjoinWorkerResult, sqlkiller.SQLKiller) *hashjoinWorkerResult {
+func (*innerJoinProbe) ScanRowTable(*hashjoinWorkerResult, *sqlkiller.SQLKiller) *hashjoinWorkerResult {
 	panic("should not reach here")
 }
 
