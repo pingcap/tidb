@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/memory"
 	"go.uber.org/zap"
 )
 
@@ -350,10 +351,13 @@ func (h *Handle) initStatsHistogramsByPaging(is infoschema.InfoSchema, cache sta
 	return nil
 }
 
-func (h *Handle) initStatsHistogramsConcurrency(is infoschema.InfoSchema, cache statstypes.StatsCache) error {
+func (h *Handle) initStatsHistogramsConcurrency(is infoschema.InfoSchema, cache statstypes.StatsCache, totalMemory uint64) error {
 	var maxTid = maxTidRecord.tid.Load()
 	tid := int64(0)
 	ls := initstats.NewRangeWorker("histogram", func(task initstats.Task) error {
+		if isFullCache(cache, totalMemory) {
+			return nil
+		}
 		return h.initStatsHistogramsByPaging(is, cache, task)
 	}, uint64(maxTid), uint64(initStatsStep))
 	ls.LoadStats()
@@ -363,6 +367,9 @@ func (h *Handle) initStatsHistogramsConcurrency(is infoschema.InfoSchema, cache 
 			EndTid:   tid + initStatsStep,
 		})
 		tid += initStatsStep
+		if isFullCache(cache, totalMemory) {
+			break
+		}
 	}
 	ls.Wait()
 	return nil
@@ -460,10 +467,16 @@ func (h *Handle) initStatsTopNByPaging(cache statstypes.StatsCache, task initsta
 	return nil
 }
 
-func (h *Handle) initStatsTopNConcurrency(cache statstypes.StatsCache) error {
+func (h *Handle) initStatsTopNConcurrency(cache statstypes.StatsCache, totalMemory uint64) error {
+	if isFullCache(cache, totalMemory) {
+		return nil
+	}
 	var maxTid = maxTidRecord.tid.Load()
 	tid := int64(0)
 	ls := initstats.NewRangeWorker("TopN", func(task initstats.Task) error {
+		if isFullCache(cache, totalMemory) {
+			return nil
+		}
 		return h.initStatsTopNByPaging(cache, task)
 	}, uint64(maxTid), uint64(initStatsStep))
 	ls.LoadStats()
@@ -473,6 +486,9 @@ func (h *Handle) initStatsTopNConcurrency(cache statstypes.StatsCache) error {
 			EndTid:   tid + initStatsStep,
 		})
 		tid += initStatsStep
+		if isFullCache(cache, totalMemory) {
+			break
+		}
 	}
 	ls.Wait()
 	return nil
@@ -584,9 +600,12 @@ func (*Handle) initStatsBuckets4Chunk(cache statstypes.StatsCache, iter *chunk.I
 	}
 }
 
-func (h *Handle) initStatsBuckets(cache statstypes.StatsCache) error {
+func (h *Handle) initStatsBuckets(cache statstypes.StatsCache, totalMemory uint64) error {
+	if isFullCache(cache, totalMemory) {
+		return nil
+	}
 	if config.GetGlobalConfig().Performance.ConcurrentlyInitStats {
-		err := h.initStatsBucketsConcurrency(cache)
+		err := h.initStatsBucketsConcurrency(cache, totalMemory)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -663,10 +682,16 @@ func (h *Handle) initStatsBucketsByPaging(cache statstypes.StatsCache, task init
 	return nil
 }
 
-func (h *Handle) initStatsBucketsConcurrency(cache statstypes.StatsCache) error {
+func (h *Handle) initStatsBucketsConcurrency(cache statstypes.StatsCache, totalMemory uint64) error {
+	if isFullCache(cache, totalMemory) {
+		return nil
+	}
 	var maxTid = maxTidRecord.tid.Load()
 	tid := int64(0)
 	ls := initstats.NewRangeWorker("bucket", func(task initstats.Task) error {
+		if isFullCache(cache, totalMemory) {
+			return nil
+		}
 		return h.initStatsBucketsByPaging(cache, task)
 	}, uint64(maxTid), uint64(initStatsStep))
 	ls.LoadStats()
@@ -676,6 +701,9 @@ func (h *Handle) initStatsBucketsConcurrency(cache statstypes.StatsCache) error 
 			EndTid:   tid + initStatsStep,
 		})
 		tid += initStatsStep
+		if isFullCache(cache, totalMemory) {
+			break
+		}
 	}
 	ls.Wait()
 	return nil
@@ -715,6 +743,10 @@ func (h *Handle) InitStatsLite(is infoschema.InfoSchema) (err error) {
 // 1. Basic stats meta data is loaded.(count, modify count, etc.)
 // 2. Column/index stats are loaded. (histogram, topn, buckets, FMSketch)
 func (h *Handle) InitStats(is infoschema.InfoSchema) (err error) {
+	totalMemory, err := memory.MemTotal()
+	if err != nil {
+		return err
+	}
 	loadFMSketch := config.GetGlobalConfig().Performance.EnableLoadFMSketch
 	defer func() {
 		_, err1 := util.Exec(h.initStatsCtx, "commit")
@@ -733,7 +765,7 @@ func (h *Handle) InitStats(is infoschema.InfoSchema) (err error) {
 	}
 	statslogutil.StatsLogger().Info("complete to load the meta")
 	if config.GetGlobalConfig().Performance.ConcurrentlyInitStats {
-		err = h.initStatsHistogramsConcurrency(is, cache)
+		err = h.initStatsHistogramsConcurrency(is, cache, totalMemory)
 	} else {
 		err = h.initStatsHistograms(is, cache)
 	}
@@ -742,7 +774,7 @@ func (h *Handle) InitStats(is infoschema.InfoSchema) (err error) {
 		return errors.Trace(err)
 	}
 	if config.GetGlobalConfig().Performance.ConcurrentlyInitStats {
-		err = h.initStatsTopNConcurrency(cache)
+		err = h.initStatsTopNConcurrency(cache, totalMemory)
 	} else {
 		err = h.initStatsTopN(cache)
 	}
@@ -757,7 +789,7 @@ func (h *Handle) InitStats(is infoschema.InfoSchema) (err error) {
 		}
 		statslogutil.StatsLogger().Info("complete to load the FM Sketch")
 	}
-	err = h.initStatsBuckets(cache)
+	err = h.initStatsBuckets(cache, totalMemory)
 	statslogutil.StatsLogger().Info("complete to load the bucket")
 	if err != nil {
 		return errors.Trace(err)
@@ -773,4 +805,11 @@ func (h *Handle) InitStats(is infoschema.InfoSchema) (err error) {
 	}
 	h.Replace(cache)
 	return nil
+}
+
+func isFullCache(cache statstypes.StatsCache, total uint64) bool {
+	if uint64(cache.MemConsumed()) > total/3 {
+		return true
+	}
+	return false
 }
