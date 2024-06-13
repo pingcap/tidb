@@ -86,10 +86,5 @@ func EstimateBucketMemoryUsage[K comparable, V any]() uint64 {
 
 // GetBytesFromPtr return a bytes array from the given ptr and length
 func GetBytesFromPtr(ptr unsafe.Pointer, length int) []byte {
-	var sl = struct {
-		addr   unsafe.Pointer
-		length int
-		cap    int
-	}{ptr, length, length}
-	return *(*[]byte)(unsafe.Pointer(&sl))
+	return unsafe.Slice((*byte)(ptr), length)
 }
