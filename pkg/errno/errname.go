@@ -926,6 +926,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrDependentByFunctionalIndex:                            mysql.Message("Column '%s' has an expression index dependency and cannot be dropped or renamed", nil),
 	ErrDependentByPartitionFunctional:                        mysql.Message("Column '%s' has a partitioning function dependency and cannot be dropped or renamed", nil),
 	ErrCannotConvertString:                                   mysql.Message("Cannot convert string '%.64s' from %s to %s", nil),
+	ErrInvalidJSONType:                                       mysql.Message("Invalid JSON type in argument %d to function %s; an %s is required.", nil),
 	ErrInvalidJSONValueForFuncIndex:                          mysql.Message("Invalid JSON value for CAST for expression index '%s'", nil),
 	ErrJSONValueOutOfRangeForFuncIndex:                       mysql.Message("Out of range JSON value for CAST for expression index '%s'", nil),
 	ErrFunctionalIndexDataIsTooLong:                          mysql.Message("Data too long for expression index '%s'", nil),

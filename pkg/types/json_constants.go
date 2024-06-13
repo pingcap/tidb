@@ -220,6 +220,8 @@ const (
 var (
 	// ErrInvalidJSONText means invalid JSON text.
 	ErrInvalidJSONText = dbterror.ClassJSON.NewStd(mysql.ErrInvalidJSONText)
+	// ErrInvalidJSONType means invalid JSON type.
+	ErrInvalidJSONType = dbterror.ClassJSON.NewStd(mysql.ErrInvalidJSONType)
 	// ErrInvalidJSONTextInParam means invalid JSON text in arguments.
 	ErrInvalidJSONTextInParam = dbterror.ClassJSON.NewStd(mysql.ErrInvalidJSONTextInParam)
 	// ErrInvalidJSONPath means invalid JSON path.

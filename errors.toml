@@ -2041,6 +2041,11 @@ error = '''
 Invalid JSON text: %-.192s
 '''
 
+["json:3141"]
+error = '''
+Invalid JSON text in argument %d to function %s: "%s" at position %d.
+'''
+
 ["json:3143"]
 error = '''
 Invalid JSON path expression. The error is around character position %d.
@@ -2074,6 +2079,11 @@ JSON documents may not contain NULL member names.
 ["json:3165"]
 error = '''
 A path expression is not a path to a cell in an array.
+'''
+
+["json:3853"]
+error = '''
+Invalid JSON type in argument %d to function %s; an %s is required.
 '''
 
 ["json:8067"]

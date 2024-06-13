@@ -955,6 +955,7 @@ var MySQLErrName = map[uint16]*ErrMessage{
 	ErrFKIncompatibleColumns:                                 Message("Referencing column '%s' and referenced column '%s' in foreign key constraint '%s' are incompatible.", nil),
 	ErrFunctionalIndexRowValueIsNotAllowed:                   Message("Expression of functional index '%s' cannot refer to a row value", nil),
 	ErrDependentByFunctionalIndex:                            Message("Column '%s' has a functional index dependency and cannot be dropped or renamed", nil),
+	ErrInvalidJSONType:                                       Message("Invalid JSON type in argument %d to function %s; an %s is required.", nil),
 	ErrInvalidJsonValueForFuncIndex:                          Message("Invalid JSON value for CAST for functional index '%s'", nil),
 	ErrJsonValueOutOfRangeForFuncIndex:                       Message("Out of range JSON value for CAST for functional index '%s'", nil),
 	ErrFunctionalIndexDataIsTooLong:                          Message("Data too long for functional index '%s'", nil),

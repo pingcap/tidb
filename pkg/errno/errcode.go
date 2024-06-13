@@ -930,6 +930,7 @@ const (
 	ErrCheckConstraintDupName                                = 3822
 	ErrCheckConstraintClauseUsingFKReferActionColumn         = 3823
 	ErrDependentByFunctionalIndex                            = 3837
+	ErrInvalidJSONType                                       = 3853
 	ErrCannotConvertString                                   = 3854
 	ErrDependentByPartitionFunctional                        = 3855
 	ErrInvalidJSONValueForFuncIndex                          = 3903
