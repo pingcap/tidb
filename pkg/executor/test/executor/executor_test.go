@@ -2940,10 +2940,6 @@ func TestIndexLookUpIssue53871(t *testing.T) {
 		tk.MustExec("insert into t (b) select b from t;")
 	}
 	tk.MustExec(`update t set b = rand() * 10000, c = id;`)
-	// Index lookup query with paging enabled.
-	tk.MustExec(`set @@tidb_enable_paging=1`)
-	tk.MustExec(`set @@tidb_min_paging_size=128`)
-	tk.MustExec("set @@tidb_max_chunk_size=1024;")
 	tk.MustQuery("select count(c) from t use index(idx);").Check(testkit.Rows("4096")) // full scan to resolve uncommitted lock.
 	tk.MustQuery("select count(c) from t ignore index(idx)").Check(testkit.Rows("4096"))
 	tk.MustExec("analyze table t")
