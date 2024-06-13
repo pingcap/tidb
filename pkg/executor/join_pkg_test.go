@@ -29,7 +29,7 @@ import (
 func TestHashJoinV2UnderApply(t *testing.T) {
 	colTypes := []*types.FieldType{
 		types.NewFieldType(mysql.TypeLonglong),
-		types.NewFieldType(mysql.TypeDouble),
+		types.NewFieldType(mysql.TypeLonglong),
 	}
 	casTest := defaultHashJoinTestCase(colTypes, 0, false)
 	opt1 := testutil.MockDataSourceParameters{
@@ -61,21 +61,20 @@ func TestHashJoinV2UnderApply(t *testing.T) {
 		chk := exec.NewFirstChunk(executor)
 		err := executor.Open(ctx)
 		require.NoError(t, err)
+		rows := 0
 		for {
 			err = executor.Next(ctx, chk)
 			require.NoError(t, err)
 			if chk.NumRows() == 0 {
 				break
 			}
+			rows += chk.NumRows()
 		}
+		require.Equal(t, true, rows >= opt1.Rows)
 		err = executor.Close()
 		require.NoError(t, err)
-		newDataSource1 := testutil.BuildMockDataSource(opt1)
-		newDataSource2 := testutil.BuildMockDataSource(opt2)
-		newDataSource1.PrepareChunks()
-		newDataSource2.PrepareChunks()
-		executor.SetChildren(0, newDataSource1)
-		executor.SetChildren(1, newDataSource2)
+		dataSource1.PrepareChunks()
+		dataSource2.PrepareChunks()
 	}
 }
 
