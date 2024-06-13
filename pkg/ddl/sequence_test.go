@@ -96,6 +96,7 @@ func TestSequenceFunction(t *testing.T) {
 	session.SetSchemaLease(600 * time.Millisecond)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("create table t(a int)")
 	tk.MustExec("drop sequence if exists seq")
 	tk.MustExec("drop sequence if exists seq1")
 	tk.MustExec("create sequence seq")

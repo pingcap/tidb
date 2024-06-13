@@ -1134,17 +1134,19 @@ func (m *Meta) ListTableName2TableID(dbID int64) (map[string]int, error) {
 			continue
 		}
 
-		idRegex := regexp.MustCompile(`"id": (\d+)`)
-		nameLRegex := regexp.MustCompile(`"L": "([^"]+)"`)
+		idRegex := regexp.MustCompile(`"id":(\d+)`)
+		nameLRegex := regexp.MustCompile(`"L":"([^"]+)"`)
+
+		println(string(hack.String(r.Value)))
 
 		idMatch := idRegex.FindStringSubmatch(string(hack.String(r.Value)))
 
 		nameLMatch := nameLRegex.FindStringSubmatch(string(hack.String(r.Value)))
-		id, err := strconv.Atoi(idMatch[0])
+		id, err := strconv.Atoi(idMatch[1])
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		ress[nameLMatch[0]] = id
+		ress[nameLMatch[1]] = id
 	}
 
 	logutil.BgLogger().Info("ListTableName2TableID", zap.Duration("time", time.Since(start)), zap.Int("size", len(ress)))
