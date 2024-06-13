@@ -37,6 +37,10 @@ func (j *innerJoinProbe) Probe(joinResult *hashjoinWorkerResult, sqlKiller *sqlk
 		return false, joinResult
 	}
 	meta := j.ctx.hashTableMeta
+	isInCompleteChunk := joinedChk.IsInCompleteChunk()
+	// always set in complete chunk during probe
+	joinedChk.SetInCompleteChunk(true)
+	defer joinedChk.SetInCompleteChunk(isInCompleteChunk)
 
 	for remainCap > 0 && j.currentProbeRow < j.chunkRows {
 		if j.matchedRowsHeaders[j.currentProbeRow] != nil {

@@ -321,6 +321,10 @@ func (j *leftOuterJoinProbe) Probe(joinResult *hashjoinWorkerResult, sqlKiller *
 		joinResult.err = err
 		return false, joinResult
 	}
+	isInCompleteChunk := joinedChk.IsInCompleteChunk()
+	// always set in complete chunk during probe
+	joinedChk.SetInCompleteChunk(true)
+	defer joinedChk.SetInCompleteChunk(isInCompleteChunk)
 	if j.rightAsBuildSide {
 		err = j.probeForRightBuild(joinResult.chk, joinedChk, remainCap, sqlKiller)
 	} else {
