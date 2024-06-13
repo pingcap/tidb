@@ -19,11 +19,11 @@ import (
 	"testing"
 	"unsafe"
 
+	"github.com/pingcap/tidb/pkg/executor/internal/testutil"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
-	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 )
@@ -73,7 +73,7 @@ func createRowTable(rows int) (*rowTable, error) {
 	}
 
 	partitionNumber := 1
-	chk := chunk.GenRandomChunks(buildTypes, rows)
+	chk := testutil.GenRandomChunks(buildTypes, rows)
 	hashJoinCtx := &HashJoinCtxV2{
 		PartitionNumber: partitionNumber,
 		hashTableMeta:   meta,
