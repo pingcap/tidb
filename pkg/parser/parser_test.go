@@ -6886,7 +6886,7 @@ func TestBRIE(t *testing.T) {
 		{"BACKUP DATABASE *, a TO 'noop://'", false, ""},
 		{"BACKUP DATABASE a, * TO 'noop://'", false, ""},
 		{"BACKUP DATABASE TO 'noop://'", false, ""},
-		
+
 		{"BACKUP TABLE a TO 'noop://' checksum_concurrency 4 compression_level 4 ignore_stats 1 compression_type 'lz4'", true, "BACKUP TABLE `a` TO 'noop://' CHECKSUM_CONCURRENCY = 4 COMPRESSION_LEVEL = 4 IGNORE_STATS = 1 COMPRESSION_TYPE = 'lz4'"},
 		{"RESTORE TABLE a FROM 'noop://' checksum_concurrency 4 wait_tiflash_ready 1 with_sys_table 1", true, "RESTORE TABLE `a` FROM 'noop://' CHECKSUM_CONCURRENCY = 4 WAIT_TIFLASH_READY = 1 WITH_SYS_TABLE = 1"},
 		{"BACKUP TABLE a.b TO 'noop://'", true, "BACKUP TABLE `a`.`b` TO 'noop://'"},
