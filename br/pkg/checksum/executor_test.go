@@ -5,7 +5,6 @@ package checksum_test
 import (
 	"context"
 	"math"
-	"strings"
 	"testing"
 
 	"github.com/pingcap/failpoint"
@@ -304,12 +303,20 @@ func BenchmarkDecodeTableInfo(b *testing.B) {
 	value := p.Get("partition")
 	value = p.Get("tiflash_replica")
 	value.Exists()
+	//idPattern := `"L":\s*"([^"]+)"`
+	//idRegex := regexp.MustCompile(idPattern)
 
 	//emptyRegex := regexp.MustCompile(`\"partition\": {"`)
 
 	//var m model.TableInfo
 	for i := 0; i < b.N; i++ {
-		strings.Contains(rawJson, "\"partition\": {")
+		//nameLMatches := idRegex.FindStringSubmatch(rawJson)
+		//if len(nameLMatches) > 1 {
+		//	nameL := nameLMatches[1]
+		//	//fmt.Println("Name.L:", nameL)
+		//}
+
+		//strings.Contains(rawJson, "\"partition\": {")
 		//p := gjson.Parse(string(hack.String(rawJson)))
 		//value := gjson.Get(string(hack.String(rawJson)), "[partition, tiflash_replica, ttl_info]")
 		//value = p.Get("tiflash_replica")

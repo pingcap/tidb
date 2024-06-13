@@ -19,9 +19,11 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 	"math"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -1109,6 +1111,52 @@ func (m *Meta) ListSimpleTablesWithoutDecode(dbID int64) ([]*model.TableNameInfo
 
 	logutil.BgLogger().Info("ListSimpleTablesWithoutDecode", zap.Duration("time", time.Since(start)))
 	return tables, nil
+}
+
+func (m *Meta) ListTableName2TableID(dbID int64) (map[string]int, error) {
+	dbKey := m.dbKey(dbID)
+	if err := m.checkDBExists(dbKey); err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	start := time.Now()
+
+	ress := make(map[string]int, 0)
+
+	res, err := m.txn.HGetAll(dbKey)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	for _, r := range res {
+		// only handle table meta
+		tableKey := string(r.Field)
+		if !strings.HasPrefix(tableKey, mTablePrefix) {
+			continue
+		}
+
+		idRegex := regexp.MustCompile(`"id": (\d+)`)
+		nameLRegex := regexp.MustCompile(`"L": "([^"]+)"`)
+
+		idMatch := idRegex.FindStringSubmatch(string(hack.String(r.Value)))
+
+		nameLMatch := nameLRegex.FindStringSubmatch(string(hack.String(r.Value)))
+		id, err := strconv.Atoi(idMatch[0])
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		ress[nameLMatch[0]] = id
+	}
+
+	logutil.BgLogger().Info("ListTableName2TableID", zap.Duration("time", time.Since(start)), zap.Int("size", len(ress)))
+	j := 0
+	for k, v := range ress {
+		if j > 10 {
+			break
+		}
+		j++
+		logutil.BgLogger().Info("ListTableName2TableID", zap.String("key", k), zap.Int("value", v))
+	}
+	return ress, nil
 }
 
 // ListSimpleTables shows all simple tables in database.

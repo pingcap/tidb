@@ -38,8 +38,11 @@ func onCreateSequence(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ err
 
 	tbInfo.State = model.StateNone
 	err := checkTableNotExists(d, t, schemaID, tbInfo.Name.L)
+	t.ListTables(schemaID)
+	t.ListSimpleTables(schemaID)
 	t.ListSimpleTablesWithoutDecode(schemaID)
-	t.ListTablesWithoutDecode(schemaID)
+	t.ListTableName2TableID(schemaID)
+	//t.ListTablesWithoutDecode(schemaID)
 	t.ListTablesWithoutDecodeV2(schemaID)
 	if err != nil {
 		if infoschema.ErrDatabaseNotExists.Equal(err) || infoschema.ErrTableExists.Equal(err) {
