@@ -54,7 +54,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/syncutil"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	"github.com/tikv/client-go/v2/oracle"
-	"github.com/tikv/client-go/v2/util"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
 )
@@ -97,7 +96,6 @@ func (p *brieTaskProgress) Inc() {
 
     now := time.Now().Unix()
     lastUpdate := atomic.LoadInt64(&p.lastUpdate)
-
     // set an interval to avoid update too frequently
     if now-lastUpdate >= 120 && atomic.CompareAndSwapInt64(&p.lastUpdate, lastUpdate, now) {
 		updateMetaTable(context.Background(), p.executor, p.taskID, map[string]interface{}{
@@ -108,7 +106,16 @@ func (p *brieTaskProgress) Inc() {
 
 // IncBy implements glue.Progress
 func (p *brieTaskProgress) IncBy(cnt int64) {
-	atomic.AddInt64(&p.current, cnt)
+	current := atomic.AddInt64(&p.current, cnt) * 100 / atomic.LoadInt64(&p.total)
+
+	now := time.Now().Unix()
+    lastUpdate := atomic.LoadInt64(&p.lastUpdate)
+    // set an interval to avoid update too frequently
+    if now-lastUpdate >= 120 && atomic.CompareAndSwapInt64(&p.lastUpdate, lastUpdate, now) {
+		updateMetaTable(context.Background(), p.executor, p.taskID, map[string]interface{}{
+			"progress": current,
+		})
+    }
 }
 
 // GetCurrent implements glue.Progress
@@ -122,6 +129,7 @@ func (p *brieTaskProgress) Close() {
 	current := atomic.LoadInt64(&p.current)
 	total := atomic.LoadInt64(&p.total)
 	cmd := p.cmd
+	log.Info("BRIE task progress", zap.Uint64("task id", p.taskID), zap.String("cmd", cmd), zap.Int64("progress", current), zap.Int64("total", total))
 	if current < total {
 		cmd = fmt.Sprintf("%s Canceled", cmd)
 		p.cmd = cmd
@@ -203,9 +211,10 @@ func (bq *brieQueue) registerTask(
 	if err != nil {
 		return taskCtx, 0, err
 	}
+	item.info.id = taskID
 	item.progress.taskID = taskID
 	bq.tasks.Store(taskID, item)
-	info.id = taskID
+	e.info.id = taskID
 
 	return taskCtx, taskID, nil
 }
@@ -777,7 +786,7 @@ func (*tidbGlue) OwnsStorage() bool {
 }
 
 // StartProgress implements glue.Glue
-func (gs *tidbGlue) StartProgress(_ context.Context, cmdName string, total int64, _ bool) glue.Progress {
+func (gs *tidbGlue) StartProgress(ctx context.Context, cmdName string, total int64, _ bool) glue.Progress {
 	gs.progress.lock.Lock()
 	gs.progress.cmd = cmdName
 	gs.progress.total = total
@@ -789,11 +798,10 @@ func (gs *tidbGlue) StartProgress(_ context.Context, cmdName string, total int64
 		return gs.progress
 	}
 	atomic.StoreInt64(&gs.progress.lastUpdate, time.Now().Unix())
-	ctx := util.WithInternalSourceType(context.Background(), kv.InternalTxnBR)
-	_, err := gs.progress.executor.Ctx().GetSQLExecutor().ExecuteInternal(ctx, "UPDATE mysql.tidb_br_jobs SET state = %?, progress = %? WHERE id = %?;", cmdName, 0, gs.progress.taskID)
-	if err != nil {
-		log.Error("Failed to update BRIE task progress", zap.Error(err))
-	}
+	updateMetaTable(ctx, gs.progress.executor, gs.progress.taskID, map[string]interface{}{
+		"state": cmdName,
+		"progress": 0,
+	})
 	return gs.progress
 }
 
