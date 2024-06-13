@@ -685,13 +685,12 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, workCh chan<
 			SetMemTracker(tracker).
 			SetConnIDAndConnAlias(e.Ctx().GetSessionVars().ConnectionID, e.Ctx().GetSessionVars().SessionAlias)
 
-		worker.batchSize = min(initBatchSize, worker.maxBatchSize)
-		if builder.Request.Paging.Enable && builder.Request.Paging.MinPagingSize < uint64(worker.batchSize) {
+		if builder.Request.Paging.Enable && builder.Request.Paging.MinPagingSize < uint64(initBatchSize) {
 			// when paging enabled and Paging.MinPagingSize less than initBatchSize, change Paging.MinPagingSize to
 			// initBatchSize to avoid redundant paging RPC, see more detail in https://github.com/pingcap/tidb/issues/53827
-			builder.Request.Paging.MinPagingSize = uint64(worker.batchSize)
-			if builder.Request.Paging.MaxPagingSize < uint64(worker.batchSize) {
-				builder.Request.Paging.MaxPagingSize = uint64(worker.batchSize)
+			builder.Request.Paging.MinPagingSize = uint64(initBatchSize)
+			if builder.Request.Paging.MaxPagingSize < uint64(initBatchSize) {
+				builder.Request.Paging.MaxPagingSize = uint64(initBatchSize)
 			}
 		}
 		results := make([]distsql.SelectResult, 0, len(kvRanges))
@@ -724,6 +723,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, workCh chan<
 			}
 			results = append(results, result)
 		}
+		worker.batchSize = min(initBatchSize, worker.maxBatchSize)
 		if len(results) > 1 && len(e.byItems) != 0 {
 			// e.Schema() not the output schema for indexReader, and we put byItems related column at first in `buildIndexReq`, so use nil here.
 			ssr := distsql.NewSortedSelectResults(e.Ctx().GetExprCtx().GetEvalCtx(), results, nil, e.byItems, e.memTracker)
