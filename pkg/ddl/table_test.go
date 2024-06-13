@@ -17,6 +17,7 @@ package ddl_test
 import (
 	"context"
 	"fmt"
+	"sync"
 	"testing"
 
 	"github.com/pingcap/errors"
@@ -32,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -442,6 +444,13 @@ func TestCreateTables(t *testing.T) {
 		Args:       []any{infos},
 	}
 	ctx.SetValue(sessionctx.QueryString, "skip")
+
+	var once sync.Once
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/mockGetJobByIDFail", func(errP *error) {
+		once.Do(func() {
+			*errP = errors.New("mock get job by ID failed")
+		})
+	})
 	err = d.DoDDLJob(ctx, job)
 	require.NoError(t, err)
 

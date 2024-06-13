@@ -79,6 +79,14 @@ func newParallelSortWorker(
 	}
 }
 
+func (p *parallelSortWorker) reset() {
+	p.batchRows = nil
+	p.localSortedRows = nil
+	p.sortedRowsIter = nil
+	p.merger = nil
+	p.memTracker.ReplaceBytesUsed(0)
+}
+
 func (p *parallelSortWorker) injectFailPointForParallelSortWorker(triggerFactor int32) {
 	injectParallelSortRandomFail(triggerFactor)
 	failpoint.Inject("SlowSomeWorkers", func(val failpoint.Value) {

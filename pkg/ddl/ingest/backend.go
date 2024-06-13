@@ -17,6 +17,7 @@ package ingest
 import (
 	"context"
 	"fmt"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -105,6 +106,10 @@ type litBackendCtx struct {
 	updateInterval  time.Duration
 	checkpointMgr   *CheckpointManager
 	etcdClient      *clientv3.Client
+
+	// unregisterMu prevents concurrent calls of `UnregisterEngines`.
+	// For details, see https://github.com/pingcap/tidb/issues/53843.
+	unregisterMu sync.Mutex
 }
 
 func (bc *litBackendCtx) handleErrorAfterCollectRemoteDuplicateRows(
