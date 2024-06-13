@@ -860,6 +860,8 @@ const (
 	LabelForChunkDataInDiskByChunks int = -30
 	// LabelForSortPartition represents the label of the sort partition
 	LabelForSortPartition = -31
+	// LabelForLock  represents the label of the lock
+	LabelForLock = -32
 )
 
 // MetricsTypes is used to get label for metrics
