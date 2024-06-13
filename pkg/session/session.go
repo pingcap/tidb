@@ -3403,7 +3403,7 @@ func bootstrapSessionImpl(store kv.Storage, createSessionsImpl func(store kv.Sto
 	}
 	collate.SetNewCollationEnabledForTest(newCollationEnabled)
 	// To deal with the location partition failure caused by inconsistent NewCollationEnabled values(see issue #32416).
-	rebuildAllPartitionValueMapAndSorted(ses[0])
+	//rebuildAllPartitionValueMapAndSorted(ses[0])
 
 	dom := domain.GetDomain(ses[0])
 
