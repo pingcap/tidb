@@ -645,7 +645,11 @@ func (d *ddl) DropSchema(ctx sessionctx.Context, stmt *ast.DropDatabaseStmt) (er
 		BinlogInfo:     &model.HistoryInfo{},
 		Args:           []any{fkCheck},
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
-		SQLMode:        ctx.GetSessionVars().SQLMode,
+		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{{
+			Database: stmt.Name.L,
+			Table:    model.InvolvingAll,
+		}},
+		SQLMode: ctx.GetSessionVars().SQLMode,
 	}
 
 	err = d.DoDDLJob(ctx, job)

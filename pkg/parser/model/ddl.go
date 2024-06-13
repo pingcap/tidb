@@ -1032,6 +1032,10 @@ func (job *Job) GetInvolvingSchemaInfo() []InvolvingSchemaInfo {
 	if len(job.InvolvingSchemaInfo) > 0 {
 		return job.InvolvingSchemaInfo
 	}
+	table := job.TableName
+	if table == "" {
+		table = InvolvingAll
+	}
 	return []InvolvingSchemaInfo{
 		{Database: job.SchemaName, Table: job.TableName},
 	}
