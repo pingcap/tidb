@@ -409,7 +409,7 @@ func (w *ProbeWorkerV2) scanRowTableAfterProbeDone() {
 		return
 	}
 	for !w.JoinProbe.IsScanRowTableDone() {
-		joinResult = w.JoinProbe.ScanRowTable(joinResult, w.HashJoinCtx.SessCtx.GetSessionVars().SQLKiller)
+		joinResult = w.JoinProbe.ScanRowTable(joinResult, &w.HashJoinCtx.SessCtx.GetSessionVars().SQLKiller)
 		if joinResult.err != nil {
 			w.HashJoinCtx.joinResultCh <- joinResult
 			return
@@ -436,7 +436,7 @@ func (w *ProbeWorkerV2) processOneProbeChunk(probeChunk *chunk.Chunk, joinResult
 		return false, waitTime, joinResult
 	}
 	for !w.JoinProbe.IsCurrentChunkProbeDone() {
-		ok, joinResult = w.JoinProbe.Probe(joinResult, w.HashJoinCtx.SessCtx.GetSessionVars().SQLKiller)
+		ok, joinResult = w.JoinProbe.Probe(joinResult, &w.HashJoinCtx.SessCtx.GetSessionVars().SQLKiller)
 		if !ok || joinResult.err != nil {
 			return ok, waitTime, joinResult
 		}
@@ -624,16 +624,25 @@ func (e *HashJoinV2Exec) fetchAndBuildHashTable(ctx context.Context) {
 		}()
 	}
 
+	waitJobDone := func(wg *sync.WaitGroup, errCh chan error) bool {
+		wg.Wait()
+		close(errCh)
+		if err := <-errCh; err != nil {
+			e.buildFinished <- err
+			return false
+		}
+		return true
+	}
+
 	wg := new(sync.WaitGroup)
 	errCh := make(chan error, 1+e.Concurrency)
 	// doneCh is used by the consumer(splitAndAppendToRowTable) to info the producer(fetchBuildSideRows) that the consumer meet error and stop consume data
 	doneCh := make(chan struct{}, e.Concurrency)
 	srcChkCh := e.fetchBuildSideRows(ctx, wg, errCh, doneCh)
 	e.splitAndAppendToRowTable(srcChkCh, wg, errCh, doneCh)
-	wg.Wait()
-	close(errCh)
-	if err := <-errCh; err != nil {
-		e.buildFinished <- err
+	success := waitJobDone(wg, errCh)
+	if !success {
+		return
 	}
 
 	totalSegmentCnt := e.hashTableContext.mergeRowTablesToHashTable(e.hashTableMeta, e.PartitionNumber)
@@ -644,11 +653,7 @@ func (e *HashJoinV2Exec) fetchAndBuildHashTable(ctx context.Context) {
 	doneCh = make(chan struct{}, e.Concurrency)
 	buildTaskCh := e.createBuildTasks(totalSegmentCnt, wg, errCh, doneCh)
 	e.buildHashTable(buildTaskCh, wg, errCh, doneCh)
-	wg.Wait()
-	close(errCh)
-	if err := <-errCh; err != nil {
-		e.buildFinished <- err
-	}
+	waitJobDone(wg, errCh)
 }
 
 func (e *HashJoinV2Exec) fetchBuildSideRows(ctx context.Context, wg *sync.WaitGroup, errCh chan error, doneCh chan struct{}) chan *chunk.Chunk {
