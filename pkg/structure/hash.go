@@ -176,7 +176,7 @@ func (t *TxStructure) HGetAllNameToID(key []byte) (map[string]int, error) {
 	nameLRegex := regexp.MustCompile(`"L":"([^"]+)"`)
 
 	err := t.iterateHash(key, func(field []byte, value []byte) error {
-		if !strings.HasPrefix(string(hack.String(key)), "Table") {
+		if !strings.HasPrefix(string(hack.String(field)), "Table") {
 			return nil
 		}
 

@@ -1133,7 +1133,7 @@ func (m *Meta) ListTableName2TableID(dbID int64) (map[string]int, error) {
 
 	start := time.Now()
 
-	ress := make(map[string]int, 0)
+	ress := make(map[string]int)
 
 	res, err := m.txn.HGetAll(dbKey)
 	if err != nil {
