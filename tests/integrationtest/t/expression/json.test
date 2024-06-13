@@ -417,3 +417,9 @@ SELECT JSON_SCHEMA_VALID('{"properties": {"a": {"type": "number", "minimum": 5}}
 SELECT JSON_SCHEMA_VALID('{"properties": {"a": {"type": "number", "minimum": 5}}}', '{"a": 6}');
 SELECT JSON_SCHEMA_VALID('{"properties": {"a": {"pattern": "^a"}}}', '{"a": "abc"}');
 SELECT JSON_SCHEMA_VALID('{"properties": {"a": {"pattern": "^a"}}}', '{"a": "cba"}');
+
+# TestJSONQuote
+SELECT JSON_QUOTE("<html>");
+SELECT JSON_QUOTE("&");
+SELECT JSON_QUOTE(CONVERT(0x10 USING utf8mb4));
+SELECT JSON_QUOTE("O'Neil");

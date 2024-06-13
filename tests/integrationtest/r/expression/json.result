@@ -703,3 +703,15 @@ JSON_SCHEMA_VALID('{"properties": {"a": {"pattern": "^a"}}}', '{"a": "abc"}')
 SELECT JSON_SCHEMA_VALID('{"properties": {"a": {"pattern": "^a"}}}', '{"a": "cba"}');
 JSON_SCHEMA_VALID('{"properties": {"a": {"pattern": "^a"}}}', '{"a": "cba"}')
 0
+SELECT JSON_QUOTE("<html>");
+JSON_QUOTE("<html>")
+"<html>"
+SELECT JSON_QUOTE("&");
+JSON_QUOTE("&")
+"&"
+SELECT JSON_QUOTE(CONVERT(0x10 USING utf8mb4));
+JSON_QUOTE(CONVERT(0x10 USING utf8mb4))
+"\u0010"
+SELECT JSON_QUOTE("O'Neil");
+JSON_QUOTE("O'Neil")
+"O'Neil"
