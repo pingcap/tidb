@@ -103,6 +103,7 @@ type isBuildSideEmpty func() bool
 func wait4BuildSide(isBuildEmpty isBuildSideEmpty, canSkipIfBuildEmpty, needScanAfterProbeDone bool, hashJoinCtx *hashJoinCtxBase) (skipProbe bool) {
 	var err error
 	skipProbe = false
+	buildFinishes := false
 	select {
 	case <-hashJoinCtx.closeCh:
 		// current executor is closed, no need to probe
@@ -111,9 +112,12 @@ func wait4BuildSide(isBuildEmpty isBuildSideEmpty, canSkipIfBuildEmpty, needScan
 		if err != nil {
 			// build meet error, no need to probe
 			skipProbe = true
+		} else {
+			buildFinishes = true
 		}
 	}
-	if isBuildEmpty() && canSkipIfBuildEmpty {
+	// only check build empty if build finishes
+	if buildFinishes && isBuildEmpty() && canSkipIfBuildEmpty {
 		// if build side is empty, can skip probe if canSkipIfBuildEmpty is true(e.g. inner join)
 		skipProbe = true
 	}
