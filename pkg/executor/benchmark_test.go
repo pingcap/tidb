@@ -717,6 +717,14 @@ func prepare4HashJoinV2(testCase *hashJoinTestCase, innerExec, outerExec exec.Ex
 		HashJoinCtxV2:         hashJoinCtx,
 	}
 	e.ProbeSideTupleFetcher.ProbeSideExec = outerExec
+	e.LUsed = make([]int, 0, len(innerTypes))
+	for index := range innerTypes {
+		e.LUsed = append(e.LUsed, index)
+	}
+	e.RUsed = make([]int, 0, len(outerTypes))
+	for index := range outerTypes {
+		e.RUsed = append(e.RUsed, index)
+	}
 
 	for i := 0; i < testCase.concurrency; i++ {
 		e.ProbeWorkers[i] = &join.ProbeWorkerV2{
