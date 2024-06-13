@@ -796,7 +796,7 @@ func TestTime(t *testing.T) {
 	for _, c := range cases {
 		f, err := newFunctionForTest(ctx, ast.Time, primitiveValsToConstants(ctx, []any{c.args})...)
 		require.NoError(t, err)
-		tp := f.GetType()
+		tp := f.GetType(ctx)
 		require.Equal(t, mysql.TypeDuration, tp.GetType())
 		require.Equal(t, charset.CharsetBin, tp.GetCharset())
 		require.Equal(t, charset.CollationBin, tp.GetCollate())
@@ -1266,7 +1266,7 @@ func TestFromUnixTime(t *testing.T) {
 		if len(c.format) == 0 {
 			constants := datumsToConstants([]types.Datum{timestamp})
 			if !c.isDecimal {
-				constants[0].GetType().SetDecimal(0)
+				constants[0].GetType(ctx).SetDecimal(0)
 			}
 
 			f, err := fc.getFunction(ctx, constants)
@@ -1280,7 +1280,7 @@ func TestFromUnixTime(t *testing.T) {
 			format := types.NewStringDatum(c.format)
 			constants := datumsToConstants([]types.Datum{timestamp, format})
 			if !c.isDecimal {
-				constants[0].GetType().SetDecimal(0)
+				constants[0].GetType(ctx).SetDecimal(0)
 			}
 			f, err := fc.getFunction(ctx, constants)
 			require.NoError(t, err)
@@ -1632,7 +1632,7 @@ func TestTimeDiff(t *testing.T) {
 		preWarningCnt := ctx.GetSessionVars().StmtCtx.WarningCount()
 		f, err := newFunctionForTest(ctx, ast.TimeDiff, primitiveValsToConstants(ctx, c.args)...)
 		require.NoError(t, err)
-		tp := f.GetType()
+		tp := f.GetType(ctx)
 		require.Equal(t, mysql.TypeDuration, tp.GetType())
 		require.Equal(t, charset.CharsetBin, tp.GetCharset())
 		require.Equal(t, charset.CollationBin, tp.GetCollate())
@@ -1873,7 +1873,7 @@ func TestUnixTimestamp(t *testing.T) {
 
 	for _, test := range tests {
 		expr := datumsToConstants([]types.Datum{test.input})
-		expr[0].GetType().SetDecimal(test.inputDecimal)
+		expr[0].GetType(ctx).SetDecimal(test.inputDecimal)
 		resetStmtContext(ctx)
 		f, err := fc.getFunction(ctx, expr)
 		require.NoErrorf(t, err, "%+v", test)
@@ -2265,7 +2265,7 @@ func TestMakeDate(t *testing.T) {
 	for _, c := range cases {
 		f, err := newFunctionForTest(ctx, ast.MakeDate, primitiveValsToConstants(ctx, c.args)...)
 		require.NoError(t, err)
-		tp := f.GetType()
+		tp := f.GetType(ctx)
 		require.Equal(t, mysql.TypeDate, tp.GetType())
 		require.Equal(t, charset.CharsetBin, tp.GetCharset())
 		require.Equal(t, charset.CollationBin, tp.GetCollate())
@@ -2769,7 +2769,7 @@ func TestSecToTime(t *testing.T) {
 	for _, test := range tests {
 		comment := fmt.Sprintf("%+v", test)
 		expr := datumsToConstants([]types.Datum{test.input})
-		expr[0].GetType().SetDecimal(test.inputDecimal)
+		expr[0].GetType(ctx).SetDecimal(test.inputDecimal)
 		f, err := fc.getFunction(ctx, expr)
 		require.NoError(t, err, comment)
 		d, err := evalBuiltinFunc(f, ctx, chunk.Row{})

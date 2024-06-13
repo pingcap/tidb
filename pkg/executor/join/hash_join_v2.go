@@ -353,13 +353,18 @@ func (e *HashJoinV2Exec) initializeForProbe() {
 
 func (e *HashJoinV2Exec) fetchAndProbeHashTable(ctx context.Context) {
 	e.initializeForProbe()
-	e.workerWg.RunWithRecover(func() {
+	fetchProbeSideChunksFunc := func() {
 		defer trace.StartRegion(ctx, "HashJoinProbeSideFetcher").End()
-		e.ProbeSideTupleFetcher.fetchProbeSideChunks(ctx, e.MaxChunkSize(), func() bool {
-			return e.ProbeSideTupleFetcher.hashTableContext.hashTable.isHashTableEmpty()
-		}, e.ProbeSideTupleFetcher.canSkipProbeIfHashTableIsEmpty, e.ProbeSideTupleFetcher.needScanRowTableAfterProbeDone,
-			e.ProbeSideTupleFetcher.shouldLimitProbeFetchSize(), &e.ProbeSideTupleFetcher.hashJoinCtxBase)
-	}, e.ProbeSideTupleFetcher.handleProbeSideFetcherPanic)
+		e.ProbeSideTupleFetcher.fetchProbeSideChunks(
+			ctx,
+			e.MaxChunkSize(),
+			func() bool { return e.ProbeSideTupleFetcher.hashTableContext.hashTable.isHashTableEmpty() },
+			e.ProbeSideTupleFetcher.canSkipProbeIfHashTableIsEmpty,
+			e.ProbeSideTupleFetcher.needScanRowTableAfterProbeDone,
+			e.ProbeSideTupleFetcher.shouldLimitProbeFetchSize(),
+			&e.ProbeSideTupleFetcher.hashJoinCtxBase)
+	}
+	e.workerWg.RunWithRecover(fetchProbeSideChunksFunc, e.ProbeSideTupleFetcher.handleProbeSideFetcherPanic)
 
 	for i := uint(0); i < e.Concurrency; i++ {
 		workerID := i

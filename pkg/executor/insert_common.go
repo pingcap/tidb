@@ -1178,7 +1178,7 @@ func (e *InsertValues) handleDuplicateKey(ctx context.Context, txn kv.Transactio
 		}
 		return true, nil
 	}
-	_, handle, err := tables.FetchDuplicatedHandle(ctx, uk.newKey, true, txn, e.Table.Meta().ID, uk.commonHandle)
+	_, handle, err := tables.FetchDuplicatedHandle(ctx, uk.newKey, true, txn, e.Table.Meta().ID)
 	if err != nil {
 		return false, err
 	}
@@ -1373,7 +1373,11 @@ func (e *InsertValues) removeRow(
 		return true, nil
 	}
 
-	err = r.t.RemoveRecord(e.Ctx().GetTableCtx(), handle, oldRow)
+	if ph, ok := handle.(kv.PartitionHandle); ok {
+		err = e.Table.(table.PartitionedTable).GetPartition(ph.PartitionID).RemoveRecord(e.Ctx().GetTableCtx(), ph.Handle, oldRow)
+	} else {
+		err = r.t.RemoveRecord(e.Ctx().GetTableCtx(), handle, oldRow)
+	}
 	if err != nil {
 		return false, err
 	}

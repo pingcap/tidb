@@ -92,7 +92,7 @@ func GetAvgRowSize(ctx context.PlanContext, coll *statistics.HistColl, cols []*e
 func GetAvgRowSizeDataInDiskByRows(coll *statistics.HistColl, cols []*expression.Column) (size float64) {
 	if coll.Pseudo || len(coll.Columns) == 0 || coll.RealtimeCount == 0 {
 		for _, col := range cols {
-			size += float64(chunk.EstimateTypeWidth(col.GetType()))
+			size += float64(chunk.EstimateTypeWidth(col.GetStaticType()))
 		}
 	} else {
 		for _, col := range cols {
@@ -100,7 +100,7 @@ func GetAvgRowSizeDataInDiskByRows(coll *statistics.HistColl, cols []*expression
 			// Normally this would not happen, it is for compatibility with old version stats which
 			// does not include TotColSize.
 			if !ok || (!colHist.IsHandle && colHist.TotColSize == 0 && (colHist.NullCount != coll.RealtimeCount)) {
-				size += float64(chunk.EstimateTypeWidth(col.GetType()))
+				size += float64(chunk.EstimateTypeWidth(col.GetStaticType()))
 				continue
 			}
 			size += AvgColSizeDataInDiskByRows(colHist, coll.RealtimeCount)

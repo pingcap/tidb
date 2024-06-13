@@ -184,7 +184,7 @@ func CheckRecordAndIndex(ctx context.Context, sessCtx sessionctx.Context, txn kv
 
 		return true, nil
 	}
-	err := iterRecords(sessCtx, txn, t, startKey, cols, filterFunc)
+	err := iterRecords(sessCtx, txn, t, startKey, cols, idx.Meta().Global, filterFunc)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -204,7 +204,7 @@ func makeRowDecoder(t table.Table, sctx sessionctx.Context) (*decoder.RowDecoder
 	return decoder.NewRowDecoder(t, t.Cols(), decodeColsMap), nil
 }
 
-func iterRecords(sessCtx sessionctx.Context, retriever kv.Retriever, t table.Table, startKey kv.Key, cols []*table.Column, fn table.RecordIterFunc) error {
+func iterRecords(sessCtx sessionctx.Context, retriever kv.Retriever, t table.Table, startKey kv.Key, cols []*table.Column, isGlobalIndex bool, fn table.RecordIterFunc) error {
 	prefix := t.RecordPrefix()
 	keyUpperBound := prefix.PrefixNext()
 
@@ -233,6 +233,9 @@ func iterRecords(sessCtx sessionctx.Context, retriever kv.Retriever, t table.Tab
 		handle, err := tablecodec.DecodeRowKey(it.Key())
 		if err != nil {
 			return errors.Trace(err)
+		}
+		if isGlobalIndex {
+			handle = kv.NewPartitionHandle(tablecodec.DecodeTableID(it.Key()), handle)
 		}
 
 		rowMap, err := rowDecoder.DecodeAndEvalRowWithMap(sessCtx.GetExprCtx(), handle, it.Value(), sessCtx.GetSessionVars().Location(), nil)

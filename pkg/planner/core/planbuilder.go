@@ -639,7 +639,7 @@ func (b *PlanBuilder) buildDo(ctx context.Context, v *ast.DoStmt) (base.Plan, er
 		proj.Exprs = append(proj.Exprs, expr)
 		schema.Append(&expression.Column{
 			UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
-			RetType:  expr.GetType(),
+			RetType:  expr.GetType(b.ctx.GetExprCtx().GetEvalCtx()),
 		})
 	}
 	proj.SetChildren(p)
@@ -692,7 +692,7 @@ func (b *PlanBuilder) buildSet(ctx context.Context, v *ast.SetStmt) (base.Plan, 
 				}
 				constant := &expression.Constant{
 					Value:   row[0],
-					RetType: assign.Expr.GetType(),
+					RetType: assign.Expr.GetType(b.ctx.GetExprCtx().GetEvalCtx()),
 				}
 				assign.Expr = constant
 			}
@@ -4929,7 +4929,8 @@ func (*PlanBuilder) buildTrace(trace *ast.TraceStmt) (base.Plan, error) {
 }
 
 func (b *PlanBuilder) buildExplainPlan(targetPlan base.Plan, format string, explainRows [][]string, analyze bool, execStmt ast.StmtNode, runtimeStats *execdetails.RuntimeStatsColl) (base.Plan, error) {
-	if strings.ToLower(format) == types.ExplainFormatTrueCardCost && !analyze {
+	format = strings.ToLower(format)
+	if format == types.ExplainFormatTrueCardCost && !analyze {
 		return nil, errors.Errorf("'explain format=%v' cannot work without 'analyze', please use 'explain analyze format=%v'", format, format)
 	}
 
@@ -4961,14 +4962,15 @@ func (b *PlanBuilder) buildExplainFor(explainFor *ast.ExplainForStmt) (base.Plan
 	}
 
 	targetPlan, ok := processInfo.Plan.(base.Plan)
+	explainForFormat := strings.ToLower(explainFor.Format)
 	if !ok || targetPlan == nil {
-		return &Explain{Format: explainFor.Format}, nil
+		return &Explain{Format: explainForFormat}, nil
 	}
 	var explainRows [][]string
-	if explainFor.Format == types.ExplainFormatROW {
+	if explainForFormat == types.ExplainFormatROW {
 		explainRows = processInfo.PlanExplainRows
 	}
-	return b.buildExplainPlan(targetPlan, explainFor.Format, explainRows, false, nil, processInfo.RuntimeStatsColl)
+	return b.buildExplainPlan(targetPlan, explainForFormat, explainRows, false, nil, processInfo.RuntimeStatsColl)
 }
 
 func (b *PlanBuilder) buildExplain(ctx context.Context, explain *ast.ExplainStmt) (base.Plan, error) {

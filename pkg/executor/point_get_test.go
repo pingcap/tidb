@@ -88,7 +88,7 @@ func TestReturnValues(t *testing.T) {
 	txnCtx := tk.Session().GetSessionVars().TxnCtx
 	val, ok := txnCtx.GetKeyInPessimisticLockCache(pk)
 	require.True(t, ok)
-	handle, err := tablecodec.DecodeHandleInUniqueIndexValue(val, false)
+	handle, err := tablecodec.DecodeHandleInIndexValue(val)
 	require.NoError(t, err)
 	rowKey := tablecodec.EncodeRowKeyWithHandle(tid, handle)
 	_, ok = txnCtx.GetKeyInPessimisticLockCache(rowKey)

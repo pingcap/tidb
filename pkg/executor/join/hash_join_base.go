@@ -100,19 +100,57 @@ func (fetcher *probeSideTupleFetcherBase) handleProbeSideFetcherPanic(r any) {
 
 type isBuildSideEmpty func() bool
 
-func wait4BuildSide(isBuildEmpty isBuildSideEmpty, canSkipIfBuildEmpty bool, hashJoinCtx *hashJoinCtxBase) (skipProbe bool, err error) {
+func wait4BuildSide(isBuildEmpty isBuildSideEmpty, canSkipIfBuildEmpty, needScanAfterProbeDone bool, hashJoinCtx *hashJoinCtxBase) (skipProbe bool) {
+	var err error
+	skipProbe = false
 	select {
 	case <-hashJoinCtx.closeCh:
-		return true, nil
-	case err := <-hashJoinCtx.buildFinished:
+		// current executor is closed, no need to probe
+		skipProbe = true
+	case err = <-hashJoinCtx.buildFinished:
 		if err != nil {
-			return false, err
+			// build meet error, no need to probe
+			skipProbe = true
 		}
 	}
 	if isBuildEmpty() && canSkipIfBuildEmpty {
-		return true, nil
+		// if build side is empty, can skip probe if canSkipIfBuildEmpty is true(e.g. inner join)
+		skipProbe = true
 	}
-	return false, nil
+	if err != nil {
+		// if err is not nil, send out the error
+		hashJoinCtx.joinResultCh <- &hashjoinWorkerResult{
+			err: err,
+		}
+	} else if skipProbe {
+		// if skipProbe is true and there is no need to scan hash table after probe, just the whole hash join is finished
+		if !needScanAfterProbeDone {
+			hashJoinCtx.finished.Store(true)
+		}
+	}
+	return skipProbe
+}
+
+func (fetcher *probeSideTupleFetcherBase) getProbeSideResource(shouldLimitProbeFetchSize bool, maxChunkSize int, hashJoinCtx *hashJoinCtxBase) *probeChkResource {
+	if hashJoinCtx.finished.Load() {
+		return nil
+	}
+
+	var probeSideResource *probeChkResource
+	var ok bool
+	select {
+	case <-hashJoinCtx.closeCh:
+		return nil
+	case probeSideResource, ok = <-fetcher.probeChkResourceCh:
+		if !ok {
+			return nil
+		}
+	}
+	if shouldLimitProbeFetchSize {
+		required := int(atomic.LoadInt64(&fetcher.requiredRows))
+		probeSideResource.chk.SetRequiredRows(required, maxChunkSize)
+	}
+	return probeSideResource
 }
 
 // fetchProbeSideChunks get chunks from fetches chunks from the big table in a background goroutine
@@ -120,25 +158,11 @@ func wait4BuildSide(isBuildEmpty isBuildSideEmpty, canSkipIfBuildEmpty bool, has
 func (fetcher *probeSideTupleFetcherBase) fetchProbeSideChunks(ctx context.Context, maxChunkSize int, isBuildEmpty isBuildSideEmpty, canSkipIfBuildEmpty, needScanAfterProbeDone, shouldLimitProbeFetchSize bool, hashJoinCtx *hashJoinCtxBase) {
 	hasWaitedForBuild := false
 	for {
-		if hashJoinCtx.finished.Load() {
+		probeSideResource := fetcher.getProbeSideResource(shouldLimitProbeFetchSize, maxChunkSize, hashJoinCtx)
+		if probeSideResource == nil {
 			return
-		}
-
-		var probeSideResource *probeChkResource
-		var ok bool
-		select {
-		case <-hashJoinCtx.closeCh:
-			return
-		case probeSideResource, ok = <-fetcher.probeChkResourceCh:
-			if !ok {
-				return
-			}
 		}
 		probeSideResult := probeSideResource.chk
-		if shouldLimitProbeFetchSize {
-			required := int(atomic.LoadInt64(&fetcher.requiredRows))
-			probeSideResult.SetRequiredRows(required, maxChunkSize)
-		}
 		err := exec.Next(ctx, fetcher.ProbeSideExec, probeSideResult)
 		failpoint.Inject("ConsumeRandomPanic", nil)
 		if err != nil {
@@ -153,17 +177,9 @@ func (fetcher *probeSideTupleFetcherBase) fetchProbeSideChunks(ctx context.Conte
 					probeSideResult.Reset()
 				}
 			})
-			skipProbe, buildErr := wait4BuildSide(isBuildEmpty, canSkipIfBuildEmpty, hashJoinCtx)
-			if buildErr != nil {
-				hashJoinCtx.joinResultCh <- &hashjoinWorkerResult{
-					err: buildErr,
-				}
-				return
-			} else if skipProbe {
-				// stop probe
-				if !needScanAfterProbeDone {
-					hashJoinCtx.finished.Store(true)
-				}
+			skipProbe := wait4BuildSide(isBuildEmpty, canSkipIfBuildEmpty, needScanAfterProbeDone, hashJoinCtx)
+			if skipProbe {
+				// there is no need to probe, so just return
 				return
 			}
 			hasWaitedForBuild = true

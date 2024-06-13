@@ -852,7 +852,6 @@ show warnings;
 Level	Code	Message
 Warning	1815	use_index_merge(index_merge.t_alias) is inapplicable, check whether the table(index_merge.t_alias) exists
 Warning	1815	use_index_merge(index_merge.t_alias) is inapplicable, check whether the table(index_merge.t_alias) exists
-Warning	1815	use_index_merge(index_merge.t_alias) is inapplicable, check whether the table(index_merge.t_alias) exists
 with recursive cte1 as (select 1 c1, 1 c2, 1 c3 UNION ALL select /*+ use_index_merge(t_alias) */ c1 + 1, c2 + 1, c3 + 1 from cte1 t_alias where c1 < 10 or c2 < 10 and c3 < 10) select * from cte1 order by 1;
 c1	c2	c3
 1	1	1

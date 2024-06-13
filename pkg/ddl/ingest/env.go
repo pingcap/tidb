@@ -19,6 +19,7 @@ import (
 	"path/filepath"
 	"strconv"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/lightning/log"
@@ -68,6 +69,11 @@ func InitGlobalLightningEnv(filterProcessingJobIDs FilterProcessingJobIDsFunc) {
 	} else {
 		memTotal = memTotal / 2
 	}
+	failpoint.Inject("setMemTotalInMB", func(val failpoint.Value) {
+		//nolint: forcetypeassert
+		i := val.(int)
+		memTotal = uint64(i) * size.MB
+	})
 	LitBackCtxMgr = NewLitBackendCtxMgr(sortPath, memTotal, filterProcessingJobIDs)
 	litRLimit = util.GenRLimit("ddl-ingest")
 	LitInitialized = true

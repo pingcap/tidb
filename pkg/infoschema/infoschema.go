@@ -320,6 +320,26 @@ func (is *infoSchema) SchemaTableInfos(schema model.CIStr) []*model.TableInfo {
 	return getTableInfoList(is.SchemaTables(schema))
 }
 
+type tableInfoResult struct {
+	DBName     string
+	TableInfos []*model.TableInfo
+}
+
+func (is *infoSchema) ListTablesWithSpecialAttribute(filter specialAttributeFilter) []tableInfoResult {
+	ret := make([]tableInfoResult, 0, 10)
+	for _, dbName := range is.AllSchemaNames() {
+		res := tableInfoResult{DBName: dbName.O}
+		for _, tblInfo := range is.SchemaTableInfos(dbName) {
+			if !filter(tblInfo) {
+				continue
+			}
+			res.TableInfos = append(res.TableInfos, tblInfo)
+		}
+		ret = append(ret, res)
+	}
+	return ret
+}
+
 // AllSchemaNames returns all the schemas' names.
 func AllSchemaNames(is InfoSchema) (names []string) {
 	schemas := is.AllSchemaNames()

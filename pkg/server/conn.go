@@ -1951,8 +1951,7 @@ func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.Stm
 		return nil, err1
 	}
 	for idxKey, idxVal := range idxVals {
-		isCommonHd := isCommonHandle[idxKey]
-		h, err2 := tablecodec.DecodeHandleInUniqueIndexValue(idxVal, isCommonHd)
+		h, err2 := tablecodec.DecodeHandleInIndexValue(idxVal)
 		if err2 != nil {
 			return nil, err2
 		}
@@ -2049,6 +2048,12 @@ func (cc *clientConn) handleStmt(
 		if cc.getStatus() == connStatusShutdown {
 			return false, exeerrors.ErrQueryInterrupted
 		}
+		cc.ctx.GetSessionVars().SQLKiller.Finish = func() {
+			//nolint: errcheck
+			rs.Finish()
+		}
+		cc.ctx.GetSessionVars().SQLKiller.InWriteResultSet.Store(true)
+		defer cc.ctx.GetSessionVars().SQLKiller.InWriteResultSet.Store(false)
 		if retryable, err := cc.writeResultSet(ctx, rs, false, status, 0); err != nil {
 			return retryable, err
 		}

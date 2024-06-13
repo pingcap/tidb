@@ -187,7 +187,7 @@ func ConvertConfigItem2JSON(ctx sessionctx.Context, key string, val expression.E
 	}
 	isNull := false
 	str := ""
-	switch val.GetType().EvalType() {
+	switch val.GetType(ctx.GetExprCtx().GetEvalCtx()).EvalType() {
 	case types.ETString:
 		var s string
 		s, isNull, err = val.EvalString(ctx.GetExprCtx().GetEvalCtx(), chunk.Row{})
@@ -198,7 +198,7 @@ func ConvertConfigItem2JSON(ctx sessionctx.Context, key string, val expression.E
 		var i int64
 		i, isNull, err = val.EvalInt(ctx.GetExprCtx().GetEvalCtx(), chunk.Row{})
 		if err == nil && !isNull {
-			if mysql.HasIsBooleanFlag(val.GetType().GetFlag()) {
+			if mysql.HasIsBooleanFlag(val.GetType(ctx.GetExprCtx().GetEvalCtx()).GetFlag()) {
 				str = "true"
 				if i == 0 {
 					str = "false"

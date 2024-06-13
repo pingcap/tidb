@@ -2252,7 +2252,7 @@ func BuildTableInfo(
 				return nil, errors.Trace(err)
 			}
 			// check if the expression is bool type
-			if err := table.IfCheckConstraintExprBoolType(constraintInfo, tbInfo); err != nil {
+			if err := table.IfCheckConstraintExprBoolType(ctx.GetExprCtx().GetEvalCtx(), constraintInfo, tbInfo); err != nil {
 				return nil, err
 			}
 			constraintInfo.ID = allocateConstraintID(tbInfo)
@@ -4649,18 +4649,27 @@ func (d *ddl) AlterTablePartitioning(ctx sessionctx.Context, ident ast.Ident, sp
 				return err
 			}
 			if !ck {
-				if ctx.GetSessionVars().EnableGlobalIndex {
-					return dbterror.ErrCancelledDDLJob.GenWithStack("global index is not supported yet for alter table partitioning")
+				indexTp := ""
+				if !ctx.GetSessionVars().EnableGlobalIndex {
+					if index.Primary {
+						indexTp = "PRIMARY KEY"
+					} else {
+						indexTp = "UNIQUE INDEX"
+					}
+				} else if t.Meta().IsCommonHandle {
+					indexTp = "CLUSTERED INDEX"
 				}
-				indexTp := "UNIQUE INDEX"
-				if index.Primary {
-					indexTp = "PRIMARY"
+				if indexTp != "" {
+					return dbterror.ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs(indexTp)
 				}
-				return dbterror.ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs(indexTp)
+				// Also mark the unique index as global index
+				index.Global = true
 			}
 		}
 	}
 	if newMeta.PKIsHandle {
+		// This case is covers when the Handle is the PK (only ints), since it would not
+		// have an entry in the tblInfo.Indices
 		indexCols := []*model.IndexColumn{{
 			Name:   newMeta.GetPkName(),
 			Length: types.UnspecifiedLength,
@@ -4670,7 +4679,10 @@ func (d *ddl) AlterTablePartitioning(ctx sessionctx.Context, ident ast.Ident, sp
 			return err
 		}
 		if !ck {
-			return dbterror.ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs("PRIMARY")
+			if !ctx.GetSessionVars().EnableGlobalIndex {
+				return dbterror.ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs("PRIMARY KEY")
+			}
+			return dbterror.ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs("CLUSTERED INDEX")
 		}
 	}
 
@@ -4890,7 +4902,7 @@ func checkReorgPartitionDefs(ctx sessionctx.Context, action model.ActionType, tb
 				return nil
 			}
 
-			isUnsigned := isPartExprUnsigned(tblInfo)
+			isUnsigned := isPartExprUnsigned(ctx.GetExprCtx().GetEvalCtx(), tblInfo)
 			currentRangeValue, _, err := getRangeValue(ctx.GetExprCtx(), pi.Definitions[lastPartIdx].LessThan[0], isUnsigned)
 			if err != nil {
 				return errors.Trace(err)
@@ -7561,7 +7573,7 @@ func BuildHiddenColumnInfo(ctx sessionctx.Context, indexPartSpecifications []*as
 			Version:             model.CurrLatestColumnInfoVersion,
 			Dependences:         make(map[string]struct{}),
 			Hidden:              true,
-			FieldType:           *expr.GetType(),
+			FieldType:           *expr.GetType(ctx.GetExprCtx().GetEvalCtx()),
 		}
 		// Reset some flag, it may be caused by wrong type infer. But it's not easy to fix them all, so reset them here for safety.
 		colInfo.DelFlag(mysql.PriKeyFlag | mysql.UniqueKeyFlag | mysql.AutoIncrementFlag)
@@ -9405,7 +9417,7 @@ func (d *ddl) CreateCheckConstraint(ctx sessionctx.Context, ti ast.Ident, constr
 		return errors.Trace(err)
 	}
 	// check if the expression is bool type
-	if err := table.IfCheckConstraintExprBoolType(constraintInfo, tblInfo); err != nil {
+	if err := table.IfCheckConstraintExprBoolType(ctx.GetExprCtx().GetEvalCtx(), constraintInfo, tblInfo); err != nil {
 		return err
 	}
 	job := &model.Job{

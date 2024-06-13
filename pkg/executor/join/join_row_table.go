@@ -19,17 +19,14 @@ import (
 	"sync/atomic"
 	"unsafe"
 
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
-	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/serialization"
-	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 )
 
 const sizeOfNextPtr = int(unsafe.Sizeof(unsafe.Pointer(nil)))
@@ -528,16 +525,6 @@ func (b *rowTableBuilder) initBuffer() {
 	}
 }
 
-func buildCheckSQLKiller(killer sqlkiller.SQLKiller) error {
-	err := killer.HandleSignal()
-	failpoint.Inject("killedDuringBuild", func(val failpoint.Value) {
-		if val.(bool) {
-			err = exeerrors.ErrQueryInterrupted
-		}
-	})
-	return err
-}
-
 func (b *rowTableBuilder) initHashValueAndPartIndexForOneChunk(partitionNumber uint64) {
 	h := fnv.New64()
 	fakePartIndex := uint64(0)
@@ -565,7 +552,7 @@ func (b *rowTableBuilder) processOneChunk(chk *chunk.Chunk, typeCtx types.Contex
 			return err
 		}
 	}
-	err = buildCheckSQLKiller(hashJoinCtx.SessCtx.GetSessionVars().SQLKiller)
+	err = checkSQLKiller(hashJoinCtx.SessCtx.GetSessionVars().SQLKiller, "killedDuringBuild")
 	if err != nil {
 		return err
 	}
@@ -576,15 +563,11 @@ func (b *rowTableBuilder) processOneChunk(chk *chunk.Chunk, typeCtx types.Contex
 			return err
 		}
 	}
-	err = buildCheckSQLKiller(hashJoinCtx.SessCtx.GetSessionVars().SQLKiller)
+	err = checkSQLKiller(hashJoinCtx.SessCtx.GetSessionVars().SQLKiller, "killedDuringBuild")
 	if err != nil {
 		return err
 	}
 
-	err = buildCheckSQLKiller(hashJoinCtx.SessCtx.GetSessionVars().SQLKiller)
-	if err != nil {
-		return err
-	}
 	b.initHashValueAndPartIndexForOneChunk(uint64(hashJoinCtx.PartitionNumber))
 
 	// 2. build rowtable
@@ -728,7 +711,7 @@ func (b *rowTableBuilder) appendToRowTable(chk *chunk.Chunk, hashJoinCtx *HashJo
 	rowTableMeta := hashJoinCtx.hashTableMeta
 	for logicalRowIndex, physicalRowIndex := range b.usedRows {
 		if logicalRowIndex%10 == 0 || logicalRowIndex == len(b.usedRows)-1 {
-			err := buildCheckSQLKiller(hashJoinCtx.SessCtx.GetSessionVars().SQLKiller)
+			err := checkSQLKiller(hashJoinCtx.SessCtx.GetSessionVars().SQLKiller, "killedDuringBuild")
 			if err != nil {
 				return err
 			}
