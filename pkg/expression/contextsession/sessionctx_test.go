@@ -174,7 +174,7 @@ func (m *mockPrivManager) RequestVerification(
 }
 
 func (m *mockPrivManager) RequestDynamicVerification(
-	activeRoles []*auth.RoleIdentity, privName []string, grantable bool,
+	activeRoles []*auth.RoleIdentity, privName string, grantable bool,
 ) bool {
 	return m.Called(activeRoles, privName, grantable).Bool(0)
 }
