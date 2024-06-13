@@ -322,6 +322,8 @@ func (j *leftOuterJoinProbe) Probe(joinResult *hashjoinWorkerResult, sqlKiller *
 		return false, joinResult
 	}
 	isInCompleteChunk := joinedChk.IsInCompleteChunk()
+	// in case that virtual rows is not maintained correctly
+	joinedChk.SetNumVirtualRows(joinedChk.NumRows())
 	// always set in complete chunk during probe
 	joinedChk.SetInCompleteChunk(true)
 	defer joinedChk.SetInCompleteChunk(isInCompleteChunk)
