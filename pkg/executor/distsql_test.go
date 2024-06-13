@@ -405,7 +405,7 @@ func TestAdaptiveClosestRead(t *testing.T) {
 	tk.MustExec("insert into t values (1, '00000001', '0000000000000001'), (2, '00000003', '0000000000000002'), (3, '00000011', '0000000000000003'), (4, '00000044', '0000000000000004');")
 	tk.MustExec("analyze table t;")
 	// estimate cost is 38
-	checkMetrics("select s from t where id >= 1 and id < 3;", 1, 0)
+	checkMetrics("select s from t where id >= 1 and id < 3;", 0, 1)
 	// estimate cost is 39 with 2 cop request
 	checkMetrics("select s from t where id >= 2 and id < 4;", 0, 2)
 

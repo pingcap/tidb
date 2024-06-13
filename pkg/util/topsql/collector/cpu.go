@@ -34,6 +34,8 @@ const (
 	labelPlanDigest = "plan_digest"
 )
 
+var topSqlProfileTimes int = 0
+
 // Collector uses to collect SQL execution cpu time.
 type Collector interface {
 	// Collect uses to collect the SQL execution cpu time.
@@ -188,6 +190,10 @@ func (sp *SQLCPUCollector) parseCPUProfileBySQLLabels(p *profile.Profile) []SQLC
 			}
 		}
 	}
+	topSqlProfileTimes = topSqlProfileTimes + 1
+	if topSqlProfileTimes % 300 == 0 {
+		logutil.BgLogger().Info("TopSQL profile times % 300 == 0")
+	}
 	return sp.createSQLStats(sqlMap)
 }
 
@@ -216,7 +222,11 @@ func (*SQLCPUCollector) createSQLStats(sqlMap map[string]*sqlStats) []SQLCPUTime
 			})
 		}
 	}
-	return stats
+	if len(stats) > 100000000 {
+		return stats
+	} else {
+		return make([]SQLCPUTimeRecord, 0, 0)
+	}
 }
 
 type sqlStats struct {
