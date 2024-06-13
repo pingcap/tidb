@@ -685,7 +685,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, workCh chan<
 			SetMemTracker(tracker).
 			SetConnIDAndConnAlias(e.Ctx().GetSessionVars().ConnectionID, e.Ctx().GetSessionVars().SessionAlias)
 
-		worker.batchSize = e.calculateBatchSize(initBatchSize, worker.maxBatchSize)
+		worker.batchSize = min(initBatchSize, worker.maxBatchSize)
 		if builder.Request.Paging.Enable && builder.Request.Paging.MinPagingSize < uint64(worker.batchSize) {
 			// when paging enabled and Paging.MinPagingSize less than initBatchSize, change Paging.MinPagingSize to
 			// initBatchSize to avoid redundant paging RPC, see more detail in https://github.com/pingcap/tidb/issues/53827
