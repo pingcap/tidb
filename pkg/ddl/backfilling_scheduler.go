@@ -371,9 +371,21 @@ func (b *ingestBackfillScheduler) setupWorkers() error {
 		return errors.Trace(err)
 	}
 	b.copReqSenderPool = copReqSenderPool
+<<<<<<< HEAD
 	readerCnt, writerCnt := b.expectedWorkerSize()
 	writerPool := workerpool.NewWorkerPool[IndexRecordChunk]("ingest_writer",
 		poolutil.DDL, writerCnt, b.createWorker)
+=======
+	readerCnt, writerCnt := b.expectedWorkerCnt()
+	writerPool := workerpool.NewWorkerPool[IndexRecordChunk](
+		"ingest_writer",
+		poolutil.DDL,
+		writerCnt,
+		func() workerpool.Worker[IndexRecordChunk, workerpool.None] {
+			return b.createWorker(indexIDs, engines, writerCnt)
+		},
+	)
+>>>>>>> 329a9800c45 (ddl: fast-reorg set memory limit for local writer based on current usage (#53873))
 	writerPool.Start(b.ctx)
 	b.writerPool = writerPool
 	b.copReqSenderPool.chunkSender = writerPool
@@ -438,13 +450,21 @@ func (b *ingestBackfillScheduler) currentWorkerSize() int {
 }
 
 func (b *ingestBackfillScheduler) adjustWorkerSize() error {
-	readerCnt, writer := b.expectedWorkerSize()
+	readerCnt, writer := b.expectedWorkerCnt()
 	b.writerPool.Tune(int32(writer))
 	b.copReqSenderPool.adjustSize(readerCnt)
 	return nil
 }
 
+<<<<<<< HEAD
 func (b *ingestBackfillScheduler) createWorker() workerpool.Worker[IndexRecordChunk, workerpool.None] {
+=======
+func (b *ingestBackfillScheduler) createWorker(
+	indexIDs []int64,
+	engines []ingest.Engine,
+	writerCnt int,
+) workerpool.Worker[IndexRecordChunk, workerpool.None] {
+>>>>>>> 329a9800c45 (ddl: fast-reorg set memory limit for local writer based on current usage (#53873))
 	reorgInfo := b.reorgInfo
 	job := reorgInfo.Job
 	sessCtx, err := newSessCtx(reorgInfo.d.store, reorgInfo.ReorgMeta.SQLMode, reorgInfo.ReorgMeta.Location, reorgInfo.ReorgMeta.ResourceGroupName)
@@ -472,9 +492,15 @@ func (b *ingestBackfillScheduler) createWorker() workerpool.Worker[IndexRecordCh
 	}
 
 	worker, err := newAddIndexIngestWorker(
+<<<<<<< HEAD
 		b.ctx, b.tbl, reorgInfo.d, engines, b.resultCh, job.ID,
 		reorgInfo.SchemaName, indexIDs, b.writerMaxID,
 		b.copReqSenderPool, sessCtx, b.checkpointMgr)
+=======
+		b.ctx, b.tbl, reorgInfo, engines, b.resultCh, job.ID,
+		indexIDs, b.writerMaxID, writerCnt,
+		b.copReqSenderPool, b.checkpointMgr)
+>>>>>>> 329a9800c45 (ddl: fast-reorg set memory limit for local writer based on current usage (#53873))
 	if err != nil {
 		// Return an error only if it is the first worker.
 		if b.writerMaxID == 0 {
@@ -515,7 +541,7 @@ func (b *ingestBackfillScheduler) createCopReqSenderPool() (*copReqSenderPool, e
 	return newCopReqSenderPool(b.ctx, copCtx, sessCtx.GetStore(), b.taskCh, b.sessPool, b.checkpointMgr), nil
 }
 
-func (b *ingestBackfillScheduler) expectedWorkerSize() (readerSize int, writerSize int) {
+func (b *ingestBackfillScheduler) expectedWorkerCnt() (readerCnt int, writerCnt int) {
 	return expectedIngestWorkerCnt(int(variable.GetDDLReorgWorkerCounter()), b.avgRowSize)
 }
 

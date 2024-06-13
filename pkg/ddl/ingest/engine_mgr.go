@@ -27,12 +27,35 @@ import (
 // maxWriterCount is the max number of writers that can be created for a single engine.
 const maxWriterCount = 16
 
+<<<<<<< HEAD
 // Register create a new engineInfo and register it to the backend context.
 func (bc *litBackendCtx) Register(jobID, indexID int64, schemaName, tableName string) (Engine, error) {
 	// Calculate lightning concurrency degree and set memory usage
 	// and pre-allocate memory usage for worker.
 	bc.MemRoot.RefreshConsumption()
 	ok := bc.MemRoot.CheckConsume(int64(bc.cfg.TikvImporter.LocalWriterMemCacheSize))
+=======
+	for _, indexID := range indexIDs {
+		en, ok := bc.engines[indexID]
+		if !ok {
+			continue
+		}
+		ret = append(ret, en)
+	}
+	if l := len(ret); l > 0 {
+		if l != len(indexIDs) {
+			return nil, errors.Errorf(
+				"engines index ID number mismatch: job ID %d, required number of index IDs: %d, actual number of engines: %d",
+				bc.jobID, len(indexIDs), l,
+			)
+		}
+		return ret, nil
+	}
+
+	bc.memRoot.RefreshConsumption()
+	numIdx := int64(len(indexIDs))
+	ok := bc.memRoot.CheckConsume(numIdx * structSizeEngineInfo)
+>>>>>>> 329a9800c45 (ddl: fast-reorg set memory limit for local writer based on current usage (#53873))
 	if !ok {
 		return nil, genEngineAllocMemFailedErr(bc.ctx, bc.MemRoot, bc.jobID, indexID)
 	}
@@ -81,6 +104,7 @@ func (bc *litBackendCtx) Register(jobID, indexID int64, schemaName, tableName st
 		en.writerCount++
 		info = LitInfoAddWriter
 	}
+<<<<<<< HEAD
 	bc.MemRoot.ConsumeWithTag(encodeEngineTag(jobID, indexID), int64(bc.cfg.TikvImporter.LocalWriterMemCacheSize))
 	logutil.Logger(bc.ctx).Info(info, zap.Int64("job ID", jobID),
 		zap.Int64("index ID", indexID),
@@ -88,6 +112,21 @@ func (bc *litBackendCtx) Register(jobID, indexID int64, schemaName, tableName st
 		zap.Int64("memory limitation", bc.MemRoot.MaxMemoryQuota()),
 		zap.Int("current writer count", en.writerCount))
 	return en, nil
+=======
+
+	for _, indexID := range indexIDs {
+		ei := openedEngines[indexID]
+		ret = append(ret, ei)
+		bc.engines[indexID] = ei
+	}
+	bc.memRoot.Consume(numIdx * structSizeEngineInfo)
+
+	logutil.Logger(bc.ctx).Info(LitInfoOpenEngine, zap.Int64("job ID", bc.jobID),
+		zap.Int64s("index IDs", indexIDs),
+		zap.Int64("current memory usage", bc.memRoot.CurrentUsage()),
+		zap.Int64("memory limitation", bc.memRoot.MaxMemoryQuota()))
+	return ret, nil
+>>>>>>> 329a9800c45 (ddl: fast-reorg set memory limit for local writer based on current usage (#53873))
 }
 
 // Unregister delete the engineInfo from the engineManager.
@@ -97,11 +136,15 @@ func (bc *litBackendCtx) Unregister(jobID, indexID int64) {
 		return
 	}
 
+<<<<<<< HEAD
 	ei.Clean()
 	bc.Delete(indexID)
 	bc.MemRoot.ReleaseWithTag(encodeEngineTag(jobID, indexID))
 	bc.MemRoot.Release(StructSizeWriterCtx * int64(ei.writerCount))
 	bc.MemRoot.Release(StructSizeEngineInfo)
+=======
+	bc.memRoot.Release(numIdx * structSizeEngineInfo)
+>>>>>>> 329a9800c45 (ddl: fast-reorg set memory limit for local writer based on current usage (#53873))
 }
 
 // ResetWorkers reset the writer count of the engineInfo because

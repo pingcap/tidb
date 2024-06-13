@@ -41,7 +41,12 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
+<<<<<<< HEAD
 	"github.com/pingcap/tidb/pkg/lightning/common"
+=======
+	"github.com/pingcap/tidb/pkg/lightning/backend"
+	litconfig "github.com/pingcap/tidb/pkg/lightning/config"
+>>>>>>> 329a9800c45 (ddl: fast-reorg set memory limit for local writer based on current usage (#53873))
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -788,7 +793,8 @@ SwitchIndexState:
 	return ver, errors.Trace(err)
 }
 
-// pickBackfillType determines which backfill process will be used.
+// pickBackfillType determines which backfill process will be used. The result is
+// both stored in job.ReorgMeta.ReorgTp and returned.
 func pickBackfillType(ctx context.Context, job *model.Job) (model.ReorgType, error) {
 	if job.ReorgMeta.ReorgTp != model.ReorgTypeNone {
 		// The backfill task has been started.
@@ -1665,6 +1671,21 @@ type addIndexIngestWorker struct {
 	jobID    int64
 }
 
+func getLocalWriterConfig(indexCnt, writerCnt int) *backend.LocalWriterConfig {
+	writerCfg := &backend.LocalWriterConfig{}
+	// avoid unit test panic
+	memRoot := ingest.LitMemRoot
+	if memRoot == nil {
+		return writerCfg
+	}
+
+	availMem := memRoot.MaxMemoryQuota() - memRoot.CurrentUsage()
+	memLimitPerWriter := availMem / int64(indexCnt) / int64(writerCnt)
+	memLimitPerWriter = min(memLimitPerWriter, litconfig.DefaultLocalWriterMemCacheSize)
+	writerCfg.Local.MemCacheSize = memLimitPerWriter
+	return writerCfg
+}
+
 func newAddIndexIngestWorker(
 	ctx context.Context,
 	t table.PhysicalTable,
@@ -1675,16 +1696,19 @@ func newAddIndexIngestWorker(
 	schemaName string,
 	indexIDs []int64,
 	writerID int,
+	writerCnt int,
 	copReqSenderPool *copReqSenderPool,
 	sessCtx sessionctx.Context,
 	checkpointMgr *ingest.CheckpointManager,
 ) (*addIndexIngestWorker, error) {
 	indexes := make([]table.Index, 0, len(indexIDs))
 	writers := make([]ingest.Writer, 0, len(indexIDs))
+	writerCfg := getLocalWriterConfig(len(indexIDs), writerCnt)
+
 	for i, indexID := range indexIDs {
 		indexInfo := model.FindIndexInfoByID(t.Meta().Indices, indexID)
 		index := tables.NewIndex(t.GetPhysicalID(), t.Meta(), indexInfo)
-		lw, err := engines[i].CreateWriter(writerID)
+		lw, err := engines[i].CreateWriter(writerID, writerCfg)
 		if err != nil {
 			return nil, err
 		}
