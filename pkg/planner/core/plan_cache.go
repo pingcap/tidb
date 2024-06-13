@@ -130,6 +130,9 @@ func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isNonPrep
 		// cached plan once the schema version is changed.
 		// Cached plan in prepared struct does NOT have a "cache key" with
 		// schema version like prepared plan cache key
+		stmt.PointGet.pointPlan = nil
+		stmt.PointGet.columnNames = nil
+		stmt.PointGet.pointPlanHints = nil
 		stmt.PointGet.Executor = nil
 		stmt.PointGet.ColumnInfos = nil
 		// If the schema version has changed we need to preprocess it again,
@@ -215,32 +218,43 @@ func GetPlanFromSessionPlanCache(ctx context.Context, sctx sessionctx.Context,
 		}
 	}
 
-	matchOpts, err := GetMatchOpts(sctx, is, stmt, params)
-	if err != nil {
-		return nil, nil, err
-	}
+	var matchOpts *utilpc.PlanCacheMatchOpts
 	if stmtCtx.UseCache() {
-		if plan, names, ok, err := getCachedPlan(sctx, isNonPrepared, cacheKey, bindSQL, is, stmt, matchOpts); err != nil || ok {
-			return plan, names, err
+		var cacheVal kvcache.Value
+		var hit, isPointPlan bool
+		if stmt.PointGet.pointPlan != nil { // if it's PointGet Plan, no need to use MatchOpts
+			cacheVal = &PlanCacheValue{
+				Plan:          stmt.PointGet.pointPlan,
+				OutputColumns: stmt.PointGet.columnNames,
+				stmtHints:     stmt.PointGet.pointPlanHints,
+			}
+			isPointPlan, hit = true, true
+		} else {
+			matchOpts = GetMatchOpts(sctx, is, stmt, params)
+			cacheVal, hit = sctx.GetSessionPlanCache().Get(cacheKey, matchOpts)
 		}
+		if hit {
+			if plan, names, ok, err := adjustCachedPlan(sctx, cacheVal.(*PlanCacheValue), isNonPrepared, isPointPlan, cacheKey, bindSQL, is, stmt); err != nil || ok {
+				return plan, names, err
+			}
+		}
+	}
+	if matchOpts == nil {
+		matchOpts = GetMatchOpts(sctx, is, stmt, params)
 	}
 
 	return generateNewPlan(ctx, sctx, isNonPrepared, is, stmt, cacheKey, latestSchemaVersion, bindSQL, matchOpts)
 }
 
-func getCachedPlan(sctx sessionctx.Context, isNonPrepared bool, cacheKey kvcache.Key, bindSQL string,
-	is infoschema.InfoSchema, stmt *PlanCacheStmt, matchOpts *utilpc.PlanCacheMatchOpts) (base.Plan,
+func adjustCachedPlan(sctx sessionctx.Context, cachedVal *PlanCacheValue, isNonPrepared, isPointPlan bool,
+	cacheKey kvcache.Key, bindSQL string, is infoschema.InfoSchema, stmt *PlanCacheStmt) (base.Plan,
 	[]*types.FieldName, bool, error) {
 	sessVars := sctx.GetSessionVars()
 	stmtCtx := sessVars.StmtCtx
-
-	candidate, exist := sctx.GetSessionPlanCache().Get(cacheKey, matchOpts)
-	if !exist {
-		return nil, nil, false, nil
-	}
-	cachedVal := candidate.(*PlanCacheValue)
-	if err := checkPreparedPriv(sctx, stmt, is); err != nil {
-		return nil, nil, false, err
+	if !isPointPlan { // keep the prior behavior
+		if err := checkPreparedPriv(sctx, stmt, is); err != nil {
+			return nil, nil, false, err
+		}
 	}
 	for tblInfo, unionScan := range cachedVal.TblInfo2UnionScan {
 		if !unionScan && tableHasDirtyContent(sctx.GetPlanCtx(), tblInfo) {
@@ -309,6 +323,11 @@ func generateNewPlan(ctx context.Context, sctx sessionctx.Context, isNonPrepared
 		stmtCtx.SetPlan(p)
 		stmtCtx.SetPlanDigest(stmt.NormalizedPlan, stmt.PlanDigest)
 		sctx.GetSessionPlanCache().Put(cacheKey, cached, matchOpts)
+		if _, ok := p.(*PointGetPlan); ok {
+			stmt.PointGet.pointPlan = p
+			stmt.PointGet.columnNames = names
+			stmt.PointGet.pointPlanHints = stmtCtx.StmtHints.Clone()
+		}
 	}
 	sessVars.FoundInPlanCache = false
 	return p, names, err

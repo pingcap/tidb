@@ -682,6 +682,9 @@ func (b *executorBuilder) buildCleanupIndex(v *plannercore.CleanupIndex) exec.Ex
 	}
 	sessCtx := e.Ctx().GetSessionVars().StmtCtx
 	e.handleCols = buildHandleColsForExec(sessCtx, tblInfo, e.columns)
+	if e.index.Meta().Global {
+		e.columns = append(e.columns, model.NewExtraPartitionIDColInfo())
+	}
 	return e
 }
 
@@ -1366,9 +1369,14 @@ func (b *executorBuilder) buildUnionScanFromReader(reader exec.Executor, v *plan
 		us.columns = x.columns
 		us.table = x.table
 		us.virtualColumnIndex = buildVirtualColumnIndex(us.Schema(), us.columns)
-	default:
-		// The mem table will not be written by sql directly, so we can omit the union scan to avoid err reporting.
+	case *PointGetExecutor, *BatchPointGetExec, // PointGet and BatchPoint can handle virtual columns and dirty txn data themselves.
+		*TableDualExec,       // If TableDual, the result must be empty, so we can skip UnionScan and use TableDual directly here.
+		*TableSampleExecutor: // TableSample only supports sampling from disk, don't need to consider in-memory txn data for simplicity.
 		return originReader
+	default:
+		// TODO: consider more operators like Projection.
+		b.err = errors.NewNoStackErrorf("unexpected operator %T under UnionScan", reader)
+		return nil
 	}
 	return us
 }
@@ -2492,7 +2500,7 @@ func (b *executorBuilder) buildAnalyzeIndexPushdown(task plannercore.AnalyzeInde
 	failpoint.Inject("injectAnalyzeSnapshot", func(val failpoint.Value) {
 		startTS = uint64(val.(int))
 	})
-	concurrency := b.ctx.GetSessionVars().AnalyzeDistSQLScanConcurrency()
+	concurrency := adaptiveAnlayzeDistSQLConcurrency(context.Background(), b.ctx)
 	base := baseAnalyzeExec{
 		ctx:         b.ctx,
 		tableID:     task.TableID,
@@ -2609,7 +2617,7 @@ func (b *executorBuilder) buildAnalyzeSamplingPushdown(
 		PartitionName:    task.PartitionName,
 		SampleRateReason: sampleRateReason,
 	}
-	concurrency := b.ctx.GetSessionVars().AnalyzeDistSQLScanConcurrency()
+	concurrency := adaptiveAnlayzeDistSQLConcurrency(context.Background(), b.ctx)
 	base := baseAnalyzeExec{
 		ctx:         b.ctx,
 		tableID:     task.TableID,
@@ -2743,7 +2751,7 @@ func (b *executorBuilder) buildAnalyzeColumnsPushdown(
 	failpoint.Inject("injectAnalyzeSnapshot", func(val failpoint.Value) {
 		startTS = uint64(val.(int))
 	})
-	concurrency := b.ctx.GetSessionVars().AnalyzeDistSQLScanConcurrency()
+	concurrency := adaptiveAnlayzeDistSQLConcurrency(context.Background(), b.ctx)
 	base := baseAnalyzeExec{
 		ctx:         b.ctx,
 		tableID:     task.TableID,
@@ -3529,7 +3537,7 @@ func (builder *dataReaderBuilder) prunePartitionForInnerExecutor(tbl table.Table
 		for i, data := range content.Keys {
 			locateKey[keyColOffsets[i]] = data
 		}
-		p, err := partitionTbl.GetPartitionByRow(exprCtx, locateKey)
+		p, err := partitionTbl.GetPartitionByRow(exprCtx.GetEvalCtx(), locateKey)
 		if table.ErrNoPartitionForGivenValue.Equal(err) {
 			continue
 		}
@@ -4111,6 +4119,9 @@ func (builder *dataReaderBuilder) buildUnionScanForIndexJoin(ctx context.Context
 	}
 
 	ret := builder.buildUnionScanFromReader(reader, v)
+	if builder.err != nil {
+		return nil, builder.err
+	}
 	if us, ok := ret.(*UnionScanExec); ok {
 		err = us.open(ctx)
 	}
@@ -4168,7 +4179,7 @@ func (builder *dataReaderBuilder) buildTableReaderForIndexJoin(ctx context.Conte
 				for i, data := range content.Keys {
 					locateKey[keyColOffsets[i]] = data
 				}
-				p, err := pt.GetPartitionByRow(exprCtx, locateKey)
+				p, err := pt.GetPartitionByRow(exprCtx.GetEvalCtx(), locateKey)
 				if table.ErrNoPartitionForGivenValue.Equal(err) {
 					continue
 				}
@@ -4216,7 +4227,7 @@ func (builder *dataReaderBuilder) buildTableReaderForIndexJoin(ctx context.Conte
 			for i, data := range content.Keys {
 				locateKey[keyColOffsets[i]] = data
 			}
-			p, err := pt.GetPartitionByRow(exprCtx, locateKey)
+			p, err := pt.GetPartitionByRow(exprCtx.GetEvalCtx(), locateKey)
 			if table.ErrNoPartitionForGivenValue.Equal(err) {
 				continue
 			}

@@ -19,7 +19,6 @@ import (
 	"context"
 
 	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
@@ -63,16 +62,6 @@ func (*convertOuterToInnerJoin) optimize(_ context.Context, p base.LogicalPlan, 
 // false for those cases.
 
 // ConvertOuterToInnerJoin implements base.LogicalPlan ConvertOuterToInnerJoin interface.
-func (s *baseLogicalPlan) ConvertOuterToInnerJoin(predicates []expression.Expression) base.LogicalPlan {
-	p := s.self
-	for i, child := range p.Children() {
-		newChild := child.ConvertOuterToInnerJoin(predicates)
-		p.SetChild(i, newChild)
-	}
-	return p
-}
-
-// ConvertOuterToInnerJoin implements base.LogicalPlan ConvertOuterToInnerJoin interface.
 func (p *LogicalJoin) ConvertOuterToInnerJoin(predicates []expression.Expression) base.LogicalPlan {
 	innerTable := p.Children()[0]
 	outerTable := p.Children()[1]
@@ -87,7 +76,7 @@ func (p *LogicalJoin) ConvertOuterToInnerJoin(predicates []expression.Expression
 	if p.JoinType == LeftOuterJoin || p.JoinType == RightOuterJoin {
 		canBeSimplified := false
 		for _, expr := range predicates {
-			isOk := isNullFiltered(p.SCtx(), innerTable.Schema(), expr)
+			isOk := util.IsNullRejected(p.SCtx(), innerTable.Schema(), expr)
 			if isOk {
 				canBeSimplified = true
 				break
@@ -132,7 +121,7 @@ func (*convertOuterToInnerJoin) name() string {
 
 // ConvertOuterToInnerJoin implements base.LogicalPlan ConvertOuterToInnerJoin interface.
 func (s *LogicalSelection) ConvertOuterToInnerJoin(predicates []expression.Expression) base.LogicalPlan {
-	p := s.self.(*LogicalSelection)
+	p := s.Self().(*LogicalSelection)
 	combinedCond := append(predicates, p.Conditions...)
 	child := p.Children()[0]
 	child = child.ConvertOuterToInnerJoin(combinedCond)
@@ -142,58 +131,10 @@ func (s *LogicalSelection) ConvertOuterToInnerJoin(predicates []expression.Expre
 
 // ConvertOuterToInnerJoin implements base.LogicalPlan ConvertOuterToInnerJoin interface.
 func (s *LogicalProjection) ConvertOuterToInnerJoin(predicates []expression.Expression) base.LogicalPlan {
-	p := s.self.(*LogicalProjection)
+	p := s.Self().(*LogicalProjection)
 	canBePushed, _ := BreakDownPredicates(p, predicates)
 	child := p.Children()[0]
 	child = child.ConvertOuterToInnerJoin(canBePushed)
 	p.SetChildren(child)
 	return p
-}
-
-// allConstants checks if only the expression has only constants.
-func allConstants(ctx expression.BuildContext, expr expression.Expression) bool {
-	if expression.MaybeOverOptimized4PlanCache(ctx, []expression.Expression{expr}) {
-		return false // expression contains non-deterministic parameter
-	}
-	switch v := expr.(type) {
-	case *expression.ScalarFunction:
-		for _, arg := range v.GetArgs() {
-			if !allConstants(ctx, arg) {
-				return false
-			}
-		}
-		return true
-	case *expression.Constant:
-		return true
-	}
-	return false
-}
-
-// isNullFiltered takes care of complex predicates like this:
-// isNullFiltered(A OR B) = isNullFiltered(A) AND isNullFiltered(B)
-// isNullFiltered(A AND B) = isNullFiltered(A) OR isNullFiltered(B)
-func isNullFiltered(ctx base.PlanContext, innerSchema *expression.Schema, predicate expression.Expression) bool {
-	// The expression should reference at least one field in innerSchema or all constants.
-	if !expression.ExprReferenceSchema(predicate, innerSchema) && !allConstants(ctx.GetExprCtx(), predicate) {
-		return false
-	}
-
-	switch expr := predicate.(type) {
-	case *expression.ScalarFunction:
-		if expr.FuncName.L == ast.LogicAnd {
-			if isNullFiltered(ctx, innerSchema, expr.GetArgs()[0]) {
-				return true
-			}
-			return isNullFiltered(ctx, innerSchema, expr.GetArgs()[0])
-		} else if expr.FuncName.L == ast.LogicOr {
-			if !(isNullFiltered(ctx, innerSchema, expr.GetArgs()[0])) {
-				return false
-			}
-			return isNullFiltered(ctx, innerSchema, expr.GetArgs()[1])
-		} else {
-			return util.IsNullRejected(ctx, innerSchema, expr)
-		}
-	default:
-		return util.IsNullRejected(ctx, innerSchema, predicate)
-	}
 }

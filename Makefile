@@ -312,7 +312,7 @@ tools/bin/revive:
 
 .PHONY: tools/bin/failpoint-ctl
 tools/bin/failpoint-ctl:
-	GOBIN=$(shell pwd)/tools/bin $(GO) install github.com/pingcap/failpoint/failpoint-ctl@2eaa328
+	GOBIN=$(shell pwd)/tools/bin $(GO) install github.com/pingcap/failpoint/failpoint-ctl@9b3b6e3
 
 .PHONY: tools/bin/errdoc-gen
 tools/bin/errdoc-gen:
@@ -416,9 +416,15 @@ build_for_lightning_integration_test:
 	) || (make failpoint-disable && exit 1)
 	@make failpoint-disable
 
+.PHONY: lightning_integration_test
 lightning_integration_test: build_lightning build_for_lightning_integration_test
 	lightning/tests/run.sh
 
+.PHONY: lightning_integration_test_debug
+lightning_integration_test_debug:
+	lightning/tests/run.sh --no-tiflash
+
+.PHONY: build_for_br_integration_test
 build_for_br_integration_test:
 	@make failpoint-enable
 	($(GOTEST) -c -cover -covermode=count \

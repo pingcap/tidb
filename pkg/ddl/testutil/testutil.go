@@ -107,14 +107,14 @@ func TestMatchCancelState(t *testing.T, job *model.Job, cancelState any, sql str
 	switch v := cancelState.(type) {
 	case model.SchemaState:
 		if job.Type == model.ActionMultiSchemaChange {
-			msg := fmt.Sprintf("unexpected multi-schema change(sql: %s, cancel state: %s)", sql, v)
+			msg := fmt.Sprintf("unexpected multi-schema change(sql: %s, cancel state: %s, job: %s)", sql, v, job.String())
 			require.Failf(t, msg, "use []model.SchemaState as cancel states instead")
 			return false
 		}
 		return job.SchemaState == v
 	case SubStates: // For multi-schema change sub-jobs.
 		if job.MultiSchemaInfo == nil {
-			msg := fmt.Sprintf("not multi-schema change(sql: %s, cancel state: %v)", sql, v)
+			msg := fmt.Sprintf("not multi-schema change(sql: %s, cancel state: %v, job: %s)", sql, v, job.String())
 			require.Failf(t, msg, "use model.SchemaState as the cancel state instead")
 			return false
 		}

@@ -176,9 +176,9 @@ func (c checkCDCClient) checkpointTSFor(ctx context.Context, cf changefeed) (uin
 	}
 	switch info.State {
 	// https://docs.pingcap.com/zh/tidb/stable/ticdc-changefeed-overview
-	case "failed", "finished":
+	case "finished":
 		return invalidTs, nil
-	case "running", "warning", "normal", "stopped", "error":
+	case "failed", "running", "warning", "normal", "stopped", "error":
 		cts, err := c.fetchCheckpointTSFromStatus(ctx, cf)
 		if err != nil {
 			return 0, err

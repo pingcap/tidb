@@ -195,9 +195,11 @@ func (p *UserPrivileges) RequestVerificationWithUser(db, table, column string, p
 	if SkipWithGrant {
 		return true
 	}
-
 	if user == nil {
 		return false
+	}
+	if user.Username == "" && user.Hostname == "" {
+		return true
 	}
 
 	// Skip check for INFORMATION_SCHEMA database.

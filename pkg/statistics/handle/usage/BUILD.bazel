@@ -35,10 +35,12 @@ go_test(
     timeout = "short",
     srcs = [
         "index_usage_integration_test.go",
+        "predicate_column_test.go",
         "session_stats_collect_test.go",
     ],
     embed = [":usage"],
     flaky = True,
+    shard_count = 3,
     deps = [
         "//pkg/infoschema",
         "//pkg/parser/model",

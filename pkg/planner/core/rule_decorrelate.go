@@ -39,7 +39,7 @@ func (la *LogicalApply) canPullUpAgg() bool {
 	if len(la.EqualConditions)+len(la.LeftConditions)+len(la.RightConditions)+len(la.OtherConditions) > 0 {
 		return false
 	}
-	return len(la.children[0].Schema().Keys) > 0
+	return len(la.Children()[0].Schema().Keys) > 0
 }
 
 // canPullUp checks if an aggregation can be pulled up. An aggregate function like count(*) cannot be pulled up.
@@ -49,7 +49,7 @@ func (la *LogicalAggregation) canPullUp() bool {
 	}
 	for _, f := range la.AggFuncs {
 		for _, arg := range f.Args {
-			expr := expression.EvaluateExprWithNull(la.SCtx().GetExprCtx(), la.children[0].Schema(), arg)
+			expr := expression.EvaluateExprWithNull(la.SCtx().GetExprCtx(), la.Children()[0].Schema(), arg)
 			if con, ok := expr.(*expression.Constant); !ok || !con.Value.IsNull() {
 				return false
 			}
@@ -179,13 +179,13 @@ func (*decorrelateSolver) aggDefaultValueMap(agg *LogicalAggregation) map[int]*e
 func (s *decorrelateSolver) optimize(ctx context.Context, p base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
 	planChanged := false
 	if apply, ok := p.(*LogicalApply); ok {
-		outerPlan := apply.children[0]
-		innerPlan := apply.children[1]
-		apply.CorCols = coreusage.ExtractCorColumnsBySchema4LogicalPlan(apply.children[1], apply.children[0].Schema())
+		outerPlan := apply.Children()[0]
+		innerPlan := apply.Children()[1]
+		apply.CorCols = coreusage.ExtractCorColumnsBySchema4LogicalPlan(apply.Children()[1], apply.Children()[0].Schema())
 		if len(apply.CorCols) == 0 {
 			// If the inner plan is non-correlated, the apply will be simplified to join.
 			join := &apply.LogicalJoin
-			join.self = join
+			join.SetSelf(join)
 			join.SetTP(plancodec.TypeJoin)
 			p = join
 			appendApplySimplifiedTraceStep(apply, join, opt)
@@ -199,13 +199,13 @@ func (s *decorrelateSolver) optimize(ctx context.Context, p base.LogicalPlan, op
 				newConds = append(newConds, cond.Decorrelate(outerPlan.Schema()))
 			}
 			apply.AttachOnConds(newConds)
-			innerPlan = sel.children[0]
+			innerPlan = sel.Children()[0]
 			apply.SetChildren(outerPlan, innerPlan)
 			appendRemoveSelectionTraceStep(apply, sel, opt)
 			return s.optimize(ctx, p, opt)
 		} else if m, ok := innerPlan.(*LogicalMaxOneRow); ok {
-			if m.children[0].MaxOneRow() {
-				innerPlan = m.children[0]
+			if m.Children()[0].MaxOneRow() {
+				innerPlan = m.Children()[0]
 				apply.SetChildren(outerPlan, innerPlan)
 				appendRemoveMaxOneRowTraceStep(m, opt)
 				return s.optimize(ctx, p, opt)
@@ -250,7 +250,7 @@ func (s *decorrelateSolver) optimize(ctx context.Context, p base.LogicalPlan, op
 			}
 			apply.decorrelate(outerPlan.Schema())
 
-			innerPlan = proj.children[0]
+			innerPlan = proj.Children()[0]
 			apply.SetChildren(outerPlan, innerPlan)
 			if apply.JoinType != SemiJoin && apply.JoinType != LeftOuterSemiJoin && apply.JoinType != AntiSemiJoin && apply.JoinType != AntiLeftOuterSemiJoin {
 				proj.SetSchema(apply.Schema())
@@ -279,14 +279,14 @@ func (s *decorrelateSolver) optimize(ctx context.Context, p base.LogicalPlan, op
 			}
 			// Limit with non-0 offset will conduct an impact of itself on the final result set from its sub-child, consequently determining the bool value of the exist subquery.
 			if li.Offset == 0 {
-				innerPlan = li.children[0]
+				innerPlan = li.Children()[0]
 				apply.SetChildren(outerPlan, innerPlan)
 				appendRemoveLimitTraceStep(li, opt)
 				return s.optimize(ctx, p, opt)
 			}
 		} else if agg, ok := innerPlan.(*LogicalAggregation); ok {
 			if apply.canPullUpAgg() && agg.canPullUp() {
-				innerPlan = agg.children[0]
+				innerPlan = agg.Children()[0]
 				apply.JoinType = LeftOuterJoin
 				apply.SetChildren(outerPlan, innerPlan)
 				agg.SetSchema(apply.Schema())
@@ -344,7 +344,7 @@ func (s *decorrelateSolver) optimize(ctx context.Context, p base.LogicalPlan, op
 			}
 			// We can pull up the equal conditions below the aggregation as the join key of the apply, if only
 			// the equal conditions contain the correlated column of this apply.
-			if sel, ok := agg.children[0].(*LogicalSelection); ok && apply.JoinType == LeftOuterJoin {
+			if sel, ok := agg.Children()[0].(*LogicalSelection); ok && apply.JoinType == LeftOuterJoin {
 				var (
 					eqCondWithCorCol []*expression.ScalarFunction
 					remainedExpr     []expression.Expression
@@ -360,7 +360,7 @@ func (s *decorrelateSolver) optimize(ctx context.Context, p base.LogicalPlan, op
 				if len(eqCondWithCorCol) > 0 {
 					originalExpr := sel.Conditions
 					sel.Conditions = remainedExpr
-					apply.CorCols = coreusage.ExtractCorColumnsBySchema4LogicalPlan(apply.children[1], apply.children[0].Schema())
+					apply.CorCols = coreusage.ExtractCorColumnsBySchema4LogicalPlan(apply.Children()[1], apply.Children()[0].Schema())
 					// There's no other correlated column.
 					groupByCols := expression.NewSchema(agg.GetGroupByCols()...)
 					if len(apply.CorCols) == 0 {
@@ -391,7 +391,7 @@ func (s *decorrelateSolver) optimize(ctx context.Context, p base.LogicalPlan, op
 						}
 						// The selection may be useless, check and remove it.
 						if len(sel.Conditions) == 0 {
-							agg.SetChildren(sel.children[0])
+							agg.SetChildren(sel.Children()[0])
 							appendRemoveSelectionTraceStep(agg, sel, opt)
 						}
 						defaultValueMap := s.aggDefaultValueMap(agg)
@@ -413,13 +413,13 @@ func (s *decorrelateSolver) optimize(ctx context.Context, p base.LogicalPlan, op
 						return s.optimize(ctx, p, opt)
 					}
 					sel.Conditions = originalExpr
-					apply.CorCols = coreusage.ExtractCorColumnsBySchema4LogicalPlan(apply.children[1], apply.children[0].Schema())
+					apply.CorCols = coreusage.ExtractCorColumnsBySchema4LogicalPlan(apply.Children()[1], apply.Children()[0].Schema())
 				}
 			}
 		} else if sort, ok := innerPlan.(*LogicalSort); ok {
 			// Since we only pull up Selection, Projection, Aggregation, MaxOneRow,
 			// the top level Sort has no effect on the subquery's result.
-			innerPlan = sort.children[0]
+			innerPlan = sort.Children()[0]
 			apply.SetChildren(outerPlan, innerPlan)
 			appendRemoveSortTraceStep(sort, opt)
 			return s.optimize(ctx, p, opt)

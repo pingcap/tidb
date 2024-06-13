@@ -50,20 +50,20 @@ func (pdss *pushDownSequenceSolver) recursiveOptimize(pushedSequence *LogicalSeq
 			pushedSequence.SetChildren(lp.Children()...)
 			return pdss.recursiveOptimize(pushedSequence, lp.Children()[len(lp.Children())-1])
 		}
-		childLen := len(x.children)
-		mainQuery := x.children[childLen-1]
-		allCTEs := make([]base.LogicalPlan, 0, childLen+len(pushedSequence.children)-2)
-		allCTEs = append(allCTEs, pushedSequence.children[:len(pushedSequence.children)-1]...)
-		allCTEs = append(allCTEs, x.children[:childLen-1]...)
+		childLen := x.ChildLen()
+		mainQuery := x.Children()[childLen-1]
+		allCTEs := make([]base.LogicalPlan, 0, childLen+pushedSequence.ChildLen()-2)
+		allCTEs = append(allCTEs, pushedSequence.Children()[:pushedSequence.ChildLen()-1]...)
+		allCTEs = append(allCTEs, x.Children()[:childLen-1]...)
 		pushedSequence = LogicalSequence{}.Init(lp.SCtx(), lp.QueryBlockOffset())
 		pushedSequence.SetChildren(append(allCTEs, mainQuery)...)
 		return pdss.recursiveOptimize(pushedSequence, mainQuery)
 	case *DataSource, *LogicalAggregation, *LogicalCTE:
-		pushedSequence.SetChild(len(pushedSequence.children)-1, pdss.recursiveOptimize(nil, lp))
+		pushedSequence.SetChild(pushedSequence.ChildLen()-1, pdss.recursiveOptimize(nil, lp))
 		return pushedSequence
 	default:
 		if len(lp.Children()) > 1 {
-			pushedSequence.SetChild(len(pushedSequence.children)-1, lp)
+			pushedSequence.SetChild(pushedSequence.ChildLen()-1, lp)
 			return pushedSequence
 		}
 		lp.SetChildren(pdss.recursiveOptimize(pushedSequence, lp.Children()[0]))
