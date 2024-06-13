@@ -223,7 +223,11 @@ func (d *ddl) CreateSchemaWithInfo(
 		BinlogInfo:     &model.HistoryInfo{},
 		Args:           []any{dbInfo},
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
-		SQLMode:        ctx.GetSessionVars().SQLMode,
+		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{{
+			Database: dbInfo.Name.L,
+			Table:    model.InvolvingAll,
+		}},
+		SQLMode: ctx.GetSessionVars().SQLMode,
 	}
 
 	err = d.DoDDLJob(ctx, job)
@@ -262,7 +266,11 @@ func (d *ddl) ModifySchemaCharsetAndCollate(ctx sessionctx.Context, stmt *ast.Al
 		BinlogInfo:     &model.HistoryInfo{},
 		Args:           []any{toCharset, toCollate},
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
-		SQLMode:        ctx.GetSessionVars().SQLMode,
+		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{{
+			Database: dbInfo.Name.L,
+			Table:    model.InvolvingAll,
+		}},
+		SQLMode: ctx.GetSessionVars().SQLMode,
 	}
 	err = d.DoDDLJob(ctx, job)
 	err = d.callHookOnChanged(job, err)
@@ -294,7 +302,11 @@ func (d *ddl) ModifySchemaDefaultPlacement(ctx sessionctx.Context, stmt *ast.Alt
 		BinlogInfo:     &model.HistoryInfo{},
 		Args:           []any{placementPolicyRef},
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
-		SQLMode:        ctx.GetSessionVars().SQLMode,
+		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{{
+			Database: dbInfo.Name.L,
+			Table:    model.InvolvingAll,
+		}},
+		SQLMode: ctx.GetSessionVars().SQLMode,
 	}
 	err = d.DoDDLJob(ctx, job)
 	err = d.callHookOnChanged(job, err)
@@ -456,7 +468,11 @@ func (d *ddl) ModifySchemaSetTiFlashReplica(sctx sessionctx.Context, stmt *ast.A
 			BinlogInfo:     &model.HistoryInfo{},
 			Args:           []any{*tiflashReplica},
 			CDCWriteSource: sctx.GetSessionVars().CDCWriteSource,
-			SQLMode:        sctx.GetSessionVars().SQLMode,
+			InvolvingSchemaInfo: []model.InvolvingSchemaInfo{{
+				Database: dbInfo.Name.L,
+				Table:    model.InvolvingAll,
+			}},
+			SQLMode: sctx.GetSessionVars().SQLMode,
 		}
 		err := d.DoDDLJob(sctx, job)
 		err = d.callHookOnChanged(job, err)
@@ -2813,6 +2829,7 @@ func (d *ddl) createTableWithInfoJob(
 		args = append(args, ctx.GetSessionVars().ForeignKeyChecks)
 	}
 
+	// TODO(lance6716): check where we calculate InvolvingSchemaInfo
 	job = &model.Job{
 		SchemaID:       schema.ID,
 		TableID:        tbInfo.ID,
@@ -3185,13 +3202,13 @@ func (d *ddl) FlashbackCluster(ctx sessionctx.Context, flashbackTS uint64) error
 		Args: []any{
 			flashbackTS,
 			map[string]any{},
-			true,         /* tidb_gc_enable */
-			variable.On,  /* tidb_enable_auto_analyze */
-			variable.Off, /* tidb_super_read_only */
-			0,            /* totalRegions */
-			0,            /* startTS */
-			0,            /* commitTS */
-			variable.On,  /* tidb_ttl_job_enable */
+			true,           /* tidb_gc_enable */
+			variable.On,    /* tidb_enable_auto_analyze */
+			variable.Off,   /* tidb_super_read_only */
+			0,              /* totalRegions */
+			0,              /* startTS */
+			0,              /* commitTS */
+			variable.On,    /* tidb_ttl_job_enable */
 			[]kv.KeyRange{} /* flashback key_ranges */},
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 		// FLASHBACK CLUSTER affects all schemas and tables.
@@ -7953,7 +7970,17 @@ func (d *ddl) CreateForeignKey(ctx sessionctx.Context, ti ast.Ident, fkName mode
 		BinlogInfo:     &model.HistoryInfo{},
 		Args:           []any{fkInfo, fkCheck},
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
-		SQLMode:        ctx.GetSessionVars().SQLMode,
+		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{
+			{
+				Database: schema.Name.L,
+				Table:    t.Meta().Name.L,
+			},
+			{
+				Database: fkInfo.RefSchema.L,
+				Table:    fkInfo.RefTable.L,
+			},
+		},
+		SQLMode: ctx.GetSessionVars().SQLMode,
 	}
 
 	err = d.DoDDLJob(ctx, job)
@@ -8382,6 +8409,8 @@ func (d *ddl) UnlockTables(ctx sessionctx.Context, unlockTables []model.TableLoc
 			SessionID: ctx.GetSessionVars().ConnectionID,
 		},
 	}
+
+	// TODO(lance6716): should we set InvolvingSchemaInfo?
 	job := &model.Job{
 		SchemaID:       unlockTables[0].SchemaID,
 		TableID:        unlockTables[0].TableID,
@@ -9424,6 +9453,7 @@ func (d *ddl) CreateCheckConstraint(ctx sessionctx.Context, ti ast.Ident, constr
 	if err := table.IfCheckConstraintExprBoolType(ctx.GetExprCtx().GetEvalCtx(), constraintInfo, tblInfo); err != nil {
 		return err
 	}
+	// TODO(lance6716): InvolvingSchemaInfo for constraint related DDL?
 	job := &model.Job{
 		SchemaID:       schema.ID,
 		TableID:        tblInfo.ID,
