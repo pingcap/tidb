@@ -1207,7 +1207,6 @@ type updateColumnWorker struct {
 
 	rowMap map[int64]types.Datum
 
-	checksumBuffer rowcodec.RowData
 	checksumNeeded bool
 }
 
