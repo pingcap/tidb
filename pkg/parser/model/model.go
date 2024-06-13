@@ -930,6 +930,7 @@ func NewExtraPartitionIDColInfo() *ColumnInfo {
 		Name: ExtraPartitionIdName,
 	}
 	colInfo.SetType(mysql.TypeLonglong)
+	colInfo.SetFlag(mysql.NotNullFlag)
 	flen, decimal := mysql.GetDefaultFieldLengthAndDecimal(mysql.TypeLonglong)
 	colInfo.SetFlen(flen)
 	colInfo.SetDecimal(decimal)
@@ -945,6 +946,7 @@ func NewExtraPhysTblIDColInfo() *ColumnInfo {
 		Name: ExtraPhysTblIdName,
 	}
 	colInfo.SetType(mysql.TypeLonglong)
+	colInfo.SetFlag(mysql.NotNullFlag)
 	flen, decimal := mysql.GetDefaultFieldLengthAndDecimal(mysql.TypeLonglong)
 	colInfo.SetFlen(flen)
 	colInfo.SetDecimal(decimal)
