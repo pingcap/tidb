@@ -18,7 +18,6 @@ import (
 	"bytes"
 	"context"
 	goJSON "encoding/json"
-	"strconv"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -1414,7 +1413,14 @@ func (b *builtinJSONQuoteSig) evalString(ctx EvalContext, row chunk.Row) (string
 	if isNull || err != nil {
 		return "", isNull, err
 	}
-	return strconv.Quote(str), false, nil
+	buffer := &bytes.Buffer{}
+	encoder := goJSON.NewEncoder(buffer)
+	encoder.SetEscapeHTML(false)
+	err = encoder.Encode(str)
+	if err != nil {
+		return "", isNull, err
+	}
+	return string(bytes.TrimSuffix(buffer.Bytes(), []byte("\n"))), false, nil
 }
 
 type jsonSearchFunctionClass struct {
