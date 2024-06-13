@@ -406,6 +406,7 @@ select cast(j as datetime) from t;
 SELECT JSON_SCHEMA_VALID(NULL, NULL);
 SELECT JSON_SCHEMA_VALID('{}', NULL);
 SELECT JSON_SCHEMA_VALID(NULL, '{}');
+SELECT JSON_SCHEMA_VALID(NULL, '');
 SELECT JSON_SCHEMA_VALID('{"required": ["a","b"]}', '{"a": 5,"b": 6}');
 SELECT JSON_SCHEMA_VALID('{"required": ["a","b"]}', '{"a": 5,"c": 6}');
 SELECT JSON_SCHEMA_VALID('{"type": "object"}', '{}');
@@ -458,3 +459,9 @@ SELECT JSON_OBJECT(NULL,'abc');
 SELECT JSON_SCHEMA_VALID(1, '{}');
 -- error 3146
 SELECT JSON_SCHEMA_VALID('{}', 1);
+-- error 3141
+SELECT JSON_SCHEMA_VALID('','{}');
+-- error 3141
+SELECT JSON_SCHEMA_VALID('{}','');
+-- error 3141
+SELECT JSON_SCHEMA_VALID('', NULL);

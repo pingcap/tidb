@@ -1821,6 +1821,24 @@ func (c *jsonSchemaValidFunctionClass) verifyArgs(ctx EvalContext, args []Expres
 	if evalType := args[1].GetType(ctx).EvalType(); evalType != types.ETString && evalType != types.ETJson {
 		return ErrInvalidTypeForJSON.GenWithStackByArgs(2, "json_schema_valid")
 	}
+	if c, ok := args[0].(*Constant); ok {
+		// If args[0] is NULL, then don't check the length of *both* arguments.
+		// JSON_SCHEMA_VALID(NULL,NULL) -> NULL
+		// JSON_SCHEMA_VALID(NULL,'') -> NULL
+		// JSON_SCHEMA_VALID('',NULL) -> ErrInvalidJSONTextInParam
+		if !c.Value.IsNull() {
+			if len(c.Value.GetBytes()) == 0 {
+				return types.ErrInvalidJSONTextInParam.GenWithStackByArgs(
+					1, "json_schema_valid", "The document is empty.", 0)
+			}
+			if c1, ok := args[1].(*Constant); ok {
+				if !c1.Value.IsNull() && len(c1.Value.GetBytes()) == 0 {
+					return types.ErrInvalidJSONTextInParam.GenWithStackByArgs(
+						2, "json_schema_valid", "The document is empty.", 0)
+				}
+			}
+		}
+	}
 	return nil
 }
 

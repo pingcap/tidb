@@ -846,6 +846,7 @@ const (
 	ErrWarnConflictingHint                                   = 3126
 	ErrUnresolvedHintName                                    = 3128
 	ErrInvalidJSONText                                       = 3140
+	ErrInvalidJSONTextInParam                                = 3141
 	ErrInvalidJSONPath                                       = 3143
 	ErrInvalidJSONCharset                                    = 3144
 	ErrInvalidTypeForJSON                                    = 3146

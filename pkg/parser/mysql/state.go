@@ -251,6 +251,7 @@ var MySQLState = map[uint16]string{
 	ErrGeneratedColumnNonPrior:             "HY000",
 	ErrDependentByGeneratedColumn:          "HY000",
 	ErrInvalidJSONText:                     "22032",
+	ErrInvalidJSONTextInParam:              "22032",
 	ErrInvalidJSONPath:                     "42000",
 	ErrInvalidJSONData:                     "22032",
 	ErrInvalidJSONPathWildcard:             "42000",
