@@ -50,7 +50,6 @@ import (
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	decoder "github.com/pingcap/tidb/pkg/util/rowDecoder"
-	"github.com/pingcap/tidb/pkg/util/rowcodec"
 	kvutil "github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
 )

@@ -1801,16 +1801,6 @@ func (t *TableCommon) getMutation(ctx table.MutateContext) *binlog.TableMutation
 	return ctx.StmtGetMutation(t.tableID)
 }
 
-func logWithContext(sessVars *variable.SessionVars, log func(msg string, fields ...zap.Field), msg string, fields ...zap.Field) {
-	ctxFields := make([]zap.Field, 0, len(fields)+2)
-	ctxFields = append(ctxFields, zap.Uint64("conn", sessVars.ConnectionID))
-	if sessVars.TxnCtx != nil {
-		ctxFields = append(ctxFields, zap.Uint64("txnStartTS", sessVars.TxnCtx.StartTS))
-	}
-	ctxFields = append(ctxFields, fields...)
-	log(msg, ctxFields...)
-}
-
 func (t *TableCommon) canSkip(col *table.Column, value *types.Datum) bool {
 	return CanSkip(t.Meta(), col, value)
 }
