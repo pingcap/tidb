@@ -166,6 +166,9 @@ func CheckPrivilege(activeRoles []*auth.RoleIdentity, pm privilege.Manager, vs [
 			hasPriv := false
 			for _, priv := range v.dynamicPrivs {
 				hasPriv = hasPriv || pm.RequestDynamicVerification(activeRoles, priv, v.dynamicWithGrant)
+				if hasPriv {
+					break
+				}
 			}
 			if !hasPriv {
 				if v.err == nil {
