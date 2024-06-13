@@ -201,11 +201,12 @@ func updateMetaTable(ctx context.Context, e *exec.BaseExecutor, id uint64, updat
     
     // Construct the final SQL query
     query := fmt.Sprintf("UPDATE mysql.tidb_br_jobs SET %s WHERE id = %d", strings.Join(setClauses, ", "), id)
+	log.Info("updateMetaTable", zap.String("query", query), zap.Any("args", args))
     
 	stmtCtx := util.WithInternalSourceType(ctx, kv.InternalTxnBR)
 	_,err := e.Ctx().GetSQLExecutor().ExecuteInternal(stmtCtx, query, args...)
     if err != nil {
-        log.Error("Failed to insert BRIE task into tidb_br_jobs", zap.Error(err), zap.String("query", query))
+        log.Error("Failed to update BRIE task into tidb_br_jobs", zap.Error(err), zap.String("query", query))
         return err
     }
     
@@ -236,6 +237,7 @@ func addTaskToMetaTable(ctx context.Context, e *BRIEExec) (uint64,error) {
 		"Wait",
 		0,
     )
+	log.Info("addTaskToMetaTable", zap.String("query", insertStmt))
 
 	stmtCtx := util.WithInternalSourceType(ctx, kv.InternalTxnBR)
 	_,err := e.Ctx().GetSQLExecutor().ExecuteInternal(stmtCtx, insertStmt)
