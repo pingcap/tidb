@@ -782,18 +782,6 @@ func setMaxValue(addr *int64, currentValue int64) {
 	}
 }
 
-func (e *hashJoinRuntimeStatsV2) setMaxFetchAndProbeTime(t int64) {
-	for {
-		value := atomic.LoadInt64(&e.maxFetchAndProbe)
-		if t <= value {
-			return
-		}
-		if atomic.CompareAndSwapInt64(&e.maxFetchAndProbe, value, t) {
-			return
-		}
-	}
-}
-
 // Tp implements the RuntimeStats interface.
 func (*hashJoinRuntimeStatsV2) Tp() int {
 	return execdetails.TpHashJoinRuntimeStats
