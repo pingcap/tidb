@@ -668,7 +668,13 @@ func (m *Meta) CreateDatabase(dbInfo *model.DBInfo) error {
 		return errors.Trace(err)
 	}
 
-	return m.txn.HSet(mDBs, dbKey, data)
+	if err := m.txn.HSet(mDBs, dbKey, data); err != nil {
+		return errors.Trace(err)
+	}
+	if m.needUpdateName {
+		return errors.Trace(m.CreateDatabaseName(dbInfo.Name.L, dbInfo.ID))
+	}
+	return nil
 }
 
 // UpdateDatabase updates a database with db info.
@@ -684,7 +690,13 @@ func (m *Meta) UpdateDatabase(dbInfo *model.DBInfo) error {
 		return errors.Trace(err)
 	}
 
-	return m.txn.HSet(mDBs, dbKey, data)
+	if err := m.txn.HSet(mDBs, dbKey, data); err != nil {
+		return errors.Trace(err)
+	}
+	if m.needUpdateName {
+		return errors.Trace(m.CreateDatabaseName(dbInfo.Name.L, dbInfo.ID))
+	}
+	return nil
 }
 
 // CreateTableOrView creates a table with tableInfo in database.
@@ -1599,6 +1611,12 @@ func (m *Meta) DropTableName(dbName string, tableName string) error {
 		return errors.Trace(err)
 	}
 	return m.txn.Clear(key)
+}
+
+// CreateDatabaseName creates a database name.
+// Used by CreateDatabase
+func (m *Meta) CreateDatabaseName(dbName string, dbID int64) error {
+	return m.CreateTableName(dbName, "", dbID)
 }
 
 // DropDatabaseName drops a database name.
