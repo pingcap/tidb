@@ -196,7 +196,7 @@ func ResetGlobalBRIEQueueForTest() {
 func (bq *brieQueue) registerTask(
 	ctx context.Context,
 	info *brieTaskInfo,
-	e *BRIEExec,
+	e *exec.BaseExecutor,
 ) (context.Context, uint64, error) {
 	taskCtx, taskCancel := context.WithCancel(ctx)
 	item := &brieQueueItem{
@@ -207,14 +207,14 @@ func (bq *brieQueue) registerTask(
 			total: 1,
 		},
 	}
-	taskID,err := addTaskToMetaTable(ctx,e)
+	taskID,err := addTaskToMetaTable(ctx,info,e)
 	if err != nil {
 		return taskCtx, 0, err
 	}
 	item.info.id = taskID
 	item.progress.taskID = taskID
 	bq.tasks.Store(taskID, item)
-	e.info.id = taskID
+	info.id = taskID
 
 	return taskCtx, taskID, nil
 }
@@ -416,7 +416,12 @@ func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) 
 	case len(s.Schemas) != 0:
 		cfg.TableFilter = filter.NewSchemasFilter(s.Schemas...)
 	default:
-		cfg.TableFilter = filter.All()
+		defaultFilter,err := filter.Parse([]string{"!mysql.tidb_br_jobs"})
+		if err != nil {
+			b.err = err
+			return nil
+		}
+		cfg.TableFilter = defaultFilter
 	}
 
 	// table options are stored in original case, but comparison
@@ -626,7 +631,7 @@ func (e *BRIEExec) Next(ctx context.Context, req *chunk.Chunk) error {
 
 	e.info.connID = e.Ctx().GetSessionVars().ConnectionID
 	e.info.queueTime = types.CurrentTime(mysql.TypeDatetime)
-	taskCtx, taskID,err := bq.registerTask(ctx, e.info,e)
+	taskCtx,taskID,err := bq.registerTask(ctx, e.info,&e.BaseExecutor)
 	if err != nil {
 		log.Error("Failed to register BRIE task", zap.Error(err))
 		return err
