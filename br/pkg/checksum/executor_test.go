@@ -4,10 +4,11 @@ package checksum_test
 
 import (
 	"context"
+	"github.com/pingcap/tidb/pkg/util/hack"
 	"math"
-	"regexp"
 	"testing"
 
+	jsoniter "github.com/json-iterator/go"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/checksum"
 	"github.com/pingcap/tidb/br/pkg/metautil"
@@ -304,16 +305,16 @@ func BenchmarkDecodeTableInfo(b *testing.B) {
 	value := p.Get("partition")
 	value = p.Get("tiflash_replica")
 	value.Exists()
-	idPattern := `"L":\s*"([^"]+)"`
-	idRegex := regexp.MustCompile(idPattern)
+	//idPattern := `"L":\s*"([^"]+)"`
+	//idRegex := regexp.MustCompile(idPattern)
 	//idRegex = regexp.MustCompile(`"id": (\d+),\s+"name": {\s+"O": "[^"]+",\s+"L": "([^"]+)"`)
 	//idRegex = regexp.MustCompile(`"L": "([^"]+)"`)
 
 	//emptyRegex := regexp.MustCompile(`\"partition\": {"`)
 
-	//var m model.TableInfo
+	var m model.TableNameInfo
 	for i := 0; i < b.N; i++ {
-		idRegex.FindStringSubmatch(rawJson[0:50])
+		//idRegex.FindStringSubmatch(rawJson[0:50])
 		//if len(nameLMatches) > 1 {
 		//	nameL := nameLMatches[1]
 		//	//fmt.Println("Name.L:", nameL)
@@ -327,6 +328,6 @@ func BenchmarkDecodeTableInfo(b *testing.B) {
 
 		//value := gjson.Get(string(hack.String(rawJson)), "partition")
 		//value.Exists()
-		//json.Unmarshal(hack.Slice(rawJson), &m)
+		jsoniter.Unmarshal(hack.Slice(rawJson), &m)
 	}
 }

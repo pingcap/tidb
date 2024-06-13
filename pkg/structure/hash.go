@@ -17,7 +17,10 @@ package structure
 import (
 	"bytes"
 	"context"
+	"github.com/pingcap/tidb/pkg/util/hack"
+	"regexp"
 	"strconv"
+	"strings"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -160,6 +163,31 @@ func (t *TxStructure) HGetAll(key []byte) ([]HashPair, error) {
 			Value: append([]byte{}, value...),
 		}
 		res = append(res, pair)
+		return nil
+	})
+
+	return res, errors.Trace(err)
+}
+
+// HGetAllNameToID gets all the fields and values in a hash.
+func (t *TxStructure) HGetAllNameToID(key []byte) (map[string]int, error) {
+	res := make(map[string]int)
+	idRegex := regexp.MustCompile(`"id":(\d+)`)
+	nameLRegex := regexp.MustCompile(`"L":"([^"]+)"`)
+
+	err := t.iterateHash(key, func(field []byte, value []byte) error {
+		if !strings.HasPrefix(string(hack.String(key)), "Table") {
+			return nil
+		}
+
+		idMatch := idRegex.FindStringSubmatch(string(hack.String(r.Value)))
+
+		nameLMatch := nameLRegex.FindStringSubmatch(string(hack.String(r.Value)))
+		id, err := strconv.Atoi(idMatch[1])
+		if err != nil {
+			return errors.Trace(err)
+		}
+		res[nameLMatch[1]] = id
 		return nil
 	})
 

@@ -42,6 +42,7 @@ func onCreateSequence(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ err
 	t.ListSimpleTables(schemaID)
 	t.ListSimpleTablesWithoutDecode(schemaID)
 	t.ListTableName2TableID(schemaID)
+	t.ListTableName2TableIDV2(schemaID)
 	//t.ListTablesWithoutDecode(schemaID)
 	t.ListTablesWithoutDecodeV2(schemaID)
 	if err != nil {
