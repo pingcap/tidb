@@ -223,32 +223,3 @@ func TestBRIEBuilderOPtions(t *testing.T) {
 	require.True(t, e.restoreCfg.WithSysTable)
 	require.True(t, e.restoreCfg.LoadStats)
 }
-
-func TestInsert(t *testing.T) {
-	sctx := mock.NewContext()
-	sctx.GetSessionVars().User = &auth.UserIdentity{Username: "test"}
-	is := infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable(), core.MockUnsignedTable()})
-	ResetGlobalBRIEQueueForTest()
-	builder := NewMockExecutorBuilderForTest(sctx, is)
-	ctx := context.Background()
-	p := parser.New()
-	p.SetParserConfig(parser.ParserConfig{EnableWindowFunction: true, EnableStrictDoubleTypeCheck: true})
-	failpoint.Enable("github.com/pingcap/tidb/pkg/executor/modifyStore", `return("tikv")`)
-	defer failpoint.Disable("github.com/pingcap/tidb/pkg/executor/modifyStore")
-	err := os.WriteFile("/tmp/keyfile", []byte(strings.Repeat("A", 128)), 0644)
-
-	require.NoError(t, err)
-	stmt, err := p.ParseOneStmt("BACKUP TABLE `a` TO 'noop://' CHECKSUM_CONCURRENCY = 4 IGNORE_STATS = 1 COMPRESSION_LEVEL = 4 COMPRESSION_TYPE = 'lz4' ENCRYPTION_METHOD = 'aes256-ctr' ENCRYPTION_KEYFILE = '/tmp/keyfile'", "", "")
-	require.NoError(t, err)
-	plan, err := core.BuildLogicalPlanForTest(ctx, sctx, stmt, infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable(), core.MockUnsignedTable(), core.MockView()}))
-	require.NoError(t, err)
-	s, ok := stmt.(*ast.BRIEStmt)
-	require.True(t, ok)
-	require.True(t, s.Kind == ast.BRIEKindBackup)
-
-	schema := plan.Schema()
-	exec := builder.buildBRIE(s, schema)
-	require.NoError(t, builder.err)
-	e, ok := exec.(*BRIEExec)
-	e.Ctx().GetSQLExecutor().ExecuteInternal(ctx, "show databases;")
-}
