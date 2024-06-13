@@ -40,6 +40,7 @@ import (
 	executor_metrics "github.com/pingcap/tidb/pkg/executor/metrics"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/metrics"
@@ -688,7 +689,7 @@ func (e *SimpleExec) executeRevokeRole(ctx context.Context, s *ast.RevokeRoleStm
 	e.setCurrentUser(s.Users)
 
 	for _, role := range s.Roles {
-		exists, err := userExists(ctx, e.Ctx(), role.Username, role.Hostname)
+		exists, err := userExistsWithRetryVariants(ctx, e.Ctx(), &role.Username, role.Hostname)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1122,6 +1123,11 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 
 	users := make([]*auth.UserIdentity, 0, len(s.Specs))
 	for _, spec := range s.Specs {
+		if !s.IsCreateRole {
+			if err := keyspace.GetUsernamePolicy().ValidateUsername(spec.User.Username); err != nil {
+				return err
+			}
+		}
 		if len(spec.User.Username) > auth.UserNameMaxLength {
 			return exeerrors.ErrWrongStringLength.GenWithStackByArgs(spec.User.Username, "user name", auth.UserNameMaxLength)
 		}
@@ -1748,7 +1754,7 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 			}
 		}
 
-		exists, err := userExistsInternal(ctx, sqlExecutor, spec.User.Username, spec.User.Hostname)
+		exists, err := userExistsInternalWithRetryVariants(ctx, sqlExecutor, &spec.User.Username, spec.User.Hostname)
 		if err != nil {
 			return err
 		}
@@ -2016,7 +2022,7 @@ func (e *SimpleExec) executeGrantRole(ctx context.Context, s *ast.GrantRoleStmt)
 	e.setCurrentUser(s.Users)
 
 	for _, role := range s.Roles {
-		exists, err := userExists(ctx, e.Ctx(), role.Username, role.Hostname)
+		exists, err := userExistsWithRetryVariants(ctx, e.Ctx(), &role.Username, role.Hostname)
 		if err != nil {
 			return err
 		}
@@ -2025,7 +2031,7 @@ func (e *SimpleExec) executeGrantRole(ctx context.Context, s *ast.GrantRoleStmt)
 		}
 	}
 	for _, user := range s.Users {
-		exists, err := userExists(ctx, e.Ctx(), user.Username, user.Hostname)
+		exists, err := userExistsWithRetryVariants(ctx, e.Ctx(), &user.Username, user.Hostname)
 		if err != nil {
 			return err
 		}
@@ -2082,6 +2088,9 @@ func (e *SimpleExec) executeRenameUser(s *ast.RenameUserStmt) error {
 	}
 	for _, userToUser := range s.UserToUsers {
 		oldUser, newUser := userToUser.OldUser, userToUser.NewUser
+		if err := keyspace.GetUsernamePolicy().ValidateUsername(newUser.Username); err != nil {
+			return err
+		}
 		if len(newUser.Username) > auth.UserNameMaxLength {
 			return exeerrors.ErrWrongStringLength.GenWithStackByArgs(newUser.Username, "user name", auth.UserNameMaxLength)
 		}
@@ -2388,6 +2397,25 @@ func userExists(ctx context.Context, sctx sessionctx.Context, name string, host 
 	return len(rows) > 0, nil
 }
 
+func userExistsWithRetryVariants(ctx context.Context, sctx sessionctx.Context, name *string, host string) (bool, error) {
+	exists, err := userExists(ctx, sctx, *name, host)
+	if err != nil {
+		return false, err
+	}
+	if exists {
+		return true, nil
+	}
+	// Check if user variants exist.
+	for _, variant := range keyspace.GetUsernamePolicy().GetUsernameVariants(*name) {
+		exists, err = userExists(ctx, sctx, variant, host)
+		if exists && err == nil {
+			*name = variant
+			return true, nil
+		}
+	}
+	return false, err
+}
+
 // use the same internal executor to read within the same transaction, otherwise same as userExists
 func userExistsInternal(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, name string, host string) (bool, error) {
 	sql := new(strings.Builder)
@@ -2407,6 +2435,25 @@ func userExistsInternal(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, na
 		return false, errClose
 	}
 	return rows > 0, err
+}
+
+func userExistsInternalWithRetryVariants(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, name *string, host string) (bool, error) {
+	exists, err := userExistsInternal(ctx, sqlExecutor, *name, host)
+	if err != nil {
+		return false, err
+	}
+	if exists {
+		return true, nil
+	}
+	// Check if user variants exist.
+	for _, variant := range keyspace.GetUsernamePolicy().GetUsernameVariants(*name) {
+		exists, err = userExistsInternal(ctx, sqlExecutor, variant, host)
+		if exists && err == nil {
+			*name = variant
+			return true, nil
+		}
+	}
+	return false, err
 }
 
 func (e *SimpleExec) executeSetPwd(ctx context.Context, s *ast.SetPwdStmt) error {

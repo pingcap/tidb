@@ -32,6 +32,7 @@ go_library(
         "//pkg/expression",
         "//pkg/extension",
         "//pkg/infoschema",
+        "//pkg/keyspace",
         "//pkg/kv",
         "//pkg/metrics",
         "//pkg/param",

@@ -1160,4 +1160,5 @@ const (
 	ErrTiKVMaxTimestampNotSynced = 9011
 	ErrTiFlashServerTimeout      = 9012
 	ErrTiFlashServerBusy         = 9013
+	ErrUsernameFormat            = 9014
 )

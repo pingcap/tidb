@@ -65,6 +65,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/extension"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser"
@@ -804,6 +805,42 @@ func (cc *clientConn) openSessionAndDoAuth(authData []byte, authPlugin string, z
 	return nil
 }
 
+// checkUserVarintMismatch checks if the user has different prefix than the assigned keyspace.
+func checkUserVarintMismatch(ctx context.Context, user string) error {
+	if keyspace.GetUsernamePolicy().ValidateUsername(user) != nil &&
+		keyspace.GetUsernamePolicy().ValidateUsernameFormat(user) {
+		logutil.Logger(ctx).Warn("username variants mismatch",
+			zap.String("user", user),
+			zap.String("assigned-keyspace", keyspace.GetKeyspaceNameBySettings()),
+		)
+		return servererr.ErrUsernameFormat
+	}
+	return nil
+}
+
+func (cc *clientConn) matchIdentityWithVariants(ctx context.Context, host, hasPassword string) (*auth.UserIdentity, error) {
+	for _, variant := range keyspace.GetUsernamePolicy().GetUsernameVariants(cc.user) {
+		identity, err := cc.ctx.MatchIdentity(variant, host)
+		if err != nil {
+			// If the username's format is correct but does not match the assigned keyspace,
+			// if so, return a special error to hint the user to retry.
+			if mismatchErr := checkUserVarintMismatch(ctx, cc.user); mismatchErr != nil {
+				return nil, mismatchErr
+			}
+			return nil, servererr.ErrAccessDenied.FastGenByArgs(cc.user, host, hasPassword)
+		}
+
+		logutil.Logger(ctx).Info("found user identity with variants",
+			zap.String("user", cc.user),
+			zap.String("host", host),
+			zap.String("assigned-keyspace", keyspace.GetKeyspaceNameBySettings()),
+		)
+		cc.user = variant
+		return identity, nil
+	}
+	return nil, servererr.ErrAccessDenied.FastGenByArgs(cc.user, host, hasPassword)
+}
+
 // Check if the Authentication Plugin of the server, client and user configuration matches
 func (cc *clientConn) checkAuthPlugin(ctx context.Context, resp *handshake.Response41) ([]byte, error) {
 	// Open a context unless this was done before.
@@ -831,7 +868,11 @@ func (cc *clientConn) checkAuthPlugin(ctx context.Context, resp *handshake.Respo
 	// Find the identity of the user based on username and peer host.
 	identity, err := cc.ctx.MatchIdentity(cc.user, host)
 	if err != nil {
-		return nil, servererr.ErrAccessDenied.FastGenByArgs(cc.user, host, hasPassword)
+		// If can't find the user, retry username variants.
+		identity, err = cc.matchIdentityWithVariants(ctx, host, hasPassword)
+		if err != nil {
+			return nil, err
+		}
 	}
 	// Get the plugin for the identity.
 	userplugin, err := cc.ctx.AuthPluginForUser(identity)

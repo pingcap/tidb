@@ -44,4 +44,6 @@ var (
 	ErrNetPacketTooLarge = dbterror.ClassServer.NewStd(errno.ErrNetPacketTooLarge)
 	// ErrMustChangePassword is returned when the user must change the password.
 	ErrMustChangePassword = dbterror.ClassServer.NewStd(errno.ErrMustChangePassword)
+	// ErrUsernameFormat is returned when the username is illegal.
+	ErrUsernameFormat = dbterror.ClassServer.NewStd(errno.ErrUsernameFormat)
 )
