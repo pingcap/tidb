@@ -152,7 +152,7 @@ func newJoinHashTableForTest(partitionedRowTables []*rowTable) *hashTableV2 {
 }
 
 func (jht *hashTableV2) createRowPos(pos uint64) *rowPos {
-	if pos < 0 || pos > jht.totalRowCount() {
+	if pos > jht.totalRowCount() {
 		panic("invalid call to createRowPos, the input pos should be in [0, totalRowCount]")
 	}
 	if pos == jht.totalRowCount() {
@@ -208,9 +208,4 @@ func (jht *hashTableV2) totalRowCount() uint64 {
 
 func (jht *hashTableV2) buildHashTableForTest(partitionIndex int, startSegmentIndex int, segmentStep int) {
 	jht.tables[partitionIndex].build(startSegmentIndex, segmentStep)
-}
-
-func (jht *hashTableV2) lookup(hashValue uint64) unsafe.Pointer {
-	partitionIndex := hashValue % jht.partitionNumber
-	return jht.tables[partitionIndex].lookup(hashValue)
 }

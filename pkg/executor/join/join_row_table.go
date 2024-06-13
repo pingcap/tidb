@@ -472,7 +472,6 @@ func newTableMeta(buildKeyIndex []int, buildTypes, buildKeyTypes, probeKeyTypes 
 type rowTableBuilder struct {
 	buildKeyIndex    []int
 	buildKeyTypes    []*types.FieldType
-	buildSchema      *expression.Schema
 	hasNullableKey   bool
 	hasFilter        bool
 	keepFilteredRows bool
