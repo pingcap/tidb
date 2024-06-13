@@ -188,7 +188,9 @@ func (s *chunkRestoreSuite) TestDeliverLoop() {
 	indexEngine, err := importer.OpenEngine(ctx, &backend.EngineConfig{}, s.tr.tableName, -1)
 	require.NoError(s.T(), err)
 
-	dataWriter, err := dataEngine.LocalWriter(ctx, &backend.LocalWriterConfig{TableName: s.tr.tableName})
+	writerCfg := &backend.LocalWriterConfig{}
+	writerCfg.TiDB.TableName = s.tr.tableName
+	dataWriter, err := dataEngine.LocalWriter(ctx, writerCfg)
 	require.NoError(s.T(), err)
 	indexWriter, err := indexEngine.LocalWriter(ctx, &backend.LocalWriterConfig{})
 	require.NoError(s.T(), err)
