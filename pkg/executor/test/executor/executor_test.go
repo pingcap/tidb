@@ -2945,7 +2945,7 @@ func TestIndexLookUpIssue53871(t *testing.T) {
 	tk.MustExec("analyze table t")
 	rows := tk.MustQuery("explain analyze select * from t use index(idx) where b > 0;").Rows()
 	require.Len(t, rows, 3)
-	require.Regexp(t, ".*IndexLookUp.*table_task: {total_time: .*, num: 3, .*", fmt.Sprintf("%v", rows[0]))
-	require.Regexp(t, ".*IndexRangeScan.*rpc_info.*Cop:{num_rpc:3, total_time:.*", fmt.Sprintf("%v", rows[1]))
-	require.Regexp(t, ".*TableRowIDScan.*rpc_info.*Cop:{num_rpc:3, total_time:.*", fmt.Sprintf("%v", rows[2]))
+	require.Regexp(t, ".*IndexLookUp.*table_task: {total_time: .*, num: 1, .*", fmt.Sprintf("%v", rows[0]))
+	require.Regexp(t, ".*IndexRangeScan.*rpc_info.*Cop:{num_rpc:1, total_time:.*", fmt.Sprintf("%v", rows[1]))
+	require.Regexp(t, ".*TableRowIDScan.*rpc_info.*Cop:{num_rpc:1, total_time:.*", fmt.Sprintf("%v", rows[2]))
 }
