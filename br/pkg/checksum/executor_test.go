@@ -310,7 +310,7 @@ func BenchmarkDecodeTableInfo(b *testing.B) {
 
 	//var m model.TableInfo
 	for i := 0; i < b.N; i++ {
-		//nameLMatches := idRegex.FindStringSubmatch(rawJson)
+		//nameLMatches = idRegex.FindStringSubmatch(rawJson)
 		//if len(nameLMatches) > 1 {
 		//	nameL := nameLMatches[1]
 		//	//fmt.Println("Name.L:", nameL)

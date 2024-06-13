@@ -1127,15 +1127,14 @@ func (m *Meta) ListTableName2TableID(dbID int64) (map[string]int, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	idRegex := regexp.MustCompile(`"id":(\d+)`)
+	nameLRegex := regexp.MustCompile(`"L":"([^"]+)"`)
 	for _, r := range res {
 		// only handle table meta
 		tableKey := string(r.Field)
 		if !strings.HasPrefix(tableKey, mTablePrefix) {
 			continue
 		}
-
-		idRegex := regexp.MustCompile(`"id":(\d+)`)
-		nameLRegex := regexp.MustCompile(`"L":"([^"]+)"`)
 
 		println(string(hack.String(r.Value)))
 
