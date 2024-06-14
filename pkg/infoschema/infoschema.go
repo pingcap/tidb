@@ -366,16 +366,17 @@ func (is *infoSchema) AllSchemaNames() (schemas []model.CIStr) {
 	return rs
 }
 
-func (is *infoSchema) SchemaTables(schema model.CIStr) (tables []table.Table) {
+func (is *infoSchema) SchemaTables(schema model.CIStr) []table.Table {
 	schemaTables, ok := is.schemaMap.get(schema.L)
 	if !ok {
-		return
+		return nil
 	}
+	tables := make([]table.Table, 0, schemaTables.tables.estimatedLen())
 	schemaTables.tables.scan(func(_ string, tbl table.Table) bool {
 		tables = append(tables, tbl)
 		return true
 	})
-	return
+	return tables
 }
 
 // FindTableByPartitionID finds the partition-table info by the partitionID.
