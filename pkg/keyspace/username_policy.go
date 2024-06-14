@@ -45,18 +45,18 @@ func NewDefaultUsernamePolicy() UsernamePolicy {
 	return &defaultUsernamePolicy{}
 }
 
-func (p *defaultUsernamePolicy) ValidateUsername(username string) error {
+func (*defaultUsernamePolicy) ValidateUsername(_ string) error {
 	return nil
 }
 
-func (p *defaultUsernamePolicy) ValidateUsernameFormat(username string) bool {
+func (*defaultUsernamePolicy) ValidateUsernameFormat(_ string) bool {
 	return true
 }
 
-func (p *defaultUsernamePolicy) GetUsernameVariants(username string) []string {
+func (*defaultUsernamePolicy) GetUsernameVariants(_ string) []string {
 	return nil
 }
 
-func (p *defaultUsernamePolicy) GetOriginalUsername(username string) string {
+func (*defaultUsernamePolicy) GetOriginalUsername(_ string) string {
 	return ""
 }
