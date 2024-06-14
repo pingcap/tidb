@@ -1166,4 +1166,6 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrCannotResumeDDLJob: mysql.Message("Job [%v] can't be resumed: %s", nil),
 	ErrPausedDDLJob:       mysql.Message("Job [%v] has already been paused", nil),
 	ErrBDRRestrictedDDL:   mysql.Message("The operation is not allowed while the bdr role of this cluster is set to %s.", nil),
+
+	ErrUsernameFormat: mysql.Message("Username is not valid", nil),
 }
