@@ -15,9 +15,6 @@
 package addindextest
 
 import (
-	"context"
-	"os"
-	"path/filepath"
 	"testing"
 
 	"github.com/pingcap/failpoint"
@@ -31,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/tests/realtikvtest/addindextestutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/tikv/client-go/v2/tikv"
 )
 
 func init() {
