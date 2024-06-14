@@ -155,10 +155,6 @@ func TestAddUKWithSmallIntHandles(t *testing.T) {
 	tk.MustContainErrMsg("alter table t add unique index uk(b)", "Duplicate entry '1' for key 't.uk'")
 }
 
-func alwaysRemoveFirstJobID(ids []int64) ([]int64, error) {
-	return ids[1:], nil
-}
-
 func TestAddUniqueDuplicateIndexes(t *testing.T) {
 	store, dom := realtikvtest.CreateMockStoreAndDomainAndSetup(t)
 
