@@ -130,6 +130,15 @@ func (*MockBackendCtx) CollectRemoteDuplicateRows(indexID int64, _ table.Table) 
 	return nil
 }
 
+// HandleErrorAfterCollectRemoteDuplicateRows implements BackendCtx.HandleErrorAfterCollectRemoteDuplicateRows interface.
+func (*MockBackendCtx) HandleErrorAfterCollectRemoteDuplicateRows(err error, indexID int64, _ table.Table, hasDupe bool) error {
+	logutil.DDLIngestLogger().Info("mock backend ctx handle error after collect remote duplicate rows",
+		zap.Error(err),
+		zap.Int64("indexID", indexID),
+		zap.Bool("hasDupe", hasDupe))
+	return nil
+}
+
 // FinishImport implements BackendCtx.FinishImport interface.
 func (*MockBackendCtx) FinishImport(_ table.Table) error {
 	logutil.DDLIngestLogger().Info("mock backend ctx finish import")

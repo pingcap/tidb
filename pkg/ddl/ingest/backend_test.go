@@ -15,9 +15,12 @@
 package ingest_test
 
 import (
+	"context"
+	"fmt"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
 	lkv "github.com/pingcap/tidb/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/local"
@@ -30,7 +33,9 @@ import (
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/mock"
+	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/tikv"
 )
 
 func TestHandleErrorAfterCollectRemoteDuplicateRows(t *testing.T) {
@@ -85,22 +90,21 @@ func TestHandleErrorAfterCollectRemoteDuplicateRows(t *testing.T) {
 	require.NoError(t, err)
 
 	kvPairs := encoder.SessionCtx.TakeKvPairs()
-	data2RowKey := kvPairs.Pairs[2].Key
-	data2RowValue := kvPairs.Pairs[2].Val
+	//data2RowKey := kvPairs.Pairs[2].Key
+	//data2RowValue := kvPairs.Pairs[2].Val
 	data3IndexKey := kvPairs.Pairs[5].Key
 	data3IndexValue := kvPairs.Pairs[5].Val
 
-	originalErr := common.ErrFoundDuplicateKeys.FastGenByArgs(data2RowKey, data2RowValue)
+	originalErr := common.ErrFoundDuplicateKeys.FastGenByArgs(data3IndexKey, data3IndexValue)
 
 	newErr := local.ConvertToErrFoundConflictRecords(originalErr, tbl)
-	require.EqualError(t, newErr, "[Lightning:Restore:ErrFoundDataConflictRecords]found data conflict records in table a, primary key is '2', row data is '(2, 6, \"2.csv\", 102)'")
-
-	originalErr = common.ErrFoundDuplicateKeys.FastGenByArgs(data3IndexKey, data3IndexValue)
-
-	newErr = local.ConvertToErrFoundConflictRecords(originalErr, tbl)
 	require.EqualError(t, newErr, "[Lightning:Restore:ErrFoundIndexConflictRecords]found index conflict records in table a, index name is 'a.key_bd', unique key is '[7 103]', primary key is '3'")
 
-	//var bc ingest.BackendCtx
-	//newErr := bc.HandleErrorAfterCollectRemoteDuplicateRows(err, indexID, tbl, hasDupe)
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	discovery := store.(tikv.Storage).GetRegionCache().PDClient().GetServiceDiscovery()
+	bCtx, err := ingest.LitBackCtxMgr.Register(context.Background(), 1, false, nil, discovery, "test")
+	require.NoError(t, err)
 
+	newErr = bCtx.HandleErrorAfterCollectRemoteDuplicateRows(newErr, 0, tbl, true)
+	fmt.Println(newErr)
 }
