@@ -76,6 +76,23 @@ func (rts *rowTableSegment) totalUsedBytes() int64 {
 	return ret
 }
 
+func (rts *rowTableSegment) getRowNum() int {
+	return len(rts.hashValues)
+}
+
+// This function is available to be used only when `rowLocations` has been initialized
+func (rts *rowTableSegment) getRowsBytes(rowID int) [][]byte {
+	rowNum := rts.getRowNum()
+	idx := int64(0)	
+	for {
+
+	}
+}
+
+func (rts *rowTableSegment) getRowLen(rowID int) int {
+	// return *(*int)(rts.rowLocations[rowID+1])
+}
+
 const maxRowTableSegmentSize = 1024
 
 func newRowTableSegment() *rowTableSegment {
@@ -221,6 +238,14 @@ func (rt *rowTable) getValidJoinKeyPos(rowIndex int) int {
 		startOffset += len(rt.segments[segIndex].rowLocations)
 	}
 	return -1
+}
+
+func (rt *rowTable) getTotalUsedBytesInSegments() int64 {
+	totalUsedBytes := int64(0)
+	for _, seg := range rt.segments {
+		totalUsedBytes += seg.totalUsedBytes()
+	}
+	return totalUsedBytes
 }
 
 type keyProp struct {
@@ -626,7 +651,7 @@ func (b *rowTableBuilder) appendRemainingRowLocations(workerID int, htCtx *hashT
 	for partID := 0; partID < int(htCtx.hashTable.partitionNumber); partID++ {
 		startPosInRawData := b.startPosInRawData[partID]
 		if len(startPosInRawData) > 0 {
-			htCtx.finalizeCurrentSeg(workerID, partID, b)
+			htCtx.finalizeCurrentSeg(workerID, partID, b, true)
 		}
 	}
 }
@@ -725,7 +750,7 @@ func (b *rowTableBuilder) appendToRowTable(chk *chunk.Chunk, hashJoinCtx *HashJo
 			seg     *rowTableSegment
 		)
 		if b.crrntSizeOfRowTable[partIdx] >= maxRowTableSegmentSize {
-			hashJoinCtx.hashTableContext.finalizeCurrentSeg(workerID, partIdx, b)
+			hashJoinCtx.hashTableContext.finalizeCurrentSeg(workerID, partIdx, b, true)
 		}
 		seg = hashJoinCtx.hashTableContext.getCurrentRowSegment(workerID, partIdx, hashJoinCtx.hashTableMeta, true)
 		if hasValidKey {

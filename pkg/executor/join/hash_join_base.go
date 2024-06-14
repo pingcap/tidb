@@ -319,7 +319,7 @@ func (w *buildWorkerBase) checkSpillAndExecute(fetcherAndWorkerSyncer *sync.Wait
 	if spillHelper.isInSpilling() {
 		// Wait for the stop of all workers
 		fetcherAndWorkerSyncer.Wait()
-		return spillHelper.spill()
+		return spillHelper.spillInBuildStage()
 	}
 	return nil
 }

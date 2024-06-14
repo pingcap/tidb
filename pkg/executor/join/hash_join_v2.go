@@ -48,15 +48,33 @@ var (
 type hashTableContext struct {
 	// rowTables is used during split partition stage, each buildWorker has
 	// its own rowTable
-	rowTables     [][]*rowTable
-	hashTable     *hashTableV2
-	memoryTracker *memory.Tracker
+	rowTables         [][]*rowTable
+	hashTable         *hashTableV2
+	memoryTracker     *memory.Tracker
+	spilledPartitions []bool
 }
 
 func (htc *hashTableContext) reset() {
 	htc.rowTables = nil
 	htc.hashTable = nil
 	htc.memoryTracker.Detach()
+	htc.spilledPartitions = nil
+}
+
+func (htc *hashTableContext) getPartitionMemoryUsage(partID int) int64 {
+	totalMemoryUsage := int64(0)
+	for _, tables := range htc.rowTables {
+		totalMemoryUsage += tables[partID].getTotalUsedBytesInSegments()
+	}
+	return totalMemoryUsage
+}
+
+func (htc *hashTableContext) getSegments(workerID, partitionID int) []*rowTableSegment {
+	return htc.rowTables[workerID][partitionID].segments
+}
+
+func (htc *hashTableContext) clearSegments(workerID, partitionID int) {
+	htc.rowTables[workerID][partitionID].segments = htc.rowTables[workerID][partitionID].segments[:0]
 }
 
 func (htc *hashTableContext) getCurrentRowSegment(workerID, partitionID int, tableMeta *TableMeta, allowCreate bool) *rowTableSegment {
@@ -75,7 +93,7 @@ func (htc *hashTableContext) getCurrentRowSegment(workerID, partitionID int, tab
 	return htc.rowTables[workerID][partitionID].segments[segNum-1]
 }
 
-func (htc *hashTableContext) finalizeCurrentSeg(workerID, partitionID int, builder *rowTableBuilder) {
+func (htc *hashTableContext) finalizeCurrentSeg(workerID, partitionID int, builder *rowTableBuilder, needConsume bool) {
 	seg := htc.getCurrentRowSegment(workerID, partitionID, nil, false)
 	for _, pos := range builder.startPosInRawData[partitionID] {
 		seg.rowLocations = append(seg.rowLocations, unsafe.Pointer(&seg.rawData[pos]))
@@ -84,7 +102,9 @@ func (htc *hashTableContext) finalizeCurrentSeg(workerID, partitionID int, build
 	builder.startPosInRawData[partitionID] = builder.startPosInRawData[partitionID][:0]
 	failpoint.Inject("finalizeCurrentSegPanic", nil)
 	seg.finalized = true
-	htc.memoryTracker.Consume(seg.totalUsedBytes())
+	if needConsume {
+		htc.memoryTracker.Consume(seg.totalUsedBytes())
+	}
 }
 
 func (htc *hashTableContext) mergeRowTablesToHashTable(tableMeta *TableMeta, partitionNumber int) int {
@@ -141,6 +161,7 @@ func (hCtx *HashJoinCtxV2) initHashTableContext() {
 		partitionNumber: uint64(hCtx.PartitionNumber),
 	}
 	hCtx.hashTableContext.memoryTracker = memory.NewTracker(memory.LabelForHashTableInHashJoinV2, -1)
+	hCtx.hashTableContext.spilledPartitions = make([]bool, hCtx.Concurrency)
 }
 
 // ProbeSideTupleFetcherV2 reads tuples from ProbeSideExec and send them to ProbeWorkers.
@@ -166,6 +187,7 @@ type BuildWorkerV2 struct {
 	BuildTypes     []*types.FieldType
 	HasNullableKey bool
 	WorkerID       uint
+	builder        *rowTableBuilder
 }
 
 // NewJoinBuildWorkerV2 create a BuildWorkerV2
@@ -186,6 +208,14 @@ func NewJoinBuildWorkerV2(ctx *HashJoinCtxV2, workID uint, buildSideExec exec.Ex
 	worker.BuildSideExec = buildSideExec
 	worker.BuildKeyColIdx = buildKeyColIdx
 	return worker
+}
+
+func (b *BuildWorkerV2) getSegments(partID int) []*rowTableSegment {
+	return b.HashJoinCtx.hashTableContext.getSegments(int(b.WorkerID), partID)
+}
+
+func (b *BuildWorkerV2) clearSegments(partID int) {
+	b.HashJoinCtx.hashTableContext.clearSegments(int(b.WorkerID), partID)
 }
 
 // HashJoinV2Exec implements the hash join algorithm.
@@ -297,13 +327,13 @@ func (fetcher *ProbeSideTupleFetcherV2) shouldLimitProbeFetchSize() bool {
 	return false
 }
 
-func (w *BuildWorkerV2) processOneChunk(typeCtx types.Context, builder *rowTableBuilder, chk *chunk.Chunk, fetcherAndWorkerSyncer *sync.WaitGroup, cost *int64) error {
+func (w *BuildWorkerV2) processOneChunk(typeCtx types.Context, chk *chunk.Chunk, fetcherAndWorkerSyncer *sync.WaitGroup, cost *int64) error {
 	defer func() {
 		fetcherAndWorkerSyncer.Done()
 	}()
 
 	start := time.Now()
-	err := builder.processOneChunk(chk, typeCtx, w.HashJoinCtx, int(w.WorkerID))
+	err := w.builder.processOneChunk(chk, typeCtx, w.HashJoinCtx, int(w.WorkerID))
 	failpoint.Inject("splitPartitionPanic", nil)
 	*cost += int64(time.Since(start))
 	return err
@@ -320,17 +350,19 @@ func (w *BuildWorkerV2) splitPartitionAndAppendToRowTable(typeCtx types.Context,
 	partitionNumber := w.HashJoinCtx.PartitionNumber
 	hashJoinCtx := w.HashJoinCtx
 
-	builder := createRowTableBuilder(w.BuildKeyColIdx, hashJoinCtx.BuildKeyTypes, partitionNumber, w.HasNullableKey, hashJoinCtx.BuildFilter != nil, hashJoinCtx.needScanRowTableAfterProbeDone)
+	// TODO add random failpoint to slow worker here, 20-40ms, enable it at any case.
+
+	w.builder = createRowTableBuilder(w.BuildKeyColIdx, hashJoinCtx.BuildKeyTypes, partitionNumber, w.HasNullableKey, hashJoinCtx.BuildFilter != nil, hashJoinCtx.needScanRowTableAfterProbeDone)
 
 	for chk := range srcChkCh {
-		err = w.processOneChunk(typeCtx, builder, chk, fetcherAndWorkerSyncer, &cost)
+		err = w.processOneChunk(typeCtx, chk, fetcherAndWorkerSyncer, &cost)
 		if err != nil {
 			return err
 		}
 	}
+
 	start := time.Now()
-	// TODO it's important to control the time point of closing srcChkCh
-	builder.appendRemainingRowLocations(int(w.WorkerID), w.HashJoinCtx.hashTableContext)
+	w.builder.appendRemainingRowLocations(int(w.WorkerID), w.HashJoinCtx.hashTableContext)
 	cost += int64(time.Since(start))
 	return nil
 }

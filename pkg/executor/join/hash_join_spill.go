@@ -18,8 +18,11 @@ import "github.com/pingcap/tidb/pkg/util/memory"
 
 const spillChunkSize = 1024
 
+const spillInfo = "memory exceeds quota, spill to disk now."
+
 const (
 	notSpilled = iota
+	needSpill
 	inSpilling
 )
 
@@ -44,7 +47,7 @@ func (h *hashJoinSpillAction) Action(t *memory.Tracker) {
 		return
 	}
 
-	if t.CheckExceed() {
+	if t.CheckExceed() && !hasEnoughDataToSpill(h.spillHelper.hashJoinExec.memTracker, t) {
 		h.GetFallback().Action(t)
 	}
 }
@@ -58,8 +61,14 @@ func (h *hashJoinSpillAction) actionImpl(t *memory.Tracker) bool {
 		h.spillHelper.cond.Wait()
 	}
 
-	if t.CheckExceed() && hasEnoughDataToSpill(h.spillHelper.hashJoinExec.memTracker, t) {
-		h.spillHelper.setInSpillingNoLock()
+	if t.CheckExceed() && h.spillHelper.isNotSpilledNoLock() && hasEnoughDataToSpill(h.spillHelper.hashJoinExec.memTracker, t) {
+		h.spillHelper.setNeedSpillNoLock()
+
+		// Because all executors could keep running before spill flag is set to `inSpilling`, memory
+		// consumption will be modified before we print the spill log. It's necessary to record the
+		// memory consumption when spill is triggered.
+		h.spillHelper.bytesConsumed.Store(t.BytesConsumed())
+		h.spillHelper.bytesLimit.Store(t.GetBytesLimit())
 		return true
 	}
 
@@ -67,5 +76,5 @@ func (h *hashJoinSpillAction) actionImpl(t *memory.Tracker) bool {
 }
 
 func hasEnoughDataToSpill(hashJoinTracker *memory.Tracker, passedInTracker *memory.Tracker) bool {
-	return hashJoinTracker.BytesConsumed() >= passedInTracker.GetBytesLimit()/10
+	return hashJoinTracker.BytesConsumed() >= passedInTracker.GetBytesLimit()/20
 }
