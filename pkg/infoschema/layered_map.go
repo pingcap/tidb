@@ -32,18 +32,20 @@ type itemT[V any] struct {
 }
 
 // layeredMap is a copy-on-write map with multiple layers. it's similar to an LSM tree.
-// infoschema builder uses this map to build new schema info from the old schema info,
-// to avoid copying too many elements.
-// infoschema uses this map to store the schema information, it's read-only and accessed
-// concurrently.
-// if mutable/immutable is not called, it's the same as a normal map.
+// infoschema builder uses a copy-on-write strategy to build new schema info from
+// the old schema info. in order to avoid copying the whole map on every modification,
+// we use this layered map to store the schema information. the builder must call
+// forCOW to get a new map for writing.
+// to support delete without copying the whole map, we use tombstone to mark the deleted.
 type layeredMap[K comparable, V any] struct {
 	// layers is the map layers inside this map, top layer is the last element.
 	// items in top layer shadows the items in the bottom layer.
+	// for a newly created map or after full compaction, we only have one layer which
+	// is the top layer.
 	layers []map[K]itemT[V]
-	// topLayer is the topLayer layer, it's the last element in layers, and all
-	// layers below it are read-only and might be accessed concurrently, so we need
-	// copy-on-write.
+	// topLayer is the top writable layer, it's the last element in layers, and all
+	// layers below it are read-only, might be shared and accessed concurrently,
+	// so we need copy-on-write.
 	topLayer         map[K]itemT[V]
 	maxLevel         int
 	compactThreshold int
@@ -193,7 +195,8 @@ func (m *layeredMap[K, V]) add0(key K, value V, tombstone bool) {
 		if len(m.layers) >= m.maxLevel {
 			m.compact(false)
 		}
-		// append a new layer even after compaction to avoid slice growth.
+		// append a new layer even after compaction to avoid map capacity growth
+		// automatically by golang.
 		m.topLayer = make(map[K]itemT[V], initialMapCap)
 		m.layers = append(m.layers, m.topLayer)
 	}
