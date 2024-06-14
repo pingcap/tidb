@@ -7278,11 +7278,14 @@ func (d *ddl) renameTables(ctx sessionctx.Context, oldIdents, newIdents []ast.Id
 		oldSchemaIDs = append(oldSchemaIDs, schemas[0].ID)
 		newSchemaIDs = append(newSchemaIDs, schemas[1].ID)
 		oldSchemaNames = append(oldSchemaNames, &schemas[0].Name)
-		involveSchemaInfo = append(involveSchemaInfo, model.InvolvingSchemaInfo{
-			Database: schemas[0].Name.L, Table: oldIdents[i].Name.L,
-		}, model.InvolvingSchemaInfo{
-			Database: schemas[1].Name.L, Table: newIdents[i].Name.L,
-		})
+		involveSchemaInfo = append(involveSchemaInfo,
+			model.InvolvingSchemaInfo{
+				Database: schemas[0].Name.L, Table: oldIdents[i].Name.L,
+			},
+			model.InvolvingSchemaInfo{
+				Database: schemas[1].Name.L, Table: newIdents[i].Name.L,
+			},
+		)
 	}
 
 	job := &model.Job{
