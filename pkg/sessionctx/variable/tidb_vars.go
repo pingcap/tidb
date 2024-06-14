@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"strconv"
 	"time"
 
 	"github.com/pingcap/tidb/pkg/config"
@@ -1595,7 +1596,8 @@ var (
 	IgnoreInlistPlanDigest    = atomic.NewBool(DefTiDBIgnoreInlistPlanDigest)
 	TxnEntrySizeLimit         = atomic.NewUint64(DefTiDBTxnEntrySizeLimit)
 
-	SchemaCacheSize = atomic.NewInt64(DefTiDBSchemaCacheSize)
+	SchemaCacheSize           = atomic.NewUint64(DefTiDBSchemaCacheSize)
+	SchemaCacheSizeOriginText = atomic.NewString(strconv.Itoa(DefTiDBSchemaCacheSize))
 )
 
 var (

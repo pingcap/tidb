@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"math"
 	"slices"
 	"strconv"
 	"strings"
@@ -586,4 +587,26 @@ func ParseAnalyzeSkipColumnTypes(val string) map[string]struct{} {
 		}
 	}
 	return skipTypes
+}
+
+func parseSchemaCacheSize(s *SessionVars, normalizedValue string, originalValue string) (byteSize uint64, normalizedStr string, err error) {
+	defer func() {
+		if err == nil && byteSize > 0 && byteSize < (512<<20) {
+			s.StmtCtx.AppendWarning(ErrTruncatedWrongValue.FastGenByArgs(TiDBSchemaCacheSize, originalValue))
+			byteSize = 512 << 20
+			normalizedStr = "512MB"
+		}
+		if err == nil && byteSize > math.MaxInt64 {
+			s.StmtCtx.AppendWarning(ErrTruncatedWrongValue.FastGenByArgs(TiDBSchemaCacheSize, originalValue))
+			byteSize = math.MaxInt64
+			normalizedStr = strconv.Itoa(math.MaxInt64)
+		}
+	}()
+
+	bt, str := parseByteSize(normalizedValue)
+	if str != "" {
+		return bt, str, nil
+	}
+
+	return 0, "", ErrTruncatedWrongValue.GenWithStackByArgs(TiDBSchemaCacheSize, originalValue)
 }
