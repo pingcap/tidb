@@ -72,6 +72,9 @@ func fetchShowBRIEResult(t *testing.T, e *ShowExec, brieColTypes []*types.FieldT
 }
 
 func TestFetchShowBRIE(t *testing.T) {
+	failpoint.Enable("github.com/pingcap/tidb/pkg/executor/ignoreMetaTable", "return()")
+	defer failpoint.Disable("github.com/pingcap/tidb/pkg/executor/ignoreMetaTable")
+
 	sctx := mock.NewContext()
 	sctx.GetSessionVars().User = &auth.UserIdentity{Username: "test"}
 	ResetGlobalBRIEQueueForTest()
@@ -111,7 +114,7 @@ func TestFetchShowBRIE(t *testing.T) {
 		message:    "killed",
 	}
 
-	globalBRIEQueue.registerTask(ctx, info1,&e.BaseExecutor)
+	globalBRIEQueue.registerTask(ctx, info1, &e.BaseExecutor)
 	info1Res := brieTaskInfoToResult(info1)
 	require.Equal(t, info1Res, fetchShowBRIEResult(t, e, brieColTypes))
 
@@ -119,7 +122,7 @@ func TestFetchShowBRIE(t *testing.T) {
 	require.Len(t, fetchShowBRIEResult(t, e, brieColTypes), 0)
 
 	// Register this task again, we should be able to fetch this info
-	globalBRIEQueue.registerTask(ctx, info1,&e.BaseExecutor)
+	globalBRIEQueue.registerTask(ctx, info1, &e.BaseExecutor)
 	info1Res = brieTaskInfoToResult(info1)
 	require.Equal(t, info1Res, fetchShowBRIEResult(t, e, brieColTypes))
 
@@ -139,7 +142,7 @@ func TestFetchShowBRIE(t *testing.T) {
 		storage:    "noop://test/backup2",
 		message:    "",
 	}
-	globalBRIEQueue.registerTask(ctx, info2,&e.BaseExecutor)
+	globalBRIEQueue.registerTask(ctx, info2, &e.BaseExecutor)
 	info2Res := brieTaskInfoToResult(info2)
 	globalBRIEQueue.clearTask(e.Ctx().GetSessionVars().StmtCtx)
 	require.Equal(t, info2Res, fetchShowBRIEResult(t, e, brieColTypes))

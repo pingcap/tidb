@@ -188,37 +188,37 @@ func splitBatchCreateTable(sctx sessionctx.Context, schema model.CIStr,
 	return err
 }
 
-func addTaskToMetaTable(ctx context.Context,info *brieTaskInfo , e *exec.BaseExecutor) (uint64,error) {
+func addTaskToMetaTable(ctx context.Context, info *brieTaskInfo, e *exec.BaseExecutor) (uint64, error) {
 	if info.queueTime.IsZero() {
-		return 0,errors.New("queueTime is not set")
+		return 0, errors.New("queueTime is not set")
 	}
 	if info.storage == "" {
-		return 0,errors.New("storage is not set")
+		return 0, errors.New("storage is not set")
 	}
 
 	escapedStorage := fmt.Sprintf("'%s'", info.storage)
 	escapedQuery := strings.ReplaceAll(info.query, "'", "''")
 
-    // Construct the SQL statement with escaped strings
-    insertStmt := fmt.Sprintf(`
+	// Construct the SQL statement with escaped strings
+	insertStmt := fmt.Sprintf(`
     INSERT INTO mysql.tidb_br_jobs (
          query, queueTime, kind, storage, connID, state, progress
     ) VALUES ('%s', '%s', '%s', %s, %d, '%s', %d);
-    `,  escapedQuery,
+    `, escapedQuery,
 		info.queueTime,
-        info.kind,
-        escapedStorage,
-        info.connID,
+		info.kind,
+		escapedStorage,
+		info.connID,
 		"Wait",
 		0,
-    )
+	)
 	log.Info("addTaskToMetaTable", zap.String("query", insertStmt))
 
 	stmtCtx := util.WithInternalSourceType(ctx, kv.InternalTxnBR)
-	_,err := e.Ctx().GetSQLExecutor().ExecuteInternal(stmtCtx, insertStmt)
+	_, err := e.Ctx().GetSQLExecutor().ExecuteInternal(stmtCtx, insertStmt)
 	if err != nil {
 		log.Error("Failed to insert BRIE task into tidb_br_jobs", zap.Error(err))
-		return 0,err
+		return 0, err
 	}
 
 	//FIXME: is this a safe way to get id?
@@ -236,29 +236,29 @@ func addTaskToMetaTable(ctx context.Context,info *brieTaskInfo , e *exec.BaseExe
 		return 0, errors.Errorf("unexpected result length: %d", len(rows))
 	}
 
-    return rows[0].GetUint64(0), nil
+	return rows[0].GetUint64(0), nil
 }
 
 func updateMetaTable(ctx context.Context, e *exec.BaseExecutor, id uint64, updates map[string]interface{}) error {
-    // Construct the SET clause dynamically based on the updates map
-    setClauses := make([]string, 0, len(updates))
-    args := make([]interface{}, 0, len(updates))
-    
-    for column, value := range updates {
-        setClauses = append(setClauses, fmt.Sprintf("%s = %%?", column))
-        args = append(args, value)
-    }
-    
-    // Construct the final SQL query
-    query := fmt.Sprintf("UPDATE mysql.tidb_br_jobs SET %s WHERE id = %d", strings.Join(setClauses, ", "), id)
+	// Construct the SET clause dynamically based on the updates map
+	setClauses := make([]string, 0, len(updates))
+	args := make([]interface{}, 0, len(updates))
+
+	for column, value := range updates {
+		setClauses = append(setClauses, fmt.Sprintf("%s = %%?", column))
+		args = append(args, value)
+	}
+
+	// Construct the final SQL query
+	query := fmt.Sprintf("UPDATE mysql.tidb_br_jobs SET %s WHERE id = %d", strings.Join(setClauses, ", "), id)
 	log.Info("updateMetaTable", zap.String("query", query), zap.Any("args", args))
-    
+
 	stmtCtx := util.WithInternalSourceType(ctx, kv.InternalTxnBR)
-	_,err := e.Ctx().GetSQLExecutor().ExecuteInternal(stmtCtx, query, args...)
-    if err != nil {
-        log.Error("Failed to update BRIE task into tidb_br_jobs", zap.Error(err), zap.String("query", query))
-        return err
-    }
-    
-    return nil
+	_, err := e.Ctx().GetSQLExecutor().ExecuteInternal(stmtCtx, query, args...)
+	if err != nil {
+		log.Error("Failed to update BRIE task into tidb_br_jobs", zap.Error(err), zap.String("query", query))
+		return err
+	}
+
+	return nil
 }
