@@ -250,7 +250,6 @@ func (ei *engineInfo) closeWriters() error {
 					firstErr = err
 				}
 			}
-			ei.memRoot.Release(int64(ei.litCfg.TikvImporter.LocalWriterMemCacheSize))
 		}
 		ei.writerCache.Delete(wid)
 		ei.memRoot.Release(structSizeWriterCtx)
