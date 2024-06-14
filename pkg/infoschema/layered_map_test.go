@@ -16,6 +16,7 @@ package infoschema
 
 import (
 	"fmt"
+	"math"
 	"math/rand"
 	"testing"
 	"time"
@@ -30,7 +31,8 @@ func layeredROMapLen(m *layeredMap[string, string]) int {
 func BenchmarkLayeredMapGet(b *testing.B) {
 	mapItemCounts := []int{1024, 50000, 100000, 300000, 1 << 20}
 	for _, mapItemCount := range mapItemCounts {
-		m1 := newLayeredMap0[string, string](initialMapCap, 1, 1)
+		// this is same as a normal map
+		m1 := newLayeredMap0[string, string](initialMapCap, 1, math.MaxInt)
 		for i := 0; i < mapItemCount; i++ {
 			m1.add(fmt.Sprintf("%d", i), fmt.Sprintf("%d", i))
 		}
@@ -68,14 +70,14 @@ func BenchmarkLayeredMapGet(b *testing.B) {
 }
 
 //func TestLayeredROMapGet(t *testing.T) {
-//	layerCounts := []int{5, 6, 8}
+//	layerCounts := []int{8}
 //	thresholds := [][]int{
-//		{256},
-//		{128, 256},
-//		{32, 64},
+//		//{256},
+//		//{128, 256},
+//		//{32, 64},
 //		//{64, 128, 192, 256, 512},
 //		//{32, 64, 96, 128, 156},
-//		//{16, 32, 64},
+//		{8, 16, 32, 64},
 //		//{4, 8, 16},
 //	}
 //	for i, layerCount := range layerCounts {
