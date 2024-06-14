@@ -256,7 +256,7 @@ func TestColumnAllocatorLimit(t *testing.T) {
 	//long characters are not cached
 	alloc = NewAllocator()
 	rs := alloc.Alloc([]*types.FieldType{types.NewFieldTypeBuilder().SetType(mysql.TypeVarchar).BuildP()}, 1024, 1024)
-	nu := len(alloc.columnAlloc.pool[varElemLen].allocColumns)
+	nu := len(alloc.columnAlloc.pool[VarElemLen].allocColumns)
 	require.Equal(t, nu, 1)
 	for _, col := range rs.columns {
 		for i := 0; i < 20480; i++ {

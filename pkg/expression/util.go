@@ -992,7 +992,12 @@ func containOuterNot(expr Expression, not bool) bool {
 // Contains tests if `exprs` contains `e`.
 func Contains(exprs []Expression, e Expression) bool {
 	for _, expr := range exprs {
-		if e == expr {
+		// Check string equivalence if one of the expressions is a clone.
+		sameString := false
+		if e != nil && expr != nil {
+			sameString = (e.String() == expr.String())
+		}
+		if e == expr || sameString {
 			return true
 		}
 	}

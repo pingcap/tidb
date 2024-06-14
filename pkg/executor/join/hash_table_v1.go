@@ -15,7 +15,6 @@
 package join
 
 import (
-	"fmt"
 	"hash"
 	"hash/fnv"
 	"sync/atomic"
@@ -30,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/disk"
-	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/memory"
 )
@@ -81,16 +79,6 @@ func (hc *HashContext) InitHash(rows int) {
 			}
 		}
 	}
-}
-
-type hashStatistic struct {
-	// NOTE: probeCollision may be accessed from multiple goroutines concurrently.
-	probeCollision   int64
-	buildTableElapse time.Duration
-}
-
-func (s *hashStatistic) String() string {
-	return fmt.Sprintf("probe_collision:%v, build:%v", s.probeCollision, execdetails.FormatDuration(s.buildTableElapse))
 }
 
 type hashNANullBucket struct {

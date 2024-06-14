@@ -31,6 +31,7 @@ func TestMain(m *testing.M) {
 
 	flag.Parse()
 	testDataMap.LoadTestSuiteData("testdata", "integration_suite")
+	testDataMap.LoadTestSuiteData("testdata", "index_range")
 
 	opts := []goleak.Option{
 		goleak.IgnoreTopFunction("github.com/golang/glog.(*fileSink).flushDaemon"),
@@ -48,6 +49,10 @@ func TestMain(m *testing.M) {
 	}
 
 	goleak.VerifyTestMain(testmain.WrapTestingM(m, callback), opts...)
+}
+
+func GetIndexRangeSuiteData() testdata.TestData {
+	return testDataMap["index_range"]
 }
 
 func GetIntegrationSuiteData() testdata.TestData {

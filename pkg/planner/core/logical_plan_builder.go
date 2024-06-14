@@ -7288,10 +7288,10 @@ func collectTableName(node ast.ResultSetNode, updatableName *map[string]bool, in
 	}
 }
 
-func appendDynamicVisitInfo(vi []visitInfo, priv string, withGrant bool, err error) []visitInfo {
+func appendDynamicVisitInfo(vi []visitInfo, privs []string, withGrant bool, err error) []visitInfo {
 	return append(vi, visitInfo{
 		privilege:        mysql.ExtendedPriv,
-		dynamicPriv:      priv,
+		dynamicPrivs:     privs,
 		dynamicWithGrant: withGrant,
 		err:              err,
 	})

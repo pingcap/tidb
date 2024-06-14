@@ -66,6 +66,7 @@ var dynamicPrivs = []string{
 	"RESTRICTED_CONNECTION_ADMIN",     // Can not be killed by PROCESS/CONNECTION_ADMIN privilege
 	"RESTRICTED_REPLICA_WRITER_ADMIN", // Can write to the sever even when tidb_restriced_read_only is turned on.
 	"RESOURCE_GROUP_ADMIN",            // Create/Drop/Alter RESOURCE GROUP
+	"RESOURCE_GROUP_USER",             // Can change the resource group of current session.
 }
 var dynamicPrivLock sync.Mutex
 var defaultTokenLife = 15 * time.Minute

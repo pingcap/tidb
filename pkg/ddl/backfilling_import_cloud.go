@@ -78,10 +78,31 @@ func (m *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Sub
 	if local == nil {
 		return errors.Errorf("local backend not found")
 	}
-	// TODO(lance6716): find the correct index, so "duplicate entry" error can have index name
-	currentIdx := m.indexes[0]
 
-	_, engineUUID := backend.MakeUUID(m.ptbl.Meta().Name.L, currentIdx.ID)
+	var (
+		currentIdx *model.IndexInfo
+		idxID      int64
+	)
+	switch len(sm.EleIDs) {
+	case 1:
+		for _, idx := range m.indexes {
+			if idx.ID == sm.EleIDs[0] {
+				currentIdx = idx
+				idxID = idx.ID
+				break
+			}
+		}
+	case 0:
+		// maybe this subtask is generated from an old version TiDB
+		if len(m.indexes) == 1 {
+			currentIdx = m.indexes[0]
+		}
+		idxID = m.indexes[0].ID
+	default:
+		return errors.Errorf("unexpected EleIDs count %v", sm.EleIDs)
+	}
+
+	_, engineUUID := backend.MakeUUID(m.ptbl.Meta().Name.L, idxID)
 
 	all := external.SortedKVMeta{}
 	for _, g := range sm.MetaGroups {
@@ -111,12 +132,11 @@ func (m *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Sub
 		return nil
 	}
 
-	if len(m.indexes) == 1 {
+	if currentIdx != nil {
 		return ingest.TryConvertToKeyExistsErr(err, currentIdx, m.ptbl.Meta())
 	}
 
-	// TODO(lance6716): after we can find the correct index, we can use the index
-	// name here. And fix TestGlobalSortMultiSchemaChange/ingest_dist_gs_backfill
+	// cannot fill the index name for subtask generated from an old version TiDB
 	tErr, ok := errors.Cause(err).(*terror.Error)
 	if !ok {
 		return err

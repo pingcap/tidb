@@ -1681,7 +1681,7 @@ func (er *expressionRewriter) rewriteVariable(planCtx *exprRewriterPlanCtx, v *a
 	}
 	if sem.IsEnabled() && sem.IsInvisibleSysVar(sysVar.Name) {
 		err := plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("RESTRICTED_VARIABLES_ADMIN")
-		planCtx.builder.visitInfo = appendDynamicVisitInfo(planCtx.builder.visitInfo, "RESTRICTED_VARIABLES_ADMIN", false, err)
+		planCtx.builder.visitInfo = appendDynamicVisitInfo(planCtx.builder.visitInfo, []string{"RESTRICTED_VARIABLES_ADMIN"}, false, err)
 	}
 	if v.ExplicitScope && !sysVar.HasNoneScope() {
 		if v.IsGlobal && !(sysVar.HasGlobalScope() || sysVar.HasInstanceScope()) {

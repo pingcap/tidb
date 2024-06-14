@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/executor"
+	"github.com/pingcap/tidb/pkg/executor/join"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -1301,8 +1302,12 @@ func TestOOMPanicInHashJoinWhenFetchBuildRows(t *testing.T) {
 	defer func() {
 		require.NoError(t, failpoint.Disable(fpName))
 	}()
-	err := tk.QueryToErr("select * from t as t2  join t as t1 where t1.c1=t2.c1")
-	require.EqualError(t, err, "failpoint panic: ERROR 1105 (HY000): Out Of Memory Quota![conn=1]")
+	useHashJoinV2 := []bool{true, false}
+	for _, hashJoinV2 := range useHashJoinV2 {
+		join.EnableHashJoinV2.Store(hashJoinV2)
+		err := tk.QueryToErr("select * from t as t2  join t as t1 where t1.c1=t2.c1")
+		require.EqualError(t, err, "failpoint panic: ERROR 1105 (HY000): Out Of Memory Quota![conn=1]")
+	}
 }
 
 func TestIssue18744(t *testing.T) {

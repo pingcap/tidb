@@ -76,3 +76,11 @@ alter table t1 add column(c datetime default '11abc');
 Error 1067 (42000): Invalid default value for 'c'
 alter table t1 add column d date default '2024-10';
 Error 1067 (42000): Invalid default value for 'd'
+drop table if exists t;
+create table t(a decimal(0,0), b decimal(0));
+show create table t;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `a` decimal(10,0) DEFAULT NULL,
+  `b` decimal(10,0) DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin

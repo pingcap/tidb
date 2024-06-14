@@ -147,7 +147,7 @@ func checkColumnType(id int, col *Column) bool {
 		return false
 	}
 
-	if id == varElemLen {
+	if id == VarElemLen {
 		//Take up too much memory,
 		if cap(col.data) > MaxCachedLen {
 			return false
@@ -212,7 +212,7 @@ func (alloc *poolColumnAllocator) put(col *Column) {
 		return
 	}
 	typeSize := col.typeSize()
-	if typeSize <= 0 && typeSize != varElemLen {
+	if typeSize <= 0 && typeSize != VarElemLen {
 		return
 	}
 
