@@ -1326,6 +1326,34 @@ func TestTiDBEnableResourceControl(t *testing.T) {
 	require.Equal(t, enable, true)
 }
 
+func TestTiDBResourceControlStrictMode(t *testing.T) {
+	vars := NewSessionVars(nil)
+	mock := NewMockGlobalAccessor4Tests()
+	mock.SessionVars = vars
+	vars.GlobalVarsAccessor = mock
+	resourceControlStrictMode := GetSysVar(TiDBResourceControlStrictMode)
+
+	// Default true
+	require.Equal(t, resourceControlStrictMode.Value, On)
+	require.Equal(t, EnableResourceControlStrictMode.Load(), true)
+
+	// Set to Off
+	err := mock.SetGlobalSysVar(context.Background(), TiDBResourceControlStrictMode, Off)
+	require.NoError(t, err)
+	val, err1 := mock.GetGlobalSysVar(TiDBEnableResourceControl)
+	require.NoError(t, err1)
+	require.Equal(t, Off, val)
+	require.Equal(t, EnableResourceControlStrictMode.Load(), false)
+
+	// Set to On again
+	err = mock.SetGlobalSysVar(context.Background(), TiDBResourceControlStrictMode, On)
+	require.NoError(t, err)
+	val, err1 = mock.GetGlobalSysVar(TiDBResourceControlStrictMode)
+	require.NoError(t, err1)
+	require.Equal(t, On, val)
+	require.Equal(t, EnableResourceControlStrictMode.Load(), true)
+}
+
 func TestTiDBEnableRowLevelChecksum(t *testing.T) {
 	ctx := context.Background()
 	vars := NewSessionVars(nil)
