@@ -822,12 +822,7 @@ func (cc *clientConn) matchIdentityWithVariants(ctx context.Context, host, hasPa
 	for _, variant := range keyspace.GetUsernamePolicy().GetUsernameVariants(cc.user) {
 		identity, err := cc.ctx.MatchIdentity(variant, host)
 		if err != nil {
-			// If the username's format is correct but does not match the assigned keyspace,
-			// if so, return a special error to hint the user to retry.
-			if mismatchErr := checkUserVarintMismatch(ctx, cc.user); mismatchErr != nil {
-				return nil, mismatchErr
-			}
-			return nil, servererr.ErrAccessDenied.FastGenByArgs(cc.user, host, hasPassword)
+			continue
 		}
 
 		logutil.Logger(ctx).Info("found user identity with variants",
@@ -837,6 +832,11 @@ func (cc *clientConn) matchIdentityWithVariants(ctx context.Context, host, hasPa
 		)
 		cc.user = variant
 		return identity, nil
+	}
+	// If the username's format is correct but does not match the assigned keyspace,
+	// if so, return a special error to hint the user to retry.
+	if mismatchErr := checkUserVarintMismatch(ctx, cc.user); mismatchErr != nil {
+		return nil, mismatchErr
 	}
 	return nil, servererr.ErrAccessDenied.FastGenByArgs(cc.user, host, hasPassword)
 }
