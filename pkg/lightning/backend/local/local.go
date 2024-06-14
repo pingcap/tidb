@@ -1632,6 +1632,10 @@ func (local *Backend) SwitchModeByKeyRanges(ctx context.Context, ranges []common
 }
 
 func openLocalWriter(cfg *backend.LocalWriterConfig, engine *Engine, tikvCodec tikvclient.Codec, cacheSize int64, kvBuffer *membuf.Buffer) (*Writer, error) {
+	// we want to keep the cacheSize as the whole limit of this local writer, but the
+	// main memory usage comes from two member: kvBuffer and writeBatch, so we split
+	// ~10% to writeBatch for !IsKVSorted, which means we estimate the average length
+	// of KV pairs are 9 times than the size of common.KvPair (9*72B = 648B).
 	w := &Writer{
 		engine:             engine,
 		memtableSizeLimit:  cacheSize,

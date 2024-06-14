@@ -2404,8 +2404,7 @@ func TestTotalMemoryConsume(t *testing.T) {
 
 	inMemTest = true
 	getMemoryInUse := func() int64 {
-		// wait to make test more stable, maybe related to release memory. I don't know
-		// why 🤷‍
+		// wait to make test more stable, maybe releasing memory is slow
 		runtime.GC()
 		time.Sleep(time.Second)
 		runtime.GC()
@@ -2448,9 +2447,12 @@ func TestTotalMemoryConsume(t *testing.T) {
 	require.NoError(t, err)
 	checkMemoryConsume("after open 1 engine", 0)
 
-	unsortedWriter, err := b.LocalWriter(ctx, &backend.LocalWriterConfig{IsKVSorted: false}, engineID)
+	writerCfg := &backend.LocalWriterConfig{}
+	writerCfg.Local.IsKVSorted = false
+	unsortedWriter, err := b.LocalWriter(ctx, writerCfg, engineID)
 	require.NoError(t, err)
-	sortedWriter, err := b.LocalWriter(ctx, &backend.LocalWriterConfig{IsKVSorted: true}, engineID)
+	writerCfg.Local.IsKVSorted = true
+	sortedWriter, err := b.LocalWriter(ctx, writerCfg, engineID)
 	require.NoError(t, err)
 	// 72 B * 1 Mi from unsortedWriter.writeBatch
 	checkMemoryConsume("after create engine writers", 72*units.MiB)
@@ -2477,7 +2479,9 @@ func TestTotalMemoryConsume(t *testing.T) {
 	// 1 MiB from bufferPool of unsortedWriter
 	checkMemoryConsume("after close all writers", 1*units.MiB)
 
-	unsortedWriter, err = b.LocalWriter(ctx, &backend.LocalWriterConfig{IsKVSorted: false}, engineID)
+	writerCfg = &backend.LocalWriterConfig{}
+	writerCfg.Local.IsKVSorted = false
+	unsortedWriter, err = b.LocalWriter(ctx, writerCfg, engineID)
 	require.NoError(t, err)
 	// write about 150 MiB data
 	val := make([]byte, 35)
