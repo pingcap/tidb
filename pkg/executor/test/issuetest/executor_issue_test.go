@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/failpoint"
 	_ "github.com/pingcap/tidb/pkg/autoid_service"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/charset"
@@ -720,4 +721,19 @@ func TestIndexLookUpIssue53871(t *testing.T) {
 	require.Regexp(t, ".*IndexLookUp.*table_task: {total_time: .*, num: 1, .*", fmt.Sprintf("%v", rows[0]))
 	require.Regexp(t, ".*IndexRangeScan.*rpc_info.*Cop:{num_rpc:1, total_time:.*", fmt.Sprintf("%v", rows[1]))
 	require.Regexp(t, ".*TableRowIDScan.*rpc_info.*Cop:{num_rpc:1, total_time:.*", fmt.Sprintf("%v", rows[2]))
+}
+
+func TestCalculateBatchSize(t *testing.T) {
+	require.Equal(t, 1024, executor.CalculateBatchSize(true, 5000, 1024, 20000))
+	require.Equal(t, 1024, executor.CalculateBatchSize(true, 1024, 1024, 20000))
+	require.Equal(t, 1024, executor.CalculateBatchSize(true, 10, 1024, 20000))
+	require.Equal(t, 258, executor.CalculateBatchSize(true, 10, 1024, 258))
+	require.Equal(t, 1024, executor.CalculateBatchSize(true, 0, 1024, 20000))
+	require.Equal(t, 20000, executor.CalculateBatchSize(false, 50000, 1024, 20000))
+	require.Equal(t, 20000, executor.CalculateBatchSize(false, 18000, 1024, 20000))
+	require.Equal(t, 8192, executor.CalculateBatchSize(false, 5000, 1024, 20000))
+	require.Equal(t, 1024, executor.CalculateBatchSize(false, 1024, 1024, 20000))
+	require.Equal(t, 1024, executor.CalculateBatchSize(false, 10, 1024, 20000))
+	require.Equal(t, 258, executor.CalculateBatchSize(false, 10, 1024, 258))
+	require.Equal(t, 1024, executor.CalculateBatchSize(false, 0, 1024, 20000))
 }
