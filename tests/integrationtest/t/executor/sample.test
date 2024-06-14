@@ -119,7 +119,7 @@ split table t between (0) and (10000) regions 5;
 insert into t values (1000, 1, '1'), (1001, 1, '1'), (2100, 2, '2'), (4500, 3, '3');
 create index idx_0 on t (b);
 select a from t tablesample regions() order by a;
--- error 8128
+-- error 1815
 select a from t use index (idx_0) tablesample regions() order by a;
 
 # TestTableSampleUnsignedIntHandle
@@ -143,3 +143,8 @@ select * from t tablesample regions() order by a;
 set @@tidb_partition_prune_mode='dynamic';
 select * from t tablesample regions() order by a;
 set @@tidb_partition_prune_mode=default;
+
+# TestTableSampleNoIndexScan
+drop table if exists t;
+create table t (a decimal(62,2) not null, key idx (a), primary key (a) clustered);
+select a from t tablesample regions() order by a;

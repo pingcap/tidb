@@ -1521,6 +1521,10 @@ func (ds *DataSource) FindBestTask(prop *property.PhysicalProperty, planCounter 
 		if ds.preferStoreType&h.PreferTiFlash != 0 {
 			continue
 		}
+		// TableSample do not support index scan.
+		if ds.SampleInfo != nil {
+			continue
+		}
 		idxTask, err := ds.convertToIndexScan(prop, candidate, opt)
 		if err != nil {
 			return nil, 0, err

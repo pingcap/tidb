@@ -194,7 +194,7 @@ a
 2100
 4500
 select a from t use index (idx_0) tablesample regions() order by a;
-Error 8128 (HY000): Invalid TABLESAMPLE: plan not supported
+Error 1815 (HY000): Internal : Can't find a proper physical plan for this query
 DROP TABLE IF EXISTS a;
 CREATE TABLE a (pk bigint unsigned primary key clustered, v text);
 INSERT INTO a WITH RECURSIVE b(pk) AS (SELECT 1 UNION ALL SELECT pk+1 FROM b WHERE pk < 1000) SELECT pk, 'a' FROM b;
@@ -224,3 +224,7 @@ a	b
 1	1
 2	2
 set @@tidb_partition_prune_mode=default;
+drop table if exists t;
+create table t (a decimal(62,2) not null, key idx (a), primary key (a) clustered);
+select a from t tablesample regions() order by a;
+a
