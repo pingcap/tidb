@@ -1,0 +1,86 @@
+drop table if exists t1;
+create table t1 (da date default '1962-03-03 23:33:34', dt datetime default '1962-03-03', ti time default '2020-10-11 12:23:23', ts timestamp default '2020-10-13 12:23:23');
+show create table t1;
+Table	Create Table
+t1	CREATE TABLE `t1` (
+  `da` date DEFAULT '1962-03-03',
+  `dt` datetime DEFAULT '1962-03-03 00:00:00',
+  `ti` time DEFAULT '12:23:23',
+  `ts` timestamp DEFAULT '2020-10-13 12:23:23'
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+insert into t1 values();
+select * from t1;
+da	dt	ti	ts
+1962-03-03	1962-03-03 00:00:00	12:23:23	2020-10-13 12:23:23
+alter table t1 add column da1 date default '2020-03-27 20:20:20 123456';
+show create table t1;
+Table	Create Table
+t1	CREATE TABLE `t1` (
+  `da` date DEFAULT '1962-03-03',
+  `dt` datetime DEFAULT '1962-03-03 00:00:00',
+  `ti` time DEFAULT '12:23:23',
+  `ts` timestamp DEFAULT '2020-10-13 12:23:23',
+  `da1` date DEFAULT '2020-03-27'
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+select * from t1;
+da	dt	ti	ts	da1
+1962-03-03	1962-03-03 00:00:00	12:23:23	2020-10-13 12:23:23	2020-03-27
+alter table t1 change ts da2 date default '2020-10-10 20:20:20';
+show create table t1;
+Table	Create Table
+t1	CREATE TABLE `t1` (
+  `da` date DEFAULT '1962-03-03',
+  `dt` datetime DEFAULT '1962-03-03 00:00:00',
+  `ti` time DEFAULT '12:23:23',
+  `da2` date DEFAULT '2020-10-10',
+  `da1` date DEFAULT '2020-03-27'
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+select * from t1;
+da	dt	ti	da2	da1
+1962-03-03	1962-03-03 00:00:00	12:23:23	2020-10-13	2020-03-27
+drop table if exists t1, t2;
+CREATE TABLE t1(id INTEGER PRIMARY KEY, authorId INTEGER AUTO_INCREMENT UNIQUE);
+show create table t1;
+Table	Create Table
+t1	CREATE TABLE `t1` (
+  `id` int(11) NOT NULL,
+  `authorId` int(11) NOT NULL AUTO_INCREMENT,
+  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,
+  UNIQUE KEY `authorId` (`authorId`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+CREATE TABLE `t2`( `id` INTEGER PRIMARY KEY, `authorId` int(11) AUTO_INCREMENT, UNIQUE KEY `authorIdx` (`authorId`));
+show create table t2;
+Table	Create Table
+t2	CREATE TABLE `t2` (
+  `id` int(11) NOT NULL,
+  `authorId` int(11) NOT NULL AUTO_INCREMENT,
+  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,
+  UNIQUE KEY `authorIdx` (`authorId`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+set @@sql_mode='';
+drop table if exists t1;
+create table t1(b tinyint default '11111111');
+Error 1067 (42000): Invalid default value for 'b'
+create table t1(b tinyint default '11abc');
+Error 1067 (42000): Invalid default value for 'b'
+create table t1(b datetime default '11abc');
+Error 1067 (42000): Invalid default value for 'b'
+create table t1(b date default '2024-10');
+Error 1067 (42000): Invalid default value for 'b'
+create table t1(a tinyint, b date default '2024-10-24 12:20');
+alter table t1 add column(c tinyint default '11111111');
+Error 1067 (42000): Invalid default value for 'c'
+alter table t1 add column(c tinyint default '11abc');
+Error 1067 (42000): Invalid default value for 'c'
+alter table t1 add column(c datetime default '11abc');
+Error 1067 (42000): Invalid default value for 'c'
+alter table t1 add column d date default '2024-10';
+Error 1067 (42000): Invalid default value for 'd'
+drop table if exists t;
+create table t(a decimal(0,0), b decimal(0));
+show create table t;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `a` decimal(10,0) DEFAULT NULL,
+  `b` decimal(10,0) DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
