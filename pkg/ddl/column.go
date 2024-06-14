@@ -1399,7 +1399,11 @@ func (w *updateColumnWorker) getRowRecord(handle kv.Handle, recordKey []byte, ra
 	}
 	rd := &w.tblCtx.GetSessionVars().RowEncoder
 	ec := w.exprCtx.GetEvalCtx().ErrCtx()
-	newRowVal, err := tablecodec.EncodeRow(w.loc, newRow, newColumnIDs, nil, nil, recordKey, rd)
+	var checksumKey kv.Key
+	if w.checksumNeeded {
+		checksumKey = recordKey
+	}
+	newRowVal, err := tablecodec.EncodeRow(sysTZ, newRow, newColumnIDs, nil, nil, checksumKey, rd)
 	err = ec.HandleError(err)
 	if err != nil {
 		return errors.Trace(err)
