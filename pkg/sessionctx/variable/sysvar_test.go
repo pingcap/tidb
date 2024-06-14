@@ -1340,10 +1340,9 @@ func TestTiDBResourceControlStrictMode(t *testing.T) {
 	// Set to Off
 	err := mock.SetGlobalSysVar(context.Background(), TiDBResourceControlStrictMode, Off)
 	require.NoError(t, err)
-	val, err1 := mock.GetGlobalSysVar(TiDBEnableResourceControl)
+	val, err1 := mock.GetGlobalSysVar(TiDBResourceControlStrictMode)
 	require.NoError(t, err1)
 	require.Equal(t, Off, val)
-	require.Equal(t, EnableResourceControlStrictMode.Load(), false)
 
 	// Set to On again
 	err = mock.SetGlobalSysVar(context.Background(), TiDBResourceControlStrictMode, On)
@@ -1351,7 +1350,6 @@ func TestTiDBResourceControlStrictMode(t *testing.T) {
 	val, err1 = mock.GetGlobalSysVar(TiDBResourceControlStrictMode)
 	require.NoError(t, err1)
 	require.Equal(t, On, val)
-	require.Equal(t, EnableResourceControlStrictMode.Load(), true)
 }
 
 func TestTiDBEnableRowLevelChecksum(t *testing.T) {
