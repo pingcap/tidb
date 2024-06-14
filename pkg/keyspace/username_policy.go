@@ -26,7 +26,7 @@ type UsernamePolicy interface {
 	GetOriginalUsername(username string) string
 }
 
-var globalUsernamePolicy UsernamePolicy = NewDefaultUsernamePolicy()
+var globalUsernamePolicy = NewDefaultUsernamePolicy()
 
 // SetUsernamePolicy sets the global username policy.
 func SetUsernamePolicy(policy UsernamePolicy) {
