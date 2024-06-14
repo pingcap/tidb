@@ -679,7 +679,6 @@ func (e *BRIEExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		"execTime": e.info.execTime.String(),
 	})
 
-
 	switch e.info.kind {
 	case ast.BRIEKindBackup:
 		err = handleBRIEError(task.RunBackup(taskCtx, glue, "Backup", e.backupCfg), exeerrors.ErrBRIEBackupFailed)
