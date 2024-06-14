@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"math/rand"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -88,20 +89,20 @@ type brieTaskProgress struct {
 
 // Inc implements glue.Progress
 func (p *brieTaskProgress) Inc() {
-    current := atomic.AddInt64(&p.current, 1) * 100 / atomic.LoadInt64(&p.total)
-    if p.executor == nil {
+	current := atomic.AddInt64(&p.current, 1) * 100 / atomic.LoadInt64(&p.total)
+	if p.executor == nil {
 		log.Error("BRIE task executor is nil", zap.Uint64("task id", p.taskID))
-        return
-    }
+		return
+	}
 
-    now := time.Now().Unix()
-    lastUpdate := atomic.LoadInt64(&p.lastUpdate)
-    // set an interval to avoid update too frequently
-    if now-lastUpdate >= 120 && atomic.CompareAndSwapInt64(&p.lastUpdate, lastUpdate, now) {
+	now := time.Now().Unix()
+	lastUpdate := atomic.LoadInt64(&p.lastUpdate)
+	// set an interval to avoid update too frequently
+	if now-lastUpdate >= 120 && atomic.CompareAndSwapInt64(&p.lastUpdate, lastUpdate, now) {
 		updateMetaTable(context.Background(), p.executor, p.taskID, map[string]interface{}{
 			"progress": current,
 		})
-    }
+	}
 }
 
 // IncBy implements glue.Progress
@@ -109,13 +110,13 @@ func (p *brieTaskProgress) IncBy(cnt int64) {
 	current := atomic.AddInt64(&p.current, cnt) * 100 / atomic.LoadInt64(&p.total)
 
 	now := time.Now().Unix()
-    lastUpdate := atomic.LoadInt64(&p.lastUpdate)
-    // set an interval to avoid update too frequently
-    if now-lastUpdate >= 120 && atomic.CompareAndSwapInt64(&p.lastUpdate, lastUpdate, now) {
+	lastUpdate := atomic.LoadInt64(&p.lastUpdate)
+	// set an interval to avoid update too frequently
+	if now-lastUpdate >= 120 && atomic.CompareAndSwapInt64(&p.lastUpdate, lastUpdate, now) {
 		updateMetaTable(context.Background(), p.executor, p.taskID, map[string]interface{}{
 			"progress": current,
 		})
-    }
+	}
 }
 
 // GetCurrent implements glue.Progress
@@ -129,7 +130,6 @@ func (p *brieTaskProgress) Close() {
 	current := atomic.LoadInt64(&p.current)
 	total := atomic.LoadInt64(&p.total)
 	cmd := p.cmd
-	log.Info("BRIE task progress", zap.Uint64("task id", p.taskID), zap.String("cmd", cmd), zap.Int64("progress", current), zap.Int64("total", total))
 	if current < total {
 		cmd = fmt.Sprintf("%s Canceled", cmd)
 		p.cmd = cmd
@@ -170,7 +170,7 @@ type brieQueueItem struct {
 
 type brieQueue struct {
 	// nextID uint64
-	tasks  sync.Map
+	tasks sync.Map
 
 	lastClearTime time.Time
 
@@ -207,7 +207,12 @@ func (bq *brieQueue) registerTask(
 			total: 1,
 		},
 	}
-	taskID,err := addTaskToMetaTable(ctx,info,e)
+	taskID, err := addTaskToMetaTable(ctx, info, e)
+	failpoint.Inject("ignoreMetaTable", func() {
+		err = nil
+		taskID = rand.Uint64() % 1000
+	})
+
 	if err != nil {
 		return taskCtx, 0, err
 	}
@@ -235,7 +240,7 @@ func (bq *brieQueue) acquireTask(taskCtx context.Context, taskID uint64, e *BRIE
 	// wait until we are at the front of the queue.
 	select {
 	case bq.workerCh <- struct{}{}:
-		item, ok := bq.tasks.Load(taskID);
+		item, ok := bq.tasks.Load(taskID)
 		if !ok {
 			bq.releaseTask()
 			return nil, errors.Errorf("backup/restore task %d is canceled", taskID)
@@ -416,7 +421,7 @@ func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) 
 	case len(s.Schemas) != 0:
 		cfg.TableFilter = filter.NewSchemasFilter(s.Schemas...)
 	default:
-		defaultFilter,err := filter.Parse([]string{"*.*","!mysql.tidb_br_jobs"})
+		defaultFilter, err := filter.Parse([]string{"*.*", "!mysql.tidb_br_jobs"})
 		if err != nil {
 			b.err = err
 			return nil
@@ -631,19 +636,19 @@ func (e *BRIEExec) Next(ctx context.Context, req *chunk.Chunk) error {
 
 	e.info.connID = e.Ctx().GetSessionVars().ConnectionID
 	e.info.queueTime = types.CurrentTime(mysql.TypeDatetime)
-	taskCtx,taskID,err := bq.registerTask(ctx, e.info,&e.BaseExecutor)
+	taskCtx, taskID, err := bq.registerTask(ctx, e.info, &e.BaseExecutor)
 	if err != nil {
 		log.Error("Failed to register BRIE task", zap.Error(err))
 		return err
 	}
 	defer bq.cancelTask(taskID)
-	failpoint.Inject("block-on-brie", func() {
+	if _, _err_ := failpoint.Eval(_curpkg_("block-on-brie")); _err_ == nil {
 		log.Warn("You shall not pass, nya. :3")
 		<-taskCtx.Done()
 		if taskCtx.Err() != nil {
-			failpoint.Return(taskCtx.Err())
+			return taskCtx.Err()
 		}
-	})
+	}
 	// manually monitor the Killed status...
 	go func() {
 		ticker := time.NewTicker(3 * time.Second)
@@ -672,7 +677,7 @@ func (e *BRIEExec) Next(ctx context.Context, req *chunk.Chunk) error {
 
 	err = updateMetaTable(ctx, &e.BaseExecutor, taskID, map[string]interface{}{
 		"execTime": e.info.execTime.String(),
-    	},
+	},
 	)
 	if err != nil {
 		return err
@@ -688,15 +693,15 @@ func (e *BRIEExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 	if err != nil {
 		e.info.message = err.Error() //will be used below
-	}else {
-			e.info.message = ""
+	} else {
+		e.info.message = ""
 	}
 	e.info.finishTime = types.CurrentTime(mysql.TypeDatetime)
 	retErr := updateMetaTable(ctx, &e.BaseExecutor, e.info.id, map[string]interface{}{
-		"finishTime": e.info.finishTime.String(),
-		"message": e.info.message,
-		"backupTS": e.info.backupTS,
-		"restoreTS": e.info.restoreTS,
+		"finishTime":  e.info.finishTime.String(),
+		"message":     e.info.message,
+		"backupTS":    e.info.backupTS,
+		"restoreTS":   e.info.restoreTS,
 		"archiveSize": e.info.archiveSize,
 	})
 	if retErr != nil {
@@ -720,7 +725,7 @@ func (e *BRIEExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		req.AppendTime(4, e.info.queueTime)
 		req.AppendTime(5, e.info.execTime)
 	}
-	
+
 	e.info = nil
 	return nil
 }
@@ -804,7 +809,7 @@ func (gs *tidbGlue) StartProgress(ctx context.Context, cmdName string, total int
 	}
 	atomic.StoreInt64(&gs.progress.lastUpdate, time.Now().Unix())
 	updateMetaTable(ctx, gs.progress.executor, gs.progress.taskID, map[string]interface{}{
-		"state": cmdName,
+		"state":    cmdName,
 		"progress": 0,
 	})
 	return gs.progress

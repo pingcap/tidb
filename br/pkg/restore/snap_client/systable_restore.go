@@ -67,7 +67,7 @@ var unRecoverableTable = map[string]map[string]struct{}{
 
 		// replace into view is not supported now
 		"tidb_mdl_view": {},
-		"tidb_br_jobs": {},
+		"tidb_br_jobs":  {},
 	},
 	"sys": {
 		// replace into view is not supported now
