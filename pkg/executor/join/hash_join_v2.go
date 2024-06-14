@@ -17,14 +17,6 @@ package join
 import (
 	"bytes"
 	"context"
-	"math"
-	"runtime/trace"
-	"strconv"
-	"sync"
-	"sync/atomic"
-	"time"
-	"unsafe"
-
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -37,6 +29,12 @@ import (
 	"github.com/pingcap/tidb/pkg/util/disk"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/memory"
+	"math"
+	"runtime/trace"
+	"strconv"
+	"sync"
+	"sync/atomic"
+	"time"
 )
 
 var (
@@ -78,7 +76,7 @@ func (htc *hashTableContext) getCurrentRowSegment(workerID, partitionID int, tab
 func (htc *hashTableContext) finalizeCurrentSeg(workerID, partitionID int, builder *rowTableBuilder) {
 	seg := htc.getCurrentRowSegment(workerID, partitionID, nil, false)
 	for _, pos := range builder.startPosInRawData[partitionID] {
-		seg.rowLocations = append(seg.rowLocations, unsafe.Pointer(&seg.rawData[pos]))
+		seg.rowStartOffset = append(seg.rowStartOffset, pos)
 	}
 	builder.crrntSizeOfRowTable[partitionID] = 0
 	builder.startPosInRawData[partitionID] = builder.startPosInRawData[partitionID][:0]

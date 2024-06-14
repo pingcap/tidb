@@ -74,7 +74,8 @@ func checkRowLocationAlignment(t *testing.T, rowTables []*rowTable) {
 			continue
 		}
 		for _, seg := range rt.segments {
-			for _, rowLocation := range seg.rowLocations {
+			for index := range seg.rowStartOffset {
+				rowLocation := seg.getRowPointer(index)
 				require.Equal(t, uint64(0), uint64(uintptr(rowLocation))%8, "row location must be 8 byte aligned")
 			}
 		}
@@ -344,9 +345,9 @@ func checkColumns(t *testing.T, withSelCol bool, buildFilter expression.CNFExprs
 			rowStart := rowTables[0].getRowStart(logicalIndex)
 			require.NotEqual(t, uintptr(0), rowStart, "row start must not be nil, logical index = "+strconv.Itoa(logicalIndex)+", physical index = "+strconv.Itoa(physicalIndex))
 			if hasOtherConditionColumns {
-				mockJoinProber.appendBuildRowToCachedBuildRowsAndConstructBuildRowsIfNeeded(&matchedRowInfo{probeRowIndex: 0, buildRowStart: rowStart}, tmpChunk, 0, hasOtherConditionColumns)
+				mockJoinProber.appendBuildRowToCachedBuildRowsAndConstructBuildRowsIfNeeded(createMatchRowInfo(0, rowStart), tmpChunk, 0, hasOtherConditionColumns)
 			} else {
-				mockJoinProber.appendBuildRowToCachedBuildRowsAndConstructBuildRowsIfNeeded(&matchedRowInfo{probeRowIndex: 0, buildRowStart: rowStart}, resultChunk, 0, hasOtherConditionColumns)
+				mockJoinProber.appendBuildRowToCachedBuildRowsAndConstructBuildRowsIfNeeded(createMatchRowInfo(0, rowStart), resultChunk, 0, hasOtherConditionColumns)
 			}
 		}
 		if len(mockJoinProber.cachedBuildRows) > 0 {
@@ -382,9 +383,9 @@ func checkColumns(t *testing.T, withSelCol bool, buildFilter expression.CNFExprs
 			rowStart := rowTables[0].getRowStart(rowIndex)
 			require.NotEqual(t, uintptr(0), rowStart, "row start must not be nil, logical index = "+strconv.Itoa(logicalIndex)+", physical index = "+strconv.Itoa(physicalIndex))
 			if hasOtherConditionColumns {
-				mockJoinProber.appendBuildRowToCachedBuildRowsAndConstructBuildRowsIfNeeded(&matchedRowInfo{probeRowIndex: 0, buildRowStart: rowStart}, tmpChunk, 0, hasOtherConditionColumns)
+				mockJoinProber.appendBuildRowToCachedBuildRowsAndConstructBuildRowsIfNeeded(createMatchRowInfo(0, rowStart), tmpChunk, 0, hasOtherConditionColumns)
 			} else {
-				mockJoinProber.appendBuildRowToCachedBuildRowsAndConstructBuildRowsIfNeeded(&matchedRowInfo{probeRowIndex: 0, buildRowStart: rowStart}, resultChunk, 0, hasOtherConditionColumns)
+				mockJoinProber.appendBuildRowToCachedBuildRowsAndConstructBuildRowsIfNeeded(createMatchRowInfo(0, rowStart), resultChunk, 0, hasOtherConditionColumns)
 			}
 			rowIndex++
 		}
