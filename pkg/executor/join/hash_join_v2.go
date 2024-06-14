@@ -125,10 +125,11 @@ func (htc *hashTableContext) mergeRowTablesToHashTable(tableMeta *TableMeta, par
 // HashJoinCtxV2 is the hash join ctx used in hash join v2
 type HashJoinCtxV2 struct {
 	hashJoinCtxBase
-	PartitionNumber int
-	ProbeKeyTypes   []*types.FieldType
-	BuildKeyTypes   []*types.FieldType
-	stats           *hashJoinRuntimeStatsV2
+	PartitionNumber     int
+	PartitionMaskOffset int
+	ProbeKeyTypes       []*types.FieldType
+	BuildKeyTypes       []*types.FieldType
+	stats               *hashJoinRuntimeStatsV2
 
 	RightAsBuildSide               bool
 	BuildFilter                    expression.CNFExprs

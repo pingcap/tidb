@@ -588,7 +588,7 @@ func TestBalanceOfFilteredRows(t *testing.T) {
 		}
 	}
 
-	partitionNumber := 5
+	partitionNumber := 4
 	buildFilter := createImpossibleFilter(t)
 	builder := createRowTableBuilder(buildKeyIndex, buildKeyTypes, partitionNumber, hasNullableKey, true, true)
 	chk := testutil.GenRandomChunks(buildTypes, 3000)

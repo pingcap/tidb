@@ -227,7 +227,7 @@ func (j *baseJoinProbe) SetChunkForProbe(chk *chunk.Chunk) (err error) {
 		// See https://golang.org/pkg/hash/#Hash
 		_, _ = hash.Write(j.serializedKeys[logicalRowIndex])
 		hashValue := hash.Sum64()
-		partIndex := hashValue % uint64(j.ctx.PartitionNumber)
+		partIndex := hashValue >> j.ctx.PartitionMaskOffset
 		j.hashValues[partIndex] = append(j.hashValues[partIndex], posAndHashValue{hashValue: hashValue, pos: logicalRowIndex})
 	}
 	j.currentProbeRow = 0

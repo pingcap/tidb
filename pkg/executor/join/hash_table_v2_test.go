@@ -246,7 +246,7 @@ func checkRowIter(t *testing.T, table *hashTableV2, scanConcurrency int) {
 }
 
 func TestRowIter(t *testing.T) {
-	partitionNumbers := []int{1, 5, 10}
+	partitionNumbers := []int{1, 4, 8}
 	// normal case
 	for _, partitionNumber := range partitionNumbers {
 		// create row tables

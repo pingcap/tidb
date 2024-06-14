@@ -509,20 +509,39 @@ func createRowTableBuilder(buildKeyIndex []int, buildKeyTypes []*types.FieldType
 	return builder
 }
 
-func (b *rowTableBuilder) initHashValueAndPartIndexForOneChunk(partitionNumber uint64) {
+func (b *rowTableBuilder) initBuffer() {
+	b.serializedKeyVectorBuffer = make([][]byte, chunk.InitialCapacity)
+	b.partIdxVector = make([]int, 0, chunk.InitialCapacity)
+	b.hashValue = make([]uint64, 0, chunk.InitialCapacity)
+	if b.hasFilter {
+		b.filterVector = make([]bool, 0, chunk.InitialCapacity)
+	}
+	if b.hasNullableKey {
+		b.nullKeyVector = make([]bool, 0, chunk.InitialCapacity)
+		for i := 0; i < chunk.InitialCapacity; i++ {
+			b.nullKeyVector = append(b.nullKeyVector, false)
+		}
+	}
+	b.selRows = make([]int, 0, chunk.InitialCapacity)
+	for i := 0; i < chunk.InitialCapacity; i++ {
+		b.selRows = append(b.selRows, i)
+	}
+}
+
+func (b *rowTableBuilder) initHashValueAndPartIndexForOneChunk(partitionMaskOffset, partitionNumber int) {
 	h := fnv.New64()
 	fakePartIndex := uint64(0)
 	for logicalRowIndex, physicalRowIndex := range b.usedRows {
 		if (b.filterVector != nil && !b.filterVector[physicalRowIndex]) || (b.nullKeyVector != nil && b.nullKeyVector[physicalRowIndex]) {
 			b.hashValue[logicalRowIndex] = fakePartIndex
 			b.partIdxVector[logicalRowIndex] = int(fakePartIndex)
-			fakePartIndex = (fakePartIndex + 1) % partitionNumber
+			fakePartIndex = (fakePartIndex + 1) % uint64(partitionNumber)
 			continue
 		}
 		h.Write(b.serializedKeyVectorBuffer[logicalRowIndex])
 		hash := h.Sum64()
 		b.hashValue[logicalRowIndex] = hash
-		b.partIdxVector[logicalRowIndex] = int(hash % partitionNumber)
+		b.partIdxVector[logicalRowIndex] = int(hash >> partitionMaskOffset)
 		h.Reset()
 	}
 }
@@ -553,7 +572,7 @@ func (b *rowTableBuilder) processOneChunk(chk *chunk.Chunk, typeCtx types.Contex
 		return err
 	}
 
-	b.initHashValueAndPartIndexForOneChunk(uint64(hashJoinCtx.PartitionNumber))
+	b.initHashValueAndPartIndexForOneChunk(hashJoinCtx.PartitionMaskOffset, hashJoinCtx.PartitionNumber)
 
 	// 2. build rowtable
 	return b.appendToRowTable(chk, hashJoinCtx, workerID)
