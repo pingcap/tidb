@@ -98,6 +98,44 @@ func CopySelectedJoinRowsWithSameOuterRows(src *Chunk, innerColOffset, innerColL
 	return numSelected > 0, nil
 }
 
+// CopySelectedRows copies the selected rows in srcCol to dstCol
+func CopySelectedRows(dstCol *Column, srcCol *Column, selected []bool) {
+	CopySelectedRowsWithRowIDFunc(dstCol, srcCol, selected, 0, len(selected), func(i int) int {
+		return i
+	})
+}
+
+// CopySelectedRowsWithRowIDFunc copies the selected rows in srcCol to dstCol
+func CopySelectedRowsWithRowIDFunc(dstCol *Column, srcCol *Column, selected []bool, start int, end int, rowIDFunc func(int) int) {
+	if srcCol.isFixed() {
+		for i := start; i < end; i++ {
+			if !selected[i] {
+				continue
+			}
+			rowID := rowIDFunc(i)
+			dstCol.appendNullBitmap(!srcCol.IsNull(rowID))
+			dstCol.length++
+
+			elemLen := len(srcCol.elemBuf)
+			offset := rowID * elemLen
+			dstCol.data = append(dstCol.data, srcCol.data[offset:offset+elemLen]...)
+		}
+	} else {
+		for i := start; i < end; i++ {
+			if !selected[i] {
+				continue
+			}
+			rowID := rowIDFunc(i)
+			dstCol.appendNullBitmap(!srcCol.IsNull(rowID))
+			dstCol.length++
+
+			start, end := srcCol.offsets[rowID], srcCol.offsets[rowID+1]
+			dstCol.data = append(dstCol.data, srcCol.data[start:end]...)
+			dstCol.offsets = append(dstCol.offsets, int64(len(dstCol.data)))
+		}
+	}
+}
+
 // copySelectedInnerRows copies the selected inner rows from the source Chunk
 // to the destination Chunk.
 // return the number of rows which is selected.
@@ -115,31 +153,7 @@ func copySelectedInnerRows(innerColOffset, innerColLen int, src *Chunk, selected
 	oldLen := dst.columns[innerColOffset].length
 	for j, srcCol := range srcCols {
 		dstCol := dst.columns[innerColOffset+j]
-		if srcCol.isFixed() {
-			for i := 0; i < len(selected); i++ {
-				if !selected[i] {
-					continue
-				}
-				dstCol.appendNullBitmap(!srcCol.IsNull(i))
-				dstCol.length++
-
-				elemLen := len(srcCol.elemBuf)
-				offset := i * elemLen
-				dstCol.data = append(dstCol.data, srcCol.data[offset:offset+elemLen]...)
-			}
-		} else {
-			for i := 0; i < len(selected); i++ {
-				if !selected[i] {
-					continue
-				}
-				dstCol.appendNullBitmap(!srcCol.IsNull(i))
-				dstCol.length++
-
-				start, end := srcCol.offsets[i], srcCol.offsets[i+1]
-				dstCol.data = append(dstCol.data, srcCol.data[start:end]...)
-				dstCol.offsets = append(dstCol.offsets, int64(len(dstCol.data)))
-			}
-		}
+		CopySelectedRows(dstCol, srcCol, selected)
 	}
 	return dst.columns[innerColOffset].length - oldLen
 }

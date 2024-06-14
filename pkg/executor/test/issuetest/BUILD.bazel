@@ -13,6 +13,7 @@ go_test(
         "//pkg/autoid_service",
         "//pkg/config",
         "//pkg/executor",
+        "//pkg/executor/join",
         "//pkg/kv",
         "//pkg/meta/autoid",
         "//pkg/parser/auth",
