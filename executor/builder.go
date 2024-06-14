@@ -17,6 +17,7 @@ package executor
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"math"
 	"strconv"
 	"strings"
@@ -1314,7 +1315,7 @@ func (b *executorBuilder) buildUnionScanFromReader(reader Executor, v *plannerco
 		return originReader
 	default:
 		// TODO: consider more operators like Projection.
-		b.err = errors.NewNoStackErrorf("unexpected operator %T under UnionScan", reader)
+		b.err = errors.NewNoStackError(fmt.Sprintf("unexpected operator %T under UnionScan", reader))
 		return nil
 	}
 	return us
