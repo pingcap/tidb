@@ -499,7 +499,7 @@ func (b *Builder) applyCreateSchema(m *meta.Meta, diff *model.SchemaDiff) error 
 			fmt.Sprintf("(Schema ID %d)", diff.SchemaID),
 		)
 	}
-	b.addDB(diff.Version, di, &schemaTables{dbInfo: di, tables: newLayeredMap[string, table.Table](initialMapCap)})
+	b.addDB(diff.Version, di, &schemaTables{dbInfo: di, tables: newLayeredMap[string, table.Table]()})
 	return nil
 }
 
@@ -575,7 +575,7 @@ func (b *Builder) applyRecoverSchema(m *meta.Meta, diff *model.SchemaDiff) ([]in
 	}
 	b.addSchemaAndMark(&schemaTables{
 		dbInfo: di,
-		tables: newLayeredMap[string, table.Table](len(diff.AffectedOpts)),
+		tables: newLayeredMap[string, table.Table](),
 	})
 	return applyCreateTables(b, m, diff)
 }
@@ -909,8 +909,8 @@ type tableFromMetaFunc func(alloc autoid.Allocators, tblInfo *model.TableInfo) (
 func (b *Builder) createSchemaTablesForDB(di *model.DBInfo, tableFromMeta tableFromMetaFunc, schemaVersion int64) error {
 	schTbls := &schemaTables{
 		dbInfo: di,
-		tables: newLayeredMap[string, table.Table](len(di.Tables)),
 	}
+	tbls := make(map[string]table.Table, len(di.Tables))
 	for _, t := range di.Tables {
 		allocs := autoid.NewAllocatorsFromTblInfo(b.Requirement, di.ID, t)
 		var tbl table.Table
@@ -919,13 +919,14 @@ func (b *Builder) createSchemaTablesForDB(di *model.DBInfo, tableFromMeta tableF
 			return errors.Wrap(err, fmt.Sprintf("Build table `%s`.`%s` schema failed", di.Name.O, t.Name.O))
 		}
 
-		schTbls.tables.add(t.Name.L, tbl)
+		tbls[t.Name.L] = tbl
 		b.addTable(schemaVersion, di, t, tbl)
 
 		if tblInfo := tbl.Meta(); tblInfo.TempTableType != model.TempTableNone {
 			b.addTemporaryTable(tblInfo.ID)
 		}
 	}
+	schTbls.tables = newLayeredMapFrom[string, table.Table](tbls)
 	b.addDB(schemaVersion, di, schTbls)
 
 	return nil

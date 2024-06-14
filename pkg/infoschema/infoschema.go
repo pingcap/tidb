@@ -100,7 +100,7 @@ func MockInfoSchema(tbList []*model.TableInfo) InfoSchema {
 	dbInfo := &model.DBInfo{ID: 1, Name: model.NewCIStr("test"), Tables: tbList}
 	tableNames := &schemaTables{
 		dbInfo: dbInfo,
-		tables: newLayeredMap[string, table.Table](initialMapCap),
+		tables: newLayeredMap[string, table.Table](),
 	}
 	result.addSchema(tableNames)
 	var tableIDs map[int64]struct{}
@@ -140,7 +140,7 @@ func MockInfoSchema(tbList []*model.TableInfo) InfoSchema {
 	mysqlDBInfo := &model.DBInfo{ID: 2, Name: model.NewCIStr("mysql"), Tables: tables}
 	tableNames = &schemaTables{
 		dbInfo: mysqlDBInfo,
-		tables: newLayeredMap[string, table.Table](initialMapCap),
+		tables: newLayeredMap[string, table.Table](),
 	}
 	result.addSchema(tableNames)
 	for _, tb := range tables {
@@ -164,7 +164,7 @@ func MockInfoSchemaWithSchemaVer(tbList []*model.TableInfo, schemaVer int64) Inf
 	dbInfo := &model.DBInfo{ID: 1, Name: model.NewCIStr("test"), Tables: tbList}
 	tableNames := &schemaTables{
 		dbInfo: dbInfo,
-		tables: newLayeredMap[string, table.Table](initialMapCap),
+		tables: newLayeredMap[string, table.Table](),
 	}
 	result.addSchema(tableNames)
 	for _, tb := range tbList {
@@ -197,8 +197,8 @@ func newInfoSchema() *infoSchema {
 			ruleBundleMap:         map[int64]*placement.Bundle{},
 			referredForeignKeyMap: make(map[SchemaAndTableName][]*model.ReferredFKInfo),
 		},
-		schemaMap:           newLayeredMap[string, *schemaTables](initialMapCap),
-		schemaID2Name:       newLayeredMap[int64, string](initialMapCap),
+		schemaMap:           newLayeredMap[string, *schemaTables](),
+		schemaID2Name:       newLayeredMap[int64, string](),
 		sortedTablesBuckets: make([]sortedTables, bucketCount),
 	}
 }
@@ -737,7 +737,7 @@ func (is *SessionTables) ensureSchema(db *model.DBInfo) *schemaTables {
 		return tbls
 	}
 
-	tbls := &schemaTables{dbInfo: db, tables: newLayeredMap[string, table.Table](initialMapCap)}
+	tbls := &schemaTables{dbInfo: db, tables: newLayeredMap[string, table.Table]()}
 	is.schemaMap[db.Name.L] = tbls
 	return tbls
 }

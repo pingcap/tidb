@@ -49,15 +49,26 @@ type layeredMap[K comparable, V any] struct {
 	compactThreshold int
 }
 
-func newLayeredMap[K comparable, V any](cap int) *layeredMap[K, V] {
-	return newLayeredMap0[K, V](cap, maxMapLevel, compactThreshold)
+func newLayeredMap[K comparable, V any]() *layeredMap[K, V] {
+	return newLayeredMap0[K, V](maxMapLevel, compactThreshold)
 }
 
-func newLayeredMap0[K comparable, V any](cap, maxLevel, compactThreshold int) *layeredMap[K, V] {
+func newLayeredMapFrom[K comparable, V any](m map[K]V) *layeredMap[K, V] {
+	topLayer := make(map[K]itemT[V], len(m))
+	for k, v := range m {
+		topLayer[k] = itemT[V]{v: v}
+	}
+	lm := newLayeredMap[K, V]()
+	lm.layers[0] = topLayer
+	lm.topLayer = topLayer
+	return lm
+}
+
+func newLayeredMap0[K comparable, V any](maxLevel, compactThreshold int) *layeredMap[K, V] {
 	m := &layeredMap[K, V]{
 		layers: make([]map[K]itemT[V], 0, maxLevel),
 	}
-	m.topLayer = make(map[K]itemT[V], cap)
+	m.topLayer = make(map[K]itemT[V], initialMapCap)
 	m.layers = append(m.layers, m.topLayer)
 	m.maxLevel = maxLevel
 	m.compactThreshold = compactThreshold
@@ -95,10 +106,10 @@ func (m *layeredMap[K, V]) estimatedLen() int {
 }
 
 func (m *layeredMap[K, V]) empty() bool {
-	var empty bool
+	empty := true
 	m.scan(func(_ K, _ V) bool {
 		empty = false
-		return empty
+		return false
 	})
 	return empty
 }
@@ -107,9 +118,7 @@ func (m *layeredMap[K, V]) empty() bool {
 // if fn returns false, the scan will be stopped.
 func (m *layeredMap[K, V]) scan(fn func(K, V) bool) {
 	layerCnt := len(m.layers)
-	if layerCnt == 0 {
-		return
-	} else if layerCnt == 1 {
+	if layerCnt == 1 {
 		for k, item := range m.layers[0] {
 			if item.tombstone {
 				continue
@@ -171,6 +180,7 @@ func (m *layeredMap[K, V]) add(key K, value V) {
 
 func (m *layeredMap[K, V]) del(key K) {
 	if len(m.layers) == 1 {
+		// happens after full compaction or a new created map, just delete from top layer.
 		delete(m.topLayer, key)
 		return
 	}
