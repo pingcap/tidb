@@ -239,10 +239,10 @@ func addTaskToMetaTable(ctx context.Context, info *brieTaskInfo, e *exec.BaseExe
 	return rows[0].GetUint64(0), nil
 }
 
-func updateMetaTable(ctx context.Context, e *exec.BaseExecutor, id uint64, updates map[string]interface{}) error {
+func updateMetaTable(ctx context.Context, e *exec.BaseExecutor, id uint64, updates map[string]any) {
 	// Construct the SET clause dynamically based on the updates map
 	setClauses := make([]string, 0, len(updates))
-	args := make([]interface{}, 0, len(updates))
+	args := make([]any, 0, len(updates))
 
 	for column, value := range updates {
 		setClauses = append(setClauses, fmt.Sprintf("%s = %%?", column))
@@ -257,8 +257,5 @@ func updateMetaTable(ctx context.Context, e *exec.BaseExecutor, id uint64, updat
 	_, err := e.Ctx().GetSQLExecutor().ExecuteInternal(stmtCtx, query, args...)
 	if err != nil {
 		log.Error("Failed to update BRIE task into tidb_br_jobs", zap.Error(err), zap.String("query", query))
-		return err
 	}
-
-	return nil
 }
