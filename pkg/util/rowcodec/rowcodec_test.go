@@ -1194,6 +1194,38 @@ func TestRowChecksum(t *testing.T) {
 	}
 }
 
+func TestEncodeDecodeRowWithChecksum(t *testing.T) {
+	enc := rowcodec.Encoder{}
+
+	raw, err := enc.Encode(time.UTC, nil, nil, nil, nil)
+	require.NoError(t, err)
+
+	dec := rowcodec.NewDatumMapDecoder([]rowcodec.ColInfo{}, time.UTC)
+	_, err = dec.DecodeToDatumMap(raw, nil)
+	require.NoError(t, err)
+
+	checksum, ok := dec.GetChecksum()
+	require.False(t, ok)
+	require.Zero(t, checksum)
+
+	raw, err = enc.Encode(time.UTC, nil, nil, []byte("0x1"), nil)
+	require.NoError(t, err)
+
+	expected, ok := enc.GetChecksum()
+	require.True(t, ok)
+	require.NotZero(t, expected)
+
+	_, err = dec.DecodeToDatumMap(raw, nil)
+	require.NoError(t, err)
+
+	checksum, ok = dec.GetChecksum()
+	require.True(t, ok)
+	require.Equal(t, expected, checksum)
+
+	version := dec.ChecksumVersion()
+	require.Equal(t, 1, version)
+}
+
 var (
 	withUnsigned = func(ft *types.FieldType) *types.FieldType {
 		ft.AddFlag(mysql.UnsignedFlag)

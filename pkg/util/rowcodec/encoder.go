@@ -61,6 +61,7 @@ func (encoder *Encoder) Encode(loc *time.Location, colIDs []int64, values []type
 		valueBytes = append(valueBytes, encoder.checksumHeader)
 		rawChecksum := crc32.Checksum(append(valueBytes, key...), crc32.IEEETable)
 		valueBytes = binary.LittleEndian.AppendUint32(valueBytes, rawChecksum)
+		encoder.checksum1 = rawChecksum
 	}
 	return valueBytes, nil
 }
