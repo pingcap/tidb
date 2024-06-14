@@ -19,6 +19,7 @@ import (
 	"testing"
 	"unsafe"
 
+	"github.com/pingcap/tidb/pkg/executor/internal/testutil"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -96,7 +97,7 @@ func checkKeys(t *testing.T, withSelCol bool, buildFilter expression.CNFExprs, b
 		}
 	}
 	builder := createRowTableBuilder(buildKeyIndex, buildKeyTypes, 1, hasNullableKey, buildFilter != nil, keepFilteredRows)
-	chk := chunk.GenRandomChunks(buildTypes, 2049)
+	chk := testutil.GenRandomChunks(buildTypes, 2049)
 	if withSelCol {
 		sel := make([]int, 0, 2049)
 		for i := 0; i < chk.NumRows(); i++ {
@@ -303,7 +304,7 @@ func checkColumns(t *testing.T, withSelCol bool, buildFilter expression.CNFExprs
 		}
 	}
 	builder := createRowTableBuilder(buildKeyIndex, buildKeyTypes, 1, hasNullableKey, buildFilter != nil, keepFilteredRows)
-	chk := chunk.GenRandomChunks(buildTypes, 2049)
+	chk := testutil.GenRandomChunks(buildTypes, 2049)
 	if withSelCol {
 		sel := make([]int, 0, 2049)
 		for i := 0; i < chk.NumRows(); i++ {
@@ -542,7 +543,7 @@ func TestBalanceOfFilteredRows(t *testing.T) {
 	partitionNumber := 5
 	buildFilter := createImpossibleFilter(t)
 	builder := createRowTableBuilder(buildKeyIndex, buildKeyTypes, partitionNumber, hasNullableKey, true, true)
-	chk := chunk.GenRandomChunks(buildTypes, 3000)
+	chk := testutil.GenRandomChunks(buildTypes, 3000)
 	hashJoinCtx := &HashJoinCtxV2{
 		PartitionNumber: partitionNumber,
 		hashTableMeta:   meta,

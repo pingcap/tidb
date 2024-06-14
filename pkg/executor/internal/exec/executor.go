@@ -16,7 +16,7 @@ package exec
 
 import (
 	"context"
-	"fmt"
+	"reflect"
 	"time"
 
 	"github.com/ngaut/pools"
@@ -403,7 +403,7 @@ func Next(ctx context.Context, e Executor, req *chunk.Chunk) (err error) {
 		return err
 	}
 
-	r, ctx := tracing.StartRegionEx(ctx, fmt.Sprintf("%T.Next", e))
+	r, ctx := tracing.StartRegionEx(ctx, reflect.TypeOf(e).String()+".Next")
 	defer r.End()
 
 	e.RegisterSQLAndPlanInExecForTopSQL()

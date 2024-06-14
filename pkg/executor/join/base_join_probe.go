@@ -386,7 +386,7 @@ func (j *baseJoinProbe) appendProbeRowToChunkInternal(chk *chunk.Chunk, probeChk
 				srcCol := probeChk.Column(colIndex)
 				dstCol := chk.Column(colIndex + collOffset)
 				for _, offsetAndLength := range j.offsetAndLengthArray {
-					dstCol.BatchAppend(srcCol, offsetAndLength.offset, offsetAndLength.length)
+					dstCol.AppendCellNTimes(srcCol, offsetAndLength.offset, offsetAndLength.length)
 				}
 				usedColumnMap[colIndex] = struct{}{}
 			}
@@ -396,7 +396,7 @@ func (j *baseJoinProbe) appendProbeRowToChunkInternal(chk *chunk.Chunk, probeChk
 			srcCol := probeChk.Column(colIndex)
 			dstCol := chk.Column(index + collOffset)
 			for _, offsetAndLength := range j.offsetAndLengthArray {
-				dstCol.BatchAppend(srcCol, offsetAndLength.offset, offsetAndLength.length)
+				dstCol.AppendCellNTimes(srcCol, offsetAndLength.offset, offsetAndLength.length)
 			}
 		}
 	}
