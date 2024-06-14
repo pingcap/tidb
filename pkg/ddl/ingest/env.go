@@ -110,18 +110,16 @@ func GenIngestTempDataDir() (string, error) {
 	return sortPath, nil
 }
 
-// CleanUpTempDir reads the temp dir and removes the stale index data.
-// This function will get
+// CleanUpTempDir is used to remove the stale index data.
+// This function gets running DDL jobs from `mysql.tidb_ddl_job` and
+// it only removes the folders that related to finished jobs.
 func CleanUpTempDir(ctx context.Context, se sessionctx.Context, path string) {
-	err := os.MkdirAll(path, 0700)
-	if err != nil {
-		logutil.DDLIngestLogger().Error(LitErrCreateDirFail, zap.Error(err))
-		return
-	}
-
 	entries, err := os.ReadDir(path)
 	if err != nil {
-		logutil.DDLIngestLogger().Error(LitErrReadSortPath, zap.Error(err))
+		if strings.Contains(err.Error(), "no such file") {
+			return
+		}
+		logutil.DDLIngestLogger().Warn(LitErrCleanSortPath, zap.Error(err))
 		return
 	}
 	toCheckJobIDs := make(map[int64]struct{}, len(entries))

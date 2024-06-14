@@ -67,4 +67,6 @@ func TestLitBackendCtxMgr(t *testing.T) {
 	ingest.CleanUpTempDir(ctx, tk.Session(), sortPath)
 	require.NoDirExists(t, staleJobDir)
 	require.NoDirExists(t, staleJobDir2)
+
+	ingest.CleanUpTempDir(ctx, tk.Session(), "unkown_path")
 }

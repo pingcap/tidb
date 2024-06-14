@@ -17,6 +17,7 @@ package ingest
 import (
 	"context"
 	"math"
+	"os"
 	"path/filepath"
 	"strconv"
 	"sync"
@@ -126,7 +127,13 @@ func (m *litBackendCtxMgr) Register(
 	if !ok {
 		return nil, genBackendAllocMemFailedErr(ctx, m.memRoot, jobID)
 	}
-	cfg, err := genConfig(ctx, m.encodeJobSortPath(jobID), m.memRoot, hasUnique, resourceGroupName)
+	sortPath := m.encodeJobSortPath(jobID)
+	err := os.MkdirAll(sortPath, 0700)
+	if err != nil {
+		logutil.Logger(ctx).Error(LitErrCreateDirFail, zap.Error(err))
+		return nil, err
+	}
+	cfg, err := genConfig(ctx, sortPath, m.memRoot, hasUnique, resourceGroupName)
 	if err != nil {
 		logutil.Logger(ctx).Warn(LitWarnConfigError, zap.Int64("job ID", jobID), zap.Error(err))
 		return nil, err
