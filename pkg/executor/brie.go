@@ -99,7 +99,7 @@ func (p *brieTaskProgress) Inc() {
 	lastUpdate := atomic.LoadInt64(&p.lastUpdate)
 	// set an interval to avoid update too frequently
 	if now-lastUpdate >= 120 && atomic.CompareAndSwapInt64(&p.lastUpdate, lastUpdate, now) {
-		updateMetaTable(context.Background(), p.executor, p.taskID, map[string]interface{}{
+		updateMetaTable(context.Background(), p.executor, p.taskID, map[string]any{
 			"progress": current,
 		})
 	}
@@ -113,7 +113,7 @@ func (p *brieTaskProgress) IncBy(cnt int64) {
 	lastUpdate := atomic.LoadInt64(&p.lastUpdate)
 	// set an interval to avoid update too frequently
 	if now-lastUpdate >= 120 && atomic.CompareAndSwapInt64(&p.lastUpdate, lastUpdate, now) {
-		updateMetaTable(context.Background(), p.executor, p.taskID, map[string]interface{}{
+		updateMetaTable(context.Background(), p.executor, p.taskID, map[string]any{
 			"progress": current,
 		})
 	}
@@ -141,7 +141,7 @@ func (p *brieTaskProgress) Close() {
 		log.Error("BRIE task executor is nil", zap.Uint64("task id", p.taskID))
 		return
 	}
-	updateMetaTable(context.Background(), p.executor, p.taskID, map[string]interface{}{
+	updateMetaTable(context.Background(), p.executor, p.taskID, map[string]any{
 		"progress": current * 100 / total,
 		"state":    cmd,
 	})
@@ -675,13 +675,10 @@ func (e *BRIEExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	e.info.execTime = types.CurrentTime(mysql.TypeDatetime)
 	glue := &tidbGlue{se: e.Ctx(), progress: progress, info: e.info}
 
-	err = updateMetaTable(ctx, &e.BaseExecutor, taskID, map[string]interface{}{
+	updateMetaTable(ctx, &e.BaseExecutor, taskID, map[string]any{
 		"execTime": e.info.execTime.String(),
-	},
-	)
-	if err != nil {
-		return err
-	}
+	})
+
 
 	switch e.info.kind {
 	case ast.BRIEKindBackup:
@@ -697,16 +694,13 @@ func (e *BRIEExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		e.info.message = ""
 	}
 	e.info.finishTime = types.CurrentTime(mysql.TypeDatetime)
-	retErr := updateMetaTable(ctx, &e.BaseExecutor, e.info.id, map[string]interface{}{
+	updateMetaTable(ctx, &e.BaseExecutor, e.info.id, map[string]any{
 		"finishTime":  e.info.finishTime.String(),
 		"message":     e.info.message,
 		"backupTS":    e.info.backupTS,
 		"restoreTS":   e.info.restoreTS,
 		"archiveSize": e.info.archiveSize,
 	})
-	if retErr != nil {
-		return retErr
-	}
 	//err exit delay to here to ensure the finishTime is updated
 	if err != nil {
 		return err
@@ -808,7 +802,7 @@ func (gs *tidbGlue) StartProgress(ctx context.Context, cmdName string, total int
 		return gs.progress
 	}
 	atomic.StoreInt64(&gs.progress.lastUpdate, time.Now().Unix())
-	updateMetaTable(ctx, gs.progress.executor, gs.progress.taskID, map[string]interface{}{
+	updateMetaTable(ctx, gs.progress.executor, gs.progress.taskID, map[string]any{
 		"state":    cmdName,
 		"progress": 0,
 	})
