@@ -381,7 +381,7 @@ func (is *infoschemaV2) tableByID(id int64, noRefill bool) (val table.Table, ok 
 
 	if isTableVirtual(id) {
 		if schTbls, exist := is.Data.specials[itm.dbName]; exist {
-			val, ok = schTbls.tables[itm.tableName]
+			val, ok = schTbls.tables.get(itm.tableName)
 			return
 		}
 		return nil, false
@@ -417,7 +417,7 @@ func isSpecialDB(dbName string) bool {
 func (is *infoschemaV2) TableByName(schema, tbl model.CIStr) (t table.Table, err error) {
 	if isSpecialDB(schema.L) {
 		if tbNames, ok := is.specials[schema.L]; ok {
-			if t, ok = tbNames.tables[tbl.L]; ok {
+			if t, ok = tbNames.tables.get(tbl.L); ok {
 				return
 			}
 		}
@@ -471,10 +471,11 @@ func (is *infoschemaV2) TableInfoByID(id int64) (*model.TableInfo, bool) {
 func (is *infoschemaV2) SchemaTableInfos(schema model.CIStr) []*model.TableInfo {
 	if isSpecialDB(schema.L) {
 		schTbls := is.Data.specials[schema.L]
-		tables := make([]table.Table, 0, len(schTbls.tables))
-		for _, tbl := range schTbls.tables {
+		tables := make([]table.Table, 0, schTbls.tables.estimatedLen())
+		schTbls.tables.scan(func(_ string, tbl table.Table) bool {
 			tables = append(tables, tbl)
-		}
+			return true
+		})
 		return getTableInfoList(tables)
 	}
 
@@ -668,10 +669,11 @@ func (is *infoschemaV2) SchemaByID(id int64) (*model.DBInfo, bool) {
 func (is *infoschemaV2) SchemaTables(schema model.CIStr) (tables []table.Table) {
 	if isSpecialDB(schema.L) {
 		schTbls := is.Data.specials[schema.L]
-		tables := make([]table.Table, 0, len(schTbls.tables))
-		for _, tbl := range schTbls.tables {
+		tables := make([]table.Table, 0, schTbls.tables.estimatedLen())
+		schTbls.tables.scan(func(_ string, tbl table.Table) bool {
 			tables = append(tables, tbl)
-		}
+			return true
+		})
 		return tables
 	}
 
