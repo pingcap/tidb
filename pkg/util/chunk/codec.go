@@ -168,8 +168,8 @@ func bytesToI64Slice(b []byte) (i64s []int64) {
 	return i64s
 }
 
-// varElemLen indicates this Column is a variable length Column.
-const varElemLen = -1
+// VarElemLen indicates this Column is a variable length Column.
+const VarElemLen = -1
 
 func getFixedLen(colType *types.FieldType) int {
 	switch colType.GetType() {
@@ -183,12 +183,12 @@ func getFixedLen(colType *types.FieldType) int {
 	case mysql.TypeNewDecimal:
 		return types.MyDecimalStructSize
 	default:
-		return varElemLen
+		return VarElemLen
 	}
 }
 
 // GetFixedLen get the memory size of a fixed-length type.
-// if colType is not fixed-length, it returns varElemLen, aka -1.
+// if colType is not fixed-length, it returns VarElemLen, aka -1.
 func GetFixedLen(colType *types.FieldType) int {
 	return getFixedLen(colType)
 }
@@ -201,7 +201,7 @@ func GetFixedLen(colType *types.FieldType) int {
 func EstimateTypeWidth(colType *types.FieldType) int {
 	colLen := getFixedLen(colType)
 	// Easy if it's a fixed-width type
-	if colLen != varElemLen {
+	if colLen != VarElemLen {
 		return colLen
 	}
 
@@ -293,7 +293,7 @@ func (c *Decoder) ReuseIntermChk(chk *Chunk) {
 	for i, col := range c.intermChk.columns {
 		col.length = c.remainedRows
 		elemLen := getFixedLen(c.codec.colTypes[i])
-		if elemLen == varElemLen {
+		if elemLen == VarElemLen {
 			// For var-length types, we need to adjust the offsets before reuse.
 			if deltaOffset := col.offsets[0]; deltaOffset != 0 {
 				for j := 0; j < len(col.offsets); j++ {
@@ -312,7 +312,7 @@ func (c *Decoder) decodeColumn(chk *Chunk, ordinal int, requiredRows int) {
 	srcCol := c.intermChk.columns[ordinal]
 	destCol := chk.columns[ordinal]
 
-	if elemLen == varElemLen {
+	if elemLen == VarElemLen {
 		// For var-length types, we need to adjust the offsets after appending to destCol.
 		numDataBytes = srcCol.offsets[requiredRows] - srcCol.offsets[0]
 		deltaOffset := destCol.offsets[destCol.length] - srcCol.offsets[0]
