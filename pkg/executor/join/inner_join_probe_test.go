@@ -20,6 +20,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/executor/internal/testutil"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -307,8 +308,8 @@ func testJoinProbe(t *testing.T, withSel bool, leftKeyIndex []int, rightKeyIndex
 		require.Equal(t, buildLength, probeLength, "build type and probe type is not compatible")
 	}
 	for i := 0; i < chunkNumber; i++ {
-		buildChunks = append(buildChunks, chunk.GenRandomChunks(buildTypes, inputRowNumber))
-		probeChunk := chunk.GenRandomChunks(probeTypes, inputRowNumber*2/3)
+		buildChunks = append(buildChunks, testutil.GenRandomChunks(buildTypes, inputRowNumber))
+		probeChunk := testutil.GenRandomChunks(probeTypes, inputRowNumber*2/3)
 		// copy some build data to probe side, to make sure there is some matched rows
 		_, err := chunk.CopySelectedJoinRowsDirect(buildChunks[i], selected, probeChunk)
 		probeChunks = append(probeChunks, probeChunk)
