@@ -317,7 +317,7 @@ func TestOnBackupResponse(t *testing.T) {
 	r.Resp.StartKey = []byte("aa")
 	require.NoError(t, s.backupClient.OnBackupResponse(ctx, r, errContext, &tree))
 
-	incomplete := tree.Iter().GetIncompleteRanges()
+	incomplete := tree.GetIncompleteRanges()
 	require.Len(t, incomplete, 1)
 	require.Equal(t, []byte("b"), incomplete[0].StartKey)
 	require.Equal(t, []byte("c"), incomplete[0].EndKey)
@@ -326,7 +326,7 @@ func TestOnBackupResponse(t *testing.T) {
 	r.Resp.StartKey = []byte("b")
 	r.Resp.EndKey = []byte("c")
 	require.NoError(t, s.backupClient.OnBackupResponse(ctx, r, errContext, &tree))
-	incomplete = tree.Iter().GetIncompleteRanges()
+	incomplete = tree.GetIncompleteRanges()
 	require.Len(t, incomplete, 0)
 }
 
@@ -411,7 +411,7 @@ func TestMainBackupLoop(t *testing.T) {
 		GlobalProgressTree:      &tree,
 		ReplicaReadLabel:        nil,
 		StateNotifier:           ch,
-		ProgressCallBack:        func() {},
+		ProgressCallBack:        func(backup.ProgressUnit) {},
 		GetBackupClientCallBack: mockGetBackupClientCallBack,
 	}
 
@@ -450,7 +450,7 @@ func TestMainBackupLoop(t *testing.T) {
 		GlobalProgressTree:      &tree,
 		ReplicaReadLabel:        nil,
 		StateNotifier:           ch,
-		ProgressCallBack:        func() {},
+		ProgressCallBack:        func(backup.ProgressUnit) {},
 		GetBackupClientCallBack: mockGetBackupClientCallBack,
 	}
 
@@ -502,7 +502,7 @@ func TestMainBackupLoop(t *testing.T) {
 		GlobalProgressTree:      &tree,
 		ReplicaReadLabel:        nil,
 		StateNotifier:           ch,
-		ProgressCallBack:        func() {},
+		ProgressCallBack:        func(backup.ProgressUnit) {},
 		GetBackupClientCallBack: mockGetBackupClientCallBack,
 	}
 	go func() {
@@ -557,7 +557,7 @@ func TestMainBackupLoop(t *testing.T) {
 		GlobalProgressTree:      &tree,
 		ReplicaReadLabel:        nil,
 		StateNotifier:           ch,
-		ProgressCallBack:        func() {},
+		ProgressCallBack:        func(backup.ProgressUnit) {},
 		GetBackupClientCallBack: mockGetBackupClientCallBack,
 	}
 	go func() {
@@ -614,7 +614,7 @@ func TestMainBackupLoop(t *testing.T) {
 		GlobalProgressTree:      &tree,
 		ReplicaReadLabel:        nil,
 		StateNotifier:           ch,
-		ProgressCallBack:        func() {},
+		ProgressCallBack:        func(backup.ProgressUnit) {},
 		GetBackupClientCallBack: mockGetBackupClientCallBack,
 	}
 	go func() {

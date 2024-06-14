@@ -62,6 +62,13 @@ type Checksum struct {
 // ProgressUnit represents the unit of progress.
 type ProgressUnit string
 
+const (
+	// RangeUnit represents the progress updated counter when a range finished.
+	RangeUnit ProgressUnit = "range"
+	// RegionUnit represents the progress updated counter when a region finished.
+	RegionUnit ProgressUnit = "region"
+)
+
 type MainBackupLoop struct {
 	BackupSender
 
@@ -73,7 +80,7 @@ type MainBackupLoop struct {
 	ReplicaReadLabel   map[string]string
 	StateNotifier      chan BackupRetryPolicy
 
-	ProgressCallBack        func()
+	ProgressCallBack        func(ProgressUnit)
 	GetBackupClientCallBack func(ctx context.Context, storeID uint64) (backuppb.BackupClient, error)
 }
 
@@ -196,8 +203,7 @@ mainLoop:
 			mainCancel()
 			return ctx.Err()
 		default:
-			iter := loop.GlobalProgressTree.Iter()
-			inCompleteRanges = iter.GetIncompleteRanges()
+			inCompleteRanges = loop.GlobalProgressTree.GetIncompleteRanges()
 			if len(inCompleteRanges) == 0 {
 				// all range backuped
 				logutil.CL(ctx).Info("This round finished all backup ranges", zap.Uint64("round", round))
@@ -316,7 +322,7 @@ mainLoop:
 					mainCancel()
 					return err
 				}
-				loop.ProgressCallBack()
+				loop.ProgressCallBack(RegionUnit)
 			}
 		}
 	}
@@ -526,7 +532,7 @@ func (bc *Client) StartCheckpointRunner(
 	backupTS uint64,
 	ranges []rtree.Range,
 	safePointID string,
-	progressCallBack func(),
+	progressCallBack func(ProgressUnit),
 ) (err error) {
 	if bc.checkpointMeta == nil {
 		bc.checkpointMeta = &checkpoint.CheckpointMetadataForBackup{
@@ -567,13 +573,12 @@ func (bc *Client) getProgressRange(r rtree.Range) *rtree.ProgressRange {
 	if bc.checkpointMeta != nil && len(bc.checkpointMeta.CheckpointDataMap) > 0 {
 		rangeTree, exists := bc.checkpointMeta.CheckpointDataMap[groupKey]
 		if exists {
-			incomplete := rangeTree.GetIncompleteRange(r.StartKey, r.EndKey)
 			delete(bc.checkpointMeta.CheckpointDataMap, groupKey)
 			return &rtree.ProgressRange{
-				Res:        rangeTree,
-				Incomplete: incomplete,
-				Origin:     r,
-				GroupKey:   groupKey,
+				Res:      rangeTree,
+				Origin:   r,
+				GroupKey: groupKey,
+				Complete: false,
 			}
 		}
 	}
@@ -581,17 +586,15 @@ func (bc *Client) getProgressRange(r rtree.Range) *rtree.ProgressRange {
 	// the origin range are not recorded in checkpoint
 	// return the default progress range
 	return &rtree.ProgressRange{
-		Res: rtree.NewRangeTree(),
-		Incomplete: []rtree.Range{
-			r,
-		},
+		Res:      rtree.NewRangeTree(),
 		Origin:   r,
 		GroupKey: groupKey,
+		Complete: false,
 	}
 }
 
 // LoadCheckpointRange loads the checkpoint(finished) sub-ranges of the current range, and calculate its incompleted sub-ranges.
-func (bc *Client) loadCheckpointRanges(ctx context.Context, progressCallBack func()) (map[string]rtree.RangeTree, error) {
+func (bc *Client) loadCheckpointRanges(ctx context.Context, progressCallBack func(ProgressUnit)) (map[string]rtree.RangeTree, error) {
 	rangeDataMap := make(map[string]rtree.RangeTree)
 
 	pastDureTime, err := checkpoint.WalkCheckpointFileForBackup(ctx, bc.storage, bc.cipher, func(groupKey string, rg checkpoint.BackupValueType) {
@@ -601,7 +604,7 @@ func (bc *Client) loadCheckpointRanges(ctx context.Context, progressCallBack fun
 			rangeDataMap[groupKey] = rangeTree
 		}
 		rangeTree.Put(rg.StartKey, rg.EndKey, rg.Files)
-		progressCallBack()
+		progressCallBack(RegionUnit)
 	})
 
 	// we should adjust start-time of the summary to `pastDureTime` earlier
@@ -1042,7 +1045,7 @@ func (bc *Client) BackupRanges(
 	concurrency uint,
 	replicaReadLabel map[string]string,
 	metaWriter *metautil.MetaWriter,
-	progressCallBack func(),
+	progressCallBack func(ProgressUnit),
 ) error {
 	log.Info("Backup Ranges Started", rtree.ZapRanges(ranges))
 	init := time.Now()
@@ -1061,6 +1064,7 @@ func (bc *Client) BackupRanges(
 	if err != nil {
 		return errors.Trace(err)
 	}
+	globalProgressTree.SetCallBack(func() { progressCallBack(RangeUnit) })
 
 	stateNotifier := make(chan BackupRetryPolicy)
 	ObserveStoreChangesAsync(ctx, stateNotifier, bc.mgr.GetPDClient())
