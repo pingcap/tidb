@@ -1236,26 +1236,12 @@ func newUpdateColumnWorker(id int, t table.PhysicalTable, decodeColMap map[int64
 		}
 	}
 	rowDecoder := decoder.NewRowDecoder(t, t.WritableCols(), decodeColMap)
-	checksumNeeded := false
+	checksumNeeded := variable.EnableRowLevelChecksum.Load()
 	failpoint.Inject("forceRowLevelChecksumOnUpdateColumnBackfill", func() {
 		orig := variable.EnableRowLevelChecksum.Load()
 		defer variable.EnableRowLevelChecksum.Store(orig)
 		variable.EnableRowLevelChecksum.Store(true)
 	})
-	// We use global `EnableRowLevelChecksum` to detect whether checksum is enabled in ddl backfill worker because
-	// `SessionVars.IsRowLevelChecksumEnabled` will filter out internal sessions.
-	if variable.EnableRowLevelChecksum.Load() {
-		if numNonPubCols := len(t.DeletableCols()) - len(t.Cols()); numNonPubCols > 1 {
-			cols := make([]*model.ColumnInfo, len(t.DeletableCols()))
-			for i, col := range t.DeletableCols() {
-				cols[i] = col.ToInfo()
-			}
-			logutil.DDLLogger().Warn("skip checksum in update-column backfill since the number of non-public columns is greater than 1",
-				zap.String("jobQuery", reorgInfo.Query), zap.Stringer("reorgInfo", reorgInfo), zap.Any("cols", cols))
-		} else {
-			checksumNeeded = true
-		}
-	}
 	return &updateColumnWorker{
 		backfillCtx:    bCtx,
 		oldColInfo:     oldCol,
