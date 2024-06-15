@@ -1594,7 +1594,7 @@ func TestAuthSessionTokenPlugin(t *testing.T) {
 	tk.MustExec("CREATE USER auth_session_token")
 	tk.MustExec("CREATE USER another_user")
 
-	tc, err := drv.OpenCtx(uint64(0), 0, uint8(mysql.DefaultCollationID), "", nil, nil, nil)
+	tc, err := drv.OpenCtx(uint64(0), 0, uint8(mysql.DefaultCollationID), "", nil, nil)
 	require.NoError(t, err)
 	cc := &clientConn{
 		connectionID: 1,

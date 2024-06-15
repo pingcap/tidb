@@ -114,7 +114,7 @@ func CreateMockConn(t *testing.T, server *Server) MockConn {
 	require.NoError(t, err)
 
 	connID := rand.Uint64()
-	tc, err := server.driver.OpenCtx(connID, 0, uint8(tmysql.DefaultCollationID), "", nil, extensions.NewSessionExtensions(), extensions.GetAuthPlugins())
+	tc, err := server.driver.OpenCtx(connID, 0, uint8(tmysql.DefaultCollationID), "", nil, extensions.NewSessionExtensions())
 	require.NoError(t, err)
 
 	cc := &clientConn{
@@ -126,8 +126,6 @@ func CreateMockConn(t *testing.T, server *Server) MockConn {
 		chunkAlloc:   chunk.NewAllocator(),
 		pkt:          internal.NewPacketIOForTest(bufio.NewWriter(bytes.NewBuffer(nil))),
 		extensions:   tc.GetExtensions(),
-
-		registeredAuthPlugins: tc.GetExtensions().GetAuthPlugins(),
 	}
 	cc.SetCtx(tc)
 	cc.server.rwlock.Lock()

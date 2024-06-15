@@ -8,10 +8,8 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
-	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
-	"go.uber.org/zap"
 	"golang.org/x/exp/maps"
 	"testing"
 )
@@ -25,17 +23,14 @@ func (p *MockAuthPlugin) Name() string {
 }
 
 func (p *MockAuthPlugin) AuthenticateUser(ctx *extension.AuthenticateContext) error {
-	logutil.BgLogger().Warn("Authenticating User in test", zap.Any("ctx", ctx))
 	return p.Called(ctx).Error(0)
 }
 
 func (p *MockAuthPlugin) ValidateAuthString(hash string) bool {
-	logutil.BgLogger().Warn("Validating auth string in test", zap.Any("authstr", hash))
 	return p.Called(hash).Bool(0)
 }
 
 func (p *MockAuthPlugin) GenerateAuthString(password string) (string, bool) {
-	logutil.BgLogger().Warn("Generating auth string in test", zap.Any("password", password))
 	args := p.Called(password)
 	return args.String(0), args.Bool(1)
 }
@@ -202,8 +197,6 @@ func TestAuthPlugin(t *testing.T) {
 	tk.MustContainErrMsg("alter user 'u2'@'localhost' identified with 'bad_plugin' by 'rawpassword'", "[executor:1524]Plugin 'bad_plugin' is not loaded")
 
 	tk1 := testkit.NewTestKit(t, store)
-	// TODO: remove
-	tk1.Session().SetAuthPlugins(authChecks)
 	require.NoError(t, tk1.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil, nil))
 	tk1.MustExec("use test")
 
@@ -475,4 +468,11 @@ func TestCreateUserWhenGrant(t *testing.T) {
 func TestCreateViewWithPluginUser(t *testing.T) {
 	defer extension.Reset()
 	extension.Reset()
+	// TODO
+}
+
+func TestPluginUserModification(t *testing.T) {
+	defer extension.Reset()
+	extension.Reset()
+	// TODO
 }

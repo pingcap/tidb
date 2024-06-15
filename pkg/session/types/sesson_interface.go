@@ -82,6 +82,4 @@ type Session interface {
 
 	// SetExtensions sets the `*extension.SessionExtensions` object
 	SetExtensions(extensions *extension.SessionExtensions)
-	// SetAuthPlugins sets the `map[string]extension.AuthPlugin` object
-	SetAuthPlugins(authPlugins map[string]*extension.AuthPlugin)
 }

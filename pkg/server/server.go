@@ -664,7 +664,6 @@ func (s *Server) onConn(conn *clientConn) {
 		terror.Log(conn.Close())
 		return
 	}
-	conn.registeredAuthPlugins = extensions.GetAuthPlugins()
 
 	if sessExtensions := extensions.NewSessionExtensions(); sessExtensions != nil {
 		conn.extensions = sessExtensions
