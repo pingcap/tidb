@@ -1101,7 +1101,6 @@ import (
 	AnyOrAll                               "Any or All for subquery"
 	Assignment                             "assignment"
 	AssignmentList                         "assignment list"
-	AssignmentListOpt                      "assignment list opt"
 	AuthOption                             "User auth option"
 	AutoRandomOpt                          "Auto random option"
 	Boolean                                "Boolean (0, 1, false, true)"
@@ -1110,7 +1109,6 @@ import (
 	CastType                               "Cast function target type"
 	CharsetOpt                             "CHARACTER SET option in LOAD DATA"
 	ColumnDef                              "table column definition"
-	ColumnDefList                          "table column definition list"
 	ColumnName                             "column name"
 	ColumnNameOrUserVariable               "column name or user variable"
 	ColumnNameList                         "column name list"
@@ -1346,7 +1344,6 @@ import (
 	TableNameOptWild                       "Table name with optional wildcard"
 	TableNameList                          "Table name list"
 	TableNameListOpt                       "Table name list opt"
-	TableNameListOpt2                      "Optional table name list with a preceding TABLE"
 	TableOption                            "create table option"
 	TableOptionList                        "create table option list"
 	TableRef                               "table reference"
@@ -1547,7 +1544,6 @@ import (
 	OptTable          "Optional table keyword"
 	OptInteger        "Optional Integer keyword"
 	CharsetKw         "charset or charater set"
-	CommaOpt          "optional comma"
 	logAnd            "logical and operator"
 	logOr             "logical or operator"
 	LinearOpt         "linear or empty"
@@ -3314,13 +3310,6 @@ AssignmentList:
 		$$ = append($1.([]*ast.Assignment), $3.(*ast.Assignment))
 	}
 
-AssignmentListOpt:
-	/* EMPTY */
-	{
-		$$ = []*ast.Assignment{}
-	}
-|	AssignmentList
-
 BeginTransactionStmt:
 	"BEGIN"
 	{
@@ -3374,16 +3363,6 @@ BinlogStmt:
 	"BINLOG" stringLit
 	{
 		$$ = &ast.BinlogStmt{Str: $2}
-	}
-
-ColumnDefList:
-	ColumnDef
-	{
-		$$ = []*ast.ColumnDef{$1.(*ast.ColumnDef)}
-	}
-|	ColumnDefList ',' ColumnDef
-	{
-		$$ = append($1.([]*ast.ColumnDef), $3.(*ast.ColumnDef))
 	}
 
 ColumnDef:
@@ -12021,16 +12000,6 @@ TableNameListOpt:
 	}
 |	TableNameList
 
-TableNameListOpt2:
-	%prec empty
-	{
-		$$ = []*ast.TableName{}
-	}
-|	"TABLE" TableNameList
-	{
-		$$ = $2
-	}
-
 WithReadLockOpt:
 	{
 		$$ = false
@@ -13370,11 +13339,6 @@ WhereClauseOptional:
 		$$ = nil
 	}
 |	WhereClause
-
-CommaOpt:
-	{}
-|	','
-	{}
 
 /************************************************************************************
  *  Account Management Statements
