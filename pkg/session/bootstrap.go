@@ -3060,7 +3060,7 @@ func initGlobalVariableIfNotExists(s sessiontypes.Session, name string, val any)
 	}
 
 	mustExecute(s, "INSERT HIGH_PRIORITY IGNORE INTO %n.%n VALUES (%?, %?);",
-		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBResourceControlStrictMode, val)
+		mysql.SystemDB, mysql.GlobalVariablesTable, name, val)
 }
 
 func writeOOMAction(s sessiontypes.Session) {
