@@ -268,7 +268,6 @@ import (
 	sqlSmallResult    "SQL_SMALL_RESULT"
 	ssl               "SSL"
 	starting          "STARTING"
-	statsExtended     "STATS_EXTENDED"
 	stored            "STORED"
 	straightJoin      "STRAIGHT_JOIN"
 	tableKwd          "TABLE"
@@ -872,6 +871,7 @@ import (
 	statistics                 "STATISTICS"
 	stats                      "STATS"
 	statsBuckets               "STATS_BUCKETS"
+	statsExtended              "STATS_EXTENDED"
 	statsHealthy               "STATS_HEALTHY"
 	statsHistograms            "STATS_HISTOGRAMS"
 	statsLocked                "STATS_LOCKED"
@@ -1592,6 +1592,7 @@ import (
 	ProcedurceLabelOpt              "Optional Procedure label name"
 
 %precedence empty
+%precedence statsExtended
 %precedence as
 %precedence placement
 %precedence lowerThanSelectOpt
@@ -6975,12 +6976,13 @@ TiDBKeyword:
 |	"SESSION_STATES"
 |	"STATISTICS"
 |	"STATS"
-|	"STATS_META"
-|	"STATS_HISTOGRAMS"
-|	"STATS_TOPN"
 |	"STATS_BUCKETS"
+|	"STATS_EXTENDED"
 |	"STATS_HEALTHY"
+|	"STATS_HISTOGRAMS"
 |	"STATS_LOCKED"
+|	"STATS_META"
+|	"STATS_TOPN"
 |	"HISTOGRAMS_IN_FLIGHT"
 |	"TIDB"
 |	"TIFLASH"
