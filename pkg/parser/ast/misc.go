@@ -1427,6 +1427,7 @@ func (n *UserSpec) GetAuthPluginOrDefault(defaultPlugin string) string {
 	return n.AuthOpt.AuthPlugin
 }
 
+// ExtAuthPluginSpec encapsulates the extension auth plugin functions to prevent cyclic import.
 type ExtAuthPluginSpec struct {
 	EncodePassword func(string) (string, bool)
 	ValidateHash   func(string) bool
