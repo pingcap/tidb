@@ -38,8 +38,8 @@ func TestSpecialSchemas(t *testing.T) {
 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
 	tk.MustExec("use test")
 
-	tk.MustExec("set @@global.tidb_schema_cache_size = 1024;")
-	tk.MustQuery("select @@global.tidb_schema_cache_size;").Check(testkit.Rows("1024"))
+	tk.MustExec("set @@global.tidb_schema_cache_size = 1073741824;")
+	tk.MustQuery("select @@global.tidb_schema_cache_size;").Check(testkit.Rows("1073741824"))
 	tk.MustExec("create table t (id int);")
 	is := domain.GetDomain(tk.Session()).InfoSchema()
 	isV2, _ := infoschema.IsV2(is)
