@@ -2502,6 +2502,7 @@ func (e *SimpleExec) executeSetPwd(ctx context.Context, s *ast.SetPwdStmt) error
 		e.Ctx().GetSessionVars().StmtCtx.AppendNote(exeerrors.ErrSetPasswordAuthPlugin.FastGenByArgs(u, h))
 		pwd = ""
 	default:
+		logutil.BgLogger().Warn("in test - authplugin", zap.String("authplugin", authplugin), zap.Any("plugins", e.Ctx().GetExtensions().GetAuthPlugins()))
 		if pluginImpl, ok := e.Ctx().GetExtensions().GetAuthPlugins()[authplugin]; ok {
 			if pwd, ok = pluginImpl.GenerateAuthString(s.Password); !ok {
 				return exeerrors.ErrPasswordFormat.GenWithStackByArgs()

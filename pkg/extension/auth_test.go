@@ -8,8 +8,10 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
 	"golang.org/x/exp/maps"
 	"testing"
 )
@@ -23,14 +25,17 @@ func (p *MockAuthPlugin) Name() string {
 }
 
 func (p *MockAuthPlugin) AuthenticateUser(ctx *extension.AuthenticateContext) error {
+	logutil.BgLogger().Warn("Authenticating User in test", zap.Any("ctx", ctx))
 	return p.Called(ctx).Error(0)
 }
 
 func (p *MockAuthPlugin) ValidateAuthString(hash string) bool {
+	logutil.BgLogger().Warn("Validating auth string in test", zap.Any("authstr", hash))
 	return p.Called(hash).Bool(0)
 }
 
 func (p *MockAuthPlugin) GenerateAuthString(password string) (string, bool) {
+	logutil.BgLogger().Warn("Generating auth string in test", zap.Any("password", password))
 	args := p.Called(password)
 	return args.String(0), args.Bool(1)
 }
@@ -41,6 +46,36 @@ func (p *MockAuthPlugin) VerifyDynamicPrivilege(ctx *extension.AuthorizeContext)
 
 func (p *MockAuthPlugin) VerifyPrivilege(ctx *extension.AuthorizeContext) bool {
 	return p.Called(ctx).Bool(0)
+}
+
+type AuthenticateContextMatcher struct {
+	expected extension.AuthenticateContext
+}
+
+func (m AuthenticateContextMatcher) Matches(x interface{}) bool {
+	ctx, ok := x.(*extension.AuthenticateContext)
+	if !ok {
+		return false
+	}
+	return ctx.User == m.expected.User &&
+		ctx.StoredPwd == m.expected.StoredPwd &&
+		string(ctx.InputPwd) == string(m.expected.InputPwd)
+}
+
+type AuthorizeContextMatcher struct {
+	expected extension.AuthorizeContext
+}
+
+func (m AuthorizeContextMatcher) Matches(x interface{}) bool {
+	ctx, ok := x.(*extension.AuthorizeContext)
+	if !ok {
+		return false
+	}
+	return ctx.User == m.expected.User &&
+		ctx.DB == m.expected.DB &&
+		ctx.PrivName == m.expected.PrivName &&
+		ctx.Priv == m.expected.Priv &&
+		ctx.WithGrant == m.expected.WithGrant
 }
 
 func sha1Password(s string) []byte {
@@ -66,22 +101,57 @@ func TestAuthPlugin(t *testing.T) {
 	authChecks := map[string]*extension.AuthPlugin{}
 	p := new(MockAuthPlugin)
 	p.On("Name").Return("authentication_test_plugin")
-	p.On("AuthenticateUser", mock.Anything).Return(nil)
 
-	p.On("AuthenticateUser", "u2", "encodedpassword", []byte("1"), mock.Anything, mock.Anything, mock.Anything).Return(nil)
-	p.On("AuthenticateUser", "u2", "encodedpassword", []byte("2"), mock.Anything, mock.Anything, mock.Anything).Return(errors.New("authentication failed"))
-	p.On("AuthenticateUser", "u2", "anotherencodedpassword", []byte("1"), mock.Anything, mock.Anything, mock.Anything).Return(nil)
-	p.On("AuthenticateUser", "u2", "yetanotherencodedpassword", []byte("1"), mock.Anything, mock.Anything, mock.Anything).Return(nil)
-	p.On("AuthenticateUser", "u2", "yetanotherencodedpassword2", []byte("1"), mock.Anything, mock.Anything, mock.Anything).Return(nil)
+	authnMatcher1 := mock.MatchedBy(func(ctx *extension.AuthenticateContext) bool {
+		return AuthenticateContextMatcher{expected: extension.AuthenticateContext{User: "u2", StoredPwd: "encodedpassword", InputPwd: []byte("1")}}.Matches(ctx)
+	})
+	p.On("AuthenticateUser", authnMatcher1).Return(nil)
+	authnMatcher2 := mock.MatchedBy(func(ctx *extension.AuthenticateContext) bool {
+		return AuthenticateContextMatcher{expected: extension.AuthenticateContext{User: "u2", StoredPwd: "encodedpassword", InputPwd: []byte("2")}}.Matches(ctx)
+	})
+	p.On("AuthenticateUser", authnMatcher2).Return(errors.New("authentication failed"))
+	authnMatcher3 := mock.MatchedBy(func(ctx *extension.AuthenticateContext) bool {
+		return AuthenticateContextMatcher{expected: extension.AuthenticateContext{User: "u2", StoredPwd: "anotherencodedpassword", InputPwd: []byte("1")}}.Matches(ctx)
+	})
+	p.On("AuthenticateUser", authnMatcher3).Return(nil)
+	authnMatcher4 := mock.MatchedBy(func(ctx *extension.AuthenticateContext) bool {
+		return AuthenticateContextMatcher{expected: extension.AuthenticateContext{User: "u2", StoredPwd: "yetanotherencodedpassword", InputPwd: []byte("1")}}.Matches(ctx)
+	})
+	p.On("AuthenticateUser", authnMatcher4).Return(nil)
+	authnMatcher5 := mock.MatchedBy(func(ctx *extension.AuthenticateContext) bool {
+		return AuthenticateContextMatcher{expected: extension.AuthenticateContext{User: "u2", StoredPwd: "yetanotherencodedpassword2", InputPwd: []byte("1")}}.Matches(ctx)
+	})
+	p.On("AuthenticateUser", authnMatcher5).Return(nil)
+
 	p.On("ValidateAuthString", mock.Anything).Return(true)
 	p.On("GenerateAuthString", "rawpassword").Return("encodedpassword", true)
 	p.On("GenerateAuthString", "anotherrawpassword").Return("anotherencodedpassword", true)
 	p.On("GenerateAuthString", "yetanotherrawpassword").Return("yetanotherencodedpassword", true)
 	p.On("GenerateAuthString", "yetanotherrawpassword2").Return("yetanotherencodedpassword2", true)
-	p.On("VerifyPrivilege", mock.Anything, "u2", "localhost", "test", "t1", mock.Anything, mysql.AllPrivMask, mock.Anything).Return(true)
-	p.On("VerifyPrivilege", mock.Anything, "u2", "localhost", "test", "t1", mock.Anything, mysql.SelectPriv, mock.Anything).Return(true)
-	p.On("VerifyPrivilege", mock.Anything, "u2", "localhost", "test", "t1", mock.Anything, mysql.InsertPriv, mock.Anything).Return(false)
-	p.On("VerifyDynamicPrivilege", mock.Anything, "u2", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(false)
+	authzMatcher1 := mock.MatchedBy(func(ctx *extension.AuthorizeContext) bool {
+		return AuthorizeContextMatcher{expected: extension.AuthorizeContext{User: "u2", Host: "localhost", DB: "test", Table: "t1", Priv: mysql.AllPrivMask}}.Matches(ctx)
+	})
+	p.On("VerifyPrivilege", authzMatcher1).Return(true)
+	authzMatcher2 := mock.MatchedBy(func(ctx *extension.AuthorizeContext) bool {
+		return AuthorizeContextMatcher{expected: extension.AuthorizeContext{User: "u2", Host: "localhost", DB: "test", Table: "t1", Priv: mysql.SelectPriv}}.Matches(ctx)
+	})
+	p.On("VerifyPrivilege", authzMatcher2).Return(true)
+	authzMatcher3 := mock.MatchedBy(func(ctx *extension.AuthorizeContext) bool {
+		return AuthorizeContextMatcher{expected: extension.AuthorizeContext{User: "u2", Host: "localhost", DB: "test", Table: "t1", Priv: mysql.InsertPriv}}.Matches(ctx)
+	})
+	p.On("VerifyPrivilege", authzMatcher3).Return(false)
+	authzMatcher4 := mock.MatchedBy(func(ctx *extension.AuthorizeContext) bool {
+		return AuthorizeContextMatcher{expected: extension.AuthorizeContext{User: "u2"}}.Matches(ctx)
+	})
+	p.On("VerifyDynamicPrivilege", authzMatcher4).Return(false)
+	deleteMatcher := mock.MatchedBy(func(ctx *extension.AuthorizeContext) bool {
+		return AuthorizeContextMatcher{expected: extension.AuthorizeContext{User: "u2", Host: "localhost", DB: "test", Table: "t1", Priv: mysql.DeletePriv}}.Matches(ctx)
+	})
+	p.On("VerifyPrivilege", deleteMatcher).Return(false)
+	sysVarAdminMatcher := mock.MatchedBy(func(ctx *extension.AuthorizeContext) bool {
+		return AuthorizeContextMatcher{expected: extension.AuthorizeContext{User: "u2", PrivName: "SYSTEM_VARIABLES_ADMIN", WithGrant: false}}.Matches(ctx)
+	})
+	p.On("VerifyDynamicPrivilege", sysVarAdminMatcher).Return(false)
 
 	authChecks[p.Name()] = &extension.AuthPlugin{
 		Name:                     p.Name(),
@@ -122,14 +192,17 @@ func TestAuthPlugin(t *testing.T) {
 	tk.MustContainErrMsg("create user 'u2'@'localhost' identified with 'bad_plugin' by 'rawpassword'", "[executor:1524]Plugin 'bad_plugin' is not loaded")
 
 	// Create user with a valid plugin should work.
-	tk.MustExec("create user 'u2'@'localhost' identified with 'authentication_test_plugin' as 'rawpassword'")
+	tk.MustExec("create user 'u2'@'localhost' identified with 'authentication_test_plugin' as 'encodedpassword'")
 	tk.MustQuery(`SELECT user, plugin FROM mysql.user WHERE user='u2' and host='localhost'`).Check(testkit.Rows("u2 authentication_test_plugin"))
-	p.AssertCalled(t, "ValidateAuthString", "rawpassword")
+	p.AssertCalled(t, "ValidateAuthString", "encodedpassword")
+	p.AssertNumberOfCalls(t, "ValidateAuthString", 1)
+	p.AssertNotCalled(t, "GenerateAuthString")
 
 	// Alter user with an invalid plugin should not work.
 	tk.MustContainErrMsg("alter user 'u2'@'localhost' identified with 'bad_plugin' by 'rawpassword'", "[executor:1524]Plugin 'bad_plugin' is not loaded")
 
 	tk1 := testkit.NewTestKit(t, store)
+	// TODO: remove
 	tk1.Session().SetAuthPlugins(authChecks)
 	require.NoError(t, tk1.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil, nil))
 	tk1.MustExec("use test")
@@ -143,8 +216,8 @@ func TestAuthPlugin(t *testing.T) {
 	require.NoError(t, tk2.Session().Auth(&auth.UserIdentity{Username: "u2", Hostname: "localhost"}, []byte("1"), nil, nil))
 	// Should authenticate using plugin impl.
 	p.AssertNumberOfCalls(t, "AuthenticateUser", 2)
-	p.AssertCalled(t, "ValidateAuthString", "rawpassword")
-	p.AssertNumberOfCalls(t, "ValidateAuthString", 2)
+	p.AssertCalled(t, "ValidateAuthString", "encodedpassword")
+	p.AssertNumberOfCalls(t, "ValidateAuthString", 4)
 
 	// Change password should work using ALTER USER statement.
 	tk.MustExec("alter user 'u2'@'localhost' identified with 'authentication_test_plugin' by 'anotherrawpassword'")
@@ -164,6 +237,7 @@ func TestAuthPlugin(t *testing.T) {
 	p.AssertNumberOfCalls(t, "AuthenticateUser", 4)
 	p.AssertCalled(t, "ValidateAuthString", "yetanotherencodedpassword")
 
+	tk2.Session().SetExtensions(ext.NewSessionExtensions())
 	// Change password using SET PASSWORD statement should work using the user itself.
 	tk2.MustExec("set password='yetanotherrawpassword2'")
 	p.AssertCalled(t, "GenerateAuthString", "yetanotherrawpassword2")
@@ -172,6 +246,7 @@ func TestAuthPlugin(t *testing.T) {
 	// Should authenticate using plugin impl.
 	p.AssertNumberOfCalls(t, "AuthenticateUser", 5)
 	p.AssertCalled(t, "ValidateAuthString", "yetanotherencodedpassword2")
+	tk2.Session().SetExtensions(ext.NewSessionExtensions())
 
 	// Authorization tests.
 	tk1.MustExec("create table t1(id int primary key, v int)")
@@ -189,19 +264,19 @@ func TestAuthPlugin(t *testing.T) {
 	require.EqualError(t, tk2.ExecToErr("insert into t1 values (3, 30)"), "[planner:1142]INSERT command denied to user 'u2'@'localhost' for table 't1'")
 	// Should verify privilege using plugin impl.
 	p.AssertNumberOfCalls(t, "VerifyPrivilege", 3)
-	p.AssertCalled(t, "VerifyPrivilege", mock.Anything, "u2", "localhost", "test", "t1", mock.Anything, mysql.SelectPriv, mock.Anything)
-	p.AssertCalled(t, "VerifyPrivilege", mock.Anything, "u2", "localhost", "test", "t1", mock.Anything, mysql.InsertPriv, mock.Anything)
+	p.AssertCalled(t, "VerifyPrivilege", authzMatcher2)
+	p.AssertCalled(t, "VerifyPrivilege", authzMatcher3)
 
 	require.EqualError(t, tk2.ExecToErr("delete from t1 where id=1"), "[planner:1142]DELETE command denied to user 'u2'@'localhost' for table 't1'")
 	// Should not verify delete privilege using plugin impl since privilege is not granted in mysql.
-	p.AssertNotCalled(t, "VerifyPrivilege", mock.Anything, "u2", "localhost", "test", "t1", mock.Anything, mysql.DeletePriv, mock.Anything)
+	p.AssertNotCalled(t, "VerifyPrivilege", deleteMatcher)
 
 	require.EqualError(t, tk2.ExecToErr("SET GLOBAL sql_mode = 'STRICT_TRANS_TABLES,NO_AUTO_CREATE_USER'"), "[planner:1227]Access denied; you need (at least one of) the SUPER or SYSTEM_VARIABLES_ADMIN privilege(s) for this operation")
-	p.AssertNotCalled(t, "VerifyDynamicPrivilege", mock.Anything, "u2", mock.Anything, "SYSTEM_VARIABLES_ADMIN", false, mock.Anything)
+	p.AssertNotCalled(t, "VerifyDynamicPrivilege", sysVarAdminMatcher)
 	tk.MustExec("GRANT SYSTEM_VARIABLES_ADMIN on *.* TO u2@localhost")
 	require.EqualError(t, tk2.ExecToErr("SET GLOBAL sql_mode = 'STRICT_TRANS_TABLES,NO_AUTO_CREATE_USER'"), "[planner:1227]Access denied; you need (at least one of) the SUPER or SYSTEM_VARIABLES_ADMIN privilege(s) for this operation")
 	// Should verify dynamic privilege using plugin impl.
-	p.AssertCalled(t, "VerifyDynamicPrivilege", mock.Anything, "u2", mock.Anything, "SYSTEM_VARIABLES_ADMIN", false, mock.Anything)
+	p.AssertCalled(t, "VerifyDynamicPrivilege", sysVarAdminMatcher)
 }
 
 func TestAuthPluginSwitchPlugins(t *testing.T) {
@@ -211,16 +286,30 @@ func TestAuthPluginSwitchPlugins(t *testing.T) {
 	authChecks := map[string]*extension.AuthPlugin{}
 	p := new(MockAuthPlugin)
 	p.On("Name").Return("authentication_test_plugin")
-	p.On("AuthenticateUser", "u2", "encodedpassword", []byte("1"), mock.Anything, mock.Anything, mock.Anything).Return(nil)
-	p.On("AuthenticateUser", "u2", "encodedpassword", []byte("2"), mock.Anything, mock.Anything, mock.Anything).Return(errors.New("authentication failed"))
-	p.On("AuthenticateUser", "u2", "anotherencodedpassword", []byte("1"), mock.Anything, mock.Anything, mock.Anything).Return(nil)
+	authnMatcher1 := mock.MatchedBy(func(ctx *extension.AuthenticateContext) bool {
+		return AuthenticateContextMatcher{expected: extension.AuthenticateContext{User: "u2", StoredPwd: "rawpassword", InputPwd: []byte("1")}}.Matches(ctx)
+	})
+	p.On("AuthenticateUser", authnMatcher1).Return(nil)
+	authnMatcher2 := mock.MatchedBy(func(ctx *extension.AuthenticateContext) bool {
+		return AuthenticateContextMatcher{expected: extension.AuthenticateContext{User: "u2", StoredPwd: "encodedpassword", InputPwd: []byte("1")}}.Matches(ctx)
+	})
+	p.On("AuthenticateUser", authnMatcher2).Return(nil)
+
 	p.On("ValidateAuthString", mock.Anything).Return(true)
 	p.On("GenerateAuthString", "rawpassword").Return("encodedpassword", true)
-	p.On("GenerateAuthString", "anotherrawpassword").Return("anotherencodedpassword", true)
-	p.On("VerifyPrivilege", mock.Anything, "u2", "localhost", "test", "t1", mock.Anything, mysql.AllPrivMask, mock.Anything).Return(true)
-	p.On("VerifyPrivilege", mock.Anything, "u2", "localhost", "test", "t1", mock.Anything, mysql.SelectPriv, mock.Anything).Return(true)
-	p.On("VerifyPrivilege", mock.Anything, "u2", "localhost", "test", "t1", mock.Anything, mysql.InsertPriv, mock.Anything).Return(false)
-	p.On("VerifyDynamicPrivilege", mock.Anything, "u2", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(false)
+
+	allPrivMatcher := mock.MatchedBy(func(ctx *extension.AuthorizeContext) bool {
+		return AuthorizeContextMatcher{expected: extension.AuthorizeContext{User: "u2", Host: "localhost", DB: "test", Table: "t1", Priv: mysql.AllPrivMask}}.Matches(ctx)
+	})
+	p.On("VerifyPrivilege", allPrivMatcher).Return(true)
+	selectMatcher := mock.MatchedBy(func(ctx *extension.AuthorizeContext) bool {
+		return AuthorizeContextMatcher{expected: extension.AuthorizeContext{User: "u2", Host: "localhost", DB: "test", Table: "t1", Priv: mysql.SelectPriv}}.Matches(ctx)
+	})
+	p.On("VerifyPrivilege", selectMatcher).Return(true)
+	insertMatcher := mock.MatchedBy(func(ctx *extension.AuthorizeContext) bool {
+		return AuthorizeContextMatcher{expected: extension.AuthorizeContext{User: "u2", Host: "localhost", DB: "test", Table: "t1", Priv: mysql.InsertPriv}}.Matches(ctx)
+	})
+	p.On("VerifyPrivilege", insertMatcher).Return(false)
 
 	authChecks[p.Name()] = &extension.AuthPlugin{
 		Name:                     p.Name(),
@@ -261,21 +350,22 @@ func TestAuthPluginSwitchPlugins(t *testing.T) {
 	// Create user with a valid plugin should work.
 	tk.MustExec("create user 'u2'@'localhost' identified with 'authentication_test_plugin' as 'rawpassword'")
 	tk.MustQuery(`SELECT user, plugin FROM mysql.user WHERE user='u2' and host='localhost'`).Check(testkit.Rows("u2 authentication_test_plugin"))
-	p.AssertCalled(t, "GenerateAuthString", "rawpassword")
+	p.AssertCalled(t, "ValidateAuthString", "rawpassword")
 
 	tk1 := testkit.NewTestKit(t, store)
-	tk1.Session().SetAuthPlugins(authChecks)
+	tk1.Session().SetExtensions(ext.NewSessionExtensions())
 	require.NoError(t, tk1.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil, nil))
 	tk1.MustExec("use test")
+	tk1.Session().SetExtensions(ext.NewSessionExtensions())
 
 	// Authentication tests.
 	tk2 := testkit.NewTestKit(t, store)
-	tk2.Session().SetAuthPlugins(authChecks)
+	tk2.Session().SetExtensions(ext.NewSessionExtensions())
 	// Correct password should pass
 	require.NoError(t, tk2.Session().Auth(&auth.UserIdentity{Username: "u2", Hostname: "localhost"}, []byte("1"), nil, nil))
 	// Should authenticate using plugin impl.
 	p.AssertNumberOfCalls(t, "AuthenticateUser", 1)
-	p.AssertCalled(t, "ValidateAuthString", "encodedpassword")
+	p.AssertCalled(t, "ValidateAuthString", "rawpassword")
 
 	// Authorization tests.
 	tk1.MustExec("create table t1(id int primary key, v int)")
@@ -288,8 +378,8 @@ func TestAuthPluginSwitchPlugins(t *testing.T) {
 	require.EqualError(t, tk2.ExecToErr("insert into t1 values (3, 30)"), "[planner:1142]INSERT command denied to user 'u2'@'localhost' for table 't1'")
 	// Should verify privilege using plugin impl.
 	p.AssertNumberOfCalls(t, "VerifyPrivilege", 3)
-	p.AssertCalled(t, "VerifyPrivilege", mock.Anything, "u2", "localhost", "test", "t1", mock.Anything, mysql.SelectPriv, mock.Anything)
-	p.AssertCalled(t, "VerifyPrivilege", mock.Anything, "u2", "localhost", "test", "t1", mock.Anything, mysql.InsertPriv, mock.Anything)
+	p.AssertCalled(t, "VerifyPrivilege", selectMatcher)
+	p.AssertCalled(t, "VerifyPrivilege", insertMatcher)
 
 	tk.MustExec("alter user 'u2'@'localhost' identified with 'mysql_native_password' by '123'")
 	tk.MustQuery(`SELECT user, plugin FROM mysql.user WHERE user='u2' and host='localhost'`).Check(testkit.Rows("u2 mysql_native_password"))
@@ -300,6 +390,7 @@ func TestAuthPluginSwitchPlugins(t *testing.T) {
 
 	// New session should not use plugin.
 	tk2.RefreshSession()
+	tk2.Session().SetExtensions(ext.NewSessionExtensions())
 	require.NoError(t, tk2.Session().Auth(&auth.UserIdentity{Username: "u2", Hostname: "localhost"}, sha1Password("123"), nil, nil))
 	tk2.MustExec("use test")
 	tk2.MustQuery("select * from t1 where id=1").Check(testkit.Rows("1 10"))
@@ -311,8 +402,10 @@ func TestAuthPluginSwitchPlugins(t *testing.T) {
 	// Switch back to plugin should work.
 	tk.MustExec("alter user 'u2'@'localhost' identified with 'authentication_test_plugin' by 'rawpassword'")
 	tk.MustQuery(`SELECT user, plugin FROM mysql.user WHERE user='u2' and host='localhost'`).Check(testkit.Rows("u2 authentication_test_plugin"))
+	p.AssertCalled(t, "GenerateAuthString", "rawpassword")
 	tk2.RefreshSession()
 	require.NoError(t, tk2.Session().Auth(&auth.UserIdentity{Username: "u2", Hostname: "localhost"}, []byte("1"), nil, nil))
+	tk2.Session().SetExtensions(ext.NewSessionExtensions())
 	tk2.MustExec("use test")
 	tk2.MustQuery("select * from t1 where id=1").Check(testkit.Rows("1 10"))
 	require.EqualError(t, tk2.ExecToErr("insert into t1 values (5, 50)"), "[planner:1142]INSERT command denied to user 'u2'@'localhost' for table 't1'")
