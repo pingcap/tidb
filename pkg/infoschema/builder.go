@@ -986,7 +986,7 @@ func NewBuilder(r autoid.Requirement, factory func() (pools.Resource, error), in
 	}
 	schemaCacheSize := variable.SchemaCacheSize.Load()
 	if schemaCacheSize > 0 {
-		infoData.tableCache.SetCapacity(uint64(schemaCacheSize))
+		infoData.tableCache.SetCapacity(schemaCacheSize)
 		builder.enableV2 = true
 	}
 	return builder
