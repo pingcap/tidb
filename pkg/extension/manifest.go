@@ -245,6 +245,9 @@ func newManifestWithSetup(name string, factory func() ([]Option, error)) (_ *Man
 			if p.GenerateAuthString == nil {
 				return nil, errors.Errorf("auth plugin GenerateAuthString function cannot be nil for %s", pluginName)
 			}
+			if p.ValidateAuthString == nil {
+				return nil, errors.Errorf("auth plugin ValidateAuthString function cannot be nil for %s", pluginName)
+			}
 			return nil, nil
 		})
 
