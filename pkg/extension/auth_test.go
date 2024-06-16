@@ -8,10 +8,8 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
-	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
-	"go.uber.org/zap"
 	"golang.org/x/exp/maps"
 	"testing"
 )
@@ -42,9 +40,7 @@ func (p *MockAuthPlugin) VerifyDynamicPrivilege(ctx *extension.AuthorizeContext)
 }
 
 func (p *MockAuthPlugin) VerifyPrivilege(ctx *extension.AuthorizeContext) bool {
-	ret := p.Called(ctx).Bool(0)
-	logutil.BgLogger().Info("VerifyPrivilege", zap.Bool("ret", ret), zap.Any("ctx", ctx))
-	return ret
+	return p.Called(ctx).Bool(0)
 }
 
 type AuthenticateContextMatcher struct {
@@ -72,8 +68,8 @@ func (m AuthorizeContextMatcher) Matches(x interface{}) bool {
 	}
 	return ctx.User == m.expected.User &&
 		ctx.DB == m.expected.DB &&
-		ctx.PrivName == m.expected.PrivName &&
-		ctx.Priv == m.expected.Priv &&
+		ctx.DynamicPriv == m.expected.DynamicPriv &&
+		ctx.StaticPriv == m.expected.StaticPriv &&
 		ctx.WithGrant == m.expected.WithGrant
 }
 
@@ -128,15 +124,15 @@ func TestAuthPlugin(t *testing.T) {
 	p.On("GenerateAuthString", "yetanotherrawpassword").Return("yetanotherencodedpassword", true)
 	p.On("GenerateAuthString", "yetanotherrawpassword2").Return("yetanotherencodedpassword2", true)
 	authzMatcher1 := mock.MatchedBy(func(ctx *extension.AuthorizeContext) bool {
-		return AuthorizeContextMatcher{expected: extension.AuthorizeContext{User: "u2", Host: "localhost", DB: "test", Table: "t1", Priv: mysql.AllPrivMask}}.Matches(ctx)
+		return AuthorizeContextMatcher{expected: extension.AuthorizeContext{User: "u2", Host: "localhost", DB: "test", Table: "t1", StaticPriv: mysql.AllPrivMask}}.Matches(ctx)
 	})
 	p.On("VerifyPrivilege", authzMatcher1).Return(true)
 	authzMatcher2 := mock.MatchedBy(func(ctx *extension.AuthorizeContext) bool {
-		return AuthorizeContextMatcher{expected: extension.AuthorizeContext{User: "u2", Host: "localhost", DB: "test", Table: "t1", Priv: mysql.SelectPriv}}.Matches(ctx)
+		return AuthorizeContextMatcher{expected: extension.AuthorizeContext{User: "u2", Host: "localhost", DB: "test", Table: "t1", StaticPriv: mysql.SelectPriv}}.Matches(ctx)
 	})
 	p.On("VerifyPrivilege", authzMatcher2).Return(true)
 	authzMatcher3 := mock.MatchedBy(func(ctx *extension.AuthorizeContext) bool {
-		return AuthorizeContextMatcher{expected: extension.AuthorizeContext{User: "u2", Host: "localhost", DB: "test", Table: "t1", Priv: mysql.InsertPriv}}.Matches(ctx)
+		return AuthorizeContextMatcher{expected: extension.AuthorizeContext{User: "u2", Host: "localhost", DB: "test", Table: "t1", StaticPriv: mysql.InsertPriv}}.Matches(ctx)
 	})
 	p.On("VerifyPrivilege", authzMatcher3).Return(false)
 	authzMatcher4 := mock.MatchedBy(func(ctx *extension.AuthorizeContext) bool {
@@ -144,11 +140,11 @@ func TestAuthPlugin(t *testing.T) {
 	})
 	p.On("VerifyDynamicPrivilege", authzMatcher4).Return(false)
 	deleteMatcher := mock.MatchedBy(func(ctx *extension.AuthorizeContext) bool {
-		return AuthorizeContextMatcher{expected: extension.AuthorizeContext{User: "u2", Host: "localhost", DB: "test", Table: "t1", Priv: mysql.DeletePriv}}.Matches(ctx)
+		return AuthorizeContextMatcher{expected: extension.AuthorizeContext{User: "u2", Host: "localhost", DB: "test", Table: "t1", StaticPriv: mysql.DeletePriv}}.Matches(ctx)
 	})
 	p.On("VerifyPrivilege", deleteMatcher).Return(false)
 	sysVarAdminMatcher := mock.MatchedBy(func(ctx *extension.AuthorizeContext) bool {
-		return AuthorizeContextMatcher{expected: extension.AuthorizeContext{User: "u2", PrivName: "SYSTEM_VARIABLES_ADMIN", WithGrant: false}}.Matches(ctx)
+		return AuthorizeContextMatcher{expected: extension.AuthorizeContext{User: "u2", DynamicPriv: "SYSTEM_VARIABLES_ADMIN", WithGrant: false}}.Matches(ctx)
 	})
 	p.On("VerifyDynamicPrivilege", sysVarAdminMatcher).Return(false)
 
@@ -296,15 +292,15 @@ func TestAuthPluginSwitchPlugins(t *testing.T) {
 	p.On("GenerateAuthString", "rawpassword").Return("encodedpassword", true)
 
 	allPrivMatcher := mock.MatchedBy(func(ctx *extension.AuthorizeContext) bool {
-		return AuthorizeContextMatcher{expected: extension.AuthorizeContext{User: "u2", Host: "localhost", DB: "test", Table: "t1", Priv: mysql.AllPrivMask}}.Matches(ctx)
+		return AuthorizeContextMatcher{expected: extension.AuthorizeContext{User: "u2", Host: "localhost", DB: "test", Table: "t1", StaticPriv: mysql.AllPrivMask}}.Matches(ctx)
 	})
 	p.On("VerifyPrivilege", allPrivMatcher).Return(true)
 	selectMatcher := mock.MatchedBy(func(ctx *extension.AuthorizeContext) bool {
-		return AuthorizeContextMatcher{expected: extension.AuthorizeContext{User: "u2", Host: "localhost", DB: "test", Table: "t1", Priv: mysql.SelectPriv}}.Matches(ctx)
+		return AuthorizeContextMatcher{expected: extension.AuthorizeContext{User: "u2", Host: "localhost", DB: "test", Table: "t1", StaticPriv: mysql.SelectPriv}}.Matches(ctx)
 	})
 	p.On("VerifyPrivilege", selectMatcher).Return(true)
 	insertMatcher := mock.MatchedBy(func(ctx *extension.AuthorizeContext) bool {
-		return AuthorizeContextMatcher{expected: extension.AuthorizeContext{User: "u2", Host: "localhost", DB: "test", Table: "t1", Priv: mysql.InsertPriv}}.Matches(ctx)
+		return AuthorizeContextMatcher{expected: extension.AuthorizeContext{User: "u2", Host: "localhost", DB: "test", Table: "t1", StaticPriv: mysql.InsertPriv}}.Matches(ctx)
 	})
 	p.On("VerifyPrivilege", insertMatcher).Return(false)
 
@@ -485,11 +481,11 @@ func TestCreateViewWithPluginUser(t *testing.T) {
 	p.On("GenerateAuthString", "rawpassword").Return("encodedpassword", true)
 
 	allPrivMatcherHost1 := mock.MatchedBy(func(ctx *extension.AuthorizeContext) bool {
-		return AuthorizeContextMatcher{expected: extension.AuthorizeContext{User: "u1", Host: "localhost", DB: "test", Table: "t1", Priv: mysql.AllPrivMask}}.Matches(ctx)
+		return AuthorizeContextMatcher{expected: extension.AuthorizeContext{User: "u1", Host: "localhost", DB: "test", Table: "t1", StaticPriv: mysql.AllPrivMask}}.Matches(ctx)
 	})
 	p.On("VerifyPrivilege", allPrivMatcherHost1).Return(true)
 	createViewMatcher := mock.MatchedBy(func(ctx *extension.AuthorizeContext) bool {
-		return AuthorizeContextMatcher{expected: extension.AuthorizeContext{User: "u1", Host: "localhost", DB: "test", Table: "t1", Priv: mysql.CreateViewPriv}}.Matches(ctx)
+		return AuthorizeContextMatcher{expected: extension.AuthorizeContext{User: "u1", Host: "localhost", DB: "test", Table: "t1", StaticPriv: mysql.CreateViewPriv}}.Matches(ctx)
 	})
 	p.On("VerifyPrivilege", createViewMatcher).Return(true)
 
@@ -542,7 +538,7 @@ func TestCreateViewWithPluginUser(t *testing.T) {
 	tk1.MustExec("use test")
 
 	selectMatcher := mock.MatchedBy(func(ctx *extension.AuthorizeContext) bool {
-		return AuthorizeContextMatcher{expected: extension.AuthorizeContext{User: "u1", Host: "localhost", DB: "test", Table: "t1", Priv: mysql.SelectPriv}}.Matches(ctx)
+		return AuthorizeContextMatcher{expected: extension.AuthorizeContext{User: "u1", Host: "localhost", DB: "test", Table: "t1", StaticPriv: mysql.SelectPriv}}.Matches(ctx)
 	})
 	p.On("VerifyPrivilege", selectMatcher).Return(false).Once()
 	// Create view should not work.
@@ -577,5 +573,94 @@ func TestCreateViewWithPluginUser(t *testing.T) {
 func TestPluginUserModification(t *testing.T) {
 	defer extension.Reset()
 	extension.Reset()
-	// TODO
+
+	authChecks := map[string]*extension.AuthPlugin{}
+	p := new(MockAuthPlugin)
+	p.On("Name").Return("authentication_test_plugin")
+	authnMatcher1 := mock.MatchedBy(func(ctx *extension.AuthenticateContext) bool {
+		return AuthenticateContextMatcher{expected: extension.AuthenticateContext{User: "u4", StoredPwd: "rawpassword", InputPwd: []byte("1")}}.Matches(ctx)
+	})
+	p.On("AuthenticateUser", authnMatcher1).Return(nil)
+
+	p.On("ValidateAuthString", mock.Anything).Return(true)
+	p.On("GenerateAuthString", mock.Anything).Return("encodedrandompassword", true)
+	p.On("VerifyPrivilege", mock.Anything).Return(true)
+	p.On("VerifyDynamicPrivilege", mock.Anything).Return(true)
+
+	authChecks[p.Name()] = &extension.AuthPlugin{
+		Name:                     p.Name(),
+		AuthenticateUser:         p.AuthenticateUser,
+		ValidateAuthString:       p.ValidateAuthString,
+		GenerateAuthString:       p.GenerateAuthString,
+		VerifyPrivilege:          p.VerifyPrivilege,
+		VerifyDynamicPrivilege:   p.VerifyDynamicPrivilege,
+		RequiredClientSidePlugin: mysql.AuthNativePassword,
+	}
+
+	require.NoError(t, extension.Register(
+		"extension_authentication_plugin",
+		extension.WithCustomAuthPlugins(authChecks),
+		extension.WithCustomSysVariables([]*variable.SysVar{
+			{
+				Scope:          variable.ScopeGlobal,
+				Name:           "extension_authentication_plugin",
+				Value:          mysql.AuthNativePassword,
+				Type:           variable.TypeEnum,
+				PossibleValues: maps.Keys(authChecks),
+			},
+		}),
+	))
+	ext, err := extension.GetExtensions()
+	require.NoError(t, err)
+	require.NoError(t, extension.Setup())
+
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.Session().SetExtensions(ext.NewSessionExtensions())
+
+	// Create user u1 with plugin with super privilege
+	tk.MustExec("create user 'u1' identified with 'authentication_test_plugin' as 'rawpassword'")
+	tk.MustExec("grant super on *.* to u1")
+	// Create a non-plugin user u2 with create user privilege.
+	tk.MustExec("create user 'u2'")
+	tk.MustExec("grant create user on *.* to u2")
+	// Create a non-plugin user u3 with create user and system_user privilege. It also needs the super privilege so we can run set password on u1.
+	tk.MustExec("create user 'u3'")
+	tk.MustExec("grant create user, system_user, super on *.* to u3")
+	// Create another super plugin user u4 to check if it can run admin operations on u3.
+	tk.MustExec("create user 'u4' identified with 'authentication_test_plugin' as 'rawpassword'")
+	tk.MustExec("grant create user, super on *.* to u4")
+
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.Session().SetExtensions(ext.NewSessionExtensions())
+	require.NoError(t, tk2.Session().Auth(&auth.UserIdentity{Username: "u2", Hostname: "localhost"}, nil, nil, nil))
+	// User u2 should not be able to alter user u1 or drop it.
+	tk2.MustContainErrMsg("drop user u1", "[planner:1227]Access denied; you need (at least one of) the SYSTEM_USER or SUPER privilege(s) for this operation")
+	tk2.MustContainErrMsg("alter user u1 identified with 'authentication_test_plugin' as 'randompassword'", "[planner:1227]Access denied; you need (at least one of) the SYSTEM_USER or SUPER privilege(s) for this operation")
+	// Should not even call the plugin to verify privilege of u1 at all.
+	p.AssertNumberOfCalls(t, "VerifyPrivilege", 0)
+	p.AssertNumberOfCalls(t, "VerifyDynamicPrivilege", 0)
+
+	tk3 := testkit.NewTestKit(t, store)
+	tk3.Session().SetExtensions(ext.NewSessionExtensions())
+	require.NoError(t, tk3.Session().Auth(&auth.UserIdentity{Username: "u3", Hostname: "localhost"}, nil, nil, nil))
+	// Should be able to run these admin operations on u1.
+	tk3.MustExec("alter user u1 identified with 'authentication_test_plugin' as 'randompassword'")
+	tk3.MustExec("set password for 'u1'='random2password'")
+	tk3.MustExec("drop user u1")
+	// Should not even call the plugin to verify privilege of u1 at all.
+	p.AssertNumberOfCalls(t, "VerifyPrivilege", 0)
+	p.AssertNumberOfCalls(t, "VerifyDynamicPrivilege", 0)
+
+	tk4 := testkit.NewTestKit(t, store)
+	tk4.Session().SetExtensions(ext.NewSessionExtensions())
+	require.NoError(t, tk4.Session().Auth(&auth.UserIdentity{Username: "u4", Hostname: "localhost"}, []byte("1"), nil, nil))
+	// Should be able to run these admin operations on u3.
+	tk4.MustExec("alter user u3 identified by 'blah'")
+	tk4.MustExec("set password for 'u3'='blahblah'")
+	tk4.MustExec("drop user u3")
+	// Should have called the plugin to verify privilege of u4 since it's in-session for CREATE_USER/SUPER privileges.
+	p.AssertNumberOfCalls(t, "VerifyPrivilege", 3)
+	// Dynamic privilege should be checked for u4. for SYSTEM_USER and RESTRICTED_USER_ADMIN.
+	p.AssertNumberOfCalls(t, "VerifyDynamicPrivilege", 4)
 }

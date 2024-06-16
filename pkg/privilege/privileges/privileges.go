@@ -262,32 +262,30 @@ func (p *UserPrivileges) authenticateWithPlugin(user *auth.UserIdentity, authent
 	}
 
 	// If the user is authenticated using extension auth plugin, populate the plugin request verification funcs
-	p.authPluginRequestVerification = func(mysqlPriv *MySQLPrivilege, user, host string, activeRoles []*auth.RoleIdentity, db, table, column string, priv mysql.PrivilegeType) bool {
-		if authPlugin.VerifyPrivilege == nil {
-			return true
+	if authPlugin.VerifyPrivilege != nil {
+		p.authPluginRequestVerification = func(mysqlPriv *MySQLPrivilege, user, host string, activeRoles []*auth.RoleIdentity, db, table, column string, priv mysql.PrivilegeType) bool {
+			return authPlugin.VerifyPrivilege(&extension.AuthorizeContext{
+				User:        user,
+				Host:        host,
+				DB:          db,
+				Table:       table,
+				Column:      column,
+				StaticPriv:  priv,
+				ConnState:   sessionVars.TLSConnectionState,
+				ActiveRoles: activeRoles,
+			})
 		}
-		return authPlugin.VerifyPrivilege(&extension.AuthorizeContext{
-			User:        user,
-			Host:        host,
-			DB:          db,
-			Table:       table,
-			Column:      column,
-			Priv:        priv,
-			ConnState:   sessionVars.TLSConnectionState,
-			ActiveRoles: activeRoles,
-		})
 	}
-	p.authPluginRequestDynamicVerification = func(mysqlPriv *MySQLPrivilege, activeRoles []*auth.RoleIdentity, user, host, privName string, grantable bool) bool {
-		if authPlugin.VerifyDynamicPrivilege == nil {
-			return true
+	if authPlugin.VerifyDynamicPrivilege != nil {
+		p.authPluginRequestDynamicVerification = func(mysqlPriv *MySQLPrivilege, activeRoles []*auth.RoleIdentity, user, host, privName string, grantable bool) bool {
+			return authPlugin.VerifyDynamicPrivilege(&extension.AuthorizeContext{
+				User:        user,
+				Host:        host,
+				DynamicPriv: privName,
+				ConnState:   sessionVars.TLSConnectionState,
+				ActiveRoles: activeRoles,
+			})
 		}
-		return authPlugin.VerifyDynamicPrivilege(&extension.AuthorizeContext{
-			User:        user,
-			Host:        host,
-			PrivName:    privName,
-			ConnState:   sessionVars.TLSConnectionState,
-			ActiveRoles: activeRoles,
-		})
 	}
 	return nil
 }

@@ -67,16 +67,16 @@ type AuthorizeContext struct {
 	User string
 	// Host The host that the user is connecting from
 	Host string
-	// DB The database to check for privilege
+	// DB The database to check for privilege (should be empty if DynamicPriv is set)
 	DB string
-	// Table The table to check for privilege
+	// Table The table to check for privilege (should be empty if DynamicPriv is set)
 	Table string
 	// Column The column to check for privilege (currently just a placeholder in TiDB as column-level privilege is not supported by TiDB yet)
 	Column string
-	// Priv The privilege type of the SQL statement that will be executed
-	Priv mysql.PrivilegeType
-	// PrivName the dynamic privilege required by the user's SQL statement
-	PrivName string
+	// StaticPriv The privilege type of the SQL statement that will be executed. Mutual exclusive with DynamicPriv.
+	StaticPriv mysql.PrivilegeType
+	// DynamicPriv the dynamic privilege required by the user's SQL statement. Mutual exclusive with StaticPriv.
+	DynamicPriv string
 	// ConnState The TLS connection state (contains the TLS certificate) if client is using TLS. It will be nil if the client is not using TLS
 	ConnState *tls.ConnectionState
 	// ActiveRoles List of active MySQL roles for the current user
