@@ -115,7 +115,10 @@ func newSessionExtensions(es *Extensions) *SessionExtensions {
 			}
 		}
 		if m.authPlugins != nil {
-			connExtensions.authPlugins = m.authPlugins
+			connExtensions.authPlugins = make(map[string]*AuthPlugin)
+			for k, v := range m.authPlugins {
+				connExtensions.authPlugins[k] = v
+			}
 		}
 	}
 	return connExtensions
@@ -161,10 +164,5 @@ func (es *SessionExtensions) GetAuthPlugins() map[string]*AuthPlugin {
 	if es == nil {
 		return nil
 	}
-
-	authPlugins := make(map[string]*AuthPlugin)
-	for k, v := range es.authPlugins {
-		authPlugins[k] = v
-	}
-	return authPlugins
+	return es.authPlugins
 }

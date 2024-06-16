@@ -8,8 +8,10 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
 	"golang.org/x/exp/maps"
 	"testing"
 )
@@ -40,7 +42,9 @@ func (p *MockAuthPlugin) VerifyDynamicPrivilege(ctx *extension.AuthorizeContext)
 }
 
 func (p *MockAuthPlugin) VerifyPrivilege(ctx *extension.AuthorizeContext) bool {
-	return p.Called(ctx).Bool(0)
+	ret := p.Called(ctx).Bool(0)
+	logutil.BgLogger().Info("VerifyPrivilege", zap.Bool("ret", ret), zap.Any("ctx", ctx))
+	return ret
 }
 
 type AuthenticateContextMatcher struct {
@@ -468,7 +472,106 @@ func TestCreateUserWhenGrant(t *testing.T) {
 func TestCreateViewWithPluginUser(t *testing.T) {
 	defer extension.Reset()
 	extension.Reset()
-	// TODO
+
+	authChecks := map[string]*extension.AuthPlugin{}
+	p := new(MockAuthPlugin)
+	p.On("Name").Return("authentication_test_plugin")
+	authnMatcher1 := mock.MatchedBy(func(ctx *extension.AuthenticateContext) bool {
+		return AuthenticateContextMatcher{expected: extension.AuthenticateContext{User: "u1", StoredPwd: "rawpassword", InputPwd: []byte("1")}}.Matches(ctx)
+	})
+	p.On("AuthenticateUser", authnMatcher1).Return(nil).Return(nil)
+
+	p.On("ValidateAuthString", mock.Anything).Return(true)
+	p.On("GenerateAuthString", "rawpassword").Return("encodedpassword", true)
+
+	allPrivMatcherHost1 := mock.MatchedBy(func(ctx *extension.AuthorizeContext) bool {
+		return AuthorizeContextMatcher{expected: extension.AuthorizeContext{User: "u1", Host: "localhost", DB: "test", Table: "t1", Priv: mysql.AllPrivMask}}.Matches(ctx)
+	})
+	p.On("VerifyPrivilege", allPrivMatcherHost1).Return(true)
+	createViewMatcher := mock.MatchedBy(func(ctx *extension.AuthorizeContext) bool {
+		return AuthorizeContextMatcher{expected: extension.AuthorizeContext{User: "u1", Host: "localhost", DB: "test", Table: "t1", Priv: mysql.CreateViewPriv}}.Matches(ctx)
+	})
+	p.On("VerifyPrivilege", createViewMatcher).Return(true)
+
+	authChecks[p.Name()] = &extension.AuthPlugin{
+		Name:                     p.Name(),
+		AuthenticateUser:         p.AuthenticateUser,
+		ValidateAuthString:       p.ValidateAuthString,
+		GenerateAuthString:       p.GenerateAuthString,
+		VerifyPrivilege:          p.VerifyPrivilege,
+		VerifyDynamicPrivilege:   p.VerifyDynamicPrivilege,
+		RequiredClientSidePlugin: mysql.AuthNativePassword,
+	}
+
+	require.NoError(t, extension.Register(
+		"extension_authentication_plugin",
+		extension.WithCustomAuthPlugins(authChecks),
+		extension.WithCustomSysVariables([]*variable.SysVar{
+			{
+				Scope:          variable.ScopeGlobal,
+				Name:           "extension_authentication_plugin",
+				Value:          mysql.AuthNativePassword,
+				Type:           variable.TypeEnum,
+				PossibleValues: maps.Keys(authChecks),
+			},
+		}),
+	))
+	ext, err := extension.GetExtensions()
+	require.NoError(t, err)
+	require.NoError(t, extension.Setup())
+
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.Session().SetExtensions(ext.NewSessionExtensions())
+	// Set up the table using root user.
+	tk.MustExec("use test")
+	tk.MustExec("create table t1(id int primary key, v int)")
+	tk.MustExec("insert into t1 values (1, 10), (2, 20)")
+
+	// Create user u1 with plugin.
+	tk.MustExec("create user 'u1' identified with 'authentication_test_plugin' as 'rawpassword'")
+	tk.MustExec("grant select, insert, create view on test.* TO u1")
+	// Create another user u2 without plugin.
+	tk.MustExec("create user 'u2'")
+	tk.MustExec("grant select on test.* TO u2")
+
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.Session().SetExtensions(ext.NewSessionExtensions())
+	// Create one session for u1. This session does not have SELECT privilege.
+	require.NoError(t, tk1.Session().Auth(&auth.UserIdentity{Username: "u1", Hostname: "localhost"}, []byte("1"), nil, nil))
+	tk1.MustExec("use test")
+
+	selectMatcher := mock.MatchedBy(func(ctx *extension.AuthorizeContext) bool {
+		return AuthorizeContextMatcher{expected: extension.AuthorizeContext{User: "u1", Host: "localhost", DB: "test", Table: "t1", Priv: mysql.SelectPriv}}.Matches(ctx)
+	})
+	p.On("VerifyPrivilege", selectMatcher).Return(false).Once()
+	// Create view should not work.
+	require.ErrorContains(t, tk1.ExecToErr("create view v1 as select * from t1"), "[planner:1142]SELECT command denied to user 'u1'@'%' for table 't1'")
+	p.AssertNumberOfCalls(t, "VerifyPrivilege", 1)
+
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.Session().SetExtensions(ext.NewSessionExtensions())
+	// Create another session for u1. This session has SELECT privilege.
+	require.NoError(t, tk2.Session().Auth(&auth.UserIdentity{Username: "u1", Hostname: "localhost"}, []byte("1"), nil, nil))
+	tk2.MustExec("use test")
+	p.On("VerifyPrivilege", selectMatcher).Return(true)
+	// Create view should work.
+	tk2.MustExec("create view v1 as select * from t1")
+	tk2.MustQuery("select * from v1").Check(testkit.Rows("1 10", "2 20"))
+	// Session 1 should also be able to access the view now.
+	tk1.MustQuery("select * from v1").Check(testkit.Rows("1 10", "2 20"))
+	p.AssertNumberOfCalls(t, "VerifyPrivilege", 5)
+
+	tk3 := testkit.NewTestKit(t, store)
+	tk3.Session().SetExtensions(ext.NewSessionExtensions())
+	// Create another session for u1, logging in with a different host. This session has SELECT privilege.
+	require.NoError(t, tk3.Session().Auth(&auth.UserIdentity{Username: "u2", Hostname: "localhost"}, nil, nil, nil))
+	tk3.MustExec("use test")
+	// Now reject the SELECT privilege check for u1, but u2 should be able to access the view.
+	p.On("VerifyPrivilege", selectMatcher).Return(false)
+	tk3.MustQuery("select * from v1").Check(testkit.Rows("1 10", "2 20"))
+	// Should not verify privilege using the plugin since the definer is not in-session.
+	p.AssertNumberOfCalls(t, "VerifyPrivilege", 5)
 }
 
 func TestPluginUserModification(t *testing.T) {
