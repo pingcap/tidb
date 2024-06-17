@@ -37,13 +37,17 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/pkg/ddl/util/callback"
+	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/parser/model"
 	tmysql "github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/server"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testenv"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/versioninfo"
 	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/require"
@@ -2786,6 +2790,196 @@ func (cli *TestServerClient) RunTestTypeAndCharsetOfSendLongData(t *testing.T) {
 			require.Equal(t, gbkStr, txt)
 		}
 	})
+}
+
+func (cli *TestServerClient) getNewDB(t *testing.T, overrider configOverrider) *testkit.DBTestKit {
+	db, err := sql.Open("mysql", cli.GetDSN(overrider))
+	require.NoError(t, err)
+
+	return testkit.NewDBTestKit(t, db)
+}
+
+func MustExec(t *testing.T, ctx context.Context, conn *sql.Conn, sql string) {
+	_, err := conn.QueryContext(ctx, sql)
+	require.NoError(t, err)
+}
+
+type sqlWithErr struct {
+	sql       string
+	expectErr error
+	stmt      *sql.Stmt
+}
+
+type expectQuery struct {
+	sql  string
+	rows []string
+}
+
+func (cli *TestServerClient) RunTestXxx(t *testing.T, dom *domain.Domain) {
+	cli.RunTests(t, func(config *mysql.Config) {
+		config.MaxAllowedPacket = 1024
+	}, func(dbt *testkit.DBTestKit) {
+		ctx := context.Background()
+
+		conn, err := dbt.GetDB().Conn(ctx)
+		require.NoError(t, err)
+		MustExec(t, ctx, conn, "create database test_db_state default charset utf8 default collate utf8_bin")
+		MustExec(t, ctx, conn, "use test_db_state")
+		MustExec(t, ctx, conn, `CREATE TABLE stock (
+  a int NOT NULL,
+  b char(30) NOT NULL,
+  c int,
+  d char(64),
+  PRIMARY KEY(a,b)
+) ENGINE=InnoDB DEFAULT CHARSET=latin1 COLLATE=latin1_bin COMMENT='…comment';
+`)
+		MustExec(t, ctx, conn, "insert into stock values(1, 'a', 11, 'x'), (2, 'b', 22, 'y')")
+		MustExec(t, ctx, conn, "alter table stock add column cct_1 int default 10")
+		MustExec(t, ctx, conn, "alter table stock modify cct_1 json")
+		defer MustExec(t, ctx, conn, "drop table stock")
+
+		sqls := make([]sqlWithErr, 6)
+		sqls[0] = sqlWithErr{"begin", nil, nil}
+		sqls[1] = sqlWithErr{"select a, c, d from stock where (a, b) IN ((?, ?),(?, ?)) FOR UPDATE", nil, nil}
+		sqls[2] = sqlWithErr{"UPDATE stock SET c = ? WHERE a= ? AND b = 'a'", nil, nil}
+		sqls[3] = sqlWithErr{"UPDATE stock SET c = ?, d = 'z' WHERE a= ? AND b = 'b'", nil, nil}
+		// sqls[1] = sqlWithErr{"select a, c, d from stock where (a, b) IN ((1, 'a'),(2, 'b')) FOR UPDATE", nil, nil}
+		// sqls[2] = sqlWithErr{"UPDATE stock SET c = 11 WHERE a= 1 AND b = 'a'", nil, nil}
+		// sqls[3] = sqlWithErr{"UPDATE stock SET c = 12, d = 'z' WHERE a= 2 AND b = 'b'", nil, nil}
+		sqls[4] = sqlWithErr{"select * FROM stock;", nil, nil}
+		sqls[5] = sqlWithErr{"commit", nil, nil}
+		// dropColumnsSQL := "alter table stock drop column cct_1"
+		dropColumnsSQL := "alter table stock add column adc_1 smallint"
+		query := &expectQuery{sql: "admin check table stock;", rows: nil}
+		// query := &expectQuery{sql: "admin show ddl jobs;", rows: nil}
+		runTestInSchemaState(t, conn, cli, dom, model.StateWriteReorganization, true, dropColumnsSQL, sqls, query)
+	})
+}
+
+func runTestInSchemaState(
+	t *testing.T,
+	conn *sql.Conn,
+	cli *TestServerClient,
+	dom *domain.Domain,
+	state model.SchemaState,
+	isOnJobUpdated bool,
+	alterTableSQL string,
+	sqlWithErrs []sqlWithErr,
+	expectQuery *expectQuery,
+) {
+	ctx := context.Background()
+	MustExec(t, ctx, conn, "use test_db_state")
+	MustExec(t, ctx, conn, "drop table if exists t")
+	MustExec(t, ctx, conn, `create table t (
+	 	c1 varchar(64),
+	 	c2 enum('N','Y') not null default 'N',
+	 	c3 timestamp on update current_timestamp,
+	 	c4 int primary key,
+	 	unique key idx2 (c2))`)
+	MustExec(t, ctx, conn, "insert into t values('a', 'N', '2017-07-01', 8)")
+	// Make sure these SQLs use the plan of index scan.
+	MustExec(t, ctx, conn, "drop stats t")
+
+	callback := &callback.TestDDLCallback{Do: dom}
+	prevState := model.StateNone
+	var checkErr error
+	dbt := cli.getNewDB(t, func(config *mysql.Config) {
+		config.MaxAllowedPacket = 1024
+	})
+	conn1, err := dbt.GetDB().Conn(ctx)
+	require.NoError(t, err)
+	defer func() {
+		err := dbt.GetDB().Close()
+		require.NoError(t, err)
+	}()
+	MustExec(t, ctx, conn1, "use test_db_state")
+	cbFunc := func(job *model.Job) {
+		if jobStateOrLastSubJobState(job) == prevState || checkErr != nil {
+			return
+		}
+		prevState = jobStateOrLastSubJobState(job)
+		if prevState != model.StatePublic {
+			return
+		}
+		logutil.BgLogger().Info("zzz--------------------------------------------------------------------------------------------------------- 1", zap.Stringer("x", prevState))
+		sqlWithErr := sqlWithErrs[0]
+		MustExec(t, ctx, conn1, sqlWithErr.sql)
+	}
+	if isOnJobUpdated {
+		callback.OnJobUpdatedExported.Store(&cbFunc)
+	} else {
+		callback.OnJobRunBeforeExported = cbFunc
+	}
+	d := dom.DDL()
+	originalCallback := d.GetHook()
+	d.SetHook(callback)
+
+	MustExec(t, ctx, conn, alterTableSQL)
+	require.NoError(t, checkErr)
+
+	sqls := sqlWithErrs[1:]
+	for i, sqlWithErr := range sqls {
+		if i == 0 {
+			stmt, err := conn1.PrepareContext(ctx, sqlWithErr.sql)
+			require.NoError(t, err)
+			sqlWithErr.stmt = stmt
+		} else if i == len(sqls)-1 {
+			MustExec(t, ctx, conn1, sqlWithErr.sql)
+		} else {
+			stmt, err := conn1.PrepareContext(ctx, sqlWithErr.sql)
+			require.NoError(t, err)
+			sqlWithErr.stmt = stmt
+		}
+		sqls[i] = sqlWithErr
+		logutil.BgLogger().Info("zzz--------------------------------------------------------------------------------------------------------- 2",
+			zap.Int("no.", i), zap.Int("len", len(sqls)), zap.String("sql", sqlWithErr.sql))
+		// zap.Int("no.", i), zap.Int("len", len(sqls)), zap.String("sql", sqlWithErr.sql), zap.String("stmt", fmt.Sprintf("%v", sqls[i].stmt)))
+	}
+
+	sqlWithErr := sqlWithErrs[0]
+	MustExec(t, ctx, conn1, sqlWithErr.sql)
+
+	prevState = model.StateNone
+	state = model.StateWriteOnly
+	cbFunc1 := func(job *model.Job) {
+		if jobStateOrLastSubJobState(job) == prevState || checkErr != nil {
+			return
+		}
+		prevState = jobStateOrLastSubJobState(job)
+		if prevState != state {
+			return
+		}
+		for i, sqlWithErr := range sqls {
+			logutil.BgLogger().Info("zzz--------------------------------------------------------------------------------------------------------- 3",
+				zap.Int("no.", i), zap.Int("len", len(sqls)), zap.String("sql", sqlWithErr.sql))
+			if i == 0 {
+				_, err = sqlWithErr.stmt.ExecContext(ctx, 1, "a", 2, "b")
+				require.NoError(t, err)
+			} else if i == len(sqls)-1 {
+				MustExec(t, ctx, conn1, sqlWithErr.sql)
+			} else {
+				_, err = sqlWithErr.stmt.ExecContext(ctx, 10+i, i)
+				require.NoError(t, err)
+			}
+		}
+	}
+	if isOnJobUpdated {
+		callback.OnJobUpdatedExported.Store(&cbFunc1)
+	} else {
+		callback.OnJobRunBeforeExported = cbFunc1
+	}
+	d.SetHook(callback)
+	MustExec(t, ctx, conn, "alter table stock drop column cct_1")
+	require.NoError(t, checkErr)
+	d.SetHook(originalCallback)
+}
+
+func jobStateOrLastSubJobState(job *model.Job) model.SchemaState {
+	if job.Type == model.ActionMultiSchemaChange && job.MultiSchemaInfo != nil {
+		subs := job.MultiSchemaInfo.SubJobs
+		return subs[len(subs)-1].SchemaState
+	}
+	return job.SchemaState
 }
 
 //revive:enable:exported

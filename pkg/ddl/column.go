@@ -258,6 +258,11 @@ func onDropColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) 
 	originalState := colInfo.State
 	switch colInfo.State {
 	case model.StatePublic:
+		// logutil.DDLLogger().Warn("xxx----------------------------------------------------------------- public start sleep")
+		// time.Sleep(3 * time.Second)
+		// logutil.DDLLogger().Warn("xxx----------------------------------------------------------------- public sleep 3s")
+		// time.Sleep(3 * time.Second)
+		// logutil.DDLLogger().Warn("xxx----------------------------------------------------------------- public sleep 3s")
 		// public -> write only
 		colInfo.State = model.StateWriteOnly
 		setIndicesState(idxInfos, model.StateWriteOnly)
@@ -271,6 +276,11 @@ func onDropColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) 
 			return ver, errors.Trace(err)
 		}
 	case model.StateWriteOnly:
+		// logutil.DDLLogger().Warn("xxx----------------------------------------------------------------- wo start sleep")
+		// time.Sleep(3 * time.Second)
+		// logutil.DDLLogger().Warn("xxx----------------------------------------------------------------- wo sleep 3s")
+		// time.Sleep(3 * time.Second)
+		// logutil.DDLLogger().Warn("xxx----------------------------------------------------------------- wo sleep 3s")
 		// write only -> delete only
 		failpoint.InjectCall("onDropColumnStateWriteOnly")
 		colInfo.State = model.StateDeleteOnly

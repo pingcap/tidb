@@ -795,10 +795,8 @@ func runTestInSchemaState(
 	callback := &callback.TestDDLCallback{Do: dom}
 	prevState := model.StateNone
 	var checkErr error
-	se, err := session.CreateSession(store)
-	require.NoError(t, err)
-	_, err = se.Execute(context.Background(), "use test_db_state")
-	require.NoError(t, err)
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test_db_state")
 	cbFunc := func(job *model.Job) {
 		if jobStateOrLastSubJobState(job) == prevState || checkErr != nil {
 			return
@@ -807,12 +805,9 @@ func runTestInSchemaState(
 		if prevState != model.StatePublic {
 			return
 		}
-		logutil.BgLogger().Info("zzz--------------------------------------------------------------------------------------------------------- 1", zap.Int64("ver", se.GetInfoSchema().SchemaMetaVersion()), zap.Stringer("x", prevState))
+		logutil.BgLogger().Info("zzz--------------------------------------------------------------------------------------------------------- 1", zap.Int64("ver", tk1.Session().GetInfoSchema().SchemaMetaVersion()), zap.Stringer("x", prevState))
 		sqlWithErr := sqlWithErrs[0]
-		_, err1 := se.Execute(context.Background(), sqlWithErr.sql)
-		if !terror.ErrorEqual(err1, sqlWithErr.expectErr) {
-			checkErr = errors.Errorf("sql: %s, expect err: %v, got err: %v", sqlWithErr.sql, sqlWithErr.expectErr, err1)
-		}
+		tk1.MustExec(sqlWithErr.sql)
 		// logutil.BgLogger().Info("zzz--------------------------------------------------------------------------------------------------------- 2", zap.Int64("ver", se.GetInfoSchema().SchemaMetaVersion()), zap.Stringer("x", prevState))
 		// _, err1 = se.Execute(context.Background(), "select * from stock")
 		// if !terror.ErrorEqual(err1, sqlWithErr.expectErr) {
@@ -844,11 +839,13 @@ func runTestInSchemaState(
 		sqls := sqlWithErrs[1:]
 		for i, sqlWithErr := range sqls {
 			logutil.BgLogger().Info("zzz--------------------------------------------------------------------------------------------------------- 3",
-				zap.Int64("ver", se.GetInfoSchema().SchemaMetaVersion()), zap.Int("no.", i), zap.String("sql", sqlWithErr.sql))
-			_, err1 := se.Execute(context.Background(), sqlWithErr.sql)
-			if !terror.ErrorEqual(err1, sqlWithErr.expectErr) {
-				checkErr = errors.Errorf("sql: %s, expect err: %v, got err: %v", sqlWithErr.sql, sqlWithErr.expectErr, err1)
-				break
+				zap.Int64("ver", tk1.Session().GetInfoSchema().SchemaMetaVersion()), zap.Int("no.", i), zap.Int("len", len(sqls)), zap.String("sql", sqlWithErr.sql))
+			if i == 0 || i == 1 {
+				tk1.MustExec(sqlWithErr.sql, 1, "a", 2, "b")
+			} else if i == len(sqls)-1 {
+				tk1.MustExec(sqlWithErr.sql)
+			} else {
+				tk1.MustExec(sqlWithErr.sql, 10+i, i)
 			}
 		}
 	}
@@ -1691,13 +1688,17 @@ func TestXxxWriteReorgForColumnTypeChange(t *testing.T) {
 	// tk.MustExec("alter table stock add column adc_1 smallint")
 	defer tk.MustExec("drop table stock")
 
-	sqls := make([]sqlWithErr, 6)
+	sqls := make([]sqlWithErr, 7)
 	sqls[0] = sqlWithErr{"begin", nil}
-	sqls[1] = sqlWithErr{"select a, c, d from stock where (a, b) IN ((1, 'a'),(2, 'b')) FOR UPDATE", nil}
-	sqls[2] = sqlWithErr{"UPDATE stock SET c = 11 WHERE a= 1 AND b = 'a'", nil}
-	sqls[3] = sqlWithErr{"UPDATE stock SET c = 12, d = 'z' WHERE a= 2 AND b = 'b'", nil}
-	sqls[4] = sqlWithErr{"select * FROM stock;", nil}
-	sqls[5] = sqlWithErr{"commit", nil}
+	sqls[1] = sqlWithErr{"select a, c, d from stock where (a, b) IN ((?, ?),(?, ?)) FOR UPDATE", nil}
+	sqls[2] = sqlWithErr{"select a, c, d from stock where (a, b) IN ((?, ?),(?, ?)) FOR UPDATE", nil}
+	sqls[3] = sqlWithErr{"UPDATE stock SET c = ? WHERE a= ? AND b = 'a'", nil}
+	sqls[4] = sqlWithErr{"UPDATE stock SET c = ?, d = 'z' WHERE a= ? AND b = 'b'", nil}
+	// sqls[1] = sqlWithErr{"select a, c, d from stock where (a, b) IN ((1, 'a'),(2, 'b')) FOR UPDATE", nil}
+	// sqls[2] = sqlWithErr{"UPDATE stock SET c = 11 WHERE a= 1 AND b = 'a'", nil}
+	// sqls[3] = sqlWithErr{"UPDATE stock SET c = 12, d = 'z' WHERE a= 2 AND b = 'b'", nil}
+	sqls[5] = sqlWithErr{"select * FROM stock;", nil}
+	sqls[6] = sqlWithErr{"commit", nil}
 	// dropColumnsSQL := "alter table stock drop column cct_1"
 	dropColumnsSQL := "alter table stock add column adc_1 smallint"
 	query := &expectQuery{sql: "admin check table stock;", rows: nil}
