@@ -41,7 +41,7 @@ const (
 	LitErrExceedConcurrency string = "the concurrency is greater than ingest limit"
 	LitErrCloseWriterErr    string = "close writer error"
 	LitErrReadSortPath      string = "cannot read sort path"
-	LitErrCleanSortPath     string = "cannot cleanup sort path"
+	LitErrCleanSortPath     string = "clean up temp dir failed"
 	LitErrResetEngineFail   string = "reset engine failed"
 	LitWarnEnvInitFail      string = "initialize environment failed"
 	LitWarnConfigError      string = "build config for backend failed"
