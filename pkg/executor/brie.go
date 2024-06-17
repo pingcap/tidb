@@ -262,9 +262,22 @@ func (bq *brieQueue) cancelTask(taskID uint64) bool {
 		return false
 	}
 	i := item.(*brieQueueItem)
+
+	if i.info.message == "" && strings.HasSuffix(i.progress.cmd,"canceled" ) {
+		i.progress.cmd = i.progress.cmd[:len(i.progress.cmd)-len("canceled")]
+	}
+	updateMetaTable(context.Background(), i.progress.executor, i.info.id, map[string]any{
+		"finishTime":  i.info.finishTime.String(),
+		"message":     i.info.message,
+		"backupTS":    i.info.backupTS,
+		"restoreTS":   i.info.restoreTS,
+		"archiveSize": i.info.archiveSize,
+	})
+
 	log.Debug("Canceling BRIE job", zap.Uint64("ID", i.info.id),zap.String("message", i.info.message))
 	i.cancel()
 	i.progress.Close()
+	i.progress.executor = nil
 	log.Info("BRIE job canceled.", zap.Uint64("ID", i.info.id))
 	return true
 }
@@ -690,17 +703,8 @@ func (e *BRIEExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 	if err != nil {
 		e.info.message = err.Error() //will be used below
-	} else {
-		e.info.message = ""
 	}
 	e.info.finishTime = types.CurrentTime(mysql.TypeDatetime)
-	updateMetaTable(ctx, &e.BaseExecutor, e.info.id, map[string]any{
-		"finishTime":  e.info.finishTime.String(),
-		"message":     e.info.message,
-		"backupTS":    e.info.backupTS,
-		"restoreTS":   e.info.restoreTS,
-		"archiveSize": e.info.archiveSize,
-	})
 	//err exit delay to here to ensure the finishTime is updated
 	if err != nil {
 		return err
