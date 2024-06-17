@@ -233,10 +233,6 @@ func getCgroupDetails(mountInfoPath string, cRoot string, controller string) (mo
 	scanner := bufio.NewScanner(info)
 	for scanner.Scan() {
 		fields := bytes.Fields(scanner.Bytes())
-		if len(fields) < 10 {
-			continue
-		}
-
 		ver, ok := detectCgroupVersion(fields, controller)
 		if ok {
 			mountPoint := string(fields[4])
@@ -332,6 +328,10 @@ func detectCgroupVersion(fields [][]byte, controller string) (_ int, found bool)
 		return 1, true
 	} else if bytes.Equal(fields[pos], []byte("cgroup2")) {
 		return 2, true
+	} else if bytes.Equal(fields[pos], []byte("tmpfs")) && bytes.HasSuffix(fields[5], []byte("sys/fs/cgroup")) {
+		// it is either hybrid or legacy mode, in which V1 is supported
+		// ref https://github.com/systemd/systemd/blob/main/docs/CGROUP_DELEGATION.md#three-different-tree-setups-
+		return 1, true
 	}
 
 	return 0, false
