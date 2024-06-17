@@ -58,6 +58,7 @@ var (
 	addingDDLJobNotifyKey       = "/tidb/ddl/add_ddl_job_general"
 	dispatchLoopWaitingDuration = 1 * time.Second
 	localWorkerWaitingDuration  = 10 * time.Millisecond
+	schedulerLoopRetryInterval  = time.Second
 )
 
 func init() {
@@ -97,10 +98,11 @@ var _ owner.Listener = (*ownerListener)(nil)
 func (l *ownerListener) OnBecomeOwner() {
 	ctx, cancelFunc := context.WithCancel(l.ddl.ddlCtx.ctx)
 	l.scheduler = &jobScheduler{
-		schCtx:      ctx,
-		cancel:      cancelFunc,
-		runningJobs: newRunningJobs(),
-		sysTblMgr:   systable.NewManager(l.ddl.sessPool),
+		schCtx:       ctx,
+		cancel:       cancelFunc,
+		runningJobs:  newRunningJobs(),
+		sysTblMgr:    systable.NewManager(l.ddl.sessPool),
+		schemaLoader: l.ddl.schemaLoader,
 
 		ddlCtx:         l.ddl.ddlCtx,
 		ddlJobNotifyCh: l.ddl.ddlJobNotifyCh,
@@ -120,11 +122,12 @@ func (l *ownerListener) OnRetireOwner() {
 // jobScheduler is used to schedule the DDL jobs, it's only run on the DDL owner.
 type jobScheduler struct {
 	// *ddlCtx already have context named as "ctx", so we use "schCtx" here to avoid confusion.
-	schCtx      context.Context
-	cancel      context.CancelFunc
-	wg          tidbutil.WaitGroupWrapper
-	runningJobs *runningJobs
-	sysTblMgr   systable.Manager
+	schCtx       context.Context
+	cancel       context.CancelFunc
+	wg           tidbutil.WaitGroupWrapper
+	runningJobs  *runningJobs
+	sysTblMgr    systable.Manager
+	schemaLoader SchemaLoader
 
 	// those fields are created on start
 	reorgWorkerPool      *workerPool
@@ -392,6 +395,7 @@ func (s *jobScheduler) startDispatch() error {
 	defer ticker.Stop()
 	// TODO move waitSchemaSyncedController out of ddlCtx.
 	s.clearOnceMap()
+	s.mustReloadSchemas()
 	for {
 		if err := s.schCtx.Err(); err != nil {
 			return err
@@ -491,6 +495,25 @@ func (s *jobScheduler) loadDDLJobAndRun(se *sess.Session, pool *workerPool, getJ
 	s.delivery2Worker(wk, pool, job)
 }
 
+// mustReloadSchemas is used to reload schema when we become the DDL owner, in case
+// the schema version is outdated before we become the owner.
+// It will keep reloading schema until either success or context done.
+// Domain also have a similar method 'mustReload', but its methods don't accept context.
+func (s *jobScheduler) mustReloadSchemas() {
+	for {
+		err := s.schemaLoader.Reload()
+		if err == nil {
+			return
+		}
+		logutil.DDLLogger().Warn("reload schema failed, will retry later", zap.Error(err))
+		select {
+		case <-s.schCtx.Done():
+			return
+		case <-time.After(schedulerLoopRetryInterval):
+		}
+	}
+}
+
 // delivery2LocalWorker runs the DDL job of v2 in local.
 // send the result to the error channels in the task.
 // delivery2Localworker owns the worker, need to put it back to the pool in this function.
@@ -587,6 +610,7 @@ func (s *jobScheduler) delivery2Worker(wk *worker, pool *workerPool, job *model.
 }
 
 func (s *jobScheduler) runJobWithWorker(wk *worker, job *model.Job) error {
+	failpoint.InjectCall("beforeRunJobWithWorker")
 	ownerID := s.ownerManager.ID()
 	// suppose we failed to sync version last time, we need to check and sync it
 	// before run to maintain the 2-version invariant.
