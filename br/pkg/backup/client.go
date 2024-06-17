@@ -44,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/ranger"
 	filter "github.com/pingcap/tidb/util/table-filter"
 	"github.com/tikv/client-go/v2/oracle"
@@ -961,12 +962,12 @@ func (bc *Client) findRegionLeader(ctx context.Context, key []byte, isRawKv bool
 	// Keys are saved in encoded format in TiKV, so the key must be encoded
 	// in order to find the correct region.
 	key = codec.EncodeBytesExt([]byte{}, key, isRawKv)
-	for i := 0; i < 100; i++ {
+	for i := 1; i < 100; i++ {
 		// better backoff.
 		region, err := bc.mgr.GetPDClient().GetRegion(ctx, key)
 		if err != nil || region == nil {
 			logutil.CL(ctx).Error("find leader failed", zap.Error(err), zap.Reflect("region", region))
-			time.Sleep(time.Millisecond * time.Duration(100*i))
+			time.Sleep(time.Millisecond * time.Duration(mathutil.Min(i*100, 3000)))
 			continue
 		}
 		if region.Leader != nil {
@@ -975,11 +976,7 @@ func (bc *Client) findRegionLeader(ctx context.Context, key []byte, isRawKv bool
 			return region.Leader, nil
 		}
 		logutil.CL(ctx).Warn("no region found", logutil.Key("key", key))
-		backofftimeMillseconds := 100 * i
-		if backofftimeMillseconds > 3000 {
-			backofftimeMillseconds = 3000
-		}
-		time.Sleep(time.Millisecond * time.Duration(backofftimeMillseconds))
+		time.Sleep(time.Millisecond * time.Duration(mathutil.Min(i*100, 3000)))
 		continue
 	}
 	logutil.CL(ctx).Error("can not find leader", logutil.Key("key", key))
