@@ -15,6 +15,7 @@
 package join
 
 import (
+	"slices"
 	"sync"
 	"sync/atomic"
 
@@ -101,6 +102,8 @@ func (h *hashJoinSpillHelper) isSpillTriggered() bool {
 	return len(h.buildRowsInDisk) > 0
 }
 
+// TODO write a specific test for this function
+// TODO refine this function
 func (h *hashJoinSpillHelper) choosePartitionsToSpill() ([]int, int64) {
 	partitionNum := h.hashJoinExec.PartitionNumber
 	partitionsMemoryUsage := make([]int64, partitionNum)
@@ -108,12 +111,69 @@ func (h *hashJoinSpillHelper) choosePartitionsToSpill() ([]int, int64) {
 		partitionsMemoryUsage[i] = h.hashJoinExec.hashTableContext.getPartitionMemoryUsage(i)
 	}
 
-	spilledPartitions := make([]int, 0)
+	spilledPartitions := h.hashJoinExec.HashJoinCtxV2.hashTableContext.getSpilledPartitions()
 
-	// TODO choose some partitions to spill
-	// TODO some partitions may have been spilled before, we must spill them again
-	// TODO When not all partitions are spilled, calculate how many memory will be released by chosen workers, if released memory is not enough, choose more partitions
-	return spilledPartitions, 0 // TODO
+	releasedMemoryUsage := int64(0)
+	for _, partID := range spilledPartitions {
+		releasedMemoryUsage += partitionsMemoryUsage[partID]
+	}
+
+	bytesLimit := h.hashJoinExec.memTracker.GetBytesLimit()
+	bytesConsumed := h.hashJoinExec.memTracker.BytesConsumed()
+	bytesConsumedAfterReleased := bytesConsumed - releasedMemoryUsage
+
+	// Check if it's enough to spill existing spilled partitions
+	if float64(bytesConsumedAfterReleased) <= float64(bytesLimit)*0.8 {
+		return spilledPartitions, releasedMemoryUsage
+	}
+
+	unspilledPartitions := h.hashJoinExec.HashJoinCtxV2.hashTableContext.getUnspilledPartitions()
+
+	type partIDAndMem struct {
+		partID      int
+		memoryUsage int64
+	}
+
+	unspilledPartitionsAndMemory := make([]partIDAndMem, 0, len(unspilledPartitions))
+	for _, partID := range unspilledPartitions {
+		unspilledPartitionsAndMemory = append(unspilledPartitionsAndMemory, partIDAndMem{partID: partID, memoryUsage: partitionsMemoryUsage[partID]})
+	}
+
+	// Sort partitions by memory usage in descend
+	slices.SortFunc(unspilledPartitionsAndMemory, func(i, j partIDAndMem) int {
+		if i.memoryUsage > j.memoryUsage {
+			return -1
+		}
+		if i.memoryUsage < j.memoryUsage {
+			return 1
+		}
+		return 0
+	})
+
+	// Pick half of unspilled partitions to spill
+	spilledPartitionNum := len(unspilledPartitionsAndMemory) / 2
+	for i := 0; i < spilledPartitionNum; i++ {
+		spilledPartitions = append(spilledPartitions, unspilledPartitionsAndMemory[i].partID)
+		releasedMemoryUsage += unspilledPartitionsAndMemory[i].memoryUsage
+	}
+
+	unspilledPartitionsAndMemory = unspilledPartitionsAndMemory[spilledPartitionNum:]
+
+	bytesConsumedAfterReleased = bytesConsumed - releasedMemoryUsage
+	if float64(bytesConsumedAfterReleased) <= float64(bytesLimit)*0.8 {
+		return spilledPartitions, releasedMemoryUsage
+	}
+
+	// Choose more partitions to spill
+	for _, item := range unspilledPartitionsAndMemory {
+		spilledPartitions = append(spilledPartitions, item.partID)
+		releasedMemoryUsage += item.memoryUsage
+		if float64(bytesConsumedAfterReleased) <= float64(bytesLimit)*0.8 {
+			return spilledPartitions, releasedMemoryUsage
+		}
+	}
+
+	return spilledPartitions, releasedMemoryUsage
 }
 
 func (h *hashJoinSpillHelper) spillBuildSideOnePartition(partID int, segments []*rowTableSegment) error {
@@ -123,10 +183,25 @@ func (h *hashJoinSpillHelper) spillBuildSideOnePartition(partID int, segments []
 		h.buildRowsInDisk[partID] = inDisk
 	}
 
+	// Get row bytes from segment and spill them
 	for _, seg := range segments {
-		
+		rows := seg.getRowsBytes()
+		for i, row := range rows {
+			if h.tmpSpillChunk.IsFull() {
+				h.buildRowsInDisk[partID].Add(h.tmpSpillChunk)
+				h.tmpSpillChunk.Reset()
+			}
+
+			h.tmpSpillChunk.AppendInt64(0, int64(seg.hashValues[i]))
+			h.tmpSpillChunk.AppendBytes(1, row)
+		}
 	}
 
+	// Spill remaining rows in tmpSpillChunk
+	if h.tmpSpillChunk.NumRows() > 0 {
+		h.buildRowsInDisk[partID].Add(h.tmpSpillChunk)
+		h.tmpSpillChunk.Reset()
+	}
 	return nil
 }
 
@@ -189,8 +264,10 @@ func (h *hashJoinSpillHelper) spillInBuildStage() error {
 				worker.clearSegments(partID)
 			}
 
-			// TODO spill
-
+			err := h.spillBuildSideOnePartition(partID, spilledSegments)
+			if err != nil {
+				errChannel <- util.GetRecoverError(err)
+			}
 		}(partitionsNeedSpill[i])
 	}
 

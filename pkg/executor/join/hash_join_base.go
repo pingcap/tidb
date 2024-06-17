@@ -236,11 +236,12 @@ func syncerDone(syncer *sync.WaitGroup) {
 func (w *buildWorkerBase) fetchBuildSideRows(ctx context.Context, hashJoinCtx *hashJoinCtxBase, fetcherAndWorkerSyncer *sync.WaitGroup, workerWaiter *sync.WaitGroup, spillHelper *hashJoinSpillHelper, chkCh chan<- *chunk.Chunk, errCh chan<- error, doneCh <-chan struct{}) {
 	defer func() {
 		if workerWaiter != nil {
-			err := w.spillRemainingRows(workerWaiter, spillHelper)
+			// Try to spill remaining rows if spill is triggered
+			err := w.checkSpillAndExecute(fetcherAndWorkerSyncer, spillHelper)
 			errCh <- errors.Trace(err)
 		}
 
-		// TODO explain why we need to put the close operation at here
+		// We must put the close of chkCh after the place of spilling remaining rows or there will be data race
 		close(chkCh)
 	}()
 
@@ -320,14 +321,6 @@ func (w *buildWorkerBase) checkSpillAndExecute(fetcherAndWorkerSyncer *sync.Wait
 		// Wait for the stop of all workers
 		fetcherAndWorkerSyncer.Wait()
 		return spillHelper.spillInBuildStage()
-	}
-	return nil
-}
-
-func (w *buildWorkerBase) spillRemainingRows(workerWaiter *sync.WaitGroup, spillHelper *hashJoinSpillHelper) error {
-	if spillHelper.isSpillTriggered() {
-		workerWaiter.Wait()
-		return nil // TODO implement it
 	}
 	return nil
 }

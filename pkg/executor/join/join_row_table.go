@@ -81,12 +81,23 @@ func (rts *rowTableSegment) getRowNum() int {
 }
 
 // This function is available to be used only when `rowLocations` has been initialized
-func (rts *rowTableSegment) getRowsBytes(rowID int) [][]byte {
+func (rts *rowTableSegment) getRowsBytes() [][]byte {
 	rowNum := rts.getRowNum()
-	idx := int64(0)	
-	for {
+	startPos := int64(0)
+	rows := make([][]byte, 0)
+	for idx := 0; idx < rowNum; idx++ {
+		if idx == rowNum-1 {
+			rows = append(rows, rts.rawData[startPos:])
+			continue
+		}
 
+		rowByteLen := int64(uintptr(rts.rowLocations[idx+1]) - uintptr(rts.rowLocations[idx]))
+		end := startPos + rowByteLen
+		rows = append(rows, rts.rawData[startPos:end])
+		startPos = end
 	}
+
+	return rows
 }
 
 func (rts *rowTableSegment) getRowLen(rowID int) int {

@@ -61,6 +61,30 @@ func (htc *hashTableContext) reset() {
 	htc.spilledPartitions = nil
 }
 
+func (htc *hashTableContext) getSpilledPartitions() []int {
+	spilledPartitions := make([]int, 0)
+	for i, spilled := range htc.spilledPartitions {
+		if spilled {
+			spilledPartitions = append(spilledPartitions, i)
+		}
+	}
+	return spilledPartitions
+}
+
+func (htc *hashTableContext) getUnspilledPartitions() []int {
+	unspilledPartitions := make([]int, 0)
+	for i, spilled := range htc.spilledPartitions {
+		if !spilled {
+			unspilledPartitions = append(unspilledPartitions, i)
+		}
+	}
+	return unspilledPartitions
+}
+
+func (htc *hashTableContext) setPartitionSpilled(partID int) {
+	htc.spilledPartitions[partID] = true
+}
+
 func (htc *hashTableContext) getPartitionMemoryUsage(partID int) int64 {
 	totalMemoryUsage := int64(0)
 	for _, tables := range htc.rowTables {
