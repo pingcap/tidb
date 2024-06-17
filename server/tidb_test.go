@@ -109,7 +109,6 @@ func createTidbTestSuiteWithCfg(t *testing.T, cfg *config.Config) *tidbTestSuite
 	ts.server.SetDomain(ts.domain)
 	ts.server.InitGlobalConnID(ts.domain.ServerID)
 	ts.domain.InfoSyncer().SetSessionManager(ts.server)
-	RunInGoTestChan = make(chan struct{})
 	go func() {
 		err := ts.server.Run(nil)
 		require.NoError(t, err)
