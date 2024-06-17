@@ -945,11 +945,11 @@ func (cc *clientConn) checkAuthPlugin(ctx context.Context, resp *handshakeRespon
 		}
 		uname := user.Username
 
-		if intest.InTest {
+		failpoint.Inject("MockOSUserForAuthSocket", func() {
 			if p := mockOSUserForAuthSocketTest.Load(); p != nil {
 				uname = *p
 			}
-		}
+		})
 
 		return []byte(uname), nil
 	}
