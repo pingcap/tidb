@@ -229,6 +229,12 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 	return preparedObj, p, paramCount, nil
 }
 
+// relatedTblInfo is used to hold related table for building plan cache key.
+type relatedTblInfo struct {
+	id  int64
+	rev uint64
+}
+
 // planCacheKey is used to access Plan Cache. We put some variables that do not affect the plan into planCacheKey, such as the sql text.
 // Put the parameters that may affect the plan in planCacheValue.
 // However, due to some compatibility reasons, we will temporarily keep some system variable-related values in planCacheKey.
@@ -239,7 +245,10 @@ type planCacheKey struct {
 	connID        uint64
 	stmtText      string
 	schemaVersion int64
-	tblVersionMap map[int64]uint64
+
+	// related tables. it's optimized (no additional allocation) for the case that there is only one related table.
+	firstRelatedTbl  relatedTblInfo
+	extraRelatedTbls []relatedTblInfo
 
 	// Only be set in rc or for update read and leave it default otherwise.
 	// In Rc or ForUpdateRead, we should check whether the information schema has been changed when using plan cache.
@@ -248,7 +257,7 @@ type planCacheKey struct {
 	lastUpdatedSchemaVersion int64
 	sqlMode                  mysql.SQLMode
 	timezoneOffset           int
-	isolationReadEngines     map[kv.StoreType]struct{}
+	isolationReadEngines     [kv.StoreTypeCount]bool
 	selectLimit              uint64
 	bindSQL                  string
 	connCollation            string
@@ -261,44 +270,63 @@ type planCacheKey struct {
 	hash        []byte
 }
 
-func hashInt64Uint64Map(b []byte, m map[int64]uint64) []byte {
-	keys := make([]int64, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
+func (key *planCacheKey) updateIsolationReadEngines(isolationReadEngines map[kv.StoreType]struct{}) {
+	key.isolationReadEngines = [kv.StoreTypeCount]bool{}
+	for k := range isolationReadEngines {
+		if k < kv.StoreTypeCount {
+			key.isolationReadEngines[k] = true
+		}
 	}
-	sort.Slice(keys, func(i, j int) bool {
-		return keys[i] < keys[j]
-	})
+}
 
-	for _, k := range keys {
-		v := m[k]
-		b = codec.EncodeInt(b, k)
-		b = codec.EncodeUint(b, v)
+func (key *planCacheKey) appendRelatedTblsToHash() {
+	if (key.firstRelatedTbl == relatedTblInfo{}) {
+		return
 	}
-	return b
+	key.hash = codec.EncodeInt(key.hash, key.firstRelatedTbl.id)
+	key.hash = codec.EncodeUint(key.hash, key.firstRelatedTbl.rev)
+	for _, tbl := range key.extraRelatedTbls {
+		key.hash = codec.EncodeInt(key.hash, tbl.id)
+		key.hash = codec.EncodeUint(key.hash, tbl.rev)
+	}
 }
 
 // Hash implements Key interface.
 func (key *planCacheKey) Hash() []byte {
 	if len(key.hash) == 0 {
 		if key.hash == nil {
-			key.hash = make([]byte, 0, len(key.stmtText)*2)
+			key.hash = make([]byte, 0,
+				len(key.database)+
+					8+ // connID
+					len(key.stmtText)+
+					8+ // schemaVersion
+					16*(len(key.extraRelatedTbls)+1)+ // releatedTbls
+					8+ // lastUpdatedSchemaVersion
+					8+ // sqlMode
+					8+ // timezoneOffset
+					4+4+7+ // isolationReadEngines
+					8+ // selectLimit
+					len(key.bindSQL)+
+					len(key.connCollation)+
+					5*3+ // inRestrictedSQL + restrictedReadOnly + TiDBSuperReadOnly
+					8, // exprBlacklistTS
+			)
 		}
 		key.hash = append(key.hash, hack.Slice(key.database)...)
 		key.hash = codec.EncodeInt(key.hash, int64(key.connID))
 		key.hash = append(key.hash, hack.Slice(key.stmtText)...)
 		key.hash = codec.EncodeInt(key.hash, key.schemaVersion)
-		key.hash = hashInt64Uint64Map(key.hash, key.tblVersionMap)
+		key.appendRelatedTblsToHash()
 		key.hash = codec.EncodeInt(key.hash, key.lastUpdatedSchemaVersion)
 		key.hash = codec.EncodeInt(key.hash, int64(key.sqlMode))
 		key.hash = codec.EncodeInt(key.hash, int64(key.timezoneOffset))
-		if _, ok := key.isolationReadEngines[kv.TiDB]; ok {
+		if key.isolationReadEngines[kv.TiDB] {
 			key.hash = append(key.hash, kv.TiDB.Name()...)
 		}
-		if _, ok := key.isolationReadEngines[kv.TiKV]; ok {
+		if key.isolationReadEngines[kv.TiKV] {
 			key.hash = append(key.hash, kv.TiKV.Name()...)
 		}
-		if _, ok := key.isolationReadEngines[kv.TiFlash]; ok {
+		if key.isolationReadEngines[kv.TiFlash] {
 			key.hash = append(key.hash, kv.TiFlash.Name()...)
 		}
 		key.hash = codec.EncodeInt(key.hash, int64(key.selectLimit))
@@ -323,8 +351,14 @@ func (key *planCacheKey) MemoryUsage() (sum int64) {
 	if key.memoryUsage > 0 {
 		return key.memoryUsage
 	}
+	engines := int64(0)
+	for _, ok := range key.isolationReadEngines {
+		if ok {
+			engines++
+		}
+	}
 	sum = emptyPlanCacheKeySize + int64(len(key.database)+len(key.stmtText)+len(key.bindSQL)+len(key.connCollation)) +
-		int64(len(key.isolationReadEngines))*size.SizeOfUint8 + int64(cap(key.hash))
+		engines*size.SizeOfUint8 + int64(cap(key.hash))
 	key.memoryUsage = sum
 	return
 }
@@ -338,10 +372,7 @@ func SetPstmtIDSchemaVersion(key kvcache.Key, stmtText string, schemaVersion int
 	}
 	psStmtKey.stmtText = stmtText
 	psStmtKey.schemaVersion = schemaVersion
-	psStmtKey.isolationReadEngines = make(map[kv.StoreType]struct{})
-	for k, v := range isolationReadEngines {
-		psStmtKey.isolationReadEngines[k] = v
-	}
+	psStmtKey.updateIsolationReadEngines(isolationReadEngines)
 	psStmtKey.hash = psStmtKey.hash[:0]
 }
 
@@ -369,11 +400,9 @@ func NewPlanCacheKey(sessionVars *variable.SessionVars, stmtText, stmtDB string,
 		connID:                   sessionVars.ConnectionID,
 		stmtText:                 stmtText,
 		schemaVersion:            schemaVersion,
-		tblVersionMap:            make(map[int64]uint64),
 		lastUpdatedSchemaVersion: lastUpdatedSchemaVersion,
 		sqlMode:                  sessionVars.SQLMode,
 		timezoneOffset:           timezoneOffset,
-		isolationReadEngines:     make(map[kv.StoreType]struct{}),
 		selectLimit:              sessionVars.SelectLimit,
 		bindSQL:                  bindSQL,
 		connCollation:            connCollation,
@@ -382,11 +411,21 @@ func NewPlanCacheKey(sessionVars *variable.SessionVars, stmtText, stmtDB string,
 		TiDBSuperReadOnly:        variable.VarTiDBSuperReadOnly.Load(),
 		exprBlacklistTS:          exprBlacklistTS,
 	}
-	for k, v := range sessionVars.IsolationReadEngines {
-		key.isolationReadEngines[k] = v
-	}
-	for k, v := range relatedSchemaVersion {
-		key.tblVersionMap[k] = v
+	key.updateIsolationReadEngines(sessionVars.IsolationReadEngines)
+	if size := len(relatedSchemaVersion); size == 1 {
+		for id, rev := range relatedSchemaVersion {
+			key.firstRelatedTbl = relatedTblInfo{id, rev}
+		}
+	} else if size > 1 {
+		tbls := make([]relatedTblInfo, 0, size)
+		for id, rev := range relatedSchemaVersion {
+			tbls = append(tbls, relatedTblInfo{id, rev})
+		}
+		sort.Slice(tbls, func(i int, j int) bool {
+			return tbls[i].id < tbls[j].id
+		})
+		key.firstRelatedTbl = tbls[0]
+		key.extraRelatedTbls = tbls[1:]
 	}
 	return key, nil
 }

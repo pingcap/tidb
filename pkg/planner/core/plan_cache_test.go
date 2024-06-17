@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	driver "github.com/pingcap/tidb/pkg/types/parser_driver"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 )
 
@@ -1824,4 +1825,16 @@ func TestIndexRange(t *testing.T) {
 	tk.MustExec(`set tidb_enable_non_prepared_plan_cache=1;`)
 	tk.MustQuery(`SELECT t0.* FROM t0 WHERE (id = 1 or id = 9223372036854775808);`).Check(testkit.Rows("1"))
 	tk.MustQuery("SELECT t1.c0 FROM t1 WHERE t1.c0!=BIN(-1);").Check(testkit.Rows("1"))
+}
+
+func BenchmarkPlanCacheKey(b *testing.B) {
+	vars := mock.NewContext().GetSessionVars()
+	tbls := map[int64]uint64{1: 1}
+	for i := 0; i < b.N; i++ {
+		key, err := plannercore.NewPlanCacheKey(vars, "select c from sbtest1 where id = ?", "test", 1, 1, "bind.sql", 0, tbls)
+		if err != nil {
+			b.FailNow()
+		}
+		key.Hash()
+	}
 }

@@ -351,6 +351,8 @@ const (
 	TiFlash
 	// TiDB means the type of a store is TiDB.
 	TiDB
+	// StoreTypeCount means the total number of known store types.
+	StoreTypeCount
 	// UnSpecified means the store type is unknown
 	UnSpecified = 255
 )
