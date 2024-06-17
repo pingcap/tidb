@@ -2149,6 +2149,6 @@ drop table t1, t2;
 drop table if exists t;
 create table t (a date default current_date);
 insert into t values();
-select count(1) from t where a = date(now());
+select count(1) from t where a = date(a);
 count(1)
 1
