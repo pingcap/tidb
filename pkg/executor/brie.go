@@ -262,6 +262,7 @@ func (bq *brieQueue) cancelTask(taskID uint64) bool {
 		return false
 	}
 	i := item.(*brieQueueItem)
+	log.Debug("Canceling BRIE job", zap.Uint64("ID", i.info.id),zap.String("message", i.info.message))
 	i.cancel()
 	i.progress.Close()
 	log.Info("BRIE job canceled.", zap.Uint64("ID", i.info.id))
