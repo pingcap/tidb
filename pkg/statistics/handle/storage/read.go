@@ -581,7 +581,7 @@ func loadNeededIndexHistograms(sctx sessionctx.Context, statsCache util.StatsCac
 	if !ok || !index.IsLoadNeeded() {
 		if !index.IsLoadNeeded() {
 			logutil.BgLogger().Warn(
-				"Although the index stats is not required to load, an attempt is still made to load it. Please verify if this index has any histogram records in the `mysql.stats_histograms` table.",
+				"Although the index stats is not required to load, an attempt is still made to load it.",
 				zap.Int64("table_id", idx.TableID), zap.Int64("hist_id", idx.ID),
 			)
 		}
