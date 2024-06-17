@@ -13,8 +13,10 @@ import (
 	"time"
 
 	"github.com/golang/protobuf/proto"
+	"github.com/pingcap/failpoint"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/encryptionpb"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/br/pkg/backup"
 	"github.com/pingcap/tidb/br/pkg/conn"
 	gluemock "github.com/pingcap/tidb/br/pkg/gluetidb/mock"
@@ -54,7 +56,7 @@ var connectedStore map[uint64]int
 
 var _ backup.BackupSender = (*mockBackupBackupSender)(nil)
 
-func mockGetBackupClientCallBack(ctx context.Context, storeID uint64) (backuppb.BackupClient, error) {
+func mockGetBackupClientCallBack(ctx context.Context, storeID uint64, reset bool) (backuppb.BackupClient, error) {
 	lock.Lock()
 	defer lock.Unlock()
 	connectedStore[storeID] += 1
@@ -283,7 +285,9 @@ func TestOnBackupResponse(t *testing.T) {
 	}
 
 	errContext := utils.NewErrorContext("test", 1)
-	require.Nil(t, s.backupClient.OnBackupResponse(ctx, nil, errContext, nil))
+	lock, err := s.backupClient.OnBackupResponse(ctx, nil, errContext, nil)
+	require.NoError(t, err)
+	require.Nil(t, lock)
 
 	tree := rtree.NewProgressRangeTree()
 	r := &backup.ResponseAndStore{
@@ -296,9 +300,12 @@ func TestOnBackupResponse(t *testing.T) {
 	}
 	// case #1: error resposne
 	// first error can be ignored due to errContext.
-	require.NoError(t, s.backupClient.OnBackupResponse(ctx, r, errContext, &tree))
+	lock, err = s.backupClient.OnBackupResponse(ctx, r, errContext, &tree)
+	require.NoError(t, err)
+	require.Nil(t, lock)
 	// second error cannot be ignored.
-	require.Error(t, s.backupClient.OnBackupResponse(ctx, r, errContext, &tree))
+	_, err = s.backupClient.OnBackupResponse(ctx, r, errContext, &tree)
+	require.Error(t, err)
 
 	// case #2: normal resposne
 	r = &backup.ResponseAndStore{
@@ -311,11 +318,14 @@ func TestOnBackupResponse(t *testing.T) {
 
 	require.NoError(t, tree.Insert(buildProgressRangeFn([]byte("aa"), []byte("c"))))
 	// error due to the tree range does not match response range.
-	require.Error(t, s.backupClient.OnBackupResponse(ctx, r, errContext, &tree))
+	_, err = s.backupClient.OnBackupResponse(ctx, r, errContext, &tree)
+	require.Error(t, err)
 
 	// case #3: partial range success case, find incomplete range
 	r.Resp.StartKey = []byte("aa")
-	require.NoError(t, s.backupClient.OnBackupResponse(ctx, r, errContext, &tree))
+	lock, err = s.backupClient.OnBackupResponse(ctx, r, errContext, &tree)
+	require.NoError(t, err)
+	require.Nil(t, lock)
 
 	incomplete := tree.Iter().GetIncompleteRanges()
 	require.Len(t, incomplete, 1)
@@ -325,9 +335,35 @@ func TestOnBackupResponse(t *testing.T) {
 	// case #4: success case, make up incomplete range
 	r.Resp.StartKey = []byte("b")
 	r.Resp.EndKey = []byte("c")
-	require.NoError(t, s.backupClient.OnBackupResponse(ctx, r, errContext, &tree))
+	lock, err = s.backupClient.OnBackupResponse(ctx, r, errContext, &tree)
+	require.NoError(t, err)
+	require.Nil(t, lock)
 	incomplete = tree.Iter().GetIncompleteRanges()
 	require.Len(t, incomplete, 0)
+
+	// case #5: failed case, key is locked
+	r = &backup.ResponseAndStore{
+		StoreID: 0,
+		Resp: &backuppb.BackupResponse{
+			Error: &backuppb.Error{
+				Detail: &backuppb.Error_KvError{
+					KvError: &kvrpcpb.KeyError{
+						Locked: &kvrpcpb.LockInfo{
+							PrimaryLock: []byte("b"),
+							LockVersion: 0,
+							Key:         []byte("b"),
+							LockTtl:     50,
+							TxnSize:     1,
+							LockType:    kvrpcpb.Op_Put,
+						},
+					},
+				},
+			},
+		},
+	}
+	lock, err = s.backupClient.OnBackupResponse(ctx, r, errContext, &tree)
+	require.NoError(t, err)
+	require.Equal(t, []byte("b"), lock.Primary)
 }
 
 func TestMainBackupLoop(t *testing.T) {
@@ -665,4 +701,50 @@ func TestBuildProgressRangeTree(t *testing.T) {
 	require.Equal(t, []byte("aa"), contained.Origin.StartKey)
 	require.Equal(t, []byte("b"), contained.Origin.EndKey)
 	require.NoError(t, err)
+}
+
+func TestObserveStoreChangesAsync(t *testing.T) {
+	s := createBackupSuite(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// test 2 stores backup
+	s.mockCluster.AddStore(1, "127.0.0.1:20160")
+	s.mockCluster.AddStore(2, "127.0.0.1:20161")
+
+	stores, err := s.mockPDClient.GetAllStores(ctx)
+	require.NoError(t, err)
+	require.Len(t, stores, 2)
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/br/pkg/backup/backup-store-change-tick", `return(true)`))
+
+	// case #1: nothing happened
+	ch := make(chan backup.BackupRetryPolicy, 1)
+	backup.ObserveStoreChangesAsync(ctx, ch, s.mockPDClient)
+	// the channel never receive any message
+	require.Never(t, func() bool { return len(ch) > 0 }, time.Second, 100*time.Millisecond)
+
+	// case #2: new store joined
+	s.mockCluster.AddStore(3, "127.0.0.1:20162")
+	// the channel received the new store
+	require.Eventually(t, func() bool {
+		if len(ch) == 0 {
+			return false
+		}
+		res := <-ch
+		return res.One == 3
+	}, time.Second, 100*time.Millisecond)
+
+	// case #3: one store disconnected
+	s.mockCluster.StopStore(2)
+	// the channel received the store disconnected
+	require.Eventually(t, func() bool {
+		if len(ch) == 0 {
+			return false
+		}
+		res := <-ch
+		return res.All
+	}, time.Second, 100*time.Millisecond)
+
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/backup/backup-store-change-tick"))
 }

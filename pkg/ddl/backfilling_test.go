@@ -16,7 +16,6 @@ package ddl
 
 import (
 	"bytes"
-	"context"
 	"testing"
 	"time"
 
@@ -64,7 +63,6 @@ func TestPickBackfillType(t *testing.T) {
 			return nil
 		})
 	ingest.LitBackCtxMgr = mockMgr
-	mockCtx := context.Background()
 	mockJob := &model.Job{
 		ID: 1,
 		ReorgMeta: &model.DDLReorgMeta{
@@ -72,19 +70,19 @@ func TestPickBackfillType(t *testing.T) {
 		},
 	}
 	mockJob.ReorgMeta.IsFastReorg = true
-	tp, err := pickBackfillType(mockCtx, mockJob)
+	tp, err := pickBackfillType(mockJob)
 	require.NoError(t, err)
 	require.Equal(t, tp, model.ReorgTypeTxn)
 
 	mockJob.ReorgMeta.ReorgTp = model.ReorgTypeNone
 	ingest.LitInitialized = false
-	tp, err = pickBackfillType(mockCtx, mockJob)
+	tp, err = pickBackfillType(mockJob)
 	require.NoError(t, err)
 	require.Equal(t, tp, model.ReorgTypeTxnMerge)
 
 	mockJob.ReorgMeta.ReorgTp = model.ReorgTypeNone
 	ingest.LitInitialized = true
-	tp, err = pickBackfillType(mockCtx, mockJob)
+	tp, err = pickBackfillType(mockJob)
 	require.NoError(t, err)
 	require.Equal(t, tp, model.ReorgTypeLitMerge)
 }

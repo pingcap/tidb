@@ -140,3 +140,13 @@ func CreateMockConn(t *testing.T, server *Server) MockConn {
 		t:          t,
 	}
 }
+
+// MockOSUserForAuthSocket mocks the OS user for AUTH_SOCKET plugin
+func MockOSUserForAuthSocket(uname string) {
+	mockOSUserForAuthSocketTest.Store(&uname)
+}
+
+// ClearOSUserForAuthSocket clears the mocked OS user for AUTH_SOCKET plugin
+func ClearOSUserForAuthSocket() {
+	mockOSUserForAuthSocketTest.Store(nil)
+}

@@ -88,6 +88,7 @@ func TestInfo(t *testing.T) {
 		ddl.WithStore(s),
 		ddl.WithInfoCache(dom.infoCache),
 		ddl.WithLease(ddlLease),
+		ddl.WithSchemaLoader(dom),
 	)
 	ddl.DisableTiFlashPoll(dom.ddl)
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/domain/MockReplaceDDL", `return(true)`))

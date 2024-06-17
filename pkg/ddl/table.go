@@ -62,7 +62,7 @@ func createTable(d *ddlCtx, t *meta.Meta, job *model.Job, fkCheck bool) (*model.
 	if variable.EnableFastCreateTable.Load() {
 		err = checkTableNotExistsByName(d, t, schemaID, job.SchemaName, tbInfo.Name.L)
 	} else {
-		err = checkTableNotExists(d, t, schemaID, tbInfo.Name.L)
+		err = checkTableNotExists(d, schemaID, tbInfo.Name.L)
 	}
 	if err != nil {
 		if infoschema.ErrDatabaseNotExists.Equal(err) || infoschema.ErrTableExists.Equal(err) {
@@ -469,7 +469,7 @@ func (w *worker) onRecoverTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 		return ver, errors.Trace(err)
 	}
 
-	err = checkTableNotExists(d, t, schemaID, tblInfo.Name.L)
+	err = checkTableNotExists(d, schemaID, tblInfo.Name.L)
 	if err != nil {
 		if infoschema.ErrDatabaseNotExists.Equal(err) || infoschema.ErrTableExists.Equal(err) {
 			job.State = model.JobStateCancelled
@@ -1056,7 +1056,7 @@ func onRenameTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 		return finishJobRenameTable(d, t, job)
 	}
 	newSchemaID := job.SchemaID
-	err := checkTableNotExists(d, t, newSchemaID, tableName.L)
+	err := checkTableNotExists(d, newSchemaID, tableName.L)
 	if err != nil {
 		if infoschema.ErrDatabaseNotExists.Equal(err) || infoschema.ErrTableExists.Equal(err) {
 			job.State = model.JobStateCancelled
@@ -1511,18 +1511,22 @@ func onUpdateFlashReplicaStatus(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 	return ver, nil
 }
 
-func checkTableNotExists(d *ddlCtx, t *meta.Meta, schemaID int64, tableName string) error {
-	// Try to use memory schema info to check first.
-	currVer, err := t.GetSchemaVersion()
-	if err != nil {
-		return err
-	}
+// checking using cached info schema should be enough, as:
+//   - we will reload schema until success when become the owner
+//   - existing tables are correctly checked in the first place
+//   - we calculate job dependencies before running jobs, so there will not be 2
+//     jobs creating same table running concurrently.
+//
+// if there are 2 owners A and B, we have 2 consecutive jobs J1 and J2 which
+// are creating the same table T. those 2 jobs might be running concurrently when
+// A sees J1 first and B sees J2 first. But for B sees J2 first, J1 must already
+// be done and synced, and been deleted from tidb_ddl_job table, as we are querying
+// jobs in the order of job id. During syncing J1, B should have synced the schema
+// with the latest schema version, so when B runs J2, below check will see the table
+// T already exists, and J2 will fail.
+func checkTableNotExists(d *ddlCtx, schemaID int64, tableName string) error {
 	is := d.infoCache.GetLatest()
-	if is != nil && is.SchemaMetaVersion() == currVer {
-		return checkTableNotExistsFromInfoSchema(is, schemaID, tableName)
-	}
-
-	return checkTableNotExistsFromStore(t, schemaID, tableName)
+	return checkTableNotExistsFromInfoSchema(is, schemaID, tableName)
 }
 
 func checkTableNotExistsByName(d *ddlCtx, t *meta.Meta, schemaID int64, schemaName, tableName string) error {
@@ -1583,26 +1587,6 @@ func checkTableNotExistsFromInfoSchema(is infoschema.InfoSchema, schemaID int64,
 	if is.TableExists(schema.Name, model.NewCIStr(tableName)) {
 		return infoschema.ErrTableExists.GenWithStackByArgs(tableName)
 	}
-	return nil
-}
-
-func checkTableNotExistsFromStore(t *meta.Meta, schemaID int64, tableName string) error {
-	// Check this table's database.
-	tbls, err := t.ListSimpleTables(schemaID)
-	if err != nil {
-		if meta.ErrDBNotExists.Equal(err) {
-			return infoschema.ErrDatabaseNotExists.GenWithStackByArgs("")
-		}
-		return errors.Trace(err)
-	}
-
-	// Check the table.
-	for _, tbl := range tbls {
-		if tbl.Name.L == tableName {
-			return infoschema.ErrTableExists.GenWithStackByArgs(tbl.Name)
-		}
-	}
-
 	return nil
 }
 

@@ -18,11 +18,14 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/util/callback"
+	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
@@ -35,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -599,4 +603,83 @@ func TestRenameTableIntermediateState(t *testing.T) {
 		finishedJobID = jobID
 	}
 	dom.DDL().SetHook(originHook)
+}
+
+func TestCreateSameTableOrDBOnOwnerChange(t *testing.T) {
+	tc := testkit.NewDistExecutionContext(t, 2)
+	defer tc.Close()
+
+	// keep trigger owner change every 50ms.
+	var ownerWg util.WaitGroupWrapper
+	var finished atomic.Bool
+	ownerWg.Run(func() {
+		for !finished.Load() {
+			tc.TriggerOwnerChange()
+			time.Sleep(50 * time.Millisecond)
+		}
+	})
+
+	var pauseSchedule atomic.Bool
+	var waitSchCh = make(chan struct{})
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeAllLoadDDLJobAndRun", func() {
+		if pauseSchedule.Load() {
+			<-waitSchCh
+		}
+	})
+	pauseSchedule.Store(true)
+
+	var enableWaitSubmit atomic.Bool
+	waitSubmitCh := make(chan struct{})
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/waitJobSubmitted",
+		func() {
+			if enableWaitSubmit.Load() {
+				<-waitSubmitCh
+			}
+		},
+	)
+	enableWaitSubmit.Store(true)
+
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunJobWithWorker", func() { time.Sleep(300 * time.Millisecond) })
+	// create and wait all jobs are submitted to tidb_ddl_job before they are run.
+	// we are creating same table/database, only the first will success.
+	var wg util.WaitGroupWrapper
+	for gi, g := range [][]string{
+		{
+			"create table test.t(a int)",
+			"create table test.t(a int)",
+			"create table test.t(a int)",
+		},
+		{
+			"create database aaa",
+			"create database aaa",
+			"create database aaa",
+		},
+	} {
+		expectedErr := infoschema.ErrTableExists
+		if gi == 1 {
+			expectedErr = infoschema.ErrDatabaseExists
+		}
+		for i, s := range g {
+			idx, sql := i, s
+			wg.Run(func() {
+				tk2 := testkit.NewTestKit(t, tc.Store)
+				if idx == 0 {
+					tk2.MustExec(sql)
+				} else {
+					err := tk2.ExecToErr(sql)
+					require.ErrorIs(t, err, expectedErr)
+				}
+			})
+			waitSubmitCh <- struct{}{}
+		}
+	}
+	enableWaitSubmit.Store(false)
+
+	// start schedule jobs when all jobs are submitted to tidb_ddl_job
+	pauseSchedule.Store(false)
+	close(waitSchCh)
+
+	wg.Wait()
+	finished.Store(true)
+	ownerWg.Wait()
 }
