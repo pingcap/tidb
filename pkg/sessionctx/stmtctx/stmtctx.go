@@ -433,14 +433,30 @@ func NewStmtCtxWithTimeZone(tz *time.Location) *StatementContext {
 // Reset resets a statement context
 func (sc *StatementContext) Reset() {
 	*sc = StatementContext{
-		ctxID: contextutil.GenContextID(),
+		ctxID:               contextutil.GenContextID(),
+		CTEStorageMap:       sc.CTEStorageMap,
+		LockTableIDs:        sc.LockTableIDs,
+		TableStats:          sc.TableStats,
+		MDLRelatedTableIDs:  sc.MDLRelatedTableIDs,
+		TblInfo2UnionScan:   sc.TblInfo2UnionScan,
+		WarnHandler:         sc.WarnHandler,
+		ExtraWarnHandler:    sc.ExtraWarnHandler,
+		IndexUsageCollector: sc.IndexUsageCollector,
 	}
 	sc.typeCtx = types.NewContext(types.DefaultStmtFlags, time.UTC, sc)
 	sc.errCtx = newErrCtx(sc.typeCtx, DefaultStmtErrLevels, sc)
 	sc.PlanCacheTracker = contextutil.NewPlanCacheTracker(sc)
 	sc.RangeFallbackHandler = contextutil.NewRangeFallbackHandler(&sc.PlanCacheTracker, sc)
-	sc.WarnHandler = contextutil.NewStaticWarnHandler(0)
-	sc.ExtraWarnHandler = contextutil.NewStaticWarnHandler(0)
+	if h, ok := sc.WarnHandler.(interface{ Reset() }); ok && sc.WarnHandler != nil {
+		h.Reset()
+	} else {
+		sc.WarnHandler = contextutil.NewStaticWarnHandler(0)
+	}
+	if h, ok := sc.ExtraWarnHandler.(interface{ Reset() }); ok && sc.ExtraWarnHandler != nil {
+		h.Reset()
+	} else {
+		sc.ExtraWarnHandler = contextutil.NewStaticWarnHandler(0)
+	}
 }
 
 // CtxID returns the context id of the statement
