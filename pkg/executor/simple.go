@@ -632,9 +632,11 @@ func (e *SimpleExec) executeBegin(ctx context.Context, s *ast.BeginStmt) error {
 	}
 	if e.is.SchemaMetaVersion() == 66 {
 		tbl, _ := e.is.TableByID(106)
+		str := ""
 		for _, col := range tbl.Meta().Columns {
-			logutil.BgLogger().Info(fmt.Sprintf("simple-------------col:%v, ID:%d, offset:%d", col.Name, col.ID, col.Offset))
+			str += fmt.Sprintf("col:%v, ID:%d, offset:%d, ", col.Name, col.ID, col.Offset)
 		}
+		logutil.BgLogger().Info(fmt.Sprintf("simple------------- tbl: %s, str: %s", tbl.Meta().Name.L, str))
 	}
 
 	return sessiontxn.GetTxnManager(e.Ctx()).EnterNewTxn(ctx, &sessiontxn.EnterNewTxnRequest{

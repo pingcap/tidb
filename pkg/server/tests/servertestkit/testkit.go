@@ -54,6 +54,7 @@ func CreateTidbTestSuite(t *testing.T) *TidbTestSuite {
 	cfg.Status.StatusPort = 0
 	cfg.Status.RecordDBLabel = true
 	cfg.Performance.TCPKeepAlive = true
+	cfg.Lease = "45s"
 	return CreateTidbTestSuiteWithCfg(t, cfg)
 }
 
