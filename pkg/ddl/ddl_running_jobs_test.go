@@ -68,6 +68,7 @@ func TestRunningJobs(t *testing.T) {
 	job2 := mkJob(2, "db2.t3")
 	j.add(job1.ID, job1.GetInvolvingSchemaInfo())
 	j.add(job2.ID, job2.GetInvolvingSchemaInfo())
+	require.False(t, j.checkRunnable(mkJob(0, "db1.*")))
 	require.Equal(t, "1,2", orderedAllIDs(j.allIDs()))
 	runnable = j.checkRunnable(mkJob(0, "db1.t1"))
 	require.False(t, runnable)
