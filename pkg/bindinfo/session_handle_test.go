@@ -16,6 +16,7 @@ package bindinfo_test
 
 import (
 	"context"
+	"fmt"
 	"strconv"
 	"testing"
 	"time"
@@ -390,8 +391,14 @@ func TestIssue53834(t *testing.T) {
 	for i := 0; i < 12; i++ {
 		tk.MustExec(`insert into t select * from t`)
 	}
+	oomAction := tk.MustQuery(`select @@tidb_mem_oom_action`).Rows()[0][0].(string)
+	defer func() {
+		tk.MustExec(fmt.Sprintf(`set global tidb_mem_oom_action='%v'`, oomAction))
+	}()
+	tk.MustExec(`set global tidb_mem_oom_action='cancel'`)
 	tk.MustExec(`create binding using replace /*+ memory_quota(1 mb) */ into t select * from t`)
-	tk.MustExec(`replace into t select * from t`)
+	err := tk.ExecToErr(`replace into t select * from t`)
+	require.ErrorContains(t, err, "cancelled due to exceeding the allowed memory limit")
 }
 
 func TestPreparedStmt(t *testing.T) {
