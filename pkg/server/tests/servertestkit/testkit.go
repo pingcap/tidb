@@ -69,6 +69,10 @@ func CreateTidbTestSuiteWithCfg(t *testing.T, cfg *config.Config) *TidbTestSuite
 	ts.Domain, err = session.BootstrapSession(ts.Store)
 	require.NoError(t, err)
 	ts.Tidbdrv = srv.NewTiDBDriver(ts.Store)
+<<<<<<< HEAD
+=======
+
+>>>>>>> 72d22d60fca (privilege: fix `auth_socket` bug, should only allow os user name to login (#54032))
 	srv.RunInGoTestChan = make(chan struct{})
 	server, err := srv.NewServer(cfg, ts.Tidbdrv)
 	require.NoError(t, err)
