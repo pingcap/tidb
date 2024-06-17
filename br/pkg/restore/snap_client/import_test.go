@@ -17,7 +17,6 @@ package snapclient_test
 import (
 	"context"
 	"testing"
-	"time"
 
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
@@ -144,7 +143,6 @@ func (client *fakeImporterClient) DownloadSST(
 	storeID uint64,
 	req *import_sstpb.DownloadRequest,
 ) (*import_sstpb.DownloadResponse, error) {
-	time.Sleep(time.Millisecond * 20)
 	return &import_sstpb.DownloadResponse{Range: *req.Sst.Range}, nil
 }
 
@@ -153,7 +151,6 @@ func (client *fakeImporterClient) MultiIngest(
 	storeID uint64,
 	req *import_sstpb.MultiIngestRequest,
 ) (*import_sstpb.IngestResponse, error) {
-	time.Sleep(time.Millisecond * 20)
 	return &import_sstpb.IngestResponse{}, nil
 }
 

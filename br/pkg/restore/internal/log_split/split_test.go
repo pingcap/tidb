@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/docker/go-units"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
 	logsplit "github.com/pingcap/tidb/br/pkg/restore/internal/log_split"
@@ -171,10 +172,6 @@ func fakeRowKey(tableID, rowID int64) kv.Key {
 	return codec.EncodeBytes(nil, tablecodec.EncodeRecordKey(tablecodec.GenTableRecordPrefix(tableID), kv.IntHandle(rowID)))
 }
 
-func fakeMB(n uint64) uint64 {
-	return n * 1024 * 1024
-}
-
 func TestLogSplitHelper(t *testing.T) {
 	ctx := context.Background()
 	rules := map[int64]*restoreutils.RewriteRules{
@@ -204,12 +201,12 @@ func TestLogSplitHelper(t *testing.T) {
 	mockPDCli := split.NewMockPDClientForSplit()
 	mockPDCli.SetRegions(oriRegions)
 	client := split.NewClient(mockPDCli, nil, nil, 100, 4)
-	helper := logsplit.NewLogSplitHelper(rules, client, fakeMB(4), 400)
+	helper := logsplit.NewLogSplitHelper(rules, client, 4*units.MiB, 400)
 
 	helper.Merge(fakeFile(1, 100, 100, 100))
-	helper.Merge(fakeFile(1, 200, fakeMB(2), 200))
-	helper.Merge(fakeFile(2, 100, fakeMB(3), 300))
-	helper.Merge(fakeFile(3, 100, fakeMB(10), 100000))
+	helper.Merge(fakeFile(1, 200, 2*units.MiB, 200))
+	helper.Merge(fakeFile(2, 100, 3*units.MiB, 300))
+	helper.Merge(fakeFile(3, 100, 10*units.MiB, 100000))
 	// different regions, no split happens
 	err := helper.Split(ctx)
 	require.NoError(t, err)
@@ -221,8 +218,8 @@ func TestLogSplitHelper(t *testing.T) {
 	require.Equal(t, codec.EncodeBytes(nil, tablecodec.EncodeTablePrefix(200)), regions[2].Meta.StartKey)
 	require.Equal(t, codec.EncodeBytes(nil, tablecodec.EncodeTablePrefix(402)), regions[2].Meta.EndKey)
 
-	helper.Merge(fakeFile(1, 300, fakeMB(3), 10))
-	helper.Merge(fakeFile(1, 400, fakeMB(4), 10))
+	helper.Merge(fakeFile(1, 300, 3*units.MiB, 10))
+	helper.Merge(fakeFile(1, 400, 4*units.MiB, 10))
 	// trigger to split regions for table 1
 	err = helper.Split(ctx)
 	require.NoError(t, err)

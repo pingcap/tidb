@@ -2,6 +2,7 @@
 package logsplit_test
 
 import (
+	"fmt"
 	"testing"
 
 	logsplit "github.com/pingcap/tidb/br/pkg/restore/internal/log_split"
@@ -25,6 +26,10 @@ func mb(b uint64) logsplit.Value {
 	}
 }
 
+func exportString(startKey, endKey, size string, number int) string {
+	return fmt.Sprintf("([%s, %s), %s MB, %d)", startKey, endKey, size, number)
+}
+
 func TestSumSorted(t *testing.T) {
 	cases := []struct {
 		values []logsplit.Valued
@@ -39,9 +44,9 @@ func TestSumSorted(t *testing.T) {
 			},
 			result: []uint64{0, 250, 25, 75, 50, 0},
 			strs: []string{
-				"([61, 66), 100.00 MB, 100)",
-				"([61, 63), 200.00 MB, 200)",
-				"([64, 67), 100.00 MB, 100)",
+				exportString("61", "66", "100.00", 100),
+				exportString("61", "63", "200.00", 200),
+				exportString("64", "67", "100.00", 100),
 			},
 		},
 		{
@@ -52,9 +57,9 @@ func TestSumSorted(t *testing.T) {
 			},
 			result: []uint64{0, 250, 25, 125, 0},
 			strs: []string{
-				"([61, 66), 100.00 MB, 100)",
-				"([61, 63), 200.00 MB, 200)",
-				"([64, 66), 100.00 MB, 100)",
+				exportString("61", "66", "100.00", 100),
+				exportString("61", "63", "200.00", 200),
+				exportString("64", "66", "100.00", 100),
 			},
 		},
 		{
@@ -65,9 +70,9 @@ func TestSumSorted(t *testing.T) {
 			},
 			result: []uint64{0, 250, 150, 0},
 			strs: []string{
-				"([61, 66), 100.00 MB, 100)",
-				"([61, 63), 200.00 MB, 200)",
-				"([63, 66), 100.00 MB, 100)",
+				exportString("61", "66", "100.00", 100),
+				exportString("61", "63", "200.00", 200),
+				exportString("63", "66", "100.00", 100),
 			},
 		},
 		{
@@ -79,10 +84,10 @@ func TestSumSorted(t *testing.T) {
 			},
 			result: []uint64{0, 250, 50, 150, 50, 0},
 			strs: []string{
-				"([61, 66), 100.00 MB, 100)",
-				"([61, 63), 200.00 MB, 200)",
-				"([63, 66), 100.00 MB, 100)",
-				"([6461, 6462), 100.00 MB, 100)",
+				exportString("61", "66", "100.00", 100),
+				exportString("61", "63", "200.00", 200),
+				exportString("63", "66", "100.00", 100),
+				exportString("6461", "6462", "100.00", 100),
 			},
 		},
 		{
@@ -95,11 +100,11 @@ func TestSumSorted(t *testing.T) {
 			},
 			result: []uint64{0, 250, 25, 75, 200, 50, 0},
 			strs: []string{
-				"([61, 66), 100.00 MB, 100)",
-				"([61, 63), 200.00 MB, 200)",
-				"([63, 66), 100.00 MB, 100)",
-				"([6461, 6462), 100.00 MB, 100)",
-				"([6362, 6462), 100.00 MB, 100)",
+				exportString("61", "66", "100.00", 100),
+				exportString("61", "63", "200.00", 200),
+				exportString("63", "66", "100.00", 100),
+				exportString("6461", "6462", "100.00", 100),
+				exportString("6362", "6462", "100.00", 100),
 			},
 		},
 		{
@@ -112,11 +117,11 @@ func TestSumSorted(t *testing.T) {
 			},
 			result: []uint64{0, 250, 25, 75, 200, 100, 0},
 			strs: []string{
-				"([61, 66), 100.00 MB, 100)",
-				"([61, 63), 200.00 MB, 200)",
-				"([63, 66), 100.00 MB, 100)",
-				"([6461, 6462), 100.00 MB, 100)",
-				"([6362, 66), 150.00 MB, 150)",
+				exportString("61", "66", "100.00", 100),
+				exportString("61", "63", "200.00", 200),
+				exportString("63", "66", "100.00", 100),
+				exportString("6461", "6462", "100.00", 100),
+				exportString("6362", "66", "150.00", 150),
 			},
 		},
 		{
@@ -129,11 +134,11 @@ func TestSumSorted(t *testing.T) {
 			},
 			result: []uint64{0, 250, 25, 75, 200, 75, 25, 0},
 			strs: []string{
-				"([61, 66), 100.00 MB, 100)",
-				"([61, 63), 200.00 MB, 200)",
-				"([63, 66), 100.00 MB, 100)",
-				"([6461, 6462), 100.00 MB, 100)",
-				"([6362, 6466), 150.00 MB, 150)",
+				exportString("61", "66", "100.00", 100),
+				exportString("61", "63", "200.00", 200),
+				exportString("63", "66", "100.00", 100),
+				exportString("6461", "6462", "100.00", 100),
+				exportString("6362", "6466", "150.00", 150),
 			},
 		},
 		{
@@ -146,11 +151,11 @@ func TestSumSorted(t *testing.T) {
 			},
 			result: []uint64{0, 250, 25, 75, 200, 75, 25, 0},
 			strs: []string{
-				"([61, 66), 100.00 MB, 100)",
-				"([61, 63), 200.00 MB, 200)",
-				"([63, 66), 100.00 MB, 100)",
-				"([6461, 6462), 100.00 MB, 100)",
-				"([6362, 6466), 150.00 MB, 150)",
+				exportString("61", "66", "100.00", 100),
+				exportString("61", "63", "200.00", 200),
+				exportString("63", "66", "100.00", 100),
+				exportString("6461", "6462", "100.00", 100),
+				exportString("6362", "6466", "150.00", 150),
 			},
 		},
 		{
@@ -163,11 +168,11 @@ func TestSumSorted(t *testing.T) {
 			},
 			result: []uint64{0, 250, 100, 200, 75, 25, 0},
 			strs: []string{
-				"([61, 66), 100.00 MB, 100)",
-				"([61, 63), 200.00 MB, 200)",
-				"([63, 66), 100.00 MB, 100)",
-				"([6461, 6462), 100.00 MB, 100)",
-				"([63, 6466), 150.00 MB, 150)",
+				exportString("61", "66", "100.00", 100),
+				exportString("61", "63", "200.00", 200),
+				exportString("63", "66", "100.00", 100),
+				exportString("6461", "6462", "100.00", 100),
+				exportString("63", "6466", "150.00", 150),
 			},
 		},
 		{
@@ -180,11 +185,11 @@ func TestSumSorted(t *testing.T) {
 			},
 			result: []uint64{0, 250, 100, 200, 100, 0},
 			strs: []string{
-				"([61, 66), 100.00 MB, 100)",
-				"([61, 63), 200.00 MB, 200)",
-				"([63, 66), 100.00 MB, 100)",
-				"([6461, 6462), 100.00 MB, 100)",
-				"([63, 66), 150.00 MB, 150)",
+				exportString("61", "66", "100.00", 100),
+				exportString("61", "63", "200.00", 200),
+				exportString("63", "66", "100.00", 100),
+				exportString("6461", "6462", "100.00", 100),
+				exportString("63", "66", "150.00", 150),
 			},
 		},
 	}
