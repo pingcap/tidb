@@ -172,6 +172,9 @@ type columnAPI interface {
 
 	// FullHiddenColsAndVisibleCols returns hidden columns in all states and unhidden columns in public states.
 	FullHiddenColsAndVisibleCols() []*Column
+
+	// NonPubColMaybeRefByIndex returns the non-public column that may be referred by the index.
+	NonPubColMaybeRefByNonPublicIndex() *Column
 }
 
 // MutateContext is used to when mutating a table.
@@ -187,6 +190,7 @@ type Table interface {
 	// Indices returns the indices of the table.
 	// The caller must be aware of that not all the returned indices are public.
 	Indices() []Index
+	DeletableIndices() []Index
 
 	// RecordPrefix returns the record key prefix.
 	RecordPrefix() kv.Key
@@ -201,6 +205,7 @@ type Table interface {
 
 	// RemoveRecord removes a row in the table.
 	RemoveRecord(ctx MutateContext, h kv.Handle, r []types.Datum) error
+	RemoveRecordWithGivenInfo(ctx MutateContext, h kv.Handle, r []types.Datum, indexPosInRow map[int64][]int, refColOfNonPubColForNonPubIndex int) error
 
 	// Allocators returns all allocators.
 	Allocators(ctx AllocatorContext) autoid.Allocators

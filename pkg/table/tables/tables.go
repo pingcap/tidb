@@ -300,8 +300,8 @@ func GetWritableIndexByName(idxName string, t table.Table) table.Index {
 	return nil
 }
 
-// deletableIndices implements table.Table deletableIndices interface.
-func (t *TableCommon) deletableIndices() []table.Index {
+// DeletableIndices implements table.Table DeletableIndices interface.
+func (t *TableCommon) DeletableIndices() []table.Index {
 	// All indices are deletable because we don't need to check StateNone.
 	return t.indices
 }
@@ -488,6 +488,14 @@ func (t *TableCommon) shouldAssert(level variable.AssertionLevel) bool {
 		}
 	}
 	return true
+}
+
+// NonPublicColumns implements table.Table NonPublicColumns interface.
+func (t *TableCommon) NonPubColMaybeRefByNonPublicIndex() *table.Column {
+	if len(t.Cols()) < len(t.Columns) {
+		return t.Columns[len(t.Cols())]
+	}
+	return nil
 }
 
 // UpdateRecord implements table.Table UpdateRecord interface.
@@ -690,7 +698,7 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx table.MutateContext
 }
 
 func (t *TableCommon) rebuildIndices(ctx table.MutateContext, txn kv.Transaction, h kv.Handle, touched []bool, oldData []types.Datum, newData []types.Datum, opts ...table.CreateIdxOptFunc) error {
-	for _, idx := range t.deletableIndices() {
+	for _, idx := range t.DeletableIndices() {
 		if t.meta.IsCommonHandle && idx.Meta().Primary {
 			continue
 		}
@@ -1460,6 +1468,99 @@ func (t *TableCommon) RemoveRecord(ctx table.MutateContext, h kv.Handle, r []typ
 	return err
 }
 
+// RemoveRecordWithGivenInfo implements table.Table RemoveRecord interface.
+func (t *TableCommon) RemoveRecordWithGivenInfo(ctx table.MutateContext, h kv.Handle, r []types.Datum, indexPosInRow map[int64][]int, refColOfNonPubColForNonPubIndex int) error {
+	txn, err := ctx.Txn(true)
+	if err != nil {
+		return err
+	}
+
+	memBuffer := txn.GetMemBuffer()
+	sh := memBuffer.Staging()
+	defer memBuffer.Cleanup(sh)
+
+	logutil.BgLogger().Debug("RemoveRecord",
+		zap.Stringer("key", t.RecordKey(h)))
+	err = t.removeRowData(ctx, h)
+	if err != nil {
+		return err
+	}
+
+	if m := t.Meta(); m.TempTableType != model.TempTableNone {
+		if tmpTable := addTemporaryTable(ctx, m); tmpTable != nil {
+			if err := checkTempTableSize(ctx, tmpTable, m); err != nil {
+				return err
+			}
+			defer handleTempTableSize(tmpTable, txn.Size(), txn)
+		}
+	}
+
+	// The table has non-public column and this column is doing the operation of "modify/change column".
+	if refColOfNonPubColForNonPubIndex != -1 {
+		// The changing column datum derived from related column should be casted here.
+		// Otherwise, the existed changing indexes will not be deleted.
+		relatedColDatum := r[refColOfNonPubColForNonPubIndex]
+		value, err := table.CastColumnValue(ctx.GetExprCtx(), relatedColDatum, t.Columns[refColOfNonPubColForNonPubIndex].ColumnInfo, false, false)
+		if err != nil {
+			logutil.BgLogger().Info("remove record cast value failed", zap.Any("col", t.Columns[refColOfNonPubColForNonPubIndex]),
+				zap.String("handle", h.String()), zap.Any("val", relatedColDatum), zap.Error(err))
+			return err
+		}
+		r = append(r, value)
+	}
+	err = t.removeRowIndicesWithGivenInfo(ctx, h, r, indexPosInRow)
+	if err != nil {
+		return err
+	}
+
+	sessVars := ctx.GetSessionVars()
+	sc := sessVars.StmtCtx
+	if err = injectMutationError(t, txn, sh); err != nil {
+		return err
+	}
+	if sessVars.EnableMutationChecker {
+		if err = CheckDataConsistency(txn, sessVars, t, nil, r, memBuffer, sh); err != nil {
+			return errors.Trace(err)
+		}
+	}
+	memBuffer.Release(sh)
+
+	if shouldWriteBinlog(ctx.GetSessionVars(), t.meta) {
+		cols := t.DeletableCols()
+		colIDs := make([]int64, 0, len(cols)+1)
+		for _, col := range cols {
+			colIDs = append(colIDs, col.ID)
+		}
+		var binlogRow []types.Datum
+		if !t.meta.PKIsHandle && !t.meta.IsCommonHandle {
+			colIDs = append(colIDs, model.ExtraHandleID)
+			binlogRow = make([]types.Datum, 0, len(r)+1)
+			binlogRow = append(binlogRow, r...)
+			handleData, err := h.Data()
+			if err != nil {
+				return err
+			}
+			binlogRow = append(binlogRow, handleData...)
+		} else {
+			binlogRow = r
+		}
+		err = t.addDeleteBinlog(ctx, binlogRow, colIDs)
+	}
+	if ctx.GetSessionVars().TxnCtx == nil {
+		return nil
+	}
+	colSize := make([]variable.ColSize, len(t.Cols()))
+	for id, col := range t.Cols() {
+		size, err := codec.EstimateValueSize(sc.TypeCtx(), r[id])
+		if err != nil {
+			continue
+		}
+		colSize[id] = variable.ColSize{ColID: col.ID, Size: -int64(size - 1)}
+	}
+	ctx.GetSessionVars().TxnCtx.UpdateDeltaForTableFromColSlice(t.physicalTableID, -1, 1, colSize)
+	return err
+}
+
 func (t *TableCommon) addInsertBinlog(ctx table.MutateContext, h kv.Handle, row []types.Datum, colIDs []int64) error {
 	mutation := t.getMutation(ctx)
 	handleData, err := h.Data()
@@ -1572,11 +1673,38 @@ func (t *TableCommon) removeRowIndices(ctx table.MutateContext, h kv.Handle, rec
 	if err != nil {
 		return err
 	}
-	for _, v := range t.deletableIndices() {
+	for _, v := range t.DeletableIndices() {
 		if v.Meta().Primary && (t.Meta().IsCommonHandle || t.Meta().PKIsHandle) {
 			continue
 		}
 		vals, err := v.FetchValues(rec, nil)
+		if err != nil {
+			logutil.BgLogger().Info("remove row index failed", zap.Any("index", v.Meta()), zap.Uint64("txnStartTS", txn.StartTS()), zap.String("handle", h.String()), zap.Any("record", rec), zap.Error(err))
+			return err
+		}
+		if err = v.Delete(ctx, txn, vals, h); err != nil {
+			if v.Meta().State != model.StatePublic && kv.ErrNotExist.Equal(err) {
+				// If the index is not in public state, we may have not created the index,
+				// or already deleted the index, so skip ErrNotExist error.
+				logutil.BgLogger().Debug("row index not exists", zap.Any("index", v.Meta()), zap.Uint64("txnStartTS", txn.StartTS()), zap.String("handle", h.String()))
+				continue
+			}
+			return err
+		}
+	}
+	return nil
+}
+
+func (t *TableCommon) removeRowIndicesWithGivenInfo(ctx table.MutateContext, h kv.Handle, rec []types.Datum, indexPosInRow map[int64][]int) error {
+	txn, err := ctx.Txn(true)
+	if err != nil {
+		return err
+	}
+	for _, v := range t.DeletableIndices() {
+		if v.Meta().Primary && (t.Meta().IsCommonHandle || t.Meta().PKIsHandle) {
+			continue
+		}
+		vals, err := v.FetchValuesByGivenOffsets(rec, indexPosInRow[v.Meta().ID])
 		if err != nil {
 			logutil.BgLogger().Info("remove row index failed", zap.Any("index", v.Meta()), zap.Uint64("txnStartTS", txn.StartTS()), zap.String("handle", h.String()), zap.Any("record", rec), zap.Error(err))
 			return err

@@ -161,6 +161,11 @@ func (vt *perfSchemaTable) Cols() []*table.Column {
 	return vt.cols
 }
 
+// NonPublicColumns implements table.Table NonPublicColumns interface.
+func (vt *perfSchemaTable) NonPubColMaybeRefByNonPublicIndex() *table.Column {
+	return nil
+}
+
 // VisibleCols implements table.Table VisibleCols interface.
 func (vt *perfSchemaTable) VisibleCols() []*table.Column {
 	return vt.cols
@@ -204,6 +209,11 @@ func (vt *perfSchemaTable) Type() table.Type {
 // Indices implements table.Table Indices interface.
 func (vt *perfSchemaTable) Indices() []table.Index {
 	return vt.indices
+}
+
+// DeletableIndices implements table.Table DeletableIndices interface.
+func (vt *perfSchemaTable) DeletableIndices() []table.Index {
+	return nil
 }
 
 // GetPartitionedTable implements table.Table GetPartitionedTable interface.

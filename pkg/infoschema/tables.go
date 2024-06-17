@@ -2398,6 +2398,11 @@ func (it *infoschemaTable) DeletableCols() []*table.Column {
 	return it.cols
 }
 
+// NonPubColMaybeRefByNonPublicIndex implements table.Table HiddenColMaybeRefByNonPublicIndex interface.
+func (it *infoschemaTable) NonPubColMaybeRefByNonPublicIndex() *table.Column {
+	return nil
+}
+
 // FullHiddenColsAndVisibleCols implements table FullHiddenColsAndVisibleCols interface.
 func (it *infoschemaTable) FullHiddenColsAndVisibleCols() []*table.Column {
 	return it.cols
@@ -2405,6 +2410,11 @@ func (it *infoschemaTable) FullHiddenColsAndVisibleCols() []*table.Column {
 
 // Indices implements table.Table Indices interface.
 func (it *infoschemaTable) Indices() []table.Index {
+	return nil
+}
+
+// DeletableIndices implements table.Table DeletableIndices interface.
+func (it *infoschemaTable) DeletableIndices() []table.Index {
 	return nil
 }
 
@@ -2425,6 +2435,11 @@ func (it *infoschemaTable) AddRecord(ctx table.MutateContext, r []types.Datum, o
 
 // RemoveRecord implements table.Table RemoveRecord interface.
 func (it *infoschemaTable) RemoveRecord(ctx table.MutateContext, h kv.Handle, r []types.Datum) error {
+	return table.ErrUnsupportedOp
+}
+
+// RemoveRecordWithGivenInfo implements table.Table RemoveRecordWithGivenInfo interface.
+func (it *infoschemaTable) RemoveRecordWithGivenInfo(ctx table.MutateContext, h kv.Handle, r []types.Datum, indexPosInRow map[int64][]int, refColOfNonPubColForNonPubIndex int) error {
 	return table.ErrUnsupportedOp
 }
 
@@ -2496,6 +2511,11 @@ func (vt *VirtualTable) Indices() []table.Index {
 	return nil
 }
 
+// DeletableIndices implements table.Table DeletableIndices interface.
+func (vt *VirtualTable) DeletableIndices() []table.Index {
+	return nil
+}
+
 // RecordPrefix implements table.Table RecordPrefix interface.
 func (vt *VirtualTable) RecordPrefix() kv.Key {
 	return nil
@@ -2506,6 +2526,11 @@ func (vt *VirtualTable) IndexPrefix() kv.Key {
 	return nil
 }
 
+// NonPubColMaybeRefByNonPublicIndex implements table.Table HiddenColMaybeRefByNonPublicIndex interface.
+func (vt *VirtualTable) NonPubColMaybeRefByNonPublicIndex() *table.Column {
+	return nil
+}
+
 // AddRecord implements table.Table AddRecord interface.
 func (vt *VirtualTable) AddRecord(ctx table.MutateContext, r []types.Datum, opts ...table.AddRecordOption) (recordID kv.Handle, err error) {
 	return nil, table.ErrUnsupportedOp
@@ -2513,6 +2538,11 @@ func (vt *VirtualTable) AddRecord(ctx table.MutateContext, r []types.Datum, opts
 
 // RemoveRecord implements table.Table RemoveRecord interface.
 func (vt *VirtualTable) RemoveRecord(ctx table.MutateContext, h kv.Handle, r []types.Datum) error {
+	return table.ErrUnsupportedOp
+}
+
+// RemoveRecordWithGivenInfo implements table.Table RemoveRecordWithGivenInfo interface.
+func (vt *VirtualTable) RemoveRecordWithGivenInfo(ctx table.MutateContext, h kv.Handle, r []types.Datum, indexPosInRow map[int64][]int, refColOfNonPubColForNonPubIndex int) error {
 	return table.ErrUnsupportedOp
 }
 

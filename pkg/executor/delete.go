@@ -62,16 +62,16 @@ func (e *DeleteExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	return e.deleteSingleTableByChunk(ctx)
 }
 
-func (e *DeleteExec) deleteOneRow(tbl table.Table, handleCols util.HandleCols, isExtraHandle bool, row []types.Datum) error {
+func (e *DeleteExec) deleteOneRow(tbl table.Table, colInfo *plannercore.TblColPosInfo, isExtraHandle bool, row []types.Datum) error {
 	end := len(row)
 	if isExtraHandle {
 		end--
 	}
-	handle, err := handleCols.BuildHandleByDatums(row)
+	handle, err := colInfo.HandleCols.BuildHandleByDatums(row)
 	if err != nil {
 		return err
 	}
-	err = e.removeRow(e.Ctx(), tbl, handle, row[:end])
+	err = e.removeRowNew(e.Ctx(), tbl, handle, row[:end], colInfo)
 	if err != nil {
 		return err
 	}
@@ -83,10 +83,13 @@ func (e *DeleteExec) deleteSingleTableByChunk(ctx context.Context) error {
 		tbl           table.Table
 		isExtrahandle bool
 		handleCols    util.HandleCols
+		colPosInfo    *plannercore.TblColPosInfo
 		rowCount      int
 	)
-	for _, info := range e.tblColPosInfos {
+	for i := range e.tblColPosInfos {
+		info := e.tblColPosInfos[i]
 		tbl = e.tblID2Table[info.TblID]
+		colPosInfo = &info
 		handleCols = info.HandleCols
 		if !tbl.Meta().IsCommonHandle {
 			isExtrahandle = handleCols.IsInt() && handleCols.GetCol(0).ID == model.ExtraHandleID
@@ -138,7 +141,7 @@ func (e *DeleteExec) deleteSingleTableByChunk(ctx context.Context) error {
 				datumRow = append(datumRow, datum)
 			}
 
-			err = e.deleteOneRow(tbl, handleCols, isExtrahandle, datumRow)
+			err = e.deleteOneRow(tbl, colPosInfo, isExtrahandle, datumRow)
 			if err != nil {
 				return err
 			}
@@ -255,6 +258,20 @@ func (e *DeleteExec) removeRowsInTblRowMap(tblRowMap tableRowMapType) error {
 
 func (e *DeleteExec) removeRow(ctx sessionctx.Context, t table.Table, h kv.Handle, data []types.Datum) error {
 	err := t.RemoveRecord(ctx.GetTableCtx(), h, data)
+	if err != nil {
+		return err
+	}
+	tid := t.Meta().ID
+	err = onRemoveRowForFK(ctx, data, e.fkChecks[tid], e.fkCascades[tid])
+	if err != nil {
+		return err
+	}
+	ctx.GetSessionVars().StmtCtx.AddAffectedRows(1)
+	return nil
+}
+
+func (e *DeleteExec) removeRowNew(ctx sessionctx.Context, t table.Table, h kv.Handle, data []types.Datum, colInfo *plannercore.TblColPosInfo) error {
+	err := t.RemoveRecordWithGivenInfo(ctx.GetTableCtx(), h, data, colInfo.IndexesForDelete, colInfo.RefColPosOfUnfinishedDDLCol)
 	if err != nil {
 		return err
 	}

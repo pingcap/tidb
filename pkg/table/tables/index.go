@@ -652,6 +652,19 @@ func (c *index) FetchValues(r []types.Datum, vals []types.Datum) ([]types.Datum,
 	return vals, nil
 }
 
+// FetchValuesByGivenOffsets fetches values by given offsets.
+func (c *index) FetchValuesByGivenOffsets(r []types.Datum, colOffsets []int) ([]types.Datum, error) {
+	needLength := len(colOffsets)
+	vals := make([]types.Datum, needLength)
+	for i, offset := range colOffsets {
+		if offset < 0 || offset >= len(r) {
+			return nil, table.ErrIndexOutBound.GenWithStackByArgs(offset, r)
+		}
+		vals[i] = r[offset]
+	}
+	return vals, nil
+}
+
 // FindChangingCol finds the changing column in idxInfo.
 func FindChangingCol(cols []*table.Column, idxInfo *model.IndexInfo) *table.Column {
 	for _, ic := range idxInfo.Columns {

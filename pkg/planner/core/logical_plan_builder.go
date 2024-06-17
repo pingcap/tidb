@@ -5642,6 +5642,9 @@ type TblColPosInfo struct {
 	Start, End int
 	// HandleOrdinal represents the ordinal of the handle column.
 	HandleCols util.HandleCols
+
+	IndexesForDelete            map[int64][]int
+	RefColPosOfUnfinishedDDLCol int
 }
 
 // MemoryUsage return the memory usage of TblColPosInfo
@@ -5711,11 +5714,78 @@ func buildColumns2Handle(
 				return nil, err
 			}
 			end := offset + tblLen
-			cols2Handles = append(cols2Handles, TblColPosInfo{tblID, offset, end, handleCol})
+			cols2Handles = append(cols2Handles, TblColPosInfo{TblID: tblID, Start: offset, End: end, HandleCols: handleCol})
 		}
 	}
 	sort.Sort(cols2Handles)
 	return cols2Handles, nil
+}
+
+// buildColPositionInfoForDelete builds columns to handle mapping for delete.
+func buildColPositionInfoForDelete(
+	names []*types.FieldName,
+	tblID2Handle map[int64][]util.HandleCols,
+	tblID2Table map[int64]table.Table,
+) (TblColPosInfoSlice, error) {
+	var cols2PosInfos TblColPosInfoSlice
+	buildOffsetMap := func(tblOrigName string, cols []*table.Column, names []*types.FieldName, start, end int) (map[int]int, error) {
+		offsetMap := make(map[int]int, len(cols))
+		for i := start; i < end; i++ {
+			name := names[i]
+			found := -1
+			for j, col := range cols {
+				if col.Name.L == name.ColName.L {
+					offsetMap[j] = i
+					found = j
+					break
+				}
+			}
+			if found == -1 {
+				return nil, plannererrors.ErrDeleteNotFoundColumn.GenWithStackByArgs(name.ColName.O, tblOrigName)
+			}
+			offsetMap[found] = i
+		}
+		return offsetMap, nil
+	}
+	for tblID, handleCols := range tblID2Handle {
+		tbl := tblID2Table[tblID]
+		tblLen := len(tbl.Cols())
+		cols := tbl.Cols()
+		idxs := tbl.DeletableIndices()
+		nonPubCol := tbl.NonPubColMaybeRefByNonPublicIndex()
+
+		for _, handleCol := range handleCols {
+			offset, err := getTableOffset(names, names[handleCol.GetCol(0).Index])
+			if err != nil {
+				return nil, err
+			}
+			end := offset + tblLen
+			offsetMap, err := buildOffsetMap(tbl.Meta().Name.O, cols, names, offset, end)
+			if err != nil {
+				return nil, err
+			}
+			indexColMap := make(map[int64][]int)
+			for _, idx := range idxs {
+				idxCols := idx.Meta().Columns
+				colPos := make([]int, 0, len(idxCols))
+				for _, col := range idxCols {
+					if col.Offset == len(cols) {
+						colPos = append(colPos, len(cols))
+						continue
+					}
+					colPos = append(colPos, offsetMap[col.Offset])
+				}
+				indexColMap[idx.Meta().ID] = colPos
+			}
+			nonPubColRefPos := -1
+			if nonPubCol != nil {
+				nonPubColRefPos = offsetMap[nonPubCol.Offset]
+			}
+			cols2PosInfos = append(cols2PosInfos, TblColPosInfo{tblID, offset, end, handleCol, indexColMap, nonPubColRefPos})
+		}
+	}
+	sort.Sort(cols2PosInfos)
+	return cols2PosInfos, nil
 }
 
 func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (base.Plan, error) {
@@ -6304,7 +6374,7 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, ds *ast.DeleteStmt) (base
 	for id := range tblID2Handle {
 		tblID2table[id], _ = b.is.TableByID(id)
 	}
-	del.TblColPosInfos, err = buildColumns2Handle(del.names, tblID2Handle, tblID2table, false)
+	del.TblColPosInfos, err = buildColPositionInfoForDelete(del.names, tblID2Handle, tblID2table)
 	if err != nil {
 		return nil, err
 	}
