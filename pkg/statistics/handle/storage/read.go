@@ -576,7 +576,15 @@ func loadNeededIndexHistograms(sctx sessionctx.Context, statsCache util.StatsCac
 		return nil
 	}
 	index, ok := tbl.Indices[idx.ID]
-	if !ok {
+	// Double check if the index is really needed to load.
+	// See: https://github.com/pingcap/tidb/issues/54022
+	if !ok || !index.IsLoadNeeded() {
+		if !index.IsLoadNeeded() {
+			logutil.BgLogger().Warn(
+				"Although the index stats is not required to load, an attempt is still made to load it. Please verify if this index has any histogram records in the `mysql.stats_histograms` table.",
+				zap.Int64("table_id", idx.TableID), zap.Int64("hist_id", idx.ID),
+			)
+		}
 		statistics.HistogramNeededItems.Delete(idx)
 		return nil
 	}
