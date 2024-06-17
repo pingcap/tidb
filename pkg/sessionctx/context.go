@@ -55,9 +55,9 @@ type SessionStatesHandler interface {
 
 // PlanCache is an interface for prepare and non-prepared plan cache
 type PlanCache interface {
-	Get(key kvcache.Key, opts *utilpc.PlanCacheMatchOpts) (value kvcache.Value, ok bool)
-	Put(key kvcache.Key, value kvcache.Value, opts *utilpc.PlanCacheMatchOpts)
-	Delete(key kvcache.Key)
+	Get(key string, opts *utilpc.PlanCacheMatchOpts) (value kvcache.Value, ok bool)
+	Put(key string, value kvcache.Value, opts *utilpc.PlanCacheMatchOpts)
+	Delete(key string)
 	DeleteAll()
 	Size() int
 	SetCapacity(capacity uint) error

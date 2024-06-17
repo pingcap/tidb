@@ -174,7 +174,7 @@ func GetPlanFromSessionPlanCache(ctx context.Context, sctx sessionctx.Context,
 		return nil, nil, err
 	}
 
-	var cacheKey kvcache.Key
+	var cacheKey string
 	sessVars := sctx.GetSessionVars()
 	stmtCtx := sessVars.StmtCtx
 	cacheEnabled := false
@@ -247,7 +247,7 @@ func GetPlanFromSessionPlanCache(ctx context.Context, sctx sessionctx.Context,
 }
 
 func adjustCachedPlan(sctx sessionctx.Context, cachedVal *PlanCacheValue, isNonPrepared, isPointPlan bool,
-	cacheKey kvcache.Key, bindSQL string, is infoschema.InfoSchema, stmt *PlanCacheStmt) (base.Plan,
+	cacheKey string, bindSQL string, is infoschema.InfoSchema, stmt *PlanCacheStmt) (base.Plan,
 	[]*types.FieldName, bool, error) {
 	sessVars := sctx.GetSessionVars()
 	stmtCtx := sessVars.StmtCtx
@@ -286,7 +286,7 @@ func adjustCachedPlan(sctx sessionctx.Context, cachedVal *PlanCacheValue, isNonP
 // generateNewPlan call the optimizer to generate a new plan for current statement
 // and try to add it to cache
 func generateNewPlan(ctx context.Context, sctx sessionctx.Context, isNonPrepared bool, is infoschema.InfoSchema,
-	stmt *PlanCacheStmt, cacheKey kvcache.Key, latestSchemaVersion int64, bindSQL string,
+	stmt *PlanCacheStmt, cacheKey string, latestSchemaVersion int64, bindSQL string,
 	matchOpts *utilpc.PlanCacheMatchOpts) (base.Plan, []*types.FieldName, error) {
 	stmtAst := stmt.PreparedAst
 	sessVars := sctx.GetSessionVars()

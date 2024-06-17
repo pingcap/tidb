@@ -46,7 +46,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/intest"
-	"github.com/pingcap/tidb/pkg/util/kvcache"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	utilpc "github.com/pingcap/tidb/pkg/util/plancache"
 	"github.com/pingcap/tidb/pkg/util/size"
@@ -329,31 +328,15 @@ func (key *planCacheKey) MemoryUsage() (sum int64) {
 	return
 }
 
-// SetPstmtIDSchemaVersion implements PstmtCacheKeyMutator interface to change pstmtID and schemaVersion of cacheKey.
-// so we can reuse Key instead of new every time.
-func SetPstmtIDSchemaVersion(key kvcache.Key, stmtText string, schemaVersion int64, isolationReadEngines map[kv.StoreType]struct{}) {
-	psStmtKey, isPsStmtKey := key.(*planCacheKey)
-	if !isPsStmtKey {
-		return
-	}
-	psStmtKey.stmtText = stmtText
-	psStmtKey.schemaVersion = schemaVersion
-	psStmtKey.isolationReadEngines = make(map[kv.StoreType]struct{})
-	for k, v := range isolationReadEngines {
-		psStmtKey.isolationReadEngines[k] = v
-	}
-	psStmtKey.hash = psStmtKey.hash[:0]
-}
-
 // NewPlanCacheKey creates a new planCacheKey object.
 // Note: lastUpdatedSchemaVersion will only be set in the case of rc or for update read in order to
 // differentiate the cache key. In other cases, it will be 0.
-func NewPlanCacheKey(sessionVars *variable.SessionVars, stmtText, stmtDB string, schemaVersion, lastUpdatedSchemaVersion int64, bindSQL string, exprBlacklistTS int64, relatedSchemaVersion map[int64]uint64) (kvcache.Key, error) {
+func NewPlanCacheKey(sessionVars *variable.SessionVars, stmtText, stmtDB string, schemaVersion, lastUpdatedSchemaVersion int64, bindSQL string, exprBlacklistTS int64, relatedSchemaVersion map[int64]uint64) (string, error) {
 	if stmtText == "" {
-		return nil, errors.New("no statement text")
+		return "", errors.New("no statement text")
 	}
 	if schemaVersion == 0 && !intest.InTest {
-		return nil, errors.New("Schema version uninitialized")
+		return "", errors.New("Schema version uninitialized")
 	}
 	if stmtDB == "" {
 		stmtDB = sessionVars.CurrentDB
@@ -388,7 +371,7 @@ func NewPlanCacheKey(sessionVars *variable.SessionVars, stmtText, stmtDB string,
 	for k, v := range relatedSchemaVersion {
 		key.tblVersionMap[k] = v
 	}
-	return key, nil
+	return string(key.Hash()), nil
 }
 
 // PlanCacheValue stores the cached Statement and StmtNode.
