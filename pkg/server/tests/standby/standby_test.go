@@ -68,8 +68,6 @@ func (c *mockStandbyController) OnServerCreated(svr *server.Server) {
 }
 
 func TestStandby(t *testing.T) {
-	server.RunInGoTest = true
-	server.RunInGoTestChan = make(chan struct{})
 	standbyController := newMockStandbyController()
 	var svr *server.Server
 	serverCreated := make(chan struct{})
