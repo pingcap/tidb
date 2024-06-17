@@ -75,13 +75,14 @@ func (b *SortedBuilder) Iterate(data types.Datum) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
+	var lastValue = new(types.Datum)
 	if cmp == 0 {
 		// The new item has the same value as current bucket value, to ensure that
 		// a same value only stored in a single bucket, we do not increase bucketIdx even if it exceeds
 		// valuesPerBucket.
 		b.hist.Buckets[b.bucketIdx].Count++
 		b.hist.Buckets[b.bucketIdx].Repeat++
-	} else if b.hist.Buckets[b.bucketIdx].Count+1-b.lastNumber <= b.valuesPerBucket {
+	} else if b.hist.Buckets[b.bucketIdx].Count+1-b.lastNumber <= b.valuesPerBucket || isConsecutive(*lastValue, data) {
 		// The bucket still have room to store a new item, update the bucket.
 		b.hist.updateLastBucket(&data, b.hist.Buckets[b.bucketIdx].Count+1, 1, b.needBucketNDV)
 		b.hist.NDV++
@@ -106,6 +107,7 @@ func (b *SortedBuilder) Iterate(data types.Datum) error {
 			appendBucket(&data, &data, b.lastNumber+1, 1)
 		}
 		b.hist.NDV++
+		lastValue = &data
 	}
 	return nil
 }
@@ -169,6 +171,7 @@ func buildHist(sc *stmtctx.StatementContext, hg *Histogram, samples []*SampleIte
 		}
 	}()
 	var upper = new(types.Datum)
+	var lastValue = new(types.Datum)
 	for i := int64(1); i < sampleNum; i++ {
 		corrXYSum += float64(i) * float64(samples[i].Ordinal)
 		hg.UpperToDatum(bucketIdx, upper)
@@ -193,7 +196,7 @@ func buildHist(sc *stmtctx.StatementContext, hg *Histogram, samples []*SampleIte
 			} else {
 				hg.Buckets[bucketIdx].Repeat += int64(sampleFactor)
 			}
-		} else if totalCount-float64(lastCount) <= valuesPerBucket {
+		} else if totalCount-float64(lastCount) <= valuesPerBucket || isConsecutive(*lastValue, samples[i].Value) {
 			// The bucket still have room to store a new item, update the bucket.
 			hg.updateLastBucket(&samples[i].Value, int64(totalCount), int64(ndvFactor), false)
 		} else {
@@ -202,8 +205,24 @@ func buildHist(sc *stmtctx.StatementContext, hg *Histogram, samples []*SampleIte
 			bucketIdx++
 			hg.AppendBucket(&samples[i].Value, &samples[i].Value, int64(totalCount), int64(ndvFactor))
 		}
+		lastValue = &samples[i].Value
 	}
 	return corrXYSum, nil
+}
+
+func isConsecutive(prev, this types.Datum) bool {
+	if prev.Kind() != this.Kind() { // kind is type
+		return false
+	}
+	switch prev.Kind() {
+	// Only cover int currently, since integers are the most likely datatype to have consecutive values
+	case types.KindInt64:
+		return this.GetInt64() <= prev.GetInt64()+1
+	case types.KindUint64:
+		return this.GetUint64() <= prev.GetUint64()+1
+	default:
+		return false // unsupported
+	}
 }
 
 // calcCorrelation computes column order correlation with the handle.
