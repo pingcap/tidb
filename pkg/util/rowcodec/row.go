@@ -16,6 +16,8 @@ package rowcodec
 
 import (
 	"encoding/binary"
+	"github.com/pingcap/tidb/pkg/util/logutil"
+	"go.uber.org/zap"
 )
 
 const (
@@ -165,6 +167,8 @@ func (r *row) fromBytes(rowData []byte) error {
 			cursor += 4
 			r.checksum2 = binary.LittleEndian.Uint32(rowData[cursor:])
 		}
+		logutil.BgLogger().Info("checksum found",
+			zap.Int("version", checksumVersion), zap.Uint32("checksum", r.checksum1), zap.Uint32("extraChecksum", r.checksum2))
 	} else {
 		r.checksumHeader = 0
 		r.checksum1 = 0
