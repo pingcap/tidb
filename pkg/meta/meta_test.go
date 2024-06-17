@@ -710,18 +710,18 @@ func TestName(t *testing.T) {
 	err = m.CheckTableNameNotExists(m.TableNameKey("db1", "t"))
 	require.NoError(t, err)
 
-	// TestDDLV2Initialized
-	v, err := m.GetDDLV2Initialized()
+	// TestFastCreateTableInitialized
+	v, err := m.GetFastCreateTableInitialized()
 	require.NoError(t, err)
 	require.Equal(t, v, false)
-	err = m.SetDDLV2Initialized(true)
+	err = m.SetFastCreateTableInitialized(true)
 	require.NoError(t, err)
-	v, err = m.GetDDLV2Initialized()
+	v, err = m.GetFastCreateTableInitialized()
 	require.NoError(t, err)
 	require.Equal(t, v, true)
-	err = m.SetDDLV2Initialized(false)
+	err = m.SetFastCreateTableInitialized(false)
 	require.NoError(t, err)
-	v, err = m.GetDDLV2Initialized()
+	v, err = m.GetFastCreateTableInitialized()
 	require.NoError(t, err)
 	require.Equal(t, v, false)
 
