@@ -381,6 +381,19 @@ func TestDropSingleBindings(t *testing.T) {
 	tk.MustExec("drop table t")
 }
 
+func TestIssue53834(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table t (a varchar(1024))`)
+	tk.MustExec(`insert into t values (space(1024))`)
+	for i := 0; i < 12; i++ {
+		tk.MustExec(`insert into t select * from t`)
+	}
+	tk.MustExec(`create binding using replace /*+ memory_quota(1 mb) */ into t select * from t`)
+	tk.MustExec(`replace into t select * from t`)
+}
+
 func TestPreparedStmt(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)

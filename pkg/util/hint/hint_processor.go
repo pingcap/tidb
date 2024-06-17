@@ -68,6 +68,8 @@ func setTableHints4StmtNode(node ast.Node, hints []*ast.TableOptimizerHint) {
 		x.TableHints = hints
 	case *ast.DeleteStmt:
 		x.TableHints = hints
+	case *ast.InsertStmt:
+		x.TableHints = hints
 	}
 }
 
@@ -203,7 +205,7 @@ type hintProcessor struct {
 
 func (hp *hintProcessor) Enter(in ast.Node) (ast.Node, bool) {
 	switch v := in.(type) {
-	case *ast.SelectStmt, *ast.UpdateStmt, *ast.DeleteStmt:
+	case *ast.SelectStmt, *ast.UpdateStmt, *ast.DeleteStmt, *ast.InsertStmt:
 		if hp.bindHint2Ast {
 			if hp.tableCounter < len(hp.tableHints) {
 				setTableHints4StmtNode(in, hp.tableHints[hp.tableCounter])
