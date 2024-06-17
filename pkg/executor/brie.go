@@ -256,29 +256,33 @@ func (bq *brieQueue) releaseTask() {
 	<-bq.workerCh
 }
 
-func (bq *brieQueue) cancelTask(taskID uint64) bool {
+func (bq *brieQueue) cleanTask(taskID uint64) bool {
 	item, ok := bq.tasks.Load(taskID)
 	if !ok {
 		return false
 	}
 	i := item.(*brieQueueItem)
 
-	if i.info.message == "" && strings.HasSuffix(i.progress.cmd,"canceled" ) {
-		i.progress.cmd = i.progress.cmd[:len(i.progress.cmd)-len("canceled")]
+	// FIXME: this is a hack way
+	i.progress.lock.Lock()
+	log.Info("BRIE job cleaning", zap.Uint64("id",i.info.id), zap.String("message", i.info.message),zap.String("cmd", i.progress.cmd))
+	if i.info.message == "" && strings.HasSuffix(i.progress.cmd,"Canceled" ) {
+		i.progress.cmd = i.progress.cmd[:len(i.progress.cmd)-len("Canceled")]
 	}
+	i.progress.lock.Unlock()
 	updateMetaTable(context.Background(), i.progress.executor, i.info.id, map[string]any{
 		"finishTime":  i.info.finishTime.String(),
-		"message":     i.info.message,
+		"message":     messageOrNULL(i.info.message),
 		"backupTS":    i.info.backupTS,
 		"restoreTS":   i.info.restoreTS,
 		"archiveSize": i.info.archiveSize,
 	})
 
-	log.Debug("Canceling BRIE job", zap.Uint64("ID", i.info.id),zap.String("message", i.info.message))
+	log.Debug("Cleaning BRIE job", zap.Uint64("ID", i.info.id),zap.String("message", i.info.message))
 	i.cancel()
 	i.progress.Close()
 	i.progress.executor = nil
-	log.Info("BRIE job canceled.", zap.Uint64("ID", i.info.id))
+	log.Info("BRIE job ended.", zap.Uint64("ID", i.info.id))
 	return true
 }
 
@@ -573,7 +577,7 @@ type cancelJobExec struct {
 
 func (s cancelJobExec) Next(_ context.Context, req *chunk.Chunk) error {
 	req.Reset()
-	if !globalBRIEQueue.cancelTask(s.targetID) {
+	if !globalBRIEQueue.cleanTask(s.targetID) {
 		s.Ctx().GetSessionVars().StmtCtx.AppendWarning(exeerrors.ErrLoadDataJobNotFound.FastGenByArgs(s.targetID))
 	}
 	return nil
@@ -655,7 +659,7 @@ func (e *BRIEExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		log.Error("Failed to register BRIE task", zap.Error(err))
 		return err
 	}
-	defer bq.cancelTask(taskID)
+	defer bq.cleanTask(taskID)
 	failpoint.Inject("block-on-brie", func() {
 		log.Warn("You shall not pass, nya. :3")
 		<-taskCtx.Done()
@@ -671,7 +675,7 @@ func (e *BRIEExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			select {
 			case <-ticker.C:
 				if e.Ctx().GetSessionVars().SQLKiller.HandleSignal() == exeerrors.ErrQueryInterrupted {
-					bq.cancelTask(taskID)
+					bq.cleanTask(taskID)
 					return
 				}
 			case <-taskCtx.Done():
@@ -701,12 +705,9 @@ func (e *BRIEExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	default:
 		err = errors.Errorf("unsupported BRIE statement kind: %s", e.info.kind)
 	}
-	if err != nil {
-		e.info.message = err.Error() //will be used below
-	}
 	e.info.finishTime = types.CurrentTime(mysql.TypeDatetime)
-	//err exit delay to here to ensure the finishTime is updated
 	if err != nil {
+		e.info.message = err.Error() 
 		return err
 	}
 

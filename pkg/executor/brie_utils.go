@@ -202,8 +202,8 @@ func addTaskToMetaTable(ctx context.Context, info *brieTaskInfo, e *exec.BaseExe
 	// Construct the SQL statement with escaped strings
 	insertStmt := fmt.Sprintf(`
     INSERT INTO mysql.tidb_br_jobs (
-         query, queueTime, kind, storage, connID, state, progress, message
-    ) VALUES ('%s', '%s', '%s', %s, %d, '%s', %d, %s);
+         query, queueTime, kind, storage, connID, state, progress
+    ) VALUES ('%s', '%s', '%s', %s, %d, '%s', %d);
     `, escapedQuery,
 		info.queueTime,
 		info.kind,
@@ -211,9 +211,8 @@ func addTaskToMetaTable(ctx context.Context, info *brieTaskInfo, e *exec.BaseExe
 		info.connID,
 		"Wait",
 		0,
-		"''",
 	)
-	log.Info("addTaskToMetaTable", zap.String("query", insertStmt))
+	log.Debug("addTaskToMetaTable", zap.String("query", insertStmt))
 
 	stmtCtx := util.WithInternalSourceType(ctx, kv.InternalTxnBR)
 	_, err := e.Ctx().GetSQLExecutor().ExecuteInternal(stmtCtx, insertStmt)
@@ -240,6 +239,13 @@ func addTaskToMetaTable(ctx context.Context, info *brieTaskInfo, e *exec.BaseExe
 	return rows[0].GetUint64(0), nil
 }
 
+func messageOrNULL(msg string) string {
+	if msg == "" {
+		return "NULL"
+	}
+	return msg
+}
+
 func updateMetaTable(ctx context.Context, e *exec.BaseExecutor, id uint64, updates map[string]any) {
 	// Construct the SET clause dynamically based on the updates map
 	setClauses := make([]string, 0, len(updates))
@@ -258,14 +264,5 @@ func updateMetaTable(ctx context.Context, e *exec.BaseExecutor, id uint64, updat
 	_, err := e.Ctx().GetSQLExecutor().ExecuteInternal(stmtCtx, query, args...)
 	if err != nil {
 		log.Error("Failed to update BRIE task into tidb_br_jobs", zap.Error(err), zap.String("query", query))
-	}
-}
-
-// FIXME: We use this function becasue we don't have a straightforward way to check if the task is truely canceled.
-func eraseCancelFlag(ctx context.Context, e *exec.BaseExecutor, id uint64, state string) {
-	stmtCtx := util.WithInternalSourceType(ctx, kv.InternalTxnBR)
-	_, err := e.Ctx().GetSQLExecutor().ExecuteInternal(stmtCtx, "UPDATE mysql.tidb_br_jobs SET state = %? WHERE id = %?", state, id)
-	if err != nil {
-		log.Error("Failed to correct state from tidb_br_jobs", zap.Error(err))
 	}
 }

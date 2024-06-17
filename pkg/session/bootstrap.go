@@ -703,10 +703,11 @@ const (
 		progress    INT,
 		finishTime  TIMESTAMP NULL,         
 		connID      BIGINT UNSIGNED,
-		backupTS    BIGINT UNSIGNED NULL,
-		restoreTS   BIGINT UNSIGNED NULL,
-		archiveSize BIGINT UNSIGNED NULL,
-		message     TEXT
+		backupTS    BIGINT UNSIGNED DEFAULT 0,
+		restoreTS   BIGINT UNSIGNED DEFAULT 0,
+		archiveSize BIGINT UNSIGNED DEFAULT 0,
+		message     TEXT DEFAULT NULL,
+		lastUpdate  TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 	);`
 
 	// DropMySQLIndexUsageTable removes the table `mysql.schema_index_usage`
