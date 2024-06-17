@@ -694,6 +694,7 @@ const (
 	//CreateBrJobs is a table that BR uses.
 	CreateBrJobs = `CREATE TABLE IF NOT EXISTS mysql.tidb_br_jobs (
 		id          BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
+		connID      BIGINT UNSIGNED,
 		queueTime   TIMESTAMP,  
 		kind        ENUM('BACKUP', 'RESTORE'), 
 		query       VARCHAR(255),
@@ -702,7 +703,6 @@ const (
 		state       VARCHAR(255), 
 		progress    INT,
 		finishTime  TIMESTAMP NULL,         
-		connID      BIGINT UNSIGNED,
 		backupTS    BIGINT UNSIGNED DEFAULT 0,
 		restoreTS   BIGINT UNSIGNED DEFAULT 0,
 		archiveSize BIGINT UNSIGNED DEFAULT 0,
