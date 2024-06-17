@@ -15,9 +15,13 @@
 package statisticstest
 
 import (
+	"context"
 	"fmt"
 	"testing"
+	"time"
 
+	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/stretchr/testify/require"
@@ -231,4 +235,67 @@ func checkFMSketch(tk *testkit.TestKit) {
 	tk.MustExec("select * from employees;")
 	tk.MustQuery(`SHOW STATS_HISTOGRAMS WHERE TABLE_NAME='employees' and partition_name="global"  and column_name="id"`).CheckAt([]int{6}, [][]any{
 		{"14"}})
+}
+
+func TestNoNeedIndexStatsLoading(t *testing.T) {
+	store, dom := realtikvtest.CreateMockStoreAndDomainAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("create table t(a int, b int, index ia(a));")
+	tk.MustExec("drop stats t;")
+	tk.MustExec("insert into t value(1,1), (2,2);")
+	require.Eventually(t, func() bool {
+		rows := tk.MustQuery("show stats_meta").Rows()
+		return len(rows) > 0
+	}, 2*time.Minute, 30*time.Millisecond)
+	tk.MustExec("set tidb_opt_objective='determinate';")
+	tk.MustQuery("select * from t where a = 1 and b = 1;").Check(testkit.Rows("1 1"))
+	table, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	checkTableIDInItems(t, table.Meta().ID)
+}
+
+func checkTableIDInItems(t *testing.T, tableID int64) {
+	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Minute)
+	defer cancel()
+
+	ticker := time.NewTicker(1 * time.Second)
+	defer ticker.Stop()
+
+	done := make(chan bool)
+
+	// First, confirm that the table ID is in the items.
+	items := statistics.HistogramNeededItems.AllItems()
+	for _, item := range items {
+		if item.TableID == tableID {
+			// Then, continuously check until it no longer exists or timeout.
+			go func() {
+				for {
+					select {
+					case <-ticker.C:
+						items := statistics.HistogramNeededItems.AllItems()
+						found := false
+						for _, item := range items {
+							if item.TableID == tableID {
+								found = true
+							}
+						}
+						if !found {
+							done <- true
+						}
+					case <-ctx.Done():
+						return
+					}
+				}
+			}()
+			break
+		}
+	}
+
+	select {
+	case <-done:
+		t.Log("Table ID has been removed from items")
+	case <-ctx.Done():
+		t.Fatal("Timeout: Table ID was not removed from items within the time limit")
+	}
 }
