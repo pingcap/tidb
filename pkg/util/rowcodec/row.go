@@ -158,6 +158,7 @@ func (r *row) fromBytes(rowData []byte) error {
 	if r.hasChecksum() {
 		r.checksumHeader = rowData[cursor]
 		checksumVersion := r.ChecksumVersion()
+		// make sure it can be read previous version checksum to support backward compatibility.
 		if checksumVersion != 0 && checksumVersion != 1 {
 			return errInvalidChecksumVer
 		}
