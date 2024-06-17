@@ -2780,8 +2780,9 @@ var defaultSysVars = []*SysVar{
 		return BoolToOnOff(EnableResourceControl.Load()), nil
 	}},
 	{Scope: ScopeGlobal, Name: TiDBResourceControlStrictMode, Value: BoolToOnOff(DefTiDBResourceControlStrictMode), Type: TypeBool, SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
-		if TiDBOptOn(s) != EnableResourceControl.Load() {
-			EnableResourceControlStrictMode.Store(TiDBOptOn(s))
+		opOn := TiDBOptOn(s)
+		if opOn != EnableResourceControlStrictMode.Load() {
+			EnableResourceControlStrictMode.Store(opOn)
 			logutil.BgLogger().Info("change resource control strict mode", zap.Bool("enable", TiDBOptOn(s)))
 		}
 		return nil
