@@ -211,7 +211,7 @@ func addTaskToMetaTable(ctx context.Context, info *brieTaskInfo, e *exec.BaseExe
 		info.connID,
 		"Wait",
 		0,
-		"",
+		"''",
 	)
 	log.Info("addTaskToMetaTable", zap.String("query", insertStmt))
 
