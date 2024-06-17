@@ -31,10 +31,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-<<<<<<< HEAD:pkg/server/tests/tidb_test.go
-=======
-	"runtime"
->>>>>>> 72d22d60fca (privilege: fix `auth_socket` bug, should only allow os user name to login (#54032)):pkg/server/tests/commontest/tidb_test.go
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -3148,13 +3144,6 @@ func TestConnectionCount(t *testing.T) {
 	ts := servertestkit.CreateTidbTestSuite(t)
 	ts.RunTestConnectionCount(t)
 }
-<<<<<<< HEAD:pkg/server/tests/tidb_test.go
-=======
-
-func TestTypeAndCharsetOfSendLongData(t *testing.T) {
-	ts := servertestkit.CreateTidbTestSuite(t)
-	ts.RunTestTypeAndCharsetOfSendLongData(t)
-}
 
 func TestAuthSocket(t *testing.T) {
 	defer server2.ClearOSUserForAuthSocket()
@@ -3224,4 +3213,3 @@ func TestAuthSocket(t *testing.T) {
 		ts.CheckRows(t, rows, "u2@%")
 	})
 }
->>>>>>> 72d22d60fca (privilege: fix `auth_socket` bug, should only allow os user name to login (#54032)):pkg/server/tests/commontest/tidb_test.go
