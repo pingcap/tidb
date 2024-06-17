@@ -751,7 +751,7 @@ func parseParamTypes(sctx sessionctx.Context, params []expression.Expression) (p
 	return
 }
 
-// PickPlanFromBucket pick one plan from bucket
+// matchCachedPlan checks whether this plan is matched with these match-options.
 func matchCachedPlan(sctx sessionctx.Context, value *PlanCacheValue, matchOpts *utilpc.PlanCacheMatchOpts) bool {
 	if matchOpts == nil { // if PointGet, the matchOpts is nil
 		return true
