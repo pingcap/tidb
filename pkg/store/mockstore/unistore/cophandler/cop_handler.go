@@ -336,7 +336,8 @@ func buildDAG(reader *dbreader.DBReader, lockStore *lockstore.MemStore, req *cop
 	case "System":
 		tz = time.Local
 	default:
-		tz, ok := globalLocationMap.getLocation(dagReq.TimeZoneName)
+		var ok bool
+		tz, ok = globalLocationMap.getLocation(dagReq.TimeZoneName)
 		if !ok {
 			tz, err = time.LoadLocation(dagReq.TimeZoneName)
 			if err != nil {
