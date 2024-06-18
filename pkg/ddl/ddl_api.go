@@ -665,7 +665,7 @@ func (d *ddl) DropSchema(ctx sessionctx.Context, stmt *ast.DropDatabaseStmt) (er
 			Database: old.Name.L,
 			Table:    model.InvolvingAll,
 		}},
-		SQLMode:        ctx.GetSessionVars().SQLMode,
+		SQLMode: ctx.GetSessionVars().SQLMode,
 	}
 
 	err = d.DoDDLJob(ctx, job)
