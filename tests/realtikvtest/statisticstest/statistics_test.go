@@ -242,13 +242,20 @@ func TestNoNeedIndexStatsLoading(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists t;")
+	// 1. Create a table and the statsHandle.Update(do.InfoSchema()) will load this table into the stats cache.
 	tk.MustExec("create table if not exists t(a int, b int, index ia(a));")
+	// 2. Drop the stats of the stats, it will clean up all system table records for this table.
 	tk.MustExec("drop stats t;")
+	// 3. Insert some data and wait for the modify_count and the count is not null in the mysql.stats_meta.
 	tk.MustExec("insert into t value(1,1), (2,2);")
+	h := dom.StatsHandle()
+	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	require.Eventually(t, func() bool {
 		rows := tk.MustQuery("show stats_meta").Rows()
 		return len(rows) > 0
-	}, 2*time.Minute, 5*time.Millisecond)
+	}, 1*time.Minute, 2*time.Millisecond)
+	require.NoError(t, h.Update(dom.InfoSchema()))
+	// 4. Try to select some data from this table by ID, it would trigger an async load.
 	tk.MustExec("set tidb_opt_objective='determinate';")
 	tk.MustQuery("select * from t where a = 1 and b = 1;").Check(testkit.Rows("1 1"))
 	table, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
@@ -260,7 +267,7 @@ func checkTableIDInItems(t *testing.T, tableID int64) {
 	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Minute)
 	defer cancel()
 
-	ticker := time.NewTicker(1 * time.Second)
+	ticker := time.NewTicker(2 * time.Millisecond)
 	defer ticker.Stop()
 
 	done := make(chan bool)
