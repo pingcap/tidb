@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/kvcache"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
-	utilpc "github.com/pingcap/tidb/pkg/util/plancache"
 	"github.com/pingcap/tidb/pkg/util/syncutil"
 )
 
@@ -80,7 +79,7 @@ func NewLRUPlanCache(capacity uint, guard float64, quota uint64, sctx sessionctx
 }
 
 // Get tries to find the corresponding value according to the given key.
-func (l *LRUPlanCache) Get(key string, opts *utilpc.PlanCacheMatchOpts) (value any, ok bool) {
+func (l *LRUPlanCache) Get(key string, opts any) (value any, ok bool) {
 	l.lock.RLock()
 	defer l.lock.RUnlock()
 
@@ -95,7 +94,7 @@ func (l *LRUPlanCache) Get(key string, opts *utilpc.PlanCacheMatchOpts) (value a
 }
 
 // Put puts the (key, value) pair into the LRU Cache.
-func (l *LRUPlanCache) Put(key string, value any, opts *utilpc.PlanCacheMatchOpts) {
+func (l *LRUPlanCache) Put(key string, value, opts any) {
 	l.lock.Lock()
 	defer l.lock.Unlock()
 
@@ -240,7 +239,7 @@ func (l *LRUPlanCache) memoryControl() {
 }
 
 // PickPlanFromBucket pick one plan from bucket
-func (l *LRUPlanCache) pickFromBucket(bucket map[*list.Element]struct{}, matchOpts *utilpc.PlanCacheMatchOpts) (*list.Element, bool) {
+func (l *LRUPlanCache) pickFromBucket(bucket map[*list.Element]struct{}, matchOpts *PlanCacheMatchOpts) (*list.Element, bool) {
 	for k := range bucket {
 		if matchOpts == nil { // for PointGet Plan
 			return k, true

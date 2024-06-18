@@ -35,7 +35,6 @@ import (
 	tbctx "github.com/pingcap/tidb/pkg/table/context"
 	"github.com/pingcap/tidb/pkg/util"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
-	utilpc "github.com/pingcap/tidb/pkg/util/plancache"
 	rangerctx "github.com/pingcap/tidb/pkg/util/ranger/context"
 	"github.com/pingcap/tidb/pkg/util/sli"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
@@ -54,8 +53,8 @@ type SessionStatesHandler interface {
 
 // PlanCache is an interface for prepare and non-prepared plan cache
 type PlanCache interface {
-	Get(key string, opts *utilpc.PlanCacheMatchOpts) (value any, ok bool)
-	Put(key string, value any, opts *utilpc.PlanCacheMatchOpts)
+	Get(key string, opts any) (value any, ok bool)
+	Put(key string, value, opts any)
 	Delete(key string)
 	DeleteAll()
 	Size() int

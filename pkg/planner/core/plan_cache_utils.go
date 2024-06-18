@@ -47,7 +47,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	utilpc "github.com/pingcap/tidb/pkg/util/plancache"
 	"github.com/pingcap/tidb/pkg/util/size"
 	atomic2 "go.uber.org/atomic"
 	"go.uber.org/zap"
@@ -382,7 +381,7 @@ type PlanCacheValue struct {
 	memoryUsage       int64
 
 	// matchOpts stores some fields help to choose a suitable plan
-	matchOpts *utilpc.PlanCacheMatchOpts
+	matchOpts *PlanCacheMatchOpts
 	// stmtHints stores the hints which set session variables, because the hints won't be processed using cached plan.
 	stmtHints *hint.StmtHints
 }
@@ -431,7 +430,7 @@ func (v *PlanCacheValue) MemoryUsage() (sum int64) {
 
 // NewPlanCacheValue creates a SQLCacheValue.
 func NewPlanCacheValue(plan base.Plan, names []*types.FieldName, srcMap map[*model.TableInfo]bool,
-	matchOpts *utilpc.PlanCacheMatchOpts, stmtHints *hint.StmtHints) *PlanCacheValue {
+	matchOpts *PlanCacheMatchOpts, stmtHints *hint.StmtHints) *PlanCacheValue {
 	dstMap := make(map[*model.TableInfo]bool)
 	for k, v := range srcMap {
 		dstMap[k] = v
@@ -447,6 +446,23 @@ func NewPlanCacheValue(plan base.Plan, names []*types.FieldName, srcMap map[*mod
 		matchOpts:         matchOpts,
 		stmtHints:         stmtHints.Clone(),
 	}
+}
+
+// PlanCacheMatchOpts store some property used to fetch plan from plan cache
+// The structure set here is to avoid import cycle
+type PlanCacheMatchOpts struct {
+	// paramTypes stores all parameters' FieldType, some different parameters may share same plan
+	ParamTypes []*types.FieldType
+	// limitOffsetAndCount stores all the offset and key parameters extract from limit statement
+	// only used for cache and pick plan with parameters in limit
+	LimitOffsetAndCount []uint64
+	// HasSubQuery indicate whether this query has sub query
+	HasSubQuery bool
+	// StatsVersionHash is the hash value of the statistics version
+	StatsVersionHash uint64
+
+	// Below are some variables that can affect the plan
+	ForeignKeyChecks bool
 }
 
 // PlanCacheQueryFeatures records all query features which may affect plan selection.
@@ -549,7 +565,7 @@ func GetPreparedStmt(stmt *ast.ExecuteStmt, vars *variable.SessionVars) (*PlanCa
 
 // GetMatchOpts get options to fetch plan or generate new plan
 // we can add more options here
-func GetMatchOpts(sctx sessionctx.Context, is infoschema.InfoSchema, stmt *PlanCacheStmt, params []expression.Expression) *utilpc.PlanCacheMatchOpts {
+func GetMatchOpts(sctx sessionctx.Context, is infoschema.InfoSchema, stmt *PlanCacheStmt, params []expression.Expression) *PlanCacheMatchOpts {
 	var statsVerHash uint64
 	var limitOffsetAndCount []uint64
 
@@ -590,7 +606,7 @@ func GetMatchOpts(sctx sessionctx.Context, is infoschema.InfoSchema, stmt *PlanC
 		}
 	}
 
-	return &utilpc.PlanCacheMatchOpts{
+	return &PlanCacheMatchOpts{
 		LimitOffsetAndCount: limitOffsetAndCount,
 		HasSubQuery:         stmt.QueryFeatures.hasSubquery,
 		StatsVersionHash:    statsVerHash,
