@@ -646,11 +646,11 @@ func SubTestHistogramProtoConversion() func(*testing.T) {
 }
 
 func TestPruneTopN(t *testing.T) {
-	var topnIn, topnOut []TopNMeta
+	var topnIn, topnOut []*TopNMeta
 	var totalNDV, nullCnt, sampleRows, totalRows int64
 
 	// case 1
-	topnIn = []TopNMeta{{[]byte{1}, 100_000}, {[]byte{2}, 10}}
+	topnIn = []*TopNMeta{NewTopNMeta([]byte{1}, 100_000), NewTopNMeta([]byte{2}, 10)}
 	totalNDV = 2
 	nullCnt = 0
 	sampleRows = 100_010
@@ -659,7 +659,7 @@ func TestPruneTopN(t *testing.T) {
 	require.Equal(t, topnIn, topnOut)
 
 	// case 2
-	topnIn = []TopNMeta{
+	topnIn = []*TopNMeta{
 		{[]byte{1}, 30_000},
 		{[]byte{2}, 30_000},
 		{[]byte{3}, 20_000},
@@ -675,7 +675,7 @@ func TestPruneTopN(t *testing.T) {
 	// case 3
 	topnIn = nil
 	for i := 0; i < 100; i++ {
-		topnIn = append(topnIn, TopNMeta{[]byte{byte(i)}, 1_000})
+		topnIn = append(topnIn, NewTopNMeta([]byte{byte(i)}, 1_000))
 	}
 	totalNDV = 100
 	nullCnt = 0

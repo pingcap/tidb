@@ -185,8 +185,8 @@ type analyzeIndexProcessor struct {
 
 	statsVer         int32
 	topNCount        int32
-	topNValuePairs   []statistics.TopNMeta
-	topNCurValuePair statistics.TopNMeta
+	topNValuePairs   []*statistics.TopNMeta
+	topNCurValuePair *statistics.TopNMeta
 }
 
 func (p *analyzeIndexProcessor) Process(key, _ []byte) error {
@@ -611,8 +611,8 @@ type analyzeMixedExec struct {
 
 	statsVer         int32
 	topNCount        int32
-	topNValuePairs   []statistics.TopNMeta
-	topNCurValuePair statistics.TopNMeta
+	topNValuePairs   []*statistics.TopNMeta
+	topNCurValuePair *statistics.TopNMeta
 }
 
 func (e *analyzeMixedExec) Process(key, value []byte) error {

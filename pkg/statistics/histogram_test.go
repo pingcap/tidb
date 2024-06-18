@@ -451,14 +451,11 @@ func TestMergePartitionLevelHist(t *testing.T) {
 		}
 		ctx := mock.NewContext()
 		sc := ctx.GetSessionVars().StmtCtx
-		poped := make([]TopNMeta, 0, len(tt.popedTopN))
+		poped := make([]*TopNMeta, 0, len(tt.popedTopN))
 		for _, top := range tt.popedTopN {
 			b, err := codec.EncodeKey(sc.TimeZone(), nil, types.NewIntDatum(top.data))
 			require.NoError(t, err)
-			tmp := TopNMeta{
-				Encoded: b,
-				Count:   uint64(top.count),
-			}
+			tmp := NewTopNMeta(b, uint64(top.count))
 			poped = append(poped, tmp)
 		}
 		globalHist, err := MergePartitionHist2GlobalHist(sc, hists, poped, tt.expBucketNumber, true)
@@ -723,11 +720,8 @@ func TestVerifyHistsBinarySearchRemoveValAndRemoveVals(t *testing.T) {
 	sc := ctx.GetSessionVars().StmtCtx
 	b, err := codec.EncodeKey(sc.TimeZone(), nil, types.NewIntDatum(150))
 	require.NoError(t, err)
-	tmp := TopNMeta{
-		Encoded: b,
-		Count:   2,
-	}
-	data1.RemoveVals([]TopNMeta{tmp})
+	tmp := NewTopNMeta(b, 2)
+	data1.RemoveVals([]*TopNMeta{tmp})
 	data2.BinarySearchRemoveVal(tmp)
 	require.Equal(t, data1, data2)
 }

@@ -80,13 +80,10 @@ func benchmarkMergePartitionHist2GlobalHist(b *testing.B, partition int) {
 		hist := genHist4Bench(b, buckets, histogramLen)
 		hists = append(hists, hist)
 	}
-	poped := make([]TopNMeta, 0, popedTopNLen)
+	poped := make([]*TopNMeta, 0, popedTopNLen)
 	for n := 0; n < popedTopNLen; n++ {
 		b, _ := codec.EncodeKey(sc.TimeZone(), nil, types.NewIntDatum(rand.Int63n(10000)))
-		tmp := TopNMeta{
-			Encoded: b,
-			Count:   uint64(rand.Int63n(10000)),
-		}
+		tmp := NewTopNMeta(b, uint64(rand.Int63n(10000)))
 		poped = append(poped, tmp)
 	}
 	b.StartTimer()
