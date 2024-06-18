@@ -51,6 +51,11 @@ func IsHashJoinV2Enabled() bool {
 	return enableHashJoinV2.Load() && sizeOfUintptr >= sizeOfUnsafePointer
 }
 
+// SetEnableHashJoinV2 enable/disable hash join v2
+func SetEnableHashJoinV2(enable bool) {
+	enableHashJoinV2.Store(enable)
+}
+
 type hashTableContext struct {
 	// rowTables is used during split partition stage, each buildWorker has
 	// its own rowTable
