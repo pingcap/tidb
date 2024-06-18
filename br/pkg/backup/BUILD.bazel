@@ -26,6 +26,7 @@ go_library(
         "//br/pkg/summary",
         "//br/pkg/utils",
         "//br/pkg/version",
+<<<<<<< HEAD
         "//pkg/ddl",
         "//pkg/distsql",
         "//pkg/kv",
@@ -37,6 +38,20 @@ go_library(
         "//pkg/util/codec",
         "//pkg/util/ranger",
         "//pkg/util/table-filter",
+=======
+        "//ddl",
+        "//distsql",
+        "//kv",
+        "//meta",
+        "//meta/autoid",
+        "//parser/model",
+        "//statistics/handle",
+        "//util",
+        "//util/codec",
+        "//util/mathutil",
+        "//util/ranger",
+        "//util/table-filter",
+>>>>>>> 918436672c7 (br: retry more time to get pd leader (#54059))
         "@com_github_google_btree//:btree",
         "@com_github_opentracing_opentracing_go//:opentracing-go",
         "@com_github_pingcap_errors//:errors",
