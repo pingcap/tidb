@@ -2829,16 +2829,31 @@ func (d *ddl) createTableWithInfoJob(
 		args = append(args, ctx.GetSessionVars().ForeignKeyChecks)
 	}
 
+	involvingSchemaInfo := make([]model.InvolvingSchemaInfo, 0, len(tbInfo.ForeignKeys)+1)
+	if ctx.GetSessionVars().ForeignKeyChecks && len(tbInfo.ForeignKeys) > 0 {
+		involvingSchemaInfo = append(involvingSchemaInfo, model.InvolvingSchemaInfo{
+			Database: schema.Name.L,
+			Table:    tbInfo.Name.L,
+		})
+		for _, fk := range tbInfo.ForeignKeys {
+			involvingSchemaInfo = append(involvingSchemaInfo, model.InvolvingSchemaInfo{
+				Database: fk.RefSchema.L,
+				Table:    fk.RefTable.L,
+			})
+		}
+	}
+
 	job = &model.Job{
-		SchemaID:       schema.ID,
-		TableID:        tbInfo.ID,
-		SchemaName:     schema.Name.L,
-		TableName:      tbInfo.Name.L,
-		Type:           actionType,
-		BinlogInfo:     &model.HistoryInfo{},
-		Args:           args,
-		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
-		SQLMode:        ctx.GetSessionVars().SQLMode,
+		SchemaID:            schema.ID,
+		TableID:             tbInfo.ID,
+		SchemaName:          schema.Name.L,
+		TableName:           tbInfo.Name.L,
+		Type:                actionType,
+		BinlogInfo:          &model.HistoryInfo{},
+		Args:                args,
+		CDCWriteSource:      ctx.GetSessionVars().CDCWriteSource,
+		InvolvingSchemaInfo: involvingSchemaInfo,
+		SQLMode:             ctx.GetSessionVars().SQLMode,
 	}
 	return job, nil
 }
