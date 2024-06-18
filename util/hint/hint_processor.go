@@ -642,3 +642,13 @@ func GenerateQBName(nodeType NodeType, blockOffset int) (model.CIStr, error) {
 	}
 	return model.NewCIStr(fmt.Sprintf("%s%d", defaultSelectBlockPrefix, blockOffset)), nil
 }
+
+// isStmtHint checks whether this hint is a statement-level hint.
+func isStmtHint(h *ast.TableOptimizerHint) bool {
+	switch h.HintName.L {
+	case "max_execution_time", "memory_quota", "resource_group":
+		return true
+	default:
+		return false
+	}
+}
