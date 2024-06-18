@@ -227,7 +227,7 @@ SET GLOBAL tidb_analyze_default_column_choice = 'ALL';
 | Value     | Description                                                    |
 | --------- | -------------------------------------------------------------- |
 | PREDICATE | Use predicate columns in the analyze process.                  |
-| ALL       | Analyze all columns (**But still collect predicate columns.**) |
+| ALL       | Analyze all columns (**But still collect predicate columns**). |
 
 We continue to collect predicate columns even when the feature is disabled. This ensures that we can promptly catch up with the latest predicate columns when the feature is re-enabled.
 
