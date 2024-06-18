@@ -17,13 +17,6 @@ package core
 import (
 	"cmp"
 	"context"
-	"math"
-	"slices"
-	"sort"
-	"strconv"
-	"time"
-	"unsafe"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -50,6 +43,11 @@ import (
 	"github.com/pingcap/tidb/pkg/util/size"
 	atomic2 "go.uber.org/atomic"
 	"go.uber.org/zap"
+	"math"
+	"slices"
+	"sort"
+	"strconv"
+	"time"
 )
 
 const (
@@ -276,57 +274,6 @@ func hashInt64Uint64Map(b []byte, m map[int64]uint64) []byte {
 	return b
 }
 
-// Hash implements Key interface.
-func (key *planCacheKey) Hash() []byte {
-	if len(key.hash) == 0 {
-		if key.hash == nil {
-			key.hash = make([]byte, 0, len(key.stmtText)*2)
-		}
-		key.hash = append(key.hash, hack.Slice(key.database)...)
-		key.hash = codec.EncodeInt(key.hash, int64(key.connID))
-		key.hash = append(key.hash, hack.Slice(key.stmtText)...)
-		key.hash = codec.EncodeInt(key.hash, key.schemaVersion)
-		key.hash = hashInt64Uint64Map(key.hash, key.tblVersionMap)
-		key.hash = codec.EncodeInt(key.hash, key.lastUpdatedSchemaVersion)
-		key.hash = codec.EncodeInt(key.hash, int64(key.sqlMode))
-		key.hash = codec.EncodeInt(key.hash, int64(key.timezoneOffset))
-		if _, ok := key.isolationReadEngines[kv.TiDB]; ok {
-			key.hash = append(key.hash, kv.TiDB.Name()...)
-		}
-		if _, ok := key.isolationReadEngines[kv.TiKV]; ok {
-			key.hash = append(key.hash, kv.TiKV.Name()...)
-		}
-		if _, ok := key.isolationReadEngines[kv.TiFlash]; ok {
-			key.hash = append(key.hash, kv.TiFlash.Name()...)
-		}
-		key.hash = codec.EncodeInt(key.hash, int64(key.selectLimit))
-		key.hash = append(key.hash, hack.Slice(key.bindSQL)...)
-		key.hash = append(key.hash, hack.Slice(key.connCollation)...)
-		key.hash = append(key.hash, hack.Slice(strconv.FormatBool(key.inRestrictedSQL))...)
-		key.hash = append(key.hash, hack.Slice(strconv.FormatBool(key.restrictedReadOnly))...)
-		key.hash = append(key.hash, hack.Slice(strconv.FormatBool(key.TiDBSuperReadOnly))...)
-		key.hash = codec.EncodeInt(key.hash, key.exprBlacklistTS)
-	}
-	return key.hash
-}
-
-const emptyPlanCacheKeySize = int64(unsafe.Sizeof(planCacheKey{}))
-
-// MemoryUsage return the memory usage of planCacheKey
-func (key *planCacheKey) MemoryUsage() (sum int64) {
-	if key == nil {
-		return
-	}
-
-	if key.memoryUsage > 0 {
-		return key.memoryUsage
-	}
-	sum = emptyPlanCacheKeySize + int64(len(key.database)+len(key.stmtText)+len(key.bindSQL)+len(key.connCollation)) +
-		int64(len(key.isolationReadEngines))*size.SizeOfUint8 + int64(cap(key.hash))
-	key.memoryUsage = sum
-	return
-}
-
 // NewPlanCacheKey creates a new planCacheKey object.
 // Note: lastUpdatedSchemaVersion will only be set in the case of rc or for update read in order to
 // differentiate the cache key. In other cases, it will be 0.
@@ -346,31 +293,32 @@ func NewPlanCacheKey(sessionVars *variable.SessionVars, stmtText, stmtDB string,
 	}
 	_, connCollation := sessionVars.GetCharsetInfo()
 
-	key := &planCacheKey{
-		database:                 stmtDB,
-		connID:                   sessionVars.ConnectionID,
-		stmtText:                 stmtText,
-		schemaVersion:            schemaVersion,
-		tblVersionMap:            make(map[int64]uint64),
-		lastUpdatedSchemaVersion: lastUpdatedSchemaVersion,
-		sqlMode:                  sessionVars.SQLMode,
-		timezoneOffset:           timezoneOffset,
-		isolationReadEngines:     make(map[kv.StoreType]struct{}),
-		selectLimit:              sessionVars.SelectLimit,
-		bindSQL:                  bindSQL,
-		connCollation:            connCollation,
-		inRestrictedSQL:          sessionVars.InRestrictedSQL,
-		restrictedReadOnly:       variable.RestrictedReadOnly.Load(),
-		TiDBSuperReadOnly:        variable.VarTiDBSuperReadOnly.Load(),
-		exprBlacklistTS:          exprBlacklistTS,
+	hash := make([]byte, 0, len(stmtText)*2)
+	hash = append(hash, hack.Slice(stmtDB)...)
+	hash = codec.EncodeInt(hash, int64(sessionVars.ConnectionID))
+	hash = append(hash, hack.Slice(stmtText)...)
+	hash = codec.EncodeInt(hash, schemaVersion)
+	hash = hashInt64Uint64Map(hash, relatedSchemaVersion)
+	hash = codec.EncodeInt(hash, lastUpdatedSchemaVersion)
+	hash = codec.EncodeInt(hash, int64(sessionVars.SQLMode))
+	hash = codec.EncodeInt(hash, int64(timezoneOffset))
+	if _, ok := sessionVars.IsolationReadEngines[kv.TiDB]; ok {
+		hash = append(hash, kv.TiDB.Name()...)
 	}
-	for k, v := range sessionVars.IsolationReadEngines {
-		key.isolationReadEngines[k] = v
+	if _, ok := sessionVars.IsolationReadEngines[kv.TiKV]; ok {
+		hash = append(hash, kv.TiKV.Name()...)
 	}
-	for k, v := range relatedSchemaVersion {
-		key.tblVersionMap[k] = v
+	if _, ok := sessionVars.IsolationReadEngines[kv.TiFlash]; ok {
+		hash = append(hash, kv.TiFlash.Name()...)
 	}
-	return string(key.Hash()), nil
+	hash = codec.EncodeInt(hash, int64(sessionVars.SelectLimit))
+	hash = append(hash, hack.Slice(bindSQL)...)
+	hash = append(hash, hack.Slice(connCollation)...)
+	hash = append(hash, hack.Slice(strconv.FormatBool(sessionVars.InRestrictedSQL))...)
+	hash = append(hash, hack.Slice(strconv.FormatBool(variable.RestrictedReadOnly.Load()))...)
+	hash = append(hash, hack.Slice(strconv.FormatBool(variable.VarTiDBSuperReadOnly.Load()))...)
+	hash = codec.EncodeInt(hash, exprBlacklistTS)
+	return string(hash), nil
 }
 
 // PlanCacheValue stores the cached Statement and StmtNode.
