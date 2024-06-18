@@ -4169,7 +4169,7 @@ func (s *session) GetStmtStats() *stmtstats.StatementStats {
 // SetMemoryFootprintChangeHook sets the hook that is called when the memdb changes its size.
 // Call this after s.txn becomes valid, since TxnInfo is initialized when the txn becomes valid.
 func (s *session) SetMemoryFootprintChangeHook() {
-	if s.GetSessionVars().TxnCtx.MemHookAlreadySet {
+	if s.txn.MemHookSet() {
 		return
 	}
 	if config.GetGlobalConfig().Performance.TxnTotalSizeLimit != config.DefTxnTotalSizeLimit {
@@ -4186,7 +4186,6 @@ func (s *session) SetMemoryFootprintChangeHook() {
 		s.sessionVars.MemDBFootprint.ReplaceBytesUsed(int64(mem))
 	}
 	s.txn.SetMemoryFootprintChangeHook(hook)
-	s.GetSessionVars().TxnCtx.MemHookAlreadySet = true
 }
 
 // EncodeSessionStates implements SessionStatesHandler.EncodeSessionStates interface.
