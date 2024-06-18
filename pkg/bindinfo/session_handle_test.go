@@ -16,6 +16,7 @@ package bindinfo_test
 
 import (
 	"context"
+	"fmt"
 	"strconv"
 	"testing"
 	"time"
@@ -379,6 +380,29 @@ func TestDropSingleBindings(t *testing.T) {
 	rows = tk.MustQuery("show global bindings").Rows()
 	require.Len(t, rows, 0)
 	tk.MustExec("drop table t")
+}
+
+func TestIssue53834(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table t (a varchar(1024))`)
+	tk.MustExec(`insert into t values (space(1024))`)
+	for i := 0; i < 12; i++ {
+		tk.MustExec(`insert into t select * from t`)
+	}
+	oomAction := tk.MustQuery(`select @@tidb_mem_oom_action`).Rows()[0][0].(string)
+	defer func() {
+		tk.MustExec(fmt.Sprintf(`set global tidb_mem_oom_action='%v'`, oomAction))
+	}()
+
+	tk.MustExec(`set global tidb_mem_oom_action='cancel'`)
+	err := tk.ExecToErr(`replace into t select /*+ memory_quota(1 mb) */ * from t`)
+	require.ErrorContains(t, err, "cancelled due to exceeding the allowed memory limit")
+
+	tk.MustExec(`create binding using replace into t select /*+ memory_quota(1 mb) */ * from t`)
+	err = tk.ExecToErr(`replace into t select * from t`)
+	require.ErrorContains(t, err, "cancelled due to exceeding the allowed memory limit")
 }
 
 func TestPreparedStmt(t *testing.T) {

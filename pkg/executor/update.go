@@ -124,6 +124,7 @@ func (e *UpdateExec) merge(row, newData []types.Datum, mergeGenerated bool) erro
 	}
 	var mergedData []types.Datum
 	// merge updates from and into mergedRowData
+	var totalMemDelta int64
 	for i, content := range e.tblColPosInfos {
 		if !e.multiUpdateOnSameTable[content.TblID] {
 			// No need to merge if not multi-updated
@@ -165,8 +166,9 @@ func (e *UpdateExec) merge(row, newData []types.Datum, mergeGenerated bool) erro
 
 		memDelta := e.mergedRowData[content.TblID].Set(handle, mergedData)
 		memDelta += types.EstimatedMemUsage(mergedData, 1) + int64(handle.ExtraMemSize())
-		e.memTracker.Consume(memDelta)
+		totalMemDelta += memDelta
 	}
+	e.memTracker.Consume(totalMemDelta)
 	return nil
 }
 
@@ -176,6 +178,10 @@ func (e *UpdateExec) exec(ctx context.Context, _ *expression.Schema, row, newDat
 	for i, flag := range e.assignFlag {
 		bAssignFlag[i] = flag >= 0
 	}
+
+	var totalMemDelta int64
+	defer func() { e.memTracker.Consume(totalMemDelta) }()
+
 	for i, content := range e.tblColPosInfos {
 		if !e.tableUpdatable[i] {
 			// If there's nothing to update, we can just skip current row
@@ -206,7 +212,7 @@ func (e *UpdateExec) exec(ctx context.Context, _ *expression.Schema, row, newDat
 			if !exist {
 				memDelta += int64(handle.ExtraMemSize())
 			}
-			e.memTracker.Consume(memDelta)
+			totalMemDelta += memDelta
 			continue
 		}
 

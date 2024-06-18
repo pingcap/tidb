@@ -294,7 +294,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 				core.DebugTraceTryBinding(pctx, binding.Hint)
 			}
 			hint.BindHint(stmtNode, binding.Hint)
-			curStmtHints, _, curWarns := hint.ParseStmtHints(binding.Hint.GetFirstTableHints(), setVarHintChecker, byte(kv.ReplicaReadFollower))
+			curStmtHints, _, curWarns := hint.ParseStmtHints(binding.Hint.GetStmtHints(), setVarHintChecker, byte(kv.ReplicaReadFollower))
 			sessVars.StmtCtx.StmtHints = curStmtHints
 			// update session var by hint /set_var/
 			for name, val := range sessVars.StmtCtx.StmtHints.SetVars {
