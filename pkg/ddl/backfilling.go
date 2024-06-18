@@ -470,10 +470,10 @@ func getBatchTasks(t table.Table, reorgInfo *reorgInfo, kvRanges []kv.KeyRange,
 		prefix = t.RecordPrefix()
 	}
 	// Build reorg tasks.
-	job := reorgInfo.Job
+	// job := reorgInfo.Job
 	//nolint:forcetypeassert
 	phyTbl := t.(table.PhysicalTable)
-	jobCtx := reorgInfo.NewJobContext()
+	// jobCtx := reorgInfo.NewJobContext()
 	for _, keyRange := range kvRanges {
 		taskID := taskIDAlloc.alloc()
 		startKey := keyRange.StartKey
@@ -484,15 +484,15 @@ func getBatchTasks(t table.Table, reorgInfo *reorgInfo, kvRanges []kv.KeyRange,
 		if len(endKey) == 0 {
 			endKey = prefix.PrefixNext()
 		}
-		endK, err := GetRangeEndKey(jobCtx, reorgInfo.d.store, job.Priority, prefix, startKey, endKey)
-		if err != nil {
-			logutil.DDLLogger().Info("get backfill range task, get reverse key failed", zap.Error(err))
-		} else {
-			logutil.DDLLogger().Info("get backfill range task, change end key",
-				zap.Int("id", taskID), zap.Int64("pTbl", phyTbl.GetPhysicalID()),
-				zap.String("end key", hex.EncodeToString(endKey)), zap.String("current end key", hex.EncodeToString(endK)))
-			endKey = endK
-		}
+		// endK, err := GetRangeEndKey(jobCtx, reorgInfo.d.store, job.Priority, prefix, startKey, endKey)
+		// if err != nil {
+		// 	logutil.DDLLogger().Info("get backfill range task, get reverse key failed", zap.Error(err))
+		// } else {
+		// 	logutil.DDLLogger().Info("get backfill range task, change end key",
+		// 		zap.Int("id", taskID), zap.Int64("pTbl", phyTbl.GetPhysicalID()),
+		// 		zap.String("end key", hex.EncodeToString(endKey)), zap.String("current end key", hex.EncodeToString(endK)))
+		// 	endKey = endK
+		// }
 
 		task := &reorgBackfillTask{
 			id:            taskID,
