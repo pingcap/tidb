@@ -87,7 +87,7 @@ const (
 	batchAddingJobs = 10
 
 	reorgWorkerCnt   = 10
-	generalWorkerCnt = 1
+	generalWorkerCnt = 10
 	localWorkerCnt   = 10
 
 	// checkFlagIndexInJobArgs is the recoverCheckFlag index used in RecoverTable/RecoverSchema job arg list.
@@ -381,6 +381,7 @@ type ddlCtx struct {
 	tableLockCkr    util.DeadTableLockChecker
 	etcdCli         *clientv3.Client
 	autoidCli       *autoid.ClientDiscover
+	schemaLoader    SchemaLoader
 
 	*waitSchemaSyncedController
 	*schemaVersionManager
@@ -741,6 +742,7 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 		tableLockCkr:               deadLockCkr,
 		etcdCli:                    opt.EtcdCli,
 		autoidCli:                  opt.AutoIDClient,
+		schemaLoader:               opt.SchemaLoader,
 		waitSchemaSyncedController: newWaitSchemaSyncedController(),
 	}
 	ddlCtx.reorgCtx.reorgCtxMap = make(map[int64]*reorgCtx)
