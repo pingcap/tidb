@@ -80,6 +80,10 @@ func testRenameTables(t *testing.T, ctx sessionctx.Context, d ddl.DDL, oldSchema
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []any{oldSchemaIDs, newSchemaIDs, newTableNames, oldTableIDs, oldSchemaNames, oldTableNames},
 		CtxVars:    []any{append(oldSchemaIDs, newSchemaIDs...), oldTableIDs},
+		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{
+			{Database: oldSchemaNames[0].L, Table: oldTableNames[0].L},
+			{Database: oldSchemaNames[0].L, Table: newTableNames[0].L},
+		},
 	}
 	ctx.SetValue(sessionctx.QueryString, "skip")
 	require.NoError(t, d.DoDDLJob(ctx, job))
@@ -284,7 +288,9 @@ func TestCreateView(t *testing.T) {
 	require.NoError(t, err)
 	job = &model.Job{
 		SchemaID:   dbInfo.ID,
+		SchemaName: dbInfo.Name.L,
 		TableID:    tblInfo.ID,
+		TableName:  tblInfo.Name.L,
 		Type:       model.ActionCreateView,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []any{newTblInfo0},
@@ -305,7 +311,9 @@ func TestCreateView(t *testing.T) {
 	require.NoError(t, err)
 	job = &model.Job{
 		SchemaID:   dbInfo.ID,
+		SchemaName: dbInfo.Name.L,
 		TableID:    tblInfo.ID,
+		TableName:  tblInfo.Name.L,
 		Type:       model.ActionCreateView,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []any{newTblInfo1, true, newTblInfo0.ID},
@@ -326,7 +334,9 @@ func TestCreateView(t *testing.T) {
 	require.NoError(t, err)
 	job = &model.Job{
 		SchemaID:   dbInfo.ID,
+		SchemaName: dbInfo.Name.L,
 		TableID:    tblInfo.ID,
+		TableName:  tblInfo.Name.L,
 		Type:       model.ActionCreateView,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []any{newTblInfo2, true, newTblInfo0.ID},
@@ -484,6 +494,11 @@ func TestCreateTables(t *testing.T) {
 		Type:       model.ActionCreateTables,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []any{infos},
+		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{
+			{Database: "test_table", Table: "s1"},
+			{Database: "test_table", Table: "s2"},
+			{Database: "test_table", Table: "s3"},
+		},
 	}
 	ctx.SetValue(sessionctx.QueryString, "skip")
 
@@ -540,7 +555,9 @@ func TestAlterTTL(t *testing.T) {
 
 	job = &model.Job{
 		SchemaID:   dbInfo.ID,
+		SchemaName: dbInfo.Name.L,
 		TableID:    tblInfo.ID,
+		TableName:  tblInfo.Name.L,
 		Type:       model.ActionAlterTTLInfo,
 		BinlogInfo: &model.HistoryInfo{},
 		Args: []any{&model.TTLInfo{
@@ -563,7 +580,9 @@ func TestAlterTTL(t *testing.T) {
 	// submit a ddl job to modify ttlEnabled
 	job = &model.Job{
 		SchemaID:   dbInfo.ID,
+		SchemaName: dbInfo.Name.L,
 		TableID:    tblInfo.ID,
+		TableName:  tblInfo.Name.L,
 		Type:       model.ActionAlterTTLRemove,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []any{true},
