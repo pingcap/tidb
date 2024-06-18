@@ -368,9 +368,10 @@ func BuildHistAndTopN(
 		hg.Correlation = calcCorrelation(sampleNum, corrXYSum)
 	}
 
-	// Handle the counting for the last value. Basically equal to the case 2 above.
-	// now topn is empty: append the "current" count directly
+	// Handle the counting for the last value. Basically equal to the case 2 above - including
+	// limiting addition of a value with a count of 1 (since it will be pruned anyway).
 	if numTopN != 0 && (!allowPruning || (allowPruning && (sampleFactor <= 1 || curCnt > 1))) {
+		// now topn is empty: append the "current" count directly
 		if len(topNList) == 0 {
 			topNList = append(topNList, TopNMeta{Encoded: cur, Count: uint64(curCnt)})
 		} else if len(topNList) < numTopN || uint64(curCnt) > topNList[len(topNList)-1].Count {

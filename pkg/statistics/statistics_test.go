@@ -695,4 +695,20 @@ func TestPruneTopN(t *testing.T) {
 	totalRows = 10_000
 	topnOut = pruneTopNItem(topnIn, totalNDV, nullCnt, sampleRows, totalRows)
 	require.Equal(t, topnIn, topnOut)
+
+	// case 5 - test pruning of value=1
+	topnIn = nil
+	for i := 0; i < 10; i++ {
+		topnIn = append(topnIn, TopNMeta{[]byte{byte(i)}, 90})
+	}
+	topnPruned := topnIn
+	for i := 90; i < 150; i++ {
+		topnIn = append(topnIn, TopNMeta{[]byte{byte(i)}, 1})
+	}
+	totalNDV = 150
+	nullCnt = 0
+	sampleRows = 1500
+	totalRows = 1500
+	topnOut = pruneTopNItem(topnIn, totalNDV, nullCnt, sampleRows, totalRows)
+	require.Equal(t, topnPruned, topnOut)
 }
