@@ -271,6 +271,7 @@ func TestSchema(t *testing.T) {
 	// Drop a non-existent database.
 	job = &model.Job{
 		SchemaID:   dbInfo.ID,
+		SchemaName: "test_schema",
 		Type:       model.ActionDropSchema,
 		BinlogInfo: &model.HistoryInfo{},
 	}
