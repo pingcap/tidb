@@ -188,6 +188,39 @@ func referredFKInfoEqual(r1, r2 *model.ReferredFKInfo) bool {
 	return true
 }
 
+func tableInfoResultEqual(t1, t2 []tableInfoResult) bool {
+	if len(t1) != len(t2) {
+		return false
+	}
+	slices.SortFunc(t1, func(i, j tableInfoResult) int {
+		return strings.Compare(i.DBName, j.DBName)
+	})
+	slices.SortFunc(t2, func(i, j tableInfoResult) int {
+		return strings.Compare(i.DBName, j.DBName)
+	})
+	for i := range t1 {
+		if t1[i].DBName != t2[i].DBName {
+			return false
+		}
+		slices.SortFunc(t1[i].TableInfos, func(i, j *model.TableInfo) int {
+			return strings.Compare(i.Name.O, j.Name.O)
+		})
+		slices.SortFunc(t2[i].TableInfos, func(i, j *model.TableInfo) int {
+			return strings.Compare(i.Name.O, j.Name.O)
+		})
+		if len(t1[i].TableInfos) != len(t2[i].TableInfos) {
+			return false
+		}
+		for j := range t1[i].TableInfos {
+			if !tblInfoEqual(t1[i].TableInfos[j], t2[i].TableInfos[j]) {
+				return false
+			}
+
+		}
+	}
+	return true
+}
+
 func (is *InfoschemaV3) TableByID(id int64) (val table.Table, ok bool) {
 	tbl1, ok1 := is.infoV1.TableByID(id)
 	tbl2, ok2 := is.infoV2.TableByID(id)
@@ -537,6 +570,15 @@ func (is *InfoschemaV3) GetTableReferredForeignKeys(schema, table string) []*mod
 		}
 	}
 	return r2
+}
+
+func (is *InfoschemaV3) ListTablesWithSpecialAttribute(filter specialAttributeFilter) []tableInfoResult {
+	rs1 := is.infoV1.ListTablesWithSpecialAttribute(filter)
+	rs2 := is.infoV2.ListTablesWithSpecialAttribute(filter)
+	if !tableInfoResultEqual(rs1, rs2) {
+		panic("inconsistent infoschema")
+	}
+	return rs2
 }
 
 func (is *InfoschemaV3) SchemaMetaVersion() int64 {
