@@ -662,10 +662,10 @@ func (d *ddl) DropSchema(ctx sessionctx.Context, stmt *ast.DropDatabaseStmt) (er
 		Args:           []any{fkCheck},
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{{
-			Database: stmt.Name.L,
+			Database: old.Name.L,
 			Table:    model.InvolvingAll,
 		}},
-		SQLMode: ctx.GetSessionVars().SQLMode,
+		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
 
 	err = d.DoDDLJob(ctx, job)
