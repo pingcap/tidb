@@ -171,6 +171,7 @@ func (e *DeleteExec) doBatchDelete(ctx context.Context) error {
 
 func (e *DeleteExec) composeTblRowMap(tblRowMap tableRowMapType, colPosInfos []plannercore.TblColPosInfo, joinedRow []types.Datum) error {
 	// iterate all the joined tables, and got the corresponding rows in joinedRow.
+	var totalMemDelta int64
 	for _, info := range colPosInfos {
 		if unmatchedOuterRow(info, joinedRow) {
 			continue
@@ -195,8 +196,9 @@ func (e *DeleteExec) composeTblRowMap(tblRowMap tableRowMapType, colPosInfos []p
 			memDelta += types.EstimatedMemUsage(joinedRow, 1)
 			memDelta += int64(handle.ExtraMemSize())
 		}
-		e.memTracker.Consume(memDelta)
+		totalMemDelta += memDelta
 	}
+	e.memTracker.Consume(totalMemDelta)
 	return nil
 }
 
