@@ -22,7 +22,6 @@ import (
 	"sort"
 	"strconv"
 	"time"
-	"unsafe"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/bindinfo"
@@ -46,9 +45,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/intest"
-	"github.com/pingcap/tidb/pkg/util/kvcache"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	utilpc "github.com/pingcap/tidb/pkg/util/plancache"
 	"github.com/pingcap/tidb/pkg/util/size"
 	atomic2 "go.uber.org/atomic"
 	"go.uber.org/zap"
@@ -229,38 +226,6 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 	return preparedObj, p, paramCount, nil
 }
 
-// planCacheKey is used to access Plan Cache. We put some variables that do not affect the plan into planCacheKey, such as the sql text.
-// Put the parameters that may affect the plan in planCacheValue.
-// However, due to some compatibility reasons, we will temporarily keep some system variable-related values in planCacheKey.
-// At the same time, because these variables have a small impact on plan, we will move them to PlanCacheValue later if necessary.
-// TODO: maintain a sync.pool for this structure.
-type planCacheKey struct {
-	database      string
-	connID        uint64
-	stmtText      string
-	schemaVersion int64
-	tblVersionMap map[int64]uint64
-
-	// Only be set in rc or for update read and leave it default otherwise.
-	// In Rc or ForUpdateRead, we should check whether the information schema has been changed when using plan cache.
-	// If it changed, we should rebuild the plan. lastUpdatedSchemaVersion help us to decide whether we should rebuild
-	// the plan in rc or for update read.
-	lastUpdatedSchemaVersion int64
-	sqlMode                  mysql.SQLMode
-	timezoneOffset           int
-	isolationReadEngines     map[kv.StoreType]struct{}
-	selectLimit              uint64
-	bindSQL                  string
-	connCollation            string
-	inRestrictedSQL          bool
-	restrictedReadOnly       bool
-	TiDBSuperReadOnly        bool
-	exprBlacklistTS          int64 // expr-pushdown-blacklist can affect query optimization, so we need to consider it in plan cache.
-
-	memoryUsage int64 // Do not include in hash
-	hash        []byte
-}
-
 func hashInt64Uint64Map(b []byte, m map[int64]uint64) []byte {
 	keys := make([]int64, 0, len(m))
 	for k := range m {
@@ -278,82 +243,16 @@ func hashInt64Uint64Map(b []byte, m map[int64]uint64) []byte {
 	return b
 }
 
-// Hash implements Key interface.
-func (key *planCacheKey) Hash() []byte {
-	if len(key.hash) == 0 {
-		if key.hash == nil {
-			key.hash = make([]byte, 0, len(key.stmtText)*2)
-		}
-		key.hash = append(key.hash, hack.Slice(key.database)...)
-		key.hash = codec.EncodeInt(key.hash, int64(key.connID))
-		key.hash = append(key.hash, hack.Slice(key.stmtText)...)
-		key.hash = codec.EncodeInt(key.hash, key.schemaVersion)
-		key.hash = hashInt64Uint64Map(key.hash, key.tblVersionMap)
-		key.hash = codec.EncodeInt(key.hash, key.lastUpdatedSchemaVersion)
-		key.hash = codec.EncodeInt(key.hash, int64(key.sqlMode))
-		key.hash = codec.EncodeInt(key.hash, int64(key.timezoneOffset))
-		if _, ok := key.isolationReadEngines[kv.TiDB]; ok {
-			key.hash = append(key.hash, kv.TiDB.Name()...)
-		}
-		if _, ok := key.isolationReadEngines[kv.TiKV]; ok {
-			key.hash = append(key.hash, kv.TiKV.Name()...)
-		}
-		if _, ok := key.isolationReadEngines[kv.TiFlash]; ok {
-			key.hash = append(key.hash, kv.TiFlash.Name()...)
-		}
-		key.hash = codec.EncodeInt(key.hash, int64(key.selectLimit))
-		key.hash = append(key.hash, hack.Slice(key.bindSQL)...)
-		key.hash = append(key.hash, hack.Slice(key.connCollation)...)
-		key.hash = append(key.hash, hack.Slice(strconv.FormatBool(key.inRestrictedSQL))...)
-		key.hash = append(key.hash, hack.Slice(strconv.FormatBool(key.restrictedReadOnly))...)
-		key.hash = append(key.hash, hack.Slice(strconv.FormatBool(key.TiDBSuperReadOnly))...)
-		key.hash = codec.EncodeInt(key.hash, key.exprBlacklistTS)
-	}
-	return key.hash
-}
-
-const emptyPlanCacheKeySize = int64(unsafe.Sizeof(planCacheKey{}))
-
-// MemoryUsage return the memory usage of planCacheKey
-func (key *planCacheKey) MemoryUsage() (sum int64) {
-	if key == nil {
-		return
-	}
-
-	if key.memoryUsage > 0 {
-		return key.memoryUsage
-	}
-	sum = emptyPlanCacheKeySize + int64(len(key.database)+len(key.stmtText)+len(key.bindSQL)+len(key.connCollation)) +
-		int64(len(key.isolationReadEngines))*size.SizeOfUint8 + int64(cap(key.hash))
-	key.memoryUsage = sum
-	return
-}
-
-// SetPstmtIDSchemaVersion implements PstmtCacheKeyMutator interface to change pstmtID and schemaVersion of cacheKey.
-// so we can reuse Key instead of new every time.
-func SetPstmtIDSchemaVersion(key kvcache.Key, stmtText string, schemaVersion int64, isolationReadEngines map[kv.StoreType]struct{}) {
-	psStmtKey, isPsStmtKey := key.(*planCacheKey)
-	if !isPsStmtKey {
-		return
-	}
-	psStmtKey.stmtText = stmtText
-	psStmtKey.schemaVersion = schemaVersion
-	psStmtKey.isolationReadEngines = make(map[kv.StoreType]struct{})
-	for k, v := range isolationReadEngines {
-		psStmtKey.isolationReadEngines[k] = v
-	}
-	psStmtKey.hash = psStmtKey.hash[:0]
-}
-
-// NewPlanCacheKey creates a new planCacheKey object.
+// NewPlanCacheKey creates the plan cache key for this statement.
 // Note: lastUpdatedSchemaVersion will only be set in the case of rc or for update read in order to
 // differentiate the cache key. In other cases, it will be 0.
-func NewPlanCacheKey(sessionVars *variable.SessionVars, stmtText, stmtDB string, schemaVersion, lastUpdatedSchemaVersion int64, bindSQL string, exprBlacklistTS int64, relatedSchemaVersion map[int64]uint64) (kvcache.Key, error) {
+// All information that might affect the plan should be considered in this function.
+func NewPlanCacheKey(sessionVars *variable.SessionVars, stmtText, stmtDB string, schemaVersion, lastUpdatedSchemaVersion int64, bindSQL string, exprBlacklistTS int64, relatedSchemaVersion map[int64]uint64) (string, error) {
 	if stmtText == "" {
-		return nil, errors.New("no statement text")
+		return "", errors.New("no statement text")
 	}
 	if schemaVersion == 0 && !intest.InTest {
-		return nil, errors.New("Schema version uninitialized")
+		return "", errors.New("Schema version uninitialized")
 	}
 	if stmtDB == "" {
 		stmtDB = sessionVars.CurrentDB
@@ -364,31 +263,37 @@ func NewPlanCacheKey(sessionVars *variable.SessionVars, stmtText, stmtDB string,
 	}
 	_, connCollation := sessionVars.GetCharsetInfo()
 
-	key := &planCacheKey{
-		database:                 stmtDB,
-		connID:                   sessionVars.ConnectionID,
-		stmtText:                 stmtText,
-		schemaVersion:            schemaVersion,
-		tblVersionMap:            make(map[int64]uint64),
-		lastUpdatedSchemaVersion: lastUpdatedSchemaVersion,
-		sqlMode:                  sessionVars.SQLMode,
-		timezoneOffset:           timezoneOffset,
-		isolationReadEngines:     make(map[kv.StoreType]struct{}),
-		selectLimit:              sessionVars.SelectLimit,
-		bindSQL:                  bindSQL,
-		connCollation:            connCollation,
-		inRestrictedSQL:          sessionVars.InRestrictedSQL,
-		restrictedReadOnly:       variable.RestrictedReadOnly.Load(),
-		TiDBSuperReadOnly:        variable.VarTiDBSuperReadOnly.Load(),
-		exprBlacklistTS:          exprBlacklistTS,
+	hash := make([]byte, 0, len(stmtText)*2)
+	hash = append(hash, hack.Slice(stmtDB)...)
+	hash = codec.EncodeInt(hash, int64(sessionVars.ConnectionID))
+	hash = append(hash, hack.Slice(stmtText)...)
+	hash = codec.EncodeInt(hash, schemaVersion)
+	hash = hashInt64Uint64Map(hash, relatedSchemaVersion)
+	// Only be set in rc or for update read and leave it default otherwise.
+	// In Rc or ForUpdateRead, we should check whether the information schema has been changed when using plan cache.
+	// If it changed, we should rebuild the plan. lastUpdatedSchemaVersion help us to decide whether we should rebuild
+	// the plan in rc or for update read.
+	hash = codec.EncodeInt(hash, lastUpdatedSchemaVersion)
+	hash = codec.EncodeInt(hash, int64(sessionVars.SQLMode))
+	hash = codec.EncodeInt(hash, int64(timezoneOffset))
+	if _, ok := sessionVars.IsolationReadEngines[kv.TiDB]; ok {
+		hash = append(hash, kv.TiDB.Name()...)
 	}
-	for k, v := range sessionVars.IsolationReadEngines {
-		key.isolationReadEngines[k] = v
+	if _, ok := sessionVars.IsolationReadEngines[kv.TiKV]; ok {
+		hash = append(hash, kv.TiKV.Name()...)
 	}
-	for k, v := range relatedSchemaVersion {
-		key.tblVersionMap[k] = v
+	if _, ok := sessionVars.IsolationReadEngines[kv.TiFlash]; ok {
+		hash = append(hash, kv.TiFlash.Name()...)
 	}
-	return key, nil
+	hash = codec.EncodeInt(hash, int64(sessionVars.SelectLimit))
+	hash = append(hash, hack.Slice(bindSQL)...)
+	hash = append(hash, hack.Slice(connCollation)...)
+	hash = append(hash, hack.Slice(strconv.FormatBool(sessionVars.InRestrictedSQL))...)
+	hash = append(hash, hack.Slice(strconv.FormatBool(variable.RestrictedReadOnly.Load()))...)
+	hash = append(hash, hack.Slice(strconv.FormatBool(variable.VarTiDBSuperReadOnly.Load()))...)
+	// expr-pushdown-blacklist can affect query optimization, so we need to consider it in plan cache.
+	hash = codec.EncodeInt(hash, exprBlacklistTS)
+	return string(hash), nil
 }
 
 // PlanCacheValue stores the cached Statement and StmtNode.
@@ -399,7 +304,7 @@ type PlanCacheValue struct {
 	memoryUsage       int64
 
 	// matchOpts stores some fields help to choose a suitable plan
-	matchOpts *utilpc.PlanCacheMatchOpts
+	matchOpts *PlanCacheMatchOpts
 	// stmtHints stores the hints which set session variables, because the hints won't be processed using cached plan.
 	stmtHints *hint.StmtHints
 }
@@ -448,7 +353,7 @@ func (v *PlanCacheValue) MemoryUsage() (sum int64) {
 
 // NewPlanCacheValue creates a SQLCacheValue.
 func NewPlanCacheValue(plan base.Plan, names []*types.FieldName, srcMap map[*model.TableInfo]bool,
-	matchOpts *utilpc.PlanCacheMatchOpts, stmtHints *hint.StmtHints) *PlanCacheValue {
+	matchOpts *PlanCacheMatchOpts, stmtHints *hint.StmtHints) *PlanCacheValue {
 	dstMap := make(map[*model.TableInfo]bool)
 	for k, v := range srcMap {
 		dstMap[k] = v
@@ -464,6 +369,23 @@ func NewPlanCacheValue(plan base.Plan, names []*types.FieldName, srcMap map[*mod
 		matchOpts:         matchOpts,
 		stmtHints:         stmtHints.Clone(),
 	}
+}
+
+// PlanCacheMatchOpts store some property used to fetch plan from plan cache
+// The structure set here is to avoid import cycle
+type PlanCacheMatchOpts struct {
+	// paramTypes stores all parameters' FieldType, some different parameters may share same plan
+	ParamTypes []*types.FieldType
+	// limitOffsetAndCount stores all the offset and key parameters extract from limit statement
+	// only used for cache and pick plan with parameters in limit
+	LimitOffsetAndCount []uint64
+	// HasSubQuery indicate whether this query has sub query
+	HasSubQuery bool
+	// StatsVersionHash is the hash value of the statistics version
+	StatsVersionHash uint64
+
+	// Below are some variables that can affect the plan
+	ForeignKeyChecks bool
 }
 
 // PlanCacheQueryFeatures records all query features which may affect plan selection.
@@ -566,7 +488,7 @@ func GetPreparedStmt(stmt *ast.ExecuteStmt, vars *variable.SessionVars) (*PlanCa
 
 // GetMatchOpts get options to fetch plan or generate new plan
 // we can add more options here
-func GetMatchOpts(sctx sessionctx.Context, is infoschema.InfoSchema, stmt *PlanCacheStmt, params []expression.Expression) *utilpc.PlanCacheMatchOpts {
+func GetMatchOpts(sctx sessionctx.Context, is infoschema.InfoSchema, stmt *PlanCacheStmt, params []expression.Expression) *PlanCacheMatchOpts {
 	var statsVerHash uint64
 	var limitOffsetAndCount []uint64
 
@@ -607,7 +529,7 @@ func GetMatchOpts(sctx sessionctx.Context, is infoschema.InfoSchema, stmt *PlanC
 		}
 	}
 
-	return &utilpc.PlanCacheMatchOpts{
+	return &PlanCacheMatchOpts{
 		LimitOffsetAndCount: limitOffsetAndCount,
 		HasSubQuery:         stmt.QueryFeatures.hasSubquery,
 		StatsVersionHash:    statsVerHash,
@@ -752,7 +674,7 @@ func parseParamTypes(sctx sessionctx.Context, params []expression.Expression) (p
 }
 
 // matchCachedPlan checks whether this plan is matched with these match-options.
-func matchCachedPlan(sctx sessionctx.Context, value *PlanCacheValue, matchOpts *utilpc.PlanCacheMatchOpts) bool {
+func matchCachedPlan(sctx sessionctx.Context, value *PlanCacheValue, matchOpts *PlanCacheMatchOpts) bool {
 	if matchOpts == nil { // if PointGet, the matchOpts is nil
 		return true
 	}

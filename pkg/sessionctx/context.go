@@ -35,8 +35,6 @@ import (
 	tbctx "github.com/pingcap/tidb/pkg/table/context"
 	"github.com/pingcap/tidb/pkg/util"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
-	"github.com/pingcap/tidb/pkg/util/kvcache"
-	utilpc "github.com/pingcap/tidb/pkg/util/plancache"
 	rangerctx "github.com/pingcap/tidb/pkg/util/ranger/context"
 	"github.com/pingcap/tidb/pkg/util/sli"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
@@ -55,9 +53,9 @@ type SessionStatesHandler interface {
 
 // PlanCache is an interface for prepare and non-prepared plan cache
 type PlanCache interface {
-	Get(key kvcache.Key, opts *utilpc.PlanCacheMatchOpts) (value kvcache.Value, ok bool)
-	Put(key kvcache.Key, value kvcache.Value, opts *utilpc.PlanCacheMatchOpts)
-	Delete(key kvcache.Key)
+	Get(key string, opts any) (value any, ok bool)
+	Put(key string, value, opts any)
+	Delete(key string)
 	DeleteAll()
 	Size() int
 	SetCapacity(capacity uint) error
