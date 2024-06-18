@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library")
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "import_client",
@@ -16,5 +16,24 @@ go_library(
         "@org_golang_google_grpc//credentials/insecure",
         "@org_golang_google_grpc//keepalive",
         "@org_golang_google_grpc//status",
+    ],
+)
+
+go_test(
+    name = "import_client_test",
+    timeout = "short",
+    srcs = ["import_client_test.go"],
+    flaky = True,
+    deps = [
+        ":import_client",
+        "//br/pkg/restore/split",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_kvproto//pkg/errorpb",
+        "@com_github_pingcap_kvproto//pkg/import_sstpb",
+        "@com_github_pingcap_kvproto//pkg/kvrpcpb",
+        "@com_github_pingcap_kvproto//pkg/metapb",
+        "@com_github_stretchr_testify//require",
+        "@org_golang_google_grpc//:grpc",
+        "@org_golang_google_grpc//keepalive",
     ],
 )

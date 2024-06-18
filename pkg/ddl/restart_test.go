@@ -43,7 +43,12 @@ func getDDLSchemaVer(t *testing.T, d ddl.DDL) int64 {
 func restartWorkers(t *testing.T, store kv.Storage, d *domain.Domain) {
 	err := d.DDL().Stop()
 	require.NoError(t, err)
-	newDDL := ddl.NewDDL(context.Background(), ddl.WithStore(d.Store()), ddl.WithInfoCache(d.InfoCache()), ddl.WithLease(d.DDL().GetLease()))
+	newDDL := ddl.NewDDL(context.Background(),
+		ddl.WithStore(d.Store()),
+		ddl.WithInfoCache(d.InfoCache()),
+		ddl.WithLease(d.DDL().GetLease()),
+		ddl.WithSchemaLoader(d),
+	)
 	d.SetDDL(newDDL)
 	err = newDDL.Start(pools.NewResourcePool(func() (pools.Resource, error) {
 		session := testkit.NewTestKit(t, store).Session()
