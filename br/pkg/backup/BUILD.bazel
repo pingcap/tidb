@@ -35,6 +35,7 @@ go_library(
         "//statistics/handle",
         "//util",
         "//util/codec",
+        "//util/mathutil",
         "//util/ranger",
         "//util/table-filter",
         "@com_github_google_btree//:btree",
