@@ -11,7 +11,6 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-
 package core
 
 import (
@@ -71,26 +70,6 @@ func TestInstancePlanCacheBasic(t *testing.T) {
 	put(1, 100)
 	put(1, 101)
 	require.Equal(t, pc.MemUsage(sctx), int64(100)) // the second one will be ignored
-
-	// update the hard limit after exceeding it
-	pc = NewInstancePlanCache(250, 250)
-	put(1, 100)
-	put(2, 100)
-	put(3, 100)
-	require.Equal(t, pc.MemUsage(sctx), int64(200))
-	pc.SetHardLimit(300)
-	put(3, 100)
-	require.Equal(t, pc.MemUsage(sctx), int64(300))
-	hit(1)
-	hit(2)
-	hit(3)
-
-	// invalid hard or soft limit
-	pc = NewInstancePlanCache(250, 250)
-	require.Error(t, pc.SetHardLimit(-1))
-	require.Error(t, pc.SetHardLimit(200))
-	require.Error(t, pc.SetSoftLimit(-1))
-	require.Error(t, pc.SetSoftLimit(300))
 
 	// eviction
 	pc = NewInstancePlanCache(320, 500)

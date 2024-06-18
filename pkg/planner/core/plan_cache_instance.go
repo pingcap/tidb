@@ -11,7 +11,6 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-
 package core
 
 import (
@@ -19,7 +18,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/kvcache"
 	"go.uber.org/atomic"
@@ -27,12 +25,14 @@ import (
 
 // InstancePlanCache represents the instance/node level plan cache.
 type InstancePlanCache interface {
+	// Get gets the cached value from the cache according to key and opts.
 	Get(sctx sessionctx.Context, key string, opts any) (value any, ok bool)
+	// Put puts the key and value into the cache.
 	Put(sctx sessionctx.Context, key string, value, opts any) (succ bool)
+	// Evict evicts some cached values.
 	Evict(sctx sessionctx.Context) (evicted bool)
+	// MemUsage returns the total memory usage of this plan cache.
 	MemUsage(sctx sessionctx.Context) int64
-	SetHardLimit(hardMemLimit int64) error
-	SetSoftLimit(softMemLimit int64) error
 }
 
 // NewInstancePlanCache creates a new instance level plan cache.
@@ -164,32 +164,6 @@ func (pc *instancePlanCache) Evict(_ sessionctx.Context) (evicted bool) {
 // MemUsage returns the memory usage of this plan cache.
 func (pc *instancePlanCache) MemUsage(_ sessionctx.Context) int64 {
 	return pc.totCost.Load()
-}
-
-// SetHardLimit updates the hard memory limit.
-func (pc *instancePlanCache) SetHardLimit(hardMemLimit int64) error {
-	currentSoft, currentHard := pc.softMemLimit.Load(), pc.hardMemLimit.Load()
-	if hardMemLimit < 0 || hardMemLimit < currentSoft {
-		return errors.NewNoStackErrorf("Plan Cache hard memory limit shouldn't be less than 0 or less than soft memory limit(%v)", currentSoft)
-	}
-	ok := pc.hardMemLimit.CompareAndSwap(currentHard, hardMemLimit)
-	if !ok {
-		return errors.NewNoStackError("some other threads are updating hard memory limit simultaneously")
-	}
-	return nil
-}
-
-// SetSoftLimit updates the soft memory limit.
-func (pc *instancePlanCache) SetSoftLimit(softMemLimit int64) error {
-	currentSoft, currentHard := pc.softMemLimit.Load(), pc.hardMemLimit.Load()
-	if softMemLimit < 0 || softMemLimit > currentHard {
-		return errors.NewNoStackErrorf("Plan Cache soft memory limit shouldn't be less than 0 or greater than hard memory limit(%v)", currentHard)
-	}
-	ok := pc.softMemLimit.CompareAndSwap(currentSoft, softMemLimit)
-	if !ok {
-		return errors.NewNoStackError("some other threads are updating soft memory limit simultaneously")
-	}
-	return nil
 }
 
 func (pc *instancePlanCache) calcEvictionThreshold(lastUsedTimes []time.Time) (t time.Time) {
