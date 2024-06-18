@@ -52,7 +52,7 @@ func (hs *HintsSet) GetStmtHints() []*ast.TableOptimizerHint {
 			}
 		}
 	}
-	return nil
+	return result
 }
 
 // ContainTableHint checks whether the table hint set contains a hint.
