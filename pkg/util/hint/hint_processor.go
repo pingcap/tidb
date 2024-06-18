@@ -87,8 +87,24 @@ func ExtractTableHintsFromStmtNode(node ast.Node, sctx sessionctx.Context) []*as
 		return x.TableHints
 	case *ast.InsertStmt:
 		// check duplicated hints
+<<<<<<< HEAD
 		checkInsertStmtHintDuplicated(node, sctx)
 		return x.TableHints
+=======
+		checkInsertStmtHintDuplicated(node, warnHandler)
+		result := make([]*ast.TableOptimizerHint, 0, len(x.TableHints))
+		result = append(result, x.TableHints...)
+		if x.Select != nil {
+			// support statement-level hint in sub-select: "insert into t select /* ... */ ..."
+			// TODO: support this for Update and Delete as well
+			for _, h := range ExtractTableHintsFromStmtNode(x.Select, warnHandler) {
+				if isStmtHint(h) {
+					result = append(result, h)
+				}
+			}
+		}
+		return result
+>>>>>>> 9906339471d (planner: fix the issue that statement-level hints in sub-queries of Insert/Replace can not take effect (#54083))
 	case *ast.SetOprStmt:
 		var result []*ast.TableOptimizerHint
 		if x.SelectList == nil {
