@@ -161,11 +161,6 @@ func (vt *perfSchemaTable) Cols() []*table.Column {
 	return vt.cols
 }
 
-// NonPublicColumns implements table.Table NonPublicColumns interface.
-func (vt *perfSchemaTable) NonPubColMaybeRefByNonPublicIndex() *table.Column {
-	return nil
-}
-
 // VisibleCols implements table.Table VisibleCols interface.
 func (vt *perfSchemaTable) VisibleCols() []*table.Column {
 	return vt.cols

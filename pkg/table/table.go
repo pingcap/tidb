@@ -172,9 +172,6 @@ type columnAPI interface {
 
 	// FullHiddenColsAndVisibleCols returns hidden columns in all states and unhidden columns in public states.
 	FullHiddenColsAndVisibleCols() []*Column
-
-	// NonPubColMaybeRefByIndex returns the non-public column that may be referred by the index.
-	NonPubColMaybeRefByNonPublicIndex() *Column
 }
 
 // MutateContext is used to when mutating a table.

@@ -5730,13 +5730,13 @@ func buildColPositionInfoForDelete(
 	var cols2PosInfos TblColPosInfoSlice
 	for tblID, handleCols := range tblID2Handle {
 		tbl := tblID2Table[tblID]
-		cols := tbl.Cols()
-		idxs := tbl.DeletableIndices()
-		nonPubCol := tbl.NonPubColMaybeRefByNonPublicIndex()
+		pubCols := tbl.Cols()
+		deletableIdxs := tbl.DeletableIndices()
+		deletableCols := tbl.DeletableCols()
 		tblInfo := tbl.Meta()
 
 		for _, handleCol := range handleCols {
-			curColPosInfo, err := buildSingleTableColPosInfoForDelete(names, handleCol, cols, idxs, nonPubCol, tblInfo)
+			curColPosInfo, err := buildSingleTableColPosInfoForDelete(names, handleCol, pubCols, deletableIdxs, deletableCols, tblInfo)
 			if err != nil {
 				return nil, err
 			}
@@ -5750,22 +5750,22 @@ func buildColPositionInfoForDelete(
 func buildSingleTableColPosInfoForDelete(
 	names []*types.FieldName,
 	handleCol util.HandleCols,
-	cols []*table.Column,
-	idxs []table.Index,
-	nonPubCol *table.Column,
+	pubCols []*table.Column,
+	deletableIdxs []table.Index,
+	deletableCols []*table.Column,
 	tblInfo *model.TableInfo,
 ) (TblColPosInfo, error) {
-	tblLen := len(cols)
+	tblLen := len(deletableCols)
 	offset, err := getTableOffset(names, names[handleCol.GetCol(0).Index])
 	if err != nil {
 		return TblColPosInfo{}, err
 	}
 	end := offset + tblLen
-	offsetMap := make(map[int]int, len(cols))
+	offsetMap := make(map[int]int, len(deletableCols))
 	for i := offset; i < end; i++ {
 		name := names[i]
 		found := -1
-		for j, col := range cols {
+		for j, col := range deletableCols {
 			if col.Name.L == name.ColName.L {
 				offsetMap[j] = i
 				found = j
@@ -5778,12 +5778,12 @@ func buildSingleTableColPosInfoForDelete(
 		offsetMap[found] = i
 	}
 	indexColMap := make(map[int64][]int)
-	for _, idx := range idxs {
+	for _, idx := range deletableIdxs {
 		idxCols := idx.Meta().Columns
 		colPos := make([]int, 0, len(idxCols))
 		for _, col := range idxCols {
-			if col.Offset == len(cols) {
-				colPos = append(colPos, len(cols))
+			if col.Offset == len(pubCols) {
+				colPos = append(colPos, len(pubCols))
 				continue
 			}
 			colPos = append(colPos, offsetMap[col.Offset])
@@ -5791,8 +5791,8 @@ func buildSingleTableColPosInfoForDelete(
 		indexColMap[idx.Meta().ID] = colPos
 	}
 	nonPubColRefPos := -1
-	if nonPubCol != nil {
-		nonPubColRefPos = offsetMap[nonPubCol.Offset]
+	if len(deletableCols) > len(pubCols) && deletableCols[len(pubCols)].ChangeStateInfo != nil {
+		nonPubColRefPos = offsetMap[deletableCols[len(pubCols)].ChangeStateInfo.DependencyColumnOffset]
 	}
 	return TblColPosInfo{tblInfo.ID, offset, end, handleCol, indexColMap, nonPubColRefPos}, nil
 }

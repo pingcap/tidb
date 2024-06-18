@@ -1927,7 +1927,7 @@ func buildPointUpdatePlan(ctx base.PlanContext, pointPlan base.PhysicalPlan, dbN
 	if orderedList == nil {
 		return nil
 	}
-	handleCols := buildHandleCols(ctx, tbl, pointPlan)
+	handleCols := buildHandleCols(ctx, dbName, tbl, pointPlan)
 	updatePlan := Update{
 		SelectPlan:  pointPlan,
 		OrderedList: orderedList,
@@ -2046,14 +2046,14 @@ func buildPointDeletePlan(ctx base.PlanContext, pointPlan base.PhysicalPlan, dbN
 	if checkFastPlanPrivilege(ctx, dbName, tbl.Name.L, mysql.SelectPriv, mysql.DeletePriv) != nil {
 		return nil
 	}
-	handleCols := buildHandleCols(ctx, tbl, pointPlan)
+	handleCols := buildHandleCols(ctx, dbName, tbl, pointPlan)
 	var err error
 	is := ctx.GetInfoSchema().(infoschema.InfoSchema)
 	t, _ := is.TableByID(tbl.ID)
-	cols := t.Cols()
+	pubCols := t.Cols()
 	idxs := t.DeletableIndices()
-	nonPubCol := t.NonPubColMaybeRefByNonPublicIndex()
-	colPosInfo, err := buildSingleTableColPosInfoForDelete(pointPlan.OutputNames(), handleCols, cols, idxs, nonPubCol, tbl)
+	deletableCols := t.DeletableCols()
+	colPosInfo, err := buildSingleTableColPosInfoForDelete(pointPlan.OutputNames(), handleCols, pubCols, idxs, deletableCols, tbl)
 	if err != nil {
 		return nil
 	}
@@ -2095,7 +2095,7 @@ func colInfoToColumn(col *model.ColumnInfo, idx int) *expression.Column {
 	}
 }
 
-func buildHandleCols(ctx base.PlanContext, tbl *model.TableInfo, pointget base.PhysicalPlan) util.HandleCols {
+func buildHandleCols(ctx base.PlanContext, dbName string, tbl *model.TableInfo, pointget base.PhysicalPlan) util.HandleCols {
 	schema := pointget.Schema()
 	// fields len is 0 for update and delete.
 	if tbl.PKIsHandle {
@@ -2114,7 +2114,16 @@ func buildHandleCols(ctx base.PlanContext, tbl *model.TableInfo, pointget base.P
 	handleCol := colInfoToColumn(model.NewExtraHandleColInfo(), schema.Len())
 	schema.Append(handleCol)
 	newOutputNames := pointget.OutputNames().Shallow()
-	newOutputNames = append(newOutputNames, &types.FieldName{ColName: model.ExtraHandleName})
+	tableAliasName := tbl.Name
+	if pointget.Schema().Len() > 0 {
+		tableAliasName = pointget.OutputNames()[0].TblName
+	}
+	newOutputNames = append(newOutputNames, &types.FieldName{
+		DBName:      model.NewCIStr(dbName),
+		TblName:     tableAliasName,
+		OrigTblName: tbl.Name,
+		ColName:     model.ExtraHandleName,
+	})
 	pointget.SetOutputNames(newOutputNames)
 	return util.NewIntHandleCols(handleCol)
 }

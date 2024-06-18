@@ -2398,11 +2398,6 @@ func (it *infoschemaTable) DeletableCols() []*table.Column {
 	return it.cols
 }
 
-// NonPubColMaybeRefByNonPublicIndex implements table.Table HiddenColMaybeRefByNonPublicIndex interface.
-func (it *infoschemaTable) NonPubColMaybeRefByNonPublicIndex() *table.Column {
-	return nil
-}
-
 // FullHiddenColsAndVisibleCols implements table FullHiddenColsAndVisibleCols interface.
 func (it *infoschemaTable) FullHiddenColsAndVisibleCols() []*table.Column {
 	return it.cols
@@ -2523,11 +2518,6 @@ func (vt *VirtualTable) RecordPrefix() kv.Key {
 
 // IndexPrefix implements table.Table IndexPrefix interface.
 func (vt *VirtualTable) IndexPrefix() kv.Key {
-	return nil
-}
-
-// NonPubColMaybeRefByNonPublicIndex implements table.Table HiddenColMaybeRefByNonPublicIndex interface.
-func (vt *VirtualTable) NonPubColMaybeRefByNonPublicIndex() *table.Column {
 	return nil
 }
 

@@ -490,14 +490,6 @@ func (t *TableCommon) shouldAssert(level variable.AssertionLevel) bool {
 	return true
 }
 
-// NonPubColMaybeRefByNonPublicIndex implements table.Table NonPublicColumns interface.
-func (t *TableCommon) NonPubColMaybeRefByNonPublicIndex() *table.Column {
-	if len(t.Cols()) < len(t.Columns) {
-		return t.Columns[len(t.Cols())]
-	}
-	return nil
-}
-
 // UpdateRecord implements table.Table UpdateRecord interface.
 // `touched` means which columns are really modified, used for secondary indices.
 // Length of `oldData` and `newData` equals to length of `t.WritableCols()`.
