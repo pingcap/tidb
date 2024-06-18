@@ -31,7 +31,7 @@ explain format='brief' select * from t partition(p0) use index(idx) where lower(
 id	estRows	task	access object	operator info
 Projection	3333.33	root	NULL	globalindex__expression_index.t.a, globalindex__expression_index.t.b
 └─IndexLookUp	3333.33	root	partition:p0	NULL
-  ├─Selection(Build)	3333.33	cop[tikv]	NULL	in(_tidb_pid, pid0)
+  ├─Selection(Build)	3333.33	cop[tikv]	NULL	in(_tidb_tid, tid0)
   │ └─IndexRangeScan	3333.33	cop[tikv]	table:t, index:idx(lower(`b`))	range:("c",+inf], keep order:false, stats:pseudo
   └─TableRowIDScan(Probe)	3333.33	cop[tikv]	table:t	keep order:false, stats:pseudo
 select * from t partition(p0) use index(idx) where lower(b) > 'c';

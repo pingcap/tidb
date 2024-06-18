@@ -29,9 +29,13 @@ import (
 	"golang.org/x/exp/slices"
 )
 
-var GetSSTMetaFromFile = getSSTMetaFromFile
+var (
+	RestoreLabelKey   = restoreLabelKey
+	RestoreLabelValue = restoreLabelValue
 
-var GetKeyRangeByMode = getKeyRangeByMode
+	GetSSTMetaFromFile = getSSTMetaFromFile
+	GetKeyRangeByMode  = getKeyRangeByMode
+)
 
 // MockClient create a fake Client used to test.
 func MockClient(dbs map[string]*metautil.Database) *SnapClient {

@@ -2407,3 +2407,32 @@ func TestIssue31024(t *testing.T) {
 
 	tk2.MustExec("rollback")
 }
+
+func TestGlobalIndexWithSelectLock(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec("set tidb_enable_global_index = true")
+	tk1.MustExec("use test")
+	tk1.MustExec("create table t(a int, b int, unique index(b), primary key(a)) partition by hash(a) partitions 5;")
+	tk1.MustExec("insert into t values (1,1),(2,2),(3,3),(4,4),(5,5);")
+	tk1.MustExec("begin")
+	tk1.MustExec("select * from t use index(b) where b = 2 order by b limit 1 for update;")
+
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use test")
+
+	ch := make(chan int, 10)
+	go func() {
+		// Check the key is locked.
+		tk2.MustExec("update t set b = 6 where b = 2")
+		ch <- 1
+	}()
+
+	time.Sleep(50 * time.Millisecond)
+	ch <- 0
+	tk1.MustExec("commit")
+
+	require.Equal(t, <-ch, 0)
+	require.Equal(t, <-ch, 1)
+}

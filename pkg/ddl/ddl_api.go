@@ -646,6 +646,10 @@ func (d *ddl) DropSchema(ctx sessionctx.Context, stmt *ast.DropDatabaseStmt) (er
 		Args:           []any{fkCheck},
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 		SQLMode:        ctx.GetSessionVars().SQLMode,
+		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{{
+			Database: old.Name.L,
+			Table:    model.InvolvingAll,
+		}},
 	}
 
 	err = d.DoDDLJob(ctx, job)
@@ -2796,6 +2800,21 @@ func (d *ddl) createTableWithInfoJob(
 		return nil, err
 	}
 
+	var involvedSchemaInfos []model.InvolvingSchemaInfo
+	if len(tbInfo.ForeignKeys) > 0 {
+		involvedSchemaInfos = make([]model.InvolvingSchemaInfo, 0, 1+len(tbInfo.ForeignKeys))
+		involvedSchemaInfos = append(involvedSchemaInfos, model.InvolvingSchemaInfo{
+			Database: schema.Name.L,
+			Table:    tbInfo.Name.L,
+		})
+		for _, fk := range tbInfo.ForeignKeys {
+			involvedSchemaInfos = append(involvedSchemaInfos, model.InvolvingSchemaInfo{
+				Database: fk.RefSchema.L,
+				Table:    fk.RefTable.L,
+			})
+		}
+	}
+
 	var actionType model.ActionType
 	args := []any{tbInfo}
 	switch {
@@ -2810,15 +2829,16 @@ func (d *ddl) createTableWithInfoJob(
 	}
 
 	job = &model.Job{
-		SchemaID:       schema.ID,
-		TableID:        tbInfo.ID,
-		SchemaName:     schema.Name.L,
-		TableName:      tbInfo.Name.L,
-		Type:           actionType,
-		BinlogInfo:     &model.HistoryInfo{},
-		Args:           args,
-		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
-		SQLMode:        ctx.GetSessionVars().SQLMode,
+		SchemaID:            schema.ID,
+		TableID:             tbInfo.ID,
+		SchemaName:          schema.Name.L,
+		TableName:           tbInfo.Name.L,
+		Type:                actionType,
+		BinlogInfo:          &model.HistoryInfo{},
+		Args:                args,
+		CDCWriteSource:      ctx.GetSessionVars().CDCWriteSource,
+		SQLMode:             ctx.GetSessionVars().SQLMode,
+		InvolvingSchemaInfo: involvedSchemaInfos,
 	}
 	return job, nil
 }

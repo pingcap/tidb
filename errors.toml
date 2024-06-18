@@ -2041,6 +2041,11 @@ error = '''
 Invalid JSON text: %-.192s
 '''
 
+["json:3141"]
+error = '''
+Invalid JSON text in argument %d to function %s: "%s" at position %d.
+'''
+
 ["json:3143"]
 error = '''
 Invalid JSON path expression. The error is around character position %d.
@@ -2053,7 +2058,7 @@ Cannot create a JSON value from a string with CHARACTER SET '%s'.
 
 ["json:3149"]
 error = '''
-In this situation, path expressions may not contain the * and ** tokens or range selection.
+In this situation, path expressions may not contain the * and ** tokens or an array range.
 '''
 
 ["json:3150"]
@@ -2074,6 +2079,11 @@ JSON documents may not contain NULL member names.
 ["json:3165"]
 error = '''
 A path expression is not a path to a cell in an array.
+'''
+
+["json:3853"]
+error = '''
+Invalid JSON type in argument %d to function %s; an %s is required.
 '''
 
 ["json:8067"]
@@ -3264,6 +3274,16 @@ error = '''
 ["types:3013"]
 error = '''
 Invalid size for column '%s'.
+'''
+
+["types:3153"]
+error = '''
+The path expression '$' is not allowed in this context.
+'''
+
+["types:3154"]
+error = '''
+The oneOrAll argument to %s may take these values: 'one' or 'all'.
 '''
 
 ["types:8029"]

@@ -496,6 +496,7 @@ func (e *VecGroupChecker) IsExhausted() bool {
 func (e *VecGroupChecker) Reset() {
 	if e.groupOffset != nil {
 		e.groupOffset = e.groupOffset[:0]
+		e.groupCount = 0
 	}
 	if e.sameGroup != nil {
 		e.sameGroup = e.sameGroup[:0]

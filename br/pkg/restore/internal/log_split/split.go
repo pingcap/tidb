@@ -56,18 +56,6 @@ func (iter *splitHelperIterator) Traverse(fn func(v Valued, endKey []byte, rule 
 	}
 }
 
-func NewSplitHelperIteratorForTest(helper *SplitHelper, tableID int64, rule *restoreutils.RewriteRules) *splitHelperIterator {
-	return &splitHelperIterator{
-		tableSplitters: []*rewriteSplitter{
-			{
-				tableID:  tableID,
-				rule:     rule,
-				splitter: helper,
-			},
-		},
-	}
-}
-
 type LogSplitHelper struct {
 	tableSplitter map[int64]*SplitHelper
 	rules         map[int64]*restoreutils.RewriteRules
@@ -358,7 +346,7 @@ func (helper *LogSplitHelper) Split(ctx context.Context) error {
 	receiveNewRegions:
 		for {
 			select {
-			case <-ectx.Done():
+			case <-ctx.Done():
 				return
 			case newRegions, ok := <-helper.regionsCh:
 				if !ok {

@@ -383,13 +383,12 @@ func IsIndexPrefixCovered(tbInfo *TableInfo, index *IndexInfo, cols ...CIStr) bo
 // for use of execution phase.
 const ExtraHandleID = -1
 
-// ExtraPidColID is the column ID of column which store the partitionID decoded in global index values.
-const ExtraPidColID = -2
+// Deprecated: Use ExtraPhysTblID instead.
+// const ExtraPidColID = -2
 
 // ExtraPhysTblID is the column ID of column that should be filled in with the physical table id.
 // Primarily used for table partition dynamic prune mode, to return which partition (physical table id) the row came from.
-// Using a dedicated id for this, since in the future ExtraPidColID and ExtraPhysTblID may be used for the same request.
-// Must be after ExtraPidColID!
+// If used with a global index, the partition ID decoded from the key value will be filled in.
 const ExtraPhysTblID = -3
 
 // ExtraRowChecksumID is the column ID of column which holds the row checksum info.
@@ -435,8 +434,8 @@ const (
 // ExtraHandleName is the name of ExtraHandle Column.
 var ExtraHandleName = NewCIStr("_tidb_rowid")
 
-// ExtraPartitionIdName is the name of ExtraPartitionId Column.
-var ExtraPartitionIdName = NewCIStr("_tidb_pid") //nolint:revive
+// Deprecated: Use ExtraPhysTblIdName instead.
+// var ExtraPartitionIdName = NewCIStr("_tidb_pid") //nolint:revive
 
 // ExtraPhysTblIdName is the name of ExtraPhysTblID Column.
 var ExtraPhysTblIdName = NewCIStr("_tidb_tid") //nolint:revive
@@ -918,21 +917,6 @@ func NewExtraHandleColInfo() *ColumnInfo {
 	colInfo.SetFlen(flen)
 	colInfo.SetDecimal(decimal)
 
-	colInfo.SetCharset(charset.CharsetBin)
-	colInfo.SetCollate(charset.CollationBin)
-	return colInfo
-}
-
-// NewExtraPartitionIDColInfo mocks a column info for extra partition id column.
-func NewExtraPartitionIDColInfo() *ColumnInfo {
-	colInfo := &ColumnInfo{
-		ID:   ExtraPidColID,
-		Name: ExtraPartitionIdName,
-	}
-	colInfo.SetType(mysql.TypeLonglong)
-	flen, decimal := mysql.GetDefaultFieldLengthAndDecimal(mysql.TypeLonglong)
-	colInfo.SetFlen(flen)
-	colInfo.SetDecimal(decimal)
 	colInfo.SetCharset(charset.CharsetBin)
 	colInfo.SetCollate(charset.CollationBin)
 	return colInfo

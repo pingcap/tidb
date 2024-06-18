@@ -402,8 +402,7 @@ func (bj BinaryJSON) Modify(pathExprList []JSONPathExpression, values []BinaryJS
 	}
 	for _, pathExpr := range pathExprList {
 		if pathExpr.flags.containsAnyAsterisk() || pathExpr.flags.containsAnyRange() {
-			// TODO: should return 3149(42000)
-			return retj, errors.New("Invalid path expression")
+			return retj, ErrInvalidJSONPathMultipleSelection
 		}
 	}
 	for i := 0; i < len(pathExprList); i++ {
@@ -480,12 +479,10 @@ func (bj BinaryJSON) ArrayInsert(pathExpr JSONPathExpression, value BinaryJSON) 
 func (bj BinaryJSON) Remove(pathExprList []JSONPathExpression) (BinaryJSON, error) {
 	for _, pathExpr := range pathExprList {
 		if len(pathExpr.legs) == 0 {
-			// TODO: should return 3153(42000)
-			return bj, errors.New("Invalid path expression")
+			return bj, ErrJSONVacuousPath
 		}
 		if pathExpr.flags.containsAnyAsterisk() || pathExpr.flags.containsAnyRange() {
-			// TODO: should return 3149(42000)
-			return bj, errors.New("Invalid path expression")
+			return bj, ErrInvalidJSONPathMultipleSelection
 		}
 		modifer := &binaryModifier{bj: bj}
 		bj = modifer.remove(pathExpr)
@@ -1188,7 +1185,7 @@ func (bj BinaryJSON) GetElemDepth() int {
 // [https://dev.mysql.com/doc/refman/5.7/en/json-search-functions.html#function_json-search]
 func (bj BinaryJSON) Search(containType string, search string, escape byte, pathExpres []JSONPathExpression) (res BinaryJSON, isNull bool, err error) {
 	if containType != JSONContainsPathOne && containType != JSONContainsPathAll {
-		return res, true, ErrInvalidJSONPath
+		return res, true, ErrJSONBadOneOrAllArg.GenWithStackByArgs("json_search")
 	}
 	patChars, patTypes := stringutil.CompilePattern(search, escape)
 

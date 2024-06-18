@@ -45,6 +45,19 @@ type Meta = *backuppb.Metadata
 // Log is the metadata of one file recording KV sequences.
 type Log = *backuppb.DataFileInfo
 
+type streamMetadataHelper interface {
+	InitCacheEntry(path string, ref int)
+	ReadFile(
+		ctx context.Context,
+		path string,
+		offset uint64,
+		length uint64,
+		compressionType backuppb.CompressionType,
+		storage storage.ExternalStorage,
+	) ([]byte, error)
+	ParseToMetadata(rawMetaData []byte) (*backuppb.Metadata, error)
+}
+
 // LogFileManager is the manager for log files of a certain restoration,
 // which supports read / filter from the log backup archive with static start TS / restore TS.
 type LogFileManager struct {
@@ -60,7 +73,7 @@ type LogFileManager struct {
 	shiftStartTS uint64
 
 	storage storage.ExternalStorage
-	helper  *stream.MetadataHelper
+	helper  streamMetadataHelper
 
 	metadataDownloadBatchSize uint
 }

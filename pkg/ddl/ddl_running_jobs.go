@@ -126,6 +126,9 @@ func (j *runningJobs) checkRunnable(job *model.Job) bool {
 			if _, ok := tbls[model.InvolvingAll]; ok {
 				return false
 			}
+			if info.Table == model.InvolvingAll {
+				return false
+			}
 			if info.Table == model.InvolvingNone {
 				continue
 			}

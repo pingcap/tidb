@@ -1423,15 +1423,6 @@ func (ds *DataSource) FindBestTask(prop *property.PhysicalProperty, planCounter 
 				}
 			}
 			if canConvertPointGet {
-				// If the schema contains ExtraPidColID, do not convert to point get.
-				// Because the point get executor can not handle the extra partition ID column now.
-				// I.e. Global Index is used
-				for _, col := range ds.schema.Columns {
-					if col.ID == model.ExtraPidColID {
-						canConvertPointGet = false
-						break
-					}
-				}
 				if path != nil && path.Index != nil && path.Index.Global {
 					// Don't convert to point get during ddl
 					// TODO: Revisit truncate partition and global index
@@ -2148,6 +2139,15 @@ func (is *PhysicalIndexScan) initSchema(idxExprCols []*expression.Column, isDoub
 		}
 	}
 
+	var extraPhysTblCol *expression.Column
+	// If `dataSouceSchema` contains `model.ExtraPhysTblID`, we should add it into `indexScan.schema`
+	for _, col := range is.dataSourceSchema.Columns {
+		if col.ID == model.ExtraPhysTblID {
+			extraPhysTblCol = col.Clone().(*expression.Column)
+			break
+		}
+	}
+
 	if isDoubleRead || is.Index.Global {
 		// If it's double read case, the first index must return handle. So we should add extra handle column
 		// if there isn't a handle column.
@@ -2161,23 +2161,19 @@ func (is *PhysicalIndexScan) initSchema(idxExprCols []*expression.Column, isDoub
 				})
 			}
 		}
-		// If it's global index, handle and PidColID columns has to be added, so that needed pids can be filtered.
-		if is.Index.Global {
+		// If it's global index, handle and PhysTblID columns has to be added, so that needed pids can be filtered.
+		if is.Index.Global && extraPhysTblCol == nil {
 			indexCols = append(indexCols, &expression.Column{
 				RetType:  types.NewFieldType(mysql.TypeLonglong),
-				ID:       model.ExtraPidColID,
+				ID:       model.ExtraPhysTblID,
 				UniqueID: is.SCtx().GetSessionVars().AllocPlanColumnID(),
-				OrigName: model.ExtraPartitionIdName.O,
+				OrigName: model.ExtraPhysTblIdName.O,
 			})
 		}
 	}
 
-	// If `dataSouceSchema` contains `model.ExtraPhysTblID`, we should add it into `indexScan.schema`
-	for _, col := range is.dataSourceSchema.Columns {
-		if col.ID == model.ExtraPhysTblID {
-			indexCols = append(indexCols, col.Clone().(*expression.Column))
-			break
-		}
+	if extraPhysTblCol != nil {
+		indexCols = append(indexCols, extraPhysTblCol)
 	}
 
 	is.SetSchema(expression.NewSchema(indexCols...))
@@ -2189,14 +2185,14 @@ func (is *PhysicalIndexScan) addSelectionConditionForGlobalIndex(p *DataSource, 
 	}
 	args := make([]expression.Expression, 0, len(p.partitionNames)+1)
 	for _, col := range is.schema.Columns {
-		if col.ID == model.ExtraPidColID {
+		if col.ID == model.ExtraPhysTblID {
 			args = append(args, col.Clone())
 			break
 		}
 	}
 
 	if len(args) != 1 {
-		return nil, errors.Errorf("Can't find column %s in schema %s", model.ExtraPartitionIdName.O, is.schema)
+		return nil, errors.Errorf("Can't find column %s in schema %s", model.ExtraPhysTblIdName.O, is.schema)
 	}
 
 	// For SQL like 'select x from t partition(p0, p1) use index(idx)',
