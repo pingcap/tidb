@@ -21,7 +21,6 @@ package tables
 import (
 	"context"
 	"fmt"
-	"github.com/pingcap/tidb/pkg/util/rowcodec"
 	"math"
 	"strconv"
 	"strings"
@@ -51,6 +50,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/generatedexpr"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/rowcodec"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 	"github.com/pingcap/tidb/pkg/util/tableutil"
 	"github.com/pingcap/tidb/pkg/util/tracing"
