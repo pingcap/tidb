@@ -573,15 +573,15 @@ begin;
 delete from t2 where c_decimal > c_double/2 order by c_int, c_str, c_double, c_decimal limit 1;
 desc format='brief' select t2.c_enum from t2,t1 where t1.c_int - 1 = t2.c_int - 1 order  by t2.c_enum;
 id	estRows	task	access object	operator info
-Sort	12487.50	root		explain_generate_column_substitute.t2.c_enum
-└─HashJoin	12487.50	root		inner join, equal:[eq(minus(explain_generate_column_substitute.t1.c_int, 1), minus(explain_generate_column_substitute.t2.c_int, 1))]
-  ├─IndexReader(Build)	9990.00	root		index:IndexFullScan
-  │ └─IndexFullScan	9990.00	cop[tikv]	table:t1, index:expression_index_2(`c_int` - 1)	keep order:false, stats:pseudo
-  └─Projection(Probe)	10000.00	root		explain_generate_column_substitute.t2.c_enum, minus(explain_generate_column_substitute.t2.c_int, 1), explain_generate_column_substitute.t2._tidb_rowid
-    └─UnionScan	8000.00	root		not(isnull(minus(explain_generate_column_substitute.t2.c_int, 1)))
-      └─Selection	8000.00	root		not(isnull(minus(explain_generate_column_substitute.t2.c_int, 1)))
-        └─TableReader	10000.00	root		data:TableFullScan
-          └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+Sort	10000.00	root		explain_generate_column_substitute.t2.c_enum
+└─HashJoin	10000.00	root		inner join, equal:[eq(minus(explain_generate_column_substitute.t1.c_int, 1), minus(explain_generate_column_substitute.t2.c_int, 1))]
+  ├─Selection(Build)	8000.00	root		not(isnull(minus(explain_generate_column_substitute.t2.c_int, 1)))
+  │ └─Projection	10000.00	root		explain_generate_column_substitute.t2.c_enum, minus(explain_generate_column_substitute.t2.c_int, 1), explain_generate_column_substitute.t2._tidb_rowid
+  │   └─UnionScan	10000.00	root		
+  │     └─TableReader	10000.00	root		data:TableFullScan
+  │       └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+  └─IndexReader(Probe)	9990.00	root		index:IndexFullScan
+    └─IndexFullScan	9990.00	cop[tikv]	table:t1, index:expression_index_2(`c_int` - 1)	keep order:false, stats:pseudo
 select t2.c_enum from t2,t1 where t1.c_int - 1 = t2.c_int - 1 order  by t2.c_enum;
 c_enum
 orange

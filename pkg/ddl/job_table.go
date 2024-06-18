@@ -34,6 +34,7 @@ import (
 	sess "github.com/pingcap/tidb/pkg/ddl/internal/session"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/ddl/syncer"
+	"github.com/pingcap/tidb/pkg/ddl/systable"
 	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
@@ -57,6 +58,7 @@ var (
 	addingDDLJobNotifyKey       = "/tidb/ddl/add_ddl_job_general"
 	dispatchLoopWaitingDuration = 1 * time.Second
 	localWorkerWaitingDuration  = 10 * time.Millisecond
+	schedulerLoopRetryInterval  = time.Second
 )
 
 func init() {
@@ -96,9 +98,11 @@ var _ owner.Listener = (*ownerListener)(nil)
 func (l *ownerListener) OnBecomeOwner() {
 	ctx, cancelFunc := context.WithCancel(l.ddl.ddlCtx.ctx)
 	l.scheduler = &jobScheduler{
-		schCtx:      ctx,
-		cancel:      cancelFunc,
-		runningJobs: newRunningJobs(),
+		schCtx:       ctx,
+		cancel:       cancelFunc,
+		runningJobs:  newRunningJobs(),
+		sysTblMgr:    systable.NewManager(l.ddl.sessPool),
+		schemaLoader: l.ddl.schemaLoader,
 
 		ddlCtx:         l.ddl.ddlCtx,
 		ddlJobNotifyCh: l.ddl.ddlJobNotifyCh,
@@ -118,10 +122,12 @@ func (l *ownerListener) OnRetireOwner() {
 // jobScheduler is used to schedule the DDL jobs, it's only run on the DDL owner.
 type jobScheduler struct {
 	// *ddlCtx already have context named as "ctx", so we use "schCtx" here to avoid confusion.
-	schCtx      context.Context
-	cancel      context.CancelFunc
-	wg          tidbutil.WaitGroupWrapper
-	runningJobs *runningJobs
+	schCtx       context.Context
+	cancel       context.CancelFunc
+	wg           tidbutil.WaitGroupWrapper
+	runningJobs  *runningJobs
+	sysTblMgr    systable.Manager
+	schemaLoader SchemaLoader
 
 	// those fields are created on start
 	reorgWorkerPool      *workerPool
@@ -389,6 +395,7 @@ func (s *jobScheduler) startDispatch() error {
 	defer ticker.Stop()
 	// TODO move waitSchemaSyncedController out of ddlCtx.
 	s.clearOnceMap()
+	s.mustReloadSchemas()
 	for {
 		if err := s.schCtx.Err(); err != nil {
 			return err
@@ -418,6 +425,7 @@ func (s *jobScheduler) startDispatch() error {
 		if err := s.checkAndUpdateClusterState(false); err != nil {
 			continue
 		}
+		failpoint.InjectCall("beforeAllLoadDDLJobAndRun")
 		s.loadDDLJobAndRun(se, s.generalDDLWorkerPool, s.getGeneralJob)
 		s.loadDDLJobAndRun(se, s.reorgWorkerPool, s.getReorgJob)
 	}
@@ -487,6 +495,25 @@ func (s *jobScheduler) loadDDLJobAndRun(se *sess.Session, pool *workerPool, getJ
 	s.delivery2Worker(wk, pool, job)
 }
 
+// mustReloadSchemas is used to reload schema when we become the DDL owner, in case
+// the schema version is outdated before we become the owner.
+// It will keep reloading schema until either success or context done.
+// Domain also have a similar method 'mustReload', but its methods don't accept context.
+func (s *jobScheduler) mustReloadSchemas() {
+	for {
+		err := s.schemaLoader.Reload()
+		if err == nil {
+			return
+		}
+		logutil.DDLLogger().Warn("reload schema failed, will retry later", zap.Error(err))
+		select {
+		case <-s.schCtx.Done():
+			return
+		case <-time.After(schedulerLoopRetryInterval):
+		}
+	}
+}
+
 // delivery2LocalWorker runs the DDL job of v2 in local.
 // send the result to the error channels in the task.
 // delivery2Localworker owns the worker, need to put it back to the pool in this function.
@@ -526,13 +553,15 @@ func (d *ddl) delivery2LocalWorker(pool *workerPool, task *limitJobTask) {
 
 // delivery2Worker owns the worker, need to put it back to the pool in this function.
 func (s *jobScheduler) delivery2Worker(wk *worker, pool *workerPool, job *model.Job) {
+	failpoint.InjectCall("beforeDelivery2Worker", job)
 	injectFailPointForGetJob(job)
-	s.runningJobs.add(job)
-	s.wg.Run(func() {
-		metrics.DDLRunningJobCount.WithLabelValues(pool.tp().String()).Inc()
+	jobID, involvedSchemaInfos := job.ID, job.GetInvolvingSchemaInfo()
+	s.runningJobs.add(jobID, involvedSchemaInfos)
+	metrics.DDLRunningJobCount.WithLabelValues(pool.tp().String()).Inc()
+	s.wg.RunWithLog(func() {
 		defer func() {
 			failpoint.InjectCall("afterDelivery2Worker", job)
-			s.runningJobs.remove(job)
+			s.runningJobs.remove(jobID, involvedSchemaInfos)
 			asyncNotify(s.ddlJobNotifyCh)
 			metrics.DDLRunningJobCount.WithLabelValues(pool.tp().String()).Dec()
 			if wk.ctx.Err() != nil && ingest.LitBackCtxMgr != nil {
@@ -540,80 +569,110 @@ func (s *jobScheduler) delivery2Worker(wk *worker, pool *workerPool, job *model.
 				// as litBackendCtx is holding this very 'ctx', and it cannot reuse now.
 				// TODO make LitBackCtxMgr a local value of the job scheduler, it makes
 				// it much harder to test multiple owners in 1 unit test.
-				ingest.LitBackCtxMgr.Unregister(job.ID)
+				ingest.LitBackCtxMgr.Unregister(jobID)
 			}
+			pool.put(wk)
 		}()
-		ownerID := s.ownerManager.ID()
-		// check if this ddl job is synced to all servers.
-		if !job.NotStarted() && (!s.isSynced(job) || !s.maybeAlreadyRunOnce(job.ID)) {
-			if variable.EnableMDL.Load() {
-				exist, version, err := checkMDLInfo(job.ID, s.sessPool)
-				if err != nil {
-					wk.jobLogger(job).Warn("check MDL info failed", zap.Error(err))
-					// Release the worker resource.
-					pool.put(wk)
-					return
-				} else if exist {
-					// Release the worker resource.
-					pool.put(wk)
-					err = waitSchemaSyncedForMDL(wk.ctx, s.ddlCtx, job, version)
-					if err != nil {
-						return
-					}
-					s.setAlreadyRunOnce(job.ID)
-					cleanMDLInfo(s.sessPool, job, s.etcdCli, ownerID, job.State == model.JobStateSynced)
-					// Don't have a worker now.
-					return
-				}
-			} else {
-				err := waitSchemaSynced(wk.ctx, s.ddlCtx, job, 2*s.lease)
-				if err != nil {
-					time.Sleep(time.Second)
-					// Release the worker resource.
-					pool.put(wk)
-					return
-				}
-				s.setAlreadyRunOnce(job.ID)
-			}
-		}
-
-		schemaVer, err := wk.HandleDDLJobTable(s.ddlCtx, job)
-		logCtx := wk.logCtx
-		pool.put(wk)
-		if err != nil {
-			tidblogutil.Logger(logCtx).Info("handle ddl job failed", zap.Error(err), zap.Stringer("job", job))
-		} else {
-			failpoint.Inject("mockDownBeforeUpdateGlobalVersion", func(val failpoint.Value) {
-				if val.(bool) {
-					if mockDDLErrOnce == 0 {
-						mockDDLErrOnce = schemaVer
-						failpoint.Return()
-					}
-				}
-			})
-
-			// Here means the job enters another state (delete only, write only, public, etc...) or is cancelled.
-			// If the job is done or still running or rolling back, we will wait 2 * lease time or util MDL synced to guarantee other servers to update
-			// the newest schema.
-			err := waitSchemaChanged(wk.ctx, s.ddlCtx, s.lease*2, schemaVer, job)
+		for {
+			err := s.runJobWithWorker(wk, job)
 			if err != nil {
+				logutil.DDLLogger().Info("run job failed", zap.Error(err), zap.Stringer("job", job))
+			} else if job.InFinalState() {
 				return
 			}
-			cleanMDLInfo(s.sessPool, job, s.etcdCli, ownerID, job.State == model.JobStateSynced)
-			s.synced(job)
+			// we have to refresh the job, to handle cases like job cancel or pause
+			// or the job is finished by another owner.
+			// TODO for JobStateRollbackDone we have to query 1 additional time when the
+			// job is already moved to history.
+			failpoint.InjectCall("beforeRefreshJob", job)
+			for {
+				job, err = s.sysTblMgr.GetJobByID(s.schCtx, jobID)
+				failpoint.InjectCall("mockGetJobByIDFail", &err)
+				if err == nil {
+					break
+				}
 
-			if RunInGoTest {
-				// s.mu.hook is initialed from domain / test callback, which will force the owner host update schema diff synchronously.
-				s.mu.RLock()
-				s.mu.hook.OnSchemaStateChanged(schemaVer)
-				s.mu.RUnlock()
+				if err == systable.ErrNotFound {
+					logutil.DDLLogger().Info("job not found, might already finished",
+						zap.Int64("job_id", jobID))
+					return
+				}
+				logutil.DDLLogger().Error("get job failed", zap.Int64("job_id", jobID), zap.Error(err))
+				select {
+				case <-s.schCtx.Done():
+					return
+				case <-time.After(500 * time.Millisecond):
+					continue
+				}
 			}
-
-			s.mu.RLock()
-			s.mu.hook.OnJobUpdated(job)
-			s.mu.RUnlock()
 		}
 	})
+}
+
+func (s *jobScheduler) runJobWithWorker(wk *worker, job *model.Job) error {
+	failpoint.InjectCall("beforeRunJobWithWorker")
+	ownerID := s.ownerManager.ID()
+	// suppose we failed to sync version last time, we need to check and sync it
+	// before run to maintain the 2-version invariant.
+	if !job.NotStarted() && (!s.isSynced(job) || !s.maybeAlreadyRunOnce(job.ID)) {
+		if variable.EnableMDL.Load() {
+			version, err := s.sysTblMgr.GetMDLVer(s.schCtx, job.ID)
+			if err == nil {
+				err = waitSchemaSyncedForMDL(wk.ctx, s.ddlCtx, job, version)
+				if err != nil {
+					return err
+				}
+				s.setAlreadyRunOnce(job.ID)
+				s.cleanMDLInfo(job, ownerID)
+				return nil
+			} else if err != systable.ErrNotFound {
+				wk.jobLogger(job).Warn("check MDL info failed", zap.Error(err))
+				return err
+			}
+		} else {
+			err := waitSchemaSynced(wk.ctx, s.ddlCtx, job, 2*s.lease)
+			if err != nil {
+				time.Sleep(time.Second)
+				return err
+			}
+			s.setAlreadyRunOnce(job.ID)
+		}
+	}
+
+	schemaVer, err := wk.HandleDDLJobTable(s.ddlCtx, job)
+	if err != nil {
+		tidblogutil.Logger(wk.logCtx).Info("handle ddl job failed", zap.Error(err), zap.Stringer("job", job))
+		return err
+	}
+	failpoint.Inject("mockDownBeforeUpdateGlobalVersion", func(val failpoint.Value) {
+		if val.(bool) {
+			if mockDDLErrOnce == 0 {
+				mockDDLErrOnce = schemaVer
+				failpoint.Return(errors.New("mock down before update global version"))
+			}
+		}
+	})
+
+	// Here means the job enters another state (delete only, write only, public, etc...) or is cancelled.
+	// If the job is done or still running or rolling back, we will wait 2 * lease time or util MDL synced to guarantee other servers to update
+	// the newest schema.
+	if err = waitSchemaChanged(wk.ctx, s.ddlCtx, s.lease*2, schemaVer, job); err != nil {
+		return err
+	}
+	s.cleanMDLInfo(job, ownerID)
+	s.synced(job)
+
+	if RunInGoTest {
+		// s.mu.hook is initialed from domain / test callback, which will force the owner host update schema diff synchronously.
+		s.mu.RLock()
+		s.mu.hook.OnSchemaStateChanged(schemaVer)
+		s.mu.RUnlock()
+	}
+
+	s.mu.RLock()
+	s.mu.hook.OnJobUpdated(job)
+	s.mu.RUnlock()
+	return nil
 }
 
 func (*jobScheduler) markJobProcessing(se *sess.Session, job *model.Job) error {
@@ -874,30 +933,4 @@ func getJobsBySQL(se *sess.Session, tbl, condition string) ([]*model.Job, error)
 		jobs = append(jobs, &job)
 	}
 	return jobs, nil
-}
-
-func filterProcessingJobIDs(se *sess.Session, jobIDs []int64) ([]int64, error) {
-	if len(jobIDs) == 0 {
-		return nil, nil
-	}
-
-	var sb strings.Builder
-	for i, id := range jobIDs {
-		if i != 0 {
-			sb.WriteString(",")
-		}
-		sb.WriteString(strconv.FormatInt(id, 10))
-	}
-	sql := fmt.Sprintf(
-		"SELECT job_id FROM mysql.tidb_ddl_job WHERE job_id IN (%s) AND processing",
-		sb.String())
-	rows, err := se.Execute(context.Background(), sql, "filter_processing_job_ids")
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	ret := make([]int64, 0, len(rows))
-	for _, row := range rows {
-		ret = append(ret, row.GetInt64(0))
-	}
-	return ret, nil
 }

@@ -384,6 +384,18 @@ func CollationToProto(c string) int32 {
 	return v
 }
 
+// CanUseRawMemAsKey returns true if current collator can use the original raw memory as the key
+// only return true for binCollator and derivedBinCollator
+func CanUseRawMemAsKey(c Collator) bool {
+	if _, ok := c.(*binCollator); ok {
+		return true
+	}
+	if _, ok := c.(*derivedBinCollator); ok {
+		return true
+	}
+	return false
+}
+
 // ProtoToCollation converts collation from int32(used by protocol) to string.
 func ProtoToCollation(c int32) string {
 	coll, err := charset.GetCollationByID(int(RestoreCollationIDIfNeeded(c)))
