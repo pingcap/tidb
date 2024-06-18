@@ -26,7 +26,7 @@
     - [Performance Tests](#performance-tests)
   - [Impacts \& Risks](#impacts--risks)
     - [If new predicate columns appear, they cannot be analyzed in time](#if-new-predicate-columns-appear-they-cannot-be-analyzed-in-time)
-    - [Use PREDICATE COLUMNS when your workload's query pattern is  relatively stable](#use-predicate-columns-when-your-workloads-query-pattern-is--relatively-stable)
+    - [Use PREDICATE COLUMNS when your workload's query pattern is relatively stable](#use-predicate-columns-when-your-workloads-query-pattern-is--relatively-stable)
   - [Investigation \& Alternatives](#investigation--alternatives)
     - [CRDB](#crdb)
       - [Summary](#summary)
