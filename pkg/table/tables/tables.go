@@ -1394,19 +1394,6 @@ func (t *TableCommon) RemoveRecord(ctx table.MutateContext, h kv.Handle, r []typ
 		}
 	}
 
-	// The table has non-public column and this column is doing the operation of "modify/change column".
-	if len(t.Columns) > len(r) && t.Columns[len(r)].ChangeStateInfo != nil {
-		// The changing column datum derived from related column should be casted here.
-		// Otherwise, the existed changing indexes will not be deleted.
-		relatedColDatum := r[t.Columns[len(r)].ChangeStateInfo.DependencyColumnOffset]
-		value, err := table.CastColumnValue(ctx.GetExprCtx(), relatedColDatum, t.Columns[len(r)].ColumnInfo, false, false)
-		if err != nil {
-			logutil.BgLogger().Info("remove record cast value failed", zap.Any("col", t.Columns[len(r)]),
-				zap.String("handle", h.String()), zap.Any("val", relatedColDatum), zap.Error(err))
-			return err
-		}
-		r = append(r, value)
-	}
 	err = t.removeRowIndices(ctx, h, r)
 	if err != nil {
 		return err
