@@ -85,35 +85,60 @@ connection default;
 drop user placement_user;
 
 # TestResourceGroupAdminDynamicPriv
+CREATE USER resource_group_admin;
 CREATE USER resource_group_user;
 # This should be the default value in the future, so we do not need to set if for testing?
 set @@global.tidb_enable_resource_control = 1;
 
+connect (resource_group_admin,localhost,resource_group_admin,,);
 connect (resource_group_user,localhost,resource_group_user,,);
-connection resource_group_user;
+
+connection resource_group_admin;
 --error 1227
 CREATE RESOURCE GROUP test RU_PER_SEC = 666;
 
 connection default;
-GRANT RESOURCE_GROUP_ADMIN ON *.* TO resource_group_user;
+CREATE DATABASE IF NOT EXISTS test_rc;
+CREATE TABLE test_rc.t(id int);
+INSERT INTO test_rc.t VALUES (1);
+GRANT RESOURCE_GROUP_ADMIN ON *.* TO resource_group_admin;
+SHOW GRANTS FOR resource_group_admin;
+GRANT RESOURCE_GROUP_USER ON *.* TO resource_group_user;
 SHOW GRANTS FOR resource_group_user;
+GRANT SELECT on test_rc.* TO resource_group_admin;
+GRANT SELECT on test_rc.* TO resource_group_user;
 
-connection resource_group_user;
+connection resource_group_admin;
 CREATE RESOURCE GROUP test RU_PER_SEC = 666;
 CREATE RESOURCE GROUP test2 RU_PER_SEC = 999;
 ALTER RESOURCE GROUP test2 RU_PER_SEC = 1000;
 DROP RESOURCE GROUP test2;
-
-connection default;
-REVOKE RESOURCE_GROUP_ADMIN ON *.* FROM resource_group_user;
+SELECT /*+ RESOURCE_GROUP(test) */ * from test_rc.t;
+SET RESOURCE GROUP test;
 
 connection resource_group_user;
+SELECT /*+ RESOURCE_GROUP(test) */ * from test_rc.t;
+SET RESOURCE GROUP test;
+
+connection default;
+REVOKE RESOURCE_GROUP_ADMIN ON *.* FROM resource_group_admin;
+REVOKE RESOURCE_GROUP_USER ON *.* FROM resource_group_user;
+
+connection resource_group_admin;
 --error 1227
 ALTER RESOURCE GROUP test RU_PER_SEC = 667;
 --error 1227
 DROP RESOURCE GROUP test;
+--error 1227
+SET RESOURCE GROUP test;
+SELECT /*+ RESOURCE_GROUP(test) */ * from test_rc.t;
+
+disconnect resource_group_admin;
 disconnect resource_group_user;
 connection default;
+REVOKE SELECT on test_rc.* FROM resource_group_admin;
+REVOKE SELECT on test_rc.* FROM resource_group_user;
+DROP DATABASE test_rc;
 
 # TestGrantReferences
 CREATE SCHEMA IF NOT EXISTS privilege__privileges;

@@ -204,7 +204,7 @@ func (m *ownerManager) CampaignOwner(withTTL ...int) error {
 func (m *ownerManager) ResignOwner(ctx context.Context) error {
 	elec := m.elec.Load()
 	if elec == nil {
-		return errors.Errorf("This node is not a ddl owner, can't be resigned")
+		return errors.Errorf("This node is not a owner, can't be resigned")
 	}
 
 	childCtx, cancel := context.WithTimeout(ctx, keyOpDefaultTimeout)
@@ -214,7 +214,7 @@ func (m *ownerManager) ResignOwner(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 
-	logutil.Logger(m.logCtx).Warn("resign ddl owner success")
+	logutil.Logger(m.logCtx).Warn("resign owner success")
 	return nil
 }
 
@@ -347,7 +347,7 @@ func getOwnerInfo(ctx, logCtx context.Context, etcdCli *clientv3.Client, ownerPa
 		if err == nil {
 			break
 		}
-		logutil.BgLogger().Info("etcd-cli get owner info failed", zap.String("category", "ddl"), zap.String("key", ownerPath), zap.Int("retryCnt", i), zap.Error(err))
+		logutil.Logger(logCtx).Info("etcd-cli get owner info failed", zap.String("key", ownerPath), zap.Int("retryCnt", i), zap.Error(err))
 		time.Sleep(util.KeyOpRetryInterval)
 	}
 	if err != nil {

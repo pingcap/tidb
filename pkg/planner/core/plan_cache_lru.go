@@ -253,59 +253,11 @@ func (l *LRUPlanCache) memoryControl() {
 // PickPlanFromBucket pick one plan from bucket
 func (l *LRUPlanCache) pickFromBucket(bucket map[*list.Element]struct{}, matchOpts *utilpc.PlanCacheMatchOpts) (*list.Element, bool) {
 	for k := range bucket {
-		if matchOpts == nil { // for PointGet Plan
+		if matchCachedPlan(l.sctx, k.Value.(*planCacheEntry).PlanValue.(*PlanCacheValue), matchOpts) {
 			return k, true
 		}
-
-		plan := k.Value.(*planCacheEntry).PlanValue.(*PlanCacheValue)
-		// check param types' compatibility
-		ok1 := checkTypesCompatibility4PC(plan.matchOpts.ParamTypes, matchOpts.ParamTypes)
-		if !ok1 {
-			continue
-		}
-
-		// check limit offset and key if equal and check switch if enabled
-		ok2 := checkUint64SliceIfEqual(plan.matchOpts.LimitOffsetAndCount, matchOpts.LimitOffsetAndCount)
-		if !ok2 {
-			continue
-		}
-		if len(plan.matchOpts.LimitOffsetAndCount) > 0 && !l.sctx.GetSessionVars().EnablePlanCacheForParamLimit {
-			// offset and key slice matched, but it is a plan with param limit and the switch is disabled
-			continue
-		}
-		// check subquery switch state
-		if plan.matchOpts.HasSubQuery && !l.sctx.GetSessionVars().EnablePlanCacheForSubquery {
-			continue
-		}
-		// table stats has changed
-		// this check can be disabled by turning off system variable tidb_plan_cache_invalidation_on_fresh_stats
-		if l.sctx.GetSessionVars().PlanCacheInvalidationOnFreshStats &&
-			plan.matchOpts.StatsVersionHash != matchOpts.StatsVersionHash {
-			continue
-		}
-
-		// below are some SQL variables that can affect the plan
-		if plan.matchOpts.ForeignKeyChecks != matchOpts.ForeignKeyChecks {
-			continue
-		}
-		return k, true
 	}
 	return nil, false
-}
-
-func checkUint64SliceIfEqual(a, b []uint64) bool {
-	if (a == nil && b != nil) || (a != nil && b == nil) {
-		return false
-	}
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
 }
 
 // updateInstanceMetric update the memory usage and plan num for show in grafana

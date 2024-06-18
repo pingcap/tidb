@@ -35,7 +35,7 @@ type Engine interface {
 	Flush() error
 	ImportAndClean() error
 	Clean()
-	CreateWriter(id int) (Writer, error)
+	CreateWriter(id int, writerCfg *backend.LocalWriterConfig) (Writer, error)
 }
 
 // Writer is the interface for the writer that can be used to write key-value pairs.
@@ -188,14 +188,14 @@ type writerContext struct {
 }
 
 // CreateWriter creates a new writerContext.
-func (ei *engineInfo) CreateWriter(id int) (Writer, error) {
+func (ei *engineInfo) CreateWriter(id int, writerCfg *backend.LocalWriterConfig) (Writer, error) {
 	ei.memRoot.RefreshConsumption()
 	ok := ei.memRoot.CheckConsume(structSizeWriterCtx)
 	if !ok {
 		return nil, genWriterAllocMemFailedErr(ei.ctx, ei.memRoot, ei.jobID, ei.indexID)
 	}
 
-	wCtx, err := ei.newWriterContext(id)
+	wCtx, err := ei.newWriterContext(id, writerCfg)
 	if err != nil {
 		logutil.Logger(ei.ctx).Error(LitErrCreateContextFail, zap.Error(err),
 			zap.Int64("job ID", ei.jobID), zap.Int64("index ID", ei.indexID),
@@ -206,7 +206,7 @@ func (ei *engineInfo) CreateWriter(id int) (Writer, error) {
 	ei.memRoot.Consume(structSizeWriterCtx)
 	logutil.Logger(ei.ctx).Info(LitInfoCreateWrite, zap.Int64("job ID", ei.jobID),
 		zap.Int64("index ID", ei.indexID), zap.Int("worker ID", id),
-		zap.Int64("allocate memory", structSizeWriterCtx),
+		zap.Int64("allocate memory", structSizeWriterCtx+writerCfg.Local.MemCacheSize),
 		zap.Int64("current memory usage", ei.memRoot.CurrentUsage()),
 		zap.Int64("max memory quota", ei.memRoot.MaxMemoryQuota()))
 	return wCtx, err
@@ -216,21 +216,21 @@ func (ei *engineInfo) CreateWriter(id int) (Writer, error) {
 // If local writer not exist, then create new one and store it into engine info writer cache.
 // note: operate ei.writeCache map is not thread safe please make sure there is sync mechanism to
 // make sure the safe.
-func (ei *engineInfo) newWriterContext(workerID int) (*writerContext, error) {
+func (ei *engineInfo) newWriterContext(workerID int, writerCfg *backend.LocalWriterConfig) (*writerContext, error) {
 	lWrite, exist := ei.writerCache.Load(workerID)
 	if !exist {
-		ok := ei.memRoot.CheckConsume(int64(ei.litCfg.TikvImporter.LocalWriterMemCacheSize))
+		ok := ei.memRoot.CheckConsume(writerCfg.Local.MemCacheSize)
 		if !ok {
 			return nil, genWriterAllocMemFailedErr(ei.ctx, ei.memRoot, ei.jobID, ei.indexID)
 		}
 		var err error
-		lWrite, err = ei.openedEngine.LocalWriter(ei.ctx, &backend.LocalWriterConfig{})
+		lWrite, err = ei.openedEngine.LocalWriter(ei.ctx, writerCfg)
 		if err != nil {
 			return nil, err
 		}
 		// Cache the local writer.
 		ei.writerCache.Store(workerID, lWrite)
-		ei.memRoot.Consume(int64(ei.litCfg.TikvImporter.LocalWriterMemCacheSize))
+		ei.memRoot.Consume(writerCfg.Local.MemCacheSize)
 	}
 	wc := &writerContext{
 		ctx:    ei.ctx,

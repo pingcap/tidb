@@ -498,7 +498,11 @@ func (em *engineManager) localWriter(_ context.Context, cfg *backend.LocalWriter
 		return nil, errors.Errorf("could not find engine for %s", engineUUID.String())
 	}
 	engine := e.(*Engine)
-	return openLocalWriter(cfg, engine, em.GetTiKVCodec(), em.LocalWriterMemCacheSize, em.bufferPool.NewBuffer())
+	memCacheSize := em.LocalWriterMemCacheSize
+	if cfg.Local.MemCacheSize > 0 {
+		memCacheSize = cfg.Local.MemCacheSize
+	}
+	return openLocalWriter(cfg, engine, em.GetTiKVCodec(), memCacheSize, em.bufferPool.NewBuffer())
 }
 
 func (em *engineManager) engineFileSizes() (res []backend.EngineFileSize) {
