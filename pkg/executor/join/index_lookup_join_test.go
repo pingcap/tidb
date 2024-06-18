@@ -131,5 +131,6 @@ func TestIssue45716(t *testing.T) {
 	failpoint.Enable("github.com/pingcap/tidb/pkg/executor/join/inlNewInnerPanic", `return(true)`)
 	defer failpoint.Disable("github.com/pingcap/tidb/pkg/executor/join/inlNewInnerPanic")
 	err := tk.QueryToErr("select /*+ inl_join(t2) */ * from t1 join t2 on t1.a = t2.a;")
+	require.Error(t, err)
 	tk.MustContainErrMsg(err.Error(), "test inlNewInnerPanic")
 }
