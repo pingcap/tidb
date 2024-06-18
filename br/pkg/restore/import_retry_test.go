@@ -592,21 +592,21 @@ func TestFilterFilesByRegion(t *testing.T) {
 	}
 }
 
-func TestRetryRecognizeErrCode (t *testing.T) {
-	waitTime := 1*time.Millisecond
-	maxWaitTime := 16*time.Millisecond
+func TestRetryRecognizeErrCode(t *testing.T) {
+	waitTime := 1 * time.Millisecond
+	maxWaitTime := 16 * time.Millisecond
 	ctx := context.Background()
 	inner := 0
 	outer := 0
 	utils.WithRetry(ctx, func() error {
 		e := utils.WithRetry(ctx, func() error {
-			inner ++
+			inner++
 			e := status.Error(codes.Unavailable, "the connection to TiKV has been cut by a neko, meow :3")
 			if e != nil {
 				return errors.Trace(e)
 			}
 			return nil
-			}, utils.NewBackoffer(10, waitTime, maxWaitTime, utils.NewErrorContext("download sst", 3)))
+		}, utils.NewBackoffer(10, waitTime, maxWaitTime, utils.NewErrorContext("download sst", 3)))
 		outer++
 		return errors.Trace(e)
 	}, utils.NewBackoffer(10, waitTime, maxWaitTime, utils.NewErrorContext("import sst", 3)))
