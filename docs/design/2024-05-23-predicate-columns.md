@@ -58,7 +58,7 @@ Using this syntax, TiDB will only analyze columns that appear in the predicate o
 Compare with other syntaxes:
 
 | Analyze Statement                   | Explain                                                          |
-|-------------------------------------|------------------------------------------------------------------|
+| ----------------------------------- | ---------------------------------------------------------------- |
 | ANALYZE TABLE t;                    | It will analyze with default options. (Usually all columns)      |
 | ANALYZE TABLE t ALL COLUMNS;        | It will analyze all columns.                                     |
 | ANALYZE TABLE t COLUMNS col1, col2; | It will only analyze col1 and col2.                              |
@@ -122,9 +122,9 @@ CREATE TABLE IF NOT EXISTS mysql.column_stats_usage (
 The detailed explanation:
 
 | Column Name      | Description                                          |
-|------------------|------------------------------------------------------|
+| ---------------- | ---------------------------------------------------- |
 | table_id         | The physical table ID.                               |
-| column_id        | The column ID from schema information.            |
+| column_id        | The column ID from schema information.               |
 | last_used_at     | The timestamp when the column statistics were used.  |
 | last_analyzed_at | The timestamp at when the column stats were updated. |
 
@@ -182,7 +182,7 @@ CREATE TABLE IF NOT EXISTS mysql.analyze_options (
 We can focus on the `column_choice` column, which has three different column options in the analyze statement. The corresponding relations are as follows:
 
 | Analyze Statement                        | column_choice | column_ids | mysql.column_stats_usage                                                 | Explain                                                                  |
-|------------------------------------------|---------------|------------|--------------------------------------------------------------------------|--------------------------------------------------------------------------|
+| ---------------------------------------- | ------------- | ---------- | ------------------------------------------------------------------------ | ------------------------------------------------------------------------ |
 | ANALYZE TABLE t;                         | DEFAULT(ALL)  | None       | None                                                                     | It will analyze all analyzable columns from the table.                   |
 | ANALYZE TABLE t ALL COLUMNS;             | ALL           | None       | None                                                                     | It will analyze all columns from the table.                              |
 | ANALYZE TABLE t LIST COLUMNS col1, col2; | LIST          | col1, col2 | None                                                                     | It will only analyze col1 and col2.                                      |
@@ -191,7 +191,7 @@ We can focus on the `column_choice` column, which has three different column opt
 As you can see, we pick PREDICATE as the column_choice for the ANALYZE TABLE t PREDICATE COLUMNS statement. At the same time, we now consider DEFAULT to be ALL, but to support predicate columns during auto-analyze, we need to change the definition of DEFAULT.
 
 | Predicate Column Feature Status | Predicate Columns in `mysql.column_stats_usage` | Meaning                                                                                                                                                          |
-|---------------------------------|-------------------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| ------------------------------- | ----------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Enabled                         | Present                                         | Use those predicate and indexed columns to analyze the table.                                                                                                    |
 | Enabled                         | Absent                                          | Only analyze indexed columns of the table. **If there are no indexes present, we will bypass the analysis of this table and directly set the modify_count to 0** |
 | Disabled                        | -                                               | Analyze all columns of the table                                                                                                                                 |
@@ -210,19 +210,24 @@ Before initiating the analyze process, we can first retrieve all predicate colum
 
 ### Global Variable
 
-In this feature, we introduce a new global variable `tidb_enable_column_tracking` to control whether to use predicate columns in the analyze process.
+In the experimental implementation, we introduce a new global variable `tidb_enable_column_tracking` to control whether to use predicate columns in the analyze process.
 
-Users can set this variable to `ON` or `OFF` to enable or disable the feature. The default value is `OFF`. (Will be set to `ON` in the future)
+But because we decided to track all columns by default, so it becomes unnecessary to use this variable. We will mark it deprecated and remove it in the future.
+
+In this feature, we introduce a new global variable `tidb_analyze_default_column_choice` to control whether to use predicate columns or all columns in the analyze process.
+
+Users can set this variable to `ALL` or `PREDICATE` to analyze all columns or only predicate columns. The default value will be `PREDICATE` after this feature is fully implemented.
 
 ```sql
-SET GLOBAL tidb_enable_column_tracking = ON;
-SET GLOBAL tidb_enable_column_tracking = OFF;
+SET GLOBAL tidb_analyze_default_column_choice = 'PREDICATE';
+
+SET GLOBAL tidb_analyze_default_column_choice = 'ALL';
 ```
 
-| Value | Description                                                                      |
-|-------|----------------------------------------------------------------------------------|
-| ON    | Use predicate columns in the analyze process.                                    |
-| OFF   | Do not use predicate columns in the analyze process. **But still collect them.** |
+| Value     | Description                                                                                                   |
+| --------- | ------------------------------------------------------------------------------------------------------------- |
+| PREDICATE | Use predicate columns in the analyze process.                                                                 |
+| ALL       | 1. Analyze all columns \n 2. Do not use predicate columns in the analyze process. **But still collect them.** |
 
 We continue to collect predicate columns even when the feature is disabled. This ensures that we can promptly catch up with the latest predicate columns when the feature is re-enabled.
 
