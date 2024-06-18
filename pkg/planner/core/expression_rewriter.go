@@ -385,9 +385,10 @@ func (er *expressionRewriter) ctxStackAppend(col expression.Expression, name *ty
 // constructBinaryOpFunction converts binary operator functions
 /*
 	The algorithm is as follows:
-	1. If the length of the two sides of the expression is not equal, return an error.
-	2. If the operator is EQ, NE, or NullEQ, converts (a0,a1,a2) op (b0,b1,b2) to (a0 op b0) and (a1 op b1) and (a2 op b2)
-	3. If the operator is not EQ, NE, or NullEQ,
+	1. If the length of the two sides of the expression is 1, return l op r directly.
+    2. If the length of the two sides of the expression is not equal, return an error.
+	3. If the operator is EQ, NE, or NullEQ, converts (a0,a1,a2) op (b0,b1,b2) to (a0 op b0) and (a1 op b1) and (a2 op b2)
+	4. If the operator is not EQ, NE, or NullEQ,
             converts (a0,a1,a2) op (b0,b1,b2) to (a0 > b0) or (a0 = b0 and a1 > b1) or (a0 = b0 and a1 = b1 and a2 op b2)
 	   Especially, op is GE or LE, the prefix element will be converted to > or <.
             converts (a0,a1,a2) >= (b0,b1,b2) to (a0 > b0) or (a0 = b0 and a1 > b1) or (a0 = b0 and a1 = b1 and a2 >= b2)
