@@ -15,7 +15,10 @@
 package ddl
 
 import (
+	"fmt"
+
 	"github.com/pingcap/errors"
+	ddllogutil "github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -23,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"go.uber.org/zap"
 )
 
 func (d *ddl) MultiSchemaChange(ctx sessionctx.Context, ti ast.Ident, info *model.MultiSchemaInfo) error {
@@ -34,19 +38,52 @@ func (d *ddl) MultiSchemaChange(ctx sessionctx.Context, ti ast.Ident, info *mode
 	if err != nil {
 		return errors.Trace(err)
 	}
+	involveSchemaInfo := make([]model.InvolvingSchemaInfo, 0, len(info.AddForeignKeys)+1)
+	if len(info.AddForeignKeys) > 0 {
+		involveSchemaInfo = append(involveSchemaInfo, model.InvolvingSchemaInfo{
+			Database: schema.Name.L,
+			Table:    t.Meta().Name.L,
+		})
+
+		for _, subjob := range info.SubJobs {
+			if subjob.Type != model.ActionAddForeignKey {
+				continue
+			}
+
+			if len(subjob.Args) < 1 {
+				ddllogutil.DDLLogger().Warn(
+					"expected add foreign key subjob args length",
+					zap.Any("args", subjob.Args))
+				continue
+			}
+			fkInfo, ok := subjob.Args[0].(*model.FKInfo)
+			if !ok {
+				ddllogutil.DDLLogger().Warn(
+					"expected add foreign key subjob args[0] type",
+					zap.String("type", fmt.Sprintf("%T", subjob.Args[0])),
+					zap.Any("args[0]", subjob.Args[0]))
+				continue
+			}
+			involveSchemaInfo = append(involveSchemaInfo, model.InvolvingSchemaInfo{
+				Database: fkInfo.RefSchema.L,
+				Table:    fkInfo.RefTable.L,
+			})
+		}
+	}
 
 	job := &model.Job{
-		SchemaID:        schema.ID,
-		TableID:         t.Meta().ID,
-		SchemaName:      schema.Name.L,
-		TableName:       t.Meta().Name.L,
-		Type:            model.ActionMultiSchemaChange,
-		BinlogInfo:      &model.HistoryInfo{},
-		Args:            nil,
-		MultiSchemaInfo: info,
-		ReorgMeta:       nil,
-		CDCWriteSource:  ctx.GetSessionVars().CDCWriteSource,
-		SQLMode:         ctx.GetSessionVars().SQLMode,
+		SchemaID:            schema.ID,
+		TableID:             t.Meta().ID,
+		SchemaName:          schema.Name.L,
+		TableName:           t.Meta().Name.L,
+		Type:                model.ActionMultiSchemaChange,
+		BinlogInfo:          &model.HistoryInfo{},
+		Args:                nil,
+		MultiSchemaInfo:     info,
+		ReorgMeta:           nil,
+		CDCWriteSource:      ctx.GetSessionVars().CDCWriteSource,
+		InvolvingSchemaInfo: involveSchemaInfo,
+		SQLMode:             ctx.GetSessionVars().SQLMode,
 	}
 	if containsDistTaskSubJob(subJobs) {
 		job.ReorgMeta, err = newReorgMetaFromVariables(job, ctx)
