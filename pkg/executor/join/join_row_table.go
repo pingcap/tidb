@@ -29,10 +29,12 @@ import (
 	"github.com/pingcap/tidb/pkg/util/serialization"
 )
 
-const sizeOfNextPtr = int(unsafe.Sizeof(unsafe.Pointer(nil)))
+const sizeOfNextPtr = int(unsafe.Sizeof(uintptr(0)))
 const sizeOfLengthField = int(unsafe.Sizeof(uint64(1)))
 const usedFlagMaskBigEndian = uint32(1) << 31
 const usedFlagMaskLittleEndian = uint32(1) << 7
+const sizeOfUnsafePointer = int(unsafe.Sizeof(unsafe.Pointer(nil)))
+const sizeOfUintptr = int(unsafe.Sizeof(uintptr(0)))
 
 var fakeAddrPlaceHolder = []byte{0, 0, 0, 0, 0, 0, 0, 0}
 

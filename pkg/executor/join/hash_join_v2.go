@@ -40,9 +40,16 @@ import (
 
 var (
 	_ exec.Executor = &HashJoinV2Exec{}
-	// EnableHashJoinV2 is a variable used only in test
-	EnableHashJoinV2 = atomic.Bool{}
+	// enableHashJoinV2 is a variable used only in test
+	enableHashJoinV2 = atomic.Bool{}
 )
+
+// IsHashJoinV2Enabled return true if hash join v2 is enabled
+func IsHashJoinV2Enabled() bool {
+	// sizeOfUintptr should always equal to sizeOfUnsafePointer, add this check here in case in the future
+	// go runtime change this
+	return enableHashJoinV2.Load() && sizeOfUintptr >= sizeOfUnsafePointer
+}
 
 type hashTableContext struct {
 	// rowTables is used during split partition stage, each buildWorker has
