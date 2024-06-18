@@ -248,7 +248,7 @@ func TestNoNeedIndexStatsLoading(t *testing.T) {
 	require.Eventually(t, func() bool {
 		rows := tk.MustQuery("show stats_meta").Rows()
 		return len(rows) > 0
-	}, 2*time.Minute, 30*time.Millisecond)
+	}, 2*time.Minute, 5*time.Millisecond)
 	tk.MustExec("set tidb_opt_objective='determinate';")
 	tk.MustQuery("select * from t where a = 1 and b = 1;").Check(testkit.Rows("1 1"))
 	table, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
