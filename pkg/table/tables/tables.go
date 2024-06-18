@@ -521,17 +521,8 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx table.MutateContext
 	// Note: The buffer should not be referenced or modified outside this function.
 	// It can only act as a temporary buffer for the current function call.
 	buffer := sctx.GetSessionVars().TablesBufferPool.Update
-	if cap(buffer.ColIDs) < numColsCap {
-		buffer.ColIDs = make([]int64, 0, numColsCap)
-	} else {
-		buffer.ColIDs = buffer.ColIDs[:0]
-	}
-
-	if cap(buffer.Row) < numColsCap {
-		buffer.Row = make([]types.Datum, 0, numColsCap)
-	} else {
-		buffer.Row = buffer.Row[:0]
-	}
+	buffer.ColIDs = ensureCapacityAndReset(buffer.ColIDs, 0, numColsCap)
+	buffer.Row = ensureCapacityAndReset(buffer.Row, 0, numColsCap)
 	if shouldWriteBinlog(sctx.GetSessionVars(), t.meta) {
 		binlogColIDs = make([]int64, 0, numColsCap)
 		binlogOldRow = make([]types.Datum, 0, numColsCap)
@@ -539,11 +530,7 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx table.MutateContext
 	}
 	checksumData := t.initChecksumData(sctx, h)
 	needChecksum := len(checksumData) > 0
-	if cap(buffer.RowToCheck) < numColsCap {
-		buffer.RowToCheck = make([]types.Datum, 0, numColsCap)
-	} else {
-		buffer.RowToCheck = buffer.RowToCheck[:0]
-	}
+	buffer.RowToCheck = ensureCapacityAndReset(buffer.RowToCheck, 0, numColsCap)
 
 	for _, col := range t.Columns {
 		var value types.Datum
@@ -690,11 +677,7 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx table.MutateContext
 			return err
 		}
 	}
-	if cap(buffer.ColSize) < len(t.Cols()) {
-		buffer.ColSize = make([]variable.ColSize, len(t.Cols()))
-	} else {
-		buffer.ColSize = buffer.ColSize[:len(t.Cols())]
-	}
+	buffer.ColSize = ensureCapacityAndReset(buffer.ColSize, len(t.Cols()))
 	for id, col := range t.Cols() {
 		size, err := codec.EstimateValueSize(sc.TypeCtx(), newData[id])
 		if err != nil {
@@ -970,16 +953,8 @@ func (t *TableCommon) AddRecord(sctx table.MutateContext, r []types.Datum, opts 
 	// Note: The buffer should not be referenced or modified outside this function.
 	// It can only act as a temporary buffer for the current function call.
 	buffer := sctx.GetSessionVars().TablesBufferPool.Add
-	if cap(buffer.ColIDs) < len(r) {
-		buffer.ColIDs = make([]int64, 0, len(r))
-	} else {
-		buffer.ColIDs = buffer.ColIDs[:0]
-	}
-	if cap(buffer.Row) < len(r) {
-		buffer.Row = make([]types.Datum, 0, len(r))
-	} else {
-		buffer.Row = buffer.Row[:0]
-	}
+	buffer.ColIDs = ensureCapacityAndReset(buffer.ColIDs, 0, len(r))
+	buffer.Row = ensureCapacityAndReset(buffer.Row, 0, len(r))
 	memBuffer := txn.GetMemBuffer()
 	sh := memBuffer.Staging()
 	defer memBuffer.Cleanup(sh)
@@ -1181,11 +1156,7 @@ func (t *TableCommon) AddRecord(sctx table.MutateContext, r []types.Datum, opts 
 		sessVars.TxnCtx.InsertTTLRowsCount += 1
 	}
 
-	if cap(buffer.ColSize) < len(t.Cols()) {
-		buffer.ColSize = make([]variable.ColSize, len(t.Cols()))
-	} else {
-		buffer.ColSize = buffer.ColSize[:len(t.Cols())]
-	}
+	buffer.ColSize = ensureCapacityAndReset(buffer.ColSize, len(t.Cols()))
 
 	for id, col := range t.Cols() {
 		size, err := codec.EstimateValueSize(sc.TypeCtx(), r[id])
@@ -1466,11 +1437,7 @@ func (t *TableCommon) RemoveRecord(ctx table.MutateContext, h kv.Handle, r []typ
 	// Note: The buffer should not be referenced or modified outside this function.
 	// It can only act as a temporary buffer for the current function call.
 	buffer := sessVars.TablesBufferPool.Remove
-	if cap(buffer.ColSize) < len(t.Cols()) {
-		buffer.ColSize = make([]variable.ColSize, len(t.Cols()))
-	} else {
-		buffer.ColSize = buffer.ColSize[:len(t.Cols())]
-	}
+	buffer.ColSize = ensureCapacityAndReset(buffer.ColSize, len(t.Cols()))
 	for id, col := range t.Cols() {
 		size, err := codec.EstimateValueSize(sc.TypeCtx(), r[id])
 		if err != nil {
@@ -2469,4 +2436,17 @@ func (t *TemporaryTable) SetSize(v int64) {
 // GetMeta gets the table meta.
 func (t *TemporaryTable) GetMeta() *model.TableInfo {
 	return t.meta
+}
+
+// ensureCapacityAndReset is similar to the built-in make(),
+// but it reuses the given slice if it has enough capacity.
+func ensureCapacityAndReset[T any](slice []T, size int, optCap ...int) []T {
+	capacity := size
+	if len(optCap) > 0 {
+		capacity = optCap[0]
+	}
+	if cap(slice) < capacity {
+		return make([]T, size, capacity)
+	}
+	return slice[:size]
 }
