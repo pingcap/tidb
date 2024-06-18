@@ -50,7 +50,7 @@ type LRUPlanCache struct {
 	// lock make cache thread safe
 	lock syncutil.RWMutex
 	// onEvict will be called if any eviction happened, only for test use now
-	onEvict func(string, kvcache.Value)
+	onEvict func(string, any)
 
 	// 0 indicates no quota
 	quota uint64

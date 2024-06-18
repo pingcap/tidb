@@ -225,38 +225,6 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 	return preparedObj, p, paramCount, nil
 }
 
-// planCacheKey is used to access Plan Cache. We put some variables that do not affect the plan into planCacheKey, such as the sql text.
-// Put the parameters that may affect the plan in planCacheValue.
-// However, due to some compatibility reasons, we will temporarily keep some system variable-related values in planCacheKey.
-// At the same time, because these variables have a small impact on plan, we will move them to PlanCacheValue later if necessary.
-// TODO: maintain a sync.pool for this structure.
-type planCacheKey struct {
-	database      string
-	connID        uint64
-	stmtText      string
-	schemaVersion int64
-	tblVersionMap map[int64]uint64
-
-	// Only be set in rc or for update read and leave it default otherwise.
-	// In Rc or ForUpdateRead, we should check whether the information schema has been changed when using plan cache.
-	// If it changed, we should rebuild the plan. lastUpdatedSchemaVersion help us to decide whether we should rebuild
-	// the plan in rc or for update read.
-	lastUpdatedSchemaVersion int64
-	sqlMode                  mysql.SQLMode
-	timezoneOffset           int
-	isolationReadEngines     map[kv.StoreType]struct{}
-	selectLimit              uint64
-	bindSQL                  string
-	connCollation            string
-	inRestrictedSQL          bool
-	restrictedReadOnly       bool
-	TiDBSuperReadOnly        bool
-	exprBlacklistTS          int64 // expr-pushdown-blacklist can affect query optimization, so we need to consider it in plan cache.
-
-	memoryUsage int64 // Do not include in hash
-	hash        []byte
-}
-
 func hashInt64Uint64Map(b []byte, m map[int64]uint64) []byte {
 	keys := make([]int64, 0, len(m))
 	for k := range m {
