@@ -222,10 +222,12 @@ func encodeValueDatum(loc *time.Location, d *types.Datum, buffer []byte) (nBuffe
 	return
 }
 
+// Checksum is used to calculate and append checksum data into the raw bytes
 type Checksum interface {
 	encode(encoder *Encoder, buf []byte) ([]byte, error)
 }
 
+// NoChecksum indicate no checksum encoded into the raw bytes
 type NoChecksum struct{}
 
 func (NoChecksum) encode(encoder *Encoder, buf []byte) ([]byte, error) {
@@ -235,6 +237,7 @@ func (NoChecksum) encode(encoder *Encoder, buf []byte) ([]byte, error) {
 
 const checksumVersionRaw byte = 1
 
+// RawChecksum indicates encode the raw bytes checksum and append it to the raw bytes.
 type RawChecksum struct {
 	Key []byte
 }
