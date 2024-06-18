@@ -833,6 +833,7 @@ func (e *IndexLookUpExecutor) Close() error {
 	e.tblWorkerWg.Wait()
 	e.finished = nil
 	e.workerStarted = false
+	e.memTracker.Detach()
 	e.memTracker = nil
 	e.resultCurr = nil
 	return nil
