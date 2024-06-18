@@ -1155,6 +1155,7 @@ func SetTiFlashPlacementRule(ctx context.Context, rule pdhttp.Rule) error {
 	return is.tiflashReplicaManager.SetPlacementRule(ctx, &rule)
 }
 
+// DeleteTiFlashPlacementRules is a helper function to delete TiFlash placement rules of given physical table IDs.
 func DeleteTiFlashPlacementRules(ctx context.Context, physicalTableIDs []int64) error {
 	is, err := getGlobalInfoSyncer()
 	if err != nil {
