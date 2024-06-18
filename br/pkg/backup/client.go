@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version"
+<<<<<<< HEAD
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/distsql"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -45,6 +46,19 @@ import (
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/redact"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
+=======
+	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/distsql"
+	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/meta"
+	"github.com/pingcap/tidb/meta/autoid"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/mathutil"
+	"github.com/pingcap/tidb/util/ranger"
+	filter "github.com/pingcap/tidb/util/table-filter"
+>>>>>>> 918436672c7 (br: retry more time to get pd leader (#54059))
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/txnkv/txnlock"
@@ -965,12 +979,17 @@ func (bc *Client) FindTargetPeer(ctx context.Context, key []byte, isRawKv bool, 
 	// in order to find the correct region.
 	var leader *metapb.Peer
 	key = codec.EncodeBytesExt([]byte{}, key, isRawKv)
+<<<<<<< HEAD
 	state := utils.InitialRetryState(60, 100*time.Millisecond, 2*time.Second)
 	failpoint.Inject("retry-state-on-find-target-peer", func(v failpoint.Value) {
 		logutil.CL(ctx).Info("reset state for FindTargetPeer")
 		state = utils.InitialRetryState(v.(int), 100*time.Millisecond, 100*time.Millisecond)
 	})
 	err := utils.WithRetry(ctx, func() error {
+=======
+	for i := 1; i < 100; i++ {
+		// better backoff.
+>>>>>>> 918436672c7 (br: retry more time to get pd leader (#54059))
 		region, err := bc.mgr.GetPDClient().GetRegion(ctx, key)
 		failpoint.Inject("return-region-on-find-target-peer", func(v failpoint.Value) {
 			switch v.(string) {
@@ -1019,8 +1038,14 @@ func (bc *Client) FindTargetPeer(ctx context.Context, key []byte, isRawKv bool, 
 			}
 		})
 		if err != nil || region == nil {
+<<<<<<< HEAD
 			logutil.CL(ctx).Error("find region failed", zap.Error(err), zap.Reflect("region", region))
 			return errors.Annotate(berrors.ErrPDLeaderNotFound, "cannot find region from pd client")
+=======
+			logutil.CL(ctx).Error("find leader failed", zap.Error(err), zap.Reflect("region", region))
+			time.Sleep(time.Millisecond * time.Duration(mathutil.Min(i*100, 3000)))
+			continue
+>>>>>>> 918436672c7 (br: retry more time to get pd leader (#54059))
 		}
 		if len(targetStoreIds) == 0 {
 			if region.Leader != nil {
@@ -1044,11 +1069,17 @@ func (bc *Client) FindTargetPeer(ctx context.Context, key []byte, isRawKv bool, 
 				return nil
 			}
 		}
+<<<<<<< HEAD
 		return errors.Annotate(berrors.ErrPDLeaderNotFound, "cannot find leader or candidate from pd client")
 	}, &state)
 	if err != nil {
 		logutil.CL(ctx).Error("can not find a valid target peer after retry", logutil.Key("key", key))
 		return nil, err
+=======
+		logutil.CL(ctx).Warn("no region found", logutil.Key("key", key))
+		time.Sleep(time.Millisecond * time.Duration(mathutil.Min(i*100, 3000)))
+		continue
+>>>>>>> 918436672c7 (br: retry more time to get pd leader (#54059))
 	}
 	// leader cannot be nil if err is nil
 	return leader, nil
