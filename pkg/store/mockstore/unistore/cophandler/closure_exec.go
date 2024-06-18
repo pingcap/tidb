@@ -925,8 +925,8 @@ func (e *closureExecutor) indexScanProcessCore(key, value []byte) error {
 	}
 	// Add ExtraPhysTblID if requested
 	// Assumes it is always last!
-	// If we need pid, it already filled by above loop. Because `DecodeIndexKV` func will return pid in values.
-	// The following if statement is to ensure that tid can be filled in.
+	// If we need pid, it already filled by above loop. Because `DecodeIndexKV` func will return pid in `values`.
+	// The following if statement is to fill in the tid when we needed it.
 	if e.columnInfos[len(e.columnInfos)-1].ColumnId == model.ExtraPhysTblID && len(e.columnInfos) >= len(values) {
 		tblID := tablecodec.DecodeTableID(key)
 		chk.AppendInt64(len(e.columnInfos)-1, tblID)

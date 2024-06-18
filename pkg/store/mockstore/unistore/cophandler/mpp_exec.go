@@ -314,8 +314,8 @@ func (e *indexScanExec) Process(key, value []byte) error {
 		}
 	}
 
-	// If we need pid, it already filled by above loop. Because `DecodeIndexKV` func will return pid in values.
-	// The following if statement is to ensure that tid can be filled in.
+	// If we need pid, it already filled by above loop. Because `DecodeIndexKV` func will return pid in `values`.
+	// The following if statement is to fill in the tid when we needed it.
 	if e.physTblIDColIdx != nil && *e.physTblIDColIdx >= len(values) {
 		tblID := tablecodec.DecodeTableID(key)
 		e.chk.AppendInt64(*e.physTblIDColIdx, tblID)
