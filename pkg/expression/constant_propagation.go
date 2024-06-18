@@ -16,6 +16,7 @@ package expression
 
 import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/types"
@@ -204,12 +205,22 @@ func (s *propConstSolver) propagateConstantEQ() {
 		}
 		cols := make([]*Column, 0, len(mapper))
 		cons := make([]Expression, 0, len(mapper))
+		collations := make([]string, 0, len(mapper))
 		for id, con := range mapper {
 			cols = append(cols, s.columns[id])
 			cons = append(cons, con)
+			collations = append(collations, s.columns[id].GetStaticType().GetCollate())
 		}
 		for i, cond := range s.conditions {
 			if !visited[i] {
+				if currentFun, ok := cond.(*ScalarFunction); ok &&
+					currentFun.FuncName.L == ast.Length &&
+					(collations[i] == charset.CollationUTF8MB4 || collations[i] == charset.CollationUTF8) {
+					// If the collation of the column is PAD SPACE,
+					// we can't propagate the constant to the length function.
+					// Fixed issue #53730
+					continue
+				}
 				s.conditions[i] = ColumnSubstitute(s.ctx, cond, NewSchema(cols...), cons)
 			}
 		}
