@@ -577,6 +577,7 @@ func loadNeededIndexHistograms(sctx sessionctx.Context, statsCache util.StatsCac
 	}
 	index, ok := tbl.Indices[idx.ID]
 	// Double check if the index is really needed to load.
+	// If we don't do this it might cause a memory leak.
 	// See: https://github.com/pingcap/tidb/issues/54022
 	if !ok || !index.IsLoadNeeded() {
 		if !index.IsLoadNeeded() {
