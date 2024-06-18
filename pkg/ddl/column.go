@@ -19,6 +19,7 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
+	"github.com/pingcap/tidb/pkg/util/rowcodec"
 	"math/bits"
 	"strings"
 	"sync/atomic"
@@ -1236,7 +1237,6 @@ func newUpdateColumnWorker(id int, t table.PhysicalTable, decodeColMap map[int64
 		}
 	}
 	rowDecoder := decoder.NewRowDecoder(t, t.WritableCols(), decodeColMap)
-	checksumNeeded := variable.EnableRowLevelChecksum.Load()
 	failpoint.Inject("forceRowLevelChecksumOnUpdateColumnBackfill", func() {
 		orig := variable.EnableRowLevelChecksum.Load()
 		defer variable.EnableRowLevelChecksum.Store(orig)
@@ -1248,7 +1248,7 @@ func newUpdateColumnWorker(id int, t table.PhysicalTable, decodeColMap map[int64
 		newColInfo:     newCol,
 		rowDecoder:     rowDecoder,
 		rowMap:         make(map[int64]types.Datum, len(decodeColMap)),
-		checksumNeeded: checksumNeeded,
+		checksumNeeded: variable.EnableRowLevelChecksum.Load(),
 	}, nil
 }
 
@@ -1385,11 +1385,11 @@ func (w *updateColumnWorker) getRowRecord(handle kv.Handle, recordKey []byte, ra
 	}
 	rd := &w.tblCtx.GetSessionVars().RowEncoder
 	ec := w.exprCtx.GetEvalCtx().ErrCtx()
-	var checksumKey kv.Key
+	var checksum rowcodec.Checksum
 	if w.checksumNeeded {
-		checksumKey = recordKey
+		checksum = rowcodec.RawChecksum{Key: recordKey}
 	}
-	newRowVal, err := tablecodec.EncodeRow(sysTZ, newRow, newColumnIDs, nil, nil, checksumKey, rd)
+	newRowVal, err := tablecodec.EncodeRow(sysTZ, newRow, newColumnIDs, nil, nil, checksum, rd)
 	err = ec.HandleError(err)
 	if err != nil {
 		return errors.Trace(err)

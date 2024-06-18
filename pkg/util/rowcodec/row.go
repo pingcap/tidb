@@ -53,17 +53,18 @@ const (
 //
 // Checksum
 //
-//	0               1               2               3               4               5               6               7               8
-//	+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-//	|       |E| VER |                            CHECKSUM                           |                    EXTRA_CHECKSUM(OPTIONAL)                   |
-//	+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-//	     HEADER
+//		0               1               2               3               4               5               6               7               8
+//		+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+//		|       |E| VER |                            CHECKSUM                           |                    EXTRA_CHECKSUM(OPTIONAL)                   |
+//		+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+//		     HEADER
 //
-//	- HEADER
-//	  - VER: version
-//	  - E:   has extra checksum
-//	- CHECKSUM
-//	  - little-endian CRC32(IEEE) when hdr.ver = 0 (default)
+//		- HEADER
+//		  - VER: version
+//		  - E:   has extra checksum
+//		- CHECKSUM
+//		  - little-endian CRC32(IEEE) when hdr.ver = 0 (old version, columns-level checksum)
+//	   - little-endian CRC32(IEEE) when hdr.ver = 1 (default, bytes-level checksum)
 type row struct {
 	flags          byte
 	checksumHeader byte
@@ -187,6 +188,14 @@ func (r *row) toBytes(buf []byte) []byte {
 		buf = append(buf, u16SliceToBytes(r.offsets)...)
 	}
 	buf = append(buf, r.data...)
+	// it's the caller's responsibility to set the checksum data.
+	if r.hasChecksum() {
+		buf = append(buf, r.checksumHeader)
+		buf = binary.LittleEndian.AppendUint32(buf, r.checksum1)
+		if r.hasExtraChecksum() {
+			buf = binary.LittleEndian.AppendUint32(buf, r.checksum2)
+		}
+	}
 	return buf
 }
 

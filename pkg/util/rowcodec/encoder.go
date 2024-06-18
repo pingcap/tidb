@@ -22,7 +22,6 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/codec"
@@ -43,7 +42,7 @@ type Encoder struct {
 // This function may return both a valid encoded bytes and an error (actually `"pingcap/errors".ErrorGroup`). If the caller
 // expects to handle these errors according to `SQL_MODE` or other configuration, please refer to `pkg/errctx`.
 // the caller should make sure the key is not nil if require checksum.
-func (encoder *Encoder) Encode(loc *time.Location, colIDs []int64, values []types.Datum, key kv.Key, buf []byte) ([]byte, error) {
+func (encoder *Encoder) Encode(loc *time.Location, colIDs []int64, values []types.Datum, checksum Checksum, buf []byte) ([]byte, error) {
 	encoder.reset()
 	encoder.appendColVals(colIDs, values)
 	numCols, notNullIdx := encoder.reformatCols()
@@ -51,19 +50,10 @@ func (encoder *Encoder) Encode(loc *time.Location, colIDs []int64, values []type
 	if err != nil {
 		return nil, err
 	}
-	if key != nil {
-		encoder.flags |= rowFlagChecksum
+	if checksum == nil {
+		checksum = NoChecksum{}
 	}
-	valueBytes := encoder.toBytes(buf)
-	if encoder.hasChecksum() {
-		// set the checksumHeader to 1 to specify using the bytes-level checksum.
-		encoder.checksumHeader = 1
-		valueBytes = append(valueBytes, encoder.checksumHeader)
-		rawChecksum := crc32.Checksum(append(valueBytes, key...), crc32.IEEETable)
-		valueBytes = binary.LittleEndian.AppendUint32(valueBytes, rawChecksum)
-		encoder.checksum1 = rawChecksum
-	}
-	return valueBytes, nil
+	return checksum.encode(encoder, buf)
 }
 
 func (encoder *Encoder) reset() {
@@ -230,4 +220,34 @@ func encodeValueDatum(loc *time.Location, d *types.Datum, buffer []byte) (nBuffe
 	}
 	nBuffer = buffer
 	return
+}
+
+type Checksum interface {
+	encode(encoder *Encoder, buf []byte) ([]byte, error)
+}
+
+type NoChecksum struct{}
+
+func (NoChecksum) encode(encoder *Encoder, buf []byte) ([]byte, error) {
+	encoder.flags &^= rowFlagChecksum // revert checksum flag
+	return encoder.toBytes(buf), nil
+}
+
+const checksumVersionRaw byte = 1
+
+type RawChecksum struct {
+	Key []byte
+}
+
+func (c RawChecksum) encode(encoder *Encoder, buf []byte) ([]byte, error) {
+	encoder.flags |= rowFlagChecksum
+	encoder.checksumHeader &^= checksumFlagExtra   // revert extra checksum flag
+	encoder.checksumHeader &^= checksumMaskVersion // revert checksum version
+	encoder.checksumHeader |= checksumVersionRaw   // set checksum version
+	valueBytes := encoder.toBytes(buf)
+	valueBytes = append(valueBytes, encoder.checksumHeader)
+	encoder.checksum1 = crc32.Checksum(valueBytes, crc32.IEEETable)
+	encoder.checksum1 = crc32.Update(encoder.checksum1, crc32.IEEETable, c.Key)
+	valueBytes = binary.LittleEndian.AppendUint32(valueBytes, encoder.checksum1)
+	return valueBytes, nil
 }

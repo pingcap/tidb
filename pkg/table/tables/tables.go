@@ -21,6 +21,7 @@ package tables
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/pkg/util/rowcodec"
 	"math"
 	"strconv"
 	"strings"
@@ -594,12 +595,11 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx table.MutateContext
 	adjustRowValuesBuf(writeBufs, len(row))
 	key := t.RecordKey(h)
 	sc, rd := sessVars.StmtCtx, &sessVars.RowEncoder
-	var checksumKey kv.Key
-	needChecksum := sctx.GetSessionVars().IsRowLevelChecksumEnabled()
-	if needChecksum {
-		checksumKey = key
+	var checksum rowcodec.Checksum
+	if sctx.GetSessionVars().IsRowLevelChecksumEnabled() {
+		checksum = rowcodec.RawChecksum{Key: key}
 	}
-	writeBufs.RowValBuf, err = tablecodec.EncodeRow(sc.TimeZone(), row, colIDs, writeBufs.RowValBuf, writeBufs.AddRowValues, checksumKey, rd)
+	writeBufs.RowValBuf, err = tablecodec.EncodeRow(sc.TimeZone(), row, colIDs, writeBufs.RowValBuf, writeBufs.AddRowValues, checksum, rd)
 	err = sc.HandleError(err)
 	if err != nil {
 		return err
@@ -1016,12 +1016,11 @@ func (t *TableCommon) AddRecord(sctx table.MutateContext, r []types.Datum, opts 
 	logutil.BgLogger().Debug("addRecord",
 		zap.Stringer("key", key))
 	sc, rd := sessVars.StmtCtx, &sessVars.RowEncoder
-	var checksumKey kv.Key
-	needChecksum := sctx.GetSessionVars().IsRowLevelChecksumEnabled()
-	if needChecksum {
-		checksumKey = key
+	var checksum rowcodec.Checksum
+	if sctx.GetSessionVars().IsRowLevelChecksumEnabled() {
+		checksum = rowcodec.RawChecksum{Key: key}
 	}
-	writeBufs.RowValBuf, err = tablecodec.EncodeRow(sc.TimeZone(), row, colIDs, writeBufs.RowValBuf, writeBufs.AddRowValues, checksumKey, rd)
+	writeBufs.RowValBuf, err = tablecodec.EncodeRow(sc.TimeZone(), row, colIDs, writeBufs.RowValBuf, writeBufs.AddRowValues, checksum, rd)
 	err = sc.HandleError(err)
 	if err != nil {
 		return nil, err
