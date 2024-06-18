@@ -128,7 +128,6 @@ func (e *DeleteExec) deleteSingleTableByChunk(ctx context.Context) error {
 				}
 				rowCount = 0
 			}
-
 			for i, field := range fields {
 				if columns[i].ID == model.ExtraPidColID || columns[i].ID == model.ExtraPhysTblID {
 					continue
@@ -143,7 +142,7 @@ func (e *DeleteExec) deleteSingleTableByChunk(ctx context.Context) error {
 				return err
 			}
 			rowCount++
-			clear(datumRow)
+			datumRow = datumRow[:0]
 		}
 		chk = chunk.Renew(chk, e.MaxChunkSize())
 		if txn, _ := e.Ctx().Txn(false); txn != nil {
