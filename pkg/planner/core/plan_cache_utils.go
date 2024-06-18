@@ -760,7 +760,7 @@ func matchCachedPlan(sctx sessionctx.Context, value *PlanCacheValue, matchOpts *
 		return false
 	}
 	// check limit offset and key if equal and check switch if enabled
-	if !checkUint64SliceIfEqual(value.matchOpts.LimitOffsetAndCount, matchOpts.LimitOffsetAndCount) {
+	if !slices.Equal(value.matchOpts.LimitOffsetAndCount, matchOpts.LimitOffsetAndCount) {
 		return false
 	}
 	if len(value.matchOpts.LimitOffsetAndCount) > 0 && !sctx.GetSessionVars().EnablePlanCacheForParamLimit {
@@ -781,21 +781,6 @@ func matchCachedPlan(sctx sessionctx.Context, value *PlanCacheValue, matchOpts *
 	// below are some SQL variables that can affect the plan
 	if value.matchOpts.ForeignKeyChecks != matchOpts.ForeignKeyChecks {
 		return false
-	}
-	return true
-}
-
-func checkUint64SliceIfEqual(a, b []uint64) bool {
-	if (a == nil && b != nil) || (a != nil && b == nil) {
-		return false
-	}
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
 	}
 	return true
 }
