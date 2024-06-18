@@ -192,7 +192,7 @@ func (bo *importerBackoffer) NextBackoff(err error) time.Duration {
 				bo.delayTime = 2 * bo.delayTime
 				bo.attempt--
 			case codes.Canceled:
-				if isGRPCCancel(err) {
+				if isGRPCCancel(lastErr) {
 					bo.delayTime = 2 * bo.delayTime
 					bo.attempt--
 				} else {
