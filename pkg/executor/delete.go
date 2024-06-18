@@ -128,7 +128,7 @@ func (e *DeleteExec) deleteSingleTableByChunk(ctx context.Context) error {
 				}
 				rowCount = 0
 			}
-			
+
 			for i, field := range fields {
 				if columns[i].ID == model.ExtraPidColID || columns[i].ID == model.ExtraPhysTblID {
 					continue
