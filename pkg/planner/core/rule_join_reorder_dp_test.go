@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/stretchr/testify/require"
@@ -37,7 +38,7 @@ type mockLogicalJoin struct {
 }
 
 func (mj mockLogicalJoin) init(ctx base.PlanContext) *mockLogicalJoin {
-	mj.baseLogicalPlan = newBaseLogicalPlan(ctx, "MockLogicalJoin", &mj, 0)
+	mj.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(ctx, "MockLogicalJoin", &mj, 0)
 	return &mj
 }
 
@@ -153,7 +154,7 @@ func newDataSource(ctx base.PlanContext, name string, count int) base.LogicalPla
 func planToString(plan base.LogicalPlan) string {
 	switch x := plan.(type) {
 	case *mockLogicalJoin:
-		return fmt.Sprintf("MockJoin{%v, %v}", planToString(x.children[0]), planToString(x.children[1]))
+		return fmt.Sprintf("MockJoin{%v, %v}", planToString(x.Children()[0]), planToString(x.Children()[1]))
 	case *DataSource:
 		return x.TableAsName.L
 	}

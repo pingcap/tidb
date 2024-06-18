@@ -10,8 +10,8 @@ go_test(
         "//pkg/config",
         "//pkg/ddl/ingest",
         "//pkg/ddl/ingest/testutil",
-        "//pkg/ddl/util/callback",
         "//pkg/parser/model",
         "//pkg/testkit",
+        "//pkg/testkit/testfailpoint",
     ],
 )

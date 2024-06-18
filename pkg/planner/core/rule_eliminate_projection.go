@@ -218,7 +218,7 @@ func (pe *projectionEliminator) eliminate(p base.LogicalPlan, replace map[string
 				proj.Exprs[i] = ReplaceColumnOfExpr(proj.Exprs[i], child, child.Schema())
 				foldedExpr := expression.FoldConstant(ctx.GetExprCtx(), proj.Exprs[i])
 				// the folded expr should have the same null flag with the original expr, especially for the projection under union, so forcing it here.
-				foldedExpr.GetType().SetFlag((foldedExpr.GetType().GetFlag() & ^mysql.NotNullFlag) | (proj.Exprs[i].GetType().GetFlag() & mysql.NotNullFlag))
+				foldedExpr.GetType(ctx.GetExprCtx().GetEvalCtx()).SetFlag((foldedExpr.GetType(ctx.GetExprCtx().GetEvalCtx()).GetFlag() & ^mysql.NotNullFlag) | (proj.Exprs[i].GetType(ctx.GetExprCtx().GetEvalCtx()).GetFlag() & mysql.NotNullFlag))
 				proj.Exprs[i] = foldedExpr
 			}
 			p.Children()[0] = child.Children()[0]

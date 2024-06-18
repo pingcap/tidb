@@ -869,6 +869,7 @@ var tableTiDBIndexesCols = []columnInfo{
 	{name: "INDEX_ID", tp: mysql.TypeLonglong, size: 21},
 	{name: "IS_VISIBLE", tp: mysql.TypeVarchar, size: 64},
 	{name: "CLUSTERED", tp: mysql.TypeVarchar, size: 64},
+	{name: "IS_GLOBAL", tp: mysql.TypeLonglong, size: 21},
 }
 
 var slowQueryCols = []columnInfo{
@@ -1263,9 +1264,9 @@ var tableDDLJobsCols = []columnInfo{
 	{name: "SCHEMA_ID", tp: mysql.TypeLonglong, size: 21},
 	{name: "TABLE_ID", tp: mysql.TypeLonglong, size: 21},
 	{name: "ROW_COUNT", tp: mysql.TypeLonglong, size: 21},
-	{name: "CREATE_TIME", tp: mysql.TypeDatetime, size: 26},
-	{name: "START_TIME", tp: mysql.TypeDatetime, size: 26},
-	{name: "END_TIME", tp: mysql.TypeDatetime, size: 26},
+	{name: "CREATE_TIME", tp: mysql.TypeDatetime, size: 26, decimal: 6},
+	{name: "START_TIME", tp: mysql.TypeDatetime, size: 26, decimal: 6},
+	{name: "END_TIME", tp: mysql.TypeDatetime, size: 26, decimal: 6},
 	{name: "STATE", tp: mysql.TypeVarchar, size: 64},
 	{name: "QUERY", tp: mysql.TypeBlob, size: types.UnspecifiedLength},
 }
@@ -1529,7 +1530,7 @@ var tableTiDBTrxCols = []columnInfo{
 	{name: txninfo.StartTimeStr, tp: mysql.TypeTimestamp, decimal: 6, size: 26, comment: "Start time of the transaction"},
 	{name: txninfo.CurrentSQLDigestStr, tp: mysql.TypeVarchar, size: 64, comment: "Digest of the sql the transaction are currently running"},
 	{name: txninfo.CurrentSQLDigestTextStr, tp: mysql.TypeBlob, size: types.UnspecifiedLength, comment: "The normalized sql the transaction are currently running"},
-	{name: txninfo.StateStr, tp: mysql.TypeEnum, enumElems: txninfo.TxnRunningStateStrs, comment: "Current running state of the transaction"},
+	{name: txninfo.StateStr, tp: mysql.TypeEnum, size: 16, enumElems: txninfo.TxnRunningStateStrs, comment: "Current running state of the transaction"},
 	{name: txninfo.WaitingStartTimeStr, tp: mysql.TypeTimestamp, decimal: 6, size: 26, comment: "Current lock waiting's start time"},
 	{name: txninfo.MemBufferKeysStr, tp: mysql.TypeLonglong, size: 64, comment: "How many entries are in MemDB"},
 	{name: txninfo.MemBufferBytesStr, tp: mysql.TypeLonglong, size: 64, comment: "MemDB used memory"},

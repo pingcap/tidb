@@ -113,8 +113,8 @@ func (*BaseCallback) OnGetJobAfter(_ string, _ *model.Job) {
 func (*BaseCallback) OnUpdateReorgInfo(_ *model.Job, _ int64) {
 }
 
-// DomainReloader is used to avoid import loop.
-type DomainReloader interface {
+// SchemaLoader is used to avoid import loop, the only impl is domain currently.
+type SchemaLoader interface {
 	Reload() error
 }
 
@@ -129,7 +129,7 @@ type ReorgCallback interface {
 // DefaultCallback is the default callback that TiDB will use.
 type DefaultCallback struct {
 	*BaseCallback
-	do DomainReloader
+	do SchemaLoader
 }
 
 // OnChanged overrides ddl Callback interface.
@@ -155,7 +155,7 @@ func (c *DefaultCallback) OnSchemaStateChanged(_ int64) {
 	}
 }
 
-func newDefaultCallBack(do DomainReloader) Callback {
+func newDefaultCallBack(do SchemaLoader) Callback {
 	return &DefaultCallback{BaseCallback: &BaseCallback{}, do: do}
 }
 
@@ -167,7 +167,7 @@ func newDefaultCallBack(do DomainReloader) Callback {
 // ctc is named from column type change, here after we call them ctc for short.
 type ctcCallback struct {
 	*BaseCallback
-	do DomainReloader
+	do SchemaLoader
 }
 
 // OnChanged overrides ddl Callback interface.
@@ -206,14 +206,14 @@ func (*ctcCallback) OnJobRunBefore(job *model.Job) {
 	}
 }
 
-func newCTCCallBack(do DomainReloader) Callback {
+func newCTCCallBack(do SchemaLoader) Callback {
 	return &ctcCallback{do: do}
 }
 
 // ****************************** End of CTC DDL Callback Instance ***************************************************
 
 var (
-	customizedCallBackRegisterMap = map[string]func(do DomainReloader) Callback{}
+	customizedCallBackRegisterMap = map[string]func(do SchemaLoader) Callback{}
 )
 
 func init() {
@@ -223,7 +223,7 @@ func init() {
 }
 
 // GetCustomizedHook get the hook registered in the hookMap.
-func GetCustomizedHook(s string) (func(do DomainReloader) Callback, error) {
+func GetCustomizedHook(s string) (func(do SchemaLoader) Callback, error) {
 	s = strings.ToLower(s)
 	s = strings.TrimSpace(s)
 	fact, ok := customizedCallBackRegisterMap[s]

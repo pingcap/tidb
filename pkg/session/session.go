@@ -106,7 +106,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/intest"
-	"github.com/pingcap/tidb/pkg/util/kvcache"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/logutil/consistency"
 	"github.com/pingcap/tidb/pkg/util/memory"
@@ -293,7 +292,7 @@ func (s *session) cleanRetryInfo() {
 	}
 
 	planCacheEnabled := s.GetSessionVars().EnablePreparedPlanCache
-	var cacheKey kvcache.Key
+	var cacheKey, bindSQL string
 	var err error
 	var preparedObj *plannercore.PlanCacheStmt
 	var stmtText, stmtDB string
@@ -303,7 +302,7 @@ func (s *session) cleanRetryInfo() {
 			preparedObj, ok = preparedPointer.(*plannercore.PlanCacheStmt)
 			if ok {
 				stmtText, stmtDB = preparedObj.StmtText, preparedObj.StmtDB
-				bindSQL, _ := bindinfo.MatchSQLBindingForPlanCache(s.pctx, preparedObj.PreparedAst.Stmt, &preparedObj.BindingInfo)
+				bindSQL, _ = bindinfo.MatchSQLBindingForPlanCache(s.pctx, preparedObj.PreparedAst.Stmt, &preparedObj.BindingInfo)
 				cacheKey, err = plannercore.NewPlanCacheKey(s.sessionVars, stmtText, stmtDB, preparedObj.SchemaVersion,
 					0, bindSQL, expression.ExprPushDownBlackListReloadTimeStamp.Load(), preparedObj.RelateVersion)
 				if err != nil {
@@ -316,7 +315,12 @@ func (s *session) cleanRetryInfo() {
 	for i, stmtID := range retryInfo.DroppedPreparedStmtIDs {
 		if planCacheEnabled {
 			if i > 0 && preparedObj != nil {
-				plannercore.SetPstmtIDSchemaVersion(cacheKey, stmtText, preparedObj.SchemaVersion, s.sessionVars.IsolationReadEngines)
+				cacheKey, err = plannercore.NewPlanCacheKey(s.sessionVars, stmtText, stmtDB, preparedObj.SchemaVersion,
+					0, bindSQL, expression.ExprPushDownBlackListReloadTimeStamp.Load(), preparedObj.RelateVersion)
+				if err != nil {
+					logutil.Logger(s.currentCtx).Warn("clean cached plan failed", zap.Error(err))
+					return
+				}
 			}
 			if !s.sessionVars.IgnorePreparedCacheCloseStmt { // keep the plan in cache
 				s.GetSessionPlanCache().Delete(cacheKey)
@@ -747,7 +751,7 @@ func (s *session) commitTxnWithTemporaryData(ctx context.Context, txn kv.Transac
 	return nil
 }
 
-// errIsNoisy is used to filter DUPLCATE KEY errors.
+// errIsNoisy is used to filter DUPLICATE KEY errors.
 // These can observed by users in INFORMATION_SCHEMA.CLIENT_ERRORS_SUMMARY_GLOBAL instead.
 //
 // The rationale for filtering these errors is because they are "client generated errors". i.e.
@@ -2340,7 +2344,7 @@ const ExecStmtVarKey ExecStmtVarKeyType = 0
 // execStmtResult is the return value of ExecuteStmt and it implements the sqlexec.RecordSet interface.
 // Why we need a struct to wrap a RecordSet and provide another RecordSet?
 // This is because there are so many session state related things that definitely not belongs to the original
-// RecordSet, so this struct exists and RecordSet.Close() is overrided handle that.
+// RecordSet, so this struct exists and RecordSet.Close() is overridden to handle that.
 type execStmtResult struct {
 	sqlexec.RecordSet
 	se     *session

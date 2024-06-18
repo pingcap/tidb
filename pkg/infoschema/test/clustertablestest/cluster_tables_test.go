@@ -763,6 +763,7 @@ func (s *clusterTablesSuite) setUpRPCService(t *testing.T, addr string, sm util.
 	}()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.Status.StatusPort = uint(port)
+		conf.AdvertiseAddress = "127.0.0.1"
 	})
 	return srv, addr
 }
@@ -906,6 +907,24 @@ func TestMDLView(t *testing.T) {
 			wg.Wait()
 		})
 	}
+}
+
+func TestMDLViewPrivilege(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
+	tk.MustQuery("select * from mysql.tidb_mdl_view;").Check(testkit.Rows())
+	tk.MustExec("create user 'test'@'%' identified by '';")
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "test", Hostname: "%"}, nil, nil, nil))
+	_, err := tk.Exec("select * from mysql.tidb_mdl_view;")
+	require.ErrorContains(t, err, "view lack rights")
+
+	// grant all privileges to test user.
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
+	tk.MustExec("grant all privileges on *.* to 'test'@'%';")
+	tk.MustExec("flush privileges;")
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "test", Hostname: "%"}, nil, nil, nil))
+	tk.MustQuery("select * from mysql.tidb_mdl_view;").Check(testkit.Rows())
 }
 
 func TestQuickBinding(t *testing.T) {
@@ -1758,14 +1777,14 @@ func TestMDLViewIDConflict(t *testing.T) {
 	wg := &sync.WaitGroup{}
 	wg.Add(1)
 	go func() {
-		ddlTK1.MustExec("ALTER TABLE t ADD COLUMN b INT;")
+		ddlTK1.MustExec("ALTER TABLE t ADD index(a);")
 		wg.Done()
 	}()
 	ddlTK2 := s.newTestKitWithRoot(t)
 	ddlTK2.MustExec("use test")
 	wg.Add(1)
 	go func() {
-		ddlTK2.MustExec(fmt.Sprintf("ALTER TABLE %s ADD COLUMN b INT;", bigTableName))
+		ddlTK2.MustExec(fmt.Sprintf("ALTER TABLE %s ADD index(a);", bigTableName))
 		wg.Done()
 	}()
 

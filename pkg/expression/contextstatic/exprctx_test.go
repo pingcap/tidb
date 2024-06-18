@@ -70,7 +70,7 @@ func checkDefaultStaticExprCtx(t *testing.T, ctx *StaticExprContext) {
 	require.NoError(t, err)
 	require.Equal(t, charsetName, cs.Name)
 	require.Equal(t, cs.DefaultCollation, collation)
-	require.Equal(t, variable.DefaultCollationForUTF8MB4, ctx.GetDefaultCollationForUTF8MB4())
+	require.Equal(t, mysql.DefaultCollationName, ctx.GetDefaultCollationForUTF8MB4())
 	require.Equal(t, variable.DefBlockEncryptionMode, ctx.GetBlockEncryptionMode())
 	require.Equal(t, variable.DefSysdateIsNow, ctx.GetSysdateIsNow())
 	require.Equal(t, variable.TiDBOptOnOffWarn(variable.DefTiDBEnableNoopFuncs), ctx.GetNoopFuncsMode())

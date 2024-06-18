@@ -277,6 +277,7 @@ func extractBestCNFItemRanges(sctx *rangerctx.RangerContext, conds []expression.
 			bestRes = curRes
 		}
 	}
+
 	if bestRes != nil && bestRes.rangeResult != nil {
 		bestRes.rangeResult.IsDNFCond = false
 	}
@@ -462,6 +463,21 @@ func (d *rangeDetacher) detachCNFCondAndBuildRangeForIndex(conditions []expressi
 		// TODO: we will optimize it later.
 		res.RemainedConds = AppendConditionsIfNotExist(res.RemainedConds, remainedConds)
 		res.Ranges = ranges
+		// Choosing between point ranges and bestCNF is needed since bestCNF does not cover the intersection
+		// of all conjuncts. Even when we add support for intersection, it could be turned off by a flag or it could be
+		// incomplete due to a long list of conjuncts.
+		if bestCNFItemRes != nil && res != nil && len(res.Ranges) != 0 {
+			bestCNFIsSubset := bestCNFItemRes.rangeResult.Ranges.Subset(d.sctx.TypeCtx, res.Ranges)
+			pointRangeIsSubset := res.Ranges.Subset(d.sctx.TypeCtx, bestCNFItemRes.rangeResult.Ranges)
+			// Pick bestCNFIsSubset if it is more selective than point ranges(res).
+			// Apply optimization if bestCNFItemRes is a proper subset of point ranges.
+			if bestCNFIsSubset && !pointRangeIsSubset {
+				// Update final result and just update: Ranges, AccessConds and RemainedConds
+				res.RemainedConds = removeConditions(res.RemainedConds, bestCNFItemRes.rangeResult.AccessConds)
+				res.Ranges = bestCNFItemRes.rangeResult.Ranges
+				res.AccessConds = bestCNFItemRes.rangeResult.AccessConds
+			}
+		}
 		return res, nil
 	}
 	for _, cond := range newConditions {
@@ -631,8 +647,8 @@ func ExtractEqAndInCondition(sctx *rangerctx.RangerContext, conditions []express
 		}
 		// Multiple Eq/In conditions for one column in CNF, apply intersection on them
 		// Lazily compute the points for the previously visited Eq/In
-		newTp := newFieldType(cols[offset].GetType())
-		collator := collate.GetCollator(cols[offset].GetType().GetCollate())
+		newTp := newFieldType(cols[offset].GetType(sctx.ExprCtx.GetEvalCtx()))
+		collator := collate.GetCollator(cols[offset].GetType(sctx.ExprCtx.GetEvalCtx()).GetCollate())
 		if mergedAccesses[offset] == nil {
 			mergedAccesses[offset] = accesses[offset]
 			// Note that this is a relatively special usage of build(). We will restore the points back to Expression for
@@ -704,7 +720,7 @@ func ExtractEqAndInCondition(sctx *rangerctx.RangerContext, conditions []express
 		// However, please notice that if you're implementing this, please (1) set StatementContext.OptimDependOnMutableConst to true,
 		// or (2) don't do this optimization when StatementContext.UseCache is true. That's because this plan is affected by
 		// flen of user variable, we cannot cache this plan.
-		isFullLength := lengths[i] == types.UnspecifiedLength || lengths[i] == cols[i].GetType().GetFlen()
+		isFullLength := lengths[i] == types.UnspecifiedLength || lengths[i] == cols[i].GetType(sctx.ExprCtx.GetEvalCtx()).GetFlen()
 		if !isFullLength {
 			filters = append(filters, cond)
 		}

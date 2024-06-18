@@ -40,6 +40,7 @@ import (
 	rg "github.com/pingcap/tidb/pkg/domain/resourcegroup"
 	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/expression"
+	exprctx "github.com/pingcap/tidb/pkg/expression/context"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
@@ -645,6 +646,10 @@ func (d *ddl) DropSchema(ctx sessionctx.Context, stmt *ast.DropDatabaseStmt) (er
 		Args:           []any{fkCheck},
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 		SQLMode:        ctx.GetSessionVars().SQLMode,
+		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{{
+			Database: old.Name.L,
+			Table:    model.InvolvingAll,
+		}},
 	}
 
 	err = d.DoDDLJob(ctx, job)
@@ -1023,13 +1028,13 @@ func buildColumnAndConstraint(
 // In non-strict SQL mode, if the default value of the column is an empty string, the default value can be ignored.
 // In strict SQL mode, TEXT/BLOB/JSON can't have not null default values.
 // In NO_ZERO_DATE SQL mode, TIMESTAMP/DATE/DATETIME type can't have zero date like '0000-00-00' or '0000-00-00 00:00:00'.
-func checkColumnDefaultValue(ctx sessionctx.Context, col *table.Column, value any) (bool, any, error) {
+func checkColumnDefaultValue(ctx exprctx.BuildContext, col *table.Column, value any) (bool, any, error) {
 	hasDefaultValue := true
 	if value != nil && (col.GetType() == mysql.TypeJSON ||
 		col.GetType() == mysql.TypeTinyBlob || col.GetType() == mysql.TypeMediumBlob ||
 		col.GetType() == mysql.TypeLongBlob || col.GetType() == mysql.TypeBlob) {
 		// In non-strict SQL mode.
-		if !ctx.GetSessionVars().SQLMode.HasStrictMode() && value == "" {
+		if !ctx.GetEvalCtx().SQLMode().HasStrictMode() && value == "" {
 			if col.GetType() == mysql.TypeBlob || col.GetType() == mysql.TypeLongBlob {
 				// The TEXT/BLOB default value can be ignored.
 				hasDefaultValue = false
@@ -1038,17 +1043,16 @@ func checkColumnDefaultValue(ctx sessionctx.Context, col *table.Column, value an
 			if col.GetType() == mysql.TypeJSON {
 				value = `null`
 			}
-			sc := ctx.GetSessionVars().StmtCtx
-			sc.AppendWarning(dbterror.ErrBlobCantHaveDefault.FastGenByArgs(col.Name.O))
+			ctx.GetEvalCtx().AppendWarning(dbterror.ErrBlobCantHaveDefault.FastGenByArgs(col.Name.O))
 			return hasDefaultValue, value, nil
 		}
 		// In strict SQL mode or default value is not an empty string.
 		return hasDefaultValue, value, dbterror.ErrBlobCantHaveDefault.GenWithStackByArgs(col.Name.O)
 	}
-	if value != nil && ctx.GetSessionVars().SQLMode.HasNoZeroDateMode() &&
-		ctx.GetSessionVars().SQLMode.HasStrictMode() && types.IsTypeTime(col.GetType()) {
+	if value != nil && ctx.GetEvalCtx().SQLMode().HasNoZeroDateMode() &&
+		ctx.GetEvalCtx().SQLMode().HasStrictMode() && types.IsTypeTime(col.GetType()) {
 		if vv, ok := value.(string); ok {
-			timeValue, err := expression.GetTimeValue(ctx.GetExprCtx(), vv, col.GetType(), col.GetDecimal(), nil)
+			timeValue, err := expression.GetTimeValue(ctx, vv, col.GetType(), col.GetDecimal(), nil)
 			if err != nil {
 				return hasDefaultValue, value, errors.Trace(err)
 			}
@@ -1433,7 +1437,7 @@ func getFuncCallDefaultValue(col *table.Column, option *ast.ColumnOption, expr *
 // getDefaultValue will get the default value for column.
 // 1: get the expr restored string for the column which uses sequence next value as default value.
 // 2: get specific default value for the other column.
-func getDefaultValue(ctx sessionctx.Context, col *table.Column, option *ast.ColumnOption) (any, bool, error) {
+func getDefaultValue(ctx exprctx.BuildContext, col *table.Column, option *ast.ColumnOption) (any, bool, error) {
 	// handle default value with function call
 	tp, fsp := col.FieldType.GetType(), col.FieldType.GetDecimal()
 	if x, ok := option.Expr.(*ast.FuncCallExpr); ok {
@@ -1445,7 +1449,7 @@ func getDefaultValue(ctx sessionctx.Context, col *table.Column, option *ast.Colu
 	}
 
 	if tp == mysql.TypeTimestamp || tp == mysql.TypeDatetime || tp == mysql.TypeDate {
-		vd, err := expression.GetTimeValue(ctx.GetExprCtx(), option.Expr, tp, fsp, nil)
+		vd, err := expression.GetTimeValue(ctx, option.Expr, tp, fsp, nil)
 		value := vd.GetValue()
 		if err != nil {
 			return nil, false, dbterror.ErrInvalidDefaultValue.GenWithStackByArgs(col.Name.O)
@@ -1465,7 +1469,7 @@ func getDefaultValue(ctx sessionctx.Context, col *table.Column, option *ast.Colu
 	}
 
 	// evaluate the non-function-call expr to a certain value.
-	v, err := expression.EvalSimpleAst(ctx.GetExprCtx(), option.Expr)
+	v, err := expression.EvalSimpleAst(ctx, option.Expr)
 	if err != nil {
 		return nil, false, errors.Trace(err)
 	}
@@ -1491,7 +1495,7 @@ func getDefaultValue(ctx sessionctx.Context, col *table.Column, option *ast.Colu
 			return str, false, err
 		}
 		// For other kind of fields (e.g. INT), we supply its integer as string value.
-		value, err := v.GetBinaryLiteral().ToInt(ctx.GetSessionVars().StmtCtx.TypeCtx())
+		value, err := v.GetBinaryLiteral().ToInt(ctx.GetEvalCtx().TypeCtx())
 		if err != nil {
 			return nil, false, err
 		}
@@ -1506,7 +1510,7 @@ func getDefaultValue(ctx sessionctx.Context, col *table.Column, option *ast.Colu
 		val, err := getEnumDefaultValue(v, col)
 		return val, false, err
 	case mysql.TypeDuration, mysql.TypeDate:
-		if v, err = v.ConvertTo(ctx.GetSessionVars().StmtCtx.TypeCtx(), &col.FieldType); err != nil {
+		if v, err = v.ConvertTo(ctx.GetEvalCtx().TypeCtx(), &col.FieldType); err != nil {
 			return "", false, errors.Trace(err)
 		}
 	case mysql.TypeBit:
@@ -1518,7 +1522,7 @@ func getDefaultValue(ctx sessionctx.Context, col *table.Column, option *ast.Colu
 		// For these types, convert it to standard format firstly.
 		// like integer fields, convert it into integer string literals. like convert "1.25" into "1" and "2.8" into "3".
 		// if raise a error, we will use original expression. We will handle it in check phase
-		if temp, err := v.ConvertTo(ctx.GetSessionVars().StmtCtx.TypeCtx(), &col.FieldType); err == nil {
+		if temp, err := v.ConvertTo(ctx.GetEvalCtx().TypeCtx(), &col.FieldType); err == nil {
 			v = temp
 		}
 	}
@@ -1665,7 +1669,7 @@ func setNoDefaultValueFlag(c *table.Column, hasDefaultValue bool) {
 	}
 }
 
-func checkDefaultValue(ctx sessionctx.Context, c *table.Column, hasDefaultValue bool) (err error) {
+func checkDefaultValue(ctx exprctx.BuildContext, c *table.Column, hasDefaultValue bool) (err error) {
 	if !hasDefaultValue {
 		return nil
 	}
@@ -1677,9 +1681,10 @@ func checkDefaultValue(ctx sessionctx.Context, c *table.Column, hasDefaultValue 
 			}
 			return nil
 		}
-		handleWithTruncateErr(ctx, func() {
-			_, err = table.GetColDefaultValue(ctx.GetExprCtx(), c.ToInfo())
-		})
+		_, err = table.GetColDefaultValue(
+			exprctx.CtxWithHandleTruncateErrLevel(ctx, errctx.LevelError),
+			c.ToInfo(),
+		)
 		if err != nil {
 			return types.ErrInvalidDefault.GenWithStackByArgs(c.Name)
 		}
@@ -2251,7 +2256,7 @@ func BuildTableInfo(
 				return nil, errors.Trace(err)
 			}
 			// check if the expression is bool type
-			if err := table.IfCheckConstraintExprBoolType(constraintInfo, tbInfo); err != nil {
+			if err := table.IfCheckConstraintExprBoolType(ctx.GetExprCtx().GetEvalCtx(), constraintInfo, tbInfo); err != nil {
 				return nil, err
 			}
 			constraintInfo.ID = allocateConstraintID(tbInfo)
@@ -2795,6 +2800,21 @@ func (d *ddl) createTableWithInfoJob(
 		return nil, err
 	}
 
+	var involvedSchemaInfos []model.InvolvingSchemaInfo
+	if len(tbInfo.ForeignKeys) > 0 {
+		involvedSchemaInfos = make([]model.InvolvingSchemaInfo, 0, 1+len(tbInfo.ForeignKeys))
+		involvedSchemaInfos = append(involvedSchemaInfos, model.InvolvingSchemaInfo{
+			Database: schema.Name.L,
+			Table:    tbInfo.Name.L,
+		})
+		for _, fk := range tbInfo.ForeignKeys {
+			involvedSchemaInfos = append(involvedSchemaInfos, model.InvolvingSchemaInfo{
+				Database: fk.RefSchema.L,
+				Table:    fk.RefTable.L,
+			})
+		}
+	}
+
 	var actionType model.ActionType
 	args := []any{tbInfo}
 	switch {
@@ -2809,15 +2829,16 @@ func (d *ddl) createTableWithInfoJob(
 	}
 
 	job = &model.Job{
-		SchemaID:       schema.ID,
-		TableID:        tbInfo.ID,
-		SchemaName:     schema.Name.L,
-		TableName:      tbInfo.Name.L,
-		Type:           actionType,
-		BinlogInfo:     &model.HistoryInfo{},
-		Args:           args,
-		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
-		SQLMode:        ctx.GetSessionVars().SQLMode,
+		SchemaID:            schema.ID,
+		TableID:             tbInfo.ID,
+		SchemaName:          schema.Name.L,
+		TableName:           tbInfo.Name.L,
+		Type:                actionType,
+		BinlogInfo:          &model.HistoryInfo{},
+		Args:                args,
+		CDCWriteSource:      ctx.GetSessionVars().CDCWriteSource,
+		SQLMode:             ctx.GetSessionVars().SQLMode,
+		InvolvingSchemaInfo: involvedSchemaInfos,
 	}
 	return job, nil
 }
@@ -3006,11 +3027,32 @@ func (d *ddl) BatchCreateTableWithInfo(ctx sessionctx.Context,
 		}
 	}
 
-	return nil
+	return d.callHookOnChanged(jobs, err)
+}
+
+// BuildQueryStringFromJobs takes a slice of Jobs and concatenates their
+// queries into a single query string.
+// Each query is separated by a semicolon and a space.
+// Trailing spaces are removed from each query, and a semicolon is appended
+// if it's not already present.
+func BuildQueryStringFromJobs(jobs []*model.Job) string {
+	var queryBuilder strings.Builder
+	for i, job := range jobs {
+		q := strings.TrimSpace(job.Query)
+		if !strings.HasSuffix(q, ";") {
+			q += ";"
+		}
+		queryBuilder.WriteString(q)
+
+		if i < len(jobs)-1 {
+			queryBuilder.WriteString(" ")
+		}
+	}
+	return queryBuilder.String()
 }
 
 // BatchCreateTableWithJobs combine CreateTableJobs to BatchCreateTableJob.
-func (*ddl) BatchCreateTableWithJobs(jobs []*model.Job) (*model.Job, error) {
+func BatchCreateTableWithJobs(jobs []*model.Job) (*model.Job, error) {
 	if len(jobs) == 0 {
 		return nil, errors.Trace(fmt.Errorf("expect non-empty jobs"))
 	}
@@ -3054,6 +3096,7 @@ func (*ddl) BatchCreateTableWithJobs(jobs []*model.Job) (*model.Job, error) {
 	combinedJob.Args = append(combinedJob.Args, args)
 	combinedJob.Args = append(combinedJob.Args, foreignKeyChecks)
 	combinedJob.InvolvingSchemaInfo = involvingSchemaInfo
+	combinedJob.Query = BuildQueryStringFromJobs(jobs)
 
 	return combinedJob, nil
 }
@@ -3870,6 +3913,9 @@ func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt *ast
 	}
 
 	if len(validSpecs) > 1 {
+		// after MultiSchemaInfo is set, DoDDLJob will collect all jobs into
+		// MultiSchemaInfo and skip running them. Then we will run them in
+		// d.MultiSchemaChange all at once.
 		sctx.GetSessionVars().StmtCtx.MultiSchemaInfo = model.NewMultiSchemaInfo()
 	}
 	for _, spec := range validSpecs {
@@ -4094,7 +4140,9 @@ func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt *ast
 	}
 
 	if sctx.GetSessionVars().StmtCtx.MultiSchemaInfo != nil {
-		err = d.MultiSchemaChange(sctx, ident)
+		info := sctx.GetSessionVars().StmtCtx.MultiSchemaInfo
+		sctx.GetSessionVars().StmtCtx.MultiSchemaInfo = nil
+		err = d.MultiSchemaChange(sctx, ident, info)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -4626,18 +4674,27 @@ func (d *ddl) AlterTablePartitioning(ctx sessionctx.Context, ident ast.Ident, sp
 				return err
 			}
 			if !ck {
-				if ctx.GetSessionVars().EnableGlobalIndex {
-					return dbterror.ErrCancelledDDLJob.GenWithStack("global index is not supported yet for alter table partitioning")
+				indexTp := ""
+				if !ctx.GetSessionVars().EnableGlobalIndex {
+					if index.Primary {
+						indexTp = "PRIMARY KEY"
+					} else {
+						indexTp = "UNIQUE INDEX"
+					}
+				} else if t.Meta().IsCommonHandle {
+					indexTp = "CLUSTERED INDEX"
 				}
-				indexTp := "UNIQUE INDEX"
-				if index.Primary {
-					indexTp = "PRIMARY"
+				if indexTp != "" {
+					return dbterror.ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs(indexTp)
 				}
-				return dbterror.ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs(indexTp)
+				// Also mark the unique index as global index
+				index.Global = true
 			}
 		}
 	}
 	if newMeta.PKIsHandle {
+		// This case is covers when the Handle is the PK (only ints), since it would not
+		// have an entry in the tblInfo.Indices
 		indexCols := []*model.IndexColumn{{
 			Name:   newMeta.GetPkName(),
 			Length: types.UnspecifiedLength,
@@ -4647,7 +4704,10 @@ func (d *ddl) AlterTablePartitioning(ctx sessionctx.Context, ident ast.Ident, sp
 			return err
 		}
 		if !ck {
-			return dbterror.ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs("PRIMARY")
+			if !ctx.GetSessionVars().EnableGlobalIndex {
+				return dbterror.ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs("PRIMARY KEY")
+			}
+			return dbterror.ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs("CLUSTERED INDEX")
 		}
 	}
 
@@ -4867,7 +4927,7 @@ func checkReorgPartitionDefs(ctx sessionctx.Context, action model.ActionType, tb
 				return nil
 			}
 
-			isUnsigned := isPartExprUnsigned(tblInfo)
+			isUnsigned := isPartExprUnsigned(ctx.GetExprCtx().GetEvalCtx(), tblInfo)
 			currentRangeValue, _, err := getRangeValue(ctx.GetExprCtx(), pi.Definitions[lastPartIdx].LessThan[0], isUnsigned)
 			if err != nil {
 				return errors.Trace(err)
@@ -5518,23 +5578,14 @@ func checkModifyTypes(origin *types.FieldType, to *types.FieldType, needRewriteC
 	return errors.Trace(err)
 }
 
-// handleWithTruncateErr handles the doFunc with FlagTruncateAsWarning and FlagIgnoreTruncateErr flags, both of which are false.
-func handleWithTruncateErr(ctx sessionctx.Context, doFunc func()) {
-	sv := ctx.GetSessionVars().StmtCtx
-	oldTypeFlags := sv.TypeFlags()
-	newTypeFlags := oldTypeFlags.WithTruncateAsWarning(false).WithIgnoreTruncateErr(false)
-	sv.SetTypeFlags(newTypeFlags)
-	doFunc()
-	sv.SetTypeFlags(oldTypeFlags)
-}
-
 // SetDefaultValue sets the default value of the column.
 func SetDefaultValue(ctx sessionctx.Context, col *table.Column, option *ast.ColumnOption) (hasDefaultValue bool, err error) {
 	var value any
 	var isSeqExpr bool
-	handleWithTruncateErr(ctx, func() {
-		value, isSeqExpr, err = getDefaultValue(ctx, col, option)
-	})
+	value, isSeqExpr, err = getDefaultValue(
+		exprctx.CtxWithHandleTruncateErrLevel(ctx.GetExprCtx(), errctx.LevelError),
+		col, option,
+	)
 	if err != nil {
 		return false, errors.Trace(err)
 	}
@@ -5547,7 +5598,7 @@ func SetDefaultValue(ctx sessionctx.Context, col *table.Column, option *ast.Colu
 
 	// When the default value is expression, we skip check and convert.
 	if !col.DefaultIsExpr {
-		if hasDefaultValue, value, err = checkColumnDefaultValue(ctx, col, value); err != nil {
+		if hasDefaultValue, value, err = checkColumnDefaultValue(ctx.GetExprCtx(), col, value); err != nil {
 			return hasDefaultValue, errors.Trace(err)
 		}
 		value, err = convertTimestampDefaultValToUTC(ctx, value, col)
@@ -5685,7 +5736,7 @@ func processAndCheckDefaultValueAndColumn(ctx sessionctx.Context, col *table.Col
 	if err = checkColumnValueConstraint(col, col.GetCollate()); err != nil {
 		return errors.Trace(err)
 	}
-	if err = checkDefaultValue(ctx, col, hasDefaultValue); err != nil {
+	if err = checkDefaultValue(ctx.GetExprCtx(), col, hasDefaultValue); err != nil {
 		return errors.Trace(err)
 	}
 	if err = checkColumnFieldLength(col); err != nil {
@@ -5941,9 +5992,10 @@ func GetModifiableColumnJob(
 				return nil, dbterror.ErrUnsupportedModifyColumn.GenWithStack("cannot parse generated PartitionInfo")
 			}
 			pAst := at.Specs[0].Partition
-			handleWithTruncateErr(sctx, func() {
-				_, err = buildPartitionDefinitionsInfo(sctx.GetExprCtx(), pAst.Definitions, &newTblInfo, uint64(len(newTblInfo.Partition.Definitions)))
-			})
+			_, err = buildPartitionDefinitionsInfo(
+				exprctx.CtxWithHandleTruncateErrLevel(sctx.GetExprCtx(), errctx.LevelError),
+				pAst.Definitions, &newTblInfo, uint64(len(newTblInfo.Partition.Definitions)),
+			)
 			if err != nil {
 				return nil, dbterror.ErrUnsupportedModifyColumn.GenWithStack("New column does not match partition definitions: %s", err.Error())
 			}
@@ -6361,7 +6413,7 @@ func (d *ddl) AlterColumn(ctx sessionctx.Context, ident ast.Ident, spec *ast.Alt
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if err = checkDefaultValue(ctx, col, hasDefaultValue); err != nil {
+		if err = checkDefaultValue(ctx.GetExprCtx(), col, hasDefaultValue); err != nil {
 			return errors.Trace(err)
 		}
 	}
@@ -7246,11 +7298,14 @@ func (d *ddl) renameTables(ctx sessionctx.Context, oldIdents, newIdents []ast.Id
 		oldSchemaIDs = append(oldSchemaIDs, schemas[0].ID)
 		newSchemaIDs = append(newSchemaIDs, schemas[1].ID)
 		oldSchemaNames = append(oldSchemaNames, &schemas[0].Name)
-		involveSchemaInfo = append(involveSchemaInfo, model.InvolvingSchemaInfo{
-			Database: schemas[0].Name.L, Table: oldIdents[i].Name.L,
-		}, model.InvolvingSchemaInfo{
-			Database: schemas[1].Name.L, Table: newIdents[i].Name.L,
-		})
+		involveSchemaInfo = append(involveSchemaInfo,
+			model.InvolvingSchemaInfo{
+				Database: schemas[0].Name.L, Table: oldIdents[i].Name.L,
+			},
+			model.InvolvingSchemaInfo{
+				Database: schemas[1].Name.L, Table: newIdents[i].Name.L,
+			},
+		)
 	}
 
 	job := &model.Job{
@@ -7546,7 +7601,7 @@ func BuildHiddenColumnInfo(ctx sessionctx.Context, indexPartSpecifications []*as
 			Version:             model.CurrLatestColumnInfoVersion,
 			Dependences:         make(map[string]struct{}),
 			Hidden:              true,
-			FieldType:           *expr.GetType(),
+			FieldType:           *expr.GetType(ctx.GetExprCtx().GetEvalCtx()),
 		}
 		// Reset some flag, it may be caused by wrong type infer. But it's not easy to fix them all, so reset them here for safety.
 		colInfo.DelFlag(mysql.PriKeyFlag | mysql.UniqueKeyFlag | mysql.AutoIncrementFlag)
@@ -9390,7 +9445,7 @@ func (d *ddl) CreateCheckConstraint(ctx sessionctx.Context, ti ast.Ident, constr
 		return errors.Trace(err)
 	}
 	// check if the expression is bool type
-	if err := table.IfCheckConstraintExprBoolType(constraintInfo, tblInfo); err != nil {
+	if err := table.IfCheckConstraintExprBoolType(ctx.GetExprCtx().GetEvalCtx(), constraintInfo, tblInfo); err != nil {
 		return err
 	}
 	job := &model.Job{

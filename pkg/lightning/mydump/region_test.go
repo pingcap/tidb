@@ -487,3 +487,98 @@ func TestSplitLargeFileOnlyOneChunk(t *testing.T) {
 		require.Equal(t, columns, regions[i].Chunk.Columns)
 	}
 }
+
+func TestSplitLargeFileSeekInsideCRLF(t *testing.T) {
+	ctx := context.Background()
+	meta := &MDTableMeta{
+		DB:   "csv",
+		Name: "large_csv_seek_inside_crlf",
+	}
+
+	dir := t.TempDir()
+
+	fileName := "test.csv"
+	filePath := filepath.Join(dir, fileName)
+
+	content := []byte("1\r\n2\r\n3\r\n4\r\n")
+	err := os.WriteFile(filePath, content, 0o644)
+	require.NoError(t, err)
+
+	dataFileInfo, err := os.Stat(filePath)
+	require.NoError(t, err)
+	fileSize := dataFileInfo.Size()
+	fileInfo := FileInfo{FileMeta: SourceFileMeta{Path: fileName, Type: SourceTypeCSV, FileSize: fileSize}}
+	ioWorker := worker.NewPool(context.Background(), 4, "io")
+
+	store, err := storage.NewLocalStorage(dir)
+	require.NoError(t, err)
+
+	// if we don't set terminator, it will get the wrong result
+
+	cfg := &config.Config{
+		Mydumper: config.MydumperRuntime{
+			ReadBlockSize: config.ReadBlockSize,
+			CSV: config.CSVConfig{
+				Separator: ",",
+			},
+			StrictFormat:  true,
+			Filter:        []string{"*.*"},
+			MaxRegionSize: 2,
+		},
+	}
+	divideConfig := NewDataDivideConfig(cfg, 1, ioWorker, store, meta)
+
+	// in fact this is the wrong result, just to show the bug. pos mismatch with
+	// offsets. and we might read more rows than expected because we use == rather
+	// than >= to stop reading.
+	offsets := [][]int64{{0, 3}, {3, 6}, {6, 9}, {9, 12}}
+	pos := []int64{2, 5, 8, 11}
+
+	regions, _, err := SplitLargeCSV(context.Background(), divideConfig, fileInfo)
+	require.NoError(t, err)
+	require.Len(t, regions, len(offsets))
+	for i := range offsets {
+		require.Equal(t, offsets[i][0], regions[i].Chunk.Offset)
+		require.Equal(t, offsets[i][1], regions[i].Chunk.EndOffset)
+	}
+
+	file, err := os.Open(filePath)
+	require.NoError(t, err)
+	parser, err := NewCSVParser(ctx, &cfg.Mydumper.CSV, file, 128, ioWorker, false, nil)
+	require.NoError(t, err)
+
+	for parser.ReadRow() == nil {
+		p, _ := parser.Pos()
+		require.Equal(t, pos[0], p)
+		pos = pos[1:]
+	}
+	require.NoError(t, parser.Close())
+
+	// set terminator to "\r\n"
+
+	cfg.Mydumper.CSV.Terminator = "\r\n"
+	divideConfig = NewDataDivideConfig(cfg, 1, ioWorker, store, meta)
+	// pos is contained in expectedOffsets
+	expectedOffsets := [][]int64{{0, 6}, {6, 12}}
+	pos = []int64{3, 6, 9, 12}
+
+	regions, _, err = SplitLargeCSV(context.Background(), divideConfig, fileInfo)
+	require.NoError(t, err)
+	require.Len(t, regions, len(expectedOffsets))
+	for i := range expectedOffsets {
+		require.Equal(t, expectedOffsets[i][0], regions[i].Chunk.Offset)
+		require.Equal(t, expectedOffsets[i][1], regions[i].Chunk.EndOffset)
+	}
+
+	file, err = os.Open(filePath)
+	require.NoError(t, err)
+	parser, err = NewCSVParser(ctx, &cfg.Mydumper.CSV, file, 128, ioWorker, false, nil)
+	require.NoError(t, err)
+
+	for parser.ReadRow() == nil {
+		p, _ := parser.Pos()
+		require.Equal(t, pos[0], p)
+		pos = pos[1:]
+	}
+	require.NoError(t, parser.Close())
+}

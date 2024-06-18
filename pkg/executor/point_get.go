@@ -329,7 +329,7 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 			}
 
 			var iv kv.Handle
-			iv, err = tablecodec.DecodeHandleInUniqueIndexValue(e.handleVal, e.tblInfo.IsCommonHandle)
+			iv, err = tablecodec.DecodeHandleInIndexValue(e.handleVal)
 			if err != nil {
 				return err
 			}
@@ -349,8 +349,7 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 				failpoint.InjectContext(ctx, "pointGetRepeatableReadTest-step2", nil)
 			})
 			if e.idxInfo.Global {
-				segs := tablecodec.SplitIndexValue(e.handleVal)
-				_, pid, err := codec.DecodeInt(segs.PartitionID)
+				_, pid, err := codec.DecodeInt(tablecodec.SplitIndexValue(e.handleVal).PartitionID)
 				if err != nil {
 					return err
 				}
@@ -449,7 +448,7 @@ func fillRowChecksum(
 		columnFt[col.ID] = &col.FieldType
 	}
 	tz := sctx.GetSessionVars().TimeZone
-	ft := []*types.FieldType{schema.Columns[checksumColumnIndex].GetType()}
+	ft := []*types.FieldType{schema.Columns[checksumColumnIndex].GetType(sctx.GetExprCtx().GetEvalCtx())}
 	checksumCols := chunk.NewChunkWithCapacity(ft, req.Capacity())
 	for i := start; i < end; i++ {
 		handle, val := handles[i], values[i]

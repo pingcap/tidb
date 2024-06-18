@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -53,8 +54,8 @@ func StatsMetaCountAndModifyCount(sctx sessionctx.Context, tableID int64) (count
 	return count, modifyCount, false, nil
 }
 
-// HistMetaFromStorage reads the meta info of the histogram from the storage.
-func HistMetaFromStorage(sctx sessionctx.Context, item *model.TableItemID, possibleColInfo *model.ColumnInfo) (*statistics.Histogram, *types.Datum, int64, int64, error) {
+// HistMetaFromStorageWithHighPriority reads the meta info of the histogram from the storage.
+func HistMetaFromStorageWithHighPriority(sctx sessionctx.Context, item *model.TableItemID, possibleColInfo *model.ColumnInfo) (*statistics.Histogram, *types.Datum, int64, int64, error) {
 	isIndex := 0
 	var tp *types.FieldType
 	if item.IsIndex {
@@ -64,7 +65,7 @@ func HistMetaFromStorage(sctx sessionctx.Context, item *model.TableItemID, possi
 		tp = &possibleColInfo.FieldType
 	}
 	rows, _, err := util.ExecRows(sctx,
-		"select distinct_count, version, null_count, tot_col_size, stats_ver, correlation, flag, last_analyze_pos from mysql.stats_histograms where table_id = %? and hist_id = %? and is_index = %?",
+		"select high_priority distinct_count, version, null_count, tot_col_size, stats_ver, correlation, flag, last_analyze_pos from mysql.stats_histograms where table_id = %? and hist_id = %? and is_index = %?",
 		item.TableID,
 		item.ID,
 		isIndex,
@@ -81,9 +82,29 @@ func HistMetaFromStorage(sctx sessionctx.Context, item *model.TableItemID, possi
 	return hist, &lastPos, rows[0].GetInt64(4), rows[0].GetInt64(6), nil
 }
 
-// HistogramFromStorage reads histogram from storage.
-func HistogramFromStorage(sctx sessionctx.Context, tableID int64, colID int64, tp *types.FieldType, distinct int64, isIndex int, ver uint64, nullCount int64, totColSize int64, corr float64) (_ *statistics.Histogram, err error) {
-	rows, fields, err := util.ExecRows(sctx, "select count, repeats, lower_bound, upper_bound, ndv from mysql.stats_buckets where table_id = %? and is_index = %? and hist_id = %? order by bucket_id", tableID, isIndex, colID)
+// HistogramFromStorageWithPriority wraps the HistogramFromStorage with the given kv.Priority.
+// Sync load and async load will use high priority to get data.
+func HistogramFromStorageWithPriority(
+	sctx sessionctx.Context,
+	tableID int64,
+	colID int64,
+	tp *types.FieldType,
+	distinct int64,
+	isIndex int,
+	ver uint64,
+	nullCount int64,
+	totColSize int64,
+	corr float64,
+	priority int,
+) (*statistics.Histogram, error) {
+	selectPrefix := "select "
+	switch priority {
+	case kv.PriorityHigh:
+		selectPrefix += "high_priority "
+	case kv.PriorityLow:
+		selectPrefix += "low_priority "
+	}
+	rows, fields, err := util.ExecRows(sctx, selectPrefix+"count, repeats, lower_bound, upper_bound, ndv from mysql.stats_buckets where table_id = %? and is_index = %? and hist_id = %? order by bucket_id", tableID, isIndex, colID)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -127,11 +148,15 @@ func HistogramFromStorage(sctx sessionctx.Context, tableID int64, colID int64, t
 	return hg, nil
 }
 
-// CMSketchAndTopNFromStorage reads CMSketch and TopN from storage.
-func CMSketchAndTopNFromStorage(sctx sessionctx.Context, tblID int64, isIndex, histID int64) (_ *statistics.CMSketch, _ *statistics.TopN, err error) {
+// CMSketchAndTopNFromStorageWithHighPriority reads CMSketch and TopN from storage.
+func CMSketchAndTopNFromStorageWithHighPriority(sctx sessionctx.Context, tblID int64, isIndex, histID, statsVer int64) (_ *statistics.CMSketch, _ *statistics.TopN, err error) {
 	topNRows, _, err := util.ExecRows(sctx, "select HIGH_PRIORITY value, count from mysql.stats_top_n where table_id = %? and is_index = %? and hist_id = %?", tblID, isIndex, histID)
 	if err != nil {
 		return nil, nil, err
+	}
+	// If we are on version higher than 1. Don't read Count-Min Sketch.
+	if statsVer > statistics.Version1 {
+		return statistics.DecodeCMSketchAndTopN(nil, topNRows)
 	}
 	rows, _, err := util.ExecRows(sctx, "select cm_sketch from mysql.stats_histograms where table_id = %? and is_index = %? and hist_id = %?", tblID, isIndex, histID)
 	if err != nil {
@@ -294,11 +319,11 @@ func indexStatsFromStorage(sctx sessionctx.Context, row chunk.Row, table *statis
 			break
 		}
 		if idx == nil || idx.LastUpdateVersion < histVer || loadAll {
-			hg, err := HistogramFromStorage(sctx, table.PhysicalID, histID, types.NewFieldType(mysql.TypeBlob), distinct, 1, histVer, nullCount, 0, 0)
+			hg, err := HistogramFromStorageWithPriority(sctx, table.PhysicalID, histID, types.NewFieldType(mysql.TypeBlob), distinct, 1, histVer, nullCount, 0, 0, kv.PriorityNormal)
 			if err != nil {
 				return errors.Trace(err)
 			}
-			cms, topN, err := CMSketchAndTopNFromStorage(sctx, table.PhysicalID, 1, idxInfo.ID)
+			cms, topN, err := CMSketchAndTopNFromStorageWithHighPriority(sctx, table.PhysicalID, 1, idxInfo.ID, statsVer)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -404,11 +429,11 @@ func columnStatsFromStorage(sctx sessionctx.Context, row chunk.Row, table *stati
 			break
 		}
 		if col == nil || col.LastUpdateVersion < histVer || loadAll {
-			hg, err := HistogramFromStorage(sctx, table.PhysicalID, histID, &colInfo.FieldType, distinct, 0, histVer, nullCount, totColSize, correlation)
+			hg, err := HistogramFromStorageWithPriority(sctx, table.PhysicalID, histID, &colInfo.FieldType, distinct, 0, histVer, nullCount, totColSize, correlation, kv.PriorityNormal)
 			if err != nil {
 				return errors.Trace(err)
 			}
-			cms, topN, err := CMSketchAndTopNFromStorage(sctx, table.PhysicalID, 0, colInfo.ID)
+			cms, topN, err := CMSketchAndTopNFromStorageWithHighPriority(sctx, table.PhysicalID, 0, colInfo.ID, statsVer)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -533,9 +558,9 @@ func LoadHistogram(sctx sessionctx.Context, tableID int64, isIndex int, histID i
 			tp = colInfo.FieldType
 			break
 		}
-		return HistogramFromStorage(sctx, tableID, histID, &tp, distinct, isIndex, histVer, nullCount, totColSize, corr)
+		return HistogramFromStorageWithPriority(sctx, tableID, histID, &tp, distinct, isIndex, histVer, nullCount, totColSize, corr, kv.PriorityNormal)
 	}
-	return HistogramFromStorage(sctx, tableID, histID, types.NewFieldType(mysql.TypeBlob), distinct, isIndex, histVer, nullCount, 0, 0)
+	return HistogramFromStorageWithPriority(sctx, tableID, histID, types.NewFieldType(mysql.TypeBlob), distinct, isIndex, histVer, nullCount, 0, 0, kv.PriorityNormal)
 }
 
 // LoadNeededHistograms will load histograms for those needed columns/indices.
@@ -594,7 +619,7 @@ func loadNeededColumnHistograms(sctx sessionctx.Context, statsCache statstypes.S
 		return nil
 	}
 	colInfo = tbl.ColAndIdxExistenceMap.GetCol(col.ID)
-	hg, _, statsVer, _, err := HistMetaFromStorage(sctx, &col, colInfo)
+	hg, _, statsVer, _, err := HistMetaFromStorageWithHighPriority(sctx, &col, colInfo)
 	if hg == nil || err != nil {
 		asyncload.AsyncLoadHistogramNeededItems.Delete(col)
 		return err
@@ -605,11 +630,11 @@ func loadNeededColumnHistograms(sctx sessionctx.Context, statsCache statstypes.S
 		fms  *statistics.FMSketch
 	)
 	if fullLoad {
-		hg, err = HistogramFromStorage(sctx, col.TableID, col.ID, &colInfo.FieldType, hg.NDV, 0, hg.LastUpdateVersion, hg.NullCount, hg.TotColSize, hg.Correlation)
+		hg, err = HistogramFromStorageWithPriority(sctx, col.TableID, col.ID, &colInfo.FieldType, hg.NDV, 0, hg.LastUpdateVersion, hg.NullCount, hg.TotColSize, hg.Correlation, kv.PriorityHigh)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		cms, topN, err = CMSketchAndTopNFromStorage(sctx, col.TableID, 0, col.ID)
+		cms, topN, err = CMSketchAndTopNFromStorageWithHighPriority(sctx, col.TableID, 0, col.ID, statsVer)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -670,17 +695,17 @@ func loadNeededIndexHistograms(sctx sessionctx.Context, statsCache statstypes.St
 		asyncload.AsyncLoadHistogramNeededItems.Delete(idx)
 		return nil
 	}
-	hgMeta, lastAnalyzePos, statsVer, flag, err := HistMetaFromStorage(sctx, &idx, nil)
+	hgMeta, lastAnalyzePos, statsVer, flag, err := HistMetaFromStorageWithHighPriority(sctx, &idx, nil)
 	if hgMeta == nil || err != nil {
 		asyncload.AsyncLoadHistogramNeededItems.Delete(idx)
 		return err
 	}
 	idxInfo := tbl.ColAndIdxExistenceMap.GetIndex(idx.ID)
-	hg, err := HistogramFromStorage(sctx, idx.TableID, idx.ID, types.NewFieldType(mysql.TypeBlob), hgMeta.NDV, 1, hgMeta.LastUpdateVersion, hgMeta.NullCount, hgMeta.TotColSize, hgMeta.Correlation)
+	hg, err := HistogramFromStorageWithPriority(sctx, idx.TableID, idx.ID, types.NewFieldType(mysql.TypeBlob), hgMeta.NDV, 1, hgMeta.LastUpdateVersion, hgMeta.NullCount, hgMeta.TotColSize, hgMeta.Correlation, kv.PriorityHigh)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	cms, topN, err := CMSketchAndTopNFromStorage(sctx, idx.TableID, 1, idx.ID)
+	cms, topN, err := CMSketchAndTopNFromStorageWithHighPriority(sctx, idx.TableID, 1, idx.ID, statsVer)
 	if err != nil {
 		return errors.Trace(err)
 	}

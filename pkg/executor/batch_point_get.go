@@ -290,15 +290,14 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 			if len(handleVal) == 0 {
 				continue
 			}
-			handle, err1 := tablecodec.DecodeHandleInUniqueIndexValue(handleVal, e.tblInfo.IsCommonHandle)
+			handle, err1 := tablecodec.DecodeHandleInIndexValue(handleVal)
 			if err1 != nil {
 				return err1
 			}
 			if e.tblInfo.Partition != nil {
 				var pid int64
 				if e.idxInfo.Global {
-					segs := tablecodec.SplitIndexValue(handleVal)
-					_, pid, err = codec.DecodeInt(segs.PartitionID)
+					_, pid, err = codec.DecodeInt(tablecodec.SplitIndexValue(handleVal).PartitionID)
 					if err != nil {
 						return err
 					}
