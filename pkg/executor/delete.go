@@ -98,6 +98,7 @@ func (e *DeleteExec) deleteSingleTableByChunk(ctx context.Context) error {
 	batchDelete := e.Ctx().GetSessionVars().BatchDelete && !e.Ctx().GetSessionVars().InTxn() &&
 		variable.EnableBatchDML.Load() && batchDMLSize > 0
 	fields := exec.RetTypes(e.Children(0))
+	datumRow := make([]types.Datum, 0, len(fields))
 	chk := exec.TryNewCacheChunk(e.Children(0))
 	columns := e.Children(0).Schema().Columns
 	if len(columns) != len(fields) {
@@ -127,8 +128,6 @@ func (e *DeleteExec) deleteSingleTableByChunk(ctx context.Context) error {
 				}
 				rowCount = 0
 			}
-
-			datumRow := make([]types.Datum, 0, len(fields))
 			for i, field := range fields {
 				if columns[i].ID == model.ExtraPhysTblID {
 					continue
@@ -143,6 +142,7 @@ func (e *DeleteExec) deleteSingleTableByChunk(ctx context.Context) error {
 				return err
 			}
 			rowCount++
+			datumRow = datumRow[:0]
 		}
 		chk = chunk.Renew(chk, e.MaxChunkSize())
 		if txn, _ := e.Ctx().Txn(false); txn != nil {
