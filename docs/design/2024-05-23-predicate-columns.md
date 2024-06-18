@@ -278,7 +278,7 @@ By default, CockroachDB automatically generates table statistics when tables are
 If the column list is not specified in the analyze SQL, the default column list will be used to generate statistics.
 To determine a useful set of default column statistics, they rely on information provided by the schema.
 
-1. The presence of an index on a particular set of columns indicates that the workload likely contains queries that involve those columns (e.g., for filters), and it would be useful to have statistics on prefixes of those columns. For example, if a table abc contains indexes on (a ASC, b ASC) and (b ASC, c ASC), we will collect statistics on a, {a, b}, b, and {b, c}. (But if multiColEnabled is  false, they will only collect stats on a and b).
+1. The presence of an index on a particular set of columns indicates that the workload likely contains queries that involve those columns (e.g., for filters), and it would be useful to have statistics on prefixes of those columns. For example, if a table abc contains indexes on (a ASC, b ASC) and (b ASC, c ASC), we will collect statistics on a, {a, b}, b, and {b, c}. (But if ```multiColEnabled``` is false, they will only collect stats on a and b).
 2. Columns in partial index predicate expressions are also likely to appear in query filters, so stats are collected for those columns as well.
 3. They only collect histograms for index columns, plus any other boolean or enum columns (where the "histogram" is tiny).
 
