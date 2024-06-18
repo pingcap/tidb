@@ -591,3 +591,22 @@ func TestFilterFilesByRegion(t *testing.T) {
 		require.Equal(t, subfile, c.subfiles)
 	}
 }
+
+func TestRetryRecognizeErrCode (t *testing.T) {
+	waitTime := 10*time.Millisecond
+	maxWaitTime := 10*time.Millisecond
+	ctx := context.Background()
+	cnt := 0
+	utils.WithRetry(ctx, func() error {
+		e := utils.WithRetry(ctx, func() error {
+			cnt ++
+				e := status.Error(codes.Unavailable, "the connection to TiKV has been cut by a neko, meow :3")
+				if e != nil {
+					return errors.Trace(e)
+				}
+				return nil
+			}, utils.NewBackoffer(8, waitTime, maxWaitTime, utils.NewErrorContext("download sst", 3)))
+		return errors.Trace(e)
+	}, utils.NewBackoffer(16, waitTime, maxWaitTime, utils.NewErrorContext("import sst", 3)))
+	require.Equal(t, 64, cnt)
+}
