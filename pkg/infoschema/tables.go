@@ -2434,7 +2434,7 @@ func (it *infoschemaTable) RemoveRecord(ctx table.MutateContext, h kv.Handle, r 
 }
 
 // RemoveRecordWithGivenInfo implements table.Table RemoveRecordWithGivenInfo interface.
-func (it *infoschemaTable) RemoveRecordWithGivenInfo(ctx table.MutateContext, h kv.Handle, r []types.Datum, indexPosInRow map[int64][]int, refColOfNonPubColForNonPubIndex int) error {
+func (it *infoschemaTable) RemoveRecordWithGivenInfo(ctx table.MutateContext, h kv.Handle, r []types.Datum, indexPosInRow map[int64][]int, refColOfColUnderModify int) error {
 	return table.ErrUnsupportedOp
 }
 

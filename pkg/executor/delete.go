@@ -272,7 +272,7 @@ func (e *DeleteExec) removeRow(ctx sessionctx.Context, t table.Table, h kv.Handl
 }
 
 func (e *DeleteExec) removeRowNew(ctx sessionctx.Context, t table.Table, h kv.Handle, data []types.Datum, colInfo *plannercore.TblColPosInfo) error {
-	err := t.RemoveRecordWithGivenInfo(ctx.GetTableCtx(), h, data, colInfo.IndexesForDelete, colInfo.RefColPosOfUnfinishedDDLCol)
+	err := t.RemoveRecordWithGivenInfo(ctx.GetTableCtx(), h, data, colInfo.IndexesForDelete, colInfo.RefColPosOfColUnderModify)
 	if err != nil {
 		return err
 	}

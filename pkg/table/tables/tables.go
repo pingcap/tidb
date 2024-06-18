@@ -1461,7 +1461,7 @@ func (t *TableCommon) RemoveRecord(ctx table.MutateContext, h kv.Handle, r []typ
 }
 
 // RemoveRecordWithGivenInfo implements table.Table RemoveRecord interface.
-func (t *TableCommon) RemoveRecordWithGivenInfo(ctx table.MutateContext, h kv.Handle, r []types.Datum, indexPosInRow map[int64][]int, refColOfNonPubColForNonPubIndex int) error {
+func (t *TableCommon) RemoveRecordWithGivenInfo(ctx table.MutateContext, h kv.Handle, r []types.Datum, indexPosInRow map[int64][]int, refColOfColUnderModify int) error {
 	txn, err := ctx.Txn(true)
 	if err != nil {
 		return err
@@ -1488,13 +1488,13 @@ func (t *TableCommon) RemoveRecordWithGivenInfo(ctx table.MutateContext, h kv.Ha
 	}
 
 	// The table has non-public column and this column is doing the operation of "modify/change column".
-	if refColOfNonPubColForNonPubIndex != -1 {
+	if refColOfColUnderModify != -1 {
 		// The changing column datum derived from related column should be casted here.
 		// Otherwise, the existed changing indexes will not be deleted.
-		relatedColDatum := r[refColOfNonPubColForNonPubIndex]
-		value, err := table.CastColumnValue(ctx.GetExprCtx(), relatedColDatum, t.Columns[refColOfNonPubColForNonPubIndex].ColumnInfo, false, false)
+		relatedColDatum := r[refColOfColUnderModify]
+		value, err := table.CastColumnValue(ctx.GetExprCtx(), relatedColDatum, t.Columns[refColOfColUnderModify].ColumnInfo, false, false)
 		if err != nil {
-			logutil.BgLogger().Info("remove record cast value failed", zap.Any("col", t.Columns[refColOfNonPubColForNonPubIndex]),
+			logutil.BgLogger().Info("remove record cast value failed", zap.Any("col", t.Columns[refColOfColUnderModify]),
 				zap.String("handle", h.String()), zap.Any("val", relatedColDatum), zap.Error(err))
 			return err
 		}

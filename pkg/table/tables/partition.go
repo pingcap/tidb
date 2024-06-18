@@ -1684,7 +1684,7 @@ func (t *partitionedTable) RemoveRecord(ctx table.MutateContext, h kv.Handle, r 
 	return nil
 }
 
-func (t *partitionedTable) RemoveRecordWithGivenInfo(ctx table.MutateContext, h kv.Handle, r []types.Datum, indexPosInRow map[int64][]int, refColOfNonPubColForNonPubIndex int) error {
+func (t *partitionedTable) RemoveRecordWithGivenInfo(ctx table.MutateContext, h kv.Handle, r []types.Datum, indexPosInRow map[int64][]int, refColOfColUnderModify int) error {
 	ectx := ctx.GetExprCtx()
 	pid, err := t.locatePartition(ectx.GetEvalCtx(), r)
 	if err != nil {
@@ -1692,7 +1692,7 @@ func (t *partitionedTable) RemoveRecordWithGivenInfo(ctx table.MutateContext, h 
 	}
 
 	tbl := t.GetPartition(pid)
-	err = tbl.RemoveRecordWithGivenInfo(ctx, h, r, indexPosInRow, refColOfNonPubColForNonPubIndex)
+	err = tbl.RemoveRecordWithGivenInfo(ctx, h, r, indexPosInRow, refColOfColUnderModify)
 	if err != nil {
 		return errors.Trace(err)
 	}

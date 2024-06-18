@@ -5643,8 +5643,8 @@ type TblColPosInfo struct {
 	// HandleOrdinal represents the ordinal of the handle column.
 	HandleCols util.HandleCols
 
-	IndexesForDelete            map[int64][]int
-	RefColPosOfUnfinishedDDLCol int
+	IndexesForDelete          map[int64][]int
+	RefColPosOfColUnderModify int
 }
 
 // MemoryUsage return the memory usage of TblColPosInfo
@@ -5722,6 +5722,16 @@ func buildColumns2Handle(
 }
 
 // buildColPositionInfoForDelete builds columns to handle mapping for delete.
+// We'll have two kinds of columns seen by DELETE:
+//  1. The columns that are public. They are the columns that not affected by any DDL.
+//  2. The columns that are not public. They are the columns that are affected by DDL.
+//     But we need them because the non-public indexes may rely on them.
+//
+// The two kind of columns forms the whole columns of the table. Public part first.
+// This function records the following things:
+//  1. The position of the columns used by indexes in the DELETE's select's output.
+//  2. The row id's position in the output.
+//  3. The possible reference column of the column under MODIFY/CHANGE ddl job.
 func buildColPositionInfoForDelete(
 	names []*types.FieldName,
 	tblID2Handle map[int64][]util.HandleCols,
@@ -5747,6 +5757,7 @@ func buildColPositionInfoForDelete(
 	return cols2PosInfos, nil
 }
 
+// buildSingleTableColPosInfoForDelete builds columns mapping for delete.
 func buildSingleTableColPosInfoForDelete(
 	names []*types.FieldName,
 	handleCol util.HandleCols,
@@ -5755,12 +5766,16 @@ func buildSingleTableColPosInfoForDelete(
 	deletableCols []*table.Column,
 	tblInfo *model.TableInfo,
 ) (TblColPosInfo, error) {
+	// Columns can be seen by DELETE are the deletable columns.
 	tblLen := len(deletableCols)
 	offset, err := getTableOffset(names, names[handleCol.GetCol(0).Index])
 	if err != nil {
 		return TblColPosInfo{}, err
 	}
 	end := offset + tblLen
+
+	// Index only records its columns' offsets in the deletableCols(the whole columns).
+	// So we need to first change the offsets to the real position of SELECT's output.
 	offsetMap := make(map[int]int, len(deletableCols))
 	for i := offset; i < end; i++ {
 		name := names[i]
@@ -5790,11 +5805,16 @@ func buildSingleTableColPosInfoForDelete(
 		}
 		indexColMap[idx.Meta().ID] = colPos
 	}
-	nonPubColRefPos := -1
+
+	refPosOfColUnderModify := -1
+	// Check whether there's any DDL not finished. And check whether the unfinished job is CHANGE/MODIFY COLUMN by checking its ChangeStateInfo.
+	// Currently we only support one CHANGE/MODIFY COLUMN job at a time. So we can just use the first element of deletableCols to check.
+	// It also only records the offset. So we need to transform it to the real position.
 	if len(deletableCols) > len(pubCols) && deletableCols[len(pubCols)].ChangeStateInfo != nil {
-		nonPubColRefPos = offsetMap[deletableCols[len(pubCols)].ChangeStateInfo.DependencyColumnOffset]
+		refPosOfColUnderModify = offsetMap[deletableCols[len(pubCols)].ChangeStateInfo.DependencyColumnOffset]
 	}
-	return TblColPosInfo{tblInfo.ID, offset, end, handleCol, indexColMap, nonPubColRefPos}, nil
+
+	return TblColPosInfo{tblInfo.ID, offset, end, handleCol, indexColMap, refPosOfColUnderModify}, nil
 }
 
 func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (base.Plan, error) {
