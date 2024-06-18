@@ -241,7 +241,8 @@ func TestNoNeedIndexStatsLoading(t *testing.T) {
 	store, dom := realtikvtest.CreateMockStoreAndDomainAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
-	tk.MustExec("create table t(a int, b int, index ia(a));")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table if not exists t(a int, b int, index ia(a));")
 	tk.MustExec("drop stats t;")
 	tk.MustExec("insert into t value(1,1), (2,2);")
 	require.Eventually(t, func() bool {
