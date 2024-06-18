@@ -88,7 +88,7 @@ func (pc *instancePlanCache) Get(sctx sessionctx.Context, key string, opts any) 
 	return pc.getPlanFromList(sctx, headNode, opts)
 }
 
-func (pc *instancePlanCache) getPlanFromList(sctx sessionctx.Context, headNode *instancePCNode, opts any) (any, bool) {
+func (*instancePlanCache) getPlanFromList(sctx sessionctx.Context, headNode *instancePCNode, opts any) (any, bool) {
 	for node := headNode.next.Load(); node != nil; node = node.next.Load() {
 		var matchOpts *PlanCacheMatchOpts
 		if opts != nil {
@@ -237,7 +237,7 @@ func (pc *instancePlanCache) headNodes() ([]string, []*instancePCNode) {
 	return keys, headNodes
 }
 
-func (pc *instancePlanCache) createNode(value kvcache.Value) *instancePCNode {
+func (*instancePlanCache) createNode(value kvcache.Value) *instancePCNode {
 	node := new(instancePCNode)
 	node.value = value
 	node.lastUsed.Store(time.Now())
