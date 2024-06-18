@@ -72,6 +72,7 @@ func (e *DeleteExec) deleteOneRow(tbl table.Table, colInfo *plannercore.TblColPo
 		return err
 	}
 	err = e.removeRowNew(e.Ctx(), tbl, handle, row[:end], colInfo)
+	// err = e.removeRow(e.Ctx(), tbl, handle, row[:end])
 	if err != nil {
 		return err
 	}

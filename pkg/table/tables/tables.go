@@ -490,7 +490,7 @@ func (t *TableCommon) shouldAssert(level variable.AssertionLevel) bool {
 	return true
 }
 
-// NonPublicColumns implements table.Table NonPublicColumns interface.
+// NonPubColMaybeRefByNonPublicIndex implements table.Table NonPublicColumns interface.
 func (t *TableCommon) NonPubColMaybeRefByNonPublicIndex() *table.Column {
 	if len(t.Cols()) < len(t.Columns) {
 		return t.Columns[len(t.Cols())]
