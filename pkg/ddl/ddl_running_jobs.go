@@ -65,6 +65,7 @@ func (j *runningJobs) add(jobID int64, involves []model.InvolvingSchemaInfo) {
 	j.updateIDsStrGetter()
 
 	for _, info := range involves {
+		// DDL jobs related to placement policies and resource groups
 		if info.Database == model.InvolvingNone {
 			// should not happen
 			if intest.InTest {
@@ -150,6 +151,7 @@ func (j *runningJobs) checkRunnable(jobID int64, involves []model.InvolvingSchem
 		}
 		return false
 	}
+	// Currently flashback cluster is the only DDL that involves ALL schemas.
 	if _, ok := j.schemas[model.InvolvingAll]; ok {
 		return false
 	}

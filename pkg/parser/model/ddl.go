@@ -1033,6 +1033,7 @@ func (job *Job) GetInvolvingSchemaInfo() []InvolvingSchemaInfo {
 		return job.InvolvingSchemaInfo
 	}
 	table := job.TableName
+	// for schema related DDL, such as 'drop schema xxx'
 	if table == "" {
 		table = InvolvingAll
 	}
