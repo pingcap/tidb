@@ -275,11 +275,9 @@ func (e *Engine) TotalMemorySize() int64 {
 			memSize += w.kvBuffer.TotalSize()
 			w.Unlock()
 		}
-		if w.writeBatch != nil {
-			w.Lock()
-			memSize += sizeOfKVPair * int64(cap(w.writeBatch))
-			w.Unlock()
-		}
+		w.Lock()
+		memSize += sizeOfKVPair * int64(cap(w.writeBatch))
+		w.Unlock()
 		return true
 	})
 	return memSize
