@@ -205,7 +205,7 @@ type rowTable struct {
 }
 
 // used for test
-func (rt *rowTable) getRowStart(rowIndex int) unsafe.Pointer {
+func (rt *rowTable) getRowPointer(rowIndex int) unsafe.Pointer {
 	for segIndex := 0; segIndex < len(rt.segments); segIndex++ {
 		if rowIndex < len(rt.segments[segIndex].rowStartOffset) {
 			return rt.segments[segIndex].getRowPointer(rowIndex)

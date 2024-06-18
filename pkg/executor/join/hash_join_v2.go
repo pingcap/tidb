@@ -17,6 +17,13 @@ package join
 import (
 	"bytes"
 	"context"
+	"math"
+	"runtime/trace"
+	"strconv"
+	"sync"
+	"sync/atomic"
+	"time"
+
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -29,12 +36,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/disk"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/memory"
-	"math"
-	"runtime/trace"
-	"strconv"
-	"sync"
-	"sync/atomic"
-	"time"
 )
 
 var (
