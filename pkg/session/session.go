@@ -4169,6 +4169,9 @@ func (s *session) GetStmtStats() *stmtstats.StatementStats {
 // SetMemoryFootprintChangeHook sets the hook that is called when the memdb changes its size.
 // Call this after s.txn becomes valid, since TxnInfo is initialized when the txn becomes valid.
 func (s *session) SetMemoryFootprintChangeHook() {
+	if s.txn.MemHookSet() {
+		return
+	}
 	if config.GetGlobalConfig().Performance.TxnTotalSizeLimit != config.DefTxnTotalSizeLimit {
 		// if the user manually specifies the config, don't involve the new memory tracker mechanism, let the old config
 		// work as before.

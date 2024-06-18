@@ -81,8 +81,7 @@ select * from test_t1 where a = 1;
 ## Test generated column with global index
 drop table if exists t;
 ## Test for virtual generated column with global index
-create table t (a varchar(10), b varchar(1) GENERATED ALWAYS AS (substr(a,1,1)) VIRTUAL) partition by list columns(b) (partition p0 values in ('a','c'), partition p1 values in ('b','d'));
-alter table t add unique index (a);
+create table t (a varchar(10), b varchar(1) GENERATED ALWAYS AS (substr(a,1,1)) VIRTUAL, unique index (a)) partition by list columns(b) (partition p0 values in ('a','c'), partition p1 values in ('b','d'));
 insert into t (a) values  ('aaa'),('abc'),('acd');
 analyze table t;
 select a from t partition (p0) order by a;
@@ -100,13 +99,12 @@ select a from t order by a;
 select * from t where a = 'bbc';
 select a from t partition (p0) order by a;
 select a from t partition (p1) order by a;
---replace_regex /in\(_tidb_pid, [0-9]+\)/in(_tidb_pid, pid1)/
+--replace_regex /in\(_tidb_tid, [0-9]+\)/in(_tidb_tid, tid1)/
 explain format = 'brief' select a from t partition (p1) order by a;
 
 drop table if exists t;
 ## Test for stored generated column with global index
-create table t (a varchar(10), b varchar(1) GENERATED ALWAYS AS (substr(a,1,1)) STORED) partition by list columns(b) (partition p0 values in ('a','c'), partition p1 values in ('b','d'));
-alter table t add unique index (a);
+create table t (a varchar(10), b varchar(1) GENERATED ALWAYS AS (substr(a,1,1)) STORED, unique index (a)) partition by list columns(b) (partition p0 values in ('a','c'), partition p1 values in ('b','d'));
 insert into t (a) values  ('aaa'),('abc'),('acd');
 analyze table t;
 select a from t partition (p0) order by a;
@@ -124,6 +122,6 @@ select a from t order by a;
 select * from t where a = 'bbc';
 select a from t partition (p0) order by a;
 select a from t partition (p1) order by a;
---replace_regex /in\(_tidb_pid, [0-9]+\)/in(_tidb_pid, pid1)/
+--replace_regex /in\(_tidb_tid, [0-9]+\)/in(_tidb_tid, tid1)/
 explain format = 'brief' select a from t partition (p1) order by a;
 
