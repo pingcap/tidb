@@ -383,13 +383,16 @@ func (er *expressionRewriter) ctxStackAppend(col expression.Expression, name *ty
 }
 
 // constructBinaryOpFunction converts binary operator functions
-// 1. If op are EQ or NE or NullEQ, constructBinaryOpFunctions converts (a0,a1,a2) op (b0,b1,b2) to (a0 op b0) and (a1 op b1) and (a2 op b2)
-// 2. Else constructBinaryOpFunctions converts (a0,a1,a2) op (b0,b1,b2) to
-// `IF( a0 NE b0, a0 op b0,
-//
-//	IF ( isNull(a0 NE b0), Null,
-//		IF ( a1 NE b1, a1 op b1,
-//			IF ( isNull(a1 NE b1), Null, a2 op b2))))`
+/*
+	The algorithm is as follows:
+	1. If the length of the two sides of the expression is not equal, return an error.
+	2. If the operator is EQ, NE, or NullEQ, converts (a0,a1,a2) op (b0,b1,b2) to (a0 op b0) and (a1 op b1) and (a2 op b2)
+	3. If the operator is not EQ, NE, or NullEQ,
+            converts (a0,a1,a2) op (b0,b1,b2) to (a0 > b0) or (a0 = b0 and a1 > b1) or (a0 = b0 and a1 = b1 and a2 op b2)
+	   Especially, op is GE or LE, the prefix element will be converted to > or <.
+            converts (a0,a1,a2) >= (b0,b1,b2) to (a0 > b0) or (a0 = b0 and a1 > b1) or (a0 = b0 and a1 = b1 and a2 >= b2)
+       The only different between >= and > is that >= additional include the (x,y,z) = (a,b,c).
+*/
 func (er *expressionRewriter) constructBinaryOpFunction(l expression.Expression, r expression.Expression, op string) (expression.Expression, error) {
 	lLen, rLen := expression.GetRowLen(l), expression.GetRowLen(r)
 	if lLen == 1 && rLen == 1 {
@@ -412,10 +415,19 @@ func (er *expressionRewriter) constructBinaryOpFunction(l expression.Expression,
 		}
 		return expression.ComposeCNFCondition(er.sctx, funcs...), nil
 	default:
+		/*
+				The algorithm is as follows:
+				1. Iterate over i left columns and construct his own CNF for each left column.
+			        1.1 Iterate over j (every i-1 columns) to l[j]=r[j]
+			        1.2 Build current i column with op to l[i] op r[i]
+			        1.3 Combine 1.1 and 1.2 predicates with AND operator
+				2. Combine every i CNF with OR operator.
+		*/
 		resultDNFList := make([]expression.Expression, 0, lLen)
+		// Step 1
 		for i := 0; i < lLen; i++ {
-			exprList := make([]expression.Expression, 0, lLen)
-			// build prefix equal conditions
+			exprList := make([]expression.Expression, 0, i+1)
+			// Step 1.1 build prefix equal conditions
 			// (l[0], ... , l[i-1], ...) op (r[0], ... , r[i-1], ...) should be convert to
 			// l[0] = r[0] and l[1] = r[1] and ... and l[i-1] = r[i-1]
 			for j := 0; j < i; j++ {
@@ -426,8 +438,7 @@ func (er *expressionRewriter) constructBinaryOpFunction(l expression.Expression,
 				exprList = append(exprList, jExpr)
 			}
 
-			// (x,y,z) >= (a,b,c) should be convert to (x > a) or (x = a and y > b) or (x = a and y = b and z >= c)
-			// The only different between >= and > is that >= additional include the (x,y,z) = (a,b,c).
+			// Especially, op is GE or LE, the prefix element will be converted to > or <.
 			degeneratedOp := op
 			if i < lLen-1 {
 				switch op {
@@ -437,14 +448,17 @@ func (er *expressionRewriter) constructBinaryOpFunction(l expression.Expression,
 					degeneratedOp = ast.LT
 				}
 			}
+			// Step 1.2
 			currentIndexExpr, err := er.constructBinaryOpFunction(expression.GetFuncArg(l, i), expression.GetFuncArg(r, i), degeneratedOp)
 			if err != nil {
 				return nil, err
 			}
 			exprList = append(exprList, currentIndexExpr)
+			// Step 1.3
 			currentExpr := expression.ComposeCNFCondition(er.sctx, exprList...)
 			resultDNFList = append(resultDNFList, currentExpr)
 		}
+		// Step 2
 		return expression.ComposeDNFCondition(er.sctx, resultDNFList...), nil
 	}
 }
