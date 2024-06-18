@@ -45,6 +45,9 @@ type runningJobs struct {
 	schemas map[string]map[string]struct{}
 }
 
+// TODO(lance6716): support jobs involving objects that are exclusive (ALTER
+// PLACEMENT POLICY vs ALTER PLACEMENT POLICY) and shared (ALTER TABLE PLACEMENT
+// POLICY vs ALTER TABLE PLACEMENT POLICY)
 func newRunningJobs() *runningJobs {
 	return &runningJobs{
 		ids:          make(map[int64]struct{}),
