@@ -17,6 +17,12 @@ package core
 import (
 	"cmp"
 	"context"
+	"math"
+	"slices"
+	"sort"
+	"strconv"
+	"time"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -43,11 +49,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/size"
 	atomic2 "go.uber.org/atomic"
 	"go.uber.org/zap"
-	"math"
-	"slices"
-	"sort"
-	"strconv"
-	"time"
 )
 
 const (
@@ -242,9 +243,10 @@ func hashInt64Uint64Map(b []byte, m map[int64]uint64) []byte {
 	return b
 }
 
-// NewPlanCacheKey creates a new planCacheKey object.
+// NewPlanCacheKey creates the plan cache key for this statement.
 // Note: lastUpdatedSchemaVersion will only be set in the case of rc or for update read in order to
 // differentiate the cache key. In other cases, it will be 0.
+// All information that might affect the plan should be considered in this function.
 func NewPlanCacheKey(sessionVars *variable.SessionVars, stmtText, stmtDB string, schemaVersion, lastUpdatedSchemaVersion int64, bindSQL string, exprBlacklistTS int64, relatedSchemaVersion map[int64]uint64) (string, error) {
 	if stmtText == "" {
 		return "", errors.New("no statement text")
@@ -267,6 +269,10 @@ func NewPlanCacheKey(sessionVars *variable.SessionVars, stmtText, stmtDB string,
 	hash = append(hash, hack.Slice(stmtText)...)
 	hash = codec.EncodeInt(hash, schemaVersion)
 	hash = hashInt64Uint64Map(hash, relatedSchemaVersion)
+	// Only be set in rc or for update read and leave it default otherwise.
+	// In Rc or ForUpdateRead, we should check whether the information schema has been changed when using plan cache.
+	// If it changed, we should rebuild the plan. lastUpdatedSchemaVersion help us to decide whether we should rebuild
+	// the plan in rc or for update read.
 	hash = codec.EncodeInt(hash, lastUpdatedSchemaVersion)
 	hash = codec.EncodeInt(hash, int64(sessionVars.SQLMode))
 	hash = codec.EncodeInt(hash, int64(timezoneOffset))
@@ -285,6 +291,7 @@ func NewPlanCacheKey(sessionVars *variable.SessionVars, stmtText, stmtDB string,
 	hash = append(hash, hack.Slice(strconv.FormatBool(sessionVars.InRestrictedSQL))...)
 	hash = append(hash, hack.Slice(strconv.FormatBool(variable.RestrictedReadOnly.Load()))...)
 	hash = append(hash, hack.Slice(strconv.FormatBool(variable.VarTiDBSuperReadOnly.Load()))...)
+	// expr-pushdown-blacklist can affect query optimization, so we need to consider it in plan cache.
 	hash = codec.EncodeInt(hash, exprBlacklistTS)
 	return string(hash), nil
 }
