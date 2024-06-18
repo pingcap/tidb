@@ -52,10 +52,10 @@ func TestLRUPCPut(t *testing.T) {
 	lruA := NewLRUPlanCache(0, 0, 0, mockCtx, false)
 	require.Equal(t, lruA.capacity, uint(100))
 
-	maxMemDroppedKv := make(map[string]any)
+	dropCnt := 0
 	lru := NewLRUPlanCache(3, 0, 0, mockCtx, false)
 	lru.onEvict = func(key string, value any) {
-		maxMemDroppedKv[key] = value
+		dropCnt++
 	}
 	require.Equal(t, uint(3), lru.capacity)
 
@@ -73,7 +73,7 @@ func TestLRUPCPut(t *testing.T) {
 
 	// one key corresponding to multi values
 	for i := 0; i < 5; i++ {
-		keys[i] = fmt.Sprintf("key-%v", i)
+		keys[i] = "key-1"
 		opts := &PlanCacheMatchOpts{
 			ParamTypes:          pTypes[i],
 			LimitOffsetAndCount: limitParams[i],
@@ -87,14 +87,13 @@ func TestLRUPCPut(t *testing.T) {
 	require.Equal(t, uint(3), lru.size)
 
 	// test for non-existent elements
-	require.Len(t, maxMemDroppedKv, 2)
+	require.Equal(t, dropCnt, 2)
 	for i := 0; i < 2; i++ {
 		bucket, exist := lru.buckets[keys[i]]
 		require.True(t, exist)
 		for element := range bucket {
 			require.NotEqual(t, vals[i], element.Value.(*planCacheEntry).PlanValue)
 		}
-		require.Equal(t, vals[i], maxMemDroppedKv[keys[i]])
 	}
 
 	// test for existent elements
@@ -294,14 +293,14 @@ func TestLRUPCDeleteAll(t *testing.T) {
 }
 
 func TestLRUPCSetCapacity(t *testing.T) {
-	maxMemDroppedKv := make(map[string]any)
 	ctx := MockContext()
 	lru := NewLRUPlanCache(5, 0, 0, ctx, false)
 	defer func() {
 		domain.GetDomain(ctx).StatsHandle().Close()
 	}()
+	dropCnt := 0
 	lru.onEvict = func(key string, value any) {
-		maxMemDroppedKv[key] = value
+		dropCnt++
 	}
 	require.Equal(t, uint(5), lru.capacity)
 
@@ -316,7 +315,7 @@ func TestLRUPCSetCapacity(t *testing.T) {
 
 	// one key corresponding to multi values
 	for i := 0; i < 5; i++ {
-		keys[i] = fmt.Sprintf("key-%v", i)
+		keys[i] = "key-1"
 		opts := &PlanCacheMatchOpts{
 			ParamTypes:          pTypes[i],
 			LimitOffsetAndCount: []uint64{},
@@ -333,14 +332,13 @@ func TestLRUPCSetCapacity(t *testing.T) {
 	require.NoError(t, err)
 
 	// test for non-existent elements
-	require.Len(t, maxMemDroppedKv, 2)
+	require.Equal(t, dropCnt, 2)
 	for i := 0; i < 2; i++ {
 		bucket, exist := lru.buckets[keys[i]]
 		require.True(t, exist)
 		for element := range bucket {
 			require.NotEqual(t, vals[i], element.Value.(*planCacheEntry).PlanValue)
 		}
-		require.Equal(t, vals[i], maxMemDroppedKv[keys[i]])
 	}
 
 	// test for existent elements
