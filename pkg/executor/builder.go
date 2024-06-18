@@ -683,7 +683,7 @@ func (b *executorBuilder) buildCleanupIndex(v *plannercore.CleanupIndex) exec.Ex
 	sessCtx := e.Ctx().GetSessionVars().StmtCtx
 	e.handleCols = buildHandleColsForExec(sessCtx, tblInfo, e.columns)
 	if e.index.Meta().Global {
-		e.columns = append(e.columns, model.NewExtraPartitionIDColInfo())
+		e.columns = append(e.columns, model.NewExtraPhysTblIDColInfo())
 	}
 	return e
 }
@@ -5133,7 +5133,7 @@ func NewRowDecoder(ctx sessionctx.Context, schema *expression.Schema, tbl *model
 	}
 	defVal := func(i int, chk *chunk.Chunk) error {
 		if reqCols[i].ID < 0 {
-			// model.ExtraHandleID, ExtraPidColID, ExtraPhysTblID... etc
+			// model.ExtraHandleID, ExtraPhysTblID... etc
 			// Don't set the default value for that column.
 			chk.AppendNull(i)
 			return nil
