@@ -62,7 +62,6 @@ func newParallelSortWorker(
 	sortedRowsIter *chunk.Iterator4Slice,
 	maxChunkSize int,
 	spillHelper *parallelSortSpillHelper) *parallelSortWorker {
-	maxSortedRowsLimit := maxChunkSize * 30
 	return &parallelSortWorker{
 		workerIDForTest:        workerIDForTest,
 		lessRowFunc:            lessRowFunc,
@@ -73,9 +72,9 @@ func newParallelSortWorker(
 		timesOfRowCompare:      0,
 		memTracker:             memTracker,
 		sortedRowsIter:         sortedRowsIter,
-		maxSortedRowsLimit:     maxSortedRowsLimit,
+		maxSortedRowsLimit:     maxChunkSize * 30,
 		spillHelper:            spillHelper,
-		batchRows:              make([]chunk.Row, 0, maxSortedRowsLimit),
+		batchRows:              make([]chunk.Row, 0),
 	}
 }
 
@@ -129,7 +128,7 @@ func (p *parallelSortWorker) multiWayMergeLocalSortedRows() ([]chunk.Row, error)
 func (p *parallelSortWorker) sortBatchRows() {
 	slices.SortFunc(p.batchRows, p.keyColumnsLess)
 	p.localSortedRows = append(p.localSortedRows, chunk.NewIterator4Slice(p.batchRows))
-	p.batchRows = make([]chunk.Row, 0, p.maxSortedRowsLimit)
+	p.batchRows = make([]chunk.Row, 0)
 }
 
 func (p *parallelSortWorker) sortLocalRows() ([]chunk.Row, error) {
