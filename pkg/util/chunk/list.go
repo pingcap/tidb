@@ -45,6 +45,18 @@ type RowPtr struct {
 	RowIdx uint32
 }
 
+// NewListWithMemTracker creates a new List with field types, init chunk size, max chunk size and memory tracker.
+func NewListWithMemTracker(fieldTypes []*types.FieldType, initChunkSize, maxChunkSize int, tracker *memory.Tracker) *List {
+	l := &List{
+		fieldTypes:    fieldTypes,
+		initChunkSize: initChunkSize,
+		maxChunkSize:  maxChunkSize,
+		memTracker:    tracker,
+		consumedIdx:   -1,
+	}
+	return l
+}
+
 // NewList creates a new List with field types, init chunk size and max chunk size.
 func NewList(fieldTypes []*types.FieldType, initChunkSize, maxChunkSize int) *List {
 	l := &List{
