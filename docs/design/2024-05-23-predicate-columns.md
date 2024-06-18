@@ -258,7 +258,7 @@ Test that the query plan is optimized after the predicate columns are used in th
 If a table has some new queries that use some new predicate columns, but we have just finished an auto-analysis for this table. Then for a long time, the optimizer cannot get the statistics for the newly used columns until we have enough modification to trigger the auto-analysis again.
 **This problem is more obvious during cluster creation or POC.** But by default, we always collect statistics for all indexes, so we consider this problem to be acceptable.
 
-### Use PREDICATE COLUMNS when your workload's query pattern is  relatively stable
+### Use PREDICATE COLUMNS when your workload's query pattern is relatively stable
 
 When the query pattern is variable, with different columns frequently being used as predicates, using PREDICATE COLUMNS might temporarily result in stale statistics. Stale statistics can lead to suboptimal query runtime plans and long runtimes.
 
