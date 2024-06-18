@@ -25,7 +25,7 @@ import (
 	"go.uber.org/atomic"
 )
 
-// InstancePlanCache ...
+// InstancePlanCache represents the instance/node level plan cache.
 type InstancePlanCache interface {
 	Get(sctx sessionctx.Context, key string, opts any) (value any, ok bool)
 	Put(sctx sessionctx.Context, key string, value, opts any) (succ bool)
@@ -35,6 +35,7 @@ type InstancePlanCache interface {
 	SetSoftLimit(softMemLimit int64) error
 }
 
+// NewInstancePlanCache creates a new instance level plan cache.
 func NewInstancePlanCache(softMemLimit, hardMemLimit int64) InstancePlanCache {
 	planCache := new(instancePlanCache)
 	planCache.softMemLimit.Store(softMemLimit)
@@ -48,7 +49,7 @@ type instancePCNode struct {
 	next     atomic.Pointer[instancePCNode]
 }
 
-// instancePlanCache is the instance level plan cache.
+// instancePlanCache is a lock-free implementation of InstancePlanCache interface.
 // [key1] --> [headNode1] --> [node1] --> [node2] --> [node3]
 // [key2] --> [headNode2] --> [node4] --> [node5]
 // [key3] --> [headNode3] --> [node6] --> [node7] --> [node8]
@@ -78,6 +79,7 @@ func (pc *instancePlanCache) getHead(key string, create bool) *instancePCNode {
 	return nil
 }
 
+// Get gets the cached value according to key and opts.
 func (pc *instancePlanCache) Get(sctx sessionctx.Context, key string, opts any) (value any, ok bool) {
 	headNode := pc.getHead(key, false)
 	if headNode == nil { // cache miss
@@ -100,6 +102,8 @@ func (pc *instancePlanCache) getPlanFromList(sctx sessionctx.Context, headNode *
 	return nil, false
 }
 
+// Put puts the key and values into the cache.
+// Due to some thread-safety issues, this Put operation might fail, use the returned succ to indicate it.
 func (pc *instancePlanCache) Put(sctx sessionctx.Context, key string, value, opts any) (succ bool) {
 	vMem := value.(*PlanCacheValue).MemoryUsage()
 	if vMem+pc.totCost.Load() > pc.hardMemLimit.Load() {
@@ -146,14 +150,23 @@ func (pc *instancePlanCache) Evict(_ sessionctx.Context) (evicted bool) {
 		}
 		return false
 	})
-	pc.clearEmptyHead()
+
+	// post operation: clear empty heads in pc.Heads
+	keys, headNodes := pc.headNodes()
+	for i, headNode := range headNodes {
+		if headNode.next.Load() == nil {
+			pc.heads.Delete(keys[i])
+		}
+	}
 	return
 }
 
+// MemUsage returns the memory usage of this plan cache.
 func (pc *instancePlanCache) MemUsage(_ sessionctx.Context) int64 {
 	return pc.totCost.Load()
 }
 
+// SetHardLimit updates the hard memory limit.
 func (pc *instancePlanCache) SetHardLimit(hardMemLimit int64) error {
 	currentSoft, currentHard := pc.softMemLimit.Load(), pc.hardMemLimit.Load()
 	if hardMemLimit < 0 || hardMemLimit < currentSoft {
@@ -166,6 +179,7 @@ func (pc *instancePlanCache) SetHardLimit(hardMemLimit int64) error {
 	return nil
 }
 
+// SetSoftLimit updates the soft memory limit.
 func (pc *instancePlanCache) SetSoftLimit(softMemLimit int64) error {
 	currentSoft, currentHard := pc.softMemLimit.Load(), pc.hardMemLimit.Load()
 	if softMemLimit < 0 || softMemLimit > currentHard {
@@ -183,7 +197,9 @@ func (pc *instancePlanCache) calcEvictionThreshold(lastUsedTimes []time.Time) (t
 	if avgPerPlan <= 0 {
 		return
 	}
-	numToEvict := (pc.totCost.Load() - pc.softMemLimit.Load() + avgPerPlan - 1) / avgPerPlan
+	memToRelease := pc.totCost.Load() - pc.softMemLimit.Load()
+	// (... +avgPerPlan-1) is used to try to keep the final memory usage below the soft mem limit.
+	numToEvict := (memToRelease + avgPerPlan - 1) / avgPerPlan
 	if numToEvict <= 0 {
 		return
 	}
@@ -201,7 +217,7 @@ func (pc *instancePlanCache) foreach(callback func(prev, this *instancePCNode) (
 	for _, headNode := range headNodes {
 		for prev, this := headNode, headNode.next.Load(); this != nil; {
 			thisRemoved := callback(prev, this)
-			if !thisRemoved {
+			if !thisRemoved { // this node is removed, no need to update the prev node in this case
 				prev, this = this, this.next.Load()
 			} else {
 				this = this.next.Load()
@@ -219,15 +235,6 @@ func (pc *instancePlanCache) headNodes() ([]string, []*instancePCNode) {
 		return true
 	})
 	return keys, headNodes
-}
-
-func (pc *instancePlanCache) clearEmptyHead() {
-	keys, headNodes := pc.headNodes()
-	for i, headNode := range headNodes {
-		if headNode.next.Load() == nil {
-			pc.heads.Delete(keys[i])
-		}
-	}
 }
 
 func (pc *instancePlanCache) createNode(value kvcache.Value) *instancePCNode {
