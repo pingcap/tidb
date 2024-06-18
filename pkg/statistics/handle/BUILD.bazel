@@ -20,7 +20,11 @@ go_library(
         "//pkg/parser/mysql",
         "//pkg/parser/terror",
         "//pkg/sessionctx",
+<<<<<<< HEAD
         "//pkg/sessionctx/stmtctx",
+=======
+        "//pkg/sessionctx/sysproctrack",
+>>>>>>> 2cea9949f20 (statistics: stop loading too many stats when to init stats (#53999))
         "//pkg/sessionctx/variable",
         "//pkg/statistics",
         "//pkg/statistics/handle/autoanalyze",
@@ -38,6 +42,7 @@ go_library(
         "//pkg/util/chunk",
         "//pkg/util/intest",
         "//pkg/util/logutil",
+        "//pkg/util/memory",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_tiancaiamao_gp//:gp",
