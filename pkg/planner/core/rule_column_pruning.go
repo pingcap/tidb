@@ -16,7 +16,6 @@ package core
 
 import (
 	"context"
-	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace/logicaltrace"
 	"slices"
 
 	"github.com/pingcap/tidb/pkg/expression"
@@ -30,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
+	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace/logicaltrace"
 )
 
 type columnPruner struct {
@@ -719,7 +719,8 @@ func preferKeyColumnFromTable(dataSource *DataSource, originColumns []*expressio
 	return resultColumn, resultColumnInfo
 }
 
-// LogicalCTE just do a empty function call. It's logical optimize is indivisual phase.
+// PruneColumns implements the interface of base.LogicalPlan.
+// LogicalCTE just do an empty function call. It's logical optimize is indivisual phase.
 func (p *LogicalCTE) PruneColumns(_ []*expression.Column, _ *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, error) {
 	return p, nil
 }
