@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/placement"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/expression/contextstatic"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
@@ -59,7 +60,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
-	"github.com/pingcap/tidb/pkg/util/mock"
 	decoder "github.com/pingcap/tidb/pkg/util/rowDecoder"
 	"github.com/pingcap/tidb/pkg/util/slice"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
@@ -4259,9 +4259,9 @@ func (cns columnNameSlice) At(i int) string {
 }
 
 func isPartExprUnsigned(ectx expression.EvalContext, tbInfo *model.TableInfo) bool {
-	// We should not rely on any configuration, system or session variables, so use a mock ctx!
+	// We should not rely on any configuration, system or session variables, so use a default context.
 	// Same as in tables.newPartitionExpr
-	ctx := mock.NewContext()
+	ctx := contextstatic.NewStaticExprContext()
 	expr, err := expression.ParseSimpleExpr(ctx, tbInfo.Partition.Expr, expression.WithTableInfo("", tbInfo))
 	if err != nil {
 		logutil.DDLLogger().Error("isPartExpr failed parsing expression!", zap.Error(err))
