@@ -17,6 +17,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 	"unsafe"
 
@@ -297,15 +298,10 @@ func (ft *FieldType) Equal(other *FieldType) bool {
 		ft.collate == other.collate &&
 		flenEqual &&
 		mysql.HasUnsignedFlag(ft.flag) == mysql.HasUnsignedFlag(other.flag)
-	if !partialEqual || len(ft.elems) != len(other.elems) {
+	if !partialEqual {
 		return false
 	}
-	for i := range ft.elems {
-		if ft.elems[i] != other.elems[i] {
-			return false
-		}
-	}
-	return true
+	return slices.Equal(ft.elems, other.elems)
 }
 
 // PartialEqual checks whether two FieldType objects are equal.
