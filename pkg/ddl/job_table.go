@@ -226,7 +226,9 @@ func (s *jobScheduler) getJob(se *sess.Session, tp jobType) (*model.Job, error) 
 			return &job, nil
 		}
 
-		if !s.runningJobs.checkRunnable(job.ID, job.GetInvolvingSchemaInfo()) {
+		involving := job.GetInvolvingSchemaInfo()
+		if !s.runningJobs.checkRunnable(job.ID, involving) {
+			s.runningJobs.addPending(involving)
 			continue
 		}
 
@@ -235,8 +237,10 @@ func (s *jobScheduler) getJob(se *sess.Session, tp jobType) (*model.Job, error) 
 				"[ddl] handle ddl job failed: mark job is processing meet error",
 				zap.Error(err),
 				zap.Stringer("job", &job))
+			s.runningJobs.addPending(involving)
 			return nil, errors.Trace(err)
 		}
+		s.runningJobs.resetAllPending()
 		return &job, nil
 	}
 	return nil, nil

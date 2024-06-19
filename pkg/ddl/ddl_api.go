@@ -310,9 +310,11 @@ func (d *ddl) ModifySchemaDefaultPlacement(ctx sessionctx.Context, stmt *ast.Alt
 		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{{
 			Database: dbInfo.Name.L,
 			Table:    model.InvolvingAll,
-			Shared:   &model.InvolvingSharedSchemaInfo{Policy: placementPolicyRef.Name.L},
 		}},
 		SQLMode: ctx.GetSessionVars().SQLMode,
+	}
+	if placementPolicyRef != nil {
+		job.InvolvingSchemaInfo[0].Shared = &model.InvolvingSharedSchemaInfo{Policy: placementPolicyRef.Name.L}
 	}
 	err = d.DoDDLJob(ctx, job)
 	err = d.callHookOnChanged(job, err)
