@@ -42,6 +42,7 @@ func (s *LogicalSchemaProducer) Schema() *expression.Schema {
 	return s.schema
 }
 
+// OutputNames implements the Plan.OutputNames interface.
 func (s *LogicalSchemaProducer) OutputNames() types.NameSlice {
 	if s.names == nil && len(s.Children()) == 1 {
 		// default implementation for plans has only one child: proprgate child `OutputNames`.
@@ -51,11 +52,12 @@ func (s *LogicalSchemaProducer) OutputNames() types.NameSlice {
 	return s.names
 }
 
+// SetOutputNames sets the output names for the plan.
 func (s *LogicalSchemaProducer) SetOutputNames(names types.NameSlice) {
 	s.names = names
 }
 
-// SetSchema implements the Plan.SetSchema interface.
+// SetSchema sets the logical schema producer's schema.
 func (s *LogicalSchemaProducer) SetSchema(schema *expression.Schema) {
 	s.schema = schema
 }
@@ -66,7 +68,7 @@ func (s *LogicalSchemaProducer) SetSchemaAndNames(schema *expression.Schema, nam
 	s.names = names
 }
 
-// InlineProjection prunes unneeded columns inline a executor.
+// InlineProjection prunes unneeded columns inline an executor.
 func (s *LogicalSchemaProducer) InlineProjection(parentUsedCols []*expression.Column, opt *optimizetrace.LogicalOptimizeOp) {
 	prunedColumns := make([]*expression.Column, 0)
 	used := expression.GetUsedList(s.SCtx().GetExprCtx().GetEvalCtx(), parentUsedCols, s.Schema())
@@ -79,7 +81,7 @@ func (s *LogicalSchemaProducer) InlineProjection(parentUsedCols []*expression.Co
 	logicaltrace.AppendColumnPruneTraceStep(s.Self(), prunedColumns, opt)
 }
 
-// BuildKeyInfo implements LogicalPlan BuildKeyInfo interface.
+// BuildKeyInfo implements LogicalPlan.BuildKeyInfo interface.
 func (p *LogicalSchemaProducer) BuildKeyInfo(selfSchema *expression.Schema, childSchema []*expression.Schema) {
 	selfSchema.Keys = nil
 	p.BaseLogicalPlan.BuildKeyInfo(selfSchema, childSchema)
