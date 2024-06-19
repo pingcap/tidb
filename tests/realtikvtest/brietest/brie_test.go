@@ -51,16 +51,18 @@ func TestShowBackupQuery(t *testing.T) {
 	tk.MustExec("insert into foo(v) values " + strings.TrimSuffix(strings.Repeat("('hello, world'),", 100), ",") + ";")
 	backupQuery := fmt.Sprintf("BACKUP DATABASE * TO 'local://%s'", sqlTmp)
 	_ = tk.MustQuery(backupQuery)
+	id := tk.MustQuery("SELECT * FROM mysql.tidb_br_jobs ORDER BY id DESC LIMIT 1;").Rows()[0][0].(string)
 	// NOTE: we assume a auto-increamental ID here.
 	// once we implement other ID allocation, we may have to change this case.
-	res := tk.MustQuery("show br job query 1;")
+	res := tk.MustQuery("show br job query " + id)
 	fmt.Println(res.Rows())
 	res.CheckContain(backupQuery)
 
 	tk.MustExec("drop table foo;")
 	restoreQuery := fmt.Sprintf("RESTORE TABLE `test`.`foo` FROM 'local://%s'", sqlTmp)
 	tk.MustQuery(restoreQuery)
-	res = tk.MustQuery("show br job query 2;")
+	id = tk.MustQuery("SELECT * FROM mysql.tidb_br_jobs ORDER BY id DESC LIMIT 1;").Rows()[0][0].(string)
+	res = tk.MustQuery("show br job query " +id)
 	res.CheckContain(restoreQuery)
 }
 
@@ -78,7 +80,8 @@ func TestShowBackupQueryRedact(t *testing.T) {
 	}()
 
 	check := func() bool {
-		res := tk.MustQuery("show br job query 1;")
+		id := tk.MustQuery("SELECT * FROM mysql.tidb_br_jobs ORDER BY id DESC LIMIT 1;").Rows()[0][0].(string)
+		res := tk.MustQuery("show br job query "+id)
 		rs := res.Rows()
 		if len(rs) == 0 {
 			return false
@@ -92,7 +95,8 @@ func TestShowBackupQueryRedact(t *testing.T) {
 		return true
 	}
 	require.Eventually(t, check, 5*time.Second, 1*time.Second)
-	tk.MustExec("cancel br job 1;")
+	id := tk.MustQuery("SELECT * FROM mysql.tidb_br_jobs ORDER BY id DESC LIMIT 1;").Rows()[0][0].(string)
+	tk.MustExec("cancel br job "+id)
 	// Make sure the background job returns.
 	// So `goleak` would be happy.
 	<-ch
@@ -115,7 +119,8 @@ func TestCancel(t *testing.T) {
 
 	check := func() bool {
 		wb := tk.Session().GetSessionVars().StmtCtx.WarningCount()
-		tk.MustExec("cancel br job 1;")
+		id := tk.MustQuery("SELECT * FROM mysql.tidb_br_jobs ORDER BY id DESC LIMIT 1;").Rows()[0][0].(string)
+		tk.MustExec("cancel br job "+id)
 		wa := tk.Session().GetSessionVars().StmtCtx.WarningCount()
 		return wb == wa
 	}

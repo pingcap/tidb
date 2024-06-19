@@ -265,7 +265,7 @@ func TestCleanupFinished1(t *testing.T) {
 	require.Equal(t,cmd + " Canceled",progress.cmd)
 
 	//If message is empty, the task is assumed to be finished
-	globalBRIEQueue.cleanupTask(taskID)
+	globalBRIEQueue.cleanupTask(taskID,&e)
 	require.Equal(t,total,progress.current)
 	require.Equal(t,total,progress.total)
 	require.Equal(t,cmd,progress.cmd)
@@ -310,7 +310,7 @@ func TestCleanupFinished2(t *testing.T) {
 	require.Equal(t,cmd,progress.cmd)
 
 	//If current = total, the task is finished
-	globalBRIEQueue.cleanupTask(taskID)
+	globalBRIEQueue.cleanupTask(taskID,&e)
 	require.Equal(t,total,progress.current)
 	require.Equal(t,total,progress.total)
 	require.Equal(t,cmd,progress.cmd)
@@ -343,7 +343,7 @@ func TestCleanupUnfinished(t *testing.T) {
 	progress.total = total
 	progress.cmd = cmd
 
-	globalBRIEQueue.cleanupTask(taskID)
+	globalBRIEQueue.cleanupTask(taskID,&e)
 	require.Equal(t,current,progress.current)
 	require.Equal(t,total,progress.total)
 	require.Equal(t,cmd + " Canceled",progress.cmd)
