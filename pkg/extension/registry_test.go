@@ -378,7 +378,7 @@ func TestAuthPluginValidation(t *testing.T) {
 		extension.WithCustomAuthPlugins(map[string]*extension.AuthPlugin{
 			"plugin1": {
 				Name: "plugin1",
-				AuthenticateUser: func(ctx *extension.AuthenticateContext) error {
+				AuthenticateUser: func(ctx extension.AuthenticateRequest) error {
 					return nil
 				},
 				GenerateAuthString: func(pwd string) (string, bool) {
@@ -394,7 +394,7 @@ func TestAuthPluginValidation(t *testing.T) {
 		extension.WithCustomAuthPlugins(map[string]*extension.AuthPlugin{
 			"plugin1": {
 				Name: "plugin1",
-				AuthenticateUser: func(ctx *extension.AuthenticateContext) error {
+				AuthenticateUser: func(ctx extension.AuthenticateRequest) error {
 					return nil
 				},
 				ValidateAuthString: func(pwdHash string) bool {
@@ -410,7 +410,7 @@ func TestAuthPluginValidation(t *testing.T) {
 		extension.WithCustomAuthPlugins(map[string]*extension.AuthPlugin{
 			"plugin1": {
 				Name: "plugin1",
-				AuthenticateUser: func(ctx *extension.AuthenticateContext) error {
+				AuthenticateUser: func(ctx extension.AuthenticateRequest) error {
 					return nil
 				},
 				GenerateAuthString: func(pwd string) (string, bool) {
@@ -422,7 +422,7 @@ func TestAuthPluginValidation(t *testing.T) {
 			},
 			"plugin2": {
 				Name: "plugin1",
-				AuthenticateUser: func(ctx *extension.AuthenticateContext) error {
+				AuthenticateUser: func(ctx extension.AuthenticateRequest) error {
 					return nil
 				},
 				GenerateAuthString: func(pwd string) (string, bool) {
@@ -441,7 +441,7 @@ func TestAuthPluginValidation(t *testing.T) {
 		extension.WithCustomAuthPlugins(map[string]*extension.AuthPlugin{
 			"plugin1": {
 				Name: "mysql_native_password",
-				AuthenticateUser: func(ctx *extension.AuthenticateContext) error {
+				AuthenticateUser: func(ctx extension.AuthenticateRequest) error {
 					return nil
 				},
 				GenerateAuthString: func(pwd string) (string, bool) {
@@ -460,7 +460,7 @@ func TestAuthPluginValidation(t *testing.T) {
 		extension.WithCustomAuthPlugins(map[string]*extension.AuthPlugin{
 			"plugin1": {
 				Name: "plugin1",
-				AuthenticateUser: func(ctx *extension.AuthenticateContext) error {
+				AuthenticateUser: func(ctx extension.AuthenticateRequest) error {
 					return nil
 				},
 				GenerateAuthString: func(pwd string) (string, bool) {

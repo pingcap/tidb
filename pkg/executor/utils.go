@@ -15,6 +15,8 @@
 package executor
 
 import (
+	"github.com/pingcap/tidb/pkg/extension"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"strings"
 )
 
@@ -96,4 +98,23 @@ func (b *batchRetrieverHelper) nextBatch(retrieveRange func(start, end int) erro
 		b.retrieved = true
 	}
 	return nil
+}
+
+// encodePassword encodes the password for the user. It invokes the auth plugin if it is available.
+func encodePassword(u *ast.UserSpec, authPlugin *extension.AuthPlugin) (string, bool) {
+	if u.AuthOpt == nil {
+		return "", true
+	}
+	// If the extension auth plugin is available, use it to encode the password.
+	if authPlugin != nil {
+		if u.AuthOpt.ByAuthString {
+			return authPlugin.GenerateAuthString(u.AuthOpt.AuthString)
+		}
+		// If we receive a hash string, validate it first.
+		if authPlugin.ValidateAuthString(u.AuthOpt.HashString) {
+			return u.AuthOpt.HashString, true
+		}
+		return "", false
+	}
+	return u.EncodedPassword()
 }

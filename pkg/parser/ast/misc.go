@@ -1427,31 +1427,14 @@ func (n *UserSpec) GetAuthPluginOrDefault(defaultPlugin string) string {
 	return n.AuthOpt.AuthPlugin
 }
 
-// ExtAuthPluginSpec encapsulates the extension auth plugin functions to prevent cyclic import.
-type ExtAuthPluginSpec struct {
-	EncodePassword func(string) (string, bool)
-	ValidateHash   func(string) bool
-}
-
 // EncodedPassword returns the encoded password (which is the real data mysql.user).
 // The boolean value indicates input's password format is legal or not.
-func (n *UserSpec) EncodedPassword(extPluginSpec *ExtAuthPluginSpec) (string, bool) {
+func (n *UserSpec) EncodedPassword() (string, bool) {
 	if n.AuthOpt == nil {
 		return "", true
 	}
 
 	opt := n.AuthOpt
-	// If the extension auth plugin is available, use it to encode the password.
-	if extPluginSpec != nil {
-		if opt.ByAuthString {
-			return extPluginSpec.EncodePassword(opt.AuthString)
-		}
-		// If we receive a hash string, validate it first.
-		if extPluginSpec.ValidateHash(opt.HashString) {
-			return opt.HashString, true
-		}
-		return "", false
-	}
 	if opt.ByAuthString {
 		switch opt.AuthPlugin {
 		case mysql.AuthCachingSha2Password, mysql.AuthTiDBSM3Password:

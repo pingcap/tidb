@@ -22,7 +22,7 @@ func (p *MockAuthPlugin) Name() string {
 	return p.Called().String(0)
 }
 
-func (p *MockAuthPlugin) AuthenticateUser(ctx *extension.AuthenticateContext) error {
+func (p *MockAuthPlugin) AuthenticateUser(ctx extension.AuthenticateRequest) error {
 	return p.Called(ctx).Error(0)
 }
 
@@ -35,42 +35,54 @@ func (p *MockAuthPlugin) GenerateAuthString(password string) (string, bool) {
 	return args.String(0), args.Bool(1)
 }
 
-func (p *MockAuthPlugin) VerifyDynamicPrivilege(ctx *extension.AuthorizeContext) bool {
+func (p *MockAuthPlugin) VerifyDynamicPrivilege(ctx extension.VerifyDynamicPrivRequest) bool {
 	return p.Called(ctx).Bool(0)
 }
 
-func (p *MockAuthPlugin) VerifyPrivilege(ctx *extension.AuthorizeContext) bool {
+func (p *MockAuthPlugin) VerifyPrivilege(ctx extension.VerifyStaticPrivRequest) bool {
 	return p.Called(ctx).Bool(0)
 }
 
 type AuthenticateContextMatcher struct {
-	expected extension.AuthenticateContext
+	expected extension.AuthenticateRequest
 }
 
 func (m AuthenticateContextMatcher) Matches(x interface{}) bool {
-	ctx, ok := x.(*extension.AuthenticateContext)
+	ctx, ok := x.(extension.AuthenticateRequest)
 	if !ok {
 		return false
 	}
 	return ctx.User == m.expected.User &&
-		ctx.StoredPwd == m.expected.StoredPwd &&
-		string(ctx.InputPwd) == string(m.expected.InputPwd)
+		ctx.StoredAuthString == m.expected.StoredAuthString &&
+		string(ctx.InputAuthString) == string(m.expected.InputAuthString)
 }
 
-type AuthorizeContextMatcher struct {
-	expected extension.AuthorizeContext
+type DynamicMatcher struct {
+	expected extension.VerifyDynamicPrivRequest
 }
 
-func (m AuthorizeContextMatcher) Matches(x interface{}) bool {
-	ctx, ok := x.(*extension.AuthorizeContext)
+func (m DynamicMatcher) Matches(x interface{}) bool {
+	ctx, ok := x.(extension.VerifyDynamicPrivRequest)
 	if !ok {
 		return false
 	}
 	return ctx.User == m.expected.User &&
-		ctx.DB == m.expected.DB &&
 		ctx.DynamicPriv == m.expected.DynamicPriv &&
-		ctx.StaticPriv == m.expected.StaticPriv &&
 		ctx.WithGrant == m.expected.WithGrant
+}
+
+type StaticMatcher struct {
+	expected extension.VerifyStaticPrivRequest
+}
+
+func (m StaticMatcher) Matches(x interface{}) bool {
+	ctx, ok := x.(extension.VerifyStaticPrivRequest)
+	if !ok {
+		return false
+	}
+	return ctx.User == m.expected.User &&
+		ctx.StaticPriv == m.expected.StaticPriv &&
+		ctx.DB == m.expected.DB
 }
 
 func sha1Password(s string) []byte {
@@ -97,24 +109,24 @@ func TestAuthPlugin(t *testing.T) {
 	p := new(MockAuthPlugin)
 	p.On("Name").Return("authentication_test_plugin")
 
-	authnMatcher1 := mock.MatchedBy(func(ctx *extension.AuthenticateContext) bool {
-		return AuthenticateContextMatcher{expected: extension.AuthenticateContext{User: "u2", StoredPwd: "encodedpassword", InputPwd: []byte("1")}}.Matches(ctx)
+	authnMatcher1 := mock.MatchedBy(func(ctx extension.AuthenticateRequest) bool {
+		return AuthenticateContextMatcher{expected: extension.AuthenticateRequest{User: "u2", StoredAuthString: "encodedpassword", InputAuthString: []byte("1")}}.Matches(ctx)
 	})
 	p.On("AuthenticateUser", authnMatcher1).Return(nil)
-	authnMatcher2 := mock.MatchedBy(func(ctx *extension.AuthenticateContext) bool {
-		return AuthenticateContextMatcher{expected: extension.AuthenticateContext{User: "u2", StoredPwd: "encodedpassword", InputPwd: []byte("2")}}.Matches(ctx)
+	authnMatcher2 := mock.MatchedBy(func(ctx extension.AuthenticateRequest) bool {
+		return AuthenticateContextMatcher{expected: extension.AuthenticateRequest{User: "u2", StoredAuthString: "encodedpassword", InputAuthString: []byte("2")}}.Matches(ctx)
 	})
 	p.On("AuthenticateUser", authnMatcher2).Return(errors.New("authentication failed"))
-	authnMatcher3 := mock.MatchedBy(func(ctx *extension.AuthenticateContext) bool {
-		return AuthenticateContextMatcher{expected: extension.AuthenticateContext{User: "u2", StoredPwd: "anotherencodedpassword", InputPwd: []byte("1")}}.Matches(ctx)
+	authnMatcher3 := mock.MatchedBy(func(ctx extension.AuthenticateRequest) bool {
+		return AuthenticateContextMatcher{expected: extension.AuthenticateRequest{User: "u2", StoredAuthString: "anotherencodedpassword", InputAuthString: []byte("1")}}.Matches(ctx)
 	})
 	p.On("AuthenticateUser", authnMatcher3).Return(nil)
-	authnMatcher4 := mock.MatchedBy(func(ctx *extension.AuthenticateContext) bool {
-		return AuthenticateContextMatcher{expected: extension.AuthenticateContext{User: "u2", StoredPwd: "yetanotherencodedpassword", InputPwd: []byte("1")}}.Matches(ctx)
+	authnMatcher4 := mock.MatchedBy(func(ctx extension.AuthenticateRequest) bool {
+		return AuthenticateContextMatcher{expected: extension.AuthenticateRequest{User: "u2", StoredAuthString: "yetanotherencodedpassword", InputAuthString: []byte("1")}}.Matches(ctx)
 	})
 	p.On("AuthenticateUser", authnMatcher4).Return(nil)
-	authnMatcher5 := mock.MatchedBy(func(ctx *extension.AuthenticateContext) bool {
-		return AuthenticateContextMatcher{expected: extension.AuthenticateContext{User: "u2", StoredPwd: "yetanotherencodedpassword2", InputPwd: []byte("1")}}.Matches(ctx)
+	authnMatcher5 := mock.MatchedBy(func(ctx extension.AuthenticateRequest) bool {
+		return AuthenticateContextMatcher{expected: extension.AuthenticateRequest{User: "u2", StoredAuthString: "yetanotherencodedpassword2", InputAuthString: []byte("1")}}.Matches(ctx)
 	})
 	p.On("AuthenticateUser", authnMatcher5).Return(nil)
 
@@ -123,28 +135,28 @@ func TestAuthPlugin(t *testing.T) {
 	p.On("GenerateAuthString", "anotherrawpassword").Return("anotherencodedpassword", true)
 	p.On("GenerateAuthString", "yetanotherrawpassword").Return("yetanotherencodedpassword", true)
 	p.On("GenerateAuthString", "yetanotherrawpassword2").Return("yetanotherencodedpassword2", true)
-	authzMatcher1 := mock.MatchedBy(func(ctx *extension.AuthorizeContext) bool {
-		return AuthorizeContextMatcher{expected: extension.AuthorizeContext{User: "u2", Host: "localhost", DB: "test", Table: "t1", StaticPriv: mysql.AllPrivMask}}.Matches(ctx)
+	authzMatcher1 := mock.MatchedBy(func(ctx extension.VerifyStaticPrivRequest) bool {
+		return StaticMatcher{expected: extension.VerifyStaticPrivRequest{User: "u2", Host: "localhost", DB: "test", Table: "t1", StaticPriv: mysql.AllPrivMask}}.Matches(ctx)
 	})
 	p.On("VerifyPrivilege", authzMatcher1).Return(true)
-	authzMatcher2 := mock.MatchedBy(func(ctx *extension.AuthorizeContext) bool {
-		return AuthorizeContextMatcher{expected: extension.AuthorizeContext{User: "u2", Host: "localhost", DB: "test", Table: "t1", StaticPriv: mysql.SelectPriv}}.Matches(ctx)
+	authzMatcher2 := mock.MatchedBy(func(ctx extension.VerifyStaticPrivRequest) bool {
+		return StaticMatcher{expected: extension.VerifyStaticPrivRequest{User: "u2", Host: "localhost", DB: "test", Table: "t1", StaticPriv: mysql.SelectPriv}}.Matches(ctx)
 	})
 	p.On("VerifyPrivilege", authzMatcher2).Return(true)
-	authzMatcher3 := mock.MatchedBy(func(ctx *extension.AuthorizeContext) bool {
-		return AuthorizeContextMatcher{expected: extension.AuthorizeContext{User: "u2", Host: "localhost", DB: "test", Table: "t1", StaticPriv: mysql.InsertPriv}}.Matches(ctx)
+	authzMatcher3 := mock.MatchedBy(func(ctx extension.VerifyStaticPrivRequest) bool {
+		return StaticMatcher{expected: extension.VerifyStaticPrivRequest{User: "u2", Host: "localhost", DB: "test", Table: "t1", StaticPriv: mysql.InsertPriv}}.Matches(ctx)
 	})
 	p.On("VerifyPrivilege", authzMatcher3).Return(false)
-	authzMatcher4 := mock.MatchedBy(func(ctx *extension.AuthorizeContext) bool {
-		return AuthorizeContextMatcher{expected: extension.AuthorizeContext{User: "u2"}}.Matches(ctx)
+	authzMatcher4 := mock.MatchedBy(func(ctx extension.VerifyDynamicPrivRequest) bool {
+		return DynamicMatcher{expected: extension.VerifyDynamicPrivRequest{User: "u2"}}.Matches(ctx)
 	})
 	p.On("VerifyDynamicPrivilege", authzMatcher4).Return(false)
-	deleteMatcher := mock.MatchedBy(func(ctx *extension.AuthorizeContext) bool {
-		return AuthorizeContextMatcher{expected: extension.AuthorizeContext{User: "u2", Host: "localhost", DB: "test", Table: "t1", StaticPriv: mysql.DeletePriv}}.Matches(ctx)
+	deleteMatcher := mock.MatchedBy(func(ctx extension.VerifyStaticPrivRequest) bool {
+		return StaticMatcher{expected: extension.VerifyStaticPrivRequest{User: "u2", Host: "localhost", DB: "test", Table: "t1", StaticPriv: mysql.DeletePriv}}.Matches(ctx)
 	})
 	p.On("VerifyPrivilege", deleteMatcher).Return(false)
-	sysVarAdminMatcher := mock.MatchedBy(func(ctx *extension.AuthorizeContext) bool {
-		return AuthorizeContextMatcher{expected: extension.AuthorizeContext{User: "u2", DynamicPriv: "SYSTEM_VARIABLES_ADMIN", WithGrant: false}}.Matches(ctx)
+	sysVarAdminMatcher := mock.MatchedBy(func(ctx extension.VerifyDynamicPrivRequest) bool {
+		return DynamicMatcher{expected: extension.VerifyDynamicPrivRequest{User: "u2", DynamicPriv: "SYSTEM_VARIABLES_ADMIN", WithGrant: false}}.Matches(ctx)
 	})
 	p.On("VerifyDynamicPrivilege", sysVarAdminMatcher).Return(false)
 
@@ -279,28 +291,28 @@ func TestAuthPluginSwitchPlugins(t *testing.T) {
 	authChecks := map[string]*extension.AuthPlugin{}
 	p := new(MockAuthPlugin)
 	p.On("Name").Return("authentication_test_plugin")
-	authnMatcher1 := mock.MatchedBy(func(ctx *extension.AuthenticateContext) bool {
-		return AuthenticateContextMatcher{expected: extension.AuthenticateContext{User: "u2", StoredPwd: "rawpassword", InputPwd: []byte("1")}}.Matches(ctx)
+	authnMatcher1 := mock.MatchedBy(func(ctx extension.AuthenticateRequest) bool {
+		return AuthenticateContextMatcher{expected: extension.AuthenticateRequest{User: "u2", StoredAuthString: "rawpassword", InputAuthString: []byte("1")}}.Matches(ctx)
 	})
 	p.On("AuthenticateUser", authnMatcher1).Return(nil)
-	authnMatcher2 := mock.MatchedBy(func(ctx *extension.AuthenticateContext) bool {
-		return AuthenticateContextMatcher{expected: extension.AuthenticateContext{User: "u2", StoredPwd: "encodedpassword", InputPwd: []byte("1")}}.Matches(ctx)
+	authnMatcher2 := mock.MatchedBy(func(ctx extension.AuthenticateRequest) bool {
+		return AuthenticateContextMatcher{expected: extension.AuthenticateRequest{User: "u2", StoredAuthString: "encodedpassword", InputAuthString: []byte("1")}}.Matches(ctx)
 	})
 	p.On("AuthenticateUser", authnMatcher2).Return(nil)
 
 	p.On("ValidateAuthString", mock.Anything).Return(true)
 	p.On("GenerateAuthString", "rawpassword").Return("encodedpassword", true)
 
-	allPrivMatcher := mock.MatchedBy(func(ctx *extension.AuthorizeContext) bool {
-		return AuthorizeContextMatcher{expected: extension.AuthorizeContext{User: "u2", Host: "localhost", DB: "test", Table: "t1", StaticPriv: mysql.AllPrivMask}}.Matches(ctx)
+	allPrivMatcher := mock.MatchedBy(func(ctx extension.VerifyStaticPrivRequest) bool {
+		return StaticMatcher{expected: extension.VerifyStaticPrivRequest{User: "u2", Host: "localhost", DB: "test", Table: "t1", StaticPriv: mysql.AllPrivMask}}.Matches(ctx)
 	})
 	p.On("VerifyPrivilege", allPrivMatcher).Return(true)
-	selectMatcher := mock.MatchedBy(func(ctx *extension.AuthorizeContext) bool {
-		return AuthorizeContextMatcher{expected: extension.AuthorizeContext{User: "u2", Host: "localhost", DB: "test", Table: "t1", StaticPriv: mysql.SelectPriv}}.Matches(ctx)
+	selectMatcher := mock.MatchedBy(func(ctx extension.VerifyStaticPrivRequest) bool {
+		return StaticMatcher{expected: extension.VerifyStaticPrivRequest{User: "u2", Host: "localhost", DB: "test", Table: "t1", StaticPriv: mysql.SelectPriv}}.Matches(ctx)
 	})
 	p.On("VerifyPrivilege", selectMatcher).Return(true)
-	insertMatcher := mock.MatchedBy(func(ctx *extension.AuthorizeContext) bool {
-		return AuthorizeContextMatcher{expected: extension.AuthorizeContext{User: "u2", Host: "localhost", DB: "test", Table: "t1", StaticPriv: mysql.InsertPriv}}.Matches(ctx)
+	insertMatcher := mock.MatchedBy(func(ctx extension.VerifyStaticPrivRequest) bool {
+		return StaticMatcher{expected: extension.VerifyStaticPrivRequest{User: "u2", Host: "localhost", DB: "test", Table: "t1", StaticPriv: mysql.InsertPriv}}.Matches(ctx)
 	})
 	p.On("VerifyPrivilege", insertMatcher).Return(false)
 
@@ -472,20 +484,20 @@ func TestCreateViewWithPluginUser(t *testing.T) {
 	authChecks := map[string]*extension.AuthPlugin{}
 	p := new(MockAuthPlugin)
 	p.On("Name").Return("authentication_test_plugin")
-	authnMatcher1 := mock.MatchedBy(func(ctx *extension.AuthenticateContext) bool {
-		return AuthenticateContextMatcher{expected: extension.AuthenticateContext{User: "u1", StoredPwd: "rawpassword", InputPwd: []byte("1")}}.Matches(ctx)
+	authnMatcher1 := mock.MatchedBy(func(ctx extension.AuthenticateRequest) bool {
+		return AuthenticateContextMatcher{expected: extension.AuthenticateRequest{User: "u1", StoredAuthString: "rawpassword", InputAuthString: []byte("1")}}.Matches(ctx)
 	})
 	p.On("AuthenticateUser", authnMatcher1).Return(nil).Return(nil)
 
 	p.On("ValidateAuthString", mock.Anything).Return(true)
 	p.On("GenerateAuthString", "rawpassword").Return("encodedpassword", true)
 
-	allPrivMatcherHost1 := mock.MatchedBy(func(ctx *extension.AuthorizeContext) bool {
-		return AuthorizeContextMatcher{expected: extension.AuthorizeContext{User: "u1", Host: "localhost", DB: "test", Table: "t1", StaticPriv: mysql.AllPrivMask}}.Matches(ctx)
+	allPrivMatcherHost1 := mock.MatchedBy(func(ctx extension.VerifyStaticPrivRequest) bool {
+		return StaticMatcher{expected: extension.VerifyStaticPrivRequest{User: "u1", Host: "localhost", DB: "test", Table: "t1", StaticPriv: mysql.AllPrivMask}}.Matches(ctx)
 	})
 	p.On("VerifyPrivilege", allPrivMatcherHost1).Return(true)
-	createViewMatcher := mock.MatchedBy(func(ctx *extension.AuthorizeContext) bool {
-		return AuthorizeContextMatcher{expected: extension.AuthorizeContext{User: "u1", Host: "localhost", DB: "test", Table: "t1", StaticPriv: mysql.CreateViewPriv}}.Matches(ctx)
+	createViewMatcher := mock.MatchedBy(func(ctx extension.VerifyStaticPrivRequest) bool {
+		return StaticMatcher{expected: extension.VerifyStaticPrivRequest{User: "u1", Host: "localhost", DB: "test", Table: "t1", StaticPriv: mysql.CreateViewPriv}}.Matches(ctx)
 	})
 	p.On("VerifyPrivilege", createViewMatcher).Return(true)
 
@@ -537,8 +549,8 @@ func TestCreateViewWithPluginUser(t *testing.T) {
 	require.NoError(t, tk1.Session().Auth(&auth.UserIdentity{Username: "u1", Hostname: "localhost"}, []byte("1"), nil, nil))
 	tk1.MustExec("use test")
 
-	selectMatcher := mock.MatchedBy(func(ctx *extension.AuthorizeContext) bool {
-		return AuthorizeContextMatcher{expected: extension.AuthorizeContext{User: "u1", Host: "localhost", DB: "test", Table: "t1", StaticPriv: mysql.SelectPriv}}.Matches(ctx)
+	selectMatcher := mock.MatchedBy(func(ctx extension.VerifyStaticPrivRequest) bool {
+		return StaticMatcher{expected: extension.VerifyStaticPrivRequest{User: "u1", Host: "localhost", DB: "test", Table: "t1", StaticPriv: mysql.SelectPriv}}.Matches(ctx)
 	})
 	p.On("VerifyPrivilege", selectMatcher).Return(false).Once()
 	// Create view should not work.
@@ -577,8 +589,8 @@ func TestPluginUserModification(t *testing.T) {
 	authChecks := map[string]*extension.AuthPlugin{}
 	p := new(MockAuthPlugin)
 	p.On("Name").Return("authentication_test_plugin")
-	authnMatcher1 := mock.MatchedBy(func(ctx *extension.AuthenticateContext) bool {
-		return AuthenticateContextMatcher{expected: extension.AuthenticateContext{User: "u4", StoredPwd: "rawpassword", InputPwd: []byte("1")}}.Matches(ctx)
+	authnMatcher1 := mock.MatchedBy(func(ctx extension.AuthenticateRequest) bool {
+		return AuthenticateContextMatcher{expected: extension.AuthenticateRequest{User: "u4", StoredAuthString: "rawpassword", InputAuthString: []byte("1")}}.Matches(ctx)
 	})
 	p.On("AuthenticateUser", authnMatcher1).Return(nil)
 

@@ -19,7 +19,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/pingcap/tidb/pkg/extension"
 	"math"
 	"os"
 	"strconv"
@@ -1165,12 +1164,7 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 				return err
 			}
 		}
-		pluginImpl, foundPlugin := e.Ctx().GetExtensions().GetAuthPlugins()[authPlugin]
-		pwd, ok := spec.EncodedPassword(getExtAuthPluginSpec(pluginImpl))
-
-		if !ok {
-			return errors.Trace(exeerrors.ErrPasswordFormat)
-		}
+		pluginImpl, foundPlugin := e.Ctx().GetExtensions().GetAuthPlugin(authPlugin)
 
 		switch authPlugin {
 		case mysql.AuthNativePassword, mysql.AuthCachingSha2Password, mysql.AuthTiDBSM3Password, mysql.AuthSocket, mysql.AuthTiDBAuthToken, mysql.AuthLDAPSimple, mysql.AuthLDAPSASL:
@@ -1179,6 +1173,11 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 			if !foundPlugin {
 				return exeerrors.ErrPluginIsNotLoaded.GenWithStackByArgs(spec.AuthOpt.AuthPlugin)
 			}
+		}
+
+		pwd, ok := encodePassword(spec, pluginImpl)
+		if !ok {
+			return errors.Trace(exeerrors.ErrPasswordFormat)
 		}
 
 		recordTokenIssuer := tokenIssuer
@@ -1613,7 +1612,7 @@ func checkPasswordReusePolicy(ctx context.Context, sqlExecutor sqlexec.SQLExecut
 		return nil
 	}
 	// Skip password reuse checks for extension auth plugins
-	if _, ok := sctx.GetExtensions().GetAuthPlugins()[authPlugin]; ok {
+	if _, ok := sctx.GetExtensions().GetAuthPlugin(authPlugin); ok {
 		return nil
 	}
 	// read password reuse info from mysql.user and global variables.
@@ -1639,16 +1638,6 @@ func checkPasswordReusePolicy(ctx context.Context, sqlExecutor sqlexec.SQLExecut
 		return err
 	}
 	return nil
-}
-
-func getExtAuthPluginSpec(authPlugin *extension.AuthPlugin) *ast.ExtAuthPluginSpec {
-	if authPlugin == nil {
-		return nil
-	}
-	return &ast.ExtAuthPluginSpec{
-		EncodePassword: authPlugin.GenerateAuthString,
-		ValidateHash:   authPlugin.ValidateAuthString,
-	}
 }
 
 func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt) error {
@@ -1806,7 +1795,7 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 			if spec.AuthOpt.AuthPlugin == "" {
 				spec.AuthOpt.AuthPlugin = currentAuthPlugin
 			}
-			authPluginImpl, foundAuthPlugin := e.Ctx().GetExtensions().GetAuthPlugins()[spec.AuthOpt.AuthPlugin]
+			authPluginImpl, foundAuthPlugin := e.Ctx().GetExtensions().GetAuthPlugin(spec.AuthOpt.AuthPlugin)
 			switch spec.AuthOpt.AuthPlugin {
 			case mysql.AuthNativePassword, mysql.AuthCachingSha2Password, mysql.AuthTiDBSM3Password, mysql.AuthSocket, mysql.AuthLDAPSimple, mysql.AuthLDAPSASL, "":
 				authTokenOptionHandler = noNeedAuthTokenOptions
@@ -1835,7 +1824,7 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 					return err
 				}
 			}
-			pwd, ok := spec.EncodedPassword(getExtAuthPluginSpec(authPluginImpl))
+			pwd, ok := encodePassword(spec, authPluginImpl)
 			if !ok {
 				return errors.Trace(exeerrors.ErrPasswordFormat)
 			}
@@ -2502,7 +2491,7 @@ func (e *SimpleExec) executeSetPwd(ctx context.Context, s *ast.SetPwdStmt) error
 		e.Ctx().GetSessionVars().StmtCtx.AppendNote(exeerrors.ErrSetPasswordAuthPlugin.FastGenByArgs(u, h))
 		pwd = ""
 	default:
-		if pluginImpl, ok := e.Ctx().GetExtensions().GetAuthPlugins()[authplugin]; ok {
+		if pluginImpl, ok := e.Ctx().GetExtensions().GetAuthPlugin(authplugin); ok {
 			if pwd, ok = pluginImpl.GenerateAuthString(s.Password); !ok {
 				return exeerrors.ErrPasswordFormat.GenWithStackByArgs()
 			}

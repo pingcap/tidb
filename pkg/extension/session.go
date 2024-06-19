@@ -159,10 +159,11 @@ func (es *SessionExtensions) OnStmtEvent(tp StmtEventTp, event StmtEventInfo) {
 	}
 }
 
-// GetAuthPlugins returns the registered extension auth plugins.
-func (es *SessionExtensions) GetAuthPlugins() map[string]*AuthPlugin {
+// GetAuthPlugin returns the required registered extension auth plugin and whether it exists.
+func (es *SessionExtensions) GetAuthPlugin(name string) (*AuthPlugin, bool) {
 	if es == nil {
-		return nil
+		return nil, false
 	}
-	return es.authPlugins
+	p, ok := es.authPlugins[name]
+	return p, ok
 }

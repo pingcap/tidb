@@ -80,8 +80,8 @@ type UserPrivileges struct {
 	extensionAccessCheckFuncs []extension.AccessCheckFunc
 	authPlugins               map[string]*extension.AuthPlugin
 
-	authPluginRequestVerification        func(mysqlPriv *MySQLPrivilege, user, host string, activeRoles []*auth.RoleIdentity, db, table, column string, priv mysql.PrivilegeType) bool
-	authPluginRequestDynamicVerification func(mysqlPriv *MySQLPrivilege, activeRoles []*auth.RoleIdentity, user, host, privName string, grantable bool) bool
+	authPluginRequestVerification        func(user, host string, activeRoles []*auth.RoleIdentity, db, table, column string, priv mysql.PrivilegeType) bool
+	authPluginRequestDynamicVerification func(activeRoles []*auth.RoleIdentity, user, host, privName string, grantable bool) bool
 }
 
 // NewUserPrivileges creates a new UserPrivileges
@@ -132,7 +132,10 @@ func (p *UserPrivileges) RequestDynamicVerification(activeRoles []*auth.RoleIden
 	}
 
 	mysqlPriv := p.Handle.Get()
-	return p.checkMySQLAndPluginDynamicPrivilege(mysqlPriv, activeRoles, p.user, p.host, privName, grantable)
+	if !mysqlPriv.RequestDynamicVerification(activeRoles, p.user, p.host, privName, grantable) {
+		return false
+	}
+	return p.authPluginRequestDynamicVerification == nil || p.authPluginRequestDynamicVerification(activeRoles, p.user, p.host, privName, grantable)
 }
 
 // RequestVerification implements the Manager interface.
@@ -192,7 +195,10 @@ func (p *UserPrivileges) RequestVerification(activeRoles []*auth.RoleIdentity, d
 	}
 
 	mysqlPriv := p.Handle.Get()
-	return p.checkMySQLAndPluginPrivilege(mysqlPriv, p.user, p.host, activeRoles, db, table, column, priv)
+	if !mysqlPriv.RequestVerification(activeRoles, p.user, p.host, db, table, column, priv) {
+		return false
+	}
+	return p.authPluginRequestVerification == nil || p.authPluginRequestVerification(p.user, p.host, activeRoles, db, table, column, priv)
 }
 
 // RequestVerificationWithUser implements the Manager interface.
@@ -218,53 +224,29 @@ func (p *UserPrivileges) RequestVerificationWithUser(db, table, column string, p
 	return mysqlPriv.RequestVerification(roles, user.Username, user.Hostname, db, table, column, priv)
 }
 
-// checkMySQLAndPluginDynamicPrivilege checks dynamic privilege for MySQL, and then checks the extension auth plugin.
-func (p *UserPrivileges) checkMySQLAndPluginDynamicPrivilege(mysqlPriv *MySQLPrivilege, activeRoles []*auth.RoleIdentity, user, host, privName string, grantable bool) bool {
-	mysqlAllowed := mysqlPriv.RequestDynamicVerification(activeRoles, user, host, privName, grantable)
-	// If authPluginRequestDynamicVerification is nil, it means the user is not authenticated using extension auth plugins. Skip the extension auth plugin check.
-	if p.authPluginRequestDynamicVerification == nil {
-		return mysqlAllowed
+func (p *UserPrivileges) authenticateWithPlugin(user *auth.UserIdentity, authentication, salt []byte, sessionVars *variable.SessionVars, authConn conn.AuthConn, authPlugin *extension.AuthPlugin, pwd string) error {
+	authRequest := extension.AuthenticateRequest{
+		User:             user.Username,
+		StoredAuthString: pwd,
+		InputAuthString:  authentication,
+		Salt:             salt,
+		ConnState:        sessionVars.TLSConnectionState,
+		AuthConn:         authConn,
 	}
-	// If MySQL privilege check failed, skip the extension auth plugin check.
-	if !mysqlAllowed {
-		return false
-	}
-	return p.authPluginRequestDynamicVerification(mysqlPriv, activeRoles, user, host, privName, grantable)
-}
-
-// checkMySQLAndPluginPrivilege checks privilege for MySQL, and then checks the extension auth plugin.
-func (p *UserPrivileges) checkMySQLAndPluginPrivilege(mysqlPriv *MySQLPrivilege, user, host string, activeRoles []*auth.RoleIdentity, db, table, column string, priv mysql.PrivilegeType) bool {
-	mysqlAllowed := mysqlPriv.RequestVerification(activeRoles, user, host, db, table, column, priv)
-	// If authPluginRequestVerification is nil, it means the user is not authenticated using extension auth plugins. Skip the extension auth plugin check.
-	if p.authPluginRequestVerification == nil {
-		return mysqlAllowed
-	}
-	// If MySQL privilege check failed, skip the extension auth plugin check.
-	if !mysqlAllowed {
-		return false
-	}
-	return p.authPluginRequestVerification(mysqlPriv, user, host, activeRoles, db, table, column, priv)
-}
-
-func (p *UserPrivileges) authenticateWithPlugin(user *auth.UserIdentity, authentication, salt []byte, sessionVars *variable.SessionVars, authConn conn.AuthConn, authPlugin *extension.AuthPlugin, pwd string, record *UserRecord, hasPassword string) error {
-	authCtx := &extension.AuthenticateContext{
-		User:      user.Username,
-		StoredPwd: pwd,
-		InputPwd:  authentication,
-		Salt:      salt,
-		ConnState: sessionVars.TLSConnectionState,
-		AuthConn:  authConn,
-	}
-	if err := authPlugin.AuthenticateUser(authCtx); err != nil {
+	if err := authPlugin.AuthenticateUser(authRequest); err != nil {
 		logutil.BgLogger().Warn("verify through extension auth plugin failed",
-			zap.String("plugin", record.AuthPlugin), zap.String("username", user.Username), zap.Error(err))
+			zap.String("plugin", authPlugin.Name), zap.String("username", user.Username), zap.Error(err))
+		hasPassword := "YES"
+		if len(authentication) == 0 {
+			hasPassword = "NO"
+		}
 		return ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
 	}
 
 	// If the user is authenticated using extension auth plugin, populate the plugin request verification funcs
 	if authPlugin.VerifyPrivilege != nil {
-		p.authPluginRequestVerification = func(mysqlPriv *MySQLPrivilege, user, host string, activeRoles []*auth.RoleIdentity, db, table, column string, priv mysql.PrivilegeType) bool {
-			return authPlugin.VerifyPrivilege(&extension.AuthorizeContext{
+		p.authPluginRequestVerification = func(user, host string, activeRoles []*auth.RoleIdentity, db, table, column string, priv mysql.PrivilegeType) bool {
+			return authPlugin.VerifyPrivilege(extension.VerifyStaticPrivRequest{
 				User:        user,
 				Host:        host,
 				DB:          db,
@@ -277,13 +259,14 @@ func (p *UserPrivileges) authenticateWithPlugin(user *auth.UserIdentity, authent
 		}
 	}
 	if authPlugin.VerifyDynamicPrivilege != nil {
-		p.authPluginRequestDynamicVerification = func(mysqlPriv *MySQLPrivilege, activeRoles []*auth.RoleIdentity, user, host, privName string, grantable bool) bool {
-			return authPlugin.VerifyDynamicPrivilege(&extension.AuthorizeContext{
+		p.authPluginRequestDynamicVerification = func(activeRoles []*auth.RoleIdentity, user, host, privName string, grantable bool) bool {
+			return authPlugin.VerifyDynamicPrivilege(extension.VerifyDynamicPrivRequest{
 				User:        user,
 				Host:        host,
 				DynamicPriv: privName,
 				ConnState:   sessionVars.TLSConnectionState,
 				ActiveRoles: activeRoles,
+				WithGrant:   grantable,
 			})
 		}
 	}

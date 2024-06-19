@@ -2,9 +2,12 @@ package extension
 
 import (
 	"crypto/tls"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/privilege/conn"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"slices"
 )
 
 // AuthPlugin contains attributes needed for an authentication plugin.
@@ -19,8 +22,8 @@ type AuthPlugin struct {
 
 	// AuthenticateUser is called when a client connects to the server as a user and the server authenticates the user.
 	// If an error is returned, the login attempt fails, otherwise it succeeds.
-	// authContext: The context for the authentication plugin to authenticate a user
-	AuthenticateUser func(ctx *AuthenticateContext) error
+	// request: The request context for the authentication plugin to authenticate a user
+	AuthenticateUser func(request AuthenticateRequest) error
 
 	// GenerateAuthString is a function for user to implement customized ways to encode the password (e.g. hash/salt/clear-text). The returned string will be stored as the encoded password in the mysql.user table.
 	// If the input password is considered as invalid, this should return an error.
@@ -35,24 +38,24 @@ type AuthPlugin struct {
 	// VerifyPrivilege is called for each user queries, and serves as an extra check for privileges for the user.
 	// It will only be executed if the user has already been granted the privilege in SQL layer.
 	// Returns true if user has the requested privilege.
-	// ctx: The context for the authorization plugin to authorize a user's privilege
-	VerifyPrivilege func(ctx *AuthorizeContext) bool
+	// request: The request context for the authorization plugin to authorize a user's static privilege
+	VerifyPrivilege func(request VerifyStaticPrivRequest) bool
 
 	// VerifyDynamicPrivilege is called for each user queries, and serves as an extra check for dynamic privileges for the user.
 	// It will only be executed if the user has already been granted the dynamic privilege in SQL layer.
 	// Returns true if user has the requested privilege.
-	// ctx: The context for the authorization plugin to authorize a user's privilege
-	VerifyDynamicPrivilege func(ctx *AuthorizeContext) bool
+	// request: The request context for the authorization plugin to authorize a user's dynamic privilege
+	VerifyDynamicPrivilege func(request VerifyDynamicPrivRequest) bool
 }
 
-// AuthenticateContext contains the context for the authentication plugin to authenticate a user.
-type AuthenticateContext struct {
+// AuthenticateRequest contains the context for the authentication plugin to authenticate a user.
+type AuthenticateRequest struct {
 	// User The username in the connect attempt
 	User string
-	// StoredPwd The user's password stored in mysql.user table
-	StoredPwd string
-	// InputPwd The user's password passed in from the connection attempt in bytes
-	InputPwd []byte
+	// StoredAuthString The user's auth string stored in mysql.user table
+	StoredAuthString string
+	// InputAuthString The user's auth string passed in from the connection attempt in bytes
+	InputAuthString []byte
 	// Salt Randomly generated salt for the current connection
 	Salt []byte
 	// ConnState The TLS connection state (contains the TLS certificate) if client is using TLS. It will be nil if the client is not using TLS
@@ -61,21 +64,33 @@ type AuthenticateContext struct {
 	AuthConn conn.AuthConn
 }
 
-// AuthorizeContext contains the context for the authorization plugin to authorize a user's privilege.
-type AuthorizeContext struct {
+// VerifyStaticPrivRequest contains the context for the plugin to authorize a user's static privilege.
+type VerifyStaticPrivRequest struct {
 	// User The username in the connect attempt
 	User string
 	// Host The host that the user is connecting from
 	Host string
-	// DB The database to check for privilege (should be empty if DynamicPriv is set)
+	// DB The database to check for privilege
 	DB string
-	// Table The table to check for privilege (should be empty if DynamicPriv is set)
+	// Table The table to check for privilege
 	Table string
 	// Column The column to check for privilege (currently just a placeholder in TiDB as column-level privilege is not supported by TiDB yet)
 	Column string
-	// StaticPriv The privilege type of the SQL statement that will be executed. Mutual exclusive with DynamicPriv.
+	// StaticPriv The privilege type of the SQL statement that will be executed
 	StaticPriv mysql.PrivilegeType
-	// DynamicPriv the dynamic privilege required by the user's SQL statement. Mutual exclusive with StaticPriv.
+	// ConnState The TLS connection state (contains the TLS certificate) if client is using TLS. It will be nil if the client is not using TLS
+	ConnState *tls.ConnectionState
+	// ActiveRoles List of active MySQL roles for the current user
+	ActiveRoles []*auth.RoleIdentity
+}
+
+// VerifyDynamicPrivRequest contains the context for the plugin to authorize a user's dynamic privilege.
+type VerifyDynamicPrivRequest struct {
+	// User The username in the connect attempt
+	User string
+	// Host The host that the user is connecting from
+	Host string
+	// DynamicPriv the dynamic privilege required by the user's SQL statement
 	DynamicPriv string
 	// ConnState The TLS connection state (contains the TLS certificate) if client is using TLS. It will be nil if the client is not using TLS
 	ConnState *tls.ConnectionState
@@ -83,4 +98,33 @@ type AuthorizeContext struct {
 	ActiveRoles []*auth.RoleIdentity
 	// WithGrant Whether the statement to be executed is granting the user privilege for executing GRANT statements
 	WithGrant bool
+}
+
+// validateAuthPlugin validates the auth plugin functions and attributes.
+func validateAuthPlugin(m *Manifest) error {
+	pluginNames := make(map[string]bool)
+	defaultAuthPlugins := variable.GetSysVar(variable.DefaultAuthPlugin).PossibleValues
+	// Validate required functions for the auth plugins
+	for pluginName, p := range m.authPlugins {
+		if p.Name == "" {
+			return errors.Errorf("auth plugin name cannot be empty for %s", pluginName)
+		}
+		if pluginNames[p.Name] {
+			return errors.Errorf("auth plugin name %s has already been registered", p.Name)
+		}
+		pluginNames[p.Name] = true
+		if slices.Contains(defaultAuthPlugins, p.Name) {
+			return errors.Errorf("auth plugin name %s is a reserved name for default auth plugins", p.Name)
+		}
+		if p.AuthenticateUser == nil {
+			return errors.Errorf("auth plugin AuthenticateUser function cannot be nil for %s", pluginName)
+		}
+		if p.GenerateAuthString == nil {
+			return errors.Errorf("auth plugin GenerateAuthString function cannot be nil for %s", pluginName)
+		}
+		if p.ValidateAuthString == nil {
+			return errors.Errorf("auth plugin ValidateAuthString function cannot be nil for %s", pluginName)
+		}
+	}
+	return nil
 }

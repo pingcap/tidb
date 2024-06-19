@@ -16,8 +16,6 @@ package extension
 
 import (
 	"context"
-	"slices"
-
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -224,36 +222,8 @@ func newManifestWithSetup(name string, factory func() ([]Option, error)) (_ *Man
 		}
 	}
 
-	pluginNames := make(map[string]bool)
-	defaultAuthPlugins := variable.GetSysVar(variable.DefaultAuthPlugin).PossibleValues
-	// Validate required functions for the auth plugins
-	for pluginName, p := range m.authPlugins {
-		err = clearBuilder.DoWithCollectClear(func() (func(), error) {
-			if p.Name == "" {
-				return nil, errors.Errorf("auth plugin name cannot be empty for %s", pluginName)
-			}
-			if pluginNames[p.Name] {
-				return nil, errors.Errorf("auth plugin name %s has already been registered", p.Name)
-			}
-			pluginNames[p.Name] = true
-			if slices.Contains(defaultAuthPlugins, p.Name) {
-				return nil, errors.Errorf("auth plugin name %s is a reserved name for default auth plugins", p.Name)
-			}
-			if p.AuthenticateUser == nil {
-				return nil, errors.Errorf("auth plugin AuthenticateUser function cannot be nil for %s", pluginName)
-			}
-			if p.GenerateAuthString == nil {
-				return nil, errors.Errorf("auth plugin GenerateAuthString function cannot be nil for %s", pluginName)
-			}
-			if p.ValidateAuthString == nil {
-				return nil, errors.Errorf("auth plugin ValidateAuthString function cannot be nil for %s", pluginName)
-			}
-			return nil, nil
-		})
-
-		if err != nil {
-			return nil, func() {}, err
-		}
+	if err := validateAuthPlugin(m); err != nil {
+		return nil, nil, err
 	}
 
 	return m, clearBuilder.Build(), nil

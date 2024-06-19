@@ -253,12 +253,12 @@ func (cc *clientConn) authSwitchRequest(ctx context.Context, plugin string) ([]b
 		clientPlugin += "_client"
 	} else if plugin == mysql.AuthLDAPSimple {
 		clientPlugin = mysql.AuthMySQLClearPassword
-	} else if authPluginImpl, ok := cc.extensions.GetAuthPlugins()[plugin]; ok {
+	} else if authPluginImpl, ok := cc.extensions.GetAuthPlugin(plugin); ok {
 		if authPluginImpl.RequiredClientSidePlugin != "" {
 			clientPlugin = authPluginImpl.RequiredClientSidePlugin
 		} else {
-			// If the plugin does not need special handling of the password, use clear text password.
-			clientPlugin = mysql.AuthMySQLClearPassword
+			// If RequiredClientSidePlugin is empty, use the plugin name as the client plugin.
+			clientPlugin = authPluginImpl.Name
 		}
 	}
 	failpoint.Inject("FakeAuthSwitch", func() {
@@ -628,7 +628,7 @@ func (cc *clientConn) readOptionalSSLRequestAndHandshakeResponse(ctx context.Con
 	case mysql.AuthLDAPSASL:
 	case mysql.AuthLDAPSimple:
 	default:
-		if _, ok := cc.extensions.GetAuthPlugins()[resp.AuthPlugin]; !ok {
+		if _, ok := cc.extensions.GetAuthPlugin(resp.AuthPlugin); !ok {
 			return errors.New("Unknown auth plugin")
 		}
 	}
@@ -651,7 +651,7 @@ func (cc *clientConn) handleAuthPlugin(ctx context.Context, resp *handshake.Resp
 			resp.Auth = newAuth
 		}
 
-		if _, ok := cc.extensions.GetAuthPlugins()[resp.AuthPlugin]; ok {
+		if _, ok := cc.extensions.GetAuthPlugin(resp.AuthPlugin); ok {
 			// The auth plugin has been registered, skip other checks.
 			return nil
 		}
