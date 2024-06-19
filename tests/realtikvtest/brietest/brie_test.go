@@ -46,6 +46,7 @@ func TestShowBackupQuery(t *testing.T) {
 
 	log.SetLevel(zapcore.ErrorLevel)
 	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists foo;")
 	tk.MustExec("create table foo(pk int primary key auto_increment, v varchar(255));")
 	tk.MustExec("insert into foo(v) values " + strings.TrimSuffix(strings.Repeat("('hello, world'),", 100), ",") + ";")
 	backupQuery := fmt.Sprintf("BACKUP DATABASE * TO 'local://%s'", sqlTmp)
