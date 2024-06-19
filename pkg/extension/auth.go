@@ -2,11 +2,12 @@ package extension
 
 import (
 	"crypto/tls"
+	"slices"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/privilege/conn"
-	"slices"
 )
 
 // AuthPlugin contains attributes needed for an authentication plugin.

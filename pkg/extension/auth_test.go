@@ -2,6 +2,8 @@ package extension_test
 
 import (
 	"crypto/sha1"
+	"testing"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/extension"
 	"github.com/pingcap/tidb/pkg/parser/auth"
@@ -11,7 +13,6 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/exp/maps"
-	"testing"
 )
 
 type MockAuthPlugin struct {

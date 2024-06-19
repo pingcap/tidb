@@ -15,9 +15,10 @@
 package executor
 
 import (
+	"strings"
+
 	"github.com/pingcap/tidb/pkg/extension"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"strings"
 )
 
 var (

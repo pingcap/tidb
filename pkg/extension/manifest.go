@@ -16,6 +16,7 @@ package extension
 
 import (
 	"context"
+
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
