@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/failpoint"
 	_ "github.com/pingcap/tidb/pkg/autoid_service"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/executor/join"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/auth"
@@ -712,4 +713,40 @@ func TestIssue53221(t *testing.T) {
 	require.ErrorContains(t, err, "Empty pattern is invalid")
 
 	tk.MustExec("drop table if exists t")
+}
+
+func TestIndexLookUpIssue53871(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (id int key auto_increment, b int, c int, index idx (b))")
+	tk.MustExec(" insert into t () values (), (), (), (), (), (), (), ();")
+	for i := 0; i < 9; i++ {
+		tk.MustExec("insert into t (b) select b from t;")
+	}
+	tk.MustExec(`update t set b = rand() * 10000, c = id;`)
+	tk.MustQuery("select count(c) from t use index(idx);").Check(testkit.Rows("4096")) // full scan to resolve uncommitted lock.
+	tk.MustQuery("select count(c) from t ignore index(idx)").Check(testkit.Rows("4096"))
+	tk.MustExec("analyze table t")
+	rows := tk.MustQuery("explain analyze select * from t use index(idx) where b > 0;").Rows()
+	require.Len(t, rows, 3)
+	require.Regexp(t, ".*IndexLookUp.*table_task: {total_time: .*, num: 1, .*", fmt.Sprintf("%v", rows[0]))
+	require.Regexp(t, ".*IndexRangeScan.*rpc_info.*Cop:{num_rpc:1, total_time:.*", fmt.Sprintf("%v", rows[1]))
+	require.Regexp(t, ".*TableRowIDScan.*rpc_info.*Cop:{num_rpc:1, total_time:.*", fmt.Sprintf("%v", rows[2]))
+}
+
+func TestCalculateBatchSize(t *testing.T) {
+	require.Equal(t, 1024, executor.CalculateBatchSize(true, 5000, 1024, 20000))
+	require.Equal(t, 1024, executor.CalculateBatchSize(true, 1024, 1024, 20000))
+	require.Equal(t, 1024, executor.CalculateBatchSize(true, 10, 1024, 20000))
+	require.Equal(t, 258, executor.CalculateBatchSize(true, 10, 1024, 258))
+	require.Equal(t, 1024, executor.CalculateBatchSize(true, 0, 1024, 20000))
+	require.Equal(t, 20000, executor.CalculateBatchSize(false, 50000, 1024, 20000))
+	require.Equal(t, 20000, executor.CalculateBatchSize(false, 18000, 1024, 20000))
+	require.Equal(t, 8192, executor.CalculateBatchSize(false, 5000, 1024, 20000))
+	require.Equal(t, 1024, executor.CalculateBatchSize(false, 1024, 1024, 20000))
+	require.Equal(t, 1024, executor.CalculateBatchSize(false, 10, 1024, 20000))
+	require.Equal(t, 258, executor.CalculateBatchSize(false, 10, 1024, 258))
+	require.Equal(t, 1024, executor.CalculateBatchSize(false, 0, 1024, 20000))
 }

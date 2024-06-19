@@ -7,6 +7,7 @@ package logclient_test
 
 import (
 	"context"
+	"crypto/sha256"
 	"fmt"
 	"math"
 	"os"
@@ -23,6 +24,8 @@ import (
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/stream"
 	"github.com/pingcap/tidb/br/pkg/utils/iter"
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -549,5 +552,95 @@ func TestFilterDataFiles(t *testing.T) {
 				idx += 1
 			}
 		}
+	}
+}
+
+func encodekv(prefix string, ts uint64, emptyV bool) []byte {
+	k := fmt.Sprintf("%s_%d", prefix, ts)
+	v := "any value"
+	if emptyV {
+		v = ""
+	}
+	kts := codec.EncodeUintDesc([]byte(k), ts)
+	return stream.EncodeKVEntry(kts, []byte(v))
+}
+
+func encodekvEntryWithTS(prefix string, ts uint64) *logclient.KvEntryWithTS {
+	k := fmt.Sprintf("%s_%d", prefix, ts)
+	v := "any value"
+	kts := codec.EncodeUintDesc([]byte(k), ts)
+	return &logclient.KvEntryWithTS{
+		E: kv.Entry{
+			Key:   kts,
+			Value: []byte(v),
+		},
+		Ts: ts,
+	}
+}
+
+func generateKvData() ([]byte, logclient.Log) {
+	buff := make([]byte, 0)
+	rangeLength := uint64(0)
+	buff = append(buff, encodekv("mDDLHistory", 10, false)...)
+	buff = append(buff, encodekv("mDDLHistory", 10, true)...)
+	rangeOffset := uint64(len(buff))
+	buff = append(buff, encodekv("mDDLHistory", 21, false)...)
+	buff = append(buff, encodekv("mDDLHistory", 22, true)...)
+	buff = append(buff, encodekv("mDDL", 27, false)...)
+	buff = append(buff, encodekv("mDDL", 28, true)...)
+	buff = append(buff, encodekv("mDDL", 37, false)...)
+	buff = append(buff, encodekv("mDDL", 38, true)...)
+	buff = append(buff, encodekv("mDDLHistory", 45, false)...)
+	buff = append(buff, encodekv("mDDLHistory", 45, true)...)
+	buff = append(buff, encodekv("mDDL", 50, false)...)
+	buff = append(buff, encodekv("mDDL", 50, true)...)
+	buff = append(buff, encodekv("mTable", 52, false)...)
+	buff = append(buff, encodekv("mTable", 52, true)...)
+	buff = append(buff, encodekv("mDDL", 65, false)...)
+	buff = append(buff, encodekv("mDDL", 65, true)...)
+	buff = append(buff, encodekv("mDDLHistory", 80, false)...)
+	buff = append(buff, encodekv("mDDLHistory", 80, true)...)
+	rangeLength = uint64(len(buff)) - rangeOffset
+	buff = append(buff, encodekv("mDDL", 90, false)...)
+	buff = append(buff, encodekv("mDDL", 90, true)...)
+
+	sha256 := sha256.Sum256(buff[rangeOffset : rangeOffset+rangeLength])
+	return buff, &backuppb.DataFileInfo{
+		Sha256:      sha256[:],
+		RangeOffset: rangeOffset,
+		RangeLength: rangeLength,
+	}
+}
+
+func TestReadAllEntries(t *testing.T) {
+	ctx := context.Background()
+	data, file := generateKvData()
+	fm := logclient.TEST_NewLogFileManager(35, 75, 25, &logclient.FakeStreamMetadataHelper{Data: data})
+	{
+		file.Cf = stream.WriteCF
+		kvEntries, nextKvEntries, err := fm.ReadAllEntries(ctx, file, 50)
+		require.NoError(t, err)
+		require.Equal(t, []*logclient.KvEntryWithTS{
+			encodekvEntryWithTS("mDDL", 37),
+			encodekvEntryWithTS("mDDLHistory", 45),
+		}, kvEntries)
+		require.Equal(t, []*logclient.KvEntryWithTS{
+			encodekvEntryWithTS("mDDL", 50),
+			encodekvEntryWithTS("mDDL", 65),
+		}, nextKvEntries)
+	}
+	{
+		file.Cf = stream.DefaultCF
+		kvEntries, nextKvEntries, err := fm.ReadAllEntries(ctx, file, 50)
+		require.NoError(t, err)
+		require.Equal(t, []*logclient.KvEntryWithTS{
+			encodekvEntryWithTS("mDDL", 27),
+			encodekvEntryWithTS("mDDL", 37),
+			encodekvEntryWithTS("mDDLHistory", 45),
+		}, kvEntries)
+		require.Equal(t, []*logclient.KvEntryWithTS{
+			encodekvEntryWithTS("mDDL", 50),
+			encodekvEntryWithTS("mDDL", 65),
+		}, nextKvEntries)
 	}
 }

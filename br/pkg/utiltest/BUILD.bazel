@@ -11,12 +11,14 @@ go_library(
     deps = [
         "//br/pkg/gluetidb/mock",
         "//br/pkg/mock",
+        "//br/pkg/pdutil",
         "//br/pkg/restore/split",
         "//br/pkg/storage",
         "@com_github_pingcap_kvproto//pkg/metapb",
         "@com_github_pkg_errors//:errors",
         "@com_github_stretchr_testify//require",
         "@com_github_tikv_pd_client//:client",
+        "@com_github_tikv_pd_client//http",
         "@org_golang_google_grpc//keepalive",
     ],
 )

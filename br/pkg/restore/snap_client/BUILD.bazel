@@ -77,6 +77,7 @@ go_test(
     srcs = [
         "batcher_test.go",
         "client_test.go",
+        "context_manager_test.go",
         "export_test.go",
         "import_test.go",
         "main_test.go",
@@ -85,7 +86,7 @@ go_test(
     ],
     embed = [":snap_client"],
     flaky = True,
-    shard_count = 17,
+    shard_count = 23,
     deps = [
         "//br/pkg/errors",
         "//br/pkg/glue",
@@ -112,9 +113,11 @@ go_test(
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_pingcap_kvproto//pkg/brpb",
         "@com_github_pingcap_kvproto//pkg/import_sstpb",
+        "@com_github_pingcap_kvproto//pkg/kvrpcpb",
         "@com_github_pingcap_kvproto//pkg/metapb",
         "@com_github_pingcap_log//:log",
         "@com_github_stretchr_testify//require",
+        "@com_github_tikv_pd_client//:client",
         "@org_golang_x_exp//slices",
         "@org_uber_go_goleak//:goleak",
         "@org_uber_go_zap//:zap",

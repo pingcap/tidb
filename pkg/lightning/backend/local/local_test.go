@@ -24,6 +24,7 @@ import (
 	"math/rand"
 	"path"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -38,6 +39,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	sst "github.com/pingcap/kvproto/pkg/import_sstpb"
+	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
@@ -56,7 +58,9 @@ import (
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/engine"
 	"github.com/pingcap/tidb/pkg/util/hack"
+	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
 	"github.com/tikv/pd/client/http"
 	"google.golang.org/grpc"
@@ -357,7 +361,9 @@ func testLocalWriter(t *testing.T, needSort bool, partitialSort bool) {
 	pool := membuf.NewPool()
 	defer pool.Destroy()
 	kvBuffer := pool.NewBuffer()
-	w, err := openLocalWriter(&backend.LocalWriterConfig{IsKVSorted: sorted}, f, keyspace.CodecV1, 1024, kvBuffer)
+	writerCfg := &backend.LocalWriterConfig{}
+	writerCfg.Local.IsKVSorted = sorted
+	w, err := openLocalWriter(writerCfg, f, keyspace.CodecV1, 1024, kvBuffer)
 	require.NoError(t, err)
 
 	ctx := context.Background()
@@ -2380,4 +2386,122 @@ func TestCheckDiskAvail(t *testing.T) {
 	store = &http.StoreInfo{Status: http.StoreStatus{LeaderWeight: 1.0, RegionWeight: 1.0}}
 	err = checkDiskAvail(ctx, store)
 	require.NoError(t, err)
+}
+
+type mockStoreHelper struct{}
+
+func (mockStoreHelper) GetTS(context.Context) (physical, logical int64, err error) {
+	return 12345, 67890, nil
+}
+
+func (mockStoreHelper) GetTiKVCodec() tikv.Codec {
+	c, _ := tikv.NewCodecV2(tikv.ModeTxn, &keyspacepb.KeyspaceMeta{})
+	return c
+}
+
+func TestTotalMemoryConsume(t *testing.T) {
+	t.Skip("this test is manually run to calibrate the real memory usage with TotalMemoryConsume")
+
+	inMemTest = true
+	getMemoryInUse := func() int64 {
+		// wait to make test more stable, maybe releasing memory is slow
+		runtime.GC()
+		time.Sleep(time.Second)
+		runtime.GC()
+
+		s := runtime.MemStats{}
+		runtime.ReadMemStats(&s)
+		return int64(s.HeapInuse)
+	}
+	memInUseBase := getMemoryInUse()
+
+	ctx := context.Background()
+	cfg := BackendConfig{
+		LocalStoreDir:           t.TempDir(),
+		CheckpointEnabled:       true,
+		DupeDetectEnabled:       true,
+		MemTableSize:            100 * units.MiB,
+		LocalWriterMemCacheSize: 100 * units.MiB,
+	}
+	b, err := NewBackendForTest(ctx, cfg, mockStoreHelper{})
+	require.NoError(t, err)
+
+	checkMemoryConsume := func(tag string, expected int64) {
+		expectedMemConsume := expected
+		require.EqualValues(t, expectedMemConsume, b.TotalMemoryConsume())
+		memInUse := getMemoryInUse()
+		diff := memInUse - memInUseBase
+		t.Logf("%s, memInUse %d, memInUseBase %d, diff %d", tag, memInUse, memInUseBase, diff)
+		require.Less(t, mathutil.Abs(diff-expectedMemConsume), int64(10*units.MiB))
+	}
+
+	// 1. test local engine write phase
+
+	engineCfg := &backend.EngineConfig{
+		Local: backend.LocalEngineConfig{
+			BlockSize: 100 * units.MiB,
+		},
+	}
+	engineID := uuid.New()
+	err = b.OpenEngine(ctx, engineCfg, engineID)
+	require.NoError(t, err)
+	checkMemoryConsume("after open 1 engine", 0)
+
+	writerCfg := &backend.LocalWriterConfig{}
+	writerCfg.Local.IsKVSorted = false
+	unsortedWriter, err := b.LocalWriter(ctx, writerCfg, engineID)
+	require.NoError(t, err)
+	writerCfg.Local.IsKVSorted = true
+	sortedWriter, err := b.LocalWriter(ctx, writerCfg, engineID)
+	require.NoError(t, err)
+	// 72 B * 1 Mi from unsortedWriter.writeBatch
+	checkMemoryConsume("after create engine writers", 72*units.MiB)
+
+	err = unsortedWriter.AppendRows(ctx, []string{"a", "b", "c"}, kv.MakeRowsFromKvPairs([]common.KvPair{
+		{Key: []byte("k1"), Val: []byte("v1")},
+		{Key: []byte("k3"), Val: []byte("v3")},
+		{Key: []byte("k2"), Val: []byte("v2")},
+	}))
+	require.NoError(t, err)
+	err = sortedWriter.AppendRows(ctx, []string{"a", "b", "c"}, kv.MakeRowsFromKvPairs([]common.KvPair{
+		{Key: []byte("k4"), Val: []byte("v4")},
+		{Key: []byte("k5"), Val: []byte("v5")},
+		{Key: []byte("k6"), Val: []byte("v6")},
+	}))
+	require.NoError(t, err)
+	// 72 MiB from unsortedWriter.writeBatch, 1 MiB from bufferPool of unsortedWriter
+	checkMemoryConsume("after write a bit rows", 73*units.MiB)
+
+	_, err = unsortedWriter.Close(ctx)
+	require.NoError(t, err)
+	_, err = sortedWriter.Close(ctx)
+	require.NoError(t, err)
+	// 1 MiB from bufferPool of unsortedWriter
+	checkMemoryConsume("after close all writers", 1*units.MiB)
+
+	writerCfg = &backend.LocalWriterConfig{}
+	writerCfg.Local.IsKVSorted = false
+	unsortedWriter, err = b.LocalWriter(ctx, writerCfg, engineID)
+	require.NoError(t, err)
+	// write about 150 MiB data
+	val := make([]byte, 35)
+	for i := 0; i < 1024*1024; i++ {
+		err = unsortedWriter.AppendRows(ctx, []string{"a", "b", "c"}, kv.MakeRowsFromKvPairs([]common.KvPair{
+			{Key: []byte(fmt.Sprintf("key_a_%09d", i)), Val: val},
+			{Key: []byte(fmt.Sprintf("key_b_%09d", i)), Val: val},
+			{Key: []byte(fmt.Sprintf("key_c_%09d", i)), Val: val},
+		}))
+		require.NoError(t, err)
+	}
+
+	// 119 MiB from bufferPool, 72 B * 2048910 from unsortedWriter.writeBatch
+	checkMemoryConsume("after write many rows", 272302064)
+
+	_, err = unsortedWriter.Close(ctx)
+	require.NoError(t, err)
+	checkMemoryConsume("after close all writers", 119*units.MiB)
+
+	err = b.CloseEngine(ctx, &backend.EngineConfig{}, engineID)
+	require.NoError(t, err)
+	b.CloseEngineMgr()
 }

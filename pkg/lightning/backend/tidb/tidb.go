@@ -873,7 +873,7 @@ func (be *tidbBackend) LocalWriter(
 	cfg *backend.LocalWriterConfig,
 	_ uuid.UUID,
 ) (backend.EngineWriter, error) {
-	return &Writer{be: be, tableName: cfg.TableName}, nil
+	return &Writer{be: be, tableName: cfg.TiDB.TableName}, nil
 }
 
 // Writer is a writer that writes data to local storage.

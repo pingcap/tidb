@@ -290,7 +290,6 @@ func (w *buildWorkerBase) fetchBuildSideRows(ctx context.Context, hashJoinCtx *h
 				err = errors.Errorf("issue51998 build return error")
 			}
 		})
-
 		if err != nil {
 			errCh <- errors.Trace(err)
 			return
