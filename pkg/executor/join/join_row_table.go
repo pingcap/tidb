@@ -100,10 +100,6 @@ func (rts *rowTableSegment) getRowsBytes() [][]byte {
 	return rows
 }
 
-func (rts *rowTableSegment) getRowLen(rowID int) int {
-	// return *(*int)(rts.rowLocations[rowID+1])
-}
-
 const maxRowTableSegmentSize = 1024
 
 func newRowTableSegment() *rowTableSegment {

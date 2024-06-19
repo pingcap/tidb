@@ -171,6 +171,8 @@ type HashJoinCtxV2 struct {
 
 	LUsed, RUsed                                 []int
 	LUsedInOtherCondition, RUsedInOtherCondition []int
+
+	spillHelper *hashJoinSpillHelper // TODO initialize it
 }
 
 // initHashTableContext create hashTableContext for current HashJoinCtxV2
@@ -253,8 +255,6 @@ type HashJoinV2Exec struct {
 
 	workerWg util.WaitGroupWrapper
 	waiterWg util.WaitGroupWrapper
-
-	spillHelper *hashJoinSpillHelper // TODO initialize it
 
 	prepared bool
 }
@@ -421,10 +421,12 @@ func (e *HashJoinV2Exec) initializeForProbe() {
 
 func (e *HashJoinV2Exec) fetchAndProbeHashTable(ctx context.Context) {
 	e.initializeForProbe()
+	fetcherAndWorkerSyncer := &sync.WaitGroup{}
 	fetchProbeSideChunksFunc := func() {
 		defer trace.StartRegion(ctx, "HashJoinProbeSideFetcher").End()
 		e.ProbeSideTupleFetcher.fetchProbeSideChunks(
 			ctx,
+			fetcherAndWorkerSyncer,
 			e.MaxChunkSize(),
 			func() bool { return e.ProbeSideTupleFetcher.hashTableContext.hashTable.isHashTableEmpty() },
 			e.ProbeSideTupleFetcher.canSkipProbeIfHashTableIsEmpty,
@@ -438,10 +440,12 @@ func (e *HashJoinV2Exec) fetchAndProbeHashTable(ctx context.Context) {
 		workerID := i
 		e.workerWg.RunWithRecover(func() {
 			defer trace.StartRegion(ctx, "HashJoinWorker").End()
-			e.ProbeWorkers[workerID].runJoinWorker()
+			e.ProbeWorkers[workerID].runJoinWorker(fetcherAndWorkerSyncer)
 		}, e.ProbeWorkers[workerID].handleProbeWorkerPanic)
 	}
 	e.waiterWg.RunWithRecover(e.waitJoinWorkersAndCloseResultChan, nil)
+
+	// TODO restore rows if spill is triggered before
 }
 
 func (w *ProbeWorkerV2) handleProbeWorkerPanic(r any) {
@@ -497,7 +501,8 @@ func (w *ProbeWorkerV2) scanRowTableAfterProbeDone() {
 	}
 }
 
-func (w *ProbeWorkerV2) processOneProbeChunk(probeChunk *chunk.Chunk, joinResult *hashjoinWorkerResult) (ok bool, waitTime int64, _ *hashjoinWorkerResult) {
+func (w *ProbeWorkerV2) processOneProbeChunk(probeChunk *chunk.Chunk, joinResult *hashjoinWorkerResult, fetcherAndWorkerSyncer *sync.WaitGroup) (ok bool, waitTime int64, _ *hashjoinWorkerResult) {
+	defer fetcherAndWorkerSyncer.Done()
 	waitTime = 0
 	joinResult.err = w.JoinProbe.SetChunkForProbe(probeChunk)
 	if joinResult.err != nil {
@@ -522,7 +527,7 @@ func (w *ProbeWorkerV2) processOneProbeChunk(probeChunk *chunk.Chunk, joinResult
 	return true, waitTime, joinResult
 }
 
-func (w *ProbeWorkerV2) runJoinWorker() {
+func (w *ProbeWorkerV2) runJoinWorker(fetcherAndWorkerSyncer *sync.WaitGroup) {
 	probeTime := int64(0)
 	if w.HashJoinCtx.stats != nil {
 		start := time.Now()
@@ -562,7 +567,7 @@ func (w *ProbeWorkerV2) runJoinWorker() {
 
 		start := time.Now()
 		waitTime := int64(0)
-		ok, waitTime, joinResult = w.processOneProbeChunk(probeSideResult, joinResult)
+		ok, waitTime, joinResult = w.processOneProbeChunk(probeSideResult, joinResult, fetcherAndWorkerSyncer)
 		probeTime += int64(time.Since(start)) - waitTime
 		if !ok {
 			break

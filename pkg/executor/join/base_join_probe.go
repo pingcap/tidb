@@ -124,6 +124,8 @@ type baseJoinProbe struct {
 	tmpChk        *chunk.Chunk
 	rowIndexInfos []*matchedRowInfo
 	selected      []bool
+
+	spillTmpChk []*chunk.Chunk // TODO initialize it
 }
 
 func (j *baseJoinProbe) IsCurrentChunkProbeDone() bool {
@@ -208,6 +210,7 @@ func (j *baseJoinProbe) SetChunkForProbe(chk *chunk.Chunk) (err error) {
 			return err
 		}
 	}
+
 	// generate hash value
 	hash := fnv.New64()
 	for logicalRowIndex, physicalRowIndex := range j.usedRows {
@@ -216,13 +219,29 @@ func (j *baseJoinProbe) SetChunkForProbe(chk *chunk.Chunk) (err error) {
 			j.matchedRowsHeaders[logicalRowIndex] = nil
 			continue
 		}
+
 		hash.Reset()
+
 		// As the golang doc described, `Hash.Write` never returns an error.
 		// See https://golang.org/pkg/hash/#Hash
 		_, _ = hash.Write(j.serializedKeys[logicalRowIndex])
 		hashValue := hash.Sum64()
 		partIndex := hashValue % uint64(j.ctx.PartitionNumber)
-		j.hashValues[partIndex] = append(j.hashValues[partIndex], posAndHashValue{hashValue: hashValue, pos: logicalRowIndex})
+		if j.ctx.spillHelper.isPartitionSpilled(int(partIndex)) {
+			j.spillTmpChk[partIndex].AppendInt64(0, int64(hashValue))
+			j.spillTmpChk[partIndex].AppendPartialRow(1, j.currentChunk.GetRow(logicalRowIndex))
+
+			if j.spillTmpChk[partIndex].IsFull() {
+				j.ctx.spillHelper.probeRowsInDisk[partIndex].Add(j.spillTmpChk[partIndex])
+				err := j.ctx.spillHelper.spillProbeChk(int(partIndex), j.spillTmpChk[partIndex])
+				if err != nil {
+					return err
+				}
+				j.spillTmpChk[partIndex].Reset()
+			}
+		} else {
+			j.hashValues[partIndex] = append(j.hashValues[partIndex], posAndHashValue{hashValue: hashValue, pos: logicalRowIndex})
+		}
 	}
 	j.currentProbeRow = 0
 	for i := 0; i < j.ctx.PartitionNumber; i++ {

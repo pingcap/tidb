@@ -35,17 +35,22 @@ type hashJoinSpillHelper struct {
 	buildRowsInDisk []*chunk.DataInDiskByChunks
 	probeRowsInDisk []*chunk.DataInDiskByChunks
 
-	fieldTypes    []*types.FieldType
-	tmpSpillChunk *chunk.Chunk
+	probeInDiskLocks []sync.Mutex
+
+	buildSpillChkFieldTypes []*types.FieldType
+	probeFieldTypes         []*types.FieldType
+	tmpSpillChunk           *chunk.Chunk
 
 	bytesConsumed atomic.Int64
 	bytesLimit    atomic.Int64
 }
 
-func newHashJoinSpillHelper(hashJoinExec *HashJoinV2Exec) *hashJoinSpillHelper {
+func newHashJoinSpillHelper(hashJoinExec *HashJoinV2Exec, probeFieldTypes []*types.FieldType) *hashJoinSpillHelper {
 	helper := &hashJoinSpillHelper{hashJoinExec: hashJoinExec}
-	helper.fieldTypes = append(helper.fieldTypes, types.NewFieldType(mysql.TypeLonglong))
-	helper.fieldTypes = append(helper.fieldTypes, types.NewFieldType(mysql.TypeBit))
+	helper.buildSpillChkFieldTypes = append(helper.buildSpillChkFieldTypes, types.NewFieldType(mysql.TypeLonglong))
+	helper.buildSpillChkFieldTypes = append(helper.buildSpillChkFieldTypes, types.NewFieldType(mysql.TypeBit))
+	helper.probeFieldTypes = append(helper.probeFieldTypes, types.NewFieldType(mysql.TypeLonglong))
+	helper.probeFieldTypes = append(helper.probeFieldTypes, probeFieldTypes...)
 	return helper
 }
 
@@ -62,7 +67,7 @@ func (h *hashJoinSpillHelper) close() {
 	}
 
 	if h.tmpSpillChunk != nil {
-		h.tmpSpillChunk.Destroy(spillChunkSize, h.fieldTypes)
+		h.tmpSpillChunk.Destroy(spillChunkSize, h.buildSpillChkFieldTypes)
 	}
 }
 
@@ -100,6 +105,10 @@ func (h *hashJoinSpillHelper) isSpillTriggered() bool {
 	h.cond.L.Lock()
 	defer h.cond.L.Unlock()
 	return len(h.buildRowsInDisk) > 0
+}
+
+func (h *hashJoinSpillHelper) isPartitionSpilled(partID int) bool {
+	return len(h.buildRowsInDisk) > 0 && h.buildRowsInDisk[partID] != nil
 }
 
 // TODO write a specific test for this function
@@ -178,9 +187,12 @@ func (h *hashJoinSpillHelper) choosePartitionsToSpill() ([]int, int64) {
 
 func (h *hashJoinSpillHelper) spillBuildSideOnePartition(partID int, segments []*rowTableSegment) error {
 	if h.buildRowsInDisk[partID] == nil {
-		inDisk := chunk.NewDataInDiskByChunks(h.fieldTypes)
+		inDisk := chunk.NewDataInDiskByChunks(h.buildSpillChkFieldTypes)
 		inDisk.GetDiskTracker().AttachTo(h.hashJoinExec.diskTracker)
 		h.buildRowsInDisk[partID] = inDisk
+		inDisk = chunk.NewDataInDiskByChunks(h.probeFieldTypes)
+		inDisk.GetDiskTracker().AttachTo(h.hashJoinExec.diskTracker)
+		h.probeRowsInDisk[partID] = inDisk
 	}
 
 	// Get row bytes from segment and spill them
@@ -205,10 +217,16 @@ func (h *hashJoinSpillHelper) spillBuildSideOnePartition(partID int, segments []
 	return nil
 }
 
+func (h *hashJoinSpillHelper) spillProbeChk(partID int, chk *chunk.Chunk) error {
+	h.probeInDiskLocks[partID].Lock()
+	defer h.probeInDiskLocks[partID].Unlock()
+	return h.probeRowsInDisk[partID].Add(chk)
+}
+
 func (h *hashJoinSpillHelper) initIfNeed() {
 	if h.buildRowsInDisk == nil {
 		// It's the first time that spill is triggered
-		h.tmpSpillChunk = chunk.NewChunkFromPoolWithCapacity(h.fieldTypes, spillChunkSize)
+		h.tmpSpillChunk = chunk.NewChunkFromPoolWithCapacity(h.buildSpillChkFieldTypes, spillChunkSize)
 
 		partitionNum := h.hashJoinExec.PartitionNumber
 		h.buildRowsInDisk = make([]*chunk.DataInDiskByChunks, partitionNum)

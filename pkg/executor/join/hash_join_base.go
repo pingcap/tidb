@@ -160,9 +160,16 @@ func (fetcher *probeSideTupleFetcherBase) getProbeSideResource(shouldLimitProbeF
 
 // fetchProbeSideChunks get chunks from fetches chunks from the big table in a background goroutine
 // and sends the chunks to multiple channels which will be read by multiple join workers.
-func (fetcher *probeSideTupleFetcherBase) fetchProbeSideChunks(ctx context.Context, maxChunkSize int, isBuildEmpty isBuildSideEmpty, canSkipIfBuildEmpty, needScanAfterProbeDone, shouldLimitProbeFetchSize bool, hashJoinCtx *hashJoinCtxBase) {
+func (fetcher *probeSideTupleFetcherBase) fetchProbeSideChunks(ctx context.Context, fetcherAndWorkerSyncer *sync.WaitGroup, maxChunkSize int, isBuildEmpty isBuildSideEmpty, canSkipIfBuildEmpty, needScanAfterProbeDone, shouldLimitProbeFetchSize bool, hashJoinCtx *hashJoinCtxBase) {
+	defer func() {
+		// TODO check if we need to spill more partitions
+	}()
+
 	hasWaitedForBuild := false
+	// TODO add a case that first spill is triggered in probe stage
+	// TODO add a case that first spill is triggered in build stage and spill is triggered again in probe stage
 	for {
+		// TODO check if we need to spill more partitions
 		probeSideResource := fetcher.getProbeSideResource(shouldLimitProbeFetchSize, maxChunkSize, hashJoinCtx)
 		if probeSideResource == nil {
 			return
@@ -194,6 +201,9 @@ func (fetcher *probeSideTupleFetcherBase) fetchProbeSideChunks(ctx context.Conte
 			return
 		}
 
+		if fetcherAndWorkerSyncer != nil {
+			fetcherAndWorkerSyncer.Add(1)
+		}
 		probeSideResource.dest <- probeSideResult
 	}
 }
