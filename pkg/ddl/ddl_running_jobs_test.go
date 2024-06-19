@@ -28,7 +28,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func mkJob(id int64, schemaTableNames ...string) *model.Job {
+func mkJob(id int64, schemaTableNames ...string) (int64, []model.InvolvingSchemaInfo) {
 	schemaInfos := make([]model.InvolvingSchemaInfo, len(schemaTableNames))
 	for _, schemaTableName := range schemaTableNames {
 		ss := strings.Split(schemaTableName, ".")
@@ -37,14 +37,22 @@ func mkJob(id int64, schemaTableNames ...string) *model.Job {
 			Table:    ss[1],
 		})
 	}
-	return &model.Job{
-		ID:                  id,
-		InvolvingSchemaInfo: schemaInfos,
+	return id, schemaInfos
+}
+
+func checkInvariants(t *testing.T, j *runningJobs) {
+	// check table-level entry should not have zero length
+	for _, tables := range j.schemas {
+		require.Greater(t, len(tables), 0)
 	}
 }
 
 func TestRunningJobs(t *testing.T) {
 	orderedAllIDs := func(ids string) string {
+		if ids == "" {
+			return ""
+		}
+
 		ss := strings.Split(ids, ",")
 		ssid := make([]int, len(ss))
 		for i := range ss {
@@ -61,15 +69,22 @@ func TestRunningJobs(t *testing.T) {
 
 	j := newRunningJobs()
 	require.Equal(t, "", j.allIDs())
+	checkInvariants(t, j)
 
 	runnable := j.checkRunnable(mkJob(0, "db1.t1"))
 	require.True(t, runnable)
-	job1 := mkJob(1, "db1.t1", "db1.t2")
-	job2 := mkJob(2, "db2.t3")
-	j.add(job1.ID, job1.GetInvolvingSchemaInfo())
-	j.add(job2.ID, job2.GetInvolvingSchemaInfo())
-	require.False(t, j.checkRunnable(mkJob(0, "db1.*")))
+
+	jobID1, involves1 := mkJob(1, "db1.t1", "db1.t2")
+	runnable = j.checkRunnable(jobID1, involves1)
+	require.True(t, runnable)
+	j.add(jobID1, involves1)
+	jobID2, involves2 := mkJob(2, "db2.t3")
+	runnable = j.checkRunnable(jobID2, involves2)
+	require.True(t, runnable)
+	j.add(jobID2, involves2)
 	require.Equal(t, "1,2", orderedAllIDs(j.allIDs()))
+	checkInvariants(t, j)
+
 	runnable = j.checkRunnable(mkJob(0, "db1.t1"))
 	require.False(t, runnable)
 	runnable = j.checkRunnable(mkJob(0, "db1.t2"))
@@ -79,56 +94,42 @@ func TestRunningJobs(t *testing.T) {
 	runnable = j.checkRunnable(mkJob(0, "db3.t4", "db4.t5"))
 	require.True(t, runnable)
 
-	job3 := mkJob(3, "db1.*")
-	j.add(job3.ID, job3.GetInvolvingSchemaInfo())
-	require.Equal(t, "1,2,3", orderedAllIDs(j.allIDs()))
+	jobID3, involves3 := mkJob(3, "db1.*")
+	runnable = j.checkRunnable(jobID3, involves3)
+	require.False(t, runnable)
+	j.remove(jobID1, involves1)
+	runnable = j.checkRunnable(jobID3, involves3)
+	require.True(t, runnable)
+	j.add(jobID3, involves3)
+	require.Equal(t, "2,3", orderedAllIDs(j.allIDs()))
+	checkInvariants(t, j)
+
 	runnable = j.checkRunnable(mkJob(0, "db1.t100"))
 	require.False(t, runnable)
 
-	job4 := mkJob(4, "db4.")
-	j.add(job4.ID, job4.GetInvolvingSchemaInfo())
-	require.Equal(t, "1,2,3,4", orderedAllIDs(j.allIDs()))
-	runnable = j.checkRunnable(mkJob(0, "db4.t100"))
+	jobID4, involves4 := mkJob(4, "db4.t100")
+	runnable = j.checkRunnable(jobID4, involves4)
 	require.True(t, runnable)
+	j.add(jobID4, involves4)
+	require.Equal(t, "2,3,4", orderedAllIDs(j.allIDs()))
+	checkInvariants(t, j)
 
-	job5 := mkJob(5, "*.*")
-	j.add(job5.ID, job5.GetInvolvingSchemaInfo())
-	require.Equal(t, "1,2,3,4,5", orderedAllIDs(j.allIDs()))
-	runnable = j.checkRunnable(mkJob(0, "db100.t100"))
+	jobID5, involves5 := mkJob(5, "*.*")
+	runnable = j.checkRunnable(jobID5, involves5)
 	require.False(t, runnable)
 
-	job5.State = model.JobStateDone
-	j.remove(job5.ID, job5.GetInvolvingSchemaInfo())
-	require.Equal(t, "1,2,3,4", orderedAllIDs(j.allIDs()))
-	runnable = j.checkRunnable(mkJob(0, "db100.t100"))
-	require.True(t, runnable)
+	j.remove(jobID2, involves2)
+	j.remove(jobID3, involves3)
+	j.remove(jobID4, involves4)
+	require.Equal(t, "", orderedAllIDs(j.allIDs()))
+	checkInvariants(t, j)
 
-	job3.State = model.JobStateDone
-	j.remove(job3.ID, job3.GetInvolvingSchemaInfo())
-	require.Equal(t, "1,2,4", orderedAllIDs(j.allIDs()))
-	runnable = j.checkRunnable(mkJob(0, "db1.t100"))
+	runnable = j.checkRunnable(jobID5, involves5)
 	require.True(t, runnable)
+	j.add(jobID5, involves5)
+	require.Equal(t, "5", orderedAllIDs(j.allIDs()))
+	checkInvariants(t, j)
 
-	job1.State = model.JobStateDone
-	j.remove(job1.ID, job1.GetInvolvingSchemaInfo())
-	require.Equal(t, "2,4", orderedAllIDs(j.allIDs()))
 	runnable = j.checkRunnable(mkJob(0, "db1.t1"))
-	require.True(t, runnable)
-}
-
-func TestOwnerRetireThenToBeOwner(t *testing.T) {
-	j := newRunningJobs()
-	require.Equal(t, "", j.allIDs())
-	job := mkJob(1, "test.t1")
-	j.add(job.ID, job.GetInvolvingSchemaInfo())
-	require.False(t, j.checkRunnable(job))
-	// retire
-	j.clear()
-	// to be owner, try to start a new job.
-	require.False(t, j.checkRunnable(job))
-	// previous job removed.
-	j.remove(job.ID, job.GetInvolvingSchemaInfo())
-	require.True(t, j.checkRunnable(job))
-	j.add(job.ID, job.GetInvolvingSchemaInfo())
-	require.False(t, j.checkRunnable(job))
+	require.False(t, runnable)
 }

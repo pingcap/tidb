@@ -19,122 +19,163 @@
 package ddl
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
 	"sync"
 
 	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/util/intest"
 )
 
 type runningJobs struct {
-	sync.RWMutex
-	// processingIDs records the IDs of the jobs that are being processed by a worker.
-	processingIDs    map[int64]struct{}
-	processingIDsStr string
+	// although most of the usage is called by jobScheduler in a single goroutine,
+	// runningJobs.remove is called by the worker goroutine. Another implementation
+	// is let worker goroutine send the finished job to jobScheduler, and
+	// jobScheduler calls remove, so no need to lock.
+	mu sync.RWMutex
 
-	// unfinishedIDs records the IDs of the jobs that are not finished yet.
-	// It is not necessarily being processed by a worker.
-	unfinishedIDs    map[int64]struct{}
-	unfinishedSchema map[string]map[string]struct{} // database -> table -> struct{}
+	ids          map[int64]struct{}
+	idsStrGetter func() string
+	// database -> table -> struct{}
+	//
+	// if the job is only related to a database, the table-level entry key is
+	// model.InvolvingAll. When remove a job, runningJobs will make sure no
+	// zero-length map exists in table-level.
+	schemas map[string]map[string]struct{}
 }
 
+// TODO(lance6716): support jobs involving objects that are exclusive (ALTER
+// PLACEMENT POLICY vs ALTER PLACEMENT POLICY) and shared (ALTER TABLE PLACEMENT
+// POLICY vs ALTER TABLE PLACEMENT POLICY)
 func newRunningJobs() *runningJobs {
 	return &runningJobs{
-		processingIDs:    make(map[int64]struct{}),
-		unfinishedSchema: make(map[string]map[string]struct{}),
-		unfinishedIDs:    make(map[int64]struct{}),
+		ids:          make(map[int64]struct{}),
+		idsStrGetter: func() string { return "" },
+		schemas:      make(map[string]map[string]struct{}),
 	}
 }
 
-func (j *runningJobs) clear() {
-	j.Lock()
-	defer j.Unlock()
-	j.unfinishedIDs = make(map[int64]struct{})
-	j.unfinishedSchema = make(map[string]map[string]struct{})
-}
+// add should only add the argument that passed the last checkRunnable.
+func (j *runningJobs) add(jobID int64, involves []model.InvolvingSchemaInfo) {
+	j.mu.Lock()
+	defer j.mu.Unlock()
 
-func (j *runningJobs) add(jobID int64, involvedSchemaInfos []model.InvolvingSchemaInfo) {
-	j.Lock()
-	defer j.Unlock()
-	j.processingIDs[jobID] = struct{}{}
-	j.updateInternalRunningJobIDs()
+	j.ids[jobID] = struct{}{}
+	j.updateIDsStrGetter()
 
-	if _, ok := j.unfinishedIDs[jobID]; ok {
-		// Already exists, no need to add it again.
-		return
-	}
-	j.unfinishedIDs[jobID] = struct{}{}
-	for _, info := range involvedSchemaInfos {
-		if _, ok := j.unfinishedSchema[info.Database]; !ok {
-			j.unfinishedSchema[info.Database] = make(map[string]struct{})
+	for _, info := range involves {
+		// DDL jobs related to placement policies and resource groups
+		if info.Database == model.InvolvingNone {
+			// should not happen
+			if intest.InTest {
+				if info.Table != model.InvolvingNone {
+					panic(fmt.Sprintf(
+						"job %d is invalid, involved table name is not empty: %s",
+						jobID, info.Table,
+					))
+				}
+			}
+			continue
 		}
-		j.unfinishedSchema[info.Database][info.Table] = struct{}{}
+
+		if _, ok := j.schemas[info.Database]; !ok {
+			j.schemas[info.Database] = make(map[string]struct{})
+		}
+		j.schemas[info.Database][info.Table] = struct{}{}
 	}
 }
 
-func (j *runningJobs) remove(jobID int64, involvedSchemaInfos []model.InvolvingSchemaInfo) {
-	j.Lock()
-	defer j.Unlock()
-	delete(j.processingIDs, jobID)
-	j.updateInternalRunningJobIDs()
+// remove can be concurrently called with add and checkRunnable.
+func (j *runningJobs) remove(jobID int64, involves []model.InvolvingSchemaInfo) {
+	j.mu.Lock()
+	defer j.mu.Unlock()
 
-	delete(j.unfinishedIDs, jobID)
-	for _, info := range involvedSchemaInfos {
-		if db, ok := j.unfinishedSchema[info.Database]; ok {
+	if intest.InTest {
+		if _, ok := j.ids[jobID]; !ok {
+			panic(fmt.Sprintf("job %d is not running", jobID))
+		}
+	}
+	delete(j.ids, jobID)
+	j.updateIDsStrGetter()
+
+	for _, info := range involves {
+		if db, ok := j.schemas[info.Database]; ok {
 			delete(db, info.Table)
 		}
-		if len(j.unfinishedSchema[info.Database]) == 0 {
-			delete(j.unfinishedSchema, info.Database)
+		if len(j.schemas[info.Database]) == 0 {
+			delete(j.schemas, info.Database)
 		}
+	}
+}
+
+func (j *runningJobs) updateIDsStrGetter() {
+	var (
+		once   sync.Once
+		idsStr string
+	)
+	j.idsStrGetter = func() string {
+		once.Do(func() {
+			var sb strings.Builder
+			i := 0
+			for id := range j.ids {
+				sb.WriteString(strconv.Itoa(int(id)))
+				if i != len(j.ids)-1 {
+					sb.WriteString(",")
+				}
+				i++
+			}
+			idsStr = sb.String()
+		})
+		return idsStr
 	}
 }
 
 func (j *runningJobs) allIDs() string {
-	j.RLock()
-	defer j.RUnlock()
-	return j.processingIDsStr
+	j.mu.RLock()
+	defer j.mu.RUnlock()
+	return j.idsStrGetter()
 }
 
-func (j *runningJobs) updateInternalRunningJobIDs() {
-	var sb strings.Builder
-	i := 0
-	for id := range j.processingIDs {
-		sb.WriteString(strconv.Itoa(int(id)))
-		if i != len(j.processingIDs)-1 {
-			sb.WriteString(",")
+// checkRunnable checks whether the job can be run. If the caller found a
+// runnable job and decides to add it, it must add before next checkRunnable
+// invocation.
+func (j *runningJobs) checkRunnable(jobID int64, involves []model.InvolvingSchemaInfo) bool {
+	j.mu.RLock()
+	defer j.mu.RUnlock()
+
+	if _, ok := j.ids[jobID]; ok {
+		// should not happen
+		if intest.InTest {
+			panic(fmt.Sprintf("job %d is already running", jobID))
 		}
-		i++
-	}
-	j.processingIDsStr = sb.String()
-}
-
-func (j *runningJobs) checkRunnable(job *model.Job) bool {
-	j.RLock()
-	defer j.RUnlock()
-	if _, ok := j.processingIDs[job.ID]; ok {
-		// Already processing by a worker. Skip running it again.
 		return false
 	}
-	for _, info := range job.GetInvolvingSchemaInfo() {
-		if _, ok := j.unfinishedSchema[model.InvolvingAll]; ok {
-			return false
-		}
-		if info.Database == model.InvolvingNone {
+	// Currently flashback cluster is the only DDL that involves ALL schemas.
+	if _, ok := j.schemas[model.InvolvingAll]; ok {
+		return false
+	}
+
+	for _, info := range involves {
+		if info.Database == model.InvolvingAll {
+			if len(j.schemas) != 0 {
+				return false
+			}
 			continue
 		}
-		if tbls, ok := j.unfinishedSchema[info.Database]; ok {
-			if _, ok := tbls[model.InvolvingAll]; ok {
-				return false
-			}
-			if info.Table == model.InvolvingAll {
-				return false
-			}
-			if info.Table == model.InvolvingNone {
-				continue
-			}
-			if _, ok := tbls[info.Table]; ok {
-				return false
-			}
+
+		tbls, ok := j.schemas[info.Database]
+		if !ok {
+			continue
+		}
+		if info.Table == model.InvolvingAll {
+			return false
+		}
+		if _, ok2 := tbls[model.InvolvingAll]; ok2 {
+			return false
+		}
+		if _, ok2 := tbls[info.Table]; ok2 {
+			return false
 		}
 	}
 	return true
