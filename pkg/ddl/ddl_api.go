@@ -229,6 +229,11 @@ func (d *ddl) CreateSchemaWithInfo(
 		}},
 		SQLMode: ctx.GetSessionVars().SQLMode,
 	}
+	if ref := dbInfo.PlacementPolicyRef; ref != nil {
+		job.InvolvingSchemaInfo[0].Shared = &model.InvolvingSharedSchemaInfo{
+			Policy: ref.Name.L,
+		}
+	}
 
 	err = d.DoDDLJob(ctx, job)
 	err = d.callHookOnChanged(job, err)
@@ -305,6 +310,7 @@ func (d *ddl) ModifySchemaDefaultPlacement(ctx sessionctx.Context, stmt *ast.Alt
 		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{{
 			Database: dbInfo.Name.L,
 			Table:    model.InvolvingAll,
+			Shared:   &model.InvolvingSharedSchemaInfo{Policy: placementPolicyRef.Name.L},
 		}},
 		SQLMode: ctx.GetSessionVars().SQLMode,
 	}
@@ -525,16 +531,26 @@ func (d *ddl) AlterTablePlacement(ctx sessionctx.Context, ident ast.Ident, place
 		return err
 	}
 
+	var involvingSchemaInfo []model.InvolvingSchemaInfo
+	if placementPolicyRef != nil {
+		involvingSchemaInfo = []model.InvolvingSchemaInfo{{
+			Database: schema.Name.L,
+			Table:    tblInfo.Name.L,
+			Shared:   &model.InvolvingSharedSchemaInfo{Policy: placementPolicyRef.Name.L},
+		}}
+	}
+
 	job := &model.Job{
-		SchemaID:       schema.ID,
-		TableID:        tblInfo.ID,
-		SchemaName:     schema.Name.L,
-		TableName:      tblInfo.Name.L,
-		Type:           model.ActionAlterTablePlacement,
-		BinlogInfo:     &model.HistoryInfo{},
-		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
-		Args:           []any{placementPolicyRef},
-		SQLMode:        ctx.GetSessionVars().SQLMode,
+		SchemaID:            schema.ID,
+		TableID:             tblInfo.ID,
+		SchemaName:          schema.Name.L,
+		TableName:           tblInfo.Name.L,
+		Type:                model.ActionAlterTablePlacement,
+		BinlogInfo:          &model.HistoryInfo{},
+		CDCWriteSource:      ctx.GetSessionVars().CDCWriteSource,
+		Args:                []any{placementPolicyRef},
+		InvolvingSchemaInfo: involvingSchemaInfo,
+		SQLMode:             ctx.GetSessionVars().SQLMode,
 	}
 
 	err = d.DoDDLJob(ctx, job)
@@ -580,10 +596,10 @@ func checkMultiSchemaSpecs(_ sessionctx.Context, specs []*ast.DatabaseOption) er
 func (d *ddl) AlterSchema(sctx sessionctx.Context, stmt *ast.AlterDatabaseStmt) (err error) {
 	// Resolve target charset and collation from options.
 	var (
-		toCharset, toCollate                                         string
-		isAlterCharsetAndCollate, isAlterPlacement, isTiFlashReplica bool
-		placementPolicyRef                                           *model.PolicyRefInfo
-		tiflashReplica                                               *ast.TiFlashReplicaSpec
+		toCharset, toCollate     string
+		isAlterCharsetAndCollate bool
+		placementPolicyRef       *model.PolicyRefInfo
+		tiflashReplica           *ast.TiFlashReplicaSpec
 	)
 
 	err = checkMultiSchemaSpecs(sctx, stmt.Options)
@@ -614,10 +630,8 @@ func (d *ddl) AlterSchema(sctx sessionctx.Context, stmt *ast.AlterDatabaseStmt) 
 			isAlterCharsetAndCollate = true
 		case ast.DatabaseOptionPlacementPolicy:
 			placementPolicyRef = &model.PolicyRefInfo{Name: model.NewCIStr(val.Value)}
-			isAlterPlacement = true
 		case ast.DatabaseSetTiFlashReplica:
 			tiflashReplica = val.TiFlashReplica
-			isTiFlashReplica = true
 		}
 	}
 
@@ -626,12 +640,12 @@ func (d *ddl) AlterSchema(sctx sessionctx.Context, stmt *ast.AlterDatabaseStmt) 
 			return err
 		}
 	}
-	if isAlterPlacement {
+	if placementPolicyRef != nil {
 		if err = d.ModifySchemaDefaultPlacement(sctx, stmt, placementPolicyRef); err != nil {
 			return err
 		}
 	}
-	if isTiFlashReplica {
+	if tiflashReplica != nil {
 		if err = d.ModifySchemaSetTiFlashReplica(sctx, stmt, tiflashReplica); err != nil {
 			return err
 		}
@@ -2701,7 +2715,10 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(ident.Schema)
 	}
 
-	var referTbl table.Table
+	var (
+		referTbl     table.Table
+		involvingRef []model.InvolvingSchemaInfo
+	)
 	if s.ReferTable != nil {
 		referIdent := ast.Ident{Schema: s.ReferTable.Schema, Name: s.ReferTable.Name}
 		_, ok := is.SchemaByName(referIdent.Schema)
@@ -2712,6 +2729,12 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 		if err != nil {
 			return infoschema.ErrTableNotExists.GenWithStackByArgs(referIdent.Schema, referIdent.Name)
 		}
+		involvingRef = append(involvingRef, model.InvolvingSchemaInfo{
+			Shared: &model.InvolvingSharedSchemaInfo{
+				Database: s.ReferTable.Schema.L,
+				Table:    s.ReferTable.Name.L,
+			},
+		})
 	}
 
 	// build tableInfo
@@ -2737,7 +2760,7 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 		onExist = OnExistIgnore
 	}
 
-	return d.CreateTableWithInfo(ctx, schema.Name, tbInfo, onExist)
+	return d.CreateTableWithInfo(ctx, schema.Name, tbInfo, involvingRef, onExist)
 }
 
 func setTemporaryType(_ sessionctx.Context, tbInfo *model.TableInfo, s *ast.CreateTableStmt) error {
@@ -2764,6 +2787,7 @@ func (d *ddl) createTableWithInfoJob(
 	ctx sessionctx.Context,
 	dbName model.CIStr,
 	tbInfo *model.TableInfo,
+	involvingRef []model.InvolvingSchemaInfo,
 	onExist OnExist,
 	retainID bool,
 ) (job *model.Job, err error) {
@@ -2829,16 +2853,39 @@ func (d *ddl) createTableWithInfoJob(
 		args = append(args, ctx.GetSessionVars().ForeignKeyChecks)
 	}
 
+	var involvingSchemas []model.InvolvingSchemaInfo
+	if len(involvingRef) > 0 {
+		involvingSchemas = append(involvingSchemas, model.InvolvingSchemaInfo{
+			Database: schema.Name.L,
+			Table:    tbInfo.Name.L,
+		})
+		involvingSchemas = append(involvingSchemas, involvingRef...)
+	}
+	for _, fk := range tbInfo.ForeignKeys {
+		involvingSchemas = append(involvingSchemas, model.InvolvingSchemaInfo{
+			Shared: &model.InvolvingSharedSchemaInfo{
+				Database: fk.RefSchema.L,
+				Table:    fk.RefTable.L,
+			},
+		})
+	}
+	if ref := tbInfo.PlacementPolicyRef; ref != nil {
+		involvingSchemas = append(involvingSchemas, model.InvolvingSchemaInfo{
+			Shared: &model.InvolvingSharedSchemaInfo{Policy: ref.Name.L},
+		})
+	}
+
 	job = &model.Job{
-		SchemaID:       schema.ID,
-		TableID:        tbInfo.ID,
-		SchemaName:     schema.Name.L,
-		TableName:      tbInfo.Name.L,
-		Type:           actionType,
-		BinlogInfo:     &model.HistoryInfo{},
-		Args:           args,
-		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
-		SQLMode:        ctx.GetSessionVars().SQLMode,
+		SchemaID:            schema.ID,
+		TableID:             tbInfo.ID,
+		SchemaName:          schema.Name.L,
+		TableName:           tbInfo.Name.L,
+		Type:                actionType,
+		BinlogInfo:          &model.HistoryInfo{},
+		Args:                args,
+		CDCWriteSource:      ctx.GetSessionVars().CDCWriteSource,
+		InvolvingSchemaInfo: involvingSchemas,
+		SQLMode:             ctx.GetSessionVars().SQLMode,
 	}
 	return job, nil
 }
@@ -2887,11 +2934,14 @@ func (d *ddl) CreateTableWithInfo(
 	ctx sessionctx.Context,
 	dbName model.CIStr,
 	tbInfo *model.TableInfo,
+	involvingRef []model.InvolvingSchemaInfo,
 	cs ...CreateTableWithInfoConfigurier,
 ) (err error) {
 	c := GetCreateTableWithInfoConfig(cs)
 
-	job, err := d.createTableWithInfoJob(ctx, dbName, tbInfo, c.OnExist, !c.ShouldAllocTableID(tbInfo))
+	job, err := d.createTableWithInfoJob(
+		ctx, dbName, tbInfo, involvingRef, c.OnExist, !c.ShouldAllocTableID(tbInfo),
+	)
 	if err != nil {
 		return err
 	}
@@ -2977,7 +3027,7 @@ func (d *ddl) BatchCreateTableWithInfo(ctx sessionctx.Context,
 			}
 		}
 
-		job, err := d.createTableWithInfoJob(ctx, dbName, info, c.OnExist, true)
+		job, err := d.createTableWithInfoJob(ctx, dbName, info, nil, c.OnExist, true)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -3140,8 +3190,7 @@ func (d *ddl) CreatePlacementPolicyWithInfo(ctx sessionctx.Context, policy *mode
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []any{policy, onExist == OnExistReplace},
 		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{{
-			Database: model.InvolvingNone,
-			Table:    model.InvolvingNone,
+			Policy: policy.Name.L,
 		}},
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 		SQLMode:        ctx.GetSessionVars().SQLMode,
@@ -3255,7 +3304,7 @@ func (d *ddl) RecoverTable(ctx sessionctx.Context, recoverInfo *RecoverInfo) (er
 }
 
 func (d *ddl) CreateView(ctx sessionctx.Context, s *ast.CreateViewStmt) (err error) {
-	viewInfo, err := BuildViewInfo(ctx, s)
+	viewInfo, err := BuildViewInfo(s)
 	if err != nil {
 		return err
 	}
@@ -3290,11 +3339,13 @@ func (d *ddl) CreateView(ctx sessionctx.Context, s *ast.CreateViewStmt) (err err
 		onExist = OnExistReplace
 	}
 
-	return d.CreateTableWithInfo(ctx, s.ViewName.Schema, tbInfo, onExist)
+	var involvingRef []model.InvolvingSchemaInfo
+	// TODO(lance6716): visit the s.Select to get all TableNames?
+	return d.CreateTableWithInfo(ctx, s.ViewName.Schema, tbInfo, involvingRef, onExist)
 }
 
 // BuildViewInfo builds a ViewInfo structure from an ast.CreateViewStmt.
-func BuildViewInfo(_ sessionctx.Context, s *ast.CreateViewStmt) (*model.ViewInfo, error) {
+func BuildViewInfo(s *ast.CreateViewStmt) (*model.ViewInfo, error) {
 	// Always Use `format.RestoreNameBackQuotes` to restore `SELECT` statement despite the `ANSI_QUOTES` SQL Mode is enabled or not.
 	restoreFlag := format.RestoreStringSingleQuotes | format.RestoreKeyWordUppercase | format.RestoreNameBackQuotes
 	var sb strings.Builder
@@ -7976,7 +8027,17 @@ func (d *ddl) CreateForeignKey(ctx sessionctx.Context, ti ast.Ident, fkName mode
 		BinlogInfo:     &model.HistoryInfo{},
 		Args:           []any{fkInfo, fkCheck},
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
-		SQLMode:        ctx.GetSessionVars().SQLMode,
+		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{
+			{
+				Database: schema.Name.L,
+				Table:    t.Meta().Name.L,
+				Shared: &model.InvolvingSharedSchemaInfo{
+					Database: fkInfo.RefSchema.L,
+					Table:    fkInfo.RefTable.L,
+				},
+			},
+		},
+		SQLMode: ctx.GetSessionVars().SQLMode,
 	}
 
 	err = d.DoDDLJob(ctx, job)
@@ -8659,7 +8720,7 @@ func (d *ddl) CreateSequence(ctx sessionctx.Context, stmt *ast.CreateSequenceStm
 		onExist = OnExistIgnore
 	}
 
-	return d.CreateTableWithInfo(ctx, ident.Schema, tbInfo, onExist)
+	return d.CreateTableWithInfo(ctx, ident.Schema, tbInfo, nil, onExist)
 }
 
 func (d *ddl) AlterSequence(ctx sessionctx.Context, stmt *ast.AlterSequenceStmt) error {
@@ -8878,16 +8939,30 @@ func (d *ddl) AlterTablePartitionPlacement(ctx sessionctx.Context, tableIdent as
 		return errors.Trace(err)
 	}
 
+	var involveSchemaInfo []model.InvolvingSchemaInfo
+	if policyRefInfo != nil {
+		involveSchemaInfo = []model.InvolvingSchemaInfo{
+			{
+				Database: schema.Name.L,
+				Table:    tblInfo.Name.L,
+				Shared: &model.InvolvingSharedSchemaInfo{
+					Policy: policyRefInfo.Name.L,
+				},
+			},
+		}
+	}
+
 	job := &model.Job{
-		SchemaID:       schema.ID,
-		TableID:        tblInfo.ID,
-		SchemaName:     schema.Name.L,
-		TableName:      tblInfo.Name.L,
-		Type:           model.ActionAlterTablePartitionPlacement,
-		BinlogInfo:     &model.HistoryInfo{},
-		Args:           []any{partitionID, policyRefInfo},
-		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
-		SQLMode:        ctx.GetSessionVars().SQLMode,
+		SchemaID:            schema.ID,
+		TableID:             tblInfo.ID,
+		SchemaName:          schema.Name.L,
+		TableName:           tblInfo.Name.L,
+		Type:                model.ActionAlterTablePartitionPlacement,
+		BinlogInfo:          &model.HistoryInfo{},
+		Args:                []any{partitionID, policyRefInfo},
+		CDCWriteSource:      ctx.GetSessionVars().CDCWriteSource,
+		InvolvingSchemaInfo: involveSchemaInfo,
+		SQLMode:             ctx.GetSessionVars().SQLMode,
 	}
 
 	err = d.DoDDLJob(ctx, job)
@@ -9050,8 +9125,7 @@ func (d *ddl) AddResourceGroup(ctx sessionctx.Context, stmt *ast.CreateResourceG
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 		Args:           []any{groupInfo, false},
 		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{{
-			Database: model.InvolvingNone,
-			Table:    model.InvolvingNone,
+			ResourceGroup: groupInfo.Name.L,
 		}},
 		SQLMode: ctx.GetSessionVars().SQLMode,
 	}
@@ -9102,8 +9176,7 @@ func (d *ddl) DropResourceGroup(ctx sessionctx.Context, stmt *ast.DropResourceGr
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 		Args:           []any{groupName},
 		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{{
-			Database: model.InvolvingNone,
-			Table:    model.InvolvingNone,
+			ResourceGroup: groupName.L,
 		}},
 		SQLMode: ctx.GetSessionVars().SQLMode,
 	}
@@ -9160,8 +9233,7 @@ func (d *ddl) AlterResourceGroup(ctx sessionctx.Context, stmt *ast.AlterResource
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 		Args:           []any{newGroupInfo},
 		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{{
-			Database: model.InvolvingNone,
-			Table:    model.InvolvingNone,
+			ResourceGroup: newGroupInfo.Name.L,
 		}},
 		SQLMode: ctx.GetSessionVars().SQLMode,
 	}
@@ -9226,8 +9298,7 @@ func (d *ddl) DropPlacementPolicy(ctx sessionctx.Context, stmt *ast.DropPlacemen
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 		Args:           []any{policyName},
 		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{{
-			Database: model.InvolvingNone,
-			Table:    model.InvolvingNone,
+			Policy: policyName.L,
 		}},
 		SQLMode: ctx.GetSessionVars().SQLMode,
 	}
@@ -9266,8 +9337,7 @@ func (d *ddl) AlterPlacementPolicy(ctx sessionctx.Context, stmt *ast.AlterPlacem
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 		Args:           []any{newPolicyInfo},
 		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{{
-			Database: model.InvolvingNone,
-			Table:    model.InvolvingNone,
+			Policy: newPolicyInfo.Name.L,
 		}},
 		SQLMode: ctx.GetSessionVars().SQLMode,
 	}
