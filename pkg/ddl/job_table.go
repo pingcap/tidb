@@ -663,6 +663,7 @@ func (s *jobScheduler) refreshMinJobID() {
 		logutil.DDLLogger().Info("get min job ID failed", zap.Error(err))
 		return
 	}
+	// use max, in case all job are finished to avoid the currMinJobID go back.
 	s.currMinJobID = max(s.currMinJobID, minID)
 }
 
