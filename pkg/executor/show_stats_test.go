@@ -407,7 +407,7 @@ func TestShowAnalyzeStatus(t *testing.T) {
 	require.Equal(t, "test", rows[0][0])
 	require.Equal(t, "t", rows[0][1])
 	require.Equal(t, "", rows[0][2])
-	require.Equal(t, "analyze table all columns with 256 buckets, 500 topn, 1 samplerate", rows[0][3])
+	require.Equal(t, "analyze table all columns with 256 buckets, 100 topn, 1 samplerate", rows[0][3])
 	require.Equal(t, "2", rows[0][4])
 	checkTime := func(val any) {
 		str, ok := val.(string)

@@ -501,7 +501,7 @@ func SubTestBuild() func(*testing.T) {
 	return func(t *testing.T) {
 		s := createTestStatisticsSamples(t)
 		bucketCount := int64(256)
-		topNCount := 20
+		topNCount := 100
 		ctx := mock.NewContext()
 		sc := ctx.GetSessionVars().StmtCtx
 		sketch, _, err := buildFMSketch(sc, s.rc.(*recordSet).data, 1000)
@@ -650,7 +650,7 @@ func TestPruneTopN(t *testing.T) {
 	var totalNDV, nullCnt, sampleRows, totalRows int64
 
 	// case 1
-	topnIn = []TopNMeta{{[]byte{1}, 100_000}, {[]byte{2}, 10}}
+	topnIn = []TopNMeta{{[]byte{1}, 100_000}}
 	totalNDV = 2
 	nullCnt = 0
 	sampleRows = 100_010
@@ -674,8 +674,8 @@ func TestPruneTopN(t *testing.T) {
 
 	// case 3
 	topnIn = nil
-	for i := 0; i < 100; i++ {
-		topnIn = append(topnIn, TopNMeta{[]byte{byte(i)}, 1_000})
+	for i := 0; i < 10; i++ {
+		topnIn = append(topnIn, TopNMeta{[]byte{byte(i)}, 10_000})
 	}
 	totalNDV = 100
 	nullCnt = 0
@@ -683,4 +683,32 @@ func TestPruneTopN(t *testing.T) {
 	totalRows = 10_000_000
 	topnOut = pruneTopNItem(topnIn, totalNDV, nullCnt, sampleRows, totalRows)
 	require.Equal(t, topnIn, topnOut)
+
+	// case 4 - test TopN pruning for small table
+	topnIn = []TopNMeta{
+		{[]byte{1}, 3_000},
+		{[]byte{2}, 3_000},
+	}
+	totalNDV = 4002
+	nullCnt = 0
+	sampleRows = 10_000
+	totalRows = 10_000
+	topnOut = pruneTopNItem(topnIn, totalNDV, nullCnt, sampleRows, totalRows)
+	require.Equal(t, topnIn, topnOut)
+
+	// case 5 - test pruning of value=1
+	topnIn = nil
+	for i := 0; i < 10; i++ {
+		topnIn = append(topnIn, TopNMeta{[]byte{byte(i)}, 90})
+	}
+	topnPruned := topnIn
+	for i := 90; i < 150; i++ {
+		topnIn = append(topnIn, TopNMeta{[]byte{byte(i)}, 1})
+	}
+	totalNDV = 150
+	nullCnt = 0
+	sampleRows = 1500
+	totalRows = 1500
+	topnOut = pruneTopNItem(topnIn, totalNDV, nullCnt, sampleRows, totalRows)
+	require.Equal(t, topnPruned, topnOut)
 }

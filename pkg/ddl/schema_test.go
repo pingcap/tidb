@@ -41,7 +41,9 @@ import (
 func testCreateTable(t *testing.T, ctx sessionctx.Context, d ddl.DDL, dbInfo *model.DBInfo, tblInfo *model.TableInfo) *model.Job {
 	job := &model.Job{
 		SchemaID:   dbInfo.ID,
+		SchemaName: dbInfo.Name.L,
 		TableID:    tblInfo.ID,
+		TableName:  tblInfo.Name.L,
 		Type:       model.ActionCreateTable,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []any{tblInfo},
@@ -138,6 +140,10 @@ func testCreateSchema(t *testing.T, ctx sessionctx.Context, d ddl.DDL, dbInfo *m
 		Type:       model.ActionCreateSchema,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []any{dbInfo},
+		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{{
+			Database: dbInfo.Name.L,
+			Table:    model.InvolvingAll,
+		}},
 	}
 	ctx.SetValue(sessionctx.QueryString, "skip")
 	require.NoError(t, d.DoDDLJob(ctx, job))
@@ -155,6 +161,10 @@ func buildDropSchemaJob(dbInfo *model.DBInfo) *model.Job {
 		Type:       model.ActionDropSchema,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []any{true},
+		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{{
+			Database: dbInfo.Name.L,
+			Table:    model.InvolvingAll,
+		}},
 	}
 }
 
@@ -261,6 +271,7 @@ func TestSchema(t *testing.T) {
 	// Drop a non-existent database.
 	job = &model.Job{
 		SchemaID:   dbInfo.ID,
+		SchemaName: "test_schema",
 		Type:       model.ActionDropSchema,
 		BinlogInfo: &model.HistoryInfo{},
 	}
@@ -320,13 +331,24 @@ func TestSchemaWaitJob(t *testing.T) {
 	genIDs, err := genGlobalIDs(store, 1)
 	require.NoError(t, err)
 	schemaID := genIDs[0]
-	doDDLJobErr(t, schemaID, 0, model.ActionCreateSchema, []any{dbInfo}, testkit.NewTestKit(t, store).Session(), d2, store)
+	doDDLJobErr(t, schemaID, 0, "test_schema", "", model.ActionCreateSchema, []any{dbInfo}, testkit.NewTestKit(t, store).Session(), d2, store)
 }
 
-func doDDLJobErr(t *testing.T, schemaID, tableID int64, tp model.ActionType, args []any, ctx sessionctx.Context, d ddl.DDL, store kv.Storage) *model.Job {
+func doDDLJobErr(
+	t *testing.T,
+	schemaID, tableID int64,
+	schemaName, tableName string,
+	tp model.ActionType,
+	args []any,
+	ctx sessionctx.Context,
+	d ddl.DDL,
+	store kv.Storage,
+) *model.Job {
 	job := &model.Job{
 		SchemaID:   schemaID,
+		SchemaName: schemaName,
 		TableID:    tableID,
+		TableName:  tableName,
 		Type:       tp,
 		Args:       args,
 		BinlogInfo: &model.HistoryInfo{},
