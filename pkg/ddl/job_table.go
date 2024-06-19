@@ -184,6 +184,7 @@ func (s *jobScheduler) close() {
 	}
 }
 
+// getJob reads tidb_ddl_job and returns the first runnable DDL job.
 func (s *jobScheduler) getJob(se *sess.Session, tp jobType) (*model.Job, error) {
 	defer s.runningJobs.resetAllPending()
 
