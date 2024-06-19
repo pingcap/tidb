@@ -47,6 +47,7 @@ func TestBackupAndRestore(t *testing.T) {
 	tk := initTestKit(t)
 	tk.MustExec("create database if not exists br")
 	tk.MustExec("use br")
+	tk.MustExec("DROP TABLE IF EXISTS t1")
 	tk.MustExec("create table t1(v int)")
 	tk.MustExec("insert into t1 values (1)")
 	tk.MustExec("insert into t1 values (2)")
@@ -55,6 +56,7 @@ func TestBackupAndRestore(t *testing.T) {
 
 	tk.MustExec("create database if not exists br02")
 	tk.MustExec("use br02")
+	tk.MustExec("DROP TABLE IF EXISTS t1")
 	tk.MustExec("create table t1(v int)")
 
 	tmpDir := path.Join(os.TempDir(), "bk1")
