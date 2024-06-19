@@ -257,8 +257,13 @@ func TestSubstituteCorCol2Constant(t *testing.T) {
 	plus3 := newFunction(ast.Plus, plus2, col1)
 	ret, err = SubstituteCorCol2Constant(plus3)
 	require.NoError(t, err)
+<<<<<<< HEAD
 	ans3 := newFunction(ast.Plus, ans1, col1)
 	require.True(t, ret.Equal(ctx, ans3))
+=======
+	ans3 := newFunctionWithMockCtx(ast.Plus, ans1, col1)
+	require.False(t, ret.Equal(ctx, ans3))
+>>>>>>> 1a24c032126 (expression: correct the erroneous scalar function equivalence check (#54067))
 }
 
 func TestPushDownNot(t *testing.T) {

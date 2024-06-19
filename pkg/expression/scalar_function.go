@@ -347,7 +347,14 @@ func (sf *ScalarFunction) Equal(ctx sessionctx.Context, e Expression) bool {
 	if sf.FuncName.L != fun.FuncName.L {
 		return false
 	}
+<<<<<<< HEAD
 	return sf.Function.equal(fun.Function)
+=======
+	if !sf.RetType.Equal(fun.RetType) {
+		return false
+	}
+	return sf.Function.equal(ctx, fun.Function)
+>>>>>>> 1a24c032126 (expression: correct the erroneous scalar function equivalence check (#54067))
 }
 
 // IsCorrelated implements Expression interface.
