@@ -114,6 +114,7 @@ func TestSchemaResume(t *testing.T) {
 	require.NoError(t, err)
 	job := &model.Job{
 		SchemaID:   dbInfo.ID,
+		SchemaName: dbInfo.Name.L,
 		Type:       model.ActionCreateSchema,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []any{dbInfo},
