@@ -360,7 +360,7 @@ func (sf *ScalarFunction) Equal(ctx EvalContext, e Expression) bool {
 	if sf.FuncName.L != fun.FuncName.L {
 		return false
 	}
-	if sf.RetType != fun.RetType {
+	if !sf.RetType.Equal(fun.RetType) {
 		return false
 	}
 	return sf.Function.equal(ctx, fun.Function)
