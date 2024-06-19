@@ -518,12 +518,12 @@ func (s *jobScheduler) delivery2Worker(wk *worker, pool *workerPool, job *model.
 	failpoint.InjectCall("beforeDelivery2Worker", job)
 	injectFailPointForGetJob(job)
 	jobID, involvedSchemaInfos := job.ID, job.GetInvolvingSchemaInfo()
-	s.runningJobs.add(jobID, involvedSchemaInfos)
+	s.runningJobs.addRunning(jobID, involvedSchemaInfos)
 	metrics.DDLRunningJobCount.WithLabelValues(pool.tp().String()).Inc()
 	s.wg.RunWithLog(func() {
 		defer func() {
 			failpoint.InjectCall("afterDelivery2Worker", job)
-			s.runningJobs.remove(jobID, involvedSchemaInfos)
+			s.runningJobs.removeRunning(jobID, involvedSchemaInfos)
 			asyncNotify(s.ddlJobNotifyCh)
 			metrics.DDLRunningJobCount.WithLabelValues(pool.tp().String()).Dec()
 			if wk.ctx.Err() != nil && ingest.LitBackCtxMgr != nil {
