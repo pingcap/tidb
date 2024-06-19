@@ -1578,7 +1578,7 @@ func (*Meta) TableNameKey(dbName string, tableName string) kv.Key {
 // DatabaseNameKey constructs the key for database name.
 func (*Meta) DatabaseNameKey(dbName string) kv.Key {
 	var sb strings.Builder
-	sb.Write(mNames)
+	sb.Write(mDBNames)
 	sb.WriteByte(':')
 	sb.WriteString(strings.ToLower(dbName))
 	return kv.Key(sb.String())
