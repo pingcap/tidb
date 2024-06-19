@@ -18,7 +18,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"math/rand"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -130,7 +129,7 @@ func (p *brieTaskProgress) Close() {
 	current := atomic.LoadInt64(&p.current)
 	total := atomic.LoadInt64(&p.total)
 	cmd := p.cmd
-	if current < total && !strings.HasSuffix(p.cmd, "Canceled") {
+	if current < total && !strings.HasSuffix(p.cmd, " Canceled") {
 		cmd = fmt.Sprintf("%s Canceled", cmd)
 		p.cmd = cmd
 	}
@@ -231,10 +230,6 @@ func (bq *brieQueue) registerTask(
 		},
 	}
 	taskID, err := addTaskToMetaTable(ctx, info, e)
-	failpoint.Inject("ignoreMetaTable", func() {
-		err = nil
-		taskID = rand.Uint64() % 1000
-	})
 
 	if err != nil {
 		return taskCtx, 0, err
@@ -293,8 +288,8 @@ func (bq *brieQueue) cleanupTask(taskID uint64) bool {
 	// FIXME: this is a hack way, we assume that as long as message is empty, the job is finished.
 	i.progress.lock.Lock()
 	finished := false
-	if i.info.message == "" && strings.HasSuffix(i.progress.cmd, "Canceled") {
-		i.progress.cmd = i.progress.cmd[:len(i.progress.cmd)-len("Canceled")]
+	if i.info.message == "" && strings.HasSuffix(i.progress.cmd, " Canceled") {
+		i.progress.cmd = i.progress.cmd[:len(i.progress.cmd)-len(" Canceled")]
 		finished = true
 	}
 	i.progress.lock.Unlock()

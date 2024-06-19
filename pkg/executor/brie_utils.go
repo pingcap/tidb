@@ -18,9 +18,11 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"math/rand"
 	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain"
@@ -189,6 +191,10 @@ func splitBatchCreateTable(sctx sessionctx.Context, schema model.CIStr,
 }
 
 func addTaskToMetaTable(ctx context.Context, info *brieTaskInfo, e *exec.BaseExecutor) (uint64, error) {
+	failpoint.Inject("ignoreMetaTable", func() {
+		taskID := rand.Uint64() % 1000
+		failpoint.Return(taskID, nil)
+	})
 	if info.queueTime.IsZero() {
 		return 0, errors.New("queueTime is not set")
 	}
@@ -247,6 +253,9 @@ func messageOrNULL(msg string) string {
 }
 
 func updateMetaTable(ctx context.Context, e *exec.BaseExecutor, id uint64, updates map[string]any) {
+	failpoint.Inject("ignoreMetaTable", func() {
+		failpoint.Return()
+	})
 	// Construct the SET clause dynamically based on the updates map
 	setClauses := make([]string, 0, len(updates))
 	args := make([]any, 0, len(updates))
