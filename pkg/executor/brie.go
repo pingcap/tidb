@@ -145,7 +145,7 @@ func (p *brieTaskProgress) Close() {
 	})
 }
 
-func (p *brieTaskProgress) cleanup(finished bool) {
+func (p *brieTaskProgress) cleanup(finished bool, e *exec.BaseExecutor) {
 	p.lock.Lock()
 	cmd := p.cmd
 	if !finished && p.current < p.total && !strings.HasSuffix(p.cmd, "Canceled") {
@@ -159,11 +159,7 @@ func (p *brieTaskProgress) cleanup(finished bool) {
 	total := p.total
 	p.lock.Unlock()
 
-	if p.executor == nil {
-		log.Error("BRIE task executor is nil", zap.Uint64("task id", p.taskID))
-		return
-	}
-	updateMetaTable(context.Background(), p.executor, p.taskID, map[string]any{
+	updateMetaTable(context.Background(), e, p.taskID, map[string]any{
 		"progress": current * 100 / total,
 		"state":    cmd,
 	})
@@ -274,7 +270,7 @@ func (bq *brieQueue) releaseTask() {
 	<-bq.workerCh
 }
 
-func (bq *brieQueue) cleanupTask(taskID uint64) bool {
+func (bq *brieQueue) cleanupTask(taskID uint64, e *exec.BaseExecutor) bool {
 	item, ok := bq.tasks.Load(taskID)
 	if !ok {
 		return false
@@ -293,7 +289,7 @@ func (bq *brieQueue) cleanupTask(taskID uint64) bool {
 		finished = true
 	}
 	i.progress.lock.Unlock()
-	updateMetaTable(context.Background(), i.progress.executor, i.info.id, map[string]any{
+	updateMetaTable(context.Background(), e, i.info.id, map[string]any{
 		"finishTime":  i.info.finishTime.String(),
 		"message":     messageOrNULL(i.info.message),
 		"backupTS":    i.info.backupTS,
@@ -301,7 +297,7 @@ func (bq *brieQueue) cleanupTask(taskID uint64) bool {
 		"archiveSize": i.info.archiveSize,
 	})
 
-	i.progress.cleanup(finished)
+	i.progress.cleanup(finished,e)
 	i.progress.executor = nil
 	log.Info("BRIE job ended.", zap.Uint64("ID", i.info.id))
 	return true
@@ -598,7 +594,7 @@ type cancelJobExec struct {
 
 func (s cancelJobExec) Next(_ context.Context, req *chunk.Chunk) error {
 	req.Reset()
-	if !globalBRIEQueue.cleanupTask(s.targetID) {
+	if !globalBRIEQueue.cleanupTask(s.targetID, &s.BaseExecutor) {
 		s.Ctx().GetSessionVars().StmtCtx.AppendWarning(exeerrors.ErrLoadDataJobNotFound.FastGenByArgs(s.targetID))
 	}
 	return nil
@@ -680,7 +676,7 @@ func (e *BRIEExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		log.Error("Failed to register BRIE task", zap.Error(err))
 		return err
 	}
-	defer bq.cleanupTask(taskID)
+	defer bq.cleanupTask(taskID, &e.BaseExecutor)
 	failpoint.Inject("block-on-brie", func() {
 		log.Warn("You shall not pass, nya. :3")
 		<-taskCtx.Done()
@@ -696,7 +692,7 @@ func (e *BRIEExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			select {
 			case <-ticker.C:
 				if e.Ctx().GetSessionVars().SQLKiller.HandleSignal() == exeerrors.ErrQueryInterrupted {
-					bq.cleanupTask(taskID)
+					bq.cleanupTask(taskID, &e.BaseExecutor)
 					return
 				}
 			case <-taskCtx.Done():
