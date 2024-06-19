@@ -244,7 +244,7 @@ func (sg *TiKVSingleGather) GetPhysicalTableReader(schema *expression.Schema, st
 		PruningConds:   sg.Source.allConds,
 		PartitionNames: sg.Source.partitionNames,
 		Columns:        sg.Source.TblCols,
-		ColumnNames:    sg.Source.names,
+		ColumnNames:    sg.Source.OutputNames(),
 	}
 	reader.SetStats(stats)
 	reader.SetSchema(schema)

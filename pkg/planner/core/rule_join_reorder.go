@@ -618,7 +618,7 @@ func (s *baseSingleGroupJoinOrderSolver) makeBushyJoin(cartesianJoinGroup []base
 			newJoin := s.newCartesianJoin(cartesianJoinGroup[i], cartesianJoinGroup[i+1])
 			for i := len(s.otherConds) - 1; i >= 0; i-- {
 				cols := expression.ExtractColumns(s.otherConds[i])
-				if newJoin.schema.ColumnsIndices(cols) != nil {
+				if newJoin.Schema().ColumnsIndices(cols) != nil {
 					newJoin.OtherConditions = append(newJoin.OtherConditions, s.otherConds[i])
 					s.otherConds = append(s.otherConds[:i], s.otherConds[i+1:]...)
 				}
