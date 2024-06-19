@@ -222,7 +222,7 @@ func addTaskToMetaTable(ctx context.Context, info *brieTaskInfo, e *exec.BaseExe
 	}
 
 	//FIXME: is this a safe way to get id?
-	rs, err := e.Ctx().GetSQLExecutor().ExecuteInternal(ctx, `SELECT LAST_INSERT_ID();`)
+	rs, err := e.Ctx().GetSQLExecutor().ExecuteInternal(stmtCtx, `SELECT LAST_INSERT_ID();`)
 	if err != nil {
 		return 0, err
 	}
