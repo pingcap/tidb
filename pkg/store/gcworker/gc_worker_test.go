@@ -21,6 +21,7 @@ import (
 	"math"
 	"sort"
 	"strconv"
+	"sync"
 	"testing"
 	"time"
 
@@ -777,6 +778,59 @@ func TestDeleteRangesFailure(t *testing.T) {
 	}
 }
 
+func TestConcurrentDeleteRanges(t *testing.T) {
+	// make sure the parallelization of deleteRanges works
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/store/gcworker/mockHistoryJobForGC", "return(1)"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/store/gcworker/mockHistoryJob", "return(\"schema/d1/t1\")"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/gcworker/mockHistoryJobForGC"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/gcworker/mockHistoryJob"))
+	}()
+
+	s := createGCWorkerSuite(t)
+	se := createSession(s.gcWorker.store)
+	defer se.Close()
+	_, err := se.Execute(gcContext(), `INSERT INTO mysql.gc_delete_range VALUES
+("1", "2", "31", "32", "10"),
+("3", "4", "33", "34", "10"),
+("5", "6", "35", "36", "15"),
+("7", "8", "37", "38", "15"),
+("9", "10", "39", "40", "15")
+	`)
+	require.NoError(t, err)
+
+	ranges, err := util.LoadDeleteRanges(gcContext(), se, 20)
+	require.NoError(t, err)
+	require.Len(t, ranges, 5)
+
+	stores, err := s.gcWorker.getStoresForGC(context.Background())
+	require.NoError(t, err)
+	require.Len(t, stores, 3)
+	sort.Slice(stores, func(i, j int) bool { return stores[i].Address < stores[j].Address })
+
+	sendReqCh := make(chan SentReq, 20)
+	s.client.unsafeDestroyRangeHandler = func(addr string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
+		sendReqCh <- SentReq{req, addr}
+		resp := &tikvrpc.Response{
+			Resp: &kvrpcpb.UnsafeDestroyRangeResponse{},
+		}
+		return resp, nil
+	}
+	defer func() { s.client.unsafeDestroyRangeHandler = nil }()
+
+	err = s.gcWorker.deleteRanges(gcContext(), 20, 10)
+	require.NoError(t, err)
+
+	s.checkDestroyRangeReq(t, sendReqCh, ranges, stores)
+
+	se = createSession(s.gcWorker.store)
+	remainingRanges, err := util.LoadDeleteRanges(gcContext(), se, 20)
+	se.Close()
+	require.NoError(t, err)
+	require.Len(t, remainingRanges, 0)
+}
+
 type SentReq struct {
 	req  *tikvrpc.Request
 	addr string
@@ -1419,7 +1473,8 @@ func TestGCPlacementRules(t *testing.T) {
 
 	// do gc
 	dr := util.DelRangeTask{JobID: 1, ElementID: 10}
-	err = s.gcWorker.doGCPlacementRules(createSession(s.store), 1, dr, gcPlacementRuleCache)
+	err = s.gcWorker.doGCPlacementRules(createSession(s.store), 1, dr, gcPlacementRuleCache,
+		&sync.Mutex{})
 	require.NoError(t, err)
 	require.Equal(t, map[int64]any{10: struct{}{}}, gcPlacementRuleCache)
 	require.Equal(t, 1, deletePlacementRuleCounter)
@@ -1431,7 +1486,8 @@ func TestGCPlacementRules(t *testing.T) {
 	require.True(t, got.IsEmpty())
 
 	// gc the same table id repeatedly
-	err = s.gcWorker.doGCPlacementRules(createSession(s.store), 1, dr, gcPlacementRuleCache)
+	err = s.gcWorker.doGCPlacementRules(createSession(s.store), 1, dr, gcPlacementRuleCache,
+		&sync.Mutex{})
 	require.NoError(t, err)
 	require.Equal(t, map[int64]any{10: struct{}{}}, gcPlacementRuleCache)
 	require.Equal(t, 1, deletePlacementRuleCounter)

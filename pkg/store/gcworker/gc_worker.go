@@ -805,14 +805,14 @@ func (w *GCWorker) runGCJob(ctx context.Context, safePoint uint64, concurrency i
 func (w *GCWorker) deleteRanges(ctx context.Context, safePoint uint64, concurrency int) error {
 	metrics.GCWorkerCounter.WithLabelValues("delete_range").Inc()
 
-	se := createSession(w.store)
-	defer se.Close()
-	ranges, err := util.LoadDeleteRanges(ctx, se, safePoint)
+	s := createSession(w.store)
+	defer s.Close()
+	ranges, err := util.LoadDeleteRanges(ctx, s, safePoint)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	v2, err := util.IsRaftKv2(ctx, se)
+	v2, err := util.IsRaftKv2(ctx, s)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -823,55 +823,78 @@ func (w *GCWorker) deleteRanges(ctx context.Context, safePoint uint64, concurren
 		zap.String("uuid", w.uuid),
 		zap.Int("ranges", len(ranges)))
 	startTime := time.Now()
-	for _, r := range ranges {
-		startKey, endKey := r.Range()
-		if v2 {
-			// In raftstore-v2, we use delete range instead to avoid deletion omission
-			task := rangetask.NewDeleteRangeTask(w.tikvStore, startKey, endKey, concurrency)
-			err = task.Execute(ctx)
-		} else {
-			err = w.doUnsafeDestroyRangeRequest(ctx, startKey, endKey, concurrency)
-		}
-		failpoint.Inject("ignoreDeleteRangeFailed", func() {
-			err = nil
-		})
 
-		if err != nil {
-			logutil.Logger(ctx).Error("delete range failed on range", zap.String("category", "gc worker"),
-				zap.String("uuid", w.uuid),
-				zap.Stringer("startKey", startKey),
-				zap.Stringer("endKey", endKey),
-				zap.Error(err))
-			continue
-		}
-
-		if err := w.doGCPlacementRules(se, safePoint, r, gcPlacementRuleCache); err != nil {
-			logutil.Logger(ctx).Error("gc placement rules failed on range", zap.String("category", "gc worker"),
-				zap.String("uuid", w.uuid),
-				zap.Int64("jobID", r.JobID),
-				zap.Int64("elementID", r.ElementID),
-				zap.Error(err))
-			continue
-		}
-		if err := w.doGCLabelRules(r); err != nil {
-			logutil.Logger(ctx).Error("gc label rules failed on range", zap.String("category", "gc worker"),
-				zap.String("uuid", w.uuid),
-				zap.Int64("jobID", r.JobID),
-				zap.Int64("elementID", r.ElementID),
-				zap.Error(err))
-			continue
-		}
-
-		err = util.CompleteDeleteRange(se, r, !v2)
-		if err != nil {
-			logutil.Logger(ctx).Error("failed to mark delete range task done", zap.String("category", "gc worker"),
-				zap.String("uuid", w.uuid),
-				zap.Stringer("startKey", startKey),
-				zap.Stringer("endKey", endKey),
-				zap.Error(err))
-			metrics.GCUnsafeDestroyRangeFailuresCounterVec.WithLabelValues("save").Inc()
-		}
+	var wg sync.WaitGroup
+	if concurrency < 1 {
+		concurrency = 1
 	}
+	sem := make(chan struct{}, concurrency)
+	var cacheMu sync.Mutex
+
+	for _, r := range ranges {
+		sem <- struct{}{}
+		wg.Add(1)
+
+		go func(r util.DelRangeTask) {
+			var err error
+			defer func() {
+				<-sem
+				wg.Done()
+			}()
+			se := createSession(w.store)
+			defer se.Close()
+
+			startKey, endKey := r.Range()
+			if v2 {
+				// In raftstore-v2, we use delete range instead to avoid deletion omission
+				task := rangetask.NewDeleteRangeTask(w.tikvStore, startKey, endKey, concurrency)
+				err = task.Execute(ctx)
+			} else {
+				err = w.doUnsafeDestroyRangeRequest(ctx, startKey, endKey, concurrency)
+			}
+			failpoint.Inject("ignoreDeleteRangeFailed", func() {
+				err = nil
+			})
+
+			if err != nil {
+				logutil.Logger(ctx).Error("delete range failed on range", zap.String("category", "gc worker"),
+					zap.String("uuid", w.uuid),
+					zap.Stringer("startKey", startKey),
+					zap.Stringer("endKey", endKey),
+					zap.Error(err))
+				return
+			}
+
+			err = w.doGCPlacementRules(se, safePoint, r, gcPlacementRuleCache, &cacheMu)
+			if err != nil {
+				logutil.Logger(ctx).Error("gc placement rules failed on range", zap.String("category", "gc worker"),
+					zap.String("uuid", w.uuid),
+					zap.Int64("jobID", r.JobID),
+					zap.Int64("elementID", r.ElementID),
+					zap.Error(err))
+			}
+			if err := w.doGCLabelRules(r); err != nil {
+				logutil.Logger(ctx).Error("gc label rules failed on range", zap.String("category", "gc worker"),
+					zap.String("uuid", w.uuid),
+					zap.Int64("jobID", r.JobID),
+					zap.Int64("elementID", r.ElementID),
+					zap.Error(err))
+				return
+			}
+
+			err = util.CompleteDeleteRange(se, r, !v2)
+			if err != nil {
+				logutil.Logger(ctx).Error("failed to mark delete range task done", zap.String("category", "gc worker"),
+					zap.String("uuid", w.uuid),
+					zap.Stringer("startKey", startKey),
+					zap.Stringer("endKey", endKey),
+					zap.Error(err))
+				metrics.GCUnsafeDestroyRangeFailuresCounterVec.WithLabelValues("save").Inc()
+			}
+		}(r)
+	}
+	wg.Wait()
+
 	logutil.Logger(ctx).Info("finish delete ranges", zap.String("category", "gc worker"),
 		zap.String("uuid", w.uuid),
 		zap.Int("num of ranges", len(ranges)),
@@ -1489,7 +1512,8 @@ func (w *GCWorker) saveValueToSysTable(key, value string) error {
 // GC placement rules when the partitions are removed by the GC worker.
 // Placement rules cannot be removed immediately after drop table / truncate table,
 // because the tables can be flashed back or recovered.
-func (w *GCWorker) doGCPlacementRules(se sessiontypes.Session, safePoint uint64, dr util.DelRangeTask, gcPlacementRuleCache map[int64]any) (err error) {
+func (w *GCWorker) doGCPlacementRules(se sessiontypes.Session, safePoint uint64,
+	dr util.DelRangeTask, gcPlacementRuleCache map[int64]any, cacheMu *sync.Mutex) (err error) {
 	// Get the job from the job history
 	var historyJob *model.Job
 	failpoint.Inject("mockHistoryJobForGC", func(v failpoint.Value) {
@@ -1532,12 +1556,14 @@ func (w *GCWorker) doGCPlacementRules(se sessiontypes.Session, safePoint uint64,
 	}
 
 	// Skip table ids that's already successfully handled.
+	cacheMu.Lock()
 	tmp := physicalTableIDs[:0]
 	for _, id := range physicalTableIDs {
 		if _, ok := gcPlacementRuleCache[id]; !ok {
 			tmp = append(tmp, id)
 		}
 	}
+	cacheMu.Unlock()
 	physicalTableIDs = tmp
 
 	if len(physicalTableIDs) == 0 {
@@ -1565,9 +1591,11 @@ func (w *GCWorker) doGCPlacementRules(se sessiontypes.Session, safePoint uint64,
 	}
 
 	// Cache the table id if its related rule are deleted successfully.
+	cacheMu.Lock()
 	for _, id := range physicalTableIDs {
 		gcPlacementRuleCache[id] = struct{}{}
 	}
+	cacheMu.Unlock()
 	return nil
 }
 
