@@ -609,6 +609,10 @@ func TestCreateSameTableOrDBOnOwnerChange(t *testing.T) {
 	tc := testkit.NewDistExecutionContext(t, 2)
 	defer tc.Close()
 
+<<<<<<< HEAD
+=======
+	// keep trigger owner change every 50ms.
+>>>>>>> upstream/master
 	var ownerWg util.WaitGroupWrapper
 	var finished atomic.Bool
 	ownerWg.Run(func() {
@@ -639,7 +643,8 @@ func TestCreateSameTableOrDBOnOwnerChange(t *testing.T) {
 	enableWaitSubmit.Store(true)
 
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunJobWithWorker", func() { time.Sleep(300 * time.Millisecond) })
-
+	// create and wait all jobs are submitted to tidb_ddl_job before they are run.
+	// we are creating same table/database, only the first will success.
 	var wg util.WaitGroupWrapper
 	for gi, g := range [][]string{
 		{

@@ -296,6 +296,11 @@ func BuildHistAndTopN(
 	sampleNum := int64(len(samples))
 	// As we use samples to build the histogram, the bucket number and repeat should multiply a factor.
 	sampleFactor := float64(count) / float64(len(samples))
+	// If a numTopn value other than 100 is passed in, we assume it's a value that the user wants us to honor
+	allowPruning := true
+	if numTopN != 100 {
+		allowPruning = false
+	}
 
 	// Step1: collect topn from samples
 
@@ -326,18 +331,23 @@ func BuildHistAndTopN(
 			continue
 		}
 		// case 2, meet a different value: counting for the "current" is complete
-		// case 2-1, now topn is empty: append the "current" count directly
+		// case 2-1, do not add a count of 1 if we're sampling
+		if curCnt == 1 && sampleFactor > 1 && allowPruning {
+			cur, curCnt = sampleBytes, 1
+			continue
+		}
+		// case 2-2, now topn is empty: append the "current" count directly
 		if len(topNList) == 0 {
 			topNList = append(topNList, TopNMeta{Encoded: cur, Count: uint64(curCnt)})
 			cur, curCnt = sampleBytes, 1
 			continue
 		}
-		// case 2-2, now topn is full, and the "current" count is less than the least count in the topn: no need to insert the "current"
+		// case 2-3, now topn is full, and the "current" count is less than the least count in the topn: no need to insert the "current"
 		if len(topNList) >= numTopN && uint64(curCnt) <= topNList[len(topNList)-1].Count {
 			cur, curCnt = sampleBytes, 1
 			continue
 		}
-		// case 2-3, now topn is not full, or the "current" count is larger than the least count in the topn: need to find a slot to insert the "current"
+		// case 2-4, now topn is not full, or the "current" count is larger than the least count in the topn: need to find a slot to insert the "current"
 		j := len(topNList)
 		for ; j > 0; j-- {
 			if uint64(curCnt) < topNList[j-1].Count {
@@ -358,9 +368,10 @@ func BuildHistAndTopN(
 		hg.Correlation = calcCorrelation(sampleNum, corrXYSum)
 	}
 
-	// Handle the counting for the last value. Basically equal to the case 2 above.
-	// now topn is empty: append the "current" count directly
-	if numTopN != 0 {
+	// Handle the counting for the last value. Basically equal to the case 2 above - including
+	// limiting addition of a value with a count of 1 (since it will be pruned anyway).
+	if numTopN != 0 && (!allowPruning || (allowPruning && (sampleFactor <= 1 || curCnt > 1))) {
+		// now topn is empty: append the "current" count directly
 		if len(topNList) == 0 {
 			topNList = append(topNList, TopNMeta{Encoded: cur, Count: uint64(curCnt)})
 		} else if len(topNList) < numTopN || uint64(curCnt) > topNList[len(topNList)-1].Count {
@@ -380,7 +391,9 @@ func BuildHistAndTopN(
 		}
 	}
 
-	topNList = pruneTopNItem(topNList, ndv, nullCount, sampleNum, count)
+	if allowPruning {
+		topNList = pruneTopNItem(topNList, ndv, nullCount, sampleNum, count)
+	}
 
 	// Step2: exclude topn from samples
 	if numTopN != 0 {
@@ -435,7 +448,7 @@ func BuildHistAndTopN(
 	topn.Scale(sampleFactor)
 
 	if uint64(count) <= topn.TotalCount() || int(hg.NDV) <= len(topn.TopN) {
-		// TopN includes all sample data
+		// If we've collected everything  - don't create any buckets
 		return hg, topn, nil
 	}
 
@@ -454,8 +467,7 @@ func BuildHistAndTopN(
 //
 //	We assume that the ones not in the top-n list's selectivity is 1/remained_ndv which is the internal implementation of EqualRowCount
 func pruneTopNItem(topns []TopNMeta, ndv, nullCount, sampleRows, totalRows int64) []TopNMeta {
-	// If the sampleRows holds all rows, or NDV of samples equals to actual NDV, we just return the TopN directly.
-	if sampleRows == totalRows || totalRows <= 1 || int64(len(topns)) >= ndv || len(topns) == 0 {
+	if totalRows <= 1 || int64(len(topns)) >= ndv || len(topns) <= 1 {
 		return topns
 	}
 	// Sum the occurrence except the least common one from the top-n list. To check whether the lest common one is worth

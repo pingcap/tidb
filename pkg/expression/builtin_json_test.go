@@ -504,7 +504,7 @@ func TestJSONContains(t *testing.T) {
 	}
 	for _, cs := range cases {
 		_, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(cs.arg1, cs.arg2)))
-		require.True(t, types.ErrInvalidJSONData.Equal(err))
+		require.True(t, ErrInvalidTypeForJSON.Equal(err))
 	}
 }
 

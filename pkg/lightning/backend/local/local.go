@@ -1632,6 +1632,17 @@ func (local *Backend) SwitchModeByKeyRanges(ctx context.Context, ranges []common
 }
 
 func openLocalWriter(cfg *backend.LocalWriterConfig, engine *Engine, tikvCodec tikvclient.Codec, cacheSize int64, kvBuffer *membuf.Buffer) (*Writer, error) {
+	// pre-allocate a long enough buffer to avoid a lot of runtime.growslice
+	// this can help save about 3% of CPU.
+	var preAllocWriteBatch []common.KvPair
+	if !cfg.Local.IsKVSorted {
+		preAllocWriteBatch = make([]common.KvPair, units.MiB)
+		// we want to keep the cacheSize as the whole limit of this local writer, but the
+		// main memory usage comes from two member: kvBuffer and writeBatch, so we split
+		// ~10% to writeBatch for !IsKVSorted, which means we estimate the average length
+		// of KV pairs are 9 times than the size of common.KvPair (9*72B = 648B).
+		cacheSize = cacheSize * 9 / 10
+	}
 	w := &Writer{
 		engine:             engine,
 		memtableSizeLimit:  cacheSize,
@@ -1639,12 +1650,7 @@ func openLocalWriter(cfg *backend.LocalWriterConfig, engine *Engine, tikvCodec t
 		isKVSorted:         cfg.Local.IsKVSorted,
 		isWriteBatchSorted: true,
 		tikvCodec:          tikvCodec,
-	}
-	// pre-allocate a long enough buffer to avoid a lot of runtime.growslice
-	// this can help save about 3% of CPU.
-	// TODO(lance6716): split the cacheSize to take writeBatch into consideration
-	if !w.isKVSorted {
-		w.writeBatch = make([]common.KvPair, units.MiB)
+		writeBatch:         preAllocWriteBatch,
 	}
 	engine.localWriters.Store(w, nil)
 	return w, nil

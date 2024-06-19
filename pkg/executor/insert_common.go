@@ -474,6 +474,7 @@ func insertRowsFromSelect(ctx context.Context, base insertCommon) error {
 		}
 		chkMemUsage := chk.MemoryUsage()
 		memTracker.Consume(chkMemUsage)
+		var totalMemDelta int64
 		for innerChunkRow := iter.Begin(); innerChunkRow != iter.End(); innerChunkRow = iter.Next() {
 			innerRow := innerChunkRow.GetDatumRow(fields)
 			e.rowCount++
@@ -486,21 +487,21 @@ func insertRowsFromSelect(ctx context.Context, base insertCommon) error {
 			if batchInsert && e.rowCount%uint64(batchSize) == 0 {
 				memUsageOfRows = types.EstimatedMemUsage(rows[0], len(rows))
 				memUsageOfExtraCols = types.EstimatedMemUsage(extraColsInSel[0], len(extraColsInSel))
-				memTracker.Consume(memUsageOfRows + memUsageOfExtraCols)
+				totalMemDelta += memUsageOfRows + memUsageOfExtraCols
 				e.Ctx().GetSessionVars().CurrInsertBatchExtraCols = extraColsInSel
 				if err = base.exec(ctx, rows); err != nil {
 					return err
 				}
 				rows = rows[:0]
 				extraColsInSel = extraColsInSel[:0]
-				memTracker.Consume(-memUsageOfRows)
-				memTracker.Consume(-memUsageOfExtraCols)
+				totalMemDelta += -memUsageOfRows - memUsageOfExtraCols
 				memUsageOfRows = 0
 				if err = e.doBatchInsert(ctx); err != nil {
 					return err
 				}
 			}
 		}
+		memTracker.Consume(totalMemDelta)
 
 		if len(rows) != 0 {
 			memUsageOfRows = types.EstimatedMemUsage(rows[0], len(rows))
@@ -514,9 +515,7 @@ func insertRowsFromSelect(ctx context.Context, base insertCommon) error {
 		}
 		rows = rows[:0]
 		extraColsInSel = extraColsInSel[:0]
-		memTracker.Consume(-memUsageOfRows)
-		memTracker.Consume(-memUsageOfExtraCols)
-		memTracker.Consume(-chkMemUsage)
+		memTracker.Consume(-memUsageOfRows - memUsageOfExtraCols - chkMemUsage)
 	}
 	return nil
 }

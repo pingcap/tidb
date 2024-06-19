@@ -1367,6 +1367,30 @@ type PhysicalHashJoin struct {
 	runtimeFilterList []*RuntimeFilter
 }
 
+// CanUseHashJoinV2 returns true if current join is supported by hash join v2
+func (p *PhysicalHashJoin) CanUseHashJoinV2() bool {
+	switch p.JoinType {
+	case LeftOuterJoin, InnerJoin:
+		// null aware join is not supported yet
+		if len(p.LeftNAJoinKeys) > 0 {
+			return false
+		}
+		// cross join is not supported
+		if len(p.LeftJoinKeys) == 0 {
+			return false
+		}
+		// NullEQ is not supported yet
+		for _, value := range p.IsNullEQ {
+			if value {
+				return false
+			}
+		}
+		return true
+	default:
+		return false
+	}
+}
+
 // Clone implements op.PhysicalPlan interface.
 func (p *PhysicalHashJoin) Clone() (base.PhysicalPlan, error) {
 	cloned := new(PhysicalHashJoin)
