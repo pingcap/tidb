@@ -25,6 +25,9 @@ type MemRoot interface {
 	Consume(size int64)
 	Release(size int64)
 	CheckConsume(size int64) bool
+	// ConsumeWithTag consumes memory with a tag. The main difference between
+	// ConsumeWithTag and Consume is that if the memory is updated afterward, caller
+	// can use ReleaseWithTag then ConsumeWithTag to update the memory usage.
 	ConsumeWithTag(tag string, size int64)
 	ReleaseWithTag(tag string)
 

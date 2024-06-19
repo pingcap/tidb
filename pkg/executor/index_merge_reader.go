@@ -628,7 +628,6 @@ func (w *partialTableWorker) needPartitionHandle() (bool, error) {
 	col := cols[outputOffsets[len(outputOffsets)-1]]
 
 	needPartitionHandle := w.partitionTableMode && len(w.byItems) > 0
-	// no ExtraPidColID here, because a clustered index couldn't be a global index.
 	hasExtraCol := col.ID == model.ExtraPhysTblID
 
 	// There will be two needPartitionHandle != hasExtraCol situations.
@@ -1698,7 +1697,7 @@ func syncErr(ctx context.Context, finished <-chan struct{}, errCh chan<- *indexM
 }
 
 // needPartitionHandle indicates whether we need create a partitionHandle or not.
-// If the schema from planner part contains ExtraPidColID or ExtraPhysTblID,
+// If the schema from planner part contains ExtraPhysTblID,
 // we need create a partitionHandle, otherwise create a normal handle.
 // In TableRowIDScan, the partitionHandle will be used to create key ranges.
 func (w *partialIndexWorker) needPartitionHandle() (bool, error) {
@@ -1706,8 +1705,9 @@ func (w *partialIndexWorker) needPartitionHandle() (bool, error) {
 	outputOffsets := w.dagPB.OutputOffsets
 	col := cols[outputOffsets[len(outputOffsets)-1]]
 
-	needPartitionHandle := w.partitionTableMode && len(w.byItems) > 0
-	hasExtraCol := col.ID == model.ExtraPidColID || col.ID == model.ExtraPhysTblID
+	is := w.plan[0].(*plannercore.PhysicalIndexScan)
+	needPartitionHandle := w.partitionTableMode && len(w.byItems) > 0 || is.Index.Global
+	hasExtraCol := col.ID == model.ExtraPhysTblID
 
 	// There will be two needPartitionHandle != hasExtraCol situations.
 	// Only `needPartitionHandle` == true and `hasExtraCol` == false are not allowed.
@@ -1715,7 +1715,7 @@ func (w *partialIndexWorker) needPartitionHandle() (bool, error) {
 	if needPartitionHandle && !hasExtraCol {
 		return needPartitionHandle, errors.Errorf("Internal error, needPartitionHandle != ret")
 	}
-	return needPartitionHandle || (col.ID == model.ExtraPidColID), nil
+	return needPartitionHandle, nil
 }
 
 func (w *partialIndexWorker) fetchHandles(

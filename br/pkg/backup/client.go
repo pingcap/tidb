@@ -43,6 +43,12 @@ import (
 	"go.uber.org/zap"
 )
 
+const (
+	// MaxResolveLocksbackupOffSleep is the maximum sleep time for resolving locks.
+	// 10 minutes for every round.
+	MaxResolveLocksbackupOffSleepMs = 600000
+)
+
 // ClientMgr manages connections needed by backup.
 type ClientMgr interface {
 	GetBackupClient(ctx context.Context, storeID uint64) (backuppb.BackupClient, error)
@@ -74,7 +80,7 @@ type MainBackupLoop struct {
 	StateNotifier      chan BackupRetryPolicy
 
 	ProgressCallBack        func()
-	GetBackupClientCallBack func(ctx context.Context, storeID uint64) (backuppb.BackupClient, error)
+	GetBackupClientCallBack func(ctx context.Context, storeID uint64, reset bool) (backuppb.BackupClient, error)
 }
 
 type MainBackupSender struct{}
@@ -90,7 +96,7 @@ func (s *MainBackupSender) SendAsync(
 ) {
 	go func() {
 		defer func() {
-			logutil.CL(ctx).Info("exit store backup goroutine", zap.Uint64("store", storeID))
+			logutil.CL(ctx).Info("store backup goroutine exits", zap.Uint64("store", storeID))
 			close(respCh)
 		}()
 		err := startBackup(ctx, storeID, request, cli, respCh)
@@ -125,7 +131,7 @@ func (l *MainBackupLoop) CollectStoreBackupsAsync(
 ) {
 	go func() {
 		defer func() {
-			logutil.CL(ctx).Info("exit collect backups goroutine", zap.Uint64("round", round))
+			logutil.CL(ctx).Info("collect backups goroutine exits", zap.Uint64("round", round))
 			close(globalCh)
 		}()
 		cases := make([]reflect.SelectCase, 0)
@@ -164,6 +170,8 @@ func (bc *Client) RunLoop(ctx context.Context, loop *MainBackupLoop) error {
 	// ideally, backup should be finished in one round
 	// unless the cluster state changed or some kv errors occurred.
 	round := uint64(0)
+	// reset grpc connection every round except key_locked error.
+	reset := true
 mainLoop:
 	for {
 		round += 1
@@ -189,6 +197,7 @@ mainLoop:
 		start := time.Now()
 
 		var inCompleteRanges []rtree.Range
+		var allTxnLocks []*txnlock.Lock
 		select {
 		case <-ctx.Done():
 			// ctx cancal outside
@@ -218,6 +227,7 @@ mainLoop:
 			// so this error must be retryable, just make infinite retry here
 			logutil.CL(mainCtx).Error("failed to get backup stores", zap.Uint64("round", round), zap.Error(err))
 			mainCancel()
+			reset = true
 			continue mainLoop
 		}
 		for _, store := range allStores {
@@ -228,12 +238,13 @@ mainLoop:
 			}
 			storeID := store.GetId()
 			// reset backup client every round, to get a clean grpc connection.
-			cli, err := loop.GetBackupClientCallBack(mainCtx, storeID)
+			cli, err := loop.GetBackupClientCallBack(mainCtx, storeID, reset)
 			if err != nil {
 				// because the we get store info from pd.
 				// there is no customer setting here, so make infinite retry.
 				logutil.CL(ctx).Error("failed to reset backup client", zap.Uint64("round", round), zap.Uint64("storeID", storeID), zap.Error(err))
 				mainCancel()
+				reset = true
 				continue mainLoop
 			}
 			ch := make(chan *ResponseAndStore)
@@ -256,10 +267,13 @@ mainLoop:
 					handleCancel()
 					mainCancel()
 					// start next round backups
+					reset = true
 					continue mainLoop
 				}
 				if storeBackupInfo.One != 0 {
 					storeID := storeBackupInfo.One
+					logutil.CL(mainCtx).Info("receive notifaction and retry backup on this store",
+						zap.Uint64("storeID", storeID), zap.Uint64("round", round))
 					store, err := bc.mgr.GetPDClient().GetStore(mainCtx, storeID)
 					if err != nil {
 						// cannot get store, maybe store has scaled-in.
@@ -267,21 +281,24 @@ mainLoop:
 						// try next round
 						handleCancel()
 						mainCancel()
+						reset = true
 						continue mainLoop
 					}
 					if err = utils.CheckStoreLiveness(store); err != nil {
 						// skip this store in this round.
 						logutil.CL(mainCtx).Warn("store not alive, skip backup it in this round", zap.Uint64("round", round), zap.Error(err))
+						reset = true
 						continue mainLoop
 					}
 					// reset backup client. store address could change but store id remained.
-					cli, err := loop.GetBackupClientCallBack(mainCtx, storeID)
+					cli, err := loop.GetBackupClientCallBack(mainCtx, storeID, reset)
 					if err != nil {
 						logutil.CL(mainCtx).Error("failed to reset backup client", zap.Uint64("round", round), zap.Uint64("storeID", storeID), zap.Error(err))
 						handleCancel()
 						mainCancel()
 						// receive new store info but failed to get backup client.
 						// start next round backups to get all tikv stores and reset all client connections.
+						reset = true
 						continue mainLoop
 					}
 
@@ -302,10 +319,20 @@ mainLoop:
 				}
 			case respAndStore, ok := <-globalBackupResultCh:
 				if !ok {
+					// resolve all txn lock before next round starts
+					if len(allTxnLocks) > 0 {
+						bo := utils.AdaptTiKVBackoffer(handleCtx, MaxResolveLocksbackupOffSleepMs, berrors.ErrUnknown)
+						_, err = bc.mgr.GetLockResolver().ResolveLocks(bo.Inner(), 0, allTxnLocks)
+						if err != nil {
+							logutil.CL(handleCtx).Warn("failed to resolve locks, ignore and wait for next round to resolve",
+								zap.Uint64("round", round), zap.Error(err))
+						}
+						reset = false
+					}
 					// this round backup finished. break and check incomplete ranges in mainLoop.
 					break handleLoop
 				}
-				err = bc.OnBackupResponse(handleCtx, respAndStore, errContext, loop.GlobalProgressTree)
+				lock, err := bc.OnBackupResponse(handleCtx, respAndStore, errContext, loop.GlobalProgressTree)
 				if err != nil {
 					// if error occurred here, stop the backup process
 					// because only 3 kinds of errors will be returned here:
@@ -315,6 +342,9 @@ mainLoop:
 					handleCancel()
 					mainCancel()
 					return err
+				}
+				if lock != nil {
+					allTxnLocks = append(allTxnLocks, lock)
 				}
 				loop.ProgressCallBack()
 			}
@@ -1074,7 +1104,12 @@ func (bc *Client) BackupRanges(
 		ProgressCallBack:   progressCallBack,
 		// always use reset connection here.
 		// because we need to reset connection when store state changed.
-		GetBackupClientCallBack: bc.mgr.ResetBackupClient,
+		GetBackupClientCallBack: func(ctx context.Context, storeID uint64, reset bool) (backuppb.BackupClient, error) {
+			if reset {
+				return bc.mgr.ResetBackupClient(ctx, storeID)
+			}
+			return bc.mgr.GetBackupClient(ctx, storeID)
+		},
 	}
 
 	err = bc.RunLoop(ctx, mainBackupLoop)
@@ -1114,9 +1149,9 @@ func (bc *Client) OnBackupResponse(
 	r *ResponseAndStore,
 	errContext *utils.ErrorContext,
 	globalProgressTree *rtree.ProgressRangeTree,
-) error {
+) (*txnlock.Lock, error) {
 	if r == nil || r.GetResponse() == nil {
-		return nil
+		return nil, nil
 	}
 
 	resp := r.GetResponse()
@@ -1128,7 +1163,7 @@ func (bc *Client) OnBackupResponse(
 		if err != nil {
 			logutil.CL(ctx).Error("failed to update the backup response",
 				zap.Reflect("error", err))
-			return err
+			return nil, err
 		}
 		if bc.checkpointRunner != nil {
 			if err := checkpoint.AppendForBackup(
@@ -1141,7 +1176,7 @@ func (bc *Client) OnBackupResponse(
 			); err != nil {
 				// flush checkpoint failed,
 				logutil.CL(ctx).Error("failed to flush checkpoint", zap.Error(err))
-				return err
+				return nil, err
 			}
 		}
 		pr.Res.Put(resp.StartKey, resp.EndKey, resp.Files)
@@ -1149,6 +1184,13 @@ func (bc *Client) OnBackupResponse(
 		bc.SetApiVersion(apiVersion)
 	} else {
 		errPb := resp.GetError()
+		switch v := errPb.Detail.(type) {
+		case *backuppb.Error_KvError:
+			if lockErr := v.KvError.Locked; lockErr != nil {
+				// return lock for later resolving in this round
+				return txnlock.NewLock(lockErr), nil
+			}
+		}
 		res := errContext.HandleIgnorableError(errPb, storeID)
 		switch res.Strategy {
 		case utils.GiveUpStrategy:
@@ -1157,13 +1199,13 @@ func (bc *Client) OnBackupResponse(
 				errMsg = errPb.Msg
 			}
 			// TODO output a precise store address. @3pointer
-			return errors.Annotatef(berrors.ErrKVStorage, "error happen in store %v: %s",
+			return nil, errors.Annotatef(berrors.ErrKVStorage, "error happen in store %v: %s",
 				storeID,
 				errMsg,
 			)
 		}
 	}
-	return nil
+	return nil, nil
 }
 
 func collectRangeFiles(progressRangeTree *rtree.ProgressRangeTree, metaWriter *metautil.MetaWriter) error {

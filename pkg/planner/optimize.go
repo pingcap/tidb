@@ -113,7 +113,7 @@ func getPlanFromNonPreparedPlanCache(ctx context.Context, sctx sessionctx.Contex
 	}
 	cachedStmt := val.(*core.PlanCacheStmt)
 
-	cachedPlan, names, err := core.GetPlanFromSessionPlanCache(ctx, sctx, true, is, cachedStmt, paramExprs)
+	cachedPlan, names, err := core.GetPlanFromPlanCache(ctx, sctx, true, is, cachedStmt, paramExprs)
 	if err != nil {
 		return nil, nil, false, err
 	}
@@ -175,11 +175,23 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 		// Override the resource group if the hint is set.
 		if retErr == nil && sessVars.StmtCtx.StmtHints.HasResourceGroup {
 			if variable.EnableResourceControl.Load() {
-				sessVars.StmtCtx.ResourceGroupName = sessVars.StmtCtx.StmtHints.ResourceGroup
-				// if we are in a txn, should update the txn resource name to let the txn
-				// commit with the hint resource group.
-				if txn, err := sctx.Txn(false); err == nil && txn != nil && txn.Valid() {
-					kv.SetTxnResourceGroup(txn, sessVars.StmtCtx.ResourceGroupName)
+				checker := privilege.GetPrivilegeManager(sctx)
+				hasPriv := true
+				if checker != nil {
+					hasRgAdminPriv := checker.RequestDynamicVerification(sctx.GetSessionVars().ActiveRoles, "RESOURCE_GROUP_ADMIN", false)
+					hasRgUserPriv := checker.RequestDynamicVerification(sctx.GetSessionVars().ActiveRoles, "RESOURCE_GROUP_USER", false)
+					hasPriv = hasRgAdminPriv || hasRgUserPriv
+				}
+				if hasPriv {
+					sessVars.StmtCtx.ResourceGroupName = sessVars.StmtCtx.StmtHints.ResourceGroup
+					// if we are in a txn, should update the txn resource name to let the txn
+					// commit with the hint resource group.
+					if txn, err := sctx.Txn(false); err == nil && txn != nil && txn.Valid() {
+						kv.SetTxnResourceGroup(txn, sessVars.StmtCtx.ResourceGroupName)
+					}
+				} else {
+					err := plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("SUPER or RESOURCE_GROUP_ADMIN or RESOURCE_GROUP_USER")
+					sessVars.StmtCtx.AppendWarning(err)
 				}
 			} else {
 				err := infoschema.ErrResourceGroupSupportDisabled
@@ -282,7 +294,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 				core.DebugTraceTryBinding(pctx, binding.Hint)
 			}
 			hint.BindHint(stmtNode, binding.Hint)
-			curStmtHints, _, curWarns := hint.ParseStmtHints(binding.Hint.GetFirstTableHints(), setVarHintChecker, byte(kv.ReplicaReadFollower))
+			curStmtHints, _, curWarns := hint.ParseStmtHints(binding.Hint.GetStmtHints(), setVarHintChecker, byte(kv.ReplicaReadFollower))
 			sessVars.StmtCtx.StmtHints = curStmtHints
 			// update session var by hint /set_var/
 			for name, val := range sessVars.StmtCtx.StmtHints.SetVars {
@@ -523,7 +535,7 @@ func OptimizeExecStmt(ctx context.Context, sctx sessionctx.Context,
 	if !ok {
 		return nil, nil, errors.Errorf("invalid result plan type, should be Execute")
 	}
-	plan, names, err := core.GetPlanFromSessionPlanCache(ctx, sctx, false, is, exec.PrepStmt, exec.Params)
+	plan, names, err := core.GetPlanFromPlanCache(ctx, sctx, false, is, exec.PrepStmt, exec.Params)
 	if err != nil {
 		return nil, nil, err
 	}
