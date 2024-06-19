@@ -54,8 +54,8 @@ func TestBackupAndRestore(t *testing.T) {
 	tk.MustExec("insert into t1 values (3)")
 	tk.MustQuery("select count(*) from t1").Check(testkit.Rows("3"))
 
-	tk.MustExec("drop database if exists br")
-	tk.MustExec("create database br")
+	tk.MustExec("drop database if exists br02")
+	tk.MustExec("create database br02")
 	tk.MustExec("use br02")
 	tk.MustExec("create table t1(v int)")
 
