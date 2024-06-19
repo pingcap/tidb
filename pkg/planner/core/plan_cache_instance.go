@@ -140,7 +140,7 @@ func (pc *instancePlanCache) Evict(_ sessionctx.Context) (evicted bool) {
 	})
 	threshold := pc.calcEvictionThreshold(lastUsedTimes) // step 2
 	pc.foreach(func(prev, this *instancePCNode) bool {   // step 3
-		if this.lastUsed.Load().Before(threshold) { // evict this value
+		if !this.lastUsed.Load().After(threshold) { // if lastUsed<=threshold, evict this value
 			if prev.next.CompareAndSwap(this, this.next.Load()) { // have to use CAS since
 				pc.totCost.Sub(this.value.MemoryUsage()) //  it might have been updated by other thread
 				evicted = true
@@ -179,10 +179,10 @@ func (pc *instancePlanCache) calcEvictionThreshold(lastUsedTimes []time.Time) (t
 	sort.Slice(lastUsedTimes, func(i, j int) bool {
 		return lastUsedTimes[i].Before(lastUsedTimes[j])
 	})
-	if len(lastUsedTimes) <= int(numToEvict) {
+	if len(lastUsedTimes) < int(numToEvict) {
 		return
 	}
-	return lastUsedTimes[numToEvict]
+	return lastUsedTimes[numToEvict-1]
 }
 
 func (pc *instancePlanCache) foreach(callback func(prev, this *instancePCNode) (thisRemoved bool)) {

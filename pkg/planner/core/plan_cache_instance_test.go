@@ -101,6 +101,22 @@ func TestInstancePlanCacheBasic(t *testing.T) {
 	_hit(t, sctx, pc, 1, 0)
 	_hit(t, sctx, pc, 2, 0)
 	_hit(t, sctx, pc, 3, 0)
+
+	// empty head should be dropped after eviction
+	pc = NewInstancePlanCache(1, 500)
+	_put(sctx, pc, 1, 100, 0)
+	_put(sctx, pc, 2, 100, 0)
+	_put(sctx, pc, 3, 100, 0)
+	require.Equal(t, pc.MemUsage(sctx), int64(300))
+	pcImpl := pc.(*instancePlanCache)
+	numHeads := 0
+	pcImpl.heads.Range(func(k, v any) bool { numHeads++; return true })
+	require.Equal(t, numHeads, 3)
+	require.Equal(t, pc.Evict(sctx), true)
+	require.Equal(t, pc.MemUsage(sctx), int64(0))
+	numHeads = 0
+	pcImpl.heads.Range(func(k, v any) bool { numHeads++; return true })
+	require.Equal(t, numHeads, 0)
 }
 
 func TestInstancePlanCacheWithMatchOpts(t *testing.T) {
