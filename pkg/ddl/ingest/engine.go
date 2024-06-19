@@ -230,7 +230,7 @@ func (ei *engineInfo) newWriterContext(workerID int, writerCfg *backend.LocalWri
 		}
 		// Cache the local writer.
 		ei.writerCache.Store(workerID, lWrite)
-		ei.memRoot.Consume(writerCfg.Local.MemCacheSize)
+		ei.memRoot.ConsumeWithTag(encodeBackendTag(ei.jobID), writerCfg.Local.MemCacheSize)
 	}
 	wc := &writerContext{
 		ctx:    ei.ctx,
@@ -250,7 +250,6 @@ func (ei *engineInfo) closeWriters() error {
 					firstErr = err
 				}
 			}
-			ei.memRoot.Release(int64(ei.litCfg.TikvImporter.LocalWriterMemCacheSize))
 		}
 		ei.writerCache.Delete(wid)
 		ei.memRoot.Release(structSizeWriterCtx)
