@@ -824,12 +824,12 @@ delete from mysql.analyze_jobs;
 analyze table t;
 select job_info from mysql.analyze_jobs where job_info like '%analyze table%';
 job_info
-analyze table columns a, b, d with 256 buckets, 500 topn, 1 samplerate
+analyze table columns a, b, d with 256 buckets, 100 topn, 1 samplerate
 delete from mysql.analyze_jobs;
 analyze table t columns a, e;
 select job_info from mysql.analyze_jobs where job_info like '%analyze table%';
 job_info
-analyze table columns a, d with 256 buckets, 500 topn, 1 samplerate
+analyze table columns a, d with 256 buckets, 100 topn, 1 samplerate
 set @@session.tidb_analyze_skip_column_types = default;
 DROP TABLE IF EXISTS Issue34228;
 CREATE TABLE Issue34228 (id bigint NOT NULL, dt datetime NOT NULL) PARTITION BY RANGE COLUMNS(dt) (PARTITION p202201 VALUES LESS THAN ("2022-02-01"), PARTITION p202202 VALUES LESS THAN ("2022-03-01"));
