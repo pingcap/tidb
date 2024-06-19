@@ -447,6 +447,16 @@ func ParseStmtHints(hints []*ast.TableOptimizerHint,
 	return
 }
 
+// isStmtHint checks whether this hint is a statement-level hint.
+func isStmtHint(h *ast.TableOptimizerHint) bool {
+	switch h.HintName.L {
+	case "max_execution_time", "memory_quota", "resource_group":
+		return true
+	default:
+		return false
+	}
+}
+
 // IndexJoinHints stores hint information about index nested loop join.
 type IndexJoinHints struct {
 	INLJTables  []HintedTable

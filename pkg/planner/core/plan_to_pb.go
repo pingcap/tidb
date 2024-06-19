@@ -465,8 +465,6 @@ func (p *PhysicalIndexScan) ToPB(_ *base.BuildPBContext, _ kv.StoreType) (*tipb.
 			columns = append(columns, model.NewExtraHandleColInfo())
 		} else if col.ID == model.ExtraPhysTblID {
 			columns = append(columns, model.NewExtraPhysTblIDColInfo())
-		} else if col.ID == model.ExtraPidColID {
-			columns = append(columns, model.NewExtraPartitionIDColInfo())
 		} else {
 			columns = append(columns, FindColumnInfoByID(tableColumns, col.ID))
 		}

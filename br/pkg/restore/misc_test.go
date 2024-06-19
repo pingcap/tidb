@@ -15,15 +15,36 @@
 package restore_test
 
 import (
+	"context"
 	"math"
 	"testing"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/mock"
 	"github.com/pingcap/tidb/br/pkg/restore"
+	"github.com/pingcap/tidb/br/pkg/utiltest"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/stretchr/testify/require"
 )
+
+func TestTransferBoolToValue(t *testing.T) {
+	require.Equal(t, "ON", restore.TransferBoolToValue(true))
+	require.Equal(t, "OFF", restore.TransferBoolToValue(false))
+}
+
+func TestGetTableSchema(t *testing.T) {
+	m, err := mock.NewCluster()
+	require.Nil(t, err)
+	defer m.Stop()
+	dom := m.Domain
+
+	_, err = restore.GetTableSchema(dom, model.NewCIStr("test"), model.NewCIStr("tidb"))
+	require.Error(t, err)
+	tableInfo, err := restore.GetTableSchema(dom, model.NewCIStr("mysql"), model.NewCIStr("tidb"))
+	require.NoError(t, err)
+	require.Equal(t, model.NewCIStr("tidb"), tableInfo.Name)
+}
 
 func TestGetExistedUserDBs(t *testing.T) {
 	m, err := mock.NewCluster()
@@ -72,4 +93,31 @@ func TestGetExistedUserDBs(t *testing.T) {
 	dom.MockInfoCacheAndLoadInfoSchema(builder.Build(math.MaxUint64))
 	dbs = restore.GetExistedUserDBs(dom)
 	require.Equal(t, 2, len(dbs))
+}
+
+func TestGetTSWithRetry(t *testing.T) {
+	t.Run("PD leader is healthy:", func(t *testing.T) {
+		retryTimes := -1000
+		pDClient := utiltest.NewFakePDClient(nil, false, &retryTimes)
+		_, err := restore.GetTSWithRetry(context.Background(), pDClient)
+		require.NoError(t, err)
+	})
+
+	t.Run("PD leader failure:", func(t *testing.T) {
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/br/pkg/utils/set-attempt-to-one", "1*return(true)"))
+		defer func() {
+			require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/utils/set-attempt-to-one"))
+		}()
+		retryTimes := -1000
+		pDClient := utiltest.NewFakePDClient(nil, true, &retryTimes)
+		_, err := restore.GetTSWithRetry(context.Background(), pDClient)
+		require.Error(t, err)
+	})
+
+	t.Run("PD leader switch successfully", func(t *testing.T) {
+		retryTimes := 0
+		pDClient := utiltest.NewFakePDClient(nil, true, &retryTimes)
+		_, err := restore.GetTSWithRetry(context.Background(), pDClient)
+		require.NoError(t, err)
+	})
 }

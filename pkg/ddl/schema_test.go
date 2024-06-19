@@ -290,6 +290,7 @@ func TestSchemaWaitJob(t *testing.T) {
 		ddl.WithStore(store),
 		ddl.WithInfoCache(domain.InfoCache()),
 		ddl.WithLease(testLease),
+		ddl.WithSchemaLoader(domain),
 	)
 	err := d2.Start(pools.NewResourcePool(func() (pools.Resource, error) {
 		session := testkit.NewTestKit(t, store).Session()
