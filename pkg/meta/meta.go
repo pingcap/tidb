@@ -692,13 +692,7 @@ func (m *Meta) UpdateDatabase(dbInfo *model.DBInfo) error {
 		return errors.Trace(err)
 	}
 
-	if err := m.txn.HSet(mDBs, dbKey, data); err != nil {
-		return errors.Trace(err)
-	}
-	if m.needUpdateName {
-		return errors.Trace(m.CreateDatabaseName(dbInfo.Name.L, dbInfo.ID))
-	}
-	return nil
+	return m.txn.HSet(mDBs, dbKey, data)
 }
 
 // CreateTableOrView creates a table with tableInfo in database.
