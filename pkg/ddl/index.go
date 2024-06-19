@@ -1681,7 +1681,8 @@ func getLocalWriterConfig(indexCnt, writerCnt int) *backend.LocalWriterConfig {
 		return writerCfg
 	}
 
-	availMem := memRoot.MaxMemoryQuota() - memRoot.CurrentUsage()
+	// leave some room for objects overhead
+	availMem := memRoot.MaxMemoryQuota() - memRoot.CurrentUsage() - int64(10*size.MB)
 	memLimitPerWriter := availMem / int64(indexCnt) / int64(writerCnt)
 	memLimitPerWriter = min(memLimitPerWriter, litconfig.DefaultLocalWriterMemCacheSize)
 	writerCfg.Local.MemCacheSize = memLimitPerWriter
