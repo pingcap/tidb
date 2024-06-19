@@ -19,7 +19,6 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/util/kvcache"
 	"go.uber.org/atomic"
 )
 
@@ -44,7 +43,7 @@ func NewInstancePlanCache(softMemLimit, hardMemLimit int64) InstancePlanCache {
 }
 
 type instancePCNode struct {
-	value    any // the underlying value, which should be (*PlanCacheValue)
+	value    *PlanCacheValue
 	lastUsed atomic.Time
 	next     atomic.Pointer[instancePCNode]
 }
@@ -94,7 +93,7 @@ func (*instancePlanCache) getPlanFromList(sctx sessionctx.Context, headNode *ins
 		if opts != nil {
 			matchOpts = opts.(*PlanCacheMatchOpts)
 		}
-		if matchCachedPlan(sctx, node.value.(*PlanCacheValue), matchOpts) { // v.Plan is read-only, no need to lock
+		if matchCachedPlan(sctx, node.value, matchOpts) { // v.Plan is read-only, no need to lock
 			node.lastUsed.Store(time.Now()) // atomically update the lastUsed field
 			return node.value, true
 		}
@@ -143,7 +142,7 @@ func (pc *instancePlanCache) Evict(_ sessionctx.Context) (evicted bool) {
 	pc.foreach(func(prev, this *instancePCNode) bool {   // step 3
 		if this.lastUsed.Load().Before(threshold) { // evict this value
 			if prev.next.CompareAndSwap(this, this.next.Load()) { // have to use CAS since
-				pc.totCost.Sub(this.value.(*PlanCacheValue).MemoryUsage()) //  it might have been updated by other thread
+				pc.totCost.Sub(this.value.MemoryUsage()) //  it might have been updated by other thread
 				evicted = true
 				return true
 			}
@@ -211,9 +210,11 @@ func (pc *instancePlanCache) headNodes() ([]string, []*instancePCNode) {
 	return keys, headNodes
 }
 
-func (*instancePlanCache) createNode(value kvcache.Value) *instancePCNode {
+func (*instancePlanCache) createNode(value any) *instancePCNode {
 	node := new(instancePCNode)
-	node.value = value
+	if value != nil {
+		node.value = value.(*PlanCacheValue)
+	}
 	node.lastUsed.Store(time.Now())
 	return node
 }
