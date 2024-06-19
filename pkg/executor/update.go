@@ -204,15 +204,15 @@ func (e *UpdateExec) exec(ctx context.Context, _ *expression.Schema, row, newDat
 		if tbl.Meta().Name.L == "stock" {
 			str := ""
 			for _, col := range tbl.Meta().Columns {
-				str += fmt.Sprintf("col:%#v;", col)
+				str += fmt.Sprintf("col name:%v, ID:%d, ft:%v, offset:%v;", col.Name, col.ID, col.FieldType, col.Offset)
 			}
 			txn, err := e.Ctx().Txn(true)
 			if err != nil {
 				return err
 			}
 			is := e.Ctx().GetInfoSchema()
-			logutil.BgLogger().Warn(fmt.Sprintf("xxx update------------------------------------ ts:%v, ver:%v, tbl name:%s, id:%d, cols:%v, tbl:%p, is:%p",
-				is.SchemaMetaVersion(), txn.StartTS(), tbl.Meta().Name, tbl.Meta().ID, str, tbl, e.Ctx().GetInfoSchema()))
+			logutil.BgLogger().Warn(fmt.Sprintf("xxx update------------------------------------ ts:%v, ver:%v, tbl name:%s, id:%d, cols:%v, tbl:%p, err:%v",
+				is.SchemaMetaVersion(), txn.StartTS(), tbl.Meta().Name, tbl.Meta().ID, str, tbl, err))
 		}
 		if err1 == nil {
 			_, exist := e.updatedRowKeys[content.Start].Get(handle)

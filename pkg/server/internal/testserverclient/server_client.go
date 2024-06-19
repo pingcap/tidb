@@ -2804,6 +2804,15 @@ func MustExec(t *testing.T, ctx context.Context, conn *sql.Conn, sql string) {
 	require.NoError(t, err)
 }
 
+func MustQuery(t *testing.T, ctx context.Context, cli *TestServerClient, conn *sql.Conn, sql string) {
+	rs, err := conn.QueryContext(ctx, sql)
+	require.NoError(t, err)
+	if rs != nil {
+		cli.Rows(t, rs)
+		rs.Close()
+	}
+}
+
 type sqlWithErr struct {
 	sql       string
 	expectErr error
@@ -2843,15 +2852,10 @@ func (cli *TestServerClient) RunTestXxx(t *testing.T, dom *domain.Domain) {
 		sqls[1] = sqlWithErr{"select a, c, d from stock where (a, b) IN ((?, ?),(?, ?)) FOR UPDATE", nil, nil}
 		sqls[2] = sqlWithErr{"UPDATE stock SET c = ? WHERE a= ? AND b = 'a'", nil, nil}
 		sqls[3] = sqlWithErr{"UPDATE stock SET c = ?, d = 'z' WHERE a= ? AND b = 'b'", nil, nil}
-		// sqls[1] = sqlWithErr{"select a, c, d from stock where (a, b) IN ((1, 'a'),(2, 'b')) FOR UPDATE", nil, nil}
-		// sqls[2] = sqlWithErr{"UPDATE stock SET c = 11 WHERE a= 1 AND b = 'a'", nil, nil}
-		// sqls[3] = sqlWithErr{"UPDATE stock SET c = 12, d = 'z' WHERE a= 2 AND b = 'b'", nil, nil}
 		sqls[4] = sqlWithErr{"select * FROM stock;", nil, nil}
 		sqls[5] = sqlWithErr{"commit", nil, nil}
-		// dropColumnsSQL := "alter table stock drop column cct_1"
 		dropColumnsSQL := "alter table stock add column adc_1 smallint"
-		query := &expectQuery{sql: "admin check table stock;", rows: nil}
-		// query := &expectQuery{sql: "admin show ddl jobs;", rows: nil}
+		query := &expectQuery{sql: "select * from stock;", rows: []string{"1 a 101 x <nil>\n2 b 102 z <nil>"}}
 		runTestInSchemaState(t, conn, cli, dom, model.StateWriteReorganization, true, dropColumnsSQL, sqls, query)
 	})
 }
@@ -2950,17 +2954,19 @@ func runTestInSchemaState(
 			return
 		}
 		for i, sqlWithErr := range sqls {
-			logutil.BgLogger().Info("zzz--------------------------------------------------------------------------------------------------------- 3",
-				zap.Int("no.", i), zap.Int("len", len(sqls)), zap.String("sql", sqlWithErr.sql))
+			logutil.BgLogger().Info("zzz--------------------------------------------------------------------------------------------------------- 3, start",
+				zap.Int("no.", i+1), zap.Int("len", len(sqls)), zap.String("sql", sqlWithErr.sql), zap.Stringer("state", state))
 			if i == 0 {
 				_, err = sqlWithErr.stmt.ExecContext(ctx, 1, "a", 2, "b")
 				require.NoError(t, err)
-			} else if i == len(sqls)-1 {
-				MustExec(t, ctx, conn1, sqlWithErr.sql)
-			} else {
-				_, err = sqlWithErr.stmt.ExecContext(ctx, 10+i, i)
+			} else if i == 2 || i == 1 {
+				_, err = sqlWithErr.stmt.ExecContext(ctx, 100+i, i)
 				require.NoError(t, err)
+			} else {
+				MustQuery(t, ctx, cli, conn1, sqlWithErr.sql)
 			}
+			logutil.BgLogger().Info("zzz--------------------------------------------------------------------------------------------------------- 3, finish",
+				zap.Int("no.", i+1), zap.Int("len", len(sqls)), zap.String("sql", sqlWithErr.sql), zap.Stringer("state", state))
 		}
 	}
 	if isOnJobUpdated {
@@ -2971,6 +2977,16 @@ func runTestInSchemaState(
 	d.SetHook(callback)
 	MustExec(t, ctx, conn, "alter table stock drop column cct_1")
 	require.NoError(t, checkErr)
+	if expectQuery != nil {
+		rs, err := conn.QueryContext(ctx, expectQuery.sql)
+		require.NoError(t, err)
+		if expectQuery.rows == nil {
+			require.Nil(t, rs)
+		} else {
+			cli.CheckRows(t, rs, expectQuery.rows[0])
+		}
+	}
+	logutil.BgLogger().Warn("xxx------------------------------------------------------------------- finish")
 	d.SetHook(originalCallback)
 }
 

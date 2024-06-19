@@ -16,6 +16,7 @@ package executor
 
 import (
 	"context"
+	"fmt"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -35,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/collate"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/tracing"
 )
@@ -159,6 +161,19 @@ func updateRecord(
 				handleChanged = true
 			}
 		}
+	}
+
+	if t.Meta().Name.L == "stock" {
+		str := ""
+		for _, col := range t.Meta().Columns {
+			str += fmt.Sprintf("col name:%v, ID:%d, ft:%v, offset:%v;", col.Name, col.ID, col.FieldType, col.Offset)
+		}
+		txn, err := sctx.GetTableCtx().Txn(true)
+		if err != nil {
+			return false, err
+		}
+		logutil.BgLogger().Warn(fmt.Sprintf("xxx update, write------------------------------------ ts:%v, tbl name:%s, id:%d, cols:%v",
+			txn.StartTS(), t.Meta().Name, t.Meta().ID, str))
 	}
 
 	// If handle changed, remove the old then add the new record, otherwise update the record.

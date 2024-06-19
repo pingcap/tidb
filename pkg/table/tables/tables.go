@@ -622,7 +622,7 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx table.MutateContext
 		for _, col := range t.Meta().Columns {
 			str += fmt.Sprintf("col ID:%d, offset:%d, type:%v, state:%s; ", col.ID, col.Offset, col.GetType(), col.State)
 		}
-		logutil.BgLogger().Warn(fmt.Sprintf("xxx update------------------------------------ ts:%v, tbl name:%s, id:%d, cols:%v colIDs:%v, row:%v, tbl:%p, oldData:%v, newData:%v, nonPublicColStr:%v",
+		logutil.BgLogger().Warn(fmt.Sprintf("xxx update, tables ------------------------------------ ts:%v, tbl name:%s, id:%d, cols:%v colIDs:%v, row:%v, tbl:%p, oldData:%v, newData:%v, nonPublicColStr:%v",
 			txn.StartTS(), t.Meta().Name, t.Meta().ID, str, colIDs, row, t, oldData, newData, nonPublicColStr))
 	}
 

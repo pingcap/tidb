@@ -17,8 +17,10 @@ package servertestkit
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/domain"
@@ -54,7 +56,6 @@ func CreateTidbTestSuite(t *testing.T) *TidbTestSuite {
 	cfg.Status.StatusPort = 0
 	cfg.Status.RecordDBLabel = true
 	cfg.Performance.TCPKeepAlive = true
-	cfg.Lease = "45s"
 	return CreateTidbTestSuiteWithCfg(t, cfg)
 }
 
@@ -67,7 +68,9 @@ func CreateTidbTestSuiteWithCfg(t *testing.T, cfg *config.Config) *TidbTestSuite
 	ts.Store, err = mockstore.NewMockStore()
 	session.DisableStats4Test()
 	require.NoError(t, err)
+	session.SetSchemaLease(20 * time.Second)
 	ts.Domain, err = session.BootstrapSession(ts.Store)
+	fmt.Printf("xxx------------------------------------------- lease:%v\n", ts.Domain.DDL().GetLease())
 	require.NoError(t, err)
 	ts.Tidbdrv = srv.NewTiDBDriver(ts.Store)
 

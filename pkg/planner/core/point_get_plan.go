@@ -1233,7 +1233,7 @@ func tryWhereIn2BatchPointGet(ctx base.PlanContext, selStmt *ast.SelectStmt) *Ba
 			return nil
 		}
 		if txn != nil && txn.Valid() {
-			logutil.BgLogger().Warn(fmt.Sprintf("xxx builder, in point get plan------------------------------------ ver:%v, ts:%d, tbl name:%s, id:%d, cols:%v, tbl:%p, ctx:%p",
+			logutil.BgLogger().Warn(fmt.Sprintf("xxx builder, build in point get plan------------------------------------ ver:%v, ts:%d, tbl name:%s, id:%d, cols:%v, tbl:%p, ctx:%p",
 				ctx.GetInfoSchema().SchemaMetaVersion(), txn.StartTS(), tbl.Name, tbl.ID, str, tbl, ctx.GetInfoSchema()))
 		}
 	}
@@ -1331,10 +1331,16 @@ func tryPointGetPlan(ctx base.PlanContext, selStmt *ast.SelectStmt, check bool) 
 	if tblName == nil {
 		return nil
 	}
-	tbl := tblName.TableInfo
-	if tbl == nil {
+	// tbl := tblName.TableInfo
+	// if tbl == nil {
+	// 	return nil
+	// }
+	is := ctx.GetInfoSchema().(infoschema.InfoSchema)
+	t, _ := is.TableByName(tblName.Schema, tblName.Name)
+	if t == nil {
 		return nil
 	}
+	tbl := t.Meta()
 	if tbl.Name.L == "stock" {
 		str := ""
 		for _, col := range tbl.Columns {
@@ -1345,7 +1351,7 @@ func tryPointGetPlan(ctx base.PlanContext, selStmt *ast.SelectStmt, check bool) 
 			return nil
 		}
 		if txn != nil && txn.Valid() {
-			logutil.BgLogger().Warn(fmt.Sprintf("xxx builder, point get plan------------------------------------ ver:%v, ts:%d, tbl name:%s, id:%d, cols:%v, tbl:%p, ctx:%p",
+			logutil.BgLogger().Warn(fmt.Sprintf("xxx builder, build point get plan------------------------------------ ver:%v, ts:%d, tbl name:%s, id:%d, cols:%v, tbl:%p, ctx:%p",
 				ctx.GetInfoSchema().SchemaMetaVersion(), txn.StartTS(), tbl.Name, tbl.ID, str, tbl, ctx.GetInfoSchema()))
 		}
 	}
@@ -1993,7 +1999,7 @@ func buildPointUpdatePlan(ctx base.PlanContext, pointPlan base.PhysicalPlan, dbN
 			str1 += fmt.Sprintf("col ID:%d, offset:%d, type:%v, state:%s; ", col.ID, col.Offset, col.GetType(), col.State)
 		}
 		if txn != nil && txn.Valid() {
-			logutil.BgLogger().Warn(fmt.Sprintf("xxx builder, point get------------------------------------ ver:%v, ver:%v, ts:%d, tbl name:%s, cols:%v, tbl:%p, cols:%v, t:%p, is:%p",
+			logutil.BgLogger().Warn(fmt.Sprintf("xxx builder, point get, build update plan------------------------------------ ver:%v, ver:%v, ts:%d, tbl name:%s, cols:%v, tbl:%p, cols:%v, t:%p, is:%p",
 				is.SchemaMetaVersion(), pointPlan.SCtx().GetInfoSchema().SchemaMetaVersion(), txn.StartTS(), tbl.Name, str, tbl, str1, t, ctx.GetInfoSchema()))
 		}
 	}
