@@ -185,6 +185,8 @@ func (s *jobScheduler) close() {
 }
 
 func (s *jobScheduler) getJob(se *sess.Session, tp jobType) (*model.Job, error) {
+	defer s.runningJobs.resetAllPending()
+
 	not := "not"
 	label := "get_job_general"
 	if tp == jobTypeReorg {
@@ -240,7 +242,6 @@ func (s *jobScheduler) getJob(se *sess.Session, tp jobType) (*model.Job, error) 
 			s.runningJobs.addPending(involving)
 			return nil, errors.Trace(err)
 		}
-		s.runningJobs.resetAllPending()
 		return &job, nil
 	}
 	return nil, nil
