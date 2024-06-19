@@ -130,7 +130,7 @@ func (p *brieTaskProgress) Close() {
 	current := atomic.LoadInt64(&p.current)
 	total := atomic.LoadInt64(&p.total)
 	cmd := p.cmd
-	if current < total && !strings.HasSuffix(p.cmd,"Canceled") {
+	if current < total && !strings.HasSuffix(p.cmd, "Canceled") {
 		cmd = fmt.Sprintf("%s Canceled", cmd)
 		p.cmd = cmd
 	}
@@ -149,7 +149,7 @@ func (p *brieTaskProgress) Close() {
 func (p *brieTaskProgress) cleanup(finished bool) {
 	p.lock.Lock()
 	cmd := p.cmd
-	if !finished && p.current < p.total && !strings.HasSuffix(p.cmd,"Canceled") {
+	if !finished && p.current < p.total && !strings.HasSuffix(p.cmd, "Canceled") {
 		cmd = fmt.Sprintf("%s Canceled", cmd)
 		p.cmd = cmd
 	}
@@ -286,14 +286,14 @@ func (bq *brieQueue) cleanupTask(taskID uint64) bool {
 	}
 	i := item.(*brieQueueItem)
 
-	log.Debug("Cleaning BRIE job", zap.Uint64("ID", i.info.id),zap.String("message", i.info.message))
+	log.Debug("Cleaning BRIE job", zap.Uint64("ID", i.info.id), zap.String("message", i.info.message))
 	i.cancel()
 	i.progress.Close()
 
 	// FIXME: this is a hack way, we assume that as long as message is empty, the job is finished.
 	i.progress.lock.Lock()
 	finished := false
-	if i.info.message == "" && strings.HasSuffix(i.progress.cmd,"Canceled") {
+	if i.info.message == "" && strings.HasSuffix(i.progress.cmd, "Canceled") {
 		i.progress.cmd = i.progress.cmd[:len(i.progress.cmd)-len("Canceled")]
 		finished = true
 	}
@@ -733,7 +733,7 @@ func (e *BRIEExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 	e.info.finishTime = types.CurrentTime(mysql.TypeDatetime)
 	if err != nil {
-		e.info.message = err.Error() 
+		e.info.message = err.Error()
 		return err
 	}
 
