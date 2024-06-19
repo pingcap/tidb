@@ -70,7 +70,7 @@ type Context struct {
 	sessionVars   *variable.SessionVars
 	tblctx        *tbctximpl.TableContextImpl
 	cancel        context.CancelFunc
-	pcache        sessionctx.PlanCache
+	pcache        sessionctx.SessionPlanCache
 	level         kvrpcpb.DiskFullOpt
 	inSandBoxMode bool
 	isDDLOwner    bool
@@ -384,7 +384,7 @@ func (*Context) SetGlobalSysVar(_ sessionctx.Context, name string, value string)
 }
 
 // GetSessionPlanCache implements the sessionctx.Context interface.
-func (c *Context) GetSessionPlanCache() sessionctx.PlanCache {
+func (c *Context) GetSessionPlanCache() sessionctx.SessionPlanCache {
 	return c.pcache
 }
 
