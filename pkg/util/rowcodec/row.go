@@ -188,14 +188,6 @@ func (r *row) toBytes(buf []byte) []byte {
 		buf = append(buf, u16SliceToBytes(r.offsets)...)
 	}
 	buf = append(buf, r.data...)
-	// it's the caller's responsibility to set the checksum data.
-	if r.hasChecksum() {
-		buf = append(buf, r.checksumHeader)
-		buf = binary.LittleEndian.AppendUint32(buf, r.checksum1)
-		if r.hasExtraChecksum() {
-			buf = binary.LittleEndian.AppendUint32(buf, r.checksum2)
-		}
-	}
 	return buf
 }
 
