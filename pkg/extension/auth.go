@@ -6,7 +6,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/privilege/conn"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"slices"
 )
 
@@ -103,7 +102,6 @@ type VerifyDynamicPrivRequest struct {
 // validateAuthPlugin validates the auth plugin functions and attributes.
 func validateAuthPlugin(m *Manifest) error {
 	pluginNames := make(map[string]bool)
-	defaultAuthPlugins := variable.GetSysVar(variable.DefaultAuthPlugin).PossibleValues
 	// Validate required functions for the auth plugins
 	for pluginName, p := range m.authPlugins {
 		if p.Name == "" {
@@ -113,7 +111,7 @@ func validateAuthPlugin(m *Manifest) error {
 			return errors.Errorf("auth plugin name %s has already been registered", p.Name)
 		}
 		pluginNames[p.Name] = true
-		if slices.Contains(defaultAuthPlugins, p.Name) {
+		if slices.Contains(mysql.DefaultAuthPlugins, p.Name) {
 			return errors.Errorf("auth plugin name %s is a reserved name for default auth plugins", p.Name)
 		}
 		if p.AuthenticateUser == nil {
