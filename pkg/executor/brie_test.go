@@ -39,10 +39,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-const (
-	skipTestTemporary = true
-)
-
 func TestGlueGetVersion(t *testing.T) {
 	g := tidbGlue{}
 	version := g.GetVersion()
@@ -76,9 +72,6 @@ func fetchShowBRIEResult(t *testing.T, e *ShowExec, brieColTypes []*types.FieldT
 }
 
 func TestFetchShowBRIE(t *testing.T) {
-	if skipTestTemporary {
-		t.Skip("Skip temporarily")
-	}
 	failpoint.Enable("github.com/pingcap/tidb/pkg/executor/ignoreMetaTable", "return()")
 	defer failpoint.Disable("github.com/pingcap/tidb/pkg/executor/ignoreMetaTable")
 

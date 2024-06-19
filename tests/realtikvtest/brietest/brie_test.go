@@ -29,10 +29,6 @@ import (
 	"go.uber.org/zap/zapcore"
 )
 
-const (
-	skipTestTemporary = true
-)
-
 func makeTempDirForBackup(t *testing.T) string {
 	d, err := os.MkdirTemp(os.TempDir(), "briesql-*")
 	require.NoError(t, err)
@@ -43,9 +39,6 @@ func makeTempDirForBackup(t *testing.T) string {
 }
 
 func TestShowBackupQuery(t *testing.T) {
-	if skipTestTemporary {
-		t.Skip("Skip temporarily")
-	}
 	tk := initTestKit(t)
 	executor.ResetGlobalBRIEQueueForTest()
 	tmp := makeTempDirForBackup(t)
@@ -71,9 +64,6 @@ func TestShowBackupQuery(t *testing.T) {
 }
 
 func TestShowBackupQueryRedact(t *testing.T) {
-	if skipTestTemporary {
-		t.Skip("Skip temporarily")
-	}
 	tk := initTestKit(t)
 
 	executor.ResetGlobalBRIEQueueForTest()
@@ -108,9 +98,6 @@ func TestShowBackupQueryRedact(t *testing.T) {
 }
 
 func TestCancel(t *testing.T) {
-	if skipTestTemporary {
-		t.Skip("Skip temporarily")
-	}
 	tk := initTestKit(t)
 	executor.ResetGlobalBRIEQueueForTest()
 	tk.MustExec("use test;")
