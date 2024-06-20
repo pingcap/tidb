@@ -17,6 +17,9 @@ package join
 import (
 	"sync/atomic"
 	"unsafe"
+
+	"github.com/pingcap/tidb/pkg/util/memory"
+	"github.com/pingcap/tidb/pkg/util/serialization"
 )
 
 type subTable struct {
@@ -31,6 +34,14 @@ func (st *subTable) lookup(hashValue uint64) unsafe.Pointer {
 	return st.hashTable[hashValue&st.posMask]
 }
 
+func (st *subTable) getAllRowTablesMemoryUsage() int64 {
+	return st.rowData.getTotalMemoryUsage()
+}
+
+func (st *subTable) getTotalMemoryUsage() int64 {
+	return st.rowData.getTotalMemoryUsage() + int64(len(st.hashTable))*serialization.UnsafePointerLen
+}
+
 func nextPowerOfTwo(value uint64) uint64 {
 	ret := uint64(2)
 	round := 1
@@ -43,7 +54,7 @@ func nextPowerOfTwo(value uint64) uint64 {
 	return ret
 }
 
-func newSubTable(table *rowTable) *subTable {
+func newSubTable(table *rowTable, tracker *memory.Tracker) *subTable {
 	ret := &subTable{
 		rowData:          table,
 		isHashTableEmpty: false,
@@ -56,6 +67,9 @@ func newSubTable(table *rowTable) *subTable {
 		ret.isHashTableEmpty = true
 	}
 	hashTableLength := max(nextPowerOfTwo(table.validKeyCount()), uint64(1024))
+	if tracker != nil {
+		tracker.Consume(int64(hashTableLength) * serialization.UnsafePointerLen)
+	}
 	ret.hashTable = make([]unsafe.Pointer, hashTableLength)
 	ret.posMask = hashTableLength - 1
 	return ret
@@ -104,6 +118,14 @@ type hashTableV2 struct {
 	partitionNumber uint64
 }
 
+func (ht *hashTableV2) getAllMemoryUsage() int64 {
+	totalMemoryUsage := int64(0)
+	for _, table := range ht.tables {
+		totalMemoryUsage += table.getTotalMemoryUsage()
+	}
+	return totalMemoryUsage
+}
+
 type rowPos struct {
 	subTableIndex   int
 	rowSegmentIndex int
@@ -146,7 +168,7 @@ func newJoinHashTableForTest(partitionedRowTables []*rowTable) *hashTableV2 {
 		partitionNumber: uint64(len(partitionedRowTables)),
 	}
 	for i, rowTable := range partitionedRowTables {
-		jht.tables[i] = newSubTable(rowTable)
+		jht.tables[i] = newSubTable(rowTable, nil)
 	}
 	return jht
 }

@@ -113,11 +113,15 @@ func (h *hashJoinSpillHelper) isPartitionSpilled(partID int) bool {
 
 // TODO write a specific test for this function
 // TODO refine this function
-func (h *hashJoinSpillHelper) choosePartitionsToSpill() ([]int, int64) {
+func (h *hashJoinSpillHelper) choosePartitionsToSpill(isInBuildStage bool) ([]int, int64) {
 	partitionNum := h.hashJoinExec.PartitionNumber
 	partitionsMemoryUsage := make([]int64, partitionNum)
 	for i := 0; i < partitionNum; i++ {
-		partitionsMemoryUsage[i] = h.hashJoinExec.hashTableContext.getPartitionMemoryUsage(i)
+		if isInBuildStage {
+			partitionsMemoryUsage[i] = h.hashJoinExec.hashTableContext.getPartitionMemoryUsageInBuildStage(i)
+		} else {
+			partitionsMemoryUsage[i] = h.hashJoinExec.hashTableContext.getPartitionMemoryUsageInProbeStage(i)
+		}
 	}
 
 	spilledPartitions := h.hashJoinExec.HashJoinCtxV2.hashTableContext.getSpilledPartitions()
@@ -190,9 +194,12 @@ func (h *hashJoinSpillHelper) spillBuildSideOnePartition(partID int, segments []
 		inDisk := chunk.NewDataInDiskByChunks(h.buildSpillChkFieldTypes)
 		inDisk.GetDiskTracker().AttachTo(h.hashJoinExec.diskTracker)
 		h.buildRowsInDisk[partID] = inDisk
+
 		inDisk = chunk.NewDataInDiskByChunks(h.probeFieldTypes)
 		inDisk.GetDiskTracker().AttachTo(h.hashJoinExec.diskTracker)
 		h.probeRowsInDisk[partID] = inDisk
+
+		h.hashJoinExec.hashTableContext.setPartitionSpilled(partID)
 	}
 
 	// Get row bytes from segment and spill them
@@ -234,7 +241,7 @@ func (h *hashJoinSpillHelper) initIfNeed() {
 	}
 }
 
-func (h *hashJoinSpillHelper) spillInBuildStage() error {
+func (h *hashJoinSpillHelper) spillBuildRows(isInBuildStage bool) error {
 	h.setInSpilling()
 	defer h.cond.Broadcast()
 	defer h.setNotSpilled()
@@ -246,7 +253,7 @@ func (h *hashJoinSpillHelper) spillInBuildStage() error {
 
 	h.initIfNeed()
 
-	partitionsNeedSpill, totalReleasedMemory := h.choosePartitionsToSpill()
+	partitionsNeedSpill, totalReleasedMemory := h.choosePartitionsToSpill(isInBuildStage)
 
 	workerNum := len(h.hashJoinExec.BuildWorkers)
 	errChannel := make(chan error, workerNum)
@@ -266,20 +273,25 @@ func (h *hashJoinSpillHelper) spillInBuildStage() error {
 
 			spilledSegments := make([]*rowTableSegment, 0)
 
-			// finalize current segment of partition `partID` of each worker
-			for i := 0; i < workerNum; i++ {
-				worker := h.hashJoinExec.BuildWorkers[i]
-				builder := worker.builder
-				if builder == nil {
-					// TODO check that test could reach to here
-					continue
+			if isInBuildStage {
+				// finalize current segment of partition `partID` of each worker
+				for i := 0; i < workerNum; i++ {
+					worker := h.hashJoinExec.BuildWorkers[i]
+					builder := worker.builder
+					if builder == nil {
+						// TODO check that test could reach to here
+						continue
+					}
+					startPosInRawData := builder.startPosInRawData[partID]
+					if len(startPosInRawData) > 0 {
+						worker.HashJoinCtx.hashTableContext.finalizeCurrentSeg(i, partID, worker.builder, false)
+					}
+					spilledSegments = append(spilledSegments, worker.getSegments(partID)...)
+					worker.clearSegments(partID)
 				}
-				startPosInRawData := builder.startPosInRawData[partID]
-				if len(startPosInRawData) > 0 {
-					worker.HashJoinCtx.hashTableContext.finalizeCurrentSeg(i, partID, worker.builder, false)
-				}
-				spilledSegments = append(spilledSegments, worker.getSegments(partID)...)
-				worker.clearSegments(partID)
+			} else {
+				spilledSegments = h.hashJoinExec.hashTableContext.getSegments(-1, partID)
+				h.hashJoinExec.hashTableContext.clearSegments(-1, partID)
 			}
 
 			err := h.spillBuildSideOnePartition(partID, spilledSegments)

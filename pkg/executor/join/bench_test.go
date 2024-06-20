@@ -26,7 +26,7 @@ func BenchmarkHashTableBuild(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
-	subTable := newSubTable(rowTable)
+	subTable := newSubTable(rowTable, nil)
 	segmentCount := len(rowTable.segments)
 	b.StartTimer()
 	subTable.build(0, segmentCount)
@@ -38,7 +38,7 @@ func BenchmarkHashTableConcurrentBuild(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
-	subTable := newSubTable(rowTable)
+	subTable := newSubTable(rowTable, nil)
 	segmentCount := len(rowTable.segments)
 	buildThreads := 3
 	wg := util.WaitGroupWrapper{}

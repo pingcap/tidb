@@ -160,22 +160,34 @@ func (fetcher *probeSideTupleFetcherBase) getProbeSideResource(shouldLimitProbeF
 
 // fetchProbeSideChunks get chunks from fetches chunks from the big table in a background goroutine
 // and sends the chunks to multiple channels which will be read by multiple join workers.
-func (fetcher *probeSideTupleFetcherBase) fetchProbeSideChunks(ctx context.Context, fetcherAndWorkerSyncer *sync.WaitGroup, maxChunkSize int, isBuildEmpty isBuildSideEmpty, canSkipIfBuildEmpty, needScanAfterProbeDone, shouldLimitProbeFetchSize bool, hashJoinCtx *hashJoinCtxBase) {
+func (fetcher *probeSideTupleFetcherBase) fetchProbeSideChunks(ctx context.Context, fetcherAndWorkerSyncer *sync.WaitGroup, spillHelper *hashJoinSpillHelper, maxChunkSize int, isBuildEmpty isBuildSideEmpty, canSkipIfBuildEmpty, needScanAfterProbeDone, shouldLimitProbeFetchSize bool, hashJoinCtx *hashJoinCtxBase) {
 	defer func() {
-		// TODO check if we need to spill more partitions
+		if spillHelper != nil {
+			spillHelper.hashJoinExec.hashTableContext.releaseAllMemoryUsage()
+		}
 	}()
 
 	hasWaitedForBuild := false
+
 	// TODO add a case that first spill is triggered in probe stage
 	// TODO add a case that first spill is triggered in build stage and spill is triggered again in probe stage
+
 	for {
-		// TODO check if we need to spill more partitions
+		err := checkSpillAndExecute(fetcherAndWorkerSyncer, spillHelper, false)
+		if err != nil {
+			hashJoinCtx.joinResultCh <- &hashjoinWorkerResult{
+				err: err,
+			}
+			return
+		}
+
 		probeSideResource := fetcher.getProbeSideResource(shouldLimitProbeFetchSize, maxChunkSize, hashJoinCtx)
 		if probeSideResource == nil {
 			return
 		}
 		probeSideResult := probeSideResource.chk
-		err := exec.Next(ctx, fetcher.ProbeSideExec, probeSideResult)
+
+		err = exec.Next(ctx, fetcher.ProbeSideExec, probeSideResult)
 		failpoint.Inject("ConsumeRandomPanic", nil)
 		if err != nil {
 			hashJoinCtx.joinResultCh <- &hashjoinWorkerResult{
@@ -183,6 +195,7 @@ func (fetcher *probeSideTupleFetcherBase) fetchProbeSideChunks(ctx context.Conte
 			}
 			return
 		}
+
 		if !hasWaitedForBuild {
 			failpoint.Inject("issue30289", func(val failpoint.Value) {
 				if val.(bool) {
@@ -201,9 +214,7 @@ func (fetcher *probeSideTupleFetcherBase) fetchProbeSideChunks(ctx context.Conte
 			return
 		}
 
-		if fetcherAndWorkerSyncer != nil {
-			fetcherAndWorkerSyncer.Add(1)
-		}
+		syncerAdd(fetcherAndWorkerSyncer)
 		probeSideResource.dest <- probeSideResult
 	}
 }
@@ -241,13 +252,26 @@ func syncerDone(syncer *sync.WaitGroup) {
 	}
 }
 
+func checkSpillAndExecute(fetcherAndWorkerSyncer *sync.WaitGroup, spillHelper *hashJoinSpillHelper, isInBuildStage bool) error {
+	if fetcherAndWorkerSyncer == nil {
+		return nil
+	}
+
+	if spillHelper.isInSpilling() {
+		// Wait for the stop of all workers
+		fetcherAndWorkerSyncer.Wait()
+		return spillHelper.spillBuildRows(isInBuildStage)
+	}
+	return nil
+}
+
 // fetchBuildSideRows fetches all rows from build side executor, and append them
 // to e.buildSideResult.
 func (w *buildWorkerBase) fetchBuildSideRows(ctx context.Context, hashJoinCtx *hashJoinCtxBase, fetcherAndWorkerSyncer *sync.WaitGroup, workerWaiter *sync.WaitGroup, spillHelper *hashJoinSpillHelper, chkCh chan<- *chunk.Chunk, errCh chan<- error, doneCh <-chan struct{}) {
 	defer func() {
 		if workerWaiter != nil {
 			// Try to spill remaining rows if spill is triggered
-			err := w.checkSpillAndExecute(fetcherAndWorkerSyncer, spillHelper)
+			err := checkSpillAndExecute(fetcherAndWorkerSyncer, spillHelper, true)
 			errCh <- errors.Trace(err)
 		}
 
@@ -280,12 +304,10 @@ func (w *buildWorkerBase) fetchBuildSideRows(ctx context.Context, hashJoinCtx *h
 
 	sessVars := hashJoinCtx.SessCtx.GetSessionVars()
 	for {
-		if fetcherAndWorkerSyncer != nil {
-			err := w.checkSpillAndExecute(fetcherAndWorkerSyncer, spillHelper)
-			if err != nil {
-				errCh <- errors.Trace(err)
-				return
-			}
+		err := checkSpillAndExecute(fetcherAndWorkerSyncer, spillHelper, true)
+		if err != nil {
+			errCh <- errors.Trace(err)
+			return
 		}
 
 		if hashJoinCtx.finished.Load() {
@@ -323,15 +345,6 @@ func (w *buildWorkerBase) fetchBuildSideRows(ctx context.Context, hashJoinCtx *h
 		case chkCh <- chk:
 		}
 	}
-}
-
-func (w *buildWorkerBase) checkSpillAndExecute(fetcherAndWorkerSyncer *sync.WaitGroup, spillHelper *hashJoinSpillHelper) error {
-	if spillHelper.isInSpilling() {
-		// Wait for the stop of all workers
-		fetcherAndWorkerSyncer.Wait()
-		return spillHelper.spillInBuildStage()
-	}
-	return nil
 }
 
 // probeChkResource stores the result of the join probe side fetch worker,

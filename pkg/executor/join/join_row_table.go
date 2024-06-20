@@ -224,6 +224,22 @@ type rowTable struct {
 	segments []*rowTableSegment
 }
 
+func (rt *rowTable) getTotalMemoryUsage() int64 {
+	totalMemoryUsage := int64(0)
+	for _, seg := range rt.segments {
+		totalMemoryUsage += seg.totalUsedBytes()
+	}
+	return totalMemoryUsage
+}
+
+func (rt *rowTable) getSegments() []*rowTableSegment {
+	return rt.segments
+}
+
+func (rt *rowTable) clearSegments() {
+	rt.segments = nil
+}
+
 // used for test
 func (rt *rowTable) getRowStart(rowIndex int) unsafe.Pointer {
 	for segIndex := 0; segIndex < len(rt.segments); segIndex++ {

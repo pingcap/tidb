@@ -54,6 +54,15 @@ type hashTableContext struct {
 	spilledPartitions []bool
 }
 
+func (ht *hashTableContext) releaseAllMemoryUsage() {
+	// Segments in rowTables and hashTable are the same,
+	// so it's needless to get memory usage in rowTables.
+	totalMemoryUsage := ht.hashTable.getAllMemoryUsage()
+	ht.rowTables = nil
+	ht.hashTable = nil
+	ht.memoryTracker.Consume(-totalMemoryUsage)
+}
+
 func (htc *hashTableContext) reset() {
 	htc.rowTables = nil
 	htc.hashTable = nil
@@ -85,7 +94,7 @@ func (htc *hashTableContext) setPartitionSpilled(partID int) {
 	htc.spilledPartitions[partID] = true
 }
 
-func (htc *hashTableContext) getPartitionMemoryUsage(partID int) int64 {
+func (htc *hashTableContext) getPartitionMemoryUsageInBuildStage(partID int) int64 {
 	totalMemoryUsage := int64(0)
 	for _, tables := range htc.rowTables {
 		totalMemoryUsage += tables[partID].getTotalUsedBytesInSegments()
@@ -93,12 +102,25 @@ func (htc *hashTableContext) getPartitionMemoryUsage(partID int) int64 {
 	return totalMemoryUsage
 }
 
+func (htc *hashTableContext) getPartitionMemoryUsageInProbeStage(partID int) int64 {
+	return htc.hashTable.tables[partID].getAllRowTablesMemoryUsage()
+}
+
 func (htc *hashTableContext) getSegments(workerID, partitionID int) []*rowTableSegment {
-	return htc.rowTables[workerID][partitionID].segments
+	if workerID == -1 {
+		return htc.hashTable.tables[partitionID].rowData.getSegments()
+	}
+
+	return htc.rowTables[workerID][partitionID].getSegments()
 }
 
 func (htc *hashTableContext) clearSegments(workerID, partitionID int) {
-	htc.rowTables[workerID][partitionID].segments = htc.rowTables[workerID][partitionID].segments[:0]
+	if workerID == -1 {
+		htc.hashTable.tables[partitionID].rowData.clearSegments()
+		htc.hashTable.tables[partitionID].hashTable = nil
+		return
+	}
+	htc.rowTables[workerID][partitionID].clearSegments()
 }
 
 func (htc *hashTableContext) getCurrentRowSegment(workerID, partitionID int, tableMeta *TableMeta, allowCreate bool) *rowTableSegment {
@@ -147,7 +169,7 @@ func (htc *hashTableContext) mergeRowTablesToHashTable(tableMeta *TableMeta, par
 		}
 	}
 	for i := 0; i < partitionNumber; i++ {
-		htc.hashTable.tables[i] = newSubTable(rowTables[i])
+		htc.hashTable.tables[i] = newSubTable(rowTables[i], htc.memoryTracker)
 	}
 	htc.rowTables = nil
 	return totalSegmentCnt
@@ -427,6 +449,7 @@ func (e *HashJoinV2Exec) fetchAndProbeHashTable(ctx context.Context) {
 		e.ProbeSideTupleFetcher.fetchProbeSideChunks(
 			ctx,
 			fetcherAndWorkerSyncer,
+			e.spillHelper,
 			e.MaxChunkSize(),
 			func() bool { return e.ProbeSideTupleFetcher.hashTableContext.hashTable.isHashTableEmpty() },
 			e.ProbeSideTupleFetcher.canSkipProbeIfHashTableIsEmpty,
@@ -434,6 +457,7 @@ func (e *HashJoinV2Exec) fetchAndProbeHashTable(ctx context.Context) {
 			e.ProbeSideTupleFetcher.shouldLimitProbeFetchSize(),
 			&e.ProbeSideTupleFetcher.hashJoinCtxBase)
 	}
+
 	e.workerWg.RunWithRecover(fetchProbeSideChunksFunc, e.ProbeSideTupleFetcher.handleProbeSideFetcherPanic)
 
 	for i := uint(0); i < e.Concurrency; i++ {
@@ -538,6 +562,8 @@ func (w *ProbeWorkerV2) runJoinWorker(fetcherAndWorkerSyncer *sync.WaitGroup) {
 			setMaxValue(&w.HashJoinCtx.stats.maxFetchAndProbe, int64(t))
 		}()
 	}
+
+	// TODO add random failpoint to slow some workers
 
 	var (
 		probeSideResult *chunk.Chunk

@@ -92,27 +92,27 @@ func createRowTable(rows int) (*rowTable, error) {
 
 func TestHashTableSize(t *testing.T) {
 	rowTable := createMockRowTable(10, 5, true)
-	subTable := newSubTable(rowTable)
+	subTable := newSubTable(rowTable, nil)
 	// min hash table size is 1024
 	require.Equal(t, 1024, len(subTable.hashTable))
 	rowTable = createMockRowTable(1024, 1, true)
-	subTable = newSubTable(rowTable)
+	subTable = newSubTable(rowTable, nil)
 	require.Equal(t, 2048, len(subTable.hashTable))
 	rowTable = createMockRowTable(1025, 1, true)
-	subTable = newSubTable(rowTable)
+	subTable = newSubTable(rowTable, nil)
 	require.Equal(t, 2048, len(subTable.hashTable))
 	rowTable = createMockRowTable(2048, 1, true)
-	subTable = newSubTable(rowTable)
+	subTable = newSubTable(rowTable, nil)
 	require.Equal(t, 4096, len(subTable.hashTable))
 	rowTable = createMockRowTable(2049, 1, true)
-	subTable = newSubTable(rowTable)
+	subTable = newSubTable(rowTable, nil)
 	require.Equal(t, 4096, len(subTable.hashTable))
 }
 
 func TestBuild(t *testing.T) {
 	rowTable, err := createRowTable(1000000)
 	require.NoError(t, err)
-	subTable := newSubTable(rowTable)
+	subTable := newSubTable(rowTable, nil)
 	// single thread build
 	subTable.build(0, len(rowTable.segments))
 	rowSet := make(map[unsafe.Pointer]struct{}, rowTable.rowCount())
@@ -140,7 +140,7 @@ func TestBuild(t *testing.T) {
 func TestConcurrentBuild(t *testing.T) {
 	rowTable, err := createRowTable(3000000)
 	require.NoError(t, err)
-	subTable := newSubTable(rowTable)
+	subTable := newSubTable(rowTable, nil)
 	segmentCount := len(rowTable.segments)
 	buildThreads := 3
 	wg := util.WaitGroupWrapper{}
@@ -177,7 +177,7 @@ func TestConcurrentBuild(t *testing.T) {
 func TestLookup(t *testing.T) {
 	rowTable, err := createRowTable(200000)
 	require.NoError(t, err)
-	subTable := newSubTable(rowTable)
+	subTable := newSubTable(rowTable, nil)
 	// single thread build
 	subTable.build(0, len(rowTable.segments))
 
