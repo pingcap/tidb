@@ -160,6 +160,7 @@ func (p *brieTaskProgress) cleanup(e *exec.BaseExecutor, info *brieTaskInfo) {
 		cmd = fmt.Sprintf("%s Canceled", cmd)
 	}
 	p.cmd = cmd
+	p.executor = nil
 	p.lock.Unlock()
 
 	updateMetaTable(context.Background(), e, info.id, map[string]any{
@@ -287,7 +288,6 @@ func (bq *brieQueue) cleanupTask(taskID uint64, e *exec.BaseExecutor) bool {
 
 	i.cancel()
 	i.progress.cleanup(e, i.info)
-	i.progress.executor = nil
 	log.Info("Cleanup BRIE job", zap.Uint64("ID", i.info.id), zap.String("message", i.info.message))
 	return true
 }
