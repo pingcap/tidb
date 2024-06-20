@@ -696,7 +696,7 @@ func (d *ddl) DropSchema(ctx sessionctx.Context, stmt *ast.DropDatabaseStmt) (er
 
 func (d *ddl) RecoverSchema(ctx sessionctx.Context, recoverSchemaInfo *RecoverSchemaInfo) error {
 	involvedSchemas := []model.InvolvingSchemaInfo{{
-		Database: recoverSchemaInfo.Name.L,
+		Database: recoverSchemaInfo.DBInfo.Name.L,
 		Table:    model.InvolvingAll,
 	}}
 	if recoverSchemaInfo.OldSchemaName.L != recoverSchemaInfo.DBInfo.Name.L {
