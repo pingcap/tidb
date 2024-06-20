@@ -2865,10 +2865,6 @@ func (d *ddl) createTableWithInfoJob(
 
 	involvingSchemas := make([]model.InvolvingSchemaInfo, 0, len(involvingRef)+len(tbInfo.ForeignKeys)+1)
 	if len(involvingRef) > 0 {
-		involvingSchemas = append(involvingSchemas, model.InvolvingSchemaInfo{
-			Database: schema.Name.L,
-			Table:    tbInfo.Name.L,
-		})
 		involvingSchemas = append(involvingSchemas, involvingRef...)
 	}
 	for _, fk := range tbInfo.ForeignKeys {
@@ -2882,6 +2878,12 @@ func (d *ddl) createTableWithInfoJob(
 		involvingSchemas = append(involvingSchemas, model.InvolvingSchemaInfo{
 			Policy: ref.Name.L,
 			Mode:   model.SharedInvolving,
+		})
+	}
+	if len(involvingSchemas) > 0 {
+		involvingSchemas = append(involvingSchemas, model.InvolvingSchemaInfo{
+			Database: schema.Name.L,
+			Table:    tbInfo.Name.L,
 		})
 	}
 
@@ -3349,8 +3351,7 @@ func (d *ddl) CreateView(ctx sessionctx.Context, s *ast.CreateViewStmt) (err err
 		onExist = OnExistReplace
 	}
 
-	var involvingRef []model.InvolvingSchemaInfo
-	return d.CreateTableWithInfo(ctx, s.ViewName.Schema, tbInfo, involvingRef, onExist)
+	return d.CreateTableWithInfo(ctx, s.ViewName.Schema, tbInfo, nil, onExist)
 }
 
 // BuildViewInfo builds a ViewInfo structure from an ast.CreateViewStmt.

@@ -41,10 +41,19 @@ func mkJob(id int64, schemaTableNames ...string) (int64, []model.InvolvingSchema
 }
 
 func checkInvariants(t *testing.T, j *runningJobs) {
-	// check table-level entry should not have zero length
 	for _, checkingObj := range []*objects{j.exclusive, j.shared, j.pending} {
 		for _, tables := range checkingObj.schemas {
+			// check table-level entry should not have zero length
 			require.Greater(t, len(tables), 0)
+			for _, v := range tables {
+				require.Greater(t, v, 0)
+			}
+		}
+		for _, v := range checkingObj.placementPolicies {
+			require.Greater(t, v, 0)
+		}
+		for _, v := range checkingObj.resourceGroups {
+			require.Greater(t, v, 0)
 		}
 	}
 }
@@ -108,7 +117,7 @@ func TestRunningJobs(t *testing.T) {
 	runnable = j.checkRunnable(mkJob(0, "db1.t100"))
 	require.False(t, runnable)
 
-	jobID4, involves4 := mkJob(4, "db4.t100")
+	jobID4, involves4 := mkJob(4, "db4.t100", "db2.t6")
 	runnable = j.checkRunnable(jobID4, involves4)
 	require.True(t, runnable)
 	j.addRunning(jobID4, involves4)
@@ -174,6 +183,7 @@ func TestSchemaPolicyAndResourceGroup(t *testing.T) {
 	require.True(t, runnable)
 	j.addRunning(jobID3, involves3)
 	require.Equal(t, "1,2,3", orderedAllIDs(j.allIDs()))
+	checkInvariants(t, j)
 
 	failedInvolves = []model.InvolvingSchemaInfo{
 		{ResourceGroup: "g0"},
@@ -183,6 +193,7 @@ func TestSchemaPolicyAndResourceGroup(t *testing.T) {
 
 	j.removeRunning(jobID2, involves2)
 	require.Equal(t, "1,3", orderedAllIDs(j.allIDs()))
+	checkInvariants(t, j)
 
 	jobID4 := int64(4)
 	involves4 := []model.InvolvingSchemaInfo{
@@ -193,9 +204,15 @@ func TestSchemaPolicyAndResourceGroup(t *testing.T) {
 	require.True(t, runnable)
 	j.addRunning(jobID4, involves4)
 	require.Equal(t, "1,3,4", orderedAllIDs(j.allIDs()))
+	checkInvariants(t, j)
 
 	failedInvolves = []model.InvolvingSchemaInfo{
 		{Database: "db3", Table: "t3"},
+	}
+	runnable = j.checkRunnable(0, failedInvolves)
+	require.False(t, runnable)
+	failedInvolves = []model.InvolvingSchemaInfo{
+		{Policy: "p1"},
 	}
 	runnable = j.checkRunnable(0, failedInvolves)
 	require.False(t, runnable)
@@ -234,6 +251,7 @@ func TestExclusiveShared(t *testing.T) {
 	require.True(t, runnable)
 	j.addRunning(jobID3, involves3)
 	require.Equal(t, "1,2,3", orderedAllIDs(j.allIDs()))
+	checkInvariants(t, j)
 
 	pendingInvolves := []model.InvolvingSchemaInfo{
 		{Database: "db2", Table: "t2"},
@@ -242,6 +260,7 @@ func TestExclusiveShared(t *testing.T) {
 	require.False(t, runnable)
 	j.addPending(pendingInvolves)
 	require.Equal(t, "1,2,3", orderedAllIDs(j.allIDs()))
+	checkInvariants(t, j)
 
 	// because there's a pending job on db2.t2, next job on db2.t2 should be blocked
 	jobID4 := int64(4)
@@ -252,13 +271,88 @@ func TestExclusiveShared(t *testing.T) {
 	runnable = j.checkRunnable(jobID4, involves4)
 	require.False(t, runnable)
 	require.Equal(t, "1,2,3", orderedAllIDs(j.allIDs()))
+	checkInvariants(t, j)
 
 	// mimic all running job is finished and here's the next round to get jobs
 	j.resetAllPending()
 	j.removeRunning(jobID1, involves1)
 	j.removeRunning(jobID2, involves2)
 	j.removeRunning(jobID3, involves3)
+	checkInvariants(t, j)
 
+	runnable = j.checkRunnable(0, pendingInvolves)
+	require.True(t, runnable)
+
+	// new test round
+
+	jobID5 := int64(5)
+	involves5 := []model.InvolvingSchemaInfo{
+		{Policy: "p1", Mode: model.SharedInvolving},
+		{Policy: "p2", Mode: model.SharedInvolving},
+	}
+	runnable = j.checkRunnable(jobID5, involves5)
+	require.True(t, runnable)
+	j.addRunning(jobID5, involves5)
+
+	jobID6 := int64(6)
+	involves6 := []model.InvolvingSchemaInfo{
+		{Policy: "p1", Mode: model.SharedInvolving},
+		{ResourceGroup: "g1", Mode: model.SharedInvolving},
+	}
+	runnable = j.checkRunnable(jobID6, involves6)
+	require.True(t, runnable)
+	j.addRunning(jobID6, involves6)
+
+	require.Equal(t, "5,6", orderedAllIDs(j.allIDs()))
+	checkInvariants(t, j)
+
+	pendingInvolves = []model.InvolvingSchemaInfo{
+		{Policy: "p1"},
+		{ResourceGroup: "g2"},
+	}
+	runnable = j.checkRunnable(0, pendingInvolves)
+	require.False(t, runnable)
+	j.addPending(pendingInvolves)
+
+	secondPendingInvolves := []model.InvolvingSchemaInfo{
+		{ResourceGroup: "g2"},
+		{ResourceGroup: "g3"},
+	}
+	runnable = j.checkRunnable(0, secondPendingInvolves)
+	require.False(t, runnable)
+	j.addPending(secondPendingInvolves)
+
+	// we have two shared p1 objects, test when one is finished and another round starts.
+
+	j.removeRunning(jobID6, involves6)
+	require.Equal(t, "5", orderedAllIDs(j.allIDs()))
+	checkInvariants(t, j)
+	j.resetAllPending()
+
+	runnable = j.checkRunnable(0, pendingInvolves)
+	require.False(t, runnable)
+	j.addPending(pendingInvolves)
+	runnable = j.checkRunnable(0, secondPendingInvolves)
+	require.False(t, runnable)
+	j.addPending(secondPendingInvolves)
+
+	// all shared p1 objects is removed
+
+	j.removeRunning(jobID5, involves5)
+	require.Equal(t, "", orderedAllIDs(j.allIDs()))
+	checkInvariants(t, j)
+
+	// no p1 in exclusive and shared. But p1 exists in pending, so this job can not run
+	thirdPendingInvolves := []model.InvolvingSchemaInfo{
+		{Policy: "p1"},
+	}
+	runnable = j.checkRunnable(0, thirdPendingInvolves)
+	require.False(t, runnable)
+	j.addPending(thirdPendingInvolves)
+
+	// now another round starts, the first pending job can run
+
+	j.resetAllPending()
 	runnable = j.checkRunnable(0, pendingInvolves)
 	require.True(t, runnable)
 }

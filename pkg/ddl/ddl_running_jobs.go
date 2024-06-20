@@ -45,23 +45,29 @@ type runningJobs struct {
 	pending *objects
 }
 
+// objects uses maps to count the involved number of objects. If the count is
+// zero, the entry will be deleted from the map to keep map size small.
 type objects struct {
 	// database -> table -> struct{}
 	//
 	// if the job is only related to a database, the table-level entry key is
 	// model.InvolvingAll. When remove a job, runningJobs will make sure no
 	// zero-length map exists in table-level.
-	schemas           map[string]map[string]struct{}
-	placementPolicies map[string]struct{}
-	resourceGroups    map[string]struct{}
+	schemas           map[string]map[string]int
+	placementPolicies map[string]int
+	resourceGroups    map[string]int
 }
 
 func newObjects() *objects {
 	return &objects{
-		schemas:           make(map[string]map[string]struct{}),
-		placementPolicies: make(map[string]struct{}),
-		resourceGroups:    make(map[string]struct{}),
+		schemas:           make(map[string]map[string]int),
+		placementPolicies: make(map[string]int),
+		resourceGroups:    make(map[string]int),
 	}
+}
+
+func (o *objects) empty() bool {
+	return len(o.schemas) == 0 && len(o.placementPolicies) == 0 && len(o.resourceGroups) == 0
 }
 
 func newRunningJobs() *runningJobs {
@@ -94,39 +100,36 @@ func (j *runningJobs) checkRunnable(jobID int64, involves []model.InvolvingSchem
 		return false
 	}
 
+	if j.exclusive.empty() && j.shared.empty() && j.pending.empty() {
+		return true
+	}
+
 	for _, info := range involves {
-		if intest.InTest {
-			if info.Database == model.InvolvingNone && info.Table != model.InvolvingNone {
-				panic(fmt.Sprintf(
-					"job %d is invalid. While database is empty, involved table name is not empty: %s",
-					jobID, info.Table,
-				))
-			}
-			if info.Database != model.InvolvingNone && info.Table == model.InvolvingNone {
-				panic(fmt.Sprintf(
-					"job %d is invalid. While table is empty, involved database name is not empty: %s",
-					jobID, info.Database,
-				))
-			}
-		}
+		intest.Assert(
+			!(info.Database == model.InvolvingNone && info.Table != model.InvolvingNone),
+			"job %d is invalid. While database is empty, involved table name is not empty: %s",
+			jobID, info.Table,
+		)
+		intest.Assert(
+			!(info.Database != model.InvolvingNone && info.Table == model.InvolvingNone),
+			"job %d is invalid. While table is empty, involved database name is not empty: %s",
+			jobID, info.Database,
+		)
 
 		if info.Database == model.InvolvingAll && info.Table == model.InvolvingAll &&
 			info.Mode == model.ExclusiveInvolving {
 			// check for involving all databases and tables, where the only case is FLASHBACK
-			// CLUSTER
-			if len(j.exclusive.schemas) != 0 || len(j.shared.schemas) != 0 ||
-				len(j.exclusive.placementPolicies) != 0 || len(j.shared.placementPolicies) != 0 ||
-				len(j.exclusive.resourceGroups) != 0 || len(j.shared.resourceGroups) != 0 {
-				return false
-			}
-			continue
+			// CLUSTER. Because now runningJobs is not totally empty, we can return false.
+			return false
 		}
 
 		var toCheck []*objects
 		switch info.Mode {
 		case model.ExclusiveInvolving:
-			// Exclusive objects conflicts with running exclusive and shared objects.
-			toCheck = []*objects{j.exclusive, j.shared}
+			// Exclusive objects conflicts with running exclusive and shared objects. And
+			// because shared will be concurrently removed by removeRunning in another
+			// goroutine, we also check pending objects.
+			toCheck = []*objects{j.exclusive, j.shared, j.pending}
 		case model.SharedInvolving:
 			// Shared objects conflicts with running exclusive objects and pending exclusive
 			// objects.
@@ -154,7 +157,7 @@ func (j *runningJobs) checkRunnable(jobID int64, involves []model.InvolvingSchem
 
 func hasSchemaConflict(
 	requestDatabase, requestTable string,
-	schemas map[string]map[string]struct{},
+	schemas map[string]map[string]int,
 ) bool {
 	tbls, ok := schemas[requestDatabase]
 	if !ok {
@@ -196,15 +199,15 @@ func (j *runningJobs) addRunning(jobID int64, involves []model.InvolvingSchemaIn
 
 		if info.Database != model.InvolvingNone {
 			if _, ok := toAdd.schemas[info.Database]; !ok {
-				toAdd.schemas[info.Database] = make(map[string]struct{})
+				toAdd.schemas[info.Database] = make(map[string]int)
 			}
-			toAdd.schemas[info.Database][info.Table] = struct{}{}
+			toAdd.schemas[info.Database][info.Table]++
 		}
 		if info.Policy != model.InvolvingNone {
-			toAdd.placementPolicies[info.Policy] = struct{}{}
+			toAdd.placementPolicies[info.Policy]++
 		}
 		if info.ResourceGroup != model.InvolvingNone {
-			toAdd.resourceGroups[info.ResourceGroup] = struct{}{}
+			toAdd.resourceGroups[info.ResourceGroup]++
 		}
 	}
 }
@@ -232,14 +235,34 @@ func (j *runningJobs) removeRunning(jobID int64, involves []model.InvolvingSchem
 		default:
 			panic(fmt.Sprintf("unknown involving mode: %d", info.Mode))
 		}
-		if db, ok := toRemove.schemas[info.Database]; ok {
-			delete(db, info.Table)
+
+		if info.Database != model.InvolvingNone {
+			if db, ok := toRemove.schemas[info.Database]; ok {
+				if info.Table != model.InvolvingNone {
+					db[info.Table]--
+					if db[info.Table] == 0 {
+						delete(db, info.Table)
+					}
+				}
+			}
+			if len(toRemove.schemas[info.Database]) == 0 {
+				delete(toRemove.schemas, info.Database)
+			}
 		}
-		if len(toRemove.schemas[info.Database]) == 0 {
-			delete(toRemove.schemas, info.Database)
+
+		if len(info.Policy) > 0 {
+			toRemove.placementPolicies[info.Policy]--
+			if toRemove.placementPolicies[info.Policy] == 0 {
+				delete(toRemove.placementPolicies, info.Policy)
+			}
 		}
-		delete(toRemove.placementPolicies, info.Policy)
-		delete(toRemove.resourceGroups, info.ResourceGroup)
+
+		if len(info.ResourceGroup) > 0 {
+			toRemove.resourceGroups[info.ResourceGroup]--
+			if toRemove.resourceGroups[info.ResourceGroup] == 0 {
+				delete(toRemove.resourceGroups, info.ResourceGroup)
+			}
+		}
 	}
 }
 
@@ -255,15 +278,15 @@ func (j *runningJobs) addPending(involves []model.InvolvingSchemaInfo) {
 	for _, info := range involves {
 		if info.Database != model.InvolvingNone {
 			if _, ok := j.pending.schemas[info.Database]; !ok {
-				j.pending.schemas[info.Database] = make(map[string]struct{})
+				j.pending.schemas[info.Database] = make(map[string]int)
 			}
-			j.pending.schemas[info.Database][info.Table] = struct{}{}
+			j.pending.schemas[info.Database][info.Table]++
 		}
 		if info.Policy != model.InvolvingNone {
-			j.pending.placementPolicies[info.Policy] = struct{}{}
+			j.pending.placementPolicies[info.Policy]++
 		}
 		if info.ResourceGroup != model.InvolvingNone {
-			j.pending.resourceGroups[info.ResourceGroup] = struct{}{}
+			j.pending.resourceGroups[info.ResourceGroup]++
 		}
 	}
 }
@@ -274,9 +297,7 @@ func (j *runningJobs) resetAllPending() {
 	j.mu.Lock()
 	defer j.mu.Unlock()
 
-	j.pending.schemas = make(map[string]map[string]struct{})
-	j.pending.placementPolicies = make(map[string]struct{})
-	j.pending.resourceGroups = make(map[string]struct{})
+	j.pending = newObjects()
 }
 
 func (j *runningJobs) updateIDsStrGetter() {
