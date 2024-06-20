@@ -815,7 +815,7 @@ func (b *builtinCastIntAsJSONSig) evalJSON(ctx EvalContext, row chunk.Row) (res 
 	}
 	if mysql.HasIsBooleanFlag(b.args[0].GetType(ctx).GetFlag()) {
 		res = types.CreateBinaryJSON(val != 0)
-	} else if mysql.HasUnsignedFlag(b.args[0].GetType(ctx).GetFlag()) {
+	} else if mysql.HasUnsignedFlag(b.args[0].GetType(ctx).GetFlag()) || b.args[0].GetType(ctx).GetType() == mysql.TypeYear {
 		res = types.CreateBinaryJSON(uint64(val))
 	} else {
 		res = types.CreateBinaryJSON(val)
