@@ -145,23 +145,31 @@ func (p *brieTaskProgress) Close() {
 	})
 }
 
-func (p *brieTaskProgress) cleanup(finished bool, e *exec.BaseExecutor) {
+func (p *brieTaskProgress) cleanup(e *exec.BaseExecutor, info *brieTaskInfo) {
 	p.lock.Lock()
 	cmd := p.cmd
-	if !finished && p.current < p.total && !strings.HasSuffix(p.cmd, "Canceled") {
-		cmd = fmt.Sprintf("%s Canceled", cmd)
-		p.cmd = cmd
-	}
+	current := atomic.LoadInt64(&p.current)
+	total := atomic.LoadInt64(&p.total)
+	//FIXME: Is this a good standard?
+	finished := len(info.message) == 0
 	if finished {
 		atomic.StoreInt64(&p.current, p.total)
+		current = total
+		cmd = strings.TrimSuffix(cmd, " Canceled")
+	} else if !finished && !strings.HasSuffix(cmd, " Canceled") {
+		cmd = fmt.Sprintf("%s Canceled", cmd)
 	}
-	current := p.current
-	total := p.total
+	p.cmd = cmd
 	p.lock.Unlock()
 
-	updateMetaTable(context.Background(), e, p.taskID, map[string]any{
-		"progress": current * 100 / total,
-		"state":    cmd,
+	updateMetaTable(context.Background(), e, info.id, map[string]any{
+		"finishTime":  info.finishTime.String(),
+		"message":     messageOrNULL(info.message),
+		"backupTS":    info.backupTS,
+		"restoreTS":   info.restoreTS,
+		"archiveSize": info.archiveSize,
+		"progress":    current * 100 / total,
+		"state":       cmd,
 	})
 }
 
@@ -277,29 +285,10 @@ func (bq *brieQueue) cleanupTask(taskID uint64, e *exec.BaseExecutor) bool {
 	}
 	i := item.(*brieQueueItem)
 
-	log.Debug("Cleaning BRIE job", zap.Uint64("ID", i.info.id), zap.String("message", i.info.message))
 	i.cancel()
-	i.progress.Close()
-
-	// FIXME: this is a hack way, we assume that as long as message is empty, the job is finished.
-	i.progress.lock.Lock()
-	finished := false
-	if i.info.message == "" && strings.HasSuffix(i.progress.cmd, " Canceled") {
-		i.progress.cmd = i.progress.cmd[:len(i.progress.cmd)-len(" Canceled")]
-		finished = true
-	}
-	i.progress.lock.Unlock()
-	updateMetaTable(context.Background(), e, i.info.id, map[string]any{
-		"finishTime":  i.info.finishTime.String(),
-		"message":     messageOrNULL(i.info.message),
-		"backupTS":    i.info.backupTS,
-		"restoreTS":   i.info.restoreTS,
-		"archiveSize": i.info.archiveSize,
-	})
-
-	i.progress.cleanup(finished,e)
+	i.progress.cleanup(e, i.info)
 	i.progress.executor = nil
-	log.Info("BRIE job ended.", zap.Uint64("ID", i.info.id))
+	log.Info("Cleanup BRIE job", zap.Uint64("ID", i.info.id), zap.String("message", i.info.message))
 	return true
 }
 

@@ -62,7 +62,7 @@ func TestShowBackupQuery(t *testing.T) {
 	restoreQuery := fmt.Sprintf("RESTORE TABLE `test`.`foo` FROM 'local://%s'", sqlTmp)
 	tk.MustQuery(restoreQuery)
 	id = tk.MustQuery("SELECT * FROM mysql.tidb_br_jobs ORDER BY id DESC LIMIT 1;").Rows()[0][0].(string)
-	res = tk.MustQuery("show br job query " +id)
+	res = tk.MustQuery("show br job query " + id)
 	res.CheckContain(restoreQuery)
 }
 
@@ -81,7 +81,7 @@ func TestShowBackupQueryRedact(t *testing.T) {
 
 	check := func() bool {
 		id := tk.MustQuery("SELECT * FROM mysql.tidb_br_jobs ORDER BY id DESC LIMIT 1;").Rows()[0][0].(string)
-		res := tk.MustQuery("show br job query "+id)
+		res := tk.MustQuery("show br job query " + id)
 		rs := res.Rows()
 		if len(rs) == 0 {
 			return false
@@ -96,7 +96,7 @@ func TestShowBackupQueryRedact(t *testing.T) {
 	}
 	require.Eventually(t, check, 5*time.Second, 1*time.Second)
 	id := tk.MustQuery("SELECT * FROM mysql.tidb_br_jobs ORDER BY id DESC LIMIT 1;").Rows()[0][0].(string)
-	tk.MustExec("cancel br job "+id)
+	tk.MustExec("cancel br job " + id)
 	// Make sure the background job returns.
 	// So `goleak` would be happy.
 	<-ch
@@ -120,7 +120,7 @@ func TestCancel(t *testing.T) {
 	check := func() bool {
 		wb := tk.Session().GetSessionVars().StmtCtx.WarningCount()
 		id := tk.MustQuery("SELECT * FROM mysql.tidb_br_jobs ORDER BY id DESC LIMIT 1;").Rows()[0][0].(string)
-		tk.MustExec("cancel br job "+id)
+		tk.MustExec("cancel br job " + id)
 		wa := tk.Session().GetSessionVars().StmtCtx.WarningCount()
 		return wb == wa
 	}

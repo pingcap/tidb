@@ -227,7 +227,7 @@ func TestBRIEBuilderOPtions(t *testing.T) {
 	require.True(t, e.restoreCfg.LoadStats)
 }
 
-func TestCleanupFinished1(t *testing.T) {
+func TestCleanup0(t *testing.T) {
 	failpoint.Enable("github.com/pingcap/tidb/pkg/executor/ignoreMetaTable", "return()")
 	defer failpoint.Disable("github.com/pingcap/tidb/pkg/executor/ignoreMetaTable")
 	ResetGlobalBRIEQueueForTest()
@@ -238,113 +238,109 @@ func TestCleanupFinished1(t *testing.T) {
 
 	// Register brie task info
 	info1 := &brieTaskInfo{
-		kind:       ast.BRIEKindBackup,
-		storage:    "noop://",
+		kind:      ast.BRIEKindBackup,
+		queueTime: types.CurrentTime(mysql.TypeDatetime),
+		storage:   "noop://",
 	}
-	_,taskID,err := globalBRIEQueue.registerTask(ctx, info1, &e)
+	_, taskID, err := globalBRIEQueue.registerTask(ctx, info1, &e)
 	require.NoError(t, err)
 
-	var current int64 = 90
+	var current int64 = 70
 	var total int64 = 100
 	var cmd string = "Test"
-	item,_ := globalBRIEQueue.tasks.Load(taskID)
+	item, _ := globalBRIEQueue.tasks.Load(taskID)
+	progress := item.(*brieQueueItem).progress
+	progress.current = current
+	progress.total = total
+	progress.cmd = cmd
+
+	globalBRIEQueue.cleanupTask(taskID, &e)
+	require.Equal(t, total, progress.current)
+	require.Equal(t, total, progress.total)
+	require.Equal(t, cmd, progress.cmd)
+}
+
+func TestCleanup1(t *testing.T) {
+	failpoint.Enable("github.com/pingcap/tidb/pkg/executor/ignoreMetaTable", "return()")
+	defer failpoint.Disable("github.com/pingcap/tidb/pkg/executor/ignoreMetaTable")
+	ResetGlobalBRIEQueueForTest()
+
+	// Prepare ctx.
+	ctx := context.Background()
+	e := exec.BaseExecutor{}
+
+	// Register brie task info
+	info1 := &brieTaskInfo{
+		kind:      ast.BRIEKindBackup,
+		queueTime: types.CurrentTime(mysql.TypeDatetime),
+		storage:   "noop://",
+		message:   "random",
+	}
+	_, taskID, err := globalBRIEQueue.registerTask(ctx, info1, &e)
+	require.NoError(t, err)
+
+	var current int64 = 70
+	var total int64 = 100
+	var cmd string = "Test"
+	item, _ := globalBRIEQueue.tasks.Load(taskID)
+	progress := item.(*brieQueueItem).progress
+	progress.current = current
+	progress.total = total
+	progress.cmd = cmd
+
+	globalBRIEQueue.cleanupTask(taskID, &e)
+	require.Equal(t, total, progress.current)
+	require.Equal(t, total, progress.total)
+	require.Equal(t, cmd+" Canceled", progress.cmd)
+}
+
+func TestCleanup2(t *testing.T) {
+	failpoint.Enable("github.com/pingcap/tidb/pkg/executor/ignoreMetaTable", "return()")
+	defer failpoint.Disable("github.com/pingcap/tidb/pkg/executor/ignoreMetaTable")
+	ResetGlobalBRIEQueueForTest()
+
+	// Prepare ctx.
+	ctx := context.Background()
+	e := exec.BaseExecutor{}
+
+	// Register brie task info
+	info1 := &brieTaskInfo{
+		kind:      ast.BRIEKindBackup,
+		queueTime: types.CurrentTime(mysql.TypeDatetime),
+		storage:   "noop://",
+		message:   "random",
+	}
+	_, taskID, err := globalBRIEQueue.registerTask(ctx, info1, &e)
+	require.NoError(t, err)
+
+	var current int64 = 70
+	var total int64 = 100
+	var cmd string = "Test"
+	item, _ := globalBRIEQueue.tasks.Load(taskID)
 	progress := item.(*brieQueueItem).progress
 	progress.current = current
 	progress.total = total
 	progress.cmd = cmd
 
 	progress.Close()
-	require.Equal(t,current,progress.current)
-	require.Equal(t,total,progress.total)
-	require.Equal(t,cmd + " Canceled",progress.cmd)
+	require.Equal(t, current, progress.current)
+	require.Equal(t, total, progress.total)
+	require.Equal(t, cmd+" Canceled", progress.cmd)
 
 	//No redundant 'Cancel'
 	progress.Close()
-	require.Equal(t,current,progress.current)
-	require.Equal(t,total,progress.total)
-	require.Equal(t,cmd + " Canceled",progress.cmd)
+	require.Equal(t, current, progress.current)
+	require.Equal(t, total, progress.total)
+	require.Equal(t, cmd+" Canceled", progress.cmd)
 
-	//If message is empty, the task is assumed to be finished
-	globalBRIEQueue.cleanupTask(taskID,&e)
-	require.Equal(t,total,progress.current)
-	require.Equal(t,total,progress.total)
-	require.Equal(t,cmd,progress.cmd)
-}
+	globalBRIEQueue.cleanupTask(taskID, &e)
+	require.Equal(t, current, progress.current)
+	require.Equal(t, total, progress.total)
+	require.Equal(t, cmd+" Canceled", progress.cmd)
 
-func TestCleanupFinished2(t *testing.T) {
-	failpoint.Enable("github.com/pingcap/tidb/pkg/executor/ignoreMetaTable", "return()")
-	defer failpoint.Disable("github.com/pingcap/tidb/pkg/executor/ignoreMetaTable")
-	ResetGlobalBRIEQueueForTest()
-
-	// Prepare ctx.
-	ctx := context.Background()
-	e := exec.BaseExecutor{}
-
-	// Register brie task info
-	info1 := &brieTaskInfo{
-		kind:       ast.BRIEKindBackup,
-		storage:    "noop://",
-		message:    "random",
-	}
-	_,taskID,err := globalBRIEQueue.registerTask(ctx, info1, &e)
-	require.NoError(t, err)
-
-	var current int64 = 100
-	var total int64 = 100
-	var cmd string = "Test"
-	item,_ := globalBRIEQueue.tasks.Load(taskID)
-	progress := item.(*brieQueueItem).progress
-	progress.current = current
-	progress.total = total
-	progress.cmd = cmd
-
-	progress.Close()
-	require.Equal(t,total,progress.current)
-	require.Equal(t,total,progress.total)
-	require.Equal(t,cmd,progress.cmd)
-
-	//No redundant 'Cancel'
-	progress.Close()
-	require.Equal(t,total,progress.current)
-	require.Equal(t,total,progress.total)
-	require.Equal(t,cmd,progress.cmd)
-
-	//If current = total, the task is finished
-	globalBRIEQueue.cleanupTask(taskID,&e)
-	require.Equal(t,total,progress.current)
-	require.Equal(t,total,progress.total)
-	require.Equal(t,cmd,progress.cmd)
-}
-
-func TestCleanupUnfinished(t *testing.T) {
-	failpoint.Enable("github.com/pingcap/tidb/pkg/executor/ignoreMetaTable", "return()")
-	defer failpoint.Disable("github.com/pingcap/tidb/pkg/executor/ignoreMetaTable")
-	ResetGlobalBRIEQueueForTest()
-
-	// Prepare ctx.
-	ctx := context.Background()
-	e := exec.BaseExecutor{}
-
-	// Register brie task info
-	info1 := &brieTaskInfo{
-		kind:       ast.BRIEKindBackup,
-		storage:    "noop://",
-		message:    "random",
-	}
-	_,taskID,err := globalBRIEQueue.registerTask(ctx, info1, &e)
-	require.NoError(t, err)
-
-	var current int64 = 90
-	var total int64 = 100
-	var cmd string = "Test"
-	item,_ := globalBRIEQueue.tasks.Load(taskID)
-	progress := item.(*brieQueueItem).progress
-	progress.current = current
-	progress.total = total
-	progress.cmd = cmd
-
-	globalBRIEQueue.cleanupTask(taskID,&e)
-	require.Equal(t,current,progress.current)
-	require.Equal(t,total,progress.total)
-	require.Equal(t,cmd + " Canceled",progress.cmd)
+	info1.message = ""
+	globalBRIEQueue.cleanupTask(taskID, &e)
+	require.Equal(t, total, progress.current)
+	require.Equal(t, total, progress.total)
+	require.Equal(t, cmd, progress.cmd)
 }
