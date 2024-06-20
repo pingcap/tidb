@@ -123,3 +123,53 @@ func TestRangeDerivation(t *testing.T) {
 		plan.Check(testkit.Rows(output[i].Plan...))
 	}
 }
+func TestRangeIntersection(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (a1 int, b1 int, c1 int, key pkx (a1,b1));")
+	tk.MustExec("insert into t1 values (1,1,1);")
+	tk.MustExec("insert into t1 values (null,1,1);")
+	tk.MustExec("insert into t1 values (1,null,1);")
+	tk.MustExec("insert into t1 values (1,1,null);")
+	tk.MustExec("insert into t1 values (1,10,1);")
+	tk.MustExec("insert into t1 values (10,20,1);")
+	tk.MustExec("insert into t1 select a1+1,b1,c1+1 from t1;")
+	tk.MustExec("insert into t1 select a1,b1+1,c1+1 from t1;")
+	tk.MustExec("insert into t1 select a1-1,b1+1,c1+1 from t1;")
+	tk.MustExec("insert into t1 select a1+2,b1+2,c1+2 from t1;")
+	tk.MustExec("insert into t1 select a1+2,b1-2,c1+2 from t1;")
+	tk.MustExec("insert into t1 select a1+2,b1-1,c1+2 from t1;")
+	tk.MustExec("insert into t1 select null,b1,c1+1 from t1;")
+	tk.MustExec("insert into t1 select a1,null,c1+1 from t1;")
+
+	tk.MustExec("create table t11 (a1 int, b1 int, c1 int);")
+	tk.MustExec("insert into t11 select * from t1;")
+
+	tk.MustExec("CREATE TABLE `tablename` (`primary_key` varbinary(1024) NOT NULL,`secondary_key` varbinary(1024) NOT NULL,`timestamp` bigint(20) NOT NULL,`value` mediumblob DEFAULT NULL,PRIMARY KEY PKK (`primary_key`,`secondary_key`,`timestamp`));")
+
+	tk.MustExec("create table t(a int, b int, c int, key PKK(a,b,c));")
+	tk.MustExec("create table tt(a int, b int, c int, primary key PKK(a,b,c));")
+	tk.MustExec("insert into t select * from t1;")
+	tk.MustExec("insert into tt select * from t1 where a1 is not null and b1 is not null and c1 is not null;")
+
+	var input []string
+	var output []struct {
+		SQL    string
+		Plan   []string
+		Result []string
+	}
+	indexRangeSuiteData := GetIndexRangeSuiteData()
+	indexRangeSuiteData.LoadTestCases(t, &input, &output)
+	indexRangeSuiteData.LoadTestCases(t, &input, &output)
+	for i, sql := range input {
+		plan := tk.MustQuery("explain format = 'brief' " + sql)
+		testdata.OnRecord(func() {
+			output[i].SQL = sql
+			output[i].Plan = testdata.ConvertRowsToStrings(plan.Rows())
+			output[i].Result = testdata.ConvertRowsToStrings(tk.MustQuery(sql).Sort().Rows())
+		})
+		plan.Check(testkit.Rows(output[i].Plan...))
+		tk.MustQuery(sql).Sort().Check(testkit.Rows(output[i].Result...))
+	}
+}

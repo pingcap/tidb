@@ -15,6 +15,7 @@
 package ranger_test
 
 import (
+	"fmt"
 	"math"
 	"testing"
 
@@ -26,11 +27,21 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestRange(t *testing.T) {
-	simpleTests := []struct {
-		ran ranger.Range
-		str string
-	}{
+type rangeWithStr struct {
+	ran ranger.Range
+	str string
+}
+
+func rangeToString(ran *ranger.Range) string {
+	if ran == nil {
+		return "<nil>"
+	} else {
+		return ran.String()
+	}
+}
+
+func sampleRanges() []rangeWithStr {
+	result := []rangeWithStr{
 		{
 			ran: ranger.Range{
 				LowVal:    []types.Datum{types.NewIntDatum(1)},
@@ -77,6 +88,142 @@ func TestRange(t *testing.T) {
 			str: "[-inf,1)",
 		},
 	}
+	return result
+}
+func TestIntersection(t *testing.T) {
+	expectedResult := make(map[string]string)
+	actualResult := make(map[string]string)
+	expectedResult["[1,2] [3,4]"] = "<nil>"
+	expectedResult["(1,2] (3,4]"] = "<nil>"
+	expectedResult["[1,2) [3,4)"] = "<nil>"
+	expectedResult["(1,2) (3,4)"] = "<nil>"
+	expectedResult["[1 2,1 3] (1 3,1 4]"] = "<nil>"
+	expectedResult["[-inf,1] [2,+inf]"] = "<nil>"
+	expectedResult["[1 2,1 3] [1 3,1 4]"] = "[1 3,1 3]"
+	expectedResult["[1 1 2,1 1 5] (1 2,1 3)"] = "<nil>"
+
+	// We cover all combinations of disjoint, subset intersections and other intersections.
+	// Each test is repeated with switching range1 and range2 and same result is expected.
+	var range1, range2 ranger.Range
+	var intersection1, intersection2 *ranger.Range
+	ctx := core.MockContext()
+
+	// I. Empty intersections
+	// All ranges closed. intersection of [1,2] [3,4] is empty
+	range1 = ranger.Range{
+		LowVal:    []types.Datum{types.NewIntDatum(1)},
+		HighVal:   []types.Datum{types.NewIntDatum(2)},
+		Collators: collate.GetBinaryCollatorSlice(1),
+	}
+	range2 = ranger.Range{
+		LowVal:    []types.Datum{types.NewIntDatum(3)},
+		HighVal:   []types.Datum{types.NewIntDatum(4)},
+		Collators: collate.GetBinaryCollatorSlice(1),
+	}
+	intersection1, _ = range1.IntersectRange(ctx.GetRangerCtx().TypeCtx, &range2)
+	actualResult[range1.String()+" "+range2.String()] = rangeToString(intersection1)
+	intersection2, _ = range2.IntersectRange(ctx.GetRangerCtx().TypeCtx, &range1)
+	require.Equal(t, intersection1, intersection2)
+
+	// Low open.  intersection of (1,2] (3,4] is empty
+	range1.LowExclude = true
+	range1.HighExclude = false
+	range2.LowExclude = true
+	range2.HighExclude = false
+	intersection1, _ = range1.IntersectRange(ctx.GetRangerCtx().TypeCtx, &range2)
+	actualResult[range1.String()+" "+range2.String()] = rangeToString(intersection1)
+	intersection2, _ = range2.IntersectRange(ctx.GetRangerCtx().TypeCtx, &range1)
+	require.Equal(t, intersection1, intersection2)
+
+	// high bound open. intersection of [1,2) [3,4) is empty
+	range1.LowExclude = false
+	range1.HighExclude = true
+	range2.LowExclude = false
+	range2.HighExclude = true
+	intersection1, _ = range1.IntersectRange(ctx.GetRangerCtx().TypeCtx, &range2)
+	actualResult[range1.String()+" "+range2.String()] = rangeToString(intersection1)
+	intersection2, _ = range2.IntersectRange(ctx.GetRangerCtx().TypeCtx, &range1)
+	require.Equal(t, intersection1, intersection2)
+
+	// both open. intersection of (1,2) (3,4) is empty
+	range1.LowExclude = true
+	range1.HighExclude = true
+	range2.LowExclude = true
+	range2.HighExclude = true
+	intersection1, _ = range1.IntersectRange(ctx.GetRangerCtx().TypeCtx, &range2)
+	actualResult[range1.String()+" "+range2.String()] = rangeToString(intersection1)
+	intersection2, _ = range2.IntersectRange(ctx.GetRangerCtx().TypeCtx, &range1)
+	require.Equal(t, intersection1, intersection2)
+	// Use of inifinity in ragnes. Intersection of [-infinity, 1] and [2, +infinity]
+	range1 = ranger.Range{
+		LowVal:    []types.Datum{types.NewIntDatum(math.MinInt64)},
+		HighVal:   []types.Datum{types.NewIntDatum(1)},
+		Collators: collate.GetBinaryCollatorSlice(1),
+	}
+	range2 = ranger.Range{
+		LowVal:    []types.Datum{types.NewIntDatum(2)},
+		HighVal:   []types.Datum{types.NewIntDatum(math.MaxInt64)},
+		Collators: collate.GetBinaryCollatorSlice(1),
+	}
+	intersection1, _ = range1.IntersectRange(ctx.GetRangerCtx().TypeCtx, &range2)
+	actualResult[range1.String()+" "+range2.String()] = rangeToString(intersection1)
+	intersection2, _ = range2.IntersectRange(ctx.GetRangerCtx().TypeCtx, &range1)
+	require.Equal(t, intersection1, intersection2)
+
+	// Multi column range. Intersection of [1 2,1 3] (1 3,1 4] is empty
+	range1 = ranger.Range{
+		LowVal:    []types.Datum{types.NewIntDatum(1), types.NewIntDatum(2)},
+		HighVal:   []types.Datum{types.NewIntDatum(1), types.NewIntDatum(3)},
+		Collators: collate.GetBinaryCollatorSlice(2),
+	}
+	range2 = ranger.Range{
+		LowVal:    []types.Datum{types.NewIntDatum(1), types.NewIntDatum(3)},
+		HighVal:   []types.Datum{types.NewIntDatum(1), types.NewIntDatum(4)},
+		Collators: collate.GetBinaryCollatorSlice(2),
+	}
+	range2.LowExclude = true
+	intersection1, _ = range1.IntersectRange(ctx.GetRangerCtx().TypeCtx, &range2)
+	actualResult[range1.String()+" "+range2.String()] = rangeToString(intersection1)
+	intersection2, _ = range2.IntersectRange(ctx.GetRangerCtx().TypeCtx, &range1)
+	require.Equal(t, intersection1, intersection2)
+
+	range2.LowExclude = false // negative test for disjoint ranges when high = low.
+	intersection1, _ = range1.IntersectRange(ctx.GetRangerCtx().TypeCtx, &range2)
+	actualResult[range1.String()+" "+range2.String()] = rangeToString(intersection1)
+	intersection2, _ = range2.IntersectRange(ctx.GetRangerCtx().TypeCtx, &range1)
+	require.Equal(t, intersection1, intersection2)
+
+	// Multi column range with different number of columns. Intersection of [1 1 2,1 1 5] (1 2,1 3) is empty
+	range1 = ranger.Range{
+		LowVal:    []types.Datum{types.NewIntDatum(1), types.NewIntDatum(1), types.NewIntDatum(2)},
+		HighVal:   []types.Datum{types.NewIntDatum(1), types.NewIntDatum(1), types.NewIntDatum(5)},
+		Collators: collate.GetBinaryCollatorSlice(3),
+	}
+	range2 = ranger.Range{
+		LowVal:    []types.Datum{types.NewIntDatum(1), types.NewIntDatum(2)},
+		HighVal:   []types.Datum{types.NewIntDatum(1), types.NewIntDatum(3)},
+		Collators: collate.GetBinaryCollatorSlice(2),
+	}
+	range2.LowExclude = true
+	range2.HighExclude = true
+	intersection1, _ = range1.IntersectRange(ctx.GetRangerCtx().TypeCtx, &range2)
+	actualResult[range1.String()+" "+range2.String()] = rangeToString(intersection1)
+	intersection2, _ = range2.IntersectRange(ctx.GetRangerCtx().TypeCtx, &range1)
+	require.Equal(t, intersection1, intersection2)
+
+	// II. Subset intersections
+	// III. Non subset intersections
+
+	// Compare actual vs expected
+	for k, v := range actualResult {
+		require.Equal(t, v, expectedResult[k])
+	}
+	// cleanup
+	domain.GetDomain(ctx).StatsHandle().Close()
+}
+
+func TestRange(t *testing.T) {
+	simpleTests := sampleRanges()
 	for _, v := range simpleTests {
 		require.Equal(t, v.str, v.ran.String())
 	}

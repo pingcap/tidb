@@ -273,8 +273,32 @@ func extractBestCNFItemRanges(sctx *rangerctx.RangerContext, conds []expression.
 			continue
 		}
 		curRes := getCNFItemRangeResult(sctx, res, i)
-		if bestRes == nil || compareCNFItemRangeResult(curRes, bestRes) {
+		if bestRes == nil {
 			bestRes = curRes
+		} else {
+			if curRes != nil && bestRes.rangeResult != nil {
+				bestResIsSubset := bestRes.rangeResult.Ranges.Subset(sctx.TypeCtx, curRes.rangeResult.Ranges)
+				// if bestRes is a subset then do nothing
+				if !bestResIsSubset {
+					curResIsSubset := curRes.rangeResult.Ranges.Subset(sctx.TypeCtx, bestRes.rangeResult.Ranges)
+					// if curRes is subset (more selective) then make it bestRes.
+					if curResIsSubset {
+						bestRes = curRes
+					} else {
+						// Try intersecting result of different conjuncts.
+						intersection := curRes.rangeResult.Ranges.IntersectRanges(sctx.TypeCtx, bestRes.rangeResult.Ranges)
+						if intersection == nil {
+							if compareCNFItemRangeResult(curRes, bestRes) {
+								bestRes = curRes
+							}
+						} else {
+							bestRes.rangeResult.Ranges = intersection
+							bestRes.rangeResult.AccessConds =
+								AppendConditionsIfNotExist(bestRes.rangeResult.AccessConds, []expression.Expression{cond})
+						}
+					}
+				}
+			}
 		}
 	}
 
