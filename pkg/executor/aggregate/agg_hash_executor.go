@@ -304,7 +304,7 @@ func (e *HashAggExec) initPartialWorkers(partialConcurrency int, finalConcurrenc
 			globalOutputCh:       e.finalOutputCh,
 			partialResultsMap:    partialResultsMap,
 			groupByItems:         e.GroupByItems,
-			chk:                  exec.TryNewCacheChunk(e.Children(0)),
+			chk:                  e.NewChunkWithCapacity(e.RetFieldTypes(), 0, e.MaxChunkSize()),
 			groupKeyBuf:          *groupKeyBuf,
 			serializeHelpers:     aggfuncs.NewSerializeHelper(),
 			isSpillPrepared:      false,
@@ -326,7 +326,7 @@ func (e *HashAggExec) initPartialWorkers(partialConcurrency int, finalConcurrenc
 		}
 		e.memTracker.Consume(e.partialWorkers[i].chk.MemoryUsage())
 		input := &HashAggInput{
-			chk:        exec.NewFirstChunk(e.Children(0)),
+			chk:        chunk.New(e.RetFieldTypes(), 0, e.MaxChunkSize()),
 			giveBackCh: e.partialWorkers[i].inputCh,
 		}
 		e.memTracker.Consume(input.chk.MemoryUsage())
@@ -343,7 +343,6 @@ func (e *HashAggExec) initFinalWorkers(finalConcurrency int) {
 			inputCh:                    e.partialOutputChs[i],
 			outputCh:                   e.finalOutputCh,
 			finalResultHolderCh:        make(chan *chunk.Chunk, 1),
-			mutableRow:                 chunk.MutRowFromTypes(exec.RetTypes(e)),
 			spillHelper:                e.spillHelper,
 			restoredAggResultMapperMem: 0,
 		}
@@ -353,7 +352,7 @@ func (e *HashAggExec) initFinalWorkers(finalConcurrency int) {
 			e.finalWorkers[i].stats = &AggWorkerStat{}
 			e.stats.FinalStats = append(e.stats.FinalStats, e.finalWorkers[i].stats)
 		}
-		e.finalWorkers[i].finalResultHolderCh <- exec.NewFirstChunk(e)
+		e.finalWorkers[i].finalResultHolderCh <- chunk.New(e.RetFieldTypes(), 0, e.MaxChunkSize())
 	}
 }
 
