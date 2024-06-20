@@ -546,14 +546,13 @@ func getActualEndKey(
 	if err != nil {
 		logutil.DDLLogger().Info("get backfill range task, get reverse key failed", zap.Error(err))
 		return rangeEnd
-	} else {
-		logutil.DDLLogger().Info("get backfill range task, change end key",
-			zap.Int("id", taskID),
-			zap.Int64("pTbl", phyTbl.GetPhysicalID()),
-			zap.String("end key", hex.EncodeToString(rangeEnd)),
-			zap.String("current end key", hex.EncodeToString(actualEndKey)))
-		return actualEndKey
 	}
+	logutil.DDLLogger().Info("get backfill range task, change end key",
+		zap.Int("id", taskID),
+		zap.Int64("pTbl", phyTbl.GetPhysicalID()),
+		zap.String("end key", hex.EncodeToString(rangeEnd)),
+		zap.String("current end key", hex.EncodeToString(actualEndKey)))
+	return actualEndKey
 }
 
 // sendTasks sends tasks to workers, and returns remaining kvRanges that is not handled.
