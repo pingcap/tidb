@@ -49,7 +49,7 @@ func TestManager(t *testing.T) {
 		_, err := mgr.GetJobByID(ctx, 9999)
 		require.ErrorIs(t, err, systable.ErrNotFound)
 		tk.MustExec(`insert into mysql.tidb_ddl_job(job_id, reorg, schema_ids, table_ids, job_meta, type, processing)
-					values(9999, 0, '1', '1', '{"id":9999,"schema_name":"db","table_name":"tbl"}', 1, 0)`)
+					values(9999, 0, '1', '1', '{"id":9999}', 1, 0)`)
 		job, err := mgr.GetJobByID(ctx, 9999)
 		require.NoError(t, err)
 		require.EqualValues(t, 9999, job.ID)
