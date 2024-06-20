@@ -28,8 +28,8 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	sess "github.com/pingcap/tidb/pkg/ddl/internal/session"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
+	"github.com/pingcap/tidb/pkg/ddl/session"
 	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
@@ -101,8 +101,8 @@ type worker struct {
 	ctx context.Context
 	wg  sync.WaitGroup
 
-	sessPool        *sess.Pool    // sessPool is used to new sessions to execute SQL in ddl package.
-	sess            *sess.Session // sess is used and only used in running DDL job.
+	sessPool        *session.Pool    // sessPool is used to new sessions to execute SQL in ddl package.
+	sess            *session.Session // sess is used and only used in running DDL job.
 	delRangeManager delRangeManager
 	logCtx          context.Context
 	seqNumLocked    bool
@@ -134,7 +134,7 @@ func NewJobContext() *JobContext {
 	}
 }
 
-func newWorker(ctx context.Context, tp workerType, sessPool *sess.Pool, delRangeMgr delRangeManager, dCtx *ddlCtx) *worker {
+func newWorker(ctx context.Context, tp workerType, sessPool *session.Pool, delRangeMgr delRangeManager, dCtx *ddlCtx) *worker {
 	worker := &worker{
 		id:              ddlWorkerID.Add(1),
 		tp:              tp,
@@ -407,7 +407,7 @@ func (d *ddl) addBatchDDLJobs(tasks []*limitJobTask) error {
 		return errors.Trace(err)
 	}
 	defer d.sessPool.Put(se)
-	jobs, err := getJobsBySQL(sess.NewSession(se), JobTable, fmt.Sprintf("type = %d", model.ActionFlashbackCluster))
+	jobs, err := getJobsBySQL(session.NewSession(se), JobTable, fmt.Sprintf("type = %d", model.ActionFlashbackCluster))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -480,7 +480,7 @@ func (d *ddl) addBatchDDLJobs(tasks []*limitJobTask) error {
 
 		// currently doesn't support pause job in local mode.
 		if d.stateSyncer.IsUpgradingState() && !hasSysDB(job) && !job.LocalMode {
-			if err = pauseRunningJob(sess.NewSession(se), job, model.AdminCommandBySystem); err != nil {
+			if err = pauseRunningJob(session.NewSession(se), job, model.AdminCommandBySystem); err != nil {
 				logutil.DDLUpgradingLogger().Warn("pause user DDL by system failed", zap.Stringer("job", job), zap.Error(err))
 				task.cacheErr = err
 				continue
@@ -507,7 +507,7 @@ func (d *ddl) addBatchDDLJobs(tasks []*limitJobTask) error {
 		}
 		return nil
 	}
-	return errors.Trace(insertDDLJobs2Table(sess.NewSession(se), true, jobTasks...))
+	return errors.Trace(insertDDLJobs2Table(session.NewSession(se), true, jobTasks...))
 }
 
 // combineBatchCreateTableJobs combine batch jobs to another batch jobs.
@@ -639,7 +639,7 @@ func (s *jobScheduler) cleanMDLInfo(job *model.Job, ownerID string) {
 	}
 	sctx, _ := s.sessPool.Get()
 	defer s.sessPool.Put(sctx)
-	se := sess.NewSession(sctx)
+	se := session.NewSession(sctx)
 	se.GetSessionVars().SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
 	_, err := se.Execute(s.schCtx, sql, "delete-mdl-info")
 	if err != nil {

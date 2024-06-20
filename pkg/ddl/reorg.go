@@ -27,8 +27,8 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
-	sess "github.com/pingcap/tidb/pkg/ddl/internal/session"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
+	"github.com/pingcap/tidb/pkg/ddl/session"
 	"github.com/pingcap/tidb/pkg/distsql"
 	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
 	"github.com/pingcap/tidb/pkg/errctx"
@@ -313,7 +313,7 @@ func (w *worker) runReorgJob(
 	return nil
 }
 
-func overwriteReorgInfoFromGlobalCheckpoint(w *worker, sess *sess.Session, job *model.Job, reorgInfo *reorgInfo) error {
+func overwriteReorgInfoFromGlobalCheckpoint(w *worker, sess *session.Session, job *model.Job, reorgInfo *reorgInfo) error {
 	if job.ReorgMeta.ReorgTp != model.ReorgTypeLitMerge {
 		// Only used for the ingest mode job.
 		return nil
@@ -886,7 +886,7 @@ func getReorgInfoFromPartitions(ctx *JobContext, d *ddlCtx, rh *reorgHandler, jo
 
 // UpdateReorgMeta creates a new transaction and updates tidb_ddl_reorg table,
 // so the reorg can restart in case of issues.
-func (r *reorgInfo) UpdateReorgMeta(startKey kv.Key, pool *sess.Pool) (err error) {
+func (r *reorgInfo) UpdateReorgMeta(startKey kv.Key, pool *session.Pool) (err error) {
 	if startKey == nil && r.EndKey == nil {
 		return nil
 	}
@@ -896,7 +896,7 @@ func (r *reorgInfo) UpdateReorgMeta(startKey kv.Key, pool *sess.Pool) (err error
 	}
 	defer pool.Put(sctx)
 
-	se := sess.NewSession(sctx)
+	se := session.NewSession(sctx)
 	err = se.Begin(context.Background())
 	if err != nil {
 		return
@@ -912,15 +912,15 @@ func (r *reorgInfo) UpdateReorgMeta(startKey kv.Key, pool *sess.Pool) (err error
 
 // reorgHandler is used to handle the reorg information duration reorganization DDL job.
 type reorgHandler struct {
-	s *sess.Session
+	s *session.Session
 }
 
 // NewReorgHandlerForTest creates a new reorgHandler, only used in test.
 func NewReorgHandlerForTest(se sessionctx.Context) *reorgHandler {
-	return newReorgHandler(sess.NewSession(se))
+	return newReorgHandler(session.NewSession(se))
 }
 
-func newReorgHandler(sess *sess.Session) *reorgHandler {
+func newReorgHandler(sess *session.Session) *reorgHandler {
 	return &reorgHandler{s: sess}
 }
 
@@ -940,7 +940,7 @@ func (r *reorgHandler) RemoveDDLReorgHandle(job *model.Job, elements []*meta.Ele
 }
 
 // CleanupDDLReorgHandles removes the job reorganization related handles.
-func CleanupDDLReorgHandles(job *model.Job, s *sess.Session) {
+func CleanupDDLReorgHandles(job *model.Job, s *session.Session) {
 	if job != nil && !job.IsFinished() && !job.IsSynced() {
 		// Job is given, but it is neither finished nor synced; do nothing
 		return

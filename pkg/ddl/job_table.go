@@ -31,8 +31,8 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
-	sess "github.com/pingcap/tidb/pkg/ddl/internal/session"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
+	"github.com/pingcap/tidb/pkg/ddl/session"
 	"github.com/pingcap/tidb/pkg/ddl/syncer"
 	"github.com/pingcap/tidb/pkg/ddl/systable"
 	"github.com/pingcap/tidb/pkg/ddl/util"
@@ -141,7 +141,7 @@ type jobScheduler struct {
 	// TODO ddlCtx is too large for here, we should remove dependency on it.
 	*ddlCtx
 	ddlJobNotifyCh chan struct{}
-	sessPool       *sess.Pool
+	sessPool       *session.Pool
 	delRangeMgr    delRangeManager
 }
 
@@ -162,7 +162,7 @@ func (s *jobScheduler) start() {
 				return nil, err
 			}
 			sessForJob.GetSessionVars().SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
-			wk.sess = sess.NewSession(sessForJob)
+			wk.sess = session.NewSession(sessForJob)
 			metrics.DDLCounter.WithLabelValues(fmt.Sprintf("%s_%s", metrics.CreateDDL, wk.String())).Inc()
 			return wk, nil
 		}
@@ -188,7 +188,7 @@ func (s *jobScheduler) close() {
 	}
 }
 
-func (s *jobScheduler) getJob(se *sess.Session, tp jobType) (*model.Job, error) {
+func (s *jobScheduler) getJob(se *session.Session, tp jobType) (*model.Job, error) {
 	not := "not"
 	label := "get_job_general"
 	if tp == jobTypeReorg {
@@ -256,7 +256,7 @@ func hasSysDB(job *model.Job) bool {
 	return false
 }
 
-func (s *jobScheduler) processJobDuringUpgrade(sess *sess.Session, job *model.Job) (isRunnable bool, err error) {
+func (s *jobScheduler) processJobDuringUpgrade(sess *session.Session, job *model.Job) (isRunnable bool, err error) {
 	if s.stateSyncer.IsUpgradingState() {
 		if job.IsPaused() {
 			return false, nil
@@ -350,7 +350,7 @@ func (s *jobScheduler) startDispatch() error {
 		return errors.Trace(err)
 	}
 	defer s.sessPool.Put(sessCtx)
-	se := sess.NewSession(sessCtx)
+	se := session.NewSession(sessCtx)
 	var notifyDDLJobByEtcdCh clientv3.WatchChan
 	if s.etcdCli != nil {
 		notifyDDLJobByEtcdCh = s.etcdCli.Watch(s.schCtx, addingDDLJobNotifyKey)
@@ -436,7 +436,7 @@ func (s *jobScheduler) checkAndUpdateClusterState(needUpdate bool) error {
 	return nil
 }
 
-func (s *jobScheduler) loadDDLJobAndRun(se *sess.Session, pool *workerPool, tp jobType) {
+func (s *jobScheduler) loadDDLJobAndRun(se *session.Session, pool *workerPool, tp jobType) {
 	wk, err := pool.get()
 	if err != nil || wk == nil {
 		logutil.DDLLogger().Debug(fmt.Sprintf("[ddl] no %v worker available now", pool.tp()), zap.Error(err))
@@ -643,7 +643,7 @@ func (s *jobScheduler) runJobWithWorker(wk *worker, job *model.Job) error {
 	return nil
 }
 
-func (*jobScheduler) markJobProcessing(se *sess.Session, job *model.Job) error {
+func (*jobScheduler) markJobProcessing(se *session.Session, job *model.Job) error {
 	se.GetSessionVars().SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
 	_, err := se.Execute(context.Background(), fmt.Sprintf(
 		"update mysql.tidb_ddl_job set processing = 1 where job_id = %d", job.ID),
@@ -691,7 +691,7 @@ const (
 	updateDDLJobSQL = "update mysql.tidb_ddl_job set job_meta = %s where job_id = %d"
 )
 
-func insertDDLJobs2Table(se *sess.Session, updateRawArgs bool, jobs ...*model.Job) error {
+func insertDDLJobs2Table(se *session.Session, updateRawArgs bool, jobs ...*model.Job) error {
 	failpoint.Inject("mockAddBatchDDLJobsErr", func(val failpoint.Value) {
 		if val.(bool) {
 			failpoint.Return(errors.Errorf("mockAddBatchDDLJobsErr"))
@@ -765,7 +765,7 @@ func (w *worker) deleteDDLJob(job *model.Job) error {
 	return errors.Trace(err)
 }
 
-func updateDDLJob2Table(se *sess.Session, job *model.Job, updateRawArgs bool) error {
+func updateDDLJob2Table(se *session.Session, job *model.Job, updateRawArgs bool) error {
 	b, err := job.Encode(updateRawArgs)
 	if err != nil {
 		return err
@@ -776,7 +776,7 @@ func updateDDLJob2Table(se *sess.Session, job *model.Job, updateRawArgs bool) er
 }
 
 // getDDLReorgHandle gets DDL reorg handle.
-func getDDLReorgHandle(se *sess.Session, job *model.Job) (element *meta.Element,
+func getDDLReorgHandle(se *session.Session, job *model.Job) (element *meta.Element,
 	startKey, endKey kv.Key, physicalTableID int64, err error) {
 	sql := fmt.Sprintf("select ele_id, ele_type, start_key, end_key, physical_id, reorg_meta from mysql.tidb_ddl_reorg where job_id = %d", job.ID)
 	ctx := kv.WithInternalSourceType(context.Background(), getDDLRequestSource(job.Type))
@@ -799,7 +799,7 @@ func getDDLReorgHandle(se *sess.Session, job *model.Job) (element *meta.Element,
 	return
 }
 
-func getCheckpointReorgHandle(se *sess.Session, job *model.Job) (startKey, endKey kv.Key, physicalTableID int64, err error) {
+func getCheckpointReorgHandle(se *session.Session, job *model.Job) (startKey, endKey kv.Key, physicalTableID int64, err error) {
 	startKey, endKey = kv.Key{}, kv.Key{}
 	sql := fmt.Sprintf("select reorg_meta from mysql.tidb_ddl_reorg where job_id = %d", job.ID)
 	ctx := kv.WithInternalSourceType(context.Background(), getDDLRequestSource(job.Type))
@@ -838,7 +838,7 @@ func getCheckpointReorgHandle(se *sess.Session, job *model.Job) (startKey, endKe
 
 // updateDDLReorgHandle update startKey, endKey physicalTableID and element of the handle.
 // Caller should wrap this in a separate transaction, to avoid conflicts.
-func updateDDLReorgHandle(se *sess.Session, jobID int64, startKey kv.Key, endKey kv.Key, physicalTableID int64, element *meta.Element) error {
+func updateDDLReorgHandle(se *session.Session, jobID int64, startKey kv.Key, endKey kv.Key, physicalTableID int64, element *meta.Element) error {
 	sql := fmt.Sprintf("update mysql.tidb_ddl_reorg set ele_id = %d, ele_type = %s, start_key = %s, end_key = %s, physical_id = %d where job_id = %d",
 		element.ID, util.WrapKey2String(element.TypeKey), util.WrapKey2String(startKey), util.WrapKey2String(endKey), physicalTableID, jobID)
 	_, err := se.Execute(context.Background(), sql, "update_handle")
@@ -846,7 +846,7 @@ func updateDDLReorgHandle(se *sess.Session, jobID int64, startKey kv.Key, endKey
 }
 
 // initDDLReorgHandle initializes the handle for ddl reorg.
-func initDDLReorgHandle(s *sess.Session, jobID int64, startKey kv.Key, endKey kv.Key, physicalTableID int64, element *meta.Element) error {
+func initDDLReorgHandle(s *session.Session, jobID int64, startKey kv.Key, endKey kv.Key, physicalTableID int64, element *meta.Element) error {
 	rawReorgMeta, err := json.Marshal(ingest.JobReorgMeta{
 		Checkpoint: &ingest.ReorgCheckpoint{
 			PhysicalID: physicalTableID,
@@ -860,7 +860,7 @@ func initDDLReorgHandle(s *sess.Session, jobID int64, startKey kv.Key, endKey kv
 	del := fmt.Sprintf("delete from mysql.tidb_ddl_reorg where job_id = %d", jobID)
 	ins := fmt.Sprintf("insert into mysql.tidb_ddl_reorg(job_id, ele_id, ele_type, start_key, end_key, physical_id, reorg_meta) values (%d, %d, %s, %s, %s, %d, %s)",
 		jobID, element.ID, util.WrapKey2String(element.TypeKey), util.WrapKey2String(startKey), util.WrapKey2String(endKey), physicalTableID, util.WrapKey2String(rawReorgMeta))
-	return s.RunInTxn(func(se *sess.Session) error {
+	return s.RunInTxn(func(se *session.Session) error {
 		_, err := se.Execute(context.Background(), del, "init_handle")
 		if err != nil {
 			logutil.DDLLogger().Info("initDDLReorgHandle failed to delete", zap.Int64("jobID", jobID), zap.Error(err))
@@ -871,36 +871,36 @@ func initDDLReorgHandle(s *sess.Session, jobID int64, startKey kv.Key, endKey kv
 }
 
 // deleteDDLReorgHandle deletes the handle for ddl reorg.
-func removeDDLReorgHandle(se *sess.Session, job *model.Job, elements []*meta.Element) error {
+func removeDDLReorgHandle(se *session.Session, job *model.Job, elements []*meta.Element) error {
 	if len(elements) == 0 {
 		return nil
 	}
 	sql := fmt.Sprintf("delete from mysql.tidb_ddl_reorg where job_id = %d", job.ID)
-	return se.RunInTxn(func(se *sess.Session) error {
+	return se.RunInTxn(func(se *session.Session) error {
 		_, err := se.Execute(context.Background(), sql, "remove_handle")
 		return err
 	})
 }
 
 // removeReorgElement removes the element from ddl reorg, it is the same with removeDDLReorgHandle, only used in failpoint
-func removeReorgElement(se *sess.Session, job *model.Job) error {
+func removeReorgElement(se *session.Session, job *model.Job) error {
 	sql := fmt.Sprintf("delete from mysql.tidb_ddl_reorg where job_id = %d", job.ID)
-	return se.RunInTxn(func(se *sess.Session) error {
+	return se.RunInTxn(func(se *session.Session) error {
 		_, err := se.Execute(context.Background(), sql, "remove_handle")
 		return err
 	})
 }
 
 // cleanDDLReorgHandles removes handles that are no longer needed.
-func cleanDDLReorgHandles(se *sess.Session, job *model.Job) error {
+func cleanDDLReorgHandles(se *session.Session, job *model.Job) error {
 	sql := "delete from mysql.tidb_ddl_reorg where job_id = " + strconv.FormatInt(job.ID, 10)
-	return se.RunInTxn(func(se *sess.Session) error {
+	return se.RunInTxn(func(se *session.Session) error {
 		_, err := se.Execute(context.Background(), sql, "clean_handle")
 		return err
 	})
 }
 
-func getJobsBySQL(se *sess.Session, tbl, condition string) ([]*model.Job, error) {
+func getJobsBySQL(se *session.Session, tbl, condition string) ([]*model.Job, error) {
 	rows, err := se.Execute(context.Background(), fmt.Sprintf("select job_meta from mysql.%s where %s", tbl, condition), "get_job")
 	if err != nil {
 		return nil, errors.Trace(err)

@@ -27,8 +27,8 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
-	sess "github.com/pingcap/tidb/pkg/ddl/internal/session"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
+	"github.com/pingcap/tidb/pkg/ddl/session"
 	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
@@ -45,7 +45,7 @@ type CheckpointManager struct {
 	ctx           context.Context
 	cancel        context.CancelFunc
 	flushCtrl     FlushController
-	sessPool      *sess.Pool
+	sessPool      *session.Pool
 	jobID         int64
 	indexIDs      []int64
 	localStoreDir string
@@ -104,7 +104,7 @@ type FlushController interface {
 func NewCheckpointManager(
 	ctx context.Context,
 	flushCtrl FlushController,
-	sessPool *sess.Pool,
+	sessPool *session.Pool,
 	jobID int64,
 	indexIDs []int64,
 	localStoreDir string,
@@ -335,8 +335,8 @@ func (s *CheckpointManager) resumeOrInitCheckpoint() error {
 		return errors.Trace(err)
 	}
 	defer s.sessPool.Put(sessCtx)
-	ddlSess := sess.NewSession(sessCtx)
-	err = ddlSess.RunInTxn(func(se *sess.Session) error {
+	ddlSess := session.NewSession(sessCtx)
+	err = ddlSess.RunInTxn(func(se *session.Session) error {
 		template := "select reorg_meta from mysql.tidb_ddl_reorg where job_id = %d and ele_type = %s;"
 		sql := fmt.Sprintf(template, s.jobID, util.WrapKey2String(meta.IndexElementKey))
 		ctx := kv.WithInternalSourceType(s.ctx, kv.InternalTxnBackfillDDLPrefix+"add_index")
@@ -415,8 +415,8 @@ func (s *CheckpointManager) updateCheckpointImpl() error {
 		return errors.Trace(err)
 	}
 	defer s.sessPool.Put(sessCtx)
-	ddlSess := sess.NewSession(sessCtx)
-	err = ddlSess.RunInTxn(func(se *sess.Session) error {
+	ddlSess := session.NewSession(sessCtx)
+	err = ddlSess.RunInTxn(func(se *session.Session) error {
 		template := "update mysql.tidb_ddl_reorg set reorg_meta = %s where job_id = %d and ele_type = %s;"
 		cp := &ReorgCheckpoint{
 			LocalSyncKey:   flushedKeyLowWatermark,

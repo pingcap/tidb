@@ -24,7 +24,7 @@ import (
 
 	"github.com/ngaut/pools"
 	"github.com/pingcap/tidb/pkg/ddl"
-	"github.com/pingcap/tidb/pkg/ddl/internal/session"
+	session2 "github.com/pingcap/tidb/pkg/ddl/session"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -38,10 +38,10 @@ func TestDDLHistoryBasic(t *testing.T) {
 		newTk := testkit.NewTestKit(t, store)
 		return newTk.Session(), nil
 	}, 8, 8, 0)
-	sessPool := session.NewSessionPool(rs)
+	sessPool := session2.NewSessionPool(rs)
 	sessCtx, err := sessPool.Get()
 	require.NoError(t, err)
-	sess := session.NewSession(sessCtx)
+	sess := session2.NewSession(sessCtx)
 
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnLightning)
 	err = kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
