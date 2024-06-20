@@ -157,7 +157,9 @@ func (p *parallelCPUProfiler) profilingLoop() {
 	checkTicker := time.NewTicker(DefProfileDuration)
 	defer func() {
 		checkTicker.Stop()
+		logutil.BgLogger().Debug("before StopCPUProfile")
 		pprof.StopCPUProfile()
+		logutil.BgLogger().Debug("after StopCPUProfile")
 		p.wg.Done()
 	}()
 	for {
@@ -177,7 +179,9 @@ func (p *parallelCPUProfiler) profilingLoop() {
 
 func (p *parallelCPUProfiler) doProfiling() {
 	if p.profileData != nil {
+		logutil.BgLogger().Debug("before StopCPUProfile")
 		pprof.StopCPUProfile()
+		logutil.BgLogger().Debug("after StopCPUProfile")
 		p.lastDataSize = p.profileData.Data.Len()
 		p.sendToConsumers()
 	}
@@ -190,7 +194,9 @@ func (p *parallelCPUProfiler) doProfiling() {
 
 	capacity := (p.lastDataSize/4096 + 1) * 4096
 	p.profileData = &ProfileData{Data: bytes.NewBuffer(make([]byte, 0, capacity))}
+	logutil.BgLogger().Debug("before StartCPUProfile")
 	err := pprof.StartCPUProfile(p.profileData.Data)
+	logutil.BgLogger().Debug("after StartCPUProfile")
 	if err != nil {
 		p.profileData.Error = err
 		// notify error as soon as possible
