@@ -374,8 +374,8 @@ func (b *PlanBuilder) buildAggregation(ctx context.Context, p base.LogicalPlan, 
 	if isSelection {
 		join, isSelectionJoin = selection.Children()[0].(*LogicalJoin)
 	}
-	if (isJoin && join.fullSchema != nil) || (isSelectionJoin && join.fullSchema != nil) {
-		for i, col := range join.fullSchema.Columns {
+	if (isJoin && join.FullSchema != nil) || (isSelectionJoin && join.FullSchema != nil) {
+		for i, col := range join.FullSchema.Columns {
 			if p.Schema().Contains(col) {
 				continue
 			}
@@ -387,7 +387,7 @@ func (b *PlanBuilder) buildAggregation(ctx context.Context, p base.LogicalPlan, 
 			newCol, _ := col.Clone().(*expression.Column)
 			newCol.RetType = newFunc.RetTp
 			schema4Agg.Append(newCol)
-			names = append(names, join.fullNames[i])
+			names = append(names, join.FullNames[i])
 		}
 	}
 	hasGroupBy := len(gbyItems) > 0
@@ -665,139 +665,139 @@ func (p *LogicalJoin) setPreferredJoinTypeAndOrder(hintInfo *h.PlanHints) {
 	lhsAlias := extractTableAlias(p.Children()[0], p.QueryBlockOffset())
 	rhsAlias := extractTableAlias(p.Children()[1], p.QueryBlockOffset())
 	if hintInfo.IfPreferMergeJoin(lhsAlias) {
-		p.preferJoinType |= h.PreferMergeJoin
-		p.leftPreferJoinType |= h.PreferMergeJoin
+		p.PreferJoinType |= h.PreferMergeJoin
+		p.LeftPreferJoinType |= h.PreferMergeJoin
 	}
 	if hintInfo.IfPreferMergeJoin(rhsAlias) {
-		p.preferJoinType |= h.PreferMergeJoin
-		p.rightPreferJoinType |= h.PreferMergeJoin
+		p.PreferJoinType |= h.PreferMergeJoin
+		p.RightPreferJoinType |= h.PreferMergeJoin
 	}
 	if hintInfo.IfPreferNoMergeJoin(lhsAlias) {
-		p.preferJoinType |= h.PreferNoMergeJoin
-		p.leftPreferJoinType |= h.PreferNoMergeJoin
+		p.PreferJoinType |= h.PreferNoMergeJoin
+		p.LeftPreferJoinType |= h.PreferNoMergeJoin
 	}
 	if hintInfo.IfPreferNoMergeJoin(rhsAlias) {
-		p.preferJoinType |= h.PreferNoMergeJoin
-		p.rightPreferJoinType |= h.PreferNoMergeJoin
+		p.PreferJoinType |= h.PreferNoMergeJoin
+		p.RightPreferJoinType |= h.PreferNoMergeJoin
 	}
 	if hintInfo.IfPreferBroadcastJoin(lhsAlias) {
-		p.preferJoinType |= h.PreferBCJoin
-		p.leftPreferJoinType |= h.PreferBCJoin
+		p.PreferJoinType |= h.PreferBCJoin
+		p.LeftPreferJoinType |= h.PreferBCJoin
 	}
 	if hintInfo.IfPreferBroadcastJoin(rhsAlias) {
-		p.preferJoinType |= h.PreferBCJoin
-		p.rightPreferJoinType |= h.PreferBCJoin
+		p.PreferJoinType |= h.PreferBCJoin
+		p.RightPreferJoinType |= h.PreferBCJoin
 	}
 	if hintInfo.IfPreferShuffleJoin(lhsAlias) {
-		p.preferJoinType |= h.PreferShuffleJoin
-		p.leftPreferJoinType |= h.PreferShuffleJoin
+		p.PreferJoinType |= h.PreferShuffleJoin
+		p.LeftPreferJoinType |= h.PreferShuffleJoin
 	}
 	if hintInfo.IfPreferShuffleJoin(rhsAlias) {
-		p.preferJoinType |= h.PreferShuffleJoin
-		p.rightPreferJoinType |= h.PreferShuffleJoin
+		p.PreferJoinType |= h.PreferShuffleJoin
+		p.RightPreferJoinType |= h.PreferShuffleJoin
 	}
 	if hintInfo.IfPreferHashJoin(lhsAlias) {
-		p.preferJoinType |= h.PreferHashJoin
-		p.leftPreferJoinType |= h.PreferHashJoin
+		p.PreferJoinType |= h.PreferHashJoin
+		p.LeftPreferJoinType |= h.PreferHashJoin
 	}
 	if hintInfo.IfPreferHashJoin(rhsAlias) {
-		p.preferJoinType |= h.PreferHashJoin
-		p.rightPreferJoinType |= h.PreferHashJoin
+		p.PreferJoinType |= h.PreferHashJoin
+		p.RightPreferJoinType |= h.PreferHashJoin
 	}
 	if hintInfo.IfPreferNoHashJoin(lhsAlias) {
-		p.preferJoinType |= h.PreferNoHashJoin
-		p.leftPreferJoinType |= h.PreferNoHashJoin
+		p.PreferJoinType |= h.PreferNoHashJoin
+		p.LeftPreferJoinType |= h.PreferNoHashJoin
 	}
 	if hintInfo.IfPreferNoHashJoin(rhsAlias) {
-		p.preferJoinType |= h.PreferNoHashJoin
-		p.rightPreferJoinType |= h.PreferNoHashJoin
+		p.PreferJoinType |= h.PreferNoHashJoin
+		p.RightPreferJoinType |= h.PreferNoHashJoin
 	}
 	if hintInfo.IfPreferINLJ(lhsAlias) {
-		p.preferJoinType |= h.PreferLeftAsINLJInner
-		p.leftPreferJoinType |= h.PreferINLJ
+		p.PreferJoinType |= h.PreferLeftAsINLJInner
+		p.LeftPreferJoinType |= h.PreferINLJ
 	}
 	if hintInfo.IfPreferINLJ(rhsAlias) {
-		p.preferJoinType |= h.PreferRightAsINLJInner
-		p.rightPreferJoinType |= h.PreferINLJ
+		p.PreferJoinType |= h.PreferRightAsINLJInner
+		p.RightPreferJoinType |= h.PreferINLJ
 	}
 	if hintInfo.IfPreferINLHJ(lhsAlias) {
-		p.preferJoinType |= h.PreferLeftAsINLHJInner
-		p.leftPreferJoinType |= h.PreferINLHJ
+		p.PreferJoinType |= h.PreferLeftAsINLHJInner
+		p.LeftPreferJoinType |= h.PreferINLHJ
 	}
 	if hintInfo.IfPreferINLHJ(rhsAlias) {
-		p.preferJoinType |= h.PreferRightAsINLHJInner
-		p.rightPreferJoinType |= h.PreferINLHJ
+		p.PreferJoinType |= h.PreferRightAsINLHJInner
+		p.RightPreferJoinType |= h.PreferINLHJ
 	}
 	if hintInfo.IfPreferINLMJ(lhsAlias) {
-		p.preferJoinType |= h.PreferLeftAsINLMJInner
-		p.leftPreferJoinType |= h.PreferINLMJ
+		p.PreferJoinType |= h.PreferLeftAsINLMJInner
+		p.LeftPreferJoinType |= h.PreferINLMJ
 	}
 	if hintInfo.IfPreferINLMJ(rhsAlias) {
-		p.preferJoinType |= h.PreferRightAsINLMJInner
-		p.rightPreferJoinType |= h.PreferINLMJ
+		p.PreferJoinType |= h.PreferRightAsINLMJInner
+		p.RightPreferJoinType |= h.PreferINLMJ
 	}
 	if hintInfo.IfPreferNoIndexJoin(lhsAlias) {
-		p.preferJoinType |= h.PreferNoIndexJoin
-		p.leftPreferJoinType |= h.PreferNoIndexJoin
+		p.PreferJoinType |= h.PreferNoIndexJoin
+		p.LeftPreferJoinType |= h.PreferNoIndexJoin
 	}
 	if hintInfo.IfPreferNoIndexJoin(rhsAlias) {
-		p.preferJoinType |= h.PreferNoIndexJoin
-		p.rightPreferJoinType |= h.PreferNoIndexJoin
+		p.PreferJoinType |= h.PreferNoIndexJoin
+		p.RightPreferJoinType |= h.PreferNoIndexJoin
 	}
 	if hintInfo.IfPreferNoIndexHashJoin(lhsAlias) {
-		p.preferJoinType |= h.PreferNoIndexHashJoin
-		p.leftPreferJoinType |= h.PreferNoIndexHashJoin
+		p.PreferJoinType |= h.PreferNoIndexHashJoin
+		p.LeftPreferJoinType |= h.PreferNoIndexHashJoin
 	}
 	if hintInfo.IfPreferNoIndexHashJoin(rhsAlias) {
-		p.preferJoinType |= h.PreferNoIndexHashJoin
-		p.rightPreferJoinType |= h.PreferNoIndexHashJoin
+		p.PreferJoinType |= h.PreferNoIndexHashJoin
+		p.RightPreferJoinType |= h.PreferNoIndexHashJoin
 	}
 	if hintInfo.IfPreferNoIndexMergeJoin(lhsAlias) {
-		p.preferJoinType |= h.PreferNoIndexMergeJoin
-		p.leftPreferJoinType |= h.PreferNoIndexMergeJoin
+		p.PreferJoinType |= h.PreferNoIndexMergeJoin
+		p.LeftPreferJoinType |= h.PreferNoIndexMergeJoin
 	}
 	if hintInfo.IfPreferNoIndexMergeJoin(rhsAlias) {
-		p.preferJoinType |= h.PreferNoIndexMergeJoin
-		p.rightPreferJoinType |= h.PreferNoIndexMergeJoin
+		p.PreferJoinType |= h.PreferNoIndexMergeJoin
+		p.RightPreferJoinType |= h.PreferNoIndexMergeJoin
 	}
 	if hintInfo.IfPreferHJBuild(lhsAlias) {
-		p.preferJoinType |= h.PreferLeftAsHJBuild
-		p.leftPreferJoinType |= h.PreferHJBuild
+		p.PreferJoinType |= h.PreferLeftAsHJBuild
+		p.LeftPreferJoinType |= h.PreferHJBuild
 	}
 	if hintInfo.IfPreferHJBuild(rhsAlias) {
-		p.preferJoinType |= h.PreferRightAsHJBuild
-		p.rightPreferJoinType |= h.PreferHJBuild
+		p.PreferJoinType |= h.PreferRightAsHJBuild
+		p.RightPreferJoinType |= h.PreferHJBuild
 	}
 	if hintInfo.IfPreferHJProbe(lhsAlias) {
-		p.preferJoinType |= h.PreferLeftAsHJProbe
-		p.leftPreferJoinType |= h.PreferHJProbe
+		p.PreferJoinType |= h.PreferLeftAsHJProbe
+		p.LeftPreferJoinType |= h.PreferHJProbe
 	}
 	if hintInfo.IfPreferHJProbe(rhsAlias) {
-		p.preferJoinType |= h.PreferRightAsHJProbe
-		p.rightPreferJoinType |= h.PreferHJProbe
+		p.PreferJoinType |= h.PreferRightAsHJProbe
+		p.RightPreferJoinType |= h.PreferHJProbe
 	}
 	hasConflict := false
 	if !p.SCtx().GetSessionVars().EnableAdvancedJoinHint || p.SCtx().GetSessionVars().StmtCtx.StraightJoinOrder {
-		if containDifferentJoinTypes(p.preferJoinType) {
+		if containDifferentJoinTypes(p.PreferJoinType) {
 			hasConflict = true
 		}
 	} else if p.SCtx().GetSessionVars().EnableAdvancedJoinHint {
-		if containDifferentJoinTypes(p.leftPreferJoinType) || containDifferentJoinTypes(p.rightPreferJoinType) {
+		if containDifferentJoinTypes(p.LeftPreferJoinType) || containDifferentJoinTypes(p.RightPreferJoinType) {
 			hasConflict = true
 		}
 	}
 	if hasConflict {
 		p.SCtx().GetSessionVars().StmtCtx.SetHintWarning(
 			"Join hints are conflict, you can only specify one type of join")
-		p.preferJoinType = 0
+		p.PreferJoinType = 0
 	}
 	// set the join order
 	if hintInfo.LeadingJoinOrder != nil {
-		p.preferJoinOrder = hintInfo.MatchTableName([]*h.HintedTable{lhsAlias, rhsAlias}, hintInfo.LeadingJoinOrder)
+		p.PreferJoinOrder = hintInfo.MatchTableName([]*h.HintedTable{lhsAlias, rhsAlias}, hintInfo.LeadingJoinOrder)
 	}
 	// set hintInfo for further usage if this hint info can be used.
-	if p.preferJoinType != 0 || p.preferJoinOrder {
-		p.hintInfo = hintInfo
+	if p.PreferJoinType != 0 || p.PreferJoinOrder {
+		p.HintInfo = hintInfo
 	}
 }
 
@@ -851,14 +851,14 @@ func setPreferredJoinTypeFromOneSide(preferJoinType uint, isLeft bool) (resJoinT
 
 // setPreferredJoinType generates hint information for the logicalJoin based on the hint information of its left and right children.
 func (p *LogicalJoin) setPreferredJoinType() {
-	if p.leftPreferJoinType == 0 && p.rightPreferJoinType == 0 {
+	if p.LeftPreferJoinType == 0 && p.RightPreferJoinType == 0 {
 		return
 	}
-	p.preferJoinType = setPreferredJoinTypeFromOneSide(p.leftPreferJoinType, true) | setPreferredJoinTypeFromOneSide(p.rightPreferJoinType, false)
-	if containDifferentJoinTypes(p.preferJoinType) {
+	p.PreferJoinType = setPreferredJoinTypeFromOneSide(p.LeftPreferJoinType, true) | setPreferredJoinTypeFromOneSide(p.RightPreferJoinType, false)
+	if containDifferentJoinTypes(p.PreferJoinType) {
 		p.SCtx().GetSessionVars().StmtCtx.SetHintWarning(
 			"Join hints conflict after join reorder phase, you can only specify one type of join")
-		p.preferJoinType = 0
+		p.PreferJoinType = 0
 	}
 }
 
@@ -982,22 +982,22 @@ func (b *PlanBuilder) buildJoin(ctx context.Context, joinNode *ast.Join) (base.L
 		joinPlan.JoinType = InnerJoin
 	}
 
-	// Merge sub-plan's fullSchema into this join plan.
-	// Please read the comment of LogicalJoin.fullSchema for the details.
+	// Merge sub-plan's FullSchema into this join plan.
+	// Please read the comment of LogicalJoin.FullSchema for the details.
 	var (
 		lFullSchema, rFullSchema *expression.Schema
 		lFullNames, rFullNames   types.NameSlice
 	)
-	if left, ok := leftPlan.(*LogicalJoin); ok && left.fullSchema != nil {
-		lFullSchema = left.fullSchema
-		lFullNames = left.fullNames
+	if left, ok := leftPlan.(*LogicalJoin); ok && left.FullSchema != nil {
+		lFullSchema = left.FullSchema
+		lFullNames = left.FullNames
 	} else {
 		lFullSchema = leftPlan.Schema()
 		lFullNames = leftPlan.OutputNames()
 	}
-	if right, ok := rightPlan.(*LogicalJoin); ok && right.fullSchema != nil {
-		rFullSchema = right.fullSchema
-		rFullNames = right.fullNames
+	if right, ok := rightPlan.(*LogicalJoin); ok && right.FullSchema != nil {
+		rFullSchema = right.FullSchema
+		rFullNames = right.FullNames
 	} else {
 		rFullSchema = rightPlan.Schema()
 		rFullNames = rightPlan.OutputNames()
@@ -1007,22 +1007,22 @@ func (b *PlanBuilder) buildJoin(ctx context.Context, joinNode *ast.Join) (base.L
 		lFullSchema, rFullSchema = rFullSchema, lFullSchema
 		lFullNames, rFullNames = rFullNames, lFullNames
 	}
-	joinPlan.fullSchema = expression.MergeSchema(lFullSchema, rFullSchema)
+	joinPlan.FullSchema = expression.MergeSchema(lFullSchema, rFullSchema)
 
 	// Clear NotNull flag for the inner side schema if it's an outer join.
 	if joinNode.Tp == ast.LeftJoin || joinNode.Tp == ast.RightJoin {
-		resetNotNullFlag(joinPlan.fullSchema, lFullSchema.Len(), joinPlan.fullSchema.Len())
+		resetNotNullFlag(joinPlan.FullSchema, lFullSchema.Len(), joinPlan.FullSchema.Len())
 	}
 
-	// Merge sub-plan's fullNames into this join plan, similar to the fullSchema logic above.
-	joinPlan.fullNames = make([]*types.FieldName, 0, len(lFullNames)+len(rFullNames))
+	// Merge sub-plan's FullNames into this join plan, similar to the FullSchema logic above.
+	joinPlan.FullNames = make([]*types.FieldName, 0, len(lFullNames)+len(rFullNames))
 	for _, lName := range lFullNames {
 		name := *lName
-		joinPlan.fullNames = append(joinPlan.fullNames, &name)
+		joinPlan.FullNames = append(joinPlan.FullNames, &name)
 	}
 	for _, rName := range rFullNames {
 		name := *rName
-		joinPlan.fullNames = append(joinPlan.fullNames, &name)
+		joinPlan.FullNames = append(joinPlan.FullNames, &name)
 	}
 
 	// Set preferred join algorithm if some join hints is specified by user.
@@ -1066,7 +1066,7 @@ func (b *PlanBuilder) buildJoin(ctx context.Context, joinNode *ast.Join) (base.L
 	} else if joinPlan.JoinType == InnerJoin {
 		// If a inner join without "ON" or "USING" clause, it's a cartesian
 		// product over the join tables.
-		joinPlan.cartesianJoin = true
+		joinPlan.CartesianJoin = true
 	}
 
 	return joinPlan, nil
@@ -1269,12 +1269,12 @@ func (b *PlanBuilder) coalesceCommonColumns(p *LogicalJoin, leftPlan, rightPlan 
 			return err
 		}
 		conds = append(conds, cond)
-		if p.fullSchema != nil {
-			// since fullSchema is derived from left and right schema in upper layer, so rc/lc must be in fullSchema.
+		if p.FullSchema != nil {
+			// since FullSchema is derived from left and right schema in upper layer, so rc/lc must be in FullSchema.
 			if joinTp == ast.RightJoin {
-				p.fullNames[p.fullSchema.ColumnIndex(lc)].Redundant = true
+				p.FullNames[p.FullSchema.ColumnIndex(lc)].Redundant = true
 			} else {
-				p.fullNames[p.fullSchema.ColumnIndex(rc)].Redundant = true
+				p.FullNames[p.FullSchema.ColumnIndex(rc)].Redundant = true
 			}
 		}
 	}
@@ -1582,9 +1582,9 @@ func findColFromNaturalUsingJoin(p base.LogicalPlan, col *expression.Column) (na
 	case *LogicalLimit, *LogicalSelection, *LogicalTopN, *LogicalSort, *LogicalMaxOneRow:
 		return findColFromNaturalUsingJoin(p.Children()[0], col)
 	case *LogicalJoin:
-		if x.fullSchema != nil {
-			idx := x.fullSchema.ColumnIndex(col)
-			return x.fullNames[idx]
+		if x.FullSchema != nil {
+			idx := x.FullSchema.ColumnIndex(col)
+			return x.FullNames[idx]
 		}
 	}
 	return nil
@@ -2591,9 +2591,9 @@ func (a *havingWindowAndOrderbyExprResolver) resolveFromPlan(v *ast.ColumnNameEx
 		case *LogicalLimit, *LogicalSelection, *LogicalTopN, *LogicalSort, *LogicalMaxOneRow:
 			return a.resolveFromPlan(v, p.Children()[0], resolveFieldsFirst)
 		case *LogicalJoin:
-			if len(x.fullNames) != 0 {
-				idx, err = expression.FindFieldName(x.fullNames, v.Name)
-				schemaCols, outputNames = x.fullSchema.Columns, x.fullNames
+			if len(x.FullNames) != 0 {
+				idx, err = expression.FindFieldName(x.FullNames, v.Name)
+				schemaCols, outputNames = x.FullSchema.Columns, x.FullNames
 			}
 		}
 		if err != nil || idx < 0 {
@@ -3870,9 +3870,9 @@ func (*PlanBuilder) unfoldWildStar(p base.LogicalPlan, selectFields []*ast.Selec
 		list := unfoldWildStar(field, p.OutputNames(), p.Schema().Columns)
 		// For sql like `select t1.*, t2.* from t1 join t2 using(a)` or `select t1.*, t2.* from t1 natual join t2`,
 		// the schema of the Join doesn't contain enough columns because the join keys are coalesced in this schema.
-		// We should collect the columns from the fullSchema.
-		if isJoin && join.fullSchema != nil && field.WildCard.Table.L != "" {
-			list = unfoldWildStar(field, join.fullNames, join.fullSchema.Columns)
+		// We should collect the columns from the FullSchema.
+		if isJoin && join.FullSchema != nil && field.WildCard.Table.L != "" {
+			list = unfoldWildStar(field, join.FullNames, join.FullSchema.Columns)
 		}
 		if len(list) == 0 {
 			return nil, plannererrors.ErrBadTable.GenWithStackByArgs(field.WildCard.Table)
@@ -5620,7 +5620,7 @@ func (b *PlanBuilder) buildSemiJoin(outerPlan, innerPlan base.LogicalPlan, onCon
 	// Apply forces to choose hash join currently, so don't worry the hints will take effect if the semi join is in one apply.
 	joinPlan.setPreferredJoinTypeAndOrder(b.TableHints())
 	if forceRewrite {
-		joinPlan.preferJoinType |= h.PreferRewriteSemiJoin
+		joinPlan.PreferJoinType |= h.PreferRewriteSemiJoin
 		b.optFlag |= flagSemiJoinRewrite
 	}
 	return joinPlan, nil
@@ -7317,7 +7317,7 @@ func getInnerFromParenthesesAndUnaryPlus(expr ast.ExprNode) ast.ExprNode {
 	return expr
 }
 
-// containDifferentJoinTypes checks whether `preferJoinType` contains different
+// containDifferentJoinTypes checks whether `PreferJoinType` contains different
 // join types.
 func containDifferentJoinTypes(preferJoinType uint) bool {
 	preferJoinType &= ^h.PreferNoHashJoin

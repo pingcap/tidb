@@ -2110,8 +2110,8 @@ func TestConflictedJoinTypeHints(t *testing.T) {
 	require.True(t, ok)
 	join, ok := proj.Children()[0].(*LogicalJoin)
 	require.True(t, ok)
-	require.Nil(t, join.hintInfo)
-	require.Equal(t, uint(0), join.preferJoinType)
+	require.Nil(t, join.HintInfo)
+	require.Equal(t, uint(0), join.PreferJoinType)
 }
 
 func TestSimplyOuterJoinWithOnlyOuterExpr(t *testing.T) {

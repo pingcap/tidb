@@ -773,7 +773,7 @@ func (p *LogicalJoin) DeriveStats(childStats []*property.StatsInfo, selfSchema *
 	}
 	leftProfile, rightProfile := childStats[0], childStats[1]
 	leftJoinKeys, rightJoinKeys, _, _ := p.GetJoinKeys()
-	p.equalCondOutCnt = cardinality.EstimateFullJoinRowCount(p.SCtx(),
+	p.EqualCondOutCnt = cardinality.EstimateFullJoinRowCount(p.SCtx(),
 		0 == len(p.EqualConditions),
 		leftProfile, rightProfile,
 		leftJoinKeys, rightJoinKeys,
@@ -801,7 +801,7 @@ func (p *LogicalJoin) DeriveStats(childStats []*property.StatsInfo, selfSchema *
 		p.StatsInfo().GroupNDVs = p.getGroupNDVs(colGroups, childStats)
 		return p.StatsInfo(), nil
 	}
-	count := p.equalCondOutCnt
+	count := p.EqualCondOutCnt
 	if p.JoinType == LeftOuterJoin {
 		count = math.Max(count, leftProfile.RowCount)
 	} else if p.JoinType == RightOuterJoin {

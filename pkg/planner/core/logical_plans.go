@@ -128,16 +128,16 @@ type LogicalJoin struct {
 	logicalop.LogicalSchemaProducer
 
 	JoinType      JoinType
-	reordered     bool
-	cartesianJoin bool
+	Reordered     bool
+	CartesianJoin bool
 	StraightJoin  bool
 
-	// hintInfo stores the join algorithm hint information specified by client.
-	hintInfo            *h.PlanHints
-	preferJoinType      uint
-	preferJoinOrder     bool
-	leftPreferJoinType  uint
-	rightPreferJoinType uint
+	// HintInfo stores the join algorithm hint information specified by client.
+	HintInfo            *h.PlanHints
+	PreferJoinType      uint
+	PreferJoinOrder     bool
+	LeftPreferJoinType  uint
+	RightPreferJoinType uint
 
 	EqualConditions []*expression.ScalarFunction
 	// NAEQConditions means null aware equal conditions, which is used for null aware semi joins.
@@ -146,8 +146,8 @@ type LogicalJoin struct {
 	RightConditions expression.CNFExprs
 	OtherConditions expression.CNFExprs
 
-	leftProperties  [][]*expression.Column
-	rightProperties [][]*expression.Column
+	LeftProperties  [][]*expression.Column
+	RightProperties [][]*expression.Column
 
 	// DefaultValues is only used for left/right outer join, which is values the inner row's should be when the outer table
 	// doesn't match any inner table's row.
@@ -155,7 +155,7 @@ type LogicalJoin struct {
 	// Currently, only `aggregation push down` phase will set this.
 	DefaultValues []types.Datum
 
-	// fullSchema contains all the columns that the Join can output. It's ordered as [outer schema..., inner schema...].
+	// FullSchema contains all the columns that the Join can output. It's ordered as [outer schema..., inner schema...].
 	// This is useful for natural joins and "using" joins. In these cases, the join key columns from the
 	// inner side (or the right side when it's an inner join) will not be in the schema of Join.
 	// But upper operators should be able to find those "redundant" columns, and the user also can specifically select
@@ -164,16 +164,16 @@ type LogicalJoin struct {
 	// For example:
 	// create table t1(a int, b int); create table t2(a int, b int);
 	// select * from t1 join t2 using (b);
-	// schema of the Join will be [t1.b, t1.a, t2.a]; fullSchema will be [t1.a, t1.b, t2.a, t2.b].
+	// schema of the Join will be [t1.b, t1.a, t2.a]; FullSchema will be [t1.a, t1.b, t2.a, t2.b].
 	//
 	// We record all columns and keep them ordered is for correctly handling SQLs like
 	// select t1.*, t2.* from t1 join t2 using (b);
 	// (*PlanBuilder).unfoldWildStar() handles the schema for such case.
-	fullSchema *expression.Schema
-	fullNames  types.NameSlice
+	FullSchema *expression.Schema
+	FullNames  types.NameSlice
 
-	// equalCondOutCnt indicates the estimated count of joined rows after evaluating `EqualConditions`.
-	equalCondOutCnt float64
+	// EqualCondOutCnt indicates the estimated count of joined rows after evaluating `EqualConditions`.
+	EqualCondOutCnt float64
 }
 
 func (p *LogicalJoin) isNAAJ() bool {
@@ -1275,8 +1275,8 @@ func (p *LogicalSelection) ExtractFD() *fd.FDSet {
 	// join's schema will miss t2.a while join.full schema has. since selection
 	// itself doesn't contain schema, extracting schema should tell them apart.
 	var columns []*expression.Column
-	if join, ok := p.Children()[0].(*LogicalJoin); ok && join.fullSchema != nil {
-		columns = join.fullSchema.Columns
+	if join, ok := p.Children()[0].(*LogicalJoin); ok && join.FullSchema != nil {
+		columns = join.FullSchema.Columns
 	} else {
 		columns = p.Schema().Columns
 	}
