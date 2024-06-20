@@ -25,7 +25,8 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 )
 
-func appendItemPruneTraceStep(p base.LogicalPlan, itemType string, prunedObjects []fmt.Stringer, opt *optimizetrace.LogicalOptimizeOp) {
+func appendItemPruneTraceStep(p base.LogicalPlan, itemType string, prunedObjects []fmt.Stringer,
+	opt *optimizetrace.LogicalOptimizeOp) {
 	if len(prunedObjects) < 1 {
 		return
 	}
@@ -47,7 +48,8 @@ func appendItemPruneTraceStep(p base.LogicalPlan, itemType string, prunedObjects
 }
 
 // AppendColumnPruneTraceStep appends a trace step for column pruning.
-func AppendColumnPruneTraceStep(p base.LogicalPlan, prunedColumns []*expression.Column, opt *optimizetrace.LogicalOptimizeOp) {
+func AppendColumnPruneTraceStep(p base.LogicalPlan, prunedColumns []*expression.Column,
+	opt *optimizetrace.LogicalOptimizeOp) {
 	if len(prunedColumns) < 1 {
 		return
 	}
@@ -59,7 +61,8 @@ func AppendColumnPruneTraceStep(p base.LogicalPlan, prunedColumns []*expression.
 }
 
 // AppendFunctionPruneTraceStep appends a trace step for group by pruning.
-func AppendFunctionPruneTraceStep(p base.LogicalPlan, prunedFunctions []*aggregation.AggFuncDesc, opt *optimizetrace.LogicalOptimizeOp) {
+func AppendFunctionPruneTraceStep(p base.LogicalPlan, prunedFunctions []*aggregation.AggFuncDesc,
+	opt *optimizetrace.LogicalOptimizeOp) {
 	if len(prunedFunctions) < 1 {
 		return
 	}
@@ -71,7 +74,8 @@ func AppendFunctionPruneTraceStep(p base.LogicalPlan, prunedFunctions []*aggrega
 }
 
 // AppendByItemsPruneTraceStep appends a trace step for group by pruning.
-func AppendByItemsPruneTraceStep(p base.LogicalPlan, prunedByItems []*util.ByItems, opt *optimizetrace.LogicalOptimizeOp) {
+func AppendByItemsPruneTraceStep(p base.LogicalPlan, prunedByItems []*util.ByItems,
+	opt *optimizetrace.LogicalOptimizeOp) {
 	if len(prunedByItems) < 1 {
 		return
 	}
@@ -83,7 +87,8 @@ func AppendByItemsPruneTraceStep(p base.LogicalPlan, prunedByItems []*util.ByIte
 }
 
 // AppendGroupByItemsPruneTraceStep appends a trace step for group by pruning.
-func AppendGroupByItemsPruneTraceStep(p base.LogicalPlan, prunedGroupByItems []expression.Expression, opt *optimizetrace.LogicalOptimizeOp) {
+func AppendGroupByItemsPruneTraceStep(p base.LogicalPlan, prunedGroupByItems []expression.Expression,
+	opt *optimizetrace.LogicalOptimizeOp) {
 	if len(prunedGroupByItems) < 1 {
 		return
 	}
