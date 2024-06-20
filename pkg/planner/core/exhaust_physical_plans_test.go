@@ -113,7 +113,7 @@ func prepareForAnalyzeLookUpFilters() *indexJoinContext {
 		TblName: model.NewCIStr("t"),
 		DBName:  model.NewCIStr("test"),
 	})
-	dataSourceNode.schema = dsSchema
+	dataSourceNode.SetSchema(dsSchema)
 	dataSourceNode.SetStats(&property.StatsInfo{StatsVersion: statistics.PseudoVersion})
 	path := &util.AccessPath{
 		IdxCols:    append(make([]*expression.Column, 0, 5), dsSchema.Columns...),
@@ -189,10 +189,10 @@ func testAnalyzeLookUpFilters(t *testing.T, testCtx *indexJoinContext, testCase 
 	ctx.GetSessionVars().RangeMaxSize = testCase.rangeMaxSize
 	dataSourceNode := testCtx.dataSourceNode
 	joinNode := testCtx.joinNode
-	pushed, err := rewriteSimpleExpr(ctx.GetExprCtx(), testCase.pushedDownConds, dataSourceNode.schema, testCtx.dsNames)
+	pushed, err := rewriteSimpleExpr(ctx.GetExprCtx(), testCase.pushedDownConds, dataSourceNode.Schema(), testCtx.dsNames)
 	require.NoError(t, err)
 	dataSourceNode.pushedDownConds = pushed
-	others, err := rewriteSimpleExpr(ctx.GetExprCtx(), testCase.otherConds, joinNode.schema, testCtx.joinColNames)
+	others, err := rewriteSimpleExpr(ctx.GetExprCtx(), testCase.otherConds, joinNode.Schema(), testCtx.joinColNames)
 	require.NoError(t, err)
 	joinNode.OtherConditions = others
 	helper := &indexJoinBuildHelper{join: joinNode, lastColManager: nil, innerPlan: dataSourceNode}
@@ -215,7 +215,7 @@ func testAnalyzeLookUpFilters(t *testing.T, testCtx *indexJoinContext, testCase 
 
 func TestIndexJoinAnalyzeLookUpFilters(t *testing.T) {
 	indexJoinCtx := prepareForAnalyzeLookUpFilters()
-	dsSchema := indexJoinCtx.dataSourceNode.schema
+	dsSchema := indexJoinCtx.dataSourceNode.Schema()
 	tests := []indexJoinTestCase{
 		// Join key not continuous and no pushed filter to match.
 		{
@@ -357,7 +357,7 @@ func checkRangeFallbackAndReset(t *testing.T, ctx base.PlanContext, expectedRang
 func TestRangeFallbackForAnalyzeLookUpFilters(t *testing.T) {
 	ijCtx := prepareForAnalyzeLookUpFilters()
 	ctx := ijCtx.dataSourceNode.SCtx()
-	dsSchema := ijCtx.dataSourceNode.schema
+	dsSchema := ijCtx.dataSourceNode.Schema()
 
 	type testOutput struct {
 		ranges         string
