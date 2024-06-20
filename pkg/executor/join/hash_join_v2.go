@@ -46,8 +46,9 @@ var (
 
 // IsHashJoinV2Enabled return true if hash join v2 is enabled
 func IsHashJoinV2Enabled() bool {
-	// sizeOfUintptr should always equal to sizeOfUnsafePointer, add this check here in case in the future
-	// go runtime change this
+	// sizeOfUintptr should always equal to sizeOfUnsafePointer, because according to golang's doc,
+	// a Pointer can be converted to an uintptr. Add this check here in case in the future go runtime
+	// change this
 	return enableHashJoinV2.Load() && sizeOfUintptr >= sizeOfUnsafePointer
 }
 
