@@ -127,7 +127,6 @@ type IndexMergeReaderExecutor struct {
 
 	// memTracker is used to track the memory usage of this executor.
 	memTracker *memory.Tracker
-	paging     bool
 
 	partialPlans        [][]base.PhysicalPlan
 	tblPlans            []base.PhysicalPlan
@@ -395,7 +394,6 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 					SetIsStaleness(e.isStaleness).
 					SetFromSessionVars(e.Ctx().GetDistSQLCtx()).
 					SetMemTracker(e.memTracker).
-					SetPaging(e.paging).
 					SetFromInfoSchema(e.Ctx().GetInfoSchema()).
 					SetClosestReplicaReadAdjuster(newClosestReadAdjuster(e.Ctx().GetDistSQLCtx(), &builder.Request, e.partialNetDataSizes[workID])).
 					SetConnIDAndConnAlias(e.Ctx().GetSessionVars().ConnectionID, e.Ctx().GetSessionVars().SessionAlias)
