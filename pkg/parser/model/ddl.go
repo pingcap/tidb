@@ -596,6 +596,7 @@ type InvolvingSchemaInfo struct {
 	Mode          InvolvingSchemaInfoMode `json:"mode,omitempty"`
 }
 
+// InvolvingSchemaInfoMode is used by InvolvingSchemaInfo.Mode.
 type InvolvingSchemaInfoMode int
 
 // ExclusiveInvolving and SharedInvolving are considered like the exclusive lock
