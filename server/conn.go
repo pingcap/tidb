@@ -892,6 +892,9 @@ func (cc *clientConn) openSessionAndDoAuth(authData []byte, authPlugin string) e
 	return nil
 }
 
+// mockOSUserForAuthSocketTest should only be used in test
+var mockOSUserForAuthSocketTest atomic.Pointer[string]
+
 // Check if the Authentication Plugin of the server, client and user configuration matches
 func (cc *clientConn) checkAuthPlugin(ctx context.Context, resp *handshakeResponse41) ([]byte, error) {
 	// Open a context unless this was done before.
@@ -940,7 +943,15 @@ func (cc *clientConn) checkAuthPlugin(ctx context.Context, resp *handshakeRespon
 		if err != nil {
 			return nil, err
 		}
-		return []byte(user.Username), nil
+		uname := user.Username
+
+		failpoint.Inject("MockOSUserForAuthSocket", func() {
+			if p := mockOSUserForAuthSocketTest.Load(); p != nil {
+				uname = *p
+			}
+		})
+
+		return []byte(uname), nil
 	}
 	if len(userplugin) == 0 {
 		// No user plugin set, assuming MySQL Native Password
