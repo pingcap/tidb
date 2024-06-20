@@ -42,23 +42,23 @@ func TestRefreshMinJobID(t *testing.T) {
 	mgr.EXPECT().GetMinJobID(gomock.Any(), int64(0)).Return(int64(1), nil)
 	refresher.Refresh(ctx)
 	require.EqualValues(t, 1, refresher.currMinJobID)
-	require.GreaterOrEqual(t, refresher.lastRefreshMinIDTime, start)
+	require.GreaterOrEqual(t, refresher.lastRefreshTime, start)
 	require.True(t, ctrl.Satisfied())
 	// not refresh too fast
 	refreshInterval = time.Hour
 	refresher.Refresh(ctx)
 	require.True(t, ctrl.Satisfied())
 	// ignore refresh error
-	refresher.lastRefreshMinIDTime = time.Time{}
+	refresher.lastRefreshTime = time.Time{}
 	mgr.EXPECT().GetMinJobID(gomock.Any(), int64(1)).Return(int64(0), errors.New("mock err"))
 	refresher.Refresh(ctx)
 	require.EqualValues(t, 1, refresher.currMinJobID)
 	require.True(t, ctrl.Satisfied())
 	// success again
-	refresher.lastRefreshMinIDTime = time.Time{}
+	refresher.lastRefreshTime = time.Time{}
 	mgr.EXPECT().GetMinJobID(gomock.Any(), int64(1)).Return(int64(100), nil)
 	refresher.Refresh(ctx)
 	require.EqualValues(t, 100, refresher.currMinJobID)
-	require.GreaterOrEqual(t, refresher.lastRefreshMinIDTime, start)
+	require.GreaterOrEqual(t, refresher.lastRefreshTime, start)
 	require.True(t, ctrl.Satisfied())
 }

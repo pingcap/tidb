@@ -29,9 +29,9 @@ var (
 // MinJobIDRefresher is used to maintain the minimal job ID in tidb_ddl_job table.
 // we use it to mitigate this issue https://github.com/pingcap/tidb/issues/52905
 type MinJobIDRefresher struct {
-	sysTblMgr            Manager
-	currMinJobID         int64
-	lastRefreshMinIDTime time.Time
+	sysTblMgr       Manager
+	currMinJobID    int64
+	lastRefreshTime time.Time
 }
 
 // NewMinJobIDRefresher creates a new MinJobIDRefresher.
@@ -49,10 +49,10 @@ func (r *MinJobIDRefresher) GetCurrMinJobID() int64 {
 // Refresh refreshes the minimal job ID in tidb_ddl_job table.
 func (r *MinJobIDRefresher) Refresh(ctx context.Context) {
 	now := time.Now()
-	if now.Sub(r.lastRefreshMinIDTime) < refreshInterval {
+	if now.Sub(r.lastRefreshTime) < refreshInterval {
 		return
 	}
-	r.lastRefreshMinIDTime = now
+	r.lastRefreshTime = now
 	minID, err := r.sysTblMgr.GetMinJobID(ctx, r.currMinJobID)
 	if err != nil {
 		logutil.DDLLogger().Info("get min job ID failed", zap.Error(err))
