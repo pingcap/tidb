@@ -128,6 +128,10 @@ type jobScheduler struct {
 	runningJobs  *runningJobs
 	sysTblMgr    systable.Manager
 	schemaLoader SchemaLoader
+	// currMinJobID is the minimal job ID in tidb_ddl_job table, we use it to mitigate
+	// this issue https://github.com/pingcap/tidb/issues/52905
+	currMinJobID         int64
+	lastRefreshMinIDTime time.Time
 
 	// those fields are created on start
 	reorgWorkerPool      *workerPool
@@ -184,21 +188,22 @@ func (s *jobScheduler) close() {
 	}
 }
 
-func (s *jobScheduler) getJob(se *sess.Session, tp jobType, filter func(*model.Job) (bool, error)) (*model.Job, error) {
+func (s *jobScheduler) getJob(se *sess.Session, tp jobType) (*model.Job, error) {
 	not := "not"
 	label := "get_job_general"
 	if tp == jobTypeReorg {
 		not = ""
 		label = "get_job_reorg"
 	}
+	// TODO replace this sub-query with memory implementation.
 	const getJobSQL = `select job_meta, processing from mysql.tidb_ddl_job where job_id in
-		(select min(job_id) from mysql.tidb_ddl_job group by schema_ids, table_ids, processing)
+		(select min(job_id) from mysql.tidb_ddl_job where job_id >= %d group by schema_ids, table_ids, processing)
 		and %s reorg %s order by processing desc, job_id`
 	var excludedJobIDs string
 	if ids := s.runningJobs.allIDs(); len(ids) > 0 {
 		excludedJobIDs = fmt.Sprintf("and job_id not in (%s)", ids)
 	}
-	sql := fmt.Sprintf(getJobSQL, not, excludedJobIDs)
+	sql := fmt.Sprintf(getJobSQL, s.currMinJobID, not, excludedJobIDs)
 	rows, err := se.Execute(context.Background(), sql, label)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -226,20 +231,18 @@ func (s *jobScheduler) getJob(se *sess.Session, tp jobType, filter func(*model.J
 			return &job, nil
 		}
 
-		b, err := filter(&job)
-		if err != nil {
+		if !s.runningJobs.checkRunnable(job.ID, job.GetInvolvingSchemaInfo()) {
+			continue
+		}
+
+		if err = s.markJobProcessing(se, &job); err != nil {
+			logutil.DDLLogger().Warn(
+				"[ddl] handle ddl job failed: mark job is processing meet error",
+				zap.Error(err),
+				zap.Stringer("job", &job))
 			return nil, errors.Trace(err)
 		}
-		if b {
-			if err = s.markJobProcessing(se, &job); err != nil {
-				logutil.DDLLogger().Warn(
-					"[ddl] handle ddl job failed: mark job is processing meet error",
-					zap.Error(err),
-					zap.Stringer("job", &job))
-				return nil, errors.Trace(err)
-			}
-			return &job, nil
-		}
+		return &job, nil
 	}
 	return nil, nil
 }
@@ -304,42 +307,6 @@ func (s *jobScheduler) processJobDuringUpgrade(sess *sess.Session, job *model.Jo
 	}
 
 	return true, nil
-}
-
-func (s *jobScheduler) getGeneralJob(sess *sess.Session) (*model.Job, error) {
-	return s.getJob(sess, jobTypeGeneral, func(job *model.Job) (bool, error) {
-		if !s.runningJobs.checkRunnable(job) {
-			return false, nil
-		}
-		if job.Type == model.ActionDropSchema {
-			// Check if there is any reorg job on this schema.
-			sql := fmt.Sprintf("select job_id from mysql.tidb_ddl_job where CONCAT(',', schema_ids, ',') REGEXP CONCAT(',', %s, ',') != 0 and processing limit 1", strconv.Quote(strconv.FormatInt(job.SchemaID, 10)))
-			rows, err := sess.Execute(s.schCtx, sql, "check conflict jobs")
-			return len(rows) == 0, err
-		}
-		// Check if there is any running job works on the same table.
-		sql := fmt.Sprintf("select job_id from mysql.tidb_ddl_job t1, (select table_ids from mysql.tidb_ddl_job where job_id = %d) t2 where "+
-			"(processing and CONCAT(',', t2.table_ids, ',') REGEXP CONCAT(',(', REPLACE(t1.table_ids, ',', '|'), '),') != 0)"+
-			"or (type = %d and processing)", job.ID, model.ActionFlashbackCluster)
-		rows, err := sess.Execute(s.schCtx, sql, "check conflict jobs")
-		return len(rows) == 0, err
-	})
-}
-
-func (s *jobScheduler) getReorgJob(sess *sess.Session) (*model.Job, error) {
-	return s.getJob(sess, jobTypeReorg, func(job *model.Job) (bool, error) {
-		if !s.runningJobs.checkRunnable(job) {
-			return false, nil
-		}
-		// Check if there is any block ddl running, like drop schema and flashback cluster.
-		sql := fmt.Sprintf("select job_id from mysql.tidb_ddl_job where "+
-			"(CONCAT(',', schema_ids, ',') REGEXP CONCAT(',', %s, ',') != 0 and type = %d and processing) "+
-			"or (CONCAT(',', table_ids, ',') REGEXP CONCAT(',', %s, ',') != 0 and processing) "+
-			"or (type = %d and processing) limit 1",
-			strconv.Quote(strconv.FormatInt(job.SchemaID, 10)), model.ActionDropSchema, strconv.Quote(strconv.FormatInt(job.TableID, 10)), model.ActionFlashbackCluster)
-		rows, err := sess.Execute(s.schCtx, sql, "check conflict jobs")
-		return len(rows) == 0, err
-	})
 }
 
 // startLocalWorkerLoop starts the local worker loop to run the DDL job of v2.
@@ -425,9 +392,10 @@ func (s *jobScheduler) startDispatch() error {
 		if err := s.checkAndUpdateClusterState(false); err != nil {
 			continue
 		}
+		s.refreshMinJobID()
 		failpoint.InjectCall("beforeAllLoadDDLJobAndRun")
-		s.loadDDLJobAndRun(se, s.generalDDLWorkerPool, s.getGeneralJob)
-		s.loadDDLJobAndRun(se, s.reorgWorkerPool, s.getReorgJob)
+		s.loadDDLJobAndRun(se, s.generalDDLWorkerPool, jobTypeGeneral)
+		s.loadDDLJobAndRun(se, s.reorgWorkerPool, jobTypeReorg)
 	}
 }
 
@@ -468,7 +436,7 @@ func (s *jobScheduler) checkAndUpdateClusterState(needUpdate bool) error {
 	return nil
 }
 
-func (s *jobScheduler) loadDDLJobAndRun(se *sess.Session, pool *workerPool, getJob func(*sess.Session) (*model.Job, error)) {
+func (s *jobScheduler) loadDDLJobAndRun(se *sess.Session, pool *workerPool, tp jobType) {
 	wk, err := pool.get()
 	if err != nil || wk == nil {
 		logutil.DDLLogger().Debug(fmt.Sprintf("[ddl] no %v worker available now", pool.tp()), zap.Error(err))
@@ -480,7 +448,7 @@ func (s *jobScheduler) loadDDLJobAndRun(se *sess.Session, pool *workerPool, getJ
 	s.mu.RUnlock()
 
 	startTime := time.Now()
-	job, err := getJob(se)
+	job, err := s.getJob(se, tp)
 	if job == nil || err != nil {
 		if err != nil {
 			wk.jobLogger(job).Warn("get job met error", zap.Duration("take time", time.Since(startTime)), zap.Error(err))
@@ -681,6 +649,21 @@ func (*jobScheduler) markJobProcessing(se *sess.Session, job *model.Job) error {
 		"update mysql.tidb_ddl_job set processing = 1 where job_id = %d", job.ID),
 		"mark_job_processing")
 	return errors.Trace(err)
+}
+
+func (s *jobScheduler) refreshMinJobID() {
+	now := time.Now()
+	if now.Sub(s.lastRefreshMinIDTime) < dispatchLoopWaitingDuration {
+		return
+	}
+	s.lastRefreshMinIDTime = now
+	minID, err := s.sysTblMgr.GetMinJobID(s.schCtx, s.currMinJobID)
+	if err != nil {
+		logutil.DDLLogger().Info("get min job ID failed", zap.Error(err))
+		return
+	}
+	// use max, in case all job are finished to avoid the currMinJobID go back.
+	s.currMinJobID = max(s.currMinJobID, minID)
 }
 
 func (d *ddl) getTableByTxn(r autoid.Requirement, schemaID, tableID int64) (*model.DBInfo, table.Table, error) {

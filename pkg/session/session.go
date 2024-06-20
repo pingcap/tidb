@@ -178,7 +178,7 @@ type session struct {
 
 	store kv.Storage
 
-	sessionPlanCache sessionctx.PlanCache
+	sessionPlanCache sessionctx.SessionPlanCache
 
 	sessionVars    *variable.SessionVars
 	sessionManager util.SessionManager
@@ -390,7 +390,7 @@ func (s *session) SetCollation(coID int) error {
 	return s.sessionVars.SetSystemVarWithoutValidation(variable.CollationConnection, co)
 }
 
-func (s *session) GetSessionPlanCache() sessionctx.PlanCache {
+func (s *session) GetSessionPlanCache() sessionctx.SessionPlanCache {
 	// use the prepared plan cache
 	if !s.GetSessionVars().EnablePreparedPlanCache && !s.GetSessionVars().EnableNonPreparedPlanCache {
 		return nil
@@ -3061,7 +3061,7 @@ func CreateSession4Test(store kv.Storage) (types.Session, error) {
 
 // Opt describes the option for creating session
 type Opt struct {
-	PreparedPlanCache sessionctx.PlanCache
+	PreparedPlanCache sessionctx.SessionPlanCache
 }
 
 // CreateSession4TestWithOpt creates a new session environment for test.

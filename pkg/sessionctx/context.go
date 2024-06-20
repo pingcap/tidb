@@ -51,8 +51,8 @@ type SessionStatesHandler interface {
 	DecodeSessionStates(context.Context, Context, *sessionstates.SessionStates) error
 }
 
-// PlanCache is an interface for prepare and non-prepared plan cache
-type PlanCache interface {
+// SessionPlanCache is an interface for prepare and non-prepared plan cache
+type SessionPlanCache interface {
 	Get(key string, opts any) (value any, ok bool)
 	Put(key string, value, opts any)
 	Delete(key string)
@@ -131,7 +131,7 @@ type Context interface {
 	GetStore() kv.Storage
 
 	// GetSessionPlanCache returns the session-level cache of the physical plan.
-	GetSessionPlanCache() PlanCache
+	GetSessionPlanCache() SessionPlanCache
 
 	// UpdateColStatsUsage updates the column stats usage.
 	UpdateColStatsUsage(predicateColumns []model.TableItemID)

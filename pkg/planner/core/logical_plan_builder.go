@@ -398,7 +398,7 @@ func (b *PlanBuilder) buildAggregation(ctx context.Context, p base.LogicalPlan, 
 		}
 		schema4Agg.Columns[i].RetType = aggFunc.RetTp
 	}
-	plan4Agg.names = names
+	plan4Agg.SetOutputNames(names)
 	plan4Agg.SetChildren(p)
 	if rollupExpand != nil {
 		// append gid and gpos as the group keys if any.
@@ -962,9 +962,9 @@ func (b *PlanBuilder) buildJoin(ctx context.Context, joinNode *ast.Join) (base.L
 	joinPlan := LogicalJoin{StraightJoin: joinNode.StraightJoin || b.inStraightJoin}.Init(b.ctx, b.getSelectOffset())
 	joinPlan.SetChildren(leftPlan, rightPlan)
 	joinPlan.SetSchema(expression.MergeSchema(leftPlan.Schema(), rightPlan.Schema()))
-	joinPlan.names = make([]*types.FieldName, leftPlan.Schema().Len()+rightPlan.Schema().Len())
-	copy(joinPlan.names, leftPlan.OutputNames())
-	copy(joinPlan.names[leftPlan.Schema().Len():], rightPlan.OutputNames())
+	joinPlan.SetOutputNames(make([]*types.FieldName, leftPlan.Schema().Len()+rightPlan.Schema().Len()))
+	copy(joinPlan.OutputNames(), leftPlan.OutputNames())
+	copy(joinPlan.OutputNames()[leftPlan.Schema().Len():], rightPlan.OutputNames())
 
 	// Set join type.
 	switch joinNode.Tp {
@@ -972,12 +972,12 @@ func (b *PlanBuilder) buildJoin(ctx context.Context, joinNode *ast.Join) (base.L
 		// left outer join need to be checked elimination
 		b.optFlag = b.optFlag | flagEliminateOuterJoin
 		joinPlan.JoinType = LeftOuterJoin
-		resetNotNullFlag(joinPlan.schema, leftPlan.Schema().Len(), joinPlan.schema.Len())
+		resetNotNullFlag(joinPlan.Schema(), leftPlan.Schema().Len(), joinPlan.Schema().Len())
 	case ast.RightJoin:
 		// right outer join need to be checked elimination
 		b.optFlag = b.optFlag | flagEliminateOuterJoin
 		joinPlan.JoinType = RightOuterJoin
-		resetNotNullFlag(joinPlan.schema, 0, leftPlan.Schema().Len())
+		resetNotNullFlag(joinPlan.Schema(), 0, leftPlan.Schema().Len())
 	default:
 		joinPlan.JoinType = InnerJoin
 	}
@@ -1091,7 +1091,7 @@ func (b *PlanBuilder) buildUsingClause(p *LogicalJoin, leftPlan, rightPlan base.
 	}
 	// We do not need to coalesce columns for update and delete.
 	if b.inUpdateStmt || b.inDeleteStmt {
-		p.setSchemaAndNames(expression.MergeSchema(p.Children()[0].Schema(), p.Children()[1].Schema()),
+		p.SetSchemaAndNames(expression.MergeSchema(p.Children()[0].Schema(), p.Children()[1].Schema()),
 			append(p.Children()[0].OutputNames(), p.Children()[1].OutputNames()...))
 	}
 	return nil
@@ -1111,7 +1111,7 @@ func (b *PlanBuilder) buildNaturalJoin(p *LogicalJoin, leftPlan, rightPlan base.
 	}
 	// We do not need to coalesce columns for update and delete.
 	if b.inUpdateStmt || b.inDeleteStmt {
-		p.setSchemaAndNames(expression.MergeSchema(p.Children()[0].Schema(), p.Children()[1].Schema()),
+		p.SetSchemaAndNames(expression.MergeSchema(p.Children()[0].Schema(), p.Children()[1].Schema()),
 			append(p.Children()[0].OutputNames(), p.Children()[1].OutputNames()...))
 	}
 	return nil
@@ -1280,7 +1280,7 @@ func (b *PlanBuilder) coalesceCommonColumns(p *LogicalJoin, leftPlan, rightPlan 
 	}
 
 	p.SetSchema(expression.NewSchema(schemaCols...))
-	p.names = names
+	p.SetOutputNames(names)
 
 	p.OtherConditions = append(conds, p.OtherConditions...)
 
@@ -1331,7 +1331,7 @@ func (b *PlanBuilder) buildSelection(ctx context.Context, p base.LogicalPlan, wh
 				}
 				// If there is condition which is always false, return dual plan directly.
 				dual := LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
-				dual.names = p.OutputNames()
+				dual.SetOutputNames(p.OutputNames())
 				dual.SetSchema(p.Schema())
 				return dual, nil
 			}
@@ -1743,7 +1743,7 @@ func (b *PlanBuilder) buildProjection(ctx context.Context, p base.LogicalPlan, f
 	schema, newNames, proj.Exprs = b.implicitProjectGroupingSetCols(schema, newNames, proj.Exprs)
 
 	proj.SetSchema(schema)
-	proj.names = newNames
+	proj.SetOutputNames(newNames)
 	if expandGenerateColumn {
 		// Sometimes we need to add some fields to the projection so that we can use generate column substitute
 		// optimization. For example: select a+1 from t order by a+1, with a virtual generate column c as (a+1) and
@@ -1755,12 +1755,12 @@ func (b *PlanBuilder) buildProjection(ctx context.Context, p base.LogicalPlan, f
 			if idx == -1 {
 				continue
 			}
-			if proj.schema.Contains(col) {
+			if proj.Schema().Contains(col) {
 				continue
 			}
-			proj.schema.Columns = append(proj.schema.Columns, col)
+			proj.Schema().Columns = append(proj.Schema().Columns, col)
 			proj.Exprs = append(proj.Exprs, expr)
-			proj.names = append(proj.names, p.OutputNames()[idx])
+			proj.SetOutputNames(append(proj.OutputNames(), p.OutputNames()[idx]))
 		}
 	}
 	proj.SetChildren(p)
@@ -1832,7 +1832,7 @@ func (b *PlanBuilder) buildProjection(ctx context.Context, p base.LogicalPlan, f
 				name := ""
 				for idx, schemaCol := range proj.Schema().Columns {
 					if schemaCol.UniqueID == errShowCol.UniqueID {
-						name = proj.names[idx].String()
+						name = proj.OutputNames()[idx].String()
 						break
 					}
 				}
@@ -1890,10 +1890,10 @@ func (b *PlanBuilder) buildDistinct(child base.LogicalPlan, length int) (*Logica
 	}
 	plan4Agg.SetChildren(child)
 	plan4Agg.SetSchema(child.Schema().Clone())
-	plan4Agg.names = child.OutputNames()
+	plan4Agg.SetOutputNames(child.OutputNames())
 	// Distinct will be rewritten as first_row, we reset the type here since the return type
 	// of first_row is not always the same as the column arg of first_row.
-	for i, col := range plan4Agg.schema.Columns {
+	for i, col := range plan4Agg.Schema().Columns {
 		col.RetType = plan4Agg.AggFuncs[i].RetTp
 	}
 	return plan4Agg, nil
@@ -1979,8 +1979,8 @@ func (b *PlanBuilder) buildProjection4Union(_ context.Context, u *LogicalUnionAl
 			UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
 		})
 	}
-	u.schema = expression.NewSchema(unionCols...)
-	u.names = names
+	u.SetSchema(expression.NewSchema(unionCols...))
+	u.SetOutputNames(names)
 	// Process each child and add a projection above original child.
 	// So the schema of `UnionAll` can be the same with its children's.
 	for childID, child := range u.Children() {
@@ -1996,10 +1996,10 @@ func (b *PlanBuilder) buildProjection4Union(_ context.Context, u *LogicalUnionAl
 		}
 		b.optFlag |= flagEliminateProjection
 		proj := LogicalProjection{Exprs: exprs, AvoidColumnEvaluator: true}.Init(b.ctx, b.getSelectOffset())
-		proj.SetSchema(u.schema.Clone())
+		proj.SetSchema(u.Schema().Clone())
 		// reset the schema type to make the "not null" flag right.
 		for i, expr := range exprs {
-			proj.schema.Columns[i].RetType = expr.GetType(b.ctx.GetExprCtx().GetEvalCtx())
+			proj.Schema().Columns[i].RetType = expr.GetType(b.ctx.GetExprCtx().GetEvalCtx())
 		}
 		proj.SetChildren(child)
 		u.Children()[childID] = proj
@@ -2091,7 +2091,7 @@ func (b *PlanBuilder) buildSetOpr(ctx context.Context, setOpr *ast.SetOprStmt) (
 		for _, col := range schema.Columns {
 			col.UniqueID = b.ctx.GetSessionVars().AllocPlanColumnID()
 		}
-		proj.names = setOprPlan.OutputNames()[:oldLen]
+		proj.SetOutputNames(setOprPlan.OutputNames()[:oldLen])
 		proj.SetSchema(schema)
 		return proj, nil
 	}
@@ -2111,8 +2111,8 @@ func (b *PlanBuilder) buildSemiJoinForSetOperator(
 	joinPlan := LogicalJoin{JoinType: joinType}.Init(b.ctx, b.getSelectOffset())
 	joinPlan.SetChildren(leftPlan, rightPlan)
 	joinPlan.SetSchema(leftPlan.Schema())
-	joinPlan.names = make([]*types.FieldName, leftPlan.Schema().Len())
-	copy(joinPlan.names, leftPlan.OutputNames())
+	joinPlan.SetOutputNames(make([]*types.FieldName, leftPlan.Schema().Len()))
+	copy(joinPlan.OutputNames(), leftPlan.OutputNames())
 	for j := 0; j < len(rightPlan.Schema().Columns); j++ {
 		leftCol, rightCol := leftPlan.Schema().Columns[j], rightPlan.Schema().Columns[j]
 		eqCond, err := expression.NewFunction(b.ctx.GetExprCtx(), ast.NullEQ, types.NewFieldType(mysql.TypeTiny), leftCol, rightCol)
@@ -2482,8 +2482,8 @@ func (b *PlanBuilder) buildLimit(src base.LogicalPlan, limit *ast.Limit) (base.L
 	}
 	if offset+count == 0 {
 		tableDual := LogicalTableDual{RowCount: 0}.Init(b.ctx, b.getSelectOffset())
-		tableDual.schema = src.Schema()
-		tableDual.names = src.OutputNames()
+		tableDual.SetSchema(src.Schema())
+		tableDual.SetOutputNames(src.OutputNames())
 		return tableDual, nil
 	}
 	li := LogicalLimit{
@@ -4320,7 +4320,7 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p b
 		for _, col := range schema.Columns {
 			col.UniqueID = b.ctx.GetSessionVars().AllocPlanColumnID()
 		}
-		proj.names = p.OutputNames()[:oldLen]
+		proj.SetOutputNames(p.OutputNames()[:oldLen])
 		proj.SetSchema(schema)
 		return b.tryToBuildSequence(currentLayerCTEs, proj), nil
 	}
@@ -4400,12 +4400,12 @@ func (ds *DataSource) AddExtraPhysTblIDColumn() *expression.Column {
 	ds.Columns = append(ds.Columns, model.NewExtraPhysTblIDColInfo())
 	schema := ds.Schema()
 	schema.Append(pidCol)
-	ds.names = append(ds.names, &types.FieldName{
+	ds.SetOutputNames(append(ds.OutputNames(), &types.FieldName{
 		DBName:      ds.DBName,
 		TblName:     ds.TableInfo().Name,
 		ColName:     model.ExtraPhysTblIdName,
 		OrigColName: model.ExtraPhysTblIdName,
-	})
+	}))
 	ds.TblCols = append(ds.TblCols, pidCol)
 	return pidCol
 }
@@ -4620,7 +4620,7 @@ func (b *PlanBuilder) tryBuildCTE(ctx context.Context, tn *ast.TableName, asName
 				return b.buildDataSourceFromCTEMerge(ctx, cte.def)
 			}
 
-			for i, col := range lp.schema.Columns {
+			for i, col := range lp.Schema().Columns {
 				lp.cte.ColumnMap[string(col.HashCode())] = prevSchema.Columns[i]
 			}
 			p = lp
@@ -5006,7 +5006,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	handleMap[tableInfo.ID] = []util.HandleCols{handleCols}
 	b.handleHelper.pushMap(handleMap)
 	ds.SetSchema(schema)
-	ds.names = names
+	ds.SetOutputNames(names)
 	ds.setPreferredStoreType(b.TableHints())
 	ds.SampleInfo = tablesampler.NewTableSampleInfo(tn.TableSample, schema, b.partitionedTable)
 	b.isSampling = ds.SampleInfo != nil
@@ -5030,12 +5030,12 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 
 	// Init commonHandleCols and commonHandleLens for data source.
 	if tableInfo.IsCommonHandle {
-		ds.commonHandleCols, ds.commonHandleLens = expression.IndexInfo2Cols(ds.Columns, ds.schema.Columns, tables.FindPrimaryIndex(tableInfo))
+		ds.commonHandleCols, ds.commonHandleLens = expression.IndexInfo2Cols(ds.Columns, ds.Schema().Columns, tables.FindPrimaryIndex(tableInfo))
 	}
 	// Init FullIdxCols, FullIdxColLens for accessPaths.
 	for _, path := range ds.possibleAccessPaths {
 		if !path.IsIntHandlePath {
-			path.FullIdxCols, path.FullIdxColLens = expression.IndexInfo2Cols(ds.Columns, ds.schema.Columns, path.Index)
+			path.FullIdxCols, path.FullIdxColLens = expression.IndexInfo2Cols(ds.Columns, ds.Schema().Columns, path.Index)
 
 			// check whether the path's index has a tidb_shard() prefix and the index column count
 			// more than 1. e.g. index(tidb_shard(a), a)
@@ -5274,7 +5274,7 @@ func (b *PlanBuilder) buildMemTable(_ context.Context, dbName model.CIStr, table
 		Columns:   make([]*model.ColumnInfo, len(tableInfo.Columns)),
 	}.Init(b.ctx, b.getSelectOffset())
 	p.SetSchema(schema)
-	p.names = names
+	p.SetOutputNames(names)
 	copy(p.Columns, tableInfo.Columns)
 
 	// Some memory tables can receive some predicates
@@ -5514,7 +5514,7 @@ func (b *PlanBuilder) buildProjUponView(_ context.Context, dbName model.CIStr, t
 		projExprs = append(projExprs, cols[i])
 	}
 	projUponView := LogicalProjection{Exprs: projExprs}.Init(b.ctx, b.getSelectOffset())
-	projUponView.names = projNames
+	projUponView.SetOutputNames(projNames)
 	projUponView.SetChildren(selectLogicalPlan.(base.LogicalPlan))
 	projUponView.SetSchema(projSchema)
 	return projUponView, nil
@@ -5526,17 +5526,17 @@ func (b *PlanBuilder) buildApplyWithJoinType(outerPlan, innerPlan base.LogicalPl
 	b.optFlag = b.optFlag | flagPredicatePushDown | flagBuildKeyInfo | flagDecorrelate | flagConvertOuterToInnerJoin
 	ap := LogicalApply{LogicalJoin: LogicalJoin{JoinType: tp}, NoDecorrelate: markNoDecorrelate}.Init(b.ctx, b.getSelectOffset())
 	ap.SetChildren(outerPlan, innerPlan)
-	ap.names = make([]*types.FieldName, outerPlan.Schema().Len()+innerPlan.Schema().Len())
-	copy(ap.names, outerPlan.OutputNames())
+	ap.SetOutputNames(make([]*types.FieldName, outerPlan.Schema().Len()+innerPlan.Schema().Len()))
+	copy(ap.OutputNames(), outerPlan.OutputNames())
 	ap.SetSchema(expression.MergeSchema(outerPlan.Schema(), innerPlan.Schema()))
 	setIsInApplyForCTE(innerPlan, ap.Schema())
 	// Note that, tp can only be LeftOuterJoin or InnerJoin, so we don't consider other outer joins.
 	if tp == LeftOuterJoin {
 		b.optFlag = b.optFlag | flagEliminateOuterJoin
-		resetNotNullFlag(ap.schema, outerPlan.Schema().Len(), ap.schema.Len())
+		resetNotNullFlag(ap.Schema(), outerPlan.Schema().Len(), ap.Schema().Len())
 	}
 	for i := outerPlan.Schema().Len(); i < ap.Schema().Len(); i++ {
-		ap.names[i] = types.EmptyName
+		ap.OutputNames()[i] = types.EmptyName
 	}
 	ap.LogicalJoin.setPreferredJoinTypeAndOrder(b.TableHints())
 	return ap
@@ -5594,15 +5594,15 @@ func (b *PlanBuilder) buildSemiJoin(outerPlan, innerPlan base.LogicalPlan, onCon
 	}
 	joinPlan.SetChildren(outerPlan, innerPlan)
 	joinPlan.AttachOnConds(onCondition)
-	joinPlan.names = make([]*types.FieldName, outerPlan.Schema().Len(), outerPlan.Schema().Len()+innerPlan.Schema().Len()+1)
-	copy(joinPlan.names, outerPlan.OutputNames())
+	joinPlan.SetOutputNames(make([]*types.FieldName, outerPlan.Schema().Len(), outerPlan.Schema().Len()+innerPlan.Schema().Len()+1))
+	copy(joinPlan.OutputNames(), outerPlan.OutputNames())
 	if asScalar {
 		newSchema := outerPlan.Schema().Clone()
 		newSchema.Append(&expression.Column{
 			RetType:  types.NewFieldType(mysql.TypeTiny),
 			UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
 		})
-		joinPlan.names = append(joinPlan.names, types.EmptyName)
+		joinPlan.SetOutputNames(append(joinPlan.OutputNames(), types.EmptyName))
 		joinPlan.SetSchema(newSchema)
 		if not {
 			joinPlan.JoinType = AntiLeftOuterSemiJoin
@@ -5792,9 +5792,9 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 	// Add project to freeze the order of output columns.
 	proj := LogicalProjection{Exprs: expression.Column2Exprs(p.Schema().Columns[:oldSchemaLen])}.Init(b.ctx, b.getSelectOffset())
 	proj.SetSchema(expression.NewSchema(make([]*expression.Column, oldSchemaLen)...))
-	proj.names = make(types.NameSlice, len(p.OutputNames()))
-	copy(proj.names, p.OutputNames())
-	copy(proj.schema.Columns, p.Schema().Columns[:oldSchemaLen])
+	proj.SetOutputNames(make(types.NameSlice, len(p.OutputNames())))
+	copy(proj.OutputNames(), p.OutputNames())
+	copy(proj.Schema().Columns, p.Schema().Columns[:oldSchemaLen])
 	proj.SetChildren(p)
 	p = proj
 
@@ -6196,7 +6196,7 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, ds *ast.DeleteStmt) (base
 	proj := LogicalProjection{Exprs: expression.Column2Exprs(p.Schema().Columns[:oldLen])}.Init(b.ctx, b.getSelectOffset())
 	proj.SetChildren(p)
 	proj.SetSchema(oldSchema.Clone())
-	proj.names = p.OutputNames()[:oldLen]
+	proj.SetOutputNames(p.OutputNames()[:oldLen])
 	p = proj
 
 	handleColsMap := b.handleHelper.tailMap()
@@ -6209,7 +6209,7 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, ds *ast.DeleteStmt) (base
 				}
 				proj.Exprs = append(proj.Exprs, exprCol)
 				proj.Schema().Columns = append(proj.Schema().Columns, exprCol)
-				proj.names = append(proj.names, types.EmptyName)
+				proj.SetOutputNames(append(proj.OutputNames(), types.EmptyName))
 			}
 		}
 	}
@@ -6398,12 +6398,12 @@ func (b *PlanBuilder) buildProjectionForWindow(ctx context.Context, p base.Logic
 	projLen := len(p.Schema().Columns) + len(partitionItems) + len(orderItems) + len(args)
 	proj := LogicalProjection{Exprs: make([]expression.Expression, 0, projLen)}.Init(b.ctx, b.getSelectOffset())
 	proj.SetSchema(expression.NewSchema(make([]*expression.Column, 0, projLen)...))
-	proj.names = make([]*types.FieldName, p.Schema().Len(), projLen)
+	proj.SetOutputNames(make([]*types.FieldName, p.Schema().Len(), projLen))
 	for _, col := range p.Schema().Columns {
 		proj.Exprs = append(proj.Exprs, col)
-		proj.schema.Append(col)
+		proj.Schema().Append(col)
 	}
-	copy(proj.names, p.OutputNames())
+	copy(proj.OutputNames(), p.OutputNames())
 
 	propertyItems := make([]property.SortItem, 0, len(partitionItems)+len(orderItems))
 	var err error
@@ -6430,12 +6430,12 @@ func (b *PlanBuilder) buildProjectionForWindow(ctx context.Context, p base.Logic
 			continue
 		}
 		proj.Exprs = append(proj.Exprs, newArg)
-		proj.names = append(proj.names, types.EmptyName)
+		proj.SetOutputNames(append(proj.OutputNames(), types.EmptyName))
 		col := &expression.Column{
 			UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
 			RetType:  newArg.GetType(b.ctx.GetExprCtx().GetEvalCtx()),
 		}
-		proj.schema.Append(col)
+		proj.Schema().Append(col)
 		newArgList = append(newArgList, col)
 	}
 
@@ -6496,20 +6496,20 @@ func (b *PlanBuilder) buildByItemsForWindow(
 			// We need to attempt to add this column because a subquery may be created during the expression rewrite process.
 			// Therefore, we need to ensure that the column from the newly created query plan is added.
 			// If the column is already in the schema, we don't need to add it again.
-			if !proj.schema.Contains(col) {
+			if !proj.Schema().Contains(col) {
 				proj.Exprs = append(proj.Exprs, col)
-				proj.names = append(proj.names, types.EmptyName)
-				proj.schema.Append(col)
+				proj.SetOutputNames(append(proj.OutputNames(), types.EmptyName))
+				proj.Schema().Append(col)
 			}
 			continue
 		}
 		proj.Exprs = append(proj.Exprs, it)
-		proj.names = append(proj.names, types.EmptyName)
+		proj.SetOutputNames(append(proj.OutputNames(), types.EmptyName))
 		col := &expression.Column{
 			UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
 			RetType:  it.GetType(b.ctx.GetExprCtx().GetEvalCtx()),
 		}
-		proj.schema.Append(col)
+		proj.Schema().Append(col)
 		retItems = append(retItems, property.SortItem{Col: col, Desc: item.Desc})
 	}
 	return p, retItems, nil
@@ -6748,8 +6748,8 @@ func (b *PlanBuilder) buildWindowFunctions(ctx context.Context, p base.LogicalPl
 			OrderBy:     orderBy,
 			Frame:       frame,
 		}.Init(b.ctx, b.getSelectOffset())
-		window.names = make([]*types.FieldName, np.Schema().Len())
-		copy(window.names, np.OutputNames())
+		window.SetOutputNames(make([]*types.FieldName, np.Schema().Len()))
+		copy(window.OutputNames(), np.OutputNames())
 		schema := np.Schema().Clone()
 		descs := make([]*aggregation.WindowFuncDesc, 0, len(funcs))
 		preArgs := 0
@@ -6774,7 +6774,7 @@ func (b *PlanBuilder) buildWindowFunctions(ctx context.Context, p base.LogicalPl
 				UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
 				RetType:  desc.RetTp,
 			})
-			window.names = append(window.names, types.EmptyName)
+			window.SetOutputNames(append(window.OutputNames(), types.EmptyName))
 		}
 		window.WindowFuncDescs = descs
 		window.SetChildren(np)

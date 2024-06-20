@@ -1155,14 +1155,20 @@ func SetTiFlashPlacementRule(ctx context.Context, rule pdhttp.Rule) error {
 	return is.tiflashReplicaManager.SetPlacementRule(ctx, &rule)
 }
 
-// DeleteTiFlashPlacementRule is to delete placement rule for certain group.
-func DeleteTiFlashPlacementRule(ctx context.Context, group string, ruleID string) error {
+// DeleteTiFlashPlacementRules is a helper function to delete TiFlash placement rules of given physical table IDs.
+func DeleteTiFlashPlacementRules(ctx context.Context, physicalTableIDs []int64) error {
 	is, err := getGlobalInfoSyncer()
 	if err != nil {
 		return errors.Trace(err)
 	}
-	logutil.BgLogger().Info("DeleteTiFlashPlacementRule", zap.String("ruleID", ruleID))
-	return is.tiflashReplicaManager.DeletePlacementRule(ctx, group, ruleID)
+	logutil.BgLogger().Info("DeleteTiFlashPlacementRules", zap.Int64s("physicalTableIDs", physicalTableIDs))
+	rules := make([]*pdhttp.Rule, 0, len(physicalTableIDs))
+	for _, id := range physicalTableIDs {
+		// make a rule with count 0 to delete the rule
+		rule := MakeNewRule(id, 0, nil)
+		rules = append(rules, &rule)
+	}
+	return is.tiflashReplicaManager.SetPlacementRuleBatch(ctx, rules)
 }
 
 // GetTiFlashGroupRules to get all placement rule in a certain group.

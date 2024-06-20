@@ -61,3 +61,39 @@ func TestMustReloadSchemas(t *testing.T) {
 	sch.mustReloadSchemas()
 	require.True(t, ctrl.Satisfied())
 }
+
+func TestRefreshMinJobID(t *testing.T) {
+	reduceIntervals(t)
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+	mgr := mock.NewMockManager(ctrl)
+
+	sch := &jobScheduler{
+		schCtx:    context.Background(),
+		sysTblMgr: mgr,
+	}
+	// success
+	start := time.Now()
+	mgr.EXPECT().GetMinJobID(gomock.Any(), int64(0)).Return(int64(1), nil)
+	sch.refreshMinJobID()
+	require.EqualValues(t, 1, sch.currMinJobID)
+	require.GreaterOrEqual(t, sch.lastRefreshMinIDTime, start)
+	require.True(t, ctrl.Satisfied())
+	// not refresh too fast
+	schedulerLoopRetryInterval = time.Hour
+	sch.refreshMinJobID()
+	require.True(t, ctrl.Satisfied())
+	// ignore refresh error
+	sch.lastRefreshMinIDTime = time.Time{}
+	mgr.EXPECT().GetMinJobID(gomock.Any(), int64(1)).Return(int64(0), errors.New("mock err"))
+	sch.refreshMinJobID()
+	require.EqualValues(t, 1, sch.currMinJobID)
+	require.True(t, ctrl.Satisfied())
+	// success again
+	sch.lastRefreshMinIDTime = time.Time{}
+	mgr.EXPECT().GetMinJobID(gomock.Any(), int64(1)).Return(int64(100), nil)
+	sch.refreshMinJobID()
+	require.EqualValues(t, 100, sch.currMinJobID)
+	require.GreaterOrEqual(t, sch.lastRefreshMinIDTime, start)
+	require.True(t, ctrl.Satisfied())
+}

@@ -346,7 +346,7 @@ func (p *LogicalProjection) appendExpr(expr expression.Expression) *expression.C
 	if col, ok := expr.(*expression.Column); ok {
 		return col
 	}
-	expr = expression.ColumnSubstitute(p.SCtx().GetExprCtx(), expr, p.schema, p.Exprs)
+	expr = expression.ColumnSubstitute(p.SCtx().GetExprCtx(), expr, p.Schema(), p.Exprs)
 	p.Exprs = append(p.Exprs, expr)
 
 	col := &expression.Column{
@@ -355,7 +355,7 @@ func (p *LogicalProjection) appendExpr(expr expression.Expression) *expression.C
 	}
 	col.SetCoercibility(expr.Coercibility())
 	col.SetRepertoire(expr.Repertoire())
-	p.schema.Append(col)
+	p.Schema().Append(col)
 	// reset ParseToJSONFlag in order to keep the flag away from json column
 	if col.GetStaticType().GetType() == mysql.TypeJSON {
 		col.GetStaticType().DelFlag(mysql.ParseToJSONFlag)
@@ -729,7 +729,7 @@ func (p *LogicalWindow) PredicatePushDown(predicates []expression.Expression, op
 // PredicatePushDown implements base.LogicalPlan PredicatePushDown interface.
 func (p *LogicalMemTable) PredicatePushDown(predicates []expression.Expression, _ *optimizetrace.LogicalOptimizeOp) ([]expression.Expression, base.LogicalPlan) {
 	if p.Extractor != nil {
-		predicates = p.Extractor.Extract(p.SCtx(), p.schema, p.names, predicates)
+		predicates = p.Extractor.Extract(p.SCtx(), p.Schema(), p.OutputNames(), predicates)
 	}
 	return predicates, p.Self()
 }
@@ -847,7 +847,7 @@ func (ds *DataSource) AddPrefix4ShardIndexes(sc base.PlanContext, conds []expres
 func (ds *DataSource) addExprPrefixCond(sc base.PlanContext, path *util.AccessPath,
 	conds []expression.Expression) ([]expression.Expression, error) {
 	idxCols, idxColLens :=
-		expression.IndexInfo2PrefixCols(ds.Columns, ds.schema.Columns, path.Index)
+		expression.IndexInfo2PrefixCols(ds.Columns, ds.Schema().Columns, path.Index)
 	if len(idxCols) == 0 {
 		return conds, nil
 	}

@@ -54,7 +54,7 @@ func (la *LogicalAggregation) BuildKeyInfo(selfSchema *expression.Schema, childS
 	if len(la.AggFuncs) != 0 && la.IsPartialModeAgg() {
 		return
 	}
-	la.logicalSchemaProducer.BuildKeyInfo(selfSchema, childSchema)
+	la.LogicalSchemaProducer.BuildKeyInfo(selfSchema, childSchema)
 	la.buildSelfKeyInfo(selfSchema)
 }
 
@@ -77,7 +77,7 @@ func (la *LogicalAggregation) buildSelfKeyInfo(selfSchema *expression.Schema) {
 
 // If a condition is the form of (uniqueKey = constant) or (uniqueKey = Correlated column), it returns at most one row.
 // This function will check it.
-func (*LogicalSelection) checkMaxOneRowCond(eqColIDs map[int64]struct{}, childSchema *expression.Schema) bool {
+func checkMaxOneRowCond(eqColIDs map[int64]struct{}, childSchema *expression.Schema) bool {
 	if len(eqColIDs) == 0 {
 		return false
 	}
@@ -122,12 +122,12 @@ func (p *LogicalSelection) BuildKeyInfo(selfSchema *expression.Schema, childSche
 			}
 		}
 	}
-	p.SetMaxOneRow(p.checkMaxOneRowCond(eqCols, childSchema[0]))
+	p.SetMaxOneRow(checkMaxOneRowCond(eqCols, childSchema[0]))
 }
 
 // BuildKeyInfo implements base.LogicalPlan BuildKeyInfo interface.
 func (p *LogicalLimit) BuildKeyInfo(selfSchema *expression.Schema, childSchema []*expression.Schema) {
-	p.logicalSchemaProducer.BuildKeyInfo(selfSchema, childSchema)
+	p.LogicalSchemaProducer.BuildKeyInfo(selfSchema, childSchema)
 	if p.Count == 1 {
 		p.SetMaxOneRow(true)
 	}
@@ -189,7 +189,7 @@ func (p *LogicalProjection) BuildKeyInfo(selfSchema *expression.Schema, childSch
 
 // BuildKeyInfo implements base.LogicalPlan BuildKeyInfo interface.
 func (p *LogicalJoin) BuildKeyInfo(selfSchema *expression.Schema, childSchema []*expression.Schema) {
-	p.logicalSchemaProducer.BuildKeyInfo(selfSchema, childSchema)
+	p.LogicalSchemaProducer.BuildKeyInfo(selfSchema, childSchema)
 	switch p.JoinType {
 	case SemiJoin, LeftOuterSemiJoin, AntiSemiJoin, AntiLeftOuterSemiJoin:
 		selfSchema.Keys = childSchema[0].Clone().Keys
