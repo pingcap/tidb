@@ -1006,6 +1006,10 @@ func WriteBackupDDLJobs(metaWriter *metautil.MetaWriter, g glue.Glue, store kv.S
 			if skipUnsupportedDDLJob(job) {
 				continue
 			}
+			if job.BinlogInfo != nil && job.BinlogInfo.SchemaVersion <= lastSchemaVersion {
+				// early exits to stop unnecessary scan
+				return true, nil
+			}
 
 			if (job.State == model.JobStateDone || job.State == model.JobStateSynced) &&
 				(job.BinlogInfo != nil && job.BinlogInfo.SchemaVersion > lastSchemaVersion && job.BinlogInfo.SchemaVersion <= backupSchemaVersion) {
@@ -1026,8 +1030,6 @@ func WriteBackupDDLJobs(metaWriter *metautil.MetaWriter, g glue.Glue, store kv.S
 					return true, errors.Trace(err)
 				}
 			}
-			// early exits to stop unnecessary scan
-			return true, nil
 		}
 		return true, nil
 	}
