@@ -195,11 +195,10 @@ func (s *jobScheduler) getJob(se *sess.Session, tp jobType) (*model.Job, error) 
 		not = ""
 		label = "get_job_reorg"
 	}
-	const getJobSQL = `
-		select job_meta, processing
-		from mysql.tidb_ddl_job
-		where job_id >= %d and %s reorg %s
-		order by processing desc, job_id`
+	// TODO replace this sub-query with memory implementation.
+	const getJobSQL = `select job_meta, processing from mysql.tidb_ddl_job where job_id in
+		(select min(job_id) from mysql.tidb_ddl_job where job_id >= %d group by schema_ids, table_ids, processing)
+		and %s reorg %s order by processing desc, job_id`
 	var excludedJobIDs string
 	if ids := s.runningJobs.allIDs(); len(ids) > 0 {
 		excludedJobIDs = fmt.Sprintf("and job_id not in (%s)", ids)
