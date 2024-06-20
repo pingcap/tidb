@@ -125,7 +125,7 @@ func (smj *semiJoinRewriter) recursivePlan(p base.LogicalPlan) (base.LogicalPlan
 		EqualConditions: make([]*expression.ScalarFunction, 0, len(join.EqualConditions)),
 	}.Init(p.SCtx(), p.QueryBlockOffset())
 	innerJoin.SetChildren(join.Children()[0], subAgg)
-	innerJoin.SetSchema(expression.MergeSchema(join.Children()[0].Schema(), subAgg.schema))
+	innerJoin.SetSchema(expression.MergeSchema(join.Children()[0].Schema(), subAgg.Schema()))
 	innerJoin.AttachOnConds(expression.ScalarFuncs2Exprs(join.EqualConditions))
 
 	proj := LogicalProjection{

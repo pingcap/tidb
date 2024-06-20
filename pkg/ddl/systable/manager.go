@@ -21,7 +21,7 @@ import (
 	"fmt"
 
 	"github.com/pingcap/errors"
-	session2 "github.com/pingcap/tidb/pkg/ddl/session"
+	"github.com/pingcap/tidb/pkg/ddl/session"
 	"github.com/pingcap/tidb/pkg/parser/model"
 )
 
@@ -45,32 +45,32 @@ type Manager interface {
 }
 
 type manager struct {
-	sePool *session2.Pool
+	sePool *session.Pool
 }
 
 var _ Manager = (*manager)(nil)
 
 // NewManager creates a new Manager.
-func NewManager(pool *session2.Pool) Manager {
+func NewManager(pool *session.Pool) Manager {
 	return &manager{
 		sePool: pool,
 	}
 }
 
-func (mgr *manager) withNewSession(fn func(se *session2.Session) error) error {
+func (mgr *manager) withNewSession(fn func(se *session.Session) error) error {
 	se, err := mgr.sePool.Get()
 	if err != nil {
 		return err
 	}
 	defer mgr.sePool.Put(se)
 
-	ddlse := session2.NewSession(se)
+	ddlse := session.NewSession(se)
 	return fn(ddlse)
 }
 
 func (mgr *manager) GetJobByID(ctx context.Context, jobID int64) (*model.Job, error) {
 	job := model.Job{}
-	if err := mgr.withNewSession(func(se *session2.Session) error {
+	if err := mgr.withNewSession(func(se *session.Session) error {
 		sql := fmt.Sprintf(`select job_meta from mysql.tidb_ddl_job where job_id = %d`, jobID)
 		rows, err := se.Execute(ctx, sql, "get-job-by-id")
 		if err != nil {
@@ -93,7 +93,7 @@ func (mgr *manager) GetJobByID(ctx context.Context, jobID int64) (*model.Job, er
 
 func (mgr *manager) GetMDLVer(ctx context.Context, jobID int64) (int64, error) {
 	var ver int64
-	if err := mgr.withNewSession(func(se *session2.Session) error {
+	if err := mgr.withNewSession(func(se *session.Session) error {
 		sql := fmt.Sprintf("select version from mysql.tidb_mdl_info where job_id = %d", jobID)
 		rows, err := se.Execute(ctx, sql, "check-mdl-info")
 		if err != nil {
@@ -112,7 +112,7 @@ func (mgr *manager) GetMDLVer(ctx context.Context, jobID int64) (int64, error) {
 
 func (mgr *manager) GetMinJobID(ctx context.Context, prevMinJobID int64) (int64, error) {
 	var minID int64
-	if err := mgr.withNewSession(func(se *session2.Session) error {
+	if err := mgr.withNewSession(func(se *session.Session) error {
 		sql := fmt.Sprintf(`select min(job_id) from mysql.tidb_ddl_job where job_id >= %d`, prevMinJobID)
 		rows, err := se.Execute(ctx, sql, "get-min-job-id")
 		if err != nil {

@@ -76,7 +76,7 @@ func (p *LogicalMemTable) DeriveStats(_ []*property.StatsInfo, selfSchema *expre
 	stats := &property.StatsInfo{
 		RowCount:     float64(statsTable.RealtimeCount),
 		ColNDVs:      make(map[int64]float64, len(p.TableInfo.Columns)),
-		HistColl:     statsTable.GenerateHistCollFromColumnInfo(p.TableInfo, p.schema.Columns),
+		HistColl:     statsTable.GenerateHistCollFromColumnInfo(p.TableInfo, p.Schema().Columns),
 		StatsVersion: statistics.PseudoVersion,
 	}
 	for _, col := range selfSchema.Columns {
@@ -205,7 +205,7 @@ func (ds *DataSource) initStats(colGroups [][]*expression.Column) {
 	}
 	tableStats := &property.StatsInfo{
 		RowCount:     float64(ds.statisticTable.RealtimeCount),
-		ColNDVs:      make(map[int64]float64, ds.schema.Len()),
+		ColNDVs:      make(map[int64]float64, ds.Schema().Len()),
 		HistColl:     ds.statisticTable.GenerateHistCollFromColumnInfo(ds.tableInfo, ds.TblCols),
 		StatsVersion: ds.statisticTable.Version,
 	}
@@ -224,7 +224,7 @@ func (ds *DataSource) initStats(colGroups [][]*expression.Column) {
 		ColAndIdxStatus: ds.statisticTable.ColAndIdxExistenceMap,
 	})
 
-	for _, col := range ds.schema.Columns {
+	for _, col := range ds.Schema().Columns {
 		tableStats.ColNDVs[col.UniqueID] = cardinality.EstimateColumnNDV(ds.statisticTable, col.ID)
 	}
 	ds.tableStats = tableStats
@@ -1017,7 +1017,7 @@ func (p *LogicalCTE) DeriveStats(_ []*property.StatsInfo, selfSchema *expression
 			p.StatsInfo().ColNDVs[col.UniqueID] += recurStat.ColNDVs[p.cte.recursivePartLogicalPlan.Schema().Columns[i].UniqueID]
 		}
 		if p.cte.IsDistinct {
-			p.StatsInfo().RowCount, _ = cardinality.EstimateColsNDVWithMatchedLen(p.schema.Columns, p.schema, p.StatsInfo())
+			p.StatsInfo().RowCount, _ = cardinality.EstimateColsNDVWithMatchedLen(p.Schema().Columns, p.Schema(), p.StatsInfo())
 		} else {
 			p.StatsInfo().RowCount += recurStat.RowCount
 		}

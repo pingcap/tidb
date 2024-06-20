@@ -19,7 +19,7 @@ import (
 	"testing"
 
 	"github.com/ngaut/pools"
-	session2 "github.com/pingcap/tidb/pkg/ddl/session"
+	"github.com/pingcap/tidb/pkg/ddl/session"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 )
@@ -32,10 +32,10 @@ func TestSessionPool(t *testing.T) {
 		newTk := testkit.NewTestKit(t, store)
 		return newTk.Session(), nil
 	}, 4, 4, 0)
-	pool := session2.NewSessionPool(resourcePool)
+	pool := session.NewSessionPool(resourcePool)
 	sessCtx, err := pool.Get()
 	require.NoError(t, err)
-	se := session2.NewSession(sessCtx)
+	se := session.NewSession(sessCtx)
 	err = se.Begin(context.Background())
 	startTS := se.GetSessionVars().TxnCtx.StartTS
 	require.NoError(t, err)

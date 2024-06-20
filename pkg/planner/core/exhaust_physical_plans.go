@@ -459,7 +459,7 @@ func (p *LogicalJoin) getHashJoin(prop *property.PhysicalProperty, innerIdx int,
 		chReqProps[1-innerIdx].ExpectedCnt = p.Children()[1-innerIdx].StatsInfo().RowCount * expCntScale
 	}
 	hashJoin := NewPhysicalHashJoin(p, innerIdx, useOuterToBuild, p.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), chReqProps...)
-	hashJoin.SetSchema(p.schema)
+	hashJoin.SetSchema(p.Schema())
 	return hashJoin
 }
 
@@ -575,7 +575,7 @@ func (p *LogicalJoin) constructIndexJoin(
 	if path != nil {
 		join.IdxColLens = path.IdxColLens
 	}
-	join.SetSchema(p.schema)
+	join.SetSchema(p.Schema())
 	return []base.PhysicalPlan{join}
 }
 
@@ -1069,7 +1069,7 @@ func (p *LogicalJoin) constructInnerTableScanTask(
 		tblCols:         ds.TblCols,
 		tblColHists:     ds.TblColHists,
 	}.Init(ds.SCtx(), ds.QueryBlockOffset())
-	ts.SetSchema(ds.schema.Clone())
+	ts.SetSchema(ds.Schema().Clone())
 	if rowCount <= 0 {
 		rowCount = float64(1)
 	}
@@ -1106,7 +1106,7 @@ func (p *LogicalJoin) constructInnerTableScanTask(
 		PruningConds:   ds.allConds,
 		PartitionNames: ds.partitionNames,
 		Columns:        ds.TblCols,
-		ColumnNames:    ds.names,
+		ColumnNames:    ds.OutputNames(),
 	}
 	ts.PlanPartInfo = copTask.physPlanPartInfo
 	selStats := ts.StatsInfo().Scale(selectivity)
@@ -1135,7 +1135,7 @@ func (*LogicalJoin) constructInnerAgg(logicalAgg *LogicalAggregation, child base
 		return child
 	}
 	physicalHashAgg := NewPhysicalHashAgg(logicalAgg, logicalAgg.StatsInfo(), nil)
-	physicalHashAgg.SetSchema(logicalAgg.schema.Clone())
+	physicalHashAgg.SetSchema(logicalAgg.Schema().Clone())
 	physicalHashAgg.SetChildren(child)
 	return physicalHashAgg
 }
@@ -1161,7 +1161,7 @@ func (*LogicalJoin) constructInnerProj(proj *LogicalProjection, child base.Physi
 		AvoidColumnEvaluator: proj.AvoidColumnEvaluator,
 	}.Init(proj.SCtx(), proj.StatsInfo(), proj.QueryBlockOffset(), nil)
 	physicalProj.SetChildren(child)
-	physicalProj.SetSchema(proj.schema)
+	physicalProj.SetSchema(proj.Schema())
 	return physicalProj
 }
 
@@ -1257,7 +1257,7 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 		Index:            path.Index,
 		IdxCols:          path.IdxCols,
 		IdxColLens:       path.IdxColLens,
-		dataSourceSchema: ds.schema,
+		dataSourceSchema: ds.Schema(),
 		KeepOrder:        keepOrder,
 		Ranges:           ranges,
 		rangeInfo:        rangeInfo,
@@ -1277,7 +1277,7 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 		PruningConds:   ds.allConds,
 		PartitionNames: ds.partitionNames,
 		Columns:        ds.TblCols,
-		ColumnNames:    ds.names,
+		ColumnNames:    ds.OutputNames(),
 	}
 	if !path.IsSingleScan {
 		// On this way, it's double read case.
@@ -1317,7 +1317,7 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 			cop.needExtraProj = cop.needExtraProj || needExtraProj
 		}
 		if cop.needExtraProj {
-			cop.originSchema = ds.schema
+			cop.originSchema = ds.Schema()
 		}
 		cop.tablePlan = ts
 	}
@@ -1491,7 +1491,7 @@ func (p *LogicalJoin) constructIndexJoinInnerSideTask(dsCopTask *CopTask, ds *Da
 			GroupByItems: newGbyItems,
 			AggFuncs:     newAggFuncs,
 		}.initForStream(la.SCtx(), la.StatsInfo(), la.QueryBlockOffset(), nil)
-		streamAgg.SetSchema(la.schema.Clone())
+		streamAgg.SetSchema(la.Schema().Clone())
 		// change to keep order for index scan and dsCopTask
 		if dsCopTask.indexPlan != nil {
 			// get the index scan from dsCopTask.indexPlan
@@ -1510,7 +1510,7 @@ func (p *LogicalJoin) constructIndexJoinInnerSideTask(dsCopTask *CopTask, ds *Da
 	// build hash agg, when the stream agg is illegal such as the order by prop is not matched
 	if aggTask == nil {
 		physicalHashAgg := NewPhysicalHashAgg(la, la.StatsInfo(), nil)
-		physicalHashAgg.SetSchema(la.schema.Clone())
+		physicalHashAgg.SetSchema(la.Schema().Clone())
 		aggTask = physicalHashAgg.Attach2Task(dsCopTask)
 	}
 
@@ -1720,7 +1720,7 @@ loopOtherConds:
 			continue
 		}
 		for _, col := range affectedCols {
-			if innerPlan.schema.Contains(col) {
+			if innerPlan.Schema().Contains(col) {
 				continue loopOtherConds
 			}
 		}
@@ -2446,7 +2446,7 @@ func (p *LogicalJoin) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([]b
 
 	if !p.isNAAJ() {
 		// naaj refuse merge join and index join.
-		mergeJoins := p.GetMergeJoin(prop, p.schema, p.StatsInfo(), p.Children()[0].StatsInfo(), p.Children()[1].StatsInfo())
+		mergeJoins := p.GetMergeJoin(prop, p.Schema(), p.StatsInfo(), p.Children()[0].StatsInfo(), p.Children()[1].StatsInfo())
 		if (p.preferJoinType&h.PreferMergeJoin) > 0 && len(mergeJoins) > 0 {
 			return mergeJoins, true, nil
 		}
@@ -2686,7 +2686,7 @@ func (p *LogicalJoin) tryToGetMppHashJoin(prop *property.PhysicalProperty, useBC
 		mppShuffleJoin:    !useBCJ,
 		// Mpp Join has quite heavy cost. Even limit might not suspend it in time, so we don't scale the count.
 	}.Init(p.SCtx(), p.StatsInfo(), p.QueryBlockOffset(), childrenProps...)
-	join.SetSchema(p.schema)
+	join.SetSchema(p.Schema())
 	return []base.PhysicalPlan{join}
 }
 
@@ -2705,7 +2705,7 @@ func (p *LogicalProjection) TryToGetChildProp(prop *property.PhysicalProperty) (
 	newProp := prop.CloneEssentialFields()
 	newCols := make([]property.SortItem, 0, len(prop.SortItems))
 	for _, col := range prop.SortItems {
-		idx := p.schema.ColumnIndex(col.Col)
+		idx := p.Schema().ColumnIndex(col.Col)
 		switch expr := p.Exprs[idx].(type) {
 		case *expression.Column:
 			newCols = append(newCols, property.SortItem{Col: expr, Desc: col.Desc})
@@ -2781,7 +2781,7 @@ func (p *LogicalProjection) ExhaustPhysicalPlans(prop *property.PhysicalProperty
 			CalculateNoDelay:     p.CalculateNoDelay,
 			AvoidColumnEvaluator: p.AvoidColumnEvaluator,
 		}.Init(ctx, p.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), p.QueryBlockOffset(), newProp)
-		proj.SetSchema(p.schema)
+		proj.SetSchema(p.Schema())
 		ret = append(ret, proj)
 	}
 	return ret, true, nil
@@ -2906,7 +2906,7 @@ func (la *LogicalApply) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([
 	}
 	cacheHitRatio := 0.0
 	if la.StatsInfo().RowCount != 0 {
-		ndv, _ := cardinality.EstimateColsNDVWithMatchedLen(columns, la.schema, la.StatsInfo())
+		ndv, _ := cardinality.EstimateColsNDVWithMatchedLen(columns, la.Schema(), la.StatsInfo())
 		// for example, if there are 100 rows and the number of distinct values of these correlated columns
 		// are 70, then we can assume 30 rows can hit the cache so the cache hit ratio is 1 - (70/100) = 0.3
 		cacheHitRatio = 1 - (ndv / la.StatsInfo().RowCount)
@@ -2928,7 +2928,7 @@ func (la *LogicalApply) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([
 		la.QueryBlockOffset(),
 		&property.PhysicalProperty{ExpectedCnt: math.MaxFloat64, SortItems: prop.SortItems, CTEProducerStatus: prop.CTEProducerStatus},
 		&property.PhysicalProperty{ExpectedCnt: math.MaxFloat64, CTEProducerStatus: prop.CTEProducerStatus})
-	apply.SetSchema(la.schema)
+	apply.SetSchema(la.Schema())
 	return []base.PhysicalPlan{apply}, true, nil
 }
 
@@ -3224,7 +3224,7 @@ func (la *LogicalAggregation) getEnforcedStreamAggs(prop *property.PhysicalPrope
 			GroupByItems: newGbyItems,
 			AggFuncs:     newAggFuncs,
 		}.initForStream(la.SCtx(), la.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), la.QueryBlockOffset(), copiedChildProperty)
-		agg.SetSchema(la.schema.Clone())
+		agg.SetSchema(la.Schema().Clone())
 		enforcedAggs = append(enforcedAggs, agg)
 	}
 	return enforcedAggs
@@ -3308,7 +3308,7 @@ func (la *LogicalAggregation) getStreamAggs(prop *property.PhysicalProperty) []b
 				GroupByItems: newGbyItems,
 				AggFuncs:     newAggFuncs,
 			}.initForStream(la.SCtx(), la.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), la.QueryBlockOffset(), copiedChildProperty)
-			agg.SetSchema(la.schema.Clone())
+			agg.SetSchema(la.Schema().Clone())
 			streamAggs = append(streamAggs, agg)
 		}
 	}
@@ -3419,7 +3419,7 @@ func (la *LogicalAggregation) tryToGetMppHashAggs(prop *property.PhysicalPropert
 		if len(partitionCols) != 0 && !la.SCtx().GetSessionVars().EnableSkewDistinctAgg {
 			childProp := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, MPPPartitionTp: property.HashType, MPPPartitionCols: partitionCols, CanAddEnforcer: true, RejectSort: true, CTEProducerStatus: prop.CTEProducerStatus}
 			agg := NewPhysicalHashAgg(la, la.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), childProp)
-			agg.SetSchema(la.schema.Clone())
+			agg.SetSchema(la.Schema().Clone())
 			agg.MppRunMode = Mpp1Phase
 			finalAggAdjust(agg.AggFuncs)
 			if validMppAgg(agg) {
@@ -3436,7 +3436,7 @@ func (la *LogicalAggregation) tryToGetMppHashAggs(prop *property.PhysicalPropert
 		// no partition property down，record partition cols inside agg itself, enforce shuffler latter.
 		childProp := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, MPPPartitionTp: property.AnyType, RejectSort: true, CTEProducerStatus: prop.CTEProducerStatus}
 		agg := NewPhysicalHashAgg(la, la.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), childProp)
-		agg.SetSchema(la.schema.Clone())
+		agg.SetSchema(la.Schema().Clone())
 		agg.MppRunMode = Mpp2Phase
 		agg.MppPartitionCols = partitionCols
 		if validMppAgg(agg) {
@@ -3447,7 +3447,7 @@ func (la *LogicalAggregation) tryToGetMppHashAggs(prop *property.PhysicalPropert
 		if prop.TaskTp == property.RootTaskType {
 			childProp := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, RejectSort: true, CTEProducerStatus: prop.CTEProducerStatus}
 			agg := NewPhysicalHashAgg(la, la.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), childProp)
-			agg.SetSchema(la.schema.Clone())
+			agg.SetSchema(la.Schema().Clone())
 			agg.MppRunMode = MppTiDB
 			hashAggs = append(hashAggs, agg)
 		}
@@ -3455,7 +3455,7 @@ func (la *LogicalAggregation) tryToGetMppHashAggs(prop *property.PhysicalPropert
 		// TODO: support scalar agg in MPP, merge the final result to one node
 		childProp := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, RejectSort: true, CTEProducerStatus: prop.CTEProducerStatus}
 		agg := NewPhysicalHashAgg(la, la.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), childProp)
-		agg.SetSchema(la.schema.Clone())
+		agg.SetSchema(la.Schema().Clone())
 		if la.HasDistinct() || la.HasOrderBy() {
 			// mpp scalar mode means the data will be pass through to only one tiFlash node at last.
 			agg.MppRunMode = MppScalar
@@ -3547,7 +3547,7 @@ func (la *LogicalAggregation) getHashAggs(prop *property.PhysicalProperty) []bas
 			}
 		} else {
 			agg := NewPhysicalHashAgg(la, la.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64, TaskTp: taskTp, CTEProducerStatus: prop.CTEProducerStatus})
-			agg.SetSchema(la.schema.Clone())
+			agg.SetSchema(la.Schema().Clone())
 			hashAggs = append(hashAggs, agg)
 		}
 	}
@@ -3788,7 +3788,7 @@ func (p *LogicalCTE) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([]ba
 			ExchangeType: tipb.ExchangeType_Broadcast,
 		}.Init(p.SCtx(), p.StatsInfo())
 	}
-	pcte.SetSchema(p.schema)
+	pcte.SetSchema(p.Schema())
 	pcte.childrenReqProps = []*property.PhysicalProperty{prop.CloneEssentialFields()}
 	return []base.PhysicalPlan{(*PhysicalCTEStorage)(pcte)}, true, nil
 }
