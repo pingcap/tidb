@@ -42,8 +42,10 @@ func mkJob(id int64, schemaTableNames ...string) (int64, []model.InvolvingSchema
 
 func checkInvariants(t *testing.T, j *runningJobs) {
 	// check table-level entry should not have zero length
-	for _, tables := range j.schemas {
-		require.Greater(t, len(tables), 0)
+	for _, checkingObj := range []*objects{j.exclusive, j.shared, j.pending} {
+		for _, tables := range checkingObj.schemas {
+			require.Greater(t, len(tables), 0)
+		}
 	}
 }
 
@@ -209,7 +211,7 @@ func TestExclusiveShared(t *testing.T) {
 
 	failedInvolves := []model.InvolvingSchemaInfo{
 		{Database: "db2", Table: model.InvolvingAll},
-		{Shared: &model.InvolvingSharedSchemaInfo{Database: "db1", Table: "t1"}},
+		{Database: "db1", Table: "t1", Mode: model.SharedInvolving},
 	}
 	runnable = j.checkRunnable(0, failedInvolves)
 	require.False(t, runnable)
@@ -217,7 +219,7 @@ func TestExclusiveShared(t *testing.T) {
 	jobID2 := int64(2)
 	involves2 := []model.InvolvingSchemaInfo{
 		{Database: "db3", Table: model.InvolvingAll},
-		{Shared: &model.InvolvingSharedSchemaInfo{Database: "db2", Table: "t2"}},
+		{Database: "db2", Table: "t2", Mode: model.SharedInvolving},
 	}
 	runnable = j.checkRunnable(jobID2, involves2)
 	require.True(t, runnable)
@@ -226,7 +228,7 @@ func TestExclusiveShared(t *testing.T) {
 	jobID3 := int64(3)
 	involves3 := []model.InvolvingSchemaInfo{
 		{Database: "db4", Table: model.InvolvingAll},
-		{Shared: &model.InvolvingSharedSchemaInfo{Database: "db2", Table: "t2"}},
+		{Database: "db2", Table: "t2", Mode: model.SharedInvolving},
 	}
 	runnable = j.checkRunnable(jobID3, involves3)
 	require.True(t, runnable)
@@ -245,7 +247,7 @@ func TestExclusiveShared(t *testing.T) {
 	jobID4 := int64(4)
 	involves4 := []model.InvolvingSchemaInfo{
 		{Database: "db100", Table: model.InvolvingAll},
-		{Shared: &model.InvolvingSharedSchemaInfo{Database: "db2", Table: "t2"}},
+		{Database: "db2", Table: "t2", Mode: model.SharedInvolving},
 	}
 	runnable = j.checkRunnable(jobID4, involves4)
 	require.False(t, runnable)

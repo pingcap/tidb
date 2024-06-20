@@ -586,35 +586,36 @@ type Job struct {
 }
 
 // InvolvingSchemaInfo returns the schema info involved in the job. The value
-// should be stored in lower case. The top level fields are exclusively used for
-// the job, and the shared objects are saved in Shared field.
-//
-// Exclusive and shared objects are considered like the exclusive lock and shared
-// lock when calculate DDL job dependencies. And we also implement the fair lock
-// semantic which means if job B (exclusive request object 0) is waiting for the
-// running job A (shared request object 0), and job C (shared request object 0)
-// arrives, job C should also be blocked until job B is finished although job A &
-// C has no dependency.
+// should be stored in lower case. No need to use this type as one-of
+// Database/Table, Policy, ResourceGroup.
 type InvolvingSchemaInfo struct {
-	Database      string                     `json:"database"`
-	Table         string                     `json:"table"`
-	Policy        string                     `json:"policy,omitempty"`
-	ResourceGroup string                     `json:"resource_group,omitempty"`
-	Shared        *InvolvingSharedSchemaInfo `json:"shared,omitempty"`
+	Database      string                  `json:"database,omitempty"`
+	Table         string                  `json:"table,omitempty"`
+	Policy        string                  `json:"policy,omitempty"`
+	ResourceGroup string                  `json:"resource_group,omitempty"`
+	Mode          InvolvingSchemaInfoMode `json:"mode,omitempty"`
 }
 
-// InvolvingSharedSchemaInfo is used by InvolvingSchemaInfo.
-type InvolvingSharedSchemaInfo struct {
-	Database      string `json:"database,omitempty"`
-	Table         string `json:"table,omitempty"`
-	Policy        string `json:"policy,omitempty"`
-	ResourceGroup string `json:"resource_group,omitempty"`
-}
+type InvolvingSchemaInfoMode int
+
+// ExclusiveInvolving and SharedInvolving are considered like the exclusive lock
+// and shared lock when calculate DDL job dependencies. And we also implement the
+// fair lock semantic which means if we have job A/B/C arrive in order, and job B
+// (exclusive request object 0) is waiting for the running job A (shared request
+// object 0), and job C (shared request object 0) arrives, job C should also be
+// blocked until job B is finished although job A & C has no dependency.
+const (
+	// ExclusiveInvolving is the default value to keep compatibility with old
+	// versions.
+	ExclusiveInvolving InvolvingSchemaInfoMode = iota
+	SharedInvolving
+)
 
 const (
-	// InvolvingAll means all schemas/tables are affected. If it's used in
-	// InvolvingSchemaInfo.Database, it also means all placement policies and
-	// resource groups are affected. Currently the only usage is FLASHBACK CLUSTER.
+	// InvolvingAll means all schemas/tables are affected. It's used in
+	// InvolvingSchemaInfo.Database/Tables fields. When both the Database and Tables
+	// are InvolvingAll it also means all placement policies and resource groups are
+	// affected. Currently the only case is FLASHBACK CLUSTER.
 	InvolvingAll = "*"
 	// InvolvingNone means no schema/table is affected.
 	InvolvingNone = ""

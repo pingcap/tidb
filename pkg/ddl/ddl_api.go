@@ -230,9 +230,10 @@ func (d *ddl) CreateSchemaWithInfo(
 		SQLMode: ctx.GetSessionVars().SQLMode,
 	}
 	if ref := dbInfo.PlacementPolicyRef; ref != nil {
-		job.InvolvingSchemaInfo[0].Shared = &model.InvolvingSharedSchemaInfo{
+		job.InvolvingSchemaInfo = append(job.InvolvingSchemaInfo, model.InvolvingSchemaInfo{
 			Policy: ref.Name.L,
-		}
+			Mode:   model.SharedInvolving,
+		})
 	}
 
 	err = d.DoDDLJob(ctx, job)
@@ -314,7 +315,10 @@ func (d *ddl) ModifySchemaDefaultPlacement(ctx sessionctx.Context, stmt *ast.Alt
 		SQLMode: ctx.GetSessionVars().SQLMode,
 	}
 	if placementPolicyRef != nil {
-		job.InvolvingSchemaInfo[0].Shared = &model.InvolvingSharedSchemaInfo{Policy: placementPolicyRef.Name.L}
+		job.InvolvingSchemaInfo = append(job.InvolvingSchemaInfo, model.InvolvingSchemaInfo{
+			Policy: placementPolicyRef.Name.L,
+			Mode:   model.SharedInvolving,
+		})
 	}
 	err = d.DoDDLJob(ctx, job)
 	err = d.callHookOnChanged(job, err)
@@ -535,11 +539,16 @@ func (d *ddl) AlterTablePlacement(ctx sessionctx.Context, ident ast.Ident, place
 
 	var involvingSchemaInfo []model.InvolvingSchemaInfo
 	if placementPolicyRef != nil {
-		involvingSchemaInfo = []model.InvolvingSchemaInfo{{
-			Database: schema.Name.L,
-			Table:    tblInfo.Name.L,
-			Shared:   &model.InvolvingSharedSchemaInfo{Policy: placementPolicyRef.Name.L},
-		}}
+		involvingSchemaInfo = []model.InvolvingSchemaInfo{
+			{
+				Database: schema.Name.L,
+				Table:    tblInfo.Name.L,
+			},
+			{
+				Policy: placementPolicyRef.Name.L,
+				Mode:   model.SharedInvolving,
+			},
+		}
 	}
 
 	job := &model.Job{
@@ -2732,10 +2741,9 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 			return infoschema.ErrTableNotExists.GenWithStackByArgs(referIdent.Schema, referIdent.Name)
 		}
 		involvingRef = append(involvingRef, model.InvolvingSchemaInfo{
-			Shared: &model.InvolvingSharedSchemaInfo{
-				Database: s.ReferTable.Schema.L,
-				Table:    s.ReferTable.Name.L,
-			},
+			Database: s.ReferTable.Schema.L,
+			Table:    s.ReferTable.Name.L,
+			Mode:     model.SharedInvolving,
 		})
 	}
 
@@ -2865,15 +2873,15 @@ func (d *ddl) createTableWithInfoJob(
 	}
 	for _, fk := range tbInfo.ForeignKeys {
 		involvingSchemas = append(involvingSchemas, model.InvolvingSchemaInfo{
-			Shared: &model.InvolvingSharedSchemaInfo{
-				Database: fk.RefSchema.L,
-				Table:    fk.RefTable.L,
-			},
+			Database: fk.RefSchema.L,
+			Table:    fk.RefTable.L,
+			Mode:     model.SharedInvolving,
 		})
 	}
 	if ref := tbInfo.PlacementPolicyRef; ref != nil {
 		involvingSchemas = append(involvingSchemas, model.InvolvingSchemaInfo{
-			Shared: &model.InvolvingSharedSchemaInfo{Policy: ref.Name.L},
+			Policy: ref.Name.L,
+			Mode:   model.SharedInvolving,
 		})
 	}
 
@@ -3342,7 +3350,6 @@ func (d *ddl) CreateView(ctx sessionctx.Context, s *ast.CreateViewStmt) (err err
 	}
 
 	var involvingRef []model.InvolvingSchemaInfo
-	// TODO(lance6716): visit the s.Select to get all TableNames?
 	return d.CreateTableWithInfo(ctx, s.ViewName.Schema, tbInfo, involvingRef, onExist)
 }
 
@@ -8033,10 +8040,11 @@ func (d *ddl) CreateForeignKey(ctx sessionctx.Context, ti ast.Ident, fkName mode
 			{
 				Database: schema.Name.L,
 				Table:    t.Meta().Name.L,
-				Shared: &model.InvolvingSharedSchemaInfo{
-					Database: fkInfo.RefSchema.L,
-					Table:    fkInfo.RefTable.L,
-				},
+			},
+			{
+				Database: fkInfo.RefSchema.L,
+				Table:    fkInfo.RefTable.L,
+				Mode:     model.SharedInvolving,
 			},
 		},
 		SQLMode: ctx.GetSessionVars().SQLMode,
@@ -8947,9 +8955,10 @@ func (d *ddl) AlterTablePartitionPlacement(ctx sessionctx.Context, tableIdent as
 			{
 				Database: schema.Name.L,
 				Table:    tblInfo.Name.L,
-				Shared: &model.InvolvingSharedSchemaInfo{
-					Policy: policyRefInfo.Name.L,
-				},
+			},
+			{
+				Policy: policyRefInfo.Name.L,
+				Mode:   model.SharedInvolving,
 			},
 		}
 	}

@@ -38,6 +38,14 @@ type runningJobs struct {
 	ids          map[int64]struct{}
 	idsStrGetter func() string
 
+	exclusive *objects
+	shared    *objects
+	// to implement the fair lock semantics, we need to save the pending exclusive
+	// object requests to block future shared object requests.
+	pending *objects
+}
+
+type objects struct {
 	// database -> table -> struct{}
 	//
 	// if the job is only related to a database, the table-level entry key is
@@ -46,38 +54,24 @@ type runningJobs struct {
 	schemas           map[string]map[string]struct{}
 	placementPolicies map[string]struct{}
 	resourceGroups    map[string]struct{}
-
-	shared struct {
-		schemas           map[string]map[string]struct{}
-		placementPolicies map[string]struct{}
-		resourceGroups    map[string]struct{}
-	}
-
-	// to implement the fair lock semantics, we need to save the pending exclusive
-	// object requests to block future shared object requests.
-	pending struct {
-		schemas           map[string]map[string]struct{}
-		placementPolicies map[string]struct{}
-		resourceGroups    map[string]struct{}
-	}
 }
 
-func newRunningJobs() *runningJobs {
-	ret := &runningJobs{
-		ids:               make(map[int64]struct{}),
-		idsStrGetter:      func() string { return "" },
+func newObjects() *objects {
+	return &objects{
 		schemas:           make(map[string]map[string]struct{}),
 		placementPolicies: make(map[string]struct{}),
 		resourceGroups:    make(map[string]struct{}),
 	}
-	ret.shared.schemas = make(map[string]map[string]struct{})
-	ret.shared.placementPolicies = make(map[string]struct{})
-	ret.shared.resourceGroups = make(map[string]struct{})
-	ret.pending.schemas = make(map[string]map[string]struct{})
-	ret.pending.placementPolicies = make(map[string]struct{})
-	ret.pending.resourceGroups = make(map[string]struct{})
+}
 
-	return ret
+func newRunningJobs() *runningJobs {
+	return &runningJobs{
+		ids:          make(map[int64]struct{}),
+		idsStrGetter: func() string { return "" },
+		exclusive:    newObjects(),
+		shared:       newObjects(),
+		pending:      newObjects(),
+	}
 }
 
 // checkRunnable checks whether the job can be run. If the caller found a
@@ -96,7 +90,7 @@ func (j *runningJobs) checkRunnable(jobID int64, involves []model.InvolvingSchem
 		return false
 	}
 	// Currently flashback cluster is the only DDL that involves ALL schemas.
-	if _, ok := j.schemas[model.InvolvingAll]; ok {
+	if _, ok := j.exclusive.schemas[model.InvolvingAll]; ok {
 		return false
 	}
 
@@ -116,74 +110,43 @@ func (j *runningJobs) checkRunnable(jobID int64, involves []model.InvolvingSchem
 			}
 		}
 
-		// 1. check exclusive objects of involves. Exclusive objects conflicts with
-		// running exclusive and shared objects.
-
-		// 1.1 check for Database == model.InvolvingAll, where the only case is FLASHBACK
-		// CLUSTER
-		if info.Database == model.InvolvingAll {
-			if len(j.schemas) != 0 || len(j.shared.schemas) != 0 ||
-				len(j.placementPolicies) != 0 || len(j.shared.placementPolicies) != 0 ||
-				len(j.resourceGroups) != 0 || len(j.shared.resourceGroups) != 0 {
+		if info.Database == model.InvolvingAll && info.Table == model.InvolvingAll &&
+			info.Mode == model.ExclusiveInvolving {
+			// check for involving all databases and tables, where the only case is FLASHBACK
+			// CLUSTER
+			if len(j.exclusive.schemas) != 0 || len(j.shared.schemas) != 0 ||
+				len(j.exclusive.placementPolicies) != 0 || len(j.shared.placementPolicies) != 0 ||
+				len(j.exclusive.resourceGroups) != 0 || len(j.shared.resourceGroups) != 0 {
 				return false
 			}
 			continue
 		}
 
-		// 1.2 check schema exclusive objects
-		if hasSchemaConflict(info.Database, info.Table, j.schemas) {
-			return false
-		}
-		if hasSchemaConflict(info.Database, info.Table, j.shared.schemas) {
-			return false
-		}
-
-		// 1.3 check placement policy exclusive objects
-		if _, ok := j.placementPolicies[info.Policy]; ok {
-			return false
-		}
-		if _, ok := j.shared.placementPolicies[info.Policy]; ok {
-			return false
+		var toCheck []*objects
+		switch info.Mode {
+		case model.ExclusiveInvolving:
+			// Exclusive objects conflicts with running exclusive and shared objects.
+			toCheck = []*objects{j.exclusive, j.shared}
+		case model.SharedInvolving:
+			// Shared objects conflicts with running exclusive objects and pending exclusive
+			// objects.
+			toCheck = []*objects{j.exclusive, j.pending}
+		default:
+			panic(fmt.Sprintf("unknown involving mode: %d", info.Mode))
 		}
 
-		// 1.4 check resource group exclusive objects
-		if _, ok := j.resourceGroups[info.ResourceGroup]; ok {
-			return false
-		}
-		if _, ok := j.shared.resourceGroups[info.ResourceGroup]; ok {
-			return false
-		}
+		for _, checkingObj := range toCheck {
+			if info.Database != model.InvolvingNone &&
+				hasSchemaConflict(info.Database, info.Table, checkingObj.schemas) {
+				return false
+			}
 
-		// 2. check shared objects of involves. Shared objects conflicts with running
-		// exclusive objects and pending exclusive objects.
-
-		shared := info.Shared
-		if shared == nil {
-			continue
-		}
-
-		// 2.1 check schema shared objects
-		if hasSchemaConflict(shared.Database, shared.Table, j.schemas) {
-			return false
-		}
-		if hasSchemaConflict(shared.Database, shared.Table, j.pending.schemas) {
-			return false
-		}
-
-		// 2.2 check placement policy exclusive objects
-		if _, ok := j.placementPolicies[shared.Policy]; ok {
-			return false
-		}
-		if _, ok := j.pending.placementPolicies[shared.Policy]; ok {
-			return false
-		}
-
-		// 2.3 check resource group exclusive objects
-		if _, ok := j.resourceGroups[shared.ResourceGroup]; ok {
-			return false
-		}
-		if _, ok := j.pending.resourceGroups[shared.ResourceGroup]; ok {
-			return false
+			if _, ok := checkingObj.placementPolicies[info.Policy]; ok {
+				return false
+			}
+			if _, ok := checkingObj.resourceGroups[info.ResourceGroup]; ok {
+				return false
+			}
 		}
 	}
 	return true
@@ -221,34 +184,27 @@ func (j *runningJobs) addRunning(jobID int64, involves []model.InvolvingSchemaIn
 	j.updateIDsStrGetter()
 
 	for _, info := range involves {
-		if info.Database != model.InvolvingNone {
-			if _, ok := j.schemas[info.Database]; !ok {
-				j.schemas[info.Database] = make(map[string]struct{})
-			}
-			j.schemas[info.Database][info.Table] = struct{}{}
-		}
-		if info.Policy != model.InvolvingNone {
-			j.placementPolicies[info.Policy] = struct{}{}
-		}
-		if info.ResourceGroup != model.InvolvingNone {
-			j.resourceGroups[info.ResourceGroup] = struct{}{}
+		var toAdd *objects
+		switch info.Mode {
+		case model.ExclusiveInvolving:
+			toAdd = j.exclusive
+		case model.SharedInvolving:
+			toAdd = j.shared
+		default:
+			panic(fmt.Sprintf("unknown involving mode: %d", info.Mode))
 		}
 
-		shared := info.Shared
-		if shared == nil {
-			continue
-		}
-		if shared.Database != model.InvolvingNone {
-			if _, ok := j.shared.schemas[shared.Database]; !ok {
-				j.shared.schemas[shared.Database] = make(map[string]struct{})
+		if info.Database != model.InvolvingNone {
+			if _, ok := toAdd.schemas[info.Database]; !ok {
+				toAdd.schemas[info.Database] = make(map[string]struct{})
 			}
-			j.shared.schemas[shared.Database][shared.Table] = struct{}{}
+			toAdd.schemas[info.Database][info.Table] = struct{}{}
 		}
-		if shared.Policy != model.InvolvingNone {
-			j.shared.placementPolicies[shared.Policy] = struct{}{}
+		if info.Policy != model.InvolvingNone {
+			toAdd.placementPolicies[info.Policy] = struct{}{}
 		}
-		if shared.ResourceGroup != model.InvolvingNone {
-			j.shared.resourceGroups[shared.ResourceGroup] = struct{}{}
+		if info.ResourceGroup != model.InvolvingNone {
+			toAdd.resourceGroups[info.ResourceGroup] = struct{}{}
 		}
 	}
 }
@@ -267,27 +223,23 @@ func (j *runningJobs) removeRunning(jobID int64, involves []model.InvolvingSchem
 	j.updateIDsStrGetter()
 
 	for _, info := range involves {
-		if db, ok := j.schemas[info.Database]; ok {
+		var toRemove *objects
+		switch info.Mode {
+		case model.ExclusiveInvolving:
+			toRemove = j.exclusive
+		case model.SharedInvolving:
+			toRemove = j.shared
+		default:
+			panic(fmt.Sprintf("unknown involving mode: %d", info.Mode))
+		}
+		if db, ok := toRemove.schemas[info.Database]; ok {
 			delete(db, info.Table)
 		}
-		if len(j.schemas[info.Database]) == 0 {
-			delete(j.schemas, info.Database)
+		if len(toRemove.schemas[info.Database]) == 0 {
+			delete(toRemove.schemas, info.Database)
 		}
-		delete(j.placementPolicies, info.Policy)
-		delete(j.resourceGroups, info.ResourceGroup)
-
-		shared := info.Shared
-		if shared == nil {
-			continue
-		}
-		if db, ok := j.shared.schemas[shared.Database]; ok {
-			delete(db, shared.Table)
-		}
-		if len(j.shared.schemas[shared.Database]) == 0 {
-			delete(j.shared.schemas, shared.Database)
-		}
-		delete(j.shared.placementPolicies, shared.Policy)
-		delete(j.shared.resourceGroups, shared.ResourceGroup)
+		delete(toRemove.placementPolicies, info.Policy)
+		delete(toRemove.resourceGroups, info.ResourceGroup)
 	}
 }
 

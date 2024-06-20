@@ -60,7 +60,8 @@ func (d *ddl) MultiSchemaChange(ctx sessionctx.Context, ti ast.Ident, info *mode
 				continue
 			}
 			involvingSchemaInfo = append(involvingSchemaInfo, model.InvolvingSchemaInfo{
-				Shared: &model.InvolvingSharedSchemaInfo{Policy: ref.Name.L},
+				Policy: ref.Name.L,
+				Mode:   model.SharedInvolving,
 			})
 		case model.ActionAddForeignKey:
 			ref, ok := j.Args[0].(*model.FKInfo)
@@ -71,10 +72,9 @@ func (d *ddl) MultiSchemaChange(ctx sessionctx.Context, ti ast.Ident, info *mode
 				continue
 			}
 			involvingSchemaInfo = append(involvingSchemaInfo, model.InvolvingSchemaInfo{
-				Shared: &model.InvolvingSharedSchemaInfo{
-					Database: ref.RefSchema.L,
-					Table:    ref.RefTable.L,
-				},
+				Database: ref.RefSchema.L,
+				Table:    ref.RefTable.L,
+				Mode:     model.SharedInvolving,
 			})
 		case model.ActionAlterTablePartitionPlacement:
 			if len(j.Args) < 2 {
@@ -94,7 +94,8 @@ func (d *ddl) MultiSchemaChange(ctx sessionctx.Context, ti ast.Ident, info *mode
 				continue
 			}
 			involvingSchemaInfo = append(involvingSchemaInfo, model.InvolvingSchemaInfo{
-				Shared: &model.InvolvingSharedSchemaInfo{Policy: ref.Name.L},
+				Policy: ref.Name.L,
+				Mode:   model.SharedInvolving,
 			})
 		}
 	}
