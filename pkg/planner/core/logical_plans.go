@@ -533,17 +533,17 @@ type LogicalExpand struct {
 	logicalop.LogicalSchemaProducer
 
 	// distinct group by columns. (maybe projected below if it's a non-col)
-	distinctGroupByCol  []*expression.Column
-	distinctGbyColNames []*types.FieldName
+	DistinctGroupByCol  []*expression.Column
+	DistinctGbyColNames []*types.FieldName
 	// keep the old gbyExprs for resolve cases like grouping(a+b), the args:
 	// a+b should be resolved to new projected gby col according to ref pos.
-	distinctGbyExprs []expression.Expression
+	DistinctGbyExprs []expression.Expression
 
 	// rollup grouping sets.
-	distinctSize       int
-	rollupGroupingSets expression.GroupingSets
-	rollupID2GIDS      map[int]map[uint64]struct{}
-	rollupGroupingIDs  []uint64
+	DistinctSize       int
+	RollupGroupingSets expression.GroupingSets
+	RollupID2GIDS      map[int]map[uint64]struct{}
+	RollupGroupingIDs  []uint64
 
 	// The level projections is generated from grouping sets，make execution more clearly.
 	LevelExprs [][]expression.Expression
@@ -590,9 +590,9 @@ func (*LogicalExpand) GetUsedCols() (usedCols []*expression.Column) {
 // optimization is done such as column pruning.
 func (p *LogicalExpand) GenLevelProjections() {
 	// get all the grouping cols.
-	groupingSetCols := p.rollupGroupingSets.AllSetsColIDs()
-	p.distinctSize, p.rollupGroupingIDs, p.rollupID2GIDS = p.rollupGroupingSets.DistinctSize()
-	hasDuplicateGroupingSet := len(p.rollupGroupingSets) != p.distinctSize
+	groupingSetCols := p.RollupGroupingSets.AllSetsColIDs()
+	p.DistinctSize, p.RollupGroupingIDs, p.RollupID2GIDS = p.RollupGroupingSets.DistinctSize()
+	hasDuplicateGroupingSet := len(p.RollupGroupingSets) != p.DistinctSize
 	schemaCols := p.Schema().Columns
 	// last two schema col is about gid and gpos if any.
 	nonGenCols := schemaCols[:len(schemaCols)-1]
@@ -604,7 +604,7 @@ func (p *LogicalExpand) GenLevelProjections() {
 	}
 
 	// for every rollup grouping set, gen its level projection.
-	for offset, curGroupingSet := range p.rollupGroupingSets {
+	for offset, curGroupingSet := range p.RollupGroupingSets {
 		levelProj := make([]expression.Expression, 0, p.Schema().Len())
 		for _, oneCol := range nonGenCols {
 			// if this col is in the grouping-set-cols and this col is not needed by current grouping-set, just set it as null value with specified fieldType.
@@ -661,10 +661,10 @@ func (p *LogicalExpand) GenerateGroupingMarks(sourceCols []*expression.Column) [
 			resMap := make(map[uint64]struct{}, 1)
 			res := uint64(0)
 			// from high pos to low pos.
-			for i := len(p.distinctGroupByCol) - 1; i >= 0; i-- {
+			for i := len(p.DistinctGroupByCol) - 1; i >= 0; i-- {
 				// left shift.
 				res = res << 1
-				if p.distinctGroupByCol[i].UniqueID == oneCol.UniqueID {
+				if p.DistinctGroupByCol[i].UniqueID == oneCol.UniqueID {
 					// fill the corresponding col pos as 1 as bitMark.
 					// eg: say distinctGBY [x,y,z] and GROUPING(x) with '100'.
 					// When any groupingID & 100 > 0 means the source column x
@@ -681,7 +681,7 @@ func (p *LogicalExpand) GenerateGroupingMarks(sourceCols []*expression.Column) [
 	// For example, GROUPING(x,y,z) returns 6 it means: GROUPING(x) is 1, GROUPING(y) is 1 and GROUPING(z) is 0, in which
 	// we should also return all these three single column grouping marks as function meta to GROUPING FUNCTION.
 	for _, oneCol := range sourceCols {
-		resSliceMap = append(resSliceMap, p.rollupID2GIDS[int(oneCol.UniqueID)])
+		resSliceMap = append(resSliceMap, p.RollupID2GIDS[int(oneCol.UniqueID)])
 	}
 	return resSliceMap
 }
@@ -689,10 +689,10 @@ func (p *LogicalExpand) GenerateGroupingMarks(sourceCols []*expression.Column) [
 func (p *LogicalExpand) trySubstituteExprWithGroupingSetCol(expr expression.Expression) (expression.Expression, bool) {
 	// since all the original group items has been projected even single col,
 	// let's check the origin gby expression here, and map it to new gby col.
-	for i, oneExpr := range p.distinctGbyExprs {
+	for i, oneExpr := range p.DistinctGbyExprs {
 		if bytes.Equal(expr.CanonicalHashCode(), oneExpr.CanonicalHashCode()) {
 			// found
-			return p.distinctGroupByCol[i], true
+			return p.DistinctGroupByCol[i], true
 		}
 	}
 	// not found.
@@ -702,8 +702,8 @@ func (p *LogicalExpand) trySubstituteExprWithGroupingSetCol(expr expression.Expr
 // CheckGroupingFuncArgsInGroupBy checks whether grouping function args is in grouping items.
 func (p *LogicalExpand) resolveGroupingFuncArgsInGroupBy(groupingFuncArgs []expression.Expression) ([]*expression.Column, error) {
 	// build GBYColMap
-	distinctGBYColMap := make(map[int64]struct{}, len(p.distinctGroupByCol))
-	for _, oneDistinctGBYCol := range p.distinctGroupByCol {
+	distinctGBYColMap := make(map[int64]struct{}, len(p.DistinctGroupByCol))
+	for _, oneDistinctGBYCol := range p.DistinctGroupByCol {
 		distinctGBYColMap[oneDistinctGBYCol.UniqueID] = struct{}{}
 	}
 	var refPos int
@@ -712,7 +712,7 @@ func (p *LogicalExpand) resolveGroupingFuncArgsInGroupBy(groupingFuncArgs []expr
 		refPos = -1
 		// since all the original group items has been projected even single col,
 		// let's check the origin gby expression here, and map it to new gby col.
-		for i, oneExpr := range p.distinctGbyExprs {
+		for i, oneExpr := range p.DistinctGbyExprs {
 			if bytes.Equal(oneArg.CanonicalHashCode(), oneExpr.CanonicalHashCode()) {
 				refPos = i
 				break
@@ -720,7 +720,7 @@ func (p *LogicalExpand) resolveGroupingFuncArgsInGroupBy(groupingFuncArgs []expr
 		}
 		if refPos != -1 {
 			// directly ref original group by expressions.
-			rewrittenArgCols = append(rewrittenArgCols, p.distinctGroupByCol[refPos])
+			rewrittenArgCols = append(rewrittenArgCols, p.DistinctGroupByCol[refPos])
 		} else {
 			// case for refPos == -1
 			// since for case like: select year from t group by year, country with rollup order by grouping(year)
@@ -754,10 +754,10 @@ func (p *LogicalExpand) GenerateGroupingIDModeBitAnd(oneSet expression.GroupingS
 	idsNeeded := oneSet.AllColIDs()
 	res := uint64(0)
 	// from high pos to low pos.
-	for i := len(p.distinctGroupByCol) - 1; i >= 0; i-- {
+	for i := len(p.DistinctGroupByCol) - 1; i >= 0; i-- {
 		// left shift.
 		res = res << 1
-		if idsNeeded.Has(int(p.distinctGroupByCol[i].UniqueID)) {
+		if idsNeeded.Has(int(p.DistinctGroupByCol[i].UniqueID)) {
 			// col is needed, fill the corresponding pos as 1.
 			res = res | 1
 		}
@@ -777,7 +777,7 @@ func (p *LogicalExpand) GenerateGroupingIDIncrementModeNumericSet(oneSetOffset i
 	// we can just set its gid   :  0,       1       2      3    <----+
 	// just keep this mapping logic stored as meta, and return the defined id back generated from this defined rule.
 	//     for special case      :  {a,a,c} and {a,c}: this two logical same grouping set naturally share the same gid allocation!
-	return p.rollupGroupingIDs[oneSetOffset]
+	return p.RollupGroupingIDs[oneSetOffset]
 	// how to use it, eg: when encountering a grouping function like: grouping(a), we should dig down to related Expand operator and
 	// found it in meta that: column 'a' is in grouping set {a,b,c}, {a,b},  {a}, and its correspondent mapping grouping ids is about
 	// {0,1,2}. This grouping id set is returned back as this grouping function's specified meta when rewriting the grouping function,

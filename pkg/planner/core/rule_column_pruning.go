@@ -79,8 +79,8 @@ func exprHasSetVarOrSleep(expr expression.Expression) bool {
 // so when do the rule_column_pruning here, we just prune the schema is enough.
 func (p *LogicalExpand) PruneColumns(parentUsedCols []*expression.Column, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, error) {
 	// Expand need those extra redundant distinct group by columns projected from underlying projection.
-	// distinct GroupByCol must be used by aggregate above, to make sure this, append distinctGroupByCol again.
-	parentUsedCols = append(parentUsedCols, p.distinctGroupByCol...)
+	// distinct GroupByCol must be used by aggregate above, to make sure this, append DistinctGroupByCol again.
+	parentUsedCols = append(parentUsedCols, p.DistinctGroupByCol...)
 	used := expression.GetUsedList(p.SCtx().GetExprCtx().GetEvalCtx(), parentUsedCols, p.Schema())
 	prunedColumns := make([]*expression.Column, 0)
 	for i := len(used) - 1; i >= 0; i-- {

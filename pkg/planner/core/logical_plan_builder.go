@@ -187,23 +187,23 @@ func (b *PlanBuilder) buildExpand(p base.LogicalPlan, gbyItems []expression.Expr
 	expandSchema := proj.Schema().Clone()
 	expression.AdjustNullabilityFromGroupingSets(rollupGroupingSets, expandSchema)
 	expand := LogicalExpand{
-		rollupGroupingSets:  rollupGroupingSets,
-		distinctGroupByCol:  distinctGbyCols,
-		distinctGbyColNames: distinctGbyColNames,
+		RollupGroupingSets:  rollupGroupingSets,
+		DistinctGroupByCol:  distinctGbyCols,
+		DistinctGbyColNames: distinctGbyColNames,
 		// for resolving grouping function args.
-		distinctGbyExprs: distinctGbyExprs,
+		DistinctGbyExprs: distinctGbyExprs,
 
 		// fill the gen col names when building level projections.
 	}.Init(b.ctx, b.getSelectOffset())
 
 	// if we want to use bitAnd for the quick computation of grouping function, then the maximum capacity of num of grouping is about 64.
 	expand.GroupingMode = tipb.GroupingMode_ModeBitAnd
-	if len(expand.rollupGroupingSets) > 64 {
+	if len(expand.RollupGroupingSets) > 64 {
 		expand.GroupingMode = tipb.GroupingMode_ModeNumericSet
 	}
 
-	expand.distinctSize, expand.rollupGroupingIDs, expand.rollupID2GIDS = expand.rollupGroupingSets.DistinctSize()
-	hasDuplicateGroupingSet := len(expand.rollupGroupingSets) != expand.distinctSize
+	expand.DistinctSize, expand.RollupGroupingIDs, expand.RollupID2GIDS = expand.RollupGroupingSets.DistinctSize()
+	hasDuplicateGroupingSet := len(expand.RollupGroupingSets) != expand.DistinctSize
 	// append the generated column for logical Expand.
 	tp := types.NewFieldType(mysql.TypeLonglong)
 	tp.SetFlag(mysql.UnsignedFlag | mysql.NotNullFlag)
@@ -1633,7 +1633,7 @@ func (b *PlanBuilder) replaceGroupingFunc(expr expression.Expression) expression
 	if b.currentBlockExpand == nil {
 		return expr
 	}
-	// curExpand can supply the distinctGbyExprs and gid col.
+	// curExpand can supply the DistinctGbyExprs and gid col.
 	traverseAction := resolveGroupingTraverseAction{CurrentBlockExpand: b.currentBlockExpand}
 	return expr.Traverse(traverseAction)
 }
@@ -1642,11 +1642,11 @@ func (b *PlanBuilder) implicitProjectGroupingSetCols(projSchema *expression.Sche
 	if b.currentBlockExpand == nil {
 		return projSchema, projNames, projExprs
 	}
-	m := make(map[int64]struct{}, len(b.currentBlockExpand.distinctGroupByCol))
+	m := make(map[int64]struct{}, len(b.currentBlockExpand.DistinctGroupByCol))
 	for _, col := range projSchema.Columns {
 		m[col.UniqueID] = struct{}{}
 	}
-	for idx, gCol := range b.currentBlockExpand.distinctGroupByCol {
+	for idx, gCol := range b.currentBlockExpand.DistinctGroupByCol {
 		if _, ok := m[gCol.UniqueID]; ok {
 			// grouping col has been explicitly projected, not need to reserve it here for later order-by item (a+1)
 			// like: select a+1, b from t group by a+1 order by a+1.
@@ -1655,7 +1655,7 @@ func (b *PlanBuilder) implicitProjectGroupingSetCols(projSchema *expression.Sche
 		// project the grouping col out implicitly here. If it's not used by later OP, it will be cleaned in column pruner.
 		projSchema.Append(gCol)
 		projExprs = append(projExprs, gCol)
-		projNames = append(projNames, b.currentBlockExpand.distinctGbyColNames[idx])
+		projNames = append(projNames, b.currentBlockExpand.DistinctGbyColNames[idx])
 	}
 	// project GID.
 	projSchema.Append(b.currentBlockExpand.GID)
