@@ -82,9 +82,9 @@ func (s *LogicalSchemaProducer) InlineProjection(parentUsedCols []*expression.Co
 }
 
 // BuildKeyInfo implements LogicalPlan.BuildKeyInfo interface.
-func (p *LogicalSchemaProducer) BuildKeyInfo(selfSchema *expression.Schema, childSchema []*expression.Schema) {
+func (s *LogicalSchemaProducer) BuildKeyInfo(selfSchema *expression.Schema, childSchema []*expression.Schema) {
 	selfSchema.Keys = nil
-	p.BaseLogicalPlan.BuildKeyInfo(selfSchema, childSchema)
+	s.BaseLogicalPlan.BuildKeyInfo(selfSchema, childSchema)
 
 	// default implementation for plans has only one child: proprgate child keys
 	// multi-children plans are likely to have particular implementation.
