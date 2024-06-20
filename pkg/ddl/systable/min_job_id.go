@@ -23,14 +23,13 @@ import (
 )
 
 var (
-	refreshInterval = 1 * time.Second
+	refreshInterval = time.Second
 )
 
-// MinJobIDRefresher is used to refresh the minimal job ID in tidb_ddl_job table.
+// MinJobIDRefresher is used to maintain the minimal job ID in tidb_ddl_job table.
+// we use it to mitigate this issue https://github.com/pingcap/tidb/issues/52905
 type MinJobIDRefresher struct {
-	sysTblMgr Manager
-	// currMinJobID is the minimal job ID in tidb_ddl_job table, we use it to mitigate
-	// this issue https://github.com/pingcap/tidb/issues/52905
+	sysTblMgr            Manager
 	currMinJobID         int64
 	lastRefreshMinIDTime time.Time
 }

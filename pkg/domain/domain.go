@@ -819,6 +819,7 @@ func (do *Domain) refreshMDLCheckTableInfo() {
 	exec := sctx.GetRestrictedSQLExecutor()
 	domainSchemaVer := do.InfoSchema().SchemaMetaVersion()
 	do.minJobIDRefresher.Refresh(ctx)
+	// the job must stay inside tidb_ddl_job if we need to wait schema version for it.
 	sql := fmt.Sprintf(`select job_id, version, table_ids from mysql.tidb_mdl_info
 		where job_id >= %d and version <= %d`, do.minJobIDRefresher.GetCurrMinJobID(), domainSchemaVer)
 	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, sql)

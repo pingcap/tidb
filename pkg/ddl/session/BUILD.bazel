@@ -6,7 +6,7 @@ go_library(
         "session.go",
         "session_pool.go",
     ],
-    importpath = "github.com/pingcap/tidb/pkg/ddl/internal/session",
+    importpath = "github.com/pingcap/tidb/pkg/ddl/session",
     visibility = ["//pkg/ddl:__subpackages__"],
     deps = [
         "//pkg/ddl/logutil",
