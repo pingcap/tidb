@@ -289,7 +289,7 @@ func TestCleanup1(t *testing.T) {
 	progress.cmd = cmd
 
 	globalBRIEQueue.cleanupTask(taskID, &e)
-	require.Equal(t, total, progress.current)
+	require.Equal(t, current, progress.current)
 	require.Equal(t, total, progress.total)
 	require.Equal(t, cmd+" Canceled", progress.cmd)
 }
