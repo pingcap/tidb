@@ -24,7 +24,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl/copr"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
-	"github.com/pingcap/tidb/pkg/ddl/session"
+	sess "github.com/pingcap/tidb/pkg/ddl/session"
 	"github.com/pingcap/tidb/pkg/distsql"
 	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
 	"github.com/pingcap/tidb/pkg/errctx"
@@ -74,7 +74,7 @@ type copReqSenderPool struct {
 	tasksCh       chan *reorgBackfillTask
 	chunkSender   chunkSender
 	checkpointMgr *ingest.CheckpointManager
-	sessPool      *session.Pool
+	sessPool      *sess.Pool
 
 	ctx    context.Context
 	copCtx copr.CopContext
@@ -106,7 +106,7 @@ func (c *copReqSender) run() {
 		p.chunkSender.AddTask(IndexRecordChunk{Err: err})
 		return
 	}
-	se := session.NewSession(sessCtx)
+	se := sess.NewSession(sessCtx)
 	defer p.sessPool.Put(sessCtx)
 	var (
 		task *reorgBackfillTask
@@ -136,7 +136,7 @@ func (c *copReqSender) run() {
 	}
 }
 
-func scanRecords(p *copReqSenderPool, task *reorgBackfillTask, se *session.Session) error {
+func scanRecords(p *copReqSenderPool, task *reorgBackfillTask, se *sess.Session) error {
 	logutil.Logger(p.ctx).Info("start a cop-request task",
 		zap.Int("id", task.id), zap.Stringer("task", task))
 
@@ -180,7 +180,7 @@ func scanRecords(p *copReqSenderPool, task *reorgBackfillTask, se *session.Sessi
 	})
 }
 
-func wrapInBeginRollback(se *session.Session, f func(startTS uint64) error) error {
+func wrapInBeginRollback(se *sess.Session, f func(startTS uint64) error) error {
 	err := se.Begin(context.Background())
 	if err != nil {
 		return errors.Trace(err)
@@ -195,7 +195,7 @@ func wrapInBeginRollback(se *session.Session, f func(startTS uint64) error) erro
 }
 
 func newCopReqSenderPool(ctx context.Context, copCtx copr.CopContext, store kv.Storage,
-	taskCh chan *reorgBackfillTask, sessPool *session.Pool,
+	taskCh chan *reorgBackfillTask, sessPool *sess.Pool,
 	checkpointMgr *ingest.CheckpointManager) *copReqSenderPool {
 	poolSize := copReadChunkPoolSize()
 	srcChkPool := make(chan *chunk.Chunk, poolSize)
