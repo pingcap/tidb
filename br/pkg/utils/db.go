@@ -6,7 +6,6 @@ import (
 	"context"
 	"database/sql"
 	"strconv"
-	"strings"
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
@@ -31,6 +30,7 @@ var (
 	logBackupTaskCount = atomic.NewInt32(0)
 )
 
+<<<<<<< HEAD
 // QueryExecutor is a interface for exec query
 type QueryExecutor interface {
 	QueryContext(ctx context.Context, query string, args ...interface{}) (*sql.Rows, error)
@@ -101,6 +101,8 @@ func IsLogBackupEnabled(ctx sqlexec.RestrictedSQLExecutor) (bool, error) {
 	return true, nil
 }
 
+=======
+>>>>>>> 8973dddc9ed (br: no domain to run log command (#52127))
 func GetRegionSplitInfo(ctx sqlexec.RestrictedSQLExecutor) (uint64, int64) {
 	return GetSplitSize(ctx), GetSplitKeys(ctx)
 }
