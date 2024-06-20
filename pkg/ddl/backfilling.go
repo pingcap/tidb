@@ -540,18 +540,12 @@ func getActualEndKey(
 		// we don't need to get the actual end key of this range.
 		return rangeEnd
 	}
-
-	var prefix kv.Key
-	if reorgInfo.mergingTmpIdx {
-		prefix = t.IndexPrefix()
-	} else {
-		prefix = t.RecordPrefix()
-	}
 	jobCtx := reorgInfo.NewJobContext()
 
-	actualEndKey, err := GetRangeEndKey(jobCtx, reorgInfo.d.store, job.Priority, prefix, rangeStart, rangeEnd)
+	actualEndKey, err := GetRangeEndKey(jobCtx, reorgInfo.d.store, job.Priority, t.RecordPrefix(), rangeStart, rangeEnd)
 	if err != nil {
 		logutil.DDLLogger().Info("get backfill range task, get reverse key failed", zap.Error(err))
+		return rangeEnd
 	} else {
 		logutil.DDLLogger().Info("get backfill range task, change end key",
 			zap.Int("id", taskID),
