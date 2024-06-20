@@ -611,7 +611,7 @@ func (b *PlanBuilder) buildDo(ctx context.Context, v *ast.DoStmt) (base.Plan, er
 	dual.SetSchema(expression.NewSchema())
 	p = dual
 	proj := LogicalProjection{Exprs: make([]expression.Expression, 0, len(v.Exprs))}.Init(b.ctx, b.getSelectOffset())
-	proj.names = make([]*types.FieldName, len(v.Exprs))
+	proj.SetOutputNames(make([]*types.FieldName, len(v.Exprs)))
 	schema := expression.NewSchema(make([]*expression.Column, 0, len(v.Exprs))...)
 
 	// Since do statement only contain expression list, and it may contain aggFunc, detecting to build the aggMapper firstly.
@@ -1385,8 +1385,8 @@ func (b *PlanBuilder) buildAdmin(ctx context.Context, as *ast.AdminStmt) (base.P
 		ret = p
 	case ast.AdminShowDDLJobs:
 		p := LogicalShowDDLJobs{JobNumber: as.JobNumber}.Init(b.ctx)
-		p.setSchemaAndNames(buildShowDDLJobsFields())
-		for _, col := range p.schema.Columns {
+		p.SetSchemaAndNames(buildShowDDLJobsFields())
+		for _, col := range p.Schema().Columns {
 			col.UniqueID = b.ctx.GetSessionVars().AllocPlanColumnID()
 		}
 		ret = p
@@ -3224,8 +3224,8 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (base.P
 
 	schema, names := buildShowSchema(show, isView, isSequence)
 	p.SetSchema(schema)
-	p.names = names
-	for _, col := range p.schema.Columns {
+	p.SetOutputNames(names)
+	for _, col := range p.Schema().Columns {
 		col.UniqueID = b.ctx.GetSessionVars().AllocPlanColumnID()
 	}
 	var err error
@@ -3255,10 +3255,10 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (base.P
 	}
 	if np != p {
 		b.optFlag |= flagEliminateProjection
-		fieldsLen := len(p.schema.Columns)
+		fieldsLen := len(p.Schema().Columns)
 		proj := LogicalProjection{Exprs: make([]expression.Expression, 0, fieldsLen)}.Init(b.ctx, 0)
 		schema := expression.NewSchema(make([]*expression.Column, 0, fieldsLen)...)
-		for _, col := range p.schema.Columns {
+		for _, col := range p.Schema().Columns {
 			proj.Exprs = append(proj.Exprs, col)
 			newCol := col.Clone().(*expression.Column)
 			newCol.UniqueID = b.ctx.GetSessionVars().AllocPlanColumnID()
@@ -3690,7 +3690,7 @@ func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (
 
 	mockTablePlan := LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
 	mockTablePlan.SetSchema(insertPlan.tableSchema)
-	mockTablePlan.names = insertPlan.tableColNames
+	mockTablePlan.SetOutputNames(insertPlan.tableColNames)
 
 	checkRefColumn := func(n ast.Node) ast.Node {
 		if insertPlan.NeedFillDefaultValue {
@@ -3719,7 +3719,7 @@ func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (
 	}
 
 	mockTablePlan.SetSchema(insertPlan.Schema4OnDuplicate)
-	mockTablePlan.names = insertPlan.names4OnDuplicate
+	mockTablePlan.SetOutputNames(insertPlan.names4OnDuplicate)
 
 	onDupColSet, err := insertPlan.resolveOnDuplicate(insert.OnDuplicate, tableInfo, func(node ast.ExprNode) (expression.Expression, error) {
 		return b.rewriteInsertOnDuplicateUpdate(ctx, node, mockTablePlan, insertPlan)
@@ -3729,8 +3729,8 @@ func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (
 	}
 
 	// Calculate generated columns.
-	mockTablePlan.schema = insertPlan.tableSchema
-	mockTablePlan.names = insertPlan.tableColNames
+	mockTablePlan.SetSchema(insertPlan.tableSchema)
+	mockTablePlan.SetOutputNames(insertPlan.tableColNames)
 	insertPlan.GenCols, err = b.resolveGeneratedColumns(ctx, insertPlan.Table.Cols(), onDupColSet, mockTablePlan)
 	if err != nil {
 		return nil, err
@@ -4127,7 +4127,7 @@ func (b *PlanBuilder) buildLoadData(ctx context.Context, ld *ast.LoadDataStmt) (
 		return nil, err
 	}
 	mockTablePlan.SetSchema(schema)
-	mockTablePlan.names = names
+	mockTablePlan.SetOutputNames(names)
 
 	p.GenCols, err = b.resolveGeneratedColumns(ctx, tableInPlan.Cols(), nil, mockTablePlan)
 	return p, err
@@ -4227,7 +4227,7 @@ func (b *PlanBuilder) buildImportInto(ctx context.Context, ld *ast.ImportIntoStm
 		return nil, err
 	}
 	mockTablePlan.SetSchema(schema)
-	mockTablePlan.names = names
+	mockTablePlan.SetOutputNames(names)
 
 	p.GenCols, err = b.resolveGeneratedColumns(ctx, tableInPlan.Cols(), nil, mockTablePlan)
 	if err != nil {
@@ -4338,7 +4338,7 @@ func (b *PlanBuilder) buildSplitIndexRegion(node *ast.SplitRegionStmt) (base.Pla
 		return nil, err
 	}
 	mockTablePlan.SetSchema(schema)
-	mockTablePlan.names = names
+	mockTablePlan.SetOutputNames(names)
 
 	p := &SplitRegion{
 		TableInfo:      tblInfo,
@@ -4453,7 +4453,7 @@ func (b *PlanBuilder) buildSplitTableRegion(node *ast.SplitRegionStmt) (base.Pla
 		return nil, err
 	}
 	mockTablePlan.SetSchema(schema)
-	mockTablePlan.names = names
+	mockTablePlan.SetOutputNames(names)
 
 	p := &SplitRegion{
 		TableInfo:      tblInfo,

@@ -93,8 +93,8 @@ func rewriteAstExprWithPlanCtx(sctx base.PlanContext, expr ast.ExprNode, schema 
 	b.allowBuildCastArray = allowCastArray
 	fakePlan := LogicalTableDual{}.Init(sctx, 0)
 	if schema != nil {
-		fakePlan.schema = schema
-		fakePlan.names = names
+		fakePlan.SetSchema(schema)
+		fakePlan.SetOutputNames(names)
 	}
 	b.curClause = expressionClause
 	newExpr, _, err := b.rewrite(context.TODO(), expr, fakePlan, nil, true)
@@ -813,7 +813,7 @@ func (er *expressionRewriter) handleOtherComparableSubq(planCtx *exprRewriterPla
 	colMaxOrMin.SetCoercibility(rexpr.Coercibility())
 	schema := expression.NewSchema(colMaxOrMin)
 
-	plan4Agg.names = append(plan4Agg.names, types.EmptyName)
+	plan4Agg.SetOutputNames(append(plan4Agg.OutputNames(), types.EmptyName))
 	plan4Agg.SetSchema(schema)
 	plan4Agg.AggFuncs = []*aggregation.AggFuncDesc{funcMaxOrMin}
 
@@ -838,7 +838,7 @@ func (er *expressionRewriter) buildQuantifierPlan(planCtx *exprRewriterPlanCtx, 
 		RetType:  funcSum.RetTp,
 	}
 	plan4Agg.AggFuncs = append(plan4Agg.AggFuncs, funcSum)
-	plan4Agg.schema.Append(colSum)
+	plan4Agg.Schema().Append(colSum)
 	innerHasNull := expression.NewFunctionInternal(er.sctx, ast.NE, types.NewFieldType(mysql.TypeTiny), colSum, expression.NewZero())
 
 	// Build `count(1)` aggregation to check if subquery is empty.
@@ -852,7 +852,7 @@ func (er *expressionRewriter) buildQuantifierPlan(planCtx *exprRewriterPlanCtx, 
 		RetType:  funcCount.RetTp,
 	}
 	plan4Agg.AggFuncs = append(plan4Agg.AggFuncs, funcCount)
-	plan4Agg.schema.Append(colCount)
+	plan4Agg.Schema().Append(colCount)
 
 	if all {
 		// All of the inner record set should not contain null value. So for t.id < all(select s.id from s), it
@@ -890,15 +890,17 @@ func (er *expressionRewriter) buildQuantifierPlan(planCtx *exprRewriterPlanCtx, 
 	proj := LogicalProjection{
 		Exprs: expression.Column2Exprs(joinSchema.Clone().Columns[:outerSchemaLen]),
 	}.Init(planCtx.builder.ctx, planCtx.builder.getSelectOffset())
-	proj.names = make([]*types.FieldName, outerSchemaLen, outerSchemaLen+1)
-	copy(proj.names, planCtx.plan.OutputNames())
+	proj.SetOutputNames(make([]*types.FieldName, outerSchemaLen, outerSchemaLen+1))
+	names := proj.OutputNames()
+	copy(names, planCtx.plan.OutputNames())
+	proj.SetOutputNames(names)
 	proj.SetSchema(expression.NewSchema(joinSchema.Clone().Columns[:outerSchemaLen]...))
 	proj.Exprs = append(proj.Exprs, cond)
-	proj.schema.Append(&expression.Column{
+	proj.Schema().Append(&expression.Column{
 		UniqueID: sessVars.AllocPlanColumnID(),
 		RetType:  cond.GetType(er.sctx.GetEvalCtx()),
 	})
-	proj.names = append(proj.names, types.EmptyName)
+	proj.SetOutputNames(append(proj.OutputNames(), types.EmptyName))
 	proj.SetChildren(planCtx.plan)
 	planCtx.plan = proj
 }
@@ -939,7 +941,7 @@ func (er *expressionRewriter) handleNEAny(planCtx *exprRewriterPlanCtx, lexpr, r
 		UniqueID: sctx.GetSessionVars().AllocPlanColumnID(),
 		RetType:  countFunc.RetTp,
 	}
-	plan4Agg.names = append(plan4Agg.names, types.EmptyName, types.EmptyName)
+	plan4Agg.SetOutputNames(append(plan4Agg.OutputNames(), types.EmptyName, types.EmptyName))
 	plan4Agg.SetSchema(expression.NewSchema(maxResultCol, count))
 	gtFunc := expression.NewFunctionInternal(er.sctx, ast.GT, types.NewFieldType(mysql.TypeTiny), count, expression.NewOne())
 	neCond := expression.NewFunctionInternal(er.sctx, ast.NE, types.NewFieldType(mysql.TypeTiny), lexpr, maxResultCol)
@@ -973,14 +975,14 @@ func (er *expressionRewriter) handleEQAll(planCtx *exprRewriterPlanCtx, lexpr, r
 		plan4Agg.PreferAggToCop = hintinfo.PreferAggToCop
 	}
 	plan4Agg.SetChildren(np)
-	plan4Agg.names = append(plan4Agg.names, types.EmptyName)
+	plan4Agg.SetOutputNames(append(plan4Agg.OutputNames(), types.EmptyName))
 
 	maxResultCol := &expression.Column{
 		UniqueID: sctx.GetSessionVars().AllocPlanColumnID(),
 		RetType:  maxFunc.RetTp,
 	}
 	maxResultCol.SetCoercibility(rexpr.Coercibility())
-	plan4Agg.names = append(plan4Agg.names, types.EmptyName)
+	plan4Agg.SetOutputNames(append(plan4Agg.OutputNames(), types.EmptyName))
 	count := &expression.Column{
 		UniqueID: sctx.GetSessionVars().AllocPlanColumnID(),
 		RetType:  countFunc.RetTp,
@@ -1210,10 +1212,10 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, planCtx *exp
 		// Build inner join above the aggregation.
 		join := LogicalJoin{JoinType: InnerJoin}.Init(planCtx.builder.ctx, planCtx.builder.getSelectOffset())
 		join.SetChildren(planCtx.plan, agg)
-		join.SetSchema(expression.MergeSchema(planCtx.plan.Schema(), agg.schema))
-		join.names = make([]*types.FieldName, planCtx.plan.Schema().Len()+agg.Schema().Len())
-		copy(join.names, planCtx.plan.OutputNames())
-		copy(join.names[planCtx.plan.Schema().Len():], agg.OutputNames())
+		join.SetSchema(expression.MergeSchema(planCtx.plan.Schema(), agg.Schema()))
+		join.SetOutputNames(make([]*types.FieldName, planCtx.plan.Schema().Len()+agg.Schema().Len()))
+		copy(join.OutputNames(), planCtx.plan.OutputNames())
+		copy(join.OutputNames()[planCtx.plan.Schema().Len():], agg.OutputNames())
 		join.AttachOnConds(expression.SplitCNFItems(checkCondition))
 		// Set join hint for this join.
 		if planCtx.builder.TableHints() != nil {

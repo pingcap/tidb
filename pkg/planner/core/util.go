@@ -26,8 +26,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/baseimpl"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
-	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -92,63 +90,6 @@ func (a *WindowFuncExtractor) Leave(n ast.Node) (ast.Node, bool) {
 		a.windowFuncs = append(a.windowFuncs, v)
 	}
 	return n, true
-}
-
-// logicalSchemaProducer stores the schema for the logical plans who can produce schema directly.
-type logicalSchemaProducer struct {
-	schema *expression.Schema
-	names  types.NameSlice
-	logicalop.BaseLogicalPlan
-}
-
-// Schema implements the Plan.Schema interface.
-func (s *logicalSchemaProducer) Schema() *expression.Schema {
-	if s.schema == nil {
-		if len(s.Children()) == 1 {
-			// default implementation for plans has only one child: proprgate child schema.
-			// multi-children plans are likely to have particular implementation.
-			s.schema = s.Children()[0].Schema().Clone()
-		} else {
-			s.schema = expression.NewSchema()
-		}
-	}
-	return s.schema
-}
-
-func (s *logicalSchemaProducer) OutputNames() types.NameSlice {
-	if s.names == nil && len(s.Children()) == 1 {
-		// default implementation for plans has only one child: proprgate child `OutputNames`.
-		// multi-children plans are likely to have particular implementation.
-		s.names = s.Children()[0].OutputNames()
-	}
-	return s.names
-}
-
-func (s *logicalSchemaProducer) SetOutputNames(names types.NameSlice) {
-	s.names = names
-}
-
-// SetSchema implements the Plan.SetSchema interface.
-func (s *logicalSchemaProducer) SetSchema(schema *expression.Schema) {
-	s.schema = schema
-}
-
-func (s *logicalSchemaProducer) setSchemaAndNames(schema *expression.Schema, names types.NameSlice) {
-	s.schema = schema
-	s.names = names
-}
-
-// inlineProjection prunes unneeded columns inline a executor.
-func (s *logicalSchemaProducer) inlineProjection(parentUsedCols []*expression.Column, opt *optimizetrace.LogicalOptimizeOp) {
-	prunedColumns := make([]*expression.Column, 0)
-	used := expression.GetUsedList(s.SCtx().GetExprCtx().GetEvalCtx(), parentUsedCols, s.Schema())
-	for i := len(used) - 1; i >= 0; i-- {
-		if !used[i] {
-			prunedColumns = append(prunedColumns, s.Schema().Columns[i])
-			s.schema.Columns = append(s.Schema().Columns[:i], s.Schema().Columns[i+1:]...)
-		}
-	}
-	appendColumnPruneTraceStep(s.Self(), prunedColumns, opt)
 }
 
 // physicalSchemaProducer stores the schema for the physical plans who can produce schema directly.
