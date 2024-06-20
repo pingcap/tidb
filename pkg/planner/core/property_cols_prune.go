@@ -167,8 +167,8 @@ func (p *LogicalJoin) PreparePossibleProperties(_ *expression.Schema, childrenPr
 	leftProperties := childrenProperties[0]
 	rightProperties := childrenProperties[1]
 	// TODO: We should consider properties propagation.
-	p.leftProperties = leftProperties
-	p.rightProperties = rightProperties
+	p.LeftProperties = leftProperties
+	p.RightProperties = rightProperties
 	if p.JoinType == LeftOuterJoin || p.JoinType == LeftOuterSemiJoin {
 		rightProperties = nil
 	} else if p.JoinType == RightOuterJoin {
