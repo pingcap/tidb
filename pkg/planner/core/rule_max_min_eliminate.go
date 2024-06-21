@@ -52,8 +52,8 @@ func (*maxMinEliminator) composeAggsByInnerJoin(originAgg *LogicalAggregation, a
 	for i := 1; i < len(aggs); i++ {
 		join := LogicalJoin{JoinType: InnerJoin}.Init(sctx, plan.QueryBlockOffset())
 		join.SetChildren(plan, aggs[i])
-		join.schema = buildLogicalJoinSchema(InnerJoin, join)
-		join.cartesianJoin = true
+		join.SetSchema(buildLogicalJoinSchema(InnerJoin, join))
+		join.CartesianJoin = true
 		plan = join
 		joins = append(joins, join)
 	}
@@ -121,7 +121,7 @@ func (a *maxMinEliminator) cloneSubPlans(plan base.LogicalPlan) base.LogicalPlan
 		// ReadOnly fields uses a shallow copy, while the fields which will be overwritten must use a deep copy.
 		newDs := *p
 		newDs.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(p.SCtx(), p.TP(), &newDs, p.QueryBlockOffset())
-		newDs.schema = p.schema.Clone()
+		newDs.SetSchema(p.Schema().Clone())
 		newDs.Columns = make([]*model.ColumnInfo, len(p.Columns))
 		copy(newDs.Columns, p.Columns)
 		newAccessPaths := make([]*util.AccessPath, 0, len(p.possibleAccessPaths))
@@ -157,13 +157,13 @@ func (a *maxMinEliminator) splitAggFuncAndCheckIndices(agg *LogicalAggregation, 
 	for i, f := range agg.AggFuncs {
 		newAgg := LogicalAggregation{AggFuncs: []*aggregation.AggFuncDesc{f}}.Init(agg.SCtx(), agg.QueryBlockOffset())
 		newAgg.SetChildren(a.cloneSubPlans(agg.Children()[0]))
-		newAgg.schema = expression.NewSchema(agg.schema.Columns[i])
+		newAgg.SetSchema(expression.NewSchema(agg.Schema().Columns[i]))
 		// Since LogicalAggregation doesn’t use the parent base.LogicalPlan, passing an incorrect parameter here won’t affect subsequent optimizations.
 		var (
 			p   base.LogicalPlan
 			err error
 		)
-		if p, err = newAgg.PruneColumns([]*expression.Column{newAgg.schema.Columns[0]}, opt); err != nil {
+		if p, err = newAgg.PruneColumns([]*expression.Column{newAgg.Schema().Columns[0]}, opt); err != nil {
 			return nil, false
 		}
 		newAgg = p.(*LogicalAggregation)

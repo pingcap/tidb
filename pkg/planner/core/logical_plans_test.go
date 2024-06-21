@@ -179,7 +179,7 @@ func TestEliminateProjectionUnderUnion(t *testing.T) {
 	p, err = logicalOptimize(context.TODO(), flagPredicatePushDown|flagJoinReOrder|flagPrunColumns|flagEliminateProjection, p.(base.LogicalPlan))
 	require.NoError(t, err)
 	// after folding constants, the null flag should keep the same with the old one's (i.e., the schema's).
-	schemaNullFlag := p.(*LogicalProjection).Children()[0].(*LogicalJoin).Children()[1].Children()[1].(*LogicalProjection).schema.Columns[0].RetType.GetFlag() & mysql.NotNullFlag
+	schemaNullFlag := p.(*LogicalProjection).Children()[0].(*LogicalJoin).Children()[1].Children()[1].(*LogicalProjection).Schema().Columns[0].RetType.GetFlag() & mysql.NotNullFlag
 	exprNullFlag := p.(*LogicalProjection).Children()[0].(*LogicalJoin).Children()[1].Children()[1].(*LogicalProjection).Exprs[0].GetType(s.ctx.GetExprCtx().GetEvalCtx()).GetFlag() & mysql.NotNullFlag
 	require.Equal(t, exprNullFlag, schemaNullFlag)
 }
@@ -390,7 +390,7 @@ func TestExtraPKNotNullFlag(t *testing.T) {
 	ds := p.(*LogicalProjection).Children()[0].(*LogicalAggregation).Children()[0].(*DataSource)
 	require.Equal(t, "_tidb_rowid", ds.Columns[2].Name.L)
 	require.Equal(t, mysql.PriKeyFlag|mysql.NotNullFlag, ds.Columns[2].GetFlag())
-	require.Equal(t, mysql.PriKeyFlag|mysql.NotNullFlag, ds.schema.Columns[2].RetType.GetFlag())
+	require.Equal(t, mysql.PriKeyFlag|mysql.NotNullFlag, ds.Schema().Columns[2].RetType.GetFlag())
 }
 
 func buildLogicPlan4GroupBy(s *plannerSuite, t *testing.T, sql string) (base.Plan, error) {
@@ -1993,7 +1993,7 @@ func TestSkylinePruning(t *testing.T) {
 			case *LogicalProjection:
 				newItems := make([]*util.ByItems, 0, len(byItems))
 				for _, col := range byItems {
-					idx := v.schema.ColumnIndex(col.Expr.(*expression.Column))
+					idx := v.Schema().ColumnIndex(col.Expr.(*expression.Column))
 					switch expr := v.Exprs[idx].(type) {
 					case *expression.Column:
 						newItems = append(newItems, &util.ByItems{Expr: expr, Desc: col.Desc})
@@ -2110,8 +2110,8 @@ func TestConflictedJoinTypeHints(t *testing.T) {
 	require.True(t, ok)
 	join, ok := proj.Children()[0].(*LogicalJoin)
 	require.True(t, ok)
-	require.Nil(t, join.hintInfo)
-	require.Equal(t, uint(0), join.preferJoinType)
+	require.Nil(t, join.HintInfo)
+	require.Equal(t, uint(0), join.PreferJoinType)
 }
 
 func TestSimplyOuterJoinWithOnlyOuterExpr(t *testing.T) {
@@ -2348,24 +2348,24 @@ func TestRollupExpand(t *testing.T) {
 	require.Equal(t, builder.currentBlockExpand.LevelExprs != nil, true)
 	require.Equal(t, len(builder.currentBlockExpand.LevelExprs), 3)
 	// for grouping set {}: gid = '00' = 0
-	require.Equal(t, expression.ExplainExpressionList(expand.LevelExprs[0], expand.schema), "test.t.a, <nil>->Column#13, <nil>->Column#14, 0->gid")
+	require.Equal(t, expression.ExplainExpressionList(expand.LevelExprs[0], expand.Schema()), "test.t.a, <nil>->Column#13, <nil>->Column#14, 0->gid")
 	// for grouping set {a}: gid = '01' = 1
-	require.Equal(t, expression.ExplainExpressionList(expand.LevelExprs[1], expand.schema), "test.t.a, Column#13, <nil>->Column#14, 1->gid")
+	require.Equal(t, expression.ExplainExpressionList(expand.LevelExprs[1], expand.Schema()), "test.t.a, Column#13, <nil>->Column#14, 1->gid")
 	// for grouping set {a,b}: gid = '11' = 3
-	require.Equal(t, expression.ExplainExpressionList(expand.LevelExprs[2], expand.schema), "test.t.a, Column#13, Column#14, 3->gid")
+	require.Equal(t, expression.ExplainExpressionList(expand.LevelExprs[2], expand.Schema()), "test.t.a, Column#13, Column#14, 3->gid")
 
 	require.Equal(t, expand.Schema().Len(), 4)
 	// source column a should be kept as real.
 	require.Equal(t, expand.Schema().Columns[0].RetType.GetFlag()&mysql.NotNullFlag, uint(1))
-	require.Equal(t, expand.names[0].String(), "test.t.a")
+	require.Equal(t, expand.OutputNames()[0].String(), "test.t.a")
 	// the grouping column a,b should be changed as nullable.
 	require.Equal(t, expand.Schema().Columns[1].RetType.GetFlag()&mysql.NotNullFlag, uint(0))
-	require.Equal(t, expand.names[1].String(), "test.ex_t.ex_a") // column#13
+	require.Equal(t, expand.OutputNames()[1].String(), "test.ex_t.ex_a") // column#13
 	require.Equal(t, expand.Schema().Columns[2].RetType.GetFlag()&mysql.NotNullFlag, uint(0))
-	require.Equal(t, expand.names[2].String(), "test.ex_t.ex_b") // column#14
+	require.Equal(t, expand.OutputNames()[2].String(), "test.ex_t.ex_b") // column#14
 	// the gid col
 	require.Equal(t, expand.Schema().Columns[3].RetType.GetFlag()&mysql.NotNullFlag, uint(1))
-	require.Equal(t, expand.names[3].String(), "gid")
+	require.Equal(t, expand.OutputNames()[3].String(), "gid")
 
 	// Test grouping marks generation.
 	// Expand.schema.columns[0] is normal source column.
@@ -2373,22 +2373,22 @@ func TestRollupExpand(t *testing.T) {
 	// Expand.schema.columns[2] is normal grouping set column b.
 	// Expand.schema.columns[2] is normal grouping gen column gid.
 	// mock grouping(a)
-	gm := expand.GenerateGroupingMarks([]*expression.Column{expand.schema.Columns[1]})
+	gm := expand.GenerateGroupingMarks([]*expression.Column{expand.Schema().Columns[1]})
 	require.NotNil(t, gm)
 	require.Equal(t, len(gm), 1)
 
 	// mock grouping(b)
-	gm = expand.GenerateGroupingMarks([]*expression.Column{expand.schema.Columns[2]})
+	gm = expand.GenerateGroupingMarks([]*expression.Column{expand.Schema().Columns[2]})
 	require.NotNil(t, gm)
 	require.Equal(t, len(gm), 1)
 
 	// mock grouping(a,b)
-	gm = expand.GenerateGroupingMarks([]*expression.Column{expand.schema.Columns[1], expand.schema.Columns[2]})
+	gm = expand.GenerateGroupingMarks([]*expression.Column{expand.Schema().Columns[1], expand.Schema().Columns[2]})
 	require.NotNil(t, gm)
 	require.Equal(t, len(gm), 2)
 
 	// mock grouping(b,a)
-	gm = expand.GenerateGroupingMarks([]*expression.Column{expand.schema.Columns[2], expand.schema.Columns[1]})
+	gm = expand.GenerateGroupingMarks([]*expression.Column{expand.Schema().Columns[2], expand.Schema().Columns[1]})
 	require.NotNil(t, gm)
 	require.Equal(t, len(gm), 2)
 }

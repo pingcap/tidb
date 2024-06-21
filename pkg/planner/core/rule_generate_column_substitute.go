@@ -77,7 +77,7 @@ func collectGenerateColumn(lp base.LogicalPlan, exprToColumn ExprColumnMap) {
 		for _, idxPart := range p.Index.Columns {
 			colInfo := ds.tableInfo.Columns[idxPart.Offset]
 			if colInfo.IsGenerated() && !colInfo.GeneratedStored {
-				s := ds.schema.Columns
+				s := ds.Schema().Columns
 				col := expression.ColInfo2Col(s, colInfo)
 				if col != nil && col.GetType(ectx).PartialEqual(col.VirtualExpr.GetType(ectx), lp.SCtx().GetSessionVars().EnableUnsafeSubstitute) {
 					exprToColumn[col.VirtualExpr] = col

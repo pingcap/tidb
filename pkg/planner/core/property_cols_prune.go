@@ -136,11 +136,11 @@ func getPossiblePropertyFromByItems(items []*util.ByItems) []*expression.Column 
 // PreparePossibleProperties implements base.LogicalPlan PreparePossibleProperties interface.
 func (p *LogicalProjection) PreparePossibleProperties(_ *expression.Schema, childrenProperties ...[][]*expression.Column) [][]*expression.Column {
 	childProperties := childrenProperties[0]
-	oldCols := make([]*expression.Column, 0, p.schema.Len())
-	newCols := make([]*expression.Column, 0, p.schema.Len())
+	oldCols := make([]*expression.Column, 0, p.Schema().Len())
+	newCols := make([]*expression.Column, 0, p.Schema().Len())
 	for i, expr := range p.Exprs {
 		if col, ok := expr.(*expression.Column); ok {
-			newCols = append(newCols, p.schema.Columns[i])
+			newCols = append(newCols, p.Schema().Columns[i])
 			oldCols = append(oldCols, col)
 		}
 	}
@@ -167,8 +167,8 @@ func (p *LogicalJoin) PreparePossibleProperties(_ *expression.Schema, childrenPr
 	leftProperties := childrenProperties[0]
 	rightProperties := childrenProperties[1]
 	// TODO: We should consider properties propagation.
-	p.leftProperties = leftProperties
-	p.rightProperties = rightProperties
+	p.LeftProperties = leftProperties
+	p.RightProperties = rightProperties
 	if p.JoinType == LeftOuterJoin || p.JoinType == LeftOuterSemiJoin {
 		rightProperties = nil
 	} else if p.JoinType == RightOuterJoin {

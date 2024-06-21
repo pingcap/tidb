@@ -377,28 +377,6 @@ func HasMaxOneRow(p base.LogicalPlan, childMaxOneRow []bool) bool {
 	return false
 }
 
-// BuildKeyInfo implements LogicalPlan BuildKeyInfo interface.
-func (p *logicalSchemaProducer) BuildKeyInfo(selfSchema *expression.Schema, childSchema []*expression.Schema) {
-	selfSchema.Keys = nil
-	p.BaseLogicalPlan.BuildKeyInfo(selfSchema, childSchema)
-
-	// default implementation for plans has only one child: proprgate child keys
-	// multi-children plans are likely to have particular implementation.
-	if len(childSchema) == 1 {
-		for _, key := range childSchema[0].Keys {
-			indices := selfSchema.ColumnsIndices(key)
-			if indices == nil {
-				continue
-			}
-			newKey := make([]*expression.Column, 0, len(key))
-			for _, i := range indices {
-				newKey = append(newKey, selfSchema.Columns[i])
-			}
-			selfSchema.Keys = append(selfSchema.Keys, newKey)
-		}
-	}
-}
-
 func newBasePhysicalPlan(ctx base.PlanContext, tp string, self base.PhysicalPlan, offset int) basePhysicalPlan {
 	return basePhysicalPlan{
 		Plan: baseimpl.NewBasePlan(ctx, tp, offset),
