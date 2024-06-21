@@ -125,7 +125,7 @@ func (pc *instancePlanCache) Put(sctx sessionctx.Context, key string, value, opt
 
 // Evict evicts some values. There should be a background thread to perform the eviction.
 // step 1: iterate all values to collects their last_used
-// step 2: estimate a eviction threshold time based on all last_used values
+// step 2: estimate an eviction threshold time based on all last_used values
 // step 3: iterate all values again and evict qualified values
 func (pc *instancePlanCache) Evict(_ sessionctx.Context) (evicted bool) {
 	pc.evictMutex.Lock() // make sure only one thread to trigger eviction for safety
