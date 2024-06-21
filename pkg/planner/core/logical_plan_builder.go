@@ -187,23 +187,23 @@ func (b *PlanBuilder) buildExpand(p base.LogicalPlan, gbyItems []expression.Expr
 	expandSchema := proj.Schema().Clone()
 	expression.AdjustNullabilityFromGroupingSets(rollupGroupingSets, expandSchema)
 	expand := LogicalExpand{
-		rollupGroupingSets:  rollupGroupingSets,
-		distinctGroupByCol:  distinctGbyCols,
-		distinctGbyColNames: distinctGbyColNames,
+		RollupGroupingSets:  rollupGroupingSets,
+		DistinctGroupByCol:  distinctGbyCols,
+		DistinctGbyColNames: distinctGbyColNames,
 		// for resolving grouping function args.
-		distinctGbyExprs: distinctGbyExprs,
+		DistinctGbyExprs: distinctGbyExprs,
 
 		// fill the gen col names when building level projections.
 	}.Init(b.ctx, b.getSelectOffset())
 
 	// if we want to use bitAnd for the quick computation of grouping function, then the maximum capacity of num of grouping is about 64.
 	expand.GroupingMode = tipb.GroupingMode_ModeBitAnd
-	if len(expand.rollupGroupingSets) > 64 {
+	if len(expand.RollupGroupingSets) > 64 {
 		expand.GroupingMode = tipb.GroupingMode_ModeNumericSet
 	}
 
-	expand.distinctSize, expand.rollupGroupingIDs, expand.rollupID2GIDS = expand.rollupGroupingSets.DistinctSize()
-	hasDuplicateGroupingSet := len(expand.rollupGroupingSets) != expand.distinctSize
+	expand.DistinctSize, expand.RollupGroupingIDs, expand.RollupID2GIDS = expand.RollupGroupingSets.DistinctSize()
+	hasDuplicateGroupingSet := len(expand.RollupGroupingSets) != expand.DistinctSize
 	// append the generated column for logical Expand.
 	tp := types.NewFieldType(mysql.TypeLonglong)
 	tp.SetFlag(mysql.UnsignedFlag | mysql.NotNullFlag)
@@ -374,8 +374,8 @@ func (b *PlanBuilder) buildAggregation(ctx context.Context, p base.LogicalPlan, 
 	if isSelection {
 		join, isSelectionJoin = selection.Children()[0].(*LogicalJoin)
 	}
-	if (isJoin && join.fullSchema != nil) || (isSelectionJoin && join.fullSchema != nil) {
-		for i, col := range join.fullSchema.Columns {
+	if (isJoin && join.FullSchema != nil) || (isSelectionJoin && join.FullSchema != nil) {
+		for i, col := range join.FullSchema.Columns {
 			if p.Schema().Contains(col) {
 				continue
 			}
@@ -387,7 +387,7 @@ func (b *PlanBuilder) buildAggregation(ctx context.Context, p base.LogicalPlan, 
 			newCol, _ := col.Clone().(*expression.Column)
 			newCol.RetType = newFunc.RetTp
 			schema4Agg.Append(newCol)
-			names = append(names, join.fullNames[i])
+			names = append(names, join.FullNames[i])
 		}
 	}
 	hasGroupBy := len(gbyItems) > 0
@@ -665,139 +665,139 @@ func (p *LogicalJoin) setPreferredJoinTypeAndOrder(hintInfo *h.PlanHints) {
 	lhsAlias := extractTableAlias(p.Children()[0], p.QueryBlockOffset())
 	rhsAlias := extractTableAlias(p.Children()[1], p.QueryBlockOffset())
 	if hintInfo.IfPreferMergeJoin(lhsAlias) {
-		p.preferJoinType |= h.PreferMergeJoin
-		p.leftPreferJoinType |= h.PreferMergeJoin
+		p.PreferJoinType |= h.PreferMergeJoin
+		p.LeftPreferJoinType |= h.PreferMergeJoin
 	}
 	if hintInfo.IfPreferMergeJoin(rhsAlias) {
-		p.preferJoinType |= h.PreferMergeJoin
-		p.rightPreferJoinType |= h.PreferMergeJoin
+		p.PreferJoinType |= h.PreferMergeJoin
+		p.RightPreferJoinType |= h.PreferMergeJoin
 	}
 	if hintInfo.IfPreferNoMergeJoin(lhsAlias) {
-		p.preferJoinType |= h.PreferNoMergeJoin
-		p.leftPreferJoinType |= h.PreferNoMergeJoin
+		p.PreferJoinType |= h.PreferNoMergeJoin
+		p.LeftPreferJoinType |= h.PreferNoMergeJoin
 	}
 	if hintInfo.IfPreferNoMergeJoin(rhsAlias) {
-		p.preferJoinType |= h.PreferNoMergeJoin
-		p.rightPreferJoinType |= h.PreferNoMergeJoin
+		p.PreferJoinType |= h.PreferNoMergeJoin
+		p.RightPreferJoinType |= h.PreferNoMergeJoin
 	}
 	if hintInfo.IfPreferBroadcastJoin(lhsAlias) {
-		p.preferJoinType |= h.PreferBCJoin
-		p.leftPreferJoinType |= h.PreferBCJoin
+		p.PreferJoinType |= h.PreferBCJoin
+		p.LeftPreferJoinType |= h.PreferBCJoin
 	}
 	if hintInfo.IfPreferBroadcastJoin(rhsAlias) {
-		p.preferJoinType |= h.PreferBCJoin
-		p.rightPreferJoinType |= h.PreferBCJoin
+		p.PreferJoinType |= h.PreferBCJoin
+		p.RightPreferJoinType |= h.PreferBCJoin
 	}
 	if hintInfo.IfPreferShuffleJoin(lhsAlias) {
-		p.preferJoinType |= h.PreferShuffleJoin
-		p.leftPreferJoinType |= h.PreferShuffleJoin
+		p.PreferJoinType |= h.PreferShuffleJoin
+		p.LeftPreferJoinType |= h.PreferShuffleJoin
 	}
 	if hintInfo.IfPreferShuffleJoin(rhsAlias) {
-		p.preferJoinType |= h.PreferShuffleJoin
-		p.rightPreferJoinType |= h.PreferShuffleJoin
+		p.PreferJoinType |= h.PreferShuffleJoin
+		p.RightPreferJoinType |= h.PreferShuffleJoin
 	}
 	if hintInfo.IfPreferHashJoin(lhsAlias) {
-		p.preferJoinType |= h.PreferHashJoin
-		p.leftPreferJoinType |= h.PreferHashJoin
+		p.PreferJoinType |= h.PreferHashJoin
+		p.LeftPreferJoinType |= h.PreferHashJoin
 	}
 	if hintInfo.IfPreferHashJoin(rhsAlias) {
-		p.preferJoinType |= h.PreferHashJoin
-		p.rightPreferJoinType |= h.PreferHashJoin
+		p.PreferJoinType |= h.PreferHashJoin
+		p.RightPreferJoinType |= h.PreferHashJoin
 	}
 	if hintInfo.IfPreferNoHashJoin(lhsAlias) {
-		p.preferJoinType |= h.PreferNoHashJoin
-		p.leftPreferJoinType |= h.PreferNoHashJoin
+		p.PreferJoinType |= h.PreferNoHashJoin
+		p.LeftPreferJoinType |= h.PreferNoHashJoin
 	}
 	if hintInfo.IfPreferNoHashJoin(rhsAlias) {
-		p.preferJoinType |= h.PreferNoHashJoin
-		p.rightPreferJoinType |= h.PreferNoHashJoin
+		p.PreferJoinType |= h.PreferNoHashJoin
+		p.RightPreferJoinType |= h.PreferNoHashJoin
 	}
 	if hintInfo.IfPreferINLJ(lhsAlias) {
-		p.preferJoinType |= h.PreferLeftAsINLJInner
-		p.leftPreferJoinType |= h.PreferINLJ
+		p.PreferJoinType |= h.PreferLeftAsINLJInner
+		p.LeftPreferJoinType |= h.PreferINLJ
 	}
 	if hintInfo.IfPreferINLJ(rhsAlias) {
-		p.preferJoinType |= h.PreferRightAsINLJInner
-		p.rightPreferJoinType |= h.PreferINLJ
+		p.PreferJoinType |= h.PreferRightAsINLJInner
+		p.RightPreferJoinType |= h.PreferINLJ
 	}
 	if hintInfo.IfPreferINLHJ(lhsAlias) {
-		p.preferJoinType |= h.PreferLeftAsINLHJInner
-		p.leftPreferJoinType |= h.PreferINLHJ
+		p.PreferJoinType |= h.PreferLeftAsINLHJInner
+		p.LeftPreferJoinType |= h.PreferINLHJ
 	}
 	if hintInfo.IfPreferINLHJ(rhsAlias) {
-		p.preferJoinType |= h.PreferRightAsINLHJInner
-		p.rightPreferJoinType |= h.PreferINLHJ
+		p.PreferJoinType |= h.PreferRightAsINLHJInner
+		p.RightPreferJoinType |= h.PreferINLHJ
 	}
 	if hintInfo.IfPreferINLMJ(lhsAlias) {
-		p.preferJoinType |= h.PreferLeftAsINLMJInner
-		p.leftPreferJoinType |= h.PreferINLMJ
+		p.PreferJoinType |= h.PreferLeftAsINLMJInner
+		p.LeftPreferJoinType |= h.PreferINLMJ
 	}
 	if hintInfo.IfPreferINLMJ(rhsAlias) {
-		p.preferJoinType |= h.PreferRightAsINLMJInner
-		p.rightPreferJoinType |= h.PreferINLMJ
+		p.PreferJoinType |= h.PreferRightAsINLMJInner
+		p.RightPreferJoinType |= h.PreferINLMJ
 	}
 	if hintInfo.IfPreferNoIndexJoin(lhsAlias) {
-		p.preferJoinType |= h.PreferNoIndexJoin
-		p.leftPreferJoinType |= h.PreferNoIndexJoin
+		p.PreferJoinType |= h.PreferNoIndexJoin
+		p.LeftPreferJoinType |= h.PreferNoIndexJoin
 	}
 	if hintInfo.IfPreferNoIndexJoin(rhsAlias) {
-		p.preferJoinType |= h.PreferNoIndexJoin
-		p.rightPreferJoinType |= h.PreferNoIndexJoin
+		p.PreferJoinType |= h.PreferNoIndexJoin
+		p.RightPreferJoinType |= h.PreferNoIndexJoin
 	}
 	if hintInfo.IfPreferNoIndexHashJoin(lhsAlias) {
-		p.preferJoinType |= h.PreferNoIndexHashJoin
-		p.leftPreferJoinType |= h.PreferNoIndexHashJoin
+		p.PreferJoinType |= h.PreferNoIndexHashJoin
+		p.LeftPreferJoinType |= h.PreferNoIndexHashJoin
 	}
 	if hintInfo.IfPreferNoIndexHashJoin(rhsAlias) {
-		p.preferJoinType |= h.PreferNoIndexHashJoin
-		p.rightPreferJoinType |= h.PreferNoIndexHashJoin
+		p.PreferJoinType |= h.PreferNoIndexHashJoin
+		p.RightPreferJoinType |= h.PreferNoIndexHashJoin
 	}
 	if hintInfo.IfPreferNoIndexMergeJoin(lhsAlias) {
-		p.preferJoinType |= h.PreferNoIndexMergeJoin
-		p.leftPreferJoinType |= h.PreferNoIndexMergeJoin
+		p.PreferJoinType |= h.PreferNoIndexMergeJoin
+		p.LeftPreferJoinType |= h.PreferNoIndexMergeJoin
 	}
 	if hintInfo.IfPreferNoIndexMergeJoin(rhsAlias) {
-		p.preferJoinType |= h.PreferNoIndexMergeJoin
-		p.rightPreferJoinType |= h.PreferNoIndexMergeJoin
+		p.PreferJoinType |= h.PreferNoIndexMergeJoin
+		p.RightPreferJoinType |= h.PreferNoIndexMergeJoin
 	}
 	if hintInfo.IfPreferHJBuild(lhsAlias) {
-		p.preferJoinType |= h.PreferLeftAsHJBuild
-		p.leftPreferJoinType |= h.PreferHJBuild
+		p.PreferJoinType |= h.PreferLeftAsHJBuild
+		p.LeftPreferJoinType |= h.PreferHJBuild
 	}
 	if hintInfo.IfPreferHJBuild(rhsAlias) {
-		p.preferJoinType |= h.PreferRightAsHJBuild
-		p.rightPreferJoinType |= h.PreferHJBuild
+		p.PreferJoinType |= h.PreferRightAsHJBuild
+		p.RightPreferJoinType |= h.PreferHJBuild
 	}
 	if hintInfo.IfPreferHJProbe(lhsAlias) {
-		p.preferJoinType |= h.PreferLeftAsHJProbe
-		p.leftPreferJoinType |= h.PreferHJProbe
+		p.PreferJoinType |= h.PreferLeftAsHJProbe
+		p.LeftPreferJoinType |= h.PreferHJProbe
 	}
 	if hintInfo.IfPreferHJProbe(rhsAlias) {
-		p.preferJoinType |= h.PreferRightAsHJProbe
-		p.rightPreferJoinType |= h.PreferHJProbe
+		p.PreferJoinType |= h.PreferRightAsHJProbe
+		p.RightPreferJoinType |= h.PreferHJProbe
 	}
 	hasConflict := false
 	if !p.SCtx().GetSessionVars().EnableAdvancedJoinHint || p.SCtx().GetSessionVars().StmtCtx.StraightJoinOrder {
-		if containDifferentJoinTypes(p.preferJoinType) {
+		if containDifferentJoinTypes(p.PreferJoinType) {
 			hasConflict = true
 		}
 	} else if p.SCtx().GetSessionVars().EnableAdvancedJoinHint {
-		if containDifferentJoinTypes(p.leftPreferJoinType) || containDifferentJoinTypes(p.rightPreferJoinType) {
+		if containDifferentJoinTypes(p.LeftPreferJoinType) || containDifferentJoinTypes(p.RightPreferJoinType) {
 			hasConflict = true
 		}
 	}
 	if hasConflict {
 		p.SCtx().GetSessionVars().StmtCtx.SetHintWarning(
 			"Join hints are conflict, you can only specify one type of join")
-		p.preferJoinType = 0
+		p.PreferJoinType = 0
 	}
 	// set the join order
 	if hintInfo.LeadingJoinOrder != nil {
-		p.preferJoinOrder = hintInfo.MatchTableName([]*h.HintedTable{lhsAlias, rhsAlias}, hintInfo.LeadingJoinOrder)
+		p.PreferJoinOrder = hintInfo.MatchTableName([]*h.HintedTable{lhsAlias, rhsAlias}, hintInfo.LeadingJoinOrder)
 	}
 	// set hintInfo for further usage if this hint info can be used.
-	if p.preferJoinType != 0 || p.preferJoinOrder {
-		p.hintInfo = hintInfo
+	if p.PreferJoinType != 0 || p.PreferJoinOrder {
+		p.HintInfo = hintInfo
 	}
 }
 
@@ -851,14 +851,14 @@ func setPreferredJoinTypeFromOneSide(preferJoinType uint, isLeft bool) (resJoinT
 
 // setPreferredJoinType generates hint information for the logicalJoin based on the hint information of its left and right children.
 func (p *LogicalJoin) setPreferredJoinType() {
-	if p.leftPreferJoinType == 0 && p.rightPreferJoinType == 0 {
+	if p.LeftPreferJoinType == 0 && p.RightPreferJoinType == 0 {
 		return
 	}
-	p.preferJoinType = setPreferredJoinTypeFromOneSide(p.leftPreferJoinType, true) | setPreferredJoinTypeFromOneSide(p.rightPreferJoinType, false)
-	if containDifferentJoinTypes(p.preferJoinType) {
+	p.PreferJoinType = setPreferredJoinTypeFromOneSide(p.LeftPreferJoinType, true) | setPreferredJoinTypeFromOneSide(p.RightPreferJoinType, false)
+	if containDifferentJoinTypes(p.PreferJoinType) {
 		p.SCtx().GetSessionVars().StmtCtx.SetHintWarning(
 			"Join hints conflict after join reorder phase, you can only specify one type of join")
-		p.preferJoinType = 0
+		p.PreferJoinType = 0
 	}
 }
 
@@ -871,17 +871,17 @@ func (ds *DataSource) setPreferredStoreType(hintInfo *h.PlanHints) {
 	if len(ds.TableAsName.L) != 0 {
 		alias = &h.HintedTable{DBName: ds.DBName, TblName: *ds.TableAsName, SelectOffset: ds.QueryBlockOffset()}
 	} else {
-		alias = &h.HintedTable{DBName: ds.DBName, TblName: ds.tableInfo.Name, SelectOffset: ds.QueryBlockOffset()}
+		alias = &h.HintedTable{DBName: ds.DBName, TblName: ds.TableInfo.Name, SelectOffset: ds.QueryBlockOffset()}
 	}
 	if hintTbl := hintInfo.IfPreferTiKV(alias); hintTbl != nil {
-		for _, path := range ds.possibleAccessPaths {
+		for _, path := range ds.PossibleAccessPaths {
 			if path.StoreType == kv.TiKV {
-				ds.preferStoreType |= h.PreferTiKV
-				ds.preferPartitions[h.PreferTiKV] = hintTbl.Partitions
+				ds.PreferStoreType |= h.PreferTiKV
+				ds.PreferPartitions[h.PreferTiKV] = hintTbl.Partitions
 				break
 			}
 		}
-		if ds.preferStoreType&h.PreferTiKV == 0 {
+		if ds.PreferStoreType&h.PreferTiKV == 0 {
 			errMsg := fmt.Sprintf("No available path for table %s.%s with the store type %s of the hint /*+ read_from_storage */, "+
 				"please check the status of the table replica and variable value of tidb_isolation_read_engines(%v)",
 				ds.DBName.O, ds.table.Meta().Name.O, kv.TiKV.Name(), ds.SCtx().GetSessionVars().GetIsolationReadEngines())
@@ -891,23 +891,23 @@ func (ds *DataSource) setPreferredStoreType(hintInfo *h.PlanHints) {
 		}
 	}
 	if hintTbl := hintInfo.IfPreferTiFlash(alias); hintTbl != nil {
-		// `ds.preferStoreType != 0`, which means there's a hint hit the both TiKV value and TiFlash value for table.
+		// `ds.PreferStoreType != 0`, which means there's a hint hit the both TiKV value and TiFlash value for table.
 		// We can't support read a table from two different storages, even partition table.
-		if ds.preferStoreType != 0 {
+		if ds.PreferStoreType != 0 {
 			ds.SCtx().GetSessionVars().StmtCtx.SetHintWarning(
 				fmt.Sprintf("Storage hints are conflict, you can only specify one storage type of table %s.%s",
 					alias.DBName.L, alias.TblName.L))
-			ds.preferStoreType = 0
+			ds.PreferStoreType = 0
 			return
 		}
-		for _, path := range ds.possibleAccessPaths {
+		for _, path := range ds.PossibleAccessPaths {
 			if path.StoreType == kv.TiFlash {
-				ds.preferStoreType |= h.PreferTiFlash
-				ds.preferPartitions[h.PreferTiFlash] = hintTbl.Partitions
+				ds.PreferStoreType |= h.PreferTiFlash
+				ds.PreferPartitions[h.PreferTiFlash] = hintTbl.Partitions
 				break
 			}
 		}
-		if ds.preferStoreType&h.PreferTiFlash == 0 {
+		if ds.PreferStoreType&h.PreferTiFlash == 0 {
 			errMsg := fmt.Sprintf("No available path for table %s.%s with the store type %s of the hint /*+ read_from_storage */, "+
 				"please check the status of the table replica and variable value of tidb_isolation_read_engines(%v)",
 				ds.DBName.O, ds.table.Meta().Name.O, kv.TiFlash.Name(), ds.SCtx().GetSessionVars().GetIsolationReadEngines())
@@ -982,22 +982,22 @@ func (b *PlanBuilder) buildJoin(ctx context.Context, joinNode *ast.Join) (base.L
 		joinPlan.JoinType = InnerJoin
 	}
 
-	// Merge sub-plan's fullSchema into this join plan.
-	// Please read the comment of LogicalJoin.fullSchema for the details.
+	// Merge sub-plan's FullSchema into this join plan.
+	// Please read the comment of LogicalJoin.FullSchema for the details.
 	var (
 		lFullSchema, rFullSchema *expression.Schema
 		lFullNames, rFullNames   types.NameSlice
 	)
-	if left, ok := leftPlan.(*LogicalJoin); ok && left.fullSchema != nil {
-		lFullSchema = left.fullSchema
-		lFullNames = left.fullNames
+	if left, ok := leftPlan.(*LogicalJoin); ok && left.FullSchema != nil {
+		lFullSchema = left.FullSchema
+		lFullNames = left.FullNames
 	} else {
 		lFullSchema = leftPlan.Schema()
 		lFullNames = leftPlan.OutputNames()
 	}
-	if right, ok := rightPlan.(*LogicalJoin); ok && right.fullSchema != nil {
-		rFullSchema = right.fullSchema
-		rFullNames = right.fullNames
+	if right, ok := rightPlan.(*LogicalJoin); ok && right.FullSchema != nil {
+		rFullSchema = right.FullSchema
+		rFullNames = right.FullNames
 	} else {
 		rFullSchema = rightPlan.Schema()
 		rFullNames = rightPlan.OutputNames()
@@ -1007,22 +1007,22 @@ func (b *PlanBuilder) buildJoin(ctx context.Context, joinNode *ast.Join) (base.L
 		lFullSchema, rFullSchema = rFullSchema, lFullSchema
 		lFullNames, rFullNames = rFullNames, lFullNames
 	}
-	joinPlan.fullSchema = expression.MergeSchema(lFullSchema, rFullSchema)
+	joinPlan.FullSchema = expression.MergeSchema(lFullSchema, rFullSchema)
 
 	// Clear NotNull flag for the inner side schema if it's an outer join.
 	if joinNode.Tp == ast.LeftJoin || joinNode.Tp == ast.RightJoin {
-		resetNotNullFlag(joinPlan.fullSchema, lFullSchema.Len(), joinPlan.fullSchema.Len())
+		resetNotNullFlag(joinPlan.FullSchema, lFullSchema.Len(), joinPlan.FullSchema.Len())
 	}
 
-	// Merge sub-plan's fullNames into this join plan, similar to the fullSchema logic above.
-	joinPlan.fullNames = make([]*types.FieldName, 0, len(lFullNames)+len(rFullNames))
+	// Merge sub-plan's FullNames into this join plan, similar to the FullSchema logic above.
+	joinPlan.FullNames = make([]*types.FieldName, 0, len(lFullNames)+len(rFullNames))
 	for _, lName := range lFullNames {
 		name := *lName
-		joinPlan.fullNames = append(joinPlan.fullNames, &name)
+		joinPlan.FullNames = append(joinPlan.FullNames, &name)
 	}
 	for _, rName := range rFullNames {
 		name := *rName
-		joinPlan.fullNames = append(joinPlan.fullNames, &name)
+		joinPlan.FullNames = append(joinPlan.FullNames, &name)
 	}
 
 	// Set preferred join algorithm if some join hints is specified by user.
@@ -1066,7 +1066,7 @@ func (b *PlanBuilder) buildJoin(ctx context.Context, joinNode *ast.Join) (base.L
 	} else if joinPlan.JoinType == InnerJoin {
 		// If a inner join without "ON" or "USING" clause, it's a cartesian
 		// product over the join tables.
-		joinPlan.cartesianJoin = true
+		joinPlan.CartesianJoin = true
 	}
 
 	return joinPlan, nil
@@ -1269,12 +1269,12 @@ func (b *PlanBuilder) coalesceCommonColumns(p *LogicalJoin, leftPlan, rightPlan 
 			return err
 		}
 		conds = append(conds, cond)
-		if p.fullSchema != nil {
-			// since fullSchema is derived from left and right schema in upper layer, so rc/lc must be in fullSchema.
+		if p.FullSchema != nil {
+			// since FullSchema is derived from left and right schema in upper layer, so rc/lc must be in FullSchema.
 			if joinTp == ast.RightJoin {
-				p.fullNames[p.fullSchema.ColumnIndex(lc)].Redundant = true
+				p.FullNames[p.FullSchema.ColumnIndex(lc)].Redundant = true
 			} else {
-				p.fullNames[p.fullSchema.ColumnIndex(rc)].Redundant = true
+				p.FullNames[p.FullSchema.ColumnIndex(rc)].Redundant = true
 			}
 		}
 	}
@@ -1582,9 +1582,9 @@ func findColFromNaturalUsingJoin(p base.LogicalPlan, col *expression.Column) (na
 	case *LogicalLimit, *LogicalSelection, *LogicalTopN, *LogicalSort, *LogicalMaxOneRow:
 		return findColFromNaturalUsingJoin(p.Children()[0], col)
 	case *LogicalJoin:
-		if x.fullSchema != nil {
-			idx := x.fullSchema.ColumnIndex(col)
-			return x.fullNames[idx]
+		if x.FullSchema != nil {
+			idx := x.FullSchema.ColumnIndex(col)
+			return x.FullNames[idx]
 		}
 	}
 	return nil
@@ -1633,7 +1633,7 @@ func (b *PlanBuilder) replaceGroupingFunc(expr expression.Expression) expression
 	if b.currentBlockExpand == nil {
 		return expr
 	}
-	// curExpand can supply the distinctGbyExprs and gid col.
+	// curExpand can supply the DistinctGbyExprs and gid col.
 	traverseAction := resolveGroupingTraverseAction{CurrentBlockExpand: b.currentBlockExpand}
 	return expr.Traverse(traverseAction)
 }
@@ -1642,11 +1642,11 @@ func (b *PlanBuilder) implicitProjectGroupingSetCols(projSchema *expression.Sche
 	if b.currentBlockExpand == nil {
 		return projSchema, projNames, projExprs
 	}
-	m := make(map[int64]struct{}, len(b.currentBlockExpand.distinctGroupByCol))
+	m := make(map[int64]struct{}, len(b.currentBlockExpand.DistinctGroupByCol))
 	for _, col := range projSchema.Columns {
 		m[col.UniqueID] = struct{}{}
 	}
-	for idx, gCol := range b.currentBlockExpand.distinctGroupByCol {
+	for idx, gCol := range b.currentBlockExpand.DistinctGroupByCol {
 		if _, ok := m[gCol.UniqueID]; ok {
 			// grouping col has been explicitly projected, not need to reserve it here for later order-by item (a+1)
 			// like: select a+1, b from t group by a+1 order by a+1.
@@ -1655,7 +1655,7 @@ func (b *PlanBuilder) implicitProjectGroupingSetCols(projSchema *expression.Sche
 		// project the grouping col out implicitly here. If it's not used by later OP, it will be cleaned in column pruner.
 		projSchema.Append(gCol)
 		projExprs = append(projExprs, gCol)
-		projNames = append(projNames, b.currentBlockExpand.distinctGbyColNames[idx])
+		projNames = append(projNames, b.currentBlockExpand.DistinctGbyColNames[idx])
 	}
 	// project GID.
 	projSchema.Append(b.currentBlockExpand.GID)
@@ -2591,9 +2591,9 @@ func (a *havingWindowAndOrderbyExprResolver) resolveFromPlan(v *ast.ColumnNameEx
 		case *LogicalLimit, *LogicalSelection, *LogicalTopN, *LogicalSort, *LogicalMaxOneRow:
 			return a.resolveFromPlan(v, p.Children()[0], resolveFieldsFirst)
 		case *LogicalJoin:
-			if len(x.fullNames) != 0 {
-				idx, err = expression.FindFieldName(x.fullNames, v.Name)
-				schemaCols, outputNames = x.fullSchema.Columns, x.fullNames
+			if len(x.FullNames) != 0 {
+				idx, err = expression.FindFieldName(x.FullNames, v.Name)
+				schemaCols, outputNames = x.FullSchema.Columns, x.FullNames
 			}
 		}
 		if err != nil || idx < 0 {
@@ -3870,9 +3870,9 @@ func (*PlanBuilder) unfoldWildStar(p base.LogicalPlan, selectFields []*ast.Selec
 		list := unfoldWildStar(field, p.OutputNames(), p.Schema().Columns)
 		// For sql like `select t1.*, t2.* from t1 join t2 using(a)` or `select t1.*, t2.* from t1 natual join t2`,
 		// the schema of the Join doesn't contain enough columns because the join keys are coalesced in this schema.
-		// We should collect the columns from the fullSchema.
-		if isJoin && join.fullSchema != nil && field.WildCard.Table.L != "" {
-			list = unfoldWildStar(field, join.fullNames, join.fullSchema.Columns)
+		// We should collect the columns from the FullSchema.
+		if isJoin && join.FullSchema != nil && field.WildCard.Table.L != "" {
+			list = unfoldWildStar(field, join.FullNames, join.FullSchema.Columns)
 		}
 		if len(list) == 0 {
 			return nil, plannererrors.ErrBadTable.GenWithStackByArgs(field.WildCard.Table)
@@ -4374,7 +4374,7 @@ func (ds *DataSource) newExtraHandleSchemaCol() *expression.Column {
 		RetType:  tp,
 		UniqueID: ds.SCtx().GetSessionVars().AllocPlanColumnID(),
 		ID:       model.ExtraHandleID,
-		OrigName: fmt.Sprintf("%v.%v.%v", ds.DBName, ds.tableInfo.Name, model.ExtraHandleName),
+		OrigName: fmt.Sprintf("%v.%v.%v", ds.DBName, ds.TableInfo.Name, model.ExtraHandleName),
 	}
 }
 
@@ -4394,7 +4394,7 @@ func (ds *DataSource) AddExtraPhysTblIDColumn() *expression.Column {
 		RetType:  types.NewFieldType(mysql.TypeLonglong),
 		UniqueID: ds.SCtx().GetSessionVars().AllocPlanColumnID(),
 		ID:       model.ExtraPhysTblID,
-		OrigName: fmt.Sprintf("%v.%v.%v", ds.DBName, ds.tableInfo.Name, model.ExtraPhysTblIdName),
+		OrigName: fmt.Sprintf("%v.%v.%v", ds.DBName, ds.TableInfo.Name, model.ExtraPhysTblIdName),
 	}
 
 	ds.Columns = append(ds.Columns, model.NewExtraPhysTblIDColInfo())
@@ -4402,7 +4402,7 @@ func (ds *DataSource) AddExtraPhysTblIDColumn() *expression.Column {
 	schema.Append(pidCol)
 	ds.SetOutputNames(append(ds.OutputNames(), &types.FieldName{
 		DBName:      ds.DBName,
-		TblName:     ds.TableInfo().Name,
+		TblName:     ds.TableInfo.Name,
 		ColName:     model.ExtraPhysTblIdName,
 		OrigColName: model.ExtraPhysTblIdName,
 	}))
@@ -4940,18 +4940,18 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		DBName:              dbName,
 		TableAsName:         asName,
 		table:               tbl,
-		tableInfo:           tableInfo,
-		physicalTableID:     tableInfo.ID,
-		astIndexHints:       tn.IndexHints,
+		TableInfo:           tableInfo,
+		PhysicalTableID:     tableInfo.ID,
+		AstIndexHints:       tn.IndexHints,
 		IndexHints:          b.TableHints().IndexHintList,
-		indexMergeHints:     indexMergeHints,
-		possibleAccessPaths: possiblePaths,
+		IndexMergeHints:     indexMergeHints,
+		PossibleAccessPaths: possiblePaths,
 		Columns:             make([]*model.ColumnInfo, 0, len(columns)),
-		partitionNames:      tn.PartitionNames,
+		PartitionNames:      tn.PartitionNames,
 		TblCols:             make([]*expression.Column, 0, len(columns)),
-		preferPartitions:    make(map[int][]model.CIStr),
-		is:                  b.is,
-		isForUpdateRead:     b.isForUpdateRead,
+		PreferPartitions:    make(map[int][]model.CIStr),
+		IS:                  b.is,
+		IsForUpdateRead:     b.isForUpdateRead,
 	}.Init(b.ctx, b.getSelectOffset())
 	var handleCols util.HandleCols
 	schema := expression.NewSchema(make([]*expression.Column, 0, len(columns))...)
@@ -5000,8 +5000,8 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 			ds.TblCols = append(ds.TblCols, extraCol)
 		}
 	}
-	ds.handleCols = handleCols
-	ds.unMutableHandleCols = handleCols
+	ds.HandleCols = handleCols
+	ds.UnMutableHandleCols = handleCols
 	handleMap := make(map[int64][]util.HandleCols)
 	handleMap[tableInfo.ID] = []util.HandleCols{handleCols}
 	b.handleHelper.pushMap(handleMap)
@@ -5028,12 +5028,12 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		}
 	}
 
-	// Init commonHandleCols and commonHandleLens for data source.
+	// Init CommonHandleCols and CommonHandleLens for data source.
 	if tableInfo.IsCommonHandle {
-		ds.commonHandleCols, ds.commonHandleLens = expression.IndexInfo2Cols(ds.Columns, ds.Schema().Columns, tables.FindPrimaryIndex(tableInfo))
+		ds.CommonHandleCols, ds.CommonHandleLens = expression.IndexInfo2Cols(ds.Columns, ds.Schema().Columns, tables.FindPrimaryIndex(tableInfo))
 	}
 	// Init FullIdxCols, FullIdxColLens for accessPaths.
-	for _, path := range ds.possibleAccessPaths {
+	for _, path := range ds.PossibleAccessPaths {
 		if !path.IsIntHandlePath {
 			path.FullIdxCols, path.FullIdxColLens = expression.IndexInfo2Cols(ds.Columns, ds.Schema().Columns, path.Index)
 
@@ -5048,7 +5048,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 					len(path.Index.Columns) > 1 &&
 					path.Index.Unique {
 					path.IsUkShardIndexPath = true
-					ds.containExprPrefixUk = true
+					ds.ContainExprPrefixUk = true
 				}
 			}
 		}
@@ -5082,7 +5082,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 func (ds *DataSource) ExtractFD() *fd.FDSet {
 	// FD in datasource (leaf node) can be cached and reused.
 	// Once the all conditions are not equal to nil, built it again.
-	if ds.FDs() == nil || ds.allConds != nil {
+	if ds.FDs() == nil || ds.AllConds != nil {
 		fds := &fd.FDSet{HashCodeToUniqueID: make(map[string]int)}
 		allCols := intset.NewFastIntSet()
 		// should use the column's unique ID avoiding fdSet conflict.
@@ -5091,7 +5091,7 @@ func (ds *DataSource) ExtractFD() *fd.FDSet {
 			allCols.Insert(int(col.UniqueID))
 		}
 		// int pk doesn't store its index column in indexInfo.
-		if ds.tableInfo.PKIsHandle {
+		if ds.TableInfo.PKIsHandle {
 			keyCols := intset.NewFastIntSet()
 			for _, col := range ds.TblCols {
 				if mysql.HasPriKeyFlag(col.RetType.GetFlag()) {
@@ -5107,7 +5107,7 @@ func (ds *DataSource) ExtractFD() *fd.FDSet {
 			changed       bool
 			err           error
 		)
-		check := ds.SCtx().GetSessionVars().IsIsolation(ast.ReadCommitted) || ds.isForUpdateRead
+		check := ds.SCtx().GetSessionVars().IsIsolation(ast.ReadCommitted) || ds.IsForUpdateRead
 		check = check && ds.SCtx().GetSessionVars().ConnectionID > 0
 		if check {
 			latestIndexes, changed, err = getLatestIndexInfo(ds.SCtx(), ds.table.Meta().ID, 0)
@@ -5117,10 +5117,10 @@ func (ds *DataSource) ExtractFD() *fd.FDSet {
 			}
 		}
 		// other indices including common handle.
-		for _, idx := range ds.tableInfo.Indices {
+		for _, idx := range ds.TableInfo.Indices {
 			keyCols := intset.NewFastIntSet()
 			allColIsNotNull := true
-			if ds.isForUpdateRead && changed {
+			if ds.IsForUpdateRead && changed {
 				latestIndex, ok := latestIndexes[idx.ID]
 				if !ok || latestIndex.State != model.StatePublic {
 					continue
@@ -5133,7 +5133,7 @@ func (ds *DataSource) ExtractFD() *fd.FDSet {
 				// Note: even the prefix column can also be the FD. For example:
 				// unique(char_column(10)), will also guarantee the prefix to be
 				// the unique which means the while column is unique too.
-				refCol := ds.tableInfo.Columns[idxCol.Offset]
+				refCol := ds.TableInfo.Columns[idxCol.Offset]
 				if !mysql.HasNotNullFlag(refCol.GetFlag()) {
 					allColIsNotNull = false
 				}
@@ -5156,15 +5156,15 @@ func (ds *DataSource) ExtractFD() *fd.FDSet {
 			}
 		}
 		// handle the datasource conditions (maybe pushed down from upper layer OP)
-		if len(ds.allConds) != 0 {
+		if len(ds.AllConds) != 0 {
 			// extract the not null attributes from selection conditions.
-			notnullColsUniqueIDs := extractNotNullFromConds(ds.allConds, ds)
+			notnullColsUniqueIDs := extractNotNullFromConds(ds.AllConds, ds)
 
 			// extract the constant cols from selection conditions.
-			constUniqueIDs := extractConstantCols(ds.allConds, ds.SCtx(), fds)
+			constUniqueIDs := extractConstantCols(ds.AllConds, ds.SCtx(), fds)
 
 			// extract equivalence cols.
-			equivUniqueIDs := extractEquivalenceCols(ds.allConds, ds.SCtx(), fds)
+			equivUniqueIDs := extractEquivalenceCols(ds.AllConds, ds.SCtx(), fds)
 
 			// apply conditions to FD.
 			fds.MakeNotNull(notnullColsUniqueIDs)
@@ -5234,7 +5234,7 @@ func (b *PlanBuilder) timeRangeForSummaryTable() util.QueryTimeRange {
 }
 
 func (b *PlanBuilder) buildMemTable(_ context.Context, dbName model.CIStr, tableInfo *model.TableInfo) (base.LogicalPlan, error) {
-	// We can use the `tableInfo.Columns` directly because the memory table has
+	// We can use the `TableInfo.Columns` directly because the memory table has
 	// a stable schema and there is no online DDL on the memory table.
 	schema := expression.NewSchema(make([]*expression.Column, 0, len(tableInfo.Columns))...)
 	names := make([]*types.FieldName, 0, len(tableInfo.Columns))
@@ -5475,7 +5475,7 @@ func (b *PlanBuilder) buildProjUponView(_ context.Context, dbName model.CIStr, t
 	columnInfo := tableInfo.Cols()
 	cols := selectLogicalPlan.Schema().Clone().Columns
 	outputNamesOfUnderlyingSelect := selectLogicalPlan.OutputNames().Shallow()
-	// In the old version of VIEW implementation, tableInfo.View.Cols is used to
+	// In the old version of VIEW implementation, TableInfo.View.Cols is used to
 	// store the origin columns' names of the underlying SelectStmt used when
 	// creating the view.
 	if tableInfo.View.Cols != nil {
@@ -5620,7 +5620,7 @@ func (b *PlanBuilder) buildSemiJoin(outerPlan, innerPlan base.LogicalPlan, onCon
 	// Apply forces to choose hash join currently, so don't worry the hints will take effect if the semi join is in one apply.
 	joinPlan.setPreferredJoinTypeAndOrder(b.TableHints())
 	if forceRewrite {
-		joinPlan.preferJoinType |= h.PreferRewriteSemiJoin
+		joinPlan.PreferJoinType |= h.PreferRewriteSemiJoin
 		b.optFlag |= flagSemiJoinRewrite
 	}
 	return joinPlan, nil
@@ -7317,7 +7317,7 @@ func getInnerFromParenthesesAndUnaryPlus(expr ast.ExprNode) ast.ExprNode {
 	return expr
 }
 
-// containDifferentJoinTypes checks whether `preferJoinType` contains different
+// containDifferentJoinTypes checks whether `PreferJoinType` contains different
 // join types.
 func containDifferentJoinTypes(preferJoinType uint) bool {
 	preferJoinType &= ^h.PreferNoHashJoin

@@ -465,7 +465,7 @@ func (*partitionProcessor) reconstructTableColNames(ds *DataSource) ([]*types.Fi
 		if colExpr.ID == model.ExtraHandleID {
 			names = append(names, &types.FieldName{
 				DBName:      ds.DBName,
-				TblName:     ds.tableInfo.Name,
+				TblName:     ds.TableInfo.Name,
 				ColName:     model.ExtraHandleName,
 				OrigColName: model.ExtraHandleName,
 			})
@@ -474,7 +474,7 @@ func (*partitionProcessor) reconstructTableColNames(ds *DataSource) ([]*types.Fi
 		if colExpr.ID == model.ExtraPhysTblID {
 			names = append(names, &types.FieldName{
 				DBName:      ds.DBName,
-				TblName:     ds.tableInfo.Name,
+				TblName:     ds.TableInfo.Name,
 				ColName:     model.ExtraPhysTblIdName,
 				OrigColName: model.ExtraPhysTblIdName,
 			})
@@ -483,9 +483,9 @@ func (*partitionProcessor) reconstructTableColNames(ds *DataSource) ([]*types.Fi
 		if colInfo, found := colsInfoMap[colExpr.ID]; found {
 			names = append(names, &types.FieldName{
 				DBName:      ds.DBName,
-				TblName:     ds.tableInfo.Name,
+				TblName:     ds.TableInfo.Name,
 				ColName:     colInfo.Name,
-				OrigTblName: ds.tableInfo.Name,
+				OrigTblName: ds.TableInfo.Name,
 				OrigColName: colInfo.Name,
 			})
 			continue
@@ -501,7 +501,7 @@ func (s *partitionProcessor) processHashOrKeyPartition(ds *DataSource, pi *model
 		return nil, err
 	}
 
-	used, err := s.pruneHashOrKeyPartition(ds.SCtx(), ds.table, ds.partitionNames, ds.allConds, ds.TblCols, names)
+	used, err := s.pruneHashOrKeyPartition(ds.SCtx(), ds.table, ds.PartitionNames, ds.AllConds, ds.TblCols, names)
 	if err != nil {
 		return nil, err
 	}
@@ -818,15 +818,15 @@ func (s *partitionProcessor) pruneListPartition(ctx base.PlanContext, tbl table.
 }
 
 func (s *partitionProcessor) prune(ds *DataSource, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, error) {
-	pi := ds.tableInfo.GetPartitionInfo()
+	pi := ds.TableInfo.GetPartitionInfo()
 	if pi == nil {
 		return ds, nil
 	}
-	// PushDownNot here can convert condition 'not (a != 1)' to 'a = 1'. When we build range from ds.allConds, the condition
+	// PushDownNot here can convert condition 'not (a != 1)' to 'a = 1'. When we build range from ds.AllConds, the condition
 	// like 'not (a != 1)' would not be handled so we need to convert it to 'a = 1', which can be handled when building range.
 	// TODO: there may be a better way to push down Not once for all.
-	for i, cond := range ds.allConds {
-		ds.allConds[i] = expression.PushDownNot(ds.SCtx().GetExprCtx(), cond)
+	for i, cond := range ds.AllConds {
+		ds.AllConds[i] = expression.PushDownNot(ds.SCtx().GetExprCtx(), cond)
 	}
 	// Try to locate partition directly for hash partition.
 	// TODO: See if there is a way to remove conditions that does not
@@ -1031,7 +1031,7 @@ func (s *partitionProcessor) pruneRangePartition(ctx base.PlanContext, pi *model
 }
 
 func (s *partitionProcessor) processRangePartition(ds *DataSource, pi *model.PartitionInfo, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, error) {
-	used, err := s.pruneRangePartition(ds.SCtx(), pi, ds.table.(table.PartitionedTable), ds.allConds, ds.TblCols, ds.OutputNames())
+	used, err := s.pruneRangePartition(ds.SCtx(), pi, ds.table.(table.PartitionedTable), ds.AllConds, ds.TblCols, ds.OutputNames())
 	if err != nil {
 		return nil, err
 	}
@@ -1039,7 +1039,7 @@ func (s *partitionProcessor) processRangePartition(ds *DataSource, pi *model.Par
 }
 
 func (s *partitionProcessor) processListPartition(ds *DataSource, pi *model.PartitionInfo, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, error) {
-	used, err := s.pruneListPartition(ds.SCtx(), ds.table, ds.partitionNames, ds.allConds, ds.TblCols)
+	used, err := s.pruneListPartition(ds.SCtx(), ds.table, ds.PartitionNames, ds.AllConds, ds.TblCols)
 	if err != nil {
 		return nil, err
 	}
@@ -1647,16 +1647,16 @@ func pruneUseBinarySearch(lessThan lessThanDataInt, data dataForPrune) (start in
 
 func (*partitionProcessor) resolveAccessPaths(ds *DataSource) error {
 	possiblePaths, err := getPossibleAccessPaths(
-		ds.SCtx(), &h.PlanHints{IndexMergeHintList: ds.indexMergeHints, IndexHintList: ds.IndexHints},
-		ds.astIndexHints, ds.table, ds.DBName, ds.tableInfo.Name, ds.isForUpdateRead, true)
+		ds.SCtx(), &h.PlanHints{IndexMergeHintList: ds.IndexMergeHints, IndexHintList: ds.IndexHints},
+		ds.AstIndexHints, ds.table, ds.DBName, ds.TableInfo.Name, ds.IsForUpdateRead, true)
 	if err != nil {
 		return err
 	}
-	possiblePaths, err = filterPathByIsolationRead(ds.SCtx(), possiblePaths, ds.tableInfo.Name, ds.DBName)
+	possiblePaths, err = filterPathByIsolationRead(ds.SCtx(), possiblePaths, ds.TableInfo.Name, ds.DBName)
 	if err != nil {
 		return err
 	}
-	ds.possibleAccessPaths = possiblePaths
+	ds.PossibleAccessPaths = possiblePaths
 	return nil
 }
 
@@ -1680,9 +1680,9 @@ func (s *partitionProcessor) resolveOptimizeHint(ds *DataSource, partitionName m
 	}
 
 	// index merge hint
-	if len(ds.indexMergeHints) > 0 {
-		newIndexMergeHint := make([]h.HintedIndex, 0, len(ds.indexMergeHints))
-		for _, idxHint := range ds.indexMergeHints {
+	if len(ds.IndexMergeHints) > 0 {
+		newIndexMergeHint := make([]h.HintedIndex, 0, len(ds.IndexMergeHints))
+		for _, idxHint := range ds.IndexMergeHints {
 			if len(idxHint.Partitions) == 0 {
 				newIndexMergeHint = append(newIndexMergeHint, idxHint)
 			} else {
@@ -1694,31 +1694,31 @@ func (s *partitionProcessor) resolveOptimizeHint(ds *DataSource, partitionName m
 				}
 			}
 		}
-		ds.indexMergeHints = newIndexMergeHint
+		ds.IndexMergeHints = newIndexMergeHint
 	}
 
 	// read from storage hint
-	if ds.preferStoreType&h.PreferTiKV > 0 {
-		if len(ds.preferPartitions[h.PreferTiKV]) > 0 {
-			ds.preferStoreType ^= h.PreferTiKV
-			for _, p := range ds.preferPartitions[h.PreferTiKV] {
+	if ds.PreferStoreType&h.PreferTiKV > 0 {
+		if len(ds.PreferPartitions[h.PreferTiKV]) > 0 {
+			ds.PreferStoreType ^= h.PreferTiKV
+			for _, p := range ds.PreferPartitions[h.PreferTiKV] {
 				if p.String() == partitionName.String() {
-					ds.preferStoreType |= h.PreferTiKV
+					ds.PreferStoreType |= h.PreferTiKV
 				}
 			}
 		}
 	}
-	if ds.preferStoreType&h.PreferTiFlash > 0 {
-		if len(ds.preferPartitions[h.PreferTiFlash]) > 0 {
-			ds.preferStoreType ^= h.PreferTiFlash
-			for _, p := range ds.preferPartitions[h.PreferTiFlash] {
+	if ds.PreferStoreType&h.PreferTiFlash > 0 {
+		if len(ds.PreferPartitions[h.PreferTiFlash]) > 0 {
+			ds.PreferStoreType ^= h.PreferTiFlash
+			for _, p := range ds.PreferPartitions[h.PreferTiFlash] {
 				if p.String() == partitionName.String() {
-					ds.preferStoreType |= h.PreferTiFlash
+					ds.PreferStoreType |= h.PreferTiFlash
 				}
 			}
 		}
 	}
-	if ds.preferStoreType&h.PreferTiFlash != 0 && ds.preferStoreType&h.PreferTiKV != 0 {
+	if ds.PreferStoreType&h.PreferTiFlash != 0 && ds.PreferStoreType&h.PreferTiKV != 0 {
 		ds.SCtx().GetSessionVars().StmtCtx.AppendWarning(
 			errors.NewNoStackError("hint `read_from_storage` has conflict storage type for the partition " + partitionName.L))
 	}
@@ -1750,13 +1750,13 @@ func (*partitionProcessor) checkHintsApplicable(ds *DataSource, partitionSet set
 		unknownPartitions := checkTableHintsApplicableForPartition(idxHint.Partitions, partitionSet)
 		appendWarnForUnknownPartitions(ds.SCtx(), h.Restore2IndexHint(idxHint.HintTypeString(), idxHint), unknownPartitions)
 	}
-	for _, idxMergeHint := range ds.indexMergeHints {
+	for _, idxMergeHint := range ds.IndexMergeHints {
 		unknownPartitions := checkTableHintsApplicableForPartition(idxMergeHint.Partitions, partitionSet)
 		appendWarnForUnknownPartitions(ds.SCtx(), h.Restore2IndexHint(h.HintIndexMerge, idxMergeHint), unknownPartitions)
 	}
-	unknownPartitions := checkTableHintsApplicableForPartition(ds.preferPartitions[h.PreferTiKV], partitionSet)
+	unknownPartitions := checkTableHintsApplicableForPartition(ds.PreferPartitions[h.PreferTiKV], partitionSet)
 	unknownPartitions = append(unknownPartitions,
-		checkTableHintsApplicableForPartition(ds.preferPartitions[h.PreferTiFlash], partitionSet)...)
+		checkTableHintsApplicableForPartition(ds.PreferPartitions[h.PreferTiFlash], partitionSet)...)
 	appendWarnForUnknownPartitions(ds.SCtx(), h.HintReadFromStorage, unknownPartitions)
 }
 
@@ -1767,8 +1767,8 @@ func (s *partitionProcessor) makeUnionAllChildren(ds *DataSource, pi *model.Part
 	for _, r := range or {
 		for i := r.start; i < r.end; i++ {
 			// This is for `table partition (p0,p1)` syntax, only union the specified partition if has specified partitions.
-			if len(ds.partitionNames) != 0 {
-				if !s.findByName(ds.partitionNames, pi.Definitions[i].Name.L) {
+			if len(ds.PartitionNames) != 0 {
+				if !s.findByName(ds.PartitionNames, pi.Definitions[i].Name.L) {
 					continue
 				}
 			}
@@ -1779,8 +1779,8 @@ func (s *partitionProcessor) makeUnionAllChildren(ds *DataSource, pi *model.Part
 			newDataSource.Columns = make([]*model.ColumnInfo, len(ds.Columns))
 			copy(newDataSource.Columns, ds.Columns)
 			idx := i
-			newDataSource.partitionDefIdx = &idx
-			newDataSource.physicalTableID = pi.Definitions[i].ID
+			newDataSource.PartitionDefIdx = &idx
+			newDataSource.PhysicalTableID = pi.Definitions[i].ID
 
 			// There are many expression nodes in the plan tree use the original datasource
 			// id as FromID. So we set the id of the newDataSource with the original one to

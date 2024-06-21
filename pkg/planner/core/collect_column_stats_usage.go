@@ -53,7 +53,7 @@ type columnStatsUsageCollector struct {
 	// cols is used to store columns collected from expressions and saves some allocation.
 	cols []*expression.Column
 
-	// visitedPhysTblIDs all ds.physicalTableID that have been visited.
+	// visitedPhysTblIDs all ds.PhysicalTableID that have been visited.
 	// It's always collected, even collectHistNeededColumns is not set.
 	visitedPhysTblIDs *intset.FastIntSet
 
@@ -130,7 +130,7 @@ func (c *columnStatsUsageCollector) collectPredicateColumnsForDataSource(ds *Dat
 	}
 	// For partition tables, no matter whether it is static or dynamic pruning mode, we use table ID rather than partition ID to
 	// set TableColumnID.TableID. In this way, we keep the set of predicate columns consistent between different partitions and global table.
-	tblID := ds.TableInfo().ID
+	tblID := ds.TableInfo.ID
 	if c.collectVisitedTable {
 		c.visitedtbls[tblID] = struct{}{}
 	}
@@ -138,8 +138,8 @@ func (c *columnStatsUsageCollector) collectPredicateColumnsForDataSource(ds *Dat
 		tblColID := model.TableItemID{TableID: tblID, ID: col.ID, IsIndex: false}
 		c.colMap[col.UniqueID] = map[model.TableItemID]struct{}{tblColID: {}}
 	}
-	// We should use `pushedDownConds` here. `allConds` is used for partition pruning, which doesn't need stats.
-	c.addPredicateColumnsFromExpressions(ds.pushedDownConds)
+	// We should use `PushedDownConds` here. `AllConds` is used for partition pruning, which doesn't need stats.
+	c.addPredicateColumnsFromExpressions(ds.PushedDownConds)
 }
 
 func (c *columnStatsUsageCollector) collectPredicateColumnsForJoin(p *LogicalJoin) {
@@ -178,16 +178,16 @@ func (c *columnStatsUsageCollector) collectPredicateColumnsForUnionAll(p *Logica
 }
 
 func (c *columnStatsUsageCollector) addHistNeededColumns(ds *DataSource) {
-	c.visitedPhysTblIDs.Insert(int(ds.physicalTableID))
+	c.visitedPhysTblIDs.Insert(int(ds.PhysicalTableID))
 	if c.collectMode&collectHistNeededColumns == 0 {
 		return
 	}
 	if c.collectVisitedTable {
-		tblID := ds.TableInfo().ID
+		tblID := ds.TableInfo.ID
 		c.visitedtbls[tblID] = struct{}{}
 	}
 	stats := domain.GetDomain(ds.SCtx()).StatsHandle()
-	tblStats := stats.GetPartitionStats(ds.tableInfo, ds.physicalTableID)
+	tblStats := stats.GetPartitionStats(ds.TableInfo, ds.PhysicalTableID)
 	skipPseudoCheckForTest := false
 	failpoint.Inject("disablePseudoCheck", func() {
 		skipPseudoCheckForTest = true
@@ -196,7 +196,7 @@ func (c *columnStatsUsageCollector) addHistNeededColumns(ds *DataSource) {
 	if tblStats.Pseudo && !skipPseudoCheckForTest {
 		return
 	}
-	columns := expression.ExtractColumnsFromExpressions(c.cols[:0], ds.pushedDownConds, nil)
+	columns := expression.ExtractColumnsFromExpressions(c.cols[:0], ds.PushedDownConds, nil)
 
 	colIDSet := intset.NewFastIntSet()
 
@@ -206,18 +206,18 @@ func (c *columnStatsUsageCollector) addHistNeededColumns(ds *DataSource) {
 		if col.ID < 0 {
 			continue
 		}
-		tblColID := model.TableItemID{TableID: ds.physicalTableID, ID: col.ID, IsIndex: false}
+		tblColID := model.TableItemID{TableID: ds.PhysicalTableID, ID: col.ID, IsIndex: false}
 		colIDSet.Insert(int(col.ID))
 		c.histNeededCols[tblColID] = true
 	}
-	for _, column := range ds.tableInfo.Columns {
+	for _, column := range ds.TableInfo.Columns {
 		// If the column is plan-generated one, Skip it.
 		// TODO: we may need to consider the ExtraHandle.
 		if column.ID < 0 {
 			continue
 		}
 		if !column.Hidden {
-			tblColID := model.TableItemID{TableID: ds.physicalTableID, ID: column.ID, IsIndex: false}
+			tblColID := model.TableItemID{TableID: ds.PhysicalTableID, ID: column.ID, IsIndex: false}
 			if _, ok := c.histNeededCols[tblColID]; !ok {
 				c.histNeededCols[tblColID] = false
 			}
@@ -348,7 +348,7 @@ func (c *columnStatsUsageCollector) collectFromPlan(lp base.LogicalPlan) {
 // predicate indicates whether to collect predicate columns and histNeeded indicates whether to collect histogram-needed columns.
 // First return value: predicate columns (nil if predicate is false)
 // Second return value: histogram-needed columns (nil if histNeeded is false)
-// Third return value: ds.physicalTableID from all DataSource (always collected)
+// Third return value: ds.PhysicalTableID from all DataSource (always collected)
 func CollectColumnStatsUsage(lp base.LogicalPlan, predicate, histNeeded bool) (
 	[]model.TableItemID,
 	[]model.StatsLoadItem,

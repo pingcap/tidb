@@ -50,16 +50,16 @@ func checkPartitionBy(p *LogicalWindow, d *DataSource) bool {
 	}
 
 	// Table not clustered and window has partition by. Can not do the TopN push down.
-	if d.handleCols == nil {
+	if d.HandleCols == nil {
 		return false
 	}
 
-	if len(p.PartitionBy) > d.handleCols.NumCols() {
+	if len(p.PartitionBy) > d.HandleCols.NumCols() {
 		return false
 	}
 
 	for i, col := range p.PartitionBy {
-		if !(col.Col.EqualColumn(d.handleCols.GetCol(i))) {
+		if !(col.Col.EqualColumn(d.HandleCols.GetCol(i))) {
 			return false
 		}
 	}
@@ -104,7 +104,7 @@ func windowIsTopN(p *LogicalSelection) (bool, uint64) {
 	}
 
 	// Give up if TiFlash is one possible access path. Pushing down window aggregation is good enough in this case.
-	for _, path := range dataSource.possibleAccessPaths {
+	for _, path := range dataSource.PossibleAccessPaths {
 		if path.StoreType == kv.TiFlash {
 			return false, 0
 		}

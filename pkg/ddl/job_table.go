@@ -31,8 +31,8 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
-	sess "github.com/pingcap/tidb/pkg/ddl/internal/session"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
+	sess "github.com/pingcap/tidb/pkg/ddl/session"
 	"github.com/pingcap/tidb/pkg/ddl/syncer"
 	"github.com/pingcap/tidb/pkg/ddl/systable"
 	"github.com/pingcap/tidb/pkg/ddl/util"
@@ -97,12 +97,14 @@ var _ owner.Listener = (*ownerListener)(nil)
 
 func (l *ownerListener) OnBecomeOwner() {
 	ctx, cancelFunc := context.WithCancel(l.ddl.ddlCtx.ctx)
+	sysTblMgr := systable.NewManager(l.ddl.sessPool)
 	l.scheduler = &jobScheduler{
-		schCtx:       ctx,
-		cancel:       cancelFunc,
-		runningJobs:  newRunningJobs(),
-		sysTblMgr:    systable.NewManager(l.ddl.sessPool),
-		schemaLoader: l.ddl.schemaLoader,
+		schCtx:            ctx,
+		cancel:            cancelFunc,
+		runningJobs:       newRunningJobs(),
+		sysTblMgr:         sysTblMgr,
+		schemaLoader:      l.ddl.schemaLoader,
+		minJobIDRefresher: systable.NewMinJobIDRefresher(sysTblMgr),
 
 		ddlCtx:         l.ddl.ddlCtx,
 		ddlJobNotifyCh: l.ddl.ddlJobNotifyCh,
@@ -122,16 +124,13 @@ func (l *ownerListener) OnRetireOwner() {
 // jobScheduler is used to schedule the DDL jobs, it's only run on the DDL owner.
 type jobScheduler struct {
 	// *ddlCtx already have context named as "ctx", so we use "schCtx" here to avoid confusion.
-	schCtx       context.Context
-	cancel       context.CancelFunc
-	wg           tidbutil.WaitGroupWrapper
-	runningJobs  *runningJobs
-	sysTblMgr    systable.Manager
-	schemaLoader SchemaLoader
-	// currMinJobID is the minimal job ID in tidb_ddl_job table, we use it to mitigate
-	// this issue https://github.com/pingcap/tidb/issues/52905
-	currMinJobID         int64
-	lastRefreshMinIDTime time.Time
+	schCtx            context.Context
+	cancel            context.CancelFunc
+	wg                tidbutil.WaitGroupWrapper
+	runningJobs       *runningJobs
+	sysTblMgr         systable.Manager
+	schemaLoader      SchemaLoader
+	minJobIDRefresher *systable.MinJobIDRefresher
 
 	// those fields are created on start
 	reorgWorkerPool      *workerPool
@@ -203,7 +202,7 @@ func (s *jobScheduler) getJob(se *sess.Session, tp jobType) (*model.Job, error) 
 	if ids := s.runningJobs.allIDs(); len(ids) > 0 {
 		excludedJobIDs = fmt.Sprintf("and job_id not in (%s)", ids)
 	}
-	sql := fmt.Sprintf(getJobSQL, s.currMinJobID, not, excludedJobIDs)
+	sql := fmt.Sprintf(getJobSQL, s.minJobIDRefresher.GetCurrMinJobID(), not, excludedJobIDs)
 	rows, err := se.Execute(context.Background(), sql, label)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -392,7 +391,7 @@ func (s *jobScheduler) startDispatch() error {
 		if err := s.checkAndUpdateClusterState(false); err != nil {
 			continue
 		}
-		s.refreshMinJobID()
+		s.minJobIDRefresher.Refresh(s.schCtx)
 		failpoint.InjectCall("beforeAllLoadDDLJobAndRun")
 		s.loadDDLJobAndRun(se, s.generalDDLWorkerPool, jobTypeGeneral)
 		s.loadDDLJobAndRun(se, s.reorgWorkerPool, jobTypeReorg)
@@ -649,21 +648,6 @@ func (*jobScheduler) markJobProcessing(se *sess.Session, job *model.Job) error {
 		"update mysql.tidb_ddl_job set processing = 1 where job_id = %d", job.ID),
 		"mark_job_processing")
 	return errors.Trace(err)
-}
-
-func (s *jobScheduler) refreshMinJobID() {
-	now := time.Now()
-	if now.Sub(s.lastRefreshMinIDTime) < dispatchLoopWaitingDuration {
-		return
-	}
-	s.lastRefreshMinIDTime = now
-	minID, err := s.sysTblMgr.GetMinJobID(s.schCtx, s.currMinJobID)
-	if err != nil {
-		logutil.DDLLogger().Info("get min job ID failed", zap.Error(err))
-		return
-	}
-	// use max, in case all job are finished to avoid the currMinJobID go back.
-	s.currMinJobID = max(s.currMinJobID, minID)
 }
 
 func (d *ddl) getTableByTxn(r autoid.Requirement, schemaID, tableID int64) (*model.DBInfo, table.Table, error) {
