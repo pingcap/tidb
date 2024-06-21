@@ -273,6 +273,11 @@ func (ctx *SessionEvalContext) RequestDynamicVerification(privName string, grant
 	return checker.RequestDynamicVerification(ctx.sctx.GetSessionVars().ActiveRoles, privName, grantable)
 }
 
+// GetParamValue returns the value of the parameter by index.
+func (ctx *SessionEvalContext) GetParamValue(idx int) types.Datum {
+	return ctx.sctx.GetSessionVars().PlanCacheParams.GetParamValue(idx)
+}
+
 func getStmtTimestamp(ctx sessionctx.Context) (time.Time, error) {
 	if ctx != nil {
 		staleTSO, err := ctx.GetSessionVars().StmtCtx.GetStaleTSO()

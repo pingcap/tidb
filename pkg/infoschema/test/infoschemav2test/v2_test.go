@@ -15,12 +15,18 @@
 package infoschemav2test
 
 import (
+	"slices"
+	"strconv"
+	"strings"
 	"testing"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
@@ -146,4 +152,114 @@ PARTITION p5 VALUES LESS THAN (1980))`)
 	pi := ptbl.Meta().GetPartitionInfo()
 	pid = pi.GetPartitionIDByName("p3")
 	require.Equal(t, pid, ntbl.Meta().ID)
+}
+
+func TestListTablesWithSpecialAttribute(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/infoschema/mockTiFlashStoreCount", `return(true)`))
+	defer func() {
+		err := failpoint.Disable("github.com/pingcap/tidb/pkg/infoschema/mockTiFlashStoreCount")
+		require.NoError(t, err)
+	}()
+	tiflash := infosync.NewMockTiFlash()
+	infosync.SetMockTiFlash(tiflash)
+	defer func() {
+		tiflash.Lock()
+		tiflash.StatusServer.Close()
+		tiflash.Unlock()
+	}()
+
+	for _, v := range []int{1024000, 0} {
+		tk.MustExec("set @@global.tidb_schema_cache_size = ?", v)
+
+		tk.MustExec("create database test_db1")
+		tk.MustExec("use test_db1")
+		tk.MustExec("create table t_ttl (created_at datetime) ttl = created_at + INTERVAL 1 YEAR ttl_enable = 'ON'")
+		checkResult(t, tk, "test_db1 t_ttl")
+
+		tk.MustExec("alter table t_ttl remove ttl")
+		checkResult(t, tk)
+
+		tk.MustExec("drop table t_ttl")
+		checkResult(t, tk)
+
+		tk.MustExec("create table t_ttl (created_at1 datetime) ttl = created_at1 + INTERVAL 1 YEAR ttl_enable = 'ON'")
+		checkResult(t, tk, "test_db1 t_ttl")
+
+		tk.MustExec("create database test_db2")
+		tk.MustExec("use test_db2")
+		checkResult(t, tk, "test_db1 t_ttl")
+
+		tk.MustExec("create table t_ttl (created_at datetime) ttl = created_at + INTERVAL 1 YEAR ttl_enable = 'ON'")
+		checkResult(t, tk, "test_db1 t_ttl", "test_db2 t_ttl")
+
+		tk.MustExec("create table t_tiflash (id int)")
+		checkResult(t, tk, "test_db1 t_ttl", "test_db2 t_ttl")
+
+		tk.MustExec("alter table t_tiflash set tiflash replica 1")
+		checkResult(t, tk, "test_db1 t_ttl", "test_db2 t_tiflash", "test_db2 t_ttl")
+
+		tk.MustExec("alter table t_tiflash set tiflash replica 0")
+		checkResult(t, tk, "test_db1 t_ttl", "test_db2 t_ttl")
+
+		tk.MustExec("drop table t_tiflash")
+		checkResult(t, tk, "test_db1 t_ttl", "test_db2 t_ttl")
+
+		tk.MustExec("create table t_tiflash (id int)")
+		tk.MustExec("alter table t_tiflash set tiflash replica 1")
+		checkResult(t, tk, "test_db1 t_ttl", "test_db2 t_tiflash", "test_db2 t_ttl")
+
+		tk.MustExec("drop database test_db1")
+		checkResult(t, tk, "test_db2 t_tiflash", "test_db2 t_ttl")
+
+		tk.MustExec("create or replace placement policy x primary_region=\"cn-east-1\" regions=\"cn-east-1\"")
+		tk.MustExec("create table t_placement (a int) placement policy=\"x\"")
+		checkResult(t, tk, "test_db2 t_placement", "test_db2 t_tiflash", "test_db2 t_ttl")
+
+		tk.MustExec("create table pt_placement (id int) placement policy x partition by HASH(id) PARTITIONS 4")
+		checkResult(t, tk, "test_db2 pt_placement", "test_db2 t_placement", "test_db2 t_tiflash", "test_db2 t_ttl")
+
+		tk.MustExec("drop database test_db2")
+		checkResult(t, tk)
+	}
+}
+
+func checkResult(t *testing.T, tk *testkit.TestKit, result ...string) {
+	is := domain.GetDomain(tk.Session()).InfoSchema()
+	ch := is.ListTablesWithSpecialAttribute(infoschema.AllSpecialAttribute)
+	var rows []string
+	for _, v := range ch {
+		for _, tblInfo := range v.TableInfos {
+			rows = append(rows, v.DBName+" "+tblInfo.Name.L)
+		}
+	}
+	slices.SortFunc(rows, strings.Compare)
+	require.Equal(t, rows, result)
+}
+
+func TestTiDBSchemaCacheSizeVariable(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	dom.Reload() // need this to trigger infoschema rebuild to reset capacity
+	is := dom.InfoSchema()
+	ok, raw := infoschema.IsV2(is)
+	if ok {
+		val := variable.SchemaCacheSize.Load()
+		tk.MustQuery("select @@global.tidb_schema_cache_size").CheckContain(strconv.FormatInt(val, 10))
+
+		// On start, the capacity might not be set correctly because infoschema have not load global variable yet.
+		// cap := raw.Data.CacheCapacity()
+		// require.Equal(t, cap, uint64(val))
+	}
+
+	tk.MustExec("set @@global.tidb_schema_cache_size = 32 * 1024 * 1024")
+	tk.MustQuery("select @@global.tidb_schema_cache_size").CheckContain("33554432")
+	require.Equal(t, variable.SchemaCacheSize.Load(), int64(33554432))
+	tk.MustExec("create table trigger_reload (id int)") // need to trigger infoschema rebuild to reset capacity
+	is = dom.InfoSchema()
+	ok, raw = infoschema.IsV2(is)
+	require.True(t, ok)
+	require.Equal(t, raw.Data.CacheCapacity(), uint64(33554432))
 }

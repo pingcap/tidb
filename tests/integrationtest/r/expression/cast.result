@@ -118,3 +118,33 @@ select null as a union all select 'a' as a;
 a
 NULL
 a
+drop table if exists t0;
+create table t0(c0 tinyint(1) unsigned not null );
+insert into t0 values (1);
+select * from t0 where case 0 when t0.c0 > -1.194192591e9 then null else 1 end;
+c0
+1
+select t0.c0 > -1.194192591e9 from t0;
+t0.c0 > -1.194192591e9
+1
+select t0.c0 < -1.194192591e9 from t0;
+t0.c0 < -1.194192591e9
+0
+select -1.194192591e9 > t0.c0 from t0;
+-1.194192591e9 > t0.c0
+0
+select -1.194192591e9 < t0.c0 from t0;
+-1.194192591e9 < t0.c0
+1
+select t0.c0 > 1.194192591e9 from t0;
+t0.c0 > 1.194192591e9
+0
+select t0.c0 < 1.194192591e9 from t0;
+t0.c0 < 1.194192591e9
+1
+select 1.194192591e9 > t0.c0 from t0;
+1.194192591e9 > t0.c0
+1
+select 1.194192591e9 < t0.c0 from t0;
+1.194192591e9 < t0.c0
+0

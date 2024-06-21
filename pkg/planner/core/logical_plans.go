@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/cost"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	fd "github.com/pingcap/tidb/pkg/planner/funcdep"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
@@ -124,19 +125,19 @@ func (tp JoinType) String() string {
 
 // LogicalJoin is the logical join plan.
 type LogicalJoin struct {
-	logicalSchemaProducer
+	logicalop.LogicalSchemaProducer
 
 	JoinType      JoinType
-	reordered     bool
-	cartesianJoin bool
+	Reordered     bool
+	CartesianJoin bool
 	StraightJoin  bool
 
-	// hintInfo stores the join algorithm hint information specified by client.
-	hintInfo            *h.PlanHints
-	preferJoinType      uint
-	preferJoinOrder     bool
-	leftPreferJoinType  uint
-	rightPreferJoinType uint
+	// HintInfo stores the join algorithm hint information specified by client.
+	HintInfo            *h.PlanHints
+	PreferJoinType      uint
+	PreferJoinOrder     bool
+	LeftPreferJoinType  uint
+	RightPreferJoinType uint
 
 	EqualConditions []*expression.ScalarFunction
 	// NAEQConditions means null aware equal conditions, which is used for null aware semi joins.
@@ -145,8 +146,8 @@ type LogicalJoin struct {
 	RightConditions expression.CNFExprs
 	OtherConditions expression.CNFExprs
 
-	leftProperties  [][]*expression.Column
-	rightProperties [][]*expression.Column
+	LeftProperties  [][]*expression.Column
+	RightProperties [][]*expression.Column
 
 	// DefaultValues is only used for left/right outer join, which is values the inner row's should be when the outer table
 	// doesn't match any inner table's row.
@@ -154,7 +155,7 @@ type LogicalJoin struct {
 	// Currently, only `aggregation push down` phase will set this.
 	DefaultValues []types.Datum
 
-	// fullSchema contains all the columns that the Join can output. It's ordered as [outer schema..., inner schema...].
+	// FullSchema contains all the columns that the Join can output. It's ordered as [outer schema..., inner schema...].
 	// This is useful for natural joins and "using" joins. In these cases, the join key columns from the
 	// inner side (or the right side when it's an inner join) will not be in the schema of Join.
 	// But upper operators should be able to find those "redundant" columns, and the user also can specifically select
@@ -163,16 +164,16 @@ type LogicalJoin struct {
 	// For example:
 	// create table t1(a int, b int); create table t2(a int, b int);
 	// select * from t1 join t2 using (b);
-	// schema of the Join will be [t1.b, t1.a, t2.a]; fullSchema will be [t1.a, t1.b, t2.a, t2.b].
+	// schema of the Join will be [t1.b, t1.a, t2.a]; FullSchema will be [t1.a, t1.b, t2.a, t2.b].
 	//
 	// We record all columns and keep them ordered is for correctly handling SQLs like
 	// select t1.*, t2.* from t1 join t2 using (b);
 	// (*PlanBuilder).unfoldWildStar() handles the schema for such case.
-	fullSchema *expression.Schema
-	fullNames  types.NameSlice
+	FullSchema *expression.Schema
+	FullNames  types.NameSlice
 
-	// equalCondOutCnt indicates the estimated count of joined rows after evaluating `EqualConditions`.
-	equalCondOutCnt float64
+	// EqualCondOutCnt indicates the estimated count of joined rows after evaluating `EqualConditions`.
+	EqualCondOutCnt float64
 }
 
 func (p *LogicalJoin) isNAAJ() bool {
@@ -202,7 +203,7 @@ func (p *LogicalJoin) ExtractFD() *fd.FDSet {
 func (p *LogicalJoin) extractFDForSemiJoin(filtersFromApply []expression.Expression) *fd.FDSet {
 	// 1: since semi join will keep the part or all rows of the outer table, it's outer FD can be saved.
 	// 2: the un-projected column will be left for the upper layer projection or already be pruned from bottom up.
-	outerFD, _ := p.children[0].ExtractFD(), p.children[1].ExtractFD()
+	outerFD, _ := p.Children()[0].ExtractFD(), p.Children()[1].ExtractFD()
 	fds := outerFD
 
 	eqCondSlice := expression.ScalarFuncs2Exprs(p.EqualConditions)
@@ -214,12 +215,12 @@ func (p *LogicalJoin) extractFDForSemiJoin(filtersFromApply []expression.Express
 
 	fds.MakeNotNull(notNullColsFromFilters)
 	fds.AddConstants(constUniqueIDs)
-	p.fdSet = fds
+	p.SetFDs(fds)
 	return fds
 }
 
 func (p *LogicalJoin) extractFDForInnerJoin(filtersFromApply []expression.Expression) *fd.FDSet {
-	leftFD, rightFD := p.children[0].ExtractFD(), p.children[1].ExtractFD()
+	leftFD, rightFD := p.Children()[0].ExtractFD(), p.Children()[1].ExtractFD()
 	fds := leftFD
 	fds.MakeCartesianProduct(rightFD)
 
@@ -255,19 +256,19 @@ func (p *LogicalJoin) extractFDForInnerJoin(filtersFromApply []expression.Expres
 		fds.GroupByCols.Insert(i)
 	}
 	fds.HasAggBuilt = fds.HasAggBuilt || rightFD.HasAggBuilt
-	p.fdSet = fds
+	p.SetFDs(fds)
 	return fds
 }
 
 func (p *LogicalJoin) extractFDForOuterJoin(filtersFromApply []expression.Expression) *fd.FDSet {
-	outerFD, innerFD := p.children[0].ExtractFD(), p.children[1].ExtractFD()
+	outerFD, innerFD := p.Children()[0].ExtractFD(), p.Children()[1].ExtractFD()
 	innerCondition := p.RightConditions
 	outerCondition := p.LeftConditions
 	outerCols, innerCols := intset.NewFastIntSet(), intset.NewFastIntSet()
-	for _, col := range p.children[0].Schema().Columns {
+	for _, col := range p.Children()[0].Schema().Columns {
 		outerCols.Insert(int(col.UniqueID))
 	}
-	for _, col := range p.children[1].Schema().Columns {
+	for _, col := range p.Children()[1].Schema().Columns {
 		innerCols.Insert(int(col.UniqueID))
 	}
 	if p.JoinType == RightOuterJoin {
@@ -349,7 +350,7 @@ func (p *LogicalJoin) extractFDForOuterJoin(filtersFromApply []expression.Expres
 
 	fds := outerFD
 	fds.MakeOuterJoin(innerFD, filterFD, outerCols, innerCols, &opt)
-	p.fdSet = fds
+	p.SetFDs(fds)
 	return fds
 }
 
@@ -455,7 +456,7 @@ func (p *LogicalJoin) columnSubstituteAll(schema *expression.Schema, exprs []exp
 
 		// If the columns used in the new filter all come from the left child,
 		// we can push this filter to it.
-		if expression.ExprFromSchema(newCond, p.children[0].Schema()) {
+		if expression.ExprFromSchema(newCond, p.Children()[0].Schema()) {
 			p.LeftConditions = append(p.LeftConditions, newCond)
 			p.EqualConditions = append(p.EqualConditions[:i], p.EqualConditions[i+1:]...)
 			continue
@@ -463,7 +464,7 @@ func (p *LogicalJoin) columnSubstituteAll(schema *expression.Schema, exprs []exp
 
 		// If the columns used in the new filter all come from the right
 		// child, we can push this filter to it.
-		if expression.ExprFromSchema(newCond, p.children[1].Schema()) {
+		if expression.ExprFromSchema(newCond, p.Children()[1].Schema()) {
 			p.RightConditions = append(p.RightConditions, newCond)
 			p.EqualConditions = append(p.EqualConditions[:i], p.EqualConditions[i+1:]...)
 			continue
@@ -529,20 +530,20 @@ func (p *LogicalJoin) ExtractJoinKeys(childIdx int) *expression.Schema {
 
 // LogicalExpand represents a logical Expand OP serves for data replication requirement.
 type LogicalExpand struct {
-	logicalSchemaProducer
+	logicalop.LogicalSchemaProducer
 
 	// distinct group by columns. (maybe projected below if it's a non-col)
-	distinctGroupByCol  []*expression.Column
-	distinctGbyColNames []*types.FieldName
+	DistinctGroupByCol  []*expression.Column
+	DistinctGbyColNames []*types.FieldName
 	// keep the old gbyExprs for resolve cases like grouping(a+b), the args:
 	// a+b should be resolved to new projected gby col according to ref pos.
-	distinctGbyExprs []expression.Expression
+	DistinctGbyExprs []expression.Expression
 
 	// rollup grouping sets.
-	distinctSize       int
-	rollupGroupingSets expression.GroupingSets
-	rollupID2GIDS      map[int]map[uint64]struct{}
-	rollupGroupingIDs  []uint64
+	DistinctSize       int
+	RollupGroupingSets expression.GroupingSets
+	RollupID2GIDS      map[int]map[uint64]struct{}
+	RollupGroupingIDs  []uint64
 
 	// The level projections is generated from grouping sets，make execution more clearly.
 	LevelExprs [][]expression.Expression
@@ -563,7 +564,7 @@ type LogicalExpand struct {
 // ExtractFD implements the logical plan interface, extracting the FD from bottom up.
 func (p *LogicalExpand) ExtractFD() *fd.FDSet {
 	// basically extract the children's fdSet.
-	return p.logicalSchemaProducer.ExtractFD()
+	return p.LogicalSchemaProducer.ExtractFD()
 }
 
 // ExtractCorrelatedCols implements LogicalPlan interface.
@@ -589,9 +590,9 @@ func (*LogicalExpand) GetUsedCols() (usedCols []*expression.Column) {
 // optimization is done such as column pruning.
 func (p *LogicalExpand) GenLevelProjections() {
 	// get all the grouping cols.
-	groupingSetCols := p.rollupGroupingSets.AllSetsColIDs()
-	p.distinctSize, p.rollupGroupingIDs, p.rollupID2GIDS = p.rollupGroupingSets.DistinctSize()
-	hasDuplicateGroupingSet := len(p.rollupGroupingSets) != p.distinctSize
+	groupingSetCols := p.RollupGroupingSets.AllSetsColIDs()
+	p.DistinctSize, p.RollupGroupingIDs, p.RollupID2GIDS = p.RollupGroupingSets.DistinctSize()
+	hasDuplicateGroupingSet := len(p.RollupGroupingSets) != p.DistinctSize
 	schemaCols := p.Schema().Columns
 	// last two schema col is about gid and gpos if any.
 	nonGenCols := schemaCols[:len(schemaCols)-1]
@@ -603,8 +604,8 @@ func (p *LogicalExpand) GenLevelProjections() {
 	}
 
 	// for every rollup grouping set, gen its level projection.
-	for offset, curGroupingSet := range p.rollupGroupingSets {
-		levelProj := make([]expression.Expression, 0, p.schema.Len())
+	for offset, curGroupingSet := range p.RollupGroupingSets {
+		levelProj := make([]expression.Expression, 0, p.Schema().Len())
 		for _, oneCol := range nonGenCols {
 			// if this col is in the grouping-set-cols and this col is not needed by current grouping-set, just set it as null value with specified fieldType.
 			if groupingSetCols.Has(int(oneCol.UniqueID)) {
@@ -660,10 +661,10 @@ func (p *LogicalExpand) GenerateGroupingMarks(sourceCols []*expression.Column) [
 			resMap := make(map[uint64]struct{}, 1)
 			res := uint64(0)
 			// from high pos to low pos.
-			for i := len(p.distinctGroupByCol) - 1; i >= 0; i-- {
+			for i := len(p.DistinctGroupByCol) - 1; i >= 0; i-- {
 				// left shift.
 				res = res << 1
-				if p.distinctGroupByCol[i].UniqueID == oneCol.UniqueID {
+				if p.DistinctGroupByCol[i].UniqueID == oneCol.UniqueID {
 					// fill the corresponding col pos as 1 as bitMark.
 					// eg: say distinctGBY [x,y,z] and GROUPING(x) with '100'.
 					// When any groupingID & 100 > 0 means the source column x
@@ -680,7 +681,7 @@ func (p *LogicalExpand) GenerateGroupingMarks(sourceCols []*expression.Column) [
 	// For example, GROUPING(x,y,z) returns 6 it means: GROUPING(x) is 1, GROUPING(y) is 1 and GROUPING(z) is 0, in which
 	// we should also return all these three single column grouping marks as function meta to GROUPING FUNCTION.
 	for _, oneCol := range sourceCols {
-		resSliceMap = append(resSliceMap, p.rollupID2GIDS[int(oneCol.UniqueID)])
+		resSliceMap = append(resSliceMap, p.RollupID2GIDS[int(oneCol.UniqueID)])
 	}
 	return resSliceMap
 }
@@ -688,10 +689,10 @@ func (p *LogicalExpand) GenerateGroupingMarks(sourceCols []*expression.Column) [
 func (p *LogicalExpand) trySubstituteExprWithGroupingSetCol(expr expression.Expression) (expression.Expression, bool) {
 	// since all the original group items has been projected even single col,
 	// let's check the origin gby expression here, and map it to new gby col.
-	for i, oneExpr := range p.distinctGbyExprs {
+	for i, oneExpr := range p.DistinctGbyExprs {
 		if bytes.Equal(expr.CanonicalHashCode(), oneExpr.CanonicalHashCode()) {
 			// found
-			return p.distinctGroupByCol[i], true
+			return p.DistinctGroupByCol[i], true
 		}
 	}
 	// not found.
@@ -701,8 +702,8 @@ func (p *LogicalExpand) trySubstituteExprWithGroupingSetCol(expr expression.Expr
 // CheckGroupingFuncArgsInGroupBy checks whether grouping function args is in grouping items.
 func (p *LogicalExpand) resolveGroupingFuncArgsInGroupBy(groupingFuncArgs []expression.Expression) ([]*expression.Column, error) {
 	// build GBYColMap
-	distinctGBYColMap := make(map[int64]struct{}, len(p.distinctGroupByCol))
-	for _, oneDistinctGBYCol := range p.distinctGroupByCol {
+	distinctGBYColMap := make(map[int64]struct{}, len(p.DistinctGroupByCol))
+	for _, oneDistinctGBYCol := range p.DistinctGroupByCol {
 		distinctGBYColMap[oneDistinctGBYCol.UniqueID] = struct{}{}
 	}
 	var refPos int
@@ -711,7 +712,7 @@ func (p *LogicalExpand) resolveGroupingFuncArgsInGroupBy(groupingFuncArgs []expr
 		refPos = -1
 		// since all the original group items has been projected even single col,
 		// let's check the origin gby expression here, and map it to new gby col.
-		for i, oneExpr := range p.distinctGbyExprs {
+		for i, oneExpr := range p.DistinctGbyExprs {
 			if bytes.Equal(oneArg.CanonicalHashCode(), oneExpr.CanonicalHashCode()) {
 				refPos = i
 				break
@@ -719,7 +720,7 @@ func (p *LogicalExpand) resolveGroupingFuncArgsInGroupBy(groupingFuncArgs []expr
 		}
 		if refPos != -1 {
 			// directly ref original group by expressions.
-			rewrittenArgCols = append(rewrittenArgCols, p.distinctGroupByCol[refPos])
+			rewrittenArgCols = append(rewrittenArgCols, p.DistinctGroupByCol[refPos])
 		} else {
 			// case for refPos == -1
 			// since for case like: select year from t group by year, country with rollup order by grouping(year)
@@ -753,10 +754,10 @@ func (p *LogicalExpand) GenerateGroupingIDModeBitAnd(oneSet expression.GroupingS
 	idsNeeded := oneSet.AllColIDs()
 	res := uint64(0)
 	// from high pos to low pos.
-	for i := len(p.distinctGroupByCol) - 1; i >= 0; i-- {
+	for i := len(p.DistinctGroupByCol) - 1; i >= 0; i-- {
 		// left shift.
 		res = res << 1
-		if idsNeeded.Has(int(p.distinctGroupByCol[i].UniqueID)) {
+		if idsNeeded.Has(int(p.DistinctGroupByCol[i].UniqueID)) {
 			// col is needed, fill the corresponding pos as 1.
 			res = res | 1
 		}
@@ -776,7 +777,7 @@ func (p *LogicalExpand) GenerateGroupingIDIncrementModeNumericSet(oneSetOffset i
 	// we can just set its gid   :  0,       1       2      3    <----+
 	// just keep this mapping logic stored as meta, and return the defined id back generated from this defined rule.
 	//     for special case      :  {a,a,c} and {a,c}: this two logical same grouping set naturally share the same gid allocation!
-	return p.rollupGroupingIDs[oneSetOffset]
+	return p.RollupGroupingIDs[oneSetOffset]
 	// how to use it, eg: when encountering a grouping function like: grouping(a), we should dig down to related Expand operator and
 	// found it in meta that: column 'a' is in grouping set {a,b,c}, {a,b},  {a}, and its correspondent mapping grouping ids is about
 	// {0,1,2}. This grouping id set is returned back as this grouping function's specified meta when rewriting the grouping function,
@@ -785,7 +786,7 @@ func (p *LogicalExpand) GenerateGroupingIDIncrementModeNumericSet(oneSetOffset i
 
 // LogicalProjection represents a select fields plan.
 type LogicalProjection struct {
-	logicalSchemaProducer
+	logicalop.LogicalSchemaProducer
 
 	Exprs []expression.Expression
 
@@ -810,7 +811,7 @@ type LogicalProjection struct {
 // ExtractFD implements the logical plan interface, extracting the FD from bottom up.
 func (p *LogicalProjection) ExtractFD() *fd.FDSet {
 	// basically extract the children's fdSet.
-	fds := p.logicalSchemaProducer.ExtractFD()
+	fds := p.LogicalSchemaProducer.ExtractFD()
 	// collect the output columns' unique ID.
 	outputColsUniqueIDs := intset.NewFastIntSet()
 	notnullColsUniqueIDs := intset.NewFastIntSet()
@@ -878,7 +879,7 @@ func (p *LogicalProjection) ExtractFD() *fd.FDSet {
 				// the dependent columns in scalar function should be also considered as output columns as well.
 				outputColsUniqueIDs.Insert(int(one.UniqueID))
 			}
-			notnull := util.IsNullRejected(p.SCtx(), p.schema, x)
+			notnull := util.IsNullRejected(p.SCtx(), p.Schema(), x)
 			if notnull || determinants.SubsetOf(fds.NotNullCols) {
 				notnullColsUniqueIDs.Insert(scalarUniqueID)
 			}
@@ -893,7 +894,7 @@ func (p *LogicalProjection) ExtractFD() *fd.FDSet {
 	// select max(a) from t group by b, we should project both `a` & `b` to maintain the FD down here, even if select-fields only contain `a`.
 	fds.ProjectCols(outputColsUniqueIDs.Union(fds.GroupByCols))
 	// just trace it down in every operator for test checking.
-	p.fdSet = fds
+	p.SetFDs(fds)
 	return fds
 }
 
@@ -916,7 +917,7 @@ func (p *LogicalProjection) GetUsedCols() (usedCols []*expression.Column) {
 
 // LogicalAggregation represents an aggregate plan.
 type LogicalAggregation struct {
-	logicalSchemaProducer
+	logicalop.LogicalSchemaProducer
 
 	AggFuncs     []*aggregation.AggFuncDesc
 	GroupByItems []expression.Expression
@@ -967,7 +968,7 @@ func (la *LogicalAggregation) HasOrderBy() bool {
 // depend on logicalAgg.ExtractFD() to finish the only_full_group_by checking problem rather than by 1 & 2.
 func (la *LogicalAggregation) ExtractFD() *fd.FDSet {
 	// basically extract the children's fdSet.
-	fds := la.logicalSchemaProducer.ExtractFD()
+	fds := la.LogicalSchemaProducer.ExtractFD()
 	// collect the output columns' unique ID.
 	outputColsUniqueIDs := intset.NewFastIntSet()
 	notnullColsUniqueIDs := intset.NewFastIntSet()
@@ -1018,7 +1019,7 @@ func (la *LogicalAggregation) ExtractFD() *fd.FDSet {
 				determinants.Insert(int(one.UniqueID))
 				groupByColsOutputCols.Insert(int(one.UniqueID))
 			}
-			notnull := util.IsNullRejected(la.SCtx(), la.schema, x)
+			notnull := util.IsNullRejected(la.SCtx(), la.Schema(), x)
 			if notnull || determinants.SubsetOf(fds.NotNullCols) {
 				notnullColsUniqueIDs.Insert(scalarUniqueID)
 			}
@@ -1037,7 +1038,7 @@ func (la *LogicalAggregation) ExtractFD() *fd.FDSet {
 	realAggFuncUniqueID := intset.NewFastIntSet()
 	for i, aggDes := range la.AggFuncs {
 		if aggDes.Name != "firstrow" {
-			realAggFuncUniqueID.Insert(int(la.schema.Columns[i].UniqueID))
+			realAggFuncUniqueID.Insert(int(la.Schema().Columns[i].UniqueID))
 		}
 	}
 
@@ -1072,7 +1073,7 @@ func (la *LogicalAggregation) ExtractFD() *fd.FDSet {
 	fds.GroupByCols = groupByColsUniqueIDs
 	fds.HasAggBuilt = true
 	// just trace it down in every operator for test checking.
-	la.fdSet = fds
+	la.SetFDs(fds)
 	return fds
 }
 
@@ -1118,7 +1119,7 @@ func (la *LogicalAggregation) GetPotentialPartitionKeys() []*property.MPPPartiti
 		if col, ok := item.(*expression.Column); ok {
 			groupByCols = append(groupByCols, &property.MPPPartitionColumn{
 				Col:       col,
-				CollateID: property.GetCollateIDByNameForPartition(col.GetType().GetCollate()),
+				CollateID: property.GetCollateIDByNameForPartition(col.GetStaticType().GetCollate()),
 			})
 		}
 	}
@@ -1160,7 +1161,7 @@ func (la *LogicalAggregation) GetUsedCols() (usedCols []*expression.Column) {
 
 // LogicalSelection represents a where or having predicate.
 type LogicalSelection struct {
-	baseLogicalPlan
+	logicalop.BaseLogicalPlan
 
 	// Originally the WHERE or ON condition is parsed into a single expression,
 	// but after we converted to CNF(Conjunctive normal form), it can be
@@ -1266,7 +1267,7 @@ func extractEquivalenceCols(conditions []expression.Expression, sctx base.PlanCo
 // ExtractFD implements the LogicalPlan interface.
 func (p *LogicalSelection) ExtractFD() *fd.FDSet {
 	// basically extract the children's fdSet.
-	fds := p.baseLogicalPlan.ExtractFD()
+	fds := p.BaseLogicalPlan.ExtractFD()
 	// collect the output columns' unique ID.
 	outputColsUniqueIDs := intset.NewFastIntSet()
 	notnullColsUniqueIDs := intset.NewFastIntSet()
@@ -1274,8 +1275,8 @@ func (p *LogicalSelection) ExtractFD() *fd.FDSet {
 	// join's schema will miss t2.a while join.full schema has. since selection
 	// itself doesn't contain schema, extracting schema should tell them apart.
 	var columns []*expression.Column
-	if join, ok := p.children[0].(*LogicalJoin); ok && join.fullSchema != nil {
-		columns = join.fullSchema.Columns
+	if join, ok := p.Children()[0].(*LogicalJoin); ok && join.FullSchema != nil {
+		columns = join.FullSchema.Columns
 	} else {
 		columns = p.Schema().Columns
 	}
@@ -1300,7 +1301,7 @@ func (p *LogicalSelection) ExtractFD() *fd.FDSet {
 	}
 	fds.ProjectCols(outputColsUniqueIDs)
 	// just trace it down in every operator for test checking.
-	p.fdSet = fds
+	p.SetFDs(fds)
 	return fds
 }
 
@@ -1326,7 +1327,7 @@ type LogicalApply struct {
 func (la *LogicalApply) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
 	corCols := la.LogicalJoin.ExtractCorrelatedCols()
 	for i := len(corCols) - 1; i >= 0; i-- {
-		if la.children[0].Schema().Contains(&corCols[i].Column) {
+		if la.Children()[0].Schema().Contains(&corCols[i].Column) {
 			corCols = append(corCols[:i], corCols[i+1:]...)
 		}
 	}
@@ -1335,7 +1336,7 @@ func (la *LogicalApply) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
 
 // ExtractFD implements the LogicalPlan interface.
 func (la *LogicalApply) ExtractFD() *fd.FDSet {
-	innerPlan := la.children[1]
+	innerPlan := la.Children()[1]
 	// build the join correlated equal condition for apply join, this equal condition is used for deriving the transitive FD between outer and inner side.
 	correlatedCols := coreusage.ExtractCorrelatedCols4LogicalPlan(innerPlan)
 	deduplicateCorrelatedCols := make(map[int64]*expression.CorrelatedColumn)
@@ -1371,7 +1372,7 @@ func (la *LogicalApply) ExtractFD() *fd.FDSet {
 
 // LogicalMaxOneRow checks if a query returns no more than one row.
 type LogicalMaxOneRow struct {
-	baseLogicalPlan
+	logicalop.BaseLogicalPlan
 }
 
 // LogicalTableDual represents a dual table plan.
@@ -1379,7 +1380,7 @@ type LogicalMaxOneRow struct {
 // outputting 0/1 row with zero column. This semantic may be different from your expectation sometimes but should not
 // cause any actual problems now.
 type LogicalTableDual struct {
-	logicalSchemaProducer
+	logicalop.LogicalSchemaProducer
 
 	// RowCount could only be 0 or 1.
 	RowCount int
@@ -1395,7 +1396,7 @@ type LogicalTableDual struct {
 // requesting all cluster components log search gRPC interface to retrieve
 // log message and filtering them in TiDB node.
 type LogicalMemTable struct {
-	logicalSchemaProducer
+	logicalop.LogicalSchemaProducer
 
 	Extractor base.MemTablePredicateExtractor
 	DBName    model.CIStr
@@ -1411,7 +1412,7 @@ type LogicalMemTable struct {
 
 // LogicalUnionScan is used in non read-only txn or for scanning a local temporary table whose snapshot data is located in memory.
 type LogicalUnionScan struct {
-	baseLogicalPlan
+	logicalop.BaseLogicalPlan
 
 	conditions []expression.Expression
 
@@ -1425,7 +1426,7 @@ func (ds *DataSource) GetAllConds() []expression.Expression {
 
 // DataSource represents a tableScan without condition push down.
 type DataSource struct {
-	logicalSchemaProducer
+	logicalop.LogicalSchemaProducer
 
 	astIndexHints []*ast.IndexHint
 	IndexHints    []h.HintedIndex
@@ -1505,7 +1506,7 @@ func (ds *DataSource) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
 // TiKVSingleGather is a leaf logical operator of TiDB layer to gather
 // tuples from TiKV regions.
 type TiKVSingleGather struct {
-	logicalSchemaProducer
+	logicalop.LogicalSchemaProducer
 	Source *DataSource
 	// IsIndexGather marks if this TiKVSingleGather gathers tuples from an IndexScan.
 	// in implementation phase, we need this flag to determine whether to generate
@@ -1516,7 +1517,7 @@ type TiKVSingleGather struct {
 
 // LogicalTableScan is the logical table scan operator for TiKV.
 type LogicalTableScan struct {
-	logicalSchemaProducer
+	logicalop.LogicalSchemaProducer
 	Source      *DataSource
 	HandleCols  util.HandleCols
 	AccessConds expression.CNFExprs
@@ -1525,7 +1526,7 @@ type LogicalTableScan struct {
 
 // LogicalIndexScan is the logical index scan operator for TiKV.
 type LogicalIndexScan struct {
-	logicalSchemaProducer
+	logicalop.LogicalSchemaProducer
 	// DataSource should be read-only here.
 	Source       *DataSource
 	IsDoubleRead bool
@@ -1595,7 +1596,7 @@ func (ds *DataSource) buildIndexGather(path *util.AccessPath) base.LogicalPlan {
 	is.Columns = make([]*model.ColumnInfo, len(ds.Columns))
 	copy(is.Columns, ds.Columns)
 	is.SetSchema(ds.Schema())
-	is.IdxCols, is.IdxColLens = expression.IndexInfo2PrefixCols(is.Columns, is.schema.Columns, is.Index)
+	is.IdxCols, is.IdxColLens = expression.IndexInfo2PrefixCols(is.Columns, is.Schema().Columns, is.Index)
 
 	sg := TiKVSingleGather{
 		Source:        ds,
@@ -1613,8 +1614,8 @@ func (ds *DataSource) Convert2Gathers() (gathers []base.LogicalPlan) {
 	gathers = append(gathers, tg)
 	for _, path := range ds.possibleAccessPaths {
 		if !path.IsIntHandlePath {
-			path.FullIdxCols, path.FullIdxColLens = expression.IndexInfo2Cols(ds.Columns, ds.schema.Columns, path.Index)
-			path.IdxCols, path.IdxColLens = expression.IndexInfo2PrefixCols(ds.Columns, ds.schema.Columns, path.Index)
+			path.FullIdxCols, path.FullIdxColLens = expression.IndexInfo2Cols(ds.Columns, ds.Schema().Columns, path.Index)
+			path.IdxCols, path.IdxColLens = expression.IndexInfo2PrefixCols(ds.Columns, ds.Schema().Columns, path.Index)
 			// If index columns can cover all of the needed columns, we can use a IndexGather + IndexScan.
 			if ds.isSingleScan(path.FullIdxCols, path.FullIdxColLens) {
 				gathers = append(gathers, ds.buildIndexGather(path))
@@ -1658,8 +1659,8 @@ func detachCondAndBuildRangeForPath(
 func (ds *DataSource) deriveCommonHandleTablePathStats(path *util.AccessPath, conds []expression.Expression, isIm bool) error {
 	path.CountAfterAccess = float64(ds.statisticTable.RealtimeCount)
 	path.Ranges = ranger.FullNotNullRange()
-	path.IdxCols, path.IdxColLens = expression.IndexInfo2PrefixCols(ds.Columns, ds.schema.Columns, path.Index)
-	path.FullIdxCols, path.FullIdxColLens = expression.IndexInfo2Cols(ds.Columns, ds.schema.Columns, path.Index)
+	path.IdxCols, path.IdxColLens = expression.IndexInfo2PrefixCols(ds.Columns, ds.Schema().Columns, path.Index)
+	path.FullIdxCols, path.FullIdxColLens = expression.IndexInfo2Cols(ds.Columns, ds.Schema().Columns, path.Index)
 	if len(conds) == 0 {
 		return nil
 	}
@@ -1711,10 +1712,10 @@ func (ds *DataSource) deriveTablePathStats(path *util.AccessPath, conds []expres
 	if ds.tableInfo.PKIsHandle {
 		if pkColInfo := ds.tableInfo.GetPkColInfo(); pkColInfo != nil {
 			isUnsigned = mysql.HasUnsignedFlag(pkColInfo.GetFlag())
-			pkCol = expression.ColInfo2Col(ds.schema.Columns, pkColInfo)
+			pkCol = expression.ColInfo2Col(ds.Schema().Columns, pkColInfo)
 		}
 	} else {
-		pkCol = ds.schema.GetExtraHandleColumn()
+		pkCol = ds.Schema().GetExtraHandleColumn()
 	}
 	if pkCol == nil {
 		path.Ranges = ranger.FullIntRange(isUnsigned)
@@ -1786,8 +1787,8 @@ func (ds *DataSource) fillIndexPath(path *util.AccessPath, conds []expression.Ex
 	}
 	path.Ranges = ranger.FullRange()
 	path.CountAfterAccess = float64(ds.statisticTable.RealtimeCount)
-	path.IdxCols, path.IdxColLens = expression.IndexInfo2PrefixCols(ds.Columns, ds.schema.Columns, path.Index)
-	path.FullIdxCols, path.FullIdxColLens = expression.IndexInfo2Cols(ds.Columns, ds.schema.Columns, path.Index)
+	path.IdxCols, path.IdxColLens = expression.IndexInfo2PrefixCols(ds.Columns, ds.Schema().Columns, path.Index)
+	path.FullIdxCols, path.FullIdxColLens = expression.IndexInfo2Cols(ds.Columns, ds.Schema().Columns, path.Index)
 	if !path.Index.Unique && !path.Index.Primary && len(path.Index.Columns) == len(path.IdxCols) {
 		handleCol := ds.getPKIsHandleCol()
 		if handleCol != nil && !mysql.HasUnsignedFlag(handleCol.RetType.GetFlag()) {
@@ -1882,7 +1883,7 @@ func getPKIsHandleColFromSchema(cols []*model.ColumnInfo, schema *expression.Sch
 }
 
 func (ds *DataSource) getPKIsHandleCol() *expression.Column {
-	return getPKIsHandleColFromSchema(ds.Columns, ds.schema, ds.tableInfo.PKIsHandle)
+	return getPKIsHandleColFromSchema(ds.Columns, ds.Schema(), ds.tableInfo.PKIsHandle)
 }
 
 func (p *LogicalIndexScan) getPKIsHandleCol(schema *expression.Schema) *expression.Column {
@@ -1899,7 +1900,7 @@ func (ds *DataSource) TableInfo() *model.TableInfo {
 
 // LogicalUnionAll represents LogicalUnionAll plan.
 type LogicalUnionAll struct {
-	logicalSchemaProducer
+	logicalop.LogicalSchemaProducer
 }
 
 // LogicalPartitionUnionAll represents the LogicalUnionAll plan is for partition table.
@@ -1909,7 +1910,7 @@ type LogicalPartitionUnionAll struct {
 
 // LogicalSort stands for the order by plan.
 type LogicalSort struct {
-	baseLogicalPlan
+	logicalop.BaseLogicalPlan
 
 	ByItems []*util.ByItems
 }
@@ -1925,7 +1926,7 @@ func (ls *LogicalSort) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
 
 // LogicalTopN represents a top-n plan.
 type LogicalTopN struct {
-	baseLogicalPlan
+	logicalop.BaseLogicalPlan
 
 	ByItems []*util.ByItems
 	// PartitionBy is used for extended TopN to consider K heaps. Used by rule_derive_topn_from_window
@@ -1956,7 +1957,7 @@ func (lt *LogicalTopN) isLimit() bool {
 
 // LogicalLimit represents offset and limit plan.
 type LogicalLimit struct {
-	logicalSchemaProducer
+	logicalop.LogicalSchemaProducer
 
 	PartitionBy      []property.SortItem // This is used for enhanced topN optimization
 	Offset           uint64
@@ -1972,7 +1973,7 @@ func (lt *LogicalLimit) GetPartitionBy() []property.SortItem {
 
 // LogicalLock represents a select lock plan.
 type LogicalLock struct {
-	baseLogicalPlan
+	logicalop.BaseLogicalPlan
 
 	Lock         *ast.SelectLockInfo
 	tblID2Handle map[int64][]util.HandleCols
@@ -2063,11 +2064,13 @@ func (fb *FrameBound) updateCmpFuncsAndCmpDataType(cmpDataType types.EvalType) {
 
 // UpdateCompareCols will update CompareCols.
 func (fb *FrameBound) UpdateCompareCols(ctx sessionctx.Context, orderByCols []*expression.Column) error {
+	ectx := ctx.GetExprCtx().GetEvalCtx()
+
 	if len(fb.CalcFuncs) > 0 {
 		fb.CompareCols = make([]expression.Expression, len(orderByCols))
-		if fb.CalcFuncs[0].GetType().EvalType() != orderByCols[0].GetType().EvalType() {
+		if fb.CalcFuncs[0].GetType(ectx).EvalType() != orderByCols[0].GetType(ectx).EvalType() {
 			var err error
-			fb.CompareCols[0], err = expression.NewFunctionBase(ctx.GetExprCtx(), ast.Cast, fb.CalcFuncs[0].GetType(), orderByCols[0])
+			fb.CompareCols[0], err = expression.NewFunctionBase(ctx.GetExprCtx(), ast.Cast, fb.CalcFuncs[0].GetType(ectx), orderByCols[0])
 			if err != nil {
 				return err
 			}
@@ -2077,7 +2080,7 @@ func (fb *FrameBound) UpdateCompareCols(ctx sessionctx.Context, orderByCols []*e
 			}
 		}
 
-		cmpDataType := expression.GetAccurateCmpType(fb.CompareCols[0], fb.CalcFuncs[0])
+		cmpDataType := expression.GetAccurateCmpType(ctx.GetExprCtx().GetEvalCtx(), fb.CompareCols[0], fb.CalcFuncs[0])
 		fb.updateCmpFuncsAndCmpDataType(cmpDataType)
 	}
 	return nil
@@ -2085,7 +2088,7 @@ func (fb *FrameBound) UpdateCompareCols(ctx sessionctx.Context, orderByCols []*e
 
 // LogicalWindow represents a logical window function plan.
 type LogicalWindow struct {
-	logicalSchemaProducer
+	logicalop.LogicalSchemaProducer
 
 	WindowFuncDescs []*aggregation.WindowFuncDesc
 	PartitionBy     []property.SortItem
@@ -2185,7 +2188,7 @@ func (p *LogicalWindow) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
 
 // GetWindowResultColumns returns the columns storing the result of the window function.
 func (p *LogicalWindow) GetWindowResultColumns() []*expression.Column {
-	return p.schema.Columns[p.schema.Len()-len(p.WindowFuncDescs):]
+	return p.Schema().Columns[p.Schema().Len()-len(p.WindowFuncDescs):]
 }
 
 // ShowContents stores the contents for the `SHOW` statement.
@@ -2227,7 +2230,7 @@ func (s *ShowContents) MemoryUsage() (sum int64) {
 
 // LogicalShow represents a show plan.
 type LogicalShow struct {
-	logicalSchemaProducer
+	logicalop.LogicalSchemaProducer
 	ShowContents
 
 	Extractor base.ShowPredicateExtractor
@@ -2235,7 +2238,7 @@ type LogicalShow struct {
 
 // LogicalShowDDLJobs is for showing DDL job list.
 type LogicalShowDDLJobs struct {
-	logicalSchemaProducer
+	logicalop.LogicalSchemaProducer
 
 	JobNumber int64
 }
@@ -2292,7 +2295,7 @@ func (cc *CTEClass) MemoryUsage() (sum int64) {
 
 // LogicalCTE is for CTE.
 type LogicalCTE struct {
-	logicalSchemaProducer
+	logicalop.LogicalSchemaProducer
 
 	cte       *CTEClass
 	cteAsName model.CIStr
@@ -2304,7 +2307,7 @@ type LogicalCTE struct {
 
 // LogicalCTETable is for CTE table
 type LogicalCTETable struct {
-	logicalSchemaProducer
+	logicalop.LogicalSchemaProducer
 
 	seedStat     *property.StatsInfo
 	name         string
@@ -2334,10 +2337,10 @@ func (p *LogicalCTE) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
 //
 // We use this property to do complex optimizations for CTEs.
 type LogicalSequence struct {
-	baseLogicalPlan
+	logicalop.BaseLogicalPlan
 }
 
 // Schema returns its last child(which is the main query plan)'s schema.
 func (p *LogicalSequence) Schema() *expression.Schema {
-	return p.children[len(p.children)-1].Schema()
+	return p.Children()[p.ChildLen()-1].Schema()
 }

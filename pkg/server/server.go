@@ -119,7 +119,7 @@ type Server struct {
 	driver            IDriver
 	listener          net.Listener
 	socket            net.Listener
-	concurrentLimiter *TokenLimiter
+	concurrentLimiter *util.TokenLimiter
 
 	rwlock  sync.RWMutex
 	clients map[uint64]*clientConn
@@ -201,7 +201,7 @@ func (s *Server) ConnectionCount() int {
 	return cnt
 }
 
-func (s *Server) getToken() *Token {
+func (s *Server) getToken() *util.Token {
 	start := time.Now()
 	tok := s.concurrentLimiter.Get()
 	metrics.TokenGauge.Inc()
@@ -210,7 +210,7 @@ func (s *Server) getToken() *Token {
 	return tok
 }
 
-func (s *Server) releaseToken(token *Token) {
+func (s *Server) releaseToken(token *util.Token) {
 	s.concurrentLimiter.Put(token)
 	metrics.TokenGauge.Dec()
 }
@@ -242,7 +242,7 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 	s := &Server{
 		cfg:               cfg,
 		driver:            driver,
-		concurrentLimiter: NewTokenLimiter(cfg.TokenLimit),
+		concurrentLimiter: util.NewTokenLimiter(cfg.TokenLimit),
 		clients:           make(map[uint64]*clientConn),
 		internalSessions:  make(map[any]struct{}, 100),
 		health:            uatomic.NewBool(false),
@@ -907,6 +907,13 @@ func (s *Server) Kill(connectionID uint64, query bool, maxExecutionTime bool) {
 		// Mark the client connection status as WaitShutdown, when clientConn.Run detect
 		// this, it will end the dispatch loop and exit.
 		conn.setStatus(connStatusWaitShutdown)
+		if conn.bufReadConn != nil {
+			// When attempting to 'kill connection' and TiDB is stuck in the network stack while writing packets,
+			// we can quickly exit the network stack and terminate the SQL execution by setting WriteDeadline.
+			if err := conn.bufReadConn.SetWriteDeadline(time.Now()); err != nil {
+				logutil.BgLogger().Warn("error setting write deadline for kill.", zap.Error(err))
+			}
+		}
 	}
 	killQuery(conn, maxExecutionTime)
 }
@@ -940,6 +947,7 @@ func killQuery(conn *clientConn, maxExecutionTime bool) {
 			logutil.BgLogger().Warn("error setting read deadline for kill.", zap.Error(err))
 		}
 	}
+	sessVars.SQLKiller.FinishResultSet()
 }
 
 // KillSysProcesses kill sys processes such as auto analyze.

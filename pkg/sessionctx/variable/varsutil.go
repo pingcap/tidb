@@ -542,6 +542,7 @@ var GAFunction4ExpressionIndex = map[string]struct{}{
 	ast.JSONMergePreserve: {},
 	ast.JSONPretty:        {},
 	ast.JSONQuote:         {},
+	ast.JSONSchemaValid:   {},
 	ast.JSONSearch:        {},
 	ast.JSONStorageSize:   {},
 	ast.JSONDepth:         {},

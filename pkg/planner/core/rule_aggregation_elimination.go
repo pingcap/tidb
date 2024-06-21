@@ -67,7 +67,7 @@ func (a *aggregationEliminateChecker) tryToEliminateAggregation(agg *LogicalAggr
 	schemaByGroupby := expression.NewSchema(agg.GetGroupByCols()...)
 	coveredByUniqueKey := false
 	var uniqueKey expression.KeyInfo
-	for _, key := range agg.children[0].Schema().Keys {
+	for _, key := range agg.Children()[0].Schema().Keys {
 		if schemaByGroupby.ColumnsIndices(key) != nil {
 			coveredByUniqueKey = true
 			uniqueKey = key
@@ -79,8 +79,8 @@ func (a *aggregationEliminateChecker) tryToEliminateAggregation(agg *LogicalAggr
 			return nil
 		}
 		// GroupByCols has unique key, so this aggregation can be removed.
-		if ok, proj := ConvertAggToProj(agg, agg.schema); ok {
-			proj.SetChildren(agg.children[0])
+		if ok, proj := ConvertAggToProj(agg, agg.Schema()); ok {
+			proj.SetChildren(agg.Children()[0])
 			appendAggregationEliminateTraceStep(agg, proj, uniqueKey, opt)
 			return proj
 		}
@@ -107,14 +107,14 @@ func (*aggregationEliminateChecker) tryToEliminateDistinct(agg *LogicalAggregati
 				distinctByUniqueKey := false
 				schemaByDistinct := expression.NewSchema(cols...)
 				var uniqueKey expression.KeyInfo
-				for _, key := range agg.children[0].Schema().Keys {
+				for _, key := range agg.Children()[0].Schema().Keys {
 					if schemaByDistinct.ColumnsIndices(key) != nil {
 						distinctByUniqueKey = true
 						uniqueKey = key
 						break
 					}
 				}
-				for _, key := range agg.children[0].Schema().UniqueKeys {
+				for _, key := range agg.Children()[0].Schema().UniqueKeys {
 					if schemaByDistinct.ColumnsIndices(key) != nil {
 						distinctByUniqueKey = true
 						uniqueKey = key
@@ -202,7 +202,7 @@ func rewriteExpr(ctx expression.BuildContext, aggFunc *aggregation.AggFuncDesc) 
 	case ast.AggFuncCount:
 		if aggFunc.Mode == aggregation.FinalMode &&
 			len(aggFunc.Args) == 1 &&
-			mysql.HasNotNullFlag(aggFunc.Args[0].GetType().GetFlag()) {
+			mysql.HasNotNullFlag(aggFunc.Args[0].GetType(ctx.GetEvalCtx()).GetFlag()) {
 			return true, wrapCastFunction(ctx, aggFunc.Args[0], aggFunc.RetTp)
 		}
 		return true, rewriteCount(ctx, aggFunc.Args, aggFunc.RetTp)
@@ -221,7 +221,7 @@ func rewriteCount(ctx expression.BuildContext, exprs []expression.Expression, ta
 	// If is count(expr not null), we will change it to constant 1.
 	isNullExprs := make([]expression.Expression, 0, len(exprs))
 	for _, expr := range exprs {
-		if mysql.HasNotNullFlag(expr.GetType().GetFlag()) {
+		if mysql.HasNotNullFlag(expr.GetType(ctx.GetEvalCtx()).GetFlag()) {
 			isNullExprs = append(isNullExprs, expression.NewZero())
 		} else {
 			isNullExpr := expression.NewFunctionInternal(ctx, ast.IsNull, types.NewFieldType(mysql.TypeTiny), expr)
@@ -242,14 +242,14 @@ func rewriteBitFunc(ctx expression.BuildContext, funcType string, arg expression
 	if funcType != ast.AggFuncBitAnd {
 		finalExpr = expression.NewFunctionInternal(ctx, ast.Ifnull, targetTp, outerCast, expression.NewZero())
 	} else {
-		finalExpr = expression.NewFunctionInternal(ctx, ast.Ifnull, outerCast.GetType(), outerCast, &expression.Constant{Value: types.NewUintDatum(math.MaxUint64), RetType: targetTp})
+		finalExpr = expression.NewFunctionInternal(ctx, ast.Ifnull, outerCast.GetType(ctx.GetEvalCtx()), outerCast, &expression.Constant{Value: types.NewUintDatum(math.MaxUint64), RetType: targetTp})
 	}
 	return finalExpr
 }
 
 // wrapCastFunction will wrap a cast if the targetTp is not equal to the arg's.
 func wrapCastFunction(ctx expression.BuildContext, arg expression.Expression, targetTp *types.FieldType) expression.Expression {
-	if arg.GetType().Equal(targetTp) {
+	if arg.GetType(ctx.GetEvalCtx()).Equal(targetTp) {
 		return arg
 	}
 	return expression.BuildCastFunction(ctx, arg, targetTp)

@@ -590,7 +590,7 @@ func (p *Plan) initOptions(ctx context.Context, seCtx sessionctx.Context, option
 	}
 
 	optAsString := func(opt *plannercore.LoadDataOpt) (string, error) {
-		if opt.Value.GetType().GetType() != mysql.TypeVarString {
+		if opt.Value.GetType(seCtx.GetExprCtx().GetEvalCtx()).GetType() != mysql.TypeVarString {
 			return "", exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}
 		val, isNull, err2 := opt.Value.EvalString(seCtx.GetExprCtx().GetEvalCtx(), chunk.Row{})
@@ -601,7 +601,7 @@ func (p *Plan) initOptions(ctx context.Context, seCtx sessionctx.Context, option
 	}
 	optAsInt64 := func(opt *plannercore.LoadDataOpt) (int64, error) {
 		// current parser takes integer and bool as mysql.TypeLonglong
-		if opt.Value.GetType().GetType() != mysql.TypeLonglong || mysql.HasIsBooleanFlag(opt.Value.GetType().GetFlag()) {
+		if opt.Value.GetType(seCtx.GetExprCtx().GetEvalCtx()).GetType() != mysql.TypeLonglong || mysql.HasIsBooleanFlag(opt.Value.GetType(seCtx.GetExprCtx().GetEvalCtx()).GetFlag()) {
 			return 0, exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}
 		val, isNull, err2 := opt.Value.EvalInt(seCtx.GetExprCtx().GetEvalCtx(), chunk.Row{})
@@ -756,6 +756,10 @@ func (p *Plan) initOptions(ctx context.Context, seCtx sessionctx.Context, option
 	// will NOT cross file chunk.
 	if p.SplitFile && p.IgnoreLines > 1 {
 		return exeerrors.ErrInvalidOptionVal.FastGenByArgs("skip_rows, should be <= 1 when split-file is enabled")
+	}
+
+	if p.SplitFile && len(p.LinesTerminatedBy) == 0 {
+		return exeerrors.ErrInvalidOptionVal.FastGenByArgs("lines_terminated_by, should not be empty when use split_file")
 	}
 
 	p.adjustOptions(targetNodeCPUCnt)

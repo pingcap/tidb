@@ -17,6 +17,7 @@ go_test(
         "//pkg/domain",
         "//pkg/expression",
         "//pkg/expression/aggregation",
+        "//pkg/expression/contextstatic",
         "//pkg/parser/ast",
         "//pkg/parser/model",
         "//pkg/parser/mysql",

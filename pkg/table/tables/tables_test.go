@@ -426,7 +426,8 @@ func TestHiddenColumn(t *testing.T) {
 	colInfo[1].Hidden = true
 	colInfo[3].Hidden = true
 	colInfo[5].Hidden = true
-
+	tc := tb.(*tables.TableCommon)
+	tc.ClearColumnsCache()
 	// Basic test
 	cols := tb.VisibleCols()
 	require.NotNil(t, table.FindCol(cols, "a"))

@@ -29,7 +29,7 @@ type memBuffer struct {
 	isPipelinedDML bool
 }
 
-func newMemBuffer(m tikv.MemBuffer, isPipelinedDML bool) kv.MemBuffer {
+func newMemBuffer(m tikv.MemBuffer, isPipelinedDML bool) *memBuffer {
 	if m == nil {
 		return nil
 	}

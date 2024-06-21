@@ -283,8 +283,10 @@ func (do *Domain) loadInfoSchema(startTS uint64) (infoschema.InfoSchema, bool, i
 		is, relatedChanges, diffTypes, err := do.tryLoadSchemaDiffs(m, currentSchemaVersion, neededSchemaVersion, startTS)
 		if err == nil {
 			infoschema_metrics.LoadSchemaDurationLoadDiff.Observe(time.Since(startTime).Seconds())
+			isV2, _ := infoschema.IsV2(is)
 			do.infoCache.Insert(is, schemaTs)
 			logutil.BgLogger().Info("diff load InfoSchema success",
+				zap.Bool("isV2", isV2),
 				zap.Int64("currentSchemaVersion", currentSchemaVersion),
 				zap.Int64("neededSchemaVersion", neededSchemaVersion),
 				zap.Duration("start time", time.Since(startTime)),
@@ -312,8 +314,6 @@ func (do *Domain) loadInfoSchema(startTS uint64) (infoschema.InfoSchema, bool, i
 	if err != nil {
 		return nil, false, currentSchemaVersion, nil, err
 	}
-	// clear data
-	do.infoCache.Data = infoschema.NewData()
 	newISBuilder, err := infoschema.NewBuilder(do, do.sysFacHack, do.infoCache.Data).InitWithDBInfos(schemas, policies, resourceGroups, neededSchemaVersion)
 	if err != nil {
 		return nil, false, currentSchemaVersion, nil, err
@@ -436,7 +436,14 @@ func (*Domain) fetchSchemasWithTables(schemas []*model.DBInfo, m *meta.Meta, don
 			infoschema.ConvertCharsetCollateToLowerCaseIfNeed(tbl)
 			// Check whether the table is in repair mode.
 			if domainutil.RepairInfo.InRepairMode() && domainutil.RepairInfo.CheckAndFetchRepairedTable(di, tbl) {
-				continue
+				if tbl.State != model.StatePublic {
+					// Do not load it because we are reparing the table and the table info could be `bad`
+					// before repair is done.
+					continue
+				}
+				// If the state is public, it means that the DDL job is done, but the table
+				// haven't been deleted from the repair table list.
+				// Since the repairment is done and table is visible, we should load it.
 			}
 			di.Tables = append(di.Tables, tbl)
 		}
@@ -459,6 +466,8 @@ func (do *Domain) tryLoadSchemaDiffs(m *meta.Meta, usedVersion, newVersion int64
 		if diff == nil {
 			// Empty diff means the txn of generating schema version is committed, but the txn of `runDDLJob` is not or fail.
 			// It is safe to skip the empty diff because the infoschema is new enough and consistent.
+			logutil.BgLogger().Info("diff load InfoSchema get empty schema diff", zap.Int64("version", usedVersion))
+			do.infoCache.InsertEmptySchemaVersion(usedVersion)
 			continue
 		}
 		diffs = append(diffs, diff)
@@ -473,6 +482,7 @@ func (do *Domain) tryLoadSchemaDiffs(m *meta.Meta, usedVersion, newVersion int64
 	diffTypes := make([]string, 0, len(diffs))
 	for _, diff := range diffs {
 		if diff.RegenerateSchemaMap {
+			do.infoCache.Data = infoschema.NewData()
 			return nil, nil, nil, errors.Errorf("Meets a schema diff with RegenerateSchemaMap flag")
 		}
 		ids, err := builder.ApplyDiff(m, diff)
@@ -1202,6 +1212,7 @@ func (do *Domain) Init(
 		ddl.WithInfoCache(do.infoCache),
 		ddl.WithHook(callback),
 		ddl.WithLease(ddlLease),
+		ddl.WithSchemaLoader(do),
 	)
 
 	failpoint.Inject("MockReplaceDDL", func(val failpoint.Value) {
@@ -2240,6 +2251,9 @@ func (do *Domain) UpdateTableStatsLoop(ctx, initStatsCtx sessionctx.Context) err
 	// This is because the updated worker's primary responsibilities are to update the change delta and handle DDL operations.
 	// These tasks do not interfere with or depend on the initialization process.
 	do.wg.Run(func() { do.updateStatsWorker(ctx, owner) }, "updateStatsWorker")
+	do.wg.Run(func() {
+		do.handleDDLEvent()
+	}, "handleDDLEvent")
 	// Wait for the stats worker to finish the initialization.
 	// Otherwise, we may start the auto analyze worker before the stats cache is initialized.
 	do.wg.Run(
@@ -2256,6 +2270,25 @@ func (do *Domain) UpdateTableStatsLoop(ctx, initStatsCtx sessionctx.Context) err
 		},
 		"analyzeJobsCleanupWorker",
 	)
+	do.wg.Run(
+		func() {
+			// The initStatsCtx is used to store the internal session for initializing stats,
+			// so we need the gc min start ts calculation to track it as an internal session.
+			// Since the session manager may not be ready at this moment, `infosync.StoreInternalSession` can fail.
+			// we need to retry until the session manager is ready or the init stats completes.
+			for !infosync.StoreInternalSession(initStatsCtx) {
+				waitRetry := time.After(time.Second)
+				select {
+				case <-do.StatsHandle().InitStatsDone:
+					return
+				case <-waitRetry:
+				}
+			}
+			<-do.StatsHandle().InitStatsDone
+			infosync.DeleteInternalSession(initStatsCtx)
+		},
+		"RemoveInitStatsFromInternalSessions",
+	)
 	return nil
 }
 
@@ -2268,9 +2301,6 @@ func quitStatsOwner(do *Domain, mgr owner.Manager) {
 func (do *Domain) StartLoadStatsSubWorkers(ctxList []sessionctx.Context) {
 	statsHandle := do.StatsHandle()
 	for _, ctx := range ctxList {
-		// The sync load will affect how optimizer choose the plan.
-		// We need to assign high priority to it so that we can get the stats as quick as we can.
-		ctx.GetSessionVars().StmtCtx.Priority = mysql.HighPriority
 		do.wg.Add(1)
 		go statsHandle.SubLoadWorker(ctx, do.exit, do.wg)
 	}
@@ -2392,6 +2422,24 @@ func (*Domain) updateStatsWorkerExitPreprocessing(statsHandle *handle.Handle, ow
 	}
 }
 
+func (do *Domain) handleDDLEvent() {
+	logutil.BgLogger().Info("handleDDLEvent started.")
+	defer util.Recover(metrics.LabelDomain, "handleDDLEvent", nil, false)
+	statsHandle := do.StatsHandle()
+	for {
+		select {
+		case <-do.exit:
+			return
+			// This channel is sent only by ddl owner.
+		case t := <-statsHandle.DDLEventCh():
+			err := statsHandle.HandleDDLEvent(t)
+			if err != nil {
+				logutil.BgLogger().Error("handle ddl event failed", zap.String("event", t.String()), zap.Error(err))
+			}
+		}
+	}
+}
+
 func (do *Domain) updateStatsWorker(_ sessionctx.Context, owner owner.Manager) {
 	defer util.Recover(metrics.LabelDomain, "updateStatsWorker", nil, false)
 	logutil.BgLogger().Info("updateStatsWorker started.")
@@ -2418,12 +2466,6 @@ func (do *Domain) updateStatsWorker(_ sessionctx.Context, owner owner.Manager) {
 		case <-do.exit:
 			do.updateStatsWorkerExitPreprocessing(statsHandle, owner)
 			return
-			// This channel is sent only by ddl owner.
-		case t := <-statsHandle.DDLEventCh():
-			err := statsHandle.HandleDDLEvent(t)
-			if err != nil {
-				logutil.BgLogger().Error("handle ddl event failed", zap.String("event", t.String()), zap.Error(err))
-			}
 		case <-deltaUpdateTicker.C:
 			err := statsHandle.DumpStatsDeltaToKV(false)
 			if err != nil {

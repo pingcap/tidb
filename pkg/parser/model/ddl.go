@@ -386,7 +386,8 @@ func NewMultiSchemaInfo() *MultiSchemaInfo {
 	}
 }
 
-// SubJob is a representation of one DDL schema change. A Job may contain zero(when multi-schema change is not applicable) or more SubJobs.
+// SubJob is a representation of one DDL schema change. A Job may contain zero
+// (when multi-schema change is not applicable) or more SubJobs.
 type SubJob struct {
 	Type        ActionType      `json:"type"`
 	Args        []interface{}   `json:"-"`
@@ -546,7 +547,10 @@ type Job struct {
 	// Priority is only used to set the operation priority of adding indices.
 	Priority int `json:"priority"`
 
-	// SeqNum is the total order in all DDLs, it's used to identify the order of DDL.
+	// SeqNum is the total order in all DDLs, it's used to identify the order of
+	// moving the job into DDL history, not the order of the job execution.
+	// fast create table doesn't honor this field, there might duplicate seq_num in this case.
+	// TODO: deprecated it, as it forces 'moving jobs into DDL history' part to be serial.
 	SeqNum uint64 `json:"seq_num"`
 
 	// Charset is the charset when the DDL Job is created.
@@ -729,7 +733,8 @@ func (job *Job) Decode(b []byte) error {
 	return errors.Trace(err)
 }
 
-// DecodeArgs decodes job args.
+// DecodeArgs decodes serialized job arguments from job.RawArgs into the given
+// variables, and also save the result in job.Args.
 func (job *Job) DecodeArgs(args ...interface{}) error {
 	var rawArgs []json.RawMessage
 	if err := json.Unmarshal(job.RawArgs, &rawArgs); err != nil {
@@ -746,6 +751,9 @@ func (job *Job) DecodeArgs(args ...interface{}) error {
 			return errors.Trace(err)
 		}
 	}
+	// TODO(lance6716): don't assign to job.Args here, because the types of argument
+	// `args` are always pointer type. But sometimes in the `job` literals we don't
+	// use pointer
 	job.Args = args[:sz]
 	return nil
 }
@@ -950,6 +958,14 @@ func (job *Job) NotStarted() bool {
 	return job.State == JobStateNone || job.State == JobStateQueueing
 }
 
+// InFinalState returns whether the job is in a final state of job FSM.
+// TODO JobStateRollbackDone is not a final state, maybe we should add a JobStateRollbackSynced
+// state to diff between the entrance of JobStateRollbackDone and move the job to
+// history where the job is in final state.
+func (job *Job) InFinalState() bool {
+	return job.State == JobStateSynced || job.State == JobStateCancelled || job.State == JobStatePaused
+}
+
 // MayNeedReorg indicates that this job may need to reorganize the data.
 func (job *Job) MayNeedReorg() bool {
 	switch job.Type {
@@ -1016,8 +1032,13 @@ func (job *Job) GetInvolvingSchemaInfo() []InvolvingSchemaInfo {
 	if len(job.InvolvingSchemaInfo) > 0 {
 		return job.InvolvingSchemaInfo
 	}
+	table := job.TableName
+	// for schema related DDL, such as 'drop schema xxx'
+	if table == "" {
+		table = InvolvingAll
+	}
 	return []InvolvingSchemaInfo{
-		{Database: job.SchemaName, Table: job.TableName},
+		{Database: job.SchemaName, Table: table},
 	}
 }
 
@@ -1034,9 +1055,13 @@ const (
 	JobStateRollingback  JobState = 2
 	JobStateRollbackDone JobState = 3
 	JobStateDone         JobState = 4
-	JobStateCancelled    JobState = 5
-	// JobStateSynced is used to mark the information about the completion of this job
-	// has been synchronized to all servers.
+	// JobStateCancelled is the state to do the job is cancelled, this state only
+	// persisted to history table and queue too.
+	JobStateCancelled JobState = 5
+	// JobStateSynced means the job is done and has been synchronized to all servers.
+	// job of this state will not be written to the tidb_ddl_job table, when job
+	// is in `done` state and version synchronized, the job will be deleted from
+	// tidb_ddl_job table, and we insert a `synced` job to the history table and queue directly.
 	JobStateSynced JobState = 6
 	// JobStateCancelling is used to mark the DDL job is cancelled by the client, but the DDL work hasn't handle it.
 	JobStateCancelling JobState = 7

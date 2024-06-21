@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
@@ -470,15 +471,6 @@ func (*partitionProcessor) reconstructTableColNames(ds *DataSource) ([]*types.Fi
 			})
 			continue
 		}
-		if colExpr.ID == model.ExtraPidColID {
-			names = append(names, &types.FieldName{
-				DBName:      ds.DBName,
-				TblName:     ds.tableInfo.Name,
-				ColName:     model.ExtraPartitionIdName,
-				OrigColName: model.ExtraPartitionIdName,
-			})
-			continue
-		}
 		if colExpr.ID == model.ExtraPhysTblID {
 			names = append(names, &types.FieldName{
 				DBName:      ds.DBName,
@@ -518,7 +510,7 @@ func (s *partitionProcessor) processHashOrKeyPartition(ds *DataSource, pi *model
 	}
 	tableDual := LogicalTableDual{RowCount: 0}.Init(ds.SCtx(), ds.QueryBlockOffset())
 	tableDual.SCtx().GetSessionVars().StmtCtx.SetSkipPlanCache("TableDual/Static partition pruning mode")
-	tableDual.schema = ds.Schema()
+	tableDual.SetSchema(ds.Schema())
 	appendNoPartitionChildTraceStep(ds, tableDual, opt)
 	return tableDual, nil
 }
@@ -1026,7 +1018,7 @@ func (s *partitionProcessor) pruneRangePartition(ctx base.PlanContext, pi *model
 	pruner := rangePruner{
 		lessThan: lessThanDataInt{
 			data:     partExpr.ForRangePruning.LessThan,
-			unsigned: mysql.HasUnsignedFlag(col.GetType().GetFlag()),
+			unsigned: mysql.HasUnsignedFlag(col.GetStaticType().GetFlag()),
 			maxvalue: partExpr.ForRangePruning.MaxValue,
 		},
 		col:        col,
@@ -1039,7 +1031,7 @@ func (s *partitionProcessor) pruneRangePartition(ctx base.PlanContext, pi *model
 }
 
 func (s *partitionProcessor) processRangePartition(ds *DataSource, pi *model.PartitionInfo, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, error) {
-	used, err := s.pruneRangePartition(ds.SCtx(), pi, ds.table.(table.PartitionedTable), ds.allConds, ds.TblCols, ds.names)
+	used, err := s.pruneRangePartition(ds.SCtx(), pi, ds.table.(table.PartitionedTable), ds.allConds, ds.TblCols, ds.OutputNames())
 	if err != nil {
 		return nil, err
 	}
@@ -1160,7 +1152,7 @@ func minCmp(ctx base.PlanContext, lowVal []types.Datum, columnsPruner *rangeColu
 							return false
 						}
 					} else {
-						if con.Value.GetInt64() == types.IntergerSignedLowerBound(col.GetType().GetType()) {
+						if con.Value.GetInt64() == types.IntergerSignedLowerBound(col.GetStaticType().GetType()) {
 							return false
 						}
 					}
@@ -1421,10 +1413,10 @@ func partitionRangeForInExpr(sctx base.PlanContext, args []expression.Expression
 			// replace fn(col) to fn(const)
 			partFnConst := replaceColumnWithConst(pruner.partFn, constExpr)
 			val, _, err = partFnConst.EvalInt(sctx.GetExprCtx().GetEvalCtx(), chunk.Row{})
-			unsigned = mysql.HasUnsignedFlag(partFnConst.GetType().GetFlag())
+			unsigned = mysql.HasUnsignedFlag(partFnConst.GetStaticType().GetFlag())
 		} else {
 			val, _, err = constExpr.EvalInt(sctx.GetExprCtx().GetEvalCtx(), chunk.Row{})
-			unsigned = mysql.HasUnsignedFlag(constExpr.GetType().GetFlag())
+			unsigned = mysql.HasUnsignedFlag(constExpr.GetType(sctx.GetExprCtx().GetEvalCtx()).GetFlag())
 		}
 		if err != nil {
 			return pruner.fullRange()
@@ -1542,7 +1534,7 @@ func (p *rangePruner) extractDataForPrune(sctx base.PlanContext, expr expression
 	c, isNull, err := constExpr.EvalInt(sctx.GetExprCtx().GetEvalCtx(), chunk.Row{})
 	if err == nil && !isNull {
 		ret.c = c
-		ret.unsigned = mysql.HasUnsignedFlag(constExpr.GetType().GetFlag())
+		ret.unsigned = mysql.HasUnsignedFlag(constExpr.GetType(sctx.GetExprCtx().GetEvalCtx()).GetFlag())
 		return ret, true
 	}
 	return ret, false
@@ -1782,8 +1774,8 @@ func (s *partitionProcessor) makeUnionAllChildren(ds *DataSource, pi *model.Part
 			}
 			// Not a deep copy.
 			newDataSource := *ds
-			newDataSource.baseLogicalPlan = newBaseLogicalPlan(ds.SCtx(), plancodec.TypeTableScan, &newDataSource, ds.QueryBlockOffset())
-			newDataSource.schema = ds.schema.Clone()
+			newDataSource.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(ds.SCtx(), plancodec.TypeTableScan, &newDataSource, ds.QueryBlockOffset())
+			newDataSource.SetSchema(ds.Schema().Clone())
 			newDataSource.Columns = make([]*model.ColumnInfo, len(ds.Columns))
 			copy(newDataSource.Columns, ds.Columns)
 			idx := i
@@ -1809,7 +1801,7 @@ func (s *partitionProcessor) makeUnionAllChildren(ds *DataSource, pi *model.Part
 	if len(children) == 0 {
 		// No result after table pruning.
 		tableDual := LogicalTableDual{RowCount: 0}.Init(ds.SCtx(), ds.QueryBlockOffset())
-		tableDual.schema = ds.Schema()
+		tableDual.SetSchema(ds.Schema())
 		appendMakeUnionAllChildrenTranceStep(ds, usedDefinition, tableDual, children, opt)
 		return tableDual, nil
 	}
@@ -1820,7 +1812,7 @@ func (s *partitionProcessor) makeUnionAllChildren(ds *DataSource, pi *model.Part
 	}
 	unionAll := LogicalPartitionUnionAll{}.Init(ds.SCtx(), ds.QueryBlockOffset())
 	unionAll.SetChildren(children...)
-	unionAll.SetSchema(ds.schema.Clone())
+	unionAll.SetSchema(ds.Schema().Clone())
 	appendMakeUnionAllChildrenTranceStep(ds, usedDefinition, unionAll, children, opt)
 	return unionAll, nil
 }

@@ -804,6 +804,9 @@ func (cc *clientConn) openSessionAndDoAuth(authData []byte, authPlugin string, z
 	return nil
 }
 
+// mockOSUserForAuthSocketTest should only be used in test
+var mockOSUserForAuthSocketTest atomic.Pointer[string]
+
 // Check if the Authentication Plugin of the server, client and user configuration matches
 func (cc *clientConn) checkAuthPlugin(ctx context.Context, resp *handshake.Response41) ([]byte, error) {
 	// Open a context unless this was done before.
@@ -852,7 +855,15 @@ func (cc *clientConn) checkAuthPlugin(ctx context.Context, resp *handshake.Respo
 		if err != nil {
 			return nil, err
 		}
-		return []byte(user.Username), nil
+		uname := user.Username
+
+		if intest.InTest {
+			if p := mockOSUserForAuthSocketTest.Load(); p != nil {
+				uname = *p
+			}
+		}
+
+		return []byte(uname), nil
 	}
 	if len(userplugin) == 0 {
 		// No user plugin set, assuming MySQL Native Password
@@ -1951,8 +1962,7 @@ func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.Stm
 		return nil, err1
 	}
 	for idxKey, idxVal := range idxVals {
-		isCommonHd := isCommonHandle[idxKey]
-		h, err2 := tablecodec.DecodeHandleInUniqueIndexValue(idxVal, isCommonHd)
+		h, err2 := tablecodec.DecodeHandleInIndexValue(idxVal)
 		if err2 != nil {
 			return nil, err2
 		}
@@ -2049,6 +2059,12 @@ func (cc *clientConn) handleStmt(
 		if cc.getStatus() == connStatusShutdown {
 			return false, exeerrors.ErrQueryInterrupted
 		}
+		cc.ctx.GetSessionVars().SQLKiller.Finish = func() {
+			//nolint: errcheck
+			rs.Finish()
+		}
+		cc.ctx.GetSessionVars().SQLKiller.InWriteResultSet.Store(true)
+		defer cc.ctx.GetSessionVars().SQLKiller.InWriteResultSet.Store(false)
 		if retryable, err := cc.writeResultSet(ctx, rs, false, status, 0); err != nil {
 			return retryable, err
 		}

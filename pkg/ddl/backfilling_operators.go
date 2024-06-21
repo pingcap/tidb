@@ -120,7 +120,6 @@ func NewAddIndexIngestPipeline(
 	sessPool opSessPool,
 	backendCtx ingest.BackendCtx,
 	engines []ingest.Engine,
-	sessCtx sessionctx.Context,
 	jobID int64,
 	tbl table.PhysicalTable,
 	idxInfos []*model.IndexInfo,
@@ -137,7 +136,7 @@ func NewAddIndexIngestPipeline(
 		indexes = append(indexes, index)
 	}
 	reqSrc := getDDLRequestSource(model.ActionAddIndex)
-	copCtx, err := copr.NewCopContext(tbl.Meta(), idxInfos, sessCtx, reqSrc)
+	copCtx, err := NewReorgCopContext(store, reorgMeta, tbl.Meta(), idxInfos, reqSrc)
 	if err != nil {
 		return nil, err
 	}
@@ -174,7 +173,6 @@ func NewWriteIndexToExternalStoragePipeline(
 	store kv.Storage,
 	extStoreURI string,
 	sessPool opSessPool,
-	sessCtx sessionctx.Context,
 	jobID, subtaskID int64,
 	tbl table.PhysicalTable,
 	idxInfos []*model.IndexInfo,
@@ -193,7 +191,7 @@ func NewWriteIndexToExternalStoragePipeline(
 		indexes = append(indexes, index)
 	}
 	reqSrc := getDDLRequestSource(model.ActionAddIndex)
-	copCtx, err := copr.NewCopContext(tbl.Meta(), idxInfos, sessCtx, reqSrc)
+	copCtx, err := NewReorgCopContext(store, reorgMeta, tbl.Meta(), idxInfos, reqSrc)
 	if err != nil {
 		return nil, err
 	}
@@ -444,9 +442,6 @@ func (w *tableScanWorker) Close() {
 	}
 }
 
-// OperatorCallBackForTest is used for test to mock scan record error.
-var OperatorCallBackForTest func()
-
 func (w *tableScanWorker) scanRecords(task TableScanTask, sender func(IndexRecordChunk)) {
 	logutil.Logger(w.ctx).Info("start a table scan task",
 		zap.Int("id", task.ID), zap.Stringer("task", task))
@@ -456,9 +451,7 @@ func (w *tableScanWorker) scanRecords(task TableScanTask, sender func(IndexRecor
 		failpoint.Inject("mockScanRecordError", func(_ failpoint.Value) {
 			failpoint.Return(errors.New("mock scan record error"))
 		})
-		failpoint.Inject("scanRecordExec", func(_ failpoint.Value) {
-			OperatorCallBackForTest()
-		})
+		failpoint.InjectCall("scanRecordExec")
 		rs, err := buildTableScan(w.ctx, w.copCtx.GetBase(), startTS, task.Start, task.End)
 		if err != nil {
 			return err
@@ -517,16 +510,26 @@ func NewWriteExternalStoreOperator(
 	memoryQuota uint64,
 	reorgMeta *model.DDLReorgMeta,
 ) *WriteExternalStoreOperator {
+	// due to multi-schema-change, we may merge processing multiple indexes into one
+	// local backend.
+	hasUnique := false
+	for _, index := range indexes {
+		if index.Meta().Unique {
+			hasUnique = true
+			break
+		}
+	}
+
 	pool := workerpool.NewWorkerPool(
 		"WriteExternalStoreOperator",
 		util.DDL,
 		concurrency,
 		func() workerpool.Worker[IndexRecordChunk, IndexWriteResult] {
 			writers := make([]ingest.Writer, 0, len(indexes))
-			for i, index := range indexes {
+			for i := range indexes {
 				builder := external.NewWriterBuilder().
 					SetOnCloseFunc(onClose).
-					SetKeyDuplicationEncoding(index.Meta().Unique).
+					SetKeyDuplicationEncoding(hasUnique).
 					SetMemorySizeLimit(memoryQuota).
 					SetGroupOffset(i)
 				writerID := uuid.New().String()
@@ -580,6 +583,8 @@ func NewIndexIngestOperator(
 	concurrency int,
 	reorgMeta *model.DDLReorgMeta,
 ) *IndexIngestOperator {
+	writerCfg := getLocalWriterConfig(len(indexes), concurrency)
+
 	var writerIDAlloc atomic.Int32
 	pool := workerpool.NewWorkerPool(
 		"indexIngestOperator",
@@ -589,9 +594,10 @@ func NewIndexIngestOperator(
 			writers := make([]ingest.Writer, 0, len(indexes))
 			for i := range indexes {
 				writerID := int(writerIDAlloc.Add(1))
-				writer, err := engines[i].CreateWriter(writerID)
+				writer, err := engines[i].CreateWriter(writerID, writerCfg)
 				if err != nil {
 					logutil.Logger(ctx).Error("create index ingest worker failed", zap.Error(err))
+					ctx.onError(err)
 					return nil
 				}
 				writers = append(writers, writer)
@@ -714,10 +720,7 @@ func (w *indexIngestBaseWorker) initSessCtx() {
 			return
 		}
 		w.restore = restoreSessCtx(sessCtx)
-		if err := initSessCtx(sessCtx,
-			w.reorgMeta.SQLMode,
-			w.reorgMeta.Location,
-			w.reorgMeta.ResourceGroupName); err != nil {
+		if err := initSessCtx(sessCtx, w.reorgMeta); err != nil {
 			w.ctx.onError(err)
 			return
 		}
@@ -749,13 +752,12 @@ func (w *indexIngestBaseWorker) WriteChunk(rs *IndexRecordChunk) (count int, nex
 	failpoint.Inject("mockWriteLocalError", func(_ failpoint.Value) {
 		failpoint.Return(0, nil, errors.New("mock write local error"))
 	})
-	failpoint.Inject("writeLocalExec", func(_ failpoint.Value) {
-		OperatorCallBackForTest()
-	})
+	failpoint.InjectCall("writeLocalExec", rs.Done)
 
 	oprStartTime := time.Now()
 	vars := w.se.GetSessionVars()
-	cnt, lastHandle, err := writeChunkToLocal(w.ctx, w.writers, w.indexes, w.copCtx, vars, rs.Chunk)
+	sc := vars.StmtCtx
+	cnt, lastHandle, err := writeChunkToLocal(w.ctx, w.writers, w.indexes, w.copCtx, sc.TimeZone(), sc.ErrCtx(), vars.GetWriteStmtBufs(), rs.Chunk)
 	if err != nil || cnt == 0 {
 		return 0, nil, err
 	}
@@ -833,6 +835,7 @@ func (s *indexWriteResultSink) flush() error {
 	failpoint.Inject("mockFlushError", func(_ failpoint.Value) {
 		failpoint.Return(errors.New("mock flush error"))
 	})
+	// TODO(lance6716): convert to ErrKeyExists inside Flush
 	_, _, errIdxID, err := s.backendCtx.Flush(ingest.FlushModeForceFlushAndImport)
 	if err != nil {
 		if common.ErrFoundDuplicateKeys.Equal(err) {
@@ -847,7 +850,7 @@ func (s *indexWriteResultSink) flush() error {
 				logutil.Logger(s.ctx).Error("index not found", zap.Int64("indexID", errIdxID))
 				return kv.ErrKeyExists
 			}
-			return convertToKeyExistsErr(err, idxInfo.Meta(), s.tbl.Meta())
+			return ingest.TryConvertToKeyExistsErr(err, idxInfo.Meta(), s.tbl.Meta())
 		}
 		logutil.Logger(s.ctx).Error("flush error",
 			zap.String("category", "ddl"), zap.Error(err))

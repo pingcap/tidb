@@ -32,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/model"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/table"
 	tidblogutil "github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
@@ -105,21 +104,15 @@ func (r *readIndexExecutor) RunSubtask(ctx context.Context, subtask *proto.Subta
 		return err
 	}
 
-	sessCtx, err := newSessCtx(
-		r.d.store, r.job.ReorgMeta.SQLMode, r.job.ReorgMeta.Location, r.job.ReorgMeta.ResourceGroupName)
-	if err != nil {
-		return err
-	}
-
 	opCtx := NewOperatorCtx(ctx, subtask.TaskID, subtask.ID)
 	defer opCtx.Cancel()
 	r.curRowCount.Store(0)
 
 	var pipe *operator.AsyncPipeline
 	if len(r.cloudStorageURI) > 0 {
-		pipe, err = r.buildExternalStorePipeline(opCtx, subtask.ID, sessCtx, sm, subtask.Concurrency)
+		pipe, err = r.buildExternalStorePipeline(opCtx, subtask.ID, sm, subtask.Concurrency)
 	} else {
-		pipe, err = r.buildLocalStorePipeline(opCtx, sessCtx, sm, subtask.Concurrency)
+		pipe, err = r.buildLocalStorePipeline(opCtx, sm, subtask.Concurrency)
 	}
 	if err != nil {
 		return err
@@ -149,16 +142,8 @@ func (r *readIndexExecutor) Cleanup(ctx context.Context) error {
 	return nil
 }
 
-// MockDMLExecutionAddIndexSubTaskFinish is used to mock DML execution during distributed add index.
-var MockDMLExecutionAddIndexSubTaskFinish func()
-
 func (r *readIndexExecutor) OnFinished(ctx context.Context, subtask *proto.Subtask) error {
-	failpoint.Inject("mockDMLExecutionAddIndexSubTaskFinish", func(val failpoint.Value) {
-		//nolint:forcetypeassert
-		if val.(bool) {
-			MockDMLExecutionAddIndexSubTaskFinish()
-		}
-	})
+	failpoint.InjectCall("mockDMLExecutionAddIndexSubTaskFinish")
 	if len(r.cloudStorageURI) == 0 {
 		return nil
 	}
@@ -169,17 +154,22 @@ func (r *readIndexExecutor) OnFinished(ctx context.Context, subtask *proto.Subta
 	}
 	sum, _ := r.subtaskSummary.LoadAndDelete(subtask.ID)
 	s := sum.(*readIndexSummary)
+	sm.MetaGroups = s.metaGroups
+	sm.EleIDs = make([]int64, 0, len(r.indexes))
+	for _, index := range r.indexes {
+		sm.EleIDs = append(sm.EleIDs, index.ID)
+	}
+
 	all := external.SortedKVMeta{}
 	for _, g := range s.metaGroups {
 		all.Merge(g)
 	}
-	sm.MetaGroups = s.metaGroups
-
 	tidblogutil.Logger(ctx).Info("get key boundary on subtask finished",
 		zap.String("start", hex.EncodeToString(all.StartKey)),
 		zap.String("end", hex.EncodeToString(all.EndKey)),
 		zap.Int("fileCount", len(all.MultipleFilesStats)),
 		zap.Uint64("totalKVSize", all.TotalKVSize))
+
 	meta, err := json.Marshal(sm)
 	if err != nil {
 		return err
@@ -212,7 +202,6 @@ func (r *readIndexExecutor) getTableStartEndKey(sm *BackfillSubTaskMeta) (
 
 func (r *readIndexExecutor) buildLocalStorePipeline(
 	opCtx *OperatorCtx,
-	sessCtx sessionctx.Context,
 	sm *BackfillSubTaskMeta,
 	concurrency int,
 ) (*operator.AsyncPipeline, error) {
@@ -222,10 +211,12 @@ func (r *readIndexExecutor) buildLocalStorePipeline(
 	}
 	d := r.d
 	indexIDs := make([]int64, 0, len(r.indexes))
+	uniques := make([]bool, 0, len(r.indexes))
 	for _, index := range r.indexes {
 		indexIDs = append(indexIDs, index.ID)
+		uniques = append(uniques, index.Unique)
 	}
-	engines, err := r.bc.Register(indexIDs, r.job.TableName)
+	engines, err := r.bc.Register(indexIDs, uniques, r.job.TableName)
 	if err != nil {
 		tidblogutil.Logger(opCtx).Error("cannot register new engine",
 			zap.Error(err),
@@ -241,7 +232,6 @@ func (r *readIndexExecutor) buildLocalStorePipeline(
 		d.sessPool,
 		r.bc,
 		engines,
-		sessCtx,
 		r.job.ID,
 		tbl,
 		r.indexes,
@@ -258,7 +248,6 @@ func (r *readIndexExecutor) buildLocalStorePipeline(
 func (r *readIndexExecutor) buildExternalStorePipeline(
 	opCtx *OperatorCtx,
 	subtaskID int64,
-	sessCtx sessionctx.Context,
 	sm *BackfillSubTaskMeta,
 	concurrency int,
 ) (*operator.AsyncPipeline, error) {
@@ -287,7 +276,6 @@ func (r *readIndexExecutor) buildExternalStorePipeline(
 		d.store,
 		r.cloudStorageURI,
 		r.d.sessPool,
-		sessCtx,
 		r.job.ID,
 		subtaskID,
 		tbl,

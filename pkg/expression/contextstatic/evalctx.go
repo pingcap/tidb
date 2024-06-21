@@ -79,6 +79,7 @@ type staticEvalCtxState struct {
 	divPrecisionIncrement        int
 	requestVerificationFn        func(db, table, column string, priv mysql.PrivilegeType) bool
 	requestDynamicVerificationFn func(privName string, grantable bool) bool
+	paramList                    []types.Datum
 	props                        contextopt.OptionalEvalPropProviders
 }
 
@@ -187,6 +188,16 @@ func WithOptionalProperty(providers ...exprctx.OptionalEvalPropProvider) StaticE
 		s.props = contextopt.OptionalEvalPropProviders{}
 		for _, p := range providers {
 			s.props.Add(p)
+		}
+	}
+}
+
+// WithParamList sets the param list for the `StaticEvalContext`.
+func WithParamList(params *variable.PlanCacheParamList) StaticEvalCtxOption {
+	return func(s *staticEvalCtxState) {
+		s.paramList = make([]types.Datum, len(params.AllParamValues()))
+		for i, v := range params.AllParamValues() {
+			s.paramList[i] = v
 		}
 	}
 }
@@ -361,4 +372,12 @@ func (ctx *StaticEvalContext) Apply(opt ...StaticEvalCtxOption) *StaticEvalConte
 	}
 
 	return newCtx
+}
+
+// GetParamValue returns the value of the parameter by index.
+func (ctx *StaticEvalContext) GetParamValue(idx int) types.Datum {
+	if idx < 0 || idx >= len(ctx.paramList) {
+		return types.Datum{}
+	}
+	return ctx.paramList[idx]
 }

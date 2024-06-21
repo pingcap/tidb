@@ -73,6 +73,7 @@ go_test(
         "//pkg/executor/internal/exec",
         "//pkg/executor/internal/testutil",
         "//pkg/expression",
+        "//pkg/expression/contextstatic",
         "//pkg/parser/mysql",
         "//pkg/planner/core",
         "//pkg/planner/util",

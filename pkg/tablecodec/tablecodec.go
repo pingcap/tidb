@@ -109,6 +109,9 @@ func CutRowKeyPrefix(key kv.Key) []byte {
 // EncodeRecordKey encodes the recordPrefix, row handle into a kv.Key.
 func EncodeRecordKey(recordPrefix kv.Key, h kv.Handle) kv.Key {
 	buf := make([]byte, 0, len(recordPrefix)+h.Len())
+	if ph, ok := h.(kv.PartitionHandle); ok {
+		recordPrefix = GenTableRecordPrefix(ph.PartitionID)
+	}
 	buf = append(buf, recordPrefix...)
 	buf = append(buf, h.Encoded()...)
 	return buf
@@ -960,7 +963,7 @@ func DecodeIndexHandle(key, value []byte, colsLen int) (kv.Handle, error) {
 	if len(b) > 0 {
 		return decodeHandleInIndexKey(b)
 	} else if len(value) >= 8 {
-		return decodeHandleInIndexValue(value)
+		return DecodeHandleInIndexValue(value)
 	}
 	// Should never execute to here.
 	return nil, errors.Errorf("no handle in index key: %v, value: %v", key, value)
@@ -977,7 +980,11 @@ func decodeHandleInIndexKey(keySuffix []byte) (kv.Handle, error) {
 	return kv.NewCommonHandle(keySuffix)
 }
 
-func decodeHandleInIndexValue(value []byte) (handle kv.Handle, err error) {
+// DecodeHandleInIndexValue decodes handle in unqiue index value.
+func DecodeHandleInIndexValue(value []byte) (handle kv.Handle, err error) {
+	if len(value) <= MaxOldEncodeValueLen {
+		return decodeIntHandleInIndexValue(value), nil
+	}
 	seg := SplitIndexValue(value)
 	if len(seg.IntHandle) != 0 {
 		handle = decodeIntHandleInIndexValue(seg.IntHandle)
@@ -1674,35 +1681,6 @@ func encodeCommonHandle(idxVal []byte, h kv.Handle) []byte {
 	idxVal = append(idxVal, byte(hLen>>8), byte(hLen))
 	idxVal = append(idxVal, h.Encoded()...)
 	return idxVal
-}
-
-// DecodeHandleInUniqueIndexValue decodes handle in data.
-func DecodeHandleInUniqueIndexValue(data []byte, isCommonHandle bool) (kv.Handle, error) {
-	if !isCommonHandle {
-		dLen := len(data)
-		if dLen <= MaxOldEncodeValueLen {
-			return kv.IntHandle(int64(binary.BigEndian.Uint64(data))), nil
-		}
-		return kv.IntHandle(int64(binary.BigEndian.Uint64(data[dLen-int(data[0]):]))), nil
-	}
-	if getIndexVersion(data) == 1 {
-		seg := splitIndexValueForClusteredIndexVersion1(data)
-		h, err := kv.NewCommonHandle(seg.CommonHandle)
-		if err != nil {
-			return nil, err
-		}
-		return h, nil
-	}
-
-	tailLen := int(data[0])
-	data = data[:len(data)-tailLen]
-	handleLen := uint16(data[2])<<8 + uint16(data[3])
-	handleEndOff := 4 + handleLen
-	h, err := kv.NewCommonHandle(data[4:handleEndOff])
-	if err != nil {
-		return nil, err
-	}
-	return h, nil
 }
 
 func encodePartitionID(idxVal []byte, partitionID int64) []byte {

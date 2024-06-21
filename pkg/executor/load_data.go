@@ -211,7 +211,9 @@ func (e *LoadDataWorker) LoadLocal(ctx context.Context, r io.ReadCloser) error {
 	readers := []importer.LoadDataReaderInfo{{
 		Opener: func(_ context.Context) (io.ReadSeekCloser, error) {
 			addedSeekReader := NewSimpleSeekerOnReadCloser(r)
-			return storage.InterceptDecompressReader(addedSeekReader, compressTp2, storage.DecompressConfig{})
+			return storage.InterceptDecompressReader(addedSeekReader, compressTp2, storage.DecompressConfig{
+				ZStdDecodeConcurrency: 1,
+			})
 		}}}
 	return e.load(ctx, readers)
 }

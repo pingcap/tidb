@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/types"
@@ -51,8 +52,8 @@ func (*maxMinEliminator) composeAggsByInnerJoin(originAgg *LogicalAggregation, a
 	for i := 1; i < len(aggs); i++ {
 		join := LogicalJoin{JoinType: InnerJoin}.Init(sctx, plan.QueryBlockOffset())
 		join.SetChildren(plan, aggs[i])
-		join.schema = buildLogicalJoinSchema(InnerJoin, join)
-		join.cartesianJoin = true
+		join.SetSchema(buildLogicalJoinSchema(InnerJoin, join))
+		join.CartesianJoin = true
 		plan = join
 		joins = append(joins, join)
 	}
@@ -67,7 +68,7 @@ func (a *maxMinEliminator) checkColCanUseIndex(plan base.LogicalPlan, col *expre
 	switch p := plan.(type) {
 	case *LogicalSelection:
 		conditions = append(conditions, p.Conditions...)
-		return a.checkColCanUseIndex(p.children[0], col, conditions)
+		return a.checkColCanUseIndex(p.Children()[0], col, conditions)
 	case *DataSource:
 		// Check whether there is an AccessPath can use index for col.
 		for _, path := range p.possibleAccessPaths {
@@ -113,14 +114,14 @@ func (a *maxMinEliminator) cloneSubPlans(plan base.LogicalPlan) base.LogicalPlan
 		newConditions := make([]expression.Expression, len(p.Conditions))
 		copy(newConditions, p.Conditions)
 		sel := LogicalSelection{Conditions: newConditions}.Init(p.SCtx(), p.QueryBlockOffset())
-		sel.SetChildren(a.cloneSubPlans(p.children[0]))
+		sel.SetChildren(a.cloneSubPlans(p.Children()[0]))
 		return sel
 	case *DataSource:
 		// Quick clone a DataSource.
 		// ReadOnly fields uses a shallow copy, while the fields which will be overwritten must use a deep copy.
 		newDs := *p
-		newDs.baseLogicalPlan = newBaseLogicalPlan(p.SCtx(), p.TP(), &newDs, p.QueryBlockOffset())
-		newDs.schema = p.schema.Clone()
+		newDs.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(p.SCtx(), p.TP(), &newDs, p.QueryBlockOffset())
+		newDs.SetSchema(p.Schema().Clone())
 		newDs.Columns = make([]*model.ColumnInfo, len(p.Columns))
 		copy(newDs.Columns, p.Columns)
 		newAccessPaths := make([]*util.AccessPath, 0, len(p.possibleAccessPaths))
@@ -147,7 +148,7 @@ func (a *maxMinEliminator) splitAggFuncAndCheckIndices(agg *LogicalAggregation, 
 		if !ok {
 			return nil, false
 		}
-		if !a.checkColCanUseIndex(agg.children[0], col, make([]expression.Expression, 0)) {
+		if !a.checkColCanUseIndex(agg.Children()[0], col, make([]expression.Expression, 0)) {
 			return nil, false
 		}
 	}
@@ -155,14 +156,14 @@ func (a *maxMinEliminator) splitAggFuncAndCheckIndices(agg *LogicalAggregation, 
 	// we can split the aggregation only if all of the aggFuncs pass the check.
 	for i, f := range agg.AggFuncs {
 		newAgg := LogicalAggregation{AggFuncs: []*aggregation.AggFuncDesc{f}}.Init(agg.SCtx(), agg.QueryBlockOffset())
-		newAgg.SetChildren(a.cloneSubPlans(agg.children[0]))
-		newAgg.schema = expression.NewSchema(agg.schema.Columns[i])
+		newAgg.SetChildren(a.cloneSubPlans(agg.Children()[0]))
+		newAgg.SetSchema(expression.NewSchema(agg.Schema().Columns[i]))
 		// Since LogicalAggregation doesn’t use the parent base.LogicalPlan, passing an incorrect parameter here won’t affect subsequent optimizations.
 		var (
 			p   base.LogicalPlan
 			err error
 		)
-		if p, err = newAgg.PruneColumns([]*expression.Column{newAgg.schema.Columns[0]}, opt); err != nil {
+		if p, err = newAgg.PruneColumns([]*expression.Column{newAgg.Schema().Columns[0]}, opt); err != nil {
 			return nil, false
 		}
 		newAgg = p.(*LogicalAggregation)
@@ -182,7 +183,7 @@ func (*maxMinEliminator) eliminateSingleMaxMin(agg *LogicalAggregation, opt *opt
 	// If there's no column in f.GetArgs()[0], we still need limit and read data from real table because the result should be NULL if the input is empty.
 	if len(expression.ExtractColumns(f.Args[0])) > 0 {
 		// If it can be NULL, we need to filter NULL out first.
-		if !mysql.HasNotNullFlag(f.Args[0].GetType().GetFlag()) {
+		if !mysql.HasNotNullFlag(f.Args[0].GetType(ctx.GetExprCtx().GetEvalCtx()).GetFlag()) {
 			sel = LogicalSelection{}.Init(ctx, agg.QueryBlockOffset())
 			isNullFunc := expression.NewFunctionInternal(ctx.GetExprCtx(), ast.IsNull, types.NewFieldType(mysql.TypeTiny), f.Args[0])
 			notNullFunc := expression.NewFunctionInternal(ctx.GetExprCtx(), ast.UnaryNot, types.NewFieldType(mysql.TypeTiny), isNullFunc)

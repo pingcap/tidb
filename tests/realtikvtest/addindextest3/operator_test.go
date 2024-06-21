@@ -17,6 +17,7 @@ package addindextest
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -188,7 +189,6 @@ func TestBackfillOperatorPipeline(t *testing.T) {
 		sessPool,
 		mockBackendCtx,
 		[]ingest.Engine{mockEngine},
-		tk.Session(),
 		1, // job id
 		tbl.(table.PhysicalTable),
 		[]*model.IndexInfo{idxInfo},
@@ -234,7 +234,7 @@ func TestBackfillOperatorPipelineException(t *testing.T) {
 		{
 			failPointPath:  "github.com/pingcap/tidb/pkg/ddl/scanRecordExec",
 			closeErrMsg:    "context canceled",
-			operatorErrMsg: "",
+			operatorErrMsg: "context canceled",
 		},
 		{
 			failPointPath:  "github.com/pingcap/tidb/pkg/ddl/mockWriteLocalError",
@@ -254,44 +254,63 @@ func TestBackfillOperatorPipelineException(t *testing.T) {
 	}
 
 	for _, tc := range testCase {
-		require.NoError(t, failpoint.Enable(tc.failPointPath, `return`))
-		ctx, cancel := context.WithCancel(context.Background())
-		ddl.OperatorCallBackForTest = func() {
+		t.Run(tc.failPointPath, func(t *testing.T) {
+			defer func() {
+				require.NoError(t, failpoint.Disable(tc.failPointPath))
+			}()
+			ctx, cancel := context.WithCancel(context.Background())
+			if strings.Contains(tc.failPointPath, "writeLocalExec") {
+				var counter atomic.Int32
+				require.NoError(t, failpoint.EnableCall(tc.failPointPath, func(done bool) {
+					if !done {
+						return
+					}
+					// we need to want all tableScanWorkers finish scanning, else
+					// fetchTableScanResult will might return context error, and cause
+					// the case fail.
+					// 10 is the table scan task count.
+					counter.Add(1)
+					if counter.Load() == 10 {
+						cancel()
+					}
+				}))
+			} else if strings.Contains(tc.failPointPath, "scanRecordExec") {
+				require.NoError(t, failpoint.EnableCall(tc.failPointPath, func() { cancel() }))
+			} else {
+				require.NoError(t, failpoint.Enable(tc.failPointPath, `return`))
+			}
+			opCtx := ddl.NewOperatorCtx(ctx, 1, 1)
+			pipeline, err := ddl.NewAddIndexIngestPipeline(
+				opCtx, store,
+				sessPool,
+				mockBackendCtx,
+				[]ingest.Engine{mockEngine},
+				1, // job id
+				tbl.(table.PhysicalTable),
+				[]*model.IndexInfo{idxInfo},
+				startKey,
+				endKey,
+				&atomic.Int64{},
+				nil,
+				ddl.NewDDLReorgMeta(tk.Session()),
+				0,
+				2,
+			)
+			require.NoError(t, err)
+			err = pipeline.Execute()
+			require.NoError(t, err)
+			err = pipeline.Close()
+			comment := fmt.Sprintf("case: %s", tc.failPointPath)
+			require.ErrorContains(t, err, tc.closeErrMsg, comment)
+			opCtx.Cancel()
+			if tc.operatorErrMsg == "" {
+				require.NoError(t, opCtx.OperatorErr())
+			} else {
+				require.Error(t, opCtx.OperatorErr())
+				require.Equal(t, tc.operatorErrMsg, opCtx.OperatorErr().Error())
+			}
 			cancel()
-		}
-		opCtx := ddl.NewOperatorCtx(ctx, 1, 1)
-		pipeline, err := ddl.NewAddIndexIngestPipeline(
-			opCtx, store,
-			sessPool,
-			mockBackendCtx,
-			[]ingest.Engine{mockEngine},
-			tk.Session(),
-			1, // job id
-			tbl.(table.PhysicalTable),
-			[]*model.IndexInfo{idxInfo},
-			startKey,
-			endKey,
-			&atomic.Int64{},
-			nil,
-			ddl.NewDDLReorgMeta(tk.Session()),
-			0,
-			2,
-		)
-		require.NoError(t, err)
-		err = pipeline.Execute()
-		require.NoError(t, err)
-		err = pipeline.Close()
-		comment := fmt.Sprintf("case: %s", tc.failPointPath)
-		require.ErrorContains(t, err, tc.closeErrMsg, comment)
-		opCtx.Cancel()
-		if tc.operatorErrMsg == "" {
-			require.NoError(t, opCtx.OperatorErr())
-		} else {
-			require.Error(t, opCtx.OperatorErr())
-			require.Equal(t, tc.operatorErrMsg, opCtx.OperatorErr().Error())
-		}
-		require.NoError(t, failpoint.Disable(tc.failPointPath))
-		cancel()
+		})
 	}
 }
 
@@ -320,8 +339,10 @@ func prepare(t *testing.T, tk *testkit.TestKit, dom *domain.Domain, regionCnt in
 
 	tblInfo := tbl.Meta()
 	idxInfo = tblInfo.FindIndexByName("idx")
-	copCtx, err = copr.NewCopContextSingleIndex(tblInfo, idxInfo, tk.Session(), "")
+	sctx := tk.Session()
+	copCtx, err = ddl.NewReorgCopContext(dom.Store(), ddl.NewDDLReorgMeta(sctx), tblInfo, []*model.IndexInfo{idxInfo}, "")
 	require.NoError(t, err)
+	require.IsType(t, copCtx, &copr.CopContextSingleIndex{})
 	return tbl, idxInfo, start, end, copCtx
 }
 

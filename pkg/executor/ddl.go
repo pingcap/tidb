@@ -309,6 +309,7 @@ func (e *DDLExec) executeCreateView(ctx context.Context, s *ast.CreateViewStmt) 
 		return exeerrors.ErrViewInvalid.GenWithStackByArgs(s.ViewName.Schema.L, s.ViewName.Name.L)
 	}
 
+	e.Ctx().GetSessionVars().ClearRelatedTableForMDL()
 	return domain.GetDomain(e.Ctx()).DDL().CreateView(e.Ctx(), s)
 }
 

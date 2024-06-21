@@ -81,6 +81,30 @@ func TestAdjustPdAddrAndPort(t *testing.T) {
 	require.Equal(t, "123.45.67.89:1234,56.78.90.12:3456", cfg.TiDB.PdAddr)
 }
 
+func TestStrictFormat(t *testing.T) {
+	ts, host, port := startMockServer(t, http.StatusOK,
+		`{"port":4444,"advertise-address":"","path":"123.45.67.89:1234,56.78.90.12:3456"}`,
+	)
+	defer ts.Close()
+
+	cfg := NewConfig()
+	cfg.TiDB.Host = host
+	cfg.TiDB.StatusPort = port
+	cfg.Mydumper.SourceDir = "."
+	cfg.TikvImporter.Backend = BackendLocal
+	cfg.TikvImporter.SortedKVDir = "."
+	cfg.TiDB.DistSQLScanConcurrency = 1
+	cfg.Mydumper.StrictFormat = true
+
+	err := cfg.Adjust(context.Background())
+	require.ErrorContains(t, err, "mydumper.strict-format can not be used with empty mydumper.csv.terminator")
+	t.Log(err.Error())
+
+	cfg.Mydumper.CSV.Terminator = "\r\n"
+	err = cfg.Adjust(context.Background())
+	require.NoError(t, err)
+}
+
 func TestPausePDSchedulerScope(t *testing.T) {
 	ts, host, port := startMockServer(t, http.StatusOK,
 		`{"port":4444,"advertise-address":"","path":"123.45.67.89:1234,56.78.90.12:3456"}`,
@@ -668,7 +692,7 @@ func TestMaxErrorUnmarshal(t *testing.T) {
 		},
 		{
 			TOMLStr:      `max-error = "abcde"`,
-			ExpectErrStr: "invalid max-error 'abcde', should be an integer or a map of string:int64",
+			ExpectErrStr: "toml: line 1 (last key \"max-error\"): invalid max-error 'abcde', should be an integer or a map of string:int64",
 			CaseName:     "Abnormal_String",
 		},
 		{
@@ -919,13 +943,13 @@ func TestTomlPostRestore(t *testing.T) {
 		[post-restore]
 		checksum = "req"
 	`))
-	require.EqualError(t, err, "invalid op level 'req', please choose valid option between ['off', 'optional', 'required']")
+	require.EqualError(t, err, "toml: line 3 (last key \"post-restore.checksum\"): invalid op level 'req', please choose valid option between ['off', 'optional', 'required']")
 
 	err = cfg.LoadFromTOML([]byte(`
 		[post-restore]
 		analyze = 123
 	`))
-	require.EqualError(t, err, "invalid op level '123', please choose valid option between ['off', 'optional', 'required']")
+	require.EqualError(t, err, "toml: line 3 (last key \"post-restore.analyze\"): invalid op level '123', please choose valid option between ['off', 'optional', 'required']")
 
 	kvMap := map[string]PostOpLevel{
 		`"off"`:      OpLevelOff,

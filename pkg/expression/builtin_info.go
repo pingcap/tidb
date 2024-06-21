@@ -628,7 +628,7 @@ func (c *benchmarkFunctionClass) getFunction(ctx BuildContext, args []Expression
 
 	// Syntax: BENCHMARK(loop_count, expression)
 	// Define with same eval type of input arg to avoid unnecessary cast function.
-	sameEvalType := args[1].GetType().EvalType()
+	sameEvalType := args[1].GetType(ctx.GetEvalCtx()).EvalType()
 	// constLoopCount is used by VecEvalInt
 	// since non-constant loop count would be different between rows, and cannot be vectorized.
 	var constLoopCount int64
@@ -684,7 +684,7 @@ func (b *builtinBenchmarkSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bo
 	// behavior observed on MySQL 5.7.24.
 	var i int64
 	arg := b.args[1]
-	switch evalType := arg.GetType().EvalType(); evalType {
+	switch evalType := arg.GetType(ctx).EvalType(); evalType {
 	case types.ETInt:
 		for ; i < loopCount; i++ {
 			_, isNull, err = arg.EvalInt(ctx, row)
@@ -752,7 +752,7 @@ func (c *charsetFunctionClass) getFunction(ctx BuildContext, args []Expression) 
 	}
 	argsTps := make([]types.EvalType, 0, len(args))
 	for _, arg := range args {
-		argsTps = append(argsTps, arg.GetType().EvalType())
+		argsTps = append(argsTps, arg.GetType(ctx.GetEvalCtx()).EvalType())
 	}
 	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, argsTps...)
 	if err != nil {
@@ -777,7 +777,7 @@ func (b *builtinCharsetSig) Clone() builtinFunc {
 }
 
 func (b *builtinCharsetSig) evalString(ctx EvalContext, row chunk.Row) (string, bool, error) {
-	return b.args[0].GetType().GetCharset(), false, nil
+	return b.args[0].GetType(ctx).GetCharset(), false, nil
 }
 
 type coercibilityFunctionClass struct {
@@ -788,7 +788,7 @@ func (c *coercibilityFunctionClass) getFunction(ctx BuildContext, args []Express
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, args[0].GetType().EvalType())
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, args[0].GetType(ctx.GetEvalCtx()).EvalType())
 	if err != nil {
 		return nil, err
 	}
@@ -821,7 +821,7 @@ func (c *collationFunctionClass) getFunction(ctx BuildContext, args []Expression
 	}
 	argsTps := make([]types.EvalType, 0, len(args))
 	for _, arg := range args {
-		argsTps = append(argsTps, arg.GetType().EvalType())
+		argsTps = append(argsTps, arg.GetType(ctx.GetEvalCtx()).EvalType())
 	}
 	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, argsTps...)
 	if err != nil {
@@ -846,7 +846,7 @@ func (b *builtinCollationSig) Clone() builtinFunc {
 }
 
 func (b *builtinCollationSig) evalString(ctx EvalContext, row chunk.Row) (string, bool, error) {
-	return b.args[0].GetType().GetCollate(), false, nil
+	return b.args[0].GetType(ctx).GetCollate(), false, nil
 }
 
 type rowCountFunctionClass struct {
@@ -1336,7 +1336,7 @@ func (c *setValFunctionClass) getFunction(ctx BuildContext, args []Expression) (
 		return nil, err
 	}
 	sig := &builtinSetValSig{baseBuiltinFunc: bf}
-	bf.tp.SetFlen(args[1].GetType().GetFlen())
+	bf.tp.SetFlen(args[1].GetType(ctx.GetEvalCtx()).GetFlen())
 	return sig, nil
 }
 

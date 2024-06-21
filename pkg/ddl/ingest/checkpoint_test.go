@@ -60,7 +60,7 @@ func TestCheckpointManager(t *testing.T) {
 		return newTk.Session(), nil
 	}, 8, 8, 0)
 	ctx := context.Background()
-	sessPool := session.NewSessionPool(rs, store)
+	sessPool := session.NewSessionPool(rs)
 	flushCtrl := &dummyFlushCtrl{imported: false}
 	tmpFolder := t.TempDir()
 	createDummyFile(t, tmpFolder)
@@ -115,7 +115,7 @@ func TestCheckpointManagerUpdateReorg(t *testing.T) {
 		return newTk.Session(), nil
 	}, 8, 8, 0)
 	ctx := context.Background()
-	sessPool := session.NewSessionPool(rs, store)
+	sessPool := session.NewSessionPool(rs)
 	flushCtrl := &dummyFlushCtrl{imported: true}
 	tmpFolder := t.TempDir()
 	createDummyFile(t, tmpFolder)
@@ -168,7 +168,7 @@ func TestCheckpointManagerResumeReorg(t *testing.T) {
 		return newTk.Session(), nil
 	}, 8, 8, 0)
 	ctx := context.Background()
-	sessPool := session.NewSessionPool(rs, store)
+	sessPool := session.NewSessionPool(rs)
 	flushCtrl := &dummyFlushCtrl{imported: false}
 	tmpFolder := t.TempDir()
 	// checkpoint manager should not use local checkpoint if the folder is empty

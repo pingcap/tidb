@@ -320,6 +320,26 @@ func (is *infoSchema) SchemaTableInfos(schema model.CIStr) []*model.TableInfo {
 	return getTableInfoList(is.SchemaTables(schema))
 }
 
+type tableInfoResult struct {
+	DBName     string
+	TableInfos []*model.TableInfo
+}
+
+func (is *infoSchema) ListTablesWithSpecialAttribute(filter specialAttributeFilter) []tableInfoResult {
+	ret := make([]tableInfoResult, 0, 10)
+	for _, dbName := range is.AllSchemaNames() {
+		res := tableInfoResult{DBName: dbName.O}
+		for _, tblInfo := range is.SchemaTableInfos(dbName) {
+			if !filter(tblInfo) {
+				continue
+			}
+			res.TableInfos = append(res.TableInfos, tblInfo)
+		}
+		ret = append(ret, res)
+	}
+	return ret
+}
+
 // AllSchemaNames returns all the schemas' names.
 func AllSchemaNames(is InfoSchema) (names []string) {
 	schemas := is.AllSchemaNames()
@@ -344,15 +364,16 @@ func (is *infoSchema) AllSchemaNames() (schemas []model.CIStr) {
 	return rs
 }
 
-func (is *infoSchema) SchemaTables(schema model.CIStr) (tables []table.Table) {
+func (is *infoSchema) SchemaTables(schema model.CIStr) []table.Table {
 	schemaTables, ok := is.schemaMap[schema.L]
 	if !ok {
-		return
+		return nil
 	}
+	tables := make([]table.Table, 0, len(schemaTables.tables))
 	for _, tbl := range schemaTables.tables {
 		tables = append(tables, tbl)
 	}
-	return
+	return tables
 }
 
 // FindTableByPartitionID finds the partition-table info by the partitionID.

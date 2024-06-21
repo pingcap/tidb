@@ -149,7 +149,7 @@ func (h *benchHelper) init() {
 
 	h.outputTypes = make([]*types.FieldType, 0, len(h.exprs))
 	for i := 0; i < len(h.exprs); i++ {
-		h.outputTypes = append(h.outputTypes, h.exprs[i].GetType())
+		h.outputTypes = append(h.outputTypes, h.exprs[i].GetType(h.ctx))
 	}
 
 	h.outputChunk = chunk.NewChunkWithCapacity(h.outputTypes, numRows)
@@ -1293,7 +1293,7 @@ func genVecExprBenchCase(ctx BuildContext, funcName string, testCase vecExprBenc
 		panic(err)
 	}
 
-	output = chunk.New([]*types.FieldType{eType2FieldType(expr.GetType().EvalType())}, testCase.chunkSize, testCase.chunkSize)
+	output = chunk.New([]*types.FieldType{eType2FieldType(expr.GetType(ctx.GetEvalCtx()).EvalType())}, testCase.chunkSize, testCase.chunkSize)
 	return expr, fts, input, output
 }
 
@@ -1313,7 +1313,7 @@ func testVectorizedEvalOneVec(t *testing.T, vecExprCases vecExprBenchCases) {
 			require.NoErrorf(t, evalOneColumn(ctx, expr, it, output2, 0), "func: %v, case: %+v", funcName, testCase)
 
 			c1, c2 := output.Column(0), output2.Column(0)
-			switch expr.GetType().EvalType() {
+			switch expr.GetType(ctx).EvalType() {
 			case types.ETInt:
 				for i := 0; i < input.NumRows(); i++ {
 					require.Equal(t, c1.IsNull(i), c2.IsNull(i), commentf(i))

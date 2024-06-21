@@ -24,6 +24,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/table"
@@ -47,7 +48,7 @@ func NewMockBackendCtxMgr(sessCtxProvider func() sessionctx.Context) *MockBacken
 }
 
 // CheckMoreTasksAvailable implements BackendCtxMgr.CheckMoreTaskAvailable interface.
-func (m *MockBackendCtxMgr) CheckMoreTasksAvailable(context.Context) (bool, error) {
+func (m *MockBackendCtxMgr) CheckMoreTasksAvailable() (bool, error) {
 	return len(m.runningJobs) == 0, nil
 }
 
@@ -105,7 +106,7 @@ type MockBackendCtx struct {
 }
 
 // Register implements BackendCtx.Register interface.
-func (m *MockBackendCtx) Register(indexIDs []int64, _ string) ([]Engine, error) {
+func (m *MockBackendCtx) Register(indexIDs []int64, _ []bool, _ string) ([]Engine, error) {
 	logutil.DDLIngestLogger().Info("mock backend ctx register", zap.Int64("jobID", m.jobID), zap.Int64s("indexIDs", indexIDs))
 	ret := make([]Engine, 0, len(indexIDs))
 	for range indexIDs {
@@ -119,8 +120,8 @@ func (*MockBackendCtx) UnregisterEngines() {
 	logutil.DDLIngestLogger().Info("mock backend ctx unregister")
 }
 
-// FinishedWritingNeedImport implements BackendCtx interface.
-func (*MockBackendCtx) FinishedWritingNeedImport() bool {
+// ImportStarted implements BackendCtx interface.
+func (*MockBackendCtx) ImportStarted() bool {
 	return false
 }
 
@@ -131,8 +132,8 @@ func (*MockBackendCtx) CollectRemoteDuplicateRows(indexID int64, _ table.Table) 
 }
 
 // FinishImport implements BackendCtx.FinishImport interface.
-func (*MockBackendCtx) FinishImport(indexID int64, _ bool, _ table.Table) error {
-	logutil.DDLIngestLogger().Info("mock backend ctx finish import", zap.Int64("indexID", indexID))
+func (*MockBackendCtx) FinishImport(_ table.Table) error {
+	logutil.DDLIngestLogger().Info("mock backend ctx finish import")
 	return nil
 }
 
@@ -206,7 +207,7 @@ func (m *MockEngineInfo) SetHook(onWrite func(key, val []byte)) {
 }
 
 // CreateWriter implements Engine.CreateWriter interface.
-func (m *MockEngineInfo) CreateWriter(id int) (Writer, error) {
+func (m *MockEngineInfo) CreateWriter(id int, _ *backend.LocalWriterConfig) (Writer, error) {
 	logutil.DDLIngestLogger().Info("mock engine info create writer", zap.Int("id", id))
 	return &MockWriter{sessCtx: m.sessCtx, mu: m.mu, onWrite: m.onWrite}, nil
 }

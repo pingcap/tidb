@@ -1071,6 +1071,9 @@ const (
 	TiDBEnableHistoricalStatsForCapture = "tidb_enable_historical_stats_for_capture"
 	// TiDBEnableResourceControl indicates whether resource control feature is enabled
 	TiDBEnableResourceControl = "tidb_enable_resource_control"
+	// TiDBResourceControlStrictMode indicates whether resource control strict mode is enabled.
+	// When strict mode is enabled, user need certain privilege to change session or statement resource group.
+	TiDBResourceControlStrictMode = "tidb_resource_control_strict_mode"
 	// TiDBStmtSummaryEnablePersistent indicates whether to enable file persistence for stmtsummary.
 	TiDBStmtSummaryEnablePersistent = "tidb_stmt_summary_enable_persistent"
 	// TiDBStmtSummaryFilename indicates the file name written by stmtsummary.
@@ -1448,6 +1451,7 @@ const (
 	DefTiDBTTLDeleteWorkerCount                       = 4
 	DefaultExchangeCompressionMode                    = kv.ExchangeCompressionModeUnspecified
 	DefTiDBEnableResourceControl                      = true
+	DefTiDBResourceControlStrictMode                  = true
 	DefTiDBPessimisticTransactionFairLocking          = false
 	DefTiDBEnablePlanCacheForParamLimit               = true
 	DefTiFlashComputeDispatchPolicy                   = tiflashcompute.DispatchPolicyConsistentHashStr
@@ -1585,15 +1589,16 @@ var (
 	TTLRunningTasks                 = atomic.NewInt32(DefTiDBTTLRunningTasks)
 	// always set the default value to false because the resource control in kv-client is not inited
 	// It will be initialized to the right value after the first call of `rebuildSysVarCache`
-	EnableResourceControl     = atomic.NewBool(false)
-	EnableCheckConstraint     = atomic.NewBool(DefTiDBEnableCheckConstraint)
-	SkipMissingPartitionStats = atomic.NewBool(DefTiDBSkipMissingPartitionStats)
-	TiFlashEnablePipelineMode = atomic.NewBool(DefTiDBEnableTiFlashPipelineMode)
-	ServiceScope              = atomic.NewString("")
-	SchemaVersionCacheLimit   = atomic.NewInt64(DefTiDBSchemaVersionCacheLimit)
-	CloudStorageURI           = atomic.NewString("")
-	IgnoreInlistPlanDigest    = atomic.NewBool(DefTiDBIgnoreInlistPlanDigest)
-	TxnEntrySizeLimit         = atomic.NewUint64(DefTiDBTxnEntrySizeLimit)
+	EnableResourceControl           = atomic.NewBool(false)
+	EnableResourceControlStrictMode = atomic.NewBool(true)
+	EnableCheckConstraint           = atomic.NewBool(DefTiDBEnableCheckConstraint)
+	SkipMissingPartitionStats       = atomic.NewBool(DefTiDBSkipMissingPartitionStats)
+	TiFlashEnablePipelineMode       = atomic.NewBool(DefTiDBEnableTiFlashPipelineMode)
+	ServiceScope                    = atomic.NewString("")
+	SchemaVersionCacheLimit         = atomic.NewInt64(DefTiDBSchemaVersionCacheLimit)
+	CloudStorageURI                 = atomic.NewString("")
+	IgnoreInlistPlanDigest          = atomic.NewBool(DefTiDBIgnoreInlistPlanDigest)
+	TxnEntrySizeLimit               = atomic.NewUint64(DefTiDBTxnEntrySizeLimit)
 
 	SchemaCacheSize = atomic.NewInt64(DefTiDBSchemaCacheSize)
 )

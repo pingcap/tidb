@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/expression"
+	exprctx "github.com/pingcap/tidb/pkg/expression/context"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -40,9 +41,9 @@ import (
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util"
+	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	decoder "github.com/pingcap/tidb/pkg/util/rowDecoder"
-	"github.com/pingcap/tidb/pkg/util/timeutil"
 	"github.com/pingcap/tidb/pkg/util/topsql"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/tikv/client-go/v2/tikv"
@@ -146,6 +147,10 @@ type backfillCtx struct {
 	id int
 	*ddlCtx
 	sessCtx       sessionctx.Context
+	warnings      contextutil.WarnHandlerExt
+	loc           *time.Location
+	exprCtx       exprctx.BuildContext
+	tblCtx        table.MutateContext
 	schemaName    string
 	table         table.Table
 	batchCnt      int
@@ -153,22 +158,33 @@ type backfillCtx struct {
 	metricCounter prometheus.Counter
 }
 
-func newBackfillCtx(ctx *ddlCtx, id int, sessCtx sessionctx.Context,
-	schemaName string, tbl table.Table, jobCtx *JobContext, label string, isDistributed bool) *backfillCtx {
+func newBackfillCtx(id int, rInfo *reorgInfo,
+	schemaName string, tbl table.Table, jobCtx *JobContext, label string, isDistributed bool) (*backfillCtx, error) {
+	sessCtx, err := newSessCtx(rInfo.d.store, rInfo.ReorgMeta)
+	if err != nil {
+		return nil, err
+	}
+
 	if isDistributed {
 		id = int(backfillContextID.Add(1))
 	}
+
+	exprCtx := sessCtx.GetExprCtx()
 	return &backfillCtx{
 		id:         id,
-		ddlCtx:     ctx,
+		ddlCtx:     rInfo.d,
 		sessCtx:    sessCtx,
+		warnings:   sessCtx.GetSessionVars().StmtCtx.WarnHandler,
+		exprCtx:    exprCtx,
+		tblCtx:     sessCtx.GetTableCtx(),
+		loc:        exprCtx.GetEvalCtx().Location(),
 		schemaName: schemaName,
 		table:      tbl,
 		batchCnt:   int(variable.GetDDLReorgBatchSize()),
 		jobContext: jobCtx,
 		metricCounter: metrics.BackfillTotalCounter.WithLabelValues(
 			metrics.GenerateReorgLabel(label, schemaName, tbl.Meta().Name.String())),
-	}
+	}, nil
 }
 
 func updateTxnEntrySizeLimitIfNeeded(txn kv.Transaction) {
@@ -543,24 +559,6 @@ func makeupDecodeColMap(dbName model.CIStr, t table.Table) (map[int64]decoder.Co
 	return decodeColMap, nil
 }
 
-func setSessCtxLocation(sctx sessionctx.Context, tzLocation *model.TimeZoneLocation) error {
-	// It is set to SystemLocation to be compatible with nil LocationInfo.
-	tz := *timeutil.SystemLocation()
-	if sctx.GetSessionVars().TimeZone == nil {
-		sctx.GetSessionVars().TimeZone = &tz
-	} else {
-		*sctx.GetSessionVars().TimeZone = tz
-	}
-	if tzLocation != nil {
-		loc, err := tzLocation.GetLocation()
-		if err != nil {
-			return errors.Trace(err)
-		}
-		*sctx.GetSessionVars().TimeZone = *loc
-	}
-	return nil
-}
-
 var backfillTaskChanSize = 128
 
 // SetBackfillTaskChanSizeForTest is only used for test.
@@ -584,6 +582,7 @@ func SetBackfillTaskChanSizeForTest(n int) {
 // The above operations are completed in a transaction.
 // Finally, update the concurrent processing of the total number of rows, and store the completed handle value.
 func (dc *ddlCtx) writePhysicalTableRecord(
+	ctx context.Context,
 	sessPool *sess.Pool,
 	t table.PhysicalTable,
 	bfWorkerType backfillerType,
@@ -604,7 +603,7 @@ func (dc *ddlCtx) writePhysicalTableRecord(
 
 	jc := reorgInfo.NewJobContext()
 
-	eg, egCtx := util.NewErrorGroupWithRecoverWithCtx(dc.ctx)
+	eg, egCtx := util.NewErrorGroupWithRecoverWithCtx(ctx)
 
 	scheduler, err := newBackfillScheduler(egCtx, reorgInfo, sessPool, bfWorkerType, t, jc)
 	if err != nil {
@@ -612,7 +611,7 @@ func (dc *ddlCtx) writePhysicalTableRecord(
 	}
 	defer scheduler.close(true)
 	if lit, ok := scheduler.(*ingestBackfillScheduler); ok {
-		if lit.finishedWritingNeedImport() {
+		if lit.importStarted() {
 			return nil
 		}
 	}

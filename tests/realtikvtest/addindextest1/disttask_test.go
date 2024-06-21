@@ -17,14 +17,13 @@ package addindextest
 import (
 	"context"
 	"fmt"
+	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/util/callback"
-	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
-	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -127,14 +126,15 @@ func TestAddIndexDistCancel(t *testing.T) {
 	tk.MustExec("insert into t values (), (), (), (), (), ()")
 	tk.MustExec("split table t between (3) and (8646911284551352360) regions 50;")
 
-	ddl.MockDMLExecutionAddIndexSubTaskFinish = func() {
-		row := tk1.MustQuery("select job_id from mysql.tidb_ddl_job").Rows()
-		require.Equal(t, 1, len(row))
-		jobID := row[0][0].(string)
-		tk1.MustExec("admin cancel ddl jobs " + jobID)
-	}
-
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockDMLExecutionAddIndexSubTaskFinish", "1*return(true)"))
+	var once sync.Once
+	require.NoError(t, failpoint.EnableCall("github.com/pingcap/tidb/pkg/ddl/mockDMLExecutionAddIndexSubTaskFinish", func() {
+		once.Do(func() {
+			row := tk1.MustQuery("select job_id from mysql.tidb_ddl_job").Rows()
+			require.Equal(t, 1, len(row))
+			jobID := row[0][0].(string)
+			tk1.MustExec("admin cancel ddl jobs " + jobID)
+		})
+	}))
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockDMLExecutionAddIndexSubTaskFinish"))
 	}()
@@ -167,31 +167,29 @@ func TestAddIndexDistPauseAndResume(t *testing.T) {
 	tk.MustExec("insert into t values (), (), (), (), (), ()")
 	tk.MustExec("split table t between (3) and (8646911284551352360) regions 50;")
 
-	ddl.MockDMLExecutionAddIndexSubTaskFinish = func() {
-		row := tk1.MustQuery("select job_id from mysql.tidb_ddl_job").Rows()
-		require.Equal(t, 1, len(row))
-		jobID := row[0][0].(string)
-		tk1.MustExec("admin pause ddl jobs " + jobID)
-		<-ddl.TestSyncChan
-	}
+	var syncChan = make(chan struct{})
+	var counter atomic.Int32
+	require.NoError(t, failpoint.EnableCall("github.com/pingcap/tidb/pkg/ddl/mockDMLExecutionAddIndexSubTaskFinish", func() {
+		if counter.Add(1) <= 3 {
+			row := tk1.MustQuery("select job_id from mysql.tidb_ddl_job").Rows()
+			require.Equal(t, 1, len(row))
+			jobID := row[0][0].(string)
+			tk1.MustExec("admin pause ddl jobs " + jobID)
+			<-syncChan
+		}
+	}))
 
-	scheduler.MockDMLExecutionOnPausedState = func(task *proto.Task) {
+	require.NoError(t, failpoint.EnableCall("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/mockDMLExecutionOnPausedState", func() {
 		row := tk1.MustQuery("select job_id from mysql.tidb_ddl_job").Rows()
 		require.Equal(t, 1, len(row))
 		jobID := row[0][0].(string)
 		tk1.MustExec("admin resume ddl jobs " + jobID)
-	}
+	}))
 
-	ddl.MockDMLExecutionOnTaskFinished = func() {
-		row := tk1.MustQuery("select job_id from mysql.tidb_ddl_job").Rows()
-		require.Equal(t, 1, len(row))
-		jobID := row[0][0].(string)
-		tk1.MustExec("admin pause ddl jobs " + jobID)
-	}
-
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockDMLExecutionAddIndexSubTaskFinish", "3*return(true)"))
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/mockDMLExecutionOnPausedState", "return(true)"))
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/syncDDLTaskPause", "return()"))
+	require.NoError(t, failpoint.EnableCall("github.com/pingcap/tidb/pkg/ddl/syncDDLTaskPause", func() {
+		// make sure the task is paused.
+		syncChan <- struct{}{}
+	}))
 	tk.MustExec(`set global tidb_enable_dist_task=1;`)
 	tk.MustExec("alter table t add index idx1(a);")
 	tk.MustExec("admin check table t;")
@@ -210,7 +208,17 @@ func TestAddIndexDistPauseAndResume(t *testing.T) {
 	}
 	hook.OnJobUpdatedExported.Store(&resumeFunc)
 	dom.DDL().SetHook(hook.Clone())
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/pauseAfterDistTaskFinished", "1*return(true)"))
+	var once sync.Once
+	require.NoError(t, failpoint.EnableCall("github.com/pingcap/tidb/pkg/ddl/pauseAfterDistTaskFinished",
+		func() {
+			once.Do(func() {
+				row := tk1.MustQuery("select job_id from mysql.tidb_ddl_job").Rows()
+				require.Equal(t, 1, len(row))
+				jobID := row[0][0].(string)
+				tk1.MustExec("admin pause ddl jobs " + jobID)
+			})
+		},
+	))
 	tk.MustExec("alter table t add index idx3(a);")
 	tk.MustExec("admin check table t;")
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/pauseAfterDistTaskFinished"))

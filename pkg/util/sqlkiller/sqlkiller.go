@@ -41,11 +41,48 @@ const (
 type SQLKiller struct {
 	Signal killSignal
 	ConnID uint64
+	Finish func()
+	// InWriteResultSet is used to indicate whether the query is currently calling clientConn.writeResultSet().
+	// If the query is in writeResultSet and Finish() can acquire rs.finishLock, we can assume the query is waiting for the client to receive data from the server over network I/O.
+	InWriteResultSet atomic.Bool
 }
 
 // SendKillSignal sends a kill signal to the query.
 func (killer *SQLKiller) SendKillSignal(reason killSignal) {
-	atomic.CompareAndSwapUint32(&killer.Signal, 0, reason)
+	if atomic.CompareAndSwapUint32(&killer.Signal, 0, reason) {
+		status := atomic.LoadUint32(&killer.Signal)
+		err := killer.getKillError(status)
+		logutil.BgLogger().Warn("kill initiated", zap.Uint64("connection ID", killer.ConnID), zap.String("reason", err.Error()))
+	}
+}
+
+// GetKillSignal gets the kill signal.
+func (killer *SQLKiller) GetKillSignal() killSignal {
+	return atomic.LoadUint32(&killer.Signal)
+}
+
+// getKillError gets the error according to the kill signal.
+func (killer *SQLKiller) getKillError(status killSignal) error {
+	switch status {
+	case QueryInterrupted:
+		return exeerrors.ErrQueryInterrupted.GenWithStackByArgs()
+	case MaxExecTimeExceeded:
+		return exeerrors.ErrMaxExecTimeExceeded.GenWithStackByArgs()
+	case QueryMemoryExceeded:
+		return exeerrors.ErrMemoryExceedForQuery.GenWithStackByArgs(killer.ConnID)
+	case ServerMemoryExceeded:
+		return exeerrors.ErrMemoryExceedForInstance.GenWithStackByArgs(killer.ConnID)
+	}
+	return nil
+}
+
+// FinishResultSet is used to close the result set.
+// If a kill signal is sent but the SQL query is stuck in the network stack while writing packets to the client,
+// encountering some bugs that cause it to hang, or failing to detect the kill signal, we can call Finish to release resources used during the SQL execution process.
+func (killer *SQLKiller) FinishResultSet() {
+	if killer.Finish != nil {
+		killer.Finish()
+	}
 }
 
 // HandleSignal handles the kill signal and return the error.
@@ -61,22 +98,19 @@ func (killer *SQLKiller) HandleSignal() error {
 		}
 	})
 	status := atomic.LoadUint32(&killer.Signal)
-	switch status {
-	case QueryInterrupted:
-		return exeerrors.ErrQueryInterrupted.GenWithStackByArgs()
-	case MaxExecTimeExceeded:
-		return exeerrors.ErrMaxExecTimeExceeded.GenWithStackByArgs()
-	case QueryMemoryExceeded:
-		return exeerrors.ErrMemoryExceedForQuery.GenWithStackByArgs(killer.ConnID)
-	case ServerMemoryExceeded:
+	err := killer.getKillError(status)
+	if status == ServerMemoryExceeded {
 		logutil.BgLogger().Warn("global memory controller, NeedKill signal is received successfully",
 			zap.Uint64("conn", killer.ConnID))
-		return exeerrors.ErrMemoryExceedForInstance.GenWithStackByArgs(killer.ConnID)
 	}
-	return nil
+	return err
 }
 
 // Reset resets the SqlKiller.
 func (killer *SQLKiller) Reset() {
+	if atomic.LoadUint32(&killer.Signal) != 0 {
+		logutil.BgLogger().Warn("kill finished", zap.Uint64("conn", killer.ConnID))
+	}
 	atomic.StoreUint32(&killer.Signal, 0)
+	killer.Finish = nil
 }

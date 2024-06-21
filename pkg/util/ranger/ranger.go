@@ -172,8 +172,8 @@ func convertPoint(sctx *rangerctx.RangerContext, point *point, newTp *types.Fiel
 			// see issue #20101: overflow when converting integer to year
 		} else if newTp.GetType() == mysql.TypeBit && terror.ErrorEqual(err, types.ErrDataTooLong) {
 			// see issue #19067: we should ignore the types.ErrDataTooLong when we convert value to TypeBit value
-		} else if (newTp.GetType() == mysql.TypeNewDecimal || newTp.GetType() == mysql.TypeLonglong) && terror.ErrorEqual(err, types.ErrOverflow) {
-			// Ignore the types.ErrOverflow when we convert TypeNewDecimal/TypeLonglong values.
+		} else if (newTp.GetType() == mysql.TypeNewDecimal || mysql.IsIntegerType(newTp.GetType()) || newTp.GetType() == mysql.TypeFloat) && terror.ErrorEqual(err, types.ErrOverflow) {
+			// Ignore the types.ErrOverflow when we convert TypeNewDecimal/TypeTiny/TypeShort/TypeInt24/TypeLong/TypeLonglong/TypeFloat values.
 			// A trimmed valid boundary point value would be returned then. Accordingly, the `excl` of the point
 			// would be adjusted. Impossible ranges would be skipped by the `validInterval` call later.
 			// tests in TestIndexRange/TestIndexRangeForDecimal
@@ -732,7 +732,7 @@ func newFieldType(tp *types.FieldType) *types.FieldType {
 func points2EqOrInCond(ctx expression.BuildContext, points []*point, col *expression.Column) expression.Expression {
 	// len(points) cannot be 0 here, since we impose early termination in ExtractEqAndInCondition
 	// Constant and Column args should have same RetType, simply get from first arg
-	retType := col.GetType()
+	retType := col.GetType(ctx.GetEvalCtx())
 	args := make([]expression.Expression, 0, len(points)/2)
 	args = append(args, col)
 	for i := 0; i < len(points); i = i + 2 {
@@ -746,7 +746,7 @@ func points2EqOrInCond(ctx expression.BuildContext, points []*point, col *expres
 	if len(args) > 2 {
 		funcName = ast.In
 	}
-	return expression.NewFunctionInternal(ctx, funcName, col.GetType(), args...)
+	return expression.NewFunctionInternal(ctx, funcName, col.GetType(ctx.GetEvalCtx()), args...)
 }
 
 // RangesToString print a list of Ranges into a string which can appear in an SQL as a condition.
