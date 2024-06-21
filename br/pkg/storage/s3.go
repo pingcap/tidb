@@ -295,7 +295,7 @@ func createOssRAMCred() (*credentials.Credentials, error) {
 	return credentials.NewChainCredentials([]credentials.Provider{
 		&credentials.EnvProvider{},
 		&credentials.SharedCredentialsProvider{},
-		&credentials.StaticProvider{Value: credentials.Value{ncred.AccessKeyId, ncred.AccessKeySecret, ncred.AccessKeyStsToken, ""}},
+		&credentials.StaticProvider{Value: credentials.Value{AccessKeyID: ncred.AccessKeyId, SecretAccessKey: ncred.AccessKeySecret, SessionToken: ncred.AccessKeyStsToken, ProviderName: ""}},
 	}), nil
 }
 
