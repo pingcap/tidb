@@ -75,6 +75,7 @@ func (m *mockBackupBackupSender) SendAsync(
 	round uint64,
 	storeID uint64,
 	request backuppb.BackupRequest,
+	concurrency uint,
 	cli backuppb.BackupClient,
 	respCh chan *backup.ResponseAndStore,
 	StateNotifier chan backup.BackupRetryPolicy,

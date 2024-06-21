@@ -19,8 +19,10 @@ import (
 	"github.com/pingcap/tidb/br/pkg/rtree"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/utils/storewatch"
+	tidbutil "github.com/pingcap/tidb/pkg/util"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
+	"golang.org/x/sync/errgroup"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -36,6 +38,7 @@ type BackupSender interface {
 		round uint64,
 		storeID uint64,
 		request backuppb.BackupRequest,
+		concurrency uint,
 		cli backuppb.BackupClient,
 		respCh chan *ResponseAndStore,
 		StateNotifier chan BackupRetryPolicy)
@@ -130,6 +133,7 @@ func startBackup(
 	storeID uint64,
 	backupReq backuppb.BackupRequest,
 	backupCli backuppb.BackupClient,
+	concurrency uint,
 	respCh chan *ResponseAndStore,
 ) error {
 	// this goroutine handle the response from a single store
@@ -144,51 +148,60 @@ func startBackup(
 			// Send backup request to the store.
 			// handle the backup response or internal error here.
 			// handle the store error(reboot or network partition) outside.
-			return doSendBackup(ctx, backupCli, backupReq, func(resp *backuppb.BackupResponse) error {
-				// Forward all responses (including error).
-				failpoint.Inject("backup-timeout-error", func(val failpoint.Value) {
-					msg := val.(string)
-					logutil.CL(ctx).Info("failpoint backup-timeout-error injected.", zap.String("msg", msg))
-					resp.Error = &backuppb.Error{
-						Msg: msg,
-					}
+			reqs := splitBackupReqRanges(backupReq, concurrency)
+			pool := tidbutil.NewWorkerPool(concurrency, "store_backup")
+			eg, ectx := errgroup.WithContext(ctx)
+			for _, req := range reqs {
+				bkReq := req
+				pool.ApplyOnErrorGroup(eg, func() error {
+					return doSendBackup(ectx, backupCli, bkReq, func(resp *backuppb.BackupResponse) error {
+						// Forward all responses (including error).
+						failpoint.Inject("backup-timeout-error", func(val failpoint.Value) {
+							msg := val.(string)
+							logutil.CL(ectx).Info("failpoint backup-timeout-error injected.", zap.String("msg", msg))
+							resp.Error = &backuppb.Error{
+								Msg: msg,
+							}
+						})
+						failpoint.Inject("backup-storage-error", func(val failpoint.Value) {
+							msg := val.(string)
+							logutil.CL(ectx).Debug("failpoint backup-storage-error injected.", zap.String("msg", msg))
+							resp.Error = &backuppb.Error{
+								Msg: msg,
+							}
+						})
+						failpoint.Inject("tikv-rw-error", func(val failpoint.Value) {
+							msg := val.(string)
+							logutil.CL(ectx).Debug("failpoint tikv-rw-error injected.", zap.String("msg", msg))
+							resp.Error = &backuppb.Error{
+								Msg: msg,
+							}
+						})
+						failpoint.Inject("tikv-region-error", func(val failpoint.Value) {
+							msg := val.(string)
+							logutil.CL(ectx).Debug("failpoint tikv-region-error injected.", zap.String("msg", msg))
+							resp.Error = &backuppb.Error{
+								// Msg: msg,
+								Detail: &backuppb.Error_RegionError{
+									RegionError: &errorpb.Error{
+										Message: msg,
+									},
+								},
+							}
+						})
+						select {
+						case <-ectx.Done():
+							return ectx.Err()
+						case respCh <- &ResponseAndStore{
+							Resp:    resp,
+							StoreID: storeID,
+						}:
+						}
+						return nil
+					})
 				})
-				failpoint.Inject("backup-storage-error", func(val failpoint.Value) {
-					msg := val.(string)
-					logutil.CL(ctx).Debug("failpoint backup-storage-error injected.", zap.String("msg", msg))
-					resp.Error = &backuppb.Error{
-						Msg: msg,
-					}
-				})
-				failpoint.Inject("tikv-rw-error", func(val failpoint.Value) {
-					msg := val.(string)
-					logutil.CL(ctx).Debug("failpoint tikv-rw-error injected.", zap.String("msg", msg))
-					resp.Error = &backuppb.Error{
-						Msg: msg,
-					}
-				})
-				failpoint.Inject("tikv-region-error", func(val failpoint.Value) {
-					msg := val.(string)
-					logutil.CL(ctx).Debug("failpoint tikv-region-error injected.", zap.String("msg", msg))
-					resp.Error = &backuppb.Error{
-						// Msg: msg,
-						Detail: &backuppb.Error_RegionError{
-							RegionError: &errorpb.Error{
-								Message: msg,
-							},
-						},
-					}
-				})
-				select {
-				case <-ctx.Done():
-					return ctx.Err()
-				case respCh <- &ResponseAndStore{
-					Resp:    resp,
-					StoreID: storeID,
-				}:
-				}
-				return nil
-			})
+			}
+			return eg.Wait()
 		}, utils.NewBackupSSTBackoffer())
 	}
 }
@@ -263,4 +276,23 @@ func ObserveStoreChangesAsync(ctx context.Context, stateNotifier chan BackupRetr
 			}
 		}
 	}()
+}
+
+func splitBackupReqRanges(req backuppb.BackupRequest, count uint) []backuppb.BackupRequest {
+	rangeCount := len(req.SubRanges)
+	if rangeCount == 0 {
+		return []backuppb.BackupRequest{req}
+	}
+	splitRequests := make([]backuppb.BackupRequest, 0, count)
+	splitStep := rangeCount / int(count+1)
+	if splitStep == 0 {
+		return []backuppb.BackupRequest{req}
+	}
+	subRanges := req.SubRanges
+	for i := 0; i < rangeCount; i += splitStep {
+		splitReq := req
+		splitReq.SubRanges = subRanges[i:min(i+splitStep, rangeCount)]
+		splitRequests = append(splitRequests, splitReq)
+	}
+	return splitRequests
 }
