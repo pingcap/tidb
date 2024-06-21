@@ -20,8 +20,8 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/config",
-        "//pkg/ddl/internal/session",
         "//pkg/ddl/logutil",
+        "//pkg/ddl/session",
         "//pkg/ddl/util",
         "//pkg/kv",
         "//pkg/lightning/backend",
@@ -78,7 +78,7 @@ go_test(
         "//pkg/config",
         "//pkg/ddl",
         "//pkg/ddl/ingest/testutil",
-        "//pkg/ddl/internal/session",
+        "//pkg/ddl/session",
         "//pkg/ddl/testutil",
         "//pkg/ddl/util/callback",
         "//pkg/domain",
