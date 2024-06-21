@@ -211,15 +211,15 @@ func toString(in base.Plan, strs []string, idxs []int) ([]string, []int) {
 		str = name + "{" + strings.Join(children, ",") + "}"
 		idxs = idxs[:last]
 	case *DataSource:
-		if x.partitionDefIdx != nil {
+		if x.PartitionDefIdx != nil {
 			// TODO: Change this to:
-			//str = fmt.Sprintf("Partition(%d)", x.tableInfo.Partition.Definitions[*x.partitionDefIdx].Name.O)
-			str = fmt.Sprintf("Partition(%d)", x.physicalTableID)
+			//str = fmt.Sprintf("Partition(%d)", x.TableInfo.Partition.Definitions[*x.PartitionDefIdx].Name.O)
+			str = fmt.Sprintf("Partition(%d)", x.PhysicalTableID)
 		} else {
 			if x.TableAsName != nil && x.TableAsName.L != "" {
 				str = fmt.Sprintf("DataScan(%s)", x.TableAsName)
 			} else {
-				str = fmt.Sprintf("DataScan(%s)", x.tableInfo.Name)
+				str = fmt.Sprintf("DataScan(%s)", x.TableInfo.Name)
 			}
 		}
 	case *LogicalSelection:

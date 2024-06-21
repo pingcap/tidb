@@ -213,8 +213,8 @@ func TestJoinPredicatePushDown(t *testing.T) {
 		require.True(t, ok, comment)
 		rightPlan, ok := join.Children()[1].(*DataSource)
 		require.True(t, ok, comment)
-		leftCond := fmt.Sprintf("%s", leftPlan.pushedDownConds)
-		rightCond := fmt.Sprintf("%s", rightPlan.pushedDownConds)
+		leftCond := fmt.Sprintf("%s", leftPlan.PushedDownConds)
+		rightCond := fmt.Sprintf("%s", rightPlan.PushedDownConds)
 		testdata.OnRecord(func() {
 			output[i].Left, output[i].Right = leftCond, rightCond
 		})
@@ -260,8 +260,8 @@ func TestOuterWherePredicatePushDown(t *testing.T) {
 		require.True(t, ok, comment)
 		rightPlan, ok := join.Children()[1].(*DataSource)
 		require.True(t, ok, comment)
-		leftCond := fmt.Sprintf("%s", leftPlan.pushedDownConds)
-		rightCond := fmt.Sprintf("%s", rightPlan.pushedDownConds)
+		leftCond := fmt.Sprintf("%s", leftPlan.PushedDownConds)
+		rightCond := fmt.Sprintf("%s", rightPlan.PushedDownConds)
 		testdata.OnRecord(func() {
 			output[i].Left, output[i].Right = leftCond, rightCond
 		})
@@ -367,8 +367,8 @@ func TestDeriveNotNullConds(t *testing.T) {
 		join := p.(base.LogicalPlan).Children()[0].(*LogicalJoin)
 		left := join.Children()[0].(*DataSource)
 		right := join.Children()[1].(*DataSource)
-		leftConds := fmt.Sprintf("%s", left.pushedDownConds)
-		rightConds := fmt.Sprintf("%s", right.pushedDownConds)
+		leftConds := fmt.Sprintf("%s", left.PushedDownConds)
+		rightConds := fmt.Sprintf("%s", right.PushedDownConds)
 		testdata.OnRecord(func() {
 			output[i].Left, output[i].Right = leftConds, rightConds
 		})

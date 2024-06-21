@@ -373,17 +373,17 @@ func (p *LogicalUnionScan) PruneColumns(parentUsedCols []*expression.Column, opt
 func (ds *DataSource) PruneColumns(parentUsedCols []*expression.Column, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, error) {
 	used := expression.GetUsedList(ds.SCtx().GetExprCtx().GetEvalCtx(), parentUsedCols, ds.Schema())
 
-	exprCols := expression.ExtractColumnsFromExpressions(nil, ds.allConds, nil)
+	exprCols := expression.ExtractColumnsFromExpressions(nil, ds.AllConds, nil)
 	exprUsed := expression.GetUsedList(ds.SCtx().GetExprCtx().GetEvalCtx(), exprCols, ds.Schema())
 	prunedColumns := make([]*expression.Column, 0)
 
 	originSchemaColumns := ds.Schema().Columns
 	originColumns := ds.Columns
 
-	ds.colsRequiringFullLen = make([]*expression.Column, 0, len(used))
+	ds.ColsRequiringFullLen = make([]*expression.Column, 0, len(used))
 	for i, col := range ds.Schema().Columns {
-		if used[i] || (ds.containExprPrefixUk && expression.GcColumnExprIsTidbShard(col.VirtualExpr)) {
-			ds.colsRequiringFullLen = append(ds.colsRequiringFullLen, col)
+		if used[i] || (ds.ContainExprPrefixUk && expression.GcColumnExprIsTidbShard(col.VirtualExpr)) {
+			ds.ColsRequiringFullLen = append(ds.ColsRequiringFullLen, col)
 		}
 	}
 
@@ -391,7 +391,7 @@ func (ds *DataSource) PruneColumns(parentUsedCols []*expression.Column, opt *opt
 		if !used[i] && !exprUsed[i] {
 			// If ds has a shard index, and the column is generated column by `tidb_shard()`
 			// it can't prune the generated column of shard index
-			if ds.containExprPrefixUk &&
+			if ds.ContainExprPrefixUk &&
 				expression.GcColumnExprIsTidbShard(ds.Schema().Columns[i].VirtualExpr) {
 				continue
 			}
@@ -414,16 +414,16 @@ func (ds *DataSource) PruneColumns(parentUsedCols []*expression.Column, opt *opt
 	}
 	// ref: https://github.com/pingcap/tidb/issues/44579
 	// when first entering columnPruner, we kept a column-a in datasource since upper agg function count(a) is used.
-	//		then we mark the handleCols as nil here.
+	//		then we mark the HandleCols as nil here.
 	// when second entering columnPruner, the count(a) is eliminated since it always not null. we should fill another
 	// 		extra col, in this way, handle col is useful again, otherwise, _tidb_rowid will be filled.
-	if ds.handleCols != nil && ds.handleCols.IsInt() && ds.Schema().ColumnIndex(ds.handleCols.GetCol(0)) == -1 {
-		ds.handleCols = nil
+	if ds.HandleCols != nil && ds.HandleCols.IsInt() && ds.Schema().ColumnIndex(ds.HandleCols.GetCol(0)) == -1 {
+		ds.HandleCols = nil
 	}
 	// Current DataSource operator contains all the filters on this table, and the columns used by these filters are always included
 	// in the output schema. Even if they are not needed by DataSource's parent operator. Thus add a projection here to prune useless columns
 	// Limit to MPP tasks, because TiKV can't benefit from this now(projection can't be pushed down to TiKV now).
-	if !addOneHandle && ds.Schema().Len() > len(parentUsedCols) && ds.SCtx().GetSessionVars().IsMPPEnforced() && ds.tableInfo.TiFlashReplica != nil {
+	if !addOneHandle && ds.Schema().Len() > len(parentUsedCols) && ds.SCtx().GetSessionVars().IsMPPEnforced() && ds.TableInfo.TiFlashReplica != nil {
 		proj := LogicalProjection{
 			Exprs: expression.Column2Exprs(parentUsedCols),
 		}.Init(ds.SCtx(), ds.QueryBlockOffset())
@@ -588,13 +588,13 @@ func (p *LogicalLock) PruneColumns(parentUsedCols []*expression.Column, opt *opt
 		return p, nil
 	}
 
-	for tblID, cols := range p.tblID2Handle {
+	for tblID, cols := range p.TblID2Handle {
 		for _, col := range cols {
 			for i := 0; i < col.NumCols(); i++ {
 				parentUsedCols = append(parentUsedCols, col.GetCol(i))
 			}
 		}
-		if physTblIDCol, ok := p.tblID2PhysTblIDCol[tblID]; ok {
+		if physTblIDCol, ok := p.TblID2PhysTblIDCol[tblID]; ok {
 			// If the children include partitioned tables, there is an extra partition ID column.
 			parentUsedCols = append(parentUsedCols, physTblIDCol)
 		}
@@ -703,13 +703,13 @@ func preferKeyColumnFromTable(dataSource *DataSource, originColumns []*expressio
 		resultColumnInfo = originSchemaColumns[0]
 		resultColumn = originColumns[0]
 	} else {
-		if dataSource.handleCols != nil {
-			resultColumn = dataSource.handleCols.GetCol(0)
+		if dataSource.HandleCols != nil {
+			resultColumn = dataSource.HandleCols.GetCol(0)
 			resultColumnInfo = resultColumn.ToInfo()
 		} else if dataSource.table.Meta().PKIsHandle {
-			// dataSource.handleCols = nil doesn't mean datasource doesn't have a intPk handle.
-			// since datasource.handleCols will be cleared in the first columnPruner.
-			resultColumn = dataSource.unMutableHandleCols.GetCol(0)
+			// dataSource.HandleCols = nil doesn't mean datasource doesn't have a intPk handle.
+			// since datasource.HandleCols will be cleared in the first columnPruner.
+			resultColumn = dataSource.UnMutableHandleCols.GetCol(0)
 			resultColumnInfo = resultColumn.ToInfo()
 		} else {
 			resultColumn = dataSource.newExtraHandleSchemaCol()
