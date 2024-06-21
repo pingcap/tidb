@@ -995,13 +995,6 @@ var defaultSysVars = []*SysVar{
 		GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
 			return BoolToOnOff(PersistAnalyzeOptions.Load()), nil
 		},
-		Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
-			persist := TiDBOptOn(normalizedValue)
-			if !persist && EnableColumnTracking.Load() {
-				return "", errors.Errorf("tidb_persist_analyze_options option cannot be set to OFF when tidb_enable_column_tracking is ON, as this will result in the loss of column tracking information")
-			}
-			return normalizedValue, nil
-		},
 		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
 			persist := TiDBOptOn(val)
 			PersistAnalyzeOptions.Store(persist)
