@@ -792,7 +792,7 @@ childLoop:
 			return nil
 		}
 	}
-	if wrapper.ds == nil || wrapper.ds.preferStoreType&h.PreferTiFlash != 0 {
+	if wrapper.ds == nil || wrapper.ds.PreferStoreType&h.PreferTiFlash != 0 {
 		return nil
 	}
 	return wrapper
@@ -803,7 +803,7 @@ func (p *LogicalJoin) getIndexJoinBuildHelper(ds *DataSource, innerJoinKeys []*e
 		join:      p,
 		innerPlan: ds,
 	}
-	for _, path := range ds.possibleAccessPaths {
+	for _, path := range ds.PossibleAccessPaths {
 		if checkPathValid(path) {
 			emptyRange, err := helper.analyzeLookUpFilters(path, ds, innerJoinKeys, outerJoinKeys, false)
 			if emptyRange {
@@ -839,7 +839,7 @@ func (p *LogicalJoin) buildIndexJoinInner2TableScan(
 	outerIdx int, avgInnerRowCnt float64) (joins []base.PhysicalPlan) {
 	ds := wrapper.ds
 	var tblPath *util.AccessPath
-	for _, path := range ds.possibleAccessPaths {
+	for _, path := range ds.PossibleAccessPaths {
 		if path.IsTablePath() && path.StoreType == kv.TiKV {
 			tblPath = path
 			break
@@ -853,7 +853,7 @@ func (p *LogicalJoin) buildIndexJoinInner2TableScan(
 	var ranges ranger.MutableRanges = ranger.Ranges{}
 	var innerTask, innerTask2 base.Task
 	var helper *indexJoinBuildHelper
-	if ds.tableInfo.IsCommonHandle {
+	if ds.TableInfo.IsCommonHandle {
 		helper, keyOff2IdxOff = p.getIndexJoinBuildHelper(ds, innerJoinKeys, func(path *util.AccessPath) bool { return path.IsCommonHandlePath }, outerJoinKeys)
 		if helper == nil {
 			return nil
@@ -1048,24 +1048,24 @@ func (p *LogicalJoin) constructInnerTableScanTask(
 	rowCount float64,
 ) base.Task {
 	ds := wrapper.ds
-	// If `ds.tableInfo.GetPartitionInfo() != nil`,
+	// If `ds.TableInfo.GetPartitionInfo() != nil`,
 	// it means the data source is a partition table reader.
 	// If the inner task need to keep order, the partition table reader can't satisfy it.
-	if keepOrder && ds.tableInfo.GetPartitionInfo() != nil {
+	if keepOrder && ds.TableInfo.GetPartitionInfo() != nil {
 		return nil
 	}
 	ts := PhysicalTableScan{
-		Table:           ds.tableInfo,
+		Table:           ds.TableInfo,
 		Columns:         ds.Columns,
 		TableAsName:     ds.TableAsName,
 		DBName:          ds.DBName,
-		filterCondition: ds.pushedDownConds,
+		filterCondition: ds.PushedDownConds,
 		Ranges:          ranges,
 		rangeInfo:       rangeInfo,
 		KeepOrder:       keepOrder,
 		Desc:            desc,
-		physicalTableID: ds.physicalTableID,
-		isPartition:     ds.partitionDefIdx != nil,
+		physicalTableID: ds.PhysicalTableID,
+		isPartition:     ds.PartitionDefIdx != nil,
 		tblCols:         ds.TblCols,
 		tblColHists:     ds.TblColHists,
 	}.Init(ds.SCtx(), ds.QueryBlockOffset())
@@ -1077,7 +1077,7 @@ func (p *LogicalJoin) constructInnerTableScanTask(
 	countAfterAccess := rowCount
 	if len(ts.filterCondition) > 0 {
 		var err error
-		selectivity, _, err = cardinality.Selectivity(ds.SCtx(), ds.tableStats.HistColl, ts.filterCondition, ds.possibleAccessPaths)
+		selectivity, _, err = cardinality.Selectivity(ds.SCtx(), ds.TableStats.HistColl, ts.filterCondition, ds.PossibleAccessPaths)
 		if err != nil || selectivity <= 0 {
 			logutil.BgLogger().Debug("unexpected selectivity, use selection factor", zap.Float64("selectivity", selectivity), zap.String("table", ts.TableAsName.L))
 			selectivity = cost.SelectionFactor
@@ -1103,8 +1103,8 @@ func (p *LogicalJoin) constructInnerTableScanTask(
 		keepOrder:         ts.KeepOrder,
 	}
 	copTask.physPlanPartInfo = PhysPlanPartInfo{
-		PruningConds:   ds.allConds,
-		PartitionNames: ds.partitionNames,
+		PruningConds:   ds.AllConds,
+		PartitionNames: ds.PartitionNames,
 		Columns:        ds.TblCols,
 		ColumnNames:    ds.OutputNames(),
 	}
@@ -1243,14 +1243,14 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 	maxOneRow bool,
 ) base.Task {
 	ds := wrapper.ds
-	// If `ds.tableInfo.GetPartitionInfo() != nil`,
+	// If `ds.TableInfo.GetPartitionInfo() != nil`,
 	// it means the data source is a partition table reader.
 	// If the inner task need to keep order, the partition table reader can't satisfy it.
-	if keepOrder && ds.tableInfo.GetPartitionInfo() != nil {
+	if keepOrder && ds.TableInfo.GetPartitionInfo() != nil {
 		return nil
 	}
 	is := PhysicalIndexScan{
-		Table:            ds.tableInfo,
+		Table:            ds.TableInfo,
 		TableAsName:      ds.TableAsName,
 		DBName:           ds.DBName,
 		Columns:          ds.Columns,
@@ -1262,8 +1262,8 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 		Ranges:           ranges,
 		rangeInfo:        rangeInfo,
 		Desc:             desc,
-		isPartition:      ds.partitionDefIdx != nil,
-		physicalTableID:  ds.physicalTableID,
+		isPartition:      ds.PartitionDefIdx != nil,
+		physicalTableID:  ds.PhysicalTableID,
 		tblColHists:      ds.TblColHists,
 		pkIsHandleCol:    ds.getPKIsHandleCol(),
 	}.Init(ds.SCtx(), ds.QueryBlockOffset())
@@ -1274,8 +1274,8 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 		keepOrder:   is.KeepOrder,
 	}
 	cop.physPlanPartInfo = PhysPlanPartInfo{
-		PruningConds:   ds.allConds,
-		PartitionNames: ds.partitionNames,
+		PruningConds:   ds.AllConds,
+		PartitionNames: ds.PartitionNames,
 		Columns:        ds.TblCols,
 		ColumnNames:    ds.OutputNames(),
 	}
@@ -1286,14 +1286,14 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 			Table:           is.Table,
 			TableAsName:     ds.TableAsName,
 			DBName:          ds.DBName,
-			isPartition:     ds.partitionDefIdx != nil,
-			physicalTableID: ds.physicalTableID,
+			isPartition:     ds.PartitionDefIdx != nil,
+			physicalTableID: ds.PhysicalTableID,
 			tblCols:         ds.TblCols,
 			tblColHists:     ds.TblColHists,
 		}.Init(ds.SCtx(), ds.QueryBlockOffset())
 		ts.schema = is.dataSourceSchema.Clone()
-		if ds.tableInfo.IsCommonHandle {
-			commonHandle := ds.handleCols.(*util.CommonHandleCols)
+		if ds.TableInfo.IsCommonHandle {
+			commonHandle := ds.HandleCols.(*util.CommonHandleCols)
 			for _, col := range commonHandle.GetColumns() {
 				if ts.schema.ColumnIndex(col) == -1 {
 					ts.Schema().Append(col)
@@ -1305,13 +1305,13 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 		// We set `StatsVersion` here and fill other fields in `(*copTask).finishIndexPlan`. Since `copTask.indexPlan` may
 		// change before calling `(*copTask).finishIndexPlan`, we don't know the stats information of `ts` currently and on
 		// the other hand, it may be hard to identify `StatsVersion` of `ts` in `(*copTask).finishIndexPlan`.
-		ts.SetStats(&property.StatsInfo{StatsVersion: ds.tableStats.StatsVersion})
+		ts.SetStats(&property.StatsInfo{StatsVersion: ds.TableStats.StatsVersion})
 		usedStats := p.SCtx().GetSessionVars().StmtCtx.GetUsedStatsInfo(false)
 		if usedStats != nil && usedStats.GetUsedInfo(ts.physicalTableID) != nil {
 			ts.usedStatsInfo = usedStats.GetUsedInfo(ts.physicalTableID)
 		}
 		// If inner cop task need keep order, the extraHandleCol should be set.
-		if cop.keepOrder && !ds.tableInfo.IsCommonHandle {
+		if cop.keepOrder && !ds.TableInfo.IsCommonHandle {
 			var needExtraProj bool
 			cop.extraHandleCol, needExtraProj = ts.appendExtraHandleCol(ds)
 			cop.needExtraProj = cop.needExtraProj || needExtraProj
@@ -1321,10 +1321,10 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 		}
 		cop.tablePlan = ts
 	}
-	if cop.tablePlan != nil && ds.tableInfo.IsCommonHandle {
-		cop.commonHandleCols = ds.commonHandleCols
+	if cop.tablePlan != nil && ds.TableInfo.IsCommonHandle {
+		cop.commonHandleCols = ds.CommonHandleCols
 	}
-	is.initSchema(append(path.FullIdxCols, ds.commonHandleCols...), cop.tablePlan != nil)
+	is.initSchema(append(path.FullIdxCols, ds.CommonHandleCols...), cop.tablePlan != nil)
 	indexConds, tblConds := ds.splitIndexFilterConditions(filterConds, path.FullIdxCols, path.FullIdxColLens)
 
 	// Note: due to a regression in JOB workload, we use the optimizer fix control to enable this for now.
@@ -1334,7 +1334,7 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 	// We can calculate the lower bound of the NDV therefore we can get an upper bound of the row count here.
 	rowCountUpperBound := -1.0
 	fixControlOK := fixcontrol.GetBoolWithDefault(ds.SCtx().GetSessionVars().GetOptimizerFixControlMap(), fixcontrol.Fix44855, false)
-	if fixControlOK && ds.tableStats != nil {
+	if fixControlOK && ds.TableStats != nil {
 		usedColIDs := make([]int64, 0)
 		// We only consider columns in this index that (1) are used to probe as join key,
 		// and (2) are not prefix column in the index (for which we can't easily get a lower bound)
@@ -1346,9 +1346,9 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 			}
 			usedColIDs = append(usedColIDs, path.FullIdxCols[idxOffset].UniqueID)
 		}
-		joinKeyNDV := getColsNDVLowerBoundFromHistColl(usedColIDs, ds.tableStats.HistColl)
+		joinKeyNDV := getColsNDVLowerBoundFromHistColl(usedColIDs, ds.TableStats.HistColl)
 		if joinKeyNDV > 0 {
-			rowCountUpperBound = ds.tableStats.RowCount / float64(joinKeyNDV)
+			rowCountUpperBound = ds.TableStats.RowCount / float64(joinKeyNDV)
 		}
 	}
 
@@ -1369,7 +1369,7 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 	}
 	// Assume equal conditions used by index join and other conditions are independent.
 	if len(tblConds) > 0 {
-		selectivity, _, err := cardinality.Selectivity(ds.SCtx(), ds.tableStats.HistColl, tblConds, ds.possibleAccessPaths)
+		selectivity, _, err := cardinality.Selectivity(ds.SCtx(), ds.TableStats.HistColl, tblConds, ds.PossibleAccessPaths)
 		if err != nil || selectivity <= 0 {
 			logutil.BgLogger().Debug("unexpected selectivity, use selection factor", zap.Float64("selectivity", selectivity), zap.String("table", ds.TableAsName.L))
 			selectivity = cost.SelectionFactor
@@ -1387,7 +1387,7 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 		tmpPath.CountAfterAccess = cnt
 	}
 	if len(indexConds) > 0 {
-		selectivity, _, err := cardinality.Selectivity(ds.SCtx(), ds.tableStats.HistColl, indexConds, ds.possibleAccessPaths)
+		selectivity, _, err := cardinality.Selectivity(ds.SCtx(), ds.TableStats.HistColl, indexConds, ds.PossibleAccessPaths)
 		if err != nil || selectivity <= 0 {
 			logutil.BgLogger().Debug("unexpected selectivity, use selection factor", zap.Float64("selectivity", selectivity), zap.String("table", ds.TableAsName.L))
 			selectivity = cost.SelectionFactor
@@ -1401,12 +1401,12 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 		}
 		tmpPath.CountAfterAccess = cnt
 	}
-	is.SetStats(ds.tableStats.ScaleByExpectCnt(tmpPath.CountAfterAccess))
+	is.SetStats(ds.TableStats.ScaleByExpectCnt(tmpPath.CountAfterAccess))
 	usedStats := ds.SCtx().GetSessionVars().StmtCtx.GetUsedStatsInfo(false)
 	if usedStats != nil && usedStats.GetUsedInfo(is.physicalTableID) != nil {
 		is.usedStatsInfo = usedStats.GetUsedInfo(is.physicalTableID)
 	}
-	finalStats := ds.tableStats.ScaleByExpectCnt(rowCount)
+	finalStats := ds.TableStats.ScaleByExpectCnt(rowCount)
 	if err := is.addPushedDownSelection(cop, ds, tmpPath, finalStats); err != nil {
 		logutil.BgLogger().Warn("unexpected error happened during addPushedDownSelection function", zap.Error(err))
 		return nil
@@ -1464,7 +1464,7 @@ func (p *LogicalJoin) constructIndexJoinInnerSideTask(dsCopTask *CopTask, ds *Da
 	}
 	// sort items must be the super set of group by items
 	if path != nil && path.Index != nil && !path.Index.MVIndex &&
-		ds.tableInfo.GetPartitionInfo() == nil {
+		ds.TableInfo.GetPartitionInfo() == nil {
 		if len(path.IdxCols) < len(groupByCols) {
 			preferStream = false
 		}
@@ -1676,7 +1676,7 @@ func (ijHelper *indexJoinBuildHelper) resetContextForIndex(innerKeys []*expressi
 	}
 }
 
-// findUsefulEqAndInFilters analyzes the pushedDownConds held by inner child and split them to three parts.
+// findUsefulEqAndInFilters analyzes the PushedDownConds held by inner child and split them to three parts.
 // usefulEqOrInFilters is the continuous eq/in conditions on current unused index columns.
 // remainedEqOrIn is part of usefulEqOrInFilters, which needs to be evaluated again in selection.
 // remainingRangeCandidates is the other conditions for future use.
@@ -1684,7 +1684,7 @@ func (ijHelper *indexJoinBuildHelper) findUsefulEqAndInFilters(innerPlan *DataSo
 	// Extract the eq/in functions of possible join key.
 	// you can see the comment of ExtractEqAndInCondition to get the meaning of the second return value.
 	usefulEqOrInFilters, remainedEqOrIn, remainingRangeCandidates, _, emptyRange = ranger.ExtractEqAndInCondition(
-		innerPlan.SCtx().GetRangerCtx(), innerPlan.pushedDownConds,
+		innerPlan.SCtx().GetRangerCtx(), innerPlan.PushedDownConds,
 		ijHelper.curNotUsedIndexCols,
 		ijHelper.curNotUsedColLens,
 	)
@@ -2937,7 +2937,7 @@ func disableAggPushDownToCop(p base.LogicalPlan) {
 		disableAggPushDownToCop(child)
 	}
 	if agg, ok := p.(*LogicalAggregation); ok {
-		agg.noCopPushDown = true
+		agg.NoCopPushDown = true
 	}
 }
 
@@ -3107,7 +3107,7 @@ func canPushToCopImpl(lp base.LogicalPlan, storeTp kv.StoreType, considerDual bo
 		case *DataSource:
 			validDs := false
 			indexMergeIsIntersection := false
-			for _, path := range c.possibleAccessPaths {
+			for _, path := range c.PossibleAccessPaths {
 				if path.StoreType == storeTp {
 					validDs = true
 				}
@@ -3123,7 +3123,7 @@ func canPushToCopImpl(lp base.LogicalPlan, storeTp kv.StoreType, considerDual bo
 				return false // TopN and Limit cannot be pushed down to the intersection type IndexMerge
 			}
 
-			if c.tableInfo.TableCacheStatusType != model.TableCacheStatusDisable {
+			if c.TableInfo.TableCacheStatusType != model.TableCacheStatusDisable {
 				// Don't push to cop for cached table, it brings more harm than good:
 				// 1. Those tables are small enough, push to cop can't utilize several TiKV to accelerate computation.
 				// 2. Cached table use UnionScan to read the cache data, and push to cop is not supported when an UnionScan exists.
@@ -3182,7 +3182,7 @@ func canPushToCopImpl(lp base.LogicalPlan, storeTp kv.StoreType, considerDual bo
 
 // CanPushToCop implements LogicalPlan interface.
 func (la *LogicalAggregation) CanPushToCop(storeTp kv.StoreType) bool {
-	return la.BaseLogicalPlan.CanPushToCop(storeTp) && !la.noCopPushDown
+	return la.BaseLogicalPlan.CanPushToCop(storeTp) && !la.NoCopPushDown
 }
 
 func (la *LogicalAggregation) getEnforcedStreamAggs(prop *property.PhysicalProperty) []base.PhysicalPlan {
@@ -3193,7 +3193,7 @@ func (la *LogicalAggregation) getEnforcedStreamAggs(prop *property.PhysicalPrope
 	allTaskTypes := prop.GetAllPossibleChildTaskTypes()
 	enforcedAggs := make([]base.PhysicalPlan, 0, len(allTaskTypes))
 	childProp := &property.PhysicalProperty{
-		ExpectedCnt:    math.Max(prop.ExpectedCnt*la.inputCount/la.StatsInfo().RowCount, prop.ExpectedCnt),
+		ExpectedCnt:    math.Max(prop.ExpectedCnt*la.InputCount/la.StatsInfo().RowCount, prop.ExpectedCnt),
 		CanAddEnforcer: true,
 		SortItems:      property.SortItemsFromCols(la.GetGroupByCols(), desc),
 	}
@@ -3265,12 +3265,12 @@ func (la *LogicalAggregation) getStreamAggs(prop *property.PhysicalProperty) []b
 	}
 
 	allTaskTypes := prop.GetAllPossibleChildTaskTypes()
-	streamAggs := make([]base.PhysicalPlan, 0, len(la.possibleProperties)*(len(allTaskTypes)-1)+len(allTaskTypes))
+	streamAggs := make([]base.PhysicalPlan, 0, len(la.PossibleProperties)*(len(allTaskTypes)-1)+len(allTaskTypes))
 	childProp := &property.PhysicalProperty{
-		ExpectedCnt: math.Max(prop.ExpectedCnt*la.inputCount/la.StatsInfo().RowCount, prop.ExpectedCnt),
+		ExpectedCnt: math.Max(prop.ExpectedCnt*la.InputCount/la.StatsInfo().RowCount, prop.ExpectedCnt),
 	}
 
-	for _, possibleChildProperty := range la.possibleProperties {
+	for _, possibleChildProperty := range la.PossibleProperties {
 		childProp.SortItems = property.SortItemsFromCols(possibleChildProperty[:len(groupByCols)], desc)
 		if !prop.IsPrefix(childProp) {
 			continue
@@ -3666,8 +3666,8 @@ func (p *LogicalLock) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([]b
 	childProp := prop.CloneEssentialFields()
 	lock := PhysicalLock{
 		Lock:               p.Lock,
-		TblID2Handle:       p.tblID2Handle,
-		TblID2PhysTblIDCol: p.tblID2PhysTblIDCol,
+		TblID2Handle:       p.TblID2Handle,
+		TblID2PhysTblIDCol: p.TblID2PhysTblIDCol,
 	}.Init(p.SCtx(), p.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), childProp)
 	return []base.PhysicalPlan{lock}, true, nil
 }

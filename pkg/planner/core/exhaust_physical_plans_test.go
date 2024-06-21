@@ -191,7 +191,7 @@ func testAnalyzeLookUpFilters(t *testing.T, testCtx *indexJoinContext, testCase 
 	joinNode := testCtx.joinNode
 	pushed, err := rewriteSimpleExpr(ctx.GetExprCtx(), testCase.pushedDownConds, dataSourceNode.Schema(), testCtx.dsNames)
 	require.NoError(t, err)
-	dataSourceNode.pushedDownConds = pushed
+	dataSourceNode.PushedDownConds = pushed
 	others, err := rewriteSimpleExpr(ctx.GetExprCtx(), testCase.otherConds, joinNode.Schema(), testCtx.joinColNames)
 	require.NoError(t, err)
 	joinNode.OtherConditions = others

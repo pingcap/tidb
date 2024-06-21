@@ -926,12 +926,12 @@ type LogicalAggregation struct {
 	PreferAggType  uint
 	PreferAggToCop bool
 
-	possibleProperties [][]*expression.Column
-	inputCount         float64 // inputCount is the input count of this plan.
+	PossibleProperties [][]*expression.Column
+	InputCount         float64 // InputCount is the input count of this plan.
 
-	// noCopPushDown indicates if planner must not push this agg down to coprocessor.
+	// NoCopPushDown indicates if planner must not push this agg down to coprocessor.
 	// It is true when the agg is in the outer child tree of apply.
-	noCopPushDown bool
+	NoCopPushDown bool
 }
 
 // HasDistinct shows whether LogicalAggregation has functions with distinct.
@@ -1419,85 +1419,80 @@ type LogicalUnionScan struct {
 	handleCols util.HandleCols
 }
 
-// GetAllConds Exported for unit test.
-func (ds *DataSource) GetAllConds() []expression.Expression {
-	return ds.allConds
-}
-
 // DataSource represents a tableScan without condition push down.
 type DataSource struct {
 	logicalop.LogicalSchemaProducer
 
-	astIndexHints []*ast.IndexHint
+	AstIndexHints []*ast.IndexHint
 	IndexHints    []h.HintedIndex
 	table         table.Table
-	tableInfo     *model.TableInfo
+	TableInfo     *model.TableInfo
 	Columns       []*model.ColumnInfo
 	DBName        model.CIStr
 
 	TableAsName *model.CIStr
-	// indexMergeHints are the hint for indexmerge.
-	indexMergeHints []h.HintedIndex
-	// pushedDownConds are the conditions that will be pushed down to coprocessor.
-	pushedDownConds []expression.Expression
-	// allConds contains all the filters on this table. For now it's maintained
+	// IndexMergeHints are the hint for indexmerge.
+	IndexMergeHints []h.HintedIndex
+	// PushedDownConds are the conditions that will be pushed down to coprocessor.
+	PushedDownConds []expression.Expression
+	// AllConds contains all the filters on this table. For now it's maintained
 	// in predicate push down and used in partition pruning/index merge.
-	allConds []expression.Expression
+	AllConds []expression.Expression
 
-	statisticTable *statistics.Table
-	tableStats     *property.StatsInfo
+	StatisticTable *statistics.Table
+	TableStats     *property.StatsInfo
 
-	// possibleAccessPaths stores all the possible access path for physical plan, including table scan.
-	possibleAccessPaths []*util.AccessPath
+	// PossibleAccessPaths stores all the possible access path for physical plan, including table scan.
+	PossibleAccessPaths []*util.AccessPath
 
 	// The data source may be a partition, rather than a real table.
-	partitionDefIdx *int
-	physicalTableID int64
-	partitionNames  []model.CIStr
+	PartitionDefIdx *int
+	PhysicalTableID int64
+	PartitionNames  []model.CIStr
 
 	// handleCol represents the handle column for the datasource, either the
 	// int primary key column or extra handle column.
 	// handleCol *expression.Column
-	handleCols          util.HandleCols
-	unMutableHandleCols util.HandleCols
+	HandleCols          util.HandleCols
+	UnMutableHandleCols util.HandleCols
 	// TblCols contains the original columns of table before being pruned, and it
 	// is used for estimating table scan cost.
 	TblCols []*expression.Column
-	// commonHandleCols and commonHandleLens save the info of primary key which is the clustered index.
-	commonHandleCols []*expression.Column
-	commonHandleLens []int
+	// CommonHandleCols and CommonHandleLens save the info of primary key which is the clustered index.
+	CommonHandleCols []*expression.Column
+	CommonHandleLens []int
 	// TblColHists contains the Histogram of all original table columns,
-	// it is converted from statisticTable, and used for IO/network cost estimating.
+	// it is converted from StatisticTable, and used for IO/network cost estimating.
 	TblColHists *statistics.HistColl
-	// preferStoreType means the DataSource is enforced to which storage.
-	preferStoreType int
-	// preferPartitions store the map, the key represents store type, the value represents the partition name list.
-	preferPartitions map[int][]model.CIStr
+	// PreferStoreType means the DataSource is enforced to which storage.
+	PreferStoreType int
+	// PreferPartitions store the map, the key represents store type, the value represents the partition name list.
+	PreferPartitions map[int][]model.CIStr
 	SampleInfo       *tablesampler.TableSampleInfo
-	is               infoschema.InfoSchema
-	// isForUpdateRead should be true in either of the following situations
+	IS               infoschema.InfoSchema
+	// IsForUpdateRead should be true in either of the following situations
 	// 1. use `inside insert`, `update`, `delete` or `select for update` statement
 	// 2. isolation level is RC
-	isForUpdateRead bool
+	IsForUpdateRead bool
 
 	// contain unique index and the first field is tidb_shard(),
 	// such as (tidb_shard(a), a ...), the fields are more than 2
-	containExprPrefixUk bool
+	ContainExprPrefixUk bool
 
-	// colsRequiringFullLen is the columns that must be fetched with full length.
+	// ColsRequiringFullLen is the columns that must be fetched with full length.
 	// It is used to decide whether single scan is enough when reading from an index.
-	colsRequiringFullLen []*expression.Column
+	ColsRequiringFullLen []*expression.Column
 
-	// accessPathMinSelectivity is the minimal selectivity among the access paths.
+	// AccessPathMinSelectivity is the minimal selectivity among the access paths.
 	// It's calculated after we generated the access paths and estimated row count for them, and before entering findBestTask.
 	// It considers CountAfterIndex for index paths and CountAfterAccess for table paths and index merge paths.
-	accessPathMinSelectivity float64
+	AccessPathMinSelectivity float64
 }
 
 // ExtractCorrelatedCols implements LogicalPlan interface.
 func (ds *DataSource) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
-	corCols := make([]*expression.CorrelatedColumn, 0, len(ds.pushedDownConds))
-	for _, expr := range ds.pushedDownConds {
+	corCols := make([]*expression.CorrelatedColumn, 0, len(ds.PushedDownConds))
+	for _, expr := range ds.PushedDownConds {
 		corCols = append(corCols, expression.ExtractCorColumns(expr)...)
 	}
 	return corCols
@@ -1574,7 +1569,7 @@ func getTablePath(paths []*util.AccessPath) *util.AccessPath {
 }
 
 func (ds *DataSource) buildTableGather() base.LogicalPlan {
-	ts := LogicalTableScan{Source: ds, HandleCols: ds.handleCols}.Init(ds.SCtx(), ds.QueryBlockOffset())
+	ts := LogicalTableScan{Source: ds, HandleCols: ds.HandleCols}.Init(ds.SCtx(), ds.QueryBlockOffset())
 	ts.SetSchema(ds.Schema())
 	sg := TiKVSingleGather{Source: ds, IsIndexGather: false}.Init(ds.SCtx(), ds.QueryBlockOffset())
 	sg.SetSchema(ds.Schema())
@@ -1612,7 +1607,7 @@ func (ds *DataSource) buildIndexGather(path *util.AccessPath) base.LogicalPlan {
 func (ds *DataSource) Convert2Gathers() (gathers []base.LogicalPlan) {
 	tg := ds.buildTableGather()
 	gathers = append(gathers, tg)
-	for _, path := range ds.possibleAccessPaths {
+	for _, path := range ds.PossibleAccessPaths {
 		if !path.IsIntHandlePath {
 			path.FullIdxCols, path.FullIdxColLens = expression.IndexInfo2Cols(ds.Columns, ds.Schema().Columns, path.Index)
 			path.IdxCols, path.IdxColLens = expression.IndexInfo2PrefixCols(ds.Columns, ds.Schema().Columns, path.Index)
@@ -1657,27 +1652,27 @@ func detachCondAndBuildRangeForPath(
 }
 
 func (ds *DataSource) deriveCommonHandleTablePathStats(path *util.AccessPath, conds []expression.Expression, isIm bool) error {
-	path.CountAfterAccess = float64(ds.statisticTable.RealtimeCount)
+	path.CountAfterAccess = float64(ds.StatisticTable.RealtimeCount)
 	path.Ranges = ranger.FullNotNullRange()
 	path.IdxCols, path.IdxColLens = expression.IndexInfo2PrefixCols(ds.Columns, ds.Schema().Columns, path.Index)
 	path.FullIdxCols, path.FullIdxColLens = expression.IndexInfo2Cols(ds.Columns, ds.Schema().Columns, path.Index)
 	if len(conds) == 0 {
 		return nil
 	}
-	if err := detachCondAndBuildRangeForPath(ds.SCtx(), path, conds, ds.tableStats.HistColl); err != nil {
+	if err := detachCondAndBuildRangeForPath(ds.SCtx(), path, conds, ds.TableStats.HistColl); err != nil {
 		return err
 	}
 	if path.EqOrInCondCount == len(path.AccessConds) {
 		accesses, remained := path.SplitCorColAccessCondFromFilters(ds.SCtx(), path.EqOrInCondCount)
 		path.AccessConds = append(path.AccessConds, accesses...)
 		path.TableFilters = remained
-		if len(accesses) > 0 && ds.statisticTable.Pseudo {
-			path.CountAfterAccess = cardinality.PseudoAvgCountPerValue(ds.statisticTable)
+		if len(accesses) > 0 && ds.StatisticTable.Pseudo {
+			path.CountAfterAccess = cardinality.PseudoAvgCountPerValue(ds.StatisticTable)
 		} else {
-			selectivity := path.CountAfterAccess / float64(ds.statisticTable.RealtimeCount)
+			selectivity := path.CountAfterAccess / float64(ds.StatisticTable.RealtimeCount)
 			for i := range accesses {
 				col := path.IdxCols[path.EqOrInCondCount+i]
-				ndv := cardinality.EstimateColumnNDV(ds.statisticTable, col.ID)
+				ndv := cardinality.EstimateColumnNDV(ds.StatisticTable, col.ID)
 				ndv *= selectivity
 				if ndv < 1 {
 					ndv = 1.0
@@ -1689,7 +1684,7 @@ func (ds *DataSource) deriveCommonHandleTablePathStats(path *util.AccessPath, co
 	// If the `CountAfterAccess` is less than `stats.RowCount`, there must be some inconsistent stats info.
 	// We prefer the `stats.RowCount` because it could use more stats info to calculate the selectivity.
 	if path.CountAfterAccess < ds.StatsInfo().RowCount && !isIm {
-		path.CountAfterAccess = math.Min(ds.StatsInfo().RowCount/cost.SelectionFactor, float64(ds.statisticTable.RealtimeCount))
+		path.CountAfterAccess = math.Min(ds.StatsInfo().RowCount/cost.SelectionFactor, float64(ds.StatisticTable.RealtimeCount))
 	}
 	return nil
 }
@@ -1705,12 +1700,12 @@ func (ds *DataSource) deriveTablePathStats(path *util.AccessPath, conds []expres
 		return ds.deriveCommonHandleTablePathStats(path, conds, isIm)
 	}
 	var err error
-	path.CountAfterAccess = float64(ds.statisticTable.RealtimeCount)
+	path.CountAfterAccess = float64(ds.StatisticTable.RealtimeCount)
 	path.TableFilters = conds
 	var pkCol *expression.Column
 	isUnsigned := false
-	if ds.tableInfo.PKIsHandle {
-		if pkColInfo := ds.tableInfo.GetPkColInfo(); pkColInfo != nil {
+	if ds.TableInfo.PKIsHandle {
+		if pkColInfo := ds.TableInfo.GetPkColInfo(); pkColInfo != nil {
 			isUnsigned = mysql.HasUnsignedFlag(pkColInfo.GetFlag())
 			pkCol = expression.ColInfo2Col(ds.Schema().Columns, pkColInfo)
 		}
@@ -1771,11 +1766,11 @@ func (ds *DataSource) deriveTablePathStats(path *util.AccessPath, conds []expres
 	if err != nil {
 		return err
 	}
-	path.CountAfterAccess, err = cardinality.GetRowCountByIntColumnRanges(ds.SCtx(), &ds.statisticTable.HistColl, pkCol.ID, path.Ranges)
+	path.CountAfterAccess, err = cardinality.GetRowCountByIntColumnRanges(ds.SCtx(), &ds.StatisticTable.HistColl, pkCol.ID, path.Ranges)
 	// If the `CountAfterAccess` is less than `stats.RowCount`, there must be some inconsistent stats info.
 	// We prefer the `stats.RowCount` because it could use more stats info to calculate the selectivity.
 	if path.CountAfterAccess < ds.StatsInfo().RowCount && !isIm {
-		path.CountAfterAccess = math.Min(ds.StatsInfo().RowCount/cost.SelectionFactor, float64(ds.statisticTable.RealtimeCount))
+		path.CountAfterAccess = math.Min(ds.StatsInfo().RowCount/cost.SelectionFactor, float64(ds.StatisticTable.RealtimeCount))
 	}
 	return err
 }
@@ -1786,7 +1781,7 @@ func (ds *DataSource) fillIndexPath(path *util.AccessPath, conds []expression.Ex
 		defer debugtrace.LeaveContextCommon(ds.SCtx())
 	}
 	path.Ranges = ranger.FullRange()
-	path.CountAfterAccess = float64(ds.statisticTable.RealtimeCount)
+	path.CountAfterAccess = float64(ds.StatisticTable.RealtimeCount)
 	path.IdxCols, path.IdxColLens = expression.IndexInfo2PrefixCols(ds.Columns, ds.Schema().Columns, path.Index)
 	path.FullIdxCols, path.FullIdxColLens = expression.IndexInfo2Cols(ds.Columns, ds.Schema().Columns, path.Index)
 	if !path.Index.Unique && !path.Index.Primary && len(path.Index.Columns) == len(path.IdxCols) {
@@ -1803,13 +1798,13 @@ func (ds *DataSource) fillIndexPath(path *util.AccessPath, conds []expression.Ex
 				path.IdxCols = append(path.IdxCols, handleCol)
 				path.IdxColLens = append(path.IdxColLens, types.UnspecifiedLength)
 				// Also updates the map that maps the index id to its prefix column ids.
-				if len(ds.tableStats.HistColl.Idx2ColUniqueIDs[path.Index.ID]) == len(path.Index.Columns) {
-					ds.tableStats.HistColl.Idx2ColUniqueIDs[path.Index.ID] = append(ds.tableStats.HistColl.Idx2ColUniqueIDs[path.Index.ID], handleCol.UniqueID)
+				if len(ds.TableStats.HistColl.Idx2ColUniqueIDs[path.Index.ID]) == len(path.Index.Columns) {
+					ds.TableStats.HistColl.Idx2ColUniqueIDs[path.Index.ID] = append(ds.TableStats.HistColl.Idx2ColUniqueIDs[path.Index.ID], handleCol.UniqueID)
 				}
 			}
 		}
 	}
-	err := detachCondAndBuildRangeForPath(ds.SCtx(), path, conds, ds.tableStats.HistColl)
+	err := detachCondAndBuildRangeForPath(ds.SCtx(), path, conds, ds.TableStats.HistColl)
 	return err
 }
 
@@ -1825,13 +1820,13 @@ func (ds *DataSource) deriveIndexPathStats(path *util.AccessPath, _ []expression
 		accesses, remained := path.SplitCorColAccessCondFromFilters(ds.SCtx(), path.EqOrInCondCount)
 		path.AccessConds = append(path.AccessConds, accesses...)
 		path.TableFilters = remained
-		if len(accesses) > 0 && ds.statisticTable.Pseudo {
-			path.CountAfterAccess = cardinality.PseudoAvgCountPerValue(ds.statisticTable)
+		if len(accesses) > 0 && ds.StatisticTable.Pseudo {
+			path.CountAfterAccess = cardinality.PseudoAvgCountPerValue(ds.StatisticTable)
 		} else {
-			selectivity := path.CountAfterAccess / float64(ds.statisticTable.RealtimeCount)
+			selectivity := path.CountAfterAccess / float64(ds.StatisticTable.RealtimeCount)
 			for i := range accesses {
 				col := path.IdxCols[path.EqOrInCondCount+i]
-				ndv := cardinality.EstimateColumnNDV(ds.statisticTable, col.ID)
+				ndv := cardinality.EstimateColumnNDV(ds.StatisticTable, col.ID)
 				ndv *= selectivity
 				if ndv < 1 {
 					ndv = 1.0
@@ -1846,10 +1841,10 @@ func (ds *DataSource) deriveIndexPathStats(path *util.AccessPath, _ []expression
 	// If the `CountAfterAccess` is less than `stats.RowCount`, there must be some inconsistent stats info.
 	// We prefer the `stats.RowCount` because it could use more stats info to calculate the selectivity.
 	if path.CountAfterAccess < ds.StatsInfo().RowCount && !isIm {
-		path.CountAfterAccess = math.Min(ds.StatsInfo().RowCount/cost.SelectionFactor, float64(ds.statisticTable.RealtimeCount))
+		path.CountAfterAccess = math.Min(ds.StatsInfo().RowCount/cost.SelectionFactor, float64(ds.StatisticTable.RealtimeCount))
 	}
 	if path.IndexFilters != nil {
-		selectivity, _, err := cardinality.Selectivity(ds.SCtx(), ds.tableStats.HistColl, path.IndexFilters, nil)
+		selectivity, _, err := cardinality.Selectivity(ds.SCtx(), ds.TableStats.HistColl, path.IndexFilters, nil)
 		if err != nil {
 			logutil.BgLogger().Debug("calculate selectivity failed, use selection factor", zap.Error(err))
 			selectivity = cost.SelectionFactor
@@ -1883,19 +1878,14 @@ func getPKIsHandleColFromSchema(cols []*model.ColumnInfo, schema *expression.Sch
 }
 
 func (ds *DataSource) getPKIsHandleCol() *expression.Column {
-	return getPKIsHandleColFromSchema(ds.Columns, ds.Schema(), ds.tableInfo.PKIsHandle)
+	return getPKIsHandleColFromSchema(ds.Columns, ds.Schema(), ds.TableInfo.PKIsHandle)
 }
 
 func (p *LogicalIndexScan) getPKIsHandleCol(schema *expression.Schema) *expression.Column {
 	// We cannot use p.Source.getPKIsHandleCol() here,
 	// Because we may re-prune p.Columns and p.schema during the transformation.
 	// That will make p.Columns different from p.Source.Columns.
-	return getPKIsHandleColFromSchema(p.Columns, schema, p.Source.tableInfo.PKIsHandle)
-}
-
-// TableInfo returns the *TableInfo of data source.
-func (ds *DataSource) TableInfo() *model.TableInfo {
-	return ds.tableInfo
+	return getPKIsHandleColFromSchema(p.Columns, schema, p.Source.TableInfo.PKIsHandle)
 }
 
 // LogicalUnionAll represents LogicalUnionAll plan.
@@ -1976,12 +1966,12 @@ type LogicalLock struct {
 	logicalop.BaseLogicalPlan
 
 	Lock         *ast.SelectLockInfo
-	tblID2Handle map[int64][]util.HandleCols
+	TblID2Handle map[int64][]util.HandleCols
 
 	// tblID2phyTblIDCol is used for partitioned tables,
 	// the child executor need to return an extra column containing
 	// the Physical Table ID (i.e. from which partition the row came from)
-	tblID2PhysTblIDCol map[int64]*expression.Column
+	TblID2PhysTblIDCol map[int64]*expression.Column
 }
 
 // WindowFrame represents a window function frame.

@@ -32,9 +32,9 @@ func preparePossibleProperties(lp base.LogicalPlan) [][]*expression.Column {
 
 // PreparePossibleProperties implements base.LogicalPlan PreparePossibleProperties interface.
 func (ds *DataSource) PreparePossibleProperties(_ *expression.Schema, _ ...[][]*expression.Column) [][]*expression.Column {
-	result := make([][]*expression.Column, 0, len(ds.possibleAccessPaths))
+	result := make([][]*expression.Column, 0, len(ds.PossibleAccessPaths))
 
-	for _, path := range ds.possibleAccessPaths {
+	for _, path := range ds.PossibleAccessPaths {
 		if path.IsIntHandlePath {
 			col := ds.getPKIsHandleCol()
 			if col != nil {
@@ -193,7 +193,7 @@ func (la *LogicalAggregation) PreparePossibleProperties(_ *expression.Schema, ch
 	// If there's no group-by item, the stream aggregation could have no order property. So we can add an empty property
 	// when its group-by item is empty.
 	if len(la.GroupByItems) == 0 {
-		la.possibleProperties = [][]*expression.Column{nil}
+		la.PossibleProperties = [][]*expression.Column{nil}
 		return nil
 	}
 	resultProperties := make([][]*expression.Column, 0, len(childProps))
@@ -205,6 +205,6 @@ func (la *LogicalAggregation) PreparePossibleProperties(_ *expression.Schema, ch
 			resultProperties = append(resultProperties, prop)
 		}
 	}
-	la.possibleProperties = resultProperties
+	la.PossibleProperties = resultProperties
 	return resultProperties
 }

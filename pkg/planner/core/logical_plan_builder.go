@@ -871,17 +871,17 @@ func (ds *DataSource) setPreferredStoreType(hintInfo *h.PlanHints) {
 	if len(ds.TableAsName.L) != 0 {
 		alias = &h.HintedTable{DBName: ds.DBName, TblName: *ds.TableAsName, SelectOffset: ds.QueryBlockOffset()}
 	} else {
-		alias = &h.HintedTable{DBName: ds.DBName, TblName: ds.tableInfo.Name, SelectOffset: ds.QueryBlockOffset()}
+		alias = &h.HintedTable{DBName: ds.DBName, TblName: ds.TableInfo.Name, SelectOffset: ds.QueryBlockOffset()}
 	}
 	if hintTbl := hintInfo.IfPreferTiKV(alias); hintTbl != nil {
-		for _, path := range ds.possibleAccessPaths {
+		for _, path := range ds.PossibleAccessPaths {
 			if path.StoreType == kv.TiKV {
-				ds.preferStoreType |= h.PreferTiKV
-				ds.preferPartitions[h.PreferTiKV] = hintTbl.Partitions
+				ds.PreferStoreType |= h.PreferTiKV
+				ds.PreferPartitions[h.PreferTiKV] = hintTbl.Partitions
 				break
 			}
 		}
-		if ds.preferStoreType&h.PreferTiKV == 0 {
+		if ds.PreferStoreType&h.PreferTiKV == 0 {
 			errMsg := fmt.Sprintf("No available path for table %s.%s with the store type %s of the hint /*+ read_from_storage */, "+
 				"please check the status of the table replica and variable value of tidb_isolation_read_engines(%v)",
 				ds.DBName.O, ds.table.Meta().Name.O, kv.TiKV.Name(), ds.SCtx().GetSessionVars().GetIsolationReadEngines())
@@ -891,23 +891,23 @@ func (ds *DataSource) setPreferredStoreType(hintInfo *h.PlanHints) {
 		}
 	}
 	if hintTbl := hintInfo.IfPreferTiFlash(alias); hintTbl != nil {
-		// `ds.preferStoreType != 0`, which means there's a hint hit the both TiKV value and TiFlash value for table.
+		// `ds.PreferStoreType != 0`, which means there's a hint hit the both TiKV value and TiFlash value for table.
 		// We can't support read a table from two different storages, even partition table.
-		if ds.preferStoreType != 0 {
+		if ds.PreferStoreType != 0 {
 			ds.SCtx().GetSessionVars().StmtCtx.SetHintWarning(
 				fmt.Sprintf("Storage hints are conflict, you can only specify one storage type of table %s.%s",
 					alias.DBName.L, alias.TblName.L))
-			ds.preferStoreType = 0
+			ds.PreferStoreType = 0
 			return
 		}
-		for _, path := range ds.possibleAccessPaths {
+		for _, path := range ds.PossibleAccessPaths {
 			if path.StoreType == kv.TiFlash {
-				ds.preferStoreType |= h.PreferTiFlash
-				ds.preferPartitions[h.PreferTiFlash] = hintTbl.Partitions
+				ds.PreferStoreType |= h.PreferTiFlash
+				ds.PreferPartitions[h.PreferTiFlash] = hintTbl.Partitions
 				break
 			}
 		}
-		if ds.preferStoreType&h.PreferTiFlash == 0 {
+		if ds.PreferStoreType&h.PreferTiFlash == 0 {
 			errMsg := fmt.Sprintf("No available path for table %s.%s with the store type %s of the hint /*+ read_from_storage */, "+
 				"please check the status of the table replica and variable value of tidb_isolation_read_engines(%v)",
 				ds.DBName.O, ds.table.Meta().Name.O, kv.TiFlash.Name(), ds.SCtx().GetSessionVars().GetIsolationReadEngines())
@@ -4374,7 +4374,7 @@ func (ds *DataSource) newExtraHandleSchemaCol() *expression.Column {
 		RetType:  tp,
 		UniqueID: ds.SCtx().GetSessionVars().AllocPlanColumnID(),
 		ID:       model.ExtraHandleID,
-		OrigName: fmt.Sprintf("%v.%v.%v", ds.DBName, ds.tableInfo.Name, model.ExtraHandleName),
+		OrigName: fmt.Sprintf("%v.%v.%v", ds.DBName, ds.TableInfo.Name, model.ExtraHandleName),
 	}
 }
 
@@ -4394,7 +4394,7 @@ func (ds *DataSource) AddExtraPhysTblIDColumn() *expression.Column {
 		RetType:  types.NewFieldType(mysql.TypeLonglong),
 		UniqueID: ds.SCtx().GetSessionVars().AllocPlanColumnID(),
 		ID:       model.ExtraPhysTblID,
-		OrigName: fmt.Sprintf("%v.%v.%v", ds.DBName, ds.tableInfo.Name, model.ExtraPhysTblIdName),
+		OrigName: fmt.Sprintf("%v.%v.%v", ds.DBName, ds.TableInfo.Name, model.ExtraPhysTblIdName),
 	}
 
 	ds.Columns = append(ds.Columns, model.NewExtraPhysTblIDColInfo())
@@ -4402,7 +4402,7 @@ func (ds *DataSource) AddExtraPhysTblIDColumn() *expression.Column {
 	schema.Append(pidCol)
 	ds.SetOutputNames(append(ds.OutputNames(), &types.FieldName{
 		DBName:      ds.DBName,
-		TblName:     ds.TableInfo().Name,
+		TblName:     ds.TableInfo.Name,
 		ColName:     model.ExtraPhysTblIdName,
 		OrigColName: model.ExtraPhysTblIdName,
 	}))
@@ -4940,18 +4940,18 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		DBName:              dbName,
 		TableAsName:         asName,
 		table:               tbl,
-		tableInfo:           tableInfo,
-		physicalTableID:     tableInfo.ID,
-		astIndexHints:       tn.IndexHints,
+		TableInfo:           tableInfo,
+		PhysicalTableID:     tableInfo.ID,
+		AstIndexHints:       tn.IndexHints,
 		IndexHints:          b.TableHints().IndexHintList,
-		indexMergeHints:     indexMergeHints,
-		possibleAccessPaths: possiblePaths,
+		IndexMergeHints:     indexMergeHints,
+		PossibleAccessPaths: possiblePaths,
 		Columns:             make([]*model.ColumnInfo, 0, len(columns)),
-		partitionNames:      tn.PartitionNames,
+		PartitionNames:      tn.PartitionNames,
 		TblCols:             make([]*expression.Column, 0, len(columns)),
-		preferPartitions:    make(map[int][]model.CIStr),
-		is:                  b.is,
-		isForUpdateRead:     b.isForUpdateRead,
+		PreferPartitions:    make(map[int][]model.CIStr),
+		IS:                  b.is,
+		IsForUpdateRead:     b.isForUpdateRead,
 	}.Init(b.ctx, b.getSelectOffset())
 	var handleCols util.HandleCols
 	schema := expression.NewSchema(make([]*expression.Column, 0, len(columns))...)
@@ -5000,8 +5000,8 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 			ds.TblCols = append(ds.TblCols, extraCol)
 		}
 	}
-	ds.handleCols = handleCols
-	ds.unMutableHandleCols = handleCols
+	ds.HandleCols = handleCols
+	ds.UnMutableHandleCols = handleCols
 	handleMap := make(map[int64][]util.HandleCols)
 	handleMap[tableInfo.ID] = []util.HandleCols{handleCols}
 	b.handleHelper.pushMap(handleMap)
@@ -5028,12 +5028,12 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		}
 	}
 
-	// Init commonHandleCols and commonHandleLens for data source.
+	// Init CommonHandleCols and CommonHandleLens for data source.
 	if tableInfo.IsCommonHandle {
-		ds.commonHandleCols, ds.commonHandleLens = expression.IndexInfo2Cols(ds.Columns, ds.Schema().Columns, tables.FindPrimaryIndex(tableInfo))
+		ds.CommonHandleCols, ds.CommonHandleLens = expression.IndexInfo2Cols(ds.Columns, ds.Schema().Columns, tables.FindPrimaryIndex(tableInfo))
 	}
 	// Init FullIdxCols, FullIdxColLens for accessPaths.
-	for _, path := range ds.possibleAccessPaths {
+	for _, path := range ds.PossibleAccessPaths {
 		if !path.IsIntHandlePath {
 			path.FullIdxCols, path.FullIdxColLens = expression.IndexInfo2Cols(ds.Columns, ds.Schema().Columns, path.Index)
 
@@ -5048,7 +5048,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 					len(path.Index.Columns) > 1 &&
 					path.Index.Unique {
 					path.IsUkShardIndexPath = true
-					ds.containExprPrefixUk = true
+					ds.ContainExprPrefixUk = true
 				}
 			}
 		}
@@ -5082,7 +5082,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 func (ds *DataSource) ExtractFD() *fd.FDSet {
 	// FD in datasource (leaf node) can be cached and reused.
 	// Once the all conditions are not equal to nil, built it again.
-	if ds.FDs() == nil || ds.allConds != nil {
+	if ds.FDs() == nil || ds.AllConds != nil {
 		fds := &fd.FDSet{HashCodeToUniqueID: make(map[string]int)}
 		allCols := intset.NewFastIntSet()
 		// should use the column's unique ID avoiding fdSet conflict.
@@ -5091,7 +5091,7 @@ func (ds *DataSource) ExtractFD() *fd.FDSet {
 			allCols.Insert(int(col.UniqueID))
 		}
 		// int pk doesn't store its index column in indexInfo.
-		if ds.tableInfo.PKIsHandle {
+		if ds.TableInfo.PKIsHandle {
 			keyCols := intset.NewFastIntSet()
 			for _, col := range ds.TblCols {
 				if mysql.HasPriKeyFlag(col.RetType.GetFlag()) {
@@ -5107,7 +5107,7 @@ func (ds *DataSource) ExtractFD() *fd.FDSet {
 			changed       bool
 			err           error
 		)
-		check := ds.SCtx().GetSessionVars().IsIsolation(ast.ReadCommitted) || ds.isForUpdateRead
+		check := ds.SCtx().GetSessionVars().IsIsolation(ast.ReadCommitted) || ds.IsForUpdateRead
 		check = check && ds.SCtx().GetSessionVars().ConnectionID > 0
 		if check {
 			latestIndexes, changed, err = getLatestIndexInfo(ds.SCtx(), ds.table.Meta().ID, 0)
@@ -5117,10 +5117,10 @@ func (ds *DataSource) ExtractFD() *fd.FDSet {
 			}
 		}
 		// other indices including common handle.
-		for _, idx := range ds.tableInfo.Indices {
+		for _, idx := range ds.TableInfo.Indices {
 			keyCols := intset.NewFastIntSet()
 			allColIsNotNull := true
-			if ds.isForUpdateRead && changed {
+			if ds.IsForUpdateRead && changed {
 				latestIndex, ok := latestIndexes[idx.ID]
 				if !ok || latestIndex.State != model.StatePublic {
 					continue
@@ -5133,7 +5133,7 @@ func (ds *DataSource) ExtractFD() *fd.FDSet {
 				// Note: even the prefix column can also be the FD. For example:
 				// unique(char_column(10)), will also guarantee the prefix to be
 				// the unique which means the while column is unique too.
-				refCol := ds.tableInfo.Columns[idxCol.Offset]
+				refCol := ds.TableInfo.Columns[idxCol.Offset]
 				if !mysql.HasNotNullFlag(refCol.GetFlag()) {
 					allColIsNotNull = false
 				}
@@ -5156,15 +5156,15 @@ func (ds *DataSource) ExtractFD() *fd.FDSet {
 			}
 		}
 		// handle the datasource conditions (maybe pushed down from upper layer OP)
-		if len(ds.allConds) != 0 {
+		if len(ds.AllConds) != 0 {
 			// extract the not null attributes from selection conditions.
-			notnullColsUniqueIDs := extractNotNullFromConds(ds.allConds, ds)
+			notnullColsUniqueIDs := extractNotNullFromConds(ds.AllConds, ds)
 
 			// extract the constant cols from selection conditions.
-			constUniqueIDs := extractConstantCols(ds.allConds, ds.SCtx(), fds)
+			constUniqueIDs := extractConstantCols(ds.AllConds, ds.SCtx(), fds)
 
 			// extract equivalence cols.
-			equivUniqueIDs := extractEquivalenceCols(ds.allConds, ds.SCtx(), fds)
+			equivUniqueIDs := extractEquivalenceCols(ds.AllConds, ds.SCtx(), fds)
 
 			// apply conditions to FD.
 			fds.MakeNotNull(notnullColsUniqueIDs)
@@ -5234,7 +5234,7 @@ func (b *PlanBuilder) timeRangeForSummaryTable() util.QueryTimeRange {
 }
 
 func (b *PlanBuilder) buildMemTable(_ context.Context, dbName model.CIStr, tableInfo *model.TableInfo) (base.LogicalPlan, error) {
-	// We can use the `tableInfo.Columns` directly because the memory table has
+	// We can use the `TableInfo.Columns` directly because the memory table has
 	// a stable schema and there is no online DDL on the memory table.
 	schema := expression.NewSchema(make([]*expression.Column, 0, len(tableInfo.Columns))...)
 	names := make([]*types.FieldName, 0, len(tableInfo.Columns))
@@ -5475,7 +5475,7 @@ func (b *PlanBuilder) buildProjUponView(_ context.Context, dbName model.CIStr, t
 	columnInfo := tableInfo.Cols()
 	cols := selectLogicalPlan.Schema().Clone().Columns
 	outputNamesOfUnderlyingSelect := selectLogicalPlan.OutputNames().Shallow()
-	// In the old version of VIEW implementation, tableInfo.View.Cols is used to
+	// In the old version of VIEW implementation, TableInfo.View.Cols is used to
 	// store the origin columns' names of the underlying SelectStmt used when
 	// creating the view.
 	if tableInfo.View.Cols != nil {
