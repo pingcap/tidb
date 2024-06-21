@@ -509,8 +509,15 @@ func (e *HashJoinV2Exec) waitJoinWorkersAndRestoreIfNeeded() {
 func (e *HashJoinV2Exec) restore() error {
 	e.spillHelper.prepareForRestoring()
 
-	for e.spillHelper.stack.isEmpty() {
+	for {
+		hashTable, err := e.spillHelper.restoreOneBuildPartition()
+		if err != nil {
+			return err
+		}
 		
+		if hashTable == nil {
+			break
+		}
 	}
 
 	return nil

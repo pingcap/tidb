@@ -348,7 +348,27 @@ func (h *hashJoinSpillHelper) prepareForRestoring() {
 	}
 }
 
-func (h *hashJoinSpillHelper) restoreOneBuildPartition() *hashTableV2 {
+// TODO implement concurrent restoring in the future
+func (h *hashJoinSpillHelper) restoreOneBuildPartition() (*hashTableV2, error) {
+	restoredPartition := h.stack.pop()
+	if restoredPartition == nil {
+		return nil
+	}
+
+	rowTable := &rowTable{} // TODO initialize metaData in rowTable
+	seg := newRowTableSegment()
+
+	buildInDisk := restoredPartition.buildSideData
+	chunkNum := buildInDisk.NumChunks()
+	for i := 0; i < chunkNum; i++ {
+		chunk, err := buildInDisk.GetChunk(i)
+		if err != nil {
+			return nil, err
+		}
+
+	}
+
+	hashTable := &hashTableV2{}
 
 	return nil // TODO
 }
@@ -363,10 +383,6 @@ type restorePartition struct {
 
 type restoreStack struct {
 	elems []*restorePartition
-}
-
-func (r *restoreStack) isEmpty() bool {
-	return len(r.elems) == 0
 }
 
 func (r *restoreStack) pop() *restorePartition {
