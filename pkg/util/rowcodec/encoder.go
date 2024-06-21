@@ -227,7 +227,7 @@ type Checksum interface {
 	encode(encoder *Encoder, buf []byte) ([]byte, error)
 }
 
-// NoChecksum indicate no checksum encoded into the raw bytes
+// NoChecksum indicates no checksum is encoded into the returned raw bytes.
 type NoChecksum struct{}
 
 func (NoChecksum) encode(encoder *Encoder, buf []byte) ([]byte, error) {
