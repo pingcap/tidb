@@ -1073,7 +1073,7 @@ var PlacementPolicyAttribute specialAttributeFilter = func(t *model.TableInfo) b
 
 // PartitionAttribute is the Partition attribute filter used by ListTablesWithSpecialAttribute.
 var PartitionAttribute specialAttributeFilter = func(t *model.TableInfo) bool {
-	return t.Partition != nil
+	return t.GetPartitionInfo() != nil
 }
 
 func hasSpecialAttributes(t *model.TableInfo) bool {
