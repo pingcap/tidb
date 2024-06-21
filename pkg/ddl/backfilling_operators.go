@@ -49,7 +49,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/size"
-	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
@@ -83,10 +82,20 @@ type OperatorCtx struct {
 	err    atomic.Pointer[error]
 }
 
-// NewOperatorCtx creates a new OperatorCtx.
-func NewOperatorCtx(ctx context.Context, taskID, subtaskID int64) *OperatorCtx {
+// NewDistTaskOperatorCtx is used for adding index with dist framework.
+func NewDistTaskOperatorCtx(ctx context.Context, taskID, subtaskID int64) *OperatorCtx {
 	opCtx, cancel := context.WithCancel(ctx)
 	opCtx = logutil.WithFields(opCtx, zap.Int64("task-id", taskID), zap.Int64("subtask-id", subtaskID))
+	return &OperatorCtx{
+		Context: opCtx,
+		cancel:  cancel,
+	}
+}
+
+// NewStandaloneOperatorCtx is used for adding index with standalone mode.
+func NewStandaloneOperatorCtx(ctx context.Context, jobID int64) *OperatorCtx {
+	opCtx, cancel := context.WithCancel(ctx)
+	opCtx = logutil.WithFields(opCtx, zap.Int64("jobID", jobID))
 	return &OperatorCtx{
 		Context: opCtx,
 		cancel:  cancel,
@@ -113,6 +122,29 @@ func (ctx *OperatorCtx) OperatorErr() error {
 	return *err
 }
 
+var (
+	_ RowCountListener = (*EmptyRowCntListener)(nil)
+	_ RowCountListener = (*distTaskRowCntListener)(nil)
+	_ RowCountListener = (*standaloneRowCntListener)(nil)
+)
+
+// RowCountListener is invoked when some index records are flushed to disk or imported to TiKV.
+type RowCountListener interface {
+	Flushed(rowCnt int)
+	Imported(rowCnt int)
+}
+
+// EmptyRowCntListener implements a noop RowCountListener.
+type EmptyRowCntListener struct {
+}
+
+func (*EmptyRowCntListener) Flushed(rowCnt int) {
+
+}
+
+func (*EmptyRowCntListener) Imported(rowCnt int) {
+}
+
 // NewAddIndexIngestPipeline creates a pipeline for adding index in ingest mode.
 func NewAddIndexIngestPipeline(
 	ctx *OperatorCtx,
@@ -124,11 +156,10 @@ func NewAddIndexIngestPipeline(
 	tbl table.PhysicalTable,
 	idxInfos []*model.IndexInfo,
 	startKey, endKey kv.Key,
-	totalRowCount *atomic.Int64,
-	metricCounter prometheus.Counter,
 	reorgMeta *model.DDLReorgMeta,
 	avgRowSize int,
 	concurrency int,
+	rowCntListener RowCountListener,
 ) (*operator.AsyncPipeline, error) {
 	indexes := make([]table.Index, 0, len(idxInfos))
 	for _, idxInfo := range idxInfos {
@@ -149,8 +180,9 @@ func NewAddIndexIngestPipeline(
 
 	srcOp := NewTableScanTaskSource(ctx, store, tbl, startKey, endKey)
 	scanOp := NewTableScanOperator(ctx, sessPool, copCtx, srcChkPool, readerCnt)
-	ingestOp := NewIndexIngestOperator(ctx, copCtx, backendCtx, sessPool, tbl, indexes, engines, srcChkPool, writerCnt, reorgMeta)
-	sinkOp := newIndexWriteResultSink(ctx, backendCtx, tbl, indexes, totalRowCount, metricCounter)
+	ingestOp := NewIndexIngestOperator(ctx, copCtx, backendCtx, sessPool,
+		tbl, indexes, engines, srcChkPool, writerCnt, reorgMeta, rowCntListener)
+	sinkOp := newIndexWriteResultSink(ctx, backendCtx, tbl, indexes, rowCntListener)
 
 	operator.Compose[TableScanTask](srcOp, scanOp)
 	operator.Compose[IndexRecordChunk](scanOp, ingestOp)
@@ -177,13 +209,12 @@ func NewWriteIndexToExternalStoragePipeline(
 	tbl table.PhysicalTable,
 	idxInfos []*model.IndexInfo,
 	startKey, endKey kv.Key,
-	totalRowCount *atomic.Int64,
-	metricCounter prometheus.Counter,
 	onClose external.OnCloseFunc,
 	reorgMeta *model.DDLReorgMeta,
 	avgRowSize int,
 	concurrency int,
 	resource *proto.StepResource,
+	rowCntListener RowCountListener,
 ) (*operator.AsyncPipeline, error) {
 	indexes := make([]table.Index, 0, len(idxInfos))
 	for _, idxInfo := range idxInfos {
@@ -220,7 +251,7 @@ func NewWriteIndexToExternalStoragePipeline(
 	scanOp := NewTableScanOperator(ctx, sessPool, copCtx, srcChkPool, readerCnt)
 	writeOp := NewWriteExternalStoreOperator(
 		ctx, copCtx, sessPool, jobID, subtaskID, tbl, indexes, extStore, srcChkPool, writerCnt, onClose, memSizePerIndex, reorgMeta)
-	sinkOp := newIndexWriteResultSink(ctx, nil, tbl, indexes, totalRowCount, metricCounter)
+	sinkOp := newIndexWriteResultSink(ctx, nil, tbl, indexes, rowCntListener)
 
 	operator.Compose[TableScanTask](srcOp, scanOp)
 	operator.Compose[IndexRecordChunk](scanOp, writeOp)
@@ -582,6 +613,7 @@ func NewIndexIngestOperator(
 	srcChunkPool chan *chunk.Chunk,
 	concurrency int,
 	reorgMeta *model.DDLReorgMeta,
+	rowCntListener RowCountListener,
 ) *IndexIngestOperator {
 	writerCfg := getLocalWriterConfig(len(indexes), concurrency)
 
@@ -620,8 +652,9 @@ func NewIndexIngestOperator(
 					srcChunkPool: srcChunkPool,
 					reorgMeta:    reorgMeta,
 				},
-				indexIDs:   indexIDs,
-				backendCtx: backendCtx,
+				indexIDs:       indexIDs,
+				backendCtx:     backendCtx,
+				rowCntListener: rowCntListener,
 			}
 		})
 	return &IndexIngestOperator{
@@ -647,8 +680,9 @@ func (w *indexIngestExternalWorker) HandleTask(rs IndexRecordChunk, send func(In
 
 type indexIngestLocalWorker struct {
 	indexIngestBaseWorker
-	indexIDs   []int64
-	backendCtx ingest.BackendCtx
+	indexIDs       []int64
+	backendCtx     ingest.BackendCtx
+	rowCntListener RowCountListener
 }
 
 func (w *indexIngestLocalWorker) HandleTask(rs IndexRecordChunk, send func(IndexWriteResult)) {
@@ -772,8 +806,7 @@ type indexWriteResultSink struct {
 	tbl        table.PhysicalTable
 	indexes    []table.Index
 
-	rowCount      *atomic.Int64
-	metricCounter prometheus.Counter
+	rowCntListener RowCountListener
 
 	errGroup errgroup.Group
 	source   operator.DataChannel[IndexWriteResult]
@@ -784,17 +817,15 @@ func newIndexWriteResultSink(
 	backendCtx ingest.BackendCtx,
 	tbl table.PhysicalTable,
 	indexes []table.Index,
-	rowCount *atomic.Int64,
-	metricCounter prometheus.Counter,
+	rowCntListener RowCountListener,
 ) *indexWriteResultSink {
 	return &indexWriteResultSink{
-		ctx:           ctx,
-		backendCtx:    backendCtx,
-		tbl:           tbl,
-		indexes:       indexes,
-		rowCount:      rowCount,
-		metricCounter: metricCounter,
-		errGroup:      errgroup.Group{},
+		ctx:            ctx,
+		backendCtx:     backendCtx,
+		tbl:            tbl,
+		indexes:        indexes,
+		rowCntListener: rowCntListener,
+		errGroup:       errgroup.Group{},
 	}
 }
 
@@ -820,10 +851,7 @@ func (s *indexWriteResultSink) collectResult() error {
 				}
 				return err
 			}
-			s.rowCount.Add(int64(result.Added))
-			if s.metricCounter != nil {
-				s.metricCounter.Add(float64(result.Added))
-			}
+			s.rowCntListener.Imported(result.Added)
 		}
 	}
 }

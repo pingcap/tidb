@@ -43,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
+	tidblogutil "github.com/pingcap/tidb/pkg/util/logutil"
 	decoder "github.com/pingcap/tidb/pkg/util/rowDecoder"
 	"github.com/pingcap/tidb/pkg/util/topsql"
 	"github.com/prometheus/client_golang/prometheus"
@@ -566,6 +567,101 @@ func SetBackfillTaskChanSizeForTest(n int) {
 	backfillTaskChanSize = n
 }
 
+func (dc *ddlCtx) runAddIndexInIngestMode(
+	ctx context.Context,
+	sessPool *sess.Pool,
+	t table.PhysicalTable,
+	reorgInfo *reorgInfo,
+) error {
+	startKey, endKey := reorgInfo.StartKey, reorgInfo.EndKey
+	if err := dc.isReorgRunnable(reorgInfo.Job.ID, false); err != nil {
+		return errors.Trace(err)
+	}
+	job := reorgInfo.Job
+	opCtx := NewStandaloneOperatorCtx(ctx, job.ID)
+	bcCtx, err := getBackendCtx(ctx, dc.store, dc.etcdCli, job)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	idxCnt := len(reorgInfo.elements)
+	indexIDs := make([]int64, 0, idxCnt)
+	indexInfos := make([]*model.IndexInfo, 0, idxCnt)
+	uniques := make([]bool, 0, idxCnt)
+	for _, e := range reorgInfo.elements {
+		indexIDs = append(indexIDs, e.ID)
+		indexInfo := model.FindIndexInfoByID(t.Meta().Indices, e.ID)
+		if indexInfo == nil {
+			logutil.DDLIngestLogger().Warn("index info not found",
+				zap.Int64("table ID", t.Meta().ID),
+				zap.Int64("index ID", e.ID))
+			return errors.Errorf("index info not found: %d", e.ID)
+		}
+		indexInfos = append(indexInfos, indexInfo)
+	}
+	engines, err := bcCtx.Register(indexIDs, uniques, job.TableName)
+	if err != nil {
+		tidblogutil.Logger(opCtx).Error("cannot register new engine",
+			zap.Error(err),
+			zap.Int64s("index IDs", indexIDs))
+		return errors.Trace(err)
+	}
+	sctx, err := sessPool.Get()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer sessPool.Put(sctx)
+
+	totalRowCount := job.GetRowCount()
+	rowCntListener := &standaloneRowCntListener{
+		imported: func(cnt int) {
+			totalRowCount += int64(cnt)
+			dc.getReorgCtx(reorgInfo.Job.ID).setRowCount(totalRowCount)
+		},
+		counter: metrics.BackfillTotalCounter.WithLabelValues(
+			metrics.GenerateReorgLabel("add_idx_rate", job.SchemaName, job.TableName)),
+	}
+
+	avgRowSize := estimateTableRowSize(ctx, dc.store, sctx.GetRestrictedSQLExecutor(), t)
+	concurrency := int(variable.GetDDLReorgWorkerCounter())
+
+	pipe, err := NewAddIndexIngestPipeline(
+		opCtx,
+		dc.store,
+		sessPool,
+		bcCtx,
+		engines,
+		job.ID,
+		t,
+		indexInfos,
+		startKey,
+		endKey,
+		job.ReorgMeta,
+		avgRowSize,
+		concurrency,
+		rowCntListener,
+	)
+	err = pipe.Execute()
+	if err != nil {
+		return err
+	}
+	err = pipe.Close()
+	if opCtx.OperatorErr() != nil {
+		return opCtx.OperatorErr()
+	}
+	return err
+}
+
+type standaloneRowCntListener struct {
+	EmptyRowCntListener
+	imported func(int)
+	counter  prometheus.Counter
+}
+
+func (s *standaloneRowCntListener) Imported(rowCnt int) {
+	s.imported(rowCnt)
+	s.counter.Add(float64(rowCnt))
+}
+
 // writePhysicalTableRecord handles the "add index" or "modify/change column" reorganization state for a non-partitioned table or a partition.
 // For a partitioned table, it should be handled partition by partition.
 //
@@ -600,6 +696,9 @@ func (dc *ddlCtx) writePhysicalTableRecord(
 			failpoint.Return(errors.New("job.ErrCount:" + strconv.Itoa(int(reorgInfo.Job.ErrorCount)) + ", mock unknown type: ast.whenClause."))
 		}
 	})
+	if bfWorkerType == typeAddIndexWorker && reorgInfo.ReorgMeta.ReorgTp == model.ReorgTypeLitMerge {
+		return dc.runAddIndexInIngestMode(ctx, sessPool, t, reorgInfo)
+	}
 
 	jc := reorgInfo.NewJobContext()
 
