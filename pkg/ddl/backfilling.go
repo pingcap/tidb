@@ -640,6 +640,9 @@ func (dc *ddlCtx) runAddIndexInIngestMode(
 		concurrency,
 		rowCntListener,
 	)
+	if err != nil {
+		return err
+	}
 	err = pipe.Execute()
 	if err != nil {
 		return err
