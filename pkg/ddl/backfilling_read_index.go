@@ -240,6 +240,7 @@ func (r *readIndexExecutor) buildLocalStorePipeline(
 		r.job.ReorgMeta,
 		r.avgRowSize,
 		concurrency,
+		nil,
 		rowCntListener,
 	)
 }

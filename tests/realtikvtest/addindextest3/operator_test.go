@@ -60,7 +60,7 @@ func TestBackfillOperators(t *testing.T) {
 		ctx := context.Background()
 		opCtx := ddl.NewDistTaskOperatorCtx(ctx, 1, 1)
 		pTbl := tbl.(table.PhysicalTable)
-		src := ddl.NewTableScanTaskSource(opCtx, store, pTbl, startKey, endKey)
+		src := ddl.NewTableScanTaskSource(opCtx, store, pTbl, startKey, endKey, nil)
 		sink := newTestSink[ddl.TableScanTask]()
 
 		operator.Compose[ddl.TableScanTask](src, sink)
@@ -95,7 +95,7 @@ func TestBackfillOperators(t *testing.T) {
 		ctx := context.Background()
 		opCtx := ddl.NewDistTaskOperatorCtx(ctx, 1, 1)
 		src := newTestSource(opTasks...)
-		scanOp := ddl.NewTableScanOperator(opCtx, sessPool, copCtx, srcChkPool, 3)
+		scanOp := ddl.NewTableScanOperator(opCtx, sessPool, copCtx, srcChkPool, 3, nil)
 		sink := newTestSink[ddl.IndexRecordChunk]()
 
 		operator.Compose[ddl.TableScanTask](src, scanOp)
@@ -144,7 +144,7 @@ func TestBackfillOperators(t *testing.T) {
 		reorgMeta := ddl.NewDDLReorgMeta(tk.Session())
 		ingestOp := ddl.NewIndexIngestOperator(
 			opCtx, copCtx, mockBackendCtx, sessPool, pTbl, []table.Index{index}, []ingest.Engine{mockEngine},
-			srcChkPool, 3, reorgMeta, &ddl.EmptyRowCntListener{})
+			srcChkPool, 3, reorgMeta, nil, &ddl.EmptyRowCntListener{})
 		sink := newTestSink[ddl.IndexWriteResult]()
 
 		operator.Compose[ddl.IndexRecordChunk](src, ingestOp)
@@ -196,6 +196,7 @@ func TestBackfillOperatorPipeline(t *testing.T) {
 		ddl.NewDDLReorgMeta(tk.Session()),
 		0,
 		2,
+		nil,
 		&ddl.EmptyRowCntListener{},
 	)
 	require.NoError(t, err)
@@ -290,6 +291,7 @@ func TestBackfillOperatorPipelineException(t *testing.T) {
 				ddl.NewDDLReorgMeta(tk.Session()),
 				0,
 				2,
+				nil,
 				&ddl.EmptyRowCntListener{},
 			)
 			require.NoError(t, err)

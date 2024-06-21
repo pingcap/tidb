@@ -25,6 +25,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	sess "github.com/pingcap/tidb/pkg/ddl/internal/session"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
@@ -611,11 +612,27 @@ func (dc *ddlCtx) runAddIndexInIngestMode(
 	}
 	defer sessPool.Put(sctx)
 
+	cpMgr, err := ingest.NewCheckpointManager(
+		ctx,
+		bcCtx,
+		sessPool,
+		job.ID,
+		indexIDs,
+		bcCtx.GetLocalBackend().LocalStoreDir,
+		dc.store.(kv.StorageWithPD).GetPDClient(),
+	)
+	if err != nil {
+		logutil.DDLIngestLogger().Warn("create checkpoint manager failed", zap.Error(err))
+	} else {
+		defer cpMgr.Close()
+		cpMgr.Reset(t.GetPhysicalID(), startKey, endKey)
+	}
+
 	totalRowCount := job.GetRowCount()
 	rowCntListener := &standaloneRowCntListener{
 		imported: func(cnt int) {
 			totalRowCount += int64(cnt)
-			dc.getReorgCtx(reorgInfo.Job.ID).setRowCount(totalRowCount)
+			dc.getReorgCtx(reorgInfo.Job.ID).setRowCount(int64(cnt))
 		},
 		counter: metrics.BackfillTotalCounter.WithLabelValues(
 			metrics.GenerateReorgLabel("add_idx_rate", job.SchemaName, job.TableName)),
@@ -638,6 +655,7 @@ func (dc *ddlCtx) runAddIndexInIngestMode(
 		job.ReorgMeta,
 		avgRowSize,
 		concurrency,
+		cpMgr,
 		rowCntListener,
 	)
 	if err != nil {
