@@ -214,7 +214,7 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 				return nil, nil, 0, err
 			}
 			if txn != nil && txn.Valid() {
-				logutil.BgLogger().Warn(fmt.Sprintf("xxx builder, logical build tbl info------------------------------------ ver:%v, ts:%d, tbl name:%s, id:%d, cols:%v, tbl:%p, is:%p",
+				logutil.BgLogger().Warn(fmt.Sprintf("xxx builder, GeneratePlanCacheStmtWithAST------------------------------------ ver:%v, ts:%d, tbl name:%s, id:%d, cols:%v, tbl:%p, is:%p",
 					p.SCtx().GetInfoSchema().SchemaMetaVersion(), txn.StartTS(), tbl.Meta().Name, tbl.Meta().ID, str, tbl.Meta(), is))
 			}
 		}

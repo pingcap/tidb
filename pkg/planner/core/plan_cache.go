@@ -16,6 +16,8 @@ package core
 
 import (
 	"context"
+	"fmt"
+	"strings"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/bindinfo"
@@ -103,7 +105,7 @@ func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isNonPrep
 	// step 3: add metadata lock and check each table's schema version
 	schemaNotMatch := false
 	for i := 0; i < len(stmt.dbName); i++ {
-		_, ok := is.TableByID(stmt.tbls[i].Meta().ID)
+		tbl, ok := is.TableByID(stmt.tbls[i].Meta().ID)
 		if !ok {
 			tblByName, err := is.TableByName(stmt.dbName[i], stmt.tbls[i].Meta().Name)
 			if err != nil {
@@ -113,13 +115,14 @@ func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isNonPrep
 			stmt.tbls[i] = tblByName
 			stmt.RelateVersion[tblByName.Meta().ID] = tblByName.Meta().Revision
 		}
-		logutil.BgLogger().Warn("xxx--------------------------- tryLockMDLAndUpdateSchemaIfNecessary")
 		newTbl, err := tryLockMDLAndUpdateSchemaIfNecessary(sctx.GetPlanCtx(), stmt.dbName[i], stmt.tbls[i], is)
+		logutil.BgLogger().Warn(fmt.Sprintf("xxx--------------------------- planCachePreprocess, tryLockMDLAndUpdateSchemaIfNecessary, tbl:%p, rev:%v, rev:%v, newTbl:%p, rev:%v",
+			stmt.tbls[i], stmt.tbls[i].Meta().Revision, tbl.Meta().Revision, newTbl, newTbl.Meta().Revision))
 		if err != nil {
 			schemaNotMatch = true
 			continue
 		}
-		if stmt.tbls[i].Meta().Revision != newTbl.Meta().Revision {
+		if stmt.tbls[i].Meta().Revision != newTbl.Meta().Revision || tbl.Meta().Revision != newTbl.Meta().Revision {
 			schemaNotMatch = true
 		}
 		stmt.tbls[i] = newTbl
@@ -220,6 +223,9 @@ func GetPlanFromSessionPlanCache(ctx context.Context, sctx sessionctx.Context,
 		}
 	}
 
+	if strings.Contains(stmt.StmtText, "stock") {
+		logutil.BgLogger().Warn("xxx")
+	}
 	var matchOpts *utilpc.PlanCacheMatchOpts
 	if stmtCtx.UseCache() {
 		var cacheVal kvcache.Value

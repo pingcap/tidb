@@ -1829,6 +1829,7 @@ func tryLockMDLAndUpdateSchemaIfNecessary(sctx base.PlanContext, dbName model.CI
 			tblStr += fmt.Sprintf("col ID:%d, offset:%d, type:%v, state:%s; ", col.ID, col.Offset, col.GetType(), col.State)
 		}
 		tblStr += fmt.Sprintf(" tbl:%p", tbl)
+		logutil.BgLogger().Warn("xxx builder, preprocessor, tryLockMDLAndUpdateSchemaIfNecessary ------------------------------------ 1")
 	}
 
 	if !sctx.GetSessionVars().TxnCtx.EnableMDL {
@@ -1964,8 +1965,8 @@ func tryLockMDLAndUpdateSchemaIfNecessary(sctx base.PlanContext, dbName model.CI
 				return nil, err
 			}
 			if txn != nil && txn.Valid() {
-				logutil.BgLogger().Warn(fmt.Sprintf("xxx builder, preprocessor, tryLockMDLAndUpdateSchemaIfNecessary ------------------------------------ ver:%v, ts:%d, %s, cols:%v, t:%p",
-					is.SchemaMetaVersion(), txn.StartTS(), tblStr, str, tbl))
+				logutil.BgLogger().Warn(fmt.Sprintf("xxx builder, preprocessor, tryLockMDLAndUpdateSchemaIfNecessary ------------------------------------ ver:%v, ts:%d, %s, cols:%v, t:%p, is:%p",
+					is.SchemaMetaVersion(), txn.StartTS(), tblStr, str, tbl, domainSchemaVer))
 			}
 		}
 		return tbl, nil

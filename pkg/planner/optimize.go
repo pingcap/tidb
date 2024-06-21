@@ -18,7 +18,6 @@ import (
 	"context"
 	"math"
 	"math/rand"
-	"strings"
 	"sync"
 	"time"
 
@@ -159,9 +158,9 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 		}()
 	}
 
-	if strings.Contains(node.OriginalText(), "stock") {
-		logutil.BgLogger().Warn("xxx")
-	}
+	// if strings.Contains(node.OriginalText(), "stock") {
+	// 	logutil.BgLogger().Warn("xxx")
+	// }
 
 	// handle the execute statement
 	if execAST, ok := node.(*ast.ExecuteStmt); ok {
@@ -548,9 +547,9 @@ func buildLogicalPlan(ctx context.Context, sctx pctx.PlanContext, node ast.Node,
 		sctx.GetSessionVars().PlanID.Store(rand.Int31n(1000)) // nolint:gosec
 	})
 
-	if strings.Contains(node.OriginalText(), "stock") {
-		logutil.BgLogger().Warn("xxx")
-	}
+	//if strings.Contains(node.OriginalText(), "stock") {
+	//	logutil.BgLogger().Warn("xxx")
+	//}
 	// reset fields about rewrite
 	sctx.GetSessionVars().RewritePhaseInfo.Reset()
 	beginRewrite := time.Now()
