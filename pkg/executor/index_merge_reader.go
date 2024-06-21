@@ -398,7 +398,8 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 					SetClosestReplicaReadAdjuster(newClosestReadAdjuster(e.Ctx().GetDistSQLCtx(), &builder.Request, e.partialNetDataSizes[workID])).
 					SetConnIDAndConnAlias(e.Ctx().GetSessionVars().ConnectionID, e.Ctx().GetSessionVars().SessionAlias)
 
-				worker.batchSize = min(e.MaxChunkSize(), worker.maxBatchSize)
+				estRows := int(is.StatsCount())
+				worker.batchSize = CalculateBatchSize(estRows, e.MaxChunkSize(), worker.maxBatchSize)
 				if builder.Request.Paging.Enable && builder.Request.Paging.MinPagingSize < uint64(worker.batchSize) {
 					// when paging enabled and Paging.MinPagingSize less than initBatchSize, change Paging.MinPagingSize to
 					// initial batchSize to avoid redundant paging RPC, see more detail in https://github.com/pingcap/tidb/issues/54066
