@@ -741,7 +741,11 @@ func (w *indexIngestLocalWorker) HandleTask(ck IndexRecordChunk, send func(Index
 		rs.Added = 0
 		rs.Total = totalCnt
 		rs.Next = nextKey
-		w.cpMgr.UpdateWrittenKeys(ck.ID, rs.Added)
+		err := w.cpMgr.UpdateWrittenKeys(ck.ID, rs.Added)
+		if err != nil {
+			w.ctx.onError(err)
+			return
+		}
 	}
 	send(rs)
 	w.rowCntListener.Flushed(rs.Added)
