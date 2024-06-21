@@ -138,11 +138,13 @@ type RowCountListener interface {
 type EmptyRowCntListener struct {
 }
 
-func (*EmptyRowCntListener) Flushed(rowCnt int) {
+// Flushed implements RowCountListener.
+func (*EmptyRowCntListener) Flushed(_ int) {
 
 }
 
-func (*EmptyRowCntListener) Imported(rowCnt int) {
+// Imported implements RowCountListener.
+func (*EmptyRowCntListener) Imported(_ int) {
 }
 
 // NewAddIndexIngestPipeline creates a pipeline for adding index in ingest mode.
