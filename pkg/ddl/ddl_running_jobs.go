@@ -139,14 +139,35 @@ func (j *runningJobs) checkRunnable(jobID int64, involves []model.InvolvingSchem
 		}
 
 		for _, checkingObj := range toCheck {
-			if info.Database != model.InvolvingNone &&
-				hasSchemaConflict(info.Database, info.Table, checkingObj.schemas) {
-				return false
+			if info.Database != model.InvolvingNone {
+				if hasSchemaConflict(info.Database, info.Table, checkingObj.schemas) {
+					return false
+				}
+				// model.InvolvingSchemaInfo is like an enumerate type
+				intest.Assert(
+					info.Policy == "" && info.ResourceGroup == "",
+					"InvolvingSchemaInfo should be like an enumerate type: %#v",
+					info,
+				)
+				continue
 			}
 
-			if _, ok := checkingObj.placementPolicies[info.Policy]; ok {
-				return false
+			if info.Policy != "" {
+				if _, ok := checkingObj.placementPolicies[info.Policy]; ok {
+					return false
+				}
+				intest.Assert(
+					info.ResourceGroup == "",
+					"InvolvingSchemaInfo should be like an enumerate type: %#v",
+					info,
+				)
+				continue
 			}
+			intest.Assert(
+				info.ResourceGroup != "",
+				"InvolvingSchemaInfo should be like an enumerate type: %#v",
+				info,
+			)
 			if _, ok := checkingObj.resourceGroups[info.ResourceGroup]; ok {
 				return false
 			}

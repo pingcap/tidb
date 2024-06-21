@@ -2863,28 +2863,17 @@ func (d *ddl) createTableWithInfoJob(
 		args = append(args, ctx.GetSessionVars().ForeignKeyChecks)
 	}
 
-	involvingSchemas := make([]model.InvolvingSchemaInfo, 0, len(involvingRef)+len(tbInfo.ForeignKeys)+1)
-	if len(involvingRef) > 0 {
-		involvingSchemas = append(involvingSchemas, involvingRef...)
-	}
-	for _, fk := range tbInfo.ForeignKeys {
-		involvingSchemas = append(involvingSchemas, model.InvolvingSchemaInfo{
-			Database: fk.RefSchema.L,
-			Table:    fk.RefTable.L,
-			Mode:     model.SharedInvolving,
-		})
-	}
-	if ref := tbInfo.PlacementPolicyRef; ref != nil {
-		involvingSchemas = append(involvingSchemas, model.InvolvingSchemaInfo{
-			Policy: ref.Name.L,
-			Mode:   model.SharedInvolving,
-		})
-	}
-	if len(involvingSchemas) > 0 {
+	var involvingSchemas []model.InvolvingSchemaInfo
+	sharedInvolvingFromTableInfo := getSharedInvolvingSchemaInfo(tbInfo)
+
+	if sum := len(involvingRef) + len(sharedInvolvingFromTableInfo); sum > 0 {
+		involvingSchemas = make([]model.InvolvingSchemaInfo, 0, sum+1)
 		involvingSchemas = append(involvingSchemas, model.InvolvingSchemaInfo{
 			Database: schema.Name.L,
 			Table:    tbInfo.Name.L,
 		})
+		involvingSchemas = append(involvingSchemas, involvingRef...)
+		involvingSchemas = append(involvingSchemas, sharedInvolvingFromTableInfo...)
 	}
 
 	job = &model.Job{
@@ -2900,6 +2889,24 @@ func (d *ddl) createTableWithInfoJob(
 		SQLMode:             ctx.GetSessionVars().SQLMode,
 	}
 	return job, nil
+}
+
+func getSharedInvolvingSchemaInfo(info *model.TableInfo) []model.InvolvingSchemaInfo {
+	ret := make([]model.InvolvingSchemaInfo, 0, len(info.ForeignKeys)+1)
+	for _, fk := range info.ForeignKeys {
+		ret = append(ret, model.InvolvingSchemaInfo{
+			Database: fk.RefSchema.L,
+			Table:    fk.RefTable.L,
+			Mode:     model.SharedInvolving,
+		})
+	}
+	if ref := info.PlacementPolicyRef; ref != nil {
+		ret = append(ret, model.InvolvingSchemaInfo{
+			Policy: ref.Name.L,
+			Mode:   model.SharedInvolving,
+		})
+	}
+	return ret
 }
 
 func (d *ddl) createTableWithInfoPost(
@@ -3061,11 +3068,13 @@ func (d *ddl) BatchCreateTableWithInfo(ctx sessionctx.Context,
 			return errors.Trace(fmt.Errorf("except table info"))
 		}
 		args = append(args, info)
-		jobs.InvolvingSchemaInfo = append(jobs.InvolvingSchemaInfo,
-			model.InvolvingSchemaInfo{
+		if sharedInv := getSharedInvolvingSchemaInfo(info); len(sharedInv) > 0 {
+			jobs.InvolvingSchemaInfo = append(jobs.InvolvingSchemaInfo, model.InvolvingSchemaInfo{
 				Database: dbName.L,
 				Table:    info.Name.L,
 			})
+			jobs.InvolvingSchemaInfo = append(jobs.InvolvingSchemaInfo, sharedInv...)
+		}
 	}
 	if len(args) == 0 {
 		return nil

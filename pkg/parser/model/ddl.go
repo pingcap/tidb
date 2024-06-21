@@ -586,8 +586,9 @@ type Job struct {
 }
 
 // InvolvingSchemaInfo returns the schema info involved in the job. The value
-// should be stored in lower case. No need to use this type as one-of
-// Database/Table, Policy, ResourceGroup.
+// should be stored in lower case. Only one type of the three member types
+// (Database&Table, Policy, ResourceGroup) should only be set in a
+// InvolvingSchemaInfo.
 type InvolvingSchemaInfo struct {
 	Database      string                  `json:"database,omitempty"`
 	Table         string                  `json:"table,omitempty"`

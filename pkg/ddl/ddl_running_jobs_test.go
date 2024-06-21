@@ -29,7 +29,7 @@ import (
 )
 
 func mkJob(id int64, schemaTableNames ...string) (int64, []model.InvolvingSchemaInfo) {
-	schemaInfos := make([]model.InvolvingSchemaInfo, len(schemaTableNames))
+	schemaInfos := make([]model.InvolvingSchemaInfo, 0, len(schemaTableNames))
 	for _, schemaTableName := range schemaTableNames {
 		ss := strings.Split(schemaTableName, ".")
 		schemaInfos = append(schemaInfos, model.InvolvingSchemaInfo{
@@ -168,7 +168,9 @@ func TestSchemaPolicyAndResourceGroup(t *testing.T) {
 
 	jobID2 := int64(2)
 	involves2 := []model.InvolvingSchemaInfo{
-		{Database: "db2", Table: model.InvolvingAll, Policy: "p0", ResourceGroup: "g0"},
+		{Database: "db2", Table: model.InvolvingAll},
+		{Policy: "p0"},
+		{ResourceGroup: "g0"},
 	}
 	runnable = j.checkRunnable(jobID2, involves2)
 	require.True(t, runnable)
