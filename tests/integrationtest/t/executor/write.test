@@ -1,0 +1,1357 @@
+# TestMultiBatch
+drop table if exists t,t0;
+create table t0 (i int);
+insert into t0 values (1), (1);
+create table t (i int unique key);
+set @@tidb_dml_batch_size = 1;
+insert ignore into t select * from t0;
+admin check table t;
+drop table if exists t,t0;
+set @@tidb_dml_batch_size = default;
+
+# TestInsertSetWithDefault
+drop table if exists t1, t2;
+create table t1 (a int default 10, b int default 20);
+insert into t1 set a=default;
+select * from t1;
+delete from t1;
+insert into t1 set b=default;
+select * from t1;
+delete from t1;
+insert into t1 set b=default, a=1;
+select * from t1;
+delete from t1;
+insert into t1 set a=default(a);
+select * from t1;
+delete from t1;
+insert into t1 set a=default(b), b=default(a);
+select * from t1;
+delete from t1;
+insert into t1 set a=default(b)+default(a);
+select * from t1;
+create table t2 (a int default 10 primary key, b int generated always as (-a) virtual, c int generated always as (-a) stored);
+insert into t2 set a=default;
+select * from t2;
+delete from t2;
+insert into t2 set a=2, b=default;
+select * from t2;
+delete from t2;
+insert into t2 set c=default, a=3;
+select * from t2;
+delete from t2;
+insert into t2 set a=default, b=default, c=default;
+select * from t2;
+delete from t2;
+insert into t2 set a=default(a), b=default, c=default;
+select * from t2;
+delete from t2;
+-- error 3105
+insert into t2 set b=default(a);
+-- error 3105
+insert into t2 set a=default(b), b=default(b);
+insert into t2 set a=default(a), c=default(c);
+-- error 3105
+insert into t2 set a=default(a), c=default(a);
+insert into t2 set a=3, b=default, c=default(c) ON DUPLICATE KEY UPDATE b = default(b);
+-- error 1062
+insert into t2 set a=3, b=default, c=default(c) ON DUPLICATE KEY UPDATE b = default(b);
+-- error 3105
+insert into t2 set a=3, b=default, c=default(c) ON DUPLICATE KEY UPDATE b = default(a);
+--sorted_result
+select * from t2;
+drop table t1, t2;
+create table t1 (a int not null auto_increment,primary key(a), t timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP);
+set @@timestamp = 1637541064;
+--enable_warnings;
+insert into t1 set a=default,t=default;
+--disable_warnings;
+set @@timestamp = 1637541082;
+insert into t1 VALUES (default,default);
+--sorted_result
+select * from t1;
+set @@timestamp = 1637541332;
+--enable_warnings;
+insert into t1 set a=1,t='2001-02-03 04:05:06' ON DUPLICATE KEY UPDATE t = default;
+insert into t1 set a=2,t='2001-02-03 04:05:06' ON DUPLICATE KEY UPDATE t = default(t);
+--disable_warnings;
+--sorted_result
+select * from t1;
+DROP TABLE t1;
+CREATE TABLE t1 (a int default 1 PRIMARY KEY, b int default 2);
+INSERT INTO t1 VALUES (2,2), (3,3);
+INSERT INTO t1 VALUES (3,2) ON DUPLICATE KEY UPDATE b = DEFAULT(a);
+--enable_warnings;
+INSERT INTO t1 SET a = 2, b = 3 ON DUPLICATE KEY UPDATE b = DEFAULT(a);
+--disable_warnings;
+--sorted_result
+select * from t1;
+drop table if exists t1;
+set @@timestamp = DEFAULT;
+
+# TestInsertOnDupUpdateDefault
+drop table if exists t1, t2;
+create table t1 (a int unique, b int default 20, c int default 30);
+insert into t1 values (1,default,default);
+insert into t1 values (1,default,default) on duplicate key update b=default;
+select * from t1;
+insert into t1 values (1,default,default) on duplicate key update c=default, b=default;
+select * from t1;
+insert into t1 values (1,default,default) on duplicate key update c=default, a=2;
+select * from t1;
+insert into t1 values (2,default,default) on duplicate key update c=default(b);
+select * from t1;
+insert into t1 values (2,default,default) on duplicate key update a=default(b)+default(c);
+select * from t1;
+create table t2 (a int unique, b int generated always as (-a) virtual, c int generated always as (-a) stored);
+insert into t2 values (1,default,default);
+insert into t2 values (1,default,default) on duplicate key update a=2, b=default;
+select * from t2;
+insert into t2 values (2,default,default) on duplicate key update a=3, c=default;
+select * from t2;
+insert into t2 values (3,default,default) on duplicate key update c=default, b=default, a=4;
+select * from t2;
+insert into t2 values (4,default,default) on duplicate key update b=default, a=5, c=default;
+select * from t2;
+-- error 3105
+insert into t2 values (5,default,default) on duplicate key update b=default(a);
+insert into t2 values (5,default,default) on duplicate key update a=default(a), c=default(c);
+select * from t2;
+delete from t2;
+insert into t2 (a) values (1);
+insert into t2 values (1,default,default) on duplicate key update a=default(b), b=default(b);
+select * from t2;
+delete from t2;
+insert into t2 (a) values (1);
+-- error 3105
+insert into t2 values (1,default,default) on duplicate key update a=default(a), c=default(a);
+drop table t1, t2;
+set @@tidb_txn_mode = 'pessimistic';
+create table t ( c_int int, c_string varchar(40) collate utf8mb4_bin , primary key (c_string), unique key (c_int));
+insert into t values (22, 'gold witch'), (24, 'gray singer'), (21, 'silver sight');
+begin;
+--error 1062
+insert into t values (21,'black warlock'), (22, 'dark sloth'), (21,  'cyan song') on duplicate key update c_int = c_int + 1, c_string = concat(c_int, ':', c_string);
+commit;
+select * from t order by c_int;
+drop table t;
+set @@tidb_txn_mode = default;
+
+# TestReplaceWithCICollation
+drop table if exists t;
+create table t (a varchar(20) charset utf8mb4 collate utf8mb4_general_ci primary key);
+replace into t(a) values (_binary'A '),(_binary'A');
+select a from t use index(primary);
+select a from t ignore index(primary);
+drop table if exists t;
+
+# TestGeneratedColumnForInsert
+drop table if exists t1;
+create table t1(id int, id_gen int as(id + 42), b int, unique key id_gen(id_gen));
+insert into t1 (id, b) values(1,1),(2,2),(3,3),(4,4),(5,5);
+replace into t1 (id, b) values(1,1);
+replace into t1 (id, b) values(1,1),(2,2);
+replace into t1 (id, b) values(6,16),(7,17),(8,18);
+select * from t1;
+insert into t1 (id, b) values (6,18) on duplicate key update id = -id;
+insert into t1 (id, b) values (7,28) on duplicate key update b = -values(b);
+select * from t1;
+drop table if exists t;
+create table t (i int as(k+1) stored, j int as(k+2) virtual, k int, unique key idx_i(i), unique key idx_j(j));
+insert into t (k) values (1), (2);
+replace into t (k) values (1), (2);
+select * from t;
+drop table if exists t;
+create table t (i int as(k+1) stored, j int as(k+2) virtual, k int, unique key idx_j(j));
+insert into t (k) values (1), (2);
+replace into t (k) values (1), (2);
+select * from t;
+drop table if exists t;
+create table t (i int as(k+1) stored, j int as(k+2) virtual, k int, unique key idx_i(i));
+insert into t (k) values (1), (2);
+replace into t (k) values (1), (2);
+select * from t;
+drop table if exists t1;
+create table t1(f1 json, f2 real as (cast(f1 as decimal(2,1))));
+-- error 1690
+INSERT INTO t1 (f1) VALUES (CAST(1000 AS JSON));
+set @@sql_mode = '';
+INSERT INTO t1 (f1) VALUES (CAST(1000 AS JSON));
+select * from t1;
+set @@sql_mode = default;
+drop table if exists t1;
+
+# TestNullDefault
+drop table if exists test_null_default;
+set timestamp = 1234;
+set time_zone = '+08:00';
+create table test_null_default (ts timestamp null default current_timestamp);
+insert into test_null_default values (null);
+select * from test_null_default;
+insert into test_null_default values ();
+select * from test_null_default;
+set timestamp = default;
+drop table if exists test_null_default;
+
+# TestNotNullDefault
+drop table if exists t1,t2;
+create table t1 (a int not null default null default 1);
+create table t2 (a int);
+alter table  t2 change column a a int not null default null default 1;
+drop table t1,t2;
+
+# TestIssue4067
+drop table if exists t1, t2;
+create table t1(id int);
+create table t2(id int);
+insert into t1 values(123);
+insert into t2 values(123);
+delete from t1 where id not in (select id from t2);
+select * from t1;
+delete from t1 where id in (select id from t2);
+select * from t1;
+drop table if exists t1, t2;
+
+# TestInsertCalculatedValue
+drop table if exists t;
+create table t(a int, b int);
+insert into t set a=1, b=a+1;
+select a, b from t;
+drop table if exists t;
+create table t(a int default 100, b int);
+insert into t set b=a+1, a=1;
+select a, b from t;
+insert into t (b) value (a);
+select * from t where b = 100;
+insert into t set a=2, b=a+1;
+select * from t where a = 2;
+drop table if exists t;
+create table t (c int);
+insert into t set t.c = '1';
+select * from t;
+drop table if exists t;
+create table t(a int default 1);
+insert into t values (a);
+select * from t;
+drop table if exists t;
+create table t (a int, b int, c int, d int);
+insert into t value (1, 2, a+1, b+1);
+select * from t;
+drop table if exists t;
+create table t (a int not null);
+insert into t values (a+2);
+insert into t values (a);
+select * from t order by a;
+drop table if exists t;
+create table t (a bigint not null, b bigint not null);
+insert into t value(b + 1, a);
+insert into t set a = b + a, b = a + 1;
+insert into t value(1000, a);
+insert t set b = sqrt(a + 4), a = 10;
+select * from t order by a;
+drop table if exists t;
+create table t(a int);
+insert into t values(a);
+select * from t;
+drop table if exists t;
+create table t(a enum('a', 'b'));
+insert into t values(a);
+select * from t;
+drop table if exists t;
+create table t(a enum('a', 'b') default 'a');
+insert into t values(a);
+insert into t values(a+1);
+select * from t order by a;
+drop table if exists t;
+create table t(a blob);
+insert into t values(a);
+select * from t;
+drop table if exists t;
+create table t(a varchar(20) default 'a');
+insert into t values(a);
+insert into t values(upper(a));
+select * from t order by a;
+drop table if exists t;
+create table t(a varchar(20) not null, b varchar(20));
+insert into t value (a, b);
+select * from t;
+drop table if exists t;
+create table t(a int, b int);
+insert into t values(a*b, b*b);
+select * from t;
+drop table if exists t;
+create table t (a json not null, b int);
+-- error 1366
+insert into t value (a,a->'$');
+drop table if exists t;
+create table t (a json not null, b varchar(10));
+insert into t value (a,a->'$');
+select * from t;
+drop table if exists t;
+create table t(a json, b int, c int as (a->'$.a'));
+insert into t (a, b) value (a, a->'$.a'+1);
+insert into t (b) value (a->'$.a'+1);
+select * from t;
+insert into t (a, b) value ('{"a": 1}', a->'$.a'+1);
+select * from t where c = 1;
+truncate table t;
+insert t set b = c + 1;
+select * from t;
+truncate table t;
+insert t set a = '{"a": 1}', b = c;
+select * from t;
+drop table if exists t;
+create table t(a int auto_increment key, b int);
+insert into t (b) value (a);
+insert into t value (a, a+1);
+set SQL_MODE=NO_AUTO_VALUE_ON_ZERO;
+insert into t (b) value (a+1);
+select * from t order by a;
+set SQL_MODE=STRICT_ALL_TABLES;
+drop table if exists t;
+create table t(a int not null, b int, c int as (sqrt(a)));
+insert t set b = a, a = 4;
+select * from t;
+set SQL_MODE=default;
+drop table t;
+
+# TestDataTooLongErrMsg
+drop table if exists t;
+create table t(a varchar(2));
+--error 1406
+insert into t values('123');
+insert into t values('12');
+--error 1406
+update t set a = '123' where a = '12';
+drop table t;
+
+# TestDeferConstraintCheckForDelete
+set tidb_constraint_check_in_place = 0;
+set @@tidb_txn_mode = 'optimistic';
+drop table if exists t1, t2, t3, t4, t5;
+create table t1(i int primary key, j int);
+insert into t1 values(1, 2);
+begin;
+insert into t1 values(1, 3);
+delete from t1 where j = 3;
+-- error 1062
+commit;
+rollback;
+create table t2(i int, j int, unique index idx(i));
+insert into t2 values(1, 2);
+begin;
+insert into t2 values(1, 3);
+delete from t2 where j = 3;
+-- error 1062
+commit;
+admin check table t2;
+create table t3(i int, j int, primary key(i));
+begin;
+insert into t3 values(1, 3);
+delete from t3 where j = 3;
+commit;
+create table t4(i int, j int, primary key(i));
+begin;
+insert into t4 values(1, 3);
+delete from t4 where j = 3;
+insert into t4 values(2, 3);
+commit;
+admin check table t4;
+select * from t4;
+create table t5(i int, j int, primary key(i));
+begin;
+insert into t5 values(1, 3);
+delete from t5 where j = 3;
+insert into t5 values(1, 4);
+commit;
+admin check table t5;
+select * from t5;
+set tidb_constraint_check_in_place = default;
+set @@tidb_txn_mode = default;
+
+# TestDefEnumInsert
+drop table if exists test;
+create table test (id int, prescription_type enum('a','b','c','d','e','f') NOT NULL, primary key(id));
+insert into test (id)  values (1);
+select prescription_type from test;
+drop table if exists test;
+
+# TestIssue11059
+drop table if exists t;
+create table t (pk int primary key, uk int unique, v int);
+insert into t values (2, 11, 215);
+insert into t values (3, 7, 2111);
+--error 1062
+update t set pk = 2 where uk = 7;
+drop table if exists t;
+
+# TestSetWithRefGenCol
+drop table if exists t, te, tn, t1, t2, t3;
+create table t (i int, j int as (i+1) not null);
+insert into t set i = j + 1;
+select * from t;
+insert into t set i = j + 100;
+select * from t;
+create table te (i int);
+insert into te set i = i + 10;
+select * from te;
+insert into te set i = i;
+select * from te;
+create table tn (i int not null);
+insert into tn set i = i;
+select * from tn;
+insert into tn set i = i + 10;
+select * from tn;
+create table t1 (j int(11) GENERATED ALWAYS AS (i + 1) stored, i int(11) DEFAULT '10');
+insert into t1 values();
+select * from t1;
+insert into t1 values();
+select * from t1;
+create table t2 (j int(11) GENERATED ALWAYS AS (i + 1) stored not null, i int(11) DEFAULT '5');
+insert into t2 set i = j + 9;
+select * from t2;
+--error 3105
+insert into t2 set j = i + 1;
+insert into t2 set i = j + 100;
+select * from t2;
+create table t3(j int(11) GENERATED ALWAYS AS (i + 1) stored, i int(11) DEFAULT '5');
+insert into t3 set i = j + 100;
+select * from t3;
+--error 3105
+insert into t3 set j = i + 1;
+drop table if exists t, te, t1, t2, t3;
+
+# TestSetWithCurrentTimestampAndNow
+drop table if exists t1;
+create table t1(c1 timestamp default current_timestamp, c2 int, c3 timestamp default current_timestamp);
+insert into t1 set c1 = current_timestamp, c2 = sleep(2);
+select c1 = c3 from t1;
+insert into t1 set c1 = current_timestamp, c2 = sleep(1);
+select c1 = c3 from t1;
+drop table if exists t1;
+
+# TestApplyWithPointAndBatchPointGet
+drop table if exists t;
+create table t ( c_int int, c_str varchar(40),c_datetime datetime, c_timestamp timestamp,
+c_double double, c_decimal decimal(12, 6) , primary key(c_int, c_str) , unique key(c_int) , unique key(c_str) ,
+unique key(c_decimal) , unique key(c_datetime) , key(c_timestamp) );
+insert into t values (1, 'zen ardinghelli', '2020-02-03 18:15:17', '2020-03-11 05:47:11', 36.226534, 3.763),
+(2, 'suspicious joliot', '2020-01-01 22:56:37', '2020-04-07 06:19:07', 62.756537, 5.567),
+(3, 'keen zhukovsky', '2020-01-21 04:09:20', '2020-06-06 08:32:14', 33.115065, 1.381),
+(4, 'crazy newton', '2020-02-14 21:37:56', '2020-04-28 08:33:48', 44.146318, 4.249),
+(5, 'happy black', '2020-03-12 16:04:14', '2020-01-18 09:17:37', 41.962653, 5.959);
+insert into t values (6, 'vigilant swartz', '2020-06-01 07:37:44', '2020-05-25 01:26:43', 56.352233, 2.202),
+(7, 'suspicious germain', '2020-04-16 23:25:23', '2020-03-17 05:06:57', 55.897698, 3.460),
+(8, 'festive chandrasekhar', '2020-02-11 23:40:29', '2020-04-08 10:13:04', 77.565691, 0.540),
+(9, 'vigorous meninsky', '2020-02-17 10:03:17', '2020-01-02 15:02:02', 6.484815, 6.292),
+(10, 'heuristic moser', '2020-04-20 12:18:49', '2020-06-20 20:20:18', 28.023822, 2.765);
+insert into t values (11, 'sharp carver', '2020-03-01 11:23:41', '2020-03-23 17:59:05', 40.842442, 6.345),
+(12, 'trusting noether', '2020-03-28 06:42:34', '2020-01-27 15:33:40', 49.544658, 4.811),
+(13, 'objective ishizaka', '2020-01-28 17:30:55', '2020-04-02 17:45:39', 59.523930, 5.015),
+(14, 'sad rhodes', '2020-03-30 21:43:37', '2020-06-09 06:53:53', 87.295753, 2.413),
+(15, 'wonderful shockley', '2020-04-29 09:17:11', '2020-03-14 04:36:51', 6.778588, 8.497);
+begin pessimistic;
+insert into t values (13, 'vibrant yalow', '2020-05-15 06:59:05', '2020-05-03 05:58:45', 43.721929, 8.066),
+(14, 'xenodochial spence', '2020-02-13 17:28:07', '2020-04-01 12:18:30', 19.981331, 5.774),
+(22, 'eloquent neumann', '2020-02-10 16:00:20', '2020-03-28 00:24:42', 10.702532, 7.618)
+on duplicate key update c_int=values(c_int), c_str=values(c_str), c_double=values(c_double), c_timestamp=values(c_timestamp);
+select sum((select t1.c_str from t t1 where t1.c_int = 11 and t1.c_str > t.c_str order by t1.c_decimal limit 1) is null) nulls
+from t order by c_str;
+select sum((select t1.c_str from t t1 where t1.c_int in (11, 10086) and t1.c_str > t.c_str order by t1.c_decimal limit 1) is null) nulls
+from t order by c_str;
+commit;
+select sum((select t1.c_str from t t1 where t1.c_int = 11 and t1.c_str > t.c_str order by t1.c_decimal limit 1) is null) nulls
+from t order by c_str;
+select sum((select t1.c_str from t t1 where t1.c_int in (11, 10086) and t1.c_str > t.c_str order by t1.c_decimal limit 1) is null) nulls
+from t order by c_str;
+drop table if exists t;
+
+# TestWriteListPartitionTable
+set @@session.tidb_enable_list_partition = ON;
+drop table if exists t;
+create table t (id int, name varchar(10), unique index idx (id)) partition by list  (id) (
+    	partition p0 values in (3,5,6,9,17),
+    	partition p1 values in (1,2,10,11,19,20),
+    	partition p2 values in (4,12,13,14,18),
+    	partition p3 values in (7,8,15,16,null)
+	);
+insert into t values  (1, 'a');
+update t set name='b' where id=2;
+select * from t;
+update t set name='b' where id=1;
+select * from t;
+replace into t values  (1, 'c');
+select * from t;
+insert into t values (1, 'd') on duplicate key update name='e';
+select * from t;
+delete from t where id=1;
+select * from t;
+insert into t values  (2, 'f');
+delete from t where name='f';
+select * from t;
+insert into t values  (1, 'a');
+-- error 1062
+insert into t values (1, 'd');
+-- error 1526
+insert into t values (100, 'd');
+admin check table t;
+insert into t values  (2,'b'),(3,'c'),(4,'d'),(7,'f'), (null,null);
+select * from t partition (p0) order by id;
+select * from t partition (p1,p3) order by id;
+select * from t partition (p1,p3,p0,p2) order by id;
+select * from t order by id;
+delete from t partition (p0);
+select * from t order by id;
+delete from t partition (p3,p2);
+select * from t order by id;
+set @@session.tidb_enable_list_partition = default;
+drop table if exists t;
+
+# TestWriteListColumnsPartitionTable
+set @@session.tidb_enable_list_partition = ON;
+drop table if exists t;
+create table t (id int, name varchar(10), unique index idx (id)) partition by list columns (id) (
+    	partition p0 values in (3,5,6,9,17),
+    	partition p1 values in (1,2,10,11,19,20),
+    	partition p2 values in (4,12,13,14,18),
+    	partition p3 values in (7,8,15,16,null)
+	);
+insert into t values  (1, 'a');
+update t set name='b' where id=2;
+select * from t;
+update t set name='b' where id=1;
+select * from t;
+replace into t values  (1, 'c');
+select * from t;
+insert into t values (1, 'd') on duplicate key update name='e';
+select * from t;
+delete from t where id=1;
+select * from t;
+insert into t values  (2, 'f');
+delete from t where name='f';
+select * from t;
+insert into t values  (1, 'a');
+--error 1062
+insert into t values (1, 'd');
+--error 1526
+insert into t values (100, 'd');
+admin check table t;
+insert into t values  (2,'b'),(3,'c'),(4,'d'),(7,'f'), (null,null);
+select * from t partition (p0) order by id;
+select * from t partition (p1,p3) order by id;
+select * from t partition (p1,p3,p0,p2) order by id;
+select * from t order by id;
+delete from t partition (p0);
+select * from t order by id;
+delete from t partition (p3,p2);
+select * from t order by id;
+set @@session.tidb_enable_list_partition = default;
+drop table if exists t;
+
+# TestWriteListPartitionTable1
+## TestWriteListPartitionTable1 test for write list partition when the partition expression is simple.
+set @@session.tidb_enable_list_partition = ON;
+drop table if exists t;
+create table t (id int, name varchar(10)) partition by list  (id) (
+    	partition p0 values in (3,5,6,9,17),
+    	partition p1 values in (1,2,10,11,19,20),
+    	partition p2 values in (4,12,13,14,18),
+    	partition p3 values in (7,8,15,16,null)
+	);
+insert into t values  (1, 'a'),(1,'b');
+--error 1062
+alter table t add unique index idx (id);
+delete from t where name='b';
+alter table t add unique index idx (id);
+delete from t;
+insert into t values  (1, 'a'),(2,'b'),(10,'c');
+select * from t partition(p1) order by id;
+delete from t;
+insert into t values  (1, 'a'),(3,'c'),(4,'e');
+select * from t partition(p0) order by id;
+select * from t partition(p1) order by id;
+select * from t partition(p2) order by id;
+select * from t partition(p3) order by id;
+insert into t values (1, 'd'), (3,'f'),(5,'g') on duplicate key update name='x';
+select * from t partition(p0) order by id;
+select * from t partition(p1) order by id;
+select * from t partition(p2) order by id;
+select * from t partition(p3) order by id;
+--error 1062
+insert into t values (3, 'a'), (11,'x') on duplicate key update id=id+1;
+select * from t order by id;
+--enable_warnings
+insert ignore into t values  (1, 'b'), (5,'a'),(null,'y');
+--disable_warnings
+select * from t partition(p0) order by id;
+select * from t partition(p1) order by id;
+select * from t partition(p2) order by id;
+select * from t partition(p3) order by id;
+insert ignore into t values  (15, 'a'),(17,'a');
+select * from t partition(p0,p1,p2) order by id;
+select * from t partition(p3) order by id;
+--error 1526
+insert into t values (100, 'd');
+delete from t;
+insert into t values  (1, 'a'),(2,'b'),(3,'c');
+update t set name='b' where id=2;
+select * from t partition(p1);
+update t set name='x' where id in (1,2);
+select * from t partition(p1);
+update t set name='y' where id < 3;
+select * from t order by id;
+--error 1062
+update t set id=2 where id = 1;
+select * from t order by id;
+update t set name='z' where id in (1,2,3);
+select * from t order by id;
+update t set name='a' limit 3;
+select * from t order by id;
+update t set id=id*10 where id in (1,2);
+select * from t order by id;
+--error 1062
+update t set id=id+17 where id in (3,10);
+select * from t order by id;
+--error 1526
+update t set id=id*2 where id in (3,20);
+select * from t order by id;
+delete from t;
+replace into t values  (1, 'a'),(2,'b');
+select * from t order by id;
+replace into t values  (3, 'c'),(4,'d'),(7,'f');
+select * from t partition(p0) order by id;
+select * from t partition(p1) order by id;
+select * from t partition(p2) order by id;
+select * from t partition(p3) order by id;
+replace into t values  (1, 'x'),(7,'x');
+select * from t order by id;
+--error 1526
+replace into t values  (10,'x'),(50,'x');
+select * from t order by id;
+delete from t where id = 3;
+select * from t partition(p0) order by id;
+delete from t where id in (1,2);
+select * from t partition(p1) order by id;
+delete from t where id in (4,7,10,11);
+select * from t;
+insert into t values  (3, 'c'),(4,'d'),(7,'f');
+delete from t where id < 10;
+select * from t;
+insert into t values  (3, 'c'),(4,'d'),(7,'f');
+delete from t limit 3;
+select * from t;
+drop table if exists t;
+set @@session.tidb_enable_list_partition = default;
+
+# TestWriteListColumnsPartitionTable2
+## TestWriteListColumnsPartitionTable2 test for write list partition when the partition by multi-columns.
+set @@session.tidb_enable_list_partition = ON;
+drop table if exists t;
+create table t (location varchar(10), id int, a int) partition by list columns (location,id) (
+    	partition p_west  values in (('w', 1),('w', 2),('w', 3),('w', 4)),
+    	partition p_east  values in (('e', 5),('e', 6),('e', 7),('e', 8)),
+    	partition p_north values in (('n', 9),('n',10),('n',11),('n',12)),
+    	partition p_south values in (('s',13),('s',14),('s',15),('s',16))
+	);
+insert into t values  ('w', 1, 1),('w', 1, 2);
+--error 1062
+alter table t add unique index idx (location,id);
+delete from t where a=2;
+alter table t add unique index idx (location,id);
+delete from t;
+insert into t values  ('w', 1, 1),('w', 2, 2),('w', 3, 3);
+select * from t partition(p_west) order by id;
+delete from t;
+insert into t values  ('w', 1, 1),('e', 5, 5),('n', 9, 9);
+select * from t partition(p_west) order by id;
+select * from t partition(p_east) order by id;
+select * from t partition(p_north) order by id;
+select * from t partition(p_south) order by id;
+insert into t values  ('w', 1, 1) on duplicate key update a=a+1;
+select * from t partition(p_west) order by id;
+insert into t values  ('w', 1, 1) on duplicate key update location='s', id=13;
+select * from t partition(p_south) order by id;
+select * from t partition(p_west) order by id;
+insert into t values  ('w', 2, 2), ('w', 1, 1);
+-- error 1062
+insert into t values  ('w', 2, 3) on duplicate key update id=1;
+select * from t partition(p_west) order by id;
+--enable_warnings
+insert ignore into t values  ('w', 2, 2), ('w', 3, 3), ('n', 10, 10);
+--disable_warnings
+select * from t partition(p_west) order by id;
+select * from t partition(p_north) order by id;
+insert ignore into t values  ('w', 4, 4), ('s', 14, 14);
+select * from t partition(p_west) order by id;
+select * from t partition(p_south) order by id;
+-- error 1526
+insert into t values  ('w', 5, 5);
+-- error 1526
+insert into t values  ('s', 5, 5);
+-- error 1526
+insert into t values  ('s', 100, 5);
+-- error 1526
+insert into t values  ('x', 1, 5);
+delete from t;
+insert into t values  ('w', 1, 1),('w', 2, 2),('w', 3, 3);
+update t set a=2 where a=1;
+select * from t partition(p_west) order by id;
+update t set a=3 where location='w';
+select * from t partition(p_west) order by id;
+update t set a=4 where location='w' and id=1;
+select * from t partition(p_west) order by id;
+update t set a=5 where id=1;
+select * from t partition(p_west) order by id;
+update t set a=a+id where id>1;
+select * from t partition(p_west) order by id,a;
+--error 1062
+update t set id=id+1 where location='w' and id<2;
+select * from t partition(p_west) order by id,a;
+delete from t;
+insert into t values  ('w', 1, 1), ('w', 2, 2), ('e', 8, 8),('n', 11, 11);
+update t set a=a+1 where id < 20;
+select * from t order by id;
+update t set a=a+1 where location in ('w','s','n');
+select * from t order by id;
+update t set a=a+1 where location in ('w','s','n') and id in (1,3,5,7,8,9,11);
+select * from t order by id;
+update t set a=a+1 where location='n' and id=12;
+select * from t order by id;
+update t set a=a+1 where location='n' and id=11;
+select * from t order by id;
+--error 1062
+update t set id=id+1 where location='w' and id in (1,2);
+select * from t order by id;
+--error 1526
+update t set id=id+3 where location='w' and id in (1,2);
+select * from t order by id;
+update t set location='s', id=14 where location='e' and id=8;
+select * from t order by id;
+delete from t;
+replace into t values  ('w', 1, 1),('w', 2, 2),('w', 3, 3);
+select * from t partition(p_west) order by id;
+delete from t;
+replace into t values  ('w', 1, 1),('e', 5, 5),('n', 9, 9);
+select * from t order by id;
+replace into t values  ('w', 1, 2),('n', 10, 10);
+select * from t order by id;
+-- error 1526
+replace into t values  ('w', 5, 5);
+-- error 1526
+replace into t values  ('s', 5, 5);
+-- error 1526
+replace into t values  ('s', 100, 5);
+-- error 1526
+replace into t values  ('x', 1, 5);
+delete from t where location='w' and id=2;
+select * from t order by id;
+delete from t where location='w' and id=1;
+select * from t order by id;
+delete from t where location in ('w','e','n') and id in (1,2,3,4,5,8,9);
+select * from t order by id;
+delete from t where a=10;
+select * from t order by id;
+replace into t values  ('w', 1, 1),('e', 5, 5),('n', 11, 11);
+delete from t where id < 10;
+select * from t order by id;
+delete from t limit 1;
+select * from t order by id;
+drop table if exists t;
+set @@session.tidb_enable_list_partition = default;
+
+# TestWriteListPartitionTableIssue21437
+set @@session.tidb_enable_list_partition = ON;
+drop table if exists t;
+create table t (a int) partition by list (a%10) (partition p0 values in (0,1));
+--error 1526
+replace into t values  (null);
+drop table if exists t;
+set @@session.tidb_enable_list_partition = default;
+
+# TestListPartitionWithGeneratedColumn
+set @@session.tidb_enable_list_partition = ON;
+drop table if exists t;
+create table t (a bigint, b bigint GENERATED ALWAYS AS (3*a - 2*a) VIRTUAL, index idx(a)) partition by list (5*b - 4*b) (partition p0 values in (1,2,3,4,5), partition p1 values in (6,7,8,9,10));
+insert into t (a) values (1),(3),(5),(7),(9);
+select a from t partition (p0) order by a;
+select a from t partition (p1) order by a;
+select * from t where a = 1;
+update t set a=a+1 where a = 1;
+select a from t partition (p0) order by a;
+select a from t partition (p1) order by a;
+select * from t where a = 1;
+select * from t where a = 2;
+delete from t where a>10;
+select count(1) from t;
+delete from t where a=9;
+select a from t partition (p1) order by a;
+select count(1) from t;
+--error 1526
+insert into t (a) values (11);
+--error 1526
+update t set a=a+10 where a = 2;
+drop table if exists t;
+create table t (a bigint, b bigint GENERATED ALWAYS AS (3*a - 2*a) STORED, index idx(a)) partition by list (5*b - 4*b) (partition p0 values in (1,2,3,4,5), partition p1 values in (6,7,8,9,10));
+insert into t (a) values (1),(3),(5),(7),(9);
+select a from t partition (p0) order by a;
+select a from t partition (p1) order by a;
+select * from t where a = 1;
+update t set a=a+1 where a = 1;
+select a from t partition (p0) order by a;
+select a from t partition (p1) order by a;
+select * from t where a = 1;
+select * from t where a = 2;
+delete from t where a>10;
+select count(1) from t;
+delete from t where a=9;
+select a from t partition (p1) order by a;
+select count(1) from t;
+--error 1526
+insert into t (a) values (11);
+--error 1526
+update t set a=a+10 where a = 2;
+drop table if exists t;
+create table t (a bigint, b bigint GENERATED ALWAYS AS (3*a - 2*a) VIRTUAL, index idx(a)) partition by list columns(b) (partition p0 values in (1,2,3,4,5), partition p1 values in (6,7,8,9,10));
+insert into t (a) values (1),(3),(5),(7),(9);
+select a from t partition (p0) order by a;
+select a from t partition (p1) order by a;
+select * from t where a = 1;
+update t set a=a+1 where a = 1;
+select a from t partition (p0) order by a;
+select a from t partition (p1) order by a;
+select * from t where a = 1;
+select * from t where a = 2;
+delete from t where a>10;
+select count(1) from t;
+delete from t where a=9;
+select a from t partition (p1) order by a;
+select count(1) from t;
+--error 1526
+insert into t (a) values (11);
+--error 1526
+update t set a=a+10 where a = 2;
+drop table if exists t;
+create table t (a bigint, b bigint GENERATED ALWAYS AS (3*a - 2*a) STORED, index idx(a)) partition by list columns(b) (partition p0 values in (1,2,3,4,5), partition p1 values in (6,7,8,9,10));
+insert into t (a) values (1),(3),(5),(7),(9);
+select a from t partition (p0) order by a;
+select a from t partition (p1) order by a;
+select * from t where a = 1;
+update t set a=a+1 where a = 1;
+select a from t partition (p0) order by a;
+select a from t partition (p1) order by a;
+select * from t where a = 1;
+select * from t where a = 2;
+delete from t where a>10;
+select count(1) from t;
+delete from t where a=9;
+select a from t partition (p1) order by a;
+select count(1) from t;
+--error 1526
+insert into t (a) values (11);
+--error 1526
+update t set a=a+10 where a = 2;
+drop table if exists t;
+set @@session.tidb_enable_list_partition = default;
+
+# TestListPartitionWithGeneratedColumn1
+set @@session.tidb_enable_list_partition = ON;
+drop table if exists t;
+create table t (a year, b year GENERATED ALWAYS AS (3*a - 2*a) VIRTUAL, index idx(a)) partition by list (1 + b - 1) (partition p0 values in (2001,2002,2003,2004,2005), partition p1 values in (2006,2007,2008,2009));
+insert into t (a) values (1),(3),(5),(7),(9);
+select a from t partition (p0) order by a;
+select a from t partition (p1) order by a;
+select * from t where a = 1;
+update t set a=a+1 where a = 1;
+select a from t partition (p0) order by a;
+select a from t partition (p1) order by a;
+select * from t where a = 1;
+select * from t where a = 2;
+delete from t where a>10;
+select count(1) from t;
+delete from t where a=9;
+select a from t partition (p1) order by a;
+select count(1) from t;
+--error 1526
+insert into t (a) values (11);
+--error 1526
+update t set a=a+10 where a = 2;
+delete from t;
+insert into t (a) values (2001),(2003),(2005),(2007),(2009);
+select a from t partition (p0) order by a;
+select a from t partition (p1) order by a;
+select * from t where a = 2001;
+update t set a=a+1 where a = 2001;
+select a from t partition (p0) order by a;
+select a from t partition (p1) order by a;
+select * from t where a = 2001;
+select * from t where a = 2002;
+delete from t where a>2010;
+select count(1) from t;
+delete from t where a=2009;
+select a from t partition (p1) order by a;
+select count(1) from t;
+-- error 1526
+insert into t (a) values (2011);
+-- error 1526
+update t set a=a+10 where a = 2002;
+drop table if exists t;
+create table t (a year, b year GENERATED ALWAYS AS (3*a - 2*a) STORED, index idx(a)) partition by list (1 + b - 1) (partition p0 values in (2001,2002,2003,2004,2005), partition p1 values in (2006,2007,2008,2009));
+insert into t (a) values (1),(3),(5),(7),(9);
+select a from t partition (p0) order by a;
+select a from t partition (p1) order by a;
+select * from t where a = 1;
+update t set a=a+1 where a = 1;
+select a from t partition (p0) order by a;
+select a from t partition (p1) order by a;
+select * from t where a = 1;
+select * from t where a = 2;
+delete from t where a>10;
+select count(1) from t;
+delete from t where a=9;
+select a from t partition (p1) order by a;
+select count(1) from t;
+--error 1526
+insert into t (a) values (11);
+--error 1526
+update t set a=a+10 where a = 2;
+delete from t;
+insert into t (a) values (2001),(2003),(2005),(2007),(2009);
+select a from t partition (p0) order by a;
+select a from t partition (p1) order by a;
+select * from t where a = 2001;
+update t set a=a+1 where a = 2001;
+select a from t partition (p0) order by a;
+select a from t partition (p1) order by a;
+select * from t where a = 2001;
+select * from t where a = 2002;
+delete from t where a>2010;
+select count(1) from t;
+delete from t where a=2009;
+select a from t partition (p1) order by a;
+select count(1) from t;
+-- error 1526
+insert into t (a) values (2011);
+-- error 1526
+update t set a=a+10 where a = 2002;
+drop table if exists t;
+set @@session.tidb_enable_list_partition = default;
+
+# TestListPartitionWithGeneratedColumn2
+set @@session.tidb_enable_list_partition = ON;
+drop table if exists t;
+create table t (a datetime, b bigint GENERATED ALWAYS AS (to_seconds(a)) VIRTUAL, index idx(a)) partition by list (1 + b - 1) (
+				partition p0 values in (to_seconds('2020-09-28 17:03:38'),to_seconds('2020-09-28 17:03:39')),
+				partition p1 values in (to_seconds('2020-09-28 17:03:40'),to_seconds('2020-09-28 17:03:41')));
+insert into t (a) values  ('2020-09-28 17:03:38'),('2020-09-28 17:03:40');
+select a from t partition (p0);
+select a from t where a = '2020-09-28 17:03:40';
+update t set a='2020-09-28 17:03:41' where a = '2020-09-28 17:03:38';
+select a from t partition (p0);
+select a from t partition (p1) order by a;
+drop table if exists t;
+create table t (a datetime, b bigint GENERATED ALWAYS AS (to_seconds(a)) STORED, index idx(a)) partition by list (1 + b - 1) (
+				partition p0 values in (to_seconds('2020-09-28 17:03:38'),to_seconds('2020-09-28 17:03:39')),
+				partition p1 values in (to_seconds('2020-09-28 17:03:40'),to_seconds('2020-09-28 17:03:41')));
+insert into t (a) values  ('2020-09-28 17:03:38'),('2020-09-28 17:03:40');
+select a from t partition (p0);
+select a from t where a = '2020-09-28 17:03:40';
+update t set a='2020-09-28 17:03:41' where a = '2020-09-28 17:03:38';
+select a from t partition (p0);
+select a from t partition (p1) order by a;
+drop table if exists t;
+create table t (a timestamp, b bigint GENERATED ALWAYS AS (to_seconds(a)) VIRTUAL, index idx(a)) partition by list (1 + b - 1) (
+				partition p0 values in (to_seconds('2020-09-28 17:03:38'),to_seconds('2020-09-28 17:03:39')),
+				partition p1 values in (to_seconds('2020-09-28 17:03:40'),to_seconds('2020-09-28 17:03:41')));
+insert into t (a) values  ('2020-09-28 17:03:38'),('2020-09-28 17:03:40');
+select a from t partition (p0);
+select a from t where a = '2020-09-28 17:03:40';
+update t set a='2020-09-28 17:03:41' where a = '2020-09-28 17:03:38';
+select a from t partition (p0);
+select a from t partition (p1) order by a;
+drop table if exists t;
+create table t (a timestamp, b bigint GENERATED ALWAYS AS (to_seconds(a)) STORED, index idx(a)) partition by list (1 + b - 1) (
+				partition p0 values in (to_seconds('2020-09-28 17:03:38'),to_seconds('2020-09-28 17:03:39')),
+				partition p1 values in (to_seconds('2020-09-28 17:03:40'),to_seconds('2020-09-28 17:03:41')));
+insert into t (a) values  ('2020-09-28 17:03:38'),('2020-09-28 17:03:40');
+select a from t partition (p0);
+select a from t where a = '2020-09-28 17:03:40';
+update t set a='2020-09-28 17:03:41' where a = '2020-09-28 17:03:38';
+select a from t partition (p0);
+select a from t partition (p1) order by a;
+drop table if exists t;
+create table t (a timestamp, b bigint GENERATED ALWAYS AS (to_seconds(a)) VIRTUAL, index idx(a)) partition by list columns(b) (
+				partition p0 values in (to_seconds('2020-09-28 17:03:38'),to_seconds('2020-09-28 17:03:39')),
+				partition p1 values in (to_seconds('2020-09-28 17:03:40'),to_seconds('2020-09-28 17:03:41')));
+insert into t (a) values  ('2020-09-28 17:03:38'),('2020-09-28 17:03:40');
+select a from t partition (p0);
+select a from t where a = '2020-09-28 17:03:40';
+update t set a='2020-09-28 17:03:41' where a = '2020-09-28 17:03:38';
+select a from t partition (p0);
+select a from t partition (p1) order by a;
+drop table if exists t;
+create table t (a timestamp, b bigint GENERATED ALWAYS AS (to_seconds(a)) STORED, index idx(a)) partition by list columns(b) (
+				partition p0 values in (to_seconds('2020-09-28 17:03:38'),to_seconds('2020-09-28 17:03:39')),
+				partition p1 values in (to_seconds('2020-09-28 17:03:40'),to_seconds('2020-09-28 17:03:41')));
+insert into t (a) values  ('2020-09-28 17:03:38'),('2020-09-28 17:03:40');
+select a from t partition (p0);
+select a from t where a = '2020-09-28 17:03:40';
+update t set a='2020-09-28 17:03:41' where a = '2020-09-28 17:03:38';
+select a from t partition (p0);
+select a from t partition (p1) order by a;
+drop table if exists t;
+set @@session.tidb_enable_list_partition = default;
+
+# TestListColumnsPartitionWithGeneratedColumn
+set @@session.tidb_enable_list_partition = ON;
+drop table if exists t;
+create table t (a varchar(10), b varchar(1) GENERATED ALWAYS AS (substr(a,1,1)) VIRTUAL, index idx(a)) partition by list columns(b) (partition p0 values in ('a','c'), partition p1 values in ('b','d'));
+insert into t (a) values  ('aaa'),('abc'),('acd');
+select a from t partition (p0) order by a;
+select * from t where a = 'abc' order by a;
+update t set a='bbb' where a = 'aaa';
+select a from t partition (p0) order by a;
+select a from t partition (p1) order by a;
+select * from t where a = 'bbb' order by a;
+drop table if exists t;
+create table t (a varchar(10), b varchar(1) GENERATED ALWAYS AS (substr(a,1,1)) STORED, index idx(a)) partition by list columns(b) (partition p0 values in ('a','c'), partition p1 values in ('b','d'));
+insert into t (a) values  ('aaa'),('abc'),('acd');
+select a from t partition (p0) order by a;
+select * from t where a = 'abc' order by a;
+update t set a='bbb' where a = 'aaa';
+select a from t partition (p0) order by a;
+select a from t partition (p1) order by a;
+select * from t where a = 'bbb' order by a;
+drop table if exists t;
+set @@session.tidb_enable_list_partition = default;
+
+# TestIssue22496
+drop table if exists t12;
+create table t12(d decimal(15,2));
+--error 1366
+insert into t12 values('1,9999.00');
+set sql_mode='';
+insert into t12 values('1,999.00');
+SELECT * FROM t12;
+drop table t12;
+set sql_mode=default;
+
+# TestIssue21232
+drop table if exists t, t1;
+create table t(a varchar(1), index idx(a));
+create table t1(a varchar(5), index idx(a));
+insert into t values('a'), ('b');
+insert into t1 values('a'), ('bbbbb');
+--enable_warnings
+update /*+ INL_JOIN(t) */ t, t1 set t.a='a' where t.a=t1.a;
+--disable_warnings
+select * from t;
+--enable_warnings
+update /*+ INL_HASH_JOIN(t) */ t, t1 set t.a='a' where t.a=t1.a;
+--disable_warnings
+select * from t;
+--enable_warnings
+update /*+ INL_MERGE_JOIN(t) */ t, t1 set t.a='a' where t.a=t1.a;
+--disable_warnings
+select * from t;
+drop table if exists t, t1;
+
+# TestIssue20724
+drop table if exists t1;
+create table t1(a varchar(10) collate utf8mb4_general_ci);
+insert into t1 values ('a');
+update t1 set a = 'A';
+select * from t1;
+drop table t1;
+
+# TestIssue20840
+drop table if exists t1;
+set @@tidb_enable_clustered_index = 'int_only';
+create table t1 (i varchar(20) unique key) collate=utf8mb4_general_ci;
+insert into t1 values ('a');
+replace into t1 values ('A');
+select * from t1;
+drop table t1;
+
+# TestIssueInsertPrefixIndexForNonUTF8Collation
+drop table if exists t1, t2, t3;
+create table t1 ( c_int int, c_str varchar(40) character set ascii collate ascii_bin, primary key(c_int, c_str(8)) clustered , unique key(c_str));
+create table t2 ( c_int int, c_str varchar(40) character set latin1 collate latin1_bin, primary key(c_int, c_str(8)) clustered , unique key(c_str));
+insert into t1 values (3, 'fervent brattain');
+insert into t2 values (3, 'fervent brattain');
+admin check table t1;
+admin check table t2;
+create table t3 (x varchar(40) CHARACTER SET ascii COLLATE ascii_bin, UNIQUE KEY uk(x(4)));
+insert into t3 select 'abc ';
+-- error 1062
+insert into t3 select 'abc d';
+drop table if exists t1, t2, t3;
+
+# TestIssue40066
+drop table if exists t_int;
+create table t_int(column1 int, column2 int unsigned generated always as(column1-100));
+set @@sql_mode = DEFAULT;
+-- error 1264
+insert into t_int(column1) values (99);
+set @@sql_mode = '';
+--enable_warnings
+insert into t_int(column1) values (99);
+--disable_warnings
+select * from t_int;
+drop table if exists t_float;
+create table t_float(column1 float, column2 int unsigned generated always as(column1-100));
+set @@sql_mode = DEFAULT;
+-- error 1264
+insert into t_float(column1) values (12.95);
+set @@sql_mode = '';
+--enable_warnings
+insert into t_float(column1) values (12.95);
+--disable_warnings
+select * from t_float;
+drop table if exists t_decimal;
+create table t_decimal(column1 decimal(20,10), column2 int unsigned generated always as(column1-100));
+set @@sql_mode = DEFAULT;
+-- error 1264
+insert into t_decimal(column1) values (123.456e-2);
+set @@sql_mode = '';
+--enable_warnings
+insert into t_decimal(column1) values (123.456e-2);
+--disable_warnings
+select * from t_decimal;
+drop table if exists t_varchar;
+create table t_varchar(column1 varchar(10), column2 int unsigned generated always as(column1-100));
+set @@sql_mode = DEFAULT;
+-- error 1264
+insert into t_varchar(column1) values ('87.12');
+set @@sql_mode = '';
+--enable_warnings
+insert into t_varchar(column1) values ('87.12');
+--disable_warnings
+select * from t_varchar;
+drop table if exists t_union;
+create table t_union(column1 float, column2 int unsigned generated always as(column1-100), column3 float unsigned generated always as(column1-100));
+set @@sql_mode = DEFAULT;
+-- error 1264
+insert into t_union(column1) values (12.95);
+set @@sql_mode = '';
+--enable_warnings
+insert into t_union(column1) values (12.95);
+--disable_warnings
+select * from t_union;
+set @@sql_mode = default;
+drop table t_int, t_float, t_decimal, t_varchar, t_union;
+
+# TestHandleColumnWithOnUpdateCurrentTimestamp
+## Test https://github.com/pingcap/tidb/issues/44565
+drop table if exists t;
+create table t (a timestamp on update current_timestamp(0), b int, primary key (a) clustered, key idx (a));
+insert into t values ('2023-06-11 10:00:00', 1);
+update t force index(primary) set b = 10 where a = '2023-06-11 10:00:00';
+admin check table t;
+drop table if exists t;
+
+# TestMutipleReplaceAndInsertInOneSession
+drop table if exists t_securities;
+create table t_securities(id bigint not null auto_increment primary key, security_id varchar(8), market_id smallint, security_type int, unique key uu(security_id, market_id));
+insert into t_securities (security_id, market_id, security_type) values ("1", 2, 7), ("7", 1, 7) ON DUPLICATE KEY UPDATE security_type = VALUES(security_type);
+replace into t_securities (security_id, market_id, security_type) select security_id+1, 1, security_type from t_securities  where security_id="7";
+INSERT INTO t_securities (security_id, market_id, security_type) values ("1", 2, 7), ("7", 1, 7) ON DUPLICATE KEY UPDATE security_type = VALUES(security_type);
+--sorted_result
+select * from t_securities;
+
+connect (conn1, localhost, root,,executor__write);
+insert into t_securities (security_id, market_id, security_type) values ("1", 2, 7), ("7", 1, 7) ON DUPLICATE KEY UPDATE security_type = VALUES(security_type);
+insert into t_securities (security_id, market_id, security_type) select security_id+2, 1, security_type from t_securities  where security_id="7";
+INSERT INTO t_securities (security_id, market_id, security_type) values ("1", 2, 7), ("7", 1, 7) ON DUPLICATE KEY UPDATE security_type = VALUES(security_type);
+--sorted_result
+select * from t_securities;
+
+connection default;
+disconnect conn1;
+
+# TestListPartitionWithAutoRandom
+set @@session.tidb_enable_list_partition = ON;
+drop table if exists t;
+create table t (a bigint key auto_random (3), b int) partition by list (a%5) (partition p0 values in (0,1,2), partition p1 values in (3,4));
+set @@allow_auto_random_explicit_insert = true;
+replace into t values  (1,1);
+insert into t (b) values (2);
+insert into t (b) values (3);
+insert into t (b) values (4);
+insert into t (b) values (5);
+insert into t (b) values (6);
+insert into t (b) values (7);
+insert into t (b) values (8);
+insert into t (b) values (9);
+select b from t order by b;
+update t set b=b+1 where a=1;
+select b from t where a=1;
+update t set b=b+1 where a<2;
+select b from t where a<2;
+insert into t values (1, 1) on duplicate key update b=b+1;
+select b from t where a=1;
+
+set @@session.tidb_enable_list_partition = default;
+set @@allow_auto_random_explicit_insert = default;
+
+# TestListPartitionWithAutoIncrement
+set @@session.tidb_enable_list_partition = ON;
+drop table if exists t;
+create table t (a bigint key auto_increment, b int) partition by list (a%5) (partition p0 values in (0,1,2), partition p1 values in (3,4));
+set @@allow_auto_random_explicit_insert = true;
+replace into t values  (1,1);
+insert into t (b) values (2);
+insert into t (b) values (3);
+insert into t (b) values (4);
+insert into t (b) values (5);
+insert into t (b) values (6);
+insert into t (b) values (7);
+insert into t (b) values (8);
+insert into t (b) values (9);
+select b from t order by b;
+update t set b=b+1 where a=1;
+select b from t where a=1;
+update t set b=b+1 where a<2;
+select b from t where a<2;
+insert into t values (1, 1) on duplicate key update b=b+1;
+select b from t where a=1;
+
+set @@session.tidb_enable_list_partition = default;
+set @@allow_auto_random_explicit_insert = default;
+
+
+# TestReplace
+drop table if exists replace_test;
+create table replace_test (id int PRIMARY KEY AUTO_INCREMENT, c1 int, c2 int, c3 int default 1);
+--enable_info
+replace replace_test (c1) values (1),(2),(NULL);
+--disable_info
+begin;
+-- error 1136
+replace replace_test (c1) values ();
+rollback;
+begin;
+-- error 1136
+replace replace_test (c1, c2) values (1,2),(1);
+rollback;
+begin;
+-- error 1054
+replace replace_test (xxx) values (3);
+rollback;
+begin;
+-- error 1146
+replace replace_test_xxx (c1) values ();
+rollback;
+--enable_info
+replace replace_test set c1 = 3;
+--disable_info
+begin;
+-- error 1110
+replace replace_test set c1 = 4, c1 = 5;
+rollback;
+begin;
+-- error 1054
+replace replace_test set xxx = 6;
+rollback;
+
+drop table if exists replace_test_1;
+create table replace_test_1 (id int, c1 int);
+--enable_info
+replace replace_test_1 select id, c1 from replace_test;
+--disable_info
+begin;
+--error 1136
+replace replace_test_1 select c1 from replace_test;
+rollback;
+
+create table replace_test_2 (id int, c1 int);
+--enable_info
+replace replace_test_1 select id, c1 from replace_test union select id * 10, c1 * 10 from replace_test;
+--disable_info
+
+drop table if exists replace_test_3;
+create table replace_test_3 (c1 int, c2 int, UNIQUE INDEX (c2));
+--enable_info
+replace into replace_test_3 set c2=1;
+replace into replace_test_3 set c2=1;
+replace into replace_test_3 set c1=1, c2=1;
+replace into replace_test_3 set c2=NULL;
+replace into replace_test_3 set c2=NULL;
+--disable_info
+
+drop table if exists replace_test_4;
+create table replace_test_4 (c1 int, c2 int, c3 int, UNIQUE INDEX (c1, c2));
+--enable_info
+replace into replace_test_4 set c2=NULL;
+replace into replace_test_4 set c2=NULL;
+--disable_info
+
+drop table if exists replace_test_5;
+create table replace_test_5 (c1 int, c2 int, c3 int, PRIMARY KEY (c1, c2));
+--enable_info
+replace into replace_test_5 set c1=1, c2=2;
+replace into replace_test_5 set c1=1, c2=2;
+--disable_info
+
+drop table if exists tIssue989;
+CREATE TABLE tIssue989 (a int, b int, PRIMARY KEY(a), UNIQUE KEY(b));
+--enable_info
+insert into tIssue989 (a, b) values (1, 2);
+replace into tIssue989(a, b) values (111, 2);
+--disable_info
+select * from tIssue989;
+
+drop table if exists tIssue1012;
+CREATE TABLE tIssue1012 (a int, b int, PRIMARY KEY(a), UNIQUE KEY(b));
+insert into tIssue1012 (a, b) values (1, 2);
+insert into tIssue1012 (a, b) values (2, 1);
+--enable_info
+replace into tIssue1012(a, b) values (1, 1);
+--disable_info
+select * from tIssue1012;
+
+drop table if exists t1;
+create table t1(a int primary key, b int);
+insert into t1 values(1,1),(2,2),(3,3),(4,4),(5,5);
+--enable_info
+replace into t1 values(1,1);
+replace into t1 values(1,1),(2,2);
+replace into t1 values(4,14),(5,15),(6,16),(7,17),(8,18);
+replace into t1 select * from (select 1, 2) as tmp;
+--disable_info
+
+drop table if exists t1, t2;
+create table t1 (a int primary key, b int default 20, c int default 30);
+insert into t1 value (1, 2, 3);
+replace t1 set a=1, b=default;
+select * from t1;
+replace t1 set a=2, b=default, c=default;
+select * from t1;
+replace t1 set a=2, b=default(c), c=default(b);
+select * from t1;
+replace t1 set a=default(b)+default(c);
+select * from t1;
+create table t2 (pk int primary key, a int default 1, b int generated always as (-a) virtual, c int generated always as (-a) stored);
+replace t2 set pk=1, b=default;
+select * from t2;
+replace t2 set pk=2, a=10, b=default;
+select * from t2;
+replace t2 set pk=2, c=default, a=20;
+select * from t2;
+replace t2 set pk=2, a=default, b=default, c=default;
+select * from t2;
+replace t2 set pk=3, a=default(a), b=default, c=default;
+select * from t2;
+-- error 3105
+replace t2 set b=default(a);
+-- error 3105
+replace t2 set a=default(b), b=default(b);
+-- error 1364
+replace t2 set a=default(a), c=default(c);
+-- error 3105
+replace t2 set c=default(a);
+drop table t1, t2;
+
+# TestIssue53746
+drop table if exists t;
+create table t (a date default current_date);
+insert into t values();
+select count(1) from t where a = date(a);
