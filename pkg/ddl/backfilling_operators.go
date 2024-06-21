@@ -47,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"go.uber.org/zap"
@@ -340,29 +341,43 @@ func (src *TableScanTaskSource) Open() error {
 	return nil
 }
 
+// adjustRange adjusts the range so that we can skip the ranges that have been processed
+// according to the information of checkpoint manager.
+func (src *TableScanTaskSource) adjustStartKey(start, end kv.Key) kv.Key {
+	if src.cpMgr == nil {
+		return start
+	}
+	cpKey := src.cpMgr.LastProcessedKey()
+	if len(cpKey) == 0 {
+		return start
+	}
+	cpKeyNext := cpKey.Next()
+	if cpKeyNext.Cmp(start) > 0 || cpKey.Cmp(end) >= 0 {
+		logutil.Logger(src.ctx).Error("invalid checkpoint key",
+			zap.String("last_process_key", hex.EncodeToString(cpKey)),
+			zap.String("start", hex.EncodeToString(start)),
+			zap.String("end", hex.EncodeToString(end)),
+		)
+		if intest.InTest {
+			panic("invalid checkpoint key")
+		}
+		return start
+	}
+	return cpKeyNext
+}
+
 func (src *TableScanTaskSource) generateTasks() error {
 	taskIDAlloc := newTaskIDAllocator()
 	defer src.sink.Finish()
-	startKey := src.startKey
-	endKey := src.endKey
-	if src.cpMgr != nil {
-		cpKey := src.cpMgr.LastProcessedKey()
-		cpKeyNext := cpKey.Next()
-		if cpKeyNext.Cmp(startKey) > 0 || cpKey.Cmp(endKey) >= 0 {
-			ck := hex.EncodeToString(cpKey)
-			start := hex.EncodeToString(startKey)
-			end := hex.EncodeToString(endKey)
-			return errors.Errorf("invalid checkpoint key: %s, startKey: %s, endKey: %s", ck, start, end)
-		}
-		startKey = cpKeyNext
-	}
+
+	startKey := src.adjustStartKey(src.startKey, src.endKey)
 	for {
 		kvRanges, err := splitTableRanges(
 			src.ctx,
 			src.tbl,
 			src.store,
 			startKey,
-			endKey,
+			src.endKey,
 			backfillTaskChanSize,
 		)
 		if err != nil {
@@ -381,7 +396,7 @@ func (src *TableScanTaskSource) generateTasks() error {
 			}
 		}
 		startKey = kvRanges[len(kvRanges)-1].EndKey
-		if startKey.Cmp(endKey) >= 0 {
+		if startKey.Cmp(src.endKey) >= 0 {
 			break
 		}
 	}
