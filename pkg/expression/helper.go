@@ -94,6 +94,7 @@ func GetTimeValue(ctx sessionctx.Context, v interface{}, tp byte, fsp int, expli
 	switch x := v.(type) {
 	case string:
 		lowerX := strings.ToLower(x)
+<<<<<<< HEAD
 		if lowerX == ast.CurrentTimestamp || lowerX == ast.CurrentDate {
 			if value, err = getTimeCurrentTimeStamp(ctx, tp, fsp); err != nil {
 				return d, err
@@ -103,6 +104,25 @@ func GetTimeValue(ctx sessionctx.Context, v interface{}, tp byte, fsp int, expli
 			terror.Log(err)
 		} else {
 			value, err = types.ParseTime(sc, x, tp, fsp, explicitTz)
+=======
+		switch lowerX {
+		case ast.CurrentTimestamp:
+			if value, err = getTimeCurrentTimeStamp(ctx.GetEvalCtx(), tp, fsp); err != nil {
+				return d, err
+			}
+		case ast.CurrentDate:
+			if value, err = getTimeCurrentTimeStamp(ctx.GetEvalCtx(), tp, fsp); err != nil {
+				return d, err
+			}
+			yy, mm, dd := value.Year(), value.Month(), value.Day()
+			truncated := types.FromDate(yy, mm, dd, 0, 0, 0, 0)
+			value.SetCoreTime(truncated)
+		case types.ZeroDatetimeStr:
+			value, err = types.ParseTimeFromNum(tc, 0, tp, fsp)
+			terror.Log(err)
+		default:
+			value, err = types.ParseTime(tc, x, tp, fsp)
+>>>>>>> 4d8e1d5e485 (expression: truncate time part for current_date columns (#54045))
 			if err != nil {
 				return d, err
 			}
