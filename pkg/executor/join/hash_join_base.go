@@ -164,6 +164,9 @@ func (fetcher *probeSideTupleFetcherBase) fetchProbeSideChunks(ctx context.Conte
 	defer func() {
 		if spillHelper != nil {
 			spillHelper.hashJoinExec.hashTableContext.releaseAllMemoryUsage()
+
+			// We need to reset the flag, because spill may be triggered by other executors before releasing all memory usage
+			spillHelper.setNotSpilled()
 		}
 	}()
 

@@ -23,7 +23,9 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/disk"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/memory"
 	"go.uber.org/zap"
 )
 
@@ -41,6 +43,11 @@ type hashJoinSpillHelper struct {
 	probeFieldTypes         []*types.FieldType
 	tmpSpillChunk           *chunk.Chunk
 
+	stack restoreStack
+
+	memTracker  *memory.Tracker
+	diskTracker *disk.Tracker
+
 	bytesConsumed atomic.Int64
 	bytesLimit    atomic.Int64
 }
@@ -49,8 +56,11 @@ func newHashJoinSpillHelper(hashJoinExec *HashJoinV2Exec, probeFieldTypes []*typ
 	helper := &hashJoinSpillHelper{hashJoinExec: hashJoinExec}
 	helper.buildSpillChkFieldTypes = append(helper.buildSpillChkFieldTypes, types.NewFieldType(mysql.TypeLonglong))
 	helper.buildSpillChkFieldTypes = append(helper.buildSpillChkFieldTypes, types.NewFieldType(mysql.TypeBit))
+	helper.buildSpillChkFieldTypes = append(helper.buildSpillChkFieldTypes, types.NewFieldType(mysql.TypeBit))
 	helper.probeFieldTypes = append(helper.probeFieldTypes, types.NewFieldType(mysql.TypeLonglong))
 	helper.probeFieldTypes = append(helper.probeFieldTypes, probeFieldTypes...)
+	helper.memTracker = hashJoinExec.memTracker
+	helper.diskTracker = hashJoinExec.diskTracker
 	return helper
 }
 
@@ -131,8 +141,8 @@ func (h *hashJoinSpillHelper) choosePartitionsToSpill(isInBuildStage bool) ([]in
 		releasedMemoryUsage += partitionsMemoryUsage[partID]
 	}
 
-	bytesLimit := h.hashJoinExec.memTracker.GetBytesLimit()
-	bytesConsumed := h.hashJoinExec.memTracker.BytesConsumed()
+	bytesLimit := h.memTracker.GetBytesLimit()
+	bytesConsumed := h.memTracker.BytesConsumed()
 	bytesConsumedAfterReleased := bytesConsumed - releasedMemoryUsage
 
 	// Check if it's enough to spill existing spilled partitions
@@ -189,22 +199,38 @@ func (h *hashJoinSpillHelper) choosePartitionsToSpill(isInBuildStage bool) ([]in
 	return spilledPartitions, releasedMemoryUsage
 }
 
+func (h *hashJoinSpillHelper) generateSpilledValidJoinKey(seg *rowTableSegment, validJoinKeys []byte) []byte {
+	rowLen := len(seg.rowLocations)
+	validJoinKeys = validJoinKeys[:rowLen]
+	for i := 0; i < rowLen; i++ {
+		validJoinKeys[i] = byte(0)
+	}
+	for _, pos := range seg.validJoinKeyPos {
+		validJoinKeys[pos] = byte(1)
+	}
+	return validJoinKeys
+}
+
 func (h *hashJoinSpillHelper) spillBuildSideOnePartition(partID int, segments []*rowTableSegment) error {
 	if h.buildRowsInDisk[partID] == nil {
 		inDisk := chunk.NewDataInDiskByChunks(h.buildSpillChkFieldTypes)
-		inDisk.GetDiskTracker().AttachTo(h.hashJoinExec.diskTracker)
+		inDisk.GetDiskTracker().AttachTo(h.diskTracker)
 		h.buildRowsInDisk[partID] = inDisk
 
 		inDisk = chunk.NewDataInDiskByChunks(h.probeFieldTypes)
-		inDisk.GetDiskTracker().AttachTo(h.hashJoinExec.diskTracker)
+		inDisk.GetDiskTracker().AttachTo(h.diskTracker)
 		h.probeRowsInDisk[partID] = inDisk
 
 		h.hashJoinExec.hashTableContext.setPartitionSpilled(partID)
 	}
 
+	validJoinKeys := make([]byte, 0, maxRowTableSegmentSize)
+
 	// Get row bytes from segment and spill them
 	for _, seg := range segments {
+		validJoinKeys = h.generateSpilledValidJoinKey(seg, validJoinKeys)
 		rows := seg.getRowsBytes()
+
 		for i, row := range rows {
 			if h.tmpSpillChunk.IsFull() {
 				h.buildRowsInDisk[partID].Add(h.tmpSpillChunk)
@@ -212,7 +238,8 @@ func (h *hashJoinSpillHelper) spillBuildSideOnePartition(partID int, segments []
 			}
 
 			h.tmpSpillChunk.AppendInt64(0, int64(seg.hashValues[i]))
-			h.tmpSpillChunk.AppendBytes(1, row)
+			h.tmpSpillChunk.AppendBytes(1, validJoinKeys[i:i+1])
+			h.tmpSpillChunk.AppendBytes(2, row)
 		}
 	}
 
@@ -308,4 +335,50 @@ func (h *hashJoinSpillHelper) spillBuildRows(isInBuildStage bool) error {
 	}
 	h.hashJoinExec.hashTableContext.memoryTracker.Consume(-totalReleasedMemory)
 	return nil
+}
+
+func (h *hashJoinSpillHelper) prepareForRestoring() {
+	for i, buildInDisk := range h.buildRowsInDisk {
+		rd := &restorePartition{
+			buildSideData: buildInDisk,
+			probeSideData: h.probeRowsInDisk[i],
+			round:         0,
+		}
+		h.stack.push(rd)
+	}
+}
+
+func (h *hashJoinSpillHelper) restoreOneBuildPartition() *hashTableV2 {
+
+	return nil // TODO
+}
+
+// Data in this structure are in same partition
+type restorePartition struct {
+	buildSideData *chunk.DataInDiskByChunks
+	probeSideData *chunk.DataInDiskByChunks
+
+	round int
+}
+
+type restoreStack struct {
+	elems []*restorePartition
+}
+
+func (r *restoreStack) isEmpty() bool {
+	return len(r.elems) == 0
+}
+
+func (r *restoreStack) pop() *restorePartition {
+	len := len(r.elems)
+	if len == 0 {
+		return nil
+	}
+	ret := r.elems[len-1]
+	r.elems = r.elems[:len-1]
+	return ret
+}
+
+func (r *restoreStack) push(elem *restorePartition) {
+	r.elems = append(r.elems, elem)
 }

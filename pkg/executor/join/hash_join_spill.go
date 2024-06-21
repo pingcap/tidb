@@ -14,7 +14,9 @@
 
 package join
 
-import "github.com/pingcap/tidb/pkg/util/memory"
+import (
+	"github.com/pingcap/tidb/pkg/util/memory"
+)
 
 const spillChunkSize = 1024
 

@@ -279,6 +279,8 @@ type HashJoinV2Exec struct {
 	waiterWg util.WaitGroupWrapper
 
 	prepared bool
+
+	maxRound int // TODO init it // Max times that a partition could be split
 }
 
 // Close implements the Executor Close interface.
@@ -467,9 +469,8 @@ func (e *HashJoinV2Exec) fetchAndProbeHashTable(ctx context.Context) {
 			e.ProbeWorkers[workerID].runJoinWorker(fetcherAndWorkerSyncer)
 		}, e.ProbeWorkers[workerID].handleProbeWorkerPanic)
 	}
-	e.waiterWg.RunWithRecover(e.waitJoinWorkersAndCloseResultChan, nil)
 
-	// TODO restore rows if spill is triggered before
+	e.waiterWg.RunWithRecover(e.waitJoinWorkersAndRestoreIfNeeded, nil)
 }
 
 func (w *ProbeWorkerV2) handleProbeWorkerPanic(r any) {
@@ -484,8 +485,16 @@ func (e *HashJoinV2Exec) handleJoinWorkerPanic(r any) {
 	}
 }
 
-func (e *HashJoinV2Exec) waitJoinWorkersAndCloseResultChan() {
+func (e *HashJoinV2Exec) waitJoinWorkersAndRestoreIfNeeded() {
+	defer close(e.joinResultCh)
 	e.workerWg.Wait()
+
+	err := e.restore()
+	if err != nil {
+		e.joinResultCh <- &hashjoinWorkerResult{err: err}
+		return
+	}
+
 	if e.ProbeWorkers[0] != nil && e.ProbeWorkers[0].JoinProbe.NeedScanRowTable() {
 		for i := uint(0); i < e.Concurrency; i++ {
 			var workerID = i
@@ -495,7 +504,16 @@ func (e *HashJoinV2Exec) waitJoinWorkersAndCloseResultChan() {
 		}
 		e.workerWg.Wait()
 	}
-	close(e.joinResultCh)
+}
+
+func (e *HashJoinV2Exec) restore() error {
+	e.spillHelper.prepareForRestoring()
+
+	for e.spillHelper.stack.isEmpty() {
+		
+	}
+
+	return nil
 }
 
 func (w *ProbeWorkerV2) scanRowTableAfterProbeDone() {
