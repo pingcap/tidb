@@ -1145,7 +1145,7 @@ var defaultSysVars = []*SysVar{
 	},
 	{
 		Scope: ScopeGlobal, Name: TiDBEnableColumnTracking,
-		Value: BoolToOnOff(DefTiDBEnableColumnTracking),
+		Value: BoolToOnOff(true),
 		Type:  TypeBool,
 		GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
 			return BoolToOnOff(true), nil
