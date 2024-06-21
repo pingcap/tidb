@@ -1233,8 +1233,8 @@ func tryWhereIn2BatchPointGet(ctx base.PlanContext, selStmt *ast.SelectStmt) *Ba
 			return nil
 		}
 		if txn != nil && txn.Valid() {
-			logutil.BgLogger().Warn(fmt.Sprintf("xxx builder, build in point get plan------------------------------------ ver:%v, ts:%d, tbl name:%s, id:%d, cols:%v, tbl:%p, ctx:%p",
-				ctx.GetInfoSchema().SchemaMetaVersion(), txn.StartTS(), tbl.Name, tbl.ID, str, tbl, ctx.GetInfoSchema()))
+			logutil.BgLogger().Warn(fmt.Sprintf("xxx builder, build in point get plan------------------------------------ ver:%v, ts:%d, tbl name:%s, id:%d, cols:%v, tbl:%p",
+				ctx.GetInfoSchema().SchemaMetaVersion(), txn.StartTS(), tbl.Name, tbl.ID, str, tbl))
 		}
 	}
 
@@ -1331,16 +1331,16 @@ func tryPointGetPlan(ctx base.PlanContext, selStmt *ast.SelectStmt, check bool) 
 	if tblName == nil {
 		return nil
 	}
-	// tbl := tblName.TableInfo
-	// if tbl == nil {
-	// 	return nil
-	// }
-	is := ctx.GetInfoSchema().(infoschema.InfoSchema)
-	t, _ := is.TableByName(tblName.Schema, tblName.Name)
-	if t == nil {
+	tbl := tblName.TableInfo
+	if tbl == nil {
 		return nil
 	}
-	tbl := t.Meta()
+	// is := ctx.GetInfoSchema().(infoschema.InfoSchema)
+	// t, _ := is.TableByName(tblName.Schema, tblName.Name)
+	// if t == nil {
+	// 	return nil
+	// }
+	// tbl := t.Meta()
 	if tbl.Name.L == "stock" {
 		str := ""
 		for _, col := range tbl.Columns {
@@ -1351,8 +1351,8 @@ func tryPointGetPlan(ctx base.PlanContext, selStmt *ast.SelectStmt, check bool) 
 			return nil
 		}
 		if txn != nil && txn.Valid() {
-			logutil.BgLogger().Warn(fmt.Sprintf("xxx builder, build point get plan------------------------------------ ver:%v, ts:%d, tbl name:%s, id:%d, cols:%v, tbl:%p, ctx:%p",
-				ctx.GetInfoSchema().SchemaMetaVersion(), txn.StartTS(), tbl.Name, tbl.ID, str, tbl, ctx.GetInfoSchema()))
+			logutil.BgLogger().Warn(fmt.Sprintf("xxx builder, build point get plan------------------------------------ ver:%v, ts:%d, tbl name:%s, id:%d, cols:%v, tbl:%p",
+				ctx.GetInfoSchema().SchemaMetaVersion(), txn.StartTS(), tbl.Name, tbl.ID, str, tbl))
 		}
 	}
 

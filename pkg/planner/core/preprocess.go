@@ -1606,8 +1606,8 @@ func (p *preprocessor) handleTableName(tn *ast.TableName) {
 			return
 		}
 		if txn != nil && txn.Valid() {
-			logutil.BgLogger().Warn(fmt.Sprintf("xxx builder, preprocessor ------------------------------------ ver:%v, ts:%d, %s, cols:%v, t:%p, is:%p, txn is:%p",
-				p.InfoSchema.SchemaMetaVersion(), txn.StartTS(), tblStr, str, table, p.InfoSchema, p.InfoSchema))
+			logutil.BgLogger().Warn(fmt.Sprintf("xxx builder, preprocessor ------------------------------------ ver:%v, ts:%d, %s, cols:%v, t:%p",
+				p.InfoSchema.SchemaMetaVersion(), txn.StartTS(), tblStr, str, table))
 		}
 	}
 
@@ -1823,6 +1823,14 @@ func (p *preprocessor) hasAutoConvertWarning(colDef *ast.ColumnDef) bool {
 }
 
 func tryLockMDLAndUpdateSchemaIfNecessary(sctx base.PlanContext, dbName model.CIStr, tbl table.Table, is infoschema.InfoSchema) (table.Table, error) {
+	tblStr := ""
+	if tbl.Meta().Name.L == "stock" {
+		for _, col := range tbl.Meta().Columns {
+			tblStr += fmt.Sprintf("col ID:%d, offset:%d, type:%v, state:%s; ", col.ID, col.Offset, col.GetType(), col.State)
+		}
+		tblStr += fmt.Sprintf(" tbl:%p", tbl)
+	}
+
 	if !sctx.GetSessionVars().TxnCtx.EnableMDL {
 		return tbl, nil
 	}
@@ -1945,6 +1953,20 @@ func tryLockMDLAndUpdateSchemaIfNecessary(sctx base.PlanContext, dbName model.CI
 		}
 		if curTxn.Valid() {
 			curTxn.SetOption(kv.TableToColumnMaps, nil)
+		}
+		if tbl.Meta().Name.L == "stock" {
+			str := ""
+			for _, col := range tbl.Meta().Columns {
+				str += fmt.Sprintf("col ID:%d, offset:%d, type:%v, state:%s; ", col.ID, col.Offset, col.GetType(), col.State)
+			}
+			txn, err := sctx.Txn(false)
+			if err != nil {
+				return nil, err
+			}
+			if txn != nil && txn.Valid() {
+				logutil.BgLogger().Warn(fmt.Sprintf("xxx builder, preprocessor, tryLockMDLAndUpdateSchemaIfNecessary ------------------------------------ ver:%v, ts:%d, %s, cols:%v, t:%p",
+					is.SchemaMetaVersion(), txn.StartTS(), tblStr, str, tbl))
+			}
 		}
 		return tbl, nil
 	}

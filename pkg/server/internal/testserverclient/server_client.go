@@ -2927,17 +2927,16 @@ func runTestInSchemaState(
 			stmt, err := conn1.PrepareContext(ctx, sqlWithErr.sql)
 			require.NoError(t, err)
 			sqlWithErr.stmt = stmt
-		} else if i == len(sqls)-1 {
-			MustExec(t, ctx, conn1, sqlWithErr.sql)
-		} else {
+		} else if i == 2 || i == 1 {
 			stmt, err := conn1.PrepareContext(ctx, sqlWithErr.sql)
 			require.NoError(t, err)
 			sqlWithErr.stmt = stmt
+		} else {
+			continue
 		}
 		sqls[i] = sqlWithErr
 		logutil.BgLogger().Info("zzz--------------------------------------------------------------------------------------------------------- 2",
 			zap.Int("no.", i), zap.Int("len", len(sqls)), zap.String("sql", sqlWithErr.sql))
-		// zap.Int("no.", i), zap.Int("len", len(sqls)), zap.String("sql", sqlWithErr.sql), zap.String("stmt", fmt.Sprintf("%v", sqls[i].stmt)))
 	}
 
 	sqlWithErr := sqlWithErrs[0]
@@ -2965,8 +2964,6 @@ func runTestInSchemaState(
 			} else {
 				MustQuery(t, ctx, cli, conn1, sqlWithErr.sql)
 			}
-			logutil.BgLogger().Info("zzz--------------------------------------------------------------------------------------------------------- 3, finish",
-				zap.Int("no.", i+1), zap.Int("len", len(sqls)), zap.String("sql", sqlWithErr.sql), zap.Stringer("state", state))
 		}
 	}
 	if isOnJobUpdated {

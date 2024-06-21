@@ -4722,6 +4722,20 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	if err != nil {
 		return nil, err
 	}
+	if tbl.Meta().Name.L == "stock" {
+		str := ""
+		for _, col := range tbl.Meta().Columns {
+			str += fmt.Sprintf("col ID:%d, offset:%d, type:%v, state:%s; ", col.ID, col.Offset, col.GetType(), col.State)
+		}
+		txn, err := b.ctx.Txn(false)
+		if err != nil {
+			return nil, err
+		}
+		if txn != nil && txn.Valid() {
+			logutil.BgLogger().Warn(fmt.Sprintf("xxx builder, logical build tbl info------------------------------------ ver:%v, ts:%d, tbl name:%s, id:%d, cols:%v, tbl:%p, tbl2:%p, is:%p",
+				b.ctx.GetInfoSchema().SchemaMetaVersion(), txn.StartTS(), tbl.Meta().Name, tbl.Meta().ID, str, tbl.Meta(), tn.TableInfo, b.ctx))
+		}
+	}
 
 	tbl, err = tryLockMDLAndUpdateSchemaIfNecessary(b.ctx, dbName, tbl, b.is)
 	if err != nil {

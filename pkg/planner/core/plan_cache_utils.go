@@ -17,6 +17,7 @@ package core
 import (
 	"cmp"
 	"context"
+	"fmt"
 	"math"
 	"slices"
 	"sort"
@@ -203,6 +204,20 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 		dbName = append(dbName, db.Name)
 		tbls = append(tbls, tbl)
 		relateVersion[id] = tbl.Meta().Revision
+		if tbl.Meta().Name.L == "stock" {
+			str := ""
+			for _, col := range tbl.Meta().Columns {
+				str += fmt.Sprintf("col ID:%d, offset:%d, type:%v, state:%s; ", col.ID, col.Offset, col.GetType(), col.State)
+			}
+			txn, err := p.SCtx().Txn(false)
+			if err != nil {
+				return nil, nil, 0, err
+			}
+			if txn != nil && txn.Valid() {
+				logutil.BgLogger().Warn(fmt.Sprintf("xxx builder, logical build tbl info------------------------------------ ver:%v, ts:%d, tbl name:%s, id:%d, cols:%v, tbl:%p, is:%p",
+					p.SCtx().GetInfoSchema().SchemaMetaVersion(), txn.StartTS(), tbl.Meta().Name, tbl.Meta().ID, str, tbl.Meta(), is))
+			}
+		}
 	}
 
 	preparedObj := &PlanCacheStmt{

@@ -40,6 +40,7 @@ import (
 	"encoding/binary"
 	"runtime/trace"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -146,7 +147,6 @@ func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err e
 		return mysql.NewErr(mysql.ErrUnknownStmtHandler,
 			strconv.FormatUint(uint64(stmtID), 10), "stmt_execute")
 	}
-
 	flag := data[pos]
 	pos++
 	// Please refer to https://dev.mysql.com/doc/dev/mysql-server/latest/page_protocol_com_stmt_execute.html
@@ -301,6 +301,9 @@ func (cc *clientConn) executePreparedStmtAndWriteResult(ctx context.Context, stm
 	planCacheStmt, ok := prepStmt.(*plannercore.PlanCacheStmt)
 	if ok {
 		sql = planCacheStmt.StmtText
+	}
+	if strings.Contains(sql, "stock") {
+		logutil.BgLogger().Warn("xxx")
 	}
 	execStmt.SetText(charset.EncodingUTF8Impl, sql)
 	rs, err := (&cc.ctx).ExecuteStmt(ctx, execStmt)

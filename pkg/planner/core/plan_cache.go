@@ -37,6 +37,7 @@ import (
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/kvcache"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	utilpc "github.com/pingcap/tidb/pkg/util/plancache"
 )
 
@@ -112,6 +113,7 @@ func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isNonPrep
 			stmt.tbls[i] = tblByName
 			stmt.RelateVersion[tblByName.Meta().ID] = tblByName.Meta().Revision
 		}
+		logutil.BgLogger().Warn("xxx--------------------------- tryLockMDLAndUpdateSchemaIfNecessary")
 		newTbl, err := tryLockMDLAndUpdateSchemaIfNecessary(sctx.GetPlanCtx(), stmt.dbName[i], stmt.tbls[i], is)
 		if err != nil {
 			schemaNotMatch = true
