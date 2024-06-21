@@ -1345,6 +1345,7 @@ const (
 	DefTiDBTableCacheLease                  = 3 // 3s
 	DefTiDBPersistAnalyzeOptions            = true
 	// DefTiDBEnableColumnTracking is used to enable collecting predicate columns.
+	// Right now, we always enable it by default.
 	// DEPRECATED: This variable is deprecated, please do not use this variable.
 	DefTiDBEnableColumnTracking                    = false
 	DefTiDBStatsLoadSyncWait                       = 100
