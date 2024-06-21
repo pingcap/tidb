@@ -15,6 +15,8 @@
 package core
 
 import (
+	"slices"
+
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
@@ -175,15 +177,23 @@ func InjectProjBelowAgg(aggPlan base.PhysicalPlan, aggFuncs []*aggregation.AggFu
 		if _, isCnst := item.(*expression.Constant); isCnst {
 			continue
 		}
-		projExprs = append(projExprs, item)
-		newArg := &expression.Column{
-			UniqueID: aggPlan.SCtx().GetSessionVars().AllocPlanColumnID(),
-			RetType:  item.GetType(ectx),
-			Index:    cursor,
+		idx := slices.IndexFunc(projExprs, func(a expression.Expression) bool {
+			return a.Equal(ectx, item)
+		})
+		if idx < 0 {
+			projExprs = append(projExprs, item)
+			newArg := &expression.Column{
+				UniqueID: aggPlan.SCtx().GetSessionVars().AllocPlanColumnID(),
+				RetType:  item.GetType(ectx),
+				Index:    cursor,
+			}
+			projSchemaCols = append(projSchemaCols, newArg)
+			groupByItems[i] = newArg
+			cursor++
+		} else {
+			groupByItems[i] = projSchemaCols[idx]
+			cursor++
 		}
-		projSchemaCols = append(projSchemaCols, newArg)
-		groupByItems[i] = newArg
-		cursor++
 	}
 
 	child := aggPlan.Children()[0]
