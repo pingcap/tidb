@@ -284,3 +284,7 @@ select * from t3 where a > 0x80;
 set @@tidb_enable_outer_join_reorder=false;
 
 set @@sql_mode=default;
+
+SELECT 1 FROM (SELECT 1 x) a STRAIGHT_JOIN (SELECT 1 x) b USING (x);
+SELECT 1 FROM (SELECT 1 x) a STRAIGHT_JOIN (SELECT 2 x) b USING (x);
+SELECT 1 FROM (SELECT 1 x UNION ALL SELECT 3) a STRAIGHT_JOIN (SELECT 1 x UNION ALL SELECT 2) b USING (x);
