@@ -1618,40 +1618,6 @@ type SessionVars struct {
 
 	// GroupConcatMaxLen represents the maximum length of the result of GROUP_CONCAT.
 	GroupConcatMaxLen uint64
-
-	// TablesBufferPool is a memory pool for table related memory allocation that aims to reuse memory
-	// and saves allocation
-	// The buffers are supposed to be used inside AddRecord/UpdateRecord/RemoveRecord.
-	// It's users duty to reset them before use.
-	TablesBufferPool TablesBufferPool
-}
-
-// TablesBufferPool is a memory pool for table related memory allocation that aims to reuse memory
-// and saves allocation
-type TablesBufferPool struct {
-	Update *UpdatePool
-	Add    *AddPool
-	Remove *RemovePool
-}
-
-// RemovePool is for RemoveRecord
-type RemovePool struct {
-	ColSize []ColSize
-}
-
-// AddPool is for AddRecord
-type AddPool struct {
-	ColIDs  []int64
-	Row     []types.Datum
-	ColSize []ColSize
-}
-
-// UpdatePool is for UpdateRecord
-type UpdatePool struct {
-	ColIDs     []int64
-	Row        []types.Datum
-	RowToCheck []types.Datum
-	ColSize    []ColSize
 }
 
 // GetOptimizerFixControlMap returns the specified value of the optimizer fix control.
@@ -2176,11 +2142,6 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		vars.EnableRowLevelChecksum = true
 	}
 	vars.systems[CharacterSetConnection], vars.systems[CollationConnection] = charset.GetDefaultCharsetAndCollate()
-	vars.TablesBufferPool = TablesBufferPool{
-		Update: &UpdatePool{},
-		Add:    &AddPool{},
-		Remove: &RemovePool{},
-	}
 	return vars
 }
 

@@ -520,7 +520,7 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx table.MutateContext
 	// a reusable buffer to save malloc
 	// Note: The buffer should not be referenced or modified outside this function.
 	// It can only act as a temporary buffer for the current function call.
-	buffer := sctx.GetSessionVars().TablesBufferPool.Update
+	buffer := sctx.GetTablesBuffer().Update
 	buffer.ColIDs = ensureCapacityAndReset(buffer.ColIDs, 0, numColsCap)
 	buffer.Row = ensureCapacityAndReset(buffer.Row, 0, numColsCap)
 	if shouldWriteBinlog(sctx.GetSessionVars(), t.meta) {
@@ -952,7 +952,7 @@ func (t *TableCommon) AddRecord(sctx table.MutateContext, r []types.Datum, opts 
 	// a reusable buffer to save malloc
 	// Note: The buffer should not be referenced or modified outside this function.
 	// It can only act as a temporary buffer for the current function call.
-	buffer := sctx.GetSessionVars().TablesBufferPool.Add
+	buffer := sctx.GetTablesBuffer().Add
 	buffer.ColIDs = ensureCapacityAndReset(buffer.ColIDs, 0, len(r))
 	buffer.Row = ensureCapacityAndReset(buffer.Row, 0, len(r))
 	memBuffer := txn.GetMemBuffer()
@@ -1436,7 +1436,7 @@ func (t *TableCommon) RemoveRecord(ctx table.MutateContext, h kv.Handle, r []typ
 	// a reusable buffer to save malloc
 	// Note: The buffer should not be referenced or modified outside this function.
 	// It can only act as a temporary buffer for the current function call.
-	buffer := sessVars.TablesBufferPool.Remove
+	buffer := ctx.GetTablesBuffer().Remove
 	buffer.ColSize = ensureCapacityAndReset(buffer.ColSize, len(t.Cols()))
 	for id, col := range t.Cols() {
 		size, err := codec.EstimateValueSize(sc.TypeCtx(), r[id])
