@@ -695,17 +695,24 @@ func (d *ddl) DropSchema(ctx sessionctx.Context, stmt *ast.DropDatabaseStmt) (er
 }
 
 func (d *ddl) RecoverSchema(ctx sessionctx.Context, recoverSchemaInfo *RecoverSchemaInfo) error {
+	involvedSchemas := []model.InvolvingSchemaInfo{{
+		Database: recoverSchemaInfo.DBInfo.Name.L,
+		Table:    model.InvolvingAll,
+	}}
+	if recoverSchemaInfo.OldSchemaName.L != recoverSchemaInfo.DBInfo.Name.L {
+		involvedSchemas = append(involvedSchemas, model.InvolvingSchemaInfo{
+			Database: recoverSchemaInfo.OldSchemaName.L,
+			Table:    model.InvolvingAll,
+		})
+	}
 	recoverSchemaInfo.State = model.StateNone
 	job := &model.Job{
-		Type:           model.ActionRecoverSchema,
-		BinlogInfo:     &model.HistoryInfo{},
-		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
-		Args:           []any{recoverSchemaInfo, recoverCheckFlagNone},
-		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{{
-			Database: recoverSchemaInfo.Name.L,
-			Table:    model.InvolvingAll,
-		}},
-		SQLMode: ctx.GetSessionVars().SQLMode,
+		Type:                model.ActionRecoverSchema,
+		BinlogInfo:          &model.HistoryInfo{},
+		CDCWriteSource:      ctx.GetSessionVars().CDCWriteSource,
+		Args:                []any{recoverSchemaInfo, recoverCheckFlagNone},
+		InvolvingSchemaInfo: involvedSchemas,
+		SQLMode:             ctx.GetSessionVars().SQLMode,
 	}
 	err := d.DoDDLJob(ctx, job)
 	err = d.callHookOnChanged(job, err)
@@ -3236,6 +3243,16 @@ func (d *ddl) RecoverTable(ctx sessionctx.Context, recoverInfo *RecoverInfo) (er
 		return infoschema.ErrTableExists.GenWithStackByArgs(tbInfo.Name)
 	}
 
+	// for "flashback table xxx to yyy"
+	// Note: this case only allow change table name, schema remains the same.
+	var involvedSchemas []model.InvolvingSchemaInfo
+	if recoverInfo.OldTableName != tbInfo.Name.L {
+		involvedSchemas = []model.InvolvingSchemaInfo{
+			{Database: schema.Name.L, Table: recoverInfo.OldTableName},
+			{Database: schema.Name.L, Table: tbInfo.Name.L},
+		}
+	}
+
 	tbInfo.State = model.StateNone
 	job := &model.Job{
 		SchemaID:   schemaID,
@@ -3243,11 +3260,12 @@ func (d *ddl) RecoverTable(ctx sessionctx.Context, recoverInfo *RecoverInfo) (er
 		SchemaName: schema.Name.L,
 		TableName:  tbInfo.Name.L,
 
-		Type:           model.ActionRecoverTable,
-		BinlogInfo:     &model.HistoryInfo{},
-		Args:           []any{recoverInfo, recoverCheckFlagNone},
-		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
-		SQLMode:        ctx.GetSessionVars().SQLMode,
+		Type:                model.ActionRecoverTable,
+		BinlogInfo:          &model.HistoryInfo{},
+		Args:                []any{recoverInfo, recoverCheckFlagNone},
+		InvolvingSchemaInfo: involvedSchemas,
+		CDCWriteSource:      ctx.GetSessionVars().CDCWriteSource,
+		SQLMode:             ctx.GetSessionVars().SQLMode,
 	}
 	err = d.DoDDLJob(ctx, job)
 	err = d.callHookOnChanged(job, err)
