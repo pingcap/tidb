@@ -174,7 +174,7 @@ func InjectProjBelowAgg(aggPlan base.PhysicalPlan, aggFuncs []*aggregation.AggFu
 				projSchemaCols = append(projSchemaCols, newArg)
 				byItem.Expr = newArg
 			} else {
-				groupByItems[i] = projSchemaCols[idx]
+				byItem.Expr = projSchemaCols[idx]
 			}
 		}
 	}
