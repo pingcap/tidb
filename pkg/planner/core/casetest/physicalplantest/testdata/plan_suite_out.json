@@ -2594,8 +2594,8 @@
       {
         "SQL": "select /*+ agg_to_cop */ group_concat(name ORDER BY name desc SEPARATOR '++'), group_concat(id ORDER BY name desc, id asc SEPARATOR '--') from test;",
         "Plan": [
-          "HashAgg 1.00 root  funcs:group_concat(Column#6 order by Column#7 desc separator \"++\")->Column#4, funcs:group_concat(Column#8 order by Column#9 desc, Column#10 separator \"--\")->Column#5",
-          "└─Projection 10000.00 root  cast(test.test.name, var_string(20))->Column#6, test.test.name->Column#7, cast(test.test.id, var_string(20))->Column#8, test.test.name->Column#9, test.test.id->Column#10",
+          "HashAgg 1.00 root  funcs:group_concat(Column#6 order by Column#7 desc separator \"++\")->Column#4, funcs:group_concat(Column#8 order by Column#7 desc, Column#9 separator \"--\")->Column#5",
+          "└─Projection 10000.00 root  cast(test.test.name, var_string(20))->Column#6, test.test.name->Column#7, cast(test.test.id, var_string(20))->Column#8, test.test.id->Column#9",
           "  └─TableReader 10000.00 root  data:TableFullScan",
           "    └─TableFullScan 10000.00 cop[tikv] table:test keep order:false, stats:pseudo"
         ],
@@ -2606,8 +2606,8 @@
       {
         "SQL": "select /*+ agg_to_cop */ group_concat(name ORDER BY name desc SEPARATOR '++'), group_concat(id ORDER BY name desc, id asc SEPARATOR '--') from ptest;",
         "Plan": [
-          "HashAgg 1.00 root  funcs:group_concat(Column#6 order by Column#7 desc separator \"++\")->Column#4, funcs:group_concat(Column#8 order by Column#9 desc, Column#10 separator \"--\")->Column#5",
-          "└─Projection 10000.00 root  cast(test.ptest.name, var_string(20))->Column#6, test.ptest.name->Column#7, cast(test.ptest.id, var_string(20))->Column#8, test.ptest.name->Column#9, test.ptest.id->Column#10",
+          "HashAgg 1.00 root  funcs:group_concat(Column#6 order by Column#7 desc separator \"++\")->Column#4, funcs:group_concat(Column#8 order by Column#7 desc, Column#9 separator \"--\")->Column#5",
+          "└─Projection 10000.00 root  cast(test.ptest.name, var_string(20))->Column#6, test.ptest.name->Column#7, cast(test.ptest.id, var_string(20))->Column#8, test.ptest.id->Column#9",
           "  └─TableReader 10000.00 root partition:all data:TableFullScan",
           "    └─TableFullScan 10000.00 cop[tikv] table:ptest keep order:false, stats:pseudo"
         ],
