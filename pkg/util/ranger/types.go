@@ -284,7 +284,8 @@ func formatDatum(d types.Datum, isLeftSide bool) string {
 
 // compareLexicographically compares two bounds from two ranges and returns 0, 1, -1
 // for equal, greater than or less than respectively. It gets the two bounds,
-// collations and if each bound is open or closed. In addition, it also gets what type of bound it is.
+// collations and if each bound is open (open1, open2) or closed. In addition,
+// it also gets if each bound is lower or upper (low1, low2).
 // Lower bounds logically can be extended with -infinity and upper bounds can be extended with +infinity.
 func compareLexicographically(tc types.Context, bound1, bound2 []types.Datum, collators []collate.Collator,
 	open1, open2, low1, low2 bool) (int, error) {
@@ -318,15 +319,13 @@ func compareLexicographically(tc types.Context, bound1, bound2 []types.Datum, co
 		case open1:
 			if low1 {
 				return 1, nil
-			} else {
-				return -1, nil
 			}
+			return -1, nil
 		case open2:
 			if low2 {
 				return -1, nil
-			} else {
-				return 1, nil
 			}
+			return 1, nil
 		}
 	}
 
@@ -335,33 +334,17 @@ func compareLexicographically(tc types.Context, bound1, bound2 []types.Datum, co
 		if low1 {
 			// -infinity is less than anything
 			return -1, nil
-		} else {
-			// +infinity is higher than anything
-			return 1, nil
 		}
+		// +infinity is higher than anything
+		return 1, nil
 	}
 	// n2 > n1
 	if low2 {
 		// anything is larger than -infinity.
 		return 1, nil
-	} else {
-		// anything is less than +infinity
-		return -1, nil
 	}
-}
-
-// Compare two lists of Datum. This is useful for lower/upper bounds of Range.
-func compare(tc types.Context, bound1 []types.Datum, bound2 []types.Datum, length int, collators []collate.Collator, openInterval bool) (int, error) {
-	for i := 0; i < length; i++ {
-		cmp, err := bound1[i].Compare(tc, &bound2[i], collators[i])
-		if err != nil {
-			return 0, err
-		}
-		if cmp != 0 || (cmp == 0 && openInterval) {
-			return cmp, nil
-		}
-	}
-	return 0, nil
+	// anything is less than +infinity
+	return -1, nil
 }
 
 // Check if a list of Datum is a prefix of another list of Datum. This is useful for checking if
@@ -435,7 +418,7 @@ func (ran *Range) Subset(tc types.Context, otherRange *Range) bool {
 		return false
 	}
 
-	if !checkCollators(ran, otherRange, min(len(otherRange.LowVal), len(ran.LowVal))) {
+	if !checkCollators(ran, otherRange, len(otherRange.LowVal)) {
 		return false
 	}
 
@@ -486,6 +469,9 @@ func (ran *Range) IntersectRange(tc types.Context, otherRange *Range) (*Range, e
 
 	lowVsLow, err := compareLexicographically(tc, ran.LowVal, otherRange.LowVal,
 		ran.Collators, ran.LowExclude, otherRange.LowExclude, true, true)
+	if err != nil {
+		return &Range{}, err
+	}
 	if lowVsLow == -1 {
 		result.LowVal = otherRange.LowVal
 		result.LowExclude = otherRange.LowExclude
@@ -496,6 +482,9 @@ func (ran *Range) IntersectRange(tc types.Context, otherRange *Range) (*Range, e
 
 	highVshigh, err := compareLexicographically(tc, ran.HighVal, otherRange.HighVal,
 		ran.Collators, ran.HighExclude, otherRange.HighExclude, false, false)
+	if err != nil {
+		return &Range{}, err
+	}
 	if highVshigh == 1 {
 		result.HighVal = otherRange.HighVal
 		result.HighExclude = otherRange.HighExclude

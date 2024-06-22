@@ -23,7 +23,7 @@ import (
 
 	"github.com/ngaut/pools"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
-	"github.com/pingcap/tidb/pkg/ddl/internal/session"
+	"github.com/pingcap/tidb/pkg/ddl/session"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"

@@ -222,6 +222,8 @@ type Transaction interface {
 	Mem() uint64
 	// SetMemoryFootprintChangeHook sets the hook that will be called when the memory footprint changes.
 	SetMemoryFootprintChangeHook(func(uint64))
+	// MemHookSet returns whether the memory footprint change hook is set.
+	MemHookSet() bool
 	// Len returns the number of entries in the DB.
 	Len() int
 	// Commit commits the transaction operations to KV store.

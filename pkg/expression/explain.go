@@ -37,11 +37,11 @@ func (expr *ScalarFunction) explainInfo(ctx EvalContext, normalized bool) string
 	intest.Assert(normalized || ctx != nil)
 	var buffer bytes.Buffer
 	fmt.Fprintf(&buffer, "%s(", expr.FuncName.L)
-	// convert `in(_tidb_pid, -1)` to `in(_tidb_pid, dual)` whether normalized equals to true or false.
+	// convert `in(_tidb_tid, -1)` to `in(_tidb_tid, dual)` whether normalized equals to true or false.
 	if expr.FuncName.L == ast.In {
 		args := expr.GetArgs()
-		if len(args) == 2 && args[0].ExplainNormalizedInfo() == model.ExtraPartitionIdName.L && args[1].(*Constant).Value.GetInt64() == -1 {
-			buffer.WriteString(model.ExtraPartitionIdName.L + ", dual)")
+		if len(args) == 2 && strings.HasSuffix(args[0].ExplainNormalizedInfo(), model.ExtraPhysTblIdName.L) && args[1].(*Constant).Value.GetInt64() == -1 {
+			buffer.WriteString(args[0].ExplainNormalizedInfo() + ", dual)")
 			return buffer.String()
 		}
 	}

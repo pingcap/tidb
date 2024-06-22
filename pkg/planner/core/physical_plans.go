@@ -241,10 +241,10 @@ func setMppOrBatchCopForTableScan(curPlan base.PhysicalPlan) {
 func (sg *TiKVSingleGather) GetPhysicalTableReader(schema *expression.Schema, stats *property.StatsInfo, props ...*property.PhysicalProperty) *PhysicalTableReader {
 	reader := PhysicalTableReader{}.Init(sg.SCtx(), sg.QueryBlockOffset())
 	reader.PlanPartInfo = PhysPlanPartInfo{
-		PruningConds:   sg.Source.allConds,
-		PartitionNames: sg.Source.partitionNames,
+		PruningConds:   sg.Source.AllConds,
+		PartitionNames: sg.Source.PartitionNames,
 		Columns:        sg.Source.TblCols,
-		ColumnNames:    sg.Source.names,
+		ColumnNames:    sg.Source.OutputNames(),
 	}
 	reader.SetStats(stats)
 	reader.SetSchema(schema)
@@ -1365,6 +1365,30 @@ type PhysicalHashJoin struct {
 
 	// for runtime filter
 	runtimeFilterList []*RuntimeFilter
+}
+
+// CanUseHashJoinV2 returns true if current join is supported by hash join v2
+func (p *PhysicalHashJoin) CanUseHashJoinV2() bool {
+	switch p.JoinType {
+	case LeftOuterJoin, InnerJoin:
+		// null aware join is not supported yet
+		if len(p.LeftNAJoinKeys) > 0 {
+			return false
+		}
+		// cross join is not supported
+		if len(p.LeftJoinKeys) == 0 {
+			return false
+		}
+		// NullEQ is not supported yet
+		for _, value := range p.IsNullEQ {
+			if value {
+				return false
+			}
+		}
+		return true
+	default:
+		return false
+	}
 }
 
 // Clone implements op.PhysicalPlan interface.

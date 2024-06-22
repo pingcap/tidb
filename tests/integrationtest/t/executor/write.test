@@ -1350,3 +1350,8 @@ replace t2 set a=default(a), c=default(c);
 replace t2 set c=default(a);
 drop table t1, t2;
 
+# TestIssue53746
+drop table if exists t;
+create table t (a date default current_date);
+insert into t values();
+select count(1) from t where a = date(a);

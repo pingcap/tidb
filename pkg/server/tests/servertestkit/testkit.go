@@ -70,6 +70,7 @@ func CreateTidbTestSuiteWithCfg(t *testing.T, cfg *config.Config) *TidbTestSuite
 	require.NoError(t, err)
 	ts.Tidbdrv = srv.NewTiDBDriver(ts.Store)
 
+	srv.RunInGoTestChan = make(chan struct{})
 	server, err := srv.NewServer(cfg, ts.Tidbdrv)
 	require.NoError(t, err)
 
