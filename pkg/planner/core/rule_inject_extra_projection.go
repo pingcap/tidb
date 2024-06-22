@@ -161,15 +161,21 @@ func InjectProjBelowAgg(aggPlan base.PhysicalPlan, aggFuncs []*aggregation.AggFu
 			if _, isCnst := byItem.Expr.(*expression.Constant); isCnst {
 				continue
 			}
-			projExprs = append(projExprs, byItem.Expr)
-			newArg := &expression.Column{
-				UniqueID: aggPlan.SCtx().GetSessionVars().AllocPlanColumnID(),
-				RetType:  byItem.Expr.GetType(ectx),
-				Index:    cursor,
+			idx := slices.IndexFunc(projExprs, func(a expression.Expression) bool {
+				return a.Equal(ectx, byItem.Expr)
+			})
+			if idx < 0 {
+				projExprs = append(projExprs, byItem.Expr)
+				newArg := &expression.Column{
+					UniqueID: aggPlan.SCtx().GetSessionVars().AllocPlanColumnID(),
+					RetType:  byItem.Expr.GetType(ectx),
+					Index:    cursor,
+				}
+				projSchemaCols = append(projSchemaCols, newArg)
+				byItem.Expr = newArg
+			} else {
+				groupByItems[i] = projSchemaCols[idx]
 			}
-			projSchemaCols = append(projSchemaCols, newArg)
-			byItem.Expr = newArg
-			cursor++
 		}
 	}
 
