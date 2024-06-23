@@ -42,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -745,9 +746,20 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, workCh chan<
 
 // calculateBatchSize calculates a suitable initial batch size.
 func (e *IndexLookUpExecutor) calculateBatchSize(initBatchSize, maxBatchSize int) int {
+	// If initBatchSize is less than MaxChunkSize, there should be limit upon the reader.
+	// So we use the slow start strategy to avoid unnecessary rpc.
+	if initBatchSize < e.ctx.GetSessionVars().MaxChunkSize {
+		return initBatchSize
+	}
 	var estRows int
 	if len(e.idxPlans) > 0 {
 		estRows = int(e.idxPlans[0].StatsCount())
+	}
+	// https://github.com/pingcap/tidb/pull/53855
+	// There're some problems that the initBatchSize(which is the requiredRows from the upper executor) is not well maintained. Sometimes we'll need to tune it by hand.
+	// We leave this hack here to avoid the performance regression.
+	if e.ctx.GetSessionVars().MinPagingSize < variable.DefMinPagingSize || e.ctx.GetSessionVars().MaxPagingSize < variable.DefMaxPagingSize {
+		return initBatchSize
 	}
 	return CalculateBatchSize(e.indexPaging, estRows, initBatchSize, maxBatchSize)
 }
