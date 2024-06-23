@@ -2184,6 +2184,11 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		sc.RuntimeStatsColl = execdetails.NewRuntimeStatsColl(reuseObj)
 	}
 
+	fixValue, ok := ctx.GetSessionVars().GetOptimizerFixControlValue(variable.TiDBOptFixControl49736)
+	if ok && variable.TiDBOptOn(fixValue) {
+		sc.ForcePlanCache = true
+	}
+
 	sc.TblInfo2UnionScan = make(map[*model.TableInfo]bool)
 	errCount, warnCount := vars.StmtCtx.NumErrorWarnings()
 	vars.SysErrorCount = errCount

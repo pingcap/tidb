@@ -126,7 +126,8 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 	} else {
 		cacheable, reason := CacheableWithCtx(sctx, stmt, ret.InfoSchema)
 		prepared.UseCache = cacheable
-		if !cacheable {
+		fixValue, _ := sctx.GetSessionVars().GetOptimizerFixControlValue(variable.TiDBOptFixControl49736)
+		if !cacheable && !variable.TiDBOptOn(fixValue) {
 			sctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("skip plan-cache: " + reason))
 		}
 		selectStmtNode, normalizedSQL4PC, digest4PC, err = ExtractSelectAndNormalizeDigest(stmt, vars.CurrentDB)

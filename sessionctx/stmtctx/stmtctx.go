@@ -166,6 +166,7 @@ type StatementContext struct {
 	ErrAutoincReadFailedAsWarning bool
 	InShowWarning                 bool
 	UseCache                      bool
+	ForcePlanCache                bool // force the optimizer to use plan cache even if there is risky optimization, see #49736.
 	BatchCheck                    bool
 	InNullRejectCheck             bool
 	AllowInvalidDate              bool
@@ -639,6 +640,10 @@ func (sc *StatementContext) SetPlanHint(hint string) {
 func (sc *StatementContext) SetSkipPlanCache(reason error) {
 	if !sc.UseCache {
 		return // avoid unnecessary warnings
+	}
+	if sc.ForcePlanCache {
+		sc.AppendWarning(errors.Errorf("force plan-cache: may use risky cached plan: %s", reason.Error()))
+		return
 	}
 	sc.UseCache = false
 	sc.AppendWarning(reason)

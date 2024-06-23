@@ -1351,6 +1351,9 @@ var (
 	// TiDBOptFixControl44830 controls whether to allow to cache Batch/PointGet from some complex scenarios.
 	// See #44830 for more details.
 	TiDBOptFixControl44830 uint64 = 44830
+	// TiDBOptFixControl49736 controls whether to force the optimizer to use plan cache even if there is risky optimization.
+	// This fix-control is test-only.
+	TiDBOptFixControl49736 uint64 = 49736
 )
 
 // GetOptimizerFixControlValue returns the specified value of the optimizer fix control.
