@@ -5363,6 +5363,7 @@ func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName model.
 	if err != nil {
 		return nil, err
 	}
+
 	originalVisitInfo := b.visitInfo
 	b.visitInfo = make([]visitInfo, 0)
 
@@ -5441,6 +5442,7 @@ func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName model.
 		}
 		return nil, err
 	}
+
 	pm := privilege.GetPrivilegeManager(b.ctx)
 	if viewDepth != 0 &&
 		b.ctx.GetSessionVars().StmtCtx.InExplainStmt &&
@@ -5467,8 +5469,19 @@ func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName model.
 	if len(tableInfo.Columns) != selectLogicalPlan.Schema().Len() {
 		return nil, plannererrors.ErrViewInvalid.GenWithStackByArgs(dbName.O, tableInfo.Name.O)
 	}
-
-	return b.buildProjUponView(ctx, dbName, tableInfo, selectLogicalPlan)
+	p, err := b.buildProjUponView(ctx, dbName, tableInfo, selectLogicalPlan)
+	if err != nil {
+		return nil, err
+	}
+	if sel, ok := selectNode.(*ast.SelectStmt); ok {
+		if b.ctx.GetSessionVars().SQLMode.HasOnlyFullGroupBy() && sel.From != nil && !b.ctx.GetSessionVars().OptimizerEnableNewOnlyFullGroupByCheck {
+			err = b.checkOnlyFullGroupBy(p, sel)
+			if err != nil {
+				return nil, err
+			}
+		}
+	}
+	return p, err
 }
 
 func (b *PlanBuilder) buildProjUponView(_ context.Context, dbName model.CIStr, tableInfo *model.TableInfo, selectLogicalPlan base.Plan) (base.LogicalPlan, error) {
