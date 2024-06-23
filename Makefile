@@ -624,12 +624,13 @@ bazel_coverage_test: failpoint-enable bazel_ci_simple_prepare
 		-//tests/globalkilltest/... -//tests/readonlytest/... -//br/pkg/task:task_test -//tests/realtikvtest/...
 
 .PHONY: bazel_build
+NOGO_FLAG=true
 bazel_build:
 	mkdir -p bin
 	bazel $(BAZEL_GLOBAL_CONFIG) build $(BAZEL_CMD_CONFIG) \
-		//... --//build:with_nogo_flag=true
+		//... --//build:with_nogo_flag=$(NOGO_FLAG)
 	bazel $(BAZEL_GLOBAL_CONFIG) build $(BAZEL_CMD_CONFIG) \
-		//cmd/importer:importer //cmd/tidb-server:tidb-server //cmd/tidb-server:tidb-server-check --//build:with_nogo_flag=true
+		//cmd/importer:importer //cmd/tidb-server:tidb-server //cmd/tidb-server:tidb-server-check --//build:with_nogo_flag=$(NOGO_FLAG)
 	cp bazel-out/k8-fastbuild/bin/cmd/tidb-server/tidb-server_/tidb-server ./bin
 	cp bazel-out/k8-fastbuild/bin/cmd/importer/importer_/importer      ./bin
 	cp bazel-out/k8-fastbuild/bin/cmd/tidb-server/tidb-server-check_/tidb-server-check ./bin
@@ -778,8 +779,9 @@ bazel_flashbacktest: failpoint-enable bazel_ci_simple_prepare
 	./build/jenkins_collect_coverage.sh
 
 .PHONY: bazel_lint
+NOGO_FLAG=true
 bazel_lint: bazel_prepare
-	bazel build //... --//build:with_nogo_flag=true
+	bazel build //... --//build:with_nogo_flag=$(NOGO_FLAG)
 
 .PHONY: docker
 docker:
