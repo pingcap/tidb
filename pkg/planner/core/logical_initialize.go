@@ -6,12 +6,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 )
 
-// Init initializes LogicalAggregation.
-func (la LogicalAggregation) Init(ctx base.PlanContext, offset int) *LogicalAggregation {
-	la.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(ctx, plancodec.TypeAgg, &la, offset)
-	return &la
-}
-
 // Init initializes LogicalJoin.
 func (p LogicalJoin) Init(ctx base.PlanContext, offset int) *LogicalJoin {
 	p.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(ctx, plancodec.TypeJoin, &p, offset)

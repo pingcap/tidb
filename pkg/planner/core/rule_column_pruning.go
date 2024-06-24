@@ -20,7 +20,6 @@ import (
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
-	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
@@ -41,33 +40,6 @@ func (*columnPruner) optimize(_ context.Context, lp base.LogicalPlan, opt *optim
 		return nil, planChanged, err
 	}
 	return lp, planChanged, nil
-}
-
-// ExprsHasSideEffects checks if any of the expressions has side effects.
-func ExprsHasSideEffects(exprs []expression.Expression) bool {
-	for _, expr := range exprs {
-		if exprHasSetVarOrSleep(expr) {
-			return true
-		}
-	}
-	return false
-}
-
-// exprHasSetVarOrSleep checks if the expression has SetVar function or Sleep function.
-func exprHasSetVarOrSleep(expr expression.Expression) bool {
-	scalaFunc, isScalaFunc := expr.(*expression.ScalarFunction)
-	if !isScalaFunc {
-		return false
-	}
-	if scalaFunc.FuncName.L == ast.SetVar || scalaFunc.FuncName.L == ast.Sleep {
-		return true
-	}
-	for _, arg := range scalaFunc.GetArgs() {
-		if exprHasSetVarOrSleep(arg) {
-			return true
-		}
-	}
-	return false
 }
 
 // PruneColumns implement the Expand OP's column pruning logic.
@@ -107,7 +79,7 @@ func (p *LogicalProjection) PruneColumns(parentUsedCols []*expression.Column, op
 
 	// for implicit projected cols, once the ancestor doesn't use it, the implicit expr will be automatically pruned here.
 	for i := len(used) - 1; i >= 0; i-- {
-		if !used[i] && !exprHasSetVarOrSleep(p.Exprs[i]) {
+		if !used[i] && !expression.ExprHasSetVarOrSleep(p.Exprs[i]) {
 			prunedColumns = append(prunedColumns, p.Schema().Columns[i])
 			p.Schema().Columns = append(p.Schema().Columns[:i], p.Schema().Columns[i+1:]...)
 			p.Exprs = append(p.Exprs[:i], p.Exprs[i+1:]...)

@@ -3,7 +3,7 @@ package core
 import (
 	"bytes"
 	"fmt"
-	"github.com/pingcap/errors"
+
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -16,8 +16,10 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace/logicaltrace"
+	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	h "github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/intset"
+	"github.com/pingcap/tidb/pkg/util/plancodec"
 )
 
 // LogicalAggregation represents an aggregate plan.
@@ -37,6 +39,12 @@ type LogicalAggregation struct {
 	// NoCopPushDown indicates if planner must not push this agg down to coprocessor.
 	// It is true when the agg is in the outer child tree of apply.
 	NoCopPushDown bool
+}
+
+// Init initializes LogicalAggregation.
+func (la LogicalAggregation) Init(ctx base.PlanContext, offset int) *LogicalAggregation {
+	la.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(ctx, plancodec.TypeAgg, &la, offset)
+	return &la
 }
 
 // *************************** start implementation of Plan interface ***************************
@@ -102,7 +110,7 @@ func (la *LogicalAggregation) PruneColumns(parentUsedCols []*expression.Column, 
 		if la.AggFuncs[i].Name != ast.AggFuncFirstRow {
 			allFirstRow = false
 		}
-		if !used[i] && !ExprsHasSideEffects(la.AggFuncs[i].Args) {
+		if !used[i] && !expression.ExprsHasSideEffects(la.AggFuncs[i].Args) {
 			prunedColumns = append(prunedColumns, la.Schema().Columns[i])
 			prunedFunctions = append(prunedFunctions, la.AggFuncs[i])
 			la.Schema().Columns = append(la.Schema().Columns[:i], la.Schema().Columns[i+1:]...)
@@ -119,7 +127,7 @@ func (la *LogicalAggregation) PruneColumns(parentUsedCols []*expression.Column, 
 		selfUsedCols = expression.ExtractColumnsFromExpressions(selfUsedCols, aggrFunc.Args, nil)
 
 		var cols []*expression.Column
-		aggrFunc.OrderByItems, cols = pruneByItems(la, aggrFunc.OrderByItems, opt)
+		aggrFunc.OrderByItems, cols = utilfuncp.PruneByItems(la, aggrFunc.OrderByItems, opt)
 		selfUsedCols = append(selfUsedCols, cols...)
 	}
 	if len(la.AggFuncs) == 0 || (!allFirstRow && allRemainFirstRow) {
@@ -148,7 +156,7 @@ func (la *LogicalAggregation) PruneColumns(parentUsedCols []*expression.Column, 
 	if len(la.GroupByItems) > 0 {
 		for i := len(la.GroupByItems) - 1; i >= 0; i-- {
 			cols := expression.ExtractColumns(la.GroupByItems[i])
-			if len(cols) == 0 && !exprHasSetVarOrSleep(la.GroupByItems[i]) {
+			if len(cols) == 0 && !expression.ExprHasSetVarOrSleep(la.GroupByItems[i]) {
 				prunedGroupByItems = append(prunedGroupByItems, la.GroupByItems[i])
 				la.GroupByItems = append(la.GroupByItems[:i], la.GroupByItems[i+1:]...)
 			} else {
@@ -266,7 +274,7 @@ func (la *LogicalAggregation) PreparePossibleProperties(_ *expression.Schema, ch
 	resultProperties := make([][]*expression.Column, 0, len(childProps))
 	groupByCols := la.GetGroupByCols()
 	for _, possibleChildProperty := range childProps {
-		sortColOffsets := getMaxSortPrefix(possibleChildProperty, groupByCols)
+		sortColOffsets := util.GetMaxSortPrefix(possibleChildProperty, groupByCols)
 		if len(sortColOffsets) == len(groupByCols) {
 			prop := possibleChildProperty[:len(groupByCols)]
 			resultProperties = append(resultProperties, prop)
@@ -288,12 +296,12 @@ func (la *LogicalAggregation) ExhaustPhysicalPlans(prop *property.PhysicalProper
 
 	preferHash, preferStream := la.ResetHintIfConflicted()
 
-	hashAggs := getHashAggs(la, prop)
+	hashAggs := utilfuncp.GetHashAggs(la, prop)
 	if hashAggs != nil && preferHash {
 		return hashAggs, true, nil
 	}
 
-	streamAggs := getStreamAggs(la, prop)
+	streamAggs := utilfuncp.GetStreamAggs(la, prop)
 	if streamAggs != nil && preferStream {
 		return streamAggs, true, nil
 	}
@@ -566,7 +574,8 @@ func (la *LogicalAggregation) ResetHintIfConflicted() (preferHash bool, preferSt
 	return
 }
 
-func (la *LogicalAggregation) distinctArgsMeetsProperty() bool {
+// DistinctArgsMeetsProperty checks if the distinct args meet the property.
+func (la *LogicalAggregation) DistinctArgsMeetsProperty() bool {
 	for _, aggFunc := range la.AggFuncs {
 		if aggFunc.HasDistinct {
 			for _, distinctArg := range aggFunc.Args {
@@ -577,33 +586,6 @@ func (la *LogicalAggregation) distinctArgsMeetsProperty() bool {
 		}
 	}
 	return true
-}
-
-// TODO: support more operators and distinct later
-func (la *LogicalAggregation) checkCanPushDownToMPP() bool {
-	hasUnsupportedDistinct := false
-	for _, agg := range la.AggFuncs {
-		// MPP does not support distinct except count distinct now
-		if agg.HasDistinct {
-			if agg.Name != ast.AggFuncCount && agg.Name != ast.AggFuncGroupConcat {
-				hasUnsupportedDistinct = true
-			}
-		}
-		// MPP does not support AggFuncApproxCountDistinct now
-		if agg.Name == ast.AggFuncApproxCountDistinct {
-			hasUnsupportedDistinct = true
-		}
-	}
-	if hasUnsupportedDistinct {
-		warnErr := errors.NewNoStackError("Aggregation can not be pushed to storage layer in mpp mode because it contains agg function with distinct")
-		if la.SCtx().GetSessionVars().StmtCtx.InExplainStmt {
-			la.SCtx().GetSessionVars().StmtCtx.AppendWarning(warnErr)
-		} else {
-			la.SCtx().GetSessionVars().StmtCtx.AppendExtraWarning(warnErr)
-		}
-		return false
-	}
-	return CheckAggCanPushCop(la.SCtx(), la.AggFuncs, la.GroupByItems, kv.TiFlash)
 }
 
 // pushDownPredicatesForAggregation split a CNF condition to two parts, can be pushed-down or can not be pushed-down below aggregation.

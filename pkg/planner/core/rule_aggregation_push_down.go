@@ -18,7 +18,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -565,7 +564,7 @@ func (a *aggregationPushDownSolver) aggPushDown(p base.LogicalPlan, opt *optimiz
 						break
 					}
 					newGbyItems = append(newGbyItems, groupBy)
-					if ExprsHasSideEffects(newGbyItems) {
+					if expression.ExprsHasSideEffects(newGbyItems) {
 						noSideEffects = false
 						break
 					}
@@ -586,7 +585,7 @@ func (a *aggregationPushDownSolver) aggPushDown(p base.LogicalPlan, opt *optimiz
 							}
 							newArgs = append(newArgs, newArg)
 						}
-						if ExprsHasSideEffects(newArgs) {
+						if expression.ExprsHasSideEffects(newArgs) {
 							noSideEffects = false
 							break
 						}
@@ -603,7 +602,7 @@ func (a *aggregationPushDownSolver) aggPushDown(p base.LogicalPlan, opt *optimiz
 								}
 								newOrderByItems = append(newOrderByItems, byItem)
 							}
-							if ExprsHasSideEffects(newOrderByItems) {
+							if expression.ExprsHasSideEffects(newOrderByItems) {
 								noSideEffects = false
 								break
 							}

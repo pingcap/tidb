@@ -67,19 +67,6 @@ func (p *LogicalUnionScan) ExhaustPhysicalPlans(prop *property.PhysicalProperty)
 	return []base.PhysicalPlan{us}, true, nil
 }
 
-func getMaxSortPrefix(sortCols, allCols []*expression.Column) []int {
-	tmpSchema := expression.NewSchema(allCols...)
-	sortColOffsets := make([]int, 0, len(sortCols))
-	for _, sortCol := range sortCols {
-		offset := tmpSchema.ColumnIndex(sortCol)
-		if offset == -1 {
-			return sortColOffsets
-		}
-		sortColOffsets = append(sortColOffsets, offset)
-	}
-	return sortColOffsets
-}
-
 func findMaxPrefixLen(candidates [][]*expression.Column, keys []*expression.Column) int {
 	maxLen := 0
 	for _, candidateKeys := range candidates {
@@ -183,7 +170,7 @@ func (p *LogicalJoin) GetMergeJoin(prop *property.PhysicalProperty, schema *expr
 		return nil
 	}
 	for _, lhsChildProperty := range p.LeftProperties {
-		offsets := getMaxSortPrefix(lhsChildProperty, leftJoinKeys)
+		offsets := util.GetMaxSortPrefix(lhsChildProperty, leftJoinKeys)
 		// If not all equal conditions hit properties. We ban merge join heuristically. Because in this case, merge join
 		// may get a very low performance. In executor, executes join results before other conditions filter it.
 		if len(offsets) < len(leftJoinKeys) {
@@ -1459,7 +1446,7 @@ func (p *LogicalJoin) constructIndexJoinInnerSideTask(dsCopTask *CopTask, ds *Da
 	if len(groupByCols) != len(la.GroupByItems) {
 		preferStream = false
 	}
-	if la.HasDistinct() && !la.distinctArgsMeetsProperty() {
+	if la.HasDistinct() && !la.DistinctArgsMeetsProperty() {
 		preferStream = false
 	}
 	// sort items must be the super set of group by items
@@ -3225,7 +3212,8 @@ func getEnforcedStreamAggs(la *LogicalAggregation, prop *property.PhysicalProper
 	return enforcedAggs
 }
 
-func getStreamAggs(la *LogicalAggregation, prop *property.PhysicalProperty) []base.PhysicalPlan {
+func getStreamAggs(lp base.LogicalPlan, prop *property.PhysicalProperty) []base.PhysicalPlan {
+	la := lp.(*LogicalAggregation)
 	// TODO: support CopTiFlash task type in stream agg
 	if prop.IsFlashProp() {
 		return nil
@@ -3267,7 +3255,7 @@ func getStreamAggs(la *LogicalAggregation, prop *property.PhysicalProperty) []ba
 				// if variable doesn't allow DistinctAggPushDown, just produce root task type.
 				// if variable does allow DistinctAggPushDown, but OP itself can't be pushed down to tikv, just produce root task type.
 				taskTypes = []property.TaskType{property.RootTaskType}
-			} else if !la.distinctArgsMeetsProperty() {
+			} else if !la.DistinctArgsMeetsProperty() {
 				continue
 			}
 		} else if !la.PreferAggToCop {
@@ -3449,17 +3437,18 @@ func tryToGetMppHashAggs(la *LogicalAggregation, prop *property.PhysicalProperty
 //	for 2, the final result for this physical operator enumeration is chosen or rejected is according to more factors later (hint/variable/partition/virtual-col/cost)
 //
 // That is to say, the non-complete positive judgement of canPushDownToMPP/canPushDownToTiFlash/canPushDownToTiKV is not that for sure here.
-func getHashAggs(la *LogicalAggregation, prop *property.PhysicalProperty) []base.PhysicalPlan {
+func getHashAggs(lp base.LogicalPlan, prop *property.PhysicalProperty) []base.PhysicalPlan {
+	la := lp.(*LogicalAggregation)
 	if !prop.IsSortItemEmpty() {
 		return nil
 	}
-	if prop.TaskTp == property.MppTaskType && !la.checkCanPushDownToMPP() {
+	if prop.TaskTp == property.MppTaskType && !checkCanPushDownToMPP(la) {
 		return nil
 	}
 	hashAggs := make([]base.PhysicalPlan, 0, len(prop.GetAllPossibleChildTaskTypes()))
 	taskTypes := []property.TaskType{property.CopSingleReadTaskType, property.CopMultiReadTaskType}
 	canPushDownToTiFlash := la.CanPushToCop(kv.TiFlash)
-	canPushDownToMPP := canPushDownToTiFlash && la.SCtx().GetSessionVars().IsMPPAllowed() && la.checkCanPushDownToMPP()
+	canPushDownToMPP := canPushDownToTiFlash && la.SCtx().GetSessionVars().IsMPPAllowed() && checkCanPushDownToMPP(la)
 	if la.HasDistinct() {
 		// TODO: remove after the cost estimation of distinct pushdown is implemented.
 		if !la.SCtx().GetSessionVars().AllowDistinctAggPushDown || !la.CanPushToCop(kv.TiKV) {
@@ -3507,6 +3496,33 @@ func getHashAggs(la *LogicalAggregation, prop *property.PhysicalProperty) []base
 		}
 	}
 	return hashAggs
+}
+
+// TODO: support more operators and distinct later
+func checkCanPushDownToMPP(la *LogicalAggregation) bool {
+	hasUnsupportedDistinct := false
+	for _, agg := range la.AggFuncs {
+		// MPP does not support distinct except count distinct now
+		if agg.HasDistinct {
+			if agg.Name != ast.AggFuncCount && agg.Name != ast.AggFuncGroupConcat {
+				hasUnsupportedDistinct = true
+			}
+		}
+		// MPP does not support AggFuncApproxCountDistinct now
+		if agg.Name == ast.AggFuncApproxCountDistinct {
+			hasUnsupportedDistinct = true
+		}
+	}
+	if hasUnsupportedDistinct {
+		warnErr := errors.NewNoStackError("Aggregation can not be pushed to storage layer in mpp mode because it contains agg function with distinct")
+		if la.SCtx().GetSessionVars().StmtCtx.InExplainStmt {
+			la.SCtx().GetSessionVars().StmtCtx.AppendWarning(warnErr)
+		} else {
+			la.SCtx().GetSessionVars().StmtCtx.AppendExtraWarning(warnErr)
+		}
+		return false
+	}
+	return CheckAggCanPushCop(la.SCtx(), la.AggFuncs, la.GroupByItems, kv.TiFlash)
 }
 
 // ExhaustPhysicalPlans implements LogicalPlan interface.

@@ -18,7 +18,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -212,7 +211,7 @@ func (pe *projectionEliminator) eliminate(p base.LogicalPlan, replace map[string
 
 	// eliminate duplicate projection: projection with child projection
 	if isProj {
-		if child, ok := p.Children()[0].(*LogicalProjection); ok && !ExprsHasSideEffects(child.Exprs) {
+		if child, ok := p.Children()[0].(*LogicalProjection); ok && !expression.ExprsHasSideEffects(child.Exprs) {
 			ctx := p.SCtx()
 			for i := range proj.Exprs {
 				proj.Exprs[i] = ReplaceColumnOfExpr(proj.Exprs[i], child, child.Schema())
