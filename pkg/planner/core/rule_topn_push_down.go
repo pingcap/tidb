@@ -171,7 +171,7 @@ func (p *LogicalProjection) PushDownTopN(topNLogicalPlan base.LogicalPlan, opt *
 		exprCtx := p.SCtx().GetExprCtx()
 		substitutedExprs := make([]expression.Expression, 0, len(topN.ByItems))
 		for _, by := range topN.ByItems {
-			substituted := expression.FoldConstant(exprCtx, expression.ColumnSubstitute(exprCtx, by.Expr, p.schema, p.Exprs))
+			substituted := expression.FoldConstant(exprCtx, expression.ColumnSubstitute(exprCtx, by.Expr, p.Schema(), p.Exprs))
 			if !expression.IsImmutableFunc(substituted) {
 				// after substituting, if the order-by expression is un-deterministic like 'order by rand()', stop pushing down.
 				return p.BaseLogicalPlan.PushDownTopN(topN, opt)

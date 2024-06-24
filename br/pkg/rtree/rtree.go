@@ -352,14 +352,13 @@ func (rangeTree *ProgressRangeTree) Insert(pr *ProgressRange) error {
 
 // FindContained finds if there is a progress range containing the key range [startKey, endKey).
 func (rangeTree *ProgressRangeTree) FindContained(startKey, endKey []byte) (*ProgressRange, error) {
-	var ret *ProgressRange
-	rangeTree.Descend(func(pr *ProgressRange) bool {
-		if bytes.Compare(pr.Origin.StartKey, startKey) <= 0 {
-			ret = pr
-			return false
-		}
-		return true
-	})
+	startPr := &ProgressRange{
+		Origin: Range{
+			StartKey: startKey,
+			EndKey:   endKey,
+		},
+	}
+	ret := rangeTree.find(startPr)
 
 	if ret == nil {
 		return nil, errors.Errorf("Cannot find progress range that contains the start key: %s", redact.Key(startKey))

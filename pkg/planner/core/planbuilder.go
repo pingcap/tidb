@@ -19,6 +19,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"math"
+	"reflect"
 	"strconv"
 	"strings"
 
@@ -72,14 +73,27 @@ import (
 )
 
 type visitInfo struct {
-	privilege        mysql.PrivilegeType
-	db               string
-	table            string
-	column           string
-	err              error
-	alterWritable    bool
-	dynamicPriv      string
+	privilege     mysql.PrivilegeType
+	db            string
+	table         string
+	column        string
+	err           error
+	alterWritable bool
+	// if multiple privileges is provided, user should
+	// have at least one privilege to pass the check.
+	dynamicPrivs     []string
 	dynamicWithGrant bool
+}
+
+func (v *visitInfo) Equals(other *visitInfo) bool {
+	return v.privilege == other.privilege &&
+		v.db == other.db &&
+		v.table == other.table &&
+		v.column == other.column &&
+		v.err == other.err &&
+		v.alterWritable == other.alterWritable &&
+		reflect.DeepEqual(v.dynamicPrivs, other.dynamicPrivs) &&
+		v.dynamicWithGrant == other.dynamicWithGrant
 }
 
 // clauseCode indicates in which clause the column is currently.
@@ -597,7 +611,7 @@ func (b *PlanBuilder) buildDo(ctx context.Context, v *ast.DoStmt) (base.Plan, er
 	dual.SetSchema(expression.NewSchema())
 	p = dual
 	proj := LogicalProjection{Exprs: make([]expression.Expression, 0, len(v.Exprs))}.Init(b.ctx, b.getSelectOffset())
-	proj.names = make([]*types.FieldName, len(v.Exprs))
+	proj.SetOutputNames(make([]*types.FieldName, len(v.Exprs)))
 	schema := expression.NewSchema(make([]*expression.Column, 0, len(v.Exprs))...)
 
 	// Since do statement only contain expression list, and it may contain aggFunc, detecting to build the aggMapper firstly.
@@ -654,11 +668,11 @@ func (b *PlanBuilder) buildSet(ctx context.Context, v *ast.SetStmt) (base.Plan, 
 	for _, vars := range v.Variables {
 		if vars.IsGlobal {
 			err := plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("SUPER or SYSTEM_VARIABLES_ADMIN")
-			b.visitInfo = appendDynamicVisitInfo(b.visitInfo, "SYSTEM_VARIABLES_ADMIN", false, err)
+			b.visitInfo = appendDynamicVisitInfo(b.visitInfo, []string{"SYSTEM_VARIABLES_ADMIN"}, false, err)
 		}
 		if sem.IsEnabled() && sem.IsInvisibleSysVar(strings.ToLower(vars.Name)) {
 			err := plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("RESTRICTED_VARIABLES_ADMIN")
-			b.visitInfo = appendDynamicVisitInfo(b.visitInfo, "RESTRICTED_VARIABLES_ADMIN", false, err)
+			b.visitInfo = appendDynamicVisitInfo(b.visitInfo, []string{"RESTRICTED_VARIABLES_ADMIN"}, false, err)
 		}
 		assign := &expression.VarAssignment{
 			Name:     vars.Name,
@@ -1298,8 +1312,8 @@ func (b *PlanBuilder) buildSelectLock(src base.LogicalPlan, lock *ast.SelectLock
 	}
 	selectLock := LogicalLock{
 		Lock:               lock,
-		tblID2Handle:       b.handleHelper.tailMap(),
-		tblID2PhysTblIDCol: tblID2PhysTblIDCol,
+		TblID2Handle:       b.handleHelper.tailMap(),
+		TblID2PhysTblIDCol: tblID2PhysTblIDCol,
 	}.Init(b.ctx)
 	selectLock.SetChildren(src)
 	return selectLock, nil
@@ -1308,10 +1322,10 @@ func (b *PlanBuilder) buildSelectLock(src base.LogicalPlan, lock *ast.SelectLock
 func setExtraPhysTblIDColsOnDataSource(p base.LogicalPlan, tblID2PhysTblIDCol map[int64]*expression.Column) {
 	switch ds := p.(type) {
 	case *DataSource:
-		if ds.tableInfo.GetPartitionInfo() == nil {
+		if ds.TableInfo.GetPartitionInfo() == nil {
 			return
 		}
-		tblID2PhysTblIDCol[ds.tableInfo.ID] = ds.AddExtraPhysTblIDColumn()
+		tblID2PhysTblIDCol[ds.TableInfo.ID] = ds.AddExtraPhysTblIDColumn()
 	default:
 		for _, child := range p.Children() {
 			setExtraPhysTblIDColsOnDataSource(child, tblID2PhysTblIDCol)
@@ -1371,8 +1385,8 @@ func (b *PlanBuilder) buildAdmin(ctx context.Context, as *ast.AdminStmt) (base.P
 		ret = p
 	case ast.AdminShowDDLJobs:
 		p := LogicalShowDDLJobs{JobNumber: as.JobNumber}.Init(b.ctx)
-		p.setSchemaAndNames(buildShowDDLJobsFields())
-		for _, col := range p.schema.Columns {
+		p.SetSchemaAndNames(buildShowDDLJobsFields())
+		for _, col := range p.Schema().Columns {
 			col.UniqueID = b.ctx.GetSessionVars().AllocPlanColumnID()
 		}
 		ret = p
@@ -1852,7 +1866,7 @@ func GetPhysicalIDsAndPartitionNames(tblInfo *model.TableInfo, partitionNames []
 		return []int64{tblInfo.ID}, []string{""}, nil
 	}
 
-	// If the partitionNames is empty, we will return all partitions.
+	// If the PartitionNames is empty, we will return all partitions.
 	if len(partitionNames) == 0 {
 		ids := make([]int64, 0, len(pi.Definitions))
 		names := make([]string, 0, len(pi.Definitions))
@@ -2682,9 +2696,11 @@ var analyzeOptionDefault = map[ast.AnalyzeOptionType]uint64{
 	ast.AnalyzeOptSampleRate:    math.Float64bits(0),
 }
 
+// TopN reduced from 500 to 100 due to concerns over large number of TopN values collected for customers with many tables.
+// 100 is more inline with other databases. 100-256 is also common for NumBuckets with other databases.
 var analyzeOptionDefaultV2 = map[ast.AnalyzeOptionType]uint64{
 	ast.AnalyzeOptNumBuckets:    256,
-	ast.AnalyzeOptNumTopN:       500,
+	ast.AnalyzeOptNumTopN:       100,
 	ast.AnalyzeOptCMSketchWidth: 2048,
 	ast.AnalyzeOptCMSketchDepth: 5,
 	ast.AnalyzeOptNumSamples:    0,
@@ -3167,10 +3183,10 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (base.P
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.ShowViewPriv, show.Table.Schema.L, show.Table.Name.L, "", err)
 	case ast.ShowBackups:
 		err := plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("SUPER or BACKUP_ADMIN")
-		b.visitInfo = appendDynamicVisitInfo(b.visitInfo, "BACKUP_ADMIN", false, err)
+		b.visitInfo = appendDynamicVisitInfo(b.visitInfo, []string{"BACKUP_ADMIN"}, false, err)
 	case ast.ShowRestores:
 		err := plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("SUPER or RESTORE_ADMIN")
-		b.visitInfo = appendDynamicVisitInfo(b.visitInfo, "RESTORE_ADMIN", false, err)
+		b.visitInfo = appendDynamicVisitInfo(b.visitInfo, []string{"RESTORE_ADMIN"}, false, err)
 	case ast.ShowTableNextRowId:
 		p := &ShowNextRowID{TableName: show.Table}
 		p.setSchemaAndNames(buildShowNextRowID())
@@ -3208,8 +3224,8 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (base.P
 
 	schema, names := buildShowSchema(show, isView, isSequence)
 	p.SetSchema(schema)
-	p.names = names
-	for _, col := range p.schema.Columns {
+	p.SetOutputNames(names)
+	for _, col := range p.Schema().Columns {
 		col.UniqueID = b.ctx.GetSessionVars().AllocPlanColumnID()
 	}
 	var err error
@@ -3239,10 +3255,10 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (base.P
 	}
 	if np != p {
 		b.optFlag |= flagEliminateProjection
-		fieldsLen := len(p.schema.Columns)
+		fieldsLen := len(p.Schema().Columns)
 		proj := LogicalProjection{Exprs: make([]expression.Expression, 0, fieldsLen)}.Init(b.ctx, 0)
 		schema := expression.NewSchema(make([]*expression.Column, 0, fieldsLen)...)
-		for _, col := range p.schema.Columns {
+		for _, col := range p.Schema().Columns {
 			proj.Exprs = append(proj.Exprs, col)
 			newCol := col.Clone().(*expression.Column)
 			newCol.UniqueID = b.ctx.GetSessionVars().AllocPlanColumnID()
@@ -3288,28 +3304,28 @@ func (b *PlanBuilder) buildSimple(ctx context.Context, node ast.StmtNode) (base.
 		p.setSchemaAndNames(buildBRIESchema(raw.Kind))
 		if raw.Kind == ast.BRIEKindRestore {
 			err := plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("SUPER or RESTORE_ADMIN")
-			b.visitInfo = appendDynamicVisitInfo(b.visitInfo, "RESTORE_ADMIN", false, err)
+			b.visitInfo = appendDynamicVisitInfo(b.visitInfo, []string{"RESTORE_ADMIN"}, false, err)
 		} else {
 			err := plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("SUPER or BACKUP_ADMIN")
-			b.visitInfo = appendDynamicVisitInfo(b.visitInfo, "BACKUP_ADMIN", false, err)
+			b.visitInfo = appendDynamicVisitInfo(b.visitInfo, []string{"BACKUP_ADMIN"}, false, err)
 		}
 	case *ast.CalibrateResourceStmt:
 		err := plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("SUPER or RESOURCE_GROUP_ADMIN")
-		b.visitInfo = appendDynamicVisitInfo(b.visitInfo, "RESOURCE_GROUP_ADMIN", false, err)
+		b.visitInfo = appendDynamicVisitInfo(b.visitInfo, []string{"RESOURCE_GROUP_ADMIN"}, false, err)
 		p.setSchemaAndNames(buildCalibrateResourceSchema())
 	case *ast.AddQueryWatchStmt:
 		err := plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("SUPER or RESOURCE_GROUP_ADMIN")
-		b.visitInfo = appendDynamicVisitInfo(b.visitInfo, "RESOURCE_GROUP_ADMIN", false, err)
+		b.visitInfo = appendDynamicVisitInfo(b.visitInfo, []string{"RESOURCE_GROUP_ADMIN"}, false, err)
 		p.setSchemaAndNames(buildAddQueryWatchSchema())
 	case *ast.DropQueryWatchStmt:
 		err := plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("SUPER or RESOURCE_GROUP_ADMIN")
-		b.visitInfo = appendDynamicVisitInfo(b.visitInfo, "RESOURCE_GROUP_ADMIN", false, err)
+		b.visitInfo = appendDynamicVisitInfo(b.visitInfo, []string{"RESOURCE_GROUP_ADMIN"}, false, err)
 	case *ast.GrantRoleStmt:
 		err := plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("SUPER or ROLE_ADMIN")
-		b.visitInfo = appendDynamicVisitInfo(b.visitInfo, "ROLE_ADMIN", false, err)
+		b.visitInfo = appendDynamicVisitInfo(b.visitInfo, []string{"ROLE_ADMIN"}, false, err)
 	case *ast.RevokeRoleStmt:
 		err := plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("SUPER or ROLE_ADMIN")
-		b.visitInfo = appendDynamicVisitInfo(b.visitInfo, "ROLE_ADMIN", false, err)
+		b.visitInfo = appendDynamicVisitInfo(b.visitInfo, []string{"ROLE_ADMIN"}, false, err)
 		// Check if any of the users are RESTRICTED
 		for _, user := range raw.Users {
 			b.visitInfo = appendVisitInfoIsRestrictedUser(b.visitInfo, b.ctx, user, "RESTRICTED_USER_ADMIN")
@@ -3330,13 +3346,13 @@ func (b *PlanBuilder) buildSimple(ctx context.Context, node ast.StmtNode) (base.
 				loginUser := b.ctx.GetSessionVars().User
 				if pi.User != loginUser.Username {
 					err := plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("SUPER or CONNECTION_ADMIN")
-					b.visitInfo = appendDynamicVisitInfo(b.visitInfo, "CONNECTION_ADMIN", false, err)
+					b.visitInfo = appendDynamicVisitInfo(b.visitInfo, []string{"CONNECTION_ADMIN"}, false, err)
 					b.visitInfo = appendVisitInfoIsRestrictedUser(b.visitInfo, b.ctx, &auth.UserIdentity{Username: pi.User, Hostname: pi.Host}, "RESTRICTED_CONNECTION_ADMIN")
 				}
 			} else if raw.ConnectionID == domain.GetDomain(b.ctx).GetAutoAnalyzeProcID() {
 				// Only the users with SUPER or CONNECTION_ADMIN privilege can kill auto analyze.
 				err := plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("SUPER or CONNECTION_ADMIN")
-				b.visitInfo = appendDynamicVisitInfo(b.visitInfo, "CONNECTION_ADMIN", false, err)
+				b.visitInfo = appendDynamicVisitInfo(b.visitInfo, []string{"CONNECTION_ADMIN"}, false, err)
 			}
 		}
 	case *ast.UseStmt:
@@ -3381,6 +3397,11 @@ func (b *PlanBuilder) buildSimple(ctx context.Context, node ast.StmtNode) (base.
 			}
 			p.StaleTxnStartTS = startTS
 		}
+	case *ast.SetResourceGroupStmt:
+		if variable.EnableResourceControlStrictMode.Load() {
+			err := plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("SUPER or RESOURCE_GROUP_ADMIN or RESOURCE_GROUP_USER")
+			b.visitInfo = appendDynamicVisitInfo(b.visitInfo, []string{"RESOURCE_GROUP_ADMIN", "RESOURCE_GROUP_USER"}, false, err)
+		}
 	}
 	return p, nil
 }
@@ -3402,7 +3423,7 @@ func collectVisitInfoFromRevokeStmt(sctx base.PlanContext, vi []visitInfo, stmt 
 	var allPrivs []mysql.PrivilegeType
 	for _, item := range stmt.Privs {
 		if item.Priv == mysql.ExtendedPriv {
-			vi = appendDynamicVisitInfo(vi, strings.ToUpper(item.Name), true, nil) // verified in MySQL: requires the dynamic grant option to revoke.
+			vi = appendDynamicVisitInfo(vi, []string{strings.ToUpper(item.Name)}, true, nil) // verified in MySQL: requires the dynamic grant option to revoke.
 			continue
 		}
 		nonDynamicPrivilege = true
@@ -3444,7 +3465,7 @@ func appendVisitInfoIsRestrictedUser(visitInfo []visitInfo, sctx base.PlanContex
 	checker := privilege.GetPrivilegeManager(sctx)
 	if checker != nil && checker.RequestDynamicVerificationWithUser("RESTRICTED_USER_ADMIN", false, user) {
 		err := plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs(priv)
-		visitInfo = appendDynamicVisitInfo(visitInfo, priv, false, err)
+		visitInfo = appendDynamicVisitInfo(visitInfo, []string{priv}, false, err)
 	}
 	return visitInfo
 }
@@ -3479,7 +3500,7 @@ func collectVisitInfoFromGrantStmt(sctx base.PlanContext, vi []visitInfo, stmt *
 			//   with dynamic privileges.
 
 			err := plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("GRANT OPTION")
-			vi = appendDynamicVisitInfo(vi, item.Name, true, err)
+			vi = appendDynamicVisitInfo(vi, []string{item.Name}, true, err)
 			continue
 		}
 		nonDynamicPrivilege = true
@@ -3669,7 +3690,7 @@ func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (
 
 	mockTablePlan := LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
 	mockTablePlan.SetSchema(insertPlan.tableSchema)
-	mockTablePlan.names = insertPlan.tableColNames
+	mockTablePlan.SetOutputNames(insertPlan.tableColNames)
 
 	checkRefColumn := func(n ast.Node) ast.Node {
 		if insertPlan.NeedFillDefaultValue {
@@ -3698,7 +3719,7 @@ func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (
 	}
 
 	mockTablePlan.SetSchema(insertPlan.Schema4OnDuplicate)
-	mockTablePlan.names = insertPlan.names4OnDuplicate
+	mockTablePlan.SetOutputNames(insertPlan.names4OnDuplicate)
 
 	onDupColSet, err := insertPlan.resolveOnDuplicate(insert.OnDuplicate, tableInfo, func(node ast.ExprNode) (expression.Expression, error) {
 		return b.rewriteInsertOnDuplicateUpdate(ctx, node, mockTablePlan, insertPlan)
@@ -3708,8 +3729,8 @@ func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (
 	}
 
 	// Calculate generated columns.
-	mockTablePlan.schema = insertPlan.tableSchema
-	mockTablePlan.names = insertPlan.tableColNames
+	mockTablePlan.SetSchema(insertPlan.tableSchema)
+	mockTablePlan.SetOutputNames(insertPlan.tableColNames)
 	insertPlan.GenCols, err = b.resolveGeneratedColumns(ctx, insertPlan.Table.Cols(), onDupColSet, mockTablePlan)
 	if err != nil {
 		return nil, err
@@ -4106,7 +4127,7 @@ func (b *PlanBuilder) buildLoadData(ctx context.Context, ld *ast.LoadDataStmt) (
 		return nil, err
 	}
 	mockTablePlan.SetSchema(schema)
-	mockTablePlan.names = names
+	mockTablePlan.SetOutputNames(names)
 
 	p.GenCols, err = b.resolveGeneratedColumns(ctx, tableInPlan.Cols(), nil, mockTablePlan)
 	return p, err
@@ -4189,7 +4210,7 @@ func (b *PlanBuilder) buildImportInto(ctx context.Context, ld *ast.ImportIntoStm
 	// support set 'tidb_snapshot' first and then import into the target table.
 	//
 	// tidb_read_staleness can be used to do stale read too, it's allowed as long as
-	// tableInfo.ID matches with the latest schema.
+	// TableInfo.ID matches with the latest schema.
 	latestIS := b.ctx.GetDomainInfoSchema().(infoschema.InfoSchema)
 	tableInPlan, ok := latestIS.TableByID(tableInfo.ID)
 	if !ok {
@@ -4206,7 +4227,7 @@ func (b *PlanBuilder) buildImportInto(ctx context.Context, ld *ast.ImportIntoStm
 		return nil, err
 	}
 	mockTablePlan.SetSchema(schema)
-	mockTablePlan.names = names
+	mockTablePlan.SetOutputNames(names)
 
 	p.GenCols, err = b.resolveGeneratedColumns(ctx, tableInPlan.Cols(), nil, mockTablePlan)
 	if err != nil {
@@ -4317,7 +4338,7 @@ func (b *PlanBuilder) buildSplitIndexRegion(node *ast.SplitRegionStmt) (base.Pla
 		return nil, err
 	}
 	mockTablePlan.SetSchema(schema)
-	mockTablePlan.names = names
+	mockTablePlan.SetOutputNames(names)
 
 	p := &SplitRegion{
 		TableInfo:      tblInfo,
@@ -4432,7 +4453,7 @@ func (b *PlanBuilder) buildSplitTableRegion(node *ast.SplitRegionStmt) (base.Pla
 		return nil, err
 	}
 	mockTablePlan.SetSchema(schema)
-	mockTablePlan.names = names
+	mockTablePlan.SetOutputNames(names)
 
 	p := &SplitRegion{
 		TableInfo:      tblInfo,
@@ -4843,10 +4864,10 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (base.Plan
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "", nil)
 	case *ast.DropPlacementPolicyStmt, *ast.CreatePlacementPolicyStmt, *ast.AlterPlacementPolicyStmt:
 		err := plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("SUPER or PLACEMENT_ADMIN")
-		b.visitInfo = appendDynamicVisitInfo(b.visitInfo, "PLACEMENT_ADMIN", false, err)
+		b.visitInfo = appendDynamicVisitInfo(b.visitInfo, []string{"PLACEMENT_ADMIN"}, false, err)
 	case *ast.CreateResourceGroupStmt, *ast.DropResourceGroupStmt, *ast.AlterResourceGroupStmt:
 		err := plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("SUPER or RESOURCE_GROUP_ADMIN")
-		b.visitInfo = appendDynamicVisitInfo(b.visitInfo, "RESOURCE_GROUP_ADMIN", false, err)
+		b.visitInfo = appendDynamicVisitInfo(b.visitInfo, []string{"RESOURCE_GROUP_ADMIN"}, false, err)
 	case *ast.OptimizeTableStmt:
 		return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStack("OPTIMIZE TABLE is not supported")
 	}
@@ -4929,7 +4950,8 @@ func (*PlanBuilder) buildTrace(trace *ast.TraceStmt) (base.Plan, error) {
 }
 
 func (b *PlanBuilder) buildExplainPlan(targetPlan base.Plan, format string, explainRows [][]string, analyze bool, execStmt ast.StmtNode, runtimeStats *execdetails.RuntimeStatsColl) (base.Plan, error) {
-	if strings.ToLower(format) == types.ExplainFormatTrueCardCost && !analyze {
+	format = strings.ToLower(format)
+	if format == types.ExplainFormatTrueCardCost && !analyze {
 		return nil, errors.Errorf("'explain format=%v' cannot work without 'analyze', please use 'explain analyze format=%v'", format, format)
 	}
 
@@ -4961,14 +4983,15 @@ func (b *PlanBuilder) buildExplainFor(explainFor *ast.ExplainForStmt) (base.Plan
 	}
 
 	targetPlan, ok := processInfo.Plan.(base.Plan)
+	explainForFormat := strings.ToLower(explainFor.Format)
 	if !ok || targetPlan == nil {
-		return &Explain{Format: explainFor.Format}, nil
+		return &Explain{Format: explainForFormat}, nil
 	}
 	var explainRows [][]string
-	if explainFor.Format == types.ExplainFormatROW {
+	if explainForFormat == types.ExplainFormatROW {
 		explainRows = processInfo.PlanExplainRows
 	}
-	return b.buildExplainPlan(targetPlan, explainFor.Format, explainRows, false, nil, processInfo.RuntimeStatsColl)
+	return b.buildExplainPlan(targetPlan, explainForFormat, explainRows, false, nil, processInfo.RuntimeStatsColl)
 }
 
 func (b *PlanBuilder) buildExplain(ctx context.Context, explain *ast.ExplainStmt) (base.Plan, error) {

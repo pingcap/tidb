@@ -13,14 +13,33 @@ import (
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/rtree"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/br/pkg/utils/storewatch"
+	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
+
+type BackupRetryPolicy struct {
+	One uint64
+	All bool
+}
+
+type BackupSender interface {
+	SendAsync(
+		ctx context.Context,
+		round uint64,
+		storeID uint64,
+		request backuppb.BackupRequest,
+		cli backuppb.BackupClient,
+		respCh chan *ResponseAndStore,
+		StateNotifier chan BackupRetryPolicy)
+}
 
 type ResponseAndStore struct {
 	Resp    *backuppb.BackupResponse
@@ -106,7 +125,7 @@ func doSendBackup(
 	}
 }
 
-func startStoreBackup(
+func startBackup(
 	ctx context.Context,
 	storeID uint64,
 	backupReq backuppb.BackupRequest,
@@ -183,4 +202,65 @@ func getBackupRanges(ranges []rtree.Range) []*kvrpcpb.KeyRange {
 		})
 	}
 	return requestRanges
+}
+
+func ObserveStoreChangesAsync(ctx context.Context, stateNotifier chan BackupRetryPolicy, pdCli pd.Client) {
+	go func() {
+		sendAll := false
+		newJoinStoresMap := make(map[uint64]struct{})
+		cb := storewatch.MakeCallback(storewatch.WithOnReboot(func(s *metapb.Store) {
+			sendAll = true
+		}), storewatch.WithOnDisconnect(func(s *metapb.Store) {
+			sendAll = true
+		}), storewatch.WithOnNewStoreRegistered(func(s *metapb.Store) {
+			// only backup for this store
+			newJoinStoresMap[s.Id] = struct{}{}
+		}))
+
+		notifyFn := func(ctx context.Context, sendPolicy BackupRetryPolicy) {
+			select {
+			case <-ctx.Done():
+			case stateNotifier <- sendPolicy:
+			}
+		}
+
+		watcher := storewatch.New(pdCli, cb)
+		// make a first step, and make the state correct for next 30s check
+		err := watcher.Step(ctx)
+		if err != nil {
+			logutil.CL(ctx).Warn("failed to watch store changes at beginning, ignore it", zap.Error(err))
+		}
+		tickInterval := 30 * time.Second
+		failpoint.Inject("backup-store-change-tick", func(val failpoint.Value) {
+			if val.(bool) {
+				tickInterval = 100 * time.Millisecond
+			}
+			logutil.CL(ctx).Info("failpoint backup-store-change-tick injected.", zap.Duration("interval", tickInterval))
+		})
+		tick := time.NewTicker(tickInterval)
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-tick.C:
+				// reset the state
+				sendAll = false
+				clear(newJoinStoresMap)
+				logutil.CL(ctx).Info("check store changes every tick")
+				err := watcher.Step(ctx)
+				if err != nil {
+					logutil.CL(ctx).Warn("failed to watch store changes, ignore it", zap.Error(err))
+				}
+				if sendAll {
+					logutil.CL(ctx).Info("detect some store(s) restarted or disconnected, notify with all stores")
+					notifyFn(ctx, BackupRetryPolicy{All: true})
+				} else if len(newJoinStoresMap) > 0 {
+					for storeID := range newJoinStoresMap {
+						logutil.CL(ctx).Info("detect a new registered store, notify with this store", zap.Uint64("storeID", storeID))
+						notifyFn(ctx, BackupRetryPolicy{One: storeID})
+					}
+				}
+			}
+		}
+	}()
 }

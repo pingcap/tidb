@@ -27,10 +27,10 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
-	sess "github.com/pingcap/tidb/pkg/ddl/internal/session"
 	"github.com/pingcap/tidb/pkg/ddl/label"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
+	sess "github.com/pingcap/tidb/pkg/ddl/session"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -65,6 +65,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 	"github.com/tikv/client-go/v2/tikv"
 	kvutil "github.com/tikv/client-go/v2/util"
+	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
 )
 
@@ -435,9 +436,9 @@ func checkPartitionReplica(replicaCount uint64, addingDefinitions []model.Partit
 	if replicaCount > tiFlashStoreCount {
 		return false, errors.Errorf("[ddl] the tiflash replica count: %d should be less than the total tiflash server count: %d", replicaCount, tiFlashStoreCount)
 	}
-	for _, pd := range addingDefinitions {
-		startKey, endKey := tablecodec.GetTableHandleKeyRange(pd.ID)
-		regions, err := pdCli.ScanRegions(ctx, startKey, endKey, -1)
+	for _, pDef := range addingDefinitions {
+		startKey, endKey := tablecodec.GetTableHandleKeyRange(pDef.ID)
+		regions, err := pdCli.BatchScanRegions(ctx, []pd.KeyRange{{StartKey: startKey, EndKey: endKey}}, -1)
 		if err != nil {
 			return needWait, errors.Trace(err)
 		}
@@ -458,7 +459,7 @@ func checkPartitionReplica(replicaCount uint64, addingDefinitions []model.Partit
 				continue
 			}
 			needWait = true
-			logutil.DDLLogger().Info("partition replicas check failed in replica-only DDL state", zap.Int64("pID", pd.ID), zap.Uint64("wait region ID", region.Meta.Id), zap.Bool("tiflash peer at least one", tiflashPeerAtLeastOne), zap.Time("check time", time.Now()))
+			logutil.DDLLogger().Info("partition replicas check failed in replica-only DDL state", zap.Int64("pID", pDef.ID), zap.Uint64("wait region ID", region.Meta.Id), zap.Bool("tiflash peer at least one", tiflashPeerAtLeastOne), zap.Time("check time", time.Now()))
 			return needWait, nil
 		}
 	}
@@ -2675,6 +2676,8 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 	})
 
 	// Set both tables to the maximum auto IDs between normal table and partitioned table.
+	// TODO: Fix the issue of big transactions during EXCHANGE PARTITION with AutoID.
+	// Similar to https://github.com/pingcap/tidb/issues/46904
 	newAutoIDs := meta.AutoIDGroup{
 		RowID:       mathutil.Max(ptAutoIDs.RowID, ntAutoIDs.RowID),
 		IncrementID: mathutil.Max(ptAutoIDs.IncrementID, ntAutoIDs.IncrementID),
@@ -3498,8 +3501,6 @@ func (w *reorgPartitionWorker) fetchRowColVals(txn kv.Transaction, taskRange reo
 				return false, nil
 			}
 
-			// TODO: Extend for normal tables
-			// TODO: Extend for REMOVE PARTITIONING
 			_, err := w.rowDecoder.DecodeTheExistedColumnMap(w.exprCtx, handle, rawRow, sysTZ, w.rowMap)
 			if err != nil {
 				return false, errors.Trace(err)
@@ -3517,9 +3518,31 @@ func (w *reorgPartitionWorker) fetchRowColVals(txn kv.Transaction, taskRange reo
 			if err != nil {
 				return false, errors.Trace(err)
 			}
-			pid := p.GetPhysicalID()
-			newKey := tablecodec.EncodeTablePrefix(pid)
-			newKey = append(newKey, recordKey[len(newKey):]...)
+			var newKey kv.Key
+			if w.reorgedTbl.Meta().PKIsHandle || w.reorgedTbl.Meta().IsCommonHandle {
+				pid := p.GetPhysicalID()
+				newKey = tablecodec.EncodeTablePrefix(pid)
+				newKey = append(newKey, recordKey[len(newKey):]...)
+			} else {
+				// Non-clustered table / not unique _tidb_rowid for the whole table
+				// Generate new _tidb_rowid if exists.
+				// Due to EXCHANGE PARTITION, the existing _tidb_rowid may collide between partitions!
+				stmtCtx := w.sessCtx.GetSessionVars().StmtCtx
+				if stmtCtx.BaseRowID >= stmtCtx.MaxRowID {
+					// TODO: Which autoid allocator to use?
+					ids := uint64(max(1, w.batchCnt-len(w.rowRecords)))
+					// Keep using the original table's allocator
+					stmtCtx.BaseRowID, stmtCtx.MaxRowID, err = tables.AllocHandleIDs(w.ctx, w.tblCtx, w.reorgedTbl, ids)
+					if err != nil {
+						return false, errors.Trace(err)
+					}
+				}
+				recordID, err := tables.AllocHandle(w.ctx, w.tblCtx, w.reorgedTbl)
+				if err != nil {
+					return false, errors.Trace(err)
+				}
+				newKey = tablecodec.EncodeRecordKey(p.RecordPrefix(), recordID)
+			}
 			w.rowRecords = append(w.rowRecords, &rowRecord{
 				key: newKey, vals: rawRow,
 			})

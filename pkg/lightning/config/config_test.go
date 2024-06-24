@@ -692,7 +692,7 @@ func TestMaxErrorUnmarshal(t *testing.T) {
 		},
 		{
 			TOMLStr:      `max-error = "abcde"`,
-			ExpectErrStr: "invalid max-error 'abcde', should be an integer or a map of string:int64",
+			ExpectErrStr: "toml: line 1 (last key \"max-error\"): invalid max-error 'abcde', should be an integer or a map of string:int64",
 			CaseName:     "Abnormal_String",
 		},
 		{
@@ -943,13 +943,13 @@ func TestTomlPostRestore(t *testing.T) {
 		[post-restore]
 		checksum = "req"
 	`))
-	require.EqualError(t, err, "invalid op level 'req', please choose valid option between ['off', 'optional', 'required']")
+	require.EqualError(t, err, "toml: line 3 (last key \"post-restore.checksum\"): invalid op level 'req', please choose valid option between ['off', 'optional', 'required']")
 
 	err = cfg.LoadFromTOML([]byte(`
 		[post-restore]
 		analyze = 123
 	`))
-	require.EqualError(t, err, "invalid op level '123', please choose valid option between ['off', 'optional', 'required']")
+	require.EqualError(t, err, "toml: line 3 (last key \"post-restore.analyze\"): invalid op level '123', please choose valid option between ['off', 'optional', 'required']")
 
 	kvMap := map[string]PostOpLevel{
 		`"off"`:      OpLevelOff,

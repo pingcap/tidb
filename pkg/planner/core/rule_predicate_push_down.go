@@ -116,6 +116,11 @@ func (p *LogicalSelection) PredicatePushDown(predicates []expression.Expression,
 
 // PredicatePushDown implements base.LogicalPlan PredicatePushDown interface.
 func (p *LogicalUnionScan) PredicatePushDown(predicates []expression.Expression, opt *optimizetrace.LogicalOptimizeOp) ([]expression.Expression, base.LogicalPlan) {
+	if expression.ContainVirtualColumn(predicates) {
+		// predicates with virtual columns can't be pushed down to TiKV/TiFlash so they'll be put into a Projection
+		// below the UnionScan, but the current UnionScan doesn't support placing Projection below it, see #53951.
+		return predicates, p
+	}
 	retainedPredicates, _ := p.Children()[0].PredicatePushDown(predicates, opt)
 	p.conditions = make([]expression.Expression, 0, len(predicates))
 	p.conditions = append(p.conditions, predicates...)
@@ -130,8 +135,8 @@ func (ds *DataSource) PredicatePushDown(predicates []expression.Expression, opt 
 	// Add tidb_shard() prefix to the condtion for shard index in some scenarios
 	// TODO: remove it to the place building logical plan
 	predicates = ds.AddPrefix4ShardIndexes(ds.SCtx(), predicates)
-	ds.allConds = predicates
-	ds.pushedDownConds, predicates = expression.PushDownExprs(GetPushDownCtx(ds.SCtx()), predicates, kv.UnSpecified)
+	ds.AllConds = predicates
+	ds.PushedDownConds, predicates = expression.PushDownExprs(GetPushDownCtx(ds.SCtx()), predicates, kv.UnSpecified)
 	appendDataSourcePredicatePushDownTraceStep(ds, opt)
 	return predicates, ds
 }
@@ -341,7 +346,7 @@ func (p *LogicalProjection) appendExpr(expr expression.Expression) *expression.C
 	if col, ok := expr.(*expression.Column); ok {
 		return col
 	}
-	expr = expression.ColumnSubstitute(p.SCtx().GetExprCtx(), expr, p.schema, p.Exprs)
+	expr = expression.ColumnSubstitute(p.SCtx().GetExprCtx(), expr, p.Schema(), p.Exprs)
 	p.Exprs = append(p.Exprs, expr)
 
 	col := &expression.Column{
@@ -350,7 +355,7 @@ func (p *LogicalProjection) appendExpr(expr expression.Expression) *expression.C
 	}
 	col.SetCoercibility(expr.Coercibility())
 	col.SetRepertoire(expr.Repertoire())
-	p.schema.Append(col)
+	p.Schema().Append(col)
 	// reset ParseToJSONFlag in order to keep the flag away from json column
 	if col.GetStaticType().GetType() == mysql.TypeJSON {
 		col.GetStaticType().DelFlag(mysql.ParseToJSONFlag)
@@ -724,7 +729,7 @@ func (p *LogicalWindow) PredicatePushDown(predicates []expression.Expression, op
 // PredicatePushDown implements base.LogicalPlan PredicatePushDown interface.
 func (p *LogicalMemTable) PredicatePushDown(predicates []expression.Expression, _ *optimizetrace.LogicalOptimizeOp) ([]expression.Expression, base.LogicalPlan) {
 	if p.Extractor != nil {
-		predicates = p.Extractor.Extract(p.SCtx(), p.schema, p.names, predicates)
+		predicates = p.Extractor.Extract(p.SCtx(), p.Schema(), p.OutputNames(), predicates)
 	}
 	return predicates, p.Self()
 }
@@ -775,7 +780,7 @@ func appendSelectionPredicatePushDownTraceStep(p *LogicalSelection, conditions [
 }
 
 func appendDataSourcePredicatePushDownTraceStep(ds *DataSource, opt *optimizetrace.LogicalOptimizeOp) {
-	if len(ds.pushedDownConds) < 1 {
+	if len(ds.PushedDownConds) < 1 {
 		return
 	}
 	reason := func() string {
@@ -783,7 +788,7 @@ func appendDataSourcePredicatePushDownTraceStep(ds *DataSource, opt *optimizetra
 	}
 	action := func() string {
 		buffer := bytes.NewBufferString("The conditions[")
-		for i, cond := range ds.pushedDownConds {
+		for i, cond := range ds.PushedDownConds {
 			if i > 0 {
 				buffer.WriteString(",")
 			}
@@ -813,14 +818,14 @@ func appendAddSelectionTraceStep(p base.LogicalPlan, child base.LogicalPlan, sel
 // @param[in] conds            the original condtion of this datasource
 // @retval - the new condition after adding expression prefix
 func (ds *DataSource) AddPrefix4ShardIndexes(sc base.PlanContext, conds []expression.Expression) []expression.Expression {
-	if !ds.containExprPrefixUk {
+	if !ds.ContainExprPrefixUk {
 		return conds
 	}
 
 	var err error
 	newConds := conds
 
-	for _, path := range ds.possibleAccessPaths {
+	for _, path := range ds.PossibleAccessPaths {
 		if !path.IsUkShardIndexPath {
 			continue
 		}
@@ -830,7 +835,7 @@ func (ds *DataSource) AddPrefix4ShardIndexes(sc base.PlanContext, conds []expres
 				zap.Error(err),
 				zap.Uint64("connection id", sc.GetSessionVars().ConnectionID),
 				zap.String("database name", ds.DBName.L),
-				zap.String("table name", ds.tableInfo.Name.L),
+				zap.String("table name", ds.TableInfo.Name.L),
 				zap.String("index name", path.Index.Name.L))
 			return conds
 		}
@@ -842,7 +847,7 @@ func (ds *DataSource) AddPrefix4ShardIndexes(sc base.PlanContext, conds []expres
 func (ds *DataSource) addExprPrefixCond(sc base.PlanContext, path *util.AccessPath,
 	conds []expression.Expression) ([]expression.Expression, error) {
 	idxCols, idxColLens :=
-		expression.IndexInfo2PrefixCols(ds.Columns, ds.schema.Columns, path.Index)
+		expression.IndexInfo2PrefixCols(ds.Columns, ds.Schema().Columns, path.Index)
 	if len(idxCols) == 0 {
 		return conds, nil
 	}

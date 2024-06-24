@@ -37,7 +37,6 @@ import (
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/kvcache"
-	utilpc "github.com/pingcap/tidb/pkg/util/plancache"
 )
 
 // PlanCacheKeyTestIssue43667 is only for test.
@@ -163,18 +162,18 @@ func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isNonPrep
 	return nil
 }
 
-// GetPlanFromSessionPlanCache is the entry point of Plan Cache.
-// It tries to get a valid cached plan from this session's plan cache.
+// GetPlanFromPlanCache is the entry point of Plan Cache.
+// It tries to get a valid cached plan from plan cache.
 // If there is no such a plan, it'll call the optimizer to generate a new one.
 // isNonPrepared indicates whether to use the non-prepared plan cache or the prepared plan cache.
-func GetPlanFromSessionPlanCache(ctx context.Context, sctx sessionctx.Context,
+func GetPlanFromPlanCache(ctx context.Context, sctx sessionctx.Context,
 	isNonPrepared bool, is infoschema.InfoSchema, stmt *PlanCacheStmt,
 	params []expression.Expression) (plan base.Plan, names []*types.FieldName, err error) {
 	if err := planCachePreprocess(ctx, sctx, isNonPrepared, is, stmt, params); err != nil {
 		return nil, nil, err
 	}
 
-	var cacheKey kvcache.Key
+	var cacheKey string
 	sessVars := sctx.GetSessionVars()
 	stmtCtx := sessVars.StmtCtx
 	cacheEnabled := false
@@ -218,7 +217,7 @@ func GetPlanFromSessionPlanCache(ctx context.Context, sctx sessionctx.Context,
 		}
 	}
 
-	var matchOpts *utilpc.PlanCacheMatchOpts
+	var matchOpts *PlanCacheMatchOpts
 	if stmtCtx.UseCache() {
 		var cacheVal kvcache.Value
 		var hit, isPointPlan bool
@@ -231,6 +230,7 @@ func GetPlanFromSessionPlanCache(ctx context.Context, sctx sessionctx.Context,
 			isPointPlan, hit = true, true
 		} else {
 			matchOpts = GetMatchOpts(sctx, is, stmt, params)
+			// TODO: consider instance-level plan cache
 			cacheVal, hit = sctx.GetSessionPlanCache().Get(cacheKey, matchOpts)
 		}
 		if hit {
@@ -247,7 +247,7 @@ func GetPlanFromSessionPlanCache(ctx context.Context, sctx sessionctx.Context,
 }
 
 func adjustCachedPlan(sctx sessionctx.Context, cachedVal *PlanCacheValue, isNonPrepared, isPointPlan bool,
-	cacheKey kvcache.Key, bindSQL string, is infoschema.InfoSchema, stmt *PlanCacheStmt) (base.Plan,
+	cacheKey string, bindSQL string, is infoschema.InfoSchema, stmt *PlanCacheStmt) (base.Plan,
 	[]*types.FieldName, bool, error) {
 	sessVars := sctx.GetSessionVars()
 	stmtCtx := sessVars.StmtCtx
@@ -286,8 +286,8 @@ func adjustCachedPlan(sctx sessionctx.Context, cachedVal *PlanCacheValue, isNonP
 // generateNewPlan call the optimizer to generate a new plan for current statement
 // and try to add it to cache
 func generateNewPlan(ctx context.Context, sctx sessionctx.Context, isNonPrepared bool, is infoschema.InfoSchema,
-	stmt *PlanCacheStmt, cacheKey kvcache.Key, latestSchemaVersion int64, bindSQL string,
-	matchOpts *utilpc.PlanCacheMatchOpts) (base.Plan, []*types.FieldName, error) {
+	stmt *PlanCacheStmt, cacheKey string, latestSchemaVersion int64, bindSQL string,
+	matchOpts *PlanCacheMatchOpts) (base.Plan, []*types.FieldName, error) {
 	stmtAst := stmt.PreparedAst
 	sessVars := sctx.GetSessionVars()
 	stmtCtx := sessVars.StmtCtx

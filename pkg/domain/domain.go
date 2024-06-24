@@ -39,6 +39,8 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
 	"github.com/pingcap/tidb/pkg/ddl/schematracker"
+	ddlsession "github.com/pingcap/tidb/pkg/ddl/session"
+	"github.com/pingcap/tidb/pkg/ddl/systable"
 	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
@@ -196,8 +198,9 @@ type Domain struct {
 		sctxs map[sessionctx.Context]bool
 	}
 
-	mdlCheckCh      chan struct{}
-	stopAutoAnalyze atomicutil.Bool
+	mdlCheckCh        chan struct{}
+	stopAutoAnalyze   atomicutil.Bool
+	minJobIDRefresher *systable.MinJobIDRefresher
 }
 
 type mdlCheckTableInfo struct {
@@ -807,15 +810,19 @@ func (do *Domain) refreshMDLCheckTableInfo() {
 	}
 	// Make sure the session is new.
 	sctx := se.(sessionctx.Context)
-	if _, err := sctx.GetSQLExecutor().ExecuteInternal(kv.WithInternalSourceType(context.Background(), kv.InternalTxnMeta), "rollback"); err != nil {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnMeta)
+	if _, err := sctx.GetSQLExecutor().ExecuteInternal(ctx, "rollback"); err != nil {
 		se.Close()
 		return
 	}
 	defer do.sysSessionPool.Put(se)
 	exec := sctx.GetRestrictedSQLExecutor()
 	domainSchemaVer := do.InfoSchema().SchemaMetaVersion()
-	rows, _, err := exec.ExecRestrictedSQL(kv.WithInternalSourceType(context.Background(), kv.InternalTxnMeta), nil,
-		fmt.Sprintf("select job_id, version, table_ids from mysql.tidb_mdl_info where version <= %d", domainSchemaVer))
+	do.minJobIDRefresher.Refresh(ctx)
+	// the job must stay inside tidb_ddl_job if we need to wait schema version for it.
+	sql := fmt.Sprintf(`select job_id, version, table_ids from mysql.tidb_mdl_info
+		where job_id >= %d and version <= %d`, do.minJobIDRefresher.GetCurrMinJobID(), domainSchemaVer)
+	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, sql)
 	if err != nil {
 		logutil.BgLogger().Warn("get mdl info from tidb_mdl_info failed", zap.Error(err))
 		return
@@ -1195,6 +1202,8 @@ func (do *Domain) Init(
 		return sysExecutorFactory(do)
 	}
 	sysCtxPool := pools.NewResourcePool(sysFac, 512, 512, resourceIdleTimeout)
+	do.minJobIDRefresher = systable.NewMinJobIDRefresher(systable.NewManager(ddlsession.NewSessionPool(sysCtxPool)))
+
 	ctx, cancelFunc := context.WithCancel(context.Background())
 	do.cancelFns = append(do.cancelFns, cancelFunc)
 	var callback ddl.Callback
@@ -1212,6 +1221,7 @@ func (do *Domain) Init(
 		ddl.WithInfoCache(do.infoCache),
 		ddl.WithHook(callback),
 		ddl.WithLease(ddlLease),
+		ddl.WithSchemaLoader(do),
 	)
 
 	failpoint.Inject("MockReplaceDDL", func(val failpoint.Value) {
@@ -2250,6 +2260,9 @@ func (do *Domain) UpdateTableStatsLoop(ctx, initStatsCtx sessionctx.Context) err
 	// This is because the updated worker's primary responsibilities are to update the change delta and handle DDL operations.
 	// These tasks do not interfere with or depend on the initialization process.
 	do.wg.Run(func() { do.updateStatsWorker(ctx, owner) }, "updateStatsWorker")
+	do.wg.Run(func() {
+		do.handleDDLEvent()
+	}, "handleDDLEvent")
 	// Wait for the stats worker to finish the initialization.
 	// Otherwise, we may start the auto analyze worker before the stats cache is initialized.
 	do.wg.Run(
@@ -2297,9 +2310,6 @@ func quitStatsOwner(do *Domain, mgr owner.Manager) {
 func (do *Domain) StartLoadStatsSubWorkers(ctxList []sessionctx.Context) {
 	statsHandle := do.StatsHandle()
 	for _, ctx := range ctxList {
-		// The sync load will affect how optimizer choose the plan.
-		// We need to assign high priority to it so that we can get the stats as quick as we can.
-		ctx.GetSessionVars().StmtCtx.Priority = mysql.HighPriority
 		do.wg.Add(1)
 		go statsHandle.SubLoadWorker(ctx, do.exit, do.wg)
 	}
@@ -2421,6 +2431,24 @@ func (*Domain) updateStatsWorkerExitPreprocessing(statsHandle *handle.Handle, ow
 	}
 }
 
+func (do *Domain) handleDDLEvent() {
+	logutil.BgLogger().Info("handleDDLEvent started.")
+	defer util.Recover(metrics.LabelDomain, "handleDDLEvent", nil, false)
+	statsHandle := do.StatsHandle()
+	for {
+		select {
+		case <-do.exit:
+			return
+			// This channel is sent only by ddl owner.
+		case t := <-statsHandle.DDLEventCh():
+			err := statsHandle.HandleDDLEvent(t)
+			if err != nil {
+				logutil.BgLogger().Error("handle ddl event failed", zap.String("event", t.String()), zap.Error(err))
+			}
+		}
+	}
+}
+
 func (do *Domain) updateStatsWorker(_ sessionctx.Context, owner owner.Manager) {
 	defer util.Recover(metrics.LabelDomain, "updateStatsWorker", nil, false)
 	logutil.BgLogger().Info("updateStatsWorker started.")
@@ -2447,12 +2475,6 @@ func (do *Domain) updateStatsWorker(_ sessionctx.Context, owner owner.Manager) {
 		case <-do.exit:
 			do.updateStatsWorkerExitPreprocessing(statsHandle, owner)
 			return
-			// This channel is sent only by ddl owner.
-		case t := <-statsHandle.DDLEventCh():
-			err := statsHandle.HandleDDLEvent(t)
-			if err != nil {
-				logutil.BgLogger().Error("handle ddl event failed", zap.String("event", t.String()), zap.Error(err))
-			}
 		case <-deltaUpdateTicker.C:
 			err := statsHandle.DumpStatsDeltaToKV(false)
 			if err != nil {

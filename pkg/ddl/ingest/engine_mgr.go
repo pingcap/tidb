@@ -22,7 +22,7 @@ import (
 )
 
 // Register implements BackendCtx.
-func (bc *litBackendCtx) Register(indexIDs []int64, tableName string) ([]Engine, error) {
+func (bc *litBackendCtx) Register(indexIDs []int64, uniques []bool, tableName string) ([]Engine, error) {
 	ret := make([]Engine, 0, len(indexIDs))
 
 	for _, indexID := range indexIDs {
@@ -44,8 +44,7 @@ func (bc *litBackendCtx) Register(indexIDs []int64, tableName string) ([]Engine,
 
 	bc.memRoot.RefreshConsumption()
 	numIdx := int64(len(indexIDs))
-	engineCacheSize := int64(bc.cfg.TikvImporter.EngineMemCacheSize)
-	ok := bc.memRoot.CheckConsume(numIdx * (structSizeEngineInfo + engineCacheSize))
+	ok := bc.memRoot.CheckConsume(numIdx * structSizeEngineInfo)
 	if !ok {
 		return nil, genEngineAllocMemFailedErr(bc.ctx, bc.memRoot, bc.jobID, indexIDs)
 	}
@@ -59,7 +58,7 @@ func (bc *litBackendCtx) Register(indexIDs []int64, tableName string) ([]Engine,
 
 	openedEngines := make(map[int64]*engineInfo, numIdx)
 
-	for _, indexID := range indexIDs {
+	for i, indexID := range indexIDs {
 		openedEngine, err := mgr.OpenEngine(bc.ctx, cfg, tableName, int32(indexID))
 		if err != nil {
 			logutil.Logger(bc.ctx).Warn(LitErrCreateEngineFail,
@@ -77,6 +76,7 @@ func (bc *litBackendCtx) Register(indexIDs []int64, tableName string) ([]Engine,
 			bc.ctx,
 			bc.jobID,
 			indexID,
+			uniques[i],
 			cfg,
 			bc.cfg,
 			openedEngine,
@@ -90,7 +90,7 @@ func (bc *litBackendCtx) Register(indexIDs []int64, tableName string) ([]Engine,
 		ret = append(ret, ei)
 		bc.engines[indexID] = ei
 	}
-	bc.memRoot.Consume(numIdx * (structSizeEngineInfo + engineCacheSize))
+	bc.memRoot.Consume(numIdx * structSizeEngineInfo)
 
 	logutil.Logger(bc.ctx).Info(LitInfoOpenEngine, zap.Int64("job ID", bc.jobID),
 		zap.Int64s("index IDs", indexIDs),
@@ -101,14 +101,19 @@ func (bc *litBackendCtx) Register(indexIDs []int64, tableName string) ([]Engine,
 
 // UnregisterEngines implements BackendCtx.
 func (bc *litBackendCtx) UnregisterEngines() {
+	bc.unregisterMu.Lock()
+	defer bc.unregisterMu.Unlock()
+
+	if len(bc.engines) == 0 {
+		return
+	}
 	numIdx := int64(len(bc.engines))
 	for _, ei := range bc.engines {
 		ei.Clean()
 	}
 	bc.engines = make(map[int64]*engineInfo, 10)
 
-	engineCacheSize := int64(bc.cfg.TikvImporter.EngineMemCacheSize)
-	bc.memRoot.Release(numIdx * (structSizeEngineInfo + engineCacheSize))
+	bc.memRoot.Release(numIdx * structSizeEngineInfo)
 }
 
 // ImportStarted implements BackendCtx.

@@ -30,7 +30,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/ddl/copr"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
-	"github.com/pingcap/tidb/pkg/ddl/internal/session"
+	"github.com/pingcap/tidb/pkg/ddl/session"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/operator"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -308,7 +308,7 @@ func (src *TableScanTaskSource) generateTasks() error {
 	startKey := src.startKey
 	endKey := src.endKey
 	for {
-		kvRanges, err := splitTableRanges(
+		kvRanges, err := splitAndValidateTableRanges(
 			src.ctx,
 			src.tbl,
 			src.store,
@@ -510,16 +510,26 @@ func NewWriteExternalStoreOperator(
 	memoryQuota uint64,
 	reorgMeta *model.DDLReorgMeta,
 ) *WriteExternalStoreOperator {
+	// due to multi-schema-change, we may merge processing multiple indexes into one
+	// local backend.
+	hasUnique := false
+	for _, index := range indexes {
+		if index.Meta().Unique {
+			hasUnique = true
+			break
+		}
+	}
+
 	pool := workerpool.NewWorkerPool(
 		"WriteExternalStoreOperator",
 		util.DDL,
 		concurrency,
 		func() workerpool.Worker[IndexRecordChunk, IndexWriteResult] {
 			writers := make([]ingest.Writer, 0, len(indexes))
-			for i, index := range indexes {
+			for i := range indexes {
 				builder := external.NewWriterBuilder().
 					SetOnCloseFunc(onClose).
-					SetKeyDuplicationEncoding(index.Meta().Unique).
+					SetKeyDuplicationEncoding(hasUnique).
 					SetMemorySizeLimit(memoryQuota).
 					SetGroupOffset(i)
 				writerID := uuid.New().String()
@@ -573,6 +583,8 @@ func NewIndexIngestOperator(
 	concurrency int,
 	reorgMeta *model.DDLReorgMeta,
 ) *IndexIngestOperator {
+	writerCfg := getLocalWriterConfig(len(indexes), concurrency)
+
 	var writerIDAlloc atomic.Int32
 	pool := workerpool.NewWorkerPool(
 		"indexIngestOperator",
@@ -582,9 +594,10 @@ func NewIndexIngestOperator(
 			writers := make([]ingest.Writer, 0, len(indexes))
 			for i := range indexes {
 				writerID := int(writerIDAlloc.Add(1))
-				writer, err := engines[i].CreateWriter(writerID)
+				writer, err := engines[i].CreateWriter(writerID, writerCfg)
 				if err != nil {
 					logutil.Logger(ctx).Error("create index ingest worker failed", zap.Error(err))
+					ctx.onError(err)
 					return nil
 				}
 				writers = append(writers, writer)
@@ -822,6 +835,7 @@ func (s *indexWriteResultSink) flush() error {
 	failpoint.Inject("mockFlushError", func(_ failpoint.Value) {
 		failpoint.Return(errors.New("mock flush error"))
 	})
+	// TODO(lance6716): convert to ErrKeyExists inside Flush
 	_, _, errIdxID, err := s.backendCtx.Flush(ingest.FlushModeForceFlushAndImport)
 	if err != nil {
 		if common.ErrFoundDuplicateKeys.Equal(err) {
@@ -836,7 +850,7 @@ func (s *indexWriteResultSink) flush() error {
 				logutil.Logger(s.ctx).Error("index not found", zap.Int64("indexID", errIdxID))
 				return kv.ErrKeyExists
 			}
-			return convertToKeyExistsErr(err, idxInfo.Meta(), s.tbl.Meta())
+			return ingest.TryConvertToKeyExistsErr(err, idxInfo.Meta(), s.tbl.Meta())
 		}
 		logutil.Logger(s.ctx).Error("flush error",
 			zap.String("category", "ddl"), zap.Error(err))

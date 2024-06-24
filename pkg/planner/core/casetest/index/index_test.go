@@ -95,3 +95,56 @@ func TestInvisibleIndex(t *testing.T) {
 			`IndexReader_7 10000.00 root  index:IndexFullScan_6`,
 			`└─IndexFullScan_6 10000.00 cop[tikv] table:t1, index:a(a) keep order:false, stats:pseudo`))
 }
+
+func TestRangeDerivation(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (a1 int, b1 int, c1 int, primary key pkx (a1,b1));")
+	tk.MustExec("create table t1char (a1 char(5), b1 char(5), c1 int, primary key pkx (a1,b1));")
+	tk.MustExec("create table t(a int, b int, c int, primary key(a,b));")
+	tk.MustExec("create table tuk (a int, b int, c int, unique key (a, b, c));")
+	tk.MustExec("set @@session.tidb_regard_null_as_point=false;")
+
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+	}
+	indexRangeSuiteData := GetIndexRangeSuiteData()
+	indexRangeSuiteData.LoadTestCases(t, &input, &output)
+	indexRangeSuiteData.LoadTestCases(t, &input, &output)
+	for i, sql := range input {
+		plan := tk.MustQuery("explain format = 'brief' " + sql)
+		testdata.OnRecord(func() {
+			output[i].SQL = sql
+			output[i].Plan = testdata.ConvertRowsToStrings(plan.Rows())
+		})
+		plan.Check(testkit.Rows(output[i].Plan...))
+	}
+}
+
+func TestRowFunctionMatchTheIndexRangeScan(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`CREATE TABLE t1 (k1 int , k2 int, k3 int, index pk1(k1, k2))`)
+	tk.MustExec(`create table t2 (k1 int, k2 int)`)
+	var input []string
+	var output []struct {
+		SQL    string
+		Plan   []string
+		Result []string
+	}
+	integrationSuiteData := GetIntegrationSuiteData()
+	integrationSuiteData.LoadTestCases(t, &input, &output)
+	for i, tt := range input {
+		testdata.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("explain format='brief' " + tt).Rows())
+			output[i].Result = testdata.ConvertRowsToStrings(tk.MustQuery(tt).Sort().Rows())
+		})
+		tk.MustQuery("explain format='brief' " + tt).Check(testkit.Rows(output[i].Plan...))
+		tk.MustQuery(tt).Sort().Check(testkit.Rows(output[i].Result...))
+	}
+}

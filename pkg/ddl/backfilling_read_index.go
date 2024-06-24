@@ -154,17 +154,22 @@ func (r *readIndexExecutor) OnFinished(ctx context.Context, subtask *proto.Subta
 	}
 	sum, _ := r.subtaskSummary.LoadAndDelete(subtask.ID)
 	s := sum.(*readIndexSummary)
+	sm.MetaGroups = s.metaGroups
+	sm.EleIDs = make([]int64, 0, len(r.indexes))
+	for _, index := range r.indexes {
+		sm.EleIDs = append(sm.EleIDs, index.ID)
+	}
+
 	all := external.SortedKVMeta{}
 	for _, g := range s.metaGroups {
 		all.Merge(g)
 	}
-	sm.MetaGroups = s.metaGroups
-
 	tidblogutil.Logger(ctx).Info("get key boundary on subtask finished",
 		zap.String("start", hex.EncodeToString(all.StartKey)),
 		zap.String("end", hex.EncodeToString(all.EndKey)),
 		zap.Int("fileCount", len(all.MultipleFilesStats)),
 		zap.Uint64("totalKVSize", all.TotalKVSize))
+
 	meta, err := json.Marshal(sm)
 	if err != nil {
 		return err
@@ -206,10 +211,12 @@ func (r *readIndexExecutor) buildLocalStorePipeline(
 	}
 	d := r.d
 	indexIDs := make([]int64, 0, len(r.indexes))
+	uniques := make([]bool, 0, len(r.indexes))
 	for _, index := range r.indexes {
 		indexIDs = append(indexIDs, index.ID)
+		uniques = append(uniques, index.Unique)
 	}
-	engines, err := r.bc.Register(indexIDs, r.job.TableName)
+	engines, err := r.bc.Register(indexIDs, uniques, r.job.TableName)
 	if err != nil {
 		tidblogutil.Logger(opCtx).Error("cannot register new engine",
 			zap.Error(err),

@@ -19,7 +19,7 @@ import (
 	"testing"
 
 	"github.com/ngaut/pools"
-	"github.com/pingcap/tidb/pkg/ddl/internal/session"
+	"github.com/pingcap/tidb/pkg/ddl/session"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 )
@@ -32,11 +32,11 @@ func TestSessionPool(t *testing.T) {
 		newTk := testkit.NewTestKit(t, store)
 		return newTk.Session(), nil
 	}, 4, 4, 0)
-	pool := session.NewSessionPool(resourcePool, store)
+	pool := session.NewSessionPool(resourcePool)
 	sessCtx, err := pool.Get()
 	require.NoError(t, err)
 	se := session.NewSession(sessCtx)
-	err = se.Begin()
+	err = se.Begin(context.Background())
 	startTS := se.GetSessionVars().TxnCtx.StartTS
 	require.NoError(t, err)
 	rows, err := se.Execute(context.Background(), "select 2;", "test")
@@ -53,7 +53,7 @@ func TestSessionPool(t *testing.T) {
 		}
 	}
 	require.NotEqual(t, uint64(0), targetTS)
-	err = se.Commit()
+	err = se.Commit(context.Background())
 	pool.Put(sessCtx)
 	require.NoError(t, err)
 	tsList = mgr.GetInternalSessionStartTSList()

@@ -22,8 +22,8 @@ import (
 	"strconv"
 
 	"github.com/pingcap/errors"
-	sess "github.com/pingcap/tidb/pkg/ddl/internal/session"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
+	sess "github.com/pingcap/tidb/pkg/ddl/session"
 	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
@@ -40,8 +40,8 @@ const (
 )
 
 // AddHistoryDDLJob record the history job.
-func AddHistoryDDLJob(sess *sess.Session, t *meta.Meta, job *model.Job, updateRawArgs bool) error {
-	err := addHistoryDDLJob2Table(sess, job, updateRawArgs)
+func AddHistoryDDLJob(ctx context.Context, sess *sess.Session, t *meta.Meta, job *model.Job, updateRawArgs bool) error {
+	err := addHistoryDDLJob2Table(ctx, sess, job, updateRawArgs)
 	if err != nil {
 		logutil.DDLLogger().Info("failed to add DDL job to history table", zap.Error(err))
 	}
@@ -50,12 +50,12 @@ func AddHistoryDDLJob(sess *sess.Session, t *meta.Meta, job *model.Job, updateRa
 }
 
 // addHistoryDDLJob2Table adds DDL job to history table.
-func addHistoryDDLJob2Table(sess *sess.Session, job *model.Job, updateRawArgs bool) error {
+func addHistoryDDLJob2Table(ctx context.Context, sess *sess.Session, job *model.Job, updateRawArgs bool) error {
 	b, err := job.Encode(updateRawArgs)
 	if err != nil {
 		return err
 	}
-	_, err = sess.Execute(context.Background(),
+	_, err = sess.Execute(ctx,
 		fmt.Sprintf("insert ignore into mysql.tidb_ddl_history(job_id, job_meta, db_name, table_name, schema_ids, table_ids, create_time) values (%d, %s, %s, %s, %s, %s, %v)",
 			job.ID, util.WrapKey2String(b), strconv.Quote(job.SchemaName), strconv.Quote(job.TableName),
 			strconv.Quote(strconv.FormatInt(job.SchemaID, 10)),

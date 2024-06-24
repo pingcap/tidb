@@ -213,6 +213,13 @@ func TestListTablesWithSpecialAttribute(t *testing.T) {
 		tk.MustExec("drop database test_db1")
 		checkResult(t, tk, "test_db2 t_tiflash", "test_db2 t_ttl")
 
+		tk.MustExec("create or replace placement policy x primary_region=\"cn-east-1\" regions=\"cn-east-1\"")
+		tk.MustExec("create table t_placement (a int) placement policy=\"x\"")
+		checkResult(t, tk, "test_db2 t_placement", "test_db2 t_tiflash", "test_db2 t_ttl")
+
+		tk.MustExec("create table pt_placement (id int) placement policy x partition by HASH(id) PARTITIONS 4")
+		checkResult(t, tk, "test_db2 pt_placement", "test_db2 t_placement", "test_db2 t_tiflash", "test_db2 t_ttl")
+
 		tk.MustExec("drop database test_db2")
 		checkResult(t, tk)
 	}

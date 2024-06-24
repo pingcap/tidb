@@ -20,7 +20,7 @@ import (
 
 	"github.com/ngaut/pools"
 	"github.com/pingcap/tidb/pkg/ddl/copr"
-	"github.com/pingcap/tidb/pkg/ddl/internal/session"
+	"github.com/pingcap/tidb/pkg/ddl/session"
 	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -55,7 +55,7 @@ func FetchChunk4Test(copCtx copr.CopContext, tbl table.PhysicalTable, startKey, 
 		ctx.Store = store
 		return ctx, nil
 	}, 8, 8, 0)
-	sessPool := session.NewSessionPool(resPool, store)
+	sessPool := session.NewSessionPool(resPool)
 	pool := newCopReqSenderPool(context.Background(), copCtx, store, taskCh, sessPool, nil)
 	pool.chunkSender = &resultChanForTest{ch: resultCh}
 	pool.adjustSize(1)

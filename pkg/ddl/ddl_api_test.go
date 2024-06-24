@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/sync/errgroup"
@@ -163,14 +164,14 @@ func TestCreateViewConcurrently(t *testing.T) {
 		counterErr error
 		counter    int
 	)
-	failpoint.EnableCall("github.com/pingcap/tidb/pkg/ddl/onDDLCreateView", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onDDLCreateView", func(job *model.Job) {
 		counter++
 		if counter > 1 {
 			counterErr = fmt.Errorf("create view job should not run concurrently")
 			return
 		}
 	})
-	failpoint.EnableCall("github.com/pingcap/tidb/pkg/ddl/afterDelivery2Worker", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterDelivery2Worker", func(job *model.Job) {
 		if job.Type == model.ActionCreateView {
 			counter--
 		}
