@@ -25,7 +25,6 @@ go_library(
         "//pkg/util",
         "//pkg/util/chunk",
         "//pkg/util/intest",
-        "//pkg/util/logutil",
         "//pkg/util/sqlexec",
         "//pkg/util/sqlexec/mock",
         "@com_github_ngaut_pools//:pools",

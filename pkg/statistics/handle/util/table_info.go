@@ -19,8 +19,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/table"
-	"github.com/pingcap/tidb/pkg/util/logutil"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/pkg/util/intest"
 )
 
 // TableInfoGetter is used to get table meta info.
@@ -65,10 +64,7 @@ func buildPartitionID2TableID(is infoschema.InfoSchema) map[int64]int64 {
 	for _, db := range rs {
 		for _, tbl := range db.TableInfos {
 			pi := tbl.GetPartitionInfo()
-			if pi == nil {
-				logutil.BgLogger().Error("table with partition attribute doesn't have partition info", zap.String("table", tbl.Name.O))
-				continue
-			}
+			intest.AssertNotNil(pi)
 			for _, def := range pi.Definitions {
 				mapper[def.ID] = tbl.ID
 			}
