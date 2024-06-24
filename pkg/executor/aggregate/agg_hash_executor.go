@@ -327,7 +327,8 @@ func (e *HashAggExec) initPartialWorkers(partialConcurrency int, finalConcurrenc
 		}
 		e.memTracker.Consume(e.partialWorkers[i].chk.MemoryUsage())
 		input := &HashAggInput{
-			chk:        chunk.New(e.RetFieldTypes(), 0, e.MaxChunkSize()),
+			chk: exec.NewFirstChunk(e.Children(0)),
+			// chk:        chunk.New(e.RetFieldTypes(), 0, e.MaxChunkSize()),
 			giveBackCh: e.partialWorkers[i].inputCh,
 		}
 		e.memTracker.Consume(input.chk.MemoryUsage())
