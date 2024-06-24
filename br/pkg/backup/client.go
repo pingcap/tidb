@@ -1044,6 +1044,9 @@ func WriteBackupDDLJobs(metaWriter *metautil.MetaWriter, g glue.Glue, store kv.S
 		return errors.Trace(err)
 	}
 
+	// filter out the jobs
+	allJobs, _ = appendJobsFn(allJobs)
+
 	historyJobsIter, err := ddl.GetLastHistoryDDLJobsIterator(newestMeta)
 	if err != nil {
 		return errors.Trace(err)
