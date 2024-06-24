@@ -277,21 +277,6 @@ func (p *LogicalProjection) ReplaceExprColumns(replace map[string]*expression.Co
 }
 
 // ReplaceExprColumns implements base.LogicalPlan interface.
-func (la *LogicalAggregation) ReplaceExprColumns(replace map[string]*expression.Column) {
-	for _, agg := range la.AggFuncs {
-		for _, aggExpr := range agg.Args {
-			ResolveExprAndReplace(aggExpr, replace)
-		}
-		for _, orderExpr := range agg.OrderByItems {
-			ResolveExprAndReplace(orderExpr.Expr, replace)
-		}
-	}
-	for _, gbyItem := range la.GroupByItems {
-		ResolveExprAndReplace(gbyItem, replace)
-	}
-}
-
-// ReplaceExprColumns implements base.LogicalPlan interface.
 func (p *LogicalSelection) ReplaceExprColumns(replace map[string]*expression.Column) {
 	for _, expr := range p.Conditions {
 		ResolveExprAndReplace(expr, replace)

@@ -3180,11 +3180,6 @@ func canPushToCopImpl(lp base.LogicalPlan, storeTp kv.StoreType, considerDual bo
 	return ret
 }
 
-// CanPushToCop implements LogicalPlan interface.
-func (la *LogicalAggregation) CanPushToCop(storeTp kv.StoreType) bool {
-	return la.BaseLogicalPlan.CanPushToCop(storeTp) && !la.NoCopPushDown
-}
-
 func getEnforcedStreamAggs(la *LogicalAggregation, prop *property.PhysicalProperty) []base.PhysicalPlan {
 	if prop.IsFlashProp() {
 		return nil
@@ -3228,19 +3223,6 @@ func getEnforcedStreamAggs(la *LogicalAggregation, prop *property.PhysicalProper
 		enforcedAggs = append(enforcedAggs, agg)
 	}
 	return enforcedAggs
-}
-
-func (la *LogicalAggregation) distinctArgsMeetsProperty() bool {
-	for _, aggFunc := range la.AggFuncs {
-		if aggFunc.HasDistinct {
-			for _, distinctArg := range aggFunc.Args {
-				if !expression.Contains(la.GroupByItems, distinctArg) {
-					return false
-				}
-			}
-		}
-	}
-	return true
 }
 
 func getStreamAggs(la *LogicalAggregation, prop *property.PhysicalProperty) []base.PhysicalPlan {
@@ -3318,33 +3300,6 @@ func getStreamAggs(la *LogicalAggregation, prop *property.PhysicalProperty) []ba
 		streamAggs = append(streamAggs, getEnforcedStreamAggs(la, prop)...)
 	}
 	return streamAggs
-}
-
-// TODO: support more operators and distinct later
-func (la *LogicalAggregation) checkCanPushDownToMPP() bool {
-	hasUnsupportedDistinct := false
-	for _, agg := range la.AggFuncs {
-		// MPP does not support distinct except count distinct now
-		if agg.HasDistinct {
-			if agg.Name != ast.AggFuncCount && agg.Name != ast.AggFuncGroupConcat {
-				hasUnsupportedDistinct = true
-			}
-		}
-		// MPP does not support AggFuncApproxCountDistinct now
-		if agg.Name == ast.AggFuncApproxCountDistinct {
-			hasUnsupportedDistinct = true
-		}
-	}
-	if hasUnsupportedDistinct {
-		warnErr := errors.NewNoStackError("Aggregation can not be pushed to storage layer in mpp mode because it contains agg function with distinct")
-		if la.SCtx().GetSessionVars().StmtCtx.InExplainStmt {
-			la.SCtx().GetSessionVars().StmtCtx.AppendWarning(warnErr)
-		} else {
-			la.SCtx().GetSessionVars().StmtCtx.AppendExtraWarning(warnErr)
-		}
-		return false
-	}
-	return CheckAggCanPushCop(la.SCtx(), la.AggFuncs, la.GroupByItems, kv.TiFlash)
 }
 
 func tryToGetMppHashAggs(la *LogicalAggregation, prop *property.PhysicalProperty) (hashAggs []base.PhysicalPlan) {
@@ -3552,50 +3507,6 @@ func getHashAggs(la *LogicalAggregation, prop *property.PhysicalProperty) []base
 		}
 	}
 	return hashAggs
-}
-
-// ResetHintIfConflicted resets the PreferAggType if they are conflicted,
-// and returns the two PreferAggType hints.
-func (la *LogicalAggregation) ResetHintIfConflicted() (preferHash bool, preferStream bool) {
-	preferHash = (la.PreferAggType & h.PreferHashAgg) > 0
-	preferStream = (la.PreferAggType & h.PreferStreamAgg) > 0
-	if preferHash && preferStream {
-		la.SCtx().GetSessionVars().StmtCtx.SetHintWarning("Optimizer aggregation hints are conflicted")
-		la.PreferAggType = 0
-		preferHash, preferStream = false, false
-	}
-	return
-}
-
-// ExhaustPhysicalPlans implements LogicalPlan interface.
-func (la *LogicalAggregation) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
-	if la.PreferAggToCop {
-		if !la.CanPushToCop(kv.TiKV) {
-			la.SCtx().GetSessionVars().StmtCtx.SetHintWarning(
-				"Optimizer Hint AGG_TO_COP is inapplicable")
-			la.PreferAggToCop = false
-		}
-	}
-
-	preferHash, preferStream := la.ResetHintIfConflicted()
-
-	hashAggs := getHashAggs(la, prop)
-	if hashAggs != nil && preferHash {
-		return hashAggs, true, nil
-	}
-
-	streamAggs := getStreamAggs(la, prop)
-	if streamAggs != nil && preferStream {
-		return streamAggs, true, nil
-	}
-
-	aggs := append(hashAggs, streamAggs...)
-
-	if streamAggs == nil && preferStream && !prop.IsSortItemEmpty() {
-		la.SCtx().GetSessionVars().StmtCtx.SetHintWarning("Optimizer Hint STREAM_AGG is inapplicable")
-	}
-
-	return aggs, !(preferStream || preferHash), nil
 }
 
 // ExhaustPhysicalPlans implements LogicalPlan interface.

@@ -45,36 +45,6 @@ func buildKeyInfo(lp base.LogicalPlan) {
 	lp.BuildKeyInfo(lp.Schema(), childSchema)
 }
 
-// BuildKeyInfo implements base.LogicalPlan BuildKeyInfo interface.
-func (la *LogicalAggregation) BuildKeyInfo(selfSchema *expression.Schema, childSchema []*expression.Schema) {
-	// According to the issue#46962, we can ignore the judgment of partial agg
-	// Sometimes, the agg inside of subquery and there is a true condition in where clause, the agg function is empty.
-	// For example, ``` select xxxx from xxx WHERE TRUE = ALL ( SELECT TRUE GROUP BY 1 LIMIT 1 ) IS NULL IS NOT NULL;
-	// In this case, the agg is complete mode and we can ignore this check.
-	if len(la.AggFuncs) != 0 && la.IsPartialModeAgg() {
-		return
-	}
-	la.LogicalSchemaProducer.BuildKeyInfo(selfSchema, childSchema)
-	la.buildSelfKeyInfo(selfSchema)
-}
-
-func (la *LogicalAggregation) buildSelfKeyInfo(selfSchema *expression.Schema) {
-	groupByCols := la.GetGroupByCols()
-	if len(groupByCols) == len(la.GroupByItems) && len(la.GroupByItems) > 0 {
-		indices := selfSchema.ColumnsIndices(groupByCols)
-		if indices != nil {
-			newKey := make([]*expression.Column, 0, len(indices))
-			for _, i := range indices {
-				newKey = append(newKey, selfSchema.Columns[i])
-			}
-			selfSchema.Keys = append(selfSchema.Keys, newKey)
-		}
-	}
-	if len(la.GroupByItems) == 0 {
-		la.SetMaxOneRow(true)
-	}
-}
-
 // If a condition is the form of (uniqueKey = constant) or (uniqueKey = Correlated column), it returns at most one row.
 // This function will check it.
 func checkMaxOneRowCond(eqColIDs map[int64]struct{}, childSchema *expression.Schema) bool {
