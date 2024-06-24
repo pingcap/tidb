@@ -532,7 +532,8 @@ func getActualEndKey(
 	phyTbl := t.(table.PhysicalTable)
 
 	if bfTp == typeAddIndexMergeTmpWorker {
-		// Temp Index data does not grow infinitely.
+		// Temp Index data does not grow infinitely, we can return the whole range
+		// and IndexMergeTmpWorker should still be finished in a bounded time.
 		return rangeEnd
 	}
 	if bfTp == typeAddIndexWorker && job.ReorgMeta.ReorgTp == model.ReorgTypeLitMerge {
@@ -540,6 +541,9 @@ func getActualEndKey(
 		// we don't need to get the actual end key of this range.
 		return rangeEnd
 	}
+
+	// Otherwise to avoid the future data written to key range of [backfillChunkEndKey, rangeEnd) and
+	// backfill worker can't catch up, we shrink the end key to the actual written key for now.
 	jobCtx := reorgInfo.NewJobContext()
 
 	actualEndKey, err := GetRangeEndKey(jobCtx, reorgInfo.d.store, job.Priority, t.RecordPrefix(), rangeStart, rangeEnd)
