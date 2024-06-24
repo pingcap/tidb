@@ -510,14 +510,26 @@ func (e *HashJoinV2Exec) restore() error {
 	e.spillHelper.prepareForRestoring()
 
 	for {
-		hashTable, err := e.spillHelper.restoreOneBuildPartition()
+		restoredPartition := e.spillHelper.stack.pop()
+		if restoredPartition == nil {
+			break
+		}
+
+		hashTable, err := e.spillHelper.buildHashTable(restoredPartition.buildSideData)
 		if err != nil {
 			return err
 		}
-		
+
 		if hashTable == nil {
 			break
 		}
+
+		// TODO check spill and execute, triggered spill may has been found in `buildHashTable`, but we handle the spill outside of `buildHashTable`
+
+		// TODO restore one probe partition
+
+		// TODO match probe and build data, check closeCh
+		// TODO scan remaining rows of a partition
 	}
 
 	return nil

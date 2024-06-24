@@ -228,6 +228,7 @@ func (j *baseJoinProbe) SetChunkForProbe(chk *chunk.Chunk) (err error) {
 		hashValue := hash.Sum64()
 		partIndex := hashValue % uint64(j.ctx.PartitionNumber)
 		if j.ctx.spillHelper.isPartitionSpilled(int(partIndex)) {
+			// TODO spill serialized key
 			j.spillTmpChk[partIndex].AppendInt64(0, int64(hashValue))
 			j.spillTmpChk[partIndex].AppendPartialRow(1, j.currentChunk.GetRow(logicalRowIndex))
 
@@ -239,6 +240,8 @@ func (j *baseJoinProbe) SetChunkForProbe(chk *chunk.Chunk) (err error) {
 				}
 				j.spillTmpChk[partIndex].Reset()
 			}
+
+			j.matchedRowsHeaders[logicalRowIndex] = nil
 		} else {
 			j.hashValues[partIndex] = append(j.hashValues[partIndex], posAndHashValue{hashValue: hashValue, pos: logicalRowIndex})
 		}

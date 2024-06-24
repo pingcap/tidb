@@ -18,6 +18,7 @@ import (
 	"slices"
 	"sync"
 	"sync/atomic"
+	"unsafe"
 
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
@@ -42,6 +43,9 @@ type hashJoinSpillHelper struct {
 	buildSpillChkFieldTypes []*types.FieldType
 	probeFieldTypes         []*types.FieldType
 	tmpSpillChunk           *chunk.Chunk
+
+	// TODO initialize it
+	joinChkResourceCh chan *chunk.Chunk
 
 	stack restoreStack
 
@@ -348,29 +352,89 @@ func (h *hashJoinSpillHelper) prepareForRestoring() {
 	}
 }
 
-// TODO implement concurrent restoring in the future
-func (h *hashJoinSpillHelper) restoreOneBuildPartition() (*hashTableV2, error) {
-	restoredPartition := h.stack.pop()
-	if restoredPartition == nil {
-		return nil
+// Append restored data to segment
+func (h *hashJoinSpillHelper) appendSegment(seg *rowTableSegment, row chunk.Row) {
+	hashValue := row.GetInt64(0)
+	validJoinKey := row.GetBytes(1)
+	rawData := row.GetBytes(2)
+
+	if int(validJoinKey[0]) != 0 {
+		// TODO we need to test the restore of validJoinKeyPos
+		seg.validJoinKeyPos = append(seg.validJoinKeyPos, seg.getRowNum())
+	}
+	seg.hashValues = append(seg.hashValues, uint64(hashValue))
+
+	rawDataLen := len(seg.rawData)
+	seg.rawData = append(seg.rawData, rawData...)
+	seg.rowLocations = append(seg.rowLocations, unsafe.Pointer(&seg.rawData[rawDataLen]))
+}
+
+func (h *hashJoinSpillHelper) appendChunkToSegments(chunk *chunk.Chunk, segments []*rowTableSegment) {
+	var seg *rowTableSegment
+	segLen := len(segments)
+	if segLen > 0 && !segments[segLen-1].finalized {
+		seg = segments[segLen-1]
+	} else {
+		seg = newRowTableSegment()
 	}
 
-	rowTable := &rowTable{} // TODO initialize metaData in rowTable
-	seg := newRowTableSegment()
+	newSegCreated := false
+	defer func() {
+		if newSegCreated {
+			segments = append(segments, seg)
+		}
+	}()
 
-	buildInDisk := restoredPartition.buildSideData
+	rowNum := chunk.NumRows()
+	for i := 0; i < rowNum; i++ {
+		if seg.getRowNum() >= maxRowTableSegmentSize {
+			// rowLocations's initialization has been done, so it's ok to set `finalized` to true
+			seg.finalized = true
+			segments = append(segments, seg)
+			h.memTracker.Consume(seg.totalUsedBytes())
+			// TODO check spill and spill if necessary
+			seg = newRowTableSegment()
+			newSegCreated = true
+		}
+
+		row := chunk.GetRow(i)
+		h.appendSegment(seg, row)
+	}
+}
+
+func (h *hashJoinSpillHelper) buildHashTable(buildInDisk *chunk.DataInDiskByChunks) (*hashTableV2, error) {
+	rowTb := &rowTable{} // TODO initialize metaData in rowTable
+	segments := make([]*rowTableSegment, 0, 10)
+
 	chunkNum := buildInDisk.NumChunks()
 	for i := 0; i < chunkNum; i++ {
+		// TODO check sql killer in an interval
 		chunk, err := buildInDisk.GetChunk(i)
 		if err != nil {
 			return nil, err
 		}
 
+		h.appendChunkToSegments(chunk, segments)
+		// TODO check spill, split partition and spill them
+
+		// TODO test re-spill case
 	}
 
-	hashTable := &hashTableV2{}
+	if len(segments) > 0 {
+		segments[len(segments)-1].finalized = true
+	}
 
-	return nil // TODO
+	rowTb.segments = segments
+	subTb := newSubTable(rowTb, h.memTracker)
+	subTb.build(0, len(subTb.rowData.segments))
+
+	// TODO check spill, split partition and spill them
+
+	hashTable := &hashTableV2{}
+	hashTable.tables = append(hashTable.tables, subTb)
+	hashTable.partitionNumber = 1
+
+	return hashTable, nil
 }
 
 // Data in this structure are in same partition
