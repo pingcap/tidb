@@ -1656,6 +1656,20 @@ func TestTiDBSchemaCacheSize(t *testing.T) {
 	require.Equal(t, "512MB", val)
 
 	// MaxValue is 9223372036854775807
+	err = mock.SetGlobalSysVar(context.Background(), TiDBSchemaCacheSize, strconv.FormatUint(maxValue, 10))
+	require.NoError(t, err)
+	val, err = mock.GetGlobalSysVar(TiDBSchemaCacheSize)
+	require.NoError(t, err)
+	require.Equal(t, strconv.FormatUint(maxValue, 10), val)
+
+	// test MinValue-1
+	err = mock.SetGlobalSysVar(context.Background(), TiDBSchemaCacheSize, strconv.FormatUint(100*mb-1, 10))
+	require.NoError(t, err)
+	val, err = mock.GetGlobalSysVar(TiDBSchemaCacheSize)
+	require.NoError(t, err)
+	require.Equal(t, "512MB", val)
+
+	// test MaxValue+1
 	err = mock.SetGlobalSysVar(context.Background(), TiDBSchemaCacheSize, strconv.FormatUint(maxValue+1, 10))
 	require.NoError(t, err)
 	val, err = mock.GetGlobalSysVar(TiDBSchemaCacheSize)
