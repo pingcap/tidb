@@ -820,7 +820,7 @@ func (d *ddl) prepareLocalModeWorkers() {
 		}
 	}
 	// local worker count at least 2 at most 10.
-	localCnt := min(max(runtime.GOMAXPROCS(0)/4, 2), localWorkerCnt)
+	localCnt := min(max(runtime.GOMAXPROCS(0)/2, 2), localWorkerCnt)
 	d.localWorkerPool = newDDLWorkerPool(pools.NewResourcePool(workerFactory(localWorker), localCnt, localCnt, 0), jobTypeLocal)
 	failpoint.Inject("NoDDLDispatchLoop", func(val failpoint.Value) {
 		if val.(bool) {
