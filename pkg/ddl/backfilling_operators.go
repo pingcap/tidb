@@ -834,7 +834,6 @@ func (s *indexWriteResultSink) flush() error {
 	failpoint.Inject("mockFlushError", func(_ failpoint.Value) {
 		failpoint.Return(errors.New("mock flush error"))
 	})
-	// TODO(lance6716): convert to ErrKeyExists inside Flush
 	_, _, err := s.backendCtx.Flush(ingest.FlushModeForceFlushAndImport)
 	if err != nil {
 		logutil.Logger(s.ctx).Error("flush error",
