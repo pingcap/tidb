@@ -151,6 +151,8 @@ func (c *StatsTableRowCache) EstimateDataLength(table *model.TableInfo) (
 		rowCount = c.GetTableRows(table.ID)
 		dataLength, indexLength = c.GetDataAndIndexLength(table, table.ID, rowCount)
 	} else {
+		_, globalIndexLen := c.GetDataAndIndexLength(table, table.ID, c.GetTableRows(table.ID))
+		indexLength += globalIndexLen
 		for _, pi := range table.GetPartitionInfo().Definitions {
 			piRowCnt := c.GetTableRows(pi.ID)
 			rowCount += piRowCnt
@@ -256,6 +258,16 @@ func (c *StatsTableRowCache) GetDataAndIndexLength(info *model.TableInfo, physic
 	for _, idx := range info.Indices {
 		if idx.State != model.StatePublic {
 			continue
+		}
+		if info.GetPartitionInfo() != nil {
+			// Global indexes calcuated in table level.
+			if idx.Global && info.ID != physicalID {
+				continue
+			}
+			// Normal indexes calculated in partition level.
+			if !idx.Global && info.ID == physicalID {
+				continue
+			}
 		}
 		for _, col := range idx.Columns {
 			if col.Length == types.UnspecifiedLength {
