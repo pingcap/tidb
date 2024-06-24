@@ -241,10 +241,10 @@ func setMppOrBatchCopForTableScan(curPlan base.PhysicalPlan) {
 func (sg *TiKVSingleGather) GetPhysicalTableReader(schema *expression.Schema, stats *property.StatsInfo, props ...*property.PhysicalProperty) *PhysicalTableReader {
 	reader := PhysicalTableReader{}.Init(sg.SCtx(), sg.QueryBlockOffset())
 	reader.PlanPartInfo = PhysPlanPartInfo{
-		PruningConds:   sg.Source.allConds,
-		PartitionNames: sg.Source.partitionNames,
+		PruningConds:   sg.Source.AllConds,
+		PartitionNames: sg.Source.PartitionNames,
 		Columns:        sg.Source.TblCols,
-		ColumnNames:    sg.Source.names,
+		ColumnNames:    sg.Source.OutputNames(),
 	}
 	reader.SetStats(stats)
 	reader.SetSchema(schema)

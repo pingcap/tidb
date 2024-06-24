@@ -1326,6 +1326,32 @@ func TestTiDBEnableResourceControl(t *testing.T) {
 	require.Equal(t, enable, true)
 }
 
+func TestTiDBResourceControlStrictMode(t *testing.T) {
+	vars := NewSessionVars(nil)
+	mock := NewMockGlobalAccessor4Tests()
+	mock.SessionVars = vars
+	vars.GlobalVarsAccessor = mock
+	resourceControlStrictMode := GetSysVar(TiDBResourceControlStrictMode)
+
+	// Default true
+	require.Equal(t, resourceControlStrictMode.Value, On)
+	require.Equal(t, EnableResourceControlStrictMode.Load(), true)
+
+	// Set to Off
+	err := mock.SetGlobalSysVar(context.Background(), TiDBResourceControlStrictMode, Off)
+	require.NoError(t, err)
+	val, err1 := mock.GetGlobalSysVar(TiDBResourceControlStrictMode)
+	require.NoError(t, err1)
+	require.Equal(t, Off, val)
+
+	// Set to On again
+	err = mock.SetGlobalSysVar(context.Background(), TiDBResourceControlStrictMode, On)
+	require.NoError(t, err)
+	val, err1 = mock.GetGlobalSysVar(TiDBResourceControlStrictMode)
+	require.NoError(t, err1)
+	require.Equal(t, On, val)
+}
+
 func TestTiDBEnableRowLevelChecksum(t *testing.T) {
 	ctx := context.Background()
 	vars := NewSessionVars(nil)
@@ -1604,72 +1630,6 @@ func TestTiDBLowResTSOUpdateInterval(t *testing.T) {
 	val, err = sv.Validate(vars, "1000", ScopeGlobal)
 	require.NoError(t, err)
 	require.Equal(t, "1000", val)
-}
-
-func TestSetEnableColumnTrackingAndPersistAnalyzeOptions(t *testing.T) {
-	vars := NewSessionVars(nil)
-	mock := NewMockGlobalAccessor4Tests()
-	mock.SessionVars = vars
-	vars.GlobalVarsAccessor = mock
-
-	// Test EnableColumnTracking
-	val, err := mock.GetGlobalSysVar(TiDBEnableColumnTracking)
-	require.NoError(t, err)
-	require.Equal(t, Off, val)
-	err = mock.SetGlobalSysVar(context.Background(), TiDBEnableColumnTracking, On)
-	require.NoError(t, err)
-	val, err = mock.GetGlobalSysVar(TiDBEnableColumnTracking)
-	require.NoError(t, err)
-	require.Equal(t, On, val)
-	// Reset back.
-	err = mock.SetGlobalSysVar(context.Background(), TiDBEnableColumnTracking, Off)
-	require.NoError(t, err)
-
-	// Test PersistAnalyzeOptions
-	val, err = mock.GetGlobalSysVar(TiDBPersistAnalyzeOptions)
-	require.NoError(t, err)
-	require.Equal(t, On, val)
-	err = mock.SetGlobalSysVar(context.Background(), TiDBPersistAnalyzeOptions, Off)
-	require.NoError(t, err)
-	val, err = mock.GetGlobalSysVar(TiDBPersistAnalyzeOptions)
-	require.NoError(t, err)
-	require.Equal(t, Off, val)
-	// Reset back
-	err = mock.SetGlobalSysVar(context.Background(), TiDBPersistAnalyzeOptions, On)
-	require.NoError(t, err)
-
-	// Set EnableColumnTracking to true when PersistAnalyzeOptions is false
-	// Set to false first.
-	err = mock.SetGlobalSysVar(context.Background(), TiDBEnableColumnTracking, Off)
-	require.NoError(t, err)
-	err = mock.SetGlobalSysVar(context.Background(), TiDBPersistAnalyzeOptions, Off)
-	require.NoError(t, err)
-	val, err = mock.GetGlobalSysVar(TiDBPersistAnalyzeOptions)
-	require.NoError(t, err)
-	require.Equal(t, Off, val)
-	err = mock.SetGlobalSysVar(context.Background(), TiDBEnableColumnTracking, On)
-	require.Error(t, err, "enable column tracking requires to persist analyze options")
-	val, err = mock.GetGlobalSysVar(TiDBEnableColumnTracking)
-	require.NoError(t, err)
-	require.Equal(t, Off, val)
-
-	// Set PersistAnalyzeOptions to false when EnableColumnTracking is true
-	// Set to true first.
-	err = mock.SetGlobalSysVar(context.Background(), TiDBPersistAnalyzeOptions, On)
-	require.NoError(t, err)
-	val, err = mock.GetGlobalSysVar(TiDBPersistAnalyzeOptions)
-	require.NoError(t, err)
-	require.Equal(t, On, val)
-	err = mock.SetGlobalSysVar(context.Background(), TiDBEnableColumnTracking, On)
-	require.NoError(t, err)
-	val, err = mock.GetGlobalSysVar(TiDBEnableColumnTracking)
-	require.NoError(t, err)
-	require.Equal(t, On, val)
-	err = mock.SetGlobalSysVar(context.Background(), TiDBPersistAnalyzeOptions, Off)
-	require.Error(t, err, "persist analyze options requires to enable column tracking")
-	val, err = mock.GetGlobalSysVar(TiDBPersistAnalyzeOptions)
-	require.NoError(t, err)
-	require.Equal(t, On, val)
 }
 
 func TestTiDBSchemaCacheSize(t *testing.T) {

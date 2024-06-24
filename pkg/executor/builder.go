@@ -683,7 +683,7 @@ func (b *executorBuilder) buildCleanupIndex(v *plannercore.CleanupIndex) exec.Ex
 	sessCtx := e.Ctx().GetSessionVars().StmtCtx
 	e.handleCols = buildHandleColsForExec(sessCtx, tblInfo, e.columns)
 	if e.index.Meta().Global {
-		e.columns = append(e.columns, model.NewExtraPartitionIDColInfo())
+		e.columns = append(e.columns, model.NewExtraPhysTblIDColInfo())
 	}
 	return e
 }
@@ -4103,8 +4103,6 @@ func buildNoRangeIndexMergeReader(b *executorBuilder, v *plannercore.PhysicalInd
 		return nil, err
 	}
 
-	paging := b.ctx.GetSessionVars().EnablePaging
-
 	e := &IndexMergeReaderExecutor{
 		BaseExecutor:             exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID()),
 		indexUsageReporter:       b.buildIndexUsageReporter(v),
@@ -4120,7 +4118,6 @@ func buildNoRangeIndexMergeReader(b *executorBuilder, v *plannercore.PhysicalInd
 		partialNetDataSizes:      partialDataSizes,
 		dataAvgRowSize:           v.GetAvgTableRowSize(),
 		dataReaderBuilder:        readerBuilder,
-		paging:                   paging,
 		handleCols:               v.HandleCols,
 		isCorColInPartialFilters: isCorColInPartialFilters,
 		isCorColInTableFilter:    isCorColInTableFilter,
@@ -5133,7 +5130,7 @@ func NewRowDecoder(ctx sessionctx.Context, schema *expression.Schema, tbl *model
 	}
 	defVal := func(i int, chk *chunk.Chunk) error {
 		if reqCols[i].ID < 0 {
-			// model.ExtraHandleID, ExtraPidColID, ExtraPhysTblID... etc
+			// model.ExtraHandleID, ExtraPhysTblID... etc
 			// Don't set the default value for that column.
 			chk.AppendNull(i)
 			return nil

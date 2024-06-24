@@ -382,7 +382,7 @@ func (e *SortExec) generateResultFromMemory() (bool, error) {
 	}
 
 	maxChunkSize := e.MaxChunkSize()
-	resBuf := make([]rowWithError, 0, maxChunkSize)
+	resBuf := make([]rowWithError, 0, 3)
 	idx := int64(0)
 	var row chunk.Row
 	for {

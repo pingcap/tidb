@@ -581,14 +581,13 @@ func (e *IndexLookUpExecutor) startWorkers(ctx context.Context, initBatchSize in
 
 func (e *IndexLookUpExecutor) needPartitionHandle(tp getHandleType) (bool, error) {
 	var col *expression.Column
-	var needPartitionHandle, hasExtraCol bool
+	var needPartitionHandle bool
 	if tp == getHandleFromIndex {
 		cols := e.idxPlans[0].Schema().Columns
 		outputOffsets := e.dagPB.OutputOffsets
 		col = cols[outputOffsets[len(outputOffsets)-1]]
 		// For indexScan, need partitionHandle when global index or keepOrder with partitionTable
 		needPartitionHandle = e.index.Global || e.partitionTableMode && e.keepOrder
-		hasExtraCol = col.ID == model.ExtraPhysTblID || col.ID == model.ExtraPidColID
 	} else {
 		cols := e.tblPlans[0].Schema().Columns
 		outputOffsets := e.tableRequest.OutputOffsets
@@ -596,9 +595,8 @@ func (e *IndexLookUpExecutor) needPartitionHandle(tp getHandleType) (bool, error
 
 		// For TableScan, need partitionHandle in `indexOrder` when e.keepOrder == true or execute `admin check [table|index]` with global index
 		needPartitionHandle = ((e.index.Global || e.partitionTableMode) && e.keepOrder) || (e.index.Global && e.checkIndexValue != nil)
-		// no ExtraPidColID here, because TableScan shouldn't contain them.
-		hasExtraCol = col.ID == model.ExtraPhysTblID
 	}
+	hasExtraCol := col.ID == model.ExtraPhysTblID
 
 	// There will be two needPartitionHandle != hasExtraCol situations.
 	// Only `needPartitionHandle` == true and `hasExtraCol` == false are not allowed.
@@ -747,20 +745,20 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, workCh chan<
 
 // calculateBatchSize calculates a suitable initial batch size.
 func (e *IndexLookUpExecutor) calculateBatchSize(initBatchSize, maxBatchSize int) int {
+	if e.indexPaging {
+		// If indexPaging is true means this query has limit, so use initBatchSize to avoid scan some unnecessary data.
+		return min(initBatchSize, maxBatchSize)
+	}
 	var estRows int
 	if len(e.idxPlans) > 0 {
 		estRows = int(e.idxPlans[0].StatsCount())
 	}
-	return CalculateBatchSize(e.indexPaging, estRows, initBatchSize, maxBatchSize)
+	return CalculateBatchSize(estRows, initBatchSize, maxBatchSize)
 }
 
 // CalculateBatchSize calculates a suitable initial batch size. It exports for testing.
-func CalculateBatchSize(indexPaging bool, estRows, initBatchSize, maxBatchSize int) int {
+func CalculateBatchSize(estRows, initBatchSize, maxBatchSize int) int {
 	batchSize := min(initBatchSize, maxBatchSize)
-	if indexPaging {
-		// If indexPaging is true means this query has limit, so use initBatchSize to avoid scan some unnecessary data.
-		return batchSize
-	}
 	if estRows >= maxBatchSize {
 		return maxBatchSize
 	}
