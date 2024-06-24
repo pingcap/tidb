@@ -51,6 +51,7 @@ import (
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/testutils"
 	"github.com/tikv/client-go/v2/tikv"
+	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
 )
 
@@ -1445,9 +1446,9 @@ func TestTiFlashReorgPartition(t *testing.T) {
 				_ = job.DecodeArgs(&dummy, &partInfo)
 				ctx := context.Background()
 				stores, _ := pdCli.GetAllStores(ctx)
-				for _, pd := range partInfo.Definitions {
-					startKey, endKey := tablecodec.GetTableHandleKeyRange(pd.ID)
-					regions, _ := pdCli.ScanRegions(ctx, startKey, endKey, -1)
+				for _, pDef := range partInfo.Definitions {
+					startKey, endKey := tablecodec.GetTableHandleKeyRange(pDef.ID)
+					regions, _ := pdCli.BatchScanRegions(ctx, []pd.KeyRange{{StartKey: startKey, EndKey: endKey}}, -1)
 					for i := range regions {
 						// similar as storeHasEngineTiFlashLabel
 						for _, store := range stores {

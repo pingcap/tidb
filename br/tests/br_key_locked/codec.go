@@ -62,7 +62,11 @@ func (c *codecPDClient) ScanRegions(
 		endKey = codec.EncodeBytes(nil, endKey)
 	}
 
+<<<<<<< HEAD
 	regions, err := c.Client.ScanRegions(ctx, startKey, endKey, limit)
+=======
+	regions, err := c.Client.BatchScanRegions(ctx, []pd.KeyRange{{StartKey: startKey, EndKey: endKey}}, limit, opts...)
+>>>>>>> 770478537ce (store/copr: batch build coprocessor tasks (#54153))
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
