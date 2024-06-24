@@ -419,10 +419,22 @@ func (*Domain) fetchSchemasWithTables(schemas []*model.DBInfo, m *meta.Meta, don
 			// schema is not public, can't be used outside.
 			continue
 		}
-		tables, err := m.ListTables(di.ID)
-		if err != nil {
-			done <- err
-			return
+		var tables []*model.TableInfo
+		var err error
+		if variable.SchemaCacheSize.Load() > 0 && !infoschema.IsSpecialDB(di.Name.L) {
+			name2ID, specialTableInfos, err := meta.GetAllNameToIDAndSpecialAttributeInfo(m, di.ID)
+			if err != nil {
+				done <- err
+				return
+			}
+			di.Name2ID = name2ID
+			tables = specialTableInfos
+		} else {
+			tables, err = m.ListTables(di.ID)
+			if err != nil {
+				done <- err
+				return
+			}
 		}
 		// If TreatOldVersionUTF8AsUTF8MB4 was enable, need to convert the old version schema UTF8 charset to UTF8MB4.
 		if config.GetGlobalConfig().TreatOldVersionUTF8AsUTF8MB4 {

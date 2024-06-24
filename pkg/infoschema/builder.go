@@ -926,9 +926,26 @@ func (b *Builder) createSchemaTablesForDB(di *model.DBInfo, tableFromMeta tableF
 
 		schTbls.tables[t.Name.L] = tbl
 		b.addTable(schemaVersion, di, t, tbl)
+		if len(di.Name2ID) > 0 {
+			delete(di.Name2ID, t.Name.L)
+		}
 
 		if tblInfo := tbl.Meta(); tblInfo.TempTableType != model.TempTableNone {
 			b.addTemporaryTable(tblInfo.ID)
+		}
+	}
+	// Add the rest name to ID mappings.
+	if b.enableV2 {
+		for name, id := range di.Name2ID {
+			item := tableItem{
+				dbName:        di.Name.L,
+				dbID:          di.ID,
+				tableName:     name,
+				tableID:       id,
+				schemaVersion: schemaVersion,
+			}
+			b.infoData.byID.Set(item)
+			b.infoData.byName.Set(item)
 		}
 	}
 	b.addDB(schemaVersion, di, schTbls)
@@ -938,7 +955,7 @@ func (b *Builder) createSchemaTablesForDB(di *model.DBInfo, tableFromMeta tableF
 
 func (b *Builder) addDB(schemaVersion int64, di *model.DBInfo, schTbls *schemaTables) {
 	if b.enableV2 {
-		if isSpecialDB(di.Name.L) {
+		if IsSpecialDB(di.Name.L) {
 			b.infoData.addSpecialDB(di, schTbls)
 		} else {
 			b.infoData.addDB(schemaVersion, di)
