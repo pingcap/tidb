@@ -16,6 +16,10 @@ package rowcodec
 
 import (
 	"encoding/binary"
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/types"
+	"hash/crc32"
+	"time"
 )
 
 const (
@@ -89,17 +93,6 @@ func (r *row) large() bool { return r.flags&rowFlagLarge > 0 }
 func (r *row) hasChecksum() bool { return r.flags&rowFlagChecksum > 0 }
 
 func (r *row) hasExtraChecksum() bool { return r.checksumHeader&checksumFlagExtra > 0 }
-
-func (r *row) setChecksums(checksums ...uint32) {
-	if len(checksums) > 0 {
-		r.flags |= rowFlagChecksum
-		r.checksum1 = checksums[0]
-		if len(checksums) > 1 {
-			r.checksumHeader |= checksumFlagExtra
-			r.checksum2 = checksums[1]
-		}
-	}
-}
 
 func (r *row) getOffsets(i int) (start uint32, end uint32) {
 	if r.large() {
@@ -304,4 +297,33 @@ func (r *row) initOffsets32() {
 	} else {
 		r.offsets32 = make([]uint32, r.numNotNullCols)
 	}
+}
+
+// CalculateRawChecksum calculates the bytes-level checksum by using the given elements.
+// this is mainly used by the TiCDC to implement E2E checksum functionality.
+func (r *row) CalculateRawChecksum(
+	loc *time.Location, colIDs []int64, values []*types.Datum, key kv.Key, buf []byte,
+) (uint32, error) {
+	r.flags |= rowFlagChecksum
+	r.checksumHeader &^= checksumFlagExtra   // revert extra checksum flag
+	r.checksumHeader &^= checksumMaskVersion // revert checksum version
+	r.checksumHeader |= checksumVersionRaw   // set checksum version
+	for idx, colID := range colIDs {
+		data, err := encodeValueDatum(loc, values[idx], nil)
+		if err != nil {
+			return 0, err
+		}
+		index, isNil, notFound := r.findColID(colID)
+		// some datum may not be found, since it's not encoded into the raw bytes,
+		// such as handle key columns, or null columns.
+		if !notFound && !isNil {
+			start, end := r.getOffsets(index)
+			copy(r.data[start:end], data)
+		}
+	}
+	buf = r.toBytes(buf)
+	buf = append(buf, r.checksumHeader)
+	rawChecksum := crc32.Checksum(buf, crc32.IEEETable)
+	rawChecksum = crc32.Update(rawChecksum, crc32.IEEETable, key)
+	return rawChecksum, nil
 }
