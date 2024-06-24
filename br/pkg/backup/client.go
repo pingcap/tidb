@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"reflect"
+	"sort"
 	"strings"
 	"time"
 
@@ -1001,14 +1002,16 @@ func WriteBackupDDLJobs(metaWriter *metautil.MetaWriter, g glue.Glue, store kv.S
 		return errors.Trace(err)
 	}
 
-	handleJobsFn := func(jobs []*model.Job) (bool, error) {
+	// determine whether the jobs need to be append into `allJobs`
+	appendJobsFn := func(jobs []*model.Job) ([]*model.Job, bool) {
+		appendJobs := make([]*model.Job, 0, len(jobs))
 		for _, job := range jobs {
 			if skipUnsupportedDDLJob(job) {
 				continue
 			}
 			if job.BinlogInfo != nil && job.BinlogInfo.SchemaVersion <= lastSchemaVersion {
 				// early exits to stop unnecessary scan
-				return true, nil
+				return appendJobs, true
 			}
 
 			if (job.State == model.JobStateDone || job.State == model.JobStateSynced) &&
@@ -1021,21 +1024,14 @@ func WriteBackupDDLJobs(metaWriter *metautil.MetaWriter, g glue.Glue, store kv.S
 					// ignore all placement policy info during incremental backup for now.
 					job.BinlogInfo.TableInfo.ClearPlacement()
 				}
-				jobBytes, err := json.Marshal(job)
-				if err != nil {
-					return true, errors.Trace(err)
-				}
-				err = metaWriter.Send(jobBytes, metautil.AppendDDL)
-				if err != nil {
-					return true, errors.Trace(err)
-				}
+				appendJobs = append(appendJobs, job)
 			}
 		}
-		return true, nil
+		return appendJobs, false
 	}
 
 	newestMeta := meta.NewSnapshotMeta(store.GetSnapshot(kv.NewVersion(version.Ver)))
-	allJobs := make([]*model.Job, 0)
+	var allJobs []*model.Job
 	err = g.UseOneShotSession(store, !needDomain, func(se glue.Session) error {
 		allJobs, err = ddl.GetAllDDLJobs(se.GetSessionCtx())
 		if err != nil {
@@ -1053,26 +1049,42 @@ func WriteBackupDDLJobs(metaWriter *metautil.MetaWriter, g glue.Glue, store kv.S
 		return errors.Trace(err)
 	}
 
-	_, err = handleJobsFn(allJobs)
-	if err != nil {
-		log.Error("failed to handle job", zap.Error(err))
-		return errors.Trace(err)
-	}
 	count := len(allJobs)
 
 	cacheJobs := make([]*model.Job, 0, ddl.DefNumHistoryJobs)
 	for {
 		cacheJobs, err = historyJobsIter.GetLastJobs(ddl.DefNumHistoryJobs, cacheJobs)
-		if err != nil || len(cacheJobs) == 0 {
+		if err != nil {
 			return errors.Trace(err)
 		}
+		if len(cacheJobs) == 0 {
+			// no more jobs
+			break
+		}
 		count += len(cacheJobs)
-		finish, err := handleJobsFn(cacheJobs)
-		if err != nil || finish {
-			log.Debug("get complete jobs", zap.Int("jobs", count))
+		jobs, finished := appendJobsFn(cacheJobs)
+		allJobs = append(allJobs, jobs...)
+		if finished {
+			// no more jobs between [LastTS, ts]
+			break
+		}
+	}
+	log.Debug("get complete jobs", zap.Int("jobs", count))
+	// sort by job id with ascend order
+	sort.Slice(allJobs, func(i, j int) bool {
+		return allJobs[i].ID < allJobs[j].ID
+	})
+	for _, job := range allJobs {
+		jobBytes, err := json.Marshal(job)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		err = metaWriter.Send(jobBytes, metautil.AppendDDL)
+		if err != nil {
 			return errors.Trace(err)
 		}
 	}
+	return nil
 }
 
 func (bc *Client) BuildProgressRangeTree(ranges []rtree.Range) (rtree.ProgressRangeTree, error) {
