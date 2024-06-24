@@ -599,6 +599,15 @@ func (dc *ddlCtx) runAddIndexInIngestMode(
 		}
 		indexInfos = append(indexInfos, indexInfo)
 	}
+	if len(indexInfos[0].Columns) == 0 {
+		panic("?")
+	}
+	defer func() {
+		if len(indexInfos[0].Columns) == 0 {
+			panic("?")
+		}
+	}()
+
 	engines, err := bcCtx.Register(indexIDs, uniques, job.TableName)
 	if err != nil {
 		tidblogutil.Logger(opCtx).Error("cannot register new engine",
