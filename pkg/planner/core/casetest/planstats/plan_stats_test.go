@@ -223,7 +223,7 @@ func TestPlanStatsLoad(t *testing.T) {
 
 func countFullStats(stats *statistics.HistColl, colID int64) int {
 	cnt := -1
-	stats.ForEachColumn(func(_ int64, col *statistics.Column) bool {
+	stats.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
 		if col.Info.ID == colID {
 			cnt = col.Histogram.Len() + col.TopN.Num()
 			return true

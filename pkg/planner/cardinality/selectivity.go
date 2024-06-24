@@ -163,7 +163,7 @@ func Selectivity(
 		id2Paths[path.Index.ID] = path
 	}
 	idxIDs := make([]int64, 0, coll.IdxNum())
-	coll.ForEachIndex(func(id int64, _ *statistics.Index) bool {
+	coll.ForEachIndexImmutable(func(id int64, _ *statistics.Index) bool {
 		idxIDs = append(idxIDs, id)
 		return false
 	})

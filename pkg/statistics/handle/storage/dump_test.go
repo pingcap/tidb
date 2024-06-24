@@ -40,7 +40,7 @@ func requireTableEqual(t *testing.T, a *statistics.Table, b *statistics.Table) {
 	require.Equal(t, b.RealtimeCount, a.RealtimeCount)
 	require.Equal(t, b.ModifyCount, a.ModifyCount)
 	require.Equal(t, b.ColNum(), a.ColNum())
-	a.ForEachColumn(func(i int64, col *statistics.Column) bool {
+	a.ForEachColumnImmutable(func(i int64, col *statistics.Column) bool {
 		require.True(t, statistics.HistogramEqual(&col.Histogram, &b.GetCol(i).Histogram, false))
 		if col.CMSketch == nil {
 			require.Nil(t, b.GetCol(i).CMSketch)
@@ -52,7 +52,7 @@ func requireTableEqual(t *testing.T, a *statistics.Table, b *statistics.Table) {
 		return false
 	})
 	require.Equal(t, b.IdxNum(), a.IdxNum())
-	a.ForEachIndex(func(i int64, idx *statistics.Index) bool {
+	a.ForEachIndexImmutable(func(i int64, idx *statistics.Index) bool {
 		require.True(t, statistics.HistogramEqual(&idx.Histogram, &b.GetIdx(i).Histogram, false))
 		if idx.CMSketch == nil {
 			require.Nil(t, b.GetIdx(i).CMSketch)
@@ -628,11 +628,11 @@ func TestLoadStatsFromOldVersion(t *testing.T) {
 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	statsTbl := h.GetTableStats(tbl.Meta())
-	statsTbl.ForEachColumn(func(i int64, col *statistics.Column) bool {
+	statsTbl.ForEachColumnImmutable(func(i int64, col *statistics.Column) bool {
 		require.False(t, col.IsStatsInitialized())
 		return false
 	})
-	statsTbl.ForEachIndex(func(i int64, idx *statistics.Index) bool {
+	statsTbl.ForEachIndexImmutable(func(i int64, idx *statistics.Index) bool {
 		require.False(t, idx.IsStatsInitialized())
 		return false
 	})

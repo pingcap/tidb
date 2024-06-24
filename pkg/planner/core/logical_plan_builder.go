@@ -4527,11 +4527,11 @@ func getLatestVersionFromStatsTable(ctx sessionctx.Context, tblInfo *model.Table
 
 	// 3. Not pseudo stats table. Return the max LastUpdateVersion among all Columns and Indices
 	// return statsTbl.LastAnalyzeVersion
-	statsTbl.ForEachColumn(func(_ int64, col *statistics.Column) bool {
+	statsTbl.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
 		version = max(version, col.LastUpdateVersion)
 		return false
 	})
-	statsTbl.ForEachIndex(func(_ int64, idx *statistics.Index) bool {
+	statsTbl.ForEachIndexImmutable(func(_ int64, idx *statistics.Index) bool {
 		version = max(version, idx.LastUpdateVersion)
 		return false
 	})

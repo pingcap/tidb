@@ -606,14 +606,14 @@ func (h *Handle) initStatsBuckets(cache statstypes.StatsCache) error {
 	}
 	tables := cache.Values()
 	for _, table := range tables {
-		table.ForEachIndex(func(_ int64, idx *statistics.Index) bool {
+		table.ForEachIndexImmutable(func(_ int64, idx *statistics.Index) bool {
 			for i := 1; i < idx.Len(); i++ {
 				idx.Buckets[i].Count += idx.Buckets[i-1].Count
 			}
 			idx.PreCalculateScalar()
 			return false
 		})
-		table.ForEachColumn(func(_ int64, col *statistics.Column) bool {
+		table.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
 			for i := 1; i < col.Len(); i++ {
 				col.Buckets[i].Count += col.Buckets[i-1].Count
 			}
@@ -759,7 +759,7 @@ func (h *Handle) InitStats(is infoschema.InfoSchema) (err error) {
 	}
 	// Set columns' stats status.
 	for _, table := range cache.Values() {
-		table.ForEachColumn(func(_ int64, col *statistics.Column) bool {
+		table.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
 			if col.StatsAvailable() {
 				// primary key column has no stats info, because primary key's is_index is false. so it cannot load the topn
 				col.StatsLoadedStatus = statistics.NewStatsAllEvictedStatus()

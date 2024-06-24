@@ -34,7 +34,7 @@ func TestLockAndUnlockTableStats(t *testing.T) {
 
 	handle := dom.StatsHandle()
 	tblStats := handle.GetTableStats(tbl)
-	tblStats.ForEachColumn(func(_ int64, col *statistics.Column) bool {
+	tblStats.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
 		require.True(t, col.IsStatsInitialized())
 		return false
 	})
@@ -73,7 +73,7 @@ func TestLockAndUnlockPartitionedTableStats(t *testing.T) {
 
 	handle := dom.StatsHandle()
 	tblStats := handle.GetTableStats(tbl)
-	tblStats.ForEachColumn(func(_ int64, col *statistics.Column) bool {
+	tblStats.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
 		require.True(t, col.IsStatsInitialized())
 		return false
 	})
@@ -105,7 +105,7 @@ func TestLockTableAndUnlockTableStatsRepeatedly(t *testing.T) {
 
 	handle := dom.StatsHandle()
 	tblStats := handle.GetTableStats(tbl)
-	tblStats.ForEachColumn(func(_ int64, col *statistics.Column) bool {
+	tblStats.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
 		require.True(t, col.IsStatsInitialized())
 		return false
 	})
@@ -173,14 +173,14 @@ func TestLockAndUnlockTablesStats(t *testing.T) {
 
 	handle := domain.GetDomain(tk.Session()).StatsHandle()
 	tbl1Stats := handle.GetTableStats(tbl1.Meta())
-	tbl1Stats.ForEachColumn(func(_ int64, col *statistics.Column) bool {
+	tbl1Stats.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
 		require.Eventually(t, func() bool {
 			return col.IsStatsInitialized()
 		}, 1*time.Second, 100*time.Millisecond)
 		return false
 	})
 	tbl2Stats := handle.GetTableStats(tbl2.Meta())
-	tbl2Stats.ForEachColumn(func(_ int64, col *statistics.Column) bool {
+	tbl2Stats.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
 		require.Eventually(t, func() bool {
 			return col.IsStatsInitialized()
 		}, 1*time.Second, 100*time.Millisecond)
@@ -228,7 +228,7 @@ func TestDropTableShouldCleanUpLockInfo(t *testing.T) {
 
 	handle := dom.StatsHandle()
 	tblStats := handle.GetTableStats(tbl)
-	tblStats.ForEachColumn(func(_ int64, col *statistics.Column) bool {
+	tblStats.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
 		require.True(t, col.IsStatsInitialized())
 		return false
 	})
@@ -254,7 +254,7 @@ func TestTruncateTableShouldCleanUpLockInfo(t *testing.T) {
 
 	handle := dom.StatsHandle()
 	tblStats := handle.GetTableStats(tbl)
-	tblStats.ForEachColumn(func(_ int64, col *statistics.Column) bool {
+	tblStats.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
 		require.True(t, col.IsStatsInitialized())
 		return false
 	})

@@ -687,7 +687,7 @@ func (s *statsReadWriter) loadStatsFromJSON(tableInfo *model.TableInfo, physical
 	}
 
 	var outerErr error
-	tbl.ForEachColumn(func(_ int64, col *statistics.Column) bool {
+	tbl.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
 		// loadStatsFromJSON doesn't support partition table now.
 		// The table level count and modify_count would be overridden by the SaveMetaToStorage below, so we don't need
 		// to care about them here.
@@ -700,7 +700,7 @@ func (s *statsReadWriter) loadStatsFromJSON(tableInfo *model.TableInfo, physical
 	if outerErr != nil {
 		return outerErr
 	}
-	tbl.ForEachIndex(func(_ int64, idx *statistics.Index) bool {
+	tbl.ForEachIndexImmutable(func(_ int64, idx *statistics.Index) bool {
 		// loadStatsFromJSON doesn't support partition table now.
 		// The table level count and modify_count would be overridden by the SaveMetaToStorage below, so we don't need
 		// to care about them here.

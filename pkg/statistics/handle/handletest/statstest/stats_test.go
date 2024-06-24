@@ -307,7 +307,7 @@ func TestInitStats51358(t *testing.T) {
 	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	stats := h.GetTableStats(tbl.Meta())
-	stats.ForEachColumn(func(_ int64, column *statistics.Column) bool {
+	stats.ForEachColumnImmutable(func(_ int64, column *statistics.Column) bool {
 		if mysql.HasPriKeyFlag(column.Info.GetFlag()) {
 			// primary key column has no stats info, because primary key's is_index is false. so it cannot load the topn
 			require.Nil(t, column.TopN)

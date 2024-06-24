@@ -75,7 +75,7 @@ func pseudoSelectivity(sctx context.PlanContext, coll *statistics.HistColl, expr
 	}
 	// use the unique key info
 	hasUniqueKey := false
-	coll.ForEachIndex(func(_ int64, idx *statistics.Index) bool {
+	coll.ForEachIndexImmutable(func(_ int64, idx *statistics.Index) bool {
 		unique := true
 		firstMatch := false
 		for _, col := range idx.Info.Columns {

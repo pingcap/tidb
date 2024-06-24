@@ -513,12 +513,12 @@ func dumpStatsMemStatus(zw *zip.Writer, pairs map[tableNamePair]struct{}, do *Do
 			return errors.AddStack(err)
 		}
 		fmt.Fprintf(statsMemFw, "[INDEX]\n")
-		tblStats.ForEachIndex(func(_ int64, idx *statistics.Index) bool {
+		tblStats.ForEachIndexImmutable(func(_ int64, idx *statistics.Index) bool {
 			fmt.Fprintf(statsMemFw, "%s\n", fmt.Sprintf("%s=%s", idx.Info.Name.String(), idx.StatusToString()))
 			return false
 		})
 		fmt.Fprintf(statsMemFw, "[COLUMN]\n")
-		tblStats.ForEachColumn(func(_ int64, c *statistics.Column) bool {
+		tblStats.ForEachColumnImmutable(func(_ int64, c *statistics.Column) bool {
 			fmt.Fprintf(statsMemFw, "%s\n", fmt.Sprintf("%s=%s", c.Info.Name.String(), c.StatusToString()))
 			return false
 		})

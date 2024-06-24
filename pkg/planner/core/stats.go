@@ -133,7 +133,7 @@ func (ds *DataSource) getGroupNDVs(colGroups [][]*expression.Column) []property.
 	}
 	tbl := ds.tableStats.HistColl
 	ndvs := make([]property.GroupNDV, 0, len(colGroups))
-	tbl.ForEachIndex(func(idxID int64, idx *statistics.Index) bool {
+	tbl.ForEachIndexImmutable(func(idxID int64, idx *statistics.Index) bool {
 		colsLen := len(tbl.Idx2ColUniqueIDs[idxID])
 		// tbl.Idx2ColUniqueIDs may only contain the prefix of index columns.
 		// But it may exceeds the total index since the index would contain the handle column if it's not a unique index.

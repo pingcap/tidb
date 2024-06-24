@@ -877,7 +877,7 @@ func TestGlobalStatsOutOfRangeEstimationAfterDelete(t *testing.T) {
 func generateMapsForMockStatsTbl(statsTbl *statistics.Table) {
 	idx2Columns := make(map[int64][]int64)
 	colID2IdxIDs := make(map[int64][]int64)
-	statsTbl.ForEachIndex(func(_ int64, idxHist *statistics.Index) bool {
+	statsTbl.ForEachIndexImmutable(func(_ int64, idxHist *statistics.Index) bool {
 		ids := make([]int64, 0, len(idxHist.Info.Columns))
 		for _, idxCol := range idxHist.Info.Columns {
 			ids = append(ids, int64(idxCol.Offset))

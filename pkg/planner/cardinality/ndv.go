@@ -51,17 +51,17 @@ func getTotalRowCount(statsTbl *statistics.Table, colHist *statistics.Column) in
 	}
 	// If colHist is not fully loaded, we may still get its total row count from other index/column stats.
 	totCount := int64(0)
-	statsTbl.ForEachIndex(func(_ int64, idx *statistics.Index) bool {
+	statsTbl.ForEachIndexImmutable(func(_ int64, idx *statistics.Index) bool {
 		if idx.IsFullLoad() && idx.LastUpdateVersion == colHist.LastUpdateVersion {
 			totCount = int64(idx.TotalRowCount())
 		}
-		return false
+		return true
 	})
-	statsTbl.ForEachColumn(func(_ int64, col *statistics.Column) bool {
+	statsTbl.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
 		if col.IsFullLoad() && col.LastUpdateVersion == colHist.LastUpdateVersion {
 			totCount = int64(col.TotalRowCount())
 		}
-		return false
+		return true
 	})
 	return totCount
 }

@@ -300,9 +300,10 @@ func (coll *HistColl) GetIdx(id int64) *Index {
 	return coll.indices[id]
 }
 
-// ForEachColumn iterates all columns in the HistColl.
-// The bool return value of f is used to control the iteration. If f returns false, the iteration will be stopped.
-func (coll *HistColl) ForEachColumn(f func(int64, *Column) bool) {
+// ForEachColumnImmutable iterates all columns in the HistColl.
+// The bool return value of f is used to control the iteration. If f returns true, the iteration will be stopped.
+// Warning: Don't change the content when calling this function.
+func (coll *HistColl) ForEachColumnImmutable(f func(int64, *Column) bool) {
 	for id, col := range coll.columns {
 		if f(id, col) {
 			return
@@ -310,9 +311,10 @@ func (coll *HistColl) ForEachColumn(f func(int64, *Column) bool) {
 	}
 }
 
-// ForEachIndex iterates all columns in the HistColl.
-// The bool return value of f is used to control the iteration. If f returns false, the iteration will be stopped.
-func (coll *HistColl) ForEachIndex(f func(int64, *Index) bool) {
+// ForEachIndexImmutable iterates all columns in the HistColl.
+// The bool return value of f is used to control the iteration. If f returns true, the iteration will be stopped.
+// WARNING: Don't change the content when calling this function.
+func (coll *HistColl) ForEachIndexImmutable(f func(int64, *Index) bool) {
 	for id, idx := range coll.indices {
 		if f(id, idx) {
 			return

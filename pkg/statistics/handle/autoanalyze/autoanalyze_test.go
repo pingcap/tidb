@@ -146,11 +146,11 @@ func TestAutoAnalyzeOnChangeAnalyzeVer(t *testing.T) {
 	require.NoError(t, err)
 	statsTbl1 := h.GetTableStats(tbl.Meta())
 	// Check that all the version of t's stats are 1.
-	statsTbl1.ForEachColumn(func(_ int64, col *statistics.Column) bool {
+	statsTbl1.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
 		require.Equal(t, int64(1), col.GetStatsVer())
 		return false
 	})
-	statsTbl1.ForEachIndex(func(_ int64, idx *statistics.Index) bool {
+	statsTbl1.ForEachIndexImmutable(func(_ int64, idx *statistics.Index) bool {
 		require.Equal(t, int64(1), idx.GetStatsVer())
 		return false
 	})
@@ -165,11 +165,11 @@ func TestAutoAnalyzeOnChangeAnalyzeVer(t *testing.T) {
 	statsTbl1 = h.GetTableStats(tbl.Meta())
 	require.Equal(t, int64(5), statsTbl1.RealtimeCount)
 	// All of its statistics should still be version 1.
-	statsTbl1.ForEachColumn(func(_ int64, col *statistics.Column) bool {
+	statsTbl1.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
 		require.Equal(t, int64(1), col.GetStatsVer())
 		return false
 	})
-	statsTbl1.ForEachIndex(func(_ int64, idx *statistics.Index) bool {
+	statsTbl1.ForEachIndexImmutable(func(_ int64, idx *statistics.Index) bool {
 		require.Equal(t, int64(1), idx.GetStatsVer())
 		return false
 	})
@@ -188,11 +188,11 @@ func TestAutoAnalyzeOnChangeAnalyzeVer(t *testing.T) {
 	require.NoError(t, h.Update(is))
 	statsTbl2 := h.GetTableStats(tbl2.Meta())
 	// Since it's a newly created table. Auto analyze should analyze it's statistics to version2.
-	statsTbl2.ForEachColumn(func(_ int64, col *statistics.Column) bool {
+	statsTbl2.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
 		require.Equal(t, int64(2), col.GetStatsVer())
 		return false
 	})
-	statsTbl2.ForEachIndex(func(_ int64, idx *statistics.Index) bool {
+	statsTbl2.ForEachIndexImmutable(func(_ int64, idx *statistics.Index) bool {
 		require.Equal(t, int64(2), idx.GetStatsVer())
 		return false
 	})

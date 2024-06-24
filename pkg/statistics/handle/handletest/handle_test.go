@@ -220,7 +220,7 @@ func TestLoadHist(t *testing.T) {
 	// The stats table is updated.
 	require.False(t, oldStatsTbl == newStatsTbl)
 	// Only the TotColSize of histograms is updated.
-	oldStatsTbl.ForEachColumn(func(id int64, hist *statistics.Column) bool {
+	oldStatsTbl.ForEachColumnImmutable(func(id int64, hist *statistics.Column) bool {
 		require.Less(t, hist.TotColSize, newStatsTbl.GetCol(id).TotColSize)
 
 		temp := hist.TotColSize
@@ -244,7 +244,7 @@ func TestLoadHist(t *testing.T) {
 	newStatsTbl2 := h.GetTableStats(tableInfo)
 	require.False(t, newStatsTbl2 == newStatsTbl)
 	// The histograms is not updated.
-	newStatsTbl.ForEachColumn(func(id int64, hist *statistics.Column) bool {
+	newStatsTbl.ForEachColumnImmutable(func(id int64, hist *statistics.Column) bool {
 		require.Equal(t, newStatsTbl2.GetCol(id), hist)
 		return false
 	})
@@ -1268,14 +1268,14 @@ func TestEvictedColumnLoadedStatus(t *testing.T) {
 	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	require.Nil(t, err)
 	tblStats := domain.GetDomain(tk.Session()).StatsHandle().GetTableStats(tbl.Meta())
-	tblStats.ForEachColumn(func(_ int64, col *statistics.Column) bool {
+	tblStats.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
 		require.True(t, col.IsStatsInitialized())
 		return false
 	})
 
 	domain.GetDomain(tk.Session()).StatsHandle().SetStatsCacheCapacity(1)
 	tblStats = domain.GetDomain(tk.Session()).StatsHandle().GetTableStats(tbl.Meta())
-	tblStats.ForEachColumn(func(_ int64, col *statistics.Column) bool {
+	tblStats.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
 		require.True(t, col.IsStatsInitialized())
 		return false
 	})
@@ -1298,11 +1298,11 @@ func TestUninitializedStatsStatus(t *testing.T) {
 	require.NoError(t, err)
 	tblInfo := tbl.Meta()
 	tblStats := h.GetTableStats(tblInfo)
-	tblStats.ForEachColumn(func(_ int64, col *statistics.Column) bool {
+	tblStats.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
 		require.False(t, col.IsStatsInitialized())
 		return false
 	})
-	tblStats.ForEachIndex(func(_ int64, idx *statistics.Index) bool {
+	tblStats.ForEachIndexImmutable(func(_ int64, idx *statistics.Index) bool {
 		require.False(t, idx.IsStatsInitialized())
 		return false
 	})
@@ -1351,11 +1351,11 @@ insert into t1 values
 }
 
 func checkAllEvicted(t *testing.T, statsTbl *statistics.Table) {
-	statsTbl.ForEachColumn(func(_ int64, col *statistics.Column) bool {
+	statsTbl.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
 		require.True(t, col.IsAllEvicted())
 		return false
 	})
-	statsTbl.ForEachIndex(func(_ int64, idx *statistics.Index) bool {
+	statsTbl.ForEachIndexImmutable(func(_ int64, idx *statistics.Index) bool {
 		require.True(t, idx.IsAllEvicted())
 		return false
 	})
@@ -1463,11 +1463,11 @@ func TestSkipMissingPartitionStats(t *testing.T) {
 	globalStats := h.GetTableStats(tblInfo)
 	require.Equal(t, 6, int(globalStats.RealtimeCount))
 	require.Equal(t, 2, int(globalStats.ModifyCount))
-	globalStats.ForEachColumn(func(_ int64, col *statistics.Column) bool {
+	globalStats.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
 		require.True(t, col.IsStatsInitialized())
 		return false
 	})
-	globalStats.ForEachIndex(func(_ int64, idx *statistics.Index) bool {
+	globalStats.ForEachIndexImmutable(func(_ int64, idx *statistics.Index) bool {
 		require.True(t, idx.IsStatsInitialized())
 		return false
 	})

@@ -26,7 +26,7 @@ func AssertTableEqual(t *testing.T, a *statistics.Table, b *statistics.Table) {
 	require.Equal(t, b.RealtimeCount, a.RealtimeCount)
 	require.Equal(t, b.ModifyCount, a.ModifyCount)
 	require.Equal(t, a.ColNum(), b.ColNum())
-	a.ForEachColumn(func(id int64, col *statistics.Column) bool {
+	a.ForEachColumnImmutable(func(id int64, col *statistics.Column) bool {
 		bCol := b.GetCol(id)
 		require.NotNil(t, bCol)
 		require.True(t, statistics.HistogramEqual(&col.Histogram, &bCol.Histogram, false))
@@ -40,7 +40,7 @@ func AssertTableEqual(t *testing.T, a *statistics.Table, b *statistics.Table) {
 		return false
 	})
 	require.Equal(t, a.IdxNum(), b.IdxNum())
-	a.ForEachIndex(func(id int64, idx *statistics.Index) bool {
+	a.ForEachIndexImmutable(func(id int64, idx *statistics.Index) bool {
 		bIdx := b.GetIdx(id)
 		require.NotNil(t, bIdx)
 		require.True(t, statistics.HistogramEqual(&idx.Histogram, &bIdx.Histogram, false))

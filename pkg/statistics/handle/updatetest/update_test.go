@@ -393,7 +393,7 @@ func TestAutoUpdate(t *testing.T) {
 		stats = h.GetTableStats(tableInfo)
 		require.Equal(t, int64(5), stats.RealtimeCount)
 		require.Equal(t, int64(0), stats.ModifyCount)
-		stats.ForEachColumn(func(_ int64, item *statistics.Column) bool {
+		stats.ForEachColumnImmutable(func(_ int64, item *statistics.Column) bool {
 			// TotColSize = 5*(2(length of 'ss') + 1(size of len byte)).
 			require.Equal(t, int64(15), item.TotColSize)
 			return true
@@ -432,7 +432,7 @@ func TestAutoUpdate(t *testing.T) {
 		require.Equal(t, int64(8), stats.RealtimeCount)
 		// Modify count is non-zero means that we do not analyze the table.
 		require.Equal(t, int64(1), stats.ModifyCount)
-		stats.ForEachColumn(func(_ int64, item *statistics.Column) bool {
+		stats.ForEachColumnImmutable(func(_ int64, item *statistics.Column) bool {
 			// TotColSize = 27, because the table has not been analyzed, and insert statement will add 3(length of 'eee') to TotColSize.
 			require.Equal(t, int64(27), item.TotColSize)
 			return true
@@ -1107,7 +1107,7 @@ func TestStatsLockUnlockForAutoAnalyze(t *testing.T) {
 	require.Nil(t, err)
 
 	tblStats := h.GetTableStats(tbl.Meta())
-	tblStats.ForEachColumn(func(_ int64, col *statistics.Column) bool {
+	tblStats.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
 		require.True(t, col.IsStatsInitialized())
 		return false
 	})

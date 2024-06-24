@@ -265,7 +265,7 @@ func (e *ShowExec) appendTableForStatsHistograms(dbName, tblName, partitionName 
 	if statsTbl.Pseudo {
 		return
 	}
-	statsTbl.ForEachColumn(func(_ int64, col *statistics.Column) bool {
+	statsTbl.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
 		if !col.IsStatsInitialized() {
 			return false
 		}
@@ -273,7 +273,7 @@ func (e *ShowExec) appendTableForStatsHistograms(dbName, tblName, partitionName 
 			col.StatsLoadedStatus.StatusToString(), col.MemoryUsage())
 		return false
 	})
-	statsTbl.ForEachIndex(func(_ int64, idx *statistics.Index) bool {
+	statsTbl.ForEachIndexImmutable(func(_ int64, idx *statistics.Index) bool {
 		if !idx.IsStatsInitialized() {
 			return false
 		}

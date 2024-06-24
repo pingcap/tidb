@@ -205,18 +205,18 @@ func TestLFUCachePutGetWithManyConcurrencyAndSmallConcurrency(t *testing.T) {
 	lfu.wait()
 	v, ok := lfu.Get(rand.Int63n(50))
 	require.True(t, ok)
-	v.ForEachColumn(func(_ int64, c *statistics.Column) bool {
+	v.ForEachColumnImmutable(func(_ int64, c *statistics.Column) bool {
 		require.Equal(t, c.GetEvictedStatus(), statistics.AllEvicted)
 		return false
 	})
-	v.ForEachIndex(func(_ int64, i *statistics.Index) bool {
+	v.ForEachIndexImmutable(func(_ int64, i *statistics.Index) bool {
 		require.Equal(t, i.GetEvictedStatus(), statistics.AllEvicted)
 		return false
 	})
 }
 
 func checkTable(t *testing.T, tbl *statistics.Table) {
-	tbl.ForEachColumn(func(_ int64, column *statistics.Column) bool {
+	tbl.ForEachColumnImmutable(func(_ int64, column *statistics.Column) bool {
 		if column.GetEvictedStatus() == statistics.AllEvicted {
 			require.Nil(t, column.TopN)
 			require.Equal(t, 0, cap(column.Histogram.Buckets))
@@ -226,7 +226,7 @@ func checkTable(t *testing.T, tbl *statistics.Table) {
 		}
 		return false
 	})
-	tbl.ForEachIndex(func(_ int64, idx *statistics.Index) bool {
+	tbl.ForEachIndexImmutable(func(_ int64, idx *statistics.Index) bool {
 		if idx.GetEvictedStatus() == statistics.AllEvicted {
 			require.Nil(t, idx.TopN)
 			require.Equal(t, 0, cap(idx.Histogram.Buckets))
@@ -258,11 +258,11 @@ func TestLFUReject(t *testing.T) {
 	require.Len(t, lfu.Values(), 2)
 	v, ok := lfu.Get(2)
 	require.True(t, ok)
-	v.ForEachColumn(func(_ int64, c *statistics.Column) bool {
+	v.ForEachColumnImmutable(func(_ int64, c *statistics.Column) bool {
 		require.Equal(t, statistics.AllEvicted, c.GetEvictedStatus())
 		return false
 	})
-	v.ForEachIndex(func(_ int64, i *statistics.Index) bool {
+	v.ForEachIndexImmutable(func(_ int64, i *statistics.Index) bool {
 		require.Equal(t, statistics.AllEvicted, i.GetEvictedStatus())
 		return false
 	})

@@ -78,11 +78,11 @@ PARTITION BY RANGE ( a ) (
 			require.False(t, statsTbl.Pseudo)
 			require.Equal(t, statsTbl.ColNum(), 3)
 			require.Equal(t, statsTbl.IdxNum(), 1)
-			statsTbl.ForEachColumn(func(_ int64, col *statistics.Column) bool {
+			statsTbl.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
 				require.Greater(t, col.Len()+col.TopN.Num(), 0)
 				return false
 			})
-			statsTbl.ForEachIndex(func(_ int64, idx *statistics.Index) bool {
+			statsTbl.ForEachIndexImmutable(func(_ int64, idx *statistics.Index) bool {
 				require.Greater(t, idx.Len()+idx.TopN.Num(), 0)
 				return false
 			})

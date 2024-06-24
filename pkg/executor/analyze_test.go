@@ -92,7 +92,7 @@ func TestAnalyzeIndexExtractTopN(t *testing.T) {
 		require.NoError(t, err)
 		topn.AppendTopN(key2, 2)
 	}
-	tbl.ForEachIndex(func(_ int64, idx *statistics.Index) bool {
+	tbl.ForEachIndexImmutable(func(_ int64, idx *statistics.Index) bool {
 		ok, err := checkHistogram(tk.Session().GetSessionVars().StmtCtx, &idx.Histogram)
 		require.NoError(t, err)
 		require.True(t, ok)

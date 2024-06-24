@@ -148,7 +148,7 @@ func TraceStatsTbl(statsTbl *Table) *StatsTblTraceInfo {
 	// Collect information for each Column
 	colTraces := make([]statsTblColOrIdxInfo, colNum)
 	colIDs := make([]int64, 0, colNum)
-	statsTbl.ForEachColumn(func(id int64, _ *Column) bool {
+	statsTbl.ForEachColumnImmutable(func(id int64, _ *Column) bool {
 		colIDs = append(colIDs, id)
 		return false
 	})
@@ -163,7 +163,7 @@ func TraceStatsTbl(statsTbl *Table) *StatsTblTraceInfo {
 	// Collect information for each Index
 	idxTraces := make([]statsTblColOrIdxInfo, idxNum)
 	idxIDs := make([]int64, 0, idxNum)
-	statsTbl.ForEachIndex(func(id int64, _ *Index) bool {
+	statsTbl.ForEachIndexImmutable(func(id int64, _ *Index) bool {
 		idxIDs = append(idxIDs, id)
 		return false
 	})

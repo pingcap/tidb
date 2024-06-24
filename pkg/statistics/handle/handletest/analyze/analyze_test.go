@@ -45,7 +45,7 @@ func checkForGlobalStatsWithOpts(t *testing.T, dom *domain.Domain, db, tt, pp st
 	require.NoError(t, err)
 
 	delta := buckets/2 + 10
-	tblStats.ForEachIndex(func(_ int64, idxStats *statistics.Index) bool {
+	tblStats.ForEachIndexImmutable(func(_ int64, idxStats *statistics.Index) bool {
 		if len(idxStats.Buckets) == 0 {
 			return false // it's not loaded
 		}
@@ -58,7 +58,7 @@ func checkForGlobalStatsWithOpts(t *testing.T, dom *domain.Domain, db, tt, pp st
 		require.LessOrEqual(t, numBuckets, buckets+delta)
 		return false
 	})
-	tblStats.ForEachColumn(func(_ int64, colStats *statistics.Column) bool {
+	tblStats.ForEachColumnImmutable(func(_ int64, colStats *statistics.Column) bool {
 		if len(colStats.Buckets) == 0 {
 			return false // it's not loaded
 		}

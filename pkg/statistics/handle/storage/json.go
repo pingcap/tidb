@@ -101,7 +101,7 @@ func GenJSONTableFromStats(sctx sessionctx.Context, dbName string, tableInfo *mo
 		Version:      tbl.Version,
 	}
 	var outerErr error
-	tbl.ForEachColumn(func(_ int64, col *statistics.Column) bool {
+	tbl.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
 		hist, err := col.ConvertTo(statistics.UTCWithAllowInvalidDateCtx, types.NewFieldType(mysql.TypeBlob))
 		if err != nil {
 			outerErr = errors.Trace(err)
@@ -121,7 +121,7 @@ func GenJSONTableFromStats(sctx sessionctx.Context, dbName string, tableInfo *mo
 	if outerErr != nil {
 		return nil, outerErr
 	}
-	tbl.ForEachIndex(func(_ int64, idx *statistics.Index) bool {
+	tbl.ForEachIndexImmutable(func(_ int64, idx *statistics.Index) bool {
 		proto := dumpJSONCol(&idx.Histogram, idx.CMSketch, idx.TopN, nil, &idx.StatsVer)
 		tracker.Consume(proto.TotalMemoryUsage())
 		if err := sctx.GetSessionVars().SQLKiller.HandleSignal(); err != nil {

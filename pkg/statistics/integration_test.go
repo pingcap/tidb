@@ -52,11 +52,11 @@ func TestChangeVerTo2Behavior(t *testing.T) {
 	require.NoError(t, h.Update(is))
 	statsTblT := h.GetTableStats(tblT.Meta())
 	// Analyze table with version 1 success, all statistics are version 1.
-	statsTblT.ForEachColumn(func(_ int64, col *statistics.Column) bool {
+	statsTblT.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
 		require.Equal(t, int64(1), col.GetStatsVer())
 		return false
 	})
-	statsTblT.ForEachIndex(func(_ int64, idx *statistics.Index) bool {
+	statsTblT.ForEachIndexImmutable(func(_ int64, idx *statistics.Index) bool {
 		require.Equal(t, int64(1), idx.GetStatsVer())
 		return false
 	})
@@ -65,7 +65,7 @@ func TestChangeVerTo2Behavior(t *testing.T) {
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 The analyze version from the session is not compatible with the existing statistics of the table. Use the existing version instead"))
 	require.NoError(t, h.Update(is))
 	statsTblT = h.GetTableStats(tblT.Meta())
-	statsTblT.ForEachIndex(func(_ int64, idx *statistics.Index) bool {
+	statsTblT.ForEachIndexImmutable(func(_ int64, idx *statistics.Index) bool {
 		require.Equal(t, int64(1), idx.GetStatsVer())
 		return false
 	})
@@ -73,18 +73,18 @@ func TestChangeVerTo2Behavior(t *testing.T) {
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 The analyze version from the session is not compatible with the existing statistics of the table. Use the existing version instead"))
 	require.NoError(t, h.Update(is))
 	statsTblT = h.GetTableStats(tblT.Meta())
-	statsTblT.ForEachIndex(func(_ int64, idx *statistics.Index) bool {
+	statsTblT.ForEachIndexImmutable(func(_ int64, idx *statistics.Index) bool {
 		require.Equal(t, int64(1), idx.GetStatsVer())
 		return false
 	})
 	tk.MustExec("analyze table t ")
 	require.NoError(t, h.Update(is))
 	statsTblT = h.GetTableStats(tblT.Meta())
-	statsTblT.ForEachColumn(func(_ int64, col *statistics.Column) bool {
+	statsTblT.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
 		require.Equal(t, int64(2), col.GetStatsVer())
 		return false
 	})
-	statsTblT.ForEachIndex(func(_ int64, idx *statistics.Index) bool {
+	statsTblT.ForEachIndexImmutable(func(_ int64, idx *statistics.Index) bool {
 		require.Equal(t, int64(2), idx.GetStatsVer())
 		return false
 	})
@@ -94,7 +94,7 @@ func TestChangeVerTo2Behavior(t *testing.T) {
 		"Warning 1105 The version 2 would collect all statistics not only the selected indexes"))
 	require.NoError(t, h.Update(is))
 	statsTblT = h.GetTableStats(tblT.Meta())
-	statsTblT.ForEachIndex(func(_ int64, idx *statistics.Index) bool {
+	statsTblT.ForEachIndexImmutable(func(_ int64, idx *statistics.Index) bool {
 		require.Equal(t, int64(2), idx.GetStatsVer())
 		return false
 	})
@@ -103,18 +103,18 @@ func TestChangeVerTo2Behavior(t *testing.T) {
 		"Warning 1105 The version 2 would collect all statistics not only the selected indexes"))
 	require.NoError(t, h.Update(is))
 	statsTblT = h.GetTableStats(tblT.Meta())
-	statsTblT.ForEachIndex(func(_ int64, idx *statistics.Index) bool {
+	statsTblT.ForEachIndexImmutable(func(_ int64, idx *statistics.Index) bool {
 		require.Equal(t, int64(2), idx.GetStatsVer())
 		return false
 	})
 	tk.MustExec("analyze table t ")
 	require.NoError(t, h.Update(is))
 	statsTblT = h.GetTableStats(tblT.Meta())
-	statsTblT.ForEachColumn(func(_ int64, col *statistics.Column) bool {
+	statsTblT.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
 		require.Equal(t, int64(1), col.GetStatsVer())
 		return false
 	})
-	statsTblT.ForEachIndex(func(_ int64, idx *statistics.Index) bool {
+	statsTblT.ForEachIndexImmutable(func(_ int64, idx *statistics.Index) bool {
 		require.Equal(t, int64(1), idx.GetStatsVer())
 		return false
 	})
@@ -141,11 +141,11 @@ func TestChangeVerTo2BehaviorWithPersistedOptions(t *testing.T) {
 	require.NoError(t, h.Update(is))
 	statsTblT := h.GetTableStats(tblT.Meta())
 	// Analyze table with version 1 success, all statistics are version 1.
-	statsTblT.ForEachColumn(func(_ int64, col *statistics.Column) bool {
+	statsTblT.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
 		require.Equal(t, int64(1), col.GetStatsVer())
 		return false
 	})
-	statsTblT.ForEachIndex(func(_ int64, idx *statistics.Index) bool {
+	statsTblT.ForEachIndexImmutable(func(_ int64, idx *statistics.Index) bool {
 		require.Equal(t, int64(1), idx.GetStatsVer())
 		return false
 	})
@@ -154,7 +154,7 @@ func TestChangeVerTo2BehaviorWithPersistedOptions(t *testing.T) {
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 The analyze version from the session is not compatible with the existing statistics of the table. Use the existing version instead"))
 	require.NoError(t, h.Update(is))
 	statsTblT = h.GetTableStats(tblT.Meta())
-	statsTblT.ForEachIndex(func(_ int64, idx *statistics.Index) bool {
+	statsTblT.ForEachIndexImmutable(func(_ int64, idx *statistics.Index) bool {
 		require.Equal(t, int64(1), idx.GetStatsVer())
 		return false
 	})
@@ -162,18 +162,18 @@ func TestChangeVerTo2BehaviorWithPersistedOptions(t *testing.T) {
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 The analyze version from the session is not compatible with the existing statistics of the table. Use the existing version instead"))
 	require.NoError(t, h.Update(is))
 	statsTblT = h.GetTableStats(tblT.Meta())
-	statsTblT.ForEachIndex(func(_ int64, idx *statistics.Index) bool {
+	statsTblT.ForEachIndexImmutable(func(_ int64, idx *statistics.Index) bool {
 		require.Equal(t, int64(1), idx.GetStatsVer())
 		return false
 	})
 	tk.MustExec("analyze table t ")
 	require.NoError(t, h.Update(is))
 	statsTblT = h.GetTableStats(tblT.Meta())
-	statsTblT.ForEachColumn(func(_ int64, col *statistics.Column) bool {
+	statsTblT.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
 		require.Equal(t, int64(2), col.GetStatsVer())
 		return false
 	})
-	statsTblT.ForEachIndex(func(_ int64, idx *statistics.Index) bool {
+	statsTblT.ForEachIndexImmutable(func(_ int64, idx *statistics.Index) bool {
 		require.Equal(t, int64(2), idx.GetStatsVer())
 		return false
 	})
@@ -184,7 +184,7 @@ func TestChangeVerTo2BehaviorWithPersistedOptions(t *testing.T) {
 		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t, reason to use this rate is \"use min(1, 110000/3) as the sample-rate=1\"")) // since fallback to ver2 path, should do samplerate adjustment
 	require.NoError(t, h.Update(is))
 	statsTblT = h.GetTableStats(tblT.Meta())
-	statsTblT.ForEachIndex(func(_ int64, idx *statistics.Index) bool {
+	statsTblT.ForEachIndexImmutable(func(_ int64, idx *statistics.Index) bool {
 		require.Equal(t, int64(2), idx.GetStatsVer())
 		return false
 	})
@@ -194,18 +194,18 @@ func TestChangeVerTo2BehaviorWithPersistedOptions(t *testing.T) {
 		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t, reason to use this rate is \"use min(1, 110000/3) as the sample-rate=1\""))
 	require.NoError(t, h.Update(is))
 	statsTblT = h.GetTableStats(tblT.Meta())
-	statsTblT.ForEachIndex(func(_ int64, idx *statistics.Index) bool {
+	statsTblT.ForEachIndexImmutable(func(_ int64, idx *statistics.Index) bool {
 		require.Equal(t, int64(2), idx.GetStatsVer())
 		return false
 	})
 	tk.MustExec("analyze table t ")
 	require.NoError(t, h.Update(is))
 	statsTblT = h.GetTableStats(tblT.Meta())
-	statsTblT.ForEachColumn(func(_ int64, col *statistics.Column) bool {
+	statsTblT.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
 		require.Equal(t, int64(1), col.GetStatsVer())
 		return false
 	})
-	statsTblT.ForEachIndex(func(_ int64, idx *statistics.Index) bool {
+	statsTblT.ForEachIndexImmutable(func(_ int64, idx *statistics.Index) bool {
 		require.Equal(t, int64(1), idx.GetStatsVer())
 		return false
 	})
@@ -268,7 +268,7 @@ func TestNULLOnFullSampling(t *testing.T) {
 	require.NoError(t, h.Update(is))
 	statsTblT := h.GetTableStats(tblT.Meta())
 	// Check the null count is 3.
-	statsTblT.ForEachColumn(func(_ int64, col *statistics.Column) bool {
+	statsTblT.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
 		require.Equal(t, int64(3), col.NullCount)
 		return false
 	})
