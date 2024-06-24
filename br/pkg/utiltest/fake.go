@@ -202,6 +202,34 @@ func (fpdc *FakePDClient) ScanRegions(
 	return regions, nil
 }
 
+func (fpdc *FakePDClient) BatchScanRegions(
+	ctx context.Context,
+	ranges []pd.KeyRange,
+	limit int,
+	opts ...pd.GetRegionOption,
+) ([]*pd.Region, error) {
+	regions := make([]*pd.Region, 0, len(fpdc.regions))
+	fpdc.peerStoreId = fpdc.peerStoreId + 1
+	peerStoreId := (fpdc.peerStoreId + 1) / 2
+	for _, region := range fpdc.regions {
+		inRange := false
+		for _, keyRange := range ranges {
+			if len(keyRange.EndKey) != 0 && bytes.Compare(region.Meta.StartKey, keyRange.EndKey) >= 0 {
+				continue
+			}
+			if len(region.Meta.EndKey) != 0 && bytes.Compare(region.Meta.EndKey, keyRange.StartKey) <= 0 {
+				continue
+			}
+			inRange = true
+		}
+		if inRange {
+			region.Meta.Peers = []*metapb.Peer{{StoreId: peerStoreId}}
+			regions = append(regions, region)
+		}
+	}
+	return nil, nil
+}
+
 func (fpdc *FakePDClient) GetTS(ctx context.Context) (int64, int64, error) {
 	(*fpdc.retryTimes)++
 	if *fpdc.retryTimes >= 3 { // the mock PD leader switched successfully

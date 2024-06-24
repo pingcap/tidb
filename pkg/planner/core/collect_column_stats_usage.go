@@ -349,15 +349,14 @@ func (c *columnStatsUsageCollector) collectFromPlan(lp base.LogicalPlan) {
 // First return value: predicate columns (nil if predicate is false)
 // Second return value: histogram-needed columns (nil if histNeeded is false)
 // Third return value: ds.PhysicalTableID from all DataSource (always collected)
-func CollectColumnStatsUsage(lp base.LogicalPlan, predicate, histNeeded bool) (
+func CollectColumnStatsUsage(lp base.LogicalPlan, histNeeded bool) (
 	[]model.TableItemID,
 	[]model.StatsLoadItem,
 	*intset.FastIntSet,
 ) {
 	var mode uint64
-	if predicate {
-		mode |= collectPredicateColumns
-	}
+	// Always collect predicate columns.
+	mode |= collectPredicateColumns
 	if histNeeded {
 		mode |= collectHistNeededColumns
 	}
@@ -448,9 +447,7 @@ func CollectColumnStatsUsage(lp base.LogicalPlan, predicate, histNeeded bool) (
 		predicateCols  []model.TableItemID
 		histNeededCols []model.StatsLoadItem
 	)
-	if predicate {
-		predicateCols = maps.Keys(collector.predicateCols)
-	}
+	predicateCols = maps.Keys(collector.predicateCols)
 	if histNeeded {
 		histNeededCols = itemSet2slice(collector.histNeededCols)
 	}
