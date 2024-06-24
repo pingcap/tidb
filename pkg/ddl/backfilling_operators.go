@@ -47,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/size"
@@ -491,7 +492,7 @@ type tableScanWorker struct {
 
 func (w *tableScanWorker) HandleTask(task TableScanTask, sender func(IndexRecordChunk)) {
 	defer tidbutil.Recover(metrics.LblAddIndex, "handleTableScanTaskWithRecover", func() {
-		w.ctx.onError(errors.New("met panic in tableScanWorker"))
+		w.ctx.onError(dbterror.ErrReorgPanic)
 	}, false)
 
 	failpoint.Inject("injectPanicForTableScan", func() {
@@ -521,8 +522,11 @@ func (w *tableScanWorker) scanRecords(task TableScanTask, sender func(IndexRecor
 
 	var idxResult IndexRecordChunk
 	err := wrapInBeginRollback(w.se, func(startTS uint64) error {
-		failpoint.Inject("mockScanRecordError", func(_ failpoint.Value) {
+		failpoint.Inject("mockScanRecordError", func() {
 			failpoint.Return(errors.New("mock scan record error"))
+		})
+		failpoint.Inject("mockScanRecordPanic", func() {
+			panic("mock panic")
 		})
 		failpoint.InjectCall("scanRecordExec")
 		rs, err := buildTableScan(w.ctx, w.copCtx.GetBase(), startTS, task.Start, task.End)
@@ -718,7 +722,7 @@ type indexIngestExternalWorker struct {
 
 func (w *indexIngestExternalWorker) HandleTask(ck IndexRecordChunk, send func(IndexWriteResult)) {
 	defer tidbutil.Recover(metrics.LblAddIndex, "indexIngestExternalWorkerRecover", func() {
-		w.ctx.onError(errors.New("met panic in indexIngestExternalWorker"))
+		w.ctx.onError(dbterror.ErrReorgPanic)
 	}, false)
 	defer func() {
 		if ck.Chunk != nil {
@@ -743,7 +747,7 @@ type indexIngestLocalWorker struct {
 
 func (w *indexIngestLocalWorker) HandleTask(ck IndexRecordChunk, send func(IndexWriteResult)) {
 	defer tidbutil.Recover(metrics.LblAddIndex, "indexIngestLocalWorkerRecover", func() {
-		w.ctx.onError(errors.New("met panic in indexIngestLocalWorker"))
+		w.ctx.onError(dbterror.ErrReorgPanic)
 	}, false)
 	defer func() {
 		if ck.Chunk != nil {
