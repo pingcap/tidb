@@ -298,8 +298,7 @@ func SplitBackupReqRanges(req backuppb.BackupRequest, count uint) []backuppb.Bac
 		splitStep = 1
 	}
 	subRanges := req.SubRanges
-	i := 0
-	for ; i < rangeCount; i += splitStep {
+	for i := 0; i < rangeCount; i += splitStep {
 		splitReq := req
 		splitReq.SubRanges = subRanges[i:min(i+splitStep, rangeCount)]
 		splitRequests = append(splitRequests, splitReq)
