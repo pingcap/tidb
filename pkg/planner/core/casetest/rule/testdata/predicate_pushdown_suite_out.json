@@ -24,8 +24,8 @@
       {
         "SQL": "select * from t where name='a' and length(name)=1; -- without constant propagated",
         "Plan": [
-          "TableReader 10.00 root  data:Selection",
-          "└─Selection 10.00 cop[tikv]  eq(test.t.name, \"a\")",
+          "TableReader 8.00 root  data:Selection",
+          "└─Selection 8.00 cop[tikv]  eq(length(test.t.name), 1), eq(test.t.name, \"a\")",
           "  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
         "Warning": null
