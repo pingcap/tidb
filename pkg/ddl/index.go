@@ -33,8 +33,8 @@ import (
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl/copr"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
-	sess "github.com/pingcap/tidb/pkg/ddl/internal/session"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
+	sess "github.com/pingcap/tidb/pkg/ddl/session"
 	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
@@ -43,6 +43,8 @@ import (
 	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/lightning/backend"
+	litconfig "github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -691,7 +693,7 @@ SwitchIndexState:
 	case model.StateNone:
 		// none -> delete only
 		var reorgTp model.ReorgType
-		reorgTp, err = pickBackfillType(w.ctx, job)
+		reorgTp, err = pickBackfillType(job)
 		if err != nil {
 			if !errorIsRetryable(err, job) {
 				job.State = model.JobStateCancelled
@@ -816,8 +818,9 @@ SwitchIndexState:
 	return ver, errors.Trace(err)
 }
 
-// pickBackfillType determines which backfill process will be used.
-func pickBackfillType(ctx context.Context, job *model.Job) (model.ReorgType, error) {
+// pickBackfillType determines which backfill process will be used. The result is
+// both stored in job.ReorgMeta.ReorgTp and returned.
+func pickBackfillType(job *model.Job) (model.ReorgType, error) {
 	if job.ReorgMeta.ReorgTp != model.ReorgTypeNone {
 		// The backfill task has been started.
 		// Don't change the backfill type.
@@ -832,7 +835,7 @@ func pickBackfillType(ctx context.Context, job *model.Job) (model.ReorgType, err
 			job.ReorgMeta.ReorgTp = model.ReorgTypeLitMerge
 			return model.ReorgTypeLitMerge, nil
 		}
-		available, err := ingest.LitBackCtxMgr.CheckMoreTasksAvailable(ctx)
+		available, err := ingest.LitBackCtxMgr.CheckMoreTasksAvailable()
 		if err != nil {
 			return model.ReorgTypeNone, err
 		}
@@ -873,7 +876,7 @@ func doReorgWorkForCreateIndexMultiSchema(w *worker, d *ddlCtx, t *meta.Meta, jo
 func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 	tbl table.Table, allIndexInfos []*model.IndexInfo) (done bool, ver int64, err error) {
 	var reorgTp model.ReorgType
-	reorgTp, err = pickBackfillType(w.ctx, job)
+	reorgTp, err = pickBackfillType(job)
 	if err != nil {
 		return false, ver, err
 	}
@@ -1670,6 +1673,22 @@ type addIndexIngestWorker struct {
 	jobID    int64
 }
 
+func getLocalWriterConfig(indexCnt, writerCnt int) *backend.LocalWriterConfig {
+	writerCfg := &backend.LocalWriterConfig{}
+	// avoid unit test panic
+	memRoot := ingest.LitMemRoot
+	if memRoot == nil {
+		return writerCfg
+	}
+
+	// leave some room for objects overhead
+	availMem := memRoot.MaxMemoryQuota() - memRoot.CurrentUsage() - int64(10*size.MB)
+	memLimitPerWriter := availMem / int64(indexCnt) / int64(writerCnt)
+	memLimitPerWriter = min(memLimitPerWriter, litconfig.DefaultLocalWriterMemCacheSize)
+	writerCfg.Local.MemCacheSize = memLimitPerWriter
+	return writerCfg
+}
+
 func newAddIndexIngestWorker(
 	ctx context.Context,
 	t table.PhysicalTable,
@@ -1679,6 +1698,7 @@ func newAddIndexIngestWorker(
 	jobID int64,
 	indexIDs []int64,
 	writerID int,
+	writerCnt int,
 	copReqSenderPool *copReqSenderPool,
 	checkpointMgr *ingest.CheckpointManager,
 ) (*addIndexIngestWorker, error) {
@@ -1689,10 +1709,12 @@ func newAddIndexIngestWorker(
 
 	indexes := make([]table.Index, 0, len(indexIDs))
 	writers := make([]ingest.Writer, 0, len(indexIDs))
+	writerCfg := getLocalWriterConfig(len(indexIDs), writerCnt)
+
 	for i, indexID := range indexIDs {
 		indexInfo := model.FindIndexInfoByID(t.Meta().Indices, indexID)
 		index := tables.NewIndex(t.GetPhysicalID(), t.Meta(), indexInfo)
-		lw, err := engines[i].CreateWriter(writerID)
+		lw, err := engines[i].CreateWriter(writerID, writerCfg)
 		if err != nil {
 			return nil, err
 		}

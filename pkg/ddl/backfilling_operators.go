@@ -30,7 +30,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/ddl/copr"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
-	"github.com/pingcap/tidb/pkg/ddl/internal/session"
+	"github.com/pingcap/tidb/pkg/ddl/session"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/operator"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -583,6 +583,8 @@ func NewIndexIngestOperator(
 	concurrency int,
 	reorgMeta *model.DDLReorgMeta,
 ) *IndexIngestOperator {
+	writerCfg := getLocalWriterConfig(len(indexes), concurrency)
+
 	var writerIDAlloc atomic.Int32
 	pool := workerpool.NewWorkerPool(
 		"indexIngestOperator",
@@ -592,7 +594,7 @@ func NewIndexIngestOperator(
 			writers := make([]ingest.Writer, 0, len(indexes))
 			for i := range indexes {
 				writerID := int(writerIDAlloc.Add(1))
-				writer, err := engines[i].CreateWriter(writerID)
+				writer, err := engines[i].CreateWriter(writerID, writerCfg)
 				if err != nil {
 					logutil.Logger(ctx).Error("create index ingest worker failed", zap.Error(err))
 					ctx.onError(err)

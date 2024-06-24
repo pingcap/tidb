@@ -105,7 +105,7 @@ func TestBackendCtxConcurrentUnregister(t *testing.T) {
 }
 
 func TestMockMemoryUsedUp(t *testing.T) {
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/ingest/setMemTotalInMB", "return(1100)")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/ingest/setMemTotalInMB", "return(100)")
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")

@@ -1390,7 +1390,7 @@ type TestDDLCallback struct {
 	*ddl.BaseCallback
 	// We recommended to pass the domain parameter to the test ddl callback, it will ensure
 	// domain to reload schema before your ddl stepping into the next state change.
-	Do ddl.DomainReloader
+	Do ddl.SchemaLoader
 
 	// Only need this for now
 	OnJobRunBeforeExported func(*model.Job)

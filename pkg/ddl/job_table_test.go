@@ -228,3 +228,38 @@ func TestUpgradingRelatedJobState(t *testing.T) {
 		dom.DDL().StateSyncer().UpdateGlobalState(context.Background(), &syncer.StateInfo{State: syncer.StateNormalRunning})
 	}
 }
+
+func TestGeneralDDLWithQuery(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE t (id INT NOT NULL);")
+
+	var beforeRunCh = make(chan struct{})
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeAllLoadDDLJobAndRun", func() {
+		<-beforeRunCh
+	})
+	var ch = make(chan struct{})
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/waitJobSubmitted", func() {
+		<-ch
+	})
+	// 2 general DDLs shouldn't be blocked by each other for MDL, i.e. the "create view xx from select xxx"
+	// should not fill the MDL related tables.
+	var wg util.WaitGroupWrapper
+	wg.Run(func() {
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec("alter table t add column b int")
+	})
+	ch <- struct{}{}
+	wg.Run(func() {
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec("create view v as select * from t")
+	})
+	ch <- struct{}{}
+	tk.MustQuery("select count(1) from mysql.tidb_ddl_job").Check(testkit.Rows("2"))
+	close(beforeRunCh)
+	wg.Wait()
+}

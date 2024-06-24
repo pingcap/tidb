@@ -149,8 +149,8 @@ func applyPredicateSimplification(sctx base.PlanContext, predicates []expression
 // PredicateSimplification implements the LogicalPlan interface.
 func (ds *DataSource) PredicateSimplification(*optimizetrace.LogicalOptimizeOp) base.LogicalPlan {
 	p := ds.Self().(*DataSource)
-	p.pushedDownConds = applyPredicateSimplification(p.SCtx(), p.pushedDownConds)
-	p.allConds = applyPredicateSimplification(p.SCtx(), p.allConds)
+	p.PushedDownConds = applyPredicateSimplification(p.SCtx(), p.PushedDownConds)
+	p.AllConds = applyPredicateSimplification(p.SCtx(), p.AllConds)
 	return p
 }
 

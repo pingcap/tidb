@@ -333,6 +333,7 @@ func TestGetSplitKeyPerRegion(t *testing.T) {
 		[]byte("g"),
 		[]byte("j"),
 		[]byte("l"),
+		[]byte("m"),
 	}
 	sortedRegions := []*RegionInfo{
 		{
@@ -687,5 +688,71 @@ func TestRegionConsistency(t *testing.T) {
 		err := checkRegionConsistency(ca.startKey, ca.endKey, ca.regions)
 		require.Error(t, err)
 		require.Regexp(t, ca.err, err.Error())
+	}
+}
+
+func regionInfo(startKey, endKey string) *RegionInfo {
+	return &RegionInfo{
+		Region: &metapb.Region{
+			StartKey: []byte(startKey),
+			EndKey:   []byte(endKey),
+		},
+	}
+}
+
+func TestSplitCheckPartRegionConsistency(t *testing.T) {
+	var (
+		startKey []byte = []byte("a")
+		endKey   []byte = []byte("f")
+		err      error
+	)
+	err = checkPartRegionConsistency(startKey, endKey, nil)
+	require.Error(t, err)
+	err = checkPartRegionConsistency(startKey, endKey, []*RegionInfo{
+		regionInfo("b", "c"),
+	})
+	require.Error(t, err)
+	err = checkPartRegionConsistency(startKey, endKey, []*RegionInfo{
+		regionInfo("a", "c"),
+		regionInfo("d", "e"),
+	})
+	require.Error(t, err)
+	err = checkPartRegionConsistency(startKey, endKey, []*RegionInfo{
+		regionInfo("a", "c"),
+		regionInfo("c", "d"),
+	})
+	require.NoError(t, err)
+	err = checkPartRegionConsistency(startKey, endKey, []*RegionInfo{
+		regionInfo("a", "c"),
+		regionInfo("c", "d"),
+		regionInfo("d", "f"),
+	})
+	require.NoError(t, err)
+	err = checkPartRegionConsistency(startKey, endKey, []*RegionInfo{
+		regionInfo("a", "c"),
+		regionInfo("c", "z"),
+	})
+	require.NoError(t, err)
+}
+
+func TestScanRegionsWithRetry(t *testing.T) {
+	ctx := context.Background()
+	mockPDClient := NewMockPDClientForSplit()
+	mockClient := &pdClient{
+		client: mockPDClient,
+	}
+
+	{
+		_, err := ScanRegionsWithRetry(ctx, mockClient, []byte("1"), []byte("0"), 0)
+		require.Error(t, err)
+	}
+
+	{
+		mockPDClient.SetRegions([][]byte{{}, []byte("1"), []byte("2"), []byte("3"), []byte("4"), {}})
+		regions, err := ScanRegionsWithRetry(ctx, mockClient, []byte("1"), []byte("3"), 0)
+		require.NoError(t, err)
+		require.Len(t, regions, 2)
+		require.Equal(t, []byte("1"), regions[0].Region.StartKey)
+		require.Equal(t, []byte("2"), regions[1].Region.StartKey)
 	}
 }
