@@ -5,6 +5,7 @@ package streamhelper_test
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -580,8 +581,6 @@ func TestCheckPointResume(t *testing.T) {
 	require.ErrorContains(t, adv.OnTick(ctx), "lagged too large")
 }
 
-<<<<<<< HEAD
-=======
 func TestUnregisterAfterPause(t *testing.T) {
 	c := createFakeCluster(t, 4, false)
 	defer func() {
@@ -773,7 +772,6 @@ func TestAddTaskWithLongRunTask3(t *testing.T) {
 	}, 5*time.Second, 300*time.Millisecond)
 }
 
->>>>>>> 64f5427448b (br: fix Log Backup unexpected paused when adding a already long-running task (#53695))
 func TestOwnershipLost(t *testing.T) {
 	c := createFakeCluster(t, 4, false)
 	c.splitAndScatter(manyRegions(0, 10240)...)
