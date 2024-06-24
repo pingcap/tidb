@@ -149,6 +149,7 @@ func (*EmptyRowCntListener) Flushed(_ int) {
 func (*EmptyRowCntListener) Imported(_ int) {
 }
 
+// SetTotal implements RowCountListener.
 func (*EmptyRowCntListener) SetTotal(_ int) {
 }
 
