@@ -290,12 +290,12 @@ func (la *LogicalAggregation) ExhaustPhysicalPlans(prop *property.PhysicalProper
 
 	preferHash, preferStream := la.ResetHintIfConflicted()
 
-	hashAggs := la.getHashAggs(prop)
+	hashAggs := getHashAggs(la, prop)
 	if hashAggs != nil && preferHash {
 		return hashAggs, true, nil
 	}
 
-	streamAggs := la.getStreamAggs(prop)
+	streamAggs := getStreamAggs(la, prop)
 	if streamAggs != nil && preferStream {
 		return streamAggs, true, nil
 	}
@@ -626,7 +626,7 @@ func (la *LogicalAggregation) distinctArgsMeetsProperty() bool {
 	return true
 }
 
-func (la *LogicalAggregation) getStreamAggs(prop *property.PhysicalProperty) []base.PhysicalPlan {
+func getStreamAggs(la *LogicalAggregation, prop *property.PhysicalProperty) []base.PhysicalPlan {
 	// TODO: support CopTiFlash task type in stream agg
 	if prop.IsFlashProp() {
 		return nil
@@ -877,7 +877,7 @@ func (la *LogicalAggregation) tryToGetMppHashAggs(prop *property.PhysicalPropert
 //	for 2, the final result for this physical operator enumeration is chosen or rejected is according to more factors later (hint/variable/partition/virtual-col/cost)
 //
 // That is to say, the non-complete positive judgement of canPushDownToMPP/canPushDownToTiFlash/canPushDownToTiKV is not that for sure here.
-func (la *LogicalAggregation) getHashAggs(prop *property.PhysicalProperty) []base.PhysicalPlan {
+func getHashAggs(la *LogicalAggregation, prop *property.PhysicalProperty) []base.PhysicalPlan {
 	if !prop.IsSortItemEmpty() {
 		return nil
 	}
