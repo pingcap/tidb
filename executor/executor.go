@@ -2079,7 +2079,16 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	vars.DiskTracker.Detach()
 	vars.DiskTracker.ResetMaxConsumed()
 	vars.MemTracker.SessionID.Store(vars.ConnectionID)
+<<<<<<< HEAD:executor/executor.go
 	vars.StmtCtx.TableStats = make(map[int64]interface{})
+=======
+	vars.MemTracker.Killer = &vars.SQLKiller
+	vars.DiskTracker.Killer = &vars.SQLKiller
+	vars.SQLKiller.Reset()
+	vars.SQLKiller.ConnID = vars.ConnectionID
+	vars.StmtCtx.TableStats = make(map[int64]any)
+	sc.MDLRelatedTableIDs = make(map[int64]struct{})
+>>>>>>> 70a825397f3 (*: add metadata lock when using the plan cache (#51897)):pkg/executor/executor.go
 
 	isAnalyze := false
 	if execStmt, ok := s.(*ast.ExecuteStmt); ok {

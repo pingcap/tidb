@@ -100,8 +100,38 @@ func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isNonPrep
 		return errors.Trace(err)
 	}
 
+<<<<<<< HEAD:planner/core/plan_cache.go
 	// step 3: check schema version
 	if stmtAst.SchemaVersion != is.SchemaMetaVersion() {
+=======
+	// step 3: add metadata lock and check each table's schema version
+	schemaNotMatch := false
+	for i := 0; i < len(stmt.dbName); i++ {
+		_, ok := is.TableByID(stmt.tbls[i].Meta().ID)
+		if !ok {
+			tblByName, err := is.TableByName(stmt.dbName[i], stmt.tbls[i].Meta().Name)
+			if err != nil {
+				return plannererrors.ErrSchemaChanged.GenWithStack("Schema change caused error: %s", err.Error())
+			}
+			delete(stmt.RelateVersion, stmt.tbls[i].Meta().ID)
+			stmt.tbls[i] = tblByName
+			stmt.RelateVersion[tblByName.Meta().ID] = tblByName.Meta().Revision
+		}
+		newTbl, err := tryLockMDLAndUpdateSchemaIfNecessary(sctx.GetPlanCtx(), stmt.dbName[i], stmt.tbls[i], is)
+		if err != nil {
+			schemaNotMatch = true
+			continue
+		}
+		if stmt.tbls[i].Meta().Revision != newTbl.Meta().Revision {
+			schemaNotMatch = true
+		}
+		stmt.tbls[i] = newTbl
+		stmt.RelateVersion[newTbl.Meta().ID] = newTbl.Meta().Revision
+	}
+
+	// step 4: check schema version
+	if schemaNotMatch || stmt.SchemaVersion != is.SchemaMetaVersion() {
+>>>>>>> 70a825397f3 (*: add metadata lock when using the plan cache (#51897)):pkg/planner/core/plan_cache.go
 		// In order to avoid some correctness issues, we have to clear the
 		// cached plan once the schema version is changed.
 		// Cached plan in prepared struct does NOT have a "cache key" with
@@ -123,7 +153,7 @@ func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isNonPrep
 		stmtAst.SchemaVersion = is.SchemaMetaVersion()
 	}
 
-	// step 4: handle expiration
+	// step 5: handle expiration
 	// If the lastUpdateTime less than expiredTimeStamp4PC,
 	// it means other sessions have executed 'admin flush instance plan_cache'.
 	// So we need to clear the current session's plan cache.
@@ -134,6 +164,7 @@ func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isNonPrep
 		stmtAst.CachedPlan = nil
 		vars.LastUpdateTime4PC = expiredTimeStamp4PC
 	}
+
 	return nil
 }
 
@@ -186,7 +217,11 @@ func GetPlanFromSessionPlanCache(ctx context.Context, sctx sessionctx.Context,
 			latestSchemaVersion = domain.GetDomain(sctx).InfoSchema().SchemaMetaVersion()
 		}
 		if cacheKey, err = NewPlanCacheKey(sctx.GetSessionVars(), stmt.StmtText,
+<<<<<<< HEAD:planner/core/plan_cache.go
 			stmt.StmtDB, stmtAst.SchemaVersion, latestSchemaVersion, bindSQL, expression.ExprPushDownBlackListReloadTimeStamp.Load()); err != nil {
+=======
+			stmt.StmtDB, stmt.SchemaVersion, latestSchemaVersion, bindSQL, expression.ExprPushDownBlackListReloadTimeStamp.Load(), stmt.RelateVersion); err != nil {
+>>>>>>> 70a825397f3 (*: add metadata lock when using the plan cache (#51897)):pkg/planner/core/plan_cache.go
 			return nil, nil, err
 		}
 	}
@@ -331,7 +366,11 @@ func generateNewPlan(ctx context.Context, sctx sessionctx.Context, isNonPrepared
 		if _, isolationReadContainTiFlash := sessVars.IsolationReadEngines[kv.TiFlash]; isolationReadContainTiFlash && !IsReadOnly(stmtAst.Stmt, sessVars) {
 			delete(sessVars.IsolationReadEngines, kv.TiFlash)
 			if cacheKey, err = NewPlanCacheKey(sessVars, stmt.StmtText, stmt.StmtDB,
+<<<<<<< HEAD:planner/core/plan_cache.go
 				stmtAst.SchemaVersion, latestSchemaVersion, bindSQL, expression.ExprPushDownBlackListReloadTimeStamp.Load()); err != nil {
+=======
+				stmt.SchemaVersion, latestSchemaVersion, bindSQL, expression.ExprPushDownBlackListReloadTimeStamp.Load(), stmt.RelateVersion); err != nil {
+>>>>>>> 70a825397f3 (*: add metadata lock when using the plan cache (#51897)):pkg/planner/core/plan_cache.go
 				return nil, nil, err
 			}
 			sessVars.IsolationReadEngines[kv.TiFlash] = struct{}{}
