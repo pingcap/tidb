@@ -41,7 +41,6 @@ aliases:
     - gmhdbjd
     - lance6716
     - lichunzhu
-    - okJiang
   sig-approvers-domain: # approvers for domain pkg
     - zimulala
     - D3Hunter
