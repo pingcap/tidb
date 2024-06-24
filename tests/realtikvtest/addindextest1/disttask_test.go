@@ -285,5 +285,5 @@ func TestAddUKErrorMessage(t *testing.T) {
 	tk.MustExec("insert into t values (5, 1), (10005, 1), (20005, 1), (30005, 1);")
 	tk.MustExec("split table t between (1) and (100001) regions 10;")
 	err := tk.ExecToErr("alter table t add unique index uk(b);")
-	require.ErrorContains(t, err, "Duplicate entry '1' for key 'uk'")
+	require.ErrorContains(t, err, "Duplicate entry '1' for key 't.uk'")
 }
