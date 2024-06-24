@@ -268,26 +268,18 @@ func (s *CheckpointManager) afterFlush() {
 
 // Close closes the checkpoint manager.
 func (s *CheckpointManager) Close() {
-	s.cancel()
-	s.updaterWg.Wait()
-	s.logger.Info("close checkpoint manager")
-}
-
-// Flush flushed the data and updates checkpoint.
-func (s *CheckpointManager) Flush() {
-	// use FlushModeForceFlushNoImport to finish the flush process timely.
-	_, _, _, err := s.flushCtrl.Flush(FlushModeForceFlushNoImport)
-	if err != nil {
-		s.logger.Warn("flush local engine failed", zap.Error(err))
-	}
 	s.mu.Lock()
 	s.afterFlush()
 	s.mu.Unlock()
 
-	err = s.updateCheckpoint()
+	err := s.updateCheckpoint()
 	if err != nil {
 		s.logger.Error("update checkpoint failed", zap.Error(err))
 	}
+
+	s.cancel()
+	s.updaterWg.Wait()
+	s.logger.Info("close checkpoint manager")
 }
 
 // Reset resets the checkpoint manager between two partitions.

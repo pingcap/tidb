@@ -574,6 +574,7 @@ func (dc *ddlCtx) runAddIndexInIngestMode(
 	t table.PhysicalTable,
 	reorgInfo *reorgInfo,
 ) error {
+	// TODO(tangenta): support adjust worker count dynamically.
 	startKey, endKey := reorgInfo.StartKey, reorgInfo.EndKey
 	if err := dc.isReorgRunnable(reorgInfo.Job.ID, false); err != nil {
 		return errors.Trace(err)
@@ -629,16 +630,19 @@ func (dc *ddlCtx) runAddIndexInIngestMode(
 	} else {
 		defer cpMgr.Close()
 		cpMgr.Reset(t.GetPhysicalID(), startKey, endKey)
+		bcCtx.AttachCheckpointManager(cpMgr)
 	}
 
-	totalRowCount := job.GetRowCount()
+	reorgCtx := dc.getReorgCtx(reorgInfo.Job.ID)
+	previousTotal := reorgCtx.getRowCount()
+	var rowCnt int64
 	rowCntListener := &standaloneRowCntListener{
 		flushed: func(cnt int) {
-			totalRowCount += int64(cnt)
-			dc.getReorgCtx(reorgInfo.Job.ID).setRowCount(int64(cnt))
+			rowCnt += int64(cnt)
+			reorgCtx.setRowCount(previousTotal + rowCnt)
 		},
 		setTotal: func(total int) {
-			dc.getReorgCtx(reorgInfo.Job.ID).setRowCount(int64(total))
+			reorgCtx.setRowCount(previousTotal + int64(total))
 		},
 		counter: metrics.BackfillTotalCounter.WithLabelValues(
 			metrics.GenerateReorgLabel("add_idx_rate", job.SchemaName, job.TableName)),
@@ -736,16 +740,11 @@ func (dc *ddlCtx) writePhysicalTableRecord(
 
 	eg, egCtx := util.NewErrorGroupWithRecoverWithCtx(ctx)
 
-	scheduler, err := newBackfillScheduler(egCtx, reorgInfo, sessPool, bfWorkerType, t, jc)
+	scheduler, err := newTxnBackfillScheduler(egCtx, reorgInfo, sessPool, bfWorkerType, t, jc)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	defer scheduler.close(true)
-	if lit, ok := scheduler.(*ingestBackfillScheduler); ok {
-		if lit.importStarted() {
-			return nil
-		}
-	}
 
 	err = scheduler.setupWorkers()
 	if err != nil {

@@ -82,9 +82,6 @@ const (
 	// FlushModeAuto means caller does not enforce any flush, the implementation can
 	// decide it.
 	FlushModeAuto FlushMode = iota
-	// FlushModeForceFlushNoImport means flush all data to local storage, but don't
-	// import the data to TiKV.
-	FlushModeForceFlushNoImport
 	// FlushModeForceFlushAndImport means flush and import all data to TiKV.
 	FlushModeForceFlushAndImport
 )
@@ -328,9 +325,6 @@ func (bc *litBackendCtx) checkFlush(mode FlushMode) (shouldFlush bool, shouldImp
 	})
 	if mode == FlushModeForceFlushAndImport || ForceSyncFlagForTest {
 		return true, true
-	}
-	if mode == FlushModeForceFlushNoImport {
-		return true, false
 	}
 	bc.diskRoot.UpdateUsage()
 	shouldImport = bc.diskRoot.ShouldImport()
