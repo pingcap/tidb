@@ -366,6 +366,40 @@ func (coll *HistColl) StableOrderIdxSlice() []*Index {
 	return idxs
 }
 
+// SetAllIndexFullLoadForBootstrap sets all indices' stats loaded status to full load for bootstrap.
+func (coll *HistColl) SetAllIndexFullLoadForBootstrap() {
+	for _, idx := range coll.indices {
+		idx.StatsLoadedStatus = NewStatsFullLoadStatus()
+	}
+}
+
+// CalcPreScalar calculates the pre-calculated scalar for all columns and indices.
+func (coll *HistColl) CalcPreScalar() {
+	for _, idx := range coll.indices {
+		idx.PreCalculateScalar()
+	}
+	for _, col := range coll.columns {
+		col.PreCalculateScalar()
+	}
+}
+
+// DropEvicted will drop the unnecessary data for all columns and indices. It's triggerred by stats cache.
+func (coll *HistColl) DropEvicted() {
+	for _, col := range coll.columns {
+		if !col.IsStatsInitialized() || col.GetEvictedStatus() == AllEvicted {
+			continue
+		}
+		col.DropUnnecessaryData()
+	}
+	for _, idx := range coll.indices {
+		if !idx.IsStatsInitialized() || idx.GetEvictedStatus() == AllEvicted {
+			continue
+		}
+		idx.DropUnnecessaryData()
+	}
+
+}
+
 // TableMemoryUsage records tbl memory usage
 type TableMemoryUsage struct {
 	ColumnsMemUsage map[int64]CacheItemMemoryUsage

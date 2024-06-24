@@ -552,10 +552,7 @@ func (*Handle) initStatsBuckets4Chunk(cache statstypes.StatsCache, iter *chunk.I
 		tableID, isIndex, histID := row.GetInt64(0), row.GetInt64(1), row.GetInt64(2)
 		if table == nil || table.PhysicalID != tableID {
 			if table != nil {
-				table.ForEachIndexImmutable(func(_ int64, index *statistics.Index) bool {
-					index.StatsLoadedStatus = statistics.NewStatsFullLoadStatus()
-					return false
-				})
+				table.SetAllIndexFullLoadForBootstrap()
 				cache.Put(table.PhysicalID, table) // put this table in the cache because all statstics of the table have been read.
 			}
 			var ok bool
@@ -638,14 +635,7 @@ func (h *Handle) initStatsBuckets(cache statstypes.StatsCache, totalMemory uint6
 	}
 	tables := cache.Values()
 	for _, table := range tables {
-		table.ForEachColumnImmutable(func(_ int64, c *statistics.Column) bool {
-			c.PreCalculateScalar()
-			return false
-		})
-		table.ForEachIndexImmutable(func(_ int64, idx *statistics.Index) bool {
-			idx.PreCalculateScalar()
-			return false
-		})
+		table.CalcPreScalar()
 		cache.Put(table.PhysicalID, table) // put this table in the cache because all statstics of the table have been read.
 	}
 	return nil

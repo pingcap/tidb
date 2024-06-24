@@ -126,15 +126,6 @@ func (s *LFU) Values() []*statistics.Table {
 	return result
 }
 
-// DropEvicted drop stats for table column/index
-func DropEvicted(item statistics.TableCacheItem) {
-	if !item.IsStatsInitialized() ||
-		item.GetEvictedStatus() == statistics.AllEvicted {
-		return
-	}
-	item.DropUnnecessaryData()
-}
-
 func (s *LFU) onReject(item *ristretto.Item) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -169,14 +160,7 @@ func (s *LFU) dropMemory(item *ristretto.Item) {
 	// because the onexit function is also called when the evict event occurs.
 	// TODO(hawkingrei): not copy the useless part.
 	table := item.Value.(*statistics.Table).Copy()
-	table.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
-		DropEvicted(col)
-		return false
-	})
-	table.ForEachIndexImmutable(func(_ int64, idx *statistics.Index) bool {
-		DropEvicted(idx)
-		return false
-	})
+	table.DropEvicted()
 	s.resultKeySet.AddKeyValue(int64(item.Key), table)
 	after := table.MemoryUsage().TotalTrackingMemUsage()
 	// why add before again? because the cost will be subtracted in onExit.
