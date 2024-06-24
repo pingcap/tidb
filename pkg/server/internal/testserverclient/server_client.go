@@ -2798,12 +2798,12 @@ func (cli *TestServerClient) getNewDB(t *testing.T, overrider configOverrider) *
 	return testkit.NewDBTestKit(t, db)
 }
 
-func MustExec(t *testing.T, ctx context.Context, conn *sql.Conn, sql string) {
+func MustExec(ctx context.Context, t *testing.T, conn *sql.Conn, sql string) {
 	_, err := conn.QueryContext(ctx, sql)
 	require.NoError(t, err)
 }
 
-func MustQuery(t *testing.T, ctx context.Context, cli *TestServerClient, conn *sql.Conn, sql string) {
+func MustQuery(ctx context.Context, t *testing.T, cli *TestServerClient, conn *sql.Conn, sql string) {
 	rs, err := conn.QueryContext(ctx, sql)
 	require.NoError(t, err)
 	if rs != nil {
@@ -2813,9 +2813,8 @@ func MustQuery(t *testing.T, ctx context.Context, cli *TestServerClient, conn *s
 }
 
 type sqlWithErr struct {
-	sql       string
-	expectErr error
-	stmt      *sql.Stmt
+	stmt *sql.Stmt
+	sql  string
 }
 
 type expectQuery struct {
@@ -2831,9 +2830,9 @@ func (cli *TestServerClient) RunTestIssue53634(t *testing.T, dom *domain.Domain)
 
 		conn, err := dbt.GetDB().Conn(ctx)
 		require.NoError(t, err)
-		MustExec(t, ctx, conn, "create database test_db_state default charset utf8 default collate utf8_bin")
-		MustExec(t, ctx, conn, "use test_db_state")
-		MustExec(t, ctx, conn, `CREATE TABLE stock (
+		MustExec(ctx, t, conn, "create database test_db_state default charset utf8 default collate utf8_bin")
+		MustExec(ctx, t, conn, "use test_db_state")
+		MustExec(ctx, t, conn, `CREATE TABLE stock (
   a int NOT NULL,
   b char(30) NOT NULL,
   c int,
@@ -2841,18 +2840,18 @@ func (cli *TestServerClient) RunTestIssue53634(t *testing.T, dom *domain.Domain)
   PRIMARY KEY(a,b)
 ) ENGINE=InnoDB DEFAULT CHARSET=latin1 COLLATE=latin1_bin COMMENT='…comment';
 `)
-		MustExec(t, ctx, conn, "insert into stock values(1, 'a', 11, 'x'), (2, 'b', 22, 'y')")
-		MustExec(t, ctx, conn, "alter table stock add column cct_1 int default 10")
-		MustExec(t, ctx, conn, "alter table stock modify cct_1 json")
-		MustExec(t, ctx, conn, "alter table stock add column adc_1 smallint")
-		defer MustExec(t, ctx, conn, "drop database test_db_state")
+		MustExec(ctx, t, conn, "insert into stock values(1, 'a', 11, 'x'), (2, 'b', 22, 'y')")
+		MustExec(ctx, t, conn, "alter table stock add column cct_1 int default 10")
+		MustExec(ctx, t, conn, "alter table stock modify cct_1 json")
+		MustExec(ctx, t, conn, "alter table stock add column adc_1 smallint")
+		defer MustExec(ctx, t, conn, "drop database test_db_state")
 
 		sqls := make([]sqlWithErr, 5)
-		sqls[0] = sqlWithErr{"begin", nil, nil}
-		sqls[1] = sqlWithErr{"SELECT a, c, d from stock where (a, b) IN ((?, ?),(?, ?)) FOR UPDATE", nil, nil}
-		sqls[2] = sqlWithErr{"UPDATE stock SET c = ? WHERE a= ? AND b = 'a'", nil, nil}
-		sqls[3] = sqlWithErr{"UPDATE stock SET c = ?, d = 'z' WHERE a= ? AND b = 'b'", nil, nil}
-		sqls[4] = sqlWithErr{"commit", nil, nil}
+		sqls[0] = sqlWithErr{nil, "begin"}
+		sqls[1] = sqlWithErr{nil, "SELECT a, c, d from stock where (a, b) IN ((?, ?),(?, ?)) FOR UPDATE"}
+		sqls[2] = sqlWithErr{nil, "UPDATE stock SET c = ? WHERE a= ? AND b = 'a'"}
+		sqls[3] = sqlWithErr{nil, "UPDATE stock SET c = ?, d = 'z' WHERE a= ? AND b = 'b'"}
+		sqls[4] = sqlWithErr{nil, "commit"}
 		dropColumnSQL := "alter table stock drop column cct_1"
 		query := &expectQuery{sql: "select * from stock;", rows: []string{"1 a 101 x <nil>\n2 b 102 z <nil>"}}
 		runTestInSchemaState(t, conn, cli, dom, model.StateWriteReorganization, true, dropColumnSQL, sqls, query)
@@ -2871,7 +2870,7 @@ func runTestInSchemaState(
 	expectQuery *expectQuery,
 ) {
 	ctx := context.Background()
-	MustExec(t, ctx, conn, "use test_db_state")
+	MustExec(ctx, t, conn, "use test_db_state")
 
 	callback := &callback.TestDDLCallback{Do: dom}
 	prevState := model.StateNone
@@ -2885,14 +2884,14 @@ func runTestInSchemaState(
 		err := dbt.GetDB().Close()
 		require.NoError(t, err)
 	}()
-	MustExec(t, ctx, conn1, "use test_db_state")
+	MustExec(ctx, t, conn1, "use test_db_state")
 
 	for i, sqlWithErr := range sqlWithErrs {
 		// Start the test txn.
 		// Step 1: begin(when i = 0).
 		if i == 0 || i == len(sqlWithErrs)-1 {
 			sqlWithErr := sqlWithErrs[i]
-			MustExec(t, ctx, conn1, sqlWithErr.sql)
+			MustExec(ctx, t, conn1, sqlWithErr.sql)
 		} else {
 			// Step 2: prepare stmts.
 			// SELECT a, c, d from stock where (a, b) IN ((?, ?),(?, ?)) FOR UPDATE
@@ -2907,7 +2906,7 @@ func runTestInSchemaState(
 
 	// Step 3: begin.
 	sqlWithErr := sqlWithErrs[0]
-	MustExec(t, ctx, conn1, sqlWithErr.sql)
+	MustExec(ctx, t, conn1, sqlWithErr.sql)
 
 	prevState = model.StateNone
 	state = model.StateWriteOnly
@@ -2933,7 +2932,7 @@ func runTestInSchemaState(
 				_, err = sqlWithErr.stmt.ExecContext(ctx, 100+i, i)
 				require.NoError(t, err)
 			} else {
-				MustQuery(t, ctx, cli, conn1, sqlWithErr.sql)
+				MustQuery(ctx, t, cli, conn1, sqlWithErr.sql)
 			}
 		}
 	}
@@ -2945,7 +2944,7 @@ func runTestInSchemaState(
 	d := dom.DDL()
 	originalCallback := d.GetHook()
 	d.SetHook(callback)
-	MustExec(t, ctx, conn, dropColumnSQL)
+	MustExec(ctx, t, conn, dropColumnSQL)
 	require.NoError(t, checkErr)
 
 	// Check the result.
