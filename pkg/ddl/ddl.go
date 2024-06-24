@@ -215,6 +215,7 @@ type DDL interface {
 		ctx sessionctx.Context,
 		schema model.CIStr,
 		info *model.TableInfo,
+		involvingRef []model.InvolvingSchemaInfo,
 		cs ...CreateTableWithInfoConfigurier) error
 
 	// BatchCreateTableWithInfo is like CreateTableWithInfo, but can handle multiple tables.
