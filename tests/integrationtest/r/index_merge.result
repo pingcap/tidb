@@ -535,8 +535,8 @@ Sort_16	1841.86	root		index_merge.t1.c1
     │   └─Selection_25(Probe)	1841.86	cop[tikv]		lt(index_merge.t1.c3, 10)
     │     └─TableRowIDScan_24	5542.21	cop[tikv]	table:t1	keep order:false, stats:pseudo
     └─TopN_29(Probe)	1841.86	root		index_merge.t2.c1, offset:2, count:1
-      └─HashAgg_35	4900166.23	root		group by:Column#24, funcs:avg(Column#22)->Column#9, funcs:firstrow(Column#23)->index_merge.t2.c1
-        └─Projection_53	6125207.79	root		cast(index_merge.t2.c1, decimal(10,0) BINARY)->Column#22, index_merge.t2.c1->Column#23, index_merge.t2.c1->Column#24
+      └─HashAgg_35	4900166.23	root		group by:Column#23, funcs:avg(Column#22)->Column#9, funcs:firstrow(Column#23)->index_merge.t2.c1
+        └─Projection_53	6125207.79	root		cast(index_merge.t2.c1, decimal(10,0) BINARY)->Column#22, index_merge.t2.c1->Column#23
           └─IndexMerge_41	6125207.79	root		type: union
             ├─Selection_38(Build)	6121.12	cop[tikv]		eq(index_merge.t1.c1, index_merge.t2.c1)
             │ └─IndexRangeScan_37	6121120.92	cop[tikv]	table:t2, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
