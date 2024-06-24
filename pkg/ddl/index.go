@@ -683,9 +683,6 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 			}
 			logutil.DDLLogger().Info("run add index job", zap.Stringer("job", job), zap.Reflect("indexInfo", indexInfo))
 		}
-		if len(indexInfo.Columns) == 0 {
-			panic("?")
-		}
 		allIndexInfos = append(allIndexInfos, indexInfo)
 	}
 
@@ -886,18 +883,12 @@ func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Jo
 	if !reorgTp.NeedMergeProcess() {
 		return runReorgJobAndHandleErr(w, d, t, job, tbl, allIndexInfos, false)
 	}
-	if len(allIndexInfos[0].Columns) == 0 {
-		panic("?")
-	}
 	switch allIndexInfos[0].BackfillState {
 	case model.BackfillStateRunning:
 		logutil.DDLLogger().Info("index backfill state running",
 			zap.Int64("job ID", job.ID), zap.String("table", tbl.Meta().Name.O),
 			zap.Bool("ingest mode", reorgTp == model.ReorgTypeLitMerge),
 			zap.String("index", allIndexInfos[0].Name.O))
-		if len(allIndexInfos[0].Columns) == 0 {
-			panic("?")
-		}
 		switch reorgTp {
 		case model.ReorgTypeLitMerge:
 			if job.ReorgMeta.IsDistReorg {
@@ -913,9 +904,6 @@ func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Jo
 		}
 		for _, indexInfo := range allIndexInfos {
 			indexInfo.BackfillState = model.BackfillStateReadyToMerge
-		}
-		if len(allIndexInfos[0].Columns) == 0 {
-			panic("?")
 		}
 		ver, err = updateVersionAndTableInfo(d, t, job, tbl.Meta(), true)
 		return false, ver, errors.Trace(err)

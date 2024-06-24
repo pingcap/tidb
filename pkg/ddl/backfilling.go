@@ -578,7 +578,7 @@ func (dc *ddlCtx) runAddIndexInIngestMode(
 	if err := dc.isReorgRunnable(reorgInfo.Job.ID, false); err != nil {
 		return errors.Trace(err)
 	}
-	job := reorgInfo.Job
+	job := reorgInfo.Job.Clone()
 	opCtx := NewStandaloneOperatorCtx(ctx, job.ID)
 	bcCtx, err := getBackendCtx(ctx, dc.store, dc.etcdCli, job)
 	if err != nil {
@@ -599,14 +599,6 @@ func (dc *ddlCtx) runAddIndexInIngestMode(
 		}
 		indexInfos = append(indexInfos, indexInfo)
 	}
-	if len(indexInfos[0].Columns) == 0 {
-		panic("?")
-	}
-	defer func() {
-		if len(indexInfos[0].Columns) == 0 {
-			panic("?")
-		}
-	}()
 
 	engines, err := bcCtx.Register(indexIDs, uniques, job.TableName)
 	if err != nil {
