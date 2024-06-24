@@ -3525,33 +3525,6 @@ func getHashAggs(lp base.LogicalPlan, prop *property.PhysicalProperty) []base.Ph
 	return hashAggs
 }
 
-// TODO: support more operators and distinct later
-func checkCanPushDownToMPP(la *LogicalAggregation) bool {
-	hasUnsupportedDistinct := false
-	for _, agg := range la.AggFuncs {
-		// MPP does not support distinct except count distinct now
-		if agg.HasDistinct {
-			if agg.Name != ast.AggFuncCount && agg.Name != ast.AggFuncGroupConcat {
-				hasUnsupportedDistinct = true
-			}
-		}
-		// MPP does not support AggFuncApproxCountDistinct now
-		if agg.Name == ast.AggFuncApproxCountDistinct {
-			hasUnsupportedDistinct = true
-		}
-	}
-	if hasUnsupportedDistinct {
-		warnErr := errors.NewNoStackError("Aggregation can not be pushed to storage layer in mpp mode because it contains agg function with distinct")
-		if la.SCtx().GetSessionVars().StmtCtx.InExplainStmt {
-			la.SCtx().GetSessionVars().StmtCtx.AppendWarning(warnErr)
-		} else {
-			la.SCtx().GetSessionVars().StmtCtx.AppendExtraWarning(warnErr)
-		}
-		return false
-	}
-	return CheckAggCanPushCop(la.SCtx(), la.AggFuncs, la.GroupByItems, kv.TiFlash)
-}
-
 // ExhaustPhysicalPlans implements LogicalPlan interface.
 func (p *LogicalSelection) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
 	newProps := make([]*property.PhysicalProperty, 0, 2)
