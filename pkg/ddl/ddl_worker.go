@@ -28,8 +28,8 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	sess "github.com/pingcap/tidb/pkg/ddl/internal/session"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
+	sess "github.com/pingcap/tidb/pkg/ddl/session"
 	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
@@ -315,16 +315,12 @@ func buildJobDependence(t *meta.Meta, curJob *model.Job) error {
 
 func (d *ddl) addBatchDDLJobs2Queue(tasks []*limitJobTask) error {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
-	// lock to reduce conflict
-	d.globalIDLock.Lock()
-	defer d.globalIDLock.Unlock()
+	ids, err := d.genGlobalIDs(len(tasks))
+	if err != nil {
+		return errors.Trace(err)
+	}
 	return kv.RunInNewTxn(ctx, d.store, true, func(_ context.Context, txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
-		ids, err := t.GenGlobalIDs(len(tasks))
-		if err != nil {
-			return errors.Trace(err)
-		}
-
 		if err := d.checkFlashbackJobInQueue(t); err != nil {
 			return errors.Trace(err)
 		}
@@ -425,11 +421,10 @@ func (d *ddl) addBatchDDLJobs(tasks []*limitJobTask) error {
 	}
 
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
-	// lock to reduce conflict
-	d.globalIDLock.Lock()
+
+	ids, err = d.genGlobalIDs(len(tasks))
 	err = kv.RunInNewTxn(ctx, d.store, true, func(_ context.Context, txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
-		ids, err = t.GenGlobalIDs(len(tasks))
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -450,7 +445,6 @@ func (d *ddl) addBatchDDLJobs(tasks []*limitJobTask) error {
 
 		return nil
 	})
-	d.globalIDLock.Unlock()
 	if err != nil {
 		return errors.Trace(err)
 	}

@@ -349,7 +349,7 @@ func TestCreateTableWithInfo(t *testing.T) {
 	require.True(t, ok)
 	idGenNum, err := strconv.ParseInt(idGen, 10, 64)
 	require.NoError(t, err)
-	require.Greater(t, idGenNum, id)
+	require.NotEqual(t, idGenNum, id)
 }
 
 func TestBatchCreateTable(t *testing.T) {

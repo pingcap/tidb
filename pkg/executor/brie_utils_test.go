@@ -102,7 +102,7 @@ func TestSplitBatchCreateTableWithTableId(t *testing.T) {
 	require.True(t, ok)
 	idGenNum, err := strconv.ParseInt(idGen, 10, 64)
 	require.NoError(t, err)
-	require.Greater(t, idGenNum, id)
+	require.NotEqual(t, idGenNum, id)
 
 	// a empty table info with len(info3) = 0
 	infos3 := []*model.TableInfo{}

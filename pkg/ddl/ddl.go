@@ -35,8 +35,8 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
-	sess "github.com/pingcap/tidb/pkg/ddl/internal/session"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
+	sess "github.com/pingcap/tidb/pkg/ddl/session"
 	"github.com/pingcap/tidb/pkg/ddl/syncer"
 	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
@@ -215,6 +215,7 @@ type DDL interface {
 		ctx sessionctx.Context,
 		schema model.CIStr,
 		info *model.TableInfo,
+		involvingRef []model.InvolvingSchemaInfo,
 		cs ...CreateTableWithInfoConfigurier) error
 
 	// BatchCreateTableWithInfo is like CreateTableWithInfo, but can handle multiple tables.
@@ -296,9 +297,8 @@ type ddl struct {
 	ddlJobNotifyCh chan struct{}
 
 	// localJobCh is used to delivery job in local TiDB nodes.
-	localJobCh chan *limitJobTask
-	// globalIDLocal locks global id to reduce write conflict.
-	globalIDLock sync.Mutex
+	localJobCh  chan *limitJobTask
+	idAllocator IDAllocator
 }
 
 // waitSchemaSyncedController is to control whether to waitSchemaSynced or not.
@@ -760,6 +760,7 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 		enableTiFlashPoll: atomicutil.NewBool(true),
 		ddlJobNotifyCh:    make(chan struct{}, 100),
 		localJobCh:        make(chan *limitJobTask, 1),
+		idAllocator:       NewAllocator(ddlCtx.store),
 	}
 
 	taskexecutor.RegisterTaskType(proto.Backfill,
@@ -996,25 +997,12 @@ func (d *ddl) GetInfoSchemaWithInterceptor(ctx sessionctx.Context) infoschema.In
 }
 
 func (d *ddl) genGlobalIDs(count int) ([]int64, error) {
-	var ret []int64
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
-	// lock to reduce conflict
-	d.globalIDLock.Lock()
-	defer d.globalIDLock.Unlock()
-	err := kv.RunInNewTxn(ctx, d.store, true, func(_ context.Context, txn kv.Transaction) error {
-		failpoint.Inject("mockGenGlobalIDFail", func(val failpoint.Value) {
-			if val.(bool) {
-				failpoint.Return(errors.New("gofail genGlobalIDs error"))
-			}
-		})
-
-		m := meta.NewMeta(txn)
-		var err error
-		ret, err = m.GenGlobalIDs(count)
-		return err
+	failpoint.Inject("mockGenGlobalIDFail", func(val failpoint.Value) {
+		if val.(bool) {
+			failpoint.Return(nil, errors.New("gofail genGlobalIDs error"))
+		}
 	})
-
-	return ret, err
+	return d.idAllocator.AllocIDs(count)
 }
 
 func (d *ddl) genPlacementPolicyID() (int64, error) {

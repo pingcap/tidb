@@ -534,7 +534,7 @@ func TestPlacementMode(t *testing.T) {
 	require.NotNil(t, tbl.PlacementPolicyRef)
 	tbl.Name = model.NewCIStr("t2")
 	tk.Session().SetValue(sessionctx.QueryString, "skip")
-	err = dom.DDL().CreateTableWithInfo(tk.Session(), model.NewCIStr("test"), tbl, ddl.OnExistError)
+	err = dom.DDL().CreateTableWithInfo(tk.Session(), model.NewCIStr("test"), tbl, nil, ddl.OnExistError)
 	require.NoError(t, err)
 	tk.MustQuery("show create table t2").Check(testkit.Rows("t2 CREATE TABLE `t2` (\n" +
 		"  `id` int(11) DEFAULT NULL\n" +
@@ -548,7 +548,7 @@ func TestPlacementMode(t *testing.T) {
 	tbl.Name = model.NewCIStr("t2")
 	tbl.PlacementPolicyRef.Name = model.NewCIStr("pxx")
 	tk.Session().SetValue(sessionctx.QueryString, "skip")
-	err = dom.DDL().CreateTableWithInfo(tk.Session(), model.NewCIStr("test"), tbl, ddl.OnExistError)
+	err = dom.DDL().CreateTableWithInfo(tk.Session(), model.NewCIStr("test"), tbl, nil, ddl.OnExistError)
 	require.NoError(t, err)
 	tk.MustQuery("show create table t2").Check(testkit.Rows("t2 CREATE TABLE `t2` (\n" +
 		"  `id` int(11) DEFAULT NULL\n" +
