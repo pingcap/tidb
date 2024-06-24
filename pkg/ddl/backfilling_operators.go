@@ -133,6 +133,7 @@ var (
 type RowCountListener interface {
 	Flushed(rowCnt int)
 	Imported(rowCnt int)
+	SetTotal(total int)
 }
 
 // EmptyRowCntListener implements a noop RowCountListener.
@@ -146,6 +147,9 @@ func (*EmptyRowCntListener) Flushed(_ int) {
 
 // Imported implements RowCountListener.
 func (*EmptyRowCntListener) Imported(_ int) {
+}
+
+func (*EmptyRowCntListener) SetTotal(_ int) {
 }
 
 // NewAddIndexIngestPipeline creates a pipeline for adding index in ingest mode.
@@ -186,7 +190,7 @@ func NewAddIndexIngestPipeline(
 	scanOp := NewTableScanOperator(ctx, sessPool, copCtx, srcChkPool, readerCnt, cpMgr)
 	ingestOp := NewIndexIngestOperator(ctx, copCtx, backendCtx, sessPool,
 		tbl, indexes, engines, srcChkPool, writerCnt, reorgMeta, cpMgr, rowCntListener)
-	sinkOp := newIndexWriteResultSink(ctx, backendCtx, tbl, indexes)
+	sinkOp := newIndexWriteResultSink(ctx, backendCtx, tbl, indexes, cpMgr, rowCntListener)
 
 	operator.Compose[TableScanTask](srcOp, scanOp)
 	operator.Compose[IndexRecordChunk](scanOp, ingestOp)
@@ -255,7 +259,7 @@ func NewWriteIndexToExternalStoragePipeline(
 	scanOp := NewTableScanOperator(ctx, sessPool, copCtx, srcChkPool, readerCnt, nil)
 	writeOp := NewWriteExternalStoreOperator(
 		ctx, copCtx, sessPool, jobID, subtaskID, tbl, indexes, extStore, srcChkPool, writerCnt, onClose, memSizePerIndex, reorgMeta)
-	sinkOp := newIndexWriteResultSink(ctx, nil, tbl, indexes)
+	sinkOp := newIndexWriteResultSink(ctx, nil, tbl, indexes, nil, rowCntListener)
 
 	operator.Compose[TableScanTask](srcOp, scanOp)
 	operator.Compose[IndexRecordChunk](scanOp, writeOp)
@@ -753,7 +757,6 @@ func (w *indexIngestLocalWorker) HandleTask(ck IndexRecordChunk, send func(Index
 
 	if w.cpMgr != nil {
 		totalCnt, nextKey := w.cpMgr.Status()
-		rs.Added = 0
 		rs.Total = totalCnt
 		rs.Next = nextKey
 		flushed, imported, err := w.cpMgr.UpdateWrittenKeys(ck.ID, rs.Added)
@@ -873,6 +876,9 @@ type indexWriteResultSink struct {
 	tbl        table.PhysicalTable
 	indexes    []table.Index
 
+	cpMgr          *ingest.CheckpointManager
+	rowCntListener RowCountListener
+
 	errGroup errgroup.Group
 	source   operator.DataChannel[IndexWriteResult]
 }
@@ -882,13 +888,17 @@ func newIndexWriteResultSink(
 	backendCtx ingest.BackendCtx,
 	tbl table.PhysicalTable,
 	indexes []table.Index,
+	cpMgr *ingest.CheckpointManager,
+	rowCntListener RowCountListener,
 ) *indexWriteResultSink {
 	return &indexWriteResultSink{
-		ctx:        ctx,
-		backendCtx: backendCtx,
-		tbl:        tbl,
-		indexes:    indexes,
-		errGroup:   errgroup.Group{},
+		ctx:            ctx,
+		backendCtx:     backendCtx,
+		tbl:            tbl,
+		indexes:        indexes,
+		errGroup:       errgroup.Group{},
+		cpMgr:          cpMgr,
+		rowCntListener: rowCntListener,
 	}
 }
 
@@ -911,6 +921,10 @@ func (s *indexWriteResultSink) collectResult() error {
 				err := s.flush()
 				if err != nil {
 					s.ctx.onError(err)
+				}
+				if s.cpMgr != nil {
+					total, _ := s.cpMgr.Status()
+					s.rowCntListener.SetTotal(total)
 				}
 				return err
 			}

@@ -599,6 +599,7 @@ func (dc *ddlCtx) runAddIndexInIngestMode(
 			return errors.Errorf("index info not found: %d", e.ID)
 		}
 		indexInfos = append(indexInfos, indexInfo)
+		uniques = append(uniques, indexInfo.Unique)
 	}
 
 	engines, err := bcCtx.Register(indexIDs, uniques, job.TableName)
@@ -635,6 +636,9 @@ func (dc *ddlCtx) runAddIndexInIngestMode(
 		flushed: func(cnt int) {
 			totalRowCount += int64(cnt)
 			dc.getReorgCtx(reorgInfo.Job.ID).setRowCount(int64(cnt))
+		},
+		setTotal: func(total int) {
+			dc.getReorgCtx(reorgInfo.Job.ID).setRowCount(int64(total))
 		},
 		counter: metrics.BackfillTotalCounter.WithLabelValues(
 			metrics.GenerateReorgLabel("add_idx_rate", job.SchemaName, job.TableName)),
@@ -676,13 +680,18 @@ func (dc *ddlCtx) runAddIndexInIngestMode(
 
 type standaloneRowCntListener struct {
 	EmptyRowCntListener
-	flushed func(int)
-	counter prometheus.Counter
+	flushed  func(int)
+	setTotal func(int)
+	counter  prometheus.Counter
 }
 
 func (s *standaloneRowCntListener) Flushed(rowCnt int) {
 	s.flushed(rowCnt)
 	s.counter.Add(float64(rowCnt))
+}
+
+func (s *standaloneRowCntListener) SetTotal(total int) {
+	s.setTotal(total)
 }
 
 // writePhysicalTableRecord handles the "add index" or "modify/change column" reorganization state for a non-partitioned table or a partition.

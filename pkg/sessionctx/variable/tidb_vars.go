@@ -1378,7 +1378,7 @@ const (
 	DefTiDBSessionPlanCacheSize                    = 100
 	DefTiDBEnablePrepPlanCacheMemoryMonitor        = true
 	DefTiDBPrepPlanCacheMemoryGuardRatio           = 0.1
-	DefTiDBEnableDistTask                          = true
+	DefTiDBEnableDistTask                          = false // TODO: remove this after CI passed.
 	DefTiDBEnableFastCreateTable                   = false
 	DefTiDBSimplifiedMetrics                       = false
 	DefTiDBEnablePaging                            = true
