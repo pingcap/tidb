@@ -69,11 +69,7 @@ go_test(
     ],
     flaky = True,
     race = "on",
-<<<<<<< HEAD
-    shard_count = 26,
-=======
     shard_count = 32,
->>>>>>> 64f5427448b (br: fix Log Backup unexpected paused when adding a already long-running task (#53695))
     deps = [
         ":streamhelper",
         "//br/pkg/errors",

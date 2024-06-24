@@ -607,8 +607,6 @@ func TestUnregisterAfterPause(t *testing.T) {
 		return err != nil && strings.Contains(err.Error(), "check point lagged too large")
 	}, 5*time.Second, 300*time.Millisecond)
 }
-<<<<<<< HEAD
-=======
 
 // If the start ts is *NOT* lagged, even both the cluster and pd are lagged, the task should run normally.
 func TestAddTaskWithLongRunTask0(t *testing.T) {
@@ -772,56 +770,3 @@ func TestAddTaskWithLongRunTask3(t *testing.T) {
 		return err == nil
 	}, 5*time.Second, 300*time.Millisecond)
 }
-
-func TestOwnershipLost(t *testing.T) {
-	c := createFakeCluster(t, 4, false)
-	c.splitAndScatter(manyRegions(0, 10240)...)
-	installSubscribeSupport(c)
-	ctx, cancel := context.WithCancel(context.Background())
-	env := newTestEnv(c, t)
-	adv := streamhelper.NewCheckpointAdvancer(env)
-	adv.OnStart(ctx)
-	adv.OnBecomeOwner(ctx)
-	require.NoError(t, adv.OnTick(ctx))
-	c.advanceCheckpoints()
-	c.flushAll()
-	failpoint.Enable("github.com/pingcap/tidb/br/pkg/streamhelper/subscription.listenOver.aboutToSend", "pause")
-	failpoint.Enable("github.com/pingcap/tidb/br/pkg/streamhelper/FlushSubscriber.Clear.timeoutMs", "return(500)")
-	wg := new(sync.WaitGroup)
-	wg.Add(adv.TEST_registerCallbackForSubscriptions(wg.Done))
-	cancel()
-	failpoint.Disable("github.com/pingcap/tidb/br/pkg/streamhelper/subscription.listenOver.aboutToSend")
-	wg.Wait()
-}
-
-func TestSubscriptionPanic(t *testing.T) {
-	c := createFakeCluster(t, 4, false)
-	c.splitAndScatter(manyRegions(0, 20)...)
-	installSubscribeSupport(c)
-	ctx, cancel := context.WithCancel(context.Background())
-	env := newTestEnv(c, t)
-	adv := streamhelper.NewCheckpointAdvancer(env)
-	adv.OnStart(ctx)
-	adv.OnBecomeOwner(ctx)
-	wg := new(sync.WaitGroup)
-	wg.Add(adv.TEST_registerCallbackForSubscriptions(wg.Done))
-
-	require.NoError(t, adv.OnTick(ctx))
-	failpoint.Enable("github.com/pingcap/tidb/br/pkg/streamhelper/subscription.listenOver.aboutToSend", "5*panic")
-	ckpt := c.advanceCheckpoints()
-	c.flushAll()
-	cnt := 0
-	for {
-		require.NoError(t, adv.OnTick(ctx))
-		cnt++
-		if env.checkpoint >= ckpt {
-			break
-		}
-		if cnt > 100 {
-			t.Fatalf("After 100 times, the progress cannot be advanced.")
-		}
-	}
-	cancel()
-	wg.Wait()
-}
->>>>>>> 64f5427448b (br: fix Log Backup unexpected paused when adding a already long-running task (#53695))
