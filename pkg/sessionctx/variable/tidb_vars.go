@@ -1534,7 +1534,7 @@ var (
 	// variables for plan cache
 	PreparedPlanCacheMemoryGuardRatio = atomic.NewFloat64(DefTiDBPrepPlanCacheMemoryGuardRatio)
 	EnableDistTask                    = atomic.NewBool(DefTiDBEnableDistTask)
-	EnableFastCreateTable             = atomic.NewBool(DefTiDBEnableFastCreateTable)
+	EnableFastCreateTable             = atomic.NewBool(false)
 	DDLForce2Queue                    = atomic.NewBool(false)
 	EnableNoopVariables               = atomic.NewBool(DefTiDBEnableNoopVariables)
 	EnableMDL                         = atomic.NewBool(false)
