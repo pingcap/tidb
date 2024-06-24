@@ -211,11 +211,14 @@ func (s *CheckpointManager) UpdateTotalKeys(taskID int, delta int, last bool) {
 	cp := s.checkpoints[taskID]
 	cp.totalKeys += delta
 	cp.lastBatchRead = last
+	logutil.DDLIngestLogger().Info("UpdateTotalKeys", zap.Int("id", taskID), zap.Int("delta", delta), zap.Bool("last", last))
 }
 
 // UpdateWrittenKeys updates the written keys of the task.
 // This is called by the writer after writing the local engine to update the current number of rows written.
 func (s *CheckpointManager) UpdateWrittenKeys(taskID int, delta int) (flushed, imported bool, err error) {
+	logutil.DDLIngestLogger().Info("UpdateWrittenKeys", zap.Int("id", taskID), zap.Int("delta", delta))
+
 	s.mu.Lock()
 	cp := s.checkpoints[taskID]
 	cp.writtenKeys += delta

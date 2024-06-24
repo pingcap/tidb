@@ -610,6 +610,7 @@ func (dc *ddlCtx) runAddIndexInIngestMode(
 			zap.Int64s("index IDs", indexIDs))
 		return errors.Trace(err)
 	}
+	defer bcCtx.UnregisterEngines()
 	sctx, err := sessPool.Get()
 	if err != nil {
 		return errors.Trace(err)
@@ -679,7 +680,16 @@ func (dc *ddlCtx) runAddIndexInIngestMode(
 	if opCtx.OperatorErr() != nil {
 		return opCtx.OperatorErr()
 	}
-	return err
+	if err != nil {
+		return err
+	}
+	for _, indexID := range indexIDs {
+		err := bcCtx.CollectRemoteDuplicateRows(indexID, t)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 type standaloneRowCntListener struct {

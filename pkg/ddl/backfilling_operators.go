@@ -759,7 +759,9 @@ func (w *indexIngestLocalWorker) HandleTask(ck IndexRecordChunk, send func(Index
 		w.ctx.onError(err)
 		return
 	}
-
+	if rs.Added == 0 {
+		return
+	}
 	if w.cpMgr != nil {
 		totalCnt, nextKey := w.cpMgr.Status()
 		rs.Total = totalCnt

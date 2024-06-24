@@ -978,29 +978,23 @@ func runIngestReorgJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 	}
 	done, ver, err = runReorgJobAndHandleErr(w, d, t, job, tbl, allIndexInfos, false)
 	if err != nil {
-		if !errorIsRetryable(err, job) {
-			logutil.DDLLogger().Warn("run reorg job failed, convert job to rollback",
-				zap.String("job", job.String()), zap.Error(err))
-			ver, err = convertAddIdxJob2RollbackJob(d, t, job, tbl.Meta(), allIndexInfos, err)
-		}
-		return false, ver, errors.Trace(err)
-	}
-	if !done {
-		return false, ver, nil
-	}
-
-	err = bc.FinishImport(tbl)
-	if err != nil {
 		if kv.ErrKeyExists.Equal(err) {
 			logutil.DDLLogger().Warn("import index duplicate key, convert job to rollback", zap.Stringer("job", job), zap.Error(err))
 			ver, err = convertAddIdxJob2RollbackJob(d, t, job, tbl.Meta(), allIndexInfos, err)
+		} else if !errorIsRetryable(err, job) {
+			logutil.DDLLogger().Warn("run reorg job failed, convert job to rollback",
+				zap.String("job", job.String()), zap.Error(err))
+			ver, err = convertAddIdxJob2RollbackJob(d, t, job, tbl.Meta(), allIndexInfos, err)
 		} else {
-			logutil.DDLLogger().Warn("lightning import error", zap.Error(err))
+			logutil.DDLLogger().Warn("run add index ingest job error", zap.Error(err))
 			if !errorIsRetryable(err, job) {
 				ver, err = convertAddIdxJob2RollbackJob(d, t, job, tbl.Meta(), allIndexInfos, err)
 			}
 		}
 		return false, ver, errors.Trace(err)
+	}
+	if !done {
+		return false, ver, nil
 	}
 	bc.SetDone()
 	return true, ver, nil

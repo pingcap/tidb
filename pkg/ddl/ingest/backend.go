@@ -31,7 +31,6 @@ import (
 	lightning "github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/errormanager"
 	"github.com/pingcap/tidb/pkg/lightning/log"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/table"
@@ -53,16 +52,6 @@ type BackendCtx interface {
 	// BackendCtx.
 	Register(indexIDs []int64, uniques []bool, tableName string) ([]Engine, error)
 	UnregisterEngines()
-	// FinishImport imports all Register-ed engines of into the storage, collects
-	// the duplicate errors for unique engines.
-	//
-	// TODO(lance6716): unify with CollectRemoteDuplicateRows.
-	FinishImport(tbl table.Table) error
-	// ImportStarted returns true only when all the engines are finished writing and
-	// import is started by FinishImport. Considering the calling usage of
-	// FinishImport, it will return true after a successful call of FinishImport and
-	// may return true after a failed call of FinishImport.
-	ImportStarted() bool
 
 	CollectRemoteDuplicateRows(indexID int64, tbl table.Table) error
 	FlushController
@@ -151,34 +140,6 @@ func (bc *litBackendCtx) CollectRemoteDuplicateRows(indexID int64, tbl table.Tab
 		IndexID: indexID,
 	}, lightning.ErrorOnDup)
 	return bc.handleErrorAfterCollectRemoteDuplicateRows(err, indexID, tbl, hasDupe)
-}
-
-// FinishImport imports all the key-values in engine into the storage, collects
-// the duplicate errors if any, and removes the engine from the backend context.
-// When duplicate errors are found, it will return ErrKeyExists error.
-func (bc *litBackendCtx) FinishImport(tbl table.Table) error {
-	for _, ei := range bc.engines {
-		if err := ei.ImportAndClean(); err != nil {
-			indexInfo := model.FindIndexInfoByID(tbl.Meta().Indices, ei.indexID)
-			return TryConvertToKeyExistsErr(err, indexInfo, tbl.Meta())
-		}
-		failpoint.Inject("mockFinishImportErr", func() {
-			failpoint.Return(fmt.Errorf("mock finish import error"))
-		})
-
-		if ei.unique {
-			errorMgr := errormanager.New(nil, bc.cfg, log.Logger{Logger: logutil.Logger(bc.ctx)})
-			dupeController := bc.backend.GetDupeController(bc.cfg.TikvImporter.RangeConcurrency*2, errorMgr)
-			hasDupe, err := dupeController.CollectRemoteDuplicateRows(bc.ctx, tbl, tbl.Meta().Name.L, &encode.SessionOptions{
-				SQLMode: mysql.ModeStrictAllTables,
-				SysVars: bc.sysVars,
-				IndexID: ei.indexID,
-			}, lightning.ErrorOnDup)
-			return bc.handleErrorAfterCollectRemoteDuplicateRows(err, ei.indexID, tbl, hasDupe)
-		}
-	}
-
-	return nil
 }
 
 func acquireLock(ctx context.Context, se *concurrency.Session, key string) (*concurrency.Mutex, error) {
