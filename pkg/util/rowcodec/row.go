@@ -16,10 +16,11 @@ package rowcodec
 
 import (
 	"encoding/binary"
-	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/types"
 	"hash/crc32"
 	"time"
+
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/types"
 )
 
 const (
