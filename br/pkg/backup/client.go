@@ -74,7 +74,7 @@ type MainBackupLoop struct {
 	// backup requests for all stores.
 	// the subRanges may changed every round.
 	BackupReq backuppb.BackupRequest
-	// the number of backup clients to send backup requests.
+	// the number of backup clients to send backup requests per store.
 	Concurrency uint
 	// record the whole backup progress in infinite loop.
 	GlobalProgressTree *rtree.ProgressRangeTree
