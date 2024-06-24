@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	executor_metrics "github.com/pingcap/tidb/pkg/executor/metrics"
+	"github.com/pingcap/tidb/pkg/executor/staticrecordset"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/keyspace"
@@ -239,6 +240,17 @@ func (a *recordSet) Close() error {
 // OnFetchReturned implements commandLifeCycle#OnFetchReturned
 func (a *recordSet) OnFetchReturned() {
 	a.stmt.LogSlowQuery(a.txnStartTS, len(a.lastErrs) == 0, true)
+}
+
+// Detach creates a new `RecordSet` which doesn't depend on the current session context.
+func (a *recordSet) TryDetach() (sqlexec.RecordSet, bool, error) {
+	// TODO: also detach the executor. Currently, the executor inside may contain the session context. Once
+	// the executor itself supports detach, we should also detach it here.
+	e, ok := a.executor.(*TableReaderExecutor)
+	if !ok {
+		return nil, false, nil
+	}
+	return staticrecordset.New(a.Fields(), e, a.stmt.GetTextToLog(false)), true, nil
 }
 
 // ExecStmt implements the sqlexec.Statement interface, it builds a planner.Plan to an sqlexec.Statement.
