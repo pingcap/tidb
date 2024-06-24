@@ -141,19 +141,22 @@ func startBackup(
 	case <-ctx.Done():
 		return ctx.Err()
 	default:
-		retry := -1
-		return utils.WithRetry(ctx, func() error {
-			retry += 1
-			logutil.CL(ctx).Info("try backup", zap.Uint64("storeID", storeID), zap.Int("retry time", retry))
-			// Send backup request to the store.
-			// handle the backup response or internal error here.
-			// handle the store error(reboot or network partition) outside.
-			reqs := splitBackupReqRanges(backupReq, concurrency)
-			pool := tidbutil.NewWorkerPool(concurrency, "store_backup")
-			eg, ectx := errgroup.WithContext(ctx)
-			for _, req := range reqs {
-				bkReq := req
-				pool.ApplyOnErrorGroup(eg, func() error {
+		logutil.CL(ctx).Info("try backup", zap.Uint64("storeID", storeID))
+		// Send backup request to the store.
+		// handle the backup response or internal error here.
+		// handle the store error(reboot or network partition) outside.
+		reqs := SplitBackupReqRanges(backupReq, concurrency)
+		pool := tidbutil.NewWorkerPool(concurrency, "store_backup")
+		eg, ectx := errgroup.WithContext(ctx)
+		for i, req := range reqs {
+			bkReq := req
+			reqIndex := i
+			pool.ApplyOnErrorGroup(eg, func() error {
+				retry := -1
+				return utils.WithRetry(ectx, func() error {
+					retry += 1
+					logutil.CL(ectx).Info("backup to store", zap.Uint64("storeID", storeID),
+						zap.Int("retry", retry), zap.Int("reqIndex", reqIndex))
 					return doSendBackup(ectx, backupCli, bkReq, func(resp *backuppb.BackupResponse) error {
 						// Forward all responses (including error).
 						failpoint.Inject("backup-timeout-error", func(val failpoint.Value) {
@@ -199,10 +202,10 @@ func startBackup(
 						}
 						return nil
 					})
-				})
-			}
-			return eg.Wait()
-		}, utils.NewBackupSSTBackoffer())
+				}, utils.NewBackupSSTBackoffer())
+			})
+		}
+		return eg.Wait()
 	}
 }
 
@@ -278,18 +281,25 @@ func ObserveStoreChangesAsync(ctx context.Context, stateNotifier chan BackupRetr
 	}()
 }
 
-func splitBackupReqRanges(req backuppb.BackupRequest, count uint) []backuppb.BackupRequest {
+func SplitBackupReqRanges(req backuppb.BackupRequest, count uint) []backuppb.BackupRequest {
 	rangeCount := len(req.SubRanges)
 	if rangeCount == 0 {
 		return []backuppb.BackupRequest{req}
 	}
 	splitRequests := make([]backuppb.BackupRequest, 0, count)
-	splitStep := rangeCount / int(count+1)
-	if splitStep == 0 {
+	if count <= 1 {
+		// 0/1 means no need to split, just send one batch request
 		return []backuppb.BackupRequest{req}
 	}
+	splitStep := rangeCount / int(count)
+	if splitStep == 0 {
+		// splitStep should be at least 1
+		// if count >= rangeCount, means no batch, split them all
+		splitStep = 1
+	}
 	subRanges := req.SubRanges
-	for i := 0; i < rangeCount; i += splitStep {
+	i := 0
+	for ; i < rangeCount; i += splitStep {
 		splitReq := req
 		splitReq.SubRanges = subRanges[i:min(i+splitStep, rangeCount)]
 		splitRequests = append(splitRequests, splitReq)
