@@ -91,13 +91,13 @@ import (
 	server_metrics "github.com/pingcap/tidb/pkg/server/metrics"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	storeerr "github.com/pingcap/tidb/pkg/store/driver/error"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util/arena"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/hack"
@@ -804,6 +804,9 @@ func (cc *clientConn) openSessionAndDoAuth(authData []byte, authPlugin string, z
 	return nil
 }
 
+// mockOSUserForAuthSocketTest should only be used in test
+var mockOSUserForAuthSocketTest atomic.Pointer[string]
+
 // Check if the Authentication Plugin of the server, client and user configuration matches
 func (cc *clientConn) checkAuthPlugin(ctx context.Context, resp *handshake.Response41) ([]byte, error) {
 	// Open a context unless this was done before.
@@ -852,7 +855,15 @@ func (cc *clientConn) checkAuthPlugin(ctx context.Context, resp *handshake.Respo
 		if err != nil {
 			return nil, err
 		}
-		return []byte(user.Username), nil
+		uname := user.Username
+
+		if intest.InTest {
+			if p := mockOSUserForAuthSocketTest.Load(); p != nil {
+				uname = *p
+			}
+		}
+
+		return []byte(uname), nil
 	}
 	if len(userplugin) == 0 {
 		// No user plugin set, assuming MySQL Native Password
@@ -1206,7 +1217,7 @@ func (cc *clientConn) addMetrics(cmd byte, startTime time.Time, err error) {
 	if counter != nil {
 		counter.Inc()
 	} else {
-		label := strconv.Itoa(int(cmd))
+		label := server_metrics.CmdToString(cmd)
 		if err != nil {
 			metrics.QueryTotalCounter.WithLabelValues(label, "Error", resourceGroupName).Inc()
 		} else {
@@ -1734,7 +1745,7 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 			case variable.OnInt:
 				// multi statement is fully permitted, do nothing
 			default:
-				warn := stmtctx.SQLWarn{Level: stmtctx.WarnLevelWarning, Err: servererr.ErrMultiStatementDisabled}
+				warn := contextutil.SQLWarn{Level: contextutil.WarnLevelWarning, Err: servererr.ErrMultiStatementDisabled}
 				parserWarns = append(parserWarns, warn)
 			}
 		}
@@ -1797,7 +1808,7 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 			}
 			// When the TiFlash server seems down, we append a warning to remind the user to check the status of the TiFlash
 			// server and fallback to TiKV.
-			warns := append(parserWarns, stmtctx.SQLWarn{Level: stmtctx.WarnLevelError, Err: err})
+			warns := append(parserWarns, contextutil.SQLWarn{Level: contextutil.WarnLevelError, Err: err})
 			delete(cc.ctx.GetSessionVars().IsolationReadEngines, kv.TiFlash)
 			_, err = cc.handleStmt(ctx, stmt, warns, i == len(stmts)-1)
 			cc.ctx.GetSessionVars().IsolationReadEngines[kv.TiFlash] = struct{}{}
@@ -1951,8 +1962,7 @@ func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.Stm
 		return nil, err1
 	}
 	for idxKey, idxVal := range idxVals {
-		isCommonHd := isCommonHandle[idxKey]
-		h, err2 := tablecodec.DecodeHandleInUniqueIndexValue(idxVal, isCommonHd)
+		h, err2 := tablecodec.DecodeHandleInIndexValue(idxVal)
 		if err2 != nil {
 			return nil, err2
 		}
@@ -1998,7 +2008,7 @@ func setResourceGroupTaggerForMultiStmtPrefetch(snapshot kv.Snapshot, sqls strin
 // Currently, the first return value is used to fall back to TiKV when TiFlash is down.
 func (cc *clientConn) handleStmt(
 	ctx context.Context, stmt ast.StmtNode,
-	warns []stmtctx.SQLWarn, lastStmt bool,
+	warns []contextutil.SQLWarn, lastStmt bool,
 ) (bool, error) {
 	ctx = context.WithValue(ctx, execdetails.StmtExecDetailKey, &execdetails.StmtExecDetails{})
 	ctx = context.WithValue(ctx, util.ExecDetailsKey, &util.ExecDetails{})
@@ -2049,6 +2059,12 @@ func (cc *clientConn) handleStmt(
 		if cc.getStatus() == connStatusShutdown {
 			return false, exeerrors.ErrQueryInterrupted
 		}
+		cc.ctx.GetSessionVars().SQLKiller.Finish = func() {
+			//nolint: errcheck
+			rs.Finish()
+		}
+		cc.ctx.GetSessionVars().SQLKiller.InWriteResultSet.Store(true)
+		defer cc.ctx.GetSessionVars().SQLKiller.InWriteResultSet.Store(false)
 		if retryable, err := cc.writeResultSet(ctx, rs, false, status, 0); err != nil {
 			return retryable, err
 		}

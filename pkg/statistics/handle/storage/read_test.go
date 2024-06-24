@@ -88,7 +88,7 @@ func TestLoadStats(t *testing.T) {
 	idx, ok = stat.Indices[idxBID]
 	require.True(t, !ok || (float64(idx.CMSketch.TotalCount())+float64(idx.TopN.TotalCount())+idx.Histogram.TotalRowCount() == 0))
 	require.False(t, ok && idx.IsEssentialStatsLoaded())
-	// IsInvalid adds the index to HistogramNeededItems.
+	// IsInvalid adds the index to AsyncLoadHistogramNeededItems.
 	statistics.IndexStatsIsInvalid(testKit.Session().GetPlanCtx(), idx, &stat.HistColl, idxBID)
 	require.NoError(t, h.LoadNeededHistograms())
 	stat = h.GetTableStats(tableInfo)

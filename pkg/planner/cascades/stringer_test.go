@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/memo"
 	"github.com/pingcap/tidb/pkg/planner/pattern"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
@@ -65,7 +66,7 @@ func TestGroupStringer(t *testing.T) {
 		plan, err := plannercore.BuildLogicalPlanForTest(context.Background(), ctx, stmt, is)
 		require.NoError(t, err)
 
-		logic, ok := plan.(plannercore.LogicalPlan)
+		logic, ok := plan.(base.LogicalPlan)
 		require.True(t, ok)
 
 		logic, err = optimizer.onPhasePreprocessing(ctx, logic)

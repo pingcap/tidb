@@ -200,11 +200,11 @@ func (f Flags) WithCastTimeToYearThroughConcat(flag bool) Flags {
 type Context struct {
 	flags       Flags
 	loc         *time.Location
-	warnHandler contextutil.WarnHandler
+	warnHandler contextutil.WarnAppender
 }
 
 // NewContext creates a new `Context`
-func NewContext(flags Flags, loc *time.Location, handler contextutil.WarnHandler) Context {
+func NewContext(flags Flags, loc *time.Location, handler contextutil.WarnAppender) Context {
 	intest.Assert(loc != nil && handler != nil)
 	return Context{
 		flags:       flags,

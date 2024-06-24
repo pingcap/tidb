@@ -200,13 +200,13 @@ func (hg *Histogram) DecodeTo(tp *types.FieldType, timeZone *time.Location) erro
 }
 
 // ConvertTo converts the histogram bucket values into `tp`.
-func (hg *Histogram) ConvertTo(sc *stmtctx.StatementContext, tp *types.FieldType) (*Histogram, error) {
+func (hg *Histogram) ConvertTo(tctx types.Context, tp *types.FieldType) (*Histogram, error) {
 	hist := NewHistogram(hg.ID, hg.NDV, hg.NullCount, hg.LastUpdateVersion, tp, hg.Len(), hg.TotColSize)
 	hist.Correlation = hg.Correlation
 	iter := chunk.NewIterator4Chunk(hg.Bounds)
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		d := row.GetDatum(0, hg.Tp)
-		d, err := d.ConvertTo(sc.TypeCtx(), tp)
+		d, err := d.ConvertTo(tctx, tp)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -593,14 +593,17 @@ func (hg *Histogram) LessRowCount(sctx context.PlanContext, value types.Datum) f
 func (hg *Histogram) BetweenRowCount(sctx context.PlanContext, a, b types.Datum) float64 {
 	lessCountA := hg.LessRowCount(sctx, a)
 	lessCountB := hg.LessRowCount(sctx, b)
-	// If lessCountA is not less than lessCountB, it may be that they fall to the same bucket and we cannot estimate
-	// the fraction, so we use `totalCount / NDV` to estimate the row count, but the result should not greater than
-	// lessCountB or notNullCount-lessCountA.
-	if lessCountA >= lessCountB && hg.NDV > 0 {
+	rangeEst := lessCountB - lessCountA
+	lowEqual, _ := hg.EqualRowCount(sctx, a, false)
+	ndvAvg := hg.NotNullCount() / float64(hg.NDV)
+	// If values fall in the same bucket, we may underestimate the fractional result. So estimate the low value (a) as an equals, and
+	// estimate the high value as the default (because the input high value may be "larger" than the true high value). The range should
+	// not be less than both the low+high - or the lesser of the estimate for the individual range of a or b is used as a bound.
+	if rangeEst < math.Max(lowEqual, ndvAvg) && hg.NDV > 0 {
 		result := math.Min(lessCountB, hg.NotNullCount()-lessCountA)
-		return math.Min(result, hg.NotNullCount()/float64(hg.NDV))
+		return math.Min(result, lowEqual+ndvAvg)
 	}
-	return lessCountB - lessCountA
+	return rangeEst
 }
 
 // TotalRowCount returns the total count of this histogram.

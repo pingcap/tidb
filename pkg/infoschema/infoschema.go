@@ -56,6 +56,10 @@ const bucketCount = 512
 type infoSchema struct {
 	infoSchemaMisc
 	schemaMap map[string]*schemaTables
+	// schemaID2Name is a map from schema ID to schema name.
+	// it should be enough to query by name only theoretically, but there are some
+	// places we only have schema ID, and we check both name and id in some sanity checks.
+	schemaID2Name map[int64]string
 
 	// sortedTablesBuckets is a slice of sortedTables, a table's bucket index is (tableID % bucketCount).
 	sortedTablesBuckets []sortedTables
@@ -67,9 +71,6 @@ type infoSchemaMisc struct {
 
 	// ruleBundleMap stores all placement rules
 	ruleBundleMap map[int64]*placement.Bundle
-
-	// policyRefMap stores all policyRefInfo for tables.
-	policyRefMap map[int64]*model.PolicyRefInfo
 
 	// policyMap stores all placement policies.
 	policyMutex sync.RWMutex
@@ -95,18 +96,13 @@ type SchemaAndTableName struct {
 
 // MockInfoSchema only serves for test.
 func MockInfoSchema(tbList []*model.TableInfo) InfoSchema {
-	result := &infoSchema{}
-	result.schemaMap = make(map[string]*schemaTables)
-	result.policyMap = make(map[string]*model.PolicyInfo)
-	result.resourceGroupMap = make(map[string]*model.ResourceGroupInfo)
-	result.ruleBundleMap = make(map[int64]*placement.Bundle)
-	result.sortedTablesBuckets = make([]sortedTables, bucketCount)
+	result := newInfoSchema()
 	dbInfo := &model.DBInfo{ID: 1, Name: model.NewCIStr("test"), Tables: tbList}
 	tableNames := &schemaTables{
 		dbInfo: dbInfo,
 		tables: make(map[string]table.Table),
 	}
-	result.schemaMap["test"] = tableNames
+	result.addSchema(tableNames)
 	var tableIDs map[int64]struct{}
 	for _, tb := range tbList {
 		intest.AssertFunc(func() bool {
@@ -124,6 +120,36 @@ func MockInfoSchema(tbList []*model.TableInfo) InfoSchema {
 		bucketIdx := tableBucketIdx(tb.ID)
 		result.sortedTablesBuckets[bucketIdx] = append(result.sortedTablesBuckets[bucketIdx], tbl)
 	}
+	// Add a system table.
+	tables := []*model.TableInfo{
+		{
+			// Use a very big ID to avoid conflict with normal tables.
+			ID:   9999,
+			Name: model.NewCIStr("stats_meta"),
+			Columns: []*model.ColumnInfo{
+				{
+					State:  model.StatePublic,
+					Offset: 0,
+					Name:   model.NewCIStr("a"),
+					ID:     1,
+				},
+			},
+			State: model.StatePublic,
+		},
+	}
+	mysqlDBInfo := &model.DBInfo{ID: 2, Name: model.NewCIStr("mysql"), Tables: tables}
+	tableNames = &schemaTables{
+		dbInfo: mysqlDBInfo,
+		tables: make(map[string]table.Table),
+	}
+	result.addSchema(tableNames)
+	for _, tb := range tables {
+		tb.DBID = mysqlDBInfo.ID
+		tbl := table.MockTableFromMeta(tb)
+		tableNames.tables[tb.Name.L] = tbl
+		bucketIdx := tableBucketIdx(tb.ID)
+		result.sortedTablesBuckets[bucketIdx] = append(result.sortedTablesBuckets[bucketIdx], tbl)
+	}
 	for i := range result.sortedTablesBuckets {
 		slices.SortFunc(result.sortedTablesBuckets[i], func(i, j table.Table) int {
 			return cmp.Compare(i.Meta().ID, j.Meta().ID)
@@ -134,18 +160,13 @@ func MockInfoSchema(tbList []*model.TableInfo) InfoSchema {
 
 // MockInfoSchemaWithSchemaVer only serves for test.
 func MockInfoSchemaWithSchemaVer(tbList []*model.TableInfo, schemaVer int64) InfoSchema {
-	result := &infoSchema{}
-	result.schemaMap = make(map[string]*schemaTables)
-	result.policyMap = make(map[string]*model.PolicyInfo)
-	result.resourceGroupMap = make(map[string]*model.ResourceGroupInfo)
-	result.ruleBundleMap = make(map[int64]*placement.Bundle)
-	result.sortedTablesBuckets = make([]sortedTables, bucketCount)
+	result := newInfoSchema()
 	dbInfo := &model.DBInfo{ID: 1, Name: model.NewCIStr("test"), Tables: tbList}
 	tableNames := &schemaTables{
 		dbInfo: dbInfo,
 		tables: make(map[string]table.Table),
 	}
-	result.schemaMap["test"] = tableNames
+	result.addSchema(tableNames)
 	for _, tb := range tbList {
 		tb.DBID = dbInfo.ID
 		tbl := table.MockTableFromMeta(tb)
@@ -168,8 +189,26 @@ func (is *infoSchema) base() *infoSchema {
 	return is
 }
 
+func newInfoSchema() *infoSchema {
+	return &infoSchema{
+		infoSchemaMisc: infoSchemaMisc{
+			policyMap:             map[string]*model.PolicyInfo{},
+			resourceGroupMap:      map[string]*model.ResourceGroupInfo{},
+			ruleBundleMap:         map[int64]*placement.Bundle{},
+			referredForeignKeyMap: make(map[SchemaAndTableName][]*model.ReferredFKInfo),
+		},
+		schemaMap:           map[string]*schemaTables{},
+		schemaID2Name:       map[int64]string{},
+		sortedTablesBuckets: make([]sortedTables, bucketCount),
+	}
+}
+
 func (is *infoSchema) SchemaByName(schema model.CIStr) (val *model.DBInfo, ok bool) {
-	tableNames, ok := is.schemaMap[schema.L]
+	return is.schemaByName(schema.L)
+}
+
+func (is *infoSchema) schemaByName(name string) (val *model.DBInfo, ok bool) {
+	tableNames, ok := is.schemaMap[name]
 	if !ok {
 		return
 	}
@@ -234,12 +273,11 @@ func (is *infoSchema) PolicyByID(id int64) (val *model.PolicyInfo, ok bool) {
 }
 
 func (is *infoSchema) SchemaByID(id int64) (val *model.DBInfo, ok bool) {
-	for _, v := range is.schemaMap {
-		if v.dbInfo.ID == id {
-			return v.dbInfo, true
-		}
+	name, ok := is.schemaID2Name[id]
+	if !ok {
+		return nil, false
 	}
-	return nil, false
+	return is.schemaByName(name)
 }
 
 // SchemaByTable get a table's schema name
@@ -282,6 +320,26 @@ func (is *infoSchema) SchemaTableInfos(schema model.CIStr) []*model.TableInfo {
 	return getTableInfoList(is.SchemaTables(schema))
 }
 
+type tableInfoResult struct {
+	DBName     string
+	TableInfos []*model.TableInfo
+}
+
+func (is *infoSchema) ListTablesWithSpecialAttribute(filter specialAttributeFilter) []tableInfoResult {
+	ret := make([]tableInfoResult, 0, 10)
+	for _, dbName := range is.AllSchemaNames() {
+		res := tableInfoResult{DBName: dbName.O}
+		for _, tblInfo := range is.SchemaTableInfos(dbName) {
+			if !filter(tblInfo) {
+				continue
+			}
+			res.TableInfos = append(res.TableInfos, tblInfo)
+		}
+		ret = append(ret, res)
+	}
+	return ret
+}
+
 // AllSchemaNames returns all the schemas' names.
 func AllSchemaNames(is InfoSchema) (names []string) {
 	schemas := is.AllSchemaNames()
@@ -306,15 +364,16 @@ func (is *infoSchema) AllSchemaNames() (schemas []model.CIStr) {
 	return rs
 }
 
-func (is *infoSchema) SchemaTables(schema model.CIStr) (tables []table.Table) {
+func (is *infoSchema) SchemaTables(schema model.CIStr) []table.Table {
 	schemaTables, ok := is.schemaMap[schema.L]
 	if !ok {
-		return
+		return nil
 	}
+	tables := make([]table.Table, 0, len(schemaTables.tables))
 	for _, tbl := range schemaTables.tables {
 		tables = append(tables, tbl)
 	}
-	return
+	return tables
 }
 
 // FindTableByPartitionID finds the partition-table info by the partitionID.
@@ -334,6 +393,18 @@ func (is *infoSchema) FindTableByPartitionID(partitionID int64) (table.Table, *m
 		}
 	}
 	return nil, nil, nil
+}
+
+// addSchema is used to add a schema to the infoSchema, it will overwrite the old
+// one if it already exists.
+func (is *infoSchema) addSchema(st *schemaTables) {
+	is.schemaMap[st.dbInfo.Name.L] = st
+	is.schemaID2Name[st.dbInfo.ID] = st.dbInfo.Name.L
+}
+
+func (is *infoSchema) delSchema(di *model.DBInfo) {
+	delete(is.schemaMap, di.Name.L)
+	delete(is.schemaID2Name, di.ID)
 }
 
 // HasTemporaryTable returns whether information schema has temporary table

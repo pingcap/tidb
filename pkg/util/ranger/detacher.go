@@ -277,6 +277,7 @@ func extractBestCNFItemRanges(sctx *rangerctx.RangerContext, conds []expression.
 			bestRes = curRes
 		}
 	}
+
 	if bestRes != nil && bestRes.rangeResult != nil {
 		bestRes.rangeResult.IsDNFCond = false
 	}
@@ -462,6 +463,21 @@ func (d *rangeDetacher) detachCNFCondAndBuildRangeForIndex(conditions []expressi
 		// TODO: we will optimize it later.
 		res.RemainedConds = AppendConditionsIfNotExist(res.RemainedConds, remainedConds)
 		res.Ranges = ranges
+		// Choosing between point ranges and bestCNF is needed since bestCNF does not cover the intersection
+		// of all conjuncts. Even when we add support for intersection, it could be turned off by a flag or it could be
+		// incomplete due to a long list of conjuncts.
+		if bestCNFItemRes != nil && res != nil && len(res.Ranges) != 0 {
+			bestCNFIsSubset := bestCNFItemRes.rangeResult.Ranges.Subset(d.sctx.TypeCtx, res.Ranges)
+			pointRangeIsSubset := res.Ranges.Subset(d.sctx.TypeCtx, bestCNFItemRes.rangeResult.Ranges)
+			// Pick bestCNFIsSubset if it is more selective than point ranges(res).
+			// Apply optimization if bestCNFItemRes is a proper subset of point ranges.
+			if bestCNFIsSubset && !pointRangeIsSubset {
+				// Update final result and just update: Ranges, AccessConds and RemainedConds
+				res.RemainedConds = removeConditions(res.RemainedConds, bestCNFItemRes.rangeResult.AccessConds)
+				res.Ranges = bestCNFItemRes.rangeResult.Ranges
+				res.AccessConds = bestCNFItemRes.rangeResult.AccessConds
+			}
+		}
 		return res, nil
 	}
 	for _, cond := range newConditions {
@@ -487,7 +503,9 @@ func (d *rangeDetacher) detachCNFCondAndBuildRangeForIndex(conditions []expressi
 // excludeToIncludeForIntPoint converts `(i` to `[i+1` and `i)` to `i-1]` if `i` is integer.
 // For example, if p is `(3`, i.e., point { value: int(3), excl: true, start: true }, it is equal to `[4`, i.e., point { value: int(4), excl: false, start: true }.
 // Similarly, if p is `8)`, i.e., point { value: int(8), excl: true, start: false}, it is equal to `7]`, i.e., point { value: int(7), excl: false, start: false }.
-// If return value is nil, it means p is unsatisfiable. For example, `(MaxInt64` is unsatisfiable.
+// If return value is nil, it means p is unsatisfiable. For example, `(MaxUint64` is unsatisfiable.
+// The boundary value will be treated as the bigger type: For example, `(MaxInt64` of type KindInt64 will become `[MaxInt64+1` of type KindUint64,
+// and vice versa for `0)` of type KindUint64 will become `-1]` of type KindInt64.
 func excludeToIncludeForIntPoint(p *point) *point {
 	if !p.excl {
 		return p
@@ -496,9 +514,10 @@ func excludeToIncludeForIntPoint(p *point) *point {
 		val := p.value.GetInt64()
 		if p.start {
 			if val == math.MaxInt64 {
-				return nil
+				p.value.SetUint64(uint64(val + 1))
+			} else {
+				p.value.SetInt64(val + 1)
 			}
-			p.value.SetInt64(val + 1)
 			p.excl = false
 		} else {
 			if val == math.MinInt64 {
@@ -517,9 +536,10 @@ func excludeToIncludeForIntPoint(p *point) *point {
 			p.excl = false
 		} else {
 			if val == 0 {
-				return nil
+				p.value.SetInt64(int64(val - 1))
+			} else {
+				p.value.SetUint64(val - 1)
 			}
-			p.value.SetUint64(val - 1)
 			p.excl = false
 		}
 	}
@@ -627,8 +647,8 @@ func ExtractEqAndInCondition(sctx *rangerctx.RangerContext, conditions []express
 		}
 		// Multiple Eq/In conditions for one column in CNF, apply intersection on them
 		// Lazily compute the points for the previously visited Eq/In
-		newTp := newFieldType(cols[offset].GetType())
-		collator := collate.GetCollator(cols[offset].GetType().GetCollate())
+		newTp := newFieldType(cols[offset].GetType(sctx.ExprCtx.GetEvalCtx()))
+		collator := collate.GetCollator(cols[offset].GetType(sctx.ExprCtx.GetEvalCtx()).GetCollate())
 		if mergedAccesses[offset] == nil {
 			mergedAccesses[offset] = accesses[offset]
 			// Note that this is a relatively special usage of build(). We will restore the points back to Expression for
@@ -640,7 +660,7 @@ func ExtractEqAndInCondition(sctx *rangerctx.RangerContext, conditions []express
 		if len(points[offset]) == 0 { // Early termination if false expression found
 			if expression.MaybeOverOptimized4PlanCache(sctx.ExprCtx, conditions) {
 				// `a>@x and a<@y` --> `invalid-range if @x>=@y`
-				sctx.SetSkipPlanCache(errors.NewNoStackErrorf("some parameters may be overwritten"))
+				sctx.SetSkipPlanCache("some parameters may be overwritten")
 			}
 			return nil, nil, nil, nil, true
 		}
@@ -664,7 +684,7 @@ func ExtractEqAndInCondition(sctx *rangerctx.RangerContext, conditions []express
 		} else if len(points[i]) == 0 { // Early termination if false expression found
 			if expression.MaybeOverOptimized4PlanCache(sctx.ExprCtx, conditions) {
 				// `a>@x and a<@y` --> `invalid-range if @x>=@y`
-				sctx.SetSkipPlanCache(errors.NewNoStackErrorf("some parameters may be overwritten"))
+				sctx.SetSkipPlanCache("some parameters may be overwritten")
 			}
 			return nil, nil, nil, nil, true
 		} else {
@@ -678,7 +698,7 @@ func ExtractEqAndInCondition(sctx *rangerctx.RangerContext, conditions []express
 			}
 			if expression.MaybeOverOptimized4PlanCache(sctx.ExprCtx, conditions) {
 				// `a=@x and a=@y` --> `a=@x if @x==@y`
-				sctx.SetSkipPlanCache(errors.NewNoStackErrorf("some parameters may be overwritten"))
+				sctx.SetSkipPlanCache("some parameters may be overwritten")
 			}
 		}
 	}
@@ -700,7 +720,7 @@ func ExtractEqAndInCondition(sctx *rangerctx.RangerContext, conditions []express
 		// However, please notice that if you're implementing this, please (1) set StatementContext.OptimDependOnMutableConst to true,
 		// or (2) don't do this optimization when StatementContext.UseCache is true. That's because this plan is affected by
 		// flen of user variable, we cannot cache this plan.
-		isFullLength := lengths[i] == types.UnspecifiedLength || lengths[i] == cols[i].GetType().GetFlen()
+		isFullLength := lengths[i] == types.UnspecifiedLength || lengths[i] == cols[i].GetType(sctx.ExprCtx.GetEvalCtx()).GetFlen()
 		if !isFullLength {
 			filters = append(filters, cond)
 		}

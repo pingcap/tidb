@@ -136,3 +136,17 @@ insert into t values ("1", "a    ", "a");
 select /*+USE_INDEX(t, idx)*/ * from t;
 id	a	b
 1	a    	a
+drop table if exists t1;
+drop table if exists t2;
+create table t1(code varchar(32)) CHARSET=utf8 COLLATE=utf8_general_ci;
+create table t2(code varchar(32)) CHARSET=utf8 COLLATE=utf8_bin;
+desc format=brief select * from t1 join t2 on t1.code=t2.code and t1.code in ('1') and t2.code in ('1');
+id	estRows	task	access object	operator info
+Projection	80000.00	root		cd_test_utf8mb4_0900_bin.t1.code, cd_test_utf8mb4_0900_bin.t2.code
+└─HashJoin	80000.00	root		CARTESIAN inner join
+  ├─TableReader(Build)	10.00	root		data:Selection
+  │ └─Selection	10.00	cop[tikv]		eq(cd_test_utf8mb4_0900_bin.t2.code, "1")
+  │   └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+  └─TableReader(Probe)	8000.00	root		data:Selection
+    └─Selection	8000.00	cop[tikv]		eq(cd_test_utf8mb4_0900_bin.t1.code, "1")
+      └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo

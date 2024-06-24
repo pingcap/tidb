@@ -24,9 +24,8 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	base2 "github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/planner/core/internal/base"
-	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/baseimpl"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -93,70 +92,13 @@ func (a *WindowFuncExtractor) Leave(n ast.Node) (ast.Node, bool) {
 	return n, true
 }
 
-// logicalSchemaProducer stores the schema for the logical plans who can produce schema directly.
-type logicalSchemaProducer struct {
-	schema *expression.Schema
-	names  types.NameSlice
-	baseLogicalPlan
-}
-
-// Schema implements the Plan.Schema interface.
-func (s *logicalSchemaProducer) Schema() *expression.Schema {
-	if s.schema == nil {
-		if len(s.Children()) == 1 {
-			// default implementation for plans has only one child: proprgate child schema.
-			// multi-children plans are likely to have particular implementation.
-			s.schema = s.Children()[0].Schema().Clone()
-		} else {
-			s.schema = expression.NewSchema()
-		}
-	}
-	return s.schema
-}
-
-func (s *logicalSchemaProducer) OutputNames() types.NameSlice {
-	if s.names == nil && len(s.Children()) == 1 {
-		// default implementation for plans has only one child: proprgate child `OutputNames`.
-		// multi-children plans are likely to have particular implementation.
-		s.names = s.Children()[0].OutputNames()
-	}
-	return s.names
-}
-
-func (s *logicalSchemaProducer) SetOutputNames(names types.NameSlice) {
-	s.names = names
-}
-
-// SetSchema implements the Plan.SetSchema interface.
-func (s *logicalSchemaProducer) SetSchema(schema *expression.Schema) {
-	s.schema = schema
-}
-
-func (s *logicalSchemaProducer) setSchemaAndNames(schema *expression.Schema, names types.NameSlice) {
-	s.schema = schema
-	s.names = names
-}
-
-// inlineProjection prunes unneeded columns inline a executor.
-func (s *logicalSchemaProducer) inlineProjection(parentUsedCols []*expression.Column, opt *coreusage.LogicalOptimizeOp) {
-	prunedColumns := make([]*expression.Column, 0)
-	used := expression.GetUsedList(s.SCtx().GetExprCtx().GetEvalCtx(), parentUsedCols, s.Schema())
-	for i := len(used) - 1; i >= 0; i-- {
-		if !used[i] {
-			prunedColumns = append(prunedColumns, s.Schema().Columns[i])
-			s.schema.Columns = append(s.Schema().Columns[:i], s.Schema().Columns[i+1:]...)
-		}
-	}
-	appendColumnPruneTraceStep(s.self, prunedColumns, opt)
-}
-
 // physicalSchemaProducer stores the schema for the physical plans who can produce schema directly.
 type physicalSchemaProducer struct {
 	schema *expression.Schema
 	basePhysicalPlan
 }
 
-func (s *physicalSchemaProducer) cloneWithSelf(newSelf base2.PhysicalPlan) (*physicalSchemaProducer, error) {
+func (s *physicalSchemaProducer) cloneWithSelf(newSelf base.PhysicalPlan) (*physicalSchemaProducer, error) {
 	base, err := s.basePhysicalPlan.cloneWithSelf(newSelf)
 	if err != nil {
 		return nil, err
@@ -200,7 +142,7 @@ func (s *physicalSchemaProducer) MemoryUsage() (sum int64) {
 type baseSchemaProducer struct {
 	schema *expression.Schema
 	names  types.NameSlice
-	base.Plan
+	baseimpl.Plan
 }
 
 // OutputNames returns the outputting names of each column.
@@ -253,7 +195,7 @@ func (p *LogicalMaxOneRow) Schema() *expression.Schema {
 	return s
 }
 
-func buildLogicalJoinSchema(joinType JoinType, join LogicalPlan) *expression.Schema {
+func buildLogicalJoinSchema(joinType JoinType, join base.LogicalPlan) *expression.Schema {
 	leftSchema := join.Children()[0].Schema()
 	switch joinType {
 	case SemiJoin, AntiSemiJoin:
@@ -273,7 +215,7 @@ func buildLogicalJoinSchema(joinType JoinType, join LogicalPlan) *expression.Sch
 }
 
 // BuildPhysicalJoinSchema builds the schema of PhysicalJoin from it's children's schema.
-func BuildPhysicalJoinSchema(joinType JoinType, join base2.PhysicalPlan) *expression.Schema {
+func BuildPhysicalJoinSchema(joinType JoinType, join base.PhysicalPlan) *expression.Schema {
 	leftSchema := join.Children()[0].Schema()
 	switch joinType {
 	case SemiJoin, AntiSemiJoin:
@@ -318,8 +260,8 @@ func GetStatsInfo(i any) map[string]uint64 {
 		// To entirely fix this, uncomment the assertion in TestPreparedIssue17419
 		return nil
 	}
-	p := i.(base2.Plan)
-	var physicalPlan base2.PhysicalPlan
+	p := i.(base.Plan)
+	var physicalPlan base.PhysicalPlan
 	switch x := p.(type) {
 	case *Insert:
 		physicalPlan = x.SelectPlan
@@ -327,7 +269,7 @@ func GetStatsInfo(i any) map[string]uint64 {
 		physicalPlan = x.SelectPlan
 	case *Delete:
 		physicalPlan = x.SelectPlan
-	case base2.PhysicalPlan:
+	case base.PhysicalPlan:
 		physicalPlan = x
 	}
 
@@ -388,7 +330,7 @@ func extractStringFromBoolSlice(slice []bool) string {
 	return strings.Join(l, ",")
 }
 
-func tableHasDirtyContent(ctx base2.PlanContext, tableInfo *model.TableInfo) bool {
+func tableHasDirtyContent(ctx base.PlanContext, tableInfo *model.TableInfo) bool {
 	pi := tableInfo.GetPartitionInfo()
 	if pi == nil {
 		return ctx.HasDirtyContent(tableInfo.ID)
@@ -403,8 +345,8 @@ func tableHasDirtyContent(ctx base2.PlanContext, tableInfo *model.TableInfo) boo
 	return false
 }
 
-func clonePhysicalPlan(plans []base2.PhysicalPlan) ([]base2.PhysicalPlan, error) {
-	cloned := make([]base2.PhysicalPlan, 0, len(plans))
+func clonePhysicalPlan(plans []base.PhysicalPlan) ([]base.PhysicalPlan, error) {
+	cloned := make([]base.PhysicalPlan, 0, len(plans))
 	for _, p := range plans {
 		c, err := p.Clone()
 		if err != nil {
@@ -473,11 +415,11 @@ func EncodeUniqueIndexValuesForKey(ctx sessionctx.Context, tblInfo *model.TableI
 }
 
 // GetPushDownCtx creates a PushDownContext from PlanContext
-func GetPushDownCtx(pctx base2.PlanContext) expression.PushDownContext {
+func GetPushDownCtx(pctx base.PlanContext) expression.PushDownContext {
 	return GetPushDownCtxFromBuildPBContext(pctx.GetBuildPBCtx())
 }
 
 // GetPushDownCtxFromBuildPBContext creates a PushDownContext from BuildPBContext
-func GetPushDownCtxFromBuildPBContext(bctx *base2.BuildPBContext) expression.PushDownContext {
-	return expression.NewPushDownContext(bctx.GetExprCtx().GetEvalCtx(), bctx.GetClient(), bctx.InExplainStmt, bctx.AppendWarning, bctx.AppendExtraWarning, bctx.GroupConcatMaxLen)
+func GetPushDownCtxFromBuildPBContext(bctx *base.BuildPBContext) expression.PushDownContext {
+	return expression.NewPushDownContext(bctx.GetExprCtx().GetEvalCtx(), bctx.GetClient(), bctx.InExplainStmt, bctx.WarnHandler, bctx.ExtraWarnghandler, bctx.GroupConcatMaxLen)
 }

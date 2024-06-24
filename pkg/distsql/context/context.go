@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/nocopy"
@@ -38,7 +39,8 @@ type DistSQLContext struct {
 	// the next execution. They'll need to be handled specially.
 	_ nocopy.NoCopy
 
-	AppendWarning   func(error)
+	WarnHandler contextutil.WarnAppender
+
 	InRestrictedSQL bool
 	Client          kv.Client
 
@@ -87,4 +89,9 @@ type DistSQLContext struct {
 	SessionAlias                string
 
 	ExecDetails *execdetails.SyncExecDetails
+}
+
+// AppendWarning appends the warning to the warning handler.
+func (dctx *DistSQLContext) AppendWarning(warn error) {
+	dctx.WarnHandler.AppendWarning(warn)
 }

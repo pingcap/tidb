@@ -16,6 +16,7 @@ package hint
 
 import (
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -295,7 +296,9 @@ func (p *QBHintHandler) GetCurrentStmtHints(hints []*ast.TableOptimizerHint, cur
 			}
 			continue
 		}
-		p.QBOffsetToHints[offset] = append(p.QBOffsetToHints[offset], hint)
+		if !slices.Contains(p.QBOffsetToHints[offset], hint) {
+			p.QBOffsetToHints[offset] = append(p.QBOffsetToHints[offset], hint)
+		}
 	}
 	return p.QBOffsetToHints[currentOffset]
 }

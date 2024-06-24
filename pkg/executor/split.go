@@ -27,7 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/table/tables"
@@ -330,7 +330,7 @@ type SplitTableRegionExec struct {
 	lower          []types.Datum
 	upper          []types.Datum
 	num            int
-	handleCols     core.HandleCols
+	handleCols     util.HandleCols
 	valueLists     [][]types.Datum
 	splitKeys      [][]byte
 

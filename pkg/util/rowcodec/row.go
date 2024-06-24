@@ -16,7 +16,6 @@ package rowcodec
 
 import (
 	"encoding/binary"
-	"strconv"
 )
 
 const (
@@ -99,17 +98,6 @@ func (r *row) setChecksums(checksums ...uint32) {
 			r.checksum2 = checksums[1]
 		}
 	}
-}
-
-func (r *row) getChecksumInfo() string {
-	var s string
-	if r.hasChecksum() {
-		s = strconv.FormatUint(uint64(r.checksum1), 10)
-		if r.hasExtraChecksum() {
-			s += "," + strconv.FormatUint(uint64(r.checksum2), 10)
-		}
-	}
-	return s
 }
 
 func (r *row) getData(i int) []byte {

@@ -22,10 +22,10 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
 
@@ -49,6 +49,7 @@ type Callback interface {
 	// OnChanged is called after a ddl statement is finished.
 	OnChanged(err error) error
 	// OnSchemaStateChanged is called after a schema state is changed.
+	// only called inside tests.
 	OnSchemaStateChanged(schemaVer int64)
 	// OnJobRunBefore is called before running job.
 	OnJobRunBefore(job *model.Job)
@@ -112,8 +113,8 @@ func (*BaseCallback) OnGetJobAfter(_ string, _ *model.Job) {
 func (*BaseCallback) OnUpdateReorgInfo(_ *model.Job, _ int64) {
 }
 
-// DomainReloader is used to avoid import loop.
-type DomainReloader interface {
+// SchemaLoader is used to avoid import loop, the only impl is domain currently.
+type SchemaLoader interface {
 	Reload() error
 }
 
@@ -128,7 +129,7 @@ type ReorgCallback interface {
 // DefaultCallback is the default callback that TiDB will use.
 type DefaultCallback struct {
 	*BaseCallback
-	do DomainReloader
+	do SchemaLoader
 }
 
 // OnChanged overrides ddl Callback interface.
@@ -136,11 +137,11 @@ func (c *DefaultCallback) OnChanged(err error) error {
 	if err != nil {
 		return err
 	}
-	logutil.BgLogger().Info("performing DDL change, must reload")
+	logutil.DDLLogger().Info("performing DDL change, must reload")
 
 	err = c.do.Reload()
 	if err != nil {
-		logutil.BgLogger().Error("performing DDL change failed", zap.Error(err))
+		logutil.DDLLogger().Error("performing DDL change failed", zap.Error(err))
 	}
 
 	return nil
@@ -150,11 +151,11 @@ func (c *DefaultCallback) OnChanged(err error) error {
 func (c *DefaultCallback) OnSchemaStateChanged(_ int64) {
 	err := c.do.Reload()
 	if err != nil {
-		logutil.BgLogger().Error("domain callback failed on schema state changed", zap.Error(err))
+		logutil.DDLLogger().Error("domain callback failed on schema state changed", zap.Error(err))
 	}
 }
 
-func newDefaultCallBack(do DomainReloader) Callback {
+func newDefaultCallBack(do SchemaLoader) Callback {
 	return &DefaultCallback{BaseCallback: &BaseCallback{}, do: do}
 }
 
@@ -166,7 +167,7 @@ func newDefaultCallBack(do DomainReloader) Callback {
 // ctc is named from column type change, here after we call them ctc for short.
 type ctcCallback struct {
 	*BaseCallback
-	do DomainReloader
+	do SchemaLoader
 }
 
 // OnChanged overrides ddl Callback interface.
@@ -174,11 +175,11 @@ func (c *ctcCallback) OnChanged(err error) error {
 	if err != nil {
 		return err
 	}
-	logutil.BgLogger().Info("performing DDL change, must reload")
+	logutil.DDLLogger().Info("performing DDL change, must reload")
 
 	err = c.do.Reload()
 	if err != nil {
-		logutil.BgLogger().Error("performing DDL change failed", zap.Error(err))
+		logutil.DDLLogger().Error("performing DDL change failed", zap.Error(err))
 	}
 	return nil
 }
@@ -187,7 +188,7 @@ func (c *ctcCallback) OnChanged(err error) error {
 func (c *ctcCallback) OnSchemaStateChanged(_ int64) {
 	err := c.do.Reload()
 	if err != nil {
-		logutil.BgLogger().Error("domain callback failed on schema state changed", zap.Error(err))
+		logutil.DDLLogger().Error("domain callback failed on schema state changed", zap.Error(err))
 	}
 }
 
@@ -200,19 +201,19 @@ func (*ctcCallback) OnJobRunBefore(job *model.Job) {
 	}
 	switch job.SchemaState {
 	case model.StateDeleteOnly, model.StateWriteOnly, model.StateWriteReorganization:
-		logutil.BgLogger().Warn(fmt.Sprintf("[DDL_HOOK] Hang for 0.5 seconds on %s state triggered", job.SchemaState.String()))
+		logutil.DDLLogger().Warn(fmt.Sprintf("[DDL_HOOK] Hang for 0.5 seconds on %s state triggered", job.SchemaState.String()))
 		time.Sleep(500 * time.Millisecond)
 	}
 }
 
-func newCTCCallBack(do DomainReloader) Callback {
+func newCTCCallBack(do SchemaLoader) Callback {
 	return &ctcCallback{do: do}
 }
 
 // ****************************** End of CTC DDL Callback Instance ***************************************************
 
 var (
-	customizedCallBackRegisterMap = map[string]func(do DomainReloader) Callback{}
+	customizedCallBackRegisterMap = map[string]func(do SchemaLoader) Callback{}
 )
 
 func init() {
@@ -222,12 +223,12 @@ func init() {
 }
 
 // GetCustomizedHook get the hook registered in the hookMap.
-func GetCustomizedHook(s string) (func(do DomainReloader) Callback, error) {
+func GetCustomizedHook(s string) (func(do SchemaLoader) Callback, error) {
 	s = strings.ToLower(s)
 	s = strings.TrimSpace(s)
 	fact, ok := customizedCallBackRegisterMap[s]
 	if !ok {
-		logutil.BgLogger().Error("bad ddl hook " + s)
+		logutil.DDLLogger().Error("bad ddl hook " + s)
 		return nil, errors.Errorf("ddl hook `%s` is not found in hook registered map", s)
 	}
 	return fact, nil

@@ -226,7 +226,7 @@ func TestBuildTasksByBuckets(t *testing.T) {
 		}
 	}
 
-	// serveral ranges per bucket
+	// several ranges per bucket
 	// region:  nil---------------------------n-----------x-----------nil
 	// buckets: nil-----c-------g-------k-----n----t------x-----------nil
 	// ranges:  nil-a b-c d-e f-g h-i j-k-l m-n
@@ -439,6 +439,12 @@ func TestSplitKeyRangesByLocationsWithoutBuckets(t *testing.T) {
 	rangeEqual(t, locRanges[1].Ranges.ToRanges(), "g", "h", "h", "m", "n")
 	rangeEqual(t, locRanges[2].Ranges.ToRanges(), "n", "t")
 	rangeEqual(t, locRanges[3].Ranges.ToRanges(), "v", "w")
+
+	locRanges, err = cache.SplitKeyRangesByLocationsWithoutBuckets(bo, NewKeyRanges(BuildKeyRanges("a", "b", "v", "w")), UnspecifiedLimit)
+	require.NoError(t, err)
+	require.Len(t, locRanges, 2)
+	rangeEqual(t, locRanges[0].Ranges.ToRanges(), "a", "b")
+	rangeEqual(t, locRanges[1].Ranges.ToRanges(), "v", "w")
 }
 
 func TestSplitKeyRanges(t *testing.T) {

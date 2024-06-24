@@ -23,6 +23,7 @@ import (
 
 	"github.com/ngaut/pools"
 	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
@@ -33,7 +34,6 @@ import (
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 )
@@ -41,7 +41,9 @@ import (
 func testCreateTable(t *testing.T, ctx sessionctx.Context, d ddl.DDL, dbInfo *model.DBInfo, tblInfo *model.TableInfo) *model.Job {
 	job := &model.Job{
 		SchemaID:   dbInfo.ID,
+		SchemaName: dbInfo.Name.L,
 		TableID:    tblInfo.ID,
+		TableName:  tblInfo.Name.L,
 		Type:       model.ActionCreateTable,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []any{tblInfo},
@@ -138,6 +140,10 @@ func testCreateSchema(t *testing.T, ctx sessionctx.Context, d ddl.DDL, dbInfo *m
 		Type:       model.ActionCreateSchema,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []any{dbInfo},
+		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{{
+			Database: dbInfo.Name.L,
+			Table:    model.InvolvingAll,
+		}},
 	}
 	ctx.SetValue(sessionctx.QueryString, "skip")
 	require.NoError(t, d.DoDDLJob(ctx, job))
@@ -155,6 +161,10 @@ func buildDropSchemaJob(dbInfo *model.DBInfo) *model.Job {
 		Type:       model.ActionDropSchema,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []any{true},
+		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{{
+			Database: dbInfo.Name.L,
+			Table:    model.InvolvingAll,
+		}},
 	}
 }
 
@@ -261,6 +271,7 @@ func TestSchema(t *testing.T) {
 	// Drop a non-existent database.
 	job = &model.Job{
 		SchemaID:   dbInfo.ID,
+		SchemaName: "test_schema",
 		Type:       model.ActionDropSchema,
 		BinlogInfo: &model.HistoryInfo{},
 	}
@@ -290,6 +301,7 @@ func TestSchemaWaitJob(t *testing.T) {
 		ddl.WithStore(store),
 		ddl.WithInfoCache(domain.InfoCache()),
 		ddl.WithLease(testLease),
+		ddl.WithSchemaLoader(domain),
 	)
 	err := d2.Start(pools.NewResourcePool(func() (pools.Resource, error) {
 		session := testkit.NewTestKit(t, store).Session()
@@ -319,13 +331,24 @@ func TestSchemaWaitJob(t *testing.T) {
 	genIDs, err := genGlobalIDs(store, 1)
 	require.NoError(t, err)
 	schemaID := genIDs[0]
-	doDDLJobErr(t, schemaID, 0, model.ActionCreateSchema, []any{dbInfo}, testkit.NewTestKit(t, store).Session(), d2, store)
+	doDDLJobErr(t, schemaID, 0, "test_schema", "", model.ActionCreateSchema, []any{dbInfo}, testkit.NewTestKit(t, store).Session(), d2, store)
 }
 
-func doDDLJobErr(t *testing.T, schemaID, tableID int64, tp model.ActionType, args []any, ctx sessionctx.Context, d ddl.DDL, store kv.Storage) *model.Job {
+func doDDLJobErr(
+	t *testing.T,
+	schemaID, tableID int64,
+	schemaName, tableName string,
+	tp model.ActionType,
+	args []any,
+	ctx sessionctx.Context,
+	d ddl.DDL,
+	store kv.Storage,
+) *model.Job {
 	job := &model.Job{
 		SchemaID:   schemaID,
+		SchemaName: schemaName,
 		TableID:    tableID,
+		TableName:  tableName,
 		Type:       tp,
 		Args:       args,
 		BinlogInfo: &model.HistoryInfo{},
@@ -373,14 +396,14 @@ func TestRenameTableAutoIDs(t *testing.T) {
 			if len(res) == 1 && res[0][col] == s {
 				break
 			}
-			logutil.BgLogger().Info("Could not find match", zap.String("tableName", tableName), zap.String("s", s), zap.Int("colNum", col))
+			logutil.DDLLogger().Info("Could not find match", zap.String("tableName", tableName), zap.String("s", s), zap.Int("colNum", col))
 
 			for i := range res {
 				strs := make([]string, 0, len(res[i]))
 				for j := range res[i] {
 					strs = append(strs, res[i][j].(string))
 				}
-				logutil.BgLogger().Info("ddl jobs", zap.Strings("jobs", strs))
+				logutil.DDLLogger().Info("ddl jobs", zap.Strings("jobs", strs))
 			}
 			time.Sleep(10 * time.Millisecond)
 		}

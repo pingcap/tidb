@@ -14,18 +14,21 @@
 
 package core
 
-import "github.com/pingcap/tidb/pkg/util/intset"
+import (
+	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/util/intset"
+)
 
 // RecheckCTE fills the IsOuterMostCTE field for CTEs.
 // It's a temp solution to before we fully use the Sequence to optimize the CTEs.
 // This func checks whether the CTE is referenced only by the main query or not.
-func RecheckCTE(p LogicalPlan) {
+func RecheckCTE(p base.LogicalPlan) {
 	visited := intset.NewFastIntSet()
 	findCTEs(p, &visited, true)
 }
 
 func findCTEs(
-	p LogicalPlan,
+	p base.LogicalPlan,
 	visited *intset.FastIntSet,
 	isRootTree bool,
 ) {

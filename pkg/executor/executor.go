@@ -55,6 +55,7 @@ import (
 	planctx "github.com/pingcap/tidb/pkg/planner/context"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
@@ -69,7 +70,6 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/admin"
-	"github.com/pingcap/tidb/pkg/util/channel"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
@@ -96,12 +96,10 @@ import (
 var (
 	_ exec.Executor = &CheckTableExec{}
 	_ exec.Executor = &aggregate.HashAggExec{}
-	_ exec.Executor = &HashJoinExec{}
 	_ exec.Executor = &IndexLookUpExecutor{}
 	_ exec.Executor = &IndexReaderExecutor{}
 	_ exec.Executor = &LimitExec{}
 	_ exec.Executor = &MaxOneRowExec{}
-	_ exec.Executor = &MergeJoinExec{}
 	_ exec.Executor = &ProjectionExec{}
 	_ exec.Executor = &SelectionExec{}
 	_ exec.Executor = &SelectLockExec{}
@@ -115,7 +113,6 @@ var (
 	_ exec.Executor = &TableReaderExecutor{}
 	_ exec.Executor = &TableScanExec{}
 	_ exec.Executor = &sortexec.TopNExec{}
-	_ exec.Executor = &UnionExec{}
 	_ exec.Executor = &FastCheckTableExec{}
 	_ exec.Executor = &AdminShowBDRRoleExec{}
 
@@ -213,11 +210,6 @@ func (a *globalPanicOnExceed) Action(t *memory.Tracker) {
 // GetPriority get the priority of the Action
 func (*globalPanicOnExceed) GetPriority() int64 {
 	return memory.DefPanicPriority
-}
-
-// newList creates a new List to buffer current executor's result.
-func newList(e exec.Executor) *chunk.List {
-	return chunk.NewList(e.RetFieldTypes(), e.InitCap(), e.MaxChunkSize())
 }
 
 // CommandDDLJobsExec is the general struct for Cancel/Pause/Resume commands on
@@ -567,7 +559,7 @@ func ts2Time(timestamp uint64, loc *time.Location) types.Time {
 	duration := time.Duration(math.Pow10(9-types.DefaultFsp)) * time.Nanosecond
 	t := model.TSConvert2Time(timestamp)
 	t.Truncate(duration)
-	return types.NewTime(types.FromGoTime(t.In(loc)), mysql.TypeDatetime, types.DefaultFsp)
+	return types.NewTime(types.FromGoTime(t.In(loc)), mysql.TypeDatetime, types.MaxFsp)
 }
 
 // ShowDDLJobQueriesExec represents a show DDL job queries executor.
@@ -1108,7 +1100,7 @@ type SelectLockExec struct {
 	keys []kv.Key
 
 	// The children may be a join of multiple tables, so we need a map.
-	tblID2Handle map[int64][]plannercore.HandleCols
+	tblID2Handle map[int64][]plannerutil.HandleCols
 
 	// When SelectLock work on a partition table, we need the partition ID
 	// (Physical Table ID) instead of the 'logical' table ID to calculate
@@ -1454,9 +1446,13 @@ func init() {
 	// but the plan package cannot import the executor package because of the dependency cycle.
 	// So we assign a function implemented in the executor package to the plan package to avoid the dependency cycle.
 	plannercore.EvalSubqueryFirstRow = func(ctx context.Context, p base.PhysicalPlan, is infoschema.InfoSchema, pctx planctx.PlanContext) ([]types.Datum, error) {
+		if fixcontrol.GetBoolWithDefault(pctx.GetSessionVars().OptimizerFixControl, fixcontrol.Fix43817, false) {
+			return nil, errors.NewNoStackError("evaluate non-correlated sub-queries during optimization phase is not allowed by fix-control 43817")
+		}
+
 		defer func(begin time.Time) {
 			s := pctx.GetSessionVars()
-			s.StmtCtx.SetSkipPlanCache(errors.NewNoStackError("query has uncorrelated sub-queries is un-cacheable"))
+			s.StmtCtx.SetSkipPlanCache("query has uncorrelated sub-queries is un-cacheable")
 			s.RewritePhaseInfo.PreprocessSubQueries++
 			s.RewritePhaseInfo.DurationPreprocessSubQuery += time.Since(begin)
 		}(time.Now())
@@ -1757,203 +1753,6 @@ func (e *MaxOneRowExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	return nil
 }
 
-// UnionExec pulls all it's children's result and returns to its parent directly.
-// A "resultPuller" is started for every child to pull result from that child and push it to the "resultPool", the used
-// "Chunk" is obtained from the corresponding "resourcePool". All resultPullers are running concurrently.
-//
-//	                          +----------------+
-//	+---> resourcePool 1 ---> | resultPuller 1 |-----+
-//	|                         +----------------+     |
-//	|                                                |
-//	|                         +----------------+     v
-//	+---> resourcePool 2 ---> | resultPuller 2 |-----> resultPool ---+
-//	|                         +----------------+     ^               |
-//	|                               ......           |               |
-//	|                         +----------------+     |               |
-//	+---> resourcePool n ---> | resultPuller n |-----+               |
-//	|                         +----------------+                     |
-//	|                                                                |
-//	|                          +-------------+                       |
-//	|--------------------------| main thread | <---------------------+
-//	                           +-------------+
-type UnionExec struct {
-	exec.BaseExecutor
-	concurrency int
-	childIDChan chan int
-
-	stopFetchData atomic.Value
-
-	finished      chan struct{}
-	resourcePools []chan *chunk.Chunk
-	resultPool    chan *unionWorkerResult
-
-	results     []*chunk.Chunk
-	wg          sync.WaitGroup
-	initialized bool
-	mu          struct {
-		*syncutil.Mutex
-		maxOpenedChildID int
-	}
-
-	childInFlightForTest int32
-}
-
-// unionWorkerResult stores the result for a union worker.
-// A "resultPuller" is started for every child to pull result from that child, unionWorkerResult is used to store that pulled result.
-// "src" is used for Chunk reuse: after pulling result from "resultPool", main-thread must push a valid unused Chunk to "src" to
-// enable the corresponding "resultPuller" continue to work.
-type unionWorkerResult struct {
-	chk *chunk.Chunk
-	err error
-	src chan<- *chunk.Chunk
-}
-
-func (e *UnionExec) waitAllFinished() {
-	e.wg.Wait()
-	close(e.resultPool)
-}
-
-// Open implements the Executor Open interface.
-func (e *UnionExec) Open(context.Context) error {
-	e.stopFetchData.Store(false)
-	e.initialized = false
-	e.finished = make(chan struct{})
-	e.mu.Mutex = &syncutil.Mutex{}
-	e.mu.maxOpenedChildID = -1
-	return nil
-}
-
-func (e *UnionExec) initialize(ctx context.Context) {
-	if e.concurrency > e.ChildrenLen() {
-		e.concurrency = e.ChildrenLen()
-	}
-	for i := 0; i < e.concurrency; i++ {
-		e.results = append(e.results, exec.NewFirstChunk(e.Children(0)))
-	}
-	e.resultPool = make(chan *unionWorkerResult, e.concurrency)
-	e.resourcePools = make([]chan *chunk.Chunk, e.concurrency)
-	e.childIDChan = make(chan int, e.ChildrenLen())
-	for i := 0; i < e.concurrency; i++ {
-		e.resourcePools[i] = make(chan *chunk.Chunk, 1)
-		e.resourcePools[i] <- e.results[i]
-		e.wg.Add(1)
-		go e.resultPuller(ctx, i)
-	}
-	for i := 0; i < e.ChildrenLen(); i++ {
-		e.childIDChan <- i
-	}
-	close(e.childIDChan)
-	go e.waitAllFinished()
-}
-
-func (e *UnionExec) resultPuller(ctx context.Context, workerID int) {
-	result := &unionWorkerResult{
-		err: nil,
-		chk: nil,
-		src: e.resourcePools[workerID],
-	}
-	defer func() {
-		if r := recover(); r != nil {
-			logutil.Logger(ctx).Error("resultPuller panicked", zap.Any("recover", r), zap.Stack("stack"))
-			result.err = util.GetRecoverError(r)
-			e.resultPool <- result
-			e.stopFetchData.Store(true)
-		}
-		e.wg.Done()
-	}()
-	for childID := range e.childIDChan {
-		e.mu.Lock()
-		if childID > e.mu.maxOpenedChildID {
-			e.mu.maxOpenedChildID = childID
-		}
-		e.mu.Unlock()
-		if err := exec.Open(ctx, e.Children(childID)); err != nil {
-			result.err = err
-			e.stopFetchData.Store(true)
-			e.resultPool <- result
-		}
-		failpoint.Inject("issue21441", func() {
-			atomic.AddInt32(&e.childInFlightForTest, 1)
-		})
-		for {
-			if e.stopFetchData.Load().(bool) {
-				return
-			}
-			select {
-			case <-e.finished:
-				return
-			case result.chk = <-e.resourcePools[workerID]:
-			}
-			result.err = exec.Next(ctx, e.Children(childID), result.chk)
-			if result.err == nil && result.chk.NumRows() == 0 {
-				e.resourcePools[workerID] <- result.chk
-				break
-			}
-			failpoint.Inject("issue21441", func() {
-				if int(atomic.LoadInt32(&e.childInFlightForTest)) > e.concurrency {
-					panic("the count of child in flight is larger than e.concurrency unexpectedly")
-				}
-			})
-			e.resultPool <- result
-			if result.err != nil {
-				e.stopFetchData.Store(true)
-				return
-			}
-		}
-		failpoint.Inject("issue21441", func() {
-			atomic.AddInt32(&e.childInFlightForTest, -1)
-		})
-	}
-}
-
-// Next implements the Executor Next interface.
-func (e *UnionExec) Next(ctx context.Context, req *chunk.Chunk) error {
-	req.GrowAndReset(e.MaxChunkSize())
-	if !e.initialized {
-		e.initialize(ctx)
-		e.initialized = true
-	}
-	result, ok := <-e.resultPool
-	if !ok {
-		return nil
-	}
-	if result.err != nil {
-		return errors.Trace(result.err)
-	}
-
-	if result.chk.NumCols() != req.NumCols() {
-		return errors.Errorf("Internal error: UnionExec chunk column count mismatch, req: %d, result: %d",
-			req.NumCols(), result.chk.NumCols())
-	}
-	req.SwapColumns(result.chk)
-	result.src <- result.chk
-	return nil
-}
-
-// Close implements the Executor Close interface.
-func (e *UnionExec) Close() error {
-	if e.finished != nil {
-		close(e.finished)
-	}
-	e.results = nil
-	if e.resultPool != nil {
-		channel.Clear(e.resultPool)
-	}
-	e.resourcePools = nil
-	if e.childIDChan != nil {
-		channel.Clear(e.childIDChan)
-	}
-	// We do not need to acquire the e.mu.Lock since all the resultPuller can be
-	// promised to exit when reaching here (e.childIDChan been closed).
-	var firstErr error
-	for i := 0; i <= e.mu.maxOpenedChildID; i++ {
-		if err := exec.Close(e.Children(i)); err != nil && firstErr == nil {
-			firstErr = err
-		}
-	}
-	return firstErr
-}
-
 // ResetContextOfStmt resets the StmtContext and session variables.
 // Before every execution, we must clear statement context.
 func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
@@ -2020,6 +1819,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	vars.SQLKiller.Reset()
 	vars.SQLKiller.ConnID = vars.ConnectionID
 	vars.StmtCtx.TableStats = make(map[int64]any)
+	sc.MDLRelatedTableIDs = make(map[int64]struct{})
 
 	isAnalyze := false
 	if execStmt, ok := s.(*ast.ExecuteStmt); ok {
@@ -2240,10 +2040,18 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		sc.RuntimeStatsColl = execdetails.NewRuntimeStatsColl(reuseObj)
 
 		// also enable index usage collector
-		sc.IndexUsageCollector = ctx.NewStmtIndexUsageCollector()
+		if sc.IndexUsageCollector == nil {
+			sc.IndexUsageCollector = ctx.NewStmtIndexUsageCollector()
+		} else {
+			sc.IndexUsageCollector.Reset()
+		}
+	} else {
+		// turn off the index usage collector
+		sc.IndexUsageCollector = nil
 	}
 
-	sc.ForcePlanCache = fixcontrol.GetBoolWithDefault(vars.OptimizerFixControl, fixcontrol.Fix49736, false)
+	sc.SetForcePlanCache(fixcontrol.GetBoolWithDefault(vars.OptimizerFixControl, fixcontrol.Fix49736, false))
+	sc.SetAlwaysWarnSkipCache(sc.InExplainStmt && sc.ExplainFormat == "plan_cache")
 	sc.TblInfo2UnionScan = make(map[*model.TableInfo]bool)
 	errCount, warnCount := vars.StmtCtx.NumErrorWarnings()
 	vars.SysErrorCount = errCount

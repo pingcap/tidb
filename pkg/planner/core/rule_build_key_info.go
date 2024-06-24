@@ -21,19 +21,20 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 )
 
 type buildKeySolver struct{}
 
-func (*buildKeySolver) optimize(_ context.Context, p LogicalPlan, _ *coreusage.LogicalOptimizeOp) (LogicalPlan, bool, error) {
+func (*buildKeySolver) optimize(_ context.Context, p base.LogicalPlan, _ *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
 	planChanged := false
 	buildKeyInfo(p)
 	return p, planChanged, nil
 }
 
-// buildKeyInfo recursively calls LogicalPlan's BuildKeyInfo method.
-func buildKeyInfo(lp LogicalPlan) {
+// buildKeyInfo recursively calls base.LogicalPlan's BuildKeyInfo method.
+func buildKeyInfo(lp base.LogicalPlan) {
 	for _, child := range lp.Children() {
 		buildKeyInfo(child)
 	}
@@ -44,12 +45,16 @@ func buildKeyInfo(lp LogicalPlan) {
 	lp.BuildKeyInfo(lp.Schema(), childSchema)
 }
 
-// BuildKeyInfo implements LogicalPlan BuildKeyInfo interface.
+// BuildKeyInfo implements base.LogicalPlan BuildKeyInfo interface.
 func (la *LogicalAggregation) BuildKeyInfo(selfSchema *expression.Schema, childSchema []*expression.Schema) {
-	if la.IsPartialModeAgg() {
+	// According to the issue#46962, we can ignore the judgment of partial agg
+	// Sometimes, the agg inside of subquery and there is a true condition in where clause, the agg function is empty.
+	// For example, ``` select xxxx from xxx WHERE TRUE = ALL ( SELECT TRUE GROUP BY 1 LIMIT 1 ) IS NULL IS NOT NULL;
+	// In this case, the agg is complete mode and we can ignore this check.
+	if len(la.AggFuncs) != 0 && la.IsPartialModeAgg() {
 		return
 	}
-	la.logicalSchemaProducer.BuildKeyInfo(selfSchema, childSchema)
+	la.LogicalSchemaProducer.BuildKeyInfo(selfSchema, childSchema)
 	la.buildSelfKeyInfo(selfSchema)
 }
 
@@ -66,13 +71,13 @@ func (la *LogicalAggregation) buildSelfKeyInfo(selfSchema *expression.Schema) {
 		}
 	}
 	if len(la.GroupByItems) == 0 {
-		la.maxOneRow = true
+		la.SetMaxOneRow(true)
 	}
 }
 
 // If a condition is the form of (uniqueKey = constant) or (uniqueKey = Correlated column), it returns at most one row.
 // This function will check it.
-func (*LogicalSelection) checkMaxOneRowCond(eqColIDs map[int64]struct{}, childSchema *expression.Schema) bool {
+func checkMaxOneRowCond(eqColIDs map[int64]struct{}, childSchema *expression.Schema) bool {
 	if len(eqColIDs) == 0 {
 		return false
 	}
@@ -96,10 +101,10 @@ func (*LogicalSelection) checkMaxOneRowCond(eqColIDs map[int64]struct{}, childSc
 	return false
 }
 
-// BuildKeyInfo implements LogicalPlan BuildKeyInfo interface.
+// BuildKeyInfo implements base.LogicalPlan BuildKeyInfo interface.
 func (p *LogicalSelection) BuildKeyInfo(selfSchema *expression.Schema, childSchema []*expression.Schema) {
-	p.baseLogicalPlan.BuildKeyInfo(selfSchema, childSchema)
-	if p.maxOneRow {
+	p.BaseLogicalPlan.BuildKeyInfo(selfSchema, childSchema)
+	if p.MaxOneRow() {
 		return
 	}
 	eqCols := make(map[int64]struct{}, len(childSchema[0].Columns))
@@ -117,30 +122,30 @@ func (p *LogicalSelection) BuildKeyInfo(selfSchema *expression.Schema, childSche
 			}
 		}
 	}
-	p.maxOneRow = p.checkMaxOneRowCond(eqCols, childSchema[0])
+	p.SetMaxOneRow(checkMaxOneRowCond(eqCols, childSchema[0]))
 }
 
-// BuildKeyInfo implements LogicalPlan BuildKeyInfo interface.
+// BuildKeyInfo implements base.LogicalPlan BuildKeyInfo interface.
 func (p *LogicalLimit) BuildKeyInfo(selfSchema *expression.Schema, childSchema []*expression.Schema) {
-	p.logicalSchemaProducer.BuildKeyInfo(selfSchema, childSchema)
+	p.LogicalSchemaProducer.BuildKeyInfo(selfSchema, childSchema)
 	if p.Count == 1 {
-		p.maxOneRow = true
+		p.SetMaxOneRow(true)
 	}
 }
 
-// BuildKeyInfo implements LogicalPlan BuildKeyInfo interface.
+// BuildKeyInfo implements base.LogicalPlan BuildKeyInfo interface.
 func (lt *LogicalTopN) BuildKeyInfo(selfSchema *expression.Schema, childSchema []*expression.Schema) {
-	lt.baseLogicalPlan.BuildKeyInfo(selfSchema, childSchema)
+	lt.BaseLogicalPlan.BuildKeyInfo(selfSchema, childSchema)
 	if lt.Count == 1 {
-		lt.maxOneRow = true
+		lt.SetMaxOneRow(true)
 	}
 }
 
-// BuildKeyInfo implements LogicalPlan BuildKeyInfo interface.
+// BuildKeyInfo implements base.LogicalPlan BuildKeyInfo interface.
 func (p *LogicalTableDual) BuildKeyInfo(selfSchema *expression.Schema, childSchema []*expression.Schema) {
-	p.baseLogicalPlan.BuildKeyInfo(selfSchema, childSchema)
+	p.BaseLogicalPlan.BuildKeyInfo(selfSchema, childSchema)
 	if p.RowCount == 1 {
-		p.maxOneRow = true
+		p.SetMaxOneRow(true)
 	}
 }
 
@@ -155,18 +160,18 @@ func (p *LogicalProjection) buildSchemaByExprs(selfSchema *expression.Schema) *e
 			// If the expression is not a column, we add a column to occupy the position.
 			schema.Append(&expression.Column{
 				UniqueID: p.SCtx().GetSessionVars().AllocPlanColumnID(),
-				RetType:  expr.GetType(),
+				RetType:  expr.GetType(p.SCtx().GetExprCtx().GetEvalCtx()),
 			})
 		}
 	}
 	return schema
 }
 
-// BuildKeyInfo implements LogicalPlan BuildKeyInfo interface.
+// BuildKeyInfo implements base.LogicalPlan BuildKeyInfo interface.
 func (p *LogicalProjection) BuildKeyInfo(selfSchema *expression.Schema, childSchema []*expression.Schema) {
 	// `LogicalProjection` use schema from `Exprs` to build key info. See `buildSchemaByExprs`.
 	// So call `baseLogicalPlan.BuildKeyInfo` here to avoid duplicated building key info.
-	p.baseLogicalPlan.BuildKeyInfo(selfSchema, childSchema)
+	p.BaseLogicalPlan.BuildKeyInfo(selfSchema, childSchema)
 	selfSchema.Keys = nil
 	schema := p.buildSchemaByExprs(selfSchema)
 	for _, key := range childSchema[0].Keys {
@@ -182,9 +187,9 @@ func (p *LogicalProjection) BuildKeyInfo(selfSchema *expression.Schema, childSch
 	}
 }
 
-// BuildKeyInfo implements LogicalPlan BuildKeyInfo interface.
+// BuildKeyInfo implements base.LogicalPlan BuildKeyInfo interface.
 func (p *LogicalJoin) BuildKeyInfo(selfSchema *expression.Schema, childSchema []*expression.Schema) {
-	p.logicalSchemaProducer.BuildKeyInfo(selfSchema, childSchema)
+	p.LogicalSchemaProducer.BuildKeyInfo(selfSchema, childSchema)
 	switch p.JoinType {
 	case SemiJoin, LeftOuterSemiJoin, AntiSemiJoin, AntiLeftOuterSemiJoin:
 		selfSchema.Keys = childSchema[0].Clone().Keys
@@ -268,13 +273,13 @@ func checkIndexCanBeKey(idx *model.IndexInfo, columns []*model.ColumnInfo, schem
 	return nil, nil
 }
 
-// BuildKeyInfo implements LogicalPlan BuildKeyInfo interface.
+// BuildKeyInfo implements base.LogicalPlan BuildKeyInfo interface.
 func (ds *DataSource) BuildKeyInfo(selfSchema *expression.Schema, _ []*expression.Schema) {
 	selfSchema.Keys = nil
 	var latestIndexes map[int64]*model.IndexInfo
 	var changed bool
 	var err error
-	check := ds.SCtx().GetSessionVars().IsIsolation(ast.ReadCommitted) || ds.isForUpdateRead
+	check := ds.SCtx().GetSessionVars().IsIsolation(ast.ReadCommitted) || ds.IsForUpdateRead
 	check = check && ds.SCtx().GetSessionVars().ConnectionID > 0
 	// we should check index valid while forUpdateRead, see detail in https://github.com/pingcap/tidb/pull/22152
 	if check {
@@ -284,7 +289,7 @@ func (ds *DataSource) BuildKeyInfo(selfSchema *expression.Schema, _ []*expressio
 		}
 	}
 	for _, index := range ds.table.Meta().Indices {
-		if ds.isForUpdateRead && changed {
+		if ds.IsForUpdateRead && changed {
 			latestIndex, ok := latestIndexes[index.ID]
 			if !ok || latestIndex.State != model.StatePublic {
 				continue
@@ -298,7 +303,7 @@ func (ds *DataSource) BuildKeyInfo(selfSchema *expression.Schema, _ []*expressio
 			selfSchema.UniqueKeys = append(selfSchema.UniqueKeys, uniqueKey)
 		}
 	}
-	if ds.tableInfo.PKIsHandle {
+	if ds.TableInfo.PKIsHandle {
 		for i, col := range ds.Columns {
 			if mysql.HasPriKeyFlag(col.GetFlag()) {
 				selfSchema.Keys = append(selfSchema.Keys, []*expression.Column{selfSchema.Columns[i]})
@@ -308,15 +313,15 @@ func (ds *DataSource) BuildKeyInfo(selfSchema *expression.Schema, _ []*expressio
 	}
 }
 
-// BuildKeyInfo implements LogicalPlan BuildKeyInfo interface.
+// BuildKeyInfo implements base.LogicalPlan BuildKeyInfo interface.
 func (ts *LogicalTableScan) BuildKeyInfo(selfSchema *expression.Schema, childSchema []*expression.Schema) {
 	ts.Source.BuildKeyInfo(selfSchema, childSchema)
 }
 
-// BuildKeyInfo implements LogicalPlan BuildKeyInfo interface.
+// BuildKeyInfo implements base.LogicalPlan BuildKeyInfo interface.
 func (is *LogicalIndexScan) BuildKeyInfo(selfSchema *expression.Schema, _ []*expression.Schema) {
 	selfSchema.Keys = nil
-	for _, path := range is.Source.possibleAccessPaths {
+	for _, path := range is.Source.PossibleAccessPaths {
 		if path.IsTablePath() {
 			continue
 		}
@@ -332,7 +337,7 @@ func (is *LogicalIndexScan) BuildKeyInfo(selfSchema *expression.Schema, _ []*exp
 	}
 }
 
-// BuildKeyInfo implements LogicalPlan BuildKeyInfo interface.
+// BuildKeyInfo implements base.LogicalPlan BuildKeyInfo interface.
 func (*TiKVSingleGather) BuildKeyInfo(selfSchema *expression.Schema, childSchema []*expression.Schema) {
 	selfSchema.Keys = childSchema[0].Keys
 }

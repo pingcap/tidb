@@ -29,9 +29,12 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/cost"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
+	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
+	"github.com/pingcap/tidb/pkg/planner/util/tablesampler"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/statistics"
@@ -238,10 +241,10 @@ func setMppOrBatchCopForTableScan(curPlan base.PhysicalPlan) {
 func (sg *TiKVSingleGather) GetPhysicalTableReader(schema *expression.Schema, stats *property.StatsInfo, props ...*property.PhysicalProperty) *PhysicalTableReader {
 	reader := PhysicalTableReader{}.Init(sg.SCtx(), sg.QueryBlockOffset())
 	reader.PlanPartInfo = PhysPlanPartInfo{
-		PruningConds:   sg.Source.allConds,
-		PartitionNames: sg.Source.partitionNames,
+		PruningConds:   sg.Source.AllConds,
+		PartitionNames: sg.Source.PartitionNames,
 		Columns:        sg.Source.TblCols,
-		ColumnNames:    sg.Source.names,
+		ColumnNames:    sg.Source.OutputNames(),
 	}
 	reader.SetStats(stats)
 	reader.SetSchema(schema)
@@ -286,7 +289,7 @@ func (p *PhysicalTableReader) SetChildren(children ...base.PhysicalPlan) {
 // ExtractCorrelatedCols implements op.PhysicalPlan interface.
 func (p *PhysicalTableReader) ExtractCorrelatedCols() (corCols []*expression.CorrelatedColumn) {
 	for _, child := range p.TablePlans {
-		corCols = append(corCols, ExtractCorrelatedCols4PhysicalPlan(child)...)
+		corCols = append(corCols, coreusage.ExtractCorrelatedCols4PhysicalPlan(child)...)
 	}
 	return corCols
 }
@@ -301,7 +304,7 @@ func (p *PhysicalTableReader) BuildPlanTrace() *tracing.PlanTrace {
 }
 
 // AppendChildCandidate implements PhysicalPlan interface.
-func (p *PhysicalTableReader) AppendChildCandidate(op *coreusage.PhysicalOptimizeOp) {
+func (p *PhysicalTableReader) AppendChildCandidate(op *optimizetrace.PhysicalOptimizeOp) {
 	p.basePhysicalPlan.AppendChildCandidate(op)
 	appendChildCandidate(p, p.tablePlan, op)
 }
@@ -363,7 +366,7 @@ func (p *PhysicalIndexReader) SetChildren(children ...base.PhysicalPlan) {
 // ExtractCorrelatedCols implements op.PhysicalPlan interface.
 func (p *PhysicalIndexReader) ExtractCorrelatedCols() (corCols []*expression.CorrelatedColumn) {
 	for _, child := range p.IndexPlans {
-		corCols = append(corCols, ExtractCorrelatedCols4PhysicalPlan(child)...)
+		corCols = append(corCols, coreusage.ExtractCorrelatedCols4PhysicalPlan(child)...)
 	}
 	return corCols
 }
@@ -378,7 +381,7 @@ func (p *PhysicalIndexReader) BuildPlanTrace() *tracing.PlanTrace {
 }
 
 // AppendChildCandidate implements PhysicalPlan interface.
-func (p *PhysicalIndexReader) AppendChildCandidate(op *coreusage.PhysicalOptimizeOp) {
+func (p *PhysicalIndexReader) AppendChildCandidate(op *optimizetrace.PhysicalOptimizeOp) {
 	p.basePhysicalPlan.AppendChildCandidate(op)
 	if p.indexPlan != nil {
 		appendChildCandidate(p, p.indexPlan, op)
@@ -499,10 +502,10 @@ func (p *PhysicalIndexLookUpReader) Clone() (base.PhysicalPlan, error) {
 // ExtractCorrelatedCols implements op.PhysicalPlan interface.
 func (p *PhysicalIndexLookUpReader) ExtractCorrelatedCols() (corCols []*expression.CorrelatedColumn) {
 	for _, child := range p.TablePlans {
-		corCols = append(corCols, ExtractCorrelatedCols4PhysicalPlan(child)...)
+		corCols = append(corCols, coreusage.ExtractCorrelatedCols4PhysicalPlan(child)...)
 	}
 	for _, child := range p.IndexPlans {
-		corCols = append(corCols, ExtractCorrelatedCols4PhysicalPlan(child)...)
+		corCols = append(corCols, coreusage.ExtractCorrelatedCols4PhysicalPlan(child)...)
 	}
 	return corCols
 }
@@ -530,7 +533,7 @@ func (p *PhysicalIndexLookUpReader) BuildPlanTrace() *tracing.PlanTrace {
 }
 
 // AppendChildCandidate implements PhysicalPlan interface.
-func (p *PhysicalIndexLookUpReader) AppendChildCandidate(op *coreusage.PhysicalOptimizeOp) {
+func (p *PhysicalIndexLookUpReader) AppendChildCandidate(op *optimizetrace.PhysicalOptimizeOp) {
 	p.basePhysicalPlan.AppendChildCandidate(op)
 	if p.indexPlan != nil {
 		appendChildCandidate(p, p.indexPlan, op)
@@ -603,7 +606,7 @@ type PhysicalIndexMergeReader struct {
 
 	KeepOrder bool
 
-	HandleCols HandleCols
+	HandleCols util.HandleCols
 }
 
 // GetAvgTableRowSize return the average row size of table plan.
@@ -614,14 +617,14 @@ func (p *PhysicalIndexMergeReader) GetAvgTableRowSize() float64 {
 // ExtractCorrelatedCols implements op.PhysicalPlan interface.
 func (p *PhysicalIndexMergeReader) ExtractCorrelatedCols() (corCols []*expression.CorrelatedColumn) {
 	for _, child := range p.TablePlans {
-		corCols = append(corCols, ExtractCorrelatedCols4PhysicalPlan(child)...)
+		corCols = append(corCols, coreusage.ExtractCorrelatedCols4PhysicalPlan(child)...)
 	}
 	for _, child := range p.partialPlans {
-		corCols = append(corCols, ExtractCorrelatedCols4PhysicalPlan(child)...)
+		corCols = append(corCols, coreusage.ExtractCorrelatedCols4PhysicalPlan(child)...)
 	}
 	for _, PartialPlan := range p.PartialPlans {
 		for _, child := range PartialPlan {
-			corCols = append(corCols, ExtractCorrelatedCols4PhysicalPlan(child)...)
+			corCols = append(corCols, coreusage.ExtractCorrelatedCols4PhysicalPlan(child)...)
 		}
 	}
 	return corCols
@@ -640,7 +643,7 @@ func (p *PhysicalIndexMergeReader) BuildPlanTrace() *tracing.PlanTrace {
 }
 
 // AppendChildCandidate implements PhysicalPlan interface.
-func (p *PhysicalIndexMergeReader) AppendChildCandidate(op *coreusage.PhysicalOptimizeOp) {
+func (p *PhysicalIndexMergeReader) AppendChildCandidate(op *optimizetrace.PhysicalOptimizeOp) {
 	p.basePhysicalPlan.AppendChildCandidate(op)
 	if p.tablePlan != nil {
 		appendChildCandidate(p, p.tablePlan, op)
@@ -837,8 +840,8 @@ type PhysicalMemTable struct {
 	DBName         model.CIStr
 	Table          *model.TableInfo
 	Columns        []*model.ColumnInfo
-	Extractor      MemTablePredicateExtractor
-	QueryTimeRange QueryTimeRange
+	Extractor      base.MemTablePredicateExtractor
+	QueryTimeRange util.QueryTimeRange
 }
 
 // MemoryUsage return the memory usage of PhysicalMemTable
@@ -877,7 +880,7 @@ type PhysicalTableScan struct {
 
 	// HandleIdx is the index of handle, which is only used for admin check table.
 	HandleIdx  []int
-	HandleCols HandleCols
+	HandleCols util.HandleCols
 
 	StoreType kv.StoreType
 
@@ -897,7 +900,7 @@ type PhysicalTableScan struct {
 
 	PlanPartInfo PhysPlanPartInfo
 
-	SampleInfo *TableSampleInfo
+	SampleInfo *tablesampler.TableSampleInfo
 
 	// required by cost model
 	// tblCols and tblColHists contains all columns before pruning, which are used to calculate row-size
@@ -1364,6 +1367,30 @@ type PhysicalHashJoin struct {
 	runtimeFilterList []*RuntimeFilter
 }
 
+// CanUseHashJoinV2 returns true if current join is supported by hash join v2
+func (p *PhysicalHashJoin) CanUseHashJoinV2() bool {
+	switch p.JoinType {
+	case LeftOuterJoin, InnerJoin:
+		// null aware join is not supported yet
+		if len(p.LeftNAJoinKeys) > 0 {
+			return false
+		}
+		// cross join is not supported
+		if len(p.LeftJoinKeys) == 0 {
+			return false
+		}
+		// NullEQ is not supported yet
+		for _, value := range p.IsNullEQ {
+			if value {
+				return false
+			}
+		}
+		return true
+	default:
+		return false
+	}
+}
+
 // Clone implements op.PhysicalPlan interface.
 func (p *PhysicalHashJoin) Clone() (base.PhysicalPlan, error) {
 	cloned := new(PhysicalHashJoin)
@@ -1759,7 +1786,7 @@ type PhysicalLock struct {
 
 	Lock *ast.SelectLockInfo
 
-	TblID2Handle       map[int64][]HandleCols
+	TblID2Handle       map[int64][]util.HandleCols
 	TblID2PhysTblIDCol map[int64]*expression.Column
 }
 
@@ -1913,10 +1940,10 @@ func (p *basePhysicalAgg) numDistinctFunc() (num int) {
 func (p *basePhysicalAgg) getAggFuncCostFactor(isMPP bool) (factor float64) {
 	factor = 0.0
 	for _, agg := range p.AggFuncs {
-		if fac, ok := aggFuncFactor[agg.Name]; ok {
+		if fac, ok := cost.AggFuncFactor[agg.Name]; ok {
 			factor += fac
 		} else {
-			factor += aggFuncFactor["default"]
+			factor += cost.AggFuncFactor["default"]
 		}
 	}
 	if factor == 0 {
@@ -1925,7 +1952,7 @@ func (p *basePhysicalAgg) getAggFuncCostFactor(isMPP bool) (factor float64) {
 			// But in mpp cases, 2-phase is more usual. So we change this factor.
 			// TODO: This is still a little tricky and might cause regression. We should
 			// calibrate these factors and polish our cost model in the future.
-			factor = aggFuncFactor[ast.AggFuncFirstRow]
+			factor = cost.AggFuncFactor[ast.AggFuncFirstRow]
 		} else {
 			factor = 1.0
 		}
@@ -2124,7 +2151,7 @@ type PhysicalUnionScan struct {
 
 	Conditions []expression.Expression
 
-	HandleCols HandleCols
+	HandleCols util.HandleCols
 }
 
 // ExtractCorrelatedCols implements op.PhysicalPlan interface.
@@ -2471,7 +2498,7 @@ type PhysicalShow struct {
 
 	ShowContents
 
-	Extractor ShowPredicateExtractor
+	Extractor base.ShowPredicateExtractor
 }
 
 // MemoryUsage return the memory usage of PhysicalShow
@@ -2524,45 +2551,10 @@ func SafeClone(v base.PhysicalPlan) (_ base.PhysicalPlan, err error) {
 // It returns the sample rows to its parent operand.
 type PhysicalTableSample struct {
 	physicalSchemaProducer
-	TableSampleInfo *TableSampleInfo
+	TableSampleInfo *tablesampler.TableSampleInfo
 	TableInfo       table.Table
 	PhysicalTableID int64
 	Desc            bool
-}
-
-// TableSampleInfo contains the information for PhysicalTableSample.
-type TableSampleInfo struct {
-	AstNode    *ast.TableSample
-	FullSchema *expression.Schema
-	Partitions []table.PartitionedTable
-}
-
-// MemoryUsage return the memory usage of TableSampleInfo
-func (t *TableSampleInfo) MemoryUsage() (sum int64) {
-	if t == nil {
-		return
-	}
-
-	sum = size.SizeOfPointer*2 + size.SizeOfSlice + int64(cap(t.Partitions))*size.SizeOfInterface
-	if t.AstNode != nil {
-		sum += int64(unsafe.Sizeof(ast.TableSample{}))
-	}
-	if t.FullSchema != nil {
-		sum += t.FullSchema.MemoryUsage()
-	}
-	return
-}
-
-// NewTableSampleInfo creates a new TableSampleInfo.
-func NewTableSampleInfo(node *ast.TableSample, fullSchema *expression.Schema, pt []table.PartitionedTable) *TableSampleInfo {
-	if node == nil {
-		return nil
-	}
-	return &TableSampleInfo{
-		AstNode:    node,
-		FullSchema: fullSchema.Clone(),
-		Partitions: pt,
-	}
 }
 
 // PhysicalCTE is for CTE.
@@ -2588,9 +2580,9 @@ type PhysicalCTETable struct {
 
 // ExtractCorrelatedCols implements op.PhysicalPlan interface.
 func (p *PhysicalCTE) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
-	corCols := ExtractCorrelatedCols4PhysicalPlan(p.SeedPlan)
+	corCols := coreusage.ExtractCorrelatedCols4PhysicalPlan(p.SeedPlan)
 	if p.RecurPlan != nil {
-		corCols = append(corCols, ExtractCorrelatedCols4PhysicalPlan(p.RecurPlan)...)
+		corCols = append(corCols, coreusage.ExtractCorrelatedCols4PhysicalPlan(p.RecurPlan)...)
 	}
 	return corCols
 }
@@ -2767,7 +2759,7 @@ func (p *PhysicalCTEStorage) Clone() (base.PhysicalPlan, error) {
 	return (*PhysicalCTEStorage)(cloned.(*PhysicalCTE)), nil
 }
 
-func appendChildCandidate(origin base.PhysicalPlan, pp base.PhysicalPlan, op *coreusage.PhysicalOptimizeOp) {
+func appendChildCandidate(origin base.PhysicalPlan, pp base.PhysicalPlan, op *optimizetrace.PhysicalOptimizeOp) {
 	candidate := &tracing.CandidatePlanTrace{
 		PlanTrace: &tracing.PlanTrace{
 			ID:          pp.ID(),

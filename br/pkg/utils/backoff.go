@@ -11,8 +11,10 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
+	"go.uber.org/multierr"
 	"go.uber.org/zap"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -168,12 +170,14 @@ func NewBackupSSTBackoffer() Backoffer {
 
 func (bo *importerBackoffer) NextBackoff(err error) time.Duration {
 	// we don't care storeID here.
-	res := bo.errContext.HandleErrorMsg(err.Error(), 0)
+	errs := multierr.Errors(err)
+	lastErr := errs[len(errs)-1]
+	res := bo.errContext.HandleErrorMsg(lastErr.Error(), 0)
 	if res.Strategy == RetryStrategy {
 		bo.delayTime = 2 * bo.delayTime
 		bo.attempt--
 	} else {
-		e := errors.Cause(err)
+		e := errors.Cause(lastErr)
 		switch e { // nolint:errorlint
 		case berrors.ErrKVEpochNotMatch, berrors.ErrKVDownloadFailed, berrors.ErrKVIngestFailed, berrors.ErrPDLeaderNotFound:
 			bo.delayTime = 2 * bo.delayTime
@@ -188,7 +192,7 @@ func (bo *importerBackoffer) NextBackoff(err error) time.Duration {
 				bo.delayTime = 2 * bo.delayTime
 				bo.attempt--
 			case codes.Canceled:
-				if isGRPCCancel(err) {
+				if isGRPCCancel(lastErr) {
 					bo.delayTime = 2 * bo.delayTime
 					bo.attempt--
 				} else {
@@ -264,6 +268,9 @@ func (bo *pdReqBackoffer) NextBackoff(err error) time.Duration {
 		}
 	}
 
+	failpoint.Inject("set-attempt-to-one", func(_ failpoint.Value) {
+		bo.attempt = 1
+	})
 	if bo.delayTime > bo.maxDelayTime {
 		return bo.maxDelayTime
 	}

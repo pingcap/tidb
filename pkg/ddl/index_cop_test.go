@@ -40,8 +40,11 @@ func TestAddIndexFetchRowsFromCoprocessor(t *testing.T) {
 		require.NoError(t, err)
 		tblInfo := tbl.Meta()
 		idxInfo := tblInfo.FindIndexByName(idx)
-		copCtx, err := copr.NewCopContextSingleIndex(tblInfo, idxInfo, tk.Session(), "")
+
+		sctx := tk.Session()
+		copCtx, err := ddl.NewReorgCopContext(store, ddl.NewDDLReorgMeta(sctx), tblInfo, []*model.IndexInfo{idxInfo}, "")
 		require.NoError(t, err)
+		require.IsType(t, copCtx, &copr.CopContextSingleIndex{})
 		startKey := tbl.RecordPrefix()
 		endKey := startKey.PrefixNext()
 		txn, err := store.Begin()
@@ -57,7 +60,7 @@ func TestAddIndexFetchRowsFromCoprocessor(t *testing.T) {
 		idxDataBuf := make([]types.Datum, len(idxInfo.Columns))
 
 		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-			handle, idxDatum, err := ddl.ConvertRowToHandleAndIndexDatum(handleDataBuf, idxDataBuf, row, copCtx, idxInfo.ID)
+			handle, idxDatum, err := ddl.ConvertRowToHandleAndIndexDatum(tk.Session().GetExprCtx().GetEvalCtx(), handleDataBuf, idxDataBuf, row, copCtx, idxInfo.ID)
 			require.NoError(t, err)
 			handles = append(handles, handle)
 			copiedIdxDatum := make([]types.Datum, len(idxDatum))

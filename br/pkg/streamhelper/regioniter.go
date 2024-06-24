@@ -43,6 +43,9 @@ type TiKVClusterMeta interface {
 	// For now, all tasks (exactly one task in fact) use the same checkpoint.
 	BlockGCUntil(ctx context.Context, at uint64) (uint64, error)
 
+	// UnblockGC used to remove the service GC safe point in PD.
+	UnblockGC(ctx context.Context) error
+
 	FetchCurrentTS(ctx context.Context) (uint64, error)
 }
 

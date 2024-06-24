@@ -922,7 +922,7 @@ func (h SchemaStorageHandler) ServeHTTP(w http.ResponseWriter, req *http.Request
 // For every table in the input, we marshal them. The result such as {tb1} {tb2} {tb3}.
 // Then we add some bytes to make it become [{tb1}, {tb2}, {tb3}], so we can unmarshal it to []*model.TableInfo.
 // Note: It would return StatusOK even if errors occur. But if errors occur, there must be some bugs.
-func WriteDBTablesData(w http.ResponseWriter, tbs []table.Table) {
+func WriteDBTablesData(w http.ResponseWriter, tbs []*model.TableInfo) {
 	if len(tbs) == 0 {
 		handler.WriteData(w, []*model.TableInfo{})
 		return
@@ -946,7 +946,7 @@ func WriteDBTablesData(w http.ResponseWriter, tbs []table.Table) {
 		} else {
 			init = true
 		}
-		js, err := json.MarshalIndent(tb.Meta(), "", " ")
+		js, err := json.MarshalIndent(tb, "", " ")
 		if err != nil {
 			terror.Log(errors.Trace(err))
 			return
@@ -987,7 +987,7 @@ func (h SchemaHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		}
 		// all table schemas in a specified database
 		if schema.SchemaExists(cDBName) {
-			tbs := schema.SchemaTables(cDBName)
+			tbs := schema.SchemaTableInfos(cDBName)
 			WriteDBTablesData(w, tbs)
 			return
 		}
@@ -1016,7 +1016,7 @@ func (h SchemaHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			handler.WriteError(w, infoschema.ErrTableNotExists.GenWithStack("Table which ID = %s does not exist.", tableID))
 			return
 		}
-		handler.WriteData(w, tbl.Meta())
+		handler.WriteData(w, tbl)
 		return
 	}
 

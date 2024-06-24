@@ -216,7 +216,7 @@ func TestAlterAddConstraintStateChange3(t *testing.T) {
 			return
 		}
 		originalCallback.OnChanged(nil)
-		if job.SchemaState == model.StatePublic {
+		if job.SchemaState == model.StatePublic && job.IsDone() {
 			// set constraint state
 			constraintTable := external.GetTableByName(t, tk1, "test", "t")
 			tableCommon, ok := constraintTable.(*tables.TableCommon)

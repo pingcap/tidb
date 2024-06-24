@@ -30,6 +30,7 @@ import (
 	sst "github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
+	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -624,7 +625,8 @@ func (local *Backend) doIngest(ctx context.Context, j *regionJob) (*sst.IngestRe
 
 		leader := j.region.Leader
 		if leader == nil {
-			leader = j.region.Region.GetPeers()[0]
+			return nil, errors.Annotatef(berrors.ErrPDLeaderNotFound,
+				"region id %d has no leader", j.region.Region.Id)
 		}
 
 		cli, err := clientFactory.Create(ctx, leader.StoreId)

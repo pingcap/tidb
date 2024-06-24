@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/util/callback"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/stretchr/testify/require"
 )
@@ -186,8 +187,6 @@ func TestUpgradingRelatedJobState(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("CREATE TABLE e2 (id INT NOT NULL);")
 
-	d := dom.DDL()
-
 	testCases := []struct {
 		sql      string
 		jobState model.JobState
@@ -199,38 +198,24 @@ func TestUpgradingRelatedJobState(t *testing.T) {
 		{"alter table e2 add index idx3(id)", model.JobStateRollbackDone, errors.New("[ddl:8214]Cancelled DDL job")},
 	}
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockUpgradingState", `return(true)`))
-	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockUpgradingState"))
-	}()
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockUpgradingState", `return(true)`)
 
+	// TODO this case only checks that when a job cannot be paused, it can still run normally.
+	// we should add a ut for processJobDuringUpgrade, not this complex integration test.
 	num := 0
-	hook := &callback.TestDDLCallback{}
-	hook.OnGetJobBeforeExported = func(jobType string) {
-		for i := 0; i < 100; i++ {
-			time.Sleep(time.Millisecond * 100)
-			jobs, err := ddl.GetAllDDLJobs(testkit.NewTestKit(t, store).Session())
-			require.NoError(t, err)
-			if len(jobs) < 1 || jobs[0].Query != testCases[num].sql {
-				continue
-			}
-
-			if testCases[num].err != nil && jobs[0].SchemaState == model.StateWriteOnly {
-				tk.MustExec("use test")
-				tk.MustExec(fmt.Sprintf("admin cancel ddl jobs %d", jobs[0].ID))
-			}
-			if jobs[0].State == testCases[num].jobState {
-				dom.DDL().StateSyncer().UpdateGlobalState(context.Background(), &syncer.StateInfo{State: syncer.StateUpgrading})
-			}
-			break
+	tk2 := testkit.NewTestKit(t, store)
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRefreshJob", func(job *model.Job) {
+		if job.Query != testCases[num].sql {
+			return
 		}
-	}
-	hook.OnGetJobAfterExported = func(jobType string, getJob *model.Job) {
-		if getJob.Query == testCases[num].sql && getJob.State == testCases[num].jobState {
-			dom.DDL().StateSyncer().UpdateGlobalState(context.Background(), &syncer.StateInfo{State: syncer.StateNormalRunning})
+		if testCases[num].err != nil && job.SchemaState == model.StateWriteOnly {
+			tk2.MustExec("use test")
+			tk2.MustExec(fmt.Sprintf("admin cancel ddl jobs %d", job.ID))
 		}
-	}
-	d.SetHook(hook)
+		if job.State == testCases[num].jobState {
+			dom.DDL().StateSyncer().UpdateGlobalState(context.Background(), &syncer.StateInfo{State: syncer.StateUpgrading})
+		}
+	})
 
 	for i, tc := range testCases {
 		num = i
@@ -240,5 +225,41 @@ func TestUpgradingRelatedJobState(t *testing.T) {
 			_, err := tk.Exec(tc.sql)
 			require.Equal(t, tc.err.Error(), err.Error())
 		}
+		dom.DDL().StateSyncer().UpdateGlobalState(context.Background(), &syncer.StateInfo{State: syncer.StateNormalRunning})
 	}
+}
+
+func TestGeneralDDLWithQuery(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE t (id INT NOT NULL);")
+
+	var beforeRunCh = make(chan struct{})
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeAllLoadDDLJobAndRun", func() {
+		<-beforeRunCh
+	})
+	var ch = make(chan struct{})
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/waitJobSubmitted", func() {
+		<-ch
+	})
+	// 2 general DDLs shouldn't be blocked by each other for MDL, i.e. the "create view xx from select xxx"
+	// should not fill the MDL related tables.
+	var wg util.WaitGroupWrapper
+	wg.Run(func() {
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec("alter table t add column b int")
+	})
+	ch <- struct{}{}
+	wg.Run(func() {
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec("create view v as select * from t")
+	})
+	ch <- struct{}{}
+	tk.MustQuery("select count(1) from mysql.tidb_ddl_job").Check(testkit.Rows("2"))
+	close(beforeRunCh)
+	wg.Wait()
 }

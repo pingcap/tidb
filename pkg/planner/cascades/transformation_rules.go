@@ -24,9 +24,11 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/context"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/memo"
 	"github.com/pingcap/tidb/pkg/planner/pattern"
 	"github.com/pingcap/tidb/pkg/planner/util"
+	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/pingcap/tidb/pkg/util/set"
@@ -858,7 +860,7 @@ func (*pushDownJoin) predicatePushDown(
 	leftCond []expression.Expression,
 	rightCond []expression.Expression,
 	remainCond []expression.Expression,
-	dual plannercore.LogicalPlan,
+	dual base.LogicalPlan,
 ) {
 	var equalCond []*expression.ScalarFunction
 	var leftPushCond, rightPushCond, otherCond []expression.Expression
@@ -1601,6 +1603,7 @@ func (r *EliminateSingleMaxMin) Match(expr *memo.ExprIter) bool {
 // It will transform `max/min->X` to `max/min->top1->sel->X`.
 func (r *EliminateSingleMaxMin) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
 	agg := old.GetExpr().ExprNode.(*plannercore.LogicalAggregation)
+	ectx := agg.SCtx().GetExprCtx().GetEvalCtx()
 	childGroup := old.GetExpr().Children[0]
 	ctx := agg.SCtx()
 	f := agg.AggFuncs[0]
@@ -1608,7 +1611,7 @@ func (r *EliminateSingleMaxMin) OnTransform(old *memo.ExprIter) (newExprs []*mem
 	// If there's no column in f.GetArgs()[0], we still need limit and read data from real table because the result should be NULL if the input is empty.
 	if len(expression.ExtractColumns(f.Args[0])) > 0 {
 		// If it can be NULL, we need to filter NULL out first.
-		if !mysql.HasNotNullFlag(f.Args[0].GetType().GetFlag()) {
+		if !mysql.HasNotNullFlag(f.Args[0].GetType(ectx).GetFlag()) {
 			sel := plannercore.LogicalSelection{}.Init(ctx, agg.QueryBlockOffset())
 			isNullFunc := expression.NewFunctionInternal(ctx.GetExprCtx(), ast.IsNull, types.NewFieldType(mysql.TypeTiny), f.Args[0])
 			notNullFunc := expression.NewFunctionInternal(ctx.GetExprCtx(), ast.UnaryNot, types.NewFieldType(mysql.TypeTiny), isNullFunc)
@@ -2245,6 +2248,7 @@ func (*InjectProjectionBelowTopN) Match(expr *memo.ExprIter) bool {
 // It will convert `TopN -> X` to `Projection -> TopN -> Projection -> X`.
 func (*InjectProjectionBelowTopN) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
 	topN := old.GetExpr().ExprNode.(*plannercore.LogicalTopN)
+	ectx := topN.SCtx().GetExprCtx().GetEvalCtx()
 	oldTopNSchema := old.GetExpr().Schema()
 
 	// Construct top Projection.
@@ -2274,7 +2278,7 @@ func (*InjectProjectionBelowTopN) OnTransform(old *memo.ExprIter) (newExprs []*m
 		bottomProjExprs = append(bottomProjExprs, itemExpr)
 		newCol := &expression.Column{
 			UniqueID: topN.SCtx().GetSessionVars().AllocPlanColumnID(),
-			RetType:  itemExpr.GetType(),
+			RetType:  itemExpr.GetType(ectx),
 		}
 		bottomProjSchema = append(bottomProjSchema, newCol)
 		newByItems = append(newByItems, &util.ByItems{Expr: newCol, Desc: item.Desc})
@@ -2335,6 +2339,7 @@ func (*InjectProjectionBelowAgg) Match(expr *memo.ExprIter) bool {
 // It will convert `Agg -> X` to `Agg -> Proj -> X`.
 func (*InjectProjectionBelowAgg) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
 	agg := old.GetExpr().ExprNode.(*plannercore.LogicalAggregation)
+	ectx := agg.SCtx().GetExprCtx().GetEvalCtx()
 
 	hasScalarFunc := false
 	copyFuncs := make([]*aggregation.AggFuncDesc, 0, len(agg.AggFuncs))
@@ -2372,7 +2377,7 @@ func (*InjectProjectionBelowAgg) OnTransform(old *memo.ExprIter) (newExprs []*me
 				projExprs = append(projExprs, expr)
 				newArg := &expression.Column{
 					UniqueID: agg.SCtx().GetSessionVars().AllocPlanColumnID(),
-					RetType:  arg.GetType(),
+					RetType:  arg.GetType(ectx),
 				}
 				projSchemaCols = append(projSchemaCols, newArg)
 				f.Args[i] = newArg
@@ -2393,7 +2398,7 @@ func (*InjectProjectionBelowAgg) OnTransform(old *memo.ExprIter) (newExprs []*me
 			projExprs = append(projExprs, expr)
 			newArg := &expression.Column{
 				UniqueID: agg.SCtx().GetSessionVars().AllocPlanColumnID(),
-				RetType:  item.GetType(),
+				RetType:  item.GetType(ectx),
 			}
 			projSchemaCols = append(projSchemaCols, newArg)
 			newGroupByItems[i] = newArg
@@ -2454,7 +2459,7 @@ func (r *TransformApplyToJoin) OnTransform(old *memo.ExprIter) (newExprs []*memo
 
 func (r *TransformApplyToJoin) extractCorColumnsBySchema(innerGroup *memo.Group, outerSchema *expression.Schema) []*expression.CorrelatedColumn {
 	corCols := r.extractCorColumnsFromGroup(innerGroup)
-	return plannercore.ExtractCorColumnsBySchema(corCols, outerSchema, false)
+	return coreusage.ExtractCorColumnsBySchema(corCols, outerSchema, false)
 }
 
 func (r *TransformApplyToJoin) extractCorColumnsFromGroup(g *memo.Group) []*expression.CorrelatedColumn {

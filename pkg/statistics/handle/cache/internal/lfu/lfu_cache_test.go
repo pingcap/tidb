@@ -295,3 +295,15 @@ func TestMemoryControl(t *testing.T) {
 	lfu.wait()
 	require.Equal(t, int64(10)*(2*mockCMSMemoryUsage+mockCMSMemoryUsage), lfu.Cost())
 }
+
+func TestMemoryControlWithUpdate(t *testing.T) {
+	capacity := int64(100)
+	lfu, err := NewLFU(capacity)
+	require.NoError(t, err)
+	for i := 0; i < 100; i++ {
+		t1 := testutil.NewMockStatisticsTable(i, 1, true, false, false)
+		lfu.Put(1, t1)
+	}
+	time.Sleep(1 * time.Second)
+	require.Equal(t, int64(0), lfu.Cost())
+}

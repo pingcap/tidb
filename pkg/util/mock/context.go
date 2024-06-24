@@ -24,7 +24,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
 	exprctx "github.com/pingcap/tidb/pkg/expression/context"
-	exprctximpl "github.com/pingcap/tidb/pkg/expression/contextimpl"
+	exprctximpl "github.com/pingcap/tidb/pkg/expression/contextsession"
 	"github.com/pingcap/tidb/pkg/extension"
 	infoschema "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -60,7 +60,7 @@ var (
 // Context represents mocked sessionctx.Context.
 type Context struct {
 	planctx.EmptyPlanContextExtended
-	*exprctximpl.ExprCtxExtendedImpl
+	*exprctximpl.SessionExprContext
 	txn           wrapTxn    // mock global variable
 	Store         kv.Storage // mock global variable
 	ctx           context.Context
@@ -70,7 +70,7 @@ type Context struct {
 	sessionVars   *variable.SessionVars
 	tblctx        *tbctximpl.TableContextImpl
 	cancel        context.CancelFunc
-	pcache        sessionctx.PlanCache
+	pcache        sessionctx.SessionPlanCache
 	level         kvrpcpb.DiskFullOpt
 	inSandBoxMode bool
 	isDDLOwner    bool
@@ -229,6 +229,11 @@ func (c *Context) GetPlanCtx() planctx.PlanContext {
 	return c
 }
 
+// GetNullRejectCheckExprCtx gets the expression context with null rejected check.
+func (c *Context) GetNullRejectCheckExprCtx() exprctx.ExprContext {
+	return exprctx.WithNullRejectCheck(c)
+}
+
 // GetExprCtx returns the expression context of the session.
 func (c *Context) GetExprCtx() exprctx.ExprContext {
 	return c
@@ -245,7 +250,7 @@ func (c *Context) GetDistSQLCtx() *distsqlctx.DistSQLContext {
 	sc := vars.StmtCtx
 
 	return &distsqlctx.DistSQLContext{
-		AppendWarning:                        sc.AppendWarning,
+		WarnHandler:                          sc.WarnHandler,
 		InRestrictedSQL:                      sc.InRestrictedSQL,
 		Client:                               c.GetClient(),
 		EnabledRateLimitAction:               vars.EnabledRateLimitAction,
@@ -281,8 +286,8 @@ func (c *Context) GetRangerCtx() *rangerctx.RangerContext {
 		OptPrefixIndexSingleScan: c.GetSessionVars().OptPrefixIndexSingleScan,
 		OptimizerFixControl:      c.GetSessionVars().OptimizerFixControl,
 
-		// TODO: avoid using the whole `StmtCtx` here.
-		RangeFallbackHandler: c.GetSessionVars().StmtCtx,
+		PlanCacheTracker:     &c.GetSessionVars().StmtCtx.PlanCacheTracker,
+		RangeFallbackHandler: &c.GetSessionVars().StmtCtx.RangeFallbackHandler,
 	}
 }
 
@@ -298,10 +303,10 @@ func (c *Context) GetBuildPBCtx() *planctx.BuildPBContext {
 		// the following fields are used to build `expression.PushDownContext`.
 		// TODO: it'd be better to embed `expression.PushDownContext` in `BuildPBContext`. But `expression` already
 		// depends on this package, so we need to move `expression.PushDownContext` to a standalone package first.
-		GroupConcatMaxLen:  c.GetSessionVars().GroupConcatMaxLen,
-		InExplainStmt:      c.GetSessionVars().StmtCtx.InExplainStmt,
-		AppendWarning:      c.GetSessionVars().StmtCtx.AppendWarning,
-		AppendExtraWarning: c.GetSessionVars().StmtCtx.AppendExtraWarning,
+		GroupConcatMaxLen: c.GetSessionVars().GroupConcatMaxLen,
+		InExplainStmt:     c.GetSessionVars().StmtCtx.InExplainStmt,
+		WarnHandler:       c.GetSessionVars().StmtCtx.WarnHandler,
+		ExtraWarnghandler: c.GetSessionVars().StmtCtx.ExtraWarnHandler,
 	}
 }
 
@@ -379,7 +384,7 @@ func (*Context) SetGlobalSysVar(_ sessionctx.Context, name string, value string)
 }
 
 // GetSessionPlanCache implements the sessionctx.Context interface.
-func (c *Context) GetSessionPlanCache() sessionctx.PlanCache {
+func (c *Context) GetSessionPlanCache() sessionctx.SessionPlanCache {
 	return c.pcache
 }
 
@@ -612,7 +617,7 @@ func NewContext() *Context {
 	}
 	vars := variable.NewSessionVars(sctx)
 	sctx.sessionVars = vars
-	sctx.ExprCtxExtendedImpl = exprctximpl.NewExprExtendedImpl(sctx)
+	sctx.SessionExprContext = exprctximpl.NewSessionExprContext(sctx)
 	sctx.tblctx = tbctximpl.NewTableContextImpl(sctx, sctx)
 	vars.InitChunkSize = 2
 	vars.MaxChunkSize = 32

@@ -1448,7 +1448,7 @@ func TestExprPushDownToTiKV(t *testing.T) {
 
 	exprs := make([]Expression, 0)
 
-	//jsonColumn := genColumn(mysql.TypeJSON, 1)
+	jsonColumn := genColumn(mysql.TypeJSON, 1)
 	intColumn := genColumn(mysql.TypeLonglong, 2)
 	realColumn := genColumn(mysql.TypeDouble, 3)
 	//decimalColumn := genColumn(mysql.TypeNewDecimal, 4)
@@ -1456,6 +1456,7 @@ func TestExprPushDownToTiKV(t *testing.T) {
 	//datetimeColumn := genColumn(mysql.TypeDatetime, 6)
 	binaryStringColumn := genColumn(mysql.TypeString, 7)
 	dateColumn := genColumn(mysql.TypeDate, 8)
+	byteColumn := genColumn(mysql.TypeBit, 9)
 	binaryStringColumn.RetType.SetCollate(charset.CollationBin)
 
 	// Test exprs that cannot be pushed.
@@ -1494,6 +1495,24 @@ func TestExprPushDownToTiKV(t *testing.T) {
 	ctx := mock.NewContext()
 	pushDownCtx := NewPushDownContextFromSessionVars(ctx, ctx.GetSessionVars(), client)
 	pushed, remained := PushDownExprs(pushDownCtx, exprs, kv.TiKV)
+	require.Len(t, pushed, 0)
+	require.Len(t, remained, len(exprs))
+
+	// Test Conv function
+	exprs = exprs[:0]
+	function, err = NewFunction(mock.NewContext(), ast.Conv, types.NewFieldType(mysql.TypeString), stringColumn, intColumn, intColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+	pushed, remained = PushDownExprs(pushDownCtx, exprs, kv.TiKV)
+	require.Len(t, pushed, len(exprs))
+	require.Len(t, remained, 0)
+	exprs = exprs[:0]
+	castByteAsStringFunc, err := NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeString), byteColumn)
+	require.NoError(t, err)
+	function, err = NewFunction(mock.NewContext(), ast.Conv, types.NewFieldType(mysql.TypeString), castByteAsStringFunc, intColumn, intColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+	pushed, remained = PushDownExprs(pushDownCtx, exprs, kv.TiKV)
 	require.Len(t, pushed, 0)
 	require.Len(t, remained, len(exprs))
 
@@ -1638,6 +1657,21 @@ func TestExprPushDownToTiKV(t *testing.T) {
 			functionName: ast.Power,
 			retType:      types.NewFieldType(mysql.TypeDouble),
 			args:         []Expression{realColumn, realColumn},
+		},
+		{
+			functionName: ast.JSONReplace,
+			retType:      types.NewFieldType(mysql.TypeJSON),
+			args:         []Expression{jsonColumn, stringColumn, jsonColumn, stringColumn, jsonColumn},
+		},
+		{
+			functionName: ast.JSONArrayAppend,
+			retType:      types.NewFieldType(mysql.TypeJSON),
+			args:         []Expression{jsonColumn, stringColumn, jsonColumn, stringColumn, jsonColumn},
+		},
+		{
+			functionName: ast.JSONMergePatch,
+			retType:      types.NewFieldType(mysql.TypeJSON),
+			args:         []Expression{jsonColumn, jsonColumn, jsonColumn},
 		},
 	}
 

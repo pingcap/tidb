@@ -32,6 +32,9 @@ type InfoCache struct {
 	// cache is sorted by both SchemaVersion and timestamp in descending order, assume they have same order
 	cache []schemaAndTimestamp
 
+	// emptySchemaVersions stores schema version which has no schema_diff.
+	emptySchemaVersions map[int64]struct{}
+
 	r    autoid.Requirement
 	Data *Data
 }
@@ -45,9 +48,10 @@ type schemaAndTimestamp struct {
 func NewCache(r autoid.Requirement, capacity int) *InfoCache {
 	infoData := NewData()
 	return &InfoCache{
-		cache: make([]schemaAndTimestamp, 0, capacity),
-		r:     r,
-		Data:  infoData,
+		cache:               make([]schemaAndTimestamp, 0, capacity),
+		emptySchemaVersions: make(map[int64]struct{}),
+		r:                   r,
+		Data:                infoData,
 	}
 }
 
@@ -89,7 +93,8 @@ func (h *InfoCache) GetLatest() InfoSchema {
 	infoschema_metrics.GetLatestCounter.Inc()
 	if len(h.cache) > 0 {
 		infoschema_metrics.HitLatestCounter.Inc()
-		return h.cache[0].infoschema
+		ret := h.cache[0].infoschema
+		return ret
 	}
 	return nil
 }
@@ -97,6 +102,11 @@ func (h *InfoCache) GetLatest() InfoSchema {
 // Len returns the size of the cache
 func (h *InfoCache) Len() int {
 	return len(h.cache)
+}
+
+// GetEmptySchemaVersions returns emptySchemaVersions, exports for testing.
+func (h *InfoCache) GetEmptySchemaVersions() map[int64]struct{} {
+	return h.emptySchemaVersions
 }
 
 func (h *InfoCache) getSchemaByTimestampNoLock(ts uint64) (InfoSchema, bool) {
@@ -116,11 +126,32 @@ func (h *InfoCache) getSchemaByTimestampNoLock(ts uint64) (InfoSchema, bool) {
 			// the first element is the latest schema, so we can return it directly.
 			return is.infoschema, true
 		}
-		if h.cache[i-1].infoschema.SchemaMetaVersion() == is.infoschema.SchemaMetaVersion()+1 && uint64(h.cache[i-1].timestamp) > ts {
-			// This first condition is to make sure the schema version is continuous. If last(cache[i-1]) schema-version is 10,
-			// but current(cache[i]) schema-version is not 9, then current schema is not suitable for ts.
-			// The second condition is to make sure the cache[i-1].timestamp > ts >= cache[i].timestamp, then the current schema is suitable for ts.
-			return is.infoschema, true
+
+		if uint64(h.cache[i-1].timestamp) > ts {
+			// The first condition is to make sure the cache[i-1].timestamp > ts >= cache[i].timestamp, then the current schema is suitable for ts.
+			lastVersion := h.cache[i-1].infoschema.SchemaMetaVersion()
+			currentVersion := is.infoschema.SchemaMetaVersion()
+			if lastVersion == currentVersion+1 {
+				// This condition is to make sure the schema version is continuous. If last(cache[i-1]) schema-version is 10,
+				// but current(cache[i]) schema-version is not 9, then current schema may not suitable for ts.
+				return is.infoschema, true
+			}
+			if lastVersion > currentVersion {
+				found := true
+				for ver := currentVersion + 1; ver < lastVersion; ver++ {
+					_, ok := h.emptySchemaVersions[ver]
+					if !ok {
+						found = false
+						break
+					}
+				}
+				if found {
+					// This condition is to make sure the schema version is continuous. If last(cache[i-1]) schema-version is 10, and
+					// current(cache[i]) schema-version is 8, then there is a gap exist, and if all the gap version can be found in cache.emptySchemaVersions
+					// which means those gap versions don't have schema info, then current schema is also suitable for ts.
+					return is.infoschema, true
+				}
+			}
 		}
 		// current schema is not suitable for ts, then break the loop to avoid the unnecessary search.
 		break
@@ -143,7 +174,10 @@ func (h *InfoCache) getByVersionNoLock(version int64) InfoSchema {
 		return h.cache[i].infoschema.SchemaMetaVersion() <= version
 	})
 
-	// `GetByVersion` is allowed to load the latest schema that is less than argument `version`.
+	// `GetByVersion` is allowed to load the latest schema that is less than argument
+	// `version` when the argument `version` <= the latest schema version.
+	// if `version` > the latest schema version, always return nil, loadInfoSchema
+	// will use this behavior to decide whether to load schema diffs or full reload.
 	// Consider cache has values [10, 9, _, _, 6, 5, 4, 3, 2, 1], version 8 and 7 is empty because of the diff is empty.
 	// If we want to get version 8, we can return version 6 because v7 and v8 do not change anything, they are totally the same,
 	// in this case the `i` will not be 0.
@@ -200,13 +234,19 @@ func (h *InfoCache) Insert(is InfoSchema, schemaTS uint64) bool {
 	})
 
 	// cached entry
-	if i < len(h.cache) && h.cache[i].infoschema.SchemaMetaVersion() == version &&
-		IsV2(h.cache[i].infoschema) == IsV2(is) {
-		// update timestamp if it is not 0 and cached one is 0
-		if schemaTS > 0 && h.cache[i].timestamp == 0 {
-			h.cache[i].timestamp = int64(schemaTS)
+	if i < len(h.cache) && h.cache[i].infoschema.SchemaMetaVersion() == version {
+		xisV2, _ := IsV2(h.cache[i].infoschema)
+		yisV2, _ := IsV2(is)
+		if xisV2 == yisV2 {
+			// update timestamp if it is not 0 and cached one is 0
+			if schemaTS > 0 && h.cache[i].timestamp == 0 {
+				h.cache[i].timestamp = int64(schemaTS)
+			} else if xisV2 {
+				// update infoschema if it's infoschema v2
+				h.cache[i].infoschema = is
+			}
+			return true
 		}
-		return true
 	}
 
 	if len(h.cache) < cap(h.cache) {
@@ -230,4 +270,26 @@ func (h *InfoCache) Insert(is InfoSchema, schemaTS uint64) bool {
 	}
 
 	return true
+}
+
+// InsertEmptySchemaVersion inserts empty schema version into a map. If exceeded the cache capacity, remove the oldest version.
+func (h *InfoCache) InsertEmptySchemaVersion(version int64) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	h.emptySchemaVersions[version] = struct{}{}
+	if len(h.emptySchemaVersions) > cap(h.cache) {
+		// remove oldest version.
+		versions := make([]int64, 0, len(h.emptySchemaVersions))
+		for ver := range h.emptySchemaVersions {
+			versions = append(versions, ver)
+		}
+		sort.Slice(versions, func(i, j int) bool { return versions[i] < versions[j] })
+		for _, ver := range versions {
+			delete(h.emptySchemaVersions, ver)
+			if len(h.emptySchemaVersions) <= cap(h.cache) {
+				break
+			}
+		}
+	}
 }

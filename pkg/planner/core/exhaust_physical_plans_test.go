@@ -16,6 +16,7 @@ package core
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/domain"
@@ -29,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/types"
+	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/stretchr/testify/require"
 )
@@ -111,7 +113,7 @@ func prepareForAnalyzeLookUpFilters() *indexJoinContext {
 		TblName: model.NewCIStr("t"),
 		DBName:  model.NewCIStr("test"),
 	})
-	dataSourceNode.schema = dsSchema
+	dataSourceNode.SetSchema(dsSchema)
 	dataSourceNode.SetStats(&property.StatsInfo{StatsVersion: statistics.PseudoVersion})
 	path := &util.AccessPath{
 		IdxCols:    append(make([]*expression.Column, 0, 5), dsSchema.Columns...),
@@ -187,10 +189,10 @@ func testAnalyzeLookUpFilters(t *testing.T, testCtx *indexJoinContext, testCase 
 	ctx.GetSessionVars().RangeMaxSize = testCase.rangeMaxSize
 	dataSourceNode := testCtx.dataSourceNode
 	joinNode := testCtx.joinNode
-	pushed, err := rewriteSimpleExpr(ctx.GetExprCtx(), testCase.pushedDownConds, dataSourceNode.schema, testCtx.dsNames)
+	pushed, err := rewriteSimpleExpr(ctx.GetExprCtx(), testCase.pushedDownConds, dataSourceNode.Schema(), testCtx.dsNames)
 	require.NoError(t, err)
-	dataSourceNode.pushedDownConds = pushed
-	others, err := rewriteSimpleExpr(ctx.GetExprCtx(), testCase.otherConds, joinNode.schema, testCtx.joinColNames)
+	dataSourceNode.PushedDownConds = pushed
+	others, err := rewriteSimpleExpr(ctx.GetExprCtx(), testCase.otherConds, joinNode.Schema(), testCtx.joinColNames)
 	require.NoError(t, err)
 	joinNode.OtherConditions = others
 	helper := &indexJoinBuildHelper{join: joinNode, lastColManager: nil, innerPlan: dataSourceNode}
@@ -213,7 +215,7 @@ func testAnalyzeLookUpFilters(t *testing.T, testCtx *indexJoinContext, testCase 
 
 func TestIndexJoinAnalyzeLookUpFilters(t *testing.T) {
 	indexJoinCtx := prepareForAnalyzeLookUpFilters()
-	dsSchema := indexJoinCtx.dataSourceNode.schema
+	dsSchema := indexJoinCtx.dataSourceNode.Schema()
 	tests := []indexJoinTestCase{
 		// Join key not continuous and no pushed filter to match.
 		{
@@ -341,14 +343,21 @@ func TestIndexJoinAnalyzeLookUpFilters(t *testing.T) {
 }
 
 func checkRangeFallbackAndReset(t *testing.T, ctx base.PlanContext, expectedRangeFallback bool) {
-	require.Equal(t, expectedRangeFallback, ctx.GetSessionVars().StmtCtx.RangeFallback)
-	ctx.GetSessionVars().StmtCtx.RangeFallback = false
+	stmtCtx := ctx.GetSessionVars().StmtCtx
+	hasRangeFallbackWarn := false
+	for _, warn := range stmtCtx.GetWarnings() {
+		hasRangeFallbackWarn = hasRangeFallbackWarn || strings.Contains(warn.Err.Error(), "'tidb_opt_range_max_size' exceeded when building ranges")
+	}
+	require.Equal(t, expectedRangeFallback, hasRangeFallbackWarn)
+	stmtCtx.PlanCacheTracker = contextutil.NewPlanCacheTracker(stmtCtx)
+	stmtCtx.RangeFallbackHandler = contextutil.NewRangeFallbackHandler(&stmtCtx.PlanCacheTracker, stmtCtx)
+	stmtCtx.SetWarnings(nil)
 }
 
 func TestRangeFallbackForAnalyzeLookUpFilters(t *testing.T) {
 	ijCtx := prepareForAnalyzeLookUpFilters()
 	ctx := ijCtx.dataSourceNode.SCtx()
-	dsSchema := ijCtx.dataSourceNode.schema
+	dsSchema := ijCtx.dataSourceNode.Schema()
 
 	type testOutput struct {
 		ranges         string

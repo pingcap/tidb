@@ -1,0 +1,14 @@
+set tidb_enable_global_index=true;
+drop table if exists t;
+CREATE TABLE `t` (
+`a` int(11) DEFAULT NULL,
+`b` int(11) DEFAULT NULL,
+UNIQUE KEY `idx1` (`b`),
+KEY `idx` (`b`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY HASH (`a`) PARTITIONS 5;
+select key_name, is_global from information_schema.tidb_indexes where table_name='t' and table_schema='globalindex__information_schema' order by key_name;
+key_name	is_global
+idx	0
+idx1	1
+set tidb_enable_global_index=default;

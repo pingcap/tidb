@@ -19,7 +19,6 @@ import (
 	"math"
 
 	"github.com/pingcap/tidb/pkg/expression"
-	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/memo"
 	"github.com/pingcap/tidb/pkg/planner/pattern"
@@ -60,7 +59,7 @@ func (opt *Optimizer) ResetImplementationRules(rules map[pattern.Operand][]Imple
 
 // GetImplementationRules gets all the candidate implementation rules of the optimizer
 // for the logical plan node.
-func (opt *Optimizer) GetImplementationRules(node plannercore.LogicalPlan) []ImplementationRule {
+func (opt *Optimizer) GetImplementationRules(node base.LogicalPlan) []ImplementationRule {
 	return opt.implementationRuleMap[pattern.GetOperand(node)]
 }
 
@@ -99,7 +98,7 @@ func (opt *Optimizer) GetImplementationRules(node plannercore.LogicalPlan) []Imp
 // for each expression in each group under the required physical property. A
 // memo structure is used for a group to reduce the repeated search on the same
 // required physical property.
-func (opt *Optimizer) FindBestPlan(sctx base.PlanContext, logical plannercore.LogicalPlan) (p base.PhysicalPlan, cost float64, err error) {
+func (opt *Optimizer) FindBestPlan(sctx base.PlanContext, logical base.LogicalPlan) (p base.PhysicalPlan, cost float64, err error) {
 	logical, err = opt.onPhasePreprocessing(sctx, logical)
 	if err != nil {
 		return nil, 0, err
@@ -117,7 +116,7 @@ func (opt *Optimizer) FindBestPlan(sctx base.PlanContext, logical plannercore.Lo
 	return p, cost, err
 }
 
-func (*Optimizer) onPhasePreprocessing(_ base.PlanContext, plan plannercore.LogicalPlan) (plannercore.LogicalPlan, error) {
+func (*Optimizer) onPhasePreprocessing(_ base.PlanContext, plan base.LogicalPlan) (base.LogicalPlan, error) {
 	var err error
 	plan, err = plan.PruneColumns(plan.Schema().Columns, nil)
 	if err != nil {

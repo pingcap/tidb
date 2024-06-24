@@ -112,7 +112,7 @@ func (s *schemaValidator) Restart() {
 	defer s.mux.Unlock()
 	s.isStarted = true
 	if s.do != nil {
-		// When this instance reconnects PD, we should record the latest schema verion after mustReload(),
+		// When this instance reconnects PD, we should record the latest schema version after mustReload(),
 		// to prevent write txns using a stale schema version by aborting them before commit.
 		// However, the problem still exists for read-only txns.
 		s.restartSchemaVer = s.do.InfoSchema().SchemaMetaVersion()

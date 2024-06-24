@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/expression/contextsession"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/auth"
@@ -153,7 +154,7 @@ func TestBootstrapWithError(t *testing.T) {
 			store:       store,
 			sessionVars: variable.NewSessionVars(nil),
 		}
-		se.exprctx = newExpressionContextImpl(se)
+		se.exprctx = contextsession.NewSessionExprContext(se)
 		se.pctx = newPlanContextImpl(se)
 		se.tblctx = tbctximpl.NewTableContextImpl(se, se.exprctx)
 		globalVarsAccessor := variable.NewMockGlobalAccessor4Tests()
@@ -780,7 +781,7 @@ func TestIndexMergeUpgradeFrom300To540(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int64(ver300), ver)
 
-	// We are now in 3.0.0, check tidb_enable_index_merge shoudle not exist.
+	// We are now in 3.0.0, check tidb_enable_index_merge should not exist.
 	res := MustExecToRecodeSet(t, seV3, fmt.Sprintf("select * from mysql.GLOBAL_VARIABLES where variable_name='%s'", variable.TiDBEnableIndexMerge))
 	chk := res.NewChunk(nil)
 	err = res.Next(ctx, chk)
@@ -2246,6 +2247,53 @@ func testTiDBUpgradeWithDistTask(t *testing.T, injectQuery string, fatal bool) {
 	}
 	dom.Close()
 	require.Equal(t, fatal, fatal2panic)
+}
+
+func TestTiDBUpgradeToVer199(t *testing.T) {
+	ctx := context.Background()
+	store, _ := CreateStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+
+	// bootstrap as version198
+	ver198 := version198
+	seV198 := CreateSessionAndSetID(t, store)
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	m := meta.NewMeta(txn)
+	err = m.FinishBootstrap(int64(ver198))
+	require.NoError(t, err)
+	revertVersionAndVariables(t, seV198, ver198)
+	// simulate a real ver198 where `tidb_resource_control_strict_mode` doesn't exist yet
+	MustExec(t, seV198, "delete from mysql.GLOBAL_VARIABLES where variable_name='tidb_resource_control_strict_mode'")
+	err = txn.Commit(context.Background())
+	require.NoError(t, err)
+	unsetStoreBootstrapped(store.UUID())
+
+	// upgrade to ver199
+	domCurVer, err := BootstrapSession(store)
+	require.NoError(t, err)
+	defer domCurVer.Close()
+	seCurVer := CreateSessionAndSetID(t, store)
+	ver, err := getBootstrapVersion(seCurVer)
+	require.NoError(t, err)
+	require.Equal(t, currentBootstrapVersion, ver)
+
+	// the value in the table is set to OFF automatically
+	res := MustExecToRecodeSet(t, seCurVer, "select * from mysql.GLOBAL_VARIABLES where variable_name='tidb_resource_control_strict_mode'")
+	chk := res.NewChunk(nil)
+	require.NoError(t, res.Next(ctx, chk))
+	require.Equal(t, 1, chk.NumRows())
+	row := chk.GetRow(0)
+	require.Equal(t, "OFF", row.GetString(1))
+
+	// the global variable is also OFF
+	res = MustExecToRecodeSet(t, seCurVer, "select @@global.tidb_resource_control_strict_mode")
+	chk = res.NewChunk(nil)
+	require.NoError(t, res.Next(ctx, chk))
+	require.Equal(t, 1, chk.NumRows())
+	row = chk.GetRow(0)
+	require.Equal(t, int64(0), row.GetInt64(0))
+	require.Equal(t, false, variable.EnableResourceControlStrictMode.Load())
 }
 
 func TestTiDBUpgradeWithDistTaskEnable(t *testing.T) {
