@@ -72,23 +72,28 @@ func TestCheckpointManager(t *testing.T) {
 	mgr.Register(2, []byte{'2', '9'})
 	mgr.UpdateTotalKeys(1, 100, false)
 	require.False(t, mgr.IsKeyProcessed([]byte{'1', '9'}))
-	require.NoError(t, mgr.UpdateWrittenKeys(1, 100))
+	_, _, err = mgr.UpdateWrittenKeys(1, 100)
+	require.NoError(t, err)
 	require.False(t, mgr.IsKeyProcessed([]byte{'1', '9'}))
 	mgr.UpdateTotalKeys(1, 100, true)
-	require.NoError(t, mgr.UpdateWrittenKeys(1, 100))
+	_, _, err = mgr.UpdateWrittenKeys(1, 100)
+	require.NoError(t, err)
 	// The data is not imported to the storage yet.
 	require.False(t, mgr.IsKeyProcessed([]byte{'1', '9'}))
 	flushCtrl.imported = true // Mock the data is imported to the storage.
-	require.NoError(t, mgr.UpdateWrittenKeys(2, 0))
+	_, _, err = mgr.UpdateWrittenKeys(2, 0)
+	require.NoError(t, err)
 	require.True(t, mgr.IsKeyProcessed([]byte{'1', '9'}))
 
 	// Only when the last batch is completed, the job can be completed.
 	mgr.UpdateTotalKeys(2, 50, false)
 	mgr.UpdateTotalKeys(2, 50, true)
-	require.NoError(t, mgr.UpdateWrittenKeys(2, 50))
+	_, _, err = mgr.UpdateWrittenKeys(2, 50)
+	require.NoError(t, err)
 	require.True(t, mgr.IsKeyProcessed([]byte{'1', '9'}))
 	require.False(t, mgr.IsKeyProcessed([]byte{'2', '9'}))
-	require.NoError(t, mgr.UpdateWrittenKeys(2, 50))
+	_, _, err = mgr.UpdateWrittenKeys(2, 50)
+	require.NoError(t, err)
 	require.True(t, mgr.IsKeyProcessed([]byte{'1', '9'}))
 	require.True(t, mgr.IsKeyProcessed([]byte{'2', '9'}))
 
@@ -99,8 +104,10 @@ func TestCheckpointManager(t *testing.T) {
 	mgr.UpdateTotalKeys(3, 100, true)
 	mgr.UpdateTotalKeys(4, 100, true)
 	mgr.UpdateTotalKeys(5, 100, true)
-	require.NoError(t, mgr.UpdateWrittenKeys(5, 100))
-	require.NoError(t, mgr.UpdateWrittenKeys(4, 100))
+	_, _, err = mgr.UpdateWrittenKeys(5, 100)
+	require.NoError(t, err)
+	_, _, err = mgr.UpdateWrittenKeys(4, 100)
+	require.NoError(t, err)
 	require.False(t, mgr.IsKeyProcessed([]byte{'3', '9'}))
 	require.False(t, mgr.IsKeyProcessed([]byte{'4', '9'}))
 }
@@ -125,7 +132,8 @@ func TestCheckpointManagerUpdateReorg(t *testing.T) {
 
 	mgr.Register(1, []byte{'1', '9'})
 	mgr.UpdateTotalKeys(1, 100, true)
-	require.NoError(t, mgr.UpdateWrittenKeys(1, 100))
+	_, _, err = mgr.UpdateWrittenKeys(1, 100)
+	require.NoError(t, err)
 	mgr.Flush() // Wait the global checkpoint to be updated to the reorg table.
 	r, err := tk.Exec("select reorg_meta from mysql.tidb_ddl_reorg where job_id = 1 and ele_id = 1;")
 	require.NoError(t, err)

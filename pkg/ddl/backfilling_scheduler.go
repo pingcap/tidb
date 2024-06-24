@@ -636,7 +636,7 @@ func (w *addIndexIngestWorker) HandleTask(rs IndexRecordChunk, _ func(workerpool
 		cnt, nextKey := w.checkpointMgr.Status()
 		result.totalCount = cnt
 		result.nextKey = nextKey
-		result.err = w.checkpointMgr.UpdateWrittenKeys(rs.ID, count)
+		_, _, result.err = w.checkpointMgr.UpdateWrittenKeys(rs.ID, count)
 	} else {
 		result.addedCount = count
 		result.scanCount = count

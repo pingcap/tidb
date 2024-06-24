@@ -186,7 +186,7 @@ func NewAddIndexIngestPipeline(
 	scanOp := NewTableScanOperator(ctx, sessPool, copCtx, srcChkPool, readerCnt, cpMgr)
 	ingestOp := NewIndexIngestOperator(ctx, copCtx, backendCtx, sessPool,
 		tbl, indexes, engines, srcChkPool, writerCnt, reorgMeta, cpMgr, rowCntListener)
-	sinkOp := newIndexWriteResultSink(ctx, backendCtx, tbl, indexes, rowCntListener)
+	sinkOp := newIndexWriteResultSink(ctx, backendCtx, tbl, indexes)
 
 	operator.Compose[TableScanTask](srcOp, scanOp)
 	operator.Compose[IndexRecordChunk](scanOp, ingestOp)
@@ -255,7 +255,7 @@ func NewWriteIndexToExternalStoragePipeline(
 	scanOp := NewTableScanOperator(ctx, sessPool, copCtx, srcChkPool, readerCnt, nil)
 	writeOp := NewWriteExternalStoreOperator(
 		ctx, copCtx, sessPool, jobID, subtaskID, tbl, indexes, extStore, srcChkPool, writerCnt, onClose, memSizePerIndex, reorgMeta)
-	sinkOp := newIndexWriteResultSink(ctx, nil, tbl, indexes, rowCntListener)
+	sinkOp := newIndexWriteResultSink(ctx, nil, tbl, indexes)
 
 	operator.Compose[TableScanTask](srcOp, scanOp)
 	operator.Compose[IndexRecordChunk](scanOp, writeOp)
@@ -756,14 +756,19 @@ func (w *indexIngestLocalWorker) HandleTask(ck IndexRecordChunk, send func(Index
 		rs.Added = 0
 		rs.Total = totalCnt
 		rs.Next = nextKey
-		err := w.cpMgr.UpdateWrittenKeys(ck.ID, rs.Added)
+		flushed, imported, err := w.cpMgr.UpdateWrittenKeys(ck.ID, rs.Added)
 		if err != nil {
 			w.ctx.onError(err)
 			return
 		}
+		if flushed {
+			w.rowCntListener.Flushed(rs.Added)
+		}
+		if imported {
+			w.rowCntListener.Imported(rs.Added)
+		}
 	}
 	send(rs)
-	w.rowCntListener.Flushed(rs.Added)
 }
 
 type indexIngestBaseWorker struct {
@@ -868,8 +873,6 @@ type indexWriteResultSink struct {
 	tbl        table.PhysicalTable
 	indexes    []table.Index
 
-	rowCntListener RowCountListener
-
 	errGroup errgroup.Group
 	source   operator.DataChannel[IndexWriteResult]
 }
@@ -879,15 +882,13 @@ func newIndexWriteResultSink(
 	backendCtx ingest.BackendCtx,
 	tbl table.PhysicalTable,
 	indexes []table.Index,
-	rowCntListener RowCountListener,
 ) *indexWriteResultSink {
 	return &indexWriteResultSink{
-		ctx:            ctx,
-		backendCtx:     backendCtx,
-		tbl:            tbl,
-		indexes:        indexes,
-		rowCntListener: rowCntListener,
-		errGroup:       errgroup.Group{},
+		ctx:        ctx,
+		backendCtx: backendCtx,
+		tbl:        tbl,
+		indexes:    indexes,
+		errGroup:   errgroup.Group{},
 	}
 }
 
@@ -905,7 +906,7 @@ func (s *indexWriteResultSink) collectResult() error {
 		select {
 		case <-s.ctx.Done():
 			return s.ctx.Err()
-		case result, ok := <-s.source.Channel():
+		case _, ok := <-s.source.Channel():
 			if !ok {
 				err := s.flush()
 				if err != nil {
@@ -913,7 +914,6 @@ func (s *indexWriteResultSink) collectResult() error {
 				}
 				return err
 			}
-			s.rowCntListener.Imported(result.Added)
 		}
 	}
 }

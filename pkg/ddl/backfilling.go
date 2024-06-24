@@ -579,6 +579,7 @@ func (dc *ddlCtx) runAddIndexInIngestMode(
 		return errors.Trace(err)
 	}
 	job := reorgInfo.Job.Clone()
+	ctx = tidblogutil.WithCategory(ctx, "ddl-ingest")
 	opCtx := NewStandaloneOperatorCtx(ctx, job.ID)
 	bcCtx, err := getBackendCtx(ctx, dc.store, dc.etcdCli, job)
 	if err != nil {
@@ -631,7 +632,7 @@ func (dc *ddlCtx) runAddIndexInIngestMode(
 
 	totalRowCount := job.GetRowCount()
 	rowCntListener := &standaloneRowCntListener{
-		imported: func(cnt int) {
+		flushed: func(cnt int) {
 			totalRowCount += int64(cnt)
 			dc.getReorgCtx(reorgInfo.Job.ID).setRowCount(int64(cnt))
 		},
@@ -675,12 +676,12 @@ func (dc *ddlCtx) runAddIndexInIngestMode(
 
 type standaloneRowCntListener struct {
 	EmptyRowCntListener
-	imported func(int)
-	counter  prometheus.Counter
+	flushed func(int)
+	counter prometheus.Counter
 }
 
-func (s *standaloneRowCntListener) Imported(rowCnt int) {
-	s.imported(rowCnt)
+func (s *standaloneRowCntListener) Flushed(rowCnt int) {
+	s.flushed(rowCnt)
 	s.counter.Add(float64(rowCnt))
 }
 
