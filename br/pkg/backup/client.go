@@ -1064,8 +1064,8 @@ func WriteBackupDDLJobs(metaWriter *metautil.MetaWriter, g glue.Glue, store kv.S
 			// no more jobs
 			break
 		}
-		count += len(cacheJobs)
 		jobs, finished := appendJobsFn(cacheJobs)
+		count += len(jobs)
 		allJobs = append(allJobs, jobs...)
 		if finished {
 			// no more jobs between [LastTS, ts]
