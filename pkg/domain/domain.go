@@ -300,10 +300,12 @@ func (do *Domain) loadInfoSchema(startTS uint64) (infoschema.InfoSchema, bool, i
 		logutil.BgLogger().Error("failed to load schema diff", zap.Error(err))
 	}
 	// full load.
+	start := time.Now()
 	schemas, err := do.fetchAllSchemasWithTables(m)
 	if err != nil {
 		return nil, false, currentSchemaVersion, nil, err
 	}
+	logutil.BgLogger().Info("fetch all schemas with tables", zap.Duration("start time", time.Since(start)))
 
 	policies, err := do.fetchPolicies(m)
 	if err != nil {
