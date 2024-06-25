@@ -206,14 +206,9 @@ func (s *LFU) onExit(val any) {
 	if s.closed.Load() {
 		return
 	}
-<<<<<<< HEAD
-	s.addCost(
-		-1 * val.(*statistics.Table).MemoryUsage().TotalTrackingMemUsage())
-=======
 	s.triggerEvict()
 	// Subtract the memory usage of the table from the total memory usage.
 	s.addCost(-val.(*statistics.Table).MemoryUsage().TotalTrackingMemUsage())
->>>>>>> 2ee6d22383d (statistics: updating stats cache can trigger evict (#53979))
 }
 
 // Len implements statsCacheInner
