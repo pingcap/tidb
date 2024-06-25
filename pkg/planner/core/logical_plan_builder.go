@@ -6199,21 +6199,6 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, ds *ast.DeleteStmt) (base
 	proj.SetOutputNames(p.OutputNames()[:oldLen])
 	p = proj
 
-	handleColsMap := b.handleHelper.tailMap()
-	for _, cols := range handleColsMap {
-		for _, col := range cols {
-			for i := 0; i < col.NumCols(); i++ {
-				exprCol := col.GetCol(i)
-				if proj.Schema().Contains(exprCol) {
-					continue
-				}
-				proj.Exprs = append(proj.Exprs, exprCol)
-				proj.Schema().Columns = append(proj.Schema().Columns, exprCol)
-				proj.SetOutputNames(append(proj.OutputNames(), types.EmptyName))
-			}
-		}
-	}
-
 	del := Delete{
 		IsMultiTable: ds.IsMultiTable,
 	}.Init(b.ctx)
@@ -6285,6 +6270,7 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, ds *ast.DeleteStmt) (base
 			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.DeletePriv, dbName, v.Name.L, "", authErr)
 		}
 	}
+	handleColsMap := b.handleHelper.tailMap()
 	tblID2Handle, err := resolveIndicesForTblID2Handle(handleColsMap, p.Schema())
 	if err != nil {
 		return nil, err
