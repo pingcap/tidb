@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/tableutil"
 	"github.com/pingcap/tipb/go-binlog"
 )
@@ -49,6 +50,38 @@ type MutateContext interface {
 	// TxnRecordTempTable record the temporary table to the current transaction.
 	// This method will be called when the temporary table is modified or should allocate id in the transaction.
 	TxnRecordTempTable(tbl *model.TableInfo) tableutil.TempTable
+	// GetTablesBuffer returns the TablesBuffer,
+	// which is a buffer for table related structures that aims to reuse memory and
+	// saves allocation.
+	GetTablesBuffer() *TablesBuffer
+}
+
+// TablesBuffer is a memory pool for table related memory allocation that aims to reuse memory
+// and saves allocation
+type TablesBuffer struct {
+	Update *UpdateRecordBuffer
+	Add    *AddRecordBuffer
+	Remove *RemoveRecordBuffer
+}
+
+// RemoveRecordBuffer is for RemoveRecord
+type RemoveRecordBuffer struct {
+	ColSize []variable.ColSize
+}
+
+// AddRecordBuffer is for AddRecord
+type AddRecordBuffer struct {
+	ColIDs  []int64
+	Row     []types.Datum
+	ColSize []variable.ColSize
+}
+
+// UpdateRecordBuffer is for UpdateRecord
+type UpdateRecordBuffer struct {
+	ColIDs     []int64
+	Row        []types.Datum
+	RowToCheck []types.Datum
+	ColSize    []variable.ColSize
 }
 
 // AllocatorContext is used to provide context for method `table.Allocators`.

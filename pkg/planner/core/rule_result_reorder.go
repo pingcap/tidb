@@ -117,7 +117,7 @@ func (rs *resultReorder) extractHandleCol(lp base.LogicalPlan) *expression.Colum
 			return handleCol
 		}
 	case *DataSource:
-		if x.tableInfo.IsCommonHandle {
+		if x.TableInfo.IsCommonHandle {
 			// Currently we deliberately don't support common handle case for simplicity.
 			return nil
 		}

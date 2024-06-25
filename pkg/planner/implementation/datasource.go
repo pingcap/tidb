@@ -68,7 +68,7 @@ func NewTableReaderImpl(reader *plannercore.PhysicalTableReader, source *planner
 	base := baseImpl{plan: reader}
 	impl := &TableReaderImpl{
 		baseImpl:    base,
-		tblInfo:     source.TableInfo(),
+		tblInfo:     source.TableInfo,
 		tblColHists: source.TblColHists,
 	}
 	return impl
@@ -167,7 +167,7 @@ func (impl *IndexReaderImpl) CalcCost(outCount float64, children ...memo.Impleme
 func NewIndexReaderImpl(reader *plannercore.PhysicalIndexReader, source *plannercore.DataSource) *IndexReaderImpl {
 	return &IndexReaderImpl{
 		baseImpl:    baseImpl{plan: reader},
-		tblInfo:     source.TableInfo(),
+		tblInfo:     source.TableInfo,
 		tblColHists: source.TblColHists,
 	}
 }

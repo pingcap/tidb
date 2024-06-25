@@ -15,6 +15,8 @@
 package core
 
 import (
+	"slices"
+
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
@@ -156,34 +158,50 @@ func InjectProjBelowAgg(aggPlan base.PhysicalPlan, aggFuncs []*aggregation.AggFu
 			cursor++
 		}
 		for _, byItem := range f.OrderByItems {
-			if _, isCnst := byItem.Expr.(*expression.Constant); isCnst {
+			bi := byItem.Expr
+			if _, isCnst := bi.(*expression.Constant); isCnst {
 				continue
 			}
-			projExprs = append(projExprs, byItem.Expr)
-			newArg := &expression.Column{
-				UniqueID: aggPlan.SCtx().GetSessionVars().AllocPlanColumnID(),
-				RetType:  byItem.Expr.GetType(ectx),
-				Index:    cursor,
+			idx := slices.IndexFunc(projExprs, func(a expression.Expression) bool {
+				return a.Equal(ectx, bi)
+			})
+			if idx < 0 {
+				projExprs = append(projExprs, bi)
+				newArg := &expression.Column{
+					UniqueID: aggPlan.SCtx().GetSessionVars().AllocPlanColumnID(),
+					RetType:  bi.GetType(ectx),
+					Index:    cursor,
+				}
+				projSchemaCols = append(projSchemaCols, newArg)
+				byItem.Expr = newArg
+				cursor++
+			} else {
+				byItem.Expr = projSchemaCols[idx]
 			}
-			projSchemaCols = append(projSchemaCols, newArg)
-			byItem.Expr = newArg
-			cursor++
 		}
 	}
 
 	for i, item := range groupByItems {
-		if _, isCnst := item.(*expression.Constant); isCnst {
+		it := item
+		if _, isCnst := it.(*expression.Constant); isCnst {
 			continue
 		}
-		projExprs = append(projExprs, item)
-		newArg := &expression.Column{
-			UniqueID: aggPlan.SCtx().GetSessionVars().AllocPlanColumnID(),
-			RetType:  item.GetType(ectx),
-			Index:    cursor,
+		idx := slices.IndexFunc(projExprs, func(a expression.Expression) bool {
+			return a.Equal(ectx, it)
+		})
+		if idx < 0 {
+			projExprs = append(projExprs, it)
+			newArg := &expression.Column{
+				UniqueID: aggPlan.SCtx().GetSessionVars().AllocPlanColumnID(),
+				RetType:  item.GetType(ectx),
+				Index:    cursor,
+			}
+			projSchemaCols = append(projSchemaCols, newArg)
+			groupByItems[i] = newArg
+			cursor++
+		} else {
+			groupByItems[i] = projSchemaCols[idx]
 		}
-		projSchemaCols = append(projSchemaCols, newArg)
-		groupByItems[i] = newArg
-		cursor++
 	}
 
 	child := aggPlan.Children()[0]

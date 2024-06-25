@@ -200,5 +200,112 @@
         "Result": null
       }
     ]
+  },
+  {
+    "Name": "TestRowFunctionMatchTheIndexRangeScan",
+    "Cases": [
+      {
+        "SQL": "select k1 from t1 where (k1,k2) > (1,2)",
+        "Plan": [
+          "Projection 3366.67 root  test.t1.k1",
+          "└─IndexReader 3366.67 root  index:IndexRangeScan",
+          "  └─IndexRangeScan 3366.67 cop[tikv] table:t1, index:pk1(k1, k2) range:(1 2,1 +inf], (1,+inf], keep order:false, stats:pseudo"
+        ],
+        "Result": null
+      },
+      {
+        "SQL": "select k1 from t1 where (k1,k2) >= (1,2)",
+        "Plan": [
+          "Projection 3366.67 root  test.t1.k1",
+          "└─IndexReader 3366.67 root  index:IndexRangeScan",
+          "  └─IndexRangeScan 3366.67 cop[tikv] table:t1, index:pk1(k1, k2) range:[1 2,1 +inf], (1,+inf], keep order:false, stats:pseudo"
+        ],
+        "Result": null
+      },
+      {
+        "SQL": "select k1 from t1 where (k1,k2) < (1,2)",
+        "Plan": [
+          "Projection 3356.57 root  test.t1.k1",
+          "└─IndexReader 3356.57 root  index:IndexRangeScan",
+          "  └─IndexRangeScan 3356.57 cop[tikv] table:t1, index:pk1(k1, k2) range:[-inf,1), [1 -inf,1 2), keep order:false, stats:pseudo"
+        ],
+        "Result": null
+      },
+      {
+        "SQL": "select k1 from t1 where (k1, k2) <= (1,2)",
+        "Plan": [
+          "Projection 3356.57 root  test.t1.k1",
+          "└─IndexReader 3356.57 root  index:IndexRangeScan",
+          "  └─IndexRangeScan 3356.57 cop[tikv] table:t1, index:pk1(k1, k2) range:[-inf,1), [1 -inf,1 2], keep order:false, stats:pseudo"
+        ],
+        "Result": null
+      },
+      {
+        "SQL": "select k1 from t1 where (k1,k2) = (1,2)",
+        "Plan": [
+          "Projection 0.10 root  test.t1.k1",
+          "└─IndexReader 0.10 root  index:IndexRangeScan",
+          "  └─IndexRangeScan 0.10 cop[tikv] table:t1, index:pk1(k1, k2) range:[1 2,1 2], keep order:false, stats:pseudo"
+        ],
+        "Result": null
+      },
+      {
+        "SQL": "select k1 from t1 where (k1, k2) != (1,2); -- could not match range scan",
+        "Plan": [
+          "Projection 8882.21 root  test.t1.k1",
+          "└─IndexReader 8882.21 root  index:Selection",
+          "  └─Selection 8882.21 cop[tikv]  or(ne(test.t1.k1, 1), ne(test.t1.k2, 2))",
+          "    └─IndexFullScan 10000.00 cop[tikv] table:t1, index:pk1(k1, k2) keep order:false, stats:pseudo"
+        ],
+        "Result": null
+      },
+      {
+        "SQL": "select k1 from t1 where (k1) <=> (1); -- could not match range scan",
+        "Plan": [
+          "IndexReader 10.00 root  index:IndexRangeScan",
+          "└─IndexRangeScan 10.00 cop[tikv] table:t1, index:pk1(k1, k2) range:[1,1], keep order:false, stats:pseudo"
+        ],
+        "Result": null
+      },
+      {
+        "SQL": "select k1 from t1 where (k1, k2) in ((1,2), (3,4))",
+        "Plan": [
+          "Projection 0.20 root  test.t1.k1",
+          "└─IndexReader 0.20 root  index:IndexRangeScan",
+          "  └─IndexRangeScan 0.20 cop[tikv] table:t1, index:pk1(k1, k2) range:[1 2,1 2], [3 4,3 4], keep order:false, stats:pseudo"
+        ],
+        "Result": null
+      },
+      {
+        "SQL": "select k1 from t1 where (k1, k2) > (1,2) and (k1, k2) < (4,5)",
+        "Plan": [
+          "Projection 1122.61 root  test.t1.k1",
+          "└─IndexReader 1122.61 root  index:Selection",
+          "  └─Selection 1122.61 cop[tikv]  or(gt(test.t1.k1, 1), and(eq(test.t1.k1, 1), gt(test.t1.k2, 2))), or(lt(test.t1.k1, 4), and(eq(test.t1.k1, 4), lt(test.t1.k2, 5)))",
+          "    └─IndexRangeScan 1403.26 cop[tikv] table:t1, index:pk1(k1, k2) range:[1,1], (1,4), [4,4], keep order:false, stats:pseudo"
+        ],
+        "Result": null
+      },
+      {
+        "SQL": "select k1 from t1 where (k1, k2) >= (1,2) and (k1, k2) <= (4,5)",
+        "Plan": [
+          "Projection 1122.61 root  test.t1.k1",
+          "└─IndexReader 1122.61 root  index:Selection",
+          "  └─Selection 1122.61 cop[tikv]  or(gt(test.t1.k1, 1), and(eq(test.t1.k1, 1), ge(test.t1.k2, 2))), or(lt(test.t1.k1, 4), and(eq(test.t1.k1, 4), le(test.t1.k2, 5)))",
+          "    └─IndexRangeScan 1403.26 cop[tikv] table:t1, index:pk1(k1, k2) range:[1,1], (1,4), [4,4], keep order:false, stats:pseudo"
+        ],
+        "Result": null
+      },
+      {
+        "SQL": "select k1 from t1 where (k2, k3) > (1,2); -- could not match range scan ",
+        "Plan": [
+          "Projection 3335.56 root  test.t1.k1",
+          "└─TableReader 3335.56 root  data:Selection",
+          "  └─Selection 3335.56 cop[tikv]  or(gt(test.t1.k2, 1), and(eq(test.t1.k2, 1), gt(test.t1.k3, 2)))",
+          "    └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Result": null
+      }
+    ]
   }
 ]

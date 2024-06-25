@@ -19,5 +19,21 @@
       "select b from t3 where a = 1 and b is not null",
       "select b from t3 where a = 1 and b is null"
     ]
+  },
+  {
+    "name": "TestRowFunctionMatchTheIndexRangeScan",
+    "cases": [
+      "select k1 from t1 where (k1,k2) > (1,2)",
+      "select k1 from t1 where (k1,k2) >= (1,2)",
+      "select k1 from t1 where (k1,k2) < (1,2)",
+      "select k1 from t1 where (k1, k2) <= (1,2)",
+      "select k1 from t1 where (k1,k2) = (1,2)",
+      "select k1 from t1 where (k1, k2) != (1,2); -- could not match range scan",
+      "select k1 from t1 where (k1) <=> (1); -- could not match range scan",
+      "select k1 from t1 where (k1, k2) in ((1,2), (3,4))",
+      "select k1 from t1 where (k1, k2) > (1,2) and (k1, k2) < (4,5)",
+      "select k1 from t1 where (k1, k2) >= (1,2) and (k1, k2) <= (4,5)",
+      "select k1 from t1 where (k2, k3) > (1,2); -- could not match range scan "
+    ]
   }
 ]

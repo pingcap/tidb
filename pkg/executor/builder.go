@@ -4103,8 +4103,6 @@ func buildNoRangeIndexMergeReader(b *executorBuilder, v *plannercore.PhysicalInd
 		return nil, err
 	}
 
-	paging := b.ctx.GetSessionVars().EnablePaging
-
 	e := &IndexMergeReaderExecutor{
 		BaseExecutor:             exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID()),
 		indexUsageReporter:       b.buildIndexUsageReporter(v),
@@ -4120,7 +4118,6 @@ func buildNoRangeIndexMergeReader(b *executorBuilder, v *plannercore.PhysicalInd
 		partialNetDataSizes:      partialDataSizes,
 		dataAvgRowSize:           v.GetAvgTableRowSize(),
 		dataReaderBuilder:        readerBuilder,
-		paging:                   paging,
 		handleCols:               v.HandleCols,
 		isCorColInPartialFilters: isCorColInPartialFilters,
 		isCorColInTableFilter:    isCorColInTableFilter,

@@ -89,9 +89,9 @@ func (a *skewDistinctAggRewriter) rewriteSkewDistinctAgg(agg *LogicalAggregation
 	// aggregate functions for bottom aggregate
 	bottomAggFuncs := make([]*aggregation.AggFuncDesc, 0, len(agg.AggFuncs))
 	// output schema for top aggregate
-	topAggSchema := agg.schema.Clone()
+	topAggSchema := agg.Schema().Clone()
 	// output schema for bottom aggregate
-	bottomAggSchema := expression.NewSchema(make([]*expression.Column, 0, agg.schema.Len())...)
+	bottomAggSchema := expression.NewSchema(make([]*expression.Column, 0, agg.Schema().Len())...)
 
 	// columns used by group by items in the original aggregate
 	groupCols := make([]*expression.Column, 0, 3)
@@ -225,12 +225,12 @@ func (a *skewDistinctAggRewriter) rewriteSkewDistinctAgg(agg *LogicalAggregation
 	// wrap sum() with cast function to keep output data type same
 	for _, index := range cntIndexes {
 		exprType := proj.Exprs[index].GetType(agg.SCtx().GetExprCtx().GetEvalCtx())
-		targetType := agg.schema.Columns[index].GetStaticType()
+		targetType := agg.Schema().Columns[index].GetStaticType()
 		if !exprType.Equal(targetType) {
 			proj.Exprs[index] = expression.BuildCastFunction(agg.SCtx().GetExprCtx(), proj.Exprs[index], targetType)
 		}
 	}
-	proj.SetSchema(agg.schema.Clone())
+	proj.SetSchema(agg.Schema().Clone())
 	proj.SetChildren(topAgg)
 	appendSkewDistinctAggRewriteTraceStep(agg, proj, opt)
 	return proj

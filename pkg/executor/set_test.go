@@ -672,15 +672,11 @@ func TestSetVar(t *testing.T) {
 	tk.MustQuery("select @@tidb_enable_historical_stats").Check(testkit.Rows("0"))
 
 	// test for tidb_enable_column_tracking
-	tk.MustQuery("select @@tidb_enable_column_tracking").Check(testkit.Rows("0"))
-	tk.MustExec("set global tidb_enable_column_tracking = 1")
 	tk.MustQuery("select @@tidb_enable_column_tracking").Check(testkit.Rows("1"))
 	tk.MustExec("set global tidb_enable_column_tracking = 0")
-	tk.MustQuery("select @@tidb_enable_column_tracking").Check(testkit.Rows("0"))
-	// When set tidb_enable_column_tracking off, we record the time of the setting operation.
-	tk.MustQuery("select count(1) from mysql.tidb where variable_name = 'tidb_disable_column_tracking_time' and variable_value is not null").Check(testkit.Rows("1"))
-	tk.MustExec("set global tidb_enable_column_tracking = 1")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1681 The 'tidb_enable_column_tracking' variable is deprecated and will be removed in future versions of TiDB. It is always set to 'ON' now."))
 	tk.MustQuery("select @@tidb_enable_column_tracking").Check(testkit.Rows("1"))
+	tk.MustQuery("select count(1) from mysql.tidb where variable_name = 'tidb_disable_column_tracking_time' and variable_value is not null").Check(testkit.Rows("0"))
 	require.Error(t, tk.ExecToErr("select @@session.tidb_enable_column_tracking"))
 	require.Error(t, tk.ExecToErr("set tidb_enable_column_tracking = 0"))
 	require.Error(t, tk.ExecToErr("set global tidb_enable_column_tracking = -1"))

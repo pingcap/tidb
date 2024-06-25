@@ -467,7 +467,7 @@ type stmtKey struct {
 // `prevSQL` is included in the key To distinguish different transactions.
 func (k *stmtKey) Hash() []byte {
 	if len(k.hash) == 0 {
-		k.hash = make([]byte, 0, len(k.schemaName)+len(k.digest)+len(k.prevDigest)+len(k.planDigest))
+		k.hash = make([]byte, 0, len(k.schemaName)+len(k.digest)+len(k.prevDigest)+len(k.planDigest)+len(k.resourceGroupName))
 		k.hash = append(k.hash, hack.Slice(k.digest)...)
 		k.hash = append(k.hash, hack.Slice(k.schemaName)...)
 		k.hash = append(k.hash, hack.Slice(k.prevDigest)...)

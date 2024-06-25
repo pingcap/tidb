@@ -184,7 +184,10 @@ func (s *jobScheduler) close() {
 	}
 }
 
+// getJob reads tidb_ddl_job and returns the first runnable DDL job.
 func (s *jobScheduler) getJob(se *sess.Session, tp jobType) (*model.Job, error) {
+	defer s.runningJobs.resetAllPending()
+
 	not := "not"
 	label := "get_job_general"
 	if tp == jobTypeReorg {
@@ -226,7 +229,9 @@ func (s *jobScheduler) getJob(se *sess.Session, tp jobType) (*model.Job, error) 
 			return &job, nil
 		}
 
-		if !s.runningJobs.checkRunnable(job.ID, job.GetInvolvingSchemaInfo()) {
+		involving := job.GetInvolvingSchemaInfo()
+		if !s.runningJobs.checkRunnable(job.ID, involving) {
+			s.runningJobs.addPending(involving)
 			continue
 		}
 
@@ -235,6 +240,7 @@ func (s *jobScheduler) getJob(se *sess.Session, tp jobType) (*model.Job, error) 
 				"[ddl] handle ddl job failed: mark job is processing meet error",
 				zap.Error(err),
 				zap.Stringer("job", &job))
+			s.runningJobs.addPending(involving)
 			return nil, errors.Trace(err)
 		}
 		return &job, nil
@@ -518,12 +524,12 @@ func (s *jobScheduler) delivery2Worker(wk *worker, pool *workerPool, job *model.
 	failpoint.InjectCall("beforeDelivery2Worker", job)
 	injectFailPointForGetJob(job)
 	jobID, involvedSchemaInfos := job.ID, job.GetInvolvingSchemaInfo()
-	s.runningJobs.add(jobID, involvedSchemaInfos)
+	s.runningJobs.addRunning(jobID, involvedSchemaInfos)
 	metrics.DDLRunningJobCount.WithLabelValues(pool.tp().String()).Inc()
 	s.wg.RunWithLog(func() {
 		defer func() {
 			failpoint.InjectCall("afterDelivery2Worker", job)
-			s.runningJobs.remove(jobID, involvedSchemaInfos)
+			s.runningJobs.removeRunning(jobID, involvedSchemaInfos)
 			asyncNotify(s.ddlJobNotifyCh)
 			metrics.DDLRunningJobCount.WithLabelValues(pool.tp().String()).Dec()
 			if wk.ctx.Err() != nil && ingest.LitBackCtxMgr != nil {

@@ -199,9 +199,9 @@ func (pe *projectionEliminator) eliminate(p base.LogicalPlan, replace map[string
 	// replace logical plan schema
 	switch x := p.(type) {
 	case *LogicalJoin:
-		x.schema = buildLogicalJoinSchema(x.JoinType, x)
+		x.SetSchema(buildLogicalJoinSchema(x.JoinType, x))
 	case *LogicalApply:
-		x.schema = buildLogicalJoinSchema(x.JoinType, x)
+		x.SetSchema(buildLogicalJoinSchema(x.JoinType, x))
 	default:
 		for _, dst := range p.Schema().Columns {
 			resolveColumnAndReplace(dst, replace)

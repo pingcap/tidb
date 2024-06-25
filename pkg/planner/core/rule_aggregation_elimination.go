@@ -79,7 +79,7 @@ func (a *aggregationEliminateChecker) tryToEliminateAggregation(agg *LogicalAggr
 			return nil
 		}
 		// GroupByCols has unique key, so this aggregation can be removed.
-		if ok, proj := ConvertAggToProj(agg, agg.schema); ok {
+		if ok, proj := ConvertAggToProj(agg, agg.Schema()); ok {
 			proj.SetChildren(agg.Children()[0])
 			appendAggregationEliminateTraceStep(agg, proj, uniqueKey, opt)
 			return proj

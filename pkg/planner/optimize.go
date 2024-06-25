@@ -175,12 +175,15 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 		// Override the resource group if the hint is set.
 		if retErr == nil && sessVars.StmtCtx.StmtHints.HasResourceGroup {
 			if variable.EnableResourceControl.Load() {
-				checker := privilege.GetPrivilegeManager(sctx)
 				hasPriv := true
-				if checker != nil {
-					hasRgAdminPriv := checker.RequestDynamicVerification(sctx.GetSessionVars().ActiveRoles, "RESOURCE_GROUP_ADMIN", false)
-					hasRgUserPriv := checker.RequestDynamicVerification(sctx.GetSessionVars().ActiveRoles, "RESOURCE_GROUP_USER", false)
-					hasPriv = hasRgAdminPriv || hasRgUserPriv
+				// only check dynamic privilege when strict-mode is enabled.
+				if variable.EnableResourceControlStrictMode.Load() {
+					checker := privilege.GetPrivilegeManager(sctx)
+					if checker != nil {
+						hasRgAdminPriv := checker.RequestDynamicVerification(sctx.GetSessionVars().ActiveRoles, "RESOURCE_GROUP_ADMIN", false)
+						hasRgUserPriv := checker.RequestDynamicVerification(sctx.GetSessionVars().ActiveRoles, "RESOURCE_GROUP_USER", false)
+						hasPriv = hasRgAdminPriv || hasRgUserPriv
+					}
 				}
 				if hasPriv {
 					sessVars.StmtCtx.ResourceGroupName = sessVars.StmtCtx.StmtHints.ResourceGroup

@@ -1026,7 +1026,7 @@ func TestCollectPredicateColumnsFromExecute(t *testing.T) {
 	}
 }
 
-func TestEnableAndDisableColumnTracking(t *testing.T) {
+func TestColumnTracking(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	h := dom.StatsHandle()
@@ -1034,40 +1034,18 @@ func TestEnableAndDisableColumnTracking(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int, b int, c int)")
 
-	originalVal := tk.MustQuery("select @@tidb_enable_column_tracking").Rows()[0][0].(string)
-	defer func() {
-		tk.MustExec(fmt.Sprintf("set global tidb_enable_column_tracking = %v", originalVal))
-	}()
-
-	tk.MustExec("set global tidb_enable_column_tracking = 1")
 	tk.MustExec("select * from t where b > 1")
 	require.NoError(t, h.DumpColStatsUsageToKV())
 	rows := tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't' and last_used_at is not null").Rows()
 	require.Len(t, rows, 1)
 	require.Equal(t, "b", rows[0][3])
 
-	tk.MustExec("set global tidb_enable_column_tracking = 0")
-	// After tidb_enable_column_tracking is set to 0, the predicate columns collected before are invalidated.
-	tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't' and last_used_at is not null").Check(testkit.Rows())
-
-	// Sleep for 1.5s to let `last_used_at` be larger than `tidb_disable_tracking_time`.
-	time.Sleep(1500 * time.Millisecond)
-	tk.MustExec("select * from t where a > 1")
-	require.NoError(t, h.DumpColStatsUsageToKV())
-	// We don't collect predicate columns when tidb_enable_column_tracking = 0
-	tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't' and last_used_at is not null").Check(testkit.Rows())
-
-	tk.MustExec("set global tidb_enable_column_tracking = 1")
 	tk.MustExec("select * from t where b < 1 and c > 1")
 	require.NoError(t, h.DumpColStatsUsageToKV())
 	rows = tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't' and last_used_at is not null").Sort().Rows()
 	require.Len(t, rows, 2)
 	require.Equal(t, "b", rows[0][3])
 	require.Equal(t, "c", rows[1][3])
-
-	// Test invalidating predicate columns again in order to check that tidb_disable_tracking_time can be updated.
-	tk.MustExec("set global tidb_enable_column_tracking = 0")
-	tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't' and last_used_at is not null").Check(testkit.Rows())
 }
 
 func TestStatsLockUnlockForAutoAnalyze(t *testing.T) {

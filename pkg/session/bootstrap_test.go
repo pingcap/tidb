@@ -2249,6 +2249,53 @@ func testTiDBUpgradeWithDistTask(t *testing.T, injectQuery string, fatal bool) {
 	require.Equal(t, fatal, fatal2panic)
 }
 
+func TestTiDBUpgradeToVer199(t *testing.T) {
+	ctx := context.Background()
+	store, _ := CreateStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+
+	// bootstrap as version198
+	ver198 := version198
+	seV198 := CreateSessionAndSetID(t, store)
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	m := meta.NewMeta(txn)
+	err = m.FinishBootstrap(int64(ver198))
+	require.NoError(t, err)
+	revertVersionAndVariables(t, seV198, ver198)
+	// simulate a real ver198 where `tidb_resource_control_strict_mode` doesn't exist yet
+	MustExec(t, seV198, "delete from mysql.GLOBAL_VARIABLES where variable_name='tidb_resource_control_strict_mode'")
+	err = txn.Commit(context.Background())
+	require.NoError(t, err)
+	unsetStoreBootstrapped(store.UUID())
+
+	// upgrade to ver199
+	domCurVer, err := BootstrapSession(store)
+	require.NoError(t, err)
+	defer domCurVer.Close()
+	seCurVer := CreateSessionAndSetID(t, store)
+	ver, err := getBootstrapVersion(seCurVer)
+	require.NoError(t, err)
+	require.Equal(t, currentBootstrapVersion, ver)
+
+	// the value in the table is set to OFF automatically
+	res := MustExecToRecodeSet(t, seCurVer, "select * from mysql.GLOBAL_VARIABLES where variable_name='tidb_resource_control_strict_mode'")
+	chk := res.NewChunk(nil)
+	require.NoError(t, res.Next(ctx, chk))
+	require.Equal(t, 1, chk.NumRows())
+	row := chk.GetRow(0)
+	require.Equal(t, "OFF", row.GetString(1))
+
+	// the global variable is also OFF
+	res = MustExecToRecodeSet(t, seCurVer, "select @@global.tidb_resource_control_strict_mode")
+	chk = res.NewChunk(nil)
+	require.NoError(t, res.Next(ctx, chk))
+	require.Equal(t, 1, chk.NumRows())
+	row = chk.GetRow(0)
+	require.Equal(t, int64(0), row.GetInt64(0))
+	require.Equal(t, false, variable.EnableResourceControlStrictMode.Load())
+}
+
 func TestTiDBUpgradeWithDistTaskEnable(t *testing.T) {
 	t.Run("test enable dist task", func(t *testing.T) { testTiDBUpgradeWithDistTask(t, "set global tidb_enable_dist_task = 1", true) })
 	t.Run("test disable dist task", func(t *testing.T) { testTiDBUpgradeWithDistTask(t, "set global tidb_enable_dist_task = 0", false) })

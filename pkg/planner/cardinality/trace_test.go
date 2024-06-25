@@ -214,7 +214,7 @@ func TestTraceDebugSelectivity(t *testing.T) {
 
 		dsSchemaCols = append(dsSchemaCols, ds.Schema().Columns)
 		selConditions = append(selConditions, sel.Conditions)
-		tblInfos = append(tblInfos, ds.TableInfo())
+		tblInfos = append(tblInfos, ds.TableInfo)
 	}
 	var buf bytes.Buffer
 	encoder := json.NewEncoder(&buf)

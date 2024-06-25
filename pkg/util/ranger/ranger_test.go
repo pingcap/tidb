@@ -276,7 +276,7 @@ func TestTableRange(t *testing.T) {
 			for i, cond := range selection.Conditions {
 				conds[i] = expression.PushDownNot(sctx.GetExprCtx(), cond)
 			}
-			tbl := selection.Children()[0].(*plannercore.DataSource).TableInfo()
+			tbl := selection.Children()[0].(*plannercore.DataSource).TableInfo
 			col := expression.ColInfo2Col(selection.Schema().Columns, tbl.Columns[0])
 			require.NotNil(t, col)
 			var filter []expression.Expression
@@ -470,7 +470,7 @@ create table t(
 			p, err := plannercore.BuildLogicalPlanForTest(ctx, sctx, stmts[0], ret.InfoSchema)
 			require.NoError(t, err)
 			selection := p.(base.LogicalPlan).Children()[0].(*plannercore.LogicalSelection)
-			tbl := selection.Children()[0].(*plannercore.DataSource).TableInfo()
+			tbl := selection.Children()[0].(*plannercore.DataSource).TableInfo
 			require.NotNil(t, selection)
 			conds := make([]expression.Expression, len(selection.Conditions))
 			for i, cond := range selection.Conditions {
@@ -838,7 +838,7 @@ func TestColumnRange(t *testing.T) {
 			for i, cond := range sel.Conditions {
 				conds[i] = expression.PushDownNot(sctx.GetExprCtx(), cond)
 			}
-			col := expression.ColInfo2Col(sel.Schema().Columns, ds.TableInfo().Columns[tt.colPos])
+			col := expression.ColInfo2Col(sel.Schema().Columns, ds.TableInfo.Columns[tt.colPos])
 			require.NotNil(t, col)
 			conds = ranger.ExtractAccessConditionsForColumn(rctx, conds, col)
 			require.Equal(t, tt.accessConds, fmt.Sprintf("%s", conds))
@@ -990,7 +990,7 @@ func TestIndexRangeForYear(t *testing.T) {
 			p, err := plannercore.BuildLogicalPlanForTest(ctx, sctx, stmts[0], ret.InfoSchema)
 			require.NoError(t, err)
 			selection := p.(base.LogicalPlan).Children()[0].(*plannercore.LogicalSelection)
-			tbl := selection.Children()[0].(*plannercore.DataSource).TableInfo()
+			tbl := selection.Children()[0].(*plannercore.DataSource).TableInfo
 			require.NotNil(t, selection)
 			conds := make([]expression.Expression, len(selection.Conditions))
 			for i, cond := range selection.Conditions {
@@ -1059,7 +1059,7 @@ func TestPrefixIndexRangeScan(t *testing.T) {
 			p, err := plannercore.BuildLogicalPlanForTest(ctx, sctx, stmts[0], ret.InfoSchema)
 			require.NoError(t, err)
 			selection := p.(base.LogicalPlan).Children()[0].(*plannercore.LogicalSelection)
-			tbl := selection.Children()[0].(*plannercore.DataSource).TableInfo()
+			tbl := selection.Children()[0].(*plannercore.DataSource).TableInfo
 			require.NotNil(t, selection)
 			conds := make([]expression.Expression, len(selection.Conditions))
 			for i, cond := range selection.Conditions {
@@ -1406,7 +1406,7 @@ create table t(
 			p, err := plannercore.BuildLogicalPlanForTest(ctx, sctx, stmts[0], ret.InfoSchema)
 			require.NoError(t, err)
 			selection := p.(base.LogicalPlan).Children()[0].(*plannercore.LogicalSelection)
-			tbl := selection.Children()[0].(*plannercore.DataSource).TableInfo()
+			tbl := selection.Children()[0].(*plannercore.DataSource).TableInfo
 			require.NotNil(t, selection)
 			conds := make([]expression.Expression, len(selection.Conditions))
 			for i, cond := range selection.Conditions {
@@ -2284,7 +2284,7 @@ create table t(
 		p, err := plannercore.BuildLogicalPlanForTest(ctx, sctx, stmts[0], ret.InfoSchema)
 		require.NoError(t, err, fmt.Sprintf("error %v, for build plan, expr %s", err, tt.exprStr))
 		selection := p.(base.LogicalPlan).Children()[0].(*plannercore.LogicalSelection)
-		tbl := selection.Children()[0].(*plannercore.DataSource).TableInfo()
+		tbl := selection.Children()[0].(*plannercore.DataSource).TableInfo
 		require.NotNil(t, selection, fmt.Sprintf("expr:%v", tt.exprStr))
 		conds := make([]expression.Expression, len(selection.Conditions))
 		for i, cond := range selection.Conditions {

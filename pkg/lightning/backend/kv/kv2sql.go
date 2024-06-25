@@ -131,8 +131,6 @@ func NewTableKVDecoder(
 	se := NewSession(options, logger)
 	cols := tbl.Cols()
 	// Set CommonAddRecordCtx to session to reuse the slices and BufStore in AddRecord
-	recordCtx := tables.NewCommonAddRecordCtx(len(cols))
-	tables.SetAddRecordCtx(se, recordCtx)
 
 	genCols, err := CollectGeneratedColumns(se, tbl.Meta(), cols)
 	if err != nil {
