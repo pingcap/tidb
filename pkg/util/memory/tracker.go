@@ -245,7 +245,7 @@ func (t *Tracker) UnbindActions() {
 	t.actionMuForHardLimit.actionOnExceed = &LogOnExceed{}
 }
 
-// UnbindActionForHardLimit unbinds action from hardLimit.
+// UnbindActionFromHardLimit unbinds action from hardLimit.
 func (t *Tracker) UnbindActionFromHardLimit(actionToUnbind ActionOnExceed) {
 	t.actionMuForHardLimit.Lock()
 	defer t.actionMuForHardLimit.Unlock()
