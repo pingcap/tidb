@@ -553,7 +553,7 @@ func TestMainBackupLoop(t *testing.T) {
 	// cancel the backup in another goroutine
 	ctx, cancel := context.WithCancel(backgroundCtx)
 	go func() {
-		time.Sleep(500 * time.Millisecond)
+		time.Sleep(100 * time.Millisecond)
 		cancel()
 	}()
 	connectedStore = make(map[uint64]int)
