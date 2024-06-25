@@ -19,10 +19,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
-	"github.com/pingcap/tidb/pkg/util/logutil"
-	"go.uber.org/zap"
 	"math"
-	"math/rand"
 	"regexp"
 	"strconv"
 	"strings"
@@ -1017,9 +1014,6 @@ func CheckSpecialAttributes(str string) bool {
 		strings.Contains(str, "\"partition\":null") && strings.Contains(str, "\"ttl_info\":null") {
 		return false
 	}
-	if rand.Intn(1000) < 1 {
-		logutil.BgLogger().Info("CheckSpecialAttributes", zap.String("str", str))
-	}
 	return true
 }
 
@@ -1048,7 +1042,7 @@ func GetAllNameToIDAndSpecialAttributeInfo(m *Meta, dbID int64) (map[string]int6
 			return errors.Trace(err)
 		}
 		res[nameLMatch[1]] = int64(id)
-		if CheckSpecialAttributes(nameLMatch[1]) {
+		if CheckSpecialAttributes(string(hack.String(value))) {
 			tbInfo := &model.TableInfo{}
 			err = json.Unmarshal(value, tbInfo)
 			if err != nil {
