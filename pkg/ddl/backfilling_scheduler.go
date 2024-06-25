@@ -24,8 +24,8 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/ddl/copr"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
+	sess "github.com/pingcap/tidb/pkg/ddl/internal/session"
 	ddllogutil "github.com/pingcap/tidb/pkg/ddl/logutil"
-	sess "github.com/pingcap/tidb/pkg/ddl/session"
 	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
 	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -440,7 +440,7 @@ func (b *ingestBackfillScheduler) setupWorkers() error {
 	default:
 		return errors.Errorf("unexpected argument type, got %T", job.Args[0])
 	}
-	engines, err := b.backendCtx.Register(indexIDs, uniques, job.TableName)
+	engines, err := b.backendCtx.Register(indexIDs, uniques, b.tbl.Meta())
 	if err != nil {
 		return errors.Trace(err)
 	}

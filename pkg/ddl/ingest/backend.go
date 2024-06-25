@@ -51,7 +51,7 @@ type BackendCtx interface {
 	// backend context. If the index ID is already registered, it will return the
 	// associated engines. Only one group of index ID is allowed to register for a
 	// BackendCtx.
-	Register(indexIDs []int64, uniques []bool, tableName string) ([]Engine, error)
+	Register(indexIDs []int64, uniques []bool, tblInfo *model.TableInfo) ([]Engine, error)
 	UnregisterEngines()
 	// FinishImport imports all Register-ed engines of into the storage, collects
 	// the duplicate errors for unique engines.
@@ -95,6 +95,7 @@ type litBackendCtx struct {
 	memRoot  MemRoot
 	diskRoot DiskRoot
 	jobID    int64
+	tblInfo  *model.TableInfo
 	backend  *local.Backend
 	ctx      context.Context
 	cfg      *lightning.Config
@@ -194,29 +195,29 @@ func acquireLock(ctx context.Context, se *concurrency.Session, key string) (*con
 }
 
 // Flush implements FlushController.
-func (bc *litBackendCtx) Flush(mode FlushMode) (flushed, imported bool, errIdxID int64, err error) {
+func (bc *litBackendCtx) Flush(mode FlushMode) (flushed, imported bool, err error) {
 	shouldFlush, shouldImport := bc.checkFlush(mode)
 	if !shouldFlush {
-		return false, false, 0, nil
+		return false, false, nil
 	}
 	if !bc.flushing.CompareAndSwap(false, true) {
-		return false, false, 0, nil
+		return false, false, nil
 	}
 	defer bc.flushing.Store(false)
 
-	for indexID, ei := range bc.engines {
+	for _, ei := range bc.engines {
 		ei.flushLock.Lock()
 		//nolint: all_revive,revive
 		defer ei.flushLock.Unlock()
 
 		if err = ei.Flush(); err != nil {
-			return false, false, indexID, err
+			return false, false, err
 		}
 	}
 	bc.timeOfLastFlush.Store(time.Now())
 
 	if !shouldImport {
-		return true, false, 0, nil
+		return true, false, nil
 	}
 
 	// Use distributed lock if run in distributed mode).
@@ -225,7 +226,7 @@ func (bc *litBackendCtx) Flush(mode FlushMode) (flushed, imported bool, errIdxID
 		se, _ := concurrency.NewSession(bc.etcdClient)
 		mu, err := acquireLock(bc.ctx, se, distLockKey)
 		if err != nil {
-			return true, false, 0, errors.Trace(err)
+			return true, false, errors.Trace(err)
 		}
 		logutil.Logger(bc.ctx).Info("acquire distributed flush lock success", zap.Int64("jobID", bc.jobID))
 		defer func() {
@@ -249,11 +250,44 @@ func (bc *litBackendCtx) Flush(mode FlushMode) (flushed, imported bool, errIdxID
 
 	for indexID, ei := range bc.engines {
 		if err = bc.unsafeImportAndReset(ei); err != nil {
-			return true, false, indexID, err
+			if common.ErrFoundDuplicateKeys.Equal(err) {
+				var idxInfo *model.IndexInfo
+				for _, idx := range bc.tblInfo.Indices {
+					if idx.ID == indexID {
+						idxInfo = idx
+						break
+					}
+				}
+				if idxInfo == nil {
+					logutil.Logger(bc.ctx).Error(
+						"index not found",
+						zap.Int64("indexID", indexID))
+					err = tikv.ErrKeyExists
+				} else {
+					err = TryConvertToKeyExistsErr(err, idxInfo, bc.tblInfo)
+				}
+			}
+			return true, false, err
 		}
 	}
 
-	return true, true, 0, nil
+	var newTS uint64
+	if mgr := bc.GetCheckpointManager(); mgr != nil {
+		// for local disk case, we need to refresh TS because duplicate detection
+		// requires each ingest to have a unique TS.
+		//
+		// TODO(lance6716): there's still a chance that data is imported but because of
+		// checkpoint is low-watermark, the data will still be imported again with
+		// another TS after failover. Need to refine the checkpoint mechanism.
+		newTS, err = mgr.refreshTSAndUpdateCP()
+		if err == nil {
+			for _, ei := range bc.engines {
+				ei.openedEngine.SetTS(newTS)
+			}
+		}
+	}
+
+	return true, true, err
 }
 
 func (bc *litBackendCtx) unsafeImportAndReset(ei *engineInfo) error {
@@ -299,22 +333,6 @@ func (bc *litBackendCtx) unsafeImportAndReset(ei *engineInfo) error {
 		ei.closedEngine = nil
 		return err
 	}
-
-	if mgr == nil {
-		return nil
-	}
-
-	// for local disk case, we need to refresh TS because duplicate detection
-	// requires each ingest to have a unique TS.
-	//
-	// TODO(lance6716): there's still a chance that data is imported but because of
-	// checkpoint is low-watermark, the data will still be imported again with
-	// another TS after failover. Need to refine the checkpoint mechanism.
-	newTS, err := mgr.refreshTSAndUpdateCP()
-	if err != nil {
-		return errors.Trace(err)
-	}
-	ei.openedEngine.SetTS(newTS)
 	return nil
 }
 

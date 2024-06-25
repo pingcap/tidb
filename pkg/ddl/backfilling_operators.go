@@ -30,12 +30,11 @@ import (
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/ddl/copr"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
-	"github.com/pingcap/tidb/pkg/ddl/session"
+	"github.com/pingcap/tidb/pkg/ddl/internal/session"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/operator"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
-	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -308,7 +307,7 @@ func (src *TableScanTaskSource) generateTasks() error {
 	startKey := src.startKey
 	endKey := src.endKey
 	for {
-		kvRanges, err := splitTableRanges(
+		kvRanges, err := splitAndValidateTableRanges(
 			src.ctx,
 			src.tbl,
 			src.store,
@@ -662,7 +661,7 @@ func (w *indexIngestLocalWorker) HandleTask(rs IndexRecordChunk, send func(Index
 	}()
 	w.indexIngestBaseWorker.HandleTask(rs, send)
 	// needs to flush and import to avoid too much use of disk.
-	_, _, _, err := w.backendCtx.Flush(ingest.FlushModeAuto)
+	_, _, err := w.backendCtx.Flush(ingest.FlushModeAuto)
 	if err != nil {
 		w.ctx.onError(err)
 		return
@@ -835,23 +834,8 @@ func (s *indexWriteResultSink) flush() error {
 	failpoint.Inject("mockFlushError", func(_ failpoint.Value) {
 		failpoint.Return(errors.New("mock flush error"))
 	})
-	// TODO(lance6716): convert to ErrKeyExists inside Flush
-	_, _, errIdxID, err := s.backendCtx.Flush(ingest.FlushModeForceFlushAndImport)
+	_, _, err := s.backendCtx.Flush(ingest.FlushModeForceFlushAndImport)
 	if err != nil {
-		if common.ErrFoundDuplicateKeys.Equal(err) {
-			var idxInfo table.Index
-			for _, idx := range s.indexes {
-				if idx.Meta().ID == errIdxID {
-					idxInfo = idx
-					break
-				}
-			}
-			if idxInfo == nil {
-				logutil.Logger(s.ctx).Error("index not found", zap.Int64("indexID", errIdxID))
-				return kv.ErrKeyExists
-			}
-			return ingest.TryConvertToKeyExistsErr(err, idxInfo.Meta(), s.tbl.Meta())
-		}
 		logutil.Logger(s.ctx).Error("flush error",
 			zap.String("category", "ddl"), zap.Error(err))
 		return err
