@@ -643,7 +643,7 @@ func (dc *ddlCtx) runAddIndexInLocalIngestMode(
 		indexIDs = append(indexIDs, e.ID)
 		indexInfo := model.FindIndexInfoByID(t.Meta().Indices, e.ID)
 		if indexInfo == nil {
-			tidblogutil.Logger(ctx).Warn("index info not found",
+			tidblogutil.Logger(opCtx).Warn("index info not found",
 				zap.Int64("table ID", t.Meta().ID),
 				zap.Int64("index ID", e.ID))
 			return errors.Errorf("index info not found: %d", e.ID)
@@ -653,15 +653,17 @@ func (dc *ddlCtx) runAddIndexInLocalIngestMode(
 		hasUnique = hasUnique || indexInfo.Unique
 	}
 
+	//nolint: forcetypeassert
 	discovery := dc.store.(tikv.Storage).GetRegionCache().PDClient().GetServiceDiscovery()
-	bcCtx, err := ingest.LitBackCtxMgr.Register(ctx, job.ID, hasUnique, dc.etcdCli, discovery, job.ReorgMeta.ResourceGroupName)
+	bcCtx, err := ingest.LitBackCtxMgr.Register(
+		ctx, job.ID, hasUnique, dc.etcdCli, discovery, job.ReorgMeta.ResourceGroupName)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	defer ingest.LitBackCtxMgr.Unregister(job.ID)
 	engines, err := bcCtx.Register(indexIDs, uniques, t.Meta())
 	if err != nil {
-		tidblogutil.Logger(ctx).Error("cannot register new engine",
+		tidblogutil.Logger(opCtx).Error("cannot register new engine",
 			zap.Error(err),
 			zap.Int64s("index IDs", indexIDs))
 		return errors.Trace(err)
@@ -683,7 +685,7 @@ func (dc *ddlCtx) runAddIndexInLocalIngestMode(
 		dc.store.(kv.StorageWithPD).GetPDClient(),
 	)
 	if err != nil {
-		tidblogutil.Logger(ctx).Warn("create checkpoint manager failed", zap.Error(err))
+		tidblogutil.Logger(opCtx).Warn("create checkpoint manager failed", zap.Error(err))
 	} else {
 		defer cpMgr.Close()
 		cpMgr.Reset(t.GetPhysicalID(), reorgInfo.StartKey, reorgInfo.EndKey)
