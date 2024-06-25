@@ -59,14 +59,7 @@ func NewListWithMemTracker(fieldTypes []*types.FieldType, initChunkSize, maxChun
 
 // NewList creates a new List with field types, init chunk size and max chunk size.
 func NewList(fieldTypes []*types.FieldType, initChunkSize, maxChunkSize int) *List {
-	l := &List{
-		fieldTypes:    fieldTypes,
-		initChunkSize: initChunkSize,
-		maxChunkSize:  maxChunkSize,
-		memTracker:    memory.NewTracker(memory.LabelForChunkList, -1),
-		consumedIdx:   -1,
-	}
-	return l
+	return NewListWithMemTracker(fieldTypes, initChunkSize, maxChunkSize, memory.NewTracker(memory.LabelForChunkList, -1))
 }
 
 // GetMemTracker returns the memory tracker of this List.
