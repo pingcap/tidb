@@ -22,14 +22,12 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/ddl/copr"
-	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	sess "github.com/pingcap/tidb/pkg/ddl/internal/session"
 	ddllogutil "github.com/pingcap/tidb/pkg/ddl/logutil"
 	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
 	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
-	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -328,26 +326,6 @@ func (b *txnBackfillScheduler) close(force bool) {
 	}
 	b.wg.Wait()
 	close(b.resultCh)
-}
-
-type ingestBackfillScheduler struct {
-	ctx        context.Context
-	reorgInfo  *reorgInfo
-	sessPool   *sess.Pool
-	tbl        table.PhysicalTable
-	avgRowSize int
-
-	closed bool
-
-	taskCh   chan *reorgBackfillTask
-	resultCh chan *backfillResult
-
-	copReqSenderPool *copReqSenderPool
-
-	writerPool    *workerpool.WorkerPool[IndexRecordChunk, workerpool.None]
-	writerMaxID   int
-	backendCtx    ingest.BackendCtx
-	checkpointMgr *ingest.CheckpointManager
 }
 
 func expectedIngestWorkerCnt(concurrency, avgRowSize int) (readerCnt, writerCnt int) {

@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
-	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -32,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/tikv/client-go/v2/tikv"
-	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
 )
 
@@ -141,21 +139,15 @@ func (s *backfillDistExecutor) newBackfillSubtaskExecutor(
 }
 
 func (s *backfillDistExecutor) getBackendCtx() (ingest.BackendCtx, error) {
-	return getBackendCtx(
-		s.BaseTaskExecutor.Ctx(),
-		s.d.store,
-		s.d.etcdCli,
-		&s.taskMeta.Job,
-	)
-}
-
-func getBackendCtx(ctx context.Context, store kv.Storage, etcdCli *clientv3.Client, job *model.Job) (ingest.BackendCtx, error) {
+	job := &s.taskMeta.Job
 	hasUnique, err := hasUniqueIndex(job)
 	if err != nil {
 		return nil, err
 	}
-	discovery := store.(tikv.Storage).GetRegionCache().PDClient().GetServiceDiscovery()
-	return ingest.LitBackCtxMgr.Register(ctx, job.ID, hasUnique, etcdCli, discovery, job.ReorgMeta.ResourceGroupName)
+	ddlObj := s.d
+	discovery := ddlObj.store.(tikv.Storage).GetRegionCache().PDClient().GetServiceDiscovery()
+
+	return ingest.LitBackCtxMgr.Register(s.BaseTaskExecutor.Ctx(), job.ID, hasUnique, ddlObj.etcdCli, discovery, job.ReorgMeta.ResourceGroupName)
 }
 
 func hasUniqueIndex(job *model.Job) (bool, error) {

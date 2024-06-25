@@ -628,37 +628,40 @@ func (dc *ddlCtx) runAddIndexInLocalIngestMode(
 	reorgInfo *reorgInfo,
 ) error {
 	// TODO(tangenta): support adjust worker count dynamically.
-	startKey, endKey := reorgInfo.StartKey, reorgInfo.EndKey
 	if err := dc.isReorgRunnable(reorgInfo.Job.ID, false); err != nil {
 		return errors.Trace(err)
 	}
-	job := reorgInfo.Job.Clone()
+	job := reorgInfo.Job
 	ctx = tidblogutil.WithCategory(ctx, "ddl-ingest")
 	opCtx := NewLocalOperatorCtx(ctx, job.ID)
-	bcCtx, err := getBackendCtx(ctx, dc.store, dc.etcdCli, job)
-	if err != nil {
-		return errors.Trace(err)
-	}
 	idxCnt := len(reorgInfo.elements)
 	indexIDs := make([]int64, 0, idxCnt)
 	indexInfos := make([]*model.IndexInfo, 0, idxCnt)
 	uniques := make([]bool, 0, idxCnt)
+	hasUnique := false
 	for _, e := range reorgInfo.elements {
 		indexIDs = append(indexIDs, e.ID)
 		indexInfo := model.FindIndexInfoByID(t.Meta().Indices, e.ID)
 		if indexInfo == nil {
-			logutil.DDLIngestLogger().Warn("index info not found",
+			tidblogutil.Logger(ctx).Warn("index info not found",
 				zap.Int64("table ID", t.Meta().ID),
 				zap.Int64("index ID", e.ID))
 			return errors.Errorf("index info not found: %d", e.ID)
 		}
 		indexInfos = append(indexInfos, indexInfo)
 		uniques = append(uniques, indexInfo.Unique)
+		hasUnique = hasUnique || indexInfo.Unique
 	}
 
+	discovery := dc.store.(tikv.Storage).GetRegionCache().PDClient().GetServiceDiscovery()
+	bcCtx, err := ingest.LitBackCtxMgr.Register(ctx, job.ID, hasUnique, dc.etcdCli, discovery, job.ReorgMeta.ResourceGroupName)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer ingest.LitBackCtxMgr.Unregister(job.ID)
 	engines, err := bcCtx.Register(indexIDs, uniques, t.Meta())
 	if err != nil {
-		tidblogutil.Logger(opCtx).Error("cannot register new engine",
+		tidblogutil.Logger(ctx).Error("cannot register new engine",
 			zap.Error(err),
 			zap.Int64s("index IDs", indexIDs))
 		return errors.Trace(err)
@@ -680,10 +683,10 @@ func (dc *ddlCtx) runAddIndexInLocalIngestMode(
 		dc.store.(kv.StorageWithPD).GetPDClient(),
 	)
 	if err != nil {
-		logutil.DDLIngestLogger().Warn("create checkpoint manager failed", zap.Error(err))
+		tidblogutil.Logger(ctx).Warn("create checkpoint manager failed", zap.Error(err))
 	} else {
 		defer cpMgr.Close()
-		cpMgr.Reset(t.GetPhysicalID(), startKey, endKey)
+		cpMgr.Reset(t.GetPhysicalID(), reorgInfo.StartKey, reorgInfo.EndKey)
 		bcCtx.AttachCheckpointManager(cpMgr)
 	}
 
@@ -714,8 +717,8 @@ func (dc *ddlCtx) runAddIndexInLocalIngestMode(
 		job.ID,
 		t,
 		indexInfos,
-		startKey,
-		endKey,
+		reorgInfo.StartKey,
+		reorgInfo.EndKey,
 		job.ReorgMeta,
 		avgRowSize,
 		concurrency,
@@ -736,10 +739,12 @@ func (dc *ddlCtx) runAddIndexInLocalIngestMode(
 	if err != nil {
 		return err
 	}
-	for _, indexID := range indexIDs {
-		err := bcCtx.CollectRemoteDuplicateRows(indexID, t)
-		if err != nil {
-			return err
+	if hasUnique {
+		for _, indexID := range indexIDs {
+			err := bcCtx.CollectRemoteDuplicateRows(indexID, t)
+			if err != nil {
+				return err
+			}
 		}
 	}
 	return nil

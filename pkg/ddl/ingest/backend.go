@@ -54,6 +54,7 @@ type BackendCtx interface {
 	Register(indexIDs []int64, uniques []bool, tblInfo *model.TableInfo) ([]Engine, error)
 	UnregisterEngines()
 
+	// TODO(lance6716): remove the indexID argument from CollectRemoteDuplicateRows.
 	CollectRemoteDuplicateRows(indexID int64, tbl table.Table) error
 	FlushController
 	Done() bool
