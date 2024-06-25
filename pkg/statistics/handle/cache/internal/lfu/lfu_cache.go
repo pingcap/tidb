@@ -206,8 +206,9 @@ func (s *LFU) onExit(val any) {
 	if s.closed.Load() {
 		return
 	}
-	s.addCost(
-		-1 * val.(*statistics.Table).MemoryUsage().TotalTrackingMemUsage())
+	s.triggerEvict()
+	// Subtract the memory usage of the table from the total memory usage.
+	s.addCost(-val.(*statistics.Table).MemoryUsage().TotalTrackingMemUsage())
 }
 
 // Len implements statsCacheInner
