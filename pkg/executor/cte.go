@@ -438,10 +438,10 @@ func (p *cteProducer) computeRecursivePart(ctx context.Context) (err error) {
 			if iterNum%100 == 0 {
 				// To avoid too many logs.
 				p.logTbls(ctx, err, iterNum)
-				iterNum++
 			}
-			failpoint.Inject("assertIterTableSpillToDisk", func() {
-				if iterNum > 0 && err != nil {
+			iterNum++
+			failpoint.Inject("assertIterTableSpillToDisk", func(maxIter failpoint.Value) {
+				if iterNum > 0 && iterNum < uint64(maxIter.(int)) && err == nil {
 					if p.iterInTbl.GetMemBytes() != 0 || p.iterInTbl.GetDiskBytes() == 0 ||
 						p.iterOutTbl.GetMemBytes() != 0 || p.iterOutTbl.GetDiskBytes() == 0 ||
 						p.resTbl.GetMemBytes() != 0 || p.resTbl.GetDiskBytes() == 0 {
