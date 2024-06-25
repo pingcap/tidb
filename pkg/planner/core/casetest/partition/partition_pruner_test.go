@@ -233,3 +233,26 @@ func TestPointGetIntHandleNotFirst(t *testing.T) {
 	tk.MustQuery("select * from t WHERE a BETWEEN 13 AND 13").Check(testkit.Rows("1 13 1"))
 	tk.MustQuery(`select * from t`).Check(testkit.Rows("1 13 1"))
 }
+
+func TestPruneExtractYear(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t (
+		a bigint not null,
+		b date not null,
+		c varchar(255),
+		primary key (a,b))
+PARTITION BY RANGE (EXTRACT(YEAR FROM b))
+(PARTITION p2019 VALUES LESS THAN (2020),
+ PARTITION p2020 VALUES LESS THAN (2021),
+ PARTITION p2021 VALUES LESS THAN (2022),
+ PARTITION p2022 VALUES LESS THAN (2023),
+ PARTITION p2023 VALUES LESS THAN (2024),
+ PARTITION p2024 VALUES LESS THAN (2025),
+ PARTITION pMax VALUES LESS THAN (MAXVALUE))`)
+	tk.MustExec(`insert into t values(1, '2021-01-01', "1,2020-12-31"),(2,'2020-12-31',"2,2020-12-31")`)
+	tk.MustExec(`analyze table t`)
+	rows := tk.MustQuery("explain format='brief' select * from t WHERE b = '2020-12-31'").Rows()
+	require.Equal(t, "partition:p2020", rows[0][3])
+}

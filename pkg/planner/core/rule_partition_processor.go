@@ -1065,9 +1065,11 @@ func makePartitionByFnCol(sctx base.PlanContext, columns []*expression.Column, n
 	switch raw := partExpr.(type) {
 	case *expression.ScalarFunction:
 		args := raw.GetArgs()
-		// Special handle for floor(unix_timestamp(ts)) as partition expression.
-		// This pattern is so common for timestamp(3) column as partition expression that it deserve an optimization.
-		if raw.FuncName.L == ast.Floor {
+		// Optimizations for a limited set of functions
+		switch raw.FuncName.L {
+		case ast.Floor:
+			// Special handle for floor(unix_timestamp(ts)) as partition expression.
+			// This pattern is so common for timestamp(3) column as partition expression that it deserve an optimization.
 			if ut, ok := args[0].(*expression.ScalarFunction); ok && ut.FuncName.L == ast.UnixTimestamp {
 				args1 := ut.GetArgs()
 				if len(args1) == 1 {
@@ -1076,6 +1078,28 @@ func makePartitionByFnCol(sctx base.PlanContext, columns []*expression.Column, n
 					}
 				}
 			}
+		case ast.Extract:
+			con, ok := args[0].(*expression.Constant)
+			if !ok {
+				break
+			}
+			col, ok = args[1].(*expression.Column)
+			if !ok {
+				break
+			}
+			// TODO: should we check for timestamp, since that may have time zone conversions?
+			val := strings.ToUpper(con.String())
+			switch val {
+			// WEEK is not included, since it may use default_week_format in the future!
+			case "DAY", "MONTH", "QUARTER", "YEAR", "DAY_MICROSECOND", "DAY_SECOND", "DAY_MINUTE", "DAY_HOUR", "YEAR_MONTH":
+				// TODO: we could check the type+fsp in the column definition
+				// to see if Strict monotone for DAY, DAY_MICROSECOND, DAY_SECOND
+				// Note, this function will not have the column as first argument,
+				// so in replaceColumnWithConst it will replace the second argument, which
+				// is special handling there too!
+				return col, raw, monotoneModeNonStrict, nil
+			}
+
 		}
 
 		fn = raw
@@ -1550,6 +1574,10 @@ func replaceColumnWithConst(partFn *expression.ScalarFunction, con *expression.C
 			args[0] = con
 			return partFn
 		}
+	}
+	if partFn.FuncName.L == ast.Extract {
+		args[1] = con
+		return partFn
 	}
 
 	// No 'copy on write' for the expression here, this is a dangerous operation.
