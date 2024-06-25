@@ -204,11 +204,9 @@ func (s *propConstSolver) propagateConstantEQ() {
 		}
 		cols := make([]*Column, 0, len(mapper))
 		cons := make([]Expression, 0, len(mapper))
-		collations := make([]string, 0, len(mapper))
 		for id, con := range mapper {
 			cols = append(cols, s.columns[id])
 			cons = append(cons, con)
-			collations = append(collations, s.columns[id].GetStaticType().GetCollate())
 		}
 		for i, cond := range s.conditions {
 			if !visited[i] {
