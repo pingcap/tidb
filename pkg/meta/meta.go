@@ -19,7 +19,10 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"github.com/pingcap/tidb/pkg/util/logutil"
+	"go.uber.org/zap"
 	"math"
+	"math/rand"
 	"regexp"
 	"strconv"
 	"strings"
@@ -1013,6 +1016,9 @@ func CheckSpecialAttributes(str string) bool {
 	if strings.Contains(str, "\"tiflash_replica\":null") && strings.Contains(str, "\"policy_ref_info\":null") &&
 		strings.Contains(str, "\"partition\":null") && strings.Contains(str, "\"ttl_info\":null") {
 		return false
+	}
+	if rand.Intn(10) < 1 {
+		logutil.BgLogger().Info("CheckSpecialAttributes", zap.String("str", str))
 	}
 	return true
 }
