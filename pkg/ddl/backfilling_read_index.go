@@ -305,7 +305,7 @@ func newDistTaskRowCntListener(totalRowCnt *atomic.Int64, dbName, tblName string
 	}
 }
 
-func (d *distTaskRowCntListener) Imported(rowCnt int) {
+func (d *distTaskRowCntListener) Written(rowCnt int) {
 	d.totalRowCount.Add(int64(rowCnt))
 	d.counter.Add(float64(rowCnt))
 }

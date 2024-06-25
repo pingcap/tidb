@@ -758,7 +758,7 @@ type localRowCntListener struct {
 	curPhysicalRowCnt int64
 }
 
-func (s *localRowCntListener) Flushed(rowCnt int) {
+func (s *localRowCntListener) Written(rowCnt int) {
 	s.curPhysicalRowCnt += int64(rowCnt)
 	s.reorgCtx.setRowCount(s.prevPhysicalRowCnt + s.curPhysicalRowCnt)
 	s.counter.Add(float64(rowCnt))

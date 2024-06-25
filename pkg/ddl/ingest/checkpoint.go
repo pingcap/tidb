@@ -215,15 +215,15 @@ func (s *CheckpointManager) UpdateTotalKeys(taskID int, delta int, last bool) {
 
 // UpdateWrittenKeys updates the written keys of the task.
 // This is called by the writer after writing the local engine to update the current number of rows written.
-func (s *CheckpointManager) UpdateWrittenKeys(taskID int, delta int) (flushed, imported bool, err error) {
+func (s *CheckpointManager) UpdateWrittenKeys(taskID int, delta int) error {
 	s.mu.Lock()
 	cp := s.checkpoints[taskID]
 	cp.writtenKeys += delta
 	s.mu.Unlock()
 
-	flushed, imported, err = s.flushCtrl.Flush(FlushModeAuto)
+	flushed, imported, err := s.flushCtrl.Flush(FlushModeAuto)
 	if !flushed || err != nil {
-		return false, false, err
+		return err
 	}
 
 	failpoint.Inject("resignAfterFlush", func() {
@@ -248,7 +248,7 @@ func (s *CheckpointManager) UpdateWrittenKeys(taskID int, delta int) (flushed, i
 		s.startKeyImported = s.startKeyFlushed
 		s.endKeyImported = s.endKeyFlushed
 	}
-	return flushed, imported, nil
+	return nil
 }
 
 // afterFlush should be called after all engine is flushed.

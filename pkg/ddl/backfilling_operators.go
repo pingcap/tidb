@@ -131,8 +131,7 @@ var (
 
 // RowCountListener is invoked when some index records are flushed to disk or imported to TiKV.
 type RowCountListener interface {
-	Flushed(rowCnt int)
-	Imported(rowCnt int)
+	Written(rowCnt int)
 	SetTotal(total int)
 }
 
@@ -140,13 +139,8 @@ type RowCountListener interface {
 type EmptyRowCntListener struct {
 }
 
-// Flushed implements RowCountListener.
-func (*EmptyRowCntListener) Flushed(_ int) {
-
-}
-
-// Imported implements RowCountListener.
-func (*EmptyRowCntListener) Imported(_ int) {
+// Written implements RowCountListener.
+func (*EmptyRowCntListener) Written(_ int) {
 }
 
 // SetTotal implements RowCountListener.
@@ -761,20 +755,15 @@ func (w *indexIngestLocalWorker) HandleTask(ck IndexRecordChunk, send func(Index
 	if rs.Added == 0 {
 		return
 	}
+	w.rowCntListener.Written(rs.Added)
 	if w.cpMgr != nil {
 		totalCnt, nextKey := w.cpMgr.Status()
 		rs.Total = totalCnt
 		rs.Next = nextKey
-		flushed, imported, err := w.cpMgr.UpdateWrittenKeys(ck.ID, rs.Added)
+		err := w.cpMgr.UpdateWrittenKeys(ck.ID, rs.Added)
 		if err != nil {
 			w.ctx.onError(err)
 			return
-		}
-		if flushed {
-			w.rowCntListener.Flushed(rs.Added)
-		}
-		if imported {
-			w.rowCntListener.Imported(rs.Added)
 		}
 	}
 	send(rs)
