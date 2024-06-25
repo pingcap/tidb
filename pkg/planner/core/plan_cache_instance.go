@@ -11,6 +11,7 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
+
 package core
 
 import (
@@ -31,7 +32,7 @@ type InstancePlanCache interface {
 	// Evict evicts some cached values.
 	Evict(sctx sessionctx.Context) (evicted bool)
 	// MemUsage returns the total memory usage of this plan cache.
-	MemUsage(sctx sessionctx.Context) int64
+	MemUsage() int64
 }
 
 // NewInstancePlanCache creates a new instance level plan cache.
@@ -164,7 +165,7 @@ func (pc *instancePlanCache) Evict(_ sessionctx.Context) (evicted bool) {
 }
 
 // MemUsage returns the memory usage of this plan cache.
-func (pc *instancePlanCache) MemUsage(_ sessionctx.Context) int64 {
+func (pc *instancePlanCache) MemUsage() int64 {
 	return pc.totCost.Load()
 }
 

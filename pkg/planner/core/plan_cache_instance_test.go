@@ -11,6 +11,7 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
+
 package core
 
 import (
@@ -52,7 +53,7 @@ func TestInstancePlanCacheBasic(t *testing.T) {
 	_put(sctx, pc, 1, 100, 0)
 	_put(sctx, pc, 2, 100, 0)
 	_put(sctx, pc, 3, 100, 0)
-	require.Equal(t, pc.MemUsage(sctx), int64(300))
+	require.Equal(t, pc.MemUsage(), int64(300))
 	_hit(t, sctx, pc, 1, 0)
 	_hit(t, sctx, pc, 2, 0)
 	_hit(t, sctx, pc, 3, 0)
@@ -62,7 +63,7 @@ func TestInstancePlanCacheBasic(t *testing.T) {
 	_put(sctx, pc, 1, 100, 0)
 	_put(sctx, pc, 2, 100, 0)
 	_put(sctx, pc, 3, 100, 0)
-	require.Equal(t, pc.MemUsage(sctx), int64(200))
+	require.Equal(t, pc.MemUsage(), int64(200))
 	_hit(t, sctx, pc, 1, 0)
 	_hit(t, sctx, pc, 2, 0)
 	_miss(t, sctx, pc, 3, 0)
@@ -71,7 +72,7 @@ func TestInstancePlanCacheBasic(t *testing.T) {
 	pc = NewInstancePlanCache(250, 250)
 	_put(sctx, pc, 1, 100, 0)
 	_put(sctx, pc, 1, 101, 0)
-	require.Equal(t, pc.MemUsage(sctx), int64(100)) // the second one will be ignored
+	require.Equal(t, pc.MemUsage(), int64(100)) // the second one will be ignored
 
 	// eviction
 	pc = NewInstancePlanCache(320, 500)
@@ -84,7 +85,7 @@ func TestInstancePlanCacheBasic(t *testing.T) {
 	_hit(t, sctx, pc, 2, 0)
 	_hit(t, sctx, pc, 3, 0)
 	require.Equal(t, pc.Evict(sctx), true)
-	require.Equal(t, pc.MemUsage(sctx), int64(300))
+	require.Equal(t, pc.MemUsage(), int64(300))
 	_hit(t, sctx, pc, 1, 0) // access 1-3 to refresh their last_used
 	_hit(t, sctx, pc, 2, 0)
 	_hit(t, sctx, pc, 3, 0)
@@ -97,7 +98,7 @@ func TestInstancePlanCacheBasic(t *testing.T) {
 	_put(sctx, pc, 2, 100, 0)
 	_put(sctx, pc, 3, 100, 0)
 	require.Equal(t, pc.Evict(sctx), false)
-	require.Equal(t, pc.MemUsage(sctx), int64(300))
+	require.Equal(t, pc.MemUsage(), int64(300))
 	_hit(t, sctx, pc, 1, 0)
 	_hit(t, sctx, pc, 2, 0)
 	_hit(t, sctx, pc, 3, 0)
@@ -107,13 +108,13 @@ func TestInstancePlanCacheBasic(t *testing.T) {
 	_put(sctx, pc, 1, 100, 0)
 	_put(sctx, pc, 2, 100, 0)
 	_put(sctx, pc, 3, 100, 0)
-	require.Equal(t, pc.MemUsage(sctx), int64(300))
+	require.Equal(t, pc.MemUsage(), int64(300))
 	pcImpl := pc.(*instancePlanCache)
 	numHeads := 0
 	pcImpl.heads.Range(func(k, v any) bool { numHeads++; return true })
 	require.Equal(t, numHeads, 3)
 	require.Equal(t, pc.Evict(sctx), true)
-	require.Equal(t, pc.MemUsage(sctx), int64(0))
+	require.Equal(t, pc.MemUsage(), int64(0))
 	numHeads = 0
 	pcImpl.heads.Range(func(k, v any) bool { numHeads++; return true })
 	require.Equal(t, numHeads, 0)
@@ -158,7 +159,7 @@ func TestInstancePlanCacheWithMatchOpts(t *testing.T) {
 	_put(sctx, pc, 1, 100, 1)
 	_put(sctx, pc, 1, 100, 2)
 	_put(sctx, pc, 1, 100, 3) // the third one will be ignored
-	require.Equal(t, pc.MemUsage(sctx), int64(200))
+	require.Equal(t, pc.MemUsage(), int64(200))
 	_hit(t, sctx, pc, 1, 1)
 	_hit(t, sctx, pc, 1, 2)
 	_miss(t, sctx, pc, 1, 3)
@@ -174,7 +175,7 @@ func TestInstancePlanCacheWithMatchOpts(t *testing.T) {
 	_hit(t, sctx, pc, 1, 2)
 	_hit(t, sctx, pc, 1, 3)
 	require.True(t, pc.Evict(sctx))
-	require.Equal(t, pc.MemUsage(sctx), int64(300))
+	require.Equal(t, pc.MemUsage(), int64(300))
 	_hit(t, sctx, pc, 1, 1)
 	_hit(t, sctx, pc, 1, 2)
 	_hit(t, sctx, pc, 1, 3)
