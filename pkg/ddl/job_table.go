@@ -128,10 +128,6 @@ type jobScheduler struct {
 	runningJobs  *runningJobs
 	sysTblMgr    systable.Manager
 	schemaLoader SchemaLoader
-	// currMinJobID is the minimal job ID in tidb_ddl_job table, we use it to mitigate
-	// this issue https://github.com/pingcap/tidb/issues/52905
-	currMinJobID         int64
-	lastRefreshMinIDTime time.Time
 
 	// those fields are created on start
 	reorgWorkerPool      *workerPool
@@ -188,22 +184,24 @@ func (s *jobScheduler) close() {
 	}
 }
 
+// getJob reads tidb_ddl_job and returns the first runnable DDL job.
 func (s *jobScheduler) getJob(se *sess.Session, tp jobType) (*model.Job, error) {
+	defer s.runningJobs.resetAllPending()
+
 	not := "not"
 	label := "get_job_general"
 	if tp == jobTypeReorg {
 		not = ""
 		label = "get_job_reorg"
 	}
-	// TODO replace this sub-query with memory implementation.
 	const getJobSQL = `select job_meta, processing from mysql.tidb_ddl_job where job_id in
-		(select min(job_id) from mysql.tidb_ddl_job where job_id >= %d group by schema_ids, table_ids, processing)
+		(select min(job_id) from mysql.tidb_ddl_job group by schema_ids, table_ids, processing)
 		and %s reorg %s order by processing desc, job_id`
 	var excludedJobIDs string
 	if ids := s.runningJobs.allIDs(); len(ids) > 0 {
 		excludedJobIDs = fmt.Sprintf("and job_id not in (%s)", ids)
 	}
-	sql := fmt.Sprintf(getJobSQL, s.currMinJobID, not, excludedJobIDs)
+	sql := fmt.Sprintf(getJobSQL, not, excludedJobIDs)
 	rows, err := se.Execute(context.Background(), sql, label)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -231,7 +229,9 @@ func (s *jobScheduler) getJob(se *sess.Session, tp jobType) (*model.Job, error) 
 			return &job, nil
 		}
 
-		if !s.runningJobs.checkRunnable(job.ID, job.GetInvolvingSchemaInfo()) {
+		involving := job.GetInvolvingSchemaInfo()
+		if !s.runningJobs.checkRunnable(job.ID, involving) {
+			s.runningJobs.addPending(involving)
 			continue
 		}
 
@@ -240,6 +240,7 @@ func (s *jobScheduler) getJob(se *sess.Session, tp jobType) (*model.Job, error) 
 				"[ddl] handle ddl job failed: mark job is processing meet error",
 				zap.Error(err),
 				zap.Stringer("job", &job))
+			s.runningJobs.addPending(involving)
 			return nil, errors.Trace(err)
 		}
 		return &job, nil
@@ -392,7 +393,6 @@ func (s *jobScheduler) startDispatch() error {
 		if err := s.checkAndUpdateClusterState(false); err != nil {
 			continue
 		}
-		s.refreshMinJobID()
 		failpoint.InjectCall("beforeAllLoadDDLJobAndRun")
 		s.loadDDLJobAndRun(se, s.generalDDLWorkerPool, jobTypeGeneral)
 		s.loadDDLJobAndRun(se, s.reorgWorkerPool, jobTypeReorg)
@@ -524,12 +524,12 @@ func (s *jobScheduler) delivery2Worker(wk *worker, pool *workerPool, job *model.
 	failpoint.InjectCall("beforeDelivery2Worker", job)
 	injectFailPointForGetJob(job)
 	jobID, involvedSchemaInfos := job.ID, job.GetInvolvingSchemaInfo()
-	s.runningJobs.add(jobID, involvedSchemaInfos)
+	s.runningJobs.addRunning(jobID, involvedSchemaInfos)
 	metrics.DDLRunningJobCount.WithLabelValues(pool.tp().String()).Inc()
 	s.wg.RunWithLog(func() {
 		defer func() {
 			failpoint.InjectCall("afterDelivery2Worker", job)
-			s.runningJobs.remove(jobID, involvedSchemaInfos)
+			s.runningJobs.removeRunning(jobID, involvedSchemaInfos)
 			asyncNotify(s.ddlJobNotifyCh)
 			metrics.DDLRunningJobCount.WithLabelValues(pool.tp().String()).Dec()
 			if wk.ctx.Err() != nil && ingest.LitBackCtxMgr != nil {
@@ -649,21 +649,6 @@ func (*jobScheduler) markJobProcessing(se *sess.Session, job *model.Job) error {
 		"update mysql.tidb_ddl_job set processing = 1 where job_id = %d", job.ID),
 		"mark_job_processing")
 	return errors.Trace(err)
-}
-
-func (s *jobScheduler) refreshMinJobID() {
-	now := time.Now()
-	if now.Sub(s.lastRefreshMinIDTime) < dispatchLoopWaitingDuration {
-		return
-	}
-	s.lastRefreshMinIDTime = now
-	minID, err := s.sysTblMgr.GetMinJobID(s.schCtx, s.currMinJobID)
-	if err != nil {
-		logutil.DDLLogger().Info("get min job ID failed", zap.Error(err))
-		return
-	}
-	// use max, in case all job are finished to avoid the currMinJobID go back.
-	s.currMinJobID = max(s.currMinJobID, minID)
 }
 
 func (d *ddl) getTableByTxn(r autoid.Requirement, schemaID, tableID int64) (*model.DBInfo, table.Table, error) {

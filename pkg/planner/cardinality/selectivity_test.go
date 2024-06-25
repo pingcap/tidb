@@ -453,7 +453,7 @@ func TestSelectivity(t *testing.T) {
 		sel := p.(base.LogicalPlan).Children()[0].(*plannercore.LogicalSelection)
 		ds := sel.Children()[0].(*plannercore.DataSource)
 
-		histColl := statsTbl.GenerateHistCollFromColumnInfo(ds.TableInfo(), ds.Schema().Columns)
+		histColl := statsTbl.GenerateHistCollFromColumnInfo(ds.TableInfo, ds.Schema().Columns)
 
 		ratio, _, err := cardinality.Selectivity(sctx.GetPlanCtx(), histColl, sel.Conditions, nil)
 		require.NoErrorf(t, err, "for %s", tt.exprs)
@@ -511,7 +511,7 @@ func TestDNFCondSelectivity(t *testing.T) {
 		sel := p.(base.LogicalPlan).Children()[0].(*plannercore.LogicalSelection)
 		ds := sel.Children()[0].(*plannercore.DataSource)
 
-		histColl := statsTbl.GenerateHistCollFromColumnInfo(ds.TableInfo(), ds.Schema().Columns)
+		histColl := statsTbl.GenerateHistCollFromColumnInfo(ds.TableInfo, ds.Schema().Columns)
 
 		ratio, _, err := cardinality.Selectivity(sctx.GetPlanCtx(), histColl, sel.Conditions, nil)
 		require.NoErrorf(t, err, "error %v, for expr %s", err, tt)

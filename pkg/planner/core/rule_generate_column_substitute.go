@@ -66,16 +66,16 @@ func collectGenerateColumn(lp base.LogicalPlan, exprToColumn ExprColumnMap) {
 	// detect the read_from_storage(tiflash) hints, since virtual column will
 	// block the mpp task spreading (only supporting MPP table scan), causing
 	// mpp plan fail the cost comparison with tikv index plan.
-	if ds.preferStoreType&h.PreferTiFlash != 0 {
+	if ds.PreferStoreType&h.PreferTiFlash != 0 {
 		return
 	}
 	ectx := lp.SCtx().GetExprCtx().GetEvalCtx()
-	for _, p := range ds.possibleAccessPaths {
+	for _, p := range ds.PossibleAccessPaths {
 		if p.IsTablePath() {
 			continue
 		}
 		for _, idxPart := range p.Index.Columns {
-			colInfo := ds.tableInfo.Columns[idxPart.Offset]
+			colInfo := ds.TableInfo.Columns[idxPart.Offset]
 			if colInfo.IsGenerated() && !colInfo.GeneratedStored {
 				s := ds.Schema().Columns
 				col := expression.ColInfo2Col(s, colInfo)

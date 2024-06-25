@@ -942,14 +942,14 @@ func (p *LogicalTableDual) ExplainInfo() string {
 // ExplainInfo implements Plan interface.
 func (ds *DataSource) ExplainInfo() string {
 	buffer := bytes.NewBufferString("")
-	tblName := ds.tableInfo.Name.O
+	tblName := ds.TableInfo.Name.O
 	if ds.TableAsName != nil && ds.TableAsName.O != "" {
 		tblName = ds.TableAsName.O
 	}
 	fmt.Fprintf(buffer, "table:%s", tblName)
-	if ds.partitionDefIdx != nil {
-		if pi := ds.tableInfo.GetPartitionInfo(); pi != nil {
-			fmt.Fprintf(buffer, ", partition:%s", pi.Definitions[*ds.partitionDefIdx].Name.O)
+	if ds.PartitionDefIdx != nil {
+		if pi := ds.TableInfo.GetPartitionInfo(); pi != nil {
+			fmt.Fprintf(buffer, ", partition:%s", pi.Definitions[*ds.PartitionDefIdx].Name.O)
 		}
 	}
 	return buffer.String()
@@ -1068,8 +1068,8 @@ func (p *LogicalLimit) ExplainInfo() string {
 // ExplainInfo implements Plan interface.
 func (p *LogicalTableScan) ExplainInfo() string {
 	buffer := bytes.NewBufferString(p.Source.ExplainInfo())
-	if p.Source.handleCols != nil {
-		fmt.Fprintf(buffer, ", pk col:%s", p.Source.handleCols)
+	if p.Source.HandleCols != nil {
+		fmt.Fprintf(buffer, ", pk col:%s", p.Source.HandleCols)
 	}
 	if len(p.AccessConds) > 0 {
 		fmt.Fprintf(buffer, ", cond:%v", p.AccessConds)
@@ -1084,7 +1084,7 @@ func (p *LogicalIndexScan) ExplainInfo() string {
 	if len(index.Columns) > 0 {
 		buffer.WriteString(", index:")
 		for i, idxCol := range index.Columns {
-			if tblCol := p.Source.tableInfo.Columns[idxCol.Offset]; tblCol.Hidden {
+			if tblCol := p.Source.TableInfo.Columns[idxCol.Offset]; tblCol.Hidden {
 				buffer.WriteString(tblCol.GeneratedExprString)
 			} else {
 				buffer.WriteString(idxCol.Name.O)
