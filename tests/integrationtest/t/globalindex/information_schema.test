@@ -14,8 +14,8 @@ analyze table t;
 
 select key_name, is_global from information_schema.tidb_indexes where table_name='t' and table_schema='globalindex__information_schema' order by key_name;
 
-select partition_name, index_length from information_schema.PARTITIONS where table_name='t' and table_schema='globalindex__information_schema' order by partition_name;
-select table_name, index_length from information_schema.tables where table_name='t' and table_schema='globalindex__information_schema';
+select partition_name, data_length, index_length from information_schema.PARTITIONS where table_name='t' and table_schema='globalindex__information_schema' order by partition_name;
+select table_name, data_length, index_length from information_schema.tables where table_name='t' and table_schema='globalindex__information_schema';
 
 set tidb_enable_global_index=default;
 

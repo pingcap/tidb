@@ -13,14 +13,14 @@ select key_name, is_global from information_schema.tidb_indexes where table_name
 key_name	is_global
 idx	0
 idx1	1
-select partition_name, index_length from information_schema.PARTITIONS where table_name='t' and table_schema='globalindex__information_schema' order by partition_name;
-partition_name	index_length
-p0	0
-p1	8
-p2	0
-p3	0
-p4	0
-select table_name, index_length from information_schema.tables where table_name='t' and table_schema='globalindex__information_schema';
-table_name	index_length
-t	16
+select partition_name, data_length, index_length from information_schema.PARTITIONS where table_name='t' and table_schema='globalindex__information_schema' order by partition_name;
+partition_name	data_length	index_length
+p0	0	0
+p1	16	8
+p2	0	0
+p3	0	0
+p4	0	0
+select table_name, data_length, index_length from information_schema.tables where table_name='t' and table_schema='globalindex__information_schema';
+table_name	data_length	index_length
+t	16	16
 set tidb_enable_global_index=default;

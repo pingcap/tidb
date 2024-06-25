@@ -249,8 +249,8 @@ func (c *StatsTableRowCache) GetDataAndIndexLength(info *model.TableInfo, physic
 		}
 	}
 	for _, length := range columnLength {
-		// data only stores in partition level.
-		if info.GetPartitionInfo() == nil {
+		// For partition table, data only stores in partition level.
+		if info.GetPartitionInfo() == nil || info.ID != physicalID {
 			dataLength += length
 		}
 	}
