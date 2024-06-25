@@ -85,6 +85,6 @@ var GetHashAggs func(la base.LogicalPlan, prop *property.PhysicalProperty) []bas
 // PruneByItems will be called by baseLogicalPlan in logicalOp pkg. The logic current exists for rule logic
 // inside core.
 // todo: (10) arenatlx, when rule is moved out of core, we should direct ref the rule.Func instead of this
-//  util func pointer.
+// util func pointer.
 var PruneByItems func(p base.LogicalPlan, old []*util.ByItems, opt *optimizetrace.LogicalOptimizeOp) (
 	byItems []*util.ByItems, parentUsedCols []*expression.Column)
