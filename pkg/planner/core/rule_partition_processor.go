@@ -1106,7 +1106,6 @@ func makePartitionByFnCol(sctx PlanContext, columns []*expression.Column, names 
 				// is special handling there too!
 				return col, raw, monotoneModeNonStrict, nil
 			}
-
 		}
 
 		fn = raw
