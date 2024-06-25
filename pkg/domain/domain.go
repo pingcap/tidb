@@ -402,6 +402,9 @@ const fetchSchemaConcurrency = 1
 
 func (*Domain) splitForConcurrentFetch(schemas []*model.DBInfo) [][]*model.DBInfo {
 	groupSize := (len(schemas) + fetchSchemaConcurrency - 1) / fetchSchemaConcurrency
+	if variable.SchemaCacheSize.Load() > 0 {
+		groupSize = 8
+	}
 	splitted := make([][]*model.DBInfo, 0, fetchSchemaConcurrency)
 	schemaCnt := len(schemas)
 	for i := 0; i < schemaCnt; i += groupSize {
@@ -411,6 +414,7 @@ func (*Domain) splitForConcurrentFetch(schemas []*model.DBInfo) [][]*model.DBInf
 		}
 		splitted = append(splitted, schemas[i:end])
 	}
+	logutil.BgLogger().Info("split schemas for concurrent fetch", zap.Int("schema count", schemaCnt), zap.Int("group size", groupSize), zap.Int("group count", len(splitted)))
 	return splitted
 }
 
