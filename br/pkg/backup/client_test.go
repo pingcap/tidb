@@ -511,6 +511,8 @@ func TestMainBackupLoop(t *testing.T) {
 		GetBackupClientCallBack: mockGetBackupClientCallBack,
 	}
 
+	// an offline store still can be backed up.
+	s.mockCluster.StopStore(1)
 	connectedStore = make(map[uint64]int)
 	require.NoError(t, s.backupClient.RunLoop(backgroundCtx, mainLoop))
 
