@@ -31,8 +31,8 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
+	sess "github.com/pingcap/tidb/pkg/ddl/internal/session"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
-	sess "github.com/pingcap/tidb/pkg/ddl/session"
 	"github.com/pingcap/tidb/pkg/ddl/syncer"
 	"github.com/pingcap/tidb/pkg/ddl/systable"
 	"github.com/pingcap/tidb/pkg/ddl/util"
@@ -97,14 +97,12 @@ var _ owner.Listener = (*ownerListener)(nil)
 
 func (l *ownerListener) OnBecomeOwner() {
 	ctx, cancelFunc := context.WithCancel(l.ddl.ddlCtx.ctx)
-	sysTblMgr := systable.NewManager(l.ddl.sessPool)
 	l.scheduler = &jobScheduler{
-		schCtx:            ctx,
-		cancel:            cancelFunc,
-		runningJobs:       newRunningJobs(),
-		sysTblMgr:         sysTblMgr,
-		schemaLoader:      l.ddl.schemaLoader,
-		minJobIDRefresher: systable.NewMinJobIDRefresher(sysTblMgr),
+		schCtx:       ctx,
+		cancel:       cancelFunc,
+		runningJobs:  newRunningJobs(),
+		sysTblMgr:    systable.NewManager(l.ddl.sessPool),
+		schemaLoader: l.ddl.schemaLoader,
 
 		ddlCtx:         l.ddl.ddlCtx,
 		ddlJobNotifyCh: l.ddl.ddlJobNotifyCh,
@@ -124,13 +122,12 @@ func (l *ownerListener) OnRetireOwner() {
 // jobScheduler is used to schedule the DDL jobs, it's only run on the DDL owner.
 type jobScheduler struct {
 	// *ddlCtx already have context named as "ctx", so we use "schCtx" here to avoid confusion.
-	schCtx            context.Context
-	cancel            context.CancelFunc
-	wg                tidbutil.WaitGroupWrapper
-	runningJobs       *runningJobs
-	sysTblMgr         systable.Manager
-	schemaLoader      SchemaLoader
-	minJobIDRefresher *systable.MinJobIDRefresher
+	schCtx       context.Context
+	cancel       context.CancelFunc
+	wg           tidbutil.WaitGroupWrapper
+	runningJobs  *runningJobs
+	sysTblMgr    systable.Manager
+	schemaLoader SchemaLoader
 
 	// those fields are created on start
 	reorgWorkerPool      *workerPool
@@ -197,15 +194,14 @@ func (s *jobScheduler) getJob(se *sess.Session, tp jobType) (*model.Job, error) 
 		not = ""
 		label = "get_job_reorg"
 	}
-	// TODO replace this sub-query with memory implementation.
 	const getJobSQL = `select job_meta, processing from mysql.tidb_ddl_job where job_id in
-		(select min(job_id) from mysql.tidb_ddl_job where job_id >= %d group by schema_ids, table_ids, processing)
+		(select min(job_id) from mysql.tidb_ddl_job group by schema_ids, table_ids, processing)
 		and %s reorg %s order by processing desc, job_id`
 	var excludedJobIDs string
 	if ids := s.runningJobs.allIDs(); len(ids) > 0 {
 		excludedJobIDs = fmt.Sprintf("and job_id not in (%s)", ids)
 	}
-	sql := fmt.Sprintf(getJobSQL, s.minJobIDRefresher.GetCurrMinJobID(), not, excludedJobIDs)
+	sql := fmt.Sprintf(getJobSQL, not, excludedJobIDs)
 	rows, err := se.Execute(context.Background(), sql, label)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -397,7 +393,6 @@ func (s *jobScheduler) startDispatch() error {
 		if err := s.checkAndUpdateClusterState(false); err != nil {
 			continue
 		}
-		s.minJobIDRefresher.Refresh(s.schCtx)
 		failpoint.InjectCall("beforeAllLoadDDLJobAndRun")
 		s.loadDDLJobAndRun(se, s.generalDDLWorkerPool, jobTypeGeneral)
 		s.loadDDLJobAndRun(se, s.reorgWorkerPool, jobTypeReorg)
