@@ -30,17 +30,32 @@ type leftOuterJoinProbe struct {
 	rowIter *rowIter
 }
 
-func (j *leftOuterJoinProbe) SetChunkForProbe(chunk *chunk.Chunk) (err error) {
-	err = j.baseJoinProbe.SetChunkForProbe(chunk)
-	if err != nil {
-		return err
-	}
+func (j *leftOuterJoinProbe) prepareIsNotMatchedRows() {
 	if j.rightAsBuildSide {
 		j.isNotMatchedRows = j.isNotMatchedRows[:0]
 		for i := 0; i < j.chunkRows; i++ {
 			j.isNotMatchedRows = append(j.isNotMatchedRows, true)
 		}
 	}
+}
+
+func (j *leftOuterJoinProbe) SetChunkForProbe(chunk *chunk.Chunk) (err error) {
+	err = j.baseJoinProbe.SetChunkForProbe(chunk)
+	if err != nil {
+		return err
+	}
+
+	j.prepareIsNotMatchedRows()
+	return nil
+}
+
+func (j *leftOuterJoinProbe) SetRestoredChunkForProbe(chk *chunk.Chunk, hashTable *hashTableV2) error {
+	err := j.baseJoinProbe.SetRestoredChunkForProbe(chk, hashTable)
+	if err != nil {
+		return err
+	}
+
+	j.prepareIsNotMatchedRows()
 	return nil
 }
 

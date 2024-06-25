@@ -62,6 +62,7 @@ func newHashJoinSpillHelper(hashJoinExec *HashJoinV2Exec, probeFieldTypes []*typ
 	helper.buildSpillChkFieldTypes = append(helper.buildSpillChkFieldTypes, types.NewFieldType(mysql.TypeBit))
 	helper.buildSpillChkFieldTypes = append(helper.buildSpillChkFieldTypes, types.NewFieldType(mysql.TypeBit))
 	helper.probeFieldTypes = append(helper.probeFieldTypes, types.NewFieldType(mysql.TypeLonglong))
+	helper.probeFieldTypes = append(helper.probeFieldTypes, types.NewFieldType(mysql.TypeBit))
 	helper.probeFieldTypes = append(helper.probeFieldTypes, probeFieldTypes...)
 	helper.memTracker = hashJoinExec.memTracker
 	helper.diskTracker = hashJoinExec.diskTracker
@@ -344,9 +345,9 @@ func (h *hashJoinSpillHelper) spillBuildRows(isInBuildStage bool) error {
 func (h *hashJoinSpillHelper) prepareForRestoring() {
 	for i, buildInDisk := range h.buildRowsInDisk {
 		rd := &restorePartition{
-			buildSideData: buildInDisk,
-			probeSideData: h.probeRowsInDisk[i],
-			round:         0,
+			buildSideChunks: buildInDisk,
+			probeSideChunks: h.probeRowsInDisk[i],
+			round:           0,
 		}
 		h.stack.push(rd)
 	}
@@ -408,7 +409,6 @@ func (h *hashJoinSpillHelper) buildHashTable(buildInDisk *chunk.DataInDiskByChun
 
 	chunkNum := buildInDisk.NumChunks()
 	for i := 0; i < chunkNum; i++ {
-		// TODO check sql killer in an interval
 		chunk, err := buildInDisk.GetChunk(i)
 		if err != nil {
 			return nil, err
@@ -439,8 +439,8 @@ func (h *hashJoinSpillHelper) buildHashTable(buildInDisk *chunk.DataInDiskByChun
 
 // Data in this structure are in same partition
 type restorePartition struct {
-	buildSideData *chunk.DataInDiskByChunks
-	probeSideData *chunk.DataInDiskByChunks
+	buildSideChunks *chunk.DataInDiskByChunks
+	probeSideChunks *chunk.DataInDiskByChunks
 
 	round int
 }

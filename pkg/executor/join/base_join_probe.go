@@ -53,6 +53,8 @@ func (hCtx *HashJoinCtxV2) hasOtherCondition() bool {
 type ProbeV2 interface {
 	// SetChunkForProbe will do some pre-work when start probing a chunk
 	SetChunkForProbe(chunk *chunk.Chunk) error
+	// SetRestoredChunkForProbe will do some pre-work for a chunk resoted from disk
+	SetRestoredChunkForProbe(chunk *chunk.Chunk, hashTable *hashTableV2) error // TODO returning error is needed?
 	// Probe is to probe current chunk, the result chunk is set in result.chk, and Probe need to make sure result.chk.NumRows() <= result.chk.RequiredRows()
 	Probe(joinResult *hashjoinWorkerResult, sqlKiller *sqlkiller.SQLKiller) (ok bool, result *hashjoinWorkerResult)
 	// IsCurrentChunkProbeDone returns true if current probe chunk is all probed
@@ -125,6 +127,8 @@ type baseJoinProbe struct {
 	rowIndexInfos []*matchedRowInfo
 	selected      []bool
 
+	// This marks which columns are probe columns, and it is used only in spill
+	usedColIdx  []int
 	spillTmpChk []*chunk.Chunk // TODO initialize it
 }
 
@@ -162,7 +166,7 @@ func (j *baseJoinProbe) SetChunkForProbe(chk *chunk.Chunk) (err error) {
 		}
 		j.usedRows = j.selRows
 	}
-	j.chunkRows = logicalRows
+	j.chunkRows = logicalRows // TODO attention for spill's SetProbeChunk
 	if cap(j.matchedRowsHeaders) >= logicalRows {
 		j.matchedRowsHeaders = j.matchedRowsHeaders[:logicalRows]
 	} else {
@@ -228,12 +232,13 @@ func (j *baseJoinProbe) SetChunkForProbe(chk *chunk.Chunk) (err error) {
 		hashValue := hash.Sum64()
 		partIndex := hashValue % uint64(j.ctx.PartitionNumber)
 		if j.ctx.spillHelper.isPartitionSpilled(int(partIndex)) {
-			// TODO spill serialized key
 			j.spillTmpChk[partIndex].AppendInt64(0, int64(hashValue))
-			j.spillTmpChk[partIndex].AppendPartialRow(1, j.currentChunk.GetRow(logicalRowIndex))
+			j.spillTmpChk[partIndex].AppendBytes(1, j.serializedKeys[logicalRowIndex])
+			j.spillTmpChk[partIndex].AppendPartialRow(2, j.currentChunk.GetRow(logicalRowIndex))
 
 			if j.spillTmpChk[partIndex].IsFull() {
 				j.ctx.spillHelper.probeRowsInDisk[partIndex].Add(j.spillTmpChk[partIndex])
+				// TODO spill remaining data
 				err := j.ctx.spillHelper.spillProbeChk(int(partIndex), j.spillTmpChk[partIndex])
 				if err != nil {
 					return err
@@ -246,13 +251,52 @@ func (j *baseJoinProbe) SetChunkForProbe(chk *chunk.Chunk) (err error) {
 			j.hashValues[partIndex] = append(j.hashValues[partIndex], posAndHashValue{hashValue: hashValue, pos: logicalRowIndex})
 		}
 	}
-	j.currentProbeRow = 0
+	j.currentProbeRow = 0 // TODO attention for spill's SetProbeChunk
 	for i := 0; i < j.ctx.PartitionNumber; i++ {
 		for index := range j.hashValues[i] {
 			j.matchedRowsHeaders[j.hashValues[i][index].pos] = j.ctx.hashTableContext.hashTable.tables[i].lookup(j.hashValues[i][index].hashValue)
 		}
 	}
 	return
+}
+
+func (j *baseJoinProbe) SetRestoredChunkForProbe(chk *chunk.Chunk, hashTable *hashTableV2) error {
+	if j.currentChunk != nil {
+		if j.currentProbeRow < j.chunkRows {
+			return errors.New("Previous chunk is not probed yet")
+		}
+	}
+
+	hashValueCol := chk.Column(0)
+	serializedKeysCol := chk.Column(1)
+	colNum := chk.NumCols()
+	if j.usedColIdx == nil {
+		j.usedColIdx = make([]int, 0, colNum-2)
+		for i := 0; i < colNum-2; i++ {
+			j.usedColIdx = append(j.usedColIdx, i+2)
+		}
+	}
+	j.currentChunk = chk.Prune(j.usedColIdx)
+	logicalRows := chk.NumRows()
+	j.chunkRows = logicalRows
+
+	if cap(j.matchedRowsHeaders) >= logicalRows {
+		j.matchedRowsHeaders = j.matchedRowsHeaders[:logicalRows]
+	} else {
+		j.matchedRowsHeaders = make([]unsafe.Pointer, logicalRows)
+	}
+
+	if cap(j.serializedKeys) >= logicalRows {
+		j.serializedKeys = j.serializedKeys[:logicalRows]
+	} else {
+		j.serializedKeys = make([][]byte, logicalRows)
+	}
+
+	for i := 0; i < logicalRows; i++ {
+		j.serializedKeys[i] = append(j.serializedKeys[i], serializedKeysCol.GetBytes(i)...)
+		j.matchedRowsHeaders[i] = hashTable.tables[0].lookup(uint64(hashValueCol.GetInt64(i)))
+	}
+	return nil
 }
 
 func (j *baseJoinProbe) finishLookupCurrentProbeRow() {
@@ -556,6 +600,10 @@ type mockJoinProbe struct {
 }
 
 func (*mockJoinProbe) SetChunkForProbe(*chunk.Chunk) error {
+	return errors.New("not supported")
+}
+
+func (j *mockJoinProbe) SetRestoredChunkForProbe(chunk *chunk.Chunk) error {
 	return errors.New("not supported")
 }
 

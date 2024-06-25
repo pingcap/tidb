@@ -34,7 +34,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/channel"
 	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/disk"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/memory"
 )
@@ -350,8 +349,10 @@ func (e *HashJoinV2Exec) Open(ctx context.Context) error {
 	}
 	e.memTracker.AttachTo(e.Ctx().GetSessionVars().StmtCtx.MemTracker)
 
-	e.diskTracker = disk.NewTracker(e.ID(), -1)
-	e.diskTracker.AttachTo(e.Ctx().GetSessionVars().StmtCtx.DiskTracker)
+	// TODO consider variable.EnableTmpStorageOnOOM to switch on or off the spill feature
+	// TODO add fallback action when memory limit is exceeded
+	// e.diskTracker = disk.NewTracker(e.ID(), -1)
+	// e.diskTracker.AttachTo(e.Ctx().GetSessionVars().StmtCtx.DiskTracker)
 
 	e.workerWg = util.WaitGroupWrapper{}
 	e.waiterWg = util.WaitGroupWrapper{}
@@ -499,11 +500,50 @@ func (e *HashJoinV2Exec) waitJoinWorkersAndRestoreIfNeeded() {
 		for i := uint(0); i < e.Concurrency; i++ {
 			var workerID = i
 			e.workerWg.RunWithRecover(func() {
+				// TODO customize a special `scanRowTable` function for spill
 				e.ProbeWorkers[workerID].scanRowTableAfterProbeDone()
 			}, e.handleJoinWorkerPanic)
 		}
 		e.workerWg.Wait()
 	}
+}
+
+func (e *HashJoinV2Exec) probeInSpillMode(probeSideChunks *chunk.DataInDiskByChunks, hashTable *hashTableV2) error {
+	chunkNum := probeSideChunks.NumChunks()
+	ok, joinResult := e.ProbeWorkers[0].getNewJoinResult()
+	if !ok {
+		return nil
+	}
+
+	probeTime := int64(0)
+	for i := 0; i < chunkNum; i++ {
+		// TODO reuse probe chunk
+		chunk, err := probeSideChunks.GetChunk(i)
+		if err != nil {
+			return err
+		}
+
+		start := time.Now()
+		waitTime := int64(0)
+		ok, waitTime, joinResult = e.ProbeWorkers[0].processOneRestoredProbeChunk(chunk, hashTable, joinResult)
+		probeTime += int64(time.Since(start)) - waitTime
+		if !ok {
+			break
+		}
+		// TODO don't forget to reset chunk when it's reusable
+	}
+
+	// TODO implement it
+	// note joinResult.chk may be nil when getNewJoinResult fails in loops
+	// if joinResult == nil {
+	// 	return nil
+	// } else if joinResult.err != nil || (joinResult.chk != nil && joinResult.chk.NumRows() > 0) {
+	// 	e.HashJoinCtx.joinResultCh <- joinResult
+	// } else if joinResult.chk != nil && joinResult.chk.NumRows() == 0 {
+	// 	e.joinChkResourceCh <- joinResult.chk
+	// }
+	// TODO need to handle spill here?
+	return nil
 }
 
 func (e *HashJoinV2Exec) restore() error {
@@ -515,7 +555,7 @@ func (e *HashJoinV2Exec) restore() error {
 			break
 		}
 
-		hashTable, err := e.spillHelper.buildHashTable(restoredPartition.buildSideData)
+		hashTable, err := e.spillHelper.buildHashTable(restoredPartition.buildSideChunks)
 		if err != nil {
 			return err
 		}
@@ -526,10 +566,10 @@ func (e *HashJoinV2Exec) restore() error {
 
 		// TODO check spill and execute, triggered spill may has been found in `buildHashTable`, but we handle the spill outside of `buildHashTable`
 
-		// TODO restore one probe partition
-
-		// TODO match probe and build data, check closeCh
-		// TODO scan remaining rows of a partition
+		err = e.probeInSpillMode(restoredPartition.probeSideChunks, hashTable)
+		if err != nil {
+			return err
+		}
 	}
 
 	return nil
@@ -562,18 +602,15 @@ func (w *ProbeWorkerV2) scanRowTableAfterProbeDone() {
 	}
 }
 
-func (w *ProbeWorkerV2) processOneProbeChunk(probeChunk *chunk.Chunk, joinResult *hashjoinWorkerResult, fetcherAndWorkerSyncer *sync.WaitGroup) (ok bool, waitTime int64, _ *hashjoinWorkerResult) {
-	defer fetcherAndWorkerSyncer.Done()
-	waitTime = 0
-	joinResult.err = w.JoinProbe.SetChunkForProbe(probeChunk)
-	if joinResult.err != nil {
-		return false, waitTime, joinResult
-	}
+func (w *ProbeWorkerV2) probeAndSendResult(joinResult *hashjoinWorkerResult) (bool, int64, *hashjoinWorkerResult) {
+	var ok bool
+	waitTime := int64(0)
 	for !w.JoinProbe.IsCurrentChunkProbeDone() {
 		ok, joinResult = w.JoinProbe.Probe(joinResult, &w.HashJoinCtx.SessCtx.GetSessionVars().SQLKiller)
 		if !ok || joinResult.err != nil {
 			return ok, waitTime, joinResult
 		}
+
 		failpoint.Inject("processOneProbeChunkPanic", nil)
 		if joinResult.chk.IsFull() {
 			waitStart := time.Now()
@@ -586,6 +623,24 @@ func (w *ProbeWorkerV2) processOneProbeChunk(probeChunk *chunk.Chunk, joinResult
 		}
 	}
 	return true, waitTime, joinResult
+}
+
+func (w *ProbeWorkerV2) processOneRestoredProbeChunk(probeChunk *chunk.Chunk, hashTable *hashTableV2, joinResult *hashjoinWorkerResult) (ok bool, waitTime int64, _ *hashjoinWorkerResult) {
+	waitTime = 0
+	joinResult.err = w.JoinProbe.SetRestoredChunkForProbe(probeChunk, hashTable)
+	if joinResult.err != nil {
+		return false, 0, joinResult
+	}
+	return w.probeAndSendResult(joinResult)
+}
+
+func (w *ProbeWorkerV2) processOneProbeChunk(probeChunk *chunk.Chunk, joinResult *hashjoinWorkerResult, fetcherAndWorkerSyncer *sync.WaitGroup) (bool, int64, *hashjoinWorkerResult) {
+	defer fetcherAndWorkerSyncer.Done()
+	joinResult.err = w.JoinProbe.SetChunkForProbe(probeChunk)
+	if joinResult.err != nil {
+		return false, 0, joinResult
+	}
+	return w.probeAndSendResult(joinResult)
 }
 
 func (w *ProbeWorkerV2) runJoinWorker(fetcherAndWorkerSyncer *sync.WaitGroup) {
@@ -647,6 +702,8 @@ func (w *ProbeWorkerV2) runJoinWorker(fetcherAndWorkerSyncer *sync.WaitGroup) {
 	} else if joinResult.chk != nil && joinResult.chk.NumRows() == 0 {
 		w.joinChkResourceCh <- joinResult.chk
 	}
+
+	// TODO spill remaining probe chunks
 }
 
 func (w *ProbeWorkerV2) getNewJoinResult() (bool, *hashjoinWorkerResult) {
