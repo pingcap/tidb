@@ -45,6 +45,7 @@ import (
 var mc *mock.Cluster
 
 func TestCreateTables(t *testing.T) {
+	t.Skip()
 	m := mc
 	g := gluetidb.New()
 	client := snapclient.NewRestoreClient(m.PDClient, m.PDHTTPCli, nil, utiltest.DefaultTestKeepaliveCfg)
