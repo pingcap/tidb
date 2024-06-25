@@ -752,9 +752,9 @@ type localRowCntListener struct {
 	reorgCtx *reorgCtx
 	counter  prometheus.Counter
 
-	// prevPhysicalRowCnt records the row count from previous physcial tables (partitions).
+	// prevPhysicalRowCnt records the row count from previous physical tables (partitions).
 	prevPhysicalRowCnt int64
-	// curPhysicalRowCnt records the row count of current physcial table.
+	// curPhysicalRowCnt records the row count of current physical table.
 	curPhysicalRowCnt int64
 }
 
