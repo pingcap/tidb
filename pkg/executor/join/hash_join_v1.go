@@ -139,7 +139,7 @@ func (e *HashJoinV1Exec) Close() error {
 		}
 		e.ProbeSideTupleFetcher.probeChkResourceCh = nil
 		terror.Call(e.RowContainer.Close)
-		e.HashJoinCtx.SessCtx.GetSessionVars().MemTracker.UnbindActionFromHardLimit(e.RowContainer.ActionSpill())
+		e.HashJoinCtxV1.SessCtx.GetSessionVars().MemTracker.UnbindActionFromHardLimit(e.RowContainer.ActionSpill())
 		e.waiterWg.Wait()
 	}
 	e.outerMatchedStatus = e.outerMatchedStatus[:0]
@@ -178,12 +178,12 @@ func (e *HashJoinV1Exec) Open(ctx context.Context) error {
 	}
 	e.HashJoinCtxV1.memTracker.AttachTo(e.Ctx().GetSessionVars().StmtCtx.MemTracker)
 
-	if e.HashJoinCtx.diskTracker != nil {
-		e.HashJoinCtx.diskTracker.Reset()
+	if e.HashJoinCtxV1.diskTracker != nil {
+		e.HashJoinCtxV1.diskTracker.Reset()
 	} else {
-		e.HashJoinCtx.diskTracker = disk.NewTracker(e.ID(), -1)
+		e.HashJoinCtxV1.diskTracker = disk.NewTracker(e.ID(), -1)
 	}
-	e.HashJoinCtx.diskTracker.AttachTo(e.Ctx().GetSessionVars().StmtCtx.DiskTracker)
+	e.HashJoinCtxV1.diskTracker.AttachTo(e.Ctx().GetSessionVars().StmtCtx.DiskTracker)
 
 	e.workerWg = util.WaitGroupWrapper{}
 	e.waiterWg = util.WaitGroupWrapper{}
