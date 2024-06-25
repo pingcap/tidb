@@ -64,17 +64,17 @@ func (la LogicalAggregation) Init(ctx base.PlanContext, offset int) *LogicalAggr
 // *************************** start implementation of Plan interface ***************************
 
 // ExplainInfo implements base.Plan.<4th> interface.
-func (p *LogicalAggregation) ExplainInfo() string {
+func (la *LogicalAggregation) ExplainInfo() string {
 	buffer := bytes.NewBufferString("")
-	if len(p.GroupByItems) > 0 {
+	if len(la.GroupByItems) > 0 {
 		fmt.Fprintf(buffer, "group by:%s, ",
-			expression.SortedExplainExpressionList(p.SCtx().GetExprCtx().GetEvalCtx(), p.GroupByItems))
+			expression.SortedExplainExpressionList(la.SCtx().GetExprCtx().GetEvalCtx(), la.GroupByItems))
 	}
-	if len(p.AggFuncs) > 0 {
+	if len(la.AggFuncs) > 0 {
 		buffer.WriteString("funcs:")
-		for i, agg := range p.AggFuncs {
-			buffer.WriteString(aggregation.ExplainAggFunc(p.SCtx().GetExprCtx().GetEvalCtx(), agg, false))
-			if i+1 < len(p.AggFuncs) {
+		for i, agg := range la.AggFuncs {
+			buffer.WriteString(aggregation.ExplainAggFunc(la.SCtx().GetExprCtx().GetEvalCtx(), agg, false))
+			if i+1 < len(la.AggFuncs) {
 				buffer.WriteString(", ")
 			}
 		}
