@@ -176,14 +176,12 @@ func (d *DBStore) adjust(
 
 	if d.Security == nil {
 		d.Security = &Security{
-			CAPath:                   s.CAPath,
-			CertPath:                 s.CertPath,
-			KeyPath:                  s.KeyPath,
-			CABytes:                  s.CABytes,
-			CertBytes:                s.CertBytes,
-			KeyBytes:                 s.KeyBytes,
-			RedactInfoLog:            s.RedactInfoLog,
-			AllowFallbackToPlaintext: s.AllowFallbackToPlaintext,
+			CAPath:    s.CAPath,
+			CertPath:  s.CertPath,
+			KeyPath:   s.KeyPath,
+			CABytes:   s.CABytes,
+			CertBytes: s.CertBytes,
+			KeyBytes:  s.KeyBytes,
 		}
 	}
 
