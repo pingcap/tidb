@@ -376,9 +376,15 @@ func (coll *HistColl) SetAllIndexFullLoadForBootstrap() {
 // CalcPreScalar calculates the pre-calculated scalar for all columns and indices.
 func (coll *HistColl) CalcPreScalar() {
 	for _, idx := range coll.indices {
+		for i := 1; i < idx.Len(); i++ {
+			idx.Buckets[i].Count += idx.Buckets[i-1].Count
+		}
 		idx.PreCalculateScalar()
 	}
 	for _, col := range coll.columns {
+		for i := 1; i < col.Len(); i++ {
+			col.Buckets[i].Count += col.Buckets[i-1].Count
+		}
 		col.PreCalculateScalar()
 	}
 }
@@ -397,7 +403,6 @@ func (coll *HistColl) DropEvicted() {
 		}
 		idx.DropUnnecessaryData()
 	}
-
 }
 
 // TableMemoryUsage records tbl memory usage

@@ -54,14 +54,16 @@ func getTotalRowCount(statsTbl *statistics.Table, colHist *statistics.Column) in
 	statsTbl.ForEachIndexImmutable(func(_ int64, idx *statistics.Index) bool {
 		if idx.IsFullLoad() && idx.LastUpdateVersion == colHist.LastUpdateVersion {
 			totCount = int64(idx.TotalRowCount())
+			return true
 		}
-		return true
+		return false
 	})
 	statsTbl.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
 		if col.IsFullLoad() && col.LastUpdateVersion == colHist.LastUpdateVersion {
 			totCount = int64(col.TotalRowCount())
+			return true
 		}
-		return true
+		return false
 	})
 	return totCount
 }
