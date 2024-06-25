@@ -340,11 +340,15 @@ func (c *RowContainer) Close() (err error) {
 		c.actionSpill.cond.Broadcast()
 		c.actionSpill.SetFinished()
 	}
+	c.memTracker.Detach()
+	c.diskTracker.Detach()
+	// todo unbind action
 	if c.alreadySpilled() {
 		err = c.m.records.inDisk.Close()
 		c.m.records.inDisk = nil
 	}
 	c.m.records.inMemory.Clear()
+	c.m.records.inMemory = nil
 	return
 }
 
