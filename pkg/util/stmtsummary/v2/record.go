@@ -23,6 +23,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
@@ -153,6 +154,9 @@ type StmtRecord struct {
 
 	PlanCacheUnqualifiedCount int64  `json:"plan_cache_unqualified_count"`
 	LastPlanCacheUnqualified  string `json:"last_plan_cache_unqualified"` // the reason why this query is unqualified for the plan cache
+
+	// AdditionalInfo is used to store some additional information.
+	AdditionalInfo map[string]string `json:"additional_info"`
 }
 
 // NewStmtRecord creates a new StmtRecord from StmtExecInfo.
@@ -193,6 +197,7 @@ func NewStmtRecord(info *stmtsummary.StmtExecInfo) *StmtRecord {
 			binPlan = plancodec.BinaryPlanDiscardedEncoded
 		}
 	}
+	additionalInfo := config.GetGlobalConfig().StmtSummaryAdditionalInfo
 	return &StmtRecord{
 		SchemaName:    info.SchemaName,
 		Digest:        info.Digest,
@@ -221,6 +226,7 @@ func NewStmtRecord(info *stmtsummary.StmtExecInfo) *StmtRecord {
 		KeyspaceName:      info.KeyspaceName,
 		KeyspaceID:        info.KeyspaceID,
 		ResourceGroupName: info.ResourceGroupName,
+		AdditionalInfo:    additionalInfo,
 	}
 }
 

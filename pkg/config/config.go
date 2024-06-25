@@ -244,6 +244,8 @@ type Config struct {
 	// key will be the default value of the session variable `txn_scope` for this tidb-server.
 	Labels map[string]string `toml:"labels" json:"labels"`
 
+	// StmtSummaryAdditionalInfo will be recorded in the stmtsummary when Instance.StmtSummaryEnablePersistent is true.
+	StmtSummaryAdditionalInfo map[string]string `toml:"stmt-summary-additional-info" json:"stmt-summary-additional-info"`
 	// EnableGlobalIndex is deprecated.
 	EnableGlobalIndex bool `toml:"enable-global-index" json:"enable-global-index"`
 
@@ -503,6 +505,8 @@ type Log struct {
 	EnableSlowLog       AtomicBool `toml:"enable-slow-log" json:"enable-slow-log"`
 	SlowThreshold       uint64     `toml:"slow-threshold" json:"slow-threshold"`
 	RecordPlanInSlowLog uint32     `toml:"record-plan-in-slow-log" json:"record-plan-in-slow-log"`
+	// SlowLogAdditionalInfo will be added to slow query log as additional information.
+	SlowLogAdditionalInfo map[string]string `toml:"slow-log-additional-info" json:"slow-log-additional-info"`
 
 	// Make tidb panic if write log operation hang in `Timeout` seconds
 	Timeout int `toml:"timeout" json:"timeout"`

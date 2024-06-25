@@ -17,10 +17,18 @@ package stmtsummary
 import (
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/stretchr/testify/require"
 )
 
 func TestStmtRecord(t *testing.T) {
+	testAdditionalInfo := map[string]string{
+		"key": "value",
+	}
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.StmtSummaryAdditionalInfo = testAdditionalInfo
+	})
+
 	info := GenerateStmtExecInfo4Test("digest1")
 	record1 := NewStmtRecord(info)
 	require.Equal(t, info.SchemaName, record1.SchemaName)
@@ -41,6 +49,7 @@ func TestStmtRecord(t *testing.T) {
 	require.Equal(t, info.StartTime, record1.LastSeen)
 	require.Equal(t, info.KeyspaceName, record1.KeyspaceName)
 	require.Equal(t, info.KeyspaceID, record1.KeyspaceID)
+	require.Equal(t, testAdditionalInfo, record1.AdditionalInfo)
 	require.Empty(t, record1.AuthUsers)
 	require.Zero(t, record1.ExecCount)
 	require.Zero(t, record1.SumLatency)

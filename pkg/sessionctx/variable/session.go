@@ -3460,6 +3460,11 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 		writeSlowLogItem(&buf, SlowLogPrevStmt, logItems.PrevStmt)
 	}
 
+	additionalInfo := config.GetGlobalConfig().Log.SlowLogAdditionalInfo
+	for key, value := range additionalInfo {
+		writeSlowLogItem(&buf, key, value)
+	}
+
 	if s.CurrentDBChanged {
 		buf.WriteString(fmt.Sprintf("use %s;\n", strings.ToLower(s.CurrentDB)))
 		s.CurrentDBChanged = false
