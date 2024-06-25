@@ -25,6 +25,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
@@ -602,11 +603,10 @@ func parseSchemaCacheSize(s *SessionVars, normalizedValue string, originalValue 
 			normalizedStr = strconv.Itoa(math.MaxInt64)
 		}
 	}()
-
-	bt, str := parseByteSize(normalizedValue)
-	if str != "" {
-		return bt, str, nil
+	res, err := units.RAMInBytes(normalizedValue)
+	if err != nil {
+		return 0, "", ErrTruncatedWrongValue.GenWithStackByArgs(TiDBSchemaCacheSize, originalValue)
 	}
-
-	return 0, "", ErrTruncatedWrongValue.GenWithStackByArgs(TiDBSchemaCacheSize, originalValue)
+	bt := uint64(res)
+	return bt, normalizedValue, nil
 }
