@@ -592,9 +592,9 @@ func ParseAnalyzeSkipColumnTypes(val string) map[string]struct{} {
 
 func parseSchemaCacheSize(s *SessionVars, normalizedValue string, originalValue string) (byteSize uint64, normalizedStr string, err error) {
 	defer func() {
-		if err == nil && byteSize > 0 && byteSize < (512<<20) {
+		if err == nil && byteSize > 0 && byteSize < (512*units.MiB) {
 			s.StmtCtx.AppendWarning(ErrTruncatedWrongValue.FastGenByArgs(TiDBSchemaCacheSize, originalValue))
-			byteSize = 512 << 20
+			byteSize = 512 * units.MiB
 			normalizedStr = "512MB"
 		}
 		if err == nil && byteSize > math.MaxInt64 {
