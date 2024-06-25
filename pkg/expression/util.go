@@ -519,15 +519,11 @@ func ColumnSubstituteImpl(expr Expression, schema *Schema, newExprs []Expression
 			}
 		}
 		if substituted {
-<<<<<<< HEAD
-			return true, hasFail, NewFunctionInternal(v.GetCtx(), v.FuncName.L, v.RetType, refExprArr.Result()...)
-=======
-			newFunc, err := NewFunction(ctx, v.FuncName.L, v.RetType, refExprArr.Result()...)
+			newFunc, err := NewFunction(v.GetCtx(), v.FuncName.L, v.RetType, refExprArr.Result()...)
 			if err != nil {
 				return true, true, v
 			}
 			return true, hasFail, newFunc
->>>>>>> 3d68bd21240 (expression: fail `ColumnSubstituteImpl` if creating function returns error (#53716))
 		}
 	}
 	return false, false, expr
