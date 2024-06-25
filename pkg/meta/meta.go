@@ -1048,6 +1048,7 @@ func GetAllNameToIDAndSpecialAttributeInfo(m *Meta, dbID int64) (map[string]int6
 			if err != nil {
 				return errors.Trace(err)
 			}
+			tbInfo.DBID = dbID
 			tableInfos = append(tableInfos, tbInfo)
 		}
 		return nil
