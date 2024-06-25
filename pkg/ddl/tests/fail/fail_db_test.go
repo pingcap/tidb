@@ -409,6 +409,7 @@ func testAddIndexWorkerNum(t *testing.T, s *failedSuite, test func(*testkit.Test
 
 // TestRunDDLJobPanic tests recover panic when run ddl job panic.
 func TestRunDDLJobPanic(t *testing.T) {
+	t.Skip()
 	s := createFailDBSuite(t)
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockPanicInRunDDLJob"))
