@@ -215,10 +215,11 @@ func TestCTEIterationMemTracker(t *testing.T) {
 
 	tk.MustExec("set @@cte_max_recursion_depth=1000000")
 	tk.MustExec("set global tidb_mem_oom_action = 'log';")
-	tk.MustExec("set @@tidb_mem_quota_query=100")
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/assertIterTableSpillToDisk", "return(true)"))
+	tk.MustExec("set @@tidb_mem_quota_query=10;")
+	maxIter := 5000
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/assertIterTableSpillToDisk", fmt.Sprintf("return(%d)", maxIter)))
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/assertIterTableSpillToDisk"))
 	}()
-	tk.MustQuery("explain analyze with recursive cte1 as (select c1 from t1 union all select c1 + 1 c1 from cte1 where c1 < 5000) select * from cte1")
+	tk.MustQuery(fmt.Sprintf("explain analyze with recursive cte1 as (select c1 from t1 union all select c1 + 1 c1 from cte1 where c1 < %d) select * from cte1", maxIter))
 }
