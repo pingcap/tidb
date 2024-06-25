@@ -624,7 +624,6 @@ bazel_coverage_test: failpoint-enable bazel_ci_simple_prepare
 		-//tests/globalkilltest/... -//tests/readonlytest/... -//br/pkg/task:task_test -//tests/realtikvtest/...
 
 .PHONY: bazel_build
-NOGO_FLAG=true
 bazel_build:
 	mkdir -p bin
 	bazel $(BAZEL_GLOBAL_CONFIG) build $(BAZEL_CMD_CONFIG) \
@@ -779,7 +778,6 @@ bazel_flashbacktest: failpoint-enable bazel_ci_simple_prepare
 	./build/jenkins_collect_coverage.sh
 
 .PHONY: bazel_lint
-NOGO_FLAG=true
 bazel_lint: bazel_prepare
 	bazel build //... --//build:with_nogo_flag=$(NOGO_FLAG)
 
