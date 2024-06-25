@@ -32,7 +32,6 @@ import (
 // Engine is the interface for the engine that can be used to write key-value pairs.
 type Engine interface {
 	Flush() error
-	ImportAndClean() error
 	Clean()
 	CreateWriter(id int, writerCfg *backend.LocalWriterConfig) (Writer, error)
 }

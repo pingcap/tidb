@@ -182,11 +182,6 @@ func (*MockEngineInfo) Flush() error {
 	return nil
 }
 
-// ImportAndClean implements Engine.ImportAndClean interface.
-func (*MockEngineInfo) ImportAndClean() error {
-	return nil
-}
-
 // Clean implements Engine.Clean interface.
 func (*MockEngineInfo) Clean() {
 }
