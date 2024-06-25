@@ -242,10 +242,10 @@ func AllocAutoIncrementValue(ctx context.Context, t Table, sctx sessionctx.Conte
 
 // AllocBatchAutoIncrementValue allocates batch auto_increment value for rows, returning firstID, increment and err.
 // The caller can derive the autoID by adding increment to firstID for N-1 times.
-func AllocBatchAutoIncrementValue(ctx context.Context, t Table, sctx sessionctx.Context, N int) ( /* firstID */ int64 /* increment */, int64 /* err */, error) {
+func AllocBatchAutoIncrementValue(ctx context.Context, t Table, sctx sessionctx.Context, n int) (firstID int64, increment int64, err error) {
 	increment1, offset := getIncrementAndOffset(sctx.GetSessionVars())
 	alloc := t.Allocators(sctx.GetTableCtx()).Get(autoid.AutoIncrementType)
-	min, max, err := alloc.Alloc(ctx, uint64(N), int64(increment1), int64(offset))
+	min, max, err := alloc.Alloc(ctx, uint64(n), int64(increment1), int64(offset))
 	if err != nil {
 		return min, max, err
 	}

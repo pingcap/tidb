@@ -19,6 +19,7 @@ import (
 	"context"
 	"sync"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/infoschema/internal"
 )
 
@@ -94,6 +95,12 @@ func (s *Sieve[K, V]) Set(key K, value V) {
 	for i := 0; s.size > s.capacity && i < 10; i++ {
 		s.evict()
 	}
+
+	failpoint.Inject("forceEvictAll", func() {
+		for s.size > 0 {
+			s.evict()
+		}
+	})
 
 	e := &entry[K, V]{
 		key:   key,

@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/testkit/testutil"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
@@ -944,6 +945,27 @@ func TestInfoSchemaCreateTableLike(t *testing.T) {
 	tblInfo = tbl.Meta()
 	require.Equal(t, tblInfo.Indices[0].Name.O, "idx")
 	require.Equal(t, tblInfo.Indices[0].ID, int64(1))
+}
+
+func TestAllocRebaseInfoSchemaV2(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@global.tidb_schema_cache_size = 1024")
+
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/infoschema/forceEvictAll", "return()")
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (id int auto_increment, a int, PRIMARY KEY (id))")
+	tk.MustExec("insert into t(a) values(1)")
+	result := tk.MustQuery("select last_insert_id();")
+	result.Check(testkit.Rows("1"))
+	tk.MustExec("insert into t values(2, 1)")
+	result = tk.MustQuery("select last_insert_id();")
+	result.Check(testkit.Rows("1"))
+	tk.MustExec("insert into t(a) values(1)")
+	result = tk.MustQuery("select last_insert_id();")
+	result.Check(testkit.Rows("3"))
 }
 
 func TestEnableInfoSchemaV2(t *testing.T) {

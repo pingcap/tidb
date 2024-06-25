@@ -237,7 +237,14 @@ func buildGeneratedExpr(tblInfo *model.TableInfo, genExpr string) (ast.ExprNode,
 }
 
 // initTableCommon initializes a TableCommon struct.
-func initTableCommon(t *TableCommon, tblInfo *model.TableInfo, physicalTableID int64, cols []*table.Column, allocs autoid.Allocators, constraints []*table.Constraint) {
+func initTableCommon(
+	t *TableCommon,
+	tblInfo *model.TableInfo,
+	physicalTableID int64,
+	cols []*table.Column,
+	allocs autoid.Allocators,
+	constraints []*table.Constraint,
+) {
 	t.tableID = tblInfo.ID
 	t.physicalTableID = physicalTableID
 	t.allocs = allocs
