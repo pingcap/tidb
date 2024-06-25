@@ -681,6 +681,14 @@ func TestSetVar(t *testing.T) {
 	require.Error(t, tk.ExecToErr("set tidb_enable_column_tracking = 0"))
 	require.Error(t, tk.ExecToErr("set global tidb_enable_column_tracking = -1"))
 
+	// test for tidb_analyze_default_column_choice
+	tk.MustQuery("select @@tidb_analyze_default_column_choice").Check(testkit.Rows("ALL"))
+	tk.MustExec("set global tidb_analyze_default_column_choice = 'PREDICATE'")
+	tk.MustQuery("select @@tidb_analyze_default_column_choice").Check(testkit.Rows("PREDICATE"))
+	tk.MustExec("set global tidb_analyze_default_column_choice = 'all'")
+	tk.MustQuery("select @@tidb_analyze_default_column_choice").Check(testkit.Rows("ALL"))
+	require.Error(t, tk.ExecToErr("set global tidb_analyze_default_column_choice = 'UNKNOWN'"))
+
 	// test for tidb_ignore_prepared_cache_close_stmt
 	tk.MustQuery("select @@global.tidb_ignore_prepared_cache_close_stmt").Check(testkit.Rows("0")) // default value is 0
 	tk.MustExec("set global tidb_ignore_prepared_cache_close_stmt=1")
