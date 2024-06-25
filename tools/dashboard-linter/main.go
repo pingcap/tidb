@@ -15,6 +15,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -82,4 +83,21 @@ func main() {
 			fileName, duplicateIDs, availableRange)
 		os.Exit(1)
 	}
+
+	if idx := indexOfAny(content, []string{".*$tidb_cluster", "$tidb_cluster.*"}); idx != -1 {
+		text := string(content[max(idx-150, 0):min(idx+50, len(content))])
+		fmt.Printf("It is unnecessary to use pattern match for $tidb_cluster.\n"+
+			"See https://github.com/pingcap/tidb/pull/54135 for details.\n Around: %s\n", text)
+		os.Exit(1)
+	}
+}
+
+func indexOfAny(content []byte, substrs []string) int {
+	for _, sub := range substrs {
+		idx := bytes.Index(content, []byte(sub))
+		if idx != -1 {
+			return idx
+		}
+	}
+	return -1
 }
