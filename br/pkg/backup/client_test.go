@@ -583,7 +583,7 @@ func TestMainBackupLoop(t *testing.T) {
 	}
 	remainStoreID := uint64(1)
 	dropStoreID := uint64(2)
-	s.mockCluster.StopStore(dropStoreID)
+	s.mockCluster.MarkTombstone(dropStoreID)
 	dropBackupResponses := mockBackupResponses[dropStoreID]
 	lock.Lock()
 	mockBackupResponses[dropStoreID] = nil
@@ -642,7 +642,7 @@ func TestMainBackupLoop(t *testing.T) {
 	}
 	remainStoreID = uint64(1)
 	dropStoreID = uint64(2)
-	s.mockCluster.StopStore(dropStoreID)
+	s.mockCluster.MarkTombstone(dropStoreID)
 
 	mainLoop = &backup.MainBackupLoop{
 		BackupSender: &mockBackupBackupSender{
