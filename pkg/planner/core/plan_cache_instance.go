@@ -109,6 +109,9 @@ func (pc *instancePlanCache) Put(sctx sessionctx.Context, key string, value, opt
 		return // do nothing if it exceeds the hard limit
 	}
 	headNode := pc.getHead(key, true)
+	if headNode == nil {
+		return false // for safety
+	}
 	if _, ok := pc.getPlanFromList(sctx, headNode, opts); ok {
 		return // some other thread has inserted the same plan before
 	}
@@ -166,11 +169,15 @@ func (pc *instancePlanCache) MemUsage(_ sessionctx.Context) int64 {
 }
 
 func (pc *instancePlanCache) calcEvictionThreshold(lastUsedTimes []time.Time) (t time.Time) {
-	avgPerPlan := pc.totCost.Load() / int64(len(lastUsedTimes))
+	if len(lastUsedTimes) == 0 {
+		return
+	}
+	totCost, softMemLimit := pc.totCost.Load(), pc.softMemLimit.Load()
+	avgPerPlan := totCost / int64(len(lastUsedTimes))
 	if avgPerPlan <= 0 {
 		return
 	}
-	memToRelease := pc.totCost.Load() - pc.softMemLimit.Load()
+	memToRelease := totCost - softMemLimit
 	// (... +avgPerPlan-1) is used to try to keep the final memory usage below the soft mem limit.
 	numToEvict := (memToRelease + avgPerPlan - 1) / avgPerPlan
 	if numToEvict <= 0 {
@@ -180,7 +187,7 @@ func (pc *instancePlanCache) calcEvictionThreshold(lastUsedTimes []time.Time) (t
 		return lastUsedTimes[i].Before(lastUsedTimes[j])
 	})
 	if len(lastUsedTimes) < int(numToEvict) {
-		return
+		return // for safety, avoid index-of-range panic
 	}
 	return lastUsedTimes[numToEvict-1]
 }
