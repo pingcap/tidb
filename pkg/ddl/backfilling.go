@@ -621,7 +621,7 @@ func SetBackfillTaskChanSizeForTest(n int) {
 	backfillTaskChanSize = n
 }
 
-func (dc *ddlCtx) runAddIndexInIngestMode(
+func (dc *ddlCtx) runAddIndexInLocalIngestMode(
 	ctx context.Context,
 	sessPool *sess.Pool,
 	t table.PhysicalTable,
@@ -634,7 +634,7 @@ func (dc *ddlCtx) runAddIndexInIngestMode(
 	}
 	job := reorgInfo.Job.Clone()
 	ctx = tidblogutil.WithCategory(ctx, "ddl-ingest")
-	opCtx := NewStandaloneOperatorCtx(ctx, job.ID)
+	opCtx := NewLocalOperatorCtx(ctx, job.ID)
 	bcCtx, err := getBackendCtx(ctx, dc.store, dc.etcdCli, job)
 	if err != nil {
 		return errors.Trace(err)
@@ -690,7 +690,7 @@ func (dc *ddlCtx) runAddIndexInIngestMode(
 	reorgCtx := dc.getReorgCtx(reorgInfo.Job.ID)
 	previousTotal := reorgCtx.getRowCount()
 	var rowCnt int64
-	rowCntListener := &standaloneRowCntListener{
+	rowCntListener := &localRowCntListener{
 		flushed: func(cnt int) {
 			rowCnt += int64(cnt)
 			reorgCtx.setRowCount(previousTotal + rowCnt)
@@ -745,19 +745,19 @@ func (dc *ddlCtx) runAddIndexInIngestMode(
 	return nil
 }
 
-type standaloneRowCntListener struct {
+type localRowCntListener struct {
 	EmptyRowCntListener
 	flushed  func(int)
 	setTotal func(int)
 	counter  prometheus.Counter
 }
 
-func (s *standaloneRowCntListener) Flushed(rowCnt int) {
+func (s *localRowCntListener) Flushed(rowCnt int) {
 	s.flushed(rowCnt)
 	s.counter.Add(float64(rowCnt))
 }
 
-func (s *standaloneRowCntListener) SetTotal(total int) {
+func (s *localRowCntListener) SetTotal(total int) {
 	s.setTotal(total)
 }
 
@@ -796,7 +796,7 @@ func (dc *ddlCtx) writePhysicalTableRecord(
 		}
 	})
 	if bfWorkerType == typeAddIndexWorker && reorgInfo.ReorgMeta.ReorgTp == model.ReorgTypeLitMerge {
-		return dc.runAddIndexInIngestMode(ctx, sessPool, t, reorgInfo)
+		return dc.runAddIndexInLocalIngestMode(ctx, sessPool, t, reorgInfo)
 	}
 
 	jc := reorgInfo.NewJobContext()

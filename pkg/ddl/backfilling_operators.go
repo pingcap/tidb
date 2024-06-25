@@ -94,8 +94,8 @@ func NewDistTaskOperatorCtx(ctx context.Context, taskID, subtaskID int64) *Opera
 	}
 }
 
-// NewStandaloneOperatorCtx is used for adding index with standalone mode.
-func NewStandaloneOperatorCtx(ctx context.Context, jobID int64) *OperatorCtx {
+// NewLocalOperatorCtx is used for adding index with local ingest mode.
+func NewLocalOperatorCtx(ctx context.Context, jobID int64) *OperatorCtx {
 	opCtx, cancel := context.WithCancel(ctx)
 	opCtx = logutil.WithFields(opCtx, zap.Int64("jobID", jobID))
 	return &OperatorCtx{
@@ -127,7 +127,7 @@ func (ctx *OperatorCtx) OperatorErr() error {
 var (
 	_ RowCountListener = (*EmptyRowCntListener)(nil)
 	_ RowCountListener = (*distTaskRowCntListener)(nil)
-	_ RowCountListener = (*standaloneRowCntListener)(nil)
+	_ RowCountListener = (*localRowCntListener)(nil)
 )
 
 // RowCountListener is invoked when some index records are flushed to disk or imported to TiKV.
