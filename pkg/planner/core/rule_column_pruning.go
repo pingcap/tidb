@@ -19,9 +19,7 @@ import (
 	"slices"
 
 	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/infoschema"
-	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
@@ -42,33 +40,6 @@ func (*columnPruner) optimize(_ context.Context, lp base.LogicalPlan, opt *optim
 		return nil, planChanged, err
 	}
 	return lp, planChanged, nil
-}
-
-// ExprsHasSideEffects checks if any of the expressions has side effects.
-func ExprsHasSideEffects(exprs []expression.Expression) bool {
-	for _, expr := range exprs {
-		if exprHasSetVarOrSleep(expr) {
-			return true
-		}
-	}
-	return false
-}
-
-// exprHasSetVarOrSleep checks if the expression has SetVar function or Sleep function.
-func exprHasSetVarOrSleep(expr expression.Expression) bool {
-	scalaFunc, isScalaFunc := expr.(*expression.ScalarFunction)
-	if !isScalaFunc {
-		return false
-	}
-	if scalaFunc.FuncName.L == ast.SetVar || scalaFunc.FuncName.L == ast.Sleep {
-		return true
-	}
-	for _, arg := range scalaFunc.GetArgs() {
-		if exprHasSetVarOrSleep(arg) {
-			return true
-		}
-	}
-	return false
 }
 
 // PruneColumns implement the Expand OP's column pruning logic.
@@ -108,7 +79,7 @@ func (p *LogicalProjection) PruneColumns(parentUsedCols []*expression.Column, op
 
 	// for implicit projected cols, once the ancestor doesn't use it, the implicit expr will be automatically pruned here.
 	for i := len(used) - 1; i >= 0; i-- {
-		if !used[i] && !exprHasSetVarOrSleep(p.Exprs[i]) {
+		if !used[i] && !expression.ExprHasSetVarOrSleep(p.Exprs[i]) {
 			prunedColumns = append(prunedColumns, p.Schema().Columns[i])
 			p.Schema().Columns = append(p.Schema().Columns[:i], p.Schema().Columns[i+1:]...)
 			p.Exprs = append(p.Exprs[:i], p.Exprs[i+1:]...)
@@ -136,100 +107,6 @@ func (p *LogicalSelection) PruneColumns(parentUsedCols []*expression.Column, opt
 	}
 	addConstOneForEmptyProjection(p.Children()[0])
 	return p, nil
-}
-
-// PruneColumns implements base.LogicalPlan interface.
-func (la *LogicalAggregation) PruneColumns(parentUsedCols []*expression.Column, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, error) {
-	child := la.Children()[0]
-	used := expression.GetUsedList(la.SCtx().GetExprCtx().GetEvalCtx(), parentUsedCols, la.Schema())
-	prunedColumns := make([]*expression.Column, 0)
-	prunedFunctions := make([]*aggregation.AggFuncDesc, 0)
-	prunedGroupByItems := make([]expression.Expression, 0)
-
-	allFirstRow := true
-	allRemainFirstRow := true
-	for i := len(used) - 1; i >= 0; i-- {
-		if la.AggFuncs[i].Name != ast.AggFuncFirstRow {
-			allFirstRow = false
-		}
-		if !used[i] && !ExprsHasSideEffects(la.AggFuncs[i].Args) {
-			prunedColumns = append(prunedColumns, la.Schema().Columns[i])
-			prunedFunctions = append(prunedFunctions, la.AggFuncs[i])
-			la.Schema().Columns = append(la.Schema().Columns[:i], la.Schema().Columns[i+1:]...)
-			la.AggFuncs = append(la.AggFuncs[:i], la.AggFuncs[i+1:]...)
-		} else if la.AggFuncs[i].Name != ast.AggFuncFirstRow {
-			allRemainFirstRow = false
-		}
-	}
-	logicaltrace.AppendColumnPruneTraceStep(la, prunedColumns, opt)
-	logicaltrace.AppendFunctionPruneTraceStep(la, prunedFunctions, opt)
-	//nolint: prealloc
-	var selfUsedCols []*expression.Column
-	for _, aggrFunc := range la.AggFuncs {
-		selfUsedCols = expression.ExtractColumnsFromExpressions(selfUsedCols, aggrFunc.Args, nil)
-
-		var cols []*expression.Column
-		aggrFunc.OrderByItems, cols = pruneByItems(la, aggrFunc.OrderByItems, opt)
-		selfUsedCols = append(selfUsedCols, cols...)
-	}
-	if len(la.AggFuncs) == 0 || (!allFirstRow && allRemainFirstRow) {
-		// If all the aggregate functions are pruned, we should add an aggregate function to maintain the info of row numbers.
-		// For all the aggregate functions except `first_row`, if we have an empty table defined as t(a,b),
-		// `select agg(a) from t` would always return one row, while `select agg(a) from t group by b` would return empty.
-		// For `first_row` which is only used internally by tidb, `first_row(a)` would always return empty for empty input now.
-		var err error
-		var newAgg *aggregation.AggFuncDesc
-		if allFirstRow {
-			newAgg, err = aggregation.NewAggFuncDesc(la.SCtx().GetExprCtx(), ast.AggFuncFirstRow, []expression.Expression{expression.NewOne()}, false)
-		} else {
-			newAgg, err = aggregation.NewAggFuncDesc(la.SCtx().GetExprCtx(), ast.AggFuncCount, []expression.Expression{expression.NewOne()}, false)
-		}
-		if err != nil {
-			return nil, err
-		}
-		la.AggFuncs = append(la.AggFuncs, newAgg)
-		col := &expression.Column{
-			UniqueID: la.SCtx().GetSessionVars().AllocPlanColumnID(),
-			RetType:  newAgg.RetTp,
-		}
-		la.Schema().Columns = append(la.Schema().Columns, col)
-	}
-
-	if len(la.GroupByItems) > 0 {
-		for i := len(la.GroupByItems) - 1; i >= 0; i-- {
-			cols := expression.ExtractColumns(la.GroupByItems[i])
-			if len(cols) == 0 && !exprHasSetVarOrSleep(la.GroupByItems[i]) {
-				prunedGroupByItems = append(prunedGroupByItems, la.GroupByItems[i])
-				la.GroupByItems = append(la.GroupByItems[:i], la.GroupByItems[i+1:]...)
-			} else {
-				selfUsedCols = append(selfUsedCols, cols...)
-			}
-		}
-		// If all the group by items are pruned, we should add a constant 1 to keep the correctness.
-		// Because `select count(*) from t` is different from `select count(*) from t group by 1`.
-		if len(la.GroupByItems) == 0 {
-			la.GroupByItems = []expression.Expression{expression.NewOne()}
-		}
-	}
-	logicaltrace.AppendGroupByItemsPruneTraceStep(la, prunedGroupByItems, opt)
-	var err error
-	la.Children()[0], err = child.PruneColumns(selfUsedCols, opt)
-	if err != nil {
-		return nil, err
-	}
-	// update children[0]
-	child = la.Children()[0]
-	// Do an extra Projection Elimination here. This is specially for empty Projection below Aggregation.
-	// This kind of Projection would cause some bugs for MPP plan and is safe to be removed.
-	// This kind of Projection should be removed in Projection Elimination, but currently PrunColumnsAgain is
-	// the last rule. So we specially handle this case here.
-	if childProjection, isProjection := child.(*LogicalProjection); isProjection {
-		if len(childProjection.Exprs) == 0 && childProjection.Schema().Len() == 0 {
-			childOfChild := childProjection.Children()[0]
-			la.SetChildren(childOfChild)
-		}
-	}
-	return la, nil
 }
 
 func pruneByItems(p base.LogicalPlan, old []*util.ByItems, opt *optimizetrace.LogicalOptimizeOp) (byItems []*util.ByItems,

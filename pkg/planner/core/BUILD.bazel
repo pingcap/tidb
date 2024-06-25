@@ -21,6 +21,8 @@ go_library(
         "indexmerge_path.go",
         "indexmerge_unfinished_path.go",
         "initialize.go",
+        "logical_aggregation.go",
+        "logical_initialize.go",
         "logical_plan_builder.go",
         "logical_plans.go",
         "memtable_predicate_extractor.go",
