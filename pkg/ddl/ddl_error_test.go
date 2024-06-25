@@ -46,11 +46,11 @@ func TestTableError(t *testing.T) {
 	require.Error(t, err)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/MockModifyJobTableId"))
 
-	//// Args is wrong, so creating table is failed.
-	//require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/MockModifyJobArg", `return(true)`))
-	//err = tk.ExecToErr("create table test.t1(a int)")
-	//require.Error(t, err)
-	//require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/MockModifyJobArg"))
+	// Args is wrong, so creating table is failed.
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/MockModifyJobArg", `return(true)`))
+	err = tk.ExecToErr("create table test.t1(a int)")
+	require.Error(t, err)
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/MockModifyJobArg"))
 
 	// Table exists, so creating table is failed.
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockModifyJobSchemaId", `return(-1)`))

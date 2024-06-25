@@ -356,7 +356,7 @@ func doDDLJobErr(
 	// TODO: check error detail
 	ctx.SetValue(sessionctx.QueryString, "skip")
 	require.Error(t, d.DoDDLJob(ctx, job))
-	//testCheckJobCancelled(t, store, job, nil)
+	testCheckJobCancelled(t, store, job, nil)
 
 	return job
 }
