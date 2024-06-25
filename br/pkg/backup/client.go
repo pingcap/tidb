@@ -179,6 +179,8 @@ func (bc *Client) RunLoop(ctx context.Context, loop *MainBackupLoop) error {
 mainLoop:
 	for {
 		round += 1
+		// sleep 1s. in case of tikv cluster abnormal state trigger too many backup rounds.
+		time.Sleep(time.Second)
 		logutil.CL(ctx).Info("This round of backup starts...", zap.Uint64("round", round))
 		// initialize the error context every round
 		errContext := utils.NewErrorContext("MainBackupLoop", 10)
