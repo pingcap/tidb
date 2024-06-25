@@ -24,6 +24,7 @@ import (
 )
 
 // InstancePlanCache represents the instance/node level plan cache.
+// Value and Opts should always be *PlanCacheValue and *PlanCacheMatchOpts, use any to avoid cycle-import.
 type InstancePlanCache interface {
 	// Get gets the cached value from the cache according to key and opts.
 	Get(sctx sessionctx.Context, key string, opts any) (value any, ok bool)
