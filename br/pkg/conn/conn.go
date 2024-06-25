@@ -352,6 +352,25 @@ func (mgr *Mgr) ProcessTiKVConfigs(ctx context.Context, cfg *kvconfig.KVConfig, 
 	}
 }
 
+// IsLogBackupEnabled is used for br to check whether tikv has enabled log backup.
+func (mgr *Mgr) IsLogBackupEnabled(ctx context.Context, client *http.Client) (bool, error) {
+	logbackupEnable := true
+	err := mgr.GetConfigFromTiKV(ctx, client, func(resp *http.Response) error {
+		respBytes, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return err
+		}
+		enable, err := kvconfig.ParseLogBackupEnableFromConfig(respBytes)
+		if err != nil {
+			log.Warn("Failed to parse log-backup enable from config", logutil.ShortError(err))
+			return err
+		}
+		logbackupEnable = logbackupEnable && enable
+		return nil
+	})
+	return logbackupEnable, errors.Trace(err)
+}
+
 // GetConfigFromTiKV get configs from all alive tikv stores.
 func (mgr *Mgr) GetConfigFromTiKV(ctx context.Context, cli *http.Client, fn func(*http.Response) error) error {
 	allStores, err := GetAllTiKVStoresWithRetry(ctx, mgr.GetPDClient(), util.SkipTiFlash)

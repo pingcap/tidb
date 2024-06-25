@@ -344,6 +344,15 @@ func NewStatusController(meta *MetaDataClient, mgr PDInfoProvider, view TaskPrin
 	}
 }
 
+func (ctl *StatusController) Close() error {
+	if ctl.meta != nil {
+		if err := ctl.meta.Close(); err != nil {
+			return errors.Trace(err)
+		}
+	}
+	return nil
+}
+
 // fillTask queries and fills the extra information for a raw task.
 func (ctl *StatusController) fillTask(ctx context.Context, task Task) (TaskStatus, error) {
 	var err error
