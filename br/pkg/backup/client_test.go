@@ -75,6 +75,7 @@ func (m *mockBackupBackupSender) SendAsync(
 	round uint64,
 	storeID uint64,
 	request backuppb.BackupRequest,
+	concurrency uint,
 	cli backuppb.BackupClient,
 	respCh chan *backup.ResponseAndStore,
 	StateNotifier chan backup.BackupRetryPolicy,
@@ -552,7 +553,7 @@ func TestMainBackupLoop(t *testing.T) {
 	// cancel the backup in another goroutine
 	ctx, cancel := context.WithCancel(backgroundCtx)
 	go func() {
-		time.Sleep(500 * time.Millisecond)
+		time.Sleep(100 * time.Millisecond)
 		cancel()
 	}()
 	connectedStore = make(map[uint64]int)
@@ -806,4 +807,66 @@ func TestObserveStoreChangesAsync(t *testing.T) {
 	}, time.Second, 100*time.Millisecond)
 
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/backup/backup-store-change-tick"))
+}
+
+func TestSplitBackupReqRanges(t *testing.T) {
+	req := backuppb.BackupRequest{
+		SubRanges: []*kvrpcpb.KeyRange{},
+	}
+
+	// case #1 empty ranges
+	res := backup.SplitBackupReqRanges(req, 1)
+	require.Len(t, res, 1)
+	// case #2 empty ranges and limit is 0
+	res = backup.SplitBackupReqRanges(req, 0)
+	require.Len(t, res, 1)
+
+	genSubRanges := func(req *backuppb.BackupRequest, count int) {
+		for i := 0; i < count; i++ {
+			req.SubRanges = append(req.SubRanges, &kvrpcpb.KeyRange{
+				StartKey: []byte{byte(i)},
+				EndKey:   []byte{byte(i + 1)},
+			})
+		}
+	}
+
+	genSubRanges(&req, 10)
+	// case #3: 10 subranges and split into 10 parts
+	res = backup.SplitBackupReqRanges(req, 10)
+	require.Len(t, res, 10)
+	for i := 0; i < 10; i++ {
+		require.Equal(t, res[i].SubRanges[0].StartKey, req.SubRanges[i].StartKey)
+		require.Equal(t, res[i].SubRanges[0].EndKey, req.SubRanges[i].EndKey)
+	}
+
+	// case #3.1: 10 subranges and split into 11 parts(has no difference with 10 parts)
+	res = backup.SplitBackupReqRanges(req, 11)
+	require.Len(t, res, 10)
+	for i := 0; i < 10; i++ {
+		require.Equal(t, res[i].SubRanges[0].StartKey, req.SubRanges[i].StartKey)
+		require.Equal(t, res[i].SubRanges[0].EndKey, req.SubRanges[i].EndKey)
+	}
+
+	// case #3.2: 10 subranges and split into 9 parts(has no difference with 10 parts)
+	res = backup.SplitBackupReqRanges(req, 9)
+	require.Len(t, res, 10)
+	for i := 0; i < 10; i++ {
+		require.Equal(t, res[i].SubRanges[0].StartKey, req.SubRanges[i].StartKey)
+		require.Equal(t, res[i].SubRanges[0].EndKey, req.SubRanges[i].EndKey)
+	}
+
+	// case #4: 10 subranges and split into 3 parts, each part has 3 subranges
+	// but actually it will generate 4 parts due to not divisible.
+	res = backup.SplitBackupReqRanges(req, 3)
+	require.Len(t, res, 4)
+	for i := 0; i < 3; i++ {
+		require.Len(t, res[i].SubRanges, 3)
+		for j := 0; j < 3; j++ {
+			require.Equal(t, res[i].SubRanges[j].StartKey, req.SubRanges[i*3+j].StartKey)
+			require.Equal(t, res[i].SubRanges[j].EndKey, req.SubRanges[i*3+j].EndKey)
+		}
+	}
+	require.Len(t, res[3].SubRanges, 1)
+	require.Equal(t, res[3].SubRanges[0].StartKey, req.SubRanges[9].StartKey)
+	require.Equal(t, res[3].SubRanges[0].EndKey, req.SubRanges[9].EndKey)
 }
