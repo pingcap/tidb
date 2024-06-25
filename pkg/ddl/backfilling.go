@@ -695,16 +695,9 @@ func (dc *ddlCtx) runAddIndexInLocalIngestMode(
 	}
 
 	reorgCtx := dc.getReorgCtx(reorgInfo.Job.ID)
-	previousTotal := reorgCtx.getRowCount()
-	var rowCnt int64
 	rowCntListener := &localRowCntListener{
-		flushed: func(cnt int) {
-			rowCnt += int64(cnt)
-			reorgCtx.setRowCount(previousTotal + rowCnt)
-		},
-		setTotal: func(total int) {
-			reorgCtx.setRowCount(previousTotal + int64(total))
-		},
+		prevPhysicalRowCnt: reorgCtx.getRowCount(),
+		reorgCtx:           dc.getReorgCtx(reorgInfo.Job.ID),
 		counter: metrics.BackfillTotalCounter.WithLabelValues(
 			metrics.GenerateReorgLabel("add_idx_rate", job.SchemaName, job.TableName)),
 	}
@@ -756,18 +749,23 @@ func (dc *ddlCtx) runAddIndexInLocalIngestMode(
 
 type localRowCntListener struct {
 	EmptyRowCntListener
-	flushed  func(int)
-	setTotal func(int)
+	reorgCtx *reorgCtx
 	counter  prometheus.Counter
+
+	// prevPhysicalRowCnt records the row count from previous physcial tables (partitions).
+	prevPhysicalRowCnt int64
+	// curPhysicalRowCnt records the row count of current physcial table.
+	curPhysicalRowCnt int64
 }
 
 func (s *localRowCntListener) Flushed(rowCnt int) {
-	s.flushed(rowCnt)
+	s.curPhysicalRowCnt += int64(rowCnt)
+	s.reorgCtx.setRowCount(s.prevPhysicalRowCnt + s.curPhysicalRowCnt)
 	s.counter.Add(float64(rowCnt))
 }
 
 func (s *localRowCntListener) SetTotal(total int) {
-	s.setTotal(total)
+	s.reorgCtx.setRowCount(s.prevPhysicalRowCnt + int64(total))
 }
 
 // writePhysicalTableRecord handles the "add index" or "modify/change column" reorganization state for a non-partitioned table or a partition.
