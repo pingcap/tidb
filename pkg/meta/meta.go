@@ -1006,10 +1006,11 @@ func (m *Meta) GetMetasByDBID(dbID int64) ([]structure.HashPair, error) {
 	return res, nil
 }
 
-// checkSpecialAttributes checks if the special attributes are in the table info.
+// CheckSpecialAttributes checks if the special attributes are in the table info.
 // Make it same as hasSpecialAttributes.
-func checkSpecialAttributes(str string) bool {
-	if strings.Contains(str, "\"tiflash_replica\":null\n") && strings.Contains(str, "\"policy_ref_info\":null") &&
+// Exported for testing.
+func CheckSpecialAttributes(str string) bool {
+	if strings.Contains(str, "\"tiflash_replica\":null") && strings.Contains(str, "\"policy_ref_info\":null") &&
 		strings.Contains(str, "\"partition\":null") && strings.Contains(str, "\"ttl_info\":null") {
 		return false
 	}
@@ -1041,7 +1042,7 @@ func GetAllNameToIDAndSpecialAttributeInfo(m *Meta, dbID int64) (map[string]int6
 			return errors.Trace(err)
 		}
 		res[nameLMatch[1]] = int64(id)
-		if checkSpecialAttributes(nameLMatch[1]) {
+		if CheckSpecialAttributes(nameLMatch[1]) {
 			tbInfo := &model.TableInfo{}
 			err = json.Unmarshal(value, tbInfo)
 			if err != nil {

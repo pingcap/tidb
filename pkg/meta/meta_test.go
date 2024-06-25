@@ -16,6 +16,7 @@ package meta_test
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strconv"
 	"testing"
@@ -727,4 +728,41 @@ func TestName(t *testing.T) {
 
 	err = txn.Rollback()
 	require.NoError(t, err)
+}
+
+func TestCheckSpecialAttributes(t *testing.T) {
+	tableInfo := &model.TableInfo{
+		TTLInfo: &model.TTLInfo{IntervalExprStr: "1", IntervalTimeUnit: int(ast.TimeUnitDay), JobInterval: "1h"},
+	}
+	b, err := json.Marshal(tableInfo)
+	require.NoError(t, err)
+	require.True(t, meta.CheckSpecialAttributes(string(b)))
+
+	tableInfo = &model.TableInfo{
+		TiFlashReplica: &model.TiFlashReplicaInfo{Count: 1},
+	}
+	b, err = json.Marshal(tableInfo)
+	require.NoError(t, err)
+	require.True(t, meta.CheckSpecialAttributes(string(b)))
+
+	tableInfo = &model.TableInfo{
+		PlacementPolicyRef: &model.PolicyRefInfo{ID: 1},
+	}
+	b, err = json.Marshal(tableInfo)
+	require.NoError(t, err)
+	require.True(t, meta.CheckSpecialAttributes(string(b)))
+
+	tableInfo = &model.TableInfo{
+		Partition: &model.PartitionInfo{Expr: "a"},
+	}
+	b, err = json.Marshal(tableInfo)
+	require.NoError(t, err)
+	require.True(t, meta.CheckSpecialAttributes(string(b)))
+
+	tableInfo = &model.TableInfo{
+		ID: 123,
+	}
+	b, err = json.Marshal(tableInfo)
+	require.NoError(t, err)
+	require.False(t, meta.CheckSpecialAttributes(string(b)))
 }
