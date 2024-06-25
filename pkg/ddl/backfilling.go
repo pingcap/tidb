@@ -44,7 +44,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
-	tidblogutil "github.com/pingcap/tidb/pkg/util/logutil"
 	decoder "github.com/pingcap/tidb/pkg/util/rowDecoder"
 	"github.com/pingcap/tidb/pkg/util/topsql"
 	"github.com/prometheus/client_golang/prometheus"
@@ -632,7 +631,6 @@ func (dc *ddlCtx) runAddIndexInLocalIngestMode(
 		return errors.Trace(err)
 	}
 	job := reorgInfo.Job
-	ctx = tidblogutil.WithCategory(ctx, "ddl-ingest")
 	opCtx := NewLocalOperatorCtx(ctx, job.ID)
 	idxCnt := len(reorgInfo.elements)
 	indexIDs := make([]int64, 0, idxCnt)
@@ -643,9 +641,10 @@ func (dc *ddlCtx) runAddIndexInLocalIngestMode(
 		indexIDs = append(indexIDs, e.ID)
 		indexInfo := model.FindIndexInfoByID(t.Meta().Indices, e.ID)
 		if indexInfo == nil {
-			tidblogutil.Logger(opCtx).Warn("index info not found",
-				zap.Int64("table ID", t.Meta().ID),
-				zap.Int64("index ID", e.ID))
+			logutil.DDLIngestLogger().Warn("index info not found",
+				zap.Int64("jobID", job.ID),
+				zap.Int64("tableID", t.Meta().ID),
+				zap.Int64("indexID", e.ID))
 			return errors.Errorf("index info not found: %d", e.ID)
 		}
 		indexInfos = append(indexInfos, indexInfo)
@@ -663,7 +662,8 @@ func (dc *ddlCtx) runAddIndexInLocalIngestMode(
 	defer ingest.LitBackCtxMgr.Unregister(job.ID)
 	engines, err := bcCtx.Register(indexIDs, uniques, t.Meta())
 	if err != nil {
-		tidblogutil.Logger(opCtx).Error("cannot register new engine",
+		logutil.DDLIngestLogger().Error("cannot register new engine",
+			zap.Int64("jobID", job.ID),
 			zap.Error(err),
 			zap.Int64s("index IDs", indexIDs))
 		return errors.Trace(err)
@@ -685,7 +685,9 @@ func (dc *ddlCtx) runAddIndexInLocalIngestMode(
 		dc.store.(kv.StorageWithPD).GetPDClient(),
 	)
 	if err != nil {
-		tidblogutil.Logger(opCtx).Warn("create checkpoint manager failed", zap.Error(err))
+		logutil.DDLIngestLogger().Warn("create checkpoint manager failed",
+			zap.Int64("jobID", job.ID),
+			zap.Error(err))
 	} else {
 		defer cpMgr.Close()
 		cpMgr.Reset(t.GetPhysicalID(), reorgInfo.StartKey, reorgInfo.EndKey)
