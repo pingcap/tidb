@@ -215,6 +215,9 @@ func TestCTEIterationMemTracker(t *testing.T) {
 
 	tk.MustExec("set @@cte_max_recursion_depth=1000000")
 	tk.MustExec("set global tidb_mem_oom_action = 'log';")
+	defer func() {
+		tk.MustExec("set global tidb_mem_oom_action = default;")
+	}()
 	tk.MustExec("set @@tidb_mem_quota_query=10;")
 	maxIter := 5000
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/assertIterTableSpillToDisk", fmt.Sprintf("return(%d)", maxIter)))
