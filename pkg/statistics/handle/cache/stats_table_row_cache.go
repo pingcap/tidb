@@ -151,6 +151,7 @@ func (c *StatsTableRowCache) EstimateDataLength(table *model.TableInfo) (
 	dataLength, indexLength = c.GetDataAndIndexLength(table, table.ID, rowCount)
 	if table.GetPartitionInfo() != nil {
 		// For partition table, data only stores in partition level.
+		// Keep `indexLength` for global index.
 		rowCount, dataLength = 0, 0
 		for _, pi := range table.GetPartitionInfo().Definitions {
 			piRowCnt := c.GetTableRows(pi.ID)
