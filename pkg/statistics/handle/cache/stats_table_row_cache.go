@@ -147,8 +147,11 @@ func (c *StatsTableRowCache) Update(sctx sessionctx.Context) error {
 // Returns row count, average row length, total data length, and all indexed column length.
 func (c *StatsTableRowCache) EstimateDataLength(table *model.TableInfo) (
 	rowCount uint64, avgRowLength uint64, dataLength uint64, indexLength uint64) {
-	dataLength, indexLength = c.GetDataAndIndexLength(table, table.ID, c.GetTableRows(table.ID))
+	rowCount = c.GetTableRows(table.ID)
+	dataLength, indexLength = c.GetDataAndIndexLength(table, table.ID, rowCount)
 	if table.GetPartitionInfo() != nil {
+		// For partition table, data only stores in partition level.
+		rowCount, dataLength = 0, 0
 		for _, pi := range table.GetPartitionInfo().Definitions {
 			piRowCnt := c.GetTableRows(pi.ID)
 			rowCount += piRowCnt
@@ -249,10 +252,7 @@ func (c *StatsTableRowCache) GetDataAndIndexLength(info *model.TableInfo, physic
 		}
 	}
 	for _, length := range columnLength {
-		// For partition table, data only stores in partition level.
-		if info.GetPartitionInfo() == nil || info.ID != physicalID {
-			dataLength += length
-		}
+		dataLength += length
 	}
 	for _, idx := range info.Indices {
 		if idx.State != model.StatePublic {
