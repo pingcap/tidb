@@ -893,7 +893,7 @@ func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duratio
 		sysSessionPool:      newSessionPool(capacity, factory),
 		statsLease:          statsLease,
 		infoCache:           infoschema.NewCache(16),
-		slowQuery:           newTopNSlowQueries(30, time.Hour*24*7, 500),
+		slowQuery:           newTopNSlowQueries(config.GetGlobalConfig().InMemSlowQueryTopNNum, time.Hour*24*7, config.GetGlobalConfig().InMemSlowQueryRecentNum),
 		indexUsageSyncLease: idxUsageSyncLease,
 		dumpFileGcChecker:   &dumpFileGcChecker{gcLease: dumpFileGcLease, paths: []string{GetPlanReplayerDirName(), GetOptimizerTraceDirName()}},
 		expiredTimeStamp4PC: types.NewTime(types.ZeroCoreTime, mysql.TypeTimestamp, types.DefaultFsp),

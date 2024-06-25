@@ -114,6 +114,12 @@ enable-enum-length-limit = true
 # command can be forwarded to the right TiDB instance to execute.
 enable-global-kill = true
 
+# in-mem-slow-query-topn-num indicates the number of TopN slow queries stored in memory.
+in-mem-slow-query-topn-num = 30
+
+# in-mem-slow-query-recent-num indicates the number of recent slow queries stored in memory.
+in-mem-slow-query-recent-num = 500
+
 [log]
 # Log level: debug, info, warn, error, fatal.
 level = "info"
