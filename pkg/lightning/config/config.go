@@ -175,7 +175,16 @@ func (d *DBStore) adjust(
 	}
 
 	if d.Security == nil {
-		d.Security = s
+		d.Security = &Security{
+			CAPath:                   s.CAPath,
+			CertPath:                 s.CertPath,
+			KeyPath:                  s.KeyPath,
+			CABytes:                  s.CABytes,
+			CertBytes:                s.CertBytes,
+			KeyBytes:                 s.KeyBytes,
+			RedactInfoLog:            s.RedactInfoLog,
+			AllowFallbackToPlaintext: s.AllowFallbackToPlaintext,
+		}
 	}
 
 	switch d.TLS {
@@ -200,12 +209,6 @@ func (d *DBStore) adjust(
 	case "":
 	case "false":
 		d.Security.TLSConfig = nil
-		d.Security.CAPath = ""
-		d.Security.CertPath = ""
-		d.Security.KeyPath = ""
-		d.Security.CABytes = nil
-		d.Security.CertBytes = nil
-		d.Security.KeyBytes = nil
 	default:
 		return common.ErrInvalidConfig.GenWithStack("unsupported `tidb.tls` config %s", d.TLS)
 	}
