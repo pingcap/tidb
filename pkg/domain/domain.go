@@ -375,10 +375,12 @@ func (*Domain) fetchResourceGroups(m *meta.Meta) ([]*model.ResourceGroupInfo, er
 }
 
 func (do *Domain) fetchAllSchemasWithTables(m *meta.Meta) ([]*model.DBInfo, error) {
+	start := time.Now()
 	allSchemas, err := m.ListDatabases()
 	if err != nil {
 		return nil, err
 	}
+	logutil.BgLogger().Info("fetch all schemas", zap.Duration("start time", time.Since(start)), zap.Int("schema count", len(allSchemas)))
 	splittedSchemas := do.splitForConcurrentFetch(allSchemas)
 	doneCh := make(chan error, len(splittedSchemas))
 	for _, schemas := range splittedSchemas {
