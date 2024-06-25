@@ -29,60 +29,60 @@ type entry[K comparable, V any] struct {
 	value   V
 	visited bool
 	element *list.Element
-	size    uint64
+	sz      uint64
 }
 
-func (t *entry[K, V]) Size() uint64 {
-	if t.size == 0 {
+func (t *entry[K, V]) size() uint64 {
+	if t.sz == 0 {
 		size := internal.Sizeof(t)
 		if size > 0 {
-			t.size = uint64(size)
+			t.sz = uint64(size)
 		}
 	}
-	return t.size
+	return t.sz
 }
 
-// Sieve is an efficient turn-Key eviction algorithm for web caches.
+// sieve is an efficient turn-Key eviction algorithm for web caches.
 // See blog post https://cachemon.github.io/SIEVE-website/blog/2023/12/17/sieve-is-simpler-than-lru/
 // and also the academic paper "SIEVE is simpler than LRU"
-type Sieve[K comparable, V any] struct {
-	ctx      context.Context
-	cancel   context.CancelFunc
-	mu       sync.Mutex
-	size     uint64
-	capacity uint64
-	items    map[K]*entry[K, V]
-	ll       *list.List
-	hand     *list.Element
+type sieve[K comparable, V any] struct {
+	ctx    context.Context
+	cancel context.CancelFunc
+	mu     sync.Mutex
+	sz     uint64
+	cap    uint64
+	items  map[K]*entry[K, V]
+	ll     *list.List
+	hand   *list.Element
 }
 
-func newSieve[K comparable, V any](capacity uint64) *Sieve[K, V] {
+func newSieve[K comparable, V any](capacity uint64) *sieve[K, V] {
 	ctx, cancel := context.WithCancel(context.Background())
 
-	cache := &Sieve[K, V]{
-		ctx:      ctx,
-		cancel:   cancel,
-		capacity: capacity,
-		items:    make(map[K]*entry[K, V]),
-		ll:       list.New(),
+	cache := &sieve[K, V]{
+		ctx:    ctx,
+		cancel: cancel,
+		cap:    capacity,
+		items:  make(map[K]*entry[K, V]),
+		ll:     list.New(),
 	}
 
 	return cache
 }
 
-func (s *Sieve[K, V]) SetCapacity(capacity uint64) {
+func (s *sieve[K, V]) setCapacity(capacity uint64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.capacity = capacity
+	s.cap = capacity
 }
 
-func (s *Sieve[K, V]) Capacity() uint64 {
+func (s *sieve[K, V]) capacity() uint64 {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.capacity
+	return s.cap
 }
 
-func (s *Sieve[K, V]) Set(key K, value V) {
+func (s *sieve[K, V]) set(key K, value V) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -92,12 +92,12 @@ func (s *Sieve[K, V]) Set(key K, value V) {
 		return
 	}
 
-	for i := 0; s.size > s.capacity && i < 10; i++ {
+	for i := 0; s.sz > s.cap && i < 10; i++ {
 		s.evict()
 	}
 
 	failpoint.Inject("forceEvictAll", func() {
-		for s.size > 0 {
+		for s.sz > 0 {
 			s.evict()
 		}
 	})
@@ -106,13 +106,13 @@ func (s *Sieve[K, V]) Set(key K, value V) {
 		key:   key,
 		value: value,
 	}
-	s.size += e.Size() // calculate the size first without putting to the list.
+	s.sz += e.size() // calculate the size first without putting to the list.
 	e.element = s.ll.PushFront(key)
 
 	s.items[key] = e
 }
 
-func (s *Sieve[K, V]) Get(key K) (value V, ok bool) {
+func (s *sieve[K, V]) get(key K) (value V, ok bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if e, ok := s.items[key]; ok {
@@ -123,7 +123,7 @@ func (s *Sieve[K, V]) Get(key K) (value V, ok bool) {
 	return
 }
 
-func (s *Sieve[K, V]) Remove(key K) (ok bool) {
+func (s *sieve[K, V]) remove(key K) (ok bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -141,14 +141,14 @@ func (s *Sieve[K, V]) Remove(key K) (ok bool) {
 	return false
 }
 
-func (s *Sieve[K, V]) Contains(key K) (ok bool) {
+func (s *sieve[K, V]) contains(key K) (ok bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	_, ok = s.items[key]
 	return
 }
 
-func (s *Sieve[K, V]) Peek(key K) (value V, ok bool) {
+func (s *sieve[K, V]) peek(key K) (value V, ok bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -159,21 +159,21 @@ func (s *Sieve[K, V]) Peek(key K) (value V, ok bool) {
 	return
 }
 
-func (s *Sieve[K, V]) Size() uint64 {
+func (s *sieve[K, V]) size() uint64 {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	return s.size
+	return s.sz
 }
 
-func (s *Sieve[K, V]) Len() int {
+func (s *sieve[K, V]) len() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	return s.ll.Len()
 }
 
-func (s *Sieve[K, V]) Purge() {
+func (s *sieve[K, V]) purge() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -184,20 +184,20 @@ func (s *Sieve[K, V]) Purge() {
 	s.ll.Init()
 }
 
-func (s *Sieve[K, V]) Close() {
-	s.Purge()
+func (s *sieve[K, V]) close() {
+	s.purge()
 	s.mu.Lock()
 	s.cancel()
 	s.mu.Unlock()
 }
 
-func (s *Sieve[K, V]) removeEntry(e *entry[K, V]) {
+func (s *sieve[K, V]) removeEntry(e *entry[K, V]) {
 	s.ll.Remove(e.element)
 	delete(s.items, e.key)
-	s.size -= e.Size()
+	s.sz -= e.size()
 }
 
-func (s *Sieve[K, V]) evict() {
+func (s *sieve[K, V]) evict() {
 	o := s.hand
 	// if o is nil, then assign it to the tail element in the list
 	if o == nil {

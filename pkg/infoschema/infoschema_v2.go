@@ -86,7 +86,7 @@ type Data struct {
 	// Stores the full data in memory.
 	schemaMap *btree.BTreeG[schemaItem]
 
-	tableCache *Sieve[tableCacheKey, table.Table]
+	tableCache *sieve[tableCacheKey, table.Table]
 
 	// sorted by both SchemaVersion and timestamp in descending order, assume they have same order
 	mu struct {
@@ -181,13 +181,13 @@ func NewData() *Data {
 
 // CacheCapacity is exported for testing.
 func (isd *Data) CacheCapacity() uint64 {
-	return isd.tableCache.Capacity()
+	return isd.tableCache.capacity()
 }
 
 func (isd *Data) add(item tableItem, tbl table.Table) {
 	isd.byID.Set(item)
 	isd.byName.Set(item)
-	isd.tableCache.Set(tableCacheKey{item.tableID, item.schemaVersion}, tbl)
+	isd.tableCache.set(tableCacheKey{item.tableID, item.schemaVersion}, tbl)
 	ti := tbl.Meta()
 	if pi := ti.GetPartitionInfo(); pi != nil {
 		for _, def := range pi.Definitions {
@@ -223,7 +223,7 @@ func (isd *Data) remove(item tableItem) {
 		schemaVersion: item.schemaVersion,
 		tableInfo:     nil,
 		tomb:          true})
-	isd.tableCache.Remove(tableCacheKey{item.tableID, item.schemaVersion})
+	isd.tableCache.remove(tableCacheKey{item.tableID, item.schemaVersion})
 }
 
 func (isd *Data) deleteDB(dbInfo *model.DBInfo, schemaVersion int64) {
@@ -367,7 +367,7 @@ func (is *infoschemaV2) tableByID(id int64, noRefill bool) (val table.Table, ok 
 
 	// Get from the cache.
 	key := tableCacheKey{id, is.infoSchema.schemaMetaVersion}
-	tbl, found := is.tableCache.Get(key)
+	tbl, found := is.tableCache.get(key)
 	if found && tbl != nil {
 		return tbl, true
 	}
@@ -388,10 +388,10 @@ func (is *infoschemaV2) tableByID(id int64, noRefill bool) (val table.Table, ok 
 	}
 	// get cache with old key
 	oldKey := tableCacheKey{itm.tableID, itm.schemaVersion}
-	tbl, found = is.tableCache.Get(oldKey)
+	tbl, found = is.tableCache.get(oldKey)
 	if found && tbl != nil {
 		if !noRefill {
-			is.tableCache.Set(key, tbl)
+			is.tableCache.set(key, tbl)
 		}
 		return tbl, true
 	}
@@ -403,7 +403,7 @@ func (is *infoschemaV2) tableByID(id int64, noRefill bool) (val table.Table, ok 
 	}
 
 	if !noRefill {
-		is.tableCache.Set(key, ret)
+		is.tableCache.set(key, ret)
 	}
 	return ret, true
 }
@@ -433,16 +433,16 @@ func (is *infoschemaV2) TableByName(schema, tbl model.CIStr) (t table.Table, err
 
 	// Get from the cache.
 	key := tableCacheKey{itm.tableID, is.infoSchema.schemaMetaVersion}
-	res, found := is.tableCache.Get(key)
+	res, found := is.tableCache.get(key)
 	if found && res != nil {
 		return res, nil
 	}
 
 	// get cache with old key
 	oldKey := tableCacheKey{itm.tableID, itm.schemaVersion}
-	res, found = is.tableCache.Get(oldKey)
+	res, found = is.tableCache.get(oldKey)
 	if found && res != nil {
-		is.tableCache.Set(key, res)
+		is.tableCache.set(key, res)
 		return res, nil
 	}
 
@@ -451,7 +451,7 @@ func (is *infoschemaV2) TableByName(schema, tbl model.CIStr) (t table.Table, err
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	is.tableCache.Set(key, ret)
+	is.tableCache.set(key, ret)
 	return ret, nil
 }
 

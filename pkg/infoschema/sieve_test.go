@@ -26,112 +26,112 @@ func TestGetAndSet(t *testing.T) {
 	cache := newSieve[int, int](10 * size.MB)
 
 	for _, v := range items {
-		cache.Set(v, v*10)
+		cache.set(v, v*10)
 	}
 
 	for _, v := range items {
-		val, ok := cache.Get(v)
+		val, ok := cache.get(v)
 		require.True(t, ok)
 		require.Equal(t, v*10, val)
 	}
 
-	cache.Close()
+	cache.close()
 }
 
 func TestRemove(t *testing.T) {
 	cache := newSieve[int, int](10 * size.MB)
-	cache.Set(1, 10)
+	cache.set(1, 10)
 
-	val, ok := cache.Get(1)
+	val, ok := cache.get(1)
 	require.True(t, ok)
 	require.Equal(t, 10, val)
 
 	// After removing the key, it should not be found
-	removed := cache.Remove(1)
+	removed := cache.remove(1)
 	require.True(t, removed)
 
-	_, ok = cache.Get(1)
+	_, ok = cache.get(1)
 	require.False(t, ok)
 
 	// This should not panic
-	removed = cache.Remove(-1)
+	removed = cache.remove(-1)
 	require.False(t, removed)
 
-	cache.Close()
+	cache.close()
 }
 
 func TestSievePolicy(t *testing.T) {
 	var e entry[int, int]
-	cache := newSieve[int, int](10 * e.Size())
+	cache := newSieve[int, int](10 * e.size())
 	oneHitWonders := []int{1, 2, 3, 4, 5}
 	popularObjects := []int{6, 7, 8, 9, 10}
 
 	// add objects to the cache
 	for _, v := range oneHitWonders {
-		cache.Set(v, v)
+		cache.set(v, v)
 	}
 	for _, v := range popularObjects {
-		cache.Set(v, v)
+		cache.set(v, v)
 	}
 
 	// hit popular objects
 	for _, v := range popularObjects {
-		_, ok := cache.Get(v)
+		_, ok := cache.get(v)
 		require.True(t, ok)
 	}
 
 	// add another objects to the cache
 	for _, v := range oneHitWonders {
-		cache.Set(v*10, v*10)
+		cache.set(v*10, v*10)
 	}
 
 	// check popular objects are not evicted
 	for _, v := range popularObjects {
-		_, ok := cache.Get(v)
+		_, ok := cache.get(v)
 		require.True(t, ok)
 	}
 
-	cache.Close()
+	cache.close()
 }
 
 func TestContains(t *testing.T) {
 	cache := newSieve[string, string](10 * size.MB)
-	require.False(t, cache.Contains("hello"))
+	require.False(t, cache.contains("hello"))
 
-	cache.Set("hello", "world")
-	require.True(t, cache.Contains("hello"))
+	cache.set("hello", "world")
+	require.True(t, cache.contains("hello"))
 
-	cache.Close()
+	cache.close()
 }
 
 func TestCacheSize(t *testing.T) {
 	var e entry[int, int]
-	sz := e.Size()
+	sz := e.size()
 
 	cache := newSieve[int, int](10 * size.MB)
-	require.Equal(t, uint64(0), cache.Size())
+	require.Equal(t, uint64(0), cache.size())
 
-	cache.Set(1, 1)
-	require.Equal(t, 1*sz, cache.Size())
+	cache.set(1, 1)
+	require.Equal(t, 1*sz, cache.size())
 
 	// duplicated keys only update the recent-ness of the key and value
-	cache.Set(1, 1)
-	require.Equal(t, 1*sz, cache.Size())
+	cache.set(1, 1)
+	require.Equal(t, 1*sz, cache.size())
 
-	cache.Set(2, 2)
-	require.Equal(t, 2*sz, cache.Size())
+	cache.set(2, 2)
+	require.Equal(t, 2*sz, cache.size())
 
-	cache.Close()
+	cache.close()
 }
 
 func TestPurge(t *testing.T) {
 	cache := newSieve[int, int](10 * size.MB)
-	cache.Set(1, 1)
-	cache.Set(2, 2)
-	require.Equal(t, 2, cache.Len())
+	cache.set(1, 1)
+	cache.set(2, 2)
+	require.Equal(t, 2, cache.len())
 
-	cache.Purge()
-	require.Equal(t, 0, cache.Len())
+	cache.purge()
+	require.Equal(t, 0, cache.len())
 
-	cache.Close()
+	cache.close()
 }
