@@ -3349,7 +3349,7 @@ func rebuildAllPartitionValueMapAndSorted(s *session) {
 				continue
 			}
 			tbl, ok := is.TableByID(t.ID)
-			intest.Assert(ok == true, "table not found in infoschema")
+			intest.Assert(ok, "table not found in infoschema")
 			pe := tbl.(partitionExpr).PartitionExpr()
 			for _, cp := range pe.ColPrunes {
 				if err := cp.RebuildPartitionValueMapAndSorted(p, pi.Definitions); err != nil {
