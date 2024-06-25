@@ -97,7 +97,7 @@ type taskCheckpoint struct {
 type FlushController interface {
 	// Flush checks if al engines need to be flushed and imported based on given
 	// FlushMode. It's concurrent safe.
-	Flush(mode FlushMode) (flushed, imported bool, errIdxID int64, err error)
+	Flush(mode FlushMode) (flushed, imported bool, err error)
 }
 
 // NewCheckpointManager creates a new checkpoint manager.
@@ -224,7 +224,7 @@ func (s *CheckpointManager) UpdateWrittenKeys(taskID int, delta int) (flushed, i
 	cp.writtenKeys += delta
 	s.mu.Unlock()
 
-	flushed, imported, _, err = s.flushCtrl.Flush(FlushModeAuto)
+	flushed, imported, err = s.flushCtrl.Flush(FlushModeAuto)
 	if !flushed || err != nil {
 		return false, false, err
 	}

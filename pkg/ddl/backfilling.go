@@ -656,7 +656,7 @@ func (dc *ddlCtx) runAddIndexInLocalIngestMode(
 		uniques = append(uniques, indexInfo.Unique)
 	}
 
-	engines, err := bcCtx.Register(indexIDs, uniques, job.TableName)
+	engines, err := bcCtx.Register(indexIDs, uniques, t.Meta())
 	if err != nil {
 		tidblogutil.Logger(opCtx).Error("cannot register new engine",
 			zap.Error(err),
