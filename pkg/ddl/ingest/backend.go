@@ -73,6 +73,7 @@ type BackendCtx interface {
 	GetCheckpointManager() *CheckpointManager
 
 	GetLocalBackend() *local.Backend
+	HandleErrorAfterCollectRemoteDuplicateRows(err error, indexID int64, tbl table.Table, hasDupe bool) error
 }
 
 // FlushMode is used to control how to flush.
@@ -113,7 +114,7 @@ type litBackendCtx struct {
 	unregisterMu sync.Mutex
 }
 
-func (bc *litBackendCtx) handleErrorAfterCollectRemoteDuplicateRows(
+func (bc *litBackendCtx) HandleErrorAfterCollectRemoteDuplicateRows(
 	err error,
 	indexID int64,
 	tbl table.Table,
@@ -154,7 +155,7 @@ func (bc *litBackendCtx) CollectRemoteDuplicateRows(indexID int64, tbl table.Tab
 		SysVars: bc.sysVars,
 		IndexID: indexID,
 	}, lightning.ErrorOnDup)
-	return bc.handleErrorAfterCollectRemoteDuplicateRows(err, indexID, tbl, hasDupe)
+	return bc.HandleErrorAfterCollectRemoteDuplicateRows(err, indexID, tbl, hasDupe)
 }
 
 // FinishImport imports all the key-values in engine into the storage, collects
@@ -178,7 +179,7 @@ func (bc *litBackendCtx) FinishImport(tbl table.Table) error {
 				SysVars: bc.sysVars,
 				IndexID: ei.indexID,
 			}, lightning.ErrorOnDup)
-			return bc.handleErrorAfterCollectRemoteDuplicateRows(err, ei.indexID, tbl, hasDupe)
+			return bc.HandleErrorAfterCollectRemoteDuplicateRows(err, ei.indexID, tbl, hasDupe)
 		}
 	}
 
