@@ -6,10 +6,16 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/server/internal/testserverclient",
     visibility = ["//pkg/server:__subpackages__"],
     deps = [
+<<<<<<< HEAD
         "//pkg/config",
+=======
+        "//pkg/ddl/util/callback",
+        "//pkg/domain",
+>>>>>>> 9aeaa76c5cb (*: fix a bug that update statement uses point get and update plan with different tblInfo (#54183))
         "//pkg/errno",
         "//pkg/kv",
         "//pkg/metrics",
+        "//pkg/parser/model",
         "//pkg/parser/mysql",
         "//pkg/server",
         "//pkg/testkit",
