@@ -3341,14 +3341,16 @@ func rebuildAllPartitionValueMapAndSorted(s *session) {
 
 	p := parser.New()
 	is := s.GetInfoSchema().(infoschema.InfoSchema)
-	for _, dbName := range is.AllSchemaNames() {
-		for _, t := range is.SchemaTables(dbName) {
-			pi := t.Meta().GetPartitionInfo()
+	dbs := is.ListTablesWithSpecialAttribute(infoschema.PartitionAttribute)
+	for _, db := range dbs {
+		for _, t := range db.TableInfos {
+			pi := t.GetPartitionInfo()
 			if pi == nil || pi.Type != model.PartitionTypeList {
 				continue
 			}
-
-			pe := t.(partitionExpr).PartitionExpr()
+			tbl, ok := is.TableByID(t.ID)
+			intest.Assert(ok, "table not found in infoschema")
+			pe := tbl.(partitionExpr).PartitionExpr()
 			for _, cp := range pe.ColPrunes {
 				if err := cp.RebuildPartitionValueMapAndSorted(p, pi.Definitions); err != nil {
 					logutil.BgLogger().Warn("build list column partition value map and sorted failed")
