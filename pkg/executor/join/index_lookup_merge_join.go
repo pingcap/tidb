@@ -96,7 +96,7 @@ type InnerMergeCtx struct {
 	CompareFuncs            []expression.CompareFunc
 	ColLens                 []int
 	Desc                    bool
-	KeyOff2KeyOffOrderByIdx []int
+	OrderByIdxOffset2KeyOff []int
 }
 
 type lookUpMergeJoinTask struct {
@@ -457,7 +457,10 @@ func (imw *innerMergeWorker) handleTask(ctx context.Context, task *lookUpMergeJo
 			rowI, rowJ := task.outerResult.GetRow(idxI), task.outerResult.GetRow(idxJ)
 			var c int64
 			var err error
-			for _, keyOff := range imw.KeyOff2KeyOffOrderByIdx {
+			for _, keyOff := range imw.OrderByIdxOffset2KeyOff {
+				// when being compliant property in planner, we thought indexMergeLookJoin can supply the inner index order.
+				// if the outer side doesn't follow that order, since value(keyOff) can follows inner side index order, so
+				// we can resort outer result with a series of CompareFuncs with imw.JoinKeys[keyOff].
 				joinKey := imw.outerMergeCtx.JoinKeys[keyOff]
 				c, _, err = imw.outerMergeCtx.CompareFuncs[keyOff](exprCtx.GetEvalCtx(), joinKey, joinKey, rowI, rowJ)
 				terror.Log(err)
@@ -633,7 +636,7 @@ func (imw *innerMergeWorker) fetchInnerRowsWithSameKey(ctx context.Context, task
 
 func (imw *innerMergeWorker) compare(outerRow, innerRow chunk.Row) (int, error) {
 	exprCtx := imw.ctx.GetExprCtx()
-	for _, keyOff := range imw.InnerMergeCtx.KeyOff2KeyOffOrderByIdx {
+	for _, keyOff := range imw.InnerMergeCtx.OrderByIdxOffset2KeyOff {
 		cmp, _, err := imw.InnerMergeCtx.CompareFuncs[keyOff](exprCtx.GetEvalCtx(), imw.outerMergeCtx.JoinKeys[keyOff], imw.InnerMergeCtx.JoinKeys[keyOff], outerRow, innerRow)
 		if err != nil || cmp != 0 {
 			return int(cmp), err

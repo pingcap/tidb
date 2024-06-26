@@ -3367,7 +3367,7 @@ func (b *executorBuilder) buildIndexLookUpMergeJoin(v *plannercore.PhysicalIndex
 			CompareFuncs:            v.CompareFuncs,
 			ColLens:                 v.IdxColLens,
 			Desc:                    v.Desc,
-			KeyOff2KeyOffOrderByIdx: v.KeyOff2KeyOffOrderByIdx,
+			OrderByIdxOffset2KeyOff: v.OrderByIdxOffset2KeyOff,
 		},
 		WorkerWg:      new(sync.WaitGroup),
 		IsOuterJoin:   v.JoinType.IsOuterJoin(),

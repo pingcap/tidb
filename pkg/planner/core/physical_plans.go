@@ -1542,8 +1542,8 @@ func (p *PhysicalIndexJoin) MemoryUsage() (sum int64) {
 type PhysicalIndexMergeJoin struct {
 	PhysicalIndexJoin
 
-	// KeyOff2KeyOffOrderByIdx maps the offsets in join keys to the offsets in join keys order by index.
-	KeyOff2KeyOffOrderByIdx []int
+	// OrderByIdxOffset2KeyOff maps the offsets in join keys to the offsets in join keys order by index.
+	OrderByIdxOffset2KeyOff []int
 	// CompareFuncs store the compare functions for outer join keys and inner join key.
 	CompareFuncs []expression.CompareFunc
 	// OuterCompareFuncs store the compare functions for outer join keys and outer join
@@ -1561,7 +1561,7 @@ func (p *PhysicalIndexMergeJoin) MemoryUsage() (sum int64) {
 		return
 	}
 
-	sum = p.PhysicalIndexJoin.MemoryUsage() + size.SizeOfSlice*3 + int64(cap(p.KeyOff2KeyOffOrderByIdx))*size.SizeOfInt +
+	sum = p.PhysicalIndexJoin.MemoryUsage() + size.SizeOfSlice*3 + int64(cap(p.OrderByIdxOffset2KeyOff))*size.SizeOfInt +
 		int64(cap(p.CompareFuncs)+cap(p.OuterCompareFuncs))*size.SizeOfFunc + size.SizeOfBool*2
 	return
 }
