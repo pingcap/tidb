@@ -249,7 +249,7 @@ func newFunctionImpl(ctx BuildContext, fold int, funcName string, retType *types
 		typeInferForNull(ctx.GetEvalCtx(), funcArgs)
 	}
 
-	f, err := fc.getFunction(ctx, funcArgs)
+	f, err := fc.getFunction(ctx, funcArgs) //
 	if err != nil {
 		return nil, err
 	}

@@ -397,7 +397,7 @@ func (er *expressionRewriter) ctxStackAppend(col expression.Expression, name *ty
 func (er *expressionRewriter) constructBinaryOpFunction(l expression.Expression, r expression.Expression, op string) (expression.Expression, error) {
 	lLen, rLen := expression.GetRowLen(l), expression.GetRowLen(r)
 	if lLen == 1 && rLen == 1 {
-		return er.newFunction(op, types.NewFieldType(mysql.TypeTiny), l, r)
+		return er.newFunction(op, l.GetType(er.sctx.GetEvalCtx()), l, r)
 	} else if rLen != lLen {
 		return nil, expression.ErrOperandColumns.GenWithStackByArgs(lLen)
 	}
@@ -1930,6 +1930,9 @@ func (er *expressionRewriter) inToExpression(lLen int, not bool, tp *types.Field
 		er.castCollationForIn(l, lLen, stkLen, coll)
 		eqFunctions := make([]expression.Expression, 0, lLen)
 		for i := stkLen - lLen; i < stkLen; i++ {
+			if !er.planCtx.plan.SCtx().GetSessionVars().InRestrictedSQL {
+				fmt.Println("fuck")
+			}
 			expr, err := er.constructBinaryOpFunction(args[0], er.ctxStack[i], ast.EQ)
 			if err != nil {
 				er.err = err

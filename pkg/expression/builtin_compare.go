@@ -1771,7 +1771,7 @@ func (c *compareFunctionClass) getFunction(ctx BuildContext, rawArgs []Expressio
 		return nil, err
 	}
 	cmpType := GetAccurateCmpType(ctx.GetEvalCtx(), args[0], args[1])
-	sig, err = c.generateCmpSigs(ctx, args, cmpType)
+	sig, err = c.generateCmpSigs(ctx, args, cmpType) //
 	return sig, err
 }
 
