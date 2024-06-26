@@ -3224,8 +3224,183 @@ func TestProxyProtocolWithIpNoFallbackable(t *testing.T) {
 	db.Close()
 }
 
+<<<<<<< HEAD:server/tidb_test.go
 func TestLoadData(t *testing.T) {
 	ts := createTidbTestSuite(t)
 	ts.runTestLoadDataReplace(t)
 	ts.runTestLoadDataReplaceNonclusteredPK(t)
+=======
+func TestConnectionWillNotLeak(t *testing.T) {
+	cfg := util2.NewTestConfig()
+	cfg.Port = 0
+	cfg.Status.ReportStatus = false
+	// Setup proxy protocol config
+	cfg.ProxyProtocol.Networks = "*"
+	cfg.ProxyProtocol.Fallbackable = false
+
+	ts := servertestkit.CreateTidbTestSuite(t)
+
+	cli := testserverclient.NewTestServerClient()
+	cli.Port = testutil.GetPortFromTCPAddr(ts.Server.ListenAddr())
+	dsn := cli.GetDSN(func(config *mysql.Config) {
+		config.User = "root"
+		config.DBName = "test"
+	})
+	db, err := sql.Open("mysql", dsn)
+	require.Nil(t, err)
+	db.SetMaxOpenConns(100)
+	db.SetMaxIdleConns(0)
+
+	// create 100 connections
+	conns := make([]*sql.Conn, 0, 100)
+	for len(conns) < 100 {
+		conn, err := db.Conn(context.Background())
+		require.NoError(t, err)
+		conns = append(conns, conn)
+	}
+	require.Eventually(t, func() bool {
+		runtime.GC()
+		return server2.ConnectionInMemCounterForTest.Load() == int64(100)
+	}, time.Minute, time.Millisecond*100)
+
+	// run a simple query on each connection and close it
+	// this cannot ensure the connection will not leak for any kinds of requests
+	var wg sync.WaitGroup
+	for _, conn := range conns {
+		wg.Add(1)
+		conn := conn
+		go func() {
+			rows, err := conn.QueryContext(context.Background(), "SELECT 2023")
+			require.NoError(t, err)
+			var result int
+			require.True(t, rows.Next())
+			require.NoError(t, rows.Scan(&result))
+			require.Equal(t, result, 2023)
+			require.NoError(t, rows.Close())
+			// `db.Close` will not close already grabbed connection, so it's still needed to close the connection here.
+			require.NoError(t, conn.Close())
+			wg.Done()
+		}()
+	}
+	wg.Wait()
+
+	require.NoError(t, db.Close())
+	require.Eventually(t, func() bool {
+		runtime.GC()
+		count := server2.ConnectionInMemCounterForTest.Load()
+		return count == 0
+	}, time.Minute, time.Millisecond*100)
+}
+
+func TestPrepareCount(t *testing.T) {
+	ts := servertestkit.CreateTidbTestSuite(t)
+
+	qctx, err := ts.Tidbdrv.OpenCtx(uint64(0), 0, uint8(tmysql.DefaultCollationID), "test", nil, nil)
+	require.NoError(t, err)
+	prepareCnt := atomic.LoadInt64(&variable.PreparedStmtCount)
+	ctx := context.Background()
+	_, err = Execute(ctx, qctx, "use test;")
+	require.NoError(t, err)
+	_, err = Execute(ctx, qctx, "drop table if exists t1")
+	require.NoError(t, err)
+	_, err = Execute(ctx, qctx, "create table t1 (id int)")
+	require.NoError(t, err)
+	stmt, _, _, err := qctx.Prepare("insert into t1 values (?)")
+	require.NoError(t, err)
+	require.Equal(t, prepareCnt+1, atomic.LoadInt64(&variable.PreparedStmtCount))
+	require.NoError(t, err)
+	err = qctx.GetStatement(stmt.ID()).Close()
+	require.NoError(t, err)
+	require.Equal(t, prepareCnt, atomic.LoadInt64(&variable.PreparedStmtCount))
+	require.NoError(t, qctx.Close())
+}
+
+func TestSQLModeIsLoadedBeforeQuery(t *testing.T) {
+	ts := servertestkit.CreateTidbTestSuite(t)
+	ts.RunTestSQLModeIsLoadedBeforeQuery(t)
+}
+
+func TestConnectionCount(t *testing.T) {
+	ts := servertestkit.CreateTidbTestSuite(t)
+	ts.RunTestConnectionCount(t)
+}
+
+func TestTypeAndCharsetOfSendLongData(t *testing.T) {
+	ts := servertestkit.CreateTidbTestSuite(t)
+	ts.RunTestTypeAndCharsetOfSendLongData(t)
+}
+
+func TestIssue53634(t *testing.T) {
+	ts := servertestkit.CreateTidbTestSuiteWithDDLLease(t, "20s")
+	ts.RunTestIssue53634(t, ts.Domain)
+}
+
+func TestAuthSocket(t *testing.T) {
+	defer server2.ClearOSUserForAuthSocket()
+
+	cfg := util2.NewTestConfig()
+	cfg.Socket = filepath.Join(t.TempDir(), "authsock.sock")
+	cfg.Port = 0
+	cfg.Status.StatusPort = 0
+	ts := servertestkit.CreateTidbTestSuiteWithCfg(t, cfg)
+	ts.WaitUntilServerCanConnect()
+
+	ts.RunTests(t, nil, func(dbt *testkit.DBTestKit) {
+		dbt.MustExec("CREATE USER 'u1'@'%' IDENTIFIED WITH auth_socket;")
+		dbt.MustExec("CREATE USER 'u2'@'%' IDENTIFIED WITH auth_socket AS 'sockuser'")
+		dbt.MustExec("CREATE USER 'sockuser'@'%' IDENTIFIED WITH auth_socket;")
+	})
+
+	// network login should be denied
+	for _, uname := range []string{"u1", "u2", "u3"} {
+		server2.MockOSUserForAuthSocket(uname)
+		db, err := sql.Open("mysql", ts.GetDSN(func(config *mysql.Config) {
+			config.User = uname
+		}))
+		require.NoError(t, err)
+		_, err = db.Conn(context.TODO())
+		require.EqualError(t,
+			err,
+			fmt.Sprintf("Error 1045 (28000): Access denied for user '%s'@'127.0.0.1' (using password: NO)", uname),
+		)
+		require.NoError(t, db.Close())
+	}
+
+	socketAuthConf := func(user string) func(*mysql.Config) {
+		return func(config *mysql.Config) {
+			config.User = user
+			config.Net = "unix"
+			config.Addr = cfg.Socket
+			config.DBName = ""
+		}
+	}
+
+	server2.MockOSUserForAuthSocket("sockuser")
+
+	// mysql username that is different with the OS user should be rejected.
+	db, err := sql.Open("mysql", ts.GetDSN(socketAuthConf("u1")))
+	require.NoError(t, err)
+	_, err = db.Conn(context.TODO())
+	require.EqualError(t, err, "Error 1045 (28000): Access denied for user 'u1'@'localhost' (using password: YES)")
+	require.NoError(t, db.Close())
+
+	// mysql username that is the same with the OS user should be accepted.
+	ts.RunTests(t, socketAuthConf("sockuser"), func(dbt *testkit.DBTestKit) {
+		rows := dbt.MustQuery("select current_user();")
+		ts.CheckRows(t, rows, "sockuser@%")
+	})
+
+	// When a user is created with `IDENTIFIED WITH auth_socket AS ...`.
+	// It should be accepted when username or as string is the same with OS user.
+	ts.RunTests(t, socketAuthConf("u2"), func(dbt *testkit.DBTestKit) {
+		rows := dbt.MustQuery("select current_user();")
+		ts.CheckRows(t, rows, "u2@%")
+	})
+
+	server2.MockOSUserForAuthSocket("u2")
+	ts.RunTests(t, socketAuthConf("u2"), func(dbt *testkit.DBTestKit) {
+		rows := dbt.MustQuery("select current_user();")
+		ts.CheckRows(t, rows, "u2@%")
+	})
+>>>>>>> 9aeaa76c5cb (*: fix a bug that update statement uses point get and update plan with different tblInfo (#54183)):pkg/server/tests/commontest/tidb_test.go
 }
