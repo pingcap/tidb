@@ -302,6 +302,7 @@ type PlanCacheValue struct {
 	OutputColumns     types.NameSlice
 	TblInfo2UnionScan map[*model.TableInfo]bool
 	memoryUsage       int64
+	testKey           int64 // this is only for test
 
 	// matchOpts stores some fields help to choose a suitable plan
 	matchOpts *PlanCacheMatchOpts

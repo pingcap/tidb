@@ -23,7 +23,7 @@ import (
 
 	"github.com/ngaut/pools"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
-	"github.com/pingcap/tidb/pkg/ddl/session"
+	"github.com/pingcap/tidb/pkg/ddl/internal/session"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
@@ -121,12 +121,11 @@ func TestCheckpointManagerUpdateReorg(t *testing.T) {
 	createDummyFile(t, tmpFolder)
 	mgr, err := ingest.NewCheckpointManager(ctx, flushCtrl, sessPool, 1, []int64{1}, tmpFolder, mockGetTSClient{})
 	require.NoError(t, err)
-	defer mgr.Close()
 
 	mgr.Register(1, []byte{'1', '9'})
 	mgr.UpdateTotalKeys(1, 100, true)
 	require.NoError(t, mgr.UpdateWrittenKeys(1, 100))
-	mgr.Flush() // Wait the global checkpoint to be updated to the reorg table.
+	mgr.Close() // Wait the global checkpoint to be updated to the reorg table.
 	r, err := tk.Exec("select reorg_meta from mysql.tidb_ddl_reorg where job_id = 1 and ele_id = 1;")
 	require.NoError(t, err)
 	req := r.NewChunk(nil)
@@ -198,6 +197,6 @@ type dummyFlushCtrl struct {
 	imported bool
 }
 
-func (d *dummyFlushCtrl) Flush(_ ingest.FlushMode) (bool, bool, int64, error) {
-	return true, d.imported, 0, nil
+func (d *dummyFlushCtrl) Flush(mode ingest.FlushMode) (bool, bool, error) {
+	return true, d.imported, nil
 }
