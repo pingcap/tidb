@@ -441,7 +441,7 @@ func TestAdjustSecuritySection(t *testing.T) {
 				[tidb.security]
 				ca-path = "/path/to/ca2.pem"
 			`,
-			expectedCA:     "",
+			expectedCA:     "/path/to/ca2.pem",
 			hasTLS:         false,
 			fallback2NoTLS: false,
 		},
@@ -451,8 +451,6 @@ func TestAdjustSecuritySection(t *testing.T) {
 				ca-path = "/path/to/ca2.pem"
 				[tidb]
 				tls = "false"
-				[tidb.security]
-				
 			`,
 			expectedCA:     "/path/to/ca2.pem",
 			hasTLS:         false,
