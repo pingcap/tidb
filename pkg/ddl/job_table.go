@@ -518,7 +518,7 @@ func (d *ddl) delivery2LocalWorker(pool *workerPool, task *limitJobTask) {
 			if err == nil || !isRetryableError(err) {
 				break
 			}
-			logutil.Logger(context.Background()).Warn("handle local ddl job", zap.Int("retry times", i), zap.Error(err))
+			logutil.DDLLogger().Info("handle local ddl job", zap.Int("retry times", i), zap.Error(err))
 			time.Sleep(time.Second)
 		}
 		pool.put(wk)
