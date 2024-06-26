@@ -193,7 +193,8 @@ type HashJoinCtxV2 struct {
 	LUsed, RUsed                                 []int
 	LUsedInOtherCondition, RUsedInOtherCondition []int
 
-	spillHelper *hashJoinSpillHelper // TODO initialize it
+	maxSpillRound int
+	spillHelper   *hashJoinSpillHelper // TODO initialize it
 }
 
 // initHashTableContext create hashTableContext for current HashJoinCtxV2
@@ -278,8 +279,6 @@ type HashJoinV2Exec struct {
 	waiterWg util.WaitGroupWrapper
 
 	prepared bool
-
-	maxRound int // TODO init it // Max times that a partition could be split
 }
 
 // Close implements the Executor Close interface.
@@ -354,6 +353,9 @@ func (e *HashJoinV2Exec) Open(ctx context.Context) error {
 	// e.diskTracker = disk.NewTracker(e.ID(), -1)
 	// e.diskTracker.AttachTo(e.Ctx().GetSessionVars().StmtCtx.DiskTracker)
 
+	// TODO init it when we attach fallback action
+	// e.initMaxSpillRound()
+
 	e.workerWg = util.WaitGroupWrapper{}
 	e.waiterWg = util.WaitGroupWrapper{}
 	e.closeCh = make(chan struct{})
@@ -364,6 +366,19 @@ func (e *HashJoinV2Exec) Open(ctx context.Context) error {
 		e.stats.concurrent = int(e.Concurrency)
 	}
 	return nil
+}
+
+func (e *HashJoinV2Exec) initMaxSpillRound() {
+	e.maxSpillRound = 1
+	totalPartitionsNum := e.PartitionNumber
+	for {
+		if totalPartitionsNum > 1024 {
+			break
+		}
+		totalPartitionsNum *= e.PartitionNumber
+		e.maxSpillRound++
+	}
+	e.maxSpillRound = max(1, e.maxSpillRound-1)
 }
 
 func (fetcher *ProbeSideTupleFetcherV2) shouldLimitProbeFetchSize() bool {
@@ -517,6 +532,11 @@ func (e *HashJoinV2Exec) probeInSpillMode(probeSideChunks *chunk.DataInDiskByChu
 
 	probeTime := int64(0)
 	for i := 0; i < chunkNum; i++ {
+		if i%20 == 0 {
+			err := checkSQLKiller(&e.HashJoinCtxV2.SessCtx.GetSessionVars().SQLKiller, "probeInSpillMode")
+			return err
+		}
+
 		// TODO reuse probe chunk
 		chunk, err := probeSideChunks.GetChunk(i)
 		if err != nil {
@@ -533,16 +553,14 @@ func (e *HashJoinV2Exec) probeInSpillMode(probeSideChunks *chunk.DataInDiskByChu
 		// TODO don't forget to reset chunk when it's reusable
 	}
 
-	// TODO implement it
 	// note joinResult.chk may be nil when getNewJoinResult fails in loops
-	// if joinResult == nil {
-	// 	return nil
-	// } else if joinResult.err != nil || (joinResult.chk != nil && joinResult.chk.NumRows() > 0) {
-	// 	e.HashJoinCtx.joinResultCh <- joinResult
-	// } else if joinResult.chk != nil && joinResult.chk.NumRows() == 0 {
-	// 	e.joinChkResourceCh <- joinResult.chk
-	// }
-	// TODO need to handle spill here?
+	if joinResult == nil {
+		return nil
+	} else if joinResult.err != nil || (joinResult.chk != nil && joinResult.chk.NumRows() > 0) {
+		e.HashJoinCtxV2.joinResultCh <- joinResult
+	} else if joinResult.chk != nil && joinResult.chk.NumRows() == 0 {
+		e.ProbeWorkers[0].joinChkResourceCh <- joinResult.chk
+	}
 	return nil
 }
 
@@ -555,9 +573,14 @@ func (e *HashJoinV2Exec) restore() error {
 			break
 		}
 
-		hashTable, err := e.spillHelper.buildHashTable(restoredPartition.buildSideChunks)
+		hashTable, spillTriggered, err := e.spillHelper.buildHashTable(restoredPartition)
 		if err != nil {
 			return err
+		}
+
+		if spillTriggered {
+			// Sometimes spill may be triggered when we build hash table
+			continue
 		}
 
 		if hashTable == nil {
@@ -565,6 +588,8 @@ func (e *HashJoinV2Exec) restore() error {
 		}
 
 		// TODO check spill and execute, triggered spill may has been found in `buildHashTable`, but we handle the spill outside of `buildHashTable`
+		// TODO split build and probe data
+		// TODO after spill is executed, we should execute `continue` in the for loop to execute the restore the next partition
 
 		err = e.probeInSpillMode(restoredPartition.probeSideChunks, hashTable)
 		if err != nil {

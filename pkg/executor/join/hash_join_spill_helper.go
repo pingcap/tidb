@@ -20,6 +20,7 @@ import (
 	"sync/atomic"
 	"unsafe"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
@@ -42,7 +43,7 @@ type hashJoinSpillHelper struct {
 
 	buildSpillChkFieldTypes []*types.FieldType
 	probeFieldTypes         []*types.FieldType
-	tmpSpillChunk           *chunk.Chunk
+	tmpSpillChunks          []*chunk.Chunk
 
 	// TODO initialize it
 	joinChkResourceCh chan *chunk.Chunk
@@ -81,8 +82,8 @@ func (h *hashJoinSpillHelper) close() {
 		}
 	}
 
-	if h.tmpSpillChunk != nil {
-		h.tmpSpillChunk.Destroy(spillChunkSize, h.buildSpillChkFieldTypes)
+	if h.tmpSpillChunks != nil {
+		h.tmpSpillChunks.Destroy(spillChunkSize, h.buildSpillChkFieldTypes)
 	}
 }
 
@@ -108,6 +109,12 @@ func (h *hashJoinSpillHelper) isNotSpilledNoLock() bool {
 
 func (h *hashJoinSpillHelper) isInSpillingNoLock() bool {
 	return h.spillStatus == inSpilling
+}
+
+func (h *hashJoinSpillHelper) isSpillNeeded() bool {
+	h.cond.L.Lock()
+	defer h.cond.L.Unlock()
+	return h.spillStatus == needSpill
 }
 
 func (h *hashJoinSpillHelper) isInSpilling() bool {
@@ -229,7 +236,12 @@ func (h *hashJoinSpillHelper) spillBuildSideOnePartition(partID int, segments []
 		h.hashJoinExec.hashTableContext.setPartitionSpilled(partID)
 	}
 
+	return h.spillSegmentsToDisk(h.buildRowsInDisk[partID], segments)
+}
+
+func (h *hashJoinSpillHelper) spillSegmentsToDisk(disk *chunk.DataInDiskByChunks, segments []*rowTableSegment) error {
 	validJoinKeys := make([]byte, 0, maxRowTableSegmentSize)
+	h.tmpSpillChunks[0].Reset()
 
 	// Get row bytes from segment and spill them
 	for _, seg := range segments {
@@ -237,21 +249,27 @@ func (h *hashJoinSpillHelper) spillBuildSideOnePartition(partID int, segments []
 		rows := seg.getRowsBytes()
 
 		for i, row := range rows {
-			if h.tmpSpillChunk.IsFull() {
-				h.buildRowsInDisk[partID].Add(h.tmpSpillChunk)
-				h.tmpSpillChunk.Reset()
+			if h.tmpSpillChunks[0].IsFull() {
+				err := disk.Add(h.tmpSpillChunks[0])
+				if err != nil {
+					return err
+				}
+				h.tmpSpillChunks[0].Reset()
 			}
 
-			h.tmpSpillChunk.AppendInt64(0, int64(seg.hashValues[i]))
-			h.tmpSpillChunk.AppendBytes(1, validJoinKeys[i:i+1])
-			h.tmpSpillChunk.AppendBytes(2, row)
+			h.tmpSpillChunks[0].AppendInt64(0, int64(seg.hashValues[i]))
+			h.tmpSpillChunks[0].AppendBytes(1, validJoinKeys[i:i+1])
+			h.tmpSpillChunks[0].AppendBytes(2, row)
 		}
 	}
 
-	// Spill remaining rows in tmpSpillChunk
-	if h.tmpSpillChunk.NumRows() > 0 {
-		h.buildRowsInDisk[partID].Add(h.tmpSpillChunk)
-		h.tmpSpillChunk.Reset()
+	// Spill remaining rows in tmpSpillChunk[0]
+	if h.tmpSpillChunks[0].NumRows() > 0 {
+		err := disk.Add(h.tmpSpillChunks[0])
+		if err != nil {
+			return err
+		}
+		h.tmpSpillChunks[0].Reset()
 	}
 	return nil
 }
@@ -265,7 +283,7 @@ func (h *hashJoinSpillHelper) spillProbeChk(partID int, chk *chunk.Chunk) error 
 func (h *hashJoinSpillHelper) initIfNeed() {
 	if h.buildRowsInDisk == nil {
 		// It's the first time that spill is triggered
-		h.tmpSpillChunk = chunk.NewChunkFromPoolWithCapacity(h.buildSpillChkFieldTypes, spillChunkSize)
+		h.tmpSpillChunks = append(h.tmpSpillChunks, chunk.NewChunkFromPoolWithCapacity(h.buildSpillChkFieldTypes, spillChunkSize))
 
 		partitionNum := h.hashJoinExec.PartitionNumber
 		h.buildRowsInDisk = make([]*chunk.DataInDiskByChunks, partitionNum)
@@ -347,7 +365,7 @@ func (h *hashJoinSpillHelper) prepareForRestoring() {
 		rd := &restorePartition{
 			buildSideChunks: buildInDisk,
 			probeSideChunks: h.probeRowsInDisk[i],
-			round:           0,
+			round:           1,
 		}
 		h.stack.push(rd)
 	}
@@ -403,21 +421,97 @@ func (h *hashJoinSpillHelper) appendChunkToSegments(chunk *chunk.Chunk, segments
 	}
 }
 
-func (h *hashJoinSpillHelper) buildHashTable(buildInDisk *chunk.DataInDiskByChunks) (*hashTableV2, error) {
+func (h *hashJoinSpillHelper) respillForBuildData(round int, segments []*rowTableSegment, buildInDisk *chunk.DataInDiskByChunks, chunkIdx int) ([]*chunk.DataInDiskByChunks, error) {
+	if round >= h.hashJoinExec.maxSpillRound {
+		return nil, errors.Errorf("Exceed max hash join spill round. max round: %d", h.hashJoinExec.maxSpillRound)
+	}
+
+	segNum := len(segments)
+	if segNum > 0 && !segments[segNum-1].finalized {
+		h.memTracker.Consume(segments[segNum-1].totalUsedBytes())
+	}
+
+	newBuildInDisk := make([]*chunk.DataInDiskByChunks, h.hashJoinExec.PartitionNumber)
+	for i := range newBuildInDisk {
+		inDisk := chunk.NewDataInDiskByChunks(h.buildSpillChkFieldTypes)
+		inDisk.GetDiskTracker().AttachTo(h.diskTracker)
+		newBuildInDisk[i] = inDisk
+	}
+
+	if len(h.tmpSpillChunks) < h.hashJoinExec.PartitionNumber {
+		for i := len(h.tmpSpillChunks); i < h.hashJoinExec.PartitionNumber; i++ {
+			h.tmpSpillChunks = append(h.tmpSpillChunks, chunk.NewChunkFromPoolWithCapacity(h.buildSpillChkFieldTypes, spillChunkSize))
+		}
+	}
+
+	validJoinKeys := make([]byte, 0, maxRowTableSegmentSize)
+
+	// Spill data in segments
+	for _, seg := range segments {
+		validJoinKeys = h.generateSpilledValidJoinKey(seg, validJoinKeys)
+		rows := seg.getRowsBytes()
+
+		for i, row := range rows {
+			oldHashValue := seg.hashValues[i]
+			var newHashValue int
+			var partID int
+			// TODO get new hash value and partition id
+
+			if h.tmpSpillChunks[partID].IsFull() {
+				err := newBuildInDisk[partID].Add(h.tmpSpillChunks[partID])
+				if err != nil {
+					return nil, err
+				}
+				h.tmpSpillChunks[partID].Reset()
+			}
+
+			h.tmpSpillChunks[partID].AppendInt64(0, int64(newHashValue))
+			h.tmpSpillChunks[partID].AppendBytes(1, validJoinKeys[i:i+1])
+			h.tmpSpillChunks[partID].AppendBytes(2, row)
+		}
+	}
+
+	// respill data in disk
+	chunkNum := buildInDisk.NumChunks()
+	for i := chunkNum; i < chunkNum; i++ {
+		// TODO implement it
+	}
+
+	// Spill remaining rows in tmpSpillChunks
+	for i := 0; i < h.hashJoinExec.PartitionNumber; i++ {
+		if h.tmpSpillChunks[i].NumRows() > 0 {
+			err := newBuildInDisk[i].Add(h.tmpSpillChunks[i])
+			if err != nil {
+				return nil, err
+			}
+			h.tmpSpillChunks[i].Reset()
+		}
+	}
+
+	return newBuildInDisk, nil
+}
+
+func (h *hashJoinSpillHelper) buildHashTable(partition *restorePartition) (*hashTableV2, bool, error) {
 	rowTb := &rowTable{} // TODO initialize metaData in rowTable
 	segments := make([]*rowTableSegment, 0, 10)
 
+	spillTriggered := false
+	buildInDisk := partition.buildSideChunks
 	chunkNum := buildInDisk.NumChunks()
 	for i := 0; i < chunkNum; i++ {
+		// TODO maybe we can reuse a chunk
 		chunk, err := buildInDisk.GetChunk(i)
 		if err != nil {
-			return nil, err
+			return nil, spillTriggered, err
 		}
 
-		h.appendChunkToSegments(chunk, segments)
-		// TODO check spill, split partition and spill them
-
 		// TODO test re-spill case
+		h.appendChunkToSegments(chunk, segments)
+		if h.isSpillNeeded() {
+
+			spillTriggered = true
+			return nil, spillTriggered, nil
+		}
 	}
 
 	if len(segments) > 0 {
@@ -426,15 +520,20 @@ func (h *hashJoinSpillHelper) buildHashTable(buildInDisk *chunk.DataInDiskByChun
 
 	rowTb.segments = segments
 	subTb := newSubTable(rowTb, h.memTracker)
-	subTb.build(0, len(subTb.rowData.segments))
 
-	// TODO check spill, split partition and spill them
+	if h.isSpillNeeded() {
+		// TODO execute spill
+		spillTriggered = true
+	} else {
+		// If we need to spill, it's unnecessary to build the table
+		subTb.build(0, len(subTb.rowData.segments))
+	}
 
 	hashTable := &hashTableV2{}
 	hashTable.tables = append(hashTable.tables, subTb)
 	hashTable.partitionNumber = 1
 
-	return hashTable, nil
+	return hashTable, spillTriggered, nil
 }
 
 // Data in this structure are in same partition
