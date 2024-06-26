@@ -90,6 +90,37 @@ func TestAutoAnalyzeLockedTable(t *testing.T) {
 	require.True(t, dom.StatsHandle().HandleAutoAnalyze())
 }
 
+func TestAutoAnalyzeWithPredicateColumns(t *testing.T) {
+	// Create a table and add it to stats cache.
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int, b int)")
+	tk.MustExec("insert into t values (1, 1)")
+	tk.MustQuery("select * from t where a > 0").Check(testkit.Rows("1 1"))
+	h := dom.StatsHandle()
+	err := h.HandleDDLEvent(<-h.DDLEventCh())
+	require.NoError(t, err)
+	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	is := dom.InfoSchema()
+	require.NoError(t, h.Update(is))
+	exec.AutoAnalyzeMinCnt = 0
+	defer func() {
+		exec.AutoAnalyzeMinCnt = 1000
+	}()
+
+	// Set tidb_analyze_column_options to PREDICATE.
+	tk.MustExec("set global tidb_analyze_column_options='PREDICATE'")
+
+	// Trigger auto analyze.
+	require.True(t, dom.StatsHandle().HandleAutoAnalyze())
+
+	// Check analyze jobs.
+	tk.MustQuery("select table_name, job_info from mysql.analyze_jobs order by id desc limit 1").Check(
+		testkit.Rows("t auto analyze table all columns with 256 buckets, 100 topn, 1 samplerate"),
+	)
+}
+
 func TestDisableAutoAnalyze(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
