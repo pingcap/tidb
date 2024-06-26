@@ -142,3 +142,39 @@ func TestAnalyzeTableWithTiDBPersistAnalyzeOptionsEnabled(t *testing.T) {
 		testkit.Rows("t analyze table all columns with 256 buckets, 100 topn, 1 samplerate"),
 	)
 }
+
+func TestAnalyzeTableWithTiDBPersistAnalyzeOptionsDisabled(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+
+	// Check tidb_persist_analyze_options first.
+	tk.MustQuery("select @@tidb_persist_analyze_options").Check(testkit.Rows("1"))
+	// Disable tidb_persist_analyze_options.
+	tk.MustExec("set global tidb_persist_analyze_options = 0")
+	tk.MustQuery("select @@tidb_persist_analyze_options").Check(testkit.Rows("0"))
+	// Set tidb_analyze_column_options to PREDICATE.
+	tk.MustExec("set global tidb_analyze_column_options='PREDICATE'")
+
+	// Create table and select data with predicate.
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int, b int, c int)")
+	tk.MustExec("insert into t values (1, 1, 1), (2, 2, 2), (3, 3, 3)")
+	tk.MustQuery("select * from t where a > 1").Check(testkit.Rows("2 2 2", "3 3 3"))
+
+	// Dump the statistics usage.
+	h := dom.StatsHandle()
+	err := h.DumpColStatsUsageToKV()
+	require.NoError(t, err)
+
+	// Analyze table with specified columns.
+	tk.MustExec("analyze table t columns a, b")
+	tk.MustQuery("select table_name, job_info from mysql.analyze_jobs order by id desc limit 1").Check(
+		testkit.Rows("t analyze table columns a, b with 256 buckets, 100 topn, 1 samplerate"),
+	)
+
+	// Analyze again, it should use the predicate columns.
+	tk.MustExec("analyze table t")
+	tk.MustQuery("select table_name, job_info from mysql.analyze_jobs order by id desc limit 1").Check(
+		testkit.Rows("t analyze table columns a with 256 buckets, 100 topn, 1 samplerate"),
+	)
+}
