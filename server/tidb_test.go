@@ -3234,6 +3234,11 @@ func TestLoadData(t *testing.T) {
 	ts.runTestLoadDataReplaceNonclusteredPK(t)
 }
 
+func TestIssue53634(t *testing.T) {
+	ts := servertestkit.CreateTidbTestSuiteWithDDLLease(t, "20s")
+	ts.RunTestIssue53634(t, ts.Domain)
+}
+
 func TestAuthSocket(t *testing.T) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/server/MockOSUserForAuthSocket", "return(true)"))
 	defer func() {
