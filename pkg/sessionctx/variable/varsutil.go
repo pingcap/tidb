@@ -603,10 +603,11 @@ func parseSchemaCacheSize(s *SessionVars, normalizedValue string, originalValue 
 			normalizedStr = strconv.Itoa(math.MaxInt64)
 		}
 	}()
-	res, err := units.RAMInBytes(normalizedValue)
-	if err != nil {
-		return 0, "", ErrTruncatedWrongValue.GenWithStackByArgs(TiDBSchemaCacheSize, originalValue)
+
+	bt, str := parseByteSize(normalizedValue)
+	if str != "" {
+		return bt, str, nil
 	}
-	bt := uint64(res)
-	return bt, normalizedValue, nil
+
+	return 0, "", ErrTruncatedWrongValue.GenWithStackByArgs(TiDBSchemaCacheSize, originalValue)
 }
