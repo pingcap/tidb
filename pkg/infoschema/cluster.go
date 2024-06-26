@@ -54,6 +54,9 @@ const (
 	ClusterTableMemoryUsageOpsHistory = "CLUSTER_MEMORY_USAGE_OPS_HISTORY"
 	// ClusterTableTiDBIndexUsage is a table to show the usage stats of indexes across the whole cluster.
 	ClusterTableTiDBIndexUsage = "CLUSTER_TIDB_INDEX_USAGE"
+
+	// TableKeyspaceMeta is the table to show the keyspace meta.
+	TableKeyspaceMeta = "KEYSPACE_META"
 )
 
 // memTableToAllTiDBClusterTables means add memory table to cluster table that will send cop request to all TiDB nodes.
