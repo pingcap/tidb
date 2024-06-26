@@ -3225,7 +3225,7 @@ func (g *gbyResolver) Enter(inNode ast.Node) (ast.Node, bool) {
 		return inNode, true
 	case *driver.ParamMarkerExpr:
 		g.isParam = true
-		if g.exprDepth == 1 {
+		if g.exprDepth == 1 && !n.UseAsValueInGbyByClause {
 			_, isNull, isExpectedType := getUintFromNode(g.ctx, n, false)
 			// For constant uint expression in top level, it should be treated as position expression.
 			if !isNull && isExpectedType {
@@ -3263,6 +3263,9 @@ func (g *gbyResolver) Leave(inNode ast.Node) (ast.Node, bool) {
 				} else if ast.HasWindowFlag(ret) {
 					err = plannererrors.ErrIllegalReference.GenWithStackByArgs(v.Name.OrigColName(), "reference to window function")
 				} else {
+					if isParam, ok := ret.(*driver.ParamMarkerExpr); ok {
+						isParam.UseAsValueInGbyByClause = true
+					}
 					return ret, true
 				}
 			}
@@ -6199,21 +6202,6 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, ds *ast.DeleteStmt) (base
 	proj.SetOutputNames(p.OutputNames()[:oldLen])
 	p = proj
 
-	handleColsMap := b.handleHelper.tailMap()
-	for _, cols := range handleColsMap {
-		for _, col := range cols {
-			for i := 0; i < col.NumCols(); i++ {
-				exprCol := col.GetCol(i)
-				if proj.Schema().Contains(exprCol) {
-					continue
-				}
-				proj.Exprs = append(proj.Exprs, exprCol)
-				proj.Schema().Columns = append(proj.Schema().Columns, exprCol)
-				proj.SetOutputNames(append(proj.OutputNames(), types.EmptyName))
-			}
-		}
-	}
-
 	del := Delete{
 		IsMultiTable: ds.IsMultiTable,
 	}.Init(b.ctx)
@@ -6285,6 +6273,7 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, ds *ast.DeleteStmt) (base
 			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.DeletePriv, dbName, v.Name.L, "", authErr)
 		}
 	}
+	handleColsMap := b.handleHelper.tailMap()
 	tblID2Handle, err := resolveIndicesForTblID2Handle(handleColsMap, p.Schema())
 	if err != nil {
 		return nil, err

@@ -1211,7 +1211,7 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *model.CISt
 		buf.WriteString(",\n")
 	}
 	for i, constrInfo := range publicConstraints {
-		fmt.Fprintf(buf, "CONSTRAINT %s CHECK ((%s))", stringutil.Escape(constrInfo.Name.O, sqlMode), constrInfo.ExprString)
+		fmt.Fprintf(buf, "  CONSTRAINT %s CHECK ((%s))", stringutil.Escape(constrInfo.Name.O, sqlMode), constrInfo.ExprString)
 		if !constrInfo.Enforced {
 			buf.WriteString(" /*!80016 NOT ENFORCED */")
 		}

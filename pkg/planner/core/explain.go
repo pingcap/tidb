@@ -898,25 +898,6 @@ func (p *LogicalJoin) ExplainInfo() string {
 }
 
 // ExplainInfo implements Plan interface.
-func (p *LogicalAggregation) ExplainInfo() string {
-	buffer := bytes.NewBufferString("")
-	if len(p.GroupByItems) > 0 {
-		fmt.Fprintf(buffer, "group by:%s, ",
-			expression.SortedExplainExpressionList(p.SCtx().GetExprCtx().GetEvalCtx(), p.GroupByItems))
-	}
-	if len(p.AggFuncs) > 0 {
-		buffer.WriteString("funcs:")
-		for i, agg := range p.AggFuncs {
-			buffer.WriteString(aggregation.ExplainAggFunc(p.SCtx().GetExprCtx().GetEvalCtx(), agg, false))
-			if i+1 < len(p.AggFuncs) {
-				buffer.WriteString(", ")
-			}
-		}
-	}
-	return buffer.String()
-}
-
-// ExplainInfo implements Plan interface.
 func (p *LogicalProjection) ExplainInfo() string {
 	return expression.ExplainExpressionList(p.Exprs, p.Schema())
 }
@@ -1039,18 +1020,6 @@ func explainNormalizedByItems(buffer *bytes.Buffer, byItems []*util.ByItems) *by
 func (p *LogicalSort) ExplainInfo() string {
 	buffer := bytes.NewBufferString("")
 	return explainByItems(p.SCtx().GetExprCtx().GetEvalCtx(), buffer, p.ByItems).String()
-}
-
-// ExplainInfo implements Plan interface.
-func (lt *LogicalTopN) ExplainInfo() string {
-	buffer := bytes.NewBufferString("")
-	buffer = explainPartitionBy(buffer, lt.GetPartitionBy(), false)
-	if len(lt.GetPartitionBy()) > 0 && len(lt.ByItems) > 0 {
-		buffer.WriteString("order by ")
-	}
-	buffer = explainByItems(lt.SCtx().GetExprCtx().GetEvalCtx(), buffer, lt.ByItems)
-	fmt.Fprintf(buffer, ", offset:%v, count:%v", lt.Offset, lt.Count)
-	return buffer.String()
 }
 
 // ExplainInfo implements Plan interface.
