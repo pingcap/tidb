@@ -472,11 +472,7 @@ import (
 	level                 "LEVEL"
 	list                  "LIST"
 	local                 "LOCAL"
-<<<<<<< HEAD
-	locked                "LOCKED"
-=======
 	local_only            "LOCAL_ONLY"
->>>>>>> a409acb9d17 (parser: Sort keywords (#48851))
 	location              "LOCATION"
 	locked                "LOCKED"
 	logs                  "LOGS"
@@ -735,12 +731,8 @@ import (
 	learner               "LEARNER"
 	learnerConstraints    "LEARNER_CONSTRAINTS"
 	learners              "LEARNERS"
-<<<<<<< HEAD
-	min                   "MIN"
-=======
 	log                   "LOG"
 	low                   "LOW"
->>>>>>> a409acb9d17 (parser: Sort keywords (#48851))
 	max                   "MAX"
 	medium                "MEDIUM"
 	metadata              "METADATA"
