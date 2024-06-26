@@ -121,20 +121,9 @@ func (*MockBackendCtx) UnregisterEngines() {
 	logutil.DDLIngestLogger().Info("mock backend ctx unregister")
 }
 
-// ImportStarted implements BackendCtx interface.
-func (*MockBackendCtx) ImportStarted() bool {
-	return false
-}
-
 // CollectRemoteDuplicateRows implements BackendCtx.CollectRemoteDuplicateRows interface.
 func (*MockBackendCtx) CollectRemoteDuplicateRows(indexID int64, _ table.Table) error {
 	logutil.DDLIngestLogger().Info("mock backend ctx collect remote duplicate rows", zap.Int64("indexID", indexID))
-	return nil
-}
-
-// FinishImport implements BackendCtx.FinishImport interface.
-func (*MockBackendCtx) FinishImport(_ table.Table) error {
-	logutil.DDLIngestLogger().Info("mock backend ctx finish import")
 	return nil
 }
 
@@ -190,11 +179,6 @@ func NewMockEngineInfo(sessCtx sessionctx.Context) *MockEngineInfo {
 
 // Flush implements Engine.Flush interface.
 func (*MockEngineInfo) Flush() error {
-	return nil
-}
-
-// ImportAndClean implements Engine.ImportAndClean interface.
-func (*MockEngineInfo) ImportAndClean() error {
 	return nil
 }
 
