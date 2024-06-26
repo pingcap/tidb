@@ -473,7 +473,7 @@ func ColumnSubstituteImpl(ctx BuildContext, expr Expression, schema *Schema, new
 		// For example, schema = ['name'], newExprs = ['a'], v = length(name).
 		// We can't substitute name with 'a' in length(name) because the collation of name is PAD SPACE.
 		// Fixed issue #53730
-		if v.FuncName.L == ast.Length {
+		if ctx.IsConstantPropagateCheck() && v.FuncName.L == ast.Length {
 			arg0, isColumn := v.GetArgs()[0].(*Column)
 			if isColumn {
 				id := schema.ColumnIndex(arg0)
