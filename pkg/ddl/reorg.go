@@ -330,25 +330,6 @@ func overwriteReorgInfoFromGlobalCheckpoint(w *worker, sess *sess.Session, job *
 		// We only overwrite from checkpoint when the job runs for the first time on this TiDB instance.
 		return nil
 	}
-	bc, ok := ingest.LitBackCtxMgr.Load(job.ID)
-	if ok {
-		// We create the checkpoint manager here because we need to wait for the reorg meta to be initialized.
-		if bc.GetCheckpointManager() == nil {
-			mgr, err := ingest.NewCheckpointManager(
-				w.ctx,
-				bc,
-				w.sessPool,
-				job.ID,
-				extractElemIDs(reorgInfo),
-				bc.GetLocalBackend().LocalStoreDir,
-				w.store.(kv.StorageWithPD).GetPDClient(),
-			)
-			if err != nil {
-				logutil.DDLIngestLogger().Warn("create checkpoint manager failed", zap.Error(err))
-			}
-			bc.AttachCheckpointManager(mgr)
-		}
-	}
 	start, end, pid, err := getCheckpointReorgHandle(sess, job)
 	if err != nil {
 		return errors.Trace(err)
