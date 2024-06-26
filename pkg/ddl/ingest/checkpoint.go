@@ -279,7 +279,7 @@ func (s *CheckpointManager) Close() {
 
 	s.cancel()
 	s.updaterWg.Wait()
-	s.logger.Info("close checkpoint manager")
+	s.logger.Info("checkpoint manager closed")
 }
 
 // Reset resets the checkpoint manager between two partitions.

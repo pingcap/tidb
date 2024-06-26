@@ -987,9 +987,6 @@ func runIngestReorgJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 			ver, err = convertAddIdxJob2RollbackJob(d, t, job, tbl.Meta(), allIndexInfos, err)
 		} else {
 			logutil.DDLLogger().Warn("run add index ingest job error", zap.Error(err))
-			if !errorIsRetryable(err, job) {
-				ver, err = convertAddIdxJob2RollbackJob(d, t, job, tbl.Meta(), allIndexInfos, err)
-			}
 		}
 		return false, ver, errors.Trace(err)
 	}

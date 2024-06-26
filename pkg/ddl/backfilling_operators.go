@@ -136,16 +136,13 @@ type RowCountListener interface {
 }
 
 // EmptyRowCntListener implements a noop RowCountListener.
-type EmptyRowCntListener struct {
-}
+type EmptyRowCntListener struct{}
 
 // Written implements RowCountListener.
-func (*EmptyRowCntListener) Written(_ int) {
-}
+func (*EmptyRowCntListener) Written(_ int) {}
 
 // SetTotal implements RowCountListener.
-func (*EmptyRowCntListener) SetTotal(_ int) {
-}
+func (*EmptyRowCntListener) SetTotal(_ int) {}
 
 // NewAddIndexIngestPipeline creates a pipeline for adding index in ingest mode.
 func NewAddIndexIngestPipeline(
@@ -306,6 +303,7 @@ type TableScanTaskSource struct {
 	startKey kv.Key
 	endKey   kv.Key
 
+	// only used in local ingest
 	cpMgr *ingest.CheckpointManager
 }
 
@@ -340,7 +338,7 @@ func (src *TableScanTaskSource) Open() error {
 	return nil
 }
 
-// adjustRange adjusts the range so that we can skip the ranges that have been processed
+// adjustStartKey adjusts the start key so that we can skip the ranges that have been processed
 // according to the information of checkpoint manager.
 func (src *TableScanTaskSource) adjustStartKey(start, end kv.Key) kv.Key {
 	if src.cpMgr == nil {
@@ -351,7 +349,7 @@ func (src *TableScanTaskSource) adjustStartKey(start, end kv.Key) kv.Key {
 		return start
 	}
 	cpKeyNext := cpKey.Next()
-	if cpKeyNext.Cmp(start) > 0 || cpKey.Cmp(end) >= 0 {
+	if cpKeyNext.Cmp(start) < 0 || cpKey.Cmp(end) > 0 {
 		logutil.Logger(src.ctx).Error("invalid checkpoint key",
 			zap.String("last_process_key", hex.EncodeToString(cpKey)),
 			zap.String("start", hex.EncodeToString(start)),
@@ -517,9 +515,6 @@ func (w *tableScanWorker) scanRecords(task TableScanTask, sender func(IndexRecor
 	err := wrapInBeginRollback(w.se, func(startTS uint64) error {
 		failpoint.Inject("mockScanRecordError", func() {
 			failpoint.Return(errors.New("mock scan record error"))
-		})
-		failpoint.Inject("mockScanRecordPanic", func() {
-			panic("mock panic")
 		})
 		failpoint.InjectCall("scanRecordExec")
 		rs, err := buildTableScan(w.ctx, w.copCtx.GetBase(), startTS, task.Start, task.End)

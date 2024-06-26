@@ -736,9 +736,9 @@ func (dc *ddlCtx) runAddIndexInLocalIngestMode(
 	if err != nil {
 		return err
 	}
-	if hasUnique {
-		for _, indexID := range indexIDs {
-			err := bcCtx.CollectRemoteDuplicateRows(indexID, t)
+	for i, isUK := range uniques {
+		if isUK {
+			err := bcCtx.CollectRemoteDuplicateRows(indexIDs[i], t)
 			if err != nil {
 				return err
 			}

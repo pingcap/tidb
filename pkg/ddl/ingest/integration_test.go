@@ -131,7 +131,9 @@ func TestAddIndexIngestPanic(t *testing.T) {
 	tk.MustExec("set global tidb_enable_dist_task = 0")
 
 	t.Run("Mock panic on scan record operator", func(t *testing.T) {
-		testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockScanRecordPanic", "return")
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/scanRecordExec", func() {
+			panic("mock panic")
+		})
 		tk.MustExec("drop table if exists t;")
 		tk.MustExec("create table t (a int, b int, c int, d int, primary key (a) clustered);")
 		tk.MustExec("insert into t (a, b, c, d) values (1, 1, 1, 1), (2, 2, 2, 2), (3, 3, 3, 3);")
