@@ -88,25 +88,16 @@ type brieTaskProgress struct {
 
 // Inc implements glue.Progress
 func (p *brieTaskProgress) Inc() {
-	current := atomic.AddInt64(&p.current, 1) * 100 / atomic.LoadInt64(&p.total)
-	if p.executor == nil {
-		log.Error("BRIE task executor is nil", zap.Uint64("task id", p.taskID))
-		return
-	}
-
-	now := time.Now().Unix()
-	lastUpdate := atomic.LoadInt64(&p.lastUpdate)
-	// set an interval to avoid update too frequently
-	if now-lastUpdate >= 120 && atomic.CompareAndSwapInt64(&p.lastUpdate, lastUpdate, now) {
-		updateMetaTable(context.Background(), p.executor, p.taskID, map[string]any{
-			"progress": current,
-		})
-	}
+	p.IncBy(1)
 }
 
 // IncBy implements glue.Progress
 func (p *brieTaskProgress) IncBy(cnt int64) {
 	current := atomic.AddInt64(&p.current, cnt) * 100 / atomic.LoadInt64(&p.total)
+	if p.executor == nil {
+		log.Error("BRIE task executor is nil", zap.Uint64("task id", p.taskID))
+		return
+	}
 
 	now := time.Now().Unix()
 	lastUpdate := atomic.LoadInt64(&p.lastUpdate)
