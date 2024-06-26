@@ -3183,8 +3183,8 @@ create table if not exists test.acc (j varchar(20), k varchar(20), l varchar(20)
 explain format='brief' with t as(select i, (case when b.j = '20001' then b.l else b.k end) an from test.ast a inner join test.acc b on (a.i = b.m) and a.i = 'astp2019121731703151'), t1 as (select i, group_concat(an order by an separator '; ') an from t group by i) select * from t1;
 id	estRows	task	access object	operator info
 Projection	8.00	root		test.ast.i, Column#32
-└─HashAgg	8.00	root		group by:Column#37, funcs:group_concat(Column#34 order by Column#35 separator "; ")->Column#32, funcs:firstrow(Column#36)->test.ast.i
-  └─Projection	100.00	root		case(eq(test.acc.j, 20001), test.acc.l, test.acc.k)->Column#34, case(eq(test.acc.j, 20001), test.acc.l, test.acc.k)->Column#35, test.ast.i->Column#36, test.ast.i->Column#37
+└─HashAgg	8.00	root		group by:Column#35, funcs:group_concat(Column#34 order by Column#34 separator "; ")->Column#32, funcs:firstrow(Column#35)->test.ast.i
+  └─Projection	100.00	root		case(eq(test.acc.j, 20001), test.acc.l, test.acc.k)->Column#34, test.ast.i->Column#35
     └─HashJoin	100.00	root		CARTESIAN inner join
       ├─TableReader(Build)	10.00	root		data:Selection
       │ └─Selection	10.00	cop[tikv]		eq(test.ast.i, "astp2019121731703151")

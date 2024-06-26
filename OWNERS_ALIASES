@@ -30,7 +30,7 @@ aliases:
   sig-approvers-executor-import: # approvers for importer part of executor pkg.
     - D3Hunter
     - gmhdbjd
-    - lance6716    
+    - lance6716
   sig-approvers-expression: # approvers for expression pkg
     - windtalker
     - XuHuaiyu
@@ -41,9 +41,7 @@ aliases:
     - gmhdbjd
     - lance6716
     - lichunzhu
-    - okJiang
   sig-approvers-domain: # approvers for domain pkg
-    - zimulala
     - D3Hunter
     - gmhdbjd
     - lance6716
@@ -54,7 +52,6 @@ aliases:
     - tangenta
     - wjhuang2016
     - ywqzzy
-    - zimulala
   sig-approvers-disttask: # approvers for disttask pkg
     - Benjamin2037
     - D3Hunter
@@ -67,11 +64,9 @@ aliases:
     - Benjamin2037
     - gmhdbjd
     - lichunzhu
-    - okJiang
     - lance6716
     - tangenta
   sig-approvers-infoschema: # approvers for infoschema pkg
-    - zimulala
     - wjhuang2016
     - tangenta
     - ywqzzy
@@ -84,14 +79,12 @@ aliases:
     - tangenta
     - wjhuang2016
     - ywqzzy
-    - zimulala    
   sig-approvers-owner: # approvers for `owner` pkg
     - Benjamin2037
     - lichunzhu
     - tangenta
     - wjhuang2016
     - ywqzzy
-    - zimulala
   sig-approvers-parser: # approvers for `parser` module.
     - bb7133
     - BornChanger
@@ -112,13 +105,11 @@ aliases:
     - tangenta
     - wjhuang2016
     - ywqzzy
-    - zimulala
   sig-approvers-lock: # approvers for lock pkg
     - Benjamin2037
     - lance6716
     - tangenta
     - wjhuang2016
-    - zimulala
   sig-approvers-tidb-binlog: # approvers for tidb-binlog module
     - Benjamin2037
     - gmhdbjd

@@ -17,6 +17,7 @@ package variable
 import (
 	"context"
 	"encoding/json"
+	goerr "errors"
 	"fmt"
 	"math"
 	"runtime"
@@ -33,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
+	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
 	"github.com/pingcap/tidb/pkg/privilege/privileges/ldap"
@@ -994,13 +996,6 @@ var defaultSysVars = []*SysVar{
 		GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
 			return BoolToOnOff(PersistAnalyzeOptions.Load()), nil
 		},
-		Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
-			persist := TiDBOptOn(normalizedValue)
-			if !persist && EnableColumnTracking.Load() {
-				return "", errors.Errorf("tidb_persist_analyze_options option cannot be set to OFF when tidb_enable_column_tracking is ON, as this will result in the loss of column tracking information")
-			}
-			return normalizedValue, nil
-		},
 		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
 			persist := TiDBOptOn(val)
 			PersistAnalyzeOptions.Store(persist)
@@ -1016,7 +1011,33 @@ var defaultSysVars = []*SysVar{
 			RunAutoAnalyze.Store(TiDBOptOn(val))
 			return nil
 		},
-	}, {
+	},
+	{
+		Scope: ScopeGlobal,
+		Name:  TiDBAnalyzeColumnOptions,
+		Value: DefTiDBAnalyzeColumnOptions,
+		Type:  TypeStr,
+		GetGlobal: func(ctx context.Context, s *SessionVars) (string, error) {
+			return AnalyzeColumnOptions.Load(), nil
+		},
+		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+			AnalyzeColumnOptions.Store(strings.ToUpper(val))
+			return nil
+		},
+		Validation: func(s *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+			choice := strings.ToUpper(normalizedValue)
+			if choice != model.AllColumns.String() && choice != model.PredicateColumns.String() {
+				return "", errors.Errorf(
+					"invalid value for %s, it should be either '%s' or '%s'",
+					TiDBAnalyzeColumnOptions,
+					model.AllColumns.String(),
+					model.PredicateColumns.String(),
+				)
+			}
+			return normalizedValue, nil
+		},
+	},
+	{
 		Scope: ScopeGlobal, Name: TiDBEnableAutoAnalyzePriorityQueue, Value: BoolToOnOff(DefTiDBEnableAutoAnalyzePriorityQueue), Type: TypeBool,
 		GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
 			return BoolToOnOff(EnableAutoAnalyzePriorityQueue.Load()), nil
@@ -1024,6 +1045,10 @@ var defaultSysVars = []*SysVar{
 		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
 			EnableAutoAnalyzePriorityQueue.Store(TiDBOptOn(val))
 			return nil
+		},
+		Validation: func(s *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+			s.StmtCtx.AppendWarning(ErrWarnDeprecatedSyntaxSimpleMsg.FastGen("tidb_enable_auto_analyze_priority_queue will be removed in the future and TiDB will always use priority queue to execute auto analyze."))
+			return normalizedValue, nil
 		},
 	},
 	{Scope: ScopeGlobal, Name: TiDBGOGCTunerThreshold, Value: strconv.FormatFloat(DefTiDBGOGCTunerThreshold, 'f', -1, 64), Type: TypeFloat, MinValue: 0, MaxValue: math.MaxUint64,
@@ -1147,31 +1172,17 @@ var defaultSysVars = []*SysVar{
 	},
 	{
 		Scope: ScopeGlobal, Name: TiDBEnableColumnTracking,
-		Value: BoolToOnOff(DefTiDBEnableColumnTracking),
+		Value: BoolToOnOff(true),
 		Type:  TypeBool,
 		GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
-			return BoolToOnOff(EnableColumnTracking.Load()), nil
+			return BoolToOnOff(true), nil
 		},
 		Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
-			enabled := TiDBOptOn(normalizedValue)
-			persist := PersistAnalyzeOptions.Load()
-			if enabled && !persist {
-				return "", errors.Errorf("tidb_enable_column_tracking option cannot be set to ON when tidb_persist_analyze_options is set to OFF, as this will prevent the preservation of column tracking information")
-			}
+			// This variable is deprecated and will be removed in the future.
+			vars.StmtCtx.AppendWarning(ErrWarnDeprecatedSyntaxSimpleMsg.FastGen("The 'tidb_enable_column_tracking' variable is deprecated and will be removed in future versions of TiDB. It is always set to 'ON' now."))
 			return normalizedValue, nil
 		},
 		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
-			enabled := TiDBOptOn(val)
-			// If this is a user initiated statement,
-			// we log that column tracking is disabled.
-			if s.StmtCtx.StmtType == "Set" && !enabled {
-				// Set the location to UTC to avoid time zone interference.
-				disableTime := time.Now().UTC().Format(types.UTCTimeFormat)
-				if err := setTiDBTableValue(s, TiDBDisableColumnTrackingTime, disableTime, "Record the last time tidb_enable_column_tracking is set off"); err != nil {
-					return err
-				}
-			}
-			EnableColumnTracking.Store(enabled)
 			return nil
 		}},
 	{Scope: ScopeGlobal, Name: RequireSecureTransport, Value: BoolToOnOff(DefRequireSecureTransport), Type: TypeBool,
@@ -2533,6 +2544,11 @@ var defaultSysVars = []*SysVar{
 	}, SetGlobal: func(ctx context.Context, s *SessionVars, val string) error {
 		if len(val) > 0 && val != CloudStorageURI.Load() {
 			if err := ValidateCloudStorageURI(ctx, val); err != nil {
+				// convert annotations (second-level message) to message so clientConn.writeError
+				// will print friendly error.
+				if goerr.As(err, new(*errors.Error)) {
+					err = errors.New(err.Error())
+				}
 				return err
 			}
 		}
@@ -2778,6 +2794,16 @@ var defaultSysVars = []*SysVar{
 		return nil
 	}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
 		return BoolToOnOff(EnableResourceControl.Load()), nil
+	}},
+	{Scope: ScopeGlobal, Name: TiDBResourceControlStrictMode, Value: BoolToOnOff(DefTiDBResourceControlStrictMode), Type: TypeBool, SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
+		opOn := TiDBOptOn(s)
+		if opOn != EnableResourceControlStrictMode.Load() {
+			EnableResourceControlStrictMode.Store(opOn)
+			logutil.BgLogger().Info("change resource control strict mode", zap.Bool("enable", TiDBOptOn(s)))
+		}
+		return nil
+	}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+		return BoolToOnOff(EnableResourceControlStrictMode.Load()), nil
 	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBPessimisticTransactionFairLocking, Value: BoolToOnOff(DefTiDBPessimisticTransactionFairLocking), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.PessimisticTransactionFairLocking = TiDBOptOn(val)
@@ -3114,14 +3140,27 @@ var defaultSysVars = []*SysVar{
 	}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
 		return BoolToOnOff(EnableCheckConstraint.Load()), nil
 	}},
-	{Scope: ScopeGlobal, Name: TiDBSchemaCacheSize, Value: strconv.Itoa(DefTiDBSchemaCacheSize), Type: TypeInt, MinValue: 0, MaxValue: math.MaxInt32, SetGlobal: func(ctx context.Context, vars *SessionVars, val string) error {
-		// It does not take effect immediately, but within a ddl lease, infoschema reload would cause the v2 to be used.
-		SchemaCacheSize.Store(TidbOptInt64(val, DefTiDBSchemaCacheSize))
-		return nil
-	}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
-		val := SchemaCacheSize.Load()
-		return strconv.FormatInt(val, 10), nil
-	}},
+	{Scope: ScopeGlobal, Name: TiDBSchemaCacheSize, Value: strconv.Itoa(DefTiDBSchemaCacheSize), Type: TypeStr,
+		Validation: func(s *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+			_, str, err := parseSchemaCacheSize(s, normalizedValue, originalValue)
+			if err != nil {
+				return "", err
+			}
+			return str, nil
+		},
+		SetGlobal: func(ctx context.Context, vars *SessionVars, val string) error {
+			// It does not take effect immediately, but within a ddl lease, infoschema reload would cause the v2 to be used.
+			bt, str, err := parseSchemaCacheSize(vars, val, val)
+			if err != nil {
+				return err
+			}
+			SchemaCacheSize.Store(bt)
+			SchemaCacheSizeOriginText.Store(str)
+			return nil
+		},
+		GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+			return SchemaCacheSizeOriginText.Load(), nil
+		}},
 	{Scope: ScopeSession, Name: TiDBSessionAlias, Value: "", Type: TypeStr,
 		Validation: func(s *SessionVars, normalizedValue string, originalValue string, _ ScopeFlag) (string, error) {
 			chars := []rune(normalizedValue)
