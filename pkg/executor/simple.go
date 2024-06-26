@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/internal/querywatch"
 	executor_metrics "github.com/pingcap/tidb/pkg/executor/metrics"
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/extension"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
@@ -1164,13 +1165,14 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 				return err
 			}
 		}
-		pluginImpl, foundPlugin := e.Ctx().GetExtensions().GetAuthPlugin(authPlugin)
+		var pluginImpl *extension.AuthPlugin
 
 		switch authPlugin {
 		case mysql.AuthNativePassword, mysql.AuthCachingSha2Password, mysql.AuthTiDBSM3Password, mysql.AuthSocket, mysql.AuthTiDBAuthToken, mysql.AuthLDAPSimple, mysql.AuthLDAPSASL:
 		default:
+			found := false
 			// If the plugin is not a registered extension auth plugin, return error
-			if !foundPlugin {
+			if pluginImpl, found = e.Ctx().GetExtensions().GetAuthPlugin(authPlugin); !found {
 				return exeerrors.ErrPluginIsNotLoaded.GenWithStackByArgs(spec.AuthOpt.AuthPlugin)
 			}
 		}
@@ -1795,7 +1797,7 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 			if spec.AuthOpt.AuthPlugin == "" {
 				spec.AuthOpt.AuthPlugin = currentAuthPlugin
 			}
-			authPluginImpl, foundAuthPlugin := e.Ctx().GetExtensions().GetAuthPlugin(spec.AuthOpt.AuthPlugin)
+			var authPluginImpl *extension.AuthPlugin
 			switch spec.AuthOpt.AuthPlugin {
 			case mysql.AuthNativePassword, mysql.AuthCachingSha2Password, mysql.AuthTiDBSM3Password, mysql.AuthSocket, mysql.AuthLDAPSimple, mysql.AuthLDAPSASL, "":
 				authTokenOptionHandler = noNeedAuthTokenOptions
@@ -1804,7 +1806,8 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 					authTokenOptionHandler = RequireAuthTokenOptions
 				}
 			default:
-				if !foundAuthPlugin {
+				found := false
+				if authPluginImpl, found = e.Ctx().GetExtensions().GetAuthPlugin(spec.AuthOpt.AuthPlugin); !found {
 					return exeerrors.ErrPluginIsNotLoaded.GenWithStackByArgs(spec.AuthOpt.AuthPlugin)
 				}
 			}

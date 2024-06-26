@@ -1419,14 +1419,6 @@ func (n *UserSpec) SecurityString() string {
 	return n.User.String()
 }
 
-// GetAuthPluginOrDefault returns the auth plugin name if available, otherwise returns the default plugin name.
-func (n *UserSpec) GetAuthPluginOrDefault(defaultPlugin string) string {
-	if n.AuthOpt == nil {
-		return defaultPlugin
-	}
-	return n.AuthOpt.AuthPlugin
-}
-
 // EncodedPassword returns the encoded password (which is the real data mysql.user).
 // The boolean value indicates input's password format is legal or not.
 func (n *UserSpec) EncodedPassword() (string, bool) {
