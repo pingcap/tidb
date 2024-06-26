@@ -71,7 +71,7 @@ func (e *DeleteExec) deleteOneRow(tbl table.Table, colInfo *plannercore.TblColPo
 	if err != nil {
 		return err
 	}
-	err = e.removeRowNew(e.Ctx(), tbl, handle, row[:end], colInfo)
+	err = e.removeRow(e.Ctx(), tbl, handle, row[:end], colInfo)
 	// err = e.removeRow(e.Ctx(), tbl, handle, row[:end])
 	if err != nil {
 		return err
@@ -173,15 +173,30 @@ func (e *DeleteExec) doBatchDelete(ctx context.Context) error {
 	return nil
 }
 
+// fixHandlePosInfoForMultiDelete fixes the position info by the current execution logic.
+// We will cut the mixed row into single table row, so the handle position info should be fixed.
+func (e *DeleteExec) fixHandlePosInfoForMultiDelete() {
+	for i := range e.tblColPosInfos {
+		info := e.tblColPosInfos[i]
+		for _, idxCols := range info.IndexesForDelete {
+			for i := range idxCols {
+				idxCols[i] -= info.Start
+			}
+		}
+		info.RefColPosOfColUnderModify -= info.Start
+	}
+}
+
 func (e *DeleteExec) composeTblRowMap(tblRowMap tableRowMapType, colPosInfos []plannercore.TblColPosInfo, joinedRow []types.Datum) error {
 	// iterate all the joined tables, and got the corresponding rows in joinedRow.
 	var totalMemDelta int64
-	for _, info := range colPosInfos {
+	for i := range colPosInfos {
+		info := colPosInfos[i]
 		if unmatchedOuterRow(info, joinedRow) {
 			continue
 		}
 		if tblRowMap[info.TblID] == nil {
-			tblRowMap[info.TblID] = kv.NewMemAwareHandleMap[[]types.Datum]()
+			tblRowMap[info.TblID] = kv.NewMemAwareHandleMap[handleInfoPair]()
 		}
 		handle, err := info.HandleCols.BuildHandleByDatums(joinedRow)
 		if err != nil {
@@ -190,10 +205,10 @@ func (e *DeleteExec) composeTblRowMap(tblRowMap tableRowMapType, colPosInfos []p
 		// tblRowMap[info.TblID][handle] hold the row datas binding to this table and this handle.
 		row, exist := tblRowMap[info.TblID].Get(handle)
 		if !exist {
-			row = make([]types.Datum, info.End-info.Start)
+			row = handleInfoPair{handleVal: make([]types.Datum, info.End-info.Start), posInfo: &info}
 		}
 		for i, d := range joinedRow[info.Start:info.End] {
-			d.Copy(&row[i])
+			d.Copy(&row.handleVal[i])
 		}
 		memDelta := tblRowMap[info.TblID].Set(handle, row)
 		if !exist {
@@ -240,15 +255,14 @@ func (e *DeleteExec) deleteMultiTablesByChunk(ctx context.Context) error {
 			}
 		}
 	}
-
 	return e.removeRowsInTblRowMap(tblRowMap)
 }
 
 func (e *DeleteExec) removeRowsInTblRowMap(tblRowMap tableRowMapType) error {
 	for id, rowMap := range tblRowMap {
 		var err error
-		rowMap.Range(func(h kv.Handle, val []types.Datum) bool {
-			err = e.removeRow(e.Ctx(), e.tblID2Table[id], h, val)
+		rowMap.Range(func(h kv.Handle, val handleInfoPair) bool {
+			err = e.removeRow(e.Ctx(), e.tblID2Table[id], h, val.handleVal, val.posInfo)
 			return err == nil
 		})
 		if err != nil {
@@ -259,21 +273,7 @@ func (e *DeleteExec) removeRowsInTblRowMap(tblRowMap tableRowMapType) error {
 	return nil
 }
 
-func (e *DeleteExec) removeRow(ctx sessionctx.Context, t table.Table, h kv.Handle, data []types.Datum) error {
-	err := t.RemoveRecord(ctx.GetTableCtx(), h, data)
-	if err != nil {
-		return err
-	}
-	tid := t.Meta().ID
-	err = onRemoveRowForFK(ctx, data, e.fkChecks[tid], e.fkCascades[tid])
-	if err != nil {
-		return err
-	}
-	ctx.GetSessionVars().StmtCtx.AddAffectedRows(1)
-	return nil
-}
-
-func (e *DeleteExec) removeRowNew(ctx sessionctx.Context, t table.Table, h kv.Handle, data []types.Datum, colInfo *plannercore.TblColPosInfo) error {
+func (e *DeleteExec) removeRow(ctx sessionctx.Context, t table.Table, h kv.Handle, data []types.Datum, colInfo *plannercore.TblColPosInfo) error {
 	err := t.RemoveRecordWithGivenInfo(ctx.GetTableCtx(), h, data, colInfo.IndexesForDelete, colInfo.RefColPosOfColUnderModify)
 	if err != nil {
 		return err
@@ -315,6 +315,10 @@ func (e *DeleteExec) Open(ctx context.Context) error {
 	e.memTracker = memory.NewTracker(e.ID(), -1)
 	e.memTracker.AttachTo(e.Ctx().GetSessionVars().StmtCtx.MemTracker)
 
+	if e.IsMultiTable {
+		e.fixHandlePosInfoForMultiDelete()
+	}
+
 	return exec.Open(ctx, e.Children(0))
 }
 
@@ -341,7 +345,12 @@ func (e *DeleteExec) HasFKCascades() bool {
 	return len(e.fkCascades) > 0
 }
 
+type handleInfoPair struct {
+	handleVal []types.Datum
+	posInfo   *plannercore.TblColPosInfo
+}
+
 // tableRowMapType is a map for unique (Table, Row) pair. key is the tableID.
 // the key in map[int64]Row is the joined table handle, which represent a unique reference row.
 // the value in map[int64]Row is the deleting row.
-type tableRowMapType map[int64]*kv.MemAwareHandleMap[[]types.Datum]
+type tableRowMapType map[int64]*kv.MemAwareHandleMap[handleInfoPair]
