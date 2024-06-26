@@ -2801,7 +2801,7 @@ func pushLimitOrTopNForcibly(p base.LogicalPlan) bool {
 	return false
 }
 
-func (lt *LogicalTopN) getPhysTopN(prop *property.PhysicalProperty) []base.PhysicalPlan {
+func getPhysTopN(lt *LogicalTopN, prop *property.PhysicalProperty) []base.PhysicalPlan {
 	allTaskTypes := []property.TaskType{property.CopSingleReadTaskType, property.CopMultiReadTaskType}
 	if !pushLimitOrTopNForcibly(lt) {
 		allTaskTypes = append(allTaskTypes, property.RootTaskType)
@@ -2823,7 +2823,7 @@ func (lt *LogicalTopN) getPhysTopN(prop *property.PhysicalProperty) []base.Physi
 	return ret
 }
 
-func (lt *LogicalTopN) getPhysLimits(prop *property.PhysicalProperty) []base.PhysicalPlan {
+func getPhysLimits(lt *LogicalTopN, prop *property.PhysicalProperty) []base.PhysicalPlan {
 	p, canPass := GetPropByOrderByItems(lt.ByItems)
 	if !canPass {
 		return nil
@@ -2859,14 +2859,6 @@ func MatchItems(p *property.PhysicalProperty, items []*util.ByItems) bool {
 		}
 	}
 	return true
-}
-
-// ExhaustPhysicalPlans implements LogicalPlan interface.
-func (lt *LogicalTopN) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
-	if MatchItems(prop, lt.ByItems) {
-		return append(lt.getPhysTopN(prop), lt.getPhysLimits(prop)...), true, nil
-	}
-	return nil, true, nil
 }
 
 // GetHashJoin is public for cascades planner.
