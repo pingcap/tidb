@@ -467,3 +467,6 @@ SELECT JSON_SCHEMA_VALID('{}','');
 SELECT JSON_SCHEMA_VALID('', NULL);
 -- error 3853
 SELECT JSON_SCHEMA_VALID('1','{}');
+
+# TestIssue54027
+select json_type(cast(cast('2024' as year) as json));
