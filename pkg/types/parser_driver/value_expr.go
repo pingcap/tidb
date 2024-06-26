@@ -247,7 +247,7 @@ type ParamMarkerExpr struct {
 	// grouping the result by the 3rd column.
 	// Use this flag to let the optimizer know whether `group by ?` is converted from this case and if it is, use this
 	// marker as normal value instead of column index in the by-clause.
-	UseAsValueInByClause bool
+	UseAsValueInGbyByClause bool
 }
 
 // Restore implements Node interface.
