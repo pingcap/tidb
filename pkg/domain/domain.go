@@ -300,12 +300,10 @@ func (do *Domain) loadInfoSchema(startTS uint64) (infoschema.InfoSchema, bool, i
 		logutil.BgLogger().Error("failed to load schema diff", zap.Error(err))
 	}
 	// full load.
-	start := time.Now()
 	schemas, err := do.fetchAllSchemasWithTables(m)
 	if err != nil {
 		return nil, false, currentSchemaVersion, nil, err
 	}
-	logutil.BgLogger().Info("fetch all schemas with tables", zap.Duration("start time", time.Since(start)))
 
 	policies, err := do.fetchPolicies(m)
 	if err != nil {
@@ -375,12 +373,10 @@ func (*Domain) fetchResourceGroups(m *meta.Meta) ([]*model.ResourceGroupInfo, er
 }
 
 func (do *Domain) fetchAllSchemasWithTables(m *meta.Meta) ([]*model.DBInfo, error) {
-	start := time.Now()
 	allSchemas, err := m.ListDatabases()
 	if err != nil {
 		return nil, err
 	}
-	logutil.BgLogger().Info("fetch all schemas", zap.Duration("start time", time.Since(start)), zap.Int("schema count", len(allSchemas)))
 	splittedSchemas := do.splitForConcurrentFetch(allSchemas)
 	doneCh := make(chan error, len(splittedSchemas))
 	for _, schemas := range splittedSchemas {
@@ -402,7 +398,8 @@ const fetchSchemaConcurrency = 1
 
 func (*Domain) splitForConcurrentFetch(schemas []*model.DBInfo) [][]*model.DBInfo {
 	groupSize := (len(schemas) + fetchSchemaConcurrency - 1) / fetchSchemaConcurrency
-	if variable.SchemaCacheSize.Load() > 0 {
+	if variable.SchemaCacheSize.Load() > 0 && len(schemas) > 1000 {
+		// TODO: Temporary solution to speed up when too many databases, will refactor it later.
 		groupSize = 8
 	}
 	splitted := make([][]*model.DBInfo, 0, fetchSchemaConcurrency)
@@ -414,7 +411,6 @@ func (*Domain) splitForConcurrentFetch(schemas []*model.DBInfo) [][]*model.DBInf
 		}
 		splitted = append(splitted, schemas[i:end])
 	}
-	logutil.BgLogger().Info("split schemas for concurrent fetch", zap.Int("schema count", schemaCnt), zap.Int("group size", groupSize), zap.Int("group count", len(splitted)))
 	return splitted
 }
 
