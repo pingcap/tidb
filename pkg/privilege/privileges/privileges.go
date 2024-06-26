@@ -658,7 +658,7 @@ func (p *UserPrivileges) ConnectionVerification(user *auth.UserIdentity, authUse
 			return info, ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
 		}
 	} else if authPlugin, ok := p.authPlugins[record.AuthPlugin]; ok {
-		if err = p.authenticateWithPlugin(user, authentication, salt, sessionVars, authConn, authPlugin, pwd, record, hasPassword); err != nil {
+		if err = p.authenticateWithPlugin(user, authentication, salt, sessionVars, authConn, authPlugin, pwd); err != nil {
 			return info, err
 		}
 	} else if len(pwd) > 0 && len(authentication) > 0 {
