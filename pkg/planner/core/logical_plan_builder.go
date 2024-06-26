@@ -3225,7 +3225,7 @@ func (g *gbyResolver) Enter(inNode ast.Node) (ast.Node, bool) {
 		return inNode, true
 	case *driver.ParamMarkerExpr:
 		g.isParam = true
-		if g.exprDepth == 1 {
+		if g.exprDepth == 1 && !n.UseAsValueInGbyByClause {
 			_, isNull, isExpectedType := getUintFromNode(g.ctx, n, false)
 			// For constant uint expression in top level, it should be treated as position expression.
 			if !isNull && isExpectedType {
@@ -3263,6 +3263,9 @@ func (g *gbyResolver) Leave(inNode ast.Node) (ast.Node, bool) {
 				} else if ast.HasWindowFlag(ret) {
 					err = plannererrors.ErrIllegalReference.GenWithStackByArgs(v.Name.OrigColName(), "reference to window function")
 				} else {
+					if isParam, ok := ret.(*driver.ParamMarkerExpr); ok {
+						isParam.UseAsValueInGbyByClause = true
+					}
 					return ret, true
 				}
 			}
