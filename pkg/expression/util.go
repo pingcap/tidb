@@ -181,15 +181,19 @@ func ExtractEquivalenceColumns(result [][]Expression, exprs []Expression) [][]Ex
 // and constant. It return nil, 0 if the expression is not of this form.
 // It is used by derived Top N pattern and it is put here since it looks like
 // a general purpose routine. Similar routines can be added to find lower bound as well.
-func FindUpperBound(expr Expression) (*Column, int64) {
+func FindUpperBound(ctx BuildContext, expr Expression) (*Column, int64) {
 	scalarFunction, scalarFunctionOk := expr.(*ScalarFunction)
 	if scalarFunctionOk {
 		args := scalarFunction.GetArgs()
 		if len(args) == 2 {
 			col, colOk := args[0].(*Column)
 			constant, constantOk := args[1].(*Constant)
+			if !constantOk {
+				return nil, 0
+			}
+			constantVal, constantOk := constant.GetValueWithoutOverOptimization(ctx)
 			if colOk && constantOk && (scalarFunction.FuncName.L == ast.LT || scalarFunction.FuncName.L == ast.LE) {
-				value, valueOk := constant.Value.GetValue().(int64)
+				value, valueOk := constantVal.GetValue().(int64)
 				if valueOk {
 					if scalarFunction.FuncName.L == ast.LT {
 						return col, value - 1
@@ -628,8 +632,16 @@ func SubstituteCorCol2Constant(ctx BuildContext, expr Expression) (Expression, e
 		return &Constant{Value: *x.Data, RetType: x.GetType(ctx.GetEvalCtx())}, nil
 	case *Constant:
 		if x.DeferredExpr != nil {
-			newExpr := FoldConstant(ctx, x)
-			return &Constant{Value: newExpr.(*Constant).Value, RetType: x.GetType(ctx.GetEvalCtx())}, nil
+			newExpr := FoldConstant(ctx, x).(*Constant)
+			// if the `DeferredExpr` evaluated failed, the `newExpr.GetValue()` may return a `nil`. In this
+			// case we'll return an empty datum. This behavior is weird, but will keep the behavior not changed.
+			val, ok := newExpr.GetValue()
+			if !ok {
+				logutil.BgLogger().Warn("substitute correlation column to constant, but get empty value",
+					zap.String("expression", x.ExplainInfo(ctx.GetEvalCtx())))
+				return &Constant{RetType: x.GetType(ctx.GetEvalCtx())}, nil
+			}
+			return &Constant{Value: val, RetType: x.GetType(ctx.GetEvalCtx())}, nil
 		}
 	}
 	return expr, nil
@@ -1401,7 +1413,7 @@ func GetUint64FromConstant(ctx EvalContext, expr Expression) (uint64, bool, bool
 		logutil.BgLogger().Warn("not a constant expression", zap.String("expression", expr.ExplainInfo(ctx)))
 		return 0, false, false
 	}
-	dt := con.Value
+	dt, _ := con.GetValue()
 	if con.ParamMarker != nil {
 		dt = con.ParamMarker.GetUserVar(ctx)
 	} else if con.DeferredExpr != nil {
@@ -1552,16 +1564,22 @@ func RemoveMutableConst(ctx BuildContext, exprs []Expression) (err error) {
 	for _, expr := range exprs {
 		switch v := expr.(type) {
 		case *Constant:
-			v.ParamMarker = nil
+			val, ok := v.GetValue()
+			if ok {
+				return nil
+			}
+
 			if v.DeferredExpr != nil { // evaluate and update v.Value to convert v to a complete immutable constant.
 				// TODO: remove or hide DeferredExpr since it's too dangerous (hard to be consistent with v.Value all the time).
-				v.Value, err = v.DeferredExpr.Eval(ctx.GetEvalCtx(), chunk.Row{})
+				val, err = v.DeferredExpr.Eval(ctx.GetEvalCtx(), chunk.Row{})
 				if err != nil {
 					return err
 				}
-				v.DeferredExpr = nil
 			}
-			v.DeferredExpr = nil // do nothing since v.Value has already been evaluated in this case.
+			*v = Constant{
+				Value:   val,
+				RetType: v.RetType,
+			}
 		case *ScalarFunction:
 			return RemoveMutableConst(ctx, v.GetArgs())
 		}

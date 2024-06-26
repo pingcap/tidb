@@ -154,7 +154,15 @@ func typeInferForNull(ctx EvalContext, args []Expression) {
 	}
 	var isNull = func(expr Expression) bool {
 		cons, ok := expr.(*Constant)
-		return ok && cons.RetType.GetType() == mysql.TypeNull && cons.Value.IsNull()
+		if !ok {
+			return false
+		}
+		consVal, ok := cons.GetValue()
+		if !ok {
+			return false
+		}
+
+		return cons.RetType.GetType() == mysql.TypeNull && consVal.IsNull()
 	}
 	// Infer the actual field type of the NULL constant.
 	var retFieldTp *types.FieldType

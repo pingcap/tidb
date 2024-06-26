@@ -79,16 +79,20 @@ func updateInPredicate(ctx base.PlanContext, inPredicate expression.Expression, 
 		return inPredicate, true
 	}
 	v := inPredicate.(*expression.ScalarFunction)
-	notEQValue := notEQPredicate.(*expression.ScalarFunction).GetArgs()[1].(*expression.Constant)
+	notEQCon := notEQPredicate.(*expression.ScalarFunction).GetArgs()[1].(*expression.Constant)
+	notEQConVal, ok := notEQCon.GetValueWithoutOverOptimization(ctx.GetExprCtx())
 	// do not simplify != NULL since it is always false.
-	if notEQValue.Value.IsNull() {
+	if notEQConVal.IsNull() {
+		return inPredicate, true
+	}
+	if !ok {
 		return inPredicate, true
 	}
 	newValues := make([]expression.Expression, 0, len(v.GetArgs()))
 	var lastValue *expression.Constant
 	for _, element := range v.GetArgs() {
 		value, valueOK := element.(*expression.Constant)
-		redundantValue := valueOK && value.Equal(ctx.GetExprCtx().GetEvalCtx(), notEQValue)
+		redundantValue := valueOK && value.Equal(ctx.GetExprCtx().GetEvalCtx(), notEQCon)
 		if !redundantValue {
 			newValues = append(newValues, element)
 		}

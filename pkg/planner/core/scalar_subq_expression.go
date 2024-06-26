@@ -98,7 +98,10 @@ func (s *ScalarSubQueryExpr) selfEvaluate() error {
 		s.Constant = *expression.NewNull()
 		return err
 	}
-	s.Constant.Value = *colVal
+	s.Constant = expression.Constant{
+		Value:   *colVal,
+		RetType: s.Constant.RetType,
+	}
 	s.evaled = true
 	return nil
 }

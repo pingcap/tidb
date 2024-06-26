@@ -114,7 +114,9 @@ func NewNullWithFieldType(fieldType *types.FieldType) *Constant {
 
 // Constant stands for a constant value.
 type Constant struct {
-	Value   types.Datum
+	// Value is the datum of the constant. Don't use `Constant.Value` directly, because it'll be empty if the constant
+	// is a param marker or a deferred expression. Use `Constant.Eval` instead.
+	Value   types.Datum `extraprivate:""`
 	RetType *types.FieldType
 	// DeferredExpr holds deferred function in PlanCache cached plan.
 	// it's only used to represent non-deterministic functions(see expression.DeferredFunctions)
@@ -538,4 +540,36 @@ func (c *Constant) MemoryUsage() (sum int64) {
 		sum += c.RetType.MemoryUsage()
 	}
 	return
+}
+
+// GetValue returns the reference to the value of the constant if the constant is not a parameter or a deferred expression.
+// Otherwise, it'll return nil and false.
+// If you are using this function in planner, or `getFunction() / verifyArg()` in `expression`, please consider whether
+// it's more appropriate to use `GetValueWithoutOverOptimization`.
+func (c *Constant) GetValue() (types.Datum, bool) {
+	if c.DeferredExpr != nil || c.ParamMarker != nil {
+		return types.Datum{}, false
+	}
+	return c.Value, true
+}
+
+// GetValueWithoutOverOptimization returns the value of the constant if:
+// 1. It's not a parameter or a deferred expression.
+// 2. The context is not in plan cache.
+// This function avoids using `Constant.Value` unexpectedly in plan cache, which may cause wrong result.
+func (c *Constant) GetValueWithoutOverOptimization(ctx BuildContext) (types.Datum, bool) {
+	val, ok := c.GetValue()
+
+	if ctx.IsUseCache() {
+		if ok {
+			return val, true
+		}
+		return types.Datum{}, false
+	}
+
+	datum, err := c.Eval(ctx.GetEvalCtx(), chunk.Row{})
+	if err != nil {
+		return types.Datum{}, false
+	}
+	return datum, true
 }

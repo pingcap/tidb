@@ -164,7 +164,8 @@ func deriveCoercibilityForScalarFunc(sf *ScalarFunction) Coercibility {
 }
 
 func deriveCoercibilityForConstant(c *Constant) Coercibility {
-	if c.Value.IsNull() {
+	// For a parameter or deferred constant, it's coercibility is always `CoercibilityCoercible`, even when it's NULL.
+	if cVal, ok := c.GetValue(); ok && cVal.IsNull() {
 		return CoercibilityIgnorable
 	} else if c.RetType.EvalType() != types.ETString {
 		return CoercibilityNumeric

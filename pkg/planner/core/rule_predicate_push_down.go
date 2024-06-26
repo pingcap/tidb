@@ -525,10 +525,13 @@ func Conds2TableDual(p base.LogicalPlan, conds []expression.Expression) base.Log
 	if expression.MaybeOverOptimized4PlanCache(p.SCtx().GetExprCtx(), []expression.Expression{con}) {
 		return nil
 	}
-	if isTrue, err := con.Value.ToBool(sc.TypeCtxOrDefault()); (err == nil && isTrue == 0) || con.Value.IsNull() {
-		dual := LogicalTableDual{}.Init(p.SCtx(), p.QueryBlockOffset())
-		dual.SetSchema(p.Schema())
-		return dual
+	conVal, ok := con.GetValueWithoutOverOptimization(p.SCtx().GetExprCtx())
+	if ok {
+		if isTrue, err := conVal.ToBool(sc.TypeCtxOrDefault()); (err == nil && isTrue == 0) || conVal.IsNull() {
+			dual := LogicalTableDual{}.Init(p.SCtx(), p.QueryBlockOffset())
+			dual.SetSchema(p.Schema())
+			return dual
+		}
 	}
 	return nil
 }
@@ -547,8 +550,11 @@ func DeleteTrueExprs(p base.LogicalPlan, conds []expression.Expression) []expres
 			continue
 		}
 		sc := p.SCtx().GetSessionVars().StmtCtx
-		if isTrue, err := con.Value.ToBool(sc.TypeCtx()); err == nil && isTrue == 1 {
-			continue
+		conVal, ok := con.GetValueWithoutOverOptimization(p.SCtx().GetExprCtx())
+		if ok {
+			if isTrue, err := conVal.ToBool(sc.TypeCtx()); err == nil && isTrue == 1 {
+				continue
+			}
 		}
 		newConds = append(newConds, cond)
 	}

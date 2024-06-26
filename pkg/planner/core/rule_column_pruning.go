@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace/logicaltrace"
+	"github.com/pingcap/tidb/pkg/types"
 )
 
 type columnPruner struct {
@@ -550,7 +551,7 @@ func addConstOneForEmptyProjection(p base.LogicalPlan) {
 		RetType:  constOne.GetType(p.SCtx().GetExprCtx().GetEvalCtx()),
 	})
 	proj.Exprs = append(proj.Exprs, &expression.Constant{
-		Value:   constOne.Value,
+		Value:   types.NewDatum(1),
 		RetType: constOne.GetType(p.SCtx().GetExprCtx().GetEvalCtx()),
 	})
 }

@@ -1388,7 +1388,11 @@ func hasCTEConsumerInSubPlan(p base.LogicalPlan) bool {
 func initConstantRepertoire(ctx expression.EvalContext, c *expression.Constant) {
 	c.SetRepertoire(expression.ASCII)
 	if c.GetType(ctx).EvalType() == types.ETString {
-		for _, b := range c.Value.GetBytes() {
+		val, ok := c.GetValue()
+		if !ok {
+			return
+		}
+		for _, b := range val.GetBytes() {
 			// if any character in constant is not ascii, set the repertoire to UNICODE.
 			if b >= 0x80 {
 				c.SetRepertoire(expression.UNICODE)

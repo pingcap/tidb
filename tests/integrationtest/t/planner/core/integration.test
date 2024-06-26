@@ -2377,3 +2377,12 @@ select 1 from (select t.col as c0, 46578369 as c1 from t) as t where
   case when (
     t.c0 in (t.c0, cast((cast(1 as unsigned) - cast(t.c1 as signed)) as char))
   ) then 1 else 2 end;
+
+# TestIssue53504
+drop table if exists t;
+create table t (v bigint);
+prepare stmt5 from 'select * from t where v = -?;';
+set @arg=1;
+execute stmt5 using @arg;
+set @arg=-9223372036854775808;
+execute stmt5 using @arg;
