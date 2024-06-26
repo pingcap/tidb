@@ -199,9 +199,9 @@ func (pe *projectionEliminator) eliminate(p base.LogicalPlan, replace map[string
 	// replace logical plan schema
 	switch x := p.(type) {
 	case *LogicalJoin:
-		x.schema = buildLogicalJoinSchema(x.JoinType, x)
+		x.SetSchema(buildLogicalJoinSchema(x.JoinType, x))
 	case *LogicalApply:
-		x.schema = buildLogicalJoinSchema(x.JoinType, x)
+		x.SetSchema(buildLogicalJoinSchema(x.JoinType, x))
 	default:
 		for _, dst := range p.Schema().Columns {
 			resolveColumnAndReplace(dst, replace)
@@ -212,7 +212,7 @@ func (pe *projectionEliminator) eliminate(p base.LogicalPlan, replace map[string
 
 	// eliminate duplicate projection: projection with child projection
 	if isProj {
-		if child, ok := p.Children()[0].(*LogicalProjection); ok && !ExprsHasSideEffects(child.Exprs) {
+		if child, ok := p.Children()[0].(*LogicalProjection); ok && !expression.ExprsHasSideEffects(child.Exprs) {
 			ctx := p.SCtx()
 			for i := range proj.Exprs {
 				proj.Exprs[i] = ReplaceColumnOfExpr(proj.Exprs[i], child, child.Schema())
@@ -277,21 +277,6 @@ func (p *LogicalProjection) ReplaceExprColumns(replace map[string]*expression.Co
 }
 
 // ReplaceExprColumns implements base.LogicalPlan interface.
-func (la *LogicalAggregation) ReplaceExprColumns(replace map[string]*expression.Column) {
-	for _, agg := range la.AggFuncs {
-		for _, aggExpr := range agg.Args {
-			ResolveExprAndReplace(aggExpr, replace)
-		}
-		for _, orderExpr := range agg.OrderByItems {
-			ResolveExprAndReplace(orderExpr.Expr, replace)
-		}
-	}
-	for _, gbyItem := range la.GroupByItems {
-		ResolveExprAndReplace(gbyItem, replace)
-	}
-}
-
-// ReplaceExprColumns implements base.LogicalPlan interface.
 func (p *LogicalSelection) ReplaceExprColumns(replace map[string]*expression.Column) {
 	for _, expr := range p.Conditions {
 		ResolveExprAndReplace(expr, replace)
@@ -312,13 +297,6 @@ func (la *LogicalApply) ReplaceExprColumns(replace map[string]*expression.Column
 // ReplaceExprColumns implements base.LogicalPlan interface.
 func (ls *LogicalSort) ReplaceExprColumns(replace map[string]*expression.Column) {
 	for _, byItem := range ls.ByItems {
-		ResolveExprAndReplace(byItem.Expr, replace)
-	}
-}
-
-// ReplaceExprColumns implements base.LogicalPlan interface.
-func (lt *LogicalTopN) ReplaceExprColumns(replace map[string]*expression.Column) {
-	for _, byItem := range lt.ByItems {
 		ResolveExprAndReplace(byItem.Expr, replace)
 	}
 }

@@ -87,7 +87,7 @@ const (
 	batchAddingJobs = 10
 
 	reorgWorkerCnt   = 10
-	generalWorkerCnt = 1
+	generalWorkerCnt = 10
 	localWorkerCnt   = 10
 
 	// checkFlagIndexInJobArgs is the recoverCheckFlag index used in RecoverTable/RecoverSchema job arg list.
@@ -215,6 +215,7 @@ type DDL interface {
 		ctx sessionctx.Context,
 		schema model.CIStr,
 		info *model.TableInfo,
+		involvingRef []model.InvolvingSchemaInfo,
 		cs ...CreateTableWithInfoConfigurier) error
 
 	// BatchCreateTableWithInfo is like CreateTableWithInfo, but can handle multiple tables.

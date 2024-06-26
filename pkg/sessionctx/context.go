@@ -35,8 +35,6 @@ import (
 	tbctx "github.com/pingcap/tidb/pkg/table/context"
 	"github.com/pingcap/tidb/pkg/util"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
-	"github.com/pingcap/tidb/pkg/util/kvcache"
-	utilpc "github.com/pingcap/tidb/pkg/util/plancache"
 	rangerctx "github.com/pingcap/tidb/pkg/util/ranger/context"
 	"github.com/pingcap/tidb/pkg/util/sli"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
@@ -53,15 +51,28 @@ type SessionStatesHandler interface {
 	DecodeSessionStates(context.Context, Context, *sessionstates.SessionStates) error
 }
 
-// PlanCache is an interface for prepare and non-prepared plan cache
-type PlanCache interface {
-	Get(key kvcache.Key, opts *utilpc.PlanCacheMatchOpts) (value kvcache.Value, ok bool)
-	Put(key kvcache.Key, value kvcache.Value, opts *utilpc.PlanCacheMatchOpts)
-	Delete(key kvcache.Key)
+// SessionPlanCache is an interface for prepare and non-prepared plan cache
+type SessionPlanCache interface {
+	Get(key string, opts any) (value any, ok bool)
+	Put(key string, value, opts any)
+	Delete(key string)
 	DeleteAll()
 	Size() int
 	SetCapacity(capacity uint) error
 	Close()
+}
+
+// InstancePlanCache represents the instance/node level plan cache.
+// Value and Opts should always be *PlanCacheValue and *PlanCacheMatchOpts, use any to avoid cycle-import.
+type InstancePlanCache interface {
+	// Get gets the cached value from the cache according to key and opts.
+	Get(sctx Context, key string, opts any) (value any, ok bool)
+	// Put puts the key and value into the cache.
+	Put(sctx Context, key string, value, opts any) (succ bool)
+	// Evict evicts some cached values.
+	Evict() (evicted bool)
+	// MemUsage returns the total memory usage of this plan cache.
+	MemUsage() int64
 }
 
 // Context is an interface for transaction and executive args environment.
@@ -133,7 +144,7 @@ type Context interface {
 	GetStore() kv.Storage
 
 	// GetSessionPlanCache returns the session-level cache of the physical plan.
-	GetSessionPlanCache() PlanCache
+	GetSessionPlanCache() SessionPlanCache
 
 	// UpdateColStatsUsage updates the column stats usage.
 	UpdateColStatsUsage(predicateColumns []model.TableItemID)

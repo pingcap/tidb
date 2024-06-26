@@ -109,7 +109,7 @@ func BRIECreateTable(
 
 	table = table.Clone()
 
-	return d.CreateTableWithInfo(sctx, dbName, table, append(cs, ddl.OnExistIgnore)...)
+	return d.CreateTableWithInfo(sctx, dbName, table, nil, append(cs, ddl.OnExistIgnore)...)
 }
 
 // BRIECreateTables creates the tables with OnExistIgnore option in batch
