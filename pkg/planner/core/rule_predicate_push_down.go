@@ -46,6 +46,9 @@ type exprPrefixAdder struct {
 
 func (*ppdSolver) optimize(_ context.Context, lp base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
 	planChanged := false
+	if !lp.SCtx().GetSessionVars().InRestrictedSQL {
+		fmt.Println("ok")
+	}
 	_, p := lp.PredicatePushDown(nil, opt)
 	return p, planChanged, nil
 }
