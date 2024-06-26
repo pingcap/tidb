@@ -425,6 +425,10 @@ func (d *ddl) delivery2Worker(wk *worker, pool *workerPool, job *model.Job) {
 			d.runningJobs.remove(job)
 			asyncNotify(d.ddlJobCh)
 			metrics.DDLRunningJobCount.WithLabelValues(pool.tp().String()).Dec()
+<<<<<<< HEAD
+=======
+			pool.put(wk)
+>>>>>>> e81dabe693d (ddl: replace local ingest impl with backfill operators (#54149))
 		}()
 		ownerID := d.ownerManager.ID()
 		// check if this ddl job is synced to all servers.

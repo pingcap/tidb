@@ -46,9 +46,19 @@ var MockDMLExecutionStateBeforeImport func()
 
 // BackendCtx is the backend context for one add index reorg task.
 type BackendCtx interface {
+<<<<<<< HEAD
 	Register(jobID, indexID int64, schemaName, tableName string) (Engine, error)
 	Unregister(jobID, indexID int64)
+=======
+	// Register create a new engineInfo for each index ID and register it to the
+	// backend context. If the index ID is already registered, it will return the
+	// associated engines. Only one group of index ID is allowed to register for a
+	// BackendCtx.
+	Register(indexIDs []int64, uniques []bool, tblInfo *model.TableInfo) ([]Engine, error)
+	UnregisterEngines()
+>>>>>>> e81dabe693d (ddl: replace local ingest impl with backfill operators (#54149))
 
+	// TODO(lance6716): remove the indexID argument from CollectRemoteDuplicateRows.
 	CollectRemoteDuplicateRows(indexID int64, tbl table.Table) error
 	FinishImport(indexID int64, unique bool, tbl table.Table) error
 	ResetWorkers(jobID int64)
@@ -69,9 +79,6 @@ const (
 	// FlushModeAuto means caller does not enforce any flush, the implementation can
 	// decide it.
 	FlushModeAuto FlushMode = iota
-	// FlushModeForceFlushNoImport means flush all data to local storage, but don't
-	// import the data to TiKV.
-	FlushModeForceFlushNoImport
 	// FlushModeForceFlushAndImport means flush and import all data to TiKV.
 	FlushModeForceFlushAndImport
 )
@@ -135,6 +142,7 @@ func (bc *litBackendCtx) CollectRemoteDuplicateRows(indexID int64, tbl table.Tab
 	return bc.handleErrorAfterCollectRemoteDuplicateRows(err, indexID, tbl, hasDupe)
 }
 
+<<<<<<< HEAD
 // FinishImport imports all the key-values in engine into the storage, collects the duplicate errors if any, and
 // removes the engine from the backend context.
 func (bc *litBackendCtx) FinishImport(indexID int64, unique bool, tbl table.Table) error {
@@ -169,6 +177,8 @@ func (bc *litBackendCtx) FinishImport(indexID int64, unique bool, tbl table.Tabl
 	return nil
 }
 
+=======
+>>>>>>> e81dabe693d (ddl: replace local ingest impl with backfill operators (#54149))
 func acquireLock(ctx context.Context, se *concurrency.Session, key string) (*concurrency.Mutex, error) {
 	mu := concurrency.NewMutex(se, key)
 	err := mu.Lock(ctx)
@@ -310,9 +320,6 @@ func (bc *litBackendCtx) checkFlush(mode FlushMode) (shouldFlush bool, shouldImp
 	})
 	if mode == FlushModeForceFlushAndImport || ForceSyncFlagForTest {
 		return true, true
-	}
-	if mode == FlushModeForceFlushNoImport {
-		return true, false
 	}
 	bc.diskRoot.UpdateUsage()
 	shouldImport = bc.diskRoot.ShouldImport()

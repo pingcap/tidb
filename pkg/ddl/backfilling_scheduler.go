@@ -16,31 +16,37 @@ package ddl
 
 import (
 	"context"
-	"fmt"
 	"math"
 	"sync"
 	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/ddl/copr"
-	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	sess "github.com/pingcap/tidb/pkg/ddl/internal/session"
 	ddllogutil "github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/model"
+<<<<<<< HEAD
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
 	poolutil "github.com/pingcap/tidb/pkg/resourcemanager/util"
+=======
+>>>>>>> e81dabe693d (ddl: replace local ingest impl with backfill operators (#54149))
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
+<<<<<<< HEAD
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+=======
+	contextutil "github.com/pingcap/tidb/pkg/util/context"
+	"github.com/pingcap/tidb/pkg/util/execdetails"
+	"github.com/pingcap/tidb/pkg/util/memory"
+>>>>>>> e81dabe693d (ddl: replace local ingest impl with backfill operators (#54149))
 	"github.com/pingcap/tidb/pkg/util/mock"
 	decoder "github.com/pingcap/tidb/pkg/util/rowDecoder"
 	"go.uber.org/zap"
@@ -61,7 +67,6 @@ type backfillScheduler interface {
 
 var (
 	_ backfillScheduler = &txnBackfillScheduler{}
-	_ backfillScheduler = &ingestBackfillScheduler{}
 )
 
 const maxBackfillWorkerSize = 16
@@ -83,6 +88,7 @@ type txnBackfillScheduler struct {
 	closed   bool
 }
 
+<<<<<<< HEAD
 func newBackfillScheduler(ctx context.Context, info *reorgInfo, sessPool *sess.Pool,
 	tp backfillerType, tbl table.PhysicalTable, sessCtx sessionctx.Context,
 	jobCtx *JobContext) (backfillScheduler, error) {
@@ -93,6 +99,8 @@ func newBackfillScheduler(ctx context.Context, info *reorgInfo, sessPool *sess.P
 	return newTxnBackfillScheduler(ctx, info, sessPool, tp, tbl, sessCtx, jobCtx)
 }
 
+=======
+>>>>>>> e81dabe693d (ddl: replace local ingest impl with backfill operators (#54149))
 func newTxnBackfillScheduler(ctx context.Context, info *reorgInfo, sessPool *sess.Pool,
 	tp backfillerType, tbl table.PhysicalTable, sessCtx sessionctx.Context,
 	jobCtx *JobContext) (backfillScheduler, error) {
@@ -308,6 +316,7 @@ func (b *txnBackfillScheduler) close(force bool) {
 	close(b.resultCh)
 }
 
+<<<<<<< HEAD
 type ingestBackfillScheduler struct {
 	ctx        context.Context
 	reorgInfo  *reorgInfo
@@ -519,6 +528,8 @@ func (b *ingestBackfillScheduler) expectedWorkerSize() (readerSize int, writerSi
 	return expectedIngestWorkerCnt(int(variable.GetDDLReorgWorkerCounter()), b.avgRowSize)
 }
 
+=======
+>>>>>>> e81dabe693d (ddl: replace local ingest impl with backfill operators (#54149))
 func expectedIngestWorkerCnt(concurrency, avgRowSize int) (readerCnt, writerCnt int) {
 	workerCnt := concurrency
 	if avgRowSize == 0 {
@@ -541,6 +552,7 @@ func expectedIngestWorkerCnt(concurrency, avgRowSize int) (readerCnt, writerCnt 
 	return readerCnt, writerCnt
 }
 
+<<<<<<< HEAD
 func (w *addIndexIngestWorker) HandleTask(rs IndexRecordChunk, _ func(workerpool.None)) {
 	defer util.Recover(metrics.LabelDDL, "ingestWorker.HandleTask", func() {
 		w.resultCh <- &backfillResult{taskID: rs.ID, err: dbterror.ErrReorgPanic}
@@ -590,6 +602,8 @@ func (w *addIndexIngestWorker) HandleTask(rs IndexRecordChunk, _ func(workerpool
 
 func (*addIndexIngestWorker) Close() {}
 
+=======
+>>>>>>> e81dabe693d (ddl: replace local ingest impl with backfill operators (#54149))
 type taskIDAllocator struct {
 	id int
 }

@@ -67,7 +67,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
-	"github.com/prometheus/client_golang/prometheus"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
 	kvutil "github.com/tikv/client-go/v2/util"
@@ -940,16 +939,22 @@ func runIngestReorgJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 	}
 	done, ver, err = runReorgJobAndHandleErr(w, d, t, job, tbl, allIndexInfos, false)
 	if err != nil {
-		if !errorIsRetryable(err, job) {
+		if kv.ErrKeyExists.Equal(err) {
+			logutil.DDLLogger().Warn("import index duplicate key, convert job to rollback", zap.Stringer("job", job), zap.Error(err))
+			ver, err = convertAddIdxJob2RollbackJob(d, t, job, tbl.Meta(), allIndexInfos, err)
+		} else if !errorIsRetryable(err, job) {
 			logutil.DDLLogger().Warn("run reorg job failed, convert job to rollback",
 				zap.String("job", job.String()), zap.Error(err))
 			ver, err = convertAddIdxJob2RollbackJob(d, t, job, tbl.Meta(), allIndexInfos, err)
+		} else {
+			logutil.DDLLogger().Warn("run add index ingest job error", zap.Error(err))
 		}
 		return false, ver, errors.Trace(err)
 	}
 	if !done {
 		return false, ver, nil
 	}
+<<<<<<< HEAD
 	for _, indexInfo := range allIndexInfos {
 		err = bc.FinishImport(indexInfo.ID, indexInfo.Unique, tbl)
 		if err != nil {
@@ -968,6 +973,8 @@ func runIngestReorgJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 			return false, ver, errors.Trace(err)
 		}
 	}
+=======
+>>>>>>> e81dabe693d (ddl: replace local ingest impl with backfill operators (#54149))
 	bc.SetDone()
 	return true, ver, nil
 }
@@ -1647,6 +1654,7 @@ func (w *addIndexTxnWorker) batchCheckUniqueKey(txn kv.Transaction, idxRecords [
 	return nil
 }
 
+<<<<<<< HEAD
 type addIndexIngestWorker struct {
 	ctx           context.Context
 	d             *ddlCtx
@@ -1720,6 +1728,22 @@ func (w *addIndexIngestWorker) WriteLocal(rs *IndexRecordChunk) (count int, next
 	logSlowOperations(time.Since(oprStartTime), "writeChunkToLocal", 3000)
 	nextKey = tablecodec.EncodeRecordKey(w.tbl.RecordPrefix(), lastHandle)
 	return cnt, nextKey, nil
+=======
+func getLocalWriterConfig(indexCnt, writerCnt int) *backend.LocalWriterConfig {
+	writerCfg := &backend.LocalWriterConfig{}
+	// avoid unit test panic
+	memRoot := ingest.LitMemRoot
+	if memRoot == nil {
+		return writerCfg
+	}
+
+	// leave some room for objects overhead
+	availMem := memRoot.MaxMemoryQuota() - memRoot.CurrentUsage() - int64(10*size.MB)
+	memLimitPerWriter := availMem / int64(indexCnt) / int64(writerCnt)
+	memLimitPerWriter = min(memLimitPerWriter, litconfig.DefaultLocalWriterMemCacheSize)
+	writerCfg.Local.MemCacheSize = memLimitPerWriter
+	return writerCfg
+>>>>>>> e81dabe693d (ddl: replace local ingest impl with backfill operators (#54149))
 }
 
 func writeChunkToLocal(

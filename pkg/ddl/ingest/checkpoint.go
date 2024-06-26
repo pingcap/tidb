@@ -160,6 +160,21 @@ func (s *CheckpointManager) IsKeyProcessed(end kv.Key) bool {
 	return s.localDataIsValid && len(s.flushedKeyLowWatermark) > 0 && end.Cmp(s.flushedKeyLowWatermark) <= 0
 }
 
+// LastProcessedKey finds the last processed key in checkpoint.
+// If there is no processed key, it returns nil.
+func (s *CheckpointManager) LastProcessedKey() kv.Key {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.localDataIsValid && len(s.flushedKeyLowWatermark) > 0 {
+		return s.flushedKeyLowWatermark.Clone()
+	}
+	if len(s.importedKeyLowWatermark) > 0 {
+		return s.importedKeyLowWatermark.Clone()
+	}
+	return nil
+}
+
 // Status returns the status of the checkpoint.
 func (s *CheckpointManager) Status() (keyCnt int, minKeyImported kv.Key) {
 	s.mu.Lock()
@@ -250,6 +265,7 @@ func (s *CheckpointManager) afterFlush() {
 
 // Close closes the checkpoint manager.
 func (s *CheckpointManager) Close() {
+<<<<<<< HEAD
 	s.cancel()
 	s.updaterWg.Wait()
 	s.logger.Info("close checkpoint manager")
@@ -262,17 +278,24 @@ func (s *CheckpointManager) Flush() {
 	if err != nil {
 		s.logger.Warn("flush local engine failed", zap.Error(err))
 	}
+=======
+>>>>>>> e81dabe693d (ddl: replace local ingest impl with backfill operators (#54149))
 	s.mu.Lock()
 	s.afterFlush()
 	s.mu.Unlock()
 
-	err = s.updateCheckpoint()
+	err := s.updateCheckpoint()
 	if err != nil {
 		s.logger.Error("update checkpoint failed", zap.Error(err))
 	}
+
+	s.cancel()
+	s.updaterWg.Wait()
+	s.logger.Info("checkpoint manager closed")
 }
 
-// Reset resets the checkpoint manager between two partitions.
+// Reset resets the checkpoint manager before handling.
+// It resets the watermark if a new physical ID is given.
 func (s *CheckpointManager) Reset(newPhysicalID int64, start, end kv.Key) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

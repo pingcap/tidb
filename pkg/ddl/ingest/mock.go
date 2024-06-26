@@ -110,9 +110,15 @@ func (m *MockBackendCtx) Register(jobID, indexID int64, _, _ string) (Engine, er
 	return &MockEngineInfo{sessCtx: m.sessCtx, mu: &m.mu}, nil
 }
 
+<<<<<<< HEAD
 // Unregister implements BackendCtx.Unregister interface.
 func (*MockBackendCtx) Unregister(jobID, indexID int64) {
 	logutil.DDLIngestLogger().Info("mock backend ctx unregister", zap.Int64("jobID", jobID), zap.Int64("indexID", indexID))
+=======
+// UnregisterEngines implements BackendCtx.UnregisterEngines interface.
+func (*MockBackendCtx) UnregisterEngines() {
+	logutil.DDLIngestLogger().Info("mock backend ctx unregister")
+>>>>>>> e81dabe693d (ddl: replace local ingest impl with backfill operators (#54149))
 }
 
 // CollectRemoteDuplicateRows implements BackendCtx.CollectRemoteDuplicateRows interface.
@@ -121,6 +127,7 @@ func (*MockBackendCtx) CollectRemoteDuplicateRows(indexID int64, _ table.Table) 
 	return nil
 }
 
+<<<<<<< HEAD
 // FinishImport implements BackendCtx.FinishImport interface.
 func (*MockBackendCtx) FinishImport(indexID int64, _ bool, _ table.Table) error {
 	logutil.DDLIngestLogger().Info("mock backend ctx finish import", zap.Int64("indexID", indexID))
@@ -131,6 +138,8 @@ func (*MockBackendCtx) FinishImport(indexID int64, _ bool, _ table.Table) error 
 func (*MockBackendCtx) ResetWorkers(_ int64) {
 }
 
+=======
+>>>>>>> e81dabe693d (ddl: replace local ingest impl with backfill operators (#54149))
 // Flush implements BackendCtx.Flush interface.
 func (*MockBackendCtx) Flush(_ int64, _ FlushMode) (flushed bool, imported bool, err error) {
 	return false, false, nil
@@ -183,11 +192,6 @@ func NewMockEngineInfo(sessCtx sessionctx.Context) *MockEngineInfo {
 
 // Flush implements Engine.Flush interface.
 func (*MockEngineInfo) Flush() error {
-	return nil
-}
-
-// ImportAndClean implements Engine.ImportAndClean interface.
-func (*MockEngineInfo) ImportAndClean() error {
 	return nil
 }
 

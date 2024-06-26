@@ -103,6 +103,7 @@ func (bc *litBackendCtx) Unregister(jobID, indexID int64) {
 	bc.MemRoot.Release(StructSizeWriterCtx * int64(ei.writerCount))
 	bc.MemRoot.Release(StructSizeEngineInfo)
 }
+<<<<<<< HEAD
 
 // ResetWorkers reset the writer count of the engineInfo because
 // the goroutines of backfill workers have been terminated.
@@ -130,3 +131,5 @@ func (bc *litBackendCtx) unregisterAll(jobID int64) {
 func encodeEngineTag(jobID, indexID int64) string {
 	return fmt.Sprintf("%d-%d", jobID, indexID)
 }
+=======
+>>>>>>> e81dabe693d (ddl: replace local ingest impl with backfill operators (#54149))

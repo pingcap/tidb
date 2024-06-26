@@ -25,6 +25,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	sess "github.com/pingcap/tidb/pkg/ddl/internal/session"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
@@ -664,6 +665,154 @@ func SetBackfillTaskChanSizeForTest(n int) {
 	backfillTaskChanSize = n
 }
 
+func (dc *ddlCtx) runAddIndexInLocalIngestMode(
+	ctx context.Context,
+	sessPool *sess.Pool,
+	t table.PhysicalTable,
+	reorgInfo *reorgInfo,
+) error {
+	// TODO(tangenta): support adjust worker count dynamically.
+	if err := dc.isReorgRunnable(reorgInfo.Job.ID, false); err != nil {
+		return errors.Trace(err)
+	}
+	job := reorgInfo.Job
+	opCtx := NewLocalOperatorCtx(ctx, job.ID)
+	idxCnt := len(reorgInfo.elements)
+	indexIDs := make([]int64, 0, idxCnt)
+	indexInfos := make([]*model.IndexInfo, 0, idxCnt)
+	uniques := make([]bool, 0, idxCnt)
+	hasUnique := false
+	for _, e := range reorgInfo.elements {
+		indexIDs = append(indexIDs, e.ID)
+		indexInfo := model.FindIndexInfoByID(t.Meta().Indices, e.ID)
+		if indexInfo == nil {
+			logutil.DDLIngestLogger().Warn("index info not found",
+				zap.Int64("jobID", job.ID),
+				zap.Int64("tableID", t.Meta().ID),
+				zap.Int64("indexID", e.ID))
+			return errors.Errorf("index info not found: %d", e.ID)
+		}
+		indexInfos = append(indexInfos, indexInfo)
+		uniques = append(uniques, indexInfo.Unique)
+		hasUnique = hasUnique || indexInfo.Unique
+	}
+
+	//nolint: forcetypeassert
+	discovery := dc.store.(tikv.Storage).GetRegionCache().PDClient().GetServiceDiscovery()
+	bcCtx, err := ingest.LitBackCtxMgr.Register(
+		ctx, job.ID, hasUnique, dc.etcdCli, discovery, job.ReorgMeta.ResourceGroupName)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer ingest.LitBackCtxMgr.Unregister(job.ID)
+	engines, err := bcCtx.Register(indexIDs, uniques, t.Meta())
+	if err != nil {
+		logutil.DDLIngestLogger().Error("cannot register new engine",
+			zap.Int64("jobID", job.ID),
+			zap.Error(err),
+			zap.Int64s("index IDs", indexIDs))
+		return errors.Trace(err)
+	}
+	defer bcCtx.UnregisterEngines()
+	sctx, err := sessPool.Get()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer sessPool.Put(sctx)
+
+	cpMgr, err := ingest.NewCheckpointManager(
+		ctx,
+		bcCtx,
+		sessPool,
+		job.ID,
+		indexIDs,
+		bcCtx.GetLocalBackend().LocalStoreDir,
+		dc.store.(kv.StorageWithPD).GetPDClient(),
+	)
+	if err != nil {
+		logutil.DDLIngestLogger().Warn("create checkpoint manager failed",
+			zap.Int64("jobID", job.ID),
+			zap.Error(err))
+	} else {
+		defer cpMgr.Close()
+		cpMgr.Reset(t.GetPhysicalID(), reorgInfo.StartKey, reorgInfo.EndKey)
+		bcCtx.AttachCheckpointManager(cpMgr)
+	}
+
+	reorgCtx := dc.getReorgCtx(reorgInfo.Job.ID)
+	rowCntListener := &localRowCntListener{
+		prevPhysicalRowCnt: reorgCtx.getRowCount(),
+		reorgCtx:           dc.getReorgCtx(reorgInfo.Job.ID),
+		counter: metrics.BackfillTotalCounter.WithLabelValues(
+			metrics.GenerateReorgLabel("add_idx_rate", job.SchemaName, job.TableName)),
+	}
+
+	avgRowSize := estimateTableRowSize(ctx, dc.store, sctx.GetRestrictedSQLExecutor(), t)
+	concurrency := int(variable.GetDDLReorgWorkerCounter())
+
+	pipe, err := NewAddIndexIngestPipeline(
+		opCtx,
+		dc.store,
+		sessPool,
+		bcCtx,
+		engines,
+		job.ID,
+		t,
+		indexInfos,
+		reorgInfo.StartKey,
+		reorgInfo.EndKey,
+		job.ReorgMeta,
+		avgRowSize,
+		concurrency,
+		cpMgr,
+		rowCntListener,
+	)
+	if err != nil {
+		return err
+	}
+	err = pipe.Execute()
+	if err != nil {
+		return err
+	}
+	err = pipe.Close()
+	if opCtx.OperatorErr() != nil {
+		return opCtx.OperatorErr()
+	}
+	if err != nil {
+		return err
+	}
+	for i, isUK := range uniques {
+		if isUK {
+			err := bcCtx.CollectRemoteDuplicateRows(indexIDs[i], t)
+			if err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+type localRowCntListener struct {
+	EmptyRowCntListener
+	reorgCtx *reorgCtx
+	counter  prometheus.Counter
+
+	// prevPhysicalRowCnt records the row count from previous physical tables (partitions).
+	prevPhysicalRowCnt int64
+	// curPhysicalRowCnt records the row count of current physical table.
+	curPhysicalRowCnt int64
+}
+
+func (s *localRowCntListener) Written(rowCnt int) {
+	s.curPhysicalRowCnt += int64(rowCnt)
+	s.reorgCtx.setRowCount(s.prevPhysicalRowCnt + s.curPhysicalRowCnt)
+	s.counter.Add(float64(rowCnt))
+}
+
+func (s *localRowCntListener) SetTotal(total int) {
+	s.reorgCtx.setRowCount(s.prevPhysicalRowCnt + int64(total))
+}
+
 // writePhysicalTableRecord handles the "add index" or "modify/change column" reorganization state for a non-partitioned table or a partition.
 // For a partitioned table, it should be handled partition by partition.
 //
@@ -695,17 +844,30 @@ func (dc *ddlCtx) writePhysicalTableRecord(sessPool *sess.Pool, t table.Physical
 			failpoint.Return(errors.New("job.ErrCount:" + strconv.Itoa(int(job.ErrorCount)) + ", mock unknown type: ast.whenClause."))
 		}
 	})
+	if bfWorkerType == typeAddIndexWorker && reorgInfo.ReorgMeta.ReorgTp == model.ReorgTypeLitMerge {
+		return dc.runAddIndexInLocalIngestMode(ctx, sessPool, t, reorgInfo)
+	}
 
 	jc := reorgInfo.NewJobContext()
+<<<<<<< HEAD
 	sessCtx := newContext(reorgInfo.d.store)
 	scheduler, err := newBackfillScheduler(dc.ctx, reorgInfo, sessPool, bfWorkerType, t, sessCtx, jc)
+=======
+
+	eg, egCtx := util.NewErrorGroupWithRecoverWithCtx(ctx)
+
+	scheduler, err := newTxnBackfillScheduler(egCtx, reorgInfo, sessPool, bfWorkerType, t, jc)
+>>>>>>> e81dabe693d (ddl: replace local ingest impl with backfill operators (#54149))
 	if err != nil {
 		return errors.Trace(err)
 	}
 	defer scheduler.close(true)
+<<<<<<< HEAD
 
 	consumer := newResultConsumer(dc, reorgInfo, sessPool, false)
 	consumer.run(scheduler, startKey, &totalAddedCount)
+=======
+>>>>>>> e81dabe693d (ddl: replace local ingest impl with backfill operators (#54149))
 
 	err = scheduler.setupWorkers()
 	if err != nil {
