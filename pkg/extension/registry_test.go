@@ -352,15 +352,15 @@ func TestAuthPluginValidation(t *testing.T) {
 	defer extension.Reset()
 	extension.Reset()
 
-	require.NoError(t, extension.Register("test", extension.WithCustomAuthPlugins(map[string]*extension.AuthPlugin{
-		"plugin1": {Name: ""},
+	require.NoError(t, extension.Register("test", extension.WithCustomAuthPlugins([]*extension.AuthPlugin{
+		{Name: ""},
 	})))
 	require.ErrorContains(t, extension.Setup(), "auth plugin name cannot be empty")
 
 	extension.Reset()
 	require.NoError(t, extension.Register("test",
-		extension.WithCustomAuthPlugins(map[string]*extension.AuthPlugin{
-			"plugin1": {
+		extension.WithCustomAuthPlugins([]*extension.AuthPlugin{
+			{
 				Name: "plugin1",
 				ValidateAuthString: func(pwdHash string) bool {
 					return false
@@ -375,8 +375,8 @@ func TestAuthPluginValidation(t *testing.T) {
 
 	extension.Reset()
 	require.NoError(t, extension.Register("test",
-		extension.WithCustomAuthPlugins(map[string]*extension.AuthPlugin{
-			"plugin1": {
+		extension.WithCustomAuthPlugins([]*extension.AuthPlugin{
+			{
 				Name: "plugin1",
 				AuthenticateUser: func(ctx extension.AuthenticateRequest) error {
 					return nil
@@ -391,8 +391,8 @@ func TestAuthPluginValidation(t *testing.T) {
 
 	extension.Reset()
 	require.NoError(t, extension.Register("test",
-		extension.WithCustomAuthPlugins(map[string]*extension.AuthPlugin{
-			"plugin1": {
+		extension.WithCustomAuthPlugins([]*extension.AuthPlugin{
+			{
 				Name: "plugin1",
 				AuthenticateUser: func(ctx extension.AuthenticateRequest) error {
 					return nil
@@ -407,8 +407,8 @@ func TestAuthPluginValidation(t *testing.T) {
 
 	extension.Reset()
 	require.NoError(t, extension.Register("test",
-		extension.WithCustomAuthPlugins(map[string]*extension.AuthPlugin{
-			"plugin1": {
+		extension.WithCustomAuthPlugins([]*extension.AuthPlugin{
+			{
 				Name: "plugin1",
 				AuthenticateUser: func(ctx extension.AuthenticateRequest) error {
 					return nil
@@ -420,7 +420,7 @@ func TestAuthPluginValidation(t *testing.T) {
 					return true
 				},
 			},
-			"plugin2": {
+			{
 				Name: "plugin1",
 				AuthenticateUser: func(ctx extension.AuthenticateRequest) error {
 					return nil
@@ -438,8 +438,8 @@ func TestAuthPluginValidation(t *testing.T) {
 
 	extension.Reset()
 	require.NoError(t, extension.Register("test",
-		extension.WithCustomAuthPlugins(map[string]*extension.AuthPlugin{
-			"plugin1": {
+		extension.WithCustomAuthPlugins([]*extension.AuthPlugin{
+			{
 				Name: "mysql_native_password",
 				AuthenticateUser: func(ctx extension.AuthenticateRequest) error {
 					return nil
@@ -457,8 +457,8 @@ func TestAuthPluginValidation(t *testing.T) {
 
 	extension.Reset()
 	require.NoError(t, extension.Register("test",
-		extension.WithCustomAuthPlugins(map[string]*extension.AuthPlugin{
-			"plugin1": {
+		extension.WithCustomAuthPlugins([]*extension.AuthPlugin{
+			{
 				Name: "plugin1",
 				AuthenticateUser: func(ctx extension.AuthenticateRequest) error {
 					return nil

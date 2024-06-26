@@ -104,9 +104,9 @@ type VerifyDynamicPrivRequest struct {
 func validateAuthPlugin(m *Manifest) error {
 	pluginNames := make(map[string]bool)
 	// Validate required functions for the auth plugins
-	for pluginName, p := range m.authPlugins {
+	for _, p := range m.authPlugins {
 		if p.Name == "" {
-			return errors.Errorf("auth plugin name cannot be empty for %s", pluginName)
+			return errors.Errorf("auth plugin name cannot be empty for %s", p.Name)
 		}
 		if pluginNames[p.Name] {
 			return errors.Errorf("auth plugin name %s has already been registered", p.Name)
@@ -116,13 +116,13 @@ func validateAuthPlugin(m *Manifest) error {
 			return errors.Errorf("auth plugin name %s is a reserved name for default auth plugins", p.Name)
 		}
 		if p.AuthenticateUser == nil {
-			return errors.Errorf("auth plugin AuthenticateUser function cannot be nil for %s", pluginName)
+			return errors.Errorf("auth plugin AuthenticateUser function cannot be nil for %s", p.Name)
 		}
 		if p.GenerateAuthString == nil {
-			return errors.Errorf("auth plugin GenerateAuthString function cannot be nil for %s", pluginName)
+			return errors.Errorf("auth plugin GenerateAuthString function cannot be nil for %s", p.Name)
 		}
 		if p.ValidateAuthString == nil {
-			return errors.Errorf("auth plugin ValidateAuthString function cannot be nil for %s", pluginName)
+			return errors.Errorf("auth plugin ValidateAuthString function cannot be nil for %s", p.Name)
 		}
 	}
 	return nil

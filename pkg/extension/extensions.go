@@ -77,8 +77,8 @@ func (es *Extensions) GetAuthPlugins() map[string]*AuthPlugin {
 	authPlugins := make(map[string]*AuthPlugin)
 	for _, m := range es.manifests {
 		if m.authPlugins != nil {
-			for pluginName, p := range m.authPlugins {
-				authPlugins[pluginName] = p
+			for _, p := range m.authPlugins {
+				authPlugins[p.Name] = p
 			}
 		}
 	}

@@ -66,7 +66,7 @@ func WithCustomAccessCheck(fn AccessCheckFunc) Option {
 }
 
 // WithCustomAuthPlugins specifies the custom authentication plugins available for the system.
-func WithCustomAuthPlugins(authPlugins map[string]*AuthPlugin) Option {
+func WithCustomAuthPlugins(authPlugins []*AuthPlugin) Option {
 	return func(m *Manifest) {
 		m.authPlugins = authPlugins
 	}
@@ -125,7 +125,7 @@ type Manifest struct {
 	bootstrap             func(BootstrapContext) error
 	funcs                 []*FunctionDef
 	accessCheckFunc       AccessCheckFunc
-	authPlugins           map[string]*AuthPlugin
+	authPlugins           []*AuthPlugin
 	sessionHandlerFactory func() *SessionHandler
 	close                 func()
 }

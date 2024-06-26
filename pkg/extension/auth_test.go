@@ -12,7 +12,6 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
-	"golang.org/x/exp/maps"
 )
 
 type MockAuthPlugin struct {
@@ -106,7 +105,6 @@ func TestAuthPlugin(t *testing.T) {
 	defer extension.Reset()
 	extension.Reset()
 
-	authChecks := map[string]*extension.AuthPlugin{}
 	p := new(MockAuthPlugin)
 	p.On("Name").Return("authentication_test_plugin")
 
@@ -161,7 +159,7 @@ func TestAuthPlugin(t *testing.T) {
 	})
 	p.On("VerifyDynamicPrivilege", sysVarAdminMatcher).Return(false)
 
-	authChecks[p.Name()] = &extension.AuthPlugin{
+	authChecks := []*extension.AuthPlugin{{
 		Name:                     p.Name(),
 		AuthenticateUser:         p.AuthenticateUser,
 		ValidateAuthString:       p.ValidateAuthString,
@@ -169,7 +167,7 @@ func TestAuthPlugin(t *testing.T) {
 		VerifyPrivilege:          p.VerifyPrivilege,
 		VerifyDynamicPrivilege:   p.VerifyDynamicPrivilege,
 		RequiredClientSidePlugin: mysql.AuthNativePassword,
-	}
+	}}
 
 	require.NoError(t, extension.Register(
 		"extension_authentication_plugin",
@@ -180,7 +178,7 @@ func TestAuthPlugin(t *testing.T) {
 				Name:           "extension_authentication_plugin",
 				Value:          mysql.AuthNativePassword,
 				Type:           variable.TypeEnum,
-				PossibleValues: maps.Keys(authChecks),
+				PossibleValues: []string{p.Name()},
 			},
 		}),
 		extension.WithBootstrap(func(_ extension.BootstrapContext) error {
@@ -289,7 +287,6 @@ func TestAuthPluginSwitchPlugins(t *testing.T) {
 	defer extension.Reset()
 	extension.Reset()
 
-	authChecks := map[string]*extension.AuthPlugin{}
 	p := new(MockAuthPlugin)
 	p.On("Name").Return("authentication_test_plugin")
 	authnMatcher1 := mock.MatchedBy(func(ctx extension.AuthenticateRequest) bool {
@@ -317,7 +314,7 @@ func TestAuthPluginSwitchPlugins(t *testing.T) {
 	})
 	p.On("VerifyPrivilege", insertMatcher).Return(false)
 
-	authChecks[p.Name()] = &extension.AuthPlugin{
+	authChecks := []*extension.AuthPlugin{{
 		Name:                     p.Name(),
 		AuthenticateUser:         p.AuthenticateUser,
 		ValidateAuthString:       p.ValidateAuthString,
@@ -325,7 +322,7 @@ func TestAuthPluginSwitchPlugins(t *testing.T) {
 		VerifyPrivilege:          p.VerifyPrivilege,
 		VerifyDynamicPrivilege:   p.VerifyDynamicPrivilege,
 		RequiredClientSidePlugin: mysql.AuthNativePassword,
-	}
+	}}
 
 	require.NoError(t, extension.Register(
 		"extension_authentication_plugin",
@@ -336,7 +333,7 @@ func TestAuthPluginSwitchPlugins(t *testing.T) {
 				Name:           "extension_authentication_plugin",
 				Value:          mysql.AuthNativePassword,
 				Type:           variable.TypeEnum,
-				PossibleValues: maps.Keys(authChecks),
+				PossibleValues: []string{p.Name()},
 			},
 		}),
 		extension.WithBootstrap(func(_ extension.BootstrapContext) error {
@@ -423,19 +420,18 @@ func TestCreateUserWhenGrant(t *testing.T) {
 	defer extension.Reset()
 	extension.Reset()
 
-	authChecks := map[string]*extension.AuthPlugin{}
 	p := new(MockAuthPlugin)
 	p.On("Name").Return("authentication_test_plugin")
 	p.On("ValidateAuthString", mock.Anything).Return(true)
 	p.On("GenerateAuthString", "xxx").Return("encodedpassword", true)
 
-	authChecks[p.Name()] = &extension.AuthPlugin{
+	authChecks := []*extension.AuthPlugin{{
 		Name:                     p.Name(),
 		AuthenticateUser:         p.AuthenticateUser,
 		ValidateAuthString:       p.ValidateAuthString,
 		GenerateAuthString:       p.GenerateAuthString,
 		RequiredClientSidePlugin: mysql.AuthNativePassword,
-	}
+	}}
 
 	require.NoError(t, extension.Register(
 		"extension_authentication_plugin",
@@ -446,7 +442,7 @@ func TestCreateUserWhenGrant(t *testing.T) {
 				Name:           "extension_authentication_plugin",
 				Value:          mysql.AuthNativePassword,
 				Type:           variable.TypeEnum,
-				PossibleValues: maps.Keys(authChecks),
+				PossibleValues: []string{p.Name()},
 			},
 		}),
 		extension.WithBootstrap(func(_ extension.BootstrapContext) error {
@@ -482,7 +478,6 @@ func TestCreateViewWithPluginUser(t *testing.T) {
 	defer extension.Reset()
 	extension.Reset()
 
-	authChecks := map[string]*extension.AuthPlugin{}
 	p := new(MockAuthPlugin)
 	p.On("Name").Return("authentication_test_plugin")
 	authnMatcher1 := mock.MatchedBy(func(ctx extension.AuthenticateRequest) bool {
@@ -502,7 +497,7 @@ func TestCreateViewWithPluginUser(t *testing.T) {
 	})
 	p.On("VerifyPrivilege", createViewMatcher).Return(true)
 
-	authChecks[p.Name()] = &extension.AuthPlugin{
+	authChecks := []*extension.AuthPlugin{{
 		Name:                     p.Name(),
 		AuthenticateUser:         p.AuthenticateUser,
 		ValidateAuthString:       p.ValidateAuthString,
@@ -510,7 +505,7 @@ func TestCreateViewWithPluginUser(t *testing.T) {
 		VerifyPrivilege:          p.VerifyPrivilege,
 		VerifyDynamicPrivilege:   p.VerifyDynamicPrivilege,
 		RequiredClientSidePlugin: mysql.AuthNativePassword,
-	}
+	}}
 
 	require.NoError(t, extension.Register(
 		"extension_authentication_plugin",
@@ -521,7 +516,7 @@ func TestCreateViewWithPluginUser(t *testing.T) {
 				Name:           "extension_authentication_plugin",
 				Value:          mysql.AuthNativePassword,
 				Type:           variable.TypeEnum,
-				PossibleValues: maps.Keys(authChecks),
+				PossibleValues: []string{p.Name()},
 			},
 		}),
 	))
@@ -587,7 +582,6 @@ func TestPluginUserModification(t *testing.T) {
 	defer extension.Reset()
 	extension.Reset()
 
-	authChecks := map[string]*extension.AuthPlugin{}
 	p := new(MockAuthPlugin)
 	p.On("Name").Return("authentication_test_plugin")
 	authnMatcher1 := mock.MatchedBy(func(ctx extension.AuthenticateRequest) bool {
@@ -600,7 +594,7 @@ func TestPluginUserModification(t *testing.T) {
 	p.On("VerifyPrivilege", mock.Anything).Return(true)
 	p.On("VerifyDynamicPrivilege", mock.Anything).Return(true)
 
-	authChecks[p.Name()] = &extension.AuthPlugin{
+	authChecks := []*extension.AuthPlugin{{
 		Name:                     p.Name(),
 		AuthenticateUser:         p.AuthenticateUser,
 		ValidateAuthString:       p.ValidateAuthString,
@@ -608,7 +602,7 @@ func TestPluginUserModification(t *testing.T) {
 		VerifyPrivilege:          p.VerifyPrivilege,
 		VerifyDynamicPrivilege:   p.VerifyDynamicPrivilege,
 		RequiredClientSidePlugin: mysql.AuthNativePassword,
-	}
+	}}
 
 	require.NoError(t, extension.Register(
 		"extension_authentication_plugin",
@@ -619,7 +613,7 @@ func TestPluginUserModification(t *testing.T) {
 				Name:           "extension_authentication_plugin",
 				Value:          mysql.AuthNativePassword,
 				Type:           variable.TypeEnum,
-				PossibleValues: maps.Keys(authChecks),
+				PossibleValues: []string{p.Name()},
 			},
 		}),
 	))
