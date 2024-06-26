@@ -3554,6 +3554,10 @@ func bootstrapSessionImpl(store kv.Storage, createSessionsImpl func(store kv.Sto
 		return nil, err
 	}
 
+	// init the instance plan cache
+	// TODO: introduce 2 new variable to control these 2 mem limits.
+	dom.InitInstancePlanCache(1000000, 1000000)
+
 	// start TTL job manager after setup stats collector
 	// because TTL could modify a lot of columns, and need to trigger auto analyze
 	ttlworker.AttachStatsCollector = func(s sqlexec.SQLExecutor) sqlexec.SQLExecutor {
