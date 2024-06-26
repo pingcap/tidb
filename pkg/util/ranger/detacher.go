@@ -182,6 +182,10 @@ func getPotentialEqOrInColOffset(sctx *rangerctx.RangerContext, expr expression.
 				return i
 			}
 		}
+	case ast.IsNull:
+		if _, ok := f.GetArgs()[0].(*expression.Column); ok {
+			return 0
+		}
 	}
 	return -1
 }
@@ -635,27 +639,32 @@ func allEqOrIn(expr expression.Expression) bool {
 			}
 		}
 		return true
-	case ast.EQ, ast.NullEQ, ast.In:
+	case ast.EQ, ast.NullEQ, ast.In, ast.IsNull:
 		return true
 	}
 	return false
 }
 
 func extractValueInfo(expr expression.Expression) *valueInfo {
-	if f, ok := expr.(*expression.ScalarFunction); ok && (f.FuncName.L == ast.EQ || f.FuncName.L == ast.NullEQ) {
-		getValueInfo := func(c *expression.Constant) *valueInfo {
-			mutable := c.ParamMarker != nil || c.DeferredExpr != nil
-			var value *types.Datum
-			if !mutable {
-				value = &c.Value
+	if f, ok := expr.(*expression.ScalarFunction); ok {
+		if f.FuncName.L == ast.IsNull {
+			return &valueInfo{mutable: false}
+		}
+		if f.FuncName.L == ast.EQ || f.FuncName.L == ast.NullEQ {
+			getValueInfo := func(c *expression.Constant) *valueInfo {
+				mutable := c.ParamMarker != nil || c.DeferredExpr != nil
+				var value *types.Datum
+				if !mutable {
+					value = &c.Value
+				}
+				return &valueInfo{value, mutable}
 			}
-			return &valueInfo{value, mutable}
-		}
-		if c, ok := f.GetArgs()[0].(*expression.Constant); ok {
-			return getValueInfo(c)
-		}
-		if c, ok := f.GetArgs()[1].(*expression.Constant); ok {
-			return getValueInfo(c)
+			if c, ok := f.GetArgs()[0].(*expression.Constant); ok {
+				return getValueInfo(c)
+			}
+			if c, ok := f.GetArgs()[1].(*expression.Constant); ok {
+				return getValueInfo(c)
+			}
 		}
 	}
 	return nil
