@@ -198,13 +198,8 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			err = e.setDataFromRunawayWatches(sctx)
 		case infoschema.TableCheckConstraints:
 			err = e.setDataFromCheckConstraints(sctx, dbs)
-<<<<<<< HEAD
-=======
-		case infoschema.TableTiDBCheckConstraints:
-			err = e.setDataFromTiDBCheckConstraints(sctx, dbs)
 		case infoschema.TableKeywords:
 			err = e.setDataFromKeywords()
->>>>>>> a92497bbdf7 (parser, infoschema, executor: Add information_schema.keywords (#48807))
 		}
 		if err != nil {
 			return nil, err

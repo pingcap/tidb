@@ -38,8 +38,5 @@ bazel-tidb
 MODULE.bazel.lock
 .ijwb/
 /oom_record/
-<<<<<<< HEAD
-=======
 *.log.json
 genkeyword
->>>>>>> a92497bbdf7 (parser, infoschema, executor: Add information_schema.keywords (#48807))

@@ -209,13 +209,8 @@ const (
 	TableRunawayWatches = "RUNAWAY_WATCHES"
 	// TableCheckConstraints is the list of CHECK constraints.
 	TableCheckConstraints = "CHECK_CONSTRAINTS"
-<<<<<<< HEAD
-=======
-	// TableTiDBCheckConstraints is the list of CHECK constraints, with non-standard TiDB extensions.
-	TableTiDBCheckConstraints = "TIDB_CHECK_CONSTRAINTS"
 	// TableKeywords is the list of keywords.
 	TableKeywords = "KEYWORDS"
->>>>>>> a92497bbdf7 (parser, infoschema, executor: Add information_schema.keywords (#48807))
 )
 
 const (
@@ -325,11 +320,7 @@ var tableIDMap = map[string]int64{
 	TableResourceGroups:                  autoid.InformationSchemaDBID + 88,
 	TableRunawayWatches:                  autoid.InformationSchemaDBID + 89,
 	TableCheckConstraints:                autoid.InformationSchemaDBID + 90,
-<<<<<<< HEAD
-=======
-	TableTiDBCheckConstraints:            autoid.InformationSchemaDBID + 91,
 	TableKeywords:                        autoid.InformationSchemaDBID + 92,
->>>>>>> a92497bbdf7 (parser, infoschema, executor: Add information_schema.keywords (#48807))
 }
 
 // columnInfo represents the basic column information of all kinds of INFORMATION_SCHEMA tables
@@ -1660,24 +1651,11 @@ var tableCheckConstraintsCols = []columnInfo{
 	{name: "CHECK_CLAUSE", tp: mysql.TypeLongBlob, size: types.UnspecifiedLength, flag: mysql.NotNullFlag},
 }
 
-<<<<<<< HEAD
-=======
-// information_schema.TIDB_CHECK_CONSTRAINTS
-var tableTiDBCheckConstraintsCols = []columnInfo{
-	{name: "CONSTRAINT_CATALOG", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag},
-	{name: "CONSTRAINT_SCHEMA", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag},
-	{name: "CONSTRAINT_NAME", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag},
-	{name: "CHECK_CLAUSE", tp: mysql.TypeLongBlob, size: types.UnspecifiedLength, flag: mysql.NotNullFlag},
-	{name: "TABLE_NAME", tp: mysql.TypeVarchar, size: 64},
-	{name: "TABLE_ID", tp: mysql.TypeLonglong, size: 21},
-}
-
 var tableKeywords = []columnInfo{
 	{name: "WORD", tp: mysql.TypeVarchar, size: 128},
 	{name: "RESERVED", tp: mysql.TypeLong, size: 11},
 }
 
->>>>>>> a92497bbdf7 (parser, infoschema, executor: Add information_schema.keywords (#48807))
 // GetShardingInfo returns a nil or description string for the sharding information of given TableInfo.
 // The returned description string may be:
 //   - "NOT_SHARDED": for tables that SHARD_ROW_ID_BITS is not specified.
@@ -2196,11 +2174,7 @@ var tableNameToColumns = map[string][]columnInfo{
 	TableResourceGroups:                     tableResourceGroupsCols,
 	TableRunawayWatches:                     tableRunawayWatchListCols,
 	TableCheckConstraints:                   tableCheckConstraintsCols,
-<<<<<<< HEAD
-=======
-	TableTiDBCheckConstraints:               tableTiDBCheckConstraintsCols,
 	TableKeywords:                           tableKeywords,
->>>>>>> a92497bbdf7 (parser, infoschema, executor: Add information_schema.keywords (#48807))
 }
 
 func createInfoSchemaTable(_ autoid.Allocators, meta *model.TableInfo) (table.Table, error) {
