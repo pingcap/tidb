@@ -467,3 +467,5 @@ SELECT JSON_SCHEMA_VALID('{}','');
 SELECT JSON_SCHEMA_VALID('', NULL);
 -- error 3853
 SELECT JSON_SCHEMA_VALID('1','{}');
+-- error 3157
+SELECT JSON_SCHEMA_VALID(CONCAT('{"foo": ',repeat('[', 1000),repeat(']', 1000),'}'), json_object());
