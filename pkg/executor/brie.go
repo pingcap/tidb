@@ -156,7 +156,7 @@ func (p *brieTaskProgress) cleanup(e *exec.BaseExecutor, info *brieTaskInfo) {
 		atomic.StoreInt64(&p.current, p.total)
 		current = total
 		cmd = strings.TrimSuffix(cmd, " Canceled")
-	} else if !finished && !strings.HasSuffix(cmd, " Canceled") {
+	} else if !strings.HasSuffix(cmd, " Canceled") {
 		cmd = fmt.Sprintf("%s Canceled", cmd)
 	}
 	p.cmd = cmd
