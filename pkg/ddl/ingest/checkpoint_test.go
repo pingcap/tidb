@@ -198,6 +198,6 @@ type dummyFlushCtrl struct {
 	imported bool
 }
 
-func (d *dummyFlushCtrl) Flush(_ ingest.FlushMode) (bool, bool, int64, error) {
-	return true, d.imported, 0, nil
+func (d *dummyFlushCtrl) Flush(mode ingest.FlushMode) (bool, bool, error) {
+	return true, d.imported, nil
 }

@@ -212,7 +212,7 @@ func (pe *projectionEliminator) eliminate(p base.LogicalPlan, replace map[string
 
 	// eliminate duplicate projection: projection with child projection
 	if isProj {
-		if child, ok := p.Children()[0].(*LogicalProjection); ok && !ExprsHasSideEffects(child.Exprs) {
+		if child, ok := p.Children()[0].(*LogicalProjection); ok && !expression.ExprsHasSideEffects(child.Exprs) {
 			ctx := p.SCtx()
 			for i := range proj.Exprs {
 				proj.Exprs[i] = ReplaceColumnOfExpr(proj.Exprs[i], child, child.Schema())
@@ -273,21 +273,6 @@ func (p *LogicalJoin) ReplaceExprColumns(replace map[string]*expression.Column) 
 func (p *LogicalProjection) ReplaceExprColumns(replace map[string]*expression.Column) {
 	for _, expr := range p.Exprs {
 		ResolveExprAndReplace(expr, replace)
-	}
-}
-
-// ReplaceExprColumns implements base.LogicalPlan interface.
-func (la *LogicalAggregation) ReplaceExprColumns(replace map[string]*expression.Column) {
-	for _, agg := range la.AggFuncs {
-		for _, aggExpr := range agg.Args {
-			ResolveExprAndReplace(aggExpr, replace)
-		}
-		for _, orderExpr := range agg.OrderByItems {
-			ResolveExprAndReplace(orderExpr.Expr, replace)
-		}
-	}
-	for _, gbyItem := range la.GroupByItems {
-		ResolveExprAndReplace(gbyItem, replace)
 	}
 }
 

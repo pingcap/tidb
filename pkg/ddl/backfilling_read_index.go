@@ -216,7 +216,7 @@ func (r *readIndexExecutor) buildLocalStorePipeline(
 		indexIDs = append(indexIDs, index.ID)
 		uniques = append(uniques, index.Unique)
 	}
-	engines, err := r.bc.Register(indexIDs, uniques, r.job.TableName)
+	engines, err := r.bc.Register(indexIDs, uniques, r.ptbl.Meta())
 	if err != nil {
 		tidblogutil.Logger(opCtx).Error("cannot register new engine",
 			zap.Error(err),

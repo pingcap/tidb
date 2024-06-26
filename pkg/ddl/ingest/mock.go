@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/lightning/backend/local"
+	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/table"
 	pd "github.com/tikv/pd/client"
@@ -106,7 +107,7 @@ type MockBackendCtx struct {
 }
 
 // Register implements BackendCtx.Register interface.
-func (m *MockBackendCtx) Register(indexIDs []int64, _ []bool, _ string) ([]Engine, error) {
+func (m *MockBackendCtx) Register(indexIDs []int64, _ []bool, _ *model.TableInfo) ([]Engine, error) {
 	logutil.DDLIngestLogger().Info("mock backend ctx register", zap.Int64("jobID", m.jobID), zap.Int64s("indexIDs", indexIDs))
 	ret := make([]Engine, 0, len(indexIDs))
 	for range indexIDs {
@@ -138,8 +139,8 @@ func (*MockBackendCtx) FinishImport(_ table.Table) error {
 }
 
 // Flush implements BackendCtx.Flush interface.
-func (*MockBackendCtx) Flush(_ FlushMode) (flushed bool, imported bool, errIdxID int64, err error) {
-	return false, false, 0, nil
+func (*MockBackendCtx) Flush(mode FlushMode) (flushed, imported bool, err error) {
+	return false, false, nil
 }
 
 // Done implements BackendCtx.Done interface.

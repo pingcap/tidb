@@ -685,66 +685,6 @@ func (p *LogicalProjection) ExtractColGroups(colGroups [][]*expression.Column) [
 	return extracted
 }
 
-func (*LogicalAggregation) getGroupNDVs(colGroups [][]*expression.Column, childProfile *property.StatsInfo, gbyCols []*expression.Column) []property.GroupNDV {
-	if len(colGroups) == 0 {
-		return nil
-	}
-	// Check if the child profile provides GroupNDV for the GROUP BY columns.
-	// Note that gbyCols may not be the exact GROUP BY columns, e.g, GROUP BY a+b,
-	// but we have no other approaches for the NDV estimation of these cases
-	// except for using the independent assumption, unless we can use stats of expression index.
-	groupNDV := childProfile.GetGroupNDV4Cols(gbyCols)
-	if groupNDV == nil {
-		return nil
-	}
-	return []property.GroupNDV{*groupNDV}
-}
-
-// DeriveStats implement LogicalPlan DeriveStats interface.
-func (la *LogicalAggregation) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema, colGroups [][]*expression.Column) (*property.StatsInfo, error) {
-	childProfile := childStats[0]
-	gbyCols := make([]*expression.Column, 0, len(la.GroupByItems))
-	for _, gbyExpr := range la.GroupByItems {
-		cols := expression.ExtractColumns(gbyExpr)
-		gbyCols = append(gbyCols, cols...)
-	}
-	if la.StatsInfo() != nil {
-		// Reload GroupNDVs since colGroups may have changed.
-		la.StatsInfo().GroupNDVs = la.getGroupNDVs(colGroups, childProfile, gbyCols)
-		return la.StatsInfo(), nil
-	}
-	ndv, _ := cardinality.EstimateColsNDVWithMatchedLen(gbyCols, childSchema[0], childProfile)
-	la.SetStats(&property.StatsInfo{
-		RowCount: ndv,
-		ColNDVs:  make(map[int64]float64, selfSchema.Len()),
-	})
-	// We cannot estimate the ColNDVs for every output, so we use a conservative strategy.
-	for _, col := range selfSchema.Columns {
-		la.StatsInfo().ColNDVs[col.UniqueID] = ndv
-	}
-	la.InputCount = childProfile.RowCount
-	la.StatsInfo().GroupNDVs = la.getGroupNDVs(colGroups, childProfile, gbyCols)
-	return la.StatsInfo(), nil
-}
-
-// ExtractColGroups implements LogicalPlan ExtractColGroups interface.
-func (la *LogicalAggregation) ExtractColGroups(_ [][]*expression.Column) [][]*expression.Column {
-	// Parent colGroups would be dicarded, because aggregation would make NDV of colGroups
-	// which does not match GroupByItems invalid.
-	// Note that gbyCols may not be the exact GROUP BY columns, e.g, GROUP BY a+b,
-	// but we have no other approaches for the NDV estimation of these cases
-	// except for using the independent assumption, unless we can use stats of expression index.
-	gbyCols := make([]*expression.Column, 0, len(la.GroupByItems))
-	for _, gbyExpr := range la.GroupByItems {
-		cols := expression.ExtractColumns(gbyExpr)
-		gbyCols = append(gbyCols, cols...)
-	}
-	if len(gbyCols) > 1 {
-		return [][]*expression.Column{expression.SortColumns(gbyCols)}
-	}
-	return nil
-}
-
 func (p *LogicalJoin) getGroupNDVs(colGroups [][]*expression.Column, childStats []*property.StatsInfo) []property.GroupNDV {
 	outerIdx := int(-1)
 	if p.JoinType == LeftOuterJoin || p.JoinType == LeftOuterSemiJoin || p.JoinType == AntiLeftOuterSemiJoin {

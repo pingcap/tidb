@@ -440,7 +440,7 @@ func (b *ingestBackfillScheduler) setupWorkers() error {
 	default:
 		return errors.Errorf("unexpected argument type, got %T", job.Args[0])
 	}
-	engines, err := b.backendCtx.Register(indexIDs, uniques, job.TableName)
+	engines, err := b.backendCtx.Register(indexIDs, uniques, b.tbl.Meta())
 	if err != nil {
 		return errors.Trace(err)
 	}

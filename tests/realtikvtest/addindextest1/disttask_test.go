@@ -23,6 +23,7 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/ddl/util/callback"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/errno"
@@ -261,4 +262,28 @@ func TestAddIndexForCurrentTimestampColumn(t *testing.T) {
 	tk.MustExec("insert into t values ();")
 	tk.MustExec("alter table t add index idx(a);")
 	tk.MustExec("admin check table t;")
+}
+
+func TestAddUKErrorMessage(t *testing.T) {
+	ingest.ForceSyncFlagForTest = true
+	t.Cleanup(func() {
+		ingest.ForceSyncFlagForTest = false
+	})
+
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("drop database if exists addindexlit;")
+	tk.MustExec("create database addindexlit;")
+	tk.MustExec("use addindexlit;")
+	t.Cleanup(func() {
+		tk.MustExec("set global tidb_enable_dist_task = off;")
+	})
+	tk.MustExec(`set global tidb_ddl_enable_fast_reorg=on;`)
+	tk.MustExec("set global tidb_enable_dist_task = on;")
+
+	tk.MustExec("create table t (a int primary key, b int);")
+	tk.MustExec("insert into t values (5, 1), (10005, 1), (20005, 1), (30005, 1);")
+	tk.MustExec("split table t between (1) and (100001) regions 10;")
+	err := tk.ExecToErr("alter table t add unique index uk(b);")
+	require.ErrorContains(t, err, "Duplicate entry '1' for key 't.uk'")
 }

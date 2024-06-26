@@ -898,25 +898,6 @@ func (p *LogicalJoin) ExplainInfo() string {
 }
 
 // ExplainInfo implements Plan interface.
-func (p *LogicalAggregation) ExplainInfo() string {
-	buffer := bytes.NewBufferString("")
-	if len(p.GroupByItems) > 0 {
-		fmt.Fprintf(buffer, "group by:%s, ",
-			expression.SortedExplainExpressionList(p.SCtx().GetExprCtx().GetEvalCtx(), p.GroupByItems))
-	}
-	if len(p.AggFuncs) > 0 {
-		buffer.WriteString("funcs:")
-		for i, agg := range p.AggFuncs {
-			buffer.WriteString(aggregation.ExplainAggFunc(p.SCtx().GetExprCtx().GetEvalCtx(), agg, false))
-			if i+1 < len(p.AggFuncs) {
-				buffer.WriteString(", ")
-			}
-		}
-	}
-	return buffer.String()
-}
-
-// ExplainInfo implements Plan interface.
 func (p *LogicalProjection) ExplainInfo() string {
 	return expression.ExplainExpressionList(p.Exprs, p.Schema())
 }

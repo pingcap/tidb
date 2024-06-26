@@ -1865,3 +1865,30 @@ func ConstExprConsiderPlanCache(expr Expression, inPlanCache bool) bool {
 		return false
 	}
 }
+
+// ExprsHasSideEffects checks if any of the expressions has side effects.
+func ExprsHasSideEffects(exprs []Expression) bool {
+	for _, expr := range exprs {
+		if ExprHasSetVarOrSleep(expr) {
+			return true
+		}
+	}
+	return false
+}
+
+// ExprHasSetVarOrSleep checks if the expression has SetVar function or Sleep function.
+func ExprHasSetVarOrSleep(expr Expression) bool {
+	scalaFunc, isScalaFunc := expr.(*ScalarFunction)
+	if !isScalaFunc {
+		return false
+	}
+	if scalaFunc.FuncName.L == ast.SetVar || scalaFunc.FuncName.L == ast.Sleep {
+		return true
+	}
+	for _, arg := range scalaFunc.GetArgs() {
+		if ExprHasSetVarOrSleep(arg) {
+			return true
+		}
+	}
+	return false
+}
