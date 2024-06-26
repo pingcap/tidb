@@ -600,6 +600,13 @@ explain format = 'brief' select * from t3 where a >= 'a' and a <= 'a' and b = 'b
 id	estRows	task	access object	operator info
 IndexReader	0.33	root		index:IndexRangeScan
 └─IndexRangeScan	0.33	cop[tikv]	table:t3, index:a(a, b, c)	range:("a" "b" "c","a" "b" +inf], keep order:false, stats:pseudo
+explain format = 'brief' select * from t1 where a is null or a in (1, 2, 3);
+id	estRows	task	access object	operator info
+IndexReader	260.00	root		index:IndexRangeScan
+└─IndexRangeScan	260.00	cop[tikv]	table:t1, index:a(a, b, c)	range:[NULL,NULL], [1,3], keep order:false, stats:pseudo
+explain format = 'brief' select * from t1 where a is null and a = 1;
+id	estRows	task	access object	operator info
+TableDual	0.00	root		rows:0
 drop table if exists t1;
 CREATE TABLE t1 (
 key1 int(11) NOT NULL,
