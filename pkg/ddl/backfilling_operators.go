@@ -348,8 +348,7 @@ func (src *TableScanTaskSource) adjustStartKey(start, end kv.Key) kv.Key {
 	if len(cpKey) == 0 {
 		return start
 	}
-	cpKeyNext := cpKey.Next()
-	if cpKeyNext.Cmp(start) < 0 || cpKey.Cmp(end) > 0 {
+	if cpKey.Cmp(start) < 0 || cpKey.Cmp(end) > 0 {
 		logutil.Logger(src.ctx).Error("invalid checkpoint key",
 			zap.String("last_process_key", hex.EncodeToString(cpKey)),
 			zap.String("start", hex.EncodeToString(start)),
@@ -360,7 +359,7 @@ func (src *TableScanTaskSource) adjustStartKey(start, end kv.Key) kv.Key {
 		}
 		return start
 	}
-	return cpKeyNext
+	return cpKey.Next()
 }
 
 func (src *TableScanTaskSource) generateTasks() error {

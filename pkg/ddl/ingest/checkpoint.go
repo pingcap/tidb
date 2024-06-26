@@ -282,7 +282,8 @@ func (s *CheckpointManager) Close() {
 	s.logger.Info("checkpoint manager closed")
 }
 
-// Reset resets the checkpoint manager between two partitions.
+// Reset resets the checkpoint manager before handling.
+// It resets the watermark if a new physical ID is given.
 func (s *CheckpointManager) Reset(newPhysicalID int64, start, end kv.Key) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
