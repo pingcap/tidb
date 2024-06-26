@@ -106,3 +106,9 @@ func (b *BuildPBContext) GetExprCtx() exprctx.BuildContext {
 func (b *BuildPBContext) GetClient() kv.Client {
 	return b.Client
 }
+
+// IntoStatic persists some fields to make sure it's safe to read/write the context after the session continues
+// to execute other statements.
+func (b *BuildPBContext) IntoStatic(staticExprCtx exprctx.BuildContext) {
+	b.ExprCtx = staticExprCtx
+}

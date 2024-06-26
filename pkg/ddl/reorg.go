@@ -88,7 +88,6 @@ func newReorgExprCtx() exprctx.ExprContext {
 
 	return contextstatic.NewStaticExprContext(
 		contextstatic.WithEvalCtx(evalCtx),
-		contextstatic.WithUseCache(false),
 	)
 }
 

@@ -164,8 +164,8 @@ type StatementContext struct {
 	InPreparedPlanBuilding bool
 	InShowWarning          bool
 
-	contextutil.PlanCacheTracker
-	contextutil.RangeFallbackHandler
+	*contextutil.PlanCacheTracker
+	*contextutil.RangeFallbackHandler
 
 	BatchCheck            bool
 	IgnoreExplainIDSuffix bool
@@ -424,7 +424,7 @@ func NewStmtCtxWithTimeZone(tz *time.Location) *StatementContext {
 	sc.typeCtx = types.NewContext(types.DefaultStmtFlags, tz, sc)
 	sc.errCtx = newErrCtx(sc.typeCtx, DefaultStmtErrLevels, sc)
 	sc.PlanCacheTracker = contextutil.NewPlanCacheTracker(sc)
-	sc.RangeFallbackHandler = contextutil.NewRangeFallbackHandler(&sc.PlanCacheTracker, sc)
+	sc.RangeFallbackHandler = contextutil.NewRangeFallbackHandler(sc.PlanCacheTracker, sc)
 	sc.WarnHandler = contextutil.NewStaticWarnHandler(0)
 	sc.ExtraWarnHandler = contextutil.NewStaticWarnHandler(0)
 	return sc
@@ -438,7 +438,7 @@ func (sc *StatementContext) Reset() {
 	sc.typeCtx = types.NewContext(types.DefaultStmtFlags, time.UTC, sc)
 	sc.errCtx = newErrCtx(sc.typeCtx, DefaultStmtErrLevels, sc)
 	sc.PlanCacheTracker = contextutil.NewPlanCacheTracker(sc)
-	sc.RangeFallbackHandler = contextutil.NewRangeFallbackHandler(&sc.PlanCacheTracker, sc)
+	sc.RangeFallbackHandler = contextutil.NewRangeFallbackHandler(sc.PlanCacheTracker, sc)
 	sc.WarnHandler = contextutil.NewStaticWarnHandler(0)
 	sc.ExtraWarnHandler = contextutil.NewStaticWarnHandler(0)
 }

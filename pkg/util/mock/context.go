@@ -256,7 +256,7 @@ func (c *Context) GetDistSQLCtx() *distsqlctx.DistSQLContext {
 		EnabledRateLimitAction:               vars.EnabledRateLimitAction,
 		EnableChunkRPC:                       vars.EnableChunkRPC,
 		OriginalSQL:                          sc.OriginalSQL,
-		KVVars:                               vars.KVVars,
+		KVVars:                               *vars.KVVars,
 		KvExecCounter:                        sc.KvExecCounter,
 		SessionMemTracker:                    vars.MemTracker,
 		Location:                             sc.TimeZone(),
@@ -286,8 +286,8 @@ func (c *Context) GetRangerCtx() *rangerctx.RangerContext {
 		OptPrefixIndexSingleScan: c.GetSessionVars().OptPrefixIndexSingleScan,
 		OptimizerFixControl:      c.GetSessionVars().OptimizerFixControl,
 
-		PlanCacheTracker:     &c.GetSessionVars().StmtCtx.PlanCacheTracker,
-		RangeFallbackHandler: &c.GetSessionVars().StmtCtx.RangeFallbackHandler,
+		PlanCacheTracker:     c.GetSessionVars().StmtCtx.PlanCacheTracker,
+		RangeFallbackHandler: c.GetSessionVars().StmtCtx.RangeFallbackHandler,
 	}
 }
 

@@ -9,6 +9,7 @@ go_library(
         "//pkg/errctx",
         "//pkg/expression/context",
         "//pkg/expression/contextopt",
+        "//pkg/expression/contextstatic",
         "//pkg/infoschema/context",
         "//pkg/parser/auth",
         "//pkg/parser/model",

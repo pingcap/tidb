@@ -139,8 +139,8 @@ func (h *PlanCacheTracker) PlanCacheUnqualified() string {
 }
 
 // NewPlanCacheTracker creates a new PlanCacheTracker.
-func NewPlanCacheTracker(warnHandler WarnAppender) PlanCacheTracker {
-	return PlanCacheTracker{
+func NewPlanCacheTracker(warnHandler WarnAppender) *PlanCacheTracker {
+	return &PlanCacheTracker{
 		warnHandler: warnHandler,
 	}
 }
@@ -166,8 +166,8 @@ func (h *RangeFallbackHandler) RecordRangeFallback(rangeMaxSize int64) {
 }
 
 // NewRangeFallbackHandler creates a new RangeFallbackHandler.
-func NewRangeFallbackHandler(planCacheTracker *PlanCacheTracker, warnHandler WarnAppender) RangeFallbackHandler {
-	return RangeFallbackHandler{
+func NewRangeFallbackHandler(planCacheTracker *PlanCacheTracker, warnHandler WarnAppender) *RangeFallbackHandler {
+	return &RangeFallbackHandler{
 		planCacheTracker: planCacheTracker,
 		warnHandler:      warnHandler,
 	}
