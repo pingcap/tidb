@@ -107,6 +107,9 @@ var (
 
 	// LoadSchemaDiffVersionGapThreshold is the threshold for version gap to reload domain by loading schema diffs
 	LoadSchemaDiffVersionGapThreshold int64 = 100
+
+	// NewInstancePlanCache creates a new instance level plan cache, this function is designed to avoid cycle-import.
+	NewInstancePlanCache func(softMemLimit, hardMemLimit int64) sessionctx.InstancePlanCache
 )
 
 const (
@@ -198,6 +201,8 @@ type Domain struct {
 
 	mdlCheckCh      chan struct{}
 	stopAutoAnalyze atomicutil.Bool
+
+	instancePlanCache sessionctx.InstancePlanCache // the instance level plan cache
 }
 
 type mdlCheckTableInfo struct {
@@ -3019,6 +3024,37 @@ func (do *Domain) TTLJobManager() *ttlworker.JobManager {
 // StopAutoAnalyze stops (*Domain).autoAnalyzeWorker to launch new auto analyze jobs.
 func (do *Domain) StopAutoAnalyze() {
 	do.stopAutoAnalyze.Store(true)
+}
+
+// InitInstancePlanCache initializes the instance level plan cache for this Domain.
+func (do *Domain) InitInstancePlanCache(softMemLimit, hardMemLimit int64) {
+	do.instancePlanCache = NewInstancePlanCache(softMemLimit, hardMemLimit)
+	do.wg.Run(do.planCacheEvictTrigger, "planCacheEvictTrigger")
+}
+
+// GetInstancePlanCache returns the instance level plan cache in this Domain.
+func (do *Domain) GetInstancePlanCache() sessionctx.InstancePlanCache {
+	return do.instancePlanCache
+}
+
+// planCacheEvictTrigger triggers the plan cache eviction periodically.
+func (do *Domain) planCacheEvictTrigger() {
+	defer util.Recover(metrics.LabelDomain, "planCacheEvictTrigger", nil, false)
+	ticker := time.NewTicker(time.Second * 5) // 5s by default
+	defer func() {
+		ticker.Stop()
+		logutil.BgLogger().Info("planCacheEvictTrigger exited.")
+	}()
+
+	for {
+		select {
+		case <-ticker.C:
+			do.instancePlanCache.Evict()
+			// TODO: update the metrics
+		case <-do.exit:
+			return
+		}
+	}
 }
 
 func init() {
