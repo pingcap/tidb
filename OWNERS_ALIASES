@@ -40,7 +40,6 @@ aliases:
     - D3Hunter
     - gmhdbjd
     - lance6716
-    - lichunzhu
   sig-approvers-domain: # approvers for domain pkg
     - D3Hunter
     - gmhdbjd
@@ -63,7 +62,6 @@ aliases:
   sig-approvers-dumpling: # approvers for dumpling module
     - Benjamin2037
     - gmhdbjd
-    - lichunzhu
     - lance6716
     - tangenta
   sig-approvers-infoschema: # approvers for infoschema pkg
@@ -81,7 +79,6 @@ aliases:
     - ywqzzy
   sig-approvers-owner: # approvers for `owner` pkg
     - Benjamin2037
-    - lichunzhu
     - tangenta
     - wjhuang2016
     - ywqzzy
@@ -113,7 +110,6 @@ aliases:
   sig-approvers-tidb-binlog: # approvers for tidb-binlog module
     - Benjamin2037
     - gmhdbjd
-    - lichunzhu
   sig-approvers-planner: # approvers for planner module
     - AilinKid
     - elsa0520
