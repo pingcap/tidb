@@ -978,6 +978,11 @@ const (
 	// TiDBEnableColumnTracking enables collecting predicate columns.
 	// DEPRECATED: This variable is deprecated, please do not use this variable.
 	TiDBEnableColumnTracking = "tidb_enable_column_tracking"
+	// TiDBAnalyzeColumnOptions specifies the default column selection strategy for both manual and automatic analyze operations.
+	// It accepts two values:
+	// `PREDICATE`: Analyze only the columns that are used in the predicates of the query.
+	// `ALL`: Analyze all columns in the table.
+	TiDBAnalyzeColumnOptions = "tidb_analyze_column_options"
 	// TiDBDisableColumnTrackingTime records the last time TiDBEnableColumnTracking is set off.
 	// It is used to invalidate the collected predicate columns after turning off TiDBEnableColumnTracking, which avoids physical deletion.
 	// It doesn't have cache in memory, and we directly get/set the variable value from/to mysql.tidb.
@@ -1373,6 +1378,7 @@ const (
 	DefTiDBMemQuotaAnalyze                         = -1
 	DefTiDBEnableAutoAnalyze                       = true
 	DefTiDBEnableAutoAnalyzePriorityQueue          = true
+	DefTiDBAnalyzeColumnOptions                    = "ALL"
 	DefTiDBMemOOMAction                            = "CANCEL"
 	DefTiDBMaxAutoAnalyzeTime                      = 12 * 60 * 60
 	DefTiDBEnablePrepPlanCache                     = true
@@ -1499,20 +1505,29 @@ const (
 
 // Process global variables.
 var (
-	ProcessGeneralLog                    = atomic.NewBool(false)
-	RunAutoAnalyze                       = atomic.NewBool(DefTiDBEnableAutoAnalyze)
-	EnableAutoAnalyzePriorityQueue       = atomic.NewBool(DefTiDBEnableAutoAnalyzePriorityQueue)
-	GlobalLogMaxDays                     = atomic.NewInt32(int32(config.GetGlobalConfig().Log.File.MaxDays))
-	QueryLogMaxLen                       = atomic.NewInt32(DefTiDBQueryLogMaxLen)
-	EnablePProfSQLCPU                    = atomic.NewBool(false)
-	EnableBatchDML                       = atomic.NewBool(false)
-	EnableTmpStorageOnOOM                = atomic.NewBool(DefTiDBEnableTmpStorageOnOOM)
-	ddlReorgWorkerCounter          int32 = DefTiDBDDLReorgWorkerCount
-	ddlReorgBatchSize              int32 = DefTiDBDDLReorgBatchSize
-	ddlFlashbackConcurrency        int32 = DefTiDBDDLFlashbackConcurrency
-	ddlErrorCountLimit             int64 = DefTiDBDDLErrorCountLimit
-	ddlReorgRowFormat              int64 = DefTiDBRowFormatV2
-	maxDeltaSchemaCount            int64 = DefTiDBMaxDeltaSchemaCount
+	ProcessGeneralLog              = atomic.NewBool(false)
+	RunAutoAnalyze                 = atomic.NewBool(DefTiDBEnableAutoAnalyze)
+	EnableAutoAnalyzePriorityQueue = atomic.NewBool(DefTiDBEnableAutoAnalyzePriorityQueue)
+	// AnalyzeColumnOptions is a global variable that indicates the default column choice for ANALYZE.
+	// The value of this variable is a string that can be one of the following values:
+	// "PREDICATE", "ALL".
+	// The behavior of the analyze operation depends on the value of `tidb_persist_analyze_options`:
+	// 1. If `tidb_persist_analyze_options` is enabled and the column choice from the analyze options record is set to `default`,
+	//    the value of `tidb_analyze_column_options` determines the behavior of the analyze operation.
+	// 2. If `tidb_persist_analyze_options` is disabled, `tidb_analyze_column_options` is used directly to decide
+	//    whether to analyze all columns or just the predicate columns.
+	AnalyzeColumnOptions          = atomic.NewString(DefTiDBAnalyzeColumnOptions)
+	GlobalLogMaxDays              = atomic.NewInt32(int32(config.GetGlobalConfig().Log.File.MaxDays))
+	QueryLogMaxLen                = atomic.NewInt32(DefTiDBQueryLogMaxLen)
+	EnablePProfSQLCPU             = atomic.NewBool(false)
+	EnableBatchDML                = atomic.NewBool(false)
+	EnableTmpStorageOnOOM         = atomic.NewBool(DefTiDBEnableTmpStorageOnOOM)
+	ddlReorgWorkerCounter   int32 = DefTiDBDDLReorgWorkerCount
+	ddlReorgBatchSize       int32 = DefTiDBDDLReorgBatchSize
+	ddlFlashbackConcurrency int32 = DefTiDBDDLFlashbackConcurrency
+	ddlErrorCountLimit      int64 = DefTiDBDDLErrorCountLimit
+	ddlReorgRowFormat       int64 = DefTiDBRowFormatV2
+	maxDeltaSchemaCount     int64 = DefTiDBMaxDeltaSchemaCount
 	// DDLSlowOprThreshold is the threshold for ddl slow operations, uint is millisecond.
 	DDLSlowOprThreshold                  = config.GetGlobalConfig().Instance.DDLSlowOprThreshold
 	ForcePriority                        = int32(DefTiDBForcePriority)
