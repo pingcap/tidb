@@ -1014,14 +1014,14 @@ var defaultSysVars = []*SysVar{
 	},
 	{
 		Scope: ScopeGlobal,
-		Name:  TiDBAnalyzeDefaultColumnChoice,
-		Value: DefTiDBAnalyzeDefaultColumnChoice,
+		Name:  TiDBAnalyzeColumnOptions,
+		Value: DefTiDBAnalyzeColumnOptions,
 		Type:  TypeStr,
 		GetGlobal: func(ctx context.Context, s *SessionVars) (string, error) {
-			return AnalyzeDefaultColumnChoice.Load(), nil
+			return AnalyzeColumnOptions.Load(), nil
 		},
 		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
-			AnalyzeDefaultColumnChoice.Store(strings.ToUpper(val))
+			AnalyzeColumnOptions.Store(strings.ToUpper(val))
 			return nil
 		},
 		Validation: func(s *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
@@ -1029,7 +1029,7 @@ var defaultSysVars = []*SysVar{
 			if choice != model.AllColumns.String() && choice != model.PredicateColumns.String() {
 				return "", errors.Errorf(
 					"invalid value for %s, it should be either '%s' or '%s'",
-					TiDBAnalyzeDefaultColumnChoice,
+					TiDBAnalyzeColumnOptions,
 					model.AllColumns.String(),
 					model.PredicateColumns.String(),
 				)
