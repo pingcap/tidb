@@ -23,6 +23,7 @@ go_library(
         "initialize.go",
         "logical_aggregation.go",
         "logical_initialize.go",
+        "logical_limit.go",
         "logical_plan_builder.go",
         "logical_plans.go",
         "logical_top_n.go",
