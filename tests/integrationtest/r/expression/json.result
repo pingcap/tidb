@@ -758,3 +758,5 @@ SELECT JSON_SCHEMA_VALID('', NULL);
 Error 3141 (22032): Invalid JSON text in argument 1 to function json_schema_valid: "The document is empty." at position 0.
 SELECT JSON_SCHEMA_VALID('1','{}');
 Error 3853 (22032): Invalid JSON type in argument 1 to function json_schema_valid; an object is required.
+SELECT JSON_SCHEMA_VALID('{"properties": {"a": {"exclusiveMinimum": true}}}', '{}');
+Error 3853 (22032): Invalid JSON type in argument 1 to function json_schema_valid; an error unmarshaling properties from json: error unmarshaling exclusiveMinimum from json: json: cannot unmarshal bool into Go value of type jsonschema.ExclusiveMinimum is required.
