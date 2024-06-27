@@ -291,7 +291,7 @@ func createOssRAMCred() (*credentials.Credentials, error) {
 	if err != nil {
 		return nil, nil
 	}
-    var aliCred, ok = cred.(*alicred.StsTokenCredential)
+	var aliCred, ok = cred.(*alicred.StsTokenCredential)
 	if !ok {
 		return nil, errors.Errorf("invalid credential type %T", cred)
 	}
