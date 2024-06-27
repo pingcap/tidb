@@ -182,27 +182,28 @@ type StatementContext struct {
 
 	// IsDDLJobInQueue is used to mark whether the DDL job is put into the queue.
 	// If IsDDLJobInQueue is true, it means the DDL job is in the queue of storage, and it can be handled by the DDL worker.
-	IsDDLJobInQueue        bool
-	DDLJobID               int64
-	InInsertStmt           bool
-	InUpdateStmt           bool
-	InDeleteStmt           bool
-	InSelectStmt           bool
-	InLoadDataStmt         bool
-	InExplainStmt          bool
-	InExplainAnalyzeStmt   bool
-	ExplainFormat          string
-	InCreateOrAlterStmt    bool
-	InSetSessionStatesStmt bool
-	InPreparedPlanBuilding bool
-	InShowWarning          bool
-	UseCache               bool
-	ForcePlanCache         bool // force the optimizer to use plan cache even if there is risky optimization, see #49736.
-	CacheType              PlanCacheType
-	BatchCheck             bool
-	InNullRejectCheck      bool
-	IgnoreExplainIDSuffix  bool
-	MultiSchemaInfo        *model.MultiSchemaInfo
+	IsDDLJobInQueue          bool
+	DDLJobID                 int64
+	InInsertStmt             bool
+	InUpdateStmt             bool
+	InDeleteStmt             bool
+	InSelectStmt             bool
+	InLoadDataStmt           bool
+	InExplainStmt            bool
+	InExplainAnalyzeStmt     bool
+	ExplainFormat            string
+	InCreateOrAlterStmt      bool
+	InSetSessionStatesStmt   bool
+	InPreparedPlanBuilding   bool
+	InShowWarning            bool
+	UseCache                 bool
+	ForcePlanCache           bool // force the optimizer to use plan cache even if there is risky optimization, see #49736.
+	CacheType                PlanCacheType
+	BatchCheck               bool
+	InNullRejectCheck        bool
+	InConstantPropagateCheck bool
+	IgnoreExplainIDSuffix    bool
+	MultiSchemaInfo          *model.MultiSchemaInfo
 	// If the select statement was like 'select * from t as of timestamp ...' or in a stale read transaction
 	// or is affected by the tidb_read_staleness session variable, then the statement will be makred as isStaleness
 	// in stmtCtx
