@@ -330,7 +330,7 @@ func (s *InferTypeSuite) createTestCase4StrFuncs() []typeInferTestCase {
 		{"from_base64(c_double_d   )", mysql.TypeVarString, charset.CharsetBin, mysql.BinaryFlag, types.UnspecifiedLength, types.UnspecifiedLength},
 		{"from_base64(c_decimal    )", mysql.TypeVarString, charset.CharsetBin, mysql.BinaryFlag, 27, types.UnspecifiedLength},
 		{"from_base64(c_datetime   )", mysql.TypeVarString, charset.CharsetBin, mysql.BinaryFlag, 66, types.UnspecifiedLength},
-		{"from_base64(c_time_d     )", mysql.TypeVarString, charset.CharsetBin, mysql.BinaryFlag, 30, types.UnspecifiedLength},
+		{"from_base64(c_time_d     )", mysql.TypeVarString, charset.CharsetBin, mysql.BinaryFlag, types.UnspecifiedLength, types.UnspecifiedLength},
 		{"from_base64(c_timestamp_d)", mysql.TypeVarString, charset.CharsetBin, mysql.BinaryFlag, 57, types.UnspecifiedLength},
 		{"from_base64(c_char       )", mysql.TypeVarString, charset.CharsetBin, mysql.BinaryFlag, 60, types.UnspecifiedLength},
 		{"from_base64(c_varchar    )", mysql.TypeVarString, charset.CharsetBin, mysql.BinaryFlag, 60, types.UnspecifiedLength},

@@ -373,7 +373,7 @@ func (ft *FieldType) CompactStr() string {
 
 	// displayFlen and displayDecimal are flen and decimal values with `-1` substituted with default value.
 	displayFlen, displayDecimal := ft.flen, ft.decimal
-	if displayFlen == UnspecifiedLength {
+	if displayFlen == UnspecifiedLength && ft.GetType() != mysql.TypeVarString {
 		displayFlen = defaultFlen
 	}
 	if displayDecimal == UnspecifiedLength {
@@ -403,7 +403,11 @@ func (ft *FieldType) CompactStr() string {
 		}
 	case mysql.TypeNewDecimal:
 		suffix = fmt.Sprintf("(%d,%d)", displayFlen, displayDecimal)
-	case mysql.TypeBit, mysql.TypeVarchar, mysql.TypeString, mysql.TypeVarString:
+	case mysql.TypeVarString:
+		if displayFlen != -1 {
+			suffix = fmt.Sprintf("(%d)", displayFlen)
+		}
+	case mysql.TypeBit, mysql.TypeVarchar, mysql.TypeString:
 		suffix = fmt.Sprintf("(%d)", displayFlen)
 	case mysql.TypeTiny:
 		// With display length deprecation active tinyint(1) still has

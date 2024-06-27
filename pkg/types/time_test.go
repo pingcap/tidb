@@ -1477,6 +1477,9 @@ func TestGetFsp(t *testing.T) {
 
 	res = types.GetFsp("2019:04:12 14:00:00")
 	require.Equal(t, 0, res)
+
+	res = types.GetFsp("2019:04:12.00")
+	require.Equal(t, 2, res)
 }
 
 func TestExtractDatetimeNum(t *testing.T) {

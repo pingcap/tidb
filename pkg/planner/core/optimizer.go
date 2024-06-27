@@ -292,9 +292,6 @@ func doOptimize(
 	logic base.LogicalPlan,
 ) (base.LogicalPlan, base.PhysicalPlan, float64, error) {
 	sessVars := sctx.GetSessionVars()
-	if !sessVars.InRestrictedSQL {
-		fmt.Println("InRestrictedSQL")
-	}
 	flag = adjustOptimizationFlags(flag, logic)
 	logic, err := logicalOptimize(ctx, flag, logic)
 	if err != nil {
@@ -1001,9 +998,6 @@ func logicalOptimize(ctx context.Context, flag uint64, logic base.LogicalPlan) (
 			vars.StmtCtx.OptimizeTracer.Logical = tracer
 		}()
 	}
-	if !logic.SCtx().GetSessionVars().InRestrictedSQL {
-		fmt.Println("find")
-	}
 	var err error
 	var againRuleList []logicalOptRule
 	for i, rule := range optRuleList {
@@ -1018,9 +1012,6 @@ func logicalOptimize(ctx context.Context, flag uint64, logic base.LogicalPlan) (
 		logic, planChanged, err = rule.optimize(ctx, logic, opt)
 		if err != nil {
 			return nil, err
-		}
-		if !logic.SCtx().GetSessionVars().InRestrictedSQL {
-			fmt.Println("check")
 		}
 		// Compute interaction rules that should be optimized again
 		interactionRule, ok := optInteractionRuleList[rule]
@@ -1037,9 +1028,7 @@ func logicalOptimize(ctx context.Context, flag uint64, logic base.LogicalPlan) (
 			return nil, err
 		}
 	}
-	if !logic.SCtx().GetSessionVars().InRestrictedSQL {
-		fmt.Println("before")
-	}
+
 	opt.RecordFinalLogicalPlan(logic.BuildPlanTrace)
 	return logic, err
 }

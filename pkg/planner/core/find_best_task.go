@@ -2885,9 +2885,6 @@ func (ds *DataSource) getOriginalPhysicalIndexScan(prop *property.PhysicalProper
 
 // FindBestTask implements the LogicalPlan interface.
 func (p *LogicalCTE) FindBestTask(prop *property.PhysicalProperty, counter *base.PlanCounterTp, pop *optimizetrace.PhysicalOptimizeOp) (t base.Task, cntPlan int64, err error) {
-	if p.SCtx().GetSessionVars().InRestrictedSQL {
-		fmt.Println("ok")
-	}
 	if p.ChildLen() > 0 {
 		return p.BaseLogicalPlan.FindBestTask(prop, counter, pop)
 	}

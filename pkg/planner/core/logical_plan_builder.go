@@ -1295,9 +1295,7 @@ func (b *PlanBuilder) buildSelection(ctx context.Context, p base.LogicalPlan, wh
 	if b.curClause != havingClause {
 		b.curClause = whereClause
 	}
-	if !b.ctx.GetSessionVars().InRestrictedSQL {
-		fmt.Println("bug")
-	}
+
 	conditions := splitWhere(where)
 	expressions := make([]expression.Expression, 0, len(conditions))
 	selection := LogicalSelection{}.Init(b.ctx, b.getSelectOffset())
@@ -4036,9 +4034,6 @@ func (b *PlanBuilder) TableHints() *h.PlanHints {
 }
 
 func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p base.LogicalPlan, err error) {
-	if !b.ctx.GetSessionVars().InRestrictedSQL {
-		fmt.Println("in")
-	}
 	b.pushSelectOffset(sel.QueryBlockOffset)
 	b.pushTableHints(sel.TableHints, sel.QueryBlockOffset)
 	defer func() {
@@ -4185,7 +4180,7 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p b
 	// above example.
 	b.allNames = append(b.allNames, p.OutputNames())
 	defer func() { b.allNames = b.allNames[:len(b.allNames)-1] }()
-	//????? final
+
 	if sel.Where != nil {
 		p, err = b.buildSelection(ctx, p, sel.Where, nil)
 		if err != nil {
@@ -4617,9 +4612,7 @@ func (b *PlanBuilder) tryBuildCTE(ctx context.Context, tn *ast.TableName, asName
 			}
 			// Compute cte inline
 			b.computeCTEInlineFlag(cte)
-			if !b.ctx.GetSessionVars().InRestrictedSQL {
-				fmt.Println("ok")
-			}
+
 			if cte.recurLP == nil && cte.isInline {
 				saveCte := make([]*cteInfo, len(b.outerCTEs[i:]))
 				copy(saveCte, b.outerCTEs[i:])
