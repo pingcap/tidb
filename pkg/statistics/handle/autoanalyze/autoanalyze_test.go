@@ -146,12 +146,15 @@ func TestAutoAnalyzeOnChangeAnalyzeVer(t *testing.T) {
 	require.NoError(t, err)
 	statsTbl1 := h.GetTableStats(tbl.Meta())
 	// Check that all the version of t's stats are 1.
-	for _, col := range statsTbl1.Columns {
+	statsTbl1.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
 		require.Equal(t, int64(1), col.GetStatsVer())
-	}
-	for _, idx := range statsTbl1.Indices {
+		return false
+	})
+	statsTbl1.ForEachIndexImmutable(func(_ int64, idx *statistics.Index) bool {
 		require.Equal(t, int64(1), idx.GetStatsVer())
-	}
+		return false
+	})
+	require.Equal(t, 1, statsTbl1.StatsVer)
 	tk.MustExec("set @@global.tidb_analyze_version = 2")
 	tk.MustExec("insert into t values(1), (2), (3), (4)")
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
@@ -162,12 +165,15 @@ func TestAutoAnalyzeOnChangeAnalyzeVer(t *testing.T) {
 	statsTbl1 = h.GetTableStats(tbl.Meta())
 	require.Equal(t, int64(5), statsTbl1.RealtimeCount)
 	// All of its statistics should still be version 1.
-	for _, col := range statsTbl1.Columns {
+	statsTbl1.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
 		require.Equal(t, int64(1), col.GetStatsVer())
-	}
-	for _, idx := range statsTbl1.Indices {
+		return false
+	})
+	statsTbl1.ForEachIndexImmutable(func(_ int64, idx *statistics.Index) bool {
 		require.Equal(t, int64(1), idx.GetStatsVer())
-	}
+		return false
+	})
+	require.Equal(t, 1, statsTbl1.StatsVer)
 	// Add a new table after the analyze version set to 2.
 	tk.MustExec("create table tt(a int, index idx(a))")
 	tk.MustExec("insert into tt values(1), (2), (3), (4), (5)")
@@ -182,12 +188,15 @@ func TestAutoAnalyzeOnChangeAnalyzeVer(t *testing.T) {
 	require.NoError(t, h.Update(is))
 	statsTbl2 := h.GetTableStats(tbl2.Meta())
 	// Since it's a newly created table. Auto analyze should analyze it's statistics to version2.
-	for _, idx := range statsTbl2.Indices {
-		require.Equal(t, int64(2), idx.GetStatsVer())
-	}
-	for _, col := range statsTbl2.Columns {
+	statsTbl2.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
 		require.Equal(t, int64(2), col.GetStatsVer())
-	}
+		return false
+	})
+	statsTbl2.ForEachIndexImmutable(func(_ int64, idx *statistics.Index) bool {
+		require.Equal(t, int64(2), idx.GetStatsVer())
+		return false
+	})
+	require.Equal(t, 2, statsTbl2.StatsVer)
 	tk.MustExec("set @@global.tidb_analyze_version = 1")
 }
 
@@ -250,42 +259,21 @@ func TestNeedAnalyzeTable(t *testing.T) {
 		},
 		// table was already analyzed but auto analyze is disabled
 		{
-			tbl:    &statistics.Table{HistColl: statistics.HistColl{Columns: columns, ModifyCount: 1, RealtimeCount: 1}, LastAnalyzeVersion: 1},
+			tbl:    &statistics.Table{HistColl: *statistics.NewHistCollWithColsAndIdxs(0, false, 1, 1, columns, nil), LastAnalyzeVersion: 1},
 			ratio:  0,
 			result: false,
 			reason: "",
 		},
 		// table was already analyzed but modify count is small
 		{
-			tbl:    &statistics.Table{HistColl: statistics.HistColl{Columns: columns, ModifyCount: 0, RealtimeCount: 1}, LastAnalyzeVersion: 1},
+			tbl:    &statistics.Table{HistColl: *statistics.NewHistCollWithColsAndIdxs(0, false, 1, 0, columns, nil), LastAnalyzeVersion: 1},
 			ratio:  0.3,
 			result: false,
 			reason: "",
 		},
 		// table was already analyzed
 		{
-			tbl:    &statistics.Table{HistColl: statistics.HistColl{Columns: columns, ModifyCount: 1, RealtimeCount: 1}, LastAnalyzeVersion: 1},
-			ratio:  0.3,
-			result: true,
-			reason: "too many modifications",
-		},
-		// table was already analyzed
-		{
-			tbl:    &statistics.Table{HistColl: statistics.HistColl{Columns: columns, ModifyCount: 1, RealtimeCount: 1}, LastAnalyzeVersion: 1},
-			ratio:  0.3,
-			result: true,
-			reason: "too many modifications",
-		},
-		// table was already analyzed
-		{
-			tbl:    &statistics.Table{HistColl: statistics.HistColl{Columns: columns, ModifyCount: 1, RealtimeCount: 1}, LastAnalyzeVersion: 1},
-			ratio:  0.3,
-			result: true,
-			reason: "too many modifications",
-		},
-		// table was already analyzed
-		{
-			tbl:    &statistics.Table{HistColl: statistics.HistColl{Columns: columns, ModifyCount: 1, RealtimeCount: 1}, LastAnalyzeVersion: 1},
+			tbl:    &statistics.Table{HistColl: *statistics.NewHistCollWithColsAndIdxs(0, false, 1, 1, columns, nil), LastAnalyzeVersion: 1},
 			ratio:  0.3,
 			result: true,
 			reason: "too many modifications",

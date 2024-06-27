@@ -1173,9 +1173,9 @@ func getColsNDVLowerBoundFromHistColl(colUIDs []int64, histColl *statistics.Hist
 	}
 
 	// 1. Try to get NDV from column stats if it's a single column.
-	if len(colUIDs) == 1 && histColl.Columns != nil {
+	if len(colUIDs) == 1 && histColl.ColNum() > 0 {
 		uid := colUIDs[0]
-		if colStats, ok := histColl.Columns[uid]; ok && colStats != nil && colStats.IsStatsInitialized() {
+		if colStats := histColl.GetCol(uid); colStats != nil && colStats.IsStatsInitialized() {
 			return colStats.NDV
 		}
 	}
@@ -1195,7 +1195,7 @@ func getColsNDVLowerBoundFromHistColl(colUIDs []int64, histColl *statistics.Hist
 		if !slices.Equal(orderedIdxCols, colUIDs) {
 			continue
 		}
-		if idxStats, ok := histColl.Indices[idxID]; ok && idxStats != nil && idxStats.IsStatsInitialized() {
+		if idxStats := histColl.GetIdx(idxID); idxStats != nil && idxStats.IsStatsInitialized() {
 			return idxStats.NDV
 		}
 	}
@@ -1206,7 +1206,7 @@ func getColsNDVLowerBoundFromHistColl(colUIDs []int64, histColl *statistics.Hist
 	// 3. If we still haven't got an NDV, we use the maximum NDV in the column stats as a lower bound.
 	maxNDV := int64(-1)
 	for _, uid := range colUIDs {
-		colStats := histColl.Columns[uid]
+		colStats := histColl.GetCol(uid)
 		if colStats == nil || !colStats.IsStatsInitialized() {
 			continue
 		}
