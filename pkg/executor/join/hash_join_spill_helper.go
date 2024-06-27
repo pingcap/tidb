@@ -15,6 +15,10 @@
 package join
 
 import (
+	"bytes"
+	"encoding/binary"
+	"hash"
+	"hash/fnv"
 	"slices"
 	"sync"
 	"sync/atomic"
@@ -49,6 +53,9 @@ type hashJoinSpillHelper struct {
 	// TODO initialize it
 	joinChkResourceCh chan *chunk.Chunk
 
+	hash      hash.Hash64
+	rehashBuf *bytes.Buffer
+
 	stack           restoreStack
 	discardedInDisk []*chunk.DataInDiskByChunks
 
@@ -61,12 +68,14 @@ type hashJoinSpillHelper struct {
 
 func newHashJoinSpillHelper(hashJoinExec *HashJoinV2Exec, probeFieldTypes []*types.FieldType) *hashJoinSpillHelper {
 	helper := &hashJoinSpillHelper{hashJoinExec: hashJoinExec}
-	helper.buildSpillChkFieldTypes = append(helper.buildSpillChkFieldTypes, types.NewFieldType(mysql.TypeLonglong))
-	helper.buildSpillChkFieldTypes = append(helper.buildSpillChkFieldTypes, types.NewFieldType(mysql.TypeBit))
-	helper.buildSpillChkFieldTypes = append(helper.buildSpillChkFieldTypes, types.NewFieldType(mysql.TypeBit))
-	helper.probeFieldTypes = append(helper.probeFieldTypes, types.NewFieldType(mysql.TypeLonglong))
-	helper.probeFieldTypes = append(helper.probeFieldTypes, types.NewFieldType(mysql.TypeBit))
-	helper.probeFieldTypes = append(helper.probeFieldTypes, probeFieldTypes...)
+	helper.buildSpillChkFieldTypes = append(helper.buildSpillChkFieldTypes, types.NewFieldType(mysql.TypeLonglong)) // hash value
+	helper.buildSpillChkFieldTypes = append(helper.buildSpillChkFieldTypes, types.NewFieldType(mysql.TypeBit))      // valid join key
+	helper.buildSpillChkFieldTypes = append(helper.buildSpillChkFieldTypes, types.NewFieldType(mysql.TypeBit))      // row data
+	helper.probeFieldTypes = append(helper.probeFieldTypes, types.NewFieldType(mysql.TypeLonglong))                 // hash value
+	helper.probeFieldTypes = append(helper.probeFieldTypes, types.NewFieldType(mysql.TypeBit))                      // serialized key
+	helper.probeFieldTypes = append(helper.probeFieldTypes, probeFieldTypes...)                                     // row data
+	helper.hash = fnv.New64()
+	helper.rehashBuf = new(bytes.Buffer)
 	helper.memTracker = hashJoinExec.memTracker
 	helper.diskTracker = hashJoinExec.diskTracker
 	return helper
@@ -151,7 +160,22 @@ func (h *hashJoinSpillHelper) isPartitionSpilled(partID int) bool {
 }
 
 func (h *hashJoinSpillHelper) discardInDisk(inDisk *chunk.DataInDiskByChunks) {
+	if inDisk == nil {
+		panic("Receive nil DataInDiskByChunks")
+	}
 	h.discardedInDisk = append(h.discardedInDisk, inDisk)
+}
+
+func (h *hashJoinSpillHelper) rehash(hashValue uint64) uint64 {
+	h.rehashBuf.Reset()
+	err := binary.Write(h.rehashBuf, binary.LittleEndian, hashValue)
+	if err != nil {
+		panic("conversion error")
+	}
+
+	h.hash.Reset()
+	h.hash.Write(h.rehashBuf.Bytes())
+	return h.hash.Sum64()
 }
 
 // TODO write a specific test for this function
@@ -458,10 +482,8 @@ func (h *hashJoinSpillHelper) respillForBuildData(segments []*rowTableSegment, b
 		rows := seg.getRowsBytes()
 
 		for i, row := range rows {
-			// oldHashValue := seg.hashValues[i]
-			var newHashValue int
-			var partID int
-			// TODO get new hash value and partition id
+			newHashValue := h.rehash(seg.hashValues[i])
+			partID := newHashValue % uint64(h.hashJoinExec.PartitionNumber)
 
 			if h.tmpSpillBuildSideChunks[partID].IsFull() {
 				err := newBuildInDisk[partID].Add(h.tmpSpillBuildSideChunks[partID])
@@ -489,10 +511,8 @@ func (h *hashJoinSpillHelper) respillForBuildData(segments []*rowTableSegment, b
 		rowNum := chunk.NumRows()
 		for j := 0; j < rowNum; j++ {
 			row := chunk.GetRow(j)
-			// oldHashValue := row.GetInt64(0)
-			var newHashValue int
-			var partID int
-			// TODO get new hash value and partition id
+			newHashValue := h.rehash(uint64(row.GetInt64(0)))
+			partID := newHashValue % uint64(h.hashJoinExec.PartitionNumber)
 
 			if h.tmpSpillBuildSideChunks[partID].IsFull() {
 				err := newBuildInDisk[partID].Add(h.tmpSpillBuildSideChunks[partID])
@@ -508,7 +528,7 @@ func (h *hashJoinSpillHelper) respillForBuildData(segments []*rowTableSegment, b
 		}
 	}
 
-	// Spill remaining rows in tmpSpillChunks
+	// Spill remaining rows in tmpSpillBuildSideChunks
 	for i := 0; i < h.hashJoinExec.PartitionNumber; i++ {
 		if h.tmpSpillBuildSideChunks[i].NumRows() > 0 {
 			err := newBuildInDisk[i].Add(h.tmpSpillBuildSideChunks[i])
@@ -536,10 +556,8 @@ func (h *hashJoinSpillHelper) respillForProbeData(probeInDisk *chunk.DataInDiskB
 		rowNum := chunk.NumRows()
 		for j := 0; j < rowNum; j++ {
 			row := chunk.GetRow(j)
-			oldHashValue := row.GetInt64(0)
-			var newHashValue int
-			var partID int
-			// TODO get new hash value and partition id
+			newHashValue := h.rehash(uint64(row.GetInt64(0)))
+			partID := newHashValue % uint64(h.hashJoinExec.PartitionNumber)
 
 			if h.tmpSpillProbeSideChunks[partID].IsFull() {
 				err := newProbeInDisk[partID].Add(h.tmpSpillProbeSideChunks[partID])
@@ -552,6 +570,17 @@ func (h *hashJoinSpillHelper) respillForProbeData(probeInDisk *chunk.DataInDiskB
 			h.tmpSpillProbeSideChunks[partID].AppendInt64(0, int64(newHashValue))
 			h.tmpSpillProbeSideChunks[partID].AppendBytes(1, row.GetBytes(1))
 			h.tmpSpillProbeSideChunks[partID].AppendBytes(2, row.GetBytes(2))
+		}
+	}
+
+	// Spill remaining rows in tmpSpillProbeSideChunks
+	for i := 0; i < h.hashJoinExec.PartitionNumber; i++ {
+		if h.tmpSpillProbeSideChunks[i].NumRows() > 0 {
+			err := newProbeInDisk[i].Add(h.tmpSpillProbeSideChunks[i])
+			if err != nil {
+				return nil, err
+			}
+			h.tmpSpillProbeSideChunks[i].Reset()
 		}
 	}
 
@@ -613,7 +642,7 @@ func (h *hashJoinSpillHelper) buildHashTable(partition *restorePartition) (*hash
 		// TODO test re-spill case
 		h.appendChunkToSegments(chunk, segments)
 		if h.isSpillNeeded() {
-
+			// TODO spill
 			spillTriggered = true
 			return nil, spillTriggered, nil
 		}
@@ -637,9 +666,26 @@ func (h *hashJoinSpillHelper) buildHashTable(partition *restorePartition) (*hash
 			return nil, spillTriggered, err
 		}
 
+		newProbeInDisks, err := h.respillForProbeData(partition.probeSideChunks)
+		if err != nil {
+			return nil, spillTriggered, err
+		}
+
+		if len(newBuildInDisks) != len(newProbeInDisks) {
+			panic("Hash join's respill occurs error")
+		}
+
+		newRound := partition.round + 1
+		for i := range newBuildInDisks {
+			h.stack.push(&restorePartition{
+				buildSideChunks: newBuildInDisks[i],
+				probeSideChunks: newProbeInDisks[i],
+				round:           newRound,
+			})
+		}
+
 		return nil, spillTriggered, nil
 	} else {
-		// If we need to spill, it's unnecessary to build the table
 		subTb.build(0, len(subTb.rowData.segments))
 	}
 

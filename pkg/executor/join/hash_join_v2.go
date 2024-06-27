@@ -177,7 +177,7 @@ func (htc *hashTableContext) mergeRowTablesToHashTable(tableMeta *TableMeta, par
 // HashJoinCtxV2 is the hash join ctx used in hash join v2
 type HashJoinCtxV2 struct {
 	hashJoinCtxBase
-	PartitionNumber int
+	PartitionNumber int // TODO when partition number == 1 during spill, maybe we need to handle this situation
 	ProbeKeyTypes   []*types.FieldType
 	BuildKeyTypes   []*types.FieldType
 	stats           *hashJoinRuntimeStatsV2
@@ -573,6 +573,7 @@ func (e *HashJoinV2Exec) restore() error {
 			break
 		}
 
+		// Collect, so that we can close them in the end
 		e.spillHelper.discardInDisk(restoredPartition.buildSideChunks)
 		e.spillHelper.discardInDisk(restoredPartition.probeSideChunks)
 
@@ -586,14 +587,12 @@ func (e *HashJoinV2Exec) restore() error {
 			continue
 		}
 
-		// TODO check spill and execute, triggered spill may has been found in `buildHashTable`, but we handle the spill outside of `buildHashTable`
-		// TODO split build and probe data
-		// TODO after spill is executed, we should execute `continue` in the for loop to execute the restore the next partition
-
 		err = e.probeInSpillMode(restoredPartition.probeSideChunks, hashTable)
 		if err != nil {
 			return err
 		}
+
+		// TODO implement scan table for spill
 	}
 
 	return nil
