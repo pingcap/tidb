@@ -86,6 +86,8 @@ type Data struct {
 	// Stores the full data in memory.
 	schemaMap *btree.BTreeG[schemaItem]
 
+	schemaID2Name map[int64]string
+
 	tableCache *Sieve[tableCacheKey, table.Table]
 
 	// sorted by both SchemaVersion and timestamp in descending order, assume they have same order
@@ -171,6 +173,7 @@ func NewData() *Data {
 		byID:              btree.NewBTreeG[tableItem](compareByID),
 		byName:            btree.NewBTreeG[tableItem](compareByName),
 		schemaMap:         btree.NewBTreeG[schemaItem](compareSchemaItem),
+		schemaID2Name:     map[int64]string{},
 		tableCache:        newSieve[tableCacheKey, table.Table](1024 * 1024 * size.MB),
 		specials:          make(map[string]*schemaTables),
 		pid2tid:           btree.NewBTreeG[partitionItem](comparePartitionItem),
@@ -210,6 +213,7 @@ func (isd *Data) addSpecialDB(di *model.DBInfo, tables *schemaTables) {
 
 func (isd *Data) addDB(schemaVersion int64, dbInfo *model.DBInfo) {
 	dbInfo.Tables = nil
+	isd.schemaID2Name[dbInfo.ID] = dbInfo.Name.L
 	isd.schemaMap.Set(schemaItem{schemaVersion: schemaVersion, dbInfo: dbInfo})
 }
 
@@ -228,6 +232,7 @@ func (isd *Data) remove(item tableItem) {
 
 func (isd *Data) deleteDB(dbInfo *model.DBInfo, schemaVersion int64) {
 	item := schemaItem{schemaVersion: schemaVersion, dbInfo: dbInfo, tomb: true}
+	delete(isd.schemaID2Name, dbInfo.ID)
 	isd.schemaMap.Set(item)
 }
 
@@ -640,29 +645,11 @@ func (is *infoschemaV2) TableExists(schema, table model.CIStr) bool {
 }
 
 func (is *infoschemaV2) SchemaByID(id int64) (*model.DBInfo, bool) {
-	var ok bool
-	var dbInfo *model.DBInfo
-	if isTableVirtual(id) {
-		for _, st := range is.Data.specials {
-			if st.dbInfo.ID == id {
-				return st.dbInfo, true
-			}
-		}
-		// Something wrong?
+	name, ok := is.Data.schemaID2Name[id]
+	if !ok {
 		return nil, false
 	}
-
-	is.Data.schemaMap.Reverse(func(item schemaItem) bool {
-		if item.dbInfo.ID == id {
-			if item.schemaVersion <= is.infoSchema.schemaMetaVersion {
-				ok = !item.tomb
-				dbInfo = item.dbInfo
-				return false
-			}
-		}
-		return true
-	})
-	return dbInfo, ok
+	return is.SchemaByName(model.NewCIStr(name))
 }
 
 func (is *infoschemaV2) SchemaTables(schema model.CIStr) (tables []table.Table) {
