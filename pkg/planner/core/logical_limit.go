@@ -171,8 +171,8 @@ func (p *LogicalLimit) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([]
 // *************************** end implementation of logicalPlan interface ***************************
 
 // GetPartitionBy returns partition by fields
-func (lt *LogicalLimit) GetPartitionBy() []property.SortItem {
-	return lt.PartitionBy
+func (p *LogicalLimit) GetPartitionBy() []property.SortItem {
+	return p.PartitionBy
 }
 
 func (p *LogicalLimit) convertToTopN(opt *optimizetrace.LogicalOptimizeOp) *LogicalTopN {
