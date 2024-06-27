@@ -25,6 +25,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+<<<<<<< HEAD:expression/util.go
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -37,6 +38,22 @@ import (
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
+=======
+	"github.com/pingcap/tidb/pkg/expression/contextopt"
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/charset"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/parser/opcode"
+	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/types"
+	driver "github.com/pingcap/tidb/pkg/types/parser_driver"
+	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/collate"
+	"github.com/pingcap/tidb/pkg/util/intset"
+	"github.com/pingcap/tidb/pkg/util/logutil"
+>>>>>>> 521c99967d5 (planner: The length function could not be substitute when collation of mapped column is utfxxx_bin (#54179)):pkg/expression/util.go
 	"go.uber.org/zap"
 	"golang.org/x/tools/container/intsets"
 )
@@ -459,6 +476,28 @@ func ColumnSubstituteImpl(expr Expression, schema *Schema, newExprs []Expression
 				return true, false, e
 			}
 			return false, false, v
+		}
+		// If the collation of the column is PAD SPACE,
+		// we can't propagate the constant to the length function.
+		// For example, schema = ['name'], newExprs = ['a'], v = length(name).
+		// We can't substitute name with 'a' in length(name) because the collation of name is PAD SPACE.
+		// TODO: We will fix it here temporarily, and redesign the logic if we encounter more similar functions or situations later.
+		// Fixed issue #53730
+		if ctx.IsConstantPropagateCheck() && v.FuncName.L == ast.Length {
+			arg0, isColumn := v.GetArgs()[0].(*Column)
+			if isColumn {
+				id := schema.ColumnIndex(arg0)
+				if id != -1 {
+					_, isConstant := newExprs[id].(*Constant)
+					if isConstant {
+						mappedNewColumnCollate := schema.Columns[id].GetStaticType().GetCollate()
+						if mappedNewColumnCollate == charset.CollationUTF8MB4 ||
+							mappedNewColumnCollate == charset.CollationUTF8 {
+							return false, false, v
+						}
+					}
+				}
+			}
 		}
 		// cowExprRef is a copy-on-write util, args array allocation happens only
 		// when expr in args is changed
