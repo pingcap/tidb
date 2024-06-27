@@ -33,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/placement"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/expression/contextstatic"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
@@ -4259,9 +4258,7 @@ func (cns columnNameSlice) At(i int) string {
 }
 
 func isPartExprUnsigned(ectx expression.EvalContext, tbInfo *model.TableInfo) bool {
-	// We should not rely on any configuration, system or session variables, so use a default context.
-	// Same as in tables.newPartitionExpr
-	ctx := contextstatic.NewStaticExprContext()
+	ctx := tables.NewPartitionExprBuildCtx()
 	expr, err := expression.ParseSimpleExpr(ctx, tbInfo.Partition.Expr, expression.WithTableInfo("", tbInfo))
 	if err != nil {
 		logutil.DDLLogger().Error("isPartExpr failed parsing expression!", zap.Error(err))
