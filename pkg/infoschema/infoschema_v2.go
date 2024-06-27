@@ -645,6 +645,15 @@ func (is *infoschemaV2) TableExists(schema, table model.CIStr) bool {
 }
 
 func (is *infoschemaV2) SchemaByID(id int64) (*model.DBInfo, bool) {
+	if isTableVirtual(id) {
+		for _, st := range is.Data.specials {
+			if st.dbInfo.ID == id {
+				return st.dbInfo, true
+			}
+		}
+		// Something wrong?
+		return nil, false
+	}
 	name, ok := is.Data.schemaID2Name[id]
 	if !ok {
 		return nil, false
