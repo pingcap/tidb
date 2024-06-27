@@ -304,6 +304,9 @@ func (do *Domain) loadInfoSchema(startTS uint64) (infoschema.InfoSchema, bool, i
 		// We can fall back to full load, don't need to return the error.
 		logutil.BgLogger().Error("failed to load schema diff", zap.Error(err))
 	}
+	if neededSchemaVersion-currentSchemaVersion >= LoadSchemaDiffVersionGapThreshold {
+		logutil.BgLogger().Info("version gap, fallback to full load", zap.Int64("gap", neededSchemaVersion-currentSchemaVersion))
+	}
 	// full load.
 	schemas, err := do.fetchAllSchemasWithTables(m)
 	if err != nil {
