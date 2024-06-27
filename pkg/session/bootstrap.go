@@ -1273,7 +1273,7 @@ var (
 		upgradeToVer196,
 		upgradeToVer197,
 		upgradeToVer198,
-		upgradeToVer199,
+		upgradeToVer209,
 	}
 )
 
@@ -3042,7 +3042,7 @@ func upgradeToVer198(s sessiontypes.Session, ver int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_mdl_info ADD COLUMN owner_id VARCHAR(64) NOT NULL DEFAULT '';", infoschema.ErrColumnExists)
 }
 
-func upgradeToVer199(s sessiontypes.Session, ver int64) {
+func upgradeToVer209(s sessiontypes.Session, ver int64) {
 	if ver >= version209 {
 		return
 	}
