@@ -905,7 +905,6 @@ func TestDumpColumnStatsUsage(t *testing.T) {
 	defer func() {
 		tk.MustExec(fmt.Sprintf("set global tidb_enable_column_tracking = %v", originalVal))
 	}()
-	tk.MustExec("set global tidb_enable_column_tracking = 1")
 
 	h := dom.StatsHandle()
 	tk.MustExec("use test")
@@ -987,7 +986,6 @@ func TestCollectPredicateColumnsFromExecute(t *testing.T) {
 			defer func() {
 				tk.MustExec(fmt.Sprintf("set global tidb_enable_column_tracking = %v", originalVal2))
 			}()
-			tk.MustExec("set global tidb_enable_column_tracking = 1")
 
 			h := dom.StatsHandle()
 			tk.MustExec("use test")
