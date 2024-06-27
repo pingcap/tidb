@@ -217,7 +217,37 @@ func TestAnalyzeTableWhenV1StatsExists(t *testing.T) {
 	)
 }
 
-func TestAnalyzeWhenNoPredicateColumns(t *testing.T) {
+func TestAnalyzeWithNoPredicateColumns(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+
+	// Set tidb_analyze_column_options to PREDICATE.
+	tk.MustExec("set global tidb_analyze_column_options='PREDICATE'")
+
+	// Create table and select data without predicate.
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int, b int, c int, index ia (a, b))")
+	tk.MustExec("insert into t values (1, 1, 1), (2, 2, 2), (3, 3, 3)")
+	// Dump the statistics usage.
+	h := dom.StatsHandle()
+	err := h.DumpColStatsUsageToKV()
+	require.NoError(t, err)
+
+	// Analyze table.
+	tk.MustExec("analyze table t")
+	// Show Warnings.
+	tk.MustQuery("show warnings").Check(
+		testkit.Rows(
+			"Warning 1105 No predicate column has been collected yet for table test.t, so only indexes and the columns composing the indexes will be analyzed",
+			"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t, reason to use this rate is \"use min(1, 110000/10000) as the sample-rate=1\"",
+		),
+	)
+	tk.MustQuery("select table_name, job_info from mysql.analyze_jobs order by id desc limit 1").Check(
+		testkit.Rows("t analyze table columns a, b with 256 buckets, 100 topn, 1 samplerate"),
+	)
+}
+
+func TestAnalyzeWithNoPredicateColumnsAndNoIndexes(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 
@@ -235,8 +265,8 @@ func TestAnalyzeWhenNoPredicateColumns(t *testing.T) {
 
 	// Analyze table.
 	tk.MustExec("analyze table t")
-	// TODO: We should only analyze indexes here.
+	// FIXME: We should correct the job info or skip this kind of job.
 	tk.MustQuery("select table_name, job_info from mysql.analyze_jobs order by id desc limit 1").Check(
-		testkit.Rows("t analyze table all columns with 256 buckets, 100 topn, 1 samplerate"),
+		testkit.Rows("t analyze table columns  with 256 buckets, 100 topn, 1 samplerate]"),
 	)
 }

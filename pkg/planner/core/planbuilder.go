@@ -1977,10 +1977,13 @@ func (b *PlanBuilder) getPredicateColumns(tbl *ast.TableName, cols *calcOnceMap)
 		return nil, err
 	}
 	if len(colList) == 0 {
-		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("No predicate column has been collected yet for table %s.%s so all columns are analyzed", tbl.Schema.L, tbl.Name.L))
-		for _, colInfo := range tblInfo.Columns {
-			cols.data[colInfo.ID] = struct{}{}
-		}
+		b.ctx.GetSessionVars().StmtCtx.AppendWarning(
+			errors.NewNoStackErrorf(
+				"No predicate column has been collected yet for table %s.%s, so only indexes and the columns composing the indexes will be analyzed",
+				tbl.Schema.L,
+				tbl.Name.L,
+			),
+		)
 	} else {
 		for _, id := range colList {
 			cols.data[id] = struct{}{}
