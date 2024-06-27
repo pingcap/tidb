@@ -866,3 +866,7 @@ func (e *hashJoinRuntimeStatsV2) Merge(rs execdetails.RuntimeStats) {
 		e.maxFetchAndProbe = tmp.maxFetchAndProbe
 	}
 }
+
+func init() {
+	EnableHashJoinV2.Store(true)
+}
