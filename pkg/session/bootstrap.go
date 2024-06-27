@@ -1098,14 +1098,18 @@ const (
 	//   add column `owner_id` for `mysql.tidb_mdl_info` table
 	version198 = 198
 
-	// version 199
+	// ...
+	// [version199, version208] is the version range reserved for patches of 8.1.x
+	// ...
+
+	// version 209
 	//   sets `tidb_resource_control_strict_mode` to off when a cluster upgrades from some version lower than v8.2.
-	version199 = 199
+	version209 = 209
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version199
+var currentBootstrapVersion int64 = version209
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -3039,7 +3043,7 @@ func upgradeToVer198(s sessiontypes.Session, ver int64) {
 }
 
 func upgradeToVer199(s sessiontypes.Session, ver int64) {
-	if ver >= version199 {
+	if ver >= version209 {
 		return
 	}
 
