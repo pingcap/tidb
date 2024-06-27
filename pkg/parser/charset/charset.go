@@ -32,8 +32,10 @@ var (
 )
 
 var (
+	// PadSpace is to mark that trailing spaces are insignificant in comparisons
 	PadSpace = "PAD SPACE"
-	PadNone  = "NO PAD"
+	// PadNone is to mark that trailing spaces are significant in comparisons
+	PadNone = "NO PAD"
 )
 
 // Charset is a charset.
