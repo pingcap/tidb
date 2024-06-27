@@ -270,40 +270,7 @@ func (e *HashAggExec) initForParallelExec(_ sessionctx.Context) {
 	}
 	e.partialOutputChs = make([]chan *HashAggIntermData, finalConcurrency)
 	for i := range e.partialOutputChs {
-<<<<<<< HEAD
 		e.partialOutputChs[i] = make(chan *HashAggIntermData, partialConcurrency)
-=======
-		e.partialOutputChs[i] = make(chan *aggfuncs.AggPartialResultMapper, partialConcurrency)
-	}
-
-	e.inflightChunkSync = &sync.WaitGroup{}
-
-	isTrackerEnabled := e.Ctx().GetSessionVars().TrackAggregateMemoryUsage && variable.EnableTmpStorageOnOOM.Load()
-	isParallelHashAggSpillEnabled := e.Ctx().GetSessionVars().EnableParallelHashaggSpill
-
-	baseRetTypeNum := len(e.RetFieldTypes())
-
-	// Intermediate result for aggregate function also need to be spilled,
-	// so the number of spillChunkFieldTypes should be added 1.
-	spillChunkFieldTypes := make([]*types.FieldType, baseRetTypeNum+1)
-	for i := 0; i < baseRetTypeNum; i++ {
-		spillChunkFieldTypes[i] = types.NewFieldType(mysql.TypeVarString)
-	}
-	spillChunkFieldTypes[baseRetTypeNum] = types.NewFieldType(mysql.TypeString)
-	e.spillHelper = newSpillHelper(e.memTracker, e.PartialAggFuncs, func() *chunk.Chunk {
-		return chunk.New(spillChunkFieldTypes, e.InitCap(), e.MaxChunkSize())
-	}, spillChunkFieldTypes)
-
-	if isTrackerEnabled && isParallelHashAggSpillEnabled {
-		if e.diskTracker != nil {
-			e.diskTracker.Reset()
-		} else {
-			e.diskTracker = disk.NewTracker(e.ID(), -1)
-		}
-		e.diskTracker.AttachTo(sessionVars.StmtCtx.DiskTracker)
-		e.spillHelper.diskTracker = e.diskTracker
-		sessionVars.MemTracker.FallbackOldAndSetNewActionForSoftLimit(e.ActionSpill())
->>>>>>> 374f7b0a5ee (*: support memTracker.detach for HashJoin, Apply and IndexLookUp in Close func (#54095))
 	}
 
 	e.partialWorkers = make([]HashAggPartialWorker, partialConcurrency)
