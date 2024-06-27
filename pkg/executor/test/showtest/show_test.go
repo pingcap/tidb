@@ -1195,7 +1195,7 @@ func TestShowLimitReturnRow(t *testing.T) {
 	require.Equal(t, rows[0][0], "server_id")
 
 	tk.MustQuery("Show Collation where collation='utf8_bin'").Check(testkit.RowsWithSep("|", ""+
-		"utf8_bin utf8 83 Yes Yes 1"))
+		"utf8_bin utf8 83 Yes Yes 1 PAD SPACE"))
 
 	result = tk.MustQuery("show index from t1 where key_name='idx_b'")
 	rows = result.Rows()
