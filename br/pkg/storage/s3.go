@@ -326,7 +326,6 @@ func NewS3Storage(ctx context.Context, backend *backuppb.S3, opts *ExternalStora
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	log.Info("s3 storage config", zap.String("endpoint", qs.Endpoint), zap.Bool("cred is nil", cred == nil))
 	if cred != nil {
 		awsConfig.WithCredentials(cred)
 	}
