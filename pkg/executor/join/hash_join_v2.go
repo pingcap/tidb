@@ -573,6 +573,9 @@ func (e *HashJoinV2Exec) restore() error {
 			break
 		}
 
+		e.spillHelper.discardInDisk(restoredPartition.buildSideChunks)
+		e.spillHelper.discardInDisk(restoredPartition.probeSideChunks)
+
 		hashTable, spillTriggered, err := e.spillHelper.buildHashTable(restoredPartition)
 		if err != nil {
 			return err
@@ -581,10 +584,6 @@ func (e *HashJoinV2Exec) restore() error {
 		if spillTriggered {
 			// Sometimes spill may be triggered when we build hash table
 			continue
-		}
-
-		if hashTable == nil {
-			break
 		}
 
 		// TODO check spill and execute, triggered spill may has been found in `buildHashTable`, but we handle the spill outside of `buildHashTable`

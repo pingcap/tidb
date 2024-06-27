@@ -49,7 +49,8 @@ type hashJoinSpillHelper struct {
 	// TODO initialize it
 	joinChkResourceCh chan *chunk.Chunk
 
-	stack restoreStack
+	stack           restoreStack
+	discardedInDisk []*chunk.DataInDiskByChunks
 
 	memTracker  *memory.Tracker
 	diskTracker *disk.Tracker
@@ -72,6 +73,14 @@ func newHashJoinSpillHelper(hashJoinExec *HashJoinV2Exec, probeFieldTypes []*typ
 }
 
 func (h *hashJoinSpillHelper) close() {
+	for _, chk := range h.tmpSpillBuildSideChunks {
+		chk.Destroy(spillChunkSize, h.buildSpillChkFieldTypes)
+	}
+
+	for _, chk := range h.tmpSpillProbeSideChunks {
+		chk.Destroy(spillChunkSize, h.probeFieldTypes)
+	}
+
 	for _, inDisk := range h.buildRowsInDisk {
 		if inDisk != nil {
 			inDisk.Close()
@@ -83,8 +92,15 @@ func (h *hashJoinSpillHelper) close() {
 		}
 	}
 
-	for _, chk := range h.tmpSpillBuildSideChunks {
-		chk.Destroy(spillChunkSize, h.buildSpillChkFieldTypes)
+	partition := h.stack.pop()
+	for partition != nil {
+		partition.buildSideChunks.Close()
+		partition.probeSideChunks.Close()
+		partition = h.stack.pop()
+	}
+
+	for _, inDisk := range h.discardedInDisk {
+		inDisk.Close()
 	}
 }
 
@@ -132,6 +148,10 @@ func (h *hashJoinSpillHelper) isSpillTriggered() bool {
 
 func (h *hashJoinSpillHelper) isPartitionSpilled(partID int) bool {
 	return len(h.buildRowsInDisk) > 0 && h.buildRowsInDisk[partID] != nil
+}
+
+func (h *hashJoinSpillHelper) discardInDisk(inDisk *chunk.DataInDiskByChunks) {
+	h.discardedInDisk = append(h.discardedInDisk, inDisk)
 }
 
 // TODO write a specific test for this function
@@ -517,7 +537,21 @@ func (h *hashJoinSpillHelper) respillForProbeData(probeInDisk *chunk.DataInDiskB
 		for j := 0; j < rowNum; j++ {
 			row := chunk.GetRow(j)
 			oldHashValue := row.GetInt64(0)
-			
+			var newHashValue int
+			var partID int
+			// TODO get new hash value and partition id
+
+			if h.tmpSpillProbeSideChunks[partID].IsFull() {
+				err := newProbeInDisk[partID].Add(h.tmpSpillProbeSideChunks[partID])
+				if err != nil {
+					return nil, err
+				}
+				h.tmpSpillProbeSideChunks[partID].Reset()
+			}
+
+			h.tmpSpillProbeSideChunks[partID].AppendInt64(0, int64(newHashValue))
+			h.tmpSpillProbeSideChunks[partID].AppendBytes(1, row.GetBytes(1))
+			h.tmpSpillProbeSideChunks[partID].AppendBytes(2, row.GetBytes(2))
 		}
 	}
 
