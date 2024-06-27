@@ -53,6 +53,14 @@ type Sieve[K comparable, V any] struct {
 	items    map[K]*entry[K, V]
 	ll       *list.List
 	hand     *list.Element
+
+	hook sieveStatusHook
+}
+
+type sieveStatusHook interface {
+	onHit()
+	onMiss()
+	onEvict()
 }
 
 func newSieve[K comparable, V any](capacity uint64) *Sieve[K, V] {
@@ -67,6 +75,10 @@ func newSieve[K comparable, V any](capacity uint64) *Sieve[K, V] {
 	}
 
 	return cache
+}
+
+func (s *Sieve[K, V]) SetStatusHook(hook sieveStatusHook) {
+	s.hook = hook
 }
 
 func (s *Sieve[K, V]) SetCapacity(capacity uint64) {
@@ -110,9 +122,10 @@ func (s *Sieve[K, V]) Get(key K) (value V, ok bool) {
 	defer s.mu.Unlock()
 	if e, ok := s.items[key]; ok {
 		e.visited = true
+		s.hook.onHit()
 		return e.value, true
 	}
-
+	s.hook.onMiss()
 	return
 }
 
@@ -217,4 +230,5 @@ func (s *Sieve[K, V]) evict() {
 
 	s.hand = o.Prev()
 	s.removeEntry(el)
+	s.hook.onEvict()
 }

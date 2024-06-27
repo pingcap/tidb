@@ -13902,6 +13902,112 @@
             "align": false,
             "alignLevel": null
           }
+        },
+        {
+          "type": "graph",
+          "title": "Infoschema Cache v2",
+          "gridPos": {
+            "x": 12,
+            "y": 31,
+            "w": 12,
+            "h": 7
+          },
+          "id": 23763572012,
+          "targets": [
+            {
+              "expr": "sum(rate(tidb_domain_infoschema_v2_cache{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) by (type)",
+              "legendFormat": "{{type}}",
+              "interval": "",
+              "exemplar": true,
+              "format": "time_series",
+              "intervalFactor": 2,
+              "refId": "A",
+              "step": 40,
+              "queryType": "randomWalk"
+            }
+          ],
+          "options": {
+            "alertThreshold": true
+          },
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
+          "pluginVersion": "7.5.17",
+          "renderer": "flot",
+          "yaxes": [
+            {
+              "label": null,
+              "show": true,
+              "logBase": 1,
+              "min": 0,
+              "max": null,
+              "format": "short",
+              "$$hashKey": "object:80"
+            },
+            {
+              "label": null,
+              "show": false,
+              "logBase": 1,
+              "min": null,
+              "max": null,
+              "format": "short",
+              "$$hashKey": "object:81"
+            }
+          ],
+          "xaxis": {
+            "show": true,
+            "mode": "time",
+            "name": null,
+            "values": [],
+            "buckets": null
+          },
+          "yaxis": {
+            "align": false,
+            "alignLevel": null
+          },
+          "lines": true,
+          "fill": 1,
+          "linewidth": 2,
+          "dashLength": 10,
+          "spaceLength": 10,
+          "pointradius": 2,
+          "legend": {
+            "show": true,
+            "values": true,
+            "min": false,
+            "max": false,
+            "current": true,
+            "total": false,
+            "avg": true,
+            "alignAsTable": true,
+            "rightSide": true,
+            "sideWidth": null,
+            "hideEmpty": false,
+            "hideZero": false
+          },
+          "nullPointMode": "null as zero",
+          "tooltip": {
+            "value_type": "individual",
+            "shared": true,
+            "sort": 2
+          },
+          "aliasColors": {},
+          "seriesOverrides": [],
+          "thresholds": [],
+          "timeRegions": [],
+          "datasource": "Test-Cluster",
+          "description": "Infoschema cache v2 hit, evict and miss number",
+          "fillGradient": 0,
+          "dashes": false,
+          "hiddenSeries": false,
+          "points": false,
+          "bars": false,
+          "stack": false,
+          "percentage": false,
+          "steppedLine": false,
+          "timeFrom": null,
+          "timeShift": null
         }
       ],
       "repeat": null,
