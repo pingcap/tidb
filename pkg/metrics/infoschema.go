@@ -19,6 +19,7 @@ import (
 )
 
 var (
+	// InfoSchemaV2CacheCounter records the counter of infoschema v2 cache hit/miss/evict.
 	InfoSchemaV2CacheCounter *prometheus.CounterVec
 )
 
