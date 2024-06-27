@@ -19,9 +19,7 @@ import (
 	"slices"
 
 	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/infoschema"
-	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
@@ -42,33 +40,6 @@ func (*columnPruner) optimize(_ context.Context, lp base.LogicalPlan, opt *optim
 		return nil, planChanged, err
 	}
 	return lp, planChanged, nil
-}
-
-// ExprsHasSideEffects checks if any of the expressions has side effects.
-func ExprsHasSideEffects(exprs []expression.Expression) bool {
-	for _, expr := range exprs {
-		if exprHasSetVarOrSleep(expr) {
-			return true
-		}
-	}
-	return false
-}
-
-// exprHasSetVarOrSleep checks if the expression has SetVar function or Sleep function.
-func exprHasSetVarOrSleep(expr expression.Expression) bool {
-	scalaFunc, isScalaFunc := expr.(*expression.ScalarFunction)
-	if !isScalaFunc {
-		return false
-	}
-	if scalaFunc.FuncName.L == ast.SetVar || scalaFunc.FuncName.L == ast.Sleep {
-		return true
-	}
-	for _, arg := range scalaFunc.GetArgs() {
-		if exprHasSetVarOrSleep(arg) {
-			return true
-		}
-	}
-	return false
 }
 
 // PruneColumns implement the Expand OP's column pruning logic.
@@ -108,7 +79,7 @@ func (p *LogicalProjection) PruneColumns(parentUsedCols []*expression.Column, op
 
 	// for implicit projected cols, once the ancestor doesn't use it, the implicit expr will be automatically pruned here.
 	for i := len(used) - 1; i >= 0; i-- {
-		if !used[i] && !exprHasSetVarOrSleep(p.Exprs[i]) {
+		if !used[i] && !expression.ExprHasSetVarOrSleep(p.Exprs[i]) {
 			prunedColumns = append(prunedColumns, p.Schema().Columns[i])
 			p.Schema().Columns = append(p.Schema().Columns[:i], p.Schema().Columns[i+1:]...)
 			p.Exprs = append(p.Exprs[:i], p.Exprs[i+1:]...)
@@ -136,100 +107,6 @@ func (p *LogicalSelection) PruneColumns(parentUsedCols []*expression.Column, opt
 	}
 	addConstOneForEmptyProjection(p.Children()[0])
 	return p, nil
-}
-
-// PruneColumns implements base.LogicalPlan interface.
-func (la *LogicalAggregation) PruneColumns(parentUsedCols []*expression.Column, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, error) {
-	child := la.Children()[0]
-	used := expression.GetUsedList(la.SCtx().GetExprCtx().GetEvalCtx(), parentUsedCols, la.Schema())
-	prunedColumns := make([]*expression.Column, 0)
-	prunedFunctions := make([]*aggregation.AggFuncDesc, 0)
-	prunedGroupByItems := make([]expression.Expression, 0)
-
-	allFirstRow := true
-	allRemainFirstRow := true
-	for i := len(used) - 1; i >= 0; i-- {
-		if la.AggFuncs[i].Name != ast.AggFuncFirstRow {
-			allFirstRow = false
-		}
-		if !used[i] && !ExprsHasSideEffects(la.AggFuncs[i].Args) {
-			prunedColumns = append(prunedColumns, la.Schema().Columns[i])
-			prunedFunctions = append(prunedFunctions, la.AggFuncs[i])
-			la.Schema().Columns = append(la.Schema().Columns[:i], la.Schema().Columns[i+1:]...)
-			la.AggFuncs = append(la.AggFuncs[:i], la.AggFuncs[i+1:]...)
-		} else if la.AggFuncs[i].Name != ast.AggFuncFirstRow {
-			allRemainFirstRow = false
-		}
-	}
-	logicaltrace.AppendColumnPruneTraceStep(la, prunedColumns, opt)
-	logicaltrace.AppendFunctionPruneTraceStep(la, prunedFunctions, opt)
-	//nolint: prealloc
-	var selfUsedCols []*expression.Column
-	for _, aggrFunc := range la.AggFuncs {
-		selfUsedCols = expression.ExtractColumnsFromExpressions(selfUsedCols, aggrFunc.Args, nil)
-
-		var cols []*expression.Column
-		aggrFunc.OrderByItems, cols = pruneByItems(la, aggrFunc.OrderByItems, opt)
-		selfUsedCols = append(selfUsedCols, cols...)
-	}
-	if len(la.AggFuncs) == 0 || (!allFirstRow && allRemainFirstRow) {
-		// If all the aggregate functions are pruned, we should add an aggregate function to maintain the info of row numbers.
-		// For all the aggregate functions except `first_row`, if we have an empty table defined as t(a,b),
-		// `select agg(a) from t` would always return one row, while `select agg(a) from t group by b` would return empty.
-		// For `first_row` which is only used internally by tidb, `first_row(a)` would always return empty for empty input now.
-		var err error
-		var newAgg *aggregation.AggFuncDesc
-		if allFirstRow {
-			newAgg, err = aggregation.NewAggFuncDesc(la.SCtx().GetExprCtx(), ast.AggFuncFirstRow, []expression.Expression{expression.NewOne()}, false)
-		} else {
-			newAgg, err = aggregation.NewAggFuncDesc(la.SCtx().GetExprCtx(), ast.AggFuncCount, []expression.Expression{expression.NewOne()}, false)
-		}
-		if err != nil {
-			return nil, err
-		}
-		la.AggFuncs = append(la.AggFuncs, newAgg)
-		col := &expression.Column{
-			UniqueID: la.SCtx().GetSessionVars().AllocPlanColumnID(),
-			RetType:  newAgg.RetTp,
-		}
-		la.Schema().Columns = append(la.Schema().Columns, col)
-	}
-
-	if len(la.GroupByItems) > 0 {
-		for i := len(la.GroupByItems) - 1; i >= 0; i-- {
-			cols := expression.ExtractColumns(la.GroupByItems[i])
-			if len(cols) == 0 && !exprHasSetVarOrSleep(la.GroupByItems[i]) {
-				prunedGroupByItems = append(prunedGroupByItems, la.GroupByItems[i])
-				la.GroupByItems = append(la.GroupByItems[:i], la.GroupByItems[i+1:]...)
-			} else {
-				selfUsedCols = append(selfUsedCols, cols...)
-			}
-		}
-		// If all the group by items are pruned, we should add a constant 1 to keep the correctness.
-		// Because `select count(*) from t` is different from `select count(*) from t group by 1`.
-		if len(la.GroupByItems) == 0 {
-			la.GroupByItems = []expression.Expression{expression.NewOne()}
-		}
-	}
-	logicaltrace.AppendGroupByItemsPruneTraceStep(la, prunedGroupByItems, opt)
-	var err error
-	la.Children()[0], err = child.PruneColumns(selfUsedCols, opt)
-	if err != nil {
-		return nil, err
-	}
-	// update children[0]
-	child = la.Children()[0]
-	// Do an extra Projection Elimination here. This is specially for empty Projection below Aggregation.
-	// This kind of Projection would cause some bugs for MPP plan and is safe to be removed.
-	// This kind of Projection should be removed in Projection Elimination, but currently PrunColumnsAgain is
-	// the last rule. So we specially handle this case here.
-	if childProjection, isProjection := child.(*LogicalProjection); isProjection {
-		if len(childProjection.Exprs) == 0 && childProjection.Schema().Len() == 0 {
-			childOfChild := childProjection.Children()[0]
-			la.SetChildren(childOfChild)
-		}
-	}
-	return la, nil
 }
 
 func pruneByItems(p base.LogicalPlan, old []*util.ByItems, opt *optimizetrace.LogicalOptimizeOp) (byItems []*util.ByItems,
@@ -276,22 +153,6 @@ func (ls *LogicalSort) PruneColumns(parentUsedCols []*expression.Column, opt *op
 		return nil, err
 	}
 	return ls, nil
-}
-
-// PruneColumns implements base.LogicalPlan interface.
-// If any expression can view as a constant in execution stage, such as correlated column, constant,
-// we do prune them. Note that we can't prune the expressions contain non-deterministic functions, such as rand().
-func (lt *LogicalTopN) PruneColumns(parentUsedCols []*expression.Column, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, error) {
-	child := lt.Children()[0]
-	var cols []*expression.Column
-	lt.ByItems, cols = pruneByItems(lt, lt.ByItems, opt)
-	parentUsedCols = append(parentUsedCols, cols...)
-	var err error
-	lt.Children()[0], err = child.PruneColumns(parentUsedCols, opt)
-	if err != nil {
-		return nil, err
-	}
-	return lt, nil
 }
 
 // PruneColumns implements base.LogicalPlan interface.
@@ -373,17 +234,17 @@ func (p *LogicalUnionScan) PruneColumns(parentUsedCols []*expression.Column, opt
 func (ds *DataSource) PruneColumns(parentUsedCols []*expression.Column, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, error) {
 	used := expression.GetUsedList(ds.SCtx().GetExprCtx().GetEvalCtx(), parentUsedCols, ds.Schema())
 
-	exprCols := expression.ExtractColumnsFromExpressions(nil, ds.allConds, nil)
+	exprCols := expression.ExtractColumnsFromExpressions(nil, ds.AllConds, nil)
 	exprUsed := expression.GetUsedList(ds.SCtx().GetExprCtx().GetEvalCtx(), exprCols, ds.Schema())
 	prunedColumns := make([]*expression.Column, 0)
 
 	originSchemaColumns := ds.Schema().Columns
 	originColumns := ds.Columns
 
-	ds.colsRequiringFullLen = make([]*expression.Column, 0, len(used))
+	ds.ColsRequiringFullLen = make([]*expression.Column, 0, len(used))
 	for i, col := range ds.Schema().Columns {
-		if used[i] || (ds.containExprPrefixUk && expression.GcColumnExprIsTidbShard(col.VirtualExpr)) {
-			ds.colsRequiringFullLen = append(ds.colsRequiringFullLen, col)
+		if used[i] || (ds.ContainExprPrefixUk && expression.GcColumnExprIsTidbShard(col.VirtualExpr)) {
+			ds.ColsRequiringFullLen = append(ds.ColsRequiringFullLen, col)
 		}
 	}
 
@@ -391,7 +252,7 @@ func (ds *DataSource) PruneColumns(parentUsedCols []*expression.Column, opt *opt
 		if !used[i] && !exprUsed[i] {
 			// If ds has a shard index, and the column is generated column by `tidb_shard()`
 			// it can't prune the generated column of shard index
-			if ds.containExprPrefixUk &&
+			if ds.ContainExprPrefixUk &&
 				expression.GcColumnExprIsTidbShard(ds.Schema().Columns[i].VirtualExpr) {
 				continue
 			}
@@ -414,16 +275,16 @@ func (ds *DataSource) PruneColumns(parentUsedCols []*expression.Column, opt *opt
 	}
 	// ref: https://github.com/pingcap/tidb/issues/44579
 	// when first entering columnPruner, we kept a column-a in datasource since upper agg function count(a) is used.
-	//		then we mark the handleCols as nil here.
+	//		then we mark the HandleCols as nil here.
 	// when second entering columnPruner, the count(a) is eliminated since it always not null. we should fill another
 	// 		extra col, in this way, handle col is useful again, otherwise, _tidb_rowid will be filled.
-	if ds.handleCols != nil && ds.handleCols.IsInt() && ds.Schema().ColumnIndex(ds.handleCols.GetCol(0)) == -1 {
-		ds.handleCols = nil
+	if ds.HandleCols != nil && ds.HandleCols.IsInt() && ds.Schema().ColumnIndex(ds.HandleCols.GetCol(0)) == -1 {
+		ds.HandleCols = nil
 	}
 	// Current DataSource operator contains all the filters on this table, and the columns used by these filters are always included
 	// in the output schema. Even if they are not needed by DataSource's parent operator. Thus add a projection here to prune useless columns
 	// Limit to MPP tasks, because TiKV can't benefit from this now(projection can't be pushed down to TiKV now).
-	if !addOneHandle && ds.Schema().Len() > len(parentUsedCols) && ds.SCtx().GetSessionVars().IsMPPEnforced() && ds.tableInfo.TiFlashReplica != nil {
+	if !addOneHandle && ds.Schema().Len() > len(parentUsedCols) && ds.SCtx().GetSessionVars().IsMPPEnforced() && ds.TableInfo.TiFlashReplica != nil {
 		proj := LogicalProjection{
 			Exprs: expression.Column2Exprs(parentUsedCols),
 		}.Init(ds.SCtx(), ds.QueryBlockOffset())
@@ -588,13 +449,13 @@ func (p *LogicalLock) PruneColumns(parentUsedCols []*expression.Column, opt *opt
 		return p, nil
 	}
 
-	for tblID, cols := range p.tblID2Handle {
+	for tblID, cols := range p.TblID2Handle {
 		for _, col := range cols {
 			for i := 0; i < col.NumCols(); i++ {
 				parentUsedCols = append(parentUsedCols, col.GetCol(i))
 			}
 		}
-		if physTblIDCol, ok := p.tblID2PhysTblIDCol[tblID]; ok {
+		if physTblIDCol, ok := p.TblID2PhysTblIDCol[tblID]; ok {
 			// If the children include partitioned tables, there is an extra partition ID column.
 			parentUsedCols = append(parentUsedCols, physTblIDCol)
 		}
@@ -703,13 +564,13 @@ func preferKeyColumnFromTable(dataSource *DataSource, originColumns []*expressio
 		resultColumnInfo = originSchemaColumns[0]
 		resultColumn = originColumns[0]
 	} else {
-		if dataSource.handleCols != nil {
-			resultColumn = dataSource.handleCols.GetCol(0)
+		if dataSource.HandleCols != nil {
+			resultColumn = dataSource.HandleCols.GetCol(0)
 			resultColumnInfo = resultColumn.ToInfo()
 		} else if dataSource.table.Meta().PKIsHandle {
-			// dataSource.handleCols = nil doesn't mean datasource doesn't have a intPk handle.
-			// since datasource.handleCols will be cleared in the first columnPruner.
-			resultColumn = dataSource.unMutableHandleCols.GetCol(0)
+			// dataSource.HandleCols = nil doesn't mean datasource doesn't have a intPk handle.
+			// since datasource.HandleCols will be cleared in the first columnPruner.
+			resultColumn = dataSource.UnMutableHandleCols.GetCol(0)
 			resultColumnInfo = resultColumn.ToInfo()
 		} else {
 			resultColumn = dataSource.newExtraHandleSchemaCol()

@@ -2383,6 +2383,40 @@ func (rs *execStmtResult) Close() error {
 	return err2
 }
 
+func (rs *execStmtResult) TryDetach() (sqlexec.RecordSet, bool, error) {
+	if !rs.sql.IsReadOnly(rs.se.GetSessionVars()) {
+		return nil, false, nil
+	}
+	if !plannercore.IsAutoCommitTxn(rs.se.GetSessionVars()) {
+		return nil, false, nil
+	}
+
+	drs, ok := rs.RecordSet.(sqlexec.DetachableRecordSet)
+	if !ok {
+		return nil, false, nil
+	}
+	detachedRS, ok, err := drs.TryDetach()
+	if !ok || err != nil {
+		return nil, ok, err
+	}
+
+	// FIXME: block the min-start-ts. Now the `min-start-ts` will advance and exceed the `startTS` used by
+	// this detached record set, and may cause an error if `GC` runs.
+
+	// Now, a transaction is not needed for the detached record set, so we commit the transaction and cleanup
+	// the session state.
+	err = finishStmt(context.Background(), rs.se, nil, rs.sql)
+	if err != nil {
+		err2 := detachedRS.Close()
+		if err2 != nil {
+			logutil.BgLogger().Error("close detached record set failed", zap.Error(err2))
+		}
+		return nil, false, err
+	}
+
+	return detachedRS, true, nil
+}
+
 // rollbackOnError makes sure the next statement starts a new transaction with the latest InfoSchema.
 func (s *session) rollbackOnError(ctx context.Context) {
 	if !s.sessionVars.InTxn() {
@@ -3519,6 +3553,10 @@ func bootstrapSessionImpl(store kv.Storage, createSessionsImpl func(store kv.Sto
 	if err = dom.LoadAndUpdateStatsLoop(subCtxs, initStatsCtx); err != nil {
 		return nil, err
 	}
+
+	// init the instance plan cache
+	// TODO: introduce 2 new variable to control these 2 mem limits.
+	dom.InitInstancePlanCache(1000000, 1000000)
 
 	// start TTL job manager after setup stats collector
 	// because TTL could modify a lot of columns, and need to trigger auto analyze

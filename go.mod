@@ -84,7 +84,7 @@ require (
 	github.com/pingcap/errors v0.11.5-0.20240318064555-6bd07397691f
 	github.com/pingcap/failpoint v0.0.0-20240527053858-9b3b6e34194a
 	github.com/pingcap/fn v1.0.0
-	github.com/pingcap/kvproto v0.0.0-20240513094934-d9297553c900
+	github.com/pingcap/kvproto v0.0.0-20240620063548-118a4cab53e4
 	github.com/pingcap/log v1.1.1-0.20240314023424-862ccc32f18d
 	github.com/pingcap/sysutil v1.0.1-0.20240311050922-ae81ee01f3a5
 	github.com/pingcap/tidb/pkg/parser v0.0.0-20211011031125-9b13dc409c5e
@@ -107,8 +107,8 @@ require (
 	github.com/tdakkota/asciicheck v0.2.0
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
 	github.com/tidwall/btree v1.7.0
-	github.com/tikv/client-go/v2 v2.0.8-0.20240614064455-ac8fa1d73a0c
-	github.com/tikv/pd/client v0.0.0-20240603082825-a929a546a790
+	github.com/tikv/client-go/v2 v2.0.8-0.20240626064248-4a72526f6c30
+	github.com/tikv/pd/client v0.0.0-20240620115049-049de1761e56
 	github.com/timakin/bodyclose v0.0.0-20240125160201-f835fa56326a
 	github.com/twmb/murmur3 v1.1.6
 	github.com/uber/jaeger-client-go v2.22.1+incompatible
@@ -138,7 +138,7 @@ require (
 	golang.org/x/time v0.5.0
 	golang.org/x/tools v0.21.1-0.20240508182429-e35e4ccd0d2d
 	google.golang.org/api v0.169.0
-	google.golang.org/grpc v1.64.0
+	google.golang.org/grpc v1.63.2
 	gopkg.in/yaml.v2 v2.4.0
 	honnef.co/go/tools v0.4.7
 	k8s.io/api v0.28.6
