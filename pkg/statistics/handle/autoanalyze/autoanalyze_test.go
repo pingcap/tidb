@@ -101,6 +101,7 @@ func TestAutoAnalyzeWithPredicateColumns(t *testing.T) {
 	h := dom.StatsHandle()
 	err := h.HandleDDLEvent(<-h.DDLEventCh())
 	require.NoError(t, err)
+	require.NoError(t, h.DumpColStatsUsageToKV())
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	is := dom.InfoSchema()
 	require.NoError(t, h.Update(is))
@@ -108,6 +109,13 @@ func TestAutoAnalyzeWithPredicateColumns(t *testing.T) {
 	defer func() {
 		exec.AutoAnalyzeMinCnt = 1000
 	}()
+
+	// Check column_stats_usage.
+	rows := tk.MustQuery(
+		"show column_stats_usage where db_name = 'test' and table_name = 't' and last_used_at is not null",
+	).Rows()
+	require.Equal(t, 1, len(rows))
+	require.Equal(t, "a", rows[0][3])
 
 	// Set tidb_analyze_column_options to PREDICATE.
 	tk.MustExec("set global tidb_analyze_column_options='PREDICATE'")
@@ -117,7 +125,7 @@ func TestAutoAnalyzeWithPredicateColumns(t *testing.T) {
 
 	// Check analyze jobs.
 	tk.MustQuery("select table_name, job_info from mysql.analyze_jobs order by id desc limit 1").Check(
-		testkit.Rows("t auto analyze table all columns with 256 buckets, 100 topn, 1 samplerate"),
+		testkit.Rows("t auto analyze table columns a with 256 buckets, 100 topn, 1 samplerate"),
 	)
 }
 
