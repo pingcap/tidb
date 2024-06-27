@@ -13996,7 +13996,7 @@
           "seriesOverrides": [],
           "thresholds": [],
           "timeRegions": [],
-          "datasource": "Test-Cluster",
+          "datasource": "${DS_TEST-CLUSTER}",
           "description": "Infoschema cache v2 hit, evict and miss number",
           "fillGradient": 0,
           "dashes": false,
