@@ -863,6 +863,23 @@ func TestIssue37932(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestIssue54064(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+
+	tk.MustExec("create table A(id int primary key nonclustered auto_increment, x varchar(32) not null, y char(5) not null, z varchar(25) not null, key idx_sub_tsk(z,x,y))")
+	tk.MustExec("create table B(y char(5) not null, z varchar(25) not null, x varchar(32) not null, primary key(z, x, y) nonclustered)")
+	tk.MustExec("insert into A (y, z, x) values ('CN000', '123', 'RW '), ('CN000', '456', '123');")
+	tk.MustExec("insert into B values ('CN000', '123', 'RW '), ('CN000', '456', '123');")
+	tk.MustExec("set names utf8")
+	tk.MustQuery("select /*+ inl_merge_join(a, b) */ a.* from a join b on a.y=b.y and a.z=b.z and a.x = b.x where a.y='CN000';").Check(
+		testkit.Rows("1 RW  CN000 123", "2 123 CN000 456"))
+	tk.MustExec("set names utf8mb4;")
+	tk.MustQuery("select /*+ inl_merge_join(a, b) */ a.* from a join b on a.y=b.y and a.z=b.z and a.x = b.x where a.y='CN000';").Check(
+		testkit.Rows("1 RW  CN000 123", "2 123 CN000 456"))
+}
+
 func TestIssue49033(t *testing.T) {
 	val := runtime.GOMAXPROCS(1)
 	defer func() {
