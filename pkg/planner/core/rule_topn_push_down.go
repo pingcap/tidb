@@ -82,25 +82,6 @@ func (ls *LogicalSort) PushDownTopN(topNLogicalPlan base.LogicalPlan, opt *optim
 	return ls.Children()[0].PushDownTopN(topN, opt)
 }
 
-func (p *LogicalLimit) convertToTopN(opt *optimizetrace.LogicalOptimizeOp) *LogicalTopN {
-	topn := LogicalTopN{Offset: p.Offset, Count: p.Count, PreferLimitToCop: p.PreferLimitToCop}.Init(p.SCtx(), p.QueryBlockOffset())
-	appendConvertTopNTraceStep(p, topn, opt)
-	return topn
-}
-
-// PushDownTopN implements the LogicalPlan interface.
-func (p *LogicalLimit) PushDownTopN(topNLogicalPlan base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) base.LogicalPlan {
-	var topN *LogicalTopN
-	if topNLogicalPlan != nil {
-		topN = topNLogicalPlan.(*LogicalTopN)
-	}
-	child := p.Children()[0].PushDownTopN(p.convertToTopN(opt), opt)
-	if topN != nil {
-		return topN.AttachChild(child, opt)
-	}
-	return child
-}
-
 // PushDownTopN implements the LogicalPlan interface.
 func (p *LogicalUnionAll) PushDownTopN(topNLogicalPlan base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) base.LogicalPlan {
 	var topN *LogicalTopN

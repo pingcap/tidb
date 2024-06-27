@@ -98,12 +98,6 @@ func (ls LogicalSort) Init(ctx base.PlanContext, offset int) *LogicalSort {
 	return &ls
 }
 
-// Init initializes LogicalLimit.
-func (p LogicalLimit) Init(ctx base.PlanContext, offset int) *LogicalLimit {
-	p.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(ctx, plancodec.TypeLimit, &p, offset)
-	return &p
-}
-
 // Init initializes LogicalTableDual.
 func (p LogicalTableDual) Init(ctx base.PlanContext, offset int) *LogicalTableDual {
 	p.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(ctx, plancodec.TypeDual, &p, offset)

@@ -1670,22 +1670,6 @@ func (ls *LogicalSort) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
 	return corCols
 }
 
-// LogicalLimit represents offset and limit plan.
-type LogicalLimit struct {
-	logicalop.LogicalSchemaProducer
-
-	PartitionBy      []property.SortItem // This is used for enhanced topN optimization
-	Offset           uint64
-	Count            uint64
-	PreferLimitToCop bool
-	IsPartial        bool
-}
-
-// GetPartitionBy returns partition by fields
-func (lt *LogicalLimit) GetPartitionBy() []property.SortItem {
-	return lt.PartitionBy
-}
-
 // LogicalLock represents a select lock plan.
 type LogicalLock struct {
 	logicalop.BaseLogicalPlan
