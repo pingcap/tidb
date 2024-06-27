@@ -25,6 +25,7 @@ go_library(
         "//pkg/util",
         "//pkg/util/topsql/reporter/metrics",
         "@com_github_pingcap_kvproto//pkg/keyspacepb",
+        "@com_github_prometheus_client_golang//prometheus",
         "@com_github_tikv_client_go_v2//config",
         "@com_github_tikv_pd_client//:client",
     ],
