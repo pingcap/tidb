@@ -2258,9 +2258,10 @@ func WrapWithCastAsString(ctx BuildContext, expr Expression) Expression {
 	}
 
 	// Because we can't control the length of cast(float as char) for now, we can't determine the argLen.
-	if exprTp.GetType() == mysql.TypeFloat || exprTp.GetType() == mysql.TypeDouble {
+	if exprTp.GetType() == mysql.TypeFloat || exprTp.GetType() == mysql.TypeDouble || exprTp.GetType() == mysql.TypeDuration {
 		argLen = -1
 	}
+
 	tp := types.NewFieldType(mysql.TypeVarString)
 	if expr.Coercibility() == CoercibilityExplicit {
 		charset, collate := expr.CharsetAndCollation()
@@ -2323,13 +2324,17 @@ func WrapWithCastAsDuration(ctx BuildContext, expr Expression) Expression {
 		return expr
 	}
 	tp := types.NewFieldType(mysql.TypeDuration)
+	tp.SetFlen(mysql.MaxDurationWidthNoFsp)
 	switch x := expr.GetType(ctx.GetEvalCtx()); x.GetType() {
 	case mysql.TypeDatetime, mysql.TypeTimestamp, mysql.TypeDate:
 		tp.SetDecimal(x.GetDecimal())
+	case mysql.TypeVarString:
+		tp.SetDecimal(types.GetFsp(expr.String()))
+		tp.SetFlen(-1)
 	default:
 		tp.SetDecimal(types.MaxFsp)
 	}
-	tp.SetFlen(mysql.MaxDurationWidthNoFsp)
+
 	if tp.GetDecimal() > 0 {
 		tp.SetFlen(tp.GetFlen() + 1 + tp.GetDecimal())
 	}

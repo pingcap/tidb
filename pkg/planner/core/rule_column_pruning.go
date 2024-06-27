@@ -16,7 +16,6 @@ package core
 
 import (
 	"context"
-	"fmt"
 	"slices"
 
 	"github.com/pingcap/tidb/pkg/expression"
@@ -36,9 +35,6 @@ type columnPruner struct {
 
 func (*columnPruner) optimize(_ context.Context, lp base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
 	planChanged := false
-	if !lp.SCtx().GetSessionVars().InRestrictedSQL {
-		fmt.Println("columnPruner")
-	}
 	lp, err := lp.PruneColumns(slices.Clone(lp.Schema().Columns), opt)
 	if err != nil {
 		return nil, planChanged, err
@@ -93,7 +89,7 @@ func (p *LogicalProjection) PruneColumns(parentUsedCols []*expression.Column, op
 	selfUsedCols := make([]*expression.Column, 0, len(p.Exprs))
 	selfUsedCols = expression.ExtractColumnsFromExpressions(selfUsedCols, p.Exprs, nil)
 	var err error
-	p.Children()[0], err = p.Children()[0].PruneColumns(selfUsedCols, opt) // bug here
+	p.Children()[0], err = p.Children()[0].PruneColumns(selfUsedCols, opt)
 	if err != nil {
 		return nil, err
 	}
