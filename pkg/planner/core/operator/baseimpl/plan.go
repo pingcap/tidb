@@ -16,12 +16,12 @@ package baseimpl
 
 import (
 	"fmt"
-	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"strconv"
 	"unsafe"
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/context"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
