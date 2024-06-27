@@ -288,13 +288,18 @@ func autoNewCred(qs *backuppb.S3) (cred *credentials.Credentials, err error) {
 func createOssRAMCred() (*credentials.Credentials, error) {
 	cred, err := aliproviders.NewInstanceMetadataProvider().Retrieve()
 	if err != nil {
+		log.Warn("failed to get aliyun ram credential", zap.Error(err))
 		return nil, nil
 	}
 	var aliCred, ok = cred.(*alicred.StsTokenCredential)
 	if !ok {
 		return nil, errors.Errorf("invalid credential type %T", cred)
 	}
-	newCred := credentials.NewStaticCredentials(aliCred.AccessKeyId, aliCred.AccessKeySecret, aliCred.AccessKeyStsToken)
+	newCred := credentials.NewChainCredentials([]credentials.Provider{
+		&credentials.EnvProvider{},
+		&credentials.SharedCredentialsProvider{},
+		&credentials.StaticProvider{Value: credentials.Value{AccessKeyID: aliCred.AccessKeyId, SecretAccessKey: aliCred.AccessKeySecret, SessionToken: aliCred.AccessKeyStsToken, ProviderName: ""}},
+	})
 	if _, err := newCred.Get(); err != nil {
 		return nil, errors.Trace(err)
 	}
