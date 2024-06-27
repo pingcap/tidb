@@ -3548,8 +3548,7 @@ func (p *LogicalSelection) canPushDown(storeTp kv.StoreType) bool {
 		expression.CanExprsPushDown(GetPushDownCtx(p.SCtx()), p.Conditions, storeTp)
 }
 
-// ExhaustPhysicalPlans implements LogicalPlan interface.
-func (p *LogicalLimit) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
+func getLimitPhysicalPlans(p *LogicalLimit, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
 	if !prop.IsSortItemEmpty() {
 		return nil, true, nil
 	}
