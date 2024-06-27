@@ -32,8 +32,8 @@ var (
 )
 
 var (
-	PadSpace string = "PAD SPACE"
-	PadNone  string = "NO PAD"
+	PadSpace = "PAD SPACE"
+	PadNone  = "NO PAD"
 )
 
 // Charset is a charset.
