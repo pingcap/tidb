@@ -76,6 +76,7 @@ const (
 	flagTransactionalConsistency = "transactional-consistency"
 	flagCompress                 = "compress"
 	flagCsvOutputDialect         = "csv-output-dialect"
+	flagKeyspaceName             = "keyspace-name"
 
 	// FlagHelp represents the help flag
 	FlagHelp = "help"
@@ -188,6 +189,8 @@ type Config struct {
 
 	IOTotalBytes *atomic.Uint64
 	Net          string
+
+	KeyspaceName string
 }
 
 // ServerInfoUnknown is the unknown database type to dumpling
@@ -357,6 +360,7 @@ func (*Config) DefineFlags(flags *pflag.FlagSet) {
 	_ = flags.MarkHidden(flagTransactionalConsistency)
 	flags.StringP(flagCompress, "c", "", "Compress output file type, support 'gzip', 'snappy', 'zstd', 'no-compression' now")
 	flags.String(flagCsvOutputDialect, "", "The dialect of output CSV file, support 'snowflake', 'redshift', 'bigquery' now")
+	flags.String(flagKeyspaceName, "", "The keyspace name used to check the data to be accessed is the same as the keyspace of the target TiDB instance")
 }
 
 // ParseFromFlags parses dumpling's export.Config from flags
@@ -607,6 +611,11 @@ func (conf *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 	}
 
 	err = conf.BackendOptions.ParseFromFlags(pflag.CommandLine)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	conf.KeyspaceName, err = flags.GetString(flagKeyspaceName)
 	if err != nil {
 		return errors.Trace(err)
 	}

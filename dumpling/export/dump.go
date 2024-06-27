@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/dumpling/cli"
 	tcontext "github.com/pingcap/tidb/dumpling/context"
 	"github.com/pingcap/tidb/dumpling/log"
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/format"
@@ -37,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/pingcap/tidb/pkg/util/dbutil"
 	pd "github.com/tikv/pd/client"
 	gatomic "go.uber.org/atomic"
 	"go.uber.org/zap"
@@ -334,6 +336,27 @@ func (d *Dumper) Dump() (dumpErr error) {
 	summary.SetSuccessStatus(true)
 	m.recordFinishTime(time.Now())
 	return nil
+}
+
+func (d *Dumper) updateTiDBGlobalConfigKeyspaceName() {
+	d.tctx.L().Info("updateTiDBGlobalConfigKeyspaceName.", zap.Int("d.conf.ServerInfo.ServerType", int(d.conf.ServerInfo.ServerType)))
+	if d.conf.ServerInfo.ServerType == version.ServerTypeTiDB || d.conf.ServerInfo.ServerType == version.ServerTypeUnknown {
+		keyspaceNameInTiDB, err := dbutil.GetKeyspaceNameFromTiDB(d.dbHandle)
+		if err != nil {
+			panic(err)
+		}
+
+		if d.conf.KeyspaceName != keyspaceNameInTiDB {
+			panic("the keyspace name in command line is different from keyspace name in TiDB.")
+		}
+
+		if keyspaceNameInTiDB != "" {
+			config.UpdateGlobal(func(conf *config.Config) {
+				conf.KeyspaceName = keyspaceNameInTiDB
+			})
+			d.tctx.L().Info("dumpling using keyspace.", zap.String("keyspaceName", keyspaceNameInTiDB))
+		}
+	}
 }
 
 func (d *Dumper) startWriters(tctx *tcontext.Context, wg *errgroup.Group, taskChan <-chan Task,
@@ -1373,6 +1396,9 @@ func openSQLDB(d *Dumper) error {
 		return errors.Trace(err)
 	}
 	d.dbHandle = sql.OpenDB(c)
+
+	// Check that the command line keyspace name is the same as the target tidb keyspace name.
+	d.updateTiDBGlobalConfigKeyspaceName()
 	return nil
 }
 
