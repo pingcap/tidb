@@ -242,6 +242,7 @@ func TestAnalyzeWithNoPredicateColumns(t *testing.T) {
 			"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t, reason to use this rate is \"use min(1, 110000/10000) as the sample-rate=1\"",
 		),
 	)
+	// TODO: we should also include indexes in the job info.
 	tk.MustQuery("select table_name, job_info from mysql.analyze_jobs order by id desc limit 1").Check(
 		testkit.Rows("t analyze table columns a, b with 256 buckets, 100 topn, 1 samplerate"),
 	)
