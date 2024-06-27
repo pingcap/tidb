@@ -133,13 +133,13 @@ func (ds *DataSource) getGroupNDVs(colGroups [][]*expression.Column) []property.
 	}
 	tbl := ds.TableStats.HistColl
 	ndvs := make([]property.GroupNDV, 0, len(colGroups))
-	for idxID, idx := range tbl.Indices {
+	tbl.ForEachIndexImmutable(func(idxID int64, idx *statistics.Index) bool {
 		colsLen := len(tbl.Idx2ColUniqueIDs[idxID])
 		// tbl.Idx2ColUniqueIDs may only contain the prefix of index columns.
 		// But it may exceeds the total index since the index would contain the handle column if it's not a unique index.
 		// We append the handle at fillIndexPath.
 		if colsLen < len(idx.Info.Columns) {
-			continue
+			return false
 		} else if colsLen > len(idx.Info.Columns) {
 			colsLen--
 		}
@@ -149,7 +149,7 @@ func (ds *DataSource) getGroupNDVs(colGroups [][]*expression.Column) []property.
 		for _, g := range colGroups {
 			// We only want those exact matches.
 			if len(g) != colsLen {
-				continue
+				return false
 			}
 			match := true
 			for i, col := range g {
@@ -165,10 +165,11 @@ func (ds *DataSource) getGroupNDVs(colGroups [][]*expression.Column) []property.
 					NDV:  float64(idx.NDV),
 				}
 				ndvs = append(ndvs, ndv)
-				break
+				return true
 			}
 		}
-	}
+		return false
+	})
 	return ndvs
 }
 
@@ -589,15 +590,6 @@ func (p *LogicalLimit) DeriveStats(childStats []*property.StatsInfo, _ *expressi
 	}
 	p.SetStats(deriveLimitStats(childStats[0], float64(p.Count)))
 	return p.StatsInfo(), nil
-}
-
-// DeriveStats implement LogicalPlan DeriveStats interface.
-func (lt *LogicalTopN) DeriveStats(childStats []*property.StatsInfo, _ *expression.Schema, _ []*expression.Schema, _ [][]*expression.Column) (*property.StatsInfo, error) {
-	if lt.StatsInfo() != nil {
-		return lt.StatsInfo(), nil
-	}
-	lt.SetStats(deriveLimitStats(childStats[0], float64(lt.Count)))
-	return lt.StatsInfo(), nil
 }
 
 func (p *LogicalProjection) getGroupNDVs(colGroups [][]*expression.Column, childProfile *property.StatsInfo, selfSchema *expression.Schema) []property.GroupNDV {

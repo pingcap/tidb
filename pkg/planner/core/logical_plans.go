@@ -1670,37 +1670,6 @@ func (ls *LogicalSort) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
 	return corCols
 }
 
-// LogicalTopN represents a top-n plan.
-type LogicalTopN struct {
-	logicalop.BaseLogicalPlan
-
-	ByItems []*util.ByItems
-	// PartitionBy is used for extended TopN to consider K heaps. Used by rule_derive_topn_from_window
-	PartitionBy      []property.SortItem // This is used for enhanced topN optimization
-	Offset           uint64
-	Count            uint64
-	PreferLimitToCop bool
-}
-
-// GetPartitionBy returns partition by fields
-func (lt *LogicalTopN) GetPartitionBy() []property.SortItem {
-	return lt.PartitionBy
-}
-
-// ExtractCorrelatedCols implements LogicalPlan interface.
-func (lt *LogicalTopN) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
-	corCols := make([]*expression.CorrelatedColumn, 0, len(lt.ByItems))
-	for _, item := range lt.ByItems {
-		corCols = append(corCols, expression.ExtractCorColumns(item.Expr)...)
-	}
-	return corCols
-}
-
-// isLimit checks if TopN is a limit plan.
-func (lt *LogicalTopN) isLimit() bool {
-	return len(lt.ByItems) == 0
-}
-
 // LogicalLimit represents offset and limit plan.
 type LogicalLimit struct {
 	logicalop.LogicalSchemaProducer

@@ -112,15 +112,6 @@ func (p *LogicalSort) PreparePossibleProperties(_ *expression.Schema, _ ...[][]*
 	return [][]*expression.Column{propCols}
 }
 
-// PreparePossibleProperties implements base.LogicalPlan PreparePossibleProperties interface.
-func (lt *LogicalTopN) PreparePossibleProperties(_ *expression.Schema, _ ...[][]*expression.Column) [][]*expression.Column {
-	propCols := getPossiblePropertyFromByItems(lt.ByItems)
-	if len(propCols) == 0 {
-		return nil
-	}
-	return [][]*expression.Column{propCols}
-}
-
 func getPossiblePropertyFromByItems(items []*util.ByItems) []*expression.Column {
 	cols := make([]*expression.Column, 0, len(items))
 	for _, item := range items {

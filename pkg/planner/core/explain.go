@@ -1023,18 +1023,6 @@ func (p *LogicalSort) ExplainInfo() string {
 }
 
 // ExplainInfo implements Plan interface.
-func (lt *LogicalTopN) ExplainInfo() string {
-	buffer := bytes.NewBufferString("")
-	buffer = explainPartitionBy(buffer, lt.GetPartitionBy(), false)
-	if len(lt.GetPartitionBy()) > 0 && len(lt.ByItems) > 0 {
-		buffer.WriteString("order by ")
-	}
-	buffer = explainByItems(lt.SCtx().GetExprCtx().GetEvalCtx(), buffer, lt.ByItems)
-	fmt.Fprintf(buffer, ", offset:%v, count:%v", lt.Offset, lt.Count)
-	return buffer.String()
-}
-
-// ExplainInfo implements Plan interface.
 func (p *LogicalLimit) ExplainInfo() string {
 	buffer := bytes.NewBufferString("")
 	if len(p.GetPartitionBy()) > 0 {

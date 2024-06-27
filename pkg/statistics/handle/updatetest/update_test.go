@@ -325,7 +325,7 @@ func TestUpdatePartition(t *testing.T) {
 			statsTbl := h.GetPartitionStats(tableInfo, def.ID)
 			require.Equal(t, int64(1), statsTbl.ModifyCount)
 			require.Equal(t, int64(1), statsTbl.RealtimeCount)
-			require.Equal(t, int64(2), statsTbl.Columns[bColID].TotColSize)
+			require.Equal(t, int64(2), statsTbl.GetCol(bColID).TotColSize)
 		}
 
 		testKit.MustExec(`update t set a = a + 1, b = "aa"`)
@@ -335,7 +335,7 @@ func TestUpdatePartition(t *testing.T) {
 			statsTbl := h.GetPartitionStats(tableInfo, def.ID)
 			require.Equal(t, int64(2), statsTbl.ModifyCount)
 			require.Equal(t, int64(1), statsTbl.RealtimeCount)
-			require.Equal(t, int64(3), statsTbl.Columns[bColID].TotColSize)
+			require.Equal(t, int64(3), statsTbl.GetCol(bColID).TotColSize)
 		}
 
 		testKit.MustExec("delete from t")
@@ -345,14 +345,14 @@ func TestUpdatePartition(t *testing.T) {
 			statsTbl := h.GetPartitionStats(tableInfo, def.ID)
 			require.Equal(t, int64(3), statsTbl.ModifyCount)
 			require.Equal(t, int64(0), statsTbl.RealtimeCount)
-			require.Equal(t, int64(0), statsTbl.Columns[bColID].TotColSize)
+			require.Equal(t, int64(0), statsTbl.GetCol(bColID).TotColSize)
 		}
 		// assert WithGetTableStatsByQuery get the same result
 		for _, def := range pi.Definitions {
 			statsTbl := h.GetPartitionStats(tableInfo, def.ID)
 			require.Equal(t, int64(3), statsTbl.ModifyCount)
 			require.Equal(t, int64(0), statsTbl.RealtimeCount)
-			require.Equal(t, int64(0), statsTbl.Columns[bColID].TotColSize)
+			require.Equal(t, int64(0), statsTbl.GetCol(bColID).TotColSize)
 		}
 	})
 }
@@ -393,11 +393,11 @@ func TestAutoUpdate(t *testing.T) {
 		stats = h.GetTableStats(tableInfo)
 		require.Equal(t, int64(5), stats.RealtimeCount)
 		require.Equal(t, int64(0), stats.ModifyCount)
-		for _, item := range stats.Columns {
+		stats.ForEachColumnImmutable(func(_ int64, item *statistics.Column) bool {
 			// TotColSize = 5*(2(length of 'ss') + 1(size of len byte)).
 			require.Equal(t, int64(15), item.TotColSize)
-			break
-		}
+			return true
+		})
 
 		// Test that even if the table is recently modified, we can still analyze the table.
 		h.SetLease(time.Second)
@@ -432,11 +432,11 @@ func TestAutoUpdate(t *testing.T) {
 		require.Equal(t, int64(8), stats.RealtimeCount)
 		// Modify count is non-zero means that we do not analyze the table.
 		require.Equal(t, int64(1), stats.ModifyCount)
-		for _, item := range stats.Columns {
+		stats.ForEachColumnImmutable(func(_ int64, item *statistics.Column) bool {
 			// TotColSize = 27, because the table has not been analyzed, and insert statement will add 3(length of 'eee') to TotColSize.
 			require.Equal(t, int64(27), item.TotColSize)
-			break
-		}
+			return true
+		})
 
 		testKit.MustExec("analyze table t")
 		_, err = testKit.Exec("create index idx on t(a)")
@@ -452,8 +452,8 @@ func TestAutoUpdate(t *testing.T) {
 		stats = h.GetTableStats(tableInfo)
 		require.Equal(t, int64(8), stats.RealtimeCount)
 		require.Equal(t, int64(0), stats.ModifyCount)
-		hg, ok := stats.Indices[tableInfo.Indices[0].ID]
-		require.True(t, ok)
+		hg := stats.GetIdx(tableInfo.Indices[0].ID)
+		require.True(t, hg != nil)
 		require.Equal(t, int64(3), hg.NDV)
 		require.Equal(t, 0, hg.Len())
 		require.Equal(t, 3, hg.TopN.Num())
@@ -1085,9 +1085,10 @@ func TestStatsLockUnlockForAutoAnalyze(t *testing.T) {
 	require.Nil(t, err)
 
 	tblStats := h.GetTableStats(tbl.Meta())
-	for _, col := range tblStats.Columns {
+	tblStats.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
 		require.True(t, col.IsStatsInitialized())
-	}
+		return false
+	})
 
 	tk.MustExec("lock stats t")
 
@@ -1281,7 +1282,7 @@ func TestAutoAnalyzePartitionTableAfterAddingIndex(t *testing.T) {
 	require.NoError(t, err)
 	tblInfo := tbl.Meta()
 	idxInfo := tblInfo.Indices[0]
-	require.Nil(t, h.GetTableStats(tblInfo).Indices[idxInfo.ID])
+	require.Nil(t, h.GetTableStats(tblInfo).GetIdx(idxInfo.ID))
 	require.True(t, h.HandleAutoAnalyze())
-	require.NotNil(t, h.GetTableStats(tblInfo).Indices[idxInfo.ID])
+	require.NotNil(t, h.GetTableStats(tblInfo).GetIdx(idxInfo.ID))
 }
