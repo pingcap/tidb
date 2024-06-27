@@ -964,9 +964,24 @@ jd1	CREATE TABLE `jd1` (
   UNIQUE KEY `id` (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 INSERT INTO jd1(id) VALUES(1);
+INSERT INTO jd1 VALUES (2, '{"testval": 1234}');
 TABLE jd1;
 id	j
 1	{"foo": "bar"}
+2	{"testval": 1234}
+UPDATE jd1 SET j=NULL where id=2;
+TABLE jd1;
+id	j
+1	{"foo": "bar"}
+2	NULL
+UPDATE jd1 SET j=DEFAULT where id=2;
+TABLE jd1;
+id	j
+1	{"foo": "bar"}
+2	{"foo": "bar"}
+DELETE FROM jd1;
+TABLE jd1;
+id	j
 DROP TABLE jd1;
 CREATE TABLE jd2 (id SERIAL, j JSON DEFAULT (JSON_ARRAY("foo", "bar")));
 SHOW CREATE TABLE jd2;

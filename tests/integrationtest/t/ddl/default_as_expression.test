@@ -511,6 +511,13 @@ drop table parent, child;
 CREATE TABLE jd1 (id SERIAL, j JSON DEFAULT (JSON_OBJECT("foo", "bar")));
 SHOW CREATE TABLE jd1;
 INSERT INTO jd1(id) VALUES(1);
+INSERT INTO jd1 VALUES (2, '{"testval": 1234}');
+TABLE jd1;
+UPDATE jd1 SET j=NULL where id=2;
+TABLE jd1;
+UPDATE jd1 SET j=DEFAULT where id=2;
+TABLE jd1;
+DELETE FROM jd1;
 TABLE jd1;
 DROP TABLE jd1;
 
