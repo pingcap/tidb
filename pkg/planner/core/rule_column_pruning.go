@@ -420,39 +420,6 @@ func (la *LogicalApply) PruneColumns(parentUsedCols []*expression.Column, opt *o
 }
 
 // PruneColumns implements base.LogicalPlan interface.
-func (p *LogicalLock) PruneColumns(parentUsedCols []*expression.Column, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, error) {
-	var err error
-	if !IsSelectForUpdateLockType(p.Lock.LockType) {
-		// when use .baseLogicalPlan to call the PruneColumns, it means current plan itself has
-		// nothing to pruning or plan change, so they resort to its children's column pruning logic.
-		// so for the returned logical plan here, p is definitely determined, we just need to collect
-		// those extra deeper call error in handling children's column pruning.
-		_, err = p.BaseLogicalPlan.PruneColumns(parentUsedCols, opt)
-		if err != nil {
-			return nil, err
-		}
-		return p, nil
-	}
-
-	for tblID, cols := range p.TblID2Handle {
-		for _, col := range cols {
-			for i := 0; i < col.NumCols(); i++ {
-				parentUsedCols = append(parentUsedCols, col.GetCol(i))
-			}
-		}
-		if physTblIDCol, ok := p.TblID2PhysTblIDCol[tblID]; ok {
-			// If the children include partitioned tables, there is an extra partition ID column.
-			parentUsedCols = append(parentUsedCols, physTblIDCol)
-		}
-	}
-	p.Children()[0], err = p.Children()[0].PruneColumns(parentUsedCols, opt)
-	if err != nil {
-		return nil, err
-	}
-	return p, nil
-}
-
-// PruneColumns implements base.LogicalPlan interface.
 func (p *LogicalWindow) PruneColumns(parentUsedCols []*expression.Column, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, error) {
 	windowColumns := p.GetWindowResultColumns()
 	cnt := 0

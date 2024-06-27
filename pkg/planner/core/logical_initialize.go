@@ -122,12 +122,6 @@ func (p LogicalShowDDLJobs) Init(ctx base.PlanContext) *LogicalShowDDLJobs {
 	return &p
 }
 
-// Init initializes LogicalLock.
-func (p LogicalLock) Init(ctx base.PlanContext) *LogicalLock {
-	p.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(ctx, plancodec.TypeLock, &p, 0)
-	return &p
-}
-
 // Init initializes LogicalMemTable.
 func (p LogicalMemTable) Init(ctx base.PlanContext, offset int) *LogicalMemTable {
 	p.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(ctx, plancodec.TypeMemTableScan, &p, offset)
