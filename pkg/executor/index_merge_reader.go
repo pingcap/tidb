@@ -221,7 +221,7 @@ func (e *IndexMergeReaderExecutor) rebuildRangeForCorCol() (err error) {
 		if e.isCorColInPartialAccess[i] {
 			switch x := plan[0].(type) {
 			case *plannercore.PhysicalIndexScan:
-				e.ranges[i], err = rebuildIndexRanges(e.Ctx(), x, x.IdxCols, x.IdxColLens)
+				e.ranges[i], err = rebuildIndexRanges(e.Ctx().GetExprCtx(), e.Ctx().GetRangerCtx(), x, x.IdxCols, x.IdxColLens)
 			case *plannercore.PhysicalTableScan:
 				e.ranges[i], err = x.ResolveCorrelatedColumns()
 			default:
