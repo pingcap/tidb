@@ -284,11 +284,11 @@ func (p *PhysicalTableReader) Clone() (base.PhysicalPlan, error) {
 func (p *PhysicalTableReader) CloneForPlanCache() (base.Plan, bool) {
 	cloned := new(PhysicalTableReader)
 	*cloned = *p
-	if t, ok := p.tablePlan.CloneForPlanCache(); !ok {
+	t, ok := p.tablePlan.CloneForPlanCache()
+	if !ok {
 		return nil, false
-	} else {
-		cloned.tablePlan = t.(base.PhysicalPlan)
 	}
+	cloned.tablePlan = t.(base.PhysicalPlan)
 	cloned.TablePlans = flattenPushDownPlan(cloned.tablePlan)
 	return cloned, true
 }
@@ -359,11 +359,11 @@ func (p *PhysicalIndexReader) Clone() (base.PhysicalPlan, error) {
 func (p *PhysicalIndexReader) CloneForPlanCache() (base.Plan, bool) {
 	cloned := new(PhysicalIndexReader)
 	*cloned = *p
-	if t, ok := p.indexPlan.CloneForPlanCache(); !ok {
+	t, ok := p.indexPlan.CloneForPlanCache()
+	if !ok {
 		return nil, false
-	} else {
-		cloned.indexPlan = t.(base.PhysicalPlan)
 	}
+	cloned.indexPlan = t.(base.PhysicalPlan)
 	cloned.IndexPlans = flattenPushDownPlan(cloned.indexPlan)
 	return cloned, true
 }
