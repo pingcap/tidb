@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
+
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
@@ -43,34 +44,7 @@ func (p LogicalLimit) Init(ctx base.PlanContext, offset int) *LogicalLimit {
 	return &p
 }
 
-// GetPartitionBy returns partition by fields
-func (lt *LogicalLimit) GetPartitionBy() []property.SortItem {
-	return lt.PartitionBy
-}
-
-// BuildKeyInfo implements base.LogicalPlan BuildKeyInfo interface.
-func (p *LogicalLimit) BuildKeyInfo(selfSchema *expression.Schema, childSchema []*expression.Schema) {
-	p.LogicalSchemaProducer.BuildKeyInfo(selfSchema, childSchema)
-	if p.Count == 1 {
-		p.SetMaxOneRow(true)
-	}
-}
-
-// PredicatePushDown implements base.LogicalPlan PredicatePushDown interface.
-func (p *LogicalLimit) PredicatePushDown(predicates []expression.Expression, opt *optimizetrace.LogicalOptimizeOp) ([]expression.Expression, base.LogicalPlan) {
-	// Limit forbids any condition to push down.
-	p.BaseLogicalPlan.PredicatePushDown(nil, opt)
-	return predicates, p
-}
-
-// DeriveStats implement LogicalPlan DeriveStats interface.
-func (p *LogicalLimit) DeriveStats(childStats []*property.StatsInfo, _ *expression.Schema, _ []*expression.Schema, _ [][]*expression.Column) (*property.StatsInfo, error) {
-	if p.StatsInfo() != nil {
-		return p.StatsInfo(), nil
-	}
-	p.SetStats(deriveLimitStats(childStats[0], float64(p.Count)))
-	return p.StatsInfo(), nil
-}
+// *************************** start implementation of Plan interface ***************************
 
 // ExplainInfo implements Plan interface.
 func (p *LogicalLimit) ExplainInfo() string {
@@ -84,7 +58,11 @@ func (p *LogicalLimit) ExplainInfo() string {
 	return buffer.String()
 }
 
-// HashCode implements LogicalPlan interface.
+// *************************** end implementation of Plan interface ***************************
+
+// *************************** start implementation of logicalPlan interface ***************************
+
+// HashCode implements LogicalPlan.<0th> interface.
 func (p *LogicalLimit) HashCode() []byte {
 	// PlanType + SelectOffset + Offset + Count
 	result := make([]byte, 24)
@@ -95,26 +73,14 @@ func (p *LogicalLimit) HashCode() []byte {
 	return result
 }
 
-// PushDownTopN implements the LogicalPlan interface.
-func (p *LogicalLimit) PushDownTopN(topNLogicalPlan base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) base.LogicalPlan {
-	var topN *LogicalTopN
-	if topNLogicalPlan != nil {
-		topN = topNLogicalPlan.(*LogicalTopN)
-	}
-	child := p.Children()[0].PushDownTopN(p.convertToTopN(opt), opt)
-	if topN != nil {
-		return topN.AttachChild(child, opt)
-	}
-	return child
+// PredicatePushDown implements base.LogicalPlan.<1st> interface.
+func (p *LogicalLimit) PredicatePushDown(predicates []expression.Expression, opt *optimizetrace.LogicalOptimizeOp) ([]expression.Expression, base.LogicalPlan) {
+	// Limit forbids any condition to push down.
+	p.BaseLogicalPlan.PredicatePushDown(nil, opt)
+	return predicates, p
 }
 
-// ExhaustPhysicalPlans implements LogicalPlan interface.
-func (p *LogicalLimit) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
-	return getLimitPhysicalPlans(p, prop)
-}
-
-
-// PruneColumns implements base.LogicalPlan interface.
+// PruneColumns implements base.LogicalPlan.<2nd> interface.
 func (p *LogicalLimit) PruneColumns(parentUsedCols []*expression.Column, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, error) {
 	if len(parentUsedCols) == 0 { // happens when LIMIT appears in UPDATE.
 		return p, nil
@@ -129,6 +95,84 @@ func (p *LogicalLimit) PruneColumns(parentUsedCols []*expression.Column, opt *op
 	p.SetSchema(nil)
 	p.InlineProjection(savedUsedCols, opt)
 	return p, nil
+}
+
+// FindBestTask inherits BaseLogicalPlan.LogicalPlan.<3rd> implementation.
+
+// BuildKeyInfo implements base.LogicalPlan.<4th> interface.
+func (p *LogicalLimit) BuildKeyInfo(selfSchema *expression.Schema, childSchema []*expression.Schema) {
+	p.LogicalSchemaProducer.BuildKeyInfo(selfSchema, childSchema)
+	if p.Count == 1 {
+		p.SetMaxOneRow(true)
+	}
+}
+
+// PushDownTopN implements the base.LogicalPlan.<5th> interface.
+func (p *LogicalLimit) PushDownTopN(topNLogicalPlan base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) base.LogicalPlan {
+	var topN *LogicalTopN
+	if topNLogicalPlan != nil {
+		topN = topNLogicalPlan.(*LogicalTopN)
+	}
+	child := p.Children()[0].PushDownTopN(p.convertToTopN(opt), opt)
+	if topN != nil {
+		return topN.AttachChild(child, opt)
+	}
+	return child
+}
+
+// DeriveTopN inherits BaseLogicalPlan.LogicalPlan.<6th> implementation.
+
+// PredicateSimplification inherits BaseLogicalPlan.LogicalPlan.<7th> implementation.
+
+// ConstantPropagation inherits BaseLogicalPlan.LogicalPlan.<8th> implementation.
+
+// PullUpConstantPredicates inherits BaseLogicalPlan.LogicalPlan.<9th> implementation.
+
+// RecursiveDeriveStats inherits BaseLogicalPlan.LogicalPlan.<10th> implementation.
+
+// DeriveStats implement base.LogicalPlan.<11th> interface.
+func (p *LogicalLimit) DeriveStats(childStats []*property.StatsInfo, _ *expression.Schema, _ []*expression.Schema, _ [][]*expression.Column) (*property.StatsInfo, error) {
+	if p.StatsInfo() != nil {
+		return p.StatsInfo(), nil
+	}
+	p.SetStats(deriveLimitStats(childStats[0], float64(p.Count)))
+	return p.StatsInfo(), nil
+}
+
+// ExtractColGroups inherits BaseLogicalPlan.LogicalPlan.<12th> implementation.
+
+// PreparePossibleProperties inherits BaseLogicalPlan.LogicalPlan.<13th> implementation.
+
+// ExhaustPhysicalPlans implements base.LogicalPlan.<14th> interface.
+func (p *LogicalLimit) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
+	return getLimitPhysicalPlans(p, prop)
+}
+
+// ExtractCorrelatedCols inherits BaseLogicalPlan.LogicalPlan.<15th> implementation.
+
+// MaxOneRow inherits BaseLogicalPlan.LogicalPlan.<16th> implementation.
+
+// Children inherits BaseLogicalPlan.LogicalPlan.<17th> implementation.
+
+// SetChildren inherits BaseLogicalPlan.LogicalPlan.<18th> implementation.
+
+// SetChild inherits BaseLogicalPlan.LogicalPlan.<19th> implementation.
+
+// RollBackTaskMap inherits BaseLogicalPlan.LogicalPlan.<20th> implementation.
+
+// CanPushToCop inherits BaseLogicalPlan.LogicalPlan.<21st> implementation.
+
+// ExtractFD inherits BaseLogicalPlan.LogicalPlan.<22nd> implementation.
+
+// GetBaseLogicalPlan inherits BaseLogicalPlan.LogicalPlan.<23rd> implementation.
+
+// ConvertOuterToInnerJoin inherits BaseLogicalPlan.LogicalPlan.<24th> implementation.
+
+// *************************** end implementation of logicalPlan interface ***************************
+
+// GetPartitionBy returns partition by fields
+func (lt *LogicalLimit) GetPartitionBy() []property.SortItem {
+	return lt.PartitionBy
 }
 
 func (p *LogicalLimit) convertToTopN(opt *optimizetrace.LogicalOptimizeOp) *LogicalTopN {
