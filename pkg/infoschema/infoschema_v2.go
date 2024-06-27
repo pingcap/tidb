@@ -51,6 +51,13 @@ type schemaItem struct {
 	tomb          bool
 }
 
+type schemaIDName struct {
+	schemaVersion int64
+	id            int64
+	name          string
+	tomb          bool
+}
+
 func (si *schemaItem) Name() string {
 	return si.dbInfo.Name.L
 }
@@ -86,7 +93,9 @@ type Data struct {
 	// Stores the full data in memory.
 	schemaMap *btree.BTreeG[schemaItem]
 
-	schemaID2Name map[int64]string
+	// For the SchemaByID API, sorted by {id, schemaVersion}
+	// Stores only id, name and schemaVersion in memory.
+	schemaID2Name *btree.BTreeG[schemaIDName]
 
 	tableCache *Sieve[tableCacheKey, table.Table]
 
@@ -173,7 +182,7 @@ func NewData() *Data {
 		byID:              btree.NewBTreeG[tableItem](compareByID),
 		byName:            btree.NewBTreeG[tableItem](compareByName),
 		schemaMap:         btree.NewBTreeG[schemaItem](compareSchemaItem),
-		schemaID2Name:     map[int64]string{},
+		schemaID2Name:     btree.NewBTreeG[schemaIDName](compareSchemaByID),
 		tableCache:        newSieve[tableCacheKey, table.Table](1024 * 1024 * size.MB),
 		specials:          make(map[string]*schemaTables),
 		pid2tid:           btree.NewBTreeG[partitionItem](comparePartitionItem),
@@ -213,7 +222,7 @@ func (isd *Data) addSpecialDB(di *model.DBInfo, tables *schemaTables) {
 
 func (isd *Data) addDB(schemaVersion int64, dbInfo *model.DBInfo) {
 	dbInfo.Tables = nil
-	isd.schemaID2Name[dbInfo.ID] = dbInfo.Name.L
+	isd.schemaID2Name.Set(schemaIDName{schemaVersion: schemaVersion, id: dbInfo.ID, name: dbInfo.Name.O})
 	isd.schemaMap.Set(schemaItem{schemaVersion: schemaVersion, dbInfo: dbInfo})
 }
 
@@ -232,8 +241,8 @@ func (isd *Data) remove(item tableItem) {
 
 func (isd *Data) deleteDB(dbInfo *model.DBInfo, schemaVersion int64) {
 	item := schemaItem{schemaVersion: schemaVersion, dbInfo: dbInfo, tomb: true}
-	delete(isd.schemaID2Name, dbInfo.ID)
 	isd.schemaMap.Set(item)
+	isd.schemaID2Name.Set(schemaIDName{schemaVersion: schemaVersion, id: dbInfo.ID, name: dbInfo.Name.O, tomb: true})
 }
 
 func compareByID(a, b tableItem) bool {
@@ -297,6 +306,16 @@ func compareSchemaItem(a, b schemaItem) bool {
 		return true
 	}
 	if a.Name() > b.Name() {
+		return false
+	}
+	return a.schemaVersion < b.schemaVersion
+}
+
+func compareSchemaByID(a, b schemaIDName) bool {
+	if a.id < b.id {
+		return true
+	}
+	if a.id > b.id {
 		return false
 	}
 	return a.schemaVersion < b.schemaVersion
@@ -654,7 +673,25 @@ func (is *infoschemaV2) SchemaByID(id int64) (*model.DBInfo, bool) {
 		// Something wrong?
 		return nil, false
 	}
-	name, ok := is.Data.schemaID2Name[id]
+	var ok bool
+	var name string
+	is.Data.schemaID2Name.Descend(schemaIDName{
+		id:            id,
+		schemaVersion: math.MaxInt64,
+	}, func(item schemaIDName) bool {
+		if item.id != id {
+			ok = false
+			return false
+		}
+		if item.schemaVersion <= is.infoSchema.schemaMetaVersion {
+			if !item.tomb { // If the item is a tomb record, the database is dropped.
+				ok = true
+				name = item.name
+			}
+			return false
+		}
+		return true
+	})
 	if !ok {
 		return nil, false
 	}
