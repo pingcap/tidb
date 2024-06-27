@@ -997,7 +997,12 @@ func (h SchemaHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 	if tableID := req.FormValue(handler.TableIDQuery); len(tableID) > 0 {
 		// table schema of a specified tableID
-		data, err := getTableByIDStr(schema, tableID)
+		tid, err := strconv.Atoi(tableID)
+		if err != nil {
+			handler.WriteError(w, err)
+			return
+		}
+		data, err := getTableByIDStr(schema, tid)
 		if err != nil {
 			handler.WriteError(w, err)
 			return
@@ -1008,14 +1013,18 @@ func (h SchemaHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 	if tableIDsStr := req.FormValue(handler.TableIDsQuery); len(tableIDsStr) > 0 {
 		tableIDs := strings.Split(tableIDsStr, ",")
-		data := make([]table.Table, 0, len(tableIDs))
+		data := make(map[int]table.Table, len(tableIDs))
 		for _, tableID := range tableIDs {
-			tbl, err := getTableByIDStr(schema, tableID)
+			tid, err := strconv.Atoi(tableID)
 			if err != nil {
 				handler.WriteError(w, err)
 				return
 			}
-			data = append(data, tbl)
+			tbl, err := getTableByIDStr(schema, tid)
+			if err == nil {
+				data[tid] = tbl
+				return
+			}
 		}
 		handler.WriteData(w, data)
 		return
@@ -1025,13 +1034,9 @@ func (h SchemaHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	handler.WriteData(w, schema.AllSchemas())
 }
 
-func getTableByIDStr(schema infoschema.InfoSchema, tableID string) (table.Table, error) {
-	tid, err := strconv.Atoi(tableID)
-	if err != nil {
-		return nil, err
-	}
+func getTableByIDStr(schema infoschema.InfoSchema, tid int) (table.Table, error) {
 	if tid < 0 {
-		return nil, infoschema.ErrTableNotExists.GenWithStack("Table which ID = %s does not exist.", tableID)
+		return nil, infoschema.ErrTableNotExists.GenWithStack("Table which ID = %d does not exist.", tid)
 	}
 	if data, ok := schema.TableByID(int64(tid)); ok {
 		return data, nil
@@ -1039,7 +1044,7 @@ func getTableByIDStr(schema infoschema.InfoSchema, tableID string) (table.Table,
 	// The tid maybe a partition ID of the partition-table.
 	tbl, _, _ := schema.FindTableByPartitionID(int64(tid))
 	if tbl == nil {
-		return nil, infoschema.ErrTableNotExists.GenWithStack("Table which ID = %s does not exist.", tableID)
+		return nil, infoschema.ErrTableNotExists.GenWithStack("Table which ID = %d does not exist.", tid)
 	}
 	return tbl, nil
 }
