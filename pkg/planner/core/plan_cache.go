@@ -16,7 +16,6 @@ package core
 
 import (
 	"context"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/domain"
@@ -269,6 +268,32 @@ func adjustCachedPlan(sctx sessionctx.Context, cachedVal *PlanCacheValue, isNonP
 			return nil, nil, false, nil
 		}
 	}
+
+	switch x := cachedVal.Plan.(type) {
+	case base.PhysicalPlan:
+		if _, err := x.Clone(); err != nil {
+			//panic(fmt.Sprintf("%v %v %v", reflect.TypeOf(x), x, err))
+		}
+	case *Update:
+		if x.SelectPlan != nil {
+			if _, err := x.SelectPlan.Clone(); err != nil {
+				//panic(fmt.Sprintf("%v %v %v", reflect.TypeOf(x), x, err))
+			}
+		}
+	case *Insert:
+		if x.SelectPlan != nil {
+			if _, err := x.SelectPlan.Clone(); err != nil {
+				//panic(fmt.Sprintf("%v %v %v", reflect.TypeOf(x), x, err))
+			}
+		}
+	case *Delete:
+		if x.SelectPlan != nil {
+			if _, err := x.SelectPlan.Clone(); err != nil {
+				//panic(fmt.Sprintf("%v %v %v", reflect.TypeOf(x), x, err))
+			}
+		}
+	}
+
 	if !RebuildPlan4CachedPlan(cachedVal.Plan) {
 		return nil, nil, false, nil
 	}

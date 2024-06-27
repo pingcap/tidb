@@ -1514,6 +1514,27 @@ type PhysicalIndexJoin struct {
 	InnerHashKeys []*expression.Column
 }
 
+func (p *PhysicalIndexJoin) Clone() (base.PhysicalPlan, error) {
+	cloned := new(PhysicalIndexJoin)
+	base, err := p.basePhysicalJoin.cloneWithSelf(cloned)
+	if err != nil {
+		return nil, err
+	}
+	cloned.basePhysicalJoin = *base
+	cloned.innerTask = p.innerTask
+	cloned.Ranges = p.Ranges
+	cloned.KeyOff2IdxOff = make([]int, len(p.KeyOff2IdxOff))
+	copy(cloned.KeyOff2IdxOff, p.KeyOff2IdxOff)
+	cloned.IdxColLens = make([]int, len(p.IdxColLens))
+	copy(cloned.IdxColLens, p.IdxColLens)
+	if p.CompareFilters != nil {
+		cloned.CompareFilters = p.CompareFilters
+	}
+	cloned.OuterHashKeys = util.CloneCols(p.OuterHashKeys)
+	cloned.InnerHashKeys = util.CloneCols(p.InnerHashKeys)
+	return cloned, nil
+}
+
 // MemoryUsage return the memory usage of PhysicalIndexJoin
 func (p *PhysicalIndexJoin) MemoryUsage() (sum int64) {
 	if p == nil {
@@ -1788,6 +1809,25 @@ type PhysicalLock struct {
 
 	TblID2Handle       map[int64][]util.HandleCols
 	TblID2PhysTblIDCol map[int64]*expression.Column
+}
+
+func (pl *PhysicalLock) Clone() (base.PhysicalPlan, error) {
+	cloned := new(PhysicalLock)
+	base, err := pl.basePhysicalPlan.cloneWithSelf(cloned)
+	if err != nil {
+		return nil, err
+	}
+	cloned.basePhysicalPlan = *base
+	cloned.Lock = pl.Lock
+	cloned.TblID2Handle = make(map[int64][]util.HandleCols, len(pl.TblID2Handle))
+	for k, v := range pl.TblID2Handle {
+		cloned.TblID2Handle[k] = v
+	}
+	cloned.TblID2PhysTblIDCol = make(map[int64]*expression.Column, len(pl.TblID2PhysTblIDCol))
+	for k, v := range pl.TblID2PhysTblIDCol {
+		cloned.TblID2PhysTblIDCol[k] = v
+	}
+	return cloned, nil
 }
 
 // MemoryUsage return the memory usage of PhysicalLock
@@ -2152,6 +2192,18 @@ type PhysicalUnionScan struct {
 	Conditions []expression.Expression
 
 	HandleCols util.HandleCols
+}
+
+func (p *PhysicalUnionScan) Clone() (base.PhysicalPlan, error) {
+	cloned := new(PhysicalUnionScan)
+	base, err := p.basePhysicalPlan.cloneWithSelf(cloned)
+	if err != nil {
+		return nil, err
+	}
+	cloned.basePhysicalPlan = *base
+	cloned.Conditions = util.CloneExprs(p.Conditions)
+	cloned.HandleCols = p.HandleCols
+	return cloned, nil
 }
 
 // ExtractCorrelatedCols implements op.PhysicalPlan interface.
