@@ -213,8 +213,8 @@ func TestJoinPredicatePushDown(t *testing.T) {
 		require.True(t, ok, comment)
 		rightPlan, ok := join.Children()[1].(*DataSource)
 		require.True(t, ok, comment)
-		leftCond := fmt.Sprintf("%s", leftPlan.pushedDownConds)
-		rightCond := fmt.Sprintf("%s", rightPlan.pushedDownConds)
+		leftCond := fmt.Sprintf("%s", leftPlan.PushedDownConds)
+		rightCond := fmt.Sprintf("%s", rightPlan.PushedDownConds)
 		testdata.OnRecord(func() {
 			output[i].Left, output[i].Right = leftCond, rightCond
 		})
@@ -260,8 +260,8 @@ func TestOuterWherePredicatePushDown(t *testing.T) {
 		require.True(t, ok, comment)
 		rightPlan, ok := join.Children()[1].(*DataSource)
 		require.True(t, ok, comment)
-		leftCond := fmt.Sprintf("%s", leftPlan.pushedDownConds)
-		rightCond := fmt.Sprintf("%s", rightPlan.pushedDownConds)
+		leftCond := fmt.Sprintf("%s", leftPlan.PushedDownConds)
+		rightCond := fmt.Sprintf("%s", rightPlan.PushedDownConds)
 		testdata.OnRecord(func() {
 			output[i].Left, output[i].Right = leftCond, rightCond
 		})
@@ -367,8 +367,8 @@ func TestDeriveNotNullConds(t *testing.T) {
 		join := p.(base.LogicalPlan).Children()[0].(*LogicalJoin)
 		left := join.Children()[0].(*DataSource)
 		right := join.Children()[1].(*DataSource)
-		leftConds := fmt.Sprintf("%s", left.pushedDownConds)
-		rightConds := fmt.Sprintf("%s", right.pushedDownConds)
+		leftConds := fmt.Sprintf("%s", left.PushedDownConds)
+		rightConds := fmt.Sprintf("%s", right.PushedDownConds)
 		testdata.OnRecord(func() {
 			output[i].Left, output[i].Right = leftConds, rightConds
 		})
@@ -2332,13 +2332,13 @@ func TestRollupExpand(t *testing.T) {
 	require.Equal(t, builder.currentBlockExpand.GID != nil, true)
 	require.Equal(t, builder.currentBlockExpand.GPos == nil, true)
 	require.Equal(t, builder.currentBlockExpand.LevelExprs == nil, true)
-	require.Equal(t, builder.currentBlockExpand.rollupGroupingSets != nil, true)
-	require.Equal(t, builder.currentBlockExpand.rollupID2GIDS == nil, true)
-	require.Equal(t, builder.currentBlockExpand.rollupGroupingIDs == nil, true)
+	require.Equal(t, builder.currentBlockExpand.RollupGroupingSets != nil, true)
+	require.Equal(t, builder.currentBlockExpand.RollupID2GIDS == nil, true)
+	require.Equal(t, builder.currentBlockExpand.RollupGroupingIDs == nil, true)
 	require.Equal(t, builder.currentBlockExpand.GroupingMode == tipb.GroupingMode_ModeBitAnd, true)
 	require.Equal(t, builder.currentBlockExpand.ExtraGroupingColNames[0], "gid")
-	require.Equal(t, builder.currentBlockExpand.distinctSize, 3)
-	require.Equal(t, len(builder.currentBlockExpand.distinctGroupByCol), 2)
+	require.Equal(t, builder.currentBlockExpand.DistinctSize, 3)
+	require.Equal(t, len(builder.currentBlockExpand.DistinctGroupByCol), 2)
 
 	_, err = logicalOptimize(context.TODO(), flagPredicatePushDown|flagJoinReOrder|flagPrunColumns|flagEliminateProjection|flagResolveExpand, p.(base.LogicalPlan))
 	require.NoError(t, err)

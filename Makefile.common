@@ -131,3 +131,5 @@ ifneq ("$(CI)", "")
 	BAZEL_SYNC_CONFIG := --repository_cache=/home/jenkins/.tidb/tmp
 endif
 BAZEL_INSTRUMENTATION_FILTER := --instrument_test_targets --instrumentation_filter=//pkg/...,//br/...,//dumpling/...
+
+NOGO_FLAG=true

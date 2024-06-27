@@ -268,7 +268,6 @@ import (
 	sqlSmallResult    "SQL_SMALL_RESULT"
 	ssl               "SSL"
 	starting          "STARTING"
-	statsExtended     "STATS_EXTENDED"
 	stored            "STORED"
 	straightJoin      "STRAIGHT_JOIN"
 	tableKwd          "TABLE"
@@ -355,6 +354,7 @@ import (
 	charsetKwd            "CHARSET"
 	checkpoint            "CHECKPOINT"
 	checksum              "CHECKSUM"
+	checksumConcurrency   "CHECKSUM_CONCURRENCY"
 	cipher                "CIPHER"
 	cleanup               "CLEANUP"
 	client                "CLIENT"
@@ -372,6 +372,8 @@ import (
 	compact               "COMPACT"
 	compressed            "COMPRESSED"
 	compression           "COMPRESSION"
+	compressionLevel      "COMPRESSION_LEVEL"
+	compressionType       "COMPRESSION_TYPE"
 	concurrency           "CONCURRENCY"
 	config                "CONFIG"
 	connection            "CONNECTION"
@@ -408,6 +410,8 @@ import (
 	enable                "ENABLE"
 	enabled               "ENABLED"
 	encryption            "ENCRYPTION"
+	encryptionKeyFile     "ENCRYPTION_KEYFILE"
+	encryptionMethod      "ENCRYPTION_METHOD"
 	end                   "END"
 	enforced              "ENFORCED"
 	engine                "ENGINE"
@@ -449,6 +453,7 @@ import (
 	hour                  "HOUR"
 	hypo                  "HYPO"
 	identified            "IDENTIFIED"
+	ignoreStats           "IGNORE_STATS"
 	importKwd             "IMPORT"
 	imports               "IMPORTS"
 	increment             "INCREMENT"
@@ -472,6 +477,7 @@ import (
 	less                  "LESS"
 	level                 "LEVEL"
 	list                  "LIST"
+	loadStats             "LOAD_STATS"
 	local                 "LOCAL"
 	location              "LOCATION"
 	locked                "LOCKED"
@@ -675,22 +681,15 @@ import (
 	view                  "VIEW"
 	visible               "VISIBLE"
 	wait                  "WAIT"
+	waitTiflashReady      "WAIT_TIFLASH_READY"
 	warnings              "WARNINGS"
 	week                  "WEEK"
 	weightString          "WEIGHT_STRING"
 	without               "WITHOUT"
+	withSysTable          "WITH_SYS_TABLE"
 	workload              "WORKLOAD"
 	x509                  "X509"
 	yearType              "YEAR"
-	withSysTable          "WITH_SYS_TABLE"
-	waitTiflashReady      "WAIT_TIFLASH_READY"
-	ignoreStats           "IGNORE_STATS"
-	loadStats             "LOAD_STATS"
-	checksumConcurrency   "CHECKSUM_CONCURRENCY"
-	compressionLevel      "COMPRESSION_LEVEL"
-	compressionType       "COMPRESSION_TYPE"
-	encryptionMethod      "ENCRYPTION_METHOD"
-	encryptionKeyFile     "ENCRYPTION_KEYFILE"
 
 	/* The following tokens belong to NotKeywordToken. Notice: make sure these tokens are contained in NotKeywordToken. */
 	addDate               "ADDDATE"
@@ -872,6 +871,7 @@ import (
 	statistics                 "STATISTICS"
 	stats                      "STATS"
 	statsBuckets               "STATS_BUCKETS"
+	statsExtended              "STATS_EXTENDED"
 	statsHealthy               "STATS_HEALTHY"
 	statsHistograms            "STATS_HISTOGRAMS"
 	statsLocked                "STATS_LOCKED"
@@ -1101,7 +1101,6 @@ import (
 	AnyOrAll                               "Any or All for subquery"
 	Assignment                             "assignment"
 	AssignmentList                         "assignment list"
-	AssignmentListOpt                      "assignment list opt"
 	AuthOption                             "User auth option"
 	AutoRandomOpt                          "Auto random option"
 	Boolean                                "Boolean (0, 1, false, true)"
@@ -1110,7 +1109,6 @@ import (
 	CastType                               "Cast function target type"
 	CharsetOpt                             "CHARACTER SET option in LOAD DATA"
 	ColumnDef                              "table column definition"
-	ColumnDefList                          "table column definition list"
 	ColumnName                             "column name"
 	ColumnNameOrUserVariable               "column name or user variable"
 	ColumnNameList                         "column name list"
@@ -1346,7 +1344,6 @@ import (
 	TableNameOptWild                       "Table name with optional wildcard"
 	TableNameList                          "Table name list"
 	TableNameListOpt                       "Table name list opt"
-	TableNameListOpt2                      "Optional table name list with a preceding TABLE"
 	TableOption                            "create table option"
 	TableOptionList                        "create table option list"
 	TableRef                               "table reference"
@@ -1547,7 +1544,6 @@ import (
 	OptTable          "Optional table keyword"
 	OptInteger        "Optional Integer keyword"
 	CharsetKw         "charset or charater set"
-	CommaOpt          "optional comma"
 	logAnd            "logical and operator"
 	logOr             "logical or operator"
 	LinearOpt         "linear or empty"
@@ -1596,6 +1592,7 @@ import (
 	ProcedurceLabelOpt              "Optional Procedure label name"
 
 %precedence empty
+%precedence statsExtended
 %precedence as
 %precedence placement
 %precedence lowerThanSelectOpt
@@ -3314,13 +3311,6 @@ AssignmentList:
 		$$ = append($1.([]*ast.Assignment), $3.(*ast.Assignment))
 	}
 
-AssignmentListOpt:
-	/* EMPTY */
-	{
-		$$ = []*ast.Assignment{}
-	}
-|	AssignmentList
-
 BeginTransactionStmt:
 	"BEGIN"
 	{
@@ -3374,16 +3364,6 @@ BinlogStmt:
 	"BINLOG" stringLit
 	{
 		$$ = &ast.BinlogStmt{Str: $2}
-	}
-
-ColumnDefList:
-	ColumnDef
-	{
-		$$ = []*ast.ColumnDef{$1.(*ast.ColumnDef)}
-	}
-|	ColumnDefList ',' ColumnDef
-	{
-		$$ = append($1.([]*ast.ColumnDef), $3.(*ast.ColumnDef))
 	}
 
 ColumnDef:
@@ -6996,12 +6976,13 @@ TiDBKeyword:
 |	"SESSION_STATES"
 |	"STATISTICS"
 |	"STATS"
-|	"STATS_META"
-|	"STATS_HISTOGRAMS"
-|	"STATS_TOPN"
 |	"STATS_BUCKETS"
+|	"STATS_EXTENDED"
 |	"STATS_HEALTHY"
+|	"STATS_HISTOGRAMS"
 |	"STATS_LOCKED"
+|	"STATS_META"
+|	"STATS_TOPN"
 |	"HISTOGRAMS_IN_FLIGHT"
 |	"TIDB"
 |	"TIFLASH"
@@ -12021,16 +12002,6 @@ TableNameListOpt:
 	}
 |	TableNameList
 
-TableNameListOpt2:
-	%prec empty
-	{
-		$$ = []*ast.TableName{}
-	}
-|	"TABLE" TableNameList
-	{
-		$$ = $2
-	}
-
 WithReadLockOpt:
 	{
 		$$ = false
@@ -13370,11 +13341,6 @@ WhereClauseOptional:
 		$$ = nil
 	}
 |	WhereClause
-
-CommaOpt:
-	{}
-|	','
-	{}
 
 /************************************************************************************
  *  Account Management Statements

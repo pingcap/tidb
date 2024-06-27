@@ -1165,7 +1165,7 @@ func (*MergeAdjacentProjection) OnTransform(old *memo.ExprIter) (newExprs []*mem
 	proj := old.GetExpr().ExprNode.(*plannercore.LogicalProjection)
 	childGroup := old.Children[0].Group
 	child := old.Children[0].GetExpr().ExprNode.(*plannercore.LogicalProjection)
-	if plannercore.ExprsHasSideEffects(child.Exprs) {
+	if expression.ExprsHasSideEffects(child.Exprs) {
 		return nil, false, false, nil
 	}
 
@@ -1517,7 +1517,7 @@ func NewRuleMergeAggregationProjection() Transformation {
 // Match implements Transformation interface.
 func (*MergeAggregationProjection) Match(old *memo.ExprIter) bool {
 	proj := old.Children[0].GetExpr().ExprNode.(*plannercore.LogicalProjection)
-	return !plannercore.ExprsHasSideEffects(proj.Exprs)
+	return !expression.ExprsHasSideEffects(proj.Exprs)
 }
 
 // OnTransform implements Transformation interface.

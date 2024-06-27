@@ -230,7 +230,7 @@ func (d SchemaTracker) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStm
 		onExist = ddl.OnExistIgnore
 	}
 
-	return d.CreateTableWithInfo(ctx, schema.Name, tbInfo, onExist)
+	return d.CreateTableWithInfo(ctx, schema.Name, tbInfo, nil, onExist)
 }
 
 // CreateTableWithInfo implements the DDL interface.
@@ -238,6 +238,7 @@ func (d SchemaTracker) CreateTableWithInfo(
 	_ sessionctx.Context,
 	dbName model.CIStr,
 	info *model.TableInfo,
+	_ []model.InvolvingSchemaInfo,
 	cs ...ddl.CreateTableWithInfoConfigurier,
 ) error {
 	c := ddl.GetCreateTableWithInfoConfig(cs)
@@ -264,7 +265,7 @@ func (d SchemaTracker) CreateTableWithInfo(
 
 // CreateView implements the DDL interface.
 func (d SchemaTracker) CreateView(ctx sessionctx.Context, s *ast.CreateViewStmt) error {
-	viewInfo, err := ddl.BuildViewInfo(ctx, s)
+	viewInfo, err := ddl.BuildViewInfo(s)
 	if err != nil {
 		return err
 	}
@@ -290,7 +291,7 @@ func (d SchemaTracker) CreateView(ctx sessionctx.Context, s *ast.CreateViewStmt)
 		onExist = ddl.OnExistReplace
 	}
 
-	return d.CreateTableWithInfo(ctx, s.ViewName.Schema, tbInfo, onExist)
+	return d.CreateTableWithInfo(ctx, s.ViewName.Schema, tbInfo, nil, onExist)
 }
 
 // DropTable implements the DDL interface.
@@ -1189,7 +1190,7 @@ func (SchemaTracker) AlterResourceGroup(_ sessionctx.Context, _ *ast.AlterResour
 // BatchCreateTableWithInfo implements the DDL interface, it will call CreateTableWithInfo for each table.
 func (d SchemaTracker) BatchCreateTableWithInfo(ctx sessionctx.Context, schema model.CIStr, info []*model.TableInfo, cs ...ddl.CreateTableWithInfoConfigurier) error {
 	for _, tableInfo := range info {
-		if err := d.CreateTableWithInfo(ctx, schema, tableInfo, cs...); err != nil {
+		if err := d.CreateTableWithInfo(ctx, schema, tableInfo, nil, cs...); err != nil {
 			return err
 		}
 	}

@@ -898,25 +898,6 @@ func (p *LogicalJoin) ExplainInfo() string {
 }
 
 // ExplainInfo implements Plan interface.
-func (p *LogicalAggregation) ExplainInfo() string {
-	buffer := bytes.NewBufferString("")
-	if len(p.GroupByItems) > 0 {
-		fmt.Fprintf(buffer, "group by:%s, ",
-			expression.SortedExplainExpressionList(p.SCtx().GetExprCtx().GetEvalCtx(), p.GroupByItems))
-	}
-	if len(p.AggFuncs) > 0 {
-		buffer.WriteString("funcs:")
-		for i, agg := range p.AggFuncs {
-			buffer.WriteString(aggregation.ExplainAggFunc(p.SCtx().GetExprCtx().GetEvalCtx(), agg, false))
-			if i+1 < len(p.AggFuncs) {
-				buffer.WriteString(", ")
-			}
-		}
-	}
-	return buffer.String()
-}
-
-// ExplainInfo implements Plan interface.
 func (p *LogicalProjection) ExplainInfo() string {
 	return expression.ExplainExpressionList(p.Exprs, p.Schema())
 }
@@ -942,14 +923,14 @@ func (p *LogicalTableDual) ExplainInfo() string {
 // ExplainInfo implements Plan interface.
 func (ds *DataSource) ExplainInfo() string {
 	buffer := bytes.NewBufferString("")
-	tblName := ds.tableInfo.Name.O
+	tblName := ds.TableInfo.Name.O
 	if ds.TableAsName != nil && ds.TableAsName.O != "" {
 		tblName = ds.TableAsName.O
 	}
 	fmt.Fprintf(buffer, "table:%s", tblName)
-	if ds.partitionDefIdx != nil {
-		if pi := ds.tableInfo.GetPartitionInfo(); pi != nil {
-			fmt.Fprintf(buffer, ", partition:%s", pi.Definitions[*ds.partitionDefIdx].Name.O)
+	if ds.PartitionDefIdx != nil {
+		if pi := ds.TableInfo.GetPartitionInfo(); pi != nil {
+			fmt.Fprintf(buffer, ", partition:%s", pi.Definitions[*ds.PartitionDefIdx].Name.O)
 		}
 	}
 	return buffer.String()
@@ -1042,18 +1023,6 @@ func (p *LogicalSort) ExplainInfo() string {
 }
 
 // ExplainInfo implements Plan interface.
-func (lt *LogicalTopN) ExplainInfo() string {
-	buffer := bytes.NewBufferString("")
-	buffer = explainPartitionBy(buffer, lt.GetPartitionBy(), false)
-	if len(lt.GetPartitionBy()) > 0 && len(lt.ByItems) > 0 {
-		buffer.WriteString("order by ")
-	}
-	buffer = explainByItems(lt.SCtx().GetExprCtx().GetEvalCtx(), buffer, lt.ByItems)
-	fmt.Fprintf(buffer, ", offset:%v, count:%v", lt.Offset, lt.Count)
-	return buffer.String()
-}
-
-// ExplainInfo implements Plan interface.
 func (p *LogicalLimit) ExplainInfo() string {
 	buffer := bytes.NewBufferString("")
 	if len(p.GetPartitionBy()) > 0 {
@@ -1068,8 +1037,8 @@ func (p *LogicalLimit) ExplainInfo() string {
 // ExplainInfo implements Plan interface.
 func (p *LogicalTableScan) ExplainInfo() string {
 	buffer := bytes.NewBufferString(p.Source.ExplainInfo())
-	if p.Source.handleCols != nil {
-		fmt.Fprintf(buffer, ", pk col:%s", p.Source.handleCols)
+	if p.Source.HandleCols != nil {
+		fmt.Fprintf(buffer, ", pk col:%s", p.Source.HandleCols)
 	}
 	if len(p.AccessConds) > 0 {
 		fmt.Fprintf(buffer, ", cond:%v", p.AccessConds)
@@ -1084,7 +1053,7 @@ func (p *LogicalIndexScan) ExplainInfo() string {
 	if len(index.Columns) > 0 {
 		buffer.WriteString(", index:")
 		for i, idxCol := range index.Columns {
-			if tblCol := p.Source.tableInfo.Columns[idxCol.Offset]; tblCol.Hidden {
+			if tblCol := p.Source.TableInfo.Columns[idxCol.Offset]; tblCol.Hidden {
 				buffer.WriteString(tblCol.GeneratedExprString)
 			} else {
 				buffer.WriteString(idxCol.Name.O)

@@ -1023,10 +1023,10 @@ func (b *bundleInfoBuilder) completeUpdateTablesV2(is *infoschemaV2) {
 		return
 	}
 
-	// TODO: This is quite inefficient! we need some better way or avoid this API.
-	for _, dbInfo := range is.AllSchemas() {
-		for _, tbl := range is.SchemaTables(dbInfo.Name) {
-			tblInfo := tbl.Meta()
+	dbs := is.ListTablesWithSpecialAttribute(AllSpecialAttribute)
+	for _, db := range dbs {
+		for _, tbl := range db.TableInfos {
+			tblInfo := tbl
 			if tblInfo.PlacementPolicyRef != nil {
 				if _, ok := b.updatePolicies[tblInfo.PlacementPolicyRef.ID]; ok {
 					b.markTableBundleShouldUpdate(tblInfo.ID)
@@ -1071,8 +1071,13 @@ var PlacementPolicyAttribute specialAttributeFilter = func(t *model.TableInfo) b
 	return false
 }
 
+// PartitionAttribute is the Partition attribute filter used by ListTablesWithSpecialAttribute.
+var PartitionAttribute specialAttributeFilter = func(t *model.TableInfo) bool {
+	return t.GetPartitionInfo() != nil
+}
+
 func hasSpecialAttributes(t *model.TableInfo) bool {
-	return TTLAttribute(t) || TiFlashAttribute(t) || PlacementPolicyAttribute(t)
+	return TTLAttribute(t) || TiFlashAttribute(t) || PlacementPolicyAttribute(t) || PartitionAttribute(t)
 }
 
 // AllSpecialAttribute marks a model.TableInfo with any special attributes.

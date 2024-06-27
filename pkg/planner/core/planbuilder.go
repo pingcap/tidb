@@ -1312,8 +1312,8 @@ func (b *PlanBuilder) buildSelectLock(src base.LogicalPlan, lock *ast.SelectLock
 	}
 	selectLock := LogicalLock{
 		Lock:               lock,
-		tblID2Handle:       b.handleHelper.tailMap(),
-		tblID2PhysTblIDCol: tblID2PhysTblIDCol,
+		TblID2Handle:       b.handleHelper.tailMap(),
+		TblID2PhysTblIDCol: tblID2PhysTblIDCol,
 	}.Init(b.ctx)
 	selectLock.SetChildren(src)
 	return selectLock, nil
@@ -1322,10 +1322,10 @@ func (b *PlanBuilder) buildSelectLock(src base.LogicalPlan, lock *ast.SelectLock
 func setExtraPhysTblIDColsOnDataSource(p base.LogicalPlan, tblID2PhysTblIDCol map[int64]*expression.Column) {
 	switch ds := p.(type) {
 	case *DataSource:
-		if ds.tableInfo.GetPartitionInfo() == nil {
+		if ds.TableInfo.GetPartitionInfo() == nil {
 			return
 		}
-		tblID2PhysTblIDCol[ds.tableInfo.ID] = ds.AddExtraPhysTblIDColumn()
+		tblID2PhysTblIDCol[ds.TableInfo.ID] = ds.AddExtraPhysTblIDColumn()
 	default:
 		for _, child := range p.Children() {
 			setExtraPhysTblIDColsOnDataSource(child, tblID2PhysTblIDCol)
@@ -1866,7 +1866,7 @@ func GetPhysicalIDsAndPartitionNames(tblInfo *model.TableInfo, partitionNames []
 		return []int64{tblInfo.ID}, []string{""}, nil
 	}
 
-	// If the partitionNames is empty, we will return all partitions.
+	// If the PartitionNames is empty, we will return all partitions.
 	if len(partitionNames) == 0 {
 		ids := make([]int64, 0, len(pi.Definitions))
 		names := make([]string, 0, len(pi.Definitions))
@@ -4210,7 +4210,7 @@ func (b *PlanBuilder) buildImportInto(ctx context.Context, ld *ast.ImportIntoStm
 	// support set 'tidb_snapshot' first and then import into the target table.
 	//
 	// tidb_read_staleness can be used to do stale read too, it's allowed as long as
-	// tableInfo.ID matches with the latest schema.
+	// TableInfo.ID matches with the latest schema.
 	latestIS := b.ctx.GetDomainInfoSchema().(infoschema.InfoSchema)
 	tableInPlan, ok := latestIS.TableByID(tableInfo.ID)
 	if !ok {
