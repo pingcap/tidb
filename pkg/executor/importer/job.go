@@ -328,13 +328,18 @@ func convert2JobInfo(row chunk.Row) (*JobInfo, error) {
 }
 
 // GetAllViewableJobs gets all viewable jobs.
-func GetAllViewableJobs(ctx context.Context, conn sqlexec.SQLExecutor, user string, hasSuperPriv bool) ([]*JobInfo, error) {
+func GetAllViewableJobs(ctx context.Context, conn sqlexec.SQLExecutor, user string, hasSuperPriv bool, whereExprStr string) ([]*JobInfo, error) {
 	ctx = util.WithInternalSourceType(ctx, kv.InternalImportInto)
 	sql := baseQuerySQL
 	args := []any{}
 	if !hasSuperPriv {
 		sql += " WHERE created_by = %?"
+		if len(whereExprStr) > 0 {
+			sql += " AND (" + whereExprStr + ")"
+		}
 		args = append(args, user)
+	} else if len(whereExprStr) > 0 {
+		sql += " WHERE " + whereExprStr
 	}
 	rs, err := conn.ExecuteInternal(ctx, sql, args...)
 	if err != nil {
