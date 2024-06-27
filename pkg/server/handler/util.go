@@ -57,11 +57,12 @@ const (
 
 // For query string
 const (
-	TableIDQuery = "table_id"
-	Limit        = "limit"
-	JobID        = "start_job_id"
-	Operation    = "op"
-	Seconds      = "seconds"
+	TableIDQuery  = "table_id"
+	Limit         = "limit"
+	JobID         = "start_job_id"
+	Operation     = "op"
+	Seconds       = "seconds"
+	TableIDsQuery = "table_ids"
 )
 
 const (

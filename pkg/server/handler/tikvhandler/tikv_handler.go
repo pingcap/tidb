@@ -997,31 +997,51 @@ func (h SchemaHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 	if tableID := req.FormValue(handler.TableIDQuery); len(tableID) > 0 {
 		// table schema of a specified tableID
-		tid, err := strconv.Atoi(tableID)
+		data, err := getTableByIDStr(schema, tableID)
 		if err != nil {
 			handler.WriteError(w, err)
 			return
 		}
-		if tid < 0 {
-			handler.WriteError(w, infoschema.ErrTableNotExists.GenWithStack("Table which ID = %s does not exist.", tableID))
-			return
+		handler.WriteData(w, data)
+		return
+	}
+
+	if tableIDsStr := req.FormValue(handler.TableIDsQuery); len(tableIDsStr) > 0 {
+		tableIDs := strings.Split(tableIDsStr, ",")
+		data := make([]table.Table, 0, len(tableIDs))
+		for _, tableID := range tableIDs {
+			tbl, err := getTableByIDStr(schema, tableID)
+			if err != nil {
+				handler.WriteError(w, err)
+				return
+			}
+			data = append(data, tbl)
 		}
-		if data, ok := schema.TableByID(int64(tid)); ok {
-			handler.WriteData(w, data.Meta())
-			return
-		}
-		// The tid maybe a partition ID of the partition-table.
-		tbl, _, _ := schema.FindTableByPartitionID(int64(tid))
-		if tbl == nil {
-			handler.WriteError(w, infoschema.ErrTableNotExists.GenWithStack("Table which ID = %s does not exist.", tableID))
-			return
-		}
-		handler.WriteData(w, tbl)
+		handler.WriteData(w, data)
 		return
 	}
 
 	// all databases' schemas
 	handler.WriteData(w, schema.AllSchemas())
+}
+
+func getTableByIDStr(schema infoschema.InfoSchema, tableID string) (table.Table, error) {
+	tid, err := strconv.Atoi(tableID)
+	if err != nil {
+		return nil, err
+	}
+	if tid < 0 {
+		return nil, infoschema.ErrTableNotExists.GenWithStack("Table which ID = %s does not exist.", tableID)
+	}
+	if data, ok := schema.TableByID(int64(tid)); ok {
+		return data, nil
+	}
+	// The tid maybe a partition ID of the partition-table.
+	tbl, _, _ := schema.FindTableByPartitionID(int64(tid))
+	if tbl == nil {
+		return nil, infoschema.ErrTableNotExists.GenWithStack("Table which ID = %s does not exist.", tableID)
+	}
+	return tbl, nil
 }
 
 // ServeHTTP handles table related requests, such as table's region information, disk usage.
