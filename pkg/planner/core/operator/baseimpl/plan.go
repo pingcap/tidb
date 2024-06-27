@@ -16,6 +16,7 @@ package baseimpl
 
 import (
 	"fmt"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"strconv"
 	"unsafe"
 
@@ -135,4 +136,9 @@ func (p *Plan) MemoryUsage() (sum int64) {
 func (p *Plan) BuildPlanTrace() *tracing.PlanTrace {
 	planTrace := &tracing.PlanTrace{ID: p.ID(), TP: p.TP()}
 	return planTrace
+}
+
+// CloneForPlanCache clones this Plan for instance plan cache.
+func (p *Plan) CloneForPlanCache() (cloned base.Plan, ok bool) {
+	return nil, false
 }
