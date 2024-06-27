@@ -75,6 +75,14 @@ func (s *Sieve[K, V]) SetCapacity(capacity uint64) {
 	s.capacity = capacity
 }
 
+func (s *Sieve[K, V]) SetCapacityAndWaitEvict(capacity uint64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for s.size > s.capacity {
+		s.evict()
+	}
+}
+
 func (s *Sieve[K, V]) Capacity() uint64 {
 	s.mu.Lock()
 	defer s.mu.Unlock()
