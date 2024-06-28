@@ -497,6 +497,7 @@ func (p *BatchPointGetPlan) Clone() (base.PhysicalPlan, error) {
 	return nil, errors.Errorf("%T doesn't support cloning", p)
 }
 
+// CloneForPlanCache implements PhysicalPlan interface.
 func (p *BatchPointGetPlan) CloneForPlanCache() (base.Plan, bool) {
 	cloned := new(BatchPointGetPlan)
 	*cloned = *p
