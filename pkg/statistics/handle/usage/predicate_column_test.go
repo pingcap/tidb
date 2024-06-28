@@ -255,7 +255,6 @@ func TestAnalyzeWithNoPredicateColumnsAndNoIndexes(t *testing.T) {
 	// Set tidb_analyze_column_options to PREDICATE.
 	tk.MustExec("set global tidb_analyze_column_options='PREDICATE'")
 
-	// Create table and select data without predicate.
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a int, b int, c int)")
 	tk.MustExec("insert into t values (1, 1, 1), (2, 2, 2), (3, 3, 3)")
