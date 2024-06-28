@@ -116,7 +116,7 @@ func checkKeys(t *testing.T, withSelCol bool, buildFilter expression.CNFExprs, b
 	hashJoinCtx.SetupPartitionInfo()
 	hashJoinCtx.initHashTableContext()
 	hashJoinCtx.SessCtx = mock.NewContext()
-	builder := createRowTableBuilder(buildKeyIndex, buildKeyTypes, hashJoinCtx.PartitionNumber, hasNullableKey, buildFilter != nil, keepFilteredRows)
+	builder := createRowTableBuilder(buildKeyIndex, buildKeyTypes, hashJoinCtx.partitionNumber, hasNullableKey, buildFilter != nil, keepFilteredRows)
 	err := builder.processOneChunk(chk, hashJoinCtx.SessCtx.GetSessionVars().StmtCtx.TypeCtx(), hashJoinCtx, 0)
 	require.NoError(t, err, "processOneChunk returns error")
 	builder.appendRemainingRowLocations(0, hashJoinCtx.hashTableContext)
@@ -598,13 +598,13 @@ func TestBalanceOfFilteredRows(t *testing.T) {
 	hashJoinCtx.SetupPartitionInfo()
 	hashJoinCtx.initHashTableContext()
 	hashJoinCtx.SessCtx = mock.NewContext()
-	builder := createRowTableBuilder(buildKeyIndex, buildKeyTypes, hashJoinCtx.PartitionNumber, hasNullableKey, true, true)
+	builder := createRowTableBuilder(buildKeyIndex, buildKeyTypes, hashJoinCtx.partitionNumber, hasNullableKey, true, true)
 	err := builder.processOneChunk(chk, hashJoinCtx.SessCtx.GetSessionVars().StmtCtx.TypeCtx(), hashJoinCtx, 0)
 	require.NoError(t, err)
 	builder.appendRemainingRowLocations(0, hashJoinCtx.hashTableContext)
 	rowTables := hashJoinCtx.hashTableContext.rowTables[0]
-	for i := 0; i < int(hashJoinCtx.PartitionNumber); i++ {
-		require.Equal(t, int(3000/hashJoinCtx.PartitionNumber), int(rowTables[i].rowCount()))
+	for i := 0; i < int(hashJoinCtx.partitionNumber); i++ {
+		require.Equal(t, int(3000/hashJoinCtx.partitionNumber), int(rowTables[i].rowCount()))
 	}
 }
 
@@ -638,11 +638,10 @@ func TestSetupPartitionInfo(t *testing.T) {
 	}
 
 	for _, test := range testCases {
-
 		hashJoinCtx := &HashJoinCtxV2{}
 		hashJoinCtx.Concurrency = test.concurrency
 		hashJoinCtx.SetupPartitionInfo()
-		require.Equal(t, test.partitionNumber, hashJoinCtx.PartitionNumber)
-		require.Equal(t, test.partitionMaskOffset, hashJoinCtx.PartitionMaskOffset)
+		require.Equal(t, test.partitionNumber, hashJoinCtx.partitionNumber)
+		require.Equal(t, test.partitionMaskOffset, hashJoinCtx.partitionMaskOffset)
 	}
 }

@@ -125,8 +125,8 @@ func (htc *hashTableContext) mergeRowTablesToHashTable(tableMeta *TableMeta, par
 // HashJoinCtxV2 is the hash join ctx used in hash join v2
 type HashJoinCtxV2 struct {
 	hashJoinCtxBase
-	PartitionNumber     uint
-	PartitionMaskOffset int
+	partitionNumber     uint
+	partitionMaskOffset int
 	ProbeKeyTypes       []*types.FieldType
 	BuildKeyTypes       []*types.FieldType
 	stats               *hashJoinRuntimeStatsV2
@@ -158,7 +158,7 @@ func genHashJoinPartitionNumber(partitionHint uint) uint {
 }
 
 func getPartitionMaskOffset(partitionNumber uint) int {
-	getRightMostSetPos := func(num uint64) int {
+	getMSBPos := func(num uint64) int {
 		ret := 0
 		for num&1 != 1 {
 			num = num >> 1
@@ -170,15 +170,15 @@ func getPartitionMaskOffset(partitionNumber uint) int {
 		}
 		return ret
 	}
-	rightMostPos := getRightMostSetPos(uint64(partitionNumber))
-	// top rightMostPos bits in hash value will be used to partition data
-	return 64 - rightMostPos
+	msbPos := getMSBPos(uint64(partitionNumber))
+	// top MSB bits in hash value will be used to partition data
+	return 64 - msbPos
 }
 
-// SetupPartitionInfo set up PartitionNumber and PartitionMaskOffset based on concurrency
+// SetupPartitionInfo set up partitionNumber and partitionMaskOffset based on concurrency
 func (hCtx *HashJoinCtxV2) SetupPartitionInfo() {
-	hCtx.PartitionNumber = genHashJoinPartitionNumber(hCtx.Concurrency)
-	hCtx.PartitionMaskOffset = getPartitionMaskOffset(hCtx.PartitionNumber)
+	hCtx.partitionNumber = genHashJoinPartitionNumber(hCtx.Concurrency)
+	hCtx.partitionMaskOffset = getPartitionMaskOffset(hCtx.partitionNumber)
 }
 
 // initHashTableContext create hashTableContext for current HashJoinCtxV2
@@ -186,11 +186,11 @@ func (hCtx *HashJoinCtxV2) initHashTableContext() {
 	hCtx.hashTableContext = &hashTableContext{}
 	hCtx.hashTableContext.rowTables = make([][]*rowTable, hCtx.Concurrency)
 	for index := range hCtx.hashTableContext.rowTables {
-		hCtx.hashTableContext.rowTables[index] = make([]*rowTable, hCtx.PartitionNumber)
+		hCtx.hashTableContext.rowTables[index] = make([]*rowTable, hCtx.partitionNumber)
 	}
 	hCtx.hashTableContext.hashTable = &hashTableV2{
-		tables:          make([]*subTable, hCtx.PartitionNumber),
-		partitionNumber: uint64(hCtx.PartitionNumber),
+		tables:          make([]*subTable, hCtx.partitionNumber),
+		partitionNumber: uint64(hCtx.partitionNumber),
 	}
 	hCtx.hashTableContext.memoryTracker = memory.NewTracker(memory.LabelForHashTableInHashJoinV2, -1)
 }
@@ -355,7 +355,7 @@ func (w *BuildWorkerV2) splitPartitionAndAppendToRowTable(typeCtx types.Context,
 			setMaxValue(&w.HashJoinCtx.stats.maxPartitionData, cost)
 		}
 	}()
-	partitionNumber := w.HashJoinCtx.PartitionNumber
+	partitionNumber := w.HashJoinCtx.partitionNumber
 	hashJoinCtx := w.HashJoinCtx
 
 	builder := createRowTableBuilder(w.BuildKeyColIdx, hashJoinCtx.BuildKeyTypes, partitionNumber, w.HasNullableKey, hashJoinCtx.BuildFilter != nil, hashJoinCtx.needScanRowTableAfterProbeDone)
@@ -621,11 +621,11 @@ func (e *HashJoinV2Exec) handleFetchAndBuildHashTablePanic(r any) {
 
 // checkBalance checks whether the segment count of each partition is balanced.
 func (e *HashJoinV2Exec) checkBalance(totalSegmentCnt int) bool {
-	isBalanced := e.Concurrency == e.PartitionNumber
+	isBalanced := e.Concurrency == e.partitionNumber
 	if !isBalanced {
 		return false
 	}
-	avgSegCnt := totalSegmentCnt / int(e.PartitionNumber)
+	avgSegCnt := totalSegmentCnt / int(e.partitionNumber)
 	balanceThreshold := int(float64(avgSegCnt) * 0.8)
 	subTables := e.HashJoinCtxV2.hashTableContext.hashTable.tables
 
@@ -717,7 +717,7 @@ func (e *HashJoinV2Exec) fetchAndBuildHashTable(ctx context.Context) {
 		return
 	}
 
-	totalSegmentCnt := e.hashTableContext.mergeRowTablesToHashTable(e.hashTableMeta, e.PartitionNumber)
+	totalSegmentCnt := e.hashTableContext.mergeRowTablesToHashTable(e.hashTableMeta, e.partitionNumber)
 
 	wg = new(sync.WaitGroup)
 	errCh = make(chan error, 1+e.Concurrency)
