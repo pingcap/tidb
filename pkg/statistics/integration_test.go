@@ -599,5 +599,6 @@ func TestGlobalIndexWithAnalyzeVersion1AndHistoricalStats(t *testing.T) {
 	for i := 0; i < 10; i++ {
 		tk.MustExec("analyze table t")
 	}
+	// Each analyze will only generate one record
 	tk.MustQuery(fmt.Sprintf("select count(*) from mysql.stats_history where table_id=%d", tblID)).Equal(testkit.Rows("10"))
 }
