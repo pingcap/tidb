@@ -207,6 +207,7 @@ func (d *DBStore) adjust(
 	case "":
 	case "false":
 		d.Security.TLSConfig = nil
+		d.Security.CAPath = ""
 	default:
 		return common.ErrInvalidConfig.GenWithStack("unsupported `tidb.tls` config %s", d.TLS)
 	}
