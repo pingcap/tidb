@@ -80,12 +80,6 @@ func (p LogicalExpand) Init(ctx base.PlanContext, offset int) *LogicalExpand {
 	return &p
 }
 
-// Init initializes LogicalPartitionUnionAll.
-func (p LogicalPartitionUnionAll) Init(ctx base.PlanContext, offset int) *LogicalPartitionUnionAll {
-	p.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(ctx, plancodec.TypePartitionUnion, &p, offset)
-	return &p
-}
-
 // Init initializes LogicalTableDual.
 func (p LogicalTableDual) Init(ctx base.PlanContext, offset int) *LogicalTableDual {
 	p.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(ctx, plancodec.TypeDual, &p, offset)

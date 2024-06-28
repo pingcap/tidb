@@ -17,6 +17,7 @@ package core
 import (
 	"bytes"
 	"fmt"
+	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"math"
 	"slices"
 	"strings"
@@ -43,7 +44,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/collate"
 	h "github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	rangerctx "github.com/pingcap/tidb/pkg/util/ranger/context"
 	"github.com/pingcap/tidb/pkg/util/set"
@@ -3633,8 +3633,7 @@ func exhaustUnionAllPhysicalPlans(p *LogicalUnionAll, prop *property.PhysicalPro
 	return []base.PhysicalPlan{ua}, true, nil
 }
 
-// ExhaustPhysicalPlans implements LogicalPlan interface.
-func (p *LogicalPartitionUnionAll) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
+func exhaustPartitionUnionAllPhysicalPlans(p *LogicalPartitionUnionAll, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
 	uas, flagHint, err := p.LogicalUnionAll.ExhaustPhysicalPlans(prop)
 	if err != nil {
 		return nil, false, err
