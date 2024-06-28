@@ -525,6 +525,25 @@ func (p *PhysicalIndexLookUpReader) Clone() (base.PhysicalPlan, error) {
 	return cloned, nil
 }
 
+// CloneForPlanCache implements Plan.CloneForPlanCache method.
+func (p *PhysicalIndexLookUpReader) CloneForPlanCache() (base.Plan, bool) {
+	cloned := new(PhysicalIndexLookUpReader)
+	*cloned = *p
+	t, ok := p.tablePlan.CloneForPlanCache()
+	if !ok {
+		return nil, false
+	}
+	cloned.tablePlan = t.(base.PhysicalPlan)
+	cloned.TablePlans = flattenPushDownPlan(t.(base.PhysicalPlan))
+	i, ok := p.indexPlan.CloneForPlanCache()
+	if !ok {
+		return nil, false
+	}
+	cloned.indexPlan = i.(base.PhysicalPlan)
+	cloned.IndexPlans = flattenPushDownPlan(i.(base.PhysicalPlan))
+	return cloned, true
+}
+
 // ExtractCorrelatedCols implements op.PhysicalPlan interface.
 func (p *PhysicalIndexLookUpReader) ExtractCorrelatedCols() (corCols []*expression.CorrelatedColumn) {
 	for _, child := range p.TablePlans {
@@ -736,7 +755,7 @@ type PhysicalIndexScan struct {
 	// The index scan may be on a partition.
 	physicalTableID int64
 
-	GenExprs map[model.TableItemID]expression.Expression
+	GenExprs map[model.TableItemID]expression.Expression `json:"-"`
 
 	isPartition bool
 	Desc        bool
@@ -1139,6 +1158,15 @@ func (p *PhysicalProjection) Clone() (base.PhysicalPlan, error) {
 	cloned.physicalSchemaProducer = *base
 	cloned.Exprs = util.CloneExprs(p.Exprs)
 	return cloned, err
+}
+
+// CloneForPlanCache implements op.CloneForPlanCache interface.
+func (p *PhysicalProjection) CloneForPlanCache() (base.Plan, bool) {
+	cloned := new(PhysicalProjection)
+	*cloned = *p
+	var ok bool
+	cloned.children, ok = clonePhysicalPlansForPlanCache(p.children)
+	return cloned, ok
 }
 
 // ExtractCorrelatedCols implements op.PhysicalPlan interface.
@@ -2269,14 +2297,9 @@ func (p *PhysicalSelection) Clone() (base.PhysicalPlan, error) {
 func (p *PhysicalSelection) CloneForPlanCache() (base.Plan, bool) {
 	cloned := new(PhysicalSelection)
 	*cloned = *p
-	for i, c := range p.children {
-		clonedChild, ok := c.CloneForPlanCache()
-		if !ok {
-			return nil, false
-		}
-		cloned.children[i] = clonedChild.(base.PhysicalPlan)
-	}
-	return cloned, true
+	var ok bool
+	cloned.children, ok = clonePhysicalPlansForPlanCache(p.children)
+	return cloned, ok
 }
 
 // ExtractCorrelatedCols implements op.PhysicalPlan interface.
@@ -2875,4 +2898,16 @@ func (p *PhysicalSequence) Clone() (base.PhysicalPlan, error) {
 // Schema returns its last child(which is the main query tree)'s schema.
 func (p *PhysicalSequence) Schema() *expression.Schema {
 	return p.Children()[len(p.Children())-1].Schema()
+}
+
+func clonePhysicalPlansForPlanCache(plans []base.PhysicalPlan) ([]base.PhysicalPlan, bool) {
+	cloned := make([]base.PhysicalPlan, 0, len(plans))
+	for _, p := range plans {
+		clonedP, ok := p.CloneForPlanCache()
+		if !ok {
+			return nil, false
+		}
+		cloned = append(cloned, clonedP.(base.PhysicalPlan))
+	}
+	return cloned, true
 }
