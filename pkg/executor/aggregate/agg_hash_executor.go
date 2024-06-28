@@ -308,12 +308,13 @@ func (e *HashAggExec) initPartialWorkers(partialConcurrency int, finalConcurrenc
 			globalOutputCh:       e.finalOutputCh,
 			partialResultsMap:    partialResultsMap,
 			groupByItems:         e.GroupByItems,
-			chk:                  e.NewChunkWithCapacity(e.RetFieldTypes(), 0, e.MaxChunkSize()),
-			groupKeyBuf:          *groupKeyBuf,
-			serializeHelpers:     aggfuncs.NewSerializeHelper(),
-			isSpillPrepared:      false,
-			spillHelper:          e.spillHelper,
-			inflightChunkSync:    e.inflightChunkSync,
+			chk:                  exec.TryNewCacheChunk(e.Children(0)),
+			// chk:                  e.NewChunkWithCapacity(e.RetFieldTypes(), 0, e.MaxChunkSize()),
+			groupKeyBuf:       *groupKeyBuf,
+			serializeHelpers:  aggfuncs.NewSerializeHelper(),
+			isSpillPrepared:   false,
+			spillHelper:       e.spillHelper,
+			inflightChunkSync: e.inflightChunkSync,
 		}
 
 		e.partialWorkers[i].partialResultNumInRow = e.partialWorkers[i].getPartialResultSliceLenConsiderByteAlign()
@@ -330,8 +331,8 @@ func (e *HashAggExec) initPartialWorkers(partialConcurrency int, finalConcurrenc
 		}
 		e.memTracker.Consume(e.partialWorkers[i].chk.MemoryUsage())
 		input := &HashAggInput{
-			chk: exec.NewFirstChunk(e.Children(0)),
-			// chk:        chunk.New(e.RetFieldTypes(), 0, e.MaxChunkSize()),
+			// chk: exec.NewFirstChunk(e.Children(0)),
+			chk:        chunk.New(e.RetFieldTypes(), 0, e.MaxChunkSize()),
 			giveBackCh: e.partialWorkers[i].inputCh,
 		}
 		e.memTracker.Consume(input.chk.MemoryUsage())
