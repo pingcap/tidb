@@ -1997,6 +1997,7 @@ func (p *basePhysicalAgg) MemoryUsage() (sum int64) {
 // PhysicalHashAgg is hash operator of aggregate.
 type PhysicalHashAgg struct {
 	basePhysicalAgg
+	tiflashAutoPassThrough bool
 }
 
 func (p *PhysicalHashAgg) getPointer() *basePhysicalAgg {
@@ -2011,6 +2012,7 @@ func (p *PhysicalHashAgg) Clone() (base.PhysicalPlan, error) {
 		return nil, err
 	}
 	cloned.basePhysicalAgg = *base
+	cloned.tiflashAutoPassThrough = p.tiflashAutoPassThrough
 	return cloned, nil
 }
 
