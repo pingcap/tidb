@@ -65,30 +65,6 @@ func (p *LogicalCTE) PushDownTopN(topNLogicalPlan base.LogicalPlan, opt *optimiz
 	return p
 }
 
-// PushDownTopN implements the LogicalPlan interface.
-func (p *LogicalUnionAll) PushDownTopN(topNLogicalPlan base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) base.LogicalPlan {
-	var topN *LogicalTopN
-	if topNLogicalPlan != nil {
-		topN = topNLogicalPlan.(*LogicalTopN)
-	}
-	for i, child := range p.Children() {
-		var newTopN *LogicalTopN
-		if topN != nil {
-			newTopN = LogicalTopN{Count: topN.Count + topN.Offset, PreferLimitToCop: topN.PreferLimitToCop}.Init(p.SCtx(), topN.QueryBlockOffset())
-			for _, by := range topN.ByItems {
-				newTopN.ByItems = append(newTopN.ByItems, &util.ByItems{Expr: by.Expr, Desc: by.Desc})
-			}
-			// newTopN to push down Union's child
-			appendNewTopNTraceStep(topN, p, opt)
-		}
-		p.Children()[i] = child.PushDownTopN(newTopN, opt)
-	}
-	if topN != nil {
-		return topN.AttachChild(p, opt)
-	}
-	return p
-}
-
 // PushDownTopN implements LogicalPlan interface.
 func (p *LogicalProjection) PushDownTopN(topNLogicalPlan base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) base.LogicalPlan {
 	var topN *LogicalTopN

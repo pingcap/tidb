@@ -421,17 +421,6 @@ func (p *LogicalProjection) PredicatePushDown(predicates []expression.Expression
 }
 
 // PredicatePushDown implements base.LogicalPlan PredicatePushDown interface.
-func (p *LogicalUnionAll) PredicatePushDown(predicates []expression.Expression, opt *optimizetrace.LogicalOptimizeOp) (ret []expression.Expression, retPlan base.LogicalPlan) {
-	for i, proj := range p.Children() {
-		newExprs := make([]expression.Expression, 0, len(predicates))
-		newExprs = append(newExprs, predicates...)
-		retCond, newChild := proj.PredicatePushDown(newExprs, opt)
-		utilfuncp.AddSelection(p, newChild, retCond, i, opt)
-	}
-	return nil, p
-}
-
-// PredicatePushDown implements base.LogicalPlan PredicatePushDown interface.
 func (p *LogicalMaxOneRow) PredicatePushDown(predicates []expression.Expression, opt *optimizetrace.LogicalOptimizeOp) ([]expression.Expression, base.LogicalPlan) {
 	// MaxOneRow forbids any condition to push down.
 	p.BaseLogicalPlan.PredicatePushDown(nil, opt)
