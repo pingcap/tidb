@@ -63,6 +63,14 @@ type sieveStatusHook interface {
 	onEvict()
 }
 
+type emptySieveStatusHook struct{}
+
+func (e *emptySieveStatusHook) onHit() {}
+
+func (e *emptySieveStatusHook) onMiss() {}
+
+func (e *emptySieveStatusHook) onEvict() {}
+
 func newSieve[K comparable, V any](capacity uint64) *Sieve[K, V] {
 	ctx, cancel := context.WithCancel(context.Background())
 
@@ -72,6 +80,7 @@ func newSieve[K comparable, V any](capacity uint64) *Sieve[K, V] {
 		capacity: capacity,
 		items:    make(map[K]*entry[K, V]),
 		ll:       list.New(),
+		hook:     &emptySieveStatusHook{},
 	}
 
 	return cache
