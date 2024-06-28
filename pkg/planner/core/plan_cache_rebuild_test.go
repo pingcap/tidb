@@ -34,7 +34,7 @@ func TestPlanCacheClone(t *testing.T) {
 	tk.MustExec(`create table t (a int, b int, c int, d int, primary key(a), key(b), unique key(d))`)
 
 	for i := -20; i < 20; i++ {
-		tk.MustExec(fmt.Sprintf("insert into t values (%v,%v,%v, %v)", i, rand.Intn(20), rand.Intn(20), -i))
+		tk.MustExec(fmt.Sprintf("insert into t values (%v,%v,%v,%v)", i, rand.Intn(20), rand.Intn(20), -i))
 	}
 
 	// TableScan
