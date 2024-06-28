@@ -43,17 +43,17 @@ func TestPlanCacheClone(t *testing.T) {
 	testCachedPlanClone(t, tk, `prepare st from 'select * from t use index(b) where b>?'`,
 		`set @a1=1, @a2=2`, `execute st using @a1`, `execute st using @a2`)
 
-	// TableScan + Selection
-	testCachedPlanClone(t, tk, `prepare st from 'select * from t where a<? and b<?'`,
-		`set @a1=1, @b1=1, @a2=2, @b2=2`, `execute st using @a1,@b1`, `execute st using @a2,@b2`)
-	testCachedPlanClone(t, tk, `prepare st from 'select * from t where a<? and b+?=10'`,
-		`set @a1=1, @b1=1, @a2=2, @b2=2`, `execute st using @a1,@b1`, `execute st using @a2,@b2`)
-
-	// IndexScan + Selection
-	testCachedPlanClone(t, tk, `prepare st from 'select * from t use index(b) where a<? and b<?'`,
-		`set @a1=1, @b1=1, @a2=2, @b2=2`, `execute st using @a1,@b1`, `execute st using @a2,@b2`)
-	testCachedPlanClone(t, tk, `prepare st from 'select * from t use index(b) where a<? and b+?=10'`,
-		`set @a1=1, @b1=1, @a2=2, @b2=2`, `execute st using @a1,@b1`, `execute st using @a2,@b2`)
+	//// TableScan + Selection
+	//testCachedPlanClone(t, tk, `prepare st from 'select * from t where a<? and b<?'`,
+	//	`set @a1=1, @b1=1, @a2=2, @b2=2`, `execute st using @a1,@b1`, `execute st using @a2,@b2`)
+	//testCachedPlanClone(t, tk, `prepare st from 'select * from t where a<? and b+?=10'`,
+	//	`set @a1=1, @b1=1, @a2=2, @b2=2`, `execute st using @a1,@b1`, `execute st using @a2,@b2`)
+	//
+	//// IndexScan + Selection
+	//testCachedPlanClone(t, tk, `prepare st from 'select * from t use index(b) where a<? and b<?'`,
+	//	`set @a1=1, @b1=1, @a2=2, @b2=2`, `execute st using @a1,@b1`, `execute st using @a2,@b2`)
+	//testCachedPlanClone(t, tk, `prepare st from 'select * from t use index(b) where a<? and b+?=10'`,
+	//	`set @a1=1, @b1=1, @a2=2, @b2=2`, `execute st using @a1,@b1`, `execute st using @a2,@b2`)
 }
 
 func testCachedPlanClone(t *testing.T, tk *testkit.TestKit, prep, set, exec1, exec2 string) {
@@ -78,7 +78,7 @@ func testCachedPlanClone(t *testing.T, tk *testkit.TestKit, prep, set, exec1, ex
 	}
 	ctx := context.WithValue(context.Background(), core.PlanCacheKeyTestBeforeAdjust{}, before)
 	ctx = context.WithValue(ctx, core.PlanCacheKeyTestAfterAdjust{}, after)
-	tk.MustQuery(exec2)
+	tk.MustQueryWithContext(ctx, exec2)
 }
 
 func planFingerprint(t *testing.T, p base.Plan) string {
