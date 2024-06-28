@@ -13904,15 +13904,52 @@
           }
         },
         {
-          "type": "graph",
-          "title": "Infoschema Cache v2",
+          "aliasColors": {},
+          "dashLength": 10,
+          "datasource": "${DS_TEST-CLUSTER}",
+          "description": "Infoschema cache v2 hit, evict and miss number",
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
+          "fill": 1,
           "gridPos": {
-            "x": 12,
-            "y": 31,
+            "h": 7,
             "w": 12,
-            "h": 7
+            "x": 12,
+            "y": 31
           },
           "id": 23763572012,
+          "legend": {
+            "alignAsTable": true,
+            "avg": true,
+            "current": true,
+            "hideEmpty": false,
+            "hideZero": false,
+            "max": false,
+            "min": false,
+            "rightSide": true,
+            "show": true,
+            "sideWidth": null,
+            "total": false,
+            "values": true
+          },
+          "lines": true,
+          "linewidth": 2,
+          "nullPointMode": "null as zero",
+          "options": {
+            "alertThreshold": true
+          },
+          "pluginVersion": "7.5.17",
+          "pointradius": 2,
+          "renderer": "flot",
+          "seriesOverrides": [
+            {
+              "alias": "hit/(hit+miss)",
+              "yaxis": 2
+            }
+          ],
+          "spaceLength": 10,
           "targets": [
             {
               "expr": "sum(rate(tidb_domain_infoschema_v2_cache{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) by (type)",
@@ -13923,87 +13960,63 @@
               "intervalFactor": 2,
               "refId": "A",
               "step": 40
-            }
-          ],
-          "options": {
-            "alertThreshold": true
-          },
-          "fieldConfig": {
-            "defaults": {},
-            "overrides": []
-          },
-          "pluginVersion": "7.5.17",
-          "renderer": "flot",
-          "yaxes": [
-            {
-              "label": null,
-              "show": true,
-              "logBase": 1,
-              "min": 0,
-              "max": null,
-              "format": "short",
-              "$$hashKey": "object:80"
             },
             {
-              "label": null,
-              "show": false,
-              "logBase": 1,
-              "min": null,
-              "max": null,
-              "format": "short",
-              "$$hashKey": "object:81"
+              "expr": "sum(rate(tidb_domain_infoschema_v2_cache{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", type=\"hit\"}[1m]))/(sum(rate(tidb_domain_infoschema_v2_cache{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", type=\"hit\"}[1m]))+sum(rate(tidb_domain_infoschema_v2_cache{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", type=\"miss\"}[1m])))",
+              "legendFormat": "hit/(hit+miss)",
+              "interval": "",
+              "exemplar": true,
+              "refId": "B",
+              "hide": false
             }
           ],
+          "thresholds": [],
+          "timeRegions": [],
+          "title": "Infoschema Cache v2",
+          "tooltip": {
+            "shared": true,
+            "sort": 2,
+            "value_type": "individual"
+          },
+          "type": "graph",
           "xaxis": {
-            "show": true,
+            "buckets": null,
             "mode": "time",
             "name": null,
-            "values": [],
-            "buckets": null
+            "show": true,
+            "values": []
           },
+          "yaxes": [
+            {
+              "$$hashKey": "object:80",
+              "format": "short",
+              "label": null,
+              "logBase": 1,
+              "max": null,
+              "min": 0,
+              "show": true
+            },
+            {
+              "$$hashKey": "object:81",
+              "format": "percentunit",
+              "label": "",
+              "logBase": 1,
+              "max": "1",
+              "min": "0",
+              "show": true
+            }
+          ],
           "yaxis": {
             "align": false,
             "alignLevel": null
           },
-          "lines": true,
-          "fill": 1,
-          "linewidth": 2,
-          "dashLength": 10,
-          "spaceLength": 10,
-          "pointradius": 2,
-          "legend": {
-            "show": true,
-            "values": true,
-            "min": false,
-            "max": false,
-            "current": true,
-            "total": false,
-            "avg": true,
-            "alignAsTable": true,
-            "rightSide": true,
-            "sideWidth": null,
-            "hideEmpty": false,
-            "hideZero": false
-          },
-          "nullPointMode": "null as zero",
-          "tooltip": {
-            "value_type": "individual",
-            "shared": true,
-            "sort": 2
-          },
-          "aliasColors": {},
-          "seriesOverrides": [],
-          "thresholds": [],
-          "timeRegions": [],
-          "datasource": "${DS_TEST-CLUSTER}",
-          "description": "Infoschema cache v2 hit, evict and miss number",
-          "fillGradient": 0,
-          "dashes": false,
-          "hiddenSeries": false,
-          "points": false,
           "bars": false,
-          "stack": false,
+          "dashes": false,
+          "fillGradient": 0,
+          "hiddenSeries": false,
           "percentage": false,
+          "points": false,
+          "stack": false,
           "steppedLine": false,
           "timeFrom": null,
           "timeShift": null
