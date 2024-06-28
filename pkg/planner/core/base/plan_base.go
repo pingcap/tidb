@@ -79,6 +79,12 @@ type Plan interface {
 	QueryBlockOffset() int
 
 	BuildPlanTrace() *tracing.PlanTrace
+
+	// CloneForPlanCache clones this physical plan specially for instance level plan cache.
+	// A cached plan might be shared across multiple sessions, so for safety we have to clone it to make it thread-safe.
+	// Compared with the prior PhysicalPlan.Clone(), CloneForPlanCache() doesn't deep clones all fields instead it only
+	// deep clones fields that might be modified during reusing it and shallow clones all other fields for performance.
+	CloneForPlanCache() (cloned Plan, ok bool)
 }
 
 // PhysicalPlan is a tree of the physical operators.

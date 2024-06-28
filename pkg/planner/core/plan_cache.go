@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/kvcache"
 )
 
@@ -47,6 +48,12 @@ type PlanCacheKeyTestIssue46760 struct{}
 
 // PlanCacheKeyTestIssue47133 is only for test.
 type PlanCacheKeyTestIssue47133 struct{}
+
+// PlanCacheKeyTestBeforeAdjust is only for test.
+type PlanCacheKeyTestBeforeAdjust struct{}
+
+// PlanCacheKeyTestAfterAdjust is only for test.
+type PlanCacheKeyTestAfterAdjust struct{}
 
 // SetParameterValuesIntoSCtx sets these parameters into session context.
 func SetParameterValuesIntoSCtx(sctx base.PlanContext, isNonPrep bool, markers []ast.ParamMarkerExpr, params []expression.Expression) error {
@@ -239,7 +246,13 @@ func GetPlanFromPlanCache(ctx context.Context, sctx sessionctx.Context,
 			cacheVal, hit = sctx.GetSessionPlanCache().Get(cacheKey, matchOpts)
 		}
 		if hit {
+			if intest.InTest && ctx.Value(PlanCacheKeyTestBeforeAdjust{}) != nil {
+				ctx.Value(PlanCacheKeyTestBeforeAdjust{}).(func(cachedVal *PlanCacheValue))(cacheVal.(*PlanCacheValue))
+			}
 			if plan, names, ok, err := adjustCachedPlan(sctx, cacheVal.(*PlanCacheValue), isNonPrepared, isPointPlan, cacheKey, bindSQL, is, stmt); err != nil || ok {
+				if intest.InTest && ctx.Value(PlanCacheKeyTestAfterAdjust{}) != nil {
+					ctx.Value(PlanCacheKeyTestAfterAdjust{}).(func(cachedVal *PlanCacheValue))(cacheVal.(*PlanCacheValue))
+				}
 				return plan, names, err
 			}
 		}
