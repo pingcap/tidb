@@ -576,7 +576,7 @@ func TestTableLastAnalyzeVersion(t *testing.T) {
 	require.NotEqual(t, uint64(0), statsTbl.LastAnalyzeVersion)
 }
 
-func TestGenerateSkippedTablesMessage(t *testing.T) {
+func TestGlobalIndexWithAnalyzeVersion1AndHistoricalStats(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 
