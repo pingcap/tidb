@@ -669,6 +669,7 @@ func (e *HashJoinV2Exec) createTasks(buildTaskCh chan<- *buildTask, totalSegment
 	for {
 		hasNewTask := false
 		for partIdx := range subTables {
+			// create table by round-robin all the partitions so the build thread is likely to build different partition at the same time
 			if partitionStartIndex[partIdx] < partitionSegmentLength[partIdx] {
 				startIndex := partitionStartIndex[partIdx]
 				endIndex := min(startIndex+segStep, partitionSegmentLength[partIdx])
