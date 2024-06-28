@@ -97,7 +97,6 @@ func checkKeys(t *testing.T, withSelCol bool, buildFilter expression.CNFExprs, b
 			break
 		}
 	}
-	builder := createRowTableBuilder(buildKeyIndex, buildKeyTypes, 1, hasNullableKey, buildFilter != nil, keepFilteredRows)
 	chk := testutil.GenRandomChunks(buildTypes, 2049)
 	if withSelCol {
 		sel := make([]int, 0, 2049)
@@ -110,13 +109,14 @@ func checkKeys(t *testing.T, withSelCol bool, buildFilter expression.CNFExprs, b
 		chk.SetSel(sel)
 	}
 	hashJoinCtx := &HashJoinCtxV2{
-		PartitionNumber: 1,
-		hashTableMeta:   meta,
-		BuildFilter:     buildFilter,
+		hashTableMeta: meta,
+		BuildFilter:   buildFilter,
 	}
 	hashJoinCtx.Concurrency = 1
+	hashJoinCtx.SetupPartitionInfo()
 	hashJoinCtx.initHashTableContext()
 	hashJoinCtx.SessCtx = mock.NewContext()
+	builder := createRowTableBuilder(buildKeyIndex, buildKeyTypes, hashJoinCtx.PartitionNumber, hasNullableKey, buildFilter != nil, keepFilteredRows)
 	err := builder.processOneChunk(chk, hashJoinCtx.SessCtx.GetSessionVars().StmtCtx.TypeCtx(), hashJoinCtx, 0)
 	require.NoError(t, err, "processOneChunk returns error")
 	builder.appendRemainingRowLocations(0, hashJoinCtx.hashTableContext)
@@ -364,13 +364,13 @@ func checkColumns(t *testing.T, withSelCol bool, buildFilter expression.CNFExprs
 		chk.SetSel(sel)
 	}
 	hashJoinCtx := &HashJoinCtxV2{
-		PartitionNumber:       1,
 		hashTableMeta:         meta,
 		BuildFilter:           buildFilter,
 		LUsedInOtherCondition: columnsUsedByOtherCondition,
 		LUsed:                 outputColumns,
 	}
 	hashJoinCtx.Concurrency = 1
+	hashJoinCtx.SetupPartitionInfo()
 	hashJoinCtx.initHashTableContext()
 	hashJoinCtx.SessCtx = mock.NewContext()
 	err := builder.processOneChunk(chk, hashJoinCtx.SessCtx.GetSessionVars().StmtCtx.TypeCtx(), hashJoinCtx, 0)
@@ -588,23 +588,22 @@ func TestBalanceOfFilteredRows(t *testing.T) {
 		}
 	}
 
-	partitionNumber := uint(4)
 	buildFilter := createImpossibleFilter(t)
-	builder := createRowTableBuilder(buildKeyIndex, buildKeyTypes, partitionNumber, hasNullableKey, true, true)
 	chk := testutil.GenRandomChunks(buildTypes, 3000)
 	hashJoinCtx := &HashJoinCtxV2{
-		PartitionNumber: partitionNumber,
-		hashTableMeta:   meta,
-		BuildFilter:     buildFilter,
+		hashTableMeta: meta,
+		BuildFilter:   buildFilter,
 	}
-	hashJoinCtx.Concurrency = 1
+	hashJoinCtx.Concurrency = 4
+	hashJoinCtx.SetupPartitionInfo()
 	hashJoinCtx.initHashTableContext()
 	hashJoinCtx.SessCtx = mock.NewContext()
+	builder := createRowTableBuilder(buildKeyIndex, buildKeyTypes, hashJoinCtx.PartitionNumber, hasNullableKey, true, true)
 	err := builder.processOneChunk(chk, hashJoinCtx.SessCtx.GetSessionVars().StmtCtx.TypeCtx(), hashJoinCtx, 0)
 	require.NoError(t, err)
 	builder.appendRemainingRowLocations(0, hashJoinCtx.hashTableContext)
 	rowTables := hashJoinCtx.hashTableContext.rowTables[0]
-	for i := 0; i < int(partitionNumber); i++ {
-		require.Equal(t, 3000/partitionNumber, int(rowTables[i].rowCount()))
+	for i := 0; i < int(hashJoinCtx.PartitionNumber); i++ {
+		require.Equal(t, int(3000/hashJoinCtx.PartitionNumber), int(rowTables[i].rowCount()))
 	}
 }
