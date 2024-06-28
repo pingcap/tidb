@@ -172,7 +172,7 @@ func (j *baseJoinProbe) SetChunkForProbe(chk *chunk.Chunk) (err error) {
 	} else {
 		j.matchedRowsHeaders = make([]uintptr, logicalRows)
 	}
-	for i := 0; i < j.ctx.PartitionNumber; i++ {
+	for i := 0; i < int(j.ctx.PartitionNumber); i++ {
 		j.hashValues[i] = j.hashValues[i][:0]
 	}
 	if j.ctx.ProbeFilter != nil {
@@ -231,7 +231,7 @@ func (j *baseJoinProbe) SetChunkForProbe(chk *chunk.Chunk) (err error) {
 		j.hashValues[partIndex] = append(j.hashValues[partIndex], posAndHashValue{hashValue: hashValue, pos: logicalRowIndex})
 	}
 	j.currentProbeRow = 0
-	for i := 0; i < j.ctx.PartitionNumber; i++ {
+	for i := 0; i < int(j.ctx.PartitionNumber); i++ {
 		for index := range j.hashValues[i] {
 			j.matchedRowsHeaders[j.hashValues[i][index].pos] = j.ctx.hashTableContext.hashTable.tables[i].lookup(j.hashValues[i][index].hashValue)
 		}
@@ -509,7 +509,7 @@ func NewJoinProbe(ctx *HashJoinCtxV2, workID uint, joinType core.JoinType, keyIn
 		base.selRows = append(base.selRows, i)
 	}
 	base.hashValues = make([][]posAndHashValue, ctx.PartitionNumber)
-	for i := 0; i < ctx.PartitionNumber; i++ {
+	for i := 0; i < int(ctx.PartitionNumber); i++ {
 		base.hashValues[i] = make([]posAndHashValue, 0, chunk.InitialCapacity)
 	}
 	base.serializedKeys = make([][]byte, 0, chunk.InitialCapacity)

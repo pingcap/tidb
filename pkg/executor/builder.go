@@ -1515,38 +1515,6 @@ func extractUsedColumnsInJoinOtherCondition(expr expression.CNFExprs, leftColumn
 	return leftColumnIndex, rightColumnIndex
 }
 
-// partitionNumber is always power of 2
-func genHashJoinPartitionNumber(partitionHint int) int {
-	prevRet := 16
-	currentRet := 8
-	for currentRet != 0 {
-		if currentRet < partitionHint {
-			return prevRet
-		}
-		prevRet = currentRet
-		currentRet = currentRet >> 1
-	}
-	return 1
-}
-
-func getPartitionMaskOffset(partitionNumber int) int {
-	getRightMostSetPos := func(num uint64) int {
-		ret := 0
-		for num&1 != 1 {
-			num = num >> 1
-			ret++
-		}
-		if num != 1 {
-			// partitionNumber is always pow of 2
-			panic("should not reach here")
-		}
-		return ret
-	}
-	rightMostPos := getRightMostSetPos(uint64(partitionNumber))
-	// top rightMostPos bits in hash value will be used to partition data
-	return 64 - rightMostPos
-}
-
 func (b *executorBuilder) buildHashJoinV2(v *plannercore.PhysicalHashJoin) exec.Executor {
 	leftExec := b.build(v.Children()[0])
 	if b.err != nil {
@@ -1558,21 +1526,19 @@ func (b *executorBuilder) buildHashJoinV2(v *plannercore.PhysicalHashJoin) exec.
 		return nil
 	}
 
-	partitionNumber := genHashJoinPartitionNumber(int(v.Concurrency))
 	e := &join.HashJoinV2Exec{
 		BaseExecutor:          exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID(), leftExec, rightExec),
 		ProbeSideTupleFetcher: &join.ProbeSideTupleFetcherV2{},
 		ProbeWorkers:          make([]*join.ProbeWorkerV2, v.Concurrency),
 		BuildWorkers:          make([]*join.BuildWorkerV2, v.Concurrency),
 		HashJoinCtxV2: &join.HashJoinCtxV2{
-			OtherCondition:      v.OtherConditions,
-			PartitionNumber:     partitionNumber,
-			PartitionMaskOffset: getPartitionMaskOffset(partitionNumber),
+			OtherCondition: v.OtherConditions,
 		},
 	}
 	e.HashJoinCtxV2.SessCtx = b.ctx
 	e.HashJoinCtxV2.JoinType = v.JoinType
 	e.HashJoinCtxV2.Concurrency = v.Concurrency
+	e.HashJoinCtxV2.SetupPartitionInfo()
 	e.ChunkAllocPool = e.AllocPool
 	e.HashJoinCtxV2.RightAsBuildSide = true
 	if v.InnerChildIdx == 1 && v.UseOuterToBuild {

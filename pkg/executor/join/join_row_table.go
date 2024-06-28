@@ -497,7 +497,7 @@ type rowTableBuilder struct {
 	rowNumberInCurrentRowTableSeg []int64
 }
 
-func createRowTableBuilder(buildKeyIndex []int, buildKeyTypes []*types.FieldType, partitionNumber int, hasNullableKey bool, hasFilter bool, keepFilteredRows bool) *rowTableBuilder {
+func createRowTableBuilder(buildKeyIndex []int, buildKeyTypes []*types.FieldType, partitionNumber uint, hasNullableKey bool, hasFilter bool, keepFilteredRows bool) *rowTableBuilder {
 	builder := &rowTableBuilder{
 		buildKeyIndex:                 buildKeyIndex,
 		buildKeyTypes:                 buildKeyTypes,
@@ -528,7 +528,7 @@ func (b *rowTableBuilder) initBuffer() {
 	}
 }
 
-func (b *rowTableBuilder) initHashValueAndPartIndexForOneChunk(partitionMaskOffset, partitionNumber int) {
+func (b *rowTableBuilder) initHashValueAndPartIndexForOneChunk(partitionMaskOffset int, partitionNumber uint) {
 	h := fnv.New64()
 	fakePartIndex := uint64(0)
 	for logicalRowIndex, physicalRowIndex := range b.usedRows {

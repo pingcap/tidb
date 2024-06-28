@@ -100,9 +100,9 @@ func (htc *hashTableContext) finalizeCurrentSeg(workerID, partitionID int, build
 	htc.memoryTracker.Consume(seg.totalUsedBytes())
 }
 
-func (htc *hashTableContext) mergeRowTablesToHashTable(tableMeta *TableMeta, partitionNumber int) int {
+func (htc *hashTableContext) mergeRowTablesToHashTable(tableMeta *TableMeta, partitionNumber uint) int {
 	rowTables := make([]*rowTable, partitionNumber)
-	for i := 0; i < partitionNumber; i++ {
+	for i := 0; i < int(partitionNumber); i++ {
 		rowTables[i] = newRowTable(tableMeta)
 	}
 	totalSegmentCnt := 0
@@ -115,7 +115,7 @@ func (htc *hashTableContext) mergeRowTablesToHashTable(tableMeta *TableMeta, par
 			totalSegmentCnt += len(rt.segments)
 		}
 	}
-	for i := 0; i < partitionNumber; i++ {
+	for i := 0; i < int(partitionNumber); i++ {
 		htc.hashTable.tables[i] = newSubTable(rowTables[i])
 	}
 	htc.rowTables = nil
@@ -125,7 +125,7 @@ func (htc *hashTableContext) mergeRowTablesToHashTable(tableMeta *TableMeta, par
 // HashJoinCtxV2 is the hash join ctx used in hash join v2
 type HashJoinCtxV2 struct {
 	hashJoinCtxBase
-	PartitionNumber     int
+	PartitionNumber     uint
 	PartitionMaskOffset int
 	ProbeKeyTypes       []*types.FieldType
 	BuildKeyTypes       []*types.FieldType
@@ -141,6 +141,44 @@ type HashJoinCtxV2 struct {
 
 	LUsed, RUsed                                 []int
 	LUsedInOtherCondition, RUsedInOtherCondition []int
+}
+
+// partitionNumber is always power of 2
+func genHashJoinPartitionNumber(partitionHint uint) uint {
+	prevRet := uint(16)
+	currentRet := uint(8)
+	for currentRet != 0 {
+		if currentRet < partitionHint {
+			return prevRet
+		}
+		prevRet = currentRet
+		currentRet = currentRet >> 1
+	}
+	return 1
+}
+
+func getPartitionMaskOffset(partitionNumber uint) int {
+	getRightMostSetPos := func(num uint64) int {
+		ret := 0
+		for num&1 != 1 {
+			num = num >> 1
+			ret++
+		}
+		if num != 1 {
+			// partitionNumber is always pow of 2
+			panic("should not reach here")
+		}
+		return ret
+	}
+	rightMostPos := getRightMostSetPos(uint64(partitionNumber))
+	// top rightMostPos bits in hash value will be used to partition data
+	return 64 - rightMostPos
+}
+
+// SetupPartitionInfo set up PartitionNumber and PartitionMaskOffset based on concurrency
+func (hCtx *HashJoinCtxV2) SetupPartitionInfo() {
+	hCtx.PartitionNumber = genHashJoinPartitionNumber(hCtx.Concurrency)
+	hCtx.PartitionMaskOffset = getPartitionMaskOffset(hCtx.PartitionNumber)
 }
 
 // initHashTableContext create hashTableContext for current HashJoinCtxV2
@@ -583,11 +621,11 @@ func (e *HashJoinV2Exec) handleFetchAndBuildHashTablePanic(r any) {
 
 // checkBalance checks whether the segment count of each partition is balanced.
 func (e *HashJoinV2Exec) checkBalance(totalSegmentCnt int) bool {
-	isBalanced := e.Concurrency == uint(e.PartitionNumber)
+	isBalanced := e.Concurrency == e.PartitionNumber
 	if !isBalanced {
 		return false
 	}
-	avgSegCnt := totalSegmentCnt / e.PartitionNumber
+	avgSegCnt := totalSegmentCnt / int(e.PartitionNumber)
 	balanceThreshold := int(float64(avgSegCnt) * 0.8)
 	subTables := e.HashJoinCtxV2.hashTableContext.hashTable.tables
 
