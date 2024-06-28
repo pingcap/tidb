@@ -92,12 +92,6 @@ func (p LogicalPartitionUnionAll) Init(ctx base.PlanContext, offset int) *Logica
 	return &p
 }
 
-// Init initializes LogicalSort.
-func (ls LogicalSort) Init(ctx base.PlanContext, offset int) *LogicalSort {
-	ls.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(ctx, plancodec.TypeSort, &ls, offset)
-	return &ls
-}
-
 // Init initializes LogicalTableDual.
 func (p LogicalTableDual) Init(ctx base.PlanContext, offset int) *LogicalTableDual {
 	p.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(ctx, plancodec.TypeDual, &p, offset)

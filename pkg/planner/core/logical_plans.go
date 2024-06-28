@@ -1654,22 +1654,6 @@ type LogicalPartitionUnionAll struct {
 	LogicalUnionAll
 }
 
-// LogicalSort stands for the order by plan.
-type LogicalSort struct {
-	logicalop.BaseLogicalPlan
-
-	ByItems []*util.ByItems
-}
-
-// ExtractCorrelatedCols implements LogicalPlan interface.
-func (ls *LogicalSort) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
-	corCols := make([]*expression.CorrelatedColumn, 0, len(ls.ByItems))
-	for _, item := range ls.ByItems {
-		corCols = append(corCols, expression.ExtractCorColumns(item.Expr)...)
-	}
-	return corCols
-}
-
 // LogicalLock represents a select lock plan.
 type LogicalLock struct {
 	logicalop.BaseLogicalPlan
