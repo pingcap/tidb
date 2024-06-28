@@ -647,23 +647,42 @@ func (e *HashJoinV2Exec) createTasks(buildTaskCh chan<- *buildTask, totalSegment
 	}
 	failpoint.Inject("createTasksPanic", nil)
 
-	for partIdx, subTable := range subTables {
-		segmentsLen := len(subTable.rowData.segments)
-		if isBalanced {
+	if isBalanced {
+		for partIdx, subTable := range subTables {
+			segmentsLen := len(subTable.rowData.segments)
 			select {
 			case <-doneCh:
 				return
 			case buildTaskCh <- createBuildTask(partIdx, 0, segmentsLen):
 			}
-			continue
 		}
-		for startIdx := 0; startIdx < segmentsLen; startIdx += segStep {
-			endIdx := min(startIdx+segStep, segmentsLen)
-			select {
-			case <-doneCh:
-				return
-			case buildTaskCh <- createBuildTask(partIdx, startIdx, endIdx):
+		return
+	}
+
+	partitionStartIndex := make([]int, len(subTables))
+	partitionSegmentLength := make([]int, len(subTables))
+	for i := 0; i < len(subTables); i++ {
+		partitionStartIndex[i] = 0
+		partitionSegmentLength[i] = len(subTables[i].rowData.segments)
+	}
+
+	for {
+		hasNewTask := false
+		for partIdx := range subTables {
+			if partitionStartIndex[partIdx] < partitionSegmentLength[partIdx] {
+				startIndex := partitionStartIndex[partIdx]
+				endIndex := min(startIndex+segStep, partitionSegmentLength[partIdx])
+				select {
+				case <-doneCh:
+					return
+				case buildTaskCh <- createBuildTask(partIdx, startIndex, endIndex):
+				}
+				partitionStartIndex[partIdx] = endIndex
+				hasNewTask = true
 			}
+		}
+		if !hasNewTask {
+			break
 		}
 	}
 }
