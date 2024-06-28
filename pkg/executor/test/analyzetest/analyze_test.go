@@ -1043,7 +1043,6 @@ func TestSavedAnalyzeColumnOptions(t *testing.T) {
 	defer func() {
 		tk.MustExec(fmt.Sprintf("set global tidb_enable_column_tracking = %v", originalVal4))
 	}()
-	tk.MustExec("set global tidb_enable_column_tracking = 1")
 
 	tk.MustExec("use test")
 	tk.MustExec("set @@session.tidb_analyze_version = 2")
@@ -1154,7 +1153,6 @@ func TestAnalyzeColumnsWithPrimaryKey(t *testing.T) {
 				defer func() {
 					tk.MustExec(fmt.Sprintf("set global tidb_enable_column_tracking = %v", originalVal))
 				}()
-				tk.MustExec("set global tidb_enable_column_tracking = 1")
 				tk.MustExec("select * from t where a > 1")
 				require.NoError(t, h.DumpColStatsUsageToKV())
 				rows := tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't' and last_used_at is not null").Rows()
@@ -1222,7 +1220,6 @@ func TestAnalyzeColumnsWithIndex(t *testing.T) {
 				defer func() {
 					tk.MustExec(fmt.Sprintf("set global tidb_enable_column_tracking = %v", originalVal))
 				}()
-				tk.MustExec("set global tidb_enable_column_tracking = 1")
 				tk.MustExec("select * from t where c > 1")
 				require.NoError(t, h.DumpColStatsUsageToKV())
 				rows := tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't' and last_used_at is not null").Rows()
@@ -1299,7 +1296,6 @@ func TestAnalyzeColumnsWithClusteredIndex(t *testing.T) {
 				defer func() {
 					tk.MustExec(fmt.Sprintf("set global tidb_enable_column_tracking = %v", originalVal))
 				}()
-				tk.MustExec("set global tidb_enable_column_tracking = 1")
 				tk.MustExec("select * from t where c > 1")
 				require.NoError(t, h.DumpColStatsUsageToKV())
 				rows := tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't' and last_used_at is not null").Rows()
@@ -1381,7 +1377,6 @@ func TestAnalyzeColumnsWithDynamicPartitionTable(t *testing.T) {
 				defer func() {
 					tk.MustExec(fmt.Sprintf("set global tidb_enable_column_tracking = %v", originalVal))
 				}()
-				tk.MustExec("set global tidb_enable_column_tracking = 1")
 				tk.MustExec("select * from t where a < 1")
 				require.NoError(t, h.DumpColStatsUsageToKV())
 				rows := tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't' and last_used_at is not null").Rows()
@@ -1505,7 +1500,6 @@ func TestAnalyzeColumnsWithStaticPartitionTable(t *testing.T) {
 				defer func() {
 					tk.MustExec(fmt.Sprintf("set global tidb_enable_column_tracking = %v", originalVal))
 				}()
-				tk.MustExec("set global tidb_enable_column_tracking = 1")
 				tk.MustExec("select * from t where a < 1")
 				require.NoError(t, h.DumpColStatsUsageToKV())
 				rows := tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't' and last_used_at is not null").Rows()
@@ -1609,7 +1603,6 @@ func TestAnalyzeColumnsWithExtendedStats(t *testing.T) {
 				defer func() {
 					tk.MustExec(fmt.Sprintf("set global tidb_enable_column_tracking = %v", originalVal))
 				}()
-				tk.MustExec("set global tidb_enable_column_tracking = 1")
 				tk.MustExec("select * from t where b > 1")
 				require.NoError(t, h.DumpColStatsUsageToKV())
 				rows := tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't' and last_used_at is not null").Rows()
@@ -1679,7 +1672,6 @@ func TestAnalyzeColumnsWithVirtualColumnIndex(t *testing.T) {
 				defer func() {
 					tk.MustExec(fmt.Sprintf("set global tidb_enable_column_tracking = %v", originalVal))
 				}()
-				tk.MustExec("set global tidb_enable_column_tracking = 1")
 				tk.MustExec("select * from t where b > 1")
 				require.NoError(t, h.DumpColStatsUsageToKV())
 				rows := tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't' and last_used_at is not null").Rows()
@@ -1762,7 +1754,6 @@ func TestAnalyzeColumnsAfterAnalyzeAll(t *testing.T) {
 				defer func() {
 					tk.MustExec(fmt.Sprintf("set global tidb_enable_column_tracking = %v", originalVal))
 				}()
-				tk.MustExec("set global tidb_enable_column_tracking = 1")
 				tk.MustExec("select * from t where b > 1")
 				require.NoError(t, h.DumpColStatsUsageToKV())
 				rows := tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't' and last_used_at is not null").Rows()
@@ -1838,10 +1829,8 @@ func TestAnalyzeColumnsErrorAndWarning(t *testing.T) {
 	tk.MustExec("analyze table t predicate columns")
 	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
 		`Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t, reason to use this rate is "use min(1, 110000/10000) as the sample-rate=1"`,
-		"Warning 1105 No predicate column has been collected yet for table test.t so all columns are analyzed",
+		"Warning 1105 No predicate column has been collected yet for table test.t, so only indexes and the columns composing the indexes will be analyzed",
 	))
-	rows := tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't' and last_analyzed_at is not null").Rows()
-	require.Equal(t, 2, len(rows))
 
 	for _, val := range []model.ColumnChoice{model.ColumnList, model.PredicateColumns} {
 		func(choice model.ColumnChoice) {
@@ -1856,7 +1845,6 @@ func TestAnalyzeColumnsErrorAndWarning(t *testing.T) {
 				defer func() {
 					tk.MustExec(fmt.Sprintf("set global tidb_enable_column_tracking = %v", originalVal))
 				}()
-				tk.MustExec("set global tidb_enable_column_tracking = 1")
 				tk.MustExec("select * from t where b > 1")
 				require.NoError(t, dom.StatsHandle().DumpColStatsUsageToKV())
 				tk.MustExec("analyze table t predicate columns")
@@ -2170,7 +2158,6 @@ func TestShowAanalyzeStatusJobInfo(t *testing.T) {
 	}
 	checkJobInfo("analyze table columns b, c, d with 2 buckets, 2 topn, 1 samplerate")
 	tk.MustExec("set global tidb_persist_analyze_options = 1")
-	tk.MustExec("set global tidb_enable_column_tracking = 1")
 	tk.MustExec("select * from t where c > 1")
 	h := dom.StatsHandle()
 	require.NoError(t, h.DumpColStatsUsageToKV())
