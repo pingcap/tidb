@@ -54,7 +54,8 @@ func (p *LogicalUnionAll) PredicatePushDown(predicates []expression.Expression, 
 
 // PruneColumns implements base.LogicalPlan.<2nd> interface.
 func (p *LogicalUnionAll) PruneColumns(parentUsedCols []*expression.Column, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, error) {
-	used := expression.GetUsedList(p.SCtx().GetExprCtx().GetEvalCtx(), parentUsedCols, p.Schema())
+	eCtx := p.SCtx().GetExprCtx().GetEvalCtx()
+	used := expression.GetUsedList(eCtx, parentUsedCols, p.Schema())
 	hasBeenUsed := false
 	for i := range used {
 		hasBeenUsed = hasBeenUsed || used[i]
