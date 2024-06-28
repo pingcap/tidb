@@ -557,7 +557,7 @@ select c + 1, json_array_insert(a, concat('$', repeat('[0]', c)), json_array(1))
 from c1
 where c < 101)
 select a from c1 where c > 100;
-Error 3157 (HY000): The JSON document exceeds the maximum depth.
+Error 3157 (22032): The JSON document exceeds the maximum depth.
 insert into t with recursive c1 as (select cast(1 as signed) c, json_array(1) as a
 union
 select c + 1, json_array_insert(a, concat('$', repeat('[0]', c)), json_array(1))
@@ -565,13 +565,13 @@ from c1
 where c < 100)
 select a from c1 where c > 99;
 select json_array(a, 1) from t;
-Error 3157 (HY000): The JSON document exceeds the maximum depth.
+Error 3157 (22032): The JSON document exceeds the maximum depth.
 select json_object(1, a) from t;
-Error 3157 (HY000): The JSON document exceeds the maximum depth.
+Error 3157 (22032): The JSON document exceeds the maximum depth.
 select json_set(a, concat('$', repeat('[0]', 100)), json_array(json_array(3))) from t;
-Error 3157 (HY000): The JSON document exceeds the maximum depth.
+Error 3157 (22032): The JSON document exceeds the maximum depth.
 select json_array_append(a, concat('$', repeat('[0]', 100)), 1) from t;
-Error 3157 (HY000): The JSON document exceeds the maximum depth.
+Error 3157 (22032): The JSON document exceeds the maximum depth.
 select json_storage_free(NULL);
 json_storage_free(NULL)
 NULL
@@ -758,5 +758,7 @@ SELECT JSON_SCHEMA_VALID('', NULL);
 Error 3141 (22032): Invalid JSON text in argument 1 to function json_schema_valid: "The document is empty." at position 0.
 SELECT JSON_SCHEMA_VALID('1','{}');
 Error 3853 (22032): Invalid JSON type in argument 1 to function json_schema_valid; an object is required.
+SELECT JSON_SCHEMA_VALID(CONCAT('{"foo": ',repeat('[', 1000),repeat(']', 1000),'}'), json_object());
+Error 3157 (22032): The JSON document exceeds the maximum depth.
 SELECT JSON_SCHEMA_VALID('{"properties": {"a": {"exclusiveMinimum": true}}}', '{}');
 Error 3853 (22032): Invalid JSON type in argument 1 to function json_schema_valid; an error unmarshaling properties from json: error unmarshaling exclusiveMinimum from json: json: cannot unmarshal bool into Go value of type jsonschema.ExclusiveMinimum is required.

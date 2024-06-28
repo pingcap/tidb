@@ -467,6 +467,8 @@ SELECT JSON_SCHEMA_VALID('{}','');
 SELECT JSON_SCHEMA_VALID('', NULL);
 -- error 3853
 SELECT JSON_SCHEMA_VALID('1','{}');
+-- error 3157
+SELECT JSON_SCHEMA_VALID(CONCAT('{"foo": ',repeat('[', 1000),repeat(']', 1000),'}'), json_object());
 
 # errorIsRetryable() requires the right errors. Otherwise it might retry DDL statements that should not be retried,
 # e.g. adding a constraint with this function.
