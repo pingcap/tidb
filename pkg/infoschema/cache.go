@@ -222,7 +222,7 @@ func (h *InfoCache) GetBySnapshotTS(snapshotTS uint64) InfoSchema {
 // It returns 'true' if it is cached, 'false' otherwise.
 // schemaTs is the commitTs of the txn creates the schema diff, which indicates since when the schema version is taking effect
 func (h *InfoCache) Insert(is InfoSchema, schemaTS uint64) bool {
-	logutil.BgLogger().Info("INSERT SCHEMA", zap.Uint64("schema ts", schemaTS), zap.Int64("schema version", is.SchemaMetaVersion()))
+	logutil.BgLogger().Debug("INSERT SCHEMA", zap.Uint64("schema ts", schemaTS), zap.Int64("schema version", is.SchemaMetaVersion()))
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
@@ -247,18 +247,17 @@ func (h *InfoCache) Insert(is InfoSchema, schemaTS uint64) bool {
 			}
 			return true
 		} else {
-			// replace the old with the new??
-			logutil.BgLogger().Info("replace old with new ..",
-				zap.Bool("xisV2", xisV2),
-				zap.Bool("yisV2", yisV2))
 			old := h.cache[i].infoschema
+
+			// replace the old with the new one
 			h.cache[i].infoschema = is
+
+			// TODO: It's a bit tricky here, somewhere is holding the reference of the old infoschema.
+			// So GC can not release this object, leading to memory leak.
+			// Here we destroy the old infoschema on purpose, so someone use it would panic and
+			// we get to know where it is referenced.
 			if raw, ok := old.(*infoSchema); ok {
-				logutil.BgLogger().Info("hohoho  I reset tt, nobody should use it later!!")
-				raw.schemaMap  = nil
-				raw.schemaID2Name  = nil
-				raw.sortedTablesBuckets  = nil
-				raw.infoSchemaMisc = infoSchemaMisc{}
+				*raw = infoSchema{}
 			}
 		}
 	}
