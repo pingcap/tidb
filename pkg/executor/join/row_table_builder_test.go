@@ -607,3 +607,42 @@ func TestBalanceOfFilteredRows(t *testing.T) {
 		require.Equal(t, int(3000/hashJoinCtx.PartitionNumber), int(rowTables[i].rowCount()))
 	}
 }
+
+func TestSetupPartitionInfo(t *testing.T) {
+	type testCase struct {
+		concurrency         uint
+		partitionNumber     uint
+		partitionMaskOffset int
+	}
+
+	testCases := []testCase{
+		{1, 1, 64},
+		{2, 2, 63},
+		{3, 4, 62},
+		{4, 4, 62},
+		{5, 8, 61},
+		{6, 8, 61},
+		{7, 8, 61},
+		{8, 8, 61},
+		{9, 16, 60},
+		{10, 16, 60},
+		{11, 16, 60},
+		{12, 16, 60},
+		{13, 16, 60},
+		{14, 16, 60},
+		{15, 16, 60},
+		{16, 16, 60},
+		{17, 16, 60},
+		{18, 16, 60},
+		{100, 16, 60},
+	}
+
+	for _, test := range testCases {
+
+		hashJoinCtx := &HashJoinCtxV2{}
+		hashJoinCtx.Concurrency = test.concurrency
+		hashJoinCtx.SetupPartitionInfo()
+		require.Equal(t, test.partitionNumber, hashJoinCtx.PartitionNumber)
+		require.Equal(t, test.partitionMaskOffset, hashJoinCtx.PartitionMaskOffset)
+	}
+}
