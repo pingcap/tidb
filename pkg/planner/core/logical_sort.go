@@ -45,7 +45,8 @@ func (ls LogicalSort) Init(ctx base.PlanContext, offset int) *LogicalSort {
 // ExplainInfo implements Plan interface.
 func (ls *LogicalSort) ExplainInfo() string {
 	buffer := bytes.NewBufferString("")
-	return explainByItems(ls.SCtx().GetExprCtx().GetEvalCtx(), buffer, ls.ByItems).String()
+	eCtx := ls.SCtx().GetExprCtx().GetEvalCtx()
+	return explainByItems(eCtx, buffer, ls.ByItems).String()
 }
 
 // ReplaceExprColumns implements base.LogicalPlan interface.
