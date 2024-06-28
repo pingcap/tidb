@@ -2858,6 +2858,39 @@ func (cli *TestServerClient) RunTestIssue53634(t *testing.T, dom *domain.Domain)
 	})
 }
 
+func (cli *TestServerClient) RunTestIssue54254(t *testing.T, dom *domain.Domain) {
+	cli.RunTests(t, func(config *mysql.Config) {
+		config.MaxAllowedPacket = 1024
+	}, func(dbt *testkit.DBTestKit) {
+		ctx := context.Background()
+
+		conn, err := dbt.GetDB().Conn(ctx)
+		require.NoError(t, err)
+		MustExec(ctx, t, conn, "create database test_db_state default charset utf8 default collate utf8_bin")
+		MustExec(ctx, t, conn, "use test_db_state")
+		MustExec(ctx, t, conn, `CREATE TABLE stock (
+  a int NOT NULL,
+  b char(30) NOT NULL,
+  c int,
+  d char(64),
+  PRIMARY KEY(a,b)
+) ENGINE=InnoDB DEFAULT CHARSET=latin1 COLLATE=latin1_bin COMMENT='…comment';
+`)
+		MustExec(ctx, t, conn, "insert into stock values(1, 'a', 11, 'x'), (2, 'b', 22, 'y')")
+		defer MustExec(ctx, t, conn, "drop database test_db_state")
+
+		sqls := make([]sqlWithErr, 5)
+		sqls[0] = sqlWithErr{nil, "begin"}
+		sqls[1] = sqlWithErr{nil, "SELECT a, c, d from stock where (a, b) IN ((?, ?),(?, ?)) FOR UPDATE"}
+		sqls[2] = sqlWithErr{nil, "UPDATE stock SET c = ? WHERE a= ? AND b = 'a'"}
+		sqls[3] = sqlWithErr{nil, "UPDATE stock SET c = ?, d = 'z' WHERE a= ? AND b = 'b'"}
+		sqls[4] = sqlWithErr{nil, "commit"}
+		addColumnSQL := "alter table stock add column cct_1 int"
+		query := &expectQuery{sql: "select * from stock;", rows: []string{"1 a 101 x <nil>\n2 b 102 z <nil>"}}
+		runTestInSchemaState(t, conn, cli, dom, model.StateWriteReorganization, true, addColumnSQL, sqls, query)
+	})
+}
+
 func runTestInSchemaState(
 	t *testing.T,
 	conn *sql.Conn,
