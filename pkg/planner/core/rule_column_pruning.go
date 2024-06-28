@@ -141,21 +141,6 @@ func pruneByItems(p base.LogicalPlan, old []*util.ByItems, opt *optimizetrace.Lo
 }
 
 // PruneColumns implements base.LogicalPlan interface.
-// If any expression can view as a constant in execution stage, such as correlated column, constant,
-// we do prune them. Note that we can't prune the expressions contain non-deterministic functions, such as rand().
-func (ls *LogicalSort) PruneColumns(parentUsedCols []*expression.Column, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, error) {
-	var cols []*expression.Column
-	ls.ByItems, cols = pruneByItems(ls, ls.ByItems, opt)
-	parentUsedCols = append(parentUsedCols, cols...)
-	var err error
-	ls.Children()[0], err = ls.Children()[0].PruneColumns(parentUsedCols, opt)
-	if err != nil {
-		return nil, err
-	}
-	return ls, nil
-}
-
-// PruneColumns implements base.LogicalPlan interface.
 func (p *LogicalUnionAll) PruneColumns(parentUsedCols []*expression.Column, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, error) {
 	used := expression.GetUsedList(p.SCtx().GetExprCtx().GetEvalCtx(), parentUsedCols, p.Schema())
 	hasBeenUsed := false

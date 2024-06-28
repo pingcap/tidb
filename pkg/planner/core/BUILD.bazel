@@ -26,6 +26,7 @@ go_library(
         "logical_limit.go",
         "logical_plan_builder.go",
         "logical_plans.go",
+        "logical_sort.go",
         "logical_top_n.go",
         "memtable_predicate_extractor.go",
         "mock.go",

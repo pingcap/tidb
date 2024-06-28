@@ -1017,12 +1017,6 @@ func explainNormalizedByItems(buffer *bytes.Buffer, byItems []*util.ByItems) *by
 }
 
 // ExplainInfo implements Plan interface.
-func (p *LogicalSort) ExplainInfo() string {
-	buffer := bytes.NewBufferString("")
-	return explainByItems(p.SCtx().GetExprCtx().GetEvalCtx(), buffer, p.ByItems).String()
-}
-
-// ExplainInfo implements Plan interface.
 func (p *LogicalTableScan) ExplainInfo() string {
 	buffer := bytes.NewBufferString(p.Source.ExplainInfo())
 	if p.Source.HandleCols != nil {
