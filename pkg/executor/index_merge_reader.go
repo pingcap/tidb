@@ -147,6 +147,8 @@ type IndexMergeReaderExecutor struct {
 	isIntersection bool
 
 	hasGlobalIndex bool
+
+	partialPathIndexForSingleIndexMerge int
 }
 
 type indexMergeTableTask struct {
@@ -157,6 +159,10 @@ type indexMergeTableTask struct {
 
 	// partialPlanID are only used for indexMergeProcessWorker.fetchLoopUnionWithOrderBy.
 	partialPlanID int
+
+	// intersectionProcessWorker will return row to main goroutine directly
+	// instead of doing final table scan.
+	singleIndexMerge bool
 }
 
 // Table implements the dataSourceExecutor interface.
@@ -166,6 +172,15 @@ func (e *IndexMergeReaderExecutor) Table() table.Table {
 
 // Open implements the Executor Open interface
 func (e *IndexMergeReaderExecutor) Open(_ context.Context) (err error) {
+	// Sanity check for single index merge.
+	if e.partialPathIndexForSingleIndexMerge >= 0 {
+		if e.pushedLimit != nil {
+			return errors.New("cannot push limit for single index merge")
+		}
+		if !e.isIntersection {
+			return errors.New("single index merge only works for intersection index merge")
+		}
+	}
 	e.keyRanges = make([][]kv.KeyRange, 0, len(e.partialPlans))
 	e.initRuntimeStats()
 	if e.isCorColInTableFilter {
@@ -289,7 +304,9 @@ func (e *IndexMergeReaderExecutor) startWorkers(ctx context.Context) error {
 	workCh := make(chan *indexMergeTableTask, 1)
 	fetchCh := make(chan *indexMergeTableTask, len(e.keyRanges))
 
-	e.startIndexMergeProcessWorker(ctx, workCh, fetchCh)
+	if err := e.startIndexMergeProcessWorker(ctx, workCh, fetchCh); err != nil {
+		return err
+	}
 
 	var err error
 	for i := 0; i < len(e.partialPlans); i++ {
@@ -319,10 +336,15 @@ func (e *IndexMergeReaderExecutor) waitPartialWorkersAndCloseFetchChan(fetchCh c
 	close(fetchCh)
 }
 
-func (e *IndexMergeReaderExecutor) startIndexMergeProcessWorker(ctx context.Context, workCh chan<- *indexMergeTableTask, fetch <-chan *indexMergeTableTask) {
+func (e *IndexMergeReaderExecutor) startIndexMergeProcessWorker(ctx context.Context, workCh chan<- *indexMergeTableTask, fetch <-chan *indexMergeTableTask) error {
+	var singleIndexMerge bool
+	if e.partialPathIndexForSingleIndexMerge >= 0 {
+		singleIndexMerge = true
+	}
 	idxMergeProcessWorker := &indexMergeProcessWorker{
-		indexMerge: e,
-		stats:      e.stats,
+		indexMerge:       e,
+		stats:            e.stats,
+		singleIndexMerge: singleIndexMerge,
 	}
 	e.processWorkerWg.Add(1)
 	go func() {
@@ -345,6 +367,7 @@ func (e *IndexMergeReaderExecutor) startIndexMergeProcessWorker(ctx context.Cont
 		)
 		e.processWorkerWg.Done()
 	}()
+	return nil
 }
 
 func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, exitCh <-chan struct{}, fetchCh chan<- *indexMergeTableTask, workID int) error {
@@ -376,6 +399,10 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 		pushedIndexLimit = nil
 	}
 
+	var singleIndexMerge bool
+	if e.partialPathIndexForSingleIndexMerge == workID {
+		singleIndexMerge = true
+	}
 	go func() {
 		defer trace.StartRegion(ctx, "IndexMergePartialIndexWorker").End()
 		defer e.idxWorkerWg.Done()
@@ -397,6 +424,7 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 					prunedPartitions:   e.prunedPartitions,
 					byItems:            is.ByItems,
 					pushedLimit:        pushedIndexLimit,
+					singleIndexMerge:   singleIndexMerge,
 				}
 				if e.isCorColInPartialFilters[workID] {
 					// We got correlated column, so need to refresh Selection operator.
@@ -499,6 +527,11 @@ func (e *IndexMergeReaderExecutor) startPartialTableWorker(ctx context.Context, 
 		pushedTableLimit = nil
 	}
 
+	var singleIndexMerge bool
+	if e.partialPathIndexForSingleIndexMerge == workID {
+		singleIndexMerge = true
+	}
+
 	go func() {
 		defer trace.StartRegion(ctx, "IndexMergePartialTableWorker").End()
 		defer e.idxWorkerWg.Done()
@@ -533,6 +566,7 @@ func (e *IndexMergeReaderExecutor) startPartialTableWorker(ctx context.Context, 
 					prunedPartitions:   e.prunedPartitions,
 					byItems:            ts.ByItems,
 					pushedLimit:        pushedTableLimit,
+					singleIndexMerge:   singleIndexMerge,
 				}
 
 				if len(e.prunedPartitions) != 0 && len(e.byItems) != 0 {
@@ -640,6 +674,7 @@ type partialTableWorker struct {
 	byItems            []*plannerutil.ByItems
 	scannedKeys        uint64
 	pushedLimit        *plannercore.PushedDownLimit
+	singleIndexMerge   bool
 }
 
 // needPartitionHandle indicates whether we need create a partitionHandle or not.
@@ -701,7 +736,11 @@ func (w *partialTableWorker) getRetTpsForTableScan() []*types.FieldType {
 func (w *partialTableWorker) extractTaskHandles(ctx context.Context, chk *chunk.Chunk, handleCols plannerutil.HandleCols) (
 	handles []kv.Handle, retChk *chunk.Chunk, err error) {
 	handles = make([]kv.Handle, 0, w.batchSize)
-	if len(w.byItems) != 0 {
+	var needIdxRows bool
+	if len(w.byItems) != 0 || w.singleIndexMerge {
+		needIdxRows = true
+	}
+	if needIdxRows {
 		retChk = chunk.NewChunkWithCapacity(w.getRetTpsForTableScan(), w.batchSize)
 	}
 	var memUsage int64
@@ -756,8 +795,7 @@ func (w *partialTableWorker) extractTaskHandles(ctx context.Context, chk *chunk.
 			}
 			handles = append(handles, handle)
 		}
-		// used for order by
-		if len(w.byItems) != 0 {
+		if needIdxRows {
 			retChk.Append(chk, 0, chunkRowOffset)
 		}
 	}
@@ -774,8 +812,9 @@ func (w *partialTableWorker) buildTableTask(handles []kv.Handle, retChk *chunk.C
 			handles: handles,
 			idxRows: retChk,
 		},
-		parTblIdx:     parTblIdx,
-		partialPlanID: partialPlanID,
+		parTblIdx:        parTblIdx,
+		partialPlanID:    partialPlanID,
+		singleIndexMerge: w.singleIndexMerge,
 	}
 
 	if w.prunedPartitions != nil {
@@ -969,8 +1008,9 @@ func (e *IndexMergeReaderExecutor) Close() error {
 }
 
 type indexMergeProcessWorker struct {
-	indexMerge *IndexMergeReaderExecutor
-	stats      *IndexMergeRuntimeStat
+	indexMerge       *IndexMergeReaderExecutor
+	stats            *IndexMergeRuntimeStat
+	singleIndexMerge bool
 }
 
 type rowIdx struct {
@@ -1375,17 +1415,23 @@ type intersectionProcessWorker struct {
 	// key: parTblIdx, val: HandleMap
 	// Value of MemAwareHandleMap is *int to avoid extra Get().
 	handleMapsPerWorker map[int]*kv.MemAwareHandleMap[*int]
-	workerID            int
-	workerCh            chan *indexMergeTableTask
-	indexMerge          *IndexMergeReaderExecutor
-	memTracker          *memory.Tracker
-	batchSize           int
+	idxRowsMap          *kv.MemAwareHandleMap[chunk.Row]
+
+	workerID   int
+	workerCh   chan *indexMergeTableTask
+	indexMerge *IndexMergeReaderExecutor
+	memTracker *memory.Tracker
+	batchSize  int
 
 	// When rowDelta == memConsumeBatchSize, Consume(memUsage)
 	rowDelta      int64
 	mapUsageDelta int64
 
 	partitionIDMap map[int64]int
+
+	// If true, intersectionProcessWorker will return row to main goroutine directly
+	// instead of send task to final table worker.
+	singleIndexMerge bool
 }
 
 func (w *intersectionProcessWorker) consumeMemDelta() {
@@ -1407,8 +1453,12 @@ func (w *intersectionProcessWorker) doIntersectionPerPartition(ctx context.Conte
 			hMap = kv.NewMemAwareHandleMap[*int]()
 			w.handleMapsPerWorker[task.parTblIdx] = hMap
 		}
+		if task.singleIndexMerge {
+			w.sanityCheckForSingleIndexMerge(task)
+		}
+
 		var mapDelta, rowDelta int64
-		for _, h := range task.handles {
+		for i, h := range task.handles {
 			if w.indexMerge.hasGlobalIndex {
 				if ph, ok := h.(kv.PartitionHandle); ok {
 					if v, exists := w.partitionIDMap[ph.PartitionID]; exists {
@@ -1428,6 +1478,10 @@ func (w *intersectionProcessWorker) doIntersectionPerPartition(ctx context.Conte
 				cnt := 1
 				mapDelta += hMap.Set(h, &cnt) + int64(h.ExtraMemSize())
 				rowDelta++
+
+				if task.singleIndexMerge {
+					w.idxRowsMap.Set(h, task.idxRows.GetRow(i))
+				}
 			}
 		}
 
@@ -1480,6 +1534,12 @@ func (w *intersectionProcessWorker) doIntersectionPerPartition(ctx context.Conte
 				zap.Int("parTblIdx", parTblIdx), zap.Int("task.handles", len(task.handles)))
 		}
 	}
+
+	if w.singleIndexMerge {
+		handleSingleIndexMergeTask(ctx, w.idxRowsMap, tasks, resultCh, finished, limitDone)
+		return
+	}
+
 	failpoint.Inject("testIndexMergeProcessWorkerIntersectionHang", func(_ failpoint.Value) {
 		if resultCh != nil {
 			for i := 0; i < cap(resultCh); i++ {
@@ -1500,6 +1560,59 @@ func (w *intersectionProcessWorker) doIntersectionPerPartition(ctx context.Conte
 			// limitDone has signal means the collectWorker has collected enough results, shutdown process workers quickly here.
 			return
 		case workCh <- task:
+			// resultCh != nil means there is no collectWorker, and we should send task to resultCh too by ourselves here.
+			if resultCh != nil {
+				select {
+				case <-ctx.Done():
+					return
+				case <-finished:
+					return
+				case resultCh <- task:
+				}
+			}
+		}
+	}
+}
+
+func (w *intersectionProcessWorker) sanityCheckForSingleIndexMerge(task *indexMergeTableTask) {
+	if task.idxRows == nil || task.idxRows.NumRows() != len(task.handles) || !w.singleIndexMerge {
+		// It's ok to panic, it will be handled in handleWorkerPanic().
+		var isNil bool
+		var idxRowsNum int
+		if task.idxRows == nil {
+			isNil = true
+		}
+		if !isNil {
+			idxRowsNum = task.idxRows.NumRows()
+		}
+		panic(fmt.Sprintf("unexpected task for single index merge, task.idxRows: %v, num rows: %v, worker is single index merge: %v",
+			isNil, idxRowsNum, w.singleIndexMerge))
+	}
+}
+
+func handleSingleIndexMergeTask(ctx context.Context, idxRowsMap *kv.MemAwareHandleMap[chunk.Row],
+	tasks []*indexMergeTableTask, resultCh chan<- *indexMergeTableTask, finished, limitDone <-chan struct{}) {
+	for _, task := range tasks {
+		for _, h := range task.handles {
+			if row, ok := idxRowsMap.Get(h); ok {
+				task.rows = append(task.rows, row)
+			} else {
+				err := errors.New("cannot find handle for single index merge")
+				logutil.BgLogger().Error("index merge process worker handle single index merge error", zap.Error(err))
+				panic(err)
+			}
+		}
+	}
+	for _, task := range tasks {
+		select {
+		case <-ctx.Done():
+			return
+		case <-finished:
+			return
+		case <-limitDone:
+			// limitDone has signal means the collectWorker has collected enough results, shutdown process workers quickly here.
+			return
+		default:
 			// resultCh != nil means there is no collectWorker, and we should send task to resultCh too by ourselves here.
 			if resultCh != nil {
 				select {
@@ -1608,11 +1721,13 @@ func (w *indexMergeProcessWorker) fetchLoopIntersection(ctx context.Context, fet
 		worker := &intersectionProcessWorker{
 			workerID:            i,
 			handleMapsPerWorker: make(map[int]*kv.MemAwareHandleMap[*int]),
+			idxRowsMap:          kv.NewMemAwareHandleMap[chunk.Row](),
 			workerCh:            make(chan *indexMergeTableTask, maxChannelSize),
 			indexMerge:          w.indexMerge,
 			memTracker:          tracker,
 			batchSize:           batchSize,
 			partitionIDMap:      partitionIDMap,
+			singleIndexMerge:    w.singleIndexMerge,
 		}
 		wg.RunWithRecover(func() {
 			defer trace.StartRegion(ctx, "IndexMergeIntersectionProcessWorker").End()
@@ -1698,6 +1813,7 @@ type partialIndexWorker struct {
 	pushedLimit        *plannercore.PushedDownLimit
 	dagPB              *tipb.DAGRequest
 	plan               []base.PhysicalPlan
+	singleIndexMerge   bool
 }
 
 func syncErr(ctx context.Context, finished <-chan struct{}, errCh chan<- *indexMergeTableTask, err error) {
@@ -1801,7 +1917,11 @@ func (w *partialIndexWorker) getRetTpsForIndexScan(handleCols plannerutil.Handle
 func (w *partialIndexWorker) extractTaskHandles(ctx context.Context, chk *chunk.Chunk, idxResult distsql.SelectResult, handleCols plannerutil.HandleCols) (
 	handles []kv.Handle, retChk *chunk.Chunk, err error) {
 	handles = make([]kv.Handle, 0, w.batchSize)
-	if len(w.byItems) != 0 {
+	var needIdxRows bool
+	if len(w.byItems) != 0 || w.singleIndexMerge {
+		needIdxRows = true
+	}
+	if needIdxRows {
 		retChk = chunk.NewChunkWithCapacity(w.getRetTpsForIndexScan(handleCols), w.batchSize)
 	}
 	var memUsage int64
@@ -1857,7 +1977,7 @@ func (w *partialIndexWorker) extractTaskHandles(ctx context.Context, chk *chunk.
 			handles = append(handles, handle)
 		}
 		// used for order by
-		if len(w.byItems) != 0 {
+		if needIdxRows {
 			retChk.Append(chk, 0, chunkRowOffset)
 		}
 	}
@@ -1874,8 +1994,9 @@ func (w *partialIndexWorker) buildTableTask(handles []kv.Handle, retChk *chunk.C
 			handles: handles,
 			idxRows: retChk,
 		},
-		parTblIdx:     parTblIdx,
-		partialPlanID: partialPlanID,
+		parTblIdx:        parTblIdx,
+		partialPlanID:    partialPlanID,
+		singleIndexMerge: w.singleIndexMerge,
 	}
 
 	if w.prunedPartitions != nil {

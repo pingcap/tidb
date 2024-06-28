@@ -4000,6 +4000,8 @@ func buildSingleIndexMergeReader(b *executorBuilder, v *plannercore.PhysicalInde
 		pushedLimit:              v.PushedLimit,
 		keepOrder:                v.KeepOrder,
 		hasGlobalIndex:           hasGlobalIndex,
+		// todo finish this!
+		//partialPathIndexForSingleIndexMerge: partialPathIndex,
 	}
 	collectTable := false
 	e.tableRequest.CollectRangeCounts = &collectTable
