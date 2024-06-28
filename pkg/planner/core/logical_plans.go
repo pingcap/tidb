@@ -1654,19 +1654,6 @@ type LogicalPartitionUnionAll struct {
 	LogicalUnionAll
 }
 
-// LogicalLock represents a select lock plan.
-type LogicalLock struct {
-	logicalop.BaseLogicalPlan
-
-	Lock         *ast.SelectLockInfo
-	TblID2Handle map[int64][]util.HandleCols
-
-	// tblID2phyTblIDCol is used for partitioned tables,
-	// the child executor need to return an extra column containing
-	// the Physical Table ID (i.e. from which partition the row came from)
-	TblID2PhysTblIDCol map[int64]*expression.Column
-}
-
 // WindowFrame represents a window function frame.
 type WindowFrame struct {
 	Type  ast.FrameType
