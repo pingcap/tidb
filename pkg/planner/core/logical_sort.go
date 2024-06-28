@@ -43,9 +43,9 @@ func (ls LogicalSort) Init(ctx base.PlanContext, offset int) *LogicalSort {
 // *************************** start implementation of Plan interface ***************************
 
 // ExplainInfo implements Plan interface.
-func (p *LogicalSort) ExplainInfo() string {
+func (ls *LogicalSort) ExplainInfo() string {
 	buffer := bytes.NewBufferString("")
-	return explainByItems(p.SCtx().GetExprCtx().GetEvalCtx(), buffer, p.ByItems).String()
+	return explainByItems(ls.SCtx().GetExprCtx().GetEvalCtx(), buffer, ls.ByItems).String()
 }
 
 // ReplaceExprColumns implements base.LogicalPlan interface.
@@ -114,8 +114,8 @@ func (ls *LogicalSort) PushDownTopN(topNLogicalPlan base.LogicalPlan, opt *optim
 // ExtractColGroups inherits BaseLogicalPlan.LogicalPlan.<12th> implementation.
 
 // PreparePossibleProperties implements base.LogicalPlan.<13th> interface.
-func (p *LogicalSort) PreparePossibleProperties(_ *expression.Schema, _ ...[][]*expression.Column) [][]*expression.Column {
-	propCols := getPossiblePropertyFromByItems(p.ByItems)
+func (ls *LogicalSort) PreparePossibleProperties(_ *expression.Schema, _ ...[][]*expression.Column) [][]*expression.Column {
+	propCols := getPossiblePropertyFromByItems(ls.ByItems)
 	if len(propCols) == 0 {
 		return nil
 	}
