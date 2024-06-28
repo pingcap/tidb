@@ -272,10 +272,12 @@ func (s *StorageRC) valid() bool {
 	return s.refCnt > 0 && s.rc != nil
 }
 
+// GetMemBytes returns memory bytes used by row container.
 func (s *StorageRC) GetMemBytes() int64 {
 	return s.rc.GetMemTracker().BytesConsumed()
 }
 
+// GetDiskBytes returns disk bytes used by row container.
 func (s *StorageRC) GetDiskBytes() int64 {
 	return s.rc.GetDiskTracker().BytesConsumed()
 }
