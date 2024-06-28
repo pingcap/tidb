@@ -531,8 +531,6 @@ func ParseBinaryJSONFromString(s string) (bj BinaryJSON, err error) {
 		if goerrors.As(err, &serr) {
 			if strings.Contains(err.Error(), "exceeded max depth") {
 				err = ErrJSONDocumentTooDeep
-			} else {
-				err = ErrInvalidJSONText.GenWithStackByArgs("The document root must not be followed by other values.")
 			}
 		} else {
 			err = ErrInvalidJSONText.GenWithStackByArgs(err)
