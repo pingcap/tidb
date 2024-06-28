@@ -435,7 +435,7 @@ func (p *cteProducer) computeRecursivePart(ctx context.Context) (err error) {
 			return
 		}
 		if chk.NumRows() == 0 {
-			if iterNum%100 == 0 {
+			if iterNum%1000 == 0 {
 				// To avoid too many logs.
 				p.logTbls(ctx, err, iterNum)
 			}
