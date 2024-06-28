@@ -2039,7 +2039,7 @@ func (b *PlanBuilder) getFullAnalyzeColumnsInfo(
 			return columns, nil, nil
 		default:
 			// Usually, this won't happen.
-			logutil.BgLogger().Warn("Unknown default column choice", zap.String("choice", columnOptions))
+			logutil.BgLogger().Warn("Unknown default column choice, analyze all columns", zap.String("choice", columnOptions))
 			return tbl.TableInfo.Columns, nil, nil
 		}
 	case model.AllColumns:
