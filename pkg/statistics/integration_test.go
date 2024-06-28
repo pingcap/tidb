@@ -583,6 +583,7 @@ func TestGlobalIndexWithAnalyzeVersion1AndHistoricalStats(t *testing.T) {
 	tk.MustExec("set tidb_enable_global_index = true")
 	tk.MustExec("set tidb_analyze_version = 1")
 	tk.MustExec("set global tidb_enable_historical_stats = true")
+	defer tk.MustExec("set global tidb_enable_historical_stats = default")
 
 	tk.MustExec("use test")
 	tk.MustExec(`CREATE TABLE t ( a int, b int, c int default 0)
