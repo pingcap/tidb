@@ -47,8 +47,8 @@ func (o *outerJoinEliminator) tryToEliminateOuterJoin(p *LogicalJoin, aggCols []
 		return p, false, nil
 	}
 
-	outerPlan := p.children[1^innerChildIdx]
-	innerPlan := p.children[innerChildIdx]
+	outerPlan := p.Children()[1^innerChildIdx]
+	innerPlan := p.Children()[innerChildIdx]
 	outerUniqueIDs := set.NewInt64Set()
 	for _, outerCol := range outerPlan.Schema().Columns {
 		outerUniqueIDs.Insert(outerCol.UniqueID)
@@ -141,7 +141,7 @@ func (*outerJoinEliminator) isInnerJoinKeysContainIndex(innerPlan base.LogicalPl
 	if !ok {
 		return false, nil
 	}
-	for _, path := range ds.possibleAccessPaths {
+	for _, path := range ds.PossibleAccessPaths {
 		if path.IsIntHandlePath || !path.Index.Unique || len(path.IdxCols) == 0 {
 			continue
 		}

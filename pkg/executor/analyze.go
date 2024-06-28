@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle"
+	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
 	handleutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
@@ -117,7 +118,7 @@ func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 	pruneMode := variable.PartitionPruneMode(sessionVars.PartitionPruneMode.Load())
 	// needGlobalStats used to indicate whether we should merge the partition-level stats to global-level stats.
 	needGlobalStats := pruneMode == variable.Dynamic
-	globalStatsMap := make(map[globalStatsKey]globalStatsInfo)
+	globalStatsMap := make(map[globalStatsKey]statstypes.GlobalStatsInfo)
 	g, gctx := errgroup.WithContext(ctx)
 	g.Go(func() error {
 		return e.handleResultsError(ctx, concurrency, needGlobalStats, globalStatsMap, resultsCh, len(tasks))
@@ -160,7 +161,7 @@ TASKLOOP:
 	})
 	// If we enabled dynamic prune mode, then we need to generate global stats here for partition tables.
 	if needGlobalStats {
-		err = e.handleGlobalStats(ctx, globalStatsMap)
+		err = e.handleGlobalStats(globalStatsMap)
 		if err != nil {
 			return err
 		}
@@ -769,11 +770,11 @@ func handleGlobalStats(needGlobalStats bool, globalStatsMap globalStatsMap, resu
 					}
 					histIDs = append(histIDs, hg.ID)
 				}
-				globalStatsMap[globalStatsID] = globalStatsInfo{isIndex: result.IsIndex, histIDs: histIDs, statsVersion: results.StatsVer}
+				globalStatsMap[globalStatsID] = statstypes.GlobalStatsInfo{IsIndex: result.IsIndex, HistIDs: histIDs, StatsVersion: results.StatsVer}
 			} else {
 				for _, hg := range result.Hist {
 					globalStatsID := globalStatsKey{tableID: results.TableID.TableID, indexID: hg.ID}
-					globalStatsMap[globalStatsID] = globalStatsInfo{isIndex: result.IsIndex, histIDs: []int64{hg.ID}, statsVersion: results.StatsVer}
+					globalStatsMap[globalStatsID] = statstypes.GlobalStatsInfo{IsIndex: result.IsIndex, HistIDs: []int64{hg.ID}, StatsVersion: results.StatsVer}
 				}
 			}
 		}

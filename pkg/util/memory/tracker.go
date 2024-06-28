@@ -245,6 +245,27 @@ func (t *Tracker) UnbindActions() {
 	t.actionMuForHardLimit.actionOnExceed = &LogOnExceed{}
 }
 
+// UnbindActionFromHardLimit unbinds action from hardLimit.
+func (t *Tracker) UnbindActionFromHardLimit(actionToUnbind ActionOnExceed) {
+	t.actionMuForHardLimit.Lock()
+	defer t.actionMuForHardLimit.Unlock()
+
+	var prev ActionOnExceed
+	for current := t.actionMuForHardLimit.actionOnExceed; current != nil; current = current.GetFallback() {
+		if current == actionToUnbind {
+			if prev == nil {
+				// actionToUnbind is the first element
+				t.actionMuForHardLimit.actionOnExceed = current.GetFallback()
+			} else {
+				// actionToUnbind is not the first element
+				prev.SetFallback(current.GetFallback())
+			}
+			break
+		}
+		prev = current
+	}
+}
+
 // reArrangeFallback merge two action chains and rearrange them by priority in descending order.
 func reArrangeFallback(a ActionOnExceed, b ActionOnExceed) ActionOnExceed {
 	if a == nil {
@@ -859,7 +880,9 @@ const (
 	// LabelForChunkDataInDiskByChunks represents the label of the chunk list in disk
 	LabelForChunkDataInDiskByChunks int = -30
 	// LabelForSortPartition represents the label of the sort partition
-	LabelForSortPartition = -31
+	LabelForSortPartition int = -31
+	// LabelForHashTableInHashJoinV2 represents the label of the hash join v2's hash table
+	LabelForHashTableInHashJoinV2 int = -32
 )
 
 // MetricsTypes is used to get label for metrics

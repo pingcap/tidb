@@ -325,7 +325,6 @@ func TestConstantFoldingCharsetConvert(t *testing.T) {
 }
 
 func TestDeferredParamNotNull(t *testing.T) {
-	ctx := mockStmtExprCtx()
 	vars := contextopt.SessionVarsAsProvider(variable.NewSessionVars(nil))
 	testTime := time.Now()
 	vars.GetSessionVars().PlanCacheParams.Append(
@@ -342,6 +341,7 @@ func TestDeferredParamNotNull(t *testing.T) {
 		types.NewMysqlBitDatum([]byte{1}),
 		types.NewMysqlEnumDatum(types.Enum{Name: "n", Value: 2}),
 	)
+	ctx := mockStmtExprCtx(contextstatic.WithParamList(vars.GetSessionVars().PlanCacheParams))
 	cstInt := &Constant{ParamMarker: &ParamMarker{ctx: vars, order: 0}, RetType: newIntFieldType()}
 	cstDec := &Constant{ParamMarker: &ParamMarker{ctx: vars, order: 1}, RetType: newDecimalFieldType()}
 	cstTime := &Constant{ParamMarker: &ParamMarker{ctx: vars, order: 2}, RetType: newDateFieldType()}
@@ -355,18 +355,18 @@ func TestDeferredParamNotNull(t *testing.T) {
 	cstBit := &Constant{ParamMarker: &ParamMarker{ctx: vars, order: 10}, RetType: newBinaryLiteralFieldType()}
 	cstEnum := &Constant{ParamMarker: &ParamMarker{ctx: vars, order: 11}, RetType: newEnumFieldType()}
 
-	require.Equal(t, mysql.TypeVarString, cstJSON.GetType().GetType())
-	require.Equal(t, mysql.TypeNewDecimal, cstDec.GetType().GetType())
-	require.Equal(t, mysql.TypeLonglong, cstInt.GetType().GetType())
-	require.Equal(t, mysql.TypeLonglong, cstUint.GetType().GetType())
-	require.Equal(t, mysql.TypeTimestamp, cstTime.GetType().GetType())
-	require.Equal(t, mysql.TypeDuration, cstDuration.GetType().GetType())
-	require.Equal(t, mysql.TypeBlob, cstBytes.GetType().GetType())
-	require.Equal(t, mysql.TypeVarString, cstBinary.GetType().GetType())
-	require.Equal(t, mysql.TypeVarString, cstBit.GetType().GetType())
-	require.Equal(t, mysql.TypeFloat, cstFloat32.GetType().GetType())
-	require.Equal(t, mysql.TypeDouble, cstFloat64.GetType().GetType())
-	require.Equal(t, mysql.TypeEnum, cstEnum.GetType().GetType())
+	require.Equal(t, mysql.TypeVarString, cstJSON.GetType(ctx.GetEvalCtx()).GetType())
+	require.Equal(t, mysql.TypeNewDecimal, cstDec.GetType(ctx.GetEvalCtx()).GetType())
+	require.Equal(t, mysql.TypeLonglong, cstInt.GetType(ctx.GetEvalCtx()).GetType())
+	require.Equal(t, mysql.TypeLonglong, cstUint.GetType(ctx.GetEvalCtx()).GetType())
+	require.Equal(t, mysql.TypeTimestamp, cstTime.GetType(ctx.GetEvalCtx()).GetType())
+	require.Equal(t, mysql.TypeDuration, cstDuration.GetType(ctx.GetEvalCtx()).GetType())
+	require.Equal(t, mysql.TypeBlob, cstBytes.GetType(ctx.GetEvalCtx()).GetType())
+	require.Equal(t, mysql.TypeVarString, cstBinary.GetType(ctx.GetEvalCtx()).GetType())
+	require.Equal(t, mysql.TypeVarString, cstBit.GetType(ctx.GetEvalCtx()).GetType())
+	require.Equal(t, mysql.TypeFloat, cstFloat32.GetType(ctx.GetEvalCtx()).GetType())
+	require.Equal(t, mysql.TypeDouble, cstFloat64.GetType(ctx.GetEvalCtx()).GetType())
+	require.Equal(t, mysql.TypeEnum, cstEnum.GetType(ctx.GetEvalCtx()).GetType())
 
 	d, _, err := cstInt.EvalInt(ctx.GetEvalCtx(), chunk.Row{})
 	require.NoError(t, err)
@@ -525,9 +525,10 @@ func TestVectorizedConstant(t *testing.T) {
 func TestGetTypeThreadSafe(t *testing.T) {
 	vars := contextopt.SessionVarsAsProvider(variable.NewSessionVars(nil))
 	vars.GetSessionVars().PlanCacheParams.Append(types.NewIntDatum(1))
+	ctx := mockEvalCtx(contextstatic.WithParamList(vars.GetSessionVars().PlanCacheParams))
 	con := &Constant{ParamMarker: &ParamMarker{ctx: vars, order: 0}, RetType: newStringFieldType()}
-	ft1 := con.GetType()
-	ft2 := con.GetType()
+	ft1 := con.GetType(ctx)
+	ft2 := con.GetType(ctx)
 	require.NotSame(t, ft1, ft2)
 }
 

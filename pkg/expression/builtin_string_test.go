@@ -769,7 +769,7 @@ func TestReplace(t *testing.T) {
 	for i, c := range cases {
 		f, err := newFunctionForTest(ctx, ast.Replace, primitiveValsToConstants(ctx, c.args)...)
 		require.NoError(t, err)
-		require.Equalf(t, c.flen, f.GetType().GetFlen(), "test %v", i)
+		require.Equalf(t, c.flen, f.GetType(ctx.GetEvalCtx()).GetFlen(), "test %v", i)
 		d, err := f.Eval(ctx.GetEvalCtx(), chunk.Row{})
 		if c.getErr {
 			require.Error(t, err)
@@ -1073,8 +1073,8 @@ func TestLocate(t *testing.T) {
 	Dtbl2 := tblToDtbl(tbl2)
 	for i, c := range Dtbl2 {
 		exprs := datumsToConstants(c["Args"])
-		types.SetBinChsClnFlag(exprs[0].GetType())
-		types.SetBinChsClnFlag(exprs[1].GetType())
+		types.SetBinChsClnFlag(exprs[0].GetType(ctx.GetEvalCtx()))
+		types.SetBinChsClnFlag(exprs[1].GetType(ctx.GetEvalCtx()))
 		f, err := instr.getFunction(ctx, exprs)
 		require.NoError(t, err)
 		got, err := evalBuiltinFunc(f, ctx.GetEvalCtx(), chunk.Row{})
@@ -1455,7 +1455,7 @@ func TestCharLength(t *testing.T) {
 	for _, v := range tbl {
 		fc := funcs[ast.CharLength]
 		arg := datumsToConstants(types.MakeDatums(v.input))
-		tp := arg[0].GetType()
+		tp := arg[0].GetType(ctx.GetEvalCtx())
 		tp.SetType(mysql.TypeVarString)
 		tp.SetCharset(charset.CharsetBin)
 		tp.SetCollate(charset.CollationBin)

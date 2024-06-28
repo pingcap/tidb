@@ -672,18 +672,22 @@ func TestSetVar(t *testing.T) {
 	tk.MustQuery("select @@tidb_enable_historical_stats").Check(testkit.Rows("0"))
 
 	// test for tidb_enable_column_tracking
-	tk.MustQuery("select @@tidb_enable_column_tracking").Check(testkit.Rows("0"))
-	tk.MustExec("set global tidb_enable_column_tracking = 1")
 	tk.MustQuery("select @@tidb_enable_column_tracking").Check(testkit.Rows("1"))
 	tk.MustExec("set global tidb_enable_column_tracking = 0")
-	tk.MustQuery("select @@tidb_enable_column_tracking").Check(testkit.Rows("0"))
-	// When set tidb_enable_column_tracking off, we record the time of the setting operation.
-	tk.MustQuery("select count(1) from mysql.tidb where variable_name = 'tidb_disable_column_tracking_time' and variable_value is not null").Check(testkit.Rows("1"))
-	tk.MustExec("set global tidb_enable_column_tracking = 1")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1681 The 'tidb_enable_column_tracking' variable is deprecated and will be removed in future versions of TiDB. It is always set to 'ON' now."))
 	tk.MustQuery("select @@tidb_enable_column_tracking").Check(testkit.Rows("1"))
+	tk.MustQuery("select count(1) from mysql.tidb where variable_name = 'tidb_disable_column_tracking_time' and variable_value is not null").Check(testkit.Rows("0"))
 	require.Error(t, tk.ExecToErr("select @@session.tidb_enable_column_tracking"))
 	require.Error(t, tk.ExecToErr("set tidb_enable_column_tracking = 0"))
 	require.Error(t, tk.ExecToErr("set global tidb_enable_column_tracking = -1"))
+
+	// test for tidb_analyze_column_options
+	tk.MustQuery("select @@tidb_analyze_column_options").Check(testkit.Rows("ALL"))
+	tk.MustExec("set global tidb_analyze_column_options = 'PREDICATE'")
+	tk.MustQuery("select @@tidb_analyze_column_options").Check(testkit.Rows("PREDICATE"))
+	tk.MustExec("set global tidb_analyze_column_options = 'all'")
+	tk.MustQuery("select @@tidb_analyze_column_options").Check(testkit.Rows("ALL"))
+	require.Error(t, tk.ExecToErr("set global tidb_analyze_column_options = 'UNKNOWN'"))
 
 	// test for tidb_ignore_prepared_cache_close_stmt
 	tk.MustQuery("select @@global.tidb_ignore_prepared_cache_close_stmt").Check(testkit.Rows("0")) // default value is 0
@@ -870,14 +874,14 @@ func TestSetVar(t *testing.T) {
 	tk.MustExec("set @@session.tidb_cdc_write_source = 0")
 	require.Equal(t, uint64(0), tk.Session().GetSessionVars().CDCWriteSource)
 
-	tk.MustQuery("select @@session.tidb_analyze_skip_column_types").Check(testkit.Rows("json,blob,mediumblob,longblob,text,mediumtext,longtext"))
+	tk.MustQuery("select @@session.tidb_analyze_skip_column_types").Check(testkit.Rows("json,blob,mediumblob,longblob,mediumtext,longtext"))
 	tk.MustExec("set @@session.tidb_analyze_skip_column_types = 'json, text, blob'")
 	tk.MustQuery("select @@session.tidb_analyze_skip_column_types").Check(testkit.Rows("json,text,blob"))
 	tk.MustExec("set @@session.tidb_analyze_skip_column_types = ''")
 	tk.MustQuery("select @@session.tidb_analyze_skip_column_types").Check(testkit.Rows(""))
 	tk.MustGetErrMsg("set @@session.tidb_analyze_skip_column_types = 'int,json'", "[variable:1231]Variable 'tidb_analyze_skip_column_types' can't be set to the value of 'int,json'")
 
-	tk.MustQuery("select @@global.tidb_analyze_skip_column_types").Check(testkit.Rows("json,blob,mediumblob,longblob,text,mediumtext,longtext"))
+	tk.MustQuery("select @@global.tidb_analyze_skip_column_types").Check(testkit.Rows("json,blob,mediumblob,longblob,mediumtext,longtext"))
 	tk.MustExec("set @@global.tidb_analyze_skip_column_types = 'json, text, blob'")
 	tk.MustQuery("select @@global.tidb_analyze_skip_column_types").Check(testkit.Rows("json,text,blob"))
 	tk.MustExec("set @@global.tidb_analyze_skip_column_types = ''")

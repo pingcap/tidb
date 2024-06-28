@@ -16,21 +16,11 @@ package core
 
 import (
 	"bytes"
-	"encoding/binary"
 	"slices"
 
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 )
-
-// HashCode implements LogicalPlan interface.
-func (p *baseLogicalPlan) HashCode() []byte {
-	// We use PlanID for the default hash, so if two plans do not have
-	// the same id, the hash value will never be the same.
-	result := make([]byte, 0, 4)
-	result = util.EncodeIntAsUint32(result, p.ID())
-	return result
-}
 
 // HashCode implements LogicalPlan interface.
 func (p *LogicalProjection) HashCode() []byte {
@@ -80,16 +70,5 @@ func (p *LogicalSelection) HashCode() []byte {
 		result = util.EncodeIntAsUint32(result, len(condHashCode))
 		result = append(result, condHashCode...)
 	}
-	return result
-}
-
-// HashCode implements LogicalPlan interface.
-func (p *LogicalLimit) HashCode() []byte {
-	// PlanType + SelectOffset + Offset + Count
-	result := make([]byte, 24)
-	binary.BigEndian.PutUint32(result, uint32(plancodec.TypeStringToPhysicalID(p.TP())))
-	binary.BigEndian.PutUint32(result[4:], uint32(p.QueryBlockOffset()))
-	binary.BigEndian.PutUint64(result[8:], p.Offset)
-	binary.BigEndian.PutUint64(result[16:], p.Count)
 	return result
 }

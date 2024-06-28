@@ -1446,6 +1446,10 @@ func init() {
 	// but the plan package cannot import the executor package because of the dependency cycle.
 	// So we assign a function implemented in the executor package to the plan package to avoid the dependency cycle.
 	plannercore.EvalSubqueryFirstRow = func(ctx context.Context, p base.PhysicalPlan, is infoschema.InfoSchema, pctx planctx.PlanContext) ([]types.Datum, error) {
+		if fixcontrol.GetBoolWithDefault(pctx.GetSessionVars().OptimizerFixControl, fixcontrol.Fix43817, false) {
+			return nil, errors.NewNoStackError("evaluate non-correlated sub-queries during optimization phase is not allowed by fix-control 43817")
+		}
+
 		defer func(begin time.Time) {
 			s := pctx.GetSessionVars()
 			s.StmtCtx.SetSkipPlanCache("query has uncorrelated sub-queries is un-cacheable")

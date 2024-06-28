@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	executor_metrics "github.com/pingcap/tidb/pkg/executor/metrics"
+	"github.com/pingcap/tidb/pkg/executor/staticrecordset"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/keyspace"
@@ -90,17 +91,24 @@ type processinfoSetter interface {
 
 // recordSet wraps an executor, implements sqlexec.RecordSet interface
 type recordSet struct {
-	fields     []*ast.ResultField
-	executor   exec.Executor
+	fields   []*ast.ResultField
+	executor exec.Executor
+	// The `Fields` method may be called after `Close`, and the executor is cleared in the `Close` function.
+	// Therefore, we need to store the schema in `recordSet` to avoid a null pointer exception when calling `executor.Schema()`.
+	schema     *expression.Schema
 	stmt       *ExecStmt
 	lastErrs   []error
 	txnStartTS uint64
 	once       sync.Once
+	// finishLock is a mutex used to synchronize access to the `Next` and `Finish` functions of the adapter.
+	// It ensures that only one goroutine can access the `Next` and `Finish` functions at a time, preventing race conditions.
+	// When we terminate the current SQL externally (e.g., kill query), an additional goroutine would be used to call the `Finish` function.
+	finishLock sync.Mutex
 }
 
 func (a *recordSet) Fields() []*ast.ResultField {
 	if len(a.fields) == 0 {
-		a.fields = colNames2ResultFields(a.executor.Schema(), a.stmt.OutputNames, a.stmt.Ctx.GetSessionVars().CurrentDB)
+		a.fields = colNames2ResultFields(a.schema, a.stmt.OutputNames, a.stmt.Ctx.GetSessionVars().CurrentDB)
 	}
 	return a.fields
 }
@@ -156,6 +164,13 @@ func (a *recordSet) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 		err = util2.GetRecoverError(r)
 		logutil.Logger(ctx).Error("execute sql panic", zap.String("sql", a.stmt.GetTextToLog(false)), zap.Stack("stack"))
 	}()
+	a.finishLock.Lock()
+	defer a.finishLock.Unlock()
+	if a.stmt != nil {
+		if err := a.stmt.Ctx.GetSessionVars().SQLKiller.HandleSignal(); err != nil {
+			return err
+		}
+	}
 
 	err = a.stmt.next(ctx, a.executor, req)
 	if err != nil {
@@ -186,16 +201,27 @@ func (a *recordSet) NewChunk(alloc chunk.Allocator) *chunk.Chunk {
 
 func (a *recordSet) Finish() error {
 	var err error
-	a.once.Do(func() {
-		err = exec.Close(a.executor)
-		cteErr := resetCTEStorageMap(a.stmt.Ctx)
-		if cteErr != nil {
-			logutil.BgLogger().Error("got error when reset cte storage, should check if the spill disk file deleted or not", zap.Error(cteErr))
-		}
-		if err == nil {
-			err = cteErr
-		}
-	})
+	if a.finishLock.TryLock() {
+		defer a.finishLock.Unlock()
+		a.once.Do(func() {
+			err = exec.Close(a.executor)
+			cteErr := resetCTEStorageMap(a.stmt.Ctx)
+			if cteErr != nil {
+				logutil.BgLogger().Error("got error when reset cte storage, should check if the spill disk file deleted or not", zap.Error(cteErr))
+			}
+			if err == nil {
+				err = cteErr
+			}
+			a.executor = nil
+			if a.stmt != nil {
+				status := a.stmt.Ctx.GetSessionVars().SQLKiller.GetKillSignal()
+				inWriteResultSet := a.stmt.Ctx.GetSessionVars().SQLKiller.InWriteResultSet.Load()
+				if status > 0 && inWriteResultSet {
+					logutil.BgLogger().Warn("kill, this SQL might be stuck in the network stack while writing packets to the client.", zap.Uint64("connection ID", a.stmt.Ctx.GetSessionVars().ConnectionID))
+				}
+			}
+		})
+	}
 	if err != nil {
 		a.lastErrs = append(a.lastErrs, err)
 	}
@@ -214,6 +240,17 @@ func (a *recordSet) Close() error {
 // OnFetchReturned implements commandLifeCycle#OnFetchReturned
 func (a *recordSet) OnFetchReturned() {
 	a.stmt.LogSlowQuery(a.txnStartTS, len(a.lastErrs) == 0, true)
+}
+
+// Detach creates a new `RecordSet` which doesn't depend on the current session context.
+func (a *recordSet) TryDetach() (sqlexec.RecordSet, bool, error) {
+	// TODO: also detach the executor. Currently, the executor inside may contain the session context. Once
+	// the executor itself supports detach, we should also detach it here.
+	e, ok := a.executor.(*TableReaderExecutor)
+	if !ok {
+		return nil, false, nil
+	}
+	return staticrecordset.New(a.Fields(), e, a.stmt.GetTextToLog(false)), true, nil
 }
 
 // ExecStmt implements the sqlexec.Statement interface, it builds a planner.Plan to an sqlexec.Statement.
@@ -336,6 +373,7 @@ func (a *ExecStmt) PointGet(ctx context.Context) (*recordSet, error) {
 
 	return &recordSet{
 		executor:   executor,
+		schema:     executor.Schema(),
 		stmt:       a,
 		txnStartTS: startTs,
 	}, nil
@@ -571,6 +609,7 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 
 	return &recordSet{
 		executor:   e,
+		schema:     e.Schema(),
 		stmt:       a,
 		txnStartTS: txnStartTS,
 	}, nil
@@ -1598,7 +1637,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 		TimeOptimize:      sessVars.DurationOptimization,
 		TimeWaitTS:        sessVars.DurationWaitTS,
 		IndexNames:        indexNames,
-		CopTasks:          copTaskInfo,
+		CopTasks:          &copTaskInfo,
 		ExecDetail:        execDetail,
 		MemMax:            memMax,
 		DiskMax:           diskMax,
@@ -1950,7 +1989,7 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 		ParseLatency:        sessVars.DurationParse,
 		CompileLatency:      sessVars.DurationCompile,
 		StmtCtx:             stmtCtx,
-		CopTasks:            copTaskInfo,
+		CopTasks:            &copTaskInfo,
 		ExecDetail:          &execDetail,
 		MemMax:              memMax,
 		DiskMax:             diskMax,

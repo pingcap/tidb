@@ -24,6 +24,10 @@ const (
 	// tables (both prepared statments and non-prepared statements)
 	// See #33031
 	Fix33031 uint64 = 33031
+	// Fix43817 controls whether to allow optimizer to evaluate non-correlated sub-queries in the optimization phase.
+	// If it is not allowed, the optimizer will return a particular error when encountering non-correlated sub-queries.
+	// This fix-control is mainly for Index Advisor.
+	Fix43817 uint64 = 43817
 	// Fix44262 controls whether to allow to use dynamic-mode to access partitioning tables without global-stats (#44262).
 	Fix44262 uint64 = 44262
 	// Fix44389 controls whether to consider non-point ranges of some CNF item when building ranges.

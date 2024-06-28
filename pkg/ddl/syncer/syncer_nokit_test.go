@@ -188,6 +188,4 @@ func TestSyncJobSchemaVerLoop(t *testing.T) {
 
 	cancel()
 	wg.Wait()
-
-	require.Zero(t, jobNodeVersionCnt())
 }

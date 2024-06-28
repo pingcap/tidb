@@ -1468,6 +1468,7 @@ func TestExprPushDownToTiKV(t *testing.T) {
 	//datetimeColumn := genColumn(mysql.TypeDatetime, 6)
 	binaryStringColumn := genColumn(mysql.TypeString, 7)
 	dateColumn := genColumn(mysql.TypeDate, 8)
+	byteColumn := genColumn(mysql.TypeBit, 9)
 	binaryStringColumn.RetType.SetCollate(charset.CollationBin)
 
 	// Test exprs that cannot be pushed.
@@ -1505,6 +1506,24 @@ func TestExprPushDownToTiKV(t *testing.T) {
 
 	pushDownCtx := NewPushDownContextFromSessionVars(ctx.GetEvalCtx(), variable.NewSessionVars(nil), client)
 	pushed, remained := PushDownExprs(pushDownCtx, exprs, kv.TiKV)
+	require.Len(t, pushed, 0)
+	require.Len(t, remained, len(exprs))
+
+	// Test Conv function
+	exprs = exprs[:0]
+	function, err = NewFunction(ctx, ast.Conv, types.NewFieldType(mysql.TypeString), stringColumn, intColumn, intColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+	pushed, remained = PushDownExprs(pushDownCtx, exprs, kv.TiKV)
+	require.Len(t, pushed, len(exprs))
+	require.Len(t, remained, 0)
+	exprs = exprs[:0]
+	castByteAsStringFunc, err := NewFunction(ctx, ast.Cast, types.NewFieldType(mysql.TypeString), byteColumn)
+	require.NoError(t, err)
+	function, err = NewFunction(ctx, ast.Conv, types.NewFieldType(mysql.TypeString), castByteAsStringFunc, intColumn, intColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+	pushed, remained = PushDownExprs(pushDownCtx, exprs, kv.TiKV)
 	require.Len(t, pushed, 0)
 	require.Len(t, remained, len(exprs))
 

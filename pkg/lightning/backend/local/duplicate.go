@@ -408,6 +408,7 @@ func (s *RemoteDupKVStream) Close() error {
 // DupeDetector provides methods to collect and decode duplicated KV pairs into row data. The results
 // are stored into the errorMgr.
 // this object can only be used once, either for local or remote deduplication.
+// TODO(lance6716): make it private.
 type DupeDetector struct {
 	tbl               table.Table
 	tableName         string
@@ -1014,8 +1015,13 @@ func (m *DupeDetector) processRemoteDupTask(
 	}
 }
 
-// CollectDuplicateRowsFromTiKV collects duplicates from the remote TiKV and records all duplicate row info into errorMgr.
-func (m *DupeDetector) CollectDuplicateRowsFromTiKV(ctx context.Context, importClientFactory ImportClientFactory, algorithm config.DuplicateResolutionAlgorithm) error {
+// collectDuplicateRowsFromTiKV collects duplicates from the remote TiKV and
+// records all duplicate row info into errorMgr.
+func (m *DupeDetector) collectDuplicateRowsFromTiKV(
+	ctx context.Context,
+	importClientFactory ImportClientFactory,
+	algorithm config.DuplicateResolutionAlgorithm,
+) error {
 	tasks, err := m.buildDupTasks()
 	if err != nil {
 		return errors.Trace(err)
@@ -1085,7 +1091,13 @@ func (local *DupeController) CollectLocalDuplicateRows(ctx context.Context, tbl 
 // CollectRemoteDuplicateRows collect duplicate keys from remote TiKV storage. This keys may be duplicate with
 // the data import by other lightning.
 // TODO: revise the returned arguments to (hasDupe bool, dupInfo *DupInfo, err error) to distinguish the conflict error and the common error
-func (local *DupeController) CollectRemoteDuplicateRows(ctx context.Context, tbl table.Table, tableName string, opts *encode.SessionOptions, algorithm config.DuplicateResolutionAlgorithm) (hasDupe bool, err error) {
+func (local *DupeController) CollectRemoteDuplicateRows(
+	ctx context.Context,
+	tbl table.Table,
+	tableName string,
+	opts *encode.SessionOptions,
+	algorithm config.DuplicateResolutionAlgorithm,
+) (hasDupe bool, err error) {
 	logger := log.FromContext(ctx).With(zap.String("table", tableName)).Begin(zap.InfoLevel, "[detect-dupe] collect remote duplicate keys")
 	defer func() {
 		logger.End(zap.ErrorLevel, err)
@@ -1096,7 +1108,7 @@ func (local *DupeController) CollectRemoteDuplicateRows(ctx context.Context, tbl
 	if err != nil {
 		return false, errors.Trace(err)
 	}
-	err = duplicateManager.CollectDuplicateRowsFromTiKV(ctx, local.importClientFactory, algorithm)
+	err = duplicateManager.collectDuplicateRowsFromTiKV(ctx, local.importClientFactory, algorithm)
 	if err != nil {
 		return common.ErrFoundDataConflictRecords.Equal(err) || common.ErrFoundIndexConflictRecords.Equal(err), errors.Trace(err)
 	}

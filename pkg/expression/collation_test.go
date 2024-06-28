@@ -217,8 +217,9 @@ func TestInferCollation(t *testing.T) {
 		},
 	}
 
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	for i, test := range tests {
-		ec := inferCollation(test.exprs...)
+		ec := inferCollation(ctx.GetEvalCtx(), test.exprs...)
 		if test.err {
 			require.Nil(t, ec, i)
 		} else {

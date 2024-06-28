@@ -151,8 +151,8 @@ type StmtRecord struct {
 	ResourceGroupName string `json:"resource_group_name"`
 	stmtsummary.StmtRUSummary
 
-	PlanCacheUnqualifiedCount int64  `json:"plan_cache_unqualified_count"`
-	LastPlanCacheUnqualified  string `json:"last_plan_cache_unqualified"` // the reason why this query is unqualified for the plan cache
+	PlanCacheUnqualifiedCount      int64  `json:"plan_cache_unqualified_count"`
+	PlanCacheUnqualifiedLastReason string `json:"plan_cache_unqualified_last_reason"` // the reason why this query is unqualified for the plan cache
 }
 
 // NewStmtRecord creates a new StmtRecord from StmtExecInfo.
@@ -373,7 +373,7 @@ func (r *StmtRecord) Add(info *stmtsummary.StmtExecInfo) {
 	}
 	if info.PlanCacheUnqualified != "" {
 		r.PlanCacheUnqualifiedCount++
-		r.LastPlanCacheUnqualified = info.PlanCacheUnqualified
+		r.PlanCacheUnqualifiedLastReason = info.PlanCacheUnqualified
 	}
 	// SPM
 	if info.PlanInBinding {
@@ -550,8 +550,8 @@ func (r *StmtRecord) Merge(other *StmtRecord) {
 	// Plan cache
 	r.PlanCacheHits += other.PlanCacheHits
 	r.PlanCacheUnqualifiedCount += other.PlanCacheUnqualifiedCount
-	if other.LastPlanCacheUnqualified != "" {
-		r.LastPlanCacheUnqualified = other.LastPlanCacheUnqualified
+	if other.PlanCacheUnqualifiedLastReason != "" {
+		r.PlanCacheUnqualifiedLastReason = other.PlanCacheUnqualifiedLastReason
 	}
 	// Other
 	r.SumAffectedRows += other.SumAffectedRows

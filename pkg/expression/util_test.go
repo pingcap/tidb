@@ -19,6 +19,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/expression/contextopt"
+	"github.com/pingcap/tidb/pkg/expression/contextstatic"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -182,6 +183,7 @@ func TestGetUint64FromConstant(t *testing.T) {
 	require.Equal(t, uint64(1), num)
 
 	vars.PlanCacheParams.Append(types.NewUintDatum(100))
+	ctx = mockEvalCtx(contextstatic.WithParamList(vars.PlanCacheParams))
 	con.ParamMarker = &ParamMarker{order: 0, ctx: contextopt.SessionVarsAsProvider(vars)}
 	num, _, _ = GetUint64FromConstant(ctx, con)
 	require.Equal(t, uint64(100), num)
@@ -260,7 +262,7 @@ func TestSubstituteCorCol2Constant(t *testing.T) {
 	ret, err = SubstituteCorCol2Constant(ctx, plus3)
 	require.NoError(t, err)
 	ans3 := newFunctionWithMockCtx(ast.Plus, ans1, col1)
-	require.True(t, ret.Equal(ctx.GetEvalCtx(), ans3))
+	require.False(t, ret.Equal(ctx.GetEvalCtx(), ans3))
 }
 
 func TestPushDownNot(t *testing.T) {
@@ -351,7 +353,7 @@ func TestHashGroupKey(t *testing.T) {
 			bufs[j] = bufs[j][:0]
 		}
 		var err error
-		err = EvalExpr(ctx, true, colExpr, colExpr.GetType().EvalType(), input, colBuf)
+		err = EvalExpr(ctx, true, colExpr, colExpr.GetType(ctx).EvalType(), input, colBuf)
 		require.NoError(t, err)
 		bufs, err = codec.HashGroupKey(ctx.Location(), 1024, colBuf, bufs, ft)
 		require.NoError(t, err)
@@ -376,21 +378,22 @@ func isLogicOrFunction(e Expression) bool {
 
 func TestDisableParseJSONFlag4Expr(t *testing.T) {
 	var expr Expression
+	ctx := mockEvalCtx()
 	expr = &Column{RetType: newIntFieldType()}
-	ft := expr.GetType()
+	ft := expr.GetType(ctx)
 	ft.AddFlag(mysql.ParseToJSONFlag)
-	DisableParseJSONFlag4Expr(expr)
+	DisableParseJSONFlag4Expr(ctx, expr)
 	require.True(t, mysql.HasParseToJSONFlag(ft.GetFlag()))
 
 	expr = &CorrelatedColumn{Column: Column{RetType: newIntFieldType()}}
-	ft = expr.GetType()
+	ft = expr.GetType(ctx)
 	ft.AddFlag(mysql.ParseToJSONFlag)
-	DisableParseJSONFlag4Expr(expr)
+	DisableParseJSONFlag4Expr(ctx, expr)
 	require.True(t, mysql.HasParseToJSONFlag(ft.GetFlag()))
 	expr = &ScalarFunction{RetType: newIntFieldType()}
-	ft = expr.GetType()
+	ft = expr.GetType(ctx)
 	ft.AddFlag(mysql.ParseToJSONFlag)
-	DisableParseJSONFlag4Expr(expr)
+	DisableParseJSONFlag4Expr(ctx, expr)
 	require.False(t, mysql.HasParseToJSONFlag(ft.GetFlag()))
 }
 
@@ -454,6 +457,43 @@ func TestSQLDigestTextRetriever(t *testing.T) {
 	err = r.RetrieveGlobal(context.Background(), nil)
 	require.NoError(t, err)
 	require.Equal(t, expectedGlobalResult, r.SQLDigestsMap)
+}
+
+func TestProjectionBenefitsFromPushedDown(t *testing.T) {
+	type testDataType struct {
+		exprs          []Expression
+		inputSchemaLen int
+		expectResult   bool
+	}
+	castFunc, _ := NewFunction(mockExprCtx(), ast.Cast, types.NewFieldType(mysql.TypeString), newFunctionWithMockCtx(ast.JSONExtract, newColJSON(), newColString("str", "binary")))
+	testDataArray := []testDataType{
+		{[]Expression{newColumn(0), newColumn(1)}, 5, true},
+		{[]Expression{newColumn(0), newColumn(1)}, 2, false},
+		{[]Expression{
+			newColumn(0),
+			newFunctionWithMockCtx(ast.JSONExtract, newColJSON(), newColString("str", "binary")),
+			newFunctionWithMockCtx(ast.JSONDepth, newColJSON()),
+			newFunctionWithMockCtx(ast.JSONLength, newColJSON()),
+			newFunctionWithMockCtx(ast.JSONType, newColJSON()),
+			newFunctionWithMockCtx(ast.JSONValid, newColJSON()),
+			newFunctionWithMockCtx(ast.JSONContains, newColJSON(), newColString("str", "binary")),
+			newFunctionWithMockCtx(ast.JSONContainsPath, newColJSON(), newConstString("str", CoercibilityNone, "str", "binary"), newColString("str", "binary"), newColString("str", "binary")),
+			newFunctionWithMockCtx(ast.JSONKeys, newColJSON()),
+			newFunctionWithMockCtx(ast.JSONSearch, newColJSON(), newConstString("str", CoercibilityNone, "str", "binary"), newColString("str", "binary")),
+			newFunctionWithMockCtx(ast.JSONMemberOf, newColString("str", "binary"), newColJSON()),
+			newFunctionWithMockCtx(ast.JSONOverlaps, newColJSON(), newColJSON()),
+		}, 3, true},
+		{[]Expression{
+			newFunctionWithMockCtx(ast.JSONUnquote, newColString("str", "binary")),
+		}, 3, false},
+		{[]Expression{
+			newFunctionWithMockCtx(ast.JSONUnquote, castFunc),
+		}, 3, true},
+	}
+	for _, testData := range testDataArray {
+		result := ProjectionBenefitsFromPushedDown(testData.exprs, testData.inputSchemaLen)
+		require.Equal(t, result, testData.expectResult)
+	}
 }
 
 func BenchmarkExtractColumns(b *testing.B) {
@@ -567,7 +607,7 @@ func (m *MockExpr) EvalJSON(ctx EvalContext, row chunk.Row) (val types.BinaryJSO
 	}
 	return types.BinaryJSON{}, m.i == nil, m.err
 }
-func (m *MockExpr) GetType() *types.FieldType                         { return m.t }
+func (m *MockExpr) GetType(_ EvalContext) *types.FieldType            { return m.t }
 func (m *MockExpr) Clone() Expression                                 { return nil }
 func (m *MockExpr) Equal(ctx EvalContext, e Expression) bool          { return false }
 func (m *MockExpr) IsCorrelated() bool                                { return false }

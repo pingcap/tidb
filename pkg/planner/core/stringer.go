@@ -56,21 +56,21 @@ func needIncludeChildrenString(plan base.Plan) bool {
 func fdToString(in base.LogicalPlan, strs []string, idxs []int) ([]string, []int) {
 	switch x := in.(type) {
 	case *LogicalProjection:
-		strs = append(strs, "{"+x.fdSet.String()+"}")
+		strs = append(strs, "{"+x.FDs().String()+"}")
 		for _, child := range x.Children() {
 			strs, idxs = fdToString(child, strs, idxs)
 		}
 	case *LogicalAggregation:
-		strs = append(strs, "{"+x.fdSet.String()+"}")
+		strs = append(strs, "{"+x.FDs().String()+"}")
 		for _, child := range x.Children() {
 			strs, idxs = fdToString(child, strs, idxs)
 		}
 	case *DataSource:
-		strs = append(strs, "{"+x.fdSet.String()+"}")
+		strs = append(strs, "{"+x.FDs().String()+"}")
 	case *LogicalApply:
-		strs = append(strs, "{"+x.fdSet.String()+"}")
+		strs = append(strs, "{"+x.FDs().String()+"}")
 	case *LogicalJoin:
-		strs = append(strs, "{"+x.fdSet.String()+"}")
+		strs = append(strs, "{"+x.FDs().String()+"}")
 	default:
 	}
 	return strs, idxs
@@ -211,15 +211,15 @@ func toString(in base.Plan, strs []string, idxs []int) ([]string, []int) {
 		str = name + "{" + strings.Join(children, ",") + "}"
 		idxs = idxs[:last]
 	case *DataSource:
-		if x.partitionDefIdx != nil {
+		if x.PartitionDefIdx != nil {
 			// TODO: Change this to:
-			//str = fmt.Sprintf("Partition(%d)", x.tableInfo.Partition.Definitions[*x.partitionDefIdx].Name.O)
-			str = fmt.Sprintf("Partition(%d)", x.physicalTableID)
+			//str = fmt.Sprintf("Partition(%d)", x.TableInfo.Partition.Definitions[*x.PartitionDefIdx].Name.O)
+			str = fmt.Sprintf("Partition(%d)", x.PhysicalTableID)
 		} else {
 			if x.TableAsName != nil && x.TableAsName.L != "" {
 				str = fmt.Sprintf("DataScan(%s)", x.TableAsName)
 			} else {
-				str = fmt.Sprintf("DataScan(%s)", x.tableInfo.Name)
+				str = fmt.Sprintf("DataScan(%s)", x.TableInfo.Name)
 			}
 		}
 	case *LogicalSelection:
@@ -328,7 +328,7 @@ func toString(in base.Plan, strs []string, idxs []int) ([]string, []int) {
 		}
 	case *LogicalWindow:
 		buffer := bytes.NewBufferString("")
-		formatWindowFuncDescs(buffer, x.WindowFuncDescs, x.schema)
+		formatWindowFuncDescs(buffer, x.WindowFuncDescs, x.Schema())
 		str = fmt.Sprintf("Window(%s)", buffer.String())
 	case *PhysicalWindow:
 		str = fmt.Sprintf("Window(%s)", x.ExplainInfo())

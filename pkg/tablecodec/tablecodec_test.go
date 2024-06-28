@@ -101,7 +101,7 @@ func TestRowCodec(t *testing.T) {
 	}
 	rd := rowcodec.Encoder{Enable: true}
 	sc := stmtctx.NewStmtCtxWithTimeZone(time.Local)
-	bs, err := EncodeRow(sc.TimeZone(), row, colIDs, nil, nil, &rd)
+	bs, err := EncodeRow(sc.TimeZone(), row, colIDs, nil, nil, nil, &rd)
 	require.NoError(t, err)
 	require.NotNil(t, bs)
 
@@ -276,7 +276,7 @@ func TestTimeCodec(t *testing.T) {
 	}
 	rd := rowcodec.Encoder{Enable: true}
 	sc := stmtctx.NewStmtCtxWithTimeZone(time.UTC)
-	bs, err := EncodeRow(sc.TimeZone(), row, colIDs, nil, nil, &rd)
+	bs, err := EncodeRow(sc.TimeZone(), row, colIDs, nil, nil, nil, &rd)
 	require.NoError(t, err)
 	require.NotNil(t, bs)
 
@@ -656,7 +656,7 @@ func TestTempIndexValueCodec(t *testing.T) {
 	remain, err = newTempIdxVal.DecodeOne(val)
 	require.NoError(t, err)
 	require.Equal(t, 0, len(remain))
-	handle, err := DecodeHandleInUniqueIndexValue(newTempIdxVal.Value, false)
+	handle, err := DecodeHandleInIndexValue(newTempIdxVal.Value)
 	require.NoError(t, err)
 	require.Equal(t, handle.IntValue(), int64(100))
 	require.EqualValues(t, tempIdxVal, newTempIdxVal)

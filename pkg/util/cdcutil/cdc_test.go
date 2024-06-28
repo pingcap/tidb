@@ -65,13 +65,15 @@ func testGetConflictChangefeeds(t *testing.T, cli *clientv3.Client) {
 
 	putChangefeed("st-ok", "normal", 1, 43)
 	putChangefeed("st-fail", "normal", 1, 41)
-	putLameChangefeed("skipped", "failed", 1)
+	putLameChangefeed("skipped", "finished", 1)
+	putChangefeed("not-skipped", "failed", 1, 41)
 	putLameChangefeed("nost-ok", "normal", 43)
 	putLameChangefeed("nost-fail", "normal", 41)
 
 	names, err := cdcutil.GetIncompatibleChangefeedsWithSafeTS(context.Background(), cli, 42)
 	require.NoError(t, err)
 	require.ElementsMatch(t, names.TESTGetChangefeedNames(), []string{
+		"default/default/not-skipped",
 		"default/default/nost-fail",
 		"default/default/st-fail",
 	})
@@ -83,6 +85,7 @@ func testGetConflictChangefeeds(t *testing.T, cli *clientv3.Client) {
 	names3, err := cdcutil.GetIncompatibleChangefeedsWithSafeTS(context.Background(), cli, 48)
 	require.NoError(t, err)
 	require.ElementsMatch(t, names3.TESTGetChangefeedNames(), []string{
+		"default/default/not-skipped",
 		"default/default/nost-fail",
 		"default/default/st-fail",
 		"default/default/nost-ok",
@@ -116,7 +119,7 @@ func testGetCDCChangefeedNameSet(t *testing.T, cli *clientv3.Client) {
 	)
 	checkEtcdPut(
 		"/tidb/cdc/default/default/changefeed/info/test-1",
-		`{"state":"failed"}`,
+		`{"state":"finished"}`,
 	)
 	checkEtcdPut("/tidb/cdc/default/default/changefeed/status/test-1")
 	checkEtcdPut("/tidb/cdc/default/default/task/position/3ecd5c98-0148-4086-adfd-17641995e71f/test-1")

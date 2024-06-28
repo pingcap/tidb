@@ -17,7 +17,6 @@ package expression
 import (
 	"testing"
 
-	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/expression/contextopt"
 	"github.com/pingcap/tidb/pkg/expression/contextstatic"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -73,6 +72,7 @@ func TestEvaluateExprWithNullAndParameters(t *testing.T) {
 	param := NewOne()
 	param.ParamMarker = &ParamMarker{ctx: contextopt.SessionVarsAsProvider(vars), order: 0}
 	vars.PlanCacheParams.Append(types.NewIntDatum(10))
+	ctx = applyExprCtx(ctx, contextstatic.WithParamList(vars.PlanCacheParams))
 	ltWithParam, err := newFunctionForTest(ctx, ast.LT, col0, param)
 	require.NoError(t, err)
 	require.True(t, ctx.IsUseCache())
@@ -272,9 +272,9 @@ func TestEvalExpr(t *testing.T) {
 		colBuf2 := chunk.NewColumn(ft, 1024)
 		var err error
 		require.True(t, colExpr.Vectorized())
-		err = EvalExpr(ctx, false, colExpr, colExpr.GetType().EvalType(), input, colBuf)
+		err = EvalExpr(ctx, false, colExpr, colExpr.GetType(ctx).EvalType(), input, colBuf)
 		require.NoError(t, err)
-		err = EvalExpr(ctx, true, colExpr, colExpr.GetType().EvalType(), input, colBuf2)
+		err = EvalExpr(ctx, true, colExpr, colExpr.GetType(ctx).EvalType(), input, colBuf2)
 		require.NoError(t, err)
 		for j := 0; j < 1024; j++ {
 			isNull := colBuf.IsNull(j)
@@ -298,34 +298,4 @@ func TestExpressionMemeoryUsage(t *testing.T) {
 	c3 := Constant{Value: types.NewIntDatum(1)}
 	c4 := Constant{Value: types.NewStringDatum("11")}
 	require.Greater(t, c4.MemoryUsage(), c3.MemoryUsage())
-}
-
-func TestIgnoreTruncateExprCtx(t *testing.T) {
-	ctx := mockExprCtx(contextstatic.WithTypeFlags(types.StrictFlags), contextstatic.WithErrLevelMap(errctx.LevelMap{}))
-	evalCtx := ctx.GetEvalCtx()
-	tc, ec := evalCtx.TypeCtx(), evalCtx.ErrCtx()
-	require.True(t, !tc.Flags().IgnoreTruncateErr() && !tc.Flags().TruncateAsWarning())
-	require.Equal(t, errctx.LevelError, ec.LevelForGroup(errctx.ErrGroupTruncate))
-
-	// new ctx will ignore truncate error
-	newEvalCtx := ignoreTruncate(ctx).GetEvalCtx()
-	tc, ec = newEvalCtx.TypeCtx(), newEvalCtx.ErrCtx()
-	require.True(t, tc.Flags().IgnoreTruncateErr() && !tc.Flags().TruncateAsWarning())
-	require.Equal(t, errctx.LevelIgnore, ec.LevelForGroup(errctx.ErrGroupTruncate))
-
-	// old eval ctx will not change
-	tc, ec = evalCtx.TypeCtx(), evalCtx.ErrCtx()
-	require.True(t, !tc.Flags().IgnoreTruncateErr() && !tc.Flags().TruncateAsWarning())
-	require.Equal(t, errctx.LevelError, ec.LevelForGroup(errctx.ErrGroupTruncate))
-
-	// old build ctx will not change
-	evalCtx = ctx.GetEvalCtx()
-	tc, ec = evalCtx.TypeCtx(), evalCtx.ErrCtx()
-	require.True(t, !tc.Flags().IgnoreTruncateErr() && !tc.Flags().TruncateAsWarning())
-	require.Equal(t, errctx.LevelError, ec.LevelForGroup(errctx.ErrGroupTruncate))
-
-	// truncate ignored ctx will not create new ctx
-	ctx = mockExprCtx(contextstatic.WithTypeFlags(types.StrictFlags.WithIgnoreTruncateErr(true)), contextstatic.WithErrLevelMap(errctx.LevelMap{errctx.ErrGroupTruncate: errctx.LevelIgnore}))
-	newCtx := ignoreTruncate(ctx)
-	require.Same(t, ctx, newCtx)
 }

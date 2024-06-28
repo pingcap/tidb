@@ -951,7 +951,7 @@ create table t(id int primary key);
 create table s(id int);
 insert into t values(1), (2);
 insert into s values(2), (2);
-select *, (select count(id) from s where id = t.id) from t;
+select *, (select count(id) from s where id = t.id) from t order by id;
 select *, 0 < any (select count(id) from s where id = t.id) from t;
 select (select count(*) from t k where t.id = id) from s, t where t.id = s.id limit 1;
 
