@@ -755,7 +755,7 @@ type PhysicalIndexScan struct {
 	// The index scan may be on a partition.
 	physicalTableID int64
 
-	genExprs map[model.TableItemID]expression.Expression
+	GenExprs map[model.TableItemID]expression.Expression `json:"-"`
 
 	isPartition bool
 	Desc        bool
@@ -862,7 +862,7 @@ func (p *PhysicalIndexScan) MemoryUsage() (sum int64) {
 	for _, rang := range p.Ranges {
 		sum += rang.MemUsage()
 	}
-	for iid, expr := range p.genExprs {
+	for iid, expr := range p.GenExprs {
 		sum += int64(unsafe.Sizeof(iid)) + expr.MemoryUsage()
 	}
 	return
