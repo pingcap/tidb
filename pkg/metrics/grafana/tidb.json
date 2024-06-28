@@ -13922,8 +13922,7 @@
               "format": "time_series",
               "intervalFactor": 2,
               "refId": "A",
-              "step": 40,
-              "queryType": "randomWalk"
+              "step": 40
             }
           ],
           "options": {
