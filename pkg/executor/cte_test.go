@@ -194,3 +194,35 @@ func TestCTEShareCorColumn(t *testing.T) {
 	tk.MustExec("insert into t1 values(1), (2);")
 	tk.MustQuery("SELECT * FROM t1 dt WHERE EXISTS( WITH RECURSIVE qn AS (SELECT a AS b UNION ALL SELECT b+1 FROM qn WHERE b=0 or b = 1) SELECT * FROM qn dtqn1 where exists (select /*+ NO_DECORRELATE() */ b from qn where dtqn1.b+1));").Check(testkit.Rows("1", "2"))
 }
+
+func TestCTEIterationMemTracker(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	insertStr := "insert into t1 values(0)"
+	rowNum := 1000
+	vals := make([]int, rowNum)
+	vals[0] = 0
+	for i := 1; i < rowNum; i++ {
+		v := rand.Intn(100)
+		vals[i] = v
+		insertStr += fmt.Sprintf(", (%d)", v)
+	}
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1(c1 int);")
+	tk.MustExec(insertStr)
+
+	tk.MustExec("set @@cte_max_recursion_depth=1000000")
+	tk.MustExec("set global tidb_mem_oom_action = 'log';")
+	defer func() {
+		tk.MustExec("set global tidb_mem_oom_action = default;")
+	}()
+	tk.MustExec("set @@tidb_mem_quota_query=10;")
+	maxIter := 5000
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/assertIterTableSpillToDisk", fmt.Sprintf("return(%d)", maxIter)))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/assertIterTableSpillToDisk"))
+	}()
+	tk.MustQuery(fmt.Sprintf("explain analyze with recursive cte1 as (select c1 from t1 union all select c1 + 1 c1 from cte1 where c1 < %d) select * from cte1", maxIter))
+}
