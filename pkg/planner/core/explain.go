@@ -1023,18 +1023,6 @@ func (p *LogicalSort) ExplainInfo() string {
 }
 
 // ExplainInfo implements Plan interface.
-func (p *LogicalLimit) ExplainInfo() string {
-	buffer := bytes.NewBufferString("")
-	if len(p.GetPartitionBy()) > 0 {
-		buffer = explainPartitionBy(buffer, p.GetPartitionBy(), false)
-		fmt.Fprintf(buffer, ", offset:%v, count:%v", p.Offset, p.Count)
-	} else {
-		fmt.Fprintf(buffer, "offset:%v, count:%v", p.Offset, p.Count)
-	}
-	return buffer.String()
-}
-
-// ExplainInfo implements Plan interface.
 func (p *LogicalTableScan) ExplainInfo() string {
 	buffer := bytes.NewBufferString(p.Source.ExplainInfo())
 	if p.Source.HandleCols != nil {

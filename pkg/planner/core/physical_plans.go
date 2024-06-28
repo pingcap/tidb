@@ -280,6 +280,19 @@ func (p *PhysicalTableReader) Clone() (base.PhysicalPlan, error) {
 	return cloned, nil
 }
 
+// CloneForPlanCache implements Plan.CloneForPlanCache method.
+func (p *PhysicalTableReader) CloneForPlanCache() (base.Plan, bool) {
+	cloned := new(PhysicalTableReader)
+	*cloned = *p
+	t, ok := p.tablePlan.CloneForPlanCache()
+	if !ok {
+		return nil, false
+	}
+	cloned.tablePlan = t.(base.PhysicalPlan)
+	cloned.TablePlans = flattenPushDownPlan(cloned.tablePlan)
+	return cloned, true
+}
+
 // SetChildren overrides op.PhysicalPlan SetChildren interface.
 func (p *PhysicalTableReader) SetChildren(children ...base.PhysicalPlan) {
 	p.tablePlan = children[0]
@@ -340,6 +353,19 @@ func (p *PhysicalIndexReader) Clone() (base.PhysicalPlan, error) {
 	}
 	cloned.OutputColumns = util.CloneCols(p.OutputColumns)
 	return cloned, err
+}
+
+// CloneForPlanCache implements Plan.CloneForPlanCache method.
+func (p *PhysicalIndexReader) CloneForPlanCache() (base.Plan, bool) {
+	cloned := new(PhysicalIndexReader)
+	*cloned = *p
+	t, ok := p.indexPlan.CloneForPlanCache()
+	if !ok {
+		return nil, false
+	}
+	cloned.indexPlan = t.(base.PhysicalPlan)
+	cloned.IndexPlans = flattenPushDownPlan(cloned.indexPlan)
+	return cloned, true
 }
 
 // SetSchema overrides op.PhysicalPlan SetSchema interface.
@@ -768,6 +794,14 @@ func (p *PhysicalIndexScan) Clone() (base.PhysicalPlan, error) {
 	return cloned, nil
 }
 
+// CloneForPlanCache implements op.CloneForPlanCache interface.
+func (p *PhysicalIndexScan) CloneForPlanCache() (base.Plan, bool) {
+	cloned := new(PhysicalIndexScan)
+	*cloned = *p
+	cloned.Ranges = util.CloneRanges(p.Ranges)
+	return cloned, true
+}
+
 // ExtractCorrelatedCols implements op.PhysicalPlan interface.
 func (p *PhysicalIndexScan) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
 	corCols := make([]*expression.CorrelatedColumn, 0, len(p.AccessCondition))
@@ -947,6 +981,14 @@ func (ts *PhysicalTableScan) Clone() (base.PhysicalPlan, error) {
 		clonedScan.runtimeFilterList[i] = clonedRF
 	}
 	return clonedScan, nil
+}
+
+// CloneForPlanCache implements op.CloneForPlanCache interface.
+func (ts *PhysicalTableScan) CloneForPlanCache() (base.Plan, bool) {
+	cloned := new(PhysicalTableScan)
+	*cloned = *ts
+	cloned.Ranges = util.CloneRanges(ts.Ranges)
+	return cloned, true
 }
 
 // ExtractCorrelatedCols implements op.PhysicalPlan interface.
@@ -2221,6 +2263,20 @@ func (p *PhysicalSelection) Clone() (base.PhysicalPlan, error) {
 	cloned.basePhysicalPlan = *base
 	cloned.Conditions = util.CloneExprs(p.Conditions)
 	return cloned, nil
+}
+
+// CloneForPlanCache implements base.Plan.CloneForPlanCache method.
+func (p *PhysicalSelection) CloneForPlanCache() (base.Plan, bool) {
+	cloned := new(PhysicalSelection)
+	*cloned = *p
+	for i, c := range p.children {
+		clonedChild, ok := c.CloneForPlanCache()
+		if !ok {
+			return nil, false
+		}
+		cloned.children[i] = clonedChild.(base.PhysicalPlan)
+	}
+	return cloned, true
 }
 
 // ExtractCorrelatedCols implements op.PhysicalPlan interface.
