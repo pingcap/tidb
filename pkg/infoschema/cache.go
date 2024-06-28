@@ -246,19 +246,18 @@ func (h *InfoCache) Insert(is InfoSchema, schemaTS uint64) bool {
 				h.cache[i].infoschema = is
 			}
 			return true
-		} else {
-			old := h.cache[i].infoschema
+		}
 
-			// replace the old with the new one
-			h.cache[i].infoschema = is
+		old := h.cache[i].infoschema
+		// replace the old with the new one
+		h.cache[i].infoschema = is
 
-			// TODO: It's a bit tricky here, somewhere is holding the reference of the old infoschema.
-			// So GC can not release this object, leading to memory leak.
-			// Here we destroy the old infoschema on purpose, so someone use it would panic and
-			// we get to know where it is referenced.
-			if raw, ok := old.(*infoSchema); ok {
-				*raw = infoSchema{}
-			}
+		// TODO: It's a bit tricky here, somewhere is holding the reference of the old infoschema.
+		// So GC can not release this object, leading to memory leak.
+		// Here we destroy the old infoschema on purpose, so someone use it would panic and
+		// we get to know where it is referenced.
+		if raw, ok := old.(*infoSchema); ok {
+			*raw = infoSchema{}
 		}
 	}
 
