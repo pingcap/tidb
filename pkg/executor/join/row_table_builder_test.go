@@ -588,7 +588,7 @@ func TestBalanceOfFilteredRows(t *testing.T) {
 		}
 	}
 
-	partitionNumber := 4
+	partitionNumber := uint(4)
 	buildFilter := createImpossibleFilter(t)
 	builder := createRowTableBuilder(buildKeyIndex, buildKeyTypes, partitionNumber, hasNullableKey, true, true)
 	chk := testutil.GenRandomChunks(buildTypes, 3000)
@@ -604,7 +604,7 @@ func TestBalanceOfFilteredRows(t *testing.T) {
 	require.NoError(t, err)
 	builder.appendRemainingRowLocations(0, hashJoinCtx.hashTableContext)
 	rowTables := hashJoinCtx.hashTableContext.rowTables[0]
-	for i := 0; i < partitionNumber; i++ {
+	for i := 0; i < int(partitionNumber); i++ {
 		require.Equal(t, 3000/partitionNumber, int(rowTables[i].rowCount()))
 	}
 }

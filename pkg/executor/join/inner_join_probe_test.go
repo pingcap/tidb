@@ -262,7 +262,6 @@ func testJoinProbe(t *testing.T, withSel bool, leftKeyIndex []int, rightKeyIndex
 		BuildFilter:           buildFilter,
 		ProbeFilter:           probeFilter,
 		OtherCondition:        otherCondition,
-		PartitionNumber:       partitionNumber,
 		BuildKeyTypes:         buildKeyTypes,
 		ProbeKeyTypes:         probeKeyTypes,
 		RightAsBuildSide:      rightAsBuildSide,
@@ -274,6 +273,7 @@ func testJoinProbe(t *testing.T, withSel bool, leftKeyIndex []int, rightKeyIndex
 	hashJoinCtx.SessCtx = mock.NewContext()
 	hashJoinCtx.JoinType = joinType
 	hashJoinCtx.Concurrency = uint(partitionNumber)
+	hashJoinCtx.SetupPartitionInfo()
 	hashJoinCtx.initHashTableContext()
 	joinProbe := NewJoinProbe(hashJoinCtx, 0, joinType, probeKeyIndex, joinedTypes, probeKeyTypes, rightAsBuildSide)
 	buildSchema := &expression.Schema{}
@@ -289,7 +289,7 @@ func testJoinProbe(t *testing.T, withSel bool, leftKeyIndex []int, rightKeyIndex
 			break
 		}
 	}
-	builder := createRowTableBuilder(buildKeyIndex, buildKeyTypes, partitionNumber, hasNullableKey, buildFilter != nil, joinProbe.NeedScanRowTable())
+	builder := createRowTableBuilder(buildKeyIndex, buildKeyTypes, hashJoinCtx.PartitionNumber, hasNullableKey, buildFilter != nil, joinProbe.NeedScanRowTable())
 	chunkNumber := 3
 	buildChunks := make([]*chunk.Chunk, 0, chunkNumber)
 	probeChunks := make([]*chunk.Chunk, 0, chunkNumber)
