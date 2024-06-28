@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/expression/contextstatic"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -44,7 +45,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 	"go.uber.org/zap"
@@ -238,10 +238,30 @@ func initPartition(t *partitionedTable, def model.PartitionDefinition) (*partiti
 	return &newPart, nil
 }
 
+// NewPartitionExprBuildCtx returns a context to build partition expression.
+func NewPartitionExprBuildCtx() expression.BuildContext {
+	return contextstatic.NewStaticExprContext(
+		contextstatic.WithEvalCtx(contextstatic.NewStaticEvalContext(
+			// Set a non-strict SQL mode and allow all date values if possible to make sure constant fold can work to
+			// estimate some undetermined result when locating a row to a partition.
+			// See issue: https://github.com/pingcap/tidb/issues/54271 for details.
+			contextstatic.WithSQLMode(mysql.ModeAllowInvalidDates),
+			contextstatic.WithTypeFlags(types.StrictFlags.
+				WithIgnoreTruncateErr(true).
+				WithIgnoreZeroDateErr(true).
+				WithIgnoreZeroInDate(true).
+				WithIgnoreInvalidDateErr(true),
+			),
+			contextstatic.WithErrLevelMap(errctx.LevelMap{
+				errctx.ErrGroupTruncate: errctx.LevelIgnore,
+			}),
+		)),
+	)
+}
+
 func newPartitionExpr(tblInfo *model.TableInfo, tp model.PartitionType, expr string, partCols []model.CIStr, defs []model.PartitionDefinition) (*PartitionExpr, error) {
-	// a partitioned table cannot rely on session context/sql modes, so use a default one!
-	ctx := mock.NewContext()
-	dbName := model.NewCIStr(ctx.GetSessionVars().CurrentDB)
+	ctx := NewPartitionExprBuildCtx()
+	dbName := model.NewCIStr(ctx.GetEvalCtx().CurrentDB())
 	columns, names, err := expression.ColumnInfos2ColumnsAndNames(ctx, dbName, tblInfo.Name, tblInfo.Cols(), tblInfo)
 	if err != nil {
 		return nil, err
