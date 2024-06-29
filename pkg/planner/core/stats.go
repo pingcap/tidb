@@ -555,23 +555,6 @@ func (p *LogicalSelection) DeriveStats(childStats []*property.StatsInfo, _ *expr
 	return p.StatsInfo(), nil
 }
 
-// DeriveStats implement LogicalPlan DeriveStats interface.
-func (p *LogicalUnionAll) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, _ []*expression.Schema, _ [][]*expression.Column) (*property.StatsInfo, error) {
-	if p.StatsInfo() != nil {
-		return p.StatsInfo(), nil
-	}
-	p.SetStats(&property.StatsInfo{
-		ColNDVs: make(map[int64]float64, selfSchema.Len()),
-	})
-	for _, childProfile := range childStats {
-		p.StatsInfo().RowCount += childProfile.RowCount
-		for _, col := range selfSchema.Columns {
-			p.StatsInfo().ColNDVs[col.UniqueID] += childProfile.ColNDVs[col.UniqueID]
-		}
-	}
-	return p.StatsInfo(), nil
-}
-
 func deriveLimitStats(childProfile *property.StatsInfo, limitCount float64) *property.StatsInfo {
 	stats := &property.StatsInfo{
 		RowCount: math.Min(limitCount, childProfile.RowCount),
