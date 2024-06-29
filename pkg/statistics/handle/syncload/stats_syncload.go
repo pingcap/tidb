@@ -79,6 +79,45 @@ type statsWrapper struct {
 	idx     *statistics.Index
 }
 
+func newStatsWrapper(
+	tbl *statistics.Table, item model.TableItemID, fullLoad bool, updateCachedItem func(item model.TableItemID, colHist *statistics.Column, idxHist *statistics.Index, fullLoaded bool) (updated bool)) *statsWrapper {
+	wrapper := &statsWrapper{}
+	if item.IsIndex {
+		index, loadNeeded := tbl.IndexIsLoadNeeded(item.ID)
+		if !loadNeeded {
+			return nil
+		}
+		if index != nil {
+			wrapper.idxInfo = index.Info
+		} else {
+			wrapper.idxInfo = tbl.ColAndIdxExistenceMap.GetIndex(item.ID)
+		}
+	} else {
+		col, loadNeeded, analyzed := tbl.ColumnIsLoadNeeded(item.ID, fullLoad)
+		if !loadNeeded {
+			return nil
+		}
+		if col != nil {
+			wrapper.colInfo = col.Info
+		} else {
+			wrapper.colInfo = tbl.ColAndIdxExistenceMap.GetCol(item.ID)
+		}
+		// If this column is not analyzed yet and we don't have it in memory.
+		// We create a fake one for the pseudo estimation.
+		if loadNeeded && !analyzed {
+			wrapper.col = &statistics.Column{
+				PhysicalID: item.TableID,
+				Info:       wrapper.colInfo,
+				Histogram:  *statistics.NewHistogram(item.ID, 0, 0, 0, &wrapper.colInfo.FieldType, 0, 0),
+				IsHandle:   tbl.IsPkIsHandle && mysql.HasPriKeyFlag(wrapper.colInfo.GetFlag()),
+			}
+			updateCachedItem(item, wrapper.col, wrapper.idx, fullLoad)
+			return nil
+		}
+	}
+	return wrapper
+}
+
 // SendLoadRequests send neededColumns requests
 func (s *statsSyncLoad) SendLoadRequests(sc *stmtctx.StatementContext, neededHistItems []model.StatsLoadItem, timeout time.Duration) error {
 	remainedItems := s.removeHistLoadedColumns(neededHistItems)
@@ -303,39 +342,9 @@ func (s *statsSyncLoad) handleOneItemTask(task *statstypes.NeededItemTask) (err 
 	if !ok {
 		return nil
 	}
-	wrapper := &statsWrapper{}
-	if item.IsIndex {
-		index, loadNeeded := tbl.IndexIsLoadNeeded(item.ID)
-		if !loadNeeded {
-			return nil
-		}
-		if index != nil {
-			wrapper.idxInfo = index.Info
-		} else {
-			wrapper.idxInfo = tbl.ColAndIdxExistenceMap.GetIndex(item.ID)
-		}
-	} else {
-		col, loadNeeded, analyzed := tbl.ColumnIsLoadNeeded(item.ID, task.Item.FullLoad)
-		if !loadNeeded {
-			return nil
-		}
-		if col != nil {
-			wrapper.colInfo = col.Info
-		} else {
-			wrapper.colInfo = tbl.ColAndIdxExistenceMap.GetCol(item.ID)
-		}
-		// If this column is not analyzed yet and we don't have it in memory.
-		// We create a fake one for the pseudo estimation.
-		if loadNeeded && !analyzed {
-			wrapper.col = &statistics.Column{
-				PhysicalID: item.TableID,
-				Info:       wrapper.colInfo,
-				Histogram:  *statistics.NewHistogram(item.ID, 0, 0, 0, &wrapper.colInfo.FieldType, 0, 0),
-				IsHandle:   tbl.IsPkIsHandle && mysql.HasPriKeyFlag(wrapper.colInfo.GetFlag()),
-			}
-			s.updateCachedItem(item, wrapper.col, wrapper.idx, task.Item.FullLoad)
-			return nil
-		}
+	wrapper := newStatsWrapper(tbl, item, task.Item.FullLoad, s.updateCachedItem)
+	if wrapper == nil {
+		return nil
 	}
 	t := time.Now()
 	needUpdate := false
