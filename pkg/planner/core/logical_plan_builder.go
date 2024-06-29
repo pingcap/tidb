@@ -5443,7 +5443,8 @@ func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName model.
 			terror.ErrorNotEqual(err, plannererrors.ErrInternal) &&
 			terror.ErrorNotEqual(err, plannererrors.ErrFieldNotInGroupBy) &&
 			terror.ErrorNotEqual(err, plannererrors.ErrMixOfGroupFuncAndFields) &&
-			terror.ErrorNotEqual(err, plannererrors.ErrViewNoExplain) {
+			terror.ErrorNotEqual(err, plannererrors.ErrViewNoExplain) &&
+			terror.ErrorNotEqual(err, plannererrors.ErrNotSupportedYet) {
 			err = plannererrors.ErrViewInvalid.GenWithStackByArgs(dbName.O, tableInfo.Name.O)
 		}
 		return nil, err
