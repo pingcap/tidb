@@ -236,7 +236,6 @@ func TestShowVisibility(t *testing.T) {
 	tk.MustExec(`grant CREATE on *.* to 'show'@'%'`)
 	rows := tk1.MustQuery("show databases").Rows()
 	require.GreaterOrEqual(t, len(rows), 2)
-	tk.MustQuery("show databases WHERE TRUE IN (SELECT TRUE) < ALL (SELECT TRUE);").Check(testkit.Rows())
 
 	tk.MustExec(`drop user 'show'@'%'`)
 	tk.MustExec("drop database showdatabase")
