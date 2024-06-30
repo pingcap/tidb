@@ -17,16 +17,19 @@ package expression
 import (
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/expression/contextopt"
+	"github.com/pingcap/tidb/pkg/expression/contextstatic"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/stretchr/testify/require"
 )
 
 func TestNewValuesFunc(t *testing.T) {
-	ctx := createContext(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	res := NewValuesFunc(ctx, 0, types.NewFieldType(mysql.TypeLonglong))
 	require.Equal(t, "values", res.FuncName.O)
 	require.Equal(t, mysql.TypeLonglong, res.RetType.GetType())
@@ -35,7 +38,7 @@ func TestNewValuesFunc(t *testing.T) {
 }
 
 func TestEvaluateExprWithNull(t *testing.T) {
-	ctx := createContext(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	tblInfo := newTestTableBuilder("").add("col0", mysql.TypeLonglong, 0).add("col1", mysql.TypeLonglong, 0).build()
 	schema := tableInfoToSchemaForTest(tblInfo)
 	col0 := schema.Columns[0]
@@ -51,35 +54,36 @@ func TestEvaluateExprWithNull(t *testing.T) {
 	schema.Columns = append(schema.Columns, col1)
 	// ifnull(null, ifnull(null, 1))
 	res = EvaluateExprWithNull(ctx, schema, outerIfNull)
-	require.True(t, res.Equal(ctx, NewOne()))
+	require.True(t, res.Equal(ctx.GetEvalCtx(), NewOne()))
 }
 
 func TestEvaluateExprWithNullAndParameters(t *testing.T) {
-	ctx := createContext(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	tblInfo := newTestTableBuilder("").add("col0", mysql.TypeLonglong, 0).build()
 	schema := tableInfoToSchemaForTest(tblInfo)
 	col0 := schema.Columns[0]
 
-	ctx.GetSessionVars().StmtCtx.EnablePlanCache()
-
+	vars := variable.NewSessionVars(nil)
 	// cases for parameters
 	ltWithoutParam, err := newFunctionForTest(ctx, ast.LT, col0, NewOne())
 	require.NoError(t, err)
 	res := EvaluateExprWithNull(ctx, schema, ltWithoutParam)
-	require.True(t, res.Equal(ctx, NewNull())) // the expression is evaluated to null
+	require.True(t, res.Equal(ctx.GetEvalCtx(), NewNull())) // the expression is evaluated to null
 	param := NewOne()
-	param.ParamMarker = &ParamMarker{ctx: ctx, order: 0}
-	ctx.GetSessionVars().PlanCacheParams.Append(types.NewIntDatum(10))
+	param.ParamMarker = &ParamMarker{ctx: contextopt.SessionVarsAsProvider(vars), order: 0}
+	vars.PlanCacheParams.Append(types.NewIntDatum(10))
+	ctx = applyExprCtx(ctx, contextstatic.WithParamList(vars.PlanCacheParams))
 	ltWithParam, err := newFunctionForTest(ctx, ast.LT, col0, param)
 	require.NoError(t, err)
+	require.True(t, ctx.IsUseCache())
 	res = EvaluateExprWithNull(ctx, schema, ltWithParam)
 	_, isConst := res.(*Constant)
 	require.True(t, isConst) // this expression is evaluated and skip-plan cache flag is set.
-	require.True(t, !ctx.GetSessionVars().StmtCtx.UseCache())
+	require.True(t, !ctx.IsUseCache())
 }
 
 func TestEvaluateExprWithNullNoChangeRetType(t *testing.T) {
-	ctx := createContext(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	tblInfo := newTestTableBuilder("").add("col_str", mysql.TypeString, 0).build()
 	schema := tableInfoToSchemaForTest(tblInfo)
 
@@ -103,7 +107,7 @@ func TestEvaluateExprWithNullNoChangeRetType(t *testing.T) {
 }
 
 func TestConstant(t *testing.T) {
-	ctx := createContext(t)
+	ctx := mockEvalCtx()
 	require.False(t, NewZero().IsCorrelated())
 	require.Equal(t, ConstStrict, NewZero().ConstLevel())
 	require.True(t, NewZero().Decorrelate(nil).Equal(ctx, NewZero()))
@@ -256,7 +260,7 @@ func tableInfoToSchemaForTest(tableInfo *model.TableInfo) *Schema {
 }
 
 func TestEvalExpr(t *testing.T) {
-	ctx := createContext(t)
+	ctx := mockEvalCtx()
 	eTypes := []types.EvalType{types.ETInt, types.ETReal, types.ETDecimal, types.ETString, types.ETTimestamp, types.ETDatetime, types.ETDuration}
 	tNames := []string{"int", "real", "decimal", "string", "timestamp", "datetime", "duration"}
 	for i := 0; i < len(tNames); i++ {

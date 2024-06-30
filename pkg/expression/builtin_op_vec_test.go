@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 )
 
@@ -164,7 +163,7 @@ func BenchmarkVectorizedBuiltinOpFunc(b *testing.B) {
 }
 
 func TestBuiltinUnaryMinusIntSig(t *testing.T) {
-	ctx := mock.NewContext()
+	ctx := mockStmtExprCtx()
 	ft := eType2FieldType(types.ETInt)
 	col0 := &Column{RetType: ft, Index: 0}
 	f, err := funcs[ast.UnaryMinus].getFunction(ctx, []Expression{col0})
@@ -172,27 +171,27 @@ func TestBuiltinUnaryMinusIntSig(t *testing.T) {
 	input := chunk.NewChunkWithCapacity([]*types.FieldType{ft}, 1024)
 	result := chunk.NewColumn(ft, 1024)
 
-	require.False(t, mysql.HasUnsignedFlag(col0.GetType(ctx).GetFlag()))
+	require.False(t, mysql.HasUnsignedFlag(col0.GetType(ctx.GetEvalCtx()).GetFlag()))
 	input.AppendInt64(0, 233333)
-	require.NoError(t, vecEvalType(ctx, f, types.ETInt, input, result))
+	require.NoError(t, vecEvalType(ctx.GetEvalCtx(), f, types.ETInt, input, result))
 	require.Equal(t, int64(-233333), result.GetInt64(0))
 	input.Reset()
 	input.AppendInt64(0, math.MinInt64)
-	require.Error(t, vecEvalType(ctx, f, types.ETInt, input, result))
+	require.Error(t, vecEvalType(ctx.GetEvalCtx(), f, types.ETInt, input, result))
 	input.Column(0).SetNull(0, true)
-	require.NoError(t, vecEvalType(ctx, f, types.ETInt, input, result))
+	require.NoError(t, vecEvalType(ctx.GetEvalCtx(), f, types.ETInt, input, result))
 	require.True(t, result.IsNull(0))
 
-	col0.GetType(ctx).AddFlag(mysql.UnsignedFlag)
-	require.True(t, mysql.HasUnsignedFlag(col0.GetType(ctx).GetFlag()))
+	col0.GetType(ctx.GetEvalCtx()).AddFlag(mysql.UnsignedFlag)
+	require.True(t, mysql.HasUnsignedFlag(col0.GetType(ctx.GetEvalCtx()).GetFlag()))
 	input.Reset()
 	input.AppendUint64(0, 233333)
-	require.NoError(t, vecEvalType(ctx, f, types.ETInt, input, result))
+	require.NoError(t, vecEvalType(ctx.GetEvalCtx(), f, types.ETInt, input, result))
 	require.Equal(t, int64(-233333), result.GetInt64(0))
 	input.Reset()
 	input.AppendUint64(0, -(math.MinInt64)+1)
-	require.Error(t, vecEvalType(ctx, f, types.ETInt, input, result))
+	require.Error(t, vecEvalType(ctx.GetEvalCtx(), f, types.ETInt, input, result))
 	input.Column(0).SetNull(0, true)
-	require.NoError(t, vecEvalType(ctx, f, types.ETInt, input, result))
+	require.NoError(t, vecEvalType(ctx.GetEvalCtx(), f, types.ETInt, input, result))
 	require.True(t, result.IsNull(0))
 }

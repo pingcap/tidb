@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 )
 
@@ -61,9 +60,9 @@ func genVecBuiltinRegexpBenchCaseForConstants(ctx BuildContext) (baseFunc builti
 }
 
 func TestVectorizedBuiltinRegexpForConstants(t *testing.T) {
-	ctx := mock.NewContext()
+	ctx := mockStmtExprCtx()
 	bf, childrenFieldTypes, input, output := genVecBuiltinRegexpBenchCaseForConstants(ctx)
-	err := vecEvalType(ctx, bf, types.ETInt, input, output)
+	err := vecEvalType(ctx.GetEvalCtx(), bf, types.ETInt, input, output)
 	require.NoError(t, err)
 	i64s := output.Int64s()
 
@@ -73,7 +72,7 @@ func TestVectorizedBuiltinRegexpForConstants(t *testing.T) {
 		return fmt.Sprintf("func: builtinRegexpUTF8Sig, row: %v, rowData: %v", row, input.GetRow(row).GetDatumRow(childrenFieldTypes))
 	}
 	for row := it.Begin(); row != it.End(); row = it.Next() {
-		val, err := evalBuiltinFunc(bf, ctx, row)
+		val, err := evalBuiltinFunc(bf, ctx.GetEvalCtx(), row)
 		require.NoError(t, err)
 		require.Equal(t, output.IsNull(i), val.IsNull(), commentf(i))
 		if !val.IsNull() {
@@ -85,12 +84,13 @@ func TestVectorizedBuiltinRegexpForConstants(t *testing.T) {
 }
 
 func BenchmarkVectorizedBuiltinRegexpForConstants(b *testing.B) {
-	ctx := mock.NewContext()
+	ctx := mockStmtExprCtx()
+	evalCtx := ctx.GetEvalCtx()
 	bf, _, input, output := genVecBuiltinRegexpBenchCaseForConstants(ctx)
 	b.Run("builtinRegexpUTF8Sig-Constants-VecBuiltinFunc", func(b *testing.B) {
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
-			if err := bf.vecEvalInt(ctx, input, output); err != nil {
+			if err := bf.vecEvalInt(evalCtx, input, output); err != nil {
 				b.Fatal(err)
 			}
 		}
@@ -101,7 +101,7 @@ func BenchmarkVectorizedBuiltinRegexpForConstants(b *testing.B) {
 		for i := 0; i < b.N; i++ {
 			output.Reset(types.ETInt)
 			for row := it.Begin(); row != it.End(); row = it.Next() {
-				v, isNull, err := bf.evalInt(ctx, row)
+				v, isNull, err := bf.evalInt(evalCtx, row)
 				if err != nil {
 					b.Fatal(err)
 				}

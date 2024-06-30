@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/mock"
 )
 
 func genCastIntAsInt(ctx BuildContext) (*builtinCastIntAsIntSig, *chunk.Chunk, *chunk.Column) {
@@ -41,13 +40,14 @@ func genCastIntAsInt(ctx BuildContext) (*builtinCastIntAsIntSig, *chunk.Chunk, *
 }
 
 func BenchmarkCastIntAsIntRow(b *testing.B) {
-	ctx := mock.NewContext()
+	ctx := mockStmtExprCtx()
+	evalCtx := ctx.GetEvalCtx()
 	cast, input, _ := genCastIntAsInt(ctx)
 	it := chunk.NewIterator4Chunk(input)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		for row := it.Begin(); row != it.End(); row = it.Next() {
-			if _, _, err := cast.evalInt(ctx, row); err != nil {
+			if _, _, err := cast.evalInt(evalCtx, row); err != nil {
 				b.Fatal(err)
 			}
 		}
@@ -55,11 +55,12 @@ func BenchmarkCastIntAsIntRow(b *testing.B) {
 }
 
 func BenchmarkCastIntAsIntVec(b *testing.B) {
-	ctx := mock.NewContext()
+	ctx := mockStmtExprCtx()
+	evalCtx := ctx.GetEvalCtx()
 	cast, input, result := genCastIntAsInt(ctx)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		if err := cast.vecEvalInt(ctx, input, result); err != nil {
+		if err := cast.vecEvalInt(evalCtx, input, result); err != nil {
 			b.Fatal(err)
 		}
 	}

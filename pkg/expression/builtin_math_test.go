@@ -20,6 +20,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/expression/contextstatic"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -33,7 +34,7 @@ import (
 )
 
 func TestAbs(t *testing.T) {
-	ctx := createContext(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	tbl := []struct {
 		Arg any
 		Ret any
@@ -52,21 +53,14 @@ func TestAbs(t *testing.T) {
 		fc := funcs[ast.Abs]
 		f, err := fc.getFunction(ctx, datumsToConstants(tt["Arg"]))
 		require.NoError(t, err)
-		v, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+		v, err := evalBuiltinFunc(f, ctx.GetEvalCtx(), chunk.Row{})
 		require.NoError(t, err)
 		testutil.DatumEqual(t, tt["Ret"][0], v)
 	}
 }
 
 func TestCeil(t *testing.T) {
-	ctx := createContext(t)
-	sc := ctx.GetSessionVars().StmtCtx
-	oldTypeFlags := sc.TypeFlags()
-	defer func() {
-		sc.SetTypeFlags(oldTypeFlags)
-	}()
-	sc.SetTypeFlags(oldTypeFlags.WithIgnoreTruncateErr(true))
-
+	ctx := mockStmtIgnoreTruncateExprCtx()
 	type testCase struct {
 		arg    any
 		expect any
@@ -100,7 +94,7 @@ func TestCeil(t *testing.T) {
 			f, err := newFunctionForTest(ctx, funcName, primitiveValsToConstants(ctx, []any{test.arg})...)
 			require.NoError(t, err)
 
-			result, err := f.Eval(ctx, chunk.Row{})
+			result, err := f.Eval(ctx.GetEvalCtx(), chunk.Row{})
 			if test.getErr {
 				require.Error(t, err)
 			} else {
@@ -124,7 +118,7 @@ func TestCeil(t *testing.T) {
 }
 
 func TestExp(t *testing.T) {
-	ctx := createContext(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	tests := []struct {
 		args       any
 		expect     float64
@@ -147,18 +141,18 @@ func TestExp(t *testing.T) {
 	}
 
 	for _, test := range tests {
-		preWarningCnt := ctx.GetSessionVars().StmtCtx.WarningCount()
+		preWarningCnt := ctx.GetEvalCtx().WarningCount()
 		f, err := newFunctionForTest(ctx, ast.Exp, primitiveValsToConstants(ctx, []any{test.args})...)
 		require.NoError(t, err)
 
-		result, err := f.Eval(ctx, chunk.Row{})
+		result, err := f.Eval(ctx.GetEvalCtx(), chunk.Row{})
 		if test.getWarning {
 			if test.errMsg != "" {
 				require.Error(t, err)
 				require.Equal(t, test.errMsg, err.Error())
 			} else {
 				require.NoError(t, err)
-				require.Equal(t, preWarningCnt+1, ctx.GetSessionVars().StmtCtx.WarningCount())
+				require.Equal(t, preWarningCnt+1, ctx.GetEvalCtx().WarningCount())
 			}
 		} else {
 			require.NoError(t, err)
@@ -175,14 +169,7 @@ func TestExp(t *testing.T) {
 }
 
 func TestFloor(t *testing.T) {
-	ctx := createContext(t)
-	sc := ctx.GetSessionVars().StmtCtx
-	oldTypeFlags := sc.TypeFlags()
-	defer func() {
-		sc.SetTypeFlags(oldTypeFlags)
-	}()
-	sc.SetTypeFlags(oldTypeFlags.WithIgnoreTruncateErr(true))
-
+	ctx := mockStmtIgnoreTruncateExprCtx()
 	genDuration := func(h, m, s int64) types.Duration {
 		duration := time.Duration(h)*time.Hour +
 			time.Duration(m)*time.Minute +
@@ -216,7 +203,7 @@ func TestFloor(t *testing.T) {
 		f, err := newFunctionForTest(ctx, ast.Floor, primitiveValsToConstants(ctx, []any{test.arg})...)
 		require.NoError(t, err)
 
-		result, err := f.Eval(ctx, chunk.Row{})
+		result, err := f.Eval(ctx.GetEvalCtx(), chunk.Row{})
 		if test.getErr {
 			require.Error(t, err)
 		} else {
@@ -245,12 +232,12 @@ func TestFloor(t *testing.T) {
 }
 
 func TestLog(t *testing.T) {
-	ctx := createContext(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	tests := []struct {
 		args         []any
 		expect       float64
 		isNil        bool
-		warningCount uint16
+		warningCount int
 	}{
 		{[]any{nil}, 0, true, 0},
 		{[]any{nil, nil}, 0, true, 0},
@@ -267,14 +254,14 @@ func TestLog(t *testing.T) {
 	}
 
 	for _, test := range tests {
-		preWarningCnt := ctx.GetSessionVars().StmtCtx.WarningCount()
+		preWarningCnt := ctx.GetEvalCtx().WarningCount()
 		f, err := newFunctionForTest(ctx, ast.Log, primitiveValsToConstants(ctx, test.args)...)
 		require.NoError(t, err)
 
-		result, err := f.Eval(ctx, chunk.Row{})
+		result, err := f.Eval(ctx.GetEvalCtx(), chunk.Row{})
 		require.NoError(t, err)
 		if test.warningCount > 0 {
-			require.Equal(t, preWarningCnt+test.warningCount, ctx.GetSessionVars().StmtCtx.WarningCount())
+			require.Equal(t, preWarningCnt+test.warningCount, ctx.GetEvalCtx().WarningCount())
 		}
 		if test.isNil {
 			require.Equal(t, types.KindNull, result.Kind())
@@ -288,12 +275,12 @@ func TestLog(t *testing.T) {
 }
 
 func TestLog2(t *testing.T) {
-	ctx := createContext(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	tests := []struct {
 		args         any
 		expect       float64
 		isNil        bool
-		warningCount uint16
+		warningCount int
 	}{
 		{nil, 0, true, 0},
 		{int64(16), 4, false, 0},
@@ -305,14 +292,14 @@ func TestLog2(t *testing.T) {
 	}
 
 	for _, test := range tests {
-		preWarningCnt := ctx.GetSessionVars().StmtCtx.WarningCount()
+		preWarningCnt := ctx.GetEvalCtx().WarningCount()
 		f, err := newFunctionForTest(ctx, ast.Log2, primitiveValsToConstants(ctx, []any{test.args})...)
 		require.NoError(t, err)
 
-		result, err := f.Eval(ctx, chunk.Row{})
+		result, err := f.Eval(ctx.GetEvalCtx(), chunk.Row{})
 		require.NoError(t, err)
 		if test.warningCount > 0 {
-			require.Equal(t, preWarningCnt+test.warningCount, ctx.GetSessionVars().StmtCtx.WarningCount())
+			require.Equal(t, preWarningCnt+test.warningCount, ctx.GetEvalCtx().WarningCount())
 		}
 		if test.isNil {
 			require.Equal(t, types.KindNull, result.Kind())
@@ -326,12 +313,12 @@ func TestLog2(t *testing.T) {
 }
 
 func TestLog10(t *testing.T) {
-	ctx := createContext(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	tests := []struct {
 		args         any
 		expect       float64
 		isNil        bool
-		warningCount uint16
+		warningCount int
 	}{
 		{nil, 0, true, 0},
 		{int64(100), 2, false, 0},
@@ -343,14 +330,14 @@ func TestLog10(t *testing.T) {
 	}
 
 	for _, test := range tests {
-		preWarningCnt := ctx.GetSessionVars().StmtCtx.WarningCount()
+		preWarningCnt := ctx.GetEvalCtx().WarningCount()
 		f, err := newFunctionForTest(ctx, ast.Log10, primitiveValsToConstants(ctx, []any{test.args})...)
 		require.NoError(t, err)
 
-		result, err := f.Eval(ctx, chunk.Row{})
+		result, err := f.Eval(ctx.GetEvalCtx(), chunk.Row{})
 		require.NoError(t, err)
 		if test.warningCount > 0 {
-			require.Equal(t, preWarningCnt+test.warningCount, ctx.GetSessionVars().StmtCtx.WarningCount())
+			require.Equal(t, preWarningCnt+test.warningCount, ctx.GetEvalCtx().WarningCount())
 		}
 		if test.isNil {
 			require.Equal(t, types.KindNull, result.Kind())
@@ -364,11 +351,11 @@ func TestLog10(t *testing.T) {
 }
 
 func TestRand(t *testing.T) {
-	ctx := createContext(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	fc := funcs[ast.Rand]
 	f, err := fc.getFunction(ctx, nil)
 	require.NoError(t, err)
-	v, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+	v, err := evalBuiltinFunc(f, ctx.GetEvalCtx(), chunk.Row{})
 	require.NoError(t, err)
 	require.Less(t, v.GetFloat64(), float64(1))
 	require.GreaterOrEqual(t, v.GetFloat64(), float64(0))
@@ -378,14 +365,14 @@ func TestRand(t *testing.T) {
 	require.NoError(t, err)
 	randGen := mathutil.NewWithSeed(20160101)
 	for i := 0; i < 3; i++ {
-		v, err = evalBuiltinFunc(f2, ctx, chunk.Row{})
+		v, err = evalBuiltinFunc(f2, ctx.GetEvalCtx(), chunk.Row{})
 		require.NoError(t, err)
 		require.Equal(t, randGen.Gen(), v.GetFloat64())
 	}
 }
 
 func TestPow(t *testing.T) {
-	ctx := createContext(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	tbl := []struct {
 		Arg []any
 		Ret float64
@@ -402,7 +389,7 @@ func TestPow(t *testing.T) {
 		fc := funcs[ast.Pow]
 		f, err := fc.getFunction(ctx, datumsToConstants(tt["Arg"]))
 		require.NoError(t, err)
-		v, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+		v, err := evalBuiltinFunc(f, ctx.GetEvalCtx(), chunk.Row{})
 		require.NoError(t, err)
 		testutil.DatumEqual(t, tt["Ret"][0], v)
 	}
@@ -420,7 +407,7 @@ func TestPow(t *testing.T) {
 		fc := funcs[ast.Pow]
 		f, err := fc.getFunction(ctx, datumsToConstants(tt["Arg"]))
 		require.NoError(t, err)
-		_, err = evalBuiltinFunc(f, ctx, chunk.Row{})
+		_, err = evalBuiltinFunc(f, ctx.GetEvalCtx(), chunk.Row{})
 		if i == 2 {
 			require.Error(t, err)
 			require.Equal(t, "[types:1690]DOUBLE value is out of range in 'pow(10, 700)'", err.Error())
@@ -428,11 +415,11 @@ func TestPow(t *testing.T) {
 			require.NoError(t, err)
 		}
 	}
-	require.Equal(t, 3, int(ctx.GetSessionVars().StmtCtx.WarningCount()))
+	require.Equal(t, 3, ctx.GetEvalCtx().WarningCount())
 }
 
 func TestRound(t *testing.T) {
-	ctx := createContext(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	newDec := types.NewDecFromStringForTest
 	tbl := []struct {
 		Arg []any
@@ -479,14 +466,14 @@ func TestRound(t *testing.T) {
 		case *builtinRoundRealSig:
 			require.Equal(t, tipb.ScalarFuncSig_RoundReal, f.PbCode())
 		}
-		v, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+		v, err := evalBuiltinFunc(f, ctx.GetEvalCtx(), chunk.Row{})
 		require.NoError(t, err)
 		testutil.DatumEqual(t, tt["Ret"][0], v)
 	}
 }
 
 func TestTruncate(t *testing.T) {
-	ctx := createContext(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	newDec := types.NewDecFromStringForTest
 	tbl := []struct {
 		Arg []any
@@ -523,14 +510,13 @@ func TestTruncate(t *testing.T) {
 		f, err := fc.getFunction(ctx, datumsToConstants(tt["Arg"]))
 		require.NoError(t, err)
 		require.NotNil(t, f)
-		v, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+		v, err := evalBuiltinFunc(f, ctx.GetEvalCtx(), chunk.Row{})
 		require.NoError(t, err)
 		testutil.DatumEqual(t, tt["Ret"][0], v)
 	}
 }
 
 func TestCRC32(t *testing.T) {
-	ctx := createContext(t)
 	tbl := []struct {
 		input  []any
 		chs    string
@@ -550,11 +536,12 @@ func TestCRC32(t *testing.T) {
 		{[]any{"一"}, "gbk", 2925846374, false},
 	}
 	for _, c := range tbl {
-		err := ctx.GetSessionVars().SetSystemVar(variable.CharacterSetConnection, c.chs)
-		require.NoError(t, err)
+		vars := variable.NewSessionVars(nil)
+		require.NoError(t, vars.SetSystemVar(variable.CharacterSetConnection, c.chs))
+		ctx := mockStmtTruncateAsWarningExprCtx(contextstatic.WithCharset(vars.GetCharsetInfo()))
 		f, err := newFunctionForTest(ctx, ast.CRC32, primitiveValsToConstants(ctx, c.input)...)
 		require.NoError(t, err)
-		d, err := f.Eval(ctx, chunk.Row{})
+		d, err := f.Eval(ctx.GetEvalCtx(), chunk.Row{})
 		require.NoError(t, err)
 		if c.isNull {
 			require.True(t, d.IsNull())
@@ -565,7 +552,7 @@ func TestCRC32(t *testing.T) {
 }
 
 func TestConv(t *testing.T) {
-	ctx := createContext(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	cases := []struct {
 		args     []any
 		expected any
@@ -591,13 +578,13 @@ func TestConv(t *testing.T) {
 	for _, c := range cases {
 		f, err := newFunctionForTest(ctx, ast.Conv, primitiveValsToConstants(ctx, c.args)...)
 		require.NoError(t, err)
-		tp := f.GetType(ctx)
+		tp := f.GetType(ctx.GetEvalCtx())
 		require.Equal(t, mysql.TypeVarString, tp.GetType())
 		require.Equal(t, charset.CharsetUTF8MB4, tp.GetCharset())
 		require.Equal(t, charset.CollationUTF8MB4, tp.GetCollate())
 		require.Equal(t, uint(0), tp.GetFlag())
 
-		d, err := f.Eval(ctx, chunk.Row{})
+		d, err := f.Eval(ctx.GetEvalCtx(), chunk.Row{})
 		if c.getErr {
 			require.Error(t, err)
 		} else {
@@ -629,14 +616,7 @@ func TestConv(t *testing.T) {
 }
 
 func TestSign(t *testing.T) {
-	ctx := createContext(t)
-	sc := ctx.GetSessionVars().StmtCtx
-	oldTypeFlags := sc.TypeFlags()
-	defer func() {
-		sc.SetTypeFlags(oldTypeFlags)
-	}()
-	sc.SetTypeFlags(oldTypeFlags.WithIgnoreTruncateErr(true))
-
+	ctx := mockStmtIgnoreTruncateExprCtx()
 	for _, tt := range []struct {
 		num []any
 		ret any
@@ -657,21 +637,14 @@ func TestSign(t *testing.T) {
 		fc := funcs[ast.Sign]
 		f, err := fc.getFunction(ctx, primitiveValsToConstants(ctx, tt.num))
 		require.NoError(t, err)
-		v, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+		v, err := evalBuiltinFunc(f, ctx.GetEvalCtx(), chunk.Row{})
 		require.NoError(t, err)
 		testutil.DatumEqual(t, types.NewDatum(tt.ret), v)
 	}
 }
 
 func TestDegrees(t *testing.T) {
-	ctx := createContext(t)
-	sc := ctx.GetSessionVars().StmtCtx
-	oldTypeFlags := sc.TypeFlags()
-	defer func() {
-		sc.SetTypeFlags(oldTypeFlags)
-	}()
-	sc.SetTypeFlags(oldTypeFlags.WithIgnoreTruncateErr(false))
-
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	cases := []struct {
 		args       any
 		expected   float64
@@ -691,13 +664,13 @@ func TestDegrees(t *testing.T) {
 	}
 
 	for _, c := range cases {
-		preWarningCnt := ctx.GetSessionVars().StmtCtx.WarningCount()
+		preWarningCnt := ctx.GetEvalCtx().WarningCount()
 		f, err := newFunctionForTest(ctx, ast.Degrees, primitiveValsToConstants(ctx, []any{c.args})...)
 		require.NoError(t, err)
-		d, err := f.Eval(ctx, chunk.Row{})
+		d, err := f.Eval(ctx.GetEvalCtx(), chunk.Row{})
 		if c.getWarning {
 			require.NoError(t, err)
-			require.Equal(t, preWarningCnt+1, ctx.GetSessionVars().StmtCtx.WarningCount())
+			require.Equal(t, preWarningCnt+1, ctx.GetEvalCtx().WarningCount())
 		} else {
 			require.NoError(t, err)
 			if c.isNil {
@@ -712,7 +685,7 @@ func TestDegrees(t *testing.T) {
 }
 
 func TestSqrt(t *testing.T) {
-	ctx := createContext(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	tbl := []struct {
 		Arg []any
 		Ret any
@@ -729,24 +702,24 @@ func TestSqrt(t *testing.T) {
 		fc := funcs[ast.Sqrt]
 		f, err := fc.getFunction(ctx, primitiveValsToConstants(ctx, tt.Arg))
 		require.NoError(t, err)
-		v, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+		v, err := evalBuiltinFunc(f, ctx.GetEvalCtx(), chunk.Row{})
 		require.NoError(t, err)
 		testutil.DatumEqual(t, types.NewDatum(tt.Ret), v)
 	}
 }
 
 func TestPi(t *testing.T) {
-	ctx := createContext(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	f, err := funcs[ast.PI].getFunction(ctx, nil)
 	require.NoError(t, err)
 
-	pi, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+	pi, err := evalBuiltinFunc(f, ctx.GetEvalCtx(), chunk.Row{})
 	require.NoError(t, err)
 	testutil.DatumEqual(t, types.NewDatum(math.Pi), pi)
 }
 
 func TestRadians(t *testing.T) {
-	ctx := createContext(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	tbl := []struct {
 		Arg any
 		Ret any
@@ -764,7 +737,7 @@ func TestRadians(t *testing.T) {
 		f, err := fc.getFunction(ctx, datumsToConstants(tt["Arg"]))
 		require.NoError(t, err)
 		require.NotNil(t, f)
-		v, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+		v, err := evalBuiltinFunc(f, ctx.GetEvalCtx(), chunk.Row{})
 		require.NoError(t, err)
 		testutil.DatumEqual(t, tt["Ret"][0], v)
 	}
@@ -773,13 +746,13 @@ func TestRadians(t *testing.T) {
 	fc := funcs[ast.Radians]
 	f, err := fc.getFunction(ctx, datumsToConstants([]types.Datum{types.NewDatum(invalidArg)}))
 	require.NoError(t, err)
-	_, err = evalBuiltinFunc(f, ctx, chunk.Row{})
+	_, err = evalBuiltinFunc(f, ctx.GetEvalCtx(), chunk.Row{})
 	require.NoError(t, err)
-	require.Equal(t, 1, int(ctx.GetSessionVars().StmtCtx.WarningCount()))
+	require.Equal(t, 1, ctx.GetEvalCtx().WarningCount())
 }
 
 func TestSin(t *testing.T) {
-	ctx := createContext(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	cases := []struct {
 		args       any
 		expected   float64
@@ -800,14 +773,14 @@ func TestSin(t *testing.T) {
 	}
 
 	for _, c := range cases {
-		preWarningCnt := ctx.GetSessionVars().StmtCtx.WarningCount()
+		preWarningCnt := ctx.GetEvalCtx().WarningCount()
 		f, err := newFunctionForTest(ctx, ast.Sin, primitiveValsToConstants(ctx, []any{c.args})...)
 		require.NoError(t, err)
 
-		d, err := f.Eval(ctx, chunk.Row{})
+		d, err := f.Eval(ctx.GetEvalCtx(), chunk.Row{})
 		if c.getWarning {
 			require.NoError(t, err)
-			require.Equal(t, preWarningCnt+1, ctx.GetSessionVars().StmtCtx.WarningCount())
+			require.Equal(t, preWarningCnt+1, ctx.GetEvalCtx().WarningCount())
 		} else {
 			require.NoError(t, err)
 			if c.isNil {
@@ -823,7 +796,7 @@ func TestSin(t *testing.T) {
 }
 
 func TestCos(t *testing.T) {
-	ctx := createContext(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	cases := []struct {
 		args       any
 		expected   float64
@@ -841,14 +814,14 @@ func TestCos(t *testing.T) {
 	}
 
 	for _, c := range cases {
-		preWarningCnt := ctx.GetSessionVars().StmtCtx.WarningCount()
+		preWarningCnt := ctx.GetEvalCtx().WarningCount()
 		f, err := newFunctionForTest(ctx, ast.Cos, primitiveValsToConstants(ctx, []any{c.args})...)
 		require.NoError(t, err)
 
-		d, err := f.Eval(ctx, chunk.Row{})
+		d, err := f.Eval(ctx.GetEvalCtx(), chunk.Row{})
 		if c.getWarning {
 			require.NoError(t, err)
-			require.Equal(t, preWarningCnt+1, ctx.GetSessionVars().StmtCtx.WarningCount())
+			require.Equal(t, preWarningCnt+1, ctx.GetEvalCtx().WarningCount())
 		} else {
 			require.NoError(t, err)
 			if c.isNil {
@@ -864,7 +837,7 @@ func TestCos(t *testing.T) {
 }
 
 func TestAcos(t *testing.T) {
-	ctx := createContext(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	tests := []struct {
 		args       any
 		expect     float64
@@ -880,14 +853,14 @@ func TestAcos(t *testing.T) {
 	}
 
 	for _, test := range tests {
-		preWarningCnt := ctx.GetSessionVars().StmtCtx.WarningCount()
+		preWarningCnt := ctx.GetEvalCtx().WarningCount()
 		f, err := newFunctionForTest(ctx, ast.Acos, primitiveValsToConstants(ctx, []any{test.args})...)
 		require.NoError(t, err)
 
-		result, err := f.Eval(ctx, chunk.Row{})
+		result, err := f.Eval(ctx.GetEvalCtx(), chunk.Row{})
 		if test.getWarning {
 			require.NoError(t, err)
-			require.Equal(t, preWarningCnt+1, ctx.GetSessionVars().StmtCtx.WarningCount())
+			require.Equal(t, preWarningCnt+1, ctx.GetEvalCtx().WarningCount())
 		} else {
 			require.NoError(t, err)
 			if test.isNil {
@@ -903,7 +876,7 @@ func TestAcos(t *testing.T) {
 }
 
 func TestAsin(t *testing.T) {
-	ctx := createContext(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	tests := []struct {
 		args       any
 		expect     float64
@@ -919,14 +892,14 @@ func TestAsin(t *testing.T) {
 	}
 
 	for _, test := range tests {
-		preWarningCnt := ctx.GetSessionVars().StmtCtx.WarningCount()
+		preWarningCnt := ctx.GetEvalCtx().WarningCount()
 		f, err := newFunctionForTest(ctx, ast.Asin, primitiveValsToConstants(ctx, []any{test.args})...)
 		require.NoError(t, err)
 
-		result, err := f.Eval(ctx, chunk.Row{})
+		result, err := f.Eval(ctx.GetEvalCtx(), chunk.Row{})
 		if test.getWarning {
 			require.NoError(t, err)
-			require.Equal(t, preWarningCnt+1, ctx.GetSessionVars().StmtCtx.WarningCount())
+			require.Equal(t, preWarningCnt+1, ctx.GetEvalCtx().WarningCount())
 		} else {
 			require.NoError(t, err)
 			if test.isNil {
@@ -942,7 +915,7 @@ func TestAsin(t *testing.T) {
 }
 
 func TestAtan(t *testing.T) {
-	ctx := createContext(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	tests := []struct {
 		args       []any
 		expect     float64
@@ -958,14 +931,14 @@ func TestAtan(t *testing.T) {
 	}
 
 	for _, test := range tests {
-		preWarningCnt := ctx.GetSessionVars().StmtCtx.WarningCount()
+		preWarningCnt := ctx.GetEvalCtx().WarningCount()
 		f, err := newFunctionForTest(ctx, ast.Atan, primitiveValsToConstants(ctx, test.args)...)
 		require.NoError(t, err)
 
-		result, err := f.Eval(ctx, chunk.Row{})
+		result, err := f.Eval(ctx.GetEvalCtx(), chunk.Row{})
 		if test.getWarning {
 			require.NoError(t, err)
-			require.Equal(t, preWarningCnt+1, ctx.GetSessionVars().StmtCtx.WarningCount())
+			require.Equal(t, preWarningCnt+1, ctx.GetEvalCtx().WarningCount())
 		} else {
 			require.NoError(t, err)
 			if test.isNil {
@@ -981,7 +954,7 @@ func TestAtan(t *testing.T) {
 }
 
 func TestTan(t *testing.T) {
-	ctx := createContext(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	cases := []struct {
 		args       any
 		expected   float64
@@ -998,14 +971,14 @@ func TestTan(t *testing.T) {
 	}
 
 	for _, c := range cases {
-		preWarningCnt := ctx.GetSessionVars().StmtCtx.WarningCount()
+		preWarningCnt := ctx.GetEvalCtx().WarningCount()
 		f, err := newFunctionForTest(ctx, ast.Tan, primitiveValsToConstants(ctx, []any{c.args})...)
 		require.NoError(t, err)
 
-		d, err := f.Eval(ctx, chunk.Row{})
+		d, err := f.Eval(ctx.GetEvalCtx(), chunk.Row{})
 		if c.getWarning {
 			require.NoError(t, err)
-			require.Equal(t, preWarningCnt+1, ctx.GetSessionVars().StmtCtx.WarningCount())
+			require.Equal(t, preWarningCnt+1, ctx.GetEvalCtx().WarningCount())
 		} else {
 			require.NoError(t, err)
 			if c.isNil {
@@ -1021,7 +994,7 @@ func TestTan(t *testing.T) {
 }
 
 func TestCot(t *testing.T) {
-	ctx := createContext(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	tests := []struct {
 		args   any
 		expect float64
@@ -1043,7 +1016,7 @@ func TestCot(t *testing.T) {
 		f, err := newFunctionForTest(ctx, ast.Cot, primitiveValsToConstants(ctx, []any{test.args})...)
 		require.NoError(t, err)
 
-		result, err := f.Eval(ctx, chunk.Row{})
+		result, err := f.Eval(ctx.GetEvalCtx(), chunk.Row{})
 		if test.getErr {
 			require.Error(t, err)
 			if test.errMsg != "" {

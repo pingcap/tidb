@@ -28,6 +28,20 @@ type SessionVarsPropProvider struct {
 	vars variable.SessionVarsProvider
 }
 
+type singleValSessionVarsProvider struct {
+	vars *variable.SessionVars
+}
+
+// SessionVarsAsProvider creates a new SessionVarsProvider from a `*variable.SessionVars`
+func SessionVarsAsProvider(vars *variable.SessionVars) variable.SessionVarsProvider {
+	return &singleValSessionVarsProvider{vars: vars}
+}
+
+// GetSessionVars returns the session vars
+func (p *singleValSessionVarsProvider) GetSessionVars() *variable.SessionVars {
+	return p.vars
+}
+
 // NewSessionVarsProvider returns a new SessionVarsPropProvider
 func NewSessionVarsProvider(provider variable.SessionVarsProvider) *SessionVarsPropProvider {
 	intest.AssertNotNil(provider)

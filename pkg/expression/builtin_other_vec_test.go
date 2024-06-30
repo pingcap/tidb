@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 )
 
@@ -63,7 +62,7 @@ func BenchmarkVectorizedBuiltinOtherFunc(b *testing.B) {
 }
 
 func TestInDecimal(t *testing.T) {
-	ctx := mock.NewContext()
+	ctx := mockStmtExprCtx()
 	ft := eType2FieldType(types.ETDecimal)
 	col0 := &Column{RetType: ft, Index: 0}
 	col1 := &Column{RetType: ft, Index: 1}
@@ -83,7 +82,7 @@ func TestInDecimal(t *testing.T) {
 		require.NotEqual(t, input.Column(0).GetDecimal(i).GetDigitsFrac(), input.Column(1).GetDecimal(i).GetDigitsFrac())
 	}
 	result := chunk.NewColumn(ft, 1024)
-	require.NoError(t, vecEvalType(ctx, inFunc, types.ETInt, input, result))
+	require.NoError(t, vecEvalType(ctx.GetEvalCtx(), inFunc, types.ETInt, input, result))
 	for i := 0; i < 1024; i++ {
 		require.Equal(t, int64(1), result.GetInt64(0))
 	}

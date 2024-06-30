@@ -18,28 +18,29 @@ import (
 	"math"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/expression/contextstatic"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit/testutil"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tidb/pkg/util/printer"
 	"github.com/stretchr/testify/require"
 )
 
 func TestDatabase(t *testing.T) {
 	fc := funcs[ast.Database]
-	ctx := mock.NewContext()
+	ctx := mockStmtExprCtx()
 	f, err := fc.getFunction(ctx, nil)
 	require.NoError(t, err)
-	d, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+	d, err := evalBuiltinFunc(f, ctx.GetEvalCtx(), chunk.Row{})
 	require.NoError(t, err)
 	require.Equal(t, types.KindNull, d.Kind())
-	ctx.GetSessionVars().CurrentDB = "test"
-	d, err = evalBuiltinFunc(f, ctx, chunk.Row{})
+	ctx = applyExprCtx(ctx, contextstatic.WithCurrentDB("test"))
+	d, err = evalBuiltinFunc(f, ctx.GetEvalCtx(), chunk.Row{})
 	require.NoError(t, err)
 	require.Equal(t, "test", d.GetString())
 	require.Equal(t, f.PbCode(), f.Clone().PbCode())
@@ -49,119 +50,120 @@ func TestDatabase(t *testing.T) {
 	require.NotNil(t, fc)
 	f, err = fc.getFunction(ctx, nil)
 	require.NoError(t, err)
-	d, err = evalBuiltinFunc(f, ctx, chunk.MutRowFromDatums(types.MakeDatums()).ToRow())
+	d, err = evalBuiltinFunc(f, ctx.GetEvalCtx(), chunk.MutRowFromDatums(types.MakeDatums()).ToRow())
 	require.NoError(t, err)
 	require.Equal(t, "test", d.GetString())
 	require.Equal(t, f.PbCode(), f.Clone().PbCode())
 }
 
 func TestFoundRows(t *testing.T) {
-	ctx := mock.NewContext()
-	sessionVars := ctx.GetSessionVars()
-	sessionVars.LastFoundRows = 2
+	vars := variable.NewSessionVars(nil)
+	ctx := mockStmtExprCtx(vars)
+	vars.LastFoundRows = 2
 
 	fc := funcs[ast.FoundRows]
 	f, err := fc.getFunction(ctx, nil)
 	require.NoError(t, err)
-	d, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+	d, err := evalBuiltinFunc(f, ctx.GetEvalCtx(), chunk.Row{})
 	require.NoError(t, err)
 	require.Equal(t, uint64(2), d.GetUint64())
 }
 
 func TestUser(t *testing.T) {
-	ctx := mock.NewContext()
-	sessionVars := ctx.GetSessionVars()
+	sessionVars := variable.NewSessionVars(nil)
+	ctx := mockStmtExprCtx(sessionVars)
 	sessionVars.User = &auth.UserIdentity{Username: "root", Hostname: "localhost"}
 
 	fc := funcs[ast.User]
 	f, err := fc.getFunction(ctx, nil)
 	require.NoError(t, err)
-	d, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+	d, err := evalBuiltinFunc(f, ctx.GetEvalCtx(), chunk.Row{})
 	require.NoError(t, err)
 	require.Equal(t, "root@localhost", d.GetString())
 	require.Equal(t, f.PbCode(), f.Clone().PbCode())
 }
 
 func TestCurrentUser(t *testing.T) {
-	ctx := mock.NewContext()
-	sessionVars := ctx.GetSessionVars()
+	sessionVars := variable.NewSessionVars(nil)
+	ctx := mockStmtExprCtx(sessionVars)
 	sessionVars.User = &auth.UserIdentity{Username: "root", Hostname: "localhost", AuthUsername: "root", AuthHostname: "localhost"}
 
 	fc := funcs[ast.CurrentUser]
 	f, err := fc.getFunction(ctx, nil)
 	require.NoError(t, err)
-	d, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+	d, err := evalBuiltinFunc(f, ctx.GetEvalCtx(), chunk.Row{})
 	require.NoError(t, err)
 	require.Equal(t, "root@localhost", d.GetString())
 	require.Equal(t, f.PbCode(), f.Clone().PbCode())
 }
 
 func TestCurrentResourceGroup(t *testing.T) {
-	ctx := mock.NewContext()
-	sessionVars := ctx.GetSessionVars()
+	sessionVars := variable.NewSessionVars(nil)
+	ctx := mockStmtExprCtx(sessionVars)
 	sessionVars.StmtCtx.ResourceGroupName = "rg1"
 
 	fc := funcs[ast.CurrentResourceGroup]
 	f, err := fc.getFunction(ctx, nil)
 	require.NoError(t, err)
-	d, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+	d, err := evalBuiltinFunc(f, ctx.GetEvalCtx(), chunk.Row{})
 	require.NoError(t, err)
 	require.Equal(t, "rg1", d.GetString())
 	require.Equal(t, f.PbCode(), f.Clone().PbCode())
 }
 
 func TestCurrentRole(t *testing.T) {
-	ctx := mock.NewContext()
+	sessionVars := variable.NewSessionVars(nil)
+	ctx := mockStmtExprCtx(sessionVars)
+
 	fc := funcs[ast.CurrentRole]
 	f, err := fc.getFunction(ctx, nil)
 	require.NoError(t, err)
 
 	// empty roles
 	var d types.Datum
-	d, err = evalBuiltinFunc(f, ctx, chunk.Row{})
+	d, err = evalBuiltinFunc(f, ctx.GetEvalCtx(), chunk.Row{})
 	require.NoError(t, err)
 	require.Equal(t, "NONE", d.GetString())
 	require.Equal(t, f.PbCode(), f.Clone().PbCode())
 
 	// add roles
-	sessionVars := ctx.GetSessionVars()
 	sessionVars.ActiveRoles = make([]*auth.RoleIdentity, 0, 10)
 	sessionVars.ActiveRoles = append(sessionVars.ActiveRoles, &auth.RoleIdentity{Username: "r_1", Hostname: "%"})
 	sessionVars.ActiveRoles = append(sessionVars.ActiveRoles, &auth.RoleIdentity{Username: "r_2", Hostname: "localhost"})
 
-	d, err = evalBuiltinFunc(f, ctx, chunk.Row{})
+	d, err = evalBuiltinFunc(f, ctx.GetEvalCtx(), chunk.Row{})
 	require.NoError(t, err)
 	require.Equal(t, "`r_1`@`%`,`r_2`@`localhost`", d.GetString())
 	require.Equal(t, f.PbCode(), f.Clone().PbCode())
 }
 
 func TestConnectionID(t *testing.T) {
-	ctx := mock.NewContext()
-	sessionVars := ctx.GetSessionVars()
+	sessionVars := variable.NewSessionVars(nil)
+	ctx := mockStmtExprCtx(sessionVars)
 	sessionVars.ConnectionID = uint64(1)
 
 	fc := funcs[ast.ConnectionID]
 	f, err := fc.getFunction(ctx, nil)
 	require.NoError(t, err)
-	d, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+	d, err := evalBuiltinFunc(f, ctx.GetEvalCtx(), chunk.Row{})
 	require.NoError(t, err)
 	require.Equal(t, uint64(1), d.GetUint64())
 	require.Equal(t, f.PbCode(), f.Clone().PbCode())
 }
 
 func TestVersion(t *testing.T) {
-	ctx := createContext(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	fc := funcs[ast.Version]
 	f, err := fc.getFunction(ctx, nil)
 	require.NoError(t, err)
-	v, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+	v, err := evalBuiltinFunc(f, ctx.GetEvalCtx(), chunk.Row{})
 	require.NoError(t, err)
 	require.Equal(t, mysql.ServerVersion, v.GetString())
 	require.Equal(t, f.PbCode(), f.Clone().PbCode())
 }
 
 func TestBenchMark(t *testing.T) {
-	ctx := createContext(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	cases := []struct {
 		LoopCount  int
 		Expression any
@@ -187,7 +189,7 @@ func TestBenchMark(t *testing.T) {
 		})...)
 		require.NoError(t, err)
 
-		d, err := f.Eval(ctx, chunk.Row{})
+		d, err := f.Eval(ctx.GetEvalCtx(), chunk.Row{})
 		require.NoError(t, err)
 		if c.IsNil {
 			require.True(t, d.IsNull())
@@ -202,7 +204,7 @@ func TestBenchMark(t *testing.T) {
 }
 
 func TestCharset(t *testing.T) {
-	ctx := createContext(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	fc := funcs[ast.Charset]
 	f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(nil)))
 	require.NotNil(t, f)
@@ -211,7 +213,7 @@ func TestCharset(t *testing.T) {
 }
 
 func TestCoercibility(t *testing.T) {
-	ctx := createContext(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	fc := funcs[ast.Coercibility]
 	f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(nil)))
 	require.NotNil(t, f)
@@ -219,7 +221,7 @@ func TestCoercibility(t *testing.T) {
 }
 
 func TestCollation(t *testing.T) {
-	ctx := createContext(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	fc := funcs[ast.Collation]
 	f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(nil)))
 	require.NotNil(t, f)
@@ -228,8 +230,8 @@ func TestCollation(t *testing.T) {
 }
 
 func TestRowCount(t *testing.T) {
-	ctx := mock.NewContext()
-	sessionVars := ctx.GetSessionVars()
+	sessionVars := variable.NewSessionVars(nil)
+	ctx := mockStmtExprCtx(sessionVars)
 	sessionVars.StmtCtx.PrevAffectedRows = 10
 
 	f, err := funcs[ast.RowCount].getFunction(ctx, nil)
@@ -238,7 +240,7 @@ func TestRowCount(t *testing.T) {
 	sig, ok := f.(*builtinRowCountSig)
 	require.True(t, ok)
 	require.NotNil(t, sig)
-	intResult, isNull, err := sig.evalInt(ctx, chunk.Row{})
+	intResult, isNull, err := sig.evalInt(ctx.GetEvalCtx(), chunk.Row{})
 	require.NoError(t, err)
 	require.False(t, isNull)
 	require.Equal(t, int64(10), intResult)
@@ -247,16 +249,17 @@ func TestRowCount(t *testing.T) {
 
 // TestTiDBVersion for tidb_server().
 func TestTiDBVersion(t *testing.T) {
-	ctx := createContext(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	f, err := newFunctionForTest(ctx, ast.TiDBVersion, primitiveValsToConstants(ctx, []any{})...)
 	require.NoError(t, err)
-	v, err := f.Eval(ctx, chunk.Row{})
+	v, err := f.Eval(ctx.GetEvalCtx(), chunk.Row{})
 	require.NoError(t, err)
 	require.Equal(t, printer.GetTiDBInfo(), v.GetString())
 }
 
 func TestLastInsertID(t *testing.T) {
-	ctx := createContext(t)
+	vars := variable.NewSessionVars(nil)
+	ctx := mockStmtTruncateAsWarningExprCtx(vars)
 	maxUint64 := uint64(math.MaxUint64)
 	cases := []struct {
 		insertID uint64
@@ -279,7 +282,7 @@ func TestLastInsertID(t *testing.T) {
 			err error
 		)
 		if c.insertID > 0 {
-			ctx.GetSessionVars().StmtCtx.PrevLastInsertID = c.insertID
+			vars.StmtCtx.PrevLastInsertID = c.insertID
 		}
 
 		if c.args != nil {
@@ -287,14 +290,14 @@ func TestLastInsertID(t *testing.T) {
 		} else {
 			f, err = newFunctionForTest(ctx, ast.LastInsertId)
 		}
-		tp := f.GetType(ctx)
+		tp := f.GetType(ctx.GetEvalCtx())
 		require.NoError(t, err)
 		require.Equal(t, mysql.TypeLonglong, tp.GetType())
 		require.Equal(t, charset.CharsetBin, tp.GetCharset())
 		require.Equal(t, charset.CollationBin, tp.GetCollate())
 		require.Equal(t, mysql.BinaryFlag, tp.GetFlag()&mysql.BinaryFlag)
 		require.Equal(t, mysql.MaxIntWidth, tp.GetFlen())
-		d, err := f.Eval(ctx, chunk.Row{})
+		d, err := f.Eval(ctx.GetEvalCtx(), chunk.Row{})
 		if c.getErr {
 			require.Error(t, err)
 		} else {
@@ -312,7 +315,7 @@ func TestLastInsertID(t *testing.T) {
 }
 
 func TestFormatBytes(t *testing.T) {
-	ctx := createContext(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	tbl := []struct {
 		Arg any
 		Ret any
@@ -334,14 +337,14 @@ func TestFormatBytes(t *testing.T) {
 		fc := funcs[ast.FormatBytes]
 		f, err := fc.getFunction(ctx, datumsToConstants(tt["Arg"]))
 		require.NoError(t, err)
-		v, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+		v, err := evalBuiltinFunc(f, ctx.GetEvalCtx(), chunk.Row{})
 		require.NoError(t, err)
 		testutil.DatumEqual(t, tt["Ret"][0], v)
 	}
 }
 
 func TestFormatNanoTime(t *testing.T) {
-	ctx := createContext(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	tbl := []struct {
 		Arg any
 		Ret any
@@ -363,7 +366,7 @@ func TestFormatNanoTime(t *testing.T) {
 		fc := funcs[ast.FormatNanoTime]
 		f, err := fc.getFunction(ctx, datumsToConstants(tt["Arg"]))
 		require.NoError(t, err)
-		v, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+		v, err := evalBuiltinFunc(f, ctx.GetEvalCtx(), chunk.Row{})
 		require.NoError(t, err)
 		testutil.DatumEqual(t, tt["Ret"][0], v)
 	}

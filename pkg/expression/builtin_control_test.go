@@ -27,7 +27,7 @@ import (
 )
 
 func TestCaseWhen(t *testing.T) {
-	ctx := createContext(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	tbl := []struct {
 		Arg []any
 		Ret any
@@ -48,24 +48,18 @@ func TestCaseWhen(t *testing.T) {
 	for _, tt := range tbl {
 		f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(tt.Arg...)))
 		require.NoError(t, err)
-		d, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+		d, err := evalBuiltinFunc(f, ctx.GetEvalCtx(), chunk.Row{})
 		require.NoError(t, err)
 		testutil.DatumEqual(t, types.NewDatum(tt.Ret), d)
 	}
 	f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(errors.New("can't convert string to bool"), 1, true)))
 	require.NoError(t, err)
-	_, err = evalBuiltinFunc(f, ctx, chunk.Row{})
+	_, err = evalBuiltinFunc(f, ctx.GetEvalCtx(), chunk.Row{})
 	require.Error(t, err)
 }
 
 func TestIf(t *testing.T) {
-	ctx := createContext(t)
-	stmtCtx := ctx.GetSessionVars().StmtCtx
-	oldTypeFlags := stmtCtx.TypeFlags()
-	defer func() {
-		stmtCtx.SetTypeFlags(oldTypeFlags)
-	}()
-	stmtCtx.SetTypeFlags(oldTypeFlags.WithIgnoreTruncateErr(true))
+	ctx := mockStmtIgnoreTruncateExprCtx()
 	tbl := []struct {
 		Arg1 any
 		Arg2 any
@@ -94,20 +88,20 @@ func TestIf(t *testing.T) {
 	for _, tt := range tbl {
 		f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(tt.Arg1, tt.Arg2, tt.Arg3)))
 		require.NoError(t, err)
-		d, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+		d, err := evalBuiltinFunc(f, ctx.GetEvalCtx(), chunk.Row{})
 		require.NoError(t, err)
 		testutil.DatumEqual(t, types.NewDatum(tt.Ret), d)
 	}
 	f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(errors.New("must error"), 1, 2)))
 	require.NoError(t, err)
-	_, err = evalBuiltinFunc(f, ctx, chunk.Row{})
+	_, err = evalBuiltinFunc(f, ctx.GetEvalCtx(), chunk.Row{})
 	require.Error(t, err)
 	_, err = fc.getFunction(ctx, datumsToConstants(types.MakeDatums(1, 2)))
 	require.Error(t, err)
 }
 
 func TestIfNull(t *testing.T) {
-	ctx := createContext(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	tbl := []struct {
 		arg1     any
 		arg2     any
@@ -131,7 +125,7 @@ func TestIfNull(t *testing.T) {
 	for _, tt := range tbl {
 		f, err := newFunctionForTest(ctx, ast.Ifnull, primitiveValsToConstants(ctx, []any{tt.arg1, tt.arg2})...)
 		require.NoError(t, err)
-		d, err := f.Eval(ctx, chunk.Row{})
+		d, err := f.Eval(ctx.GetEvalCtx(), chunk.Row{})
 		if tt.getErr {
 			require.Error(t, err)
 		} else {

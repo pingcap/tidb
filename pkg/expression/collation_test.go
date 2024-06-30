@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 )
 
@@ -218,9 +217,9 @@ func TestInferCollation(t *testing.T) {
 		},
 	}
 
-	ctx := createContext(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	for i, test := range tests {
-		ec := inferCollation(ctx, test.exprs...)
+		ec := inferCollation(ctx.GetEvalCtx(), test.exprs...)
 		if test.err {
 			require.Nil(t, ec, i)
 		} else {
@@ -288,7 +287,7 @@ func newColInt(coercibility Coercibility) *Column {
 }
 
 func TestDeriveCollation(t *testing.T) {
-	ctx := mock.NewContext()
+	ctx := mockStmtExprCtx()
 	tests := []struct {
 		fcs    []string
 		args   []Expression
@@ -738,7 +737,7 @@ func TestCompareString(t *testing.T) {
 	require.NotEqual(t, 0, types.CompareString("😜", "😃", "binary"))
 	require.NotEqual(t, 0, types.CompareString("a ", "a  ", "binary"))
 
-	ctx := mock.NewContext()
+	ctx := mockStmtExprCtx()
 	ft := types.NewFieldType(mysql.TypeVarString)
 	col1 := &Column{
 		RetType: ft,
@@ -758,7 +757,7 @@ func TestCompareString(t *testing.T) {
 	chk.Column(0).AppendString("a ")
 	chk.Column(1).AppendString("a  ")
 	for i := 0; i < 4; i++ {
-		v, isNull, err := CompareStringWithCollationInfo(ctx, col1, col2, chk.GetRow(0), chk.GetRow(0), "utf8_general_ci")
+		v, isNull, err := CompareStringWithCollationInfo(ctx.GetEvalCtx(), col1, col2, chk.GetRow(0), chk.GetRow(0), "utf8_general_ci")
 		require.NoError(t, err)
 		require.False(t, isNull)
 		require.Equal(t, int64(0), v)

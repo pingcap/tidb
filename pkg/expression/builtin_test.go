@@ -22,6 +22,8 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/expression/contextopt"
+	"github.com/pingcap/tidb/pkg/expression/contextstatic"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -124,34 +126,58 @@ func makeDatums(i any) []types.Datum {
 }
 
 func TestIsNullFunc(t *testing.T) {
-	ctx := createContext(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	fc := funcs[ast.IsNull]
 	f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(1)))
 	require.NoError(t, err)
-	v, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+	v, err := evalBuiltinFunc(f, ctx.GetEvalCtx(), chunk.Row{})
 	require.NoError(t, err)
 	require.Equal(t, int64(0), v.GetInt64())
 
 	f, err = fc.getFunction(ctx, datumsToConstants(types.MakeDatums(nil)))
 	require.NoError(t, err)
-	v, err = evalBuiltinFunc(f, ctx, chunk.Row{})
+	v, err = evalBuiltinFunc(f, ctx.GetEvalCtx(), chunk.Row{})
 	require.NoError(t, err)
 	require.Equal(t, int64(1), v.GetInt64())
 }
 
+type mockAdvisoryLock struct{}
+
+// GetAdvisoryLock acquires an advisory lock
+func (mockAdvisoryLock) GetAdvisoryLock(_ string, _ int64) error {
+	return nil
+}
+
+// IsUsedAdvisoryLock check if a lock name is in use
+func (mockAdvisoryLock) IsUsedAdvisoryLock(_ string) uint64 {
+	return 0
+}
+
+// ReleaseAdvisoryLock releases an advisory lock
+func (mockAdvisoryLock) ReleaseAdvisoryLock(_ string) bool {
+	return true
+}
+
+// ReleaseAllAdvisoryLocks releases all advisory locks
+func (mockAdvisoryLock) ReleaseAllAdvisoryLocks() int {
+	return 0
+}
+
 func TestLock(t *testing.T) {
-	ctx := createContext(t)
+	ctx := mockStmtIgnoreTruncateExprCtx(contextstatic.WithOptionalProperty(
+		contextopt.NewAdvisoryLockPropProvider(mockAdvisoryLock{}),
+	))
 	lock := funcs[ast.GetLock]
 	f, err := lock.getFunction(ctx, datumsToConstants(types.MakeDatums("mylock", 1)))
 	require.NoError(t, err)
-	v, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+	v, err := evalBuiltinFunc(f, ctx.GetEvalCtx(), chunk.Row{})
 	require.NoError(t, err)
 	require.Equal(t, int64(1), v.GetInt64())
 
 	releaseLock := funcs[ast.ReleaseLock]
 	f, err = releaseLock.getFunction(ctx, datumsToConstants(types.MakeDatums("mylock")))
 	require.NoError(t, err)
-	v, err = evalBuiltinFunc(f, ctx, chunk.Row{})
+	v, err = evalBuiltinFunc(f, ctx.GetEvalCtx(), chunk.Row{})
 	require.NoError(t, err)
 	require.Equal(t, int64(1), v.GetInt64())
 }
@@ -166,7 +192,7 @@ func TestDisplayName(t *testing.T) {
 
 func TestBuiltinFuncCacheConcurrency(t *testing.T) {
 	cache := builtinFuncCache[int]{}
-	ctx := createContext(t)
+	ctx := mockEvalCtx()
 
 	var invoked atomic.Int64
 	construct := func() (int, error) {
@@ -195,15 +221,15 @@ func TestBuiltinFuncCacheConcurrency(t *testing.T) {
 
 func TestBuiltinFuncCache(t *testing.T) {
 	cache := builtinFuncCache[int]{}
-	ctx := createContext(t)
+	ctx := mockEvalCtx()
 
 	// ok should be false when no cache present
-	v, ok := cache.getCache(ctx.GetSessionVars().StmtCtx.CtxID())
+	v, ok := cache.getCache(ctx.CtxID())
 	require.Equal(t, 0, v)
 	require.False(t, ok)
 
 	// getCache should not init cache
-	v, ok = cache.getCache(ctx.GetSessionVars().StmtCtx.CtxID())
+	v, ok = cache.getCache(ctx.CtxID())
 	require.Equal(t, 0, v)
 	require.False(t, ok)
 
@@ -224,7 +250,7 @@ func TestBuiltinFuncCache(t *testing.T) {
 	require.Equal(t, int64(1), invoked.Load())
 
 	// get should return the cache
-	v, ok = cache.getCache(ctx.GetSessionVars().StmtCtx.CtxID())
+	v, ok = cache.getCache(ctx.CtxID())
 	require.Equal(t, 101, v)
 	require.True(t, ok)
 
@@ -235,17 +261,17 @@ func TestBuiltinFuncCache(t *testing.T) {
 	require.Equal(t, int64(1), invoked.Load())
 
 	// if ctxID changed, should re-init cache
-	ctx = createContext(t)
+	ctx = mockEvalCtx()
 	v, err = cache.getOrInitCache(ctx, construct)
 	require.NoError(t, err)
 	require.Equal(t, 102, v)
 	require.Equal(t, int64(2), invoked.Load())
-	v, ok = cache.getCache(ctx.GetSessionVars().StmtCtx.CtxID())
+	v, ok = cache.getCache(ctx.CtxID())
 	require.Equal(t, 102, v)
 	require.True(t, ok)
 
 	// error should be returned
-	ctx = createContext(t)
+	ctx = mockEvalCtx()
 	returnError = true
 	v, err = cache.getOrInitCache(ctx, construct)
 	require.Equal(t, 0, v)

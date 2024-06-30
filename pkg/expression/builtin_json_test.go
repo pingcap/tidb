@@ -29,7 +29,7 @@ import (
 )
 
 func TestJSONType(t *testing.T) {
-	ctx := createContext(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	fc := funcs[ast.JSONType]
 	tbl := []struct {
 		Input    any
@@ -47,14 +47,14 @@ func TestJSONType(t *testing.T) {
 	for _, tt := range dtbl {
 		f, err := fc.getFunction(ctx, datumsToConstants(tt["Input"]))
 		require.NoError(t, err)
-		d, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+		d, err := evalBuiltinFunc(f, ctx.GetEvalCtx(), chunk.Row{})
 		require.NoError(t, err)
 		testutil.DatumEqual(t, tt["Expected"][0], d)
 	}
 }
 
 func TestJSONQuote(t *testing.T) {
-	ctx := createContext(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	fc := funcs[ast.JSONQuote]
 	tbl := []struct {
 		Input    any
@@ -76,14 +76,14 @@ func TestJSONQuote(t *testing.T) {
 	for _, tt := range dtbl {
 		f, err := fc.getFunction(ctx, datumsToConstants(tt["Input"]))
 		require.NoError(t, err)
-		d, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+		d, err := evalBuiltinFunc(f, ctx.GetEvalCtx(), chunk.Row{})
 		require.NoError(t, err)
 		testutil.DatumEqual(t, tt["Expected"][0], d)
 	}
 }
 
 func TestJSONUnquote(t *testing.T) {
-	ctx := createContext(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	fc := funcs[ast.JSONUnquote]
 	tbl := []struct {
 		Input  string
@@ -111,7 +111,7 @@ func TestJSONUnquote(t *testing.T) {
 		d.SetString(tt.Input, mysql.DefaultCollationName)
 		f, err := fc.getFunction(ctx, datumsToConstants([]types.Datum{d}))
 		require.NoError(t, err)
-		d, err = evalBuiltinFunc(f, ctx, chunk.Row{})
+		d, err = evalBuiltinFunc(f, ctx.GetEvalCtx(), chunk.Row{})
 		if tt.Error == nil {
 			require.Equal(t, tt.Result, d.GetString())
 			require.NoError(t, err)
@@ -123,7 +123,7 @@ func TestJSONUnquote(t *testing.T) {
 }
 
 func TestJSONExtract(t *testing.T) {
-	ctx := createContext(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	fc := funcs[ast.JSONExtract]
 	jstr := `{"a": [{"aa": [{"aaa": 1}]}], "aaa": 2}`
 	tbl := []struct {
@@ -139,7 +139,7 @@ func TestJSONExtract(t *testing.T) {
 		args := types.MakeDatums(tt.Input...)
 		f, err := fc.getFunction(ctx, datumsToConstants(args))
 		require.NoError(t, err)
-		d, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+		d, err := evalBuiltinFunc(f, ctx.GetEvalCtx(), chunk.Row{})
 		if tt.Success {
 			require.NoError(t, err)
 			switch x := tt.Expected.(type) {
@@ -161,7 +161,7 @@ func TestJSONExtract(t *testing.T) {
 
 // TestJSONSetInsertReplace tests grammar of json_{set,insert,replace}.
 func TestJSONSetInsertReplace(t *testing.T) {
-	ctx := createContext(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	tbl := []struct {
 		fc           functionClass
 		Input        []any
@@ -186,7 +186,7 @@ func TestJSONSetInsertReplace(t *testing.T) {
 		f, err = tt.fc.getFunction(ctx, datumsToConstants(args))
 		if tt.BuildSuccess {
 			require.NoError(t, err)
-			d, err = evalBuiltinFunc(f, ctx, chunk.Row{})
+			d, err = evalBuiltinFunc(f, ctx.GetEvalCtx(), chunk.Row{})
 			if tt.Success {
 				require.NoError(t, err)
 				switch x := tt.Expected.(type) {
@@ -207,7 +207,7 @@ func TestJSONSetInsertReplace(t *testing.T) {
 }
 
 func TestJSONMerge(t *testing.T) {
-	ctx := createContext(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	fc := funcs[ast.JSONMerge]
 	tbl := []struct {
 		Input    []any
@@ -221,7 +221,7 @@ func TestJSONMerge(t *testing.T) {
 		args := types.MakeDatums(tt.Input...)
 		f, err := fc.getFunction(ctx, datumsToConstants(args))
 		require.NoError(t, err)
-		d, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+		d, err := evalBuiltinFunc(f, ctx.GetEvalCtx(), chunk.Row{})
 		require.NoError(t, err)
 
 		switch x := tt.Expected.(type) {
@@ -238,7 +238,7 @@ func TestJSONMerge(t *testing.T) {
 }
 
 func TestJSONMergePreserve(t *testing.T) {
-	ctx := createContext(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	fc := funcs[ast.JSONMergePreserve]
 	tbl := []struct {
 		Input    []any
@@ -252,7 +252,7 @@ func TestJSONMergePreserve(t *testing.T) {
 		args := types.MakeDatums(tt.Input...)
 		f, err := fc.getFunction(ctx, datumsToConstants(args))
 		require.NoError(t, err)
-		d, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+		d, err := evalBuiltinFunc(f, ctx.GetEvalCtx(), chunk.Row{})
 		require.NoError(t, err)
 
 		switch x := tt.Expected.(type) {
@@ -269,7 +269,7 @@ func TestJSONMergePreserve(t *testing.T) {
 }
 
 func TestJSONArray(t *testing.T) {
-	ctx := createContext(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	fc := funcs[ast.JSONArray]
 	tbl := []struct {
 		Input    []any
@@ -282,7 +282,7 @@ func TestJSONArray(t *testing.T) {
 		args := types.MakeDatums(tt.Input...)
 		f, err := fc.getFunction(ctx, datumsToConstants(args))
 		require.NoError(t, err)
-		d, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+		d, err := evalBuiltinFunc(f, ctx.GetEvalCtx(), chunk.Row{})
 		require.NoError(t, err)
 
 		j1, err := types.ParseBinaryJSONFromString(tt.Expected)
@@ -294,7 +294,7 @@ func TestJSONArray(t *testing.T) {
 }
 
 func TestJSONObject(t *testing.T) {
-	ctx := createContext(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	fc := funcs[ast.JSONObject]
 	tbl := []struct {
 		Input        []any
@@ -317,7 +317,7 @@ func TestJSONObject(t *testing.T) {
 		f, err = fc.getFunction(ctx, datumsToConstants(args))
 		if tt.BuildSuccess {
 			require.NoError(t, err)
-			d, err = evalBuiltinFunc(f, ctx, chunk.Row{})
+			d, err = evalBuiltinFunc(f, ctx.GetEvalCtx(), chunk.Row{})
 			if tt.Success {
 				require.NoError(t, err)
 				switch x := tt.Expected.(type) {
@@ -338,7 +338,7 @@ func TestJSONObject(t *testing.T) {
 }
 
 func TestJSONRemove(t *testing.T) {
-	ctx := createContext(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	fc := funcs[ast.JSONRemove]
 	tbl := []struct {
 		Input    []any
@@ -367,7 +367,7 @@ func TestJSONRemove(t *testing.T) {
 		args := types.MakeDatums(tt.Input...)
 		f, err := fc.getFunction(ctx, datumsToConstants(args))
 		require.NoError(t, err)
-		d, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+		d, err := evalBuiltinFunc(f, ctx.GetEvalCtx(), chunk.Row{})
 
 		if tt.Success {
 			require.NoError(t, err)
@@ -388,7 +388,7 @@ func TestJSONRemove(t *testing.T) {
 }
 
 func TestJSONMemberOf(t *testing.T) {
-	ctx := createContext(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	fc := funcs[ast.JSONMemberOf]
 	tbl := []struct {
 		input    []any
@@ -414,7 +414,7 @@ func TestJSONMemberOf(t *testing.T) {
 		args := types.MakeDatums(tt.input...)
 		f, err := fc.getFunction(ctx, datumsToConstants(args))
 		require.NoError(t, err, tt.input)
-		d, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+		d, err := evalBuiltinFunc(f, ctx.GetEvalCtx(), chunk.Row{})
 		if tt.err == nil {
 			require.NoError(t, err, tt.input)
 			if tt.expected == nil {
@@ -429,7 +429,7 @@ func TestJSONMemberOf(t *testing.T) {
 }
 
 func TestJSONContains(t *testing.T) {
-	ctx := createContext(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	fc := funcs[ast.JSONContains]
 	tbl := []struct {
 		input    []any
@@ -480,7 +480,7 @@ func TestJSONContains(t *testing.T) {
 		args := types.MakeDatums(tt.input...)
 		f, err := fc.getFunction(ctx, datumsToConstants(args))
 		require.NoError(t, err)
-		d, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+		d, err := evalBuiltinFunc(f, ctx.GetEvalCtx(), chunk.Row{})
 		if tt.err == nil {
 			require.NoError(t, err)
 			if tt.expected == nil {
@@ -509,7 +509,7 @@ func TestJSONContains(t *testing.T) {
 }
 
 func TestJSONOverlaps(t *testing.T) {
-	ctx := createContext(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	fc := funcs[ast.JSONOverlaps]
 	tbl := []struct {
 		input    []any
@@ -559,7 +559,7 @@ func TestJSONOverlaps(t *testing.T) {
 		args := types.MakeDatums(tt.input...)
 		f, err := fc.getFunction(ctx, datumsToConstants(args))
 		require.NoError(t, err, tt.input)
-		d, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+		d, err := evalBuiltinFunc(f, ctx.GetEvalCtx(), chunk.Row{})
 		if tt.err == nil {
 			require.NoError(t, err, tt.input)
 			if tt.expected == nil {
@@ -574,7 +574,7 @@ func TestJSONOverlaps(t *testing.T) {
 }
 
 func TestJSONContainsPath(t *testing.T) {
-	ctx := createContext(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	fc := funcs[ast.JSONContainsPath]
 	jsonString := `{"a": 1, "b": 2, "c": {"d": 4}}`
 	invalidJSON := `{"a": 1`
@@ -618,7 +618,7 @@ func TestJSONContainsPath(t *testing.T) {
 		args := types.MakeDatums(tt.input...)
 		f, err := fc.getFunction(ctx, datumsToConstants(args))
 		require.NoError(t, err)
-		d, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+		d, err := evalBuiltinFunc(f, ctx.GetEvalCtx(), chunk.Row{})
 		if tt.success {
 			require.NoError(t, err)
 			if tt.expected == nil {
@@ -633,7 +633,7 @@ func TestJSONContainsPath(t *testing.T) {
 }
 
 func TestJSONLength(t *testing.T) {
-	ctx := createContext(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	fc := funcs[ast.JSONLength]
 	tbl := []struct {
 		input    []any
@@ -689,7 +689,7 @@ func TestJSONLength(t *testing.T) {
 		args := types.MakeDatums(tt.input...)
 		f, err := fc.getFunction(ctx, datumsToConstants(args))
 		require.NoError(t, err)
-		d, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+		d, err := evalBuiltinFunc(f, ctx.GetEvalCtx(), chunk.Row{})
 		if tt.success {
 			require.NoError(t, err)
 
@@ -705,7 +705,7 @@ func TestJSONLength(t *testing.T) {
 }
 
 func TestJSONKeys(t *testing.T) {
-	ctx := createContext(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	fc := funcs[ast.JSONKeys]
 	tbl := []struct {
 		input    []any
@@ -754,7 +754,7 @@ func TestJSONKeys(t *testing.T) {
 		args := types.MakeDatums(tt.input...)
 		f, err := fc.getFunction(ctx, datumsToConstants(args))
 		require.NoError(t, err)
-		d, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+		d, err := evalBuiltinFunc(f, ctx.GetEvalCtx(), chunk.Row{})
 		if tt.success {
 			require.NoError(t, err)
 			switch x := tt.expected.(type) {
@@ -776,7 +776,7 @@ func TestJSONKeys(t *testing.T) {
 }
 
 func TestJSONDepth(t *testing.T) {
-	ctx := createContext(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	fc := funcs[ast.JSONDepth]
 	tbl := []struct {
 		input    []any
@@ -819,7 +819,7 @@ func TestJSONDepth(t *testing.T) {
 		args := types.MakeDatums(tt.input...)
 		f, err := fc.getFunction(ctx, datumsToConstants(args))
 		require.NoError(t, err)
-		d, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+		d, err := evalBuiltinFunc(f, ctx.GetEvalCtx(), chunk.Row{})
 		if tt.success {
 			require.NoError(t, err)
 
@@ -835,7 +835,7 @@ func TestJSONDepth(t *testing.T) {
 }
 
 func TestJSONArrayAppend(t *testing.T) {
-	ctx := createContext(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	sampleJSON, err := types.ParseBinaryJSONFromString(`{"b": 2}`)
 	require.NoError(t, err)
 	fc := funcs[ast.JSONArrayAppend]
@@ -880,7 +880,7 @@ func TestJSONArrayAppend(t *testing.T) {
 
 	for i, tt := range tbl {
 		args := types.MakeDatums(tt.input...)
-		ctx.GetSessionVars().StmtCtx.SetWarnings(nil)
+		ctx.GetEvalCtx().TruncateWarnings(0)
 		f, err := fc.getFunction(ctx, datumsToConstants(args))
 		// No error should return in getFunction if tt.err is nil.
 		if err != nil {
@@ -890,8 +890,8 @@ func TestJSONArrayAppend(t *testing.T) {
 		}
 
 		require.NotNil(t, f)
-		d, err := evalBuiltinFunc(f, ctx, chunk.Row{})
-		comment := fmt.Sprintf("case:%v \n input:%v \n output: %s \n expected: %v \n warnings: %v \n expected error %v", i, tt.input, d.GetMysqlJSON(), tt.expected, ctx.GetSessionVars().StmtCtx.GetWarnings(), tt.err)
+		d, err := evalBuiltinFunc(f, ctx.GetEvalCtx(), chunk.Row{})
+		comment := fmt.Sprintf("case:%v \n input:%v \n output: %s \n expected: %v \n warnings: %v \n expected error %v", i, tt.input, d.GetMysqlJSON(), tt.expected, ctx.GetEvalCtx().CopyWarnings(nil), tt.err)
 
 		if tt.err != nil {
 			require.True(t, tt.err.Equal(err), comment)
@@ -899,7 +899,7 @@ func TestJSONArrayAppend(t *testing.T) {
 		}
 
 		require.NoError(t, err, comment)
-		require.Equal(t, 0, int(ctx.GetSessionVars().StmtCtx.WarningCount()), comment)
+		require.Equal(t, 0, ctx.GetEvalCtx().WarningCount(), comment)
 
 		if tt.expected == nil {
 			require.True(t, d.IsNull(), comment)
@@ -914,7 +914,7 @@ func TestJSONArrayAppend(t *testing.T) {
 }
 
 func TestJSONSearch(t *testing.T) {
-	ctx := createContext(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	fc := funcs[ast.JSONSearch]
 	jsonString := `["abc", [{"k": "10"}, "def"], {"x":"abc"}, {"y":"bcd"}]`
 	jsonString2 := `["abc", [{"k": "10"}, "def"], {"x":"ab%d"}, {"y":"abcd"}]`
@@ -968,7 +968,7 @@ func TestJSONSearch(t *testing.T) {
 		args := types.MakeDatums(tt.input...)
 		f, err := fc.getFunction(ctx, datumsToConstants(args))
 		require.NoError(t, err)
-		d, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+		d, err := evalBuiltinFunc(f, ctx.GetEvalCtx(), chunk.Row{})
 		if tt.success {
 			require.NoError(t, err)
 			switch x := tt.expected.(type) {
@@ -989,7 +989,7 @@ func TestJSONSearch(t *testing.T) {
 }
 
 func TestJSONArrayInsert(t *testing.T) {
-	ctx := createContext(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	fc := funcs[ast.JSONArrayInsert]
 	tbl := []struct {
 		input    []any
@@ -1039,7 +1039,7 @@ func TestJSONArrayInsert(t *testing.T) {
 			continue
 		}
 
-		d, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+		d, err := evalBuiltinFunc(f, ctx.GetEvalCtx(), chunk.Row{})
 
 		if tt.success {
 			require.NoError(t, err)
@@ -1062,7 +1062,7 @@ func TestJSONArrayInsert(t *testing.T) {
 }
 
 func TestJSONValid(t *testing.T) {
-	ctx := createContext(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	fc := funcs[ast.JSONValid]
 	tbl := []struct {
 		Input    any
@@ -1086,14 +1086,14 @@ func TestJSONValid(t *testing.T) {
 	for _, tt := range dtbl {
 		f, err := fc.getFunction(ctx, datumsToConstants(tt["Input"]))
 		require.NoError(t, err)
-		d, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+		d, err := evalBuiltinFunc(f, ctx.GetEvalCtx(), chunk.Row{})
 		require.NoError(t, err)
 		testutil.DatumEqual(t, tt["Expected"][0], d)
 	}
 }
 
 func TestJSONStorageFree(t *testing.T) {
-	ctx := createContext(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	fc := funcs[ast.JSONStorageFree]
 	tbl := []struct {
 		input    []any
@@ -1120,7 +1120,7 @@ func TestJSONStorageFree(t *testing.T) {
 		args := types.MakeDatums(tt.input...)
 		f, err := fc.getFunction(ctx, datumsToConstants(args))
 		require.NoError(t, err)
-		d, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+		d, err := evalBuiltinFunc(f, ctx.GetEvalCtx(), chunk.Row{})
 		if tt.success {
 			require.NoError(t, err)
 
@@ -1136,7 +1136,7 @@ func TestJSONStorageFree(t *testing.T) {
 }
 
 func TestJSONStorageSize(t *testing.T) {
-	ctx := createContext(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	fc := funcs[ast.JSONStorageSize]
 	tbl := []struct {
 		input    []any
@@ -1163,7 +1163,7 @@ func TestJSONStorageSize(t *testing.T) {
 		args := types.MakeDatums(tt.input...)
 		f, err := fc.getFunction(ctx, datumsToConstants(args))
 		require.NoError(t, err)
-		d, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+		d, err := evalBuiltinFunc(f, ctx.GetEvalCtx(), chunk.Row{})
 		if tt.success {
 			require.NoError(t, err)
 
@@ -1179,7 +1179,7 @@ func TestJSONStorageSize(t *testing.T) {
 }
 
 func TestJSONPretty(t *testing.T) {
-	ctx := createContext(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	fc := funcs[ast.JSONPretty]
 	tbl := []struct {
 		input    []any
@@ -1237,7 +1237,7 @@ func TestJSONPretty(t *testing.T) {
 		args := types.MakeDatums(tt.input...)
 		f, err := fc.getFunction(ctx, datumsToConstants(args))
 		require.NoError(t, err)
-		d, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+		d, err := evalBuiltinFunc(f, ctx.GetEvalCtx(), chunk.Row{})
 		if tt.success {
 			require.NoError(t, err)
 
@@ -1253,7 +1253,7 @@ func TestJSONPretty(t *testing.T) {
 }
 
 func TestJSONMergePatch(t *testing.T) {
-	ctx := createContext(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	fc := funcs[ast.JSONMergePatch]
 	tbl := []struct {
 		input    []any
@@ -1327,7 +1327,7 @@ func TestJSONMergePatch(t *testing.T) {
 		args := types.MakeDatums(tt.input...)
 		f, err := fc.getFunction(ctx, datumsToConstants(args))
 		require.NoError(t, err)
-		d, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+		d, err := evalBuiltinFunc(f, ctx.GetEvalCtx(), chunk.Row{})
 		if tt.success {
 			require.NoError(t, err)
 
@@ -1345,7 +1345,7 @@ func TestJSONMergePatch(t *testing.T) {
 }
 
 func TestJSONSchemaValid(t *testing.T) {
-	ctx := createContext(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	fc := funcs[ast.JSONSchemaValid]
 	tbl := []struct {
 		Input    any
@@ -1385,7 +1385,7 @@ func TestJSONSchemaValid(t *testing.T) {
 	for _, tt := range dtbl {
 		f, err := fc.getFunction(ctx, datumsToConstants(tt["Input"]))
 		require.NoError(t, err)
-		d, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+		d, err := evalBuiltinFunc(f, ctx.GetEvalCtx(), chunk.Row{})
 		require.NoError(t, err)
 		if tt["Expected"][0].IsNull() {
 			require.True(t, d.IsNull())
@@ -1405,7 +1405,7 @@ func TestJSONSchemaValid(t *testing.T) {
 
 // TestJSONSchemaValidCache is to test if the cached schema is used
 func TestJSONSchemaValidCache(t *testing.T) {
-	ctx := createContext(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	fc := funcs[ast.JSONSchemaValid]
 	tbl := []struct {
 		Input    any
@@ -1419,14 +1419,14 @@ func TestJSONSchemaValidCache(t *testing.T) {
 		// Get the function and eval once, ensuring it is cached
 		f, err := fc.getFunction(ctx, datumsToConstants(tt["Input"]))
 		require.NoError(t, err)
-		_, err = evalBuiltinFunc(f, ctx, chunk.Row{})
+		_, err = evalBuiltinFunc(f, ctx.GetEvalCtx(), chunk.Row{})
 		require.NoError(t, err)
 
 		// Disable the cache function
 		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/expression/jsonSchemaValidDisableCacheRefresh", `return(true)`))
 
 		// This eval should use the cache and not call the function.
-		_, err = evalBuiltinFunc(f, ctx, chunk.Row{})
+		_, err = evalBuiltinFunc(f, ctx.GetEvalCtx(), chunk.Row{})
 		require.NoError(t, err)
 
 		// Now get a new cache by getting the function again.
@@ -1434,7 +1434,7 @@ func TestJSONSchemaValidCache(t *testing.T) {
 		require.NoError(t, err)
 
 		// Empty cache, we call the function. This should return an error.
-		_, err = evalBuiltinFunc(f, ctx, chunk.Row{})
+		_, err = evalBuiltinFunc(f, ctx.GetEvalCtx(), chunk.Row{})
 		require.Error(t, err)
 	}
 

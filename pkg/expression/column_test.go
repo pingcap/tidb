@@ -23,12 +23,11 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 )
 
 func TestColumn(t *testing.T) {
-	ctx := mock.NewContext()
+	ctx := mockStmtExprCtx().GetEvalCtx()
 	col := &Column{RetType: types.NewFieldType(mysql.TypeLonglong), UniqueID: 1}
 
 	require.True(t, col.EqualColumn(col))
@@ -165,7 +164,7 @@ func TestIndexInfo2Cols(t *testing.T) {
 }
 
 func TestColHybird(t *testing.T) {
-	ctx := mock.NewContext()
+	ctx := mockStmtExprCtx().GetEvalCtx()
 
 	// bit
 	ft := types.NewFieldType(mysql.TypeBit)
@@ -244,7 +243,7 @@ func TestInColumnArray(t *testing.T) {
 }
 
 func TestGcColumnExprIsTidbShard(t *testing.T) {
-	ctx := mock.NewContext()
+	ctx := mockStmtExprCtx()
 
 	// abnormal case
 	// nil, not tidb_shard

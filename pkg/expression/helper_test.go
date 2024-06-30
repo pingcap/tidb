@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package expression
+package expression_test
 
 import (
 	"fmt"
@@ -20,6 +20,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -32,7 +33,7 @@ import (
 
 func TestGetTimeValue(t *testing.T) {
 	ctx := mock.NewContext()
-	v, err := GetTimeValue(ctx, "2012-12-12 00:00:00", mysql.TypeTimestamp, types.MinFsp, nil)
+	v, err := expression.GetTimeValue(ctx, "2012-12-12 00:00:00", mysql.TypeTimestamp, types.MinFsp, nil)
 	require.NoError(t, err)
 
 	require.Equal(t, types.KindMysqlTime, v.Kind())
@@ -42,7 +43,7 @@ func TestGetTimeValue(t *testing.T) {
 	sessionVars := ctx.GetSessionVars()
 	err = sessionVars.SetSystemVar("timestamp", "0")
 	require.NoError(t, err)
-	v, err = GetTimeValue(ctx, "2012-12-12 00:00:00", mysql.TypeTimestamp, types.MinFsp, nil)
+	v, err = expression.GetTimeValue(ctx, "2012-12-12 00:00:00", mysql.TypeTimestamp, types.MinFsp, nil)
 	require.NoError(t, err)
 
 	require.Equal(t, types.KindMysqlTime, v.Kind())
@@ -51,7 +52,7 @@ func TestGetTimeValue(t *testing.T) {
 
 	err = sessionVars.SetSystemVar("timestamp", "0")
 	require.NoError(t, err)
-	v, err = GetTimeValue(ctx, "2012-12-12 00:00:00", mysql.TypeTimestamp, types.MinFsp, nil)
+	v, err = expression.GetTimeValue(ctx, "2012-12-12 00:00:00", mysql.TypeTimestamp, types.MinFsp, nil)
 	require.NoError(t, err)
 
 	require.Equal(t, types.KindMysqlTime, v.Kind())
@@ -60,7 +61,7 @@ func TestGetTimeValue(t *testing.T) {
 
 	err = sessionVars.SetSystemVar("timestamp", "")
 	require.Error(t, err, "Incorrect argument type to variable 'timestamp'")
-	v, err = GetTimeValue(ctx, "2012-12-12 00:00:00", mysql.TypeTimestamp, types.MinFsp, nil)
+	v, err = expression.GetTimeValue(ctx, "2012-12-12 00:00:00", mysql.TypeTimestamp, types.MinFsp, nil)
 	require.NoError(t, err)
 
 	require.Equal(t, types.KindMysqlTime, v.Kind())
@@ -71,10 +72,10 @@ func TestGetTimeValue(t *testing.T) {
 	err = sessionVars.SetSystemVar("timestamp", "0")
 	require.NoError(t, err)
 
-	v1, err := GetTimeCurrentTimestamp(ctx, mysql.TypeTimestamp, types.MinFsp)
+	v1, err := expression.GetTimeCurrentTimestamp(ctx, mysql.TypeTimestamp, types.MinFsp)
 	require.NoError(t, err)
 
-	v2, err := GetTimeCurrentTimestamp(ctx, mysql.TypeTimestamp, types.MinFsp)
+	v2, err := expression.GetTimeCurrentTimestamp(ctx, mysql.TypeTimestamp, types.MinFsp)
 	require.NoError(t, err)
 
 	require.Equal(t, v1, v2)
@@ -98,7 +99,7 @@ func TestGetTimeValue(t *testing.T) {
 
 	for i, tbl := range tbls {
 		comment := fmt.Sprintf("expr: %d", i)
-		v, err := GetTimeValue(ctx, tbl.Expr, mysql.TypeTimestamp, types.MinFsp, nil)
+		v, err := expression.GetTimeValue(ctx, tbl.Expr, mysql.TypeTimestamp, types.MinFsp, nil)
 		require.NoError(t, err)
 
 		switch v.Kind() {
@@ -120,7 +121,7 @@ func TestGetTimeValue(t *testing.T) {
 	}
 
 	for _, tbl := range errTbl {
-		_, err := GetTimeValue(ctx, tbl.Expr, mysql.TypeTimestamp, types.MinFsp, nil)
+		_, err := expression.GetTimeValue(ctx, tbl.Expr, mysql.TypeTimestamp, types.MinFsp, nil)
 		require.Error(t, err)
 	}
 }
@@ -134,24 +135,24 @@ func TestIsCurrentTimestampExpr(t *testing.T) {
 		return &ast.FuncCallExpr{FnName: model.NewCIStr("CURRENT_TIMESTAMP"), Args: args}
 	}
 
-	v := IsValidCurrentTimestampExpr(ast.NewValueExpr("abc", charset.CharsetUTF8MB4, charset.CollationUTF8MB4), nil)
+	v := expression.IsValidCurrentTimestampExpr(ast.NewValueExpr("abc", charset.CharsetUTF8MB4, charset.CollationUTF8MB4), nil)
 	require.False(t, v)
-	v = IsValidCurrentTimestampExpr(buildTimestampFuncCallExpr(0), nil)
+	v = expression.IsValidCurrentTimestampExpr(buildTimestampFuncCallExpr(0), nil)
 	require.True(t, v)
 	ft := &types.FieldType{}
 	ft.SetDecimal(3)
-	v = IsValidCurrentTimestampExpr(buildTimestampFuncCallExpr(3), ft)
+	v = expression.IsValidCurrentTimestampExpr(buildTimestampFuncCallExpr(3), ft)
 	require.True(t, v)
-	v = IsValidCurrentTimestampExpr(buildTimestampFuncCallExpr(1), ft)
+	v = expression.IsValidCurrentTimestampExpr(buildTimestampFuncCallExpr(1), ft)
 	require.False(t, v)
-	v = IsValidCurrentTimestampExpr(buildTimestampFuncCallExpr(0), ft)
+	v = expression.IsValidCurrentTimestampExpr(buildTimestampFuncCallExpr(0), ft)
 	require.False(t, v)
 
 	ft1 := &types.FieldType{}
 	ft1.SetDecimal(0)
-	v = IsValidCurrentTimestampExpr(buildTimestampFuncCallExpr(2), ft1)
+	v = expression.IsValidCurrentTimestampExpr(buildTimestampFuncCallExpr(2), ft1)
 	require.False(t, v)
-	v = IsValidCurrentTimestampExpr(buildTimestampFuncCallExpr(2), nil)
+	v = expression.IsValidCurrentTimestampExpr(buildTimestampFuncCallExpr(2), nil)
 	require.False(t, v)
 }
 
@@ -164,7 +165,7 @@ func TestCurrentTimestampTimeZone(t *testing.T) {
 	err = sessionVars.SetSystemVar("time_zone", "+00:00")
 	require.NoError(t, err)
 	sessionVars.StmtCtx.SetTimeZone(sessionVars.Location())
-	v, err := GetTimeValue(ctx, ast.CurrentTimestamp, mysql.TypeTimestamp, types.MinFsp, nil)
+	v, err := expression.GetTimeValue(ctx, ast.CurrentTimestamp, mysql.TypeTimestamp, types.MinFsp, nil)
 	require.NoError(t, err)
 	require.EqualValues(t, types.NewTime(
 		types.FromDate(1970, 1, 1, 0, 20, 34, 0),
@@ -176,7 +177,7 @@ func TestCurrentTimestampTimeZone(t *testing.T) {
 	err = sessionVars.SetSystemVar("time_zone", "+08:00")
 	require.NoError(t, err)
 	sessionVars.StmtCtx.SetTimeZone(sessionVars.Location())
-	v, err = GetTimeValue(ctx, ast.CurrentTimestamp, mysql.TypeTimestamp, types.MinFsp, nil)
+	v, err = expression.GetTimeValue(ctx, ast.CurrentTimestamp, mysql.TypeTimestamp, types.MinFsp, nil)
 	require.NoError(t, err)
 	require.EqualValues(t, types.NewTime(
 		types.FromDate(1970, 1, 1, 8, 20, 34, 0),

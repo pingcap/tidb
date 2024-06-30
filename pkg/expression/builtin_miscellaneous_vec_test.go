@@ -19,10 +19,11 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/errctx"
+	"github.com/pingcap/tidb/pkg/expression/contextstatic"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/stretchr/testify/require"
 )
@@ -139,8 +140,8 @@ func (c *counter) add(diff int) int {
 }
 
 func TestSleepVectorized(t *testing.T) {
-	ctx := mock.NewContext()
-	sessVars := ctx.GetSessionVars()
+	sessVars := variable.NewSessionVars(nil)
+	ctx := mockStmtExprCtx(sessVars)
 
 	fc := funcs[ast.Sleep]
 	ft := eType2FieldType(types.ETReal)
@@ -154,51 +155,51 @@ func TestSleepVectorized(t *testing.T) {
 	// non-strict model
 	var levels errctx.LevelMap
 	levels[errctx.ErrGroupBadNull] = errctx.LevelWarn
-	sessVars.StmtCtx.SetErrLevels(levels)
+	ctx = applyExprCtx(ctx, contextstatic.WithErrLevelMap(levels))
 	input.AppendFloat64(0, 1)
-	err = vecEvalType(ctx, f, types.ETInt, input, result)
+	err = vecEvalType(ctx.GetEvalCtx(), f, types.ETInt, input, result)
 	require.NoError(t, err)
 	require.Equal(t, int64(0), result.GetInt64(0))
-	require.Equal(t, uint16(warnCnt.add(0)), sessVars.StmtCtx.WarningCount())
+	require.Equal(t, warnCnt.add(0), ctx.GetEvalCtx().WarningCount())
 
 	input.Reset()
 	input.AppendFloat64(0, -1)
-	err = vecEvalType(ctx, f, types.ETInt, input, result)
+	err = vecEvalType(ctx.GetEvalCtx(), f, types.ETInt, input, result)
 	require.NoError(t, err)
 	require.Equal(t, int64(0), result.GetInt64(0))
-	require.Equal(t, uint16(warnCnt.add(1)), sessVars.StmtCtx.WarningCount())
+	require.Equal(t, warnCnt.add(1), ctx.GetEvalCtx().WarningCount())
 
 	input.Reset()
 	input.AppendNull(0)
-	err = vecEvalType(ctx, f, types.ETInt, input, result)
+	err = vecEvalType(ctx.GetEvalCtx(), f, types.ETInt, input, result)
 	require.NoError(t, err)
 	require.Equal(t, int64(0), result.GetInt64(0))
-	require.Equal(t, uint16(warnCnt.add(1)), sessVars.StmtCtx.WarningCount())
+	require.Equal(t, warnCnt.add(1), ctx.GetEvalCtx().WarningCount())
 
 	input.Reset()
 	input.AppendNull(0)
 	input.AppendFloat64(0, 1)
 	input.AppendFloat64(0, -1)
-	err = vecEvalType(ctx, f, types.ETInt, input, result)
+	err = vecEvalType(ctx.GetEvalCtx(), f, types.ETInt, input, result)
 	require.NoError(t, err)
 	require.Equal(t, int64(0), result.GetInt64(0))
 	require.Equal(t, int64(0), result.GetInt64(1))
 	require.Equal(t, int64(0), result.GetInt64(2))
-	require.Equal(t, uint16(warnCnt.add(2)), sessVars.StmtCtx.WarningCount())
+	require.Equal(t, warnCnt.add(2), ctx.GetEvalCtx().WarningCount())
 
 	// for error case under the strict model
 	levels[errctx.ErrGroupBadNull] = errctx.LevelError
-	sessVars.StmtCtx.SetErrLevels(levels)
+	ctx = applyExprCtx(ctx, contextstatic.WithErrLevelMap(levels))
 	input.Reset()
 	input.AppendNull(0)
-	err = vecEvalType(ctx, f, types.ETInt, input, result)
+	err = vecEvalType(ctx.GetEvalCtx(), f, types.ETInt, input, result)
 	require.Error(t, err)
 	require.Equal(t, int64(0), result.GetInt64(0))
 
-	sessVars.StmtCtx.SetWarnings(nil)
+	ctx.GetEvalCtx().TruncateWarnings(0)
 	input.Reset()
 	input.AppendFloat64(0, -2.5)
-	err = vecEvalType(ctx, f, types.ETInt, input, result)
+	err = vecEvalType(ctx.GetEvalCtx(), f, types.ETInt, input, result)
 	require.Error(t, err)
 	require.Equal(t, int64(0), result.GetInt64(0))
 
@@ -206,7 +207,7 @@ func TestSleepVectorized(t *testing.T) {
 	input.Reset()
 	input.AppendFloat64(0, 0.5)
 	start := time.Now()
-	err = vecEvalType(ctx, f, types.ETInt, input, result)
+	err = vecEvalType(ctx.GetEvalCtx(), f, types.ETInt, input, result)
 	require.NoError(t, err)
 	require.Equal(t, int64(0), result.GetInt64(0))
 	sub := time.Since(start)
@@ -219,9 +220,9 @@ func TestSleepVectorized(t *testing.T) {
 	start = time.Now()
 	go func() {
 		time.Sleep(1 * time.Second)
-		ctx.GetSessionVars().SQLKiller.SendKillSignal(sqlkiller.QueryInterrupted)
+		sessVars.SQLKiller.SendKillSignal(sqlkiller.QueryInterrupted)
 	}()
-	err = vecEvalType(ctx, f, types.ETInt, input, result)
+	err = vecEvalType(ctx.GetEvalCtx(), f, types.ETInt, input, result)
 	sub = time.Since(start)
 	require.NoError(t, err)
 	require.Equal(t, int64(0), result.GetInt64(0))

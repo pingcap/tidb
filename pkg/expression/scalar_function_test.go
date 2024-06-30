@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 )
 
@@ -91,7 +90,7 @@ func TestExpressionSemanticEqual(t *testing.T) {
 }
 
 func TestScalarFunction(t *testing.T) {
-	ctx := mock.NewContext()
+	ctx := mockStmtExprCtx()
 	a := &Column{
 		UniqueID: 1,
 		RetType:  types.NewFieldType(mysql.TypeDouble),
@@ -103,7 +102,7 @@ func TestScalarFunction(t *testing.T) {
 	require.EqualValues(t, []byte{0x22, 0x6c, 0x74, 0x28, 0x43, 0x6f, 0x6c, 0x75, 0x6d, 0x6e, 0x23, 0x31, 0x2c, 0x20, 0x31, 0x29, 0x22}, res)
 	require.False(t, sf.IsCorrelated())
 	require.Equal(t, ConstNone, sf.ConstLevel())
-	require.True(t, sf.Decorrelate(nil).Equal(ctx, sf))
+	require.True(t, sf.Decorrelate(nil).Equal(ctx.GetEvalCtx(), sf))
 	require.EqualValues(t, []byte{0x3, 0x4, 0x6c, 0x74, 0x1, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1, 0x0, 0x5, 0xbf, 0xf0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0}, sf.HashCode())
 
 	sf = NewValuesFunc(ctx, 0, types.NewFieldType(mysql.TypeLonglong))
@@ -127,16 +126,16 @@ func TestIssue23309(t *testing.T) {
 	null := NewNull()
 	null.RetType = types.NewFieldType(mysql.TypeNull)
 	sf, _ := newFunctionWithMockCtx(ast.NE, a, null).(*ScalarFunction)
-	v, err := sf.GetArgs()[1].Eval(mock.NewContext(), chunk.Row{})
+	v, err := sf.GetArgs()[1].Eval(mockStmtExprCtx().GetEvalCtx(), chunk.Row{})
 	require.NoError(t, err)
 	require.True(t, v.IsNull())
 
-	ctx := createContext(t)
-	require.False(t, mysql.HasNotNullFlag(sf.GetArgs()[1].GetType(ctx).GetFlag()))
+	ctx := mockStmtTruncateAsWarningExprCtx()
+	require.False(t, mysql.HasNotNullFlag(sf.GetArgs()[1].GetType(ctx.GetEvalCtx()).GetFlag()))
 }
 
 func TestScalarFuncs2Exprs(t *testing.T) {
-	ctx := mock.NewContext()
+	ctx := mockStmtExprCtx()
 	a := &Column{
 		UniqueID: 1,
 		RetType:  types.NewFieldType(mysql.TypeDouble),
@@ -147,6 +146,6 @@ func TestScalarFuncs2Exprs(t *testing.T) {
 	funcs := []*ScalarFunction{sf0, sf1}
 	exprs := ScalarFuncs2Exprs(funcs)
 	for i := range exprs {
-		require.True(t, exprs[i].Equal(ctx, funcs[i]))
+		require.True(t, exprs[i].Equal(ctx.GetEvalCtx(), funcs[i]))
 	}
 }

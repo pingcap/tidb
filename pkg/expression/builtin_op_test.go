@@ -28,7 +28,7 @@ import (
 )
 
 func TestUnary(t *testing.T) {
-	ctx := createContext(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	cases := []struct {
 		args     any
 		expected any
@@ -40,17 +40,11 @@ func TestUnary(t *testing.T) {
 		{uint64(9223372036854775808), int64(-9223372036854775808), false, false},
 		{int64(math.MinInt64), "9223372036854775808", true, false}, // --9223372036854775808
 	}
-	sc := ctx.GetSessionVars().StmtCtx
-	origin := sc.InSelectStmt
-	sc.InSelectStmt = true
-	defer func() {
-		sc.InSelectStmt = origin
-	}()
 
 	for _, c := range cases {
 		f, err := newFunctionForTest(ctx, ast.UnaryMinus, primitiveValsToConstants(ctx, []any{c.args})...)
 		require.NoError(t, err)
-		d, err := f.Eval(ctx, chunk.Row{})
+		d, err := f.Eval(ctx.GetEvalCtx(), chunk.Row{})
 		if !c.getErr {
 			require.NoError(t, err)
 			if !c.overflow {
@@ -68,14 +62,7 @@ func TestUnary(t *testing.T) {
 }
 
 func TestLogicAnd(t *testing.T) {
-	ctx := createContext(t)
-	sc := ctx.GetSessionVars().StmtCtx
-	oldTypeFlags := sc.TypeFlags()
-	defer func() {
-		sc.SetTypeFlags(oldTypeFlags)
-	}()
-	sc.SetTypeFlags(oldTypeFlags.WithIgnoreTruncateErr(true))
-
+	ctx := mockStmtIgnoreTruncateExprCtx()
 	cases := []struct {
 		args     []any
 		expected int64
@@ -109,7 +96,7 @@ func TestLogicAnd(t *testing.T) {
 	for _, c := range cases {
 		f, err := newFunctionForTest(ctx, ast.LogicAnd, primitiveValsToConstants(ctx, c.args)...)
 		require.NoError(t, err)
-		d, err := f.Eval(ctx, chunk.Row{})
+		d, err := f.Eval(ctx.GetEvalCtx(), chunk.Row{})
 		if c.getErr {
 			require.Error(t, err)
 		} else {
@@ -131,7 +118,7 @@ func TestLogicAnd(t *testing.T) {
 }
 
 func TestLeftShift(t *testing.T) {
-	ctx := createContext(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	cases := []struct {
 		args     []any
 		expected uint64
@@ -148,7 +135,7 @@ func TestLeftShift(t *testing.T) {
 	for _, c := range cases {
 		f, err := newFunctionForTest(ctx, ast.LeftShift, primitiveValsToConstants(ctx, c.args)...)
 		require.NoError(t, err)
-		d, err := f.Eval(ctx, chunk.Row{})
+		d, err := f.Eval(ctx.GetEvalCtx(), chunk.Row{})
 		if c.getErr {
 			require.Error(t, err)
 		} else {
@@ -163,7 +150,7 @@ func TestLeftShift(t *testing.T) {
 }
 
 func TestRightShift(t *testing.T) {
-	ctx := createContext(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	cases := []struct {
 		args     []any
 		expected uint64
@@ -180,7 +167,7 @@ func TestRightShift(t *testing.T) {
 	for _, c := range cases {
 		f, err := newFunctionForTest(ctx, ast.RightShift, primitiveValsToConstants(ctx, c.args)...)
 		require.NoError(t, err)
-		d, err := f.Eval(ctx, chunk.Row{})
+		d, err := f.Eval(ctx.GetEvalCtx(), chunk.Row{})
 		if c.getErr {
 			require.Error(t, err)
 		} else {
@@ -202,7 +189,7 @@ func TestRightShift(t *testing.T) {
 }
 
 func TestBitXor(t *testing.T) {
-	ctx := createContext(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	cases := []struct {
 		args     []any
 		expected uint64
@@ -219,7 +206,7 @@ func TestBitXor(t *testing.T) {
 	for _, c := range cases {
 		f, err := newFunctionForTest(ctx, ast.Xor, primitiveValsToConstants(ctx, c.args)...)
 		require.NoError(t, err)
-		d, err := f.Eval(ctx, chunk.Row{})
+		d, err := f.Eval(ctx.GetEvalCtx(), chunk.Row{})
 		if c.getErr {
 			require.Error(t, err)
 		} else {
@@ -241,14 +228,7 @@ func TestBitXor(t *testing.T) {
 }
 
 func TestBitOr(t *testing.T) {
-	ctx := createContext(t)
-	sc := ctx.GetSessionVars().StmtCtx
-	oldTypeFlags := sc.TypeFlags()
-	defer func() {
-		sc.SetTypeFlags(oldTypeFlags)
-	}()
-	sc.SetTypeFlags(oldTypeFlags.WithIgnoreTruncateErr(true))
-
+	ctx := mockStmtIgnoreTruncateExprCtx()
 	cases := []struct {
 		args     []any
 		expected uint64
@@ -265,7 +245,7 @@ func TestBitOr(t *testing.T) {
 	for _, c := range cases {
 		f, err := newFunctionForTest(ctx, ast.Or, primitiveValsToConstants(ctx, c.args)...)
 		require.NoError(t, err)
-		d, err := f.Eval(ctx, chunk.Row{})
+		d, err := f.Eval(ctx.GetEvalCtx(), chunk.Row{})
 		if c.getErr {
 			require.Error(t, err)
 		} else {
@@ -287,14 +267,7 @@ func TestBitOr(t *testing.T) {
 }
 
 func TestLogicOr(t *testing.T) {
-	ctx := createContext(t)
-	sc := ctx.GetSessionVars().StmtCtx
-	oldTypeFlags := sc.TypeFlags()
-	defer func() {
-		sc.SetTypeFlags(oldTypeFlags)
-	}()
-	sc.SetTypeFlags(oldTypeFlags.WithIgnoreTruncateErr(true))
-
+	ctx := mockStmtIgnoreTruncateExprCtx()
 	cases := []struct {
 		args     []any
 		expected int64
@@ -332,7 +305,7 @@ func TestLogicOr(t *testing.T) {
 	for _, c := range cases {
 		f, err := newFunctionForTest(ctx, ast.LogicOr, primitiveValsToConstants(ctx, c.args)...)
 		require.NoError(t, err)
-		d, err := f.Eval(ctx, chunk.Row{})
+		d, err := f.Eval(ctx.GetEvalCtx(), chunk.Row{})
 		if c.getErr {
 			require.Error(t, err)
 		} else {
@@ -354,7 +327,7 @@ func TestLogicOr(t *testing.T) {
 }
 
 func TestBitAnd(t *testing.T) {
-	ctx := createContext(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	cases := []struct {
 		args     []any
 		expected int64
@@ -371,7 +344,7 @@ func TestBitAnd(t *testing.T) {
 	for _, c := range cases {
 		f, err := newFunctionForTest(ctx, ast.And, primitiveValsToConstants(ctx, c.args)...)
 		require.NoError(t, err)
-		d, err := f.Eval(ctx, chunk.Row{})
+		d, err := f.Eval(ctx.GetEvalCtx(), chunk.Row{})
 		if c.getErr {
 			require.Error(t, err)
 		} else {
@@ -393,14 +366,7 @@ func TestBitAnd(t *testing.T) {
 }
 
 func TestBitNeg(t *testing.T) {
-	ctx := createContext(t)
-	sc := ctx.GetSessionVars().StmtCtx
-	oldTypeFlags := sc.TypeFlags()
-	defer func() {
-		sc.SetTypeFlags(oldTypeFlags)
-	}()
-	sc.SetTypeFlags(oldTypeFlags.WithIgnoreTruncateErr(true))
-
+	ctx := mockStmtIgnoreTruncateExprCtx()
 	cases := []struct {
 		args     []any
 		expected uint64
@@ -417,7 +383,7 @@ func TestBitNeg(t *testing.T) {
 	for _, c := range cases {
 		f, err := newFunctionForTest(ctx, ast.BitNeg, primitiveValsToConstants(ctx, c.args)...)
 		require.NoError(t, err)
-		d, err := f.Eval(ctx, chunk.Row{})
+		d, err := f.Eval(ctx.GetEvalCtx(), chunk.Row{})
 		if c.getErr {
 			require.Error(t, err)
 		} else {
@@ -439,14 +405,7 @@ func TestBitNeg(t *testing.T) {
 }
 
 func TestUnaryNot(t *testing.T) {
-	ctx := createContext(t)
-	sc := ctx.GetSessionVars().StmtCtx
-	oldTypeFlags := sc.TypeFlags()
-	defer func() {
-		sc.SetTypeFlags(oldTypeFlags)
-	}()
-	sc.SetTypeFlags(oldTypeFlags.WithIgnoreTruncateErr(true))
-
+	ctx := mockStmtIgnoreTruncateExprCtx()
 	cases := []struct {
 		args     []any
 		expected int64
@@ -471,7 +430,7 @@ func TestUnaryNot(t *testing.T) {
 	for _, c := range cases {
 		f, err := newFunctionForTest(ctx, ast.UnaryNot, primitiveValsToConstants(ctx, c.args)...)
 		require.NoError(t, err)
-		d, err := f.Eval(ctx, chunk.Row{})
+		d, err := f.Eval(ctx.GetEvalCtx(), chunk.Row{})
 		if c.getErr {
 			require.Error(t, err)
 		} else {
@@ -493,14 +452,7 @@ func TestUnaryNot(t *testing.T) {
 }
 
 func TestIsTrueOrFalse(t *testing.T) {
-	ctx := createContext(t)
-	sc := ctx.GetSessionVars().StmtCtx
-	oldTypeFlags := sc.TypeFlags()
-	defer func() {
-		sc.SetTypeFlags(oldTypeFlags)
-	}()
-	sc.SetTypeFlags(oldTypeFlags.WithIgnoreTruncateErr(true))
-
+	ctx := mockStmtIgnoreTruncateExprCtx()
 	testCases := []struct {
 		args    []any
 		isTrue  any
@@ -583,7 +535,7 @@ func TestIsTrueOrFalse(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, isTrueSig)
 
-		isTrue, err := evalBuiltinFunc(isTrueSig, ctx, chunk.Row{})
+		isTrue, err := evalBuiltinFunc(isTrueSig, ctx.GetEvalCtx(), chunk.Row{})
 		require.NoError(t, err)
 		testutil.DatumEqual(t, types.NewDatum(tc.isTrue), isTrue)
 	}
@@ -593,21 +545,14 @@ func TestIsTrueOrFalse(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, isFalseSig)
 
-		isFalse, err := evalBuiltinFunc(isFalseSig, ctx, chunk.Row{})
+		isFalse, err := evalBuiltinFunc(isFalseSig, ctx.GetEvalCtx(), chunk.Row{})
 		require.NoError(t, err)
 		testutil.DatumEqual(t, types.NewDatum(tc.isFalse), isFalse)
 	}
 }
 
 func TestLogicXor(t *testing.T) {
-	ctx := createContext(t)
-	sc := ctx.GetSessionVars().StmtCtx
-	oldTypeFlags := sc.TypeFlags()
-	defer func() {
-		sc.SetTypeFlags(oldTypeFlags)
-	}()
-	sc.SetTypeFlags(oldTypeFlags.WithIgnoreTruncateErr(true))
-
+	ctx := mockStmtIgnoreTruncateExprCtx()
 	cases := []struct {
 		args     []any
 		expected int64
@@ -642,7 +587,7 @@ func TestLogicXor(t *testing.T) {
 	for _, c := range cases {
 		f, err := newFunctionForTest(ctx, ast.LogicXor, primitiveValsToConstants(ctx, c.args)...)
 		require.NoError(t, err)
-		d, err := f.Eval(ctx, chunk.Row{})
+		d, err := f.Eval(ctx.GetEvalCtx(), chunk.Row{})
 		if c.getErr {
 			require.Error(t, err)
 		} else {

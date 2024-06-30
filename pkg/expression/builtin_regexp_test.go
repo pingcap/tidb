@@ -208,7 +208,7 @@ func setBinaryCollation(tp *types.FieldType) {
 }
 
 func TestRegexpLike(t *testing.T) {
-	ctx := createContext(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 
 	// test Regexp_like without match type
 	testsExcludeMatchType := []struct {
@@ -237,7 +237,7 @@ func TestRegexpLike(t *testing.T) {
 		fc := funcs[ast.Regexp]
 		f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(tt.input, tt.pattern)))
 		require.NoError(t, err)
-		match, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+		match, err := evalBuiltinFunc(f, ctx.GetEvalCtx(), chunk.Row{})
 		if tt.err == nil {
 			require.NoError(t, err)
 			testutil.DatumEqual(t, types.NewDatum(tt.match), match, fmt.Sprintf("%v", tt))
@@ -285,7 +285,7 @@ func TestRegexpLike(t *testing.T) {
 		fc := funcs[ast.RegexpLike]
 		f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(tt.input, tt.pattern, tt.matchType)))
 		require.NoError(t, err)
-		match, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+		match, err := evalBuiltinFunc(f, ctx.GetEvalCtx(), chunk.Row{})
 		if tt.err == nil {
 			require.NoError(t, err)
 			testutil.DatumEqual(t, types.NewDatum(tt.match), match, fmt.Sprintf("%v", tt))
@@ -354,7 +354,7 @@ func TestRegexpLikeVec(t *testing.T) {
 }
 
 func TestRegexpSubstr(t *testing.T) {
-	ctx := createContext(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 
 	// test regexp_substr(expr, pat)
 	testParam2 := []struct {
@@ -377,14 +377,14 @@ func TestRegexpSubstr(t *testing.T) {
 			fc := funcs[ast.RegexpSubstr]
 			expectMatch := tt.match
 			args := datumsToConstants(types.MakeDatums(tt.input, tt.pattern))
-			setCharsetAndCollation(charsetAndCollateTp, args[0].GetType(ctx), args[1].GetType(ctx))
+			setCharsetAndCollation(charsetAndCollateTp, args[0].GetType(ctx.GetEvalCtx()), args[1].GetType(ctx.GetEvalCtx()))
 			if charsetAndCollateTp == binaryTpIdx {
 				expectMatch = tt.matchBin
 			}
 			f, err := fc.getFunction(ctx, args)
 			require.NoError(t, err)
 
-			actualMatch, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+			actualMatch, err := evalBuiltinFunc(f, ctx.GetEvalCtx(), chunk.Row{})
 			if tt.err == nil {
 				require.NoError(t, err)
 				testutil.DatumEqual(t, types.NewDatum(expectMatch), actualMatch, fmt.Sprintf("%v", tt))
@@ -426,14 +426,14 @@ func TestRegexpSubstr(t *testing.T) {
 			fc := funcs[ast.RegexpSubstr]
 			expectMatch := tt.match
 			args := datumsToConstants(types.MakeDatums(tt.input, tt.pattern, tt.pos))
-			setCharsetAndCollation(charsetAndCollateTp, args[0].GetType(ctx), args[1].GetType(ctx))
+			setCharsetAndCollation(charsetAndCollateTp, args[0].GetType(ctx.GetEvalCtx()), args[1].GetType(ctx.GetEvalCtx()))
 			if charsetAndCollateTp == binaryTpIdx {
 				expectMatch = tt.matchBin
 			}
 			f, err := fc.getFunction(ctx, args)
 			require.NoError(t, err)
 
-			actualMatch, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+			actualMatch, err := evalBuiltinFunc(f, ctx.GetEvalCtx(), chunk.Row{})
 			if tt.err == nil {
 				require.NoError(t, err)
 				testutil.DatumEqual(t, types.NewDatum(expectMatch), actualMatch, fmt.Sprintf("%v", tt))
@@ -479,14 +479,14 @@ func TestRegexpSubstr(t *testing.T) {
 			fc := funcs[ast.RegexpSubstr]
 			expectMatch := tt.match
 			args := datumsToConstants(types.MakeDatums(tt.input, tt.pattern, tt.pos, tt.occur))
-			setCharsetAndCollation(charsetAndCollateTp, args[0].GetType(ctx), args[1].GetType(ctx))
+			setCharsetAndCollation(charsetAndCollateTp, args[0].GetType(ctx.GetEvalCtx()), args[1].GetType(ctx.GetEvalCtx()))
 			if charsetAndCollateTp == binaryTpIdx {
 				expectMatch = tt.matchBin
 			}
 			f, err := fc.getFunction(ctx, args)
 			require.NoError(t, err)
 
-			actualMatch, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+			actualMatch, err := evalBuiltinFunc(f, ctx.GetEvalCtx(), chunk.Row{})
 			if tt.err == nil {
 				require.NoError(t, err)
 				testutil.DatumEqual(t, types.NewDatum(expectMatch), actualMatch, fmt.Sprintf("%v", tt))
@@ -524,14 +524,14 @@ func TestRegexpSubstr(t *testing.T) {
 			fc := funcs[ast.RegexpSubstr]
 			expectMatch := tt.match
 			args := datumsToConstants(types.MakeDatums(tt.input, tt.pattern, tt.pos, tt.occur, tt.matchType))
-			setCharsetAndCollation(charsetAndCollateTp, args[0].GetType(ctx), args[1].GetType(ctx))
+			setCharsetAndCollation(charsetAndCollateTp, args[0].GetType(ctx.GetEvalCtx()), args[1].GetType(ctx.GetEvalCtx()))
 			if charsetAndCollateTp == binaryTpIdx {
 				expectMatch = tt.matchBin
 			}
 			f, err := fc.getFunction(ctx, args)
 			require.NoError(t, err)
 
-			actualMatch, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+			actualMatch, err := evalBuiltinFunc(f, ctx.GetEvalCtx(), chunk.Row{})
 			if tt.err == nil {
 				require.NoError(t, err)
 				testutil.DatumEqual(t, types.NewDatum(expectMatch), actualMatch, fmt.Sprintf("%v", tt))
@@ -609,7 +609,7 @@ func TestRegexpSubstrVec(t *testing.T) {
 }
 
 func TestRegexpInStr(t *testing.T) {
-	ctx := createContext(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 
 	// test regexp_instr(expr, pat)
 	testParam2 := []struct {
@@ -633,14 +633,14 @@ func TestRegexpInStr(t *testing.T) {
 			fc := funcs[ast.RegexpInStr]
 			expectMatch := tt.match
 			args := datumsToConstants(types.MakeDatums(tt.input, tt.pattern))
-			setCharsetAndCollation(charsetAndCollateTp, args[0].GetType(ctx), args[1].GetType(ctx))
+			setCharsetAndCollation(charsetAndCollateTp, args[0].GetType(ctx.GetEvalCtx()), args[1].GetType(ctx.GetEvalCtx()))
 			if charsetAndCollateTp == binaryTpIdx {
 				expectMatch = tt.matchBin
 			}
 			f, err := fc.getFunction(ctx, args)
 			require.NoError(t, err)
 
-			actualMatch, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+			actualMatch, err := evalBuiltinFunc(f, ctx.GetEvalCtx(), chunk.Row{})
 			if tt.err == nil {
 				require.NoError(t, err)
 				testutil.DatumEqual(t, types.NewDatum(expectMatch), actualMatch, fmt.Sprintf("%v", tt))
@@ -681,14 +681,14 @@ func TestRegexpInStr(t *testing.T) {
 			fc := funcs[ast.RegexpInStr]
 			expectMatch := tt.match
 			args := datumsToConstants(types.MakeDatums(tt.input, tt.pattern, tt.pos))
-			setCharsetAndCollation(charsetAndCollateTp, args[0].GetType(ctx), args[1].GetType(ctx))
+			setCharsetAndCollation(charsetAndCollateTp, args[0].GetType(ctx.GetEvalCtx()), args[1].GetType(ctx.GetEvalCtx()))
 			if charsetAndCollateTp == binaryTpIdx {
 				expectMatch = tt.matchBin
 			}
 			f, err := fc.getFunction(ctx, args)
 			require.NoError(t, err)
 
-			actualMatch, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+			actualMatch, err := evalBuiltinFunc(f, ctx.GetEvalCtx(), chunk.Row{})
 			if tt.err == nil {
 				require.NoError(t, err)
 				testutil.DatumEqual(t, types.NewDatum(expectMatch), actualMatch, fmt.Sprintf("%v", tt))
@@ -734,14 +734,14 @@ func TestRegexpInStr(t *testing.T) {
 			fc := funcs[ast.RegexpInStr]
 			expectMatch := tt.match
 			args := datumsToConstants(types.MakeDatums(tt.input, tt.pattern, tt.pos, tt.occurrence))
-			setCharsetAndCollation(charsetAndCollateTp, args[0].GetType(ctx), args[1].GetType(ctx))
+			setCharsetAndCollation(charsetAndCollateTp, args[0].GetType(ctx.GetEvalCtx()), args[1].GetType(ctx.GetEvalCtx()))
 			if charsetAndCollateTp == binaryTpIdx {
 				expectMatch = tt.matchBin
 			}
 			f, err := fc.getFunction(ctx, args)
 			require.NoError(t, err)
 
-			actualMatch, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+			actualMatch, err := evalBuiltinFunc(f, ctx.GetEvalCtx(), chunk.Row{})
 			if tt.err == nil {
 				require.NoError(t, err)
 				testutil.DatumEqual(t, types.NewDatum(expectMatch), actualMatch, fmt.Sprintf("%v", tt))
@@ -781,14 +781,14 @@ func TestRegexpInStr(t *testing.T) {
 			fc := funcs[ast.RegexpInStr]
 			expectMatch := tt.match
 			args := datumsToConstants(types.MakeDatums(tt.input, tt.pattern, tt.pos, tt.occurrence, tt.retOpt))
-			setCharsetAndCollation(charsetAndCollateTp, args[0].GetType(ctx), args[1].GetType(ctx))
+			setCharsetAndCollation(charsetAndCollateTp, args[0].GetType(ctx.GetEvalCtx()), args[1].GetType(ctx.GetEvalCtx()))
 			if charsetAndCollateTp == binaryTpIdx {
 				expectMatch = tt.matchBin
 			}
 			f, err := fc.getFunction(ctx, args)
 			require.NoError(t, err)
 
-			actualMatch, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+			actualMatch, err := evalBuiltinFunc(f, ctx.GetEvalCtx(), chunk.Row{})
 			if tt.err == nil {
 				require.NoError(t, err)
 				testutil.DatumEqual(t, types.NewDatum(expectMatch), actualMatch, fmt.Sprintf("%v", tt))
@@ -828,14 +828,14 @@ func TestRegexpInStr(t *testing.T) {
 			fc := funcs[ast.RegexpInStr]
 			expectMatch := tt.match
 			args := datumsToConstants(types.MakeDatums(tt.input, tt.pattern, tt.pos, tt.occurrence, tt.retOpt, tt.matchType))
-			setCharsetAndCollation(charsetAndCollateTp, args[0].GetType(ctx), args[1].GetType(ctx))
+			setCharsetAndCollation(charsetAndCollateTp, args[0].GetType(ctx.GetEvalCtx()), args[1].GetType(ctx.GetEvalCtx()))
 			if charsetAndCollateTp == binaryTpIdx {
 				expectMatch = tt.matchBin
 			}
 			f, err := fc.getFunction(ctx, args)
 			require.NoError(t, err)
 
-			actualMatch, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+			actualMatch, err := evalBuiltinFunc(f, ctx.GetEvalCtx(), chunk.Row{})
 			if tt.err == nil {
 				require.NoError(t, err)
 				testutil.DatumEqual(t, types.NewDatum(expectMatch), actualMatch, fmt.Sprintf("%v", tt))
@@ -921,7 +921,7 @@ func TestRegexpInStrVec(t *testing.T) {
 }
 
 func TestRegexpReplace(t *testing.T) {
-	ctx := createContext(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 
 	url1 := "https://go.mail/folder-1/online/ru-en/#lingvo/#1О 50000&price_ashka/rav4/page=/check.xml"
 	url2 := "http://saint-peters-total=меньше 1000-rublyayusche/catalogue/kolasuryat-v-2-kadyirovka-personal/serial_id=0&input_state/apartments/mokrotochki.net/upravda.ru/yandex.ru/GameMain.aspx?mult]/on/orders/50195&text=мыс и орелка в Балаш смотреть онлайн бесплатно в хорошем камбалакс&lr=20030393833539353862643188&op_promo=C-Teaser_id=06d162.html"
@@ -967,14 +967,14 @@ func TestRegexpReplace(t *testing.T) {
 			fc := funcs[ast.RegexpReplace]
 			expectMatch := tt.match
 			args := datumsToConstants(types.MakeDatums(tt.input, tt.pattern, tt.replace))
-			setCharsetAndCollation(charsetAndCollateTp, args[0].GetType(ctx), args[1].GetType(ctx), args[2].GetType(ctx))
+			setCharsetAndCollation(charsetAndCollateTp, args[0].GetType(ctx.GetEvalCtx()), args[1].GetType(ctx.GetEvalCtx()), args[2].GetType(ctx.GetEvalCtx()))
 			if charsetAndCollateTp == binaryTpIdx {
 				expectMatch = tt.matchBin
 			}
 			f, err := fc.getFunction(ctx, args)
 			require.NoError(t, err)
 
-			actualMatch, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+			actualMatch, err := evalBuiltinFunc(f, ctx.GetEvalCtx(), chunk.Row{})
 			if tt.err == nil {
 				require.NoError(t, err)
 				testutil.DatumEqual(t, types.NewDatum(expectMatch), actualMatch, fmt.Sprintf("%v", tt))
@@ -1022,14 +1022,14 @@ func TestRegexpReplace(t *testing.T) {
 			fc := funcs[ast.RegexpReplace]
 			expectMatch := tt.match
 			args := datumsToConstants(types.MakeDatums(tt.input, tt.pattern, tt.replace, tt.pos))
-			setCharsetAndCollation(charsetAndCollateTp, args[0].GetType(ctx), args[1].GetType(ctx), args[2].GetType(ctx))
+			setCharsetAndCollation(charsetAndCollateTp, args[0].GetType(ctx.GetEvalCtx()), args[1].GetType(ctx.GetEvalCtx()), args[2].GetType(ctx.GetEvalCtx()))
 			if charsetAndCollateTp == binaryTpIdx {
 				expectMatch = tt.matchBin
 			}
 			f, err := fc.getFunction(ctx, args)
 			require.NoError(t, err)
 
-			actualMatch, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+			actualMatch, err := evalBuiltinFunc(f, ctx.GetEvalCtx(), chunk.Row{})
 			if tt.err == nil {
 				require.NoError(t, err)
 				testutil.DatumEqual(t, types.NewDatum(expectMatch), actualMatch, fmt.Sprintf("%v", tt))
@@ -1081,14 +1081,14 @@ func TestRegexpReplace(t *testing.T) {
 			fc := funcs[ast.RegexpReplace]
 			expectMatch := tt.match
 			args := datumsToConstants(types.MakeDatums(tt.input, tt.pattern, tt.replace, tt.pos, tt.occurrence))
-			setCharsetAndCollation(charsetAndCollateTp, args[0].GetType(ctx), args[1].GetType(ctx), args[2].GetType(ctx))
+			setCharsetAndCollation(charsetAndCollateTp, args[0].GetType(ctx.GetEvalCtx()), args[1].GetType(ctx.GetEvalCtx()), args[2].GetType(ctx.GetEvalCtx()))
 			if charsetAndCollateTp == binaryTpIdx {
 				expectMatch = tt.matchBin
 			}
 			f, err := fc.getFunction(ctx, args)
 			require.NoError(t, err)
 
-			actualMatch, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+			actualMatch, err := evalBuiltinFunc(f, ctx.GetEvalCtx(), chunk.Row{})
 			if tt.err == nil {
 				require.NoError(t, err)
 				testutil.DatumEqual(t, types.NewDatum(expectMatch), actualMatch, fmt.Sprintf("%v", tt))
@@ -1133,14 +1133,14 @@ func TestRegexpReplace(t *testing.T) {
 			fc := funcs[ast.RegexpReplace]
 			expectMatch := tt.match
 			args := datumsToConstants(types.MakeDatums(tt.input, tt.pattern, tt.replace, tt.pos, tt.occurrence, tt.matchType))
-			setCharsetAndCollation(charsetAndCollateTp, args[0].GetType(ctx), args[1].GetType(ctx), args[2].GetType(ctx))
+			setCharsetAndCollation(charsetAndCollateTp, args[0].GetType(ctx.GetEvalCtx()), args[1].GetType(ctx.GetEvalCtx()), args[2].GetType(ctx.GetEvalCtx()))
 			if charsetAndCollateTp == binaryTpIdx {
 				expectMatch = tt.matchBin
 			}
 			f, err := fc.getFunction(ctx, args)
 			require.NoError(t, err)
 
-			actualMatch, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+			actualMatch, err := evalBuiltinFunc(f, ctx.GetEvalCtx(), chunk.Row{})
 			if tt.err == nil {
 				require.NoError(t, err)
 				testutil.DatumEqual(t, types.NewDatum(expectMatch), actualMatch, fmt.Sprintf("%v", tt))
@@ -1226,7 +1226,7 @@ func TestRegexpReplaceVec(t *testing.T) {
 }
 
 func TestRegexpCache(t *testing.T) {
-	ctx := createContext(t)
+	ctx := mockEvalCtx()
 
 	// if the pattern or match type is not constant, it should not be cached
 	sig := regexpBaseFuncSig{}
@@ -1248,7 +1248,7 @@ func TestRegexpCache(t *testing.T) {
 	require.False(t, ok)
 	require.NoError(t, err)
 
-	_, ok = sig.memorizedRegexp.getCache(ctx.GetSessionVars().StmtCtx.CtxID())
+	_, ok = sig.memorizedRegexp.getCache(ctx.CtxID())
 	require.False(t, ok)
 
 	sig.args = []Expression{&Column{}, &Constant{}, &Column{}}
@@ -1265,7 +1265,7 @@ func TestRegexpCache(t *testing.T) {
 	require.False(t, ok)
 	require.NoError(t, err)
 
-	_, ok = sig.memorizedRegexp.getCache(ctx.GetSessionVars().StmtCtx.CtxID())
+	_, ok = sig.memorizedRegexp.getCache(ctx.CtxID())
 	require.False(t, ok)
 
 	// if pattern and match type are both constant, it should be cached

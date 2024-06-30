@@ -54,7 +54,7 @@ func createGroupingFunc(args []Expression) (*BuiltinGroupingImplSig, error) {
 }
 
 func TestGrouping(t *testing.T) {
-	ctx := createContext(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	tests := []struct {
 		groupingID   uint64
 		mode         tipb.GroupingMode
@@ -97,7 +97,7 @@ func TestGrouping(t *testing.T) {
 		err = groupingFunc.SetMetadata(testCase.mode, []map[uint64]struct{}{testCase.groupingIDs})
 		require.NoError(t, err, comment)
 
-		actualResult, err := evalBuiltinFunc(groupingFunc, ctx, chunk.Row{})
+		actualResult, err := evalBuiltinFunc(groupingFunc, ctx.GetEvalCtx(), chunk.Row{})
 		require.NoError(t, err, comment)
 		testutil.DatumEqual(t, types.NewDatum(testCase.expectResult), actualResult, comment)
 	}

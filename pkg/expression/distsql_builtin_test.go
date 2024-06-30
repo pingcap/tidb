@@ -24,13 +24,12 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
-	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
 )
 
 func TestPBToExpr(t *testing.T) {
-	ctx := mock.NewContext()
+	ctx := mockStmtExprCtx()
 	fieldTps := make([]*types.FieldType, 1)
 	ds := []types.Datum{types.NewIntDatum(1), types.NewUintDatum(1), types.NewFloat64Datum(1),
 		types.NewDecimalDatum(newMyDecimal(t, "1")), types.NewDurationDatum(newDuration(time.Second))}
@@ -778,14 +777,14 @@ func TestEval(t *testing.T) {
 			types.NewIntDatum(1),
 		},
 	}
-	ctx := mock.NewContext()
+	ctx := mockStmtExprCtx()
 	for _, tt := range tests {
 		expr, err := PBToExpr(ctx, tt.expr, fieldTps)
 		require.NoError(t, err)
-		result, err := expr.Eval(ctx, row)
+		result, err := expr.Eval(ctx.GetEvalCtx(), row)
 		require.NoError(t, err)
 		require.Equal(t, tt.result.Kind(), result.Kind())
-		cmp, err := result.Compare(ctx.GetSessionVars().StmtCtx.TypeCtx(), &tt.result, collate.GetCollator(fieldTps[0].GetCollate()))
+		cmp, err := result.Compare(ctx.GetEvalCtx().TypeCtx(), &tt.result, collate.GetCollator(fieldTps[0].GetCollate()))
 		require.NoError(t, err)
 		require.Equal(t, 0, cmp)
 	}
@@ -793,7 +792,7 @@ func TestEval(t *testing.T) {
 
 func TestPBToExprWithNewCollation(t *testing.T) {
 	collate.SetNewCollationEnabledForTest(false)
-	ctx := mock.NewContext()
+	ctx := mockStmtExprCtx()
 	fieldTps := make([]*types.FieldType, 1)
 
 	cases := []struct {
@@ -848,7 +847,7 @@ func TestPBToExprWithNewCollation(t *testing.T) {
 
 // Test convert various scalar functions.
 func TestPBToScalarFuncExpr(t *testing.T) {
-	ctx := mock.NewContext()
+	ctx := mockStmtExprCtx()
 	fieldTps := make([]*types.FieldType, 1)
 	exprs := []*tipb.Expr{
 		{

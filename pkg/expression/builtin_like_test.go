@@ -28,7 +28,7 @@ import (
 )
 
 func TestLike(t *testing.T) {
-	ctx := createContext(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	tests := []struct {
 		input   string
 		pattern string
@@ -55,14 +55,14 @@ func TestLike(t *testing.T) {
 		fc := funcs[ast.Like]
 		f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(tt.input, tt.pattern, int('\\'))))
 		require.NoError(t, err, comment)
-		r, err := evalBuiltinFuncConcurrent(f, ctx, chunk.Row{})
+		r, err := evalBuiltinFuncConcurrent(f, ctx.GetEvalCtx(), chunk.Row{})
 		require.NoError(t, err, comment)
 		testutil.DatumEqual(t, types.NewDatum(tt.match), r, comment)
 	}
 }
 
 func TestRegexp(t *testing.T) {
-	ctx := createContext(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	tests := []struct {
 		pattern string
 		input   string
@@ -87,7 +87,7 @@ func TestRegexp(t *testing.T) {
 		fc := funcs[ast.Regexp]
 		f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(tt.input, tt.pattern)))
 		require.NoError(t, err)
-		match, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+		match, err := evalBuiltinFunc(f, ctx.GetEvalCtx(), chunk.Row{})
 		if tt.err == nil {
 			require.NoError(t, err)
 			testutil.DatumEqual(t, types.NewDatum(tt.match), match, fmt.Sprintf("%v", tt))
@@ -98,7 +98,7 @@ func TestRegexp(t *testing.T) {
 }
 
 func TestCILike(t *testing.T) {
-	ctx := createContext(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	tests := []struct {
 		input            string
 		pattern          string
@@ -142,7 +142,7 @@ func TestCILike(t *testing.T) {
 		f, err := fc.getFunction(ctx, inputs)
 		require.NoError(t, err, comment)
 		f.setCollator(collate.GetCollator("utf8mb4_general_ci"))
-		r, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+		r, err := evalBuiltinFunc(f, ctx.GetEvalCtx(), chunk.Row{})
 		require.NoError(t, err, comment)
 		testutil.DatumEqual(t, types.NewDatum(tt.generalMatch), r, comment)
 	}
@@ -154,7 +154,7 @@ func TestCILike(t *testing.T) {
 		f, err := fc.getFunction(ctx, inputs)
 		require.NoError(t, err, comment)
 		f.setCollator(collate.GetCollator("utf8mb4_unicode_ci"))
-		r, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+		r, err := evalBuiltinFunc(f, ctx.GetEvalCtx(), chunk.Row{})
 		require.NoError(t, err, comment)
 		testutil.DatumEqual(t, types.NewDatum(tt.unicodeMatch), r, comment)
 	}
@@ -166,7 +166,7 @@ func TestCILike(t *testing.T) {
 		f, err := fc.getFunction(ctx, inputs)
 		require.NoError(t, err, comment)
 		f.setCollator(collate.GetCollator("utf8mb4_0900_ai_ci"))
-		r, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+		r, err := evalBuiltinFunc(f, ctx.GetEvalCtx(), chunk.Row{})
 		require.NoError(t, err, comment)
 		testutil.DatumEqual(t, types.NewDatum(tt.unicode0900Match), r, comment)
 	}

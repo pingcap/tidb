@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 )
 
@@ -197,7 +196,7 @@ func TestVectorizedBuiltinArithmeticFunc(t *testing.T) {
 }
 
 func TestVectorizedDecimalErrOverflow(t *testing.T) {
-	ctx := mock.NewContext()
+	ctx := mockStmtExprCtx()
 	testCases := []struct {
 		args     []float64
 		funcName string
@@ -231,7 +230,7 @@ func TestVectorizedDecimalErrOverflow(t *testing.T) {
 		baseFunc, err := funcs[tt.funcName].getFunction(ctx, cols)
 		require.NoError(t, err)
 		result := chunk.NewColumn(eType2FieldType(types.ETDecimal), 1)
-		err = vecEvalType(ctx, baseFunc, types.ETDecimal, input, result)
+		err = vecEvalType(ctx.GetEvalCtx(), baseFunc, types.ETDecimal, input, result)
 		require.EqualError(t, err, tt.errStr)
 	}
 }

@@ -29,7 +29,7 @@ import (
 )
 
 func TestIlike(t *testing.T) {
-	ctx := createContext(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	tests := []struct {
 		input        string
 		pattern      string
@@ -84,7 +84,7 @@ func TestIlike(t *testing.T) {
 			require.NoError(t, err, comment)
 			f.SetCharsetAndCollation(charsetAndCollation[0], charsetAndCollation[1])
 			f.setCollator(collate.GetCollator(charsetAndCollation[1]))
-			r, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+			r, err := evalBuiltinFunc(f, ctx.GetEvalCtx(), chunk.Row{})
 			require.NoError(t, err, comment)
 			testutil.DatumEqual(t, types.NewDatum(tt.generalMatch), r, comment)
 		}
@@ -105,7 +105,7 @@ func TestIlike(t *testing.T) {
 			require.NoError(t, err, comment)
 			f.SetCharsetAndCollation(charsetAndCollation[0], charsetAndCollation[1])
 			f.setCollator(collate.GetCollator(charsetAndCollation[1]))
-			r, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+			r, err := evalBuiltinFunc(f, ctx.GetEvalCtx(), chunk.Row{})
 			require.NoError(t, err, comment)
 			testutil.DatumEqual(t, types.NewDatum(tt.unicodeMatch), r, comment)
 		}

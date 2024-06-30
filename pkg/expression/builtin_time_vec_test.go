@@ -19,6 +19,7 @@ import (
 	"math/rand"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
@@ -578,9 +579,7 @@ func BenchmarkVectorizedBuiltinTimeFunc(b *testing.B) {
 }
 
 func TestVecMonth(t *testing.T) {
-	ctx := createContext(t)
-	typeFlags := ctx.GetSessionVars().StmtCtx.TypeFlags()
-	ctx.GetSessionVars().StmtCtx.SetTypeFlags(typeFlags.WithTruncateAsWarning(true))
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	input := chunk.New([]*types.FieldType{types.NewFieldType(mysql.TypeDatetime)}, 3, 3)
 	input.Reset()
 	input.AppendTime(0, types.ZeroDate)
@@ -588,11 +587,14 @@ func TestVecMonth(t *testing.T) {
 	input.AppendTime(0, types.ZeroDate)
 
 	f, _, _, result := genVecBuiltinFuncBenchCase(ctx, ast.Month, vecExprBenchCase{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDatetime}})
-	require.True(t, ctx.GetSessionVars().SQLMode.HasStrictMode())
-	require.NoError(t, vecEvalType(ctx, f, types.ETInt, input, result))
-	require.Equal(t, 0, len(ctx.GetSessionVars().StmtCtx.GetWarnings()))
+	require.True(t, ctx.GetEvalCtx().SQLMode().HasStrictMode())
+	require.NoError(t, vecEvalType(ctx.GetEvalCtx(), f, types.ETInt, input, result))
+	require.Equal(t, 0, ctx.GetEvalCtx().WarningCount())
 
-	ctx.GetSessionVars().StmtCtx.InInsertStmt = true
-	ctx.GetSessionVars().StmtCtx.SetTypeFlags(typeFlags.WithTruncateAsWarning(false))
-	require.NoError(t, vecEvalType(ctx, f, types.ETInt, input, result))
+	ctx = mockStmtExprCtx()
+	tc, ec := ctx.GetEvalCtx().TypeCtx(), ctx.GetEvalCtx().ErrCtx()
+	require.False(t, tc.Flags().TruncateAsWarning())
+	require.False(t, tc.Flags().IgnoreTruncateErr())
+	require.Equal(t, errctx.LevelError, ec.LevelForGroup(errctx.ErrGroupTruncate))
+	require.NoError(t, vecEvalType(ctx.GetEvalCtx(), f, types.ETInt, input, result))
 }

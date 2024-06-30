@@ -15,6 +15,7 @@
 package expression
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -26,11 +27,20 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
 )
+
+type mockClient struct {
+	kv.RequestTypeSupportedChecker
+}
+
+// Send implement kv.Client interface.
+func (c mockClient) Send(_ context.Context, _ *kv.Request, _ any, _ *kv.ClientSendOption) kv.Response {
+	return nil
+}
 
 func genColumn(tp byte, id int64) *Column {
 	return &Column{
@@ -43,9 +53,10 @@ func genColumn(tp byte, id int64) *Column {
 func TestConstant2Pb(t *testing.T) {
 	t.Skip("constant pb has changed")
 	var constExprs []Expression
-	ctx := mock.NewContext()
-	client := new(mock.Client)
-	pushDownCtx := NewPushDownContextFromSessionVars(ctx, ctx.GetSessionVars(), client)
+	vars := variable.NewSessionVars(nil)
+	ctx := mockExprCtx()
+	client := mockClient{}
+	pushDownCtx := NewPushDownContextFromSessionVars(ctx.GetEvalCtx(), vars, client)
 
 	// can be transformed
 	constValue := new(Constant)
@@ -103,7 +114,7 @@ func TestConstant2Pb(t *testing.T) {
 	require.Len(t, pushed, len(constExprs)-3)
 	require.Len(t, remained, 3)
 
-	pbExprs, err := ExpressionsToPBList(ctx, constExprs, client)
+	pbExprs, err := ExpressionsToPBList(ctx.GetEvalCtx(), constExprs, client)
 	require.NoError(t, err)
 	jsons := []string{
 		"{\"tp\":0,\"sig\":0}",
@@ -127,9 +138,9 @@ func TestConstant2Pb(t *testing.T) {
 
 func TestColumn2Pb(t *testing.T) {
 	var colExprs []Expression
-	ctx := mock.NewContext()
-	client := new(mock.Client)
-	pushDownCtx := NewPushDownContextFromSessionVars(ctx, ctx.GetSessionVars(), client)
+	ctx := mockExprCtx()
+	client := mockClient{}
+	pushDownCtx := NewPushDownContextFromSessionVars(ctx.GetEvalCtx(), variable.NewSessionVars(nil), client)
 
 	colExprs = append(colExprs, genColumn(mysql.TypeSet, 1))
 	colExprs = append(colExprs, genColumn(mysql.TypeGeometry, 2))
@@ -140,7 +151,7 @@ func TestColumn2Pb(t *testing.T) {
 	require.Len(t, remained, len(colExprs))
 
 	for _, col := range colExprs { // cannot be pushed down
-		_, err := ExpressionsToPBList(ctx, []Expression{col}, client)
+		_, err := ExpressionsToPBList(ctx.GetEvalCtx(), []Expression{col}, client)
 		require.Error(t, err)
 	}
 
@@ -173,7 +184,7 @@ func TestColumn2Pb(t *testing.T) {
 	require.Len(t, pushed, len(colExprs))
 	require.Len(t, remained, 0)
 
-	pbExprs, err := ExpressionsToPBList(ctx, colExprs, client)
+	pbExprs, err := ExpressionsToPBList(ctx.GetEvalCtx(), colExprs, client)
 	require.NoError(t, err)
 	jsons := []string{
 		"{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0,\"field_type\":{\"tp\":1,\"flag\":0,\"flen\":4,\"decimal\":0,\"collate\":-63,\"charset\":\"binary\",\"array\":false},\"has_distinct\":false}",
@@ -220,13 +231,13 @@ func TestColumn2Pb(t *testing.T) {
 
 func TestCompareFunc2Pb(t *testing.T) {
 	var compareExprs = make([]Expression, 0)
-	ctx := mock.NewContext()
-	client := new(mock.Client)
-	pushDownCtx := NewPushDownContextFromSessionVars(ctx, ctx.GetSessionVars(), client)
+	ctx := mockExprCtx()
+	client := mockClient{}
+	pushDownCtx := NewPushDownContextFromSessionVars(ctx.GetEvalCtx(), variable.NewSessionVars(nil), client)
 
 	funcNames := []string{ast.LT, ast.LE, ast.GT, ast.GE, ast.EQ, ast.NE, ast.NullEQ}
 	for _, funcName := range funcNames {
-		fc, err := NewFunction(mock.NewContext(), funcName, types.NewFieldType(mysql.TypeUnspecified), genColumn(mysql.TypeLonglong, 1), genColumn(mysql.TypeLonglong, 2))
+		fc, err := NewFunction(ctx, funcName, types.NewFieldType(mysql.TypeUnspecified), genColumn(mysql.TypeLonglong, 1), genColumn(mysql.TypeLonglong, 2))
 		require.NoError(t, err)
 		compareExprs = append(compareExprs, fc)
 	}
@@ -235,7 +246,7 @@ func TestCompareFunc2Pb(t *testing.T) {
 	require.Len(t, pushed, len(compareExprs))
 	require.Len(t, remained, 0)
 
-	pbExprs, err := ExpressionsToPBList(ctx, compareExprs, client)
+	pbExprs, err := ExpressionsToPBList(ctx.GetEvalCtx(), compareExprs, client)
 	require.NoError(t, err)
 	require.Len(t, pbExprs, len(compareExprs))
 	jsons := []string{
@@ -257,8 +268,8 @@ func TestCompareFunc2Pb(t *testing.T) {
 
 func TestLikeFunc2Pb(t *testing.T) {
 	var likeFuncs []Expression
-	ctx := mock.NewContext()
-	client := new(mock.Client)
+	ctx := mockExprCtx()
+	client := mockClient{}
 
 	retTp := types.NewFieldType(mysql.TypeString)
 	retTp.SetFlag(retTp.GetFlag() | mysql.NotNullFlag)
@@ -279,7 +290,7 @@ func TestLikeFunc2Pb(t *testing.T) {
 	require.NoError(t, err)
 	likeFuncs = append(likeFuncs, fc)
 
-	pbExprs, err := ExpressionsToPBList(ctx, likeFuncs, client)
+	pbExprs, err := ExpressionsToPBList(ctx.GetEvalCtx(), likeFuncs, client)
 	require.NoError(t, err)
 	results := []string{
 		`{"tp":10000,"children":[{"tp":5,"val":"c3RyaW5n","sig":0,"field_type":{"tp":254,"flag":1,"flen":-1,"decimal":-1,"collate":-83,"charset":"utf8","array":false},"has_distinct":false},{"tp":5,"val":"cGF0dGVybg==","sig":0,"field_type":{"tp":254,"flag":1,"flen":-1,"decimal":-1,"collate":-83,"charset":"utf8","array":false},"has_distinct":false},{"tp":10000,"val":"CAA=","children":[{"tp":5,"val":"XA==","sig":0,"field_type":{"tp":254,"flag":1,"flen":-1,"decimal":-1,"collate":-83,"charset":"utf8","array":false},"has_distinct":false}],"sig":30,"field_type":{"tp":8,"flag":129,"flen":-1,"decimal":0,"collate":-83,"charset":"binary","array":false},"has_distinct":false}],"sig":4310,"field_type":{"tp":8,"flag":524416,"flen":1,"decimal":0,"collate":-83,"charset":"binary","array":false},"has_distinct":false}`,
@@ -294,13 +305,13 @@ func TestLikeFunc2Pb(t *testing.T) {
 
 func TestArithmeticalFunc2Pb(t *testing.T) {
 	var arithmeticalFuncs = make([]Expression, 0)
-	ctx := mock.NewContext()
-	client := new(mock.Client)
+	ctx := mockStmtExprCtx()
+	client := mockClient{}
 
 	funcNames := []string{ast.Plus, ast.Minus, ast.Mul, ast.Div}
 	for _, funcName := range funcNames {
 		fc, err := NewFunction(
-			mock.NewContext(),
+			ctx,
 			funcName,
 			types.NewFieldType(mysql.TypeUnspecified),
 			genColumn(mysql.TypeDouble, 1),
@@ -316,7 +327,7 @@ func TestArithmeticalFunc2Pb(t *testing.T) {
 	jsons[ast.Div] = "{\"tp\":10000,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0,\"field_type\":{\"tp\":5,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":-63,\"charset\":\"binary\",\"array\":false},\"has_distinct\":false},{\"tp\":201,\"val\":\"gAAAAAAAAAI=\",\"sig\":0,\"field_type\":{\"tp\":5,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":-63,\"charset\":\"binary\",\"array\":false},\"has_distinct\":false}],\"sig\":211,\"field_type\":{\"tp\":5,\"flag\":128,\"flen\":23,\"decimal\":-1,\"collate\":-63,\"charset\":\"binary\",\"array\":false},\"has_distinct\":false}"
 	jsons[ast.Mod] = "{\"tp\":10000,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0,\"field_type\":{\"tp\":5,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":-63,\"charset\":\"binary\",\"array\":false},\"has_distinct\":false},{\"tp\":201,\"val\":\"gAAAAAAAAAI=\",\"sig\":0,\"field_type\":{\"tp\":5,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":-63,\"charset\":\"binary\",\"array\":false},\"has_distinct\":false}],\"sig\":215,\"field_type\":{\"tp\":5,\"flag\":128,\"flen\":23,\"decimal\":-1,\"collate\":-63,\"charset\":\"binary\",\"array\":false},\"has_distinct\":false}"
 
-	pbExprs, err := ExpressionsToPBList(ctx, arithmeticalFuncs, client)
+	pbExprs, err := ExpressionsToPBList(ctx.GetEvalCtx(), arithmeticalFuncs, client)
 	require.NoError(t, err)
 	for i, pbExpr := range pbExprs {
 		require.NotNil(t, pbExpr)
@@ -327,13 +338,13 @@ func TestArithmeticalFunc2Pb(t *testing.T) {
 
 	// IntDiv
 	fc, err := NewFunction(
-		mock.NewContext(),
+		ctx,
 		ast.IntDiv,
 		types.NewFieldType(mysql.TypeUnspecified),
 		genColumn(mysql.TypeLonglong, 1),
 		genColumn(mysql.TypeLonglong, 2))
 	require.NoError(t, err)
-	pbExprs, err = ExpressionsToPBList(ctx, []Expression{fc}, client)
+	pbExprs, err = ExpressionsToPBList(ctx.GetEvalCtx(), []Expression{fc}, client)
 	require.NoError(t, err)
 	js, err := json.Marshal(pbExprs[0])
 	require.NoError(t, err)
@@ -342,18 +353,18 @@ func TestArithmeticalFunc2Pb(t *testing.T) {
 }
 
 func TestDateFunc2Pb(t *testing.T) {
-	ctx := mock.NewContext()
-	client := new(mock.Client)
+	ctx := mockStmtExprCtx()
+	client := mockClient{}
 
 	fc, err := NewFunction(
-		mock.NewContext(),
+		ctx,
 		ast.DateFormat,
 		types.NewFieldType(mysql.TypeUnspecified),
 		genColumn(mysql.TypeDatetime, 1),
 		genColumn(mysql.TypeString, 2))
 	require.NoError(t, err)
 	funcs := []Expression{fc}
-	pbExprs, err := ExpressionsToPBList(ctx, funcs, client)
+	pbExprs, err := ExpressionsToPBList(ctx.GetEvalCtx(), funcs, client)
 	require.NoError(t, err)
 	require.NotNil(t, pbExprs[0])
 	js, err := json.Marshal(pbExprs[0])
@@ -363,8 +374,8 @@ func TestDateFunc2Pb(t *testing.T) {
 
 func TestLogicalFunc2Pb(t *testing.T) {
 	var logicalFuncs = make([]Expression, 0)
-	ctx := mock.NewContext()
-	client := new(mock.Client)
+	ctx := mockStmtExprCtx()
+	client := mockClient{}
 
 	funcNames := []string{ast.LogicAnd, ast.LogicOr, ast.LogicXor, ast.UnaryNot}
 	for i, funcName := range funcNames {
@@ -373,7 +384,7 @@ func TestLogicalFunc2Pb(t *testing.T) {
 			args = append(args, genColumn(mysql.TypeTiny, 2))
 		}
 		fc, err := NewFunction(
-			mock.NewContext(),
+			ctx,
 			funcName,
 			types.NewFieldType(mysql.TypeUnspecified),
 			args...,
@@ -382,7 +393,7 @@ func TestLogicalFunc2Pb(t *testing.T) {
 		logicalFuncs = append(logicalFuncs, fc)
 	}
 
-	pbExprs, err := ExpressionsToPBList(ctx, logicalFuncs, client)
+	pbExprs, err := ExpressionsToPBList(ctx.GetEvalCtx(), logicalFuncs, client)
 	require.NoError(t, err)
 	jsons := []string{
 		"{\"tp\":10000,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0,\"field_type\":{\"tp\":1,\"flag\":0,\"flen\":4,\"decimal\":0,\"collate\":-63,\"charset\":\"binary\",\"array\":false},\"has_distinct\":false},{\"tp\":201,\"val\":\"gAAAAAAAAAI=\",\"sig\":0,\"field_type\":{\"tp\":1,\"flag\":0,\"flen\":4,\"decimal\":0,\"collate\":-63,\"charset\":\"binary\",\"array\":false},\"has_distinct\":false}],\"sig\":3101,\"field_type\":{\"tp\":8,\"flag\":524416,\"flen\":1,\"decimal\":0,\"collate\":-63,\"charset\":\"binary\",\"array\":false},\"has_distinct\":false}",
@@ -399,8 +410,8 @@ func TestLogicalFunc2Pb(t *testing.T) {
 
 func TestBitwiseFunc2Pb(t *testing.T) {
 	var bitwiseFuncs = make([]Expression, 0)
-	ctx := mock.NewContext()
-	client := new(mock.Client)
+	ctx := mockStmtExprCtx()
+	client := mockClient{}
 
 	funcNames := []string{ast.And, ast.Or, ast.Xor, ast.LeftShift, ast.RightShift, ast.BitNeg}
 	for i, funcName := range funcNames {
@@ -409,7 +420,7 @@ func TestBitwiseFunc2Pb(t *testing.T) {
 			args = append(args, genColumn(mysql.TypeLong, 2))
 		}
 		fc, err := NewFunction(
-			mock.NewContext(),
+			ctx,
 			funcName,
 			types.NewFieldType(mysql.TypeUnspecified),
 			args...,
@@ -418,7 +429,7 @@ func TestBitwiseFunc2Pb(t *testing.T) {
 		bitwiseFuncs = append(bitwiseFuncs, fc)
 	}
 
-	pbExprs, err := ExpressionsToPBList(ctx, bitwiseFuncs, client)
+	pbExprs, err := ExpressionsToPBList(ctx.GetEvalCtx(), bitwiseFuncs, client)
 	require.NoError(t, err)
 	jsons := []string{
 		"{\"tp\":10000,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0,\"field_type\":{\"tp\":3,\"flag\":0,\"flen\":11,\"decimal\":0,\"collate\":-63,\"charset\":\"binary\",\"array\":false},\"has_distinct\":false},{\"tp\":201,\"val\":\"gAAAAAAAAAI=\",\"sig\":0,\"field_type\":{\"tp\":3,\"flag\":0,\"flen\":11,\"decimal\":0,\"collate\":-63,\"charset\":\"binary\",\"array\":false},\"has_distinct\":false}],\"sig\":3118,\"field_type\":{\"tp\":8,\"flag\":160,\"flen\":20,\"decimal\":0,\"collate\":-63,\"charset\":\"binary\",\"array\":false},\"has_distinct\":false}",
@@ -437,8 +448,8 @@ func TestBitwiseFunc2Pb(t *testing.T) {
 
 func TestControlFunc2Pb(t *testing.T) {
 	var controlFuncs = make([]Expression, 0)
-	ctx := mock.NewContext()
-	client := new(mock.Client)
+	ctx := mockStmtExprCtx()
+	client := mockClient{}
 
 	funcNames := []string{
 		ast.Case,
@@ -452,7 +463,7 @@ func TestControlFunc2Pb(t *testing.T) {
 			args = append(args, genColumn(mysql.TypeLong, 3))
 		}
 		fc, err := NewFunction(
-			mock.NewContext(),
+			ctx,
 			funcName,
 			types.NewFieldType(mysql.TypeUnspecified),
 			args...,
@@ -461,7 +472,7 @@ func TestControlFunc2Pb(t *testing.T) {
 		controlFuncs = append(controlFuncs, fc)
 	}
 
-	pbExprs, err := ExpressionsToPBList(ctx, controlFuncs, client)
+	pbExprs, err := ExpressionsToPBList(ctx.GetEvalCtx(), controlFuncs, client)
 	require.NoError(t, err)
 	jsons := []string{
 		"{\"tp\":10000,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0,\"field_type\":{\"tp\":3,\"flag\":0,\"flen\":11,\"decimal\":0,\"collate\":-63,\"charset\":\"binary\",\"array\":false},\"has_distinct\":false},{\"tp\":201,\"val\":\"gAAAAAAAAAI=\",\"sig\":0,\"field_type\":{\"tp\":3,\"flag\":0,\"flen\":11,\"decimal\":0,\"collate\":-63,\"charset\":\"binary\",\"array\":false},\"has_distinct\":false},{\"tp\":201,\"val\":\"gAAAAAAAAAM=\",\"sig\":0,\"field_type\":{\"tp\":3,\"flag\":0,\"flen\":11,\"decimal\":0,\"collate\":-63,\"charset\":\"binary\",\"array\":false},\"has_distinct\":false}],\"sig\":4208,\"field_type\":{\"tp\":3,\"flag\":128,\"flen\":11,\"decimal\":0,\"collate\":-63,\"charset\":\"binary\",\"array\":false},\"has_distinct\":false}",
@@ -478,12 +489,12 @@ func TestControlFunc2Pb(t *testing.T) {
 
 func TestOtherFunc2Pb(t *testing.T) {
 	var otherFuncs = make([]Expression, 0)
-	client := new(mock.Client)
+	client := mockClient{}
 
 	funcNames := []string{ast.Coalesce, ast.IsNull}
 	for _, funcName := range funcNames {
 		fc, err := NewFunction(
-			mock.NewContext(),
+			mockStmtExprCtx(),
 			funcName,
 			types.NewFieldType(mysql.TypeUnspecified),
 			genColumn(mysql.TypeLong, 1),
@@ -492,7 +503,7 @@ func TestOtherFunc2Pb(t *testing.T) {
 		otherFuncs = append(otherFuncs, fc)
 	}
 
-	pbExprs, err := ExpressionsToPBList(mock.NewContext(), otherFuncs, client)
+	pbExprs, err := ExpressionsToPBList(mockExprCtx().GetEvalCtx(), otherFuncs, client)
 	require.NoError(t, err)
 	jsons := map[string]string{
 		ast.Coalesce: "{\"tp\":10000,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0,\"field_type\":{\"tp\":3,\"flag\":0,\"flen\":11,\"decimal\":0,\"collate\":-63,\"charset\":\"binary\",\"array\":false},\"has_distinct\":false}],\"sig\":4201,\"field_type\":{\"tp\":3,\"flag\":0,\"flen\":11,\"decimal\":0,\"collate\":-63,\"charset\":\"binary\",\"array\":false},\"has_distinct\":false}",
@@ -506,9 +517,9 @@ func TestOtherFunc2Pb(t *testing.T) {
 }
 
 func TestExprPushDownToFlash(t *testing.T) {
-	ctx := mock.NewContext()
-	client := new(mock.Client)
-	pushDownCtx := NewPushDownContextFromSessionVars(ctx, ctx.GetSessionVars(), client)
+	ctx := mockStmtExprCtx()
+	client := mockClient{}
+	pushDownCtx := NewPushDownContextFromSessionVars(ctx.GetEvalCtx(), variable.NewSessionVars(nil), client)
 
 	exprs := make([]Expression, 0)
 
@@ -530,85 +541,85 @@ func TestExprPushDownToFlash(t *testing.T) {
 	uintColumn := genColumn(mysql.TypeLonglong, 12)
 	uintColumn.RetType.AddFlag(mysql.UnsignedFlag)
 
-	function, err := NewFunction(mock.NewContext(), ast.JSONLength, types.NewFieldType(mysql.TypeLonglong), jsonColumn)
+	function, err := NewFunction(ctx, ast.JSONLength, types.NewFieldType(mysql.TypeLonglong), jsonColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
 	// json_extract
-	function, err = NewFunction(mock.NewContext(), ast.JSONExtract, types.NewFieldType(mysql.TypeJSON), jsonColumn, stringColumn)
+	function, err = NewFunction(ctx, ast.JSONExtract, types.NewFieldType(mysql.TypeJSON), jsonColumn, stringColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
 	// json_unquote argument is cast(json as string)
-	subFunc, subErr := NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeString), jsonColumn)
+	subFunc, subErr := NewFunction(ctx, ast.Cast, types.NewFieldType(mysql.TypeString), jsonColumn)
 	require.NoError(t, subErr)
-	function, err = NewFunction(mock.NewContext(), ast.JSONUnquote, types.NewFieldType(mysql.TypeString), subFunc)
+	function, err = NewFunction(ctx, ast.JSONUnquote, types.NewFieldType(mysql.TypeString), subFunc)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
 	// json_unquote's argument is not cast(json as string)
-	function, err = NewFunction(mock.NewContext(), ast.JSONUnquote, types.NewFieldType(mysql.TypeString), stringColumn)
+	function, err = NewFunction(ctx, ast.JSONUnquote, types.NewFieldType(mysql.TypeString), stringColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
 	// json_array
-	function, err = NewFunction(mock.NewContext(), ast.JSONArray, types.NewFieldType(mysql.TypeJSON), jsonColumn, jsonColumn, jsonColumn, jsonColumn, jsonColumn)
+	function, err = NewFunction(ctx, ast.JSONArray, types.NewFieldType(mysql.TypeJSON), jsonColumn, jsonColumn, jsonColumn, jsonColumn, jsonColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
 	// json_depth
-	function, err = NewFunction(mock.NewContext(), ast.JSONDepth, types.NewFieldType(mysql.TypeLonglong), jsonColumn)
+	function, err = NewFunction(ctx, ast.JSONDepth, types.NewFieldType(mysql.TypeLonglong), jsonColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
 	// json_contains_path
-	function, err = NewFunction(mock.NewContext(), ast.JSONContainsPath, types.NewFieldType(mysql.TypeLonglong), jsonColumn, stringColumn, stringColumn)
+	function, err = NewFunction(ctx, ast.JSONContainsPath, types.NewFieldType(mysql.TypeLonglong), jsonColumn, stringColumn, stringColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
 	// json_valid
 	/// json_valid_others
-	function, err = NewFunction(mock.NewContext(), ast.JSONValid, types.NewFieldType(mysql.TypeLonglong), intColumn)
+	function, err = NewFunction(ctx, ast.JSONValid, types.NewFieldType(mysql.TypeLonglong), intColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 	/// json_valid_json
-	function, err = NewFunction(mock.NewContext(), ast.JSONValid, types.NewFieldType(mysql.TypeLonglong), jsonColumn)
+	function, err = NewFunction(ctx, ast.JSONValid, types.NewFieldType(mysql.TypeLonglong), jsonColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 	/// json_valid_string
-	function, err = NewFunction(mock.NewContext(), ast.JSONValid, types.NewFieldType(mysql.TypeLonglong), stringColumn)
+	function, err = NewFunction(ctx, ast.JSONValid, types.NewFieldType(mysql.TypeLonglong), stringColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
 	// json_keys
 	/// 1 arg
-	function, err = NewFunction(mock.NewContext(), ast.JSONKeys, types.NewFieldType(mysql.TypeJSON), jsonColumn)
+	function, err = NewFunction(ctx, ast.JSONKeys, types.NewFieldType(mysql.TypeJSON), jsonColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 	/// 2 args
-	function, err = NewFunction(mock.NewContext(), ast.JSONKeys, types.NewFieldType(mysql.TypeJSON), jsonColumn, stringColumn)
+	function, err = NewFunction(ctx, ast.JSONKeys, types.NewFieldType(mysql.TypeJSON), jsonColumn, stringColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
 	// lpad
-	function, err = NewFunction(mock.NewContext(), ast.Lpad, types.NewFieldType(mysql.TypeString), stringColumn, int32Column, stringColumn)
+	function, err = NewFunction(ctx, ast.Lpad, types.NewFieldType(mysql.TypeString), stringColumn, int32Column, stringColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
 	// rpad
-	function, err = NewFunction(mock.NewContext(), ast.Rpad, types.NewFieldType(mysql.TypeString), stringColumn, int32Column, stringColumn)
+	function, err = NewFunction(ctx, ast.Rpad, types.NewFieldType(mysql.TypeString), stringColumn, int32Column, stringColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
-	function, err = NewFunction(mock.NewContext(), ast.If, types.NewFieldType(mysql.TypeLonglong), intColumn, intColumn, intColumn)
+	function, err = NewFunction(ctx, ast.If, types.NewFieldType(mysql.TypeLonglong), intColumn, intColumn, intColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
-	function, err = NewFunction(mock.NewContext(), ast.BitNeg, types.NewFieldType(mysql.TypeLonglong), intColumn)
+	function, err = NewFunction(ctx, ast.BitNeg, types.NewFieldType(mysql.TypeLonglong), intColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
-	function, err = NewFunction(mock.NewContext(), ast.Xor, types.NewFieldType(mysql.TypeLonglong), intColumn, intColumn)
+	function, err = NewFunction(ctx, ast.Xor, types.NewFieldType(mysql.TypeLonglong), intColumn, intColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
@@ -616,7 +627,7 @@ func TestExprPushDownToFlash(t *testing.T) {
 	extractDatetimeUnitCol := new(Constant)
 	extractDatetimeUnitCol.Value = types.NewStringDatum("day")
 	extractDatetimeUnitCol.RetType = types.NewFieldType(mysql.TypeString)
-	function, err = NewFunction(mock.NewContext(), ast.Extract, types.NewFieldType(mysql.TypeLonglong), extractDatetimeUnitCol, datetimeColumn)
+	function, err = NewFunction(ctx, ast.Extract, types.NewFieldType(mysql.TypeLonglong), extractDatetimeUnitCol, datetimeColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
@@ -624,37 +635,37 @@ func TestExprPushDownToFlash(t *testing.T) {
 	extractDurationUnitCol := new(Constant)
 	extractDurationUnitCol.Value = types.NewStringDatum("microsecond")
 	extractDurationUnitCol.RetType = types.NewFieldType(mysql.TypeString)
-	function, err = NewFunction(mock.NewContext(), ast.Extract, types.NewFieldType(mysql.TypeLonglong), extractDurationUnitCol, durationColumn)
+	function, err = NewFunction(ctx, ast.Extract, types.NewFieldType(mysql.TypeLonglong), extractDurationUnitCol, durationColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
 	// CastIntAsInt
-	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeLonglong), intColumn)
+	function, err = NewFunction(ctx, ast.Cast, types.NewFieldType(mysql.TypeLonglong), intColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
 	// CastRealAsInt
-	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeLonglong), realColumn)
+	function, err = NewFunction(ctx, ast.Cast, types.NewFieldType(mysql.TypeLonglong), realColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
 	// CastDecimalAsInt
-	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeLonglong), decimalColumn)
+	function, err = NewFunction(ctx, ast.Cast, types.NewFieldType(mysql.TypeLonglong), decimalColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
 	// CastDecimalAsDouble
-	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeDouble), decimalColumn)
+	function, err = NewFunction(ctx, ast.Cast, types.NewFieldType(mysql.TypeDouble), decimalColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
 	// CastStringAsInt
-	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeLonglong), stringColumn)
+	function, err = NewFunction(ctx, ast.Cast, types.NewFieldType(mysql.TypeLonglong), stringColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
 	// CastTimeAsInt
-	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeLonglong), datetimeColumn)
+	function, err = NewFunction(ctx, ast.Cast, types.NewFieldType(mysql.TypeLonglong), datetimeColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
@@ -662,290 +673,290 @@ func TestExprPushDownToFlash(t *testing.T) {
 	validDecimalType.SetFlen(20)
 	validDecimalType.SetDecimal(2)
 	// CastIntAsDecimal
-	function, err = NewFunction(mock.NewContext(), ast.Cast, validDecimalType, intColumn)
+	function, err = NewFunction(ctx, ast.Cast, validDecimalType, intColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
 	// CastRealAsDecimal
-	function, err = NewFunction(mock.NewContext(), ast.Cast, validDecimalType, realColumn)
+	function, err = NewFunction(ctx, ast.Cast, validDecimalType, realColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
 	// CastDecimalAsDecimal
-	function, err = NewFunction(mock.NewContext(), ast.Cast, validDecimalType, decimalColumn)
+	function, err = NewFunction(ctx, ast.Cast, validDecimalType, decimalColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
 	// CastStringAsDecimal
-	function, err = NewFunction(mock.NewContext(), ast.Cast, validDecimalType, stringColumn)
+	function, err = NewFunction(ctx, ast.Cast, validDecimalType, stringColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
 	// CastTimeAsDecimal
-	function, err = NewFunction(mock.NewContext(), ast.Cast, validDecimalType, datetimeColumn)
+	function, err = NewFunction(ctx, ast.Cast, validDecimalType, datetimeColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
 	// CastIntAsString
-	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeString), intColumn)
+	function, err = NewFunction(ctx, ast.Cast, types.NewFieldType(mysql.TypeString), intColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
 	// CastRealAsString
-	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeString), realColumn)
+	function, err = NewFunction(ctx, ast.Cast, types.NewFieldType(mysql.TypeString), realColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
 	// CastDecimalAsString
-	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeString), decimalColumn)
+	function, err = NewFunction(ctx, ast.Cast, types.NewFieldType(mysql.TypeString), decimalColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
 	// CastStringAsString
-	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeString), stringColumn)
+	function, err = NewFunction(ctx, ast.Cast, types.NewFieldType(mysql.TypeString), stringColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
 	// CastJsonAsString
-	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeString), jsonColumn)
+	function, err = NewFunction(ctx, ast.Cast, types.NewFieldType(mysql.TypeString), jsonColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
 	// CastIntAsTime
-	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeDatetime), intColumn)
+	function, err = NewFunction(ctx, ast.Cast, types.NewFieldType(mysql.TypeDatetime), intColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
 	// CastRealAsTime
-	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeDatetime), realColumn)
+	function, err = NewFunction(ctx, ast.Cast, types.NewFieldType(mysql.TypeDatetime), realColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
 	// CastDecimalAsTime
-	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeDatetime), decimalColumn)
+	function, err = NewFunction(ctx, ast.Cast, types.NewFieldType(mysql.TypeDatetime), decimalColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
 	// CastTimeAsTime
-	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeDatetime), datetimeColumn)
+	function, err = NewFunction(ctx, ast.Cast, types.NewFieldType(mysql.TypeDatetime), datetimeColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
 	// CastStringAsReal
-	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeDouble), stringColumn)
+	function, err = NewFunction(ctx, ast.Cast, types.NewFieldType(mysql.TypeDouble), stringColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
 	// Substring2ArgsUTF8
-	function, err = NewFunction(mock.NewContext(), ast.Substr, types.NewFieldType(mysql.TypeString), stringColumn, intColumn)
+	function, err = NewFunction(ctx, ast.Substr, types.NewFieldType(mysql.TypeString), stringColumn, intColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
 	// Substring3ArgsUTF8
-	function, err = NewFunction(mock.NewContext(), ast.Substr, types.NewFieldType(mysql.TypeString), stringColumn, intColumn, intColumn)
+	function, err = NewFunction(ctx, ast.Substr, types.NewFieldType(mysql.TypeString), stringColumn, intColumn, intColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
 	// sqrt
-	function, err = NewFunction(mock.NewContext(), ast.Sqrt, types.NewFieldType(mysql.TypeDouble), realColumn)
+	function, err = NewFunction(ctx, ast.Sqrt, types.NewFieldType(mysql.TypeDouble), realColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
 	// ScalarFuncSig_CeilReal
-	function, err = NewFunction(mock.NewContext(), ast.Ceil, types.NewFieldType(mysql.TypeDouble), realColumn)
+	function, err = NewFunction(ctx, ast.Ceil, types.NewFieldType(mysql.TypeDouble), realColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
 	// ScalarFuncSig_CeilIntToInt
-	function, err = NewFunction(mock.NewContext(), ast.Ceil, types.NewFieldType(mysql.TypeLonglong), intColumn)
+	function, err = NewFunction(ctx, ast.Ceil, types.NewFieldType(mysql.TypeLonglong), intColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
 	// ScalarFuncSig_CeilDecimalToInt
-	function, err = NewFunction(mock.NewContext(), ast.Ceil, types.NewFieldType(mysql.TypeLonglong), decimalColumn)
+	function, err = NewFunction(ctx, ast.Ceil, types.NewFieldType(mysql.TypeLonglong), decimalColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
 	// ScalarFuncSig_CeilDecToDec
-	function, err = NewFunction(mock.NewContext(), ast.Ceil, types.NewFieldType(mysql.TypeNewDecimal), decimalColumn)
+	function, err = NewFunction(ctx, ast.Ceil, types.NewFieldType(mysql.TypeNewDecimal), decimalColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
 	// ScalarFuncSig_FloorReal
-	function, err = NewFunction(mock.NewContext(), ast.Floor, types.NewFieldType(mysql.TypeDouble), realColumn)
+	function, err = NewFunction(ctx, ast.Floor, types.NewFieldType(mysql.TypeDouble), realColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
 	// ScalarFuncSig_FloorIntToInt
-	function, err = NewFunction(mock.NewContext(), ast.Floor, types.NewFieldType(mysql.TypeLonglong), intColumn)
+	function, err = NewFunction(ctx, ast.Floor, types.NewFieldType(mysql.TypeLonglong), intColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
 	// ScalarFuncSig_FloorDecToInt
-	function, err = NewFunction(mock.NewContext(), ast.Floor, types.NewFieldType(mysql.TypeLonglong), decimalColumn)
+	function, err = NewFunction(ctx, ast.Floor, types.NewFieldType(mysql.TypeLonglong), decimalColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
 	// ScalarFuncSig_FloorDecToDec
-	function, err = NewFunction(mock.NewContext(), ast.Floor, types.NewFieldType(mysql.TypeNewDecimal), decimalColumn)
+	function, err = NewFunction(ctx, ast.Floor, types.NewFieldType(mysql.TypeNewDecimal), decimalColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
 	// ScalarFuncSig_Log1Arg
-	function, err = NewFunction(mock.NewContext(), ast.Log, types.NewFieldType(mysql.TypeDouble), realColumn)
+	function, err = NewFunction(ctx, ast.Log, types.NewFieldType(mysql.TypeDouble), realColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
 	// ScalarFuncSig_Log2Args
-	function, err = NewFunction(mock.NewContext(), ast.Log, types.NewFieldType(mysql.TypeDouble), realColumn, realColumn)
+	function, err = NewFunction(ctx, ast.Log, types.NewFieldType(mysql.TypeDouble), realColumn, realColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
 	// ScalarFuncSig_Log2
-	function, err = NewFunction(mock.NewContext(), ast.Log2, types.NewFieldType(mysql.TypeDouble), realColumn)
+	function, err = NewFunction(ctx, ast.Log2, types.NewFieldType(mysql.TypeDouble), realColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
 	// ScalarFuncSig_Log10
-	function, err = NewFunction(mock.NewContext(), ast.Log10, types.NewFieldType(mysql.TypeDouble), realColumn)
+	function, err = NewFunction(ctx, ast.Log10, types.NewFieldType(mysql.TypeDouble), realColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
 	// ScalarFuncSig_Exp
-	function, err = NewFunction(mock.NewContext(), ast.Exp, types.NewFieldType(mysql.TypeDouble), realColumn)
+	function, err = NewFunction(ctx, ast.Exp, types.NewFieldType(mysql.TypeDouble), realColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
 	// ScalarFuncSig_Pow
-	function, err = NewFunction(mock.NewContext(), ast.Pow, types.NewFieldType(mysql.TypeDouble), realColumn, realColumn)
+	function, err = NewFunction(ctx, ast.Pow, types.NewFieldType(mysql.TypeDouble), realColumn, realColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
 	// ScalarFuncSig_Pow, Power is a synonym for Pow
-	function, err = NewFunction(mock.NewContext(), ast.Power, types.NewFieldType(mysql.TypeDouble), realColumn, realColumn)
+	function, err = NewFunction(ctx, ast.Power, types.NewFieldType(mysql.TypeDouble), realColumn, realColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
 	// ScalarFuncSig_Radians
-	function, err = NewFunction(mock.NewContext(), ast.Radians, types.NewFieldType(mysql.TypeDouble), realColumn)
+	function, err = NewFunction(ctx, ast.Radians, types.NewFieldType(mysql.TypeDouble), realColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
 	// ScalarFuncSig_Degrees
-	function, err = NewFunction(mock.NewContext(), ast.Degrees, types.NewFieldType(mysql.TypeDouble), realColumn)
+	function, err = NewFunction(ctx, ast.Degrees, types.NewFieldType(mysql.TypeDouble), realColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
 	// ScalarFuncSig_CRC32
-	function, err = NewFunction(mock.NewContext(), ast.CRC32, types.NewFieldType(mysql.TypeLonglong), stringColumn)
+	function, err = NewFunction(ctx, ast.CRC32, types.NewFieldType(mysql.TypeLonglong), stringColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
 	// ScalarFuncSig_Conv
-	function, err = NewFunction(mock.NewContext(), ast.Conv, types.NewFieldType(mysql.TypeDouble), stringColumn, intColumn, intColumn)
+	function, err = NewFunction(ctx, ast.Conv, types.NewFieldType(mysql.TypeDouble), stringColumn, intColumn, intColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
 	// Replace
-	function, err = NewFunction(mock.NewContext(), ast.Replace, types.NewFieldType(mysql.TypeString), stringColumn, stringColumn, stringColumn)
+	function, err = NewFunction(ctx, ast.Replace, types.NewFieldType(mysql.TypeString), stringColumn, stringColumn, stringColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
 	// InetAton
-	function, err = NewFunction(mock.NewContext(), ast.InetAton, types.NewFieldType(mysql.TypeString), stringColumn)
+	function, err = NewFunction(ctx, ast.InetAton, types.NewFieldType(mysql.TypeString), stringColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
 	// InetNtoa
-	function, err = NewFunction(mock.NewContext(), ast.InetNtoa, types.NewFieldType(mysql.TypeLonglong), stringColumn)
+	function, err = NewFunction(ctx, ast.InetNtoa, types.NewFieldType(mysql.TypeLonglong), stringColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
 	// Inet6Aton
-	function, err = NewFunction(mock.NewContext(), ast.Inet6Aton, types.NewFieldType(mysql.TypeString), stringColumn)
+	function, err = NewFunction(ctx, ast.Inet6Aton, types.NewFieldType(mysql.TypeString), stringColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
 	// Inet6Ntoa
-	function, err = NewFunction(mock.NewContext(), ast.Inet6Ntoa, types.NewFieldType(mysql.TypeLonglong), stringColumn)
+	function, err = NewFunction(ctx, ast.Inet6Ntoa, types.NewFieldType(mysql.TypeLonglong), stringColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
 	// ScalarFuncSig_RoundReal
-	function, err = NewFunction(mock.NewContext(), ast.Round, types.NewFieldType(mysql.TypeDouble), realColumn)
+	function, err = NewFunction(ctx, ast.Round, types.NewFieldType(mysql.TypeDouble), realColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
 	// ScalarFuncSig_RoundInt
-	function, err = NewFunction(mock.NewContext(), ast.Round, types.NewFieldType(mysql.TypeLonglong), intColumn)
+	function, err = NewFunction(ctx, ast.Round, types.NewFieldType(mysql.TypeLonglong), intColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
 	// ScalarFuncSig_RoundDecimal
-	function, err = NewFunction(mock.NewContext(), ast.Round, types.NewFieldType(mysql.TypeNewDecimal), decimalColumn)
+	function, err = NewFunction(ctx, ast.Round, types.NewFieldType(mysql.TypeNewDecimal), decimalColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
 	// ScalarFuncSig_RoundWithFracReal
-	function, err = NewFunction(mock.NewContext(), ast.Round, types.NewFieldType(mysql.TypeDouble), realColumn, intColumn)
+	function, err = NewFunction(ctx, ast.Round, types.NewFieldType(mysql.TypeDouble), realColumn, intColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
 	// ScalarFuncSig_RoundWithFracInt
-	function, err = NewFunction(mock.NewContext(), ast.Round, types.NewFieldType(mysql.TypeLonglong), intColumn, intColumn)
+	function, err = NewFunction(ctx, ast.Round, types.NewFieldType(mysql.TypeLonglong), intColumn, intColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
 	// ScalarFuncSig_RoundWithFracDecimal
-	function, err = NewFunction(mock.NewContext(), ast.Round, types.NewFieldType(mysql.TypeNewDecimal), decimalColumn, intColumn)
+	function, err = NewFunction(ctx, ast.Round, types.NewFieldType(mysql.TypeNewDecimal), decimalColumn, intColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
 	// concat
-	function, err = NewFunction(mock.NewContext(), ast.Concat, types.NewFieldType(mysql.TypeString), stringColumn, intColumn, realColumn)
+	function, err = NewFunction(ctx, ast.Concat, types.NewFieldType(mysql.TypeString), stringColumn, intColumn, realColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
 	// UnixTimestampCurrent
-	function, err = NewFunction(mock.NewContext(), ast.UnixTimestamp, types.NewFieldType(mysql.TypeLonglong))
+	function, err = NewFunction(ctx, ast.UnixTimestamp, types.NewFieldType(mysql.TypeLonglong))
 	require.NoError(t, err)
 	_, ok := function.(*Constant)
 	require.True(t, ok)
 
 	// UnixTimestampInt
 	datetimeColumn.RetType.SetDecimal(0)
-	function, err = NewFunction(mock.NewContext(), ast.UnixTimestamp, types.NewFieldType(mysql.TypeLonglong), datetimeColumn)
+	function, err = NewFunction(ctx, ast.UnixTimestamp, types.NewFieldType(mysql.TypeLonglong), datetimeColumn)
 	require.NoError(t, err)
 	require.Equal(t, tipb.ScalarFuncSig_UnixTimestampInt, function.(*ScalarFunction).Function.PbCode())
 	exprs = append(exprs, function)
 
 	// UnixTimestampDecimal
 	datetimeColumn.RetType.SetDecimal(types.UnspecifiedLength)
-	function, err = NewFunction(mock.NewContext(), ast.UnixTimestamp, types.NewFieldType(mysql.TypeNewDecimal), datetimeColumn)
+	function, err = NewFunction(ctx, ast.UnixTimestamp, types.NewFieldType(mysql.TypeNewDecimal), datetimeColumn)
 	require.NoError(t, err)
 	require.Equal(t, tipb.ScalarFuncSig_UnixTimestampDec, function.(*ScalarFunction).Function.PbCode())
 	exprs = append(exprs, function)
 
 	// Year
-	function, err = NewFunction(mock.NewContext(), ast.Year, types.NewFieldType(mysql.TypeLonglong), datetimeColumn)
+	function, err = NewFunction(ctx, ast.Year, types.NewFieldType(mysql.TypeLonglong), datetimeColumn)
 	require.NoError(t, err)
 	require.Equal(t, tipb.ScalarFuncSig_Year, function.(*ScalarFunction).Function.PbCode())
 	exprs = append(exprs, function)
 
 	// Day
-	function, err = NewFunction(mock.NewContext(), ast.Day, types.NewFieldType(mysql.TypeLonglong), datetimeColumn)
+	function, err = NewFunction(ctx, ast.Day, types.NewFieldType(mysql.TypeLonglong), datetimeColumn)
 	require.NoError(t, err)
 	require.Equal(t, tipb.ScalarFuncSig_DayOfMonth, function.(*ScalarFunction).Function.PbCode())
 	exprs = append(exprs, function)
 
 	// Repeat
-	function, err = NewFunction(mock.NewContext(), ast.Repeat, types.NewFieldType(mysql.TypeString), stringColumn, intColumn)
+	function, err = NewFunction(ctx, ast.Repeat, types.NewFieldType(mysql.TypeString), stringColumn, intColumn)
 	require.NoError(t, err)
 	require.Equal(t, tipb.ScalarFuncSig_Repeat, function.(*ScalarFunction).Function.PbCode())
 	exprs = append(exprs, function)
 
 	// Datediff
-	function, err = NewFunction(mock.NewContext(), ast.DateDiff, types.NewFieldType(mysql.TypeLonglong), datetimeColumn, datetimeColumn)
+	function, err = NewFunction(ctx, ast.DateDiff, types.NewFieldType(mysql.TypeLonglong), datetimeColumn, datetimeColumn)
 	require.NoError(t, err)
 	require.Equal(t, tipb.ScalarFuncSig_DateDiff, function.(*ScalarFunction).Function.PbCode())
 	exprs = append(exprs, function)
@@ -954,79 +965,79 @@ func TestExprPushDownToFlash(t *testing.T) {
 	constStringColumn := new(Constant)
 	constStringColumn.Value = types.NewStringDatum("day")
 	constStringColumn.RetType = types.NewFieldType(mysql.TypeString)
-	function, err = NewFunction(mock.NewContext(), ast.DateSub, types.NewFieldType(mysql.TypeDatetime), datetimeColumn, intColumn, constStringColumn)
+	function, err = NewFunction(ctx, ast.DateSub, types.NewFieldType(mysql.TypeDatetime), datetimeColumn, intColumn, constStringColumn)
 	require.NoError(t, err)
 	require.Equal(t, tipb.ScalarFuncSig_SubDateDatetimeInt, function.(*ScalarFunction).Function.PbCode())
 	exprs = append(exprs, function)
-	function, err = NewFunction(mock.NewContext(), ast.DateSub, types.NewFieldType(mysql.TypeDatetime), stringColumn, intColumn, constStringColumn)
+	function, err = NewFunction(ctx, ast.DateSub, types.NewFieldType(mysql.TypeDatetime), stringColumn, intColumn, constStringColumn)
 	require.NoError(t, err)
 	require.Equal(t, tipb.ScalarFuncSig_SubDateStringInt, function.(*ScalarFunction).Function.PbCode())
 	exprs = append(exprs, function)
-	function, err = NewFunction(mock.NewContext(), ast.SubDate, types.NewFieldType(mysql.TypeDatetime), datetimeColumn, intColumn, constStringColumn)
+	function, err = NewFunction(ctx, ast.SubDate, types.NewFieldType(mysql.TypeDatetime), datetimeColumn, intColumn, constStringColumn)
 	require.NoError(t, err)
 	require.Equal(t, tipb.ScalarFuncSig_SubDateDatetimeInt, function.(*ScalarFunction).Function.PbCode())
 	exprs = append(exprs, function)
 
 	// castTimeAsString:
-	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeString), datetimeColumn)
+	function, err = NewFunction(ctx, ast.Cast, types.NewFieldType(mysql.TypeString), datetimeColumn)
 	require.NoError(t, err)
 	require.Equal(t, tipb.ScalarFuncSig_CastTimeAsString, function.(*ScalarFunction).Function.PbCode())
 	exprs = append(exprs, function)
 
 	// concat_ws
-	function, err = NewFunction(mock.NewContext(), ast.ConcatWS, types.NewFieldType(mysql.TypeString), stringColumn, stringColumn, stringColumn)
+	function, err = NewFunction(ctx, ast.ConcatWS, types.NewFieldType(mysql.TypeString), stringColumn, stringColumn, stringColumn)
 	require.NoError(t, err)
 	require.Equal(t, tipb.ScalarFuncSig_ConcatWS, function.(*ScalarFunction).Function.PbCode())
 	exprs = append(exprs, function)
 
-	function, err = NewFunction(mock.NewContext(), ast.FromDays, types.NewFieldType(mysql.TypeDate), intColumn)
+	function, err = NewFunction(ctx, ast.FromDays, types.NewFieldType(mysql.TypeDate), intColumn)
 	require.NoError(t, err)
 	require.Equal(t, tipb.ScalarFuncSig_FromDays, function.(*ScalarFunction).Function.PbCode())
 	exprs = append(exprs, function)
 
-	function, err = NewFunction(mock.NewContext(), ast.ToDays, types.NewFieldType(mysql.TypeLonglong), datetimeColumn)
+	function, err = NewFunction(ctx, ast.ToDays, types.NewFieldType(mysql.TypeLonglong), datetimeColumn)
 	require.NoError(t, err)
 	require.Equal(t, tipb.ScalarFuncSig_ToDays, function.(*ScalarFunction).Function.PbCode())
 	exprs = append(exprs, function)
 
 	// StrToDateDateTime
-	function, err = NewFunction(mock.NewContext(), ast.StrToDate, types.NewFieldType(mysql.TypeDatetime), stringColumn, stringColumn)
+	function, err = NewFunction(ctx, ast.StrToDate, types.NewFieldType(mysql.TypeDatetime), stringColumn, stringColumn)
 	require.NoError(t, err)
 	require.Equal(t, tipb.ScalarFuncSig_StrToDateDatetime, function.(*ScalarFunction).Function.PbCode())
 	exprs = append(exprs, function)
 
 	// cast Int32 to Int32
-	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeLong), int32Column)
+	function, err = NewFunction(ctx, ast.Cast, types.NewFieldType(mysql.TypeLong), int32Column)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
 	// cast float32 to float32
-	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeFloat), float32Column)
+	function, err = NewFunction(ctx, ast.Cast, types.NewFieldType(mysql.TypeFloat), float32Column)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
 	// upper string
-	function, err = NewFunction(mock.NewContext(), ast.Upper, types.NewFieldType(mysql.TypeString), stringColumn)
+	function, err = NewFunction(ctx, ast.Upper, types.NewFieldType(mysql.TypeString), stringColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
 	// ucase string
-	function, err = NewFunction(mock.NewContext(), ast.Ucase, types.NewFieldType(mysql.TypeString), stringColumn)
+	function, err = NewFunction(ctx, ast.Ucase, types.NewFieldType(mysql.TypeString), stringColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
 	// lower string
-	function, err = NewFunction(mock.NewContext(), ast.Lower, types.NewFieldType(mysql.TypeString), stringColumn)
+	function, err = NewFunction(ctx, ast.Lower, types.NewFieldType(mysql.TypeString), stringColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
 	// lcase string
-	function, err = NewFunction(mock.NewContext(), ast.Lcase, types.NewFieldType(mysql.TypeString), stringColumn)
+	function, err = NewFunction(ctx, ast.Lcase, types.NewFieldType(mysql.TypeString), stringColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
 	// sysdate
-	function, err = NewFunction(mock.NewContext(), ast.Sysdate, types.NewFieldType(mysql.TypeDatetime), stringColumn)
+	function, err = NewFunction(ctx, ast.Sysdate, types.NewFieldType(mysql.TypeDatetime), stringColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
@@ -1036,12 +1047,12 @@ func TestExprPushDownToFlash(t *testing.T) {
 	exprs = exprs[:0]
 
 	// Substring2Args: can not be pushed
-	function, err = NewFunction(mock.NewContext(), ast.Substr, types.NewFieldType(mysql.TypeString), binaryStringColumn, intColumn)
+	function, err = NewFunction(ctx, ast.Substr, types.NewFieldType(mysql.TypeString), binaryStringColumn, intColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
 	// Substring3Args: can not be pushed
-	function, err = NewFunction(mock.NewContext(), ast.Substr, types.NewFieldType(mysql.TypeString), binaryStringColumn, intColumn, intColumn)
+	function, err = NewFunction(ctx, ast.Substr, types.NewFieldType(mysql.TypeString), binaryStringColumn, intColumn, intColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
@@ -1049,34 +1060,34 @@ func TestExprPushDownToFlash(t *testing.T) {
 	extractDatetimeFromStringUnitCol := new(Constant)
 	extractDatetimeFromStringUnitCol.Value = types.NewStringDatum("day_microsecond")
 	extractDatetimeFromStringUnitCol.RetType = types.NewFieldType(mysql.TypeString)
-	function, err = NewFunction(mock.NewContext(), ast.Extract, types.NewFieldType(mysql.TypeLonglong), extractDatetimeFromStringUnitCol, stringColumn)
+	function, err = NewFunction(ctx, ast.Extract, types.NewFieldType(mysql.TypeLonglong), extractDatetimeFromStringUnitCol, stringColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
 	// Cast to Int32: not supported
-	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeLong), stringColumn)
+	function, err = NewFunction(ctx, ast.Cast, types.NewFieldType(mysql.TypeLong), stringColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
 	// Cast to Float: not supported
-	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeFloat), intColumn)
+	function, err = NewFunction(ctx, ast.Cast, types.NewFieldType(mysql.TypeFloat), intColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
 	// Cast to invalid decimal Type: not supported
-	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeNewDecimal), intColumn)
+	function, err = NewFunction(ctx, ast.Cast, types.NewFieldType(mysql.TypeNewDecimal), intColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
 	// cast Int32 to UInt32
 	unsignedInt32Type := types.NewFieldType(mysql.TypeLong)
 	unsignedInt32Type.SetFlag(mysql.UnsignedFlag)
-	function, err = NewFunction(mock.NewContext(), ast.Cast, unsignedInt32Type, int32Column)
+	function, err = NewFunction(ctx, ast.Cast, unsignedInt32Type, int32Column)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
 	// cast Enum as String : not supported
-	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeString), enumColumn)
+	function, err = NewFunction(ctx, ast.Cast, types.NewFieldType(mysql.TypeString), enumColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
@@ -1092,235 +1103,235 @@ func TestExprPushDownToFlash(t *testing.T) {
 	// cast Enum as UInt : supported
 	unsignedInt := types.NewFieldType(mysql.TypeLonglong)
 	unsignedInt.SetFlag(mysql.UnsignedFlag)
-	function, err = NewFunction(mock.NewContext(), ast.Cast, unsignedInt, enumColumn)
+	function, err = NewFunction(ctx, ast.Cast, unsignedInt, enumColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
 	// cast Enum as Int : supported
-	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeLonglong), enumColumn)
+	function, err = NewFunction(ctx, ast.Cast, types.NewFieldType(mysql.TypeLonglong), enumColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
 	// cast Enum as Double : supported
-	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeDouble), enumColumn)
+	function, err = NewFunction(ctx, ast.Cast, types.NewFieldType(mysql.TypeDouble), enumColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
 	// cast Enum as decimal : supported
-	function, err = NewFunction(mock.NewContext(), ast.Cast, validDecimalType, enumColumn)
+	function, err = NewFunction(ctx, ast.Cast, validDecimalType, enumColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
 	// quarter: supported
-	function, err = NewFunction(mock.NewContext(), ast.Quarter, types.NewFieldType(mysql.TypeLonglong), datetimeColumn)
+	function, err = NewFunction(ctx, ast.Quarter, types.NewFieldType(mysql.TypeLonglong), datetimeColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
 	// strcmp
-	function, err = NewFunction(mock.NewContext(), ast.Strcmp, types.NewFieldType(mysql.TypeLonglong), stringColumn, stringColumn)
+	function, err = NewFunction(ctx, ast.Strcmp, types.NewFieldType(mysql.TypeLonglong), stringColumn, stringColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
 	// DayName: supported
-	function, err = NewFunction(mock.NewContext(), ast.DayName, types.NewFieldType(mysql.TypeString), datetimeColumn)
+	function, err = NewFunction(ctx, ast.DayName, types.NewFieldType(mysql.TypeString), datetimeColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
 	// MonthName: supported
-	function, err = NewFunction(mock.NewContext(), ast.MonthName, types.NewFieldType(mysql.TypeString), datetimeColumn)
+	function, err = NewFunction(ctx, ast.MonthName, types.NewFieldType(mysql.TypeString), datetimeColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
 	// ToSeconds: supported
-	function, err = NewFunction(mock.NewContext(), ast.ToSeconds, types.NewFieldType(mysql.TypeLonglong), datetimeColumn)
+	function, err = NewFunction(ctx, ast.ToSeconds, types.NewFieldType(mysql.TypeLonglong), datetimeColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
 	// regexpUTF8: supported
-	function, err = NewFunction(mock.NewContext(), ast.Regexp, types.NewFieldType(mysql.TypeLonglong), stringColumn, stringColumn)
+	function, err = NewFunction(ctx, ast.Regexp, types.NewFieldType(mysql.TypeLonglong), stringColumn, stringColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
 	// regexp: supported
-	function, err = NewFunction(mock.NewContext(), ast.Regexp, types.NewFieldType(mysql.TypeLonglong), binaryStringColumn, binaryStringColumn)
+	function, err = NewFunction(ctx, ast.Regexp, types.NewFieldType(mysql.TypeLonglong), binaryStringColumn, binaryStringColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
 	// regexp_like: supported
-	function, err = NewFunction(mock.NewContext(), ast.RegexpLike, types.NewFieldType(mysql.TypeLonglong), binaryStringColumn, binaryStringColumn, binaryStringColumn)
+	function, err = NewFunction(ctx, ast.RegexpLike, types.NewFieldType(mysql.TypeLonglong), binaryStringColumn, binaryStringColumn, binaryStringColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
 	// regexp_instr: supported
-	function, err = NewFunction(mock.NewContext(), ast.RegexpInStr, types.NewFieldType(mysql.TypeLonglong), stringColumn, stringColumn, intColumn, intColumn, intColumn, stringColumn)
+	function, err = NewFunction(ctx, ast.RegexpInStr, types.NewFieldType(mysql.TypeLonglong), stringColumn, stringColumn, intColumn, intColumn, intColumn, stringColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
 	// regexp_substr: supported
-	function, err = NewFunction(mock.NewContext(), ast.RegexpSubstr, types.NewFieldType(mysql.TypeString), stringColumn, stringColumn, intColumn, intColumn, stringColumn)
+	function, err = NewFunction(ctx, ast.RegexpSubstr, types.NewFieldType(mysql.TypeString), stringColumn, stringColumn, intColumn, intColumn, stringColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
 	// regexp_replace: supported
-	function, err = NewFunction(mock.NewContext(), ast.RegexpReplace, types.NewFieldType(mysql.TypeString), stringColumn, stringColumn, stringColumn, intColumn, intColumn, stringColumn)
+	function, err = NewFunction(ctx, ast.RegexpReplace, types.NewFieldType(mysql.TypeString), stringColumn, stringColumn, stringColumn, intColumn, intColumn, stringColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
 	// ilike: supported
-	function, err = NewFunction(mock.NewContext(), ast.Ilike, types.NewFieldType(mysql.TypeLonglong), stringColumn, stringColumn, stringColumn)
+	function, err = NewFunction(ctx, ast.Ilike, types.NewFieldType(mysql.TypeLonglong), stringColumn, stringColumn, stringColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
 	// greatest
-	function, err = NewFunction(mock.NewContext(), ast.Greatest, types.NewFieldType(mysql.TypeLonglong), int32Column, intColumn)
+	function, err = NewFunction(ctx, ast.Greatest, types.NewFieldType(mysql.TypeLonglong), int32Column, intColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
-	function, err = NewFunction(mock.NewContext(), ast.Greatest, types.NewFieldType(mysql.TypeDouble), float32Column, intColumn)
+	function, err = NewFunction(ctx, ast.Greatest, types.NewFieldType(mysql.TypeDouble), float32Column, intColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
-	function, err = NewFunction(mock.NewContext(), ast.Greatest, types.NewFieldType(mysql.TypeString), stringColumn, stringColumn)
+	function, err = NewFunction(ctx, ast.Greatest, types.NewFieldType(mysql.TypeString), stringColumn, stringColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
 	// least
-	function, err = NewFunction(mock.NewContext(), ast.Least, types.NewFieldType(mysql.TypeLonglong), int32Column, intColumn)
+	function, err = NewFunction(ctx, ast.Least, types.NewFieldType(mysql.TypeLonglong), int32Column, intColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
-	function, err = NewFunction(mock.NewContext(), ast.Least, types.NewFieldType(mysql.TypeDouble), float32Column, intColumn)
+	function, err = NewFunction(ctx, ast.Least, types.NewFieldType(mysql.TypeDouble), float32Column, intColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
-	function, err = NewFunction(mock.NewContext(), ast.Least, types.NewFieldType(mysql.TypeString), stringColumn, stringColumn)
+	function, err = NewFunction(ctx, ast.Least, types.NewFieldType(mysql.TypeString), stringColumn, stringColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
 	// is true
-	function, err = NewFunction(mock.NewContext(), ast.IsTruthWithoutNull, types.NewFieldType(mysql.TypeLonglong), int32Column)
+	function, err = NewFunction(ctx, ast.IsTruthWithoutNull, types.NewFieldType(mysql.TypeLonglong), int32Column)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
-	function, err = NewFunction(mock.NewContext(), ast.IsTruthWithoutNull, types.NewFieldType(mysql.TypeLonglong), float32Column)
+	function, err = NewFunction(ctx, ast.IsTruthWithoutNull, types.NewFieldType(mysql.TypeLonglong), float32Column)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
-	function, err = NewFunction(mock.NewContext(), ast.IsTruthWithoutNull, types.NewFieldType(mysql.TypeLonglong), decimalColumn)
+	function, err = NewFunction(ctx, ast.IsTruthWithoutNull, types.NewFieldType(mysql.TypeLonglong), decimalColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 	// is true with null
-	function, err = NewFunction(mock.NewContext(), ast.IsTruthWithNull, types.NewFieldType(mysql.TypeLonglong), int32Column)
+	function, err = NewFunction(ctx, ast.IsTruthWithNull, types.NewFieldType(mysql.TypeLonglong), int32Column)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
-	function, err = NewFunction(mock.NewContext(), ast.IsTruthWithNull, types.NewFieldType(mysql.TypeLonglong), float32Column)
+	function, err = NewFunction(ctx, ast.IsTruthWithNull, types.NewFieldType(mysql.TypeLonglong), float32Column)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
-	function, err = NewFunction(mock.NewContext(), ast.IsTruthWithNull, types.NewFieldType(mysql.TypeLonglong), decimalColumn)
+	function, err = NewFunction(ctx, ast.IsTruthWithNull, types.NewFieldType(mysql.TypeLonglong), decimalColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 	// is false, note seems there is actually no is_false_with_null, so unable to add ut for it
-	function, err = NewFunction(mock.NewContext(), ast.IsFalsity, types.NewFieldType(mysql.TypeLonglong), int32Column)
+	function, err = NewFunction(ctx, ast.IsFalsity, types.NewFieldType(mysql.TypeLonglong), int32Column)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
-	function, err = NewFunction(mock.NewContext(), ast.IsFalsity, types.NewFieldType(mysql.TypeLonglong), float32Column)
+	function, err = NewFunction(ctx, ast.IsFalsity, types.NewFieldType(mysql.TypeLonglong), float32Column)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
-	function, err = NewFunction(mock.NewContext(), ast.IsFalsity, types.NewFieldType(mysql.TypeLonglong), decimalColumn)
+	function, err = NewFunction(ctx, ast.IsFalsity, types.NewFieldType(mysql.TypeLonglong), decimalColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
 	// DayOfWeek
-	function, err = NewFunction(mock.NewContext(), ast.DayOfWeek, types.NewFieldType(mysql.TypeDatetime), datetimeColumn)
+	function, err = NewFunction(ctx, ast.DayOfWeek, types.NewFieldType(mysql.TypeDatetime), datetimeColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
 	// DayOfMonth
-	function, err = NewFunction(mock.NewContext(), ast.DayOfMonth, types.NewFieldType(mysql.TypeDatetime), datetimeColumn)
+	function, err = NewFunction(ctx, ast.DayOfMonth, types.NewFieldType(mysql.TypeDatetime), datetimeColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
 	// DayOfYear
-	function, err = NewFunction(mock.NewContext(), ast.DayOfYear, types.NewFieldType(mysql.TypeDatetime), datetimeColumn)
+	function, err = NewFunction(ctx, ast.DayOfYear, types.NewFieldType(mysql.TypeDatetime), datetimeColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
 	// LastDay
-	function, err = NewFunction(mock.NewContext(), ast.LastDay, types.NewFieldType(mysql.TypeDatetime), datetimeColumn)
+	function, err = NewFunction(ctx, ast.LastDay, types.NewFieldType(mysql.TypeDatetime), datetimeColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
 	// WeekOfYear
-	function, err = NewFunction(mock.NewContext(), ast.WeekOfYear, types.NewFieldType(mysql.TypeDatetime), datetimeColumn)
+	function, err = NewFunction(ctx, ast.WeekOfYear, types.NewFieldType(mysql.TypeDatetime), datetimeColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
 	// TimeToSec
-	function, err = NewFunction(mock.NewContext(), ast.TimeToSec, types.NewFieldType(mysql.TypeDuration), durationColumn)
+	function, err = NewFunction(ctx, ast.TimeToSec, types.NewFieldType(mysql.TypeDuration), durationColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
 	// ScalarFuncSig_RightShift
-	function, err = NewFunction(mock.NewContext(), ast.RightShift, types.NewFieldType(mysql.TypeLonglong), intColumn, intColumn)
+	function, err = NewFunction(ctx, ast.RightShift, types.NewFieldType(mysql.TypeLonglong), intColumn, intColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
 	// ScalarFuncSig_LeftShift
-	function, err = NewFunction(mock.NewContext(), ast.LeftShift, types.NewFieldType(mysql.TypeLonglong), intColumn, intColumn)
+	function, err = NewFunction(ctx, ast.LeftShift, types.NewFieldType(mysql.TypeLonglong), intColumn, intColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
 	// ReverseUTF8
-	function, err = NewFunction(mock.NewContext(), ast.Reverse, types.NewFieldType(mysql.TypeString), stringColumn)
+	function, err = NewFunction(ctx, ast.Reverse, types.NewFieldType(mysql.TypeString), stringColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
 	// Reverse
-	function, err = NewFunction(mock.NewContext(), ast.Reverse, types.NewFieldType(mysql.TypeBlob), stringColumn)
+	function, err = NewFunction(ctx, ast.Reverse, types.NewFieldType(mysql.TypeBlob), stringColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
 	// space
-	function, err = NewFunction(mock.NewContext(), ast.Space, types.NewFieldType(mysql.TypeLonglong), int32Column)
+	function, err = NewFunction(ctx, ast.Space, types.NewFieldType(mysql.TypeLonglong), int32Column)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
 	// HexStr
-	function, err = NewFunction(mock.NewContext(), ast.Hex, types.NewFieldType(mysql.TypeString), stringColumn)
+	function, err = NewFunction(ctx, ast.Hex, types.NewFieldType(mysql.TypeString), stringColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
 	// HexInt
-	function, err = NewFunction(mock.NewContext(), ast.Hex, types.NewFieldType(mysql.TypeString), intColumn)
+	function, err = NewFunction(ctx, ast.Hex, types.NewFieldType(mysql.TypeString), intColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
 	// Bin
-	function, err = NewFunction(mock.NewContext(), ast.Bin, types.NewFieldType(mysql.TypeString), intColumn)
+	function, err = NewFunction(ctx, ast.Bin, types.NewFieldType(mysql.TypeString), intColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
 	// Elt
-	function, err = NewFunction(mock.NewContext(), ast.Elt, types.NewFieldType(mysql.TypeString), intColumn, stringColumn)
+	function, err = NewFunction(ctx, ast.Elt, types.NewFieldType(mysql.TypeString), intColumn, stringColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
 	// CastTimeAsDuration
-	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeDuration), datetimeColumn)
+	function, err = NewFunction(ctx, ast.Cast, types.NewFieldType(mysql.TypeDuration), datetimeColumn)
 	require.NoError(t, err)
 	require.Equal(t, tipb.ScalarFuncSig_CastTimeAsDuration, function.(*ScalarFunction).Function.PbCode())
 	exprs = append(exprs, function)
 
 	// Unhex
-	function, err = NewFunction(mock.NewContext(), ast.Unhex, types.NewFieldType(mysql.TypeString), stringColumn)
+	function, err = NewFunction(ctx, ast.Unhex, types.NewFieldType(mysql.TypeString), stringColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
 	// IsIPv4
-	function, err = NewFunction(mock.NewContext(), ast.IsIPv4, types.NewFieldType(mysql.TypeString), stringColumn)
+	function, err = NewFunction(ctx, ast.IsIPv4, types.NewFieldType(mysql.TypeString), stringColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
 	// IsIPv6
-	function, err = NewFunction(mock.NewContext(), ast.IsIPv6, types.NewFieldType(mysql.TypeString), stringColumn)
+	function, err = NewFunction(ctx, ast.IsIPv6, types.NewFieldType(mysql.TypeString), stringColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
@@ -1333,45 +1344,45 @@ func TestExprPushDownToFlash(t *testing.T) {
 		}
 		return groupingFunc, err
 	}
-	function, err = NewFunctionWithInit(mock.NewContext(), ast.Grouping, types.NewFieldType(mysql.TypeLonglong), init, uintColumn)
+	function, err = NewFunctionWithInit(ctx, ast.Grouping, types.NewFieldType(mysql.TypeLonglong), init, uintColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
 	// CastIntAsJson
-	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeJSON), intColumn)
+	function, err = NewFunction(ctx, ast.Cast, types.NewFieldType(mysql.TypeJSON), intColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
 	// CastRealAsJson
-	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeJSON), realColumn)
+	function, err = NewFunction(ctx, ast.Cast, types.NewFieldType(mysql.TypeJSON), realColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
 	// CastDecimalAsJson
-	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeJSON), decimalColumn)
+	function, err = NewFunction(ctx, ast.Cast, types.NewFieldType(mysql.TypeJSON), decimalColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
 	// CastStringAsJson
-	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeJSON), stringColumn)
+	function, err = NewFunction(ctx, ast.Cast, types.NewFieldType(mysql.TypeJSON), stringColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
-	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeJSON), binaryStringColumn)
+	function, err = NewFunction(ctx, ast.Cast, types.NewFieldType(mysql.TypeJSON), binaryStringColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
 	// CastTimeAsJson
-	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeJSON), datetimeColumn)
+	function, err = NewFunction(ctx, ast.Cast, types.NewFieldType(mysql.TypeJSON), datetimeColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
 	// CastDurationAsJson
-	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeJSON), durationColumn)
+	function, err = NewFunction(ctx, ast.Cast, types.NewFieldType(mysql.TypeJSON), durationColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
 	// CastJsonAsJson
-	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeJSON), jsonColumn)
+	function, err = NewFunction(ctx, ast.Cast, types.NewFieldType(mysql.TypeJSON), jsonColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
@@ -1386,8 +1397,9 @@ func TestExprPushDownToFlash(t *testing.T) {
 
 func TestExprOnlyPushDownToFlash(t *testing.T) {
 	t.Skip("Skip this unstable test temporarily and bring it back before 2021-07-26")
-	client := new(mock.Client)
+	client := mockClient{}
 
+	ctx := mockStmtExprCtx()
 	exprs := make([]Expression, 0)
 
 	//jsonColumn := genColumn(mysql.TypeJSON, 1)
@@ -1399,32 +1411,31 @@ func TestExprOnlyPushDownToFlash(t *testing.T) {
 	binaryStringColumn := genColumn(mysql.TypeString, 7)
 	binaryStringColumn.RetType.SetCollate(charset.CollationBin)
 
-	function, err := NewFunction(mock.NewContext(), ast.Substr, types.NewFieldType(mysql.TypeString), stringColumn, intColumn)
+	function, err := NewFunction(ctx, ast.Substr, types.NewFieldType(mysql.TypeString), stringColumn, intColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
-	function, err = NewFunction(mock.NewContext(), ast.Substring, types.NewFieldType(mysql.TypeString), stringColumn, intColumn)
+	function, err = NewFunction(ctx, ast.Substring, types.NewFieldType(mysql.TypeString), stringColumn, intColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
-	function, err = NewFunction(mock.NewContext(), ast.GetFormat, types.NewFieldType(mysql.TypeString), stringColumn, stringColumn)
+	function, err = NewFunction(ctx, ast.GetFormat, types.NewFieldType(mysql.TypeString), stringColumn, stringColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
-	function, err = NewFunction(mock.NewContext(), ast.TimestampDiff, types.NewFieldType(mysql.TypeLonglong), stringColumn, datetimeColumn, datetimeColumn)
+	function, err = NewFunction(ctx, ast.TimestampDiff, types.NewFieldType(mysql.TypeLonglong), stringColumn, datetimeColumn, datetimeColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
-	function, err = NewFunction(mock.NewContext(), ast.FromUnixTime, types.NewFieldType(mysql.TypeDatetime), decimalColumn)
+	function, err = NewFunction(ctx, ast.FromUnixTime, types.NewFieldType(mysql.TypeDatetime), decimalColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
-	function, err = NewFunction(mock.NewContext(), ast.Extract, types.NewFieldType(mysql.TypeLonglong), stringColumn, datetimeColumn)
+	function, err = NewFunction(ctx, ast.Extract, types.NewFieldType(mysql.TypeLonglong), stringColumn, datetimeColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
-	ctx := mock.NewContext()
-	pushDownCtx := NewPushDownContextFromSessionVars(ctx, ctx.GetSessionVars(), client)
+	pushDownCtx := NewPushDownContextFromSessionVars(ctx.GetEvalCtx(), variable.NewSessionVars(nil), client)
 	pushed, remained := PushDownExprs(pushDownCtx, exprs, kv.UnSpecified)
 	require.Len(t, pushed, len(exprs))
 	require.Len(t, remained, 0)
@@ -1444,7 +1455,8 @@ func TestExprOnlyPushDownToFlash(t *testing.T) {
 }
 
 func TestExprPushDownToTiKV(t *testing.T) {
-	client := new(mock.Client)
+	ctx := mockStmtExprCtx()
+	client := mockClient{}
 
 	exprs := make([]Expression, 0)
 
@@ -1460,56 +1472,55 @@ func TestExprPushDownToTiKV(t *testing.T) {
 	binaryStringColumn.RetType.SetCollate(charset.CollationBin)
 
 	// Test exprs that cannot be pushed.
-	function, err := NewFunction(mock.NewContext(), ast.InetAton, types.NewFieldType(mysql.TypeString), stringColumn)
+	function, err := NewFunction(ctx, ast.InetAton, types.NewFieldType(mysql.TypeString), stringColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
-	function, err = NewFunction(mock.NewContext(), ast.InetNtoa, types.NewFieldType(mysql.TypeLonglong), stringColumn)
+	function, err = NewFunction(ctx, ast.InetNtoa, types.NewFieldType(mysql.TypeLonglong), stringColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
-	function, err = NewFunction(mock.NewContext(), ast.Inet6Aton, types.NewFieldType(mysql.TypeString), stringColumn)
+	function, err = NewFunction(ctx, ast.Inet6Aton, types.NewFieldType(mysql.TypeString), stringColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
-	function, err = NewFunction(mock.NewContext(), ast.Inet6Ntoa, types.NewFieldType(mysql.TypeLonglong), stringColumn)
+	function, err = NewFunction(ctx, ast.Inet6Ntoa, types.NewFieldType(mysql.TypeLonglong), stringColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
-	function, err = NewFunction(mock.NewContext(), ast.IsIPv4, types.NewFieldType(mysql.TypeString), stringColumn)
+	function, err = NewFunction(ctx, ast.IsIPv4, types.NewFieldType(mysql.TypeString), stringColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
-	function, err = NewFunction(mock.NewContext(), ast.IsIPv6, types.NewFieldType(mysql.TypeString), stringColumn)
+	function, err = NewFunction(ctx, ast.IsIPv6, types.NewFieldType(mysql.TypeString), stringColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
-	function, err = NewFunction(mock.NewContext(), ast.IsIPv4Compat, types.NewFieldType(mysql.TypeString), stringColumn)
+	function, err = NewFunction(ctx, ast.IsIPv4Compat, types.NewFieldType(mysql.TypeString), stringColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
-	function, err = NewFunction(mock.NewContext(), ast.IsIPv4Mapped, types.NewFieldType(mysql.TypeString), stringColumn)
+	function, err = NewFunction(ctx, ast.IsIPv4Mapped, types.NewFieldType(mysql.TypeString), stringColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
-	ctx := mock.NewContext()
-	pushDownCtx := NewPushDownContextFromSessionVars(ctx, ctx.GetSessionVars(), client)
+	pushDownCtx := NewPushDownContextFromSessionVars(ctx.GetEvalCtx(), variable.NewSessionVars(nil), client)
 	pushed, remained := PushDownExprs(pushDownCtx, exprs, kv.TiKV)
 	require.Len(t, pushed, 0)
 	require.Len(t, remained, len(exprs))
 
 	// Test Conv function
 	exprs = exprs[:0]
-	function, err = NewFunction(mock.NewContext(), ast.Conv, types.NewFieldType(mysql.TypeString), stringColumn, intColumn, intColumn)
+	function, err = NewFunction(ctx, ast.Conv, types.NewFieldType(mysql.TypeString), stringColumn, intColumn, intColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 	pushed, remained = PushDownExprs(pushDownCtx, exprs, kv.TiKV)
 	require.Len(t, pushed, len(exprs))
 	require.Len(t, remained, 0)
 	exprs = exprs[:0]
-	castByteAsStringFunc, err := NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeString), byteColumn)
+	castByteAsStringFunc, err := NewFunction(ctx, ast.Cast, types.NewFieldType(mysql.TypeString), byteColumn)
 	require.NoError(t, err)
-	function, err = NewFunction(mock.NewContext(), ast.Conv, types.NewFieldType(mysql.TypeString), castByteAsStringFunc, intColumn, intColumn)
+	function, err = NewFunction(ctx, ast.Conv, types.NewFieldType(mysql.TypeString), castByteAsStringFunc, intColumn, intColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 	pushed, remained = PushDownExprs(pushDownCtx, exprs, kv.TiKV)
@@ -1675,8 +1686,7 @@ func TestExprPushDownToTiKV(t *testing.T) {
 		},
 	}
 
-	ctx = mock.NewContext()
-	pushDownCtx = NewPushDownContextFromSessionVars(ctx, ctx.GetSessionVars(), client)
+	pushDownCtx = NewPushDownContextFromSessionVars(ctx.GetEvalCtx(), variable.NewSessionVars(nil), client)
 	for _, tc := range testcases {
 		function, err = NewFunction(ctx, tc.functionName, tc.retType, tc.args...)
 		require.NoError(t, err)
@@ -1689,9 +1699,9 @@ func TestExprPushDownToTiKV(t *testing.T) {
 }
 
 func TestExprOnlyPushDownToTiKV(t *testing.T) {
-	ctx := mock.NewContext()
-	client := new(mock.Client)
-	pushDownCtx := NewPushDownContextFromSessionVars(ctx, ctx.GetSessionVars(), client)
+	ctx := mockExprCtx()
+	client := mockClient{}
+	pushDownCtx := NewPushDownContextFromSessionVars(ctx.GetEvalCtx(), variable.NewSessionVars(nil), client)
 
 	function, err := NewFunction(ctx, "uuid", types.NewFieldType(mysql.TypeLonglong))
 	require.NoError(t, err)
@@ -1716,55 +1726,55 @@ func TestExprOnlyPushDownToTiKV(t *testing.T) {
 }
 
 func TestGroupByItem2Pb(t *testing.T) {
-	ctx := mock.NewContext()
-	client := new(mock.Client)
+	ctx := mockExprCtx()
+	client := mockClient{}
 
 	item := genColumn(mysql.TypeDouble, 0)
-	pbByItem := GroupByItemToPB(ctx, client, item)
+	pbByItem := GroupByItemToPB(ctx.GetEvalCtx(), client, item)
 	js, err := json.Marshal(pbByItem)
 	require.NoError(t, err)
 	require.Equal(t, "{\"expr\":{\"tp\":201,\"val\":\"gAAAAAAAAAA=\",\"sig\":0,\"field_type\":{\"tp\":5,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":-63,\"charset\":\"binary\",\"array\":false},\"has_distinct\":false},\"desc\":false}", string(js))
 
 	item = genColumn(mysql.TypeDouble, 1)
-	pbByItem = GroupByItemToPB(ctx, client, item)
+	pbByItem = GroupByItemToPB(ctx.GetEvalCtx(), client, item)
 	js, err = json.Marshal(pbByItem)
 	require.NoError(t, err)
 	require.Equal(t, "{\"expr\":{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0,\"field_type\":{\"tp\":5,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":-63,\"charset\":\"binary\",\"array\":false},\"has_distinct\":false},\"desc\":false}", string(js))
 }
 
 func TestSortByItem2Pb(t *testing.T) {
-	ctx := mock.NewContext()
-	client := new(mock.Client)
+	ctx := mockExprCtx()
+	client := mockClient{}
 
 	item := genColumn(mysql.TypeDouble, 0)
-	pbByItem := SortByItemToPB(ctx, client, item, false)
+	pbByItem := SortByItemToPB(ctx.GetEvalCtx(), client, item, false)
 	js, err := json.Marshal(pbByItem)
 	require.NoError(t, err)
 	require.Equal(t, "{\"expr\":{\"tp\":201,\"val\":\"gAAAAAAAAAA=\",\"sig\":0,\"field_type\":{\"tp\":5,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":-63,\"charset\":\"binary\",\"array\":false},\"has_distinct\":false},\"desc\":false}", string(js))
 
 	item = genColumn(mysql.TypeDouble, 1)
-	pbByItem = SortByItemToPB(ctx, client, item, false)
+	pbByItem = SortByItemToPB(ctx.GetEvalCtx(), client, item, false)
 	js, err = json.Marshal(pbByItem)
 	require.NoError(t, err)
 	require.Equal(t, "{\"expr\":{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0,\"field_type\":{\"tp\":5,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":-63,\"charset\":\"binary\",\"array\":false},\"has_distinct\":false},\"desc\":false}", string(js))
 
 	item = genColumn(mysql.TypeDouble, 1)
-	pbByItem = SortByItemToPB(ctx, client, item, true)
+	pbByItem = SortByItemToPB(ctx.GetEvalCtx(), client, item, true)
 	js, err = json.Marshal(pbByItem)
 	require.NoError(t, err)
 	require.Equal(t, "{\"expr\":{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0,\"field_type\":{\"tp\":5,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":-63,\"charset\":\"binary\",\"array\":false},\"has_distinct\":false},\"desc\":true}", string(js))
 }
 
 func TestPushCollationDown(t *testing.T) {
-	ctx := mock.NewContext()
+	ctx := mockExprCtx()
 	fc, err := NewFunction(ctx, ast.EQ, types.NewFieldType(mysql.TypeUnspecified), genColumn(mysql.TypeVarchar, 0), genColumn(mysql.TypeVarchar, 1))
 	require.NoError(t, err)
-	client := new(mock.Client)
+	client := mockClient{}
 
 	tps := []*types.FieldType{types.NewFieldType(mysql.TypeVarchar), types.NewFieldType(mysql.TypeVarchar)}
 	for _, coll := range []string{charset.CollationBin, charset.CollationLatin1, charset.CollationUTF8, charset.CollationUTF8MB4} {
 		fc.SetCharsetAndCollation("binary", coll) // only collation matters
-		pbExpr, err := ExpressionsToPBList(ctx, []Expression{fc}, client)
+		pbExpr, err := ExpressionsToPBList(ctx.GetEvalCtx(), []Expression{fc}, client)
 		require.NoError(t, err)
 		expr, err := PBToExpr(ctx, pbExpr[0], tps)
 		require.NoError(t, err)
@@ -1781,9 +1791,9 @@ func columnCollation(c *Column, chs, coll string) *Column {
 
 func TestNewCollationsEnabled(t *testing.T) {
 	var colExprs []Expression
-	ctx := mock.NewContext()
-	client := new(mock.Client)
-	pushDownCtx := NewPushDownContextFromSessionVars(ctx, ctx.GetSessionVars(), client)
+	ctx := mockExprCtx()
+	client := mockClient{}
+	pushDownCtx := NewPushDownContextFromSessionVars(ctx.GetEvalCtx(), variable.NewSessionVars(nil), client)
 
 	colExprs = colExprs[:0]
 	colExprs = append(colExprs, genColumn(mysql.TypeVarchar, 1))
@@ -1795,7 +1805,7 @@ func TestNewCollationsEnabled(t *testing.T) {
 	colExprs = append(colExprs, columnCollation(genColumn(mysql.TypeVarchar, 7), "utf8mb4", "utf8mb4_zh_pinyin_tidb_as_cs"))
 	pushed, _ := PushDownExprs(pushDownCtx, colExprs, kv.UnSpecified)
 	require.Equal(t, len(colExprs), len(pushed))
-	pbExprs, err := ExpressionsToPBList(ctx, colExprs, client)
+	pbExprs, err := ExpressionsToPBList(ctx.GetEvalCtx(), colExprs, client)
 	require.NoError(t, err)
 	jsons := []string{
 		"{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0,\"field_type\":{\"tp\":15,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":-46,\"charset\":\"utf8mb4\",\"array\":false},\"has_distinct\":false}",
@@ -1814,27 +1824,27 @@ func TestNewCollationsEnabled(t *testing.T) {
 	}
 
 	item := columnCollation(genColumn(mysql.TypeDouble, 0), "utf8mb4", "utf8mb4_0900_ai_ci")
-	pbByItem := GroupByItemToPB(ctx, client, item)
+	pbByItem := GroupByItemToPB(ctx.GetEvalCtx(), client, item)
 	js, err := json.Marshal(pbByItem)
 	require.NoError(t, err)
 	require.Equal(t, "{\"expr\":{\"tp\":201,\"val\":\"gAAAAAAAAAA=\",\"sig\":0,\"field_type\":{\"tp\":5,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":-255,\"charset\":\"utf8mb4\",\"array\":false},\"has_distinct\":false},\"desc\":false}", string(js))
 }
 
 func TestMetadata(t *testing.T) {
-	ctx := mock.NewContext()
-	client := new(mock.Client)
+	ctx := mockExprCtx()
+	client := mockClient{}
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/expression/PushDownTestSwitcher", `return("all")`))
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/expression/PushDownTestSwitcher"))
 	}()
 
-	pc := PbConverter{client: client, ctx: ctx}
+	pc := PbConverter{client: client, ctx: ctx.GetEvalCtx()}
 
 	metadata := new(tipb.InUnionMetadata)
 	var err error
 	// InUnion flag is false in `BuildCastFunction` when `ScalarFuncSig_CastStringAsInt`
-	cast := BuildCastFunction(mock.NewContext(), genColumn(mysql.TypeString, 1), types.NewFieldType(mysql.TypeLonglong))
+	cast := BuildCastFunction(ctx, genColumn(mysql.TypeString, 1), types.NewFieldType(mysql.TypeLonglong))
 	require.Equal(t, &tipb.InUnionMetadata{InUnion: false}, cast.(*ScalarFunction).Function.metadata())
 	expr := pc.ExprToPB(cast)
 	require.Equal(t, tipb.ScalarFuncSig_CastStringAsInt, expr.Sig)
@@ -1844,14 +1854,14 @@ func TestMetadata(t *testing.T) {
 	require.Equal(t, false, metadata.InUnion)
 
 	// InUnion flag is nil in `BuildCastFunction4Union` when `ScalarFuncSig_CastIntAsString`
-	castInUnion := BuildCastFunction4Union(mock.NewContext(), genColumn(mysql.TypeLonglong, 1), types.NewFieldType(mysql.TypeString))
+	castInUnion := BuildCastFunction4Union(ctx, genColumn(mysql.TypeLonglong, 1), types.NewFieldType(mysql.TypeString))
 	require.Nil(t, castInUnion.(*ScalarFunction).Function.metadata())
 	expr = pc.ExprToPB(castInUnion)
 	require.Equal(t, tipb.ScalarFuncSig_CastIntAsString, expr.Sig)
 	require.Equal(t, 0, len(expr.Val))
 
 	// InUnion flag is true in `BuildCastFunction4Union` when `ScalarFuncSig_CastStringAsInt`
-	castInUnion = BuildCastFunction4Union(mock.NewContext(), genColumn(mysql.TypeString, 1), types.NewFieldType(mysql.TypeLonglong))
+	castInUnion = BuildCastFunction4Union(ctx, genColumn(mysql.TypeString, 1), types.NewFieldType(mysql.TypeLonglong))
 	require.Equal(t, &tipb.InUnionMetadata{InUnion: true}, castInUnion.(*ScalarFunction).Function.metadata())
 	expr = pc.ExprToPB(castInUnion)
 	require.Equal(t, tipb.ScalarFuncSig_CastStringAsInt, expr.Sig)
@@ -1863,8 +1873,8 @@ func TestMetadata(t *testing.T) {
 
 func TestPushDownSwitcher(t *testing.T) {
 	var funcs = make([]Expression, 0)
-	ctx := mock.NewContext()
-	client := new(mock.Client)
+	ctx := mockExprCtx()
+	client := mockClient{}
 
 	cases := []struct {
 		name   string
@@ -1882,7 +1892,7 @@ func TestPushDownSwitcher(t *testing.T) {
 	for _, funcName := range cases {
 		args := []Expression{genColumn(mysql.TypeDouble, 1)}
 		fc, err := NewFunction(
-			mock.NewContext(),
+			ctx,
 			funcName.name,
 			types.NewFieldType(mysql.TypeUnspecified),
 			args...,
@@ -1899,7 +1909,7 @@ func TestPushDownSwitcher(t *testing.T) {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/expression/PushDownTestSwitcher"))
 	}()
 
-	pbExprs, err := ExpressionsToPBList(ctx, funcs, client)
+	pbExprs, err := ExpressionsToPBList(ctx.GetEvalCtx(), funcs, client)
 	require.NoError(t, err)
 	require.Equal(t, len(cases), len(pbExprs))
 	for i, pbExpr := range pbExprs {
@@ -1908,7 +1918,7 @@ func TestPushDownSwitcher(t *testing.T) {
 
 	// All disabled
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/expression/PushDownTestSwitcher", `return("")`))
-	pc := PbConverter{client: client, ctx: ctx}
+	pc := PbConverter{client: client, ctx: ctx.GetEvalCtx()}
 	for i := range funcs {
 		pbExpr := pc.ExprToPB(funcs[i])
 		require.Nil(t, pbExpr)
@@ -1929,8 +1939,9 @@ func TestPushDownSwitcher(t *testing.T) {
 
 func TestPanicIfPbCodeUnspecified(t *testing.T) {
 	args := []Expression{genColumn(mysql.TypeLong, 1), genColumn(mysql.TypeLong, 2)}
+	ctx := mockStmtExprCtx()
 	fc, err := NewFunction(
-		mock.NewContext(),
+		ctx,
 		ast.And,
 		types.NewFieldType(mysql.TypeUnspecified),
 		args...,
@@ -1944,23 +1955,23 @@ func TestPanicIfPbCodeUnspecified(t *testing.T) {
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/expression/PanicIfPbCodeUnspecified"))
 	}()
-	pc := PbConverter{client: new(mock.Client), ctx: mock.NewContext()}
+	pc := PbConverter{client: mockClient{}, ctx: ctx.GetEvalCtx()}
 	require.PanicsWithError(t, "unspecified PbCode: *expression.builtinBitAndSig", func() { pc.ExprToPB(fn) })
 }
 
 func TestProjectionColumn2Pb(t *testing.T) {
 	var colExprs []Expression
-	ctx := mock.NewContext()
-	client := new(mock.Client)
+	ctx := mockExprCtx()
+	client := mockClient{}
 
 	colExprs = append(colExprs, genColumn(mysql.TypeSet, 1))
 	colExprs = append(colExprs, genColumn(mysql.TypeShort, 2))
 	colExprs = append(colExprs, genColumn(mysql.TypeLong, 3))
 
 	// TypeSet column can't be converted to PB by default
-	_, err := ExpressionsToPBList(ctx, colExprs, client)
+	_, err := ExpressionsToPBList(ctx.GetEvalCtx(), colExprs, client)
 	require.Error(t, err)
 
-	_, err = ProjectionExpressionsToPBList(ctx, colExprs, client)
+	_, err = ProjectionExpressionsToPBList(ctx.GetEvalCtx(), colExprs, client)
 	require.NoError(t, err)
 }

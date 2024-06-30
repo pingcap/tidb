@@ -18,7 +18,6 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 )
 
@@ -152,6 +151,6 @@ func TestGetUsedList(t *testing.T) {
 	usedCols = append(usedCols, schema.Columns[1])
 	usedCols = append(usedCols, schema.Columns[3])
 
-	used := GetUsedList(mock.NewContext(), usedCols, schema)
+	used := GetUsedList(mockStmtExprCtx().GetEvalCtx(), usedCols, schema)
 	require.Equal(t, []bool{false, true, false, true, false}, used)
 }

@@ -30,7 +30,7 @@ import (
 )
 
 func TestInetAton(t *testing.T) {
-	ctx := createContext(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	tbl := []struct {
 		Input    any
 		Expected any
@@ -55,7 +55,7 @@ func TestInetAton(t *testing.T) {
 	for _, tt := range dtbl {
 		f, err := fc.getFunction(ctx, datumsToConstants(tt["Input"]))
 		require.NoError(t, err)
-		d, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+		d, err := evalBuiltinFunc(f, ctx.GetEvalCtx(), chunk.Row{})
 		if tt["Expected"][0].IsNull() && !tt["Input"][0].IsNull() {
 			require.True(t, terror.ErrorEqual(err, errWrongValueForType))
 		} else {
@@ -66,7 +66,7 @@ func TestInetAton(t *testing.T) {
 }
 
 func TestIsIPv4(t *testing.T) {
-	ctx := createContext(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	tests := []struct {
 		ip     string
 		expect any
@@ -88,20 +88,20 @@ func TestIsIPv4(t *testing.T) {
 		ip := types.NewStringDatum(test.ip)
 		f, err := fc.getFunction(ctx, datumsToConstants([]types.Datum{ip}))
 		require.NoError(t, err)
-		result, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+		result, err := evalBuiltinFunc(f, ctx.GetEvalCtx(), chunk.Row{})
 		require.NoError(t, err)
 		testutil.DatumEqual(t, types.NewDatum(test.expect), result)
 	}
 	// test NULL input for is_ipv4
 	var argNull types.Datum
 	f, _ := fc.getFunction(ctx, datumsToConstants([]types.Datum{argNull}))
-	r, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+	r, err := evalBuiltinFunc(f, ctx.GetEvalCtx(), chunk.Row{})
 	require.NoError(t, err)
 	testutil.DatumEqual(t, types.NewDatum(0), r)
 }
 
 func TestIsUUID(t *testing.T) {
-	ctx := createContext(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	tests := []struct {
 		uuid   string
 		expect any
@@ -123,23 +123,23 @@ func TestIsUUID(t *testing.T) {
 		uuid := types.NewStringDatum(test.uuid)
 		f, err := fc.getFunction(ctx, datumsToConstants([]types.Datum{uuid}))
 		require.NoError(t, err)
-		result, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+		result, err := evalBuiltinFunc(f, ctx.GetEvalCtx(), chunk.Row{})
 		require.NoError(t, err)
 		testutil.DatumEqual(t, types.NewDatum(test.expect), result)
 	}
 
 	var argNull types.Datum
 	f, _ := fc.getFunction(ctx, datumsToConstants([]types.Datum{argNull}))
-	r, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+	r, err := evalBuiltinFunc(f, ctx.GetEvalCtx(), chunk.Row{})
 	require.NoError(t, err)
 	require.True(t, r.IsNull())
 }
 
 func TestUUID(t *testing.T) {
-	ctx := createContext(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	f, err := newFunctionForTest(ctx, ast.UUID)
 	require.NoError(t, err)
-	d, err := f.Eval(ctx, chunk.Row{})
+	d, err := f.Eval(ctx.GetEvalCtx(), chunk.Row{})
 	require.NoError(t, err)
 	parts := strings.Split(d.GetString(), "-")
 	require.Equal(t, 5, len(parts))
@@ -162,7 +162,7 @@ func TestUUID(t *testing.T) {
 }
 
 func TestAnyValue(t *testing.T) {
-	ctx := createContext(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	tbl := []struct {
 		arg any
 		ret any
@@ -177,14 +177,14 @@ func TestAnyValue(t *testing.T) {
 		fc := funcs[ast.AnyValue]
 		f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(tt.arg)))
 		require.NoError(t, err)
-		r, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+		r, err := evalBuiltinFunc(f, ctx.GetEvalCtx(), chunk.Row{})
 		require.NoError(t, err)
 		testutil.DatumEqual(t, types.NewDatum(tt.ret), r)
 	}
 }
 
 func TestIsIPv6(t *testing.T) {
-	ctx := createContext(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	tests := []struct {
 		ip     string
 		expect any
@@ -200,20 +200,20 @@ func TestIsIPv6(t *testing.T) {
 		ip := types.NewStringDatum(test.ip)
 		f, err := fc.getFunction(ctx, datumsToConstants([]types.Datum{ip}))
 		require.NoError(t, err)
-		result, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+		result, err := evalBuiltinFunc(f, ctx.GetEvalCtx(), chunk.Row{})
 		require.NoError(t, err)
 		testutil.DatumEqual(t, types.NewDatum(test.expect), result)
 	}
 	// test NULL input for is_ipv6
 	var argNull types.Datum
 	f, _ := fc.getFunction(ctx, datumsToConstants([]types.Datum{argNull}))
-	r, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+	r, err := evalBuiltinFunc(f, ctx.GetEvalCtx(), chunk.Row{})
 	require.NoError(t, err)
 	testutil.DatumEqual(t, types.NewDatum(0), r)
 }
 
 func TestInetNtoa(t *testing.T) {
-	ctx := createContext(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	tests := []struct {
 		ip     int
 		expect any
@@ -230,20 +230,20 @@ func TestInetNtoa(t *testing.T) {
 		ip := types.NewDatum(test.ip)
 		f, err := fc.getFunction(ctx, datumsToConstants([]types.Datum{ip}))
 		require.NoError(t, err)
-		result, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+		result, err := evalBuiltinFunc(f, ctx.GetEvalCtx(), chunk.Row{})
 		require.NoError(t, err)
 		testutil.DatumEqual(t, types.NewDatum(test.expect), result)
 	}
 
 	var argNull types.Datum
 	f, _ := fc.getFunction(ctx, datumsToConstants([]types.Datum{argNull}))
-	r, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+	r, err := evalBuiltinFunc(f, ctx.GetEvalCtx(), chunk.Row{})
 	require.NoError(t, err)
 	require.True(t, r.IsNull())
 }
 
 func TestInet6NtoA(t *testing.T) {
-	ctx := createContext(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	tests := []struct {
 		ip     []byte
 		expect any
@@ -268,20 +268,20 @@ func TestInet6NtoA(t *testing.T) {
 		ip := types.NewDatum(test.ip)
 		f, err := fc.getFunction(ctx, datumsToConstants([]types.Datum{ip}))
 		require.NoError(t, err)
-		result, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+		result, err := evalBuiltinFunc(f, ctx.GetEvalCtx(), chunk.Row{})
 		require.NoError(t, err)
 		testutil.DatumEqual(t, types.NewDatum(test.expect), result)
 	}
 
 	var argNull types.Datum
 	f, _ := fc.getFunction(ctx, datumsToConstants([]types.Datum{argNull}))
-	r, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+	r, err := evalBuiltinFunc(f, ctx.GetEvalCtx(), chunk.Row{})
 	require.NoError(t, err)
 	require.True(t, r.IsNull())
 }
 
 func TestInet6AtoN(t *testing.T) {
-	ctx := createContext(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	tests := []struct {
 		ip     string
 		expect any
@@ -301,7 +301,7 @@ func TestInet6AtoN(t *testing.T) {
 		ip := types.NewDatum(test.ip)
 		f, err := fc.getFunction(ctx, datumsToConstants([]types.Datum{ip}))
 		require.NoError(t, err)
-		result, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+		result, err := evalBuiltinFunc(f, ctx.GetEvalCtx(), chunk.Row{})
 		expect := types.NewDatum(test.expect)
 		if expect.IsNull() {
 			require.True(t, terror.ErrorEqual(err, errWrongValueForType))
@@ -313,13 +313,13 @@ func TestInet6AtoN(t *testing.T) {
 
 	var argNull types.Datum
 	f, _ := fc.getFunction(ctx, datumsToConstants([]types.Datum{argNull}))
-	r, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+	r, err := evalBuiltinFunc(f, ctx.GetEvalCtx(), chunk.Row{})
 	require.NoError(t, err)
 	require.True(t, r.IsNull())
 }
 
 func TestIsIPv4Mapped(t *testing.T) {
-	ctx := createContext(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	tests := []struct {
 		ip     []byte
 		expect any
@@ -335,20 +335,20 @@ func TestIsIPv4Mapped(t *testing.T) {
 		ip := types.NewDatum(test.ip)
 		f, err := fc.getFunction(ctx, datumsToConstants([]types.Datum{ip}))
 		require.NoError(t, err)
-		result, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+		result, err := evalBuiltinFunc(f, ctx.GetEvalCtx(), chunk.Row{})
 		require.NoError(t, err)
 		testutil.DatumEqual(t, types.NewDatum(test.expect), result)
 	}
 
 	var argNull types.Datum
 	f, _ := fc.getFunction(ctx, datumsToConstants([]types.Datum{argNull}))
-	r, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+	r, err := evalBuiltinFunc(f, ctx.GetEvalCtx(), chunk.Row{})
 	require.NoError(t, err)
 	testutil.DatumEqual(t, types.NewDatum(int64(0)), r)
 }
 
 func TestIsIPv4Compat(t *testing.T) {
-	ctx := createContext(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	tests := []struct {
 		ip     []byte
 		expect any
@@ -365,20 +365,20 @@ func TestIsIPv4Compat(t *testing.T) {
 		ip := types.NewDatum(test.ip)
 		f, err := fc.getFunction(ctx, datumsToConstants([]types.Datum{ip}))
 		require.NoError(t, err)
-		result, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+		result, err := evalBuiltinFunc(f, ctx.GetEvalCtx(), chunk.Row{})
 		require.NoError(t, err)
 		testutil.DatumEqual(t, types.NewDatum(test.expect), result)
 	}
 
 	var argNull types.Datum
 	f, _ := fc.getFunction(ctx, datumsToConstants([]types.Datum{argNull}))
-	r, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+	r, err := evalBuiltinFunc(f, ctx.GetEvalCtx(), chunk.Row{})
 	require.NoError(t, err)
 	testutil.DatumEqual(t, types.NewDatum(0), r)
 }
 
 func TestNameConst(t *testing.T) {
-	ctx := createContext(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	dec := types.NewDecFromFloatForTest(123.123)
 	tm := types.NewTime(types.FromGoTime(time.Now()), mysql.TypeDatetime, 6)
 	du := types.Duration{Duration: 12*time.Hour + 1*time.Minute + 1*time.Second, Fsp: types.DefaultFsp}
@@ -414,14 +414,14 @@ func TestNameConst(t *testing.T) {
 	for _, c := range cases {
 		f, err := newFunctionForTest(ctx, ast.NameConst, primitiveValsToConstants(ctx, []any{c.colName, c.arg})...)
 		require.NoError(t, err)
-		d, err := f.Eval(ctx, chunk.Row{})
+		d, err := f.Eval(ctx.GetEvalCtx(), chunk.Row{})
 		require.NoError(t, err)
 		c.asserts(d)
 	}
 }
 
 func TestUUIDToBin(t *testing.T) {
-	ctx := createContext(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	tests := []struct {
 		args       []any
 		expect     any
@@ -495,16 +495,16 @@ func TestUUIDToBin(t *testing.T) {
 	}
 
 	for _, test := range tests {
-		preWarningCnt := ctx.GetSessionVars().StmtCtx.WarningCount()
+		preWarningCnt := ctx.GetEvalCtx().WarningCount()
 		f, err := newFunctionForTest(ctx, ast.UUIDToBin, primitiveValsToConstants(ctx, test.args)...)
 		require.NoError(t, err)
 
-		result, err := f.Eval(ctx, chunk.Row{})
+		result, err := f.Eval(ctx.GetEvalCtx(), chunk.Row{})
 		if test.getError {
 			require.Error(t, err)
 		} else if test.getWarning {
 			require.NoError(t, err)
-			require.Equal(t, preWarningCnt+1, ctx.GetSessionVars().StmtCtx.WarningCount())
+			require.Equal(t, preWarningCnt+1, ctx.GetEvalCtx().WarningCount())
 		} else {
 			require.NoError(t, err)
 			if test.isNil {
@@ -520,7 +520,7 @@ func TestUUIDToBin(t *testing.T) {
 }
 
 func TestBinToUUID(t *testing.T) {
-	ctx := createContext(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	tests := []struct {
 		args       []any
 		expect     string
@@ -566,16 +566,16 @@ func TestBinToUUID(t *testing.T) {
 	}
 
 	for _, test := range tests {
-		preWarningCnt := ctx.GetSessionVars().StmtCtx.WarningCount()
+		preWarningCnt := ctx.GetEvalCtx().WarningCount()
 		f, err := newFunctionForTest(ctx, ast.BinToUUID, primitiveValsToConstants(ctx, test.args)...)
 		require.NoError(t, err)
 
-		result, err := f.Eval(ctx, chunk.Row{})
+		result, err := f.Eval(ctx.GetEvalCtx(), chunk.Row{})
 		if test.getError {
 			require.Error(t, err)
 		} else if test.getWarning {
 			require.NoError(t, err)
-			require.Equal(t, preWarningCnt+1, ctx.GetSessionVars().StmtCtx.WarningCount())
+			require.Equal(t, preWarningCnt+1, ctx.GetEvalCtx().WarningCount())
 		} else {
 			require.NoError(t, err)
 			if test.isNil {
@@ -591,7 +591,7 @@ func TestBinToUUID(t *testing.T) {
 }
 
 func TestTidbShard(t *testing.T) {
-	ctx := createContext(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 
 	fc := funcs[ast.TiDBShard]
 
@@ -601,7 +601,7 @@ func TestTidbShard(t *testing.T) {
 	for i, arg := range args {
 		f, err := fc.getFunction(ctx, datumsToConstants([]types.Datum{arg}))
 		require.NoError(t, err)
-		d, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+		d, err := evalBuiltinFunc(f, ctx.GetEvalCtx(), chunk.Row{})
 		require.NoError(t, err)
 		testutil.DatumEqual(t, res[i], d)
 	}
@@ -612,7 +612,7 @@ func TestTidbShard(t *testing.T) {
 	for _, arg := range args2 {
 		f, err := fc.getFunction(ctx, datumsToConstants([]types.Datum{arg}))
 		require.NoError(t, err)
-		d, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+		d, err := evalBuiltinFunc(f, ctx.GetEvalCtx(), chunk.Row{})
 		require.NoError(t, err)
 		testutil.DatumEqual(t, res2[0], d)
 	}

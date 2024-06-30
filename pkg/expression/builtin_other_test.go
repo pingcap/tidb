@@ -21,6 +21,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
@@ -29,13 +30,7 @@ import (
 )
 
 func TestBitCount(t *testing.T) {
-	ctx := createContext(t)
-	stmtCtx := ctx.GetSessionVars().StmtCtx
-	oldTypeFlags := stmtCtx.TypeFlags()
-	defer func() {
-		stmtCtx.SetTypeFlags(oldTypeFlags)
-	}()
-	stmtCtx.SetTypeFlags(oldTypeFlags.WithIgnoreTruncateErr(true))
+	ctx := mockStmtIgnoreTruncateExprCtx()
 	fc := funcs[ast.BitCount]
 	var bitCountCases = []struct {
 		origin any
@@ -60,7 +55,7 @@ func TestBitCount(t *testing.T) {
 		f, err := fc.getFunction(ctx, datumsToConstants([]types.Datum{in}))
 		require.NoError(t, err)
 		require.NotNil(t, f)
-		count, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+		count, err := evalBuiltinFunc(f, ctx.GetEvalCtx(), chunk.Row{})
 		require.NoError(t, err)
 		if count.IsNull() {
 			require.Nil(t, test.count)
@@ -74,14 +69,16 @@ func TestBitCount(t *testing.T) {
 }
 
 func TestRowFunc(t *testing.T) {
-	ctx := createContext(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	fc := funcs[ast.RowFunc]
 	_, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums([]any{"1", 1.2, true, 120}...)))
 	require.NoError(t, err)
 }
 
 func TestSetVar(t *testing.T) {
-	ctx := createContext(t)
+	vars := variable.NewSessionVars(nil)
+	ctx := mockStmtTruncateAsWarningExprCtx(vars)
+
 	fc := funcs[ast.SetVar]
 	dec := types.NewDecFromInt(5)
 	timeDec := types.NewTime(types.FromGoTime(time.Now()), mysql.TypeTimestamp, 0)
@@ -102,13 +99,13 @@ func TestSetVar(t *testing.T) {
 	for _, tc := range testCases {
 		fn, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(tc.args...)))
 		require.NoError(t, err)
-		d, err := evalBuiltinFunc(fn, ctx, chunk.MutRowFromDatums(types.MakeDatums(tc.args...)).ToRow())
+		d, err := evalBuiltinFunc(fn, ctx.GetEvalCtx(), chunk.MutRowFromDatums(types.MakeDatums(tc.args...)).ToRow())
 		require.NoError(t, err)
 		require.Equal(t, tc.res, d.GetValue())
 		if tc.args[1] != nil {
 			key, ok := tc.args[0].(string)
 			require.Equal(t, true, ok)
-			sessionVar, ok := ctx.GetSessionVars().GetUserVarVal(key)
+			sessionVar, ok := vars.GetUserVarVal(key)
 			require.Equal(t, true, ok)
 			require.Equal(t, tc.res, sessionVar.GetValue())
 		}
@@ -116,7 +113,9 @@ func TestSetVar(t *testing.T) {
 }
 
 func TestGetVar(t *testing.T) {
-	ctx := createContext(t)
+	vars := variable.NewSessionVars(nil)
+	ctx := mockStmtTruncateAsWarningExprCtx(vars)
+
 	dec := types.NewDecFromInt(5)
 	timeDec := types.NewTime(types.FromGoTime(time.Now()), mysql.TypeTimestamp, 0)
 	sessionVars := []struct {
@@ -132,7 +131,7 @@ func TestGetVar(t *testing.T) {
 		{"h", timeDec},
 	}
 	for _, kv := range sessionVars {
-		ctx.GetSessionVars().SetUserVarVal(kv.key, types.NewDatum(kv.val))
+		vars.SetUserVarVal(kv.key, types.NewDatum(kv.val))
 		var tp *types.FieldType
 		if _, ok := kv.val.(types.Time); ok {
 			tp = types.NewFieldType(mysql.TypeDatetime)
@@ -140,7 +139,7 @@ func TestGetVar(t *testing.T) {
 			tp = types.NewFieldType(mysql.TypeVarString)
 		}
 		types.InferParamTypeFromUnderlyingValue(kv.val, tp)
-		ctx.GetSessionVars().SetUserVarType(kv.key, tp)
+		vars.SetUserVarType(kv.key, tp)
 	}
 
 	testCases := []struct {
@@ -157,33 +156,35 @@ func TestGetVar(t *testing.T) {
 		{[]any{"h"}, timeDec.String()},
 	}
 	for _, tc := range testCases {
-		tp, ok := ctx.GetSessionVars().GetUserVarType(tc.args[0].(string))
+		tp, ok := vars.GetUserVarType(tc.args[0].(string))
 		if !ok {
 			tp = types.NewFieldType(mysql.TypeVarString)
 		}
 		fn, err := BuildGetVarFunction(ctx, datumsToConstants(types.MakeDatums(tc.args...))[0], tp)
 		require.NoError(t, err)
-		d, err := fn.Eval(ctx, chunk.Row{})
+		d, err := fn.Eval(ctx.GetEvalCtx(), chunk.Row{})
 		require.NoError(t, err)
 		require.Equal(t, tc.res, d.GetValue())
 	}
 }
 
 func TestTypeConversion(t *testing.T) {
-	ctx := createContext(t)
+	vars := variable.NewSessionVars(nil)
+	ctx := mockStmtTruncateAsWarningExprCtx(vars)
+
 	// Set value as int64
 	key := "a"
 	val := int64(3)
-	ctx.GetSessionVars().SetUserVarVal(key, types.NewDatum(val))
+	vars.SetUserVarVal(key, types.NewDatum(val))
 	tp := types.NewFieldType(mysql.TypeLonglong)
-	ctx.GetSessionVars().SetUserVarType(key, tp)
+	vars.SetUserVarType(key, tp)
 
 	args := []any{"a"}
 	// To Decimal.
 	tp = types.NewFieldType(mysql.TypeNewDecimal)
 	fn, err := BuildGetVarFunction(ctx, datumsToConstants(types.MakeDatums(args...))[0], tp)
 	require.NoError(t, err)
-	d, err := fn.Eval(ctx, chunk.Row{})
+	d, err := fn.Eval(ctx.GetEvalCtx(), chunk.Row{})
 	require.NoError(t, err)
 	des := types.NewDecFromInt(3)
 	require.Equal(t, des, d.GetValue())
@@ -191,13 +192,15 @@ func TestTypeConversion(t *testing.T) {
 	tp = types.NewFieldType(mysql.TypeDouble)
 	fn, err = BuildGetVarFunction(ctx, datumsToConstants(types.MakeDatums(args...))[0], tp)
 	require.NoError(t, err)
-	d, err = fn.Eval(ctx, chunk.Row{})
+	d, err = fn.Eval(ctx.GetEvalCtx(), chunk.Row{})
 	require.NoError(t, err)
 	require.Equal(t, float64(3), d.GetValue())
 }
 
 func TestValues(t *testing.T) {
-	ctx := createContext(t)
+	vars := variable.NewSessionVars(nil)
+	ctx := mockStmtTruncateAsWarningExprCtx(vars)
+
 	fc := &valuesFunctionClass{baseFunctionClass{ast.Values, 0, 0}, 1, types.NewFieldType(mysql.TypeVarchar)}
 	_, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums("")))
 	require.Error(t, err)
@@ -206,18 +209,18 @@ func TestValues(t *testing.T) {
 	sig, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums()))
 	require.NoError(t, err)
 
-	ret, err := evalBuiltinFunc(sig, ctx, chunk.Row{})
+	ret, err := evalBuiltinFunc(sig, ctx.GetEvalCtx(), chunk.Row{})
 	require.NoError(t, err)
 	require.True(t, ret.IsNull())
 
-	ctx.GetSessionVars().CurrInsertValues = chunk.MutRowFromDatums(types.MakeDatums("1")).ToRow()
-	ret, err = evalBuiltinFunc(sig, ctx, chunk.Row{})
+	vars.CurrInsertValues = chunk.MutRowFromDatums(types.MakeDatums("1")).ToRow()
+	ret, err = evalBuiltinFunc(sig, ctx.GetEvalCtx(), chunk.Row{})
 	require.Error(t, err)
 	require.Regexp(t, "^Session current insert values len", err.Error())
 
 	currInsertValues := types.MakeDatums("1", "2")
-	ctx.GetSessionVars().CurrInsertValues = chunk.MutRowFromDatums(currInsertValues).ToRow()
-	ret, err = evalBuiltinFunc(sig, ctx, chunk.Row{})
+	vars.CurrInsertValues = chunk.MutRowFromDatums(currInsertValues).ToRow()
+	ret, err = evalBuiltinFunc(sig, ctx.GetEvalCtx(), chunk.Row{})
 	require.NoError(t, err)
 
 	cmp, err := ret.Compare(types.DefaultStmtNoWarningContext, &currInsertValues[1], collate.GetBinaryCollator())
@@ -226,7 +229,9 @@ func TestValues(t *testing.T) {
 }
 
 func TestSetVarFromColumn(t *testing.T) {
-	ctx := createContext(t)
+	vars := variable.NewSessionVars(nil)
+	ctx := mockStmtTruncateAsWarningExprCtx(vars)
+
 	ft1 := types.FieldType{}
 	ft1.SetType(mysql.TypeVarString)
 	ft1.SetFlen(20)
@@ -258,7 +263,7 @@ func TestSetVarFromColumn(t *testing.T) {
 	outputChunk := chunk.NewChunkWithCapacity([]*types.FieldType{argCol.RetType}, 1)
 
 	// Evaluate the SetVar function.
-	err = evalOneCell(ctx, funcSetVar, inputChunk.GetRow(0), outputChunk, 0)
+	err = evalOneCell(ctx.GetEvalCtx(), funcSetVar, inputChunk.GetRow(0), outputChunk, 0)
 	require.NoError(t, err)
 	require.Equal(t, "a", outputChunk.GetRow(0).GetString(0))
 
@@ -267,14 +272,13 @@ func TestSetVarFromColumn(t *testing.T) {
 	inputChunk.AppendString(0, "b")
 
 	// Check whether the user variable changed.
-	sessionVars := ctx.GetSessionVars()
-	sessionVar, ok := sessionVars.GetUserVarVal("a")
+	sessionVar, ok := vars.GetUserVarVal("a")
 	require.Equal(t, true, ok)
 	require.Equal(t, "a", sessionVar.GetString())
 }
 
 func TestInFunc(t *testing.T) {
-	ctx := createContext(t)
+	ctx := mockStmtTruncateAsWarningExprCtx()
 	fc := funcs[ast.In]
 	decimal1 := types.NewDecFromFloatForTest(123.121)
 	decimal2 := types.NewDecFromFloatForTest(123.122)
@@ -322,7 +326,7 @@ func TestInFunc(t *testing.T) {
 	for _, tc := range testCases {
 		fn, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(tc.args...)))
 		require.NoError(t, err)
-		d, err := evalBuiltinFunc(fn, ctx, chunk.MutRowFromDatums(types.MakeDatums(tc.args...)).ToRow())
+		d, err := evalBuiltinFunc(fn, ctx.GetEvalCtx(), chunk.MutRowFromDatums(types.MakeDatums(tc.args...)).ToRow())
 		require.NoError(t, err)
 		require.Equalf(t, tc.res, d.GetValue(), "%v", types.MakeDatums(tc.args))
 	}
@@ -330,7 +334,7 @@ func TestInFunc(t *testing.T) {
 	strD2 := types.NewCollationStringDatum("Á", "utf8_general_ci")
 	fn, err := fc.getFunction(ctx, datumsToConstants([]types.Datum{strD1, strD2}))
 	require.NoError(t, err)
-	d, err := evalBuiltinFunc(fn, ctx, chunk.Row{})
+	d, err := evalBuiltinFunc(fn, ctx.GetEvalCtx(), chunk.Row{})
 	require.NoError(t, err)
 	require.False(t, d.IsNull())
 	require.Equal(t, types.KindInt64, d.Kind())
@@ -338,7 +342,7 @@ func TestInFunc(t *testing.T) {
 	chk1 := chunk.NewChunkWithCapacity(nil, 1)
 	chk1.SetNumVirtualRows(1)
 	chk2 := chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeTiny)}, 1)
-	err = vecEvalType(ctx, fn, types.ETInt, chk1, chk2.Column(0))
+	err = vecEvalType(ctx.GetEvalCtx(), fn, types.ETInt, chk1, chk2.Column(0))
 	require.NoError(t, err)
 	require.Equal(t, int64(1), chk2.Column(0).GetInt64(0))
 }

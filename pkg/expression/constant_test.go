@@ -22,11 +22,14 @@ import (
 	"time"
 
 	exprctx "github.com/pingcap/tidb/pkg/expression/context"
+	"github.com/pingcap/tidb/pkg/expression/contextopt"
+	"github.com/pingcap/tidb/pkg/expression/contextstatic"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 )
 
@@ -56,7 +59,9 @@ func newString(value string, collation string) *Constant {
 }
 
 func newFunctionWithMockCtx(funcName string, args ...Expression) Expression {
-	return newFunction(mock.NewContext(), funcName, args...)
+	return newFunction(contextstatic.NewStaticExprContext(
+		contextstatic.WithEvalCtx(mockEvalCtx(contextstatic.WithErrLevelMap(stmtctx.DefaultStmtErrLevels))),
+	), funcName, args...)
 }
 
 func newFunction(ctx BuildContext, funcName string, args ...Expression) Expression {
@@ -177,7 +182,7 @@ func TestConstantPropagation(t *testing.T) {
 	}
 	for _, tt := range tests {
 		for _, solver := range tt.solver {
-			ctx := mock.NewContext()
+			ctx := mockStmtExprCtx()
 			conds := make([]Expression, 0, len(tt.conditions))
 			for _, cd := range tt.conditions {
 				conds = append(conds, FoldConstant(ctx, cd))
@@ -245,7 +250,7 @@ func TestConstantFolding(t *testing.T) {
 		},
 	}
 	for _, tt := range tests {
-		ctx := mock.NewContext().GetExprCtx()
+		var ctx exprctx.ExprContext = mockStmtExprCtx()
 		require.False(t, ctx.IsInNullRejectCheck())
 		expr := tt.condition(ctx)
 		if tt.nullRejectCheck {
@@ -258,7 +263,7 @@ func TestConstantFolding(t *testing.T) {
 }
 
 func TestConstantFoldingCharsetConvert(t *testing.T) {
-	ctx := mock.NewContext()
+	ctx := mockStmtExprCtx()
 	tests := []struct {
 		condition Expression
 		result    string
@@ -320,9 +325,9 @@ func TestConstantFoldingCharsetConvert(t *testing.T) {
 }
 
 func TestDeferredParamNotNull(t *testing.T) {
-	ctx := mock.NewContext()
+	vars := contextopt.SessionVarsAsProvider(variable.NewSessionVars(nil))
 	testTime := time.Now()
-	ctx.GetSessionVars().PlanCacheParams.Append(
+	vars.GetSessionVars().PlanCacheParams.Append(
 		types.NewIntDatum(1),
 		types.NewDecimalDatum(types.NewDecFromStringForTest("20170118123950.123")),
 		types.NewTimeDatum(types.NewTime(types.FromGoTime(testTime), mysql.TypeTimestamp, 6)),
@@ -336,125 +341,126 @@ func TestDeferredParamNotNull(t *testing.T) {
 		types.NewMysqlBitDatum([]byte{1}),
 		types.NewMysqlEnumDatum(types.Enum{Name: "n", Value: 2}),
 	)
-	cstInt := &Constant{ParamMarker: &ParamMarker{ctx: ctx, order: 0}, RetType: newIntFieldType()}
-	cstDec := &Constant{ParamMarker: &ParamMarker{ctx: ctx, order: 1}, RetType: newDecimalFieldType()}
-	cstTime := &Constant{ParamMarker: &ParamMarker{ctx: ctx, order: 2}, RetType: newDateFieldType()}
-	cstDuration := &Constant{ParamMarker: &ParamMarker{ctx: ctx, order: 3}, RetType: newDurFieldType()}
-	cstJSON := &Constant{ParamMarker: &ParamMarker{ctx: ctx, order: 4}, RetType: newJSONFieldType()}
-	cstBytes := &Constant{ParamMarker: &ParamMarker{ctx: ctx, order: 6}, RetType: newBlobFieldType()}
-	cstBinary := &Constant{ParamMarker: &ParamMarker{ctx: ctx, order: 5}, RetType: newBinaryLiteralFieldType()}
-	cstFloat32 := &Constant{ParamMarker: &ParamMarker{ctx: ctx, order: 7}, RetType: newFloatFieldType()}
-	cstFloat64 := &Constant{ParamMarker: &ParamMarker{ctx: ctx, order: 8}, RetType: newFloatFieldType()}
-	cstUint := &Constant{ParamMarker: &ParamMarker{ctx: ctx, order: 9}, RetType: newIntFieldType()}
-	cstBit := &Constant{ParamMarker: &ParamMarker{ctx: ctx, order: 10}, RetType: newBinaryLiteralFieldType()}
-	cstEnum := &Constant{ParamMarker: &ParamMarker{ctx: ctx, order: 11}, RetType: newEnumFieldType()}
+	ctx := mockStmtExprCtx(contextstatic.WithParamList(vars.GetSessionVars().PlanCacheParams))
+	cstInt := &Constant{ParamMarker: &ParamMarker{ctx: vars, order: 0}, RetType: newIntFieldType()}
+	cstDec := &Constant{ParamMarker: &ParamMarker{ctx: vars, order: 1}, RetType: newDecimalFieldType()}
+	cstTime := &Constant{ParamMarker: &ParamMarker{ctx: vars, order: 2}, RetType: newDateFieldType()}
+	cstDuration := &Constant{ParamMarker: &ParamMarker{ctx: vars, order: 3}, RetType: newDurFieldType()}
+	cstJSON := &Constant{ParamMarker: &ParamMarker{ctx: vars, order: 4}, RetType: newJSONFieldType()}
+	cstBytes := &Constant{ParamMarker: &ParamMarker{ctx: vars, order: 6}, RetType: newBlobFieldType()}
+	cstBinary := &Constant{ParamMarker: &ParamMarker{ctx: vars, order: 5}, RetType: newBinaryLiteralFieldType()}
+	cstFloat32 := &Constant{ParamMarker: &ParamMarker{ctx: vars, order: 7}, RetType: newFloatFieldType()}
+	cstFloat64 := &Constant{ParamMarker: &ParamMarker{ctx: vars, order: 8}, RetType: newFloatFieldType()}
+	cstUint := &Constant{ParamMarker: &ParamMarker{ctx: vars, order: 9}, RetType: newIntFieldType()}
+	cstBit := &Constant{ParamMarker: &ParamMarker{ctx: vars, order: 10}, RetType: newBinaryLiteralFieldType()}
+	cstEnum := &Constant{ParamMarker: &ParamMarker{ctx: vars, order: 11}, RetType: newEnumFieldType()}
 
-	require.Equal(t, mysql.TypeVarString, cstJSON.GetType(ctx).GetType())
-	require.Equal(t, mysql.TypeNewDecimal, cstDec.GetType(ctx).GetType())
-	require.Equal(t, mysql.TypeLonglong, cstInt.GetType(ctx).GetType())
-	require.Equal(t, mysql.TypeLonglong, cstUint.GetType(ctx).GetType())
-	require.Equal(t, mysql.TypeTimestamp, cstTime.GetType(ctx).GetType())
-	require.Equal(t, mysql.TypeDuration, cstDuration.GetType(ctx).GetType())
-	require.Equal(t, mysql.TypeBlob, cstBytes.GetType(ctx).GetType())
-	require.Equal(t, mysql.TypeVarString, cstBinary.GetType(ctx).GetType())
-	require.Equal(t, mysql.TypeVarString, cstBit.GetType(ctx).GetType())
-	require.Equal(t, mysql.TypeFloat, cstFloat32.GetType(ctx).GetType())
-	require.Equal(t, mysql.TypeDouble, cstFloat64.GetType(ctx).GetType())
-	require.Equal(t, mysql.TypeEnum, cstEnum.GetType(ctx).GetType())
+	require.Equal(t, mysql.TypeVarString, cstJSON.GetType(ctx.GetEvalCtx()).GetType())
+	require.Equal(t, mysql.TypeNewDecimal, cstDec.GetType(ctx.GetEvalCtx()).GetType())
+	require.Equal(t, mysql.TypeLonglong, cstInt.GetType(ctx.GetEvalCtx()).GetType())
+	require.Equal(t, mysql.TypeLonglong, cstUint.GetType(ctx.GetEvalCtx()).GetType())
+	require.Equal(t, mysql.TypeTimestamp, cstTime.GetType(ctx.GetEvalCtx()).GetType())
+	require.Equal(t, mysql.TypeDuration, cstDuration.GetType(ctx.GetEvalCtx()).GetType())
+	require.Equal(t, mysql.TypeBlob, cstBytes.GetType(ctx.GetEvalCtx()).GetType())
+	require.Equal(t, mysql.TypeVarString, cstBinary.GetType(ctx.GetEvalCtx()).GetType())
+	require.Equal(t, mysql.TypeVarString, cstBit.GetType(ctx.GetEvalCtx()).GetType())
+	require.Equal(t, mysql.TypeFloat, cstFloat32.GetType(ctx.GetEvalCtx()).GetType())
+	require.Equal(t, mysql.TypeDouble, cstFloat64.GetType(ctx.GetEvalCtx()).GetType())
+	require.Equal(t, mysql.TypeEnum, cstEnum.GetType(ctx.GetEvalCtx()).GetType())
 
-	d, _, err := cstInt.EvalInt(ctx, chunk.Row{})
+	d, _, err := cstInt.EvalInt(ctx.GetEvalCtx(), chunk.Row{})
 	require.NoError(t, err)
 	require.Equal(t, int64(1), d)
-	r, _, err := cstFloat64.EvalReal(ctx, chunk.Row{})
+	r, _, err := cstFloat64.EvalReal(ctx.GetEvalCtx(), chunk.Row{})
 	require.NoError(t, err)
 	require.Equal(t, float64(2.1), r)
-	de, _, err := cstDec.EvalDecimal(ctx, chunk.Row{})
+	de, _, err := cstDec.EvalDecimal(ctx.GetEvalCtx(), chunk.Row{})
 	require.NoError(t, err)
 	require.Equal(t, "20170118123950.123", de.String())
-	s, _, err := cstBytes.EvalString(ctx, chunk.Row{})
+	s, _, err := cstBytes.EvalString(ctx.GetEvalCtx(), chunk.Row{})
 	require.NoError(t, err)
 	require.Equal(t, "b", s)
-	evalTime, _, err := cstTime.EvalTime(ctx, chunk.Row{})
+	evalTime, _, err := cstTime.EvalTime(ctx.GetEvalCtx(), chunk.Row{})
 	require.NoError(t, err)
-	v := ctx.GetSessionVars().PlanCacheParams.GetParamValue(2)
+	v := vars.GetSessionVars().PlanCacheParams.GetParamValue(2)
 	require.Equal(t, 0, evalTime.Compare(v.GetMysqlTime()))
-	dur, _, err := cstDuration.EvalDuration(ctx, chunk.Row{})
+	dur, _, err := cstDuration.EvalDuration(ctx.GetEvalCtx(), chunk.Row{})
 	require.NoError(t, err)
 	require.Equal(t, types.ZeroDuration.Duration, dur.Duration)
-	evalJSON, _, err := cstJSON.EvalJSON(ctx, chunk.Row{})
+	evalJSON, _, err := cstJSON.EvalJSON(ctx.GetEvalCtx(), chunk.Row{})
 	require.NoError(t, err)
 	require.NotNil(t, evalJSON)
 }
 
 func TestDeferredExprNotNull(t *testing.T) {
 	m := &MockExpr{}
-	ctx := mock.NewContext()
+	ctx := mockStmtExprCtx()
 	cst := &Constant{DeferredExpr: m, RetType: newIntFieldType()}
 	m.i, m.err = nil, fmt.Errorf("ERROR")
-	_, _, err := cst.EvalInt(ctx, chunk.Row{})
+	_, _, err := cst.EvalInt(ctx.GetEvalCtx(), chunk.Row{})
 	require.Error(t, err)
-	_, _, err = cst.EvalReal(ctx, chunk.Row{})
+	_, _, err = cst.EvalReal(ctx.GetEvalCtx(), chunk.Row{})
 	require.Error(t, err)
-	_, _, err = cst.EvalDecimal(ctx, chunk.Row{})
+	_, _, err = cst.EvalDecimal(ctx.GetEvalCtx(), chunk.Row{})
 	require.Error(t, err)
-	_, _, err = cst.EvalString(ctx, chunk.Row{})
+	_, _, err = cst.EvalString(ctx.GetEvalCtx(), chunk.Row{})
 	require.Error(t, err)
-	_, _, err = cst.EvalTime(ctx, chunk.Row{})
+	_, _, err = cst.EvalTime(ctx.GetEvalCtx(), chunk.Row{})
 	require.Error(t, err)
-	_, _, err = cst.EvalDuration(ctx, chunk.Row{})
+	_, _, err = cst.EvalDuration(ctx.GetEvalCtx(), chunk.Row{})
 	require.Error(t, err)
-	_, _, err = cst.EvalJSON(ctx, chunk.Row{})
+	_, _, err = cst.EvalJSON(ctx.GetEvalCtx(), chunk.Row{})
 	require.Error(t, err)
 
 	m.i, m.err = nil, nil
-	_, isNull, err := cst.EvalInt(ctx, chunk.Row{})
+	_, isNull, err := cst.EvalInt(ctx.GetEvalCtx(), chunk.Row{})
 	require.NoError(t, err)
 	require.True(t, isNull)
-	_, isNull, err = cst.EvalReal(ctx, chunk.Row{})
+	_, isNull, err = cst.EvalReal(ctx.GetEvalCtx(), chunk.Row{})
 	require.NoError(t, err)
 	require.True(t, isNull)
-	_, isNull, err = cst.EvalDecimal(ctx, chunk.Row{})
+	_, isNull, err = cst.EvalDecimal(ctx.GetEvalCtx(), chunk.Row{})
 	require.NoError(t, err)
 	require.True(t, isNull)
-	_, isNull, err = cst.EvalString(ctx, chunk.Row{})
+	_, isNull, err = cst.EvalString(ctx.GetEvalCtx(), chunk.Row{})
 	require.NoError(t, err)
 	require.True(t, isNull)
-	_, isNull, err = cst.EvalTime(ctx, chunk.Row{})
+	_, isNull, err = cst.EvalTime(ctx.GetEvalCtx(), chunk.Row{})
 	require.NoError(t, err)
 	require.True(t, isNull)
-	_, isNull, err = cst.EvalDuration(ctx, chunk.Row{})
+	_, isNull, err = cst.EvalDuration(ctx.GetEvalCtx(), chunk.Row{})
 	require.NoError(t, err)
 	require.True(t, isNull)
-	_, isNull, err = cst.EvalJSON(ctx, chunk.Row{})
+	_, isNull, err = cst.EvalJSON(ctx.GetEvalCtx(), chunk.Row{})
 	require.NoError(t, err)
 	require.True(t, isNull)
 
 	m.i = int64(2333)
-	xInt, _, _ := cst.EvalInt(ctx, chunk.Row{})
+	xInt, _, _ := cst.EvalInt(ctx.GetEvalCtx(), chunk.Row{})
 	require.Equal(t, int64(2333), xInt)
 
 	m.i = float64(123.45)
-	xFlo, _, _ := cst.EvalReal(ctx, chunk.Row{})
+	xFlo, _, _ := cst.EvalReal(ctx.GetEvalCtx(), chunk.Row{})
 	require.Equal(t, float64(123.45), xFlo)
 
 	m.i = "abc"
-	xStr, _, _ := cst.EvalString(ctx, chunk.Row{})
+	xStr, _, _ := cst.EvalString(ctx.GetEvalCtx(), chunk.Row{})
 	require.Equal(t, "abc", xStr)
 
 	m.i = &types.MyDecimal{}
-	xDec, _, _ := cst.EvalDecimal(ctx, chunk.Row{})
+	xDec, _, _ := cst.EvalDecimal(ctx.GetEvalCtx(), chunk.Row{})
 	require.Equal(t, 0, xDec.Compare(m.i.(*types.MyDecimal)))
 
 	m.i = types.ZeroTime
-	xTim, _, _ := cst.EvalTime(ctx, chunk.Row{})
+	xTim, _, _ := cst.EvalTime(ctx.GetEvalCtx(), chunk.Row{})
 	require.Equal(t, 0, xTim.Compare(m.i.(types.Time)))
 
 	m.i = types.Duration{}
-	xDur, _, _ := cst.EvalDuration(ctx, chunk.Row{})
+	xDur, _, _ := cst.EvalDuration(ctx.GetEvalCtx(), chunk.Row{})
 	require.Equal(t, 0, xDur.Compare(m.i.(types.Duration)))
 
 	m.i = types.BinaryJSON{}
-	xJsn, _, _ := cst.EvalJSON(ctx, chunk.Row{})
+	xJsn, _, _ := cst.EvalJSON(ctx.GetEvalCtx(), chunk.Row{})
 	require.Equal(t, xJsn.String(), m.i.(types.BinaryJSON).String())
 
 	cln := cst.Clone().(*Constant)
@@ -471,8 +477,8 @@ func TestVectorizedConstant(t *testing.T) {
 			chk.AppendInt64(0, int64(i))
 		}
 		col := chunk.NewColumn(newIntFieldType(), 1024)
-		ctx := mock.NewContext()
-		require.Nil(t, cst.VecEvalInt(ctx, chk, col))
+		ctx := mockStmtExprCtx()
+		require.Nil(t, cst.VecEvalInt(ctx.GetEvalCtx(), chk, col))
 		i64s := col.Int64s()
 		require.Equal(t, 1024, len(i64s))
 		for _, v := range i64s {
@@ -482,7 +488,7 @@ func TestVectorizedConstant(t *testing.T) {
 		// fixed-length type with Sel
 		sel := []int{2, 3, 5, 7, 11, 13, 17, 19, 23, 29}
 		chk.SetSel(sel)
-		require.Nil(t, cst.VecEvalInt(ctx, chk, col))
+		require.Nil(t, cst.VecEvalInt(ctx.GetEvalCtx(), chk, col))
 		i64s = col.Int64s()
 		for i := range sel {
 			require.Equal(t, int64(2333), i64s[i])
@@ -500,8 +506,8 @@ func TestVectorizedConstant(t *testing.T) {
 		cst = &Constant{DeferredExpr: nil, RetType: newStringFieldType(), Value: types.NewStringDatum("hello")}
 		chk.SetSel(nil)
 		col := chunk.NewColumn(newStringFieldType(), 1024)
-		ctx := mock.NewContext()
-		require.Nil(t, cst.VecEvalString(ctx, chk, col))
+		ctx := mockStmtExprCtx()
+		require.Nil(t, cst.VecEvalString(ctx.GetEvalCtx(), chk, col))
 		for i := 0; i < 1024; i++ {
 			require.Equal(t, "hello", col.GetString(i))
 		}
@@ -509,7 +515,7 @@ func TestVectorizedConstant(t *testing.T) {
 		// var-length type with Sel
 		sel := []int{2, 3, 5, 7, 11, 13, 17, 19, 23, 29}
 		chk.SetSel(sel)
-		require.Nil(t, cst.VecEvalString(ctx, chk, col))
+		require.Nil(t, cst.VecEvalString(ctx.GetEvalCtx(), chk, col))
 		for i := range sel {
 			require.Equal(t, "hello", col.GetString(i))
 		}
@@ -517,9 +523,10 @@ func TestVectorizedConstant(t *testing.T) {
 }
 
 func TestGetTypeThreadSafe(t *testing.T) {
-	ctx := mock.NewContext()
-	ctx.GetSessionVars().PlanCacheParams.Append(types.NewIntDatum(1))
-	con := &Constant{ParamMarker: &ParamMarker{ctx: ctx, order: 0}, RetType: newStringFieldType()}
+	vars := contextopt.SessionVarsAsProvider(variable.NewSessionVars(nil))
+	vars.GetSessionVars().PlanCacheParams.Append(types.NewIntDatum(1))
+	ctx := mockEvalCtx(contextstatic.WithParamList(vars.GetSessionVars().PlanCacheParams))
+	con := &Constant{ParamMarker: &ParamMarker{ctx: vars, order: 0}, RetType: newStringFieldType()}
 	ft1 := con.GetType(ctx)
 	ft2 := con.GetType(ctx)
 	require.NotSame(t, ft1, ft2)
