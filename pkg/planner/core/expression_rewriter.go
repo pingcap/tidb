@@ -714,6 +714,9 @@ func (er *expressionRewriter) handleCompareSubquery(ctx context.Context, planCtx
 	if er.err != nil {
 		return v, true
 	}
+	if len(er.ctxStack) == 0 {
+		return v, true
+	}
 	lexpr := er.ctxStack[len(er.ctxStack)-1]
 	subq, ok := v.R.(*ast.SubqueryExpr)
 	if !ok {
