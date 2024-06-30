@@ -586,6 +586,13 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 			case *ast.ParenthesesExpr:
 				x = y.Expr
 			default:
+				if v.Expr != nil {
+					v.Expr.Accept(er)
+					if er.err != nil {
+						return v, false
+					}
+					return inNode, true
+				}
 				return inNode, false
 			}
 		}
