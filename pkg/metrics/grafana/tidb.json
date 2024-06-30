@@ -13902,6 +13902,124 @@
             "align": false,
             "alignLevel": null
           }
+        },
+        {
+          "aliasColors": {},
+          "dashLength": 10,
+          "datasource": "${DS_TEST-CLUSTER}",
+          "description": "Infoschema cache v2 hit, evict and miss number",
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
+          "fill": 1,
+          "gridPos": {
+            "h": 7,
+            "w": 12,
+            "x": 12,
+            "y": 31
+          },
+          "id": 23763572012,
+          "legend": {
+            "alignAsTable": true,
+            "avg": true,
+            "current": true,
+            "hideEmpty": false,
+            "hideZero": false,
+            "max": false,
+            "min": false,
+            "rightSide": true,
+            "show": true,
+            "sideWidth": null,
+            "total": false,
+            "values": true
+          },
+          "lines": true,
+          "linewidth": 2,
+          "nullPointMode": "null as zero",
+          "options": {
+            "alertThreshold": true
+          },
+          "pluginVersion": "7.5.17",
+          "pointradius": 2,
+          "renderer": "flot",
+          "seriesOverrides": [
+            {
+              "alias": "hit/(hit+miss)",
+              "yaxis": 2
+            }
+          ],
+          "spaceLength": 10,
+          "targets": [
+            {
+              "expr": "sum(rate(tidb_domain_infoschema_v2_cache{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) by (type)",
+              "legendFormat": "{{type}}",
+              "interval": "",
+              "exemplar": true,
+              "format": "time_series",
+              "intervalFactor": 2,
+              "refId": "A",
+              "step": 40
+            },
+            {
+              "expr": "sum(rate(tidb_domain_infoschema_v2_cache{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", type=\"hit\"}[1m]))/(sum(rate(tidb_domain_infoschema_v2_cache{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", type=\"hit\"}[1m]))+sum(rate(tidb_domain_infoschema_v2_cache{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", type=\"miss\"}[1m])))",
+              "legendFormat": "hit/(hit+miss)",
+              "interval": "",
+              "exemplar": true,
+              "refId": "B",
+              "hide": false
+            }
+          ],
+          "thresholds": [],
+          "timeRegions": [],
+          "title": "Infoschema Cache v2",
+          "tooltip": {
+            "shared": true,
+            "sort": 2,
+            "value_type": "individual"
+          },
+          "type": "graph",
+          "xaxis": {
+            "buckets": null,
+            "mode": "time",
+            "name": null,
+            "show": true,
+            "values": []
+          },
+          "yaxes": [
+            {
+              "$$hashKey": "object:80",
+              "format": "short",
+              "label": null,
+              "logBase": 1,
+              "max": null,
+              "min": 0,
+              "show": true
+            },
+            {
+              "$$hashKey": "object:81",
+              "format": "percentunit",
+              "label": "",
+              "logBase": 1,
+              "max": "1",
+              "min": "0",
+              "show": true
+            }
+          ],
+          "yaxis": {
+            "align": false,
+            "alignLevel": null
+          },
+          "bars": false,
+          "dashes": false,
+          "fillGradient": 0,
+          "hiddenSeries": false,
+          "percentage": false,
+          "points": false,
+          "stack": false,
+          "steppedLine": false,
+          "timeFrom": null,
+          "timeShift": null
         }
       ],
       "repeat": null,
