@@ -39,6 +39,8 @@ import (
 // RetryCount is the max retry count for a sync load task.
 const RetryCount = 3
 
+var globalStatsSyncLoadSingleFlight singleflight.Group
+
 type statsWrapper struct {
 	col *statistics.Column
 	idx *statistics.Index
@@ -79,25 +81,26 @@ func (h *Handle) SendLoadRequests(sc *stmtctx.StatementContext, neededHistItems 
 	}
 	sc.StatsLoad.Timeout = timeout
 	sc.StatsLoad.NeededItems = remainedItems
-	sc.StatsLoad.ResultCh = make(chan stmtctx.StatsLoadResult, len(remainedItems))
-	tasks := make([]*NeededItemTask, 0)
+	sc.StatsLoad.ResultCh = make([]<-chan singleflight.Result, 0, len(remainedItems))
 	for _, item := range remainedItems {
-		task := &NeededItemTask{
-			TableItemID: item,
-			ToTimeout:   time.Now().Local().Add(timeout),
-			ResultCh:    sc.StatsLoad.ResultCh,
-		}
-		tasks = append(tasks, task)
-	}
-	timer := time.NewTimer(timeout)
-	defer timer.Stop()
-	for _, task := range tasks {
-		select {
-		case h.StatsLoad.NeededItemsCh <- task:
-			continue
-		case <-timer.C:
-			return errors.New("sync load stats channel is full and timeout sending task to channel")
-		}
+		localItem := item
+		resultCh := globalStatsSyncLoadSingleFlight.DoChan(localItem.Key(), func() (any, error) {
+			timer := time.NewTimer(timeout)
+			defer timer.Stop()
+			task := &NeededItemTask{
+				TableItemID: localItem,
+				ToTimeout:   time.Now().Local().Add(timeout),
+				ResultCh:    make(chan stmtctx.StatsLoadResult, 1),
+			}
+			select {
+			case h.StatsLoad.NeededItemsCh <- task:
+				result := <-task.ResultCh
+				return result, nil
+			case <-timer.C:
+				return nil, errors.New("sync load stats channel is full and timeout sending task to channel")
+			}
+		})
+		sc.StatsLoad.ResultCh = append(sc.StatsLoad.ResultCh, resultCh)
 	}
 	sc.StatsLoad.LoadStartTime = time.Now()
 	return nil
@@ -123,26 +126,34 @@ func (h *Handle) SyncWaitStatsLoad(sc *stmtctx.StatementContext) error {
 	metrics.SyncLoadCounter.Inc()
 	timer := time.NewTimer(sc.StatsLoad.Timeout)
 	defer timer.Stop()
-	for {
+	for _, resultCh := range sc.StatsLoad.ResultCh {
 		select {
-		case result, ok := <-sc.StatsLoad.ResultCh:
-			if ok {
-				if result.HasError() {
-					errorMsgs = append(errorMsgs, result.ErrorMsg())
-				}
-				delete(resultCheckMap, result.Item)
-				if len(resultCheckMap) == 0 {
-					metrics.SyncLoadHistogram.Observe(float64(time.Since(sc.StatsLoad.LoadStartTime).Milliseconds()))
-					return nil
-				}
-			} else {
+		case result, ok := <-resultCh:
+			if !ok {
 				return errors.New("sync load stats channel closed unexpectedly")
+			}
+			// this error is from statsSyncLoad.SendLoadRequests which start to task and send task into worker,
+			// not the stats loading error
+			if result.Err != nil {
+				errorMsgs = append(errorMsgs, result.Err.Error())
+			} else {
+				val := result.Val.(stmtctx.StatsLoadResult)
+				// this error is from the stats loading error
+				if val.HasError() {
+					errorMsgs = append(errorMsgs, val.ErrorMsg())
+				}
+				delete(resultCheckMap, val.Item)
 			}
 		case <-timer.C:
 			metrics.SyncLoadTimeoutCounter.Inc()
 			return errors.New("sync load stats timeout")
 		}
 	}
+	if len(resultCheckMap) == 0 {
+		metrics.SyncLoadHistogram.Observe(float64(time.Since(sc.StatsLoad.LoadStartTime).Milliseconds()))
+		return nil
+	}
+	return nil
 }
 
 // removeHistLoadedColumns removed having-hist columns based on neededColumns and statsCache.
@@ -240,28 +251,17 @@ func (h *Handle) HandleOneTask(lastTask *NeededItemTask, readerCtx *StatsReaderC
 		task = lastTask
 	}
 	result := stmtctx.StatsLoadResult{Item: task.TableItemID}
-	resultChan := h.StatsLoad.Singleflight.DoChan(task.TableItemID.Key(), func() (any, error) {
-		err := h.handleOneItemTask(task, readerCtx, ctx)
-		return nil, err
-	})
-	timeout := time.Until(task.ToTimeout)
-	select {
-	case sr := <-resultChan:
-		// sr.Val is always nil.
-		if sr.Err == nil {
-			task.ResultCh <- result
-			return nil, nil
-		}
-		if !isVaildForRetry(task) {
-			result.Error = sr.Err
-			task.ResultCh <- result
-			return nil, nil
-		}
-		return task, sr.Err
-	case <-time.After(timeout):
-		task.ToTimeout.Add(time.Duration(h.mu.ctx.GetSessionVars().StatsLoadSyncWait.Load()) * time.Microsecond)
-		return task, nil
+	err = h.handleOneItemTask(task, readerCtx, ctx)
+	if err == nil {
+		task.ResultCh <- result
+		return nil, nil
 	}
+	if !isVaildForRetry(task) {
+		result.Error = err
+		task.ResultCh <- result
+		return nil, nil
+	}
+	return task, err
 }
 
 func isVaildForRetry(task *NeededItemTask) bool {
