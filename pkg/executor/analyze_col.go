@@ -384,10 +384,13 @@ func hasPkHist(handleCols plannerutil.HandleCols) bool {
 	return handleCols != nil && handleCols.IsInt()
 }
 
-func prepareV2AnalyzeJobInfo(e *AnalyzeColumnsExec, retry bool) {
+// prepareV2AnalyzeJobInfo prepares the job info for the analyze job.
+func prepareV2AnalyzeJobInfo(e *AnalyzeColumnsExec) {
+	// For v1, we analyze all columns in a single job, so we don't need to set the job info.
 	if e == nil || e.StatsVersion != statistics.Version2 {
 		return
 	}
+
 	opts := e.opts
 	cols := e.colsInfo
 	if e.V2Options != nil {
@@ -395,13 +398,12 @@ func prepareV2AnalyzeJobInfo(e *AnalyzeColumnsExec, retry bool) {
 	}
 	sampleRate := *e.analyzePB.ColReq.SampleRate
 	var b strings.Builder
-	if retry {
-		b.WriteString("retry ")
-	}
+	// If it is an internal SQL, it means it is triggered by the system itself(auto-analyze).
 	if e.ctx.GetSessionVars().InRestrictedSQL {
 		b.WriteString("auto ")
 	}
 	b.WriteString("analyze table")
+	// Ignore the _row_id column.
 	if len(cols) > 0 && cols[len(cols)-1].ID == model.ExtraHandleID {
 		cols = cols[:len(cols)-1]
 	}
