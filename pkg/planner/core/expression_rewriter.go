@@ -585,6 +585,13 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 			case *ast.ParenthesesExpr:
 				x = y.Expr
 			default:
+				if v.Expr != nil {
+					v.Expr.Accept(er)
+					if er.err != nil {
+						return v, false
+					}
+					return inNode, true
+				}
 				return inNode, false
 			}
 		}
@@ -712,9 +719,6 @@ func (er *expressionRewriter) handleCompareSubquery(ctx context.Context, planCtx
 	defer resetCTECheckForSubQuery(ci)
 	v.L.Accept(er)
 	if er.err != nil {
-		return v, true
-	}
-	if len(er.ctxStack) == 0 {
 		return v, true
 	}
 	lexpr := er.ctxStack[len(er.ctxStack)-1]
