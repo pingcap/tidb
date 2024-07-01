@@ -384,25 +384,9 @@ func hasPkHist(handleCols plannerutil.HandleCols) bool {
 	return handleCols != nil && handleCols.IsInt()
 }
 
-// prepareV2AnalyzeJobInfo prepares the job info for the analyze job.
-func prepareV2AnalyzeJobInfo(e *AnalyzeColumnsExec) {
-	// For v1, we analyze all columns in a single job, so we don't need to set the job info.
-	if e == nil || e.StatsVersion != statistics.Version2 {
-		return
-	}
-
-	opts := e.opts
+// prepareColumns prepares the columns for the analyze job.
+func prepareColumns(e *AnalyzeColumnsExec, b *strings.Builder) {
 	cols := e.colsInfo
-	if e.V2Options != nil {
-		opts = e.V2Options.FilledOpts
-	}
-	sampleRate := *e.analyzePB.ColReq.SampleRate
-	var b strings.Builder
-	// If it is an internal SQL, it means it is triggered by the system itself(auto-analyze).
-	if e.ctx.GetSessionVars().InRestrictedSQL {
-		b.WriteString("auto ")
-	}
-	b.WriteString("analyze table")
 	// Ignore the _row_id column.
 	if len(cols) > 0 && cols[len(cols)-1].ID == model.ExtraHandleID {
 		cols = cols[:len(cols)-1]
@@ -418,6 +402,29 @@ func prepareV2AnalyzeJobInfo(e *AnalyzeColumnsExec) {
 	} else {
 		b.WriteString(" all columns")
 	}
+}
+
+// prepareV2AnalyzeJobInfo prepares the job info for the analyze job.
+func prepareV2AnalyzeJobInfo(e *AnalyzeColumnsExec) {
+	// For v1, we analyze all columns in a single job, so we don't need to set the job info.
+	if e == nil || e.StatsVersion != statistics.Version2 {
+		return
+	}
+
+	opts := e.opts
+	if e.V2Options != nil {
+		opts = e.V2Options.FilledOpts
+	}
+	sampleRate := *e.analyzePB.ColReq.SampleRate
+	var b strings.Builder
+	// If it is an internal SQL, it means it is triggered by the system itself(auto-analyze).
+	if e.ctx.GetSessionVars().InRestrictedSQL {
+		b.WriteString("auto ")
+	}
+	b.WriteString("analyze table")
+
+	prepareColumns(e, &b)
+
 	var needComma bool
 	b.WriteString(" with ")
 	printOption := func(optType ast.AnalyzeOptionType) {
