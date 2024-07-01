@@ -32,12 +32,11 @@ func (p LogicalPartitionUnionAll) Init(ctx base.PlanContext, offset int) *Logica
 	return &p
 }
 
-// *************************** start implementation of Plan interface ***************************
+// *************************** start implementation of LogicalPlan interface ***************************
 
 // ExhaustPhysicalPlans implements LogicalPlan interface.
 func (p *LogicalPartitionUnionAll) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
 	return exhaustPartitionUnionAllPhysicalPlans(p, prop)
 }
 
-// *************************** end implementation of Plan interface ***************************
-
+// *************************** end implementation of LogicalPlan interface ***************************
