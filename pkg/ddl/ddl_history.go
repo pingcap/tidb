@@ -147,7 +147,7 @@ func GetAllHistoryDDLJobs(m *meta.Meta) ([]*model.Job, error) {
 // ScanHistoryDDLJobs get some of the done DDL jobs.
 // When the DDL history is quite large, GetAllHistoryDDLJobs() API can't work well, because it makes the server OOM.
 // The result is in descending order by job ID.
-func ScanHistoryDDLJobs(m *meta.Meta, startJobID int64, limit int) ([]*model.Job, error) {
+func ScanHistoryDDLJobs(m *meta.Meta, startJobID int64, limit int, ddlTypes []model.ActionType) ([]*model.Job, error) {
 	var iter meta.LastJobIterator
 	var err error
 	if startJobID == 0 {
@@ -161,5 +161,5 @@ func ScanHistoryDDLJobs(m *meta.Meta, startJobID int64, limit int) ([]*model.Job
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	return iter.GetLastJobs(limit, nil)
+	return iter.GetLastJobsWithFilter(limit, nil, ddlTypes)
 }
