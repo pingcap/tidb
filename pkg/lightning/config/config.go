@@ -215,6 +215,7 @@ func (d *DBStore) adjust(
 		d.Security.CABytes = nil
 		d.Security.CertBytes = nil
 		d.Security.KeyPath = ""
+		d.Security.KeyBytes = nil
 	default:
 		return common.ErrInvalidConfig.GenWithStack("unsupported `tidb.tls` config %s", d.TLS)
 	}
