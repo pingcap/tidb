@@ -2330,7 +2330,7 @@ func WrapWithCastAsDuration(ctx BuildContext, expr Expression) Expression {
 		tp.SetDecimal(x.GetDecimal())
 	case mysql.TypeVarString:
 		tp.SetDecimal(types.GetFsp(expr.String()))
-		tp.SetFlen(-1)
+		tp.SetFlen(types.UnspecifiedLength)
 	default:
 		tp.SetDecimal(types.MaxFsp)
 	}
