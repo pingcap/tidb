@@ -342,7 +342,7 @@ func TestAutoAnalyzeSkipColumnTypes(t *testing.T) {
 		exec.AutoAnalyzeMinCnt = originalVal
 	}()
 	require.True(t, h.HandleAutoAnalyze())
-	tk.MustQuery("select job_info from mysql.analyze_jobs where job_info like '%auto analyze table%'").Check(testkit.Rows("auto analyze table columns a, b, d with 256 buckets, 100 topn, 1 samplerate"))
+	tk.MustQuery("select job_info from mysql.analyze_jobs where job_info like '%auto analyze table%'").Check(testkit.Rows("auto analyze table all indexes, columns a, b, d with 256 buckets, 100 topn, 1 samplerate"))
 }
 
 func TestAutoAnalyzeOnEmptyTable(t *testing.T) {
