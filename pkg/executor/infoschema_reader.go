@@ -1086,11 +1086,9 @@ func calcCharOctLength(lenInChar int, cs string) int {
 }
 
 func (e *memtableRetriever) setDataFromPartitions(sctx sessionctx.Context, schemas []model.CIStr) error {
-	cache := cache.TableRowStatsCache
-	err := cache.Update(sctx)
-	if err != nil {
-		return err
-	}
+	// ywq todo speed it up
+	useStatsCache := e.updateStatsCacheIfNeed()
+
 	checker := privilege.GetPrivilegeManager(sctx)
 	var rows [][]types.Datum
 	createTimeTp := mysql.TypeDatetime
@@ -1116,9 +1114,25 @@ func (e *memtableRetriever) setDataFromPartitions(sctx sessionctx.Context, schem
 			createTime := types.NewTime(types.FromGoTime(table.GetUpdateTime()), createTimeTp, types.DefaultFsp)
 
 			var rowCount, dataLength, indexLength uint64
+			if useStatsCache {
+				if table.GetPartitionInfo() == nil {
+					err := cache.TableRowStatsCache.UpdateByID(sctx, table.ID)
+					if err != nil {
+						return err
+					}
+				} else {
+					// needs to update all partitions for partition table.
+					for _, pi := range table.GetPartitionInfo().Definitions {
+						err := cache.TableRowStatsCache.UpdateByID(sctx, pi.ID)
+						if err != nil {
+							return err
+						}
+					}
+				}
+			}
 			if table.GetPartitionInfo() == nil {
-				rowCount = cache.GetTableRows(table.ID)
-				dataLength, indexLength = cache.GetDataAndIndexLength(table, table.ID, rowCount)
+				rowCount = cache.TableRowStatsCache.GetTableRows(table.ID)
+				dataLength, indexLength = cache.TableRowStatsCache.GetDataAndIndexLength(table, table.ID, rowCount)
 				avgRowLength := uint64(0)
 				if rowCount != 0 {
 					avgRowLength = dataLength / rowCount
@@ -1158,9 +1172,8 @@ func (e *memtableRetriever) setDataFromPartitions(sctx sessionctx.Context, schem
 					if ok && extractor.Filter("partition_name", pi.Name.L) {
 						continue
 					}
-					rowCount = cache.GetTableRows(pi.ID)
-					dataLength, indexLength = cache.GetDataAndIndexLength(table, pi.ID, rowCount)
-
+					rowCount = cache.TableRowStatsCache.GetTableRows(pi.ID)
+					dataLength, indexLength = cache.TableRowStatsCache.GetDataAndIndexLength(table, pi.ID, rowCount)
 					avgRowLength := uint64(0)
 					if rowCount != 0 {
 						avgRowLength = dataLength / rowCount
@@ -3635,6 +3648,7 @@ func (e *memtableRetriever) setDataFromKeywords() error {
 	return nil
 }
 
+// ywq todo
 func (e *memtableRetriever) setDataFromIndexUsage(ctx sessionctx.Context, schemas []model.CIStr) {
 	dom := domain.GetDomain(ctx)
 	rows := make([][]types.Datum, 0, 100)
