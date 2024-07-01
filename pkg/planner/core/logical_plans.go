@@ -1131,17 +1131,6 @@ type LogicalMaxOneRow struct {
 	logicalop.BaseLogicalPlan
 }
 
-// LogicalTableDual represents a dual table plan.
-// Note that sometimes we don't set schema for LogicalTableDual (most notably in buildTableDual()), which means
-// outputting 0/1 row with zero column. This semantic may be different from your expectation sometimes but should not
-// cause any actual problems now.
-type LogicalTableDual struct {
-	logicalop.LogicalSchemaProducer
-
-	// RowCount could only be 0 or 1.
-	RowCount int
-}
-
 // LogicalMemTable represents a memory table or virtual table
 // Some memory tables wants to take the ownership of some predications
 // e.g
@@ -1642,61 +1631,6 @@ func (p *LogicalIndexScan) getPKIsHandleCol(schema *expression.Schema) *expressi
 	// Because we may re-prune p.Columns and p.schema during the transformation.
 	// That will make p.Columns different from p.Source.Columns.
 	return getPKIsHandleColFromSchema(p.Columns, schema, p.Source.TableInfo.PKIsHandle)
-}
-
-// LogicalUnionAll represents LogicalUnionAll plan.
-type LogicalUnionAll struct {
-	logicalop.LogicalSchemaProducer
-}
-
-// LogicalPartitionUnionAll represents the LogicalUnionAll plan is for partition table.
-type LogicalPartitionUnionAll struct {
-	LogicalUnionAll
-}
-
-// LogicalSort stands for the order by plan.
-type LogicalSort struct {
-	logicalop.BaseLogicalPlan
-
-	ByItems []*util.ByItems
-}
-
-// ExtractCorrelatedCols implements LogicalPlan interface.
-func (ls *LogicalSort) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
-	corCols := make([]*expression.CorrelatedColumn, 0, len(ls.ByItems))
-	for _, item := range ls.ByItems {
-		corCols = append(corCols, expression.ExtractCorColumns(item.Expr)...)
-	}
-	return corCols
-}
-
-// LogicalLimit represents offset and limit plan.
-type LogicalLimit struct {
-	logicalop.LogicalSchemaProducer
-
-	PartitionBy      []property.SortItem // This is used for enhanced topN optimization
-	Offset           uint64
-	Count            uint64
-	PreferLimitToCop bool
-	IsPartial        bool
-}
-
-// GetPartitionBy returns partition by fields
-func (lt *LogicalLimit) GetPartitionBy() []property.SortItem {
-	return lt.PartitionBy
-}
-
-// LogicalLock represents a select lock plan.
-type LogicalLock struct {
-	logicalop.BaseLogicalPlan
-
-	Lock         *ast.SelectLockInfo
-	TblID2Handle map[int64][]util.HandleCols
-
-	// tblID2phyTblIDCol is used for partitioned tables,
-	// the child executor need to return an extra column containing
-	// the Physical Table ID (i.e. from which partition the row came from)
-	TblID2PhysTblIDCol map[int64]*expression.Column
 }
 
 // WindowFrame represents a window function frame.

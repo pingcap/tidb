@@ -913,14 +913,6 @@ func (p *LogicalApply) ExplainInfo() string {
 }
 
 // ExplainInfo implements Plan interface.
-func (p *LogicalTableDual) ExplainInfo() string {
-	var str strings.Builder
-	str.WriteString("rowcount:")
-	str.WriteString(strconv.Itoa(p.RowCount))
-	return str.String()
-}
-
-// ExplainInfo implements Plan interface.
 func (ds *DataSource) ExplainInfo() string {
 	buffer := bytes.NewBufferString("")
 	tblName := ds.TableInfo.Name.O
@@ -1014,24 +1006,6 @@ func explainNormalizedByItems(buffer *bytes.Buffer, byItems []*util.ByItems) *by
 		}
 	}
 	return buffer
-}
-
-// ExplainInfo implements Plan interface.
-func (p *LogicalSort) ExplainInfo() string {
-	buffer := bytes.NewBufferString("")
-	return explainByItems(p.SCtx().GetExprCtx().GetEvalCtx(), buffer, p.ByItems).String()
-}
-
-// ExplainInfo implements Plan interface.
-func (p *LogicalLimit) ExplainInfo() string {
-	buffer := bytes.NewBufferString("")
-	if len(p.GetPartitionBy()) > 0 {
-		buffer = explainPartitionBy(buffer, p.GetPartitionBy(), false)
-		fmt.Fprintf(buffer, ", offset:%v, count:%v", p.Offset, p.Count)
-	} else {
-		fmt.Fprintf(buffer, "offset:%v, count:%v", p.Offset, p.Count)
-	}
-	return buffer.String()
 }
 
 // ExplainInfo implements Plan interface.

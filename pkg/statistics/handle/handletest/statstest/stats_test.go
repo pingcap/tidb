@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/internal"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
@@ -50,7 +51,7 @@ func TestStatsCache(t *testing.T) {
 	// If index is build, but stats is not updated. statsTbl can also work.
 	require.False(t, statsTbl.Pseudo)
 	// But the added index will not work.
-	require.Nil(t, statsTbl.Indices[int64(1)])
+	require.Nil(t, statsTbl.GetIdx(int64(1)))
 
 	testKit.MustExec("analyze table t")
 	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
@@ -101,7 +102,7 @@ func TestStatsCacheMemTracker(t *testing.T) {
 	// If index is build, but stats is not updated. statsTbl can also work.
 	require.False(t, statsTbl.Pseudo)
 	// But the added index will not work.
-	require.Nil(t, statsTbl.Indices[int64(1)])
+	require.Nil(t, statsTbl.GetIdx(int64(1)))
 
 	testKit.MustExec("analyze table t")
 	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
@@ -262,8 +263,7 @@ func TestInitStats(t *testing.T) {
 	h.Clear()
 	require.NoError(t, h.InitStats(is))
 	table0 := h.GetTableStats(tbl.Meta())
-	idx := table0.Indices
-	require.Equal(t, uint8(0x3), idx[1].LastAnalyzePos.GetBytes()[0])
+	require.Equal(t, uint8(0x3), table0.GetIdx(1).LastAnalyzePos.GetBytes()[0])
 	h.Clear()
 	require.NoError(t, h.Update(is))
 	// Index and pk are loaded.
@@ -307,13 +307,14 @@ func TestInitStats51358(t *testing.T) {
 	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	stats := h.GetTableStats(tbl.Meta())
-	for _, column := range stats.Columns {
+	stats.ForEachColumnImmutable(func(_ int64, column *statistics.Column) bool {
 		if mysql.HasPriKeyFlag(column.Info.GetFlag()) {
 			// primary key column has no stats info, because primary key's is_index is false. so it cannot load the topn
 			require.Nil(t, column.TopN)
 		}
 		require.False(t, column.IsFullLoad())
-	}
+		return false
+	})
 }
 
 func TestInitStatsVer2(t *testing.T) {
@@ -360,17 +361,14 @@ func initStatsVer2(t *testing.T, isConcurrency bool) {
 	require.NoError(t, h.InitStats(is))
 	table0 := h.GetTableStats(tbl.Meta())
 	if isConcurrency {
-		idx := table0.Indices
-		require.Equal(t, uint8(0x3), idx[1].LastAnalyzePos.GetBytes()[0])
-		require.Equal(t, uint8(0x3), idx[2].LastAnalyzePos.GetBytes()[0])
+		require.Equal(t, uint8(0x3), table0.GetIdx(1).LastAnalyzePos.GetBytes()[0])
+		require.Equal(t, uint8(0x3), table0.GetIdx(2).LastAnalyzePos.GetBytes()[0])
 	} else {
-		cols := table0.Columns
-		require.Equal(t, uint8(0x33), cols[1].LastAnalyzePos.GetBytes()[0])
-		require.Equal(t, uint8(0x33), cols[2].LastAnalyzePos.GetBytes()[0])
-		require.Equal(t, uint8(0x33), cols[3].LastAnalyzePos.GetBytes()[0])
-		idx := table0.Indices
-		require.Equal(t, uint8(0x3), idx[1].LastAnalyzePos.GetBytes()[0])
-		require.Equal(t, uint8(0x3), idx[2].LastAnalyzePos.GetBytes()[0])
+		require.Equal(t, uint8(0x33), table0.GetCol(1).LastAnalyzePos.GetBytes()[0])
+		require.Equal(t, uint8(0x33), table0.GetCol(2).LastAnalyzePos.GetBytes()[0])
+		require.Equal(t, uint8(0x33), table0.GetCol(3).LastAnalyzePos.GetBytes()[0])
+		require.Equal(t, uint8(0x3), table0.GetIdx(1).LastAnalyzePos.GetBytes()[0])
+		require.Equal(t, uint8(0x3), table0.GetIdx(2).LastAnalyzePos.GetBytes()[0])
 	}
 	h.Clear()
 	require.NoError(t, h.InitStats(is))

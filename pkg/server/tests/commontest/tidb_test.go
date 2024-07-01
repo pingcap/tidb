@@ -3094,6 +3094,11 @@ func TestIssue53634(t *testing.T) {
 	ts.RunTestIssue53634(t, ts.Domain)
 }
 
+func TestIssue54254(t *testing.T) {
+	ts := servertestkit.CreateTidbTestSuiteWithDDLLease(t, "20s")
+	ts.RunTestIssue54254(t, ts.Domain)
+}
+
 func TestAuthSocket(t *testing.T) {
 	defer server2.ClearOSUserForAuthSocket()
 
