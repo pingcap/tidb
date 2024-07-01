@@ -182,8 +182,8 @@ func (p *LogicalWindow) PreparePossibleProperties(_ *expression.Schema, _ ...[][
 }
 
 // ExhaustPhysicalPlans implements base.LogicalPlan.<14th> interface.
-func (lw *LogicalWindow) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
-	return exhaustLogicalWindowPhysicalPlans(lw, prop)
+func (p *LogicalWindow) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
+	return exhaustLogicalWindowPhysicalPlans(p, prop)
 }
 
 // ExtractCorrelatedCols implements base.LogicalPlan.<15th> interface.
@@ -302,9 +302,9 @@ func (p *LogicalWindow) GetWindowResultColumns() []*expression.Column {
 }
 
 // GetPartitionKeys gets partition keys for a logical window, it will assign column id for expressions.
-func (lw *LogicalWindow) GetPartitionKeys() []*property.MPPPartitionColumn {
-	partitionByCols := make([]*property.MPPPartitionColumn, 0, len(lw.GetPartitionByCols()))
-	for _, item := range lw.PartitionBy {
+func (p *LogicalWindow) GetPartitionKeys() []*property.MPPPartitionColumn {
+	partitionByCols := make([]*property.MPPPartitionColumn, 0, len(p.GetPartitionByCols()))
+	for _, item := range p.PartitionBy {
 		partitionByCols = append(partitionByCols, &property.MPPPartitionColumn{
 			Col:       item.Col,
 			CollateID: property.GetCollateIDByNameForPartition(item.Col.GetStaticType().GetCollate()),
@@ -315,10 +315,10 @@ func (lw *LogicalWindow) GetPartitionKeys() []*property.MPPPartitionColumn {
 }
 
 // CheckComparisonForTiFlash check Duration vs Datetime is invalid comparison as TiFlash can't handle it so far.
-func (lw *LogicalWindow) CheckComparisonForTiFlash(frameBound *FrameBound) bool {
+func (lp *LogicalWindow) CheckComparisonForTiFlash(frameBound *FrameBound) bool {
 	if len(frameBound.CompareCols) > 0 {
-		orderByEvalType := lw.OrderBy[0].Col.GetStaticType().EvalType()
-		calFuncEvalType := frameBound.CalcFuncs[0].GetType(lw.SCtx().GetExprCtx().GetEvalCtx()).EvalType()
+		orderByEvalType := lp.OrderBy[0].Col.GetStaticType().EvalType()
+		calFuncEvalType := frameBound.CalcFuncs[0].GetType(lp.SCtx().GetExprCtx().GetEvalCtx()).EvalType()
 
 		if orderByEvalType == types.ETDuration && (calFuncEvalType == types.ETDatetime || calFuncEvalType == types.ETTimestamp) {
 			return false
