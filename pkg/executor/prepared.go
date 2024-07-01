@@ -210,7 +210,8 @@ func (e *DeallocateExec) Next(context.Context, *chunk.Chunk) error {
 	if e.Ctx().GetSessionVars().EnablePreparedPlanCache {
 		bindSQL, _ := bindinfo.MatchSQLBindingForPlanCache(e.Ctx(), preparedObj.PreparedAst.Stmt, &preparedObj.BindingInfo)
 		cacheKey, err := plannercore.NewPlanCacheKey(vars, preparedObj.StmtText, preparedObj.StmtDB, preparedObj.SchemaVersion,
-			0, bindSQL, expression.ExprPushDownBlackListReloadTimeStamp.Load(), preparedObj.RelateVersion)
+			0, bindSQL, expression.ExprPushDownBlackListReloadTimeStamp.Load(),
+			preparedObj.RelateVersion, e.Ctx().GetSessionVars().StmtCtx.TblInfo2UnionScan)
 		if err != nil {
 			return err
 		}

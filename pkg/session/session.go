@@ -304,7 +304,8 @@ func (s *session) cleanRetryInfo() {
 				stmtText, stmtDB = preparedObj.StmtText, preparedObj.StmtDB
 				bindSQL, _ = bindinfo.MatchSQLBindingForPlanCache(s.pctx, preparedObj.PreparedAst.Stmt, &preparedObj.BindingInfo)
 				cacheKey, err = plannercore.NewPlanCacheKey(s.sessionVars, stmtText, stmtDB, preparedObj.SchemaVersion,
-					0, bindSQL, expression.ExprPushDownBlackListReloadTimeStamp.Load(), preparedObj.RelateVersion)
+					0, bindSQL, expression.ExprPushDownBlackListReloadTimeStamp.Load(),
+					preparedObj.RelateVersion, s.GetSessionVars().StmtCtx.TblInfo2UnionScan)
 				if err != nil {
 					logutil.Logger(s.currentCtx).Warn("clean cached plan failed", zap.Error(err))
 					return
@@ -316,7 +317,8 @@ func (s *session) cleanRetryInfo() {
 		if planCacheEnabled {
 			if i > 0 && preparedObj != nil {
 				cacheKey, err = plannercore.NewPlanCacheKey(s.sessionVars, stmtText, stmtDB, preparedObj.SchemaVersion,
-					0, bindSQL, expression.ExprPushDownBlackListReloadTimeStamp.Load(), preparedObj.RelateVersion)
+					0, bindSQL, expression.ExprPushDownBlackListReloadTimeStamp.Load(),
+					preparedObj.RelateVersion, s.GetSessionVars().StmtCtx.TblInfo2UnionScan)
 				if err != nil {
 					logutil.Logger(s.currentCtx).Warn("clean cached plan failed", zap.Error(err))
 					return
