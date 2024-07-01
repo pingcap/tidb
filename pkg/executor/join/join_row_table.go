@@ -220,7 +220,6 @@ func (meta *TableMeta) isCurrentRowUsed(rowStart unsafe.Pointer) bool {
 }
 
 type rowTable struct {
-	meta     *TableMeta
 	segments []*rowTableSegment
 }
 
@@ -663,9 +662,8 @@ func (b *rowTableBuilder) ResetBuffer(chk *chunk.Chunk) {
 	}
 }
 
-func newRowTable(meta *TableMeta) *rowTable {
+func newRowTable() *rowTable {
 	return &rowTable{
-		meta:     meta,
 		segments: make([]*rowTableSegment, 0),
 	}
 }
@@ -775,7 +773,7 @@ func (b *rowTableBuilder) appendToRowTable(chk *chunk.Chunk, hashJoinCtx *HashJo
 		if b.crrntSizeOfRowTable[partIdx] >= maxRowTableSegmentSize {
 			hashJoinCtx.hashTableContext.finalizeCurrentSeg(workerID, partIdx, b, true)
 		}
-		seg = hashJoinCtx.hashTableContext.getCurrentRowSegment(workerID, partIdx, hashJoinCtx.hashTableMeta, true)
+		seg = hashJoinCtx.hashTableContext.getCurrentRowSegment(workerID, partIdx, true)
 		if hasValidKey {
 			seg.validJoinKeyPos = append(seg.validJoinKeyPos, len(seg.hashValues))
 		}

@@ -50,7 +50,7 @@ type hashJoinSpillHelper struct {
 	tmpSpillBuildSideChunks []*chunk.Chunk
 	tmpSpillProbeSideChunks []*chunk.Chunk
 
-	// TODO initialize it
+	// TODO initialize it, do we need it?
 	joinChkResourceCh chan *chunk.Chunk
 
 	hash      hash.Hash64
@@ -68,12 +68,14 @@ type hashJoinSpillHelper struct {
 
 func newHashJoinSpillHelper(hashJoinExec *HashJoinV2Exec, probeFieldTypes []*types.FieldType) *hashJoinSpillHelper {
 	helper := &hashJoinSpillHelper{hashJoinExec: hashJoinExec}
+	helper.buildSpillChkFieldTypes = make([]*types.FieldType, 0, 3)
 	helper.buildSpillChkFieldTypes = append(helper.buildSpillChkFieldTypes, types.NewFieldType(mysql.TypeLonglong)) // hash value
 	helper.buildSpillChkFieldTypes = append(helper.buildSpillChkFieldTypes, types.NewFieldType(mysql.TypeBit))      // valid join key
 	helper.buildSpillChkFieldTypes = append(helper.buildSpillChkFieldTypes, types.NewFieldType(mysql.TypeBit))      // row data
-	helper.probeFieldTypes = append(helper.probeFieldTypes, types.NewFieldType(mysql.TypeLonglong))                 // hash value
-	helper.probeFieldTypes = append(helper.probeFieldTypes, types.NewFieldType(mysql.TypeBit))                      // serialized key
-	helper.probeFieldTypes = append(helper.probeFieldTypes, probeFieldTypes...)                                     // row data
+	helper.probeFieldTypes = make([]*types.FieldType, 0, 3)
+	helper.probeFieldTypes = append(helper.probeFieldTypes, types.NewFieldType(mysql.TypeLonglong)) // hash value
+	helper.probeFieldTypes = append(helper.probeFieldTypes, types.NewFieldType(mysql.TypeBit))      // serialized key
+	helper.probeFieldTypes = append(helper.probeFieldTypes, probeFieldTypes...)                     // row data
 	helper.hash = fnv.New64()
 	helper.rehashBuf = new(bytes.Buffer)
 	helper.memTracker = hashJoinExec.memTracker
@@ -456,7 +458,6 @@ func (h *hashJoinSpillHelper) appendChunkToSegments(chunk *chunk.Chunk, segments
 			seg.finalized = true
 			segments = append(segments, seg)
 			h.memTracker.Consume(seg.totalUsedBytes())
-			// TODO check spill and spill if necessary
 			seg = newRowTableSegment()
 			newSegCreated = true
 		}
@@ -625,7 +626,7 @@ func (h *hashJoinSpillHelper) initTmpSpillProbeSideChunks() {
 }
 
 func (h *hashJoinSpillHelper) buildHashTable(partition *restorePartition) (*hashTableV2, bool, error) {
-	rowTb := &rowTable{} // TODO initialize metaData in rowTable
+	rowTb := &rowTable{}
 	segments := make([]*rowTableSegment, 0, 10)
 
 	spillTriggered := false
@@ -642,14 +643,14 @@ func (h *hashJoinSpillHelper) buildHashTable(partition *restorePartition) (*hash
 		// TODO test re-spill case
 		h.appendChunkToSegments(chunk, segments)
 		if h.isSpillNeeded() {
-			// TODO spill
-			spillTriggered = true
-			return nil, spillTriggered, nil
+			idx++
+			break
 		}
 	}
 
-	if len(segments) > 0 {
+	if len(segments) > 0 && !segments[len(segments)-1].finalized {
 		segments[len(segments)-1].finalized = true
+		h.memTracker.Consume(segments[len(segments)-1].totalUsedBytes())
 	}
 
 	rowTb.segments = segments

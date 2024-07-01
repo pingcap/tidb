@@ -127,9 +127,11 @@ type baseJoinProbe struct {
 	rowIndexInfos []*matchedRowInfo
 	selected      []bool
 
+	probeChkFieldTypes []*types.FieldType
+
 	// This marks which columns are probe columns, and it is used only in spill
 	usedColIdx  []int
-	spillTmpChk []*chunk.Chunk // TODO initialize it
+	spillTmpChk []*chunk.Chunk
 }
 
 func (j *baseJoinProbe) IsCurrentChunkProbeDone() bool {
@@ -212,6 +214,13 @@ func (j *baseJoinProbe) SetChunkForProbe(chk *chunk.Chunk) (err error) {
 		err = codec.SerializeKeys(j.ctx.SessCtx.GetSessionVars().StmtCtx.TypeCtx(), j.currentChunk, j.keyTypes[i], index, j.usedRows, j.filterVector, j.nullKeyVector, j.ctx.hashTableMeta.serializeModes[i], j.serializedKeys)
 		if err != nil {
 			return err
+		}
+	}
+
+	// Not all sqls need spill, so we initialize it at runtime, or there will be too many unnecessary memory allocations
+	if len(j.spillTmpChk) != j.ctx.PartitionNumber {
+		for i := 0; i < j.ctx.PartitionNumber; i++ {
+			j.spillTmpChk = append(j.spillTmpChk, chunk.NewChunkFromPoolWithCapacity(j.probeChkFieldTypes, spillChunkSize))
 		}
 	}
 
@@ -544,7 +553,7 @@ func isKeyMatched(keyMode keyMode, serializedKey []byte, rowStart unsafe.Pointer
 }
 
 // NewJoinProbe create a join probe used for hash join v2
-func NewJoinProbe(ctx *HashJoinCtxV2, workID uint, joinType core.JoinType, keyIndex []int, joinedColumnTypes, probeKeyTypes []*types.FieldType, rightAsBuildSide bool) ProbeV2 {
+func NewJoinProbe(ctx *HashJoinCtxV2, workID uint, joinType core.JoinType, keyIndex []int, joinedColumnTypes, probeKeyTypes []*types.FieldType, rightAsBuildSide bool, probeChkFieldTypes []*types.FieldType) ProbeV2 {
 	base := baseJoinProbe{
 		ctx:                   ctx,
 		workID:                workID,
@@ -556,6 +565,7 @@ func NewJoinProbe(ctx *HashJoinCtxV2, workID uint, joinType core.JoinType, keyIn
 		lUsedInOtherCondition: ctx.LUsedInOtherCondition,
 		rUsedInOtherCondition: ctx.RUsedInOtherCondition,
 		rightAsBuildSide:      rightAsBuildSide,
+		probeChkFieldTypes:    probeChkFieldTypes,
 	}
 	for i := range keyIndex {
 		if !mysql.HasNotNullFlag(base.keyTypes[i].GetFlag()) {

@@ -30,10 +30,12 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/channel"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/disk"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/memory"
 )
@@ -122,9 +124,9 @@ func (htc *hashTableContext) clearSegments(workerID, partitionID int) {
 	htc.rowTables[workerID][partitionID].clearSegments()
 }
 
-func (htc *hashTableContext) getCurrentRowSegment(workerID, partitionID int, tableMeta *TableMeta, allowCreate bool) *rowTableSegment {
+func (htc *hashTableContext) getCurrentRowSegment(workerID, partitionID int, allowCreate bool) *rowTableSegment {
 	if htc.rowTables[workerID][partitionID] == nil {
-		htc.rowTables[workerID][partitionID] = newRowTable(tableMeta)
+		htc.rowTables[workerID][partitionID] = newRowTable()
 	}
 	segNum := len(htc.rowTables[workerID][partitionID].segments)
 	if segNum == 0 || htc.rowTables[workerID][partitionID].segments[segNum-1].finalized {
@@ -139,7 +141,7 @@ func (htc *hashTableContext) getCurrentRowSegment(workerID, partitionID int, tab
 }
 
 func (htc *hashTableContext) finalizeCurrentSeg(workerID, partitionID int, builder *rowTableBuilder, needConsume bool) {
-	seg := htc.getCurrentRowSegment(workerID, partitionID, nil, false)
+	seg := htc.getCurrentRowSegment(workerID, partitionID, false)
 	for _, pos := range builder.startPosInRawData[partitionID] {
 		seg.rowLocations = append(seg.rowLocations, unsafe.Pointer(&seg.rawData[pos]))
 	}
@@ -152,10 +154,10 @@ func (htc *hashTableContext) finalizeCurrentSeg(workerID, partitionID int, build
 	}
 }
 
-func (htc *hashTableContext) mergeRowTablesToHashTable(tableMeta *TableMeta, partitionNumber int) int {
+func (htc *hashTableContext) mergeRowTablesToHashTable(partitionNumber int) int {
 	rowTables := make([]*rowTable, partitionNumber)
 	for i := 0; i < partitionNumber; i++ {
-		rowTables[i] = newRowTable(tableMeta)
+		rowTables[i] = newRowTable()
 	}
 	totalSegmentCnt := 0
 	for _, rowTablesPerWorker := range htc.rowTables {
@@ -177,7 +179,7 @@ func (htc *hashTableContext) mergeRowTablesToHashTable(tableMeta *TableMeta, par
 // HashJoinCtxV2 is the hash join ctx used in hash join v2
 type HashJoinCtxV2 struct {
 	hashJoinCtxBase
-	PartitionNumber int // TODO when partition number == 1 during spill, maybe we need to handle this situation
+	PartitionNumber int
 	ProbeKeyTypes   []*types.FieldType
 	BuildKeyTypes   []*types.FieldType
 	stats           *hashJoinRuntimeStatsV2
@@ -194,7 +196,8 @@ type HashJoinCtxV2 struct {
 	LUsedInOtherCondition, RUsedInOtherCondition []int
 
 	maxSpillRound int
-	spillHelper   *hashJoinSpillHelper // TODO initialize it
+	spillHelper   *hashJoinSpillHelper
+	spillAction   *hashJoinSpillAction
 }
 
 // initHashTableContext create hashTableContext for current HashJoinCtxV2
@@ -348,13 +351,19 @@ func (e *HashJoinV2Exec) Open(ctx context.Context) error {
 	}
 	e.memTracker.AttachTo(e.Ctx().GetSessionVars().StmtCtx.MemTracker)
 
-	// TODO consider variable.EnableTmpStorageOnOOM to switch on or off the spill feature
-	// TODO add fallback action when memory limit is exceeded
-	// e.diskTracker = disk.NewTracker(e.ID(), -1)
-	// e.diskTracker.AttachTo(e.Ctx().GetSessionVars().StmtCtx.DiskTracker)
+	if e.diskTracker != nil {
+		e.diskTracker.Reset()
+	} else {
+		e.diskTracker = disk.NewTracker(e.ID(), -1)
+	}
+	e.diskTracker.AttachTo(e.Ctx().GetSessionVars().StmtCtx.DiskTracker)
+	e.spillHelper = newHashJoinSpillHelper(e, e.ProbeSideTupleFetcher.ProbeSideExec.RetFieldTypes())
 
-	// TODO init it when we attach fallback action
-	// e.initMaxSpillRound()
+	if variable.EnableTmpStorageOnOOM.Load() && e.PartitionNumber > 1 {
+		e.initMaxSpillRound()
+		e.spillAction = newHashJoinSpillDiskAction(e.spillHelper)
+		e.Ctx().GetSessionVars().MemTracker.FallbackOldAndSetNewAction(e.spillAction)
+	}
 
 	e.workerWg = util.WaitGroupWrapper{}
 	e.waiterWg = util.WaitGroupWrapper{}
@@ -868,7 +877,7 @@ func (e *HashJoinV2Exec) fetchAndBuildHashTable(ctx context.Context) {
 
 	// TODO -------------------- Put these two area codes into two functions in the future --------------------
 
-	totalSegmentCnt := e.hashTableContext.mergeRowTablesToHashTable(e.hashTableMeta, e.PartitionNumber)
+	totalSegmentCnt := e.hashTableContext.mergeRowTablesToHashTable(e.PartitionNumber)
 
 	// doneCh is used by the consumer(buildHashTable) to info the producer(createBuildTasks) that the consumer meet error and stop consume data
 	doneCh = make(chan struct{}, e.Concurrency)
