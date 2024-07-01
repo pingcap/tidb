@@ -1644,11 +1644,6 @@ func (p *LogicalIndexScan) getPKIsHandleCol(schema *expression.Schema) *expressi
 	return getPKIsHandleColFromSchema(p.Columns, schema, p.Source.TableInfo.PKIsHandle)
 }
 
-// LogicalPartitionUnionAll represents the LogicalUnionAll plan is for partition table.
-type LogicalPartitionUnionAll struct {
-	LogicalUnionAll
-}
-
 // WindowFrame represents a window function frame.
 type WindowFrame struct {
 	Type  ast.FrameType
