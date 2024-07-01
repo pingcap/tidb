@@ -763,7 +763,7 @@ func (p *cteProducer) checkAndUpdateCorColHashCode() bool {
 }
 
 func (p *cteProducer) logTbls(ctx context.Context, err error, iterNum uint64) {
-	logutil.Logger(ctx).Debug("cte iteration info",
+	logutil.Logger(ctx).Info("cte iteration info",
 		zap.Any("iterInTbl mem usage", p.iterInTbl.GetMemBytes()), zap.Any("iterInTbl disk usage", p.iterInTbl.GetDiskBytes()),
 		zap.Any("iterOutTbl mem usage", p.iterOutTbl.GetMemBytes()), zap.Any("iterOutTbl disk usage", p.iterOutTbl.GetDiskBytes()),
 		zap.Any("resTbl mem usage", p.resTbl.GetMemBytes()), zap.Any("resTbl disk usage", p.resTbl.GetDiskBytes()),
