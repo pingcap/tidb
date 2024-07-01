@@ -61,6 +61,8 @@ type sieveStatusHook interface {
 	onHit()
 	onMiss()
 	onEvict()
+	onUpdateSize(size uint64)
+	onUpdateLimit(limit uint64)
 }
 
 type emptySieveStatusHook struct{}
@@ -70,6 +72,10 @@ func (e *emptySieveStatusHook) onHit() {}
 func (e *emptySieveStatusHook) onMiss() {}
 
 func (e *emptySieveStatusHook) onEvict() {}
+
+func (e *emptySieveStatusHook) onUpdateSize(_ uint64) {}
+
+func (e *emptySieveStatusHook) onUpdateLimit(_ uint64) {}
 
 func newSieve[K comparable, V any](capacity uint64) *Sieve[K, V] {
 	ctx, cancel := context.WithCancel(context.Background())
@@ -94,6 +100,7 @@ func (s *Sieve[K, V]) SetCapacity(capacity uint64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.capacity = capacity
+	s.hook.onUpdateLimit(capacity)
 }
 
 func (s *Sieve[K, V]) Capacity() uint64 {
@@ -121,6 +128,7 @@ func (s *Sieve[K, V]) Set(key K, value V) {
 		value: value,
 	}
 	s.size += e.Size() // calculate the size first without putting to the list.
+	s.hook.onUpdateSize(s.size)
 	e.element = s.ll.PushFront(key)
 
 	s.items[key] = e
@@ -210,6 +218,7 @@ func (s *Sieve[K, V]) removeEntry(e *entry[K, V]) {
 	s.ll.Remove(e.element)
 	delete(s.items, e.key)
 	s.size -= e.Size()
+	s.hook.onUpdateSize(s.size)
 }
 
 func (s *Sieve[K, V]) evict() {
