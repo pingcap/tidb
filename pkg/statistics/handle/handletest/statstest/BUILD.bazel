@@ -14,6 +14,7 @@ go_test(
         "//pkg/config",
         "//pkg/parser/model",
         "//pkg/parser/mysql",
+        "//pkg/statistics",
         "//pkg/statistics/handle/internal",
         "//pkg/testkit",
         "//pkg/testkit/testsetup",

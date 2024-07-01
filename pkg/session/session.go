@@ -3214,7 +3214,12 @@ func InitDDLJobTables(store kv.Storage, targetVer meta.DDLTableVersion) error {
 		targetTables = BackfillTables
 	}
 	return kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), store, true, func(_ context.Context, txn kv.Transaction) error {
-		t := meta.NewMeta(txn)
+		var t *meta.Meta
+		if variable.EnableFastCreateTable.Load() {
+			t = meta.NewMeta(txn, meta.WithUpdateTableName())
+		} else {
+			t = meta.NewMeta(txn)
+		}
 		tableVer, err := t.CheckDDLTableVersion()
 		if err != nil || tableVer >= targetVer {
 			return errors.Trace(err)
@@ -3260,7 +3265,12 @@ func createAndSplitTables(store kv.Storage, t *meta.Meta, dbID int64, tables []t
 // InitMDLTable is to create tidb_mdl_info, which is used for metadata lock.
 func InitMDLTable(store kv.Storage) error {
 	return kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), store, true, func(_ context.Context, txn kv.Transaction) error {
-		t := meta.NewMeta(txn)
+		var t *meta.Meta
+		if variable.EnableFastCreateTable.Load() {
+			t = meta.NewMeta(txn, meta.WithUpdateTableName())
+		} else {
+			t = meta.NewMeta(txn)
+		}
 		ver, err := t.CheckDDLTableVersion()
 		if err != nil || ver >= meta.MDLTableVersion {
 			return errors.Trace(err)
@@ -3553,6 +3563,10 @@ func bootstrapSessionImpl(store kv.Storage, createSessionsImpl func(store kv.Sto
 	if err = dom.LoadAndUpdateStatsLoop(subCtxs, initStatsCtx); err != nil {
 		return nil, err
 	}
+
+	// init the instance plan cache
+	// TODO: introduce 2 new variable to control these 2 mem limits.
+	dom.InitInstancePlanCache(1000000, 1000000)
 
 	// start TTL job manager after setup stats collector
 	// because TTL could modify a lot of columns, and need to trigger auto analyze

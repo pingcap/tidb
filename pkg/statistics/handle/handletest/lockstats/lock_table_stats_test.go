@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 )
@@ -33,9 +34,10 @@ func TestLockAndUnlockTableStats(t *testing.T) {
 
 	handle := dom.StatsHandle()
 	tblStats := handle.GetTableStats(tbl)
-	for _, col := range tblStats.Columns {
+	tblStats.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
 		require.True(t, col.IsStatsInitialized())
-	}
+		return false
+	})
 	tk.MustExec("lock stats t")
 
 	rows := tk.MustQuery(selectTableLockSQL).Rows()
@@ -71,9 +73,10 @@ func TestLockAndUnlockPartitionedTableStats(t *testing.T) {
 
 	handle := dom.StatsHandle()
 	tblStats := handle.GetTableStats(tbl)
-	for _, col := range tblStats.Columns {
+	tblStats.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
 		require.True(t, col.IsStatsInitialized())
-	}
+		return false
+	})
 
 	tk.MustExec("lock stats t")
 	rows := tk.MustQuery(selectTableLockSQL).Rows()
@@ -102,9 +105,10 @@ func TestLockTableAndUnlockTableStatsRepeatedly(t *testing.T) {
 
 	handle := dom.StatsHandle()
 	tblStats := handle.GetTableStats(tbl)
-	for _, col := range tblStats.Columns {
+	tblStats.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
 		require.True(t, col.IsStatsInitialized())
-	}
+		return false
+	})
 	tk.MustExec("lock stats t")
 
 	rows := tk.MustQuery(selectTableLockSQL).Rows()
@@ -169,17 +173,19 @@ func TestLockAndUnlockTablesStats(t *testing.T) {
 
 	handle := domain.GetDomain(tk.Session()).StatsHandle()
 	tbl1Stats := handle.GetTableStats(tbl1.Meta())
-	for _, col := range tbl1Stats.Columns {
+	tbl1Stats.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
 		require.Eventually(t, func() bool {
 			return col.IsStatsInitialized()
 		}, 1*time.Second, 100*time.Millisecond)
-	}
+		return false
+	})
 	tbl2Stats := handle.GetTableStats(tbl2.Meta())
-	for _, col := range tbl2Stats.Columns {
+	tbl2Stats.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
 		require.Eventually(t, func() bool {
 			return col.IsStatsInitialized()
 		}, 1*time.Second, 100*time.Millisecond)
-	}
+		return false
+	})
 
 	tk.MustExec("lock stats t1, t2")
 	rows := tk.MustQuery(selectTableLockSQL).Rows()
@@ -222,9 +228,10 @@ func TestDropTableShouldCleanUpLockInfo(t *testing.T) {
 
 	handle := dom.StatsHandle()
 	tblStats := handle.GetTableStats(tbl)
-	for _, col := range tblStats.Columns {
+	tblStats.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
 		require.True(t, col.IsStatsInitialized())
-	}
+		return false
+	})
 	tk.MustExec("lock stats t")
 
 	rows := tk.MustQuery(selectTableLockSQL).Rows()
@@ -247,9 +254,10 @@ func TestTruncateTableShouldCleanUpLockInfo(t *testing.T) {
 
 	handle := dom.StatsHandle()
 	tblStats := handle.GetTableStats(tbl)
-	for _, col := range tblStats.Columns {
+	tblStats.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
 		require.True(t, col.IsStatsInitialized())
-	}
+		return false
+	})
 	tk.MustExec("lock stats t")
 
 	rows := tk.MustQuery(selectTableLockSQL).Rows()

@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 )
@@ -44,9 +45,9 @@ func checkForGlobalStatsWithOpts(t *testing.T, dom *domain.Domain, db, tt, pp st
 	require.NoError(t, err)
 
 	delta := buckets/2 + 10
-	for _, idxStats := range tblStats.Indices {
+	tblStats.ForEachIndexImmutable(func(_ int64, idxStats *statistics.Index) bool {
 		if len(idxStats.Buckets) == 0 {
-			continue // it's not loaded
+			return false // it's not loaded
 		}
 		numTopN := idxStats.TopN.Num()
 		numBuckets := len(idxStats.Buckets)
@@ -55,17 +56,19 @@ func checkForGlobalStatsWithOpts(t *testing.T, dom *domain.Domain, db, tt, pp st
 		require.Equal(t, topn, numTopN)
 		require.GreaterOrEqual(t, numBuckets, buckets-delta)
 		require.LessOrEqual(t, numBuckets, buckets+delta)
-	}
-	for _, colStats := range tblStats.Columns {
+		return false
+	})
+	tblStats.ForEachColumnImmutable(func(_ int64, colStats *statistics.Column) bool {
 		if len(colStats.Buckets) == 0 {
-			continue // it's not loaded
+			return false // it's not loaded
 		}
 		numTopN := colStats.TopN.Num()
 		numBuckets := len(colStats.Buckets)
 		require.Equal(t, topn, numTopN)
 		require.GreaterOrEqual(t, numBuckets, buckets-delta)
 		require.LessOrEqual(t, numBuckets, buckets+delta)
-	}
+		return false
+	})
 }
 
 // nolint:unused

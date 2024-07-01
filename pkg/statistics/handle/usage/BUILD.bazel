@@ -40,7 +40,7 @@ go_test(
     ],
     embed = [":usage"],
     flaky = True,
-    shard_count = 3,
+    shard_count = 10,
     deps = [
         "//pkg/infoschema",
         "//pkg/parser/model",

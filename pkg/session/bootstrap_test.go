@@ -2249,12 +2249,12 @@ func testTiDBUpgradeWithDistTask(t *testing.T, injectQuery string, fatal bool) {
 	require.Equal(t, fatal, fatal2panic)
 }
 
-func TestTiDBUpgradeToVer199(t *testing.T) {
+func TestTiDBUpgradeToVer209(t *testing.T) {
 	ctx := context.Background()
 	store, _ := CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
 
-	// bootstrap as version198
+	// bootstrap as version198, version 199~208 is reserved for v8.1.x bugfix patch.
 	ver198 := version198
 	seV198 := CreateSessionAndSetID(t, store)
 	txn, err := store.Begin()
@@ -2269,7 +2269,7 @@ func TestTiDBUpgradeToVer199(t *testing.T) {
 	require.NoError(t, err)
 	unsetStoreBootstrapped(store.UUID())
 
-	// upgrade to ver199
+	// upgrade to ver209
 	domCurVer, err := BootstrapSession(store)
 	require.NoError(t, err)
 	defer domCurVer.Close()

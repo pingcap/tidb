@@ -19,25 +19,19 @@ import (
 	"sync"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"go.uber.org/atomic"
 )
 
-// InstancePlanCache represents the instance/node level plan cache.
-// Value and Opts should always be *PlanCacheValue and *PlanCacheMatchOpts, use any to avoid cycle-import.
-type InstancePlanCache interface {
-	// Get gets the cached value from the cache according to key and opts.
-	Get(sctx sessionctx.Context, key string, opts any) (value any, ok bool)
-	// Put puts the key and value into the cache.
-	Put(sctx sessionctx.Context, key string, value, opts any) (succ bool)
-	// Evict evicts some cached values.
-	Evict(sctx sessionctx.Context) (evicted bool)
-	// MemUsage returns the total memory usage of this plan cache.
-	MemUsage() int64
+func init() {
+	domain.NewInstancePlanCache = func(softMemLimit, hardMemLimit int64) sessionctx.InstancePlanCache {
+		return NewInstancePlanCache(softMemLimit, hardMemLimit)
+	}
 }
 
 // NewInstancePlanCache creates a new instance level plan cache.
-func NewInstancePlanCache(softMemLimit, hardMemLimit int64) InstancePlanCache {
+func NewInstancePlanCache(softMemLimit, hardMemLimit int64) sessionctx.InstancePlanCache {
 	planCache := new(instancePlanCache)
 	planCache.softMemLimit.Store(softMemLimit)
 	planCache.hardMemLimit.Store(hardMemLimit)
@@ -132,7 +126,7 @@ func (pc *instancePlanCache) Put(sctx sessionctx.Context, key string, value, opt
 // step 1: iterate all values to collect their last_used
 // step 2: estimate an eviction threshold time based on all last_used values
 // step 3: iterate all values again and evict qualified values
-func (pc *instancePlanCache) Evict(_ sessionctx.Context) (evicted bool) {
+func (pc *instancePlanCache) Evict() (evicted bool) {
 	pc.evictMutex.Lock() // make sure only one thread to trigger eviction for safety
 	defer pc.evictMutex.Unlock()
 	if pc.totCost.Load() < pc.softMemLimit.Load() {

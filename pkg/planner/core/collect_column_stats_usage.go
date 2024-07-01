@@ -409,7 +409,7 @@ func CollectColumnStatsUsage(lp base.LogicalPlan, histNeeded bool) (
 			if col.State != model.StatePublic || (col.IsGenerated() && !col.GeneratedStored) || !tblStats.ColAndIdxExistenceMap.HasAnalyzed(col.ID, false) {
 				continue
 			}
-			if colStats := tblStats.Columns[col.ID]; colStats != nil {
+			if colStats := tblStats.GetCol(col.ID); colStats != nil {
 				// If any stats are already full loaded, we don't need to trigger stats loading on this table.
 				if colStats.IsFullLoad() {
 					colToTriggerLoad = nil
@@ -429,7 +429,7 @@ func CollectColumnStatsUsage(lp base.LogicalPlan, histNeeded bool) (
 				continue
 			}
 			// If any stats are already full loaded, we don't need to trigger stats loading on this table.
-			if idxStats := tblStats.Indices[idx.Meta().ID]; idxStats != nil && idxStats.IsFullLoad() {
+			if idxStats := tblStats.GetIdx(idx.Meta().ID); idxStats != nil && idxStats.IsFullLoad() {
 				colToTriggerLoad = nil
 				break
 			}

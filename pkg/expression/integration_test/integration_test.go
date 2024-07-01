@@ -57,6 +57,31 @@ import (
 	"github.com/tikv/client-go/v2/oracle"
 )
 
+func TestVector(t *testing.T) {
+	// Currently we only allow parsing Vector type, but not using it.
+
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	err := tk.ExecToErr("CREATE TABLE c(a VECTOR)")
+	require.ErrorContains(t, err, "vector type is not supported")
+	err = tk.ExecToErr("CREATE TABLE c(a VECTOR(3))")
+	require.ErrorContains(t, err, "vector type is not supported")
+	err = tk.ExecToErr("SELECT CAST('123' AS VECTOR)")
+	require.ErrorContains(t, err, "vector type is not supported")
+
+	tk.MustExec("CREATE TABLE c(pk INT)")
+
+	err = tk.ExecToErr("ALTER TABLE c ADD COLUMN a VECTOR")
+	require.ErrorContains(t, err, "vector type is not supported")
+	err = tk.ExecToErr("ALTER TABLE c MODIFY pk VECTOR")
+	require.ErrorContains(t, err, "vector type is not supported")
+
+	tk.MustExec("DROP TABLE c")
+}
+
 func TestGetLock(t *testing.T) {
 	ctx := context.Background()
 	store := testkit.CreateMockStore(t, mockstore.WithStoreType(mockstore.EmbedUnistore))

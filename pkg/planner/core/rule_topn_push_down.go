@@ -66,66 +66,6 @@ func (p *LogicalCTE) PushDownTopN(topNLogicalPlan base.LogicalPlan, opt *optimiz
 }
 
 // PushDownTopN implements LogicalPlan interface.
-func (ls *LogicalSort) PushDownTopN(topNLogicalPlan base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) base.LogicalPlan {
-	var topN *LogicalTopN
-	if topNLogicalPlan != nil {
-		topN = topNLogicalPlan.(*LogicalTopN)
-	}
-	if topN == nil {
-		return ls.BaseLogicalPlan.PushDownTopN(nil, opt)
-	} else if topN.isLimit() {
-		topN.ByItems = ls.ByItems
-		appendSortPassByItemsTraceStep(ls, topN, opt)
-		return ls.Children()[0].PushDownTopN(topN, opt)
-	}
-	// If a TopN is pushed down, this sort is useless.
-	return ls.Children()[0].PushDownTopN(topN, opt)
-}
-
-func (p *LogicalLimit) convertToTopN(opt *optimizetrace.LogicalOptimizeOp) *LogicalTopN {
-	topn := LogicalTopN{Offset: p.Offset, Count: p.Count, PreferLimitToCop: p.PreferLimitToCop}.Init(p.SCtx(), p.QueryBlockOffset())
-	appendConvertTopNTraceStep(p, topn, opt)
-	return topn
-}
-
-// PushDownTopN implements the LogicalPlan interface.
-func (p *LogicalLimit) PushDownTopN(topNLogicalPlan base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) base.LogicalPlan {
-	var topN *LogicalTopN
-	if topNLogicalPlan != nil {
-		topN = topNLogicalPlan.(*LogicalTopN)
-	}
-	child := p.Children()[0].PushDownTopN(p.convertToTopN(opt), opt)
-	if topN != nil {
-		return topN.AttachChild(child, opt)
-	}
-	return child
-}
-
-// PushDownTopN implements the LogicalPlan interface.
-func (p *LogicalUnionAll) PushDownTopN(topNLogicalPlan base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) base.LogicalPlan {
-	var topN *LogicalTopN
-	if topNLogicalPlan != nil {
-		topN = topNLogicalPlan.(*LogicalTopN)
-	}
-	for i, child := range p.Children() {
-		var newTopN *LogicalTopN
-		if topN != nil {
-			newTopN = LogicalTopN{Count: topN.Count + topN.Offset, PreferLimitToCop: topN.PreferLimitToCop}.Init(p.SCtx(), topN.QueryBlockOffset())
-			for _, by := range topN.ByItems {
-				newTopN.ByItems = append(newTopN.ByItems, &util.ByItems{Expr: by.Expr, Desc: by.Desc})
-			}
-			// newTopN to push down Union's child
-			appendNewTopNTraceStep(topN, p, opt)
-		}
-		p.Children()[i] = child.PushDownTopN(newTopN, opt)
-	}
-	if topN != nil {
-		return topN.AttachChild(p, opt)
-	}
-	return p
-}
-
-// PushDownTopN implements LogicalPlan interface.
 func (p *LogicalProjection) PushDownTopN(topNLogicalPlan base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) base.LogicalPlan {
 	var topN *LogicalTopN
 	if topNLogicalPlan != nil {
@@ -175,18 +115,6 @@ func (p *LogicalProjection) PushDownTopN(topNLogicalPlan base.LogicalPlan, opt *
 	}
 	p.Children()[0] = p.Children()[0].PushDownTopN(topN, opt)
 	return p
-}
-
-// PushDownTopN implements the LogicalPlan interface.
-func (p *LogicalLock) PushDownTopN(topNLogicalPlan base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) base.LogicalPlan {
-	var topN *LogicalTopN
-	if topNLogicalPlan != nil {
-		topN = topNLogicalPlan.(*LogicalTopN)
-	}
-	if topN != nil {
-		p.Children()[0] = p.Children()[0].PushDownTopN(topN, opt)
-	}
-	return p.Self()
 }
 
 // pushDownTopNToChild will push a topN to one child of join. The idx stands for join child index. 0 is for left child.

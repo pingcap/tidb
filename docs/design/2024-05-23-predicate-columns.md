@@ -26,7 +26,7 @@
     - [Performance Tests](#performance-tests)
   - [Impacts \& Risks](#impacts--risks)
     - [If new predicate columns appear, they cannot be analyzed in time](#if-new-predicate-columns-appear-they-cannot-be-analyzed-in-time)
-    - [Use PREDICATE COLUMNS when your workload's query pattern is relatively stable](#use-predicate-columns-when-your-workloads-query-pattern-is--relatively-stable)
+    - [Use PREDICATE COLUMNS when your workload's query pattern is relatively stable](#use-predicate-columns-when-your-workloads-query-pattern-is-relatively-stable)
   - [Investigation \& Alternatives](#investigation--alternatives)
     - [CRDB](#crdb)
       - [Summary](#summary)
@@ -214,14 +214,14 @@ In the experimental implementation, we introduce a new global variable `tidb_ena
 
 But because we decided to track all columns by default, so it becomes unnecessary to use this variable. We will mark it deprecated and remove it in the future.
 
-In this feature, we introduce a new global variable `tidb_analyze_default_column_choice` to control whether to use predicate columns or all columns in the analyze process.
+In this feature, we introduce a new global variable `tidb_analyze_column_options` to control whether to use predicate columns or all columns in the analyze process.
 
 Users can set this variable to `ALL` or `PREDICATE` to analyze all columns or only predicate columns. The default value will be `PREDICATE` after this feature is fully implemented.
 
 ```sql
-SET GLOBAL tidb_analyze_default_column_choice = 'PREDICATE';
+SET GLOBAL tidb_analyze_column_options = 'PREDICATE';
 
-SET GLOBAL tidb_analyze_default_column_choice = 'ALL';
+SET GLOBAL tidb_analyze_column_options = 'ALL';
 ```
 
 | Value     | Description                                                    |

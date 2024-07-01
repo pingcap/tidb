@@ -911,6 +911,7 @@ var MySQLErrName = map[uint16]*ErrMessage{
 	ErrInvalidJSONPathWildcard:                               Message("In this situation, path expressions may not contain the * and ** tokens or an array range.", nil),
 	ErrInvalidJSONContainsPathType:                           Message("The second argument can only be either 'one' or 'all'.", nil),
 	ErrJSONUsedAsKey:                                         Message("JSON column '%-.192s' cannot be used in key specification.", nil),
+	ErrJSONDocumentTooDeep:                                   Message("The JSON document exceeds the maximum depth.", nil),
 	ErrJSONDocumentNULLKey:                                   Message("JSON documents may not contain NULL member names.", nil),
 	ErrBadUser:                                               Message("User %s does not exist.", nil),
 	ErrUserAlreadyExists:                                     Message("User %s already exists.", nil),

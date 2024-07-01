@@ -955,3 +955,138 @@ child	CREATE TABLE `child` (
   CONSTRAINT `fk_1` FOREIGN KEY (`cc`) REFERENCES `parent` (`c`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 drop table parent, child;
+CREATE TABLE jd1 (id SERIAL, j JSON DEFAULT (JSON_OBJECT("foo", "bar")));
+SHOW CREATE TABLE jd1;
+Table	Create Table
+jd1	CREATE TABLE `jd1` (
+  `id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+  `j` json DEFAULT (json_object(_utf8mb4'foo', _utf8mb4'bar')),
+  UNIQUE KEY `id` (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+INSERT INTO jd1(id) VALUES(1);
+INSERT INTO jd1 VALUES (2, '{"testval": 1234}');
+TABLE jd1;
+id	j
+1	{"foo": "bar"}
+2	{"testval": 1234}
+UPDATE jd1 SET j=NULL where id=2;
+TABLE jd1;
+id	j
+1	{"foo": "bar"}
+2	NULL
+UPDATE jd1 SET j=DEFAULT where id=2;
+TABLE jd1;
+id	j
+1	{"foo": "bar"}
+2	{"foo": "bar"}
+DELETE FROM jd1;
+TABLE jd1;
+id	j
+DROP TABLE jd1;
+CREATE TABLE jd2 (id SERIAL, j JSON DEFAULT (JSON_ARRAY("foo", "bar")));
+SHOW CREATE TABLE jd2;
+Table	Create Table
+jd2	CREATE TABLE `jd2` (
+  `id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+  `j` json DEFAULT (json_array(_utf8mb4'foo', _utf8mb4'bar')),
+  UNIQUE KEY `id` (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+INSERT INTO jd2(id) VALUES(1);
+TABLE jd2;
+id	j
+1	["foo", "bar"]
+DROP TABLE jd2;
+CREATE TABLE jd3 (id SERIAL, j JSON DEFAULT (JSON_QUOTE("foobar")));
+SHOW CREATE TABLE jd3;
+Table	Create Table
+jd3	CREATE TABLE `jd3` (
+  `id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+  `j` json DEFAULT (json_quote(_utf8mb4'foobar')),
+  UNIQUE KEY `id` (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+INSERT INTO jd3(id) VALUES(1);
+TABLE jd3;
+id	j
+1	"foobar"
+DROP TABLE jd3;
+CREATE TABLE jd4 (id SERIAL);
+SHOW CREATE TABLE jd4;
+Table	Create Table
+jd4	CREATE TABLE `jd4` (
+  `id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+  UNIQUE KEY `id` (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+ALTER TABLE jd4 ADD COLUMN j JSON;
+SHOW CREATE TABLE jd4;
+Table	Create Table
+jd4	CREATE TABLE `jd4` (
+  `id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+  `j` json DEFAULT NULL,
+  UNIQUE KEY `id` (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+ALTER TABLE jd4 MODIFY COLUMN j JSON DEFAULT (JSON_QUOTE("foobar"));
+SHOW CREATE TABLE jd4;
+Table	Create Table
+jd4	CREATE TABLE `jd4` (
+  `id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+  `j` json DEFAULT (json_quote(_utf8mb4'foobar')),
+  UNIQUE KEY `id` (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+DROP TABLE jd4;
+CREATE TABLE jd5 (
+id INT PRIMARY KEY,
+j JSON DEFAULT (JSON_OBJECT("p", 1))
+) PARTITION BY RANGE (j->'$.p') (
+PARTITION p0 VALUES LESS THAN (1),
+PARTITION p1 VALUES LESS THAN (2),
+PARTITION p2 VALUES LESS THAN MAXVALUE
+);
+Error 1564 (HY000): This partition function is not allowed
+CREATE TABLE jd5 (
+id INT NOT NULL,
+j JSON NOT NULL DEFAULT (JSON_OBJECT("p", 1)),
+p MEDIUMINT NOT NULL AS (j->'$.p') STORED,
+PRIMARY KEY (id,p)
+) PARTITION BY RANGE (p) (
+PARTITION p0 VALUES LESS THAN (1),
+PARTITION p1 VALUES LESS THAN (2),
+PARTITION p2 VALUES LESS THAN MAXVALUE
+);
+INSERT INTO jd5(id) VALUES (123);
+TABLE jd5;
+id	j	p
+123	{"p": 1}	1
+SELECT * FROM jd5 PARTITION (p0);
+id	j	p
+SELECT * FROM jd5 PARTITION (p1);
+id	j	p
+123	{"p": 1}	1
+SELECT * FROM jd5 PARTITION (p2);
+id	j	p
+DROP TABLE jd5;
+CREATE TABLE jd6 (id INT PRIMARY KEY);
+SHOW CREATE TABLE jd6;
+Table	Create Table
+jd6	CREATE TABLE `jd6` (
+  `id` int(11) NOT NULL,
+  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+ALTER TABLE jd6 ADD COLUMN j JSON DEFAULT (JSON_ARRAY(41, 42, 43));
+Error 1674 (HY000): Statement is unsafe because it uses a system function that may return a different value on the slave
+DROP TABLE jd6;
+CREATE TABLE jd7 (
+id INT PRIMARY KEY,
+j JSON DEFAULT (JSON_OBJECT("test", 123)),
+j2 JSON AS (j->"$.test")
+);
+INSERT INTO jd7(id) VALUES (1);
+TABLE jd7;
+id	j	j2
+1	{"test": 123}	123
+DROP TABLE jd7;
+CREATE TABLE jd8 (
+id INT PRIMARY KEY,
+j2 JSON DEFAULT (JSON_ARRAY(id,id*2,id*3))
+);
+INSERT INTO jd8(id) VALUES(1);
+Error 1054 (42S22): Unknown column 'id' in 'expression'

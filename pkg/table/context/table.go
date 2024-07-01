@@ -15,8 +15,6 @@
 package context
 
 import (
-	"fmt"
-
 	exprctx "github.com/pingcap/tidb/pkg/expression/context"
 	infoschema "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -34,8 +32,6 @@ type MutateContext interface {
 	AllocatorContext
 	// GetExprCtx returns the context to build or evaluate expressions
 	GetExprCtx() exprctx.ExprContext
-	// Value returns the value associated with this context for key.
-	Value(key fmt.Stringer) any
 	// GetSessionVars returns the session variables.
 	GetSessionVars() *variable.SessionVars
 	// Txn returns the current transaction which is created before executing a statement.

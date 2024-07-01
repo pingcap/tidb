@@ -48,9 +48,9 @@ func GetRowCountByIndexRanges(sctx context.PlanContext, coll *statistics.HistCol
 		}()
 	}
 	sc := sctx.GetSessionVars().StmtCtx
-	idx, ok := coll.Indices[idxID]
+	idx := coll.GetIdx(idxID)
 	colNames := make([]string, 0, 8)
-	if ok {
+	if idx != nil {
 		if idx.Info != nil {
 			name = idx.Info.Name.O
 			for _, col := range idx.Info.Columns {
@@ -65,7 +65,7 @@ func GetRowCountByIndexRanges(sctx context.PlanContext, coll *statistics.HistCol
 			colsLen = len(idx.Info.Columns)
 		}
 		result, err = getPseudoRowCountByIndexRanges(sc.TypeCtx(), indexRanges, float64(coll.RealtimeCount), colsLen)
-		if err == nil && sc.EnableOptimizerCETrace && ok {
+		if err == nil && sc.EnableOptimizerCETrace && idx != nil {
 			ceTraceRange(sctx, coll.PhysicalID, colNames, indexRanges, "Index Stats-Pseudo", uint64(result))
 		}
 		return result, err
@@ -96,7 +96,7 @@ func getIndexRowCountForStatsV1(sctx context.PlanContext, coll *statistics.HistC
 		debugtrace.EnterContextCommon(sctx)
 		defer debugtrace.LeaveContextCommon(sctx)
 	}
-	idx := coll.Indices[idxID]
+	idx := coll.GetIdx(idxID)
 	totalCount := float64(0)
 	for _, ran := range indexRanges {
 		if debugTrace {
@@ -333,10 +333,10 @@ func getIndexRowCountForStatsV2(sctx context.PlanContext, idx *statistics.Index,
 			histNDV := idx.NDV
 			// Exclude the TopN in Stats Version 2
 			if idx.StatsVer == statistics.Version2 {
-				c, ok := coll.Columns[idx.Histogram.ID]
+				c := coll.GetCol(idx.Histogram.ID)
 				// If this is single column of a multi-column index - use the column's NDV rather than index NDV
 				isSingleColRange := len(indexRange.LowVal) == len(indexRange.HighVal) && len(indexRange.LowVal) == 1
-				if isSingleColRange && !isSingleColIdx && ok && c != nil && c.Histogram.NDV > 0 {
+				if isSingleColRange && !isSingleColIdx && c != nil && c.Histogram.NDV > 0 {
 					histNDV = c.Histogram.NDV - int64(c.TopN.Num())
 				} else {
 					histNDV -= int64(idx.TopN.Num())
@@ -444,7 +444,7 @@ func expBackoffEstimation(sctx context.PlanContext, idx *statistics.Index, coll 
 			err         error
 			foundStats  bool
 		)
-		if !statistics.ColumnStatsIsInvalid(coll.Columns[colID], sctx, coll, colID) {
+		if !statistics.ColumnStatsIsInvalid(coll.GetCol(colID), sctx, coll, colID) {
 			foundStats = true
 			count, err = GetRowCountByColumnRanges(sctx, coll, colID, tmpRan)
 			selectivity = count / float64(coll.RealtimeCount)
@@ -457,8 +457,8 @@ func expBackoffEstimation(sctx context.PlanContext, idx *statistics.Index, coll 
 				if idxID == idx.Histogram.ID {
 					continue
 				}
-				idxStats, ok := coll.Indices[idxID]
-				if !ok || statistics.IndexStatsIsInvalid(sctx, idxStats, coll, idxID) {
+				idxStats := coll.GetIdx(idxID)
+				if idxStats == nil || statistics.IndexStatsIsInvalid(sctx, idxStats, coll, idxID) {
 					continue
 				}
 				foundStats = true

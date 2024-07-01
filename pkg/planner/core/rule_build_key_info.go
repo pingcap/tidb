@@ -96,14 +96,6 @@ func (p *LogicalSelection) BuildKeyInfo(selfSchema *expression.Schema, childSche
 }
 
 // BuildKeyInfo implements base.LogicalPlan BuildKeyInfo interface.
-func (p *LogicalLimit) BuildKeyInfo(selfSchema *expression.Schema, childSchema []*expression.Schema) {
-	p.LogicalSchemaProducer.BuildKeyInfo(selfSchema, childSchema)
-	if p.Count == 1 {
-		p.SetMaxOneRow(true)
-	}
-}
-
-// BuildKeyInfo implements base.LogicalPlan BuildKeyInfo interface.
 func (p *LogicalTableDual) BuildKeyInfo(selfSchema *expression.Schema, childSchema []*expression.Schema) {
 	p.BaseLogicalPlan.BuildKeyInfo(selfSchema, childSchema)
 	if p.RowCount == 1 {

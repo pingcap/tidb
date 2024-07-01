@@ -295,13 +295,6 @@ func (la *LogicalApply) ReplaceExprColumns(replace map[string]*expression.Column
 }
 
 // ReplaceExprColumns implements base.LogicalPlan interface.
-func (ls *LogicalSort) ReplaceExprColumns(replace map[string]*expression.Column) {
-	for _, byItem := range ls.ByItems {
-		ResolveExprAndReplace(byItem.Expr, replace)
-	}
-}
-
-// ReplaceExprColumns implements base.LogicalPlan interface.
 func (p *LogicalWindow) ReplaceExprColumns(replace map[string]*expression.Column) {
 	for _, desc := range p.WindowFuncDescs {
 		for _, arg := range desc.Args {

@@ -268,6 +268,11 @@ func (ctx *StaticExprContext) IsInNullRejectCheck() bool {
 	return false
 }
 
+// IsConstantPropagateCheck implements the `ExprContext.IsConstantPropagateCheck` and should always return false.
+func (ctx *StaticExprContext) IsConstantPropagateCheck() bool {
+	return false
+}
+
 // ConnectionID implements the `ExprContext.ConnectionID`.
 func (ctx *StaticExprContext) ConnectionID() uint64 {
 	return ctx.connectionID
