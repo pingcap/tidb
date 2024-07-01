@@ -86,12 +86,6 @@ func (p LogicalMaxOneRow) Init(ctx base.PlanContext, offset int) *LogicalMaxOneR
 	return &p
 }
 
-// Init initializes LogicalWindow.
-func (p LogicalWindow) Init(ctx base.PlanContext, offset int) *LogicalWindow {
-	p.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(ctx, plancodec.TypeWindow, &p, offset)
-	return &p
-}
-
 // Init initializes LogicalShow.
 func (p LogicalShow) Init(ctx base.PlanContext) *LogicalShow {
 	p.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(ctx, plancodec.TypeShow, &p, 0)

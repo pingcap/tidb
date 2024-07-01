@@ -32,6 +32,7 @@ go_library(
         "logical_table_dual.go",
         "logical_top_n.go",
         "logical_union_all.go",
+        "logical_window.go",
         "memtable_predicate_extractor.go",
         "mock.go",
         "optimizer.go",

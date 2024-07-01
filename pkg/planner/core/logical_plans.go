@@ -21,7 +21,6 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
@@ -1733,111 +1732,6 @@ func (fb *FrameBound) UpdateCompareCols(ctx sessionctx.Context, orderByCols []*e
 		fb.updateCmpFuncsAndCmpDataType(cmpDataType)
 	}
 	return nil
-}
-
-// LogicalWindow represents a logical window function plan.
-type LogicalWindow struct {
-	logicalop.LogicalSchemaProducer
-
-	WindowFuncDescs []*aggregation.WindowFuncDesc
-	PartitionBy     []property.SortItem
-	OrderBy         []property.SortItem
-	Frame           *WindowFrame
-}
-
-// GetPartitionBy returns partition by fields.
-func (p *LogicalWindow) GetPartitionBy() []property.SortItem {
-	return p.PartitionBy
-}
-
-// EqualPartitionBy checks whether two LogicalWindow.Partitions are equal.
-func (p *LogicalWindow) EqualPartitionBy(newWindow *LogicalWindow) bool {
-	if len(p.PartitionBy) != len(newWindow.PartitionBy) {
-		return false
-	}
-	partitionByColsMap := make(map[int64]struct{})
-	for _, item := range p.PartitionBy {
-		partitionByColsMap[item.Col.UniqueID] = struct{}{}
-	}
-	for _, item := range newWindow.PartitionBy {
-		if _, ok := partitionByColsMap[item.Col.UniqueID]; !ok {
-			return false
-		}
-	}
-	return true
-}
-
-// EqualOrderBy checks whether two LogicalWindow.OrderBys are equal.
-func (p *LogicalWindow) EqualOrderBy(ctx expression.EvalContext, newWindow *LogicalWindow) bool {
-	if len(p.OrderBy) != len(newWindow.OrderBy) {
-		return false
-	}
-	for i, item := range p.OrderBy {
-		if !item.Col.Equal(ctx, newWindow.OrderBy[i].Col) ||
-			item.Desc != newWindow.OrderBy[i].Desc {
-			return false
-		}
-	}
-	return true
-}
-
-// EqualFrame checks whether two LogicalWindow.Frames are equal.
-func (p *LogicalWindow) EqualFrame(ctx expression.EvalContext, newWindow *LogicalWindow) bool {
-	if (p.Frame == nil && newWindow.Frame != nil) ||
-		(p.Frame != nil && newWindow.Frame == nil) {
-		return false
-	}
-	if p.Frame == nil && newWindow.Frame == nil {
-		return true
-	}
-	if p.Frame.Type != newWindow.Frame.Type ||
-		p.Frame.Start.Type != newWindow.Frame.Start.Type ||
-		p.Frame.Start.UnBounded != newWindow.Frame.Start.UnBounded ||
-		p.Frame.Start.Num != newWindow.Frame.Start.Num ||
-		p.Frame.End.Type != newWindow.Frame.End.Type ||
-		p.Frame.End.UnBounded != newWindow.Frame.End.UnBounded ||
-		p.Frame.End.Num != newWindow.Frame.End.Num {
-		return false
-	}
-	for i, expr := range p.Frame.Start.CalcFuncs {
-		if !expr.Equal(ctx, newWindow.Frame.Start.CalcFuncs[i]) {
-			return false
-		}
-	}
-	for i, expr := range p.Frame.End.CalcFuncs {
-		if !expr.Equal(ctx, newWindow.Frame.End.CalcFuncs[i]) {
-			return false
-		}
-	}
-	return true
-}
-
-// ExtractCorrelatedCols implements LogicalPlan interface.
-func (p *LogicalWindow) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
-	corCols := make([]*expression.CorrelatedColumn, 0, len(p.WindowFuncDescs))
-	for _, windowFunc := range p.WindowFuncDescs {
-		for _, arg := range windowFunc.Args {
-			corCols = append(corCols, expression.ExtractCorColumns(arg)...)
-		}
-	}
-	if p.Frame != nil {
-		if p.Frame.Start != nil {
-			for _, expr := range p.Frame.Start.CalcFuncs {
-				corCols = append(corCols, expression.ExtractCorColumns(expr)...)
-			}
-		}
-		if p.Frame.End != nil {
-			for _, expr := range p.Frame.End.CalcFuncs {
-				corCols = append(corCols, expression.ExtractCorColumns(expr)...)
-			}
-		}
-	}
-	return corCols
-}
-
-// GetWindowResultColumns returns the columns storing the result of the window function.
-func (p *LogicalWindow) GetWindowResultColumns() []*expression.Column {
-	return p.Schema().Columns[p.Schema().Len()-len(p.WindowFuncDescs):]
 }
 
 // ShowContents stores the contents for the `SHOW` statement.

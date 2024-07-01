@@ -294,21 +294,6 @@ func (la *LogicalApply) ReplaceExprColumns(replace map[string]*expression.Column
 	}
 }
 
-// ReplaceExprColumns implements base.LogicalPlan interface.
-func (p *LogicalWindow) ReplaceExprColumns(replace map[string]*expression.Column) {
-	for _, desc := range p.WindowFuncDescs {
-		for _, arg := range desc.Args {
-			ResolveExprAndReplace(arg, replace)
-		}
-	}
-	for _, item := range p.PartitionBy {
-		resolveColumnAndReplace(item.Col, replace)
-	}
-	for _, item := range p.OrderBy {
-		resolveColumnAndReplace(item.Col, replace)
-	}
-}
-
 func (*projectionEliminator) name() string {
 	return "projection_eliminate"
 }
