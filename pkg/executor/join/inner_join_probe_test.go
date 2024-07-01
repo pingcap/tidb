@@ -364,6 +364,11 @@ func testJoinProbe(t *testing.T, withSel bool, leftKeyIndex []int, rightKeyIndex
 			}
 		}
 	}
+
+	if joinResult.chk.NumRows() > 0 {
+		resultChunks = append(resultChunks, joinResult.chk)
+	}
+	checkVirtualRows(t, resultChunks)
 	if joinProbe.NeedScanRowTable() {
 		joinProbes := make([]ProbeV2, 0, hashJoinCtx.Concurrency)
 		for i := uint(0); i < hashJoinCtx.Concurrency; i++ {
