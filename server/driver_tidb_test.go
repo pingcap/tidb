@@ -17,10 +17,12 @@ package server
 import (
 	"testing"
 
+	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
 	"github.com/stretchr/testify/require"
 )
@@ -94,4 +96,45 @@ func TestConvertColumnInfo(t *testing.T) {
 	}
 	colInfo = convertColumnInfo(&resultField)
 	require.Equal(t, uint32(4), colInfo.ColumnLength)
+}
+
+func TestETLOperations(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t, t1, t2")
+	tk.MustExec("create table t(id int primary key, v1 int, v2 int)")
+	tk.MustExec("create table t1(id int primary key, v int)")
+	tk.MustExec("create table t2(id int primary key auto_increment, v int)")
+	tidbCtx := &TiDBContext{Session: tk.Session()}
+	p := parser.New()
+
+	mustParseOne := func(sql string) ast.StmtNode {
+		stmts, warns, err := p.ParseSQL(sql)
+		require.Nil(t, err)
+		require.Equal(t, len(warns), 0)
+		require.Equal(t, len(stmts), 1)
+		return stmts[0]
+	}
+
+	insert := mustParseOne("insert into t select tmp1.id, tmp1.v, tmp2.v from (select * from t1) tmp1 join (select * from t2) tmp2 on tmp1.id = tmp2.id")
+	shardedInsert := tidbCtx.tryETL(insert)
+	require.NotNil(t, shardedInsert)
+	require.Equal(t, shardedInsert.DMLStmt, insert)
+	require.Equal(t, shardedInsert.ShardColumn.Schema.L, "test")
+
+	selfInsert := mustParseOne("insert into t select * from t")
+	require.Nil(t, tidbCtx.tryETL(selfInsert))
+
+	nullInsert := mustParseOne("insert into t2(id) select null")
+	require.Nil(t, tidbCtx.tryETL(nullInsert))
+
+	asNameInsert := mustParseOne("insert into t(id, v1) select tmp2.id, tmp2.v from (select * from t1 tmp1) tmp2")
+	asNameETL := tidbCtx.tryETL(asNameInsert)
+	require.NotNil(t, asNameETL)
+
+	cascadeAsNameInsert := mustParseOne("insert into t(id, v1, v2) select tmp3.id, tmp3.v, tmp4.v from (select tmp2.id, tmp2.v from (select * from t1 tmp1) tmp2) tmp3 join (select * from t2) tmp4")
+	cascadeAsNameETL := tidbCtx.tryETL(cascadeAsNameInsert)
+	require.NotNil(t, cascadeAsNameETL)
+	require.Equal(t, cascadeAsNameETL.ShardColumn.Table.L, "t2")
 }
