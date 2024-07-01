@@ -786,7 +786,7 @@ func TestBasicSmallTaskConc(t *testing.T) {
 	require.True(t, isSmallTask(&copTask{RowCountHint: 6}))
 	require.True(t, isSmallTask(&copTask{RowCountHint: CopSmallTaskRow}))
 	require.False(t, isSmallTask(&copTask{RowCountHint: CopSmallTaskRow + 1}))
-	_, conc := smallTaskConcurrency([]*copTask{}, 16)
+	_, conc := smallTaskConcurrency(&kv.Request{Concurrency: 15}, []*copTask{}, 16)
 	require.GreaterOrEqual(t, conc, 0)
 }
 
@@ -824,7 +824,7 @@ func TestBuildCopTasksWithRowCountHint(t *testing.T) {
 	require.Equal(t, tasks[2].RowCountHint, 3)
 	// task[3] ["t"-"x", "y"-"z"]
 	require.Equal(t, tasks[3].RowCountHint, 3+CopSmallTaskRow)
-	_, conc := smallTaskConcurrency(tasks, 16)
+	_, conc := smallTaskConcurrency(&kv.Request{Concurrency: 1}, tasks, 16)
 	require.Equal(t, conc, 1)
 
 	ranges = buildCopRanges("a", "c", "d", "e", "h", "x", "y", "z")
@@ -843,7 +843,7 @@ func TestBuildCopTasksWithRowCountHint(t *testing.T) {
 	require.Equal(t, tasks[2].RowCountHint, 3)
 	// task[3] ["t"-"x", "y"-"z"]
 	require.Equal(t, tasks[3].RowCountHint, 6)
-	_, conc = smallTaskConcurrency(tasks, 16)
+	_, conc = smallTaskConcurrency(&kv.Request{Concurrency: 1}, tasks, 16)
 	require.Equal(t, conc, 2)
 
 	// cross-region long range
@@ -873,11 +873,11 @@ func TestSmallTaskConcurrencyLimit(t *testing.T) {
 			RowCountHint: 1,
 		})
 	}
-	count, conc := smallTaskConcurrency(tasks, 1)
+	count, conc := smallTaskConcurrency(&kv.Request{Concurrency: 1}, tasks, 1)
 	require.Equal(t, smallConcPerCore, conc)
 	require.Equal(t, smallTaskCount, count)
 	// also handle 0 value.
-	count, conc = smallTaskConcurrency(tasks, 0)
+	count, conc = smallTaskConcurrency(&kv.Request{Concurrency: 1}, tasks, 0)
 	require.Equal(t, smallConcPerCore, conc)
 	require.Equal(t, smallTaskCount, count)
 }
