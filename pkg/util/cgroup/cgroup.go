@@ -233,32 +233,16 @@ func getCgroupDetails(mountInfoPath string, cRoot string, controller string) (mo
 	scanner := bufio.NewScanner(info)
 	for scanner.Scan() {
 		fields := bytes.Fields(scanner.Bytes())
-		ver, ok := detectCgroupVersion(fields, controller)
+		ver, mountPoint, ok := detectCgroupVersion(fields, controller)
 		if ok {
-			mountPoint := string(fields[4])
 			if ver == 2 {
 				foundVer2 = true
 				mountPointVer2 = mountPoint
-				continue
+			} else {
+				foundVer1 = true
+				mountPointVer1 = mountPoint
 			}
-			// It is possible that the controller mount and the cgroup path are not the same (both are relative to the NS root).
-			// So start with the mount and construct the relative path of the cgroup.
-			// To test:
-			//  1、start a docker to run unit test or tidb-server
-			//   > docker run -it --cpus=8 --memory=8g --name test --rm ubuntu:18.04 bash
-			//
-			//  2、change the limit when the container is running
-			//	docker update --cpus=8 <containers>
-			nsRelativePath := string(fields[3])
-			if !strings.Contains(nsRelativePath, "..") {
-				// We don't expect to see err here ever but in case that it happens
-				// the best action is to ignore the line and hope that the rest of the lines
-				// will allow us to extract a valid path.
-				if relPath, err := filepath.Rel(nsRelativePath, cRoot); err == nil {
-					mountPointVer1 = filepath.Join(mountPoint, relPath)
-					foundVer1 = true
-				}
-			}
+			continue
 		}
 	}
 	if foundVer1 && foundVer2 {
@@ -299,9 +283,9 @@ func cgroupFileToInt64(filepath, desc string) (res int64, err error) {
 }
 
 // Return version of cgroup mount for memory controller if found
-func detectCgroupVersion(fields [][]byte, controller string) (_ int, found bool) {
+func detectCgroupVersion(fields [][]byte, controller string) (_ int, mp string, found bool) {
 	if len(fields) < 10 {
-		return 0, false
+		return 0, "", false
 	}
 
 	// Due to strange format there can be optional fields in the middle of the set, starting
@@ -317,7 +301,7 @@ func detectCgroupVersion(fields [][]byte, controller string) (_ int, found bool)
 
 	// No optional fields separator found or there is less than 3 fields after it which is wrong
 	if (len(fields) - pos - 1) < 3 {
-		return 0, false
+		return 0, "", false
 	}
 
 	pos++
@@ -325,16 +309,42 @@ func detectCgroupVersion(fields [][]byte, controller string) (_ int, found bool)
 	// Check for controller specifically in cgroup v1 (it is listed in super
 	// options field), as the value can't be found if it is not enforced.
 	if bytes.Equal(fields[pos], []byte("cgroup")) && controllerMatch(string(fields[pos+2]), controller) {
-		return 1, true
+		// It is possible that the controller mount and the cgroup path are not the same (both are relative to the NS root).
+		// So start with the mount and construct the relative path of the cgroup.
+		// To test:
+		//  1、start a docker to run unit test or tidb-server
+		//   > docker run -it --cpus=8 --memory=8g --name test --rm ubuntu:18.04 bash
+		//
+		//  2、change the limit when the container is running
+		//	docker update --cpus=8 <containers>
+		nsRelativePath := string(fields[3])
+		if !strings.Contains(nsRelativePath, "..") {
+			// We don't expect to see err here ever but in case that it happens
+			// the best action is to ignore the line and hope that the rest of the lines
+			// will allow us to extract a valid path.
+			if relPath, err := filepath.Rel(nsRelativePath, cRoot); err == nil {
+				mp = filepath.Join(mountPoint, relPath)
+				//fmt.Printf("xhebox | %d | %t | %s | %s | %s\n%s\n", ver, ok, cRoot, mountPoint, mountPointVer1, fields)
+			}
+		}
+		return 1, mp, true
 	} else if bytes.Equal(fields[pos], []byte("cgroup2")) {
-		return 2, true
-	} else if bytes.Equal(fields[pos], []byte("tmpfs")) && bytes.HasSuffix(fields[5], []byte("sys/fs/cgroup")) {
-		// it is either hybrid or legacy mode, in which V1 is supported
-		// ref https://github.com/systemd/systemd/blob/main/docs/CGROUP_DELEGATION.md#three-different-tree-setups-
-		return 1, true
+		mp = string(fields[4])
+		return 2, mp, true
+	} else if bytes.Equal(fields[pos], []byte("fuse.lxcfs")) {
+		mp = string(fields[4])
+		idx := bytes.LastIndex(fields[4], []byte("sys/fs/cgroup"))
+		if idx != -1 {
+			fmt.Printf("xhe|%s|%s|%s\n", fields[4], fields[4][idx+14:], controller)
+		}
+		if idx != -1 && bytes.Equal(fields[4][idx+14:], []byte(controller)) {
+			// it is either hybrid or legacy mode, in which V1 is supported
+			// ref https://github.com/systemd/systemd/blob/main/docs/CGROUP_DELEGATION.md#three-different-tree-setups-
+			return 1, mp, true
+		}
 	}
 
-	return 0, false
+	return 0, "", false
 }
 
 func detectCPUQuotaInV1(cRoot string) (period, quota int64, err error) {
