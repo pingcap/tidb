@@ -1685,6 +1685,8 @@ func BenchmarkRangeColumnPartitionPruning(b *testing.B) {
 	b.StopTimer()
 }
 
+// BenchmarkHashPartitionPruningPointSelect is not actually PointSelect,
+// it is full table scan with single partition pruning.
 func BenchmarkHashPartitionPruningPointSelect(b *testing.B) {
 	ctx := context.Background()
 	se, do, st := prepareBenchSession()
