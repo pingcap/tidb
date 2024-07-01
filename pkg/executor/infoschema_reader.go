@@ -505,6 +505,9 @@ func (e *memtableRetriever) setDataFromReferConst(sctx sessionctx.Context, schem
 				continue
 			}
 			for _, fk := range table.ForeignKeys {
+				if ok && extractor.Filter("constraint_name", fk.Name.L) {
+					continue
+				}
 				updateRule, deleteRule := "NO ACTION", "NO ACTION"
 				if model.ReferOptionType(fk.OnUpdate) != 0 {
 					updateRule = model.ReferOptionType(fk.OnUpdate).String()
@@ -1632,7 +1635,7 @@ func (e *memtableRetriever) setDataFromKeyColumnUsage(ctx sessionctx.Context, sc
 		return
 	}
 	for _, schema := range schemas {
-		if ok && extractor.Filter("table_schema", schema.L) {
+		if ok && extractor.Filter("constraint_schema", schema.L) {
 			continue
 		}
 		tables := e.is.SchemaTables(schema)
