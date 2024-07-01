@@ -1155,6 +1155,9 @@ func (e *memtableRetriever) setDataFromPartitions(sctx sessionctx.Context, schem
 				rows = append(rows, record)
 			} else {
 				for i, pi := range table.GetPartitionInfo().Definitions {
+					if ok && extractor.Filter("partition_name", pi.Name.L) {
+						continue
+					}
 					rowCount = cache.GetTableRows(pi.ID)
 					dataLength, indexLength = cache.GetDataAndIndexLength(table, pi.ID, rowCount)
 
