@@ -2775,7 +2775,7 @@ func TestAnalyzeColumnsSkipMVIndexJsonCol(t *testing.T) {
 	tk.MustQuery("select job_info from mysql.analyze_jobs where table_schema = 'test' and table_name = 't'").Sort().Check(
 		testkit.Rows(
 			"analyze index idx_c",
-			"analyze table column idx_b, columns a, b with 256 buckets, 100 topn, 1 samplerate",
+			"analyze table index idx_b, columns a, b with 256 buckets, 100 topn, 1 samplerate",
 		))
 
 	is := dom.InfoSchema()
