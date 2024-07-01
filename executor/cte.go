@@ -110,7 +110,7 @@ func (e *CTEExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 			return err
 		}
 	}
-	return e.producer.getChunk(ctx, e, req)
+	return e.producer.getChunk(e, req)
 }
 
 func setFirstErr(firstErr error, newErr error, msg string) error {
@@ -270,7 +270,7 @@ func (p *cteProducer) closeProducer() (firstErr error) {
 	return
 }
 
-func (p *cteProducer) getChunk(ctx context.Context, cteExec *CTEExec, req *chunk.Chunk) (err error) {
+func (p *cteProducer) getChunk(cteExec *CTEExec, req *chunk.Chunk) (err error) {
 	req.Reset()
 	if p.hasLimit {
 		return p.nextChunkLimit(cteExec, req)
