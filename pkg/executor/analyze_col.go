@@ -392,7 +392,11 @@ func prepareColumns(e *AnalyzeColumnsExec, b *strings.Builder) {
 		cols = cols[:len(cols)-1]
 	}
 	if len(cols) < len(e.tableInfo.Columns) {
-		b.WriteString(" columns ")
+		if len(cols) > 1 {
+			b.WriteString(" columns ")
+		} else {
+			b.WriteString(" column ")
+		}
 		for i, col := range cols {
 			if i > 0 {
 				b.WriteString(", ")
