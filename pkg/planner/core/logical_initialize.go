@@ -80,12 +80,6 @@ func (p LogicalExpand) Init(ctx base.PlanContext, offset int) *LogicalExpand {
 	return &p
 }
 
-// Init initializes LogicalTableDual.
-func (p LogicalTableDual) Init(ctx base.PlanContext, offset int) *LogicalTableDual {
-	p.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(ctx, plancodec.TypeDual, &p, offset)
-	return &p
-}
-
 // Init initializes LogicalMaxOneRow.
 func (p LogicalMaxOneRow) Init(ctx base.PlanContext, offset int) *LogicalMaxOneRow {
 	p.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(ctx, plancodec.TypeMaxOneRow, &p, offset)
