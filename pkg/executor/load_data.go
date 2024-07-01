@@ -42,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
@@ -210,7 +211,9 @@ func (e *LoadDataWorker) LoadLocal(ctx context.Context, r io.ReadCloser) error {
 	readers := []importer.LoadDataReaderInfo{{
 		Opener: func(_ context.Context) (io.ReadSeekCloser, error) {
 			addedSeekReader := NewSimpleSeekerOnReadCloser(r)
-			return storage.InterceptDecompressReader(addedSeekReader, compressTp2, storage.DecompressConfig{})
+			return storage.InterceptDecompressReader(addedSeekReader, compressTp2, storage.DecompressConfig{
+				ZStdDecodeConcurrency: 1,
+			})
 		}}}
 	return e.load(ctx, readers)
 }
@@ -257,7 +260,7 @@ sendReaderInfoLoop:
 	return err
 }
 
-func (e *LoadDataWorker) setResult(colAssignExprWarnings []stmtctx.SQLWarn) {
+func (e *LoadDataWorker) setResult(colAssignExprWarnings []contextutil.SQLWarn) {
 	stmtCtx := e.UserSctx.GetSessionVars().StmtCtx
 	numWarnings := uint64(stmtCtx.WarningCount())
 	numRecords := stmtCtx.RecordRows()
@@ -273,7 +276,7 @@ func (e *LoadDataWorker) setResult(colAssignExprWarnings []stmtctx.SQLWarn) {
 	}
 
 	msg := fmt.Sprintf(mysql.MySQLErrName[mysql.ErrLoadInfo].Raw, numRecords, numDeletes, numSkipped, numWarnings)
-	warns := make([]stmtctx.SQLWarn, numWarnings)
+	warns := make([]contextutil.SQLWarn, numWarnings)
 	n := copy(warns, stmtCtx.GetWarnings())
 	for i := 0; i < int(numRecords) && n < len(warns); i++ {
 		n += copy(warns[n:], colAssignExprWarnings)
@@ -344,7 +347,7 @@ type encodeWorker struct {
 	colAssignExprs []expression.Expression
 	// sessionCtx generate warnings when rewrite AST node into expression.
 	// we should generate such warnings for each row encoded.
-	exprWarnings []stmtctx.SQLWarn
+	exprWarnings []contextutil.SQLWarn
 	killer       *sqlkiller.SQLKiller
 	rows         [][]types.Datum
 }
@@ -355,7 +358,7 @@ type commitTask struct {
 	rows [][]types.Datum
 }
 
-// processStream always trys to build a parser from channel and process it. When
+// processStream always tries to build a parser from channel and process it. When
 // it returns nil, it means all data is read.
 func (w *encodeWorker) processStream(
 	ctx context.Context,

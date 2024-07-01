@@ -769,7 +769,7 @@ func (b *builtinCeilIntToDecSig) vecEvalDecimal(ctx EvalContext, input *chunk.Ch
 
 	i64s := buf.Int64s()
 	d := result.Decimals()
-	isUnsigned := mysql.HasUnsignedFlag(b.args[0].GetType().GetFlag())
+	isUnsigned := mysql.HasUnsignedFlag(b.args[0].GetType(ctx).GetFlag())
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
@@ -805,7 +805,7 @@ func (b *builtinTruncateIntSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, 
 	i64s := result.Int64s()
 	buf64s := buf.Int64s()
 
-	if mysql.HasUnsignedFlag(b.args[1].GetType().GetFlag()) {
+	if mysql.HasUnsignedFlag(b.args[1].GetType(ctx).GetFlag()) {
 		return nil
 	}
 
@@ -849,7 +849,7 @@ func (b *builtinTruncateUintSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk,
 	i64s := result.Int64s()
 	buf64s := buf.Int64s()
 
-	if mysql.HasUnsignedFlag(b.args[1].GetType().GetFlag()) {
+	if mysql.HasUnsignedFlag(b.args[1].GetType(ctx).GetFlag()) {
 		return nil
 	}
 
@@ -1024,7 +1024,7 @@ func (b *builtinFloorIntToDecSig) vecEvalDecimal(ctx EvalContext, input *chunk.C
 
 	i64s := buf.Int64s()
 	d := result.Decimals()
-	isUnsigned := mysql.HasUnsignedFlag(b.args[0].GetType().GetFlag())
+	isUnsigned := mysql.HasUnsignedFlag(b.args[0].GetType(ctx).GetFlag())
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue

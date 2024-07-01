@@ -640,7 +640,7 @@ func isBehindKeyRange(x withKeyRange, _, endKey string) bool {
 	return endKey != "" && x.GetStartKey() >= endKey
 }
 
-// TableInfoWithKeyRange stores table or index informations with its key range.
+// TableInfoWithKeyRange stores table or index information with its key range.
 type TableInfoWithKeyRange struct {
 	*TableInfo
 	StartKey string

@@ -73,3 +73,17 @@ select cast(cast('14:15' as time) as year) = YEAR(CURDATE());
 explain select null as a union all select 'a' as a;
 --sorted_result
 select null as a union all select 'a' as a;
+
+# TestNegFloatConvertToUnsigned
+drop table if exists t0;
+create table t0(c0 tinyint(1) unsigned not null );
+insert into t0 values (1);
+select * from t0 where case 0 when t0.c0 > -1.194192591e9 then null else 1 end;
+select t0.c0 > -1.194192591e9 from t0;
+select t0.c0 < -1.194192591e9 from t0;
+select -1.194192591e9 > t0.c0 from t0;
+select -1.194192591e9 < t0.c0 from t0;
+select t0.c0 > 1.194192591e9 from t0;
+select t0.c0 < 1.194192591e9 from t0;
+select 1.194192591e9 > t0.c0 from t0;
+select 1.194192591e9 < t0.c0 from t0;

@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	sess "github.com/pingcap/tidb/pkg/ddl/internal/session"
+	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -42,7 +43,6 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/filter"
 	"github.com/pingcap/tidb/pkg/util/gcutil"
-	"github.com/pingcap/tidb/pkg/util/logutil"
 	tikvstore "github.com/tikv/client-go/v2/kv"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
@@ -73,16 +73,16 @@ const (
 	keyRangesOffset
 )
 
-func closePDSchedule() error {
+func closePDSchedule(ctx context.Context) error {
 	closeMap := make(map[string]any)
 	for _, key := range pdScheduleKey {
 		closeMap[key] = 0
 	}
-	return infosync.SetPDScheduleConfig(context.Background(), closeMap)
+	return infosync.SetPDScheduleConfig(ctx, closeMap)
 }
 
-func savePDSchedule(job *model.Job) error {
-	retValue, err := infosync.GetPDScheduleConfig(context.Background())
+func savePDSchedule(ctx context.Context, job *model.Job) error {
+	retValue, err := infosync.GetPDScheduleConfig(ctx)
 	if err != nil {
 		return err
 	}
@@ -94,11 +94,11 @@ func savePDSchedule(job *model.Job) error {
 	return nil
 }
 
-func recoverPDSchedule(pdScheduleParam map[string]any) error {
+func recoverPDSchedule(ctx context.Context, pdScheduleParam map[string]any) error {
 	if pdScheduleParam == nil {
 		return nil
 	}
-	return infosync.SetPDScheduleConfig(context.Background(), pdScheduleParam)
+	return infosync.SetPDScheduleConfig(ctx, pdScheduleParam)
 }
 
 func getStoreGlobalMinSafeTS(s kv.Storage) time.Time {
@@ -220,24 +220,24 @@ func checkSystemSchemaID(t *meta.Meta, schemaID int64, flashbackTSString string)
 	return nil
 }
 
-func checkAndSetFlashbackClusterInfo(se sessionctx.Context, d *ddlCtx, t *meta.Meta, job *model.Job, flashbackTS uint64) (err error) {
-	if err = ValidateFlashbackTS(d.ctx, se, flashbackTS); err != nil {
+func checkAndSetFlashbackClusterInfo(ctx context.Context, se sessionctx.Context, d *ddlCtx, t *meta.Meta, job *model.Job, flashbackTS uint64) (err error) {
+	if err = ValidateFlashbackTS(ctx, se, flashbackTS); err != nil {
 		return err
 	}
 
 	if err = gcutil.DisableGC(se); err != nil {
 		return err
 	}
-	if err = closePDSchedule(); err != nil {
+	if err = closePDSchedule(ctx); err != nil {
 		return err
 	}
-	if err = setTiDBEnableAutoAnalyze(d.ctx, se, variable.Off); err != nil {
+	if err = setTiDBEnableAutoAnalyze(ctx, se, variable.Off); err != nil {
 		return err
 	}
-	if err = setTiDBSuperReadOnly(d.ctx, se, variable.On); err != nil {
+	if err = setTiDBSuperReadOnly(ctx, se, variable.On); err != nil {
 		return err
 	}
-	if err = setTiDBTTLJobEnable(d.ctx, se, variable.Off); err != nil {
+	if err = setTiDBTTLJobEnable(ctx, se, variable.Off); err != nil {
 		return err
 	}
 
@@ -256,12 +256,12 @@ func checkAndSetFlashbackClusterInfo(se sessionctx.Context, d *ddlCtx, t *meta.M
 
 	// Check if there is an upgrade during [flashbackTS, now)
 	sql := fmt.Sprintf("select VARIABLE_VALUE from mysql.tidb as of timestamp '%s' where VARIABLE_NAME='tidb_server_version'", flashbackTSString)
-	rows, err := sess.NewSession(se).Execute(d.ctx, sql, "check_tidb_server_version")
+	rows, err := sess.NewSession(se).Execute(ctx, sql, "check_tidb_server_version")
 	if err != nil || len(rows) == 0 {
 		return errors.Errorf("Get history `tidb_server_version` failed, can't do flashback")
 	}
 	sql = fmt.Sprintf("select 1 from mysql.tidb where VARIABLE_NAME='tidb_server_version' and VARIABLE_VALUE=%s", rows[0].GetString(0))
-	rows, err = sess.NewSession(se).Execute(d.ctx, sql, "check_tidb_server_version")
+	rows, err = sess.NewSession(se).Execute(ctx, sql, "check_tidb_server_version")
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -271,7 +271,7 @@ func checkAndSetFlashbackClusterInfo(se sessionctx.Context, d *ddlCtx, t *meta.M
 
 	// Check is there a DDL task at flashbackTS.
 	sql = fmt.Sprintf("select count(*) from mysql.%s as of timestamp '%s'", JobTable, flashbackTSString)
-	rows, err = sess.NewSession(se).Execute(d.ctx, sql, "check_history_job")
+	rows, err = sess.NewSession(se).Execute(ctx, sql, "check_history_job")
 	if err != nil || len(rows) == 0 {
 		return errors.Errorf("Get history ddl jobs failed, can't do flashback")
 	}
@@ -445,7 +445,7 @@ func SendPrepareFlashbackToVersionRPC(
 			endKey = rangeEndKey
 		}
 
-		logutil.BgLogger().Info("send prepare flashback request", zap.String("category", "ddl"), zap.Uint64("region_id", loc.Region.GetID()),
+		logutil.DDLLogger().Info("send prepare flashback request", zap.Uint64("region_id", loc.Region.GetID()),
 			zap.String("start_key", hex.EncodeToString(startKey)), zap.String("end_key", hex.EncodeToString(endKey)))
 
 		req := tikvrpc.NewRequest(tikvrpc.CmdPrepareFlashbackToVersion, &kvrpcpb.PrepareFlashbackToVersionRequest{
@@ -479,7 +479,7 @@ func SendPrepareFlashbackToVersionRPC(
 			continue
 		}
 		if resp.Resp == nil {
-			logutil.BgLogger().Warn("prepare flashback miss resp body", zap.Uint64("region_id", loc.Region.GetID()))
+			logutil.DDLLogger().Warn("prepare flashback miss resp body", zap.Uint64("region_id", loc.Region.GetID()))
 			err = bo.Backoff(tikv.BoTiKVRPC(), errors.New("prepare flashback rpc miss resp body"))
 			if err != nil {
 				return taskStat, err
@@ -539,7 +539,7 @@ func SendFlashbackToVersionRPC(
 			endKey = rangeEndKey
 		}
 
-		logutil.BgLogger().Info("send flashback request", zap.String("category", "ddl"), zap.Uint64("region_id", loc.Region.GetID()),
+		logutil.DDLLogger().Info("send flashback request", zap.Uint64("region_id", loc.Region.GetID()),
 			zap.String("start_key", hex.EncodeToString(startKey)), zap.String("end_key", hex.EncodeToString(endKey)))
 
 		req := tikvrpc.NewRequest(tikvrpc.CmdFlashbackToVersion, &kvrpcpb.FlashbackToVersionRequest{
@@ -552,7 +552,7 @@ func SendFlashbackToVersionRPC(
 
 		resp, err := s.SendReq(bo, req, loc.Region, flashbackTimeout)
 		if err != nil {
-			logutil.BgLogger().Warn("send request meets error", zap.Uint64("region_id", loc.Region.GetID()), zap.Error(err))
+			logutil.DDLLogger().Warn("send request meets error", zap.Uint64("region_id", loc.Region.GetID()), zap.Error(err))
 			if err.Error() != fmt.Sprintf("region %d is not prepared for the flashback", loc.Region.GetID()) {
 				return taskStat, err
 			}
@@ -569,7 +569,7 @@ func SendFlashbackToVersionRPC(
 				continue
 			}
 			if resp.Resp == nil {
-				logutil.BgLogger().Warn("flashback miss resp body", zap.Uint64("region_id", loc.Region.GetID()))
+				logutil.DDLLogger().Warn("flashback miss resp body", zap.Uint64("region_id", loc.Region.GetID()))
 				err = bo.Backoff(tikv.BoTiKVRPC(), errors.New("flashback rpc miss resp body"))
 				if err != nil {
 					return taskStat, err
@@ -609,12 +609,12 @@ func flashbackToVersion(
 	).RunOnRange(ctx, startKey, endKey)
 }
 
-func splitRegionsByKeyRanges(d *ddlCtx, keyRanges []kv.KeyRange) {
+func splitRegionsByKeyRanges(ctx context.Context, d *ddlCtx, keyRanges []kv.KeyRange) {
 	if s, ok := d.store.(kv.SplittableStore); ok {
 		for _, keys := range keyRanges {
 			for {
 				// tableID is useless when scatter == false
-				_, err := s.SplitRegions(d.ctx, [][]byte{keys.StartKey, keys.EndKey}, false, nil)
+				_, err := s.SplitRegions(ctx, [][]byte{keys.StartKey, keys.EndKey}, false, nil)
 				if err == nil {
 					break
 				}
@@ -664,7 +664,7 @@ func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 	switch job.SchemaState {
 	// Stage 1, check and set FlashbackClusterJobID, and update job args.
 	case model.StateNone:
-		if err = savePDSchedule(job); err != nil {
+		if err = savePDSchedule(w.ctx, job); err != nil {
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
 		}
@@ -696,12 +696,12 @@ func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 		return ver, nil
 	// Stage 2, check flashbackTS, close GC and PD schedule, get flashback key ranges.
 	case model.StateDeleteOnly:
-		if err = checkAndSetFlashbackClusterInfo(sess, d, t, job, flashbackTS); err != nil {
+		if err = checkAndSetFlashbackClusterInfo(w.ctx, sess, d, t, job, flashbackTS); err != nil {
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
 		}
 		// We should get startTS here to avoid lost startTS when TiDB crashed during send prepare flashback RPC.
-		startTS, err = d.store.GetOracle().GetTimestamp(d.ctx, &oracle.Option{TxnScope: oracle.GlobalTxnScope})
+		startTS, err = d.store.GetOracle().GetTimestamp(w.ctx, &oracle.Option{TxnScope: oracle.GlobalTxnScope})
 		if err != nil {
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
@@ -722,23 +722,23 @@ func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 			return updateSchemaVersion(d, t, job)
 		}
 		// Split region by keyRanges, make sure no unrelated key ranges be locked.
-		splitRegionsByKeyRanges(d, keyRanges)
+		splitRegionsByKeyRanges(w.ctx, d, keyRanges)
 		totalRegions.Store(0)
 		for _, r := range keyRanges {
-			if err = flashbackToVersion(d.ctx, d,
+			if err = flashbackToVersion(w.ctx, d,
 				func(ctx context.Context, r tikvstore.KeyRange) (rangetask.TaskStat, error) {
 					stats, err := SendPrepareFlashbackToVersionRPC(ctx, d.store.(tikv.Storage), flashbackTS, startTS, r)
 					totalRegions.Add(uint64(stats.CompletedRegions))
 					return stats, err
 				}, r.StartKey, r.EndKey); err != nil {
-				logutil.BgLogger().Warn("Get error when do flashback", zap.String("category", "ddl"), zap.Error(err))
+				logutil.DDLLogger().Warn("Get error when do flashback", zap.Error(err))
 				return ver, err
 			}
 		}
 		job.Args[totalLockedRegionsOffset] = totalRegions.Load()
 
 		// We should get commitTS here to avoid lost commitTS when TiDB crashed during send flashback RPC.
-		commitTS, err = d.store.GetOracle().GetTimestamp(d.ctx, &oracle.Option{TxnScope: oracle.GlobalTxnScope})
+		commitTS, err = d.store.GetOracle().GetTimestamp(w.ctx, &oracle.Option{TxnScope: oracle.GlobalTxnScope})
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -756,18 +756,18 @@ func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 		}
 
 		for _, r := range keyRanges {
-			if err = flashbackToVersion(d.ctx, d,
+			if err = flashbackToVersion(w.ctx, d,
 				func(ctx context.Context, r tikvstore.KeyRange) (rangetask.TaskStat, error) {
 					// Use same startTS as prepare phase to simulate 1PC txn.
 					stats, err := SendFlashbackToVersionRPC(ctx, d.store.(tikv.Storage), flashbackTS, startTS, commitTS, r)
 					completedRegions.Add(uint64(stats.CompletedRegions))
-					logutil.BgLogger().Info("flashback cluster stats", zap.String("category", "ddl"),
+					logutil.DDLLogger().Info("flashback cluster stats",
 						zap.Uint64("complete regions", completedRegions.Load()),
 						zap.Uint64("total regions", totalRegions.Load()),
 						zap.Error(err))
 					return stats, err
 				}, r.StartKey, r.EndKey); err != nil {
-				logutil.BgLogger().Warn("Get error when do flashback", zap.String("category", "ddl"), zap.Error(err))
+				logutil.DDLLogger().Warn("Get error when do flashback", zap.Error(err))
 				return ver, errors.Trace(err)
 			}
 		}
@@ -801,7 +801,7 @@ func finishFlashbackCluster(w *worker, job *model.Job) error {
 	defer w.sessPool.Put(sess)
 
 	err = kv.RunInNewTxn(w.ctx, w.store, true, func(context.Context, kv.Transaction) error {
-		if err = recoverPDSchedule(pdScheduleValue); err != nil {
+		if err = recoverPDSchedule(w.ctx, pdScheduleValue); err != nil {
 			return err
 		}
 		if gcEnabled {

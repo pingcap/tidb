@@ -48,6 +48,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/privilege/privileges"
 	"github.com/pingcap/tidb/pkg/session/txninfo"
@@ -93,7 +94,7 @@ type memtableRetriever struct {
 	rowIdx      int
 	retrieved   bool
 	initialized bool
-	extractor   plannercore.MemTablePredicateExtractor
+	extractor   base.MemTablePredicateExtractor
 	is          infoschema.InfoSchema
 	memTracker  *memory.Tracker
 }
@@ -534,7 +535,7 @@ func (e *memtableRetriever) setDataFromReferConst(sctx sessionctx.Context, schem
 
 func (e *memtableRetriever) updateStatsCacheIfNeed() bool {
 	for _, col := range e.columns {
-		// only the following columns need stats cahce.
+		// only the following columns need stats cache.
 		if col.Name.O == "AVG_ROW_LENGTH" || col.Name.O == "DATA_LENGTH" || col.Name.O == "INDEX_LENGTH" || col.Name.O == "TABLE_ROWS" {
 			return true
 		}
@@ -858,7 +859,7 @@ func (e *hugeMemTableRetriever) dataForColumnsInTable(ctx context.Context, sctx 
 		e.viewMu.Lock()
 		_, ok := e.viewSchemaMap[tbl.ID]
 		if !ok {
-			var viewLogicalPlan plannercore.Plan
+			var viewLogicalPlan base.Plan
 			internalCtx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)
 			// Build plan is not thread safe, there will be concurrency on sessionctx.
 			if err := runWithSystemSession(internalCtx, sctx, func(s sessionctx.Context) error {
@@ -921,7 +922,7 @@ ForColumnsTag:
 				idx := expression.FindFieldNameIdxByColName(e.viewOutputNamesMap[tbl.ID], col.Name.L)
 				if idx >= 0 {
 					col1 := e.viewSchemaMap[tbl.ID].Columns[idx]
-					ft = col1.GetType()
+					ft = col1.GetType(sctx.GetExprCtx().GetEvalCtx())
 				}
 			}
 			e.viewMu.RUnlock()
@@ -1248,6 +1249,7 @@ func (e *memtableRetriever) setDataFromIndexes(ctx sessionctx.Context, schemas [
 					0,            // INDEX_ID
 					"YES",        // IS_VISIBLE
 					"YES",        // CLUSTERED
+					0,            // IS_GLOBAL
 				)
 				rows = append(rows, record)
 			}
@@ -1293,6 +1295,7 @@ func (e *memtableRetriever) setDataFromIndexes(ctx sessionctx.Context, schemas [
 						idxInfo.ID,      // INDEX_ID
 						visible,         // IS_VISIBLE
 						isClustered,     // CLUSTERED
+						idxInfo.Global,  // IS_GLOBAL
 					)
 					rows = append(rows, record)
 				}

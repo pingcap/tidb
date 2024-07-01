@@ -19,6 +19,7 @@ import (
 	"math"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/executor"
@@ -122,7 +123,7 @@ func TestSlowQueryNonPrepared(t *testing.T) {
 		`0 0 select * from t where a<3;`))
 }
 
-func TestSlowQueryPrepared(t *testing.T) {
+func TestSlowQueryMisc(t *testing.T) {
 	originCfg := config.GetGlobalConfig()
 	newCfg := *originCfg
 
@@ -158,6 +159,21 @@ func TestSlowQueryPrepared(t *testing.T) {
 	tk.MustQuery("SELECT Query FROM `information_schema`.`slow_query` " +
 		"where query like 'select%sleep%' order by time desc limit 1").
 		Check(testkit.Rows("select `sleep` ( ? ) , ?;"))
+
+	// Test 3 kinds of stale-read query.
+	tk.MustExec("create table test.t_stale_read (a int)")
+	time.Sleep(time.Second + time.Millisecond*10)
+	tk.MustExec("set tidb_redact_log=0;")
+	tk.MustExec("set @@tidb_read_staleness='-1'")
+	tk.MustQuery("select a from test.t_stale_read")
+	tk.MustExec("set @@tidb_read_staleness='0'")
+	t1 := time.Now()
+	tk.MustQuery(fmt.Sprintf("select a from test.t_stale_read as of timestamp '%s'", t1.Format("2006-1-2 15:04:05")))
+	tk.MustExec(fmt.Sprintf("start transaction read only as of timestamp '%v'", t1.Format("2006-1-2 15:04:05")))
+	tk.MustQuery("select a from test.t_stale_read")
+	tk.MustExec("commit")
+	require.Len(t, tk.MustQuery("SELECT query, txn_start_ts  FROM `information_schema`.`slow_query` "+
+		"where (query = 'select a from test.t_stale_read;' or query like 'select a from test.t_stale_read as of timestamp %') and Txn_start_ts > 0").Rows(), 3)
 }
 
 func TestLogSlowLogIndex(t *testing.T) {

@@ -770,7 +770,7 @@ func TestCreateTableWithInfoPlacement(t *testing.T) {
 	tk.MustExec("drop placement policy p1")
 	tk.MustExec("create placement policy p1 followers=2")
 	tk.Session().SetValue(sessionctx.QueryString, "skip")
-	require.Nil(t, dom.DDL().CreateTableWithInfo(tk.Session(), model.NewCIStr("test2"), tbl, ddl.OnExistError))
+	require.Nil(t, dom.DDL().CreateTableWithInfo(tk.Session(), model.NewCIStr("test2"), tbl, nil, ddl.OnExistError))
 	tk.MustQuery("show create table t1").Check(testkit.Rows("t1 CREATE TABLE `t1` (\n" +
 		"  `a` int(11) DEFAULT NULL\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
@@ -791,7 +791,7 @@ func TestCreateTableWithInfoPlacement(t *testing.T) {
 	tbl2.Name = model.NewCIStr("t3")
 	tbl2.PlacementPolicyRef.Name = model.NewCIStr("pxx")
 	tk.Session().SetValue(sessionctx.QueryString, "skip")
-	err = dom.DDL().CreateTableWithInfo(tk.Session(), model.NewCIStr("test2"), tbl2, ddl.OnExistError)
+	err = dom.DDL().CreateTableWithInfo(tk.Session(), model.NewCIStr("test2"), tbl2, nil, ddl.OnExistError)
 	require.Equal(t, "[schema:8239]Unknown placement policy 'pxx'", err.Error())
 }
 
@@ -851,10 +851,37 @@ func TestAlterRangePlacementPolicy(t *testing.T) {
 	bundle, err := infosync.GetRuleBundle(context.TODO(), placement.TiDBBundleRangePrefixForGlobal)
 	require.NoError(t, err)
 	require.Equal(t, 1, len(bundle.Rules))
+	require.Equal(t, 0, len(bundle.Rules[0].LocationLabels))
 	tk.MustExec("alter range meta placement policy fiveReplicas")
+	tk.MustQuery(`show placement;`).Sort().Check(testkit.Rows(
+		"POLICY fiveReplicas FOLLOWERS=4 NULL",
+		"RANGE TiDB_GLOBAL FOLLOWERS=4 PENDING",
+		"RANGE TiDB_META FOLLOWERS=4 PENDING"))
 	bundle, err = infosync.GetRuleBundle(context.TODO(), placement.TiDBBundleRangePrefixForMeta)
 	require.NoError(t, err)
 	require.Equal(t, 1, len(bundle.Rules))
+	require.Equal(t, 0, len(bundle.Rules[0].LocationLabels))
+
+	// Test Issue #51712
+	tk.MustExec("alter placement policy fiveReplicas followers=4 SURVIVAL_PREFERENCES=\"[region]\"")
+	tk.MustQuery(`show placement;`).Sort().Check(testkit.Rows(
+		"POLICY fiveReplicas FOLLOWERS=4 SURVIVAL_PREFERENCES=\"[region]\" NULL",
+		"RANGE TiDB_GLOBAL FOLLOWERS=4 SURVIVAL_PREFERENCES=\"[region]\" PENDING",
+		"RANGE TiDB_META FOLLOWERS=4 SURVIVAL_PREFERENCES=\"[region]\" PENDING"))
+	bundle, err = infosync.GetRuleBundle(context.TODO(), placement.TiDBBundleRangePrefixForGlobal)
+	require.NoError(t, err)
+	require.Equal(t, 1, len(bundle.Rules))
+	require.Equal(t, 1, len(bundle.Rules[0].LocationLabels))
+	require.Equal(t, "region", bundle.Rules[0].LocationLabels[0])
+	bundle, err = infosync.GetRuleBundle(context.TODO(), placement.TiDBBundleRangePrefixForMeta)
+	require.NoError(t, err)
+	require.Equal(t, 1, len(bundle.Rules))
+	require.Equal(t, 1, len(bundle.Rules[0].LocationLabels))
+	require.Equal(t, "region", bundle.Rules[0].LocationLabels[0])
+	// Test Issue #52257
+	tk.MustExec("create placement policy fiveRepl followers=4 SURVIVAL_PREFERENCES=\"[region]\"")
+	tk.MustExec("drop placement policy fiveRepl")
+
 	err = tk.ExecToErr("drop placement policy fiveReplicas")
 	require.EqualError(t, err, "[ddl:8241]Placement policy 'fiveReplicas' is still in use")
 	tk.MustExec("alter range global placement policy default")

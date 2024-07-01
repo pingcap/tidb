@@ -138,10 +138,6 @@ func (b *mppExecBuilder) buildIdxScan(pb *tipb.IndexScan) (*indexScanExec, error
 		*physTblIDColIdx = numIdxCols
 		lastCol = pb.Columns[numIdxCols-1]
 	}
-	if lastCol.GetColumnId() == model.ExtraPidColID {
-		numIdxCols--
-		lastCol = pb.Columns[numIdxCols-1]
-	}
 
 	hdlStatus := tablecodec.HandleDefault
 	if len(primaryColIds) == 0 {
@@ -464,7 +460,7 @@ func (b *mppExecBuilder) buildMPPProj(proj *tipb.Projection) (*projExec, error) 
 			return nil, errors.Trace(err)
 		}
 		e.exprs = append(e.exprs, expr)
-		e.fieldTypes = append(e.fieldTypes, expr.GetType())
+		e.fieldTypes = append(e.fieldTypes, expr.GetType(b.sctx.GetExprCtx().GetEvalCtx()))
 	}
 	return e, nil
 }
@@ -680,7 +676,7 @@ type ExchangerTunnel struct {
 	ErrCh       chan error
 }
 
-// RecvChunk recive tipb chunk
+// RecvChunk receive tipb chunk
 func (tunnel *ExchangerTunnel) RecvChunk() (tipbChunk *tipb.Chunk, err error) {
 	tipbChunk = <-tunnel.DataCh
 	select {

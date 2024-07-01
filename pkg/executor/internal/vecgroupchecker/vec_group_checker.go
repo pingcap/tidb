@@ -160,7 +160,7 @@ func (e *VecGroupChecker) SplitIntoGroups(chk *chunk.Chunk) (isFirstGroupSameAsP
 func (e *VecGroupChecker) getFirstAndLastRowDatum(
 	item expression.Expression, chk *chunk.Chunk, numRows int) (err error) {
 	var firstRowDatum, lastRowDatum types.Datum
-	tp := item.GetType()
+	tp := item.GetType(e.ctx)
 	eType := tp.EvalType()
 	switch eType {
 	case types.ETInt:
@@ -328,7 +328,7 @@ func (e *VecGroupChecker) getFirstAndLastRowDatum(
 // And resolve the rows into groups according to the evaluation results
 func (e *VecGroupChecker) evalGroupItemsAndResolveGroups(
 	item expression.Expression, vecEnabled bool, chk *chunk.Chunk, numRows int) (err error) {
-	tp := item.GetType()
+	tp := item.GetType(e.ctx)
 	eType := tp.EvalType()
 	if e.allocateBuffer == nil {
 		e.allocateBuffer = expression.GetColumn
@@ -496,6 +496,7 @@ func (e *VecGroupChecker) IsExhausted() bool {
 func (e *VecGroupChecker) Reset() {
 	if e.groupOffset != nil {
 		e.groupOffset = e.groupOffset[:0]
+		e.groupCount = 0
 	}
 	if e.sameGroup != nil {
 		e.sameGroup = e.sameGroup[:0]

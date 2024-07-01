@@ -112,7 +112,7 @@ func TestAlterAddConstraintStateChange(t *testing.T) {
 	d.SetHook(callback)
 	tk.MustExec("alter table t add constraint c0 check ( a > 10)")
 	tk.MustQuery("select * from t").Check(testkit.Rows("12", "1"))
-	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n  `a` int(11) DEFAULT NULL,\nCONSTRAINT `c0` CHECK ((`a` > 10))\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n  `a` int(11) DEFAULT NULL,\n  CONSTRAINT `c0` CHECK ((`a` > 10))\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 	tk.MustExec("alter table t drop constraint c0")
 	tk.MustExec("delete from t where a = 1")
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockVerifyRemainDataSuccess"))
@@ -191,7 +191,7 @@ func TestAlterAddConstraintStateChange2(t *testing.T) {
 	d.SetHook(callback)
 	tk.MustExec("alter table t add constraint c2 check ( a > 10)")
 	tk.MustQuery("select * from t").Check(testkit.Rows("12"))
-	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n  `a` int(11) DEFAULT NULL,\nCONSTRAINT `c2` CHECK ((`a` > 10))\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n  `a` int(11) DEFAULT NULL,\n  CONSTRAINT `c2` CHECK ((`a` > 10))\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 	tk.MustExec("alter table t drop constraint c2")
 }
 
@@ -216,7 +216,7 @@ func TestAlterAddConstraintStateChange3(t *testing.T) {
 			return
 		}
 		originalCallback.OnChanged(nil)
-		if job.SchemaState == model.StatePublic {
+		if job.SchemaState == model.StatePublic && job.IsDone() {
 			// set constraint state
 			constraintTable := external.GetTableByName(t, tk1, "test", "t")
 			tableCommon, ok := constraintTable.(*tables.TableCommon)
@@ -241,7 +241,7 @@ func TestAlterAddConstraintStateChange3(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	tk.MustQuery("select * from t").Check(testkit.Rows("12"))
-	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n  `a` int(11) DEFAULT NULL,\nCONSTRAINT `c3` CHECK ((`a` > 10))\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n  `a` int(11) DEFAULT NULL,\n  CONSTRAINT `c3` CHECK ((`a` > 10))\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 }
 
 func TestAlterEnforcedConstraintStateChange(t *testing.T) {

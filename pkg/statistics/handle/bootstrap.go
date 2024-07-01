@@ -18,9 +18,9 @@ import (
 	"context"
 	"sync"
 	"sync/atomic"
-	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -28,15 +28,17 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/cache"
 	"github.com/pingcap/tidb/pkg/statistics/handle/initstats"
+	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/memory"
 	"go.uber.org/zap"
 )
 
@@ -52,7 +54,7 @@ type MaxTidRecord struct {
 }
 
 func (h *Handle) initStatsMeta4Chunk(is infoschema.InfoSchema, cache statstypes.StatsCache, iter *chunk.Iterator4Chunk) {
-	var physicalID int64
+	var physicalID, maxPhysicalID int64
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		physicalID = row.GetInt64(1)
 		// The table is read-only. Please do not modify it.
@@ -61,15 +63,9 @@ func (h *Handle) initStatsMeta4Chunk(is infoschema.InfoSchema, cache statstypes.
 			logutil.BgLogger().Debug("unknown physical ID in stats meta table, maybe it has been dropped", zap.Int64("ID", physicalID))
 			continue
 		}
+		maxPhysicalID = max(physicalID, maxPhysicalID)
 		tableInfo := table.Meta()
-		newHistColl := statistics.HistColl{
-			PhysicalID:     physicalID,
-			HavePhysicalID: true,
-			RealtimeCount:  row.GetInt64(3),
-			ModifyCount:    row.GetInt64(2),
-			Columns:        make(map[int64]*statistics.Column, 4),
-			Indices:        make(map[int64]*statistics.Index, 4),
-		}
+		newHistColl := *statistics.NewHistColl(physicalID, true, row.GetInt64(3), row.GetInt64(2), 4, 4)
 		tbl := &statistics.Table{
 			HistColl:              newHistColl,
 			Version:               row.GetUint64(0),
@@ -80,7 +76,7 @@ func (h *Handle) initStatsMeta4Chunk(is infoschema.InfoSchema, cache statstypes.
 	}
 	maxTidRecord.mu.Lock()
 	defer maxTidRecord.mu.Unlock()
-	if maxTidRecord.tid.Load() < physicalID {
+	if maxTidRecord.tid.Load() < maxPhysicalID {
 		maxTidRecord.tid.Store(physicalID)
 	}
 }
@@ -176,7 +172,7 @@ func (h *Handle) initStatsHistograms4ChunkLite(is infoschema.InfoSchema, cache s
 	}
 }
 
-func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache statstypes.StatsCache, iter *chunk.Iterator4Chunk) {
+func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache statstypes.StatsCache, iter *chunk.Iterator4Chunk, isCacheFull bool) {
 	var table *statistics.Table
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		tblID, statsVer := row.GetInt64(0), row.GetInt64(8)
@@ -209,10 +205,17 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache stats
 			if idxInfo == nil {
 				continue
 			}
-			cms, topN, err := statistics.DecodeCMSketchAndTopN(row.GetBytes(6), nil)
-			if err != nil {
-				cms = nil
-				terror.Log(errors.Trace(err))
+
+			var cms *statistics.CMSketch
+			var topN *statistics.TopN
+			var err error
+			if !isCacheFull {
+				// stats cache is full. we should not put it into cache. but we must set LastAnalyzeVersion
+				cms, topN, err = statistics.DecodeCMSketchAndTopN(row.GetBytes(6), nil)
+				if err != nil {
+					cms = nil
+					terror.Log(errors.Trace(err))
+				}
 			}
 			hist := statistics.NewHistogram(id, ndv, nullCount, version, types.NewFieldType(mysql.TypeBlob), chunk.InitialCapacity, 0)
 			index := &statistics.Index{
@@ -225,12 +228,13 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache stats
 				PhysicalID: tblID,
 			}
 			if statsVer != statistics.Version0 {
-				index.StatsLoadedStatus = statistics.NewStatsFullLoadStatus()
+				// We first set the StatsLoadedStatus as AllEvicted. when completing to load bucket, we will set it as ALlLoad.
+				index.StatsLoadedStatus = statistics.NewStatsAllEvictedStatus()
 				// The LastAnalyzeVersion is added by ALTER table so its value might be 0.
 				table.LastAnalyzeVersion = max(table.LastAnalyzeVersion, version)
 			}
 			lastAnalyzePos.Copy(&index.LastAnalyzePos)
-			table.Indices[hist.ID] = index
+			table.SetIdx(idxInfo.ID, index)
 			table.ColAndIdxExistenceMap.InsertIndex(idxInfo.ID, idxInfo, statsVer != statistics.Version0)
 		} else {
 			var colInfo *model.ColumnInfo
@@ -253,8 +257,10 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache stats
 				Flag:       row.GetInt64(10),
 				StatsVer:   statsVer,
 			}
+			// primary key column has no stats info, because primary key's is_index is false. so it cannot load the topn
+			col.StatsLoadedStatus = statistics.NewStatsAllEvictedStatus()
 			lastAnalyzePos.Copy(&col.LastAnalyzePos)
-			table.Columns[hist.ID] = col
+			table.SetCol(hist.ID, col)
 			table.ColAndIdxExistenceMap.InsertCol(colInfo.ID, colInfo, statsVer != statistics.Version0 || ndv > 0 || nullCount > 0)
 			if statsVer != statistics.Version0 {
 				// The LastAnalyzeVersion is added by ALTER table so its value might be 0.
@@ -308,12 +314,12 @@ func (h *Handle) initStatsHistograms(is infoschema.InfoSchema, cache statstypes.
 		if req.NumRows() == 0 {
 			break
 		}
-		h.initStatsHistograms4Chunk(is, cache, iter)
+		h.initStatsHistograms4Chunk(is, cache, iter, false)
 	}
 	return nil
 }
 
-func (h *Handle) initStatsHistogramsByPaging(is infoschema.InfoSchema, cache statstypes.StatsCache, task initstats.Task) error {
+func (h *Handle) initStatsHistogramsByPaging(is infoschema.InfoSchema, cache statstypes.StatsCache, task initstats.Task, totalMemory uint64) error {
 	se, err := h.Pool.SPool().Get()
 	if err != nil {
 		return err
@@ -323,8 +329,12 @@ func (h *Handle) initStatsHistogramsByPaging(is infoschema.InfoSchema, cache sta
 			h.Pool.SPool().Put(se)
 		}
 	}()
+
 	sctx := se.(sessionctx.Context)
-	sql := "select HIGH_PRIORITY table_id, is_index, hist_id, distinct_count, version, null_count, cm_sketch, tot_col_size, stats_ver, correlation, flag, last_analyze_pos from mysql.stats_histograms where table_id >= %? and table_id < %?"
+	// Why do we need to add `is_index=1` in the SQL?
+	// because it is aligned to the `initStatsTopN` function, which only loads the topn of the index too.
+	// the other will be loaded by sync load.
+	sql := "select HIGH_PRIORITY table_id, is_index, hist_id, distinct_count, version, null_count, cm_sketch, tot_col_size, stats_ver, correlation, flag, last_analyze_pos from mysql.stats_histograms where table_id >= %? and table_id < %? and is_index=1"
 	rc, err := util.Exec(sctx, sql, task.StartTid, task.EndTid)
 	if err != nil {
 		return errors.Trace(err)
@@ -341,17 +351,17 @@ func (h *Handle) initStatsHistogramsByPaging(is infoschema.InfoSchema, cache sta
 		if req.NumRows() == 0 {
 			break
 		}
-		h.initStatsHistograms4Chunk(is, cache, iter)
+		h.initStatsHistograms4Chunk(is, cache, iter, isFullCache(cache, totalMemory))
 	}
 	return nil
 }
 
-func (h *Handle) initStatsHistogramsConcurrency(is infoschema.InfoSchema, cache statstypes.StatsCache) error {
+func (h *Handle) initStatsHistogramsConcurrency(is infoschema.InfoSchema, cache statstypes.StatsCache, totalMemory uint64) error {
 	var maxTid = maxTidRecord.tid.Load()
 	tid := int64(0)
-	ls := initstats.NewRangeWorker(func(task initstats.Task) error {
-		return h.initStatsHistogramsByPaging(is, cache, task)
-	})
+	ls := initstats.NewRangeWorker("histogram", func(task initstats.Task) error {
+		return h.initStatsHistogramsByPaging(is, cache, task, totalMemory)
+	}, uint64(maxTid), uint64(initStatsStep))
 	ls.LoadStats()
 	for tid <= maxTid {
 		ls.SendTask(initstats.Task{
@@ -364,7 +374,10 @@ func (h *Handle) initStatsHistogramsConcurrency(is infoschema.InfoSchema, cache 
 	return nil
 }
 
-func (*Handle) initStatsTopN4Chunk(cache statstypes.StatsCache, iter *chunk.Iterator4Chunk) {
+func (*Handle) initStatsTopN4Chunk(cache statstypes.StatsCache, iter *chunk.Iterator4Chunk, totalMemory uint64) {
+	if isFullCache(cache, totalMemory) {
+		return
+	}
 	affectedIndexes := make(map[*statistics.Index]struct{})
 	var table *statistics.Table
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
@@ -380,8 +393,8 @@ func (*Handle) initStatsTopN4Chunk(cache statstypes.StatsCache, iter *chunk.Iter
 			}
 			table = table.Copy()
 		}
-		idx, ok := table.Indices[row.GetInt64(1)]
-		if !ok || (idx.CMSketch == nil && idx.StatsVer <= statistics.Version1) {
+		idx := table.GetIdx(row.GetInt64(1))
+		if idx == nil || (idx.CMSketch == nil && idx.StatsVer <= statistics.Version1) {
 			continue
 		}
 		if idx.TopN == nil {
@@ -400,7 +413,7 @@ func (*Handle) initStatsTopN4Chunk(cache statstypes.StatsCache, iter *chunk.Iter
 	}
 }
 
-func (h *Handle) initStatsTopN(cache statstypes.StatsCache) error {
+func (h *Handle) initStatsTopN(cache statstypes.StatsCache, totalMemory uint64) error {
 	sql := "select /*+ ORDER_INDEX(mysql.stats_top_n,tbl)*/  HIGH_PRIORITY table_id, hist_id, value, count from mysql.stats_top_n where is_index = 1 order by table_id"
 	rc, err := util.Exec(h.initStatsCtx, sql)
 	if err != nil {
@@ -418,12 +431,12 @@ func (h *Handle) initStatsTopN(cache statstypes.StatsCache) error {
 		if req.NumRows() == 0 {
 			break
 		}
-		h.initStatsTopN4Chunk(cache, iter)
+		h.initStatsTopN4Chunk(cache, iter, totalMemory)
 	}
 	return nil
 }
 
-func (h *Handle) initStatsTopNByPaging(cache statstypes.StatsCache, task initstats.Task) error {
+func (h *Handle) initStatsTopNByPaging(cache statstypes.StatsCache, task initstats.Task, totalMemory uint64) error {
 	se, err := h.Pool.SPool().Get()
 	if err != nil {
 		return err
@@ -451,19 +464,28 @@ func (h *Handle) initStatsTopNByPaging(cache statstypes.StatsCache, task initsta
 		if req.NumRows() == 0 {
 			break
 		}
-		h.initStatsTopN4Chunk(cache, iter)
+		h.initStatsTopN4Chunk(cache, iter, totalMemory)
 	}
 	return nil
 }
 
-func (h *Handle) initStatsTopNConcurrency(cache statstypes.StatsCache) error {
+func (h *Handle) initStatsTopNConcurrency(cache statstypes.StatsCache, totalMemory uint64) error {
+	if isFullCache(cache, totalMemory) {
+		return nil
+	}
 	var maxTid = maxTidRecord.tid.Load()
 	tid := int64(0)
-	ls := initstats.NewRangeWorker(func(task initstats.Task) error {
-		return h.initStatsTopNByPaging(cache, task)
-	})
+	ls := initstats.NewRangeWorker("TopN", func(task initstats.Task) error {
+		if isFullCache(cache, totalMemory) {
+			return nil
+		}
+		return h.initStatsTopNByPaging(cache, task, totalMemory)
+	}, uint64(maxTid), uint64(initStatsStep))
 	ls.LoadStats()
 	for tid <= maxTid {
+		if isFullCache(cache, totalMemory) {
+			break
+		}
 		ls.SendTask(initstats.Task{
 			StartTid: tid,
 			EndTid:   tid + initStatsStep,
@@ -489,11 +511,11 @@ func (*Handle) initStatsFMSketch4Chunk(cache statstypes.StatsCache, iter *chunk.
 		isIndex := row.GetInt64(1)
 		id := row.GetInt64(2)
 		if isIndex == 1 {
-			if idxStats, ok := table.Indices[id]; ok {
+			if idxStats := table.GetIdx(id); idxStats != nil {
 				idxStats.FMSketch = fms
 			}
 		} else {
-			if colStats, ok := table.Columns[id]; ok {
+			if colStats := table.GetCol(id); colStats != nil {
 				colStats.FMSketch = fms
 			}
 		}
@@ -530,6 +552,7 @@ func (*Handle) initStatsBuckets4Chunk(cache statstypes.StatsCache, iter *chunk.I
 		tableID, isIndex, histID := row.GetInt64(0), row.GetInt64(1), row.GetInt64(2)
 		if table == nil || table.PhysicalID != tableID {
 			if table != nil {
+				table.SetAllIndexFullLoadForBootstrap()
 				cache.Put(table.PhysicalID, table) // put this table in the cache because all statstics of the table have been read.
 			}
 			var ok bool
@@ -542,15 +565,15 @@ func (*Handle) initStatsBuckets4Chunk(cache statstypes.StatsCache, iter *chunk.I
 		var lower, upper types.Datum
 		var hist *statistics.Histogram
 		if isIndex > 0 {
-			index, ok := table.Indices[histID]
-			if !ok {
+			index := table.GetIdx(histID)
+			if index == nil {
 				continue
 			}
 			hist = &index.Histogram
 			lower, upper = types.NewBytesDatum(row.GetBytes(5)), types.NewBytesDatum(row.GetBytes(6))
 		} else {
-			column, ok := table.Columns[histID]
-			if !ok {
+			column := table.GetCol(histID)
+			if column == nil {
 				continue
 			}
 			if !mysql.HasPriKeyFlag(column.Info.GetFlag()) {
@@ -558,22 +581,18 @@ func (*Handle) initStatsBuckets4Chunk(cache statstypes.StatsCache, iter *chunk.I
 			}
 			hist = &column.Histogram
 			d := types.NewBytesDatum(row.GetBytes(5))
-			// Setting TimeZone to time.UTC aligns with HistogramFromStorage and can fix #41938. However, #41985 still exist.
-			// TODO: do the correct time zone conversion for timestamp-type columns' upper/lower bounds.
-			sc := stmtctx.NewStmtCtxWithTimeZone(time.UTC)
-			sc.SetTypeFlags(sc.TypeFlags().WithIgnoreInvalidDateErr(true).WithIgnoreZeroInDate(true))
 			var err error
-			lower, err = d.ConvertTo(sc.TypeCtx(), &column.Info.FieldType)
+			lower, err = d.ConvertTo(statistics.UTCWithAllowInvalidDateCtx, &column.Info.FieldType)
 			if err != nil {
 				logutil.BgLogger().Debug("decode bucket lower bound failed", zap.Error(err))
-				delete(table.Columns, histID)
+				table.DelCol(histID)
 				continue
 			}
 			d = types.NewBytesDatum(row.GetBytes(6))
-			upper, err = d.ConvertTo(sc.TypeCtx(), &column.Info.FieldType)
+			upper, err = d.ConvertTo(statistics.UTCWithAllowInvalidDateCtx, &column.Info.FieldType)
 			if err != nil {
 				logutil.BgLogger().Debug("decode bucket upper bound failed", zap.Error(err))
-				delete(table.Columns, histID)
+				table.DelCol(histID)
 				continue
 			}
 		}
@@ -584,9 +603,12 @@ func (*Handle) initStatsBuckets4Chunk(cache statstypes.StatsCache, iter *chunk.I
 	}
 }
 
-func (h *Handle) initStatsBuckets(cache statstypes.StatsCache) error {
+func (h *Handle) initStatsBuckets(cache statstypes.StatsCache, totalMemory uint64) error {
+	if isFullCache(cache, totalMemory) {
+		return nil
+	}
 	if config.GetGlobalConfig().Performance.ConcurrentlyInitStats {
-		err := h.initStatsBucketsConcurrency(cache)
+		err := h.initStatsBucketsConcurrency(cache, totalMemory)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -613,18 +635,7 @@ func (h *Handle) initStatsBuckets(cache statstypes.StatsCache) error {
 	}
 	tables := cache.Values()
 	for _, table := range tables {
-		for _, idx := range table.Indices {
-			for i := 1; i < idx.Len(); i++ {
-				idx.Buckets[i].Count += idx.Buckets[i-1].Count
-			}
-			idx.PreCalculateScalar()
-		}
-		for _, col := range table.Columns {
-			for i := 1; i < col.Len(); i++ {
-				col.Buckets[i].Count += col.Buckets[i-1].Count
-			}
-			col.PreCalculateScalar()
-		}
+		table.CalcPreScalar()
 		cache.Put(table.PhysicalID, table) // put this table in the cache because all statstics of the table have been read.
 	}
 	return nil
@@ -663,12 +674,18 @@ func (h *Handle) initStatsBucketsByPaging(cache statstypes.StatsCache, task init
 	return nil
 }
 
-func (h *Handle) initStatsBucketsConcurrency(cache statstypes.StatsCache) error {
+func (h *Handle) initStatsBucketsConcurrency(cache statstypes.StatsCache, totalMemory uint64) error {
+	if isFullCache(cache, totalMemory) {
+		return nil
+	}
 	var maxTid = maxTidRecord.tid.Load()
 	tid := int64(0)
-	ls := initstats.NewRangeWorker(func(task initstats.Task) error {
+	ls := initstats.NewRangeWorker("bucket", func(task initstats.Task) error {
+		if isFullCache(cache, totalMemory) {
+			return nil
+		}
 		return h.initStatsBucketsByPaging(cache, task)
-	})
+	}, uint64(maxTid), uint64(initStatsStep))
 	ls.LoadStats()
 	for tid <= maxTid {
 		ls.SendTask(initstats.Task{
@@ -676,6 +693,9 @@ func (h *Handle) initStatsBucketsConcurrency(cache statstypes.StatsCache) error 
 			EndTid:   tid + initStatsStep,
 		})
 		tid += initStatsStep
+		if isFullCache(cache, totalMemory) {
+			break
+		}
 	}
 	ls.Wait()
 	return nil
@@ -696,14 +716,17 @@ func (h *Handle) InitStatsLite(is infoschema.InfoSchema) (err error) {
 	if err != nil {
 		return err
 	}
+	failpoint.Inject("beforeInitStatsLite", func() {})
 	cache, err := h.initStatsMeta(is)
 	if err != nil {
 		return errors.Trace(err)
 	}
+	statslogutil.StatsLogger().Info("complete to load the meta in the lite mode")
 	err = h.initStatsHistogramsLite(is, cache)
 	if err != nil {
 		return errors.Trace(err)
 	}
+	statslogutil.StatsLogger().Info("complete to load the histogram in the lite mode")
 	h.Replace(cache)
 	return nil
 }
@@ -712,6 +735,10 @@ func (h *Handle) InitStatsLite(is infoschema.InfoSchema) (err error) {
 // 1. Basic stats meta data is loaded.(count, modify count, etc.)
 // 2. Column/index stats are loaded. (histogram, topn, buckets, FMSketch)
 func (h *Handle) InitStats(is infoschema.InfoSchema) (err error) {
+	totalMemory, err := memory.MemTotal()
+	if err != nil {
+		return err
+	}
 	loadFMSketch := config.GetGlobalConfig().Performance.EnableLoadFMSketch
 	defer func() {
 		_, err1 := util.Exec(h.initStatsCtx, "commit")
@@ -723,23 +750,27 @@ func (h *Handle) InitStats(is infoschema.InfoSchema) (err error) {
 	if err != nil {
 		return err
 	}
+	failpoint.Inject("beforeInitStats", func() {})
 	cache, err := h.initStatsMeta(is)
 	if err != nil {
 		return errors.Trace(err)
 	}
+	statslogutil.StatsLogger().Info("complete to load the meta")
 	if config.GetGlobalConfig().Performance.ConcurrentlyInitStats {
-		err = h.initStatsHistogramsConcurrency(is, cache)
+		err = h.initStatsHistogramsConcurrency(is, cache, totalMemory)
 	} else {
 		err = h.initStatsHistograms(is, cache)
 	}
+	statslogutil.StatsLogger().Info("complete to load the histogram")
 	if err != nil {
 		return errors.Trace(err)
 	}
 	if config.GetGlobalConfig().Performance.ConcurrentlyInitStats {
-		err = h.initStatsTopNConcurrency(cache)
+		err = h.initStatsTopNConcurrency(cache, totalMemory)
 	} else {
-		err = h.initStatsTopN(cache)
+		err = h.initStatsTopN(cache, totalMemory)
 	}
+	statslogutil.StatsLogger().Info("complete to load the topn")
 	if err != nil {
 		return err
 	}
@@ -748,23 +779,18 @@ func (h *Handle) InitStats(is infoschema.InfoSchema) (err error) {
 		if err != nil {
 			return err
 		}
+		statslogutil.StatsLogger().Info("complete to load the FM Sketch")
 	}
-	err = h.initStatsBuckets(cache)
+	err = h.initStatsBuckets(cache, totalMemory)
+	statslogutil.StatsLogger().Info("complete to load the bucket")
 	if err != nil {
 		return errors.Trace(err)
 	}
-	// Set columns' stats status.
-	for _, table := range cache.Values() {
-		for _, col := range table.Columns {
-			if col.StatsAvailable() {
-				if mysql.HasPriKeyFlag(col.Info.GetFlag()) {
-					col.StatsLoadedStatus = statistics.NewStatsFullLoadStatus()
-				} else {
-					col.StatsLoadedStatus = statistics.NewStatsAllEvictedStatus()
-				}
-			}
-		}
-	}
 	h.Replace(cache)
 	return nil
+}
+
+func isFullCache(cache statstypes.StatsCache, total uint64) bool {
+	memQuota := variable.StatsCacheMemQuota.Load()
+	return (uint64(cache.MemConsumed()) >= total/4) || (cache.MemConsumed() >= memQuota && memQuota != 0)
 }

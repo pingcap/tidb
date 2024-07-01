@@ -16,12 +16,12 @@ package core
 
 import (
 	"context"
-	"errors"
 	"slices"
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 )
 
 // predicateSimplification consolidates different predcicates on a column and its equivalence classes.  Initial out is for
@@ -65,23 +65,14 @@ func findPredicateType(expr expression.Expression) (*expression.Column, predicat
 	return nil, otherPredicate
 }
 
-func (*predicateSimplification) optimize(_ context.Context, p LogicalPlan, opt *coreusage.LogicalOptimizeOp) (LogicalPlan, bool, error) {
+func (*predicateSimplification) optimize(_ context.Context, p base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
 	planChanged := false
-	return p.predicateSimplification(opt), planChanged, nil
-}
-
-func (s *baseLogicalPlan) predicateSimplification(opt *coreusage.LogicalOptimizeOp) LogicalPlan {
-	p := s.self
-	for i, child := range p.Children() {
-		newChild := child.predicateSimplification(opt)
-		p.SetChild(i, newChild)
-	}
-	return p
+	return p.PredicateSimplification(opt), planChanged, nil
 }
 
 // updateInPredicate applies intersection of an in list with <> value. It returns updated In list and a flag for
 // a special case if an element in the inlist is not removed to keep the list not empty.
-func updateInPredicate(ctx PlanContext, inPredicate expression.Expression, notEQPredicate expression.Expression) (expression.Expression, bool) {
+func updateInPredicate(ctx base.PlanContext, inPredicate expression.Expression, notEQPredicate expression.Expression) (expression.Expression, bool) {
 	_, inPredicateType := findPredicateType(inPredicate)
 	_, notEQPredicateType := findPredicateType(notEQPredicate)
 	if inPredicateType != inListPredicate || notEQPredicateType != notEqualPredicate {
@@ -117,7 +108,7 @@ func updateInPredicate(ctx PlanContext, inPredicate expression.Expression, notEQ
 	return newPred, specialCase
 }
 
-func applyPredicateSimplification(sctx PlanContext, predicates []expression.Expression) []expression.Expression {
+func applyPredicateSimplification(sctx base.PlanContext, predicates []expression.Expression) []expression.Expression {
 	if len(predicates) <= 1 {
 		return predicates
 	}
@@ -132,13 +123,13 @@ func applyPredicateSimplification(sctx PlanContext, predicates []expression.Expr
 			if iCol == jCol {
 				if iType == notEqualPredicate && jType == inListPredicate {
 					predicates[j], specialCase = updateInPredicate(sctx, jthPredicate, ithPredicate)
-					sctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.New("NE/INList simplification is triggered"))
+					sctx.GetSessionVars().StmtCtx.SetSkipPlanCache("NE/INList simplification is triggered")
 					if !specialCase {
 						removeValues = append(removeValues, i)
 					}
 				} else if iType == inListPredicate && jType == notEqualPredicate {
 					predicates[i], specialCase = updateInPredicate(sctx, ithPredicate, jthPredicate)
-					sctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.New("NE/INList simplification is triggered"))
+					sctx.GetSessionVars().StmtCtx.SetSkipPlanCache("NE/INList simplification is triggered")
 					if !specialCase {
 						removeValues = append(removeValues, j)
 					}
@@ -155,10 +146,11 @@ func applyPredicateSimplification(sctx PlanContext, predicates []expression.Expr
 	return newValues
 }
 
-func (ds *DataSource) predicateSimplification(*coreusage.LogicalOptimizeOp) LogicalPlan {
-	p := ds.self.(*DataSource)
-	p.pushedDownConds = applyPredicateSimplification(p.SCtx(), p.pushedDownConds)
-	p.allConds = applyPredicateSimplification(p.SCtx(), p.allConds)
+// PredicateSimplification implements the LogicalPlan interface.
+func (ds *DataSource) PredicateSimplification(*optimizetrace.LogicalOptimizeOp) base.LogicalPlan {
+	p := ds.Self().(*DataSource)
+	p.PushedDownConds = applyPredicateSimplification(p.SCtx(), p.PushedDownConds)
+	p.AllConds = applyPredicateSimplification(p.SCtx(), p.AllConds)
 	return p
 }
 

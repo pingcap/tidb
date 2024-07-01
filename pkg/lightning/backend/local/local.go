@@ -262,8 +262,14 @@ type targetInfoGetter struct {
 	pdHTTPCli pdhttp.Client
 }
 
-// NewTargetInfoGetter creates an TargetInfoGetter with local backend implementation.
-func NewTargetInfoGetter(tls *common.TLS, db *sql.DB, pdHTTPCli pdhttp.Client) backend.TargetInfoGetter {
+// NewTargetInfoGetter creates an TargetInfoGetter with local backend
+// implementation. `pdHTTPCli` should not be nil when need to check component
+// versions in CheckRequirements.
+func NewTargetInfoGetter(
+	tls *common.TLS,
+	db *sql.DB,
+	pdHTTPCli pdhttp.Client,
+) backend.TargetInfoGetter {
 	return &targetInfoGetter{
 		tls:       tls,
 		targetDB:  db,
@@ -292,6 +298,9 @@ func (g *targetInfoGetter) CheckRequirements(ctx context.Context, checkCtx *back
 	}
 	if err := checkTiDBVersion(ctx, versionStr, localMinTiDBVersion, localMaxTiDBVersion); err != nil {
 		return err
+	}
+	if g.pdHTTPCli == nil {
+		return common.ErrUnknown.GenWithStack("pd HTTP client is required for component version check in local backend")
 	}
 	if err := tikv.CheckPDVersion(ctx, g.pdHTTPCli, localMinPDVersion, localMaxPDVersion); err != nil {
 		return err
@@ -399,7 +408,12 @@ type BackendConfig struct {
 	CheckpointEnabled      bool
 	// memory table size of pebble. since pebble can have multiple mem tables, the max memory used is
 	// MemTableSize * MemTableStopWritesThreshold, see pebble.Options for more details.
-	MemTableSize            int
+	MemTableSize int
+	// LocalWriterMemCacheSize is the memory threshold for one local writer of
+	// engines. If the KV payload size exceeds LocalWriterMemCacheSize, local writer
+	// will flush them into the engine.
+	//
+	// It has lower priority than LocalWriterConfig.Local.MemCacheSize.
 	LocalWriterMemCacheSize int64
 	// whether check TiKV capacity before write & ingest.
 	ShouldCheckTiKV    bool
@@ -507,6 +521,43 @@ func NewBackend(
 	config BackendConfig,
 	pdSvcDiscovery pd.ServiceDiscovery,
 ) (b *Backend, err error) {
+	var (
+		pdCli                pd.Client
+		spkv                 *tikvclient.EtcdSafePointKV
+		pdCliForTiKV         *tikvclient.CodecPDClient
+		rpcCli               tikvclient.Client
+		tikvCli              *tikvclient.KVStore
+		pdHTTPCli            pdhttp.Client
+		importClientFactory  *importClientFactoryImpl
+		multiIngestSupported bool
+	)
+	defer func() {
+		if err == nil {
+			return
+		}
+		if importClientFactory != nil {
+			importClientFactory.Close()
+		}
+		if pdHTTPCli != nil {
+			pdHTTPCli.Close()
+		}
+		if tikvCli != nil {
+			// tikvCli uses pdCliForTiKV(which wraps pdCli) , spkv and rpcCli, so
+			// close tikvCli will close all of them.
+			_ = tikvCli.Close()
+		} else {
+			if rpcCli != nil {
+				_ = rpcCli.Close()
+			}
+			if spkv != nil {
+				_ = spkv.Close()
+			}
+			// pdCliForTiKV wraps pdCli, so we only need close pdCli
+			if pdCli != nil {
+				pdCli.Close()
+			}
+		}
+	}()
 	config.adjust()
 	var pdAddrs []string
 	if pdSvcDiscovery != nil {
@@ -516,7 +567,7 @@ func NewBackend(
 	} else {
 		pdAddrs = strings.Split(config.PDAddr, ",")
 	}
-	pdCli, err := pd.NewClientWithContext(
+	pdCli, err = pd.NewClientWithContext(
 		ctx, pdAddrs, tls.ToPDSecurityOption(),
 		pd.WithGRPCDialOptions(maxCallMsgSize...),
 		// If the time too short, we may scatter a region many times, because
@@ -528,12 +579,11 @@ func NewBackend(
 	}
 
 	// The following copies tikv.NewTxnClient without creating yet another pdClient.
-	spkv, err := tikvclient.NewEtcdSafePointKV(strings.Split(config.PDAddr, ","), tls.TLSConfig())
+	spkv, err = tikvclient.NewEtcdSafePointKV(strings.Split(config.PDAddr, ","), tls.TLSConfig())
 	if err != nil {
 		return nil, common.ErrCreateKVClient.Wrap(err).GenWithStackByArgs()
 	}
 
-	var pdCliForTiKV *tikvclient.CodecPDClient
 	if config.KeyspaceName == "" {
 		pdCliForTiKV = tikvclient.NewCodecPDClient(tikvclient.ModeTxn, pdCli)
 	} else {
@@ -544,18 +594,24 @@ func NewBackend(
 	}
 
 	tikvCodec := pdCliForTiKV.GetCodec()
-	rpcCli := tikvclient.NewRPCClient(tikvclient.WithSecurity(tls.ToTiKVSecurityConfig()), tikvclient.WithCodec(tikvCodec))
-	tikvCli, err := tikvclient.NewKVStore("lightning-local-backend", pdCliForTiKV, spkv, rpcCli)
+	rpcCli = tikvclient.NewRPCClient(tikvclient.WithSecurity(tls.ToTiKVSecurityConfig()), tikvclient.WithCodec(tikvCodec))
+	tikvCli, err = tikvclient.NewKVStore("lightning-local-backend", pdCliForTiKV, spkv, rpcCli)
 	if err != nil {
 		return nil, common.ErrCreateKVClient.Wrap(err).GenWithStackByArgs()
 	}
-	pdHTTPCli := pdhttp.NewClientWithServiceDiscovery(
+	pdHTTPCli = pdhttp.NewClientWithServiceDiscovery(
 		"lightning",
 		pdCli.GetServiceDiscovery(),
 		pdhttp.WithTLSConfig(tls.TLSConfig()),
 	).WithBackoffer(retry.InitialBackoffer(time.Second, time.Second, pdutil.PDRequestRetryTime*time.Second))
 	splitCli := split.NewClient(pdCli, pdHTTPCli, tls.TLSConfig(), config.RegionSplitBatchSize, config.RegionSplitConcurrency)
-	importClientFactory := newImportClientFactoryImpl(splitCli, tls, config.MaxConnPerStore, config.ConnCompressType)
+	importClientFactory = newImportClientFactoryImpl(splitCli, tls, config.MaxConnPerStore, config.ConnCompressType)
+
+	multiIngestSupported, err = checkMultiIngestSupport(ctx, pdCli, importClientFactory)
+	if err != nil {
+		return nil, common.ErrCheckMultiIngest.Wrap(err).GenWithStackByArgs()
+	}
+
 	var writeLimiter StoreWriteLimiter
 	if config.StoreWriteBWLimit > 0 {
 		writeLimiter = newStoreWriteLimiter(config.StoreWriteBWLimit)
@@ -572,20 +628,17 @@ func NewBackend(
 
 		BackendConfig: config,
 
+		supportMultiIngest:  multiIngestSupported,
 		importClientFactory: importClientFactory,
 		writeLimiter:        writeLimiter,
 		logger:              log.FromContext(ctx),
 	}
-	engineMgr, err := newEngineManager(config, local, local.logger)
+	local.engineMgr, err = newEngineManager(config, local, local.logger)
 	if err != nil {
 		return nil, err
 	}
-	local.engineMgr = engineMgr
 	if m, ok := metric.GetCommonMetric(ctx); ok {
 		local.metrics = m
-	}
-	if err = local.checkMultiIngestSupport(ctx); err != nil {
-		return nil, common.ErrCheckMultiIngest.Wrap(err).GenWithStackByArgs()
 	}
 	local.tikvSideCheckFreeSpace(ctx)
 
@@ -618,10 +671,10 @@ func (local *Backend) TotalMemoryConsume() int64 {
 	return local.engineMgr.totalMemoryConsume()
 }
 
-func (local *Backend) checkMultiIngestSupport(ctx context.Context) error {
-	stores, err := local.pdCli.GetAllStores(ctx, pd.WithExcludeTombstone())
+func checkMultiIngestSupport(ctx context.Context, pdCli pd.Client, importClientFactory ImportClientFactory) (bool, error) {
+	stores, err := pdCli.GetAllStores(ctx, pd.WithExcludeTombstone())
 	if err != nil {
-		return errors.Trace(err)
+		return false, errors.Trace(err)
 	}
 
 	hasTiFlash := false
@@ -643,10 +696,10 @@ func (local *Backend) checkMultiIngestSupport(ctx context.Context) error {
 				select {
 				case <-time.After(100 * time.Millisecond):
 				case <-ctx.Done():
-					return ctx.Err()
+					return false, ctx.Err()
 				}
 			}
-			client, err1 := local.getImportClient(ctx, s.Id)
+			client, err1 := importClientFactory.Create(ctx, s.Id)
 			if err1 != nil {
 				err = err1
 				log.FromContext(ctx).Warn("get import client failed", zap.Error(err), zap.String("store", s.Address))
@@ -659,8 +712,7 @@ func (local *Backend) checkMultiIngestSupport(ctx context.Context) error {
 			if st, ok := status.FromError(err); ok {
 				if st.Code() == codes.Unimplemented {
 					log.FromContext(ctx).Info("multi ingest not support", zap.Any("unsupported store", s))
-					local.supportMultiIngest = false
-					return nil
+					return false, nil
 				}
 			}
 			log.FromContext(ctx).Warn("check multi ingest support failed", zap.Error(err), zap.String("store", s.Address),
@@ -670,17 +722,15 @@ func (local *Backend) checkMultiIngestSupport(ctx context.Context) error {
 			// if the cluster contains no TiFlash store, we don't need the multi-ingest feature,
 			// so in this condition, downgrade the logic instead of return an error.
 			if hasTiFlash {
-				return errors.Trace(err)
+				return false, errors.Trace(err)
 			}
 			log.FromContext(ctx).Warn("check multi failed all retry, fallback to false", log.ShortError(err))
-			local.supportMultiIngest = false
-			return nil
+			return false, nil
 		}
 	}
 
-	local.supportMultiIngest = true
 	log.FromContext(ctx).Info("multi ingest support")
-	return nil
+	return true, nil
 }
 
 func (local *Backend) tikvSideCheckFreeSpace(ctx context.Context) {
@@ -1478,7 +1528,14 @@ func (local *Backend) GetExternalEngineKVStatistics(engineUUID uuid.UUID) (
 
 // ResetEngine reset the engine and reclaim the space.
 func (local *Backend) ResetEngine(ctx context.Context, engineUUID uuid.UUID) error {
-	return local.engineMgr.resetEngine(ctx, engineUUID)
+	return local.engineMgr.resetEngine(ctx, engineUUID, false)
+}
+
+// ResetEngineSkipAllocTS is like ResetEngine but the inner TS of the engine is
+// invalid. Caller must use OpenedEngine.SetTS to set a valid TS before import
+// the engine.
+func (local *Backend) ResetEngineSkipAllocTS(ctx context.Context, engineUUID uuid.UUID) error {
+	return local.engineMgr.resetEngine(ctx, engineUUID, true)
 }
 
 // CleanupEngine cleanup the engine and reclaim the space.
@@ -1517,7 +1574,7 @@ func (local *Backend) UnsafeImportAndReset(ctx context.Context, engineUUID uuid.
 	if err := closedEngine.Import(ctx, regionSplitSize, regionSplitKeys); err != nil {
 		return err
 	}
-	return local.engineMgr.resetEngine(ctx, engineUUID)
+	return local.engineMgr.resetEngine(ctx, engineUUID, false)
 }
 
 func engineSSTDir(storeDir string, engineUUID uuid.UUID) string {
@@ -1575,18 +1632,25 @@ func (local *Backend) SwitchModeByKeyRanges(ctx context.Context, ranges []common
 }
 
 func openLocalWriter(cfg *backend.LocalWriterConfig, engine *Engine, tikvCodec tikvclient.Codec, cacheSize int64, kvBuffer *membuf.Buffer) (*Writer, error) {
+	// pre-allocate a long enough buffer to avoid a lot of runtime.growslice
+	// this can help save about 3% of CPU.
+	var preAllocWriteBatch []common.KvPair
+	if !cfg.Local.IsKVSorted {
+		preAllocWriteBatch = make([]common.KvPair, units.MiB)
+		// we want to keep the cacheSize as the whole limit of this local writer, but the
+		// main memory usage comes from two member: kvBuffer and writeBatch, so we split
+		// ~10% to writeBatch for !IsKVSorted, which means we estimate the average length
+		// of KV pairs are 9 times than the size of common.KvPair (9*72B = 648B).
+		cacheSize = cacheSize * 9 / 10
+	}
 	w := &Writer{
 		engine:             engine,
 		memtableSizeLimit:  cacheSize,
 		kvBuffer:           kvBuffer,
-		isKVSorted:         cfg.IsKVSorted,
+		isKVSorted:         cfg.Local.IsKVSorted,
 		isWriteBatchSorted: true,
 		tikvCodec:          tikvCodec,
-	}
-	// pre-allocate a long enough buffer to avoid a lot of runtime.growslice
-	// this can help save about 3% of CPU.
-	if !w.isKVSorted {
-		w.writeBatch = make([]common.KvPair, units.MiB)
+		writeBatch:         preAllocWriteBatch,
 	}
 	engine.localWriters.Store(w, nil)
 	return w, nil

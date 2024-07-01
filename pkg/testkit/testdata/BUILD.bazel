@@ -6,7 +6,7 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/testkit/testdata",
     visibility = ["//visibility:public"],
     deps = [
-        "//pkg/sessionctx/stmtctx",
+        "//pkg/util/context",
         "@com_github_stretchr_testify//require",
     ],
 )

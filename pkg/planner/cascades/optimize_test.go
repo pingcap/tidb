@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/memo"
 	"github.com/pingcap/tidb/pkg/planner/pattern"
 	"github.com/pingcap/tidb/pkg/planner/property"
@@ -46,7 +47,7 @@ func TestImplGroupZeroCost(t *testing.T) {
 	plan, err := plannercore.BuildLogicalPlanForTest(context.Background(), ctx, stmt, is)
 	require.NoError(t, err)
 
-	logic, ok := plan.(plannercore.LogicalPlan)
+	logic, ok := plan.(base.LogicalPlan)
 	require.True(t, ok)
 
 	rootGroup := memo.Convert2Group(logic)
@@ -73,7 +74,7 @@ func TestInitGroupSchema(t *testing.T) {
 	plan, err := plannercore.BuildLogicalPlanForTest(context.Background(), ctx, stmt, is)
 	require.NoError(t, err)
 
-	logic, ok := plan.(plannercore.LogicalPlan)
+	logic, ok := plan.(base.LogicalPlan)
 	require.True(t, ok)
 
 	g := memo.Convert2Group(logic)
@@ -98,7 +99,7 @@ func TestFillGroupStats(t *testing.T) {
 	plan, err := plannercore.BuildLogicalPlanForTest(context.Background(), ctx, stmt, is)
 	require.NoError(t, err)
 
-	logic, ok := plan.(plannercore.LogicalPlan)
+	logic, ok := plan.(base.LogicalPlan)
 	require.True(t, ok)
 
 	rootGroup := memo.Convert2Group(logic)
@@ -132,7 +133,7 @@ func TestPreparePossibleProperties(t *testing.T) {
 	plan, err := plannercore.BuildLogicalPlanForTest(context.Background(), ctx, stmt, is)
 	require.NoError(t, err)
 
-	logic, ok := plan.(plannercore.LogicalPlan)
+	logic, ok := plan.(base.LogicalPlan)
 	require.True(t, ok)
 
 	logic, err = optimizer.onPhasePreprocessing(ctx.GetPlanCtx(), logic)
@@ -229,7 +230,7 @@ func TestAppliedRuleSet(t *testing.T) {
 	plan, err := plannercore.BuildLogicalPlanForTest(context.Background(), ctx, stmt, is)
 	require.NoError(t, err)
 
-	logic, ok := plan.(plannercore.LogicalPlan)
+	logic, ok := plan.(base.LogicalPlan)
 	require.True(t, ok)
 
 	group := memo.Convert2Group(logic)

@@ -16,6 +16,7 @@ go_library(
         "//br/pkg/task",
         "//br/pkg/utils",
         "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_pingcap_log//:log",
         "@com_github_spf13_pflag//:pflag",
         "@com_github_tikv_client_go_v2//tikv",

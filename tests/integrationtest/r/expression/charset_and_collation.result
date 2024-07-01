@@ -1991,3 +1991,80 @@ LOCATE('bar' collate utf8mb4_0900_ai_ci, 'FOOBAR' collate utf8mb4_0900_ai_ci)
 select 'FOOBAR' collate utf8mb4_0900_ai_ci REGEXP 'foo.*' collate utf8mb4_0900_ai_ci;
 'FOOBAR' collate utf8mb4_0900_ai_ci REGEXP 'foo.*' collate utf8mb4_0900_ai_ci
 1
+set names utf8mb4 collate utf8mb4_0900_ai_ci;
+select reverse(cast('[]' as json)) between 'W' and 'm';
+reverse(cast('[]' as json)) between 'W' and 'm'
+1
+select lower(cast('[]' as json)) between 'W' and 'm';
+lower(cast('[]' as json)) between 'W' and 'm'
+1
+select upper(cast('[]' as json)) between 'W' and 'm';
+upper(cast('[]' as json)) between 'W' and 'm'
+1
+select substring_index(cast('[]' as json), '.', 1) between 'W' and 'm';
+substring_index(cast('[]' as json), '.', 1) between 'W' and 'm'
+1
+select trim(cast('[]' as json)) between 'W' and 'm';
+trim(cast('[]' as json)) between 'W' and 'm'
+1
+select quote(cast('[]' as json)) between "'W'" and "'m'";
+quote(cast('[]' as json)) between "'W'" and "'m'"
+1
+select concat(cast('[]' as json), '1') between 'W' and 'm';
+concat(cast('[]' as json), '1') between 'W' and 'm'
+1
+select concat('1', cast('[]' as json)) between '1W' and '1m';
+concat('1', cast('[]' as json)) between '1W' and '1m'
+1
+select concat_ws(cast('[]' as json), '1', '1') between '1W' and '1m';
+concat_ws(cast('[]' as json), '1', '1') between '1W' and '1m'
+1
+select concat_ws('1', cast('[]' as json)) between 'W' and 'm';
+concat_ws('1', cast('[]' as json)) between 'W' and 'm'
+1
+select elt(1, cast('[]' as json), '[]') between 'W' and 'm';
+elt(1, cast('[]' as json), '[]') between 'W' and 'm'
+1
+select elt(2, cast('[]' as json), '[]') between 'W' and 'm';
+elt(2, cast('[]' as json), '[]') between 'W' and 'm'
+1
+select make_set(1, cast('[]' as json), '[]') between 'W' and 'm';
+make_set(1, cast('[]' as json), '[]') between 'W' and 'm'
+1
+select make_set(2, cast('[]' as json), '[]') between 'W' and 'm';
+make_set(2, cast('[]' as json), '[]') between 'W' and 'm'
+1
+select replace(cast('[]' as json), '[]', '[]') between 'W' and 'm';
+replace(cast('[]' as json), '[]', '[]') between 'W' and 'm'
+1
+select replace('[]', '[]', cast('[]' as json)) between 'W' and 'm';
+replace('[]', '[]', cast('[]' as json)) between 'W' and 'm'
+0
+select insert(cast('[]' as json), 0, 100, '[]') between 'W' and 'm';
+insert(cast('[]' as json), 0, 100, '[]') between 'W' and 'm'
+1
+select insert('[]', 0, 100, cast('[]' as json)) between 'W' and 'm';
+insert('[]', 0, 100, cast('[]' as json)) between 'W' and 'm'
+0
+select substr(cast('[]' as json), 1) between 'W' and 'm';
+substr(cast('[]' as json), 1) between 'W' and 'm'
+1
+select repeat(cast('[]' as json), 10) between 'W' and 'm';
+repeat(cast('[]' as json), 10) between 'W' and 'm'
+1
+select export_set(3,cast('[]' as json),'2','-',8) between 'W' and 'm';
+export_set(3,cast('[]' as json),'2','-',8) between 'W' and 'm'
+1
+set names default;
+select cast(compress('b') as char);
+cast(compress('b') as char)
+NULL
+Level	Code	Message
+Warning	3854	Cannot convert string '   x\x9C...' from binary to utf8mb4
+set sql_mode='';
+select cast(compress('b') as char);
+cast(compress('b') as char)
+   x
+Level	Code	Message
+Warning	3854	Cannot convert string '   x\x9C...' from binary to utf8mb4
+set sql_mode=DEFAULT;

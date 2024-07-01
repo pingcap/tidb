@@ -21,6 +21,7 @@ go_test(
         "//pkg/kv",
         "//pkg/lightning/config",
         "//pkg/testkit",
+        "//pkg/testkit/testfailpoint",
         "//tests/realtikvtest",
         "@com_github_fsouza_fake_gcs_server//fakestorage",
         "@com_github_stretchr_testify//require",

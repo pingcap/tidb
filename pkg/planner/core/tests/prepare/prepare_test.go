@@ -403,7 +403,7 @@ func TestPrepareCacheDeferredFunction(t *testing.T) {
 		require.True(t, ok)
 		err = executor.ResetContextOfStmt(tk.Session(), stmt)
 		require.NoError(t, err)
-		plan, _, err := core.GetPlanFromSessionPlanCache(ctx, tk.Session(), false, is, execPlan.PrepStmt, execPlan.Params)
+		plan, _, err := core.GetPlanFromPlanCache(ctx, tk.Session(), false, is, execPlan.PrepStmt, execPlan.Params)
 		require.NoError(t, err)
 		planStr[i] = core.ToString(plan)
 		require.Regexpf(t, expectedPattern, planStr[i], "for %dth %s", i, sql1)
@@ -1449,14 +1449,15 @@ func verifyCache(ctx context.Context, t *testing.T, tk1 *testkit.TestKit, tk2 *t
 	tk1.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 
 	// Change infoSchema version which will make the plan cache invalid in the next execute
-	tk2.MustExec("alter table t1 drop column c")
-	tk1.MustExec("execute s")
-	tk1.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
-	// Now the plan cache will be valid
-	rs, err = tk1.Session().ExecutePreparedStmt(ctx, stmtID, expression.Args2Expressions4Test())
-	require.NoError(t, err)
-	require.NoError(t, rs.Close())
-	tk1.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	// DDL is blocked by MDL.
+	//tk2.MustExec("alter table t1 drop column c")
+	//tk1.MustExec("execute s")
+	//tk1.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	//// Now the plan cache will be valid
+	//rs, err = tk1.Session().ExecutePreparedStmt(ctx, stmtID, expression.Args2Expressions4Test())
+	//require.NoError(t, err)
+	//require.NoError(t, rs.Close())
+	//tk1.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 }
 
 func TestCacheHitInRc(t *testing.T) {

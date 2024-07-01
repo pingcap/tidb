@@ -333,6 +333,7 @@ func TestGetSplitKeyPerRegion(t *testing.T) {
 		[]byte("g"),
 		[]byte("j"),
 		[]byte("l"),
+		[]byte("m"),
 	}
 	sortedRegions := []*RegionInfo{
 		{
@@ -504,12 +505,20 @@ func TestPaginateScanRegion(t *testing.T) {
 			StartKey: []byte{1},
 			EndKey:   []byte{2},
 		},
+		Leader: &metapb.Peer{
+			Id:      1,
+			StoreId: 1,
+		},
 	})
 	mockPDClient.Regions.SetRegion(&pdtypes.Region{
 		Meta: &metapb.Region{
 			Id:       4,
 			StartKey: []byte{4},
 			EndKey:   []byte{5},
+		},
+		Leader: &metapb.Peer{
+			Id:      4,
+			StoreId: 1,
 		},
 	})
 
@@ -525,12 +534,20 @@ func TestPaginateScanRegion(t *testing.T) {
 				StartKey: []byte{2},
 				EndKey:   []byte{3},
 			},
+			Leader: &metapb.Peer{
+				Id:      2,
+				StoreId: 1,
+			},
 		},
 		{
 			Meta: &metapb.Region{
 				Id:       3,
 				StartKey: []byte{3},
 				EndKey:   []byte{4},
+			},
+			Leader: &metapb.Peer{
+				Id:      3,
+				StoreId: 1,
 			},
 		},
 	}
@@ -590,6 +607,10 @@ func TestRegionConsistency(t *testing.T) {
 			"region 6's endKey not equal to next region 8's startKey(.*?)",
 			[]*RegionInfo{
 				{
+					Leader: &metapb.Peer{
+						Id:      6,
+						StoreId: 1,
+					},
 					Region: &metapb.Region{
 						Id:          6,
 						StartKey:    codec.EncodeBytes([]byte{}, []byte("b")),
@@ -598,10 +619,66 @@ func TestRegionConsistency(t *testing.T) {
 					},
 				},
 				{
+					Leader: &metapb.Peer{
+						Id:      8,
+						StoreId: 1,
+					},
 					Region: &metapb.Region{
 						Id:       8,
 						StartKey: codec.EncodeBytes([]byte{}, []byte("e")),
 						EndKey:   codec.EncodeBytes([]byte{}, []byte("f")),
+					},
+				},
+			},
+		},
+		{
+			codec.EncodeBytes([]byte{}, []byte("c")),
+			codec.EncodeBytes([]byte{}, []byte("e")),
+			"region 6's leader is nil(.*?)",
+			[]*RegionInfo{
+				{
+					Region: &metapb.Region{
+						Id:          6,
+						StartKey:    codec.EncodeBytes([]byte{}, []byte("c")),
+						EndKey:      codec.EncodeBytes([]byte{}, []byte("d")),
+						RegionEpoch: nil,
+					},
+				},
+				{
+					Region: &metapb.Region{
+						Id:       8,
+						StartKey: codec.EncodeBytes([]byte{}, []byte("d")),
+						EndKey:   codec.EncodeBytes([]byte{}, []byte("e")),
+					},
+				},
+			},
+		},
+		{
+			codec.EncodeBytes([]byte{}, []byte("c")),
+			codec.EncodeBytes([]byte{}, []byte("e")),
+			"region 6's leader's store id is 0(.*?)",
+			[]*RegionInfo{
+				{
+					Leader: &metapb.Peer{
+						Id:      6,
+						StoreId: 0,
+					},
+					Region: &metapb.Region{
+						Id:          6,
+						StartKey:    codec.EncodeBytes([]byte{}, []byte("c")),
+						EndKey:      codec.EncodeBytes([]byte{}, []byte("d")),
+						RegionEpoch: nil,
+					},
+				},
+				{
+					Leader: &metapb.Peer{
+						Id:      6,
+						StoreId: 0,
+					},
+					Region: &metapb.Region{
+						Id:       8,
+						StartKey: codec.EncodeBytes([]byte{}, []byte("d")),
+						EndKey:   codec.EncodeBytes([]byte{}, []byte("e")),
 					},
 				},
 			},
@@ -611,5 +688,71 @@ func TestRegionConsistency(t *testing.T) {
 		err := checkRegionConsistency(ca.startKey, ca.endKey, ca.regions)
 		require.Error(t, err)
 		require.Regexp(t, ca.err, err.Error())
+	}
+}
+
+func regionInfo(startKey, endKey string) *RegionInfo {
+	return &RegionInfo{
+		Region: &metapb.Region{
+			StartKey: []byte(startKey),
+			EndKey:   []byte(endKey),
+		},
+	}
+}
+
+func TestSplitCheckPartRegionConsistency(t *testing.T) {
+	var (
+		startKey []byte = []byte("a")
+		endKey   []byte = []byte("f")
+		err      error
+	)
+	err = checkPartRegionConsistency(startKey, endKey, nil)
+	require.Error(t, err)
+	err = checkPartRegionConsistency(startKey, endKey, []*RegionInfo{
+		regionInfo("b", "c"),
+	})
+	require.Error(t, err)
+	err = checkPartRegionConsistency(startKey, endKey, []*RegionInfo{
+		regionInfo("a", "c"),
+		regionInfo("d", "e"),
+	})
+	require.Error(t, err)
+	err = checkPartRegionConsistency(startKey, endKey, []*RegionInfo{
+		regionInfo("a", "c"),
+		regionInfo("c", "d"),
+	})
+	require.NoError(t, err)
+	err = checkPartRegionConsistency(startKey, endKey, []*RegionInfo{
+		regionInfo("a", "c"),
+		regionInfo("c", "d"),
+		regionInfo("d", "f"),
+	})
+	require.NoError(t, err)
+	err = checkPartRegionConsistency(startKey, endKey, []*RegionInfo{
+		regionInfo("a", "c"),
+		regionInfo("c", "z"),
+	})
+	require.NoError(t, err)
+}
+
+func TestScanRegionsWithRetry(t *testing.T) {
+	ctx := context.Background()
+	mockPDClient := NewMockPDClientForSplit()
+	mockClient := &pdClient{
+		client: mockPDClient,
+	}
+
+	{
+		_, err := ScanRegionsWithRetry(ctx, mockClient, []byte("1"), []byte("0"), 0)
+		require.Error(t, err)
+	}
+
+	{
+		mockPDClient.SetRegions([][]byte{{}, []byte("1"), []byte("2"), []byte("3"), []byte("4"), {}})
+		regions, err := ScanRegionsWithRetry(ctx, mockClient, []byte("1"), []byte("3"), 0)
+		require.NoError(t, err)
+		require.Len(t, regions, 2)
+		require.Equal(t, []byte("1"), regions[0].Region.StartKey)
+		require.Equal(t, []byte("2"), regions[1].Region.StartKey)
 	}
 }

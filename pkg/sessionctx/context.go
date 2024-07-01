@@ -35,8 +35,6 @@ import (
 	tbctx "github.com/pingcap/tidb/pkg/table/context"
 	"github.com/pingcap/tidb/pkg/util"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
-	"github.com/pingcap/tidb/pkg/util/kvcache"
-	utilpc "github.com/pingcap/tidb/pkg/util/plancache"
 	rangerctx "github.com/pingcap/tidb/pkg/util/ranger/context"
 	"github.com/pingcap/tidb/pkg/util/sli"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
@@ -53,15 +51,28 @@ type SessionStatesHandler interface {
 	DecodeSessionStates(context.Context, Context, *sessionstates.SessionStates) error
 }
 
-// PlanCache is an interface for prepare and non-prepared plan cache
-type PlanCache interface {
-	Get(key kvcache.Key, opts *utilpc.PlanCacheMatchOpts) (value kvcache.Value, ok bool)
-	Put(key kvcache.Key, value kvcache.Value, opts *utilpc.PlanCacheMatchOpts)
-	Delete(key kvcache.Key)
+// SessionPlanCache is an interface for prepare and non-prepared plan cache
+type SessionPlanCache interface {
+	Get(key string, opts any) (value any, ok bool)
+	Put(key string, value, opts any)
+	Delete(key string)
 	DeleteAll()
 	Size() int
 	SetCapacity(capacity uint) error
 	Close()
+}
+
+// InstancePlanCache represents the instance/node level plan cache.
+// Value and Opts should always be *PlanCacheValue and *PlanCacheMatchOpts, use any to avoid cycle-import.
+type InstancePlanCache interface {
+	// Get gets the cached value from the cache according to key and opts.
+	Get(sctx Context, key string, opts any) (value any, ok bool)
+	// Put puts the key and value into the cache.
+	Put(sctx Context, key string, value, opts any) (succ bool)
+	// Evict evicts some cached values.
+	Evict() (evicted bool)
+	// MemUsage returns the total memory usage of this plan cache.
+	MemUsage() int64
 }
 
 // Context is an interface for transaction and executive args environment.
@@ -72,6 +83,7 @@ type Context interface {
 	// RollbackTxn rolls back the current transaction.
 	RollbackTxn(ctx context.Context)
 	// CommitTxn commits the current transaction.
+	// buffered KV changes will be discarded, call StmtCommit if you want to commit them.
 	CommitTxn(ctx context.Context) error
 	// Txn returns the current transaction which is created before executing a statement.
 	// The returned kv.Transaction is not nil, but it maybe pending or invalid.
@@ -132,7 +144,7 @@ type Context interface {
 	GetStore() kv.Storage
 
 	// GetSessionPlanCache returns the session-level cache of the physical plan.
-	GetSessionPlanCache() PlanCache
+	GetSessionPlanCache() SessionPlanCache
 
 	// UpdateColStatsUsage updates the column stats usage.
 	UpdateColStatsUsage(predicateColumns []model.TableItemID)
@@ -141,9 +153,17 @@ type Context interface {
 	HasDirtyContent(tid int64) bool
 
 	// StmtCommit flush all changes by the statement to the underlying transaction.
+	// it must be called before CommitTxn, else all changes since last StmtCommit
+	// will be lost. For SQL statement, StmtCommit or StmtRollback is called automatically.
+	// the "Stmt" not only means SQL statement, but also any KV changes, such as
+	// meta KV.
 	StmtCommit(ctx context.Context)
 	// StmtRollback provides statement level rollback. The parameter `forPessimisticRetry` should be true iff it's used
 	// for auto-retrying execution of DMLs in pessimistic transactions.
+	// if error happens when you are handling batch of KV changes since last StmtCommit
+	// or StmtRollback, and you don't want them to be committed, you must call StmtRollback
+	// before you start another batch, otherwise, the previous changes might be committed
+	// unexpectedly.
 	StmtRollback(ctx context.Context, isForPessimisticRetry bool)
 	// StmtGetMutation gets the binlog mutation for current statement.
 	StmtGetMutation(int64) *binlog.TableMutation

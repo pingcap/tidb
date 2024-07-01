@@ -369,7 +369,7 @@ func (b *Builder) updateBundleForTableUpdate(diff *model.SchemaDiff, newTableID,
 
 func dropTableForUpdate(b *Builder, newTableID, oldTableID int64, dbInfo *model.DBInfo, diff *model.SchemaDiff) ([]int64, autoid.Allocators, error) {
 	tblIDs := make([]int64, 0, 2)
-	var newAllocs autoid.Allocators
+	var keptAllocs autoid.Allocators
 	// We try to reuse the old allocator, so the cached auto ID can be reused.
 	if tableIDIsValid(oldTableID) {
 		if oldTableID == newTableID &&
@@ -386,14 +386,14 @@ func dropTableForUpdate(b *Builder, newTableID, oldTableID int64, dbInfo *model.
 			// which may have AutoID not connected to tableID
 			// TODO: can there be _tidb_rowid AutoID per partition?
 			oldAllocs, _ := allocByID(b, oldTableID)
-			newAllocs = filterAllocators(diff, oldAllocs)
+			keptAllocs = getKeptAllocators(diff, oldAllocs)
 		}
 
 		tmpIDs := tblIDs
 		if (diff.Type == model.ActionRenameTable || diff.Type == model.ActionRenameTables) && diff.OldSchemaID != diff.SchemaID {
 			oldDBInfo, ok := oldSchemaInfo(b, diff)
 			if !ok {
-				return nil, newAllocs, ErrDatabaseNotExists.GenWithStackByArgs(
+				return nil, keptAllocs, ErrDatabaseNotExists.GenWithStackByArgs(
 					fmt.Sprintf("(Schema ID %d)", diff.OldSchemaID),
 				)
 			}
@@ -407,7 +407,7 @@ func dropTableForUpdate(b *Builder, newTableID, oldTableID int64, dbInfo *model.
 			tblIDs = tmpIDs
 		}
 	}
-	return tblIDs, newAllocs, nil
+	return tblIDs, keptAllocs, nil
 }
 
 func (b *Builder) applyTableUpdate(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
@@ -438,16 +438,33 @@ func (b *Builder) applyTableUpdate(m *meta.Meta, diff *model.SchemaDiff) ([]int6
 	return tblIDs, nil
 }
 
-func filterAllocators(diff *model.SchemaDiff, oldAllocs autoid.Allocators) autoid.Allocators {
-	var newAllocs autoid.Allocators
+// getKeptAllocators get allocators that is not changed by the DDL.
+func getKeptAllocators(diff *model.SchemaDiff, oldAllocs autoid.Allocators) autoid.Allocators {
+	var autoIDChanged, autoRandomChanged bool
 	switch diff.Type {
 	case model.ActionRebaseAutoID, model.ActionModifyTableAutoIdCache:
+		autoIDChanged = true
+	case model.ActionRebaseAutoRandomBase:
+		autoRandomChanged = true
+	case model.ActionMultiSchemaChange:
+		for _, t := range diff.SubActionTypes {
+			switch t {
+			case model.ActionRebaseAutoID, model.ActionModifyTableAutoIdCache:
+				autoIDChanged = true
+			case model.ActionRebaseAutoRandomBase:
+				autoRandomChanged = true
+			}
+		}
+	}
+	var newAllocs autoid.Allocators
+	switch {
+	case autoIDChanged:
 		// Only drop auto-increment allocator.
 		newAllocs = oldAllocs.Filter(func(a autoid.Allocator) bool {
 			tp := a.GetType()
 			return tp != autoid.RowIDAllocType && tp != autoid.AutoIncrementType
 		})
-	case model.ActionRebaseAutoRandomBase:
+	case autoRandomChanged:
 		// Only drop auto-random allocator.
 		newAllocs = oldAllocs.Filter(func(a autoid.Allocator) bool {
 			tp := a.GetType()
@@ -524,7 +541,7 @@ func (b *Builder) applyDropSchema(diff *model.SchemaDiff) []int64 {
 	if !ok {
 		return nil
 	}
-	delete(b.infoSchema.schemaMap, di.Name.L)
+	b.infoSchema.delSchema(di)
 
 	// Copy the sortedTables that contain the table we are going to drop.
 	tableIDs := make([]int64, 0, len(di.Tables))
@@ -556,10 +573,10 @@ func (b *Builder) applyRecoverSchema(m *meta.Meta, diff *model.SchemaDiff) ([]in
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	b.infoSchema.schemaMap[di.Name.L] = &schemaTables{
+	b.infoSchema.addSchema(&schemaTables{
 		dbInfo: di,
 		tables: make(map[string]table.Table, len(diff.AffectedOpts)),
-	}
+	})
 	return applyCreateTables(b, m, diff)
 }
 
@@ -777,7 +794,8 @@ func (b *Builder) Build(schemaTS uint64) InfoSchema {
 func (b *Builder) InitWithOldInfoSchema(oldSchema InfoSchema) (*Builder, error) {
 	// Do not mix infoschema v1 and infoschema v2 building, this can simplify the logic.
 	// If we want to build infoschema v2, but the old infoschema is v1, just return error to trigger a full load.
-	if b.enableV2 != IsV2(oldSchema) {
+	isV2, _ := IsV2(oldSchema)
+	if b.enableV2 != isV2 {
 		return nil, errors.Errorf("builder's (v2=%v) infoschema mismatch, return error to trigger full reload", b.enableV2)
 	}
 
@@ -799,8 +817,8 @@ func (b *Builder) InitWithOldInfoSchema(oldSchema InfoSchema) (*Builder, error) 
 }
 
 func (b *Builder) copySchemasMap(oldIS *infoSchema) {
-	for k, v := range oldIS.schemaMap {
-		b.infoSchema.schemaMap[k] = v
+	for _, v := range oldIS.schemaMap {
+		b.infoSchema.addSchema(v)
 	}
 }
 
@@ -819,7 +837,7 @@ func (b *Builder) getSchemaAndCopyIfNecessary(dbName string) *model.DBInfo {
 		for k, v := range oldSchemaTables.tables {
 			newSchemaTables.tables[k] = v
 		}
-		b.infoSchema.schemaMap[dbName] = newSchemaTables
+		b.infoSchema.addSchema(newSchemaTables)
 		return newSchemaTables.dbInfo
 	}
 	return b.infoSchema.schemaMap[dbName].dbInfo
@@ -926,7 +944,7 @@ func (b *Builder) addDB(schemaVersion int64, di *model.DBInfo, schTbls *schemaTa
 			b.infoData.addDB(schemaVersion, di)
 		}
 	} else {
-		b.infoSchema.schemaMap[di.Name.L] = schTbls
+		b.infoSchema.addSchema(schTbls)
 	}
 }
 
@@ -959,14 +977,19 @@ func RegisterVirtualTable(dbInfo *model.DBInfo, tableFromMeta tableFromMetaFunc)
 
 // NewBuilder creates a new Builder with a Handle.
 func NewBuilder(r autoid.Requirement, factory func() (pools.Resource, error), infoData *Data) *Builder {
-	return &Builder{
-		enableV2:     variable.SchemaCacheSize.Load() > 0,
+	builder := &Builder{
 		Requirement:  r,
 		infoschemaV2: NewInfoSchemaV2(r, infoData),
 		dirtyDB:      make(map[string]bool),
 		factory:      factory,
 		infoData:     infoData,
 	}
+	schemaCacheSize := variable.SchemaCacheSize.Load()
+	if schemaCacheSize > 0 {
+		infoData.tableCache.SetCapacity(schemaCacheSize)
+		builder.enableV2 = true
+	}
+	return builder
 }
 
 func tableBucketIdx(tableID int64) int {

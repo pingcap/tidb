@@ -23,12 +23,15 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/store/driver/backoff"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/stathat/consistent"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/testutils"
 	"github.com/tikv/client-go/v2/tikv"
+	"github.com/tikv/client-go/v2/tikvrpc"
 	"go.uber.org/zap"
 )
 
@@ -125,13 +128,13 @@ func TestBalanceBatchCopTaskWithContinuity(t *testing.T) {
 func TestBalanceBatchCopTaskWithEmptyTaskSet(t *testing.T) {
 	{
 		var nilTaskSet []*batchCopTask
-		nilResult := balanceBatchCopTask(nil, nil, nilTaskSet, false, 0)
+		nilResult := balanceBatchCopTask(nil, nilTaskSet, false, 0)
 		require.True(t, nilResult == nil)
 	}
 
 	{
 		emptyTaskSet := make([]*batchCopTask, 0)
-		emptyResult := balanceBatchCopTask(nil, nil, emptyTaskSet, false, 0)
+		emptyResult := balanceBatchCopTask(nil, emptyTaskSet, false, 0)
 		require.True(t, emptyResult != nil)
 		require.True(t, len(emptyResult) == 0)
 	}
@@ -281,4 +284,39 @@ func TestTopoFetcherBackoff(t *testing.T) {
 	require.GreaterOrEqual(t, dura, time.Duration(fetchTopoMaxBackoff*1000))
 	require.GreaterOrEqual(t, dura, 30*time.Second)
 	require.LessOrEqual(t, dura, 50*time.Second)
+}
+
+func TestGetAllUsedTiFlashStores(t *testing.T) {
+	mockClient, _, pdClient, err := testutils.NewMockTiKV("", nil)
+	require.NoError(t, err)
+	defer func() {
+		pdClient.Close()
+		err = mockClient.Close()
+		require.NoError(t, err)
+	}()
+
+	pdCli := tikv.NewCodecPDClient(tikv.ModeTxn, pdClient)
+	defer pdCli.Close()
+
+	cache := NewRegionCache(tikv.NewRegionCache(pdCli))
+	defer cache.Close()
+
+	label1 := metapb.StoreLabel{Key: tikvrpc.EngineLabelKey, Value: tikvrpc.EngineLabelTiFlash}
+	label2 := metapb.StoreLabel{Key: tikvrpc.EngineRoleLabelKey, Value: tikvrpc.EngineLabelTiFlashCompute}
+
+	cache.SetRegionCacheStore(1, "192.168.1.1", "", tikvrpc.TiFlash, 1, []*metapb.StoreLabel{&label1, &label2})
+	cache.SetRegionCacheStore(2, "192.168.1.2", "192.168.1.3", tikvrpc.TiFlash, 1, []*metapb.StoreLabel{&label1, &label2})
+	cache.SetRegionCacheStore(3, "192.168.1.3", "192.168.1.2", tikvrpc.TiFlash, 1, []*metapb.StoreLabel{&label1, &label2})
+
+	allUsedTiFlashStoresMap := make(map[uint64]struct{})
+	allUsedTiFlashStoresMap[2] = struct{}{}
+	allUsedTiFlashStoresMap[3] = struct{}{}
+	allTiFlashStores := cache.RegionCache.GetTiFlashStores(tikv.LabelFilterNoTiFlashWriteNode)
+	require.Equal(t, 3, len(allTiFlashStores))
+	allUsedTiFlashStores := getAllUsedTiFlashStores(allTiFlashStores, allUsedTiFlashStoresMap)
+	require.Equal(t, len(allUsedTiFlashStoresMap), len(allUsedTiFlashStores))
+	for _, store := range allUsedTiFlashStores {
+		_, ok := allUsedTiFlashStoresMap[store.StoreID()]
+		require.True(t, ok)
+	}
 }

@@ -130,7 +130,7 @@ func (*LoadDataController) checkCDCPiTRTasks(ctx context.Context) error {
 		return exeerrors.ErrLoadDataPreCheckFailed.FastGenByArgs(fmt.Sprintf("found PiTR log streaming task(s): %v,", names))
 	}
 
-	nameSet, err := cdcutil.GetCDCChangefeedNameSet(ctx, cli.GetClient())
+	nameSet, err := cdcutil.GetRunningChangefeeds(ctx, cli.GetClient())
 	if err != nil {
 		return errors.Trace(err)
 	}

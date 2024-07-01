@@ -15,6 +15,7 @@ go_library(
         "//pkg/planner/cascades",
         "//pkg/planner/context",
         "//pkg/planner/core",
+        "//pkg/planner/core/base",
         "//pkg/planner/util/debugtrace",
         "//pkg/privilege",
         "//pkg/sessionctx",
