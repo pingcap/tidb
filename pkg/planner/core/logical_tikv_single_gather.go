@@ -46,10 +46,10 @@ func (sg TiKVSingleGather) Init(ctx base.PlanContext, offset int) *TiKVSingleGat
 // *************************** start implementation of Plan interface ***************************
 
 // ExplainInfo implements Plan interface.
-func (p *TiKVSingleGather) ExplainInfo() string {
-	buffer := bytes.NewBufferString(p.Source.ExplainInfo())
-	if p.IsIndexGather {
-		buffer.WriteString(", index:" + p.Index.Name.String())
+func (sg *TiKVSingleGather) ExplainInfo() string {
+	buffer := bytes.NewBufferString(sg.Source.ExplainInfo())
+	if sg.IsIndexGather {
+		buffer.WriteString(", index:" + sg.Index.Name.String())
 	}
 	return buffer.String()
 }
