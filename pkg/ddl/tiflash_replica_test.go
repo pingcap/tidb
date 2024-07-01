@@ -274,7 +274,7 @@ func TestSkipSchemaChecker(t *testing.T) {
 	if err != nil {
 		// If infoschema is changed betewen v1 and v2, it may trigger full reload.
 		// The delta(schema diffs) in schema validator maybe `Reset()` and lost.
-		// As a result, the schema validator cannot deternmine if a txn is valid.
+		// As a result, the schema validator cannot determine if a txn is valid.
 		// Since this is only happened when metadata lock is disabled, we can ignore this error.
 		require.True(t, terror.ErrorEqual(domain.ErrInfoSchemaChanged, err))
 	}
