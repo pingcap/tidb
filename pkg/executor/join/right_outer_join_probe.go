@@ -106,9 +106,8 @@ func (j *rightOuterJoinProbe) ScanRowTable(joinResult *hashjoinWorkerResult, sql
 		j.batchConstructBuildRows(joinResult.chk, 0, false)
 	}
 	// append probe side in batch
-	colOffset := len(j.lUsed)
-	for index := range j.rUsed {
-		joinResult.chk.Column(index + colOffset).AppendNNulls(insertedRows)
+	for index := range j.lUsed {
+		joinResult.chk.Column(index).AppendNNulls(insertedRows)
 	}
 	return joinResult
 }
