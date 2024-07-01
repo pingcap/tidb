@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -512,13 +513,15 @@ func dumpStatsMemStatus(zw *zip.Writer, pairs map[tableNamePair]struct{}, do *Do
 			return errors.AddStack(err)
 		}
 		fmt.Fprintf(statsMemFw, "[INDEX]\n")
-		for _, indice := range tblStats.Indices {
-			fmt.Fprintf(statsMemFw, "%s\n", fmt.Sprintf("%s=%s", indice.Info.Name.String(), indice.StatusToString()))
-		}
+		tblStats.ForEachIndexImmutable(func(_ int64, idx *statistics.Index) bool {
+			fmt.Fprintf(statsMemFw, "%s\n", fmt.Sprintf("%s=%s", idx.Info.Name.String(), idx.StatusToString()))
+			return false
+		})
 		fmt.Fprintf(statsMemFw, "[COLUMN]\n")
-		for _, col := range tblStats.Columns {
-			fmt.Fprintf(statsMemFw, "%s\n", fmt.Sprintf("%s=%s", col.Info.Name.String(), col.StatusToString()))
-		}
+		tblStats.ForEachColumnImmutable(func(_ int64, c *statistics.Column) bool {
+			fmt.Fprintf(statsMemFw, "%s\n", fmt.Sprintf("%s=%s", c.Info.Name.String(), c.StatusToString()))
+			return false
+		})
 	}
 	return nil
 }

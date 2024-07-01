@@ -8,6 +8,7 @@ go_library(
     deps = [
         "//pkg/expression",
         "//pkg/planner/context",
+        "//pkg/planner/core/base",
         "//pkg/planner/property",
         "//pkg/types",
         "//pkg/util/stringutil",
