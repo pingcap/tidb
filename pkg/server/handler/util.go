@@ -62,6 +62,7 @@ const (
 	JobID        = "start_job_id"
 	Operation    = "op"
 	Seconds      = "seconds"
+	DDLTypes     = "ddl_types"
 )
 
 const (
