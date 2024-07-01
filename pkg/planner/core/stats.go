@@ -805,15 +805,6 @@ func getSingletonStats(schema *expression.Schema) *property.StatsInfo {
 }
 
 // DeriveStats implement LogicalPlan DeriveStats interface.
-func (p *LogicalMaxOneRow) DeriveStats(_ []*property.StatsInfo, selfSchema *expression.Schema, _ []*expression.Schema, _ [][]*expression.Column) (*property.StatsInfo, error) {
-	if p.StatsInfo() != nil {
-		return p.StatsInfo(), nil
-	}
-	p.SetStats(getSingletonStats(selfSchema))
-	return p.StatsInfo(), nil
-}
-
-// DeriveStats implement LogicalPlan DeriveStats interface.
 func (p *LogicalCTE) DeriveStats(_ []*property.StatsInfo, selfSchema *expression.Schema, _ []*expression.Schema, _ [][]*expression.Column) (*property.StatsInfo, error) {
 	if p.StatsInfo() != nil {
 		return p.StatsInfo(), nil

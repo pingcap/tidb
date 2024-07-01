@@ -1125,11 +1125,6 @@ func (la *LogicalApply) ExtractFD() *fd.FDSet {
 	}
 }
 
-// LogicalMaxOneRow checks if a query returns no more than one row.
-type LogicalMaxOneRow struct {
-	logicalop.BaseLogicalPlan
-}
-
 // LogicalMemTable represents a memory table or virtual table
 // Some memory tables wants to take the ownership of some predications
 // e.g

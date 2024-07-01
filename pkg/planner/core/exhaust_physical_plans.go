@@ -3641,16 +3641,6 @@ func getNominalSortSimple(ls *LogicalSort, reqProp *property.PhysicalProperty) *
 }
 
 // ExhaustPhysicalPlans implements LogicalPlan interface.
-func (p *LogicalMaxOneRow) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
-	if !prop.IsSortItemEmpty() || prop.IsFlashProp() {
-		p.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because operator `MaxOneRow` is not supported now.")
-		return nil, true, nil
-	}
-	mor := PhysicalMaxOneRow{}.Init(p.SCtx(), p.StatsInfo(), p.QueryBlockOffset(), &property.PhysicalProperty{ExpectedCnt: 2, CTEProducerStatus: prop.CTEProducerStatus})
-	return []base.PhysicalPlan{mor}, true, nil
-}
-
-// ExhaustPhysicalPlans implements LogicalPlan interface.
 func (p *LogicalCTE) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
 	pcte := PhysicalCTE{CTE: p.cte}.Init(p.SCtx(), p.StatsInfo())
 	if prop.IsFlashProp() {

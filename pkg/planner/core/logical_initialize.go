@@ -80,12 +80,6 @@ func (p LogicalExpand) Init(ctx base.PlanContext, offset int) *LogicalExpand {
 	return &p
 }
 
-// Init initializes LogicalMaxOneRow.
-func (p LogicalMaxOneRow) Init(ctx base.PlanContext, offset int) *LogicalMaxOneRow {
-	p.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(ctx, plancodec.TypeMaxOneRow, &p, offset)
-	return &p
-}
-
 // Init initializes LogicalShow.
 func (p LogicalShow) Init(ctx base.PlanContext) *LogicalShow {
 	p.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(ctx, plancodec.TypeShow, &p, 0)

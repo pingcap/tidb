@@ -415,13 +415,6 @@ func (p *LogicalProjection) PredicatePushDown(predicates []expression.Expression
 	return append(remained, canNotBePushed...), child
 }
 
-// PredicatePushDown implements base.LogicalPlan PredicatePushDown interface.
-func (p *LogicalMaxOneRow) PredicatePushDown(predicates []expression.Expression, opt *optimizetrace.LogicalOptimizeOp) ([]expression.Expression, base.LogicalPlan) {
-	// MaxOneRow forbids any condition to push down.
-	p.BaseLogicalPlan.PredicatePushDown(nil, opt)
-	return predicates, p
-}
-
 // DeriveOtherConditions given a LogicalJoin, check the OtherConditions to see if we can derive more
 // conditions for left/right child pushdown.
 func DeriveOtherConditions(
