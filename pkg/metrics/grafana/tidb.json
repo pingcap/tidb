@@ -13972,7 +13972,7 @@
           ],
           "thresholds": [],
           "timeRegions": [],
-          "title": "Infoschema v2 Cache Rate",
+          "title": "Infoschema v2 Cache Operation",
           "tooltip": {
             "shared": true,
             "sort": 2,
