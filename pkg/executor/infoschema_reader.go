@@ -337,9 +337,16 @@ func (e *memtableRetriever) setDataForUserAttributes(ctx context.Context, sctx s
 
 func (e *memtableRetriever) setDataFromSchemata(ctx sessionctx.Context, schemas []model.CIStr) {
 	checker := privilege.GetPrivilegeManager(ctx)
+	extractor, ok := e.extractor.(*plannercore.InfoSchemaTablesExtractor)
+	if ok && extractor.SkipRequest {
+		return
+	}
 	rows := make([][]types.Datum, 0, len(schemas))
 
 	for _, schemaName := range schemas {
+		if ok && extractor.Filter("schema_name", schemaName.L) {
+			continue
+		}
 		schema, _ := e.is.SchemaByName(schemaName)
 		charset := mysql.DefaultCharset
 		collation := mysql.DefaultCollationName
@@ -1364,6 +1371,7 @@ func (e *memtableRetriever) setDataFromIndexes(ctx sessionctx.Context, schemas [
 	e.rows = rows
 }
 
+// ywq todo
 func (e *memtableRetriever) setDataFromViews(ctx sessionctx.Context, schemas []model.CIStr) {
 	checker := privilege.GetPrivilegeManager(ctx)
 	extractor, ok := e.extractor.(*plannercore.InfoSchemaTablesExtractor)
@@ -2527,13 +2535,13 @@ func (e *memtableRetriever) setDataFromSequences(ctx sessionctx.Context, schemas
 	}
 	var rows [][]types.Datum
 	for _, schema := range schemas {
-		if ok && extractor.Filter("table_schema", schema.L) {
+		if ok && extractor.Filter("sequence_schema", schema.L) {
 			continue
 		}
 		tables := e.is.SchemaTables(schema)
 		for _, table := range tables {
 			table := table.Meta()
-			if ok && extractor.Filter("table_name", table.Name.L) {
+			if ok && extractor.Filter("sequence_name", table.Name.L) {
 				continue
 			}
 			if !table.IsSequence() {

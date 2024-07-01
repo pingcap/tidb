@@ -1823,7 +1823,7 @@ func TestExtractorInPreparedStmt(t *testing.T) {
 	}
 }
 
-func TestInformSchemaTableExtract(t *testing.T) {
+func TestInforSchemaTableExtract(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	se, err := session.CreateSession4Test(store)
@@ -2014,6 +2014,13 @@ func TestInformSchemaTableExtract(t *testing.T) {
 			colPredicates: map[string]set.StringSet{
 				"table_schema": set.NewStringSet("a"),
 				"table_name":   set.NewStringSet("b"),
+			},
+		},
+		{
+			sql:         "select * from information_schema.SCHEMATA where schema_name ='a'",
+			skipRequest: false,
+			colPredicates: map[string]set.StringSet{
+				"schema_name": set.NewStringSet("a"),
 			},
 		},
 	}
