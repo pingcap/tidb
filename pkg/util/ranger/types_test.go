@@ -610,7 +610,7 @@ func TestIntersectionOverlap(t *testing.T) {
 
 	// Compare actual vs expected
 	for k, v := range actualResult {
-		require.Equal(t, v, expectedResult[k])
+		require.Equal(t, expectedResult[k], v)
 	}
 	// cleanup
 	domain.GetDomain(ctx).StatsHandle().Close()

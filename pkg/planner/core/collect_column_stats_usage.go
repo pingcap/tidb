@@ -349,15 +349,14 @@ func (c *columnStatsUsageCollector) collectFromPlan(lp base.LogicalPlan) {
 // First return value: predicate columns (nil if predicate is false)
 // Second return value: histogram-needed columns (nil if histNeeded is false)
 // Third return value: ds.PhysicalTableID from all DataSource (always collected)
-func CollectColumnStatsUsage(lp base.LogicalPlan, predicate, histNeeded bool) (
+func CollectColumnStatsUsage(lp base.LogicalPlan, histNeeded bool) (
 	[]model.TableItemID,
 	[]model.StatsLoadItem,
 	*intset.FastIntSet,
 ) {
 	var mode uint64
-	if predicate {
-		mode |= collectPredicateColumns
-	}
+	// Always collect predicate columns.
+	mode |= collectPredicateColumns
 	if histNeeded {
 		mode |= collectHistNeededColumns
 	}
@@ -410,7 +409,7 @@ func CollectColumnStatsUsage(lp base.LogicalPlan, predicate, histNeeded bool) (
 			if col.State != model.StatePublic || (col.IsGenerated() && !col.GeneratedStored) || !tblStats.ColAndIdxExistenceMap.HasAnalyzed(col.ID, false) {
 				continue
 			}
-			if colStats := tblStats.Columns[col.ID]; colStats != nil {
+			if colStats := tblStats.GetCol(col.ID); colStats != nil {
 				// If any stats are already full loaded, we don't need to trigger stats loading on this table.
 				if colStats.IsFullLoad() {
 					colToTriggerLoad = nil
@@ -430,7 +429,7 @@ func CollectColumnStatsUsage(lp base.LogicalPlan, predicate, histNeeded bool) (
 				continue
 			}
 			// If any stats are already full loaded, we don't need to trigger stats loading on this table.
-			if idxStats := tblStats.Indices[idx.Meta().ID]; idxStats != nil && idxStats.IsFullLoad() {
+			if idxStats := tblStats.GetIdx(idx.Meta().ID); idxStats != nil && idxStats.IsFullLoad() {
 				colToTriggerLoad = nil
 				break
 			}
@@ -448,9 +447,7 @@ func CollectColumnStatsUsage(lp base.LogicalPlan, predicate, histNeeded bool) (
 		predicateCols  []model.TableItemID
 		histNeededCols []model.StatsLoadItem
 	)
-	if predicate {
-		predicateCols = maps.Keys(collector.predicateCols)
-	}
+	predicateCols = maps.Keys(collector.predicateCols)
 	if histNeeded {
 		histNeededCols = itemSet2slice(collector.histNeededCols)
 	}

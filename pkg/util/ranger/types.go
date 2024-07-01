@@ -329,7 +329,7 @@ func compareLexicographically(tc types.Context, bound1, bound2 []types.Datum, co
 		}
 	}
 
-	// Unequal length ranges. We use -infinity for lower bounds and +infinity for upper counds.
+	// Unequal length ranges. We use -infinity for lower bounds and +infinity for upper bounds.
 	if n1 < n2 {
 		if low1 {
 			// -infinity is less than anything
@@ -338,7 +338,7 @@ func compareLexicographically(tc types.Context, bound1, bound2 []types.Datum, co
 		// +infinity is higher than anything
 		return 1, nil
 	}
-	// n2 > n1
+	// n1 > n2
 	if low2 {
 		// anything is larger than -infinity.
 		return 1, nil
@@ -480,12 +480,12 @@ func (ran *Range) IntersectRange(tc types.Context, otherRange *Range) (*Range, e
 		result.LowExclude = ran.LowExclude
 	}
 
-	highVshigh, err := compareLexicographically(tc, ran.HighVal, otherRange.HighVal,
+	highVsHigh, err := compareLexicographically(tc, ran.HighVal, otherRange.HighVal,
 		ran.Collators, ran.HighExclude, otherRange.HighExclude, false, false)
 	if err != nil {
 		return &Range{}, err
 	}
-	if highVshigh == 1 {
+	if highVsHigh == 1 {
 		result.HighVal = otherRange.HighVal
 		result.HighExclude = otherRange.HighExclude
 	} else {
