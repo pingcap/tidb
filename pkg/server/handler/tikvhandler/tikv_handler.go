@@ -1072,7 +1072,6 @@ func (h *TableHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 // ServeHTTP handles request of ddl jobs history.
 func (h DDLHistoryJobHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	var jobID, limitID int
-	var ddlTypes []model.ActionType
 	var err error
 	if jobValue := req.FormValue(handler.JobID); len(jobValue) > 0 {
 		jobID, err = strconv.Atoi(jobValue)
@@ -1097,25 +1096,7 @@ func (h DDLHistoryJobHandler) ServeHTTP(w http.ResponseWriter, req *http.Request
 		}
 	}
 
-	ddlTypesStr := req.FormValue(handler.DDLTypes)
-	if len(ddlTypesStr) > 0 {
-		ddlTypesList := strings.Split(ddlTypesStr, ",")
-		for _, ddlType := range ddlTypesList {
-			num, err := strconv.Atoi(ddlType)
-			if err != nil {
-				handler.WriteError(w, err)
-				return
-			}
-			actionType := model.ActionType(num)
-			if actionType.String() == "none" {
-				handler.WriteError(w, errors.New("Invalid DDL Type: "+ddlType))
-				return
-			}
-			ddlTypes = append(ddlTypes, actionType)
-		}
-	}
-
-	jobs, err := h.getHistoryDDL(jobID, limitID, ddlTypes)
+	jobs, err := h.getHistoryDDL(jobID, limitID)
 	if err != nil {
 		handler.WriteError(w, err)
 		return
@@ -1123,17 +1104,17 @@ func (h DDLHistoryJobHandler) ServeHTTP(w http.ResponseWriter, req *http.Request
 	handler.WriteData(w, jobs)
 }
 
-func (h DDLHistoryJobHandler) getHistoryDDL(jobID, limit int, ddlTypes []model.ActionType) (jobs []*model.Job, err error) {
+func (h DDLHistoryJobHandler) getHistoryDDL(jobID, limit int) (jobs []*model.Job, err error) {
 	txn, err := h.Store.Begin()
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	txnMeta := meta.NewMeta(txn)
 
-	if jobID == 0 && limit == 0 && len(ddlTypes) == 0 {
+	if jobID == 0 && limit == 0 {
 		jobs, err = ddl.GetAllHistoryDDLJobs(txnMeta)
 	} else {
-		jobs, err = ddl.ScanHistoryDDLJobs(txnMeta, int64(jobID), limit, ddlTypes)
+		jobs, err = ddl.ScanHistoryDDLJobs(txnMeta, int64(jobID), limit)
 	}
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -1355,7 +1336,7 @@ func (h *TableHandler) getRegionsByID(tbl table.Table, id int64, name string) (*
 	startKey, endKey := tablecodec.GetTableHandleKeyRange(id)
 	ctx := context.Background()
 	pdCli := h.RegionCache.PDClient()
-	regions, err := pdCli.ScanRegions(ctx, startKey, endKey, -1)
+	regions, err := pdCli.BatchScanRegions(ctx, []pd.KeyRange{{StartKey: startKey, EndKey: endKey}}, -1)
 	if err != nil {
 		return nil, err
 	}
@@ -1378,7 +1359,7 @@ func (h *TableHandler) getRegionsByID(tbl table.Table, id int64, name string) (*
 		indices[i].Name = index.Meta().Name.String()
 		indices[i].ID = indexID
 		startKey, endKey := tablecodec.GetTableIndexKeyRange(id, indexID)
-		regions, err := pdCli.ScanRegions(ctx, startKey, endKey, -1)
+		regions, err := pdCli.BatchScanRegions(ctx, []pd.KeyRange{{StartKey: startKey, EndKey: endKey}}, -1)
 		if err != nil {
 			return nil, err
 		}
