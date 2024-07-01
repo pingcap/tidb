@@ -188,6 +188,7 @@ func NewData() *Data {
 		pid2tid:           btree.NewBTreeG[partitionItem](comparePartitionItem),
 		tableInfoResident: btree.NewBTreeG[tableInfoItem](compareTableInfoItem),
 	}
+	ret.tableCache.SetStatusHook(newSieveStatusHookImpl())
 	return ret
 }
 
