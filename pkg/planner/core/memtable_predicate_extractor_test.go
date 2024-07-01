@@ -1983,7 +1983,6 @@ func TestInformSchemaTableExtract(t *testing.T) {
 				"table_name":   set.NewStringSet("b"),
 			},
 		},
-
 		{
 			sql:         "select * from information_schema.PARTITIONS where table_schema ='a' and table_name='b' and partition_name='c'",
 			skipRequest: false,
@@ -1991,6 +1990,30 @@ func TestInformSchemaTableExtract(t *testing.T) {
 				"table_schema":   set.NewStringSet("a"),
 				"table_name":     set.NewStringSet("b"),
 				"partition_name": set.NewStringSet("c"),
+			},
+		},
+		{
+			sql:         "select * from information_schema.TIDB_INDEXES where table_schema ='a' and table_name='b'",
+			skipRequest: false,
+			colPredicates: map[string]set.StringSet{
+				"table_schema": set.NewStringSet("a"),
+				"table_name":   set.NewStringSet("b"),
+			},
+		},
+		{
+			sql:         "select * from information_schema.VIEWS where table_schema ='a' and table_name='b'",
+			skipRequest: false,
+			colPredicates: map[string]set.StringSet{
+				"table_schema": set.NewStringSet("a"),
+				"table_name":   set.NewStringSet("b"),
+			},
+		},
+		{
+			sql:         "select * from information_schema.TABLE_CONSTRAINTS where table_schema ='a' and table_name='b'",
+			skipRequest: false,
+			colPredicates: map[string]set.StringSet{
+				"table_schema": set.NewStringSet("a"),
+				"table_name":   set.NewStringSet("b"),
 			},
 		},
 	}
