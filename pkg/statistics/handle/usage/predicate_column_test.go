@@ -263,12 +263,18 @@ func TestAnalyzeWithNoPredicateColumnsAndNoIndexes(t *testing.T) {
 	err := h.DumpColStatsUsageToKV()
 	require.NoError(t, err)
 
+	// Check stats_meta first.
+	rows := tk.MustQuery("select * from mysql.stats_meta where version != 0").Rows()
+	require.Len(t, rows, 0, "haven't been analyzed yet")
 	// Analyze table.
 	tk.MustExec("analyze table t")
-	// FIXME: We should correct the job info or skip this kind of job.
 	tk.MustQuery("select table_name, job_info from mysql.analyze_jobs order by id desc limit 1").Check(
 		testkit.Rows("t analyze table with 256 buckets, 100 topn, 1 samplerate"),
 	)
+
+	// Check stats_meta again.
+	rows = tk.MustQuery("select * from mysql.stats_meta where version != 0 and modify_count = 0").Rows()
+	require.Len(t, rows, 1, "modify_count should be flushed")
 }
 
 func TestAnalyzeNoPredicateColumnsWithPrimaryKey(t *testing.T) {
