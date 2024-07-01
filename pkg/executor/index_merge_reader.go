@@ -1414,8 +1414,7 @@ func (w *intersectionCollectWorker) doIntersectionLimitAndDispatch(ctx context.C
 type intersectionProcessWorker struct {
 	// key: parTblIdx, val: HandleMap
 	// Value of MemAwareHandleMap is *int to avoid extra Get().
-	handleMapsPerWorker map[int]*kv.MemAwareHandleMap[*int]
-	idxRowsMap          *kv.MemAwareHandleMap[chunk.Row]
+	handleMapsPerPartition map[int]*kv.MemAwareHandleMap[*int]
 
 	workerID   int
 	workerCh   chan *indexMergeTableTask
@@ -1446,12 +1445,13 @@ func (w *intersectionProcessWorker) doIntersectionPerPartition(ctx context.Conte
 	failpoint.Inject("testIndexMergePanicPartitionTableIntersectionWorker", nil)
 	defer w.memTracker.Detach()
 
+	idxRowsMap := kv.NewMemAwareHandleMap[chunk.Row]()
 	for task := range w.workerCh {
 		var ok bool
 		var hMap *kv.MemAwareHandleMap[*int]
-		if hMap, ok = w.handleMapsPerWorker[task.parTblIdx]; !ok {
+		if hMap, ok = w.handleMapsPerPartition[task.parTblIdx]; !ok {
 			hMap = kv.NewMemAwareHandleMap[*int]()
-			w.handleMapsPerWorker[task.parTblIdx] = hMap
+			w.handleMapsPerPartition[task.parTblIdx] = hMap
 		}
 		if task.singleIndexMerge {
 			w.sanityCheckForSingleIndexMerge(task)
@@ -1462,9 +1462,9 @@ func (w *intersectionProcessWorker) doIntersectionPerPartition(ctx context.Conte
 			if w.indexMerge.hasGlobalIndex {
 				if ph, ok := h.(kv.PartitionHandle); ok {
 					if v, exists := w.partitionIDMap[ph.PartitionID]; exists {
-						if hMap, ok = w.handleMapsPerWorker[v]; !ok {
+						if hMap, ok = w.handleMapsPerPartition[v]; !ok {
 							hMap = kv.NewMemAwareHandleMap[*int]()
-							w.handleMapsPerWorker[v] = hMap
+							w.handleMapsPerPartition[v] = hMap
 						}
 					}
 				} else {
@@ -1478,10 +1478,14 @@ func (w *intersectionProcessWorker) doIntersectionPerPartition(ctx context.Conte
 				cnt := 1
 				mapDelta += hMap.Set(h, &cnt) + int64(h.ExtraMemSize())
 				rowDelta++
-
-				if task.singleIndexMerge {
-					w.idxRowsMap.Set(h, task.idxRows.GetRow(i))
+			}
+			if task.singleIndexMerge {
+				if _, ok := idxRowsMap.Get(h); ok {
+					err := errors.New("found same handle in indexmerge intersection worker")
+					logutil.BgLogger().Error("handle single index merge error", zap.Error(err), zap.Any("h", h))
+					panic(err)
 				}
+				mapDelta += idxRowsMap.Set(h, task.idxRows.GetRow(i))
 			}
 		}
 
@@ -1500,8 +1504,8 @@ func (w *intersectionProcessWorker) doIntersectionPerPartition(ctx context.Conte
 	}
 
 	// We assume the result of intersection is small, so no need to track memory.
-	intersectedMap := make(map[int][]kv.Handle, len(w.handleMapsPerWorker))
-	for parTblIdx, hMap := range w.handleMapsPerWorker {
+	intersectedMap := make(map[int][]kv.Handle, len(w.handleMapsPerPartition))
+	for parTblIdx, hMap := range w.handleMapsPerPartition {
 		hMap.Range(func(h kv.Handle, val *int) bool {
 			if *(val) == len(w.indexMerge.partialPlans) {
 				// Means all partial paths have this handle.
@@ -1511,7 +1515,7 @@ func (w *intersectionProcessWorker) doIntersectionPerPartition(ctx context.Conte
 		})
 	}
 
-	tasks := make([]*indexMergeTableTask, 0, len(w.handleMapsPerWorker))
+	tasks := make([]*indexMergeTableTask, 0, len(w.handleMapsPerPartition))
 	for parTblIdx, intersected := range intersectedMap {
 		// Split intersected[parTblIdx] to avoid task is too large.
 		for len(intersected) > 0 {
@@ -1536,7 +1540,7 @@ func (w *intersectionProcessWorker) doIntersectionPerPartition(ctx context.Conte
 	}
 
 	if w.singleIndexMerge {
-		handleSingleIndexMergeTask(ctx, w.idxRowsMap, tasks, resultCh, finished, limitDone)
+		handleSingleIndexMergeTask(ctx, idxRowsMap, tasks, resultCh, finished, limitDone)
 		return
 	}
 
@@ -1598,7 +1602,7 @@ func handleSingleIndexMergeTask(ctx context.Context, idxRowsMap *kv.MemAwareHand
 				task.rows = append(task.rows, row)
 			} else {
 				err := errors.New("cannot find handle for single index merge")
-				logutil.BgLogger().Error("index merge process worker handle single index merge error", zap.Error(err))
+				logutil.BgLogger().Error("handle single index merge error", zap.Error(err), zap.Any("handle", h))
 				panic(err)
 			}
 		}
@@ -1621,6 +1625,13 @@ func handleSingleIndexMergeTask(ctx context.Context, idxRowsMap *kv.MemAwareHand
 				case <-finished:
 					return
 				case resultCh <- task:
+					select {
+					case <-ctx.Done():
+						return
+					case <-finished:
+						return
+					case task.doneCh <- nil:
+					}
 				}
 			}
 		}
@@ -1720,8 +1731,7 @@ func (w *indexMergeProcessWorker) fetchLoopIntersection(ctx context.Context, fet
 		tracker.AttachTo(w.indexMerge.memTracker)
 		worker := &intersectionProcessWorker{
 			workerID:            i,
-			handleMapsPerWorker: make(map[int]*kv.MemAwareHandleMap[*int]),
-			idxRowsMap:          kv.NewMemAwareHandleMap[chunk.Row](),
+			handleMapsPerPartition: make(map[int]*kv.MemAwareHandleMap[*int]),
 			workerCh:            make(chan *indexMergeTableTask, maxChannelSize),
 			indexMerge:          w.indexMerge,
 			memTracker:          tracker,
