@@ -259,6 +259,7 @@ func (h *Handle) HandleOneTask(lastTask *NeededItemTask, readerCtx *StatsReaderC
 		}
 		return task, sr.Err
 	case <-time.After(timeout):
+		task.ToTimeout.Add(time.Duration(h.mu.ctx.GetSessionVars().StatsLoadSyncWait.Load()) * time.Microsecond)
 		return task, nil
 	}
 }
@@ -445,6 +446,7 @@ func (h *Handle) drainColTask(exit chan struct{}) (*NeededItemTask, error) {
 			// if the task has already timeout, no sql is sync-waiting for it,
 			// so do not handle it just now, put it to another channel with lower priority
 			if time.Now().After(task.ToTimeout) {
+				task.ToTimeout.Add(time.Duration(h.mu.ctx.GetSessionVars().StatsLoadSyncWait.Load()) * time.Microsecond)
 				h.writeToTimeoutChan(h.StatsLoad.TimeoutItemsCh, task)
 				continue
 			}
