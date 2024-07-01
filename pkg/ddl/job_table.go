@@ -510,7 +510,7 @@ func (d *ddl) delivery2LocalWorker(pool *workerPool, task *limitJobTask) {
 			metrics.DDLRunningJobCount.WithLabelValues(pool.tp().String()).Dec()
 		}()
 
-		maxRetryTime := 10
+		maxRetryTime := 100
 		var err error
 		for i := 0; i < maxRetryTime; i++ {
 			err = wk.HandleLocalDDLJob(d.ddlCtx, job)
