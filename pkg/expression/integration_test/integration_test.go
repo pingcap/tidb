@@ -641,7 +641,7 @@ func TestShardIndexOnTiFlash(t *testing.T) {
 	tk.MustExec("set @@session.tidb_enforce_mpp = 0")
 	tk.MustExec("set @@session.tidb_allow_mpp = 0")
 	// when we isolated the read engine as 'tiflash' and banned TiDB opening allow-mpp, no suitable plan is generated.
-	_, err := tk.Exec("explain select max(b) from t")
+	_, err = tk.Exec("explain select max(b) from t")
 	require.NotNil(t, err)
 	require.Equal(t, err.Error(), "[planner:1815]Internal : Can't find a proper physical plan for this query")
 }
