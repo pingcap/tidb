@@ -125,7 +125,7 @@ func TestAutoAnalyzeWithPredicateColumns(t *testing.T) {
 
 	// Check analyze jobs.
 	tk.MustQuery("select table_name, job_info from mysql.analyze_jobs order by id desc limit 1").Check(
-		testkit.Rows("t auto analyze table columns a with 256 buckets, 100 topn, 1 samplerate"),
+		testkit.Rows("t auto analyze table column a with 256 buckets, 100 topn, 1 samplerate"),
 	)
 }
 
