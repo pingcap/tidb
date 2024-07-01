@@ -52,22 +52,6 @@ func (p *basePhysicalPlan) StatsCount() float64 {
 }
 
 // DeriveStats implement LogicalPlan DeriveStats interface.
-func (p *LogicalTableDual) DeriveStats(_ []*property.StatsInfo, selfSchema *expression.Schema, _ []*expression.Schema, _ [][]*expression.Column) (*property.StatsInfo, error) {
-	if p.StatsInfo() != nil {
-		return p.StatsInfo(), nil
-	}
-	profile := &property.StatsInfo{
-		RowCount: float64(p.RowCount),
-		ColNDVs:  make(map[int64]float64, selfSchema.Len()),
-	}
-	for _, col := range selfSchema.Columns {
-		profile.ColNDVs[col.UniqueID] = float64(p.RowCount)
-	}
-	p.SetStats(profile)
-	return p.StatsInfo(), nil
-}
-
-// DeriveStats implement LogicalPlan DeriveStats interface.
 func (p *LogicalMemTable) DeriveStats(_ []*property.StatsInfo, selfSchema *expression.Schema, _ []*expression.Schema, _ [][]*expression.Column) (*property.StatsInfo, error) {
 	if p.StatsInfo() != nil {
 		return p.StatsInfo(), nil

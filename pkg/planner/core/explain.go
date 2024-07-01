@@ -913,14 +913,6 @@ func (p *LogicalApply) ExplainInfo() string {
 }
 
 // ExplainInfo implements Plan interface.
-func (p *LogicalTableDual) ExplainInfo() string {
-	var str strings.Builder
-	str.WriteString("rowcount:")
-	str.WriteString(strconv.Itoa(p.RowCount))
-	return str.String()
-}
-
-// ExplainInfo implements Plan interface.
 func (ds *DataSource) ExplainInfo() string {
 	buffer := bytes.NewBufferString("")
 	tblName := ds.TableInfo.Name.O
