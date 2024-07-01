@@ -1,5 +1,3 @@
-.PHONY: all parser clean
-
 .PHONY: all
 all: fmt parser
 
