@@ -267,7 +267,7 @@ func TestAnalyzeWithNoPredicateColumnsAndNoIndexes(t *testing.T) {
 	tk.MustExec("analyze table t")
 	// FIXME: We should correct the job info or skip this kind of job.
 	tk.MustQuery("select table_name, job_info from mysql.analyze_jobs order by id desc limit 1").Check(
-		testkit.Rows("t analyze table column  with 256 buckets, 100 topn, 1 samplerate"),
+		testkit.Rows("t analyze table with 256 buckets, 100 topn, 1 samplerate"),
 	)
 }
 

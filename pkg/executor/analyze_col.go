@@ -391,6 +391,10 @@ func prepareColumns(e *AnalyzeColumnsExec, b *strings.Builder) {
 	if len(cols) > 0 && cols[len(cols)-1].ID == model.ExtraHandleID {
 		cols = cols[:len(cols)-1]
 	}
+	// If there are no columns, skip the process.
+	if len(cols) == 0 {
+		return
+	}
 	if len(cols) < len(e.tableInfo.Columns) {
 		if len(cols) > 1 {
 			b.WriteString(" columns ")
