@@ -422,9 +422,9 @@ func prepareIndexes(e *AnalyzeColumnsExec, b *strings.Builder) {
 	}
 	if len(indexes) < len(e.tableInfo.Indices) {
 		if len(indexes) > 1 {
-			b.WriteString(" columns ")
+			b.WriteString(" indexes ")
 		} else {
-			b.WriteString(" column ")
+			b.WriteString(" index ")
 		}
 		for i, index := range indexes {
 			if i > 0 {
