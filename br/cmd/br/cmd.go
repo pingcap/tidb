@@ -5,8 +5,10 @@ package main
 import (
 	"context"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -24,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/redact"
 	"github.com/spf13/cobra"
+	"go.uber.org/zap"
 )
 
 var (
@@ -107,6 +110,23 @@ func AddFlags(cmd *cobra.Command) {
 	_ = cmd.PersistentFlags().MarkHidden(FlagRedactLog)
 }
 
+func calculateMemoryLimit(memleft uint64) uint64 {
+	const halfGB = uint64(512 * 1024 * 1024)
+	const fourGB = 8 * halfGB
+	// memreserved = f(memleft) = 512MB * memleft / (memleft + 4GB)
+	//  * f(0) = 0
+	//  * f(4GB) = 256MB
+	//  * f(+inf) -> 512MB
+	memreserved := halfGB / (1 + fourGB/(memleft+1))
+	// 0     memused          memtotal-memreserved  memtotal
+	// +--------+--------------------+----------------+
+	//          ^            br mem upper limit
+	//          +--------------------^
+	//             GOMEMLIMIT range
+	memlimit := memleft - memreserved
+	return memlimit
+}
+
 // Init initializes BR cli.
 func Init(cmd *cobra.Command) (err error) {
 	initOnce.Do(func() {
@@ -162,6 +182,23 @@ func Init(cmd *cobra.Command) (err error) {
 		}
 		log.ReplaceGlobals(lg, p)
 		memory.InitMemoryHook()
+		if debug.SetMemoryLimit(-1) == math.MaxInt64 {
+			memtotal, e := memory.MemTotal()
+			if e != nil {
+				err = e
+				return
+			}
+			memused, e := memory.MemUsed()
+			if e != nil {
+				err = e
+				return
+			}
+			memleft := memtotal - memused
+			memlimit := calculateMemoryLimit(memleft)
+			log.Info("calculate the rest memory",
+				zap.Uint64("memtotal", memtotal), zap.Uint64("memused", memused), zap.Uint64("memlimit", memlimit))
+			debug.SetMemoryLimit(int64(memlimit))
+		}
 
 		redactLog, e := cmd.Flags().GetBool(FlagRedactLog)
 		if e != nil {
