@@ -142,7 +142,7 @@ func newClientConn(s *Server) *clientConn {
 		chunkAlloc:   chunk.NewAllocator(),
 		status:       connStatusDispatching,
 		lastActive:   time.Now(),
-		authPlugin:   mysql.AuthNativePassword,
+		authPlugin:   mysql.AuthCachingSha2Password,
 		quit:         make(chan struct{}),
 		ppEnabled:    s.cfg.ProxyProtocol.Networks != "",
 	}
@@ -661,7 +661,7 @@ func (cc *clientConn) handleAuthPlugin(ctx context.Context, resp *handshake.Resp
 		if err != nil {
 			return err
 		}
-		resp.AuthPlugin = mysql.AuthNativePassword
+		resp.AuthPlugin = mysql.AuthCachingSha2Password
 	}
 	return nil
 }
@@ -869,10 +869,10 @@ func (cc *clientConn) checkAuthPlugin(ctx context.Context, resp *handshake.Respo
 		// No user plugin set, assuming MySQL Native Password
 		// This happens if the account doesn't exist or if the account doesn't have
 		// a password set.
-		if resp.AuthPlugin != mysql.AuthNativePassword {
+		if resp.AuthPlugin != mysql.AuthCachingSha2Password {
 			if resp.Capability&mysql.ClientPluginAuth > 0 {
-				resp.AuthPlugin = mysql.AuthNativePassword
-				authData, err := cc.authSwitchRequest(ctx, mysql.AuthNativePassword)
+				resp.AuthPlugin = mysql.AuthCachingSha2Password
+				authData, err := cc.authSwitchRequest(ctx, mysql.AuthCachingSha2Password)
 				if err != nil {
 					return nil, err
 				}
@@ -898,7 +898,7 @@ func (cc *clientConn) checkAuthPlugin(ctx context.Context, resp *handshake.Respo
 			}
 			resp.AuthPlugin = userplugin
 			return authData, nil
-		} else if userplugin != mysql.AuthNativePassword {
+		} else if userplugin != mysql.AuthCachingSha2Password {
 			// MySQL 5.1 and older don't support authentication plugins yet
 			return nil, servererr.ErrNotSupportedAuthMode
 		}
