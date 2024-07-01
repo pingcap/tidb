@@ -1560,6 +1560,14 @@ func (w *addIndexTxnWorker) checkHandleExists(idxInfo *model.IndexInfo, key kv.K
 	if hasBeenBackFilled {
 		return nil
 	}
+	if idxInfo.Global {
+		// 'handle' comes from reading directly from a partition, without partition id,
+		// so we can only compare the handle part of the key.
+		if ph, ok := h.(kv.PartitionHandle); ok && ph.Handle.Equal(handle) {
+			// table row has been back-filled already, OK to add the index entry
+			return nil
+		}
+	}
 	return ddlutil.GenKeyExistsErr(key, value, idxInfo, tblInfo)
 }
 
