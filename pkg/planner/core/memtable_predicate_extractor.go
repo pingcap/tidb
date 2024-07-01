@@ -1812,7 +1812,7 @@ func (e *InfoSchemaTablesExtractor) Extract(ctx base.PlanContext,
 	predicates []expression.Expression,
 ) (remained []expression.Expression) {
 	var resultSet, resultSet1 set.StringSet
-	e.colNames = []string{"table_schema", "table_name"}
+	e.colNames = []string{"table_schema", "constraint_schema", "table_name", "constraint_name"}
 	e.ColPredicates = make(map[string]set.StringSet)
 	remained = predicates
 	for _, colName := range e.colNames {

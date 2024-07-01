@@ -1891,6 +1891,13 @@ func TestInformSchemaTableExtract(t *testing.T) {
 			},
 		},
 		{
+			sql:         "select * from information_schema.REFERENTIAL_CONSTRAINTS where constraint_schema ='t'",
+			skipRequest: false,
+			colPredicates: map[string]set.StringSet{
+				"constraint_schema": set.NewStringSet("t"),
+			},
+		},
+		{
 			sql:         "select * from information_schema.KEY_COLUMN_USAGE where table_name ='t' or table_name ='A'",
 			skipRequest: false,
 			colPredicates: map[string]set.StringSet{

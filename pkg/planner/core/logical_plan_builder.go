@@ -5318,7 +5318,8 @@ func (b *PlanBuilder) buildMemTable(_ context.Context, dbName model.CIStr, table
 		case infoschema.TableTables,
 			infoschema.TableReferConst,
 			infoschema.TableKeyColumn,
-			infoschema.TableStatistics:
+			infoschema.TableStatistics,
+			infoschema.TablePartitions:
 			p.Extractor = &InfoSchemaTablesExtractor{}
 		case infoschema.TableTiKVRegionStatus:
 			p.Extractor = &TiKVRegionStatusExtractor{tablesID: make([]int64, 0)}
