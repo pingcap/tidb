@@ -28,6 +28,7 @@ go_library(
         "logical_partition_union_all.go",
         "logical_plan_builder.go",
         "logical_plans.go",
+        "logical_projection.go",
         "logical_sort.go",
         "logical_top_n.go",
         "logical_union_all.go",

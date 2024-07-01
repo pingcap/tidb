@@ -128,13 +128,3 @@ func (s *LogicalSelection) ConvertOuterToInnerJoin(predicates []expression.Expre
 	p.SetChildren(child)
 	return p
 }
-
-// ConvertOuterToInnerJoin implements base.LogicalPlan ConvertOuterToInnerJoin interface.
-func (s *LogicalProjection) ConvertOuterToInnerJoin(predicates []expression.Expression) base.LogicalPlan {
-	p := s.Self().(*LogicalProjection)
-	canBePushed, _ := BreakDownPredicates(p, predicates)
-	child := p.Children()[0]
-	child = child.ConvertOuterToInnerJoin(canBePushed)
-	p.SetChildren(child)
-	return p
-}
