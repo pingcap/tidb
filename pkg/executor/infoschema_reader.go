@@ -1086,9 +1086,7 @@ func calcCharOctLength(lenInChar int, cs string) int {
 }
 
 func (e *memtableRetriever) setDataFromPartitions(sctx sessionctx.Context, schemas []model.CIStr) error {
-	// ywq todo speed it up
 	useStatsCache := e.updateStatsCacheIfNeed()
-
 	checker := privilege.GetPrivilegeManager(sctx)
 	var rows [][]types.Datum
 	createTimeTp := mysql.TypeDatetime
@@ -3648,7 +3646,6 @@ func (e *memtableRetriever) setDataFromKeywords() error {
 	return nil
 }
 
-// ywq todo
 func (e *memtableRetriever) setDataFromIndexUsage(ctx sessionctx.Context, schemas []model.CIStr) {
 	dom := domain.GetDomain(ctx)
 	rows := make([][]types.Datum, 0, 100)
