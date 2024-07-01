@@ -1823,7 +1823,7 @@ func TestExtractorInPreparedStmt(t *testing.T) {
 	}
 }
 
-func TestInforSchemaTableExtract(t *testing.T) {
+func TestInfoSchemaTableExtract(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	se, err := session.CreateSession4Test(store)
@@ -1919,6 +1919,14 @@ func TestInforSchemaTableExtract(t *testing.T) {
 			colPredicates: map[string]set.StringSet{
 				"constraint_schema": set.NewStringSet("t"),
 				"constraint_name":   set.NewStringSet("cc"),
+			},
+		},
+		{
+			sql:         "select * from information_schema.TABLE_CONSTRAINTS where constraint_schema ='t' and table_name = 'cc'",
+			skipRequest: false,
+			colPredicates: map[string]set.StringSet{
+				"constraint_schema": set.NewStringSet("t"),
+				"table_name":        set.NewStringSet("cc"),
 			},
 		},
 		{

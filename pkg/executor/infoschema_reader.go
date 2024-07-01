@@ -1904,6 +1904,8 @@ func (e *memtableRetriever) setDataForTiKVRegionStatus(ctx context.Context, sctx
 	}
 	schemaNames := is.AllSchemaNames()
 	schemas := ensureSchemaTables(is, schemaNames)
+
+	// ywq todo can be optimized
 	tableInfos := tikvHelper.GetRegionsTableInfo(allRegionsInfo, schemas)
 	for i := range allRegionsInfo.Regions {
 		regionTableList := tableInfos[allRegionsInfo.Regions[i].ID]
@@ -2083,7 +2085,7 @@ func (e *memtableRetriever) setDataFromTableConstraints(ctx sessionctx.Context, 
 	}
 	var rows [][]types.Datum
 	for _, schema := range schemas {
-		if ok && extractor.Filter("table_schema", schema.L) {
+		if ok && extractor.Filter("constraint_schema", schema.L) {
 			continue
 		}
 		tables := e.is.SchemaTables(schema)
