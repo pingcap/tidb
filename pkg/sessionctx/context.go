@@ -62,6 +62,19 @@ type SessionPlanCache interface {
 	Close()
 }
 
+// InstancePlanCache represents the instance/node level plan cache.
+// Value and Opts should always be *PlanCacheValue and *PlanCacheMatchOpts, use any to avoid cycle-import.
+type InstancePlanCache interface {
+	// Get gets the cached value from the cache according to key and opts.
+	Get(sctx Context, key string, opts any) (value any, ok bool)
+	// Put puts the key and value into the cache.
+	Put(sctx Context, key string, value, opts any) (succ bool)
+	// Evict evicts some cached values.
+	Evict() (evicted bool)
+	// MemUsage returns the total memory usage of this plan cache.
+	MemUsage() int64
+}
+
 // Context is an interface for transaction and executive args environment.
 type Context interface {
 	SessionStatesHandler

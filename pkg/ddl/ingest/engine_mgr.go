@@ -117,16 +117,3 @@ func (bc *litBackendCtx) UnregisterEngines() {
 
 	bc.memRoot.Release(numIdx * structSizeEngineInfo)
 }
-
-// ImportStarted implements BackendCtx.
-func (bc *litBackendCtx) ImportStarted() bool {
-	if len(bc.engines) == 0 {
-		return false
-	}
-	for _, ei := range bc.engines {
-		if ei.openedEngine == nil {
-			return true
-		}
-	}
-	return false
-}

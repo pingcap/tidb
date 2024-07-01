@@ -1017,36 +1017,6 @@ func explainNormalizedByItems(buffer *bytes.Buffer, byItems []*util.ByItems) *by
 }
 
 // ExplainInfo implements Plan interface.
-func (p *LogicalSort) ExplainInfo() string {
-	buffer := bytes.NewBufferString("")
-	return explainByItems(p.SCtx().GetExprCtx().GetEvalCtx(), buffer, p.ByItems).String()
-}
-
-// ExplainInfo implements Plan interface.
-func (lt *LogicalTopN) ExplainInfo() string {
-	buffer := bytes.NewBufferString("")
-	buffer = explainPartitionBy(buffer, lt.GetPartitionBy(), false)
-	if len(lt.GetPartitionBy()) > 0 && len(lt.ByItems) > 0 {
-		buffer.WriteString("order by ")
-	}
-	buffer = explainByItems(lt.SCtx().GetExprCtx().GetEvalCtx(), buffer, lt.ByItems)
-	fmt.Fprintf(buffer, ", offset:%v, count:%v", lt.Offset, lt.Count)
-	return buffer.String()
-}
-
-// ExplainInfo implements Plan interface.
-func (p *LogicalLimit) ExplainInfo() string {
-	buffer := bytes.NewBufferString("")
-	if len(p.GetPartitionBy()) > 0 {
-		buffer = explainPartitionBy(buffer, p.GetPartitionBy(), false)
-		fmt.Fprintf(buffer, ", offset:%v, count:%v", p.Offset, p.Count)
-	} else {
-		fmt.Fprintf(buffer, "offset:%v, count:%v", p.Offset, p.Count)
-	}
-	return buffer.String()
-}
-
-// ExplainInfo implements Plan interface.
 func (p *LogicalTableScan) ExplainInfo() string {
 	buffer := bytes.NewBufferString(p.Source.ExplainInfo())
 	if p.Source.HandleCols != nil {

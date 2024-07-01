@@ -80,33 +80,9 @@ func (p LogicalExpand) Init(ctx base.PlanContext, offset int) *LogicalExpand {
 	return &p
 }
 
-// Init initializes LogicalUnionAll.
-func (p LogicalUnionAll) Init(ctx base.PlanContext, offset int) *LogicalUnionAll {
-	p.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(ctx, plancodec.TypeUnion, &p, offset)
-	return &p
-}
-
 // Init initializes LogicalPartitionUnionAll.
 func (p LogicalPartitionUnionAll) Init(ctx base.PlanContext, offset int) *LogicalPartitionUnionAll {
 	p.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(ctx, plancodec.TypePartitionUnion, &p, offset)
-	return &p
-}
-
-// Init initializes LogicalSort.
-func (ls LogicalSort) Init(ctx base.PlanContext, offset int) *LogicalSort {
-	ls.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(ctx, plancodec.TypeSort, &ls, offset)
-	return &ls
-}
-
-// Init initializes LogicalTopN.
-func (lt LogicalTopN) Init(ctx base.PlanContext, offset int) *LogicalTopN {
-	lt.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(ctx, plancodec.TypeTopN, &lt, offset)
-	return &lt
-}
-
-// Init initializes LogicalLimit.
-func (p LogicalLimit) Init(ctx base.PlanContext, offset int) *LogicalLimit {
-	p.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(ctx, plancodec.TypeLimit, &p, offset)
 	return &p
 }
 
@@ -137,12 +113,6 @@ func (p LogicalShow) Init(ctx base.PlanContext) *LogicalShow {
 // Init initializes LogicalShowDDLJobs.
 func (p LogicalShowDDLJobs) Init(ctx base.PlanContext) *LogicalShowDDLJobs {
 	p.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(ctx, plancodec.TypeShowDDLJobs, &p, 0)
-	return &p
-}
-
-// Init initializes LogicalLock.
-func (p LogicalLock) Init(ctx base.PlanContext) *LogicalLock {
-	p.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(ctx, plancodec.TypeLock, &p, 0)
 	return &p
 }
 

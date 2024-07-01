@@ -1644,90 +1644,9 @@ func (p *LogicalIndexScan) getPKIsHandleCol(schema *expression.Schema) *expressi
 	return getPKIsHandleColFromSchema(p.Columns, schema, p.Source.TableInfo.PKIsHandle)
 }
 
-// LogicalUnionAll represents LogicalUnionAll plan.
-type LogicalUnionAll struct {
-	logicalop.LogicalSchemaProducer
-}
-
 // LogicalPartitionUnionAll represents the LogicalUnionAll plan is for partition table.
 type LogicalPartitionUnionAll struct {
 	LogicalUnionAll
-}
-
-// LogicalSort stands for the order by plan.
-type LogicalSort struct {
-	logicalop.BaseLogicalPlan
-
-	ByItems []*util.ByItems
-}
-
-// ExtractCorrelatedCols implements LogicalPlan interface.
-func (ls *LogicalSort) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
-	corCols := make([]*expression.CorrelatedColumn, 0, len(ls.ByItems))
-	for _, item := range ls.ByItems {
-		corCols = append(corCols, expression.ExtractCorColumns(item.Expr)...)
-	}
-	return corCols
-}
-
-// LogicalTopN represents a top-n plan.
-type LogicalTopN struct {
-	logicalop.BaseLogicalPlan
-
-	ByItems []*util.ByItems
-	// PartitionBy is used for extended TopN to consider K heaps. Used by rule_derive_topn_from_window
-	PartitionBy      []property.SortItem // This is used for enhanced topN optimization
-	Offset           uint64
-	Count            uint64
-	PreferLimitToCop bool
-}
-
-// GetPartitionBy returns partition by fields
-func (lt *LogicalTopN) GetPartitionBy() []property.SortItem {
-	return lt.PartitionBy
-}
-
-// ExtractCorrelatedCols implements LogicalPlan interface.
-func (lt *LogicalTopN) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
-	corCols := make([]*expression.CorrelatedColumn, 0, len(lt.ByItems))
-	for _, item := range lt.ByItems {
-		corCols = append(corCols, expression.ExtractCorColumns(item.Expr)...)
-	}
-	return corCols
-}
-
-// isLimit checks if TopN is a limit plan.
-func (lt *LogicalTopN) isLimit() bool {
-	return len(lt.ByItems) == 0
-}
-
-// LogicalLimit represents offset and limit plan.
-type LogicalLimit struct {
-	logicalop.LogicalSchemaProducer
-
-	PartitionBy      []property.SortItem // This is used for enhanced topN optimization
-	Offset           uint64
-	Count            uint64
-	PreferLimitToCop bool
-	IsPartial        bool
-}
-
-// GetPartitionBy returns partition by fields
-func (lt *LogicalLimit) GetPartitionBy() []property.SortItem {
-	return lt.PartitionBy
-}
-
-// LogicalLock represents a select lock plan.
-type LogicalLock struct {
-	logicalop.BaseLogicalPlan
-
-	Lock         *ast.SelectLockInfo
-	TblID2Handle map[int64][]util.HandleCols
-
-	// tblID2phyTblIDCol is used for partitioned tables,
-	// the child executor need to return an extra column containing
-	// the Physical Table ID (i.e. from which partition the row came from)
-	TblID2PhysTblIDCol map[int64]*expression.Column
 }
 
 // WindowFrame represents a window function frame.

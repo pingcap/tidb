@@ -63,14 +63,12 @@ import (
 	"github.com/pingcap/tidb/pkg/util/backoff"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
-	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	tidblogutil "github.com/pingcap/tidb/pkg/util/logutil"
 	decoder "github.com/pingcap/tidb/pkg/util/rowDecoder"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
-	"github.com/prometheus/client_golang/prometheus"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
 	kvutil "github.com/tikv/client-go/v2/util"
@@ -980,29 +978,20 @@ func runIngestReorgJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 	}
 	done, ver, err = runReorgJobAndHandleErr(w, d, t, job, tbl, allIndexInfos, false)
 	if err != nil {
-		if !errorIsRetryable(err, job) {
+		if kv.ErrKeyExists.Equal(err) {
+			logutil.DDLLogger().Warn("import index duplicate key, convert job to rollback", zap.Stringer("job", job), zap.Error(err))
+			ver, err = convertAddIdxJob2RollbackJob(d, t, job, tbl.Meta(), allIndexInfos, err)
+		} else if !errorIsRetryable(err, job) {
 			logutil.DDLLogger().Warn("run reorg job failed, convert job to rollback",
 				zap.String("job", job.String()), zap.Error(err))
 			ver, err = convertAddIdxJob2RollbackJob(d, t, job, tbl.Meta(), allIndexInfos, err)
+		} else {
+			logutil.DDLLogger().Warn("run add index ingest job error", zap.Error(err))
 		}
 		return false, ver, errors.Trace(err)
 	}
 	if !done {
 		return false, ver, nil
-	}
-
-	err = bc.FinishImport(tbl)
-	if err != nil {
-		if kv.ErrKeyExists.Equal(err) {
-			logutil.DDLLogger().Warn("import index duplicate key, convert job to rollback", zap.Stringer("job", job), zap.Error(err))
-			ver, err = convertAddIdxJob2RollbackJob(d, t, job, tbl.Meta(), allIndexInfos, err)
-		} else {
-			logutil.DDLLogger().Warn("lightning import error", zap.Error(err))
-			if !errorIsRetryable(err, job) {
-				ver, err = convertAddIdxJob2RollbackJob(d, t, job, tbl.Meta(), allIndexInfos, err)
-			}
-		}
-		return false, ver, errors.Trace(err)
 	}
 	bc.SetDone()
 	return true, ver, nil
@@ -1655,24 +1644,6 @@ func (w *addIndexTxnWorker) batchCheckUniqueKey(txn kv.Transaction, idxRecords [
 	return nil
 }
 
-type addIndexIngestWorker struct {
-	ctx           context.Context
-	d             *ddlCtx
-	metricCounter prometheus.Counter
-	writeLoc      *time.Location
-	writeErrCtx   errctx.Context
-	writeStmtBufs variable.WriteStmtBufs
-
-	tbl              table.PhysicalTable
-	indexes          []table.Index
-	writers          []ingest.Writer
-	copReqSenderPool *copReqSenderPool
-	checkpointMgr    *ingest.CheckpointManager
-
-	resultCh chan *backfillResult
-	jobID    int64
-}
-
 func getLocalWriterConfig(indexCnt, writerCnt int) *backend.LocalWriterConfig {
 	writerCfg := &backend.LocalWriterConfig{}
 	// avoid unit test panic
@@ -1687,76 +1658,6 @@ func getLocalWriterConfig(indexCnt, writerCnt int) *backend.LocalWriterConfig {
 	memLimitPerWriter = min(memLimitPerWriter, litconfig.DefaultLocalWriterMemCacheSize)
 	writerCfg.Local.MemCacheSize = memLimitPerWriter
 	return writerCfg
-}
-
-func newAddIndexIngestWorker(
-	ctx context.Context,
-	t table.PhysicalTable,
-	info *reorgInfo,
-	engines []ingest.Engine,
-	resultCh chan *backfillResult,
-	jobID int64,
-	indexIDs []int64,
-	writerID int,
-	writerCnt int,
-	copReqSenderPool *copReqSenderPool,
-	checkpointMgr *ingest.CheckpointManager,
-) (*addIndexIngestWorker, error) {
-	writeLoc, err := reorgTimeZoneWithTzLoc(info.ReorgMeta.Location)
-	if err != nil {
-		return nil, err
-	}
-
-	indexes := make([]table.Index, 0, len(indexIDs))
-	writers := make([]ingest.Writer, 0, len(indexIDs))
-	writerCfg := getLocalWriterConfig(len(indexIDs), writerCnt)
-
-	for i, indexID := range indexIDs {
-		indexInfo := model.FindIndexInfoByID(t.Meta().Indices, indexID)
-		index := tables.NewIndex(t.GetPhysicalID(), t.Meta(), indexInfo)
-		lw, err := engines[i].CreateWriter(writerID, writerCfg)
-		if err != nil {
-			return nil, err
-		}
-		indexes = append(indexes, index)
-		writers = append(writers, lw)
-	}
-
-	writeErrCtx := errctx.NewContextWithLevels(
-		reorgErrLevelsWithSQLMode(info.ReorgMeta.SQLMode),
-		contextutil.IgnoreWarn,
-	)
-
-	return &addIndexIngestWorker{
-		ctx:         ctx,
-		d:           info.d,
-		writeLoc:    writeLoc,
-		writeErrCtx: writeErrCtx,
-		metricCounter: metrics.BackfillTotalCounter.WithLabelValues(
-			metrics.GenerateReorgLabel("add_idx_rate", info.SchemaName, t.Meta().Name.O)),
-		tbl:              t,
-		indexes:          indexes,
-		writers:          writers,
-		copReqSenderPool: copReqSenderPool,
-		resultCh:         resultCh,
-		jobID:            jobID,
-		checkpointMgr:    checkpointMgr,
-	}, nil
-}
-
-// WriteLocal will write index records to lightning engine.
-func (w *addIndexIngestWorker) WriteLocal(rs *IndexRecordChunk) (count int, nextKey kv.Key, err error) {
-	oprStartTime := time.Now()
-	copCtx := w.copReqSenderPool.copCtx
-	cnt, lastHandle, err := writeChunkToLocal(
-		w.ctx, w.writers, w.indexes, copCtx, w.writeLoc, w.writeErrCtx, &w.writeStmtBufs, rs.Chunk)
-	if err != nil || cnt == 0 {
-		return 0, nil, err
-	}
-	w.metricCounter.Add(float64(cnt))
-	logSlowOperations(time.Since(oprStartTime), "writeChunkToLocal", 3000)
-	nextKey = tablecodec.EncodeRecordKey(w.tbl.RecordPrefix(), lastHandle)
-	return cnt, nextKey, nil
 }
 
 func writeChunkToLocal(
