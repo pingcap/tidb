@@ -14026,7 +14026,7 @@
           "bars": false,
           "dashLength": 10,
           "dashes": false,
-          "datasource": "playground",
+          "datasource": "${DS_TEST-CLUSTER}",
           "description": "Memory size of infoschema cache v2",
           "fieldConfig": {
             "defaults": {},
