@@ -1017,6 +1017,16 @@ func CheckSpecialAttributes(str string) bool {
 	return true
 }
 
+// NameExtractRegexp is exported for testing.
+const NameExtractRegexp = `"L":"([^"\\]*(?:\\.[^"\\]*)*)"}`
+
+// Unescape is exported for testing.
+func Unescape(s string) string {
+	s = strings.Replace(s, `\"`, `"`, -1)
+	s = strings.Replace(s, `\\`, `\`, -1)
+	return s
+}
+
 // GetAllNameToIDAndSpecialAttributeInfo gets all the fields and values and table info for special attributes in a hash.
 func GetAllNameToIDAndSpecialAttributeInfo(m *Meta, dbID int64) (map[string]int64, []*model.TableInfo, error) {
 	dbKey := m.dbKey(dbID)
@@ -1026,7 +1036,7 @@ func GetAllNameToIDAndSpecialAttributeInfo(m *Meta, dbID int64) (map[string]int6
 
 	res := make(map[string]int64)
 	idRegex := regexp.MustCompile(`"id":(\d+)`)
-	nameLRegex := regexp.MustCompile(`"L":"([^"]+)"`)
+	nameLRegex := regexp.MustCompile(NameExtractRegexp)
 
 	tableInfos := make([]*model.TableInfo, 0)
 
@@ -1041,7 +1051,8 @@ func GetAllNameToIDAndSpecialAttributeInfo(m *Meta, dbID int64) (map[string]int6
 		if err != nil {
 			return errors.Trace(err)
 		}
-		res[nameLMatch[1]] = int64(id)
+
+		res[Unescape(nameLMatch[1])] = int64(id)
 		if CheckSpecialAttributes(string(hack.String(value))) {
 			tbInfo := &model.TableInfo{}
 			err = json.Unmarshal(value, tbInfo)

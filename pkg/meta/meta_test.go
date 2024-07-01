@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strconv"
 	"testing"
 	"time"
@@ -765,4 +766,44 @@ func TestCheckSpecialAttributes(t *testing.T) {
 	b, err = json.Marshal(tableInfo)
 	require.NoError(t, err)
 	require.False(t, meta.CheckSpecialAttributes(string(b)))
+}
+
+func TestTableNameExtract(t *testing.T) {
+	var tbl model.TableInfo
+	tbl.Name = model.NewCIStr(`a`)
+	b, err := json.Marshal(tbl)
+	require.NoError(t, err)
+
+	nameLRegex := regexp.MustCompile(meta.NameExtractRegexp)
+	nameLMatch := nameLRegex.FindStringSubmatch(string(b))
+	require.Len(t, nameLMatch, 2)
+	require.Equal(t, "a", nameLMatch[1])
+
+	tbl.Name = model.NewCIStr(`"a"`)
+	b, err = json.Marshal(tbl)
+	require.NoError(t, err)
+	nameLMatch = nameLRegex.FindStringSubmatch(string(b))
+	require.Len(t, nameLMatch, 2)
+	require.Equal(t, `"a"`, meta.Unescape(nameLMatch[1]))
+
+	tbl.Name = model.NewCIStr(`""a"`)
+	b, err = json.Marshal(tbl)
+	require.NoError(t, err)
+	nameLMatch = nameLRegex.FindStringSubmatch(string(b))
+	require.Len(t, nameLMatch, 2)
+	require.Equal(t, `""a"`, meta.Unescape(nameLMatch[1]))
+
+	tbl.Name = model.NewCIStr(`"\"a"`)
+	b, err = json.Marshal(tbl)
+	require.NoError(t, err)
+	nameLMatch = nameLRegex.FindStringSubmatch(string(b))
+	require.Len(t, nameLMatch, 2)
+	require.Equal(t, `"\"a"`, meta.Unescape(nameLMatch[1]))
+
+	tbl.Name = model.NewCIStr(`"\"啊"`)
+	b, err = json.Marshal(tbl)
+	require.NoError(t, err)
+	nameLMatch = nameLRegex.FindStringSubmatch(string(b))
+	require.Len(t, nameLMatch, 2)
+	require.Equal(t, `"\"啊"`, meta.Unescape(nameLMatch[1]))
 }
