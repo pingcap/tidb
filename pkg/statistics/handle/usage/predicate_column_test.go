@@ -74,7 +74,7 @@ func TestAnalyzeTableWithPredicateColumns(t *testing.T) {
 	// Analyze table and check analyze jobs.
 	tk.MustExec("analyze table t")
 	tk.MustQuery("select table_name, job_info from mysql.analyze_jobs order by id desc limit 1").Check(
-		testkit.Rows("t analyze table columns a with 256 buckets, 100 topn, 1 samplerate"),
+		testkit.Rows("t analyze table column a with 256 buckets, 100 topn, 1 samplerate"),
 	)
 
 	// More columns.
@@ -175,7 +175,7 @@ func TestAnalyzeTableWithTiDBPersistAnalyzeOptionsDisabled(t *testing.T) {
 	// Analyze again, it should use the predicate columns.
 	tk.MustExec("analyze table t")
 	tk.MustQuery("select table_name, job_info from mysql.analyze_jobs order by id desc limit 1").Check(
-		testkit.Rows("t analyze table columns a with 256 buckets, 100 topn, 1 samplerate"),
+		testkit.Rows("t analyze table column a with 256 buckets, 100 topn, 1 samplerate"),
 	)
 }
 
@@ -267,7 +267,7 @@ func TestAnalyzeWithNoPredicateColumnsAndNoIndexes(t *testing.T) {
 	tk.MustExec("analyze table t")
 	// FIXME: We should correct the job info or skip this kind of job.
 	tk.MustQuery("select table_name, job_info from mysql.analyze_jobs order by id desc limit 1").Check(
-		testkit.Rows("t analyze table columns  with 256 buckets, 100 topn, 1 samplerate"),
+		testkit.Rows("t analyze table column  with 256 buckets, 100 topn, 1 samplerate"),
 	)
 }
 
