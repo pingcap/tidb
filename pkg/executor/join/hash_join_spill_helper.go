@@ -502,7 +502,7 @@ func (h *hashJoinSpillHelper) respillForBuildData(segments []*rowTableSegment, b
 
 	// respill build side in disk data
 	chunkNum := buildInDisk.NumChunks()
-	for i := chunkNum; i < chunkNum; i++ {
+	for i := chunkIdx; i < chunkNum; i++ {
 		// TODO reuse chunk
 		chunk, err := buildInDisk.GetChunk(i)
 		if err != nil {

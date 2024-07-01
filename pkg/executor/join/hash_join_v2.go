@@ -319,6 +319,7 @@ func (e *HashJoinV2Exec) Close() error {
 	if e.stats != nil {
 		defer e.Ctx().GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.ID(), e.stats)
 	}
+	e.spillHelper.close()
 	err := e.BaseExecutor.Close()
 	return err
 }
@@ -726,6 +727,13 @@ func (w *ProbeWorkerV2) runJoinWorker(fetcherAndWorkerSyncer *sync.WaitGroup) {
 		emptyProbeSideResult.chk = probeSideResult
 		w.probeChkResourceCh <- emptyProbeSideResult
 	}
+
+	err := w.JoinProbe.SpillRemainingProbeChunks()
+	if err != nil {
+		w.HashJoinCtx.joinResultCh <- &hashjoinWorkerResult{err: err}
+		return
+	}
+
 	// note joinResult.chk may be nil when getNewJoinResult fails in loops
 	if joinResult == nil {
 		return
@@ -734,8 +742,6 @@ func (w *ProbeWorkerV2) runJoinWorker(fetcherAndWorkerSyncer *sync.WaitGroup) {
 	} else if joinResult.chk != nil && joinResult.chk.NumRows() == 0 {
 		w.joinChkResourceCh <- joinResult.chk
 	}
-
-	// TODO spill remaining probe chunks
 }
 
 func (w *ProbeWorkerV2) getNewJoinResult() (bool, *hashjoinWorkerResult) {

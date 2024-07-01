@@ -54,11 +54,13 @@ type ProbeV2 interface {
 	// SetChunkForProbe will do some pre-work when start probing a chunk
 	SetChunkForProbe(chunk *chunk.Chunk) error
 	// SetRestoredChunkForProbe will do some pre-work for a chunk resoted from disk
-	SetRestoredChunkForProbe(chunk *chunk.Chunk, hashTable *hashTableV2) error // TODO returning error is needed?
+	SetRestoredChunkForProbe(chunk *chunk.Chunk, hashTable *hashTableV2) error
 	// Probe is to probe current chunk, the result chunk is set in result.chk, and Probe need to make sure result.chk.NumRows() <= result.chk.RequiredRows()
 	Probe(joinResult *hashjoinWorkerResult, sqlKiller *sqlkiller.SQLKiller) (ok bool, result *hashjoinWorkerResult)
 	// IsCurrentChunkProbeDone returns true if current probe chunk is all probed
 	IsCurrentChunkProbeDone() bool
+	// SpillRemainingProbeChunks spills remaining probe chunks
+	SpillRemainingProbeChunks() error
 	// ScanRowTable is called after all the probe chunks are probed. It is used in some special joins, like left outer join with left side to build, after all
 	// the probe side chunks are handled, it needs to scan the row table to return the un-matched rows
 	ScanRowTable(joinResult *hashjoinWorkerResult, sqlKiller *sqlkiller.SQLKiller) (result *hashjoinWorkerResult)
@@ -168,7 +170,7 @@ func (j *baseJoinProbe) SetChunkForProbe(chk *chunk.Chunk) (err error) {
 		}
 		j.usedRows = j.selRows
 	}
-	j.chunkRows = logicalRows // TODO attention for spill's SetProbeChunk
+	j.chunkRows = logicalRows
 	if cap(j.matchedRowsHeaders) >= logicalRows {
 		j.matchedRowsHeaders = j.matchedRowsHeaders[:logicalRows]
 	} else {
@@ -246,8 +248,6 @@ func (j *baseJoinProbe) SetChunkForProbe(chk *chunk.Chunk) (err error) {
 			j.spillTmpChk[partIndex].AppendPartialRow(2, j.currentChunk.GetRow(logicalRowIndex))
 
 			if j.spillTmpChk[partIndex].IsFull() {
-				j.ctx.spillHelper.probeRowsInDisk[partIndex].Add(j.spillTmpChk[partIndex])
-				// TODO spill remaining data
 				err := j.ctx.spillHelper.spillProbeChk(int(partIndex), j.spillTmpChk[partIndex])
 				if err != nil {
 					return err
@@ -260,7 +260,7 @@ func (j *baseJoinProbe) SetChunkForProbe(chk *chunk.Chunk) (err error) {
 			j.hashValues[partIndex] = append(j.hashValues[partIndex], posAndHashValue{hashValue: hashValue, pos: logicalRowIndex})
 		}
 	}
-	j.currentProbeRow = 0 // TODO attention for spill's SetProbeChunk
+	j.currentProbeRow = 0
 	for i := 0; i < j.ctx.PartitionNumber; i++ {
 		for index := range j.hashValues[i] {
 			j.matchedRowsHeaders[j.hashValues[i][index].pos] = j.ctx.hashTableContext.hashTable.tables[i].lookup(j.hashValues[i][index].hashValue)
@@ -304,6 +304,20 @@ func (j *baseJoinProbe) SetRestoredChunkForProbe(chk *chunk.Chunk, hashTable *ha
 	for i := 0; i < logicalRows; i++ {
 		j.serializedKeys[i] = append(j.serializedKeys[i], serializedKeysCol.GetBytes(i)...)
 		j.matchedRowsHeaders[i] = hashTable.tables[0].lookup(uint64(hashValueCol.GetInt64(i)))
+	}
+	j.currentProbeRow = 0
+	return nil
+}
+
+func (j *baseJoinProbe) SpillRemainingProbeChunks() error {
+	for i := 0; i < j.ctx.PartitionNumber; i++ {
+		if j.spillTmpChk[i].NumRows() > 0 {
+			err := j.ctx.spillHelper.spillProbeChk(i, j.spillTmpChk[i])
+			if err != nil {
+				return err
+			}
+			j.spillTmpChk[i].Reset()
+		}
 	}
 	return nil
 }
