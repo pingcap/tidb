@@ -525,7 +525,13 @@ func (cfg *RestoreConfig) generateSnapshotRestoreTaskName(clusterID uint64) stri
 	return cfg.checkpointSnapshotRestoreTaskName
 }
 
-func configureRestoreClient(ctx context.Context, client *snapclient.SnapClient, cfg *RestoreConfig) error {
+func configureRestoreClient(ctx context.Context, client *snapclient.SnapClient, kvConfigs *pconfig.KVConfig, cfg *RestoreConfig) error {
+	// set with kv config
+	// using tikv config to set the concurrency-per-store for client.
+	client.SetConcurrencyPerStore(kvConfigs.ImportGoroutines.Value)
+	client.SetMergeSplitKeyThreshold(kvConfigs.MergeRegionSize.Value, kvConfigs.MergeRegionKeyCount.Value)
+
+	// set with restore config
 	client.SetRateLimit(cfg.RateLimit)
 	client.SetCrypter(&cfg.CipherInfo)
 	if cfg.NoSchema {
@@ -768,9 +774,7 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 
 	keepaliveCfg.PermitWithoutStream = true
 	client := snapclient.NewRestoreClient(mgr.GetPDClient(), mgr.GetPDHTTPClient(), mgr.GetTLSConfig(), keepaliveCfg)
-	// using tikv config to set the concurrency-per-store for client.
-	client.SetConcurrencyPerStore(kvConfigs.ImportGoroutines.Value)
-	err = configureRestoreClient(ctx, client, cfg)
+	err = configureRestoreClient(ctx, client, kvConfigs, cfg)
 	if err != nil {
 		return errors.Trace(err)
 	}

@@ -24,6 +24,7 @@ import (
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/encryptionpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
+	pconfig "github.com/pingcap/tidb/br/pkg/config"
 	"github.com/pingcap/tidb/br/pkg/conn"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	snapclient "github.com/pingcap/tidb/br/pkg/restore/snap_client"
@@ -71,11 +72,20 @@ func TestConfigureRestoreClient(t *testing.T) {
 		RestoreCommonConfig: restoreComCfg,
 		DdlBatchSize:        127,
 	}
+	kvConfigs := &pconfig.KVConfig{
+		ImportGoroutines:    pconfig.ConfigTerm[uint]{Value: 10},
+		MergeRegionSize:     pconfig.ConfigTerm[uint64]{Value: 20},
+		MergeRegionKeyCount: pconfig.ConfigTerm[uint64]{Value: 30},
+	}
 	client := snapclient.NewRestoreClient(mockPDClient{}, nil, nil, keepalive.ClientParameters{})
 	ctx := context.Background()
-	err := configureRestoreClient(ctx, client, restoreCfg)
+	err := configureRestoreClient(ctx, client, kvConfigs, restoreCfg)
 	require.NoError(t, err)
-	require.Equal(t, uint(128), client.GetBatchDdlSize())
+	require.Equal(t, uint(127), client.GetBatchDdlSize())
+	require.Equal(t, uint(10), client.GetConcurrencyPerStore())
+	mergeRegionSize, mergeRegionKeyCount := client.GetMergeSplitKeyThreshold()
+	require.Equal(t, uint64(20), mergeRegionSize)
+	require.Equal(t, uint64(30), mergeRegionKeyCount)
 }
 
 func TestAdjustRestoreConfigForStreamRestore(t *testing.T) {

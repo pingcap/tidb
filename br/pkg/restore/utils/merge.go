@@ -73,14 +73,17 @@ func MergeAndRewriteFileRanges(
 	for key := range filesMap {
 		files := filesMap[key]
 		rangeSize := uint64(0)
+		rangeCount := uint64(0)
 		for _, f := range filesMap[key] {
-			rangeSize += f.Size_
+			rangeSize += f.TotalBytes
+			rangeCount += f.TotalKvs
 		}
 		rg := &rtree.Range{
 			StartKey: files[0].GetStartKey(),
 			EndKey:   files[0].GetEndKey(),
 			Files:    files,
 			Size:     rangeSize,
+			Count:    rangeCount,
 		}
 		// rewrite Range for split.
 		// so that splitRanges no need to handle rewrite rules any more.
