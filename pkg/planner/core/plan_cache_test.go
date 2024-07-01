@@ -1842,11 +1842,11 @@ func TestPlanCacheDirtyTables(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`use test`)
-	tk.MustExec(`create table t1 (a int);`)
-	tk.MustExec(`create table t2 (a int);`)
 
 	for _, t1Dirty := range []bool{true, false} {
 		for _, t2Dirty := range []bool{true, false} {
+			tk.MustExec(`create table t1 (a int);`)
+			tk.MustExec(`create table t2 (a int);`)
 			tk.MustExec(`begin`)
 			tk.MustExec(`prepare st from 'select 1 from t1, t2'`)
 			if t1Dirty {
@@ -1873,12 +1873,13 @@ func TestPlanCacheDirtyTables(t *testing.T) {
 					if testT1Dirty == t1Dirty && testT2Dirty == t2Dirty {
 						tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
 					} else {
-						tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+						tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
 					}
 
 					tk.MustExec(`commit`)
 				}
 			}
+			tk.MustExec(`drop table t1, t2`)
 		}
 	}
 }
