@@ -82,11 +82,6 @@ func (is *LogicalIndexScan) PreparePossibleProperties(_ *expression.Schema, _ ..
 }
 
 // PreparePossibleProperties implements base.LogicalPlan PreparePossibleProperties interface.
-func (*TiKVSingleGather) PreparePossibleProperties(_ *expression.Schema, childrenProperties ...[][]*expression.Column) [][]*expression.Column {
-	return childrenProperties[0]
-}
-
-// PreparePossibleProperties implements base.LogicalPlan PreparePossibleProperties interface.
 func (*LogicalSelection) PreparePossibleProperties(_ *expression.Schema, childrenProperties ...[][]*expression.Column) [][]*expression.Column {
 	return childrenProperties[0]
 }

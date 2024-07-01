@@ -31,6 +31,7 @@ go_library(
         "logical_plans.go",
         "logical_sort.go",
         "logical_table_dual.go",
+        "logical_tikv_single_gather.go",
         "logical_top_n.go",
         "logical_union_all.go",
         "logical_window.go",
