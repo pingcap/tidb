@@ -111,7 +111,7 @@ func (e *CTEExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 			return err
 		}
 	}
-	return e.producer.getChunk(ctx, e, req)
+	return e.producer.getChunk(e, req)
 }
 
 func setFirstErr(firstErr error, newErr error, msg string) error {
@@ -271,7 +271,7 @@ func (p *cteProducer) closeProducer() (firstErr error) {
 	return
 }
 
-func (p *cteProducer) getChunk(ctx context.Context, cteExec *CTEExec, req *chunk.Chunk) (err error) {
+func (p *cteProducer) getChunk(cteExec *CTEExec, req *chunk.Chunk) (err error) {
 	req.Reset()
 	if p.hasLimit {
 		return p.nextChunkLimit(cteExec, req)
@@ -338,19 +338,11 @@ func (p *cteProducer) produce(ctx context.Context) (err error) {
 	if p.resTbl.Error() != nil {
 		return p.resTbl.Error()
 	}
-<<<<<<< HEAD:executor/cte.go
-	resAction := setupCTEStorageTracker(p.resTbl, cteExec.ctx, p.memTracker, p.diskTracker)
-	iterInAction := setupCTEStorageTracker(p.iterInTbl, cteExec.ctx, p.memTracker, p.diskTracker)
-	var iterOutAction *chunk.SpillDiskAction
-	if p.iterOutTbl != nil {
-		iterOutAction = setupCTEStorageTracker(p.iterOutTbl, cteExec.ctx, p.memTracker, p.diskTracker)
-=======
 	resAction := setupCTEStorageTracker(p.resTbl, p.ctx, p.memTracker, p.diskTracker)
 	iterInAction := setupCTEStorageTracker(p.iterInTbl, p.ctx, p.memTracker, p.diskTracker)
 	var iterOutAction *chunk.SpillDiskAction
 	if p.iterOutTbl != nil {
 		iterOutAction = setupCTEStorageTracker(p.iterOutTbl, p.ctx, p.memTracker, p.diskTracker)
->>>>>>> 479f4be0920 (executor: setup mem tracker for CTE correctly (#54208)):pkg/executor/cte.go
 	}
 
 	failpoint.Inject("testCTEStorageSpill", func(val failpoint.Value) {
