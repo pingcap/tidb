@@ -361,15 +361,9 @@ func (h *Handle) initStatsHistogramsByPaging(is infoschema.InfoSchema, cache sta
 func (h *Handle) initStatsHistogramsConcurrency(is infoschema.InfoSchema, cache statstypes.StatsCache, totalMemory uint64) error {
 	var maxTid = maxTidRecord.tid.Load()
 	tid := int64(0)
-<<<<<<< HEAD
 	ls := initstats.NewRangeWorker(func(task initstats.Task) error {
-		return h.initStatsHistogramsByPaging(is, cache, task)
-	})
-=======
-	ls := initstats.NewRangeWorker("histogram", func(task initstats.Task) error {
 		return h.initStatsHistogramsByPaging(is, cache, task, totalMemory)
-	}, uint64(maxTid), uint64(initStatsStep))
->>>>>>> 2cea9949f20 (statistics: stop loading too many stats when to init stats (#53999))
+	})
 	ls.LoadStats()
 	for tid <= maxTid {
 		ls.SendTask(initstats.Task{
@@ -483,18 +477,12 @@ func (h *Handle) initStatsTopNConcurrency(cache statstypes.StatsCache, totalMemo
 	}
 	var maxTid = maxTidRecord.tid.Load()
 	tid := int64(0)
-<<<<<<< HEAD
 	ls := initstats.NewRangeWorker(func(task initstats.Task) error {
-		return h.initStatsTopNByPaging(cache, task)
-	})
-=======
-	ls := initstats.NewRangeWorker("TopN", func(task initstats.Task) error {
 		if isFullCache(cache, totalMemory) {
 			return nil
 		}
 		return h.initStatsTopNByPaging(cache, task, totalMemory)
-	}, uint64(maxTid), uint64(initStatsStep))
->>>>>>> 2cea9949f20 (statistics: stop loading too many stats when to init stats (#53999))
+	})
 	ls.LoadStats()
 	for tid <= maxTid {
 		if isFullCache(cache, totalMemory) {
@@ -707,14 +695,10 @@ func (h *Handle) initStatsBucketsConcurrency(cache statstypes.StatsCache, totalM
 	}
 	var maxTid = maxTidRecord.tid.Load()
 	tid := int64(0)
-<<<<<<< HEAD
 	ls := initstats.NewRangeWorker(func(task initstats.Task) error {
-=======
-	ls := initstats.NewRangeWorker("bucket", func(task initstats.Task) error {
 		if isFullCache(cache, totalMemory) {
 			return nil
 		}
->>>>>>> 2cea9949f20 (statistics: stop loading too many stats when to init stats (#53999))
 		return h.initStatsBucketsByPaging(cache, task)
 	})
 	ls.LoadStats()
@@ -804,12 +788,7 @@ func (h *Handle) InitStats(is infoschema.InfoSchema) (err error) {
 			return err
 		}
 	}
-<<<<<<< HEAD
-	err = h.initStatsBuckets(cache)
-=======
 	err = h.initStatsBuckets(cache, totalMemory)
-	statslogutil.StatsLogger().Info("complete to load the bucket")
->>>>>>> 2cea9949f20 (statistics: stop loading too many stats when to init stats (#53999))
 	if err != nil {
 		return errors.Trace(err)
 	}
