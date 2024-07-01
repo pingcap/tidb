@@ -244,7 +244,7 @@ func TestAnalyzeNoPredicateColumnsWithIndexes(t *testing.T) {
 	)
 	// TODO: we should also include indexes in the job info.
 	tk.MustQuery("select table_name, job_info from mysql.analyze_jobs order by id desc limit 1").Check(
-		testkit.Rows("t analyze table columns a, b with 256 buckets, 100 topn, 1 samplerate"),
+		testkit.Rows("t analyze table all indexes, columns a, b with 256 buckets, 100 topn, 1 samplerate"),
 	)
 }
 
@@ -290,6 +290,6 @@ func TestAnalyzeNoPredicateColumnsWithPrimaryKey(t *testing.T) {
 	// Analyze table.
 	tk.MustExec("analyze table t")
 	tk.MustQuery("select table_name, job_info from mysql.analyze_jobs order by id desc limit 1").Check(
-		testkit.Rows("t analyze table columns a, b with 256 buckets, 100 topn, 1 samplerate"),
+		testkit.Rows("t analyze table all indexes, columns a, b with 256 buckets, 100 topn, 1 samplerate"),
 	)
 }

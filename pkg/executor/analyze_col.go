@@ -412,6 +412,31 @@ func prepareColumns(e *AnalyzeColumnsExec, b *strings.Builder) {
 	}
 }
 
+// prepareIndexes prepares the indexes for the analyze job.
+func prepareIndexes(e *AnalyzeColumnsExec, b *strings.Builder) {
+	indexes := e.indexes
+
+	// If there are no indexes, skip the process.
+	if len(indexes) == 0 {
+		return
+	}
+	if len(indexes) < len(e.tableInfo.Indices) {
+		if len(indexes) > 1 {
+			b.WriteString(" columns ")
+		} else {
+			b.WriteString(" column ")
+		}
+		for i, index := range indexes {
+			if i > 0 {
+				b.WriteString(", ")
+			}
+			b.WriteString(index.Name.O)
+		}
+	} else {
+		b.WriteString(" all indexes")
+	}
+}
+
 // prepareV2AnalyzeJobInfo prepares the job info for the analyze job.
 func prepareV2AnalyzeJobInfo(e *AnalyzeColumnsExec) {
 	// For v1, we analyze all columns in a single job, so we don't need to set the job info.
@@ -431,6 +456,10 @@ func prepareV2AnalyzeJobInfo(e *AnalyzeColumnsExec) {
 	}
 	b.WriteString("analyze table")
 
+	prepareIndexes(e, &b)
+	if len(e.indexes) > 0 && len(e.colsInfo) > 0 {
+		b.WriteString(",")
+	}
 	prepareColumns(e, &b)
 
 	var needComma bool
