@@ -39,27 +39,29 @@ import (
 func requireTableEqual(t *testing.T, a *statistics.Table, b *statistics.Table) {
 	require.Equal(t, b.RealtimeCount, a.RealtimeCount)
 	require.Equal(t, b.ModifyCount, a.ModifyCount)
-	require.Equal(t, len(b.Columns), len(a.Columns))
-	for i := range a.Columns {
-		require.True(t, statistics.HistogramEqual(&a.Columns[i].Histogram, &b.Columns[i].Histogram, false))
-		if a.Columns[i].CMSketch == nil {
-			require.Nil(t, b.Columns[i].CMSketch)
+	require.Equal(t, b.ColNum(), a.ColNum())
+	a.ForEachColumnImmutable(func(i int64, col *statistics.Column) bool {
+		require.True(t, statistics.HistogramEqual(&col.Histogram, &b.GetCol(i).Histogram, false))
+		if col.CMSketch == nil {
+			require.Nil(t, b.GetCol(i).CMSketch)
 		} else {
-			require.True(t, a.Columns[i].CMSketch.Equal(b.Columns[i].CMSketch))
+			require.True(t, col.CMSketch.Equal(b.GetCol(i).CMSketch))
 		}
 		// The nil case has been considered in (*TopN).Equal() so we don't need to consider it here.
-		require.Truef(t, a.Columns[i].TopN.Equal(b.Columns[i].TopN), "%v, %v", a.Columns[i].TopN, b.Columns[i].TopN)
-	}
-	require.Equal(t, len(b.Indices), len(a.Indices))
-	for i := range a.Indices {
-		require.True(t, statistics.HistogramEqual(&a.Indices[i].Histogram, &b.Indices[i].Histogram, false))
-		if a.Indices[i].CMSketch == nil {
-			require.Nil(t, b.Indices[i].CMSketch)
+		require.Truef(t, col.TopN.Equal(b.GetCol(i).TopN), "%v, %v", col.TopN, b.GetCol(i).TopN)
+		return false
+	})
+	require.Equal(t, b.IdxNum(), a.IdxNum())
+	a.ForEachIndexImmutable(func(i int64, idx *statistics.Index) bool {
+		require.True(t, statistics.HistogramEqual(&idx.Histogram, &b.GetIdx(i).Histogram, false))
+		if idx.CMSketch == nil {
+			require.Nil(t, b.GetIdx(i).CMSketch)
 		} else {
-			require.True(t, a.Indices[i].CMSketch.Equal(b.Indices[i].CMSketch))
+			require.True(t, idx.CMSketch.Equal(b.GetIdx(i).CMSketch))
 		}
-		require.True(t, a.Indices[i].TopN.Equal(b.Indices[i].TopN))
-	}
+		require.True(t, idx.TopN.Equal(b.GetIdx(i).TopN))
+		return false
+	})
 	require.True(t, internal.IsSameExtendedStats(a.ExtendedStats, b.ExtendedStats))
 }
 
@@ -361,12 +363,12 @@ func TestDumpCMSketchWithTopN(t *testing.T) {
 	cms, _, _, _ := statistics.NewCMSketchAndTopN(5, 2048, fakeData, 20, 100)
 
 	stat := h.GetTableStats(tableInfo)
-	err = h.SaveStatsToStorage(tableInfo.ID, 1, 0, 0, &stat.Columns[tableInfo.Columns[0].ID].Histogram, cms, nil, statistics.Version1, 1, false, handleutil.StatsMetaHistorySourceLoadStats)
+	err = h.SaveStatsToStorage(tableInfo.ID, 1, 0, 0, &stat.GetCol(tableInfo.Columns[0].ID).Histogram, cms, nil, statistics.Version1, 1, false, handleutil.StatsMetaHistorySourceLoadStats)
 	require.NoError(t, err)
 	require.Nil(t, h.Update(is))
 
 	stat = h.GetTableStats(tableInfo)
-	cmsFromStore := stat.Columns[tableInfo.Columns[0].ID].CMSketch
+	cmsFromStore := stat.GetCol(tableInfo.Columns[0].ID).CMSketch
 	require.NotNil(t, cmsFromStore)
 	require.True(t, cms.Equal(cmsFromStore))
 
@@ -375,7 +377,7 @@ func TestDumpCMSketchWithTopN(t *testing.T) {
 	err = h.LoadStatsFromJSON(context.Background(), is, jsonTable, 0)
 	require.NoError(t, err)
 	stat = h.GetTableStats(tableInfo)
-	cmsFromJSON := stat.Columns[tableInfo.Columns[0].ID].CMSketch.Copy()
+	cmsFromJSON := stat.GetCol(tableInfo.Columns[0].ID).CMSketch.Copy()
 	require.True(t, cms.Equal(cmsFromJSON))
 }
 
@@ -627,12 +629,14 @@ func TestLoadStatsFromOldVersion(t *testing.T) {
 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	statsTbl := h.GetTableStats(tbl.Meta())
-	for _, col := range statsTbl.Columns {
+	statsTbl.ForEachColumnImmutable(func(i int64, col *statistics.Column) bool {
 		require.False(t, col.IsStatsInitialized())
-	}
-	for _, idx := range statsTbl.Indices {
+		return false
+	})
+	statsTbl.ForEachIndexImmutable(func(i int64, idx *statistics.Index) bool {
 		require.False(t, idx.IsStatsInitialized())
-	}
+		return false
+	})
 }
 
 func TestPersistStats(t *testing.T) {

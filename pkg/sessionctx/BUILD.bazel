@@ -15,6 +15,7 @@ go_library(
         "//pkg/metrics",
         "//pkg/parser/model",
         "//pkg/planner/context",
+        "//pkg/session/cursor",
         "//pkg/sessionctx/sessionstates",
         "//pkg/sessionctx/stmtctx",
         "//pkg/sessionctx/variable",

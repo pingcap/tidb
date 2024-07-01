@@ -96,3 +96,17 @@ func EncodeIntAsUint32(result []byte, value int) []byte {
 	binary.BigEndian.PutUint32(buf[:], uint32(value))
 	return append(result, buf[:]...)
 }
+
+// GetMaxSortPrefix returns the prefix offset of sortCols in allCols.
+func GetMaxSortPrefix(sortCols, allCols []*expression.Column) []int {
+	tmpSchema := expression.NewSchema(allCols...)
+	sortColOffsets := make([]int, 0, len(sortCols))
+	for _, sortCol := range sortCols {
+		offset := tmpSchema.ColumnIndex(sortCol)
+		if offset == -1 {
+			return sortColOffsets
+		}
+		sortColOffsets = append(sortColOffsets, offset)
+	}
+	return sortColOffsets
+}

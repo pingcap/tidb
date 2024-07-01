@@ -585,15 +585,39 @@ type Job struct {
 	SQLMode mysql.SQLMode `json:"sql_mode"`
 }
 
-// InvolvingSchemaInfo returns the schema info involved in the job.
-// The value should be stored in lower case.
+// InvolvingSchemaInfo returns the schema info involved in the job. The value
+// should be stored in lower case. Only one type of the three member types
+// (Database&Table, Policy, ResourceGroup) should only be set in a
+// InvolvingSchemaInfo.
 type InvolvingSchemaInfo struct {
-	Database string `json:"database"`
-	Table    string `json:"table"`
+	Database      string                  `json:"database,omitempty"`
+	Table         string                  `json:"table,omitempty"`
+	Policy        string                  `json:"policy,omitempty"`
+	ResourceGroup string                  `json:"resource_group,omitempty"`
+	Mode          InvolvingSchemaInfoMode `json:"mode,omitempty"`
 }
 
+// InvolvingSchemaInfoMode is used by InvolvingSchemaInfo.Mode.
+type InvolvingSchemaInfoMode int
+
+// ExclusiveInvolving and SharedInvolving are considered like the exclusive lock
+// and shared lock when calculate DDL job dependencies. And we also implement the
+// fair lock semantic which means if we have job A/B/C arrive in order, and job B
+// (exclusive request object 0) is waiting for the running job A (shared request
+// object 0), and job C (shared request object 0) arrives, job C should also be
+// blocked until job B is finished although job A & C has no dependency.
 const (
-	// InvolvingAll means all schemas/tables are affected.
+	// ExclusiveInvolving is the default value to keep compatibility with old
+	// versions.
+	ExclusiveInvolving InvolvingSchemaInfoMode = iota
+	SharedInvolving
+)
+
+const (
+	// InvolvingAll means all schemas/tables are affected. It's used in
+	// InvolvingSchemaInfo.Database/Tables fields. When both the Database and Tables
+	// are InvolvingAll it also means all placement policies and resource groups are
+	// affected. Currently the only case is FLASHBACK CLUSTER.
 	InvolvingAll = "*"
 	// InvolvingNone means no schema/table is affected.
 	InvolvingNone = ""
@@ -1034,7 +1058,7 @@ func (job *Job) GetInvolvingSchemaInfo() []InvolvingSchemaInfo {
 	}
 	table := job.TableName
 	// for schema related DDL, such as 'drop schema xxx'
-	if table == "" {
+	if len(job.SchemaName) > 0 && table == "" {
 		table = InvolvingAll
 	}
 	return []InvolvingSchemaInfo{

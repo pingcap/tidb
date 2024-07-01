@@ -658,9 +658,27 @@ func TestName(t *testing.T) {
 	txn, err := store.Begin()
 	require.NoError(t, err)
 
-	// TestTableNameKey
+	// TestDatabaseNameKey
 	m := meta.NewMeta(txn)
-	key := m.TableNameKey("db", "tb")
+	key := m.DatabaseNameKey("db")
+	require.Equal(t, string(key), "DBNames:db")
+
+	// TestCheckDatabaseNameExists
+	err = m.CheckDatabaseNameExists(m.DatabaseNameKey("db"))
+	require.True(t, meta.ErrDBNotExists.Equal(err))
+	// TestCheckDatabaseNameNotExists
+	err = m.CheckDatabaseNameNotExists(m.DatabaseNameKey("db"))
+	require.NoError(t, err)
+	// TestCreateDatabase
+	err = m.CreateDatabaseName("db", 1)
+	require.NoError(t, err)
+	err = m.CheckDatabaseNameExists(m.DatabaseNameKey("db"))
+	require.NoError(t, err)
+	err = m.CheckDatabaseNameNotExists(m.DatabaseNameKey("db"))
+	require.True(t, meta.ErrDBExists.Equal(err))
+
+	// TestTableNameKey
+	key = m.TableNameKey("db", "tb")
 	require.Equal(t, string(key), "Names:db\x00tb")
 
 	// TestCheckTableNameExists
@@ -683,6 +701,8 @@ func TestName(t *testing.T) {
 	err = m.CreateTableName("db", "tb", 3)
 	require.True(t, meta.ErrTableExists.Equal(err))
 
+	err = m.CreateDatabaseName("d", 4)
+	require.NoError(t, err)
 	err = m.CreateTableName("d", "btb", 3)
 	require.NoError(t, err)
 	err = m.CheckTableNameExists(m.TableNameKey("d", "btb"))
@@ -696,7 +716,7 @@ func TestName(t *testing.T) {
 
 	// TestDropDatabaseName
 	err = m.DropDatabaseName("xx")
-	require.NoError(t, err)
+	require.True(t, meta.ErrDBNotExists.Equal(err))
 	err = m.DropDatabaseName("d")
 	require.NoError(t, err)
 	err = m.CheckTableNameNotExists(m.TableNameKey("d", "btb"))
@@ -710,18 +730,22 @@ func TestName(t *testing.T) {
 	err = m.CheckTableNameNotExists(m.TableNameKey("db1", "t"))
 	require.NoError(t, err)
 
-	// TestDDLV2Initialized
-	v, err := m.GetDDLV2Initialized()
+	// TestClearAllDatabaseNames
+	err = m.ClearAllDatabaseNames()
+	require.NoError(t, err)
+
+	// TestFastCreateTableInitialized
+	v, err := m.GetFastCreateTableInitialized()
 	require.NoError(t, err)
 	require.Equal(t, v, false)
-	err = m.SetDDLV2Initialized(true)
+	err = m.SetFastCreateTableInitialized(true)
 	require.NoError(t, err)
-	v, err = m.GetDDLV2Initialized()
+	v, err = m.GetFastCreateTableInitialized()
 	require.NoError(t, err)
 	require.Equal(t, v, true)
-	err = m.SetDDLV2Initialized(false)
+	err = m.SetFastCreateTableInitialized(false)
 	require.NoError(t, err)
-	v, err = m.GetDDLV2Initialized()
+	v, err = m.GetFastCreateTableInitialized()
 	require.NoError(t, err)
 	require.Equal(t, v, false)
 

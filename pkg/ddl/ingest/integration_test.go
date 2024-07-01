@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -129,20 +130,23 @@ func TestAddIndexIngestPanic(t *testing.T) {
 
 	tk.MustExec("set global tidb_enable_dist_task = 0")
 
-	// Mock panic on coprocessor request sender.
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockCopSenderPanic", "return(true)"))
-	tk.MustExec("create table t (a int, b int, c int, d int, primary key (a) clustered);")
-	tk.MustExec("insert into t (a, b, c, d) values (1, 1, 1, 1), (2, 2, 2, 2), (3, 3, 3, 3);")
-	tk.MustGetErrCode("alter table t add index idx(b);", errno.ErrReorgPanic)
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockCopSenderPanic"))
+	t.Run("Mock panic on scan record operator", func(t *testing.T) {
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/scanRecordExec", func() {
+			panic("mock panic")
+		})
+		tk.MustExec("drop table if exists t;")
+		tk.MustExec("create table t (a int, b int, c int, d int, primary key (a) clustered);")
+		tk.MustExec("insert into t (a, b, c, d) values (1, 1, 1, 1), (2, 2, 2, 2), (3, 3, 3, 3);")
+		tk.MustGetErrCode("alter table t add index idx(b);", errno.ErrReorgPanic)
+	})
 
-	// Mock panic on local engine writer.
-	tk.MustExec("drop table t;")
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockLocalWriterPanic", "return"))
-	tk.MustExec("create table t (a int, b int, c int, d int, primary key (a) clustered);")
-	tk.MustExec("insert into t (a, b, c, d) values (1, 1, 1, 1), (2, 2, 2, 2), (3, 3, 3, 3);")
-	tk.MustGetErrCode("alter table t add index idx(b);", errno.ErrReorgPanic)
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockLocalWriterPanic"))
+	t.Run("Mock panic on local engine writer", func(t *testing.T) {
+		tk.MustExec("drop table if exists t;")
+		testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockLocalWriterPanic", "return")
+		tk.MustExec("create table t (a int, b int, c int, d int, primary key (a) clustered);")
+		tk.MustExec("insert into t (a, b, c, d) values (1, 1, 1, 1), (2, 2, 2, 2), (3, 3, 3, 3);")
+		tk.MustGetErrCode("alter table t add index idx(b);", errno.ErrReorgPanic)
+	})
 }
 
 func TestAddIndexIngestCancel(t *testing.T) {

@@ -106,7 +106,7 @@ func TestAnalyzeNonPartitionedIndexes(t *testing.T) {
 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	tblStats := handle.GetTableStats(tbl.Meta())
-	require.False(t, tblStats.Indices[1].IsAnalyzed())
+	require.False(t, tblStats.GetIdx(1).IsAnalyzed())
 
 	job.Analyze(handle, dom.SysProcTracker())
 	// Check the result of analyze.
@@ -114,10 +114,10 @@ func TestAnalyzeNonPartitionedIndexes(t *testing.T) {
 	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	tblStats = handle.GetTableStats(tbl.Meta())
-	require.NotNil(t, tblStats.Indices[1])
-	require.True(t, tblStats.Indices[1].IsAnalyzed())
-	require.NotNil(t, tblStats.Indices[2])
-	require.True(t, tblStats.Indices[2].IsAnalyzed())
+	require.NotNil(t, tblStats.GetIdx(1))
+	require.True(t, tblStats.GetIdx(1).IsAnalyzed())
+	require.NotNil(t, tblStats.GetIdx(2))
+	require.True(t, tblStats.GetIdx(2).IsAnalyzed())
 	// Check analyze jobs are created.
 	rows := tk.MustQuery("select * from mysql.analyze_jobs").Rows()
 	// Because analyze one index will analyze all indexes and all columns together, so there is only 1 job.

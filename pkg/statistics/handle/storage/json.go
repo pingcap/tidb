@@ -94,33 +94,45 @@ func GenJSONTableFromStats(sctx sessionctx.Context, dbName string, tableInfo *mo
 	jsonTbl := &util.JSONTable{
 		DatabaseName: dbName,
 		TableName:    tableInfo.Name.L,
-		Columns:      make(map[string]*util.JSONColumn, len(tbl.Columns)),
-		Indices:      make(map[string]*util.JSONColumn, len(tbl.Indices)),
+		Columns:      make(map[string]*util.JSONColumn, tbl.ColNum()),
+		Indices:      make(map[string]*util.JSONColumn, tbl.IdxNum()),
 		Count:        tbl.RealtimeCount,
 		ModifyCount:  tbl.ModifyCount,
 		Version:      tbl.Version,
 	}
-	for _, col := range tbl.Columns {
+	var outerErr error
+	tbl.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
 		hist, err := col.ConvertTo(statistics.UTCWithAllowInvalidDateCtx, types.NewFieldType(mysql.TypeBlob))
 		if err != nil {
-			return nil, errors.Trace(err)
+			outerErr = errors.Trace(err)
+			return true
 		}
 		proto := dumpJSONCol(hist, col.CMSketch, col.TopN, col.FMSketch, &col.StatsVer)
 		tracker.Consume(proto.TotalMemoryUsage())
 		if err := sctx.GetSessionVars().SQLKiller.HandleSignal(); err != nil {
-			return nil, err
+			outerErr = err
+			return true
 		}
 		jsonTbl.Columns[col.Info.Name.L] = proto
 		col.FMSketch.DestroyAndPutToPool()
 		hist.DestroyAndPutToPool()
+		return false
+	})
+	if outerErr != nil {
+		return nil, outerErr
 	}
-	for _, idx := range tbl.Indices {
+	tbl.ForEachIndexImmutable(func(_ int64, idx *statistics.Index) bool {
 		proto := dumpJSONCol(&idx.Histogram, idx.CMSketch, idx.TopN, nil, &idx.StatsVer)
 		tracker.Consume(proto.TotalMemoryUsage())
 		if err := sctx.GetSessionVars().SQLKiller.HandleSignal(); err != nil {
-			return nil, err
+			outerErr = err
+			return true
 		}
 		jsonTbl.Indices[idx.Info.Name.L] = proto
+		return false
+	})
+	if outerErr != nil {
+		return nil, outerErr
 	}
 	jsonTbl.ExtStats = dumpJSONExtendedStats(tbl.ExtendedStats)
 	return jsonTbl, nil
@@ -128,14 +140,7 @@ func GenJSONTableFromStats(sctx sessionctx.Context, dbName string, tableInfo *mo
 
 // TableStatsFromJSON loads statistic from JSONTable and return the Table of statistic.
 func TableStatsFromJSON(tableInfo *model.TableInfo, physicalID int64, jsonTbl *util.JSONTable) (*statistics.Table, error) {
-	newHistColl := statistics.HistColl{
-		PhysicalID:     physicalID,
-		HavePhysicalID: true,
-		RealtimeCount:  jsonTbl.Count,
-		ModifyCount:    jsonTbl.ModifyCount,
-		Columns:        make(map[int64]*statistics.Column, len(jsonTbl.Columns)),
-		Indices:        make(map[int64]*statistics.Index, len(jsonTbl.Indices)),
-	}
+	newHistColl := *statistics.NewHistColl(physicalID, true, jsonTbl.Count, jsonTbl.ModifyCount, len(jsonTbl.Columns), len(jsonTbl.Indices))
 	tbl := &statistics.Table{
 		HistColl:              newHistColl,
 		ColAndIdxExistenceMap: statistics.NewColAndIndexExistenceMap(len(tableInfo.Columns), len(tableInfo.Indices)),
@@ -169,7 +174,7 @@ func TableStatsFromJSON(tableInfo *model.TableInfo, physicalID int64, jsonTbl *u
 			if statsVer != statistics.Version0 {
 				tbl.StatsVer = int(statsVer)
 			}
-			tbl.Indices[idx.ID] = idx
+			tbl.SetIdx(idx.ID, idx)
 			tbl.ColAndIdxExistenceMap.InsertIndex(idxInfo.ID, idxInfo, true)
 		}
 	}
@@ -221,7 +226,7 @@ func TableStatsFromJSON(tableInfo *model.TableInfo, physicalID int64, jsonTbl *u
 			if statsVer != statistics.Version0 {
 				tbl.StatsVer = int(statsVer)
 			}
-			tbl.Columns[col.ID] = col
+			tbl.SetCol(col.ID, col)
 			tbl.ColAndIdxExistenceMap.InsertCol(colInfo.ID, colInfo, true)
 		}
 	}

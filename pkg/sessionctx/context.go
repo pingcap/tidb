@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	planctx "github.com/pingcap/tidb/pkg/planner/context"
+	"github.com/pingcap/tidb/pkg/session/cursor"
 	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -60,6 +61,19 @@ type SessionPlanCache interface {
 	Size() int
 	SetCapacity(capacity uint) error
 	Close()
+}
+
+// InstancePlanCache represents the instance/node level plan cache.
+// Value and Opts should always be *PlanCacheValue and *PlanCacheMatchOpts, use any to avoid cycle-import.
+type InstancePlanCache interface {
+	// Get gets the cached value from the cache according to key and opts.
+	Get(sctx Context, key string, opts any) (value any, ok bool)
+	// Put puts the key and value into the cache.
+	Put(sctx Context, key string, value, opts any) (succ bool)
+	// Evict evicts some cached values.
+	Evict() (evicted bool)
+	// MemUsage returns the total memory usage of this plan cache.
+	MemUsage() int64
 }
 
 // Context is an interface for transaction and executive args environment.
@@ -188,6 +202,8 @@ type Context interface {
 	ReportUsageStats()
 	// NewStmtIndexUsageCollector creates a new index usage collector for statement
 	NewStmtIndexUsageCollector() *indexusage.StmtIndexUsageCollector
+	// GetCursorTracker returns the cursor tracker of the session
+	GetCursorTracker() cursor.Tracker
 }
 
 // TxnFuture is an interface where implementations have a kv.Transaction field and after

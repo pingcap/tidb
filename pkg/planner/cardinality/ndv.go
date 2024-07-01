@@ -29,8 +29,8 @@ const distinctFactor = 0.8
 // EstimateColumnNDV computes estimated NDV of specified column using the original
 // histogram of `DataSource` which is retrieved from storage(not the derived one).
 func EstimateColumnNDV(tbl *statistics.Table, colID int64) (ndv float64) {
-	hist, ok := tbl.Columns[colID]
-	if ok && hist.IsStatsInitialized() {
+	hist := tbl.GetCol(colID)
+	if hist != nil && hist.IsStatsInitialized() {
 		ndv = float64(hist.Histogram.NDV)
 		// TODO: a better way to get the total row count derived from the last analyze.
 		analyzeCount := getTotalRowCount(tbl, hist)
@@ -50,17 +50,22 @@ func getTotalRowCount(statsTbl *statistics.Table, colHist *statistics.Column) in
 		return int64(colHist.TotalRowCount())
 	}
 	// If colHist is not fully loaded, we may still get its total row count from other index/column stats.
-	for _, idx := range statsTbl.Indices {
+	totCount := int64(0)
+	statsTbl.ForEachIndexImmutable(func(_ int64, idx *statistics.Index) bool {
 		if idx.IsFullLoad() && idx.LastUpdateVersion == colHist.LastUpdateVersion {
-			return int64(idx.TotalRowCount())
+			totCount = int64(idx.TotalRowCount())
+			return true
 		}
-	}
-	for _, col := range statsTbl.Columns {
+		return false
+	})
+	statsTbl.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
 		if col.IsFullLoad() && col.LastUpdateVersion == colHist.LastUpdateVersion {
-			return int64(col.TotalRowCount())
+			totCount = int64(col.TotalRowCount())
+			return true
 		}
-	}
-	return 0
+		return false
+	})
+	return totCount
 }
 
 // EstimateColsNDVWithMatchedLen returns the NDV of a couple of columns.

@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	planctx "github.com/pingcap/tidb/pkg/planner/context"
+	"github.com/pingcap/tidb/pkg/session/cursor"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -604,6 +605,11 @@ func (*Context) Close() {}
 
 // NewStmtIndexUsageCollector implements the sessionctx.Context interface
 func (*Context) NewStmtIndexUsageCollector() *indexusage.StmtIndexUsageCollector {
+	return nil
+}
+
+// GetCursorTracker implements the sessionctx.Context interface
+func (*Context) GetCursorTracker() cursor.Tracker {
 	return nil
 }
 

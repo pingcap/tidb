@@ -199,6 +199,22 @@ type RecordSet interface {
 	Close() error
 }
 
+// DetachableRecordSet extends the `RecordSet` to support detaching from current session context
+type DetachableRecordSet interface {
+	RecordSet
+
+	// TryDetach detaches the record set from the current session context.
+	//
+	// The last two return value indicates whether the record set is suitable for detaching, and whether
+	// it detaches successfully. If it faces any error during detaching (and there is no way to rollback),
+	// it will return the error. If an error is returned, the record set (and session) will be left at
+	// an unknown state.
+	//
+	// If the caller receives `_, false, _`, it means the original record set can still be used. If the caller
+	// receives an error, it means the original record set (and the session) is dirty.
+	TryDetach() (RecordSet, bool, error)
+}
+
 // MultiQueryNoDelayResult is an interface for one no-delay result for one statement in multi-queries.
 type MultiQueryNoDelayResult interface {
 	// AffectedRows return affected row for one statement in multi-queries.

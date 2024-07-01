@@ -34,6 +34,7 @@ go_library(
         "//pkg/parser/model",
         "//pkg/parser/mysql",
         "//pkg/parser/terror",
+        "//pkg/session/cursor",
         "//pkg/session/txninfo",
         "//pkg/sessionctx/stmtctx",
         "//pkg/util/collate",

@@ -15,7 +15,6 @@
 package executor
 
 import (
-	"cmp"
 	"context"
 	"fmt"
 	"slices"
@@ -266,20 +265,22 @@ func (e *ShowExec) appendTableForStatsHistograms(dbName, tblName, partitionName 
 	if statsTbl.Pseudo {
 		return
 	}
-	for _, col := range stableColsStats(statsTbl.Columns) {
+	statsTbl.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
 		if !col.IsStatsInitialized() {
-			continue
+			return false
 		}
 		e.histogramToRow(dbName, tblName, partitionName, col.Info.Name.O, 0, col.Histogram, cardinality.AvgColSize(col, statsTbl.RealtimeCount, false),
 			col.StatsLoadedStatus.StatusToString(), col.MemoryUsage())
-	}
-	for _, idx := range stableIdxsStats(statsTbl.Indices) {
+		return false
+	})
+	statsTbl.ForEachIndexImmutable(func(_ int64, idx *statistics.Index) bool {
 		if !idx.IsStatsInitialized() {
-			continue
+			return false
 		}
 		e.histogramToRow(dbName, tblName, partitionName, idx.Info.Name.O, 1, idx.Histogram, 0,
 			idx.StatsLoadedStatus.StatusToString(), idx.MemoryUsage())
-	}
+		return false
+	})
 }
 
 func (e *ShowExec) histogramToRow(dbName, tblName, partitionName, colName string, isIndex int, hist statistics.Histogram,
@@ -348,15 +349,15 @@ func (e *ShowExec) appendTableForStatsBuckets(dbName, tblName, partitionName str
 	if statsTbl.Pseudo {
 		return nil
 	}
-	colNameToType := make(map[string]byte, len(statsTbl.Columns))
-	for _, col := range stableColsStats(statsTbl.Columns) {
+	colNameToType := make(map[string]byte, statsTbl.ColNum())
+	for _, col := range statsTbl.StableOrderColSlice() {
 		err := e.bucketsToRows(dbName, tblName, partitionName, col.Info.Name.O, 0, col.Histogram, nil)
 		if err != nil {
 			return errors.Trace(err)
 		}
 		colNameToType[col.Info.Name.O] = col.Histogram.Tp.GetType()
 	}
-	for _, idx := range stableIdxsStats(statsTbl.Indices) {
+	for _, idx := range statsTbl.StableOrderIdxSlice() {
 		idxColumnTypes := make([]byte, 0, len(idx.Info.Columns))
 		for i := 0; i < len(idx.Info.Columns); i++ {
 			idxColumnTypes = append(idxColumnTypes, colNameToType[idx.Info.Columns[i].Name.O])
@@ -409,15 +410,15 @@ func (e *ShowExec) appendTableForStatsTopN(dbName, tblName, partitionName string
 	if statsTbl.Pseudo {
 		return nil
 	}
-	colNameToType := make(map[string]byte, len(statsTbl.Columns))
-	for _, col := range stableColsStats(statsTbl.Columns) {
+	colNameToType := make(map[string]byte, statsTbl.ColNum())
+	for _, col := range statsTbl.StableOrderColSlice() {
 		err := e.topNToRows(dbName, tblName, partitionName, col.Info.Name.O, 1, 0, col.TopN, []byte{col.Histogram.Tp.GetType()})
 		if err != nil {
 			return errors.Trace(err)
 		}
 		colNameToType[col.Info.Name.O] = col.Histogram.Tp.GetType()
 	}
-	for _, idx := range stableIdxsStats(statsTbl.Indices) {
+	for _, idx := range statsTbl.StableOrderIdxSlice() {
 		idxColumnTypes := make([]byte, 0, len(idx.Info.Columns))
 		for i := 0; i < len(idx.Info.Columns); i++ {
 			idxColumnTypes = append(idxColumnTypes, colNameToType[idx.Info.Columns[i].Name.O])
@@ -428,22 +429,6 @@ func (e *ShowExec) appendTableForStatsTopN(dbName, tblName, partitionName string
 		}
 	}
 	return nil
-}
-
-func stableColsStats(colStats map[int64]*statistics.Column) (cols []*statistics.Column) {
-	for _, col := range colStats {
-		cols = append(cols, col)
-	}
-	slices.SortFunc(cols, func(i, j *statistics.Column) int { return cmp.Compare(i.ID, j.ID) })
-	return
-}
-
-func stableIdxsStats(idxStats map[int64]*statistics.Index) (idxs []*statistics.Index) {
-	for _, idx := range idxStats {
-		idxs = append(idxs, idx)
-	}
-	slices.SortFunc(idxs, func(i, j *statistics.Index) int { return cmp.Compare(i.ID, j.ID) })
-	return
 }
 
 func (e *ShowExec) topNToRows(dbName, tblName, partitionName, colName string, numOfCols int, isIndex int, topN *statistics.TopN, columnTypes []byte) error {

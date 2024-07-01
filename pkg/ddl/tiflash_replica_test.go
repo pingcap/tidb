@@ -270,7 +270,14 @@ func TestSkipSchemaChecker(t *testing.T) {
 	tb := external.GetTableByName(t, tk, "test", "t1")
 	err := domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
 	require.NoError(t, err)
-	tk.MustExec("commit")
+	err = tk.ExecToErr("commit")
+	if err != nil {
+		// If infoschema is changed betewen v1 and v2, it may trigger full reload.
+		// The delta(schema diffs) in schema validator maybe `Reset()` and lost.
+		// As a result, the schema validator cannot determine if a txn is valid.
+		// Since this is only happened when metadata lock is disabled, we can ignore this error.
+		require.True(t, terror.ErrorEqual(domain.ErrInfoSchemaChanged, err))
+	}
 
 	// Test can't skip schema checker.
 	tk.MustExec("begin")

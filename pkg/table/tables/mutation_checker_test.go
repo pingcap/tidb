@@ -92,9 +92,7 @@ func TestCheckRowInsertionConsistency(t *testing.T) {
 
 	// mocked data
 	mockRowKey233 := tablecodec.EncodeRowKeyWithHandle(1, kv.IntHandle(233))
-	mockValue233, err := tablecodec.EncodeRow(
-		sessVars.StmtCtx.TimeZone(), []types.Datum{types.NewIntDatum(233)}, []int64{101}, nil, nil, &rd,
-	)
+	mockValue233, err := tablecodec.EncodeRow(sessVars.StmtCtx.TimeZone(), []types.Datum{types.NewIntDatum(233)}, []int64{101}, nil, nil, nil, &rd)
 	require.Nil(t, err)
 	fakeRowInsertion := mutation{key: []byte{1, 1}, value: []byte{1, 1, 1}}
 
@@ -306,7 +304,7 @@ func TestCheckIndexKeysAndCheckHandleConsistency(t *testing.T) {
 					// test checkHandleConsistency
 					rowKey := tablecodec.EncodeRowKeyWithHandle(table.tableID, handle)
 					corruptedRowKey := tablecodec.EncodeRowKeyWithHandle(table.tableID, corruptedHandle)
-					rowValue, err := tablecodec.EncodeRow(sessVars.StmtCtx.TimeZone(), rowToInsert, []int64{1, 2}, nil, nil, &rd)
+					rowValue, err := tablecodec.EncodeRow(sessVars.StmtCtx.TimeZone(), rowToInsert, []int64{1, 2}, nil, nil, nil, &rd)
 					require.Nil(t, err)
 					rowMutation := mutation{key: rowKey, value: rowValue}
 					corruptedRowMutation := mutation{key: corruptedRowKey, value: rowValue}

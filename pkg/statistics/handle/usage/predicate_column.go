@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
 	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/statistics/handle/usage/indexusage"
@@ -82,10 +81,6 @@ func (u *statsUsageImpl) CollectColumnsInExtendedStats(tableID int64) (columnIDs
 
 // LoadColumnStatsUsage loads column stats usage information from disk.
 func LoadColumnStatsUsage(sctx sessionctx.Context, loc *time.Location) (map[model.TableItemID]statstypes.ColStatsTimeInfo, error) {
-	disableTime, err := getDisableColumnTrackingTime(sctx)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
 	// Since we use another session from session pool to read mysql.column_stats_usage, which may have different @@time_zone, so we do time zone conversion here.
 	rows, _, err := utilstats.ExecRows(sctx, "SELECT table_id, column_id, CONVERT_TZ(last_used_at, @@TIME_ZONE, '+00:00'), CONVERT_TZ(last_analyzed_at, @@TIME_ZONE, '+00:00') FROM mysql.column_stats_usage")
 	if err != nil {
@@ -103,12 +98,8 @@ func LoadColumnStatsUsage(sctx sessionctx.Context, loc *time.Location) (map[mode
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
-			// If `last_used_at` is before the time when `set global tidb_enable_column_tracking = 0`, we should ignore it because
-			// `set global tidb_enable_column_tracking = 0` indicates all the predicate columns collected before.
-			if disableTime == nil || gt.After(*disableTime) {
-				t := types.NewTime(types.FromGoTime(gt.In(loc)), mysql.TypeTimestamp, types.DefaultFsp)
-				statsUsage.LastUsedAt = &t
-			}
+			t := types.NewTime(types.FromGoTime(gt.In(loc)), mysql.TypeTimestamp, types.DefaultFsp)
+			statsUsage.LastUsedAt = &t
 		}
 		if !row.IsNull(3) {
 			gt, err := row.GetTime(3).GoTime(time.UTC)
@@ -130,11 +121,6 @@ func GetPredicateColumns(sctx sessionctx.Context, tableID int64) ([]int64, error
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	// This time is the time when `set global tidb_enable_column_tracking = 0`.
-	disableTime, err := getDisableColumnTrackingTime(sctx)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
 	rows, _, err := utilstats.ExecRows(
 		sctx,
 		"SELECT column_id, CONVERT_TZ(last_used_at, @@TIME_ZONE, '+00:00') FROM mysql.column_stats_usage WHERE table_id = %? AND last_used_at IS NOT NULL",
@@ -151,17 +137,7 @@ func GetPredicateColumns(sctx sessionctx.Context, tableID int64) ([]int64, error
 			continue
 		}
 		colID := row.GetInt64(0)
-		gt, err := row.GetTime(1).GoTime(time.UTC)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		// If `last_used_at` is before the time when `set global tidb_enable_column_tracking = 0`, we don't regard the column as predicate column because
-		// `set global tidb_enable_column_tracking = 0` indicates all the predicate columns collected before.
-		// TODO: Why do we need to do this? If column tracking is already disabled, we should not collect any column usage.
-		// If this refers to re-enabling column tracking, shouldn't we retain the column usage data from before it was disabled?
-		if disableTime == nil || gt.After(*disableTime) {
-			columnIDs = append(columnIDs, colID)
-		}
+		columnIDs = append(columnIDs, colID)
 	}
 	return columnIDs, nil
 }
@@ -191,37 +167,6 @@ func cleanupDroppedColumnStatsUsage(sctx sessionctx.Context, tableID int64) erro
 	)
 
 	return err
-}
-
-// getDisableColumnTrackingTime reads the value of tidb_disable_column_tracking_time from mysql.tidb if it exists.
-// UTC time format is used to store the time.
-func getDisableColumnTrackingTime(sctx sessionctx.Context) (*time.Time, error) {
-	rows, fields, err := utilstats.ExecRows(
-		sctx,
-		"SELECT variable_value FROM %n.%n WHERE variable_name = %?",
-		mysql.SystemDB,
-		mysql.TiDBTable,
-		variable.TiDBDisableColumnTrackingTime,
-	)
-	if err != nil {
-		return nil, err
-	}
-	if len(rows) == 0 {
-		return nil, nil
-	}
-
-	d := rows[0].GetDatum(0, &fields[0].Column.FieldType)
-	// The string represents the UTC time when tidb_enable_column_tracking is set to 0.
-	value, err := d.ToString()
-	if err != nil {
-		return nil, err
-	}
-	t, err := time.Parse(types.UTCTimeFormat, value)
-	if err != nil {
-		return nil, err
-	}
-
-	return &t, nil
 }
 
 // CollectColumnsInExtendedStats returns IDs of the columns involved in extended stats.

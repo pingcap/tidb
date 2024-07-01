@@ -569,3 +569,20 @@ a
 -1
 0
 1
+set @@sql_mode='allow_invalid_dates';
+create table t_54271(a datetime primary key) partition by range columns(a) (
+partition p0 values less than ('2020-02-31 00:00:00'),
+partition p1 values less than (MAXVALUE)
+);
+insert into t_54271 values('2020-03-01 00:00:00');
+set @@sql_mode='';
+insert into t_54271 values('2020-03-01 00:00:00');
+Error 1062 (23000): Duplicate entry '2020-03-01 00:00:00' for key 't_54271.PRIMARY'
+select * from t_54271;
+a
+2020-03-01 00:00:00
+select * from t_54271 partition (p0);
+a
+select * from t_54271 partition (p1);
+a
+2020-03-01 00:00:00

@@ -42,22 +42,6 @@ func (la *LogicalApply) canPullUpAgg() bool {
 	return len(la.Children()[0].Schema().Keys) > 0
 }
 
-// canPullUp checks if an aggregation can be pulled up. An aggregate function like count(*) cannot be pulled up.
-func (la *LogicalAggregation) canPullUp() bool {
-	if len(la.GroupByItems) > 0 {
-		return false
-	}
-	for _, f := range la.AggFuncs {
-		for _, arg := range f.Args {
-			expr := expression.EvaluateExprWithNull(la.SCtx().GetExprCtx(), la.Children()[0].Schema(), arg)
-			if con, ok := expr.(*expression.Constant); !ok || !con.Value.IsNull() {
-				return false
-			}
-		}
-	}
-	return true
-}
-
 // deCorColFromEqExpr checks whether it's an equal condition of form `col = correlated col`. If so we will change the decorrelated
 // column to normal column to make a new equal condition.
 func (la *LogicalApply) deCorColFromEqExpr(expr expression.Expression) expression.Expression {

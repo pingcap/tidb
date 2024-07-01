@@ -48,10 +48,10 @@ type stmtSummaryByDigestKey struct {
 	prevDigest string
 	// The digest of the plan of this SQL.
 	planDigest string
-	// `hash` is the hash value of this object.
-	hash []byte
 	// `resourceGroupName` is the resource group's name of this statement is bind to.
 	resourceGroupName string
+	// `hash` is the hash value of this object.
+	hash []byte
 }
 
 // Hash implements SimpleLRUCache.Key.
@@ -59,7 +59,7 @@ type stmtSummaryByDigestKey struct {
 // `prevSQL` is included in the key To distinguish different transactions.
 func (key *stmtSummaryByDigestKey) Hash() []byte {
 	if len(key.hash) == 0 {
-		key.hash = make([]byte, 0, len(key.schemaName)+len(key.digest)+len(key.prevDigest)+len(key.planDigest))
+		key.hash = make([]byte, 0, len(key.schemaName)+len(key.digest)+len(key.prevDigest)+len(key.planDigest)+len(key.resourceGroupName))
 		key.hash = append(key.hash, hack.Slice(key.digest)...)
 		key.hash = append(key.hash, hack.Slice(key.schemaName)...)
 		key.hash = append(key.hash, hack.Slice(key.prevDigest)...)

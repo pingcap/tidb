@@ -1105,7 +1105,7 @@ func encodeFromOldRow(oldRow, buf []byte) ([]byte, error) {
 	}
 	var encoder rowcodec.Encoder
 	buf = buf[:0]
-	return encoder.Encode(time.UTC, colIDs, datums, buf)
+	return encoder.Encode(time.UTC, colIDs, datums, nil, buf)
 }
 
 func (store *MVCCStore) buildPrewriteLock(reqCtx *requestCtx, m *kvrpcpb.Mutation, item *badger.Item,

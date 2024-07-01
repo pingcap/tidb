@@ -55,10 +55,6 @@ type BackendCtxMgr interface {
 	Load(jobID int64) (BackendCtx, bool)
 }
 
-// FilterProcessingJobIDsFunc is a function type to return processing ones from
-// input job IDs.
-type FilterProcessingJobIDsFunc func([]int64) ([]int64, error)
-
 // litBackendCtxMgr manages multiple litBackendCtx for each DDL job. Each
 // litBackendCtx can use some local disk space and memory resource which are
 // controlled by litBackendCtxMgr.

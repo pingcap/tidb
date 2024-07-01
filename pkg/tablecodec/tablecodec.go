@@ -344,13 +344,13 @@ func EncodeValue(loc *time.Location, b []byte, raw types.Datum) ([]byte, error) 
 // EncodeRow will allocate it.
 // This function may return both a valid encoded bytes and an error (actually `"pingcap/errors".ErrorGroup`). If the caller
 // expects to handle these errors according to `SQL_MODE` or other configuration, please refer to `pkg/errctx`.
-func EncodeRow(loc *time.Location, row []types.Datum, colIDs []int64, valBuf []byte, values []types.Datum, e *rowcodec.Encoder, checksums ...uint32) ([]byte, error) {
+func EncodeRow(loc *time.Location, row []types.Datum, colIDs []int64, valBuf []byte, values []types.Datum, checksum rowcodec.Checksum, e *rowcodec.Encoder) ([]byte, error) {
 	if len(row) != len(colIDs) {
 		return nil, errors.Errorf("EncodeRow error: data and columnID count not match %d vs %d", len(row), len(colIDs))
 	}
 	if e.Enable {
 		valBuf = valBuf[:0]
-		return e.Encode(loc, colIDs, row, valBuf, checksums...)
+		return e.Encode(loc, colIDs, row, checksum, valBuf)
 	}
 	return EncodeOldRow(loc, row, colIDs, valBuf, values)
 }
@@ -1529,7 +1529,7 @@ func GenIndexValueForClusteredIndexVersion1(loc *time.Location, tblInfo *model.T
 
 		rd := rowcodec.Encoder{Enable: true}
 		var err error
-		idxVal, err = rd.Encode(loc, colIds, allRestoredData, idxVal)
+		idxVal, err = rd.Encode(loc, colIds, allRestoredData, nil, idxVal)
 		if err != nil {
 			return nil, err
 		}
@@ -1573,7 +1573,7 @@ func genIndexValueVersion0(loc *time.Location, tblInfo *model.TableInfo, idxInfo
 		rd := rowcodec.Encoder{Enable: true}
 		// Encode row restored value.
 		var err error
-		idxVal, err = rd.Encode(loc, colIds, indexedValues, idxVal)
+		idxVal, err = rd.Encode(loc, colIds, indexedValues, nil, idxVal)
 		if err != nil {
 			return nil, err
 		}

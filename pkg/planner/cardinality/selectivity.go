@@ -36,7 +36,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"go.uber.org/zap"
-	"golang.org/x/exp/maps"
 )
 
 var (
@@ -77,7 +76,7 @@ func Selectivity(
 	tableID := coll.PhysicalID
 	// TODO: If len(exprs) is bigger than 63, we could use bitset structure to replace the int64.
 	// This will simplify some code and speed up if we use this rather than a boolean slice.
-	if len(exprs) > 63 || (len(coll.Columns) == 0 && len(coll.Indices) == 0) {
+	if len(exprs) > 63 || (coll.ColNum() == 0 && coll.IdxNum() == 0) {
 		ret = pseudoSelectivity(ctx, coll, exprs)
 		if sc.EnableOptimizerCETrace {
 			ceTraceExpr(ctx, tableID, "Table Stats-Pseudo-Expression",
@@ -102,7 +101,7 @@ func Selectivity(
 			continue
 		}
 
-		colHist := coll.Columns[c.UniqueID]
+		colHist := coll.GetCol(c.UniqueID)
 		var sel float64
 		if statistics.ColumnStatsIsInvalid(colHist, ctx, coll, c.ID) {
 			sel = 1.0 / pseudoEqualRate
@@ -117,7 +116,7 @@ func Selectivity(
 		ret *= sel
 	}
 
-	extractedCols := make([]*expression.Column, 0, len(coll.Columns))
+	extractedCols := make([]*expression.Column, 0, coll.ColNum())
 	extractedCols = expression.ExtractColumnsFromExpressions(extractedCols, remainedExprs, nil)
 	slices.SortFunc(extractedCols, func(a *expression.Column, b *expression.Column) int {
 		return cmp.Compare(a.ID, b.ID)
@@ -127,7 +126,7 @@ func Selectivity(
 	})
 	for _, col := range extractedCols {
 		id := col.UniqueID
-		colStats := coll.Columns[col.UniqueID]
+		colStats := coll.GetCol(id)
 		if colStats != nil {
 			maskCovered, ranges, _, err := getMaskAndRanges(ctx, remainedExprs, ranger.ColumnRangeType, nil, nil, col)
 			if err != nil {
@@ -163,10 +162,15 @@ func Selectivity(
 		}
 		id2Paths[path.Index.ID] = path
 	}
-	idxIDs := maps.Keys(coll.Indices)
+	idxIDs := make([]int64, 0, coll.IdxNum())
+	coll.ForEachIndexImmutable(func(id int64, _ *statistics.Index) bool {
+		idxIDs = append(idxIDs, id)
+		return false
+	})
+	// Stablize the result.
 	slices.Sort(idxIDs)
 	for _, id := range idxIDs {
-		idxStats := coll.Indices[id]
+		idxStats := coll.GetIdx(id)
 		idxInfo := idxStats.Info
 		if idxInfo.MVIndex {
 			totalSelectivity, mask, ok := getMaskAndSelectivityForMVIndex(ctx, coll, id, remainedExprs)
@@ -322,7 +326,7 @@ OUTER:
 		// If there are columns not in stats, we won't handle them. This case might happen after DDL operations.
 		cols := expression.ExtractColumns(scalarCond)
 		for i := range cols {
-			if _, ok := coll.Columns[cols[i].UniqueID]; !ok {
+			if colStats := coll.GetCol(cols[i].UniqueID); colStats == nil {
 				continue OUTER
 			}
 		}
@@ -506,7 +510,7 @@ func CalcTotalSelectivityForMVIdxPath(
 			)
 			// If we can't find the virtual column from the access conditions, it's the case 2.
 			if len(cols) == 0 {
-				realtimeCount, _ = coll.GetScaledRealtimeAndModifyCnt(coll.Indices[path.Index.ID])
+				realtimeCount, _ = coll.GetScaledRealtimeAndModifyCnt(coll.GetIdx(path.Index.ID))
 			}
 		}
 		sel := path.CountAfterAccess / float64(realtimeCount)
@@ -746,7 +750,7 @@ func getMaskAndSelectivityForMVIndex(
 	// You can find more examples and explanations in comments for collectFilters4MVIndex() and
 	// buildPartialPaths4MVIndex() in planner/core.
 	accessConds, _, _ := CollectFilters4MVIndex(ctx, exprs, cols)
-	paths, isIntersection, ok, err := BuildPartialPaths4MVIndex(ctx, accessConds, cols, coll.Indices[id].Info, coll)
+	paths, isIntersection, ok, err := BuildPartialPaths4MVIndex(ctx, accessConds, cols, coll.GetIdx(id).Info, coll)
 	if err != nil || !ok {
 		return 1.0, 0, false
 	}
@@ -799,13 +803,13 @@ func GetSelectivityByFilter(sctx context.PlanContext, coll *statistics.HistColl,
 	var hist *statistics.Histogram
 	var topn *statistics.TopN
 	if isIndex {
-		stats := coll.Indices[i]
+		stats := coll.GetIdx(i)
 		statsVer = stats.StatsVer
 		hist = &stats.Histogram
 		nullCnt = hist.NullCount
 		topn = stats.TopN
 	} else {
-		stats := coll.Columns[i]
+		stats := coll.GetCol(i)
 		statsVer = stats.StatsVer
 		hist = &stats.Histogram
 		nullCnt = hist.NullCount
@@ -916,13 +920,13 @@ func GetSelectivityByFilter(sctx context.PlanContext, coll *statistics.HistColl,
 
 func findAvailableStatsForCol(sctx context.PlanContext, coll *statistics.HistColl, uniqueID int64) (isIndex bool, idx int64) {
 	// try to find available stats in column stats
-	if colStats := coll.Columns[uniqueID]; !statistics.ColumnStatsIsInvalid(colStats, sctx, coll, uniqueID) && colStats.IsFullLoad() {
+	if colStats := coll.GetCol(uniqueID); !statistics.ColumnStatsIsInvalid(colStats, sctx, coll, uniqueID) && colStats.IsFullLoad() {
 		return false, uniqueID
 	}
 	// try to find available stats in single column index stats (except for prefix index)
 	for idxStatsIdx, cols := range coll.Idx2ColUniqueIDs {
 		if len(cols) == 1 && cols[0] == uniqueID {
-			idxStats := coll.Indices[idxStatsIdx]
+			idxStats := coll.GetIdx(idxStatsIdx)
 			if !statistics.IndexStatsIsInvalid(sctx, idxStats, coll, idxStatsIdx) &&
 				idxStats.Info.Columns[0].Length == types.UnspecifiedLength &&
 				idxStats.IsFullLoad() {
@@ -975,7 +979,7 @@ func getEqualCondSelectivity(sctx context.PlanContext, coll *statistics.HistColl
 			if i >= usedColsLen {
 				break
 			}
-			if col, ok := coll.Columns[colID]; ok {
+			if col := coll.GetCol(colID); col != nil {
 				ndv = max(ndv, col.Histogram.NDV)
 			}
 		}
@@ -1058,7 +1062,7 @@ func crossValidationSelectivity(
 		if i >= usedColsLen {
 			break
 		}
-		col := coll.Columns[colID]
+		col := coll.GetCol(colID)
 		if statistics.ColumnStatsIsInvalid(col, sctx, coll, colID) {
 			continue
 		}

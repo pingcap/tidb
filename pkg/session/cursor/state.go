@@ -1,4 +1,4 @@
-// Copyright 2020 PingCAP, Inc.
+// Copyright 2024 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,16 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//go:build race
+package cursor
 
-package localpool
-
-// Get gets an object from the pool.
-func (p *LocalPool) Get() any {
-	return p.newFn()
-}
-
-// Put puts an object back to the pool.
-func (p *LocalPool) Put(obj any) bool {
-	return false
+// State is used to store the state of cursor
+type State struct {
+	StartTS uint64
 }

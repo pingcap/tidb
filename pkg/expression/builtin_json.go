@@ -1893,7 +1893,8 @@ func (b *builtinJSONSchemaValidSig) evalInt(ctx EvalContext, row chunk.Row) (res
 					return jsonschema.Schema{},
 						types.ErrInvalidJSONType.GenWithStackByArgs(1, "json_schema_valid", "object")
 				}
-				return jsonschema.Schema{}, err
+				return jsonschema.Schema{},
+					types.ErrInvalidJSONType.GenWithStackByArgs(1, "json_schema_valid", err)
 			}
 			return schema, nil
 		})
@@ -1906,7 +1907,12 @@ func (b *builtinJSONSchemaValidSig) evalInt(ctx EvalContext, row chunk.Row) (res
 			return res, false, err
 		}
 		if err := goJSON.Unmarshal(dataBin, &schema); err != nil {
-			return res, false, err
+			if _, ok := err.(*goJSON.UnmarshalTypeError); ok {
+				return res, false,
+					types.ErrInvalidJSONType.GenWithStackByArgs(1, "json_schema_valid", "object")
+			}
+			return res, false,
+				types.ErrInvalidJSONType.GenWithStackByArgs(1, "json_schema_valid", err)
 		}
 	}
 

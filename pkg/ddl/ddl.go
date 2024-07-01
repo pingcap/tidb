@@ -35,8 +35,8 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
+	sess "github.com/pingcap/tidb/pkg/ddl/internal/session"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
-	sess "github.com/pingcap/tidb/pkg/ddl/session"
 	"github.com/pingcap/tidb/pkg/ddl/syncer"
 	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
@@ -215,6 +215,7 @@ type DDL interface {
 		ctx sessionctx.Context,
 		schema model.CIStr,
 		info *model.TableInfo,
+		involvingRef []model.InvolvingSchemaInfo,
 		cs ...CreateTableWithInfoConfigurier) error
 
 	// BatchCreateTableWithInfo is like CreateTableWithInfo, but can handle multiple tables.
@@ -1144,6 +1145,8 @@ func setDDLJobMode(job *model.Job) {
 			job.LocalMode = true
 			return
 		}
+	case model.ActionCreateSchema:
+		job.LocalMode = true
 	default:
 	}
 	job.LocalMode = false
@@ -1473,30 +1476,35 @@ func (d *ddl) SwitchFastCreateTable(val bool) error {
 
 // disableFastCreateTable disable fast create table feature.
 func (*ddl) disableFastCreateTable(m *meta.Meta) error {
-	ddlV2Initialized, err := m.GetDDLV2Initialized()
+	fastCreateTableInitialized, err := m.GetFastCreateTableInitialized()
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if !ddlV2Initialized {
+	if !fastCreateTableInitialized {
 		return nil
 	}
-	// clear all table names when we switch to v1.
+	if err := m.ClearAllDatabaseNames(); err != nil {
+		return errors.Trace(err)
+	}
 	if err := m.ClearAllTableNames(); err != nil {
 		return errors.Trace(err)
 	}
-	return errors.Trace(m.SetDDLV2Initialized(false))
+	return errors.Trace(m.SetFastCreateTableInitialized(false))
 }
 
 // enableFastCreateTable enable fast create table feature.
 func (*ddl) enableFastCreateTable(m *meta.Meta) error {
-	ddlV2Initialized, err := m.GetDDLV2Initialized()
+	fastCreateTableInitialized, err := m.GetFastCreateTableInitialized()
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if ddlV2Initialized {
+	if fastCreateTableInitialized {
 		return nil
 	}
 
+	if err := m.ClearAllDatabaseNames(); err != nil {
+		return errors.Trace(err)
+	}
 	if err := m.ClearAllTableNames(); err != nil {
 		return errors.Trace(err)
 	}
@@ -1504,6 +1512,12 @@ func (*ddl) enableFastCreateTable(m *meta.Meta) error {
 	dbs, err := m.ListDatabases()
 	if err != nil {
 		return errors.Trace(err)
+	}
+
+	for _, dbInfo := range dbs {
+		if err := m.CreateDatabaseName(dbInfo.Name.L, dbInfo.ID); err != nil {
+			return errors.Trace(err)
+		}
 	}
 
 	for _, dbInfo := range dbs {
@@ -1518,7 +1532,7 @@ func (*ddl) enableFastCreateTable(m *meta.Meta) error {
 		}
 	}
 
-	return errors.Trace(m.SetDDLV2Initialized(true))
+	return errors.Trace(m.SetFastCreateTableInitialized(true))
 }
 
 func (d *ddl) switchFastCreateTable(val bool) (err error) {

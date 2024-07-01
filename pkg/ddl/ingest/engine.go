@@ -16,7 +16,6 @@ package ingest
 
 import (
 	"context"
-	"strconv"
 	"sync"
 
 	"github.com/google/uuid"
@@ -33,7 +32,6 @@ import (
 // Engine is the interface for the engine that can be used to write key-value pairs.
 type Engine interface {
 	Flush() error
-	ImportAndClean() error
 	Clean()
 	CreateWriter(id int, writerCfg *backend.LocalWriterConfig) (Writer, error)
 }
@@ -131,53 +129,6 @@ func (ei *engineInfo) Clean() {
 		logutil.Logger(ei.ctx).Error(LitErrCleanEngineErr, zap.Error(err),
 			zap.Int64("job ID", ei.jobID), zap.Int64("index ID", ei.indexID))
 	}
-}
-
-// ImportAndClean imports the engine data to TiKV and cleans up the local intermediate files.
-func (ei *engineInfo) ImportAndClean() error {
-	if ei.openedEngine != nil {
-		logutil.Logger(ei.ctx).Info(LitInfoCloseEngine, zap.Int64("job ID", ei.jobID), zap.Int64("index ID", ei.indexID))
-		closeEngine, err1 := ei.openedEngine.Close(ei.ctx)
-		if err1 != nil {
-			logutil.Logger(ei.ctx).Error(LitErrCloseEngineErr, zap.Error(err1),
-				zap.Int64("job ID", ei.jobID), zap.Int64("index ID", ei.indexID))
-			return err1
-		}
-		err := ei.closeWriters()
-		if err != nil {
-			logutil.Logger(ei.ctx).Error(LitErrCloseWriterErr, zap.Error(err),
-				zap.Int64("job ID", ei.jobID), zap.Int64("index ID", ei.indexID))
-			return err
-		}
-		ei.openedEngine = nil
-		ei.closedEngine = closeEngine
-	}
-	if ei.closedEngine != nil {
-		// Ingest data to TiKV.
-		logutil.Logger(ei.ctx).Info(LitInfoStartImport, zap.Int64("job ID", ei.jobID),
-			zap.Int64("index ID", ei.indexID),
-			zap.String("split region size", strconv.FormatInt(int64(config.SplitRegionSize), 10)))
-		err := ei.closedEngine.Import(ei.ctx, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
-		if err != nil {
-			logLevel := zap.ErrorLevel
-			if common.ErrFoundDuplicateKeys.Equal(err) {
-				logLevel = zap.WarnLevel
-			}
-			logutil.Logger(ei.ctx).Log(logLevel, LitErrIngestDataErr, zap.Error(err),
-				zap.Int64("job ID", ei.jobID), zap.Int64("index ID", ei.indexID))
-			return err
-		}
-
-		// Clean up the engine local workspace.
-		err = ei.closedEngine.Cleanup(ei.ctx)
-		if err != nil {
-			logutil.Logger(ei.ctx).Error(LitErrCloseEngineErr, zap.Error(err),
-				zap.Int64("job ID", ei.jobID), zap.Int64("index ID", ei.indexID))
-			return err
-		}
-		ei.closedEngine = nil
-	}
-	return nil
 }
 
 // writerContext is used to keep a lightning local writer for each backfill worker.

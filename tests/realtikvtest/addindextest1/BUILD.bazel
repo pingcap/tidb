@@ -10,6 +10,7 @@ go_test(
     flaky = True,
     deps = [
         "//pkg/config",
+        "//pkg/ddl/ingest",
         "//pkg/ddl/util/callback",
         "//pkg/disttask/framework/storage",
         "//pkg/errno",

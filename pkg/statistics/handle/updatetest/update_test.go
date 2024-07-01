@@ -325,7 +325,7 @@ func TestUpdatePartition(t *testing.T) {
 			statsTbl := h.GetPartitionStats(tableInfo, def.ID)
 			require.Equal(t, int64(1), statsTbl.ModifyCount)
 			require.Equal(t, int64(1), statsTbl.RealtimeCount)
-			require.Equal(t, int64(2), statsTbl.Columns[bColID].TotColSize)
+			require.Equal(t, int64(2), statsTbl.GetCol(bColID).TotColSize)
 		}
 
 		testKit.MustExec(`update t set a = a + 1, b = "aa"`)
@@ -335,7 +335,7 @@ func TestUpdatePartition(t *testing.T) {
 			statsTbl := h.GetPartitionStats(tableInfo, def.ID)
 			require.Equal(t, int64(2), statsTbl.ModifyCount)
 			require.Equal(t, int64(1), statsTbl.RealtimeCount)
-			require.Equal(t, int64(3), statsTbl.Columns[bColID].TotColSize)
+			require.Equal(t, int64(3), statsTbl.GetCol(bColID).TotColSize)
 		}
 
 		testKit.MustExec("delete from t")
@@ -345,14 +345,14 @@ func TestUpdatePartition(t *testing.T) {
 			statsTbl := h.GetPartitionStats(tableInfo, def.ID)
 			require.Equal(t, int64(3), statsTbl.ModifyCount)
 			require.Equal(t, int64(0), statsTbl.RealtimeCount)
-			require.Equal(t, int64(0), statsTbl.Columns[bColID].TotColSize)
+			require.Equal(t, int64(0), statsTbl.GetCol(bColID).TotColSize)
 		}
 		// assert WithGetTableStatsByQuery get the same result
 		for _, def := range pi.Definitions {
 			statsTbl := h.GetPartitionStats(tableInfo, def.ID)
 			require.Equal(t, int64(3), statsTbl.ModifyCount)
 			require.Equal(t, int64(0), statsTbl.RealtimeCount)
-			require.Equal(t, int64(0), statsTbl.Columns[bColID].TotColSize)
+			require.Equal(t, int64(0), statsTbl.GetCol(bColID).TotColSize)
 		}
 	})
 }
@@ -393,11 +393,11 @@ func TestAutoUpdate(t *testing.T) {
 		stats = h.GetTableStats(tableInfo)
 		require.Equal(t, int64(5), stats.RealtimeCount)
 		require.Equal(t, int64(0), stats.ModifyCount)
-		for _, item := range stats.Columns {
+		stats.ForEachColumnImmutable(func(_ int64, item *statistics.Column) bool {
 			// TotColSize = 5*(2(length of 'ss') + 1(size of len byte)).
 			require.Equal(t, int64(15), item.TotColSize)
-			break
-		}
+			return true
+		})
 
 		// Test that even if the table is recently modified, we can still analyze the table.
 		h.SetLease(time.Second)
@@ -432,11 +432,11 @@ func TestAutoUpdate(t *testing.T) {
 		require.Equal(t, int64(8), stats.RealtimeCount)
 		// Modify count is non-zero means that we do not analyze the table.
 		require.Equal(t, int64(1), stats.ModifyCount)
-		for _, item := range stats.Columns {
+		stats.ForEachColumnImmutable(func(_ int64, item *statistics.Column) bool {
 			// TotColSize = 27, because the table has not been analyzed, and insert statement will add 3(length of 'eee') to TotColSize.
 			require.Equal(t, int64(27), item.TotColSize)
-			break
-		}
+			return true
+		})
 
 		testKit.MustExec("analyze table t")
 		_, err = testKit.Exec("create index idx on t(a)")
@@ -452,8 +452,8 @@ func TestAutoUpdate(t *testing.T) {
 		stats = h.GetTableStats(tableInfo)
 		require.Equal(t, int64(8), stats.RealtimeCount)
 		require.Equal(t, int64(0), stats.ModifyCount)
-		hg, ok := stats.Indices[tableInfo.Indices[0].ID]
-		require.True(t, ok)
+		hg := stats.GetIdx(tableInfo.Indices[0].ID)
+		require.True(t, hg != nil)
 		require.Equal(t, int64(3), hg.NDV)
 		require.Equal(t, 0, hg.Len())
 		require.Equal(t, 3, hg.TopN.Num())
@@ -905,7 +905,6 @@ func TestDumpColumnStatsUsage(t *testing.T) {
 	defer func() {
 		tk.MustExec(fmt.Sprintf("set global tidb_enable_column_tracking = %v", originalVal))
 	}()
-	tk.MustExec("set global tidb_enable_column_tracking = 1")
 
 	h := dom.StatsHandle()
 	tk.MustExec("use test")
@@ -987,7 +986,6 @@ func TestCollectPredicateColumnsFromExecute(t *testing.T) {
 			defer func() {
 				tk.MustExec(fmt.Sprintf("set global tidb_enable_column_tracking = %v", originalVal2))
 			}()
-			tk.MustExec("set global tidb_enable_column_tracking = 1")
 
 			h := dom.StatsHandle()
 			tk.MustExec("use test")
@@ -1026,7 +1024,7 @@ func TestCollectPredicateColumnsFromExecute(t *testing.T) {
 	}
 }
 
-func TestEnableAndDisableColumnTracking(t *testing.T) {
+func TestColumnTracking(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	h := dom.StatsHandle()
@@ -1034,40 +1032,18 @@ func TestEnableAndDisableColumnTracking(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int, b int, c int)")
 
-	originalVal := tk.MustQuery("select @@tidb_enable_column_tracking").Rows()[0][0].(string)
-	defer func() {
-		tk.MustExec(fmt.Sprintf("set global tidb_enable_column_tracking = %v", originalVal))
-	}()
-
-	tk.MustExec("set global tidb_enable_column_tracking = 1")
 	tk.MustExec("select * from t where b > 1")
 	require.NoError(t, h.DumpColStatsUsageToKV())
 	rows := tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't' and last_used_at is not null").Rows()
 	require.Len(t, rows, 1)
 	require.Equal(t, "b", rows[0][3])
 
-	tk.MustExec("set global tidb_enable_column_tracking = 0")
-	// After tidb_enable_column_tracking is set to 0, the predicate columns collected before are invalidated.
-	tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't' and last_used_at is not null").Check(testkit.Rows())
-
-	// Sleep for 1.5s to let `last_used_at` be larger than `tidb_disable_tracking_time`.
-	time.Sleep(1500 * time.Millisecond)
-	tk.MustExec("select * from t where a > 1")
-	require.NoError(t, h.DumpColStatsUsageToKV())
-	// We don't collect predicate columns when tidb_enable_column_tracking = 0
-	tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't' and last_used_at is not null").Check(testkit.Rows())
-
-	tk.MustExec("set global tidb_enable_column_tracking = 1")
 	tk.MustExec("select * from t where b < 1 and c > 1")
 	require.NoError(t, h.DumpColStatsUsageToKV())
 	rows = tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't' and last_used_at is not null").Sort().Rows()
 	require.Len(t, rows, 2)
 	require.Equal(t, "b", rows[0][3])
 	require.Equal(t, "c", rows[1][3])
-
-	// Test invalidating predicate columns again in order to check that tidb_disable_tracking_time can be updated.
-	tk.MustExec("set global tidb_enable_column_tracking = 0")
-	tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't' and last_used_at is not null").Check(testkit.Rows())
 }
 
 func TestStatsLockUnlockForAutoAnalyze(t *testing.T) {
@@ -1107,9 +1083,10 @@ func TestStatsLockUnlockForAutoAnalyze(t *testing.T) {
 	require.Nil(t, err)
 
 	tblStats := h.GetTableStats(tbl.Meta())
-	for _, col := range tblStats.Columns {
+	tblStats.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
 		require.True(t, col.IsStatsInitialized())
-	}
+		return false
+	})
 
 	tk.MustExec("lock stats t")
 
@@ -1303,7 +1280,7 @@ func TestAutoAnalyzePartitionTableAfterAddingIndex(t *testing.T) {
 	require.NoError(t, err)
 	tblInfo := tbl.Meta()
 	idxInfo := tblInfo.Indices[0]
-	require.Nil(t, h.GetTableStats(tblInfo).Indices[idxInfo.ID])
+	require.Nil(t, h.GetTableStats(tblInfo).GetIdx(idxInfo.ID))
 	require.True(t, h.HandleAutoAnalyze())
-	require.NotNil(t, h.GetTableStats(tblInfo).Indices[idxInfo.ID])
+	require.NotNil(t, h.GetTableStats(tblInfo).GetIdx(idxInfo.ID))
 }

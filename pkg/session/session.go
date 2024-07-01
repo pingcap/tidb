@@ -52,6 +52,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/executor"
+	"github.com/pingcap/tidb/pkg/executor/staticrecordset"
 	"github.com/pingcap/tidb/pkg/expression"
 	exprctx "github.com/pingcap/tidb/pkg/expression/context"
 	"github.com/pingcap/tidb/pkg/expression/contextsession"
@@ -79,6 +80,7 @@ import (
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/privilege/conn"
 	"github.com/pingcap/tidb/pkg/privilege/privileges"
+	"github.com/pingcap/tidb/pkg/session/cursor"
 	session_metrics "github.com/pingcap/tidb/pkg/session/metrics"
 	"github.com/pingcap/tidb/pkg/session/txninfo"
 	"github.com/pingcap/tidb/pkg/session/types"
@@ -217,6 +219,8 @@ type session struct {
 	extensions *extension.SessionExtensions
 
 	sandBoxMode bool
+
+	cursorTracker cursor.Tracker
 }
 
 var parserPool = &sync.Pool{New: func() any { return parser.New() }}
@@ -1447,6 +1451,7 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 		RedactSQL:             s.sessionVars.EnableRedactLog,
 		ResourceGroupName:     s.sessionVars.StmtCtx.ResourceGroupName,
 		SessionAlias:          s.sessionVars.SessionAlias,
+		CursorTracker:         s.cursorTracker,
 	}
 	oldPi := s.ShowProcess()
 	if p == nil {
@@ -2383,6 +2388,41 @@ func (rs *execStmtResult) Close() error {
 	return err2
 }
 
+func (rs *execStmtResult) TryDetach() (sqlexec.RecordSet, bool, error) {
+	if !rs.sql.IsReadOnly(rs.se.GetSessionVars()) {
+		return nil, false, nil
+	}
+	if !plannercore.IsAutoCommitTxn(rs.se.GetSessionVars()) {
+		return nil, false, nil
+	}
+
+	drs, ok := rs.RecordSet.(sqlexec.DetachableRecordSet)
+	if !ok {
+		return nil, false, nil
+	}
+	detachedRS, ok, err := drs.TryDetach()
+	if !ok || err != nil {
+		return nil, ok, err
+	}
+	cursorHandle := rs.se.GetCursorTracker().NewCursor(
+		cursor.State{StartTS: rs.se.GetSessionVars().TxnCtx.StartTS},
+	)
+	crs := staticrecordset.WrapRecordSetWithCursor(cursorHandle, detachedRS)
+
+	// Now, a transaction is not needed for the detached record set, so we commit the transaction and cleanup
+	// the session state.
+	err = finishStmt(context.Background(), rs.se, nil, rs.sql)
+	if err != nil {
+		err2 := detachedRS.Close()
+		if err2 != nil {
+			logutil.BgLogger().Error("close detached record set failed", zap.Error(err2))
+		}
+		return nil, false, err
+	}
+
+	return crs, true, nil
+}
+
 // rollbackOnError makes sure the next statement starts a new transaction with the latest InfoSchema.
 func (s *session) rollbackOnError(ctx context.Context) {
 	if !s.sessionVars.InTxn() {
@@ -3113,6 +3153,8 @@ func CreateSessionWithOpt(store kv.Storage, opt *Opt) (types.Session, error) {
 		}
 	}
 
+	s.cursorTracker = cursor.NewTracker()
+
 	return s, nil
 }
 
@@ -3180,7 +3222,12 @@ func InitDDLJobTables(store kv.Storage, targetVer meta.DDLTableVersion) error {
 		targetTables = BackfillTables
 	}
 	return kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), store, true, func(_ context.Context, txn kv.Transaction) error {
-		t := meta.NewMeta(txn)
+		var t *meta.Meta
+		if variable.EnableFastCreateTable.Load() {
+			t = meta.NewMeta(txn, meta.WithUpdateTableName())
+		} else {
+			t = meta.NewMeta(txn)
+		}
 		tableVer, err := t.CheckDDLTableVersion()
 		if err != nil || tableVer >= targetVer {
 			return errors.Trace(err)
@@ -3226,7 +3273,12 @@ func createAndSplitTables(store kv.Storage, t *meta.Meta, dbID int64, tables []t
 // InitMDLTable is to create tidb_mdl_info, which is used for metadata lock.
 func InitMDLTable(store kv.Storage) error {
 	return kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), store, true, func(_ context.Context, txn kv.Transaction) error {
-		t := meta.NewMeta(txn)
+		var t *meta.Meta
+		if variable.EnableFastCreateTable.Load() {
+			t = meta.NewMeta(txn, meta.WithUpdateTableName())
+		} else {
+			t = meta.NewMeta(txn)
+		}
 		ver, err := t.CheckDDLTableVersion()
 		if err != nil || ver >= meta.MDLTableVersion {
 			return errors.Trace(err)
@@ -3519,6 +3571,10 @@ func bootstrapSessionImpl(store kv.Storage, createSessionsImpl func(store kv.Sto
 	if err = dom.LoadAndUpdateStatsLoop(subCtxs, initStatsCtx); err != nil {
 		return nil, err
 	}
+
+	// init the instance plan cache
+	// TODO: introduce 2 new variable to control these 2 mem limits.
+	dom.InitInstancePlanCache(1000000, 1000000)
 
 	// start TTL job manager after setup stats collector
 	// because TTL could modify a lot of columns, and need to trigger auto analyze
@@ -4510,4 +4566,9 @@ func GetDBNames(seVar *variable.SessionVars) []string {
 		ns = append(ns, n)
 	}
 	return ns
+}
+
+// GetCursorTracker returns the internal `cursor.Tracker`
+func (s *session) GetCursorTracker() cursor.Tracker {
+	return s.cursorTracker
 }

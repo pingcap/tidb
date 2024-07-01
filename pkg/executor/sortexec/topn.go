@@ -112,6 +112,8 @@ func (e *TopNExec) Open(ctx context.Context) error {
 		)
 		e.spillAction = &topNSpillAction{spillHelper: e.spillHelper}
 		e.Ctx().GetSessionVars().MemTracker.FallbackOldAndSetNewAction(e.spillAction)
+	} else {
+		e.spillHelper = newTopNSpillerHelper(e, nil, nil, nil, nil, nil, nil, 0)
 	}
 
 	return exec.Open(ctx, e.Children(0))

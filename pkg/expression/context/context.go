@@ -114,6 +114,9 @@ type BuildContext interface {
 	// in most cases except for the method `isNullRejected` in planner.
 	// See the comments for `isNullRejected` in planner for more details.
 	IsInNullRejectCheck() bool
+	// IsConstantPropagateCheck returns the flag to indicate whether the expression is in constant propagate check.
+	// It should be true only when we are doing constant propagation in rule_predicate_push_down.
+	IsConstantPropagateCheck() bool
 	// ConnectionID indicates the connection ID of the current session.
 	// If the context is not in a session, it should return 0.
 	ConnectionID() uint64
@@ -142,6 +145,21 @@ func WithNullRejectCheck(ctx ExprContext) *NullRejectCheckExprContext {
 
 // IsInNullRejectCheck always returns true for `NullRejectCheckExprContext`
 func (ctx *NullRejectCheckExprContext) IsInNullRejectCheck() bool {
+	return true
+}
+
+// ConstantPropagateCheckContext is a wrapper to return true for `IsConstantPropagateCheck`.
+type ConstantPropagateCheckContext struct {
+	ExprContext
+}
+
+// WithConstantPropagateCheck returns a new `ConstantPropagateCheckContext` with the given `ExprContext`.
+func WithConstantPropagateCheck(ctx ExprContext) *ConstantPropagateCheckContext {
+	return &ConstantPropagateCheckContext{ExprContext: ctx}
+}
+
+// IsConstantPropagateCheck always returns true for `ConstantPropagateCheckContext`
+func (ctx *ConstantPropagateCheckContext) IsConstantPropagateCheck() bool {
 	return true
 }
 

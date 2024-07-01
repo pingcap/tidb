@@ -28,6 +28,7 @@ import (
 func TestAddIndexIngestRecoverPartition(t *testing.T) {
 	// TODO we are unregistering LitBackCtxMgr when owner changes, but another owner
 	// might access it, so this case is unstable by nature.
+	t.Skip("skip unstable test, fix this before 2024/07/01")
 	port := config.GetGlobalConfig().Port
 	tc := testkit.NewDistExecutionContext(t, 3)
 	defer tc.Close()

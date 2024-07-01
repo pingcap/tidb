@@ -635,7 +635,7 @@ func buildBatchCopTasksConsistentHash(
 
 	for i, ranges := range rangesForEachPhysicalTable {
 		rangesLen += ranges.Len()
-		locations, err := cache.SplitKeyRangesByLocationsWithoutBuckets(bo, ranges, UnspecifiedLimit)
+		locations, err := cache.SplitKeyRangesByLocations(bo, ranges, UnspecifiedLimit, false, false)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -932,7 +932,7 @@ func buildBatchCopTasksCore(bo *backoff.Backoffer, store *kvStore, rangesForEach
 		rangesLen = 0
 		for i, ranges := range rangesForEachPhysicalTable {
 			rangesLen += ranges.Len()
-			locations, err := cache.SplitKeyRangesByLocationsWithoutBuckets(bo, ranges, UnspecifiedLimit)
+			locations, err := cache.SplitKeyRangesByLocations(bo, ranges, UnspecifiedLimit, false, false)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -1483,7 +1483,7 @@ func buildBatchCopTasksConsistentHashForPD(bo *backoff.Backoffer,
 		splitKeyStart := time.Now()
 		for i, ranges := range rangesForEachPhysicalTable {
 			rangesLen += ranges.Len()
-			locations, err := cache.SplitKeyRangesByLocationsWithoutBuckets(bo, ranges, UnspecifiedLimit)
+			locations, err := cache.SplitKeyRangesByLocations(bo, ranges, UnspecifiedLimit, false, false)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}

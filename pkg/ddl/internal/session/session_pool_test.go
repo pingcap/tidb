@@ -19,7 +19,7 @@ import (
 	"testing"
 
 	"github.com/ngaut/pools"
-	"github.com/pingcap/tidb/pkg/ddl/session"
+	"github.com/pingcap/tidb/pkg/ddl/internal/session"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 )
