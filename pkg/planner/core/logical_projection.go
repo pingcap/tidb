@@ -61,6 +61,24 @@ func (p LogicalProjection) Init(ctx base.PlanContext, qbOffset int) *LogicalProj
 	return &p
 }
 
+// *************************** start implementation of Plan interface ***************************
+
+// ExplainInfo implements Plan interface.
+func (p *LogicalProjection) ExplainInfo() string {
+	return expression.ExplainExpressionList(p.Exprs, p.Schema())
+}
+
+// ReplaceExprColumns implements base.LogicalPlan interface.
+func (p *LogicalProjection) ReplaceExprColumns(replace map[string]*expression.Column) {
+	for _, expr := range p.Exprs {
+		ResolveExprAndReplace(expr, replace)
+	}
+}
+
+// *************************** end implementation of Plan interface ***************************
+
+// *************************** start implementation of logicalPlan interface ***************************
+
 // HashCode implements LogicalPlan interface.
 func (p *LogicalProjection) HashCode() []byte {
 	// PlanType + SelectOffset + ExprNum + [Exprs]
@@ -293,13 +311,6 @@ func (projection *LogicalProjection) PullUpConstantPredicates() []expression.Exp
 	return result
 }
 
-// ReplaceExprColumns implements base.LogicalPlan interface.
-func (p *LogicalProjection) ReplaceExprColumns(replace map[string]*expression.Column) {
-	for _, expr := range p.Exprs {
-		ResolveExprAndReplace(expr, replace)
-	}
-}
-
 // PreparePossibleProperties implements base.LogicalPlan PreparePossibleProperties interface.
 func (p *LogicalProjection) PreparePossibleProperties(_ *expression.Schema, childrenProperties ...[][]*expression.Column) [][]*expression.Column {
 	childProperties := childrenProperties[0]
@@ -485,11 +496,6 @@ func (p *LogicalProjection) appendExpr(expr expression.Expression) *expression.C
 		col.GetStaticType().DelFlag(mysql.ParseToJSONFlag)
 	}
 	return col
-}
-
-// ExplainInfo implements Plan interface.
-func (p *LogicalProjection) ExplainInfo() string {
-	return expression.ExplainExpressionList(p.Exprs, p.Schema())
 }
 
 // PruneColumns implements base.LogicalPlan interface.
