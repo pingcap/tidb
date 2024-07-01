@@ -404,7 +404,7 @@ func (ft *FieldType) CompactStr() string {
 	case mysql.TypeNewDecimal:
 		suffix = fmt.Sprintf("(%d,%d)", displayFlen, displayDecimal)
 	case mysql.TypeVarString:
-		if displayFlen != -1 {
+		if displayFlen != UnspecifiedLength {
 			suffix = fmt.Sprintf("(%d)", displayFlen)
 		}
 	case mysql.TypeBit, mysql.TypeVarchar, mysql.TypeString:
