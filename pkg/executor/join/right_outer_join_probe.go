@@ -118,9 +118,9 @@ func (j *rightOuterJoinProbe) buildResultForMatchedRowsAfterOtherCondition(chk, 
 	colOffset := len(j.lUsed)
 	for index, colIndex := range j.rUsed {
 		dstCol := chk.Column(colOffset + index)
-		if joinedChk.Column(colIndex).Rows() > 0 {
+		if joinedChk.Column(colIndex+j.currentChunk.NumCols()).Rows() > 0 {
 			// probe column that is already in joinedChk
-			srcCol := joinedChk.Column(colIndex)
+			srcCol := joinedChk.Column(colIndex + j.currentChunk.NumCols())
 			chunk.CopySelectedRows(dstCol, srcCol, j.selected)
 		} else {
 			markedJoined = true
@@ -135,7 +135,7 @@ func (j *rightOuterJoinProbe) buildResultForMatchedRowsAfterOtherCondition(chk, 
 	hasRemainCols := false
 	for index, colIndex := range j.lUsed {
 		dstCol := chk.Column(index)
-		srcCol := joinedChk.Column(colIndex + j.currentChunk.NumCols())
+		srcCol := joinedChk.Column(colIndex)
 		if srcCol.Rows() > 0 {
 			// build column that is already in joinedChk
 			chunk.CopySelectedRows(dstCol, srcCol, j.selected)
