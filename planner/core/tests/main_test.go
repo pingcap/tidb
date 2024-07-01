@@ -25,6 +25,13 @@ import (
 func TestMain(m *testing.M) {
 	testsetup.SetupForCommonTest()
 	flag.Parse()
+<<<<<<< HEAD:planner/core/tests/main_test.go
+=======
+	testDataMap.LoadTestSuiteData("testdata", "outer2inner")
+	testDataMap.LoadTestSuiteData("testdata", "derive_topn_from_window")
+	testDataMap.LoadTestSuiteData("testdata", "join_reorder_suite")
+	testDataMap.LoadTestSuiteData("testdata", "predicate_pushdown_suite")
+>>>>>>> 521c99967d5 (planner: The length function could not be substitute when collation of mapped column is utfxxx_bin (#54179)):pkg/planner/core/casetest/rule/main_test.go
 	opts := []goleak.Option{
 		goleak.IgnoreTopFunction("github.com/golang/glog.(*loggingT).flushDaemon"),
 		goleak.IgnoreTopFunction("github.com/golang/glog.(*fileSink).flushDaemon"),
@@ -37,4 +44,8 @@ func TestMain(m *testing.M) {
 		goleak.IgnoreTopFunction("github.com/pingcap/tidb/pkg/statistics/handle/syncload.(*statsSyncLoad).SendLoadRequests.func1"), // For TestPlanStatsLoadTimeout
 	}
 	goleak.VerifyTestMain(m, opts...)
+}
+
+func GetPredicatePushdownSuiteData() testdata.TestData {
+	return testDataMap["predicate_pushdown_suite"]
 }
