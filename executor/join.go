@@ -172,7 +172,7 @@ func (e *HashJoinExec) Close() error {
 		}
 		e.probeSideTupleFetcher.probeChkResourceCh = nil
 		terror.Call(e.rowContainer.Close)
-		e.sessCtx.GetSessionVars().MemTracker.UnbindActionFromHardLimit(e.RowContainer.ActionSpill())
+		e.sessCtx.GetSessionVars().MemTracker.UnbindActionFromHardLimit(e.rowContainer.ActionSpill())
 		e.waiterWg.Wait()
 	}
 	e.outerMatchedStatus = e.outerMatchedStatus[:0]
@@ -211,8 +211,8 @@ func (e *HashJoinExec) Open(ctx context.Context) error {
 	}
 	e.hashJoinCtx.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
 
-	if e.HashJoinCtxV1.diskTracker != nil {
-		e.HashJoinCtxV1.diskTracker.Reset()
+	if e.diskTracker != nil {
+		e.diskTracker.Reset()
 	} else {
 		e.diskTracker = disk.NewTracker(e.id, -1)
 	}
