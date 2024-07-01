@@ -27,7 +27,9 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/cteutil"
 	"github.com/pingcap/tidb/util/disk"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
+	"go.uber.org/zap"
 )
 
 var _ Executor = &CTEExec{}
@@ -101,11 +103,11 @@ func (e *CTEExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 	e.producer.resTbl.Lock()
 	defer e.producer.resTbl.Unlock()
 	if !e.producer.resTbl.Done() {
-		if err = e.producer.produce(ctx, e); err != nil {
+		if err = e.producer.produce(ctx); err != nil {
 			return err
 		}
 	}
-	return e.producer.getChunk(ctx, e, req)
+	return e.producer.getChunk(e, req)
 }
 
 // Close implements the Executor interface.
@@ -234,7 +236,7 @@ func (p *cteProducer) closeProducer() (err error) {
 	return nil
 }
 
-func (p *cteProducer) getChunk(ctx context.Context, cteExec *CTEExec, req *chunk.Chunk) (err error) {
+func (p *cteProducer) getChunk(cteExec *CTEExec, req *chunk.Chunk) (err error) {
 	req.Reset()
 	if p.hasLimit {
 		return p.nextChunkLimit(cteExec, req)
@@ -297,15 +299,15 @@ func (p *cteProducer) nextChunkLimit(cteExec *CTEExec, req *chunk.Chunk) error {
 	return nil
 }
 
-func (p *cteProducer) produce(ctx context.Context, cteExec *CTEExec) (err error) {
+func (p *cteProducer) produce(ctx context.Context) (err error) {
 	if p.resTbl.Error() != nil {
 		return p.resTbl.Error()
 	}
-	resAction := setupCTEStorageTracker(p.resTbl, cteExec.ctx, p.memTracker, p.diskTracker)
-	iterInAction := setupCTEStorageTracker(p.iterInTbl, cteExec.ctx, p.memTracker, p.diskTracker)
+	resAction := setupCTEStorageTracker(p.resTbl, p.ctx, p.memTracker, p.diskTracker)
+	iterInAction := setupCTEStorageTracker(p.iterInTbl, p.ctx, p.memTracker, p.diskTracker)
 	var iterOutAction *chunk.SpillDiskAction
 	if p.iterOutTbl != nil {
-		iterOutAction = setupCTEStorageTracker(p.iterOutTbl, cteExec.ctx, p.memTracker, p.diskTracker)
+		iterOutAction = setupCTEStorageTracker(p.iterOutTbl, p.ctx, p.memTracker, p.diskTracker)
 	}
 
 	failpoint.Inject("testCTEStorageSpill", func(val failpoint.Value) {
@@ -388,12 +390,29 @@ func (p *cteProducer) computeRecursivePart(ctx context.Context) (err error) {
 		return
 	}
 
+	var iterNum uint64
 	for {
 		chk := tryNewCacheChunk(p.recursiveExec)
 		if err = Next(ctx, p.recursiveExec, chk); err != nil {
 			return
 		}
 		if chk.NumRows() == 0 {
+			if iterNum%1000 == 0 {
+				// To avoid too many logs.
+				p.logTbls(ctx, err, iterNum)
+			}
+			iterNum++
+			failpoint.Inject("assertIterTableSpillToDisk", func(maxIter failpoint.Value) {
+				if iterNum > 0 && iterNum < uint64(maxIter.(int)) && err == nil {
+					if p.iterInTbl.GetMemBytes() != 0 || p.iterInTbl.GetDiskBytes() == 0 ||
+						p.iterOutTbl.GetMemBytes() != 0 || p.iterOutTbl.GetDiskBytes() == 0 ||
+						p.resTbl.GetMemBytes() != 0 || p.resTbl.GetDiskBytes() == 0 {
+						p.logTbls(ctx, err, iterNum)
+						panic("assert row container spill disk failed")
+					}
+				}
+			})
+
 			if err = p.setupTblsForNewIteration(); err != nil {
 				return
 			}
@@ -452,6 +471,8 @@ func (p *cteProducer) setupTblsForNewIteration() (err error) {
 	if err = p.iterInTbl.Reopen(); err != nil {
 		return err
 	}
+	setupCTEStorageTracker(p.iterInTbl, p.ctx, p.memTracker, p.diskTracker)
+
 	if p.isDistinct {
 		// Already deduplicated by resTbl, adding directly is ok.
 		for _, chk := range chks {
@@ -466,7 +487,11 @@ func (p *cteProducer) setupTblsForNewIteration() (err error) {
 	}
 
 	// Clear data in iterOutTbl.
-	return p.iterOutTbl.Reopen()
+	if err = p.iterOutTbl.Reopen(); err != nil {
+		return err
+	}
+	setupCTEStorageTracker(p.iterOutTbl, p.ctx, p.memTracker, p.diskTracker)
+	return nil
 }
 
 func (p *cteProducer) reset() {
@@ -482,6 +507,8 @@ func (p *cteProducer) reopenTbls() (err error) {
 	if p.isDistinct {
 		p.hashTbl = newConcurrentMapHashTable()
 	}
+	// Normally we need to setup tracker after calling Reopen(),
+	// But reopen resTbl means we need to call produce() again, it will setup tracker.
 	if err := p.resTbl.Reopen(); err != nil {
 		return err
 	}
@@ -675,4 +702,12 @@ func (p *cteProducer) checkAndUpdateCorColHashCode() bool {
 		}
 	}
 	return changed
+}
+
+func (p *cteProducer) logTbls(ctx context.Context, err error, iterNum uint64) {
+	logutil.Logger(ctx).Debug("cte iteration info",
+		zap.Any("iterInTbl mem usage", p.iterInTbl.GetMemBytes()), zap.Any("iterInTbl disk usage", p.iterInTbl.GetDiskBytes()),
+		zap.Any("iterOutTbl mem usage", p.iterOutTbl.GetMemBytes()), zap.Any("iterOutTbl disk usage", p.iterOutTbl.GetDiskBytes()),
+		zap.Any("resTbl mem usage", p.resTbl.GetMemBytes()), zap.Any("resTbl disk usage", p.resTbl.GetDiskBytes()),
+		zap.Any("resTbl rows", p.resTbl.NumRows()), zap.Any("iteration num", iterNum), zap.Error(err))
 }
