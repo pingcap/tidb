@@ -906,11 +906,6 @@ func (p *LogicalJoin) ExplainInfo() string {
 }
 
 // ExplainInfo implements Plan interface.
-func (p *LogicalProjection) ExplainInfo() string {
-	return expression.ExplainExpressionList(p.SCtx().GetExprCtx().GetEvalCtx(), p.Exprs, p.Schema())
-}
-
-// ExplainInfo implements Plan interface.
 func (p *LogicalApply) ExplainInfo() string {
 	return p.LogicalJoin.ExplainInfo()
 }

@@ -71,31 +71,6 @@ func (p *LogicalExpand) PruneColumns(parentUsedCols []*expression.Column, opt *o
 	return p, nil
 }
 
-// PruneColumns implements base.LogicalPlan interface.
-// If any expression has SetVar function or Sleep function, we do not prune it.
-func (p *LogicalProjection) PruneColumns(parentUsedCols []*expression.Column, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, error) {
-	used := expression.GetUsedList(p.SCtx().GetExprCtx().GetEvalCtx(), parentUsedCols, p.Schema())
-	prunedColumns := make([]*expression.Column, 0)
-
-	// for implicit projected cols, once the ancestor doesn't use it, the implicit expr will be automatically pruned here.
-	for i := len(used) - 1; i >= 0; i-- {
-		if !used[i] && !expression.ExprHasSetVarOrSleep(p.Exprs[i]) {
-			prunedColumns = append(prunedColumns, p.Schema().Columns[i])
-			p.Schema().Columns = append(p.Schema().Columns[:i], p.Schema().Columns[i+1:]...)
-			p.Exprs = append(p.Exprs[:i], p.Exprs[i+1:]...)
-		}
-	}
-	logicaltrace.AppendColumnPruneTraceStep(p, prunedColumns, opt)
-	selfUsedCols := make([]*expression.Column, 0, len(p.Exprs))
-	selfUsedCols = expression.ExtractColumnsFromExpressions(selfUsedCols, p.Exprs, nil)
-	var err error
-	p.Children()[0], err = p.Children()[0].PruneColumns(selfUsedCols, opt)
-	if err != nil {
-		return nil, err
-	}
-	return p, nil
-}
-
 func pruneByItems(p base.LogicalPlan, old []*util.ByItems, opt *optimizetrace.LogicalOptimizeOp) (byItems []*util.ByItems,
 	parentUsedCols []*expression.Column) {
 	prunedByItems := make([]*util.ByItems, 0)

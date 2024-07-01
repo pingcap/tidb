@@ -82,35 +82,6 @@ func getPossiblePropertyFromByItems(items []*util.ByItems) []*expression.Column 
 }
 
 // PreparePossibleProperties implements base.LogicalPlan PreparePossibleProperties interface.
-func (p *LogicalProjection) PreparePossibleProperties(_ *expression.Schema, childrenProperties ...[][]*expression.Column) [][]*expression.Column {
-	childProperties := childrenProperties[0]
-	oldCols := make([]*expression.Column, 0, p.Schema().Len())
-	newCols := make([]*expression.Column, 0, p.Schema().Len())
-	for i, expr := range p.Exprs {
-		if col, ok := expr.(*expression.Column); ok {
-			newCols = append(newCols, p.Schema().Columns[i])
-			oldCols = append(oldCols, col)
-		}
-	}
-	tmpSchema := expression.NewSchema(oldCols...)
-	newProperties := make([][]*expression.Column, 0, len(childProperties))
-	for _, childProperty := range childProperties {
-		newChildProperty := make([]*expression.Column, 0, len(childProperty))
-		for _, col := range childProperty {
-			pos := tmpSchema.ColumnIndex(col)
-			if pos < 0 {
-				break
-			}
-			newChildProperty = append(newChildProperty, newCols[pos])
-		}
-		if len(newChildProperty) != 0 {
-			newProperties = append(newProperties, newChildProperty)
-		}
-	}
-	return newProperties
-}
-
-// PreparePossibleProperties implements base.LogicalPlan PreparePossibleProperties interface.
 func (p *LogicalJoin) PreparePossibleProperties(_ *expression.Schema, childrenProperties ...[][]*expression.Column) [][]*expression.Column {
 	leftProperties := childrenProperties[0]
 	rightProperties := childrenProperties[1]
