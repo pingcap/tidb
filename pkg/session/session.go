@@ -52,6 +52,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/executor"
+	"github.com/pingcap/tidb/pkg/executor/staticrecordset"
 	"github.com/pingcap/tidb/pkg/expression"
 	exprctx "github.com/pingcap/tidb/pkg/expression/context"
 	"github.com/pingcap/tidb/pkg/expression/contextsession"
@@ -79,6 +80,7 @@ import (
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/privilege/conn"
 	"github.com/pingcap/tidb/pkg/privilege/privileges"
+	"github.com/pingcap/tidb/pkg/session/cursor"
 	session_metrics "github.com/pingcap/tidb/pkg/session/metrics"
 	"github.com/pingcap/tidb/pkg/session/txninfo"
 	"github.com/pingcap/tidb/pkg/session/types"
@@ -217,6 +219,8 @@ type session struct {
 	extensions *extension.SessionExtensions
 
 	sandBoxMode bool
+
+	cursorTracker cursor.Tracker
 }
 
 var parserPool = &sync.Pool{New: func() any { return parser.New() }}
@@ -1447,6 +1451,7 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 		RedactSQL:             s.sessionVars.EnableRedactLog,
 		ResourceGroupName:     s.sessionVars.StmtCtx.ResourceGroupName,
 		SessionAlias:          s.sessionVars.SessionAlias,
+		CursorTracker:         s.cursorTracker,
 	}
 	oldPi := s.ShowProcess()
 	if p == nil {
@@ -2399,9 +2404,10 @@ func (rs *execStmtResult) TryDetach() (sqlexec.RecordSet, bool, error) {
 	if !ok || err != nil {
 		return nil, ok, err
 	}
-
-	// FIXME: block the min-start-ts. Now the `min-start-ts` will advance and exceed the `startTS` used by
-	// this detached record set, and may cause an error if `GC` runs.
+	cursorHandle := rs.se.GetCursorTracker().NewCursor(
+		cursor.State{StartTS: rs.se.GetSessionVars().TxnCtx.StartTS},
+	)
+	crs := staticrecordset.WrapRecordSetWithCursor(cursorHandle, detachedRS)
 
 	// Now, a transaction is not needed for the detached record set, so we commit the transaction and cleanup
 	// the session state.
@@ -2414,7 +2420,7 @@ func (rs *execStmtResult) TryDetach() (sqlexec.RecordSet, bool, error) {
 		return nil, false, err
 	}
 
-	return detachedRS, true, nil
+	return crs, true, nil
 }
 
 // rollbackOnError makes sure the next statement starts a new transaction with the latest InfoSchema.
@@ -3146,6 +3152,8 @@ func CreateSessionWithOpt(store kv.Storage, opt *Opt) (types.Session, error) {
 			s.idxUsageCollector = do.StatsHandle().NewSessionIndexUsageCollector()
 		}
 	}
+
+	s.cursorTracker = cursor.NewTracker()
 
 	return s, nil
 }
@@ -4558,4 +4566,9 @@ func GetDBNames(seVar *variable.SessionVars) []string {
 		ns = append(ns, n)
 	}
 	return ns
+}
+
+// GetCursorTracker returns the internal `cursor.Tracker`
+func (s *session) GetCursorTracker() cursor.Tracker {
+	return s.cursorTracker
 }
