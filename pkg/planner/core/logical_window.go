@@ -315,10 +315,10 @@ func (p *LogicalWindow) GetPartitionKeys() []*property.MPPPartitionColumn {
 }
 
 // CheckComparisonForTiFlash check Duration vs Datetime is invalid comparison as TiFlash can't handle it so far.
-func (lp *LogicalWindow) CheckComparisonForTiFlash(frameBound *FrameBound) bool {
+func (p *LogicalWindow) CheckComparisonForTiFlash(frameBound *FrameBound) bool {
 	if len(frameBound.CompareCols) > 0 {
-		orderByEvalType := lp.OrderBy[0].Col.GetStaticType().EvalType()
-		calFuncEvalType := frameBound.CalcFuncs[0].GetType(lp.SCtx().GetExprCtx().GetEvalCtx()).EvalType()
+		orderByEvalType := p.OrderBy[0].Col.GetStaticType().EvalType()
+		calFuncEvalType := frameBound.CalcFuncs[0].GetType(p.SCtx().GetExprCtx().GetEvalCtx()).EvalType()
 
 		if orderByEvalType == types.ETDuration && (calFuncEvalType == types.ETDatetime || calFuncEvalType == types.ETTimestamp) {
 			return false
