@@ -8,7 +8,6 @@ test: fmt parser
 .PHONY: parser
 parser: parser.go hintparser.go generate
 
-.PHONY: genkeyword
 genkeyword: generate_keyword/genkeyword.go
 	go build -C generate_keyword -o ../genkeyword
 
