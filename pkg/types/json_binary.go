@@ -22,6 +22,7 @@ import (
 	"encoding/json"
 	goerrors "errors"
 	"fmt"
+	"io"
 	"math"
 	"math/bits"
 	"reflect"
@@ -549,7 +550,10 @@ func (bj *BinaryJSON) UnmarshalJSON(data []byte) error {
 		return errors.Trace(err)
 	}
 	if int64(len(data)) != decoder.InputOffset() {
-		return ErrInvalidJSONText.GenWithStackByArgs("The document root must not be followed by other values.")
+		_, err := decoder.Token()
+		if err != io.EOF {
+			return ErrInvalidJSONText.GenWithStackByArgs("The document root must not be followed by other values.")
+		}
 	}
 	newBj, err := CreateBinaryJSONWithCheck(in)
 	if err != nil {
