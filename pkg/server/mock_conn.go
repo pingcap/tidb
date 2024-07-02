@@ -114,7 +114,7 @@ func CreateMockConn(t *testing.T, server *Server) MockConn {
 	require.NoError(t, err)
 
 	connID := rand.Uint64()
-	tc, err := server.driver.OpenCtx(connID, 0, uint8(tmysql.DefaultCollationID), "", nil, extensions.NewSessionExtensions())
+	tc, err := server.driver.OpenCtx(connID, 0, tmysql.DefaultCollationID, "", nil, extensions.NewSessionExtensions())
 	require.NoError(t, err)
 
 	cc := &clientConn{
