@@ -314,7 +314,7 @@ func TestInitialHandshake(t *testing.T) {
 	expected.WriteByte(0x15)                                                                             // Authentication Plugin Length
 	expected.Write([]byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00})                   // Unused
 	expected.Write([]byte{0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10, 0x11, 0x12, 0x13, 0x14, 0x00}) // Salt
-	expected.WriteString("mysql_native_password")                                                        // Authentication Plugin
+	expected.WriteString("caching_sha2_password")                                                        // Authentication Plugin
 	expected.WriteByte(0x00)                                                                             // NULL
 	require.Equal(t, expected.Bytes(), outBuffer.Bytes()[4:])
 }
@@ -1565,7 +1565,7 @@ func TestAuthPlugin2(t *testing.T) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/server/FakeAuthSwitch", "return(1)"))
 	respAuthSwitch, err := cc.checkAuthPlugin(ctx, &resp)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/server/FakeAuthSwitch"))
-	require.Equal(t, []byte(mysql.AuthNativePassword), respAuthSwitch)
+	require.Equal(t, []byte(mysql.AuthCachingSha2Password), respAuthSwitch)
 	require.NoError(t, err)
 }
 
