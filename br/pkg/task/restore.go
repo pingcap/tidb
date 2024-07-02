@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/docker/go-units"
 	"github.com/google/uuid"
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
@@ -43,6 +44,7 @@ import (
 	"github.com/spf13/pflag"
 	"github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
+	"github.com/tikv/pd/client/http"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
@@ -820,6 +822,11 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		return errors.Annotate(berrors.ErrRestoreInvalidBackup, "contain tables but no databases")
 	}
 
+	err = checkDiskSpace(ctx, mgr, files)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
 	archiveSize := reader.ArchiveSize(ctx, files)
 	g.Record(summary.RestoreDataSize, archiveSize)
 	//restore from tidb will fetch a general Size issue https://github.com/pingcap/tidb/issues/27247
@@ -1163,6 +1170,63 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 
 	// Set task summary to success status.
 	summary.SetSuccessStatus(true)
+	return nil
+}
+
+func getMaxReplica(ctx context.Context, mgr *conn.Mgr) (int, error) {
+	resp, err := mgr.GetPDHTTPClient().GetReplicateConfig(ctx)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	key := "max-replicas"
+	val, ok := resp[key]
+	if !ok {
+		return 0, errors.Errorf("key %s not found in response %v", key, resp)
+	}
+	return int(val.(float64)), nil
+}
+
+func calNecessary(files []*backuppb.File, maxReplica int, storeCnt int) int {
+	var totalSize int
+	for _, file := range files {
+		size := file.Size()
+		totalSize += size
+	}
+	return totalSize * maxReplica / storeCnt
+}
+
+func checkTiKVSpace(necessary int, store *http.StoreInfo) error {
+	available, err := units.RAMInBytes(store.Status.Available)
+	if err != nil {
+		return errors.Errorf("store %d has invalid available space %s", store.Store.ID, store.Status.Available)
+	}
+	if available < int64(necessary) {
+		return errors.Errorf("store %d has no enough space, available %s, necessary %s",
+			store.Store.ID, units.BytesSize(float64(available)), units.BytesSize(float64(necessary)))
+	}
+	return nil
+}
+
+func checkDiskSpace(ctx context.Context, mgr *conn.Mgr, files []*backuppb.File) error {
+	maxReplica, err := getMaxReplica(ctx, mgr)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	stores, err := mgr.GetPDHTTPClient().GetStores(ctx)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	necessary := calNecessary(files, maxReplica, stores.Count)
+
+	for _, store := range stores.Stores {
+		if err != nil {
+			return errors.Trace(err)
+		}
+		err = checkTiKVSpace(necessary, &store)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
 	return nil
 }
 
