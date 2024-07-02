@@ -16,6 +16,7 @@ package join
 
 import (
 	"sync/atomic"
+	"unsafe"
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -45,11 +46,11 @@ func (j *innerJoinProbe) Probe(joinResult *hashjoinWorkerResult, sqlKiller *sqlk
 	defer joinedChk.SetInCompleteChunk(isInCompleteChunk)
 
 	for remainCap > 0 && j.currentProbeRow < j.chunkRows {
-		if j.matchedRowsHeaders[j.currentProbeRow] != nil {
-			candidateRow := j.matchedRowsHeaders[j.currentProbeRow]
+		if j.matchedRowsHeaders[j.currentProbeRow] != 0 {
+			candidateRow := *(*unsafe.Pointer)(unsafe.Pointer(&j.matchedRowsHeaders[j.currentProbeRow]))
 			if isKeyMatched(meta.keyMode, j.serializedKeys[j.currentProbeRow], candidateRow, meta) {
 				// key matched, convert row to column for build side
-				j.appendBuildRowToCachedBuildRowsAndConstructBuildRowsIfNeeded(&matchedRowInfo{probeRowIndex: j.currentProbeRow, buildRowStart: candidateRow}, joinedChk, 0, hasOtherCondition)
+				j.appendBuildRowToCachedBuildRowsAndConstructBuildRowsIfNeeded(createMatchRowInfo(j.currentProbeRow, candidateRow), joinedChk, 0, hasOtherCondition)
 				j.matchedRowsForCurrentProbeRow++
 				remainCap--
 			} else {

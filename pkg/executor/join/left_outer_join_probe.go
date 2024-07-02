@@ -16,6 +16,7 @@ package join
 
 import (
 	"sync/atomic"
+	"unsafe"
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -92,7 +93,7 @@ func (j *leftOuterJoinProbe) ScanRowTable(joinResult *hashjoinWorkerResult, sqlK
 		currentRow := j.rowIter.getValue()
 		if !meta.isCurrentRowUsed(currentRow) {
 			// append build side of this row
-			j.appendBuildRowToCachedBuildRowsAndConstructBuildRowsIfNeeded(&matchedRowInfo{buildRowStart: currentRow}, joinResult.chk, 0, false)
+			j.appendBuildRowToCachedBuildRowsAndConstructBuildRowsIfNeeded(createMatchRowInfo(0, currentRow), joinResult.chk, 0, false)
 			insertedRows++
 		}
 		j.rowIter.next()
@@ -211,12 +212,12 @@ func (j *leftOuterJoinProbe) probeForRightBuild(chk, joinedChk *chunk.Chunk, rem
 	hasOtherCondition := j.ctx.hasOtherCondition()
 
 	for remainCap > 0 && j.currentProbeRow < j.chunkRows {
-		if j.matchedRowsHeaders[j.currentProbeRow] != nil {
+		if j.matchedRowsHeaders[j.currentProbeRow] != 0 {
 			// hash value match
-			candidateRow := j.matchedRowsHeaders[j.currentProbeRow]
+			candidateRow := *(*unsafe.Pointer)(unsafe.Pointer(&j.matchedRowsHeaders[j.currentProbeRow]))
 			if isKeyMatched(meta.keyMode, j.serializedKeys[j.currentProbeRow], candidateRow, meta) {
 				// join key match
-				j.appendBuildRowToCachedBuildRowsAndConstructBuildRowsIfNeeded(&matchedRowInfo{probeRowIndex: j.currentProbeRow, buildRowStart: candidateRow}, joinedChk, 0, hasOtherCondition)
+				j.appendBuildRowToCachedBuildRowsAndConstructBuildRowsIfNeeded(createMatchRowInfo(j.currentProbeRow, candidateRow), joinedChk, 0, hasOtherCondition)
 				if !hasOtherCondition {
 					// has no other condition, key match mean join match
 					j.isNotMatchedRows[j.currentProbeRow] = false
@@ -268,12 +269,12 @@ func (j *leftOuterJoinProbe) probeForLeftBuild(chk, joinedChk *chunk.Chunk, rema
 	hasOtherCondition := j.ctx.hasOtherCondition()
 
 	for remainCap > 0 && j.currentProbeRow < j.chunkRows {
-		if j.matchedRowsHeaders[j.currentProbeRow] != nil {
+		if j.matchedRowsHeaders[j.currentProbeRow] != 0 {
 			// hash value match
-			candidateRow := j.matchedRowsHeaders[j.currentProbeRow]
+			candidateRow := *(*unsafe.Pointer)(unsafe.Pointer(&j.matchedRowsHeaders[j.currentProbeRow]))
 			if isKeyMatched(meta.keyMode, j.serializedKeys[j.currentProbeRow], candidateRow, meta) {
 				// join key match
-				j.appendBuildRowToCachedBuildRowsAndConstructBuildRowsIfNeeded(&matchedRowInfo{probeRowIndex: j.currentProbeRow, buildRowStart: candidateRow}, joinedChk, 0, hasOtherCondition)
+				j.appendBuildRowToCachedBuildRowsAndConstructBuildRowsIfNeeded(createMatchRowInfo(j.currentProbeRow, candidateRow), joinedChk, 0, hasOtherCondition)
 				if !hasOtherCondition {
 					// has no other condition, key match means join match
 					meta.setUsedFlag(candidateRow)
@@ -305,7 +306,7 @@ func (j *leftOuterJoinProbe) probeForLeftBuild(chk, joinedChk *chunk.Chunk, rema
 		err = j.buildResultAfterOtherCondition(chk, joinedChk)
 		for index, result := range j.selected {
 			if result {
-				meta.setUsedFlag(j.rowIndexInfos[index].buildRowStart)
+				meta.setUsedFlag(*(*unsafe.Pointer)(unsafe.Pointer(&j.rowIndexInfos[index].buildRowStart)))
 			}
 		}
 	}

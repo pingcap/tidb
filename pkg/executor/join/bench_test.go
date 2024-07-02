@@ -15,7 +15,9 @@
 package join
 
 import (
+	"runtime"
 	"testing"
+	"unsafe"
 
 	"github.com/pingcap/tidb/pkg/util"
 )
@@ -54,4 +56,34 @@ func BenchmarkHashTableConcurrentBuild(b *testing.B) {
 		})
 	}
 	wg.Wait()
+}
+
+func BenchmarkTestUnsafePointer(b *testing.B) {
+	size := int(1e3)
+	a := make([]byte, size*8)
+	p := make([]unsafe.Pointer, size)
+	b.StopTimer()
+	for i := 0; i < size; i++ {
+		p[i] = unsafe.Pointer(&a[i*8])
+	}
+	for i := 0; i < size; i++ {
+		*(*int64)(p[i]) = int64(i)
+	}
+	runtime.KeepAlive(a)
+	runtime.KeepAlive(p)
+}
+
+func BenchmarkTestUseUintptrAsUnsafePointer(b *testing.B) {
+	size := int(1e3)
+	a := make([]byte, size*8)
+	p := make([]uintptr, size)
+	b.StopTimer()
+	for i := 0; i < size; i++ {
+		*(*unsafe.Pointer)(unsafe.Pointer(&p[i])) = unsafe.Pointer(&a[i*8])
+	}
+	for i := 0; i < size; i++ {
+		*(*int64)((unsafe.Pointer)(&p[i])) = int64(i)
+	}
+	runtime.KeepAlive(a)
+	runtime.KeepAlive(p)
 }
