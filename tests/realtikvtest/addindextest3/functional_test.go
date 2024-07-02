@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/tests/realtikvtest"
@@ -89,7 +90,7 @@ func TestBackendCtxConcurrentUnregister(t *testing.T) {
 	for range idxIDs {
 		uniques = append(uniques, false)
 	}
-	_, err = bCtx.Register([]int64{1, 2, 3, 4, 5, 6, 7}, uniques, &model.TableInfo{})
+	_, err = bCtx.Register([]int64{1, 2, 3, 4, 5, 6, 7}, uniques, tables.MockTableFromMeta(&model.TableInfo{}))
 	require.NoError(t, err)
 
 	wg := sync.WaitGroup{}

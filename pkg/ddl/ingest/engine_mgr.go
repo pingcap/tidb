@@ -17,13 +17,13 @@ package ingest
 import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
 
 // Register implements BackendCtx.
-func (bc *litBackendCtx) Register(indexIDs []int64, uniques []bool, tblInfo *model.TableInfo) ([]Engine, error) {
+func (bc *litBackendCtx) Register(indexIDs []int64, uniques []bool, tbl table.Table) ([]Engine, error) {
 	ret := make([]Engine, 0, len(indexIDs))
 
 	for _, indexID := range indexIDs {
@@ -60,7 +60,7 @@ func (bc *litBackendCtx) Register(indexIDs []int64, uniques []bool, tblInfo *mod
 	openedEngines := make(map[int64]*engineInfo, numIdx)
 
 	for i, indexID := range indexIDs {
-		openedEngine, err := mgr.OpenEngine(bc.ctx, cfg, tblInfo.Name.L, int32(indexID))
+		openedEngine, err := mgr.OpenEngine(bc.ctx, cfg, tbl.Meta().Name.L, int32(indexID))
 		if err != nil {
 			logutil.Logger(bc.ctx).Warn(LitErrCreateEngineFail,
 				zap.Int64("job ID", bc.jobID),
@@ -92,7 +92,7 @@ func (bc *litBackendCtx) Register(indexIDs []int64, uniques []bool, tblInfo *mod
 		bc.engines[indexID] = ei
 	}
 	bc.memRoot.Consume(numIdx * structSizeEngineInfo)
-	bc.tblInfo = tblInfo
+	bc.tblInfo = tbl.Meta()
 
 	logutil.Logger(bc.ctx).Info(LitInfoOpenEngine, zap.Int64("job ID", bc.jobID),
 		zap.Int64s("index IDs", indexIDs),

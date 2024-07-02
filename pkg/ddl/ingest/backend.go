@@ -17,6 +17,7 @@ package ingest
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -51,12 +52,15 @@ type BackendCtx interface {
 	// backend context. If the index ID is already registered, it will return the
 	// associated engines. Only one group of index ID is allowed to register for a
 	// BackendCtx.
-	Register(indexIDs []int64, uniques []bool, tblInfo *model.TableInfo) ([]Engine, error)
+	Register(indexIDs []int64, uniques []bool, tbl table.Table) ([]Engine, error)
 	UnregisterEngines()
 
-	// TODO(lance6716): remove the indexID argument from CollectRemoteDuplicateRows.
-	CollectRemoteDuplicateRows(indexID int64, tbl table.Table) error
 	FlushController
+	// CollectRemoteDuplicateRows collects duplicate entry error as the supplement of
+	// FlushController.Flush. It should be called after the task is finished.
+	// `indexIDs` argument can contain non-unique indexes and the implementation will
+	// filter them.
+	CollectRemoteDuplicateRows(indexIDs []int64, tbl table.Table) error
 	Done() bool
 	SetDone()
 
@@ -124,9 +128,9 @@ func (bc *litBackendCtx) handleErrorAfterCollectRemoteDuplicateRows(
 				return errors.Trace(tikv.ErrKeyExists)
 			}
 			indexName := tErr.Args()[1]
-			valueStr := tErr.Args()[2]
+			valueStr := tErr.Args()[2].([]string)
 
-			return errors.Trace(tikv.ErrKeyExists.FastGenByArgs(valueStr, indexName))
+			return errors.Trace(tikv.ErrKeyExists.FastGenByArgs(strings.Join(valueStr, "-"), indexName))
 		}
 		return errors.Trace(tikv.ErrKeyExists)
 	}
@@ -134,15 +138,27 @@ func (bc *litBackendCtx) handleErrorAfterCollectRemoteDuplicateRows(
 }
 
 // CollectRemoteDuplicateRows collects duplicate rows from remote TiKV.
-func (bc *litBackendCtx) CollectRemoteDuplicateRows(indexID int64, tbl table.Table) error {
-	errorMgr := errormanager.New(nil, bc.cfg, log.Logger{Logger: logutil.Logger(bc.ctx)})
-	dupeController := bc.backend.GetDupeController(bc.cfg.TikvImporter.RangeConcurrency*2, errorMgr)
-	hasDupe, err := dupeController.CollectRemoteDuplicateRows(bc.ctx, tbl, tbl.Meta().Name.L, &encode.SessionOptions{
-		SQLMode: mysql.ModeStrictAllTables,
-		SysVars: bc.sysVars,
-		IndexID: indexID,
-	}, lightning.ErrorOnDup)
-	return bc.handleErrorAfterCollectRemoteDuplicateRows(err, indexID, tbl, hasDupe)
+func (bc *litBackendCtx) CollectRemoteDuplicateRows(indexIDs []int64, tbl table.Table) error {
+	for _, indexID := range indexIDs {
+		idxInfo := model.FindIndexInfoByID(tbl.Meta().Indices, indexID)
+		if !idxInfo.Unique {
+			continue
+		}
+
+		errorMgr := errormanager.New(nil, bc.cfg, log.Logger{Logger: logutil.Logger(bc.ctx)})
+		dupeController := bc.backend.GetDupeController(bc.cfg.TikvImporter.RangeConcurrency*2, errorMgr)
+		hasDupe, err := dupeController.CollectRemoteDuplicateRows(bc.ctx, tbl, tbl.Meta().Name.L, &encode.SessionOptions{
+			SQLMode: mysql.ModeStrictAllTables,
+			SysVars: bc.sysVars,
+			IndexID: indexID,
+		}, lightning.ErrorOnDup)
+		dupErr := bc.handleErrorAfterCollectRemoteDuplicateRows(err, indexID, tbl, hasDupe)
+		if dupErr != nil {
+			return dupErr
+		}
+	}
+
+	return nil
 }
 
 func acquireLock(ctx context.Context, se *concurrency.Session, key string) (*concurrency.Mutex, error) {

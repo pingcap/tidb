@@ -660,7 +660,7 @@ func (dc *ddlCtx) runAddIndexInLocalIngestMode(
 		return errors.Trace(err)
 	}
 	defer ingest.LitBackCtxMgr.Unregister(job.ID)
-	engines, err := bcCtx.Register(indexIDs, uniques, t.Meta())
+	engines, err := bcCtx.Register(indexIDs, uniques, t)
 	if err != nil {
 		logutil.DDLIngestLogger().Error("cannot register new engine",
 			zap.Int64("jobID", job.ID),
@@ -736,15 +736,7 @@ func (dc *ddlCtx) runAddIndexInLocalIngestMode(
 	if err != nil {
 		return err
 	}
-	for i, isUK := range uniques {
-		if isUK {
-			err := bcCtx.CollectRemoteDuplicateRows(indexIDs[i], t)
-			if err != nil {
-				return err
-			}
-		}
-	}
-	return nil
+	return bcCtx.CollectRemoteDuplicateRows(indexIDs, t)
 }
 
 type localRowCntListener struct {
