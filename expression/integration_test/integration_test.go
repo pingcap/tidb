@@ -8064,3 +8064,15 @@ func TestCastBinaryStringToJSON(t *testing.T) {
 	tk.MustQuery("select 1 from t where cast(BINARY vc as json) = '1';").Check(testkit.Rows())
 	tk.MustQuery("select 1 from t where cast(BINARY c as json) = '1';").Check(testkit.Rows())
 }
+
+func TestIssue53580(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t (col TEXT);")
+	tk.MustQuery(`select 1 from (select t.col as c0, 46578369 as c1 from t) as t where
+		case when (
+			t.c0 in (t.c0, cast((cast(1 as unsigned) - cast(t.c1 as signed)) as char))
+		) then 1 else 2 end;`).Check(testkit.Rows())
+}
