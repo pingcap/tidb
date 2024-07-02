@@ -36,6 +36,7 @@ go_test(
         "//pkg/errno",
         "//pkg/kv",
         "//pkg/meta/autoid",
+        "//pkg/sessionctx/variable",
         "//pkg/testkit",
         "//pkg/testkit/testsetup",
         "@com_github_pingcap_failpoint//:failpoint",
