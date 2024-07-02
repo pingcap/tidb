@@ -19,7 +19,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -71,7 +70,6 @@ type schemaValidator struct {
 	lease              time.Duration
 	latestSchemaVer    int64
 	restartSchemaVer   int64
-	latestInfoSchema   infoschema.InfoSchema
 	do                 *Domain
 	latestSchemaExpire time.Time
 	// deltaSchemaInfos is a queue that maintain the history of changes.
@@ -140,9 +138,6 @@ func (s *schemaValidator) Update(leaseGrantTS uint64, oldVer, currVer int64, cha
 
 	// Renew the lease.
 	s.latestSchemaVer = currVer
-	if s.do != nil {
-		s.latestInfoSchema = s.do.InfoSchema()
-	}
 	leaseGrantTime := oracle.GetTimeFromTS(leaseGrantTS)
 	leaseExpire := leaseGrantTime.Add(s.lease - time.Millisecond)
 	s.latestSchemaExpire = leaseExpire
