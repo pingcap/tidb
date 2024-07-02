@@ -495,6 +495,9 @@ func (p *LogicalJoin) constructIndexJoin(
 	newOtherConds := make([]expression.Expression, len(p.OtherConditions), len(p.OtherConditions)+len(p.EqualConditions))
 	copy(newOtherConds, p.OtherConditions)
 	for keyOff, idxOff := range keyOff2IdxOff {
+		// since key offset to index offset mapping is not one-to-one, we need to filter out
+		// the invalid key offset. For those value = -1 here, that means the key is not found
+		// in index columns, and we should move these condition back to OtherConditions.
 		if keyOff2IdxOff[keyOff] < 0 {
 			newOtherConds = append(newOtherConds, p.EqualConditions[keyOff])
 			continue
@@ -617,23 +620,36 @@ func (p *LogicalJoin) constructIndexMergeJoin(
 
 		// keyOff2KeyOffOrderByIdx is map the join keys offsets to [0, len(joinKeys)) ordered by the
 		// join key position in inner index.
-		keyOff2KeyOffOrderByIdx := make([]int, len(join.OuterJoinKeys))
+		orderByIdxOffset2KeyOff := make([]int, len(join.OuterJoinKeys))
 		keyOffMapList := make([]int, len(join.KeyOff2IdxOff))
 		copy(keyOffMapList, join.KeyOff2IdxOff)
-		keyOffMap := make(map[int]int, len(keyOffMapList))
+		idxOff2KeyOffMap := make(map[int]int, len(keyOffMapList))
+		// idxOff2KeyOffMap indicates the index offset <-> key offset mapping.
 		for i, idxOff := range keyOffMapList {
-			keyOffMap[idxOff] = i
+			idxOff2KeyOffMap[idxOff] = i
 		}
 		slices.Sort(keyOffMapList)
-		keyIsIndexPrefix := true
-		for keyOff, idxOff := range keyOffMapList {
-			if keyOff != idxOff {
-				keyIsIndexPrefix = false
+		keyIsIndexAcrossOver := false
+		// iter all index offset(asc ordering after sort) to check whether the join keys(maybe be truncated
+		// in constructIndexJoin, only key columns that can be found in index columns are kept) are the prefix
+		// of the index columns.
+		for i, idxOff := range keyOffMapList {
+			// once the absent here, meaning the join keys are part of index columns.
+			// eg: join(a,b), idx1(a,c,b), the index offset map list is [0,2] while the 1 is absent
+			// that means the join keys are part of index columns, fail over below after break.
+			if i != idxOff {
+				keyIsIndexAcrossOver = true
 				break
 			}
-			keyOff2KeyOffOrderByIdx[keyOffMap[idxOff]] = keyOff
+			// valid case
+			// eg: join(a,b), idx1(a,b)
+			// eg: join(b,a), idx1(a,b,c)
+			// since we need to keep the join keys order, so we need to reorder the outers keys offset to make it
+			// if outer keys don't follow the inner index's order.
+			orderByIdxOffset2KeyOff[idxOff] = idxOff2KeyOffMap[idxOff]
 		}
-		if !keyIsIndexPrefix {
+		// the example case above will fail here.
+		if keyIsIndexAcrossOver {
 			continue
 		}
 		// isOuterKeysPrefix means whether the outer join keys are the prefix of the prop items.
@@ -642,7 +658,7 @@ func (p *LogicalJoin) constructIndexMergeJoin(
 		outerCompareFuncs := make([]expression.CompareFunc, 0, len(join.OuterJoinKeys))
 
 		for i := range join.KeyOff2IdxOff {
-			if isOuterKeysPrefix && !prop.SortItems[i].Col.EqualColumn(join.OuterJoinKeys[keyOff2KeyOffOrderByIdx[i]]) {
+			if isOuterKeysPrefix && !prop.SortItems[i].Col.EqualColumn(join.OuterJoinKeys[orderByIdxOffset2KeyOff[i]]) {
 				isOuterKeysPrefix = false
 			}
 			compareFuncs = append(compareFuncs, expression.GetCmpFunction(p.SCtx().GetExprCtx(), join.OuterJoinKeys[i], join.InnerJoinKeys[i]))
@@ -651,7 +667,7 @@ func (p *LogicalJoin) constructIndexMergeJoin(
 		// canKeepOuterOrder means whether the prop items are the prefix of the outer join keys.
 		canKeepOuterOrder := len(prop.SortItems) <= len(join.OuterJoinKeys)
 		for i := 0; canKeepOuterOrder && i < len(prop.SortItems); i++ {
-			if !prop.SortItems[i].Col.EqualColumn(join.OuterJoinKeys[keyOff2KeyOffOrderByIdx[i]]) {
+			if !prop.SortItems[i].Col.EqualColumn(join.OuterJoinKeys[orderByIdxOffset2KeyOff[i]]) {
 				canKeepOuterOrder = false
 			}
 		}
@@ -661,7 +677,7 @@ func (p *LogicalJoin) constructIndexMergeJoin(
 		if canKeepOuterOrder || isOuterKeysPrefix {
 			indexMergeJoin := PhysicalIndexMergeJoin{
 				PhysicalIndexJoin:       *join,
-				KeyOff2KeyOffOrderByIdx: keyOff2KeyOffOrderByIdx,
+				OrderByIdxOffset2KeyOff: orderByIdxOffset2KeyOff,
 				NeedOuterSort:           !isOuterKeysPrefix,
 				CompareFuncs:            compareFuncs,
 				OuterCompareFuncs:       outerCompareFuncs,
@@ -804,10 +820,14 @@ func (p *LogicalJoin) getIndexJoinBuildHelper(ds *DataSource, innerJoinKeys []*e
 	if helper.chosenPath == nil {
 		return nil, nil
 	}
+	// mark all the key offset to index offset as -1.
 	keyOff2IdxOff := make([]int, len(innerJoinKeys))
 	for i := range keyOff2IdxOff {
 		keyOff2IdxOff[i] = -1
 	}
+	// collect the index offset to key offset in helper.
+	// once a column in index columns is found in inner join keys, we record the map reversely.
+	// here is possible that: part keys are mapped to -1, meaning not in the index columns.
 	for idxOff, keyOff := range helper.idxOff2KeyOff {
 		if keyOff != -1 {
 			keyOff2IdxOff[keyOff] = idxOff
@@ -1644,6 +1664,7 @@ func (ijHelper *indexJoinBuildHelper) resetContextForIndex(innerKeys []*expressi
 	ijHelper.curNotUsedIndexCols = make([]*expression.Column, 0, len(idxCols))
 	ijHelper.curNotUsedColLens = make([]int, 0, len(idxCols))
 	for i, idxCol := range idxCols {
+		// if this index column exists in innerKeys, save the offset of innerKeys in 'curIdxOff2KeyOff', -1 if not.
 		ijHelper.curIdxOff2KeyOff[i] = tmpSchema.ColumnIndex(idxCol)
 		if ijHelper.curIdxOff2KeyOff[i] >= 0 {
 			// Don't use the join columns if their collations are unmatched and the new collation is enabled.
