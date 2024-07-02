@@ -86,3 +86,81 @@ func Test53726(t *testing.T) {
 			"  └─TableReader_11 2.00 root  data:TableFullScan_10",
 			"    └─TableFullScan_10 2.00 cop[tikv] table:t7 keep order:false"))
 }
+
+func TestIssue53857(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`CREATE TABLE t9172e9ec (
+  col_1 int(11) NOT NULL,
+  col_2 json NOT NULL,
+  col_3 char(119) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL DEFAULT '1Fj!VQi4iQ)^PgL_+l',
+  col_4 varchar(286) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL DEFAULT 'cU',
+  col_5 float DEFAULT NULL,
+  PRIMARY KEY (col_1,col_3) /*T![clustered_index] CLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci
+PARTITION BY HASH (col_1) PARTITIONS 3;`)
+
+	tk.MustExec(`INSERT INTO t9172e9ec VALUES
+(1955454898,'[4784139917445341210, 2409847733994134699, 10707724437804402980, 6577977165263525461]','llE0aPj@+N_#k@Q','5=-l6',798.27545);`)
+
+	tk.MustExec(`CREATE TABLE ta0c4280a (
+  col_64 time NOT NULL,
+  KEY idx_25 (col_64),
+  UNIQUE KEY idx_26 (col_64),
+  PRIMARY KEY (col_64) /*T![clustered_index] CLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=gbk COLLATE=gbk_bin;`)
+
+	tk.MustExec(`INSERT INTO ta0c4280a VALUES
+('00:00:54'),('00:07:16'),('00:13:36'),('00:19:54'),('00:22:22'),('00:22:47'),('00:40:24'),('00:41:42'),('00:42:17'),
+('22:54:18'),('22:56:38'),('23:22:58'),('23:32:42'),('23:41:17');`)
+
+	tk.MustExec(`CREATE TABLE tld1ce2472 (
+  col_52 json NOT NULL,
+  col_53 date NOT NULL,
+  col_54 datetime NOT NULL,
+  col_55 json NOT NULL,
+  col_56 datetime NOT NULL DEFAULT '2030-11-15 00:00:00',
+  col_57 json NOT NULL,
+  PRIMARY KEY (col_54,col_56) /*T![clustered_index] NONCLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=gbk COLLATE=gbk_chinese_ci;`)
+
+	tk.MustExec(`INSERT INTO tld1ce2472 VALUES
+('[\"vH8q1l9oIVwhmVpk8lFmxxzzGGLdKZ5ndMulSB8dzxw09VkwI8EWFv0vrXvHCbui\", \"S3bmEa6qMrBXZiOrfBaWG5EU6ma8RUyQ6TOxlpaA4WXQbunIfW5Dl7fPLGDzz9Ac\", \"dwxTL5ScIMJccTK8HE42NFkY5oGNXZD7yYQtaIYQIhr5h2XaZoGGxq8odXELEg8S\", \"zEbPnyABCd5r8TQlkaZnD3xuEc7ZdM6v4dEesbcTnVQKhwauQVEbFrTuobsj0eBR\"]', '1980-08-07', '2004-12-19 00:00:00', '[\"ghFazkT2xiNmjHey6pMCPzkQUnBl6ZDZNaJdkNOzxJgSLk1R1dnY49gfTHDvYqZI\", \"9oVaH4EPaXQ59PFEVuSjkNZzUWtWHpcwLIg4wIeIlWi13P7WotFfcjB2AwzYK10k\"]', '2008-09-21 00:00:00', '[0.8933399442803783, 0.2749574908374919, 0.2957384535419304, 0.18474097724774424, 0.7974148420776407]');`)
+	tk.MustQuery(`
+explain SELECT 1
+FROM (
+    SELECT RIGHT(ta0c4280a.col_64, 4) AS col_7284
+    FROM ta0c4280a
+    JOIN t9172e9ec
+    WHERE ta0c4280a.col_64 IN ('09:41:40.00')
+) AS cte_1466
+JOIN (
+    SELECT tld1ce2472.col_53 AS col_7282
+    FROM tld1ce2472
+) AS cte_1465
+WHERE cte_1466.col_7284 BETWEEN '1f' AND '4f';
+`).Check(testkit.Rows(
+		"Projection_13 0.00 root  1->Column#15",
+		"└─HashJoin_15 0.00 root  CARTESIAN inner join",
+		"  ├─Projection_16(Build) 0.00 root  1->Column#19",
+		"  │ └─TableDual_17 0.00 root  rows:0",
+		"  └─Projection_18(Probe) 10000.00 root  1->Column#20",
+		"    └─IndexReader_22 10000.00 root  index:IndexFullScan_21",
+		"      └─IndexFullScan_21 10000.00 cop[tikv] table:tld1ce2472, index:PRIMARY(col_54, col_56) keep order:false, stats:pseudo",
+	))
+	tk.MustQuery(`
+ SELECT 1
+FROM (
+    SELECT RIGHT(ta0c4280a.col_64, 4) AS col_7284
+    FROM ta0c4280a
+    JOIN t9172e9ec
+    WHERE ta0c4280a.col_64 IN ('09:41:40.00')
+) AS cte_1466
+JOIN (
+    SELECT tld1ce2472.col_53 AS col_7282
+    FROM tld1ce2472
+) AS cte_1465
+WHERE cte_1466.col_7284 BETWEEN '1f' AND '4f';
+`).Check(testkit.Rows())
+}
