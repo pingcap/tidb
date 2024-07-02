@@ -713,17 +713,6 @@ func (t *TableCommon) rebuildIndices(ctx table.MutateContext, txn kv.Transaction
 	return nil
 }
 
-// adjustRowValuesBuf adjust writeBufs.AddRowValues length, AddRowValues stores the inserting values that is used
-// by tablecodec.EncodeRow, the encoded row format is `id1, colval, id2, colval`, so the correct length is rowLen * 2. If
-// the inserting row has null value, AddRecord will skip it, so the rowLen will be different, so we need to adjust it.
-func adjustRowValuesBuf(writeBufs *variable.WriteStmtBufs, rowLen int) {
-	adjustLen := rowLen * 2
-	if writeBufs.AddRowValues == nil || cap(writeBufs.AddRowValues) < adjustLen {
-		writeBufs.AddRowValues = make([]types.Datum, adjustLen)
-	}
-	writeBufs.AddRowValues = writeBufs.AddRowValues[:adjustLen]
-}
-
 // FindPrimaryIndex uses to find primary index in tableInfo.
 func FindPrimaryIndex(tblInfo *model.TableInfo) *model.IndexInfo {
 	var pkIdx *model.IndexInfo
@@ -2212,17 +2201,4 @@ func (t *TemporaryTable) SetSize(v int64) {
 // GetMeta gets the table meta.
 func (t *TemporaryTable) GetMeta() *model.TableInfo {
 	return t.meta
-}
-
-// ensureCapacityAndReset is similar to the built-in make(),
-// but it reuses the given slice if it has enough capacity.
-func ensureCapacityAndReset[T any](slice []T, size int, optCap ...int) []T {
-	capacity := size
-	if len(optCap) > 0 {
-		capacity = optCap[0]
-	}
-	if cap(slice) < capacity {
-		return make([]T, size, capacity)
-	}
-	return slice[:size]
 }

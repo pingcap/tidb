@@ -45,7 +45,8 @@ func (b *mockMemBuffer) Set(key kv.Key, value []byte) error {
 }
 
 func TestEncodeRow(t *testing.T) {
-	buffer := &encodeRowBuffer{}
+	stmtBufs := &variable.WriteStmtBufs{}
+	buffer := &encodeRowBuffer{writeStmtBufs: stmtBufs}
 	tm := types.NewTime(
 		types.FromDate(2021, 1, 1, 1, 2, 3, 4),
 		mysql.TypeDatetime, 6,
@@ -105,12 +106,13 @@ func TestEncodeRow(t *testing.T) {
 		memBuffer.AssertExpectations(t)
 
 		// the encoding result should be cached as a buffer
-		require.Equal(t, expectedVal, buffer.encoded)
+		require.Equal(t, expectedVal, stmtBufs.RowValBuf)
 	}
 }
 
 func TestEncodeBufferReserve(t *testing.T) {
-	for _, item := range []any{&AddRecordBuffer{}, &UpdateRecordBuffer{}} {
+	bufs := NewMutateBuffers(&variable.WriteStmtBufs{})
+	for _, item := range []any{bufs.addRecord, bufs.updateRecord} {
 		var buffer *encodeRowBuffer
 		var reset func(int)
 		var encode func()
@@ -143,9 +145,6 @@ func TestEncodeBufferReserve(t *testing.T) {
 		require.Equal(t, 0, len(buffer.colIDs))
 		require.Equal(t, 6, cap(buffer.row))
 		require.Equal(t, 0, len(buffer.row))
-		// tempValues and encoded should be postponed to encode phase to reset
-		require.Equal(t, 0, cap(buffer.tempValues))
-		require.Equal(t, 0, cap(buffer.encoded))
 
 		// add some data and encode
 		buffer.AddColVal(1, types.NewIntDatum(1))
@@ -153,9 +152,10 @@ func TestEncodeBufferReserve(t *testing.T) {
 		require.Equal(t, 2, len(buffer.colIDs))
 		require.Equal(t, 2, len(buffer.row))
 		encode()
-		encodedCap := cap(buffer.encoded)
+		encodedCap := cap(buffer.writeStmtBufs.RowValBuf)
 		require.Greater(t, encodedCap, 0)
-		require.Equal(t, 4, len(buffer.tempValues))
+		require.Equal(t, 4, len(buffer.writeStmtBufs.AddRowValues))
+		addRowValuesCap := cap(buffer.writeStmtBufs.AddRowValues)
 
 		// GetColDataBuffer should return the underlying buffer
 		if b, ok := item.(*AddRecordBuffer); ok {
@@ -170,8 +170,8 @@ func TestEncodeBufferReserve(t *testing.T) {
 		require.Equal(t, 0, len(buffer.colIDs))
 		require.Equal(t, 6, cap(buffer.row))
 		require.Equal(t, 0, len(buffer.row))
-		require.Equal(t, 4, cap(buffer.tempValues))
-		require.Equal(t, encodedCap, cap(buffer.encoded))
+		require.Equal(t, addRowValuesCap, cap(buffer.writeStmtBufs.AddRowValues))
+		require.Equal(t, encodedCap, cap(buffer.writeStmtBufs.RowValBuf))
 	}
 }
 
@@ -208,12 +208,64 @@ func TestColSizeDeltaBuffer(t *testing.T) {
 }
 
 func TestMutateBuffersGetter(t *testing.T) {
-	buffers := NewMutateBuffers()
+	stmtBufs := &variable.WriteStmtBufs{}
+	buffers := NewMutateBuffers(stmtBufs)
 	add := buffers.GetAddRecordBufferWithCap(6)
 	require.Equal(t, 6, cap(add.row))
+	require.Same(t, stmtBufs, add.writeStmtBufs)
+
 	update := buffers.GetUpdateRecordBufferWithCap(6)
 	require.Equal(t, 6, cap(update.row))
 	require.Equal(t, 6, cap(update.rowToCheck))
+	require.Same(t, stmtBufs, update.writeStmtBufs)
+
 	colSize := buffers.GetColSizeDeltaBufferWithCap(6)
 	require.Equal(t, 6, cap(colSize.delta))
+}
+
+func TestEnsureCapacityAndReset(t *testing.T) {
+	slice := ensureCapacityAndReset([]int(nil), 0)
+	require.Nil(t, slice)
+	slice = ensureCapacityAndReset([]int{}, 0)
+	require.Equal(t, []int{}, slice)
+
+	input := []int{1, 2, 3}
+	slice = ensureCapacityAndReset(input, 0)
+	require.Equal(t, 0, len(slice))
+	require.Equal(t, 3, cap(slice))
+	// share the same underlying array
+	slice[:3][2] = 4
+	require.Equal(t, []int{1, 2, 4}, input)
+
+	input = []int{1, 2, 3}
+	slice = ensureCapacityAndReset(input, 2)
+	require.Equal(t, 2, len(slice))
+	require.Equal(t, 3, cap(slice))
+	// share the same underlying array
+	slice[1] = 5
+	require.Equal(t, []int{1, 5, 3}, input)
+
+	input = []int{1, 2, 3}
+	slice = ensureCapacityAndReset(input, 4)
+	require.Equal(t, 4, len(slice))
+	require.Equal(t, 4, cap(slice))
+
+	input = []int{1, 2, 3}
+	slice = ensureCapacityAndReset(input, 1, 2)
+	require.Equal(t, 1, len(slice))
+	// if cap < originalCap, keep the original capacity
+	require.Equal(t, 3, cap(slice))
+	// share the same underlying array
+	slice[0] = 10
+	require.Equal(t, []int{10, 2, 3}, input)
+
+	input = []int{1, 2, 3}
+	slice = ensureCapacityAndReset(input, 2, 4)
+	require.Equal(t, 2, len(slice))
+	require.Equal(t, 4, cap(slice))
+
+	input = []int{1, 2, 3}
+	slice = ensureCapacityAndReset(input, 4, 5)
+	require.Equal(t, 4, len(slice))
+	require.Equal(t, 5, cap(slice))
 }

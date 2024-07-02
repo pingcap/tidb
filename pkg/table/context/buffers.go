@@ -30,10 +30,8 @@ type encodeRowBuffer struct {
 	colIDs []int64
 	// row is the column data for a row to be encoded.
 	row []types.Datum
-	// encoded is the buffer for the encoding result.
-	encoded []byte
-	// tempValues is the buffer used temporary when encoding a row with old format.
-	tempValues []types.Datum
+	// writeStmtBufs refs the `WriteStmtBufs` in session
+	writeStmtBufs *variable.WriteStmtBufs
 }
 
 // Reset resets the inner buffers to a capacity.
@@ -58,19 +56,27 @@ func (b *encodeRowBuffer) WriteMemBufferEncoded(
 		checksum = rowcodec.RawChecksum{Key: key}
 	}
 
-	b.tempValues = ensureCapacityAndReset(b.tempValues, len(b.row)*2)
+	stmtBufs := b.writeStmtBufs
+
+	// Adjust writeBufs.AddRowValues length, AddRowValues stores the inserting values that is used
+	// by tablecodec.EncodeOldRow, the encoded row format is `id1, colval, id2, colval`,
+	// so the correct length is rowLen * 2.
+	// If the inserting row has null value,
+	// AddRecord will skip it, so the rowLen will be different, so we need to adjust it.
+	stmtBufs.AddRowValues = ensureCapacityAndReset(stmtBufs.AddRowValues, len(b.row)*2)
+
 	encoded, err := tablecodec.EncodeRow(
-		loc, b.row, b.colIDs, b.encoded[:0], b.tempValues, checksum, cfg.RowEncoder,
+		loc, b.row, b.colIDs, stmtBufs.RowValBuf, stmtBufs.AddRowValues, checksum, cfg.RowEncoder,
 	)
 	if err = ec.HandleError(err); err != nil {
 		return err
 	}
-	b.encoded = encoded
+	stmtBufs.RowValBuf = encoded
 
 	if len(flags) == 0 {
-		return memBuffer.Set(key, b.encoded)
+		return memBuffer.Set(key, encoded)
 	}
-	return memBuffer.SetWithFlags(key, b.encoded, flags...)
+	return memBuffer.SetWithFlags(key, encoded, flags...)
 }
 
 // AddRecordBuffer is the buffer for AddRecord operation.
@@ -136,15 +142,23 @@ func (b *ColSizeDeltaBuffer) GetColSizeDelta() []variable.ColSize {
 // MutateBuffers is used to get the buffers for table mutating.
 type MutateBuffers struct {
 	addRecord    *AddRecordBuffer
-	update       *UpdateRecordBuffer
+	updateRecord *UpdateRecordBuffer
 	colSizeDelta *ColSizeDeltaBuffer
 }
 
 // NewMutateBuffers creates a new `MutateBuffers`.
-func NewMutateBuffers() *MutateBuffers {
+func NewMutateBuffers(stmtBufs *variable.WriteStmtBufs) *MutateBuffers {
 	return &MutateBuffers{
-		addRecord:    &AddRecordBuffer{},
-		update:       &UpdateRecordBuffer{},
+		addRecord: &AddRecordBuffer{
+			encodeRowBuffer: encodeRowBuffer{
+				writeStmtBufs: stmtBufs,
+			},
+		},
+		updateRecord: &UpdateRecordBuffer{
+			encodeRowBuffer: encodeRowBuffer{
+				writeStmtBufs: stmtBufs,
+			},
+		},
 		colSizeDelta: &ColSizeDeltaBuffer{},
 	}
 }
@@ -158,7 +172,7 @@ func (b *MutateBuffers) GetAddRecordBufferWithCap(capacity int) *AddRecordBuffer
 
 // GetUpdateRecordBufferWithCap gets the buffer for AddRecord operation and resets the capacity of its inner slices.
 func (b *MutateBuffers) GetUpdateRecordBufferWithCap(capacity int) *UpdateRecordBuffer {
-	buffer := b.update
+	buffer := b.updateRecord
 	buffer.Reset(capacity)
 	return buffer
 }
