@@ -1288,21 +1288,23 @@ func (a *ExecStmt) logAudit() {
 
 // FormatSQL is used to format the original SQL, e.g. truncating long SQL, appending prepared arguments.
 func FormatSQL(sql string) stringutil.StringerFunc {
-	return func() string {
-		length := len(sql)
-		maxQueryLen := variable.QueryLogMaxLen.Load()
-		if maxQueryLen <= 0 {
-			return QueryReplacer.Replace(sql) // no limit
-		}
-		if int32(length) > maxQueryLen {
-			var result strings.Builder
-			result.Grow(int(maxQueryLen))
-			result.WriteString(sql[:maxQueryLen])
-			fmt.Fprintf(&result, "(len:%d)", length)
-			return QueryReplacer.Replace(result.String())
-		}
-		return QueryReplacer.Replace(sql)
+	return func() string { return formatSQL(sql) }
+}
+
+func formatSQL(sql string) string {
+	length := len(sql)
+	maxQueryLen := variable.QueryLogMaxLen.Load()
+	if maxQueryLen <= 0 {
+		return QueryReplacer.Replace(sql) // no limit
 	}
+	if int32(length) > maxQueryLen {
+		var result strings.Builder
+		result.Grow(int(maxQueryLen))
+		result.WriteString(sql[:maxQueryLen])
+		fmt.Fprintf(&result, "(len:%d)", length)
+		return QueryReplacer.Replace(result.String())
+	}
+	return QueryReplacer.Replace(sql)
 }
 
 func getPhaseDurationObserver(phase string, internal bool) prometheus.Observer {
@@ -1408,7 +1410,7 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults boo
 			metrics.TiFlashQueryTotalCounter.WithLabelValues(metrics.ExecuteErrorToLabel(err), metrics.LblError).Inc()
 		}
 	}
-	sessVars.PrevStmt = FormatSQL(a.GetTextToLog(false))
+	a.updatePrevStmt()
 	a.recordLastQueryInfo(err)
 	a.observePhaseDurations(sessVars.InRestrictedSQL, execDetail.CommitDetail)
 	executeDuration := time.Since(sessVars.StartTime) - sessVars.DurationCompile
@@ -1935,7 +1937,7 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 	copTaskInfo := stmtCtx.CopTasksDetails()
 	memMax := sessVars.MemTracker.MaxConsumed()
 	diskMax := sessVars.DiskTracker.MaxConsumed()
-	sql := a.GetTextToLog(false)
+	sql := a.getLazyStmtText()
 	var stmtDetail execdetails.StmtExecDetails
 	stmtDetailRaw := a.GoCtx.Value(execdetails.StmtExecDetailKey)
 	if stmtDetailRaw != nil {
@@ -1973,7 +1975,7 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 
 	stmtExecInfo := &stmtsummary.StmtExecInfo{
 		SchemaName:          strings.ToLower(sessVars.CurrentDB),
-		OriginalSQL:         sql,
+		OriginalSQL:         &sql,
 		Charset:             charset,
 		Collation:           collation,
 		NormalizedSQL:       normalizedSQL,
@@ -2033,6 +2035,43 @@ func (a *ExecStmt) GetTextToLog(keepHint bool) string {
 		sql = redact.String(rmode, sessVars.StmtCtx.OriginalSQL+sessVars.PlanCacheParams.String())
 	}
 	return sql
+}
+
+// getLazyText is equivalent to `a.GetTextToLog(false)`. Note that the s.Params is a shallow copy of
+// `sessVars.PlanCacheParams`, so you can only use the lazy text within the current stmt context.
+func (a *ExecStmt) getLazyStmtText() (s variable.LazyStmtText) {
+	sessVars := a.Ctx.GetSessionVars()
+	rmode := sessVars.EnableRedactLog
+	if rmode == errors.RedactLogEnable {
+		sql, _ := sessVars.StmtCtx.SQLDigest()
+		s.SetText(sql)
+	} else if sensitiveStmt, ok := a.StmtNode.(ast.SensitiveStmtNode); ok {
+		sql := sensitiveStmt.SecureText()
+		s.SetText(sql)
+	} else {
+		s.Redact = rmode
+		s.SQL = sessVars.StmtCtx.OriginalSQL
+		s.Params = *sessVars.PlanCacheParams
+	}
+	return
+}
+
+// updatePrevStmt is equivalent to `sessVars.PrevStmt = FormatSQL(a.GetTextToLog(false))`
+func (a *ExecStmt) updatePrevStmt() {
+	sessVars := a.Ctx.GetSessionVars()
+	if sessVars.PrevStmt == nil {
+		sessVars.PrevStmt = &variable.LazyStmtText{Format: formatSQL}
+	}
+	rmode := sessVars.EnableRedactLog
+	if rmode == errors.RedactLogEnable {
+		sql, _ := sessVars.StmtCtx.SQLDigest()
+		sessVars.PrevStmt.SetText(sql)
+	} else if sensitiveStmt, ok := a.StmtNode.(ast.SensitiveStmtNode); ok {
+		sql := sensitiveStmt.SecureText()
+		sessVars.PrevStmt.SetText(sql)
+	} else {
+		sessVars.PrevStmt.Update(rmode, sessVars.StmtCtx.OriginalSQL, sessVars.PlanCacheParams)
+	}
 }
 
 func (a *ExecStmt) observeStmtBeginForTopSQL(ctx context.Context) context.Context {
