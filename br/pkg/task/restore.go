@@ -1212,7 +1212,7 @@ func checkDiskSpace(ctx context.Context, mgr *conn.Mgr, files []*backuppb.File) 
 	if err != nil {
 		return errors.Trace(err)
 	}
-	stores,err := mgr.GetPDHTTPClient().GetStores(ctx)
+	stores, err := mgr.GetPDHTTPClient().GetStores(ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
