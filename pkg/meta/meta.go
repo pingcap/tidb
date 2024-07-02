@@ -963,7 +963,7 @@ func (m *Meta) UpdateTable(dbID int64, tableInfo *model.TableInfo) error {
 }
 
 // IterTables iterates all the table at once, in order to avoid oom.
-func (m *Meta) IterTables(dbID int64, fn func(info *model.TableInfo) error) error {
+func IterTables[T any](m *Meta, dbID int64, fn func(info *T) error) error {
 	dbKey := m.dbKey(dbID)
 	if err := m.checkDBExists(dbKey); err != nil {
 		return errors.Trace(err)
@@ -976,12 +976,11 @@ func (m *Meta) IterTables(dbID int64, fn func(info *model.TableInfo) error) erro
 			return nil
 		}
 
-		tbInfo := &model.TableInfo{}
+		tbInfo := new(T)
 		err := json.Unmarshal(r.Value, tbInfo)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		tbInfo.DBID = dbID
 
 		err = fn(tbInfo)
 		return errors.Trace(err)

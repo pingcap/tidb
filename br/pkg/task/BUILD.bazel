@@ -51,6 +51,7 @@ go_library(
         "//br/pkg/version",
         "//pkg/config",
         "//pkg/domain",
+        "//pkg/infoschema",
         "//pkg/kv",
         "//pkg/parser/model",
         "//pkg/parser/mysql",

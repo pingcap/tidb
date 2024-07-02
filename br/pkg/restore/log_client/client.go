@@ -680,20 +680,23 @@ func (rc *LogClient) InitSchemasReplaceForDDL(
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		info := rc.dom.InfoSchema()
-		shcemas := info.AllSchemaNames()
-		for _, schema := range shcemas {
-			for _, table := range info.SchemaTables(schema) {
-				tableInfo := table.Meta()
-				if tableInfo.TiFlashReplica != nil && tableInfo.TiFlashReplica.Count > 0 {
-					return nil, errors.Errorf("exist table(s) have tiflash replica, please remove it before restore")
-				}
+		existTiFlashTable := false
+		rc.dom.InfoSchema().ListTablesWithSpecialAttribute(func(tableInfo *model.TableInfo) bool {
+			if tableInfo.TiFlashReplica != nil && tableInfo.TiFlashReplica.Count > 0 {
+				existTiFlashTable = true
 			}
+			return false
+		})
+		if existTiFlashTable {
+			return nil, errors.Errorf("exist table(s) have tiflash replica, please remove it before restore")
 		}
 	}
 
 	if len(dbMaps) <= 0 {
 		log.Info("no id maps, build the table replaces from cluster and full backup schemas")
+		if cfg.FullBackupStorage == nil {
+			return nil, errors.Errorf("miss upstream table information at `start-ts`(%d) but the full backup path is not specified", rc.startTS)
+		}
 		needConstructIdMap = true
 		s, err := storage.New(ctx, cfg.FullBackupStorage.Backend, cfg.FullBackupStorage.Opts)
 		if err != nil {
@@ -1235,7 +1238,6 @@ const (
 func (rc *LogClient) generateRepairIngestIndexSQLs(
 	ctx context.Context,
 	ingestRecorder *ingestrec.IngestRecorder,
-	allSchema []*model.DBInfo,
 	taskName string,
 ) ([]checkpoint.CheckpointIngestIndexRepairSQL, bool, error) {
 	var sqls []checkpoint.CheckpointIngestIndexRepairSQL
@@ -1255,7 +1257,9 @@ func (rc *LogClient) generateRepairIngestIndexSQLs(
 		}
 	}
 
-	ingestRecorder.UpdateIndexInfo(allSchema)
+	if err := ingestRecorder.UpdateIndexInfo(rc.dom.InfoSchema()); err != nil {
+		return sqls, false, errors.Trace(err)
+	}
 	if err := ingestRecorder.Iterate(func(_, indexID int64, info *ingestrec.IngestIndexInfo) error {
 		var (
 			addSQL  strings.Builder
@@ -1319,13 +1323,12 @@ func (rc *LogClient) generateRepairIngestIndexSQLs(
 
 // RepairIngestIndex drops the indexes from IngestRecorder and re-add them.
 func (rc *LogClient) RepairIngestIndex(ctx context.Context, ingestRecorder *ingestrec.IngestRecorder, g glue.Glue, taskName string) error {
-	info := rc.dom.InfoSchema()
-
-	sqls, fromCheckpoint, err := rc.generateRepairIngestIndexSQLs(ctx, ingestRecorder, info.AllSchemas(), taskName)
+	sqls, fromCheckpoint, err := rc.generateRepairIngestIndexSQLs(ctx, ingestRecorder, taskName)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
+	info := rc.dom.InfoSchema()
 	console := glue.GetConsole(g)
 NEXTSQL:
 	for _, sql := range sqls {

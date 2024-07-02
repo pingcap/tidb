@@ -59,7 +59,7 @@ func appendTableObserveRanges(tblIDs []int64) []kv.KeyRange {
 }
 
 // buildObserveTableRange builds key ranges to observe data KV that belongs to `table`.
-func buildObserveTableRange(table *model.TableInfo) []kv.KeyRange {
+func buildObserveTableRange(table *model.TablePartitionNameInfo) []kv.KeyRange {
 	pis := table.GetPartitionInfo()
 	if pis == nil {
 		// Short path, no partition.
@@ -94,26 +94,17 @@ func buildObserveTableRanges(
 			continue
 		}
 
-		tables, err := m.ListTables(dbInfo.ID)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		if len(tables) == 0 {
-			log.Warn("It's not necessary to observe empty database",
-				zap.Stringer("db", dbInfo.Name))
-			continue
-		}
-
-		for _, tableInfo := range tables {
+		meta.IterTables(m, dbInfo.ID, func(tableInfo *model.TablePartitionNameInfo) error {
 			if !tableFilter.MatchTable(dbInfo.Name.O, tableInfo.Name.O) {
 				// Skip tables other than the given table.
-				continue
+				return nil
 			}
+			log.Info("start to observe the table", zap.Stringer("db", dbInfo.Name), zap.Stringer("table", tableInfo.Name))
 
-			log.Info("observer table schema", zap.String("table", dbInfo.Name.O+"."+tableInfo.Name.O))
 			tableRanges := buildObserveTableRange(tableInfo)
 			ranges = append(ranges, tableRanges...)
-		}
+			return nil
+		})
 	}
 
 	return ranges, nil
