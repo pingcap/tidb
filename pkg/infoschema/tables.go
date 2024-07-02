@@ -2408,6 +2408,11 @@ func (it *infoschemaTable) Indices() []table.Index {
 	return nil
 }
 
+// DeletableIndices implements table.Table DeletableIndices interface.
+func (it *infoschemaTable) DeletableIndices() []table.Index {
+	return nil
+}
+
 // RecordPrefix implements table.Table RecordPrefix interface.
 func (it *infoschemaTable) RecordPrefix() kv.Key {
 	return nil
@@ -2425,6 +2430,11 @@ func (it *infoschemaTable) AddRecord(ctx table.MutateContext, r []types.Datum, o
 
 // RemoveRecord implements table.Table RemoveRecord interface.
 func (it *infoschemaTable) RemoveRecord(ctx table.MutateContext, h kv.Handle, r []types.Datum) error {
+	return table.ErrUnsupportedOp
+}
+
+// RemoveRecordWithGivenInfo implements table.Table RemoveRecordWithGivenInfo interface.
+func (it *infoschemaTable) RemoveRecordWithGivenInfo(ctx table.MutateContext, h kv.Handle, r []types.Datum, indexPosInRow map[int64][]int, refColOfColUnderModify int) error {
 	return table.ErrUnsupportedOp
 }
 
@@ -2496,6 +2506,11 @@ func (vt *VirtualTable) Indices() []table.Index {
 	return nil
 }
 
+// DeletableIndices implements table.Table DeletableIndices interface.
+func (vt *VirtualTable) DeletableIndices() []table.Index {
+	return nil
+}
+
 // RecordPrefix implements table.Table RecordPrefix interface.
 func (vt *VirtualTable) RecordPrefix() kv.Key {
 	return nil
@@ -2513,6 +2528,11 @@ func (vt *VirtualTable) AddRecord(ctx table.MutateContext, r []types.Datum, opts
 
 // RemoveRecord implements table.Table RemoveRecord interface.
 func (vt *VirtualTable) RemoveRecord(ctx table.MutateContext, h kv.Handle, r []types.Datum) error {
+	return table.ErrUnsupportedOp
+}
+
+// RemoveRecordWithGivenInfo implements table.Table RemoveRecordWithGivenInfo interface.
+func (vt *VirtualTable) RemoveRecordWithGivenInfo(ctx table.MutateContext, h kv.Handle, r []types.Datum, indexPosInRow map[int64][]int, refColOfNonPubColForNonPubIndex int) error {
 	return table.ErrUnsupportedOp
 }
 
