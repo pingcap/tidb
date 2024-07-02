@@ -959,8 +959,12 @@ var defaultSysVars = []*SysVar{
 			}
 			AutoAnalyzePartitionBatchSize.Store(val)
 			return nil
-		}},
-
+		}, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+			// ```tidb_auto_analyze_partition_batch_size``` is deprecated and will be removed in the future.
+			vars.StmtCtx.AppendWarning(ErrWarnDeprecatedSyntaxNoReplacement.FastGenByArgs(TiDBAutoAnalyzePartitionBatchSize))
+			return normalizedValue, nil
+		},
+	},
 	// variable for top SQL feature.
 	// TopSQL enable only be controlled by TopSQL pub/sub sinker.
 	// This global variable only uses to update the global config which store in PD(ETCD).
