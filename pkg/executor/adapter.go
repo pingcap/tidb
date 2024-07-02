@@ -100,10 +100,6 @@ type recordSet struct {
 	lastErrs   []error
 	txnStartTS uint64
 	once       sync.Once
-	// finishLock is a mutex used to synchronize access to the `Next` and `Finish` functions of the adapter.
-	// It ensures that only one goroutine can access the `Next` and `Finish` functions at a time, preventing race conditions.
-	// When we terminate the current SQL externally (e.g., kill query), an additional goroutine would be used to call the `Finish` function.
-	finishLock sync.Mutex
 }
 
 func (a *recordSet) Fields() []*ast.ResultField {
@@ -164,8 +160,6 @@ func (a *recordSet) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 		err = util2.GetRecoverError(r)
 		logutil.Logger(ctx).Error("execute sql panic", zap.String("sql", a.stmt.GetTextToLog(false)), zap.Stack("stack"))
 	}()
-	a.finishLock.Lock()
-	defer a.finishLock.Unlock()
 	if a.stmt != nil {
 		if err := a.stmt.Ctx.GetSessionVars().SQLKiller.HandleSignal(); err != nil {
 			return err
@@ -201,27 +195,24 @@ func (a *recordSet) NewChunk(alloc chunk.Allocator) *chunk.Chunk {
 
 func (a *recordSet) Finish() error {
 	var err error
-	if a.finishLock.TryLock() {
-		defer a.finishLock.Unlock()
-		a.once.Do(func() {
-			err = exec.Close(a.executor)
-			cteErr := resetCTEStorageMap(a.stmt.Ctx)
-			if cteErr != nil {
-				logutil.BgLogger().Error("got error when reset cte storage, should check if the spill disk file deleted or not", zap.Error(cteErr))
+	a.once.Do(func() {
+		err = exec.Close(a.executor)
+		cteErr := resetCTEStorageMap(a.stmt.Ctx)
+		if cteErr != nil {
+			logutil.BgLogger().Error("got error when reset cte storage, should check if the spill disk file deleted or not", zap.Error(cteErr))
+		}
+		if err == nil {
+			err = cteErr
+		}
+		a.executor = nil
+		if a.stmt != nil {
+			status := a.stmt.Ctx.GetSessionVars().SQLKiller.GetKillSignal()
+			inWriteResultSet := a.stmt.Ctx.GetSessionVars().SQLKiller.InWriteResultSet.Load()
+			if status > 0 && inWriteResultSet {
+				logutil.BgLogger().Warn("kill, this SQL might be stuck in the network stack while writing packets to the client.", zap.Uint64("connection ID", a.stmt.Ctx.GetSessionVars().ConnectionID))
 			}
-			if err == nil {
-				err = cteErr
-			}
-			a.executor = nil
-			if a.stmt != nil {
-				status := a.stmt.Ctx.GetSessionVars().SQLKiller.GetKillSignal()
-				inWriteResultSet := a.stmt.Ctx.GetSessionVars().SQLKiller.InWriteResultSet.Load()
-				if status > 0 && inWriteResultSet {
-					logutil.BgLogger().Warn("kill, this SQL might be stuck in the network stack while writing packets to the client.", zap.Uint64("connection ID", a.stmt.Ctx.GetSessionVars().ConnectionID))
-				}
-			}
-		})
-	}
+		}
+	})
 	if err != nil {
 		a.lastErrs = append(a.lastErrs, err)
 	}
