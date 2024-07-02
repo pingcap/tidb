@@ -307,7 +307,6 @@ go_test(
         "cluster_table_test.go",
         "compact_table_test.go",
         "copr_cache_test.go",
-        "cte_test.go",
         "delete_test.go",
         "distsql_test.go",
         "executor_failpoint_test.go",
