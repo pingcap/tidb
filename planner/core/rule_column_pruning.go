@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"slices"
 
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
@@ -31,8 +32,14 @@ import (
 type columnPruner struct {
 }
 
+<<<<<<< HEAD:planner/core/rule_column_pruning.go
 func (*columnPruner) optimize(_ context.Context, lp LogicalPlan, opt *logicalOptimizeOp) (LogicalPlan, error) {
 	lp, err := lp.PruneColumns(lp.Schema().Columns, opt)
+=======
+func (*columnPruner) optimize(_ context.Context, lp base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
+	planChanged := false
+	lp, err := lp.PruneColumns(slices.Clone(lp.Schema().Columns), opt)
+>>>>>>> 6612270cc58 (planner: column pruning should use a shallow copy slice (#53237)):pkg/planner/core/rule_column_pruning.go
 	if err != nil {
 		return nil, err
 	}
