@@ -947,6 +947,11 @@ func killQuery(conn *clientConn, maxExecutionTime bool) {
 			logutil.BgLogger().Warn("error setting read deadline for kill.", zap.Error(err))
 		}
 	}
+	defer func() {
+		if err := recover(); err != nil {
+			logutil.BgLogger().Error("killQuery panic", zap.Any("err", err))
+		}
+	}()
 	sessVars.SQLKiller.FinishResultSet()
 }
 
