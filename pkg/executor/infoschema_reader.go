@@ -337,9 +337,16 @@ func (e *memtableRetriever) setDataForUserAttributes(ctx context.Context, sctx s
 
 func (e *memtableRetriever) setDataFromSchemata(ctx sessionctx.Context, schemas []model.CIStr) {
 	checker := privilege.GetPrivilegeManager(ctx)
+	extractor, ok := e.extractor.(*plannercore.InfoSchemaTablesExtractor)
+	if ok && extractor.SkipRequest {
+		return
+	}
 	rows := make([][]types.Datum, 0, len(schemas))
 
 	for _, schemaName := range schemas {
+		if ok && extractor.Filter("schema_name", schemaName.L) {
+			continue
+		}
 		schema, _ := e.is.SchemaByName(schemaName)
 		charset := mysql.DefaultCharset
 		collation := mysql.DefaultCollationName
@@ -489,7 +496,7 @@ func (e *memtableRetriever) setDataFromReferConst(sctx sessionctx.Context, schem
 		return nil
 	}
 	for _, schema := range schemas {
-		if ok && extractor.Filter("table_schema", schema.L) {
+		if ok && extractor.Filter("constraint_schema", schema.L) {
 			continue
 		}
 		tables := e.is.SchemaTables(schema)
@@ -505,6 +512,9 @@ func (e *memtableRetriever) setDataFromReferConst(sctx sessionctx.Context, schem
 				continue
 			}
 			for _, fk := range table.ForeignKeys {
+				if ok && extractor.Filter("constraint_name", fk.Name.L) {
+					continue
+				}
 				updateRule, deleteRule := "NO ACTION", "NO ACTION"
 				if model.ReferOptionType(fk.OnUpdate) != 0 {
 					updateRule = model.ReferOptionType(fk.OnUpdate).String()
@@ -698,7 +708,14 @@ func (e *memtableRetriever) setDataFromTables(sctx sessionctx.Context, schemas [
 func (e *memtableRetriever) setDataFromCheckConstraints(sctx sessionctx.Context, schemas []model.CIStr) error {
 	var rows [][]types.Datum
 	checker := privilege.GetPrivilegeManager(sctx)
+	extractor, ok := e.extractor.(*plannercore.InfoSchemaTablesExtractor)
+	if ok && extractor.SkipRequest {
+		return nil
+	}
 	for _, schema := range schemas {
+		if ok && extractor.Filter("constraint_schema", schema.L) {
+			continue
+		}
 		tables := e.is.SchemaTables(schema)
 		for _, table := range tables {
 			table := table.Meta()
@@ -708,6 +725,9 @@ func (e *memtableRetriever) setDataFromCheckConstraints(sctx sessionctx.Context,
 				}
 				for _, constraint := range table.Constraints {
 					if constraint.State != model.StatePublic {
+						continue
+					}
+					if ok && extractor.Filter("constraint_name", constraint.Name.L) {
 						continue
 					}
 					record := types.MakeDatums(
@@ -730,7 +750,14 @@ func (e *memtableRetriever) setDataFromCheckConstraints(sctx sessionctx.Context,
 func (e *memtableRetriever) setDataFromTiDBCheckConstraints(sctx sessionctx.Context, schemas []model.CIStr) error {
 	var rows [][]types.Datum
 	checker := privilege.GetPrivilegeManager(sctx)
+	extractor, ok := e.extractor.(*plannercore.InfoSchemaTablesExtractor)
+	if ok && extractor.SkipRequest {
+		return nil
+	}
 	for _, schema := range schemas {
+		if ok && extractor.Filter("constraint_schema", schema.L) {
+			continue
+		}
 		tables := e.is.SchemaTables(schema)
 		for _, table := range tables {
 			table := table.Meta()
@@ -740,6 +767,9 @@ func (e *memtableRetriever) setDataFromTiDBCheckConstraints(sctx sessionctx.Cont
 				}
 				for _, constraint := range table.Constraints {
 					if constraint.State != model.StatePublic {
+						continue
+					}
+					if ok && extractor.Filter("constraint_name", constraint.Name.L) {
 						continue
 					}
 					record := types.MakeDatums(
@@ -1063,27 +1093,51 @@ func calcCharOctLength(lenInChar int, cs string) int {
 }
 
 func (e *memtableRetriever) setDataFromPartitions(sctx sessionctx.Context, schemas []model.CIStr) error {
-	cache := cache.TableRowStatsCache
-	err := cache.Update(sctx)
-	if err != nil {
-		return err
-	}
+	useStatsCache := e.updateStatsCacheIfNeed()
 	checker := privilege.GetPrivilegeManager(sctx)
 	var rows [][]types.Datum
 	createTimeTp := mysql.TypeDatetime
+
+	extractor, ok := e.extractor.(*plannercore.InfoSchemaTablesExtractor)
+	if ok && extractor.SkipRequest {
+		return nil
+	}
+
 	for _, schema := range schemas {
+		if ok && extractor.Filter("table_schema", schema.L) {
+			continue
+		}
 		tables := e.is.SchemaTables(schema)
 		for _, table := range tables {
 			table := table.Meta()
+			if ok && extractor.Filter("table_name", table.Name.L) {
+				continue
+			}
 			if checker != nil && !checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, schema.L, table.Name.L, "", mysql.SelectPriv) {
 				continue
 			}
 			createTime := types.NewTime(types.FromGoTime(table.GetUpdateTime()), createTimeTp, types.DefaultFsp)
 
 			var rowCount, dataLength, indexLength uint64
+			if useStatsCache {
+				if table.GetPartitionInfo() == nil {
+					err := cache.TableRowStatsCache.UpdateByID(sctx, table.ID)
+					if err != nil {
+						return err
+					}
+				} else {
+					// needs to update all partitions for partition table.
+					for _, pi := range table.GetPartitionInfo().Definitions {
+						err := cache.TableRowStatsCache.UpdateByID(sctx, pi.ID)
+						if err != nil {
+							return err
+						}
+					}
+				}
+			}
 			if table.GetPartitionInfo() == nil {
-				rowCount = cache.GetTableRows(table.ID)
-				dataLength, indexLength = cache.GetDataAndIndexLength(table, table.ID, rowCount)
+				rowCount = cache.TableRowStatsCache.GetTableRows(table.ID)
+				dataLength, indexLength = cache.TableRowStatsCache.GetDataAndIndexLength(table, table.ID, rowCount)
 				avgRowLength := uint64(0)
 				if rowCount != 0 {
 					avgRowLength = dataLength / rowCount
@@ -1120,9 +1174,11 @@ func (e *memtableRetriever) setDataFromPartitions(sctx sessionctx.Context, schem
 				rows = append(rows, record)
 			} else {
 				for i, pi := range table.GetPartitionInfo().Definitions {
-					rowCount = cache.GetTableRows(pi.ID)
-					dataLength, indexLength = cache.GetDataAndIndexLength(table, pi.ID, rowCount)
-
+					if ok && extractor.Filter("partition_name", pi.Name.L) {
+						continue
+					}
+					rowCount = cache.TableRowStatsCache.GetTableRows(pi.ID)
+					dataLength, indexLength = cache.TableRowStatsCache.GetDataAndIndexLength(table, pi.ID, rowCount)
 					avgRowLength := uint64(0)
 					if rowCount != 0 {
 						avgRowLength = dataLength / rowCount
@@ -1219,11 +1275,21 @@ func (e *memtableRetriever) setDataFromPartitions(sctx sessionctx.Context, schem
 
 func (e *memtableRetriever) setDataFromIndexes(ctx sessionctx.Context, schemas []model.CIStr) {
 	checker := privilege.GetPrivilegeManager(ctx)
+	extractor, ok := e.extractor.(*plannercore.InfoSchemaTablesExtractor)
+	if ok && extractor.SkipRequest {
+		return
+	}
 	var rows [][]types.Datum
 	for _, schema := range schemas {
+		if ok && extractor.Filter("table_schema", schema.L) {
+			continue
+		}
 		tables := e.is.SchemaTables(schema)
 		for _, tb := range tables {
 			tb := tb.Meta()
+			if ok && extractor.Filter("table_name", tb.Name.L) {
+				continue
+			}
 			if checker != nil && !checker.RequestVerification(ctx.GetSessionVars().ActiveRoles, schema.L, tb.Name.L, "", mysql.AllPrivMask) {
 				continue
 			}
@@ -1305,13 +1371,24 @@ func (e *memtableRetriever) setDataFromIndexes(ctx sessionctx.Context, schemas [
 	e.rows = rows
 }
 
+// ywq todo
 func (e *memtableRetriever) setDataFromViews(ctx sessionctx.Context, schemas []model.CIStr) {
 	checker := privilege.GetPrivilegeManager(ctx)
+	extractor, ok := e.extractor.(*plannercore.InfoSchemaTablesExtractor)
+	if ok && extractor.SkipRequest {
+		return
+	}
 	var rows [][]types.Datum
 	for _, schema := range schemas {
+		if ok && extractor.Filter("table_schema", schema.L) {
+			continue
+		}
 		tables := e.is.SchemaTables(schema)
 		for _, table := range tables {
 			table := table.Meta()
+			if ok && extractor.Filter("table_name", table.Name.L) {
+				continue
+			}
 			if !table.IsView() {
 				continue
 			}
@@ -1600,7 +1677,7 @@ func (e *memtableRetriever) setDataFromKeyColumnUsage(ctx sessionctx.Context, sc
 		return
 	}
 	for _, schema := range schemas {
-		if ok && extractor.Filter("table_schema", schema.L) {
+		if ok && extractor.Filter("constraint_schema", schema.L) {
 			continue
 		}
 		tables := e.is.SchemaTables(schema)
@@ -1827,6 +1904,8 @@ func (e *memtableRetriever) setDataForTiKVRegionStatus(ctx context.Context, sctx
 	}
 	schemaNames := is.AllSchemaNames()
 	schemas := ensureSchemaTables(is, schemaNames)
+
+	// ywq todo can be optimized
 	tableInfos := tikvHelper.GetRegionsTableInfo(allRegionsInfo, schemas)
 	for i := range allRegionsInfo.Regions {
 		regionTableList := tableInfos[allRegionsInfo.Regions[i].ID]
@@ -2000,11 +2079,21 @@ func (e *memtableRetriever) setDataForHotRegionByMetrics(metrics []helper.HotTab
 // setDataFromTableConstraints constructs data for table information_schema.constraints.See https://dev.mysql.com/doc/refman/5.7/en/table-constraints-table.html
 func (e *memtableRetriever) setDataFromTableConstraints(ctx sessionctx.Context, schemas []model.CIStr) {
 	checker := privilege.GetPrivilegeManager(ctx)
+	extractor, ok := e.extractor.(*plannercore.InfoSchemaTablesExtractor)
+	if ok && extractor.SkipRequest {
+		return
+	}
 	var rows [][]types.Datum
 	for _, schema := range schemas {
+		if ok && extractor.Filter("constraint_schema", schema.L) {
+			continue
+		}
 		tables := e.is.SchemaTables(schema)
 		for _, tbl := range tables {
 			tbl := tbl.Meta()
+			if ok && extractor.Filter("table_name", tbl.Name.L) {
+				continue
+			}
 			if checker != nil && !checker.RequestVerification(ctx.GetSessionVars().ActiveRoles, schema.L, tbl.Name.L, "", mysql.AllPrivMask) {
 				continue
 			}
@@ -2442,11 +2531,21 @@ func (e *memtableRetriever) setDataForServersInfo(ctx sessionctx.Context) error 
 
 func (e *memtableRetriever) setDataFromSequences(ctx sessionctx.Context, schemas []model.CIStr) {
 	checker := privilege.GetPrivilegeManager(ctx)
+	extractor, ok := e.extractor.(*plannercore.InfoSchemaTablesExtractor)
+	if ok && extractor.SkipRequest {
+		return
+	}
 	var rows [][]types.Datum
 	for _, schema := range schemas {
+		if ok && extractor.Filter("sequence_schema", schema.L) {
+			continue
+		}
 		tables := e.is.SchemaTables(schema)
 		for _, table := range tables {
 			table := table.Meta()
+			if ok && extractor.Filter("sequence_name", table.Name.L) {
+				continue
+			}
 			if !table.IsSequence() {
 				continue
 			}
@@ -2479,6 +2578,7 @@ func (e *memtableRetriever) dataForTableTiFlashReplica(ctx sessionctx.Context, s
 		rows          [][]types.Datum
 		tiFlashStores map[int64]pd.StoreInfo
 	)
+
 	for _, schema := range schemas {
 		tables := e.is.SchemaTables(schema)
 		for _, tbl := range tables {
@@ -3581,11 +3681,21 @@ func (e *memtableRetriever) setDataFromIndexUsage(ctx sessionctx.Context, schema
 	dom := domain.GetDomain(ctx)
 	rows := make([][]types.Datum, 0, 100)
 	checker := privilege.GetPrivilegeManager(ctx)
+	extractor, ok := e.extractor.(*plannercore.InfoSchemaTablesExtractor)
+	if ok && extractor.SkipRequest {
+		return
+	}
 
 	for _, schema := range schemas {
+		if ok && extractor.Filter("table_schema", schema.L) {
+			continue
+		}
 		tables := dom.InfoSchema().SchemaTables(schema)
 		for _, tbl := range tables {
 			tbl := tbl.Meta()
+			if ok && extractor.Filter("table_name", tbl.Name.L) {
+				continue
+			}
 			allowed := checker == nil || checker.RequestVerification(
 				ctx.GetSessionVars().ActiveRoles,
 				schema.L, tbl.Name.L, "", mysql.AllPrivMask)

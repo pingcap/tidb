@@ -894,7 +894,6 @@ desc format='brief' SELECT * FROM information_schema.referential_constraints rc 
 id	estRows	task	access object	operator info
 Projection	8000.00	root		Column#2, Column#3, Column#1, Column#4, Column#5, Column#6, Column#7, Column#8, Column#9, Column#10, Column#11, Column#12, Column#15, Column#16, Column#17, Column#18, Column#19, Column#20, Column#21, Column#22, Column#23
 └─HashJoin	8000.00	root		inner join, equal:[eq(Column#3, Column#14)]
-  ├─Selection(Build)	8000.00	root		eq("plan_cache", Column#13), ne(Column#23, "t")
-  │ └─MemTableScan	10000.00	root	table:KEY_COLUMN_USAGE	table_name:["t"], table_schema:["plan_cache"]
-  └─Selection(Probe)	8000.00	root		eq(Column#2, "plan_cache")
-    └─MemTableScan	10000.00	root	table:REFERENTIAL_CONSTRAINTS	table_name:["t"]
+  ├─Selection(Build)	8000.00	root		ne(Column#23, "t")
+  │ └─MemTableScan	10000.00	root	table:KEY_COLUMN_USAGE	constraint_schema:["plan_cache"], table_name:["t"], table_schema:["plan_cache"]
+  └─MemTableScan(Probe)	10000.00	root	table:REFERENTIAL_CONSTRAINTS	constraint_schema:["plan_cache"], table_name:["t"]
