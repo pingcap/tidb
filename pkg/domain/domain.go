@@ -204,6 +204,7 @@ type Domain struct {
 
 	instancePlanCache sessionctx.InstancePlanCache // the instance level plan cache
 
+	// deferFn is used to release infoschema object lazily during v1 and v2 switch
 	deferFn
 }
 
