@@ -2147,7 +2147,6 @@ func (p *PhysicalHashAgg) attach2TaskForMpp(tasks ...base.Task) base.Task {
 		if partialAgg == nil {
 			return base.InvalidTask
 		}
-		// todo cannot be stream agg
 		if partialHashAgg, ok := partialAgg.(*PhysicalHashAgg); ok {
 			partialHashAgg.tiflashPreAggMode = p.SCtx().GetSessionVars().TiFlashPreAggMode
 		}

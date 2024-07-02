@@ -1620,6 +1620,7 @@ type SessionVars struct {
 	// GroupConcatMaxLen represents the maximum length of the result of GROUP_CONCAT.
 	GroupConcatMaxLen uint64
 
+	// TiFlashPreAggMode indicates the policy of pre aggregation.
 	TiFlashPreAggMode TiFlashPreAggModeType
 }
 
@@ -3814,6 +3815,7 @@ func (s *SessionVars) GetOptObjective() string {
 	return s.OptObjective
 }
 
+// TiFlashPreAggModeType is the type of TiFlashPreAggMode.
 type TiFlashPreAggModeType string
 
 // ForcePreAggStr means 1st hashagg will be pre aggregated.

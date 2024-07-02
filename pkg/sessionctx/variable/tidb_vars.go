@@ -1503,8 +1503,7 @@ const (
 	DefTiDBDMLType                                    = "STANDARD"
 	DefGroupConcatMaxLen                              = uint64(1024)
 	DefDefaultWeekFormat                              = "0"
-	// todo change it to auto
-	DefTiFlashPreAggMode = "force_preagg"
+	DefTiFlashPreAggMode                              = "auto"
 )
 
 // Process global variables.
