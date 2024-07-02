@@ -567,7 +567,7 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, o *opti
 		if keyspaceName == "" {
 			keyspaceName, err = getKeyspaceName(db)
 			if err != nil {
-				o.logger.Warn("unable to get keyspace name, lightning will use empty keyspace name", zap.Error(err))
+				o.logger.Debug("unable to get keyspace name, lightning will use empty keyspace name", zap.Error(err))
 			}
 		}
 		o.logger.Info("acquired keyspace name", zap.String("keyspaceName", keyspaceName))
