@@ -54,6 +54,8 @@ const (
 	// Fix52869 controls whether to disable the limitation that index merge path won't be generated automatically when
 	// there exist other single-index access paths that do range scan.
 	Fix52869 uint64 = 52869
+	// Fix54337 controls whether to apply or not range intersection for index access.
+	Fix54337 uint64 = 54337
 )
 
 // GetStr fetches the given key from the fix control map as a string type.
