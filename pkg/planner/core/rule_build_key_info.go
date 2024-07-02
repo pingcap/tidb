@@ -283,11 +283,6 @@ func (is *LogicalIndexScan) BuildKeyInfo(selfSchema *expression.Schema, _ []*exp
 	}
 }
 
-// BuildKeyInfo implements base.LogicalPlan BuildKeyInfo interface.
-func (*TiKVSingleGather) BuildKeyInfo(selfSchema *expression.Schema, childSchema []*expression.Schema) {
-	selfSchema.Keys = childSchema[0].Keys
-}
-
 func (*buildKeySolver) name() string {
 	return "build_keys"
 }
