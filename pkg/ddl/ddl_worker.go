@@ -753,6 +753,7 @@ func (w *worker) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
 	}
 	w.writeDDLSeqNum(job)
 	w.removeJobCtx(job)
+	failpoint.InjectCall("afterFinishDDLJob", job)
 	err = AddHistoryDDLJob(w.ctx, w.sess, t, job, updateRawArgs)
 	return errors.Trace(err)
 }

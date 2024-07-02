@@ -1911,12 +1911,12 @@ func (w *worker) addTableIndex(t table.Table, reorgInfo *reorgInfo) error {
 			w.ddlCtx.mu.RLock()
 			w.ddlCtx.mu.hook.OnUpdateReorgInfo(reorgInfo.Job, reorgInfo.PhysicalTableID)
 			w.ddlCtx.mu.RUnlock()
-			failpoint.InjectCall("beforeUpdateReorgInfo-addTableIndex", reorgInfo.Job)
 
 			finish, err = updateReorgInfo(w.sessPool, tbl, reorgInfo)
 			if err != nil {
 				return errors.Trace(err)
 			}
+			failpoint.InjectCall("afterUpdatePartitionReorgInfo", reorgInfo.Job)
 			// Every time we finish a partition, we update the progress of the job.
 			if rc := w.getReorgCtx(reorgInfo.Job.ID); rc != nil {
 				reorgInfo.Job.SetRowCount(rc.getRowCount())
