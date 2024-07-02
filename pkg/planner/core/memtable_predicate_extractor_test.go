@@ -1984,11 +1984,12 @@ func TestInfoSchemaTableExtract(t *testing.T) {
 			},
 		},
 		{
-			sql:         "select * from information_schema.TIDB_INDEX_USAGE where table_schema ='a' and table_name='b'",
+			sql:         "select * from information_schema.TIDB_INDEX_USAGE where table_schema ='a' and table_name='b' and index_name='c'",
 			skipRequest: false,
 			colPredicates: map[string]set.StringSet{
 				"table_schema": set.NewStringSet("a"),
 				"table_name":   set.NewStringSet("b"),
+				"index_name":   set.NewStringSet("c"),
 			},
 		},
 		{

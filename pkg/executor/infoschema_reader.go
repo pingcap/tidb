@@ -2552,8 +2552,8 @@ func (e *memtableRetriever) setDataFromSequences(ctx sessionctx.Context, schemas
 			}
 			record := types.MakeDatums(
 				infoschema.CatalogVal,     // TABLE_CATALOG
-				schema.O,                  // TABLE_SCHEMA
-				table.Name.O,              // TABLE_NAME
+				schema.O,                  // SEQUENCE_SCHEMA
+				table.Name.O,              // SEQUENCE_NAME
 				table.Sequence.Cache,      // Cache
 				table.Sequence.CacheValue, // CACHE_VALUE
 				table.Sequence.Cycle,      // CYCLE
@@ -3702,8 +3702,10 @@ func (e *memtableRetriever) setDataFromIndexUsage(ctx sessionctx.Context, schema
 			}
 
 			for _, idx := range tbl.Indices {
+				if ok && extractor.Filter("index_name", idx.Name.L) {
+					continue
+				}
 				row := make([]types.Datum, 0, 14)
-
 				usage := dom.StatsHandle().GetIndexUsage(tbl.ID, idx.ID)
 				row = append(row, types.NewStringDatum(schema.O))
 				row = append(row, types.NewStringDatum(tbl.Name.O))
