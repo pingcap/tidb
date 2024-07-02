@@ -64,12 +64,12 @@ import (
 	"github.com/pingcap/tidb/pkg/util/tiflash"
 	"github.com/pingcap/tidb/pkg/util/tiflashcompute"
 	"github.com/pingcap/tidb/pkg/util/timeutil"
+	"github.com/pingcap/tipb/go-tipb"
 	tikvstore "github.com/tikv/client-go/v2/kv"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/twmb/murmur3"
 	atomic2 "go.uber.org/atomic"
 	"golang.org/x/exp/maps"
-	"github.com/pingcap/tipb/go-tipb"
 )
 
 var (
@@ -3814,24 +3814,14 @@ func (s *SessionVars) GetOptObjective() string {
 	return s.OptObjective
 }
 
-// TiFlashPreAggModeType type of tiflash preagg mode.
-type TiFlashPreAggModeType int32
+type TiFlashPreAggModeType string
 
-// ForcePreAgg means 1st hashagg will be pre aggregated.
-// Auto means TiFlash will decide which policy for 1st hashagg.
-// ForceStreaming means 1st hashagg will for pass through all blocks.
+// ForcePreAggStr means 1st hashagg will be pre aggregated.
+// AutoStr means TiFlash will decide which policy for 1st hashagg.
+// ForceStreamingStr means 1st hashagg will for pass through all blocks.
 const (
-	ForcePreAgg TiFlashPreAggModeType = iota 
-	Auto
-	ForceStreaming
-)
-
-// ForcePreAggStr is the string name of ForcePreAgg.
-// AutoStr is the string name of Auto.
-// ForceStreamingStr is the string name of ForceStreaming.
-const (
-	ForcePreAggStr = "force_preagg"
-	AutoStr = "auto"
+	ForcePreAggStr    = "force_preagg"
+	AutoStr           = "auto"
 	ForceStreamingStr = "force_streaming"
 )
 
@@ -3840,27 +3830,13 @@ func ValidTiFlashPreAggMode() string {
 	return ForcePreAggStr + ", " + AutoStr + ", " + ForceStreamingStr
 }
 
-// ToTiFlashPreAggMode convert string name to valid preagg mode.
-func ToTiFlashPreAggMode(s string) (TiFlashPreAggModeType, bool) {
-	switch s {
-	case ForcePreAggStr:
-		return ForcePreAgg, true
-	case ForceStreamingStr:
-		return ForceStreaming, true
-	case AutoStr:
-		return Auto, true
-	default:
-		return ForcePreAgg, false
-	}
-}
-
 func (m TiFlashPreAggModeType) ToTiPBTiFlashPreAggMode() (tipb.TiFlashPreAggMode, bool) {
 	switch m {
-	case ForcePreAgg:
+	case ForcePreAggStr:
 		return tipb.TiFlashPreAggMode_ForcePreAgg, true
-	case ForceStreaming:
+	case ForceStreamingStr:
 		return tipb.TiFlashPreAggMode_ForceStreaming, true
-	case Auto:
+	case AutoStr:
 		return tipb.TiFlashPreAggMode_Auto, true
 	default:
 		return tipb.TiFlashPreAggMode_ForcePreAgg, false
