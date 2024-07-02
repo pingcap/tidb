@@ -769,7 +769,8 @@ func (c *pdClient) ScanRegions(ctx context.Context, key, endKey []byte, limit in
 		failpoint.Return(nil, status.Error(codes.Unavailable, "not leader"))
 	})
 
-	regions, err := c.client.BatchScanRegions(ctx, []pd.KeyRange{{StartKey: key, EndKey: endKey}}, limit)
+	//nolint:staticcheck
+	regions, err := c.client.ScanRegions(ctx, key, endKey, limit)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
