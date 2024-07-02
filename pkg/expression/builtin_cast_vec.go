@@ -17,7 +17,6 @@ package expression
 import (
 	"encoding/json"
 	"errors"
-	goerrors "errors"
 	"math"
 	"strconv"
 	"strings"
@@ -877,11 +876,10 @@ func (b *builtinCastStringAsJSONSig) vecEvalJSON(ctx EvalContext, input *chunk.C
 			}
 			res, err = types.ParseBinaryJSONFromString(buf.GetString(i))
 			if err != nil {
-				if goerrors.As(err, &serr) {
+				if errors.As(err, &serr) {
 					return types.ErrInvalidJSONTextInParam.GenWithStackByArgs(1, "cast_as_json", err, serr.Offset)
-				} else {
-					return types.ErrInvalidJSONTextInParam.GenWithStackByArgs(1, "cast_as_json", err, 0)
 				}
+				return types.ErrInvalidJSONTextInParam.GenWithStackByArgs(1, "cast_as_json", err, 0)
 			}
 			result.AppendJSON(res)
 		}
