@@ -25,6 +25,7 @@ go_library(
         "logical_initialize.go",
         "logical_limit.go",
         "logical_lock.go",
+        "logical_max_one_row.go",
         "logical_partition_union_all.go",
         "logical_plan_builder.go",
         "logical_plans.go",
