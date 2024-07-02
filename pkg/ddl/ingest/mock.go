@@ -39,6 +39,8 @@ type MockBackendCtxMgr struct {
 	runningJobs     map[int64]*MockBackendCtx
 }
 
+var _ BackendCtxMgr = (*MockBackendCtxMgr)(nil)
+
 // NewMockBackendCtxMgr creates a new mock backend context manager.
 func NewMockBackendCtxMgr(sessCtxProvider func() sessionctx.Context) *MockBackendCtxMgr {
 	return &MockBackendCtxMgr{
@@ -81,6 +83,10 @@ func (m *MockBackendCtxMgr) Unregister(jobID int64) {
 	}
 }
 
+func (m *MockBackendCtxMgr) EncodeJobSortPath(int64) string {
+	return ""
+}
+
 // Load implements BackendCtxMgr.Load interface.
 func (m *MockBackendCtxMgr) Load(jobID int64) (BackendCtx, bool) {
 	logutil.DDLIngestLogger().Info("mock backend mgr load", zap.Int64("jobID", jobID))
@@ -115,13 +121,14 @@ func (m *MockBackendCtx) Register(indexIDs []int64, _ []bool, _ table.Table) ([]
 	return ret, nil
 }
 
-// UnregisterEngines implements BackendCtx.UnregisterEngines interface.
-func (*MockBackendCtx) UnregisterEngines() {
+// FinishAndUnregisterEngines implements BackendCtx interface.
+func (*MockBackendCtx) FinishAndUnregisterEngines() error {
 	logutil.DDLIngestLogger().Info("mock backend ctx unregister")
+	return nil
 }
 
 // CollectRemoteDuplicateRows implements BackendCtx.CollectRemoteDuplicateRows interface.
-func (*MockBackendCtx) CollectRemoteDuplicateRows(indexIDs []int64, _ table.Table) error {
+func (*MockBackendCtx) CollectRemoteDuplicateRows(indexID int64, _ table.Table) error {
 	logutil.DDLIngestLogger().Info("mock backend ctx collect remote duplicate rows", zap.Int64("indexID", indexID))
 	return nil
 }

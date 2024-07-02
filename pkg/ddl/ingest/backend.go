@@ -52,22 +52,30 @@ type BackendCtx interface {
 	// backend context. If the index ID is already registered, it will return the
 	// associated engines. Only one group of index ID is allowed to register for a
 	// BackendCtx.
+	//
+	// Register is only used in local disk based ingest.
 	Register(indexIDs []int64, uniques []bool, tbl table.Table) ([]Engine, error)
-	UnregisterEngines()
+	// FinishAndUnregisterEngines finishes the task and unregisters all engines that
+	// are Register-ed before. It's safe to call it multiple times.
+	//
+	// UnregisterEngines is only used in local disk based ingest.
+	FinishAndUnregisterEngines() error
 
 	FlushController
-	// CollectRemoteDuplicateRows collects duplicate entry error as the supplement of
-	// FlushController.Flush. It should be called after the task is finished.
-	// `indexIDs` argument can contain non-unique indexes and the implementation will
-	// filter them.
-	CollectRemoteDuplicateRows(indexIDs []int64, tbl table.Table) error
 	Done() bool
 	SetDone()
 
 	AttachCheckpointManager(*CheckpointManager)
 	GetCheckpointManager() *CheckpointManager
 
+	// GetLocalBackend exposes local.Backend. It's only used in global sort based
+	// ingest.
 	GetLocalBackend() *local.Backend
+	// CollectRemoteDuplicateRows collects duplicate entry error for given index as
+	// the supplement of FlushController.Flush.
+	//
+	// CollectRemoteDuplicateRows is only used in global sort based ingest.
+	CollectRemoteDuplicateRows(indexID int64, tbl table.Table) error
 }
 
 // FlushMode is used to control how to flush.
@@ -87,7 +95,7 @@ type litBackendCtx struct {
 	memRoot  MemRoot
 	diskRoot DiskRoot
 	jobID    int64
-	tblInfo  *model.TableInfo
+	tbl      table.Table
 	backend  *local.Backend
 	ctx      context.Context
 	cfg      *lightning.Config
@@ -100,7 +108,7 @@ type litBackendCtx struct {
 	checkpointMgr   *CheckpointManager
 	etcdClient      *clientv3.Client
 
-	// unregisterMu prevents concurrent calls of `UnregisterEngines`.
+	// unregisterMu prevents concurrent calls of `FinishAndUnregisterEngines`.
 	// For details, see https://github.com/pingcap/tidb/issues/53843.
 	unregisterMu sync.Mutex
 }
@@ -138,27 +146,19 @@ func (bc *litBackendCtx) handleErrorAfterCollectRemoteDuplicateRows(
 }
 
 // CollectRemoteDuplicateRows collects duplicate rows from remote TiKV.
-func (bc *litBackendCtx) CollectRemoteDuplicateRows(indexIDs []int64, tbl table.Table) error {
-	for _, indexID := range indexIDs {
-		idxInfo := model.FindIndexInfoByID(tbl.Meta().Indices, indexID)
-		if !idxInfo.Unique {
-			continue
-		}
+func (bc *litBackendCtx) CollectRemoteDuplicateRows(indexID int64, tbl table.Table) error {
+	return bc.collectRemoteDuplicateRows(indexID, tbl)
+}
 
-		errorMgr := errormanager.New(nil, bc.cfg, log.Logger{Logger: logutil.Logger(bc.ctx)})
-		dupeController := bc.backend.GetDupeController(bc.cfg.TikvImporter.RangeConcurrency*2, errorMgr)
-		hasDupe, err := dupeController.CollectRemoteDuplicateRows(bc.ctx, tbl, tbl.Meta().Name.L, &encode.SessionOptions{
-			SQLMode: mysql.ModeStrictAllTables,
-			SysVars: bc.sysVars,
-			IndexID: indexID,
-		}, lightning.ErrorOnDup)
-		dupErr := bc.handleErrorAfterCollectRemoteDuplicateRows(err, indexID, tbl, hasDupe)
-		if dupErr != nil {
-			return dupErr
-		}
-	}
-
-	return nil
+func (bc *litBackendCtx) collectRemoteDuplicateRows(indexID int64, tbl table.Table) error {
+	errorMgr := errormanager.New(nil, bc.cfg, log.Logger{Logger: logutil.Logger(bc.ctx)})
+	dupeController := bc.backend.GetDupeController(bc.cfg.TikvImporter.RangeConcurrency*2, errorMgr)
+	hasDupe, err := dupeController.CollectRemoteDuplicateRows(bc.ctx, tbl, tbl.Meta().Name.L, &encode.SessionOptions{
+		SQLMode: mysql.ModeStrictAllTables,
+		SysVars: bc.sysVars,
+		IndexID: indexID,
+	}, lightning.ErrorOnDup)
+	return bc.handleErrorAfterCollectRemoteDuplicateRows(err, indexID, tbl, hasDupe)
 }
 
 func acquireLock(ctx context.Context, se *concurrency.Session, key string) (*concurrency.Mutex, error) {
@@ -227,20 +227,14 @@ func (bc *litBackendCtx) Flush(mode FlushMode) (flushed, imported bool, err erro
 	for indexID, ei := range bc.engines {
 		if err = bc.unsafeImportAndReset(ei); err != nil {
 			if common.ErrFoundDuplicateKeys.Equal(err) {
-				var idxInfo *model.IndexInfo
-				for _, idx := range bc.tblInfo.Indices {
-					if idx.ID == indexID {
-						idxInfo = idx
-						break
-					}
-				}
+				idxInfo := model.FindIndexInfoByID(bc.tbl.Meta().Indices, indexID)
 				if idxInfo == nil {
 					logutil.Logger(bc.ctx).Error(
 						"index not found",
 						zap.Int64("indexID", indexID))
 					err = tikv.ErrKeyExists
 				} else {
-					err = TryConvertToKeyExistsErr(err, idxInfo, bc.tblInfo)
+					err = TryConvertToKeyExistsErr(err, idxInfo, bc.tbl.Meta())
 				}
 			}
 			return true, false, err

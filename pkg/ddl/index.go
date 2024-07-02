@@ -1931,29 +1931,34 @@ func (w *worker) addTableIndex(t table.Table, reorgInfo *reorgInfo) error {
 }
 
 func checkDuplicateForUniqueIndex(ctx context.Context, t table.Table, reorgInfo *reorgInfo, discovery pd.ServiceDiscovery) error {
-	hasUnique := false
-	indexIDs := make([]int64, 0, len(reorgInfo.elements))
+	var bc ingest.BackendCtx
+	var err error
+	defer func() {
+		if bc != nil {
+			ingest.LitBackCtxMgr.Unregister(reorgInfo.ID)
+		}
+	}()
+
 	for _, elem := range reorgInfo.elements {
-		indexIDs = append(indexIDs, elem.ID)
 		indexInfo := model.FindIndexInfoByID(t.Meta().Indices, elem.ID)
 		if indexInfo == nil {
 			return errors.New("unexpected error, can't find index info")
 		}
-		if !hasUnique && indexInfo.Unique {
-			hasUnique = true
+		if indexInfo.Unique {
+			ctx := tidblogutil.WithCategory(ctx, "ddl-ingest")
+			if bc == nil {
+				bc, err = ingest.LitBackCtxMgr.Register(ctx, reorgInfo.ID, indexInfo.Unique, nil, discovery, reorgInfo.ReorgMeta.ResourceGroupName)
+				if err != nil {
+					return err
+				}
+			}
+			err = bc.CollectRemoteDuplicateRows(indexInfo.ID, t)
+			if err != nil {
+				return err
+			}
 		}
 	}
-	if !hasUnique {
-		return nil
-	}
-
-	ctx2 := tidblogutil.WithCategory(ctx, "ddl-ingest")
-	bc, err := ingest.LitBackCtxMgr.Register(ctx2, reorgInfo.ID, true, nil, discovery, reorgInfo.ReorgMeta.ResourceGroupName)
-	if err != nil {
-		return err
-	}
-	defer ingest.LitBackCtxMgr.Unregister(reorgInfo.ID)
-	return bc.CollectRemoteDuplicateRows(indexIDs, t)
+	return nil
 }
 
 func (w *worker) executeDistTask(t table.Table, reorgInfo *reorgInfo) error {

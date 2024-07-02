@@ -92,7 +92,7 @@ func (bc *litBackendCtx) Register(indexIDs []int64, uniques []bool, tbl table.Ta
 		bc.engines[indexID] = ei
 	}
 	bc.memRoot.Consume(numIdx * structSizeEngineInfo)
-	bc.tblInfo = tbl.Meta()
+	bc.tbl = tbl
 
 	logutil.Logger(bc.ctx).Info(LitInfoOpenEngine, zap.Int64("job ID", bc.jobID),
 		zap.Int64s("index IDs", indexIDs),
@@ -101,19 +101,31 @@ func (bc *litBackendCtx) Register(indexIDs []int64, uniques []bool, tbl table.Ta
 	return ret, nil
 }
 
-// UnregisterEngines implements BackendCtx.
-func (bc *litBackendCtx) UnregisterEngines() {
+// FinishAndUnregisterEngines implements BackendCtx.
+func (bc *litBackendCtx) FinishAndUnregisterEngines() error {
 	bc.unregisterMu.Lock()
 	defer bc.unregisterMu.Unlock()
 
 	if len(bc.engines) == 0 {
-		return
+		return nil
 	}
 	numIdx := int64(len(bc.engines))
+	uniqueIdx := make([]int64, 0, numIdx)
 	for _, ei := range bc.engines {
 		ei.Clean()
+		if ei.unique {
+			uniqueIdx = append(uniqueIdx, ei.indexID)
+		}
 	}
 	bc.engines = make(map[int64]*engineInfo, 10)
 
 	bc.memRoot.Release(numIdx * structSizeEngineInfo)
+
+	for _, i := range uniqueIdx {
+		err := bc.collectRemoteDuplicateRows(i, bc.tbl)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+	return nil
 }
