@@ -37,7 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
-	require "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
@@ -2006,4 +2006,35 @@ func BenchmarkPipelinedInsertOnDuplicate(b *testing.B) {
 		require.Zero(b, warningCount)
 	}
 	b.StopTimer()
+}
+
+func BenchmarkPipelinedDelete(b *testing.B) {
+	se, do, st := prepareBenchSession()
+	defer func() {
+		se.Close()
+		do.Close()
+		st.Close()
+	}()
+	mustExecute(se, `create table tmp (id int, dt varchar(512))`)
+	mustExecute(se, `create table src (id int, dt varchar(512))`)
+	for i := 0; i < 100; i++ {
+		mustExecute(se, "begin")
+		for lines := 0; lines < 100; lines++ {
+			mustExecute(se, "insert into src values (42, repeat('x', 512)), (66, repeat('x', 512))")
+		}
+		mustExecute(se, "commit")
+	}
+
+	se.GetSessionVars().BulkDMLEnabled = true
+	se.GetSessionVars().StmtCtx.InInsertStmt = true
+	b.ResetTimer()
+	b.StopTimer()
+	for i := 0; i < b.N; i++ {
+		se.Execute(context.Background(), "insert ignore into tmp select * from src")
+		b.StartTimer()
+		se.Execute(context.Background(), "delete from tmp")
+		b.StopTimer()
+		warningCount := se.GetSessionVars().StmtCtx.WarningCount()
+		require.Zero(b, warningCount)
+	}
 }
