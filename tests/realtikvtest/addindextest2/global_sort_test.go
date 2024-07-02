@@ -172,6 +172,9 @@ func TestGlobalSortMultiSchemaChange(t *testing.T) {
 	}
 	tk.MustExec("create table t_dup (a int, b bigint);")
 	tk.MustExec(fmt.Sprintf("insert into t_dup values (%d, %d), (%d, %d);", 1, 2, 2, 2))
+	tk.MustExec("create table t_dup_2 (a int primary key, b bigint);")
+	tk.MustExec("split table t_dup_2 between (0) and (80000) regions 7;")
+	tk.MustExec(fmt.Sprintf("insert into t_dup_2 values (%d, %d), (%d, %d);", 1, 2, 79999, 2))
 
 	tableNames := []string{"t_rowid", "t_int_handle", "t_common_handle", "t_partition"}
 
@@ -201,6 +204,10 @@ func TestGlobalSortMultiSchemaChange(t *testing.T) {
 			tk.MustContainErrMsg(
 				"alter table t_dup add index idx(a), add unique index idx2(b);",
 				"Duplicate entry '2' for key 't_dup.idx2'",
+			)
+			tk.MustContainErrMsg(
+				"alter table t_dup_2 add unique index idx2(b);",
+				"Duplicate entry '2' for key 't_dup_2.idx2'",
 			)
 		})
 	}
