@@ -52,7 +52,7 @@ func predicatePushDownToTableScan(sctx base.PlanContext, plan base.PhysicalPlan)
 	switch p := plan.(type) {
 	case *PhysicalSelection:
 		if physicalTableScan, ok := plan.Children()[0].(*PhysicalTableScan); ok && physicalTableScan.StoreType == kv.TiFlash {
-			// Only when the the store type is TiFlash, we will try to push down predicates.
+			// Only when the store type is TiFlash, we will try to push down predicates.
 			predicatePushDownToTableScanImpl(sctx, p, physicalTableScan)
 			if len(p.Conditions) == 0 {
 				return p.Children()[0]

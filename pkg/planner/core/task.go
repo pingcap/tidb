@@ -914,7 +914,7 @@ func (*PhysicalTopN) canPushToIndexPlan(indexPlan base.PhysicalPlan, byItemCols 
 	return true
 }
 
-// canExpressionConvertedToPB checks whether each of the the expression in TopN can be converted to pb.
+// canExpressionConvertedToPB checks whether each of the expression in TopN can be converted to pb.
 func (p *PhysicalTopN) canExpressionConvertedToPB(storeTp kv.StoreType) bool {
 	exprs := make([]expression.Expression, 0, len(p.ByItems))
 	for _, item := range p.ByItems {

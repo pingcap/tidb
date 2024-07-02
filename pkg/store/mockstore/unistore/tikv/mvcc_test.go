@@ -1197,7 +1197,7 @@ func TestMinCommitTs(t *testing.T) {
 	MustPrewriteOptimistic(k, k, v, 10, 100, 11, store)
 	MustCheckTxnStatus(k, 10, 20, 20, false, 100, 0,
 		kvrpcpb.Action_MinCommitTSPushed, store)
-	// The the min_commit_ts should be ts(20, 1)
+	// The min_commit_ts should be ts(20, 1)
 	MustCommitErr(k, 10, 15, store)
 	MustCommitErr(k, 10, 20, store)
 	MustCommit(k, 10, 21, store)

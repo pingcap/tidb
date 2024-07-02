@@ -19,7 +19,7 @@ When certain errors occur in TiDB components, users are often unaware of the mea
 
 ### The Metafiles
 
-In order to let TiUP know the the errors every component may throw, the components developers should
+In order to let TiUP know the errors every component may throw, the components developers should
 keep a metafile in the code repository. The metafile should be a toml file which looks like:
 
 ```toml
