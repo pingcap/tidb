@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/failpoint"
 	mysql "github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 )
@@ -30,6 +31,9 @@ import (
 func TestQueryWatch(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
+	if variable.SchemaCacheSize.Load() != 0 {
+		t.Skip("skip this test because the schema cache is enabled")
+	}
 	tk.MustExec("use test")
 	tk.MustExec("create table t1(a int)")
 	tk.MustExec("insert into t1 values(1)")
