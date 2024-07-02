@@ -2147,6 +2147,9 @@ func (p *PhysicalHashAgg) attach2TaskForMpp(tasks ...base.Task) base.Task {
 		if partialAgg == nil {
 			return base.InvalidTask
 		}
+		if partialHashAgg, ok := partialAgg.(*PhysicalHashAgg); ok {
+			partialHashAgg.tiflashPreAggMode = p.SCtx().GetSessionVars().TiFlashPreAggMode
+		}
 		attachPlan2Task(partialAgg, mpp)
 		partitionCols := p.MppPartitionCols
 		if len(partitionCols) == 0 {

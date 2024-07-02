@@ -64,6 +64,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/tiflash"
 	"github.com/pingcap/tidb/pkg/util/tiflashcompute"
 	"github.com/pingcap/tidb/pkg/util/timeutil"
+	"github.com/pingcap/tipb/go-tipb"
 	tikvstore "github.com/tikv/client-go/v2/kv"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/twmb/murmur3"
@@ -1618,6 +1619,9 @@ type SessionVars struct {
 
 	// GroupConcatMaxLen represents the maximum length of the result of GROUP_CONCAT.
 	GroupConcatMaxLen uint64
+
+	// TiFlashPreAggMode indicates the policy of pre aggregation.
+	TiFlashPreAggMode TiFlashPreAggModeType
 }
 
 // GetOptimizerFixControlMap returns the specified value of the optimizer fix control.
@@ -3809,4 +3813,34 @@ const (
 // Please see comments of SessionVars.OptObjective for details.
 func (s *SessionVars) GetOptObjective() string {
 	return s.OptObjective
+}
+
+// TiFlashPreAggModeType is the type of TiFlashPreAggMode.
+type TiFlashPreAggModeType string
+
+// ForcePreAggStr means 1st hashagg will be pre aggregated.
+// AutoStr means TiFlash will decide which policy for 1st hashagg.
+// ForceStreamingStr means 1st hashagg will for pass through all blocks.
+const (
+	ForcePreAggStr    = "force_preagg"
+	AutoStr           = "auto"
+	ForceStreamingStr = "force_streaming"
+)
+
+// ValidTiFlashPreAggMode returns all valid modes.
+func ValidTiFlashPreAggMode() string {
+	return ForcePreAggStr + ", " + AutoStr + ", " + ForceStreamingStr
+}
+
+func (m TiFlashPreAggModeType) ToTiPBTiFlashPreAggMode() (tipb.TiFlashPreAggMode, bool) {
+	switch m {
+	case ForcePreAggStr:
+		return tipb.TiFlashPreAggMode_ForcePreAgg, true
+	case ForceStreamingStr:
+		return tipb.TiFlashPreAggMode_ForceStreaming, true
+	case AutoStr:
+		return tipb.TiFlashPreAggMode_Auto, true
+	default:
+		return tipb.TiFlashPreAggMode_ForcePreAgg, false
+	}
 }
