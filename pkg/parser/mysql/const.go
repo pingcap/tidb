@@ -336,6 +336,19 @@ var DefaultLengthOfTimeFraction = map[int]int{
 	6: 3,
 }
 
+// DefaultAuthPlugins are the supported default authentication plugins.
+var DefaultAuthPlugins = []string{
+	AuthNativePassword,
+	AuthCachingSha2Password,
+	AuthTiDBSM3Password,
+	AuthLDAPSASL,
+	AuthLDAPSimple,
+	AuthSocket,
+	AuthTiDBSessionToken,
+	AuthTiDBAuthToken,
+	AuthMySQLClearPassword,
+}
+
 // SQLMode is the type for MySQL sql_mode.
 // See https://dev.mysql.com/doc/refman/5.7/en/sql-mode.html
 type SQLMode int

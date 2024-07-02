@@ -20,6 +20,9 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
+	"github.com/pingcap/tidb/pkg/extension"
+	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/stretchr/testify/require"
@@ -132,4 +135,45 @@ func TestEqualDatumsAsBinary(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, tt.same, res)
 	}
+}
+
+func TestEncodePasswordWithPlugin(t *testing.T) {
+	hashString := "*3D56A309CD04FA2EEF181462E59011F075C89548"
+	u := &ast.UserSpec{
+		User: &auth.UserIdentity{
+			Username: "test",
+		},
+		AuthOpt: &ast.AuthOption{
+			ByAuthString: false,
+			AuthString:   "xxx",
+			HashString:   hashString,
+		},
+	}
+
+	p := &extension.AuthPlugin{
+		ValidateAuthString: func(s string) bool {
+			return false
+		},
+		GenerateAuthString: func(s string) (string, bool) {
+			if s == "xxx" {
+				return "xxxxxxx", true
+			}
+			return "", false
+		},
+	}
+
+	u.AuthOpt.ByAuthString = false
+	_, ok := encodePassword(u, p)
+	require.False(t, ok)
+
+	u.AuthOpt.AuthString = "xxx"
+	u.AuthOpt.ByAuthString = true
+	pwd, ok := encodePassword(u, p)
+	require.True(t, ok)
+	require.Equal(t, "xxxxxxx", pwd)
+
+	u.AuthOpt = nil
+	pwd, ok = encodePassword(u, p)
+	require.True(t, ok)
+	require.Equal(t, "", pwd)
 }
