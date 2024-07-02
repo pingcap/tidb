@@ -986,14 +986,24 @@ func (m *Meta) IterTables(dbID int64, fn func(info *model.TableInfo) error) erro
 	return errors.Trace(err)
 }
 
-// ListTables shows all tables in database.
-func (m *Meta) ListTables(dbID int64) ([]*model.TableInfo, error) {
+// GetMetasByDBID return all meta information of a database.
+// Note(dongmen): This method is used by TiCDC to reduce the time of changefeed initialization.
+// Ref: https://github.com/pingcap/tiflow/issues/11109
+func (m *Meta) GetMetasByDBID(dbID int64) ([]structure.HashPair, error) {
 	dbKey := m.dbKey(dbID)
 	if err := m.checkDBExists(dbKey); err != nil {
 		return nil, errors.Trace(err)
 	}
-
 	res, err := m.txn.HGetAll(dbKey)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return res, nil
+}
+
+// ListTables shows all tables in database.
+func (m *Meta) ListTables(dbID int64) ([]*model.TableInfo, error) {
+	res, err := m.GetMetasByDBID(dbID)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1021,12 +1031,7 @@ func (m *Meta) ListTables(dbID int64) ([]*model.TableInfo, error) {
 
 // ListSimpleTables shows all simple tables in database.
 func (m *Meta) ListSimpleTables(dbID int64) ([]*model.TableNameInfo, error) {
-	dbKey := m.dbKey(dbID)
-	if err := m.checkDBExists(dbKey); err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	res, err := m.txn.HGetAll(dbKey)
+	res, err := m.GetMetasByDBID(dbID)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
