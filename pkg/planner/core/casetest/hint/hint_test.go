@@ -367,14 +367,14 @@ func TestHints(t *testing.T) {
 	}
 }
 
-<<<<<<< HEAD
 func TestHintInReplace(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t(d date)")
 	tk.MustExec("replace /*+ SET_VAR(sql_mode='ALLOW_INVALID_DATES') */ into t values ('2004-04-31');")
-=======
+}
+
 func TestQBHintHandlerDuplicateObjects(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -385,5 +385,4 @@ func TestQBHintHandlerDuplicateObjects(t *testing.T) {
 	// Explain statement
 	tk.MustQuery("EXPLAIN WITH t AS (SELECT /*+ inl_join(e) */ em.* FROM t_employees em JOIN t_employees e WHERE em.store_id = e.department_id) SELECT * FROM t;")
 	tk.MustQuery("show warnings").Check(testkit.Rows())
->>>>>>> 2372cf828c2 (hint: avoid duplicate hints in QBHintHandler (#53921))
 }
