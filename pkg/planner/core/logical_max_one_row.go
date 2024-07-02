@@ -89,12 +89,7 @@ func (p *LogicalMaxOneRow) DeriveStats(_ []*property.StatsInfo, selfSchema *expr
 
 // ExhaustPhysicalPlans implements base.LogicalPlan.<14th> interface.
 func (p *LogicalMaxOneRow) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
-	if !prop.IsSortItemEmpty() || prop.IsFlashProp() {
-		p.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because operator `MaxOneRow` is not supported now.")
-		return nil, true, nil
-	}
-	mor := PhysicalMaxOneRow{}.Init(p.SCtx(), p.StatsInfo(), p.QueryBlockOffset(), &property.PhysicalProperty{ExpectedCnt: 2, CTEProducerStatus: prop.CTEProducerStatus})
-	return []base.PhysicalPlan{mor}, true, nil
+	return exhaustPhysicalPlans4LogicalMaxOneRow(p, prop)
 }
 
 // ExtractCorrelatedCols inherits BaseLogicalPlan.LogicalPlan.<15th> implementation.
