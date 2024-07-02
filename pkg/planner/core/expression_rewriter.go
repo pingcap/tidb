@@ -1243,6 +1243,31 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, planCtx *exp
 		copy(join.OutputNames(), planCtx.plan.OutputNames())
 		copy(join.OutputNames()[planCtx.plan.Schema().Len():], agg.OutputNames())
 		join.AttachOnConds(expression.SplitCNFItems(checkCondition))
+		// Merge planCtx.plan's FullSchema and agg.FullSchema, planCtx.plan's FullNames and  and agg.FullNames
+		var (
+			lFullSchema, rFullSchema *expression.Schema
+			lFullNames, rFullNames   types.NameSlice
+		)
+		if left, ok := planCtx.plan.(*LogicalJoin); ok && left.FullSchema != nil {
+			lFullSchema = left.FullSchema
+			lFullNames = left.FullNames
+		} else {
+			lFullSchema = planCtx.plan.Schema()
+			lFullNames = planCtx.plan.OutputNames()
+		}
+		rFullSchema = agg.Schema()
+		rFullNames = agg.OutputNames()
+		join.FullSchema = expression.MergeSchema(lFullSchema, rFullSchema)
+		// Merge sub-plan's fullNames into this join plan, similar to the fullSchema logic above.
+		join.FullNames = make([]*types.FieldName, 0, len(lFullNames)+len(rFullNames))
+		for _, lName := range lFullNames {
+			name := *lName
+			join.FullNames = append(join.FullNames, &name)
+		}
+		for _, rName := range rFullNames {
+			name := *rName
+			join.FullNames = append(join.FullNames, &name)
+		}
 		// Set join hint for this join.
 		if planCtx.builder.TableHints() != nil {
 			join.setPreferredJoinTypeAndOrder(planCtx.builder.TableHints())

@@ -26,6 +26,15 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestIssue53766(t *testing.T) {
+        store := testkit.CreateMockStore(t)
+        tk := testkit.NewTestKit(t, store)
+        tk.MustExec("use test")
+        tk.MustExec("CREATE TABLE t0(c0 int)")
+        tk.MustExec("CREATE TABLE t1(c0 int)")
+        tk.MustExec("SELECT t0.c0, t1.c0 FROM t0 NATURAL JOIN t1 WHERE '1' AND (t0.c0 IN (SELECT c0 FROM t0))")
+}
+
 // It's a case for Columns in tableScan and indexScan with double reader
 func TestIssue43461(t *testing.T) {
 	store, domain := testkit.CreateMockStoreAndDomain(t)
