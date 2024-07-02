@@ -149,6 +149,9 @@ type IndexMergeReaderExecutor struct {
 	hasGlobalIndex bool
 
 	partialPathIndexForSingleIndexMerge int
+
+	// OutputColumns represents the columns that index reader should return.
+	OutputColumns []*expression.Column
 }
 
 type indexMergeTableTask struct {
@@ -1730,14 +1733,14 @@ func (w *indexMergeProcessWorker) fetchLoopIntersection(ctx context.Context, fet
 		tracker := memory.NewTracker(w.indexMerge.ID(), -1)
 		tracker.AttachTo(w.indexMerge.memTracker)
 		worker := &intersectionProcessWorker{
-			workerID:            i,
+			workerID:               i,
 			handleMapsPerPartition: make(map[int]*kv.MemAwareHandleMap[*int]),
-			workerCh:            make(chan *indexMergeTableTask, maxChannelSize),
-			indexMerge:          w.indexMerge,
-			memTracker:          tracker,
-			batchSize:           batchSize,
-			partitionIDMap:      partitionIDMap,
-			singleIndexMerge:    w.singleIndexMerge,
+			workerCh:               make(chan *indexMergeTableTask, maxChannelSize),
+			indexMerge:             w.indexMerge,
+			memTracker:             tracker,
+			batchSize:              batchSize,
+			partitionIDMap:         partitionIDMap,
+			singleIndexMerge:       w.singleIndexMerge,
 		}
 		wg.RunWithRecover(func() {
 			defer trace.StartRegion(ctx, "IndexMergeIntersectionProcessWorker").End()
