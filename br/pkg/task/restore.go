@@ -822,10 +822,13 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		return errors.Annotate(berrors.ErrRestoreInvalidBackup, "contain tables but no databases")
 	}
 
-	err = checkDiskSpace(ctx, mgr, files)
-	if err != nil {
-		return errors.Trace(err)
-	}
+	utils.WithRetry(ctx, func() error {
+		err = checkDiskSpace(ctx, mgr, files)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		return nil
+	}, utils.NewPDReqBackoffer())
 
 	archiveSize := reader.ArchiveSize(ctx, files)
 	g.Record(summary.RestoreDataSize, archiveSize)
@@ -1173,7 +1176,7 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	return nil
 }
 
-func getMaxReplica(ctx context.Context, mgr *conn.Mgr) (int, error) {
+func getMaxReplica(ctx context.Context, mgr *conn.Mgr) (uint64, error) {
 	resp, err := mgr.GetPDHTTPClient().GetReplicateConfig(ctx)
 	if err != nil {
 		return 0, errors.Trace(err)
@@ -1183,19 +1186,19 @@ func getMaxReplica(ctx context.Context, mgr *conn.Mgr) (int, error) {
 	if !ok {
 		return 0, errors.Errorf("key %s not found in response %v", key, resp)
 	}
-	return int(val.(float64)), nil
+	return uint64(val.(float64)), nil
 }
 
-func calNecessary(files []*backuppb.File, maxReplica int, storeCnt int) int {
-	var totalSize int
+func CalNecessary(files []*backuppb.File, maxReplica uint64, storeCnt int) uint64 {
+	var totalSize uint64
 	for _, file := range files {
-		size := file.Size()
+		size := file.GetSize_()
 		totalSize += size
 	}
-	return totalSize * maxReplica / storeCnt
+	return totalSize * maxReplica / uint64(storeCnt)
 }
 
-func checkTiKVSpace(necessary int, store *http.StoreInfo) error {
+func CheckTiKVSpace(necessary uint64, store *http.StoreInfo) error {
 	available, err := units.RAMInBytes(store.Status.Available)
 	if err != nil {
 		return errors.Errorf("store %d has invalid available space %s", store.Store.ID, store.Status.Available)
@@ -1212,17 +1215,14 @@ func checkDiskSpace(ctx context.Context, mgr *conn.Mgr, files []*backuppb.File) 
 	if err != nil {
 		return errors.Trace(err)
 	}
-	stores,err := mgr.GetPDHTTPClient().GetStores(ctx)
+	stores, err := mgr.GetPDHTTPClient().GetStores(ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	necessary := calNecessary(files, maxReplica, stores.Count)
+	necessary := CalNecessary(files, maxReplica, stores.Count)
 
 	for _, store := range stores.Stores {
-		if err != nil {
-			return errors.Trace(err)
-		}
-		err = checkTiKVSpace(necessary, &store)
+		err = CheckTiKVSpace(necessary, &store)
 		if err != nil {
 			return errors.Trace(err)
 		}

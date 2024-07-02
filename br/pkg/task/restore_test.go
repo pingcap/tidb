@@ -29,6 +29,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
+	pdhttp "github.com/tikv/pd/client/http"
 )
 
 func TestPreCheckTableTiFlashReplicas(t *testing.T) {
@@ -416,4 +417,27 @@ func TestFilterDDLJobByRules(t *testing.T) {
 	for i, ddlJob := range ddlJobs {
 		assert.Equal(t, expectedDDLTypes[i], ddlJob.Type)
 	}
+}
+
+func TestCalNecessary(t *testing.T) {
+	files := []*backuppb.File{
+		{Name: "F1", Size_: 1 * 1024 * 1024 * 1024 * 1024 * 1024},
+		{Name: "F2", Size_: 2 * 1024 * 1024 * 1024 * 1024 * 1024},
+		{Name: "F3", Size_: 3 * 1024 * 1024 * 1024 * 1024 * 1024},
+		{Name: "F4", Size_: 4 * 1024 * 1024 * 1024 * 1024 * 1024},
+		{Name: "F5", Size_: 5 * 1024 * 1024 * 1024 * 1024 * 1024},
+	}
+	replica := uint64(3)
+	storeCnt := 6
+	total := uint64(0)
+	for _, f := range files {
+		total += f.GetSize_()
+	}
+	ret := task.CalNecessary(files, replica, storeCnt)
+	require.Equal(t, ret, total*replica/uint64(storeCnt))
+}
+
+func TestCheckTikvSpace(t *testing.T) {
+	store := pdhttp.StoreInfo{Store: pdhttp.MetaStore{ID: 1}, Status: pdhttp.StoreStatus{Available: "500GB"}}
+	require.NoError(t, task.CheckTiKVSpace(400*1024*1024*1024, &store))
 }
