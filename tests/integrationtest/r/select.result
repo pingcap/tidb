@@ -662,3 +662,11 @@ select * from t3 where a > 0x80;
 Error 1105 (HY000): Cannot convert string '\x80' from binary to utf8mb4
 set @@tidb_enable_outer_join_reorder=false;
 set @@sql_mode=default;
+SELECT 1 FROM (SELECT 1 x) a STRAIGHT_JOIN (SELECT 1 x) b USING (x);
+1
+1
+SELECT 1 FROM (SELECT 1 x) a STRAIGHT_JOIN (SELECT 2 x) b USING (x);
+1
+SELECT 1 FROM (SELECT 1 x UNION ALL SELECT 3) a STRAIGHT_JOIN (SELECT 1 x UNION ALL SELECT 2) b USING (x);
+1
+1
