@@ -164,6 +164,13 @@ func NewStaticWarnHandlerWithHandler(h WarnHandler) *StaticWarnHandler {
 	return newHandler
 }
 
+// Reset resets the warnings of this handler.
+func (h *StaticWarnHandler) Reset() {
+	if h.warnings != nil {
+		h.warnings = h.warnings[:0]
+	}
+}
+
 // AppendWarning implements the StaticWarnHandler.AppendWarning.
 func (h *StaticWarnHandler) AppendWarning(warn error) {
 	h.Lock()

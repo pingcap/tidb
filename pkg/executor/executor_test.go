@@ -17,7 +17,11 @@ package executor_test
 import (
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/executor"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/util/mock"
 )
 
 func TestChangePumpAndDrainer(t *testing.T) {
@@ -27,4 +31,13 @@ func TestChangePumpAndDrainer(t *testing.T) {
 	// so will meet error "URL scheme must be http, https, unix, or unixs: /tmp/tidb"
 	tk.MustMatchErrMsg("change pump to node_state ='paused' for node_id 'pump1'", "URL scheme must be http, https, unix, or unixs.*")
 	tk.MustMatchErrMsg("change drainer to node_state ='paused' for node_id 'drainer1'", "URL scheme must be http, https, unix, or unixs.*")
+}
+
+func BenchmarkResetContextOfStmt(b *testing.B) {
+	stmt := &ast.SelectStmt{}
+	ctx := mock.NewContext()
+	domain.BindDomain(ctx, &domain.Domain{})
+	for i := 0; i < b.N; i++ {
+		executor.ResetContextOfStmt(ctx, stmt)
+	}
 }
