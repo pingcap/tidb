@@ -706,6 +706,7 @@ func (dc *ddlCtx) runAddIndexInLocalIngestMode(
 	}
 	// in happy path FinishAndUnregisterEngines will be called in pipe.Close. We can
 	// ignore the error here.
+	//nolint: errcheck
 	defer bcCtx.FinishAndUnregisterEngines()
 
 	pipe, err := NewAddIndexIngestPipeline(
