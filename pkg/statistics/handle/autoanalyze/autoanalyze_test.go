@@ -125,7 +125,7 @@ func TestAutoAnalyzeWithPredicateColumns(t *testing.T) {
 
 	// Check analyze jobs.
 	tk.MustQuery("select table_name, job_info from mysql.analyze_jobs order by id desc limit 1").Check(
-		testkit.Rows("t auto analyze table columns a with 256 buckets, 100 topn, 1 samplerate"),
+		testkit.Rows("t auto analyze table column a with 256 buckets, 100 topn, 1 samplerate"),
 	)
 }
 
@@ -342,7 +342,7 @@ func TestAutoAnalyzeSkipColumnTypes(t *testing.T) {
 		exec.AutoAnalyzeMinCnt = originalVal
 	}()
 	require.True(t, h.HandleAutoAnalyze())
-	tk.MustQuery("select job_info from mysql.analyze_jobs where job_info like '%auto analyze table%'").Check(testkit.Rows("auto analyze table columns a, b, d with 256 buckets, 100 topn, 1 samplerate"))
+	tk.MustQuery("select job_info from mysql.analyze_jobs where job_info like '%auto analyze table%'").Check(testkit.Rows("auto analyze table all indexes, columns a, b, d with 256 buckets, 100 topn, 1 samplerate"))
 }
 
 func TestAutoAnalyzeOnEmptyTable(t *testing.T) {
