@@ -633,9 +633,12 @@ func (c *benchmarkFunctionClass) getFunction(ctx BuildContext, args []Expression
 	// since non-constant loop count would be different between rows, and cannot be vectorized.
 	var constLoopCount int64
 	con, ok := args[0].(*Constant)
-	if ok && con.Value.Kind() == types.KindInt64 {
-		if lc, isNull, err := con.EvalInt(ctx.GetEvalCtx(), chunk.Row{}); err == nil && !isNull {
-			constLoopCount = lc
+	if ok {
+		conVal, ok := con.GetValue()
+		if ok && conVal.Kind() == types.KindInt64 {
+			if lc, isNull, err := con.EvalInt(ctx.GetEvalCtx(), chunk.Row{}); err == nil && !isNull {
+				constLoopCount = lc
+			}
 		}
 	}
 	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETInt, sameEvalType)

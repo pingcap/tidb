@@ -78,7 +78,8 @@ func (e *SetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 			cs := dt.GetString()
 			var co string
 			if v.ExtendValue != nil {
-				co = v.ExtendValue.Value.GetString()
+				val, _ := v.ExtendValue.GetValue()
+				co = val.GetString()
 			}
 			err = e.setCharset(cs, co, v.Name == ast.SetNames)
 			if err != nil {

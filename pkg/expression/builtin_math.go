@@ -1188,7 +1188,11 @@ func (b *builtinConvSig) evalString(ctx EvalContext, row chunk.Row) (res string,
 	var str string
 	switch x := b.args[0].(type) {
 	case *Constant:
-		if x.Value.Kind() == types.KindBinaryLiteral {
+		xVal, err := x.Eval(ctx, row)
+		if err != nil {
+			return res, isNull, err
+		}
+		if xVal.Kind() == types.KindBinaryLiteral {
 			datum, err := x.Eval(ctx, row)
 			if err != nil {
 				return "", false, err

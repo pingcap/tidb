@@ -599,12 +599,8 @@ func allEqOrIn(expr expression.Expression) bool {
 func extractValueInfo(expr expression.Expression) *valueInfo {
 	if f, ok := expr.(*expression.ScalarFunction); ok && (f.FuncName.L == ast.EQ || f.FuncName.L == ast.NullEQ) {
 		getValueInfo := func(c *expression.Constant) *valueInfo {
-			mutable := c.ParamMarker != nil || c.DeferredExpr != nil
-			var value *types.Datum
-			if !mutable {
-				value = &c.Value
-			}
-			return &valueInfo{value, mutable}
+			value, ok := c.GetValue()
+			return &valueInfo{&value, !ok}
 		}
 		if c, ok := f.GetArgs()[0].(*expression.Constant); ok {
 			return getValueInfo(c)

@@ -838,15 +838,20 @@ type unaryMinusFunctionClass struct {
 }
 
 func (c *unaryMinusFunctionClass) handleIntOverflow(ctx EvalContext, arg *Constant) (overflow bool) {
+	argVal, ok := arg.GetValue()
+	if !ok {
+		// ignore parameter and deferred functions
+		return false
+	}
 	if mysql.HasUnsignedFlag(arg.GetType(ctx).GetFlag()) {
-		uval := arg.Value.GetUint64()
+		uval := argVal.GetUint64()
 		// -math.MinInt64 is 9223372036854775808, so if uval is more than 9223372036854775808, like
 		// 9223372036854775809, -9223372036854775809 is less than math.MinInt64, overflow occurs.
 		if uval > uint64(-math.MinInt64) {
 			return true
 		}
 	} else {
-		val := arg.Value.GetInt64()
+		val := argVal.GetInt64()
 		// The math.MinInt64 is -9223372036854775808, the math.MaxInt64 is 9223372036854775807,
 		// which is less than abs(-9223372036854775808). When val == math.MinInt64, overflow occurs.
 		if val == math.MinInt64 {

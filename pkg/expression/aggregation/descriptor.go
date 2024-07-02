@@ -16,7 +16,6 @@ package aggregation
 
 import (
 	"bytes"
-	"math"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -246,8 +245,15 @@ func (a *AggFuncDesc) evalNullValueInOuterJoin4Count(ctx expression.BuildContext
 	for _, arg := range a.Args {
 		result := expression.EvaluateExprWithNull(ctx, schema, arg)
 		con, ok := result.(*expression.Constant)
-		if !ok || con.Value.IsNull() {
-			return types.Datum{}, ok
+		if !ok {
+			return types.Datum{}, false
+		}
+		conVal, ok := con.GetValueWithoutOverOptimization(ctx)
+		if !ok {
+			return types.Datum{}, false
+		}
+		if conVal.IsNull() {
+			return types.Datum{}, true
 		}
 	}
 	return types.NewDatum(1), true
@@ -256,28 +262,40 @@ func (a *AggFuncDesc) evalNullValueInOuterJoin4Count(ctx expression.BuildContext
 func (a *AggFuncDesc) evalNullValueInOuterJoin4Sum(ctx expression.BuildContext, schema *expression.Schema) (types.Datum, bool) {
 	result := expression.EvaluateExprWithNull(ctx, schema, a.Args[0])
 	con, ok := result.(*expression.Constant)
-	if !ok || con.Value.IsNull() {
-		return types.Datum{}, ok
+	if !ok {
+		return types.Datum{}, false
 	}
-	return con.Value, true
+	conVal, ok := con.GetValueWithoutOverOptimization(ctx)
+	if !ok {
+		return types.Datum{}, false
+	}
+	return conVal, true
 }
 
 func (a *AggFuncDesc) evalNullValueInOuterJoin4BitAnd(ctx expression.BuildContext, schema *expression.Schema) (types.Datum, bool) {
 	result := expression.EvaluateExprWithNull(ctx, schema, a.Args[0])
 	con, ok := result.(*expression.Constant)
-	if !ok || con.Value.IsNull() {
-		return types.NewDatum(uint64(math.MaxUint64)), true
+	if !ok {
+		return types.Datum{}, false
 	}
-	return con.Value, true
+	conVal, ok := con.GetValueWithoutOverOptimization(ctx)
+	if !ok {
+		return types.Datum{}, false
+	}
+	return conVal, true
 }
 
 func (a *AggFuncDesc) evalNullValueInOuterJoin4BitOr(ctx expression.BuildContext, schema *expression.Schema) (types.Datum, bool) {
 	result := expression.EvaluateExprWithNull(ctx, schema, a.Args[0])
 	con, ok := result.(*expression.Constant)
-	if !ok || con.Value.IsNull() {
-		return types.NewDatum(0), true
+	if !ok {
+		return types.Datum{}, false
 	}
-	return con.Value, true
+	conVal, ok := con.GetValue()
+	if !ok {
+		return types.Datum{}, false
+	}
+	return conVal, true
 }
 
 // UpdateNotNullFlag4RetType checks if we should remove the NotNull flag for the return type of the agg.

@@ -40,9 +40,13 @@ func (expr *ScalarFunction) explainInfo(ctx EvalContext, normalized bool) string
 	// convert `in(_tidb_tid, -1)` to `in(_tidb_tid, dual)` whether normalized equals to true or false.
 	if expr.FuncName.L == ast.In {
 		args := expr.GetArgs()
-		if len(args) == 2 && strings.HasSuffix(args[0].ExplainNormalizedInfo(), model.ExtraPhysTblIdName.L) && args[1].(*Constant).Value.GetInt64() == -1 {
-			buffer.WriteString(args[0].ExplainNormalizedInfo() + ", dual)")
-			return buffer.String()
+		if len(args) == 2 && strings.HasSuffix(args[0].ExplainNormalizedInfo(), model.ExtraPhysTblIdName.L) {
+			if arg1Con, ok := args[1].(*Constant); ok {
+				if arg1Val, ok := arg1Con.GetValue(); ok && arg1Val.GetInt64() == -1 {
+					buffer.WriteString(args[0].ExplainNormalizedInfo() + ", dual)")
+					return buffer.String()
+				}
+			}
 		}
 	}
 	switch expr.FuncName.L {

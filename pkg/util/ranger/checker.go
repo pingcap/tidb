@@ -150,10 +150,14 @@ func (c *conditionChecker) checkLikeFunc(scalar *expression.ScalarFunction) (isA
 	if !ok {
 		return false, true
 	}
-	if pattern.Value.IsNull() {
+	patternVal, ok := pattern.GetValue()
+	if !ok {
 		return false, true
 	}
-	patternStr, err := pattern.Value.ToString()
+	if patternVal.IsNull() {
+		return false, true
+	}
+	patternStr, err := patternVal.ToString()
 	if err != nil {
 		return false, true
 	}
@@ -170,7 +174,11 @@ func (c *conditionChecker) checkLikeFunc(scalar *expression.ScalarFunction) (isA
 	if len(patternStr) == 0 {
 		return true, likeFuncReserve
 	}
-	escape := byte(scalar.GetArgs()[2].(*expression.Constant).Value.GetInt64())
+	escapeVal, ok := scalar.GetArgs()[2].(*expression.Constant).GetValue()
+	if !ok {
+		return false, true
+	}
+	escape := byte(escapeVal.GetInt64())
 	for i := 0; i < len(patternStr); i++ {
 		if patternStr[i] == escape {
 			i++

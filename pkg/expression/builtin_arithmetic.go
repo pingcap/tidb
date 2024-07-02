@@ -62,7 +62,11 @@ var (
 func isConstantBinaryLiteral(ctx EvalContext, expr Expression) bool {
 	if types.IsBinaryStr(expr.GetType(ctx)) {
 		if v, ok := expr.(*Constant); ok {
-			if k := v.Value.Kind(); k == types.KindBinaryLiteral {
+			val, ok := v.GetValue()
+			if !ok {
+				return false
+			}
+			if k := val.Kind(); k == types.KindBinaryLiteral {
 				return true
 			}
 		}

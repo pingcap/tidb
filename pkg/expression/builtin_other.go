@@ -162,13 +162,15 @@ func (c *inFunctionClass) verifyArgs(ctx BuildContext, args []Expression) ([]Exp
 	validatedArgs := make([]Expression, 0, len(args))
 	for _, arg := range args {
 		if constant, ok := arg.(*Constant); ok {
-			switch {
-			case columnType.GetType() == mysql.TypeBit && constant.Value.Kind() == types.KindInt64:
-				if constant.Value.GetInt64() < 0 {
-					if MaybeOverOptimized4PlanCache(ctx, args) {
-						ctx.SetSkipPlanCache(fmt.Sprintf("Bit Column in (%v)", constant.Value.GetInt64()))
+			if constant, ok := constant.GetValue(); ok {
+				switch {
+				case columnType.GetType() == mysql.TypeBit && constant.Kind() == types.KindInt64:
+					if constant.GetInt64() < 0 {
+						if MaybeOverOptimized4PlanCache(ctx, args) {
+							ctx.SetSkipPlanCache(fmt.Sprintf("Bit Column in (%v)", constant.GetInt64()))
+						}
+						continue
 					}
-					continue
 				}
 			}
 		}

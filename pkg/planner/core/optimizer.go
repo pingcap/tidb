@@ -576,8 +576,12 @@ func rewriteTableScanAndAggArgs(physicalTableScan *PhysicalTableScan, aggFuncs [
 		if !ok {
 			return
 		}
+		constExprVal, ok := constExpr.GetValueWithoutOverOptimization(physicalTableScan.SCtx().GetExprCtx())
+		if !ok {
+			return
+		}
 		// count(null) shouldn't be rewritten
-		if constExpr.Value.IsNull() {
+		if constExprVal.IsNull() {
 			continue
 		}
 		aggFunc.Args[0] = arg

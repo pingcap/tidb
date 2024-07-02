@@ -558,10 +558,12 @@ func newListPartitionPruner(ctx base.PlanContext, tbl table.Table, partitionName
 func (l *listPartitionPruner) locatePartition(cond expression.Expression) (tables.ListPartitionLocation, bool, error) {
 	switch sf := cond.(type) {
 	case *expression.Constant:
-		b, err := sf.Value.ToBool(l.ctx.GetSessionVars().StmtCtx.TypeCtx())
-		if err == nil && b == 0 {
-			// A constant false expression.
-			return nil, false, nil
+		if val, ok := sf.GetValueWithoutOverOptimization(l.ctx.GetExprCtx()); ok {
+			b, err := val.ToBool(l.ctx.GetSessionVars().StmtCtx.TypeCtx())
+			if err == nil && b == 0 {
+				// A constant false expression.
+				return nil, false, nil
+			}
 		}
 	case *expression.ScalarFunction:
 		switch sf.FuncName.L {
@@ -1107,8 +1109,9 @@ func minCmp(ctx base.PlanContext, lowVal []types.Datum, columnsPruner *rangeColu
 				// Not a constant, pruning not possible, so value is considered less than all partitions
 				return true
 			}
+			conVal, _ := con.GetValueWithoutOverOptimization(ctx.GetExprCtx())
 			// Add Null as point here?
-			cmp, err := con.Value.Compare(ctx.GetSessionVars().StmtCtx.TypeCtx(), &lowVal[j], comparer[j])
+			cmp, err := conVal.Compare(ctx.GetSessionVars().StmtCtx.TypeCtx(), &lowVal[j], comparer[j])
 			if err != nil {
 				*gotError = true
 			}
@@ -1145,23 +1148,25 @@ func minCmp(ctx base.PlanContext, lowVal []types.Datum, columnsPruner *rangeColu
 				return true
 			}
 			if con, ok := (*conExpr).(*expression.Constant); ok && col != nil {
+				// `conExpr` comes from table definition, so it's always fine to get the value.
+				conVal, _ := con.GetValue()
 				switch col.RetType.EvalType() {
 				case types.ETInt:
 					if mysql.HasUnsignedFlag(col.RetType.GetFlag()) {
-						if con.Value.GetUint64() == 0 {
+						if conVal.GetUint64() == 0 {
 							return false
 						}
 					} else {
-						if con.Value.GetInt64() == types.IntergerSignedLowerBound(col.GetStaticType().GetType()) {
+						if conVal.GetInt64() == types.IntergerSignedLowerBound(col.GetStaticType().GetType()) {
 							return false
 						}
 					}
 				case types.ETDatetime:
-					if con.Value.GetMysqlTime().IsZero() {
+					if conVal.GetMysqlTime().IsZero() {
 						return false
 					}
 				case types.ETString:
-					if len(con.Value.GetString()) == 0 {
+					if len(conVal.GetString()) == 0 {
 						return false
 					}
 				}
@@ -1186,8 +1191,13 @@ func maxCmp(ctx base.PlanContext, hiVal []types.Datum, columnsPruner *rangeColum
 				// Not a constant, include every partition, i.e. value is not less than any partition
 				return false
 			}
+			conVal, ok := con.GetValueWithoutOverOptimization(ctx.GetExprCtx())
+			if !ok {
+				// Not a constant. Maybe it's parameter or deferred function.
+				return false
+			}
 			// Add Null as point here?
-			cmp, err := con.Value.Compare(ctx.GetSessionVars().StmtCtx.TypeCtx(), &hiVal[j], comparer[j])
+			cmp, err := conVal.Compare(ctx.GetSessionVars().StmtCtx.TypeCtx(), &hiVal[j], comparer[j])
 			if err != nil {
 				*gotError = true
 				// error pushed, we will still use the cmp value
@@ -1324,9 +1334,11 @@ type rangePruner struct {
 
 func (p *rangePruner) partitionRangeForExpr(sctx base.PlanContext, expr expression.Expression) (start int, end int, ok bool) {
 	if constExpr, ok := expr.(*expression.Constant); ok {
-		if b, err := constExpr.Value.ToBool(sctx.GetSessionVars().StmtCtx.TypeCtx()); err == nil && b == 0 {
-			// A constant false expression.
-			return 0, 0, true
+		if constVal, ok := constExpr.GetValueWithoutOverOptimization(sctx.GetExprCtx()); ok {
+			if b, err := constVal.ToBool(sctx.GetSessionVars().StmtCtx.TypeCtx()); err == nil && b == 0 {
+				// A constant false expression.
+				return 0, 0, true
+			}
 		}
 	}
 
@@ -1364,7 +1376,11 @@ func partitionRangeColumnForInExpr(sctx base.PlanContext, args []expression.Expr
 		if !ok {
 			return pruner.fullRange()
 		}
-		switch constExpr.Value.Kind() {
+		constExprVal, ok := constExpr.GetValueWithoutOverOptimization(sctx.GetExprCtx())
+		if !ok {
+			return pruner.fullRange()
+		}
+		switch constExprVal.Kind() {
 		case types.KindInt64, types.KindUint64, types.KindMysqlTime, types.KindString: // for safety, only support string,int and datetime now
 		case types.KindNull:
 			result = append(result, partitionRange{0, 1})
@@ -1401,7 +1417,11 @@ func partitionRangeForInExpr(sctx base.PlanContext, args []expression.Expression
 		if !ok {
 			return pruner.fullRange()
 		}
-		if constExpr.Value.Kind() == types.KindNull {
+		constExprVal, ok := constExpr.GetValueWithoutOverOptimization(sctx.GetExprCtx())
+		if !ok {
+			return pruner.fullRange()
+		}
+		if constExprVal.Kind() == types.KindNull {
 			result = append(result, partitionRange{0, 1})
 			continue
 		}

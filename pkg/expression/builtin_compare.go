@@ -1443,7 +1443,7 @@ func RefineComparedConstant(ctx BuildContext, targetFieldType types.FieldType, c
 		}
 		return con, false
 	}
-	c, err := intDatum.Compare(evalCtx.TypeCtx(), &con.Value, collate.GetBinaryCollator())
+	c, err := intDatum.Compare(evalCtx.TypeCtx(), &dt, collate.GetBinaryCollator())
 	if err != nil {
 		return con, false
 	}
@@ -1580,9 +1580,18 @@ func (c *compareFunctionClass) refineArgs(ctx BuildContext, args []Expression) (
 	if !allowCmpArgsRefining4PlanCache(ctx, args) {
 		return args, nil
 	}
-	// We should remove the mutable constant for correctness, because its value may be changed.
+
 	if err := RemoveMutableConst(ctx, args); err != nil {
 		return nil, err
+	}
+
+	// After `RemoveMutableConst`, params and deferred functions are all constant value now.
+	var arg0Val, arg1Val types.Datum
+	if arg0IsCon {
+		arg0Val, _ = arg0.GetValue()
+	}
+	if arg1IsCon {
+		arg1Val, _ = arg1.GetValue()
 	}
 
 	if arg0IsCon && !arg1IsCon && matchRefineRule3Pattern(arg0EvalType, arg1Type) {
@@ -1613,7 +1622,7 @@ func (c *compareFunctionClass) refineArgs(ctx BuildContext, args []Expression) (
 			// For uint:
 			//			inf:  11111111 & 1 == 1
 			//		   -inf:  00000000 & 1 == 0
-			if arg1.Value.GetInt64()&1 == 1 {
+			if arg1Val.GetInt64()&1 == 1 {
 				isPositiveInfinite = true
 			} else {
 				isNegativeInfinite = true
@@ -1630,7 +1639,7 @@ func (c *compareFunctionClass) refineArgs(ctx BuildContext, args []Expression) (
 		// to check the NotNullFlag, then more optimizations can be enabled.
 		isExceptional = isExceptional && mysql.HasNotNullFlag(arg1Type.GetFlag())
 		if isExceptional && arg0.GetType(ctx.GetEvalCtx()).EvalType() == types.ETInt {
-			if arg0.Value.GetInt64()&1 == 1 {
+			if arg0Val.GetInt64()&1 == 1 {
 				isNegativeInfinite = true
 			} else {
 				isPositiveInfinite = true
@@ -1639,18 +1648,22 @@ func (c *compareFunctionClass) refineArgs(ctx BuildContext, args []Expression) (
 	}
 
 	// int constant [cmp] year type
-	if arg0IsCon && arg0IsInt && arg1Type.GetType() == mysql.TypeYear && !arg0.Value.IsNull() {
-		adjusted, failed := types.AdjustYear(arg0.Value.GetInt64(), false)
+	if arg0IsCon && arg0IsInt && arg1Type.GetType() == mysql.TypeYear && !arg0Val.IsNull() {
+		adjusted, failed := types.AdjustYear(arg0Val.GetInt64(), false)
 		if failed == nil {
-			arg0.Value.SetInt64(adjusted)
+			newVal := types.Datum{}
+			newVal.SetInt64(adjusted)
+			*arg0 = Constant{Value: newVal, RetType: arg0.RetType}
 			finalArg0 = arg0
 		}
 	}
 	// year type [cmp] int constant
-	if arg1IsCon && arg1IsInt && arg0Type.GetType() == mysql.TypeYear && !arg1.Value.IsNull() {
-		adjusted, failed := types.AdjustYear(arg1.Value.GetInt64(), false)
+	if arg1IsCon && arg1IsInt && arg0Type.GetType() == mysql.TypeYear && !arg1Val.IsNull() {
+		adjusted, failed := types.AdjustYear(arg1Val.GetInt64(), false)
 		if failed == nil {
-			arg1.Value.SetInt64(adjusted)
+			newVal := types.Datum{}
+			newVal.SetInt64(adjusted)
+			*arg1 = Constant{Value: newVal, RetType: arg1.RetType}
 			finalArg1 = arg1
 		}
 	}

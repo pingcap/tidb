@@ -1,0 +1,26 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "extraprivate",
+    srcs = ["analyzer.go"],
+    importpath = "github.com/pingcap/tidb/build/linter/extraprivate",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//build/linter/util",
+        "@com_github_fatih_structtag//:structtag",
+        "@org_golang_x_tools//go/analysis",
+        "@org_golang_x_tools//go/analysis/passes/inspect",
+        "@org_golang_x_tools//go/ast/inspector",
+    ],
+)
+
+go_test(
+    name = "extraprivate_test",
+    timeout = "short",
+    srcs = ["analyzer_test.go"],
+    flaky = True,
+    deps = [
+        ":extraprivate",
+        "@org_golang_x_tools//go/analysis/analysistest",
+    ],
+)

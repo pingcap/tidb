@@ -107,12 +107,18 @@ func isNullRejectedSimpleExpr(ctx context.PlanContext, schema *expression.Schema
 	sc := ctx.GetSessionVars().StmtCtx
 	result := expression.EvaluateExprWithNull(exprCtx, schema, expr)
 	x, ok := result.(*expression.Constant)
-	if ok {
-		if x.Value.IsNull() {
-			return true
-		} else if isTrue, err := x.Value.ToBool(sc.TypeCtxOrDefault()); err == nil && isTrue == 0 {
-			return true
-		}
+	if !ok {
+		return false
+	}
+	xVal, ok := x.GetValueWithoutOverOptimization(ctx.GetExprCtx())
+	if !ok {
+		return false
+	}
+	if xVal.IsNull() {
+		return true
+	}
+	if isTrue, err := xVal.ToBool(sc.TypeCtxOrDefault()); err == nil && isTrue == 0 {
+		return true
 	}
 	return false
 }
