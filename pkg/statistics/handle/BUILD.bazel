@@ -20,11 +20,8 @@ go_library(
         "//pkg/parser/mysql",
         "//pkg/parser/terror",
         "//pkg/sessionctx",
-<<<<<<< HEAD
         "//pkg/sessionctx/stmtctx",
-=======
         "//pkg/sessionctx/sysproctrack",
->>>>>>> 2cea9949f20 (statistics: stop loading too many stats when to init stats (#53999))
         "//pkg/sessionctx/variable",
         "//pkg/statistics",
         "//pkg/statistics/handle/autoanalyze",
