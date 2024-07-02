@@ -113,23 +113,14 @@ func NewTestKitWithSession(t testing.TB, store kv.Storage, se sessiontypes.Sessi
 	}
 }
 
-var (
-	testkitRNG      *rand.Rand
-	testkitRandSeed uint64
-)
-
-func init() {
-	testkitRandSeed = uint64(time.Now().UnixNano())
-	testkitRNG = rand.New(rand.NewSource(int64(testkitRandSeed)))
-}
-
 // RefreshSession set a new session for the testkit
 func (tk *TestKit) RefreshSession() {
 	tk.session = NewSession(tk.t, tk.store)
-
 	if intest.InTest {
-		tk.t.Logf("RefreshSession rand seed: %d", testkitRandSeed)
-		if testkitRNG.Intn(10) >= 3 { // 70% chance to run infoschema v2
+		seed := uint64(time.Now().UnixNano())
+		tk.t.Logf("RefreshSession rand seed: %d", seed)
+		rng := rand.New(rand.NewSource(int64(seed)))
+		if rng.Intn(10) >= 3 { // 70% chance to run infoschema v2
 			tk.MustExec("set @@global.tidb_schema_cache_size = 1024 * 1024 * 1024")
 		}
 	}
