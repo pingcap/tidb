@@ -1833,15 +1833,11 @@ func (e *ShowExec) fetchShowWarnings(errOnly bool) error {
 			sqlErr := terror.ToSQLError(x)
 			e.appendRow([]interface{}{w.Level, int64(sqlErr.Code), sqlErr.Message})
 		default:
-<<<<<<< HEAD:executor/show.go
-			e.appendRow([]interface{}{w.Level, int64(mysql.ErrUnknown), warn.Error()})
-=======
 			var err string
 			if warn != nil {
 				err = warn.Error()
 			}
 			e.appendRow([]any{w.Level, int64(mysql.ErrUnknown), err})
->>>>>>> 3c46a1e072c (*: panic guard for warnings (#54043)):pkg/executor/show.go
 		}
 	}
 	return nil
