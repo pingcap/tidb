@@ -30,24 +30,18 @@ var _ context.AllocatorContext = &TableContextImpl{}
 type TableContextImpl struct {
 	sessionctx.Context
 	exprCtx exprctx.ExprContext
-
-	// TablesBuffer is a memory pool for table related memory allocation that aims to reuse memory
+	// mutateBuffers is a memory pool for table related memory allocation that aims to reuse memory
 	// and saves allocation
 	// The buffers are supposed to be used inside AddRecord/UpdateRecord/RemoveRecord.
-	// It's users duty to reset them before use.
-	TablesBuffer *context.TablesBuffer
+	mutateBuffers *context.MutateBuffers
 }
 
 // NewTableContextImpl creates a new TableContextImpl.
 func NewTableContextImpl(sctx sessionctx.Context, exprCtx exprctx.ExprContext) *TableContextImpl {
 	return &TableContextImpl{
-		Context: sctx,
-		exprCtx: exprCtx,
-		TablesBuffer: &context.TablesBuffer{
-			Add:    &context.AddRecordBuffer{},
-			Update: &context.UpdateRecordBuffer{},
-			Remove: &context.RemoveRecordBuffer{},
-		},
+		Context:       sctx,
+		exprCtx:       exprCtx,
+		mutateBuffers: context.NewMutateBuffers(sctx.GetSessionVars().GetWriteStmtBufs()),
 	}
 }
 
@@ -62,11 +56,20 @@ func (ctx *TableContextImpl) GetExprCtx() exprctx.ExprContext {
 	return ctx.exprCtx
 }
 
-func (ctx *TableContextImpl) vars() *variable.SessionVars {
-	return ctx.Context.GetSessionVars()
+// GetRowEncodingConfig returns the RowEncodingConfig.
+func (ctx *TableContextImpl) GetRowEncodingConfig() context.RowEncodingConfig {
+	vars := ctx.vars()
+	return context.RowEncodingConfig{
+		IsRowLevelChecksumEnabled: vars.IsRowLevelChecksumEnabled(),
+		RowEncoder:                &vars.RowEncoder,
+	}
 }
 
-// GetTablesBuffer implements the MutateContext interface.
-func (ctx *TableContextImpl) GetTablesBuffer() *context.TablesBuffer {
-	return ctx.TablesBuffer
+// GetMutateBuffers implements the MutateContext interface.
+func (ctx *TableContextImpl) GetMutateBuffers() *context.MutateBuffers {
+	return ctx.mutateBuffers
+}
+
+func (ctx *TableContextImpl) vars() *variable.SessionVars {
+	return ctx.Context.GetSessionVars()
 }
