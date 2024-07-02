@@ -898,10 +898,12 @@ func (b *builtinCastStringAsJSONSig) evalJSON(ctx EvalContext, row chunk.Row) (r
 		return res, false, err
 	} else if mysql.HasParseToJSONFlag(b.tp.GetFlag()) {
 		res, err = types.ParseBinaryJSONFromString(val)
-		if goerrors.As(err, &serr) {
-			err = types.ErrInvalidJSONTextInParam.GenWithStackByArgs(1, "cast_as_json", err, serr.Offset)
-		} else {
-			err = types.ErrInvalidJSONTextInParam.GenWithStackByArgs(1, "cast_as_json", err, 0)
+		if err != nil {
+			if goerrors.As(err, &serr) {
+				err = types.ErrInvalidJSONTextInParam.GenWithStackByArgs(1, "cast_as_json", err, serr.Offset)
+			} else {
+				err = types.ErrInvalidJSONTextInParam.GenWithStackByArgs(1, "cast_as_json", err, 0)
+			}
 		}
 	} else {
 		res = types.CreateBinaryJSON(val)
