@@ -142,11 +142,6 @@ func (ds *DataSource) PredicatePushDown(predicates []expression.Expression, opt 
 }
 
 // PredicatePushDown implements base.LogicalPlan PredicatePushDown interface.
-func (p *LogicalTableDual) PredicatePushDown(predicates []expression.Expression, _ *optimizetrace.LogicalOptimizeOp) ([]expression.Expression, base.LogicalPlan) {
-	return predicates, p
-}
-
-// PredicatePushDown implements base.LogicalPlan PredicatePushDown interface.
 func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression, opt *optimizetrace.LogicalOptimizeOp) (ret []expression.Expression, retPlan base.LogicalPlan) {
 	var equalCond []*expression.ScalarFunction
 	var leftPushCond, rightPushCond, otherCond, leftCond, rightCond []expression.Expression
@@ -420,24 +415,6 @@ func (p *LogicalProjection) PredicatePushDown(predicates []expression.Expression
 	return append(remained, canNotBePushed...), child
 }
 
-// PredicatePushDown implements base.LogicalPlan PredicatePushDown interface.
-func (p *LogicalUnionAll) PredicatePushDown(predicates []expression.Expression, opt *optimizetrace.LogicalOptimizeOp) (ret []expression.Expression, retPlan base.LogicalPlan) {
-	for i, proj := range p.Children() {
-		newExprs := make([]expression.Expression, 0, len(predicates))
-		newExprs = append(newExprs, predicates...)
-		retCond, newChild := proj.PredicatePushDown(newExprs, opt)
-		utilfuncp.AddSelection(p, newChild, retCond, i, opt)
-	}
-	return nil, p
-}
-
-// PredicatePushDown implements base.LogicalPlan PredicatePushDown interface.
-func (p *LogicalMaxOneRow) PredicatePushDown(predicates []expression.Expression, opt *optimizetrace.LogicalOptimizeOp) ([]expression.Expression, base.LogicalPlan) {
-	// MaxOneRow forbids any condition to push down.
-	p.BaseLogicalPlan.PredicatePushDown(nil, opt)
-	return predicates, p
-}
-
 // DeriveOtherConditions given a LogicalJoin, check the OtherConditions to see if we can derive more
 // conditions for left/right child pushdown.
 func DeriveOtherConditions(
@@ -571,33 +548,6 @@ func (p *LogicalJoin) outerJoinPropConst(predicates []expression.Expression) []e
 	joinConds, predicates = expression.PropConstOverOuterJoin(p.SCtx().GetExprCtx(), joinConds, predicates, outerTable.Schema(), innerTable.Schema(), nullSensitive)
 	p.AttachOnConds(joinConds)
 	return predicates
-}
-
-// GetPartitionByCols extracts 'partition by' columns from the Window.
-func (p *LogicalWindow) GetPartitionByCols() []*expression.Column {
-	partitionCols := make([]*expression.Column, 0, len(p.PartitionBy))
-	for _, partitionItem := range p.PartitionBy {
-		partitionCols = append(partitionCols, partitionItem.Col)
-	}
-	return partitionCols
-}
-
-// PredicatePushDown implements base.LogicalPlan PredicatePushDown interface.
-func (p *LogicalWindow) PredicatePushDown(predicates []expression.Expression, opt *optimizetrace.LogicalOptimizeOp) ([]expression.Expression, base.LogicalPlan) {
-	canBePushed := make([]expression.Expression, 0, len(predicates))
-	canNotBePushed := make([]expression.Expression, 0, len(predicates))
-	partitionCols := expression.NewSchema(p.GetPartitionByCols()...)
-	for _, cond := range predicates {
-		// We can push predicate beneath Window, only if all of the
-		// extractedCols are part of partitionBy columns.
-		if expression.ExprFromSchema(cond, partitionCols) {
-			canBePushed = append(canBePushed, cond)
-		} else {
-			canNotBePushed = append(canNotBePushed, cond)
-		}
-	}
-	p.BaseLogicalPlan.PredicatePushDown(canBePushed, opt)
-	return canNotBePushed, p
 }
 
 // PredicatePushDown implements base.LogicalPlan PredicatePushDown interface.

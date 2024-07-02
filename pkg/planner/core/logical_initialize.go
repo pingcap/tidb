@@ -80,36 +80,6 @@ func (p LogicalExpand) Init(ctx base.PlanContext, offset int) *LogicalExpand {
 	return &p
 }
 
-// Init initializes LogicalUnionAll.
-func (p LogicalUnionAll) Init(ctx base.PlanContext, offset int) *LogicalUnionAll {
-	p.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(ctx, plancodec.TypeUnion, &p, offset)
-	return &p
-}
-
-// Init initializes LogicalPartitionUnionAll.
-func (p LogicalPartitionUnionAll) Init(ctx base.PlanContext, offset int) *LogicalPartitionUnionAll {
-	p.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(ctx, plancodec.TypePartitionUnion, &p, offset)
-	return &p
-}
-
-// Init initializes LogicalTableDual.
-func (p LogicalTableDual) Init(ctx base.PlanContext, offset int) *LogicalTableDual {
-	p.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(ctx, plancodec.TypeDual, &p, offset)
-	return &p
-}
-
-// Init initializes LogicalMaxOneRow.
-func (p LogicalMaxOneRow) Init(ctx base.PlanContext, offset int) *LogicalMaxOneRow {
-	p.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(ctx, plancodec.TypeMaxOneRow, &p, offset)
-	return &p
-}
-
-// Init initializes LogicalWindow.
-func (p LogicalWindow) Init(ctx base.PlanContext, offset int) *LogicalWindow {
-	p.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(ctx, plancodec.TypeWindow, &p, offset)
-	return &p
-}
-
 // Init initializes LogicalShow.
 func (p LogicalShow) Init(ctx base.PlanContext) *LogicalShow {
 	p.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(ctx, plancodec.TypeShow, &p, 0)
