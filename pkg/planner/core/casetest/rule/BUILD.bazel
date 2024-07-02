@@ -8,10 +8,19 @@ go_test(
         "rule_derive_topn_from_window_test.go",
         "rule_inject_extra_projection_test.go",
         "rule_join_reorder_test.go",
+<<<<<<< HEAD
     ],
     data = glob(["testdata/**"]),
     flaky = True,
     shard_count = 5,
+=======
+        "rule_outer2inner_test.go",
+        "rule_predicate_pushdown_test.go",
+    ],
+    data = glob(["testdata/**"]),
+    flaky = True,
+    shard_count = 7,
+>>>>>>> 521c99967d5 (planner: The length function could not be substitute when collation of mapped column is utfxxx_bin (#54179))
     deps = [
         "//pkg/domain",
         "//pkg/expression",

@@ -15,8 +15,12 @@
 package expression
 
 import (
+<<<<<<< HEAD
 	"errors"
 
+=======
+	exprctx "github.com/pingcap/tidb/pkg/expression/context"
+>>>>>>> 521c99967d5 (planner: The length function could not be substitute when collation of mapped column is utfxxx_bin (#54179))
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -38,7 +42,11 @@ type basePropConstSolver struct {
 	eqList    []*Constant         // if eqList[i] != nil, it means col_i = eqList[i]
 	unionSet  *disjointset.IntSet // unionSet stores the relations like col_i = col_j
 	columns   []*Column           // columns stores all columns appearing in the conditions
+<<<<<<< HEAD
 	ctx       sessionctx.Context
+=======
+	ctx       exprctx.ExprContext
+>>>>>>> 521c99967d5 (planner: The length function could not be substitute when collation of mapped column is utfxxx_bin (#54179))
 }
 
 func (s *basePropConstSolver) getColID(col *Column) int {
@@ -359,8 +367,13 @@ func (s *propConstSolver) solve(conditions []Expression) []Expression {
 
 // PropagateConstant propagate constant values of deterministic predicates in a condition.
 // This is a constant propagation logic for expression list such as ['a=1', 'a=b']
+<<<<<<< HEAD
 func PropagateConstant(ctx sessionctx.Context, conditions []Expression) []Expression {
 	return newPropConstSolver().PropagateConstant(ctx, conditions)
+=======
+func PropagateConstant(ctx exprctx.ExprContext, conditions []Expression) []Expression {
+	return newPropConstSolver().PropagateConstant(exprctx.WithConstantPropagateCheck(ctx), conditions)
+>>>>>>> 521c99967d5 (planner: The length function could not be substitute when collation of mapped column is utfxxx_bin (#54179))
 }
 
 type propOuterJoinConstSolver struct {
@@ -664,7 +677,11 @@ func (s *propOuterJoinConstSolver) solve(joinConds, filterConds []Expression) ([
 }
 
 // propagateConstantDNF find DNF item from CNF, and propagate constant inside DNF.
+<<<<<<< HEAD
 func propagateConstantDNF(ctx sessionctx.Context, conds []Expression) []Expression {
+=======
+func propagateConstantDNF(ctx exprctx.ExprContext, conds []Expression) []Expression {
+>>>>>>> 521c99967d5 (planner: The length function could not be substitute when collation of mapped column is utfxxx_bin (#54179))
 	for i, cond := range conds {
 		if dnf, ok := cond.(*ScalarFunction); ok && dnf.FuncName.L == ast.LogicOr {
 			dnfItems := SplitDNFItems(cond)
@@ -683,7 +700,11 @@ func propagateConstantDNF(ctx sessionctx.Context, conds []Expression) []Expressi
 // Second step is to extract `outerCol = innerCol` from join conditions, and derive new join
 // conditions based on this column equal condition and `outerCol` related
 // expressions in join conditions and filter conditions;
+<<<<<<< HEAD
 func PropConstOverOuterJoin(ctx sessionctx.Context, joinConds, filterConds []Expression,
+=======
+func PropConstOverOuterJoin(ctx exprctx.ExprContext, joinConds, filterConds []Expression,
+>>>>>>> 521c99967d5 (planner: The length function could not be substitute when collation of mapped column is utfxxx_bin (#54179))
 	outerSchema, innerSchema *Schema, nullSensitive bool) ([]Expression, []Expression) {
 	solver := &propOuterJoinConstSolver{
 		outerSchema:   outerSchema,
@@ -697,7 +718,11 @@ func PropConstOverOuterJoin(ctx sessionctx.Context, joinConds, filterConds []Exp
 
 // PropagateConstantSolver is a constant propagate solver.
 type PropagateConstantSolver interface {
+<<<<<<< HEAD
 	PropagateConstant(ctx sessionctx.Context, conditions []Expression) []Expression
+=======
+	PropagateConstant(ctx exprctx.ExprContext, conditions []Expression) []Expression
+>>>>>>> 521c99967d5 (planner: The length function could not be substitute when collation of mapped column is utfxxx_bin (#54179))
 }
 
 // newPropConstSolver returns a PropagateConstantSolver.
@@ -708,7 +733,11 @@ func newPropConstSolver() PropagateConstantSolver {
 }
 
 // PropagateConstant propagate constant values of deterministic predicates in a condition.
+<<<<<<< HEAD
 func (s *propConstSolver) PropagateConstant(ctx sessionctx.Context, conditions []Expression) []Expression {
+=======
+func (s *propConstSolver) PropagateConstant(ctx exprctx.ExprContext, conditions []Expression) []Expression {
+>>>>>>> 521c99967d5 (planner: The length function could not be substitute when collation of mapped column is utfxxx_bin (#54179))
 	s.ctx = ctx
 	return s.solve(conditions)
 }
