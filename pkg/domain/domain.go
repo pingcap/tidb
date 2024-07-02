@@ -250,6 +250,7 @@ func (do *Domain) loadInfoSchema(startTS uint64) (infoschema.InfoSchema, bool, i
 		schemaTs = 0
 	}
 
+	enableV2 := variable.SchemaCacheSize.Load() > 0
 	if is := do.infoCache.GetByVersion(neededSchemaVersion); is != nil {
 		isV2, raw := infoschema.IsV2(is)
 		if isV2 {
@@ -265,15 +266,17 @@ func (do *Domain) loadInfoSchema(startTS uint64) (infoschema.InfoSchema, bool, i
 		// the insert method check if schemaTs is zero
 		do.infoCache.Insert(is, schemaTs)
 
-		enableV2 := variable.SchemaCacheSize.Load() > 0
 		if enableV2 == isV2 {
 			return is, true, 0, nil, nil
 		}
 	}
 
+	var isV1V2Switch bool
 	currentSchemaVersion := int64(0)
 	if oldInfoSchema := do.infoCache.GetLatest(); oldInfoSchema != nil {
 		currentSchemaVersion = oldInfoSchema.SchemaMetaVersion()
+		isV2, _ := infoschema.IsV2(oldInfoSchema)
+		isV1V2Switch = enableV2 != isV2
 	}
 
 	// TODO: tryLoadSchemaDiffs has potential risks of failure. And it becomes worse in history reading cases.
@@ -294,7 +297,7 @@ func (do *Domain) loadInfoSchema(startTS uint64) (infoschema.InfoSchema, bool, i
 				zap.Bool("isV2", isV2),
 				zap.Int64("currentSchemaVersion", currentSchemaVersion),
 				zap.Int64("neededSchemaVersion", neededSchemaVersion),
-				zap.Duration("start time", time.Since(startTime)),
+				zap.Duration("elapsed time", time.Since(startTime)),
 				zap.Int64("gotSchemaVersion", is.SchemaMetaVersion()),
 				zap.Int64s("phyTblIDs", relatedChanges.PhyTblIDS),
 				zap.Uint64s("actionTypes", relatedChanges.ActionTypes),
@@ -323,14 +326,22 @@ func (do *Domain) loadInfoSchema(startTS uint64) (infoschema.InfoSchema, bool, i
 	if err != nil {
 		return nil, false, currentSchemaVersion, nil, err
 	}
-	infoschema_metrics.LoadSchemaDurationLoadAll.Observe(time.Since(startTime).Seconds())
-	logutil.BgLogger().Info("full load InfoSchema success",
-		zap.Int64("currentSchemaVersion", currentSchemaVersion),
-		zap.Int64("neededSchemaVersion", neededSchemaVersion),
-		zap.Duration("start time", time.Since(startTime)))
 
 	is := newISBuilder.Build(startTS)
-	do.infoCache.Insert(is, schemaTs)
+	isV2, _ := infoschema.IsV2(is)
+	infoschema_metrics.LoadSchemaDurationLoadAll.Observe(time.Since(startTime).Seconds())
+	logutil.BgLogger().Info("full load InfoSchema success",
+		zap.Bool("isV2", isV2),
+		zap.Int64("currentSchemaVersion", currentSchemaVersion),
+		zap.Int64("neededSchemaVersion", neededSchemaVersion),
+		zap.Duration("elapsed time", time.Since(startTime)))
+
+	if isV1V2Switch {
+		// Reset the whole info cache to avoid co-existing of both v1 and v2, causing the memory usage doubled.
+		do.infoCache.Reset(is, schemaTs)
+	} else {
+		do.infoCache.Insert(is, schemaTs)
+	}
 	return is, false, currentSchemaVersion, nil, nil
 }
 

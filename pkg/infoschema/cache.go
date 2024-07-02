@@ -80,10 +80,29 @@ func (h *InfoCache) Size() int {
 }
 
 // Reset resets the cache.
-func (h *InfoCache) Reset(capacity int) {
+func (h *InfoCache) Reset(is InfoSchema, schemaTS uint64) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	h.cache = make([]schemaAndTimestamp, 0, capacity)
+
+	old := h.cache
+	h.cache = make([]schemaAndTimestamp, 0, cap(h.cache))
+	h.cache = append(h.cache, schemaAndTimestamp{
+		infoschema: is,
+		timestamp:  int64(schemaTS),
+	})
+
+	// TODO: It's a bit tricky here, somewhere is holding the reference of the old infoschema.
+	// So GC can not release this object, leading to memory leak.
+	// Here we destroy the old infoschema on purpose, so someone use it would panic and
+	// we get to know where it is referenced.
+	for _, oldItem := range old {
+		switch raw := oldItem.infoschema.(type) {
+		case *infoSchema:
+			*raw = infoSchema{}
+		case *infoschemaV2:
+			*raw = infoschemaV2{}
+		}
+	}
 }
 
 // GetLatest gets the newest information schema.
@@ -248,17 +267,8 @@ func (h *InfoCache) Insert(is InfoSchema, schemaTS uint64) bool {
 			return true
 		}
 
-		old := h.cache[i].infoschema
 		// replace the old with the new one
 		h.cache[i].infoschema = is
-
-		// TODO: It's a bit tricky here, somewhere is holding the reference of the old infoschema.
-		// So GC can not release this object, leading to memory leak.
-		// Here we destroy the old infoschema on purpose, so someone use it would panic and
-		// we get to know where it is referenced.
-		if raw, ok := old.(*infoSchema); ok {
-			*raw = infoSchema{}
-		}
 	}
 
 	if len(h.cache) < cap(h.cache) {
