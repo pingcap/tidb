@@ -136,6 +136,7 @@ func (bc *litBackendCtx) handleErrorAfterCollectRemoteDuplicateRows(
 				return errors.Trace(tikv.ErrKeyExists)
 			}
 			indexName := tErr.Args()[1]
+			//nolint: forcetypeassert
 			valueStr := tErr.Args()[2].([]string)
 
 			return errors.Trace(tikv.ErrKeyExists.FastGenByArgs(strings.Join(valueStr, "-"), indexName))

@@ -231,7 +231,7 @@ func (m *litBackendCtxMgr) Unregister(jobID int64) {
 	if !exist {
 		return
 	}
-	bc.FinishAndUnregisterEngines()
+	_ = bc.FinishAndUnregisterEngines()
 	bc.backend.Close()
 	if bc.checkpointMgr != nil {
 		bc.checkpointMgr.Close()
