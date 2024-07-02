@@ -1565,7 +1565,7 @@ func TestAuthPlugin2(t *testing.T) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/server/FakeAuthSwitch", "return(1)"))
 	respAuthSwitch, err := cc.checkAuthPlugin(ctx, &resp)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/server/FakeAuthSwitch"))
-	require.Equal(t, []byte(mysql.AuthNativePassword), respAuthSwitch)
+	require.Equal(t, []byte(mysql.AuthCachingSha2Password), respAuthSwitch)
 	require.NoError(t, err)
 }
 
