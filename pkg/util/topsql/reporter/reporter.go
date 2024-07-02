@@ -108,8 +108,8 @@ func NewRemoteTopSQLReporter(decodePlan planBinaryDecodeFunc, compressPlan planB
 // Start implements the TopSQLReporter interface.
 func (tsr *RemoteTopSQLReporter) Start() {
 	tsr.sqlCPUCollector.Start()
-	go tsr.collectWorker()
-	go tsr.reportWorker()
+	//go tsr.collectWorker()
+	//go tsr.reportWorker()
 }
 
 // Collect implements tracecpu.Collector.
@@ -148,14 +148,14 @@ func (tsr *RemoteTopSQLReporter) CollectStmtStatsMap(data stmtstats.StatementSta
 //
 // This function is thread-safe and efficient.
 func (tsr *RemoteTopSQLReporter) RegisterSQL(sqlDigest []byte, normalizedSQL string, isInternal bool) {
-	tsr.normalizedSQLMap.register(sqlDigest, normalizedSQL, isInternal)
+	//tsr.normalizedSQLMap.register(sqlDigest, normalizedSQL, isInternal)
 }
 
 // RegisterPlan implements TopSQLReporter.
 //
 // This function is thread-safe and efficient.
 func (tsr *RemoteTopSQLReporter) RegisterPlan(planDigest []byte, normalizedPlan string, isLarge bool) {
-	tsr.normalizedPlanMap.register(planDigest, normalizedPlan, isLarge)
+	//tsr.normalizedPlanMap.register(planDigest, normalizedPlan, isLarge)
 }
 
 // Close implements TopSQLReporter.
