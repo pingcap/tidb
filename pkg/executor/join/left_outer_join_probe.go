@@ -16,6 +16,7 @@ package join
 
 import (
 	"sync/atomic"
+	"unsafe"
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -90,42 +91,54 @@ func (j *leftOuterJoinProbe) InitForScanRowTable() {
 }
 
 func (j *leftOuterJoinProbe) ScanRowTable(joinResult *hashjoinWorkerResult, sqlKiller *sqlkiller.SQLKiller) *hashjoinWorkerResult {
-	if j.rightAsBuildSide {
-		panic("should not reach here")
-	}
+	j.checkForScanRowTable()
 	if joinResult.chk.IsFull() {
 		return joinResult
 	}
-	if j.rowIter == nil {
-		panic("scanRowTable before init")
-	}
+
 	j.cachedBuildRows = j.cachedBuildRows[:0]
 	meta := j.ctx.hashTableMeta
 	insertedRows := 0
 	remainCap := joinResult.chk.RequiredRows() - joinResult.chk.NumRows()
+
 	for insertedRows < remainCap && !j.rowIter.isEnd() {
 		currentRow := j.rowIter.getValue()
-		if !meta.isCurrentRowUsed(currentRow) {
-			// append build side of this row
-			j.appendBuildRowToCachedBuildRowsAndConstructBuildRowsIfNeeded(&matchedRowInfo{buildRowStart: currentRow}, joinResult.chk, 0, false)
-			insertedRows++
-		}
+		j.appendBuildRow(meta, joinResult.chk, currentRow, &insertedRows)
 		j.rowIter.next()
 	}
+
 	err := checkSQLKiller(sqlKiller, "killedDuringProbe")
 	if err != nil {
 		joinResult.err = err
 		return joinResult
 	}
+
 	if len(j.cachedBuildRows) > 0 {
 		j.batchConstructBuildRows(joinResult.chk, 0, false)
 	}
+
 	// append probe side in batch
 	colOffset := len(j.lUsed)
 	for index := range j.rUsed {
 		joinResult.chk.Column(index + colOffset).AppendNNulls(insertedRows)
 	}
 	return joinResult
+}
+
+func (j *leftOuterJoinProbe) checkForScanRowTable() {
+	if j.rightAsBuildSide {
+		panic("should not reach here")
+	}
+	if j.rowIter == nil {
+		panic("scanRowTable before init")
+	}
+}
+
+func (j *leftOuterJoinProbe) appendBuildRow(meta *TableMeta, chk *chunk.Chunk, currentRow unsafe.Pointer, insertedRows *int) {
+	if !meta.isCurrentRowUsed(currentRow) {
+		j.appendBuildRowToCachedBuildRowsAndConstructBuildRowsIfNeeded(&matchedRowInfo{buildRowStart: currentRow}, chk, 0, false)
+		*insertedRows++
+	}
 }
 
 func (j *leftOuterJoinProbe) buildResultForMatchedRowsAfterOtherCondition(chk, joinedChk *chunk.Chunk) {

@@ -161,11 +161,19 @@ func (h *hashJoinSpillHelper) isPartitionSpilled(partID int) bool {
 	return len(h.buildRowsInDisk) > 0 && h.buildRowsInDisk[partID] != nil
 }
 
-func (h *hashJoinSpillHelper) discardInDisk(inDisk *chunk.DataInDiskByChunks) {
-	if inDisk == nil {
-		panic("Receive nil DataInDiskByChunks")
+func (h *hashJoinSpillHelper) discardInDisks(inDisks []*chunk.DataInDiskByChunks) error {
+	hasNilInDisk := false
+	for _, inDisk := range inDisks {
+		if inDisk == nil {
+			hasNilInDisk = true
+		}
+		h.discardedInDisk = append(h.discardedInDisk, inDisk)
 	}
-	h.discardedInDisk = append(h.discardedInDisk, inDisk)
+
+	if hasNilInDisk {
+		return errors.NewNoStackError("Receive nil DataInDiskByChunks")
+	}
+	return nil
 }
 
 func (h *hashJoinSpillHelper) rehash(hashValue uint64) uint64 {
@@ -327,7 +335,7 @@ func (h *hashJoinSpillHelper) spillProbeChk(partID int, chk *chunk.Chunk) error 
 	return h.probeRowsInDisk[partID].Add(chk)
 }
 
-func (h *hashJoinSpillHelper) initIfNeed() {
+func (h *hashJoinSpillHelper) init() {
 	if h.buildRowsInDisk == nil {
 		// It's the first time that spill is triggered
 		h.tmpSpillBuildSideChunks = append(h.tmpSpillBuildSideChunks, chunk.NewChunkFromPoolWithCapacity(h.buildSpillChkFieldTypes, spillChunkSize))
@@ -348,7 +356,7 @@ func (h *hashJoinSpillHelper) spillBuildRows(isInBuildStage bool) error {
 		return err
 	}
 
-	h.initIfNeed()
+	h.init()
 
 	partitionsNeedSpill, totalReleasedMemory := h.choosePartitionsToSpill(isInBuildStage)
 
@@ -407,7 +415,11 @@ func (h *hashJoinSpillHelper) spillBuildRows(isInBuildStage bool) error {
 	return nil
 }
 
-func (h *hashJoinSpillHelper) prepareForRestoring() {
+func (h *hashJoinSpillHelper) prepareForRestoring() error {
+	if len(h.buildRowsInDisk) != len(h.probeRowsInDisk) {
+		return errors.NewNoStackError("length of buildRowsInDisk and probeRowsInDisk are different")
+	}
+
 	for i, buildInDisk := range h.buildRowsInDisk {
 		rd := &restorePartition{
 			buildSideChunks: buildInDisk,
@@ -416,6 +428,7 @@ func (h *hashJoinSpillHelper) prepareForRestoring() {
 		}
 		h.stack.push(rd)
 	}
+	return nil
 }
 
 // Append restored data to segment

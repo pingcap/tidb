@@ -496,7 +496,7 @@ func (e *HashJoinV2Exec) fetchAndProbeHashTable(ctx context.Context) {
 		}, e.ProbeWorkers[workerID].handleProbeWorkerPanic)
 	}
 
-	e.waiterWg.RunWithRecover(e.waitJoinWorkersAndRestoreIfNeeded, nil)
+	e.waiterWg.RunWithRecover(e.waitJoinWorkersAndRestore, nil)
 }
 
 func (w *ProbeWorkerV2) handleProbeWorkerPanic(r any) {
@@ -511,13 +511,15 @@ func (e *HashJoinV2Exec) handleJoinWorkerPanic(r any) {
 	}
 }
 
-func (e *HashJoinV2Exec) waitJoinWorkersAndRestoreIfNeeded() {
+func (e *HashJoinV2Exec) waitJoinWorkersAndRestore() {
 	defer close(e.joinResultCh)
 	e.workerWg.Wait()
 
-	err := e.restore()
-	if err != nil {
-		e.joinResultCh <- &hashjoinWorkerResult{err: err}
+	if e.spillHelper.isSpillTriggered() {
+		err := e.restore()
+		if err != nil {
+			e.joinResultCh <- &hashjoinWorkerResult{err: err}
+		}
 		return
 	}
 
@@ -525,7 +527,6 @@ func (e *HashJoinV2Exec) waitJoinWorkersAndRestoreIfNeeded() {
 		for i := uint(0); i < e.Concurrency; i++ {
 			var workerID = i
 			e.workerWg.RunWithRecover(func() {
-				// TODO customize a special `scanRowTable` function for spill
 				e.ProbeWorkers[workerID].scanRowTableAfterProbeDone()
 			}, e.handleJoinWorkerPanic)
 		}
@@ -575,17 +576,25 @@ func (e *HashJoinV2Exec) probeInSpillMode(probeSideChunks *chunk.DataInDiskByChu
 }
 
 func (e *HashJoinV2Exec) restore() error {
-	e.spillHelper.prepareForRestoring()
+	err := e.spillHelper.prepareForRestoring()
+	if err != nil {
+		return err
+	}
 
+	// When spill is not triggered the stack will be empty and immediately exit the function
 	for {
 		restoredPartition := e.spillHelper.stack.pop()
 		if restoredPartition == nil {
 			break
 		}
 
-		// Collect, so that we can close them in the end
-		e.spillHelper.discardInDisk(restoredPartition.buildSideChunks)
-		e.spillHelper.discardInDisk(restoredPartition.probeSideChunks)
+		// Collect, so that we can close them in the end.
+		// We must collect them once they are popped from stack, or the resource may
+		// fail to be recycled because panic may lead to the failness of collecting.
+		err = e.spillHelper.discardInDisks([]*chunk.DataInDiskByChunks{restoredPartition.buildSideChunks, restoredPartition.probeSideChunks})
+		if err != nil {
+			return err
+		}
 
 		hashTable, spillTriggered, err := e.spillHelper.buildHashTable(restoredPartition)
 		if err != nil {
