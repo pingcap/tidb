@@ -31,6 +31,15 @@ func TestScanEmptyRegion(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestSplitEmptyRegion(t *testing.T) {
+	mockPDCli := split.NewMockPDClientForSplit()
+	mockPDCli.SetRegions([][]byte{{}, {12}, {34}, {}})
+	client := split.NewClient(mockPDCli, nil, nil, 100, 4)
+	regionSplitter := utils.NewRegionSplitter(client)
+	err := regionSplitter.ExecuteSplit(context.Background(), nil)
+	require.NoError(t, err)
+}
+
 // region: [, aay), [aay, bba), [bba, bbh), [bbh, cca), [cca, )
 // range: [aaa, aae), [aae, aaz), [ccd, ccf), [ccf, ccj)
 // rewrite rules: aa -> xx,  cc -> bb
@@ -206,6 +215,14 @@ func TestSortRange(t *testing.T) {
 		{StartKey: []byte("xxa"), EndKey: []byte("xxe"), Files: nil},
 		{StartKey: []byte("xxe"), EndKey: []byte("xxz"), Files: nil},
 	})
+
+	// overlap ranges
+	ranges4 := []rtree.Range{
+		{StartKey: []byte("aaa"), EndKey: []byte("aae")},
+		{StartKey: []byte("aaa"), EndKey: []byte("aaz")},
+	}
+	_, err = utils.SortRanges(ranges4)
+	require.Error(t, err)
 }
 
 func rangeEquals(t *testing.T, obtained, expected []rtree.Range) {

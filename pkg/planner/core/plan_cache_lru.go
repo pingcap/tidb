@@ -19,17 +19,15 @@ import (
 	"github.com/pingcap/errors"
 	core_metrics "github.com/pingcap/tidb/pkg/planner/core/metrics"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/kvcache"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
-	utilpc "github.com/pingcap/tidb/pkg/util/plancache"
 	"github.com/pingcap/tidb/pkg/util/syncutil"
 )
 
 // planCacheEntry wraps Key and Value. It's the value of list.Element.
 type planCacheEntry struct {
-	PlanKey   kvcache.Key
+	PlanKey   string
 	PlanValue kvcache.Value
 }
 
@@ -39,7 +37,7 @@ func (e *planCacheEntry) MemoryUsage() (sum int64) {
 		return
 	}
 
-	return e.PlanKey.(*planCacheKey).MemoryUsage() + e.PlanValue.(*PlanCacheValue).MemoryUsage()
+	return int64(len(e.PlanKey)) + e.PlanValue.(*PlanCacheValue).MemoryUsage()
 }
 
 // LRUPlanCache is a dedicated least recently used cache, Only used for plan cache.
@@ -52,7 +50,7 @@ type LRUPlanCache struct {
 	// lock make cache thread safe
 	lock syncutil.RWMutex
 	// onEvict will be called if any eviction happened, only for test use now
-	onEvict func(kvcache.Key, kvcache.Value)
+	onEvict func(string, any)
 
 	// 0 indicates no quota
 	quota uint64
@@ -80,20 +78,12 @@ func NewLRUPlanCache(capacity uint, guard float64, quota uint64, sctx sessionctx
 	}
 }
 
-// strHashKey control deep or Shallow copy of string
-func strHashKey(key kvcache.Key, deepCopy bool) string {
-	if deepCopy {
-		return string(key.Hash())
-	}
-	return string(hack.String(key.Hash()))
-}
-
 // Get tries to find the corresponding value according to the given key.
-func (l *LRUPlanCache) Get(key kvcache.Key, opts *utilpc.PlanCacheMatchOpts) (value kvcache.Value, ok bool) {
+func (l *LRUPlanCache) Get(key string, opts any) (value any, ok bool) {
 	l.lock.RLock()
 	defer l.lock.RUnlock()
 
-	bucket, bucketExist := l.buckets[strHashKey(key, false)]
+	bucket, bucketExist := l.buckets[key]
 	if bucketExist {
 		if element, exist := l.pickFromBucket(bucket, opts); exist {
 			l.lruList.MoveToFront(element)
@@ -104,12 +94,11 @@ func (l *LRUPlanCache) Get(key kvcache.Key, opts *utilpc.PlanCacheMatchOpts) (va
 }
 
 // Put puts the (key, value) pair into the LRU Cache.
-func (l *LRUPlanCache) Put(key kvcache.Key, value kvcache.Value, opts *utilpc.PlanCacheMatchOpts) {
+func (l *LRUPlanCache) Put(key string, value, opts any) {
 	l.lock.Lock()
 	defer l.lock.Unlock()
 
-	hash := strHashKey(key, true)
-	bucket, bucketExist := l.buckets[hash]
+	bucket, bucketExist := l.buckets[key]
 	if bucketExist {
 		if element, exist := l.pickFromBucket(bucket, opts); exist {
 			l.updateInstanceMetric(&planCacheEntry{PlanKey: key, PlanValue: value}, element.Value.(*planCacheEntry))
@@ -118,7 +107,7 @@ func (l *LRUPlanCache) Put(key kvcache.Key, value kvcache.Value, opts *utilpc.Pl
 			return
 		}
 	} else {
-		l.buckets[hash] = make(map[*list.Element]struct{}, 1)
+		l.buckets[key] = make(map[*list.Element]struct{}, 1)
 	}
 
 	newCacheEntry := &planCacheEntry{
@@ -126,7 +115,7 @@ func (l *LRUPlanCache) Put(key kvcache.Key, value kvcache.Value, opts *utilpc.Pl
 		PlanValue: value,
 	}
 	element := l.lruList.PushFront(newCacheEntry)
-	l.buckets[hash][element] = struct{}{}
+	l.buckets[key][element] = struct{}{}
 	l.size++
 	l.updateInstanceMetric(newCacheEntry, nil)
 	if l.size > l.capacity {
@@ -136,19 +125,18 @@ func (l *LRUPlanCache) Put(key kvcache.Key, value kvcache.Value, opts *utilpc.Pl
 }
 
 // Delete deletes the multi-values from the LRU Cache.
-func (l *LRUPlanCache) Delete(key kvcache.Key) {
+func (l *LRUPlanCache) Delete(key string) {
 	l.lock.Lock()
 	defer l.lock.Unlock()
 
-	hash := strHashKey(key, false)
-	bucket, bucketExist := l.buckets[hash]
+	bucket, bucketExist := l.buckets[key]
 	if bucketExist {
 		for element := range bucket {
 			l.updateInstanceMetric(nil, element.Value.(*planCacheEntry))
 			l.lruList.Remove(element)
 			l.size--
 		}
-		delete(l.buckets, hash)
+		delete(l.buckets, key)
 	}
 }
 
@@ -229,7 +217,7 @@ func (l *LRUPlanCache) removeOldest() {
 
 // removeFromBucket remove element from bucket
 func (l *LRUPlanCache) removeFromBucket(element *list.Element) {
-	hash := strHashKey(element.Value.(*planCacheEntry).PlanKey, false)
+	hash := element.Value.(*planCacheEntry).PlanKey
 	bucket := l.buckets[hash]
 	delete(bucket, element)
 	if len(bucket) == 0 {
@@ -251,7 +239,11 @@ func (l *LRUPlanCache) memoryControl() {
 }
 
 // PickPlanFromBucket pick one plan from bucket
-func (l *LRUPlanCache) pickFromBucket(bucket map[*list.Element]struct{}, matchOpts *utilpc.PlanCacheMatchOpts) (*list.Element, bool) {
+func (l *LRUPlanCache) pickFromBucket(bucket map[*list.Element]struct{}, opts any) (*list.Element, bool) {
+	var matchOpts *PlanCacheMatchOpts
+	if opts != nil {
+		matchOpts = opts.(*PlanCacheMatchOpts)
+	}
 	for k := range bucket {
 		if matchCachedPlan(l.sctx, k.Value.(*planCacheEntry).PlanValue.(*PlanCacheValue), matchOpts) {
 			return k, true

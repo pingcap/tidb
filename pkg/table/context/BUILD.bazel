@@ -11,6 +11,7 @@ go_library(
         "//pkg/kv",
         "//pkg/parser/model",
         "//pkg/sessionctx/variable",
+        "//pkg/types",
         "//pkg/util/tableutil",
         "@com_github_pingcap_tipb//go-binlog",
     ],

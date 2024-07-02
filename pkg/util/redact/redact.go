@@ -25,6 +25,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/util/intest"
 )
 
 var (
@@ -50,7 +51,11 @@ func String(mode string, input string) string {
 		return b.String()
 	case "OFF":
 		return input
+	case "ON":
+		return ""
 	default:
+		// should never happen
+		intest.Assert(false, "invalid redact mode")
 		return ""
 	}
 }

@@ -93,8 +93,8 @@ func rewriteAstExprWithPlanCtx(sctx base.PlanContext, expr ast.ExprNode, schema 
 	b.allowBuildCastArray = allowCastArray
 	fakePlan := LogicalTableDual{}.Init(sctx, 0)
 	if schema != nil {
-		fakePlan.schema = schema
-		fakePlan.names = names
+		fakePlan.SetSchema(schema)
+		fakePlan.SetOutputNames(names)
 	}
 	b.curClause = expressionClause
 	newExpr, _, err := b.rewrite(context.TODO(), expr, fakePlan, nil, true)
@@ -383,13 +383,17 @@ func (er *expressionRewriter) ctxStackAppend(col expression.Expression, name *ty
 }
 
 // constructBinaryOpFunction converts binary operator functions
-// 1. If op are EQ or NE or NullEQ, constructBinaryOpFunctions converts (a0,a1,a2) op (b0,b1,b2) to (a0 op b0) and (a1 op b1) and (a2 op b2)
-// 2. Else constructBinaryOpFunctions converts (a0,a1,a2) op (b0,b1,b2) to
-// `IF( a0 NE b0, a0 op b0,
-//
-//	IF ( isNull(a0 NE b0), Null,
-//		IF ( a1 NE b1, a1 op b1,
-//			IF ( isNull(a1 NE b1), Null, a2 op b2))))`
+/*
+	The algorithm is as follows:
+	1. If the length of the two sides of the expression is 1, return l op r directly.
+    2. If the length of the two sides of the expression is not equal, return an error.
+	3. If the operator is EQ, NE, or NullEQ, converts (a0,a1,a2) op (b0,b1,b2) to (a0 op b0) and (a1 op b1) and (a2 op b2)
+	4. If the operator is not EQ, NE, or NullEQ,
+            converts (a0,a1,a2) op (b0,b1,b2) to (a0 > b0) or (a0 = b0 and a1 > b1) or (a0 = b0 and a1 = b1 and a2 op b2)
+	   Especially, op is GE or LE, the prefix element will be converted to > or <.
+            converts (a0,a1,a2) >= (b0,b1,b2) to (a0 > b0) or (a0 = b0 and a1 > b1) or (a0 = b0 and a1 = b1 and a2 >= b2)
+       The only different between >= and > is that >= additional include the (x,y,z) = (a,b,c).
+*/
 func (er *expressionRewriter) constructBinaryOpFunction(l expression.Expression, r expression.Expression, op string) (expression.Expression, error) {
 	lLen, rLen := expression.GetRowLen(l), expression.GetRowLen(r)
 	if lLen == 1 && rLen == 1 {
@@ -412,29 +416,51 @@ func (er *expressionRewriter) constructBinaryOpFunction(l expression.Expression,
 		}
 		return expression.ComposeCNFCondition(er.sctx, funcs...), nil
 	default:
-		larg0, rarg0 := expression.GetFuncArg(l, 0), expression.GetFuncArg(r, 0)
-		var expr1, expr2, expr3, expr4, expr5 expression.Expression
-		expr1 = expression.NewFunctionInternal(er.sctx, ast.NE, types.NewFieldType(mysql.TypeTiny), larg0, rarg0)
-		expr2 = expression.NewFunctionInternal(er.sctx, op, types.NewFieldType(mysql.TypeTiny), larg0, rarg0)
-		expr3 = expression.NewFunctionInternal(er.sctx, ast.IsNull, types.NewFieldType(mysql.TypeTiny), expr1)
-		var err error
-		l, err = expression.PopRowFirstArg(er.sctx, l)
-		if err != nil {
-			return nil, err
+		/*
+				The algorithm is as follows:
+				1. Iterate over i left columns and construct his own CNF for each left column.
+			        1.1 Iterate over j (every i-1 columns) to l[j]=r[j]
+			        1.2 Build current i column with op to l[i] op r[i]
+			        1.3 Combine 1.1 and 1.2 predicates with AND operator
+				2. Combine every i CNF with OR operator.
+		*/
+		resultDNFList := make([]expression.Expression, 0, lLen)
+		// Step 1
+		for i := 0; i < lLen; i++ {
+			exprList := make([]expression.Expression, 0, i+1)
+			// Step 1.1 build prefix equal conditions
+			// (l[0], ... , l[i-1], ...) op (r[0], ... , r[i-1], ...) should be convert to
+			// l[0] = r[0] and l[1] = r[1] and ... and l[i-1] = r[i-1]
+			for j := 0; j < i; j++ {
+				jExpr, err := er.constructBinaryOpFunction(expression.GetFuncArg(l, j), expression.GetFuncArg(r, j), ast.EQ)
+				if err != nil {
+					return nil, err
+				}
+				exprList = append(exprList, jExpr)
+			}
+
+			// Especially, op is GE or LE, the prefix element will be converted to > or <.
+			degeneratedOp := op
+			if i < lLen-1 {
+				switch op {
+				case ast.GE:
+					degeneratedOp = ast.GT
+				case ast.LE:
+					degeneratedOp = ast.LT
+				}
+			}
+			// Step 1.2
+			currentIndexExpr, err := er.constructBinaryOpFunction(expression.GetFuncArg(l, i), expression.GetFuncArg(r, i), degeneratedOp)
+			if err != nil {
+				return nil, err
+			}
+			exprList = append(exprList, currentIndexExpr)
+			// Step 1.3
+			currentExpr := expression.ComposeCNFCondition(er.sctx, exprList...)
+			resultDNFList = append(resultDNFList, currentExpr)
 		}
-		r, err = expression.PopRowFirstArg(er.sctx, r)
-		if err != nil {
-			return nil, err
-		}
-		expr4, err = er.constructBinaryOpFunction(l, r, op)
-		if err != nil {
-			return nil, err
-		}
-		expr5, err = er.newFunction(ast.If, types.NewFieldType(mysql.TypeTiny), expr3, expression.NewNull(), expr4)
-		if err != nil {
-			return nil, err
-		}
-		return er.newFunction(ast.If, types.NewFieldType(mysql.TypeTiny), expr1, expr2, expr5)
+		// Step 2
+		return expression.ComposeDNFCondition(er.sctx, resultDNFList...), nil
 	}
 }
 
@@ -813,7 +839,7 @@ func (er *expressionRewriter) handleOtherComparableSubq(planCtx *exprRewriterPla
 	colMaxOrMin.SetCoercibility(rexpr.Coercibility())
 	schema := expression.NewSchema(colMaxOrMin)
 
-	plan4Agg.names = append(plan4Agg.names, types.EmptyName)
+	plan4Agg.SetOutputNames(append(plan4Agg.OutputNames(), types.EmptyName))
 	plan4Agg.SetSchema(schema)
 	plan4Agg.AggFuncs = []*aggregation.AggFuncDesc{funcMaxOrMin}
 
@@ -838,7 +864,7 @@ func (er *expressionRewriter) buildQuantifierPlan(planCtx *exprRewriterPlanCtx, 
 		RetType:  funcSum.RetTp,
 	}
 	plan4Agg.AggFuncs = append(plan4Agg.AggFuncs, funcSum)
-	plan4Agg.schema.Append(colSum)
+	plan4Agg.Schema().Append(colSum)
 	innerHasNull := expression.NewFunctionInternal(er.sctx, ast.NE, types.NewFieldType(mysql.TypeTiny), colSum, expression.NewZero())
 
 	// Build `count(1)` aggregation to check if subquery is empty.
@@ -852,7 +878,7 @@ func (er *expressionRewriter) buildQuantifierPlan(planCtx *exprRewriterPlanCtx, 
 		RetType:  funcCount.RetTp,
 	}
 	plan4Agg.AggFuncs = append(plan4Agg.AggFuncs, funcCount)
-	plan4Agg.schema.Append(colCount)
+	plan4Agg.Schema().Append(colCount)
 
 	if all {
 		// All of the inner record set should not contain null value. So for t.id < all(select s.id from s), it
@@ -890,15 +916,17 @@ func (er *expressionRewriter) buildQuantifierPlan(planCtx *exprRewriterPlanCtx, 
 	proj := LogicalProjection{
 		Exprs: expression.Column2Exprs(joinSchema.Clone().Columns[:outerSchemaLen]),
 	}.Init(planCtx.builder.ctx, planCtx.builder.getSelectOffset())
-	proj.names = make([]*types.FieldName, outerSchemaLen, outerSchemaLen+1)
-	copy(proj.names, planCtx.plan.OutputNames())
+	proj.SetOutputNames(make([]*types.FieldName, outerSchemaLen, outerSchemaLen+1))
+	names := proj.OutputNames()
+	copy(names, planCtx.plan.OutputNames())
+	proj.SetOutputNames(names)
 	proj.SetSchema(expression.NewSchema(joinSchema.Clone().Columns[:outerSchemaLen]...))
 	proj.Exprs = append(proj.Exprs, cond)
-	proj.schema.Append(&expression.Column{
+	proj.Schema().Append(&expression.Column{
 		UniqueID: sessVars.AllocPlanColumnID(),
 		RetType:  cond.GetType(er.sctx.GetEvalCtx()),
 	})
-	proj.names = append(proj.names, types.EmptyName)
+	proj.SetOutputNames(append(proj.OutputNames(), types.EmptyName))
 	proj.SetChildren(planCtx.plan)
 	planCtx.plan = proj
 }
@@ -939,7 +967,7 @@ func (er *expressionRewriter) handleNEAny(planCtx *exprRewriterPlanCtx, lexpr, r
 		UniqueID: sctx.GetSessionVars().AllocPlanColumnID(),
 		RetType:  countFunc.RetTp,
 	}
-	plan4Agg.names = append(plan4Agg.names, types.EmptyName, types.EmptyName)
+	plan4Agg.SetOutputNames(append(plan4Agg.OutputNames(), types.EmptyName, types.EmptyName))
 	plan4Agg.SetSchema(expression.NewSchema(maxResultCol, count))
 	gtFunc := expression.NewFunctionInternal(er.sctx, ast.GT, types.NewFieldType(mysql.TypeTiny), count, expression.NewOne())
 	neCond := expression.NewFunctionInternal(er.sctx, ast.NE, types.NewFieldType(mysql.TypeTiny), lexpr, maxResultCol)
@@ -973,14 +1001,14 @@ func (er *expressionRewriter) handleEQAll(planCtx *exprRewriterPlanCtx, lexpr, r
 		plan4Agg.PreferAggToCop = hintinfo.PreferAggToCop
 	}
 	plan4Agg.SetChildren(np)
-	plan4Agg.names = append(plan4Agg.names, types.EmptyName)
+	plan4Agg.SetOutputNames(append(plan4Agg.OutputNames(), types.EmptyName))
 
 	maxResultCol := &expression.Column{
 		UniqueID: sctx.GetSessionVars().AllocPlanColumnID(),
 		RetType:  maxFunc.RetTp,
 	}
 	maxResultCol.SetCoercibility(rexpr.Coercibility())
-	plan4Agg.names = append(plan4Agg.names, types.EmptyName)
+	plan4Agg.SetOutputNames(append(plan4Agg.OutputNames(), types.EmptyName))
 	count := &expression.Column{
 		UniqueID: sctx.GetSessionVars().AllocPlanColumnID(),
 		RetType:  countFunc.RetTp,
@@ -1210,10 +1238,10 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, planCtx *exp
 		// Build inner join above the aggregation.
 		join := LogicalJoin{JoinType: InnerJoin}.Init(planCtx.builder.ctx, planCtx.builder.getSelectOffset())
 		join.SetChildren(planCtx.plan, agg)
-		join.SetSchema(expression.MergeSchema(planCtx.plan.Schema(), agg.schema))
-		join.names = make([]*types.FieldName, planCtx.plan.Schema().Len()+agg.Schema().Len())
-		copy(join.names, planCtx.plan.OutputNames())
-		copy(join.names[planCtx.plan.Schema().Len():], agg.OutputNames())
+		join.SetSchema(expression.MergeSchema(planCtx.plan.Schema(), agg.Schema()))
+		join.SetOutputNames(make([]*types.FieldName, planCtx.plan.Schema().Len()+agg.Schema().Len()))
+		copy(join.OutputNames(), planCtx.plan.OutputNames())
+		copy(join.OutputNames()[planCtx.plan.Schema().Len():], agg.OutputNames())
 		join.AttachOnConds(expression.SplitCNFItems(checkCondition))
 		// Set join hint for this join.
 		if planCtx.builder.TableHints() != nil {
@@ -2443,13 +2471,13 @@ func findFieldNameFromNaturalUsingJoin(p base.LogicalPlan, v *ast.ColumnName) (c
 	case *LogicalLimit, *LogicalSelection, *LogicalTopN, *LogicalSort, *LogicalMaxOneRow:
 		return findFieldNameFromNaturalUsingJoin(p.Children()[0], v)
 	case *LogicalJoin:
-		if x.fullSchema != nil {
-			idx, err := expression.FindFieldName(x.fullNames, v)
+		if x.FullSchema != nil {
+			idx, err := expression.FindFieldName(x.FullNames, v)
 			if err != nil {
 				return nil, nil, err
 			}
 			if idx >= 0 {
-				return x.fullSchema.Columns[idx], x.fullNames[idx], nil
+				return x.FullSchema.Columns[idx], x.FullNames[idx], nil
 			}
 		}
 	}

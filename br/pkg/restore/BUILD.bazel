@@ -36,14 +36,26 @@ go_library(
 go_test(
     name = "restore_test",
     timeout = "short",
-    srcs = ["misc_test.go"],
+    srcs = [
+        "import_mode_switcher_test.go",
+        "misc_test.go",
+    ],
     flaky = True,
     race = "off",
+    shard_count = 6,
     deps = [
         ":restore",
+        "//br/pkg/conn",
         "//br/pkg/mock",
+        "//br/pkg/pdutil",
+        "//br/pkg/utiltest",
         "//pkg/infoschema",
         "//pkg/parser/model",
+        "@com_github_coreos_go_semver//semver",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_pingcap_kvproto//pkg/import_sstpb",
+        "@com_github_pingcap_kvproto//pkg/metapb",
         "@com_github_stretchr_testify//require",
+        "@org_golang_google_grpc//:grpc",
     ],
 )

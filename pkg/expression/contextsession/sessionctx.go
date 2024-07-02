@@ -114,6 +114,11 @@ func (ctx *SessionExprContext) IsInNullRejectCheck() bool {
 	return false
 }
 
+// IsConstantPropagateCheck returns whether the ctx is in constant propagate check.
+func (ctx *SessionExprContext) IsConstantPropagateCheck() bool {
+	return false
+}
+
 // GetWindowingUseHighPrecision determines whether to compute window operations without loss of precision.
 // see https://dev.mysql.com/doc/refman/8.0/en/window-function-optimization.html for more details.
 func (ctx *SessionExprContext) GetWindowingUseHighPrecision() bool {

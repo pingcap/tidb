@@ -109,9 +109,6 @@ func TestConstant(t *testing.T) {
 	require.True(t, NewZero().Decorrelate(nil).Equal(ctx, NewZero()))
 	require.Equal(t, []byte{0x0, 0x8, 0x0}, NewZero().HashCode())
 	require.False(t, NewZero().Equal(ctx, NewOne()))
-	res, err := NewZero().MarshalJSON()
-	require.NoError(t, err)
-	require.Equal(t, []byte{0x22, 0x30, 0x22}, res)
 }
 
 func TestIsBinaryLiteral(t *testing.T) {

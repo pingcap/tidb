@@ -402,11 +402,6 @@ func (col *Column) String() string {
 	return builder.String()
 }
 
-// MarshalJSON implements json.Marshaler interface.
-func (col *Column) MarshalJSON() ([]byte, error) {
-	return []byte(fmt.Sprintf("%q", col)), nil
-}
-
 // GetType implements Expression interface.
 func (col *Column) GetType(_ EvalContext) *types.FieldType {
 	return col.GetStaticType()
