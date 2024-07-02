@@ -87,7 +87,7 @@ const (
 	batchAddingJobs = 10
 
 	reorgWorkerCnt   = 10
-	generalWorkerCnt = 1
+	generalWorkerCnt = 10
 	localWorkerCnt   = 10
 
 	// checkFlagIndexInJobArgs is the recoverCheckFlag index used in RecoverTable/RecoverSchema job arg list.
@@ -215,6 +215,7 @@ type DDL interface {
 		ctx sessionctx.Context,
 		schema model.CIStr,
 		info *model.TableInfo,
+		involvingRef []model.InvolvingSchemaInfo,
 		cs ...CreateTableWithInfoConfigurier) error
 
 	// BatchCreateTableWithInfo is like CreateTableWithInfo, but can handle multiple tables.
@@ -381,6 +382,7 @@ type ddlCtx struct {
 	tableLockCkr    util.DeadTableLockChecker
 	etcdCli         *clientv3.Client
 	autoidCli       *autoid.ClientDiscover
+	schemaLoader    SchemaLoader
 
 	*waitSchemaSyncedController
 	*schemaVersionManager
@@ -741,6 +743,7 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 		tableLockCkr:               deadLockCkr,
 		etcdCli:                    opt.EtcdCli,
 		autoidCli:                  opt.AutoIDClient,
+		schemaLoader:               opt.SchemaLoader,
 		waitSchemaSyncedController: newWaitSchemaSyncedController(),
 	}
 	ddlCtx.reorgCtx.reorgCtxMap = make(map[int64]*reorgCtx)
@@ -872,16 +875,39 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 	// Start some background routine to manage TiFlash replica.
 	d.wg.Run(d.PollTiFlashRoutine)
 
-	ingest.InitGlobalLightningEnv(func(jobIDs []int64) ([]int64, error) {
-		se, err := d.sessPool.Get()
-		if err != nil {
-			return nil, err
+	ingestDataDir, err := ingest.GenIngestTempDataDir()
+	if err != nil {
+		logutil.DDLIngestLogger().Warn(ingest.LitWarnEnvInitFail,
+			zap.Error(err))
+	} else {
+		ok := ingest.InitGlobalLightningEnv(ingestDataDir)
+		if ok {
+			d.wg.Run(func() {
+				d.CleanUpTempDirLoop(d.ctx, ingestDataDir)
+			})
 		}
-		defer d.sessPool.Put(se)
-		return filterProcessingJobIDs(sess.NewSession(se), jobIDs)
-	})
+	}
 
 	return nil
+}
+
+func (d *ddl) CleanUpTempDirLoop(ctx context.Context, path string) {
+	ticker := time.NewTicker(1 * time.Minute)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			se, err := d.sessPool.Get()
+			if err != nil {
+				logutil.DDLLogger().Warn("get session from pool failed", zap.Error(err))
+				return
+			}
+			ingest.CleanUpTempDir(ctx, se, path)
+			d.sessPool.Put(se)
+		case <-d.ctx.Done():
+			return
+		}
+	}
 }
 
 // EnableDDL enable this node to execute ddl.
@@ -1119,6 +1145,8 @@ func setDDLJobMode(job *model.Job) {
 			job.LocalMode = true
 			return
 		}
+	case model.ActionCreateSchema:
+		job.LocalMode = true
 	default:
 	}
 	job.LocalMode = false
@@ -1448,30 +1476,35 @@ func (d *ddl) SwitchFastCreateTable(val bool) error {
 
 // disableFastCreateTable disable fast create table feature.
 func (*ddl) disableFastCreateTable(m *meta.Meta) error {
-	ddlV2Initialized, err := m.GetDDLV2Initialized()
+	fastCreateTableInitialized, err := m.GetFastCreateTableInitialized()
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if !ddlV2Initialized {
+	if !fastCreateTableInitialized {
 		return nil
 	}
-	// clear all table names when we switch to v1.
+	if err := m.ClearAllDatabaseNames(); err != nil {
+		return errors.Trace(err)
+	}
 	if err := m.ClearAllTableNames(); err != nil {
 		return errors.Trace(err)
 	}
-	return errors.Trace(m.SetDDLV2Initialized(false))
+	return errors.Trace(m.SetFastCreateTableInitialized(false))
 }
 
 // enableFastCreateTable enable fast create table feature.
 func (*ddl) enableFastCreateTable(m *meta.Meta) error {
-	ddlV2Initialized, err := m.GetDDLV2Initialized()
+	fastCreateTableInitialized, err := m.GetFastCreateTableInitialized()
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if ddlV2Initialized {
+	if fastCreateTableInitialized {
 		return nil
 	}
 
+	if err := m.ClearAllDatabaseNames(); err != nil {
+		return errors.Trace(err)
+	}
 	if err := m.ClearAllTableNames(); err != nil {
 		return errors.Trace(err)
 	}
@@ -1479,6 +1512,12 @@ func (*ddl) enableFastCreateTable(m *meta.Meta) error {
 	dbs, err := m.ListDatabases()
 	if err != nil {
 		return errors.Trace(err)
+	}
+
+	for _, dbInfo := range dbs {
+		if err := m.CreateDatabaseName(dbInfo.Name.L, dbInfo.ID); err != nil {
+			return errors.Trace(err)
+		}
 	}
 
 	for _, dbInfo := range dbs {
@@ -1493,7 +1532,7 @@ func (*ddl) enableFastCreateTable(m *meta.Meta) error {
 		}
 	}
 
-	return errors.Trace(m.SetDDLV2Initialized(true))
+	return errors.Trace(m.SetFastCreateTableInitialized(true))
 }
 
 func (d *ddl) switchFastCreateTable(val bool) (err error) {

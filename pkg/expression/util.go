@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression/contextopt"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/opcode"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -466,6 +467,28 @@ func ColumnSubstituteImpl(ctx BuildContext, expr Expression, schema *Schema, new
 				return true, false, e
 			}
 			return false, false, v
+		}
+		// If the collation of the column is PAD SPACE,
+		// we can't propagate the constant to the length function.
+		// For example, schema = ['name'], newExprs = ['a'], v = length(name).
+		// We can't substitute name with 'a' in length(name) because the collation of name is PAD SPACE.
+		// TODO: We will fix it here temporarily, and redesign the logic if we encounter more similar functions or situations later.
+		// Fixed issue #53730
+		if ctx.IsConstantPropagateCheck() && v.FuncName.L == ast.Length {
+			arg0, isColumn := v.GetArgs()[0].(*Column)
+			if isColumn {
+				id := schema.ColumnIndex(arg0)
+				if id != -1 {
+					_, isConstant := newExprs[id].(*Constant)
+					if isConstant {
+						mappedNewColumnCollate := schema.Columns[id].GetStaticType().GetCollate()
+						if mappedNewColumnCollate == charset.CollationUTF8MB4 ||
+							mappedNewColumnCollate == charset.CollationUTF8 {
+							return false, false, v
+						}
+					}
+				}
+			}
 		}
 		// cowExprRef is a copy-on-write util, args array allocation happens only
 		// when expr in args is changed
@@ -992,7 +1015,12 @@ func containOuterNot(expr Expression, not bool) bool {
 // Contains tests if `exprs` contains `e`.
 func Contains(exprs []Expression, e Expression) bool {
 	for _, expr := range exprs {
-		if e == expr {
+		// Check string equivalence if one of the expressions is a clone.
+		sameString := false
+		if e != nil && expr != nil {
+			sameString = (e.String() == expr.String())
+		}
+		if e == expr || sameString {
 			return true
 		}
 	}
@@ -1859,4 +1887,31 @@ func ConstExprConsiderPlanCache(expr Expression, inPlanCache bool) bool {
 	default:
 		return false
 	}
+}
+
+// ExprsHasSideEffects checks if any of the expressions has side effects.
+func ExprsHasSideEffects(exprs []Expression) bool {
+	for _, expr := range exprs {
+		if ExprHasSetVarOrSleep(expr) {
+			return true
+		}
+	}
+	return false
+}
+
+// ExprHasSetVarOrSleep checks if the expression has SetVar function or Sleep function.
+func ExprHasSetVarOrSleep(expr Expression) bool {
+	scalaFunc, isScalaFunc := expr.(*ScalarFunction)
+	if !isScalaFunc {
+		return false
+	}
+	if scalaFunc.FuncName.L == ast.SetVar || scalaFunc.FuncName.L == ast.Sleep {
+		return true
+	}
+	for _, arg := range scalaFunc.GetArgs() {
+		if ExprHasSetVarOrSleep(arg) {
+			return true
+		}
+	}
+	return false
 }

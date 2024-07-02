@@ -17,12 +17,13 @@ package ingest
 import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
+	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
 
 // Register implements BackendCtx.
-func (bc *litBackendCtx) Register(indexIDs []int64, uniques []bool, tableName string) ([]Engine, error) {
+func (bc *litBackendCtx) Register(indexIDs []int64, uniques []bool, tblInfo *model.TableInfo) ([]Engine, error) {
 	ret := make([]Engine, 0, len(indexIDs))
 
 	for _, indexID := range indexIDs {
@@ -44,8 +45,7 @@ func (bc *litBackendCtx) Register(indexIDs []int64, uniques []bool, tableName st
 
 	bc.memRoot.RefreshConsumption()
 	numIdx := int64(len(indexIDs))
-	engineCacheSize := int64(bc.cfg.TikvImporter.EngineMemCacheSize)
-	ok := bc.memRoot.CheckConsume(numIdx * (structSizeEngineInfo + engineCacheSize))
+	ok := bc.memRoot.CheckConsume(numIdx * structSizeEngineInfo)
 	if !ok {
 		return nil, genEngineAllocMemFailedErr(bc.ctx, bc.memRoot, bc.jobID, indexIDs)
 	}
@@ -60,7 +60,7 @@ func (bc *litBackendCtx) Register(indexIDs []int64, uniques []bool, tableName st
 	openedEngines := make(map[int64]*engineInfo, numIdx)
 
 	for i, indexID := range indexIDs {
-		openedEngine, err := mgr.OpenEngine(bc.ctx, cfg, tableName, int32(indexID))
+		openedEngine, err := mgr.OpenEngine(bc.ctx, cfg, tblInfo.Name.L, int32(indexID))
 		if err != nil {
 			logutil.Logger(bc.ctx).Warn(LitErrCreateEngineFail,
 				zap.Int64("job ID", bc.jobID),
@@ -91,7 +91,8 @@ func (bc *litBackendCtx) Register(indexIDs []int64, uniques []bool, tableName st
 		ret = append(ret, ei)
 		bc.engines[indexID] = ei
 	}
-	bc.memRoot.Consume(numIdx * (structSizeEngineInfo + engineCacheSize))
+	bc.memRoot.Consume(numIdx * structSizeEngineInfo)
+	bc.tblInfo = tblInfo
 
 	logutil.Logger(bc.ctx).Info(LitInfoOpenEngine, zap.Int64("job ID", bc.jobID),
 		zap.Int64s("index IDs", indexIDs),
@@ -114,19 +115,5 @@ func (bc *litBackendCtx) UnregisterEngines() {
 	}
 	bc.engines = make(map[int64]*engineInfo, 10)
 
-	engineCacheSize := int64(bc.cfg.TikvImporter.EngineMemCacheSize)
-	bc.memRoot.Release(numIdx * (structSizeEngineInfo + engineCacheSize))
-}
-
-// ImportStarted implements BackendCtx.
-func (bc *litBackendCtx) ImportStarted() bool {
-	if len(bc.engines) == 0 {
-		return false
-	}
-	for _, ei := range bc.engines {
-		if ei.openedEngine == nil {
-			return true
-		}
-	}
-	return false
+	bc.memRoot.Release(numIdx * structSizeEngineInfo)
 }

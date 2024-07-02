@@ -58,6 +58,7 @@ var (
 	addingDDLJobNotifyKey       = "/tidb/ddl/add_ddl_job_general"
 	dispatchLoopWaitingDuration = 1 * time.Second
 	localWorkerWaitingDuration  = 10 * time.Millisecond
+	schedulerLoopRetryInterval  = time.Second
 )
 
 func init() {
@@ -97,10 +98,11 @@ var _ owner.Listener = (*ownerListener)(nil)
 func (l *ownerListener) OnBecomeOwner() {
 	ctx, cancelFunc := context.WithCancel(l.ddl.ddlCtx.ctx)
 	l.scheduler = &jobScheduler{
-		schCtx:      ctx,
-		cancel:      cancelFunc,
-		runningJobs: newRunningJobs(),
-		sysTblMgr:   systable.NewManager(l.ddl.sessPool),
+		schCtx:       ctx,
+		cancel:       cancelFunc,
+		runningJobs:  newRunningJobs(),
+		sysTblMgr:    systable.NewManager(l.ddl.sessPool),
+		schemaLoader: l.ddl.schemaLoader,
 
 		ddlCtx:         l.ddl.ddlCtx,
 		ddlJobNotifyCh: l.ddl.ddlJobNotifyCh,
@@ -120,11 +122,12 @@ func (l *ownerListener) OnRetireOwner() {
 // jobScheduler is used to schedule the DDL jobs, it's only run on the DDL owner.
 type jobScheduler struct {
 	// *ddlCtx already have context named as "ctx", so we use "schCtx" here to avoid confusion.
-	schCtx      context.Context
-	cancel      context.CancelFunc
-	wg          tidbutil.WaitGroupWrapper
-	runningJobs *runningJobs
-	sysTblMgr   systable.Manager
+	schCtx       context.Context
+	cancel       context.CancelFunc
+	wg           tidbutil.WaitGroupWrapper
+	runningJobs  *runningJobs
+	sysTblMgr    systable.Manager
+	schemaLoader SchemaLoader
 
 	// those fields are created on start
 	reorgWorkerPool      *workerPool
@@ -181,7 +184,10 @@ func (s *jobScheduler) close() {
 	}
 }
 
-func (s *jobScheduler) getJob(se *sess.Session, tp jobType, filter func(*model.Job) (bool, error)) (*model.Job, error) {
+// getJob reads tidb_ddl_job and returns the first runnable DDL job.
+func (s *jobScheduler) getJob(se *sess.Session, tp jobType) (*model.Job, error) {
+	defer s.runningJobs.resetAllPending()
+
 	not := "not"
 	label := "get_job_general"
 	if tp == jobTypeReorg {
@@ -223,20 +229,21 @@ func (s *jobScheduler) getJob(se *sess.Session, tp jobType, filter func(*model.J
 			return &job, nil
 		}
 
-		b, err := filter(&job)
-		if err != nil {
+		involving := job.GetInvolvingSchemaInfo()
+		if !s.runningJobs.checkRunnable(job.ID, involving) {
+			s.runningJobs.addPending(involving)
+			continue
+		}
+
+		if err = s.markJobProcessing(se, &job); err != nil {
+			logutil.DDLLogger().Warn(
+				"[ddl] handle ddl job failed: mark job is processing meet error",
+				zap.Error(err),
+				zap.Stringer("job", &job))
+			s.runningJobs.addPending(involving)
 			return nil, errors.Trace(err)
 		}
-		if b {
-			if err = s.markJobProcessing(se, &job); err != nil {
-				logutil.DDLLogger().Warn(
-					"[ddl] handle ddl job failed: mark job is processing meet error",
-					zap.Error(err),
-					zap.Stringer("job", &job))
-				return nil, errors.Trace(err)
-			}
-			return &job, nil
-		}
+		return &job, nil
 	}
 	return nil, nil
 }
@@ -303,42 +310,6 @@ func (s *jobScheduler) processJobDuringUpgrade(sess *sess.Session, job *model.Jo
 	return true, nil
 }
 
-func (s *jobScheduler) getGeneralJob(sess *sess.Session) (*model.Job, error) {
-	return s.getJob(sess, jobTypeGeneral, func(job *model.Job) (bool, error) {
-		if !s.runningJobs.checkRunnable(job) {
-			return false, nil
-		}
-		if job.Type == model.ActionDropSchema {
-			// Check if there is any reorg job on this schema.
-			sql := fmt.Sprintf("select job_id from mysql.tidb_ddl_job where CONCAT(',', schema_ids, ',') REGEXP CONCAT(',', %s, ',') != 0 and processing limit 1", strconv.Quote(strconv.FormatInt(job.SchemaID, 10)))
-			rows, err := sess.Execute(s.schCtx, sql, "check conflict jobs")
-			return len(rows) == 0, err
-		}
-		// Check if there is any running job works on the same table.
-		sql := fmt.Sprintf("select job_id from mysql.tidb_ddl_job t1, (select table_ids from mysql.tidb_ddl_job where job_id = %d) t2 where "+
-			"(processing and CONCAT(',', t2.table_ids, ',') REGEXP CONCAT(',(', REPLACE(t1.table_ids, ',', '|'), '),') != 0)"+
-			"or (type = %d and processing)", job.ID, model.ActionFlashbackCluster)
-		rows, err := sess.Execute(s.schCtx, sql, "check conflict jobs")
-		return len(rows) == 0, err
-	})
-}
-
-func (s *jobScheduler) getReorgJob(sess *sess.Session) (*model.Job, error) {
-	return s.getJob(sess, jobTypeReorg, func(job *model.Job) (bool, error) {
-		if !s.runningJobs.checkRunnable(job) {
-			return false, nil
-		}
-		// Check if there is any block ddl running, like drop schema and flashback cluster.
-		sql := fmt.Sprintf("select job_id from mysql.tidb_ddl_job where "+
-			"(CONCAT(',', schema_ids, ',') REGEXP CONCAT(',', %s, ',') != 0 and type = %d and processing) "+
-			"or (CONCAT(',', table_ids, ',') REGEXP CONCAT(',', %s, ',') != 0 and processing) "+
-			"or (type = %d and processing) limit 1",
-			strconv.Quote(strconv.FormatInt(job.SchemaID, 10)), model.ActionDropSchema, strconv.Quote(strconv.FormatInt(job.TableID, 10)), model.ActionFlashbackCluster)
-		rows, err := sess.Execute(s.schCtx, sql, "check conflict jobs")
-		return len(rows) == 0, err
-	})
-}
-
 // startLocalWorkerLoop starts the local worker loop to run the DDL job of v2.
 func (d *ddl) startLocalWorkerLoop() {
 	for {
@@ -392,6 +363,7 @@ func (s *jobScheduler) startDispatch() error {
 	defer ticker.Stop()
 	// TODO move waitSchemaSyncedController out of ddlCtx.
 	s.clearOnceMap()
+	s.mustReloadSchemas()
 	for {
 		if err := s.schCtx.Err(); err != nil {
 			return err
@@ -422,8 +394,8 @@ func (s *jobScheduler) startDispatch() error {
 			continue
 		}
 		failpoint.InjectCall("beforeAllLoadDDLJobAndRun")
-		s.loadDDLJobAndRun(se, s.generalDDLWorkerPool, s.getGeneralJob)
-		s.loadDDLJobAndRun(se, s.reorgWorkerPool, s.getReorgJob)
+		s.loadDDLJobAndRun(se, s.generalDDLWorkerPool, jobTypeGeneral)
+		s.loadDDLJobAndRun(se, s.reorgWorkerPool, jobTypeReorg)
 	}
 }
 
@@ -464,7 +436,7 @@ func (s *jobScheduler) checkAndUpdateClusterState(needUpdate bool) error {
 	return nil
 }
 
-func (s *jobScheduler) loadDDLJobAndRun(se *sess.Session, pool *workerPool, getJob func(*sess.Session) (*model.Job, error)) {
+func (s *jobScheduler) loadDDLJobAndRun(se *sess.Session, pool *workerPool, tp jobType) {
 	wk, err := pool.get()
 	if err != nil || wk == nil {
 		logutil.DDLLogger().Debug(fmt.Sprintf("[ddl] no %v worker available now", pool.tp()), zap.Error(err))
@@ -476,7 +448,7 @@ func (s *jobScheduler) loadDDLJobAndRun(se *sess.Session, pool *workerPool, getJ
 	s.mu.RUnlock()
 
 	startTime := time.Now()
-	job, err := getJob(se)
+	job, err := s.getJob(se, tp)
 	if job == nil || err != nil {
 		if err != nil {
 			wk.jobLogger(job).Warn("get job met error", zap.Duration("take time", time.Since(startTime)), zap.Error(err))
@@ -489,6 +461,25 @@ func (s *jobScheduler) loadDDLJobAndRun(se *sess.Session, pool *workerPool, getJ
 	s.mu.RUnlock()
 
 	s.delivery2Worker(wk, pool, job)
+}
+
+// mustReloadSchemas is used to reload schema when we become the DDL owner, in case
+// the schema version is outdated before we become the owner.
+// It will keep reloading schema until either success or context done.
+// Domain also have a similar method 'mustReload', but its methods don't accept context.
+func (s *jobScheduler) mustReloadSchemas() {
+	for {
+		err := s.schemaLoader.Reload()
+		if err == nil {
+			return
+		}
+		logutil.DDLLogger().Warn("reload schema failed, will retry later", zap.Error(err))
+		select {
+		case <-s.schCtx.Done():
+			return
+		case <-time.After(schedulerLoopRetryInterval):
+		}
+	}
 }
 
 // delivery2LocalWorker runs the DDL job of v2 in local.
@@ -533,21 +524,14 @@ func (s *jobScheduler) delivery2Worker(wk *worker, pool *workerPool, job *model.
 	failpoint.InjectCall("beforeDelivery2Worker", job)
 	injectFailPointForGetJob(job)
 	jobID, involvedSchemaInfos := job.ID, job.GetInvolvingSchemaInfo()
-	s.runningJobs.add(jobID, involvedSchemaInfos)
+	s.runningJobs.addRunning(jobID, involvedSchemaInfos)
 	metrics.DDLRunningJobCount.WithLabelValues(pool.tp().String()).Inc()
 	s.wg.RunWithLog(func() {
 		defer func() {
 			failpoint.InjectCall("afterDelivery2Worker", job)
-			s.runningJobs.remove(jobID, involvedSchemaInfos)
+			s.runningJobs.removeRunning(jobID, involvedSchemaInfos)
 			asyncNotify(s.ddlJobNotifyCh)
 			metrics.DDLRunningJobCount.WithLabelValues(pool.tp().String()).Dec()
-			if wk.ctx.Err() != nil && ingest.LitBackCtxMgr != nil {
-				// if ctx cancelled, i.e. owner changed, we need to Unregister the backend
-				// as litBackendCtx is holding this very 'ctx', and it cannot reuse now.
-				// TODO make LitBackCtxMgr a local value of the job scheduler, it makes
-				// it much harder to test multiple owners in 1 unit test.
-				ingest.LitBackCtxMgr.Unregister(jobID)
-			}
 			pool.put(wk)
 		}()
 		for {
@@ -587,6 +571,7 @@ func (s *jobScheduler) delivery2Worker(wk *worker, pool *workerPool, job *model.
 }
 
 func (s *jobScheduler) runJobWithWorker(wk *worker, job *model.Job) error {
+	failpoint.InjectCall("beforeRunJobWithWorker")
 	ownerID := s.ownerManager.ID()
 	// suppose we failed to sync version last time, we need to check and sync it
 	// before run to maintain the 2-version invariant.
@@ -909,30 +894,4 @@ func getJobsBySQL(se *sess.Session, tbl, condition string) ([]*model.Job, error)
 		jobs = append(jobs, &job)
 	}
 	return jobs, nil
-}
-
-func filterProcessingJobIDs(se *sess.Session, jobIDs []int64) ([]int64, error) {
-	if len(jobIDs) == 0 {
-		return nil, nil
-	}
-
-	var sb strings.Builder
-	for i, id := range jobIDs {
-		if i != 0 {
-			sb.WriteString(",")
-		}
-		sb.WriteString(strconv.FormatInt(id, 10))
-	}
-	sql := fmt.Sprintf(
-		"SELECT job_id FROM mysql.tidb_ddl_job WHERE job_id IN (%s) AND processing",
-		sb.String())
-	rows, err := se.Execute(context.Background(), sql, "filter_processing_job_ids")
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	ret := make([]int64, 0, len(rows))
-	for _, row := range rows {
-		ret = append(ret, row.GetInt64(0))
-	}
-	return ret, nil
 }

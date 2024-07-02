@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"strconv"
 	"time"
 
 	"github.com/pingcap/tidb/pkg/config"
@@ -975,10 +976,17 @@ const (
 	// TiDBPersistAnalyzeOptions persists analyze options for later analyze and auto-analyze
 	TiDBPersistAnalyzeOptions = "tidb_persist_analyze_options"
 	// TiDBEnableColumnTracking enables collecting predicate columns.
+	// DEPRECATED: This variable is deprecated, please do not use this variable.
 	TiDBEnableColumnTracking = "tidb_enable_column_tracking"
+	// TiDBAnalyzeColumnOptions specifies the default column selection strategy for both manual and automatic analyze operations.
+	// It accepts two values:
+	// `PREDICATE`: Analyze only the columns that are used in the predicates of the query.
+	// `ALL`: Analyze all columns in the table.
+	TiDBAnalyzeColumnOptions = "tidb_analyze_column_options"
 	// TiDBDisableColumnTrackingTime records the last time TiDBEnableColumnTracking is set off.
 	// It is used to invalidate the collected predicate columns after turning off TiDBEnableColumnTracking, which avoids physical deletion.
 	// It doesn't have cache in memory, and we directly get/set the variable value from/to mysql.tidb.
+	// DEPRECATED: This variable is deprecated, please do not use this variable.
 	TiDBDisableColumnTrackingTime = "tidb_disable_column_tracking_time"
 	// TiDBStatsLoadPseudoTimeout indicates whether to fallback to pseudo stats after load timeout.
 	TiDBStatsLoadPseudoTimeout = "tidb_stats_load_pseudo_timeout"
@@ -1071,6 +1079,9 @@ const (
 	TiDBEnableHistoricalStatsForCapture = "tidb_enable_historical_stats_for_capture"
 	// TiDBEnableResourceControl indicates whether resource control feature is enabled
 	TiDBEnableResourceControl = "tidb_enable_resource_control"
+	// TiDBResourceControlStrictMode indicates whether resource control strict mode is enabled.
+	// When strict mode is enabled, user need certain privilege to change session or statement resource group.
+	TiDBResourceControlStrictMode = "tidb_resource_control_strict_mode"
 	// TiDBStmtSummaryEnablePersistent indicates whether to enable file persistence for stmtsummary.
 	TiDBStmtSummaryEnablePersistent = "tidb_stmt_summary_enable_persistent"
 	// TiDBStmtSummaryFilename indicates the file name written by stmtsummary.
@@ -1339,7 +1350,6 @@ const (
 	DefEnableLegacyInstanceScope                   = true
 	DefTiDBTableCacheLease                         = 3 // 3s
 	DefTiDBPersistAnalyzeOptions                   = true
-	DefTiDBEnableColumnTracking                    = false
 	DefTiDBStatsLoadSyncWait                       = 100
 	DefTiDBStatsLoadPseudoTimeout                  = true
 	DefSysdateIsNow                                = false
@@ -1368,6 +1378,7 @@ const (
 	DefTiDBMemQuotaAnalyze                         = -1
 	DefTiDBEnableAutoAnalyze                       = true
 	DefTiDBEnableAutoAnalyzePriorityQueue          = true
+	DefTiDBAnalyzeColumnOptions                    = "ALL"
 	DefTiDBMemOOMAction                            = "CANCEL"
 	DefTiDBMaxAutoAnalyzeTime                      = 12 * 60 * 60
 	DefTiDBEnablePrepPlanCache                     = true
@@ -1448,6 +1459,7 @@ const (
 	DefTiDBTTLDeleteWorkerCount                       = 4
 	DefaultExchangeCompressionMode                    = kv.ExchangeCompressionModeUnspecified
 	DefTiDBEnableResourceControl                      = true
+	DefTiDBResourceControlStrictMode                  = true
 	DefTiDBPessimisticTransactionFairLocking          = false
 	DefTiDBEnablePlanCacheForParamLimit               = true
 	DefTiFlashComputeDispatchPolicy                   = tiflashcompute.DispatchPolicyConsistentHashStr
@@ -1493,20 +1505,29 @@ const (
 
 // Process global variables.
 var (
-	ProcessGeneralLog                    = atomic.NewBool(false)
-	RunAutoAnalyze                       = atomic.NewBool(DefTiDBEnableAutoAnalyze)
-	EnableAutoAnalyzePriorityQueue       = atomic.NewBool(DefTiDBEnableAutoAnalyzePriorityQueue)
-	GlobalLogMaxDays                     = atomic.NewInt32(int32(config.GetGlobalConfig().Log.File.MaxDays))
-	QueryLogMaxLen                       = atomic.NewInt32(DefTiDBQueryLogMaxLen)
-	EnablePProfSQLCPU                    = atomic.NewBool(false)
-	EnableBatchDML                       = atomic.NewBool(false)
-	EnableTmpStorageOnOOM                = atomic.NewBool(DefTiDBEnableTmpStorageOnOOM)
-	ddlReorgWorkerCounter          int32 = DefTiDBDDLReorgWorkerCount
-	ddlReorgBatchSize              int32 = DefTiDBDDLReorgBatchSize
-	ddlFlashbackConcurrency        int32 = DefTiDBDDLFlashbackConcurrency
-	ddlErrorCountLimit             int64 = DefTiDBDDLErrorCountLimit
-	ddlReorgRowFormat              int64 = DefTiDBRowFormatV2
-	maxDeltaSchemaCount            int64 = DefTiDBMaxDeltaSchemaCount
+	ProcessGeneralLog              = atomic.NewBool(false)
+	RunAutoAnalyze                 = atomic.NewBool(DefTiDBEnableAutoAnalyze)
+	EnableAutoAnalyzePriorityQueue = atomic.NewBool(DefTiDBEnableAutoAnalyzePriorityQueue)
+	// AnalyzeColumnOptions is a global variable that indicates the default column choice for ANALYZE.
+	// The value of this variable is a string that can be one of the following values:
+	// "PREDICATE", "ALL".
+	// The behavior of the analyze operation depends on the value of `tidb_persist_analyze_options`:
+	// 1. If `tidb_persist_analyze_options` is enabled and the column choice from the analyze options record is set to `default`,
+	//    the value of `tidb_analyze_column_options` determines the behavior of the analyze operation.
+	// 2. If `tidb_persist_analyze_options` is disabled, `tidb_analyze_column_options` is used directly to decide
+	//    whether to analyze all columns or just the predicate columns.
+	AnalyzeColumnOptions          = atomic.NewString(DefTiDBAnalyzeColumnOptions)
+	GlobalLogMaxDays              = atomic.NewInt32(int32(config.GetGlobalConfig().Log.File.MaxDays))
+	QueryLogMaxLen                = atomic.NewInt32(DefTiDBQueryLogMaxLen)
+	EnablePProfSQLCPU             = atomic.NewBool(false)
+	EnableBatchDML                = atomic.NewBool(false)
+	EnableTmpStorageOnOOM         = atomic.NewBool(DefTiDBEnableTmpStorageOnOOM)
+	ddlReorgWorkerCounter   int32 = DefTiDBDDLReorgWorkerCount
+	ddlReorgBatchSize       int32 = DefTiDBDDLReorgBatchSize
+	ddlFlashbackConcurrency int32 = DefTiDBDDLFlashbackConcurrency
+	ddlErrorCountLimit      int64 = DefTiDBDDLErrorCountLimit
+	ddlReorgRowFormat       int64 = DefTiDBRowFormatV2
+	maxDeltaSchemaCount     int64 = DefTiDBMaxDeltaSchemaCount
 	// DDLSlowOprThreshold is the threshold for ddl slow operations, uint is millisecond.
 	DDLSlowOprThreshold                  = config.GetGlobalConfig().Instance.DDLSlowOprThreshold
 	ForcePriority                        = int32(DefTiDBForcePriority)
@@ -1523,7 +1544,6 @@ var (
 	VarTiDBSuperReadOnly                 = atomic.NewBool(DefTiDBSuperReadOnly)
 	PersistAnalyzeOptions                = atomic.NewBool(DefTiDBPersistAnalyzeOptions)
 	TableCacheLease                      = atomic.NewInt64(DefTiDBTableCacheLease)
-	EnableColumnTracking                 = atomic.NewBool(DefTiDBEnableColumnTracking)
 	StatsLoadSyncWait                    = atomic.NewInt64(DefTiDBStatsLoadSyncWait)
 	StatsLoadPseudoTimeout               = atomic.NewBool(DefTiDBStatsLoadPseudoTimeout)
 	MemQuotaBindingCache                 = atomic.NewInt64(DefTiDBMemQuotaBindingCache)
@@ -1585,17 +1605,19 @@ var (
 	TTLRunningTasks                 = atomic.NewInt32(DefTiDBTTLRunningTasks)
 	// always set the default value to false because the resource control in kv-client is not inited
 	// It will be initialized to the right value after the first call of `rebuildSysVarCache`
-	EnableResourceControl     = atomic.NewBool(false)
-	EnableCheckConstraint     = atomic.NewBool(DefTiDBEnableCheckConstraint)
-	SkipMissingPartitionStats = atomic.NewBool(DefTiDBSkipMissingPartitionStats)
-	TiFlashEnablePipelineMode = atomic.NewBool(DefTiDBEnableTiFlashPipelineMode)
-	ServiceScope              = atomic.NewString("")
-	SchemaVersionCacheLimit   = atomic.NewInt64(DefTiDBSchemaVersionCacheLimit)
-	CloudStorageURI           = atomic.NewString("")
-	IgnoreInlistPlanDigest    = atomic.NewBool(DefTiDBIgnoreInlistPlanDigest)
-	TxnEntrySizeLimit         = atomic.NewUint64(DefTiDBTxnEntrySizeLimit)
+	EnableResourceControl           = atomic.NewBool(false)
+	EnableResourceControlStrictMode = atomic.NewBool(true)
+	EnableCheckConstraint           = atomic.NewBool(DefTiDBEnableCheckConstraint)
+	SkipMissingPartitionStats       = atomic.NewBool(DefTiDBSkipMissingPartitionStats)
+	TiFlashEnablePipelineMode       = atomic.NewBool(DefTiDBEnableTiFlashPipelineMode)
+	ServiceScope                    = atomic.NewString("")
+	SchemaVersionCacheLimit         = atomic.NewInt64(DefTiDBSchemaVersionCacheLimit)
+	CloudStorageURI                 = atomic.NewString("")
+	IgnoreInlistPlanDigest          = atomic.NewBool(DefTiDBIgnoreInlistPlanDigest)
+	TxnEntrySizeLimit               = atomic.NewUint64(DefTiDBTxnEntrySizeLimit)
 
-	SchemaCacheSize = atomic.NewInt64(DefTiDBSchemaCacheSize)
+	SchemaCacheSize           = atomic.NewUint64(DefTiDBSchemaCacheSize)
+	SchemaCacheSizeOriginText = atomic.NewString(strconv.Itoa(DefTiDBSchemaCacheSize))
 )
 
 var (
