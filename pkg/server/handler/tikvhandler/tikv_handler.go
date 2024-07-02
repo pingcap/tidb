@@ -1002,26 +1002,50 @@ func (h SchemaHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			handler.WriteError(w, err)
 			return
 		}
-		if tid < 0 {
-			handler.WriteError(w, infoschema.ErrTableNotExists.GenWithStack("Table which ID = %s does not exist.", tableID))
+		data, err := getTableByID(schema, tid)
+		if err != nil {
+			handler.WriteError(w, err)
 			return
 		}
-		if data, ok := schema.TableByID(int64(tid)); ok {
-			handler.WriteData(w, data.Meta())
-			return
+		handler.WriteData(w, data)
+		return
+	}
+
+	if tableIDsStr := req.FormValue(handler.TableIDsQuery); len(tableIDsStr) > 0 {
+		tableIDs := strings.Split(tableIDsStr, ",")
+		data := make(map[int]*model.TableInfo, len(tableIDs))
+		for _, tableID := range tableIDs {
+			tid, err := strconv.Atoi(tableID)
+			if err != nil {
+				handler.WriteError(w, err)
+				return
+			}
+			tbl, err := getTableByID(schema, tid)
+			if err == nil {
+				data[tid] = tbl
+			}
 		}
-		// The tid maybe a partition ID of the partition-table.
-		tbl, _, _ := schema.FindTableByPartitionID(int64(tid))
-		if tbl == nil {
-			handler.WriteError(w, infoschema.ErrTableNotExists.GenWithStack("Table which ID = %s does not exist.", tableID))
-			return
-		}
-		handler.WriteData(w, tbl)
+		handler.WriteData(w, data)
 		return
 	}
 
 	// all databases' schemas
 	handler.WriteData(w, schema.AllSchemas())
+}
+
+func getTableByID(schema infoschema.InfoSchema, tid int) (*model.TableInfo, error) {
+	if tid < 0 {
+		return nil, infoschema.ErrTableNotExists.GenWithStack("Table which ID = %d does not exist.", tid)
+	}
+	if data, ok := schema.TableByID(int64(tid)); ok {
+		return data.Meta(), nil
+	}
+	// The tid maybe a partition ID of the partition-table.
+	tbl, _, _ := schema.FindTableByPartitionID(int64(tid))
+	if tbl == nil {
+		return nil, infoschema.ErrTableNotExists.GenWithStack("Table which ID = %d does not exist.", tid)
+	}
+	return tbl.Meta(), nil
 }
 
 // ServeHTTP handles table related requests, such as table's region information, disk usage.
