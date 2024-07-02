@@ -103,10 +103,6 @@ func MergePartitionStats2GlobalStats(
 	histIDs []int64,
 ) (globalStats *GlobalStats, err error) {
 	if sc.GetSessionVars().EnableAsyncMergeGlobalStats {
-		statslogutil.SingletonStatsSamplerLogger().Info("use async merge global stats",
-			zap.Int64("tableID", globalTableInfo.ID),
-			zap.String("table", globalTableInfo.Name.L),
-		)
 		worker, err := NewAsyncMergePartitionStats2GlobalStats(statsHandle, globalTableInfo, histIDs, is)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -117,10 +113,6 @@ func MergePartitionStats2GlobalStats(
 		}
 		return worker.Result(), nil
 	}
-	statslogutil.SingletonStatsSamplerLogger().Info("use blocking merge global stats",
-		zap.Int64("tableID", globalTableInfo.ID),
-		zap.String("table", globalTableInfo.Name.L),
-	)
 	return blockingMergePartitionStats2GlobalStats(sc, statsHandle.GPool(), opts, is, globalTableInfo, isIndex, histIDs, nil, statsHandle)
 }
 
