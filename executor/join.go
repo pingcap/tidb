@@ -173,6 +173,7 @@ func (e *HashJoinExec) Close() error {
 		}
 		e.probeSideTupleFetcher.probeChkResourceCh = nil
 		terror.Call(e.rowContainer.Close)
+		e.hashJoinCtx.sessCtx.GetSessionVars().MemTracker.UnbindActionFromHardLimit(e.rowContainer.ActionSpill())
 		e.waiterWg.Wait()
 	}
 	e.outerMatchedStatus = e.outerMatchedStatus[:0]
@@ -211,8 +212,12 @@ func (e *HashJoinExec) Open(ctx context.Context) error {
 	}
 	e.hashJoinCtx.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
 
-	e.diskTracker = disk.NewTracker(e.id, -1)
-	e.diskTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.DiskTracker)
+	if e.hashJoinCtx.diskTracker != nil {
+		e.hashJoinCtx.diskTracker.Reset()
+	} else {
+		e.hashJoinCtx.diskTracker = disk.NewTracker(e.id, -1)
+	}
+	e.hashJoinCtx.diskTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.DiskTracker)
 
 	e.workerWg = util.WaitGroupWrapper{}
 	e.waiterWg = util.WaitGroupWrapper{}
@@ -1420,7 +1425,7 @@ func (e *NestedLoopApplyExec) fetchAllInners(ctx context.Context) error {
 
 	if e.canUseCache {
 		// create a new one since it may be in the cache
-		e.innerList = chunk.NewList(retTypes(e.innerExec), e.initCap, e.maxChunkSize)
+		e.innerList = chunk.NewListWithMemTracker(retTypes(e.innerExec), e.initCap, e.maxChunkSize, e.innerList.GetMemTracker())
 	} else {
 		e.innerList.Reset()
 	}
