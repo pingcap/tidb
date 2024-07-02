@@ -2149,7 +2149,7 @@ func (p *PhysicalHashAgg) attach2TaskForMpp(tasks ...base.Task) base.Task {
 		}
 		// todo cannot be stream agg
 		if partialHashAgg, ok := partialAgg.(*PhysicalHashAgg); ok {
-			partialHashAgg.tiflashAutoPassThrough = true
+			partialHashAgg.tiflashPreAggMode = p.SCtx().GetSessionVars().TiFlashPreAggMode
 		}
 		attachPlan2Task(partialAgg, mpp)
 		partitionCols := p.MppPartitionCols

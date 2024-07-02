@@ -15,6 +15,8 @@
 package core
 
 import (
+	"fmt"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
@@ -110,7 +112,11 @@ func (p *PhysicalHashAgg) ToPB(ctx *base.BuildPBContext, storeType kv.StoreType)
 			return nil, errors.Trace(err)
 		}
 		executorID = p.ExplainID().String()
-		aggExec.AutoPassThrough = p.tiflashAutoPassThrough
+		var ok bool
+		if *aggExec.PreAggMode, ok = p.tiflashPreAggMode.ToTiPBTiFlashPreAggMode(); !ok {
+			err = errors.New(fmt.Sprintf("unexpected tiflash pre agg mode: %v", p.tiflashPreAggMode))
+			return nil, err
+		}
 	}
 	return &tipb.Executor{
 		Tp:                            tipb.ExecType_TypeAggregation,

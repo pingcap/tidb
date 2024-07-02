@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/size"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 )
 
 // Init initializes PhysicalSelection.
@@ -217,7 +218,7 @@ func (base basePhysicalAgg) Init(ctx base.PlanContext, stats *property.StatsInfo
 }
 
 func (base basePhysicalAgg) initForHash(ctx base.PlanContext, stats *property.StatsInfo, offset int, props ...*property.PhysicalProperty) *PhysicalHashAgg {
-	p := &PhysicalHashAgg{base, false}
+	p := &PhysicalHashAgg{base, variable.ForcePreAgg}
 	p.basePhysicalPlan = newBasePhysicalPlan(ctx, plancodec.TypeHashAgg, p, offset)
 	p.childrenReqProps = props
 	p.SetStats(stats)

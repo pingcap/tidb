@@ -1170,6 +1170,8 @@ const (
 	// The value can be STANDARD, BULK.
 	// Currently, the BULK mode only affects auto-committed DML.
 	TiDBDMLType = "tidb_dml_type"
+	// TiFlashHashAggPreAggMode indicates the policy of 1st hashagg.
+	TiFlashHashAggPreAggMode = "tiflash_hashagg_preaggregation_mode"
 )
 
 // TiDB intentional limits
@@ -1501,6 +1503,8 @@ const (
 	DefTiDBDMLType                                    = "STANDARD"
 	DefGroupConcatMaxLen                              = uint64(1024)
 	DefDefaultWeekFormat                              = "0"
+	// todo change it to auto
+	DefTiFlashPreAggMode                              = "force_preagg"
 )
 
 // Process global variables.

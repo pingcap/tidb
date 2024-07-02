@@ -3248,6 +3248,21 @@ var defaultSysVars = []*SysVar{
 		},
 		IsHintUpdatableVerified: true,
 	},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiFlashHashAggPreAggMode, Value: DefTiFlashPreAggMode, Type: TypeStr,
+		Validation: func(_ *SessionVars, normalizedValue string, originalValue string, _ ScopeFlag) (string, error) {
+			_, ok := ToTiFlashPreAggMode(normalizedValue)
+			if ok {
+				return normalizedValue, nil
+			}
+			errMsg := fmt.Sprintf("incorrect value: %s for %s. valid values are: %s",
+				originalValue, TiFlashHashAggPreAggMode, ValidTiFlashPreAggMode())
+			return normalizedValue, errors.New(errMsg)
+		},
+		SetSession: func(s *SessionVars, val string) error {
+			s.TiFlashPreAggMode, _ = ToTiFlashPreAggMode(val)
+			return nil
+		},
+	},
 }
 
 // GlobalSystemVariableInitialValue gets the default value for a system variable including ones that are dynamically set (e.g. based on the store)

@@ -69,6 +69,7 @@ import (
 	"github.com/twmb/murmur3"
 	atomic2 "go.uber.org/atomic"
 	"golang.org/x/exp/maps"
+	"github.com/pingcap/tipb/go-tipb"
 )
 
 var (
@@ -1618,6 +1619,8 @@ type SessionVars struct {
 
 	// GroupConcatMaxLen represents the maximum length of the result of GROUP_CONCAT.
 	GroupConcatMaxLen uint64
+
+	TiFlashPreAggMode TiFlashPreAggModeType
 }
 
 // GetOptimizerFixControlMap returns the specified value of the optimizer fix control.
@@ -3809,4 +3812,57 @@ const (
 // Please see comments of SessionVars.OptObjective for details.
 func (s *SessionVars) GetOptObjective() string {
 	return s.OptObjective
+}
+
+// TiFlashPreAggModeType type of tiflash preagg mode.
+type TiFlashPreAggModeType int32
+
+// ForcePreAgg means 1st hashagg will be pre aggregated.
+// Auto means TiFlash will decide which policy for 1st hashagg.
+// ForceStreaming means 1st hashagg will for pass through all blocks.
+const (
+	ForcePreAgg TiFlashPreAggModeType = iota 
+	Auto
+	ForceStreaming
+)
+
+// ForcePreAggStr is the string name of ForcePreAgg.
+// AutoStr is the string name of Auto.
+// ForceStreamingStr is the string name of ForceStreaming.
+const (
+	ForcePreAggStr = "force_preagg"
+	AutoStr = "auto"
+	ForceStreamingStr = "force_streaming"
+)
+
+// ValidTiFlashPreAggMode returns all valid modes.
+func ValidTiFlashPreAggMode() string {
+	return ForcePreAggStr + ", " + AutoStr + ", " + ForceStreamingStr
+}
+
+// ToTiFlashPreAggMode convert string name to valid preagg mode.
+func ToTiFlashPreAggMode(s string) (TiFlashPreAggModeType, bool) {
+	switch s {
+	case ForcePreAggStr:
+		return ForcePreAgg, true
+	case ForceStreamingStr:
+		return ForceStreaming, true
+	case AutoStr:
+		return Auto, true
+	default:
+		return ForcePreAgg, false
+	}
+}
+
+func (m TiFlashPreAggModeType) ToTiPBTiFlashPreAggMode() (tipb.TiFlashPreAggMode, bool) {
+	switch m {
+	case ForcePreAgg:
+		return tipb.TiFlashPreAggMode_ForcePreAgg, true
+	case ForceStreaming:
+		return tipb.TiFlashPreAggMode_ForceStreaming, true
+	case Auto:
+		return tipb.TiFlashPreAggMode_Auto, true
+	default:
+		return tipb.TiFlashPreAggMode_ForcePreAgg, false
+	}
 }
