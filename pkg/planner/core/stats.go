@@ -813,54 +813,6 @@ func (p *LogicalMaxOneRow) DeriveStats(_ []*property.StatsInfo, selfSchema *expr
 	return p.StatsInfo(), nil
 }
 
-func (*LogicalWindow) getGroupNDVs(colGroups [][]*expression.Column, childStats []*property.StatsInfo) []property.GroupNDV {
-	if len(colGroups) > 0 {
-		return childStats[0].GroupNDVs
-	}
-	return nil
-}
-
-// DeriveStats implement LogicalPlan DeriveStats interface.
-func (p *LogicalWindow) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, _ []*expression.Schema, colGroups [][]*expression.Column) (*property.StatsInfo, error) {
-	if p.StatsInfo() != nil {
-		// Reload GroupNDVs since colGroups may have changed.
-		p.StatsInfo().GroupNDVs = p.getGroupNDVs(colGroups, childStats)
-		return p.StatsInfo(), nil
-	}
-	childProfile := childStats[0]
-	p.SetStats(&property.StatsInfo{
-		RowCount: childProfile.RowCount,
-		ColNDVs:  make(map[int64]float64, selfSchema.Len()),
-	})
-	childLen := selfSchema.Len() - len(p.WindowFuncDescs)
-	for i := 0; i < childLen; i++ {
-		id := selfSchema.Columns[i].UniqueID
-		p.StatsInfo().ColNDVs[id] = childProfile.ColNDVs[id]
-	}
-	for i := childLen; i < selfSchema.Len(); i++ {
-		p.StatsInfo().ColNDVs[selfSchema.Columns[i].UniqueID] = childProfile.RowCount
-	}
-	p.StatsInfo().GroupNDVs = p.getGroupNDVs(colGroups, childStats)
-	return p.StatsInfo(), nil
-}
-
-// ExtractColGroups implements LogicalPlan ExtractColGroups interface.
-func (p *LogicalWindow) ExtractColGroups(colGroups [][]*expression.Column) [][]*expression.Column {
-	if len(colGroups) == 0 {
-		return nil
-	}
-	childSchema := p.Children()[0].Schema()
-	_, offsets := childSchema.ExtractColGroups(colGroups)
-	if len(offsets) == 0 {
-		return nil
-	}
-	extracted := make([][]*expression.Column, len(offsets))
-	for i, offset := range offsets {
-		extracted[i] = colGroups[offset]
-	}
-	return extracted
-}
-
 // DeriveStats implement LogicalPlan DeriveStats interface.
 func (p *LogicalCTE) DeriveStats(_ []*property.StatsInfo, selfSchema *expression.Schema, _ []*expression.Schema, _ [][]*expression.Column) (*property.StatsInfo, error) {
 	if p.StatsInfo() != nil {

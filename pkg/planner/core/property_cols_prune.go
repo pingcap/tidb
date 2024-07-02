@@ -91,18 +91,6 @@ func (*LogicalSelection) PreparePossibleProperties(_ *expression.Schema, childre
 	return childrenProperties[0]
 }
 
-// PreparePossibleProperties implements base.LogicalPlan PreparePossibleProperties interface.
-func (p *LogicalWindow) PreparePossibleProperties(_ *expression.Schema, _ ...[][]*expression.Column) [][]*expression.Column {
-	result := make([]*expression.Column, 0, len(p.PartitionBy)+len(p.OrderBy))
-	for i := range p.PartitionBy {
-		result = append(result, p.PartitionBy[i].Col)
-	}
-	for i := range p.OrderBy {
-		result = append(result, p.OrderBy[i].Col)
-	}
-	return [][]*expression.Column{result}
-}
-
 func getPossiblePropertyFromByItems(items []*util.ByItems) []*expression.Column {
 	cols := make([]*expression.Column, 0, len(items))
 	for _, item := range items {

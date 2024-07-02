@@ -557,33 +557,6 @@ func (p *LogicalJoin) outerJoinPropConst(predicates []expression.Expression) []e
 	return predicates
 }
 
-// GetPartitionByCols extracts 'partition by' columns from the Window.
-func (p *LogicalWindow) GetPartitionByCols() []*expression.Column {
-	partitionCols := make([]*expression.Column, 0, len(p.PartitionBy))
-	for _, partitionItem := range p.PartitionBy {
-		partitionCols = append(partitionCols, partitionItem.Col)
-	}
-	return partitionCols
-}
-
-// PredicatePushDown implements base.LogicalPlan PredicatePushDown interface.
-func (p *LogicalWindow) PredicatePushDown(predicates []expression.Expression, opt *optimizetrace.LogicalOptimizeOp) ([]expression.Expression, base.LogicalPlan) {
-	canBePushed := make([]expression.Expression, 0, len(predicates))
-	canNotBePushed := make([]expression.Expression, 0, len(predicates))
-	partitionCols := expression.NewSchema(p.GetPartitionByCols()...)
-	for _, cond := range predicates {
-		// We can push predicate beneath Window, only if all of the
-		// extractedCols are part of partitionBy columns.
-		if expression.ExprFromSchema(cond, partitionCols) {
-			canBePushed = append(canBePushed, cond)
-		} else {
-			canNotBePushed = append(canNotBePushed, cond)
-		}
-	}
-	p.BaseLogicalPlan.PredicatePushDown(canBePushed, opt)
-	return canNotBePushed, p
-}
-
 // PredicatePushDown implements base.LogicalPlan PredicatePushDown interface.
 func (p *LogicalMemTable) PredicatePushDown(predicates []expression.Expression, _ *optimizetrace.LogicalOptimizeOp) ([]expression.Expression, base.LogicalPlan) {
 	if p.Extractor != nil {
