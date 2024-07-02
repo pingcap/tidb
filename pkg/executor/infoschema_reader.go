@@ -1371,7 +1371,6 @@ func (e *memtableRetriever) setDataFromIndexes(ctx sessionctx.Context, schemas [
 	e.rows = rows
 }
 
-// ywq todo
 func (e *memtableRetriever) setDataFromViews(ctx sessionctx.Context, schemas []model.CIStr) {
 	checker := privilege.GetPrivilegeManager(ctx)
 	extractor, ok := e.extractor.(*plannercore.InfoSchemaTablesExtractor)
@@ -1905,7 +1904,6 @@ func (e *memtableRetriever) setDataForTiKVRegionStatus(ctx context.Context, sctx
 	schemaNames := is.AllSchemaNames()
 	schemas := ensureSchemaTables(is, schemaNames)
 
-	// ywq todo can be optimized
 	tableInfos := tikvHelper.GetRegionsTableInfo(allRegionsInfo, schemas)
 	for i := range allRegionsInfo.Regions {
 		regionTableList := tableInfos[allRegionsInfo.Regions[i].ID]
