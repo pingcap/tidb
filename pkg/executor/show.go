@@ -1625,7 +1625,8 @@ func (e *ShowExec) fetchShowCollation() error {
 			v.ID,
 			isDefault,
 			"Yes",
-			1,
+			v.Sortlen,
+			v.PadAttribute,
 		})
 	}
 	return nil
