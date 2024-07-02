@@ -203,6 +203,43 @@ type Domain struct {
 	stopAutoAnalyze atomicutil.Bool
 
 	instancePlanCache sessionctx.InstancePlanCache // the instance level plan cache
+
+	deferFn
+}
+
+type deferFn struct {
+	sync.Mutex
+	data []deferFnRecord
+}
+
+type deferFnRecord struct {
+	fn   func()
+	fire time.Time
+}
+
+func (df *deferFn) add(fn func(), fire time.Time) {
+	df.Lock()
+	defer df.Unlock()
+	df.data = append(df.data, deferFnRecord{fn: fn, fire: fire})
+}
+
+func (df *deferFn) check() {
+	now := time.Now()
+	df.Lock()
+	defer df.Unlock()
+
+	// iterate the slice, call the defer function and remove it.
+	rm := 0
+	for i := 0; i < len(df.data); i++ {
+		record := &df.data[i]
+		if now.After(record.fire) {
+			record.fn()
+			rm++
+		} else {
+			df.data[i-rm] = df.data[i]
+		}
+	}
+	df.data = df.data[:len(df.data)-rm]
 }
 
 type mdlCheckTableInfo struct {
@@ -338,7 +375,8 @@ func (do *Domain) loadInfoSchema(startTS uint64) (infoschema.InfoSchema, bool, i
 
 	if isV1V2Switch {
 		// Reset the whole info cache to avoid co-existing of both v1 and v2, causing the memory usage doubled.
-		do.infoCache.Reset(is, schemaTs)
+		fn := do.infoCache.Reset(is, schemaTs)
+		do.deferFn.add(fn, time.Now().Add(10*time.Minute))
 	} else {
 		do.infoCache.Insert(is, schemaTs)
 	}
@@ -948,6 +986,7 @@ func (do *Domain) loadSchemaInLoop(ctx context.Context, lease time.Duration) {
 			if err != nil {
 				logutil.BgLogger().Error("reload schema in loop failed", zap.Error(err))
 			}
+			do.deferFn.check()
 		case _, ok := <-syncer.GlobalVersionCh():
 			err := do.Reload()
 			if err != nil {

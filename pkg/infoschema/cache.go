@@ -80,7 +80,7 @@ func (h *InfoCache) Size() int {
 }
 
 // Reset resets the cache.
-func (h *InfoCache) Reset(is InfoSchema, schemaTS uint64) {
+func (h *InfoCache) Reset(is InfoSchema, schemaTS uint64) func() {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
@@ -91,16 +91,18 @@ func (h *InfoCache) Reset(is InfoSchema, schemaTS uint64) {
 		timestamp:  int64(schemaTS),
 	})
 
-	// TODO: It's a bit tricky here, somewhere is holding the reference of the old infoschema.
-	// So GC can not release this object, leading to memory leak.
-	// Here we destroy the old infoschema on purpose, so someone use it would panic and
-	// we get to know where it is referenced.
-	for _, oldItem := range old {
-		switch raw := oldItem.infoschema.(type) {
-		case *infoSchema:
-			*raw = infoSchema{}
-		case *infoschemaV2:
-			*raw = infoschemaV2{}
+	return func() {
+		// TODO: It's a bit tricky here, somewhere is holding the reference of the old infoschema.
+		// So GC can not release this object, leading to memory leak.
+		// Here we destroy the old infoschema on purpose, so someone use it would panic and
+		// we get to know where it is referenced.
+		for _, oldItem := range old {
+			switch raw := oldItem.infoschema.(type) {
+			case *infoSchema:
+				*raw = infoSchema{}
+			case *infoschemaV2:
+				*raw = infoschemaV2{}
+			}
 		}
 	}
 }
