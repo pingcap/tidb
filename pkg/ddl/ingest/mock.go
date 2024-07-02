@@ -83,6 +83,7 @@ func (m *MockBackendCtxMgr) Unregister(jobID int64) {
 	}
 }
 
+// EncodeJobSortPath implements BackendCtxMgr interface.
 func (m *MockBackendCtxMgr) EncodeJobSortPath(int64) string {
 	return ""
 }
