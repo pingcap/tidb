@@ -22,6 +22,7 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/errors"
+	exprctx "github.com/pingcap/tidb/pkg/expression/context"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -388,11 +389,17 @@ func (col *Column) VecEvalJSON(ctx EvalContext, input *chunk.Chunk, result *chun
 
 const columnPrefix = "Column#"
 
+// StringWithCtx implements Expression interface.
+func (col *Column) StringWithCtx(ctx ParamValues) string {
+	return col.String()
+}
+
 // String implements Stringer interface.
 func (col *Column) String() string {
 	if col.IsHidden && col.VirtualExpr != nil {
 		// A hidden column without virtual expression indicates it's a stored type.
-		return col.VirtualExpr.String()
+		// a virtual column should be able to be stringified without context.
+		return col.VirtualExpr.StringWithCtx(exprctx.EmptyParamValues)
 	}
 	if col.OrigName != "" {
 		return col.OrigName

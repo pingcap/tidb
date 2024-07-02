@@ -57,7 +57,7 @@ func TestMain(m *testing.M) {
 	goleak.VerifyTestMain(m, opts...)
 }
 
-func createContext(t *testing.T) *mock.Context {
+func createContext(t testing.TB) *mock.Context {
 	ctx := mock.NewContext()
 	sqlMode, err := mysql.GetSQLMode(mysql.DefaultSQLMode)
 	require.NoError(t, err)

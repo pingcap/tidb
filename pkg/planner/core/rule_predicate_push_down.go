@@ -566,13 +566,14 @@ func appendTableDualTraceStep(replaced base.LogicalPlan, dual base.LogicalPlan, 
 	action := func() string {
 		return fmt.Sprintf("%v_%v is replaced by %v_%v", replaced.TP(), replaced.ID(), dual.TP(), dual.ID())
 	}
+	ectx := replaced.SCtx().GetExprCtx().GetEvalCtx()
 	reason := func() string {
 		buffer := bytes.NewBufferString("The conditions[")
 		for i, cond := range conditions {
 			if i > 0 {
 				buffer.WriteString(",")
 			}
-			buffer.WriteString(cond.String())
+			buffer.WriteString(cond.StringWithCtx(ectx))
 		}
 		buffer.WriteString("] are constant false or null")
 		return buffer.String()
@@ -588,13 +589,14 @@ func appendSelectionPredicatePushDownTraceStep(p *LogicalSelection, conditions [
 		return ""
 	}
 	if len(conditions) > 0 {
+		evalCtx := p.SCtx().GetExprCtx().GetEvalCtx()
 		reason = func() string {
 			buffer := bytes.NewBufferString("The conditions[")
 			for i, cond := range conditions {
 				if i > 0 {
 					buffer.WriteString(",")
 				}
-				buffer.WriteString(cond.String())
+				buffer.WriteString(cond.StringWithCtx(evalCtx))
 			}
 			fmt.Fprintf(buffer, "] in %v_%v are pushed down", p.TP(), p.ID())
 			return buffer.String()
@@ -607,6 +609,7 @@ func appendDataSourcePredicatePushDownTraceStep(ds *DataSource, opt *optimizetra
 	if len(ds.PushedDownConds) < 1 {
 		return
 	}
+	ectx := ds.SCtx().GetExprCtx().GetEvalCtx()
 	reason := func() string {
 		return ""
 	}
@@ -616,7 +619,7 @@ func appendDataSourcePredicatePushDownTraceStep(ds *DataSource, opt *optimizetra
 			if i > 0 {
 				buffer.WriteString(",")
 			}
-			buffer.WriteString(cond.String())
+			buffer.WriteString(cond.StringWithCtx(ectx))
 		}
 		fmt.Fprintf(buffer, "] are pushed down across %v_%v", ds.TP(), ds.ID())
 		return buffer.String()

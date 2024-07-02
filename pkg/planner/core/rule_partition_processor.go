@@ -490,7 +490,9 @@ func (*partitionProcessor) reconstructTableColNames(ds *DataSource) ([]*types.Fi
 			})
 			continue
 		}
-		return nil, errors.Trace(fmt.Errorf("information of column %v is not found", colExpr.String()))
+
+		ectx := ds.SCtx().GetExprCtx().GetEvalCtx()
+		return nil, errors.Trace(fmt.Errorf("information of column %v is not found", colExpr.StringWithCtx(ectx)))
 	}
 	return names, nil
 }

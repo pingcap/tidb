@@ -19,6 +19,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -29,7 +30,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func getIndexMergePathDigest(paths []*util.AccessPath, startIndex int) string {
+func getIndexMergePathDigest(ctx expression.EvalContext, paths []*util.AccessPath, startIndex int) string {
 	if len(paths) == startIndex {
 		return "[]"
 	}
@@ -59,7 +60,7 @@ func getIndexMergePathDigest(paths []*util.AccessPath, startIndex int) string {
 			if j > 0 {
 				idxMergeDisgest += ","
 			}
-			idxMergeDisgest += path.TableFilters[j].String()
+			idxMergeDisgest += path.TableFilters[j].StringWithCtx(ctx)
 		}
 		idxMergeDisgest += "]}"
 	}
@@ -111,7 +112,7 @@ func TestIndexMergePathGeneration(t *testing.T) {
 		idxMergeStartIndex := len(ds.PossibleAccessPaths)
 		_, err = lp.RecursiveDeriveStats(nil)
 		require.NoError(t, err)
-		result := getIndexMergePathDigest(ds.PossibleAccessPaths, idxMergeStartIndex)
+		result := getIndexMergePathDigest(sctx.GetExprCtx().GetEvalCtx(), ds.PossibleAccessPaths, idxMergeStartIndex)
 		testdata.OnRecord(func() {
 			output[i] = result
 		})

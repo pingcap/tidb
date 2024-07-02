@@ -48,9 +48,10 @@ func (p LogicalLimit) Init(ctx base.PlanContext, offset int) *LogicalLimit {
 
 // ExplainInfo implements Plan interface.
 func (p *LogicalLimit) ExplainInfo() string {
+	ectx := p.SCtx().GetExprCtx().GetEvalCtx()
 	buffer := bytes.NewBufferString("")
 	if len(p.GetPartitionBy()) > 0 {
-		buffer = explainPartitionBy(buffer, p.GetPartitionBy(), false)
+		buffer = explainPartitionBy(ectx, buffer, p.GetPartitionBy(), false)
 		fmt.Fprintf(buffer, ", offset:%v, count:%v", p.Offset, p.Count)
 	} else {
 		fmt.Fprintf(buffer, "offset:%v, count:%v", p.Offset, p.Count)

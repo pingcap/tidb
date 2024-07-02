@@ -322,7 +322,7 @@ func (d *rangeDetacher) detachCNFCondAndBuildRangeForIndex(conditions []expressi
 		return nil, err
 	}
 	if len(remainedConds) > 0 {
-		filterConds = removeConditions(filterConds, remainedConds)
+		filterConds = removeConditions(d.sctx.ExprCtx.GetEvalCtx(), filterConds, remainedConds)
 		newConditions = append(newConditions, remainedConds...)
 	}
 	for ; eqCount < len(accessConds); eqCount++ {
@@ -431,7 +431,7 @@ func (d *rangeDetacher) detachCNFCondAndBuildRangeForIndex(conditions []expressi
 					d.sctx.RecordRangeFallback(d.rangeMaxSize)
 					res.RemainedConds = append(res.RemainedConds, tailRes.AccessConds...)
 					// Some conditions may be in both tailRes.AccessConds and tailRes.RemainedConds so we call AppendConditionsIfNotExist here.
-					res.RemainedConds = AppendConditionsIfNotExist(res.RemainedConds, tailRes.RemainedConds)
+					res.RemainedConds = AppendConditionsIfNotExist(d.sctx.ExprCtx.GetEvalCtx(), res.RemainedConds, tailRes.RemainedConds)
 					return res, nil
 				}
 				res.Ranges = newRanges
@@ -461,7 +461,7 @@ func (d *rangeDetacher) detachCNFCondAndBuildRangeForIndex(conditions []expressi
 		// [10, 10] [30, 30] exceeds range mem limit, we add `a = 10 or a = 30` back to RemainedConds, which is actually
 		// unnecessary because `(a = 10 and b = 20) or (a = 30 and b = 40)` is already in RemainedConds.
 		// TODO: we will optimize it later.
-		res.RemainedConds = AppendConditionsIfNotExist(res.RemainedConds, remainedConds)
+		res.RemainedConds = AppendConditionsIfNotExist(d.sctx.ExprCtx.GetEvalCtx(), res.RemainedConds, remainedConds)
 		res.Ranges = ranges
 		// Choosing between point ranges and bestCNF is needed since bestCNF does not cover the intersection
 		// of all conjuncts. Even when we add support for intersection, it could be turned off by a flag or it could be
@@ -473,7 +473,7 @@ func (d *rangeDetacher) detachCNFCondAndBuildRangeForIndex(conditions []expressi
 			// Apply optimization if bestCNFItemRes is a proper subset of point ranges.
 			if bestCNFIsSubset && !pointRangeIsSubset {
 				// Update final result and just update: Ranges, AccessConds and RemainedConds
-				res.RemainedConds = removeConditions(res.RemainedConds, bestCNFItemRes.rangeResult.AccessConds)
+				res.RemainedConds = removeConditions(d.sctx.ExprCtx.GetEvalCtx(), res.RemainedConds, bestCNFItemRes.rangeResult.AccessConds)
 				res.Ranges = bestCNFItemRes.rangeResult.Ranges
 				res.AccessConds = bestCNFItemRes.rangeResult.AccessConds
 			}
@@ -726,7 +726,7 @@ func ExtractEqAndInCondition(sctx *rangerctx.RangerContext, conditions []express
 		}
 	}
 	// We should remove all accessConds, so that they will not be added to filter conditions.
-	newConditions = removeConditions(newConditions, accesses)
+	newConditions = removeConditions(sctx.ExprCtx.GetEvalCtx(), newConditions, accesses)
 	return accesses, filters, newConditions, columnValues, false
 }
 
@@ -992,10 +992,10 @@ func DetachSimpleCondAndBuildRangeForIndex(sctx *rangerctx.RangerContext, condit
 	return res.Ranges, res.AccessConds, err
 }
 
-func removeConditions(conditions, condsToRemove []expression.Expression) []expression.Expression {
+func removeConditions(ectx expression.EvalContext, conditions, condsToRemove []expression.Expression) []expression.Expression {
 	filterConds := make([]expression.Expression, 0, len(conditions))
 	for _, cond := range conditions {
-		if !expression.Contains(condsToRemove, cond) {
+		if !expression.Contains(ectx, condsToRemove, cond) {
 			filterConds = append(filterConds, cond)
 		}
 	}
@@ -1003,10 +1003,10 @@ func removeConditions(conditions, condsToRemove []expression.Expression) []expre
 }
 
 // AppendConditionsIfNotExist appends conditions if they are absent.
-func AppendConditionsIfNotExist(conditions, condsToAppend []expression.Expression) []expression.Expression {
+func AppendConditionsIfNotExist(ectx expression.EvalContext, conditions, condsToAppend []expression.Expression) []expression.Expression {
 	shouldAppend := make([]expression.Expression, 0, len(condsToAppend))
 	for _, cond := range condsToAppend {
-		if !expression.Contains(conditions, cond) {
+		if !expression.Contains(ectx, conditions, cond) {
 			shouldAppend = append(shouldAppend, cond)
 		}
 	}
@@ -1274,7 +1274,7 @@ func AddExpr4EqAndInCondition(sctx *rangerctx.RangerContext, conditions []expres
 	// remove the accesses from newConditions
 	newConditions := make([]expression.Expression, 0, len(conditions))
 	newConditions = append(newConditions, conditions...)
-	newConditions = removeConditions(newConditions, accesses)
+	newConditions = removeConditions(sctx.ExprCtx.GetEvalCtx(), newConditions, accesses)
 
 	// add Gc condition for accesses and return new condition to newAccesses
 	newAccesses, err := AddGcColumnCond(sctx, cols, accesses, columnValues)

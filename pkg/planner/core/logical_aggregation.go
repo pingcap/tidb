@@ -593,7 +593,7 @@ func (la *LogicalAggregation) DistinctArgsMeetsProperty() bool {
 	for _, aggFunc := range la.AggFuncs {
 		if aggFunc.HasDistinct {
 			for _, distinctArg := range aggFunc.Args {
-				if !expression.Contains(la.GroupByItems, distinctArg) {
+				if !expression.Contains(la.SCtx().GetExprCtx().GetEvalCtx(), la.GroupByItems, distinctArg) {
 					return false
 				}
 			}

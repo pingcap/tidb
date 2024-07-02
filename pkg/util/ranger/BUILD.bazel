@@ -51,6 +51,7 @@ go_test(
         "//pkg/config",
         "//pkg/domain",
         "//pkg/expression",
+        "//pkg/expression/contextstatic",
         "//pkg/parser/ast",
         "//pkg/parser/model",
         "//pkg/parser/mysql",

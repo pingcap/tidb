@@ -1,0 +1,25 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "printexpression",
+    srcs = ["analyzer.go"],
+    importpath = "github.com/pingcap/tidb/build/linter/printexpression",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//build/linter/util",
+        "@org_golang_x_tools//go/analysis",
+        "@org_golang_x_tools//go/analysis/passes/inspect",
+        "@org_golang_x_tools//go/ast/inspector",
+    ],
+)
+
+go_test(
+    name = "printexpression_test",
+    timeout = "short",
+    srcs = ["analyzer_test.go"],
+    flaky = True,
+    deps = [
+        ":printexpression",
+        "@org_golang_x_tools//go/analysis/analysistest",
+    ],
+)

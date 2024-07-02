@@ -17,6 +17,7 @@ package expression
 import (
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/expression/contextstatic"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -47,7 +48,7 @@ func TestEvaluateExprWithNull(t *testing.T) {
 	require.NoError(t, err)
 
 	res := EvaluateExprWithNull(ctx, schema, outerIfNull)
-	require.Equal(t, "ifnull(Column#1, 1)", res.String())
+	require.Equal(t, "ifnull(Column#1, 1)", res.StringWithCtx(ctx))
 	schema.Columns = append(schema.Columns, col1)
 	// ifnull(null, ifnull(null, 1))
 	res = EvaluateExprWithNull(ctx, schema, outerIfNull)
@@ -68,7 +69,7 @@ func TestEvaluateExprWithNullAndParameters(t *testing.T) {
 	res := EvaluateExprWithNull(ctx, schema, ltWithoutParam)
 	require.True(t, res.Equal(ctx, NewNull())) // the expression is evaluated to null
 	param := NewOne()
-	param.ParamMarker = &ParamMarker{ctx: ctx, order: 0}
+	param.ParamMarker = &ParamMarker{order: 0}
 	ctx.GetSessionVars().PlanCacheParams.Append(types.NewIntDatum(10))
 	ltWithParam, err := newFunctionForTest(ctx, ast.LT, col0, param)
 	require.NoError(t, err)
@@ -130,6 +131,7 @@ func TestIsBinaryLiteral(t *testing.T) {
 func TestConstLevel(t *testing.T) {
 	ctxConst := NewZero()
 	ctxConst.DeferredExpr = newFunctionWithMockCtx(ast.UnixTimestamp)
+	ctx := contextstatic.NewStaticEvalContext()
 	for _, c := range []struct {
 		exp   Expression
 		level ConstLevel
@@ -145,7 +147,7 @@ func TestConstLevel(t *testing.T) {
 		{newFunctionWithMockCtx(ast.Plus, NewOne(), newColumn(1)), ConstNone},
 		{newFunctionWithMockCtx(ast.Plus, NewOne(), ctxConst), ConstOnlyInContext},
 	} {
-		require.Equal(t, c.level, c.exp.ConstLevel(), c.exp.String())
+		require.Equal(t, c.level, c.exp.ConstLevel(), c.exp.StringWithCtx(ctx))
 	}
 }
 

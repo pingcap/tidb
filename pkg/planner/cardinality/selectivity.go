@@ -60,7 +60,7 @@ func Selectivity(
 	var exprStrs []string
 	if ctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
 		debugtrace.EnterContextCommon(ctx)
-		exprStrs = expression.ExprsToStringsForDisplay(exprs)
+		exprStrs = expression.ExprsToStringsForDisplay(ctx.GetExprCtx().GetEvalCtx(), exprs)
 		debugtrace.RecordAnyValuesWithNames(ctx, "Input Expressions", exprStrs)
 		defer func() {
 			debugtrace.RecordAnyValuesWithNames(ctx, "Result", result)
@@ -111,7 +111,7 @@ func Selectivity(
 			sel = 1.0 / pseudoEqualRate
 		}
 		if sc.EnableOptimizerDebugTrace {
-			debugtrace.RecordAnyValuesWithNames(ctx, "Expression", expr.String(), "Selectivity", sel)
+			debugtrace.RecordAnyValuesWithNames(ctx, "Expression", expr.StringWithCtx(ctx.GetExprCtx().GetEvalCtx()), "Selectivity", sel)
 		}
 		ret *= sel
 	}

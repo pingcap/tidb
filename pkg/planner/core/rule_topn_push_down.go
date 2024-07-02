@@ -183,6 +183,7 @@ func appendTopNPushDownTraceStep(parent base.LogicalPlan, child base.LogicalPlan
 }
 
 func appendTopNPushDownJoinTraceStep(p *LogicalJoin, topN *LogicalTopN, idx int, opt *optimizetrace.LogicalOptimizeOp) {
+	ectx := p.SCtx().GetExprCtx().GetEvalCtx()
 	action := func() string {
 		buffer := bytes.NewBufferString(fmt.Sprintf("%v_%v is added and pushed into %v_%v's ",
 			topN.TP(), topN.ID(), p.TP(), p.ID()))
@@ -200,7 +201,7 @@ func appendTopNPushDownJoinTraceStep(p *LogicalJoin, topN *LogicalTopN, idx int,
 			if i > 0 {
 				buffer.WriteString(",")
 			}
-			buffer.WriteString(item.String())
+			buffer.WriteString(item.StringWithCtx(ectx))
 		}
 		buffer.WriteString("] contained in ")
 		if idx == 0 {
@@ -215,13 +216,14 @@ func appendTopNPushDownJoinTraceStep(p *LogicalJoin, topN *LogicalTopN, idx int,
 }
 
 func appendSortPassByItemsTraceStep(sort *LogicalSort, topN *LogicalTopN, opt *optimizetrace.LogicalOptimizeOp) {
+	ectx := sort.SCtx().GetExprCtx().GetEvalCtx()
 	action := func() string {
 		buffer := bytes.NewBufferString(fmt.Sprintf("%v_%v passes ByItems[", sort.TP(), sort.ID()))
 		for i, item := range sort.ByItems {
 			if i > 0 {
 				buffer.WriteString(",")
 			}
-			buffer.WriteString(item.String())
+			buffer.WriteString(item.StringWithCtx(ectx))
 		}
 		fmt.Fprintf(buffer, "] to %v_%v", topN.TP(), topN.ID())
 		return buffer.String()
