@@ -110,7 +110,6 @@ const (
 
 // ActionMap is the map of DDL ActionType to string.
 var ActionMap = map[ActionType]string{
-	ActionNone:                          "none",
 	ActionCreateSchema:                  "create schema",
 	ActionDropSchema:                    "drop schema",
 	ActionCreateTable:                   "create table",
@@ -286,7 +285,7 @@ func (action ActionType) String() string {
 	if v, ok := ActionMap[action]; ok {
 		return v
 	}
-	return ActionMap[ActionNone]
+	return "none"
 }
 
 // HistoryInfo is used for binlog.
