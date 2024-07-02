@@ -491,7 +491,7 @@ type rowTableBuilder struct {
 	startPosInRawData [][]uint64
 }
 
-func createRowTableBuilder(buildKeyIndex []int, buildKeyTypes []*types.FieldType, partitionNumber int, hasNullableKey bool, hasFilter bool, keepFilteredRows bool) *rowTableBuilder {
+func createRowTableBuilder(buildKeyIndex []int, buildKeyTypes []*types.FieldType, partitionNumber uint, hasNullableKey bool, hasFilter bool, keepFilteredRows bool) *rowTableBuilder {
 	builder := &rowTableBuilder{
 		buildKeyIndex:       buildKeyIndex,
 		buildKeyTypes:       buildKeyTypes,
@@ -524,20 +524,20 @@ func (b *rowTableBuilder) initBuffer() {
 	}
 }
 
-func (b *rowTableBuilder) initHashValueAndPartIndexForOneChunk(partitionNumber uint64) {
+func (b *rowTableBuilder) initHashValueAndPartIndexForOneChunk(partitionMaskOffset int, partitionNumber uint) {
 	h := fnv.New64()
 	fakePartIndex := uint64(0)
 	for logicalRowIndex, physicalRowIndex := range b.usedRows {
 		if (b.filterVector != nil && !b.filterVector[physicalRowIndex]) || (b.nullKeyVector != nil && b.nullKeyVector[physicalRowIndex]) {
 			b.hashValue[logicalRowIndex] = fakePartIndex
 			b.partIdxVector[logicalRowIndex] = int(fakePartIndex)
-			fakePartIndex = (fakePartIndex + 1) % partitionNumber
+			fakePartIndex = (fakePartIndex + 1) % uint64(partitionNumber)
 			continue
 		}
 		h.Write(b.serializedKeyVectorBuffer[logicalRowIndex])
 		hash := h.Sum64()
 		b.hashValue[logicalRowIndex] = hash
-		b.partIdxVector[logicalRowIndex] = int(hash % partitionNumber)
+		b.partIdxVector[logicalRowIndex] = int(hash >> partitionMaskOffset)
 		h.Reset()
 	}
 }
@@ -567,7 +567,7 @@ func (b *rowTableBuilder) processOneChunk(chk *chunk.Chunk, typeCtx types.Contex
 		return err
 	}
 
-	b.initHashValueAndPartIndexForOneChunk(uint64(hashJoinCtx.PartitionNumber))
+	b.initHashValueAndPartIndexForOneChunk(hashJoinCtx.partitionMaskOffset, hashJoinCtx.partitionNumber)
 
 	// 2. build rowtable
 	return b.appendToRowTable(chk, hashJoinCtx, workerID)

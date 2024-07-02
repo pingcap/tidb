@@ -72,16 +72,15 @@ func createRowTable(rows int) (*rowTable, error) {
 		}
 	}
 
-	partitionNumber := 1
 	chk := testutil.GenRandomChunks(buildTypes, rows)
 	hashJoinCtx := &HashJoinCtxV2{
-		PartitionNumber: partitionNumber,
-		hashTableMeta:   meta,
+		hashTableMeta: meta,
 	}
 	hashJoinCtx.Concurrency = 1
+	hashJoinCtx.SetupPartitionInfo()
 	hashJoinCtx.initHashTableContext()
 	hashJoinCtx.SessCtx = mock.NewContext()
-	builder := createRowTableBuilder(buildKeyIndex, buildKeyTypes, partitionNumber, hasNullableKey, false, false)
+	builder := createRowTableBuilder(buildKeyIndex, buildKeyTypes, hashJoinCtx.partitionNumber, hasNullableKey, false, false)
 	err := builder.processOneChunk(chk, hashJoinCtx.SessCtx.GetSessionVars().StmtCtx.TypeCtx(), hashJoinCtx, 0)
 	if err != nil {
 		return nil, err
@@ -239,7 +238,7 @@ func checkRowIter(t *testing.T, table *hashTableV2, scanConcurrency int) {
 }
 
 func TestRowIter(t *testing.T) {
-	partitionNumbers := []int{1, 5, 10}
+	partitionNumbers := []int{1, 4, 8}
 	// normal case
 	for _, partitionNumber := range partitionNumbers {
 		// create row tables

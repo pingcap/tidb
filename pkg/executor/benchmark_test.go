@@ -699,9 +699,10 @@ func prepare4HashJoinV2(testCase *hashJoinTestCase, innerExec, outerExec exec.Ex
 		buildKeyTypes = append(buildKeyTypes, innerTypes[i])
 	}
 	hashJoinCtx := &join.HashJoinCtxV2{
-		OtherCondition:  nil,
-		PartitionNumber: min(testCase.concurrency, 16),
+		OtherCondition: nil,
 	}
+	hashJoinCtx.Concurrency = uint(testCase.concurrency)
+	hashJoinCtx.SetupPartitionInfo()
 	hashJoinCtx.SessCtx = testCase.ctx
 	hashJoinCtx.JoinType = testCase.joinType
 	hashJoinCtx.Concurrency = uint(testCase.concurrency)
