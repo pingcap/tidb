@@ -41,7 +41,7 @@ func NewTableContextImpl(sctx sessionctx.Context, exprCtx exprctx.ExprContext) *
 	return &TableContextImpl{
 		Context:       sctx,
 		exprCtx:       exprCtx,
-		mutateBuffers: context.NewMutateBuffers(),
+		mutateBuffers: context.NewMutateBuffers(sctx.GetSessionVars().GetWriteStmtBufs()),
 	}
 }
 
