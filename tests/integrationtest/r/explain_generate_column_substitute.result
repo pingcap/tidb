@@ -624,16 +624,16 @@ id
 1
 desc format = 'brief' SELECT id FROM person ignore index(`city`) WHERE address_info->>"$.city" = 'Beijing';
 id	estRows	task	access object	operator info
-Projection	8000.00	root		explain_generate_column_substitute.person.id
-└─TableReader	8000.00	root		data:Selection
+TableReader	8000.00	root		data:Projection
+└─Projection	8000.00	cop[tikv]		explain_generate_column_substitute.person.id
   └─Selection	8000.00	cop[tikv]		eq(json_unquote(cast(json_extract(explain_generate_column_substitute.person.address_info, "$.city"), var_string(16777216))), "Beijing")
     └─TableFullScan	10000.00	cop[tikv]	table:person	keep order:false, stats:pseudo
 SELECT id FROM person force index(`city`) WHERE address_info->>"$.city" = 'Beijing';
 id
 desc format = 'brief' SELECT id FROM person force index(`city`) WHERE address_info->>"$.city" = 'Beijing';
 id	estRows	task	access object	operator info
-Projection	10.00	root		explain_generate_column_substitute.person.id
-└─IndexReader	10.00	root		index:IndexRangeScan
+IndexReader	10.00	root		index:Projection
+└─Projection	10.00	cop[tikv]		explain_generate_column_substitute.person.id
   └─IndexRangeScan	10.00	cop[tikv]	table:person, index:city(city)	range:["Beijing","Beijing"], keep order:false, stats:pseudo
 drop table person;
 create table t(a char(5), b char(6) as (concat(a, a)), index bx(b));
@@ -664,8 +664,8 @@ id
 1
 desc format = 'brief' SELECT id FROM person ignore index(`city`) WHERE address_info->>"$.city" = 'Beijing';
 id	estRows	task	access object	operator info
-Projection	8000.00	root		explain_generate_column_substitute.person.id
-└─TableReader	8000.00	root		data:Selection
+TableReader	8000.00	root		data:Projection
+└─Projection	8000.00	cop[tikv]		explain_generate_column_substitute.person.id
   └─Selection	8000.00	cop[tikv]		eq(json_unquote(cast(json_extract(explain_generate_column_substitute.person.address_info, "$.city"), var_string(16777216))), "Beijing")
     └─TableFullScan	10000.00	cop[tikv]	table:person	keep order:false, stats:pseudo
 SELECT id FROM person force index(`city`) WHERE address_info->>"$.city" = 'Beijing';
@@ -673,8 +673,8 @@ id
 1
 desc format = 'brief' SELECT id FROM person force index(`city`) WHERE address_info->>"$.city" = 'Beijing';
 id	estRows	task	access object	operator info
-Projection	10.00	root		explain_generate_column_substitute.person.id
-└─IndexReader	10.00	root		index:IndexRangeScan
+IndexReader	10.00	root		index:Projection
+└─Projection	10.00	cop[tikv]		explain_generate_column_substitute.person.id
   └─IndexRangeScan	10.00	cop[tikv]	table:person, index:city(city)	range:["Beijing","Beijing"], keep order:false, stats:pseudo
 drop table person;
 create table t(a char(5), b char(10) as (concat(a, a)), index bx(b));

@@ -82,9 +82,9 @@
               }
             ],
             "Plan": [
-              "Projection_4 10.00 root  test.t1.a",
-              "└─IndexReader_6 10.00 root  index:IndexRangeScan_5",
-              "  └─IndexRangeScan_5 10.00 cop[tikv] table:t1, index:b(b, a) range:[3,3], keep order:false, stats:pseudo"
+              "IndexReader_9 10.00 root  index:Projection_5",
+              "└─Projection_5 10.00 cop[tikv]  test.t1.a",
+              "  └─IndexRangeScan_8 10.00 cop[tikv] table:t1, index:b(b, a) range:[3,3], keep order:false, stats:pseudo"
             ],
             "LastPlanUseCache": "0",
             "Result": [
@@ -100,9 +100,9 @@
               }
             ],
             "Plan": [
-              "Projection_4 10.00 root  test.t1.a",
-              "└─IndexReader_6 10.00 root  index:IndexRangeScan_5",
-              "  └─IndexRangeScan_5 10.00 cop[tikv] table:t1, index:b(b, a) range:[2,2], keep order:false, stats:pseudo"
+              "IndexReader_9 10.00 root  index:Projection_5",
+              "└─Projection_5 10.00 cop[tikv]  test.t1.a",
+              "  └─IndexRangeScan_8 10.00 cop[tikv] table:t1, index:b(b, a) range:[2,2], keep order:false, stats:pseudo"
             ],
             "LastPlanUseCache": "1",
             "Result": [
@@ -118,9 +118,9 @@
               }
             ],
             "Plan": [
-              "Projection_4 10.00 root  test.t1.a",
-              "└─IndexReader_6 10.00 root  index:IndexRangeScan_5",
-              "  └─IndexRangeScan_5 10.00 cop[tikv] table:t1, index:b(b, a) range:[-200,-200], keep order:false, stats:pseudo"
+              "IndexReader_9 10.00 root  index:Projection_5",
+              "└─Projection_5 10.00 cop[tikv]  test.t1.a",
+              "  └─IndexRangeScan_8 10.00 cop[tikv] table:t1, index:b(b, a) range:[-200,-200], keep order:false, stats:pseudo"
             ],
             "LastPlanUseCache": "1",
             "Result": null
@@ -134,9 +134,9 @@
               }
             ],
             "Plan": [
-              "Projection_4 10.00 root  test.t1.a",
-              "└─IndexReader_6 10.00 root  index:IndexRangeScan_5",
-              "  └─IndexRangeScan_5 10.00 cop[tikv] table:t1, index:b(b, a) range:[0,0], keep order:false, stats:pseudo"
+              "IndexReader_9 10.00 root  index:Projection_5",
+              "└─Projection_5 10.00 cop[tikv]  test.t1.a",
+              "  └─IndexRangeScan_8 10.00 cop[tikv] table:t1, index:b(b, a) range:[0,0], keep order:false, stats:pseudo"
             ],
             "LastPlanUseCache": "0",
             "Result": null

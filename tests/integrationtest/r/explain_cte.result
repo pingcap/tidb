@@ -467,13 +467,13 @@ id	estRows	task	access object	operator info
 Update_17	N/A	root		N/A
 └─HashJoin_22	15.61	root		inner join, equal:[eq(explain_cte.t1.a, explain_cte.t2.c)]
   ├─HashJoin_30(Build)	12.49	root		inner join, equal:[eq(explain_cte.t3.e, explain_cte.t2.d)]
-  │ ├─Projection_32(Build)	9.99	root		explain_cte.t3.e
-  │ │ └─TableReader_35	9.99	root		data:Selection_34
-  │ │   └─Selection_34	9.99	cop[tikv]		eq(explain_cte.t3.f, 1234), not(isnull(explain_cte.t3.e))
-  │ │     └─TableFullScan_33	10000.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
-  │ └─TableReader_38(Probe)	9980.01	root		data:Selection_37
-  │   └─Selection_37	9980.01	cop[tikv]		not(isnull(explain_cte.t2.c)), not(isnull(explain_cte.t2.d))
-  │     └─TableFullScan_36	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+  │ ├─TableReader_39(Build)	9.99	root		data:Projection_33
+  │ │ └─Projection_33	9.99	cop[tikv]		explain_cte.t3.e
+  │ │   └─Selection_38	9.99	cop[tikv]		eq(explain_cte.t3.f, 1234), not(isnull(explain_cte.t3.e))
+  │ │     └─TableFullScan_37	10000.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
+  │ └─TableReader_42(Probe)	9980.01	root		data:Selection_41
+  │   └─Selection_41	9980.01	cop[tikv]		not(isnull(explain_cte.t2.c)), not(isnull(explain_cte.t2.d))
+  │     └─TableFullScan_40	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
   └─TableReader_26(Probe)	9990.00	root		data:Selection_25
     └─Selection_25	9990.00	cop[tikv]		not(isnull(explain_cte.t1.a))
       └─TableFullScan_24	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo

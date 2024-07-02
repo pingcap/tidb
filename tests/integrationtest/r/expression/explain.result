@@ -331,26 +331,26 @@ drop table if exists reg;
 create table reg(a varchar(20) null,b varchar(20) null,rep varchar(20) null) charset=utf8mb4 collate=utf8mb4_general_ci;
 explain format = 'brief' select a from reg where regexp_like(a, b);
 id	estRows	task	access object	operator info
-Projection	8000.00	root		expression__explain.reg.a
-└─TableReader	8000.00	root		data:Selection
+TableReader	8000.00	root		data:Projection
+└─Projection	8000.00	cop[tikv]		expression__explain.reg.a
   └─Selection	8000.00	cop[tikv]		regexp_like(expression__explain.reg.a, expression__explain.reg.b)
     └─TableFullScan	10000.00	cop[tikv]	table:reg	keep order:false, stats:pseudo
 explain format = 'brief' select a from reg where regexp_instr(a, b);
 id	estRows	task	access object	operator info
-Projection	8000.00	root		expression__explain.reg.a
-└─TableReader	8000.00	root		data:Selection
+TableReader	8000.00	root		data:Projection
+└─Projection	8000.00	cop[tikv]		expression__explain.reg.a
   └─Selection	8000.00	cop[tikv]		regexp_instr(expression__explain.reg.a, expression__explain.reg.b)
     └─TableFullScan	10000.00	cop[tikv]	table:reg	keep order:false, stats:pseudo
 explain format = 'brief' select a from reg where regexp_substr(a, b);
 id	estRows	task	access object	operator info
-Projection	8000.00	root		expression__explain.reg.a
-└─TableReader	8000.00	root		data:Selection
+TableReader	8000.00	root		data:Projection
+└─Projection	8000.00	cop[tikv]		expression__explain.reg.a
   └─Selection	8000.00	cop[tikv]		regexp_substr(expression__explain.reg.a, expression__explain.reg.b)
     └─TableFullScan	10000.00	cop[tikv]	table:reg	keep order:false, stats:pseudo
 explain format = 'brief' select a from reg where regexp_replace(a, b, rep);
 id	estRows	task	access object	operator info
-Projection	8000.00	root		expression__explain.reg.a
-└─TableReader	8000.00	root		data:Selection
+TableReader	8000.00	root		data:Projection
+└─Projection	8000.00	cop[tikv]		expression__explain.reg.a
   └─Selection	8000.00	cop[tikv]		regexp_replace(expression__explain.reg.a, expression__explain.reg.b, expression__explain.reg.rep)
     └─TableFullScan	10000.00	cop[tikv]	table:reg	keep order:false, stats:pseudo
 drop table if exists regbin;
