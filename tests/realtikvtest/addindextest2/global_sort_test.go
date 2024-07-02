@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/stretchr/testify/require"
@@ -85,7 +86,7 @@ func TestGlobalSortBasic(t *testing.T) {
 
 	store, dom := realtikvtest.CreateMockStoreAndDomainAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/WaitCleanUpFinished", "return()"))
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/disttask/framework/scheduler/WaitCleanUpFinished", "return()")
 	tk.MustExec("drop database if exists addindexlit;")
 	tk.MustExec("create database addindexlit;")
 	tk.MustExec("use addindexlit;")
@@ -124,7 +125,7 @@ func TestGlobalSortBasic(t *testing.T) {
 	<-scheduler.WaitCleanUpFinished
 	checkFileCleaned(t, jobID, cloudStorageURI)
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/forceMergeSort", "return()"))
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/forceMergeSort", "return()")
 	tk.MustExec("alter table t add index idx1(a);")
 	tk.MustExec("admin check table t;")
 	<-scheduler.WaitCleanUpFinished
@@ -136,12 +137,11 @@ func TestGlobalSortBasic(t *testing.T) {
 	checkFileCleaned(t, jobID, cloudStorageURI)
 
 	dom.DDL().SetHook(origin)
-
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/WaitCleanUpFinished"))
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/forceMergeSort"))
 }
 
 func TestGlobalSortMultiSchemaChange(t *testing.T) {
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockRegionBatch", `return(1)`)
+
 	gcsHost, gcsPort, cloudStorageURI := genStorageURI(t)
 	opt := fakestorage.Options{
 		Scheme:     "http",
@@ -172,6 +172,9 @@ func TestGlobalSortMultiSchemaChange(t *testing.T) {
 	}
 	tk.MustExec("create table t_dup (a int, b bigint);")
 	tk.MustExec(fmt.Sprintf("insert into t_dup values (%d, %d), (%d, %d);", 1, 2, 2, 2))
+	tk.MustExec("create table t_dup_2 (a int primary key, b bigint);")
+	tk.MustQuery("split table t_dup_2 between (0) and (80000) regions 7;").Check(testkit.Rows("6 1"))
+	tk.MustExec(fmt.Sprintf("insert into t_dup_2 values (%d, %d), (%d, %d);", 1, 2, 79999, 2))
 
 	tableNames := []string{"t_rowid", "t_int_handle", "t_common_handle", "t_partition"}
 
@@ -201,6 +204,10 @@ func TestGlobalSortMultiSchemaChange(t *testing.T) {
 			tk.MustContainErrMsg(
 				"alter table t_dup add index idx(a), add unique index idx2(b);",
 				"Duplicate entry '2' for key 't_dup.idx2'",
+			)
+			tk.MustContainErrMsg(
+				"alter table t_dup_2 add unique index idx2(b);",
+				"Duplicate entry '2' for key 't_dup_2.idx2'",
 			)
 		})
 	}

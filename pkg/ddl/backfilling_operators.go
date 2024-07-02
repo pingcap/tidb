@@ -941,7 +941,10 @@ func (s *indexWriteResultSink) Close() error {
 	err := s.errGroup.Wait()
 	// for local pipeline
 	if bc := s.backendCtx; bc != nil {
-		bc.UnregisterEngines()
+		err2 := bc.FinishAndUnregisterEngines()
+		if err == nil {
+			err = err2
+		}
 	}
 	return err
 }
