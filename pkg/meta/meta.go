@@ -1406,6 +1406,35 @@ func (m *Meta) GetHistoryDDLCount() (uint64, error) {
 // LastJobIterator is the iterator for gets latest history.
 type LastJobIterator interface {
 	GetLastJobs(num int, jobs []*model.Job) ([]*model.Job, error)
+	GetLastJobsWithFilter(num int, jobs []*model.Job, ddlTypes []model.ActionType) ([]*model.Job, error)
+}
+
+// GetLastJobsWithFilter gets last several jobs with filter.
+func (i *HLastJobIterator) GetLastJobsWithFilter(num int, jobs []*model.Job, ddlTypes []model.ActionType) ([]*model.Job, error) {
+	jobs = make([]*model.Job, 0, num)
+	iter := i.iter
+
+	for iter.Valid() && (len(ddlTypes) > 0 || len(jobs) < num) {
+		job := &model.Job{}
+		err := job.Decode(iter.Value())
+		if err != nil {
+			return nil, err
+		}
+
+		shouldAppend := len(ddlTypes) == 0 || job.Type.In(ddlTypes)
+		if shouldAppend {
+			jobs = append(jobs, job)
+		}
+
+		err = iter.Next()
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if len(jobs) == num {
+			break
+		}
+	}
+	return jobs, nil
 }
 
 // GetLastHistoryDDLJobsIterator gets latest N history ddl jobs iterator.

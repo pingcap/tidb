@@ -487,6 +487,15 @@ type JobMeta struct {
 	Priority int `json:"priority"`
 }
 
+func (action ActionType) In(ddlActionList []ActionType) bool {
+	for _, actionItem := range ddlActionList {
+		if actionItem == action {
+			return true
+		}
+	}
+	return false
+}
+
 // Job is for a DDL operation.
 type Job struct {
 	ID   int64      `json:"id"`

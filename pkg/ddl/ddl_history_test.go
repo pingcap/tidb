@@ -87,7 +87,8 @@ func TestDDLHistoryBasic(t *testing.T) {
 
 	err = kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
 		m := meta.NewMeta(txn)
-		jobs, err := ddl.ScanHistoryDDLJobs(m, 2, 2)
+		var ddlTypes []model.ActionType
+		jobs, err := ddl.ScanHistoryDDLJobs(m, 2, 2, ddlTypes)
 		require.NoError(t, err)
 		require.Equal(t, 2, len(jobs))
 		require.Equal(t, int64(2), jobs[0].ID)
