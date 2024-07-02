@@ -1186,21 +1186,21 @@ func getMaxReplica(ctx context.Context, mgr *conn.Mgr) (int, error) {
 	return int(val.(float64)), nil
 }
 
-func calNecessary(files []*backuppb.File, maxReplica int, storeCnt int) uint64 {
-	var totalSize uint64
+func calNecessary(files []*backuppb.File, maxReplica int, storeCnt int) int {
+	var totalSize int
 	for _, file := range files {
-		size := file.GetTotalBytes()
+		size := file.Size()
 		totalSize += size
 	}
-	return totalSize * uint64(maxReplica) / uint64(storeCnt)
+	return totalSize * maxReplica / storeCnt
 }
 
-func checkTiKVSpace(necessary uint64, store *http.StoreInfo) error {
+func checkTiKVSpace(necessary int, store *http.StoreInfo) error {
 	available, err := units.RAMInBytes(store.Status.Available)
 	if err != nil {
 		return errors.Errorf("store %d has invalid available space %s", store.Store.ID, store.Status.Available)
 	}
-	if uint64(available) < necessary {
+	if available < int64(necessary) {
 		return errors.Errorf("store %d has no enough space, available %s, necessary %s",
 			store.Store.ID, units.BytesSize(float64(available)), units.BytesSize(float64(necessary)))
 	}
@@ -1212,20 +1212,17 @@ func checkDiskSpace(ctx context.Context, mgr *conn.Mgr, files []*backuppb.File) 
 	if err != nil {
 		return errors.Trace(err)
 	}
-	stores, err := conn.GetAllTiKVStoresWithRetry(ctx, mgr.GetPDClient(), connutil.SkipTiFlash)
+	stores,err := mgr.GetPDHTTPClient().GetStores(ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	storeCnt := len(stores)
-	necessary := calNecessary(files, maxReplica, storeCnt)
+	necessary := calNecessary(files, maxReplica, stores.Count)
 
-	pdCli := mgr.GetPDHTTPClient()
-	for _, store := range stores {
-		info, err := pdCli.GetStore(ctx, store.GetId())
+	for _, store := range stores.Stores {
 		if err != nil {
 			return errors.Trace(err)
 		}
-		err = checkTiKVSpace(necessary, info)
+		err = checkTiKVSpace(necessary, &store)
 		if err != nil {
 			return errors.Trace(err)
 		}
