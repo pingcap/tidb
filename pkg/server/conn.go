@@ -2065,6 +2065,7 @@ func (cc *clientConn) handleStmt(
 		}
 		cc.ctx.GetSessionVars().SQLKiller.InWriteResultSet.Store(true)
 		defer cc.ctx.GetSessionVars().SQLKiller.InWriteResultSet.Store(false)
+		defer cc.ctx.GetSessionVars().SQLKiller.Reset()
 		if retryable, err := cc.writeResultSet(ctx, rs, false, status, 0); err != nil {
 			return retryable, err
 		}
