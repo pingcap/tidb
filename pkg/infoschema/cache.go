@@ -104,6 +104,7 @@ func (h *InfoCache) Reset(is InfoSchema, schemaTS uint64) func() {
 				*raw = infoschemaV2{}
 			}
 		}
+		logutil.BgLogger().Info("reset the old infoschema after v1 v2 switch, using the stale object will panic")
 	}
 }
 
