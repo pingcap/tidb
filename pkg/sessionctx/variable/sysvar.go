@@ -960,7 +960,6 @@ var defaultSysVars = []*SysVar{
 			AutoAnalyzePartitionBatchSize.Store(val)
 			return nil
 		}, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
-			// ```tidb_auto_analyze_partition_batch_size``` is deprecated and will be removed in the future.
 			vars.StmtCtx.AppendWarning(ErrWarnDeprecatedSyntaxNoReplacement.FastGenByArgs(TiDBAutoAnalyzePartitionBatchSize))
 			return normalizedValue, nil
 		},
