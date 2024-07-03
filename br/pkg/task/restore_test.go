@@ -419,13 +419,14 @@ func TestFilterDDLJobByRules(t *testing.T) {
 	}
 }
 
-func TestCalNecessary(t *testing.T) {
+func TestTikvUsage(t *testing.T) {
+	pb := uint64(1024 * 1024 * 1024 * 1024 * 1024)
 	files := []*backuppb.File{
-		{Name: "F1", Size_: 1 * 1024 * 1024 * 1024 * 1024 * 1024},
-		{Name: "F2", Size_: 2 * 1024 * 1024 * 1024 * 1024 * 1024},
-		{Name: "F3", Size_: 3 * 1024 * 1024 * 1024 * 1024 * 1024},
-		{Name: "F4", Size_: 4 * 1024 * 1024 * 1024 * 1024 * 1024},
-		{Name: "F5", Size_: 5 * 1024 * 1024 * 1024 * 1024 * 1024},
+		{Name: "F1", Size_: 1 * pb},
+		{Name: "F2", Size_: 2 * pb},
+		{Name: "F3", Size_: 3 * pb},
+		{Name: "F4", Size_: 4 * pb},
+		{Name: "F5", Size_: 5 * pb},
 	}
 	replica := uint64(3)
 	storeCnt := 6
@@ -434,7 +435,20 @@ func TestCalNecessary(t *testing.T) {
 		total += f.GetSize_()
 	}
 	ret := task.EstimateTikvUsage(files, replica, storeCnt)
-	require.Equal(t, ret, total*replica/uint64(storeCnt))
+	require.Equal(t, total*replica/uint64(storeCnt), ret)
+}
+
+func TestTiflashUsage(t *testing.T) {
+	pb := uint64(1024 * 1024 * 1024 * 1024 * 1024)
+	tables := []*metautil.Table{
+		{TiFlashReplicas: 0, Files: []*backuppb.File{{Size_: 1 * pb}}},
+		{TiFlashReplicas: 1, Files: []*backuppb.File{{Size_: 2 * pb}}},
+		{TiFlashReplicas: 2, Files: []*backuppb.File{{Size_: 3 * pb}}},
+	}
+
+	storeCnt := 3
+	ret := task.EstimateTiflashUsage(tables, storeCnt)
+	require.Equal(t, 8*pb/3, ret)
 }
 
 func TestCheckTikvSpace(t *testing.T) {
