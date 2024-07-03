@@ -77,9 +77,15 @@ type matchedRowInfo struct {
 	// probeRowIndex mean the probe side index of current matched row
 	probeRowIndex int
 	// buildRowStart mean the build row start of the current matched row
-	buildRowStart unsafe.Pointer
+	buildRowStart uintptr
 	// buildRowOffset mean the current offset of current BuildRow, used to construct column data from BuildRow
 	buildRowOffset int
+}
+
+func createMatchRowInfo(probeRowIndex int, buildRowStart unsafe.Pointer) *matchedRowInfo {
+	ret := &matchedRowInfo{probeRowIndex: probeRowIndex}
+	*(*unsafe.Pointer)(unsafe.Pointer(&ret.buildRowStart)) = buildRowStart
+	return ret
 }
 
 type posAndHashValue struct {
@@ -96,8 +102,8 @@ type baseJoinProbe struct {
 	selRows  []int
 	usedRows []int
 	// matchedRowsHeaders, serializedKeys is indexed by logical row index
-	matchedRowsHeaders []unsafe.Pointer // the start address of each matched rows
-	serializedKeys     [][]byte         // used for save serialized keys
+	matchedRowsHeaders []uintptr // the start address of each matched rows
+	serializedKeys     [][]byte  // used for save serialized keys
 	// filterVector and nullKeyVector is indexed by physical row index because the return vector of VectorizedFilter is based on physical row index
 	filterVector                  []bool              // if there is filter before probe, filterVector saves the filter result
 	nullKeyVector                 []bool              // nullKeyVector[i] = true if any of the key is null
@@ -164,7 +170,7 @@ func (j *baseJoinProbe) SetChunkForProbe(chk *chunk.Chunk) (err error) {
 	if cap(j.matchedRowsHeaders) >= logicalRows {
 		j.matchedRowsHeaders = j.matchedRowsHeaders[:logicalRows]
 	} else {
-		j.matchedRowsHeaders = make([]unsafe.Pointer, logicalRows)
+		j.matchedRowsHeaders = make([]uintptr, logicalRows)
 	}
 	for i := 0; i < j.ctx.PartitionNumber; i++ {
 		j.hashValues[i] = j.hashValues[i][:0]
@@ -213,7 +219,7 @@ func (j *baseJoinProbe) SetChunkForProbe(chk *chunk.Chunk) (err error) {
 	for logicalRowIndex, physicalRowIndex := range j.usedRows {
 		if (j.filterVector != nil && !j.filterVector[physicalRowIndex]) || (j.nullKeyVector != nil && j.nullKeyVector[physicalRowIndex]) {
 			// explicit set the matchedRowsHeaders[logicalRowIndex] to nil to indicate there is no matched rows
-			j.matchedRowsHeaders[logicalRowIndex] = nil
+			j.matchedRowsHeaders[logicalRowIndex] = 0
 			continue
 		}
 		hash.Reset()
@@ -337,14 +343,14 @@ func (j *baseJoinProbe) appendBuildRowToChunkInternal(chk *chunk.Chunk, usedCols
 		if ok {
 			currentColumn = chk.Column(indexInDstChk)
 			for index := range j.cachedBuildRows {
-				currentColumn.AppendNullBitmap(!meta.isColumnNull(j.cachedBuildRows[index].buildRowStart, columnIndex))
-				j.cachedBuildRows[index].buildRowOffset = chunk.AppendCellFromRawData(currentColumn, j.cachedBuildRows[index].buildRowStart, j.cachedBuildRows[index].buildRowOffset)
+				currentColumn.AppendNullBitmap(!meta.isColumnNull(*(*unsafe.Pointer)(unsafe.Pointer(&j.cachedBuildRows[index].buildRowStart)), columnIndex))
+				j.cachedBuildRows[index].buildRowOffset = chunk.AppendCellFromRawData(currentColumn, *(*unsafe.Pointer)(unsafe.Pointer(&j.cachedBuildRows[index].buildRowStart)), j.cachedBuildRows[index].buildRowOffset)
 			}
 		} else {
 			// not used so don't need to insert into chk, but still need to advance rowData
 			if meta.columnsSize[columnIndex] < 0 {
 				for index := range j.cachedBuildRows {
-					size := *(*uint64)(unsafe.Add(j.cachedBuildRows[index].buildRowStart, j.cachedBuildRows[index].buildRowOffset))
+					size := *(*uint64)(unsafe.Add(*(*unsafe.Pointer)(unsafe.Pointer(&j.cachedBuildRows[index].buildRowStart)), j.cachedBuildRows[index].buildRowOffset))
 					j.cachedBuildRows[index].buildRowOffset += sizeOfLengthField + int(size)
 				}
 			} else {
@@ -497,7 +503,7 @@ func NewJoinProbe(ctx *HashJoinCtxV2, workID uint, joinType core.JoinType, keyIn
 		}
 	}
 	base.cachedBuildRows = make([]*matchedRowInfo, 0, batchBuildRowSize)
-	base.matchedRowsHeaders = make([]unsafe.Pointer, 0, chunk.InitialCapacity)
+	base.matchedRowsHeaders = make([]uintptr, 0, chunk.InitialCapacity)
 	base.selRows = make([]int, 0, chunk.InitialCapacity)
 	for i := 0; i < chunk.InitialCapacity; i++ {
 		base.selRows = append(base.selRows, i)

@@ -882,7 +882,7 @@ func (p *LogicalJoin) buildIndexJoinInner2TableScan(
 			if i != 0 {
 				buffer.WriteString(" ")
 			}
-			buffer.WriteString(key.String())
+			buffer.WriteString(key.StringWithCtx(p.SCtx().GetExprCtx().GetEvalCtx()))
 		}
 		buffer.WriteString("]")
 		rangeInfo := buffer.String()
@@ -1012,13 +1012,14 @@ func (ijHelper *indexJoinBuildHelper) buildRangeDecidedByInformation(idxCols []*
 		}
 		fmt.Fprintf(buffer, "eq(%v, %v)", idxCols[idxOff], outerJoinKeys[keyOff])
 	}
+	ectx := ijHelper.join.SCtx().GetExprCtx().GetEvalCtx()
 	for _, access := range ijHelper.chosenAccess {
 		if !isFirst {
 			buffer.WriteString(" ")
 		} else {
 			isFirst = false
 		}
-		fmt.Fprintf(buffer, "%v", access)
+		fmt.Fprintf(buffer, "%v", access.StringWithCtx(ectx))
 	}
 	buffer.WriteString("]")
 	return buffer.String()
@@ -1799,7 +1800,8 @@ func (ijHelper *indexJoinBuildHelper) updateByTemplateRangeResult(tempRangeRes *
 		ijHelper.curIdxOff2KeyOff[i] = -1
 	}
 	newAccesses = accesses[:tempRangeRes.eqAndInCntInRange]
-	newRemained = ranger.AppendConditionsIfNotExist(remained, accesses[tempRangeRes.eqAndInCntInRange:])
+	newRemained = ranger.AppendConditionsIfNotExist(ijHelper.innerPlan.SCtx().GetExprCtx().GetEvalCtx(),
+		remained, accesses[tempRangeRes.eqAndInCntInRange:])
 	return
 }
 
@@ -1821,7 +1823,7 @@ func (ijHelper *indexJoinBuildHelper) analyzeLookUpFilters(path *util.AccessPath
 		return false, nil
 	}
 	accesses = append(accesses, notKeyEqAndIn...)
-	remained = ranger.AppendConditionsIfNotExist(remained, remainedEqAndIn)
+	remained = ranger.AppendConditionsIfNotExist(innerPlan.SCtx().GetExprCtx().GetEvalCtx(), remained, remainedEqAndIn)
 	lastColPos := matchedKeyCnt + len(notKeyEqAndIn)
 	// There should be some equal conditions. But we don't need that there must be some join key in accesses here.
 	// A more strict check is applied later.
@@ -2920,35 +2922,7 @@ func disableAggPushDownToCop(p base.LogicalPlan) {
 	}
 }
 
-// GetPartitionKeys gets partition keys for a logical window, it will assign column id for expressions.
-func (lw *LogicalWindow) GetPartitionKeys() []*property.MPPPartitionColumn {
-	partitionByCols := make([]*property.MPPPartitionColumn, 0, len(lw.GetPartitionByCols()))
-	for _, item := range lw.PartitionBy {
-		partitionByCols = append(partitionByCols, &property.MPPPartitionColumn{
-			Col:       item.Col,
-			CollateID: property.GetCollateIDByNameForPartition(item.Col.GetStaticType().GetCollate()),
-		})
-	}
-
-	return partitionByCols
-}
-
-// Duration vs Datetime is invalid comparison as TiFlash can't handle it so far.
-func (lw *LogicalWindow) checkComparisonForTiFlash(frameBound *FrameBound) bool {
-	if len(frameBound.CompareCols) > 0 {
-		orderByEvalType := lw.OrderBy[0].Col.GetStaticType().EvalType()
-		calFuncEvalType := frameBound.CalcFuncs[0].GetType(lw.SCtx().GetExprCtx().GetEvalCtx()).EvalType()
-
-		if orderByEvalType == types.ETDuration && (calFuncEvalType == types.ETDatetime || calFuncEvalType == types.ETTimestamp) {
-			return false
-		} else if calFuncEvalType == types.ETDuration && (orderByEvalType == types.ETDatetime || orderByEvalType == types.ETTimestamp) {
-			return false
-		}
-	}
-	return true
-}
-
-func (lw *LogicalWindow) tryToGetMppWindows(prop *property.PhysicalProperty) []base.PhysicalPlan {
+func tryToGetMppWindows(lw *LogicalWindow, prop *property.PhysicalProperty) []base.PhysicalPlan {
 	if !prop.IsSortItemAllForPartition() {
 		return nil
 	}
@@ -2989,7 +2963,7 @@ func (lw *LogicalWindow) tryToGetMppWindows(prop *property.PhysicalProperty) []b
 				return nil
 			}
 
-			if !lw.checkComparisonForTiFlash(lw.Frame.Start) || !lw.checkComparisonForTiFlash(lw.Frame.End) {
+			if !lw.CheckComparisonForTiFlash(lw.Frame.Start) || !lw.CheckComparisonForTiFlash(lw.Frame.End) {
 				lw.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced(
 					"MPP mode may be blocked because window function frame can't be pushed down, because Duration vs Datetime is invalid comparison as TiFlash can't handle it so far.")
 				return nil
@@ -3045,13 +3019,12 @@ func (lw *LogicalWindow) tryToGetMppWindows(prop *property.PhysicalProperty) []b
 	return []base.PhysicalPlan{window}
 }
 
-// ExhaustPhysicalPlans implements LogicalPlan interface.
-func (lw *LogicalWindow) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
+func exhaustLogicalWindowPhysicalPlans(lw *LogicalWindow, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
 	windows := make([]base.PhysicalPlan, 0, 2)
 
 	canPushToTiFlash := lw.CanPushToCop(kv.TiFlash)
 	if lw.SCtx().GetSessionVars().IsMPPAllowed() && canPushToTiFlash {
-		mppWindows := lw.tryToGetMppWindows(prop)
+		mppWindows := tryToGetMppWindows(lw, prop)
 		windows = append(windows, mppWindows...)
 	}
 
@@ -3202,6 +3175,19 @@ func getEnforcedStreamAggs(la *LogicalAggregation, prop *property.PhysicalProper
 		enforcedAggs = append(enforcedAggs, agg)
 	}
 	return enforcedAggs
+}
+
+func (la *LogicalAggregation) distinctArgsMeetsProperty() bool {
+	for _, aggFunc := range la.AggFuncs {
+		if aggFunc.HasDistinct {
+			for _, distinctArg := range aggFunc.Args {
+				if !expression.Contains(la.SCtx().GetExprCtx().GetEvalCtx(), la.GroupByItems, distinctArg) {
+					return false
+				}
+			}
+		}
+	}
+	return true
 }
 
 func getStreamAggs(lp base.LogicalPlan, prop *property.PhysicalProperty) []base.PhysicalPlan {
@@ -3669,8 +3655,7 @@ func getNominalSortSimple(ls *LogicalSort, reqProp *property.PhysicalProperty) *
 	return ps
 }
 
-// ExhaustPhysicalPlans implements LogicalPlan interface.
-func (p *LogicalMaxOneRow) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
+func exhaustPhysicalPlans4LogicalMaxOneRow(p *LogicalMaxOneRow, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
 	if !prop.IsSortItemEmpty() || prop.IsFlashProp() {
 		p.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because operator `MaxOneRow` is not supported now.")
 		return nil, true, nil

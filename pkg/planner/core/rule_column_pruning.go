@@ -350,51 +350,6 @@ func (la *LogicalApply) PruneColumns(parentUsedCols []*expression.Column, opt *o
 	return la, nil
 }
 
-// PruneColumns implements base.LogicalPlan interface.
-func (p *LogicalWindow) PruneColumns(parentUsedCols []*expression.Column, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, error) {
-	windowColumns := p.GetWindowResultColumns()
-	cnt := 0
-	for _, col := range parentUsedCols {
-		used := false
-		for _, windowColumn := range windowColumns {
-			if windowColumn.EqualColumn(col) {
-				used = true
-				break
-			}
-		}
-		if !used {
-			parentUsedCols[cnt] = col
-			cnt++
-		}
-	}
-	parentUsedCols = parentUsedCols[:cnt]
-	parentUsedCols = p.extractUsedCols(parentUsedCols)
-	var err error
-	p.Children()[0], err = p.Children()[0].PruneColumns(parentUsedCols, opt)
-	if err != nil {
-		return nil, err
-	}
-
-	p.SetSchema(p.Children()[0].Schema().Clone())
-	p.Schema().Append(windowColumns...)
-	return p, nil
-}
-
-func (p *LogicalWindow) extractUsedCols(parentUsedCols []*expression.Column) []*expression.Column {
-	for _, desc := range p.WindowFuncDescs {
-		for _, arg := range desc.Args {
-			parentUsedCols = append(parentUsedCols, expression.ExtractColumns(arg)...)
-		}
-	}
-	for _, by := range p.PartitionBy {
-		parentUsedCols = append(parentUsedCols, by.Col)
-	}
-	for _, by := range p.OrderBy {
-		parentUsedCols = append(parentUsedCols, by.Col)
-	}
-	return parentUsedCols
-}
-
 func (*columnPruner) name() string {
 	return "column_prune"
 }
