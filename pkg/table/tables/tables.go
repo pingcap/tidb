@@ -1030,6 +1030,7 @@ func (t *TableCommon) AddRecord(sctx table.MutateContext, r []types.Datum, opts 
 		}
 		if err == nil {
 			handleStr := getDuplicateErrorHandleString(t.Meta(), recordID, r)
+			lance test
 			return recordID, kv.ErrKeyExists.FastGenByArgs(handleStr, t.Meta().Name.String()+".PRIMARY")
 		} else if !kv.ErrNotExist.Equal(err) {
 			return recordID, err
@@ -1169,6 +1170,7 @@ func (t *TableCommon) addIndices(sctx table.MutateContext, recordID kv.Handle, r
 			if err != nil {
 				return nil, err
 			}
+			lance test
 			dupErr = kv.ErrKeyExists.FastGenByArgs(entryKey, fmt.Sprintf("%s.%s", v.TableMeta().Name.String(), v.Meta().Name.String()))
 		}
 		rsData := TryGetHandleRestoredDataWrapper(t.meta, r, nil, v.Meta())
@@ -1566,6 +1568,7 @@ func (t *TableCommon) buildIndexForRow(ctx table.MutateContext, h kv.Handle, val
 				return err
 			}
 
+			lance test
 			return kv.ErrKeyExists.FastGenByArgs(entryKey, fmt.Sprintf("%s.%s", idx.TableMeta().Name.String(), idx.Meta().Name.String()))
 		}
 		return err
