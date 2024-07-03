@@ -913,14 +913,6 @@ func (p *LogicalApply) ExplainInfo() string {
 }
 
 // ExplainInfo implements Plan interface.
-func (p *LogicalTableDual) ExplainInfo() string {
-	var str strings.Builder
-	str.WriteString("rowcount:")
-	str.WriteString(strconv.Itoa(p.RowCount))
-	return str.String()
-}
-
-// ExplainInfo implements Plan interface.
 func (ds *DataSource) ExplainInfo() string {
 	buffer := bytes.NewBufferString("")
 	tblName := ds.TableInfo.Name.O
@@ -1017,24 +1009,6 @@ func explainNormalizedByItems(buffer *bytes.Buffer, byItems []*util.ByItems) *by
 }
 
 // ExplainInfo implements Plan interface.
-func (p *LogicalSort) ExplainInfo() string {
-	buffer := bytes.NewBufferString("")
-	return explainByItems(p.SCtx().GetExprCtx().GetEvalCtx(), buffer, p.ByItems).String()
-}
-
-// ExplainInfo implements Plan interface.
-func (p *LogicalLimit) ExplainInfo() string {
-	buffer := bytes.NewBufferString("")
-	if len(p.GetPartitionBy()) > 0 {
-		buffer = explainPartitionBy(buffer, p.GetPartitionBy(), false)
-		fmt.Fprintf(buffer, ", offset:%v, count:%v", p.Offset, p.Count)
-	} else {
-		fmt.Fprintf(buffer, "offset:%v, count:%v", p.Offset, p.Count)
-	}
-	return buffer.String()
-}
-
-// ExplainInfo implements Plan interface.
 func (p *LogicalTableScan) ExplainInfo() string {
 	buffer := bytes.NewBufferString(p.Source.ExplainInfo())
 	if p.Source.HandleCols != nil {
@@ -1065,15 +1039,6 @@ func (p *LogicalIndexScan) ExplainInfo() string {
 	}
 	if len(p.AccessConds) > 0 {
 		fmt.Fprintf(buffer, ", cond:%v", p.AccessConds)
-	}
-	return buffer.String()
-}
-
-// ExplainInfo implements Plan interface.
-func (p *TiKVSingleGather) ExplainInfo() string {
-	buffer := bytes.NewBufferString(p.Source.ExplainInfo())
-	if p.IsIndexGather {
-		buffer.WriteString(", index:" + p.Index.Name.String())
 	}
 	return buffer.String()
 }

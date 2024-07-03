@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/kvcache"
 )
 
@@ -47,6 +48,12 @@ type PlanCacheKeyTestIssue46760 struct{}
 
 // PlanCacheKeyTestIssue47133 is only for test.
 type PlanCacheKeyTestIssue47133 struct{}
+
+// PlanCacheKeyTestBeforeAdjust is only for test.
+type PlanCacheKeyTestBeforeAdjust struct{}
+
+// PlanCacheKeyTestAfterAdjust is only for test.
+type PlanCacheKeyTestAfterAdjust struct{}
 
 // SetParameterValuesIntoSCtx sets these parameters into session context.
 func SetParameterValuesIntoSCtx(sctx base.PlanContext, isNonPrep bool, markers []ast.ParamMarkerExpr, params []expression.Expression) error {
@@ -164,6 +171,14 @@ func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isNonPrep
 		vars.LastUpdateTime4PC = expiredTimeStamp4PC
 	}
 
+	// step 6: initialize the tableInfo2UnionScan, which indicates which tables are dirty.
+	for _, tbl := range stmt.tbls {
+		tblInfo := tbl.Meta()
+		if tableHasDirtyContent(sctx.GetPlanCtx(), tblInfo) {
+			sctx.GetSessionVars().StmtCtx.TblInfo2UnionScan[tblInfo] = true
+		}
+	}
+
 	return nil
 }
 
@@ -217,7 +232,9 @@ func GetPlanFromPlanCache(ctx context.Context, sctx sessionctx.Context,
 			latestSchemaVersion = domain.GetDomain(sctx).InfoSchema().SchemaMetaVersion()
 		}
 		if cacheKey, err = NewPlanCacheKey(sctx.GetSessionVars(), stmt.StmtText,
-			stmt.StmtDB, stmt.SchemaVersion, latestSchemaVersion, bindSQL, expression.ExprPushDownBlackListReloadTimeStamp.Load(), stmt.RelateVersion); err != nil {
+			stmt.StmtDB, stmt.SchemaVersion, latestSchemaVersion, bindSQL,
+			expression.ExprPushDownBlackListReloadTimeStamp.Load(), stmt.RelateVersion,
+			stmtCtx.TblInfo2UnionScan); err != nil {
 			return nil, nil, err
 		}
 	}
@@ -239,7 +256,13 @@ func GetPlanFromPlanCache(ctx context.Context, sctx sessionctx.Context,
 			cacheVal, hit = sctx.GetSessionPlanCache().Get(cacheKey, matchOpts)
 		}
 		if hit {
-			if plan, names, ok, err := adjustCachedPlan(sctx, cacheVal.(*PlanCacheValue), isNonPrepared, isPointPlan, cacheKey, bindSQL, is, stmt); err != nil || ok {
+			if intest.InTest && ctx.Value(PlanCacheKeyTestBeforeAdjust{}) != nil {
+				ctx.Value(PlanCacheKeyTestBeforeAdjust{}).(func(cachedVal *PlanCacheValue))(cacheVal.(*PlanCacheValue))
+			}
+			if plan, names, ok, err := adjustCachedPlan(sctx, cacheVal.(*PlanCacheValue), isNonPrepared, isPointPlan, bindSQL, is, stmt); err != nil || ok {
+				if intest.InTest && ctx.Value(PlanCacheKeyTestAfterAdjust{}) != nil {
+					ctx.Value(PlanCacheKeyTestAfterAdjust{}).(func(cachedVal *PlanCacheValue))(cacheVal.(*PlanCacheValue))
+				}
 				return plan, names, err
 			}
 		}
@@ -252,21 +275,13 @@ func GetPlanFromPlanCache(ctx context.Context, sctx sessionctx.Context,
 }
 
 func adjustCachedPlan(sctx sessionctx.Context, cachedVal *PlanCacheValue, isNonPrepared, isPointPlan bool,
-	cacheKey string, bindSQL string, is infoschema.InfoSchema, stmt *PlanCacheStmt) (base.Plan,
+	bindSQL string, is infoschema.InfoSchema, stmt *PlanCacheStmt) (base.Plan,
 	[]*types.FieldName, bool, error) {
 	sessVars := sctx.GetSessionVars()
 	stmtCtx := sessVars.StmtCtx
 	if !isPointPlan { // keep the prior behavior
 		if err := checkPreparedPriv(sctx, stmt, is); err != nil {
 			return nil, nil, false, err
-		}
-	}
-	for tblInfo, unionScan := range cachedVal.TblInfo2UnionScan {
-		if !unionScan && tableHasDirtyContent(sctx.GetPlanCtx(), tblInfo) {
-			// TODO we can inject UnionScan into cached plan to avoid invalidating it, though
-			// rebuilding the filters in UnionScan is pretty trivial.
-			sctx.GetSessionPlanCache().Delete(cacheKey)
-			return nil, nil, false, nil
 		}
 	}
 	if !RebuildPlan4CachedPlan(cachedVal.Plan) {
@@ -318,12 +333,13 @@ func generateNewPlan(ctx context.Context, sctx sessionctx.Context, isNonPrepared
 		if _, isolationReadContainTiFlash := sessVars.IsolationReadEngines[kv.TiFlash]; isolationReadContainTiFlash && !IsReadOnly(stmtAst.Stmt, sessVars) {
 			delete(sessVars.IsolationReadEngines, kv.TiFlash)
 			if cacheKey, err = NewPlanCacheKey(sessVars, stmt.StmtText, stmt.StmtDB,
-				stmt.SchemaVersion, latestSchemaVersion, bindSQL, expression.ExprPushDownBlackListReloadTimeStamp.Load(), stmt.RelateVersion); err != nil {
+				stmt.SchemaVersion, latestSchemaVersion, bindSQL, expression.ExprPushDownBlackListReloadTimeStamp.Load(),
+				stmt.RelateVersion, stmtCtx.TblInfo2UnionScan); err != nil {
 				return nil, nil, err
 			}
 			sessVars.IsolationReadEngines[kv.TiFlash] = struct{}{}
 		}
-		cached := NewPlanCacheValue(p, names, stmtCtx.TblInfo2UnionScan, matchOpts, &stmtCtx.StmtHints)
+		cached := NewPlanCacheValue(p, names, matchOpts, &stmtCtx.StmtHints)
 		stmt.NormalizedPlan, stmt.PlanDigest = NormalizePlan(p)
 		stmtCtx.SetPlan(p)
 		stmtCtx.SetPlanDigest(stmt.NormalizedPlan, stmt.PlanDigest)

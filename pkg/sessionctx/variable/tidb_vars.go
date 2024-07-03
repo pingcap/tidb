@@ -1368,7 +1368,7 @@ const (
 	DefTiDBGCMaxWaitTime                           = 24 * 60 * 60
 	DefMaxAllowedPacket                     uint64 = 67108864
 	DefTiDBEnableBatchDML                          = false
-	DefTiDBMemQuotaQuery                           = 1073741824 // 1GB
+	DefTiDBMemQuotaQuery                           = memory.DefMemQuotaQuery // 1GB
 	DefTiDBStatsCacheMemQuota                      = 0
 	MaxTiDBStatsCacheMemQuota                      = 1024 * 1024 * 1024 * 1024 // 1TB
 	DefTiDBQueryLogMaxLen                          = 4096
@@ -1647,6 +1647,8 @@ var (
 	ValidateCloudStorageURI func(ctx context.Context, uri string) error
 	// SetLowResolutionTSOUpdateInterval is the func registered by domain to set slow resolution tso update interval.
 	SetLowResolutionTSOUpdateInterval func(interval time.Duration) error = nil
+	// ChangeSchemaCacheSize is called when tidb_schema_cache_size is changed.
+	ChangeSchemaCacheSize func(size uint64)
 )
 
 // Hooks functions for Cluster Resource Control.
