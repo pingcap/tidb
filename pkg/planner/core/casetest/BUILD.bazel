@@ -12,11 +12,7 @@ go_test(
     ],
     data = glob(["testdata/**"]),
     flaky = True,
-<<<<<<< HEAD
     shard_count = 23,
-=======
-    shard_count = 25,
->>>>>>> d2d12574a35 (planner: fix privilege for the view in the CTE and  wrong error handle (#53556))
     deps = [
         "//pkg/domain",
         "//pkg/errno",
