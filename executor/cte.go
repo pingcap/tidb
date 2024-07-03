@@ -19,6 +19,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+<<<<<<< HEAD:executor/cte.go
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/chunk"
@@ -26,6 +27,23 @@ import (
 	"github.com/pingcap/tidb/util/cteutil"
 	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/memory"
+=======
+	"github.com/pingcap/tidb/pkg/executor/internal/exec"
+	"github.com/pingcap/tidb/pkg/executor/join"
+	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/pingcap/tidb/pkg/util/cteutil"
+	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
+	"github.com/pingcap/tidb/pkg/util/disk"
+	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/memory"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
+>>>>>>> 2b6595d54d4 (executor: fix cte mem tracker failpoint condition (#54400)):pkg/executor/cte.go
 )
 
 var _ Executor = &CTEExec{}
@@ -387,6 +405,23 @@ func (p *cteProducer) computeRecursivePart(ctx context.Context) (err error) {
 			return
 		}
 		if chk.NumRows() == 0 {
+<<<<<<< HEAD:executor/cte.go
+=======
+			if iterNum%1000 == 0 {
+				// To avoid too many logs.
+				p.logTbls(ctx, err, iterNum, zapcore.DebugLevel)
+			}
+			iterNum++
+			failpoint.Inject("assertIterTableSpillToDisk", func(maxIter failpoint.Value) {
+				if iterNum > 0 && iterNum < uint64(maxIter.(int)) && err == nil {
+					if p.iterInTbl.GetDiskBytes() == 0 || p.iterOutTbl.GetDiskBytes() == 0 || p.resTbl.GetDiskBytes() == 0 {
+						p.logTbls(ctx, err, iterNum, zapcore.InfoLevel)
+						panic("assert row container spill disk failed")
+					}
+				}
+			})
+
+>>>>>>> 2b6595d54d4 (executor: fix cte mem tracker failpoint condition (#54400)):pkg/executor/cte.go
 			if err = p.setupTblsForNewIteration(); err != nil {
 				return
 			}
@@ -662,3 +697,31 @@ func (p *cteProducer) checkHasDup(probeKey uint64,
 	}
 	return false, nil
 }
+<<<<<<< HEAD:executor/cte.go
+=======
+
+func getCorColHashCode(corCol *expression.CorrelatedColumn) (res []byte) {
+	return codec.HashCode(res, *corCol.Data)
+}
+
+// Return true if cor col has changed.
+func (p *cteProducer) checkAndUpdateCorColHashCode() bool {
+	var changed bool
+	for i, corCol := range p.corCols {
+		newHashCode := getCorColHashCode(corCol)
+		if !bytes.Equal(newHashCode, p.corColHashCodes[i]) {
+			changed = true
+			p.corColHashCodes[i] = newHashCode
+		}
+	}
+	return changed
+}
+
+func (p *cteProducer) logTbls(ctx context.Context, err error, iterNum uint64, lvl zapcore.Level) {
+	logutil.Logger(ctx).Log(lvl, "cte iteration info",
+		zap.Any("iterInTbl mem usage", p.iterInTbl.GetMemBytes()), zap.Any("iterInTbl disk usage", p.iterInTbl.GetDiskBytes()),
+		zap.Any("iterOutTbl mem usage", p.iterOutTbl.GetMemBytes()), zap.Any("iterOutTbl disk usage", p.iterOutTbl.GetDiskBytes()),
+		zap.Any("resTbl mem usage", p.resTbl.GetMemBytes()), zap.Any("resTbl disk usage", p.resTbl.GetDiskBytes()),
+		zap.Any("resTbl rows", p.resTbl.NumRows()), zap.Any("iteration num", iterNum), zap.Error(err))
+}
+>>>>>>> 2b6595d54d4 (executor: fix cte mem tracker failpoint condition (#54400)):pkg/executor/cte.go
