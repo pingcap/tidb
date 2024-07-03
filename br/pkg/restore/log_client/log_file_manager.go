@@ -11,7 +11,7 @@ import (
 	"sync"
 
 	"github.com/pingcap/errors"
-	backuppb "github.com/pingcap/kvproto/pkg/brpb"
+	pb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/storage"
@@ -24,10 +24,13 @@ import (
 )
 
 // MetaIter is the type of iterator of metadata files' content.
-type MetaIter = iter.TryNextor[*backuppb.Metadata]
+type MetaIter = iter.TryNextor[*pb.Metadata]
+
+// SubcompactionIter is the type that yields subcompaction.
+type SubcompactionIter = iter.TryNextor[*pb.LogFileSubcompactionMeta]
 
 type LogDataFileInfo struct {
-	*backuppb.DataFileInfo
+	*pb.DataFileInfo
 	MetaDataGroupName   string
 	OffsetInMetaGroup   int
 	OffsetInMergedGroup int
@@ -40,10 +43,10 @@ type LogIter = iter.TryNextor[*LogDataFileInfo]
 type MetaGroupIter = iter.TryNextor[DDLMetaGroup]
 
 // Meta is the metadata of files.
-type Meta = *backuppb.Metadata
+type Meta = *pb.Metadata
 
 // Log is the metadata of one file recording KV sequences.
-type Log = *backuppb.DataFileInfo
+type Log = *pb.DataFileInfo
 
 // LogFileManager is the manager for log files of a certain restoration,
 // which supports read / filter from the log backup archive with static start TS / restore TS.
@@ -76,7 +79,7 @@ type LogFileManagerInit struct {
 
 type DDLMetaGroup struct {
 	Path      string
-	FileMetas []*backuppb.DataFileInfo
+	FileMetas []*pb.DataFileInfo
 }
 
 // CreateLogFileManager creates a log file manager using the specified config.
@@ -145,7 +148,7 @@ func (rc *LogFileManager) streamingMetaByTS(ctx context.Context, restoreTS uint6
 	if err != nil {
 		return nil, err
 	}
-	filtered := iter.FilterOut(it, func(metadata *backuppb.Metadata) bool {
+	filtered := iter.FilterOut(it, func(metadata *pb.Metadata) bool {
 		return restoreTS < metadata.MinTs || metadata.MaxTs < rc.shiftStartTS
 	})
 	return filtered, nil
@@ -165,7 +168,7 @@ func (rc *LogFileManager) createMetaIterOver(ctx context.Context, s storage.Exte
 		return nil, err
 	}
 	namesIter := iter.FromSlice(names)
-	readMeta := func(ctx context.Context, name string) (*backuppb.Metadata, error) {
+	readMeta := func(ctx context.Context, name string) (*pb.Metadata, error) {
 		f, err := s.ReadFile(ctx, name)
 		if err != nil {
 			return nil, errors.Annotatef(err, "failed during reading file %s", name)
@@ -184,17 +187,17 @@ func (rc *LogFileManager) createMetaIterOver(ctx context.Context, s storage.Exte
 }
 
 func (rc *LogFileManager) FilterDataFiles(ms MetaIter) LogIter {
-	return iter.FlatMap(ms, func(m *backuppb.Metadata) LogIter {
-		return iter.FlatMap(iter.Enumerate(iter.FromSlice(m.FileGroups)), func(gi iter.Indexed[*backuppb.DataFileGroup]) LogIter {
+	return iter.FlatMap(ms, func(m *pb.Metadata) LogIter {
+		return iter.FlatMap(iter.Enumerate(iter.FromSlice(m.FileGroups)), func(gi iter.Indexed[*pb.DataFileGroup]) LogIter {
 			return iter.Map(
-				iter.FilterOut(iter.Enumerate(iter.FromSlice(gi.Item.DataFilesInfo)), func(di iter.Indexed[*backuppb.DataFileInfo]) bool {
+				iter.FilterOut(iter.Enumerate(iter.FromSlice(gi.Item.DataFilesInfo)), func(di iter.Indexed[*pb.DataFileInfo]) bool {
 					// Modify the data internally, a little hacky.
-					if m.MetaVersion > backuppb.MetaVersion_V1 {
+					if m.MetaVersion > pb.MetaVersion_V1 {
 						di.Item.Path = gi.Item.Path
 					}
 					return di.Item.IsMeta || rc.ShouldFilterOut(di.Item)
 				}),
-				func(di iter.Indexed[*backuppb.DataFileInfo]) *LogDataFileInfo {
+				func(di iter.Indexed[*pb.DataFileInfo]) *LogDataFileInfo {
 					return &LogDataFileInfo{
 						DataFileInfo: di.Item,
 
@@ -212,7 +215,7 @@ func (rc *LogFileManager) FilterDataFiles(ms MetaIter) LogIter {
 }
 
 // ShouldFilterOut checks whether a file should be filtered out via the current client.
-func (rc *LogFileManager) ShouldFilterOut(d *backuppb.DataFileInfo) bool {
+func (rc *LogFileManager) ShouldFilterOut(d *pb.DataFileInfo) bool {
 	return d.MinTs > rc.restoreTS ||
 		(d.Cf == stream.WriteCF && d.MaxTs < rc.startTS) ||
 		(d.Cf == stream.DefaultCF && d.MaxTs < rc.shiftStartTS)
@@ -227,7 +230,7 @@ func (rc *LogFileManager) collectDDLFilesAndPrepareCache(
 		return nil, errors.Annotatef(fs.Err, "failed to collect from files")
 	}
 
-	dataFileInfos := make([]*backuppb.DataFileInfo, 0)
+	dataFileInfos := make([]*pb.DataFileInfo, 0)
 	for _, g := range fs.Item {
 		rc.helper.InitCacheEntry(g.Path, len(g.FileMetas))
 		dataFileInfos = append(dataFileInfos, g.FileMetas...)
@@ -274,10 +277,10 @@ func (rc *LogFileManager) LoadDMLFiles(ctx context.Context) (LogIter, error) {
 
 func (rc *LogFileManager) FilterMetaFiles(ms MetaIter) MetaGroupIter {
 	return iter.FlatMap(ms, func(m Meta) MetaGroupIter {
-		return iter.Map(iter.FromSlice(m.FileGroups), func(g *backuppb.DataFileGroup) DDLMetaGroup {
+		return iter.Map(iter.FromSlice(m.FileGroups), func(g *pb.DataFileGroup) DDLMetaGroup {
 			metas := iter.FilterOut(iter.FromSlice(g.DataFilesInfo), func(d Log) bool {
 				// Modify the data internally, a little hacky.
-				if m.MetaVersion > backuppb.MetaVersion_V1 {
+				if m.MetaVersion > pb.MetaVersion_V1 {
 					d.Path = g.Path
 				}
 				return !d.IsMeta || rc.ShouldFilterOut(d)
@@ -372,4 +375,54 @@ func (rc *LogFileManager) ReadAllEntries(
 	}
 
 	return kvEntries, nextKvEntries, nil
+}
+
+type WithMigrate struct {
+	metas        MetaIter
+	compactions  SubcompactionIter
+	deletedFiles map[string]*pb.SpansOfFile
+}
+
+func UnmarshalDir[T any](ctx context.Context, prefix string, s storage.ExternalStorage, unmarshal func(*T, []byte) error) iter.TryNextor[*T] {
+	ch := make(chan *T)
+	errCh := make(chan error)
+	reader := func() {
+		err := s.WalkDir(ctx, &storage.WalkOption{SubDir: prefix}, func(path string, size int64) error {
+			metaBytes, err := s.ReadFile(ctx, path)
+			if err != nil {
+				return errors.Annotatef(err, "failed during reading file %s", path)
+			}
+			var meta T
+			if err := unmarshal(&meta, metaBytes); err != nil {
+				return errors.Annotatef(err, "failed to parse subcompaction meta of file %s", path)
+			}
+			ch <- &meta
+			return nil
+		})
+		if err != nil {
+			errCh <- err
+		}
+	}
+	go reader()
+	return iter.Func(func(ctx context.Context) iter.IterResult[*T] {
+		select {
+		case <-ctx.Done():
+			return iter.Throw[*T](ctx.Err())
+		case err := <-errCh:
+			return iter.Throw[*T](err)
+		case meta, ok := <-ch:
+			if !ok {
+				return iter.Done[*T]()
+			}
+			return iter.Emit(meta)
+		}
+	})
+}
+
+func Subcompactions(ctx context.Context, prefix string, s storage.ExternalStorage) SubcompactionIter {
+	return UnmarshalDir(ctx, prefix, s, func(t *pb.LogFileSubcompactionMeta, b []byte) error { return t.Unmarshal(b) })
+}
+
+func LoadMigrations(ctx context.Context, s storage.ExternalStorage) iter.TryNextor[*pb.Migration] {
+	return UnmarshalDir(ctx, "v1/migrations/", s, func(t *pb.Migration, b []byte) error { return t.Unmarshal(b) })
 }
