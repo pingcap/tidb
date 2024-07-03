@@ -47,7 +47,7 @@ type AuthenticateContextMatcher struct {
 	expected extension.AuthenticateRequest
 }
 
-func (m AuthenticateContextMatcher) Matches(x interface{}) bool {
+func (m AuthenticateContextMatcher) Matches(x any) bool {
 	ctx, ok := x.(extension.AuthenticateRequest)
 	if !ok {
 		return false
@@ -61,7 +61,7 @@ type DynamicMatcher struct {
 	expected extension.VerifyDynamicPrivRequest
 }
 
-func (m DynamicMatcher) Matches(x interface{}) bool {
+func (m DynamicMatcher) Matches(x any) bool {
 	ctx, ok := x.(extension.VerifyDynamicPrivRequest)
 	if !ok {
 		return false
@@ -75,7 +75,7 @@ type StaticMatcher struct {
 	expected extension.VerifyStaticPrivRequest
 }
 
-func (m StaticMatcher) Matches(x interface{}) bool {
+func (m StaticMatcher) Matches(x any) bool {
 	ctx, ok := x.(extension.VerifyStaticPrivRequest)
 	if !ok {
 		return false
