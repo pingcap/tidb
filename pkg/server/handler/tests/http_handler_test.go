@@ -1023,6 +1023,17 @@ func TestAllHistory(t *testing.T) {
 		lastID = job.ID
 	}
 	require.NoError(t, resp.Body.Close())
+
+	// Cover the ddl_types parameter.
+	resp, err = ts.FetchStatus("/ddl/history?ddl_types=2")
+	require.NoError(t, err)
+	decoder = json.NewDecoder(resp.Body)
+	err = decoder.Decode(&jobs)
+	require.NoError(t, err)
+	for _, job := range jobs {
+		require.Equal(t, job.Type, model.ActionDropSchema)
+	}
+	require.NoError(t, resp.Body.Close())
 }
 
 func filterSpaces(bs []byte) []byte {

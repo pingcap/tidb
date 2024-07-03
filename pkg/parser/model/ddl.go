@@ -487,6 +487,7 @@ type JobMeta struct {
 	Priority int `json:"priority"`
 }
 
+// In returns true if the action is in the list of ActionType.
 func (action ActionType) In(ddlActionList []ActionType) bool {
 	for _, actionItem := range ddlActionList {
 		if actionItem == action {

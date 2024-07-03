@@ -1420,7 +1420,6 @@ func (i *HLastJobIterator) GetLastJobsWithFilter(num int, jobs []*model.Job, ddl
 		if err != nil {
 			return nil, err
 		}
-
 		shouldAppend := len(ddlTypes) == 0 || job.Type.In(ddlTypes)
 		if shouldAppend {
 			jobs = append(jobs, job)
@@ -1430,7 +1429,7 @@ func (i *HLastJobIterator) GetLastJobsWithFilter(num int, jobs []*model.Job, ddl
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		if len(jobs) == num {
+		if num != 0 && len(jobs) == num {
 			break
 		}
 	}

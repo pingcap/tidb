@@ -1097,24 +1097,22 @@ func (h DDLHistoryJobHandler) ServeHTTP(w http.ResponseWriter, req *http.Request
 		}
 	}
 
-	ddlTypesStr := req.FormValue(handler.DDLTypes)
-	if len(ddlTypesStr) > 0 {
-		ddlTypesList := strings.Split(ddlTypesStr, ",")
-		for _, ddlType := range ddlTypesList {
-			num, err := strconv.Atoi(ddlType)
+	typesParam, _ := req.URL.Query()[handler.DDLTypes]
+	if len(typesParam) > 0 {
+		for _, typeStr := range typesParam {
+			ddlType, err := strconv.Atoi(typeStr)
 			if err != nil {
 				handler.WriteError(w, err)
 				return
 			}
-			actionType := model.ActionType(num)
+			actionType := model.ActionType(ddlType)
 			if actionType.String() == "none" {
-				handler.WriteError(w, errors.New("Invalid DDL Type: "+ddlType))
+				handler.WriteError(w, errors.New("Invalid DDL Type: "+typeStr))
 				return
 			}
 			ddlTypes = append(ddlTypes, actionType)
 		}
 	}
-
 	jobs, err := h.getHistoryDDL(jobID, limitID, ddlTypes)
 	if err != nil {
 		handler.WriteError(w, err)
