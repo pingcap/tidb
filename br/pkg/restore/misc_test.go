@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/mock"
 	"github.com/pingcap/tidb/br/pkg/restore"
 	"github.com/pingcap/tidb/br/pkg/utiltest"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/stretchr/testify/require"
@@ -48,16 +49,16 @@ func TestGetTableSchema(t *testing.T) {
 }
 
 func TestAssertUserDBsEmpty(t *testing.T) {
-	ctx := context.Background()
 	m, err := mock.NewCluster()
 	require.Nil(t, err)
 	defer m.Stop()
 	dom := m.Domain
 
-	err = restore.AssertUserDBsEmpty(dom)
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBR)
+	se, err := session.CreateSession(dom.Store())
 	require.Nil(t, err)
 
-	se, err := session.CreateSession(dom.Store())
+	err = restore.AssertUserDBsEmpty(dom)
 	require.Nil(t, err)
 
 	_, err = se.ExecuteInternal(ctx, "CREATE DATABASE d1;")
