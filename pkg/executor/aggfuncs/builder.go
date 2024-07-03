@@ -720,10 +720,13 @@ func buildLeadLag(ctx AggFuncBuildContext, aggFuncDesc *aggregation.AggFuncDesc,
 	if len(aggFuncDesc.Args) == 3 {
 		defaultExpr = aggFuncDesc.Args[2]
 		if et, ok := defaultExpr.(*expression.Constant); ok {
-			evalCtx := ctx.GetEvalCtx()
-			res, err1 := et.Value.ConvertTo(evalCtx.TypeCtx(), aggFuncDesc.RetTp)
-			if err1 == nil {
-				defaultExpr = &expression.Constant{Value: res, RetType: aggFuncDesc.RetTp}
+			etVal, ok := et.GetValueWithoutOverOptimization(ctx)
+			if ok {
+				evalCtx := ctx.GetEvalCtx()
+				res, err1 := etVal.ConvertTo(evalCtx.TypeCtx(), aggFuncDesc.RetTp)
+				if err1 == nil {
+					defaultExpr = &expression.Constant{Value: res, RetType: aggFuncDesc.RetTp}
+				}
 			}
 		}
 	}

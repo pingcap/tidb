@@ -291,7 +291,10 @@ func IsEQCondFromIn(expr Expression) bool {
 // ExprNotNull checks if an expression is possible to be null.
 func ExprNotNull(ctx EvalContext, expr Expression) bool {
 	if c, ok := expr.(*Constant); ok {
-		return !c.Value.IsNull()
+		// For parameter / deferred function, we can't determine if it's null or not.
+		if cVal, ok := c.GetValue(); ok {
+			return !cVal.IsNull()
+		}
 	}
 	// For ScalarFunction, the result would not be correct until we support maintaining
 	// NotNull flag for it.
@@ -910,9 +913,11 @@ func evaluateExprWithNullInNullRejectCheck(ctx BuildContext, schema *Schema, exp
 		}
 		allArgsNullFromSet := true
 		for i := range args {
-			if cons, ok := args[i].(*Constant); ok && cons.Value.IsNull() && !nullFromSets[i] {
-				allArgsNullFromSet = false
-				break
+			if cons, ok := args[i].(*Constant); ok {
+				if consVal, ok := cons.GetValue(); ok && consVal.IsNull() && !nullFromSets[i] {
+					allArgsNullFromSet = false
+					break
+				}
 			}
 		}
 
@@ -929,14 +934,16 @@ func evaluateExprWithNullInNullRejectCheck(ctx BuildContext, schema *Schema, exp
 			}
 			if hasNonConstantArg {
 				for i := range args {
-					if cons, ok := args[i].(*Constant); ok && cons.Value.IsNull() && nullFromSets[i] {
-						if x.FuncName.L == ast.LogicAnd {
-							args[i] = NewOne()
-							break
-						}
-						if x.FuncName.L == ast.LogicOr {
-							args[i] = NewZero()
-							break
+					if cons, ok := args[i].(*Constant); ok {
+						if consVal, ok := cons.GetValue(); ok && consVal.IsNull() && !nullFromSets[i] {
+							if x.FuncName.L == ast.LogicAnd {
+								args[i] = NewOne()
+								break
+							}
+							if x.FuncName.L == ast.LogicOr {
+								args[i] = NewZero()
+								break
+							}
 						}
 					}
 				}
@@ -945,9 +952,12 @@ func evaluateExprWithNullInNullRejectCheck(ctx BuildContext, schema *Schema, exp
 
 		c := NewFunctionInternal(ctx, x.FuncName.L, x.RetType.Clone(), args...)
 		cons, ok := c.(*Constant)
-		// If the return expr is Null Constant, and all the Null Constant arguments are affected by column schema,
-		// then we think the result Null Constant is also affected by the column schema
-		return c, ok && cons.Value.IsNull() && allArgsNullFromSet
+		if ok {
+			consVal, ok := cons.GetValue()
+			// If the return expr is Null Constant, and all the Null Constant arguments are affected by column schema,
+			// then we think the result Null Constant is also affected by the column schema
+			return c, ok && consVal.IsNull() && allArgsNullFromSet
+		}
 	case *Column:
 		if !schema.Contains(x) {
 			return x, false
@@ -1081,7 +1091,11 @@ func NewValuesFunc(ctx BuildContext, offset int, retTp *types.FieldType) *Scalar
 // IsBinaryLiteral checks whether an expression is a binary literal
 func IsBinaryLiteral(expr Expression) bool {
 	con, ok := expr.(*Constant)
-	return ok && con.Value.Kind() == types.KindBinaryLiteral
+	if !ok {
+		return false
+	}
+	conVal, ok := con.GetValue()
+	return ok && conVal.Kind() == types.KindBinaryLiteral
 }
 
 // wrapWithIsTrue wraps `arg` with istrue function if the return type of expr is not

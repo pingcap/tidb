@@ -336,8 +336,12 @@ func (p *LogicalJoin) extractFDForOuterJoin(filtersFromApply []expression.Expres
 	if opt.OnlyInnerFilter {
 		// if one of the inner condition is constant false, the inner side are all null, left make constant all of that.
 		for _, one := range innerCondition {
-			if c, ok := one.(*expression.Constant); ok && c.DeferredExpr == nil && c.ParamMarker == nil {
-				if isTrue, err := c.Value.ToBool(p.SCtx().GetSessionVars().StmtCtx.TypeCtx()); err == nil {
+			if c, ok := one.(*expression.Constant); ok {
+				cVal, ok := c.GetValueWithoutOverOptimization(p.SCtx().GetExprCtx())
+				if !ok {
+					continue
+				}
+				if isTrue, err := cVal.ToBool(p.SCtx().GetSessionVars().StmtCtx.TypeCtx()); err == nil {
 					if isTrue == 0 {
 						// c is false
 						opt.InnerIsFalse = true

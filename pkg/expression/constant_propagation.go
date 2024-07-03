@@ -54,15 +54,19 @@ func (s *basePropConstSolver) insertCol(col *Column) {
 // tryToUpdateEQList tries to update the eqList. When the eqList has store this column with a different constant, like
 // a = 1 and a = 2, we set the second return value to false.
 func (s *basePropConstSolver) tryToUpdateEQList(col *Column, con *Constant) (bool, bool) {
-	if con.Value.IsNull() && ConstExprConsiderPlanCache(con, s.ctx.IsUseCache()) {
+	conVal, ok := con.GetValueWithoutOverOptimization(s.ctx)
+	if ok && conVal.IsNull() {
 		return false, true
 	}
 	id := s.getColID(col)
 	oldCon := s.eqList[id]
 	if oldCon != nil {
-		evalCtx := s.ctx.GetEvalCtx()
-		res, err := oldCon.Value.Compare(evalCtx.TypeCtx(), &con.Value, collate.GetCollator(col.GetType(s.ctx.GetEvalCtx()).GetCollate()))
-		return false, res != 0 || err != nil
+		oldConVal, oldOK := oldCon.GetValueWithoutOverOptimization(s.ctx)
+		if oldOK && ok {
+			evalCtx := s.ctx.GetEvalCtx()
+			res, err := oldConVal.Compare(evalCtx.TypeCtx(), &conVal, collate.GetCollator(col.GetType(s.ctx.GetEvalCtx()).GetCollate()))
+			return false, res != 0 || err != nil
+		}
 	}
 	s.eqList[id] = con
 	return true, false

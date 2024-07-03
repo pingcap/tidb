@@ -86,7 +86,7 @@ func windowIsTopN(p *LogicalSelection) (bool, uint64) {
 	}
 
 	// Check if filter is column < constant or column <= constant. If it is in this form find column and constant.
-	column, limitValue := expression.FindUpperBound(p.Conditions[0])
+	column, limitValue := expression.FindUpperBound(p.SCtx().GetExprCtx(), p.Conditions[0])
 	if column == nil || limitValue <= 0 {
 		return false, 0
 	}

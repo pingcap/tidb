@@ -1055,13 +1055,19 @@ func (c *convertFunctionClass) getFunction(ctx BuildContext, args []Expression) 
 		return nil, err
 	}
 
-	charsetArg, ok := args[1].(*Constant)
+	charsetArgCon, ok := args[1].(*Constant)
 	if !ok {
 		// `args[1]` is limited by parser to be a constant string,
 		// should never go into here.
 		return nil, errIncorrectArgs.GenWithStackByArgs("charset")
 	}
-	transcodingName := charsetArg.Value.GetString()
+	charsetArg, ok := charsetArgCon.GetValue()
+	if !ok {
+		// `args[1]` is limited by parser to be a constant string,
+		// should never go into here.
+		return nil, errIncorrectArgs.GenWithStackByArgs("charset")
+	}
+	transcodingName := charsetArg.GetString()
 	bf.tp.SetCharset(strings.ToLower(transcodingName))
 	// Quoted about the behavior of syntax CONVERT(expr, type) to CHAR():
 	// In all cases, the string has the default collation for the character set.
@@ -3873,7 +3879,11 @@ func (c *weightStringFunctionClass) verifyArgs(ctx EvalContext, args []Expressio
 		if !ok {
 			return weightStringPaddingNone, 0, ErrIncorrectType.GenWithStackByArgs(args[1].StringWithCtx(ctx), c.funcName)
 		}
-		switch x := c1.Value.GetString(); x {
+		c1Val, ok := c1.GetValue()
+		if !ok {
+			return weightStringPaddingNone, 0, ErrIncorrectType.GenWithStackByArgs(args[1].String(), c.funcName)
+		}
+		switch x := c1Val.GetString(); x {
 		case "CHAR":
 			if padding == weightStringPaddingNone {
 				padding = weightStringPaddingAsChar
@@ -3890,7 +3900,11 @@ func (c *weightStringFunctionClass) verifyArgs(ctx EvalContext, args []Expressio
 		if !ok {
 			return weightStringPaddingNone, 0, ErrIncorrectType.GenWithStackByArgs(args[1].StringWithCtx(ctx), c.funcName)
 		}
-		length = int(c2.Value.GetInt64())
+		c2Val, ok := c2.GetValue()
+		if !ok {
+			return weightStringPaddingNone, 0, ErrIncorrectType.GenWithStackByArgs(args[1].String(), c.funcName)
+		}
+		length = int(c2Val.GetInt64())
 		if length == 0 {
 			return weightStringPaddingNone, 0, ErrIncorrectType.GenWithStackByArgs(args[2].StringWithCtx(ctx), c.funcName)
 		}

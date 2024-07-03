@@ -152,6 +152,7 @@ nogo(
                "//build/linter/durationcheck",
                "//build/linter/etcdconfig",
                "//build/linter/exportloopref",
+               "//build/linter/extraprivate",
                "//build/linter/forcetypeassert",
                "//build/linter/gofmt",
                "//build/linter/gci",

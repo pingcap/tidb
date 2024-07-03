@@ -100,7 +100,7 @@ func ifNullFoldHandler(ctx BuildContext, expr *ScalarFunction) (Expression, bool
 		// Only check constArg.Value here. Because deferred expression is
 		// evaluated to constArg.Value after foldConstant(args[0]), it's not
 		// needed to be checked.
-		if constArg.Value.IsNull() {
+		if constArgVal, ok := constArg.GetValueWithoutOverOptimization(ctx); ok && constArgVal.IsNull() {
 			foldedExpr, isConstant := foldConstant(ctx, args[1])
 
 			// See https://github.com/pingcap/tidb/issues/51765. If the first argument can
@@ -181,9 +181,12 @@ func foldConstant(ctx BuildContext, expr Expression) (Expression, bool) {
 		for i := 0; i < len(args); i++ {
 			switch x := args[i].(type) {
 			case *Constant:
-				isDeferredConst = isDeferredConst || x.DeferredExpr != nil || x.ParamMarker != nil
-				argIsConst[i] = true
-				hasNullArg = hasNullArg || x.Value.IsNull()
+				xVal, ok := x.GetValueWithoutOverOptimization(ctx)
+				if ok {
+					isDeferredConst = isDeferredConst || x.DeferredExpr != nil || x.ParamMarker != nil
+					argIsConst[i] = true
+					hasNullArg = hasNullArg || xVal.IsNull()
+				}
 			default:
 				allConstArg = false
 			}

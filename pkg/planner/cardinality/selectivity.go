@@ -301,12 +301,16 @@ func Selectivity(
 		if expression.MaybeOverOptimized4PlanCache(ctx.GetExprCtx(), []expression.Expression{c}) {
 			continue
 		}
-		if c.Value.IsNull() {
+		val, ok := c.GetValueWithoutOverOptimization(ctx.GetExprCtx())
+		if !ok {
+			continue
+		}
+		if val.IsNull() {
 			// c is null
 			ret *= 0
 			mask &^= 1 << uint64(i)
 			delete(notCoveredConstants, i)
-		} else if isTrue, err := c.Value.ToBool(sc.TypeCtx()); err == nil {
+		} else if isTrue, err := val.ToBool(sc.TypeCtx()); err == nil {
 			if isTrue == 0 {
 				// c is false
 				ret *= 0

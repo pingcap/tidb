@@ -1563,7 +1563,10 @@ func (cwc *ColWithCmpFuncManager) BuildRangesByRow(ctx *rangerctx.RangerContext,
 		if err != nil {
 			return nil, err
 		}
-		cwc.TmpConstant[i].Value = constantArg
+		*cwc.TmpConstant[i] = expression.Constant{
+			Value:   constantArg,
+			RetType: cwc.TmpConstant[i].RetType,
+		}
 		newExpr, err := expression.NewFunction(exprCtx, opType, types.NewFieldType(mysql.TypeTiny), cwc.TargetCol, cwc.TmpConstant[i])
 		if err != nil {
 			return nil, err

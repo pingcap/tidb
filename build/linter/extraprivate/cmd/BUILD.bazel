@@ -1,0 +1,18 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_binary", "go_library")
+
+go_library(
+    name = "cmd_lib",
+    srcs = ["main.go"],
+    importpath = "github.com/pingcap/tidb/build/linter/extraprivate/cmd",
+    visibility = ["//visibility:private"],
+    deps = [
+        "//build/linter/extraprivate",
+        "@org_golang_x_tools//go/analysis/singlechecker",
+    ],
+)
+
+go_binary(
+    name = "cmd",
+    embed = [":cmd_lib"],
+    visibility = ["//visibility:public"],
+)

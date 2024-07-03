@@ -74,7 +74,7 @@ func (extractHelper) extractColInConsExpr(ctx base.PlanContext, extractCols map[
 		if !ok || constant.DeferredExpr != nil {
 			return "", nil
 		}
-		v := constant.Value
+		v, _ := constant.GetValue()
 		if constant.ParamMarker != nil {
 			var err error
 			v, err = constant.ParamMarker.GetUserVar(ctx.GetExprCtx().GetEvalCtx())
@@ -162,7 +162,7 @@ func (helper *extractHelper) extractColBinaryOpConsExpr(ctx base.PlanContext, ex
 	if !ok || constant.DeferredExpr != nil {
 		return "", nil
 	}
-	v := constant.Value
+	v, _ := constant.GetValue()
 	if constant.ParamMarker != nil {
 		var err error
 		v, err = constant.ParamMarker.GetUserVar(ctx.GetExprCtx().GetEvalCtx())
