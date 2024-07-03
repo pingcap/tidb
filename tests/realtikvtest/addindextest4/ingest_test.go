@@ -408,7 +408,7 @@ func TestAddIndexRemoteDuplicateCheck(t *testing.T) {
 	tk.MustExec("insert into t values(100000, 1, 1);")
 
 	ingest.ForceSyncFlagForTest = true
-	tk.MustGetErrCode("alter table t add unique index idx(b);", errno.ErrDupEntry)
+	tk.MustGetErrMsg("alter table t add unique index idx(b);", "[kv:1062]Duplicate entry '1' for key 't.idx'")
 	ingest.ForceSyncFlagForTest = false
 
 	tk.MustExec("set global tidb_ddl_reorg_worker_cnt=4;")
