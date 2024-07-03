@@ -1869,7 +1869,7 @@ func getDuplicateError(tblInfo *model.TableInfo, handle kv.Handle, row []types.D
 	tablecodec.TruncateIndexValues(tblInfo, pkIdx, pkDts)
 	entryKey, err := genIndexKeyStrs(pkDts)
 	if err != nil {
-		// if genIndexKeyStrs failed, return DuplicateErrorHandleString.
+		// if genIndexKeyStrs failed, return ErrKeyExists with handle.String().
 		return kv.ErrKeyExists.FastGenByArgs(handle.String(), keyName)
 	}
 	return kv.GenKeyExistsErr(entryKey, keyName)
