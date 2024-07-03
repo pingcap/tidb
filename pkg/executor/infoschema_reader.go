@@ -1126,8 +1126,11 @@ func (e *memtableRetriever) setDataFromPartitions(sctx sessionctx.Context, schem
 						return err
 					}
 				} else {
-					// needs to update all partitions for partition table.
+					// needs to update needed partitions for partition table.
 					for _, pi := range table.GetPartitionInfo().Definitions {
+						if ok && extractor.Filter("partition_name", pi.Name.L) {
+							continue
+						}
 						err := cache.TableRowStatsCache.UpdateByID(sctx, pi.ID)
 						if err != nil {
 							return err
