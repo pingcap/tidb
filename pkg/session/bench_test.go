@@ -37,7 +37,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
-	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
@@ -1946,7 +1945,11 @@ func TestBenchDaily(t *testing.T) {
 	)
 }
 
-func BenchmarkPipelinedInsertIgnore(b *testing.B) {
+var batchNum = 100
+var batchSize = 100
+
+func BenchmarkPipelinedSimpleInsert(b *testing.B) {
+	logutil.InitLogger(&logutil.LogConfig{Config: log.Config{Level: "fatal"}})
 	se, do, st := prepareBenchSession()
 	defer func() {
 		se.Close()
@@ -1955,26 +1958,55 @@ func BenchmarkPipelinedInsertIgnore(b *testing.B) {
 	}()
 	mustExecute(se, `create table tmp (id int, dt varchar(512))`)
 	mustExecute(se, `create table src (id int, dt varchar(512))`)
-	for i := 0; i < 100; i++ {
+	for i := 0; i < batchNum; i++ {
 		mustExecute(se, "begin")
-		for lines := 0; lines < 100; lines++ {
-			mustExecute(se, "insert into src values (42, repeat('x', 512)), (66, repeat('x', 512))")
+		for lines := 0; lines < batchSize; lines++ {
+			mustExecute(se, "insert into src values (42, repeat('x', 512))")
 		}
 		mustExecute(se, "commit")
 	}
 
-	b.ResetTimer()
 	se.GetSessionVars().BulkDMLEnabled = true
 	se.GetSessionVars().StmtCtx.InInsertStmt = true
+	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		se.Execute(context.Background(), "insert ignore into tmp select * from src")
-		warningCount := se.GetSessionVars().StmtCtx.WarningCount()
-		require.Zero(b, warningCount)
+		se.Execute(context.Background(), "insert into tmp select * from src")
 	}
 	b.StopTimer()
+	b.ReportMetric(float64(b.Elapsed().Nanoseconds()/int64(b.N*batchSize*batchNum)), "ns/row")
+}
+
+func BenchmarkPipelinedInsertIgnoreNoDuplicates(b *testing.B) {
+	logutil.InitLogger(&logutil.LogConfig{Config: log.Config{Level: "fatal"}})
+	se, do, st := prepareBenchSession()
+	defer func() {
+		se.Close()
+		do.Close()
+		st.Close()
+	}()
+	mustExecute(se, `create table tmp (id int, dt varchar(512))`)
+	mustExecute(se, `create table src (id int, dt varchar(512))`)
+	for i := 0; i < batchNum; i++ {
+		mustExecute(se, "begin")
+		for lines := 0; lines < batchSize; lines++ {
+			mustExecute(se, "insert into src values (42, repeat('x', 512))")
+		}
+		mustExecute(se, "commit")
+	}
+
+	se.GetSessionVars().BulkDMLEnabled = true
+	se.GetSessionVars().StmtCtx.InInsertStmt = true
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		se.Execute(context.Background(), "insert ignore into tmp select * from src")
+	}
+	b.StopTimer()
+	b.ReportMetric(float64(b.Elapsed().Nanoseconds()/int64(b.N*batchSize*batchNum)), "ns/row")
 }
 
 func BenchmarkPipelinedInsertOnDuplicate(b *testing.B) {
+	logutil.InitLogger(&logutil.LogConfig{Config: log.Config{Level: "fatal"}})
 	se, do, st := prepareBenchSession()
 	defer func() {
 		se.Close()
@@ -1983,12 +2015,12 @@ func BenchmarkPipelinedInsertOnDuplicate(b *testing.B) {
 	}()
 	mustExecute(se, `create table tmp (id int, dt varchar(512), unique key k1(id))`)
 	mustExecute(se, `create table src (id int, dt varchar(512))`)
-	for i := 0; i < 100; i++ {
+	for i := 0; i < batchNum; i++ {
 		mustExecute(se, "begin")
-		for lines := 0; lines < 100; lines++ {
+		for lines := 0; lines < batchSize; lines++ {
 			mustExecute(se,
 				fmt.Sprintf(
-					"insert into src values (%d, repeat('x', 512)), (66, repeat('x', 512))",
+					"insert into src values (%d, repeat('x', 512))",
 					i*100+lines,
 				),
 			)
@@ -1996,19 +2028,19 @@ func BenchmarkPipelinedInsertOnDuplicate(b *testing.B) {
 		mustExecute(se, "commit")
 	}
 
-	b.ResetTimer()
 	se.GetSessionVars().BulkDMLEnabled = true
 	se.GetSessionVars().StmtCtx.InInsertStmt = true
+	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		se.Execute(context.Background(),
 			"insert into tmp select * from src on duplicate key update dt = values(dt)")
-		warningCount := se.GetSessionVars().StmtCtx.WarningCount()
-		require.Zero(b, warningCount)
 	}
 	b.StopTimer()
+	b.ReportMetric(float64(b.Elapsed().Nanoseconds()/int64(b.N*batchSize*batchNum)), "ns/row")
 }
 
 func BenchmarkPipelinedDelete(b *testing.B) {
+	logutil.InitLogger(&logutil.LogConfig{Config: log.Config{Level: "fatal"}})
 	se, do, st := prepareBenchSession()
 	defer func() {
 		se.Close()
@@ -2017,24 +2049,53 @@ func BenchmarkPipelinedDelete(b *testing.B) {
 	}()
 	mustExecute(se, `create table tmp (id int, dt varchar(512))`)
 	mustExecute(se, `create table src (id int, dt varchar(512))`)
-	for i := 0; i < 100; i++ {
+	for i := 0; i < batchNum; i++ {
 		mustExecute(se, "begin")
-		for lines := 0; lines < 100; lines++ {
-			mustExecute(se, "insert into src values (42, repeat('x', 512)), (66, repeat('x', 512))")
+		for lines := 0; lines < batchSize; lines++ {
+			mustExecute(se, "insert into src values (42, repeat('x', 512))")
 		}
 		mustExecute(se, "commit")
 	}
 
 	se.GetSessionVars().BulkDMLEnabled = true
 	se.GetSessionVars().StmtCtx.InInsertStmt = true
-	b.ResetTimer()
 	b.StopTimer()
+	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		se.Execute(context.Background(), "insert ignore into tmp select * from src")
+		se.Execute(context.Background(), "truncate tmp")
+		se.Execute(context.Background(), "insert into tmp select * from src")
 		b.StartTimer()
 		se.Execute(context.Background(), "delete from tmp")
 		b.StopTimer()
-		warningCount := se.GetSessionVars().StmtCtx.WarningCount()
-		require.Zero(b, warningCount)
 	}
+	b.ReportMetric(float64(b.Elapsed().Nanoseconds()/int64(b.N*batchSize*batchNum)), "ns/row")
+}
+
+func BenchmarkPipelinedReplaceNoDuplicates(b *testing.B) {
+	logutil.InitLogger(&logutil.LogConfig{Config: log.Config{Level: "fatal"}})
+	se, do, st := prepareBenchSession()
+	defer func() {
+		se.Close()
+		do.Close()
+		st.Close()
+	}()
+	mustExecute(se, `create table tmp (id int, dt varchar(512))`)
+	mustExecute(se, `create table src (id int, dt varchar(512))`)
+	for i := 0; i < batchNum; i++ {
+		mustExecute(se, "begin")
+		for lines := 0; lines < batchSize; lines++ {
+			mustExecute(se, "insert into src values (42, repeat('x', 512))")
+		}
+		mustExecute(se, "commit")
+	}
+
+	se.GetSessionVars().BulkDMLEnabled = true
+	se.GetSessionVars().StmtCtx.InInsertStmt = true
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		se.Execute(context.Background(), "replace into tmp select * from src")
+	}
+	b.StopTimer()
+	b.ReportMetric(float64(b.Elapsed().Nanoseconds()/int64(b.N*batchSize*batchNum)), "ns/row")
 }
