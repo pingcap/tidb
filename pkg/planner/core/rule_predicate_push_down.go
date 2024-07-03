@@ -142,11 +142,6 @@ func (ds *DataSource) PredicatePushDown(predicates []expression.Expression, opt 
 }
 
 // PredicatePushDown implements base.LogicalPlan PredicatePushDown interface.
-func (p *LogicalTableDual) PredicatePushDown(predicates []expression.Expression, _ *optimizetrace.LogicalOptimizeOp) ([]expression.Expression, base.LogicalPlan) {
-	return predicates, p
-}
-
-// PredicatePushDown implements base.LogicalPlan PredicatePushDown interface.
 func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression, opt *optimizetrace.LogicalOptimizeOp) (ret []expression.Expression, retPlan base.LogicalPlan) {
 	var equalCond []*expression.ScalarFunction
 	var leftPushCond, rightPushCond, otherCond, leftCond, rightCond []expression.Expression
@@ -420,150 +415,6 @@ func (p *LogicalProjection) PredicatePushDown(predicates []expression.Expression
 	return append(remained, canNotBePushed...), child
 }
 
-// PredicatePushDown implements base.LogicalPlan PredicatePushDown interface.
-func (p *LogicalUnionAll) PredicatePushDown(predicates []expression.Expression, opt *optimizetrace.LogicalOptimizeOp) (ret []expression.Expression, retPlan base.LogicalPlan) {
-	for i, proj := range p.Children() {
-		newExprs := make([]expression.Expression, 0, len(predicates))
-		newExprs = append(newExprs, predicates...)
-		retCond, newChild := proj.PredicatePushDown(newExprs, opt)
-		utilfuncp.AddSelection(p, newChild, retCond, i, opt)
-	}
-	return nil, p
-}
-
-// pushDownPredicatesForAggregation split a condition to two parts, can be pushed-down or can not be pushed-down below aggregation.
-func (la *LogicalAggregation) pushDownPredicatesForAggregation(cond expression.Expression, groupByColumns *expression.Schema, exprsOriginal []expression.Expression) ([]expression.Expression, []expression.Expression) {
-	var condsToPush []expression.Expression
-	var ret []expression.Expression
-	switch cond.(type) {
-	case *expression.Constant:
-		condsToPush = append(condsToPush, cond)
-		// Consider SQL list "select sum(b) from t group by a having 1=0". "1=0" is a constant predicate which should be
-		// retained and pushed down at the same time. Because we will get a wrong query result that contains one column
-		// with value 0 rather than an empty query result.
-		ret = append(ret, cond)
-	case *expression.ScalarFunction:
-		extractedCols := expression.ExtractColumns(cond)
-		ok := true
-		for _, col := range extractedCols {
-			if !groupByColumns.Contains(col) {
-				ok = false
-				break
-			}
-		}
-		if ok {
-			newFunc := expression.ColumnSubstitute(la.SCtx().GetExprCtx(), cond, la.Schema(), exprsOriginal)
-			condsToPush = append(condsToPush, newFunc)
-		} else {
-			ret = append(ret, cond)
-		}
-	default:
-		ret = append(ret, cond)
-	}
-	return condsToPush, ret
-}
-
-// pushDownPredicatesForAggregation split a CNF condition to two parts, can be pushed-down or can not be pushed-down below aggregation.
-// It would consider the CNF.
-// For example,
-// (a > 1 or avg(b) > 1) and (a < 3), and `avg(b) > 1` can't be pushed-down.
-// Then condsToPush: a < 3, ret: a > 1 or avg(b) > 1
-func (la *LogicalAggregation) pushDownCNFPredicatesForAggregation(cond expression.Expression, groupByColumns *expression.Schema, exprsOriginal []expression.Expression) ([]expression.Expression, []expression.Expression) {
-	var condsToPush []expression.Expression
-	var ret []expression.Expression
-	subCNFItem := expression.SplitCNFItems(cond)
-	if len(subCNFItem) == 1 {
-		return la.pushDownPredicatesForAggregation(subCNFItem[0], groupByColumns, exprsOriginal)
-	}
-	exprCtx := la.SCtx().GetExprCtx()
-	for _, item := range subCNFItem {
-		condsToPushForItem, retForItem := la.pushDownDNFPredicatesForAggregation(item, groupByColumns, exprsOriginal)
-		if len(condsToPushForItem) > 0 {
-			condsToPush = append(condsToPush, expression.ComposeDNFCondition(exprCtx, condsToPushForItem...))
-		}
-		if len(retForItem) > 0 {
-			ret = append(ret, expression.ComposeDNFCondition(exprCtx, retForItem...))
-		}
-	}
-	return condsToPush, ret
-}
-
-// pushDownDNFPredicatesForAggregation split a DNF condition to two parts, can be pushed-down or can not be pushed-down below aggregation.
-// It would consider the DNF.
-// For example,
-// (a > 1 and avg(b) > 1) or (a < 3), and `avg(b) > 1` can't be pushed-down.
-// Then condsToPush: (a < 3) and (a > 1), ret: (a > 1 and avg(b) > 1) or (a < 3)
-func (la *LogicalAggregation) pushDownDNFPredicatesForAggregation(cond expression.Expression, groupByColumns *expression.Schema, exprsOriginal []expression.Expression) ([]expression.Expression, []expression.Expression) {
-	//nolint: prealloc
-	var condsToPush []expression.Expression
-	var ret []expression.Expression
-	subDNFItem := expression.SplitDNFItems(cond)
-	if len(subDNFItem) == 1 {
-		return la.pushDownPredicatesForAggregation(subDNFItem[0], groupByColumns, exprsOriginal)
-	}
-	exprCtx := la.SCtx().GetExprCtx()
-	for _, item := range subDNFItem {
-		condsToPushForItem, retForItem := la.pushDownCNFPredicatesForAggregation(item, groupByColumns, exprsOriginal)
-		if len(condsToPushForItem) <= 0 {
-			return nil, []expression.Expression{cond}
-		}
-		condsToPush = append(condsToPush, expression.ComposeCNFCondition(exprCtx, condsToPushForItem...))
-		if len(retForItem) > 0 {
-			ret = append(ret, expression.ComposeCNFCondition(exprCtx, retForItem...))
-		}
-	}
-	if len(ret) == 0 {
-		// All the condition can be pushed down.
-		return []expression.Expression{cond}, nil
-	}
-	dnfPushDownCond := expression.ComposeDNFCondition(exprCtx, condsToPush...)
-	// Some condition can't be pushed down, we need to keep all the condition.
-	return []expression.Expression{dnfPushDownCond}, []expression.Expression{cond}
-}
-
-// splitCondForAggregation splits the condition into those who can be pushed and others.
-func (la *LogicalAggregation) splitCondForAggregation(predicates []expression.Expression) ([]expression.Expression, []expression.Expression) {
-	var condsToPush []expression.Expression
-	var ret []expression.Expression
-	exprsOriginal := make([]expression.Expression, 0, len(la.AggFuncs))
-	for _, fun := range la.AggFuncs {
-		exprsOriginal = append(exprsOriginal, fun.Args[0])
-	}
-	groupByColumns := expression.NewSchema(la.GetGroupByCols()...)
-	// It's almost the same as pushDownCNFPredicatesForAggregation, except that the condition is a slice.
-	for _, cond := range predicates {
-		subCondsToPush, subRet := la.pushDownDNFPredicatesForAggregation(cond, groupByColumns, exprsOriginal)
-		if len(subCondsToPush) > 0 {
-			condsToPush = append(condsToPush, subCondsToPush...)
-		}
-		if len(subRet) > 0 {
-			ret = append(ret, subRet...)
-		}
-	}
-	return condsToPush, ret
-}
-
-// PredicatePushDown implements base.LogicalPlan PredicatePushDown interface.
-func (la *LogicalAggregation) PredicatePushDown(predicates []expression.Expression, opt *optimizetrace.LogicalOptimizeOp) ([]expression.Expression, base.LogicalPlan) {
-	condsToPush, ret := la.splitCondForAggregation(predicates)
-	la.BaseLogicalPlan.PredicatePushDown(condsToPush, opt)
-	return ret, la
-}
-
-// PredicatePushDown implements base.LogicalPlan PredicatePushDown interface.
-func (p *LogicalLimit) PredicatePushDown(predicates []expression.Expression, opt *optimizetrace.LogicalOptimizeOp) ([]expression.Expression, base.LogicalPlan) {
-	// Limit forbids any condition to push down.
-	p.BaseLogicalPlan.PredicatePushDown(nil, opt)
-	return predicates, p
-}
-
-// PredicatePushDown implements base.LogicalPlan PredicatePushDown interface.
-func (p *LogicalMaxOneRow) PredicatePushDown(predicates []expression.Expression, opt *optimizetrace.LogicalOptimizeOp) ([]expression.Expression, base.LogicalPlan) {
-	// MaxOneRow forbids any condition to push down.
-	p.BaseLogicalPlan.PredicatePushDown(nil, opt)
-	return predicates, p
-}
-
 // DeriveOtherConditions given a LogicalJoin, check the OtherConditions to see if we can derive more
 // conditions for left/right child pushdown.
 func DeriveOtherConditions(
@@ -697,33 +548,6 @@ func (p *LogicalJoin) outerJoinPropConst(predicates []expression.Expression) []e
 	joinConds, predicates = expression.PropConstOverOuterJoin(p.SCtx().GetExprCtx(), joinConds, predicates, outerTable.Schema(), innerTable.Schema(), nullSensitive)
 	p.AttachOnConds(joinConds)
 	return predicates
-}
-
-// GetPartitionByCols extracts 'partition by' columns from the Window.
-func (p *LogicalWindow) GetPartitionByCols() []*expression.Column {
-	partitionCols := make([]*expression.Column, 0, len(p.PartitionBy))
-	for _, partitionItem := range p.PartitionBy {
-		partitionCols = append(partitionCols, partitionItem.Col)
-	}
-	return partitionCols
-}
-
-// PredicatePushDown implements base.LogicalPlan PredicatePushDown interface.
-func (p *LogicalWindow) PredicatePushDown(predicates []expression.Expression, opt *optimizetrace.LogicalOptimizeOp) ([]expression.Expression, base.LogicalPlan) {
-	canBePushed := make([]expression.Expression, 0, len(predicates))
-	canNotBePushed := make([]expression.Expression, 0, len(predicates))
-	partitionCols := expression.NewSchema(p.GetPartitionByCols()...)
-	for _, cond := range predicates {
-		// We can push predicate beneath Window, only if all of the
-		// extractedCols are part of partitionBy columns.
-		if expression.ExprFromSchema(cond, partitionCols) {
-			canBePushed = append(canBePushed, cond)
-		} else {
-			canNotBePushed = append(canNotBePushed, cond)
-		}
-	}
-	p.BaseLogicalPlan.PredicatePushDown(canBePushed, opt)
-	return canNotBePushed, p
 }
 
 // PredicatePushDown implements base.LogicalPlan PredicatePushDown interface.

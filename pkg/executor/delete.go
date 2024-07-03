@@ -156,11 +156,6 @@ func (e *DeleteExec) deleteSingleTableByChunk(ctx context.Context) error {
 }
 
 func (e *DeleteExec) doBatchDelete(ctx context.Context) error {
-	txn, err := e.Ctx().Txn(false)
-	if err != nil {
-		return exeerrors.ErrBatchInsertFail.GenWithStack("BatchDelete failed with error: %v", err)
-	}
-	e.memTracker.Consume(-int64(txn.Size()))
 	e.Ctx().StmtCommit(ctx)
 	if err := sessiontxn.NewTxnInStmt(ctx, e.Ctx()); err != nil {
 		// We should return a special error for batch insert.

@@ -21,6 +21,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/context"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
@@ -135,4 +136,9 @@ func (p *Plan) MemoryUsage() (sum int64) {
 func (p *Plan) BuildPlanTrace() *tracing.PlanTrace {
 	planTrace := &tracing.PlanTrace{ID: p.ID(), TP: p.TP()}
 	return planTrace
+}
+
+// CloneForPlanCache clones this Plan for instance plan cache.
+func (*Plan) CloneForPlanCache() (cloned base.Plan, ok bool) {
+	return nil, false
 }

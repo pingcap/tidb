@@ -511,6 +511,8 @@ func TestMainBackupLoop(t *testing.T) {
 		GetBackupClientCallBack: mockGetBackupClientCallBack,
 	}
 
+	// an offline store still can be backed up.
+	s.mockCluster.StopStore(1)
 	connectedStore = make(map[uint64]int)
 	require.NoError(t, s.backupClient.RunLoop(backgroundCtx, mainLoop))
 
@@ -583,7 +585,7 @@ func TestMainBackupLoop(t *testing.T) {
 	}
 	remainStoreID := uint64(1)
 	dropStoreID := uint64(2)
-	s.mockCluster.StopStore(dropStoreID)
+	s.mockCluster.MarkTombstone(dropStoreID)
 	dropBackupResponses := mockBackupResponses[dropStoreID]
 	lock.Lock()
 	mockBackupResponses[dropStoreID] = nil
@@ -642,7 +644,7 @@ func TestMainBackupLoop(t *testing.T) {
 	}
 	remainStoreID = uint64(1)
 	dropStoreID = uint64(2)
-	s.mockCluster.StopStore(dropStoreID)
+	s.mockCluster.MarkTombstone(dropStoreID)
 
 	mainLoop = &backup.MainBackupLoop{
 		BackupSender: &mockBackupBackupSender{

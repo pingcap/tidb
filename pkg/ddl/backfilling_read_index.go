@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/table"
 	tidblogutil "github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
 )
 
@@ -104,7 +105,7 @@ func (r *readIndexExecutor) RunSubtask(ctx context.Context, subtask *proto.Subta
 		return err
 	}
 
-	opCtx := NewOperatorCtx(ctx, subtask.TaskID, subtask.ID)
+	opCtx := NewDistTaskOperatorCtx(ctx, subtask.TaskID, subtask.ID)
 	defer opCtx.Cancel()
 	r.curRowCount.Store(0)
 
@@ -224,8 +225,7 @@ func (r *readIndexExecutor) buildLocalStorePipeline(
 			zap.Int64s("index IDs", indexIDs))
 		return nil, err
 	}
-	counter := metrics.BackfillTotalCounter.WithLabelValues(
-		metrics.GenerateReorgLabel("add_idx_rate", r.job.SchemaName, tbl.Meta().Name.O))
+	rowCntListener := newDistTaskRowCntListener(r.curRowCount, r.job.SchemaName, tbl.Meta().Name.O)
 	return NewAddIndexIngestPipeline(
 		opCtx,
 		d.store,
@@ -237,11 +237,11 @@ func (r *readIndexExecutor) buildLocalStorePipeline(
 		r.indexes,
 		start,
 		end,
-		r.curRowCount,
-		counter,
 		r.job.ReorgMeta,
 		r.avgRowSize,
 		concurrency,
+		nil,
+		rowCntListener,
 	)
 }
 
@@ -269,8 +269,7 @@ func (r *readIndexExecutor) buildExternalStorePipeline(
 		kvMeta.MergeSummary(summary)
 		s.mu.Unlock()
 	}
-	counter := metrics.BackfillTotalCounter.WithLabelValues(
-		metrics.GenerateReorgLabel("add_idx_rate", r.job.SchemaName, tbl.Meta().Name.O))
+	rowCntListener := newDistTaskRowCntListener(r.curRowCount, r.job.SchemaName, tbl.Meta().Name.O)
 	return NewWriteIndexToExternalStoragePipeline(
 		opCtx,
 		d.store,
@@ -282,12 +281,31 @@ func (r *readIndexExecutor) buildExternalStorePipeline(
 		r.indexes,
 		start,
 		end,
-		r.curRowCount,
-		counter,
 		onClose,
 		r.job.ReorgMeta,
 		r.avgRowSize,
 		concurrency,
 		r.GetResource(),
+		rowCntListener,
 	)
+}
+
+type distTaskRowCntListener struct {
+	EmptyRowCntListener
+	totalRowCount *atomic.Int64
+	counter       prometheus.Counter
+}
+
+func newDistTaskRowCntListener(totalRowCnt *atomic.Int64, dbName, tblName string) *distTaskRowCntListener {
+	counter := metrics.BackfillTotalCounter.WithLabelValues(
+		metrics.GenerateReorgLabel("add_idx_rate", dbName, tblName))
+	return &distTaskRowCntListener{
+		totalRowCount: totalRowCnt,
+		counter:       counter,
+	}
+}
+
+func (d *distTaskRowCntListener) Written(rowCnt int) {
+	d.totalRowCount.Add(int64(rowCnt))
+	d.counter.Add(float64(rowCnt))
 }

@@ -203,7 +203,8 @@ func (ts *TiDBStatement) Close() error {
 			}
 			bindSQL, _ := bindinfo.MatchSQLBindingForPlanCache(ts.ctx, preparedObj.PreparedAst.Stmt, &preparedObj.BindingInfo)
 			cacheKey, err := core.NewPlanCacheKey(ts.ctx.GetSessionVars(), preparedObj.StmtText, preparedObj.StmtDB,
-				preparedObj.SchemaVersion, 0, bindSQL, expression.ExprPushDownBlackListReloadTimeStamp.Load(), preparedObj.RelateVersion)
+				preparedObj.SchemaVersion, 0, bindSQL, expression.ExprPushDownBlackListReloadTimeStamp.Load(),
+				preparedObj.RelateVersion, ts.ctx.GetSessionVars().StmtCtx.TblInfo2UnionScan)
 			if err != nil {
 				return err
 			}

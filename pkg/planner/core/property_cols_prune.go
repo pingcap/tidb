@@ -82,43 +82,8 @@ func (is *LogicalIndexScan) PreparePossibleProperties(_ *expression.Schema, _ ..
 }
 
 // PreparePossibleProperties implements base.LogicalPlan PreparePossibleProperties interface.
-func (*TiKVSingleGather) PreparePossibleProperties(_ *expression.Schema, childrenProperties ...[][]*expression.Column) [][]*expression.Column {
-	return childrenProperties[0]
-}
-
-// PreparePossibleProperties implements base.LogicalPlan PreparePossibleProperties interface.
 func (*LogicalSelection) PreparePossibleProperties(_ *expression.Schema, childrenProperties ...[][]*expression.Column) [][]*expression.Column {
 	return childrenProperties[0]
-}
-
-// PreparePossibleProperties implements base.LogicalPlan PreparePossibleProperties interface.
-func (p *LogicalWindow) PreparePossibleProperties(_ *expression.Schema, _ ...[][]*expression.Column) [][]*expression.Column {
-	result := make([]*expression.Column, 0, len(p.PartitionBy)+len(p.OrderBy))
-	for i := range p.PartitionBy {
-		result = append(result, p.PartitionBy[i].Col)
-	}
-	for i := range p.OrderBy {
-		result = append(result, p.OrderBy[i].Col)
-	}
-	return [][]*expression.Column{result}
-}
-
-// PreparePossibleProperties implements base.LogicalPlan PreparePossibleProperties interface.
-func (p *LogicalSort) PreparePossibleProperties(_ *expression.Schema, _ ...[][]*expression.Column) [][]*expression.Column {
-	propCols := getPossiblePropertyFromByItems(p.ByItems)
-	if len(propCols) == 0 {
-		return nil
-	}
-	return [][]*expression.Column{propCols}
-}
-
-// PreparePossibleProperties implements base.LogicalPlan PreparePossibleProperties interface.
-func (lt *LogicalTopN) PreparePossibleProperties(_ *expression.Schema, _ ...[][]*expression.Column) [][]*expression.Column {
-	propCols := getPossiblePropertyFromByItems(lt.ByItems)
-	if len(propCols) == 0 {
-		return nil
-	}
-	return [][]*expression.Column{propCols}
 }
 
 func getPossiblePropertyFromByItems(items []*util.ByItems) []*expression.Column {
@@ -184,27 +149,5 @@ func (p *LogicalJoin) PreparePossibleProperties(_ *expression.Schema, childrenPr
 		resultProperties[leftLen+i] = make([]*expression.Column, len(cols))
 		copy(resultProperties[leftLen+i], cols)
 	}
-	return resultProperties
-}
-
-// PreparePossibleProperties implements base.LogicalPlan PreparePossibleProperties interface.
-func (la *LogicalAggregation) PreparePossibleProperties(_ *expression.Schema, childrenProperties ...[][]*expression.Column) [][]*expression.Column {
-	childProps := childrenProperties[0]
-	// If there's no group-by item, the stream aggregation could have no order property. So we can add an empty property
-	// when its group-by item is empty.
-	if len(la.GroupByItems) == 0 {
-		la.PossibleProperties = [][]*expression.Column{nil}
-		return nil
-	}
-	resultProperties := make([][]*expression.Column, 0, len(childProps))
-	groupByCols := la.GetGroupByCols()
-	for _, possibleChildProperty := range childProps {
-		sortColOffsets := getMaxSortPrefix(possibleChildProperty, groupByCols)
-		if len(sortColOffsets) == len(groupByCols) {
-			prop := possibleChildProperty[:len(groupByCols)]
-			resultProperties = append(resultProperties, prop)
-		}
-	}
-	la.PossibleProperties = resultProperties
 	return resultProperties
 }
