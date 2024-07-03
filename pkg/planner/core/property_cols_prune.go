@@ -57,18 +57,6 @@ func (ds *DataSource) PreparePossibleProperties(_ *expression.Schema, _ ...[][]*
 }
 
 // PreparePossibleProperties implements base.LogicalPlan PreparePossibleProperties interface.
-func (ts *LogicalTableScan) PreparePossibleProperties(_ *expression.Schema, _ ...[][]*expression.Column) [][]*expression.Column {
-	if ts.HandleCols != nil {
-		cols := make([]*expression.Column, ts.HandleCols.NumCols())
-		for i := 0; i < ts.HandleCols.NumCols(); i++ {
-			cols[i] = ts.HandleCols.GetCol(i)
-		}
-		return [][]*expression.Column{cols}
-	}
-	return nil
-}
-
-// PreparePossibleProperties implements base.LogicalPlan PreparePossibleProperties interface.
 func (is *LogicalIndexScan) PreparePossibleProperties(_ *expression.Schema, _ ...[][]*expression.Column) [][]*expression.Column {
 	if len(is.IdxCols) == 0 {
 		return nil
