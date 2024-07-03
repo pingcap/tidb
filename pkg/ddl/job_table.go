@@ -530,7 +530,7 @@ func (s *jobScheduler) delivery2Worker(wk *worker, pool *workerPool, job *model.
 				logutil.DDLLogger().Error("panic in delivery2Worker", zap.Any("recover", r), zap.Stack("stack"))
 			}
 			failpoint.InjectCall("afterDelivery2Worker", job)
-			moveRunningJobsToPending := r != nil || job.IsPaused()
+			moveRunningJobsToPending := r != nil || (job != nil && job.IsPaused())
 			s.runningJobs.removeRunningOrPending(jobID, involvedSchemaInfos, moveRunningJobsToPending)
 			asyncNotify(s.ddlJobNotifyCh)
 			metrics.DDLRunningJobCount.WithLabelValues(pool.tp().String()).Dec()
