@@ -374,7 +374,7 @@ func (do *Domain) loadInfoSchema(startTS uint64) (infoschema.InfoSchema, bool, i
 		zap.Int64("neededSchemaVersion", neededSchemaVersion),
 		zap.Duration("elapsed time", time.Since(startTime)))
 
-	if isV1V2Switch {
+	if isV1V2Switch && schemaTs > 0 {
 		// Reset the whole info cache to avoid co-existing of both v1 and v2, causing the memory usage doubled.
 		fn := do.infoCache.Upsert(is, schemaTs)
 		do.deferFn.add(fn, time.Now().Add(10*time.Minute))
