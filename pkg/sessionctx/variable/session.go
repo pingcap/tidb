@@ -56,6 +56,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/kvcache"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
+	"github.com/pingcap/tidb/pkg/util/redact"
 	"github.com/pingcap/tidb/pkg/util/replayer"
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
@@ -1136,7 +1137,7 @@ type SessionVars struct {
 	DurationWaitTS time.Duration
 
 	// PrevStmt is used to store the previous executed statement in the current session.
-	PrevStmt fmt.Stringer
+	PrevStmt *LazyStmtText
 
 	// prevStmtDigest is used to store the digest of the previous statement in the current session.
 	prevStmtDigest string
@@ -1924,6 +1925,48 @@ func (p *PlanCacheParamList) GetParamValue(idx int) types.Datum {
 // AllParamValues returns all parameter values.
 func (p *PlanCacheParamList) AllParamValues() []types.Datum {
 	return p.paramValues
+}
+
+// LazyStmtText represents the sql text of a stmt that used in log. It's lazily evaluated to reduce the mem allocs.
+type LazyStmtText struct {
+	text   *string
+	SQL    string
+	Redact string
+	Params PlanCacheParamList
+	Format func(string) string
+}
+
+// SetText sets the text directly.
+func (s *LazyStmtText) SetText(text string) {
+	s.text = &text
+}
+
+// Update resets the lazy text and leads to re-eval for next `s.String()`. It copies params so it's safe to use
+// `SessionVars.PlanCacheParams` directly without worrying about the params get reset later.
+func (s *LazyStmtText) Update(redact string, sql string, params *PlanCacheParamList) {
+	s.text = nil
+	s.SQL = sql
+	s.Redact = redact
+	s.Params.Reset()
+	if params != nil {
+		s.Params.forNonPrepCache = params.forNonPrepCache
+		s.Params.paramValues = append(s.Params.paramValues, params.paramValues...)
+	}
+}
+
+// String implements fmt.Stringer.
+func (s *LazyStmtText) String() string {
+	if s == nil {
+		return ""
+	}
+	if s.text == nil {
+		text := redact.String(s.Redact, s.SQL+s.Params.String())
+		if s.Format != nil {
+			text = s.Format(text)
+		}
+		s.text = &text
+	}
+	return *s.text
 }
 
 // ConnectionInfo presents the connection information, which is mainly used by audit logs.
