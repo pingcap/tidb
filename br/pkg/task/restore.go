@@ -1194,38 +1194,22 @@ func getMaxReplica(ctx context.Context, mgr *conn.Mgr) (uint64, error) {
 	return uint64(val.(float64)), nil
 }
 
-func getStoreEngine(store *http.StoreInfo) (string, error) {
-	for _, lable := range store.Store.Labels {
-		if lable.Key == "engine" {
-			return lable.Value, nil
-		}
-	}
-	return "", errors.Errorf("store %d has no engine label", store.Store.ID)
-}
-
-func classifyStores(stores *http.StoresInfo) (kvStores, tiflashStores []*http.StoreInfo, err error) {
+func classifyStores(stores *http.StoresInfo) (tikvStores, tiflashStores []*http.StoreInfo, err error) {
 	if stores == nil || len(stores.Stores) == 0 {
 		return nil, nil, fmt.Errorf("no stores provided")
 	}
 
 	for i := range stores.Stores {
 		store := &stores.Stores[i]
-		engine, err := getStoreEngine(store)
-		if err != nil {
-			return nil, nil, fmt.Errorf("failed to get store engine for store %d: %w", store.Store.ID, err)
+		for _, label := range store.Store.Labels {
+			if label.Key == "engine" && (label.Value == "tiflash_compute" || label.Value == "tiflash") {
+				tiflashStores = append(tiflashStores, store)
+				break
+			}
 		}
-
-		switch engine {
-		case "tikv":
-			kvStores = append(kvStores, store)
-		case "tiflash":
-			tiflashStores = append(tiflashStores, store)
-		default:
-			return nil, nil, fmt.Errorf("store %d has invalid engine %s", store.Store.ID, engine)
-		}
+		tikvStores = append(tikvStores, store)
 	}
-
-	return kvStores, tiflashStores, nil
+	return tikvStores, tiflashStores, nil
 }
 
 func EstimateTikvUsage(files []*backuppb.File, maxReplica uint64, storeCnt int) uint64 {
