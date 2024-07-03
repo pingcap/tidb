@@ -47,7 +47,7 @@ MySQL [test]> explain SELECT a, b, sum(1) FROM t GROUP BY a, b With Rollup;
 +--------------------------------------+----------+--------------+---------------+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
 9 rows in set (0.018 sec)
 ```
-Most modern databases with AP functionality always include multi-dimensional aggregate analysis. Rollup/Cute are two common syntax forms of them. MySQL also provides rollup syntax support after version 8.0, along with supporting implementation of the grouping function. Expand operator can supply underlying data replication, data being grouped with different dimensional grouping layout, and consequently outputting different dimensional aggregation results.
+Most modern databases with AP functionality always include multi-dimensional aggregate analysis. Rollup/Cube are two common syntax forms of them. MySQL also provides rollup syntax support after version 8.0, along with supporting implementation of the grouping function. Expand operator can supply underlying data replication, data being grouped with different dimensional grouping layout, and consequently outputting different dimensional aggregation results.
 
 Behind the realization of both phenomena, the essence is the application of grouping sets. We are going to discover and analyze the necessary requirements for data replication from different scenarios, replicate the underlying data via building Expand operator consuming grouping sets collected, and feedback the grouping function and grouping column related expressions in the upper layer by rewriting.
 
@@ -57,7 +57,7 @@ Behind the realization of both phenomena, the essence is the application of grou
 
 **Grouping Sets Brief**
 
-Grouping Sets is a union set of grouping layout requirements, generally speaking, normal group-by clause without rollup/cute suffix can produce only one grouping set. eg: group-by(a,b), and it's enough that the underlying data should only be grouped by {a,b}.
+Grouping Sets is a union set of grouping layout requirements, generally speaking, normal group-by clause without rollup/cube suffix can produce only one grouping set. eg: group-by(a,b), and it's enough that the underlying data should only be grouped by {a,b}.
 
 For a more advanced syntax, like dimensional group-by --- rollup(a,b), it requires the several grouping layout: {{a,b}, {a},{}}, which means the underlying data should be grouped multi-time according to different group layout, among each of them, output current aggregation result, then regroup the data again. Note: all dimensional aggregated result are dispatched to client as a union.
 
@@ -73,7 +73,7 @@ Take the case above as an example, the operation info of expand operator show so
 
 **Conclusion**
 
-In a words, grouping sets are the basic important logic concept through the entire optimization phase. After the physical optimization phase, the data replication logic are analyzed and organized as level-projection, which make the execution logic more general and clean.
+In a words, grouping sets are the basic important logic concept through the entire optimization phase. After the logical optimization phase, the data replication logic are analyzed and organized as level-projection, which make the execution logic more general and clean.
 
 ### Frontend Application Access
 

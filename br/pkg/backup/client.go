@@ -75,6 +75,8 @@ type MainBackupLoop struct {
 	// backup requests for all stores.
 	// the subRanges may changed every round.
 	BackupReq backuppb.BackupRequest
+	// the number of backup clients to send backup requests per store.
+	Concurrency uint
 	// record the whole backup progress in infinite loop.
 	GlobalProgressTree *rtree.ProgressRangeTree
 	ReplicaReadLabel   map[string]string
@@ -91,6 +93,7 @@ func (s *MainBackupSender) SendAsync(
 	round uint64,
 	storeID uint64,
 	request backuppb.BackupRequest,
+	concurrency uint,
 	cli backuppb.BackupClient,
 	respCh chan *ResponseAndStore,
 	StateNotifier chan BackupRetryPolicy,
@@ -100,7 +103,7 @@ func (s *MainBackupSender) SendAsync(
 			logutil.CL(ctx).Info("store backup goroutine exits", zap.Uint64("store", storeID))
 			close(respCh)
 		}()
-		err := startBackup(ctx, storeID, request, cli, respCh)
+		err := startBackup(ctx, storeID, request, cli, concurrency, respCh)
 		if err != nil {
 			// only 2 kinds of errors will occur here.
 			// 1. grpc connection error(already retry inside)
@@ -176,6 +179,8 @@ func (bc *Client) RunLoop(ctx context.Context, loop *MainBackupLoop) error {
 mainLoop:
 	for {
 		round += 1
+		// sleep 200ms. in case of tikv cluster abnormal state trigger too many backup rounds.
+		time.Sleep(200 * time.Millisecond)
 		logutil.CL(ctx).Info("This round of backup starts...", zap.Uint64("round", round))
 		// initialize the error context every round
 		errContext := utils.NewErrorContext("MainBackupLoop", 10)
@@ -250,7 +255,7 @@ mainLoop:
 			}
 			ch := make(chan *ResponseAndStore)
 			storeBackupResultChMap[storeID] = ch
-			loop.SendAsync(mainCtx, round, storeID, loop.BackupReq, cli, ch, loop.StateNotifier)
+			loop.SendAsync(mainCtx, round, storeID, loop.BackupReq, loop.Concurrency, cli, ch, loop.StateNotifier)
 		}
 		// infinite loop to collect region backup response to global channel
 		loop.CollectStoreBackupsAsync(handleCtx, round, storeBackupResultChMap, globalBackupResultCh)
@@ -309,7 +314,7 @@ mainLoop:
 
 					storeBackupResultChMap[storeID] = ch
 					// start backup for this store
-					loop.SendAsync(mainCtx, round, storeID, loop.BackupReq, cli, ch, loop.StateNotifier)
+					loop.SendAsync(mainCtx, round, storeID, loop.BackupReq, loop.Concurrency, cli, ch, loop.StateNotifier)
 					// re-create context for new handler loop
 					handleCtx, handleCancel = context.WithCancel(mainCtx)
 					// handleCancel makes the former collect goroutine exits
@@ -1136,6 +1141,7 @@ func (bc *Client) BackupRanges(
 	mainBackupLoop := &MainBackupLoop{
 		BackupSender:       &MainBackupSender{},
 		BackupReq:          request,
+		Concurrency:        concurrency,
 		GlobalProgressTree: &globalProgressTree,
 		ReplicaReadLabel:   replicaReadLabel,
 		StateNotifier:      stateNotifier,
