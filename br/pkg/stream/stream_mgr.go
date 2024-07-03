@@ -94,7 +94,7 @@ func buildObserveTableRanges(
 			continue
 		}
 
-		meta.IterTables(m, dbInfo.ID, func(tableInfo *model.TablePartitionNameInfo) error {
+		if err := meta.IterTables(m, dbInfo.ID, func(tableInfo *model.TablePartitionNameInfo) error {
 			if !tableFilter.MatchTable(dbInfo.Name.O, tableInfo.Name.O) {
 				// Skip tables other than the given table.
 				return nil
@@ -104,7 +104,9 @@ func buildObserveTableRanges(
 			tableRanges := buildObserveTableRange(tableInfo)
 			ranges = append(ranges, tableRanges...)
 			return nil
-		})
+		}); err != nil {
+			return nil, errors.Trace(err)
+		}
 	}
 
 	return ranges, nil

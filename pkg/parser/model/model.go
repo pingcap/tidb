@@ -553,6 +553,7 @@ type TableNameInfo struct {
 	Name CIStr `json:"name"`
 }
 
+// TablePartitionNameInfo provides meta data describing a table info only with name and partition.
 type TablePartitionNameInfo struct {
 	ID        int64          `json:"id"`
 	Name      CIStr          `json:"name"`
