@@ -53,27 +53,9 @@ func TestEnforceMPP(t *testing.T) {
 	is := dom.InfoSchema()
 	db, exists := is.SchemaByName(model.NewCIStr("test"))
 	require.True(t, exists)
-	for _, tbl := range is.SchemaTables(db.Name) {
-		tblInfo := tbl.Meta()
-		if tblInfo.Name.L == "t" {
-			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
-				Count:     1,
-				Available: true,
-			}
-		}
-		if tblInfo.Name.L == "s" {
-			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
-				Count:     1,
-				Available: true,
-			}
-		}
-		if tblInfo.Name.L == "t3" {
-			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
-				Count:     1,
-				Available: true,
-			}
-		}
-	}
+	coretestsdk.SetTiFlashReplica(t, dom, db.Name.L, "t")
+	coretestsdk.SetTiFlashReplica(t, dom, db.Name.L, "s")
+	coretestsdk.SetTiFlashReplica(t, dom, db.Name.L, "t3")
 
 	var input []string
 	var output []struct {
@@ -146,35 +128,13 @@ func TestEnforceMPPWarning1(t *testing.T) {
 		if strings.HasPrefix(tt, "cmd: create-replica") {
 			// Create virtual tiflash replica info.
 			dom := domain.GetDomain(tk.Session())
-			is := dom.InfoSchema()
-			db, exists := is.SchemaByName(model.NewCIStr("test"))
-			require.True(t, exists)
-			for _, tbl := range is.SchemaTables(db.Name) {
-				tblInfo := tbl.Meta()
-				if tblInfo.Name.L == "t" {
-					tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
-						Count:     1,
-						Available: false,
-					}
-				}
-			}
+			coretestsdk.SetTiFlashReplica(t, dom, "test", "t")
 			continue
 		}
 		if strings.HasPrefix(tt, "cmd: enable-replica") {
 			// Create virtual tiflash replica info.
 			dom := domain.GetDomain(tk.Session())
-			is := dom.InfoSchema()
-			db, exists := is.SchemaByName(model.NewCIStr("test"))
-			require.True(t, exists)
-			for _, tbl := range is.SchemaTables(db.Name) {
-				tblInfo := tbl.Meta()
-				if tblInfo.Name.L == "t" {
-					tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
-						Count:     1,
-						Available: true,
-					}
-				}
-			}
+			coretestsdk.SetTiFlashReplica(t, dom, "test", "t")
 			continue
 		}
 		testdata.OnRecord(func() {
@@ -308,18 +268,8 @@ func TestEnforceMPPWarning4(t *testing.T) {
 
 	// Create virtual tiflash replica info.
 	dom := domain.GetDomain(tk.Session())
-	is := dom.InfoSchema()
-	db, exists := is.SchemaByName(model.NewCIStr("test"))
-	require.True(t, exists)
-	for _, tbl := range is.SchemaTables(db.Name) {
-		tblInfo := tbl.Meta()
-		if tblInfo.Name.L == "t" || tblInfo.Name.L == "s" {
-			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
-				Count:     1,
-				Available: true,
-			}
-		}
-	}
+	coretestsdk.SetTiFlashReplica(t, dom, "test", "t")
+	coretestsdk.SetTiFlashReplica(t, dom, "test", "s")
 
 	var input []string
 	var output []struct {
@@ -370,18 +320,9 @@ func TestMPP2PhaseAggPushDown(t *testing.T) {
 
 	// Create virtual tiflash replica info.
 	dom := domain.GetDomain(tk.Session())
-	is := dom.InfoSchema()
-	db, exists := is.SchemaByName(model.NewCIStr("test"))
-	require.True(t, exists)
-	for _, tbl := range is.SchemaTables(db.Name) {
-		tblInfo := tbl.Meta()
-		if tblInfo.Name.L == "c" || tblInfo.Name.L == "o" || tblInfo.Name.L == "t" {
-			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
-				Count:     1,
-				Available: true,
-			}
-		}
-	}
+	coretestsdk.SetTiFlashReplica(t, dom, "test", "c")
+	coretestsdk.SetTiFlashReplica(t, dom, "test", "o")
+	coretestsdk.SetTiFlashReplica(t, dom, "test", "t")
 
 	var input []string
 	var output []struct {
