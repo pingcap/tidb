@@ -187,10 +187,22 @@ func (c *Chunk) MemoryUsage() (sum int64) {
 		return 0
 	}
 	for _, col := range c.columns {
-		curColMemUsage := int64(unsafe.Sizeof(*col)) + int64(cap(col.nullBitmap)) + int64(cap(col.offsets)*8) + int64(cap(col.data)) + int64(cap(col.elemBuf))
-		sum += curColMemUsage
+		sum += int64(unsafe.Sizeof(*col)) + int64(cap(col.nullBitmap)) + int64(cap(col.offsets)*8) + int64(cap(col.data)) + int64(cap(col.elemBuf))
 	}
 	return
+}
+
+// GetMemoryUsageCap returns the total memory usage that may be used in the future.
+// We ignore the size of Column.length and Column.nullCount
+// since they have little effect of the total memory usage.
+func (c *Chunk) GetMemoryUsageCap(capacity int) (sum int64) {
+	if c == nil {
+		return 0
+	}
+	for _, col := range c.columns {
+		sum += int64(unsafe.Sizeof(*col)) + col.getMemoryUsageCap(capacity)
+	}
+	return sum
 }
 
 // RequiredRows returns how many rows is considered full.
