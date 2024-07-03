@@ -1411,7 +1411,10 @@ type LastJobIterator interface {
 
 // GetLastJobsWithFilter gets last several jobs with filter.
 func (i *HLastJobIterator) GetLastJobsWithFilter(num int, jobs []*model.Job, ddlTypes []model.ActionType) ([]*model.Job, error) {
-	jobs = make([]*model.Job, 0, num)
+	if len(jobs) < num {
+		jobs = make([]*model.Job, 0, num)
+	}
+	jobs = jobs[:0]
 	iter := i.iter
 
 	for iter.Valid() && (len(ddlTypes) > 0 || len(jobs) < num) {

@@ -1097,7 +1097,7 @@ func (h DDLHistoryJobHandler) ServeHTTP(w http.ResponseWriter, req *http.Request
 		}
 	}
 
-	typesParam, _ := req.URL.Query()[handler.DDLTypes]
+	typesParam, _ := req.URL.Query()[handler.DDLType]
 	if len(typesParam) > 0 {
 		for _, typeStr := range typesParam {
 			ddlType, err := strconv.Atoi(typeStr)
