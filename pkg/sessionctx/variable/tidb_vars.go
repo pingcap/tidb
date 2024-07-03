@@ -1647,6 +1647,8 @@ var (
 	ValidateCloudStorageURI func(ctx context.Context, uri string) error
 	// SetLowResolutionTSOUpdateInterval is the func registered by domain to set slow resolution tso update interval.
 	SetLowResolutionTSOUpdateInterval func(interval time.Duration) error = nil
+	// ChangeSchemaCacheSize is called when tidb_schema_cache_size is changed.
+	ChangeSchemaCacheSize func(size uint64)
 )
 
 // Hooks functions for Cluster Resource Control.

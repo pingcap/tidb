@@ -247,7 +247,9 @@ func hashInt64Uint64Map(b []byte, m map[int64]uint64) []byte {
 // Note: lastUpdatedSchemaVersion will only be set in the case of rc or for update read in order to
 // differentiate the cache key. In other cases, it will be 0.
 // All information that might affect the plan should be considered in this function.
-func NewPlanCacheKey(sessionVars *variable.SessionVars, stmtText, stmtDB string, schemaVersion, lastUpdatedSchemaVersion int64, bindSQL string, exprBlacklistTS int64, relatedSchemaVersion map[int64]uint64) (string, error) {
+func NewPlanCacheKey(sessionVars *variable.SessionVars, stmtText, stmtDB string,
+	schemaVersion, lastUpdatedSchemaVersion int64, bindSQL string, exprBlacklistTS int64,
+	relatedSchemaVersion map[int64]uint64, dirtyTables map[*model.TableInfo]bool) (string, error) {
 	if stmtText == "" {
 		return "", errors.New("no statement text")
 	}
@@ -263,7 +265,7 @@ func NewPlanCacheKey(sessionVars *variable.SessionVars, stmtText, stmtDB string,
 	}
 	_, connCollation := sessionVars.GetCharsetInfo()
 
-	hash := make([]byte, 0, len(stmtText)*2)
+	hash := make([]byte, 0, len(stmtText)*2) // TODO: a Pool for this
 	hash = append(hash, hack.Slice(stmtDB)...)
 	hash = codec.EncodeInt(hash, int64(sessionVars.ConnectionID))
 	hash = append(hash, hack.Slice(stmtText)...)
@@ -293,16 +295,28 @@ func NewPlanCacheKey(sessionVars *variable.SessionVars, stmtText, stmtDB string,
 	hash = append(hash, hack.Slice(strconv.FormatBool(variable.VarTiDBSuperReadOnly.Load()))...)
 	// expr-pushdown-blacklist can affect query optimization, so we need to consider it in plan cache.
 	hash = codec.EncodeInt(hash, exprBlacklistTS)
+	if len(dirtyTables) > 0 {
+		dirtyTableIDs := make([]int64, 0, len(dirtyTables)) // TODO: a Pool for this
+		for t, dirty := range dirtyTables {
+			if !dirty {
+				continue
+			}
+			dirtyTableIDs = append(dirtyTableIDs, t.ID)
+		}
+		sort.Slice(dirtyTableIDs, func(i, j int) bool { return dirtyTableIDs[i] < dirtyTableIDs[j] })
+		for _, id := range dirtyTableIDs {
+			hash = codec.EncodeInt(hash, id)
+		}
+	}
 	return string(hash), nil
 }
 
 // PlanCacheValue stores the cached Statement and StmtNode.
 type PlanCacheValue struct {
-	Plan              base.Plan
-	OutputColumns     types.NameSlice
-	TblInfo2UnionScan map[*model.TableInfo]bool
-	memoryUsage       int64
-	testKey           int64 // this is only for test
+	Plan          base.Plan
+	OutputColumns types.NameSlice
+	memoryUsage   int64
+	testKey       int64 // this is only for test
 
 	// matchOpts stores some fields help to choose a suitable plan
 	matchOpts *PlanCacheMatchOpts
@@ -337,7 +351,7 @@ func (v *PlanCacheValue) MemoryUsage() (sum int64) {
 	}
 
 	sum += size.SizeOfInterface + size.SizeOfSlice*2 + int64(cap(v.OutputColumns))*size.SizeOfPointer +
-		size.SizeOfMap + int64(len(v.TblInfo2UnionScan))*(size.SizeOfPointer+size.SizeOfBool) + size.SizeOfInt64*2
+		size.SizeOfMap + size.SizeOfInt64*2
 	if v.matchOpts != nil {
 		sum += int64(cap(v.matchOpts.ParamTypes)) * size.SizeOfPointer
 		for _, ft := range v.matchOpts.ParamTypes {
@@ -353,22 +367,17 @@ func (v *PlanCacheValue) MemoryUsage() (sum int64) {
 }
 
 // NewPlanCacheValue creates a SQLCacheValue.
-func NewPlanCacheValue(plan base.Plan, names []*types.FieldName, srcMap map[*model.TableInfo]bool,
+func NewPlanCacheValue(plan base.Plan, names []*types.FieldName,
 	matchOpts *PlanCacheMatchOpts, stmtHints *hint.StmtHints) *PlanCacheValue {
-	dstMap := make(map[*model.TableInfo]bool)
-	for k, v := range srcMap {
-		dstMap[k] = v
-	}
 	userParamTypes := make([]*types.FieldType, len(matchOpts.ParamTypes))
 	for i, tp := range matchOpts.ParamTypes {
 		userParamTypes[i] = tp.Clone()
 	}
 	return &PlanCacheValue{
-		Plan:              plan,
-		OutputColumns:     names,
-		TblInfo2UnionScan: dstMap,
-		matchOpts:         matchOpts,
-		stmtHints:         stmtHints.Clone(),
+		Plan:          plan,
+		OutputColumns: names,
+		matchOpts:     matchOpts,
+		stmtHints:     stmtHints.Clone(),
 	}
 }
 

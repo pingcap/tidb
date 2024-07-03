@@ -21,7 +21,6 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
@@ -1126,22 +1125,6 @@ func (la *LogicalApply) ExtractFD() *fd.FDSet {
 	}
 }
 
-// LogicalMaxOneRow checks if a query returns no more than one row.
-type LogicalMaxOneRow struct {
-	logicalop.BaseLogicalPlan
-}
-
-// LogicalTableDual represents a dual table plan.
-// Note that sometimes we don't set schema for LogicalTableDual (most notably in buildTableDual()), which means
-// outputting 0/1 row with zero column. This semantic may be different from your expectation sometimes but should not
-// cause any actual problems now.
-type LogicalTableDual struct {
-	logicalop.LogicalSchemaProducer
-
-	// RowCount could only be 0 or 1.
-	RowCount int
-}
-
 // LogicalMemTable represents a memory table or virtual table
 // Some memory tables wants to take the ownership of some predications
 // e.g
@@ -1252,18 +1235,6 @@ func (ds *DataSource) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
 		corCols = append(corCols, expression.ExtractCorColumns(expr)...)
 	}
 	return corCols
-}
-
-// TiKVSingleGather is a leaf logical operator of TiDB layer to gather
-// tuples from TiKV regions.
-type TiKVSingleGather struct {
-	logicalop.LogicalSchemaProducer
-	Source *DataSource
-	// IsIndexGather marks if this TiKVSingleGather gathers tuples from an IndexScan.
-	// in implementation phase, we need this flag to determine whether to generate
-	// PhysicalTableReader or PhysicalIndexReader.
-	IsIndexGather bool
-	Index         *model.IndexInfo
 }
 
 // LogicalTableScan is the logical table scan operator for TiKV.
@@ -1644,61 +1615,6 @@ func (p *LogicalIndexScan) getPKIsHandleCol(schema *expression.Schema) *expressi
 	return getPKIsHandleColFromSchema(p.Columns, schema, p.Source.TableInfo.PKIsHandle)
 }
 
-// LogicalUnionAll represents LogicalUnionAll plan.
-type LogicalUnionAll struct {
-	logicalop.LogicalSchemaProducer
-}
-
-// LogicalPartitionUnionAll represents the LogicalUnionAll plan is for partition table.
-type LogicalPartitionUnionAll struct {
-	LogicalUnionAll
-}
-
-// LogicalSort stands for the order by plan.
-type LogicalSort struct {
-	logicalop.BaseLogicalPlan
-
-	ByItems []*util.ByItems
-}
-
-// ExtractCorrelatedCols implements LogicalPlan interface.
-func (ls *LogicalSort) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
-	corCols := make([]*expression.CorrelatedColumn, 0, len(ls.ByItems))
-	for _, item := range ls.ByItems {
-		corCols = append(corCols, expression.ExtractCorColumns(item.Expr)...)
-	}
-	return corCols
-}
-
-// LogicalLimit represents offset and limit plan.
-type LogicalLimit struct {
-	logicalop.LogicalSchemaProducer
-
-	PartitionBy      []property.SortItem // This is used for enhanced topN optimization
-	Offset           uint64
-	Count            uint64
-	PreferLimitToCop bool
-	IsPartial        bool
-}
-
-// GetPartitionBy returns partition by fields
-func (lt *LogicalLimit) GetPartitionBy() []property.SortItem {
-	return lt.PartitionBy
-}
-
-// LogicalLock represents a select lock plan.
-type LogicalLock struct {
-	logicalop.BaseLogicalPlan
-
-	Lock         *ast.SelectLockInfo
-	TblID2Handle map[int64][]util.HandleCols
-
-	// tblID2phyTblIDCol is used for partitioned tables,
-	// the child executor need to return an extra column containing
-	// the Physical Table ID (i.e. from which partition the row came from)
-	TblID2PhysTblIDCol map[int64]*expression.Column
-}
-
 // WindowFrame represents a window function frame.
 type WindowFrame struct {
 	Type  ast.FrameType
@@ -1799,111 +1715,6 @@ func (fb *FrameBound) UpdateCompareCols(ctx sessionctx.Context, orderByCols []*e
 		fb.updateCmpFuncsAndCmpDataType(cmpDataType)
 	}
 	return nil
-}
-
-// LogicalWindow represents a logical window function plan.
-type LogicalWindow struct {
-	logicalop.LogicalSchemaProducer
-
-	WindowFuncDescs []*aggregation.WindowFuncDesc
-	PartitionBy     []property.SortItem
-	OrderBy         []property.SortItem
-	Frame           *WindowFrame
-}
-
-// GetPartitionBy returns partition by fields.
-func (p *LogicalWindow) GetPartitionBy() []property.SortItem {
-	return p.PartitionBy
-}
-
-// EqualPartitionBy checks whether two LogicalWindow.Partitions are equal.
-func (p *LogicalWindow) EqualPartitionBy(newWindow *LogicalWindow) bool {
-	if len(p.PartitionBy) != len(newWindow.PartitionBy) {
-		return false
-	}
-	partitionByColsMap := make(map[int64]struct{})
-	for _, item := range p.PartitionBy {
-		partitionByColsMap[item.Col.UniqueID] = struct{}{}
-	}
-	for _, item := range newWindow.PartitionBy {
-		if _, ok := partitionByColsMap[item.Col.UniqueID]; !ok {
-			return false
-		}
-	}
-	return true
-}
-
-// EqualOrderBy checks whether two LogicalWindow.OrderBys are equal.
-func (p *LogicalWindow) EqualOrderBy(ctx expression.EvalContext, newWindow *LogicalWindow) bool {
-	if len(p.OrderBy) != len(newWindow.OrderBy) {
-		return false
-	}
-	for i, item := range p.OrderBy {
-		if !item.Col.Equal(ctx, newWindow.OrderBy[i].Col) ||
-			item.Desc != newWindow.OrderBy[i].Desc {
-			return false
-		}
-	}
-	return true
-}
-
-// EqualFrame checks whether two LogicalWindow.Frames are equal.
-func (p *LogicalWindow) EqualFrame(ctx expression.EvalContext, newWindow *LogicalWindow) bool {
-	if (p.Frame == nil && newWindow.Frame != nil) ||
-		(p.Frame != nil && newWindow.Frame == nil) {
-		return false
-	}
-	if p.Frame == nil && newWindow.Frame == nil {
-		return true
-	}
-	if p.Frame.Type != newWindow.Frame.Type ||
-		p.Frame.Start.Type != newWindow.Frame.Start.Type ||
-		p.Frame.Start.UnBounded != newWindow.Frame.Start.UnBounded ||
-		p.Frame.Start.Num != newWindow.Frame.Start.Num ||
-		p.Frame.End.Type != newWindow.Frame.End.Type ||
-		p.Frame.End.UnBounded != newWindow.Frame.End.UnBounded ||
-		p.Frame.End.Num != newWindow.Frame.End.Num {
-		return false
-	}
-	for i, expr := range p.Frame.Start.CalcFuncs {
-		if !expr.Equal(ctx, newWindow.Frame.Start.CalcFuncs[i]) {
-			return false
-		}
-	}
-	for i, expr := range p.Frame.End.CalcFuncs {
-		if !expr.Equal(ctx, newWindow.Frame.End.CalcFuncs[i]) {
-			return false
-		}
-	}
-	return true
-}
-
-// ExtractCorrelatedCols implements LogicalPlan interface.
-func (p *LogicalWindow) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
-	corCols := make([]*expression.CorrelatedColumn, 0, len(p.WindowFuncDescs))
-	for _, windowFunc := range p.WindowFuncDescs {
-		for _, arg := range windowFunc.Args {
-			corCols = append(corCols, expression.ExtractCorColumns(arg)...)
-		}
-	}
-	if p.Frame != nil {
-		if p.Frame.Start != nil {
-			for _, expr := range p.Frame.Start.CalcFuncs {
-				corCols = append(corCols, expression.ExtractCorColumns(expr)...)
-			}
-		}
-		if p.Frame.End != nil {
-			for _, expr := range p.Frame.End.CalcFuncs {
-				corCols = append(corCols, expression.ExtractCorColumns(expr)...)
-			}
-		}
-	}
-	return corCols
-}
-
-// GetWindowResultColumns returns the columns storing the result of the window function.
-func (p *LogicalWindow) GetWindowResultColumns() []*expression.Column {
-	return p.Schema().Columns[p.Schema().Len()-len(p.WindowFuncDescs):]
 }
 
 // ShowContents stores the contents for the `SHOW` statement.
