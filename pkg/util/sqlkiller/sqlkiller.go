@@ -96,7 +96,7 @@ func (killer *SQLKiller) SetFinishFunc(fn func()) {
 	killer.Finish = fn
 }
 
-// SetFinishFunc sets the finish function.
+// ClearFinishFunc clears the finish function.1
 func (killer *SQLKiller) ClearFinishFunc() {
 	killer.FinishFuncLock.Lock()
 	defer killer.FinishFuncLock.Unlock()
