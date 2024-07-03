@@ -518,7 +518,8 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx table.MutateContext
 	// Note: The buffer should not be referenced or modified outside this function.
 	// It can only act as a temporary buffer for the current function call.
 	mutateBuffers := sctx.GetMutateBuffers()
-	buffer := mutateBuffers.GetUpdateRecordBufferWithCap(numColsCap)
+	encodeRowBuffer := mutateBuffers.GetEncodeRowBufferWithCap(numColsCap)
+	checkRowBuffer := mutateBuffers.GetCheckRowBufferWithCap(numColsCap)
 	if shouldWriteBinlog(sctx.GetSessionVars(), t.meta) {
 		binlogColIDs = make([]int64, 0, numColsCap)
 		binlogOldRow = make([]types.Datum, 0, numColsCap)
@@ -559,9 +560,9 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx table.MutateContext
 			value = newData[col.Offset]
 		}
 		if !t.canSkip(col, &value) {
-			buffer.AddColVal(col.ID, value)
+			encodeRowBuffer.AddColVal(col.ID, value)
 		}
-		buffer.AddColValToCheck(value)
+		checkRowBuffer.AddColVal(value)
 		if shouldWriteBinlog(sctx.GetSessionVars(), t.meta) && !t.canSkipUpdateBinlog(col, value) {
 			binlogColIDs = append(binlogColIDs, col.ID)
 			binlogOldRow = append(binlogOldRow, oldData[col.Offset])
@@ -569,7 +570,7 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx table.MutateContext
 		}
 	}
 	// check data constraint
-	err = t.CheckRowConstraint(sctx, buffer.GetRowToCheck())
+	err = t.CheckRowConstraint(sctx, checkRowBuffer.GetRowToCheck())
 	if err != nil {
 		return err
 	}
@@ -594,7 +595,7 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx table.MutateContext
 
 	key := t.RecordKey(h)
 	sc := sessVars.StmtCtx
-	err = buffer.WriteMemBufferEncoded(sctx.GetRowEncodingConfig(), sc.TimeZone(), sc.ErrCtx(), memBuffer, key)
+	err = encodeRowBuffer.WriteMemBufferEncoded(sctx.GetRowEncodingConfig(), sc.TimeZone(), sc.ErrCtx(), memBuffer, key)
 	if err != nil {
 		return err
 	}
@@ -906,7 +907,7 @@ func (t *TableCommon) AddRecord(sctx table.MutateContext, r []types.Datum, opts 
 	// Note: The buffer should not be referenced or modified outside this function.
 	// It can only act as a temporary buffer for the current function call.
 	mutateBuffers := sctx.GetMutateBuffers()
-	buffer := mutateBuffers.GetAddRecordBufferWithCap(len(r))
+	encodeRowBuffer := mutateBuffers.GetEncodeRowBufferWithCap(len(r))
 	memBuffer := txn.GetMemBuffer()
 	sh := memBuffer.Staging()
 	defer memBuffer.Cleanup(sh)
@@ -930,7 +931,7 @@ func (t *TableCommon) AddRecord(sctx table.MutateContext, r []types.Datum, opts 
 			} else {
 				r[col.Offset] = value
 			}
-			buffer.AddColVal(col.ID, value)
+			encodeRowBuffer.AddColVal(col.ID, value)
 			continue
 		}
 		if col.State == model.StatePublic {
@@ -960,7 +961,7 @@ func (t *TableCommon) AddRecord(sctx table.MutateContext, r []types.Datum, opts 
 			}
 		}
 		if !t.canSkip(col, &value) {
-			buffer.AddColVal(col.ID, value)
+			encodeRowBuffer.AddColVal(col.ID, value)
 		}
 	}
 	// check data constraint
@@ -1004,7 +1005,7 @@ func (t *TableCommon) AddRecord(sctx table.MutateContext, r []types.Datum, opts 
 	}
 
 	sc := sessVars.StmtCtx
-	err = buffer.WriteMemBufferEncoded(sctx.GetRowEncodingConfig(), sc.TimeZone(), sc.ErrCtx(), memBuffer, key, flags...)
+	err = encodeRowBuffer.WriteMemBufferEncoded(sctx.GetRowEncodingConfig(), sc.TimeZone(), sc.ErrCtx(), memBuffer, key, flags...)
 	if err != nil {
 		return nil, err
 	}
@@ -1057,7 +1058,7 @@ func (t *TableCommon) AddRecord(sctx table.MutateContext, r []types.Datum, opts 
 
 	if shouldWriteBinlog(sctx.GetSessionVars(), t.meta) {
 		// For insert, TiDB and Binlog can use same row and schema.
-		binlogColIDs, binlogRow = buffer.GetColDataBuffer()
+		binlogColIDs, binlogRow = encodeRowBuffer.GetColDataBuffer()
 		err = t.addInsertBinlog(sctx, recordID, binlogRow, binlogColIDs)
 		if err != nil {
 			return nil, err
@@ -1072,7 +1073,7 @@ func (t *TableCommon) AddRecord(sctx table.MutateContext, r []types.Datum, opts 
 		sessVars.TxnCtx.InsertTTLRowsCount += 1
 	}
 
-	colSizeBuffer := mutateBuffers.GetColSizeDeltaBufferWithCap(len(t.Cols()))
+	colSizeBuffer := sctx.GetMutateBuffers().GetColSizeDeltaBufferWithCap(len(t.Cols()))
 	for id, col := range t.Cols() {
 		size, err := codec.EstimateValueSize(sc.TypeCtx(), r[id])
 		if err != nil {

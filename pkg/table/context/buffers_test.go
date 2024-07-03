@@ -44,16 +44,34 @@ func (b *mockMemBuffer) Set(key kv.Key, value []byte) error {
 	return args.Error(0)
 }
 
-func TestEncodeRow(t *testing.T) {
+type mockMutateCtx struct {
+	MutateContext
+	buffers *MutateBuffers
+}
+
+func (ctx *mockMutateCtx) GetMutateBuffers() *MutateBuffers {
+	return ctx.buffers
+}
+
+func newMockMutateCtx() (*variable.WriteStmtBufs, *mockMutateCtx) {
 	stmtBufs := &variable.WriteStmtBufs{}
-	buffer := &encodeRowBuffer{writeStmtBufs: stmtBufs}
+	ctx := &mockMutateCtx{
+		buffers: NewMutateBuffers(stmtBufs),
+	}
+	return stmtBufs, ctx
+}
+
+func TestEncodeRow(t *testing.T) {
+	stmtBufs, ctx := newMockMutateCtx()
 	tm := types.NewTime(
 		types.FromDate(2021, 1, 1, 1, 2, 3, 4),
-		mysql.TypeDatetime, 6,
+		mysql.TypeTimestamp, 6,
 	)
 	d1 := types.NewBytesDatum([]byte{1, 2, 3})
 	d2 := types.NewIntDatum(20)
 	d3 := types.NewTimeDatum(tm)
+	buffer := ctx.GetMutateBuffers().GetEncodeRowBufferWithCap(3)
+	require.Same(t, stmtBufs, buffer.writeStmtBufs)
 	buffer.AddColVal(1, d1)
 	buffer.AddColVal(2, d2)
 	buffer.AddColVal(3, d3)
@@ -101,87 +119,67 @@ func TestEncodeRow(t *testing.T) {
 		} else {
 			memBuffer.On("SetWithFlags", kv.Key("key1"), expectedVal, c.flags).Return(nil).Once()
 		}
-		err = buffer.WriteMemBufferEncoded(cfg, time.UTC, errctx.StrictNoWarningContext, memBuffer, kv.Key("key1"), c.flags...)
+		err = buffer.WriteMemBufferEncoded(
+			cfg, c.loc, errctx.StrictNoWarningContext,
+			memBuffer, kv.Key("key1"), c.flags...,
+		)
 		require.NoError(t, err)
 		memBuffer.AssertExpectations(t)
 
 		// the encoding result should be cached as a buffer
-		require.Equal(t, expectedVal, stmtBufs.RowValBuf)
+		require.Equal(t, expectedVal, buffer.writeStmtBufs.RowValBuf)
 	}
 }
 
 func TestEncodeBufferReserve(t *testing.T) {
-	bufs := NewMutateBuffers(&variable.WriteStmtBufs{})
-	for _, item := range []any{bufs.addRecord, bufs.updateRecord} {
-		var buffer *encodeRowBuffer
-		var reset func(int)
-		var encode func()
-		cfg := RowEncodingConfig{
-			RowEncoder: &rowcodec.Encoder{Enable: true},
-		}
-		mb := &mockMemBuffer{}
-		mb.On("Set", kv.Key("key1"), mock.Anything).Return(nil).Once()
-		switch b := item.(type) {
-		case *UpdateRecordBuffer:
-			reset = b.reset
-			buffer = &b.encodeRowBuffer
-			encode = func() {
-				err := buffer.WriteMemBufferEncoded(cfg, time.UTC, errctx.StrictNoWarningContext, mb, kv.Key("key1"))
-				require.NoError(t, err)
-				mb.AssertExpectations(t)
-			}
-		case *AddRecordBuffer:
-			reset = b.reset
-			buffer = &b.encodeRowBuffer
-			encode = func() {
-				err := buffer.WriteMemBufferEncoded(cfg, time.UTC, errctx.StrictNoWarningContext, mb, kv.Key("key1"))
-				require.NoError(t, err)
-				mb.AssertExpectations(t)
-			}
-		}
-		reset(6)
-		// data buffer should be reset to the capacity and length is 0
-		require.Equal(t, 6, cap(buffer.colIDs))
-		require.Equal(t, 0, len(buffer.colIDs))
-		require.Equal(t, 6, cap(buffer.row))
-		require.Equal(t, 0, len(buffer.row))
+	stmtBufs, ctx := newMockMutateCtx()
+	mb := &mockMemBuffer{}
+	mb.On("Set", kv.Key("key1"), mock.Anything).Return(nil).Once()
 
-		// add some data and encode
-		buffer.AddColVal(1, types.NewIntDatum(1))
-		buffer.AddColVal(2, types.NewIntDatum(2))
-		require.Equal(t, 2, len(buffer.colIDs))
-		require.Equal(t, 2, len(buffer.row))
-		encode()
-		encodedCap := cap(buffer.writeStmtBufs.RowValBuf)
-		require.Greater(t, encodedCap, 0)
-		require.Equal(t, 4, len(buffer.writeStmtBufs.AddRowValues))
-		addRowValuesCap := cap(buffer.writeStmtBufs.AddRowValues)
+	buffer := ctx.GetMutateBuffers().GetEncodeRowBufferWithCap(6)
+	require.Same(t, ctx.buffers.encodeRow, buffer)
+	require.Same(t, stmtBufs, buffer.writeStmtBufs)
+	// data buffer should be reset to the capacity and length is 0
+	require.Equal(t, 6, cap(buffer.colIDs))
+	require.Equal(t, 0, len(buffer.colIDs))
+	require.Equal(t, 6, cap(buffer.row))
+	require.Equal(t, 0, len(buffer.row))
 
-		// GetColDataBuffer should return the underlying buffer
-		if b, ok := item.(*AddRecordBuffer); ok {
-			colIDs, row := b.GetColDataBuffer()
-			require.Equal(t, buffer.colIDs, colIDs)
-			require.Equal(t, buffer.row, row)
-		}
+	// add some data and encode
+	buffer.AddColVal(1, types.NewIntDatum(1))
+	buffer.AddColVal(2, types.NewIntDatum(2))
+	require.Equal(t, 2, len(buffer.colIDs))
+	require.Equal(t, 2, len(buffer.row))
+	require.NoError(t, buffer.WriteMemBufferEncoded(RowEncodingConfig{
+		RowEncoder: &rowcodec.Encoder{Enable: true},
+	}, time.UTC, errctx.StrictNoWarningContext, mb, kv.Key("key1")))
+	encodedCap := cap(buffer.writeStmtBufs.RowValBuf)
+	require.Greater(t, encodedCap, 0)
+	require.Equal(t, 4, len(buffer.writeStmtBufs.AddRowValues))
+	addRowValuesCap := cap(buffer.writeStmtBufs.AddRowValues)
 
-		// reset should not shrink the capacity
-		reset(2)
-		require.Equal(t, 6, cap(buffer.colIDs))
-		require.Equal(t, 0, len(buffer.colIDs))
-		require.Equal(t, 6, cap(buffer.row))
-		require.Equal(t, 0, len(buffer.row))
-		require.Equal(t, addRowValuesCap, cap(buffer.writeStmtBufs.AddRowValues))
-		require.Equal(t, encodedCap, cap(buffer.writeStmtBufs.RowValBuf))
-	}
+	// GetColDataBuffer should return the underlying buffer
+	colIDs, row := buffer.GetColDataBuffer()
+	require.Equal(t, buffer.colIDs, colIDs)
+	require.Equal(t, buffer.row, row)
+
+	// reset should not shrink the capacity
+	buffer.Reset(2)
+	require.Equal(t, 6, cap(buffer.colIDs))
+	require.Equal(t, 0, len(buffer.colIDs))
+	require.Equal(t, 6, cap(buffer.row))
+	require.Equal(t, 0, len(buffer.row))
+	require.Equal(t, addRowValuesCap, cap(buffer.writeStmtBufs.AddRowValues))
+	require.Equal(t, encodedCap, cap(buffer.writeStmtBufs.RowValBuf))
 }
 
-func TestUpdateRecordRowToCheckBuffer(t *testing.T) {
-	buffer := &UpdateRecordBuffer{}
+func TestCheckRowBuffer(t *testing.T) {
+	buffer := &CheckRowBuffer{}
 	buffer.Reset(6)
 	require.Equal(t, 0, len(buffer.rowToCheck))
 	require.Equal(t, 6, cap(buffer.rowToCheck))
-	buffer.AddColValToCheck(types.NewIntDatum(1))
-	buffer.AddColValToCheck(types.NewIntDatum(2))
+	buffer.AddColVal(types.NewIntDatum(1))
+	buffer.AddColVal(types.NewIntDatum(2))
 	require.Equal(t, []types.Datum{types.NewIntDatum(1), types.NewIntDatum(2)}, buffer.rowToCheck)
 	require.Equal(t, buffer.rowToCheck, buffer.GetRowToCheck())
 
@@ -210,14 +208,13 @@ func TestColSizeDeltaBuffer(t *testing.T) {
 func TestMutateBuffersGetter(t *testing.T) {
 	stmtBufs := &variable.WriteStmtBufs{}
 	buffers := NewMutateBuffers(stmtBufs)
-	add := buffers.GetAddRecordBufferWithCap(6)
+	add := buffers.GetEncodeRowBufferWithCap(6)
 	require.Equal(t, 6, cap(add.row))
 	require.Same(t, stmtBufs, add.writeStmtBufs)
 
-	update := buffers.GetUpdateRecordBufferWithCap(6)
-	require.Equal(t, 6, cap(update.row))
+	update := buffers.GetCheckRowBufferWithCap(6)
 	require.Equal(t, 6, cap(update.rowToCheck))
-	require.Same(t, stmtBufs, update.writeStmtBufs)
+	require.Equal(t, 6, cap(update.rowToCheck))
 
 	colSize := buffers.GetColSizeDeltaBufferWithCap(6)
 	require.Equal(t, 6, cap(colSize.delta))

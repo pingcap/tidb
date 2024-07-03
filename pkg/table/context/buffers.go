@@ -25,7 +25,8 @@ import (
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
 )
 
-type encodeRowBuffer struct {
+// EncodeRowBuffer is used to encode a row.
+type EncodeRowBuffer struct {
 	// colIDs is the column ids for a row to be encoded.
 	colIDs []int64
 	// row is the column data for a row to be encoded.
@@ -35,19 +36,19 @@ type encodeRowBuffer struct {
 }
 
 // Reset resets the inner buffers to a capacity.
-func (b *encodeRowBuffer) reset(capacity int) {
+func (b *EncodeRowBuffer) Reset(capacity int) {
 	b.colIDs = ensureCapacityAndReset(b.colIDs, 0, capacity)
 	b.row = ensureCapacityAndReset(b.row, 0, capacity)
 }
 
 // AddColVal adds a column value to the buffer.
-func (b *encodeRowBuffer) AddColVal(colID int64, val types.Datum) {
+func (b *EncodeRowBuffer) AddColVal(colID int64, val types.Datum) {
 	b.colIDs = append(b.colIDs, colID)
 	b.row = append(b.row, val)
 }
 
 // WriteMemBufferEncoded writes the encoded row to the memBuffer.
-func (b *encodeRowBuffer) WriteMemBufferEncoded(
+func (b *EncodeRowBuffer) WriteMemBufferEncoded(
 	cfg RowEncodingConfig, loc *time.Location, ec errctx.Context,
 	memBuffer kv.MemBuffer, key kv.Key, flags ...kv.FlagsOp,
 ) error {
@@ -79,42 +80,30 @@ func (b *encodeRowBuffer) WriteMemBufferEncoded(
 	return memBuffer.SetWithFlags(key, encoded, flags...)
 }
 
-// AddRecordBuffer is the buffer for AddRecord operation.
-type AddRecordBuffer struct {
-	encodeRowBuffer
-}
-
 // GetColDataBuffer returns the buffer for column data.
 // TODO: make sure the inner buffer is not used outside directly.
-func (b *AddRecordBuffer) GetColDataBuffer() ([]int64, []types.Datum) {
+func (b *EncodeRowBuffer) GetColDataBuffer() ([]int64, []types.Datum) {
 	return b.colIDs, b.row
 }
 
-// Reset resets the inner buffers to a capacity.
-func (b *AddRecordBuffer) Reset(capacity int) {
-	b.encodeRowBuffer.reset(capacity)
-}
-
-// UpdateRecordBuffer is the buffer for UpdateRecord operation.
-type UpdateRecordBuffer struct {
-	encodeRowBuffer
+// CheckRowBuffer is used to check row constraints
+type CheckRowBuffer struct {
 	rowToCheck []types.Datum
 }
 
 // GetRowToCheck gets the row data for constraint check.
 // TODO: make sure the inner buffer is not used outside directly.
-func (b *UpdateRecordBuffer) GetRowToCheck() []types.Datum {
+func (b *CheckRowBuffer) GetRowToCheck() []types.Datum {
 	return b.rowToCheck
 }
 
-// AddColValToCheck adds a column value to the buffer for checking.
-func (b *UpdateRecordBuffer) AddColValToCheck(val types.Datum) {
+// AddColVal adds a column value to the buffer for checking.
+func (b *CheckRowBuffer) AddColVal(val types.Datum) {
 	b.rowToCheck = append(b.rowToCheck, val)
 }
 
-// Reset resets the inner buffers to a capacity.
-func (b *UpdateRecordBuffer) Reset(capacity int) {
-	b.encodeRowBuffer.reset(capacity)
+// Reset resets the inner buffer to a capacity.
+func (b *CheckRowBuffer) Reset(capacity int) {
 	b.rowToCheck = ensureCapacityAndReset(b.rowToCheck, 0, capacity)
 }
 
@@ -141,38 +130,32 @@ func (b *ColSizeDeltaBuffer) GetColSizeDelta() []variable.ColSize {
 
 // MutateBuffers is used to get the buffers for table mutating.
 type MutateBuffers struct {
-	addRecord    *AddRecordBuffer
-	updateRecord *UpdateRecordBuffer
+	encodeRow    *EncodeRowBuffer
+	checkRow     *CheckRowBuffer
 	colSizeDelta *ColSizeDeltaBuffer
 }
 
 // NewMutateBuffers creates a new `MutateBuffers`.
 func NewMutateBuffers(stmtBufs *variable.WriteStmtBufs) *MutateBuffers {
 	return &MutateBuffers{
-		addRecord: &AddRecordBuffer{
-			encodeRowBuffer: encodeRowBuffer{
-				writeStmtBufs: stmtBufs,
-			},
+		encodeRow: &EncodeRowBuffer{
+			writeStmtBufs: stmtBufs,
 		},
-		updateRecord: &UpdateRecordBuffer{
-			encodeRowBuffer: encodeRowBuffer{
-				writeStmtBufs: stmtBufs,
-			},
-		},
+		checkRow:     &CheckRowBuffer{},
 		colSizeDelta: &ColSizeDeltaBuffer{},
 	}
 }
 
-// GetAddRecordBufferWithCap gets the buffer for AddRecord operation and resets the capacity of its inner slices.
-func (b *MutateBuffers) GetAddRecordBufferWithCap(capacity int) *AddRecordBuffer {
-	buffer := b.addRecord
+// GetEncodeRowBufferWithCap gets the buffer to encode a row
+func (b *MutateBuffers) GetEncodeRowBufferWithCap(capacity int) *EncodeRowBuffer {
+	buffer := b.encodeRow
 	buffer.Reset(capacity)
 	return buffer
 }
 
-// GetUpdateRecordBufferWithCap gets the buffer for AddRecord operation and resets the capacity of its inner slices.
-func (b *MutateBuffers) GetUpdateRecordBufferWithCap(capacity int) *UpdateRecordBuffer {
-	buffer := b.updateRecord
+// GetCheckRowBufferWithCap gets the buffer to check row constraints
+func (b *MutateBuffers) GetCheckRowBufferWithCap(capacity int) *CheckRowBuffer {
+	buffer := b.checkRow
 	buffer.Reset(capacity)
 	return buffer
 }
