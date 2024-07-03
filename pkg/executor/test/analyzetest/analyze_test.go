@@ -2914,7 +2914,7 @@ func TestAnalyzeMVIndex(t *testing.T) {
 	// 2. analyze and check analyze jobs
 	tk.MustExec("analyze table t with 1 samplerate, 3 topn")
 	tk.MustQuery("select id, table_schema, table_name, partition_name, job_info, processed_rows, state from mysql.analyze_jobs order by id").
-		Check(testkit.Rows("1 test t  analyze table columns a with 256 buckets, 3 topn, 1 samplerate 27 finished",
+		Check(testkit.Rows("1 test t  analyze table index ia, column a with 256 buckets, 3 topn, 1 samplerate 27 finished",
 			"2 test t  analyze index ij_signed 190 finished",
 			"3 test t  analyze index ij_unsigned 135 finished",
 			"4 test t  analyze index ij_double 154 finished",
