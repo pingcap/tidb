@@ -914,16 +914,6 @@ func (p *LogicalProjection) GetUsedCols() (usedCols []*expression.Column) {
 	return usedCols
 }
 
-// LogicalSelection represents a where or having predicate.
-type LogicalSelection struct {
-	logicalop.BaseLogicalPlan
-
-	// Originally the WHERE or ON condition is parsed into a single expression,
-	// but after we converted to CNF(Conjunctive normal form), it can be
-	// split into a list of AND conditions.
-	Conditions []expression.Expression
-}
-
 func extractNotNullFromConds(conditions []expression.Expression, p base.LogicalPlan) intset.FastIntSet {
 	// extract the column NOT NULL rejection characteristic from selection condition.
 	// CNF considered only, DNF doesn't have its meanings (cause that condition's eval may don't take effect)
@@ -1017,56 +1007,6 @@ func extractEquivalenceCols(conditions []expression.Expression, sctx base.PlanCo
 		equivUniqueIDs = append(equivUniqueIDs, []intset.FastIntSet{intset.NewFastIntSet(lhsUniqueID), intset.NewFastIntSet(rhsUniqueID)})
 	}
 	return equivUniqueIDs
-}
-
-// ExtractFD implements the LogicalPlan interface.
-func (p *LogicalSelection) ExtractFD() *fd.FDSet {
-	// basically extract the children's fdSet.
-	fds := p.BaseLogicalPlan.ExtractFD()
-	// collect the output columns' unique ID.
-	outputColsUniqueIDs := intset.NewFastIntSet()
-	notnullColsUniqueIDs := intset.NewFastIntSet()
-	// eg: select t2.a, count(t2.b) from t1 join t2 using (a) where t1.a = 1
-	// join's schema will miss t2.a while join.full schema has. since selection
-	// itself doesn't contain schema, extracting schema should tell them apart.
-	var columns []*expression.Column
-	if join, ok := p.Children()[0].(*LogicalJoin); ok && join.FullSchema != nil {
-		columns = join.FullSchema.Columns
-	} else {
-		columns = p.Schema().Columns
-	}
-	for _, one := range columns {
-		outputColsUniqueIDs.Insert(int(one.UniqueID))
-	}
-
-	// extract the not null attributes from selection conditions.
-	notnullColsUniqueIDs.UnionWith(extractNotNullFromConds(p.Conditions, p))
-
-	// extract the constant cols from selection conditions.
-	constUniqueIDs := extractConstantCols(p.Conditions, p.SCtx(), fds)
-
-	// extract equivalence cols.
-	equivUniqueIDs := extractEquivalenceCols(p.Conditions, p.SCtx(), fds)
-
-	// apply operator's characteristic's FD setting.
-	fds.MakeNotNull(notnullColsUniqueIDs)
-	fds.AddConstants(constUniqueIDs)
-	for _, equiv := range equivUniqueIDs {
-		fds.AddEquivalence(equiv[0], equiv[1])
-	}
-	fds.ProjectCols(outputColsUniqueIDs)
-	// just trace it down in every operator for test checking.
-	p.SetFDs(fds)
-	return fds
-}
-
-// ExtractCorrelatedCols implements LogicalPlan interface.
-func (p *LogicalSelection) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
-	corCols := make([]*expression.CorrelatedColumn, 0, len(p.Conditions))
-	for _, cond := range p.Conditions {
-		corCols = append(corCols, expression.ExtractCorColumns(cond)...)
-	}
-	return corCols
 }
 
 // LogicalApply gets one row from outer executor and gets one row from inner executor according to outer row.

@@ -3503,8 +3503,7 @@ func getHashAggs(lp base.LogicalPlan, prop *property.PhysicalProperty) []base.Ph
 	return hashAggs
 }
 
-// ExhaustPhysicalPlans implements LogicalPlan interface.
-func (p *LogicalSelection) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
+func exhaustPhysicalPlans4LogicalSelection(p *LogicalSelection, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
 	newProps := make([]*property.PhysicalProperty, 0, 2)
 	childProp := prop.CloneEssentialFields()
 	newProps = append(newProps, childProp)
@@ -3525,13 +3524,6 @@ func (p *LogicalSelection) ExhaustPhysicalPlans(prop *property.PhysicalProperty)
 		ret = append(ret, sel)
 	}
 	return ret, true, nil
-}
-
-// utility function to check whether we can push down Selection to TiKV or TiFlash
-func (p *LogicalSelection) canPushDown(storeTp kv.StoreType) bool {
-	return !expression.ContainVirtualColumn(p.Conditions) &&
-		p.CanPushToCop(storeTp) &&
-		expression.CanExprsPushDown(GetPushDownCtx(p.SCtx()), p.Conditions, storeTp)
 }
 
 func getLimitPhysicalPlans(p *LogicalLimit, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {

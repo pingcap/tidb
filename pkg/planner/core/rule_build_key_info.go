@@ -72,29 +72,6 @@ func checkMaxOneRowCond(eqColIDs map[int64]struct{}, childSchema *expression.Sch
 }
 
 // BuildKeyInfo implements base.LogicalPlan BuildKeyInfo interface.
-func (p *LogicalSelection) BuildKeyInfo(selfSchema *expression.Schema, childSchema []*expression.Schema) {
-	p.BaseLogicalPlan.BuildKeyInfo(selfSchema, childSchema)
-	if p.MaxOneRow() {
-		return
-	}
-	eqCols := make(map[int64]struct{}, len(childSchema[0].Columns))
-	for _, cond := range p.Conditions {
-		if sf, ok := cond.(*expression.ScalarFunction); ok && sf.FuncName.L == ast.EQ {
-			for i, arg := range sf.GetArgs() {
-				if col, isCol := arg.(*expression.Column); isCol {
-					_, isCon := sf.GetArgs()[1-i].(*expression.Constant)
-					_, isCorCol := sf.GetArgs()[1-i].(*expression.CorrelatedColumn)
-					if isCon || isCorCol {
-						eqCols[col.UniqueID] = struct{}{}
-					}
-					break
-				}
-			}
-		}
-	}
-	p.SetMaxOneRow(checkMaxOneRowCond(eqCols, childSchema[0]))
-}
-
 // A bijection exists between columns of a projection's schema and this projection's Exprs.
 // Sometimes we need a schema made by expr of Exprs to convert a column in child's schema to a column in this projection's Schema.
 func (p *LogicalProjection) buildSchemaByExprs(selfSchema *expression.Schema) *expression.Schema {

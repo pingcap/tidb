@@ -89,32 +89,6 @@ func splitSetGetVarFunc(filters []expression.Expression) ([]expression.Expressio
 }
 
 // PredicatePushDown implements base.LogicalPlan PredicatePushDown interface.
-func (p *LogicalSelection) PredicatePushDown(predicates []expression.Expression, opt *optimizetrace.LogicalOptimizeOp) ([]expression.Expression, base.LogicalPlan) {
-	predicates = DeleteTrueExprs(p, predicates)
-	p.Conditions = DeleteTrueExprs(p, p.Conditions)
-	var child base.LogicalPlan
-	var retConditions []expression.Expression
-	var originConditions []expression.Expression
-	canBePushDown, canNotBePushDown := splitSetGetVarFunc(p.Conditions)
-	originConditions = canBePushDown
-	retConditions, child = p.Children()[0].PredicatePushDown(append(canBePushDown, predicates...), opt)
-	retConditions = append(retConditions, canNotBePushDown...)
-	exprCtx := p.SCtx().GetExprCtx()
-	if len(retConditions) > 0 {
-		p.Conditions = expression.PropagateConstant(exprCtx, retConditions)
-		// Return table dual when filter is constant false or null.
-		dual := Conds2TableDual(p, p.Conditions)
-		if dual != nil {
-			appendTableDualTraceStep(p, dual, p.Conditions, opt)
-			return nil, dual
-		}
-		return nil, p
-	}
-	appendSelectionPredicatePushDownTraceStep(p, originConditions, opt)
-	return nil, child
-}
-
-// PredicatePushDown implements base.LogicalPlan PredicatePushDown interface.
 func (p *LogicalUnionScan) PredicatePushDown(predicates []expression.Expression, opt *optimizetrace.LogicalOptimizeOp) ([]expression.Expression, base.LogicalPlan) {
 	if expression.ContainVirtualColumn(predicates) {
 		// predicates with virtual columns can't be pushed down to TiKV/TiFlash so they'll be put into a Projection

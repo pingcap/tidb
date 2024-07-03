@@ -15,9 +15,6 @@
 package core
 
 import (
-	"bytes"
-	"slices"
-
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 )
@@ -35,30 +32,6 @@ func (p *LogicalProjection) HashCode() []byte {
 		exprHashCode := expr.HashCode()
 		result = util.EncodeIntAsUint32(result, len(exprHashCode))
 		result = append(result, exprHashCode...)
-	}
-	return result
-}
-
-// HashCode implements LogicalPlan interface.
-func (p *LogicalSelection) HashCode() []byte {
-	// PlanType + SelectOffset + ConditionNum + [Conditions]
-	// Conditions are commonly `ScalarFunction`s, whose hashcode usually has a
-	// length larger than 20, so we pre-alloc 25 bytes for each expr's hashcode.
-	result := make([]byte, 0, 12+len(p.Conditions)*25)
-	result = util.EncodeIntAsUint32(result, plancodec.TypeStringToPhysicalID(p.TP()))
-	result = util.EncodeIntAsUint32(result, p.QueryBlockOffset())
-	result = util.EncodeIntAsUint32(result, len(p.Conditions))
-
-	condHashCodes := make([][]byte, len(p.Conditions))
-	for i, expr := range p.Conditions {
-		condHashCodes[i] = expr.HashCode()
-	}
-	// Sort the conditions, so `a > 1 and a < 100` can equal to `a < 100 and a > 1`.
-	slices.SortFunc(condHashCodes, func(i, j []byte) int { return bytes.Compare(i, j) })
-
-	for _, condHashCode := range condHashCodes {
-		result = util.EncodeIntAsUint32(result, len(condHashCode))
-		result = append(result, condHashCode...)
 	}
 	return result
 }

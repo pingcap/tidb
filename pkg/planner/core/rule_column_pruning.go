@@ -96,19 +96,6 @@ func (p *LogicalProjection) PruneColumns(parentUsedCols []*expression.Column, op
 	return p, nil
 }
 
-// PruneColumns implements base.LogicalPlan interface.
-func (p *LogicalSelection) PruneColumns(parentUsedCols []*expression.Column, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, error) {
-	child := p.Children()[0]
-	parentUsedCols = expression.ExtractColumnsFromExpressions(parentUsedCols, p.Conditions, nil)
-	var err error
-	p.Children()[0], err = child.PruneColumns(parentUsedCols, opt)
-	if err != nil {
-		return nil, err
-	}
-	addConstOneForEmptyProjection(p.Children()[0])
-	return p, nil
-}
-
 func pruneByItems(p base.LogicalPlan, old []*util.ByItems, opt *optimizetrace.LogicalOptimizeOp) (byItems []*util.ByItems,
 	parentUsedCols []*expression.Column) {
 	prunedByItems := make([]*util.ByItems, 0)
