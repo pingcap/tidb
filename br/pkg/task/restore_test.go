@@ -433,11 +433,11 @@ func TestCalNecessary(t *testing.T) {
 	for _, f := range files {
 		total += f.GetSize_()
 	}
-	ret := task.CalNecessary(files, replica, storeCnt)
+	ret := task.EstimateTikvUsage(files, replica, storeCnt)
 	require.Equal(t, ret, total*replica/uint64(storeCnt))
 }
 
 func TestCheckTikvSpace(t *testing.T) {
 	store := pdhttp.StoreInfo{Store: pdhttp.MetaStore{ID: 1}, Status: pdhttp.StoreStatus{Available: "500GB"}}
-	require.NoError(t, task.CheckTiKVSpace(400*1024*1024*1024, &store))
+	require.NoError(t, task.CheckStoreSpace(400*1024*1024*1024, &store))
 }

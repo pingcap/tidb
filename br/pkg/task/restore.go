@@ -824,7 +824,7 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 
 	if cfg.CheckRequirements {
 		err := utils.WithRetry(ctx, func() error {
-			err = checkDiskSpace(ctx, mgr, files)
+			err = checkDiskSpace(ctx, mgr, files, tables)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -1194,28 +1194,79 @@ func getMaxReplica(ctx context.Context, mgr *conn.Mgr) (uint64, error) {
 	return uint64(val.(float64)), nil
 }
 
-func CalNecessary(files []*backuppb.File, maxReplica uint64, storeCnt int) uint64 {
-	var totalSize uint64
+func getStoreEngine(store *http.StoreInfo) (string, error) {
+	for _, lable := range store.Store.Labels {
+		if lable.Key == "engine" {
+			return lable.Value, nil
+		}
+	}
+	return "", errors.Errorf("store %d has no engine label", store.Store.ID)
+}
+
+func classifyStores(stores *http.StoresInfo) (kvStores, tiflashStores []*http.StoreInfo, err error) {
+	if stores == nil || len(stores.Stores) == 0 {
+		return nil, nil, fmt.Errorf("no stores provided")
+	}
+
+	for i := range stores.Stores {
+		store := &stores.Stores[i]
+		engine, err := getStoreEngine(store)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to get store engine for store %d: %w", store.Store.ID, err)
+		}
+
+		switch engine {
+		case "tikv":
+			kvStores = append(kvStores, store)
+		case "tiflash":
+			tiflashStores = append(tiflashStores, store)
+		default:
+			return nil, nil, fmt.Errorf("store %d has invalid engine %s", store.Store.ID, engine)
+		}
+	}
+
+	return kvStores, tiflashStores, nil
+}
+
+func EstimateTikvUsage(files []*backuppb.File, maxReplica uint64, storeCnt int) uint64 {
+	var totalSize uint64 = 0
 	for _, file := range files {
-		size := file.GetSize_()
-		totalSize += size
+		totalSize += file.GetSize_()
 	}
 	return totalSize * maxReplica / uint64(storeCnt)
 }
 
-func CheckTiKVSpace(necessary uint64, store *http.StoreInfo) error {
+func EstimateTiflashUsage(tables []*metautil.Table, storeCnt int) uint64 {
+	var tiflashTotal uint64 = 0
+	for _, table := range tables {
+		if table.TiFlashReplicas <= 0 {
+			continue
+		}
+		tableBytes := uint64(0)
+		for _, file := range table.Files {
+			tableBytes += file.GetSize_()
+		}
+		tiflashTotal += tableBytes * uint64(table.TiFlashReplicas)
+	}
+	return tiflashTotal / uint64(storeCnt)
+}
+
+func CheckStoreSpace(necessary uint64, store *http.StoreInfo) error {
 	available, err := units.RAMInBytes(store.Status.Available)
 	if err != nil {
 		return errors.Errorf("store %d has invalid available space %s", store.Store.ID, store.Status.Available)
 	}
-	if available < int64(necessary) {
+	if available <= 0 {
+		return errors.Errorf("store %d has no available space", store.Store.ID)
+	}
+	if uint64(available) < necessary {
 		return errors.Errorf("store %d has no enough space, available %s, necessary %s",
 			store.Store.ID, units.BytesSize(float64(available)), units.BytesSize(float64(necessary)))
 	}
 	return nil
 }
 
-func checkDiskSpace(ctx context.Context, mgr *conn.Mgr, files []*backuppb.File) error {
+func checkDiskSpace(ctx context.Context, mgr *conn.Mgr, files []*backuppb.File, tables []*metautil.Table) error {
 	maxReplica, err := getMaxReplica(ctx, mgr)
 	if err != nil {
 		return errors.Trace(err)
@@ -1224,11 +1275,20 @@ func checkDiskSpace(ctx context.Context, mgr *conn.Mgr, files []*backuppb.File) 
 	if err != nil {
 		return errors.Trace(err)
 	}
-	necessary := CalNecessary(files, maxReplica, stores.Count)
+	kvStores, tiflashStores, err := classifyStores(stores)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	tikvUsage := EstimateTikvUsage(files, maxReplica, len(kvStores)) * 11 / 10
+	tiflashUsage := EstimateTiflashUsage(tables, len(tiflashStores)) * 11 / 10
 
-	for _, store := range stores.Stores {
-		err = CheckTiKVSpace(necessary, &store)
-		if err != nil {
+	for _, tikv := range kvStores {
+		if err := CheckStoreSpace(tikvUsage, tikv); err != nil {
+			return errors.Trace(err)
+		}
+	}
+	for _, tiflash := range tiflashStores {
+		if err := CheckStoreSpace(tiflashUsage, tiflash); err != nil {
 			return errors.Trace(err)
 		}
 	}
