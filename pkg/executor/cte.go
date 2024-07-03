@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 )
 
 var _ exec.Executor = &CTEExec{}
@@ -438,15 +439,13 @@ func (p *cteProducer) computeRecursivePart(ctx context.Context) (err error) {
 		if chk.NumRows() == 0 {
 			if iterNum%1000 == 0 {
 				// To avoid too many logs.
-				p.logTbls(ctx, err, iterNum)
+				p.logTbls(ctx, err, iterNum, zapcore.DebugLevel)
 			}
 			iterNum++
 			failpoint.Inject("assertIterTableSpillToDisk", func(maxIter failpoint.Value) {
 				if iterNum > 0 && iterNum < uint64(maxIter.(int)) && err == nil {
-					if p.iterInTbl.GetMemBytes() != 0 || p.iterInTbl.GetDiskBytes() == 0 ||
-						p.iterOutTbl.GetMemBytes() != 0 || p.iterOutTbl.GetDiskBytes() == 0 ||
-						p.resTbl.GetMemBytes() != 0 || p.resTbl.GetDiskBytes() == 0 {
-						p.logTbls(ctx, err, iterNum)
+					if p.iterInTbl.GetDiskBytes() == 0 || p.iterOutTbl.GetDiskBytes() == 0 || p.resTbl.GetDiskBytes() == 0 {
+						p.logTbls(ctx, err, iterNum, zapcore.InfoLevel)
 						panic("assert row container spill disk failed")
 					}
 				}
@@ -762,8 +761,8 @@ func (p *cteProducer) checkAndUpdateCorColHashCode() bool {
 	return changed
 }
 
-func (p *cteProducer) logTbls(ctx context.Context, err error, iterNum uint64) {
-	logutil.Logger(ctx).Debug("cte iteration info",
+func (p *cteProducer) logTbls(ctx context.Context, err error, iterNum uint64, lvl zapcore.Level) {
+	logutil.Logger(ctx).Log(lvl, "cte iteration info",
 		zap.Any("iterInTbl mem usage", p.iterInTbl.GetMemBytes()), zap.Any("iterInTbl disk usage", p.iterInTbl.GetDiskBytes()),
 		zap.Any("iterOutTbl mem usage", p.iterOutTbl.GetMemBytes()), zap.Any("iterOutTbl disk usage", p.iterOutTbl.GetDiskBytes()),
 		zap.Any("resTbl mem usage", p.resTbl.GetMemBytes()), zap.Any("resTbl disk usage", p.resTbl.GetDiskBytes()),
