@@ -1263,16 +1263,20 @@ func checkDiskSpace(ctx context.Context, mgr *conn.Mgr, files []*backuppb.File, 
 	if err != nil {
 		return errors.Trace(err)
 	}
-	tikvUsage := EstimateTikvUsage(files, maxReplica, len(kvStores)) * 11 / 10
-	tiflashUsage := EstimateTiflashUsage(tables, len(tiflashStores)) * 11 / 10
 
+	tikvUsage := EstimateTikvUsage(files, maxReplica, len(kvStores))
+	tiflashUsage := EstimateTiflashUsage(tables, len(tiflashStores))
+
+	extraPreserve := func(base uint64, ratio uint64) uint64 {
+		return base * ratio / 100
+	}
 	for _, tikv := range kvStores {
-		if err := CheckStoreSpace(tikvUsage, tikv); err != nil {
+		if err := CheckStoreSpace(extraPreserve(tikvUsage,110), tikv); err != nil {
 			return errors.Trace(err)
 		}
 	}
 	for _, tiflash := range tiflashStores {
-		if err := CheckStoreSpace(tiflashUsage, tiflash); err != nil {
+		if err := CheckStoreSpace(extraPreserve(tiflashUsage,110), tiflash); err != nil {
 			return errors.Trace(err)
 		}
 	}
