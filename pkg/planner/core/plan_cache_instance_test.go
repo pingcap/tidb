@@ -27,18 +27,18 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func _put(sctx sessionctx.Context, pc InstancePlanCache, testKey, memUsage, statsHash int64) (succ bool) {
+func _put(sctx sessionctx.Context, pc sessionctx.InstancePlanCache, testKey, memUsage, statsHash int64) (succ bool) {
 	v := &PlanCacheValue{testKey: testKey, memoryUsage: memUsage, matchOpts: &PlanCacheMatchOpts{StatsVersionHash: uint64(statsHash)}}
 	return pc.Put(sctx, fmt.Sprintf("%v", testKey), v, &PlanCacheMatchOpts{StatsVersionHash: uint64(statsHash)})
 }
 
-func _hit(t *testing.T, sctx sessionctx.Context, pc InstancePlanCache, testKey, statsHash int) {
+func _hit(t *testing.T, sctx sessionctx.Context, pc sessionctx.InstancePlanCache, testKey, statsHash int) {
 	v, ok := pc.Get(sctx, fmt.Sprintf("%v", testKey), &PlanCacheMatchOpts{StatsVersionHash: uint64(statsHash)})
 	require.True(t, ok)
 	require.Equal(t, v.(*PlanCacheValue).testKey, int64(testKey))
 }
 
-func _miss(t *testing.T, sctx sessionctx.Context, pc InstancePlanCache, testKey, statsHash int) {
+func _miss(t *testing.T, sctx sessionctx.Context, pc sessionctx.InstancePlanCache, testKey, statsHash int) {
 	_, ok := pc.Get(sctx, fmt.Sprintf("%v", testKey), &PlanCacheMatchOpts{StatsVersionHash: uint64(statsHash)})
 	require.False(t, ok)
 }
@@ -84,7 +84,7 @@ func TestInstancePlanCacheBasic(t *testing.T) {
 	_hit(t, sctx, pc, 1, 0) // access 1-3 to refresh their last_used
 	_hit(t, sctx, pc, 2, 0)
 	_hit(t, sctx, pc, 3, 0)
-	require.Equal(t, pc.Evict(sctx), true)
+	require.Equal(t, pc.Evict(), true)
 	require.Equal(t, pc.MemUsage(), int64(300))
 	_hit(t, sctx, pc, 1, 0) // access 1-3 to refresh their last_used
 	_hit(t, sctx, pc, 2, 0)
@@ -97,7 +97,7 @@ func TestInstancePlanCacheBasic(t *testing.T) {
 	_put(sctx, pc, 1, 100, 0)
 	_put(sctx, pc, 2, 100, 0)
 	_put(sctx, pc, 3, 100, 0)
-	require.Equal(t, pc.Evict(sctx), false)
+	require.Equal(t, pc.Evict(), false)
 	require.Equal(t, pc.MemUsage(), int64(300))
 	_hit(t, sctx, pc, 1, 0)
 	_hit(t, sctx, pc, 2, 0)
@@ -113,7 +113,7 @@ func TestInstancePlanCacheBasic(t *testing.T) {
 	numHeads := 0
 	pcImpl.heads.Range(func(k, v any) bool { numHeads++; return true })
 	require.Equal(t, numHeads, 3)
-	require.Equal(t, pc.Evict(sctx), true)
+	require.Equal(t, pc.Evict(), true)
 	require.Equal(t, pc.MemUsage(), int64(0))
 	numHeads = 0
 	pcImpl.heads.Range(func(k, v any) bool { numHeads++; return true })
@@ -174,7 +174,7 @@ func TestInstancePlanCacheWithMatchOpts(t *testing.T) {
 	_hit(t, sctx, pc, 1, 1) // refresh 1-3's last_used
 	_hit(t, sctx, pc, 1, 2)
 	_hit(t, sctx, pc, 1, 3)
-	require.True(t, pc.Evict(sctx))
+	require.True(t, pc.Evict())
 	require.Equal(t, pc.MemUsage(), int64(300))
 	_hit(t, sctx, pc, 1, 1)
 	_hit(t, sctx, pc, 1, 2)

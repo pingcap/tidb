@@ -1371,11 +1371,11 @@ func testVectorizedEvalOneVec(t *testing.T, vecExprCases vecExprBenchCases) {
 // benchmarkVectorizedEvalOneVec is used to get the effect of
 // using the vectorized expression evaluations during projection
 func benchmarkVectorizedEvalOneVec(b *testing.B, vecExprCases vecExprBenchCases) {
-	ctx := mock.NewContext()
+	ctx := createContext(b)
 	for funcName, testCases := range vecExprCases {
 		for _, testCase := range testCases {
 			expr, _, input, output := genVecExprBenchCase(ctx, funcName, testCase)
-			exprName := expr.String()
+			exprName := expr.StringWithCtx(ctx)
 			if sf, ok := expr.(*ScalarFunction); ok {
 				exprName = fmt.Sprintf("%v", reflect.TypeOf(sf.Function))
 				tmp := strings.Split(exprName, ".")

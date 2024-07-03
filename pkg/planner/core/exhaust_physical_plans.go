@@ -882,7 +882,7 @@ func (p *LogicalJoin) buildIndexJoinInner2TableScan(
 			if i != 0 {
 				buffer.WriteString(" ")
 			}
-			buffer.WriteString(key.String())
+			buffer.WriteString(key.StringWithCtx(p.SCtx().GetExprCtx().GetEvalCtx()))
 		}
 		buffer.WriteString("]")
 		rangeInfo := buffer.String()
@@ -1012,13 +1012,14 @@ func (ijHelper *indexJoinBuildHelper) buildRangeDecidedByInformation(idxCols []*
 		}
 		fmt.Fprintf(buffer, "eq(%v, %v)", idxCols[idxOff], outerJoinKeys[keyOff])
 	}
+	ectx := ijHelper.join.SCtx().GetExprCtx().GetEvalCtx()
 	for _, access := range ijHelper.chosenAccess {
 		if !isFirst {
 			buffer.WriteString(" ")
 		} else {
 			isFirst = false
 		}
-		fmt.Fprintf(buffer, "%v", access)
+		fmt.Fprintf(buffer, "%v", access.StringWithCtx(ectx))
 	}
 	buffer.WriteString("]")
 	return buffer.String()
@@ -1173,9 +1174,9 @@ func getColsNDVLowerBoundFromHistColl(colUIDs []int64, histColl *statistics.Hist
 	}
 
 	// 1. Try to get NDV from column stats if it's a single column.
-	if len(colUIDs) == 1 && histColl.Columns != nil {
+	if len(colUIDs) == 1 && histColl.ColNum() > 0 {
 		uid := colUIDs[0]
-		if colStats, ok := histColl.Columns[uid]; ok && colStats != nil && colStats.IsStatsInitialized() {
+		if colStats := histColl.GetCol(uid); colStats != nil && colStats.IsStatsInitialized() {
 			return colStats.NDV
 		}
 	}
@@ -1195,7 +1196,7 @@ func getColsNDVLowerBoundFromHistColl(colUIDs []int64, histColl *statistics.Hist
 		if !slices.Equal(orderedIdxCols, colUIDs) {
 			continue
 		}
-		if idxStats, ok := histColl.Indices[idxID]; ok && idxStats != nil && idxStats.IsStatsInitialized() {
+		if idxStats := histColl.GetIdx(idxID); idxStats != nil && idxStats.IsStatsInitialized() {
 			return idxStats.NDV
 		}
 	}
@@ -1206,7 +1207,7 @@ func getColsNDVLowerBoundFromHistColl(colUIDs []int64, histColl *statistics.Hist
 	// 3. If we still haven't got an NDV, we use the maximum NDV in the column stats as a lower bound.
 	maxNDV := int64(-1)
 	for _, uid := range colUIDs {
-		colStats := histColl.Columns[uid]
+		colStats := histColl.GetCol(uid)
 		if colStats == nil || !colStats.IsStatsInitialized() {
 			continue
 		}
@@ -1799,7 +1800,8 @@ func (ijHelper *indexJoinBuildHelper) updateByTemplateRangeResult(tempRangeRes *
 		ijHelper.curIdxOff2KeyOff[i] = -1
 	}
 	newAccesses = accesses[:tempRangeRes.eqAndInCntInRange]
-	newRemained = ranger.AppendConditionsIfNotExist(remained, accesses[tempRangeRes.eqAndInCntInRange:])
+	newRemained = ranger.AppendConditionsIfNotExist(ijHelper.innerPlan.SCtx().GetExprCtx().GetEvalCtx(),
+		remained, accesses[tempRangeRes.eqAndInCntInRange:])
 	return
 }
 
@@ -1821,7 +1823,7 @@ func (ijHelper *indexJoinBuildHelper) analyzeLookUpFilters(path *util.AccessPath
 		return false, nil
 	}
 	accesses = append(accesses, notKeyEqAndIn...)
-	remained = ranger.AppendConditionsIfNotExist(remained, remainedEqAndIn)
+	remained = ranger.AppendConditionsIfNotExist(innerPlan.SCtx().GetExprCtx().GetEvalCtx(), remained, remainedEqAndIn)
 	lastColPos := matchedKeyCnt + len(notKeyEqAndIn)
 	// There should be some equal conditions. But we don't need that there must be some join key in accesses here.
 	// A more strict check is applied later.
@@ -2801,7 +2803,7 @@ func pushLimitOrTopNForcibly(p base.LogicalPlan) bool {
 	return false
 }
 
-func (lt *LogicalTopN) getPhysTopN(prop *property.PhysicalProperty) []base.PhysicalPlan {
+func getPhysTopN(lt *LogicalTopN, prop *property.PhysicalProperty) []base.PhysicalPlan {
 	allTaskTypes := []property.TaskType{property.CopSingleReadTaskType, property.CopMultiReadTaskType}
 	if !pushLimitOrTopNForcibly(lt) {
 		allTaskTypes = append(allTaskTypes, property.RootTaskType)
@@ -2823,7 +2825,7 @@ func (lt *LogicalTopN) getPhysTopN(prop *property.PhysicalProperty) []base.Physi
 	return ret
 }
 
-func (lt *LogicalTopN) getPhysLimits(prop *property.PhysicalProperty) []base.PhysicalPlan {
+func getPhysLimits(lt *LogicalTopN, prop *property.PhysicalProperty) []base.PhysicalPlan {
 	p, canPass := GetPropByOrderByItems(lt.ByItems)
 	if !canPass {
 		return nil
@@ -2859,14 +2861,6 @@ func MatchItems(p *property.PhysicalProperty, items []*util.ByItems) bool {
 		}
 	}
 	return true
-}
-
-// ExhaustPhysicalPlans implements LogicalPlan interface.
-func (lt *LogicalTopN) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
-	if MatchItems(prop, lt.ByItems) {
-		return append(lt.getPhysTopN(prop), lt.getPhysLimits(prop)...), true, nil
-	}
-	return nil, true, nil
 }
 
 // GetHashJoin is public for cascades planner.
@@ -2928,35 +2922,7 @@ func disableAggPushDownToCop(p base.LogicalPlan) {
 	}
 }
 
-// GetPartitionKeys gets partition keys for a logical window, it will assign column id for expressions.
-func (lw *LogicalWindow) GetPartitionKeys() []*property.MPPPartitionColumn {
-	partitionByCols := make([]*property.MPPPartitionColumn, 0, len(lw.GetPartitionByCols()))
-	for _, item := range lw.PartitionBy {
-		partitionByCols = append(partitionByCols, &property.MPPPartitionColumn{
-			Col:       item.Col,
-			CollateID: property.GetCollateIDByNameForPartition(item.Col.GetStaticType().GetCollate()),
-		})
-	}
-
-	return partitionByCols
-}
-
-// Duration vs Datetime is invalid comparison as TiFlash can't handle it so far.
-func (lw *LogicalWindow) checkComparisonForTiFlash(frameBound *FrameBound) bool {
-	if len(frameBound.CompareCols) > 0 {
-		orderByEvalType := lw.OrderBy[0].Col.GetStaticType().EvalType()
-		calFuncEvalType := frameBound.CalcFuncs[0].GetType(lw.SCtx().GetExprCtx().GetEvalCtx()).EvalType()
-
-		if orderByEvalType == types.ETDuration && (calFuncEvalType == types.ETDatetime || calFuncEvalType == types.ETTimestamp) {
-			return false
-		} else if calFuncEvalType == types.ETDuration && (orderByEvalType == types.ETDatetime || orderByEvalType == types.ETTimestamp) {
-			return false
-		}
-	}
-	return true
-}
-
-func (lw *LogicalWindow) tryToGetMppWindows(prop *property.PhysicalProperty) []base.PhysicalPlan {
+func tryToGetMppWindows(lw *LogicalWindow, prop *property.PhysicalProperty) []base.PhysicalPlan {
 	if !prop.IsSortItemAllForPartition() {
 		return nil
 	}
@@ -2997,7 +2963,7 @@ func (lw *LogicalWindow) tryToGetMppWindows(prop *property.PhysicalProperty) []b
 				return nil
 			}
 
-			if !lw.checkComparisonForTiFlash(lw.Frame.Start) || !lw.checkComparisonForTiFlash(lw.Frame.End) {
+			if !lw.CheckComparisonForTiFlash(lw.Frame.Start) || !lw.CheckComparisonForTiFlash(lw.Frame.End) {
 				lw.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced(
 					"MPP mode may be blocked because window function frame can't be pushed down, because Duration vs Datetime is invalid comparison as TiFlash can't handle it so far.")
 				return nil
@@ -3053,13 +3019,12 @@ func (lw *LogicalWindow) tryToGetMppWindows(prop *property.PhysicalProperty) []b
 	return []base.PhysicalPlan{window}
 }
 
-// ExhaustPhysicalPlans implements LogicalPlan interface.
-func (lw *LogicalWindow) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
+func exhaustLogicalWindowPhysicalPlans(lw *LogicalWindow, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
 	windows := make([]base.PhysicalPlan, 0, 2)
 
 	canPushToTiFlash := lw.CanPushToCop(kv.TiFlash)
 	if lw.SCtx().GetSessionVars().IsMPPAllowed() && canPushToTiFlash {
-		mppWindows := lw.tryToGetMppWindows(prop)
+		mppWindows := tryToGetMppWindows(lw, prop)
 		windows = append(windows, mppWindows...)
 	}
 
@@ -3210,6 +3175,19 @@ func getEnforcedStreamAggs(la *LogicalAggregation, prop *property.PhysicalProper
 		enforcedAggs = append(enforcedAggs, agg)
 	}
 	return enforcedAggs
+}
+
+func (la *LogicalAggregation) distinctArgsMeetsProperty() bool {
+	for _, aggFunc := range la.AggFuncs {
+		if aggFunc.HasDistinct {
+			for _, distinctArg := range aggFunc.Args {
+				if !expression.Contains(la.SCtx().GetExprCtx().GetEvalCtx(), la.GroupByItems, distinctArg) {
+					return false
+				}
+			}
+		}
+	}
+	return true
 }
 
 func getStreamAggs(lp base.LogicalPlan, prop *property.PhysicalProperty) []base.PhysicalPlan {
@@ -3556,8 +3534,7 @@ func (p *LogicalSelection) canPushDown(storeTp kv.StoreType) bool {
 		expression.CanExprsPushDown(GetPushDownCtx(p.SCtx()), p.Conditions, storeTp)
 }
 
-// ExhaustPhysicalPlans implements LogicalPlan interface.
-func (p *LogicalLimit) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
+func getLimitPhysicalPlans(p *LogicalLimit, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
 	if !prop.IsSortItemEmpty() {
 		return nil, true, nil
 	}
@@ -3583,8 +3560,7 @@ func (p *LogicalLimit) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([]
 	return ret, true, nil
 }
 
-// ExhaustPhysicalPlans implements LogicalPlan interface.
-func (p *LogicalLock) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
+func getLockPhysicalPlans(p *LogicalLock, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
 	if prop.IsFlashProp() {
 		p.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced(
 			"MPP mode may be blocked because operator `Lock` is not supported now.")
@@ -3599,8 +3575,7 @@ func (p *LogicalLock) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([]b
 	return []base.PhysicalPlan{lock}, true, nil
 }
 
-// ExhaustPhysicalPlans implements LogicalPlan interface.
-func (p *LogicalUnionAll) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
+func exhaustUnionAllPhysicalPlans(p *LogicalUnionAll, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
 	// TODO: UnionAll can not pass any order, but we can change it to sort merge to keep order.
 	if !prop.IsSortItemEmpty() || (prop.IsFlashProp() && prop.TaskTp != property.MppTaskType) {
 		return nil, true, nil
@@ -3644,8 +3619,7 @@ func (p *LogicalUnionAll) ExhaustPhysicalPlans(prop *property.PhysicalProperty) 
 	return []base.PhysicalPlan{ua}, true, nil
 }
 
-// ExhaustPhysicalPlans implements LogicalPlan interface.
-func (p *LogicalPartitionUnionAll) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
+func exhaustPartitionUnionAllPhysicalPlans(p *LogicalPartitionUnionAll, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
 	uas, flagHint, err := p.LogicalUnionAll.ExhaustPhysicalPlans(prop)
 	if err != nil {
 		return nil, false, err
@@ -3656,12 +3630,12 @@ func (p *LogicalPartitionUnionAll) ExhaustPhysicalPlans(prop *property.PhysicalP
 	return uas, flagHint, nil
 }
 
-func (ls *LogicalSort) getPhysicalSort(prop *property.PhysicalProperty) *PhysicalSort {
+func getPhysicalSort(ls *LogicalSort, prop *property.PhysicalProperty) *PhysicalSort {
 	ps := PhysicalSort{ByItems: ls.ByItems}.Init(ls.SCtx(), ls.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), ls.QueryBlockOffset(), &property.PhysicalProperty{TaskTp: prop.TaskTp, ExpectedCnt: math.MaxFloat64, RejectSort: true, CTEProducerStatus: prop.CTEProducerStatus})
 	return ps
 }
 
-func (ls *LogicalSort) getNominalSort(reqProp *property.PhysicalProperty) *NominalSort {
+func getNominalSort(ls *LogicalSort, reqProp *property.PhysicalProperty) *NominalSort {
 	prop, canPass, onlyColumn := GetPropByOrderByItemsContainScalarFunc(ls.ByItems)
 	if !canPass {
 		return nil
@@ -3673,32 +3647,15 @@ func (ls *LogicalSort) getNominalSort(reqProp *property.PhysicalProperty) *Nomin
 	return ps
 }
 
-// ExhaustPhysicalPlans implements LogicalPlan interface.
-func (ls *LogicalSort) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
-	if prop.TaskTp == property.RootTaskType {
-		if MatchItems(prop, ls.ByItems) {
-			ret := make([]base.PhysicalPlan, 0, 2)
-			ret = append(ret, ls.getPhysicalSort(prop))
-			ns := ls.getNominalSort(prop)
-			if ns != nil {
-				ret = append(ret, ns)
-			}
-			return ret, true, nil
-		}
-	} else if prop.TaskTp == property.MppTaskType && prop.RejectSort {
-		if canPushToCopImpl(&ls.BaseLogicalPlan, kv.TiFlash, true) {
-			newProp := prop.CloneEssentialFields()
-			newProp.RejectSort = true
-			ps := NominalSort{OnlyColumn: true, ByItems: ls.ByItems}.Init(
-				ls.SCtx(), ls.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), ls.QueryBlockOffset(), newProp)
-			return []base.PhysicalPlan{ps}, true, nil
-		}
-	}
-	return nil, true, nil
+func getNominalSortSimple(ls *LogicalSort, reqProp *property.PhysicalProperty) *NominalSort {
+	newProp := reqProp.CloneEssentialFields()
+	newProp.RejectSort = true
+	ps := NominalSort{OnlyColumn: true, ByItems: ls.ByItems}.Init(
+		ls.SCtx(), ls.StatsInfo().ScaleByExpectCnt(reqProp.ExpectedCnt), ls.QueryBlockOffset(), newProp)
+	return ps
 }
 
-// ExhaustPhysicalPlans implements LogicalPlan interface.
-func (p *LogicalMaxOneRow) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
+func exhaustPhysicalPlans4LogicalMaxOneRow(p *LogicalMaxOneRow, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
 	if !prop.IsSortItemEmpty() || prop.IsFlashProp() {
 		p.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because operator `MaxOneRow` is not supported now.")
 		return nil, true, nil

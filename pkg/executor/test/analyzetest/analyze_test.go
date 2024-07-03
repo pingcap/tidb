@@ -76,14 +76,16 @@ PARTITION BY RANGE ( a ) (
 		for _, def := range pi.Definitions {
 			statsTbl := handle.GetPartitionStats(table.Meta(), def.ID)
 			require.False(t, statsTbl.Pseudo)
-			require.Len(t, statsTbl.Columns, 3)
-			require.Len(t, statsTbl.Indices, 1)
-			for _, col := range statsTbl.Columns {
+			require.Equal(t, statsTbl.ColNum(), 3)
+			require.Equal(t, statsTbl.IdxNum(), 1)
+			statsTbl.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
 				require.Greater(t, col.Len()+col.TopN.Num(), 0)
-			}
-			for _, idx := range statsTbl.Indices {
+				return false
+			})
+			statsTbl.ForEachIndexImmutable(func(_ int64, idx *statistics.Index) bool {
 				require.Greater(t, idx.Len()+idx.TopN.Num(), 0)
-			}
+				return false
+			})
 		}
 
 		tk.MustExec("drop table t")
@@ -102,8 +104,8 @@ PARTITION BY RANGE ( a ) (
 			statsTbl := handle.GetPartitionStats(table.Meta(), def.ID)
 			if i == 0 {
 				require.False(t, statsTbl.Pseudo)
-				require.Len(t, statsTbl.Columns, 3)
-				require.Len(t, statsTbl.Indices, 1)
+				require.Equal(t, statsTbl.ColNum(), 3)
+				require.Equal(t, statsTbl.IdxNum(), 1)
 			} else {
 				require.True(t, statsTbl.Pseudo)
 			}
@@ -154,7 +156,7 @@ func TestAnalyzeParameters(t *testing.T) {
 	require.NoError(t, err)
 	tableInfo := table.Meta()
 	tbl := dom.StatsHandle().GetTableStats(tableInfo)
-	col := tbl.Columns[1]
+	col := tbl.GetCol(1)
 	require.Equal(t, 20, col.Len())
 	require.Len(t, col.TopN.TopN, 1)
 	width, depth := col.CMSketch.GetWidthAndDepth()
@@ -163,7 +165,7 @@ func TestAnalyzeParameters(t *testing.T) {
 
 	tk.MustExec("analyze table t with 4 buckets, 0 topn, 4 cmsketch width, 4 cmsketch depth")
 	tbl = dom.StatsHandle().GetTableStats(tableInfo)
-	col = tbl.Columns[1]
+	col = tbl.GetCol(1)
 	require.Equal(t, 4, col.Len())
 	require.Nil(t, col.TopN)
 	width, depth = col.CMSketch.GetWidthAndDepth()
@@ -173,7 +175,7 @@ func TestAnalyzeParameters(t *testing.T) {
 	// Test very large cmsketch
 	tk.MustExec(fmt.Sprintf("analyze table t with %d cmsketch width, %d cmsketch depth", core.CMSketchSizeLimit, 1))
 	tbl = dom.StatsHandle().GetTableStats(tableInfo)
-	col = tbl.Columns[1]
+	col = tbl.GetCol(1)
 	require.Equal(t, 20, col.Len())
 
 	require.Len(t, col.TopN.TopN, 1)
@@ -184,7 +186,7 @@ func TestAnalyzeParameters(t *testing.T) {
 	// Test very large cmsketch
 	tk.MustExec("analyze table t with 20480 cmsketch width, 50 cmsketch depth")
 	tbl = dom.StatsHandle().GetTableStats(tableInfo)
-	col = tbl.Columns[1]
+	col = tbl.GetCol(1)
 	require.Equal(t, 20, col.Len())
 	require.Len(t, col.TopN.TopN, 1)
 	width, depth = col.CMSketch.GetWidthAndDepth()
@@ -209,9 +211,10 @@ func TestAnalyzeTooLongColumns(t *testing.T) {
 	require.NoError(t, err)
 	tableInfo := table.Meta()
 	tbl := dom.StatsHandle().GetTableStats(tableInfo)
-	require.Equal(t, 0, tbl.Columns[1].Len())
-	require.Equal(t, 0, tbl.Columns[1].TopN.Num())
-	require.Equal(t, int64(65559), tbl.Columns[1].TotColSize)
+	col1 := tbl.GetCol(1)
+	require.Equal(t, 0, col1.Len())
+	require.Equal(t, 0, col1.TopN.Num())
+	require.Equal(t, int64(65559), col1.TotColSize)
 }
 
 func TestFailedAnalyzeRequest(t *testing.T) {
@@ -250,11 +253,11 @@ func TestExtractTopN(t *testing.T) {
 	require.NoError(t, err)
 	tblInfo := table.Meta()
 	tblStats := dom.StatsHandle().GetTableStats(tblInfo)
-	colStats := tblStats.Columns[tblInfo.Columns[1].ID]
+	colStats := tblStats.GetCol(tblInfo.Columns[1].ID)
 	require.Len(t, colStats.TopN.TopN, 10)
 	item := colStats.TopN.TopN[0]
 	require.Equal(t, uint64(11), item.Count)
-	idxStats := tblStats.Indices[tblInfo.Indices[0].ID]
+	idxStats := tblStats.GetIdx(tblInfo.Indices[0].ID)
 	require.Len(t, idxStats.TopN.TopN, 10)
 	idxItem := idxStats.TopN.TopN[0]
 	require.Equal(t, uint64(11), idxItem.Count)
@@ -716,12 +719,12 @@ func TestSavedAnalyzeOptions(t *testing.T) {
 	tableInfo := table.Meta()
 	tbl := h.GetTableStats(tableInfo)
 	lastVersion := tbl.Version
-	col0 := tbl.Columns[tableInfo.Columns[0].ID]
+	col0 := tbl.GetCol(tableInfo.Columns[0].ID)
 	require.Equal(t, 2, len(col0.Buckets))
-	col1 := tbl.Columns[tableInfo.Columns[1].ID]
+	col1 := tbl.GetCol(tableInfo.Columns[1].ID)
 	require.Equal(t, 1, len(col1.TopN.TopN))
 	require.Equal(t, 2, len(col1.Buckets))
-	col2 := tbl.Columns[tableInfo.Columns[2].ID]
+	col2 := tbl.GetCol(tableInfo.Columns[2].ID)
 	require.Equal(t, 2, len(col2.Buckets))
 	rs := tk.MustQuery("select buckets,topn from mysql.analyze_options where table_id=" + strconv.FormatInt(tbl.PhysicalID, 10))
 	require.Equal(t, 1, len(rs.Rows()))
@@ -736,7 +739,7 @@ func TestSavedAnalyzeOptions(t *testing.T) {
 	tbl = h.GetTableStats(tableInfo)
 	require.Greater(t, tbl.Version, lastVersion)
 	lastVersion = tbl.Version
-	col0 = tbl.Columns[tableInfo.Columns[0].ID]
+	col0 = tbl.GetCol(tableInfo.Columns[0].ID)
 	require.Equal(t, 2, len(col0.Buckets))
 
 	// manual analyze uses the table-level persisted options by merging the new options
@@ -744,13 +747,13 @@ func TestSavedAnalyzeOptions(t *testing.T) {
 	tbl = h.GetTableStats(tableInfo)
 	require.Greater(t, tbl.Version, lastVersion)
 	lastVersion = tbl.Version
-	col0 = tbl.Columns[tableInfo.Columns[0].ID]
+	col0 = tbl.GetCol(tableInfo.Columns[0].ID)
 	require.Equal(t, 3, len(col0.Buckets))
 	tk.MustQuery("select * from t where b > 1 and c > 1")
 	require.NoError(t, h.LoadNeededHistograms())
-	col1 = tbl.Columns[tableInfo.Columns[1].ID]
+	col1 = tbl.GetCol(tableInfo.Columns[1].ID)
 	require.Equal(t, 1, len(col1.TopN.TopN))
-	col2 = tbl.Columns[tableInfo.Columns[2].ID]
+	col2 = tbl.GetCol(tableInfo.Columns[2].ID)
 	require.Less(t, col2.LastUpdateVersion, col0.LastUpdateVersion) // not updated since removed from list
 	rs = tk.MustQuery("select sample_rate,buckets,topn,column_choice,column_ids from mysql.analyze_options where table_id=" + strconv.FormatInt(tbl.PhysicalID, 10))
 	require.Equal(t, 1, len(rs.Rows()))
@@ -767,7 +770,7 @@ func TestSavedAnalyzeOptions(t *testing.T) {
 	tk.MustExec("analyze table t with 2 topn")
 	tbl = h.GetTableStats(tableInfo)
 	require.Greater(t, tbl.Version, lastVersion)
-	col0 = tbl.Columns[tableInfo.Columns[0].ID]
+	col0 = tbl.GetCol(tableInfo.Columns[0].ID)
 	require.NotEqual(t, 3, len(col0.Buckets))
 	rs = tk.MustQuery("select topn from mysql.analyze_options where table_id=" + strconv.FormatInt(tbl.PhysicalID, 10))
 	require.Equal(t, 1, len(rs.Rows()))
@@ -807,7 +810,7 @@ PARTITION BY RANGE ( a ) (
 	require.NotNil(t, pi)
 	p0 := h.GetPartitionStats(tableInfo, pi.Definitions[0].ID)
 	lastVersion := p0.Version
-	require.Equal(t, 3, len(p0.Columns[tableInfo.Columns[0].ID].Buckets))
+	require.Equal(t, 3, len(p0.GetCol(tableInfo.Columns[0].ID).Buckets))
 	rs := tk.MustQuery("select buckets,topn from mysql.analyze_options where table_id=" + strconv.FormatInt(p0.PhysicalID, 10))
 	require.Equal(t, 1, len(rs.Rows()))
 	require.Equal(t, "3", rs.Rows()[0][0])
@@ -823,11 +826,11 @@ PARTITION BY RANGE ( a ) (
 	p1 := h.GetPartitionStats(tableInfo, pi.Definitions[1].ID)
 	require.Greater(t, p0.Version, lastVersion)
 	lastVersion = p0.Version
-	require.Equal(t, 2, len(p0.Columns[tableInfo.Columns[0].ID].Buckets))
-	require.Equal(t, 2, len(p1.Columns[tableInfo.Columns[0].ID].Buckets))
+	require.Equal(t, 2, len(p0.GetCol(tableInfo.Columns[0].ID).Buckets))
+	require.Equal(t, 2, len(p1.GetCol(tableInfo.Columns[0].ID).Buckets))
 	// check column c is not analyzed
-	require.Less(t, p0.Columns[tableInfo.Columns[2].ID].LastUpdateVersion, p0.Columns[tableInfo.Columns[0].ID].LastUpdateVersion)
-	require.Less(t, p1.Columns[tableInfo.Columns[2].ID].LastUpdateVersion, p1.Columns[tableInfo.Columns[0].ID].LastUpdateVersion)
+	require.Less(t, p0.GetCol(tableInfo.Columns[2].ID).LastUpdateVersion, p0.GetCol(tableInfo.Columns[0].ID).LastUpdateVersion)
+	require.Less(t, p1.GetCol(tableInfo.Columns[2].ID).LastUpdateVersion, p1.GetCol(tableInfo.Columns[0].ID).LastUpdateVersion)
 	rs = tk.MustQuery("select sample_rate,buckets,topn,column_choice,column_ids from mysql.analyze_options where table_id=" + strconv.FormatInt(tableInfo.ID, 10))
 	require.Equal(t, 1, len(rs.Rows()))
 	require.Equal(t, "0", rs.Rows()[0][0])
@@ -858,11 +861,11 @@ PARTITION BY RANGE ( a ) (
 	require.Equal(t, p0.Version, lastVersion)
 	require.Greater(t, p1.Version, lastVersion)
 	lastVersion = p1.Version
-	require.Equal(t, 1, len(p1.Columns[tableInfo.Columns[0].ID].Buckets))
-	require.Equal(t, 2, len(p0.Columns[tableInfo.Columns[0].ID].Buckets))
+	require.Equal(t, 1, len(p1.GetCol(tableInfo.Columns[0].ID).Buckets))
+	require.Equal(t, 2, len(p0.GetCol(tableInfo.Columns[0].ID).Buckets))
 	// only column c of p1 is re-analyzed
-	require.Equal(t, 1, len(p1.Columns[tableInfo.Columns[2].ID].Buckets))
-	require.NotEqual(t, 1, len(p0.Columns[tableInfo.Columns[2].ID].Buckets))
+	require.Equal(t, 1, len(p1.GetCol(tableInfo.Columns[2].ID).Buckets))
+	require.NotEqual(t, 1, len(p0.GetCol(tableInfo.Columns[2].ID).Buckets))
 	colIDStrsABC := strings.Join([]string{strconv.FormatInt(tableInfo.Columns[0].ID, 10), strconv.FormatInt(tableInfo.Columns[1].ID, 10), strconv.FormatInt(tableInfo.Columns[2].ID, 10)}, ",")
 	rs = tk.MustQuery("select buckets,column_ids from mysql.analyze_options where table_id=" + strconv.FormatInt(tableInfo.ID, 10))
 	require.Equal(t, 1, len(rs.Rows()))
@@ -882,7 +885,7 @@ PARTITION BY RANGE ( a ) (
 	p0 = h.GetPartitionStats(tableInfo, pi.Definitions[0].ID)
 	require.Greater(t, p0.Version, lastVersion)
 	lastVersion = p0.Version
-	require.Equal(t, 2, len(p0.Columns[tableInfo.Columns[0].ID].Buckets))
+	require.Equal(t, 2, len(p0.GetCol(tableInfo.Columns[0].ID).Buckets))
 	rs = tk.MustQuery("select buckets from mysql.analyze_options where table_id=" + strconv.FormatInt(tableInfo.ID, 10))
 	require.Equal(t, 1, len(rs.Rows()))
 	require.Equal(t, "2", rs.Rows()[0][0])
@@ -894,7 +897,7 @@ PARTITION BY RANGE ( a ) (
 	tk.MustExec("analyze table t partition p0 with 3 buckets")
 	p0 = h.GetPartitionStats(tableInfo, pi.Definitions[0].ID)
 	require.Greater(t, p0.Version, lastVersion)
-	require.Equal(t, 3, len(p0.Columns[tableInfo.Columns[0].ID].Buckets))
+	require.Equal(t, 3, len(p0.GetCol(tableInfo.Columns[0].ID).Buckets))
 	rs = tk.MustQuery("select sample_rate,buckets,topn,column_choice,column_ids from mysql.analyze_options where table_id=" + strconv.FormatInt(p0.PhysicalID, 10))
 	require.Equal(t, 1, len(rs.Rows()))
 	require.Equal(t, "0", rs.Rows()[0][0])
@@ -913,7 +916,7 @@ PARTITION BY RANGE ( a ) (
 	tableInfo = table.Meta()
 	pi = tableInfo.GetPartitionInfo()
 	p2 := h.GetPartitionStats(tableInfo, pi.Definitions[2].ID)
-	require.Equal(t, 2, len(p2.Columns[tableInfo.Columns[0].ID].Buckets))
+	require.Equal(t, 2, len(p2.GetCol(tableInfo.Columns[0].ID).Buckets))
 	rs = tk.MustQuery("select sample_rate,buckets,topn,column_choice,column_ids from mysql.analyze_options where table_id=" + strconv.FormatInt(p2.PhysicalID, 10))
 	require.Equal(t, 1, len(rs.Rows()))
 	require.Equal(t, "0", rs.Rows()[0][0])
@@ -934,7 +937,7 @@ PARTITION BY RANGE ( a ) (
 	tk.MustExec("analyze table t partition p2")
 	pi = tableInfo.GetPartitionInfo()
 	p2 = h.GetPartitionStats(tableInfo, pi.Definitions[2].ID)
-	require.NotEqual(t, 2, len(p2.Columns[tableInfo.Columns[0].ID].Buckets))
+	require.NotEqual(t, 2, len(p2.GetCol(tableInfo.Columns[0].ID).Buckets))
 
 	// drop column
 	tk.MustExec("set @@session.tidb_analyze_version = 2")
@@ -1004,8 +1007,8 @@ func TestSavedAnalyzeOptionsForMultipleTables(t *testing.T) {
 	tableInfo2 := table2.Meta()
 	tblStats1 := h.GetTableStats(tableInfo1)
 	tblStats2 := h.GetTableStats(tableInfo2)
-	tbl1Col0 := tblStats1.Columns[tableInfo1.Columns[0].ID]
-	tbl2Col0 := tblStats2.Columns[tableInfo2.Columns[0].ID]
+	tbl1Col0 := tblStats1.GetCol(tableInfo1.Columns[0].ID)
+	tbl2Col0 := tblStats2.GetCol(tableInfo2.Columns[0].ID)
 	require.Equal(t, 3, len(tbl1Col0.Buckets))
 	require.Equal(t, 2, len(tbl2Col0.Buckets))
 	rs := tk.MustQuery("select buckets,topn from mysql.analyze_options where table_id=" + strconv.FormatInt(tableInfo1.ID, 10))
@@ -1040,7 +1043,6 @@ func TestSavedAnalyzeColumnOptions(t *testing.T) {
 	defer func() {
 		tk.MustExec(fmt.Sprintf("set global tidb_enable_column_tracking = %v", originalVal4))
 	}()
-	tk.MustExec("set global tidb_enable_column_tracking = 1")
 
 	tk.MustExec("use test")
 	tk.MustExec("set @@session.tidb_analyze_version = 2")
@@ -1064,9 +1066,9 @@ func TestSavedAnalyzeColumnOptions(t *testing.T) {
 	tblStats := h.GetTableStats(tblInfo)
 	lastVersion := tblStats.Version
 	// column b is analyzed
-	require.Greater(t, lastVersion, tblStats.Columns[tblInfo.Columns[0].ID].LastUpdateVersion)
-	require.Equal(t, lastVersion, tblStats.Columns[tblInfo.Columns[1].ID].LastUpdateVersion)
-	require.Greater(t, lastVersion, tblStats.Columns[tblInfo.Columns[2].ID].LastUpdateVersion)
+	require.Greater(t, lastVersion, tblStats.GetCol(tblInfo.Columns[0].ID).LastUpdateVersion)
+	require.Equal(t, lastVersion, tblStats.GetCol(tblInfo.Columns[1].ID).LastUpdateVersion)
+	require.Greater(t, lastVersion, tblStats.GetCol(tblInfo.Columns[2].ID).LastUpdateVersion)
 	tk.MustQuery(fmt.Sprintf("select column_choice, column_ids from mysql.analyze_options where table_id = %v", tblInfo.ID)).Check(testkit.Rows("PREDICATE "))
 
 	tk.MustExec("select * from t where c > 1")
@@ -1078,9 +1080,9 @@ func TestSavedAnalyzeColumnOptions(t *testing.T) {
 	require.Less(t, lastVersion, tblStats.Version)
 	lastVersion = tblStats.Version
 	// column b, c are analyzed
-	require.Greater(t, lastVersion, tblStats.Columns[tblInfo.Columns[0].ID].LastUpdateVersion)
-	require.Equal(t, lastVersion, tblStats.Columns[tblInfo.Columns[1].ID].LastUpdateVersion)
-	require.Equal(t, lastVersion, tblStats.Columns[tblInfo.Columns[2].ID].LastUpdateVersion)
+	require.Greater(t, lastVersion, tblStats.GetCol(tblInfo.Columns[0].ID).LastUpdateVersion)
+	require.Equal(t, lastVersion, tblStats.GetCol(tblInfo.Columns[1].ID).LastUpdateVersion)
+	require.Equal(t, lastVersion, tblStats.GetCol(tblInfo.Columns[2].ID).LastUpdateVersion)
 
 	tk.MustExec("insert into t values (5,5,5),(6,6,6)")
 	require.Nil(t, h.DumpStatsDeltaToKV(true))
@@ -1091,9 +1093,9 @@ func TestSavedAnalyzeColumnOptions(t *testing.T) {
 	require.Less(t, lastVersion, tblStats.Version)
 	lastVersion = tblStats.Version
 	// column b, c are analyzed
-	require.Greater(t, lastVersion, tblStats.Columns[tblInfo.Columns[0].ID].LastUpdateVersion)
-	require.Equal(t, lastVersion, tblStats.Columns[tblInfo.Columns[1].ID].LastUpdateVersion)
-	require.Equal(t, lastVersion, tblStats.Columns[tblInfo.Columns[2].ID].LastUpdateVersion)
+	require.Greater(t, lastVersion, tblStats.GetCol(tblInfo.Columns[0].ID).LastUpdateVersion)
+	require.Equal(t, lastVersion, tblStats.GetCol(tblInfo.Columns[1].ID).LastUpdateVersion)
+	require.Equal(t, lastVersion, tblStats.GetCol(tblInfo.Columns[2].ID).LastUpdateVersion)
 
 	tk.MustExec("analyze table t columns a")
 	// TODO: the a's meta should be keep. Or the previous a's meta should be clear.
@@ -1102,9 +1104,9 @@ func TestSavedAnalyzeColumnOptions(t *testing.T) {
 	require.Less(t, lastVersion, tblStats.Version)
 	lastVersion = tblStats.Version
 	// column a is analyzed
-	require.Equal(t, lastVersion, tblStats.Columns[tblInfo.Columns[0].ID].LastUpdateVersion)
-	require.Greater(t, lastVersion, tblStats.Columns[tblInfo.Columns[1].ID].LastUpdateVersion)
-	require.Greater(t, lastVersion, tblStats.Columns[tblInfo.Columns[2].ID].LastUpdateVersion)
+	require.Equal(t, lastVersion, tblStats.GetCol(tblInfo.Columns[0].ID).LastUpdateVersion)
+	require.Greater(t, lastVersion, tblStats.GetCol(tblInfo.Columns[1].ID).LastUpdateVersion)
+	require.Greater(t, lastVersion, tblStats.GetCol(tblInfo.Columns[2].ID).LastUpdateVersion)
 	tk.MustQuery(fmt.Sprintf("select column_choice, column_ids from mysql.analyze_options where table_id = %v", tblInfo.ID)).Check(testkit.Rows(fmt.Sprintf("LIST %v", tblInfo.Columns[0].ID)))
 
 	tk.MustExec("analyze table t all columns")
@@ -1114,9 +1116,9 @@ func TestSavedAnalyzeColumnOptions(t *testing.T) {
 	require.Less(t, lastVersion, tblStats.Version)
 	lastVersion = tblStats.Version
 	// column a, b, c are analyzed
-	require.Equal(t, lastVersion, tblStats.Columns[tblInfo.Columns[0].ID].LastUpdateVersion)
-	require.Equal(t, lastVersion, tblStats.Columns[tblInfo.Columns[1].ID].LastUpdateVersion)
-	require.Equal(t, lastVersion, tblStats.Columns[tblInfo.Columns[2].ID].LastUpdateVersion)
+	require.Equal(t, lastVersion, tblStats.GetCol(tblInfo.Columns[0].ID).LastUpdateVersion)
+	require.Equal(t, lastVersion, tblStats.GetCol(tblInfo.Columns[1].ID).LastUpdateVersion)
+	require.Equal(t, lastVersion, tblStats.GetCol(tblInfo.Columns[2].ID).LastUpdateVersion)
 	tk.MustQuery(fmt.Sprintf("select column_choice, column_ids from mysql.analyze_options where table_id = %v", tblInfo.ID)).Check(testkit.Rows("ALL "))
 }
 
@@ -1151,7 +1153,6 @@ func TestAnalyzeColumnsWithPrimaryKey(t *testing.T) {
 				defer func() {
 					tk.MustExec(fmt.Sprintf("set global tidb_enable_column_tracking = %v", originalVal))
 				}()
-				tk.MustExec("set global tidb_enable_column_tracking = 1")
 				tk.MustExec("select * from t where a > 1")
 				require.NoError(t, h.DumpColStatsUsageToKV())
 				rows := tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't' and last_used_at is not null").Rows()
@@ -1219,7 +1220,6 @@ func TestAnalyzeColumnsWithIndex(t *testing.T) {
 				defer func() {
 					tk.MustExec(fmt.Sprintf("set global tidb_enable_column_tracking = %v", originalVal))
 				}()
-				tk.MustExec("set global tidb_enable_column_tracking = 1")
 				tk.MustExec("select * from t where c > 1")
 				require.NoError(t, h.DumpColStatsUsageToKV())
 				rows := tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't' and last_used_at is not null").Rows()
@@ -1296,7 +1296,6 @@ func TestAnalyzeColumnsWithClusteredIndex(t *testing.T) {
 				defer func() {
 					tk.MustExec(fmt.Sprintf("set global tidb_enable_column_tracking = %v", originalVal))
 				}()
-				tk.MustExec("set global tidb_enable_column_tracking = 1")
 				tk.MustExec("select * from t where c > 1")
 				require.NoError(t, h.DumpColStatsUsageToKV())
 				rows := tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't' and last_used_at is not null").Rows()
@@ -1378,7 +1377,6 @@ func TestAnalyzeColumnsWithDynamicPartitionTable(t *testing.T) {
 				defer func() {
 					tk.MustExec(fmt.Sprintf("set global tidb_enable_column_tracking = %v", originalVal))
 				}()
-				tk.MustExec("set global tidb_enable_column_tracking = 1")
 				tk.MustExec("select * from t where a < 1")
 				require.NoError(t, h.DumpColStatsUsageToKV())
 				rows := tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't' and last_used_at is not null").Rows()
@@ -1502,7 +1500,6 @@ func TestAnalyzeColumnsWithStaticPartitionTable(t *testing.T) {
 				defer func() {
 					tk.MustExec(fmt.Sprintf("set global tidb_enable_column_tracking = %v", originalVal))
 				}()
-				tk.MustExec("set global tidb_enable_column_tracking = 1")
 				tk.MustExec("select * from t where a < 1")
 				require.NoError(t, h.DumpColStatsUsageToKV())
 				rows := tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't' and last_used_at is not null").Rows()
@@ -1606,7 +1603,6 @@ func TestAnalyzeColumnsWithExtendedStats(t *testing.T) {
 				defer func() {
 					tk.MustExec(fmt.Sprintf("set global tidb_enable_column_tracking = %v", originalVal))
 				}()
-				tk.MustExec("set global tidb_enable_column_tracking = 1")
 				tk.MustExec("select * from t where b > 1")
 				require.NoError(t, h.DumpColStatsUsageToKV())
 				rows := tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't' and last_used_at is not null").Rows()
@@ -1676,7 +1672,6 @@ func TestAnalyzeColumnsWithVirtualColumnIndex(t *testing.T) {
 				defer func() {
 					tk.MustExec(fmt.Sprintf("set global tidb_enable_column_tracking = %v", originalVal))
 				}()
-				tk.MustExec("set global tidb_enable_column_tracking = 1")
 				tk.MustExec("select * from t where b > 1")
 				require.NoError(t, h.DumpColStatsUsageToKV())
 				rows := tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't' and last_used_at is not null").Rows()
@@ -1759,7 +1754,6 @@ func TestAnalyzeColumnsAfterAnalyzeAll(t *testing.T) {
 				defer func() {
 					tk.MustExec(fmt.Sprintf("set global tidb_enable_column_tracking = %v", originalVal))
 				}()
-				tk.MustExec("set global tidb_enable_column_tracking = 1")
 				tk.MustExec("select * from t where b > 1")
 				require.NoError(t, h.DumpColStatsUsageToKV())
 				rows := tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't' and last_used_at is not null").Rows()
@@ -1835,10 +1829,8 @@ func TestAnalyzeColumnsErrorAndWarning(t *testing.T) {
 	tk.MustExec("analyze table t predicate columns")
 	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
 		`Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t, reason to use this rate is "use min(1, 110000/10000) as the sample-rate=1"`,
-		"Warning 1105 No predicate column has been collected yet for table test.t so all columns are analyzed",
+		"Warning 1105 No predicate column has been collected yet for table test.t, so only indexes and the columns composing the indexes will be analyzed",
 	))
-	rows := tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't' and last_analyzed_at is not null").Rows()
-	require.Equal(t, 2, len(rows))
 
 	for _, val := range []model.ColumnChoice{model.ColumnList, model.PredicateColumns} {
 		func(choice model.ColumnChoice) {
@@ -1853,7 +1845,6 @@ func TestAnalyzeColumnsErrorAndWarning(t *testing.T) {
 				defer func() {
 					tk.MustExec(fmt.Sprintf("set global tidb_enable_column_tracking = %v", originalVal))
 				}()
-				tk.MustExec("set global tidb_enable_column_tracking = 1")
 				tk.MustExec("select * from t where b > 1")
 				require.NoError(t, dom.StatsHandle().DumpColStatsUsageToKV())
 				tk.MustExec("analyze table t predicate columns")
@@ -2167,7 +2158,6 @@ func TestShowAanalyzeStatusJobInfo(t *testing.T) {
 	}
 	checkJobInfo("analyze table columns b, c, d with 2 buckets, 2 topn, 1 samplerate")
 	tk.MustExec("set global tidb_persist_analyze_options = 1")
-	tk.MustExec("set global tidb_enable_column_tracking = 1")
 	tk.MustExec("select * from t where c > 1")
 	h := dom.StatsHandle()
 	require.NoError(t, h.DumpColStatsUsageToKV())
@@ -2222,10 +2212,10 @@ PARTITION BY RANGE ( a ) (
 	tbl := h.GetTableStats(tableInfo)
 	lastVersion := tbl.Version
 	// both globalStats and partition stats generated and options saved for column a,c
-	require.Equal(t, 3, len(tbl.Columns[tableInfo.Columns[0].ID].Buckets))
-	require.Equal(t, 1, len(tbl.Columns[tableInfo.Columns[0].ID].TopN.TopN))
-	require.Equal(t, 3, len(tbl.Columns[tableInfo.Columns[2].ID].Buckets))
-	require.Equal(t, 1, len(tbl.Columns[tableInfo.Columns[2].ID].TopN.TopN))
+	require.Equal(t, 3, len(tbl.GetCol(tableInfo.Columns[0].ID).Buckets))
+	require.Equal(t, 1, len(tbl.GetCol(tableInfo.Columns[0].ID).TopN.TopN))
+	require.Equal(t, 3, len(tbl.GetCol(tableInfo.Columns[2].ID).Buckets))
+	require.Equal(t, 1, len(tbl.GetCol(tableInfo.Columns[2].ID).TopN.TopN))
 	rs := tk.MustQuery("select buckets,topn from mysql.analyze_options where table_id=" + strconv.FormatInt(pi.Definitions[0].ID, 10))
 	require.Equal(t, 0, len(rs.Rows()))
 	rs = tk.MustQuery("select buckets,topn from mysql.analyze_options where table_id=" + strconv.FormatInt(pi.Definitions[1].ID, 10))
@@ -2242,10 +2232,10 @@ PARTITION BY RANGE ( a ) (
 	tbl = h.GetTableStats(tableInfo)
 	require.Greater(t, tbl.Version, lastVersion)
 	lastVersion = tbl.Version
-	require.Equal(t, 3, len(tbl.Columns[tableInfo.Columns[0].ID].Buckets))
-	require.Equal(t, 1, len(tbl.Columns[tableInfo.Columns[0].ID].TopN.TopN))
-	require.Equal(t, 3, len(tbl.Columns[tableInfo.Columns[2].ID].Buckets))
-	require.Equal(t, 1, len(tbl.Columns[tableInfo.Columns[2].ID].TopN.TopN))
+	require.Equal(t, 3, len(tbl.GetCol(tableInfo.Columns[0].ID).Buckets))
+	require.Equal(t, 1, len(tbl.GetCol(tableInfo.Columns[0].ID).TopN.TopN))
+	require.Equal(t, 3, len(tbl.GetCol(tableInfo.Columns[2].ID).Buckets))
+	require.Equal(t, 1, len(tbl.GetCol(tableInfo.Columns[2].ID).TopN.TopN))
 	rs = tk.MustQuery("select buckets,topn from mysql.analyze_options where table_id=" + strconv.FormatInt(pi.Definitions[0].ID, 10))
 	require.Equal(t, 0, len(rs.Rows()))
 	rs = tk.MustQuery("select buckets,topn from mysql.analyze_options where table_id=" + strconv.FormatInt(pi.Definitions[1].ID, 10))
@@ -2261,10 +2251,10 @@ PARTITION BY RANGE ( a ) (
 	require.NoError(t, h.LoadNeededHistograms())
 	tbl = h.GetTableStats(tableInfo)
 	require.Greater(t, tbl.Version, lastVersion)
-	require.Equal(t, 2, len(tbl.Columns[tableInfo.Columns[0].ID].Buckets))
-	require.Equal(t, 2, len(tbl.Columns[tableInfo.Columns[0].ID].TopN.TopN))
-	require.Equal(t, 2, len(tbl.Columns[tableInfo.Columns[2].ID].Buckets))
-	require.Equal(t, 2, len(tbl.Columns[tableInfo.Columns[2].ID].TopN.TopN))
+	require.Equal(t, 2, len(tbl.GetCol(tableInfo.Columns[0].ID).Buckets))
+	require.Equal(t, 2, len(tbl.GetCol(tableInfo.Columns[0].ID).TopN.TopN))
+	require.Equal(t, 2, len(tbl.GetCol(tableInfo.Columns[2].ID).Buckets))
+	require.Equal(t, 2, len(tbl.GetCol(tableInfo.Columns[2].ID).TopN.TopN))
 	rs = tk.MustQuery("select buckets,topn from mysql.analyze_options where table_id=" + strconv.FormatInt(pi.Definitions[0].ID, 10))
 	require.Equal(t, 0, len(rs.Rows()))
 	rs = tk.MustQuery("select buckets,topn from mysql.analyze_options where table_id=" + strconv.FormatInt(pi.Definitions[1].ID, 10))
@@ -2317,10 +2307,10 @@ PARTITION BY RANGE ( a ) (
 	p0 := h.GetPartitionStats(tableInfo, pi.Definitions[0].ID)
 	p1 := h.GetPartitionStats(tableInfo, pi.Definitions[1].ID)
 	lastVersion := tbl.Version
-	require.Equal(t, 3, len(p0.Columns[tableInfo.Columns[0].ID].Buckets))
-	require.Equal(t, 3, len(p0.Columns[tableInfo.Columns[2].ID].Buckets))
-	require.Equal(t, 0, len(p1.Columns[tableInfo.Columns[0].ID].Buckets))
-	require.Equal(t, 0, len(tbl.Columns[tableInfo.Columns[0].ID].Buckets))
+	require.Equal(t, 3, len(p0.GetCol(tableInfo.Columns[0].ID).Buckets))
+	require.Equal(t, 3, len(p0.GetCol(tableInfo.Columns[2].ID).Buckets))
+	require.Equal(t, 0, len(p1.GetCol(tableInfo.Columns[0].ID).Buckets))
+	require.Equal(t, 0, len(tbl.GetCol(tableInfo.Columns[0].ID).Buckets))
 	rs := tk.MustQuery("select buckets,topn from mysql.analyze_options where table_id=" + strconv.FormatInt(pi.Definitions[0].ID, 10))
 	require.Equal(t, 1, len(rs.Rows()))
 	require.Equal(t, "3", rs.Rows()[0][0])
@@ -2345,9 +2335,9 @@ PARTITION BY RANGE ( a ) (
 	require.NoError(t, err)
 	p1, err = h.TableStatsFromStorage(tableInfo, pi.Definitions[1].ID, true, 0)
 	require.NoError(t, err)
-	require.Equal(t, 0, len(p0.Columns[tableInfo.Columns[0].ID].Buckets))
-	require.Equal(t, len(tbl.Columns[tableInfo.Columns[0].ID].Buckets), len(p0.Columns[tableInfo.Columns[0].ID].Buckets))
-	require.Equal(t, len(tbl.Columns[tableInfo.Columns[0].ID].Buckets), len(p1.Columns[tableInfo.Columns[0].ID].Buckets))
+	require.Equal(t, 0, len(p0.GetCol(tableInfo.Columns[0].ID).Buckets))
+	require.Equal(t, len(tbl.GetCol(tableInfo.Columns[0].ID).Buckets), len(p0.GetCol(tableInfo.Columns[0].ID).Buckets))
+	require.Equal(t, len(tbl.GetCol(tableInfo.Columns[0].ID).Buckets), len(p1.GetCol(tableInfo.Columns[0].ID).Buckets))
 	rs = tk.MustQuery("select buckets,topn from mysql.analyze_options where table_id=" + strconv.FormatInt(pi.Definitions[0].ID, 10))
 	require.Equal(t, 1, len(rs.Rows()))
 	require.Equal(t, "3", rs.Rows()[0][0])
@@ -2365,8 +2355,8 @@ PARTITION BY RANGE ( a ) (
 	tbl = h.GetTableStats(tableInfo)
 	require.Greater(t, tbl.Version, lastVersion)
 	lastVersion = tbl.Version
-	require.Equal(t, 2, len(tbl.Columns[tableInfo.Columns[1].ID].Buckets))
-	require.Equal(t, 2, len(tbl.Columns[tableInfo.Columns[3].ID].Buckets))
+	require.Equal(t, 2, len(tbl.GetCol(tableInfo.Columns[1].ID).Buckets))
+	require.Equal(t, 2, len(tbl.GetCol(tableInfo.Columns[3].ID).Buckets))
 	rs = tk.MustQuery("select buckets,topn from mysql.analyze_options where table_id=" + strconv.FormatInt(pi.Definitions[0].ID, 10))
 	require.Equal(t, 1, len(rs.Rows()))
 	require.Equal(t, "3", rs.Rows()[0][0])
@@ -2385,8 +2375,8 @@ PARTITION BY RANGE ( a ) (
 	tbl = h.GetTableStats(tableInfo)
 	require.Greater(t, tbl.Version, lastVersion)
 	lastVersion = tbl.Version
-	require.Equal(t, 2, len(tbl.Columns[tableInfo.Columns[3].ID].Buckets))
-	require.Equal(t, 2, len(tbl.Columns[tableInfo.Columns[3].ID].TopN.TopN))
+	require.Equal(t, 2, len(tbl.GetCol(tableInfo.Columns[3].ID).Buckets))
+	require.Equal(t, 2, len(tbl.GetCol(tableInfo.Columns[3].ID).TopN.TopN))
 
 	// analyze table under dynamic mode with specified options with old table-level & partition-level options
 	tk.MustExec("analyze table t with 1 topn")
@@ -2394,10 +2384,10 @@ PARTITION BY RANGE ( a ) (
 	require.NoError(t, h.LoadNeededHistograms())
 	tbl = h.GetTableStats(tableInfo)
 	require.Greater(t, tbl.Version, lastVersion)
-	require.Equal(t, 2, len(tbl.Columns[tableInfo.Columns[1].ID].Buckets))
-	require.Equal(t, 2, len(tbl.Columns[tableInfo.Columns[3].ID].Buckets))
-	require.Equal(t, 1, len(tbl.Columns[tableInfo.Columns[1].ID].TopN.TopN))
-	require.Equal(t, 1, len(tbl.Columns[tableInfo.Columns[3].ID].TopN.TopN))
+	require.Equal(t, 2, len(tbl.GetCol(tableInfo.Columns[1].ID).Buckets))
+	require.Equal(t, 2, len(tbl.GetCol(tableInfo.Columns[3].ID).Buckets))
+	require.Equal(t, 1, len(tbl.GetCol(tableInfo.Columns[1].ID).TopN.TopN))
+	require.Equal(t, 1, len(tbl.GetCol(tableInfo.Columns[3].ID).TopN.TopN))
 	rs = tk.MustQuery("select buckets,topn from mysql.analyze_options where table_id=" + strconv.FormatInt(pi.Definitions[0].ID, 10))
 	require.Equal(t, 1, len(rs.Rows()))
 	require.Equal(t, "3", rs.Rows()[0][0])
@@ -2453,8 +2443,8 @@ PARTITION BY RANGE ( a ) (
 	require.NoError(t, h.LoadNeededHistograms())
 	tbl := h.GetTableStats(tableInfo)
 	lastVersion := tbl.Version
-	require.NotEqual(t, 3, len(tbl.Columns[tableInfo.Columns[2].ID].Buckets))
-	require.NotEqual(t, 3, len(tbl.Columns[tableInfo.Columns[3].ID].Buckets))
+	require.NotEqual(t, 3, len(tbl.GetCol(tableInfo.Columns[2].ID).Buckets))
+	require.NotEqual(t, 3, len(tbl.GetCol(tableInfo.Columns[3].ID).Buckets))
 
 	tk.MustExec("analyze table t partition p0")
 	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
@@ -2506,7 +2496,7 @@ PARTITION BY RANGE ( a ) (
 	tk.MustQuery("select * from t where a > 1 and b > 1 and c > 1 and d > 1")
 	require.NoError(t, h.LoadNeededHistograms())
 	p0 := h.GetPartitionStats(tableInfo, pi.Definitions[0].ID)
-	require.Equal(t, 3, len(p0.Columns[tableInfo.Columns[2].ID].Buckets))
+	require.Equal(t, 3, len(p0.GetCol(tableInfo.Columns[2].ID).Buckets))
 
 	// analyze partition with existing stats of other partitions under dynamic
 	tk.MustExec("set @@session.tidb_partition_prune_mode = 'dynamic'")
@@ -2545,7 +2535,7 @@ PARTITION BY RANGE ( a ) (
 	tk.MustQuery("select * from t where a > 1 and b > 1 and c > 1 and d > 1")
 	require.NoError(t, h.LoadNeededHistograms())
 	tbl := h.GetTableStats(tableInfo)
-	require.Equal(t, 2, len(tbl.Columns[tableInfo.Columns[2].ID].Buckets))
+	require.Equal(t, 2, len(tbl.GetCol(tableInfo.Columns[2].ID).Buckets))
 }
 
 func TestAnalyzePartitionUnderV1Dynamic(t *testing.T) {
@@ -2591,14 +2581,14 @@ PARTITION BY RANGE ( a ) (
 	require.NoError(t, h.LoadNeededHistograms())
 	tbl := h.GetTableStats(tableInfo)
 	lastVersion := tbl.Version
-	require.Equal(t, 3, len(tbl.Columns[tableInfo.Columns[2].ID].Buckets))
-	require.Equal(t, 3, len(tbl.Columns[tableInfo.Columns[3].ID].Buckets))
+	require.Equal(t, 3, len(tbl.GetCol(tableInfo.Columns[2].ID).Buckets))
+	require.Equal(t, 3, len(tbl.GetCol(tableInfo.Columns[3].ID).Buckets))
 
 	tk.MustExec("analyze table t partition p1 index idx with 1 topn, 2 buckets")
 	tk.MustQuery("show warnings").Sort().Check(testkit.Rows())
 	tbl = h.GetTableStats(tableInfo)
 	require.Greater(t, tbl.Version, lastVersion)
-	require.Equal(t, 2, len(tbl.Indices[tableInfo.Indices[0].ID].Buckets))
+	require.Equal(t, 2, len(tbl.GetIdx(tableInfo.Indices[0].ID).Buckets))
 }
 
 func TestIssue35056(t *testing.T) {
@@ -2703,7 +2693,7 @@ PARTITION BY RANGE ( a ) (
 	tk.MustExec("analyze table t partition p0")
 	tbl, err := h.TableStatsFromStorage(table.Meta(), table.Meta().ID, true, 0)
 	require.NoError(t, err)
-	require.Equal(t, int64(6), tbl.Columns[tableInfo.Columns[0].ID].Histogram.NDV)
+	require.Equal(t, int64(6), tbl.GetCol(tableInfo.Columns[0].ID).Histogram.NDV)
 }
 
 func TestAutoAnalyzeAwareGlobalVariableChange(t *testing.T) {
@@ -2793,17 +2783,16 @@ func TestAnalyzeColumnsSkipMVIndexJsonCol(t *testing.T) {
 	require.NoError(t, err)
 	tblInfo := tbl.Meta()
 	stats := h.GetTableStats(tblInfo)
-	require.True(t, stats.Columns[tblInfo.Columns[0].ID].IsStatsInitialized())
-	require.True(t, stats.Columns[tblInfo.Columns[1].ID].IsStatsInitialized())
-	require.False(t, stats.Columns[tblInfo.Columns[2].ID].IsStatsInitialized())
-	require.True(t, stats.Indices[tblInfo.Indices[0].ID].IsStatsInitialized())
-	require.True(t, stats.Indices[tblInfo.Indices[1].ID].IsStatsInitialized())
+	require.True(t, stats.GetCol(tblInfo.Columns[0].ID).IsStatsInitialized())
+	require.True(t, stats.GetCol(tblInfo.Columns[1].ID).IsStatsInitialized())
+	require.False(t, stats.GetCol(tblInfo.Columns[2].ID).IsStatsInitialized())
+	require.True(t, stats.GetIdx(tblInfo.Indices[0].ID).IsStatsInitialized())
+	require.True(t, stats.GetIdx(tblInfo.Indices[1].ID).IsStatsInitialized())
 }
 
 // TestAnalyzeMVIndex tests analyzing the mv index use some real data in the table.
 // It checks the analyze jobs, async loading and the stats content in the memory.
 func TestAnalyzeMVIndex(t *testing.T) {
-	t.Skip()
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/DebugAnalyzeJobOperations", "return(true)"))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/statistics/handle/DebugAnalyzeJobOperations", "return(true)"))
 	defer func() {
@@ -3019,15 +3008,15 @@ func TestAnalyzeMVIndex(t *testing.T) {
 	// 4. check stats content in the memory
 	require.NoError(t, h.LoadNeededHistograms())
 	tk.MustQuery("show stats_meta").CheckAt([]int{0, 1, 4, 5}, testkit.Rows("test t 0 27"))
-	tk.MustQuery("show stats_histograms").CheckAt([]int{0, 1, 3, 4, 6, 7, 8, 9, 10}, testkit.Rows(
+	tk.MustQuery("show stats_histograms").Sort().CheckAt([]int{0, 1, 3, 4, 6, 7, 8, 9, 10}, testkit.Rows(
 		// db_name, table_name, column_name, is_index, distinct_count, null_count, avg_col_size, correlation, load_status
 		"test t a 0 1 0 1 1 allEvicted",
 		"test t ia 1 1 0 0 0 allLoaded",
-		"test t ij_signed 1 11 0 0 0 allLoaded",
-		"test t ij_unsigned 1 6 0 0 0 allLoaded",
-		"test t ij_double 1 7 0 0 0 allLoaded",
 		"test t ij_binary 1 15 0 0 0 allLoaded",
 		"test t ij_char 1 11 0 0 0 allLoaded",
+		"test t ij_double 1 7 0 0 0 allLoaded",
+		"test t ij_signed 1 11 0 0 0 allLoaded",
+		"test t ij_unsigned 1 6 0 0 0 allLoaded",
 	))
 	tk.MustQuery("show stats_topn").Check(testkit.Rows(
 		// db_name, table_name, partition_name, column_name, is_index, value, count
