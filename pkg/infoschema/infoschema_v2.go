@@ -197,6 +197,11 @@ func (isd *Data) CacheCapacity() uint64 {
 	return isd.tableCache.Capacity()
 }
 
+// SetCacheCapacity sets the cache capacity size in bytes.
+func (isd *Data) SetCacheCapacity(capacity uint64) {
+	isd.tableCache.SetCapacityAndWaitEvict(capacity)
+}
+
 func (isd *Data) add(item tableItem, tbl table.Table) {
 	isd.byID.Set(item)
 	isd.byName.Set(item)

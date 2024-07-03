@@ -32,12 +32,6 @@ func (ds DataSource) Init(ctx base.PlanContext, offset int) *DataSource {
 	return &ds
 }
 
-// Init initializes TiKVSingleGather.
-func (sg TiKVSingleGather) Init(ctx base.PlanContext, offset int) *TiKVSingleGather {
-	sg.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(ctx, plancodec.TypeTiKVSingleGather, &sg, offset)
-	return &sg
-}
-
 // Init initializes LogicalTableScan.
 func (ts LogicalTableScan) Init(ctx base.PlanContext, offset int) *LogicalTableScan {
 	ts.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(ctx, plancodec.TypeTableScan, &ts, offset)
@@ -77,18 +71,6 @@ func (p LogicalProjection) Init(ctx base.PlanContext, qbOffset int) *LogicalProj
 // Init initializes LogicalProjection.
 func (p LogicalExpand) Init(ctx base.PlanContext, offset int) *LogicalExpand {
 	p.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(ctx, plancodec.TypeExpand, &p, offset)
-	return &p
-}
-
-// Init initializes LogicalMaxOneRow.
-func (p LogicalMaxOneRow) Init(ctx base.PlanContext, offset int) *LogicalMaxOneRow {
-	p.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(ctx, plancodec.TypeMaxOneRow, &p, offset)
-	return &p
-}
-
-// Init initializes LogicalWindow.
-func (p LogicalWindow) Init(ctx base.PlanContext, offset int) *LogicalWindow {
-	p.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(ctx, plancodec.TypeWindow, &p, offset)
 	return &p
 }
 

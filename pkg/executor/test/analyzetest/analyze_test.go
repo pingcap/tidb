@@ -2793,7 +2793,6 @@ func TestAnalyzeColumnsSkipMVIndexJsonCol(t *testing.T) {
 // TestAnalyzeMVIndex tests analyzing the mv index use some real data in the table.
 // It checks the analyze jobs, async loading and the stats content in the memory.
 func TestAnalyzeMVIndex(t *testing.T) {
-	t.Skip()
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/DebugAnalyzeJobOperations", "return(true)"))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/statistics/handle/DebugAnalyzeJobOperations", "return(true)"))
 	defer func() {
@@ -3009,15 +3008,15 @@ func TestAnalyzeMVIndex(t *testing.T) {
 	// 4. check stats content in the memory
 	require.NoError(t, h.LoadNeededHistograms())
 	tk.MustQuery("show stats_meta").CheckAt([]int{0, 1, 4, 5}, testkit.Rows("test t 0 27"))
-	tk.MustQuery("show stats_histograms").CheckAt([]int{0, 1, 3, 4, 6, 7, 8, 9, 10}, testkit.Rows(
+	tk.MustQuery("show stats_histograms").Sort().CheckAt([]int{0, 1, 3, 4, 6, 7, 8, 9, 10}, testkit.Rows(
 		// db_name, table_name, column_name, is_index, distinct_count, null_count, avg_col_size, correlation, load_status
 		"test t a 0 1 0 1 1 allEvicted",
 		"test t ia 1 1 0 0 0 allLoaded",
-		"test t ij_signed 1 11 0 0 0 allLoaded",
-		"test t ij_unsigned 1 6 0 0 0 allLoaded",
-		"test t ij_double 1 7 0 0 0 allLoaded",
 		"test t ij_binary 1 15 0 0 0 allLoaded",
 		"test t ij_char 1 11 0 0 0 allLoaded",
+		"test t ij_double 1 7 0 0 0 allLoaded",
+		"test t ij_signed 1 11 0 0 0 allLoaded",
+		"test t ij_unsigned 1 6 0 0 0 allLoaded",
 	))
 	tk.MustQuery("show stats_topn").Check(testkit.Rows(
 		// db_name, table_name, partition_name, column_name, is_index, value, count
