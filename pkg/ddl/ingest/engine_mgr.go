@@ -110,21 +110,19 @@ func (bc *litBackendCtx) FinishAndUnregisterEngines() error {
 		return nil
 	}
 	numIdx := int64(len(bc.engines))
-	uniqueIdx := make([]int64, 0, numIdx)
 	for _, ei := range bc.engines {
 		ei.Clean()
-		if ei.unique {
-			uniqueIdx = append(uniqueIdx, ei.indexID)
-		}
 	}
 	bc.engines = make(map[int64]*engineInfo, 10)
 
 	bc.memRoot.Release(numIdx * structSizeEngineInfo)
 
-	for _, i := range uniqueIdx {
-		err := bc.collectRemoteDuplicateRows(i, bc.tbl)
-		if err != nil {
-			return errors.Trace(err)
+	for _, ei := range bc.engines {
+		if ei.unique {
+			err := bc.collectRemoteDuplicateRows(ei.indexID, bc.tbl)
+			if err != nil {
+				return errors.Trace(err)
+			}
 		}
 	}
 	return nil
