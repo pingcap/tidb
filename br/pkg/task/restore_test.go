@@ -32,6 +32,8 @@ import (
 	pdhttp "github.com/tikv/pd/client/http"
 )
 
+const pb uint64 = 1024 * 1024 * 1024 * 1024 * 1024
+
 func TestPreCheckTableTiFlashReplicas(t *testing.T) {
 	mockStores := []*metapb.Store{
 		{
@@ -420,7 +422,6 @@ func TestFilterDDLJobByRules(t *testing.T) {
 }
 
 func TestTikvUsage(t *testing.T) {
-	pb := uint64(1024 * 1024 * 1024 * 1024 * 1024)
 	files := []*backuppb.File{
 		{Name: "F1", Size_: 1 * pb},
 		{Name: "F2", Size_: 2 * pb},
@@ -439,7 +440,6 @@ func TestTikvUsage(t *testing.T) {
 }
 
 func TestTiflashUsage(t *testing.T) {
-	pb := uint64(1024 * 1024 * 1024 * 1024 * 1024)
 	tables := []*metautil.Table{
 		{TiFlashReplicas: 0, Files: []*backuppb.File{{Size_: 1 * pb}}},
 		{TiFlashReplicas: 1, Files: []*backuppb.File{{Size_: 2 * pb}}},
@@ -452,6 +452,6 @@ func TestTiflashUsage(t *testing.T) {
 }
 
 func TestCheckTikvSpace(t *testing.T) {
-	store := pdhttp.StoreInfo{Store: pdhttp.MetaStore{ID: 1}, Status: pdhttp.StoreStatus{Available: "500GB"}}
-	require.NoError(t, task.CheckStoreSpace(400*1024*1024*1024, &store))
+	store := pdhttp.StoreInfo{Store: pdhttp.MetaStore{ID: 1}, Status: pdhttp.StoreStatus{Available: "500PB"}}
+	require.NoError(t, task.CheckStoreSpace(400*pb, &store))
 }

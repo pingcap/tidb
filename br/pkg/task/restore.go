@@ -100,6 +100,7 @@ const (
 	defaultFlagDdlBatchSize   = 128
 	resetSpeedLimitRetryTimes = 3
 	maxRestoreBatchSizeLimit  = 10240
+	pb                        = 1024 * 1024 * 1024 * 1024 * 1024
 )
 
 const (
@@ -1196,7 +1197,7 @@ func getMaxReplica(ctx context.Context, mgr *conn.Mgr) (uint64, error) {
 
 func classifyStores(stores *http.StoresInfo) (tikvStores, tiflashStores []*http.StoreInfo, err error) {
 	if stores == nil || len(stores.Stores) == 0 {
-		return nil, nil, fmt.Errorf("no stores provided")
+		return nil, nil, nil
 	}
 
 	for i := range stores.Stores {
@@ -1213,6 +1214,9 @@ func classifyStores(stores *http.StoresInfo) (tikvStores, tiflashStores []*http.
 }
 
 func EstimateTikvUsage(files []*backuppb.File, maxReplica uint64, storeCnt int) uint64 {
+	if storeCnt == 0 {
+		return 0
+	}
 	var totalSize uint64 = 0
 	for _, file := range files {
 		totalSize += file.GetSize_()
@@ -1221,6 +1225,9 @@ func EstimateTikvUsage(files []*backuppb.File, maxReplica uint64, storeCnt int) 
 }
 
 func EstimateTiflashUsage(tables []*metautil.Table, storeCnt int) uint64 {
+	if storeCnt == 0 {
+		return 0
+	}
 	var tiflashTotal uint64 = 0
 	for _, table := range tables {
 		if table.TiFlashReplicas <= 0 {
@@ -1259,24 +1266,28 @@ func checkDiskSpace(ctx context.Context, mgr *conn.Mgr, files []*backuppb.File, 
 	if err != nil {
 		return errors.Trace(err)
 	}
-	kvStores, tiflashStores, err := classifyStores(stores)
+	tikvStores, tiflashStores, err := classifyStores(stores)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	tikvUsage := EstimateTikvUsage(files, maxReplica, len(kvStores))
+	tikvUsage := EstimateTikvUsage(files, maxReplica, len(tikvStores))
 	tiflashUsage := EstimateTiflashUsage(tables, len(tiflashStores))
 
-	extraPreserve := func(base uint64, ratio uint64) uint64 {
-		return base * ratio / 100
+	// We won't need to restore more than 1800 PB data at one time, right?
+	extraPreserve := func(base uint64, ratio float32) uint64 {
+		if base > 1000*pb {
+			return base
+		}
+		return base * uint64(ratio*10) / 10
 	}
-	for _, tikv := range kvStores {
-		if err := CheckStoreSpace(extraPreserve(tikvUsage,110), tikv); err != nil {
+	for _, tikv := range tikvStores {
+		if err := CheckStoreSpace(extraPreserve(tikvUsage, 1.1), tikv); err != nil {
 			return errors.Trace(err)
 		}
 	}
 	for _, tiflash := range tiflashStores {
-		if err := CheckStoreSpace(extraPreserve(tiflashUsage,110), tiflash); err != nil {
+		if err := CheckStoreSpace(extraPreserve(tiflashUsage, 1.1), tiflash); err != nil {
 			return errors.Trace(err)
 		}
 	}
