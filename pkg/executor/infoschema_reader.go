@@ -398,37 +398,39 @@ func (e *memtableRetriever) setDataForStatistics(ctx sessionctx.Context, schemas
 			if checker != nil && !checker.RequestVerification(ctx.GetSessionVars().ActiveRoles, schema.L, table.Name.L, "", mysql.AllPrivMask) {
 				continue
 			}
-			e.setDataForStatisticsInTable(schema, table)
+			e.setDataForStatisticsInTable(schema, table, extractor)
 		}
 	}
 }
 
-func (e *memtableRetriever) setDataForStatisticsInTable(schema model.CIStr, table *model.TableInfo) {
+func (e *memtableRetriever) setDataForStatisticsInTable(schema model.CIStr, table *model.TableInfo, extractor *plannercore.InfoSchemaTablesExtractor) {
 	var rows [][]types.Datum
 	if table.PKIsHandle {
-		for _, col := range table.Columns {
-			if mysql.HasPriKeyFlag(col.GetFlag()) {
-				record := types.MakeDatums(
-					infoschema.CatalogVal, // TABLE_CATALOG
-					schema.O,              // TABLE_SCHEMA
-					table.Name.O,          // TABLE_NAME
-					"0",                   // NON_UNIQUE
-					schema.O,              // INDEX_SCHEMA
-					"PRIMARY",             // INDEX_NAME
-					1,                     // SEQ_IN_INDEX
-					col.Name.O,            // COLUMN_NAME
-					"A",                   // COLLATION
-					0,                     // CARDINALITY
-					nil,                   // SUB_PART
-					nil,                   // PACKED
-					"",                    // NULLABLE
-					"BTREE",               // INDEX_TYPE
-					"",                    // COMMENT
-					"",                    // INDEX_COMMENT
-					"YES",                 // IS_VISIBLE
-					nil,                   // Expression
-				)
-				rows = append(rows, record)
+		if !extractor.Filter("index_name", "primary") {
+			for _, col := range table.Columns {
+				if mysql.HasPriKeyFlag(col.GetFlag()) {
+					record := types.MakeDatums(
+						infoschema.CatalogVal, // TABLE_CATALOG
+						schema.O,              // TABLE_SCHEMA
+						table.Name.O,          // TABLE_NAME
+						"0",                   // NON_UNIQUE
+						schema.O,              // INDEX_SCHEMA
+						"PRIMARY",             // INDEX_NAME
+						1,                     // SEQ_IN_INDEX
+						col.Name.O,            // COLUMN_NAME
+						"A",                   // COLLATION
+						0,                     // CARDINALITY
+						nil,                   // SUB_PART
+						nil,                   // PACKED
+						"",                    // NULLABLE
+						"BTREE",               // INDEX_TYPE
+						"",                    // COMMENT
+						"",                    // INDEX_COMMENT
+						"YES",                 // IS_VISIBLE
+						nil,                   // Expression
+					)
+					rows = append(rows, record)
+				}
 			}
 		}
 	}
@@ -437,6 +439,9 @@ func (e *memtableRetriever) setDataForStatisticsInTable(schema model.CIStr, tabl
 		nameToCol[c.Name.L] = c
 	}
 	for _, index := range table.Indices {
+		if extractor.Filter("index_name", index.Name.L) {
+			continue
+		}
 		nonUnique := "1"
 		if index.Unique {
 			nonUnique = "0"
