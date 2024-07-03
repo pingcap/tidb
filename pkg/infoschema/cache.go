@@ -80,7 +80,14 @@ func (h *InfoCache) Size() int {
 }
 
 // Reset resets the cache.
-func (h *InfoCache) Reset(is InfoSchema, schemaTS uint64) func() {
+func (h *InfoCache) Reset(capacity int) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.cache = make([]schemaAndTimestamp, 0, capacity)
+}
+
+// Upsert is Resert and Insert combined, used during infoschema v1 v2 switch.
+func (h *InfoCache) Upsert(is InfoSchema, schemaTS uint64) func() {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
