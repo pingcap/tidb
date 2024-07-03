@@ -822,13 +822,18 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		return errors.Annotate(berrors.ErrRestoreInvalidBackup, "contain tables but no databases")
 	}
 
-	utils.WithRetry(ctx, func() error {
-		err = checkDiskSpace(ctx, mgr, files)
+	if cfg.CheckRequirements {
+		err := utils.WithRetry(ctx, func() error {
+			err = checkDiskSpace(ctx, mgr, files)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			return nil
+		}, utils.NewPDReqBackoffer())
 		if err != nil {
 			return errors.Trace(err)
 		}
-		return nil
-	}, utils.NewPDReqBackoffer())
+	}
 
 	archiveSize := reader.ArchiveSize(ctx, files)
 	g.Record(summary.RestoreDataSize, archiveSize)
