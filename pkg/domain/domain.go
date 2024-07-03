@@ -360,14 +360,14 @@ func (do *Domain) loadInfoSchema(startTS uint64) (infoschema.InfoSchema, bool, i
 	if err != nil {
 		return nil, false, currentSchemaVersion, nil, err
 	}
+	infoschema_metrics.LoadSchemaDurationLoadAll.Observe(time.Since(startTime).Seconds())
+
 	newISBuilder, err := infoschema.NewBuilder(do, do.sysFacHack, do.infoCache.Data).InitWithDBInfos(schemas, policies, resourceGroups, neededSchemaVersion)
 	if err != nil {
 		return nil, false, currentSchemaVersion, nil, err
 	}
-
 	is := newISBuilder.Build(startTS)
 	isV2, _ := infoschema.IsV2(is)
-	infoschema_metrics.LoadSchemaDurationLoadAll.Observe(time.Since(startTime).Seconds())
 	logutil.BgLogger().Info("full load InfoSchema success",
 		zap.Bool("isV2", isV2),
 		zap.Int64("currentSchemaVersion", currentSchemaVersion),
