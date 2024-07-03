@@ -298,7 +298,7 @@ func (h *hashJoinSpillHelper) spillSegmentsToDisk(disk *chunk.DataInDiskByChunks
 	// Get row bytes from segment and spill them
 	for _, seg := range segments {
 		validJoinKeys = h.generateSpilledValidJoinKey(seg, validJoinKeys)
-		rows := seg.getRowsBytes()
+		rows := seg.getRowsBytes() // TODO do not spill `next_row_ptr`
 
 		for i, row := range rows {
 			if h.tmpSpillBuildSideChunks[0].IsFull() {

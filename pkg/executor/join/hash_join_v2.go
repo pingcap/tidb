@@ -515,14 +515,7 @@ func (e *HashJoinV2Exec) waitJoinWorkersAndRestore() {
 	defer close(e.joinResultCh)
 	e.workerWg.Wait()
 
-	if e.spillHelper.isSpillTriggered() {
-		err := e.restore()
-		if err != nil {
-			e.joinResultCh <- &hashjoinWorkerResult{err: err}
-		}
-		return
-	}
-
+	// TODO consider spill's effect
 	if e.ProbeWorkers[0] != nil && e.ProbeWorkers[0].JoinProbe.NeedScanRowTable() {
 		for i := uint(0); i < e.Concurrency; i++ {
 			var workerID = i
@@ -532,6 +525,13 @@ func (e *HashJoinV2Exec) waitJoinWorkersAndRestore() {
 			}, e.handleJoinWorkerPanic)
 		}
 		e.workerWg.Wait()
+	}
+
+	if e.spillHelper.isSpillTriggered() {
+		err := e.restore()
+		if err != nil {
+			e.joinResultCh <- &hashjoinWorkerResult{err: err}
+		}
 	}
 }
 
@@ -908,6 +908,7 @@ func (e *HashJoinV2Exec) fetchAndBuildHashTable(ctx context.Context) {
 
 	wg := new(sync.WaitGroup)
 	buildTaskCh := e.createBuildTasks(totalSegmentCnt, wg, errCh, doneCh)
+	// TODO check spill when building hash table
 	e.buildHashTable(buildTaskCh, wg, errCh, doneCh)
 	waitJobDone(wg, errCh)
 }
