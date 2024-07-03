@@ -55,8 +55,8 @@ type tidbResultSet struct {
 	preparedStmt *core.PlanCacheStmt
 	columns      []*column.Info
 	closed       int32
-	// finishLock is a mutex used to synchronize access to the `Next` and `Finish` functions of the adapter.
-	// It ensures that only one goroutine can access the `Next` and `Finish` functions at a time, preventing race conditions.
+	// finishLock is a mutex used to synchronize access to the `Next`,`Finish` and `Close` functions of the adapter.
+	// It ensures that only one goroutine can access the `Next`,`Finish` and `Close` functions at a time, preventing race conditions.
 	// When we terminate the current SQL externally (e.g., kill query), an additional goroutine would be used to call the `Finish` function.
 	finishLock sync.Mutex
 }

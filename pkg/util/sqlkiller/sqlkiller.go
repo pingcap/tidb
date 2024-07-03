@@ -40,8 +40,11 @@ const (
 
 // SQLKiller is used to kill a query.
 type SQLKiller struct {
-	Signal         killSignal
-	ConnID         uint64
+	Signal killSignal
+	ConnID uint64
+	// FinishFuncLock is used to ensure that Finish is not called and modified at the same time.
+	// An external call to the Finish function only allows when the main goroutine to be in the writeResultSet process.
+	// When the main goroutine exits the writeResultSet process, the Finish function will be cleared.
 	FinishFuncLock sync.Mutex
 	Finish         func()
 	// InWriteResultSet is used to indicate whether the query is currently calling clientConn.writeResultSet().
