@@ -334,6 +334,8 @@ func TestRenewLease(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk1 := testkit.NewTestKit(t, store)
+
 	se := tk.Session()
 	tk.MustExec("create table cache_renew_t (id int)")
 	tk.MustExec("alter table cache_renew_t cache")
@@ -342,7 +344,6 @@ func TestRenewLease(t *testing.T) {
 	var i int
 	tk.MustExec("select * from cache_renew_t")
 
-	tk1 := testkit.NewTestKit(t, store)
 	remote := tables.NewStateRemote(tk1.Session())
 	var leaseBefore uint64
 	for i = 0; i < 20; i++ {
