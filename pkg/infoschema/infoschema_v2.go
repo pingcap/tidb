@@ -77,16 +77,12 @@ type Data struct {
 	//
 	// It means as long as we can find an item in it, the item is available, even through the
 	// schema version maybe smaller than required.
-	//
-	// *IMPORTANT RESTRICTION*: Do we have the full data in memory? NO!
 	byName *btree.BTreeG[tableItem]
 
 	// For the TableByID API, sorted by {tableID, schemaVersion} => dbID
 	// To reload model.TableInfo, we need both table ID and database ID for meta kv API.
 	// It provides the tableID => databaseID mapping.
-	//
-	// *IMPORTANT RESTRICTION*: Do we have the full data in memory? NO!
-	// But this mapping MUST be synced with byName.
+	// This mapping MUST be synced with byName.
 	byID *btree.BTreeG[tableItem]
 
 	// For the SchemaByName API, sorted by {dbName, schemaVersion} => model.DBInfo
@@ -405,7 +401,6 @@ func (is *infoschemaV2) tableByID(id int64, noRefill bool) (val table.Table, ok 
 	eq := func(a, b *tableItem) bool { return a.tableID == b.tableID }
 	itm, ok := search(is.byID, is.infoSchema.schemaMetaVersion, tableItem{tableID: id, schemaVersion: math.MaxInt64}, eq)
 	if !ok {
-		// TODO: in the future, this may happen and we need to check tikv to see whether table exists.
 		return nil, false
 	}
 
@@ -457,7 +452,6 @@ func (is *infoschemaV2) TableByName(schema, tbl model.CIStr) (t table.Table, err
 	eq := func(a, b *tableItem) bool { return a.dbName == b.dbName && a.tableName == b.tableName }
 	itm, ok := search(is.byName, is.infoSchema.schemaMetaVersion, tableItem{dbName: schema.L, tableName: tbl.L, schemaVersion: math.MaxInt64}, eq)
 	if !ok {
-		// TODO: in the future, this may happen and we need to check tikv to see whether table exists.
 		return nil, ErrTableNotExists.FastGenByArgs(schema, tbl)
 	}
 
