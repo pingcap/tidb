@@ -375,9 +375,9 @@ func (ctx *StaticEvalContext) Apply(opt ...StaticEvalCtxOption) *StaticEvalConte
 }
 
 // GetParamValue returns the value of the parameter by index.
-func (ctx *StaticEvalContext) GetParamValue(idx int) types.Datum {
+func (ctx *StaticEvalContext) GetParamValue(idx int) (types.Datum, error) {
 	if idx < 0 || idx >= len(ctx.paramList) {
-		return types.Datum{}
+		return types.Datum{}, exprctx.ErrParamIndexExceedParamCounts
 	}
-	return ctx.paramList[idx]
+	return ctx.paramList[idx], nil
 }

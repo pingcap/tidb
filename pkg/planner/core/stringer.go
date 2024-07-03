@@ -19,7 +19,9 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 )
 
@@ -77,6 +79,12 @@ func fdToString(in base.LogicalPlan, strs []string, idxs []int) ([]string, []int
 }
 
 func toString(in base.Plan, strs []string, idxs []int) ([]string, []int) {
+	var ectx expression.EvalContext
+	if in.SCtx() != nil {
+		// Not all `base.Plan` has a non-nil `SCtx`. For example, the `SCtx` of `Analyze` plan is nil.
+		ectx = in.SCtx().GetExprCtx().GetEvalCtx()
+	}
+
 	switch x := in.(type) {
 	case base.LogicalPlan:
 		if needIncludeChildrenString(in) {
@@ -117,8 +125,8 @@ func toString(in base.Plan, strs []string, idxs []int) ([]string, []int) {
 			str = "LeftHashJoin{" + strings.Join(children, "->") + "}"
 		}
 		for _, eq := range x.EqualConditions {
-			l := eq.GetArgs()[0].String()
-			r := eq.GetArgs()[1].String()
+			l := eq.GetArgs()[0].StringWithCtx(ectx)
+			r := eq.GetArgs()[1].StringWithCtx(ectx)
 			str += fmt.Sprintf("(%s,%s)", l, r)
 		}
 	case *PhysicalMergeJoin:
@@ -146,8 +154,8 @@ func toString(in base.Plan, strs []string, idxs []int) ([]string, []int) {
 		}
 		str = id + "{" + strings.Join(children, "->") + "}"
 		for i := range x.LeftJoinKeys {
-			l := x.LeftJoinKeys[i].String()
-			r := x.RightJoinKeys[i].String()
+			l := x.LeftJoinKeys[i].StringWithCtx(ectx)
+			r := x.RightJoinKeys[i].StringWithCtx(ectx)
 			str += fmt.Sprintf("(%s,%s)", l, r)
 		}
 	case *LogicalApply, *PhysicalApply:
@@ -187,8 +195,8 @@ func toString(in base.Plan, strs []string, idxs []int) ([]string, []int) {
 		str = "Join{" + strings.Join(children, "->") + "}"
 		idxs = idxs[:last]
 		for _, eq := range x.EqualConditions {
-			l := eq.GetArgs()[0].String()
-			r := eq.GetArgs()[1].String()
+			l := eq.GetArgs()[0].StringWithCtx(ectx)
+			r := eq.GetArgs()[1].StringWithCtx(ectx)
 			str += fmt.Sprintf("(%s,%s)", l, r)
 		}
 	case *LogicalUnionAll, *PhysicalUnionAll, *LogicalPartitionUnionAll:
@@ -223,15 +231,15 @@ func toString(in base.Plan, strs []string, idxs []int) ([]string, []int) {
 			}
 		}
 	case *LogicalSelection:
-		str = fmt.Sprintf("Sel(%s)", x.Conditions)
+		str = fmt.Sprintf("Sel(%s)", expression.StringifyExpressionsWithCtx(ectx, x.Conditions))
 	case *PhysicalSelection:
-		str = fmt.Sprintf("Sel(%s)", x.Conditions)
+		str = fmt.Sprintf("Sel(%s)", expression.StringifyExpressionsWithCtx(ectx, x.Conditions))
 	case *LogicalProjection, *PhysicalProjection:
 		str = "Projection"
 	case *LogicalTopN:
-		str = fmt.Sprintf("TopN(%v,%d,%d)", x.ByItems, x.Offset, x.Count)
+		str = fmt.Sprintf("TopN(%v,%d,%d)", util.StringifyByItemsWithCtx(ectx, x.ByItems), x.Offset, x.Count)
 	case *PhysicalTopN:
-		str = fmt.Sprintf("TopN(%v,%d,%d)", x.ByItems, x.Offset, x.Count)
+		str = fmt.Sprintf("TopN(%v,%d,%d)", util.StringifyByItemsWithCtx(ectx, x.ByItems), x.Offset, x.Count)
 	case *LogicalTableDual, *PhysicalTableDual:
 		str = "Dual"
 	case *PhysicalHashAgg:
@@ -241,7 +249,7 @@ func toString(in base.Plan, strs []string, idxs []int) ([]string, []int) {
 	case *LogicalAggregation:
 		str = "Aggr("
 		for i, aggFunc := range x.AggFuncs {
-			str += aggFunc.String()
+			str += aggFunc.StringWithCtx(ectx)
 			if i != len(x.AggFuncs)-1 {
 				str += ","
 			}
@@ -263,7 +271,7 @@ func toString(in base.Plan, strs []string, idxs []int) ([]string, []int) {
 		}
 		str += "], TablePlan->" + ToString(x.tablePlan) + ")"
 	case *PhysicalUnionScan:
-		str = fmt.Sprintf("UnionScan(%s)", x.Conditions)
+		str = fmt.Sprintf("UnionScan(%s)", expression.StringifyExpressionsWithCtx(ectx, x.Conditions))
 	case *PhysicalIndexJoin:
 		last := len(idxs) - 1
 		idx := idxs[last]
@@ -309,7 +317,7 @@ func toString(in base.Plan, strs []string, idxs []int) ([]string, []int) {
 		for _, col := range x.ColTasks {
 			var colNames []string
 			if col.HandleCols != nil {
-				colNames = append(colNames, col.HandleCols.String())
+				colNames = append(colNames, col.HandleCols.StringWithCtx(ectx))
 			}
 			for _, c := range col.ColsInfo {
 				colNames = append(colNames, c.Name.O)
@@ -328,7 +336,7 @@ func toString(in base.Plan, strs []string, idxs []int) ([]string, []int) {
 		}
 	case *LogicalWindow:
 		buffer := bytes.NewBufferString("")
-		formatWindowFuncDescs(buffer, x.WindowFuncDescs, x.Schema())
+		formatWindowFuncDescs(ectx, buffer, x.WindowFuncDescs, x.Schema())
 		str = fmt.Sprintf("Window(%s)", buffer.String())
 	case *PhysicalWindow:
 		str = fmt.Sprintf("Window(%s)", x.ExplainInfo())
