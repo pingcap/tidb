@@ -21,5 +21,6 @@ explain select c+1 from t where (c+1)>4;
 explain select c from t where c > 2;
 explain select c from t where c > 3;
 
+--sorted_result
 --replace_column 6 <update_time>
 show stats_histograms where table_name='t' and Db_name='globalindex__analyze';
