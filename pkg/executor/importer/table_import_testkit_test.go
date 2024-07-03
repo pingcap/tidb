@@ -82,7 +82,7 @@ func TestImportFromSelectCleanup(t *testing.T) {
 	require.True(t, ok)
 	table, err := do.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
-	plan, err := importer.NewImportPlan(ctx, tk.Session(), &plannercore.ImportInto{
+	plan, err := importer.NewImportPlan(ctx, tk.Session(), plannercore.ImportInto{
 		Table: &ast.TableName{
 			Name: model.NewCIStr("t"),
 			DBInfo: &model.DBInfo{
@@ -91,7 +91,7 @@ func TestImportFromSelectCleanup(t *testing.T) {
 			},
 		},
 		SelectPlan: &plannercore.PhysicalSelection{},
-	}, table)
+	}.Init(tk.Session().GetPlanCtx()), table)
 	require.NoError(t, err)
 	controller, err := importer.NewLoadDataController(plan, table, &importer.ASTArgs{})
 	require.NoError(t, err)

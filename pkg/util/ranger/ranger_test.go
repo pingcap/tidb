@@ -22,6 +22,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/expression/contextstatic"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -263,6 +264,7 @@ func TestTableRange(t *testing.T) {
 			sql := "select * from t where " + tt.exprStr
 			sctx := testKit.Session()
 			rctx := sctx.GetRangerCtx()
+			ectx := sctx.GetExprCtx().GetEvalCtx()
 			stmts, err := session.Parse(sctx, sql)
 			require.NoError(t, err)
 			require.Len(t, stmts, 1)
@@ -281,8 +283,8 @@ func TestTableRange(t *testing.T) {
 			require.NotNil(t, col)
 			var filter []expression.Expression
 			conds, filter = ranger.DetachCondsForColumn(rctx, conds, col)
-			require.Equal(t, tt.accessConds, fmt.Sprintf("%s", conds))
-			require.Equal(t, tt.filterConds, fmt.Sprintf("%s", filter))
+			require.Equal(t, tt.accessConds, expression.StringifyExpressionsWithCtx(ectx, conds))
+			require.Equal(t, tt.filterConds, expression.StringifyExpressionsWithCtx(ectx, filter))
 			result, _, _, err := ranger.BuildTableRange(conds, rctx, col.RetType, 0)
 			require.NoError(t, err)
 			got := fmt.Sprintf("%v", result)
@@ -461,6 +463,7 @@ create table t(
 			sql := "select * from t where " + tt.exprStr
 			sctx := testKit.Session()
 			rctx := sctx.GetRangerCtx()
+			ectx := sctx.GetExprCtx().GetEvalCtx()
 			stmts, err := session.Parse(sctx, sql)
 			require.NoError(t, err)
 			require.Len(t, stmts, 1)
@@ -480,8 +483,8 @@ create table t(
 			require.NotNil(t, cols)
 			res, err := ranger.DetachCondAndBuildRangeForIndex(rctx, conds, cols, lengths, 0)
 			require.NoError(t, err)
-			require.Equal(t, tt.accessConds, fmt.Sprintf("%s", res.AccessConds))
-			require.Equal(t, tt.filterConds, fmt.Sprintf("%s", res.RemainedConds))
+			require.Equal(t, tt.accessConds, expression.StringifyExpressionsWithCtx(ectx, res.AccessConds))
+			require.Equal(t, tt.filterConds, expression.StringifyExpressionsWithCtx(ectx, res.RemainedConds))
 			got := fmt.Sprintf("%v", res.Ranges)
 			require.Equal(t, tt.resultStr, got)
 		})
@@ -823,6 +826,7 @@ func TestColumnRange(t *testing.T) {
 			sql := "select * from t where " + tt.exprStr
 			sctx := testKit.Session()
 			rctx := sctx.GetRangerCtx()
+			ectx := sctx.GetExprCtx().GetEvalCtx()
 			stmts, err := session.Parse(sctx, sql)
 			require.NoError(t, err)
 			require.Len(t, stmts, 1)
@@ -841,7 +845,7 @@ func TestColumnRange(t *testing.T) {
 			col := expression.ColInfo2Col(sel.Schema().Columns, ds.TableInfo.Columns[tt.colPos])
 			require.NotNil(t, col)
 			conds = ranger.ExtractAccessConditionsForColumn(rctx, conds, col)
-			require.Equal(t, tt.accessConds, fmt.Sprintf("%s", conds))
+			require.Equal(t, tt.accessConds, expression.StringifyExpressionsWithCtx(ectx, conds))
 			result, _, _, err := ranger.BuildColumnRange(conds, rctx, col.RetType, tt.length, 0)
 			require.NoError(t, err)
 			got := fmt.Sprintf("%v", result)
@@ -981,6 +985,7 @@ func TestIndexRangeForYear(t *testing.T) {
 			sql := "select * from t where " + tt.exprStr
 			sctx := testKit.Session()
 			rctx := sctx.GetRangerCtx()
+			ectx := sctx.GetExprCtx().GetEvalCtx()
 			stmts, err := session.Parse(sctx, sql)
 			require.NoError(t, err)
 			require.Len(t, stmts, 1)
@@ -1000,8 +1005,8 @@ func TestIndexRangeForYear(t *testing.T) {
 			require.NotNil(t, cols)
 			res, err := ranger.DetachCondAndBuildRangeForIndex(rctx, conds, cols, lengths, 0)
 			require.NoError(t, err)
-			require.Equal(t, tt.accessConds, fmt.Sprintf("%s", res.AccessConds))
-			require.Equal(t, tt.filterConds, fmt.Sprintf("%s", res.RemainedConds))
+			require.Equal(t, tt.accessConds, expression.StringifyExpressionsWithCtx(ectx, res.AccessConds))
+			require.Equal(t, tt.filterConds, expression.StringifyExpressionsWithCtx(ectx, res.RemainedConds))
 			got := fmt.Sprintf("%v", res.Ranges)
 			require.Equal(t, tt.resultStr, got)
 		})
@@ -1050,6 +1055,7 @@ func TestPrefixIndexRangeScan(t *testing.T) {
 			sql := "select * from t where " + tt.exprStr
 			sctx := testKit.Session()
 			rctx := sctx.GetRangerCtx()
+			ectx := sctx.GetExprCtx().GetEvalCtx()
 			stmts, err := session.Parse(sctx, sql)
 			require.NoError(t, err)
 			require.Len(t, stmts, 1)
@@ -1069,8 +1075,8 @@ func TestPrefixIndexRangeScan(t *testing.T) {
 			require.NotNil(t, cols)
 			res, err := ranger.DetachCondAndBuildRangeForIndex(rctx, conds, cols, lengths, 0)
 			require.NoError(t, err)
-			require.Equal(t, tt.accessConds, fmt.Sprintf("%s", res.AccessConds))
-			require.Equal(t, tt.filterConds, fmt.Sprintf("%s", res.RemainedConds))
+			require.Equal(t, tt.accessConds, expression.StringifyExpressionsWithCtx(ectx, res.AccessConds))
+			require.Equal(t, tt.filterConds, expression.StringifyExpressionsWithCtx(ectx, res.RemainedConds))
 			got := fmt.Sprintf("%v", res.Ranges)
 			require.Equal(t, tt.resultStr, got)
 		})
@@ -1397,6 +1403,7 @@ create table t(
 		t.Run(tt.exprStr, func(t *testing.T) {
 			sql := "select * from t where " + tt.exprStr
 			sctx := testKit.Session()
+			ectx := sctx.GetExprCtx().GetEvalCtx()
 			stmts, err := session.Parse(sctx, sql)
 			require.NoError(t, err)
 			require.Len(t, stmts, 1)
@@ -1416,8 +1423,8 @@ create table t(
 			require.NotNil(t, cols)
 			res, err := ranger.DetachCondAndBuildRangeForIndex(sctx.GetRangerCtx(), conds, cols, lengths, 0)
 			require.NoError(t, err)
-			require.Equal(t, tt.accessConds, fmt.Sprintf("%s", res.AccessConds))
-			require.Equal(t, tt.filterConds, fmt.Sprintf("%s", res.RemainedConds))
+			require.Equal(t, tt.accessConds, expression.StringifyExpressionsWithCtx(ectx, res.AccessConds))
+			require.Equal(t, tt.filterConds, expression.StringifyExpressionsWithCtx(ectx, res.RemainedConds))
 			got := fmt.Sprintf("%v", res.Ranges)
 			require.Equal(t, tt.resultStr, got)
 		})
@@ -1638,6 +1645,7 @@ func TestTableShardIndex(t *testing.T) {
 		t.Run(tt.exprStr, func(t *testing.T) {
 			sql := "select * from " + tt.tableName + " where " + tt.exprStr
 			sctx := testKit.Session()
+			ectx := sctx.GetExprCtx().GetEvalCtx()
 			stmts, err := session.Parse(sctx, sql)
 			require.NoError(t, err)
 			require.Len(t, stmts, 1)
@@ -1658,7 +1666,7 @@ func TestTableShardIndex(t *testing.T) {
 				}
 			}
 			newConds := ds.AddPrefix4ShardIndexes(ds.SCtx(), conds)
-			require.Equal(t, tt.accessConds, fmt.Sprintf("%s", newConds))
+			require.Equal(t, tt.accessConds, expression.StringifyExpressionsWithCtx(ectx, newConds))
 		})
 	}
 
@@ -1821,9 +1829,10 @@ func TestShardIndexFuncSuites(t *testing.T) {
 		},
 	}
 
+	ectx := sctx.GetExprCtx().GetEvalCtx()
 	for _, tt := range test {
 		newConds, _ := ranger.AddExpr4EqAndInCondition(sctx.GetRangerCtx(), tt.inputConds, shardIndexCols)
-		require.Equal(t, fmt.Sprintf("%s", newConds), tt.outputConds)
+		require.Equal(t, expression.StringifyExpressionsWithCtx(ectx, newConds), tt.outputConds)
 	}
 }
 
@@ -1843,8 +1852,10 @@ func getSelectionFromQuery(t *testing.T, sctx sessionctx.Context, sql string) *p
 }
 
 func checkDetachRangeResult(t *testing.T, res *ranger.DetachRangeResult, expectedAccessConds, expectedRemainedConds, expectedRanges string) {
-	require.Equal(t, expectedAccessConds, fmt.Sprintf("%v", res.AccessConds))
-	require.Equal(t, expectedRemainedConds, fmt.Sprintf("%v", res.RemainedConds))
+	// TODO: get the context from argument
+	ectx := contextstatic.NewStaticEvalContext()
+	require.Equal(t, expectedAccessConds, expression.StringifyExpressionsWithCtx(ectx, res.AccessConds))
+	require.Equal(t, expectedRemainedConds, expression.StringifyExpressionsWithCtx(ectx, res.RemainedConds))
 	require.Equal(t, expectedRanges, fmt.Sprintf("%v", res.Ranges))
 }
 
@@ -2114,6 +2125,7 @@ func TestRangeFallbackForBuildTableRange(t *testing.T) {
 	tblInfo := tbl.Meta()
 	sctx := tk.Session()
 	rctx := sctx.GetRangerCtx()
+	ectx := sctx.GetExprCtx().GetEvalCtx()
 	sql := "select * from t where a in (10,20,30,40,50)"
 	selection := getSelectionFromQuery(t, sctx, sql)
 	conds := selection.Conditions
@@ -2126,15 +2138,15 @@ func TestRangeFallbackForBuildTableRange(t *testing.T) {
 	ranges, access, remained, err := ranger.BuildTableRange(conds, rctx, col.RetType, 0)
 	require.NoError(t, err)
 	require.Equal(t, "[[10,10] [20,20] [30,30] [40,40] [50,50]]", fmt.Sprintf("%v", ranges))
-	require.Equal(t, "[in(test.t.a, 10, 20, 30, 40, 50)]", fmt.Sprintf("%v", access))
-	require.Equal(t, "[]", fmt.Sprintf("%v", remained))
+	require.Equal(t, "[in(test.t.a, 10, 20, 30, 40, 50)]", expression.StringifyExpressionsWithCtx(ectx, access))
+	require.Equal(t, "[]", expression.StringifyExpressionsWithCtx(ectx, remained))
 	checkRangeFallbackAndReset(t, sctx, false)
 	quota := ranges.MemUsage() - 1
 	ranges, access, remained, err = ranger.BuildTableRange(conds, rctx, col.RetType, quota)
 	require.NoError(t, err)
 	require.Equal(t, "[[-inf,+inf]]", fmt.Sprintf("%v", ranges))
-	require.Equal(t, "[]", fmt.Sprintf("%v", access))
-	require.Equal(t, "[in(test.t.a, 10, 20, 30, 40, 50)]", fmt.Sprintf("%v", remained))
+	require.Equal(t, "[]", expression.StringifyExpressionsWithCtx(ectx, access))
+	require.Equal(t, "[in(test.t.a, 10, 20, 30, 40, 50)]", expression.StringifyExpressionsWithCtx(ectx, remained))
 	checkRangeFallbackAndReset(t, sctx, true)
 }
 
@@ -2149,6 +2161,7 @@ func TestRangeFallbackForBuildColumnRange(t *testing.T) {
 	tblInfo := tbl.Meta()
 	sctx := tk.Session()
 	rctx := sctx.GetRangerCtx()
+	ectx := sctx.GetExprCtx().GetEvalCtx()
 	sql := "select * from t where a in ('aaa','bbb','ccc','ddd','eee')"
 	selection := getSelectionFromQuery(t, sctx, sql)
 	conds := selection.Conditions
@@ -2161,15 +2174,15 @@ func TestRangeFallbackForBuildColumnRange(t *testing.T) {
 	ranges, access, remained, err := ranger.BuildColumnRange(conds, rctx, cola.RetType, types.UnspecifiedLength, 0)
 	require.NoError(t, err)
 	require.Equal(t, "[[\"aaa\",\"aaa\"] [\"bbb\",\"bbb\"] [\"ccc\",\"ccc\"] [\"ddd\",\"ddd\"] [\"eee\",\"eee\"]]", fmt.Sprintf("%v", ranges))
-	require.Equal(t, "[in(test.t.a, aaa, bbb, ccc, ddd, eee)]", fmt.Sprintf("%v", access))
-	require.Equal(t, "[]", fmt.Sprintf("%v", remained))
+	require.Equal(t, "[in(test.t.a, aaa, bbb, ccc, ddd, eee)]", expression.StringifyExpressionsWithCtx(ectx, access))
+	require.Equal(t, "[]", expression.StringifyExpressionsWithCtx(ectx, remained))
 	checkRangeFallbackAndReset(t, sctx, false)
 	quota := ranges.MemUsage() - 1
 	ranges, access, remained, err = ranger.BuildColumnRange(conds, rctx, cola.RetType, types.UnspecifiedLength, quota)
 	require.NoError(t, err)
 	require.Equal(t, "[[NULL,+inf]]", fmt.Sprintf("%v", ranges))
-	require.Equal(t, "[]", fmt.Sprintf("%v", access))
-	require.Equal(t, "[in(test.t.a, aaa, bbb, ccc, ddd, eee)]", fmt.Sprintf("%v", remained))
+	require.Equal(t, "[]", expression.StringifyExpressionsWithCtx(ectx, access))
+	require.Equal(t, "[in(test.t.a, aaa, bbb, ccc, ddd, eee)]", expression.StringifyExpressionsWithCtx(ectx, remained))
 	checkRangeFallbackAndReset(t, sctx, true)
 	sql = "select * from t where b in (10,20,30)"
 	selection = getSelectionFromQuery(t, sctx, sql)
@@ -2182,8 +2195,8 @@ func TestRangeFallbackForBuildColumnRange(t *testing.T) {
 	ranges, access, remained, err = ranger.BuildColumnRange(conds, rctx, colb.RetType, types.UnspecifiedLength, 1)
 	require.NoError(t, err)
 	require.Equal(t, "[[-inf,+inf]]", fmt.Sprintf("%v", ranges))
-	require.Equal(t, "[]", fmt.Sprintf("%v", access))
-	require.Equal(t, "[in(test.t.b, 10, 20, 30)]", fmt.Sprintf("%v", remained))
+	require.Equal(t, "[]", expression.StringifyExpressionsWithCtx(ectx, access))
+	require.Equal(t, "[in(test.t.b, 10, 20, 30)]", expression.StringifyExpressionsWithCtx(ectx, remained))
 }
 
 func TestPrefixIndexRange(t *testing.T) {
@@ -2275,6 +2288,7 @@ create table t(
 	for _, tt := range tests {
 		sql := "select * from t where " + tt.exprStr
 		sctx := tk.Session()
+		ectx := sctx.GetExprCtx().GetEvalCtx()
 		stmts, err := session.Parse(sctx, sql)
 		require.NoError(t, err, fmt.Sprintf("error %v, for expr %s", err, tt.exprStr))
 		require.Len(t, stmts, 1)
@@ -2294,8 +2308,8 @@ create table t(
 		require.NotNil(t, cols)
 		res, err := ranger.DetachCondAndBuildRangeForIndex(sctx.GetRangerCtx(), conds, cols, lengths, 0)
 		require.NoError(t, err)
-		require.Equal(t, tt.accessConds, fmt.Sprintf("%s", res.AccessConds), fmt.Sprintf("wrong access conditions for expr: %s", tt.exprStr))
-		require.Equal(t, tt.filterConds, fmt.Sprintf("%s", res.RemainedConds), fmt.Sprintf("wrong filter conditions for expr: %s", tt.exprStr))
+		require.Equal(t, tt.accessConds, expression.StringifyExpressionsWithCtx(ectx, res.AccessConds), fmt.Sprintf("wrong access conditions for expr: %s", tt.exprStr))
+		require.Equal(t, tt.filterConds, expression.StringifyExpressionsWithCtx(ectx, res.RemainedConds), fmt.Sprintf("wrong filter conditions for expr: %s", tt.exprStr))
 		got := fmt.Sprintf("%v", res.Ranges)
 		require.Equal(t, tt.resultStr, got, fmt.Sprintf("different for expr %s", tt.exprStr))
 	}

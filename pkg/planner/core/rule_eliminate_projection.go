@@ -294,26 +294,12 @@ func (la *LogicalApply) ReplaceExprColumns(replace map[string]*expression.Column
 	}
 }
 
-// ReplaceExprColumns implements base.LogicalPlan interface.
-func (p *LogicalWindow) ReplaceExprColumns(replace map[string]*expression.Column) {
-	for _, desc := range p.WindowFuncDescs {
-		for _, arg := range desc.Args {
-			ResolveExprAndReplace(arg, replace)
-		}
-	}
-	for _, item := range p.PartitionBy {
-		resolveColumnAndReplace(item.Col, replace)
-	}
-	for _, item := range p.OrderBy {
-		resolveColumnAndReplace(item.Col, replace)
-	}
-}
-
 func (*projectionEliminator) name() string {
 	return "projection_eliminate"
 }
 
 func appendDupProjEliminateTraceStep(parent, child *LogicalProjection, opt *optimizetrace.LogicalOptimizeOp) {
+	ectx := parent.SCtx().GetExprCtx().GetEvalCtx()
 	action := func() string {
 		buffer := bytes.NewBufferString(
 			fmt.Sprintf("%v_%v is eliminated, %v_%v's expressions changed into[", child.TP(), child.ID(), parent.TP(), parent.ID()))
@@ -321,7 +307,7 @@ func appendDupProjEliminateTraceStep(parent, child *LogicalProjection, opt *opti
 			if i > 0 {
 				buffer.WriteString(",")
 			}
-			buffer.WriteString(expr.String())
+			buffer.WriteString(expr.StringWithCtx(ectx))
 		}
 		buffer.WriteString("]")
 		return buffer.String()

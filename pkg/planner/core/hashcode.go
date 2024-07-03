@@ -40,16 +40,6 @@ func (p *LogicalProjection) HashCode() []byte {
 }
 
 // HashCode implements LogicalPlan interface.
-func (p *LogicalTableDual) HashCode() []byte {
-	// PlanType + SelectOffset + RowCount
-	result := make([]byte, 0, 12)
-	result = util.EncodeIntAsUint32(result, plancodec.TypeStringToPhysicalID(p.TP()))
-	result = util.EncodeIntAsUint32(result, p.QueryBlockOffset())
-	result = util.EncodeIntAsUint32(result, p.RowCount)
-	return result
-}
-
-// HashCode implements LogicalPlan interface.
 func (p *LogicalSelection) HashCode() []byte {
 	// PlanType + SelectOffset + ConditionNum + [Conditions]
 	// Conditions are commonly `ScalarFunction`s, whose hashcode usually has a

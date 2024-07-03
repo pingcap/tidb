@@ -225,7 +225,7 @@ type stmtSummaryByDigestElement struct {
 // StmtExecInfo records execution information of each statement.
 type StmtExecInfo struct {
 	SchemaName          string
-	OriginalSQL         string
+	OriginalSQL         fmt.Stringer
 	Charset             string
 	Collation           string
 	NormalizedSQL       string
@@ -665,7 +665,7 @@ func newStmtSummaryByDigestElement(sei *StmtExecInfo, beginTime int64, intervalS
 	}
 	ssElement := &stmtSummaryByDigestElement{
 		beginTime: beginTime,
-		sampleSQL: formatSQL(sei.OriginalSQL),
+		sampleSQL: formatSQL(sei.OriginalSQL.String()),
 		charset:   sei.Charset,
 		collation: sei.Collation,
 		// PrevSQL is already truncated to cfg.Log.QueryLogMaxLen.

@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
+	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/memory"
@@ -477,4 +478,17 @@ func TestTopNSpillDiskFailpoint(t *testing.T) {
 	failpoint.Disable("github.com/pingcap/tidb/pkg/executor/sortexec/TopNRandomFail")
 	failpoint.Disable("github.com/pingcap/tidb/pkg/executor/sortexec/ParallelSortRandomFail")
 	failpoint.Disable("github.com/pingcap/tidb/pkg/util/chunk/ChunkInDiskError")
+}
+
+func TestIssue54206(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set global tidb_enable_tmp_storage_on_oom=off")
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("drop table if exists t2;")
+	tk.MustExec("create table t1(a bigint, b bigint);")
+	tk.MustExec("create table t2(a bigint, b bigint);")
+	tk.MustExec("insert into t1 values(1, 1);")
+	tk.MustQuery("select t1.a+t1.b as result from t1 left join t2 on 1 = 0 order by result limit 1;")
 }

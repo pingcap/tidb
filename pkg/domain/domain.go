@@ -106,7 +106,7 @@ var (
 	mdlCheckLookDuration = 50 * time.Millisecond
 
 	// LoadSchemaDiffVersionGapThreshold is the threshold for version gap to reload domain by loading schema diffs
-	LoadSchemaDiffVersionGapThreshold int64 = 100
+	LoadSchemaDiffVersionGapThreshold int64 = 10000
 
 	// NewInstancePlanCache creates a new instance level plan cache, this function is designed to avoid cycle-import.
 	NewInstancePlanCache func(softMemLimit, hardMemLimit int64) sessionctx.InstancePlanCache
