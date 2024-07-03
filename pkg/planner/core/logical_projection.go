@@ -15,18 +15,18 @@
 package core
 
 import (
+	"github.com/pingcap/tidb/pkg/planner/cardinality"
+	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace/logicaltrace"
 	"slices"
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	fd "github.com/pingcap/tidb/pkg/planner/funcdep"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
-	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace/logicaltrace"
 	"github.com/pingcap/tidb/pkg/util/intset"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 )
@@ -79,7 +79,7 @@ func (p *LogicalProjection) ReplaceExprColumns(replace map[string]*expression.Co
 
 // *************************** start implementation of logicalPlan interface ***************************
 
-// HashCode implements LogicalPlan interface.
+// HashCode implements base.LogicalPlan.<0th> interface.
 func (p *LogicalProjection) HashCode() []byte {
 	// PlanType + SelectOffset + ExprNum + [Exprs]
 	// Expressions are commonly `Column`s, whose hashcode has the length 9, so
@@ -96,7 +96,267 @@ func (p *LogicalProjection) HashCode() []byte {
 	return result
 }
 
-// ExtractFD implements the logical plan interface, extracting the FD from bottom up.
+// PredicatePushDown implements base.LogicalPlan.<1st> interface.
+func (p *LogicalProjection) PredicatePushDown(predicates []expression.Expression, opt *optimizetrace.LogicalOptimizeOp) (ret []expression.Expression, retPlan base.LogicalPlan) {
+	for _, expr := range p.Exprs {
+		if expression.HasAssignSetVarFunc(expr) {
+			_, child := p.BaseLogicalPlan.PredicatePushDown(nil, opt)
+			return predicates, child
+		}
+	}
+	canBePushed, canNotBePushed := BreakDownPredicates(p, predicates)
+	remained, child := p.BaseLogicalPlan.PredicatePushDown(canBePushed, opt)
+	return append(remained, canNotBePushed...), child
+}
+
+// PruneColumns implements base.LogicalPlan.<2nd> interface.
+// If any expression has SetVar function or Sleep function, we do not prune it.
+func (p *LogicalProjection) PruneColumns(parentUsedCols []*expression.Column, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, error) {
+	used := expression.GetUsedList(p.SCtx().GetExprCtx().GetEvalCtx(), parentUsedCols, p.Schema())
+	prunedColumns := make([]*expression.Column, 0)
+
+	// for implicit projected cols, once the ancestor doesn't use it, the implicit expr will be automatically pruned here.
+	for i := len(used) - 1; i >= 0; i-- {
+		if !used[i] && !expression.ExprHasSetVarOrSleep(p.Exprs[i]) {
+			prunedColumns = append(prunedColumns, p.Schema().Columns[i])
+			p.Schema().Columns = append(p.Schema().Columns[:i], p.Schema().Columns[i+1:]...)
+			p.Exprs = append(p.Exprs[:i], p.Exprs[i+1:]...)
+		}
+	}
+	logicaltrace.AppendColumnPruneTraceStep(p, prunedColumns, opt)
+	selfUsedCols := make([]*expression.Column, 0, len(p.Exprs))
+	selfUsedCols = expression.ExtractColumnsFromExpressions(selfUsedCols, p.Exprs, nil)
+	var err error
+	p.Children()[0], err = p.Children()[0].PruneColumns(selfUsedCols, opt)
+	if err != nil {
+		return nil, err
+	}
+	return p, nil
+}
+
+// FindBestTask inherits BaseLogicalPlan.<3rd> implementation.
+
+// BuildKeyInfo implements base.LogicalPlan.<4th> interface.
+func (p *LogicalProjection) BuildKeyInfo(selfSchema *expression.Schema, childSchema []*expression.Schema) {
+	// `LogicalProjection` use schema from `Exprs` to build key info. See `buildSchemaByExprs`.
+	// So call `baseLogicalPlan.BuildKeyInfo` here to avoid duplicated building key info.
+	p.BaseLogicalPlan.BuildKeyInfo(selfSchema, childSchema)
+	selfSchema.Keys = nil
+	schema := p.buildSchemaByExprs(selfSchema)
+	for _, key := range childSchema[0].Keys {
+		indices := schema.ColumnsIndices(key)
+		if indices == nil {
+			continue
+		}
+		newKey := make([]*expression.Column, 0, len(key))
+		for _, i := range indices {
+			newKey = append(newKey, selfSchema.Columns[i])
+		}
+		selfSchema.Keys = append(selfSchema.Keys, newKey)
+	}
+}
+
+// PushDownTopN implements base.LogicalPlan.<5th> interface.
+func (p *LogicalProjection) PushDownTopN(topNLogicalPlan base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) base.LogicalPlan {
+	var topN *LogicalTopN
+	if topNLogicalPlan != nil {
+		topN = topNLogicalPlan.(*LogicalTopN)
+	}
+	for _, expr := range p.Exprs {
+		if expression.HasAssignSetVarFunc(expr) {
+			return p.BaseLogicalPlan.PushDownTopN(topN, opt)
+		}
+	}
+	if topN != nil {
+		exprCtx := p.SCtx().GetExprCtx()
+		substitutedExprs := make([]expression.Expression, 0, len(topN.ByItems))
+		for _, by := range topN.ByItems {
+			substituted := expression.FoldConstant(exprCtx, expression.ColumnSubstitute(exprCtx, by.Expr, p.Schema(), p.Exprs))
+			if !expression.IsImmutableFunc(substituted) {
+				// after substituting, if the order-by expression is un-deterministic like 'order by rand()', stop pushing down.
+				return p.BaseLogicalPlan.PushDownTopN(topN, opt)
+			}
+			substitutedExprs = append(substitutedExprs, substituted)
+		}
+		for i, by := range topN.ByItems {
+			by.Expr = substitutedExprs[i]
+		}
+
+		// remove meaningless constant sort items.
+		for i := len(topN.ByItems) - 1; i >= 0; i-- {
+			switch topN.ByItems[i].Expr.(type) {
+			case *expression.Constant, *expression.CorrelatedColumn:
+				topN.ByItems = append(topN.ByItems[:i], topN.ByItems[i+1:]...)
+			}
+		}
+
+		// if topN.ByItems contains a column(with ID=0) generated by projection, projection will prevent the optimizer from pushing topN down.
+		for _, by := range topN.ByItems {
+			cols := expression.ExtractColumns(by.Expr)
+			for _, col := range cols {
+				if col.ID == 0 && p.Schema().Contains(col) {
+					// check whether the column is generated by projection
+					if !p.Children()[0].Schema().Contains(col) {
+						p.Children()[0] = p.Children()[0].PushDownTopN(nil, opt)
+						return topN.AttachChild(p, opt)
+					}
+				}
+			}
+		}
+	}
+	p.Children()[0] = p.Children()[0].PushDownTopN(topN, opt)
+	return p
+}
+
+// DeriveTopN inherits BaseLogicalPlan.<6th> implementation.
+
+// PredicateSimplification inherits BaseLogicalPlan.<7th> implementation.
+
+// ConstantPropagation inherits BaseLogicalPlan.<8th> implementation.
+
+// PullUpConstantPredicates implements base.LogicalPlan.<9th> interface.
+func (projection *LogicalProjection) PullUpConstantPredicates() []expression.Expression {
+	// projection has no column expr
+	if !canProjectionBeEliminatedLoose(projection) {
+		return nil
+	}
+	candidateConstantPredicates := projection.Children()[0].PullUpConstantPredicates()
+	// replace predicate by projection expr
+	// candidate predicate : a=1
+	// projection: a as a'
+	// result predicate : a'=1
+	replace := make(map[string]*expression.Column)
+	for i, expr := range projection.Exprs {
+		replace[string(expr.HashCode())] = projection.Schema().Columns[i]
+	}
+	result := make([]expression.Expression, 0, len(candidateConstantPredicates))
+	for _, predicate := range candidateConstantPredicates {
+		// The column of predicate must exist in projection exprs
+		columns := expression.ExtractColumns(predicate)
+		// The number of columns in candidate predicate must be 1.
+		if len(columns) != 1 {
+			continue
+		}
+		if replace[string(columns[0].HashCode())] == nil {
+			// The column of predicate will not appear on the upper level
+			// This means that this predicate does not apply to the constant propagation optimization rule
+			// For example: select * from t, (select b from s where s.a=1) tmp where t.b=s.b
+			continue
+		}
+		clonePredicate := predicate.Clone()
+		ResolveExprAndReplace(clonePredicate, replace)
+		result = append(result, clonePredicate)
+	}
+	return result
+}
+
+// RecursiveDeriveStats inherits BaseLogicalPlan.<10th> implementation.
+
+// DeriveStats implement base.LogicalPlan.<11th> interface.
+func (p *LogicalProjection) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema, colGroups [][]*expression.Column) (*property.StatsInfo, error) {
+	childProfile := childStats[0]
+	if p.StatsInfo() != nil {
+		// Reload GroupNDVs since colGroups may have changed.
+		p.StatsInfo().GroupNDVs = p.getGroupNDVs(colGroups, childProfile, selfSchema)
+		return p.StatsInfo(), nil
+	}
+	p.SetStats(&property.StatsInfo{
+		RowCount: childProfile.RowCount,
+		ColNDVs:  make(map[int64]float64, len(p.Exprs)),
+	})
+	for i, expr := range p.Exprs {
+		cols := expression.ExtractColumns(expr)
+		p.StatsInfo().ColNDVs[selfSchema.Columns[i].UniqueID], _ = cardinality.EstimateColsNDVWithMatchedLen(cols, childSchema[0], childProfile)
+	}
+	p.StatsInfo().GroupNDVs = p.getGroupNDVs(colGroups, childProfile, selfSchema)
+	return p.StatsInfo(), nil
+}
+
+// ExtractColGroups implements base.LogicalPlan.<12th> interface.
+func (p *LogicalProjection) ExtractColGroups(colGroups [][]*expression.Column) [][]*expression.Column {
+	if len(colGroups) == 0 {
+		return nil
+	}
+	extColGroups, _ := p.Schema().ExtractColGroups(colGroups)
+	if len(extColGroups) == 0 {
+		return nil
+	}
+	extracted := make([][]*expression.Column, 0, len(extColGroups))
+	for _, cols := range extColGroups {
+		exprs := make([]*expression.Column, len(cols))
+		allCols := true
+		for i, offset := range cols {
+			col, ok := p.Exprs[offset].(*expression.Column)
+			// TODO: for functional dependent projections like `col1 + 1` -> `col2`, we can maintain GroupNDVs actually.
+			if !ok {
+				allCols = false
+				break
+			}
+			exprs[i] = col
+		}
+		if allCols {
+			extracted = append(extracted, expression.SortColumns(exprs))
+		}
+	}
+	return extracted
+}
+
+// PreparePossibleProperties implements base.LogicalPlan.<13th> interface.
+func (p *LogicalProjection) PreparePossibleProperties(_ *expression.Schema, childrenProperties ...[][]*expression.Column) [][]*expression.Column {
+	childProperties := childrenProperties[0]
+	oldCols := make([]*expression.Column, 0, p.Schema().Len())
+	newCols := make([]*expression.Column, 0, p.Schema().Len())
+	for i, expr := range p.Exprs {
+		if col, ok := expr.(*expression.Column); ok {
+			newCols = append(newCols, p.Schema().Columns[i])
+			oldCols = append(oldCols, col)
+		}
+	}
+	tmpSchema := expression.NewSchema(oldCols...)
+	newProperties := make([][]*expression.Column, 0, len(childProperties))
+	for _, childProperty := range childProperties {
+		newChildProperty := make([]*expression.Column, 0, len(childProperty))
+		for _, col := range childProperty {
+			pos := tmpSchema.ColumnIndex(col)
+			if pos < 0 {
+				break
+			}
+			newChildProperty = append(newChildProperty, newCols[pos])
+		}
+		if len(newChildProperty) != 0 {
+			newProperties = append(newProperties, newChildProperty)
+		}
+	}
+	return newProperties
+}
+
+// ExhaustPhysicalPlans implements base.LogicalPlan.<14th> interface.
+func (p *LogicalProjection) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
+	return exhaustPhysicalPlans4Projection(p, prop)
+}
+
+// ExtractCorrelatedCols implements base.LogicalPlan.<15th> interface.
+func (p *LogicalProjection) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
+	corCols := make([]*expression.CorrelatedColumn, 0, len(p.Exprs))
+	for _, expr := range p.Exprs {
+		corCols = append(corCols, expression.ExtractCorColumns(expr)...)
+	}
+	return corCols
+}
+
+// MaxOneRow inherits BaseLogicalPlan.<16th> implementation.
+
+// Children inherits BaseLogicalPlan.<17th> implementation.
+
+// SetChildren inherits BaseLogicalPlan.<18th> implementation.
+
+// SetChild inherits BaseLogicalPlan.<19th> implementation.
+
+// RollBackTaskMap inherits BaseLogicalPlan.<20th> implementation.
+
+// CanPushToCop inherits BaseLogicalPlan.<21st> implementation.
+
+// ExtractFD implements base.LogicalPlan.<22nd> interface.
 func (p *LogicalProjection) ExtractFD() *fd.FDSet {
 	// basically extract the children's fdSet.
 	fds := p.LogicalSchemaProducer.ExtractFD()
@@ -186,14 +446,19 @@ func (p *LogicalProjection) ExtractFD() *fd.FDSet {
 	return fds
 }
 
-// ExtractCorrelatedCols implements LogicalPlan interface.
-func (p *LogicalProjection) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
-	corCols := make([]*expression.CorrelatedColumn, 0, len(p.Exprs))
-	for _, expr := range p.Exprs {
-		corCols = append(corCols, expression.ExtractCorColumns(expr)...)
-	}
-	return corCols
+// GetBaseLogicalPlan inherits BaseLogicalPlan.<23rd> implementation.
+
+// ConvertOuterToInnerJoin implements base.LogicalPlan.<24th> interface.
+func (s *LogicalProjection) ConvertOuterToInnerJoin(predicates []expression.Expression) base.LogicalPlan {
+	p := s.Self().(*LogicalProjection)
+	canBePushed, _ := BreakDownPredicates(p, predicates)
+	child := p.Children()[0]
+	child = child.ConvertOuterToInnerJoin(canBePushed)
+	p.SetChildren(child)
+	return p
 }
+
+// *************************** end implementation of logicalPlan interface ***************************
 
 // GetUsedCols extracts all of the Columns used by proj.
 func (p *LogicalProjection) GetUsedCols() (usedCols []*expression.Column) {
@@ -221,26 +486,6 @@ func (p *LogicalProjection) buildSchemaByExprs(selfSchema *expression.Schema) *e
 	return schema
 }
 
-// BuildKeyInfo implements base.LogicalPlan BuildKeyInfo interface.
-func (p *LogicalProjection) BuildKeyInfo(selfSchema *expression.Schema, childSchema []*expression.Schema) {
-	// `LogicalProjection` use schema from `Exprs` to build key info. See `buildSchemaByExprs`.
-	// So call `baseLogicalPlan.BuildKeyInfo` here to avoid duplicated building key info.
-	p.BaseLogicalPlan.BuildKeyInfo(selfSchema, childSchema)
-	selfSchema.Keys = nil
-	schema := p.buildSchemaByExprs(selfSchema)
-	for _, key := range childSchema[0].Keys {
-		indices := schema.ColumnsIndices(key)
-		if indices == nil {
-			continue
-		}
-		newKey := make([]*expression.Column, 0, len(key))
-		for _, i := range indices {
-			newKey = append(newKey, selfSchema.Columns[i])
-		}
-		selfSchema.Keys = append(selfSchema.Keys, newKey)
-	}
-}
-
 // TryToGetChildProp will check if this sort property can be pushed or not.
 // When a sort column will be replaced by scalar function, we refuse it.
 // When a sort column will be replaced by a constant, we just remove it.
@@ -258,138 +503,6 @@ func (p *LogicalProjection) TryToGetChildProp(prop *property.PhysicalProperty) (
 	}
 	newProp.SortItems = newCols
 	return newProp, true
-}
-
-// ConvertOuterToInnerJoin implements base.LogicalPlan ConvertOuterToInnerJoin interface.
-func (s *LogicalProjection) ConvertOuterToInnerJoin(predicates []expression.Expression) base.LogicalPlan {
-	p := s.Self().(*LogicalProjection)
-	canBePushed, _ := BreakDownPredicates(p, predicates)
-	child := p.Children()[0]
-	child = child.ConvertOuterToInnerJoin(canBePushed)
-	p.SetChildren(child)
-	return p
-}
-
-// ExhaustPhysicalPlans implements LogicalPlan interface.
-func (p *LogicalProjection) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
-	return exhaustPhysicalPlans4Projection(p, prop)
-}
-
-// PullUpConstantPredicates implements LogicalPlan interface.
-func (projection *LogicalProjection) PullUpConstantPredicates() []expression.Expression {
-	// projection has no column expr
-	if !canProjectionBeEliminatedLoose(projection) {
-		return nil
-	}
-	candidateConstantPredicates := projection.Children()[0].PullUpConstantPredicates()
-	// replace predicate by projection expr
-	// candidate predicate : a=1
-	// projection: a as a'
-	// result predicate : a'=1
-	replace := make(map[string]*expression.Column)
-	for i, expr := range projection.Exprs {
-		replace[string(expr.HashCode())] = projection.Schema().Columns[i]
-	}
-	result := make([]expression.Expression, 0, len(candidateConstantPredicates))
-	for _, predicate := range candidateConstantPredicates {
-		// The column of predicate must exist in projection exprs
-		columns := expression.ExtractColumns(predicate)
-		// The number of columns in candidate predicate must be 1.
-		if len(columns) != 1 {
-			continue
-		}
-		if replace[string(columns[0].HashCode())] == nil {
-			// The column of predicate will not appear on the upper level
-			// This means that this predicate does not apply to the constant propagation optimization rule
-			// For example: select * from t, (select b from s where s.a=1) tmp where t.b=s.b
-			continue
-		}
-		clonePredicate := predicate.Clone()
-		ResolveExprAndReplace(clonePredicate, replace)
-		result = append(result, clonePredicate)
-	}
-	return result
-}
-
-// PreparePossibleProperties implements base.LogicalPlan PreparePossibleProperties interface.
-func (p *LogicalProjection) PreparePossibleProperties(_ *expression.Schema, childrenProperties ...[][]*expression.Column) [][]*expression.Column {
-	childProperties := childrenProperties[0]
-	oldCols := make([]*expression.Column, 0, p.Schema().Len())
-	newCols := make([]*expression.Column, 0, p.Schema().Len())
-	for i, expr := range p.Exprs {
-		if col, ok := expr.(*expression.Column); ok {
-			newCols = append(newCols, p.Schema().Columns[i])
-			oldCols = append(oldCols, col)
-		}
-	}
-	tmpSchema := expression.NewSchema(oldCols...)
-	newProperties := make([][]*expression.Column, 0, len(childProperties))
-	for _, childProperty := range childProperties {
-		newChildProperty := make([]*expression.Column, 0, len(childProperty))
-		for _, col := range childProperty {
-			pos := tmpSchema.ColumnIndex(col)
-			if pos < 0 {
-				break
-			}
-			newChildProperty = append(newChildProperty, newCols[pos])
-		}
-		if len(newChildProperty) != 0 {
-			newProperties = append(newProperties, newChildProperty)
-		}
-	}
-	return newProperties
-}
-
-// PushDownTopN implements LogicalPlan interface.
-func (p *LogicalProjection) PushDownTopN(topNLogicalPlan base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) base.LogicalPlan {
-	var topN *LogicalTopN
-	if topNLogicalPlan != nil {
-		topN = topNLogicalPlan.(*LogicalTopN)
-	}
-	for _, expr := range p.Exprs {
-		if expression.HasAssignSetVarFunc(expr) {
-			return p.BaseLogicalPlan.PushDownTopN(topN, opt)
-		}
-	}
-	if topN != nil {
-		exprCtx := p.SCtx().GetExprCtx()
-		substitutedExprs := make([]expression.Expression, 0, len(topN.ByItems))
-		for _, by := range topN.ByItems {
-			substituted := expression.FoldConstant(exprCtx, expression.ColumnSubstitute(exprCtx, by.Expr, p.Schema(), p.Exprs))
-			if !expression.IsImmutableFunc(substituted) {
-				// after substituting, if the order-by expression is un-deterministic like 'order by rand()', stop pushing down.
-				return p.BaseLogicalPlan.PushDownTopN(topN, opt)
-			}
-			substitutedExprs = append(substitutedExprs, substituted)
-		}
-		for i, by := range topN.ByItems {
-			by.Expr = substitutedExprs[i]
-		}
-
-		// remove meaningless constant sort items.
-		for i := len(topN.ByItems) - 1; i >= 0; i-- {
-			switch topN.ByItems[i].Expr.(type) {
-			case *expression.Constant, *expression.CorrelatedColumn:
-				topN.ByItems = append(topN.ByItems[:i], topN.ByItems[i+1:]...)
-			}
-		}
-
-		// if topN.ByItems contains a column(with ID=0) generated by projection, projection will prevent the optimizer from pushing topN down.
-		for _, by := range topN.ByItems {
-			cols := expression.ExtractColumns(by.Expr)
-			for _, col := range cols {
-				if col.ID == 0 && p.Schema().Contains(col) {
-					// check whether the column is generated by projection
-					if !p.Children()[0].Schema().Contains(col) {
-						p.Children()[0] = p.Children()[0].PushDownTopN(nil, opt)
-						return topN.AttachChild(p, opt)
-					}
-				}
-			}
-		}
-	}
-	p.Children()[0] = p.Children()[0].PushDownTopN(topN, opt)
-	return p
 }
 
 func (p *LogicalProjection) getGroupNDVs(colGroups [][]*expression.Column, childProfile *property.StatsInfo, selfSchema *expression.Schema) []property.GroupNDV {
@@ -428,55 +541,6 @@ func (p *LogicalProjection) getGroupNDVs(colGroups [][]*expression.Column, child
 	return ndvs
 }
 
-// DeriveStats implement LogicalPlan DeriveStats interface.
-func (p *LogicalProjection) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema, colGroups [][]*expression.Column) (*property.StatsInfo, error) {
-	childProfile := childStats[0]
-	if p.StatsInfo() != nil {
-		// Reload GroupNDVs since colGroups may have changed.
-		p.StatsInfo().GroupNDVs = p.getGroupNDVs(colGroups, childProfile, selfSchema)
-		return p.StatsInfo(), nil
-	}
-	p.SetStats(&property.StatsInfo{
-		RowCount: childProfile.RowCount,
-		ColNDVs:  make(map[int64]float64, len(p.Exprs)),
-	})
-	for i, expr := range p.Exprs {
-		cols := expression.ExtractColumns(expr)
-		p.StatsInfo().ColNDVs[selfSchema.Columns[i].UniqueID], _ = cardinality.EstimateColsNDVWithMatchedLen(cols, childSchema[0], childProfile)
-	}
-	p.StatsInfo().GroupNDVs = p.getGroupNDVs(colGroups, childProfile, selfSchema)
-	return p.StatsInfo(), nil
-}
-
-// ExtractColGroups implements LogicalPlan ExtractColGroups interface.
-func (p *LogicalProjection) ExtractColGroups(colGroups [][]*expression.Column) [][]*expression.Column {
-	if len(colGroups) == 0 {
-		return nil
-	}
-	extColGroups, _ := p.Schema().ExtractColGroups(colGroups)
-	if len(extColGroups) == 0 {
-		return nil
-	}
-	extracted := make([][]*expression.Column, 0, len(extColGroups))
-	for _, cols := range extColGroups {
-		exprs := make([]*expression.Column, len(cols))
-		allCols := true
-		for i, offset := range cols {
-			col, ok := p.Exprs[offset].(*expression.Column)
-			// TODO: for functional dependent projections like `col1 + 1` -> `col2`, we can maintain GroupNDVs actually.
-			if !ok {
-				allCols = false
-				break
-			}
-			exprs[i] = col
-		}
-		if allCols {
-			extracted = append(extracted, expression.SortColumns(exprs))
-		}
-	}
-	return extracted
-}
-
 func (p *LogicalProjection) appendExpr(expr expression.Expression) *expression.Column {
 	if col, ok := expr.(*expression.Column); ok {
 		return col
@@ -496,42 +560,4 @@ func (p *LogicalProjection) appendExpr(expr expression.Expression) *expression.C
 		col.GetStaticType().DelFlag(mysql.ParseToJSONFlag)
 	}
 	return col
-}
-
-// PruneColumns implements base.LogicalPlan interface.
-// If any expression has SetVar function or Sleep function, we do not prune it.
-func (p *LogicalProjection) PruneColumns(parentUsedCols []*expression.Column, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, error) {
-	used := expression.GetUsedList(p.SCtx().GetExprCtx().GetEvalCtx(), parentUsedCols, p.Schema())
-	prunedColumns := make([]*expression.Column, 0)
-
-	// for implicit projected cols, once the ancestor doesn't use it, the implicit expr will be automatically pruned here.
-	for i := len(used) - 1; i >= 0; i-- {
-		if !used[i] && !expression.ExprHasSetVarOrSleep(p.Exprs[i]) {
-			prunedColumns = append(prunedColumns, p.Schema().Columns[i])
-			p.Schema().Columns = append(p.Schema().Columns[:i], p.Schema().Columns[i+1:]...)
-			p.Exprs = append(p.Exprs[:i], p.Exprs[i+1:]...)
-		}
-	}
-	logicaltrace.AppendColumnPruneTraceStep(p, prunedColumns, opt)
-	selfUsedCols := make([]*expression.Column, 0, len(p.Exprs))
-	selfUsedCols = expression.ExtractColumnsFromExpressions(selfUsedCols, p.Exprs, nil)
-	var err error
-	p.Children()[0], err = p.Children()[0].PruneColumns(selfUsedCols, opt)
-	if err != nil {
-		return nil, err
-	}
-	return p, nil
-}
-
-// PredicatePushDown implements base.LogicalPlan PredicatePushDown interface.
-func (p *LogicalProjection) PredicatePushDown(predicates []expression.Expression, opt *optimizetrace.LogicalOptimizeOp) (ret []expression.Expression, retPlan base.LogicalPlan) {
-	for _, expr := range p.Exprs {
-		if expression.HasAssignSetVarFunc(expr) {
-			_, child := p.BaseLogicalPlan.PredicatePushDown(nil, opt)
-			return predicates, child
-		}
-	}
-	canBePushed, canNotBePushed := BreakDownPredicates(p, predicates)
-	remained, child := p.BaseLogicalPlan.PredicatePushDown(canBePushed, opt)
-	return append(remained, canNotBePushed...), child
 }
