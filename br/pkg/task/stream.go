@@ -435,6 +435,18 @@ func (s *streamMgr) backupFullSchemas(ctx context.Context) error {
 		m.ClusterVersion = clusterVersion
 	})
 
+	schemas := backup.NewBackupSchemas(func(storage kv.Storage, fn func(*model.DBInfo, *model.TableInfo)) error {
+		return backup.BuildFullSchema(storage, s.cfg.StartTS, func(dbInfo *model.DBInfo, tableInfo *model.TableInfo) {
+			fn(dbInfo, tableInfo)
+		})
+	}, 0)
+
+	err = schemas.BackupSchemas(ctx, metaWriter, nil, s.mgr.GetStorage(), nil,
+		s.cfg.StartTS, backup.DefaultSchemaConcurrency, 0, true, nil)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
 	if err = metaWriter.FlushBackupMeta(ctx); err != nil {
 		return errors.Trace(err)
 	}
@@ -1674,11 +1686,13 @@ func getFullBackupTS(
 func parseFullBackupTablesStorage(
 	cfg *RestoreConfig,
 ) (*logclient.FullBackupStorageConfig, error) {
-	if len(cfg.FullBackupStorage) == 0 {
-		log.Info("the full backup path is not specified, so BR will try to get id maps")
-		return nil, nil
+	var storageName string
+	if len(cfg.FullBackupStorage) > 0 {
+		storageName = cfg.FullBackupStorage
+	} else {
+		storageName = cfg.Storage
 	}
-	u, err := storage.ParseBackend(cfg.FullBackupStorage, &cfg.BackendOptions)
+	u, err := storage.ParseBackend(storageName, &cfg.BackendOptions)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

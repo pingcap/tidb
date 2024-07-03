@@ -694,9 +694,6 @@ func (rc *LogClient) InitSchemasReplaceForDDL(
 
 	if len(dbMaps) <= 0 {
 		log.Info("no id maps, build the table replaces from cluster and full backup schemas")
-		if cfg.FullBackupStorage == nil {
-			return nil, errors.Errorf("miss upstream table information at `start-ts`(%d) but the full backup path is not specified", rc.startTS)
-		}
 		needConstructIdMap = true
 		s, err := storage.New(ctx, cfg.FullBackupStorage.Backend, cfg.FullBackupStorage.Opts)
 		if err != nil {
