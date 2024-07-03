@@ -55,8 +55,8 @@ type TestDDLCallback struct {
 	onJobUpdated            func(*model.Job)
 	OnJobUpdatedExported    atomic.Pointer[func(*model.Job)]
 	onWatched               func(ctx context.Context)
-	OnGetJobBeforeExported  func(string)
-	OnGetJobAfterExported   func(string, *model.Job)
+	OnGetJobBeforeExported  func()
+	OnGetJobAfterExported   func(*model.Job)
 	OnJobSchemaStateChanged func(int64)
 
 	OnUpdateReorgInfoExported func(job *model.Job, pid int64)
@@ -146,21 +146,21 @@ func (tc *TestDDLCallback) OnWatched(ctx context.Context) {
 }
 
 // OnGetJobBefore implements Callback.OnGetJobBefore interface.
-func (tc *TestDDLCallback) OnGetJobBefore(jobType string) {
+func (tc *TestDDLCallback) OnGetJobBefore() {
 	if tc.OnGetJobBeforeExported != nil {
-		tc.OnGetJobBeforeExported(jobType)
+		tc.OnGetJobBeforeExported()
 		return
 	}
-	tc.BaseCallback.OnGetJobBefore(jobType)
+	tc.BaseCallback.OnGetJobBefore()
 }
 
 // OnGetJobAfter implements Callback.OnGetJobAfter interface.
-func (tc *TestDDLCallback) OnGetJobAfter(jobType string, job *model.Job) {
+func (tc *TestDDLCallback) OnGetJobAfter(job *model.Job) {
 	if tc.OnGetJobAfterExported != nil {
-		tc.OnGetJobAfterExported(jobType, job)
+		tc.OnGetJobAfterExported(job)
 		return
 	}
-	tc.BaseCallback.OnGetJobAfter(jobType, job)
+	tc.BaseCallback.OnGetJobAfter(job)
 }
 
 // Clone copies the callback and take its reference

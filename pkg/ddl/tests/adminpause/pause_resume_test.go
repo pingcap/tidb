@@ -20,7 +20,9 @@ import (
 	"strconv"
 	"sync"
 	"testing"
+	"time"
 
+	"github.com/pingcap/failpoint"
 	testddlutil "github.com/pingcap/tidb/pkg/ddl/testutil"
 	"github.com/pingcap/tidb/pkg/ddl/util/callback"
 	"github.com/pingcap/tidb/pkg/domain"
@@ -123,7 +125,7 @@ func pauseResumeAndCancel(t *testing.T, stmtKit *testkit.TestKit, adminCommandKi
 	var isCancelled = false
 	var cancelResult []sqlexec.RecordSet
 	var cancelErr error
-	var cancelFunc = func(jobType string) {
+	var cancelFunc = func() {
 		adminCommandMutex.Lock()
 		defer adminCommandMutex.Unlock()
 		if isPaused && isResumed && !isCancelled {
@@ -353,4 +355,61 @@ func TestPauseResumeCancelAndRerunPartitionTableStmt(t *testing.T) {
 	}
 
 	Logger.Info("TestPauseResumeCancelAndRerunPartitionTableStmt: all cases finished.")
+}
+
+func TestPauseJobDependency(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use test")
+
+	tk.MustExec("create table t (a int, b int);")
+	tk.MustExec("insert into t values (1, 1);")
+
+	afterPause := make(chan struct{})
+	afterAddCol := make(chan struct{})
+	startAddCol := make(chan struct{})
+	var (
+		modifyJobID int64
+		errModCol   error
+		errAddCol   error
+	)
+	once := sync.Once{}
+	failpoint.EnableCall("github.com/pingcap/tidb/pkg/ddl/afterModifyColumnStateDeleteOnly", func(jobID int64) {
+		once.Do(func() {
+			modifyJobID = jobID
+			tk2.MustExec(fmt.Sprintf("admin pause ddl jobs %d", jobID))
+			afterPause <- struct{}{}
+		})
+	})
+	wg := sync.WaitGroup{}
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		// Will stuck because the job is paused.
+		errModCol = tk.ExecToErr("alter table t modify column b tinyint;")
+	}()
+	go func() {
+		defer wg.Done()
+		<-afterPause
+		// This should be blocked because they handle the same table.
+		startAddCol <- struct{}{}
+		errAddCol = tk2.ExecToErr("alter table t add column c int;")
+		afterAddCol <- struct{}{}
+	}()
+	<-startAddCol
+	select {
+	case <-afterAddCol:
+		t.Logf("add column DDL on same table should be blocked")
+		t.FailNow()
+	case <-time.After(3 * time.Second):
+		tk3 := testkit.NewTestKit(t, store)
+		tk3.MustExec("use test")
+		tk3.MustExec(fmt.Sprintf("admin resume ddl jobs %d", modifyJobID))
+		<-afterAddCol
+	}
+	wg.Wait()
+	require.NoError(t, errModCol)
+	require.NoError(t, errAddCol)
 }
