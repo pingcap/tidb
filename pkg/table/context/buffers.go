@@ -128,7 +128,12 @@ func (b *ColSizeDeltaBuffer) GetColSizeDelta() []variable.ColSize {
 	return b.delta
 }
 
-// MutateBuffers is used to get the buffers for table mutating.
+// MutateBuffers is a memory pool for table related memory allocation that aims to reuse memory
+// and saves allocation.
+// It is used in table operations like AddRecord/UpdateRecord/DeleteRecord.
+// You can use `GetXXXBufferWithCap` to get the buffer and reset its inner slices to a capacity.
+// Because inner slices are reused, you should not call the get methods again before finishing the previous usage.
+// Otherwise, the previous data will be overwritten.
 type MutateBuffers struct {
 	encodeRow    *EncodeRowBuffer
 	checkRow     *CheckRowBuffer
@@ -146,14 +151,26 @@ func NewMutateBuffers(stmtBufs *variable.WriteStmtBufs) *MutateBuffers {
 	}
 }
 
-// GetEncodeRowBufferWithCap gets the buffer to encode a row
+// GetEncodeRowBufferWithCap gets the buffer to encode a row.
+// Usage:
+// 1. Call `MutateBuffers.GetEncodeRowBufferWithCap` to get the buffer.
+// 2. Call `EncodeRowBuffer.AddColVal` for every column to add column values.
+// 3. Call `EncodeRowBuffer.WriteMemBufferEncoded` to encode row and write it to the memBuffer.
+// Because the inner slices are reused, you should not call this method again before finishing the previous usage.
+// Otherwise, the previous data will be overwritten.
 func (b *MutateBuffers) GetEncodeRowBufferWithCap(capacity int) *EncodeRowBuffer {
 	buffer := b.encodeRow
 	buffer.Reset(capacity)
 	return buffer
 }
 
-// GetCheckRowBufferWithCap gets the buffer to check row constraints
+// GetCheckRowBufferWithCap gets the buffer to check row constraints.
+// Usage:
+// 1. Call `GetCheckRowBufferWithCap` to get the buffer.
+// 2. Call `CheckRowBuffer.AddColVal` for every column to add column values.
+// 3. Call `CheckRowBuffer.GetRowToCheck` to get the row data for constraint check.
+// Because the inner slices are reused, you should not call this method again before finishing the previous usage.
+// Otherwise, the previous data will be overwritten.
 func (b *MutateBuffers) GetCheckRowBufferWithCap(capacity int) *CheckRowBuffer {
 	buffer := b.checkRow
 	buffer.Reset(capacity)
@@ -162,6 +179,12 @@ func (b *MutateBuffers) GetCheckRowBufferWithCap(capacity int) *CheckRowBuffer {
 
 // GetColSizeDeltaBufferWithCap gets the buffer for column size delta collection
 // and resets the capacity of its inner slice.
+// Usage:
+// 1. Call `GetColSizeDeltaBufferWithCap` to get the buffer.
+// 2. Call `ColSizeDeltaBuffer.AddColSizeDelta` for every column to add column size delta.
+// 3. Call `ColSizeDeltaBuffer.ColSizeDeltaBuffer` to get deltas for all columns.
+// Because the inner slices are reused, you should not call this method again before finishing the previous usage.
+// Otherwise, the previous data will be overwritten.
 func (b *MutateBuffers) GetColSizeDeltaBufferWithCap(capacity int) *ColSizeDeltaBuffer {
 	buffer := b.colSizeDelta
 	buffer.Reset(capacity)
