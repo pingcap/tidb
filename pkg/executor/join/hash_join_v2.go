@@ -527,7 +527,8 @@ func (e *HashJoinV2Exec) waitJoinWorkersAndRestore() {
 		for i := uint(0); i < e.Concurrency; i++ {
 			var workerID = i
 			e.workerWg.RunWithRecover(func() {
-				e.ProbeWorkers[workerID].scanRowTableAfterProbeDone()
+				// Error has been handled in the function
+				_ = e.ProbeWorkers[workerID].scanRowTableAfterProbeDone(false)
 			}, e.handleJoinWorkerPanic)
 		}
 		e.workerWg.Wait()
@@ -611,37 +612,44 @@ func (e *HashJoinV2Exec) restore() error {
 			return err
 		}
 
-		// TODO implement scan table for spill
+		if e.ProbeWorkers[0] != nil && e.ProbeWorkers[0].JoinProbe.NeedScanRowTable() {
+			e.hashTableContext.hashTable = hashTable
+			err := e.ProbeWorkers[0].scanRowTableAfterProbeDone(true)
+			if err != nil {
+				return nil
+			}
+		}
 	}
 
 	return nil
 }
 
-func (w *ProbeWorkerV2) scanRowTableAfterProbeDone() {
-	w.JoinProbe.InitForScanRowTable()
+func (w *ProbeWorkerV2) scanRowTableAfterProbeDone(inSpillMode bool) error {
+	w.JoinProbe.InitForScanRowTable(inSpillMode)
 	ok, joinResult := w.getNewJoinResult()
 	if !ok {
-		return
+		return nil
 	}
 	for !w.JoinProbe.IsScanRowTableDone() {
 		joinResult = w.JoinProbe.ScanRowTable(joinResult, &w.HashJoinCtx.SessCtx.GetSessionVars().SQLKiller)
 		if joinResult.err != nil {
 			w.HashJoinCtx.joinResultCh <- joinResult
-			return
+			return joinResult.err
 		}
 		if joinResult.chk.IsFull() {
 			w.HashJoinCtx.joinResultCh <- joinResult
 			ok, joinResult = w.getNewJoinResult()
 			if !ok {
-				return
+				return nil
 			}
 		}
 	}
 	if joinResult == nil {
-		return
+		return nil
 	} else if joinResult.err != nil || (joinResult.chk != nil && joinResult.chk.NumRows() > 0) {
 		w.HashJoinCtx.joinResultCh <- joinResult
 	}
+	return nil
 }
 
 func (w *ProbeWorkerV2) probeAndSendResult(joinResult *hashjoinWorkerResult) (bool, int64, *hashjoinWorkerResult) {

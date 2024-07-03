@@ -50,9 +50,6 @@ type hashJoinSpillHelper struct {
 	tmpSpillBuildSideChunks []*chunk.Chunk
 	tmpSpillProbeSideChunks []*chunk.Chunk
 
-	// TODO initialize it, do we need it?
-	joinChkResourceCh chan *chunk.Chunk
-
 	hash      hash.Hash64
 	rehashBuf *bytes.Buffer
 

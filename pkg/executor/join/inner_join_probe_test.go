@@ -370,7 +370,7 @@ func testJoinProbe(t *testing.T, withSel bool, leftKeyIndex []int, rightKeyIndex
 			joinProbes = append(joinProbes, NewJoinProbe(hashJoinCtx, i, joinType, probeKeyIndex, joinedTypes, probeKeyTypes, rightAsBuildSide, nil))
 		}
 		for _, prober := range joinProbes {
-			prober.InitForScanRowTable()
+			prober.InitForScanRowTable(false)
 			for !prober.IsScanRowTableDone() {
 				joinResult = prober.ScanRowTable(joinResult, &sqlkiller.SQLKiller{})
 				require.NoError(t, joinResult.err, "unexpected error during scan row table")

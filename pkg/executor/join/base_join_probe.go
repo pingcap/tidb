@@ -69,7 +69,7 @@ type ProbeV2 interface {
 	// NeedScanRowTable returns true if current join need to scan row table after all the probe side chunks are handled
 	NeedScanRowTable() bool
 	// InitForScanRowTable do some pre-work before ScanRowTable, it must be called before ScanRowTable
-	InitForScanRowTable()
+	InitForScanRowTable(inSpillMode bool)
 }
 
 type offsetAndLength struct {
@@ -647,7 +647,7 @@ func (*mockJoinProbe) NeedScanRowTable() bool {
 	panic("not supported")
 }
 
-func (*mockJoinProbe) InitForScanRowTable() {
+func (*mockJoinProbe) InitForScanRowTable(bool) {
 	panic("not supported")
 }
 

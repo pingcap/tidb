@@ -71,11 +71,16 @@ func (j *leftOuterJoinProbe) IsScanRowTableDone() bool {
 	return j.rowIter.isEnd()
 }
 
-func (j *leftOuterJoinProbe) InitForScanRowTable() {
+func (j *leftOuterJoinProbe) InitForScanRowTable(inSpillMode bool) {
 	if j.rightAsBuildSide {
 		panic("should not reach here")
 	}
 	totalRowCount := j.ctx.hashTableContext.hashTable.totalRowCount()
+	if inSpillMode {
+		j.rowIter = j.ctx.hashTableContext.hashTable.createRowIter(0, totalRowCount)
+		return
+	}
+
 	concurrency := j.ctx.Concurrency
 	workID := uint64(j.workID)
 	avgRowPerWorker := totalRowCount / uint64(concurrency)
@@ -102,8 +107,7 @@ func (j *leftOuterJoinProbe) ScanRowTable(joinResult *hashjoinWorkerResult, sqlK
 	remainCap := joinResult.chk.RequiredRows() - joinResult.chk.NumRows()
 
 	for insertedRows < remainCap && !j.rowIter.isEnd() {
-		currentRow := j.rowIter.getValue()
-		j.appendBuildRow(meta, joinResult.chk, currentRow, &insertedRows)
+		j.appendBuildRow(meta, joinResult.chk, j.rowIter.getValue(), &insertedRows)
 		j.rowIter.next()
 	}
 
