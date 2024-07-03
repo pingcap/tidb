@@ -158,11 +158,11 @@ func (p *LogicalSelection) BuildKeyInfo(selfSchema *expression.Schema, childSche
 // PushDownTopN inherits BaseLogicalPlan.<5th> implementation.
 
 // DeriveTopN implements the base.LogicalPlan.<6th> interface.
-func (s *LogicalSelection) DeriveTopN(opt *optimizetrace.LogicalOptimizeOp) base.LogicalPlan {
-	p := s.Self().(*LogicalSelection)
-	windowIsTopN, limitValue := windowIsTopN(p)
+func (p *LogicalSelection) DeriveTopN(opt *optimizetrace.LogicalOptimizeOp) base.LogicalPlan {
+	s := p.Self().(*LogicalSelection)
+	windowIsTopN, limitValue := windowIsTopN(s)
 	if windowIsTopN {
-		child := p.Children()[0].(*LogicalWindow)
+		child := s.Children()[0].(*LogicalWindow)
 		grandChild := child.Children()[0].(*DataSource)
 		// Build order by for derived Limit
 		byItems := make([]*util.ByItems, 0, len(child.OrderBy))
@@ -174,11 +174,11 @@ func (s *LogicalSelection) DeriveTopN(opt *optimizetrace.LogicalOptimizeOp) base
 		derivedTopN.SetChildren(grandChild)
 		/* return select->datasource->topN->window */
 		child.SetChildren(derivedTopN)
-		p.SetChildren(child)
-		appendDerivedTopNTrace(p, opt)
-		return p
+		s.SetChildren(child)
+		appendDerivedTopNTrace(s, opt)
+		return s
 	}
-	return p
+	return s
 }
 
 // PredicateSimplification inherits BaseLogicalPlan.<7th> implementation.
@@ -186,11 +186,11 @@ func (s *LogicalSelection) DeriveTopN(opt *optimizetrace.LogicalOptimizeOp) base
 // ConstantPropagation inherits BaseLogicalPlan.<8th> implementation.
 
 // PullUpConstantPredicates implements the base.LogicalPlan.<9th> interface.
-func (selection *LogicalSelection) PullUpConstantPredicates() []expression.Expression {
+func (p *LogicalSelection) PullUpConstantPredicates() []expression.Expression {
 	var result []expression.Expression
-	for _, candidatePredicate := range selection.Conditions {
+	for _, candidatePredicate := range p.Conditions {
 		// the candidate predicate should be a constant and compare predicate
-		match := validCompareConstantPredicate(selection.SCtx().GetExprCtx().GetEvalCtx(), candidatePredicate)
+		match := validCompareConstantPredicate(p.SCtx().GetExprCtx().GetEvalCtx(), candidatePredicate)
 		if match {
 			result = append(result, candidatePredicate)
 		}
@@ -287,13 +287,13 @@ func (p *LogicalSelection) ExtractFD() *fd.FDSet {
 // GetBaseLogicalPlan inherits BaseLogicalPlan.<23rd> implementation.
 
 // ConvertOuterToInnerJoin implements base.LogicalPlan.<24th> interface.
-func (s *LogicalSelection) ConvertOuterToInnerJoin(predicates []expression.Expression) base.LogicalPlan {
-	p := s.Self().(*LogicalSelection)
-	combinedCond := append(predicates, p.Conditions...)
-	child := p.Children()[0]
+func (p *LogicalSelection) ConvertOuterToInnerJoin(predicates []expression.Expression) base.LogicalPlan {
+	s := p.Self().(*LogicalSelection)
+	combinedCond := append(predicates, s.Conditions...)
+	child := s.Children()[0]
 	child = child.ConvertOuterToInnerJoin(combinedCond)
-	p.SetChildren(child)
-	return p
+	s.SetChildren(child)
+	return s
 }
 
 // *************************** end implementation of logicalPlan interface ***************************
