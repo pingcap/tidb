@@ -46,14 +46,14 @@ func (ts LogicalTableScan) Init(ctx base.PlanContext, offset int) *LogicalTableS
 // *************************** start implementation of Plan interface ***************************
 
 // ExplainInfo implements Plan interface.
-func (p *LogicalTableScan) ExplainInfo() string {
-	ectx := p.SCtx().GetExprCtx().GetEvalCtx()
-	buffer := bytes.NewBufferString(p.Source.ExplainInfo())
-	if p.Source.HandleCols != nil {
-		fmt.Fprintf(buffer, ", pk col:%s", p.Source.HandleCols.StringWithCtx(ectx))
+func (ts *LogicalTableScan) ExplainInfo() string {
+	ectx := ts.SCtx().GetExprCtx().GetEvalCtx()
+	buffer := bytes.NewBufferString(ts.Source.ExplainInfo())
+	if ts.Source.HandleCols != nil {
+		fmt.Fprintf(buffer, ", pk col:%s", ts.Source.HandleCols.StringWithCtx(ectx))
 	}
-	if len(p.AccessConds) > 0 {
-		fmt.Fprintf(buffer, ", cond:%v", p.AccessConds)
+	if len(ts.AccessConds) > 0 {
+		fmt.Fprintf(buffer, ", cond:%v", ts.AccessConds)
 	}
 	return buffer.String()
 }
