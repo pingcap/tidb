@@ -1192,7 +1192,7 @@ func TestHandleAuthPlugin(t *testing.T) {
 	}
 	err = cc.handleAuthPlugin(ctx, &resp)
 	require.NoError(t, err)
-	require.Equal(t, []byte(mysql.AuthNativePassword), resp.Auth)
+	require.Equal(t, []byte(mysql.AuthCachingSha2Password), resp.Auth)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/server/FakeAuthSwitch"))
 
 	// client trying to authenticate with tidb_sm3_password
@@ -1213,7 +1213,7 @@ func TestHandleAuthPlugin(t *testing.T) {
 	}
 	err = cc.handleAuthPlugin(ctx, &resp)
 	require.NoError(t, err)
-	require.Equal(t, []byte(mysql.AuthNativePassword), resp.Auth)
+	require.Equal(t, []byte(mysql.AuthCachingSha2Password), resp.Auth)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/server/FakeAuthSwitch"))
 
 	// MySQL 5.1 or older client, without authplugin support
@@ -1250,11 +1250,11 @@ func TestHandleAuthPlugin(t *testing.T) {
 	}
 	resp = handshake.Response41{
 		Capability: mysql.ClientProtocol41 | mysql.ClientPluginAuth,
-		AuthPlugin: mysql.AuthNativePassword,
+		AuthPlugin: mysql.AuthCachingSha2Password,
 	}
 	err = cc.handleAuthPlugin(ctx, &resp)
 	require.NoError(t, err)
-	require.Equal(t, []byte(mysql.AuthNativePassword), resp.Auth)
+	require.Equal(t, []byte(mysql.AuthCachingSha2Password), resp.Auth)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/server/FakeAuthSwitch"))
 
 	// 8.0 or newer client trying to authenticate with caching_sha2_password
@@ -1275,7 +1275,7 @@ func TestHandleAuthPlugin(t *testing.T) {
 	}
 	err = cc.handleAuthPlugin(ctx, &resp)
 	require.NoError(t, err)
-	require.Equal(t, []byte(mysql.AuthNativePassword), resp.Auth)
+	require.Equal(t, []byte(mysql.AuthCachingSha2Password), resp.Auth)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/server/FakeAuthSwitch"))
 
 	// client trying to authenticate with tidb_sm3_password
@@ -1296,7 +1296,7 @@ func TestHandleAuthPlugin(t *testing.T) {
 	}
 	err = cc.handleAuthPlugin(ctx, &resp)
 	require.NoError(t, err)
-	require.Equal(t, []byte(mysql.AuthNativePassword), resp.Auth)
+	require.Equal(t, []byte(mysql.AuthCachingSha2Password), resp.Auth)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/server/FakeAuthSwitch"))
 
 	// MySQL 5.1 or older client, without authplugin support
@@ -1418,7 +1418,7 @@ func TestHandleAuthPlugin(t *testing.T) {
 	}
 	resp = handshake.Response41{
 		Capability: mysql.ClientProtocol41 | mysql.ClientPluginAuth,
-		AuthPlugin: mysql.AuthNativePassword,
+		AuthPlugin: mysql.AuthCachingSha2Password,
 	}
 	err = cc.handleAuthPlugin(ctx, &resp)
 	require.NoError(t, err)
@@ -1554,9 +1554,6 @@ func TestAuthPlugin2(t *testing.T) {
 		user:         "root",
 	}
 
-	if cc.pkt == nil {
-		t.Fatal("pktフィールドがnilです。")
-	}
 	ctx := context.Background()
 	se, _ := session.CreateSession4Test(store)
 	tc := &TiDBContext{
@@ -1648,7 +1645,7 @@ func TestAuthSessionTokenPlugin(t *testing.T) {
 
 	// login succeeds even if the password expires now
 	tk.MustExec("ALTER USER auth_session_token PASSWORD EXPIRE")
-	err = cc.openSessionAndDoAuth([]byte{}, mysql.AuthNativePassword, 0)
+	err = cc.openSessionAndDoAuth([]byte{}, mysql.AuthCachingSha2Password, 0)
 	require.ErrorContains(t, err, "Your password has expired")
 	err = cc.openSessionAndDoAuth(resp.Auth, resp.AuthPlugin, resp.ZstdLevel)
 	require.NoError(t, err)
