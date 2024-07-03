@@ -474,14 +474,14 @@ func ColumnSubstituteImpl(expr Expression, schema *Schema, newExprs []Expression
 		// We can't substitute name with 'a' in length(name) because the collation of name is PAD SPACE.
 		// TODO: We will fix it here temporarily, and redesign the logic if we encounter more similar functions or situations later.
 		// Fixed issue #53730
-		if v.GetCtx().IsConstantPropagateCheck() && v.FuncName.L == ast.Length {
+		if v.GetCtx().GetSessionVars().StmtCtx.InConstantPropagateCheck && v.FuncName.L == ast.Length {
 			arg0, isColumn := v.GetArgs()[0].(*Column)
 			if isColumn {
 				id := schema.ColumnIndex(arg0)
 				if id != -1 {
 					_, isConstant := newExprs[id].(*Constant)
 					if isConstant {
-						mappedNewColumnCollate := schema.Columns[id].GetStaticType().GetCollate()
+						mappedNewColumnCollate := schema.Columns[id].GetType().GetCollate()
 						if mappedNewColumnCollate == charset.CollationUTF8MB4 ||
 							mappedNewColumnCollate == charset.CollationUTF8 {
 							return false, false, v
