@@ -1163,9 +1163,13 @@ func TestHandleAuthPlugin(t *testing.T) {
 		server:       srv,
 		user:         "unativepassword",
 	}
+
+	if cc.pkt == nil {
+		t.Fatal("pktフィールドがnilです。")
+	}
 	resp := handshake.Response41{
 		Capability: mysql.ClientProtocol41 | mysql.ClientPluginAuth,
-		AuthPlugin: mysql.AuthNativePassword,
+		AuthPlugin: mysql.AuthCachingSha2Password,
 	}
 	err = cc.handleAuthPlugin(ctx, &resp)
 	require.NoError(t, err)
@@ -1330,7 +1334,7 @@ func TestHandleAuthPlugin(t *testing.T) {
 	}
 	resp = handshake.Response41{
 		Capability: mysql.ClientProtocol41 | mysql.ClientPluginAuth,
-		AuthPlugin: mysql.AuthNativePassword,
+		AuthPlugin: mysql.AuthCachingSha2Password,
 	}
 	err = cc.handleAuthPlugin(ctx, &resp)
 	require.NoError(t, err)
@@ -1548,6 +1552,10 @@ func TestAuthPlugin2(t *testing.T) {
 		pkt:          internal.NewPacketIOForTest(bufio.NewWriter(bytes.NewBuffer(nil))),
 		server:       srv,
 		user:         "root",
+	}
+
+	if cc.pkt == nil {
+		t.Fatal("pktフィールドがnilです。")
 	}
 	ctx := context.Background()
 	se, _ := session.CreateSession4Test(store)
