@@ -1123,11 +1123,11 @@ func (t *TableCommon) addIndices(sctx table.MutateContext, recordID kv.Handle, r
 		if !skipCheck && v.Meta().Unique {
 			// Make error message consistent with MySQL.
 			tablecodec.TruncateIndexValues(t.meta, v.Meta(), indexVals)
-			entryKey, err := genIndexKeyStrs(indexVals)
+			colStrVals, err := genIndexKeyStrs(indexVals)
 			if err != nil {
 				return nil, err
 			}
-			dupErr = kv.GenKeyExistsErr(entryKey, fmt.Sprintf("%s.%s", v.TableMeta().Name.String(), v.Meta().Name.String()))
+			dupErr = kv.GenKeyExistsErr(colStrVals, fmt.Sprintf("%s.%s", v.TableMeta().Name.String(), v.Meta().Name.String()))
 		}
 		rsData := TryGetHandleRestoredDataWrapper(t.meta, r, nil, v.Meta())
 		if dupHandle, err := v.Create(sctx, txn, indexVals, recordID, rsData, opts...); err != nil {
@@ -1517,13 +1517,13 @@ func (t *TableCommon) buildIndexForRow(ctx table.MutateContext, h kv.Handle, val
 		if kv.ErrKeyExists.Equal(err) {
 			// Make error message consistent with MySQL.
 			tablecodec.TruncateIndexValues(t.meta, idx.Meta(), vals)
-			entryKey, err1 := genIndexKeyStrs(vals)
+			colStrVals, err1 := genIndexKeyStrs(vals)
 			if err1 != nil {
 				// if genIndexKeyStrs failed, return the original error.
 				return err
 			}
 
-			return kv.GenKeyExistsErr(entryKey, fmt.Sprintf("%s.%s", idx.TableMeta().Name.String(), idx.Meta().Name.String()))
+			return kv.GenKeyExistsErr(colStrVals, fmt.Sprintf("%s.%s", idx.TableMeta().Name.String(), idx.Meta().Name.String()))
 		}
 		return err
 	}
@@ -1813,23 +1813,23 @@ func getDuplicateError(tblInfo *model.TableInfo, handle kv.Handle, row []types.D
 		if err != nil {
 			return kv.ErrKeyExists.FastGenByArgs(handle.String(), keyName)
 		}
-		keyCols, err := genIndexKeyStrs(handleData)
+		colStrVals, err := genIndexKeyStrs(handleData)
 		if err != nil {
 			return kv.ErrKeyExists.FastGenByArgs(handle.String(), keyName)
 		}
-		return kv.GenKeyExistsErr(keyCols, keyName)
+		return kv.GenKeyExistsErr(colStrVals, keyName)
 	}
 	pkDts := make([]types.Datum, 0, len(pkIdx.Columns))
 	for _, idxCol := range pkIdx.Columns {
 		pkDts = append(pkDts, row[idxCol.Offset])
 	}
 	tablecodec.TruncateIndexValues(tblInfo, pkIdx, pkDts)
-	entryKey, err := genIndexKeyStrs(pkDts)
+	colStrVals, err := genIndexKeyStrs(pkDts)
 	if err != nil {
 		// if genIndexKeyStrs failed, return ErrKeyExists with handle.String().
 		return kv.ErrKeyExists.FastGenByArgs(handle.String(), keyName)
 	}
-	return kv.GenKeyExistsErr(entryKey, keyName)
+	return kv.GenKeyExistsErr(colStrVals, keyName)
 }
 
 func init() {
