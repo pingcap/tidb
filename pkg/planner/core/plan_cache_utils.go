@@ -319,6 +319,22 @@ func NewPlanCacheKey(sctx sessionctx.Context, stmt *PlanCacheStmt) (key, binding
 	hash = append(hash, hack.Slice(strconv.FormatBool(variable.VarTiDBSuperReadOnly.Load()))...)
 	// expr-pushdown-blacklist can affect query optimization, so we need to consider it in plan cache.
 	hash = codec.EncodeInt(hash, expression.ExprPushDownBlackListReloadTimeStamp.Load())
+
+	// whether this query has sub-query
+	if stmt.QueryFeatures.hasSubquery {
+		hash = append(hash, '1')
+	} else {
+		hash = append(hash, '0')
+	}
+
+	// this variable might affect the plan
+	if vars.ForeignKeyChecks {
+		hash = append(hash, '1')
+	} else {
+		hash = append(hash, '0')
+	}
+
+	// handle dirty tables
 	dirtyTables := vars.StmtCtx.TblInfo2UnionScan
 	if len(dirtyTables) > 0 {
 		dirtyTableIDs := make([]int64, 0, len(dirtyTables)) // TODO: a Pool for this
@@ -414,13 +430,8 @@ type PlanCacheMatchOpts struct {
 	// limitOffsetAndCount stores all the offset and key parameters extract from limit statement
 	// only used for cache and pick plan with parameters in limit
 	LimitOffsetAndCount []uint64
-	// HasSubQuery indicate whether this query has sub query
-	HasSubQuery bool
 	// StatsVersionHash is the hash value of the statistics version
 	StatsVersionHash uint64
-
-	// Below are some variables that can affect the plan
-	ForeignKeyChecks bool
 }
 
 // PlanCacheQueryFeatures records all query features which may affect plan selection.
@@ -566,10 +577,8 @@ func GetMatchOpts(sctx sessionctx.Context, is infoschema.InfoSchema, stmt *PlanC
 
 	return &PlanCacheMatchOpts{
 		LimitOffsetAndCount: limitOffsetAndCount,
-		HasSubQuery:         stmt.QueryFeatures.hasSubquery,
 		StatsVersionHash:    statsVerHash,
 		ParamTypes:          parseParamTypes(sctx, params),
-		ForeignKeyChecks:    sctx.GetSessionVars().ForeignKeyChecks,
 	}
 }
 
@@ -725,19 +734,10 @@ func matchCachedPlan(sctx sessionctx.Context, value *PlanCacheValue, matchOpts *
 		// offset and key slice matched, but it is a plan with param limit and the switch is disabled
 		return false
 	}
-	// check subquery switch state
-	if value.matchOpts.HasSubQuery && !sctx.GetSessionVars().EnablePlanCacheForSubquery {
-		return false
-	}
-
 	// table stats has changed
 	// this check can be disabled by turning off system variable tidb_plan_cache_invalidation_on_fresh_stats
 	if sctx.GetSessionVars().PlanCacheInvalidationOnFreshStats &&
 		value.matchOpts.StatsVersionHash != matchOpts.StatsVersionHash {
-		return false
-	}
-	// below are some SQL variables that can affect the plan
-	if value.matchOpts.ForeignKeyChecks != matchOpts.ForeignKeyChecks {
 		return false
 	}
 	return true
