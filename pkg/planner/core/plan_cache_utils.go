@@ -341,23 +341,17 @@ func NewPlanCacheKey(sctx sessionctx.Context, stmt *PlanCacheStmt) (key, binding
 		}
 		hash = append(hash, '|')
 		for _, node := range stmt.QueryFeatures.limits {
-			if node.Count != nil {
-				if count, isParamMarker := node.Count.(*driver.ParamMarkerExpr); isParamMarker {
-					typeExpected, val := CheckParamTypeInt64orUint64(count)
+			for _, valNode := range []ast.ExprNode{node.Count, node.Offset} {
+				if valNode == nil {
+					continue
+				}
+				if param, isParam := valNode.(*driver.ParamMarkerExpr); isParam {
+					typeExpected, val := CheckParamTypeInt64orUint64(param)
 					if !typeExpected {
-						return "", "", false, "unexpected value after LIMIT", err
+						return "", "", false, "unexpected value after LIMIT", nil
 					}
 					if val > MaxCacheableLimitCount {
-						return "", "", false, "limit count is too large", err
-					}
-					hash = codec.EncodeUint(hash, val)
-				}
-			}
-			if node.Offset != nil {
-				if offset, isParamMarker := node.Offset.(*driver.ParamMarkerExpr); isParamMarker {
-					typeExpected, val := CheckParamTypeInt64orUint64(offset)
-					if !typeExpected {
-						return "", "", false, "unexpected value after LIMIT", err
+						return "", "", false, "limit count is too large", nil
 					}
 					hash = codec.EncodeUint(hash, val)
 				}
