@@ -218,7 +218,7 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 		Params:              extractor.markers,
 	}
 
-	stmtProcessor := &planCacheStmtProcessor{is: is}
+	stmtProcessor := &planCacheStmtProcessor{is: is, stmt: preparedObj}
 	paramStmt.Accept(stmtProcessor)
 	if stmtProcessor.err != nil {
 		return nil, nil, 0, err
