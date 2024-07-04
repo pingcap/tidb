@@ -218,6 +218,19 @@ type StaticEvalContext struct {
 	staticEvalCtxState
 }
 
+// ResetReadonlyVarMap implements context.EvalContext.
+func (ctx *StaticEvalContext) ResetReadonlyVarMap() {
+}
+
+// SetReadonlyVarMap implements context.EvalContext.
+func (ctx *StaticEvalContext) SetReadonlyVarMap(map[string]struct{}) {
+}
+
+// IsReadonlyVar implements context.EvalContext.
+func (ctx *StaticEvalContext) IsReadonlyVar(name string) bool {
+	return false
+}
+
 // NewStaticEvalContext creates a new `StaticEvalContext` with the given options.
 func NewStaticEvalContext(opt ...StaticEvalCtxOption) *StaticEvalContext {
 	ctx := &StaticEvalContext{

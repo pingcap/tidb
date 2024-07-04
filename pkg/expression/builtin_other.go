@@ -950,11 +950,12 @@ func BuildGetVarFunction(ctx BuildContext, expr Expression, retType *types.Field
 	if builtinRetTp := f.getRetTp(); builtinRetTp.GetType() != mysql.TypeUnspecified || retType.GetType() == mysql.TypeUnspecified {
 		retType = builtinRetTp
 	}
-	return &ScalarFunction{
+	sf := &ScalarFunction{
 		FuncName: model.NewCIStr(ast.GetVar),
 		RetType:  retType,
 		Function: f,
-	}, nil
+	}
+	return FoldConstant(ctx, sf), nil
 }
 
 type getVarFunctionClass struct {

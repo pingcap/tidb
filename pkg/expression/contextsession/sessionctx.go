@@ -138,8 +138,9 @@ func (ctx *SessionExprContext) ConnectionID() uint64 {
 
 // SessionEvalContext implements the `expression.EvalContext` interface to provide evaluation context in session.
 type SessionEvalContext struct {
-	sctx  sessionctx.Context
-	props contextopt.OptionalEvalPropProviders
+	sctx         sessionctx.Context
+	props        contextopt.OptionalEvalPropProviders
+	readonlyVars map[string]struct{}
 }
 
 // NewSessionEvalContext creates a new SessionEvalContext.
@@ -156,7 +157,27 @@ func NewSessionEvalContext(sctx sessionctx.Context) *SessionEvalContext {
 	ctx.setOptionalProp(contextopt.DDLOwnerInfoProvider(sctx.IsDDLOwner))
 	// When EvalContext is created from a session, it should contain all the optional properties.
 	intest.Assert(ctx.props.PropKeySet().IsFull())
+	ctx.readonlyVars = make(map[string]struct{})
 	return ctx
+}
+
+// ResetReadonlyVarMap resets the readonly vars map.
+func (ctx *SessionEvalContext) ResetReadonlyVarMap() {
+	ctx.readonlyVars = nil
+}
+
+// SetReadonlyVarMap sets the readonly vars map.
+func (ctx *SessionEvalContext) SetReadonlyVarMap(vars map[string]struct{}) {
+	ctx.readonlyVars = vars
+}
+
+// IsReadonlyVar checks whether the variable is readonly.
+func (ctx *SessionEvalContext) IsReadonlyVar(name string) bool {
+	if ctx.readonlyVars == nil {
+		return false
+	}
+	_, ok := ctx.readonlyVars[name]
+	return ok
 }
 
 func (ctx *SessionEvalContext) setOptionalProp(prop exprctx.OptionalEvalPropProvider) {

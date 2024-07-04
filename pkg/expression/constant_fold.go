@@ -15,6 +15,7 @@
 package expression
 
 import (
+	"github.com/pingcap/tidb/pkg/expression/contextopt"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
@@ -33,6 +34,7 @@ func init() {
 		ast.Ifnull: ifNullFoldHandler,
 		ast.Case:   caseWhenHandler,
 		ast.IsNull: isNullHandler,
+		ast.GetVar: getVarHandler,
 	}
 }
 
@@ -157,6 +159,30 @@ func caseWhenHandler(ctx BuildContext, expr *ScalarFunction) (Expression, bool) 
 		return foldedExpr, isDeferredConst
 	}
 	return expr, isDeferredConst
+}
+
+func getVarHandler(ctx BuildContext, expr *ScalarFunction) (Expression, bool) {
+	arg0 := expr.GetArgs()[0]
+	c, ok := arg0.(*Constant)
+	if !ok {
+		return expr, false
+	}
+	if !ctx.GetEvalCtx().IsReadonlyVar(c.Value.GetString()) {
+		return expr, false
+	}
+	v, err := expr.Eval(ctx.GetEvalCtx(), chunk.Row{})
+	if err != nil {
+		return expr, false
+	}
+	sessVars, err := contextopt.SessionVarsPropReader{}.GetSessionVars(ctx.GetEvalCtx())
+	if err != nil {
+		return expr, false
+	}
+	d, ok := sessVars.GetUserVarVal(c.Value.GetString())
+	if ok && d.Kind() == types.KindBinaryLiteral {
+		v.SetBinaryLiteral(v.GetBytes())
+	}
+	return &Constant{Value: v, RetType: expr.RetType, DeferredExpr: expr}, false
 }
 
 func foldConstant(ctx BuildContext, expr Expression) (Expression, bool) {

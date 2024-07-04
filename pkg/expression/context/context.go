@@ -83,6 +83,10 @@ type EvalContext interface {
 	GetOptionalPropSet() OptionalEvalPropKeySet
 	// GetOptionalPropProvider gets the optional property provider by key
 	GetOptionalPropProvider(OptionalEvalPropKey) (OptionalEvalPropProvider, bool)
+
+	ResetReadonlyVarMap()
+	SetReadonlyVarMap(map[string]struct{})
+	IsReadonlyVar(name string) bool
 }
 
 // BuildContext is used to build an expression
