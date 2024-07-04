@@ -32,12 +32,6 @@ func (ds DataSource) Init(ctx base.PlanContext, offset int) *DataSource {
 	return &ds
 }
 
-// Init initializes LogicalIndexScan.
-func (is LogicalIndexScan) Init(ctx base.PlanContext, offset int) *LogicalIndexScan {
-	is.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(ctx, plancodec.TypeIdxScan, &is, offset)
-	return &is
-}
-
 // Init initializes LogicalApply.
 func (la LogicalApply) Init(ctx base.PlanContext, offset int) *LogicalApply {
 	la.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(ctx, plancodec.TypeApply, &la, offset)

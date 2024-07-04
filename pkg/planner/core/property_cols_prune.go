@@ -56,19 +56,6 @@ func (ds *DataSource) PreparePossibleProperties(_ *expression.Schema, _ ...[][]*
 	return result
 }
 
-// PreparePossibleProperties implements base.LogicalPlan PreparePossibleProperties interface.
-func (is *LogicalIndexScan) PreparePossibleProperties(_ *expression.Schema, _ ...[][]*expression.Column) [][]*expression.Column {
-	if len(is.IdxCols) == 0 {
-		return nil
-	}
-	result := make([][]*expression.Column, 0, is.EqCondCount+1)
-	for i := 0; i <= is.EqCondCount; i++ {
-		result = append(result, make([]*expression.Column, len(is.IdxCols)-i))
-		copy(result[i], is.IdxCols[i:])
-	}
-	return result
-}
-
 func getPossiblePropertyFromByItems(items []*util.ByItems) []*expression.Column {
 	cols := make([]*expression.Column, 0, len(items))
 	for _, item := range items {
