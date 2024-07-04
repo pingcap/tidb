@@ -50,7 +50,6 @@ import (
 	tidblogutil "github.com/pingcap/tidb/pkg/util/logutil"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
-	"golang.org/x/time/rate"
 )
 
 var (
@@ -302,7 +301,6 @@ func (s *jobScheduler) schedule() error {
 	s.clearOnceMap()
 	s.mustReloadSchemas()
 
-	logRateLimiter := rate.NewLimiter(rate.Every(30*time.Second), 3)
 	for {
 		if err := s.schCtx.Err(); err != nil {
 			return err
@@ -333,8 +331,8 @@ func (s *jobScheduler) schedule() error {
 			continue
 		}
 		failpoint.InjectCall("beforeLoadAndDeliverJobs")
-		if err := s.loadAndDeliverJobs(se); err != nil && logRateLimiter.Allow() {
-			logutil.DDLLogger().Warn("load and deliver jobs failed", zap.Error(err))
+		if err := s.loadAndDeliverJobs(se); err != nil {
+			logutil.SampleLogger().Warn("load and deliver jobs failed", zap.Error(err))
 		}
 	}
 }
