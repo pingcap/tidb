@@ -32,18 +32,6 @@ func (ds DataSource) Init(ctx base.PlanContext, offset int) *DataSource {
 	return &ds
 }
 
-// Init initializes TiKVSingleGather.
-func (sg TiKVSingleGather) Init(ctx base.PlanContext, offset int) *TiKVSingleGather {
-	sg.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(ctx, plancodec.TypeTiKVSingleGather, &sg, offset)
-	return &sg
-}
-
-// Init initializes LogicalTableScan.
-func (ts LogicalTableScan) Init(ctx base.PlanContext, offset int) *LogicalTableScan {
-	ts.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(ctx, plancodec.TypeTableScan, &ts, offset)
-	return &ts
-}
-
 // Init initializes LogicalIndexScan.
 func (is LogicalIndexScan) Init(ctx base.PlanContext, offset int) *LogicalIndexScan {
 	is.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(ctx, plancodec.TypeIdxScan, &is, offset)

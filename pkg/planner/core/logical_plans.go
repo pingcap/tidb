@@ -1237,27 +1237,6 @@ func (ds *DataSource) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
 	return corCols
 }
 
-// TiKVSingleGather is a leaf logical operator of TiDB layer to gather
-// tuples from TiKV regions.
-type TiKVSingleGather struct {
-	logicalop.LogicalSchemaProducer
-	Source *DataSource
-	// IsIndexGather marks if this TiKVSingleGather gathers tuples from an IndexScan.
-	// in implementation phase, we need this flag to determine whether to generate
-	// PhysicalTableReader or PhysicalIndexReader.
-	IsIndexGather bool
-	Index         *model.IndexInfo
-}
-
-// LogicalTableScan is the logical table scan operator for TiKV.
-type LogicalTableScan struct {
-	logicalop.LogicalSchemaProducer
-	Source      *DataSource
-	HandleCols  util.HandleCols
-	AccessConds expression.CNFExprs
-	Ranges      []*ranger.Range
-}
-
 // LogicalIndexScan is the logical index scan operator for TiKV.
 type LogicalIndexScan struct {
 	logicalop.LogicalSchemaProducer
