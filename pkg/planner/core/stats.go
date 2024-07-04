@@ -498,16 +498,6 @@ func (is *LogicalIndexScan) DeriveStats(_ []*property.StatsInfo, selfSchema *exp
 	return is.StatsInfo(), nil
 }
 
-// DeriveStats implement LogicalPlan DeriveStats interface.
-func (p *LogicalSelection) DeriveStats(childStats []*property.StatsInfo, _ *expression.Schema, _ []*expression.Schema, _ [][]*expression.Column) (*property.StatsInfo, error) {
-	if p.StatsInfo() != nil {
-		return p.StatsInfo(), nil
-	}
-	p.SetStats(childStats[0].Scale(cost.SelectionFactor))
-	p.StatsInfo().GroupNDVs = nil
-	return p.StatsInfo(), nil
-}
-
 func deriveLimitStats(childProfile *property.StatsInfo, limitCount float64) *property.StatsInfo {
 	stats := &property.StatsInfo{
 		RowCount: math.Min(limitCount, childProfile.RowCount),

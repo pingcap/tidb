@@ -44,12 +44,6 @@ func (la LogicalApply) Init(ctx base.PlanContext, offset int) *LogicalApply {
 	return &la
 }
 
-// Init initializes LogicalSelection.
-func (p LogicalSelection) Init(ctx base.PlanContext, qbOffset int) *LogicalSelection {
-	p.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(ctx, plancodec.TypeSel, &p, qbOffset)
-	return &p
-}
-
 // Init initializes LogicalUnionScan.
 func (p LogicalUnionScan) Init(ctx base.PlanContext, qbOffset int) *LogicalUnionScan {
 	p.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(ctx, plancodec.TypeUnionScan, &p, qbOffset)

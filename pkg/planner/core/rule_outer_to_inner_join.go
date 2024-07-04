@@ -1,5 +1,4 @@
 // Copyright 2024 PingCAP, Inc.
-
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -117,16 +116,6 @@ func (p *LogicalJoin) ConvertOuterToInnerJoin(predicates []expression.Expression
 
 func (*convertOuterToInnerJoin) name() string {
 	return "convert_outer_to_inner_joins"
-}
-
-// ConvertOuterToInnerJoin implements base.LogicalPlan ConvertOuterToInnerJoin interface.
-func (s *LogicalSelection) ConvertOuterToInnerJoin(predicates []expression.Expression) base.LogicalPlan {
-	p := s.Self().(*LogicalSelection)
-	combinedCond := append(predicates, p.Conditions...)
-	child := p.Children()[0]
-	child = child.ConvertOuterToInnerJoin(combinedCond)
-	p.SetChildren(child)
-	return p
 }
 
 // ConvertOuterToInnerJoin implements base.LogicalPlan ConvertOuterToInnerJoin interface.

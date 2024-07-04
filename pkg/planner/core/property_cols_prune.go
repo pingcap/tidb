@@ -69,11 +69,6 @@ func (is *LogicalIndexScan) PreparePossibleProperties(_ *expression.Schema, _ ..
 	return result
 }
 
-// PreparePossibleProperties implements base.LogicalPlan PreparePossibleProperties interface.
-func (*LogicalSelection) PreparePossibleProperties(_ *expression.Schema, childrenProperties ...[][]*expression.Column) [][]*expression.Column {
-	return childrenProperties[0]
-}
-
 func getPossiblePropertyFromByItems(items []*util.ByItems) []*expression.Column {
 	cols := make([]*expression.Column, 0, len(items))
 	for _, item := range items {

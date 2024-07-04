@@ -168,19 +168,6 @@ func (logicalJoin *LogicalJoin) ConstantPropagation(parentPlan base.LogicalPlan,
 	return addCandidateSelection(logicalJoin, currentChildIdx, parentPlan, candidateConstantPredicates, opt)
 }
 
-// PullUpConstantPredicates implements the LogicalPlan interface.
-func (selection *LogicalSelection) PullUpConstantPredicates() []expression.Expression {
-	var result []expression.Expression
-	for _, candidatePredicate := range selection.Conditions {
-		// the candidate predicate should be a constant and compare predicate
-		match := validCompareConstantPredicate(selection.SCtx().GetExprCtx().GetEvalCtx(), candidatePredicate)
-		if match {
-			result = append(result, candidatePredicate)
-		}
-	}
-	return result
-}
-
 // PullUpConstantPredicates implements LogicalPlan interface.
 func (projection *LogicalProjection) PullUpConstantPredicates() []expression.Expression {
 	// projection has no column expr
