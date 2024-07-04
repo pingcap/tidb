@@ -1089,13 +1089,13 @@ func (p *PhysicalUnionAll) Attach2Task(tasks ...base.Task) base.Task {
 
 // Attach2Task implements PhysicalPlan interface.
 func (sel *PhysicalSelection) Attach2Task(tasks ...base.Task) base.Task {
-	if tasks[0] == nil {
-		fmt.Println("fuck")
-	}
 	if mppTask, _ := tasks[0].(*MppTask); mppTask != nil { // always push to mpp task.
 		if expression.CanExprsPushDown(GetPushDownCtx(sel.SCtx()), sel.Conditions, kv.TiFlash) {
 			return attachPlan2Task(sel, mppTask.Copy())
 		}
+	}
+	if tasks[0] == nil {
+		fmt.Println("fuck")
 	}
 	t := tasks[0].ConvertToRootTask(sel.SCtx())
 	return attachPlan2Task(sel, t)

@@ -117,4 +117,5 @@ WHERE
     FROM
       w
   );`)
+	tk.MustQuery(`show warnings`).Check(testkit.Rows())
 }

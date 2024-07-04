@@ -469,10 +469,6 @@ func (e *AnalyzeExec) handleResultsErrorWithConcurrency(ctx context.Context, sta
 	panicCnt := 0
 	var err error
 	for panicCnt < statsConcurrency {
-		if err := e.Ctx().GetSessionVars().SQLKiller.HandleSignal(); err != nil {
-			close(saveResultsCh)
-			return err
-		}
 		results, ok := <-resultsCh
 		if !ok {
 			break

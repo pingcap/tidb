@@ -162,6 +162,9 @@ func rebuildChildTasks(p *logicalop.BaseLogicalPlan, childTasks *[]base.Task, pp
 		}
 		*childTasks = append(*childTasks, childTask)
 	}
+	if len(*childTasks) == 0 {
+		fmt.Println("fuckyou")
+	}
 	return nil
 }
 
@@ -183,13 +186,14 @@ func enumeratePhysicalPlans4Task(
 	if _, ok := p.Self().(*LogicalSequence); ok {
 		iteration = iterateChildPlan4LogicalSequence
 	}
-	if !p.SCtx().GetSessionVars().InRestrictedSQL {
-		fmt.Println("fuck")
-	}
 	for _, pp := range physicalPlans {
 		timeStampNow := p.GetLogicalTS4TaskMap()
 		savedPlanID := p.SCtx().GetSessionVars().PlanID.Load()
-
+		if !p.SCtx().GetSessionVars().InRestrictedSQL {
+			if len(childTasks) == 1 && childTasks[0] == nil {
+				logutil.BgLogger().Info("before fuck enumeratePhysicalPlans4Task", zap.Int("len child task", len(childTasks)))
+			}
+		}
 		childTasks, curCntPlan, childCnts, err = iteration(p, pp, childTasks, childCnts, prop, opt)
 		if err != nil {
 			return nil, 0, err
@@ -199,7 +203,11 @@ func enumeratePhysicalPlans4Task(
 		if len(childTasks) != p.ChildLen() {
 			continue
 		}
-
+		if !p.SCtx().GetSessionVars().InRestrictedSQL {
+			if len(childTasks) == 1 && childTasks[0] == nil {
+				logutil.BgLogger().Info("fuck enumeratePhysicalPlans4Task", zap.Int("len child task", len(childTasks)))
+			}
+		}
 		// If the target plan can be found in this physicalPlan(pp), rebuild childTasks to build the corresponding combination.
 		if planCounter.IsForce() && int64(*planCounter) <= curCntPlan {
 			p.SCtx().GetSessionVars().PlanID.Store(savedPlanID)
@@ -207,6 +215,11 @@ func enumeratePhysicalPlans4Task(
 			err := rebuildChildTasks(p, &childTasks, pp, childCnts, int64(*planCounter), timeStampNow, opt)
 			if err != nil {
 				return nil, 0, err
+			}
+		}
+		if !p.SCtx().GetSessionVars().InRestrictedSQL {
+			if len(childTasks) == 1 && childTasks[0] == nil {
+				logutil.BgLogger().Info("fuck enumeratePhysicalPlans4Task after ", zap.Int("len child task", len(childTasks)))
 			}
 		}
 
@@ -261,14 +274,32 @@ func iteratePhysicalPlan4BaseLogical(
 ) ([]base.Task, int64, []int64, error) {
 	// Find best child tasks firstly.
 	childTasks = childTasks[:0]
+	if !p.SCtx().GetSessionVars().InRestrictedSQL {
+		fmt.Println("check")
+	}
 	// The curCntPlan records the number of possible plans for pp
 	curCntPlan := int64(1)
 	for j, child := range p.Children() {
+		//if child == nil {
+		//	logutil.BgLogger().Info("WTF")
+		//}
+		//if child.ExplainInfo() == "" {
+		//	logutil.BgLogger().Info("WTF")
+		//}
 		childProp := selfPhysicalPlan.GetChildReqProps(j)
+		//if !p.SCtx().GetSessionVars().InRestrictedSQL {
+		//logutil.BgLogger().Info("fuck child", zap.String("child.ExplainInfo()", child.ExplainInfo()))
+		//}
+		if _, ok := child.(*LogicalCTETable); ok {
+			fmt.Println("here")
+		}
 		childTask, cnt, err := child.FindBestTask(childProp, &PlanCounterDisabled, opt)
 		childCnts[j] = cnt
 		if err != nil {
 			return nil, 0, childCnts, err
+		}
+		if childTask == nil {
+			fmt.Println("???????")
 		}
 		curCntPlan = curCntPlan * cnt
 		if childTask != nil && childTask.Invalid() {
@@ -276,7 +307,9 @@ func iteratePhysicalPlan4BaseLogical(
 		}
 		childTasks = append(childTasks, childTask)
 	}
-
+	if len(childTasks) == 1 && childTasks[0] == nil {
+		logutil.BgLogger().Info("iteratePhysicalPlan4BaseLogical meet bug")
+	}
 	// This check makes sure that there is no invalid child task.
 	if len(childTasks) != p.ChildLen() {
 		return nil, 0, childCnts, nil
@@ -528,6 +561,9 @@ func findBestTask(lp base.LogicalPlan, prop *property.PhysicalProperty, planCoun
 	var hintWorksWithProp bool
 	// Maybe the plan can satisfy the required property,
 	// so we try to get the task without the enforced sort first.
+	if !lp.SCtx().GetSessionVars().InRestrictedSQL {
+		fmt.Println("here")
+	}
 	plansFitsProp, hintWorksWithProp, err = p.Self().ExhaustPhysicalPlans(newProp)
 	if err != nil {
 		return nil, 0, err
@@ -2917,7 +2953,7 @@ func findBestTask4LogicalCTE(p *LogicalCTE, prop *property.PhysicalProperty, cou
 
 func findBestTask4LogicalCTETable(p *LogicalCTETable, prop *property.PhysicalProperty, _ *base.PlanCounterTp, _ *optimizetrace.PhysicalOptimizeOp) (t base.Task, cntPlan int64, err error) {
 	if !prop.IsSortItemEmpty() {
-		return nil, 1, nil
+		return base.InvalidTask, 0, nil
 	}
 
 	pcteTable := PhysicalCTETable{IDForStorage: p.IDForStorage}.Init(p.SCtx(), p.StatsInfo())
