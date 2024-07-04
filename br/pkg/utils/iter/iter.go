@@ -121,3 +121,26 @@ func Tap[T any](i TryNextor[T], with func(T)) TryNextor[T] {
 		tapper: with,
 	}
 }
+
+type Peeker[T any] struct {
+	peeking IterResult[T]
+	inner   TryNextor[T]
+}
+
+func (p *Peeker[T]) Peek() IterResult[T] {
+	return p.peeking
+}
+
+func (p *Peeker[T]) TryNext(ctx context.Context) IterResult[T] {
+	last := p.peeking
+	p.peeking = p.inner.TryNext(ctx)
+	return last
+}
+
+func Peekable[T any](ctx context.Context, i TryNextor[T]) Peeker[T] {
+	next := i.TryNext(ctx)
+	return Peeker[T]{
+		peeking: next,
+		inner:   i,
+	}
+}

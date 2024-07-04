@@ -385,8 +385,9 @@ type WithMigrate struct {
 
 func UnmarshalDir[T any](ctx context.Context, prefix string, s storage.ExternalStorage, unmarshal func(*T, []byte) error) iter.TryNextor[*T] {
 	ch := make(chan *T)
-	errCh := make(chan error)
+	errCh := make(chan error, 1)
 	reader := func() {
+		defer close(ch)
 		err := s.WalkDir(ctx, &storage.WalkOption{SubDir: prefix}, func(path string, size int64) error {
 			metaBytes, err := s.ReadFile(ctx, path)
 			if err != nil {
@@ -396,11 +397,18 @@ func UnmarshalDir[T any](ctx context.Context, prefix string, s storage.ExternalS
 			if err := unmarshal(&meta, metaBytes); err != nil {
 				return errors.Annotatef(err, "failed to parse subcompaction meta of file %s", path)
 			}
-			ch <- &meta
+			select {
+			case ch <- &meta:
+			case <-ctx.Done():
+				return ctx.Err()
+			}
 			return nil
 		})
 		if err != nil {
-			errCh <- err
+			select {
+			case errCh <- err:
+			case <-ctx.Done():
+			}
 		}
 	}
 	go reader()
@@ -425,4 +433,8 @@ func Subcompactions(ctx context.Context, prefix string, s storage.ExternalStorag
 
 func LoadMigrations(ctx context.Context, s storage.ExternalStorage) iter.TryNextor[*pb.Migration] {
 	return UnmarshalDir(ctx, "v1/migrations/", s, func(t *pb.Migration, b []byte) error { return t.Unmarshal(b) })
+}
+
+type MigrationRunner struct {
+	s storage.ExternalStorage
 }
