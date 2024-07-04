@@ -1449,7 +1449,7 @@ func TestTruncatePartitionWithGlobalIndex(t *testing.T) {
 			if len(res) == 1 && res[0][i] == s {
 				break
 			}
-			time.Sleep(10 * time.Millisecond)
+			time.Sleep(100 * time.Millisecond)
 		}
 	}
 	waitFor(4, "delete only")
