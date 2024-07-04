@@ -2349,8 +2349,8 @@ func (ds *DataSource) splitIndexFilterConditions(conditions []expression.Express
 	return indexConditions, tableConditions
 }
 
-// GetPhysicalScan returns PhysicalTableScan for the LogicalTableScan.
-func (s *LogicalTableScan) GetPhysicalScan(schema *expression.Schema, stats *property.StatsInfo) *PhysicalTableScan {
+// GetPhysicalScan4LogicalTableScan returns PhysicalTableScan for the LogicalTableScan.
+func GetPhysicalScan4LogicalTableScan(s *LogicalTableScan, schema *expression.Schema, stats *property.StatsInfo) *PhysicalTableScan {
 	ds := s.Source
 	ts := PhysicalTableScan{
 		Table:           ds.TableInfo,

@@ -260,11 +260,6 @@ func (ds *DataSource) BuildKeyInfo(selfSchema *expression.Schema, _ []*expressio
 }
 
 // BuildKeyInfo implements base.LogicalPlan BuildKeyInfo interface.
-func (ts *LogicalTableScan) BuildKeyInfo(selfSchema *expression.Schema, childSchema []*expression.Schema) {
-	ts.Source.BuildKeyInfo(selfSchema, childSchema)
-}
-
-// BuildKeyInfo implements base.LogicalPlan BuildKeyInfo interface.
 func (is *LogicalIndexScan) BuildKeyInfo(selfSchema *expression.Schema, _ []*expression.Schema) {
 	selfSchema.Keys = nil
 	for _, path := range is.Source.PossibleAccessPaths {
