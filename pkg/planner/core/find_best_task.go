@@ -183,7 +183,9 @@ func enumeratePhysicalPlans4Task(
 	if _, ok := p.Self().(*LogicalSequence); ok {
 		iteration = iterateChildPlan4LogicalSequence
 	}
-
+	if !p.SCtx().GetSessionVars().InRestrictedSQL {
+		fmt.Println("fuck")
+	}
 	for _, pp := range physicalPlans {
 		timeStampNow := p.GetLogicalTS4TaskMap()
 		savedPlanID := p.SCtx().GetSessionVars().PlanID.Load()

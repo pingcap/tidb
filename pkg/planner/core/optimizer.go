@@ -1073,7 +1073,9 @@ func physicalOptimize(logic base.LogicalPlan, planCounter *base.PlanCounterTp) (
 			}
 		}()
 	}
-
+	if !logic.SCtx().GetSessionVars().InRestrictedSQL {
+		fmt.Println("fuck")
+	}
 	logic.SCtx().GetSessionVars().StmtCtx.TaskMapBakTS = 0
 	t, _, err := logic.FindBestTask(prop, planCounter, opt)
 	if err != nil {

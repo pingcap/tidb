@@ -86,3 +86,35 @@ func Test53726(t *testing.T) {
 			"  └─TableReader_11 2.00 root  data:TableFullScan_10",
 			"    └─TableFullScan_10 2.00 cop[tikv] table:t7 keep order:false"))
 }
+
+func TestIssue54449(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE p ( groupid bigint(20) DEFAULT NULL, KEY k1 (groupid));")
+	tk.MustExec(`CREATE TABLE g (groupid bigint(20) DEFAULT NULL,parentid bigint(20) NOT NULL,KEY k1 (parentid),KEY k2 (groupid,parentid));`)
+	tk.MustExec(`set tidb_opt_enable_hash_join=off;`)
+	tk.MustExec(`WITH RECURSIVE w(gid) AS (
+  SELECT
+    groupId
+  FROM
+    p
+  UNION
+  SELECT
+    g.groupId
+  FROM
+    g
+    JOIN w ON g.parentId = w.gid
+)
+SELECT
+  1
+FROM
+  g
+WHERE
+  g.groupId IN (
+    SELECT
+      gid
+    FROM
+      w
+  );`)
+}
