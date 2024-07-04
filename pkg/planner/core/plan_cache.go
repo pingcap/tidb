@@ -105,18 +105,18 @@ func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isNonPrep
 
 	// step 3: add metadata lock and check each table's schema version
 	schemaNotMatch := false
-	for i := 0; i < len(stmt.dbName); i++ {
-		tbl, ok := is.TableByID(stmt.tbls[i].Meta().ID)
+	for i := 0; i < len(stmt.mdlDBName); i++ {
+		tbl, ok := is.TableByID(stmt.mdlTbls[i].Meta().ID)
 		if !ok {
-			tblByName, err := is.TableByName(stmt.dbName[i], stmt.tbls[i].Meta().Name)
+			tblByName, err := is.TableByName(stmt.mdlDBName[i], stmt.mdlTbls[i].Meta().Name)
 			if err != nil {
 				return plannererrors.ErrSchemaChanged.GenWithStack("Schema change caused error: %s", err.Error())
 			}
-			delete(stmt.RelateVersion, stmt.tbls[i].Meta().ID)
-			stmt.tbls[i] = tblByName
+			delete(stmt.RelateVersion, stmt.mdlTbls[i].Meta().ID)
+			stmt.mdlTbls[i] = tblByName
 			stmt.RelateVersion[tblByName.Meta().ID] = tblByName.Meta().Revision
 		}
-		newTbl, err := tryLockMDLAndUpdateSchemaIfNecessary(sctx.GetPlanCtx(), stmt.dbName[i], stmt.tbls[i], is)
+		newTbl, err := tryLockMDLAndUpdateSchemaIfNecessary(sctx.GetPlanCtx(), stmt.mdlDBName[i], stmt.mdlTbls[i], is)
 		if err != nil {
 			schemaNotMatch = true
 			continue
@@ -126,10 +126,10 @@ func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isNonPrep
 		// The version of stmt.tbls[i] is taken from the prepare statement and is revision v1.
 		// When stmt.tbls[i] is locked in MDL, the revision of newTbl is also v1.
 		// The revision of tbl is v2. The reason may have other statements trigger "tryLockMDLAndUpdateSchemaIfNecessary" before, leading to tbl revision update.
-		if stmt.tbls[i].Meta().Revision != newTbl.Meta().Revision || (tbl != nil && tbl.Meta().Revision != newTbl.Meta().Revision) {
+		if stmt.mdlTbls[i].Meta().Revision != newTbl.Meta().Revision || (tbl != nil && tbl.Meta().Revision != newTbl.Meta().Revision) {
 			schemaNotMatch = true
 		}
-		stmt.tbls[i] = newTbl
+		stmt.mdlTbls[i] = newTbl
 		stmt.RelateVersion[newTbl.Meta().ID] = newTbl.Meta().Revision
 	}
 
@@ -170,7 +170,7 @@ func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isNonPrep
 	}
 
 	// step 6: initialize the tableInfo2UnionScan, which indicates which tables are dirty.
-	for _, tbl := range stmt.tbls {
+	for _, tbl := range stmt.relatedTables {
 		tblInfo := tbl.Meta()
 		if tableHasDirtyContent(sctx.GetPlanCtx(), tblInfo) {
 			sctx.GetSessionVars().StmtCtx.TblInfo2UnionScan[tblInfo] = true
@@ -303,7 +303,7 @@ func generateNewPlan(ctx context.Context, sctx sessionctx.Context, isNonPrepared
 
 	// check whether this plan is cacheable.
 	if stmtCtx.UseCache() {
-		if cacheable, reason := isPlanCacheable(sctx.GetPlanCtx(), p, len(matchOpts.ParamTypes), len(stmt.QueryFeatures.limits), stmt.QueryFeatures.hasSubquery); !cacheable {
+		if cacheable, reason := isPlanCacheable(sctx.GetPlanCtx(), p, len(matchOpts.ParamTypes), len(stmt.limits), stmt.hasSubquery); !cacheable {
 			stmtCtx.SetSkipPlanCache(reason)
 		}
 	}
