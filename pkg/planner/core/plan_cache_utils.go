@@ -180,12 +180,9 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 		sctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("skip prepared plan-cache: " + reason))
 	}
 
-	features := new(PlanCacheQueryFeatures)
-	paramStmt.Accept(features)
-
 	// Collect information for metadata lock.
-	dbName := make([]model.CIStr, 0, len(vars.StmtCtx.MDLRelatedTableIDs))
-	tbls := make([]table.Table, 0, len(vars.StmtCtx.MDLRelatedTableIDs))
+	mdlDBName := make([]model.CIStr, 0, len(vars.StmtCtx.MDLRelatedTableIDs))
+	mdlTbls := make([]table.Table, 0, len(vars.StmtCtx.MDLRelatedTableIDs))
 	relateVersion := make(map[int64]uint64, len(vars.StmtCtx.MDLRelatedTableIDs))
 	for id := range vars.StmtCtx.MDLRelatedTableIDs {
 		tbl, ok := is.TableByID(id)
@@ -198,12 +195,12 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 			logutil.BgLogger().Error("database not found in info schema", zap.Int64("dbID", tbl.Meta().DBID))
 			return nil, nil, 0, errors.New("database not found in info schema")
 		}
-		dbName = append(dbName, db.Name)
-		tbls = append(tbls, tbl)
+		mdlDBName = append(mdlDBName, db.Name)
+		mdlTbls = append(mdlTbls, tbl)
 		relateVersion[id] = tbl.Meta().Revision
 	}
 
-	preparedObj := &PlanCacheStmt{
+	preparedStmt := &PlanCacheStmt{
 		PreparedAst:         prepared,
 		StmtDB:              vars.CurrentDB,
 		StmtText:            paramSQL,
@@ -214,17 +211,22 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 		SnapshotTSEvaluator: ret.SnapshotTSEvaluator,
 		StmtCacheable:       cacheable,
 		UncacheableReason:   reason,
-		QueryFeatures:       features,
-		dbName:              dbName,
-		tbls:                tbls,
+		mdlDBName:           mdlDBName,
+		mdlTbls:             mdlTbls,
 		SchemaVersion:       ret.InfoSchema.SchemaMetaVersion(),
 		RelateVersion:       relateVersion,
 		Params:              extractor.markers,
 	}
-	if err = checkPreparedPriv(sctx, preparedObj, ret.InfoSchema); err != nil {
+	processor := &planCacheQueryProcessor{is: is, stmt: preparedStmt}
+	paramStmt.Accept(processor)
+	if processor.err != nil {
+		return nil, nil, 0, processor.err
+	}
+
+	if err = checkPreparedPriv(sctx, preparedStmt, ret.InfoSchema); err != nil {
 		return nil, nil, 0, err
 	}
-	return preparedObj, p, paramCount, nil
+	return preparedStmt, p, paramCount, nil
 }
 
 func hashInt64Uint64Map(b []byte, m map[int64]uint64) []byte {
@@ -328,7 +330,7 @@ func NewPlanCacheKey(sctx sessionctx.Context, stmt *PlanCacheStmt) (key, binding
 	// stats version can affect the Plan
 	if sctx.GetSessionVars().PlanCacheInvalidationOnFreshStats {
 		var statsVerHash uint64
-		for _, t := range stmt.tbls {
+		for _, t := range stmt.relatedTables {
 			statsVerHash += getLatestVersionFromStatsTable(sctx, t.Meta(), t.Meta().ID) // use '+' as the hash function for simplicity
 		}
 		hash = codec.EncodeUint(hash, statsVerHash)
@@ -336,7 +338,7 @@ func NewPlanCacheKey(sctx sessionctx.Context, stmt *PlanCacheStmt) (key, binding
 
 	// whether this query has sub-query can affect the plan cache
 	if sctx.GetSessionVars().EnablePlanCacheForSubquery {
-		if stmt.QueryFeatures.hasSubquery {
+		if stmt.hasSubquery {
 			hash = append(hash, '1')
 		} else {
 			hash = append(hash, '0')
@@ -344,7 +346,7 @@ func NewPlanCacheKey(sctx sessionctx.Context, stmt *PlanCacheStmt) (key, binding
 	}
 
 	// "limit ?,?" can affect the plan cache: "limit 1" and "limit 100000" might use different plans.
-	for _, node := range stmt.QueryFeatures.limits {
+	for _, node := range stmt.limits {
 		if node.Count != nil {
 			if count, isParamMarker := node.Count.(*driver.ParamMarkerExpr); isParamMarker {
 				typeExpected, val := CheckParamTypeInt64orUint64(count)
@@ -466,25 +468,33 @@ type PlanCacheMatchOpts struct {
 	ParamTypes []*types.FieldType
 }
 
-// PlanCacheQueryFeatures records all query features which may affect plan selection.
-type PlanCacheQueryFeatures struct {
-	limits      []*ast.Limit
-	hasSubquery bool
+// planCacheQueryProcessor extracts some information from the ast.Node.
+type planCacheQueryProcessor struct {
+	is   infoschema.InfoSchema
+	stmt *PlanCacheStmt
+	err  error
 }
 
 // Enter implements Visitor interface.
-func (f *PlanCacheQueryFeatures) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
+func (f *planCacheQueryProcessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 	switch node := in.(type) {
 	case *ast.Limit:
-		f.limits = append(f.limits, node)
+		f.stmt.limits = append(f.stmt.limits, node)
 	case *ast.SubqueryExpr, *ast.ExistsSubqueryExpr:
-		f.hasSubquery = true
+		f.stmt.hasSubquery = true
+	case *ast.TableName:
+		tbl, err := f.is.TableByName(node.Schema, node.Name)
+		if err != nil || tbl == nil {
+			f.err = err
+			return in, true
+		}
+		f.stmt.relatedTables = append(f.stmt.relatedTables, tbl)
 	}
 	return in, false
 }
 
 // Leave implements Visitor interface.
-func (*PlanCacheQueryFeatures) Leave(in ast.Node) (out ast.Node, ok bool) {
+func (*planCacheQueryProcessor) Leave(in ast.Node) (out ast.Node, ok bool) {
 	return in, true
 }
 
@@ -522,7 +532,6 @@ type PlanCacheStmt struct {
 
 	StmtCacheable     bool   // Whether this stmt is cacheable.
 	UncacheableReason string // Why this stmt is uncacheable.
-	QueryFeatures     *PlanCacheQueryFeatures
 
 	NormalizedSQL       string
 	NormalizedPlan      string
@@ -540,9 +549,14 @@ type PlanCacheStmt struct {
 	//  StmtText: select * from t where a>1 and b <? --> just format the original query;
 	StmtText string
 
+	// below are some information might affect the cacehd plan
+	limits        []*ast.Limit  // "limit ?" can affect the plan, "limit 1" and "limit 10000" should use different plans
+	hasSubquery   bool          // whether this query has sub-queries
+	relatedTables []table.Table // all related tables, used to capture table stats changes
+
 	// dbName and tbls are used to add metadata lock.
-	dbName []model.CIStr
-	tbls   []table.Table
+	mdlDBName []model.CIStr
+	mdlTbls   []table.Table
 }
 
 // GetPreparedStmt extract the prepared statement from the execute statement.
