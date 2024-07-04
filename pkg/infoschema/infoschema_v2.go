@@ -685,9 +685,9 @@ func (is *infoschemaV2) SchemaByID(id int64) (*model.DBInfo, bool) {
 	if isTableVirtual(id) {
 		var st *schemaTables
 		is.Data.specials.Range(func(key, value any) bool {
-			if st.dbInfo.ID == id {
-				// return st.dbInfo, true
-				st = value.(*schemaTables)
+			tmp := value.(*schemaTables)
+			if tmp.dbInfo.ID == id {
+				st = tmp
 				return false
 			}
 			return true
