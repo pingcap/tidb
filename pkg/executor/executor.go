@@ -1784,9 +1784,32 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	}
 	sc.SetTimeZone(vars.Location())
 	sc.TaskID = stmtctx.AllocateTaskID()
-	sc.CTEStorageMap = map[int]*CTEStorages{}
+	if sc.CTEStorageMap == nil {
+		sc.CTEStorageMap = map[int]*CTEStorages{}
+	} else {
+		clear(sc.CTEStorageMap.(map[int]*CTEStorages))
+	}
+	if sc.LockTableIDs == nil {
+		sc.LockTableIDs = make(map[int64]struct{})
+	} else {
+		clear(sc.LockTableIDs)
+	}
+	if sc.TableStats == nil {
+		sc.TableStats = make(map[int64]any)
+	} else {
+		clear(sc.TableStats)
+	}
+	if sc.MDLRelatedTableIDs == nil {
+		sc.MDLRelatedTableIDs = make(map[int64]struct{})
+	} else {
+		clear(sc.MDLRelatedTableIDs)
+	}
+	if sc.TblInfo2UnionScan == nil {
+		sc.TblInfo2UnionScan = make(map[*model.TableInfo]bool)
+	} else {
+		clear(sc.TblInfo2UnionScan)
+	}
 	sc.IsStaleness = false
-	sc.LockTableIDs = make(map[int64]struct{})
 	sc.EnableOptimizeTrace = false
 	sc.OptimizeTracer = nil
 	sc.OptimizerCETrace = nil
@@ -1818,8 +1841,6 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	vars.DiskTracker.Killer = &vars.SQLKiller
 	vars.SQLKiller.Reset()
 	vars.SQLKiller.ConnID = vars.ConnectionID
-	vars.StmtCtx.TableStats = make(map[int64]any)
-	sc.MDLRelatedTableIDs = make(map[int64]struct{})
 
 	isAnalyze := false
 	if execStmt, ok := s.(*ast.ExecuteStmt); ok {
@@ -2052,7 +2073,6 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 
 	sc.SetForcePlanCache(fixcontrol.GetBoolWithDefault(vars.OptimizerFixControl, fixcontrol.Fix49736, false))
 	sc.SetAlwaysWarnSkipCache(sc.InExplainStmt && sc.ExplainFormat == "plan_cache")
-	sc.TblInfo2UnionScan = make(map[*model.TableInfo]bool)
 	errCount, warnCount := vars.StmtCtx.NumErrorWarnings()
 	vars.SysErrorCount = errCount
 	vars.SysWarningCount = warnCount
