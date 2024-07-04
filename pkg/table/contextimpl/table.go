@@ -35,7 +35,7 @@ type TableContextImpl struct {
 	// The buffers are supposed to be used inside AddRecord/UpdateRecord/RemoveRecord.
 	mutateBuffers *context.MutateBuffers
 
-	hasExtraPosInfo bool
+	hasExtraPosInfo      bool
 	extraIndexKeyPosInfo map[int64][]int
 }
 
@@ -77,20 +77,24 @@ func (ctx *TableContextImpl) vars() *variable.SessionVars {
 	return ctx.Context.GetSessionVars()
 }
 
+// SetExtraIndexKeyPosInfo sets the extra index key pos info.
 func (ctx *TableContextImpl) SetExtraIndexKeyPosInfo(indexKeyPos map[int64][]int) {
 	ctx.hasExtraPosInfo = true
 	ctx.extraIndexKeyPosInfo = indexKeyPos
 }
 
+// GetExtraIndexKeyPosInfo gets the extra index key pos info.
 func (ctx *TableContextImpl) GetExtraIndexKeyPosInfo(idxID int64) []int {
 	return ctx.extraIndexKeyPosInfo[idxID]
 }
 
+// ResetExtraInfo resets the extra index key pos info.
 func (ctx *TableContextImpl) ResetExtraInfo() {
 	ctx.hasExtraPosInfo = false
 	ctx.extraIndexKeyPosInfo = nil
 }
 
+// HasExtraInfo returns whether the context has extra index key pos info.
 func (ctx *TableContextImpl) HasExtraInfo() bool {
 	return ctx.hasExtraPosInfo
 }

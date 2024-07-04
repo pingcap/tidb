@@ -61,12 +61,17 @@ type MutateContext interface {
 	// saves allocation.
 	GetMutateBuffers() *MutateBuffers
 
+	// SetExtraIndexKeyPosInfo sets the extra index key pos info.
+	// It's used when the given row is not a full row, but only contains some limit columns
 	SetExtraIndexKeyPosInfo(indexKeyPos map[int64][]int)
 
+	// GetExtraIndexKeyPosInfo gets the extra index key pos info.
 	GetExtraIndexKeyPosInfo(idxID int64) []int
 
+	// ResetExtraInfo resets the extra index key pos info.
 	ResetExtraInfo()
 
+	// HasExtraInfo returns whether the context has extra index key pos info.
 	HasExtraInfo() bool
 }
 
