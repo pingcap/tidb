@@ -151,9 +151,9 @@ func SaveTableStatsToStorage(sctx sessionctx.Context,
 	if len(rows) > 0 {
 		snapshot := rows[0].GetUint64(0)
 		// A newer version analyze result has been written, so skip this writing.
-		// For multi-valued index analyze, this check is not needed because we expect there's another normal v2 analyze
+		// For multi-valued index or global index analyze, this check is not needed because we expect there's another normal v2 analyze
 		// table task that may update the snapshot in stats_meta table (that task may finish before or after this task).
-		if snapshot >= results.Snapshot && results.StatsVer == statistics.Version2 && !results.ForMVIndex {
+		if snapshot >= results.Snapshot && results.StatsVer == statistics.Version2 && !results.ForMVIndexOrGlobalIndex {
 			return
 		}
 		curCnt = int64(rows[0].GetUint64(1))
@@ -167,7 +167,7 @@ func SaveTableStatsToStorage(sctx sessionctx.Context,
 		// In these cases, we use REPLACE INTO to directly insert/update the version, count and snapshot.
 		snapShot := results.Snapshot
 		count := results.Count
-		if results.ForMVIndex {
+		if results.ForMVIndexOrGlobalIndex {
 			snapShot = 0
 			count = 0
 		}
@@ -181,7 +181,7 @@ func SaveTableStatsToStorage(sctx sessionctx.Context,
 			return 0, err
 		}
 		statsVer = version
-	} else if results.ForMVIndex {
+	} else if results.ForMVIndexOrGlobalIndex {
 		// 1-2. There's already an existing record for this table, and we are handling stats for mv index now.
 		// In this case, we only update the version. See comments for AnalyzeResults.ForMVIndex for more details.
 		if _, err = util.Exec(sctx,
