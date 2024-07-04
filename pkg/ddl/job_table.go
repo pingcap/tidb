@@ -168,7 +168,7 @@ func (s *jobScheduler) start() {
 	reorgCnt := min(max(runtime.GOMAXPROCS(0)/4, 1), reorgWorkerCnt)
 	s.reorgWorkerPool = newDDLWorkerPool(pools.NewResourcePool(workerFactory(addIdxWorker), reorgCnt, reorgCnt, 0), jobTypeReorg)
 	s.generalDDLWorkerPool = newDDLWorkerPool(pools.NewResourcePool(workerFactory(generalWorker), generalWorkerCnt, generalWorkerCnt, 0), jobTypeGeneral)
-	s.wg.RunWithLog(s.startDispatchLoop)
+	s.wg.RunWithLog(s.scheduleLoop)
 	s.wg.RunWithLog(func() {
 		s.schemaSyncer.SyncJobSchemaVerLoop(s.schCtx)
 	})
@@ -262,27 +262,27 @@ func (d *ddl) startLocalWorkerLoop() {
 	}
 }
 
-func (s *jobScheduler) startDispatchLoop() {
+func (s *jobScheduler) scheduleLoop() {
 	const retryInterval = 3 * time.Second
 	for {
-		err := s.startDispatch()
+		err := s.schedule()
 		if err == context.Canceled {
-			logutil.DDLLogger().Info("startDispatchLoop quit due to context canceled")
+			logutil.DDLLogger().Info("scheduleLoop quit due to context canceled")
 			return
 		}
-		logutil.DDLLogger().Warn("startDispatchLoop failed, retrying",
+		logutil.DDLLogger().Warn("scheduleLoop failed, retrying",
 			zap.Error(err))
 
 		select {
 		case <-s.schCtx.Done():
-			logutil.DDLLogger().Info("startDispatchLoop quit due to context done")
+			logutil.DDLLogger().Info("scheduleLoop quit due to context done")
 			return
 		case <-time.After(retryInterval):
 		}
 	}
 }
 
-func (s *jobScheduler) startDispatch() error {
+func (s *jobScheduler) schedule() error {
 	sessCtx, err := s.sessPool.Get()
 	if err != nil {
 		return errors.Trace(err)
@@ -332,11 +332,10 @@ func (s *jobScheduler) startDispatch() error {
 		if err := s.checkAndUpdateClusterState(false); err != nil {
 			continue
 		}
-		failpoint.InjectCall("beforeAllLoadDDLJobAndRun")
-		if err := s.loadAndRunJobs(se); err != nil && logRateLimiter.Allow() {
-			logutil.DDLLogger().Warn("load and run jobs failed", zap.Error(err))
+		failpoint.InjectCall("beforeLoadAndDeliverJobs")
+		if err := s.loadAndDeliverJobs(se); err != nil && logRateLimiter.Allow() {
+			logutil.DDLLogger().Warn("load and deliver jobs failed", zap.Error(err))
 		}
-		//s.loadDDLJobAndRun(se)
 	}
 }
 
@@ -377,7 +376,7 @@ func (s *jobScheduler) checkAndUpdateClusterState(needUpdate bool) error {
 	return nil
 }
 
-func (s *jobScheduler) loadAndRunJobs(se *sess.Session) error {
+func (s *jobScheduler) loadAndDeliverJobs(se *sess.Session) error {
 	if s.generalDDLWorkerPool.available() == 0 && s.reorgWorkerPool.available() == 0 {
 		return nil
 	}
@@ -441,7 +440,7 @@ func (s *jobScheduler) loadAndRunJobs(se *sess.Session) error {
 			continue
 		}
 
-		s.delivery2Worker(wk, targetPool, &job)
+		s.deliveryJob(wk, targetPool, &job)
 
 		if s.generalDDLWorkerPool.available() == 0 && s.reorgWorkerPool.available() == 0 {
 			break
@@ -506,9 +505,11 @@ func (d *ddl) delivery2LocalWorker(pool *workerPool, task *limitJobTask) {
 	})
 }
 
-// delivery2Worker owns the worker, need to put it back to the pool in this function.
-func (s *jobScheduler) delivery2Worker(wk *worker, pool *workerPool, job *model.Job) {
-	failpoint.InjectCall("beforeDelivery2Worker", job)
+// deliveryJob deliver the job to the worker to run it asynchronously.
+// the worker will run the job until it's finished, paused or another owner takes
+// over and finished it.
+func (s *jobScheduler) deliveryJob(wk *worker, pool *workerPool, job *model.Job) {
+	failpoint.InjectCall("beforeDeliveryJob", job)
 	injectFailPointForGetJob(job)
 	jobID, involvedSchemaInfos := job.ID, job.GetInvolvingSchemaInfo()
 	s.runningJobs.addRunning(jobID, involvedSchemaInfos)
@@ -517,9 +518,9 @@ func (s *jobScheduler) delivery2Worker(wk *worker, pool *workerPool, job *model.
 		defer func() {
 			r := recover()
 			if r != nil {
-				logutil.DDLLogger().Error("panic in delivery2Worker", zap.Any("recover", r), zap.Stack("stack"))
+				logutil.DDLLogger().Error("panic in deliveryJob", zap.Any("recover", r), zap.Stack("stack"))
 			}
-			failpoint.InjectCall("afterDelivery2Worker", job)
+			failpoint.InjectCall("afterDeliveryJob", job)
 			// Because there is a gap between `allIDs()` and `checkRunnable()`,
 			// we append unfinished job to pending atomically to prevent `getJob()`
 			// chosing another runnable job that involves the same schema object.
@@ -530,7 +531,7 @@ func (s *jobScheduler) delivery2Worker(wk *worker, pool *workerPool, job *model.
 			pool.put(wk)
 		}()
 		for {
-			err := s.runJobWithWorker(wk, job)
+			err := s.runOneJobStep(wk, job)
 			if err != nil {
 				logutil.DDLLogger().Info("run job failed", zap.Error(err), zap.Stringer("job", job))
 			} else if job.InFinalState() {
@@ -565,8 +566,11 @@ func (s *jobScheduler) delivery2Worker(wk *worker, pool *workerPool, job *model.
 	})
 }
 
-func (s *jobScheduler) runJobWithWorker(wk *worker, job *model.Job) error {
-	failpoint.InjectCall("beforeRunJobWithWorker")
+// runOneJobStep runs one step of the DDL job. we are using online-schema-change,
+// one job might go through multiple steps, each step is one job state change such
+// as from 'done' -> 'synced, or one schema state change such as 'delete only' -> 'write only'.
+func (s *jobScheduler) runOneJobStep(wk *worker, job *model.Job) error {
+	failpoint.InjectCall("beforeRunOneJobStep")
 	ownerID := s.ownerManager.ID()
 	// suppose we failed to sync version last time, we need to check and sync it
 	// before run to maintain the 2-version invariant.

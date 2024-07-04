@@ -100,7 +100,7 @@ func TestParallelDDL(t *testing.T) {
 	jobCnt := 11
 
 	once1 := sync.Once{}
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeAllLoadDDLJobAndRun", func() {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeLoadAndDeliverJobs", func() {
 		once1.Do(func() {
 			for {
 				tk1 := testkit.NewTestKit(t, store)

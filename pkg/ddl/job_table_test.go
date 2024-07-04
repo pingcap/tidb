@@ -60,7 +60,7 @@ func TestDDLScheduling(t *testing.T) {
 	var wg util.WaitGroupWrapper
 	wg.Add(1)
 	var once sync.Once
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeAllLoadDDLJobAndRun", func() {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeLoadAndDeliverJobs", func() {
 		once.Do(func() {
 			for i, job := range ddlJobs {
 				wg.Run(func() {
@@ -86,7 +86,7 @@ func TestDDLScheduling(t *testing.T) {
 	})
 
 	record := make([]int64, 0, 16)
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeDelivery2Worker", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeDeliveryJob", func(job *model.Job) {
 		// record the job schedule order
 		record = append(record, job.ID)
 	})
@@ -226,7 +226,7 @@ func TestGeneralDDLWithQuery(t *testing.T) {
 	tk.MustExec("CREATE TABLE t (id INT NOT NULL);")
 
 	var beforeRunCh = make(chan struct{})
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeAllLoadDDLJobAndRun", func() {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeLoadAndDeliverJobs", func() {
 		<-beforeRunCh
 	})
 	var ch = make(chan struct{})

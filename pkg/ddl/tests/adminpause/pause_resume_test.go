@@ -168,13 +168,13 @@ func pauseResumeAndCancel(t *testing.T, stmtKit *testkit.TestKit, adminCommandKi
 	Logger.Debug("pauseResumeAndCancel: statement execute", zap.String("DDL Statement", stmtCase.stmt))
 	if stmtCase.isJobPausable {
 		if doCancel {
-			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeAllLoadDDLJobAndRun", func() {
+			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeLoadAndDeliverJobs", func() {
 				cancelFunc()
 			})
 			dom.DDL().SetHook(hook.Clone())
 
 			stmtKit.MustGetErrCode(stmtCase.stmt, errno.ErrCancelledDDLJob)
-			testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/beforeAllLoadDDLJobAndRun")
+			testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/beforeLoadAndDeliverJobs")
 			Logger.Info("pauseResumeAndCancel: statement execution should have been cancelled.")
 
 			verifyCancelResult(t, adminCommandKit)
