@@ -98,7 +98,7 @@ func (t *TableKVDecoder) IterRawIndexKeys(h kv.Handle, rawRow []byte, fn func([]
 			continue
 		}
 
-		indexValues, err := index.FetchValues(row, buffer)
+		indexValues, err := index.FetchValues(t.se.GetTableCtx(), row, buffer)
 		if err != nil {
 			return err
 		}

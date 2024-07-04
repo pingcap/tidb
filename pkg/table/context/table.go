@@ -54,6 +54,14 @@ type MutateContext interface {
 	// which is a buffer for table related structures that aims to reuse memory and
 	// saves allocation.
 	GetTablesBuffer() *TablesBuffer
+
+	SetExtraIndexKeyPosInfo(indexKeyPos map[int64][]int)
+
+	GetExtraIndexKeyPosInfo(idxID int64) []int
+
+	ResetExtraInfo()
+
+	HasExtraInfo() bool
 }
 
 // TablesBuffer is a memory pool for table related memory allocation that aims to reuse memory

@@ -273,11 +273,6 @@ func (c *cachedTable) RemoveRecord(sctx table.MutateContext, h kv.Handle, r []ty
 	return c.TableCommon.RemoveRecord(sctx, h, r)
 }
 
-func (c *cachedTable) RemoveRecordWithGivenInfo(ctx table.MutateContext, h kv.Handle, r []types.Datum, indexPosInRow map[int64][]int, refColOfColUnderModify int) error {
-	txnCtxAddCachedTable(ctx, c.Meta().ID, c)
-	return c.TableCommon.RemoveRecordWithGivenInfo(ctx, h, r, indexPosInRow, refColOfColUnderModify)
-}
-
 // TestMockRenewLeaseABA2 is used by test function TestRenewLeaseABAFailPoint.
 var TestMockRenewLeaseABA2 chan struct{}
 

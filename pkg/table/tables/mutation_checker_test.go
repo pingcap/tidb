@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
@@ -29,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
+	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
 	"github.com/stretchr/testify/require"
 )
@@ -230,7 +232,8 @@ func TestCheckIndexKeysAndCheckHandleConsistency(t *testing.T) {
 			{ID: 2, Offset: 1, FieldType: *types.NewFieldType(mysql.TypeDatetime)},
 		},
 	}
-	sessVars := variable.NewSessionVars(nil)
+	sctx := mock.NewContext()
+	sessVars := sctx.GetSessionVars()
 	rd := rowcodec.Encoder{Enable: true}
 
 	now := types.CurrentTime(mysql.TypeDatetime)
@@ -287,10 +290,10 @@ func TestCheckIndexKeysAndCheckHandleConsistency(t *testing.T) {
 					maps := getOrBuildColumnMaps(getter, setter, table)
 
 					// test checkIndexKeys
-					insertionKey, insertionValue, err := buildIndexKeyValue(index, rowToInsert, sessVars, tableInfo,
+					insertionKey, insertionValue, err := buildIndexKeyValue(sctx, index, rowToInsert, sessVars, tableInfo,
 						indexInfo, table, handle)
 					require.Nil(t, err)
-					deletionKey, _, err := buildIndexKeyValue(index, rowToRemove, sessVars, tableInfo, indexInfo, table,
+					deletionKey, _, err := buildIndexKeyValue(sctx, index, rowToRemove, sessVars, tableInfo, indexInfo, table,
 						handle)
 					require.Nil(t, err)
 					indexMutations := []mutation{
@@ -320,9 +323,9 @@ func TestCheckIndexKeysAndCheckHandleConsistency(t *testing.T) {
 	}
 }
 
-func buildIndexKeyValue(index table.Index, rowToInsert []types.Datum, sessVars *variable.SessionVars,
+func buildIndexKeyValue(sctx sessionctx.Context, index table.Index, rowToInsert []types.Datum, sessVars *variable.SessionVars,
 	tableInfo model.TableInfo, indexInfo *model.IndexInfo, table *TableCommon, handle kv.Handle) ([]byte, []byte, error) {
-	indexedValues, err := index.FetchValues(rowToInsert, nil)
+	indexedValues, err := index.FetchValues(sctx.GetTableCtx(), rowToInsert, nil)
 	if err != nil {
 		return nil, nil, err
 	}

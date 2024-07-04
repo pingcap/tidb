@@ -202,7 +202,6 @@ type Table interface {
 
 	// RemoveRecord removes a row in the table.
 	RemoveRecord(ctx MutateContext, h kv.Handle, r []types.Datum) error
-	RemoveRecordWithGivenInfo(ctx MutateContext, h kv.Handle, r []types.Datum, indexPosInRow map[int64][]int, refColOfColUnderModify int) error
 
 	// Allocators returns all allocators.
 	Allocators(ctx AllocatorContext) autoid.Allocators

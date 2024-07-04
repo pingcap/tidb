@@ -2433,11 +2433,6 @@ func (it *infoschemaTable) RemoveRecord(ctx table.MutateContext, h kv.Handle, r 
 	return table.ErrUnsupportedOp
 }
 
-// RemoveRecordWithGivenInfo implements table.Table RemoveRecordWithGivenInfo interface.
-func (it *infoschemaTable) RemoveRecordWithGivenInfo(ctx table.MutateContext, h kv.Handle, r []types.Datum, indexPosInRow map[int64][]int, refColOfColUnderModify int) error {
-	return table.ErrUnsupportedOp
-}
-
 // UpdateRecord implements table.Table UpdateRecord interface.
 func (it *infoschemaTable) UpdateRecord(gctx context.Context, ctx table.MutateContext, h kv.Handle, oldData, newData []types.Datum, touched []bool) error {
 	return table.ErrUnsupportedOp
@@ -2528,11 +2523,6 @@ func (vt *VirtualTable) AddRecord(ctx table.MutateContext, r []types.Datum, opts
 
 // RemoveRecord implements table.Table RemoveRecord interface.
 func (vt *VirtualTable) RemoveRecord(ctx table.MutateContext, h kv.Handle, r []types.Datum) error {
-	return table.ErrUnsupportedOp
-}
-
-// RemoveRecordWithGivenInfo implements table.Table RemoveRecordWithGivenInfo interface.
-func (vt *VirtualTable) RemoveRecordWithGivenInfo(ctx table.MutateContext, h kv.Handle, r []types.Datum, indexPosInRow map[int64][]int, refColOfNonPubColForNonPubIndex int) error {
 	return table.ErrUnsupportedOp
 }
 

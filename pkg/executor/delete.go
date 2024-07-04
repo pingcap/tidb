@@ -71,8 +71,7 @@ func (e *DeleteExec) deleteOneRow(tbl table.Table, colInfo *plannercore.TblColPo
 	if err != nil {
 		return err
 	}
-	err = e.removeRow(e.Ctx(), tbl, handle, row[:end], colInfo)
-	// err = e.removeRow(e.Ctx(), tbl, handle, row[:end])
+	err = e.removeRow(e.Ctx(), tbl, handle, row[:end])
 	if err != nil {
 		return err
 	}
@@ -262,19 +261,23 @@ func (e *DeleteExec) removeRowsInTblRowMap(tblRowMap tableRowMapType) error {
 	for id, rowMap := range tblRowMap {
 		var err error
 		rowMap.Range(func(h kv.Handle, val handleInfoPair) bool {
-			err = e.removeRow(e.Ctx(), e.tblID2Table[id], h, val.handleVal, val.posInfo)
+			e.Ctx().GetTableCtx().SetExtraIndexKeyPosInfo(val.posInfo.IndexesForDelete)
+			err = e.removeRow(e.Ctx(), e.tblID2Table[id], h, val.handleVal)
 			return err == nil
 		})
 		if err != nil {
+			e.Ctx().GetTableCtx().ResetExtraInfo()
 			return err
 		}
 	}
 
+	e.Ctx().GetTableCtx().ResetExtraInfo()
+
 	return nil
 }
 
-func (e *DeleteExec) removeRow(ctx sessionctx.Context, t table.Table, h kv.Handle, data []types.Datum, colInfo *plannercore.TblColPosInfo) error {
-	err := t.RemoveRecordWithGivenInfo(ctx.GetTableCtx(), h, data, colInfo.IndexesForDelete, colInfo.RefColPosOfColUnderModify)
+func (e *DeleteExec) removeRow(ctx sessionctx.Context, t table.Table, h kv.Handle, data []types.Datum) error {
+	err := t.RemoveRecord(ctx.GetTableCtx(), h, data)
 	if err != nil {
 		return err
 	}
@@ -306,6 +309,9 @@ func onRemoveRowForFK(ctx sessionctx.Context, data []types.Datum, fkChecks []*FK
 
 // Close implements the Executor Close interface.
 func (e *DeleteExec) Close() error {
+	if !e.IsMultiTable {
+		e.Ctx().GetTableCtx().ResetExtraInfo()
+	}
 	defer e.memTracker.ReplaceBytesUsed(0)
 	return exec.Close(e.Children(0))
 }
@@ -317,6 +323,11 @@ func (e *DeleteExec) Open(ctx context.Context) error {
 
 	if e.IsMultiTable {
 		e.fixHandlePosInfoForMultiDelete()
+	} else {
+		for _, posInfo := range e.tblColPosInfos {
+			e.Ctx().GetTableCtx().SetExtraIndexKeyPosInfo(posInfo.IndexesForDelete)
+			break
+		}
 	}
 
 	return exec.Open(ctx, e.Children(0))
