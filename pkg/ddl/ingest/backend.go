@@ -57,7 +57,7 @@ type BackendCtx interface {
 	// FinishAndUnregisterEngines finishes the task and unregisters all engines that
 	// are Register-ed before. It's safe to call it multiple times.
 	//
-	// UnregisterEngines is only used in local disk based ingest.
+	// FinishAndUnregisterEngines is only used in local disk based ingest.
 	FinishAndUnregisterEngines() error
 
 	FlushController
