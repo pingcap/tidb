@@ -1304,7 +1304,7 @@ func TestOOMPanicInHashJoinWhenFetchBuildRows(t *testing.T) {
 	}()
 	useHashJoinV2 := []bool{true, false}
 	for _, hashJoinV2 := range useHashJoinV2 {
-		join.EnableHashJoinV2.Store(hashJoinV2)
+		join.SetEnableHashJoinV2(hashJoinV2)
 		err := tk.QueryToErr("select * from t as t2  join t as t1 where t1.c1=t2.c1")
 		require.EqualError(t, err, "failpoint panic: ERROR 1105 (HY000): Out Of Memory Quota![conn=1]")
 	}

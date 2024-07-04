@@ -922,9 +922,9 @@ func (pd *MockPD) BatchScanRegions(ctx context.Context, keyRanges []pdclient.Key
 			if len(endKey) == 0 {
 				return regions, nil
 			}
-			if bytes.Compare(keyRange.StartKey, lastRegion.Meta.EndKey) >= 0 {
+			if bytes.Compare(endKey, keyRange.EndKey) >= 0 {
 				continue
-			} else if bytes.Compare(keyRange.StartKey, lastRegion.Meta.StartKey) > 0 {
+			} else if bytes.Compare(endKey, keyRange.StartKey) > 0 {
 				keyRange.StartKey = endKey
 			}
 		}
