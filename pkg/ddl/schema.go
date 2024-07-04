@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/label"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/parser/model"
 )
@@ -272,6 +273,33 @@ func (w *worker) onRecoverSchema(d *ddlCtx, t *meta.Meta, job *model.Job) (ver i
 				return ver, errors.Errorf("disable gc failed, try again later. err: %v", err)
 			}
 		}
+
+		recoverTbls := recoverSchemaInfo.RecoverTabsInfo
+		if recoverSchemaInfo.ReadTblOnDDLOwner {
+			snap := w.store.GetSnapshot(kv.NewVersion(job.StartTS))
+			snapMeta := meta.NewSnapshotMeta(snap)
+			tables, err2 := snapMeta.ListTables(job.SchemaID)
+			if err2 != nil {
+				return ver, errors.Trace(err2)
+			}
+			recoverTbls = make([]*RecoverInfo, 0, len(tables))
+			for _, tblInfo := range tables {
+				autoIDs, err3 := snapMeta.GetAutoIDAccessors(job.SchemaID, tblInfo.ID).Get()
+				if err3 != nil {
+					return ver, errors.Trace(err3)
+				}
+				recoverTbls = append(recoverTbls, &RecoverInfo{
+					SchemaID:      job.SchemaID,
+					TableInfo:     tblInfo,
+					DropJobID:     job.ID,
+					SnapshotTS:    job.StartTS,
+					AutoIDs:       autoIDs,
+					OldSchemaName: recoverSchemaInfo.OldSchemaName.L,
+					OldTableName:  tblInfo.Name.L,
+				})
+			}
+		}
+
 		dbInfo := schemaInfo.Clone()
 		dbInfo.State = model.StatePublic
 		err = t.CreateDatabase(dbInfo)
@@ -284,7 +312,7 @@ func (w *worker) onRecoverSchema(d *ddlCtx, t *meta.Meta, job *model.Job) (ver i
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
 		}
-		for _, recoverInfo := range recoverSchemaInfo.RecoverTabsInfo {
+		for _, recoverInfo := range recoverTbls {
 			if recoverInfo.TableInfo.TTLInfo != nil {
 				// force disable TTL job schedule for recovered table
 				recoverInfo.TableInfo.TTLInfo.Enable = false

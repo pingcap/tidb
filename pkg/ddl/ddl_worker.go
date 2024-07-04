@@ -726,7 +726,7 @@ func (w *worker) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
 		err = finishRecoverSchema(w, job)
 	case model.ActionCreateTables:
 		if job.IsCancelled() {
-			// it may be too large that it can not be added to the history queue, too
+			// it may be too large that it can not be added to the history queue, so
 			// delete its arguments
 			job.Args = nil
 		}
