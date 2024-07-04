@@ -245,7 +245,7 @@ func (l *LRUPlanCache) pickFromBucket(bucket map[*list.Element]struct{}, opts an
 		matchOpts = opts.(*PlanCacheMatchOpts)
 	}
 	for k := range bucket {
-		if matchCachedPlan(l.sctx, k.Value.(*planCacheEntry).PlanValue.(*PlanCacheValue), matchOpts) {
+		if matchCachedPlan(k.Value.(*planCacheEntry).PlanValue.(*PlanCacheValue), matchOpts) {
 			return k, true
 		}
 	}

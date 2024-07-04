@@ -343,6 +343,35 @@ func NewPlanCacheKey(sctx sessionctx.Context, stmt *PlanCacheStmt) (key, binding
 		}
 	}
 
+	// "limit ?,?" can affect the plan cache: "limit 1" and "limit 100000" might use different plans.
+	for _, node := range stmt.QueryFeatures.limits {
+		if node.Count != nil {
+			if count, isParamMarker := node.Count.(*driver.ParamMarkerExpr); isParamMarker {
+				typeExpected, val := CheckParamTypeInt64orUint64(count)
+				if !typeExpected {
+					sctx.GetSessionVars().StmtCtx.SetSkipPlanCache("unexpected value after LIMIT")
+					break
+				}
+				if val > MaxCacheableLimitCount {
+					sctx.GetSessionVars().StmtCtx.SetSkipPlanCache("limit count is too large")
+					break
+				}
+				hash = codec.EncodeUint(hash, val)
+			}
+		}
+		if node.Offset != nil {
+			if offset, isParamMarker := node.Offset.(*driver.ParamMarkerExpr); isParamMarker {
+				typeExpected, val := CheckParamTypeInt64orUint64(offset)
+				if !typeExpected {
+					sctx.GetSessionVars().StmtCtx.SetSkipPlanCache("unexpected value after LIMIT")
+					break
+				}
+				hash = codec.EncodeUint(hash, val)
+			}
+		}
+	}
+
+	// handle dirty tables
 	dirtyTables := vars.StmtCtx.TblInfo2UnionScan
 	if len(dirtyTables) > 0 {
 		dirtyTableIDs := make([]int64, 0, len(dirtyTables)) // TODO: a Pool for this
@@ -435,16 +464,12 @@ func NewPlanCacheValue(plan base.Plan, names []*types.FieldName,
 type PlanCacheMatchOpts struct {
 	// paramTypes stores all parameters' FieldType, some different parameters may share same plan
 	ParamTypes []*types.FieldType
-	// limitOffsetAndCount stores all the offset and key parameters extract from limit statement
-	// only used for cache and pick plan with parameters in limit
-	LimitOffsetAndCount []uint64
 }
 
 // PlanCacheQueryFeatures records all query features which may affect plan selection.
 type PlanCacheQueryFeatures struct {
 	limits      []*ast.Limit
 	hasSubquery bool
-	tables      []*ast.TableName // to capture table stats changes
 }
 
 // Enter implements Visitor interface.
@@ -454,8 +479,6 @@ func (f *PlanCacheQueryFeatures) Enter(in ast.Node) (out ast.Node, skipChildren 
 		f.limits = append(f.limits, node)
 	case *ast.SubqueryExpr, *ast.ExistsSubqueryExpr:
 		f.hasSubquery = true
-	case *ast.TableName:
-		f.tables = append(f.tables, node)
 	}
 	return in, false
 }
@@ -540,42 +563,8 @@ func GetPreparedStmt(stmt *ast.ExecuteStmt, vars *variable.SessionVars) (*PlanCa
 
 // GetMatchOpts get options to fetch plan or generate new plan
 // we can add more options here
-func GetMatchOpts(sctx sessionctx.Context, is infoschema.InfoSchema, stmt *PlanCacheStmt, params []expression.Expression) *PlanCacheMatchOpts {
-	var limitOffsetAndCount []uint64
-
-	if stmt.QueryFeatures != nil {
-		for _, node := range stmt.QueryFeatures.limits {
-			if node.Count != nil {
-				if count, isParamMarker := node.Count.(*driver.ParamMarkerExpr); isParamMarker {
-					typeExpected, val := CheckParamTypeInt64orUint64(count)
-					if !typeExpected {
-						sctx.GetSessionVars().StmtCtx.SetSkipPlanCache("unexpected value after LIMIT")
-						break
-					}
-					if val > MaxCacheableLimitCount {
-						sctx.GetSessionVars().StmtCtx.SetSkipPlanCache("limit count is too large")
-						break
-					}
-					limitOffsetAndCount = append(limitOffsetAndCount, val)
-				}
-			}
-			if node.Offset != nil {
-				if offset, isParamMarker := node.Offset.(*driver.ParamMarkerExpr); isParamMarker {
-					typeExpected, val := CheckParamTypeInt64orUint64(offset)
-					if !typeExpected {
-						sctx.GetSessionVars().StmtCtx.SetSkipPlanCache("unexpected value after LIMIT")
-						break
-					}
-					limitOffsetAndCount = append(limitOffsetAndCount, val)
-				}
-			}
-		}
-	}
-
-	return &PlanCacheMatchOpts{
-		LimitOffsetAndCount: limitOffsetAndCount,
-		ParamTypes:          parseParamTypes(sctx, params),
-	}
+func GetMatchOpts(sctx sessionctx.Context, params []expression.Expression) *PlanCacheMatchOpts {
+	return &PlanCacheMatchOpts{ParamTypes: parseParamTypes(sctx, params)}
 }
 
 // CheckTypesCompatibility4PC compares FieldSlice with []*types.FieldType
@@ -715,19 +704,11 @@ func parseParamTypes(sctx sessionctx.Context, params []expression.Expression) (p
 }
 
 // matchCachedPlan checks whether this plan is matched with these match-options.
-func matchCachedPlan(sctx sessionctx.Context, value *PlanCacheValue, matchOpts *PlanCacheMatchOpts) bool {
+func matchCachedPlan(value *PlanCacheValue, matchOpts *PlanCacheMatchOpts) bool {
 	if matchOpts == nil { // if PointGet, the matchOpts is nil
 		return true
 	}
 	if !checkTypesCompatibility4PC(value.matchOpts.ParamTypes, matchOpts.ParamTypes) {
-		return false
-	}
-	// check limit offset and key if equal and check switch if enabled
-	if !slices.Equal(value.matchOpts.LimitOffsetAndCount, matchOpts.LimitOffsetAndCount) {
-		return false
-	}
-	if len(value.matchOpts.LimitOffsetAndCount) > 0 && !sctx.GetSessionVars().EnablePlanCacheForParamLimit {
-		// offset and key slice matched, but it is a plan with param limit and the switch is disabled
 		return false
 	}
 	return true
