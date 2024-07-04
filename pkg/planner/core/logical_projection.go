@@ -216,19 +216,19 @@ func (p *LogicalProjection) PushDownTopN(topNLogicalPlan base.LogicalPlan, opt *
 // ConstantPropagation inherits BaseLogicalPlan.<8th> implementation.
 
 // PullUpConstantPredicates implements base.LogicalPlan.<9th> interface.
-func (projection *LogicalProjection) PullUpConstantPredicates() []expression.Expression {
+func (p *LogicalProjection) PullUpConstantPredicates() []expression.Expression {
 	// projection has no column expr
-	if !canProjectionBeEliminatedLoose(projection) {
+	if !canProjectionBeEliminatedLoose(p) {
 		return nil
 	}
-	candidateConstantPredicates := projection.Children()[0].PullUpConstantPredicates()
+	candidateConstantPredicates := p.Children()[0].PullUpConstantPredicates()
 	// replace predicate by projection expr
 	// candidate predicate : a=1
 	// projection: a as a'
 	// result predicate : a'=1
 	replace := make(map[string]*expression.Column)
-	for i, expr := range projection.Exprs {
-		replace[string(expr.HashCode())] = projection.Schema().Columns[i]
+	for i, expr := range p.Exprs {
+		replace[string(expr.HashCode())] = p.Schema().Columns[i]
 	}
 	result := make([]expression.Expression, 0, len(candidateConstantPredicates))
 	for _, predicate := range candidateConstantPredicates {
@@ -450,13 +450,13 @@ func (p *LogicalProjection) ExtractFD() *fd.FDSet {
 // GetBaseLogicalPlan inherits BaseLogicalPlan.<23rd> implementation.
 
 // ConvertOuterToInnerJoin implements base.LogicalPlan.<24th> interface.
-func (s *LogicalProjection) ConvertOuterToInnerJoin(predicates []expression.Expression) base.LogicalPlan {
-	p := s.Self().(*LogicalProjection)
-	canBePushed, _ := BreakDownPredicates(p, predicates)
-	child := p.Children()[0]
+func (p *LogicalProjection) ConvertOuterToInnerJoin(predicates []expression.Expression) base.LogicalPlan {
+	proj := p.Self().(*LogicalProjection)
+	canBePushed, _ := BreakDownPredicates(proj, predicates)
+	child := proj.Children()[0]
 	child = child.ConvertOuterToInnerJoin(canBePushed)
-	p.SetChildren(child)
-	return p
+	proj.SetChildren(child)
+	return proj
 }
 
 // *************************** end implementation of logicalPlan interface ***************************
