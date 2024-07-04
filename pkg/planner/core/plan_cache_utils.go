@@ -322,6 +322,9 @@ func NewPlanCacheKey(sctx sessionctx.Context, stmt *PlanCacheStmt) (key, binding
 
 	// whether this query has sub-query
 	if stmt.hasSubquery {
+		if !vars.EnablePlanCacheForSubquery {
+			return "", "", false, "the switch 'tidb_enable_plan_cache_for_subquery' is off", nil
+		}
 		hash = append(hash, '1')
 	} else {
 		hash = append(hash, '0')
@@ -337,7 +340,7 @@ func NewPlanCacheKey(sctx sessionctx.Context, stmt *PlanCacheStmt) (key, binding
 	// "limit ?" can affect the cached plan: "limit 1" and "limit 10000" should use different plans.
 	if len(stmt.limits) > 0 {
 		if !vars.EnablePlanCacheForParamLimit {
-			return "", "", false, "plan cache is disabled for param limit", nil
+			return "", "", false, "the switch 'tidb_enable_plan_cache_for_param_limit' is off", nil
 		}
 		hash = append(hash, '|')
 		for _, node := range stmt.limits {
