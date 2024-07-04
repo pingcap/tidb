@@ -207,7 +207,7 @@ func (e *DeallocateExec) Next(context.Context, *chunk.Chunk) error {
 	}
 	delete(vars.PreparedStmtNameToID, e.Name)
 	if e.Ctx().GetSessionVars().EnablePreparedPlanCache {
-		cacheKey, _, _, err := plannercore.NewPlanCacheKey(e.Ctx(), preparedObj)
+		cacheKey, _, _, _, err := plannercore.NewPlanCacheKey(e.Ctx(), preparedObj)
 		if err != nil {
 			return err
 		}

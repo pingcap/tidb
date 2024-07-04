@@ -200,7 +200,7 @@ func (ts *TiDBStatement) Close() error {
 			if !ok {
 				return errors.Errorf("invalid PlanCacheStmt type")
 			}
-			cacheKey, _, _, err := core.NewPlanCacheKey(ts.ctx, preparedObj)
+			cacheKey, _, _, _, err := core.NewPlanCacheKey(ts.ctx, preparedObj)
 			if err != nil {
 				return err
 			}

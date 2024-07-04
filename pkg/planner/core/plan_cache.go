@@ -209,15 +209,15 @@ func GetPlanFromPlanCache(ctx context.Context, sctx sessionctx.Context,
 		stmtCtx.WarnSkipPlanCache(stmt.UncacheableReason)
 	}
 
-	var binding string
-	var ignored bool
+	var binding, reason string
+	var cacheable bool
 	if stmtCtx.UseCache() {
-		cacheKey, binding, ignored, err = NewPlanCacheKey(sctx, stmt)
+		cacheKey, binding, cacheable, reason, err = NewPlanCacheKey(sctx, stmt)
 		if err != nil {
 			return nil, nil, err
 		}
-		if ignored {
-			stmtCtx.SetSkipPlanCache("ignore plan cache by binding")
+		if !cacheable {
+			stmtCtx.SetSkipPlanCache(reason)
 		}
 	}
 
@@ -233,7 +233,7 @@ func GetPlanFromPlanCache(ctx context.Context, sctx sessionctx.Context,
 			}
 			isPointPlan, hit = true, true
 		} else {
-			matchOpts = GetMatchOpts(sctx, is, stmt, params)
+			matchOpts = GetMatchOpts(sctx, params)
 			// TODO: consider instance-level plan cache
 			cacheVal, hit = sctx.GetSessionPlanCache().Get(cacheKey, matchOpts)
 		}
@@ -250,7 +250,7 @@ func GetPlanFromPlanCache(ctx context.Context, sctx sessionctx.Context,
 		}
 	}
 	if matchOpts == nil {
-		matchOpts = GetMatchOpts(sctx, is, stmt, params)
+		matchOpts = GetMatchOpts(sctx, params)
 	}
 
 	return generateNewPlan(ctx, sctx, isNonPrepared, is, stmt, cacheKey, matchOpts)
@@ -303,7 +303,7 @@ func generateNewPlan(ctx context.Context, sctx sessionctx.Context, isNonPrepared
 
 	// check whether this plan is cacheable.
 	if stmtCtx.UseCache() {
-		if cacheable, reason := isPlanCacheable(sctx.GetPlanCtx(), p, len(matchOpts.ParamTypes), len(matchOpts.LimitOffsetAndCount), matchOpts.HasSubQuery); !cacheable {
+		if cacheable, reason := isPlanCacheable(sctx.GetPlanCtx(), p, len(matchOpts.ParamTypes), len(stmt.limits), stmt.hasSubquery); !cacheable {
 			stmtCtx.SetSkipPlanCache(reason)
 		}
 	}
