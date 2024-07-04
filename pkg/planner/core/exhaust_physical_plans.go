@@ -427,9 +427,10 @@ func (p *LogicalJoin) getHashJoins(prop *property.PhysicalProperty) (joins []bas
 	}
 
 	forced = (p.PreferJoinType&h.PreferHashJoin > 0) || forceLeftToBuild || forceRightToBuild
-	if !forced && p.shouldSkipHashJoin() {
+	shouldSkipHashJoin := p.shouldSkipHashJoin()
+	if !forced && shouldSkipHashJoin {
 		return nil, false
-	} else if forced && p.shouldSkipHashJoin() {
+	} else if forced && shouldSkipHashJoin {
 		p.SCtx().GetSessionVars().StmtCtx.SetHintWarning(
 			"A conflict between the HASH_JOIN hint and the NO_HASH_JOIN hint, " +
 				"or the tidb_opt_enable_hash_join system variable, the HASH_JOIN hint will take precedence.")
