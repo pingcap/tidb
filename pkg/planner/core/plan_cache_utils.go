@@ -25,6 +25,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/bindinfo"
+	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -247,54 +248,78 @@ func hashInt64Uint64Map(b []byte, m map[int64]uint64) []byte {
 // Note: lastUpdatedSchemaVersion will only be set in the case of rc or for update read in order to
 // differentiate the cache key. In other cases, it will be 0.
 // All information that might affect the plan should be considered in this function.
-func NewPlanCacheKey(sessionVars *variable.SessionVars, stmtText, stmtDB string,
-	schemaVersion, lastUpdatedSchemaVersion int64, bindSQL string, exprBlacklistTS int64,
-	relatedSchemaVersion map[int64]uint64, dirtyTables map[*model.TableInfo]bool) (string, error) {
-	if stmtText == "" {
-		return "", errors.New("no statement text")
+func NewPlanCacheKey(sctx sessionctx.Context, stmt *PlanCacheStmt) (key, binding string, ignored bool, err error) {
+	binding, ignored = bindinfo.MatchSQLBindingForPlanCache(sctx, stmt.PreparedAst.Stmt, &stmt.BindingInfo)
+	if ignored {
+		return
 	}
-	if schemaVersion == 0 && !intest.InTest {
-		return "", errors.New("Schema version uninitialized")
+
+	// In rc or for update read, we need the latest schema version to decide whether we need to
+	// rebuild the plan. So we set this value in rc or for update read. In other cases, let it be 0.
+	var latestSchemaVersion int64
+	if sctx.GetSessionVars().IsIsolation(ast.ReadCommitted) || stmt.ForUpdateRead {
+		// In Rc or ForUpdateRead, we should check if the information schema has been changed since
+		// last time. If it changed, we should rebuild the plan. Here, we use a different and more
+		// up-to-date schema version which can lead plan cache miss and thus, the plan will be rebuilt.
+		latestSchemaVersion = domain.GetDomain(sctx).InfoSchema().SchemaMetaVersion()
 	}
+
+	// rebuild key to exclude kv.TiFlash when stmt is not read only
+	vars := sctx.GetSessionVars()
+	if _, isolationReadContainTiFlash := vars.IsolationReadEngines[kv.TiFlash]; isolationReadContainTiFlash && !IsReadOnly(stmt.PreparedAst.Stmt, vars) {
+		delete(vars.IsolationReadEngines, kv.TiFlash)
+		defer func() {
+			vars.IsolationReadEngines[kv.TiFlash] = struct{}{}
+		}()
+	}
+
+	if stmt.StmtText == "" {
+		return "", "", false, errors.New("no statement text")
+	}
+	if stmt.SchemaVersion == 0 && !intest.InTest {
+		return "", "", false, errors.New("Schema version uninitialized")
+	}
+	stmtDB := stmt.StmtDB
 	if stmtDB == "" {
-		stmtDB = sessionVars.CurrentDB
+		stmtDB = vars.CurrentDB
 	}
 	timezoneOffset := 0
-	if sessionVars.TimeZone != nil {
-		_, timezoneOffset = time.Now().In(sessionVars.TimeZone).Zone()
+	if vars.TimeZone != nil {
+		_, timezoneOffset = time.Now().In(vars.TimeZone).Zone()
 	}
-	_, connCollation := sessionVars.GetCharsetInfo()
+	_, connCollation := vars.GetCharsetInfo()
 
-	hash := make([]byte, 0, len(stmtText)*2) // TODO: a Pool for this
+	hash := make([]byte, 0, len(stmt.StmtText)*2) // TODO: a Pool for this
 	hash = append(hash, hack.Slice(stmtDB)...)
-	hash = codec.EncodeInt(hash, int64(sessionVars.ConnectionID))
-	hash = append(hash, hack.Slice(stmtText)...)
-	hash = codec.EncodeInt(hash, schemaVersion)
-	hash = hashInt64Uint64Map(hash, relatedSchemaVersion)
+	hash = codec.EncodeInt(hash, int64(vars.ConnectionID))
+	hash = append(hash, hack.Slice(stmt.StmtText)...)
+	hash = codec.EncodeInt(hash, stmt.SchemaVersion)
+	hash = hashInt64Uint64Map(hash, stmt.RelateVersion)
 	// Only be set in rc or for update read and leave it default otherwise.
 	// In Rc or ForUpdateRead, we should check whether the information schema has been changed when using plan cache.
 	// If it changed, we should rebuild the plan. lastUpdatedSchemaVersion help us to decide whether we should rebuild
 	// the plan in rc or for update read.
-	hash = codec.EncodeInt(hash, lastUpdatedSchemaVersion)
-	hash = codec.EncodeInt(hash, int64(sessionVars.SQLMode))
+	hash = codec.EncodeInt(hash, latestSchemaVersion)
+	hash = codec.EncodeInt(hash, int64(vars.SQLMode))
 	hash = codec.EncodeInt(hash, int64(timezoneOffset))
-	if _, ok := sessionVars.IsolationReadEngines[kv.TiDB]; ok {
+	if _, ok := vars.IsolationReadEngines[kv.TiDB]; ok {
 		hash = append(hash, kv.TiDB.Name()...)
 	}
-	if _, ok := sessionVars.IsolationReadEngines[kv.TiKV]; ok {
+	if _, ok := vars.IsolationReadEngines[kv.TiKV]; ok {
 		hash = append(hash, kv.TiKV.Name()...)
 	}
-	if _, ok := sessionVars.IsolationReadEngines[kv.TiFlash]; ok {
+	if _, ok := vars.IsolationReadEngines[kv.TiFlash]; ok {
 		hash = append(hash, kv.TiFlash.Name()...)
 	}
-	hash = codec.EncodeInt(hash, int64(sessionVars.SelectLimit))
-	hash = append(hash, hack.Slice(bindSQL)...)
+	hash = codec.EncodeInt(hash, int64(vars.SelectLimit))
+	hash = append(hash, hack.Slice(binding)...)
 	hash = append(hash, hack.Slice(connCollation)...)
-	hash = append(hash, hack.Slice(strconv.FormatBool(sessionVars.InRestrictedSQL))...)
+	hash = append(hash, hack.Slice(strconv.FormatBool(vars.InRestrictedSQL))...)
 	hash = append(hash, hack.Slice(strconv.FormatBool(variable.RestrictedReadOnly.Load()))...)
 	hash = append(hash, hack.Slice(strconv.FormatBool(variable.VarTiDBSuperReadOnly.Load()))...)
 	// expr-pushdown-blacklist can affect query optimization, so we need to consider it in plan cache.
-	hash = codec.EncodeInt(hash, exprBlacklistTS)
+	hash = codec.EncodeInt(hash, expression.ExprPushDownBlackListReloadTimeStamp.Load())
+	dirtyTables := vars.StmtCtx.TblInfo2UnionScan
 	if len(dirtyTables) > 0 {
 		dirtyTableIDs := make([]int64, 0, len(dirtyTables)) // TODO: a Pool for this
 		for t, dirty := range dirtyTables {
@@ -308,7 +333,7 @@ func NewPlanCacheKey(sessionVars *variable.SessionVars, stmtText, stmtDB string,
 			hash = codec.EncodeInt(hash, id)
 		}
 	}
-	return string(hash), nil
+	return string(hash), binding, false, nil
 }
 
 // PlanCacheValue stores the cached Statement and StmtNode.

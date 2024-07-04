@@ -1237,15 +1237,6 @@ func (ds *DataSource) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
 	return corCols
 }
 
-// LogicalTableScan is the logical table scan operator for TiKV.
-type LogicalTableScan struct {
-	logicalop.LogicalSchemaProducer
-	Source      *DataSource
-	HandleCols  util.HandleCols
-	AccessConds expression.CNFExprs
-	Ranges      []*ranger.Range
-}
-
 // LogicalIndexScan is the logical index scan operator for TiKV.
 type LogicalIndexScan struct {
 	logicalop.LogicalSchemaProducer
