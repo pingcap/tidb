@@ -115,10 +115,11 @@ func (p *PhysicalHashAgg) ToPB(ctx *base.BuildPBContext, storeType kv.StoreType)
 		// If p.tiflashPreAggMode is empty, means no need to consider preagg mode.
 		// For example it's the the second stage of hashagg.
 		if len(p.tiflashPreAggMode) != 0 {
-			var ok bool
-			if *aggExec.PreAggMode, ok = p.tiflashPreAggMode.ToTiPBTiFlashPreAggMode(); !ok {
+			if preAggModeVal, ok := p.tiflashPreAggMode.ToTiPBTiFlashPreAggMode(); !ok {
 				err = fmt.Errorf("unexpected tiflash pre agg mode: %v", p.tiflashPreAggMode)
 				return nil, err
+			} else {
+				aggExec.PreAggMode = &preAggModeVal
 			}
 		}
 	}
