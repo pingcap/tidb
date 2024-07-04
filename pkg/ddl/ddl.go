@@ -1563,12 +1563,13 @@ type RecoverInfo struct {
 type RecoverSchemaInfo struct {
 	*model.DBInfo
 	RecoverTabsInfo []*RecoverInfo
-	// ReadTblOnDDLOwner is the new logic to avoid RecoverTabsInfo is too large and
-	// cause persistent failure.
-	ReadTblOnDDLOwner bool
-	DropJobID         int64
-	SnapshotTS        uint64
-	OldSchemaName     model.CIStr
+	// RecoverSchemaIDOnOwner is the new logic to avoid a large RecoverTabsInfo can't
+	// be persisted. If it's set, DDL owner will recover RecoverTabsInfo instead of
+	// job submit node.
+	RecoverSchemaIDOnOwner int64
+	DropJobID              int64
+	SnapshotTS             uint64
+	OldSchemaName          model.CIStr
 }
 
 // delayForAsyncCommit sleeps `SafeWindow + AllowedClockDrift` before a DDL job finishes.
