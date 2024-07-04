@@ -19,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/session/cursor"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/stretchr/testify/require"
@@ -147,4 +148,66 @@ func TestDetachError(t *testing.T) {
 	require.False(t, ok)
 	require.NoError(t, err)
 	tk.MustExec("commit")
+}
+
+func TestCursorWillBeClosed(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t(id int)")
+	tk.MustExec("insert into t values (1), (2), (3)")
+
+	rs, err := tk.Exec("select * from t")
+	require.NoError(t, err)
+	drs := rs.(sqlexec.DetachableRecordSet)
+	srs, ok, err := drs.TryDetach()
+	require.True(t, ok)
+	require.NoError(t, err)
+
+	// close the record set
+	require.NoError(t, srs.Close())
+
+	// check the cursor is closed
+	tk.Session().GetCursorTracker().RangeCursor(func(_ cursor.Handle) bool {
+		require.Fail(t, "cursor should be closed")
+		return false
+	})
+}
+
+func TestCursorWillBlockMinStartTS(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t(id int)")
+	tk.MustExec("insert into t values (1), (2), (3)")
+
+	rs, err := tk.Exec("select * from t")
+	require.NoError(t, err)
+	initialStartTS := tk.Session().GetSessionVars().TxnCtx.StartTS
+	drs := rs.(sqlexec.DetachableRecordSet)
+	srs, ok, err := drs.TryDetach()
+	require.True(t, ok)
+	require.NoError(t, err)
+
+	// we can start another transaction on the session now
+	tk.MustExec("begin")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1", "2", "3"))
+	secondStartTS := tk.Session().GetSessionVars().TxnCtx.StartTS
+	require.Greater(t, secondStartTS, initialStartTS)
+
+	infoSyncer := dom.InfoSyncer()
+	require.Eventually(t, func() bool {
+		infoSyncer.ReportMinStartTS(store)
+		return infoSyncer.GetMinStartTS() == initialStartTS
+	}, time.Second*5, time.Millisecond*100)
+
+	// close the record set
+	require.NoError(t, srs.Close())
+
+	require.Eventually(t, func() bool {
+		infoSyncer.ReportMinStartTS(store)
+		return infoSyncer.GetMinStartTS() == secondStartTS
+	}, time.Second*5, time.Millisecond*100)
 }

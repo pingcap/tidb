@@ -279,8 +279,12 @@ func (ctx *SessionEvalContext) RequestDynamicVerification(privName string, grant
 }
 
 // GetParamValue returns the value of the parameter by index.
-func (ctx *SessionEvalContext) GetParamValue(idx int) types.Datum {
-	return ctx.sctx.GetSessionVars().PlanCacheParams.GetParamValue(idx)
+func (ctx *SessionEvalContext) GetParamValue(idx int) (types.Datum, error) {
+	params := ctx.sctx.GetSessionVars().PlanCacheParams.AllParamValues()
+	if idx >= len(params) {
+		return types.Datum{}, exprctx.ErrParamIndexExceedParamCounts
+	}
+	return params[idx], nil
 }
 
 func getStmtTimestamp(ctx sessionctx.Context) (time.Time, error) {

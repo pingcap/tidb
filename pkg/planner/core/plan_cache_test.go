@@ -1837,3 +1837,49 @@ func TestIndexRange(t *testing.T) {
 	tk.MustQuery(`SELECT t0.* FROM t0 WHERE (id = 1 or id = 9223372036854775808);`).Check(testkit.Rows("1"))
 	tk.MustQuery("SELECT t1.c0 FROM t1 WHERE t1.c0!=BIN(-1);").Check(testkit.Rows("1"))
 }
+
+func TestPlanCacheDirtyTables(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+
+	for _, t1Dirty := range []bool{true, false} {
+		for _, t2Dirty := range []bool{true, false} {
+			tk.MustExec(`create table t1 (a int);`)
+			tk.MustExec(`create table t2 (a int);`)
+			tk.MustExec(`begin`)
+			tk.MustExec(`prepare st from 'select 1 from t1, t2'`)
+			if t1Dirty {
+				tk.MustExec(`insert into t1 values (1)`)
+			}
+			if t2Dirty {
+				tk.MustExec(`insert into t2 values (1)`)
+			}
+			tk.MustExec(`execute st`) // generate a cached plan with t1Dirty & t2Dirty
+			tk.MustExec(`commit`)
+
+			// test cases
+			for _, testT1Dirty := range []bool{true, false} {
+				for _, testT2Dirty := range []bool{true, false} {
+					tk.MustExec(`begin`)
+					if testT1Dirty {
+						tk.MustExec(`insert into t1 values (1)`)
+					}
+					if testT2Dirty {
+						tk.MustExec(`insert into t2 values (1)`)
+					}
+					tk.MustExec(`execute st`)
+
+					if testT1Dirty == t1Dirty && testT2Dirty == t2Dirty {
+						tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+					} else {
+						tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+					}
+
+					tk.MustExec(`commit`)
+				}
+			}
+			tk.MustExec(`drop table t1, t2`)
+		}
+	}
+}

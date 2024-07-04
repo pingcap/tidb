@@ -57,18 +57,6 @@ func (ds *DataSource) PreparePossibleProperties(_ *expression.Schema, _ ...[][]*
 }
 
 // PreparePossibleProperties implements base.LogicalPlan PreparePossibleProperties interface.
-func (ts *LogicalTableScan) PreparePossibleProperties(_ *expression.Schema, _ ...[][]*expression.Column) [][]*expression.Column {
-	if ts.HandleCols != nil {
-		cols := make([]*expression.Column, ts.HandleCols.NumCols())
-		for i := 0; i < ts.HandleCols.NumCols(); i++ {
-			cols[i] = ts.HandleCols.GetCol(i)
-		}
-		return [][]*expression.Column{cols}
-	}
-	return nil
-}
-
-// PreparePossibleProperties implements base.LogicalPlan PreparePossibleProperties interface.
 func (is *LogicalIndexScan) PreparePossibleProperties(_ *expression.Schema, _ ...[][]*expression.Column) [][]*expression.Column {
 	if len(is.IdxCols) == 0 {
 		return nil
@@ -82,25 +70,8 @@ func (is *LogicalIndexScan) PreparePossibleProperties(_ *expression.Schema, _ ..
 }
 
 // PreparePossibleProperties implements base.LogicalPlan PreparePossibleProperties interface.
-func (*TiKVSingleGather) PreparePossibleProperties(_ *expression.Schema, childrenProperties ...[][]*expression.Column) [][]*expression.Column {
-	return childrenProperties[0]
-}
-
-// PreparePossibleProperties implements base.LogicalPlan PreparePossibleProperties interface.
 func (*LogicalSelection) PreparePossibleProperties(_ *expression.Schema, childrenProperties ...[][]*expression.Column) [][]*expression.Column {
 	return childrenProperties[0]
-}
-
-// PreparePossibleProperties implements base.LogicalPlan PreparePossibleProperties interface.
-func (p *LogicalWindow) PreparePossibleProperties(_ *expression.Schema, _ ...[][]*expression.Column) [][]*expression.Column {
-	result := make([]*expression.Column, 0, len(p.PartitionBy)+len(p.OrderBy))
-	for i := range p.PartitionBy {
-		result = append(result, p.PartitionBy[i].Col)
-	}
-	for i := range p.OrderBy {
-		result = append(result, p.OrderBy[i].Col)
-	}
-	return [][]*expression.Column{result}
 }
 
 func getPossiblePropertyFromByItems(items []*util.ByItems) []*expression.Column {

@@ -95,14 +95,6 @@ func (p *LogicalSelection) BuildKeyInfo(selfSchema *expression.Schema, childSche
 	p.SetMaxOneRow(checkMaxOneRowCond(eqCols, childSchema[0]))
 }
 
-// BuildKeyInfo implements base.LogicalPlan BuildKeyInfo interface.
-func (p *LogicalTableDual) BuildKeyInfo(selfSchema *expression.Schema, childSchema []*expression.Schema) {
-	p.BaseLogicalPlan.BuildKeyInfo(selfSchema, childSchema)
-	if p.RowCount == 1 {
-		p.SetMaxOneRow(true)
-	}
-}
-
 // A bijection exists between columns of a projection's schema and this projection's Exprs.
 // Sometimes we need a schema made by expr of Exprs to convert a column in child's schema to a column in this projection's Schema.
 func (p *LogicalProjection) buildSchemaByExprs(selfSchema *expression.Schema) *expression.Schema {
@@ -268,11 +260,6 @@ func (ds *DataSource) BuildKeyInfo(selfSchema *expression.Schema, _ []*expressio
 }
 
 // BuildKeyInfo implements base.LogicalPlan BuildKeyInfo interface.
-func (ts *LogicalTableScan) BuildKeyInfo(selfSchema *expression.Schema, childSchema []*expression.Schema) {
-	ts.Source.BuildKeyInfo(selfSchema, childSchema)
-}
-
-// BuildKeyInfo implements base.LogicalPlan BuildKeyInfo interface.
 func (is *LogicalIndexScan) BuildKeyInfo(selfSchema *expression.Schema, _ []*expression.Schema) {
 	selfSchema.Keys = nil
 	for _, path := range is.Source.PossibleAccessPaths {
@@ -289,11 +276,6 @@ func (is *LogicalIndexScan) BuildKeyInfo(selfSchema *expression.Schema, _ []*exp
 	if handle != nil {
 		selfSchema.Keys = append(selfSchema.Keys, []*expression.Column{handle})
 	}
-}
-
-// BuildKeyInfo implements base.LogicalPlan BuildKeyInfo interface.
-func (*TiKVSingleGather) BuildKeyInfo(selfSchema *expression.Schema, childSchema []*expression.Schema) {
-	selfSchema.Keys = childSchema[0].Keys
 }
 
 func (*buildKeySolver) name() string {

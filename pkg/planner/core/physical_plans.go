@@ -237,30 +237,6 @@ func setMppOrBatchCopForTableScan(curPlan base.PhysicalPlan) {
 	}
 }
 
-// GetPhysicalTableReader returns PhysicalTableReader for logical TiKVSingleGather.
-func (sg *TiKVSingleGather) GetPhysicalTableReader(schema *expression.Schema, stats *property.StatsInfo, props ...*property.PhysicalProperty) *PhysicalTableReader {
-	reader := PhysicalTableReader{}.Init(sg.SCtx(), sg.QueryBlockOffset())
-	reader.PlanPartInfo = PhysPlanPartInfo{
-		PruningConds:   sg.Source.AllConds,
-		PartitionNames: sg.Source.PartitionNames,
-		Columns:        sg.Source.TblCols,
-		ColumnNames:    sg.Source.OutputNames(),
-	}
-	reader.SetStats(stats)
-	reader.SetSchema(schema)
-	reader.childrenReqProps = props
-	return reader
-}
-
-// GetPhysicalIndexReader returns PhysicalIndexReader for logical TiKVSingleGather.
-func (sg *TiKVSingleGather) GetPhysicalIndexReader(schema *expression.Schema, stats *property.StatsInfo, props ...*property.PhysicalProperty) *PhysicalIndexReader {
-	reader := PhysicalIndexReader{}.Init(sg.SCtx(), sg.QueryBlockOffset())
-	reader.SetStats(stats)
-	reader.SetSchema(schema)
-	reader.childrenReqProps = props
-	return reader
-}
-
 // Clone implements op.PhysicalPlan interface.
 func (p *PhysicalTableReader) Clone() (base.PhysicalPlan, error) {
 	cloned := new(PhysicalTableReader)

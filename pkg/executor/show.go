@@ -1887,7 +1887,11 @@ func (e *ShowExec) fetchShowWarnings(errOnly bool) error {
 			sqlErr := terror.ToSQLError(x)
 			e.appendRow([]any{w.Level, int64(sqlErr.Code), sqlErr.Message})
 		default:
-			e.appendRow([]any{w.Level, int64(mysql.ErrUnknown), warn.Error()})
+			var err string
+			if warn != nil {
+				err = warn.Error()
+			}
+			e.appendRow([]any{w.Level, int64(mysql.ErrUnknown), err})
 		}
 	}
 	return nil
