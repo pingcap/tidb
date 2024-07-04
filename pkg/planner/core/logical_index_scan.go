@@ -57,13 +57,13 @@ func (is LogicalIndexScan) Init(ctx base.PlanContext, offset int) *LogicalIndexS
 // *************************** start implementation of Plan interface ***************************
 
 // ExplainInfo implements Plan interface.
-func (p *LogicalIndexScan) ExplainInfo() string {
-	buffer := bytes.NewBufferString(p.Source.ExplainInfo())
-	index := p.Index
+func (is *LogicalIndexScan) ExplainInfo() string {
+	buffer := bytes.NewBufferString(is.Source.ExplainInfo())
+	index := is.Index
 	if len(index.Columns) > 0 {
 		buffer.WriteString(", index:")
 		for i, idxCol := range index.Columns {
-			if tblCol := p.Source.TableInfo.Columns[idxCol.Offset]; tblCol.Hidden {
+			if tblCol := is.Source.TableInfo.Columns[idxCol.Offset]; tblCol.Hidden {
 				buffer.WriteString(tblCol.GeneratedExprString)
 			} else {
 				buffer.WriteString(idxCol.Name.O)
@@ -73,8 +73,8 @@ func (p *LogicalIndexScan) ExplainInfo() string {
 			}
 		}
 	}
-	if len(p.AccessConds) > 0 {
-		fmt.Fprintf(buffer, ", cond:%v", p.AccessConds)
+	if len(is.AccessConds) > 0 {
+		fmt.Fprintf(buffer, ", cond:%v", is.AccessConds)
 	}
 	return buffer.String()
 }
@@ -185,28 +185,28 @@ func (is *LogicalIndexScan) PreparePossibleProperties(_ *expression.Schema, _ ..
 // *************************** end implementation of logicalPlan interface ***************************
 
 // MatchIndexProp checks if the indexScan can match the required property.
-func (p *LogicalIndexScan) MatchIndexProp(prop *property.PhysicalProperty) (match bool) {
+func (is *LogicalIndexScan) MatchIndexProp(prop *property.PhysicalProperty) (match bool) {
 	if prop.IsSortItemEmpty() {
 		return true
 	}
 	if all, _ := prop.AllSameOrder(); !all {
 		return false
 	}
-	sctx := p.SCtx()
+	sctx := is.SCtx()
 	evalCtx := sctx.GetExprCtx().GetEvalCtx()
-	for i, col := range p.IdxCols {
+	for i, col := range is.IdxCols {
 		if col.Equal(evalCtx, prop.SortItems[0].Col) {
-			return matchIndicesProp(sctx, p.IdxCols[i:], p.IdxColLens[i:], prop.SortItems)
-		} else if i >= p.EqCondCount {
+			return matchIndicesProp(sctx, is.IdxCols[i:], is.IdxColLens[i:], prop.SortItems)
+		} else if i >= is.EqCondCount {
 			break
 		}
 	}
 	return false
 }
 
-func (p *LogicalIndexScan) getPKIsHandleCol(schema *expression.Schema) *expression.Column {
+func (is *LogicalIndexScan) getPKIsHandleCol(schema *expression.Schema) *expression.Column {
 	// We cannot use p.Source.getPKIsHandleCol() here,
 	// Because we may re-prune p.Columns and p.schema during the transformation.
 	// That will make p.Columns different from p.Source.Columns.
-	return getPKIsHandleColFromSchema(p.Columns, schema, p.Source.TableInfo.PKIsHandle)
+	return getPKIsHandleColFromSchema(is.Columns, schema, is.Source.TableInfo.PKIsHandle)
 }
