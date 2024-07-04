@@ -28,18 +28,18 @@ import (
 )
 
 func _put(sctx sessionctx.Context, pc sessionctx.InstancePlanCache, testKey, memUsage, statsHash int64) (succ bool) {
-	v := &PlanCacheValue{testKey: testKey, memoryUsage: memUsage, matchOpts: &PlanCacheMatchOpts{StatsVersionHash: uint64(statsHash)}}
-	return pc.Put(sctx, fmt.Sprintf("%v", testKey), v, &PlanCacheMatchOpts{StatsVersionHash: uint64(statsHash)})
+	v := &PlanCacheValue{testKey: testKey, memoryUsage: memUsage, matchOpts: &PlanCacheMatchOpts{}}
+	return pc.Put(sctx, fmt.Sprintf("%v-%v", testKey, statsHash), v, &PlanCacheMatchOpts{})
 }
 
 func _hit(t *testing.T, sctx sessionctx.Context, pc sessionctx.InstancePlanCache, testKey, statsHash int) {
-	v, ok := pc.Get(sctx, fmt.Sprintf("%v", testKey), &PlanCacheMatchOpts{StatsVersionHash: uint64(statsHash)})
+	v, ok := pc.Get(sctx, fmt.Sprintf("%v-%v", testKey, statsHash), &PlanCacheMatchOpts{})
 	require.True(t, ok)
 	require.Equal(t, v.(*PlanCacheValue).testKey, int64(testKey))
 }
 
 func _miss(t *testing.T, sctx sessionctx.Context, pc sessionctx.InstancePlanCache, testKey, statsHash int) {
-	_, ok := pc.Get(sctx, fmt.Sprintf("%v", testKey), &PlanCacheMatchOpts{StatsVersionHash: uint64(statsHash)})
+	_, ok := pc.Get(sctx, fmt.Sprintf("%v-%v", testKey, statsHash), &PlanCacheMatchOpts{})
 	require.False(t, ok)
 }
 
