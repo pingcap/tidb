@@ -209,15 +209,15 @@ func GetPlanFromPlanCache(ctx context.Context, sctx sessionctx.Context,
 		stmtCtx.WarnSkipPlanCache(stmt.UncacheableReason)
 	}
 
-	var binding string
-	var ignored bool
+	var binding, reason string
+	var cacheable bool
 	if stmtCtx.UseCache() {
-		cacheKey, binding, ignored, err = NewPlanCacheKey(sctx, stmt)
+		cacheKey, binding, cacheable, reason, err = NewPlanCacheKey(sctx, stmt)
 		if err != nil {
 			return nil, nil, err
 		}
-		if ignored {
-			stmtCtx.SetSkipPlanCache("ignore plan cache by binding")
+		if !cacheable {
+			stmtCtx.SetSkipPlanCache(reason)
 		}
 	}
 
@@ -303,7 +303,7 @@ func generateNewPlan(ctx context.Context, sctx sessionctx.Context, isNonPrepared
 
 	// check whether this plan is cacheable.
 	if stmtCtx.UseCache() {
-		if cacheable, reason := isPlanCacheable(sctx.GetPlanCtx(), p, len(matchOpts.ParamTypes), len(matchOpts.LimitOffsetAndCount), stmt.QueryFeatures.hasSubquery); !cacheable {
+		if cacheable, reason := isPlanCacheable(sctx.GetPlanCtx(), p, len(matchOpts.ParamTypes), len(stmt.QueryFeatures.limits), stmt.QueryFeatures.hasSubquery); !cacheable {
 			stmtCtx.SetSkipPlanCache(reason)
 		}
 	}

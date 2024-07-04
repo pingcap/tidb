@@ -304,7 +304,7 @@ func (s *session) cleanRetryInfo() {
 		if preparedPointer, ok := s.sessionVars.PreparedStmts[firstStmtID]; ok {
 			preparedObj, ok = preparedPointer.(*plannercore.PlanCacheStmt)
 			if ok {
-				cacheKey, _, _, err = plannercore.NewPlanCacheKey(s, preparedObj)
+				cacheKey, _, _, _, err = plannercore.NewPlanCacheKey(s, preparedObj)
 				if err != nil {
 					logutil.Logger(s.currentCtx).Warn("clean cached plan failed", zap.Error(err))
 					return
@@ -315,7 +315,7 @@ func (s *session) cleanRetryInfo() {
 	for i, stmtID := range retryInfo.DroppedPreparedStmtIDs {
 		if planCacheEnabled {
 			if i > 0 && preparedObj != nil {
-				cacheKey, _, _, err = plannercore.NewPlanCacheKey(s, preparedObj)
+				cacheKey, _, _, _, err = plannercore.NewPlanCacheKey(s, preparedObj)
 				if err != nil {
 					logutil.Logger(s.currentCtx).Warn("clean cached plan failed", zap.Error(err))
 					return

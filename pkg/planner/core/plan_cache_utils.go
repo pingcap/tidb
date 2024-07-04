@@ -248,10 +248,10 @@ func hashInt64Uint64Map(b []byte, m map[int64]uint64) []byte {
 // Note: lastUpdatedSchemaVersion will only be set in the case of rc or for update read in order to
 // differentiate the cache key. In other cases, it will be 0.
 // All information that might affect the plan should be considered in this function.
-func NewPlanCacheKey(sctx sessionctx.Context, stmt *PlanCacheStmt) (key, binding string, ignored bool, err error) {
-	binding, ignored = bindinfo.MatchSQLBindingForPlanCache(sctx, stmt.PreparedAst.Stmt, &stmt.BindingInfo)
+func NewPlanCacheKey(sctx sessionctx.Context, stmt *PlanCacheStmt) (key, binding string, cacheable bool, reason string, err error) {
+	binding, ignored := bindinfo.MatchSQLBindingForPlanCache(sctx, stmt.PreparedAst.Stmt, &stmt.BindingInfo)
 	if ignored {
-		return
+		return "", binding, false, "ignore plan cache by binding", nil
 	}
 
 	// In rc or for update read, we need the latest schema version to decide whether we need to
@@ -274,10 +274,10 @@ func NewPlanCacheKey(sctx sessionctx.Context, stmt *PlanCacheStmt) (key, binding
 	}
 
 	if stmt.StmtText == "" {
-		return "", "", false, errors.New("no statement text")
+		return "", "", false, "", errors.New("no statement text")
 	}
 	if stmt.SchemaVersion == 0 && !intest.InTest {
-		return "", "", false, errors.New("Schema version uninitialized")
+		return "", "", false, "", errors.New("Schema version uninitialized")
 	}
 	stmtDB := stmt.StmtDB
 	if stmtDB == "" {
@@ -334,6 +334,33 @@ func NewPlanCacheKey(sctx sessionctx.Context, stmt *PlanCacheStmt) (key, binding
 		hash = append(hash, '0')
 	}
 
+	// "limit ?" can affect the cached plan: "limit 1" and "limit 10000" should use different plans.
+	hash = append(hash, '|')
+	for _, node := range stmt.QueryFeatures.limits {
+		if node.Count != nil {
+			if count, isParamMarker := node.Count.(*driver.ParamMarkerExpr); isParamMarker {
+				typeExpected, val := CheckParamTypeInt64orUint64(count)
+				if !typeExpected {
+					return "", "", false, "unexpected value after LIMIT", err
+				}
+				if val > MaxCacheableLimitCount {
+					return "", "", false, "limit count is too large", err
+				}
+				hash = codec.EncodeUint(hash, val)
+			}
+		}
+		if node.Offset != nil {
+			if offset, isParamMarker := node.Offset.(*driver.ParamMarkerExpr); isParamMarker {
+				typeExpected, val := CheckParamTypeInt64orUint64(offset)
+				if !typeExpected {
+					return "", "", false, "unexpected value after LIMIT", err
+				}
+				hash = codec.EncodeUint(hash, val)
+			}
+		}
+	}
+	hash = append(hash, '|')
+
 	// handle dirty tables
 	dirtyTables := vars.StmtCtx.TblInfo2UnionScan
 	if len(dirtyTables) > 0 {
@@ -349,7 +376,7 @@ func NewPlanCacheKey(sctx sessionctx.Context, stmt *PlanCacheStmt) (key, binding
 			hash = codec.EncodeInt(hash, id)
 		}
 	}
-	return string(hash), binding, false, nil
+	return string(hash), binding, true, "", nil
 }
 
 // PlanCacheValue stores the cached Statement and StmtNode.
@@ -427,9 +454,6 @@ func NewPlanCacheValue(plan base.Plan, names []*types.FieldName,
 type PlanCacheMatchOpts struct {
 	// paramTypes stores all parameters' FieldType, some different parameters may share same plan
 	ParamTypes []*types.FieldType
-	// limitOffsetAndCount stores all the offset and key parameters extract from limit statement
-	// only used for cache and pick plan with parameters in limit
-	LimitOffsetAndCount []uint64
 	// StatsVersionHash is the hash value of the statistics version
 	StatsVersionHash uint64
 }
@@ -536,8 +560,6 @@ func GetPreparedStmt(stmt *ast.ExecuteStmt, vars *variable.SessionVars) (*PlanCa
 // we can add more options here
 func GetMatchOpts(sctx sessionctx.Context, is infoschema.InfoSchema, stmt *PlanCacheStmt, params []expression.Expression) *PlanCacheMatchOpts {
 	var statsVerHash uint64
-	var limitOffsetAndCount []uint64
-
 	if stmt.QueryFeatures != nil {
 		for _, node := range stmt.QueryFeatures.tables {
 			t, err := is.TableByName(node.Schema, node.Name)
@@ -546,39 +568,11 @@ func GetMatchOpts(sctx sessionctx.Context, is infoschema.InfoSchema, stmt *PlanC
 			}
 			statsVerHash += getLatestVersionFromStatsTable(sctx, t.Meta(), t.Meta().ID) // use '+' as the hash function for simplicity
 		}
-
-		for _, node := range stmt.QueryFeatures.limits {
-			if node.Count != nil {
-				if count, isParamMarker := node.Count.(*driver.ParamMarkerExpr); isParamMarker {
-					typeExpected, val := CheckParamTypeInt64orUint64(count)
-					if !typeExpected {
-						sctx.GetSessionVars().StmtCtx.SetSkipPlanCache("unexpected value after LIMIT")
-						break
-					}
-					if val > MaxCacheableLimitCount {
-						sctx.GetSessionVars().StmtCtx.SetSkipPlanCache("limit count is too large")
-						break
-					}
-					limitOffsetAndCount = append(limitOffsetAndCount, val)
-				}
-			}
-			if node.Offset != nil {
-				if offset, isParamMarker := node.Offset.(*driver.ParamMarkerExpr); isParamMarker {
-					typeExpected, val := CheckParamTypeInt64orUint64(offset)
-					if !typeExpected {
-						sctx.GetSessionVars().StmtCtx.SetSkipPlanCache("unexpected value after LIMIT")
-						break
-					}
-					limitOffsetAndCount = append(limitOffsetAndCount, val)
-				}
-			}
-		}
 	}
 
 	return &PlanCacheMatchOpts{
-		LimitOffsetAndCount: limitOffsetAndCount,
-		StatsVersionHash:    statsVerHash,
-		ParamTypes:          parseParamTypes(sctx, params),
+		StatsVersionHash: statsVerHash,
+		ParamTypes:       parseParamTypes(sctx, params),
 	}
 }
 
@@ -724,14 +718,6 @@ func matchCachedPlan(sctx sessionctx.Context, value *PlanCacheValue, matchOpts *
 		return true
 	}
 	if !checkTypesCompatibility4PC(value.matchOpts.ParamTypes, matchOpts.ParamTypes) {
-		return false
-	}
-	// check limit offset and key if equal and check switch if enabled
-	if !slices.Equal(value.matchOpts.LimitOffsetAndCount, matchOpts.LimitOffsetAndCount) {
-		return false
-	}
-	if len(value.matchOpts.LimitOffsetAndCount) > 0 && !sctx.GetSessionVars().EnablePlanCacheForParamLimit {
-		// offset and key slice matched, but it is a plan with param limit and the switch is disabled
 		return false
 	}
 	// table stats has changed
