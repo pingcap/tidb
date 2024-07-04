@@ -33,12 +33,12 @@ func createMockRowTable(maxRowsPerSeg int, segmentCount int, fixedSize bool) *ro
 		meta: nil,
 	}
 	for i := 0; i < segmentCount; i++ {
-		rowSeg := newRowTableSegment()
 		// no empty segment is allowed
 		rows := maxRowsPerSeg
 		if !fixedSize {
 			rows = int(rand.Int31n(int32(maxRowsPerSeg)) + 1)
 		}
+		rowSeg := newRowTableSegment(uint(rows))
 		rowSeg.rawData = make([]byte, rows)
 		for j := 0; j < rows; j++ {
 			rowSeg.rowStartOffset = append(rowSeg.rowStartOffset, uint64(j))

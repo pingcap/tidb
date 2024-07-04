@@ -71,7 +71,7 @@ func (htc *hashTableContext) reset() {
 	htc.memoryTracker.Detach()
 }
 
-func (htc *hashTableContext) getCurrentRowSegment(workerID, partitionID int, tableMeta *TableMeta, allowCreate bool) *rowTableSegment {
+func (htc *hashTableContext) getCurrentRowSegment(workerID, partitionID int, tableMeta *TableMeta, allowCreate bool, firstSegSizeHint uint) *rowTableSegment {
 	if htc.rowTables[workerID][partitionID] == nil {
 		htc.rowTables[workerID][partitionID] = newRowTable(tableMeta)
 	}
@@ -80,7 +80,12 @@ func (htc *hashTableContext) getCurrentRowSegment(workerID, partitionID int, tab
 		if !allowCreate {
 			panic("logical error, should not reach here")
 		}
-		seg := newRowTableSegment()
+		// do not pre-allocate too many memory for the first seg because for query that only has a few rows, it may waste memory and may hurt the performance in high concurrency scenarios
+		rowSizeHint := maxRowTableSegmentSize
+		if segNum == 0 {
+			rowSizeHint = int(firstSegSizeHint)
+		}
+		seg := newRowTableSegment(uint(rowSizeHint))
 		htc.rowTables[workerID][partitionID].segments = append(htc.rowTables[workerID][partitionID].segments, seg)
 		segNum++
 	}
@@ -88,10 +93,8 @@ func (htc *hashTableContext) getCurrentRowSegment(workerID, partitionID int, tab
 }
 
 func (htc *hashTableContext) finalizeCurrentSeg(workerID, partitionID int, builder *rowTableBuilder) {
-	seg := htc.getCurrentRowSegment(workerID, partitionID, nil, false)
-	seg.rowStartOffset = append(seg.rowStartOffset, builder.startPosInRawData[partitionID]...)
-	builder.crrntSizeOfRowTable[partitionID] = 0
-	builder.startPosInRawData[partitionID] = builder.startPosInRawData[partitionID][:0]
+	seg := htc.getCurrentRowSegment(workerID, partitionID, nil, false, 0)
+	builder.rowNumberInCurrentRowTableSeg[partitionID] = 0
 	failpoint.Inject("finalizeCurrentSegPanic", nil)
 	seg.finalized = true
 	htc.memoryTracker.Consume(seg.totalUsedBytes())
