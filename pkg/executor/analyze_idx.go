@@ -88,7 +88,7 @@ func analyzeIndexPushdown(idxExec *AnalyzeIndexExec) *statistics.AnalyzeResults 
 		Count:    cnt,
 		Snapshot: idxExec.snapshot,
 	}
-	if idxExec.idxInfo.MVIndex || idxExec.idxInfo.Global {
+	if idxExec.idxInfo.MVIndex || (idxExec.idxInfo.Global && statsVer == statistics.Version2) {
 		result.ForMVIndexOrGlobalIndex = true
 	}
 	return result
