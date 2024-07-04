@@ -233,7 +233,7 @@ func (j *runningJobs) addRunning(jobID int64, involves []model.InvolvingSchemaIn
 	}
 }
 
-func (j *runningJobs) removeRunningOrPending(jobID int64, involves []model.InvolvingSchemaInfo, moveToPending bool) {
+func (j *runningJobs) finishOrPendJob(jobID int64, involves []model.InvolvingSchemaInfo, moveToPending bool) {
 	j.mu.Lock()
 	defer j.mu.Unlock()
 	j.removeRunningWithoutLock(jobID, involves)
