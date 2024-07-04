@@ -180,9 +180,6 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 		sctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("skip prepared plan-cache: " + reason))
 	}
 
-	features := new(PlanCacheQueryFeatures)
-	paramStmt.Accept(features)
-
 	// Collect information for metadata lock.
 	dbName := make([]model.CIStr, 0, len(vars.StmtCtx.MDLRelatedTableIDs))
 	tbls := make([]table.Table, 0, len(vars.StmtCtx.MDLRelatedTableIDs))
@@ -214,13 +211,19 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 		SnapshotTSEvaluator: ret.SnapshotTSEvaluator,
 		StmtCacheable:       cacheable,
 		UncacheableReason:   reason,
-		QueryFeatures:       features,
 		dbName:              dbName,
 		tbls:                tbls,
 		SchemaVersion:       ret.InfoSchema.SchemaMetaVersion(),
 		RelateVersion:       relateVersion,
 		Params:              extractor.markers,
 	}
+
+	stmtProcessor := &planCacheStmtProcessor{is: is}
+	paramStmt.Accept(stmtProcessor)
+	if stmtProcessor.err != nil {
+		return nil, nil, 0, err
+	}
+
 	if err = checkPreparedPriv(sctx, preparedObj, ret.InfoSchema); err != nil {
 		return nil, nil, 0, err
 	}
@@ -321,7 +324,7 @@ func NewPlanCacheKey(sctx sessionctx.Context, stmt *PlanCacheStmt) (key, binding
 	hash = codec.EncodeInt(hash, expression.ExprPushDownBlackListReloadTimeStamp.Load())
 
 	// whether this query has sub-query
-	if stmt.QueryFeatures.hasSubquery {
+	if stmt.hasSubquery {
 		hash = append(hash, '1')
 	} else {
 		hash = append(hash, '0')
@@ -335,12 +338,12 @@ func NewPlanCacheKey(sctx sessionctx.Context, stmt *PlanCacheStmt) (key, binding
 	}
 
 	// "limit ?" can affect the cached plan: "limit 1" and "limit 10000" should use different plans.
-	if len(stmt.QueryFeatures.limits) > 0 {
+	if len(stmt.limits) > 0 {
 		if !vars.EnablePlanCacheForParamLimit {
 			return "", "", false, "plan cache is disabled for param limit", nil
 		}
 		hash = append(hash, '|')
-		for _, node := range stmt.QueryFeatures.limits {
+		for _, node := range stmt.limits {
 			for _, valNode := range []ast.ExprNode{node.Count, node.Offset} {
 				if valNode == nil {
 					continue
@@ -358,6 +361,15 @@ func NewPlanCacheKey(sctx sessionctx.Context, stmt *PlanCacheStmt) (key, binding
 			}
 		}
 		hash = append(hash, '|')
+	}
+
+	// stats ver can affect cached plan
+	if sctx.GetSessionVars().PlanCacheInvalidationOnFreshStats {
+		var statsVerHash uint64
+		for _, t := range stmt.tables {
+			statsVerHash += getLatestVersionFromStatsTable(sctx, t.Meta(), t.Meta().ID) // use '+' as the hash function for simplicity
+		}
+		hash = codec.EncodeUint(hash, statsVerHash)
 	}
 
 	// handle dirty tables
@@ -453,32 +465,35 @@ func NewPlanCacheValue(plan base.Plan, names []*types.FieldName,
 type PlanCacheMatchOpts struct {
 	// paramTypes stores all parameters' FieldType, some different parameters may share same plan
 	ParamTypes []*types.FieldType
-	// StatsVersionHash is the hash value of the statistics version
-	StatsVersionHash uint64
 }
 
-// PlanCacheQueryFeatures records all query features which may affect plan selection.
-type PlanCacheQueryFeatures struct {
-	limits      []*ast.Limit
-	hasSubquery bool
-	tables      []*ast.TableName // to capture table stats changes
+// planCacheStmtProcessor records all query features which may affect plan selection.
+type planCacheStmtProcessor struct {
+	is   infoschema.InfoSchema
+	err  error
+	stmt *PlanCacheStmt
 }
 
 // Enter implements Visitor interface.
-func (f *PlanCacheQueryFeatures) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
+func (f *planCacheStmtProcessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 	switch node := in.(type) {
 	case *ast.Limit:
-		f.limits = append(f.limits, node)
+		f.stmt.limits = append(f.stmt.limits, node)
 	case *ast.SubqueryExpr, *ast.ExistsSubqueryExpr:
-		f.hasSubquery = true
+		f.stmt.hasSubquery = true
 	case *ast.TableName:
-		f.tables = append(f.tables, node)
+		t, err := f.is.TableByName(node.Schema, node.Name)
+		if err != nil {
+			f.err = err
+			return in, true
+		}
+		f.stmt.tables = append(f.stmt.tables, t)
 	}
 	return in, false
 }
 
 // Leave implements Visitor interface.
-func (*PlanCacheQueryFeatures) Leave(in ast.Node) (out ast.Node, ok bool) {
+func (*planCacheStmtProcessor) Leave(in ast.Node) (out ast.Node, ok bool) {
 	return in, true
 }
 
@@ -516,7 +531,10 @@ type PlanCacheStmt struct {
 
 	StmtCacheable     bool   // Whether this stmt is cacheable.
 	UncacheableReason string // Why this stmt is uncacheable.
-	QueryFeatures     *PlanCacheQueryFeatures
+
+	limits      []*ast.Limit
+	hasSubquery bool
+	tables      []table.Table // to capture table stats changes
 
 	NormalizedSQL       string
 	NormalizedPlan      string
@@ -557,22 +575,8 @@ func GetPreparedStmt(stmt *ast.ExecuteStmt, vars *variable.SessionVars) (*PlanCa
 
 // GetMatchOpts get options to fetch plan or generate new plan
 // we can add more options here
-func GetMatchOpts(sctx sessionctx.Context, is infoschema.InfoSchema, stmt *PlanCacheStmt, params []expression.Expression) *PlanCacheMatchOpts {
-	var statsVerHash uint64
-	if stmt.QueryFeatures != nil {
-		for _, node := range stmt.QueryFeatures.tables {
-			t, err := is.TableByName(node.Schema, node.Name)
-			if err != nil { // CTE in this case
-				continue
-			}
-			statsVerHash += getLatestVersionFromStatsTable(sctx, t.Meta(), t.Meta().ID) // use '+' as the hash function for simplicity
-		}
-	}
-
-	return &PlanCacheMatchOpts{
-		StatsVersionHash: statsVerHash,
-		ParamTypes:       parseParamTypes(sctx, params),
-	}
+func GetMatchOpts(sctx sessionctx.Context, params []expression.Expression) *PlanCacheMatchOpts {
+	return &PlanCacheMatchOpts{ParamTypes: parseParamTypes(sctx, params)}
 }
 
 // CheckTypesCompatibility4PC compares FieldSlice with []*types.FieldType
@@ -717,12 +721,6 @@ func matchCachedPlan(sctx sessionctx.Context, value *PlanCacheValue, matchOpts *
 		return true
 	}
 	if !checkTypesCompatibility4PC(value.matchOpts.ParamTypes, matchOpts.ParamTypes) {
-		return false
-	}
-	// table stats has changed
-	// this check can be disabled by turning off system variable tidb_plan_cache_invalidation_on_fresh_stats
-	if sctx.GetSessionVars().PlanCacheInvalidationOnFreshStats &&
-		value.matchOpts.StatsVersionHash != matchOpts.StatsVersionHash {
 		return false
 	}
 	return true

@@ -233,7 +233,7 @@ func GetPlanFromPlanCache(ctx context.Context, sctx sessionctx.Context,
 			}
 			isPointPlan, hit = true, true
 		} else {
-			matchOpts = GetMatchOpts(sctx, is, stmt, params)
+			matchOpts = GetMatchOpts(sctx, params)
 			// TODO: consider instance-level plan cache
 			cacheVal, hit = sctx.GetSessionPlanCache().Get(cacheKey, matchOpts)
 		}
@@ -250,7 +250,7 @@ func GetPlanFromPlanCache(ctx context.Context, sctx sessionctx.Context,
 		}
 	}
 	if matchOpts == nil {
-		matchOpts = GetMatchOpts(sctx, is, stmt, params)
+		matchOpts = GetMatchOpts(sctx, params)
 	}
 
 	return generateNewPlan(ctx, sctx, isNonPrepared, is, stmt, cacheKey, matchOpts)
