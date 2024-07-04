@@ -18,10 +18,10 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
-	fd "github.com/pingcap/tidb/pkg/planner/funcdep"
+	"github.com/pingcap/tidb/pkg/planner/funcdep"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/types"
-	h "github.com/pingcap/tidb/pkg/util/hint"
+	utilhint "github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/intset"
 )
 
@@ -87,7 +87,7 @@ type LogicalJoin struct {
 	StraightJoin  bool
 
 	// HintInfo stores the join algorithm hint information specified by client.
-	HintInfo            *h.PlanHints
+	HintInfo            *utilhint.PlanHints
 	PreferJoinType      uint
 	PreferJoinOrder     bool
 	LeftPreferJoinType  uint
@@ -141,7 +141,7 @@ func (p *LogicalJoin) Shallow() *LogicalJoin {
 }
 
 // ExtractFD implements the interface LogicalPlan.
-func (p *LogicalJoin) ExtractFD() *fd.FDSet {
+func (p *LogicalJoin) ExtractFD() *funcdep.FDSet {
 	switch p.JoinType {
 	case InnerJoin:
 		return p.extractFDForInnerJoin(nil)
@@ -150,11 +150,11 @@ func (p *LogicalJoin) ExtractFD() *fd.FDSet {
 	case SemiJoin:
 		return p.extractFDForSemiJoin(nil)
 	default:
-		return &fd.FDSet{HashCodeToUniqueID: make(map[string]int)}
+		return &funcdep.FDSet{HashCodeToUniqueID: make(map[string]int)}
 	}
 }
 
-func (p *LogicalJoin) extractFDForSemiJoin(filtersFromApply []expression.Expression) *fd.FDSet {
+func (p *LogicalJoin) extractFDForSemiJoin(filtersFromApply []expression.Expression) *funcdep.FDSet {
 	// 1: since semi join will keep the part or all rows of the outer table, it's outer FD can be saved.
 	// 2: the un-projected column will be left for the upper layer projection or already be pruned from bottom up.
 	outerFD, _ := p.Children()[0].ExtractFD(), p.Children()[1].ExtractFD()
@@ -173,7 +173,7 @@ func (p *LogicalJoin) extractFDForSemiJoin(filtersFromApply []expression.Express
 	return fds
 }
 
-func (p *LogicalJoin) extractFDForInnerJoin(filtersFromApply []expression.Expression) *fd.FDSet {
+func (p *LogicalJoin) extractFDForInnerJoin(filtersFromApply []expression.Expression) *funcdep.FDSet {
 	leftFD, rightFD := p.Children()[0].ExtractFD(), p.Children()[1].ExtractFD()
 	fds := leftFD
 	fds.MakeCartesianProduct(rightFD)
@@ -214,7 +214,7 @@ func (p *LogicalJoin) extractFDForInnerJoin(filtersFromApply []expression.Expres
 	return fds
 }
 
-func (p *LogicalJoin) extractFDForOuterJoin(filtersFromApply []expression.Expression) *fd.FDSet {
+func (p *LogicalJoin) extractFDForOuterJoin(filtersFromApply []expression.Expression) *funcdep.FDSet {
 	outerFD, innerFD := p.Children()[0].ExtractFD(), p.Children()[1].ExtractFD()
 	innerCondition := p.RightConditions
 	outerCondition := p.LeftConditions
@@ -239,7 +239,7 @@ func (p *LogicalJoin) extractFDForOuterJoin(filtersFromApply []expression.Expres
 	allConds = append(allConds, filtersFromApply...)
 	notNullColsFromFilters := extractNotNullFromConds(allConds, p)
 
-	filterFD := &fd.FDSet{HashCodeToUniqueID: make(map[string]int)}
+	filterFD := &funcdep.FDSet{HashCodeToUniqueID: make(map[string]int)}
 
 	constUniqueIDs := extractConstantCols(allConds, p.SCtx(), filterFD)
 
@@ -263,7 +263,7 @@ func (p *LogicalJoin) extractFDForOuterJoin(filtersFromApply []expression.Expres
 	filterFD.MakeNotNull(notNullColsFromFilters)
 
 	// pre-perceive the filters for the convenience judgement of 3.3.1.
-	var opt fd.ArgOpts
+	var opt funcdep.ArgOpts
 	if equivAcrossNum > 0 {
 		// find the equivalence FD across left and right cols.
 		var outConditionCols []*expression.Column
