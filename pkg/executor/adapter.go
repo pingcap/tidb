@@ -235,13 +235,16 @@ func (a *recordSet) OnFetchReturned() {
 
 // TryDetach creates a new `RecordSet` which doesn't depend on the current session context.
 func (a *recordSet) TryDetach() (sqlexec.RecordSet, bool, error) {
-	// TODO: also detach the executor. Currently, the executor inside may contain the session context. Once
-	// the executor itself supports detach, we should also detach it here.
-	e, ok := a.executor.(*TableReaderExecutor)
+	e, ok := Detach(a.executor)
 	if !ok {
 		return nil, false, nil
 	}
 	return staticrecordset.New(a.Fields(), e, a.stmt.GetTextToLog(false)), true, nil
+}
+
+// GetExecutor4Test exports the internal executor for test purpose.
+func (a *recordSet) GetExecutor4Test() any {
+	return a.executor
 }
 
 // ExecStmt implements the sqlexec.Statement interface, it builds a planner.Plan to an sqlexec.Statement.
