@@ -17,6 +17,7 @@ package core
 import (
 	"bytes"
 	"fmt"
+
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
