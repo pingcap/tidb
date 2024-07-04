@@ -335,31 +335,36 @@ func NewPlanCacheKey(sctx sessionctx.Context, stmt *PlanCacheStmt) (key, binding
 	}
 
 	// "limit ?" can affect the cached plan: "limit 1" and "limit 10000" should use different plans.
-	hash = append(hash, '|')
-	for _, node := range stmt.QueryFeatures.limits {
-		if node.Count != nil {
-			if count, isParamMarker := node.Count.(*driver.ParamMarkerExpr); isParamMarker {
-				typeExpected, val := CheckParamTypeInt64orUint64(count)
-				if !typeExpected {
-					return "", "", false, "unexpected value after LIMIT", err
+	if len(stmt.QueryFeatures.limits) > 0 {
+		if !vars.EnablePlanCacheForParamLimit {
+			return "", "", false, "plan cache is disabled for param limit", nil
+		}
+		hash = append(hash, '|')
+		for _, node := range stmt.QueryFeatures.limits {
+			if node.Count != nil {
+				if count, isParamMarker := node.Count.(*driver.ParamMarkerExpr); isParamMarker {
+					typeExpected, val := CheckParamTypeInt64orUint64(count)
+					if !typeExpected {
+						return "", "", false, "unexpected value after LIMIT", err
+					}
+					if val > MaxCacheableLimitCount {
+						return "", "", false, "limit count is too large", err
+					}
+					hash = codec.EncodeUint(hash, val)
 				}
-				if val > MaxCacheableLimitCount {
-					return "", "", false, "limit count is too large", err
+			}
+			if node.Offset != nil {
+				if offset, isParamMarker := node.Offset.(*driver.ParamMarkerExpr); isParamMarker {
+					typeExpected, val := CheckParamTypeInt64orUint64(offset)
+					if !typeExpected {
+						return "", "", false, "unexpected value after LIMIT", err
+					}
+					hash = codec.EncodeUint(hash, val)
 				}
-				hash = codec.EncodeUint(hash, val)
 			}
 		}
-		if node.Offset != nil {
-			if offset, isParamMarker := node.Offset.(*driver.ParamMarkerExpr); isParamMarker {
-				typeExpected, val := CheckParamTypeInt64orUint64(offset)
-				if !typeExpected {
-					return "", "", false, "unexpected value after LIMIT", err
-				}
-				hash = codec.EncodeUint(hash, val)
-			}
-		}
+		hash = append(hash, '|')
 	}
-	hash = append(hash, '|')
 
 	// handle dirty tables
 	dirtyTables := vars.StmtCtx.TblInfo2UnionScan
