@@ -2156,19 +2156,19 @@ func TestShowAanalyzeStatusJobInfo(t *testing.T) {
 		require.Equal(t, expected, rows[0][3])
 		tk.MustExec("delete from mysql.analyze_jobs")
 	}
-	checkJobInfo("analyze table columns b, c, d with 2 buckets, 2 topn, 1 samplerate")
+	checkJobInfo("analyze table all indexes, columns b, c, d with 2 buckets, 2 topn, 1 samplerate")
 	tk.MustExec("set global tidb_persist_analyze_options = 1")
 	tk.MustExec("select * from t where c > 1")
 	h := dom.StatsHandle()
 	require.NoError(t, h.DumpColStatsUsageToKV())
 	tk.MustExec("analyze table t predicate columns with 2 topn, 2 buckets")
-	checkJobInfo("analyze table columns b, c, d with 2 buckets, 2 topn, 1 samplerate")
+	checkJobInfo("analyze table all indexes, columns b, c, d with 2 buckets, 2 topn, 1 samplerate")
 	tk.MustExec("analyze table t")
-	checkJobInfo("analyze table columns b, c, d with 2 buckets, 2 topn, 1 samplerate")
+	checkJobInfo("analyze table all indexes, columns b, c, d with 2 buckets, 2 topn, 1 samplerate")
 	tk.MustExec("analyze table t columns a with 1 topn, 3 buckets")
-	checkJobInfo("analyze table columns a, b, d with 3 buckets, 1 topn, 1 samplerate")
+	checkJobInfo("analyze table all indexes, columns a, b, d with 3 buckets, 1 topn, 1 samplerate")
 	tk.MustExec("analyze table t")
-	checkJobInfo("analyze table columns a, b, d with 3 buckets, 1 topn, 1 samplerate")
+	checkJobInfo("analyze table all indexes, columns a, b, d with 3 buckets, 1 topn, 1 samplerate")
 }
 
 func TestAnalyzePartitionTableWithDynamicMode(t *testing.T) {
@@ -2775,7 +2775,7 @@ func TestAnalyzeColumnsSkipMVIndexJsonCol(t *testing.T) {
 	tk.MustQuery("select job_info from mysql.analyze_jobs where table_schema = 'test' and table_name = 't'").Sort().Check(
 		testkit.Rows(
 			"analyze index idx_c",
-			"analyze table columns a, b with 256 buckets, 100 topn, 1 samplerate",
+			"analyze table index idx_b, columns a, b with 256 buckets, 100 topn, 1 samplerate",
 		))
 
 	is := dom.InfoSchema()
@@ -2914,7 +2914,7 @@ func TestAnalyzeMVIndex(t *testing.T) {
 	// 2. analyze and check analyze jobs
 	tk.MustExec("analyze table t with 1 samplerate, 3 topn")
 	tk.MustQuery("select id, table_schema, table_name, partition_name, job_info, processed_rows, state from mysql.analyze_jobs order by id").
-		Check(testkit.Rows("1 test t  analyze table columns a with 256 buckets, 3 topn, 1 samplerate 27 finished",
+		Check(testkit.Rows("1 test t  analyze table index ia, column a with 256 buckets, 3 topn, 1 samplerate 27 finished",
 			"2 test t  analyze index ij_signed 190 finished",
 			"3 test t  analyze index ij_unsigned 135 finished",
 			"4 test t  analyze index ij_double 154 finished",

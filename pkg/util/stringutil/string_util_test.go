@@ -206,6 +206,18 @@ func TestEscapeGlobQuestionMark(t *testing.T) {
 	}
 }
 
+func TestMemoizeStr(t *testing.T) {
+	cnt := 0
+	slowStringFn := func() string {
+		cnt++
+		return "slow"
+	}
+	stringer := MemoizeStr(slowStringFn)
+	require.Equal(t, "slow", stringer.String())
+	require.Equal(t, "slow", stringer.String())
+	require.Equal(t, 1, cnt)
+}
+
 func BenchmarkDoMatch(b *testing.B) {
 	escape := byte('\\')
 	tbl := []struct {

@@ -476,37 +476,6 @@ func getMinSelectivityFromPaths(paths []*util.AccessPath, totalRowCount float64)
 }
 
 // DeriveStats implements LogicalPlan DeriveStats interface.
-func (ts *LogicalTableScan) DeriveStats(_ []*property.StatsInfo, _ *expression.Schema, _ []*expression.Schema, _ [][]*expression.Column) (_ *property.StatsInfo, err error) {
-	ts.Source.initStats(nil)
-	// PushDownNot here can convert query 'not (a != 1)' to 'a = 1'.
-	exprCtx := ts.SCtx().GetExprCtx()
-	for i, expr := range ts.AccessConds {
-		// TODO The expressions may be shared by TableScan and several IndexScans, there would be redundant
-		// `PushDownNot` function call in multiple `DeriveStats` then.
-		ts.AccessConds[i] = expression.PushDownNot(exprCtx, expr)
-	}
-	ts.SetStats(ts.Source.deriveStatsByFilter(ts.AccessConds, nil))
-	// ts.Handle could be nil if PK is Handle, and PK column has been pruned.
-	// TODO: support clustered index.
-	if ts.HandleCols != nil {
-		// TODO: restrict mem usage of table ranges.
-		ts.Ranges, _, _, err = ranger.BuildTableRange(ts.AccessConds, ts.SCtx().GetRangerCtx(), ts.HandleCols.GetCol(0).RetType, 0)
-	} else {
-		isUnsigned := false
-		if ts.Source.TableInfo.PKIsHandle {
-			if pkColInfo := ts.Source.TableInfo.GetPkColInfo(); pkColInfo != nil {
-				isUnsigned = mysql.HasUnsignedFlag(pkColInfo.GetFlag())
-			}
-		}
-		ts.Ranges = ranger.FullIntRange(isUnsigned)
-	}
-	if err != nil {
-		return nil, err
-	}
-	return ts.StatsInfo(), nil
-}
-
-// DeriveStats implements LogicalPlan DeriveStats interface.
 func (is *LogicalIndexScan) DeriveStats(_ []*property.StatsInfo, selfSchema *expression.Schema, _ []*expression.Schema, _ [][]*expression.Column) (*property.StatsInfo, error) {
 	is.Source.initStats(nil)
 	exprCtx := is.SCtx().GetExprCtx()

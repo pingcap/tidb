@@ -80,12 +80,13 @@ go_rules_dependencies()
 go_download_sdk(
     name = "go_sdk",
     urls = [
+        "https://cache.hawkingrei.com/golang/{}",
         "http://ats.apps.svc/golang/{}",
         "http://bazel-cache.pingcap.net:8080/golang/{}",
         "https://mirrors.aliyun.com/golang/{}",
         "https://dl.google.com/go/{}",
     ],
-    version = "1.21.11",
+    version = "1.21.12",
 )
 
 go_register_toolchains(

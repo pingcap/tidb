@@ -29,6 +29,10 @@ func TestFixedOffsetInRowLayout(t *testing.T) {
 	require.Equal(t, 8, sizeOfLengthField)
 }
 
+func TestUintptrCanHoldPointer(t *testing.T) {
+	require.Equal(t, true, sizeOfUintptr >= sizeOfUnsafePointer)
+}
+
 func TestJoinTableMetaKeyMode(t *testing.T) {
 	tinyTp := types.NewFieldType(mysql.TypeTiny)
 	intTp := types.NewFieldType(mysql.TypeLonglong)
