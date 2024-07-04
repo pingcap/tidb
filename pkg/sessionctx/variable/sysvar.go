@@ -3255,7 +3255,7 @@ var defaultSysVars = []*SysVar{
 			if ok {
 				return normalizedValue, nil
 			}
-			errMsg := fmt.Sprintf("incorrect value: %s for %s. valid values are: %s",
+			errMsg := fmt.Sprintf("incorrect value: `%s`. %s options: %s",
 				originalValue, TiFlashHashAggPreAggMode, ValidTiFlashPreAggMode())
 			return normalizedValue, errors.New(errMsg)
 		},
