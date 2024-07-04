@@ -280,12 +280,14 @@ func (w *worker) onRecoverSchema(d *ddlCtx, t *meta.Meta, job *model.Job) (ver i
 			snapMeta := meta.NewSnapshotMeta(snap)
 			tables, err2 := snapMeta.ListTables(job.SchemaID)
 			if err2 != nil {
+				job.State = model.JobStateCancelled
 				return ver, errors.Trace(err2)
 			}
 			recoverTbls = make([]*RecoverInfo, 0, len(tables))
 			for _, tblInfo := range tables {
 				autoIDs, err3 := snapMeta.GetAutoIDAccessors(job.SchemaID, tblInfo.ID).Get()
 				if err3 != nil {
+					job.State = model.JobStateCancelled
 					return ver, errors.Trace(err3)
 				}
 				recoverTbls = append(recoverTbls, &RecoverInfo{
