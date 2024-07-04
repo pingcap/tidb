@@ -716,7 +716,7 @@ func parseParamTypes(sctx sessionctx.Context, params []expression.Expression) (p
 }
 
 // matchCachedPlan checks whether this plan is matched with these match-options.
-func matchCachedPlan(sctx sessionctx.Context, value *PlanCacheValue, matchOpts *PlanCacheMatchOpts) bool {
+func matchCachedPlan(_ sessionctx.Context, value *PlanCacheValue, matchOpts *PlanCacheMatchOpts) bool {
 	if matchOpts == nil { // if PointGet, the matchOpts is nil
 		return true
 	}
