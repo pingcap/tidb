@@ -51,12 +51,6 @@ func (p LogicalUnionScan) Init(ctx base.PlanContext, qbOffset int) *LogicalUnion
 }
 
 // Init initializes LogicalProjection.
-func (p LogicalProjection) Init(ctx base.PlanContext, qbOffset int) *LogicalProjection {
-	p.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(ctx, plancodec.TypeProj, &p, qbOffset)
-	return &p
-}
-
-// Init initializes LogicalProjection.
 func (p LogicalExpand) Init(ctx base.PlanContext, offset int) *LogicalExpand {
 	p.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(ctx, plancodec.TypeExpand, &p, offset)
 	return &p

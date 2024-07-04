@@ -13,25 +13,3 @@
 // limitations under the License.
 
 package core
-
-import (
-	"github.com/pingcap/tidb/pkg/planner/util"
-	"github.com/pingcap/tidb/pkg/util/plancodec"
-)
-
-// HashCode implements LogicalPlan interface.
-func (p *LogicalProjection) HashCode() []byte {
-	// PlanType + SelectOffset + ExprNum + [Exprs]
-	// Expressions are commonly `Column`s, whose hashcode has the length 9, so
-	// we pre-alloc 10 bytes for each expr's hashcode.
-	result := make([]byte, 0, 12+len(p.Exprs)*10)
-	result = util.EncodeIntAsUint32(result, plancodec.TypeStringToPhysicalID(p.TP()))
-	result = util.EncodeIntAsUint32(result, p.QueryBlockOffset())
-	result = util.EncodeIntAsUint32(result, len(p.Exprs))
-	for _, expr := range p.Exprs {
-		exprHashCode := expr.HashCode()
-		result = util.EncodeIntAsUint32(result, len(exprHashCode))
-		result = append(result, exprHashCode...)
-	}
-	return result
-}

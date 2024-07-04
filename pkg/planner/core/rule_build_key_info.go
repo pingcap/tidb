@@ -72,45 +72,6 @@ func checkMaxOneRowCond(eqColIDs map[int64]struct{}, childSchema *expression.Sch
 }
 
 // BuildKeyInfo implements base.LogicalPlan BuildKeyInfo interface.
-// A bijection exists between columns of a projection's schema and this projection's Exprs.
-// Sometimes we need a schema made by expr of Exprs to convert a column in child's schema to a column in this projection's Schema.
-func (p *LogicalProjection) buildSchemaByExprs(selfSchema *expression.Schema) *expression.Schema {
-	schema := expression.NewSchema(make([]*expression.Column, 0, selfSchema.Len())...)
-	for _, expr := range p.Exprs {
-		if col, isCol := expr.(*expression.Column); isCol {
-			schema.Append(col)
-		} else {
-			// If the expression is not a column, we add a column to occupy the position.
-			schema.Append(&expression.Column{
-				UniqueID: p.SCtx().GetSessionVars().AllocPlanColumnID(),
-				RetType:  expr.GetType(p.SCtx().GetExprCtx().GetEvalCtx()),
-			})
-		}
-	}
-	return schema
-}
-
-// BuildKeyInfo implements base.LogicalPlan BuildKeyInfo interface.
-func (p *LogicalProjection) BuildKeyInfo(selfSchema *expression.Schema, childSchema []*expression.Schema) {
-	// `LogicalProjection` use schema from `Exprs` to build key info. See `buildSchemaByExprs`.
-	// So call `baseLogicalPlan.BuildKeyInfo` here to avoid duplicated building key info.
-	p.BaseLogicalPlan.BuildKeyInfo(selfSchema, childSchema)
-	selfSchema.Keys = nil
-	schema := p.buildSchemaByExprs(selfSchema)
-	for _, key := range childSchema[0].Keys {
-		indices := schema.ColumnsIndices(key)
-		if indices == nil {
-			continue
-		}
-		newKey := make([]*expression.Column, 0, len(key))
-		for _, i := range indices {
-			newKey = append(newKey, selfSchema.Columns[i])
-		}
-		selfSchema.Keys = append(selfSchema.Keys, newKey)
-	}
-}
-
-// BuildKeyInfo implements base.LogicalPlan BuildKeyInfo interface.
 func (p *LogicalJoin) BuildKeyInfo(selfSchema *expression.Schema, childSchema []*expression.Schema) {
 	p.LogicalSchemaProducer.BuildKeyInfo(selfSchema, childSchema)
 	switch p.JoinType {

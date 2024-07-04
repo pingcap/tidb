@@ -168,42 +168,6 @@ func (logicalJoin *LogicalJoin) ConstantPropagation(parentPlan base.LogicalPlan,
 	return addCandidateSelection(logicalJoin, currentChildIdx, parentPlan, candidateConstantPredicates, opt)
 }
 
-// PullUpConstantPredicates implements LogicalPlan interface.
-func (projection *LogicalProjection) PullUpConstantPredicates() []expression.Expression {
-	// projection has no column expr
-	if !canProjectionBeEliminatedLoose(projection) {
-		return nil
-	}
-	candidateConstantPredicates := projection.Children()[0].PullUpConstantPredicates()
-	// replace predicate by projection expr
-	// candidate predicate : a=1
-	// projection: a as a'
-	// result predicate : a'=1
-	replace := make(map[string]*expression.Column)
-	for i, expr := range projection.Exprs {
-		replace[string(expr.HashCode())] = projection.Schema().Columns[i]
-	}
-	result := make([]expression.Expression, 0, len(candidateConstantPredicates))
-	for _, predicate := range candidateConstantPredicates {
-		// The column of predicate must exist in projection exprs
-		columns := expression.ExtractColumns(predicate)
-		// The number of columns in candidate predicate must be 1.
-		if len(columns) != 1 {
-			continue
-		}
-		if replace[string(columns[0].HashCode())] == nil {
-			// The column of predicate will not appear on the upper level
-			// This means that this predicate does not apply to the constant propagation optimization rule
-			// For example: select * from t, (select b from s where s.a=1) tmp where t.b=s.b
-			continue
-		}
-		clonePredicate := predicate.Clone()
-		ResolveExprAndReplace(clonePredicate, replace)
-		result = append(result, clonePredicate)
-	}
-	return result
-}
-
 // validComparePredicate checks if the predicate is an expression like [column '>'|'>='|'<'|'<='|'=' constant].
 // return param1: return true, if the predicate is a compare constant predicate.
 // return param2: return the column side of predicate.
