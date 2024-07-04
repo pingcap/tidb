@@ -29,11 +29,8 @@ go_library(
         "logical_partition_union_all.go",
         "logical_plan_builder.go",
         "logical_plans.go",
-<<<<<<< HEAD
-        "logical_selection.go",
-=======
         "logical_projection.go",
->>>>>>> 59f68db6df (.)
+        "logical_selection.go",
         "logical_sort.go",
         "logical_table_dual.go",
         "logical_table_scan.go",
