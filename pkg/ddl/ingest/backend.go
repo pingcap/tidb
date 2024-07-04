@@ -17,7 +17,6 @@ package ingest
 import (
 	"context"
 	"fmt"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -135,11 +134,11 @@ func (bc *litBackendCtx) handleErrorAfterCollectRemoteDuplicateRows(
 			if len(tErr.Args()) != 4 {
 				return errors.Trace(tikv.ErrKeyExists)
 			}
-			indexName := tErr.Args()[1]
 			//nolint: forcetypeassert
-			valueStr := tErr.Args()[2].([]string)
-
-			return errors.Trace(tikv.ErrKeyExists.FastGenByArgs(strings.Join(valueStr, "-"), indexName))
+			indexName := tErr.Args()[1].(string)
+			//nolint: forcetypeassert
+			keyCols := tErr.Args()[2].([]string)
+			return errors.Trace(tikv.GenKeyExistsErr(keyCols, indexName))
 		}
 		return errors.Trace(tikv.ErrKeyExists)
 	}
