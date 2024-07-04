@@ -1271,7 +1271,7 @@ const (
 	DefTiDBDDLReorgWorkerCount              = 4
 	DefTiDBDDLReorgBatchSize                = 256
 	DefTiDBDDLFlashbackConcurrency          = 64
-	DefTiDBDDLErrorCountLimit               = 512
+	DefTiDBDDLErrorCountLimit               = 10 // TODO(lance6716): revert it before merge
 	DefTiDBMaxDeltaSchemaCount              = 1024
 	DefTiDBPlacementMode                    = PlacementModeStrict
 	DefTiDBEnableAutoIncrementInGenerated   = false
