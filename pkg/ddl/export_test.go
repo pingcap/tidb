@@ -55,7 +55,7 @@ func FetchChunk4Test(copCtx copr.CopContext, tbl table.PhysicalTable, startKey, 
 		ctx.Store = store
 		return ctx, nil
 	}, 8, 8, 0)
-	sessPool := session.NewSessionPool(resPool, store)
+	sessPool := session.NewSessionPool(resPool)
 	pool := newCopReqSenderPool(context.Background(), copCtx, store, taskCh, sessPool, nil)
 	pool.chunkSender = &resultChanForTest{ch: resultCh}
 	pool.adjustSize(1)

@@ -51,6 +51,13 @@ type schemaItem struct {
 	tomb          bool
 }
 
+type schemaIDName struct {
+	schemaVersion int64
+	id            int64
+	name          string
+	tomb          bool
+}
+
 func (si *schemaItem) Name() string {
 	return si.dbInfo.Name.L
 }
@@ -85,6 +92,10 @@ type Data struct {
 	// For the SchemaByName API, sorted by {dbName, schemaVersion} => model.DBInfo
 	// Stores the full data in memory.
 	schemaMap *btree.BTreeG[schemaItem]
+
+	// For the SchemaByID API, sorted by {id, schemaVersion}
+	// Stores only id, name and schemaVersion in memory.
+	schemaID2Name *btree.BTreeG[schemaIDName]
 
 	tableCache *Sieve[tableCacheKey, table.Table]
 
@@ -171,17 +182,24 @@ func NewData() *Data {
 		byID:              btree.NewBTreeG[tableItem](compareByID),
 		byName:            btree.NewBTreeG[tableItem](compareByName),
 		schemaMap:         btree.NewBTreeG[schemaItem](compareSchemaItem),
+		schemaID2Name:     btree.NewBTreeG[schemaIDName](compareSchemaByID),
 		tableCache:        newSieve[tableCacheKey, table.Table](1024 * 1024 * size.MB),
 		specials:          make(map[string]*schemaTables),
 		pid2tid:           btree.NewBTreeG[partitionItem](comparePartitionItem),
 		tableInfoResident: btree.NewBTreeG[tableInfoItem](compareTableInfoItem),
 	}
+	ret.tableCache.SetStatusHook(newSieveStatusHookImpl())
 	return ret
 }
 
 // CacheCapacity is exported for testing.
 func (isd *Data) CacheCapacity() uint64 {
 	return isd.tableCache.Capacity()
+}
+
+// SetCacheCapacity sets the cache capacity size in bytes.
+func (isd *Data) SetCacheCapacity(capacity uint64) {
+	isd.tableCache.SetCapacityAndWaitEvict(capacity)
 }
 
 func (isd *Data) add(item tableItem, tbl table.Table) {
@@ -210,6 +228,7 @@ func (isd *Data) addSpecialDB(di *model.DBInfo, tables *schemaTables) {
 
 func (isd *Data) addDB(schemaVersion int64, dbInfo *model.DBInfo) {
 	dbInfo.Tables = nil
+	isd.schemaID2Name.Set(schemaIDName{schemaVersion: schemaVersion, id: dbInfo.ID, name: dbInfo.Name.O})
 	isd.schemaMap.Set(schemaItem{schemaVersion: schemaVersion, dbInfo: dbInfo})
 }
 
@@ -229,6 +248,7 @@ func (isd *Data) remove(item tableItem) {
 func (isd *Data) deleteDB(dbInfo *model.DBInfo, schemaVersion int64) {
 	item := schemaItem{schemaVersion: schemaVersion, dbInfo: dbInfo, tomb: true}
 	isd.schemaMap.Set(item)
+	isd.schemaID2Name.Set(schemaIDName{schemaVersion: schemaVersion, id: dbInfo.ID, name: dbInfo.Name.O, tomb: true})
 }
 
 func compareByID(a, b tableItem) bool {
@@ -292,6 +312,16 @@ func compareSchemaItem(a, b schemaItem) bool {
 		return true
 	}
 	if a.Name() > b.Name() {
+		return false
+	}
+	return a.schemaVersion < b.schemaVersion
+}
+
+func compareSchemaByID(a, b schemaIDName) bool {
+	if a.id < b.id {
+		return true
+	}
+	if a.id > b.id {
 		return false
 	}
 	return a.schemaVersion < b.schemaVersion
@@ -640,8 +670,6 @@ func (is *infoschemaV2) TableExists(schema, table model.CIStr) bool {
 }
 
 func (is *infoschemaV2) SchemaByID(id int64) (*model.DBInfo, bool) {
-	var ok bool
-	var dbInfo *model.DBInfo
 	if isTableVirtual(id) {
 		for _, st := range is.Data.specials {
 			if st.dbInfo.ID == id {
@@ -651,18 +679,29 @@ func (is *infoschemaV2) SchemaByID(id int64) (*model.DBInfo, bool) {
 		// Something wrong?
 		return nil, false
 	}
-
-	is.Data.schemaMap.Reverse(func(item schemaItem) bool {
-		if item.dbInfo.ID == id {
-			if item.schemaVersion <= is.infoSchema.schemaMetaVersion {
-				ok = !item.tomb
-				dbInfo = item.dbInfo
-				return false
+	var ok bool
+	var name string
+	is.Data.schemaID2Name.Descend(schemaIDName{
+		id:            id,
+		schemaVersion: math.MaxInt64,
+	}, func(item schemaIDName) bool {
+		if item.id != id {
+			ok = false
+			return false
+		}
+		if item.schemaVersion <= is.infoSchema.schemaMetaVersion {
+			if !item.tomb { // If the item is a tomb record, the database is dropped.
+				ok = true
+				name = item.name
 			}
+			return false
 		}
 		return true
 	})
-	return dbInfo, ok
+	if !ok {
+		return nil, false
+	}
+	return is.SchemaByName(model.NewCIStr(name))
 }
 
 func (is *infoschemaV2) SchemaTables(schema model.CIStr) (tables []table.Table) {
@@ -1023,10 +1062,10 @@ func (b *bundleInfoBuilder) completeUpdateTablesV2(is *infoschemaV2) {
 		return
 	}
 
-	// TODO: This is quite inefficient! we need some better way or avoid this API.
-	for _, dbInfo := range is.AllSchemas() {
-		for _, tbl := range is.SchemaTables(dbInfo.Name) {
-			tblInfo := tbl.Meta()
+	dbs := is.ListTablesWithSpecialAttribute(AllSpecialAttribute)
+	for _, db := range dbs {
+		for _, tbl := range db.TableInfos {
+			tblInfo := tbl
 			if tblInfo.PlacementPolicyRef != nil {
 				if _, ok := b.updatePolicies[tblInfo.PlacementPolicyRef.ID]; ok {
 					b.markTableBundleShouldUpdate(tblInfo.ID)
@@ -1071,8 +1110,13 @@ var PlacementPolicyAttribute specialAttributeFilter = func(t *model.TableInfo) b
 	return false
 }
 
+// PartitionAttribute is the Partition attribute filter used by ListTablesWithSpecialAttribute.
+var PartitionAttribute specialAttributeFilter = func(t *model.TableInfo) bool {
+	return t.GetPartitionInfo() != nil
+}
+
 func hasSpecialAttributes(t *model.TableInfo) bool {
-	return TTLAttribute(t) || TiFlashAttribute(t) || PlacementPolicyAttribute(t)
+	return TTLAttribute(t) || TiFlashAttribute(t) || PlacementPolicyAttribute(t) || PartitionAttribute(t)
 }
 
 // AllSpecialAttribute marks a model.TableInfo with any special attributes.

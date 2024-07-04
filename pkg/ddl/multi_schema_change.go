@@ -15,7 +15,10 @@
 package ddl
 
 import (
+	"fmt"
+
 	"github.com/pingcap/errors"
+	ddllogutil "github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -23,10 +26,12 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/intest"
+	"go.uber.org/zap"
 )
 
-func (d *ddl) MultiSchemaChange(ctx sessionctx.Context, ti ast.Ident) error {
-	subJobs := ctx.GetSessionVars().StmtCtx.MultiSchemaInfo.SubJobs
+func (d *ddl) MultiSchemaChange(ctx sessionctx.Context, ti ast.Ident, info *model.MultiSchemaInfo) error {
+	subJobs := info.SubJobs
 	if len(subJobs) == 0 {
 		return nil
 	}
@@ -35,18 +40,86 @@ func (d *ddl) MultiSchemaChange(ctx sessionctx.Context, ti ast.Ident) error {
 		return errors.Trace(err)
 	}
 
+	logFn := ddllogutil.DDLLogger().Warn
+	if intest.InTest {
+		logFn = ddllogutil.DDLLogger().Fatal
+	}
+
+	var involvingSchemaInfo []model.InvolvingSchemaInfo
+	for _, j := range subJobs {
+		switch j.Type {
+		case model.ActionAlterTablePlacement:
+			ref, ok := j.Args[0].(*model.PolicyRefInfo)
+			if !ok {
+				logFn("unexpected type of policy reference info",
+					zap.Any("args[0]", j.Args[0]),
+					zap.String("type", fmt.Sprintf("%T", j.Args[0])))
+				continue
+			}
+			if ref == nil {
+				continue
+			}
+			involvingSchemaInfo = append(involvingSchemaInfo, model.InvolvingSchemaInfo{
+				Policy: ref.Name.L,
+				Mode:   model.SharedInvolving,
+			})
+		case model.ActionAddForeignKey:
+			ref, ok := j.Args[0].(*model.FKInfo)
+			if !ok {
+				logFn("unexpected type of foreign key info",
+					zap.Any("args[0]", j.Args[0]),
+					zap.String("type", fmt.Sprintf("%T", j.Args[0])))
+				continue
+			}
+			involvingSchemaInfo = append(involvingSchemaInfo, model.InvolvingSchemaInfo{
+				Database: ref.RefSchema.L,
+				Table:    ref.RefTable.L,
+				Mode:     model.SharedInvolving,
+			})
+		case model.ActionAlterTablePartitionPlacement:
+			if len(j.Args) < 2 {
+				logFn("unexpected number of arguments for partition placement",
+					zap.Int("len(args)", len(j.Args)),
+					zap.Any("args", j.Args))
+				continue
+			}
+			ref, ok := j.Args[1].(*model.PolicyRefInfo)
+			if !ok {
+				logFn("unexpected type of policy reference info",
+					zap.Any("args[0]", j.Args[0]),
+					zap.String("type", fmt.Sprintf("%T", j.Args[0])))
+				continue
+			}
+			if ref == nil {
+				continue
+			}
+			involvingSchemaInfo = append(involvingSchemaInfo, model.InvolvingSchemaInfo{
+				Policy: ref.Name.L,
+				Mode:   model.SharedInvolving,
+			})
+		}
+	}
+
+	if len(involvingSchemaInfo) > 0 {
+		involvingSchemaInfo = append(involvingSchemaInfo, model.InvolvingSchemaInfo{
+			Database: schema.Name.L,
+			Table:    t.Meta().Name.L,
+		})
+	}
+
 	job := &model.Job{
-		SchemaID:        schema.ID,
-		TableID:         t.Meta().ID,
-		SchemaName:      schema.Name.L,
-		TableName:       t.Meta().Name.L,
-		Type:            model.ActionMultiSchemaChange,
-		BinlogInfo:      &model.HistoryInfo{},
-		Args:            nil,
-		MultiSchemaInfo: ctx.GetSessionVars().StmtCtx.MultiSchemaInfo,
-		ReorgMeta:       nil,
-		CDCWriteSource:  ctx.GetSessionVars().CDCWriteSource,
-		SQLMode:         ctx.GetSessionVars().SQLMode,
+		SchemaID:            schema.ID,
+		TableID:             t.Meta().ID,
+		SchemaName:          schema.Name.L,
+		TableName:           t.Meta().Name.L,
+		Type:                model.ActionMultiSchemaChange,
+		BinlogInfo:          &model.HistoryInfo{},
+		Args:                nil,
+		MultiSchemaInfo:     info,
+		ReorgMeta:           nil,
+		CDCWriteSource:      ctx.GetSessionVars().CDCWriteSource,
+		InvolvingSchemaInfo: involvingSchemaInfo,
+		SQLMode:             ctx.GetSessionVars().SQLMode,
 	}
 	if containsDistTaskSubJob(subJobs) {
 		job.ReorgMeta, err = newReorgMetaFromVariables(job, ctx)
@@ -57,12 +130,11 @@ func (d *ddl) MultiSchemaChange(ctx sessionctx.Context, ti ast.Ident) error {
 		job.ReorgMeta = NewDDLReorgMeta(ctx)
 	}
 
-	err = checkMultiSchemaInfo(ctx.GetSessionVars().StmtCtx.MultiSchemaInfo, t)
+	err = checkMultiSchemaInfo(info, t)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	mergeAddIndex(ctx.GetSessionVars().StmtCtx.MultiSchemaInfo)
-	ctx.GetSessionVars().StmtCtx.MultiSchemaInfo = nil
+	mergeAddIndex(info)
 	err = d.DoDDLJob(ctx, job)
 	return d.callHookOnChanged(job, err)
 }

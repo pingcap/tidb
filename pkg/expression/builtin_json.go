@@ -18,7 +18,6 @@ import (
 	"bytes"
 	"context"
 	goJSON "encoding/json"
-	"strconv"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -151,7 +150,7 @@ func (c *jsonExtractFunctionClass) verifyArgs(ctx EvalContext, args []Expression
 		return err
 	}
 	if evalType := args[0].GetType(ctx).EvalType(); evalType != types.ETString && evalType != types.ETJson {
-		return ErrInvalidTypeForJSON.GenWithStackByArgs(0, "json_extract")
+		return ErrInvalidTypeForJSON.GenWithStackByArgs(1, "json_extract")
 	}
 	return nil
 }
@@ -451,7 +450,7 @@ func (c *jsonMergeFunctionClass) verifyArgs(ctx EvalContext, args []Expression) 
 	}
 	for i, arg := range args {
 		if evalType := arg.GetType(ctx).EvalType(); evalType != types.ETString && evalType != types.ETJson {
-			return ErrInvalidTypeForJSON.GenWithStackByArgs(i, "json_merge")
+			return ErrInvalidTypeForJSON.GenWithStackByArgs(i+1, "json_merge")
 		}
 	}
 	return nil
@@ -559,8 +558,7 @@ func (b *builtinJSONObjectSig) evalJSON(ctx EvalContext, row chunk.Row) (res typ
 				return res, true, err
 			}
 			if isNull {
-				err = errors.New("JSON documents may not contain NULL member names")
-				return res, true, err
+				return res, true, types.ErrJSONDocumentNULLKey
 			}
 		} else {
 			value, isNull, err = arg.EvalJSON(ctx, row)
@@ -652,7 +650,7 @@ func (c *jsonContainsPathFunctionClass) verifyArgs(ctx EvalContext, args []Expre
 		return err
 	}
 	if evalType := args[0].GetType(ctx).EvalType(); evalType != types.ETString && evalType != types.ETJson {
-		return ErrInvalidTypeForJSON.GenWithStackByArgs(0, "json_contains_path")
+		return ErrInvalidTypeForJSON.GenWithStackByArgs(1, "json_contains_path")
 	}
 	return nil
 }
@@ -685,7 +683,7 @@ func (b *builtinJSONContainsPathSig) evalInt(ctx EvalContext, row chunk.Row) (re
 	}
 	containType = strings.ToLower(containType)
 	if containType != types.JSONContainsPathAll && containType != types.JSONContainsPathOne {
-		return res, true, types.ErrInvalidJSONContainsPathType
+		return res, true, types.ErrJSONBadOneOrAllArg.GenWithStackByArgs("json_contains_path")
 	}
 	var pathExpr types.JSONPathExpression
 	contains := int64(1)
@@ -768,7 +766,7 @@ func (c *jsonMemberOfFunctionClass) verifyArgs(ctx EvalContext, args []Expressio
 		return err
 	}
 	if evalType := args[1].GetType(ctx).EvalType(); evalType != types.ETJson && evalType != types.ETString {
-		return types.ErrInvalidJSONData.GenWithStackByArgs(2, "member of")
+		return ErrInvalidTypeForJSON.GenWithStackByArgs(2, "member of")
 	}
 	return nil
 }
@@ -831,10 +829,10 @@ func (c *jsonContainsFunctionClass) verifyArgs(ctx EvalContext, args []Expressio
 		return err
 	}
 	if evalType := args[0].GetType(ctx).EvalType(); evalType != types.ETJson && evalType != types.ETString {
-		return types.ErrInvalidJSONData.GenWithStackByArgs(1, "json_contains")
+		return ErrInvalidTypeForJSON.GenWithStackByArgs(1, "json_contains")
 	}
 	if evalType := args[1].GetType(ctx).EvalType(); evalType != types.ETJson && evalType != types.ETString {
-		return types.ErrInvalidJSONData.GenWithStackByArgs(2, "json_contains")
+		return ErrInvalidTypeForJSON.GenWithStackByArgs(2, "json_contains")
 	}
 	return nil
 }
@@ -911,10 +909,10 @@ func (c *jsonOverlapsFunctionClass) verifyArgs(ctx EvalContext, args []Expressio
 		return err
 	}
 	if evalType := args[0].GetType(ctx).EvalType(); evalType != types.ETJson && evalType != types.ETString {
-		return types.ErrInvalidJSONData.GenWithStackByArgs(1, "json_overlaps")
+		return ErrInvalidTypeForJSON.GenWithStackByArgs(1, "json_overlaps")
 	}
 	if evalType := args[1].GetType(ctx).EvalType(); evalType != types.ETJson && evalType != types.ETString {
-		return types.ErrInvalidJSONData.GenWithStackByArgs(2, "json_overlaps")
+		return ErrInvalidTypeForJSON.GenWithStackByArgs(2, "json_overlaps")
 	}
 	return nil
 }
@@ -1116,7 +1114,7 @@ func (b *builtinJSONArrayAppendSig) appendJSONArray(res types.BinaryJSON, p stri
 	// We should do the following checks to get correct values in res.Extract
 	pathExpr, err := types.ParseJSONPathExpr(p)
 	if err != nil {
-		return res, true, types.ErrInvalidJSONPath.GenWithStackByArgs(p)
+		return res, true, err
 	}
 	if pathExpr.CouldMatchMultipleValues() {
 		return res, true, types.ErrInvalidJSONPathMultipleSelection
@@ -1197,7 +1195,7 @@ func (b *builtinJSONArrayInsertSig) evalJSON(ctx EvalContext, row chunk.Row) (re
 
 		pathExpr, err := types.ParseJSONPathExpr(s)
 		if err != nil {
-			return res, true, types.ErrInvalidJSONPath.GenWithStackByArgs(s)
+			return res, true, err
 		}
 		if pathExpr.CouldMatchMultipleValues() {
 			return res, true, types.ErrInvalidJSONPathMultipleSelection
@@ -1230,7 +1228,7 @@ func (c *jsonMergePatchFunctionClass) verifyArgs(ctx EvalContext, args []Express
 	}
 	for i, arg := range args {
 		if evalType := arg.GetType(ctx).EvalType(); evalType != types.ETString && evalType != types.ETJson {
-			return ErrInvalidTypeForJSON.GenWithStackByArgs(i, "json_merge_patch")
+			return ErrInvalidTypeForJSON.GenWithStackByArgs(i+1, "json_merge_patch")
 		}
 	}
 	return nil
@@ -1299,7 +1297,7 @@ func (c *jsonMergePreserveFunctionClass) verifyArgs(ctx EvalContext, args []Expr
 	}
 	for i, arg := range args {
 		if evalType := arg.GetType(ctx).EvalType(); evalType != types.ETString && evalType != types.ETJson {
-			return ErrInvalidTypeForJSON.GenWithStackByArgs(i, "json_merge_preserve")
+			return ErrInvalidTypeForJSON.GenWithStackByArgs(i+1, "json_merge_preserve")
 		}
 	}
 	return nil
@@ -1414,7 +1412,14 @@ func (b *builtinJSONQuoteSig) evalString(ctx EvalContext, row chunk.Row) (string
 	if isNull || err != nil {
 		return "", isNull, err
 	}
-	return strconv.Quote(str), false, nil
+	buffer := &bytes.Buffer{}
+	encoder := goJSON.NewEncoder(buffer)
+	encoder.SetEscapeHTML(false)
+	err = encoder.Encode(str)
+	if err != nil {
+		return "", isNull, err
+	}
+	return string(bytes.TrimSuffix(buffer.Bytes(), []byte("\n"))), false, nil
 }
 
 type jsonSearchFunctionClass struct {
@@ -1436,7 +1441,7 @@ func (c *jsonSearchFunctionClass) verifyArgs(ctx EvalContext, args []Expression)
 		return err
 	}
 	if evalType := args[0].GetType(ctx).EvalType(); evalType != types.ETString && evalType != types.ETJson {
-		return ErrInvalidTypeForJSON.GenWithStackByArgs(0, "json_search")
+		return ErrInvalidTypeForJSON.GenWithStackByArgs(1, "json_search")
 	}
 	return nil
 }
@@ -1645,7 +1650,7 @@ func (c *jsonKeysFunctionClass) verifyArgs(ctx EvalContext, args []Expression) e
 		return err
 	}
 	if evalType := args[0].GetType(ctx).EvalType(); evalType != types.ETString && evalType != types.ETJson {
-		return ErrInvalidTypeForJSON.GenWithStackByArgs(0, "json_keys")
+		return ErrInvalidTypeForJSON.GenWithStackByArgs(1, "json_keys")
 	}
 	return nil
 }
@@ -1806,8 +1811,39 @@ type jsonSchemaValidFunctionClass struct {
 	baseFunctionClass
 }
 
+func (c *jsonSchemaValidFunctionClass) verifyArgs(ctx EvalContext, args []Expression) error {
+	if err := c.baseFunctionClass.verifyArgs(args); err != nil {
+		return err
+	}
+	if evalType := args[0].GetType(ctx).EvalType(); evalType != types.ETString && evalType != types.ETJson {
+		return ErrInvalidTypeForJSON.GenWithStackByArgs(1, "json_schema_valid")
+	}
+	if evalType := args[1].GetType(ctx).EvalType(); evalType != types.ETString && evalType != types.ETJson {
+		return ErrInvalidTypeForJSON.GenWithStackByArgs(2, "json_schema_valid")
+	}
+	if c, ok := args[0].(*Constant); ok {
+		// If args[0] is NULL, then don't check the length of *both* arguments.
+		// JSON_SCHEMA_VALID(NULL,NULL) -> NULL
+		// JSON_SCHEMA_VALID(NULL,'') -> NULL
+		// JSON_SCHEMA_VALID('',NULL) -> ErrInvalidJSONTextInParam
+		if !c.Value.IsNull() {
+			if len(c.Value.GetBytes()) == 0 {
+				return types.ErrInvalidJSONTextInParam.GenWithStackByArgs(
+					1, "json_schema_valid", "The document is empty.", 0)
+			}
+			if c1, ok := args[1].(*Constant); ok {
+				if !c1.Value.IsNull() && len(c1.Value.GetBytes()) == 0 {
+					return types.ErrInvalidJSONTextInParam.GenWithStackByArgs(
+						2, "json_schema_valid", "The document is empty.", 0)
+				}
+			}
+		}
+	}
+	return nil
+}
+
 func (c *jsonSchemaValidFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
-	if err := c.verifyArgs(args); err != nil {
+	if err := c.verifyArgs(ctx.GetEvalCtx(), args); err != nil {
 		return nil, err
 	}
 	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETJson, types.ETJson)
@@ -1853,7 +1889,12 @@ func (b *builtinJSONSchemaValidSig) evalInt(ctx EvalContext, row chunk.Row) (res
 				return jsonschema.Schema{}, err
 			}
 			if err := goJSON.Unmarshal(dataBin, &schema); err != nil {
-				return jsonschema.Schema{}, err
+				if _, ok := err.(*goJSON.UnmarshalTypeError); ok {
+					return jsonschema.Schema{},
+						types.ErrInvalidJSONType.GenWithStackByArgs(1, "json_schema_valid", "object")
+				}
+				return jsonschema.Schema{},
+					types.ErrInvalidJSONType.GenWithStackByArgs(1, "json_schema_valid", err)
 			}
 			return schema, nil
 		})
@@ -1866,7 +1907,12 @@ func (b *builtinJSONSchemaValidSig) evalInt(ctx EvalContext, row chunk.Row) (res
 			return res, false, err
 		}
 		if err := goJSON.Unmarshal(dataBin, &schema); err != nil {
-			return res, false, err
+			if _, ok := err.(*goJSON.UnmarshalTypeError); ok {
+				return res, false,
+					types.ErrInvalidJSONType.GenWithStackByArgs(1, "json_schema_valid", "object")
+			}
+			return res, false,
+				types.ErrInvalidJSONType.GenWithStackByArgs(1, "json_schema_valid", err)
 		}
 	}
 

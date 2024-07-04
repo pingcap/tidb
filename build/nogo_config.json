@@ -69,6 +69,14 @@
       ".*_generated\\.go$": "ignore generated code"
     }
   },
+  "printexpression": {
+    "exclude_files": {
+      "pkg/parser/parser.go": "parser/parser.go code",
+      "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code",
+      "build/linter/printexpression/testdata/": "ignore test code"
+    }
+  },
   "printf": {
     "exclude_files": {
       "pkg/parser/parser.go": "parser/parser.go code",

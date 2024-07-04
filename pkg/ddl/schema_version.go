@@ -385,11 +385,11 @@ func checkAllVersions(ctx context.Context, d *ddlCtx, job *model.Job, latestSche
 }
 
 // waitSchemaSynced handles the following situation:
-// If the job enters a new state, and the worker crashs when it's in the process of waiting for 2 * lease time,
-// Then the worker restarts quickly, we may run the job immediately again,
-// but in this case we don't wait enough 2 * lease time to let other servers update the schema.
-// So here we get the latest schema version to make sure all servers' schema version update to the latest schema version
-// in a cluster, or to wait for 2 * lease time.
+// If the job enters a new state, and the worker crash when it's in the process of
+// version sync, then the worker restarts quickly, we may run the job immediately again,
+// but schema version might not sync.
+// So here we get the latest schema version to make sure all servers' schema version
+// update to the latest schema version in a cluster.
 func waitSchemaSynced(ctx context.Context, d *ddlCtx, job *model.Job, waitTime time.Duration) error {
 	if !job.IsRunning() && !job.IsRollingback() && !job.IsDone() && !job.IsRollbackDone() {
 		return nil

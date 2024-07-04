@@ -38,8 +38,8 @@ func TestSpecialSchemas(t *testing.T) {
 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
 	tk.MustExec("use test")
 
-	tk.MustExec("set @@global.tidb_schema_cache_size = 1024;")
-	tk.MustQuery("select @@global.tidb_schema_cache_size;").Check(testkit.Rows("1024"))
+	tk.MustExec("set @@global.tidb_schema_cache_size = 1073741824;")
+	tk.MustQuery("select @@global.tidb_schema_cache_size;").Check(testkit.Rows("1073741824"))
 	tk.MustExec("create table t (id int);")
 	is := domain.GetDomain(tk.Session()).InfoSchema()
 	isV2, _ := infoschema.IsV2(is)
@@ -247,19 +247,19 @@ func TestTiDBSchemaCacheSizeVariable(t *testing.T) {
 	ok, raw := infoschema.IsV2(is)
 	if ok {
 		val := variable.SchemaCacheSize.Load()
-		tk.MustQuery("select @@global.tidb_schema_cache_size").CheckContain(strconv.FormatInt(val, 10))
+		tk.MustQuery("select @@global.tidb_schema_cache_size").CheckContain(strconv.FormatUint(val, 10))
 
 		// On start, the capacity might not be set correctly because infoschema have not load global variable yet.
 		// cap := raw.Data.CacheCapacity()
 		// require.Equal(t, cap, uint64(val))
 	}
 
-	tk.MustExec("set @@global.tidb_schema_cache_size = 32 * 1024 * 1024")
-	tk.MustQuery("select @@global.tidb_schema_cache_size").CheckContain("33554432")
-	require.Equal(t, variable.SchemaCacheSize.Load(), int64(33554432))
+	tk.MustExec("set @@global.tidb_schema_cache_size = 1024 * 1024 * 1024")
+	tk.MustQuery("select @@global.tidb_schema_cache_size").CheckContain("1073741824")
+	require.Equal(t, variable.SchemaCacheSize.Load(), uint64(1073741824))
 	tk.MustExec("create table trigger_reload (id int)") // need to trigger infoschema rebuild to reset capacity
 	is = dom.InfoSchema()
 	ok, raw = infoschema.IsV2(is)
 	require.True(t, ok)
-	require.Equal(t, raw.Data.CacheCapacity(), uint64(33554432))
+	require.Equal(t, raw.Data.CacheCapacity(), uint64(1073741824))
 }

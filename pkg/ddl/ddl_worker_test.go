@@ -47,16 +47,17 @@ func TestInvalidDDLJob(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, testLease)
 
 	job := &model.Job{
-		SchemaID:   0,
-		TableID:    0,
-		Type:       model.ActionNone,
-		BinlogInfo: &model.HistoryInfo{},
-		Args:       []any{},
+		SchemaID:            0,
+		TableID:             0,
+		Type:                model.ActionNone,
+		BinlogInfo:          &model.HistoryInfo{},
+		Args:                []any{},
+		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{{}},
 	}
 	ctx := testNewContext(store)
 	ctx.SetValue(sessionctx.QueryString, "skip")
 	err := dom.DDL().DoDDLJob(ctx, job)
-	require.Equal(t, err.Error(), "[ddl:8204]invalid ddl job type: none")
+	require.ErrorContains(t, err, "[ddl:8204]invalid ddl job type: none")
 }
 
 func TestAddBatchJobError(t *testing.T) {
@@ -134,7 +135,7 @@ func TestParallelDDL(t *testing.T) {
 	}
 
 	once1 := sync.Once{}
-	tc.OnGetJobBeforeExported = func(string) {
+	tc.OnGetJobBeforeExported = func() {
 		once1.Do(func() {
 			for {
 				tk := testkit.NewTestKit(t, store)

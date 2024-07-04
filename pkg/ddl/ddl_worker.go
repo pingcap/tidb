@@ -564,7 +564,7 @@ func (w *worker) handleUpdateJobError(t *meta.Meta, job *model.Job, err error) e
 	if kv.ErrEntryTooLarge.Equal(err) {
 		w.jobLogger(job).Warn("update DDL job failed", zap.String("job", job.String()), zap.Error(err))
 		w.sess.Rollback()
-		err1 := w.sess.Begin()
+		err1 := w.sess.Begin(w.ctx)
 		if err1 != nil {
 			return errors.Trace(err1)
 		}
@@ -603,7 +603,7 @@ func (w *worker) registerMDLInfo(job *model.Job, ver int64) error {
 	if ver == 0 {
 		return nil
 	}
-	rows, err := w.sess.Execute(context.Background(), fmt.Sprintf("select table_ids from mysql.tidb_ddl_job where job_id = %d", job.ID), "register-mdl-info")
+	rows, err := w.sess.Execute(w.ctx, fmt.Sprintf("select table_ids from mysql.tidb_ddl_job where job_id = %d", job.ID), "register-mdl-info")
 	if err != nil {
 		return err
 	}
@@ -620,12 +620,12 @@ func (w *worker) registerMDLInfo(job *model.Job, ver int64) error {
 	} else {
 		sql = fmt.Sprintf("replace into mysql.tidb_mdl_info (job_id, version, table_ids, owner_id) values (%d, %d, '%s', '%s')", job.ID, ver, ids, ownerID)
 	}
-	_, err = w.sess.Execute(context.Background(), sql, "register-mdl-info")
+	_, err = w.sess.Execute(w.ctx, sql, "register-mdl-info")
 	return err
 }
 
 // cleanMDLInfo cleans metadata lock info.
-func cleanMDLInfo(pool *sess.Pool, job *model.Job, ec *clientv3.Client, ownerID string, cleanETCD bool) {
+func (s *jobScheduler) cleanMDLInfo(job *model.Job, ownerID string) {
 	if !variable.EnableMDL.Load() {
 		return
 	}
@@ -637,39 +637,23 @@ func cleanMDLInfo(pool *sess.Pool, job *model.Job, ec *clientv3.Client, ownerID 
 	} else {
 		sql = fmt.Sprintf("delete from mysql.tidb_mdl_info where job_id = %d and owner_id = '%s'", job.ID, ownerID)
 	}
-	sctx, _ := pool.Get()
-	defer pool.Put(sctx)
+	sctx, _ := s.sessPool.Get()
+	defer s.sessPool.Put(sctx)
 	se := sess.NewSession(sctx)
 	se.GetSessionVars().SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
-	_, err := se.Execute(context.Background(), sql, "delete-mdl-info")
+	_, err := se.Execute(s.schCtx, sql, "delete-mdl-info")
 	if err != nil {
 		logutil.DDLLogger().Warn("unexpected error when clean mdl info", zap.Int64("job ID", job.ID), zap.Error(err))
 		return
 	}
-	if cleanETCD && ec != nil {
+	// TODO we need clean it when version of JobStateRollbackDone is synced also.
+	if job.State == model.JobStateSynced && s.etcdCli != nil {
 		path := fmt.Sprintf("%s/%d/", util.DDLAllSchemaVersionsByJob, job.ID)
-		_, err = ec.Delete(context.Background(), path, clientv3.WithPrefix())
+		_, err = s.etcdCli.Delete(s.schCtx, path, clientv3.WithPrefix())
 		if err != nil {
 			logutil.DDLLogger().Warn("delete versions failed", zap.Int64("job ID", job.ID), zap.Error(err))
 		}
 	}
-}
-
-// checkMDLInfo checks if metadata lock info exists. It means the schema is locked by some TiDBs if exists.
-func checkMDLInfo(jobID int64, pool *sess.Pool) (bool, int64, error) {
-	sql := fmt.Sprintf("select version from mysql.tidb_mdl_info where job_id = %d", jobID)
-	sctx, _ := pool.Get()
-	defer pool.Put(sctx)
-	se := sess.NewSession(sctx)
-	rows, err := se.Execute(context.Background(), sql, "check-mdl-info")
-	if err != nil {
-		return false, 0, err
-	}
-	if len(rows) == 0 {
-		return false, 0, nil
-	}
-	ver := rows[0].GetInt64(0)
-	return true, ver, nil
 }
 
 func needUpdateRawArgs(job *model.Job, meetErr bool) bool {
@@ -769,7 +753,7 @@ func (w *worker) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
 	}
 	w.writeDDLSeqNum(job)
 	w.removeJobCtx(job)
-	err = AddHistoryDDLJob(w.sess, t, job, updateRawArgs)
+	err = AddHistoryDDLJob(w.ctx, w.sess, t, job, updateRawArgs)
 	return errors.Trace(err)
 }
 
@@ -874,7 +858,7 @@ func (w *worker) HandleJobDone(d *ddlCtx, job *model.Job, t *meta.Meta) error {
 		return err
 	}
 
-	err = w.sess.Commit()
+	err = w.sess.Commit(w.ctx)
 	if err != nil {
 		return err
 	}
@@ -884,7 +868,7 @@ func (w *worker) HandleJobDone(d *ddlCtx, job *model.Job, t *meta.Meta) error {
 }
 
 func (w *worker) prepareTxn(job *model.Job) (kv.Transaction, error) {
-	err := w.sess.Begin()
+	err := w.sess.Begin(w.ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -1009,7 +993,7 @@ func (w *worker) HandleDDLJobTable(d *ddlCtx, job *model.Job) (int64, error) {
 	writeBinlog(d.binlogCli, txn, job)
 	// reset the SQL digest to make topsql work right.
 	w.sess.GetSessionVars().StmtCtx.ResetSQLDigest(job.Query)
-	err = w.sess.Commit()
+	err = w.sess.Commit(w.ctx)
 	d.unlockSchemaVersion(job.ID)
 	if err != nil {
 		return 0, err

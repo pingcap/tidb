@@ -672,18 +672,22 @@ func TestSetVar(t *testing.T) {
 	tk.MustQuery("select @@tidb_enable_historical_stats").Check(testkit.Rows("0"))
 
 	// test for tidb_enable_column_tracking
-	tk.MustQuery("select @@tidb_enable_column_tracking").Check(testkit.Rows("0"))
-	tk.MustExec("set global tidb_enable_column_tracking = 1")
 	tk.MustQuery("select @@tidb_enable_column_tracking").Check(testkit.Rows("1"))
 	tk.MustExec("set global tidb_enable_column_tracking = 0")
-	tk.MustQuery("select @@tidb_enable_column_tracking").Check(testkit.Rows("0"))
-	// When set tidb_enable_column_tracking off, we record the time of the setting operation.
-	tk.MustQuery("select count(1) from mysql.tidb where variable_name = 'tidb_disable_column_tracking_time' and variable_value is not null").Check(testkit.Rows("1"))
-	tk.MustExec("set global tidb_enable_column_tracking = 1")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1681 The 'tidb_enable_column_tracking' variable is deprecated and will be removed in future versions of TiDB. It is always set to 'ON' now."))
 	tk.MustQuery("select @@tidb_enable_column_tracking").Check(testkit.Rows("1"))
+	tk.MustQuery("select count(1) from mysql.tidb where variable_name = 'tidb_disable_column_tracking_time' and variable_value is not null").Check(testkit.Rows("0"))
 	require.Error(t, tk.ExecToErr("select @@session.tidb_enable_column_tracking"))
 	require.Error(t, tk.ExecToErr("set tidb_enable_column_tracking = 0"))
 	require.Error(t, tk.ExecToErr("set global tidb_enable_column_tracking = -1"))
+
+	// test for tidb_analyze_column_options
+	tk.MustQuery("select @@tidb_analyze_column_options").Check(testkit.Rows("ALL"))
+	tk.MustExec("set global tidb_analyze_column_options = 'PREDICATE'")
+	tk.MustQuery("select @@tidb_analyze_column_options").Check(testkit.Rows("PREDICATE"))
+	tk.MustExec("set global tidb_analyze_column_options = 'all'")
+	tk.MustQuery("select @@tidb_analyze_column_options").Check(testkit.Rows("ALL"))
+	require.Error(t, tk.ExecToErr("set global tidb_analyze_column_options = 'UNKNOWN'"))
 
 	// test for tidb_ignore_prepared_cache_close_stmt
 	tk.MustQuery("select @@global.tidb_ignore_prepared_cache_close_stmt").Check(testkit.Rows("0")) // default value is 0
@@ -821,8 +825,9 @@ func TestSetVar(t *testing.T) {
 	tk.MustQuery("select @@global.tidb_opt_force_inline_cte").Check(testkit.Rows("1"))
 
 	// test tidb_auto_analyze_partition_batch_size
-	tk.MustQuery("select @@global.tidb_auto_analyze_partition_batch_size").Check(testkit.Rows("128")) // default value is 128
+	tk.MustQuery("select @@global.tidb_auto_analyze_partition_batch_size").Check(testkit.Rows("8192")) // default value is 8192
 	tk.MustExec("set global tidb_auto_analyze_partition_batch_size = 2")
+	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1681 Updating 'tidb_auto_analyze_partition_batch_size' is deprecated. It will be made read-only in a future release."))
 	tk.MustQuery("select @@global.tidb_auto_analyze_partition_batch_size").Check(testkit.Rows("2"))
 	tk.MustExec("set global tidb_auto_analyze_partition_batch_size = 0")
 	tk.MustQuery("select @@global.tidb_auto_analyze_partition_batch_size").Check(testkit.Rows("1")) // min value is 1
