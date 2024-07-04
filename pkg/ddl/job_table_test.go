@@ -65,7 +65,7 @@ func TestDDLScheduling(t *testing.T) {
 	var wg util.WaitGroupWrapper
 	wg.Add(1)
 	var once sync.Once
-	hook.OnGetJobBeforeExported = func(jobType string) {
+	hook.OnGetJobBeforeExported = func() {
 		once.Do(func() {
 			for i, job := range ddlJobs {
 				wg.Run(func() {
@@ -91,7 +91,7 @@ func TestDDLScheduling(t *testing.T) {
 	}
 
 	record := make([]int64, 0, 16)
-	hook.OnGetJobAfterExported = func(jobType string, job *model.Job) {
+	hook.OnGetJobAfterExported = func(job *model.Job) {
 		// record the job schedule order
 		record = append(record, job.ID)
 	}

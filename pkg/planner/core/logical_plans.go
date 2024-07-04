@@ -21,7 +21,6 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
@@ -784,147 +783,6 @@ func (p *LogicalExpand) GenerateGroupingIDIncrementModeNumericSet(oneSetOffset i
 	// and the evaluating logic is quite simple as IN compare.
 }
 
-// LogicalProjection represents a select fields plan.
-type LogicalProjection struct {
-	logicalop.LogicalSchemaProducer
-
-	Exprs []expression.Expression
-
-	// CalculateNoDelay indicates this Projection is the root Plan and should be
-	// calculated without delay and will not return any result to client.
-	// Currently it is "true" only when the current sql query is a "DO" statement.
-	// See "https://dev.mysql.com/doc/refman/5.7/en/do.html" for more detail.
-	CalculateNoDelay bool
-
-	// AvoidColumnEvaluator is a temporary variable which is ONLY used to avoid
-	// building columnEvaluator for the expressions of Projection which is
-	// built by buildProjection4Union.
-	// This can be removed after column pool being supported.
-	// Related issue: TiDB#8141(https://github.com/pingcap/tidb/issues/8141)
-	AvoidColumnEvaluator bool
-
-	// Proj4Expand is used for expand to project same column reference, while these
-	// col may be filled with null so we couldn't just eliminate this projection itself.
-	Proj4Expand bool
-}
-
-// ExtractFD implements the logical plan interface, extracting the FD from bottom up.
-func (p *LogicalProjection) ExtractFD() *fd.FDSet {
-	// basically extract the children's fdSet.
-	fds := p.LogicalSchemaProducer.ExtractFD()
-	// collect the output columns' unique ID.
-	outputColsUniqueIDs := intset.NewFastIntSet()
-	notnullColsUniqueIDs := intset.NewFastIntSet()
-	outputColsUniqueIDsArray := make([]int, 0, len(p.Schema().Columns))
-	// here schema extended columns may contain expr, const and column allocated with uniqueID.
-	for _, one := range p.Schema().Columns {
-		outputColsUniqueIDs.Insert(int(one.UniqueID))
-		outputColsUniqueIDsArray = append(outputColsUniqueIDsArray, int(one.UniqueID))
-	}
-	// map the expr hashCode with its unique ID.
-	for idx, expr := range p.Exprs {
-		switch x := expr.(type) {
-		case *expression.Column:
-			continue
-		case *expression.CorrelatedColumn:
-			// t1(a,b,c), t2(m,n)
-			// select a, (select c from t2 where m=b) from t1;
-			// take c as constant column here.
-			continue
-		case *expression.Constant:
-			hashCode := string(x.HashCode())
-			var (
-				ok               bool
-				constantUniqueID int
-			)
-			if constantUniqueID, ok = fds.IsHashCodeRegistered(hashCode); !ok {
-				constantUniqueID = outputColsUniqueIDsArray[idx]
-				fds.RegisterUniqueID(string(x.HashCode()), constantUniqueID)
-			}
-			fds.AddConstants(intset.NewFastIntSet(constantUniqueID))
-		case *expression.ScalarFunction:
-			// t1(a,b,c), t2(m,n)
-			// select a, (select c+n from t2 where m=b) from t1;
-			// expr(c+n) contains correlated column , but we can treat it as constant here.
-			hashCode := string(x.HashCode())
-			var (
-				ok             bool
-				scalarUniqueID int
-			)
-			// If this function is not deterministic, we skip it since it not a stable value.
-			if expression.CheckNonDeterministic(x) {
-				if scalarUniqueID, ok = fds.IsHashCodeRegistered(hashCode); !ok {
-					fds.RegisterUniqueID(hashCode, scalarUniqueID)
-				}
-				continue
-			}
-			if scalarUniqueID, ok = fds.IsHashCodeRegistered(hashCode); !ok {
-				scalarUniqueID = outputColsUniqueIDsArray[idx]
-				fds.RegisterUniqueID(hashCode, scalarUniqueID)
-			} else {
-				// since the scalar's hash code has been registered before, the equivalence exists between the unique ID
-				// allocated by phase of building-projection-for-scalar and that of previous registered unique ID.
-				fds.AddEquivalence(intset.NewFastIntSet(scalarUniqueID), intset.NewFastIntSet(outputColsUniqueIDsArray[idx]))
-			}
-			determinants := intset.NewFastIntSet()
-			extractedColumns := expression.ExtractColumns(x)
-			extractedCorColumns := expression.ExtractCorColumns(x)
-			for _, one := range extractedColumns {
-				determinants.Insert(int(one.UniqueID))
-				// the dependent columns in scalar function should be also considered as output columns as well.
-				outputColsUniqueIDs.Insert(int(one.UniqueID))
-			}
-			for _, one := range extractedCorColumns {
-				determinants.Insert(int(one.UniqueID))
-				// the dependent columns in scalar function should be also considered as output columns as well.
-				outputColsUniqueIDs.Insert(int(one.UniqueID))
-			}
-			notnull := util.IsNullRejected(p.SCtx(), p.Schema(), x)
-			if notnull || determinants.SubsetOf(fds.NotNullCols) {
-				notnullColsUniqueIDs.Insert(scalarUniqueID)
-			}
-			fds.AddStrictFunctionalDependency(determinants, intset.NewFastIntSet(scalarUniqueID))
-		}
-	}
-
-	// apply operator's characteristic's FD setting.
-	// since the distinct attribute is built as firstRow agg func, we don't need to think about it here.
-	// let the fds itself to trace the not null, because after the outer join, some not null column can be nullable.
-	fds.MakeNotNull(notnullColsUniqueIDs)
-	// select max(a) from t group by b, we should project both `a` & `b` to maintain the FD down here, even if select-fields only contain `a`.
-	fds.ProjectCols(outputColsUniqueIDs.Union(fds.GroupByCols))
-	// just trace it down in every operator for test checking.
-	p.SetFDs(fds)
-	return fds
-}
-
-// ExtractCorrelatedCols implements LogicalPlan interface.
-func (p *LogicalProjection) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
-	corCols := make([]*expression.CorrelatedColumn, 0, len(p.Exprs))
-	for _, expr := range p.Exprs {
-		corCols = append(corCols, expression.ExtractCorColumns(expr)...)
-	}
-	return corCols
-}
-
-// GetUsedCols extracts all of the Columns used by proj.
-func (p *LogicalProjection) GetUsedCols() (usedCols []*expression.Column) {
-	for _, expr := range p.Exprs {
-		usedCols = append(usedCols, expression.ExtractColumns(expr)...)
-	}
-	return usedCols
-}
-
-// LogicalSelection represents a where or having predicate.
-type LogicalSelection struct {
-	logicalop.BaseLogicalPlan
-
-	// Originally the WHERE or ON condition is parsed into a single expression,
-	// but after we converted to CNF(Conjunctive normal form), it can be
-	// split into a list of AND conditions.
-	Conditions []expression.Expression
-}
-
 func extractNotNullFromConds(conditions []expression.Expression, p base.LogicalPlan) intset.FastIntSet {
 	// extract the column NOT NULL rejection characteristic from selection condition.
 	// CNF considered only, DNF doesn't have its meanings (cause that condition's eval may don't take effect)
@@ -1020,56 +878,6 @@ func extractEquivalenceCols(conditions []expression.Expression, sctx base.PlanCo
 	return equivUniqueIDs
 }
 
-// ExtractFD implements the LogicalPlan interface.
-func (p *LogicalSelection) ExtractFD() *fd.FDSet {
-	// basically extract the children's fdSet.
-	fds := p.BaseLogicalPlan.ExtractFD()
-	// collect the output columns' unique ID.
-	outputColsUniqueIDs := intset.NewFastIntSet()
-	notnullColsUniqueIDs := intset.NewFastIntSet()
-	// eg: select t2.a, count(t2.b) from t1 join t2 using (a) where t1.a = 1
-	// join's schema will miss t2.a while join.full schema has. since selection
-	// itself doesn't contain schema, extracting schema should tell them apart.
-	var columns []*expression.Column
-	if join, ok := p.Children()[0].(*LogicalJoin); ok && join.FullSchema != nil {
-		columns = join.FullSchema.Columns
-	} else {
-		columns = p.Schema().Columns
-	}
-	for _, one := range columns {
-		outputColsUniqueIDs.Insert(int(one.UniqueID))
-	}
-
-	// extract the not null attributes from selection conditions.
-	notnullColsUniqueIDs.UnionWith(extractNotNullFromConds(p.Conditions, p))
-
-	// extract the constant cols from selection conditions.
-	constUniqueIDs := extractConstantCols(p.Conditions, p.SCtx(), fds)
-
-	// extract equivalence cols.
-	equivUniqueIDs := extractEquivalenceCols(p.Conditions, p.SCtx(), fds)
-
-	// apply operator's characteristic's FD setting.
-	fds.MakeNotNull(notnullColsUniqueIDs)
-	fds.AddConstants(constUniqueIDs)
-	for _, equiv := range equivUniqueIDs {
-		fds.AddEquivalence(equiv[0], equiv[1])
-	}
-	fds.ProjectCols(outputColsUniqueIDs)
-	// just trace it down in every operator for test checking.
-	p.SetFDs(fds)
-	return fds
-}
-
-// ExtractCorrelatedCols implements LogicalPlan interface.
-func (p *LogicalSelection) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
-	corCols := make([]*expression.CorrelatedColumn, 0, len(p.Conditions))
-	for _, cond := range p.Conditions {
-		corCols = append(corCols, expression.ExtractCorColumns(cond)...)
-	}
-	return corCols
-}
-
 // LogicalApply gets one row from outer executor and gets one row from inner executor according to outer row.
 type LogicalApply struct {
 	LogicalJoin
@@ -1124,22 +932,6 @@ func (la *LogicalApply) ExtractFD() *fd.FDSet {
 	default:
 		return &fd.FDSet{HashCodeToUniqueID: make(map[string]int)}
 	}
-}
-
-// LogicalMaxOneRow checks if a query returns no more than one row.
-type LogicalMaxOneRow struct {
-	logicalop.BaseLogicalPlan
-}
-
-// LogicalTableDual represents a dual table plan.
-// Note that sometimes we don't set schema for LogicalTableDual (most notably in buildTableDual()), which means
-// outputting 0/1 row with zero column. This semantic may be different from your expectation sometimes but should not
-// cause any actual problems now.
-type LogicalTableDual struct {
-	logicalop.LogicalSchemaProducer
-
-	// RowCount could only be 0 or 1.
-	RowCount int
 }
 
 // LogicalMemTable represents a memory table or virtual table
@@ -1252,27 +1044,6 @@ func (ds *DataSource) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
 		corCols = append(corCols, expression.ExtractCorColumns(expr)...)
 	}
 	return corCols
-}
-
-// TiKVSingleGather is a leaf logical operator of TiDB layer to gather
-// tuples from TiKV regions.
-type TiKVSingleGather struct {
-	logicalop.LogicalSchemaProducer
-	Source *DataSource
-	// IsIndexGather marks if this TiKVSingleGather gathers tuples from an IndexScan.
-	// in implementation phase, we need this flag to determine whether to generate
-	// PhysicalTableReader or PhysicalIndexReader.
-	IsIndexGather bool
-	Index         *model.IndexInfo
-}
-
-// LogicalTableScan is the logical table scan operator for TiKV.
-type LogicalTableScan struct {
-	logicalop.LogicalSchemaProducer
-	Source      *DataSource
-	HandleCols  util.HandleCols
-	AccessConds expression.CNFExprs
-	Ranges      []*ranger.Range
 }
 
 // LogicalIndexScan is the logical index scan operator for TiKV.
@@ -1644,61 +1415,6 @@ func (p *LogicalIndexScan) getPKIsHandleCol(schema *expression.Schema) *expressi
 	return getPKIsHandleColFromSchema(p.Columns, schema, p.Source.TableInfo.PKIsHandle)
 }
 
-// LogicalUnionAll represents LogicalUnionAll plan.
-type LogicalUnionAll struct {
-	logicalop.LogicalSchemaProducer
-}
-
-// LogicalPartitionUnionAll represents the LogicalUnionAll plan is for partition table.
-type LogicalPartitionUnionAll struct {
-	LogicalUnionAll
-}
-
-// LogicalSort stands for the order by plan.
-type LogicalSort struct {
-	logicalop.BaseLogicalPlan
-
-	ByItems []*util.ByItems
-}
-
-// ExtractCorrelatedCols implements LogicalPlan interface.
-func (ls *LogicalSort) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
-	corCols := make([]*expression.CorrelatedColumn, 0, len(ls.ByItems))
-	for _, item := range ls.ByItems {
-		corCols = append(corCols, expression.ExtractCorColumns(item.Expr)...)
-	}
-	return corCols
-}
-
-// LogicalLimit represents offset and limit plan.
-type LogicalLimit struct {
-	logicalop.LogicalSchemaProducer
-
-	PartitionBy      []property.SortItem // This is used for enhanced topN optimization
-	Offset           uint64
-	Count            uint64
-	PreferLimitToCop bool
-	IsPartial        bool
-}
-
-// GetPartitionBy returns partition by fields
-func (lt *LogicalLimit) GetPartitionBy() []property.SortItem {
-	return lt.PartitionBy
-}
-
-// LogicalLock represents a select lock plan.
-type LogicalLock struct {
-	logicalop.BaseLogicalPlan
-
-	Lock         *ast.SelectLockInfo
-	TblID2Handle map[int64][]util.HandleCols
-
-	// tblID2phyTblIDCol is used for partitioned tables,
-	// the child executor need to return an extra column containing
-	// the Physical Table ID (i.e. from which partition the row came from)
-	TblID2PhysTblIDCol map[int64]*expression.Column
-}
-
 // WindowFrame represents a window function frame.
 type WindowFrame struct {
 	Type  ast.FrameType
@@ -1799,111 +1515,6 @@ func (fb *FrameBound) UpdateCompareCols(ctx sessionctx.Context, orderByCols []*e
 		fb.updateCmpFuncsAndCmpDataType(cmpDataType)
 	}
 	return nil
-}
-
-// LogicalWindow represents a logical window function plan.
-type LogicalWindow struct {
-	logicalop.LogicalSchemaProducer
-
-	WindowFuncDescs []*aggregation.WindowFuncDesc
-	PartitionBy     []property.SortItem
-	OrderBy         []property.SortItem
-	Frame           *WindowFrame
-}
-
-// GetPartitionBy returns partition by fields.
-func (p *LogicalWindow) GetPartitionBy() []property.SortItem {
-	return p.PartitionBy
-}
-
-// EqualPartitionBy checks whether two LogicalWindow.Partitions are equal.
-func (p *LogicalWindow) EqualPartitionBy(newWindow *LogicalWindow) bool {
-	if len(p.PartitionBy) != len(newWindow.PartitionBy) {
-		return false
-	}
-	partitionByColsMap := make(map[int64]struct{})
-	for _, item := range p.PartitionBy {
-		partitionByColsMap[item.Col.UniqueID] = struct{}{}
-	}
-	for _, item := range newWindow.PartitionBy {
-		if _, ok := partitionByColsMap[item.Col.UniqueID]; !ok {
-			return false
-		}
-	}
-	return true
-}
-
-// EqualOrderBy checks whether two LogicalWindow.OrderBys are equal.
-func (p *LogicalWindow) EqualOrderBy(ctx expression.EvalContext, newWindow *LogicalWindow) bool {
-	if len(p.OrderBy) != len(newWindow.OrderBy) {
-		return false
-	}
-	for i, item := range p.OrderBy {
-		if !item.Col.Equal(ctx, newWindow.OrderBy[i].Col) ||
-			item.Desc != newWindow.OrderBy[i].Desc {
-			return false
-		}
-	}
-	return true
-}
-
-// EqualFrame checks whether two LogicalWindow.Frames are equal.
-func (p *LogicalWindow) EqualFrame(ctx expression.EvalContext, newWindow *LogicalWindow) bool {
-	if (p.Frame == nil && newWindow.Frame != nil) ||
-		(p.Frame != nil && newWindow.Frame == nil) {
-		return false
-	}
-	if p.Frame == nil && newWindow.Frame == nil {
-		return true
-	}
-	if p.Frame.Type != newWindow.Frame.Type ||
-		p.Frame.Start.Type != newWindow.Frame.Start.Type ||
-		p.Frame.Start.UnBounded != newWindow.Frame.Start.UnBounded ||
-		p.Frame.Start.Num != newWindow.Frame.Start.Num ||
-		p.Frame.End.Type != newWindow.Frame.End.Type ||
-		p.Frame.End.UnBounded != newWindow.Frame.End.UnBounded ||
-		p.Frame.End.Num != newWindow.Frame.End.Num {
-		return false
-	}
-	for i, expr := range p.Frame.Start.CalcFuncs {
-		if !expr.Equal(ctx, newWindow.Frame.Start.CalcFuncs[i]) {
-			return false
-		}
-	}
-	for i, expr := range p.Frame.End.CalcFuncs {
-		if !expr.Equal(ctx, newWindow.Frame.End.CalcFuncs[i]) {
-			return false
-		}
-	}
-	return true
-}
-
-// ExtractCorrelatedCols implements LogicalPlan interface.
-func (p *LogicalWindow) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
-	corCols := make([]*expression.CorrelatedColumn, 0, len(p.WindowFuncDescs))
-	for _, windowFunc := range p.WindowFuncDescs {
-		for _, arg := range windowFunc.Args {
-			corCols = append(corCols, expression.ExtractCorColumns(arg)...)
-		}
-	}
-	if p.Frame != nil {
-		if p.Frame.Start != nil {
-			for _, expr := range p.Frame.Start.CalcFuncs {
-				corCols = append(corCols, expression.ExtractCorColumns(expr)...)
-			}
-		}
-		if p.Frame.End != nil {
-			for _, expr := range p.Frame.End.CalcFuncs {
-				corCols = append(corCols, expression.ExtractCorColumns(expr)...)
-			}
-		}
-	}
-	return corCols
-}
-
-// GetWindowResultColumns returns the columns storing the result of the window function.
-func (p *LogicalWindow) GetWindowResultColumns() []*expression.Column {
-	return p.Schema().Columns[p.Schema().Len()-len(p.WindowFuncDescs):]
 }
 
 // ShowContents stores the contents for the `SHOW` statement.

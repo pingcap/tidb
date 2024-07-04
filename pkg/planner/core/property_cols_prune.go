@@ -57,18 +57,6 @@ func (ds *DataSource) PreparePossibleProperties(_ *expression.Schema, _ ...[][]*
 }
 
 // PreparePossibleProperties implements base.LogicalPlan PreparePossibleProperties interface.
-func (ts *LogicalTableScan) PreparePossibleProperties(_ *expression.Schema, _ ...[][]*expression.Column) [][]*expression.Column {
-	if ts.HandleCols != nil {
-		cols := make([]*expression.Column, ts.HandleCols.NumCols())
-		for i := 0; i < ts.HandleCols.NumCols(); i++ {
-			cols[i] = ts.HandleCols.GetCol(i)
-		}
-		return [][]*expression.Column{cols}
-	}
-	return nil
-}
-
-// PreparePossibleProperties implements base.LogicalPlan PreparePossibleProperties interface.
 func (is *LogicalIndexScan) PreparePossibleProperties(_ *expression.Schema, _ ...[][]*expression.Column) [][]*expression.Column {
 	if len(is.IdxCols) == 0 {
 		return nil
@@ -81,37 +69,6 @@ func (is *LogicalIndexScan) PreparePossibleProperties(_ *expression.Schema, _ ..
 	return result
 }
 
-// PreparePossibleProperties implements base.LogicalPlan PreparePossibleProperties interface.
-func (*TiKVSingleGather) PreparePossibleProperties(_ *expression.Schema, childrenProperties ...[][]*expression.Column) [][]*expression.Column {
-	return childrenProperties[0]
-}
-
-// PreparePossibleProperties implements base.LogicalPlan PreparePossibleProperties interface.
-func (*LogicalSelection) PreparePossibleProperties(_ *expression.Schema, childrenProperties ...[][]*expression.Column) [][]*expression.Column {
-	return childrenProperties[0]
-}
-
-// PreparePossibleProperties implements base.LogicalPlan PreparePossibleProperties interface.
-func (p *LogicalWindow) PreparePossibleProperties(_ *expression.Schema, _ ...[][]*expression.Column) [][]*expression.Column {
-	result := make([]*expression.Column, 0, len(p.PartitionBy)+len(p.OrderBy))
-	for i := range p.PartitionBy {
-		result = append(result, p.PartitionBy[i].Col)
-	}
-	for i := range p.OrderBy {
-		result = append(result, p.OrderBy[i].Col)
-	}
-	return [][]*expression.Column{result}
-}
-
-// PreparePossibleProperties implements base.LogicalPlan PreparePossibleProperties interface.
-func (p *LogicalSort) PreparePossibleProperties(_ *expression.Schema, _ ...[][]*expression.Column) [][]*expression.Column {
-	propCols := getPossiblePropertyFromByItems(p.ByItems)
-	if len(propCols) == 0 {
-		return nil
-	}
-	return [][]*expression.Column{propCols}
-}
-
 func getPossiblePropertyFromByItems(items []*util.ByItems) []*expression.Column {
 	cols := make([]*expression.Column, 0, len(items))
 	for _, item := range items {
@@ -122,35 +79,6 @@ func getPossiblePropertyFromByItems(items []*util.ByItems) []*expression.Column 
 		cols = append(cols, col)
 	}
 	return cols
-}
-
-// PreparePossibleProperties implements base.LogicalPlan PreparePossibleProperties interface.
-func (p *LogicalProjection) PreparePossibleProperties(_ *expression.Schema, childrenProperties ...[][]*expression.Column) [][]*expression.Column {
-	childProperties := childrenProperties[0]
-	oldCols := make([]*expression.Column, 0, p.Schema().Len())
-	newCols := make([]*expression.Column, 0, p.Schema().Len())
-	for i, expr := range p.Exprs {
-		if col, ok := expr.(*expression.Column); ok {
-			newCols = append(newCols, p.Schema().Columns[i])
-			oldCols = append(oldCols, col)
-		}
-	}
-	tmpSchema := expression.NewSchema(oldCols...)
-	newProperties := make([][]*expression.Column, 0, len(childProperties))
-	for _, childProperty := range childProperties {
-		newChildProperty := make([]*expression.Column, 0, len(childProperty))
-		for _, col := range childProperty {
-			pos := tmpSchema.ColumnIndex(col)
-			if pos < 0 {
-				break
-			}
-			newChildProperty = append(newChildProperty, newCols[pos])
-		}
-		if len(newChildProperty) != 0 {
-			newProperties = append(newProperties, newChildProperty)
-		}
-	}
-	return newProperties
 }
 
 // PreparePossibleProperties implements base.LogicalPlan PreparePossibleProperties interface.

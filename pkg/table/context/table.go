@@ -15,27 +15,31 @@
 package context
 
 import (
-	"fmt"
-
 	exprctx "github.com/pingcap/tidb/pkg/expression/context"
 	infoschema "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
-	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/rowcodec"
 	"github.com/pingcap/tidb/pkg/util/tableutil"
 	"github.com/pingcap/tipb/go-binlog"
 )
 
 var _ AllocatorContext = MutateContext(nil)
 
+// RowEncodingConfig is used to provide config for row encoding.
+type RowEncodingConfig struct {
+	// IsRowLevelChecksumEnabled indicates whether the row level checksum is enabled.
+	IsRowLevelChecksumEnabled bool
+	// RowEncoder is used to encode a row
+	RowEncoder *rowcodec.Encoder
+}
+
 // MutateContext is used to when mutating a table.
 type MutateContext interface {
 	AllocatorContext
 	// GetExprCtx returns the context to build or evaluate expressions
 	GetExprCtx() exprctx.ExprContext
-	// Value returns the value associated with this context for key.
-	Value(key fmt.Stringer) any
 	// GetSessionVars returns the session variables.
 	GetSessionVars() *variable.SessionVars
 	// Txn returns the current transaction which is created before executing a statement.
@@ -50,10 +54,12 @@ type MutateContext interface {
 	// TxnRecordTempTable record the temporary table to the current transaction.
 	// This method will be called when the temporary table is modified or should allocate id in the transaction.
 	TxnRecordTempTable(tbl *model.TableInfo) tableutil.TempTable
-	// GetTablesBuffer returns the TablesBuffer,
+	// GetRowEncodingConfig returns the RowEncodingConfig.
+	GetRowEncodingConfig() RowEncodingConfig
+	// GetMutateBuffers returns the MutateBuffers,
 	// which is a buffer for table related structures that aims to reuse memory and
 	// saves allocation.
-	GetTablesBuffer() *TablesBuffer
+	GetMutateBuffers() *MutateBuffers
 
 	SetExtraIndexKeyPosInfo(indexKeyPos map[int64][]int)
 
@@ -62,34 +68,6 @@ type MutateContext interface {
 	ResetExtraInfo()
 
 	HasExtraInfo() bool
-}
-
-// TablesBuffer is a memory pool for table related memory allocation that aims to reuse memory
-// and saves allocation
-type TablesBuffer struct {
-	Update *UpdateRecordBuffer
-	Add    *AddRecordBuffer
-	Remove *RemoveRecordBuffer
-}
-
-// RemoveRecordBuffer is for RemoveRecord
-type RemoveRecordBuffer struct {
-	ColSize []variable.ColSize
-}
-
-// AddRecordBuffer is for AddRecord
-type AddRecordBuffer struct {
-	ColIDs  []int64
-	Row     []types.Datum
-	ColSize []variable.ColSize
-}
-
-// UpdateRecordBuffer is for UpdateRecord
-type UpdateRecordBuffer struct {
-	ColIDs     []int64
-	Row        []types.Datum
-	RowToCheck []types.Datum
-	ColSize    []variable.ColSize
 }
 
 // AllocatorContext is used to provide context for method `table.Allocators`.

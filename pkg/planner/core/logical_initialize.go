@@ -32,18 +32,6 @@ func (ds DataSource) Init(ctx base.PlanContext, offset int) *DataSource {
 	return &ds
 }
 
-// Init initializes TiKVSingleGather.
-func (sg TiKVSingleGather) Init(ctx base.PlanContext, offset int) *TiKVSingleGather {
-	sg.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(ctx, plancodec.TypeTiKVSingleGather, &sg, offset)
-	return &sg
-}
-
-// Init initializes LogicalTableScan.
-func (ts LogicalTableScan) Init(ctx base.PlanContext, offset int) *LogicalTableScan {
-	ts.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(ctx, plancodec.TypeTableScan, &ts, offset)
-	return &ts
-}
-
 // Init initializes LogicalIndexScan.
 func (is LogicalIndexScan) Init(ctx base.PlanContext, offset int) *LogicalIndexScan {
 	is.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(ctx, plancodec.TypeIdxScan, &is, offset)
@@ -56,12 +44,6 @@ func (la LogicalApply) Init(ctx base.PlanContext, offset int) *LogicalApply {
 	return &la
 }
 
-// Init initializes LogicalSelection.
-func (p LogicalSelection) Init(ctx base.PlanContext, qbOffset int) *LogicalSelection {
-	p.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(ctx, plancodec.TypeSel, &p, qbOffset)
-	return &p
-}
-
 // Init initializes LogicalUnionScan.
 func (p LogicalUnionScan) Init(ctx base.PlanContext, qbOffset int) *LogicalUnionScan {
 	p.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(ctx, plancodec.TypeUnionScan, &p, qbOffset)
@@ -69,56 +51,8 @@ func (p LogicalUnionScan) Init(ctx base.PlanContext, qbOffset int) *LogicalUnion
 }
 
 // Init initializes LogicalProjection.
-func (p LogicalProjection) Init(ctx base.PlanContext, qbOffset int) *LogicalProjection {
-	p.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(ctx, plancodec.TypeProj, &p, qbOffset)
-	return &p
-}
-
-// Init initializes LogicalProjection.
 func (p LogicalExpand) Init(ctx base.PlanContext, offset int) *LogicalExpand {
 	p.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(ctx, plancodec.TypeExpand, &p, offset)
-	return &p
-}
-
-// Init initializes LogicalUnionAll.
-func (p LogicalUnionAll) Init(ctx base.PlanContext, offset int) *LogicalUnionAll {
-	p.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(ctx, plancodec.TypeUnion, &p, offset)
-	return &p
-}
-
-// Init initializes LogicalPartitionUnionAll.
-func (p LogicalPartitionUnionAll) Init(ctx base.PlanContext, offset int) *LogicalPartitionUnionAll {
-	p.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(ctx, plancodec.TypePartitionUnion, &p, offset)
-	return &p
-}
-
-// Init initializes LogicalSort.
-func (ls LogicalSort) Init(ctx base.PlanContext, offset int) *LogicalSort {
-	ls.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(ctx, plancodec.TypeSort, &ls, offset)
-	return &ls
-}
-
-// Init initializes LogicalLimit.
-func (p LogicalLimit) Init(ctx base.PlanContext, offset int) *LogicalLimit {
-	p.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(ctx, plancodec.TypeLimit, &p, offset)
-	return &p
-}
-
-// Init initializes LogicalTableDual.
-func (p LogicalTableDual) Init(ctx base.PlanContext, offset int) *LogicalTableDual {
-	p.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(ctx, plancodec.TypeDual, &p, offset)
-	return &p
-}
-
-// Init initializes LogicalMaxOneRow.
-func (p LogicalMaxOneRow) Init(ctx base.PlanContext, offset int) *LogicalMaxOneRow {
-	p.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(ctx, plancodec.TypeMaxOneRow, &p, offset)
-	return &p
-}
-
-// Init initializes LogicalWindow.
-func (p LogicalWindow) Init(ctx base.PlanContext, offset int) *LogicalWindow {
-	p.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(ctx, plancodec.TypeWindow, &p, offset)
 	return &p
 }
 
@@ -131,12 +65,6 @@ func (p LogicalShow) Init(ctx base.PlanContext) *LogicalShow {
 // Init initializes LogicalShowDDLJobs.
 func (p LogicalShowDDLJobs) Init(ctx base.PlanContext) *LogicalShowDDLJobs {
 	p.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(ctx, plancodec.TypeShowDDLJobs, &p, 0)
-	return &p
-}
-
-// Init initializes LogicalLock.
-func (p LogicalLock) Init(ctx base.PlanContext) *LogicalLock {
-	p.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(ctx, plancodec.TypeLock, &p, 0)
 	return &p
 }
 

@@ -74,7 +74,8 @@ func checkRowLocationAlignment(t *testing.T, rowTables []*rowTable) {
 			continue
 		}
 		for _, seg := range rt.segments {
-			for _, rowLocation := range seg.rowLocations {
+			for index := range seg.rowStartOffset {
+				rowLocation := seg.getRowPointer(index)
 				require.Equal(t, uint64(0), uint64(uintptr(rowLocation))%8, "row location must be 8 byte aligned")
 			}
 		}
@@ -133,8 +134,8 @@ func checkKeys(t *testing.T, withSelCol bool, buildFilter expression.CNFExprs, b
 			}
 			validKeyPos := rowTables[0].getValidJoinKeyPos(validJoinKeyRowIndex)
 			require.Equal(t, logicalIndex, validKeyPos, "valid key pos not match, logical index = "+strconv.Itoa(logicalIndex)+", physical index = "+strconv.Itoa(physicalIndex))
-			rowStart := rowTables[0].getRowStart(validKeyPos)
-			require.NotEqual(t, uintptr(0), rowStart, "row start must not be nil, logical index = "+strconv.Itoa(logicalIndex)+", physical index = "+strconv.Itoa(physicalIndex))
+			rowStart := rowTables[0].getRowPointer(validKeyPos)
+			require.NotEqual(t, unsafe.Pointer(nil), rowStart, "row start must not be nil, logical index = "+strconv.Itoa(logicalIndex)+", physical index = "+strconv.Itoa(physicalIndex))
 			require.Equal(t, builder.serializedKeyVectorBuffer[logicalIndex], meta.getKeyBytes(rowStart), "key not match, logical index = "+strconv.Itoa(logicalIndex)+", physical index = "+strconv.Itoa(physicalIndex))
 			validJoinKeyRowIndex++
 		}
@@ -148,12 +149,12 @@ func checkKeys(t *testing.T, withSelCol bool, buildFilter expression.CNFExprs, b
 				// filtered row, skip
 				continue
 			}
-			rowStart := rowTables[0].getRowStart(rowIndex)
-			require.NotEqual(t, uintptr(0), rowStart, "row start must not be nil, logical index = "+strconv.Itoa(logicalIndex)+", physical index = "+strconv.Itoa(physicalIndex))
+			rowStart := rowTables[0].getRowPointer(rowIndex)
+			require.NotEqual(t, unsafe.Pointer(nil), rowStart, "row start must not be nil, logical index = "+strconv.Itoa(logicalIndex)+", physical index = "+strconv.Itoa(physicalIndex))
 			require.Equal(t, builder.serializedKeyVectorBuffer[logicalIndex], meta.getKeyBytes(rowStart), "key not match, logical index = "+strconv.Itoa(logicalIndex)+", physical index = "+strconv.Itoa(physicalIndex))
 			rowIndex++
 		}
-		rowStart := rowTables[0].getRowStart(rowIndex)
+		rowStart := rowTables[0].getRowPointer(rowIndex)
 		require.Equal(t, unsafe.Pointer(nil), rowStart, "row start must be nil at the end of the test")
 	}
 }
@@ -341,12 +342,12 @@ func checkColumns(t *testing.T, withSelCol bool, buildFilter expression.CNFExprs
 	if keepFilteredRows {
 		require.Equal(t, uint64(len(builder.usedRows)), rowTables[0].rowCount())
 		for logicalIndex, physicalIndex := range builder.usedRows {
-			rowStart := rowTables[0].getRowStart(logicalIndex)
-			require.NotEqual(t, uintptr(0), rowStart, "row start must not be nil, logical index = "+strconv.Itoa(logicalIndex)+", physical index = "+strconv.Itoa(physicalIndex))
+			rowStart := rowTables[0].getRowPointer(logicalIndex)
+			require.NotEqual(t, unsafe.Pointer(nil), rowStart, "row start must not be nil, logical index = "+strconv.Itoa(logicalIndex)+", physical index = "+strconv.Itoa(physicalIndex))
 			if hasOtherConditionColumns {
-				mockJoinProber.appendBuildRowToCachedBuildRowsAndConstructBuildRowsIfNeeded(&matchedRowInfo{probeRowIndex: 0, buildRowStart: rowStart}, tmpChunk, 0, hasOtherConditionColumns)
+				mockJoinProber.appendBuildRowToCachedBuildRowsAndConstructBuildRowsIfNeeded(createMatchRowInfo(0, rowStart), tmpChunk, 0, hasOtherConditionColumns)
 			} else {
-				mockJoinProber.appendBuildRowToCachedBuildRowsAndConstructBuildRowsIfNeeded(&matchedRowInfo{probeRowIndex: 0, buildRowStart: rowStart}, resultChunk, 0, hasOtherConditionColumns)
+				mockJoinProber.appendBuildRowToCachedBuildRowsAndConstructBuildRowsIfNeeded(createMatchRowInfo(0, rowStart), resultChunk, 0, hasOtherConditionColumns)
 			}
 		}
 		if len(mockJoinProber.cachedBuildRows) > 0 {
@@ -379,12 +380,12 @@ func checkColumns(t *testing.T, withSelCol bool, buildFilter expression.CNFExprs
 				// filtered row, skip
 				continue
 			}
-			rowStart := rowTables[0].getRowStart(rowIndex)
-			require.NotEqual(t, uintptr(0), rowStart, "row start must not be nil, logical index = "+strconv.Itoa(logicalIndex)+", physical index = "+strconv.Itoa(physicalIndex))
+			rowStart := rowTables[0].getRowPointer(rowIndex)
+			require.NotEqual(t, unsafe.Pointer(nil), rowStart, "row start must not be nil, logical index = "+strconv.Itoa(logicalIndex)+", physical index = "+strconv.Itoa(physicalIndex))
 			if hasOtherConditionColumns {
-				mockJoinProber.appendBuildRowToCachedBuildRowsAndConstructBuildRowsIfNeeded(&matchedRowInfo{probeRowIndex: 0, buildRowStart: rowStart}, tmpChunk, 0, hasOtherConditionColumns)
+				mockJoinProber.appendBuildRowToCachedBuildRowsAndConstructBuildRowsIfNeeded(createMatchRowInfo(0, rowStart), tmpChunk, 0, hasOtherConditionColumns)
 			} else {
-				mockJoinProber.appendBuildRowToCachedBuildRowsAndConstructBuildRowsIfNeeded(&matchedRowInfo{probeRowIndex: 0, buildRowStart: rowStart}, resultChunk, 0, hasOtherConditionColumns)
+				mockJoinProber.appendBuildRowToCachedBuildRowsAndConstructBuildRowsIfNeeded(createMatchRowInfo(0, rowStart), resultChunk, 0, hasOtherConditionColumns)
 			}
 			rowIndex++
 		}
@@ -395,7 +396,7 @@ func checkColumns(t *testing.T, withSelCol bool, buildFilter expression.CNFExprs
 				mockJoinProber.batchConstructBuildRows(resultChunk, 0, hasOtherConditionColumns)
 			}
 		}
-		rowStart := rowTables[0].getRowStart(rowIndex)
+		rowStart := rowTables[0].getRowPointer(rowIndex)
 		require.Equal(t, unsafe.Pointer(nil), rowStart, "row start must be nil at the end of the test")
 		if hasOtherConditionColumns {
 			checkColumnResult(t, builder, keepFilteredRows, tmpChunk, chk, hashJoinCtx, hasOtherConditionColumns)

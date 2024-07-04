@@ -197,7 +197,7 @@ func TestPlanStatsLoad(t *testing.T) {
 				require.True(t, ok)
 				pis, ok := pr.IndexPlans[0].(*plannercore.PhysicalIndexScan)
 				require.True(t, ok)
-				require.True(t, pis.StatsInfo().HistColl.Indices[1].IsEssentialStatsLoaded())
+				require.True(t, pis.StatsInfo().HistColl.GetIdx(1).IsEssentialStatsLoaded())
 			},
 		},
 	}
@@ -222,12 +222,15 @@ func TestPlanStatsLoad(t *testing.T) {
 }
 
 func countFullStats(stats *statistics.HistColl, colID int64) int {
-	for _, col := range stats.Columns {
+	cnt := -1
+	stats.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
 		if col.Info.ID == colID {
-			return col.Histogram.Len() + col.TopN.Num()
+			cnt = col.Histogram.Len() + col.TopN.Num()
+			return true
 		}
-	}
-	return -1
+		return false
+	})
+	return cnt
 }
 
 func TestPlanStatsLoadTimeout(t *testing.T) {

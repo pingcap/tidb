@@ -29,10 +29,12 @@ import (
 	"github.com/pingcap/tidb/pkg/util/serialization"
 )
 
-const sizeOfNextPtr = int(unsafe.Sizeof(unsafe.Pointer(nil)))
+const sizeOfNextPtr = int(unsafe.Sizeof(uintptr(0)))
 const sizeOfLengthField = int(unsafe.Sizeof(uint64(1)))
 const usedFlagMaskBigEndian = uint32(1) << 31
 const usedFlagMaskLittleEndian = uint32(1) << 7
+const sizeOfUnsafePointer = int(unsafe.Sizeof(unsafe.Pointer(nil)))
+const sizeOfUintptr = int(unsafe.Sizeof(uintptr(0)))
 
 var fakeAddrPlaceHolder = []byte{0, 0, 0, 0, 0, 0, 0, 0}
 
@@ -61,19 +63,23 @@ type rowTableSegment struct {
 	   * join key is not inlined + have other conditions: columns used in other condition, rest columns that will be used as join output
 	   * join key is not inlined + no other conditions: columns that will be used as join output
 	*/
-	rawData         []byte           // the chunk of memory to save the row data
-	hashValues      []uint64         // the hash value of each rows
-	rowLocations    []unsafe.Pointer // the start address of each row
-	validJoinKeyPos []int            // the pos of rows that need to be inserted into hash table, used in hash table build
+	rawData         []byte   // the chunk of memory to save the row data
+	hashValues      []uint64 // the hash value of each rows
+	rowStartOffset  []uint64 // the start address of each row
+	validJoinKeyPos []int    // the pos of rows that need to be inserted into hash table, used in hash table build
 	finalized       bool
 }
 
 func (rts *rowTableSegment) totalUsedBytes() int64 {
 	ret := int64(cap(rts.rawData))
 	ret += int64(cap(rts.hashValues) * int(serialization.Uint64Len))
-	ret += int64(cap(rts.rowLocations) * sizeOfNextPtr)
+	ret += int64(cap(rts.rowStartOffset) * int(serialization.Uint64Len))
 	ret += int64(cap(rts.validJoinKeyPos) * int(serialization.IntLen))
 	return ret
+}
+
+func (rts *rowTableSegment) getRowPointer(index int) unsafe.Pointer {
+	return unsafe.Pointer(&rts.rawData[rts.rowStartOffset[index]])
 }
 
 const maxRowTableSegmentSize = 1024
@@ -83,13 +89,13 @@ func newRowTableSegment() *rowTableSegment {
 		// TODO: @XuHuaiyu if joinKeyIsInlined, the cap of rawData can be calculated
 		rawData:         make([]byte, 0),
 		hashValues:      make([]uint64, 0, maxRowTableSegmentSize),
-		rowLocations:    make([]unsafe.Pointer, 0, maxRowTableSegmentSize),
+		rowStartOffset:  make([]uint64, 0, maxRowTableSegmentSize),
 		validJoinKeyPos: make([]int, 0, maxRowTableSegmentSize),
 	}
 }
 
 func (rts *rowTableSegment) rowCount() int64 {
-	return int64(len(rts.rowLocations))
+	return int64(len(rts.rowStartOffset))
 }
 
 func (rts *rowTableSegment) validKeyCount() uint64 {
@@ -106,8 +112,8 @@ func setNextRowAddress(rowStart unsafe.Pointer, nextRowAddress unsafe.Pointer) {
 	*(*unsafe.Pointer)(rowStart) = nextRowAddress
 }
 
-func getNextRowAddress(rowStart unsafe.Pointer) unsafe.Pointer {
-	return *(*unsafe.Pointer)(rowStart)
+func getNextRowAddress(rowStart unsafe.Pointer) uintptr {
+	return uintptr(*(*unsafe.Pointer)(rowStart))
 }
 
 // TableMeta is the join table meta used in hash join v2
@@ -172,7 +178,7 @@ func (meta *TableMeta) getKeyBytes(rowStart unsafe.Pointer) []byte {
 func (meta *TableMeta) advanceToRowData(matchedRowInfo *matchedRowInfo) {
 	if meta.rowDataOffset == -1 {
 		// variable length, non-inlined key
-		matchedRowInfo.buildRowOffset = sizeOfNextPtr + meta.nullMapLength + sizeOfLengthField + int(meta.getSerializedKeyLength(matchedRowInfo.buildRowStart))
+		matchedRowInfo.buildRowOffset = sizeOfNextPtr + meta.nullMapLength + sizeOfLengthField + int(meta.getSerializedKeyLength(*(*unsafe.Pointer)(unsafe.Pointer(&matchedRowInfo.buildRowStart))))
 	} else {
 		matchedRowInfo.buildRowOffset = meta.rowDataOffset
 	}
@@ -201,12 +207,12 @@ type rowTable struct {
 }
 
 // used for test
-func (rt *rowTable) getRowStart(rowIndex int) unsafe.Pointer {
+func (rt *rowTable) getRowPointer(rowIndex int) unsafe.Pointer {
 	for segIndex := 0; segIndex < len(rt.segments); segIndex++ {
-		if rowIndex < len(rt.segments[segIndex].rowLocations) {
-			return rt.segments[segIndex].rowLocations[rowIndex]
+		if rowIndex < len(rt.segments[segIndex].rowStartOffset) {
+			return rt.segments[segIndex].getRowPointer(rowIndex)
 		}
-		rowIndex -= len(rt.segments[segIndex].rowLocations)
+		rowIndex -= len(rt.segments[segIndex].rowStartOffset)
 	}
 	return nil
 }
@@ -218,7 +224,7 @@ func (rt *rowTable) getValidJoinKeyPos(rowIndex int) int {
 			return startOffset + rt.segments[segIndex].validJoinKeyPos[rowIndex]
 		}
 		rowIndex -= len(rt.segments[segIndex].validJoinKeyPos)
-		startOffset += len(rt.segments[segIndex].rowLocations)
+		startOffset += len(rt.segments[segIndex].rowStartOffset)
 	}
 	return -1
 }
