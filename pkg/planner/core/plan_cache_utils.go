@@ -220,9 +220,6 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 
 	stmtProcessor := &planCacheStmtProcessor{is: is, stmt: preparedObj}
 	paramStmt.Accept(stmtProcessor)
-	if stmtProcessor.err != nil {
-		return nil, nil, 0, err
-	}
 
 	if err = checkPreparedPriv(sctx, preparedObj, ret.InfoSchema); err != nil {
 		return nil, nil, 0, err
@@ -470,7 +467,6 @@ type PlanCacheMatchOpts struct {
 // planCacheStmtProcessor records all query features which may affect plan selection.
 type planCacheStmtProcessor struct {
 	is   infoschema.InfoSchema
-	err  error
 	stmt *PlanCacheStmt
 }
 
@@ -483,11 +479,9 @@ func (f *planCacheStmtProcessor) Enter(in ast.Node) (out ast.Node, skipChildren 
 		f.stmt.hasSubquery = true
 	case *ast.TableName:
 		t, err := f.is.TableByName(node.Schema, node.Name)
-		if err != nil {
-			f.err = err
-			return in, true
+		if err == nil {
+			f.stmt.tables = append(f.stmt.tables, t)
 		}
-		f.stmt.tables = append(f.stmt.tables, t)
 	}
 	return in, false
 }
