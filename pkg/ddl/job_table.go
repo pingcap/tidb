@@ -530,8 +530,11 @@ func (s *jobScheduler) delivery2Worker(wk *worker, pool *workerPool, job *model.
 				logutil.DDLLogger().Error("panic in delivery2Worker", zap.Any("recover", r), zap.Stack("stack"))
 			}
 			failpoint.InjectCall("afterDelivery2Worker", job)
-			moveRunningJobsToPending := r != nil || (job != nil && job.IsPaused())
-			s.runningJobs.removeRunningOrPending(jobID, involvedSchemaInfos, moveRunningJobsToPending)
+			// Because there is a gap between `allIDs()` and `checkRunnable()`,
+			// we append unfinished job to pending atomically to prevent `getJob()`
+			// chosing another runnable job that involves the same schema object.
+			moveRunningJobsToPending := r != nil || (job != nil && !job.IsFinished())
+			s.runningJobs.finishOrPendJob(jobID, involvedSchemaInfos, moveRunningJobsToPending)
 			asyncNotify(s.ddlJobNotifyCh)
 			metrics.DDLRunningJobCount.WithLabelValues(pool.tp().String()).Dec()
 			pool.put(wk)
