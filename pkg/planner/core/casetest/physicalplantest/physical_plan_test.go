@@ -405,8 +405,8 @@ func TestMPPPreferBCJ(t *testing.T) {
 		err := domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
 		require.NoError(t, err)
 	}
-	tk.MustExec("analyze table t1")
-	tk.MustExec("analyze table t2")
+	tk.MustExec("analyze table t1 all columns")
+	tk.MustExec("analyze table t2 all columns")
 	tk.MustExec("set @@tidb_allow_mpp=1; set @@tidb_enforce_mpp=1;")
 	{
 		var input []string
@@ -523,8 +523,8 @@ func TestMPPRightSemiJoin(t *testing.T) {
 		err := domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
 		require.NoError(t, err)
 	}
-	tk.MustExec("analyze table t1")
-	tk.MustExec("analyze table t2")
+	tk.MustExec("analyze table t1 all columns")
+	tk.MustExec("analyze table t2 all columns")
 	tk.MustExec("set @@tidb_allow_mpp=1; set @@tidb_enforce_mpp=1;")
 	{
 		var input []string
@@ -579,8 +579,8 @@ func TestMPPRightOuterJoin(t *testing.T) {
 		err := domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
 		require.NoError(t, err)
 	}
-	tk.MustExec("analyze table t1")
-	tk.MustExec("analyze table t2")
+	tk.MustExec("analyze table t1 all columns")
+	tk.MustExec("analyze table t2 all columns")
 	tk.MustExec("set @@tidb_allow_mpp=1; set @@tidb_enforce_mpp=1;")
 	{
 		var input []string

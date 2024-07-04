@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/internal"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/analyzehelper"
 	"github.com/stretchr/testify/require"
 )
 
@@ -36,6 +37,7 @@ func TestStatsCache(t *testing.T) {
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t (c1 int, c2 int)")
 	testKit.MustExec("insert into t values(1, 2)")
+	analyzehelper.TriggerPredicateColumnsCollection(t, testKit, store, "t", "c1", "c2")
 	do := dom
 	is := do.InfoSchema()
 	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
@@ -81,7 +83,8 @@ func TestStatsCacheMemTracker(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
-	testKit.MustExec("create table t (c1 int, c2 int,c3 int)")
+	testKit.MustExec("create table t (c1 int, c2 int, c3 int)")
+	analyzehelper.TriggerPredicateColumnsCollection(t, testKit, store, "t", "c1", "c2", "c3")
 	testKit.MustExec("insert into t values(1, 2, 3)")
 	do := dom
 	is := do.InfoSchema()
@@ -142,6 +145,7 @@ func TestStatsStoreAndLoad(t *testing.T) {
 		testKit.MustExec("insert into t values (?, ?)", i, i+1)
 	}
 	testKit.MustExec("create index idx_t on t(c2)")
+	analyzehelper.TriggerPredicateColumnsCollection(t, testKit, store, "t", "c1")
 	do := dom
 	is := do.InfoSchema()
 	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
@@ -348,6 +352,7 @@ func initStatsVer2(t *testing.T, isConcurrency bool) {
 	tk.MustExec("use test")
 	tk.MustExec("set @@session.tidb_analyze_version=2")
 	tk.MustExec("create table t(a int, b int, c int, index idx(a), index idxab(a, b))")
+	analyzehelper.TriggerPredicateColumnsCollection(t, tk, store, "t", "c")
 	tk.MustExec("insert into t values(1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4), (4, 4, 4), (4, 4, 4)")
 	tk.MustExec("analyze table t with 2 topn, 3 buckets")
 	h := dom.StatsHandle()

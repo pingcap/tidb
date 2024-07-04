@@ -45,7 +45,7 @@ func TestRuntimeFilterGenerator(t *testing.T) {
 	tk.MustExec("insert into t2 values (1,2, \"{}\")")
 	tk.MustExec("create table t1_tikv (k1 int)")
 	tk.MustExec("insert into t1_tikv values (1)")
-	tk.MustExec("analyze table t1, t2")
+	tk.MustExec("analyze table t1, t2 all columns")
 	tk.MustExec("INSERT INTO mysql.opt_rule_blacklist VALUES(\"join_reorder\");")
 	tk.MustExec("admin reload opt_rule_blacklist;")
 	// set tiflash replica

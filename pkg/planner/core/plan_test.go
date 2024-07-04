@@ -487,7 +487,7 @@ func TestCopPaging(t *testing.T) {
 	for i := 0; i < 1024; i++ {
 		tk.MustExec("insert into t values(?, ?, ?)", i, i, i)
 	}
-	tk.MustExec("analyze table t")
+	tk.MustExec("analyze table t all columns")
 
 	// limit 960 should go paging
 	for i := 0; i < 10; i++ {
