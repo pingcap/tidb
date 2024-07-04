@@ -50,6 +50,7 @@ import (
 	tidblogutil "github.com/pingcap/tidb/pkg/util/logutil"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
+	"golang.org/x/time/rate"
 )
 
 var (
@@ -184,66 +185,6 @@ func (s *jobScheduler) close() {
 	}
 }
 
-// getJob reads tidb_ddl_job and returns the first runnable DDL job.
-func (s *jobScheduler) getJob(se *sess.Session) (*model.Job, bool, error) {
-	defer s.runningJobs.resetAllPending()
-
-	const getJobSQL = `select job_meta, processing, reorg from mysql.tidb_ddl_job where job_id in
-		(select min(job_id) from mysql.tidb_ddl_job group by schema_ids, table_ids, processing)
-		%s order by processing desc, job_id`
-	var excludedJobIDs string
-	if ids := s.runningJobs.allIDs(); len(ids) > 0 {
-		excludedJobIDs = fmt.Sprintf("and job_id not in (%s)", ids)
-	}
-	sql := fmt.Sprintf(getJobSQL, excludedJobIDs)
-	rows, err := se.Execute(context.Background(), sql, "get_job")
-	if err != nil {
-		return nil, false, errors.Trace(err)
-	}
-	for _, row := range rows {
-		jobBinary := row.GetBytes(0)
-		isJobProcessing := row.GetInt64(1) == 1
-		isReorg := row.GetInt64(2) != 0
-
-		job := model.Job{}
-		err = job.Decode(jobBinary)
-		if err != nil {
-			return nil, isReorg, errors.Trace(err)
-		}
-
-		involving := job.GetInvolvingSchemaInfo()
-		isRunnable, err := s.processJobDuringUpgrade(se, &job)
-		if err != nil {
-			return nil, isReorg, errors.Trace(err)
-		}
-		if !isRunnable {
-			s.runningJobs.addPending(involving)
-			continue
-		}
-
-		// The job has already been picked up, just return to continue it.
-		if isJobProcessing {
-			return &job, isReorg, nil
-		}
-
-		if !s.runningJobs.checkRunnable(job.ID, involving) {
-			s.runningJobs.addPending(involving)
-			continue
-		}
-
-		if err = s.markJobProcessing(se, &job); err != nil {
-			logutil.DDLLogger().Warn(
-				"[ddl] handle ddl job failed: mark job is processing meet error",
-				zap.Error(err),
-				zap.Stringer("job", &job))
-			s.runningJobs.addPending(involving)
-			return nil, isReorg, errors.Trace(err)
-		}
-		return &job, isReorg, nil
-	}
-	return nil, false, nil
-}
-
 func hasSysDB(job *model.Job) bool {
 	for _, info := range job.GetInvolvingSchemaInfo() {
 		if tidbutil.IsSysDB(info.Database) {
@@ -360,6 +301,8 @@ func (s *jobScheduler) startDispatch() error {
 	// TODO move waitSchemaSyncedController out of ddlCtx.
 	s.clearOnceMap()
 	s.mustReloadSchemas()
+
+	logRateLimiter := rate.NewLimiter(rate.Every(30*time.Second), 3)
 	for {
 		if err := s.schCtx.Err(); err != nil {
 			return err
@@ -390,7 +333,10 @@ func (s *jobScheduler) startDispatch() error {
 			continue
 		}
 		failpoint.InjectCall("beforeAllLoadDDLJobAndRun")
-		s.loadDDLJobAndRun(se)
+		if err := s.loadAndRunJobs(se); err != nil && logRateLimiter.Allow() {
+			logutil.DDLLogger().Warn("load and run jobs failed", zap.Error(err))
+		}
+		//s.loadDDLJobAndRun(se)
 	}
 }
 
@@ -431,33 +377,77 @@ func (s *jobScheduler) checkAndUpdateClusterState(needUpdate bool) error {
 	return nil
 }
 
-func (s *jobScheduler) loadDDLJobAndRun(se *sess.Session) {
-	s.mu.RLock()
-	s.mu.hook.OnGetJobBefore()
-	s.mu.RUnlock()
+func (s *jobScheduler) loadAndRunJobs(se *sess.Session) error {
+	if s.generalDDLWorkerPool.available() == 0 && s.reorgWorkerPool.available() == 0 {
+		return nil
+	}
 
-	startTime := time.Now()
-	job, isReorg, err := s.getJob(se)
-	if job == nil || err != nil {
-		if err != nil {
-			logutil.DDLLogger().Warn("get job met error", zap.Duration("take time", time.Since(startTime)), zap.Error(err))
+	defer s.runningJobs.resetAllPending()
+
+	const getJobSQL = `select reorg, job_meta from mysql.tidb_ddl_job %s order by job_id`
+	var whereClause string
+	if ids := s.runningJobs.allIDs(); len(ids) > 0 {
+		whereClause = fmt.Sprintf("where job_id not in (%s)", ids)
+	}
+	sql := fmt.Sprintf(getJobSQL, whereClause)
+	rows, err := se.Execute(context.Background(), sql, "load_ddl_jobs")
+	if err != nil {
+		return errors.Trace(err)
+	}
+	for _, row := range rows {
+		reorgJob := row.GetInt64(0) == 1
+		targetPool := s.generalDDLWorkerPool
+		if reorgJob {
+			targetPool = s.reorgWorkerPool
 		}
-		return
-	}
-	s.mu.RLock()
-	s.mu.hook.OnGetJobAfter(job)
-	s.mu.RUnlock()
+		jobBinary := row.GetBytes(1)
 
-	pool := s.generalDDLWorkerPool
-	if isReorg {
-		pool = s.reorgWorkerPool
+		job := model.Job{}
+		err = job.Decode(jobBinary)
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		involving := job.GetInvolvingSchemaInfo()
+		if targetPool.available() == 0 {
+			s.runningJobs.addPending(involving)
+			continue
+		}
+
+		isRunnable, err := s.processJobDuringUpgrade(se, &job)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if !isRunnable {
+			s.runningJobs.addPending(involving)
+			continue
+		}
+
+		if !s.runningJobs.checkRunnable(job.ID, involving) {
+			s.runningJobs.addPending(involving)
+			continue
+		}
+
+		wk, err := targetPool.get()
+		if err != nil {
+			return errors.Trace(err)
+		}
+		intest.Assert(wk != nil, "worker should not be nil")
+		if wk == nil {
+			// should not happen, we have checked available() before, and we are
+			// the only routine consumes worker.
+			logutil.DDLLogger().Info("no %v worker available now", zap.Stringer("type", targetPool.tp()))
+			s.runningJobs.addPending(involving)
+			continue
+		}
+
+		s.delivery2Worker(wk, targetPool, &job)
+
+		if s.generalDDLWorkerPool.available() == 0 && s.reorgWorkerPool.available() == 0 {
+			break
+		}
 	}
-	wk, err := pool.get()
-	if err != nil || wk == nil {
-		logutil.DDLLogger().Debug(fmt.Sprintf("[ddl] no %v worker available now", pool.tp()), zap.Error(err))
-		return
-	}
-	s.delivery2Worker(wk, pool, job)
+	return nil
 }
 
 // mustReloadSchemas is used to reload schema when we become the DDL owner, in case
@@ -639,14 +629,6 @@ func (s *jobScheduler) runJobWithWorker(wk *worker, job *model.Job) error {
 	s.mu.hook.OnJobUpdated(job)
 	s.mu.RUnlock()
 	return nil
-}
-
-func (*jobScheduler) markJobProcessing(se *sess.Session, job *model.Job) error {
-	se.GetSessionVars().SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
-	_, err := se.Execute(context.Background(), fmt.Sprintf(
-		"update mysql.tidb_ddl_job set processing = 1 where job_id = %d", job.ID),
-		"mark_job_processing")
-	return errors.Trace(err)
 }
 
 func (d *ddl) getTableByTxn(r autoid.Requirement, schemaID, tableID int64) (*model.DBInfo, table.Table, error) {
