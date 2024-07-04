@@ -135,7 +135,7 @@ func TestParallelDDL(t *testing.T) {
 	}
 
 	once1 := sync.Once{}
-	tc.OnGetJobBeforeExported = func(string) {
+	tc.OnGetJobBeforeExported = func() {
 		once1.Do(func() {
 			for {
 				tk := testkit.NewTestKit(t, store)
