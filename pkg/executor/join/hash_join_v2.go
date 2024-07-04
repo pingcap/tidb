@@ -576,6 +576,7 @@ func (e *HashJoinV2Exec) probeInSpillMode(probeSideChunks *chunk.DataInDiskByChu
 	return nil
 }
 
+// TODO concurrently restore
 func (e *HashJoinV2Exec) restore() error {
 	err := e.spillHelper.prepareForRestoring()
 	if err != nil {
