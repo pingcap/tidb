@@ -22,5 +22,5 @@ explain select c from t where c > 2;
 explain select c from t where c > 3;
 
 --sorted_result
---replace_column 6 <update_time>
+--replace_column 6 <update_time> 9 <avg_col_size>
 show stats_histograms where table_name='t' and Db_name='globalindex__analyze';
