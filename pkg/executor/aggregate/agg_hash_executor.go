@@ -199,9 +199,7 @@ func (e *HashAggExec) Close() error {
 			channel.Clear(ch)
 		}
 		for _, ch := range e.partialInputChs {
-			for chk := range ch {
-				chk.Destroy(e.MaxChunkSize(), e.Children(0).RetFieldTypes())
-			}
+			channel.Clear(ch)
 		}
 		channel.Clear(e.finalOutputCh)
 		e.executed.Store(false)
@@ -213,20 +211,6 @@ func (e *HashAggExec) Close() error {
 			e.parallelAggSpillAction.SetFinished()
 			e.parallelAggSpillAction = nil
 			e.spillHelper.close()
-		}
-		for i := range e.partialWorkers {
-			e.partialWorkers[i].chk.Destroy(e.MaxChunkSize(), e.Children(0).RetFieldTypes())
-		}
-		for i := range e.finalWorkers {
-			// Commonly, finalResultHolderCh should not be nil. Check it just in case.
-			if e.finalWorkers[i].finalResultHolderCh == nil {
-				continue
-			}
-
-			close(e.finalWorkers[i].finalResultHolderCh)
-			for chk := range e.finalWorkers[i].finalResultHolderCh {
-				chk.Destroy(e.MaxChunkSize(), e.RetFieldTypes())
-			}
 		}
 	}
 
@@ -324,7 +308,7 @@ func (e *HashAggExec) initPartialWorkers(partialConcurrency int, finalConcurrenc
 			globalOutputCh:       e.finalOutputCh,
 			partialResultsMap:    partialResultsMap,
 			groupByItems:         e.GroupByItems,
-			chk:                  e.NewChunkWithCapacity(e.Children(0).RetFieldTypes(), 0, e.MaxChunkSize()), // TODO
+			chk:                  e.NewChunkWithCapacity(e.Children(0).RetFieldTypes(), 0, e.MaxChunkSize()),
 			groupKeyBuf:          *groupKeyBuf,
 			serializeHelpers:     aggfuncs.NewSerializeHelper(),
 			isSpillPrepared:      false,
@@ -346,7 +330,7 @@ func (e *HashAggExec) initPartialWorkers(partialConcurrency int, finalConcurrenc
 		}
 		e.memTracker.Consume(e.partialWorkers[i].chk.GetMemoryUsageCap(e.MaxChunkSize()))
 		input := &HashAggInput{
-			chk:        chunk.New(e.Children(0).RetFieldTypes(), 0, e.MaxChunkSize()), // TODO
+			chk:        chunk.New(e.Children(0).RetFieldTypes(), 0, e.MaxChunkSize()),
 			giveBackCh: e.partialWorkers[i].inputCh,
 		}
 		e.memTracker.Consume(input.chk.GetMemoryUsageCap(e.MaxChunkSize()))
@@ -372,7 +356,7 @@ func (e *HashAggExec) initFinalWorkers(finalConcurrency int) {
 			e.finalWorkers[i].stats = &AggWorkerStat{}
 			e.stats.FinalStats = append(e.stats.FinalStats, e.finalWorkers[i].stats)
 		}
-		e.finalWorkers[i].finalResultHolderCh <- chunk.New(e.RetFieldTypes(), 0, e.MaxChunkSize()) // TODO
+		e.finalWorkers[i].finalResultHolderCh <- chunk.New(e.RetFieldTypes(), 0, e.MaxChunkSize())
 	}
 }
 
