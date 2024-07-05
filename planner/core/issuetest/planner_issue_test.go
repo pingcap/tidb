@@ -277,3 +277,15 @@ func TestIssue49109(t *testing.T) {
 
 	tk.MustQuery("SELECT t0.c0 FROM v0, t0 LEFT JOIN t1 ON t0.c0 WHERE ((INET_ATON('5V')) IS NULL);").Check(testkit.Rows("0", "0", "0", "0", "<nil>", "<nil>", "<nil>", "<nil>", "1", "1", "1", "1", "1", "1", "1", "1", "1", "1", "1", "1", "1", "1", "1", "1", "2", "2", "2", "2", "2", "2", "2", "2", "2", "2", "2", "2", "2", "2", "2", "2"))
 }
+
+func TestQBHintHandlerDuplicateObjects(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE t_employees  (id INT NOT NULL AUTO_INCREMENT PRIMARY KEY, fname VARCHAR(25) NOT NULL, lname VARCHAR(25) NOT NULL, store_id INT NOT NULL, department_id INT NOT NULL);")
+	tk.MustExec("ALTER TABLE t_employees ADD INDEX idx(department_id);")
+
+	// Explain statement
+	tk.MustQuery("EXPLAIN WITH t AS (SELECT /*+ inl_join(e) */ em.* FROM t_employees em JOIN t_employees e WHERE em.store_id = e.department_id) SELECT * FROM t;")
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+}
