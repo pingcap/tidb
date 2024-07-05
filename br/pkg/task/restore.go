@@ -1506,9 +1506,9 @@ func FilterDDLJobs(allDDLJobs []*model.Job, tables []*metautil.Table) (ddlJobs [
 func CheckDDLJobByRules(srcDDLJobs []*model.Job, rules ...DDLJobFilterRule) error {
 	for _, ddlJob := range srcDDLJobs {
 		for _, rule := range rules {
-			if !rule(ddlJob) {
+			if rule(ddlJob) {
 				return errors.Annotatef(berrors.ErrRestoreModeMismatch, "DDL job %s is not allowed in incremental restore"+
-					" when logIncrementalCompact enabled", ddlJob.String())
+					" when --log-incremental-compact enabled", ddlJob.String())
 			}
 		}
 	}
