@@ -161,6 +161,40 @@ func TestDisableAutoAnalyze(t *testing.T) {
 	require.True(t, dom.StatsHandle().HandleAutoAnalyze())
 }
 
+func TestDisableAutoAnalyzeWithoutAnyPredicateColumns(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	// Set tidb_analyze_column_options to PREDICATE.
+	tk.MustExec("set global tidb_analyze_column_options='PREDICATE'")
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int)")
+	tk.MustExec("insert into t values (1)")
+	h := dom.StatsHandle()
+	err := h.HandleDDLEvent(<-h.DDLEventCh())
+	require.NoError(t, err)
+	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	is := dom.InfoSchema()
+	require.NoError(t, h.Update(is))
+
+	tk.MustExec("set @@global.tidb_enable_auto_analyze = 0")
+	exec.AutoAnalyzeMinCnt = 0
+	defer func() {
+		exec.AutoAnalyzeMinCnt = 1000
+	}()
+	// Even auto analyze ratio is set to 0, we still need to analyze the unanalyzed tables.
+	require.True(t, dom.StatsHandle().HandleAutoAnalyze())
+	require.NoError(t, h.Update(is))
+
+	// Try again, it should not analyze the table because it's already analyzed and auto analyze ratio is 0.
+	require.False(t, dom.StatsHandle().HandleAutoAnalyze())
+
+	// Index analyze doesn't depend on auto analyze ratio. Only control by tidb_enable_auto_analyze.
+	// Even auto analyze ratio is set to 0, we still need to analyze the newly created index.
+	tk.MustExec("alter table t add index ia(a)")
+	require.True(t, dom.StatsHandle().HandleAutoAnalyze())
+}
+
 func TestAutoAnalyzeOnChangeAnalyzeVer(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
