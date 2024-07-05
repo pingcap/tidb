@@ -225,7 +225,7 @@ func GetPlanFromPlanCache(ctx context.Context, sctx sessionctx.Context,
 	if stmtCtx.UseCache() {
 		var cacheVal kvcache.Value
 		var hit, isPointPlan bool
-		if stmt.PointGet.pointPlan != nil { // if it's PointGet Plan, no need to use MatchOpts
+		if stmt.PointGet.pointPlan != nil { // if it's PointGet Plan, no need to use paramTypes
 			cacheVal = &PlanCacheValue{
 				Plan:          stmt.PointGet.pointPlan,
 				OutputColumns: stmt.PointGet.columnNames,
