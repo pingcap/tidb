@@ -2298,6 +2298,8 @@ func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
 		analyzePlan.OptionsMap[physicalID] = opts
 	}
 
+	var indexes, independentIndexes, globalIndexes []*model.IndexInfo
+
 	// Build tasks for each partition.
 	for i, id := range physicalIDs {
 		physicalID := id
@@ -2320,7 +2322,7 @@ func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
 		}
 		execColsInfo = b.filterSkipColumnTypes(execColsInfo, tbl, &mustAnalyzedCols)
 		allColumns := len(tbl.TableInfo.Columns) == len(execColsInfo)
-		indexes, independentIndexes, globalIndexes := getModifiedIndexesInfoForAnalyze(tbl.TableInfo, allColumns, execColsInfo)
+		indexes, independentIndexes, globalIndexes = getModifiedIndexesInfoForAnalyze(tbl.TableInfo, allColumns, execColsInfo)
 		handleCols := BuildHandleColsForAnalyze(b.ctx, tbl.TableInfo, allColumns, execColsInfo)
 		newTask := AnalyzeColumnsTask{
 			HandleCols:  handleCols,
@@ -2344,12 +2346,10 @@ func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
 			}
 			analyzePlan.IdxTasks = append(analyzePlan.IdxTasks, newIdxTask)
 		}
-		// only generate global indexes idxTask onces.
-		if i == 0 {
-			for _, indexInfo := range globalIndexes {
-				analyzePlan.IdxTasks = append(analyzePlan.IdxTasks, generateIndexTasks(indexInfo, as, tbl.TableInfo, nil, nil, version)...)
-			}
-		}
+	}
+
+	for _, indexInfo := range globalIndexes {
+		analyzePlan.IdxTasks = append(analyzePlan.IdxTasks, generateIndexTasks(indexInfo, as, tbl.TableInfo, nil, nil, version)...)
 	}
 
 	return nil
