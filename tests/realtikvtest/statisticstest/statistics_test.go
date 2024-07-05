@@ -21,7 +21,11 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/parser/model"
+<<<<<<< HEAD
 	"github.com/pingcap/tidb/pkg/statistics"
+=======
+	"github.com/pingcap/tidb/pkg/statistics/asyncload"
+>>>>>>> ba5c6a9bc6a (statistics: add a testcase for issue 54022 (#54137))
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/stretchr/testify/require"
@@ -250,10 +254,13 @@ func TestNoNeedIndexStatsLoading(t *testing.T) {
 	tk.MustExec("insert into t value(1,1), (2,2);")
 	h := dom.StatsHandle()
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
+<<<<<<< HEAD
 	require.Eventually(t, func() bool {
 		rows := tk.MustQuery("show stats_meta").Rows()
 		return len(rows) > 0
 	}, 1*time.Minute, 2*time.Millisecond)
+=======
+>>>>>>> ba5c6a9bc6a (statistics: add a testcase for issue 54022 (#54137))
 	require.NoError(t, h.Update(dom.InfoSchema()))
 	// 4. Try to select some data from this table by ID, it would trigger an async load.
 	tk.MustExec("set tidb_opt_objective='determinate';")
@@ -273,7 +280,11 @@ func checkTableIDInItems(t *testing.T, tableID int64) {
 	done := make(chan bool)
 
 	// First, confirm that the table ID is in the items.
+<<<<<<< HEAD
 	items := statistics.HistogramNeededItems.AllItems()
+=======
+	items := asyncload.AsyncLoadHistogramNeededItems.AllItems()
+>>>>>>> ba5c6a9bc6a (statistics: add a testcase for issue 54022 (#54137))
 	for _, item := range items {
 		if item.TableID == tableID {
 			// Then, continuously check until it no longer exists or timeout.
@@ -281,7 +292,11 @@ func checkTableIDInItems(t *testing.T, tableID int64) {
 				for {
 					select {
 					case <-ticker.C:
+<<<<<<< HEAD
 						items := statistics.HistogramNeededItems.AllItems()
+=======
+						items := asyncload.AsyncLoadHistogramNeededItems.AllItems()
+>>>>>>> ba5c6a9bc6a (statistics: add a testcase for issue 54022 (#54137))
 						found := false
 						for _, item := range items {
 							if item.TableID == tableID {

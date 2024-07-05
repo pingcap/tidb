@@ -11,7 +11,11 @@ go_test(
     race = "on",
     deps = [
         "//pkg/parser/model",
+<<<<<<< HEAD
         "//pkg/statistics",
+=======
+        "//pkg/statistics/asyncload",
+>>>>>>> ba5c6a9bc6a (statistics: add a testcase for issue 54022 (#54137))
         "//pkg/testkit",
         "//tests/realtikvtest",
         "@com_github_stretchr_testify//require",
