@@ -24,6 +24,7 @@ go_library(
         "logical_aggregation.go",
         "logical_index_scan.go",
         "logical_initialize.go",
+        "logical_join.go",
         "logical_limit.go",
         "logical_lock.go",
         "logical_max_one_row.go",
