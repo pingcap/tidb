@@ -38,6 +38,10 @@ const (
 	resetTSWaitInterval    = 50 * time.Millisecond
 	resetTSMaxWaitInterval = 2 * time.Second
 
+	checkDiskRetryTime       = 5
+	checkDiskWaitInterval    = 50 * time.Millisecond
+	checkDiskMaxWaitInterval = 1 * time.Second
+
 	resetTSRetryTimeExt       = 600
 	resetTSWaitIntervalExt    = 500 * time.Millisecond
 	resetTSMaxWaitIntervalExt = 300 * time.Second
@@ -278,5 +282,43 @@ func (bo *pdReqBackoffer) NextBackoff(err error) time.Duration {
 }
 
 func (bo *pdReqBackoffer) Attempt() int {
+	return bo.attempt
+}
+
+type DiskCheckBackoffer struct {
+	attempt      int
+	delayTime    time.Duration
+	maxDelayTime time.Duration
+}
+
+func NewDiskCheckBackoffer() Backoffer {
+	return &DiskCheckBackoffer{
+		attempt:      checkDiskRetryTime,
+		delayTime:    checkDiskWaitInterval,
+		maxDelayTime: checkDiskMaxWaitInterval,
+	}
+}
+
+func (bo *DiskCheckBackoffer) NextBackoff(err error) time.Duration {
+	e := errors.Cause(err)
+	switch e { // nolint:errorlint
+	case berrors.ErrPDInvalidResponse:
+		bo.delayTime = 2 * bo.delayTime
+		bo.attempt--
+	case berrors.ErrKVDiskNotEnough:
+		bo.delayTime = 0
+		bo.attempt = 0
+	default:
+		bo.delayTime = 2 * bo.delayTime
+		bo.attempt = 3
+	}
+
+	if bo.delayTime > bo.maxDelayTime {
+		return bo.maxDelayTime
+	}
+	return bo.delayTime
+}
+
+func (bo *DiskCheckBackoffer) Attempt() int {
 	return bo.attempt
 }

@@ -62,6 +62,7 @@ go_library(
         "//pkg/util",
         "//pkg/util/cdcutil",
         "//pkg/util/collate",
+        "//pkg/util/engine",
         "//pkg/util/mathutil",
         "//pkg/util/table-filter",
         "@com_github_docker_go_units//:go-units",

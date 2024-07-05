@@ -825,7 +825,7 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	}
 
 	if cfg.CheckRequirements {
-		if err = checkDiskSpace(ctx, mgr, files, tables); err != nil {
+		if err := checkDiskSpace(ctx, mgr, files, tables); err != nil {
 			return errors.Trace(err)
 		}
 	}
@@ -1249,16 +1249,19 @@ func EstimateTiflashUsage(tables []*metautil.Table, storeCnt int) uint64 {
 }
 
 func CheckStoreSpace(necessary uint64, store *http.StoreInfo) error {
+	// Be careful editing the message, it is used in DiskCheckBackoffer
 	available, err := units.RAMInBytes(store.Status.Available)
 	if err != nil {
-		return errors.Errorf("store %d has invalid available space %s", store.Store.ID, store.Status.Available)
+		berrors.ErrPDInvalidResponse.Wrap(err)
 	}
 	if available <= 0 {
-		return errors.Errorf("store %d has no available space", store.Store.ID)
+		err = errors.Errorf("store %d has no available space", store.Store.ID)
+		return berrors.ErrPDInvalidResponse.Wrap(err)
 	}
 	if uint64(available) < necessary {
-		return errors.Errorf("store %d has no enough space, available %s, necessary %s",
+		err = errors.Errorf("store %d has no enough space, available %s, necessary %s",
 			store.Store.ID, units.BytesSize(float64(available)), units.BytesSize(float64(necessary)))
+		return berrors.ErrKVDiskNotEnough.Wrap(err)
 	}
 	return nil
 }
@@ -1282,6 +1285,11 @@ func checkDiskSpace(ctx context.Context, mgr *conn.Mgr, files []*backuppb.File, 
 			return base
 		}
 		return base * uint64(ratio*10) / 10
+	}
+
+	tikvStores, tiflashStores, err = getStores(ctx, mgr)
+	if err != nil {
+		return errors.Trace(err)
 	}
 	for _, tikv := range tikvStores {
 		if err := CheckStoreSpace(extraPreserve(tikvUsage, 1.1), tikv); err != nil {
