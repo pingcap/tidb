@@ -1267,7 +1267,7 @@ func checkDiskSpace(ctx context.Context, mgr *conn.Mgr, files []*backuppb.File, 
 			tiflashCnt += 1
 			continue
 		}
-		tikvCnt += 2
+		tikvCnt += 1
 	}
 
 	// We won't need to restore more than 1800 PB data at one time, right?
