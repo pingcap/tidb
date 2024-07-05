@@ -264,3 +264,18 @@ func TestTiDBSchemaCacheSizeVariable(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, raw.Data.CacheCapacity(), uint64(1073741824))
 }
+
+func TestTrace(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@global.tidb_schema_cache_size = 1024 * 1024 * 1024")
+	tk.MustExec("create table t_trace(id int key auto_increment)")
+	is := dom.InfoSchema()
+	ok, raw := infoschema.IsV2(is)
+	require.True(t, ok)
+
+	// Evict the table cache and check the trace information can catch this calling.
+	raw.EvictTable("test", "t_trace")
+	tk.MustQuery("trace select * from information_schema.tables").CheckContain("infoschema.loadTableInfo")
+}

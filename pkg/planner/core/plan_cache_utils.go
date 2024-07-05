@@ -221,7 +221,7 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 		RelateVersion:       relateVersion,
 		Params:              extractor.markers,
 	}
-	if err = checkPreparedPriv(sctx, preparedObj, ret.InfoSchema); err != nil {
+	if err = checkPreparedPriv(ctx, sctx, preparedObj, ret.InfoSchema); err != nil {
 		return nil, nil, 0, err
 	}
 	return preparedObj, p, paramCount, nil

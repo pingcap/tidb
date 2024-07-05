@@ -446,6 +446,16 @@ func isSpecialDB(dbName string) bool {
 		dbName == util.MetricSchemaName.L
 }
 
+// EvictTable is exported for testing only.
+func (is *infoschemaV2) EvictTable(schema, tbl string) {
+	eq := func(a, b *tableItem) bool { return a.dbName == b.dbName && a.tableName == b.tableName }
+	itm, ok := search(is.byName, is.infoSchema.schemaMetaVersion, tableItem{dbName: schema, tableName: tbl, schemaVersion: math.MaxInt64}, eq)
+	if !ok {
+		return
+	}
+	is.tableCache.Remove(tableCacheKey{itm.tableID, is.infoSchema.schemaMetaVersion})
+}
+
 func (is *infoschemaV2) TableByName(ctx context.Context, schema, tbl model.CIStr) (t table.Table, err error) {
 	if isSpecialDB(schema.L) {
 		if tbNames, ok := is.specials[schema.L]; ok {
@@ -755,7 +765,7 @@ retry:
 }
 
 func loadTableInfo(ctx context.Context, r autoid.Requirement, infoData *Data, tblID, dbID int64, ts uint64, schemaVersion int64) (table.Table, error) {
-	defer tracing.StartRegion(ctx, "loadTableInfo").End()
+	defer tracing.StartRegion(ctx, "infoschema.loadTableInfo").End()
 	// Try to avoid repeated concurrency loading.
 	res, err, _ := loadTableSF.Do(fmt.Sprintf("%d-%d-%d", dbID, tblID, schemaVersion), func() (any, error) {
 	retry:
