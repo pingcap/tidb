@@ -73,7 +73,7 @@ func TestAddBatchJobError(t *testing.T) {
 }
 
 func TestParallelDDL(t *testing.T) {
-	store, _ := testkit.CreateMockStoreAndDomainWithSchemaLease(t, testLease)
+	store := testkit.CreateMockStoreWithSchemaLease(t, testLease)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
