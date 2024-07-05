@@ -52,6 +52,13 @@ var (
 	_ base.LogicalPlan = &LogicalLimit{}
 	_ base.LogicalPlan = &LogicalWindow{}
 	_ base.LogicalPlan = &LogicalExpand{}
+	_ base.LogicalPlan = &LogicalUnionScan{}
+	_ base.LogicalPlan = &LogicalMemTable{}
+	_ base.LogicalPlan = &LogicalShow{}
+	_ base.LogicalPlan = &LogicalShowDDLJobs{}
+	_ base.LogicalPlan = &LogicalCTE{}
+	_ base.LogicalPlan = &LogicalCTETable{}
+	_ base.LogicalPlan = &LogicalSequence{}
 )
 
 func extractNotNullFromConds(conditions []expression.Expression, p base.LogicalPlan) intset.FastIntSet {
