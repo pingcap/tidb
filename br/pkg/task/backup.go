@@ -630,22 +630,22 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 	progressCallBack := func(callBackUnit backup.ProgressUnit) {
 		if progressUnit == callBackUnit {
 			updateCh.Inc()
+			failpoint.Inject("progress-call-back", func(v failpoint.Value) {
+				log.Info("failpoint progress-call-back injected")
+				atomic.AddUint64(&progressCount, 1)
+				if fileName, ok := v.(string); ok {
+					f, osErr := os.OpenFile(fileName, os.O_CREATE|os.O_WRONLY, os.ModePerm)
+					if osErr != nil {
+						log.Warn("failed to create file", zap.Error(osErr))
+					}
+					msg := []byte(fmt.Sprintf("%s:%d\n", progressUnit, atomic.LoadUint64(&progressCount)))
+					_, err = f.Write(msg)
+					if err != nil {
+						log.Warn("failed to write data to file", zap.Error(err))
+					}
+				}
+			})
 		}
-		failpoint.Inject("progress-call-back", func(v failpoint.Value) {
-			log.Info("failpoint progress-call-back injected")
-			atomic.AddUint64(&progressCount, 1)
-			if fileName, ok := v.(string); ok {
-				f, osErr := os.OpenFile(fileName, os.O_CREATE|os.O_WRONLY, os.ModePerm)
-				if osErr != nil {
-					log.Warn("failed to create file", zap.Error(osErr))
-				}
-				msg := []byte(fmt.Sprintf("region:%d\n", atomic.LoadUint64(&progressCount)))
-				_, err = f.Write(msg)
-				if err != nil {
-					log.Warn("failed to write data to file", zap.Error(err))
-				}
-			}
-		})
 	}
 
 	if cfg.UseCheckpoint {
