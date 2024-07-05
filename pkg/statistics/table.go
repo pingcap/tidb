@@ -66,7 +66,7 @@ type Table struct {
 	// We used it in auto-analyze to determine if this table has been analyzed.
 	// The source of this field comes from two parts:
 	// 1. Initialized by snapshot when loading stats_meta.
-	// 2. Updated by the analysis time of a more specific column or index when loading the histogram of the column or index.
+	// 2. Updated by the analysis time of a specific column or index when loading the histogram of the column or index.
 	LastAnalyzeVersion uint64
 	// TblInfoUpdateTS is the UpdateTS of the TableInfo used when filling this struct.
 	// It is the schema version of the corresponding table. It is used to skip redundant
