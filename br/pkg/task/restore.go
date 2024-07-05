@@ -1194,29 +1194,15 @@ func getMaxReplica(ctx context.Context, mgr *conn.Mgr) (cnt uint64, err error) {
 	return uint64(val.(float64)), nil
 }
 
-func getStores(ctx context.Context, mgr *conn.Mgr) (tikvStores, tiflashStores []*http.StoreInfo, err error) {
-	var stores *http.StoresInfo
+func getStores(ctx context.Context, mgr *conn.Mgr) (stores *http.StoresInfo, err error) {
 	err = utils.WithRetry(ctx, func() error {
 		stores, err = mgr.GetPDHTTPClient().GetStores(ctx)
 		return err
 	}, utils.NewPDReqBackoffer())
 	if err != nil {
-		return nil, nil, errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
-
-	if stores == nil || len(stores.Stores) == 0 {
-		return nil, nil, nil
-	}
-
-	for i := range stores.Stores {
-		store := &stores.Stores[i]
-		if engine.IsTiFlashHTTPResp(&store.Store) {
-			tiflashStores = append(tiflashStores, store)
-			continue
-		}
-		tikvStores = append(tikvStores, store)
-	}
-	return tikvStores, tiflashStores, nil
+	return stores, nil
 }
 
 func EstimateTikvUsage(files []*backuppb.File, maxReplica uint64, storeCnt int) uint64 {
@@ -1252,16 +1238,14 @@ func CheckStoreSpace(necessary uint64, store *http.StoreInfo) error {
 	// Be careful editing the message, it is used in DiskCheckBackoffer
 	available, err := units.RAMInBytes(store.Status.Available)
 	if err != nil {
-		berrors.ErrPDInvalidResponse.Wrap(err)
+		return errors.Annotatef(berrors.ErrPDInvalidResponse, "store %d has invalid available space %s",store.Store.ID, store.Status.Available)
 	}
 	if available <= 0 {
-		err = errors.Errorf("store %d has no available space", store.Store.ID)
-		return berrors.ErrPDInvalidResponse.Wrap(err)
+		return errors.Annotatef(berrors.ErrPDInvalidResponse, "store %d has invalid available space %s",store.Store.ID, store.Status.Available)
 	}
 	if uint64(available) < necessary {
-		err = errors.Errorf("store %d has no enough space, available %s, necessary %s",
+		return errors.Annotatef(berrors.ErrKVDiskNotEnough, "store %d has no enough space, available %s, necessary %s",
 			store.Store.ID, units.BytesSize(float64(available)), units.BytesSize(float64(necessary)))
-		return berrors.ErrKVDiskNotEnough.Wrap(err)
 	}
 	return nil
 }
@@ -1271,35 +1255,51 @@ func checkDiskSpace(ctx context.Context, mgr *conn.Mgr, files []*backuppb.File, 
 	if err != nil {
 		return errors.Trace(err)
 	}
-	tikvStores, tiflashStores, err := getStores(ctx, mgr)
+	stores, err := getStores(ctx, mgr)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	tikvUsage := EstimateTikvUsage(files, maxReplica, len(tikvStores))
-	tiflashUsage := EstimateTiflashUsage(tables, len(tiflashStores))
+	tikvCnt, tiflashCnt := 0, 0
+	for i := range stores.Stores {
+		store := &stores.Stores[i]
+		if engine.IsTiFlashHTTPResp(&store.Store) {
+			tiflashCnt += 1
+			continue
+		}
+		tikvCnt += 2
+	}
 
 	// We won't need to restore more than 1800 PB data at one time, right?
-	extraPreserve := func(base uint64, ratio float32) uint64 {
+	preserve := func(base uint64, ratio float32) uint64 {
 		if base > 1000*pb {
 			return base
 		}
 		return base * uint64(ratio*10) / 10
 	}
+	tikvUsage := preserve(EstimateTikvUsage(files, maxReplica, tikvCnt), 1.1)
+	tiflashUsage := preserve(EstimateTiflashUsage(tables, tiflashCnt), 1.1)
 
-	tikvStores, tiflashStores, err = getStores(ctx, mgr)
+	err = utils.WithRetry(ctx, func() error {
+		stores, err = getStores(ctx, mgr)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		for _, store := range stores.Stores {
+			if engine.IsTiFlashHTTPResp(&store.Store) {
+				if err := CheckStoreSpace(tiflashUsage, &store); err != nil {
+					return errors.Trace(err)
+				}
+			} else {
+				if err := CheckStoreSpace(tikvUsage, &store); err != nil {
+					return errors.Trace(err)
+				}
+			}
+		}
+		return nil
+	}, utils.NewDiskCheckBackoffer())
 	if err != nil {
 		return errors.Trace(err)
-	}
-	for _, tikv := range tikvStores {
-		if err := CheckStoreSpace(extraPreserve(tikvUsage, 1.1), tikv); err != nil {
-			return errors.Trace(err)
-		}
-	}
-	for _, tiflash := range tiflashStores {
-		if err := CheckStoreSpace(extraPreserve(tiflashUsage, 1.1), tiflash); err != nil {
-			return errors.Trace(err)
-		}
 	}
 	return nil
 }
