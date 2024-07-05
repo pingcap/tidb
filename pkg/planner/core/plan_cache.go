@@ -221,11 +221,11 @@ func GetPlanFromPlanCache(ctx context.Context, sctx sessionctx.Context,
 		}
 	}
 
-	var matchOpts *PlanCacheMatchOpts
+	var paramTypes []*types.FieldType
 	if stmtCtx.UseCache() {
 		var cacheVal kvcache.Value
 		var hit, isPointPlan bool
-		if stmt.PointGet.pointPlan != nil { // if it's PointGet Plan, no need to use MatchOpts
+		if stmt.PointGet.pointPlan != nil { // if it's PointGet Plan, no need to use paramTypes
 			cacheVal = &PlanCacheValue{
 				Plan:          stmt.PointGet.pointPlan,
 				OutputColumns: stmt.PointGet.columnNames,
@@ -233,9 +233,9 @@ func GetPlanFromPlanCache(ctx context.Context, sctx sessionctx.Context,
 			}
 			isPointPlan, hit = true, true
 		} else {
-			matchOpts = GetMatchOpts(sctx, params)
+			paramTypes = parseParamTypes(sctx, params)
 			// TODO: consider instance-level plan cache
-			cacheVal, hit = sctx.GetSessionPlanCache().Get(cacheKey, matchOpts)
+			cacheVal, hit = sctx.GetSessionPlanCache().Get(cacheKey, paramTypes)
 		}
 		if hit {
 			if intest.InTest && ctx.Value(PlanCacheKeyTestBeforeAdjust{}) != nil {
@@ -249,11 +249,11 @@ func GetPlanFromPlanCache(ctx context.Context, sctx sessionctx.Context,
 			}
 		}
 	}
-	if matchOpts == nil {
-		matchOpts = GetMatchOpts(sctx, params)
+	if paramTypes == nil {
+		paramTypes = parseParamTypes(sctx, params)
 	}
 
-	return generateNewPlan(ctx, sctx, isNonPrepared, is, stmt, cacheKey, matchOpts)
+	return generateNewPlan(ctx, sctx, isNonPrepared, is, stmt, cacheKey, paramTypes)
 }
 
 func adjustCachedPlan(sctx sessionctx.Context, cachedVal *PlanCacheValue, isNonPrepared, isPointPlan bool,
@@ -288,7 +288,7 @@ func adjustCachedPlan(sctx sessionctx.Context, cachedVal *PlanCacheValue, isNonP
 // generateNewPlan call the optimizer to generate a new plan for current statement
 // and try to add it to cache
 func generateNewPlan(ctx context.Context, sctx sessionctx.Context, isNonPrepared bool, is infoschema.InfoSchema,
-	stmt *PlanCacheStmt, cacheKey string, matchOpts *PlanCacheMatchOpts) (base.Plan, []*types.FieldName, error) {
+	stmt *PlanCacheStmt, cacheKey string, paramTypes []*types.FieldType) (base.Plan, []*types.FieldName, error) {
 	stmtAst := stmt.PreparedAst
 	sessVars := sctx.GetSessionVars()
 	stmtCtx := sessVars.StmtCtx
@@ -303,18 +303,18 @@ func generateNewPlan(ctx context.Context, sctx sessionctx.Context, isNonPrepared
 
 	// check whether this plan is cacheable.
 	if stmtCtx.UseCache() {
-		if cacheable, reason := isPlanCacheable(sctx.GetPlanCtx(), p, len(matchOpts.ParamTypes), len(stmt.limits), stmt.hasSubquery); !cacheable {
+		if cacheable, reason := isPlanCacheable(sctx.GetPlanCtx(), p, len(paramTypes), len(stmt.limits), stmt.hasSubquery); !cacheable {
 			stmtCtx.SetSkipPlanCache(reason)
 		}
 	}
 
 	// put this plan into the plan cache.
 	if stmtCtx.UseCache() {
-		cached := NewPlanCacheValue(p, names, matchOpts, &stmtCtx.StmtHints)
+		cached := NewPlanCacheValue(p, names, paramTypes, &stmtCtx.StmtHints)
 		stmt.NormalizedPlan, stmt.PlanDigest = NormalizePlan(p)
 		stmtCtx.SetPlan(p)
 		stmtCtx.SetPlanDigest(stmt.NormalizedPlan, stmt.PlanDigest)
-		sctx.GetSessionPlanCache().Put(cacheKey, cached, matchOpts)
+		sctx.GetSessionPlanCache().Put(cacheKey, cached, paramTypes)
 		if _, ok := p.(*PointGetPlan); ok {
 			stmt.PointGet.pointPlan = p
 			stmt.PointGet.columnNames = names
