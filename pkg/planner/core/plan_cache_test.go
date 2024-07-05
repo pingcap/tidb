@@ -1883,3 +1883,27 @@ func TestPlanCacheDirtyTables(t *testing.T) {
 		}
 	}
 }
+
+func TestInstancePlanCacheAcrossSession(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec(`use test`)
+	tk1.MustExec(`create table t (a int)`)
+	tk1.MustExec(`insert into t values (1), (2), (3), (4), (5)`)
+	tk1.Session().GetSessionVars().EnableInstancePlanCache = true
+	tk1.MustExec(`prepare st from 'select a from t where a < ?'`)
+	tk1.MustExec(`set @a=2`)
+	tk1.MustQuery(`execute st using @a`).Sort().Check(testkit.Rows(`1`))
+	tk1.MustExec(`set @a=3`)
+	tk1.MustQuery(`execute st using @a`).Sort().Check(testkit.Rows(`1`, `2`))
+	tk1.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+
+	// session2 can share session1's cached plan
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.Session().GetSessionVars().EnableInstancePlanCache = true
+	tk2.MustExec(`use test`)
+	tk2.MustExec(`prepare st from 'select a from t where a < ?'`)
+	tk2.MustExec(`set @a=4`)
+	tk2.MustQuery(`execute st using @a`).Sort().Check(testkit.Rows(`1`, `2`, `3`))
+	tk2.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+}

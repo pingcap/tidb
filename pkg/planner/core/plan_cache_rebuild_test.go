@@ -84,7 +84,7 @@ func testCachedPlanClone(t *testing.T, tk *testkit.TestKit, prep, set, exec1, ex
 		// get the current cached plan and its fingerprint
 		original, originalFingerprint = cachedVal.Plan, planFingerprint(t, cachedVal.Plan)
 		// replace the cached plan with a cloned one
-		cloned, ok := original.CloneForPlanCache()
+		cloned, ok := original.CloneForPlanCache(cachedVal.Plan.SCtx())
 		require.True(t, ok)
 		cachedVal.Plan = cloned
 	}
@@ -100,7 +100,7 @@ func testCachedPlanClone(t *testing.T, tk *testkit.TestKit, prep, set, exec1, ex
 	// check the cloned plan should have the same result as the original plan
 	originalRes := tk.MustQuery(exec2).Sort()
 	clonePlan := func(cachedVal *core.PlanCacheValue) {
-		cloned, ok := cachedVal.Plan.CloneForPlanCache()
+		cloned, ok := cachedVal.Plan.CloneForPlanCache(cachedVal.Plan.SCtx())
 		require.True(t, ok)
 		cachedVal.Plan = cloned
 	}
