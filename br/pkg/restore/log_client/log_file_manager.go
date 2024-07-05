@@ -19,6 +19,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils/iter"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tidb/pkg/util/redact"
 	"go.uber.org/zap"
 )
@@ -435,6 +436,36 @@ func LoadMigrations(ctx context.Context, s storage.ExternalStorage) iter.TryNext
 	return UnmarshalDir(ctx, "v1/migrations/", s, func(t *pb.Migration, b []byte) error { return t.Unmarshal(b) })
 }
 
-type MigrationRunner struct {
-	s storage.ExternalStorage
+type MigrationExt struct {
+	s      storage.ExternalStorage
+	prefix string
+}
+
+func (m MigrationExt) Merge(m1 *pb.Migration, m2 *pb.Migration) *pb.Migration {
+	out := new(pb.Migration)
+	out.DeleteFiles = append(out.DeleteFiles, m1.DeleteFiles...)
+	out.DeleteFiles = append(out.DeleteFiles, m2.DeleteFiles...)
+	out.DeleteLogicalFiles = append(out.DeleteLogicalFiles, m1.DeleteLogicalFiles...)
+	out.DeleteLogicalFiles = append(out.DeleteLogicalFiles, m2.DeleteLogicalFiles...)
+	out.Compactions = append(out.Compactions, m1.Compactions...)
+	out.Compactions = append(out.Compactions, m2.Compactions...)
+	out.TruncatedTo = mathutil.Max(m1.TruncatedTo, m2.TruncatedTo)
+
+	return out
+}
+
+type MigratedTo struct {
+	Warnings []error
+	NewBase  *pb.Migration
+}
+
+func (m MigrationExt) MigrateTo(ctx context.Context, mig *pb.Migration) MigratedTo {
+	out := MigratedTo{
+		Warnings: nil,
+		NewBase:  new(pb.Migration),
+	}
+	err := m.s.DeleteFiles(ctx, mig.DeleteFiles)
+	if err != nil {
+		out.Warnings = append(out.Warnings)
+	}
 }
