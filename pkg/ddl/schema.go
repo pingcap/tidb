@@ -20,11 +20,13 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/ddl/label"
+	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/parser/model"
+	"go.uber.org/zap"
 )
 
 func onCreateSchema(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
@@ -253,14 +255,6 @@ func (w *worker) onRecoverSchema(d *ddlCtx, t *meta.Meta, job *model.Job) (ver i
 		} else {
 			job.Args[checkFlagIndexInJobArgs] = recoverCheckFlagDisableGC
 		}
-		// Clear all placement when recover
-		for _, recoverTabInfo := range recoverSchemaInfo.RecoverTabsInfo {
-			err = clearTablePlacementAndBundles(recoverTabInfo.TableInfo)
-			if err != nil {
-				job.State = model.JobStateCancelled
-				return ver, errors.Wrapf(err, "failed to notify PD the placement rules")
-			}
-		}
 		schemaInfo.State = model.StateWriteOnly
 		job.SchemaState = model.StateWriteOnly
 	case model.StateWriteOnly:
@@ -285,16 +279,17 @@ func (w *worker) onRecoverSchema(d *ddlCtx, t *meta.Meta, job *model.Job) (ver i
 			}
 			recoverTbls = make([]*RecoverInfo, 0, len(tables))
 			for _, tblInfo := range tables {
-				autoIDs, err3 := snapMeta.GetAutoIDAccessors(job.SchemaID, tblInfo.ID).Get()
+				logutil.DDLLogger().Info("lance test", zap.String("table", tblInfo.Name.L))
+				autoIDs, err3 := snapMeta.GetAutoIDAccessors(sid, tblInfo.ID).Get()
 				if err3 != nil {
 					job.State = model.JobStateCancelled
 					return ver, errors.Trace(err3)
 				}
 				recoverTbls = append(recoverTbls, &RecoverInfo{
-					SchemaID:      job.SchemaID,
+					SchemaID:      sid,
 					TableInfo:     tblInfo,
-					DropJobID:     job.ID,
-					SnapshotTS:    job.StartTS,
+					DropJobID:     recoverSchemaInfo.DropJobID,
+					SnapshotTS:    recoverSchemaInfo.SnapshotTS,
 					AutoIDs:       autoIDs,
 					OldSchemaName: recoverSchemaInfo.OldSchemaName.L,
 					OldTableName:  tblInfo.Name.L,
