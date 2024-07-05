@@ -240,12 +240,8 @@ func (l *LRUPlanCache) memoryControl() {
 
 // PickPlanFromBucket pick one plan from bucket
 func (l *LRUPlanCache) pickFromBucket(bucket map[*list.Element]struct{}, opts any) (*list.Element, bool) {
-	var matchOpts *PlanCacheMatchOpts
-	if opts != nil {
-		matchOpts = opts.(*PlanCacheMatchOpts)
-	}
 	for k := range bucket {
-		if matchCachedPlan(l.sctx, k.Value.(*planCacheEntry).PlanValue.(*PlanCacheValue), matchOpts) {
+		if checkTypesCompatibility4PC(k.Value.(*planCacheEntry).PlanValue.(*PlanCacheValue).paramTypes, opts) {
 			return k, true
 		}
 	}

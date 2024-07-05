@@ -397,8 +397,8 @@ type PlanCacheValue struct {
 	memoryUsage   int64
 	testKey       int64 // this is only for test
 
-	// matchOpts stores some fields help to choose a suitable plan
-	matchOpts *PlanCacheMatchOpts
+	// paramTypes stores all parameters' FieldType, some different parameters may share same plan
+	paramTypes []*types.FieldType
 	// stmtHints stores the hints which set session variables, because the hints won't be processed using cached plan.
 	stmtHints *hint.StmtHints
 }
@@ -431,9 +431,9 @@ func (v *PlanCacheValue) MemoryUsage() (sum int64) {
 
 	sum += size.SizeOfInterface + size.SizeOfSlice*2 + int64(cap(v.OutputColumns))*size.SizeOfPointer +
 		size.SizeOfMap + size.SizeOfInt64*2
-	if v.matchOpts != nil {
-		sum += int64(cap(v.matchOpts.ParamTypes)) * size.SizeOfPointer
-		for _, ft := range v.matchOpts.ParamTypes {
+	if v.paramTypes != nil {
+		sum += int64(cap(v.paramTypes)) * size.SizeOfPointer
+		for _, ft := range v.paramTypes {
 			sum += ft.MemoryUsage()
 		}
 	}
@@ -447,24 +447,17 @@ func (v *PlanCacheValue) MemoryUsage() (sum int64) {
 
 // NewPlanCacheValue creates a SQLCacheValue.
 func NewPlanCacheValue(plan base.Plan, names []*types.FieldName,
-	matchOpts *PlanCacheMatchOpts, stmtHints *hint.StmtHints) *PlanCacheValue {
-	userParamTypes := make([]*types.FieldType, len(matchOpts.ParamTypes))
-	for i, tp := range matchOpts.ParamTypes {
+	paramTypes []*types.FieldType, stmtHints *hint.StmtHints) *PlanCacheValue {
+	userParamTypes := make([]*types.FieldType, len(paramTypes))
+	for i, tp := range paramTypes {
 		userParamTypes[i] = tp.Clone()
 	}
 	return &PlanCacheValue{
 		Plan:          plan,
 		OutputColumns: names,
-		matchOpts:     matchOpts,
+		paramTypes:    userParamTypes,
 		stmtHints:     stmtHints.Clone(),
 	}
-}
-
-// PlanCacheMatchOpts store some property used to fetch plan from plan cache
-// The structure set here is to avoid import cycle
-type PlanCacheMatchOpts struct {
-	// paramTypes stores all parameters' FieldType, some different parameters may share same plan
-	ParamTypes []*types.FieldType
 }
 
 // planCacheStmtProcessor records all query features which may affect plan selection.
@@ -570,17 +563,16 @@ func GetPreparedStmt(stmt *ast.ExecuteStmt, vars *variable.SessionVars) (*PlanCa
 	return nil, plannererrors.ErrStmtNotFound
 }
 
-// GetMatchOpts get options to fetch plan or generate new plan
-// we can add more options here
-func GetMatchOpts(sctx sessionctx.Context, params []expression.Expression) *PlanCacheMatchOpts {
-	return &PlanCacheMatchOpts{ParamTypes: parseParamTypes(sctx, params)}
-}
-
 // CheckTypesCompatibility4PC compares FieldSlice with []*types.FieldType
 // Currently this is only used in plan cache to check whether the types of parameters are compatible.
 // If the types of parameters are compatible, we can use the cached plan.
 // tpsExpected is types from cached plan
-func checkTypesCompatibility4PC(tpsExpected, tpsActual []*types.FieldType) bool {
+func checkTypesCompatibility4PC(expected, actual any) bool {
+	if expected == nil || actual == nil {
+		return true // no need to compare types
+	}
+	tpsExpected := expected.([]*types.FieldType)
+	tpsActual := actual.([]*types.FieldType)
 	if len(tpsExpected) != len(tpsActual) {
 		return false
 	}
@@ -710,15 +702,4 @@ func parseParamTypes(sctx sessionctx.Context, params []expression.Expression) (p
 		paramTypes = append(paramTypes, tp)
 	}
 	return
-}
-
-// matchCachedPlan checks whether this plan is matched with these match-options.
-func matchCachedPlan(_ sessionctx.Context, value *PlanCacheValue, matchOpts *PlanCacheMatchOpts) bool {
-	if matchOpts == nil { // if PointGet, the matchOpts is nil
-		return true
-	}
-	if !checkTypesCompatibility4PC(value.matchOpts.ParamTypes, matchOpts.ParamTypes) {
-		return false
-	}
-	return true
 }
