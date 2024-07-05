@@ -35,7 +35,6 @@ import (
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/intest"
-	"github.com/pingcap/tidb/pkg/util/kvcache"
 )
 
 // PlanCacheKeyTestIssue43667 is only for test.
@@ -191,16 +190,15 @@ func GetPlanFromPlanCache(ctx context.Context, sctx sessionctx.Context,
 		return nil, nil, err
 	}
 
-	var cacheKey string
 	sessVars := sctx.GetSessionVars()
 	stmtCtx := sessVars.StmtCtx
 	cacheEnabled := false
 	if isNonPrepared {
 		stmtCtx.SetCacheType(contextutil.SessionNonPrepared)
-		cacheEnabled = sctx.GetSessionVars().EnableNonPreparedPlanCache // plan-cache might be disabled after prepare.
+		cacheEnabled = sessVars.EnableNonPreparedPlanCache // plan-cache might be disabled after prepare.
 	} else {
 		stmtCtx.SetCacheType(contextutil.SessionPrepared)
-		cacheEnabled = sctx.GetSessionVars().EnablePreparedPlanCache
+		cacheEnabled = sessVars.EnablePreparedPlanCache
 	}
 	if stmt.StmtCacheable && cacheEnabled {
 		stmtCtx.EnablePlanCache()
@@ -209,7 +207,7 @@ func GetPlanFromPlanCache(ctx context.Context, sctx sessionctx.Context,
 		stmtCtx.WarnSkipPlanCache(stmt.UncacheableReason)
 	}
 
-	var binding, reason string
+	var cacheKey, binding, reason string
 	var cacheable bool
 	if stmtCtx.UseCache() {
 		cacheKey, binding, cacheable, reason, err = NewPlanCacheKey(sctx, stmt)
@@ -223,10 +221,10 @@ func GetPlanFromPlanCache(ctx context.Context, sctx sessionctx.Context,
 
 	var paramTypes []*types.FieldType
 	if stmtCtx.UseCache() {
-		var cacheVal kvcache.Value
+		var cachedVal *PlanCacheValue
 		var hit, isPointPlan bool
 		if stmt.PointGet.pointPlan != nil { // if it's PointGet Plan, no need to use paramTypes
-			cacheVal = &PlanCacheValue{
+			cachedVal = &PlanCacheValue{
 				Plan:          stmt.PointGet.pointPlan,
 				OutputColumns: stmt.PointGet.columnNames,
 				stmtHints:     stmt.PointGet.pointPlanHints,
@@ -234,17 +232,14 @@ func GetPlanFromPlanCache(ctx context.Context, sctx sessionctx.Context,
 			isPointPlan, hit = true, true
 		} else {
 			paramTypes = parseParamTypes(sctx, params)
-			// TODO: consider instance-level plan cache
-			cacheVal, hit = sctx.GetSessionPlanCache().Get(cacheKey, paramTypes)
+			cachedVal, hit = lookupPlanCache(sctx, cacheKey, paramTypes)
 		}
 		if hit {
-			if intest.InTest && ctx.Value(PlanCacheKeyTestBeforeAdjust{}) != nil {
-				ctx.Value(PlanCacheKeyTestBeforeAdjust{}).(func(cachedVal *PlanCacheValue))(cacheVal.(*PlanCacheValue))
+			if intest.InTest && ctx.Value(PlanCacheKeyTestBeforeAdjust{}) != nil && ctx.Value(PlanCacheKeyTestAfterAdjust{}) != nil {
+				ctx.Value(PlanCacheKeyTestBeforeAdjust{}).(func(cachedVal *PlanCacheValue))(cachedVal)
+				defer ctx.Value(PlanCacheKeyTestAfterAdjust{}).(func(cachedVal *PlanCacheValue))(cachedVal)
 			}
-			if plan, names, ok, err := adjustCachedPlan(sctx, cacheVal.(*PlanCacheValue), isNonPrepared, isPointPlan, binding, is, stmt); err != nil || ok {
-				if intest.InTest && ctx.Value(PlanCacheKeyTestAfterAdjust{}) != nil {
-					ctx.Value(PlanCacheKeyTestAfterAdjust{}).(func(cachedVal *PlanCacheValue))(cacheVal.(*PlanCacheValue))
-				}
+			if plan, names, ok, err := adjustCachedPlan(sctx, cachedVal, isNonPrepared, isPointPlan, binding, is, stmt); err != nil || ok {
 				return plan, names, err
 			}
 		}
@@ -254,6 +249,20 @@ func GetPlanFromPlanCache(ctx context.Context, sctx sessionctx.Context,
 	}
 
 	return generateNewPlan(ctx, sctx, isNonPrepared, is, stmt, cacheKey, paramTypes)
+}
+
+func lookupPlanCache(sctx sessionctx.Context, cacheKey string, paramTypes []*types.FieldType) (cachedVal *PlanCacheValue, hit bool) {
+	if sctx.GetSessionVars().EnableInstancePlanCache {
+		if v, hit := domain.GetDomain(sctx).GetInstancePlanCache().Get(cacheKey, paramTypes); hit {
+			cachedVal = v.(*PlanCacheValue)
+			return cachedVal.CloneForInstancePlanCache(sctx.GetPlanCtx()) // clone the value to solve concurrency problem
+		}
+	} else {
+		if v, hit := sctx.GetSessionPlanCache().Get(cacheKey, paramTypes); hit {
+			return v.(*PlanCacheValue), true
+		}
+	}
+	return nil, false
 }
 
 func adjustCachedPlan(sctx sessionctx.Context, cachedVal *PlanCacheValue, isNonPrepared, isPointPlan bool,
@@ -270,9 +279,7 @@ func adjustCachedPlan(sctx sessionctx.Context, cachedVal *PlanCacheValue, isNonP
 		return nil, nil, false, nil
 	}
 	sessVars.FoundInPlanCache = true
-	if len(bindSQL) > 0 {
-		// When the `len(bindSQL) > 0`, it means we use the binding.
-		// So we need to record this.
+	if len(bindSQL) > 0 { // We're using binding, set this to true.
 		sessVars.FoundInBinding = true
 	}
 	if metrics.ResettablePlanCacheCounterFortTest {
@@ -314,7 +321,11 @@ func generateNewPlan(ctx context.Context, sctx sessionctx.Context, isNonPrepared
 		stmt.NormalizedPlan, stmt.PlanDigest = NormalizePlan(p)
 		stmtCtx.SetPlan(p)
 		stmtCtx.SetPlanDigest(stmt.NormalizedPlan, stmt.PlanDigest)
-		sctx.GetSessionPlanCache().Put(cacheKey, cached, paramTypes)
+		if sessVars.EnableInstancePlanCache {
+			domain.GetDomain(sctx).GetInstancePlanCache().Put(cacheKey, cached, paramTypes)
+		} else {
+			sctx.GetSessionPlanCache().Put(cacheKey, cached, paramTypes)
+		}
 		if _, ok := p.(*PointGetPlan); ok {
 			stmt.PointGet.pointPlan = p
 			stmt.PointGet.columnNames = names

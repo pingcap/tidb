@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
+	"github.com/pingcap/tidb/pkg/planner/context"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/cost"
 	"github.com/pingcap/tidb/pkg/planner/property"
@@ -257,10 +258,11 @@ func (p *PhysicalTableReader) Clone() (base.PhysicalPlan, error) {
 }
 
 // CloneForPlanCache implements Plan.CloneForPlanCache method.
-func (p *PhysicalTableReader) CloneForPlanCache() (base.Plan, bool) {
+func (p *PhysicalTableReader) CloneForPlanCache(newCtx context.PlanContext) (base.Plan, bool) {
 	cloned := new(PhysicalTableReader)
 	*cloned = *p
-	t, ok := p.tablePlan.CloneForPlanCache()
+	cloned.SetSCtx(newCtx)
+	t, ok := p.tablePlan.CloneForPlanCache(newCtx)
 	if !ok {
 		return nil, false
 	}
@@ -332,10 +334,11 @@ func (p *PhysicalIndexReader) Clone() (base.PhysicalPlan, error) {
 }
 
 // CloneForPlanCache implements Plan.CloneForPlanCache method.
-func (p *PhysicalIndexReader) CloneForPlanCache() (base.Plan, bool) {
+func (p *PhysicalIndexReader) CloneForPlanCache(newCtx context.PlanContext) (base.Plan, bool) {
 	cloned := new(PhysicalIndexReader)
 	*cloned = *p
-	t, ok := p.indexPlan.CloneForPlanCache()
+	cloned.SetSCtx(newCtx)
+	t, ok := p.indexPlan.CloneForPlanCache(newCtx)
 	if !ok {
 		return nil, false
 	}
@@ -502,16 +505,17 @@ func (p *PhysicalIndexLookUpReader) Clone() (base.PhysicalPlan, error) {
 }
 
 // CloneForPlanCache implements Plan.CloneForPlanCache method.
-func (p *PhysicalIndexLookUpReader) CloneForPlanCache() (base.Plan, bool) {
+func (p *PhysicalIndexLookUpReader) CloneForPlanCache(newCtx context.PlanContext) (base.Plan, bool) {
 	cloned := new(PhysicalIndexLookUpReader)
 	*cloned = *p
-	t, ok := p.tablePlan.CloneForPlanCache()
+	cloned.SetSCtx(newCtx)
+	t, ok := p.tablePlan.CloneForPlanCache(newCtx)
 	if !ok {
 		return nil, false
 	}
 	cloned.tablePlan = t.(base.PhysicalPlan)
 	cloned.TablePlans = flattenPushDownPlan(t.(base.PhysicalPlan))
-	i, ok := p.indexPlan.CloneForPlanCache()
+	i, ok := p.indexPlan.CloneForPlanCache(newCtx)
 	if !ok {
 		return nil, false
 	}
@@ -790,9 +794,10 @@ func (p *PhysicalIndexScan) Clone() (base.PhysicalPlan, error) {
 }
 
 // CloneForPlanCache implements op.CloneForPlanCache interface.
-func (p *PhysicalIndexScan) CloneForPlanCache() (base.Plan, bool) {
+func (p *PhysicalIndexScan) CloneForPlanCache(newCtx context.PlanContext) (base.Plan, bool) {
 	cloned := new(PhysicalIndexScan)
 	*cloned = *p
+	cloned.SetSCtx(newCtx)
 	cloned.Ranges = util.CloneRanges(p.Ranges)
 	return cloned, true
 }
@@ -979,9 +984,10 @@ func (ts *PhysicalTableScan) Clone() (base.PhysicalPlan, error) {
 }
 
 // CloneForPlanCache implements op.CloneForPlanCache interface.
-func (ts *PhysicalTableScan) CloneForPlanCache() (base.Plan, bool) {
+func (ts *PhysicalTableScan) CloneForPlanCache(newCtx context.PlanContext) (base.Plan, bool) {
 	cloned := new(PhysicalTableScan)
 	*cloned = *ts
+	cloned.SetSCtx(newCtx)
 	cloned.Ranges = util.CloneRanges(ts.Ranges)
 	return cloned, true
 }
@@ -1137,11 +1143,12 @@ func (p *PhysicalProjection) Clone() (base.PhysicalPlan, error) {
 }
 
 // CloneForPlanCache implements op.CloneForPlanCache interface.
-func (p *PhysicalProjection) CloneForPlanCache() (base.Plan, bool) {
+func (p *PhysicalProjection) CloneForPlanCache(newCtx context.PlanContext) (base.Plan, bool) {
 	cloned := new(PhysicalProjection)
 	*cloned = *p
+	cloned.SetSCtx(newCtx)
 	var ok bool
-	cloned.children, ok = clonePhysicalPlansForPlanCache(p.children)
+	cloned.children, ok = clonePhysicalPlansForPlanCache(newCtx, p.children)
 	return cloned, ok
 }
 
@@ -2270,11 +2277,12 @@ func (p *PhysicalSelection) Clone() (base.PhysicalPlan, error) {
 }
 
 // CloneForPlanCache implements base.Plan.CloneForPlanCache method.
-func (p *PhysicalSelection) CloneForPlanCache() (base.Plan, bool) {
+func (p *PhysicalSelection) CloneForPlanCache(newCtx context.PlanContext) (base.Plan, bool) {
 	cloned := new(PhysicalSelection)
 	*cloned = *p
+	cloned.SetSCtx(newCtx)
 	var ok bool
-	cloned.children, ok = clonePhysicalPlansForPlanCache(p.children)
+	cloned.children, ok = clonePhysicalPlansForPlanCache(newCtx, p.children)
 	return cloned, ok
 }
 
@@ -2876,10 +2884,10 @@ func (p *PhysicalSequence) Schema() *expression.Schema {
 	return p.Children()[len(p.Children())-1].Schema()
 }
 
-func clonePhysicalPlansForPlanCache(plans []base.PhysicalPlan) ([]base.PhysicalPlan, bool) {
+func clonePhysicalPlansForPlanCache(newCtx context.PlanContext, plans []base.PhysicalPlan) ([]base.PhysicalPlan, bool) {
 	cloned := make([]base.PhysicalPlan, 0, len(plans))
 	for _, p := range plans {
-		clonedP, ok := p.CloneForPlanCache()
+		clonedP, ok := p.CloneForPlanCache(newCtx)
 		if !ok {
 			return nil, false
 		}
