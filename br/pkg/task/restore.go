@@ -1183,7 +1183,7 @@ func getMaxReplica(ctx context.Context, mgr *conn.Mgr) (cnt uint64, err error) {
 		return err
 	}, utils.NewPDReqBackoffer())
 	if err != nil {
-		return 0, errors.New(err.Error())
+		return 0, errors.Trace(err)
 	}
 
 	key := "max-replicas"
