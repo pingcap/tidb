@@ -49,11 +49,12 @@ import (
 )
 
 const (
-	flagOnline              = "online"
-	flagNoSchema            = "no-schema"
-	flagLoadStats           = "load-stats"
-	flagGranularity         = "granularity"
-	flagConcurrencyPerStore = "tikv-max-restore-concurrency"
+	flagOnline               = "online"
+	flagNoSchema             = "no-schema"
+	flagLoadStats            = "load-stats"
+	flagGranularity          = "granularity"
+	flagConcurrencyPerStore  = "tikv-max-restore-concurrency"
+	flagLogIncrementalCompat = "log-incremental-compat"
 
 	// FlagMergeRegionSizeBytes is the flag name of merge small regions by size
 	FlagMergeRegionSizeBytes = "merge-region-size-bytes"
@@ -167,6 +168,7 @@ func DefineRestoreCommonFlags(flags *pflag.FlagSet) {
 	flags.Bool(flagWithSysTable, true, "whether restore system privilege tables on default setting")
 	flags.StringArrayP(FlagResetSysUsers, "", []string{"cloud_admin", "root"}, "whether reset these users after restoration")
 	flags.Bool(flagUseFSR, false, "whether enable FSR for AWS snapshots")
+
 	_ = flags.MarkHidden(FlagResetSysUsers)
 	_ = flags.MarkHidden(FlagMergeRegionSizeBytes)
 	_ = flags.MarkHidden(FlagMergeRegionKeyCount)
@@ -237,6 +239,10 @@ type RestoreConfig struct {
 	// if it is empty, directly take restoring log justly.
 	FullBackupStorage string `json:"full-backup-storage" toml:"full-backup-storage"`
 
+	// LogIncrementalCompat indicates whether this restore should enter a compatibility mode for incremental restore.
+	// In this restore mode, the restore will not perform rewrite on the incremental data.
+	LogIncrementalCompat bool `json:"log-incremental-compat" toml:"log-incremental-compat"`
+
 	// [startTs, RestoreTS] is used to `restore log` from StartTS to RestoreTS.
 	StartTS         uint64                      `json:"start-ts" toml:"start-ts"`
 	RestoreTS       uint64                      `json:"restore-ts" toml:"restore-ts"`
@@ -279,6 +285,10 @@ func DefineRestoreFlags(flags *pflag.FlagSet) {
 	_ = flags.MarkHidden(flagUseCheckpoint)
 
 	flags.Bool(FlagWaitTiFlashReady, false, "whether wait tiflash replica ready if tiflash exists")
+	flags.Bool(flagLogIncrementalCompat, true, "whether make incremental restore compatible with later log restore)"+
+		" if set to true, the incremental restore will not perform rewrite on the incremental data)"+
+		" meanwhile the incremental restore will not allow to restore 3 backfilled type ddl jobs,"+
+		" these restricted ddl jobs are add index, modify column and reorganize partition")
 
 	DefineRestoreCommonFlags(flags)
 }
@@ -393,6 +403,11 @@ func (cfg *RestoreConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 	cfg.WaitTiflashReady, err = flags.GetBool(FlagWaitTiFlashReady)
 	if err != nil {
 		return errors.Annotatef(err, "failed to get flag %s", FlagWaitTiFlashReady)
+	}
+
+	cfg.LogIncrementalCompat, err = flags.GetBool(flagLogIncrementalCompat)
+	if err != nil {
+		return errors.Annotatef(err, "failed to get flag %s", flagLogIncrementalCompat)
 	}
 
 	if flags.Lookup(flagFullBackupType) != nil {
@@ -700,7 +715,7 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	if IsStreamRestore(cmdName) {
 		restoreError = RunStreamRestore(c, g, cmdName, cfg)
 	} else {
-		restoreError = runRestore(c, g, cmdName, cfg)
+		restoreError = runRestore(c, g, cmdName, cfg, nil)
 	}
 	if restoreError != nil {
 		return errors.Trace(restoreError)
@@ -732,7 +747,7 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	return nil
 }
 
-func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConfig) error {
+func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConfig, clusterNonEmptyErr error) error {
 	cfg.Adjust()
 	defer summary.Summary(cmdName)
 	ctx, cancel := context.WithCancel(c)
@@ -827,6 +842,11 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	restoreTS, err := restore.GetTSWithRetry(ctx, mgr.GetPDClient())
 	if err != nil {
 		return errors.Trace(err)
+	}
+
+	// for full + log restore. should check the cluster is empty.
+	if client.IsFull() && clusterNonEmptyErr != nil {
+		return clusterNonEmptyErr
 	}
 
 	if client.IsIncremental() {

@@ -1181,7 +1181,10 @@ func RunStreamRestore(
 		return errors.Trace(err)
 	}
 
-	curTaskInfo, doFullRestore, err := checkPiTRTaskInfo(ctx, g, s, cfg)
+	// delay cluster checks after we get the backupmeta.
+	// for the case that the restore inc + log backup,
+	// we can still restore them.
+	curTaskInfo, doFullRestore, clusterNonEmptyErr, err := checkPiTRTaskInfo(ctx, g, s, cfg)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1197,7 +1200,7 @@ func RunStreamRestore(
 		logStorage := cfg.Config.Storage
 		cfg.Config.Storage = cfg.FullBackupStorage
 		// TiFlash replica is restored to down-stream on 'pitr' currently.
-		if err = runRestore(ctx, g, FullRestoreCmd, cfg); err != nil {
+		if err = runRestore(ctx, g, FullRestoreCmd, cfg, clusterNonEmptyErr); err != nil {
 			return errors.Trace(err)
 		}
 		cfg.Config.Storage = logStorage
@@ -1774,7 +1777,7 @@ func checkPiTRTaskInfo(
 	g glue.Glue,
 	s storage.ExternalStorage,
 	cfg *RestoreConfig,
-) (*checkpoint.CheckpointTaskInfoForLogRestore, bool, error) {
+) (*checkpoint.CheckpointTaskInfoForLogRestore, bool, error, error) {
 	var (
 		doFullRestore = (len(cfg.FullBackupStorage) > 0)
 
@@ -1785,7 +1788,7 @@ func checkPiTRTaskInfo(
 	mgr, err := NewMgr(ctx, g, cfg.PD, cfg.TLS, GetKeepalive(&cfg.Config),
 		cfg.CheckRequirements, true, conn.StreamVersionChecker)
 	if err != nil {
-		return nil, false, errors.Trace(err)
+		return nil, false, nil, errors.Trace(err)
 	}
 	defer mgr.Close()
 
@@ -1793,12 +1796,12 @@ func checkPiTRTaskInfo(
 	if cfg.UseCheckpoint {
 		exists, err := checkpoint.ExistsCheckpointTaskInfo(ctx, s, clusterID)
 		if err != nil {
-			return nil, false, errors.Trace(err)
+			return nil, false, nil, errors.Trace(err)
 		}
 		if exists {
 			curTaskInfo, err = checkpoint.LoadCheckpointTaskInfoForLogRestore(ctx, s, clusterID)
 			if err != nil {
-				return nil, false, errors.Trace(err)
+				return nil, false, nil, errors.Trace(err)
 			}
 			// TODO: check whether user has manually modified the cluster(ddl). If so, regard the behavior
 			//       as restore from scratch. (update `curTaskInfo.RewriteTs` to 0 as an uninitial value)
@@ -1838,7 +1841,7 @@ func checkPiTRTaskInfo(
 						"you can adjust the `start-ts` or `restored-ts` to continue with the previous execution. "+
 						"Otherwise, if you want to restore from scratch, please clean the cluster at first", errTaskMsg)
 				}
-				return nil, false, errors.Trace(err)
+				return nil, false, errors.Trace(err), nil
 			}
 		}
 	}
@@ -1854,9 +1857,9 @@ func checkPiTRTaskInfo(
 			RewriteTS:    0,
 			TiFlashItems: nil,
 		}, clusterID); err != nil {
-			return nil, false, errors.Trace(err)
+			return nil, false, nil, errors.Trace(err)
 		}
 	}
 
-	return curTaskInfo, doFullRestore, nil
+	return curTaskInfo, doFullRestore, nil, nil
 }
