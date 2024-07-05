@@ -999,14 +999,13 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	var newTS uint64
 	if client.IsIncremental() {
 		// we need to get the new ts after execDDL
-		// or backfill data in upstream may not be covered by
+		// or backfilled data in upstream may not be covered by
 		// the new ts.
 		// see https://github.com/pingcap/tidb/issues/54426
-		// newTS, err = restore.GetTSWithRetry(ctx, mgr.GetPDClient())
-		// if err != nil {
-		// 	return errors.Trace(err)
-		// }
-		newTS = restoreTS
+		newTS, err = restore.GetTSWithRetry(ctx, mgr.GetPDClient())
+		if err != nil {
+			return errors.Trace(err)
+		}
 	}
 	// We make bigger errCh so we won't block on multi-part failed.
 	errCh := make(chan error, 32)
