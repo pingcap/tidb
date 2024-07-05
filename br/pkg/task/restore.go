@@ -961,9 +961,18 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	var newTS uint64
 	if client.IsIncremental() {
 		newTS = restoreTS
+		if cfg.LogIncrementalCompat {
+			newTS = 0
+		}
 	}
 	ddlJobs := FilterDDLJobs(client.GetDDLJobs(), tables)
 	ddlJobs = FilterDDLJobByRules(ddlJobs, DDLJobBlockListRule)
+	if cfg.LogIncrementalCompat {
+		err = CheckDDLJobByRules(ddlJobs, DDLJobLogIncrementalCompactBlockListRule)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
 
 	err = PreCheckTableTiFlashReplica(ctx, mgr.GetPDClient(), tables, cfg.tiflashRecorder)
 	if err != nil {
@@ -1493,6 +1502,19 @@ func FilterDDLJobs(allDDLJobs []*model.Job, tables []*metautil.Table) (ddlJobs [
 	return ddlJobs
 }
 
+// CheckDDLJobByRules if one of rules returns true, the job in srcDDLJobs will be filtered.
+func CheckDDLJobByRules(srcDDLJobs []*model.Job, rules ...DDLJobFilterRule) error {
+	for _, ddlJob := range srcDDLJobs {
+		for _, rule := range rules {
+			if !rule(ddlJob) {
+				return errors.Annotatef(berrors.ErrRestoreModeMismatch, "DDL job %s is not allowed in incremental restore"+
+					" when logIncrementalCompact enabled", ddlJob.String())
+			}
+		}
+	}
+	return nil
+}
+
 // FilterDDLJobByRules if one of rules returns true, the job in srcDDLJobs will be filtered.
 func FilterDDLJobByRules(srcDDLJobs []*model.Job, rules ...DDLJobFilterRule) (dstDDLJobs []*model.Job) {
 	dstDDLJobs = make([]*model.Job, 0, len(srcDDLJobs))
@@ -1522,9 +1544,19 @@ var incrementalRestoreActionBlockList = map[model.ActionType]struct{}{
 	model.ActionUnlockTable:                {},
 }
 
+var logIncrementalRestoreCompactibleBlockList = map[model.ActionType]struct{}{
+	model.ActionAddIndex:            {},
+	model.ActionModifyColumn:        {},
+	model.ActionReorganizePartition: {},
+}
+
 // DDLJobBlockListRule rule for filter ddl job with type in block list.
 func DDLJobBlockListRule(ddlJob *model.Job) bool {
 	return checkIsInActions(ddlJob.Type, incrementalRestoreActionBlockList)
+}
+
+func DDLJobLogIncrementalCompactBlockListRule(ddlJob *model.Job) bool {
+	return checkIsInActions(ddlJob.Type, logIncrementalRestoreCompactibleBlockList)
 }
 
 func checkIsInActions(action model.ActionType, actions map[model.ActionType]struct{}) bool {
