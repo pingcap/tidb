@@ -1046,45 +1046,6 @@ func (ds *DataSource) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
 	return corCols
 }
 
-// LogicalIndexScan is the logical index scan operator for TiKV.
-type LogicalIndexScan struct {
-	logicalop.LogicalSchemaProducer
-	// DataSource should be read-only here.
-	Source       *DataSource
-	IsDoubleRead bool
-
-	EqCondCount int
-	AccessConds expression.CNFExprs
-	Ranges      []*ranger.Range
-
-	Index          *model.IndexInfo
-	Columns        []*model.ColumnInfo
-	FullIdxCols    []*expression.Column
-	FullIdxColLens []int
-	IdxCols        []*expression.Column
-	IdxColLens     []int
-}
-
-// MatchIndexProp checks if the indexScan can match the required property.
-func (p *LogicalIndexScan) MatchIndexProp(prop *property.PhysicalProperty) (match bool) {
-	if prop.IsSortItemEmpty() {
-		return true
-	}
-	if all, _ := prop.AllSameOrder(); !all {
-		return false
-	}
-	sctx := p.SCtx()
-	evalCtx := sctx.GetExprCtx().GetEvalCtx()
-	for i, col := range p.IdxCols {
-		if col.Equal(evalCtx, prop.SortItems[0].Col) {
-			return matchIndicesProp(sctx, p.IdxCols[i:], p.IdxColLens[i:], prop.SortItems)
-		} else if i >= p.EqCondCount {
-			break
-		}
-	}
-	return false
-}
-
 // getTablePath finds the TablePath from a group of accessPaths.
 func getTablePath(paths []*util.AccessPath) *util.AccessPath {
 	for _, path := range paths {
@@ -1406,13 +1367,6 @@ func getPKIsHandleColFromSchema(cols []*model.ColumnInfo, schema *expression.Sch
 
 func (ds *DataSource) getPKIsHandleCol() *expression.Column {
 	return getPKIsHandleColFromSchema(ds.Columns, ds.Schema(), ds.TableInfo.PKIsHandle)
-}
-
-func (p *LogicalIndexScan) getPKIsHandleCol(schema *expression.Schema) *expression.Column {
-	// We cannot use p.Source.getPKIsHandleCol() here,
-	// Because we may re-prune p.Columns and p.schema during the transformation.
-	// That will make p.Columns different from p.Source.Columns.
-	return getPKIsHandleColFromSchema(p.Columns, schema, p.Source.TableInfo.PKIsHandle)
 }
 
 // WindowFrame represents a window function frame.
