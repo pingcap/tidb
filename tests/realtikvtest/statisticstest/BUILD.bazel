@@ -10,8 +10,14 @@ go_test(
     flaky = True,
     race = "on",
     deps = [
+<<<<<<< HEAD
         "//statistics/handle",
         "//testkit",
+=======
+        "//pkg/parser/model",
+        "//pkg/statistics/asyncload",
+        "//pkg/testkit",
+>>>>>>> ba5c6a9bc6a (statistics: add a testcase for issue 54022 (#54137))
         "//tests/realtikvtest",
         "@com_github_stretchr_testify//require",
     ],
