@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/size"
+	"github.com/pingcap/tidb/pkg/util/tracing"
 	"github.com/tidwall/btree"
 	"golang.org/x/sync/singleflight"
 )
@@ -754,6 +755,7 @@ retry:
 }
 
 func loadTableInfo(ctx context.Context, r autoid.Requirement, infoData *Data, tblID, dbID int64, ts uint64, schemaVersion int64) (table.Table, error) {
+	defer tracing.StartRegion(ctx, "loadTableInfo").End()
 	// Try to avoid repeated concurrency loading.
 	res, err, _ := loadTableSF.Do(fmt.Sprintf("%d-%d-%d", dbID, tblID, schemaVersion), func() (any, error) {
 	retry:
