@@ -79,7 +79,7 @@ if run_sql "admin check table ${DB}.t;" | grep -q 'inconsistency'; then
     exit 1
 fi
 
-index_count=$(run_sql "select count(*) from $DB.t use index (index_val);" | awk '/COUNT/{print $2}')
+index_count=$(run_sql "select count(*) from $DB.t use index (index_val);" | awk '/count/{print $2}')
 if [ "${index_count}" != "4" ];then
     echo "TEST: [$TEST_NAME] index check fail on database $DB.t"
     exit 1
