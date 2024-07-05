@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/collate"
+	"github.com/pingcap/tidb/pkg/util/engine"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -824,14 +825,7 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	}
 
 	if cfg.CheckRequirements {
-		err := utils.WithRetry(ctx, func() error {
-			err = checkDiskSpace(ctx, mgr, files, tables)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			return nil
-		}, utils.NewPDReqBackoffer())
-		if err != nil {
+		if err = checkDiskSpace(ctx, mgr, files, tables); err != nil {
 			return errors.Trace(err)
 		}
 	}
@@ -1182,11 +1176,16 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	return nil
 }
 
-func getMaxReplica(ctx context.Context, mgr *conn.Mgr) (uint64, error) {
-	resp, err := mgr.GetPDHTTPClient().GetReplicateConfig(ctx)
+func getMaxReplica(ctx context.Context, mgr *conn.Mgr) (cnt uint64, err error) {
+	var resp map[string]any
+	err = utils.WithRetry(ctx, func() error {
+		resp, err = mgr.GetPDHTTPClient().GetReplicateConfig(ctx)
+		return err
+	}, utils.NewPDReqBackoffer())
 	if err != nil {
-		return 0, errors.Trace(err)
+		return 0, errors.New(err.Error())
 	}
+
 	key := "max-replicas"
 	val, ok := resp[key]
 	if !ok {
@@ -1195,18 +1194,25 @@ func getMaxReplica(ctx context.Context, mgr *conn.Mgr) (uint64, error) {
 	return uint64(val.(float64)), nil
 }
 
-func classifyStores(stores *http.StoresInfo) (tikvStores, tiflashStores []*http.StoreInfo, err error) {
+func getStores(ctx context.Context, mgr *conn.Mgr) (tikvStores, tiflashStores []*http.StoreInfo, err error) {
+	var stores *http.StoresInfo
+	err = utils.WithRetry(ctx, func() error {
+		stores, err = mgr.GetPDHTTPClient().GetStores(ctx)
+		return err
+	}, utils.NewPDReqBackoffer())
+	if err != nil {
+		return nil, nil, errors.Trace(err)
+	}
+
 	if stores == nil || len(stores.Stores) == 0 {
 		return nil, nil, nil
 	}
 
 	for i := range stores.Stores {
 		store := &stores.Stores[i]
-		for _, label := range store.Store.Labels {
-			if label.Key == "engine" && (label.Value == "tiflash_compute" || label.Value == "tiflash") {
-				tiflashStores = append(tiflashStores, store)
-				break
-			}
+		if engine.IsTiFlashHTTPResp(&store.Store) {
+			tiflashStores = append(tiflashStores, store)
+			continue
 		}
 		tikvStores = append(tikvStores, store)
 	}
@@ -1262,11 +1268,7 @@ func checkDiskSpace(ctx context.Context, mgr *conn.Mgr, files []*backuppb.File, 
 	if err != nil {
 		return errors.Trace(err)
 	}
-	stores, err := mgr.GetPDHTTPClient().GetStores(ctx)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	tikvStores, tiflashStores, err := classifyStores(stores)
+	tikvStores, tiflashStores, err := getStores(ctx, mgr)
 	if err != nil {
 		return errors.Trace(err)
 	}
