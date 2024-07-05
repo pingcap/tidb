@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -133,32 +134,7 @@ func TestAutoAnalyzeWithPredicateColumns(t *testing.T) {
 func TestDisableAutoAnalyze(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t (a int, index idx(a))")
-	tk.MustExec("insert into t values (1)")
-	h := dom.StatsHandle()
-	err := h.HandleDDLEvent(<-h.DDLEventCh())
-	require.NoError(t, err)
-	require.NoError(t, h.DumpStatsDeltaToKV(true))
-	is := dom.InfoSchema()
-	require.NoError(t, h.Update(context.Background(), is))
-
-	tk.MustExec("set @@global.tidb_enable_auto_analyze = 0")
-	exec.AutoAnalyzeMinCnt = 0
-	defer func() {
-		exec.AutoAnalyzeMinCnt = 1000
-	}()
-	// Even auto analyze ratio is set to 0, we still need to analyze the unanalyzed tables.
-	require.True(t, dom.StatsHandle().HandleAutoAnalyze())
-	require.NoError(t, h.Update(context.Background(), is))
-
-	// Try again, it should not analyze the table because it's already analyzed and auto analyze ratio is 0.
-	require.False(t, dom.StatsHandle().HandleAutoAnalyze())
-
-	// Index analyze doesn't depend on auto analyze ratio. Only control by tidb_enable_auto_analyze.
-	// Even auto analyze ratio is set to 0, we still need to analyze the newly created index.
-	tk.MustExec("alter table t add index ia(a)")
-	require.True(t, dom.StatsHandle().HandleAutoAnalyze())
+	disableAutoAnalyzeCase(t, tk, dom)
 }
 
 func TestDisableAutoAnalyzeWithoutAnyPredicateColumns(t *testing.T) {
@@ -166,7 +142,10 @@ func TestDisableAutoAnalyzeWithoutAnyPredicateColumns(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	// Set tidb_analyze_column_options to PREDICATE.
 	tk.MustExec("set global tidb_analyze_column_options='PREDICATE'")
+	disableAutoAnalyzeCase(t, tk, dom)
+}
 
+func disableAutoAnalyzeCase(t *testing.T, tk *testkit.TestKit, dom *domain.Domain) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a int)")
 	tk.MustExec("insert into t values (1)")
@@ -175,7 +154,7 @@ func TestDisableAutoAnalyzeWithoutAnyPredicateColumns(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	is := dom.InfoSchema()
-	require.NoError(t, h.Update(is))
+	require.NoError(t, h.Update(context.Background(), is))
 
 	tk.MustExec("set @@global.tidb_enable_auto_analyze = 0")
 	exec.AutoAnalyzeMinCnt = 0
@@ -184,7 +163,7 @@ func TestDisableAutoAnalyzeWithoutAnyPredicateColumns(t *testing.T) {
 	}()
 	// Even auto analyze ratio is set to 0, we still need to analyze the unanalyzed tables.
 	require.True(t, dom.StatsHandle().HandleAutoAnalyze())
-	require.NoError(t, h.Update(is))
+	require.NoError(t, h.Update(context.Background(), is))
 
 	// Try again, it should not analyze the table because it's already analyzed and auto analyze ratio is 0.
 	require.False(t, dom.StatsHandle().HandleAutoAnalyze())
