@@ -20,13 +20,11 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/ddl/label"
-	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/parser/model"
-	"go.uber.org/zap"
 )
 
 func onCreateSchema(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
@@ -279,7 +277,6 @@ func (w *worker) onRecoverSchema(d *ddlCtx, t *meta.Meta, job *model.Job) (ver i
 			}
 			recoverTbls = make([]*RecoverInfo, 0, len(tables))
 			for _, tblInfo := range tables {
-				logutil.DDLLogger().Info("lance test", zap.String("table", tblInfo.Name.L))
 				autoIDs, err3 := snapMeta.GetAutoIDAccessors(sid, tblInfo.ID).Get()
 				if err3 != nil {
 					job.State = model.JobStateCancelled
@@ -309,6 +306,7 @@ func (w *worker) onRecoverSchema(d *ddlCtx, t *meta.Meta, job *model.Job) (ver i
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
 		}
+
 		for _, recoverInfo := range recoverTbls {
 			if recoverInfo.TableInfo.TTLInfo != nil {
 				// force disable TTL job schedule for recovered table
@@ -320,13 +318,18 @@ func (w *worker) onRecoverSchema(d *ddlCtx, t *meta.Meta, job *model.Job) (ver i
 			}
 		}
 		schemaInfo.State = model.StatePublic
-		for _, recoverInfo := range recoverSchemaInfo.RecoverTabsInfo {
+		diffInfos := make([]schemaIDAndTableInfo, 0, len(recoverTbls))
+		for _, recoverInfo := range recoverTbls {
 			recoverInfo.TableInfo.State = model.StatePublic
 			recoverInfo.TableInfo.UpdateTS = t.StartTS
+			diffInfos = append(diffInfos, schemaIDAndTableInfo{
+				schemaID: schemaInfo.ID,
+				tblInfo:  recoverInfo.TableInfo,
+			})
 		}
 		// use to update InfoSchema
 		job.SchemaID = schemaInfo.ID
-		ver, err = updateSchemaVersion(d, t, job)
+		ver, err = updateSchemaVersion(d, t, job, diffInfos...)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
