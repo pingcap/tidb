@@ -38,10 +38,6 @@ const (
 	resetTSWaitInterval    = 50 * time.Millisecond
 	resetTSMaxWaitInterval = 2 * time.Second
 
-	checkDiskRetryTime       = 5
-	checkDiskWaitInterval    = 50 * time.Millisecond
-	checkDiskMaxWaitInterval = 1 * time.Second
-
 	resetTSRetryTimeExt       = 600
 	resetTSWaitIntervalExt    = 500 * time.Millisecond
 	resetTSMaxWaitIntervalExt = 300 * time.Second
@@ -293,9 +289,9 @@ type DiskCheckBackoffer struct {
 
 func NewDiskCheckBackoffer() Backoffer {
 	return &DiskCheckBackoffer{
-		attempt:      checkDiskRetryTime,
-		delayTime:    checkDiskWaitInterval,
-		maxDelayTime: checkDiskMaxWaitInterval,
+		attempt:      resetTSRetryTime,
+		delayTime:    resetTSWaitInterval,
+		maxDelayTime: resetTSMaxWaitInterval,
 	}
 }
 
@@ -314,7 +310,7 @@ func (bo *DiskCheckBackoffer) NextBackoff(err error) time.Duration {
 			bo.attempt = 0
 		} else {
 			bo.delayTime = 2 * bo.delayTime
-			bo.attempt--
+			bo.attempt = 5
 		}
 	}
 
