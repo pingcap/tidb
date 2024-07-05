@@ -433,7 +433,7 @@ func (s *jobScheduler) loadAndDeliverJobs(se *sess.Session) error {
 		if wk == nil {
 			// should not happen, we have checked available() before, and we are
 			// the only routine consumes worker.
-			logutil.DDLLogger().Info("no %v worker available now", zap.Stringer("type", targetPool.tp()))
+			logutil.DDLLogger().Info("no worker available now", zap.Stringer("type", targetPool.tp()))
 			s.runningJobs.addPending(involving)
 			continue
 		}
@@ -566,7 +566,7 @@ func (s *jobScheduler) deliveryJob(wk *worker, pool *workerPool, job *model.Job)
 
 // runOneJobStep runs one step of the DDL job. we are using online-schema-change,
 // one job might go through multiple steps, each step is one job state change such
-// as from 'done' -> 'synced, or one schema state change such as 'delete only' -> 'write only'.
+// as from 'done' -> 'synced', or one schema state change such as 'delete only' -> 'write only'.
 func (s *jobScheduler) runOneJobStep(wk *worker, job *model.Job) error {
 	failpoint.InjectCall("beforeRunOneJobStep")
 	ownerID := s.ownerManager.ID()
