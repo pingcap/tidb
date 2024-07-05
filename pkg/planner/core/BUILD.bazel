@@ -22,6 +22,7 @@ go_library(
         "indexmerge_unfinished_path.go",
         "initialize.go",
         "logical_aggregation.go",
+        "logical_datasource.go",
         "logical_expand.go",
         "logical_index_scan.go",
         "logical_initialize.go",
