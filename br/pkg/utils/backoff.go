@@ -310,7 +310,10 @@ func (bo *DiskCheckBackoffer) NextBackoff(err error) time.Duration {
 			bo.attempt = 0
 		} else {
 			bo.delayTime = 2 * bo.delayTime
-			bo.attempt = 5
+			if bo.attempt > 5 {
+				bo.attempt = 5
+			}
+			bo.attempt--
 		}
 	}
 
