@@ -302,6 +302,9 @@ func NewDiskCheckBackoffer() Backoffer {
 func (bo *DiskCheckBackoffer) NextBackoff(err error) time.Duration {
 	e := errors.Cause(err)
 	switch e { // nolint:errorlint
+	case nil, context.Canceled, context.DeadlineExceeded:
+		bo.delayTime = 0
+		bo.attempt = 0
 	case berrors.ErrKVDiskNotEnough:
 		bo.delayTime = 0
 		bo.attempt = 0

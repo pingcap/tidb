@@ -1238,10 +1238,10 @@ func CheckStoreSpace(necessary uint64, store *http.StoreInfo) error {
 	// Be careful editing the message, it is used in DiskCheckBackoffer
 	available, err := units.RAMInBytes(store.Status.Available)
 	if err != nil {
-		return errors.Annotatef(berrors.ErrPDInvalidResponse, "store %d has invalid available space %s",store.Store.ID, store.Status.Available)
+		return errors.Annotatef(berrors.ErrPDInvalidResponse, "store %d has invalid available space %s", store.Store.ID, store.Status.Available)
 	}
 	if available <= 0 {
-		return errors.Annotatef(berrors.ErrPDInvalidResponse, "store %d has invalid available space %s",store.Store.ID, store.Status.Available)
+		return errors.Annotatef(berrors.ErrPDInvalidResponse, "store %d has invalid available space %s", store.Store.ID, store.Status.Available)
 	}
 	if uint64(available) < necessary {
 		return errors.Annotatef(berrors.ErrKVDiskNotEnough, "store %d has no enough space, available %s, necessary %s",
@@ -1290,10 +1290,10 @@ func checkDiskSpace(ctx context.Context, mgr *conn.Mgr, files []*backuppb.File, 
 				if err := CheckStoreSpace(tiflashUsage, &store); err != nil {
 					return errors.Trace(err)
 				}
-			} else {
-				if err := CheckStoreSpace(tikvUsage, &store); err != nil {
-					return errors.Trace(err)
-				}
+				continue
+			}
+			if err := CheckStoreSpace(tikvUsage, &store); err != nil {
+				return errors.Trace(err)
 			}
 		}
 		return nil
