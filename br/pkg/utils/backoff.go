@@ -305,15 +305,17 @@ func (bo *DiskCheckBackoffer) NextBackoff(err error) time.Duration {
 	case nil, context.Canceled, context.DeadlineExceeded:
 		bo.delayTime = 0
 		bo.attempt = 0
-	case berrors.ErrKVDiskNotEnough:
-		bo.delayTime = 0
-		bo.attempt = 0
 	case berrors.ErrPDInvalidResponse:
 		bo.delayTime = 2 * bo.delayTime
 		bo.attempt--
 	default:
-		bo.delayTime = 2 * bo.delayTime
-		bo.attempt--
+		if strings.Contains(e.Error(), "no space left on device") {
+			bo.delayTime = 0
+			bo.attempt = 0
+		} else {
+			bo.delayTime = 2 * bo.delayTime
+			bo.attempt--
+		}
 	}
 
 	if bo.delayTime > bo.maxDelayTime {

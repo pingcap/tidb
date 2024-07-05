@@ -97,7 +97,6 @@ var (
 	ErrKVClusterIDMismatch = errors.Normalize("tikv cluster ID mismatch", errors.RFCCodeText("BR:KV:ErrKVClusterIDMismatch"))
 	ErrKVNotLeader         = errors.Normalize("not leader", errors.RFCCodeText("BR:KV:ErrKVNotLeader"))
 	ErrKVNotTiKV           = errors.Normalize("storage is not tikv", errors.RFCCodeText("BR:KV:ErrNotTiKVStorage"))
-	ErrKVDiskNotEnough     = errors.Normalize("tikv disk is not enough", errors.RFCCodeText("BR:KV:ErrKVDiskNotEnough"))
 
 	// ErrKVEpochNotMatch is the error raised when ingestion failed with "epoch
 	// not match". This error is retryable.

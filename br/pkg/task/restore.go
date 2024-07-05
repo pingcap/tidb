@@ -1244,7 +1244,7 @@ func CheckStoreSpace(necessary uint64, store *http.StoreInfo) error {
 		return errors.Annotatef(berrors.ErrPDInvalidResponse, "store %d has invalid available space %s", store.Store.ID, store.Status.Available)
 	}
 	if uint64(available) < necessary {
-		return errors.Annotatef(berrors.ErrKVDiskNotEnough, "store %d has no enough space, available %s, necessary %s",
+		return errors.Errorf("store %d has no space left on device, available %s, necessary %s",
 			store.Store.ID, units.BytesSize(float64(available)), units.BytesSize(float64(necessary)))
 	}
 	return nil
