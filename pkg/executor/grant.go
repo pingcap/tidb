@@ -94,7 +94,7 @@ func (e *GrantExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 		}
 		dbNameStr := model.NewCIStr(dbName)
 		schema := e.Ctx().GetInfoSchema().(infoschema.InfoSchema)
-		tbl, err := schema.TableByName(dbNameStr, model.NewCIStr(e.Level.TableName))
+		tbl, err := schema.TableByName(context.Background(), dbNameStr, model.NewCIStr(e.Level.TableName))
 		// Allow GRANT on non-existent table with at least create privilege, see issue #28533 #29268
 		if err != nil {
 			allowed := false
@@ -768,7 +768,7 @@ func getTargetSchemaAndTable(ctx sessionctx.Context, dbName, tableName string, i
 		}
 	}
 	name := model.NewCIStr(tableName)
-	tbl, err := is.TableByName(model.NewCIStr(dbName), name)
+	tbl, err := is.TableByName(context.Background(), model.NewCIStr(dbName), name)
 	if terror.ErrorEqual(err, infoschema.ErrTableNotExists) {
 		return dbName, nil, err
 	}

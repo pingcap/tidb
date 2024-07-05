@@ -495,7 +495,7 @@ func (p *preprocessor) tableByName(tn *ast.TableName) (table.Table, error) {
 		is = temptable.DetachLocalTemporaryTableInfoSchema(is)
 	}
 
-	tbl, err := is.TableByName(sName, tn.Name)
+	tbl, err := is.TableByName(context.Background(), sName, tn.Name)
 	if err != nil {
 		// We should never leak that the table doesn't exist (i.e. attachplannererrors.ErrTableNotExists)
 		// unless we know that the user has permissions to it, should it exist.
@@ -844,7 +844,7 @@ func (p *preprocessor) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
 			schema = stmt.ReferTable.Schema
 		}
 		// get the infoschema from the context.
-		tableInfo, err := p.ensureInfoSchema().TableByName(schema, stmt.ReferTable.Name)
+		tableInfo, err := p.ensureInfoSchema().TableByName(context.Background(), schema, stmt.ReferTable.Name)
 		if err != nil {
 			p.err = err
 			return
@@ -1027,7 +1027,7 @@ func (p *preprocessor) checkDropTemporaryTableGrammar(stmt *ast.DropTableStmt) {
 			schema = currentDB
 		}
 
-		tbl, err := p.ensureInfoSchema().TableByName(schema, t.Name)
+		tbl, err := p.ensureInfoSchema().TableByName(context.Background(), schema, t.Name)
 		if infoschema.ErrTableNotExists.Equal(err) {
 			// Non-exist table will be checked in ddl executor
 			continue
@@ -1857,7 +1857,7 @@ func tryLockMDLAndUpdateSchemaIfNecessary(sctx base.PlanContext, dbName model.CI
 		dom := domain.GetDomain(sctx)
 		domainSchema := dom.InfoSchema()
 		domainSchemaVer := domainSchema.SchemaMetaVersion()
-		tbl, err = domainSchema.TableByName(dbName, tableInfo.Name)
+		tbl, err = domainSchema.TableByName(context.Background(), dbName, tableInfo.Name)
 		if err != nil {
 			if !skipLock {
 				sctx.GetSessionVars().GetRelatedTableForMDL().Delete(tableInfo.ID)

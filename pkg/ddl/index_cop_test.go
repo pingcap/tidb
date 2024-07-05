@@ -15,6 +15,7 @@
 package ddl_test
 
 import (
+	"context"
 	"fmt"
 	"strconv"
 	"testing"
@@ -36,7 +37,7 @@ func TestAddIndexFetchRowsFromCoprocessor(t *testing.T) {
 	tk.MustExec("use test")
 
 	testFetchRows := func(db, tb, idx string) ([]kv.Handle, [][]types.Datum) {
-		tbl, err := dom.InfoSchema().TableByName(model.NewCIStr(db), model.NewCIStr(tb))
+		tbl, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr(db), model.NewCIStr(tb))
 		require.NoError(t, err)
 		tblInfo := tbl.Meta()
 		idxInfo := tblInfo.FindIndexByName(idx)

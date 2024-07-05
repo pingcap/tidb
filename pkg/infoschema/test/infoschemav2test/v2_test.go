@@ -15,6 +15,7 @@
 package infoschemav2test
 
 import (
+	"context"
 	"slices"
 	"strconv"
 	"strings"
@@ -84,7 +85,7 @@ func checkPIDNotExist(t *testing.T, dom *domain.Domain, pid int64) {
 
 func getPIDForP3(t *testing.T, dom *domain.Domain) (int64, table.Table) {
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("pt"))
+	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("pt"))
 	require.NoError(t, err)
 	pi := tbl.Meta().GetPartitionInfo()
 	pid := pi.GetPartitionIDByName("p3")
@@ -142,12 +143,12 @@ PARTITION p5 VALUES LESS THAN (1980))`)
 	// Test FindTableByPartitionID after exchange partition.
 	tk.MustExec("create table nt (id int)")
 	is = dom.InfoSchema()
-	ntbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("nt"))
+	ntbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("nt"))
 	require.NoError(t, err)
 
 	tk.MustExec("alter table pt exchange partition p3 with table nt")
 	is = dom.InfoSchema()
-	ptbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("pt"))
+	ptbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("pt"))
 	require.NoError(t, err)
 	pi := ptbl.Meta().GetPartitionInfo()
 	pid = pi.GetPartitionIDByName("p3")

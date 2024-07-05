@@ -529,7 +529,7 @@ func GetMatchOpts(sctx sessionctx.Context, is infoschema.InfoSchema, stmt *PlanC
 
 	if stmt.QueryFeatures != nil {
 		for _, node := range stmt.QueryFeatures.tables {
-			t, err := is.TableByName(node.Schema, node.Name)
+			t, err := is.TableByName(context.Background(), node.Schema, node.Name)
 			if err != nil { // CTE in this case
 				continue
 			}

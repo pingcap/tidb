@@ -237,7 +237,7 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 
 func getAutoIncrementID(ctx sessionctx.Context, schema model.CIStr, tblInfo *model.TableInfo) (int64, error) {
 	is := ctx.GetInfoSchema().(infoschema.InfoSchema)
-	tbl, err := is.TableByName(schema, tblInfo.Name)
+	tbl, err := is.TableByName(context.Background(), schema, tblInfo.Name)
 	if err != nil {
 		return 0, err
 	}
@@ -2153,7 +2153,7 @@ func (e *tableStorageStatsRetriever) initialize(sctx sessionctx.Context) error {
 		} else {
 			// The user specified the table, extract the specified tables of this db to initialTable.
 			for tb := range tables {
-				if tb, err := is.TableByName(model.NewCIStr(DB), model.NewCIStr(tb)); err == nil {
+				if tb, err := is.TableByName(context.Background(), model.NewCIStr(DB), model.NewCIStr(tb)); err == nil {
 					// For every db.table, check it's privileges.
 					if checker(DB, tb.Meta().Name.L) {
 						e.initialTables = append(e.initialTables, &initialTable{DB, tb.Meta()})
@@ -2326,7 +2326,7 @@ func getRemainDurationForAnalyzeStatusHelper(
 		}
 		var tid int64
 		is := sessiontxn.GetTxnManager(sctx).GetTxnInfoSchema()
-		tb, err := is.TableByName(model.NewCIStr(dbName), model.NewCIStr(tableName))
+		tb, err := is.TableByName(context.Background(), model.NewCIStr(dbName), model.NewCIStr(tableName))
 		if err != nil {
 			return nil, percentage, totalCnt, err
 		}
@@ -3688,7 +3688,7 @@ func decodeTableIDFromRule(rule *label.Rule) (tableID int64, err error) {
 
 func tableOrPartitionNotExist(dbName string, tableName string, partitionName string, is infoschema.InfoSchema, tableID int64) (tableNotExist bool) {
 	if len(partitionName) == 0 {
-		curTable, _ := is.TableByName(model.NewCIStr(dbName), model.NewCIStr(tableName))
+		curTable, _ := is.TableByName(context.Background(), model.NewCIStr(dbName), model.NewCIStr(tableName))
 		if curTable == nil {
 			return true
 		}

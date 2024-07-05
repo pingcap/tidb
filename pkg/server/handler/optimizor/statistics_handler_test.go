@@ -15,6 +15,7 @@
 package optimizor_test
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -67,7 +68,7 @@ func TestDumpStatsAPI(t *testing.T) {
 	statsHandler := optimizor.NewStatsHandler(dom)
 
 	prepareData(t, client, statsHandler)
-	tableInfo, err := dom.InfoSchema().TableByName(model.NewCIStr("tidb"), model.NewCIStr("test"))
+	tableInfo, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("tidb"), model.NewCIStr("test"))
 	require.NoError(t, err)
 	err = dom.GetHistoricalStatsWorker().DumpHistoricalStats(tableInfo.Meta().ID, dom.StatsHandle())
 	require.NoError(t, err)

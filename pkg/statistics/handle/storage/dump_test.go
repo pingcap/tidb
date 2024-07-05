@@ -96,7 +96,7 @@ func TestConversion(t *testing.T) {
 	require.Nil(t, h.DumpStatsDeltaToKV(true))
 	require.Nil(t, h.Update(is))
 
-	tableInfo, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tableInfo, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	jsonTbl, err := h.DumpStatsToJSON("test", tableInfo.Meta(), nil, true)
 	require.NoError(t, err)
@@ -121,7 +121,7 @@ func getStatsJSON(t *testing.T, dom *domain.Domain, db, tableName string) *handl
 	is := dom.InfoSchema()
 	h := dom.StatsHandle()
 	require.Nil(t, h.Update(is))
-	table, err := is.TableByName(model.NewCIStr(db), model.NewCIStr(tableName))
+	table, err := is.TableByName(context.Background(), model.NewCIStr(db), model.NewCIStr(tableName))
 	require.NoError(t, err)
 	tableInfo := table.Meta()
 	jsonTbl, err := h.DumpStatsToJSON("test", tableInfo, nil, true)
@@ -133,7 +133,7 @@ func persistStats(ctx context.Context, t *testing.T, dom *domain.Domain, db, tab
 	is := dom.InfoSchema()
 	h := dom.StatsHandle()
 	require.Nil(t, h.Update(is))
-	table, err := is.TableByName(model.NewCIStr(db), model.NewCIStr(tableName))
+	table, err := is.TableByName(context.Background(), model.NewCIStr(db), model.NewCIStr(tableName))
 	require.NoError(t, err)
 	tableInfo := table.Meta()
 	err = h.PersistStatsBySnapshot(ctx, "test", tableInfo, math.MaxUint64, persist)
@@ -207,7 +207,7 @@ func TestLoadPartitionStats(t *testing.T) {
 	tk.MustExec("insert into t values " + strings.Join(vals, ","))
 	tk.MustExec("analyze table t")
 
-	table, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	table, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo := table.Meta()
 	jsonTbl, err := dom.StatsHandle().DumpStatsToJSON("test", tableInfo, nil, true)
@@ -257,7 +257,7 @@ func TestLoadPartitionStatsErrPanic(t *testing.T) {
 	tk.MustExec("insert into t values " + strings.Join(vals, ","))
 	tk.MustExec("analyze table t")
 
-	table, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	table, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo := table.Meta()
 	jsonTbl, err := dom.StatsHandle().DumpStatsToJSON("test", tableInfo, nil, true)
@@ -296,7 +296,7 @@ PARTITION BY RANGE ( a ) (
 	h := dom.StatsHandle()
 	require.Nil(t, h.Update(is))
 
-	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	table, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo := table.Meta()
 	jsonTbl, err := h.DumpStatsToJSON("test", tableInfo, nil, true)
@@ -332,7 +332,7 @@ func TestDumpAlteredTable(t *testing.T) {
 	tk.MustExec("create table t(a int, b int)")
 	tk.MustExec("analyze table t")
 	tk.MustExec("alter table t drop column a")
-	table, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	table, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	_, err = h.DumpStatsToJSON("test", table.Meta(), nil, true)
 	require.NoError(t, err)
@@ -349,7 +349,7 @@ func TestDumpCMSketchWithTopN(t *testing.T) {
 	testKit.MustExec("analyze table t")
 
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
 	h := dom.StatsHandle()
@@ -391,7 +391,7 @@ func TestDumpPseudoColumns(t *testing.T) {
 	testKit.MustExec("analyze table t index idx")
 
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	h := dom.StatsHandle()
 	_, err = h.DumpStatsToJSON("test", tbl.Meta(), nil, true)
@@ -412,7 +412,7 @@ func TestDumpExtendedStats(t *testing.T) {
 	tk.MustExec("analyze table t")
 
 	is := dom.InfoSchema()
-	tableInfo, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tableInfo, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	tbl := h.GetTableStats(tableInfo.Meta())
 	jsonTbl, err := h.DumpStatsToJSON("test", tableInfo.Meta(), nil, true)
@@ -449,7 +449,7 @@ func TestDumpVer2Stats(t *testing.T) {
 	tk.MustExec("analyze table t with 2 topn")
 	h := dom.StatsHandle()
 	is := dom.InfoSchema()
-	tableInfo, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tableInfo, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 
 	storageTbl, err := h.TableStatsFromStorage(tableInfo.Meta(), tableInfo.Meta().ID, false, 0)
@@ -501,7 +501,7 @@ func TestLoadStatsForNewCollation(t *testing.T) {
 	tk.MustExec("analyze table t with 2 topn")
 	h := dom.StatsHandle()
 	is := dom.InfoSchema()
-	tableInfo, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tableInfo, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 
 	storageTbl, err := h.TableStatsFromStorage(tableInfo.Meta(), tableInfo.Meta().ID, false, 0)
@@ -552,7 +552,7 @@ func TestJSONTableToBlocks(t *testing.T) {
 	tk.MustExec("analyze table t with 2 topn")
 	h := dom.StatsHandle()
 	is := dom.InfoSchema()
-	tableInfo, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tableInfo, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 
 	dumpJSONTable, err := h.DumpStatsToJSON("test", tableInfo.Meta(), nil, true)
@@ -626,7 +626,7 @@ func TestLoadStatsFromOldVersion(t *testing.T) {
 	jsonTbl := &handleutil.JSONTable{}
 	require.NoError(t, json.Unmarshal([]byte(statsJSONFromOldVersion), jsonTbl))
 	require.NoError(t, h.LoadStatsFromJSON(context.Background(), is, jsonTbl, 0))
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	statsTbl := h.GetTableStats(tbl.Meta())
 	statsTbl.ForEachColumnImmutable(func(i int64, col *statistics.Column) bool {

@@ -287,7 +287,7 @@ func (e *ShowNextRowIDExec) Next(_ context.Context, req *chunk.Chunk) error {
 		return nil
 	}
 	is := domain.GetDomain(e.Ctx()).InfoSchema()
-	tbl, err := is.TableByName(e.tblName.Schema, e.tblName.Name)
+	tbl, err := is.TableByName(context.Background(), e.tblName.Schema, e.tblName.Name)
 	if err != nil {
 		return err
 	}
