@@ -1007,29 +1007,6 @@ func explainNormalizedByItems(buffer *bytes.Buffer, byItems []*util.ByItems) *by
 }
 
 // ExplainInfo implements Plan interface.
-func (p *LogicalIndexScan) ExplainInfo() string {
-	buffer := bytes.NewBufferString(p.Source.ExplainInfo())
-	index := p.Index
-	if len(index.Columns) > 0 {
-		buffer.WriteString(", index:")
-		for i, idxCol := range index.Columns {
-			if tblCol := p.Source.TableInfo.Columns[idxCol.Offset]; tblCol.Hidden {
-				buffer.WriteString(tblCol.GeneratedExprString)
-			} else {
-				buffer.WriteString(idxCol.Name.O)
-			}
-			if i+1 < len(index.Columns) {
-				buffer.WriteString(", ")
-			}
-		}
-	}
-	if len(p.AccessConds) > 0 {
-		fmt.Fprintf(buffer, ", cond:%v", p.AccessConds)
-	}
-	return buffer.String()
-}
-
-// ExplainInfo implements Plan interface.
 func (p *PhysicalMemTable) ExplainInfo() string {
 	accessObject, operatorInfo := p.AccessObject().String(), p.OperatorInfo(false)
 	if len(operatorInfo) == 0 {

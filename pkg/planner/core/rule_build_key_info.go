@@ -197,25 +197,6 @@ func (ds *DataSource) BuildKeyInfo(selfSchema *expression.Schema, _ []*expressio
 	}
 }
 
-// BuildKeyInfo implements base.LogicalPlan BuildKeyInfo interface.
-func (is *LogicalIndexScan) BuildKeyInfo(selfSchema *expression.Schema, _ []*expression.Schema) {
-	selfSchema.Keys = nil
-	for _, path := range is.Source.PossibleAccessPaths {
-		if path.IsTablePath() {
-			continue
-		}
-		if uniqueKey, newKey := checkIndexCanBeKey(path.Index, is.Columns, selfSchema); newKey != nil {
-			selfSchema.Keys = append(selfSchema.Keys, newKey)
-		} else if uniqueKey != nil {
-			selfSchema.UniqueKeys = append(selfSchema.UniqueKeys, uniqueKey)
-		}
-	}
-	handle := is.getPKIsHandleCol(selfSchema)
-	if handle != nil {
-		selfSchema.Keys = append(selfSchema.Keys, []*expression.Column{handle})
-	}
-}
-
 func (*buildKeySolver) name() string {
 	return "build_keys"
 }

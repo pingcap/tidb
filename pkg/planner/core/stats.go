@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/cost"
@@ -40,10 +39,8 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/asyncload"
 	"github.com/pingcap/tidb/pkg/table"
-	"github.com/pingcap/tidb/pkg/types"
 	h "github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/ranger"
 	"go.uber.org/zap"
 )
 
@@ -473,29 +470,6 @@ func getMinSelectivityFromPaths(paths []*util.AccessPath, totalRowCount float64)
 		minSelectivity = min(minSelectivity, path.CountAfterIndex/totalRowCount)
 	}
 	return minSelectivity
-}
-
-// DeriveStats implements LogicalPlan DeriveStats interface.
-func (is *LogicalIndexScan) DeriveStats(_ []*property.StatsInfo, selfSchema *expression.Schema, _ []*expression.Schema, _ [][]*expression.Column) (*property.StatsInfo, error) {
-	is.Source.initStats(nil)
-	exprCtx := is.SCtx().GetExprCtx()
-	for i, expr := range is.AccessConds {
-		is.AccessConds[i] = expression.PushDownNot(exprCtx, expr)
-	}
-	is.SetStats(is.Source.deriveStatsByFilter(is.AccessConds, nil))
-	if len(is.AccessConds) == 0 {
-		is.Ranges = ranger.FullRange()
-	}
-	is.IdxCols, is.IdxColLens = expression.IndexInfo2PrefixCols(is.Columns, selfSchema.Columns, is.Index)
-	is.FullIdxCols, is.FullIdxColLens = expression.IndexInfo2Cols(is.Columns, selfSchema.Columns, is.Index)
-	if !is.Index.Unique && !is.Index.Primary && len(is.Index.Columns) == len(is.IdxCols) {
-		handleCol := is.getPKIsHandleCol(selfSchema)
-		if handleCol != nil && !mysql.HasUnsignedFlag(handleCol.RetType.GetFlag()) {
-			is.IdxCols = append(is.IdxCols, handleCol)
-			is.IdxColLens = append(is.IdxColLens, types.UnspecifiedLength)
-		}
-	}
-	return is.StatsInfo(), nil
 }
 
 func deriveLimitStats(childProfile *property.StatsInfo, limitCount float64) *property.StatsInfo {

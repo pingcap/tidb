@@ -92,7 +92,8 @@ func TestBasic(t *testing.T) {
 	require.NoError(t, err)
 	require.Greater(t, autoID, int64(0))
 
-	handle, err := tables.AllocHandle(context.Background(), nil, tb)
+	var handle kv.Handle
+	handle, err = tables.AllocHandle(context.Background(), nil, tb)
 	require.NoError(t, err)
 	require.Greater(t, handle.IntValue(), int64(0))
 
