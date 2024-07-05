@@ -16,7 +16,6 @@ package executor
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/errno"
@@ -224,7 +223,7 @@ func getKeysNeedCheckOneRow(ctx sessionctx.Context, t table.Table, row []types.D
 			}
 			uniqueKeys = append(uniqueKeys, &keyValueWithDupInfo{
 				newKey: key,
-				dupErr: kv.GenKeyExistsErr(colStrVals, fmt.Sprintf("%s.%s", v.TableMeta().Name.String(), v.Meta().Name.String())),
+				dupErr: kv.GenKeyExistsErr(colStrVals, v.TableMeta().Name.String()+"."+v.Meta().Name.String()),
 			})
 		}
 	}
