@@ -663,7 +663,12 @@ func rewritePartitionQueryString(ctx sessionctx.Context, s *ast.PartitionOptions
 			AppendPartitionDefs(tbInfo.Partition, &buf, sqlMode)
 
 			syntacticSugar := s.Interval.OriginalText()
-			syntacticStart := s.Interval.OriginTextPosition()
+			syntacticStart := strings.Index(query, syntacticSugar)
+			if syntacticStart == -1 {
+				logutil.DDLLogger().Error("Can't find INTERVAL definition in prepare stmt",
+					zap.String("INTERVAL defiition", syntacticSugar), zap.String("prepare stmt", query))
+				return errors.Errorf("Can't find INTERVAL definition in PREPARE STMT")
+			}
 			newQuery := query[:syntacticStart] + "(" + buf.String() + ")" + query[syntacticStart+len(syntacticSugar):]
 			ctx.SetValue(sessionctx.QueryString, newQuery)
 		}
