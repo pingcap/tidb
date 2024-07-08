@@ -103,26 +103,6 @@ func pruneByItems(p base.LogicalPlan, old []*util.ByItems, opt *optimizetrace.Lo
 }
 
 // PruneColumns implements base.LogicalPlan interface.
-func (p *LogicalUnionScan) PruneColumns(parentUsedCols []*expression.Column, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, error) {
-	for i := 0; i < p.handleCols.NumCols(); i++ {
-		parentUsedCols = append(parentUsedCols, p.handleCols.GetCol(i))
-	}
-	for _, col := range p.Schema().Columns {
-		if col.ID == model.ExtraPhysTblID {
-			parentUsedCols = append(parentUsedCols, col)
-		}
-	}
-	condCols := expression.ExtractColumnsFromExpressions(nil, p.conditions, nil)
-	parentUsedCols = append(parentUsedCols, condCols...)
-	var err error
-	p.Children()[0], err = p.Children()[0].PruneColumns(parentUsedCols, opt)
-	if err != nil {
-		return nil, err
-	}
-	return p, nil
-}
-
-// PruneColumns implements base.LogicalPlan interface.
 func (ds *DataSource) PruneColumns(parentUsedCols []*expression.Column, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, error) {
 	used := expression.GetUsedList(ds.SCtx().GetExprCtx().GetEvalCtx(), parentUsedCols, ds.Schema())
 

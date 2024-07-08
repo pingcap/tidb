@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/opcode"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	ptypes "github.com/pingcap/tidb/pkg/parser/types"
+	"github.com/pingcap/tidb/pkg/planner/context"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/baseimpl"
 	"github.com/pingcap/tidb/pkg/planner/property"
@@ -169,9 +170,10 @@ func (p *PointGetPlan) Clone() (base.PhysicalPlan, error) {
 }
 
 // CloneForPlanCache implements PhysicalPlan interface.
-func (p *PointGetPlan) CloneForPlanCache() (base.Plan, bool) {
+func (p *PointGetPlan) CloneForPlanCache(newCtx context.PlanContext) (base.Plan, bool) {
 	cloned := new(PointGetPlan)
 	*cloned = *p
+	cloned.SetSCtx(newCtx)
 	cloned.IndexValues = make([]types.Datum, len(p.IndexValues))
 	copy(cloned.IndexValues, p.IndexValues)
 	if p.Handle != nil {
@@ -498,9 +500,10 @@ func (p *BatchPointGetPlan) Clone() (base.PhysicalPlan, error) {
 }
 
 // CloneForPlanCache implements PhysicalPlan interface.
-func (p *BatchPointGetPlan) CloneForPlanCache() (base.Plan, bool) {
+func (p *BatchPointGetPlan) CloneForPlanCache(newCtx context.PlanContext) (base.Plan, bool) {
 	cloned := new(BatchPointGetPlan)
 	*cloned = *p
+	cloned.SetSCtx(newCtx)
 	cloned.Handles = make([]kv.Handle, len(p.Handles))
 	for i, h := range p.Handles {
 		cloned.Handles[i] = h.Copy()
