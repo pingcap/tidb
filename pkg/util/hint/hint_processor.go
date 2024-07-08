@@ -60,6 +60,16 @@ func (hs *HintsSet) GetStmtHints() []*ast.TableOptimizerHint {
 	return result
 }
 
+// isStmtHint checks whether this hint is a statement-level hint.
+func isStmtHint(h *ast.TableOptimizerHint) bool {
+	switch h.HintName.L {
+	case "max_execution_time", "memory_quota", "resource_group":
+		return true
+	default:
+		return false
+	}
+}
+
 // ContainTableHint checks whether the table hint set contains a hint.
 func (hs *HintsSet) ContainTableHint(hint string) bool {
 	for _, tableHintsForBlock := range hs.tableHints {
