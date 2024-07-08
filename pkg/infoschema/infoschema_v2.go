@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
+	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
@@ -467,7 +468,7 @@ func (is *infoschemaV2) TableByName(schema, tbl model.CIStr) (t table.Table, err
 	key := tableCacheKey{itm.tableID, is.infoSchema.schemaMetaVersion}
 	res, found := is.tableCache.Get(key)
 	if found && res != nil {
-		TableByNameHitDuration.Observe(float64(time.Since(start)))
+		metrics.TableByNameHitDuration.Observe(float64(time.Since(start)))
 		return res, nil
 	}
 
@@ -476,7 +477,7 @@ func (is *infoschemaV2) TableByName(schema, tbl model.CIStr) (t table.Table, err
 	res, found = is.tableCache.Get(oldKey)
 	if found && res != nil {
 		is.tableCache.Set(key, res)
-		TableByNameHitDuration.Observe(float64(time.Since(start)))
+		metrics.TableByNameHitDuration.Observe(float64(time.Since(start)))
 		return res, nil
 	}
 
@@ -486,7 +487,7 @@ func (is *infoschemaV2) TableByName(schema, tbl model.CIStr) (t table.Table, err
 		return nil, errors.Trace(err)
 	}
 	is.tableCache.Set(key, ret)
-	TableByNameMissDuration.Observe(float64(time.Since(start)))
+	metrics.TableByNameMissDuration.Observe(float64(time.Since(start)))
 	return ret, nil
 }
 
