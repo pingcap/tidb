@@ -318,23 +318,23 @@ func TestRefineMessage(t *testing.T) {
 	}{
 		{
 			input:    "[filename:xx] description: error1; error2; error1; error3",
-			expected: "[filename:xx] description: error1; error2; error3",
+			expected: "[filename:xx] description: error1; error2; error3; \n",
 		},
 		{
 			input:    "[filename:xx] description: error1:.=@; error2; error1:.!!@; error3; error2",
-			expected: "[filename:xx] description: error1:.=@; error2; error1:.!!@; error3",
+			expected: "[filename:xx] description: error1:.=@; error2; error1:.!!@; error3; \n",
 		},
 		{
 			input:    "[executor:8125]Restore failed: context canceled; context canceled; context canceled; context canceled",
-			expected: "[executor:8125]Restore failed: context canceled",
+			expected: "[executor:8125]Restore failed: context canceled; \n",
 		},
 		{
 			input:    "[executor:8124]Backup failed: backup meta file exists in file:///backup/backupmeta, there may be some backup files in the path already, please specify a correct backup directory!: [BR:Common:ErrInvalidArgument]invalid argument",
-			expected: "[executor:8124]Backup failed: backup meta file exists in file:///backup/backupmeta, there may be some backup files in the path already, please specify a correct backup directory!: [BR:Common:ErrInvalidArgument]invalid argument",
+			expected: "[executor:8124]Backup failed: backup meta file exists in file:///backup/backupmeta, there may be some backup files in the path already, please specify a correct backup directory!: [BR:Common:ErrInvalidArgument]invalid argument; \n",
 		},
 		{
 			input:    "[executor:8125]Restore failed: context canceled; backup meta file exists in file:///backup/backupmeta; context canceled;",
-			expected: "[executor:8125]Restore failed: context canceled; backup meta file exists in file:///backup/backupmeta",
+			expected: "[executor:8125]Restore failed: context canceled; backup meta file exists in file:///backup/backupmeta; \n",
 		},
 	}
 

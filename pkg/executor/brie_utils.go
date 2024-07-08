@@ -300,7 +300,7 @@ func RefineMessage(input string) string {
 	uniqueErrorsStr := strings.Join(uniqueErrors, "; ")
 
 	// Reconstruct the final string
-	result := header + description + " " + uniqueErrorsStr
+	result := header + description + " " + uniqueErrorsStr + "; \n"
 	return result
 }
 
@@ -322,15 +322,9 @@ func validateFields(updates map[string]any) (map[string]any, error) {
 		"lastUpdate":  {},
 	}
 
-	for field, value := range updates {
+	for field, _ := range updates {
 		if _, exists := validFields[field]; !exists {
 			return nil, errors.Errorf("field '%s' is not valid in mysql.tidb_br_jobs", field)
-		}
-		if field == "message" {
-			val, ok := value.(string)
-			if !ok || val == "" || val == "NULL" {
-				continue
-			}
 		}
 	}
 	return updates, nil
