@@ -480,7 +480,7 @@ func TestCheckDDLJobByRules(t *testing.T) {
 
 // NOTICE: Once there is a new backfilled type ddl, BR needs to ensure that it is correctly cover by the rules:
 func TestMonitorTheIncrementalUnsupportDDLType(t *testing.T) {
-	require.Equal(t, int(5), ddl.MaxBackupFillerType())
+	require.Equal(t, int(5), ddl.BackupFillerTypeCount())
 }
 
 func TestTikvUsage(t *testing.T) {

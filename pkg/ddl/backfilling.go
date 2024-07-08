@@ -64,7 +64,8 @@ const (
 	typeCount
 )
 
-func MaxBackupFillerType() int {
+// BackupFillerTypeCount represents the count of ddl jobs that need to do backfill.
+func BackupFillerTypeCount() int {
 	return int(typeCount)
 }
 
