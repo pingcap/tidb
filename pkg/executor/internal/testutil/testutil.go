@@ -49,6 +49,10 @@ type MockDataSourceParameters struct {
 	Ndvs        []int
 	Orders      []bool
 	Rows        int
+
+	// Sometimes, user wants to manually provide test data
+	// and he can save provided test data at here.
+	Datums [][]any
 }
 
 // MockDataSource mocks data source
@@ -73,6 +77,7 @@ func (mds *MockDataSource) GenColDatums(col int) (results []any) {
 		ndv = mds.P.Ndvs[col]
 	}
 	results = make([]any, 0, rows)
+
 	if ndv == 0 {
 		if mds.P.GenDataFunc == nil {
 			for i := 0; i < rows; i++ {
@@ -84,16 +89,24 @@ func (mds *MockDataSource) GenColDatums(col int) (results []any) {
 			}
 		}
 	} else {
-		datumSet := make(map[string]bool, ndv)
-		datums := make([]any, 0, ndv)
-		for len(datums) < ndv {
-			d := mds.RandDatum(typ)
-			str := fmt.Sprintf("%v", d)
-			if datumSet[str] {
-				continue
+		datums := make([]any, 0, max(ndv, 0))
+		if ndv == -1 {
+			if mds.P.Datums[col] == nil {
+				panic("need to provid data")
 			}
-			datumSet[str] = true
-			datums = append(datums, d)
+
+			datums = mds.P.Datums[col]
+		} else {
+			datumSet := make(map[string]bool, ndv)
+			for len(datums) < ndv {
+				d := mds.RandDatum(typ)
+				str := fmt.Sprintf("%v", d)
+				if datumSet[str] {
+					continue
+				}
+				datumSet[str] = true
+				datums = append(datums, d)
+			}
 		}
 
 		for i := 0; i < rows; i++ {

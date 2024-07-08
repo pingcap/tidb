@@ -463,7 +463,7 @@ func (h *hashJoinSpillHelper) appendChunkToSegments(chunk *chunk.Chunk, segments
 
 	rowNum := chunk.NumRows()
 	for i := 0; i < rowNum; i++ {
-		if seg.getRowNum() >= maxRowTableSegmentSize {
+		if seg.getRowNum() >= int(maxRowTableSegmentSize) {
 			// rowLocations's initialization has been done, so it's ok to set `finalized` to true
 			seg.finalized = true
 			segments = append(segments, seg)

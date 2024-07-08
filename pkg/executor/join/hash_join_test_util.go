@@ -31,7 +31,7 @@ type hashJoinInfo struct {
 	rightAsBuildSide      bool
 	buildKeys             []*expression.Column
 	probeKeys             []*expression.Column
-	conditions            expression.CNFExprs
+	conditions            expression.CNFExprs // TODO do we need it?
 	lUsed                 []int
 	rUsed                 []int
 	otherCondition        expression.CNFExprs

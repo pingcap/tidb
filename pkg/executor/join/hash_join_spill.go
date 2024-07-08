@@ -18,7 +18,8 @@ import (
 	"github.com/pingcap/tidb/pkg/util/memory"
 )
 
-const spillChunkSize = 1024
+// This variable should be const, but we need to modify it for test
+var spillChunkSize = 1024
 
 const spillInfo = "memory exceeds quota, spill to disk now."
 

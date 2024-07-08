@@ -15,13 +15,18 @@
 package join
 
 import (
+	"crypto/rand"
+	"encoding/base64"
+	"math/big"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/executor/internal/testutil"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/mock"
 )
 
@@ -55,19 +60,94 @@ var rightCols = []*expression.Column{
 	{Index: 4, RetType: types.NewFieldType(mysql.TypeLonglong)},
 }
 
+func buildJoinKeyIntDatums(num int) []any {
+	datumSet := make(map[int64]bool, num)
+	datums := make([]any, 0, num)
+	for len(datums) < num {
+		randVal, _ := rand.Int(rand.Reader, big.NewInt(100000))
+		val := randVal.Int64()
+		if datumSet[val] {
+			continue
+		}
+		datumSet[val] = true
+		datums = append(datums, val)
+	}
+	return datums
+}
+
+func buildJoinKeyStringDatums(num int) []any {
+	datumSet := make(map[string]bool, num)
+	datums := make([]any, 0, num)
+	for len(datums) < num {
+		buff := make([]byte, 10)
+		_, err := rand.Read(buff)
+		if err != nil {
+			panic("rand.Read returns error")
+		}
+
+		val := base64.RawURLEncoding.EncodeToString(buff)
+		if datumSet[val] {
+			continue
+		}
+		datumSet[val] = true
+		datums = append(datums, val)
+	}
+	return datums
+}
+
 func buildLeftAndRightDataSource(ctx sessionctx.Context) (*testutil.MockDataSource, *testutil.MockDataSource) {
 	leftSchema := expression.NewSchema(leftCols...)
 	rightSchema := expression.NewSchema(rightCols...)
-	leftMockSrcParm := testutil.MockDataSourceParameters{DataSchema: leftSchema, Ctx: ctx, Rows: 6000, Ndvs: []int{0, 5000, 0, 0, 0}}
-	rightMockSrcParm := testutil.MockDataSourceParameters{DataSchema: rightSchema, Ctx: ctx, Rows: 6000, Ndvs: []int{0, 0, 5000, 0, 0}}
+
+	joinKeyIntDatums := buildJoinKeyIntDatums(3000)
+	joinKeyStringDatums := buildJoinKeyStringDatums(2)
+	leftMockSrcParm := testutil.MockDataSourceParameters{DataSchema: leftSchema, Ctx: ctx, Rows: 6000, Ndvs: []int{0, -1, 0, -1, 0}, Datums: [][]any{nil, joinKeyIntDatums, nil, joinKeyStringDatums, nil}}
+	rightMockSrcParm := testutil.MockDataSourceParameters{DataSchema: rightSchema, Ctx: ctx, Rows: 6000, Ndvs: []int{-1, 0, -1, 0, 0}, Datums: [][]any{joinKeyIntDatums, nil, joinKeyStringDatums, nil, nil}}
 	return testutil.BuildMockDataSource(leftMockSrcParm), testutil.BuildMockDataSource(rightMockSrcParm)
 }
 
+func buildSchema(schemaTypes []*types.FieldType) *expression.Schema {
+	schema := &expression.Schema{}
+	for _, tp := range schemaTypes {
+		schema.Append(&expression.Column{
+			RetType: tp,
+		})
+	}
+}
+
+// Worker 3, partition 2
 func TestInnerJoinSpillCorrectness(t *testing.T) {
+	spillChunkSize = 100
+
 	// TODO trigger spill in different stages
 	ctx := mock.NewContext()
-	info := &hashJoinInfo{}
+	info := &hashJoinInfo{
+		ctx: ctx,
+		schema: buildSchema([]*types.FieldType{
+			types.NewFieldType(mysql.TypeLonglong),
+			types.NewFieldType(mysql.TypeLonglong),
+			types.NewFieldType(mysql.TypeVarString),
+			types.NewFieldType(mysql.TypeLonglong),
+			types.NewFieldType(mysql.TypeLonglong),
+			types.NewFieldType(mysql.TypeVarString),
+			types.NewFieldType(mysql.TypeLonglong),
+			types.NewFieldType(mysql.TypeLonglong),
+		}),
+		// TODO leftExec, rightExec
+		joinType: plannercore.InnerJoin,
+		rightAsBuildSide: true,
+		buildKeys: []*expression.Column{
+			&expression.Column{Index: 0, RetType: types.NewFieldType(mysql.TypeLonglong)},
+			&expression.Column{Index: 2, RetType: types.NewFieldType(mysql.TypeVarString)},
+		},
+		probeKeys: []*expression.Column{
+			&expression.Column{Index: 1, RetType: types.NewFieldType(mysql.TypeLonglong)},
+			&expression.Column{Index: 3, RetType: types.NewFieldType(mysql.TypeVarString)},
+		},
+	}
 	leftDataSource, rightDataSource := buildLeftAndRightDataSource(ctx)
+
+	maxRowTableSegmentSize = 100 // TODO modify it after no-spill join has been executed
 }
 
 func TestLeftOuterJoinSpillCorrectness(t *testing.T) {

@@ -100,7 +100,8 @@ func (rts *rowTableSegment) getRowsBytes() [][]byte {
 	return rows
 }
 
-const maxRowTableSegmentSize = 1024
+// This variable should be const, but we need to modify it for test
+var maxRowTableSegmentSize = int64(1024)
 
 func newRowTableSegment() *rowTableSegment {
 	return &rowTableSegment{
