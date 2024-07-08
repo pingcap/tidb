@@ -78,11 +78,7 @@ go_test(
     data = glob(["testdata/**"]),
     embed = [":statistics"],
     flaky = True,
-<<<<<<< HEAD
-    shard_count = 34,
-=======
-    shard_count = 38,
->>>>>>> 878fa328ea4 (statistics: update stats_history table when it meets duplicate (#54315))
+    shard_count = 35,
     deps = [
         "//pkg/config",
         "//pkg/parser/ast",
