@@ -1938,6 +1938,7 @@ func checkDuplicateForUniqueIndex(ctx context.Context, t table.Table, reorgInfo 
 			ingest.LitBackCtxMgr.Unregister(reorgInfo.ID)
 		}
 	}()
+
 	for _, elem := range reorgInfo.elements {
 		indexInfo := model.FindIndexInfoByID(t.Meta().Indices, elem.ID)
 		if indexInfo == nil {

@@ -259,20 +259,21 @@ func (*outerJoinEliminator) name() string {
 
 func appendOuterJoinEliminateTraceStep(join *LogicalJoin, outerPlan base.LogicalPlan, parentCols []*expression.Column,
 	innerJoinKeys *expression.Schema, opt *optimizetrace.LogicalOptimizeOp) {
+	ectx := join.SCtx().GetExprCtx().GetEvalCtx()
 	reason := func() string {
 		buffer := bytes.NewBufferString("The columns[")
 		for i, col := range parentCols {
 			if i > 0 {
 				buffer.WriteString(",")
 			}
-			buffer.WriteString(col.String())
+			buffer.WriteString(col.StringWithCtx(ectx))
 		}
 		buffer.WriteString("] are from outer table, and the inner join keys[")
 		for i, key := range innerJoinKeys.Columns {
 			if i > 0 {
 				buffer.WriteString(",")
 			}
-			buffer.WriteString(key.String())
+			buffer.WriteString(key.StringWithCtx(ectx))
 		}
 		buffer.WriteString("] are unique")
 		return buffer.String()
@@ -284,13 +285,14 @@ func appendOuterJoinEliminateTraceStep(join *LogicalJoin, outerPlan base.Logical
 }
 
 func appendOuterJoinEliminateAggregationTraceStep(join *LogicalJoin, outerPlan base.LogicalPlan, aggCols []*expression.Column, opt *optimizetrace.LogicalOptimizeOp) {
+	ectx := join.SCtx().GetExprCtx().GetEvalCtx()
 	reason := func() string {
 		buffer := bytes.NewBufferString("The columns[")
 		for i, col := range aggCols {
 			if i > 0 {
 				buffer.WriteString(",")
 			}
-			buffer.WriteString(col.String())
+			buffer.WriteString(col.StringWithCtx(ectx))
 		}
 		buffer.WriteString("] in agg are from outer table, and the agg functions are duplicate agnostic")
 		return buffer.String()

@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 )
 
@@ -121,30 +120,6 @@ func windowIsTopN(p *LogicalSelection) (bool, uint64) {
 func (*deriveTopNFromWindow) optimize(_ context.Context, p base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
 	planChanged := false
 	return p.DeriveTopN(opt), planChanged, nil
-}
-
-// DeriveTopN implements the LogicalPlan interface.
-func (s *LogicalSelection) DeriveTopN(opt *optimizetrace.LogicalOptimizeOp) base.LogicalPlan {
-	p := s.Self().(*LogicalSelection)
-	windowIsTopN, limitValue := windowIsTopN(p)
-	if windowIsTopN {
-		child := p.Children()[0].(*LogicalWindow)
-		grandChild := child.Children()[0].(*DataSource)
-		// Build order by for derived Limit
-		byItems := make([]*util.ByItems, 0, len(child.OrderBy))
-		for _, col := range child.OrderBy {
-			byItems = append(byItems, &util.ByItems{Expr: col.Col, Desc: col.Desc})
-		}
-		// Build derived Limit
-		derivedTopN := LogicalTopN{Count: limitValue, ByItems: byItems, PartitionBy: child.GetPartitionBy()}.Init(grandChild.SCtx(), grandChild.QueryBlockOffset())
-		derivedTopN.SetChildren(grandChild)
-		/* return select->datasource->topN->window */
-		child.SetChildren(derivedTopN)
-		p.SetChildren(child)
-		appendDerivedTopNTrace(p, opt)
-		return p
-	}
-	return p
 }
 
 func (*deriveTopNFromWindow) name() string {

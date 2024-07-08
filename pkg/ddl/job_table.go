@@ -185,51 +185,47 @@ func (s *jobScheduler) close() {
 }
 
 // getJob reads tidb_ddl_job and returns the first runnable DDL job.
-func (s *jobScheduler) getJob(se *sess.Session, tp jobType) (*model.Job, error) {
+func (s *jobScheduler) getJob(se *sess.Session) (*model.Job, bool, error) {
 	defer s.runningJobs.resetAllPending()
 
-	not := "not"
-	label := "get_job_general"
-	if tp == jobTypeReorg {
-		not = ""
-		label = "get_job_reorg"
-	}
-	const getJobSQL = `select job_meta, processing from mysql.tidb_ddl_job where job_id in
+	const getJobSQL = `select job_meta, processing, reorg from mysql.tidb_ddl_job where job_id in
 		(select min(job_id) from mysql.tidb_ddl_job group by schema_ids, table_ids, processing)
-		and %s reorg %s order by processing desc, job_id`
+		%s order by processing desc, job_id`
 	var excludedJobIDs string
 	if ids := s.runningJobs.allIDs(); len(ids) > 0 {
 		excludedJobIDs = fmt.Sprintf("and job_id not in (%s)", ids)
 	}
-	sql := fmt.Sprintf(getJobSQL, not, excludedJobIDs)
-	rows, err := se.Execute(context.Background(), sql, label)
+	sql := fmt.Sprintf(getJobSQL, excludedJobIDs)
+	rows, err := se.Execute(context.Background(), sql, "get_job")
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, false, errors.Trace(err)
 	}
 	for _, row := range rows {
 		jobBinary := row.GetBytes(0)
 		isJobProcessing := row.GetInt64(1) == 1
+		isReorg := row.GetInt64(2) != 0
 
 		job := model.Job{}
 		err = job.Decode(jobBinary)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, isReorg, errors.Trace(err)
 		}
 
+		involving := job.GetInvolvingSchemaInfo()
 		isRunnable, err := s.processJobDuringUpgrade(se, &job)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, isReorg, errors.Trace(err)
 		}
 		if !isRunnable {
+			s.runningJobs.addPending(involving)
 			continue
 		}
 
 		// The job has already been picked up, just return to continue it.
 		if isJobProcessing {
-			return &job, nil
+			return &job, isReorg, nil
 		}
 
-		involving := job.GetInvolvingSchemaInfo()
 		if !s.runningJobs.checkRunnable(job.ID, involving) {
 			s.runningJobs.addPending(involving)
 			continue
@@ -241,11 +237,11 @@ func (s *jobScheduler) getJob(se *sess.Session, tp jobType) (*model.Job, error) 
 				zap.Error(err),
 				zap.Stringer("job", &job))
 			s.runningJobs.addPending(involving)
-			return nil, errors.Trace(err)
+			return nil, isReorg, errors.Trace(err)
 		}
-		return &job, nil
+		return &job, isReorg, nil
 	}
-	return nil, nil
+	return nil, false, nil
 }
 
 func hasSysDB(job *model.Job) bool {
@@ -394,8 +390,7 @@ func (s *jobScheduler) startDispatch() error {
 			continue
 		}
 		failpoint.InjectCall("beforeAllLoadDDLJobAndRun")
-		s.loadDDLJobAndRun(se, s.generalDDLWorkerPool, jobTypeGeneral)
-		s.loadDDLJobAndRun(se, s.reorgWorkerPool, jobTypeReorg)
+		s.loadDDLJobAndRun(se)
 	}
 }
 
@@ -436,30 +431,32 @@ func (s *jobScheduler) checkAndUpdateClusterState(needUpdate bool) error {
 	return nil
 }
 
-func (s *jobScheduler) loadDDLJobAndRun(se *sess.Session, pool *workerPool, tp jobType) {
+func (s *jobScheduler) loadDDLJobAndRun(se *sess.Session) {
+	s.mu.RLock()
+	s.mu.hook.OnGetJobBefore()
+	s.mu.RUnlock()
+
+	startTime := time.Now()
+	job, isReorg, err := s.getJob(se)
+	if job == nil || err != nil {
+		if err != nil {
+			logutil.DDLLogger().Warn("get job met error", zap.Duration("take time", time.Since(startTime)), zap.Error(err))
+		}
+		return
+	}
+	s.mu.RLock()
+	s.mu.hook.OnGetJobAfter(job)
+	s.mu.RUnlock()
+
+	pool := s.generalDDLWorkerPool
+	if isReorg {
+		pool = s.reorgWorkerPool
+	}
 	wk, err := pool.get()
 	if err != nil || wk == nil {
 		logutil.DDLLogger().Debug(fmt.Sprintf("[ddl] no %v worker available now", pool.tp()), zap.Error(err))
 		return
 	}
-
-	s.mu.RLock()
-	s.mu.hook.OnGetJobBefore(pool.tp().String())
-	s.mu.RUnlock()
-
-	startTime := time.Now()
-	job, err := s.getJob(se, tp)
-	if job == nil || err != nil {
-		if err != nil {
-			wk.jobLogger(job).Warn("get job met error", zap.Duration("take time", time.Since(startTime)), zap.Error(err))
-		}
-		pool.put(wk)
-		return
-	}
-	s.mu.RLock()
-	s.mu.hook.OnGetJobAfter(pool.tp().String(), job)
-	s.mu.RUnlock()
-
 	s.delivery2Worker(wk, pool, job)
 }
 
@@ -526,10 +523,18 @@ func (s *jobScheduler) delivery2Worker(wk *worker, pool *workerPool, job *model.
 	jobID, involvedSchemaInfos := job.ID, job.GetInvolvingSchemaInfo()
 	s.runningJobs.addRunning(jobID, involvedSchemaInfos)
 	metrics.DDLRunningJobCount.WithLabelValues(pool.tp().String()).Inc()
-	s.wg.RunWithLog(func() {
+	s.wg.Run(func() {
 		defer func() {
+			r := recover()
+			if r != nil {
+				logutil.DDLLogger().Error("panic in delivery2Worker", zap.Any("recover", r), zap.Stack("stack"))
+			}
 			failpoint.InjectCall("afterDelivery2Worker", job)
-			s.runningJobs.removeRunning(jobID, involvedSchemaInfos)
+			// Because there is a gap between `allIDs()` and `checkRunnable()`,
+			// we append unfinished job to pending atomically to prevent `getJob()`
+			// chosing another runnable job that involves the same schema object.
+			moveRunningJobsToPending := r != nil || (job != nil && !job.IsFinished())
+			s.runningJobs.finishOrPendJob(jobID, involvedSchemaInfos, moveRunningJobsToPending)
 			asyncNotify(s.ddlJobNotifyCh)
 			metrics.DDLRunningJobCount.WithLabelValues(pool.tp().String()).Dec()
 			pool.put(wk)

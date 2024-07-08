@@ -327,7 +327,7 @@ func (rm *RunawayManager) addWatchList(record *QuarantineRecord, ttl time.Durati
 	} else {
 		if item == nil {
 			rm.queryLock.Lock()
-			// When watchlist get record, it will check whether the record is stale, so add new record if returns nil.
+			// When watchList get record, it will check whether the record is stale, so add new record if returns nil.
 			if rm.watchList.Get(key) == nil {
 				rm.watchList.Set(key, record, ttl)
 			} else {
@@ -340,7 +340,7 @@ func (rm *RunawayManager) addWatchList(record *QuarantineRecord, ttl time.Durati
 			defer rm.queryLock.Unlock()
 			rm.watchList.Set(key, record, ttl)
 		} else if item.ID != record.ID {
-			// check the ID because of the eariler scan.
+			// check the ID because of the earlier scan.
 			rm.staleQuarantineRecord <- record
 		}
 	}
@@ -452,6 +452,9 @@ func (rm *RunawayManager) examineWatchList(resourceGroupName string, convict str
 
 // Stop stops the watchList which is a ttlcache.
 func (rm *RunawayManager) Stop() {
+	if rm == nil {
+		return
+	}
 	if rm.watchList != nil {
 		rm.watchList.Stop()
 	}

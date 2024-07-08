@@ -57,8 +57,8 @@ func pseudoSelectivity(sctx context.PlanContext, coll *statistics.HistColl, expr
 		switch fun.FuncName.L {
 		case ast.EQ, ast.NullEQ, ast.In:
 			minFactor = math.Min(minFactor, 1.0/pseudoEqualRate)
-			col, ok := coll.Columns[colID]
-			if !ok {
+			col := coll.GetCol(colID)
+			if col == nil {
 				continue
 			}
 			colExists[col.Info.Name.L] = true
@@ -74,7 +74,8 @@ func pseudoSelectivity(sctx context.PlanContext, coll *statistics.HistColl, expr
 		return minFactor
 	}
 	// use the unique key info
-	for _, idx := range coll.Indices {
+	hasUniqueKey := false
+	coll.ForEachIndexImmutable(func(_ int64, idx *statistics.Index) bool {
 		unique := true
 		firstMatch := false
 		for _, col := range idx.Info.Columns {
@@ -88,8 +89,13 @@ func pseudoSelectivity(sctx context.PlanContext, coll *statistics.HistColl, expr
 			statistics.IndexStatsIsInvalid(sctx, (*statistics.Index)(nil), coll, idx.ID)
 		}
 		if idx.Info.Unique && unique {
-			return 1.0 / float64(coll.RealtimeCount)
+			hasUniqueKey = true
+			return true
 		}
+		return false
+	})
+	if hasUniqueKey {
+		return 1.0 / float64(coll.RealtimeCount)
 	}
 	return minFactor
 }

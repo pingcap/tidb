@@ -809,9 +809,13 @@ func (p *Plan) initParameters(plan *plannercore.ImportInto) error {
 		setClause = sb.String()
 	}
 	optionMap := make(map[string]any, len(plan.Options))
+	var evalCtx expression.EvalContext
+	if plan.SCtx() != nil {
+		evalCtx = plan.SCtx().GetExprCtx().GetEvalCtx()
+	}
 	for _, opt := range plan.Options {
 		if opt.Value != nil {
-			val := opt.Value.String()
+			val := opt.Value.StringWithCtx(evalCtx)
 			if opt.Name == cloudStorageURIOption {
 				val = ast.RedactURL(val)
 			}

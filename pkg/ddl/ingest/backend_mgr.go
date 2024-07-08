@@ -51,6 +51,8 @@ type BackendCtxMgr interface {
 		resourceGroupName string,
 	) (BackendCtx, error)
 	Unregister(jobID int64)
+	// EncodeJobSortPath encodes the job ID to the local disk sort path.
+	EncodeJobSortPath(jobID int64) string
 	// Load returns the registered BackendCtx with the given jobID.
 	Load(jobID int64) (BackendCtx, bool)
 }
@@ -123,7 +125,7 @@ func (m *litBackendCtxMgr) Register(
 	if !ok {
 		return nil, genBackendAllocMemFailedErr(ctx, m.memRoot, jobID)
 	}
-	sortPath := m.encodeJobSortPath(jobID)
+	sortPath := m.EncodeJobSortPath(jobID)
 	err := os.MkdirAll(sortPath, 0700)
 	if err != nil {
 		logutil.Logger(ctx).Error(LitErrCreateDirFail, zap.Error(err))
@@ -160,7 +162,8 @@ func (m *litBackendCtxMgr) Register(
 	return bcCtx, nil
 }
 
-func (m *litBackendCtxMgr) encodeJobSortPath(jobID int64) string {
+// EncodeJobSortPath implements BackendCtxMgr.
+func (m *litBackendCtxMgr) EncodeJobSortPath(jobID int64) string {
 	return filepath.Join(m.path, encodeBackendTag(jobID))
 }
 
@@ -228,7 +231,7 @@ func (m *litBackendCtxMgr) Unregister(jobID int64) {
 	if !exist {
 		return
 	}
-	bc.UnregisterEngines()
+	_ = bc.FinishAndUnregisterEngines()
 	bc.backend.Close()
 	if bc.checkpointMgr != nil {
 		bc.checkpointMgr.Close()

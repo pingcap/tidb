@@ -904,6 +904,7 @@ const (
 	ErrJSONUsedAsKey                                         = 3152
 	ErrJSONVacuousPath                                       = 3153
 	ErrJSONBadOneOrAllArg                                    = 3154
+	ErrJSONDocumentTooDeep                                   = 3157
 	ErrJSONDocumentNULLKey                                   = 3158
 	ErrBadUser                                               = 3162
 	ErrUserAlreadyExists                                     = 3163
