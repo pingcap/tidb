@@ -4194,19 +4194,8 @@ def go_deps():
         name = "com_github_tikv_pd_client",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/tikv/pd/client",
-<<<<<<< HEAD
-        sum = "h1:BBwUZAaBl7DKdyaduOxXqias4xCtdDgIAGsDBuri3lg=",
-        version = "v0.0.0-20231211083919-fe6fd1721aa6",
-=======
-        sha256 = "af957cdaccb24818d126f992ff3677b04adb2e80b53b898d5bab6f134a144120",
-        strip_prefix = "github.com/tikv/pd/client@v0.0.0-20240703065657-6b25787aff4d",
-        urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/tikv/pd/client/com_github_tikv_pd_client-v0.0.0-20240703065657-6b25787aff4d.zip",
-            "http://ats.apps.svc/gomod/github.com/tikv/pd/client/com_github_tikv_pd_client-v0.0.0-20240703065657-6b25787aff4d.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/tikv/pd/client/com_github_tikv_pd_client-v0.0.0-20240703065657-6b25787aff4d.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/tikv/pd/client/com_github_tikv_pd_client-v0.0.0-20240703065657-6b25787aff4d.zip",
-        ],
->>>>>>> 9f7441a9794 (mod: update pd client (#54424))
+        sum = "h1:YAgGB92AiNCZdM5a65vdnJRX+gS+cc4OcUplWEU6O4w=",
+        version = "v0.0.0-20240708075102-05207d6819fb",
     )
     go_repository(
         name = "com_github_timakin_bodyclose",

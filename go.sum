@@ -967,23 +967,12 @@ github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2 h1:mbAskLJ0oJf
 github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2/go.mod h1:2PfKggNGDuadAa0LElHrByyrz4JPZ9fFx6Gs7nx7ZZU=
 github.com/tiancaiamao/gp v0.0.0-20221230034425-4025bc8a4d4a h1:J/YdBZ46WKpXsxsW93SG+q0F8KI+yFrcIDT4c/RNoc4=
 github.com/tiancaiamao/gp v0.0.0-20221230034425-4025bc8a4d4a/go.mod h1:h4xBhSNtOeEosLJ4P7JyKXX7Cabg7AVkWCK5gV2vOrM=
-<<<<<<< HEAD
 github.com/tikv/client-go/v2 v2.0.8-0.20240510070118-c6d7a483b5e1 h1:NRAYutV0XCtLXVb414GXAShPmrfOQucbGgDHHuucTww=
 github.com/tikv/client-go/v2 v2.0.8-0.20240510070118-c6d7a483b5e1/go.mod h1:45NuHB8x+VAoztMIjF6hEgXvPQXhXWPfMxDg0N8CoRY=
-github.com/tikv/pd/client v0.0.0-20231211083919-fe6fd1721aa6 h1:BBwUZAaBl7DKdyaduOxXqias4xCtdDgIAGsDBuri3lg=
-github.com/tikv/pd/client v0.0.0-20231211083919-fe6fd1721aa6/go.mod h1:8XEP9aqUvvc9guWJZ7vo0av0H6QsJtjIrOmLAQlL2Jo=
+github.com/tikv/pd/client v0.0.0-20240708075102-05207d6819fb h1:YAgGB92AiNCZdM5a65vdnJRX+gS+cc4OcUplWEU6O4w=
+github.com/tikv/pd/client v0.0.0-20240708075102-05207d6819fb/go.mod h1:QCBn54O5lhfkYfxj8Tyiqaxue/mthHEMyi7AqJP/+n4=
 github.com/timakin/bodyclose v0.0.0-20221125081123-e39cf3fc478e h1:MV6KaVu/hzByHP0UvJ4HcMGE/8a6A4Rggc/0wx2AvJo=
 github.com/timakin/bodyclose v0.0.0-20221125081123-e39cf3fc478e/go.mod h1:27bSVNWSBOHm+qRp1T9qzaIpsWEP6TbUnei/43HK+PQ=
-=======
-github.com/tidwall/btree v1.7.0 h1:L1fkJH/AuEh5zBnnBbmTwQ5Lt+bRJ5A8EWecslvo9iI=
-github.com/tidwall/btree v1.7.0/go.mod h1:twD9XRA5jj9VUQGELzDO4HPQTNJsoWWfYEL+EUQ2cKY=
-github.com/tikv/client-go/v2 v2.0.8-0.20240703095801-d73cc1ed6503 h1:0mUlg3+dA5LvwKs1U6i/ID/8RsYgLVLGyM8fSBMb630=
-github.com/tikv/client-go/v2 v2.0.8-0.20240703095801-d73cc1ed6503/go.mod h1:4HDOAx8OXAJPtqhCZ03IhChXgaFs4B3+vSrPWmiPxjg=
-github.com/tikv/pd/client v0.0.0-20240703065657-6b25787aff4d h1:iTvGLERJltVzl/+W2e2nIpLgmymzMXK4VJW/HVl15ps=
-github.com/tikv/pd/client v0.0.0-20240703065657-6b25787aff4d/go.mod h1:EHHidLItrJGh0jqfdfFhIHG5vwkR8+43tFnp7v7iv1Q=
-github.com/timakin/bodyclose v0.0.0-20240125160201-f835fa56326a h1:A6uKudFIfAEpoPdaal3aSqGxBzLyU8TqyXImLwo6dIo=
-github.com/timakin/bodyclose v0.0.0-20240125160201-f835fa56326a/go.mod h1:mkjARE7Yr8qU23YcGMSALbIxTQ9r9QBVahQOBRfU460=
->>>>>>> 9f7441a9794 (mod: update pd client (#54424))
 github.com/tklauser/go-sysconf v0.3.9/go.mod h1:11DU/5sG7UexIrp/O6g35hrWzu0JxlwQ3LSFUzyeuhs=
 github.com/tklauser/go-sysconf v0.3.11 h1:89WgdJhk5SNwJfu+GKyYveZ4IaJ7xAkecBo+KdJV0CM=
 github.com/tklauser/go-sysconf v0.3.11/go.mod h1:GqXfhXY3kiPa0nAXPDIQIWzJbMCB7AmcWpGR8lSZfqI=
