@@ -296,11 +296,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 			}
 			metrics.BindUsageCounter.WithLabelValues(scope).Inc()
 			hint.BindHint(stmtNode, binding.Hint)
-<<<<<<< HEAD
-			curStmtHints, _, curWarns := handleStmtHints(binding.Hint.GetFirstTableHints())
-=======
-			curStmtHints, _, curWarns := hint.ParseStmtHints(binding.Hint.GetStmtHints(), setVarHintChecker, byte(kv.ReplicaReadFollower))
->>>>>>> 01a45732ad5 (planner: fix the issue that bindings with query-level hint can not take effect for replace statements (#54048))
+			curStmtHints, _, curWarns := handleStmtHints(binding.Hint.GetStmtHints())
 			sessVars.StmtCtx.StmtHints = curStmtHints
 			// update session var by hint /set_var/
 			for name, val := range sessVars.StmtCtx.StmtHints.SetVars {
