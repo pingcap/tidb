@@ -222,7 +222,7 @@ func addTaskToMetaTable(ctx context.Context, info *brieTaskInfo, e *exec.BaseExe
 
 	// BEGIN
 	stmtCtx := util.WithInternalSourceType(ctx, kv.InternalTxnBR)
-	_, err := e.Ctx().GetSQLExecutor().ExecuteInternal(stmtCtx,`BEGIN;`)
+	_, err := e.Ctx().GetSQLExecutor().ExecuteInternal(stmtCtx, `BEGIN;`)
 	if err != nil {
 		return 0, err
 	}
@@ -239,7 +239,7 @@ func addTaskToMetaTable(ctx context.Context, info *brieTaskInfo, e *exec.BaseExe
 	}
 	defer terror.Call(rs.Close)
 	// COMMIT
-	_, err = e.Ctx().GetSQLExecutor().ExecuteInternal(stmtCtx,`COMMIT;`)
+	_, err = e.Ctx().GetSQLExecutor().ExecuteInternal(stmtCtx, `COMMIT;`)
 	if err != nil {
 		return 0, err
 	}
@@ -255,6 +255,7 @@ func addTaskToMetaTable(ctx context.Context, info *brieTaskInfo, e *exec.BaseExe
 	return rows[0].GetUint64(0), nil
 }
 
+// RefineMessage removes duplicate errors in the message field
 func RefineMessage(input string) string {
 	// Find the position of the first occurrence of ']'
 	pos := strings.Index(input, "]")
