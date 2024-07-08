@@ -25,7 +25,10 @@ import (
 
 type outerJoinProbe struct {
 	baseJoinProbe
-	// isOuterSideBuild is true means the outer side is build side, otherwise is probe side
+	// isOuterSideBuild is true means the outer side is build side, otherwise is probe side.
+	// Outer side is the all-fetched side, and inner side is the null-append side.
+	// For left out join, left side is outer side, and right side is inner side.
+	// For right out join, right side is outer side, and left side is inner side.
 	isOuterSideBuild bool
 	// used when build inner side, isNotMatchedRows is indexed by logical row index
 	isNotMatchedRows []bool
