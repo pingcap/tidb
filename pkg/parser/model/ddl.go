@@ -796,7 +796,7 @@ func (job *Job) InfoJSON() ([]byte, error) {
 		TableID           int64         `json:"table_id"`
 		RowCount          int64         `json:"row_count"`
 		Arglen            int           `json:"arg_len"`
-		StartTime         time.Time     `json:"start_time`
+		StartTime         time.Time     `json:"start_time"`
 		Error             *terror.Error `json:"err"`
 		ErrorCount        int64         `json:"err_count"`
 		SnapshotVer       uint64        `json:"snapshot_ver"`
