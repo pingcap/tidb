@@ -1231,6 +1231,9 @@ type SessionVars struct {
 	// EnableGlobalIndex indicates whether we could create an global index on a partition table or not.
 	EnableGlobalIndex bool
 
+	// PresumeKeyNotExists indicates lazy existence checking is enabled.
+	PresumeKeyNotExists bool
+
 	// EnableParallelApply indicates that whether to use parallel apply.
 	EnableParallelApply bool
 
@@ -2710,9 +2713,12 @@ func (s *SessionVars) GetDivPrecisionIncrement() int {
 // LazyCheckKeyNotExists returns if we can lazy check key not exists.
 func (s *SessionVars) LazyCheckKeyNotExists() bool {
 	if s.StmtCtx.ErrGroupLevel(errctx.ErrGroupDupKey) != errctx.LevelError {
+		// This branch means we are in `insert/update ignore`.
+		// The executor will handle the dup-key error and ignore it in executor,
+		// so we must check the dup-key error in place to make sure the executor can get the error.
 		return false
 	}
-	return !s.ConstraintCheckInPlace || (s.TxnCtx != nil && s.TxnCtx.IsPessimistic)
+	return s.PresumeKeyNotExists || (s.TxnCtx != nil && s.TxnCtx.IsPessimistic)
 }
 
 // GetTemporaryTable returns a TempTable by tableInfo.

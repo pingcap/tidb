@@ -696,12 +696,3 @@ UPDATE update_with_diff_type SET b = '{"a":   "\\u6d4b\\u8bd5"}';
 SELECT b FROM update_with_diff_type;
 set SQL_MODE=default;
 
-# `tidb_constraint_check_in_place` should work for update, issue #54492
-drop table if exists t;
-create table t(id int primary key, u int unique);
-insert into t values (1, 1), (2, 2);
-begin optimistic;
-update t set u=2 where id=1;
---error 1062
-commit;
-select * from t order by id;

@@ -1413,11 +1413,15 @@ func (e *InsertValues) addRecordWithAutoIDHint(
 	ctx context.Context, row []types.Datum, reserveAutoIDCount int,
 ) (err error) {
 	vars := e.Ctx().GetSessionVars()
+	if !vars.ConstraintCheckInPlace {
+		vars.PresumeKeyNotExists = true
+	}
 	if reserveAutoIDCount > 0 {
 		_, err = e.Table.AddRecord(e.Ctx().GetTableCtx(), row, table.WithCtx(ctx), table.WithReserveAutoIDHint(reserveAutoIDCount))
 	} else {
 		_, err = e.Table.AddRecord(e.Ctx().GetTableCtx(), row, table.WithCtx(ctx))
 	}
+	vars.PresumeKeyNotExists = false
 	if err != nil {
 		return err
 	}
