@@ -16,8 +16,10 @@ package planner
 
 import (
 	"context"
+	"github.com/pingcap/tidb/pkg/table"
 	"math"
 	"math/rand"
+	"slices"
 	"sync"
 	"time"
 
@@ -612,13 +614,7 @@ func hypoIndexChecker(is infoschema.InfoSchema) func(db, tbl model.CIStr, cols .
 			return errors.NewNoStackErrorf("table '%v.%v' doesn't exist", db, tbl)
 		}
 		for _, col := range cols {
-			found := false
-			for _, tblCol := range t.Cols() {
-				if tblCol.Name.L == col.L {
-					found = true
-				}
-			}
-			if !found {
+			if !slices.ContainsFunc(t.Cols(), func(c *table.Column) bool { return c.Name.L == col.L }) {
 				return errors.NewNoStackErrorf("can't find column %v in table %v.%v", col, db, tbl)
 			}
 		}
