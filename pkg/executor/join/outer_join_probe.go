@@ -25,14 +25,36 @@ import (
 
 type outerJoinProbe struct {
 	baseJoinProbe
-	// isLeftOuterJoin is true means the join is left outer join, otherwise is right outer join
-	isLeftOuterJoin bool
 	// isOuterSideBuild is true means the outer side is build side, otherwise is probe side
 	isOuterSideBuild bool
 	// used when build inner side, isNotMatchedRows is indexed by logical row index
 	isNotMatchedRows []bool
 	// used when build outer side
 	rowIter *rowIter
+	// build/probe side used columns and offset in result chunk
+	buildSideUsed              []int
+	buildSideOffsetInResultChk int
+	probeSideUsed              []int
+	probeSideOffsetInResultChk int
+}
+
+func newOuterJoinProbe(base baseJoinProbe, isOuterSideBuild bool, isRightSideBuild bool) *outerJoinProbe {
+	probe := &outerJoinProbe{
+		baseJoinProbe:    base,
+		isOuterSideBuild: isOuterSideBuild,
+	}
+	if isRightSideBuild {
+		probe.buildSideUsed = base.rUsed
+		probe.buildSideOffsetInResultChk = len(base.lUsed)
+		probe.probeSideUsed = base.lUsed
+		probe.probeSideOffsetInResultChk = 0
+	} else {
+		probe.buildSideUsed = base.lUsed
+		probe.buildSideOffsetInResultChk = 0
+		probe.probeSideUsed = base.rUsed
+		probe.probeSideOffsetInResultChk = len(base.lUsed)
+	}
+	return probe
 }
 
 func (j *outerJoinProbe) SetChunkForProbe(chunk *chunk.Chunk) (err error) {
@@ -110,31 +132,25 @@ func (j *outerJoinProbe) ScanRowTable(joinResult *hashjoinWorkerResult, sqlKille
 	if len(j.cachedBuildRows) > 0 {
 		j.batchConstructBuildRows(joinResult.chk, 0, false)
 	}
-	if j.isLeftOuterJoin {
-		// append probe side in batch
-		colOffset := len(j.lUsed)
-		for index := range j.rUsed {
-			joinResult.chk.Column(index + colOffset).AppendNNulls(insertedRows)
-		}
-	} else {
-		// append probe side in batch
-		for index := range j.lUsed {
-			joinResult.chk.Column(index).AppendNNulls(insertedRows)
-		}
+	// append probe side in batch
+	for index := range j.probeSideUsed {
+		joinResult.chk.Column(index + j.probeSideOffsetInResultChk).AppendNNulls(insertedRows)
 	}
 	return joinResult
 }
 
-func (j *outerJoinProbe) buildResultForMatchedRowsAfterOtherCondition(chk, joinedChk *chunk.Chunk,
-	probeSideOffset int, probeSide []int, probeSideJoinedChunkOffset int,
-	buildSideOffset int, buildSide []int, buildSideJoinedChunkOffset int) {
+func (j *outerJoinProbe) buildResultForMatchedRowsAfterOtherCondition(chk, joinedChk *chunk.Chunk) {
+	probeColOffsetInJoinedChunk, buildColOffsetInJoinedChunk := j.currentChunk.NumCols(), 0
+	if j.rightAsBuildSide {
+		probeColOffsetInJoinedChunk, buildColOffsetInJoinedChunk = 0, j.currentChunk.NumCols()
+	}
 	rowCount := chk.NumRows()
 	markedJoined := false
-	for index, colIndex := range probeSide {
-		dstCol := chk.Column(probeSideOffset + index)
-		if joinedChk.Column(colIndex+probeSideJoinedChunkOffset).Rows() > 0 {
+	for index, colIndex := range j.probeSideUsed {
+		dstCol := chk.Column(j.probeSideOffsetInResultChk + index)
+		if joinedChk.Column(colIndex+probeColOffsetInJoinedChunk).Rows() > 0 {
 			// probe column that is already in joinedChk
-			srcCol := joinedChk.Column(colIndex + probeSideJoinedChunkOffset)
+			srcCol := joinedChk.Column(colIndex + probeColOffsetInJoinedChunk)
 			chunk.CopySelectedRows(dstCol, srcCol, j.selected)
 		} else {
 			markedJoined = true
@@ -147,9 +163,9 @@ func (j *outerJoinProbe) buildResultForMatchedRowsAfterOtherCondition(chk, joine
 		}
 	}
 	hasRemainCols := false
-	for index, colIndex := range buildSide {
-		dstCol := chk.Column(buildSideOffset + index)
-		srcCol := joinedChk.Column(buildSideJoinedChunkOffset + colIndex)
+	for index, colIndex := range j.buildSideUsed {
+		dstCol := chk.Column(j.buildSideOffsetInResultChk + index)
+		srcCol := joinedChk.Column(buildColOffsetInJoinedChunk + colIndex)
 		if srcCol.Rows() > 0 {
 			// build column that is already in joinedChk
 			chunk.CopySelectedRows(dstCol, srcCol, j.selected)
@@ -188,15 +204,13 @@ func (j *outerJoinProbe) buildResultForMatchedRowsAfterOtherCondition(chk, joine
 	chk.SetNumVirtualRows(rowCount + rowsAdded)
 }
 
-func (j *outerJoinProbe) buildResultForNotMatchedRows(chk *chunk.Chunk, startProbeRow int,
-	probeSideOffset int, probeSide []int,
-	buildSideOffset int, buildSide []int) {
+func (j *outerJoinProbe) buildResultForNotMatchedRows(chk *chunk.Chunk, startProbeRow int) {
 	// append not matched rows
 	// for not matched rows, probe col is appended using original cols, and build column is appended using nulls
 	prevRows := chk.NumRows()
 	afterRows := prevRows
-	for index, colIndex := range probeSide {
-		dstCol := chk.Column(probeSideOffset + index)
+	for index, colIndex := range j.probeSideUsed {
+		dstCol := chk.Column(j.probeSideOffsetInResultChk + index)
 		srcCol := j.currentChunk.Column(colIndex)
 		chunk.CopySelectedRowsWithRowIDFunc(dstCol, srcCol, j.isNotMatchedRows, startProbeRow, j.currentProbeRow, func(i int) int {
 			return j.usedRows[i]
@@ -204,7 +218,7 @@ func (j *outerJoinProbe) buildResultForNotMatchedRows(chk *chunk.Chunk, startPro
 		afterRows = dstCol.Rows()
 	}
 	nullRows := afterRows - prevRows
-	if len(probeSide) == 0 {
+	if len(j.probeSideUsed) == 0 {
 		for i := startProbeRow; i < j.currentProbeRow; i++ {
 			if j.isNotMatchedRows[i] {
 				nullRows++
@@ -212,8 +226,8 @@ func (j *outerJoinProbe) buildResultForNotMatchedRows(chk *chunk.Chunk, startPro
 		}
 	}
 	if nullRows > 0 {
-		for index := range buildSide {
-			dstCol := chk.Column(buildSideOffset + index)
+		for index := range j.buildSideUsed {
+			dstCol := chk.Column(j.buildSideOffsetInResultChk + index)
 			dstCol.AppendNNulls(nullRows)
 		}
 		chk.SetNumVirtualRows(prevRows + nullRows)
@@ -267,25 +281,13 @@ func (j *outerJoinProbe) probeForInnerSideBuild(chk, joinedChk *chunk.Chunk, rem
 			if err != nil {
 				return err
 			}
-			if j.isLeftOuterJoin {
-				j.buildResultForMatchedRowsAfterOtherCondition(chk, joinedChk, 0, j.lUsed, 0, len(j.lUsed), j.rUsed, j.currentChunk.NumCols())
-			} else {
-				j.buildResultForMatchedRowsAfterOtherCondition(chk, joinedChk, len(j.lUsed), j.rUsed, j.currentChunk.NumCols(), 0, j.lUsed, 0)
-			}
+			j.buildResultForMatchedRowsAfterOtherCondition(chk, joinedChk)
 		}
 		// append the not matched rows
-		if j.isLeftOuterJoin {
-			j.buildResultForNotMatchedRows(chk, startProbeRow, 0, j.lUsed, len(j.lUsed), j.rUsed)
-		} else {
-			j.buildResultForNotMatchedRows(chk, startProbeRow, len(j.lUsed), j.rUsed, 0, j.lUsed)
-		}
+		j.buildResultForNotMatchedRows(chk, startProbeRow)
 	} else {
 		// if no the condition, chk == joinedChk, and the matched rows are already in joinedChk
-		if j.isLeftOuterJoin {
-			j.buildResultForNotMatchedRows(joinedChk, startProbeRow, 0, j.lUsed, len(j.lUsed), j.rUsed)
-		} else {
-			j.buildResultForNotMatchedRows(joinedChk, startProbeRow, len(j.lUsed), j.rUsed, 0, j.lUsed)
-		}
+		j.buildResultForNotMatchedRows(joinedChk, startProbeRow)
 	}
 	return
 }
