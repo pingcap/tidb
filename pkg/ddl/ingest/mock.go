@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/lightning/backend/local"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/table"
 	pd "github.com/tikv/pd/client"
@@ -39,6 +38,8 @@ type MockBackendCtxMgr struct {
 	sessCtxProvider func() sessionctx.Context
 	runningJobs     map[int64]*MockBackendCtx
 }
+
+var _ BackendCtxMgr = (*MockBackendCtxMgr)(nil)
 
 // NewMockBackendCtxMgr creates a new mock backend context manager.
 func NewMockBackendCtxMgr(sessCtxProvider func() sessionctx.Context) *MockBackendCtxMgr {
@@ -82,6 +83,11 @@ func (m *MockBackendCtxMgr) Unregister(jobID int64) {
 	}
 }
 
+// EncodeJobSortPath implements BackendCtxMgr interface.
+func (m *MockBackendCtxMgr) EncodeJobSortPath(int64) string {
+	return ""
+}
+
 // Load implements BackendCtxMgr.Load interface.
 func (m *MockBackendCtxMgr) Load(jobID int64) (BackendCtx, bool) {
 	logutil.DDLIngestLogger().Info("mock backend mgr load", zap.Int64("jobID", jobID))
@@ -107,7 +113,7 @@ type MockBackendCtx struct {
 }
 
 // Register implements BackendCtx.Register interface.
-func (m *MockBackendCtx) Register(indexIDs []int64, _ []bool, _ *model.TableInfo) ([]Engine, error) {
+func (m *MockBackendCtx) Register(indexIDs []int64, _ []bool, _ table.Table) ([]Engine, error) {
 	logutil.DDLIngestLogger().Info("mock backend ctx register", zap.Int64("jobID", m.jobID), zap.Int64s("indexIDs", indexIDs))
 	ret := make([]Engine, 0, len(indexIDs))
 	for range indexIDs {
@@ -116,25 +122,15 @@ func (m *MockBackendCtx) Register(indexIDs []int64, _ []bool, _ *model.TableInfo
 	return ret, nil
 }
 
-// UnregisterEngines implements BackendCtx.UnregisterEngines interface.
-func (*MockBackendCtx) UnregisterEngines() {
+// FinishAndUnregisterEngines implements BackendCtx interface.
+func (*MockBackendCtx) FinishAndUnregisterEngines() error {
 	logutil.DDLIngestLogger().Info("mock backend ctx unregister")
-}
-
-// ImportStarted implements BackendCtx interface.
-func (*MockBackendCtx) ImportStarted() bool {
-	return false
+	return nil
 }
 
 // CollectRemoteDuplicateRows implements BackendCtx.CollectRemoteDuplicateRows interface.
 func (*MockBackendCtx) CollectRemoteDuplicateRows(indexID int64, _ table.Table) error {
 	logutil.DDLIngestLogger().Info("mock backend ctx collect remote duplicate rows", zap.Int64("indexID", indexID))
-	return nil
-}
-
-// FinishImport implements BackendCtx.FinishImport interface.
-func (*MockBackendCtx) FinishImport(_ table.Table) error {
-	logutil.DDLIngestLogger().Info("mock backend ctx finish import")
 	return nil
 }
 
@@ -190,11 +186,6 @@ func NewMockEngineInfo(sessCtx sessionctx.Context) *MockEngineInfo {
 
 // Flush implements Engine.Flush interface.
 func (*MockEngineInfo) Flush() error {
-	return nil
-}
-
-// ImportAndClean implements Engine.ImportAndClean interface.
-func (*MockEngineInfo) ImportAndClean() error {
 	return nil
 }
 

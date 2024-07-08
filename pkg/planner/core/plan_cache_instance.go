@@ -19,25 +19,19 @@ import (
 	"sync"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"go.uber.org/atomic"
 )
 
-// InstancePlanCache represents the instance/node level plan cache.
-// Value and Opts should always be *PlanCacheValue and *PlanCacheMatchOpts, use any to avoid cycle-import.
-type InstancePlanCache interface {
-	// Get gets the cached value from the cache according to key and opts.
-	Get(sctx sessionctx.Context, key string, opts any) (value any, ok bool)
-	// Put puts the key and value into the cache.
-	Put(sctx sessionctx.Context, key string, value, opts any) (succ bool)
-	// Evict evicts some cached values.
-	Evict(sctx sessionctx.Context) (evicted bool)
-	// MemUsage returns the total memory usage of this plan cache.
-	MemUsage() int64
+func init() {
+	domain.NewInstancePlanCache = func(softMemLimit, hardMemLimit int64) sessionctx.InstancePlanCache {
+		return NewInstancePlanCache(softMemLimit, hardMemLimit)
+	}
 }
 
 // NewInstancePlanCache creates a new instance level plan cache.
-func NewInstancePlanCache(softMemLimit, hardMemLimit int64) InstancePlanCache {
+func NewInstancePlanCache(softMemLimit, hardMemLimit int64) sessionctx.InstancePlanCache {
 	planCache := new(instancePlanCache)
 	planCache.softMemLimit.Store(softMemLimit)
 	planCache.hardMemLimit.Store(hardMemLimit)
@@ -80,22 +74,18 @@ func (pc *instancePlanCache) getHead(key string, create bool) *instancePCNode {
 	return nil
 }
 
-// Get gets the cached value according to key and opts.
-func (pc *instancePlanCache) Get(sctx sessionctx.Context, key string, opts any) (value any, ok bool) {
+// Get gets the cached value according to key and paramTypes.
+func (pc *instancePlanCache) Get(key string, paramTypes any) (value any, ok bool) {
 	headNode := pc.getHead(key, false)
 	if headNode == nil { // cache miss
 		return nil, false
 	}
-	return pc.getPlanFromList(sctx, headNode, opts)
+	return pc.getPlanFromList(headNode, paramTypes)
 }
 
-func (*instancePlanCache) getPlanFromList(sctx sessionctx.Context, headNode *instancePCNode, opts any) (any, bool) {
+func (*instancePlanCache) getPlanFromList(headNode *instancePCNode, paramTypes any) (any, bool) {
 	for node := headNode.next.Load(); node != nil; node = node.next.Load() {
-		var matchOpts *PlanCacheMatchOpts
-		if opts != nil {
-			matchOpts = opts.(*PlanCacheMatchOpts)
-		}
-		if matchCachedPlan(sctx, node.value, matchOpts) { // v.Plan is read-only, no need to lock
+		if checkTypesCompatibility4PC(node.value.paramTypes, paramTypes) { // v.Plan is read-only, no need to lock
 			node.lastUsed.Store(time.Now()) // atomically update the lastUsed field
 			return node.value, true
 		}
@@ -105,7 +95,7 @@ func (*instancePlanCache) getPlanFromList(sctx sessionctx.Context, headNode *ins
 
 // Put puts the key and values into the cache.
 // Due to some thread-safety issues, this Put operation might fail, use the returned succ to indicate it.
-func (pc *instancePlanCache) Put(sctx sessionctx.Context, key string, value, opts any) (succ bool) {
+func (pc *instancePlanCache) Put(key string, value, paramTypes any) (succ bool) {
 	vMem := value.(*PlanCacheValue).MemoryUsage()
 	if vMem+pc.totCost.Load() > pc.hardMemLimit.Load() {
 		return // do nothing if it exceeds the hard limit
@@ -114,7 +104,7 @@ func (pc *instancePlanCache) Put(sctx sessionctx.Context, key string, value, opt
 	if headNode == nil {
 		return false // for safety
 	}
-	if _, ok := pc.getPlanFromList(sctx, headNode, opts); ok {
+	if _, ok := pc.getPlanFromList(headNode, paramTypes); ok {
 		return // some other thread has inserted the same plan before
 	}
 
@@ -132,7 +122,7 @@ func (pc *instancePlanCache) Put(sctx sessionctx.Context, key string, value, opt
 // step 1: iterate all values to collect their last_used
 // step 2: estimate an eviction threshold time based on all last_used values
 // step 3: iterate all values again and evict qualified values
-func (pc *instancePlanCache) Evict(_ sessionctx.Context) (evicted bool) {
+func (pc *instancePlanCache) Evict() (evicted bool) {
 	pc.evictMutex.Lock() // make sure only one thread to trigger eviction for safety
 	defer pc.evictMutex.Unlock()
 	if pc.totCost.Load() < pc.softMemLimit.Load() {

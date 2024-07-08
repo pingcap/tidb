@@ -2,12 +2,16 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "staticrecordset",
-    srcs = ["recordset.go"],
+    srcs = [
+        "cursorrecordset.go",
+        "recordset.go",
+    ],
     importpath = "github.com/pingcap/tidb/pkg/executor/staticrecordset",
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/executor/internal/exec",
         "//pkg/parser/ast",
+        "//pkg/session/cursor",
         "//pkg/util",
         "//pkg/util/chunk",
         "//pkg/util/logutil",
@@ -21,8 +25,9 @@ go_test(
     timeout = "short",
     srcs = ["integration_test.go"],
     flaky = True,
-    shard_count = 4,
+    shard_count = 6,
     deps = [
+        "//pkg/session/cursor",
         "//pkg/testkit",
         "//pkg/util/sqlexec",
         "@com_github_stretchr_testify//require",

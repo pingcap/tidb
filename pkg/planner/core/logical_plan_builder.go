@@ -130,6 +130,7 @@ func (a *aggOrderByResolver) Leave(inNode ast.Node) (ast.Node, bool) {
 }
 
 func (b *PlanBuilder) buildExpand(p base.LogicalPlan, gbyItems []expression.Expression) (base.LogicalPlan, []expression.Expression, error) {
+	ectx := p.SCtx().GetExprCtx().GetEvalCtx()
 	b.optFlag |= flagResolveExpand
 
 	// Rollup syntax require expand OP to do the data expansion, different data replica supply the different grouping layout.
@@ -151,9 +152,9 @@ func (b *PlanBuilder) buildExpand(p base.LogicalPlan, gbyItems []expression.Expr
 		// add the newly appended names.
 		var name *types.FieldName
 		if c, ok := expr.(*expression.Column); ok {
-			name = buildExpandFieldName(c, names[p.Schema().ColumnIndex(c)], "")
+			name = buildExpandFieldName(ectx, c, names[p.Schema().ColumnIndex(c)], "")
 		} else {
-			name = buildExpandFieldName(expr, nil, "")
+			name = buildExpandFieldName(ectx, expr, nil, "")
 		}
 		names = append(names, name)
 		distinctGbyColNames = append(distinctGbyColNames, name)
@@ -215,7 +216,7 @@ func (b *PlanBuilder) buildExpand(p base.LogicalPlan, gbyItems []expression.Expr
 	expand.GID = gid
 	expandSchema.Append(gid)
 	expand.ExtraGroupingColNames = append(expand.ExtraGroupingColNames, gid.OrigName)
-	names = append(names, buildExpandFieldName(gid, nil, "gid_"))
+	names = append(names, buildExpandFieldName(ectx, gid, nil, "gid_"))
 	expand.GIDName = names[len(names)-1]
 	if hasDuplicateGroupingSet {
 		// the last two col of the schema should be gid & gpos
@@ -227,7 +228,7 @@ func (b *PlanBuilder) buildExpand(p base.LogicalPlan, gbyItems []expression.Expr
 		expand.GPos = gpos
 		expandSchema.Append(gpos)
 		expand.ExtraGroupingColNames = append(expand.ExtraGroupingColNames, gpos.OrigName)
-		names = append(names, buildExpandFieldName(gpos, nil, "gpos_"))
+		names = append(names, buildExpandFieldName(ectx, gpos, nil, "gpos_"))
 		expand.GPosName = names[len(names)-1]
 	}
 	expand.SetChildren(proj)
@@ -1440,12 +1441,12 @@ func (b *PlanBuilder) buildProjectionFieldNameFromExpressions(_ context.Context,
 	}
 }
 
-func buildExpandFieldName(expr expression.Expression, name *types.FieldName, genName string) *types.FieldName {
+func buildExpandFieldName(ctx expression.EvalContext, expr expression.Expression, name *types.FieldName, genName string) *types.FieldName {
 	_, isCol := expr.(*expression.Column)
 	var origTblName, origColName, dbName, colName, tblName model.CIStr
 	if genName != "" {
 		// for case like: gid_, gpos_
-		colName = model.NewCIStr(expr.String())
+		colName = model.NewCIStr(expr.StringWithCtx(ctx))
 	} else if isCol {
 		// col ref to original col, while its nullability may be changed.
 		origTblName, origColName, dbName = name.OrigTblName, name.OrigColName, name.DBName
@@ -1453,7 +1454,7 @@ func buildExpandFieldName(expr expression.Expression, name *types.FieldName, gen
 		tblName = model.NewCIStr("ex_" + name.TblName.O)
 	} else {
 		// Other: complicated expression.
-		colName = model.NewCIStr("ex_" + expr.String())
+		colName = model.NewCIStr("ex_" + expr.StringWithCtx(ctx))
 	}
 	newName := &types.FieldName{
 		TblName:     tblName,
@@ -3225,7 +3226,7 @@ func (g *gbyResolver) Enter(inNode ast.Node) (ast.Node, bool) {
 		return inNode, true
 	case *driver.ParamMarkerExpr:
 		g.isParam = true
-		if g.exprDepth == 1 {
+		if g.exprDepth == 1 && !n.UseAsValueInGbyByClause {
 			_, isNull, isExpectedType := getUintFromNode(g.ctx, n, false)
 			// For constant uint expression in top level, it should be treated as position expression.
 			if !isNull && isExpectedType {
@@ -3263,6 +3264,9 @@ func (g *gbyResolver) Leave(inNode ast.Node) (ast.Node, bool) {
 				} else if ast.HasWindowFlag(ret) {
 					err = plannererrors.ErrIllegalReference.GenWithStackByArgs(v.Name.OrigColName(), "reference to window function")
 				} else {
+					if isParam, ok := ret.(*driver.ParamMarkerExpr); ok {
+						isParam.UseAsValueInGbyByClause = true
+					}
 					return ret, true
 				}
 			}
@@ -4526,12 +4530,15 @@ func getLatestVersionFromStatsTable(ctx sessionctx.Context, tblInfo *model.Table
 	}
 
 	// 3. Not pseudo stats table. Return the max LastUpdateVersion among all Columns and Indices
-	for _, col := range statsTbl.Columns {
+	// return statsTbl.LastAnalyzeVersion
+	statsTbl.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
 		version = max(version, col.LastUpdateVersion)
-	}
-	for _, idx := range statsTbl.Indices {
+		return false
+	})
+	statsTbl.ForEachIndexImmutable(func(_ int64, idx *statistics.Index) bool {
 		version = max(version, idx.LastUpdateVersion)
-	}
+		return false
+	})
 	return version
 }
 
@@ -6199,21 +6206,6 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, ds *ast.DeleteStmt) (base
 	proj.SetOutputNames(p.OutputNames()[:oldLen])
 	p = proj
 
-	handleColsMap := b.handleHelper.tailMap()
-	for _, cols := range handleColsMap {
-		for _, col := range cols {
-			for i := 0; i < col.NumCols(); i++ {
-				exprCol := col.GetCol(i)
-				if proj.Schema().Contains(exprCol) {
-					continue
-				}
-				proj.Exprs = append(proj.Exprs, exprCol)
-				proj.Schema().Columns = append(proj.Schema().Columns, exprCol)
-				proj.SetOutputNames(append(proj.OutputNames(), types.EmptyName))
-			}
-		}
-	}
-
 	del := Delete{
 		IsMultiTable: ds.IsMultiTable,
 	}.Init(b.ctx)
@@ -6285,6 +6277,7 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, ds *ast.DeleteStmt) (base
 			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.DeletePriv, dbName, v.Name.L, "", authErr)
 		}
 	}
+	handleColsMap := b.handleHelper.tailMap()
 	tblID2Handle, err := resolveIndicesForTblID2Handle(handleColsMap, p.Schema())
 	if err != nil {
 		return nil, err

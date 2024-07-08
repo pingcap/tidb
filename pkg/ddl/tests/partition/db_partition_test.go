@@ -1412,7 +1412,7 @@ func TestGlobalIndexUpdateInDropPartition(t *testing.T) {
 }
 
 func TestTruncatePartitionWithGlobalIndex(t *testing.T) {
-	store := testkit.CreateMockStore(t)
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set tidb_enable_global_index=true")
@@ -1436,6 +1436,8 @@ func TestTruncatePartitionWithGlobalIndex(t *testing.T) {
 	tk2.MustExec(`use test`)
 	tk2.MustExec(`begin`)
 	tk2.MustExec(`insert into test_global values (5,5,5)`)
+
+	v1 := dom.InfoSchema().SchemaMetaVersion()
 	syncChan := make(chan bool)
 	go func() {
 		tk.MustExec("alter table test_global truncate partition p2;")
@@ -1447,7 +1449,11 @@ func TestTruncatePartitionWithGlobalIndex(t *testing.T) {
 			tk4.MustExec(`use test`)
 			res := tk4.MustQuery(`admin show ddl jobs where db_name = 'test' and table_name = 'test_global' and job_type = 'truncate partition'`).Rows()
 			if len(res) == 1 && res[0][i] == s {
-				break
+				v2 := dom.InfoSchema().SchemaMetaVersion()
+				if v2 > v1 {
+					// Also wait for the new infoschema loading
+					break
+				}
 			}
 			time.Sleep(10 * time.Millisecond)
 		}

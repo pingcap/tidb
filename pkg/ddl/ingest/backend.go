@@ -51,20 +51,15 @@ type BackendCtx interface {
 	// backend context. If the index ID is already registered, it will return the
 	// associated engines. Only one group of index ID is allowed to register for a
 	// BackendCtx.
-	Register(indexIDs []int64, uniques []bool, tblInfo *model.TableInfo) ([]Engine, error)
-	UnregisterEngines()
-	// FinishImport imports all Register-ed engines of into the storage, collects
-	// the duplicate errors for unique engines.
 	//
-	// TODO(lance6716): unify with CollectRemoteDuplicateRows.
-	FinishImport(tbl table.Table) error
-	// ImportStarted returns true only when all the engines are finished writing and
-	// import is started by FinishImport. Considering the calling usage of
-	// FinishImport, it will return true after a successful call of FinishImport and
-	// may return true after a failed call of FinishImport.
-	ImportStarted() bool
+	// Register is only used in local disk based ingest.
+	Register(indexIDs []int64, uniques []bool, tbl table.Table) ([]Engine, error)
+	// FinishAndUnregisterEngines finishes the task and unregisters all engines that
+	// are Register-ed before. It's safe to call it multiple times.
+	//
+	// FinishAndUnregisterEngines is only used in local disk based ingest.
+	FinishAndUnregisterEngines() error
 
-	CollectRemoteDuplicateRows(indexID int64, tbl table.Table) error
 	FlushController
 	Done() bool
 	SetDone()
@@ -72,7 +67,14 @@ type BackendCtx interface {
 	AttachCheckpointManager(*CheckpointManager)
 	GetCheckpointManager() *CheckpointManager
 
+	// GetLocalBackend exposes local.Backend. It's only used in global sort based
+	// ingest.
 	GetLocalBackend() *local.Backend
+	// CollectRemoteDuplicateRows collects duplicate entry error for given index as
+	// the supplement of FlushController.Flush.
+	//
+	// CollectRemoteDuplicateRows is only used in global sort based ingest.
+	CollectRemoteDuplicateRows(indexID int64, tbl table.Table) error
 }
 
 // FlushMode is used to control how to flush.
@@ -82,9 +84,6 @@ const (
 	// FlushModeAuto means caller does not enforce any flush, the implementation can
 	// decide it.
 	FlushModeAuto FlushMode = iota
-	// FlushModeForceFlushNoImport means flush all data to local storage, but don't
-	// import the data to TiKV.
-	FlushModeForceFlushNoImport
 	// FlushModeForceFlushAndImport means flush and import all data to TiKV.
 	FlushModeForceFlushAndImport
 )
@@ -95,7 +94,7 @@ type litBackendCtx struct {
 	memRoot  MemRoot
 	diskRoot DiskRoot
 	jobID    int64
-	tblInfo  *model.TableInfo
+	tbl      table.Table
 	backend  *local.Backend
 	ctx      context.Context
 	cfg      *lightning.Config
@@ -108,7 +107,7 @@ type litBackendCtx struct {
 	checkpointMgr   *CheckpointManager
 	etcdClient      *clientv3.Client
 
-	// unregisterMu prevents concurrent calls of `UnregisterEngines`.
+	// unregisterMu prevents concurrent calls of `FinishAndUnregisterEngines`.
 	// For details, see https://github.com/pingcap/tidb/issues/53843.
 	unregisterMu sync.Mutex
 }
@@ -135,10 +134,11 @@ func (bc *litBackendCtx) handleErrorAfterCollectRemoteDuplicateRows(
 			if len(tErr.Args()) != 4 {
 				return errors.Trace(tikv.ErrKeyExists)
 			}
-			indexName := tErr.Args()[1]
-			valueStr := tErr.Args()[2]
-
-			return errors.Trace(tikv.ErrKeyExists.FastGenByArgs(valueStr, indexName))
+			//nolint: forcetypeassert
+			indexName := tErr.Args()[1].(string)
+			//nolint: forcetypeassert
+			keyCols := tErr.Args()[2].([]string)
+			return errors.Trace(tikv.GenKeyExistsErr(keyCols, indexName))
 		}
 		return errors.Trace(tikv.ErrKeyExists)
 	}
@@ -147,6 +147,10 @@ func (bc *litBackendCtx) handleErrorAfterCollectRemoteDuplicateRows(
 
 // CollectRemoteDuplicateRows collects duplicate rows from remote TiKV.
 func (bc *litBackendCtx) CollectRemoteDuplicateRows(indexID int64, tbl table.Table) error {
+	return bc.collectRemoteDuplicateRows(indexID, tbl)
+}
+
+func (bc *litBackendCtx) collectRemoteDuplicateRows(indexID int64, tbl table.Table) error {
 	errorMgr := errormanager.New(nil, bc.cfg, log.Logger{Logger: logutil.Logger(bc.ctx)})
 	dupeController := bc.backend.GetDupeController(bc.cfg.TikvImporter.RangeConcurrency*2, errorMgr)
 	hasDupe, err := dupeController.CollectRemoteDuplicateRows(bc.ctx, tbl, tbl.Meta().Name.L, &encode.SessionOptions{
@@ -155,34 +159,6 @@ func (bc *litBackendCtx) CollectRemoteDuplicateRows(indexID int64, tbl table.Tab
 		IndexID: indexID,
 	}, lightning.ErrorOnDup)
 	return bc.handleErrorAfterCollectRemoteDuplicateRows(err, indexID, tbl, hasDupe)
-}
-
-// FinishImport imports all the key-values in engine into the storage, collects
-// the duplicate errors if any, and removes the engine from the backend context.
-// When duplicate errors are found, it will return ErrKeyExists error.
-func (bc *litBackendCtx) FinishImport(tbl table.Table) error {
-	for _, ei := range bc.engines {
-		if err := ei.ImportAndClean(); err != nil {
-			indexInfo := model.FindIndexInfoByID(tbl.Meta().Indices, ei.indexID)
-			return TryConvertToKeyExistsErr(err, indexInfo, tbl.Meta())
-		}
-		failpoint.Inject("mockFinishImportErr", func() {
-			failpoint.Return(fmt.Errorf("mock finish import error"))
-		})
-
-		if ei.unique {
-			errorMgr := errormanager.New(nil, bc.cfg, log.Logger{Logger: logutil.Logger(bc.ctx)})
-			dupeController := bc.backend.GetDupeController(bc.cfg.TikvImporter.RangeConcurrency*2, errorMgr)
-			hasDupe, err := dupeController.CollectRemoteDuplicateRows(bc.ctx, tbl, tbl.Meta().Name.L, &encode.SessionOptions{
-				SQLMode: mysql.ModeStrictAllTables,
-				SysVars: bc.sysVars,
-				IndexID: ei.indexID,
-			}, lightning.ErrorOnDup)
-			return bc.handleErrorAfterCollectRemoteDuplicateRows(err, ei.indexID, tbl, hasDupe)
-		}
-	}
-
-	return nil
 }
 
 func acquireLock(ctx context.Context, se *concurrency.Session, key string) (*concurrency.Mutex, error) {
@@ -251,20 +227,14 @@ func (bc *litBackendCtx) Flush(mode FlushMode) (flushed, imported bool, err erro
 	for indexID, ei := range bc.engines {
 		if err = bc.unsafeImportAndReset(ei); err != nil {
 			if common.ErrFoundDuplicateKeys.Equal(err) {
-				var idxInfo *model.IndexInfo
-				for _, idx := range bc.tblInfo.Indices {
-					if idx.ID == indexID {
-						idxInfo = idx
-						break
-					}
-				}
+				idxInfo := model.FindIndexInfoByID(bc.tbl.Meta().Indices, indexID)
 				if idxInfo == nil {
 					logutil.Logger(bc.ctx).Error(
 						"index not found",
 						zap.Int64("indexID", indexID))
 					err = tikv.ErrKeyExists
 				} else {
-					err = TryConvertToKeyExistsErr(err, idxInfo, bc.tblInfo)
+					err = TryConvertToKeyExistsErr(err, idxInfo, bc.tbl.Meta())
 				}
 			}
 			return true, false, err
@@ -346,9 +316,6 @@ func (bc *litBackendCtx) checkFlush(mode FlushMode) (shouldFlush bool, shouldImp
 	})
 	if mode == FlushModeForceFlushAndImport || ForceSyncFlagForTest {
 		return true, true
-	}
-	if mode == FlushModeForceFlushNoImport {
-		return true, false
 	}
 	bc.diskRoot.UpdateUsage()
 	shouldImport = bc.diskRoot.ShouldImport()
