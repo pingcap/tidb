@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze"
@@ -483,10 +484,13 @@ func TestIssue44369(t *testing.T) {
 }
 
 func TestGlobalIndexWithAnalyzeVersion1AndHistoricalStats(t *testing.T) {
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.EnableGlobalIndex = true
+	})
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 
-	tk.MustExec("set tidb_enable_global_index = true")
 	tk.MustExec("set tidb_analyze_version = 1")
 	tk.MustExec("set global tidb_enable_historical_stats = true")
 	defer tk.MustExec("set global tidb_enable_historical_stats = default")
