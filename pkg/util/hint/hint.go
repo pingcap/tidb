@@ -17,6 +17,7 @@ package hint
 import (
 	"bytes"
 	"fmt"
+	"github.com/pingcap/tidb/pkg/types"
 	"sort"
 	"strings"
 
@@ -113,6 +114,9 @@ const (
 	HintSemiJoinRewrite = "semi_join_rewrite"
 	// HintNoDecorrelate indicates a LogicalApply not to be decorrelated.
 	HintNoDecorrelate = "no_decorrelate"
+
+	// HintHypoIndex ...
+	HintHypoIndex = "hypo_index"
 
 	// HintMemoryQuota sets the memory limit for a query
 	HintMemoryQuota = "memory_quota"
@@ -224,6 +228,9 @@ type StmtHints struct {
 	HasResourceGroup               bool
 	SetVars                        map[string]string
 
+	// Hypo Indexes from Hints
+	HintedHypoIndexes map[string]map[string]map[string]*model.IndexInfo // dbName -> tblName -> idxName -> idxInfo
+
 	// the original table hints
 	OriginalTableHints []*ast.TableOptimizerHint
 }
@@ -270,10 +277,24 @@ func (sh *StmtHints) Clone() *StmtHints {
 	}
 }
 
+func (sh *StmtHints) addHypoIndex(db, tbl, idx string, idxInfo *model.IndexInfo) {
+	if sh.HintedHypoIndexes == nil {
+		sh.HintedHypoIndexes = make(map[string]map[string]map[string]*model.IndexInfo)
+	}
+	if sh.HintedHypoIndexes[db] == nil {
+		sh.HintedHypoIndexes[db] = make(map[string]map[string]*model.IndexInfo)
+	}
+	if sh.HintedHypoIndexes[db][tbl] == nil {
+		sh.HintedHypoIndexes[db][tbl] = make(map[string]*model.IndexInfo)
+	}
+	sh.HintedHypoIndexes[db][tbl][idx] = idxInfo
+}
+
 // ParseStmtHints parses statement hints.
 func ParseStmtHints(hints []*ast.TableOptimizerHint,
 	setVarHintChecker func(varName, hint string) (ok bool, warning error),
-	replicaReadFollower byte) ( // to avoid cycle import
+	hypoIndexChecker func(db, tbl model.CIStr, cols ...model.CIStr) error,
+	currentDB string, replicaReadFollower byte) ( // to avoid cycle import
 	stmtHints StmtHints, offs []int, warns []error) {
 	if len(hints) == 0 {
 		return
@@ -312,6 +333,40 @@ func ParseStmtHints(hints []*ast.TableOptimizerHint,
 		case "straight_join":
 			hintOffs[hint.HintName.L] = i
 			straightJoinHintCnt++
+		case "hypo_index":
+			// to make it simpler, use Tables[0] as table, Tables[1] as index name, and Tables[2:] as column name.
+			if len(hint.Tables) < 3 {
+				warn := errors.NewNoStackErrorf("Invalid HYPO_INDEX hint, valid usage: HYPO_INDEX(tableName, indexName, cols...)")
+				warns = append(warns, warn)
+				continue
+			}
+			db := hint.Tables[0].DBName.L
+			if db == "" {
+				db = currentDB
+			}
+			tbl := hint.Tables[0].TableName
+			idx := hint.Tables[1].TableName
+			var colNames []model.CIStr
+			var cols []*model.IndexColumn
+			for i := 2; i < len(hint.Tables); i++ {
+				colNames = append(colNames, hint.Tables[i].TableName)
+				cols = append(cols, &model.IndexColumn{
+					Name:   hint.Tables[i].TableName,
+					Offset: i - 2,
+					Length: types.UnspecifiedLength,
+				})
+			}
+			if err := hypoIndexChecker(model.NewCIStr(db), tbl, colNames...); err != nil {
+				warns = append(warns, errors.NewNoStackErrorf("invalid HYPO_INDEX hint: %v", err))
+				continue
+			}
+			idxInfo := &model.IndexInfo{
+				Name:    idx,
+				Columns: cols,
+				State:   model.StatePublic,
+				Tp:      model.IndexTypeHypo,
+			}
+			stmtHints.addHypoIndex(db, tbl.L, idx.L, idxInfo)
 		case "set_var":
 			setVarHint := hint.HintData.(ast.HintSetVar)
 
@@ -688,6 +743,7 @@ func ParsePlanHints(hints []*ast.TableOptimizerHint,
 		hjBuildTables, hjProbeTables                                                    []HintedTable
 		leadingHintCnt                                                                  int
 	)
+
 	for _, hint := range hints {
 		// Set warning for the hint that requires the table name.
 		switch hint.HintName.L {
