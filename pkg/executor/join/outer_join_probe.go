@@ -30,9 +30,9 @@ type outerJoinProbe struct {
 	// For left out join, left side is outer side, and right side is inner side.
 	// For right out join, right side is outer side, and left side is inner side.
 	isOuterSideBuild bool
-	// used when build inner side, isNotMatchedRows is indexed by logical row index
+	// used when use inner side to build, isNotMatchedRows is indexed by logical row index
 	isNotMatchedRows []bool
-	// used when build outer side
+	// used when use outer side to build
 	rowIter *rowIter
 	// build/probe side used columns and offset in result chunk
 	buildColUsed              []int
