@@ -322,9 +322,16 @@ func validateFields(updates map[string]any) (map[string]any, error) {
 		"lastUpdate":  {},
 	}
 
-	for field := range updates {
+	for field, value := range updates {
 		if _, exists := validFields[field]; !exists {
 			return nil, errors.Errorf("field '%s' is not valid in mysql.tidb_br_jobs", field)
+		}
+		if field == "message" {
+			if value == nil || value.(string) == "" {
+				updates[field] = nil
+			} else {
+				updates[field] = RefineMessage(value.(string))
+			}
 		}
 	}
 	return updates, nil
@@ -344,7 +351,7 @@ func updateMetaTable(ctx context.Context, e *exec.BaseExecutor, id uint64, updat
 	args := make([]any, 0, len(updates))
 
 	for column, value := range updates {
-		setClauses = append(setClauses, fmt.Sprintf("'%s' = %%?", column))
+		setClauses = append(setClauses, fmt.Sprintf("%s = %%?", column))
 		args = append(args, value)
 	}
 
