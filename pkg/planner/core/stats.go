@@ -59,16 +59,6 @@ func getFakeStats(schema *expression.Schema) *property.StatsInfo {
 	return profile
 }
 
-// DeriveStats implement LogicalPlan DeriveStats interface.
-func (p *LogicalShowDDLJobs) DeriveStats(_ []*property.StatsInfo, selfSchema *expression.Schema, _ []*expression.Schema, _ [][]*expression.Column) (*property.StatsInfo, error) {
-	if p.StatsInfo() != nil {
-		return p.StatsInfo(), nil
-	}
-	// A fake count, just to avoid panic now.
-	p.SetStats(getFakeStats(selfSchema))
-	return p.StatsInfo(), nil
-}
-
 // RecursiveDeriveStats4Test is a exporter just for test.
 func RecursiveDeriveStats4Test(p base.LogicalPlan) (*property.StatsInfo, error) {
 	return p.RecursiveDeriveStats(nil)
