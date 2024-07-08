@@ -126,15 +126,15 @@ func (j *outerJoinProbe) ScanRowTable(joinResult *hashjoinWorkerResult, sqlKille
 }
 
 func (j *outerJoinProbe) buildResultForMatchedRowsAfterOtherCondition(chk, joinedChk *chunk.Chunk,
-	probeSideOffset int, probeSide []int, probeSideCurrentChunkOffset int,
-	buildSideOffset int, buildSide []int, buildSideCurrentChunkOffset int) {
+	probeSideOffset int, probeSide []int, probeSideJoinedChunkOffset int,
+	buildSideOffset int, buildSide []int, buildSideJoinedChunkOffset int) {
 	rowCount := chk.NumRows()
 	markedJoined := false
 	for index, colIndex := range probeSide {
 		dstCol := chk.Column(probeSideOffset + index)
-		if joinedChk.Column(colIndex+probeSideCurrentChunkOffset).Rows() > 0 {
+		if joinedChk.Column(colIndex+probeSideJoinedChunkOffset).Rows() > 0 {
 			// probe column that is already in joinedChk
-			srcCol := joinedChk.Column(colIndex + probeSideCurrentChunkOffset)
+			srcCol := joinedChk.Column(colIndex + probeSideJoinedChunkOffset)
 			chunk.CopySelectedRows(dstCol, srcCol, j.selected)
 		} else {
 			markedJoined = true
@@ -149,7 +149,7 @@ func (j *outerJoinProbe) buildResultForMatchedRowsAfterOtherCondition(chk, joine
 	hasRemainCols := false
 	for index, colIndex := range buildSide {
 		dstCol := chk.Column(buildSideOffset + index)
-		srcCol := joinedChk.Column(buildSideCurrentChunkOffset + colIndex)
+		srcCol := joinedChk.Column(buildSideJoinedChunkOffset + colIndex)
 		if srcCol.Rows() > 0 {
 			// build column that is already in joinedChk
 			chunk.CopySelectedRows(dstCol, srcCol, j.selected)
