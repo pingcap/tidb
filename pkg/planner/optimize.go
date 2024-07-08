@@ -16,7 +16,6 @@ package planner
 
 import (
 	"context"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"math"
 	"math/rand"
 	"sync"
@@ -30,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/planner/cascades"
 	pctx "github.com/pingcap/tidb/pkg/planner/context"
 	"github.com/pingcap/tidb/pkg/planner/core"

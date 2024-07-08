@@ -1117,7 +1117,7 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 			}
 		}
 	}
-	if len(ctx.GetSessionVars().StmtCtx.HintedHypoIndexes) > 0 { // hint-level hypo-indexes
+	if len(ctx.GetSessionVars().StmtCtx.HintedHypoIndexes) > 0 { // statement-level hypo-indexes from hints
 		if !ctx.GetSessionVars().StmtCtx.InExplainStmt {
 			ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError("can only use HYPO_INDEX hint in explain-statements"))
 		} else {

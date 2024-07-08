@@ -17,7 +17,6 @@ package hint
 import (
 	"bytes"
 	"fmt"
-	"github.com/pingcap/tidb/pkg/types"
 	"sort"
 	"strings"
 
@@ -26,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/format"
 	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 )
 
@@ -114,9 +114,6 @@ const (
 	HintSemiJoinRewrite = "semi_join_rewrite"
 	// HintNoDecorrelate indicates a LogicalApply not to be decorrelated.
 	HintNoDecorrelate = "no_decorrelate"
-
-	// HintHypoIndex ...
-	HintHypoIndex = "hypo_index"
 
 	// HintMemoryQuota sets the memory limit for a query
 	HintMemoryQuota = "memory_quota"
@@ -743,7 +740,6 @@ func ParsePlanHints(hints []*ast.TableOptimizerHint,
 		hjBuildTables, hjProbeTables                                                    []HintedTable
 		leadingHintCnt                                                                  int
 	)
-
 	for _, hint := range hints {
 		// Set warning for the hint that requires the table name.
 		switch hint.HintName.L {
