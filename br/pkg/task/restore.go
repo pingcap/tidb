@@ -49,12 +49,12 @@ import (
 )
 
 const (
-	flagOnline               = "online"
-	flagNoSchema             = "no-schema"
-	flagLoadStats            = "load-stats"
-	flagGranularity          = "granularity"
-	flagConcurrencyPerStore  = "tikv-max-restore-concurrency"
-	flagLogIncrementalCompat = "log-incremental-compat"
+	flagOnline                   = "online"
+	flagNoSchema                 = "no-schema"
+	flagLoadStats                = "load-stats"
+	flagGranularity              = "granularity"
+	flagConcurrencyPerStore      = "tikv-max-restore-concurrency"
+	flagAllowPITRFromIncremental = "allow-pitr-from-incremental"
 
 	// FlagMergeRegionSizeBytes is the flag name of merge small regions by size
 	FlagMergeRegionSizeBytes = "merge-region-size-bytes"
@@ -239,9 +239,9 @@ type RestoreConfig struct {
 	// if it is empty, directly take restoring log justly.
 	FullBackupStorage string `json:"full-backup-storage" toml:"full-backup-storage"`
 
-	// LogIncrementalCompat indicates whether this restore should enter a compatibility mode for incremental restore.
+	// AllowPITRFromIncremental indicates whether this restore should enter a compatibility mode for incremental restore.
 	// In this restore mode, the restore will not perform rewrite on the incremental data.
-	LogIncrementalCompat bool `json:"log-incremental-compat" toml:"log-incremental-compat"`
+	AllowPITRFromIncremental bool `json:"allow-pitr-from-incremental" toml:"allow-pitr-from-incremental"`
 
 	// [startTs, RestoreTS] is used to `restore log` from StartTS to RestoreTS.
 	StartTS         uint64                      `json:"start-ts" toml:"start-ts"`
@@ -285,7 +285,7 @@ func DefineRestoreFlags(flags *pflag.FlagSet) {
 	_ = flags.MarkHidden(flagUseCheckpoint)
 
 	flags.Bool(FlagWaitTiFlashReady, false, "whether wait tiflash replica ready if tiflash exists")
-	flags.Bool(flagLogIncrementalCompat, true, "whether make incremental restore compatible with later log restore)"+
+	flags.Bool(flagAllowPITRFromIncremental, true, "whether make incremental restore compatible with later log restore)"+
 		" if set to true, the incremental restore will not perform rewrite on the incremental data)"+
 		" meanwhile the incremental restore will not allow to restore 3 backfilled type ddl jobs,"+
 		" these restricted ddl jobs are add index, modify column and reorganize partition")
@@ -405,9 +405,9 @@ func (cfg *RestoreConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 		return errors.Annotatef(err, "failed to get flag %s", FlagWaitTiFlashReady)
 	}
 
-	cfg.LogIncrementalCompat, err = flags.GetBool(flagLogIncrementalCompat)
+	cfg.AllowPITRFromIncremental, err = flags.GetBool(flagAllowPITRFromIncremental)
 	if err != nil {
-		return errors.Annotatef(err, "failed to get flag %s", flagLogIncrementalCompat)
+		return errors.Annotatef(err, "failed to get flag %s", flagAllowPITRFromIncremental)
 	}
 
 	if flags.Lookup(flagFullBackupType) != nil {
@@ -961,13 +961,13 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	var newTS uint64
 	if client.IsIncremental() {
 		newTS = restoreTS
-		if cfg.LogIncrementalCompat {
+		if cfg.AllowPITRFromIncremental {
 			newTS = 0
 		}
 	}
 	ddlJobs := FilterDDLJobs(client.GetDDLJobs(), tables)
 	ddlJobs = FilterDDLJobByRules(ddlJobs, DDLJobBlockListRule)
-	if cfg.LogIncrementalCompat {
+	if cfg.AllowPITRFromIncremental {
 		err = CheckDDLJobByRules(ddlJobs, DDLJobLogIncrementalCompactBlockListRule)
 		if err != nil {
 			return errors.Trace(err)
@@ -1508,7 +1508,7 @@ func CheckDDLJobByRules(srcDDLJobs []*model.Job, rules ...DDLJobFilterRule) erro
 		for _, rule := range rules {
 			if rule(ddlJob) {
 				return errors.Annotatef(berrors.ErrRestoreModeMismatch, "DDL job %s is not allowed in incremental restore"+
-					" when --log-incremental-compact enabled", ddlJob.String())
+					" when --allow-pitr-from-incremental enabled", ddlJob.String())
 			}
 		}
 	}
