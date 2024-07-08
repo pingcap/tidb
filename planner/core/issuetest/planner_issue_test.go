@@ -262,3 +262,18 @@ func TestIssue50614(t *testing.T) {
 		),
 	)
 }
+
+func TestIssue49109(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t0, t1;")
+	tk.MustExec("CREATE TABLE t0(c0 NUMERIC);")
+	tk.MustExec("CREATE TABLE t1(c0 NUMERIC);")
+	tk.MustExec("INSERT INTO t0 VALUES (0), (NULL), (1), (2);")
+	tk.MustExec("INSERT INTO t1(c0) VALUES (NULL), (3), (4), (5);")
+	tk.MustExec("drop view if exists v0;")
+	tk.MustExec("CREATE definer='root'@'localhost' VIEW v0(c0) AS SELECT t0.c0 FROM t0;")
+
+	tk.MustQuery("SELECT t0.c0 FROM v0, t0 LEFT JOIN t1 ON t0.c0 WHERE ((INET_ATON('5V')) IS NULL);").Check(testkit.Rows("0", "0", "0", "0", "<nil>", "<nil>", "<nil>", "<nil>", "1", "1", "1", "1", "1", "1", "1", "1", "1", "1", "1", "1", "1", "1", "1", "1", "2", "2", "2", "2", "2", "2", "2", "2", "2", "2", "2", "2", "2", "2", "2", "2"))
+}

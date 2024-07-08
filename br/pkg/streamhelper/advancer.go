@@ -442,6 +442,7 @@ func (c *CheckpointAdvancer) onTaskEvent(ctx context.Context, e TaskEvent) error
 	case EventDel:
 		utils.LogBackupTaskCountDec()
 		c.task = nil
+		c.isPaused.Store(false)
 		c.taskRange = nil
 		// This would be synced by `taskMu`, perhaps we'd better rename that to `tickMu`.
 		// Do the null check because some of test cases won't equip the advancer with subscriber.
@@ -458,11 +459,11 @@ func (c *CheckpointAdvancer) onTaskEvent(ctx context.Context, e TaskEvent) error
 		metrics.LastCheckpoint.DeleteLabelValues(e.Name)
 	case EventPause:
 		if c.task.GetName() == e.Name {
-			c.isPaused.CompareAndSwap(false, true)
+			c.isPaused.Store(true)
 		}
 	case EventResume:
 		if c.task.GetName() == e.Name {
-			c.isPaused.CompareAndSwap(true, false)
+			c.isPaused.Store(false)
 		}
 	case EventErr:
 		return e.Err
