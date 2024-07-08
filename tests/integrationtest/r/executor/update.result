@@ -891,3 +891,14 @@ SELECT b FROM update_with_diff_type;
 b
 {"a": "测试"}
 set SQL_MODE=default;
+drop table if exists t;
+create table t(id int primary key, u int unique);
+insert into t values (1, 1), (2, 2);
+begin optimistic;
+update t set u=2 where id=1;
+commit;
+Error 1062 (23000): Duplicate entry '2' for key 't.u'
+select * from t order by id;
+id	u
+1	1
+2	2
