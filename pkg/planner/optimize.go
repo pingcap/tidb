@@ -16,7 +16,6 @@ package planner
 
 import (
 	"context"
-	"github.com/pingcap/tidb/pkg/table"
 	"math"
 	"math/rand"
 	"slices"
@@ -40,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/hint"
