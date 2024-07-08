@@ -171,14 +171,14 @@
     curl http://{TiDBIP}:10080/schema/{db}/{table}
 
     curl http://{TiDBIP}:10080/schema?table_id={tableID}
-   
-    curl http://{TiDBIP}:10080/schema?table_ids={tableID,tableID,...}
     ```
 
 10. Get database information, table information and tidb info schema version by tableID.
 
      ```shell
      curl http://{TiDBIP}:10080/db-table/{tableID}
+     
+     curl http://{TiDBIP}:10080/db-table?table_ids={tableID,...}
      ```
 
 11. Get MVCC Information of the key with a specified handle ID

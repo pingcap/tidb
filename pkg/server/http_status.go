@@ -248,6 +248,7 @@ func (s *Server) startHTTPServer() {
 	router.Handle("/info", tikvhandler.NewServerInfoHandler(tikvHandlerTool)).Name("Info")
 	router.Handle("/info/all", tikvhandler.NewAllServerInfoHandler(tikvHandlerTool)).Name("InfoALL")
 	// HTTP path for get db and table info that is related to the tableID.
+	router.Handle("/db-table", tikvhandler.NewDBTableHandler(tikvHandlerTool)).Name("DB Table")
 	router.Handle("/db-table/{tableID}", tikvhandler.NewDBTableHandler(tikvHandlerTool))
 	// HTTP path for get table tiflash replica info.
 	router.Handle("/tiflash/replica-deprecated", tikvhandler.NewFlashReplicaHandler(tikvHandlerTool))

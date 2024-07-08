@@ -875,39 +875,6 @@ func TestGetSchema(t *testing.T) {
 	require.NoError(t, resp.Body.Close())
 	require.Equal(t, "user", ti.Name.L)
 
-	// check table_ids=... happy path
-	ddlTbl := external.GetTableByName(t, tk, "mysql", "tidb_ddl_job")
-	ids := strings.Join([]string{strconv.FormatInt(userTbl.Meta().ID, 10), strconv.FormatInt(ddlTbl.Meta().ID, 10)}, ",")
-	resp, err = ts.FetchStatus(fmt.Sprintf("/schema?table_ids=%s", ids))
-	require.NoError(t, err)
-	var tis map[int]*model.TableInfo
-	decoder = json.NewDecoder(resp.Body)
-	err = decoder.Decode(&tis)
-	require.NoError(t, err)
-	require.NoError(t, resp.Body.Close())
-	require.Equal(t, 2, len(tis))
-	require.Equal(t, userTbl.Meta().ID, tis[int(userTbl.Meta().ID)].ID)
-	require.Equal(t, ddlTbl.Meta().ID, tis[int(ddlTbl.Meta().ID)].ID)
-
-	// check table_ids=... partial missing
-	ids = ids + ",99999"
-	resp, err = ts.FetchStatus(fmt.Sprintf("/schema?table_ids=%s", ids))
-	require.NoError(t, err)
-	clear(tis)
-	decoder = json.NewDecoder(resp.Body)
-	err = decoder.Decode(&tis)
-	require.NoError(t, err)
-	require.NoError(t, resp.Body.Close())
-	require.Equal(t, 2, len(tis))
-	require.Equal(t, userTbl.Meta().ID, tis[int(userTbl.Meta().ID)].ID)
-	require.Equal(t, ddlTbl.Meta().ID, tis[int(ddlTbl.Meta().ID)].ID)
-
-	// check wrong format in table_ids
-	ids = ids + ",abc"
-	resp, err = ts.FetchStatus(fmt.Sprintf("/schema?table_ids=%s", ids))
-	require.NoError(t, err)
-	require.NoError(t, resp.Body.Close())
-
 	resp, err = ts.FetchStatus("/schema?table_id=a")
 	require.NoError(t, err)
 	require.NoError(t, resp.Body.Close())
@@ -957,6 +924,40 @@ func TestGetSchema(t *testing.T) {
 	se, err := session.CreateSession(ts.store)
 	require.NoError(t, err)
 	require.Equal(t, domain.GetDomain(se.(sessionctx.Context)).InfoSchema().SchemaMetaVersion(), dbtbl.SchemaVersion)
+
+	// check table_ids=... happy path
+	ddlTbl := external.GetTableByName(t, tk, "mysql", "tidb_ddl_job")
+	ids := strings.Join([]string{strconv.FormatInt(userTbl.Meta().ID, 10), strconv.FormatInt(ddlTbl.Meta().ID, 10)}, ",")
+	resp, err = ts.FetchStatus(fmt.Sprintf("/db-table?table_ids=%s", ids))
+	require.NoError(t, err)
+	var tis map[int]*tikvhandler.DBTableInfo
+
+	decoder = json.NewDecoder(resp.Body)
+	err = decoder.Decode(&tis)
+	require.NoError(t, err)
+	require.NoError(t, resp.Body.Close())
+	require.Equal(t, 2, len(tis))
+	require.Equal(t, userTbl.Meta().ID, tis[int(userTbl.Meta().ID)].TableInfo.ID)
+	require.Equal(t, ddlTbl.Meta().ID, tis[int(ddlTbl.Meta().ID)].TableInfo.ID)
+
+	// check table_ids=... partial missing
+	ids = ids + ",99999"
+	resp, err = ts.FetchStatus(fmt.Sprintf("/db-table?table_ids=%s", ids))
+	require.NoError(t, err)
+	clear(tis)
+	decoder = json.NewDecoder(resp.Body)
+	err = decoder.Decode(&tis)
+	require.NoError(t, err)
+	require.NoError(t, resp.Body.Close())
+	require.Equal(t, 2, len(tis))
+	require.Equal(t, userTbl.Meta().ID, tis[int(userTbl.Meta().ID)].TableInfo.ID)
+	require.Equal(t, ddlTbl.Meta().ID, tis[int(ddlTbl.Meta().ID)].TableInfo.ID)
+
+	// check wrong format in table_ids
+	ids = ids + ",abc"
+	resp, err = ts.FetchStatus(fmt.Sprintf("/db-table?table_ids=%s", ids))
+	require.NoError(t, err)
+	require.NoError(t, resp.Body.Close())
 
 	db, err := sql.Open("mysql", ts.GetDSN())
 	require.NoError(t, err)
