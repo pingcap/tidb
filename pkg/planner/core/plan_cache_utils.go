@@ -291,7 +291,6 @@ func NewPlanCacheKey(sctx sessionctx.Context, stmt *PlanCacheStmt) (key, binding
 
 	hash := make([]byte, 0, len(stmt.StmtText)*2) // TODO: a Pool for this
 	hash = append(hash, hack.Slice(stmtDB)...)
-	hash = codec.EncodeInt(hash, int64(vars.ConnectionID))
 	hash = append(hash, hack.Slice(stmt.StmtText)...)
 	hash = codec.EncodeInt(hash, stmt.SchemaVersion)
 	hash = hashInt64Uint64Map(hash, stmt.RelateVersion)
@@ -392,15 +391,26 @@ func NewPlanCacheKey(sctx sessionctx.Context, stmt *PlanCacheStmt) (key, binding
 
 // PlanCacheValue stores the cached Statement and StmtNode.
 type PlanCacheValue struct {
-	Plan          base.Plan
-	OutputColumns types.NameSlice
-	memoryUsage   int64
-	testKey       int64 // this is only for test
+	Plan          base.Plan          // not-read-only, session might update it before reusing
+	OutputColumns types.NameSlice    // read-only
+	memoryUsage   int64              // read-only
+	testKey       int64              // test-only
+	paramTypes    []*types.FieldType // read-only, all parameters' types, different parameters may share same plan
+	stmtHints     *hint.StmtHints    // read-only, hints which set session variables
+}
 
-	// paramTypes stores all parameters' FieldType, some different parameters may share same plan
-	paramTypes []*types.FieldType
-	// stmtHints stores the hints which set session variables, because the hints won't be processed using cached plan.
-	stmtHints *hint.StmtHints
+// CloneForInstancePlanCache clones a PlanCacheValue for instance plan cache.
+// Since PlanCacheValue.Plan is not read-only, to solve the concurrency problem when sharing the same PlanCacheValue
+// across multiple sessions, we need to clone the PlanCacheValue for each session.
+func (v *PlanCacheValue) CloneForInstancePlanCache(newCtx base.PlanContext) (*PlanCacheValue, bool) {
+	clonedPlan, ok := v.Plan.CloneForPlanCache(newCtx)
+	if !ok {
+		return nil, false
+	}
+	cloned := new(PlanCacheValue)
+	*cloned = *v
+	cloned.Plan = clonedPlan
+	return cloned, true
 }
 
 // unKnownMemoryUsage represent the memory usage of uncounted structure, maybe need implement later

@@ -75,7 +75,7 @@ func (i *InfoStore) DeleteSchema(name model.CIStr) bool {
 }
 
 // TableByName returns the TableInfo. It will also return the error like an infoschema.
-func (i *InfoStore) TableByName(ctx context.Context, schema, table model.CIStr) (*model.TableInfo, error) {
+func (i *InfoStore) TableByName(_ context.Context, schema, table model.CIStr) (*model.TableInfo, error) {
 	schemaKey := i.ciStr2Key(schema)
 	tables, ok := i.tables[schemaKey]
 	if !ok {
@@ -173,7 +173,7 @@ func (i InfoStoreAdaptor) TableExists(schema, table model.CIStr) bool {
 
 // TableByName implements the InfoSchema interface.
 func (i InfoStoreAdaptor) TableByName(ctx context.Context, schema, table model.CIStr) (t table.Table, err error) {
-	tableInfo, err := i.inner.TableByName(context.Background(), schema, table)
+	tableInfo, err := i.inner.TableByName(ctx, schema, table)
 	if err != nil {
 		return nil, err
 	}
