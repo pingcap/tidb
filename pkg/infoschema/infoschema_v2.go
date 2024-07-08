@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
@@ -428,7 +429,7 @@ func (is *infoschemaV2) tableByID(id int64, noRefill bool) (val table.Table, ok 
 	}
 
 	if !noRefill {
-		is.tableCache.Set(key, ret)
+		is.tableCache.Set(oldKey, ret)
 	}
 	return ret, true
 }
@@ -437,6 +438,17 @@ func isSpecialDB(dbName string) bool {
 	return dbName == util.InformationSchemaName.L ||
 		dbName == util.PerformanceSchemaName.L ||
 		dbName == util.MetricSchemaName.L
+}
+
+// EvictTable is exported for testing only.
+func (is *infoschemaV2) EvictTable(schema, tbl string) {
+	eq := func(a, b *tableItem) bool { return a.dbName == b.dbName && a.tableName == b.tableName }
+	itm, ok := search(is.byName, is.infoSchema.schemaMetaVersion, tableItem{dbName: schema, tableName: tbl, schemaVersion: math.MaxInt64}, eq)
+	if !ok {
+		return
+	}
+	is.tableCache.Remove(tableCacheKey{itm.tableID, is.infoSchema.schemaMetaVersion})
+	is.tableCache.Remove(tableCacheKey{itm.tableID, itm.schemaVersion})
 }
 
 func (is *infoschemaV2) TableByName(schema, tbl model.CIStr) (t table.Table, err error) {
@@ -456,18 +468,10 @@ func (is *infoschemaV2) TableByName(schema, tbl model.CIStr) (t table.Table, err
 		return nil, ErrTableNotExists.FastGenByArgs(schema, tbl)
 	}
 
-	// Get from the cache.
-	key := tableCacheKey{itm.tableID, is.infoSchema.schemaMetaVersion}
-	res, found := is.tableCache.Get(key)
-	if found && res != nil {
-		return res, nil
-	}
-
-	// get cache with old key
+	// Get from the cache with old key
 	oldKey := tableCacheKey{itm.tableID, itm.schemaVersion}
-	res, found = is.tableCache.Get(oldKey)
+	res, found := is.tableCache.Get(oldKey)
 	if found && res != nil {
-		is.tableCache.Set(key, res)
 		return res, nil
 	}
 
@@ -476,7 +480,7 @@ func (is *infoschemaV2) TableByName(schema, tbl model.CIStr) (t table.Table, err
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	is.tableCache.Set(key, ret)
+	is.tableCache.Set(oldKey, ret)
 	return ret, nil
 }
 
@@ -768,6 +772,12 @@ retry:
 }
 
 func loadTableInfo(r autoid.Requirement, infoData *Data, tblID, dbID int64, ts uint64, schemaVersion int64) (table.Table, error) {
+	failpoint.Inject("mockLoadTableInfoError", func(val failpoint.Value) {
+		if val.(bool) {
+			failpoint.Return(nil, errors.New("mockLoadTableInfoError"))
+		}
+	})
+
 	// Try to avoid repeated concurrency loading.
 	res, err, _ := loadTableSF.Do(fmt.Sprintf("%d-%d-%d", dbID, tblID, schemaVersion), func() (any, error) {
 	retry:

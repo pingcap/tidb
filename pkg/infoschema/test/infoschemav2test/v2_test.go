@@ -263,3 +263,36 @@ func TestTiDBSchemaCacheSizeVariable(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, raw.Data.CacheCapacity(), uint64(1073741824))
 }
+
+func TestUnrelatedDDLTriggerReload(t *testing.T) {
+	// TODO: pass context to loadTableInfo to avoid the global failpoint when it's ready
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@global.tidb_schema_cache_size = 512 * 1024 * 1024")
+
+	tk.MustExec("create table t1 (id int)")
+	tk.MustQuery("select * from t1").Check(testkit.Rows())
+	// Mock t1 schema cache been evicted.
+	is := dom.InfoSchema()
+	ok, v2 := infoschema.IsV2(is)
+	require.True(t, ok)
+	v2.EvictTable("test", "t1")
+
+	tk.MustExec("create table t2 (id int)")
+
+	// DDL on t2 should not cause reload or cache miss on t1
+	// before test, check failpoint works
+	failpoint.Enable("github.com/pingcap/tidb/pkg/infoschema/mockLoadTableInfoError", `return(true)`)
+	tk.MustExecToErr("select * from t1")
+	failpoint.Disable("github.com/pingcap/tidb/pkg/infoschema/mockLoadTableInfoError")
+
+	// Refill the cache, and do DDL
+	tk.MustQuery("select * from t1").Check(testkit.Rows())
+	tk.MustExec("create table t3 (id int)")
+
+	// Ensure failpoint works, and now verify that the code never call loadTableInfo()
+	failpoint.Enable("github.com/pingcap/tidb/pkg/infoschema/mockLoadTableInfoError", `return(true)`)
+	tk.MustQuery("select * from t1").Check(testkit.Rows())
+	failpoint.Disable("github.com/pingcap/tidb/pkg/infoschema/mockLoadTableInfoError")
+}
