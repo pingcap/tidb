@@ -227,7 +227,7 @@ func checkTableForeignKeyValidInOwner(d *ddlCtx, t *meta.Meta, job *model.Job, t
 		if fk.RefSchema.L == job.SchemaName && fk.RefTable.L == tbInfo.Name.L {
 			referTableInfo = tbInfo
 		} else {
-			referTable, err := is.TableByName(context.Background(), fk.RefSchema, fk.RefTable)
+			referTable, err := is.TableByName(d.ctx, fk.RefSchema, fk.RefTable)
 			if err != nil {
 				if !fkCheck && (infoschema.ErrTableNotExists.Equal(err) || infoschema.ErrDatabaseNotExists.Equal(err)) {
 					continue
@@ -244,7 +244,7 @@ func checkTableForeignKeyValidInOwner(d *ddlCtx, t *meta.Meta, job *model.Job, t
 	}
 	referredFKInfos := is.GetTableReferredForeignKeys(job.SchemaName, tbInfo.Name.L)
 	for _, referredFK := range referredFKInfos {
-		childTable, err := is.TableByName(context.Background(), referredFK.ChildSchema, referredFK.ChildTable)
+		childTable, err := is.TableByName(d.ctx, referredFK.ChildSchema, referredFK.ChildTable)
 		if err != nil {
 			return false, err
 		}
