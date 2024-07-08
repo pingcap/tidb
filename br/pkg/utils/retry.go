@@ -247,7 +247,9 @@ func WithRetryV2[T any](
 	return *new(T), allErrors // nolint:wrapcheck
 }
 
-var sampleLoggerFactory = logutil.SampleLoggerFactory(time.Minute, 3, zap.String(logutil.LogFieldCategory, "br-utils"))
+var sampleLoggerFactory = logutil.SampleLoggerFactory(
+	time.Minute, 3, zap.String(logutil.LogFieldCategory, "utils-sample-logger"),
+)
 
 // WithRetryReturnLastErr is like WithRetry but the returned error is the last
 // error during retry rather than a multierr.
