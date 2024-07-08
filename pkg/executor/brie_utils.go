@@ -322,7 +322,7 @@ func validateFields(updates map[string]any) (map[string]any, error) {
 		"lastUpdate":  {},
 	}
 
-	for field, _ := range updates {
+	for field := range updates {
 		if _, exists := validFields[field]; !exists {
 			return nil, errors.Errorf("field '%s' is not valid in mysql.tidb_br_jobs", field)
 		}
