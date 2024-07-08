@@ -74,22 +74,18 @@ func (pc *instancePlanCache) getHead(key string, create bool) *instancePCNode {
 	return nil
 }
 
-// Get gets the cached value according to key and opts.
-func (pc *instancePlanCache) Get(sctx sessionctx.Context, key string, opts any) (value any, ok bool) {
+// Get gets the cached value according to key and paramTypes.
+func (pc *instancePlanCache) Get(key string, paramTypes any) (value any, ok bool) {
 	headNode := pc.getHead(key, false)
 	if headNode == nil { // cache miss
 		return nil, false
 	}
-	return pc.getPlanFromList(sctx, headNode, opts)
+	return pc.getPlanFromList(headNode, paramTypes)
 }
 
-func (*instancePlanCache) getPlanFromList(sctx sessionctx.Context, headNode *instancePCNode, opts any) (any, bool) {
+func (*instancePlanCache) getPlanFromList(headNode *instancePCNode, paramTypes any) (any, bool) {
 	for node := headNode.next.Load(); node != nil; node = node.next.Load() {
-		var matchOpts *PlanCacheMatchOpts
-		if opts != nil {
-			matchOpts = opts.(*PlanCacheMatchOpts)
-		}
-		if matchCachedPlan(sctx, node.value, matchOpts) { // v.Plan is read-only, no need to lock
+		if checkTypesCompatibility4PC(node.value.paramTypes, paramTypes) { // v.Plan is read-only, no need to lock
 			node.lastUsed.Store(time.Now()) // atomically update the lastUsed field
 			return node.value, true
 		}
@@ -99,7 +95,7 @@ func (*instancePlanCache) getPlanFromList(sctx sessionctx.Context, headNode *ins
 
 // Put puts the key and values into the cache.
 // Due to some thread-safety issues, this Put operation might fail, use the returned succ to indicate it.
-func (pc *instancePlanCache) Put(sctx sessionctx.Context, key string, value, opts any) (succ bool) {
+func (pc *instancePlanCache) Put(key string, value, paramTypes any) (succ bool) {
 	vMem := value.(*PlanCacheValue).MemoryUsage()
 	if vMem+pc.totCost.Load() > pc.hardMemLimit.Load() {
 		return // do nothing if it exceeds the hard limit
@@ -108,7 +104,7 @@ func (pc *instancePlanCache) Put(sctx sessionctx.Context, key string, value, opt
 	if headNode == nil {
 		return false // for safety
 	}
-	if _, ok := pc.getPlanFromList(sctx, headNode, opts); ok {
+	if _, ok := pc.getPlanFromList(headNode, paramTypes); ok {
 		return // some other thread has inserted the same plan before
 	}
 

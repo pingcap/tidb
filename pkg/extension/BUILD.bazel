@@ -3,6 +3,7 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "extension",
     srcs = [
+        "auth.go",
         "extensions.go",
         "function.go",
         "manifest.go",
@@ -17,6 +18,7 @@ go_library(
         "//pkg/parser/ast",
         "//pkg/parser/auth",
         "//pkg/parser/mysql",
+        "//pkg/privilege/conn",
         "//pkg/sessionctx/stmtctx",
         "//pkg/sessionctx/variable",
         "//pkg/types",
@@ -31,6 +33,7 @@ go_test(
     name = "extension_test",
     timeout = "short",
     srcs = [
+        "auth_test.go",
         "bootstrap_test.go",
         "event_listener_test.go",
         "function_test.go",
@@ -39,7 +42,7 @@ go_test(
     ],
     embed = [":extension"],
     flaky = True,
-    shard_count = 15,
+    shard_count = 21,
     deps = [
         "//pkg/expression",
         "//pkg/parser/ast",
@@ -59,6 +62,7 @@ go_test(
         "//pkg/util/mock",
         "//pkg/util/sem",
         "@com_github_pingcap_errors//:errors",
+        "@com_github_stretchr_testify//mock",
         "@com_github_stretchr_testify//require",
         "@org_uber_go_goleak//:goleak",
     ],

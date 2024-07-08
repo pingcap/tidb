@@ -427,9 +427,10 @@ func (p *LogicalJoin) getHashJoins(prop *property.PhysicalProperty) (joins []bas
 	}
 
 	forced = (p.PreferJoinType&h.PreferHashJoin > 0) || forceLeftToBuild || forceRightToBuild
-	if !forced && p.shouldSkipHashJoin() {
+	shouldSkipHashJoin := p.shouldSkipHashJoin()
+	if !forced && shouldSkipHashJoin {
 		return nil, false
-	} else if forced && p.shouldSkipHashJoin() {
+	} else if forced && shouldSkipHashJoin {
 		p.SCtx().GetSessionVars().StmtCtx.SetHintWarning(
 			"A conflict between the HASH_JOIN hint and the NO_HASH_JOIN hint, " +
 				"or the tidb_opt_enable_hash_join system variable, the HASH_JOIN hint will take precedence.")
@@ -882,7 +883,7 @@ func (p *LogicalJoin) buildIndexJoinInner2TableScan(
 			if i != 0 {
 				buffer.WriteString(" ")
 			}
-			buffer.WriteString(key.String())
+			buffer.WriteString(key.StringWithCtx(p.SCtx().GetExprCtx().GetEvalCtx()))
 		}
 		buffer.WriteString("]")
 		rangeInfo := buffer.String()
@@ -1012,13 +1013,14 @@ func (ijHelper *indexJoinBuildHelper) buildRangeDecidedByInformation(idxCols []*
 		}
 		fmt.Fprintf(buffer, "eq(%v, %v)", idxCols[idxOff], outerJoinKeys[keyOff])
 	}
+	ectx := ijHelper.join.SCtx().GetExprCtx().GetEvalCtx()
 	for _, access := range ijHelper.chosenAccess {
 		if !isFirst {
 			buffer.WriteString(" ")
 		} else {
 			isFirst = false
 		}
-		fmt.Fprintf(buffer, "%v", access)
+		fmt.Fprintf(buffer, "%v", access.StringWithCtx(ectx))
 	}
 	buffer.WriteString("]")
 	return buffer.String()
@@ -1799,7 +1801,8 @@ func (ijHelper *indexJoinBuildHelper) updateByTemplateRangeResult(tempRangeRes *
 		ijHelper.curIdxOff2KeyOff[i] = -1
 	}
 	newAccesses = accesses[:tempRangeRes.eqAndInCntInRange]
-	newRemained = ranger.AppendConditionsIfNotExist(remained, accesses[tempRangeRes.eqAndInCntInRange:])
+	newRemained = ranger.AppendConditionsIfNotExist(ijHelper.innerPlan.SCtx().GetExprCtx().GetEvalCtx(),
+		remained, accesses[tempRangeRes.eqAndInCntInRange:])
 	return
 }
 
@@ -1821,7 +1824,7 @@ func (ijHelper *indexJoinBuildHelper) analyzeLookUpFilters(path *util.AccessPath
 		return false, nil
 	}
 	accesses = append(accesses, notKeyEqAndIn...)
-	remained = ranger.AppendConditionsIfNotExist(remained, remainedEqAndIn)
+	remained = ranger.AppendConditionsIfNotExist(innerPlan.SCtx().GetExprCtx().GetEvalCtx(), remained, remainedEqAndIn)
 	lastColPos := matchedKeyCnt + len(notKeyEqAndIn)
 	// There should be some equal conditions. But we don't need that there must be some join key in accesses here.
 	// A more strict check is applied later.
@@ -2685,25 +2688,6 @@ func choosePartitionKeys(keys []*property.MPPPartitionColumn, matches []int) []*
 	return newKeys
 }
 
-// TryToGetChildProp will check if this sort property can be pushed or not.
-// When a sort column will be replaced by scalar function, we refuse it.
-// When a sort column will be replaced by a constant, we just remove it.
-func (p *LogicalProjection) TryToGetChildProp(prop *property.PhysicalProperty) (*property.PhysicalProperty, bool) {
-	newProp := prop.CloneEssentialFields()
-	newCols := make([]property.SortItem, 0, len(prop.SortItems))
-	for _, col := range prop.SortItems {
-		idx := p.Schema().ColumnIndex(col.Col)
-		switch expr := p.Exprs[idx].(type) {
-		case *expression.Column:
-			newCols = append(newCols, property.SortItem{Col: expr, Desc: col.Desc})
-		case *expression.ScalarFunction:
-			return nil, false
-		}
-	}
-	newProp.SortItems = newCols
-	return newProp, true
-}
-
 // ExhaustPhysicalPlans enumerate all the possible physical plan for expand operator (currently only mpp case is supported)
 func (p *LogicalExpand) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
 	// under the mpp task type, if the sort item is not empty, refuse it, cause expanded data doesn't support any sort items.
@@ -2737,8 +2721,7 @@ func (p *LogicalExpand) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([
 	return nil, true, nil
 }
 
-// ExhaustPhysicalPlans implements LogicalPlan interface.
-func (p *LogicalProjection) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
+func exhaustPhysicalPlans4Projection(p *LogicalProjection, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
 	newProp, ok := p.TryToGetChildProp(prop)
 	if !ok {
 		return nil, true, nil
@@ -3175,6 +3158,19 @@ func getEnforcedStreamAggs(la *LogicalAggregation, prop *property.PhysicalProper
 	return enforcedAggs
 }
 
+func (la *LogicalAggregation) distinctArgsMeetsProperty() bool {
+	for _, aggFunc := range la.AggFuncs {
+		if aggFunc.HasDistinct {
+			for _, distinctArg := range aggFunc.Args {
+				if !expression.Contains(la.SCtx().GetExprCtx().GetEvalCtx(), la.GroupByItems, distinctArg) {
+					return false
+				}
+			}
+		}
+	}
+	return true
+}
+
 func getStreamAggs(lp base.LogicalPlan, prop *property.PhysicalProperty) []base.PhysicalPlan {
 	la := lp.(*LogicalAggregation)
 	// TODO: support CopTiFlash task type in stream agg
@@ -3488,8 +3484,7 @@ func getHashAggs(lp base.LogicalPlan, prop *property.PhysicalProperty) []base.Ph
 	return hashAggs
 }
 
-// ExhaustPhysicalPlans implements LogicalPlan interface.
-func (p *LogicalSelection) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
+func exhaustPhysicalPlans4LogicalSelection(p *LogicalSelection, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
 	newProps := make([]*property.PhysicalProperty, 0, 2)
 	childProp := prop.CloneEssentialFields()
 	newProps = append(newProps, childProp)
@@ -3510,13 +3505,6 @@ func (p *LogicalSelection) ExhaustPhysicalPlans(prop *property.PhysicalProperty)
 		ret = append(ret, sel)
 	}
 	return ret, true, nil
-}
-
-// utility function to check whether we can push down Selection to TiKV or TiFlash
-func (p *LogicalSelection) canPushDown(storeTp kv.StoreType) bool {
-	return !expression.ContainVirtualColumn(p.Conditions) &&
-		p.CanPushToCop(storeTp) &&
-		expression.CanExprsPushDown(GetPushDownCtx(p.SCtx()), p.Conditions, storeTp)
 }
 
 func getLimitPhysicalPlans(p *LogicalLimit, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {

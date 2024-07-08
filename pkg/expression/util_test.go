@@ -182,7 +182,7 @@ func TestGetUint64FromConstant(t *testing.T) {
 	require.Equal(t, uint64(1), num)
 
 	ctx.GetSessionVars().PlanCacheParams.Append(types.NewUintDatum(100))
-	con.ParamMarker = &ParamMarker{ctx: ctx, order: 0}
+	con.ParamMarker = &ParamMarker{order: 0}
 	num, _, _ = GetUint64FromConstant(ctx, con)
 	require.Equal(t, uint64(100), num)
 }
@@ -558,8 +558,7 @@ func (m *MockExpr) VecEvalJSON(ctx EvalContext, input *chunk.Chunk, result *chun
 	return nil
 }
 
-func (m *MockExpr) String() string               { return "" }
-func (m *MockExpr) MarshalJSON() ([]byte, error) { return nil, nil }
+func (m *MockExpr) StringWithCtx(ParamValues) string { return "" }
 func (m *MockExpr) Eval(ctx EvalContext, row chunk.Row) (types.Datum, error) {
 	return types.NewDatum(m.i), m.err
 }

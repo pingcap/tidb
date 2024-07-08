@@ -117,8 +117,8 @@ func injectProjBelowUnion(un *PhysicalUnionAll) *PhysicalUnionAll {
 // are columns or constants, we do not need to build the `proj`.
 func InjectProjBelowAgg(aggPlan base.PhysicalPlan, aggFuncs []*aggregation.AggFuncDesc, groupByItems []expression.Expression) base.PhysicalPlan {
 	hasScalarFunc := false
-
-	coreusage.WrapCastForAggFuncs(aggPlan.SCtx().GetExprCtx(), aggFuncs)
+	exprCtx := aggPlan.SCtx().GetExprCtx()
+	coreusage.WrapCastForAggFuncs(exprCtx, aggFuncs)
 	for i := 0; !hasScalarFunc && i < len(aggFuncs); i++ {
 		for _, arg := range aggFuncs[i].Args {
 			_, isScalarFunc := arg.(*expression.ScalarFunction)
@@ -141,7 +141,7 @@ func InjectProjBelowAgg(aggPlan base.PhysicalPlan, aggFuncs []*aggregation.AggFu
 	projExprs := make([]expression.Expression, 0, cap(projSchemaCols))
 	cursor := 0
 
-	ectx := aggPlan.SCtx().GetExprCtx().GetEvalCtx()
+	ectx := exprCtx.GetEvalCtx()
 	for _, f := range aggFuncs {
 		for i, arg := range f.Args {
 			if _, isCnst := arg.(*expression.Constant); isCnst {

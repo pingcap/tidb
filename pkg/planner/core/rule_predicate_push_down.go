@@ -89,32 +89,6 @@ func splitSetGetVarFunc(filters []expression.Expression) ([]expression.Expressio
 }
 
 // PredicatePushDown implements base.LogicalPlan PredicatePushDown interface.
-func (p *LogicalSelection) PredicatePushDown(predicates []expression.Expression, opt *optimizetrace.LogicalOptimizeOp) ([]expression.Expression, base.LogicalPlan) {
-	predicates = DeleteTrueExprs(p, predicates)
-	p.Conditions = DeleteTrueExprs(p, p.Conditions)
-	var child base.LogicalPlan
-	var retConditions []expression.Expression
-	var originConditions []expression.Expression
-	canBePushDown, canNotBePushDown := splitSetGetVarFunc(p.Conditions)
-	originConditions = canBePushDown
-	retConditions, child = p.Children()[0].PredicatePushDown(append(canBePushDown, predicates...), opt)
-	retConditions = append(retConditions, canNotBePushDown...)
-	exprCtx := p.SCtx().GetExprCtx()
-	if len(retConditions) > 0 {
-		p.Conditions = expression.PropagateConstant(exprCtx, retConditions)
-		// Return table dual when filter is constant false or null.
-		dual := Conds2TableDual(p, p.Conditions)
-		if dual != nil {
-			appendTableDualTraceStep(p, dual, p.Conditions, opt)
-			return nil, dual
-		}
-		return nil, p
-	}
-	appendSelectionPredicatePushDownTraceStep(p, originConditions, opt)
-	return nil, child
-}
-
-// PredicatePushDown implements base.LogicalPlan PredicatePushDown interface.
 func (p *LogicalUnionScan) PredicatePushDown(predicates []expression.Expression, opt *optimizetrace.LogicalOptimizeOp) ([]expression.Expression, base.LogicalPlan) {
 	if expression.ContainVirtualColumn(predicates) {
 		// predicates with virtual columns can't be pushed down to TiKV/TiFlash so they'll be put into a Projection
@@ -337,27 +311,6 @@ func (p *LogicalJoin) updateEQCond() {
 	}
 }
 
-func (p *LogicalProjection) appendExpr(expr expression.Expression) *expression.Column {
-	if col, ok := expr.(*expression.Column); ok {
-		return col
-	}
-	expr = expression.ColumnSubstitute(p.SCtx().GetExprCtx(), expr, p.Schema(), p.Exprs)
-	p.Exprs = append(p.Exprs, expr)
-
-	col := &expression.Column{
-		UniqueID: p.SCtx().GetSessionVars().AllocPlanColumnID(),
-		RetType:  expr.GetType(p.SCtx().GetExprCtx().GetEvalCtx()).Clone(),
-	}
-	col.SetCoercibility(expr.Coercibility())
-	col.SetRepertoire(expr.Repertoire())
-	p.Schema().Append(col)
-	// reset ParseToJSONFlag in order to keep the flag away from json column
-	if col.GetStaticType().GetType() == mysql.TypeJSON {
-		col.GetStaticType().DelFlag(mysql.ParseToJSONFlag)
-	}
-	return col
-}
-
 func (p *LogicalJoin) getProj(idx int) *LogicalProjection {
 	child := p.Children()[idx]
 	proj, ok := child.(*LogicalProjection)
@@ -400,19 +353,6 @@ func (p *LogicalExpand) PredicatePushDown(predicates []expression.Expression, op
 	// As a whole, we banned all the predicates pushing-down logic here that remained in Expand OP, and constructing a new selection above it if any.
 	remained, child := p.BaseLogicalPlan.PredicatePushDown(nil, opt)
 	return append(remained, predicates...), child
-}
-
-// PredicatePushDown implements base.LogicalPlan PredicatePushDown interface.
-func (p *LogicalProjection) PredicatePushDown(predicates []expression.Expression, opt *optimizetrace.LogicalOptimizeOp) (ret []expression.Expression, retPlan base.LogicalPlan) {
-	for _, expr := range p.Exprs {
-		if expression.HasAssignSetVarFunc(expr) {
-			_, child := p.BaseLogicalPlan.PredicatePushDown(nil, opt)
-			return predicates, child
-		}
-	}
-	canBePushed, canNotBePushed := BreakDownPredicates(p, predicates)
-	remained, child := p.BaseLogicalPlan.PredicatePushDown(canBePushed, opt)
-	return append(remained, canNotBePushed...), child
 }
 
 // DeriveOtherConditions given a LogicalJoin, check the OtherConditions to see if we can derive more
@@ -566,13 +506,14 @@ func appendTableDualTraceStep(replaced base.LogicalPlan, dual base.LogicalPlan, 
 	action := func() string {
 		return fmt.Sprintf("%v_%v is replaced by %v_%v", replaced.TP(), replaced.ID(), dual.TP(), dual.ID())
 	}
+	ectx := replaced.SCtx().GetExprCtx().GetEvalCtx()
 	reason := func() string {
 		buffer := bytes.NewBufferString("The conditions[")
 		for i, cond := range conditions {
 			if i > 0 {
 				buffer.WriteString(",")
 			}
-			buffer.WriteString(cond.String())
+			buffer.WriteString(cond.StringWithCtx(ectx))
 		}
 		buffer.WriteString("] are constant false or null")
 		return buffer.String()
@@ -588,13 +529,14 @@ func appendSelectionPredicatePushDownTraceStep(p *LogicalSelection, conditions [
 		return ""
 	}
 	if len(conditions) > 0 {
+		evalCtx := p.SCtx().GetExprCtx().GetEvalCtx()
 		reason = func() string {
 			buffer := bytes.NewBufferString("The conditions[")
 			for i, cond := range conditions {
 				if i > 0 {
 					buffer.WriteString(",")
 				}
-				buffer.WriteString(cond.String())
+				buffer.WriteString(cond.StringWithCtx(evalCtx))
 			}
 			fmt.Fprintf(buffer, "] in %v_%v are pushed down", p.TP(), p.ID())
 			return buffer.String()
@@ -607,6 +549,7 @@ func appendDataSourcePredicatePushDownTraceStep(ds *DataSource, opt *optimizetra
 	if len(ds.PushedDownConds) < 1 {
 		return
 	}
+	ectx := ds.SCtx().GetExprCtx().GetEvalCtx()
 	reason := func() string {
 		return ""
 	}
@@ -616,7 +559,7 @@ func appendDataSourcePredicatePushDownTraceStep(ds *DataSource, opt *optimizetra
 			if i > 0 {
 				buffer.WriteString(",")
 			}
-			buffer.WriteString(cond.String())
+			buffer.WriteString(cond.StringWithCtx(ectx))
 		}
 		fmt.Fprintf(buffer, "] are pushed down across %v_%v", ds.TP(), ds.ID())
 		return buffer.String()

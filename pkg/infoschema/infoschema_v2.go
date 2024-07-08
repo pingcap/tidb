@@ -102,7 +102,7 @@ type Data struct {
 	}
 
 	// For information_schema/metrics_schema/performance_schema etc
-	specials map[string]*schemaTables
+	specials sync.Map
 
 	// pid2tid is used by FindTableInfoByPartitionID, it stores {partitionID, schemaVersion} => table ID
 	// Need full data in memory!
@@ -180,7 +180,6 @@ func NewData() *Data {
 		schemaMap:         btree.NewBTreeG[schemaItem](compareSchemaItem),
 		schemaID2Name:     btree.NewBTreeG[schemaIDName](compareSchemaByID),
 		tableCache:        newSieve[tableCacheKey, table.Table](1024 * 1024 * size.MB),
-		specials:          make(map[string]*schemaTables),
 		pid2tid:           btree.NewBTreeG[partitionItem](comparePartitionItem),
 		tableInfoResident: btree.NewBTreeG[tableInfoItem](compareTableInfoItem),
 	}
@@ -219,7 +218,7 @@ func (isd *Data) add(item tableItem, tbl table.Table) {
 }
 
 func (isd *Data) addSpecialDB(di *model.DBInfo, tables *schemaTables) {
-	isd.specials[di.Name.L] = tables
+	isd.specials.LoadOrStore(di.Name.L, tables)
 }
 
 func (isd *Data) addDB(schemaVersion int64, dbInfo *model.DBInfo) {
@@ -405,7 +404,8 @@ func (is *infoschemaV2) tableByID(id int64, noRefill bool) (val table.Table, ok 
 	}
 
 	if isTableVirtual(id) {
-		if schTbls, exist := is.Data.specials[itm.dbName]; exist {
+		if raw, exist := is.Data.specials.Load(itm.dbName); exist {
+			schTbls := raw.(*schemaTables)
 			val, ok = schTbls.tables[itm.tableName]
 			return
 		}
@@ -441,7 +441,8 @@ func isSpecialDB(dbName string) bool {
 
 func (is *infoschemaV2) TableByName(schema, tbl model.CIStr) (t table.Table, err error) {
 	if isSpecialDB(schema.L) {
-		if tbNames, ok := is.specials[schema.L]; ok {
+		if raw, ok := is.specials.Load(schema.L); ok {
+			tbNames := raw.(*schemaTables)
 			if t, ok = tbNames.tables[tbl.L]; ok {
 				return
 			}
@@ -494,12 +495,16 @@ func (is *infoschemaV2) TableInfoByID(id int64) (*model.TableInfo, bool) {
 // SchemaTableInfos implements InfoSchema.FindTableInfoByPartitionID
 func (is *infoschemaV2) SchemaTableInfos(schema model.CIStr) []*model.TableInfo {
 	if isSpecialDB(schema.L) {
-		schTbls := is.Data.specials[schema.L]
-		tables := make([]table.Table, 0, len(schTbls.tables))
-		for _, tbl := range schTbls.tables {
-			tables = append(tables, tbl)
+		raw, ok := is.Data.specials.Load(schema.L)
+		if ok {
+			schTbls := raw.(*schemaTables)
+			tables := make([]table.Table, 0, len(schTbls.tables))
+			for _, tbl := range schTbls.tables {
+				tables = append(tables, tbl)
+			}
+			return getTableInfoList(tables)
 		}
-		return getTableInfoList(tables)
+		return nil // something wrong?
 	}
 
 retry:
@@ -540,7 +545,12 @@ func (is *infoschemaV2) FindTableInfoByPartitionID(
 
 func (is *infoschemaV2) SchemaByName(schema model.CIStr) (val *model.DBInfo, ok bool) {
 	if isSpecialDB(schema.L) {
-		return is.Data.specials[schema.L].dbInfo, true
+		raw, ok := is.Data.specials.Load(schema.L)
+		if !ok {
+			return nil, false
+		}
+		schTbls, ok := raw.(*schemaTables)
+		return schTbls.dbInfo, ok
 	}
 
 	var dbInfo model.DBInfo
@@ -584,9 +594,11 @@ func (is *infoschemaV2) allSchemas(visit func(*model.DBInfo)) {
 		}
 		return true
 	})
-	for _, sc := range is.Data.specials {
+	is.Data.specials.Range(func(key, value any) bool {
+		sc := value.(*schemaTables)
 		visit(sc.dbInfo)
-	}
+		return true
+	})
 }
 
 func (is *infoschemaV2) AllSchemas() (schemas []*model.DBInfo) {
@@ -665,13 +677,19 @@ func (is *infoschemaV2) TableExists(schema, table model.CIStr) bool {
 
 func (is *infoschemaV2) SchemaByID(id int64) (*model.DBInfo, bool) {
 	if isTableVirtual(id) {
-		for _, st := range is.Data.specials {
-			if st.dbInfo.ID == id {
-				return st.dbInfo, true
+		var st *schemaTables
+		is.Data.specials.Range(func(key, value any) bool {
+			tmp := value.(*schemaTables)
+			if tmp.dbInfo.ID == id {
+				st = tmp
+				return false
 			}
+			return true
+		})
+		if st == nil {
+			return nil, false
 		}
-		// Something wrong?
-		return nil, false
+		return st.dbInfo, true
 	}
 	var ok bool
 	var name string
@@ -700,12 +718,15 @@ func (is *infoschemaV2) SchemaByID(id int64) (*model.DBInfo, bool) {
 
 func (is *infoschemaV2) SchemaTables(schema model.CIStr) (tables []table.Table) {
 	if isSpecialDB(schema.L) {
-		schTbls := is.Data.specials[schema.L]
-		tables := make([]table.Table, 0, len(schTbls.tables))
-		for _, tbl := range schTbls.tables {
-			tables = append(tables, tbl)
+		raw, ok := is.Data.specials.Load(schema.L)
+		if ok {
+			schTbls := raw.(*schemaTables)
+			tables := make([]table.Table, 0, len(schTbls.tables))
+			for _, tbl := range schTbls.tables {
+				tables = append(tables, tbl)
+			}
+			return tables
 		}
-		return tables
 	}
 
 retry:
