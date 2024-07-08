@@ -220,19 +220,29 @@ func addTaskToMetaTable(ctx context.Context, info *brieTaskInfo, e *exec.BaseExe
 	)
 	log.Debug("addTaskToMetaTable", zap.String("query", insertStmt))
 
+	// BEGIN
 	stmtCtx := util.WithInternalSourceType(ctx, kv.InternalTxnBR)
-	_, err := e.Ctx().GetSQLExecutor().ExecuteInternal(stmtCtx, insertStmt)
+	_, err := e.Ctx().GetSQLExecutor().ExecuteInternal(stmtCtx,`BEGIN;`)
+	if err != nil {
+		return 0, err
+	}
+	// INSERT INTO mysql.tidb_br_jobs;
+	_, err = e.Ctx().GetSQLExecutor().ExecuteInternal(stmtCtx, insertStmt)
 	if err != nil {
 		log.Error("Failed to insert BRIE task into tidb_br_jobs", zap.Error(err))
 		return 0, err
 	}
-
-	//FIXME: is this a safe way to get id?
+	// SELECT LAST_INSERT_ID();
 	rs, err := e.Ctx().GetSQLExecutor().ExecuteInternal(stmtCtx, `SELECT LAST_INSERT_ID();`)
 	if err != nil {
 		return 0, err
 	}
 	defer terror.Call(rs.Close)
+	// COMMIT
+	_, err = e.Ctx().GetSQLExecutor().ExecuteInternal(stmtCtx,`COMMIT;`)
+	if err != nil {
+		return 0, err
+	}
 
 	rows, err := sqlexec.DrainRecordSet(ctx, rs, 1)
 	if err != nil {
@@ -245,23 +255,101 @@ func addTaskToMetaTable(ctx context.Context, info *brieTaskInfo, e *exec.BaseExe
 	return rows[0].GetUint64(0), nil
 }
 
-func messageOrNULL(msg string) string {
-	if msg == "" {
-		return "NULL"
+func RefineMessage(input string) string {
+	// Find the position of the first occurrence of ']'
+	pos := strings.Index(input, "]")
+	if pos == -1 {
+		return input
 	}
-	return msg
+
+	// Extract the header part [filename:xx]
+	header := input[:pos+1]
+
+	// Extract the rest of the string (description and errors)
+	rest := input[pos+1:]
+
+	// Find the position of the first occurrence of ':'
+	colonPos := strings.Index(rest, ":")
+	if colonPos == -1 {
+		return input
+	}
+
+	// Extract the description and errors
+	description := rest[:colonPos+1]
+	errors := rest[colonPos+1:]
+
+	// Split the errors by ';'
+	errorList := strings.Split(errors, ";")
+
+	// Use a map to track unique errors
+	errorMap := make(map[string]struct{})
+	var uniqueErrors []string
+
+	for _, err := range errorList {
+		trimmedErr := strings.TrimSpace(err)
+		if trimmedErr != "" {
+			if _, exists := errorMap[trimmedErr]; !exists {
+				errorMap[trimmedErr] = struct{}{}
+				uniqueErrors = append(uniqueErrors, trimmedErr)
+			}
+		}
+	}
+
+	// Join unique errors with '; '
+	uniqueErrorsStr := strings.Join(uniqueErrors, "; ")
+
+	// Reconstruct the final string
+	result := header + description + " " + uniqueErrorsStr
+	return result
+}
+
+func validateFields(updates map[string]any) (map[string]any, error) {
+	validFields := map[string]struct{}{
+		"connID":      {},
+		"queueTime":   {},
+		"kind":        {},
+		"query":       {},
+		"storage":     {},
+		"execTime":    {},
+		"state":       {},
+		"progress":    {},
+		"finishTime":  {},
+		"backupTS":    {},
+		"restoreTS":   {},
+		"archiveSize": {},
+		"message":     {},
+		"lastUpdate":  {},
+	}
+
+	for field, value := range updates {
+		if _, exists := validFields[field]; !exists {
+			return nil, errors.Errorf("field '%s' is not valid in mysql.tidb_br_jobs", field)
+		}
+		if field == "message" {
+			val, ok := value.(string)
+			if !ok || val == "" || val == "NULL" {
+				continue
+			}
+		}
+	}
+	return updates, nil
 }
 
 func updateMetaTable(ctx context.Context, e *exec.BaseExecutor, id uint64, updates map[string]any) {
 	failpoint.Inject("ignoreMetaTable", func() {
 		failpoint.Return()
 	})
-	// Construct the SET clause dynamically based on the updates map
+	// Construct the 'SET' clause dynamically based on the updates map
+	updates, err := validateFields(updates)
+	if err != nil {
+		log.Error("Detected invalid field name:", zap.Error(err))
+		return
+	}
 	setClauses := make([]string, 0, len(updates))
 	args := make([]any, 0, len(updates))
 
 	for column, value := range updates {
-		setClauses = append(setClauses, fmt.Sprintf("%s = %%?", column))
+		setClauses = append(setClauses, fmt.Sprintf("'%s' = %%?", column))
 		args = append(args, value)
 	}
 
@@ -270,7 +358,7 @@ func updateMetaTable(ctx context.Context, e *exec.BaseExecutor, id uint64, updat
 	log.Info("updateMetaTable", zap.String("query", query), zap.Any("args", args))
 
 	stmtCtx := util.WithInternalSourceType(ctx, kv.InternalTxnBR)
-	_, err := e.Ctx().GetSQLExecutor().ExecuteInternal(stmtCtx, query, args...)
+	_, err = e.Ctx().GetSQLExecutor().ExecuteInternal(stmtCtx, query, args...)
 	if err != nil {
 		log.Error("Failed to update BRIE task into tidb_br_jobs", zap.Error(err), zap.String("query", query))
 	}

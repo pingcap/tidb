@@ -310,3 +310,36 @@ func TestBRIECreateTables(t *testing.T) {
 		tk.MustExec(fmt.Sprintf("desc table_%d", i))
 	}
 }
+
+func TestRefineMessage(t *testing.T) {
+	testCases := []struct {
+		input    string
+		expected string
+	}{
+		{
+			input:    "[filename:xx] description: error1; error2; error1; error3",
+			expected: "[filename:xx] description: error1; error2; error3",
+		},
+		{
+			input:    "[filename:xx] description: error1:.=@; error2; error1:.!!@; error3; error2",
+			expected: "[filename:xx] description: error1:.=@; error2; error1:.!!@; error3",
+		},
+		{
+			input:    "[executor:8125]Restore failed: context canceled; context canceled; context canceled; context canceled",
+			expected: "[executor:8125]Restore failed: context canceled",
+		},
+		{
+			input:    "[executor:8124]Backup failed: backup meta file exists in file:///backup/backupmeta, there may be some backup files in the path already, please specify a correct backup directory!: [BR:Common:ErrInvalidArgument]invalid argument",
+			expected: "[executor:8124]Backup failed: backup meta file exists in file:///backup/backupmeta, there may be some backup files in the path already, please specify a correct backup directory!: [BR:Common:ErrInvalidArgument]invalid argument",
+		},
+		{
+			input:    "[executor:8125]Restore failed: context canceled; backup meta file exists in file:///backup/backupmeta; context canceled;",
+			expected: "[executor:8125]Restore failed: context canceled; backup meta file exists in file:///backup/backupmeta",
+		},
+	}
+
+	for _, tc := range testCases {
+		result := executor.RefineMessage(tc.input)
+		require.Equal(t, tc.expected, result)
+	}
+}

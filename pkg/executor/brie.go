@@ -156,7 +156,7 @@ func (p *brieTaskProgress) cleanup(e *exec.BaseExecutor, info *brieTaskInfo) {
 
 	updateMetaTable(context.Background(), e, info.id, map[string]any{
 		"finishTime":  info.finishTime.String(),
-		"message":     messageOrNULL(info.message),
+		"message":     info.message,
 		"backupTS":    info.backupTS,
 		"restoreTS":   info.restoreTS,
 		"archiveSize": info.archiveSize,
@@ -187,7 +187,6 @@ type brieQueueItem struct {
 }
 
 type brieQueue struct {
-	// nextID uint64
 	tasks sync.Map
 
 	lastClearTime time.Time
