@@ -180,15 +180,6 @@ type LogicalMemTable struct {
 	QueryTimeRange util.QueryTimeRange
 }
 
-// LogicalUnionScan is used in non read-only txn or for scanning a local temporary table whose snapshot data is located in memory.
-type LogicalUnionScan struct {
-	logicalop.BaseLogicalPlan
-
-	conditions []expression.Expression
-
-	handleCols util.HandleCols
-}
-
 // WindowFrame represents a window function frame.
 type WindowFrame struct {
 	Type  ast.FrameType
