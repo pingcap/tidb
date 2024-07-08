@@ -71,7 +71,7 @@ func (e *DeleteExec) deleteOneRow(tbl table.Table, colInfo *plannercore.TblColPo
 	if err != nil {
 		return err
 	}
-	err = e.removeRow(e.Ctx(), tbl, handle, row[:end])
+	err = e.removeRow(e.Ctx(), tbl, handle, row[:end], colInfo)
 	if err != nil {
 		return err
 	}
@@ -256,12 +256,10 @@ func (e *DeleteExec) removeRowsInTblRowMap(tblRowMap tableRowMapType) error {
 	for id, rowMap := range tblRowMap {
 		var err error
 		rowMap.Range(func(h kv.Handle, val handleInfoPair) bool {
-			e.Ctx().GetTableCtx().SetExtraIndexKeyPosInfo(val.posInfo.IndexesForDelete)
-			err = e.removeRow(e.Ctx(), e.tblID2Table[id], h, val.handleVal)
+			err = e.removeRow(e.Ctx(), e.tblID2Table[id], h, val.handleVal, val.posInfo)
 			return err == nil
 		})
 		if err != nil {
-			e.Ctx().GetTableCtx().ResetExtraInfo()
 			return err
 		}
 	}
@@ -271,16 +269,21 @@ func (e *DeleteExec) removeRowsInTblRowMap(tblRowMap tableRowMapType) error {
 	return nil
 }
 
-func (e *DeleteExec) removeRow(ctx sessionctx.Context, t table.Table, h kv.Handle, data []types.Datum) error {
+func (e *DeleteExec) removeRow(ctx sessionctx.Context, t table.Table, h kv.Handle, data []types.Datum, posInfo *plannercore.TblColPosInfo) error {
+	e.Ctx().GetTableCtx().SetExtraIndexKeyPosInfo(posInfo.IndexesForDelete)
 	err := t.RemoveRecord(ctx.GetTableCtx(), h, data)
 	if err != nil {
+		// Don't try to use defer for performance.
+		e.Ctx().GetTableCtx().ResetExtraInfo()
 		return err
 	}
 	tid := t.Meta().ID
 	err = onRemoveRowForFK(ctx, data, e.fkChecks[tid], e.fkCascades[tid])
 	if err != nil {
+		e.Ctx().GetTableCtx().ResetExtraInfo()
 		return err
 	}
+	e.Ctx().GetTableCtx().ResetExtraInfo()
 	ctx.GetSessionVars().StmtCtx.AddAffectedRows(1)
 	return nil
 }
@@ -304,9 +307,6 @@ func onRemoveRowForFK(ctx sessionctx.Context, data []types.Datum, fkChecks []*FK
 
 // Close implements the Executor Close interface.
 func (e *DeleteExec) Close() error {
-	if !e.IsMultiTable {
-		e.Ctx().GetTableCtx().ResetExtraInfo()
-	}
 	defer e.memTracker.ReplaceBytesUsed(0)
 	return exec.Close(e.Children(0))
 }
@@ -318,11 +318,6 @@ func (e *DeleteExec) Open(ctx context.Context) error {
 
 	if e.IsMultiTable {
 		e.fixHandlePosInfoForMultiDelete()
-	} else {
-		for _, posInfo := range e.tblColPosInfos {
-			e.Ctx().GetTableCtx().SetExtraIndexKeyPosInfo(posInfo.IndexesForDelete)
-			break
-		}
 	}
 
 	return exec.Open(ctx, e.Children(0))
