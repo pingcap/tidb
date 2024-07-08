@@ -25,6 +25,8 @@ var (
 	InfoSchemaV2CacheMemUsage prometheus.Gauge
 	// InfoSchemaV2CacheMemLimit records the memory limit of infoschema v2 cache.
 	InfoSchemaV2CacheMemLimit prometheus.Gauge
+	// TableByNameDuration records the duration of TableByName API for infoschema v2.
+	TableByNameDuration *prometheus.HistogramVec
 )
 
 // InitInfoSchemaV2Metrics intializes infoschema v2 related metrics.
@@ -50,4 +52,13 @@ func InitInfoSchemaV2Metrics() {
 			Name:      "infoschema_v2_cache_limit",
 			Help:      "infoschema cache v2 limit",
 		})
+
+	TableByNameDuration = NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: "tidb",
+			Subsystem: "infoschema",
+			Name:      "table_by_name_duration_nanoseconds",
+			Help:      "infoschema cache v2 limit",
+			Buckets:   prometheus.ExponentialBuckets(1, 2, 30), // 1us ~ 1,000,000us
+		}, []string{LblType})
 }

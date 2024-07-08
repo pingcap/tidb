@@ -455,6 +455,7 @@ func (is *infoschemaV2) TableByName(schema, tbl model.CIStr) (t table.Table, err
 		return nil, ErrTableNotExists.FastGenByArgs(schema, tbl)
 	}
 
+	start := time.Now()
 	eq := func(a, b *tableItem) bool { return a.dbName == b.dbName && a.tableName == b.tableName }
 	itm, ok := search(is.byName, is.infoSchema.schemaMetaVersion, tableItem{dbName: schema.L, tableName: tbl.L, schemaVersion: math.MaxInt64}, eq)
 	if !ok {
@@ -466,6 +467,7 @@ func (is *infoschemaV2) TableByName(schema, tbl model.CIStr) (t table.Table, err
 	key := tableCacheKey{itm.tableID, is.infoSchema.schemaMetaVersion}
 	res, found := is.tableCache.Get(key)
 	if found && res != nil {
+		TableByNameHitDuration.Observe(float64(time.Since(start)))
 		return res, nil
 	}
 
@@ -474,6 +476,7 @@ func (is *infoschemaV2) TableByName(schema, tbl model.CIStr) (t table.Table, err
 	res, found = is.tableCache.Get(oldKey)
 	if found && res != nil {
 		is.tableCache.Set(key, res)
+		TableByNameHitDuration.Observe(float64(time.Since(start)))
 		return res, nil
 	}
 
@@ -483,6 +486,7 @@ func (is *infoschemaV2) TableByName(schema, tbl model.CIStr) (t table.Table, err
 		return nil, errors.Trace(err)
 	}
 	is.tableCache.Set(key, ret)
+	TableByNameMissDuration.Observe(float64(time.Since(start)))
 	return ret, nil
 }
 

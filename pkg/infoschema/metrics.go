@@ -58,3 +58,13 @@ func (s *sieveStatusHookImpl) onUpdateSize(size uint64) {
 func (s *sieveStatusHookImpl) onUpdateLimit(limit uint64) {
 	s.memLimit.Set(float64(limit))
 }
+
+var (
+	TableByNameHitDuration  prometheus.Observer
+	TableByNameMissDuration prometheus.Observer
+)
+
+func init() {
+	TableByNameHitDuration = metrics.TableByNameDuration.WithLabelValues("hit")
+	TableByNameMissDuration = metrics.TableByNameDuration.WithLabelValues("miss")
+}
