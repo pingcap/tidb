@@ -32,10 +32,10 @@ type outerJoinProbe struct {
 	// used when build outer side
 	rowIter *rowIter
 	// build/probe side used columns and offset in result chunk
-	buildSideUsed              []int
-	buildSideOffsetInResultChk int
-	probeSideUsed              []int
-	probeSideOffsetInResultChk int
+	buildColUsed              []int
+	buildColOffsetInResultChk int
+	probeColUsed              []int
+	probeColOffsetInResultChk int
 }
 
 func newOuterJoinProbe(base baseJoinProbe, isOuterSideBuild bool, isRightSideBuild bool) *outerJoinProbe {
@@ -44,15 +44,15 @@ func newOuterJoinProbe(base baseJoinProbe, isOuterSideBuild bool, isRightSideBui
 		isOuterSideBuild: isOuterSideBuild,
 	}
 	if isRightSideBuild {
-		probe.buildSideUsed = base.rUsed
-		probe.buildSideOffsetInResultChk = len(base.lUsed)
-		probe.probeSideUsed = base.lUsed
-		probe.probeSideOffsetInResultChk = 0
+		probe.buildColUsed = base.rUsed
+		probe.buildColOffsetInResultChk = len(base.lUsed)
+		probe.probeColUsed = base.lUsed
+		probe.probeColOffsetInResultChk = 0
 	} else {
-		probe.buildSideUsed = base.lUsed
-		probe.buildSideOffsetInResultChk = 0
-		probe.probeSideUsed = base.rUsed
-		probe.probeSideOffsetInResultChk = len(base.lUsed)
+		probe.buildColUsed = base.lUsed
+		probe.buildColOffsetInResultChk = 0
+		probe.probeColUsed = base.rUsed
+		probe.probeColOffsetInResultChk = len(base.lUsed)
 	}
 	return probe
 }
@@ -133,8 +133,8 @@ func (j *outerJoinProbe) ScanRowTable(joinResult *hashjoinWorkerResult, sqlKille
 		j.batchConstructBuildRows(joinResult.chk, 0, false)
 	}
 	// append probe side in batch
-	for index := range j.probeSideUsed {
-		joinResult.chk.Column(index + j.probeSideOffsetInResultChk).AppendNNulls(insertedRows)
+	for index := range j.probeColUsed {
+		joinResult.chk.Column(index + j.probeColOffsetInResultChk).AppendNNulls(insertedRows)
 	}
 	return joinResult
 }
@@ -146,8 +146,8 @@ func (j *outerJoinProbe) buildResultForMatchedRowsAfterOtherCondition(chk, joine
 	}
 	rowCount := chk.NumRows()
 	markedJoined := false
-	for index, colIndex := range j.probeSideUsed {
-		dstCol := chk.Column(j.probeSideOffsetInResultChk + index)
+	for index, colIndex := range j.probeColUsed {
+		dstCol := chk.Column(j.probeColOffsetInResultChk + index)
 		if joinedChk.Column(colIndex+probeColOffsetInJoinedChunk).Rows() > 0 {
 			// probe column that is already in joinedChk
 			srcCol := joinedChk.Column(colIndex + probeColOffsetInJoinedChunk)
@@ -163,8 +163,8 @@ func (j *outerJoinProbe) buildResultForMatchedRowsAfterOtherCondition(chk, joine
 		}
 	}
 	hasRemainCols := false
-	for index, colIndex := range j.buildSideUsed {
-		dstCol := chk.Column(j.buildSideOffsetInResultChk + index)
+	for index, colIndex := range j.buildColUsed {
+		dstCol := chk.Column(j.buildColOffsetInResultChk + index)
 		srcCol := joinedChk.Column(buildColOffsetInJoinedChunk + colIndex)
 		if srcCol.Rows() > 0 {
 			// build column that is already in joinedChk
@@ -209,8 +209,8 @@ func (j *outerJoinProbe) buildResultForNotMatchedRows(chk *chunk.Chunk, startPro
 	// for not matched rows, probe col is appended using original cols, and build column is appended using nulls
 	prevRows := chk.NumRows()
 	afterRows := prevRows
-	for index, colIndex := range j.probeSideUsed {
-		dstCol := chk.Column(j.probeSideOffsetInResultChk + index)
+	for index, colIndex := range j.probeColUsed {
+		dstCol := chk.Column(j.probeColOffsetInResultChk + index)
 		srcCol := j.currentChunk.Column(colIndex)
 		chunk.CopySelectedRowsWithRowIDFunc(dstCol, srcCol, j.isNotMatchedRows, startProbeRow, j.currentProbeRow, func(i int) int {
 			return j.usedRows[i]
@@ -218,7 +218,7 @@ func (j *outerJoinProbe) buildResultForNotMatchedRows(chk *chunk.Chunk, startPro
 		afterRows = dstCol.Rows()
 	}
 	nullRows := afterRows - prevRows
-	if len(j.probeSideUsed) == 0 {
+	if len(j.probeColUsed) == 0 {
 		for i := startProbeRow; i < j.currentProbeRow; i++ {
 			if j.isNotMatchedRows[i] {
 				nullRows++
@@ -226,8 +226,8 @@ func (j *outerJoinProbe) buildResultForNotMatchedRows(chk *chunk.Chunk, startPro
 		}
 	}
 	if nullRows > 0 {
-		for index := range j.buildSideUsed {
-			dstCol := chk.Column(j.buildSideOffsetInResultChk + index)
+		for index := range j.buildColUsed {
+			dstCol := chk.Column(j.buildColOffsetInResultChk + index)
 			dstCol.AppendNNulls(nullRows)
 		}
 		chk.SetNumVirtualRows(prevRows + nullRows)
