@@ -270,20 +270,6 @@ func (p *LogicalJoin) ReplaceExprColumns(replace map[string]*expression.Column) 
 }
 
 // ReplaceExprColumns implements base.LogicalPlan interface.
-func (p *LogicalProjection) ReplaceExprColumns(replace map[string]*expression.Column) {
-	for _, expr := range p.Exprs {
-		ResolveExprAndReplace(expr, replace)
-	}
-}
-
-// ReplaceExprColumns implements base.LogicalPlan interface.
-func (p *LogicalSelection) ReplaceExprColumns(replace map[string]*expression.Column) {
-	for _, expr := range p.Conditions {
-		ResolveExprAndReplace(expr, replace)
-	}
-}
-
-// ReplaceExprColumns implements base.LogicalPlan interface.
 func (la *LogicalApply) ReplaceExprColumns(replace map[string]*expression.Column) {
 	la.LogicalJoin.ReplaceExprColumns(replace)
 	for _, coCol := range la.CorCols {

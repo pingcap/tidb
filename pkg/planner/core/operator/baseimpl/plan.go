@@ -139,6 +139,6 @@ func (p *Plan) BuildPlanTrace() *tracing.PlanTrace {
 }
 
 // CloneForPlanCache clones this Plan for instance plan cache.
-func (*Plan) CloneForPlanCache() (cloned base.Plan, ok bool) {
+func (*Plan) CloneForPlanCache(context.PlanContext) (cloned base.Plan, ok bool) {
 	return nil, false
 }

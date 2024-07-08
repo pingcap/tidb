@@ -1649,7 +1649,8 @@ func GetColDefaultValue(ctx exprctx.BuildContext, col *table.Column, defaultVals
 
 // AllocHandle allocate a new handle.
 // A statement could reserve some ID in the statement context, try those ones first.
-func AllocHandle(ctx context.Context, mctx table.MutateContext, t table.Table) (kv.Handle, error) {
+func AllocHandle(ctx context.Context, mctx table.MutateContext, t table.Table) (kv.IntHandle,
+	error) {
 	if mctx != nil {
 		if stmtCtx := mctx.GetSessionVars().StmtCtx; stmtCtx != nil {
 			// First try to alloc if the statement has reserved auto ID.

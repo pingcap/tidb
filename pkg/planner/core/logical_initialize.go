@@ -32,33 +32,15 @@ func (ds DataSource) Init(ctx base.PlanContext, offset int) *DataSource {
 	return &ds
 }
 
-// Init initializes LogicalIndexScan.
-func (is LogicalIndexScan) Init(ctx base.PlanContext, offset int) *LogicalIndexScan {
-	is.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(ctx, plancodec.TypeIdxScan, &is, offset)
-	return &is
-}
-
 // Init initializes LogicalApply.
 func (la LogicalApply) Init(ctx base.PlanContext, offset int) *LogicalApply {
 	la.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(ctx, plancodec.TypeApply, &la, offset)
 	return &la
 }
 
-// Init initializes LogicalSelection.
-func (p LogicalSelection) Init(ctx base.PlanContext, qbOffset int) *LogicalSelection {
-	p.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(ctx, plancodec.TypeSel, &p, qbOffset)
-	return &p
-}
-
 // Init initializes LogicalUnionScan.
 func (p LogicalUnionScan) Init(ctx base.PlanContext, qbOffset int) *LogicalUnionScan {
 	p.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(ctx, plancodec.TypeUnionScan, &p, qbOffset)
-	return &p
-}
-
-// Init initializes LogicalProjection.
-func (p LogicalProjection) Init(ctx base.PlanContext, qbOffset int) *LogicalProjection {
-	p.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(ctx, plancodec.TypeProj, &p, qbOffset)
 	return &p
 }
 
