@@ -21,7 +21,6 @@ go_library(
         "//pkg/privilege",
         "//pkg/sessionctx",
         "//pkg/sessionctx/variable",
-        "//pkg/table",
         "//pkg/types",
         "//pkg/util/dbterror/plannererrors",
         "//pkg/util/hint",
