@@ -38,6 +38,7 @@ go_library(
         "logical_projection.go",
         "logical_selection.go",
         "logical_show.go",
+        "logical_show_ddl_jobs.go",
         "logical_sort.go",
         "logical_table_dual.go",
         "logical_table_scan.go",
