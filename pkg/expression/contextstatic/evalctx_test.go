@@ -427,3 +427,27 @@ func TestUpdateStaticEvalContext(t *testing.T) {
 	require.Greater(t, ctx3.CtxID(), ctx2.CtxID())
 	checkOptionsStaticEvalCtx(t, ctx3, optState)
 }
+
+func TestParamList(t *testing.T) {
+	paramList := variable.NewPlanCacheParamList()
+	paramList.Append(types.NewDatum(1))
+	paramList.Append(types.NewDatum(2))
+	paramList.Append(types.NewDatum(3))
+	ctx := NewStaticEvalContext(
+		WithParamList(paramList),
+	)
+	for i := 0; i < 3; i++ {
+		val, err := ctx.GetParamValue(i)
+		require.NoError(t, err)
+		require.Equal(t, int64(i+1), val.GetInt64())
+	}
+
+	// after reset the paramList and append new one, the value is still persisted
+	paramList.Reset()
+	paramList.Append(types.NewDatum(4))
+	for i := 0; i < 3; i++ {
+		val, err := ctx.GetParamValue(i)
+		require.NoError(t, err)
+		require.Equal(t, int64(i+1), val.GetInt64())
+	}
+}

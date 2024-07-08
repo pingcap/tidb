@@ -385,7 +385,7 @@ func (h coprHandler) buildStreamAgg(ctx *dagContext, executor *tipb.Executor) (*
 	}
 	groupByCollators := make([]collate.Collator, 0, len(groupBys))
 	for _, expr := range groupBys {
-		groupByCollators = append(groupByCollators, collate.GetCollator(expr.GetType().GetCollate()))
+		groupByCollators = append(groupByCollators, collate.GetCollator(expr.GetType(ctx.evalCtx.sctx.GetExprCtx().GetEvalCtx()).GetCollate()))
 	}
 
 	return &streamAggExec{

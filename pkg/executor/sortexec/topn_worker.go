@@ -60,9 +60,12 @@ func newTopNWorker(
 	}
 }
 
-func (t *topNWorker) fetchChunksAndProcess() {
+func (t *topNWorker) initWorker() {
 	// Offset of heap in worker should be 0, as we need to spill all data
 	t.chkHeap.init(t.topn, t.memTracker, t.topn.Limit.Offset+t.topn.Limit.Count, 0, t.topn.greaterRow, t.topn.RetFieldTypes())
+}
+
+func (t *topNWorker) fetchChunksAndProcess() {
 	for t.fetchChunksAndProcessImpl() {
 	}
 }

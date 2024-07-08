@@ -25,77 +25,11 @@ import (
 	"github.com/pingcap/tidb/pkg/util/size"
 )
 
-// Init initializes LogicalAggregation.
-func (la LogicalAggregation) Init(ctx base.PlanContext, offset int) *LogicalAggregation {
-	la.baseLogicalPlan = newBaseLogicalPlan(ctx, plancodec.TypeAgg, &la, offset)
-	return &la
-}
-
-// Init initializes LogicalJoin.
-func (p LogicalJoin) Init(ctx base.PlanContext, offset int) *LogicalJoin {
-	p.baseLogicalPlan = newBaseLogicalPlan(ctx, plancodec.TypeJoin, &p, offset)
-	return &p
-}
-
-// Init initializes DataSource.
-func (ds DataSource) Init(ctx base.PlanContext, offset int) *DataSource {
-	ds.baseLogicalPlan = newBaseLogicalPlan(ctx, plancodec.TypeDataSource, &ds, offset)
-	return &ds
-}
-
-// Init initializes TiKVSingleGather.
-func (sg TiKVSingleGather) Init(ctx base.PlanContext, offset int) *TiKVSingleGather {
-	sg.baseLogicalPlan = newBaseLogicalPlan(ctx, plancodec.TypeTiKVSingleGather, &sg, offset)
-	return &sg
-}
-
-// Init initializes LogicalTableScan.
-func (ts LogicalTableScan) Init(ctx base.PlanContext, offset int) *LogicalTableScan {
-	ts.baseLogicalPlan = newBaseLogicalPlan(ctx, plancodec.TypeTableScan, &ts, offset)
-	return &ts
-}
-
-// Init initializes LogicalIndexScan.
-func (is LogicalIndexScan) Init(ctx base.PlanContext, offset int) *LogicalIndexScan {
-	is.baseLogicalPlan = newBaseLogicalPlan(ctx, plancodec.TypeIdxScan, &is, offset)
-	return &is
-}
-
-// Init initializes LogicalApply.
-func (la LogicalApply) Init(ctx base.PlanContext, offset int) *LogicalApply {
-	la.baseLogicalPlan = newBaseLogicalPlan(ctx, plancodec.TypeApply, &la, offset)
-	return &la
-}
-
-// Init initializes LogicalSelection.
-func (p LogicalSelection) Init(ctx base.PlanContext, qbOffset int) *LogicalSelection {
-	p.baseLogicalPlan = newBaseLogicalPlan(ctx, plancodec.TypeSel, &p, qbOffset)
-	return &p
-}
-
 // Init initializes PhysicalSelection.
 func (p PhysicalSelection) Init(ctx base.PlanContext, stats *property.StatsInfo, qbOffset int, props ...*property.PhysicalProperty) *PhysicalSelection {
 	p.basePhysicalPlan = newBasePhysicalPlan(ctx, plancodec.TypeSel, &p, qbOffset)
 	p.childrenReqProps = props
 	p.SetStats(stats)
-	return &p
-}
-
-// Init initializes LogicalUnionScan.
-func (p LogicalUnionScan) Init(ctx base.PlanContext, qbOffset int) *LogicalUnionScan {
-	p.baseLogicalPlan = newBaseLogicalPlan(ctx, plancodec.TypeUnionScan, &p, qbOffset)
-	return &p
-}
-
-// Init initializes LogicalProjection.
-func (p LogicalProjection) Init(ctx base.PlanContext, qbOffset int) *LogicalProjection {
-	p.baseLogicalPlan = newBaseLogicalPlan(ctx, plancodec.TypeProj, &p, qbOffset)
-	return &p
-}
-
-// Init initializes LogicalProjection.
-func (p LogicalExpand) Init(ctx base.PlanContext, offset int) *LogicalExpand {
-	p.baseLogicalPlan = newBaseLogicalPlan(ctx, plancodec.TypeExpand, &p, offset)
 	return &p
 }
 
@@ -107,30 +41,12 @@ func (p PhysicalProjection) Init(ctx base.PlanContext, stats *property.StatsInfo
 	return &p
 }
 
-// Init initializes LogicalUnionAll.
-func (p LogicalUnionAll) Init(ctx base.PlanContext, offset int) *LogicalUnionAll {
-	p.baseLogicalPlan = newBaseLogicalPlan(ctx, plancodec.TypeUnion, &p, offset)
-	return &p
-}
-
-// Init initializes LogicalPartitionUnionAll.
-func (p LogicalPartitionUnionAll) Init(ctx base.PlanContext, offset int) *LogicalPartitionUnionAll {
-	p.baseLogicalPlan = newBaseLogicalPlan(ctx, plancodec.TypePartitionUnion, &p, offset)
-	return &p
-}
-
 // Init initializes PhysicalUnionAll.
 func (p PhysicalUnionAll) Init(ctx base.PlanContext, stats *property.StatsInfo, offset int, props ...*property.PhysicalProperty) *PhysicalUnionAll {
 	p.basePhysicalPlan = newBasePhysicalPlan(ctx, plancodec.TypeUnion, &p, offset)
 	p.childrenReqProps = props
 	p.SetStats(stats)
 	return &p
-}
-
-// Init initializes LogicalSort.
-func (ls LogicalSort) Init(ctx base.PlanContext, offset int) *LogicalSort {
-	ls.baseLogicalPlan = newBaseLogicalPlan(ctx, plancodec.TypeSort, &ls, offset)
-	return &ls
 }
 
 // Init initializes PhysicalSort.
@@ -149,23 +65,11 @@ func (p NominalSort) Init(ctx base.PlanContext, stats *property.StatsInfo, offse
 	return &p
 }
 
-// Init initializes LogicalTopN.
-func (lt LogicalTopN) Init(ctx base.PlanContext, offset int) *LogicalTopN {
-	lt.baseLogicalPlan = newBaseLogicalPlan(ctx, plancodec.TypeTopN, &lt, offset)
-	return &lt
-}
-
 // Init initializes PhysicalTopN.
 func (p PhysicalTopN) Init(ctx base.PlanContext, stats *property.StatsInfo, offset int, props ...*property.PhysicalProperty) *PhysicalTopN {
 	p.basePhysicalPlan = newBasePhysicalPlan(ctx, plancodec.TypeTopN, &p, offset)
 	p.childrenReqProps = props
 	p.SetStats(stats)
-	return &p
-}
-
-// Init initializes LogicalLimit.
-func (p LogicalLimit) Init(ctx base.PlanContext, offset int) *LogicalLimit {
-	p.baseLogicalPlan = newBaseLogicalPlan(ctx, plancodec.TypeLimit, &p, offset)
 	return &p
 }
 
@@ -177,22 +81,10 @@ func (p PhysicalLimit) Init(ctx base.PlanContext, stats *property.StatsInfo, off
 	return &p
 }
 
-// Init initializes LogicalTableDual.
-func (p LogicalTableDual) Init(ctx base.PlanContext, offset int) *LogicalTableDual {
-	p.baseLogicalPlan = newBaseLogicalPlan(ctx, plancodec.TypeDual, &p, offset)
-	return &p
-}
-
 // Init initializes PhysicalTableDual.
 func (p PhysicalTableDual) Init(ctx base.PlanContext, stats *property.StatsInfo, offset int) *PhysicalTableDual {
 	p.basePhysicalPlan = newBasePhysicalPlan(ctx, plancodec.TypeDual, &p, offset)
 	p.SetStats(stats)
-	return &p
-}
-
-// Init initializes LogicalMaxOneRow.
-func (p LogicalMaxOneRow) Init(ctx base.PlanContext, offset int) *LogicalMaxOneRow {
-	p.baseLogicalPlan = newBaseLogicalPlan(ctx, plancodec.TypeMaxOneRow, &p, offset)
 	return &p
 }
 
@@ -201,12 +93,6 @@ func (p PhysicalMaxOneRow) Init(ctx base.PlanContext, stats *property.StatsInfo,
 	p.basePhysicalPlan = newBasePhysicalPlan(ctx, plancodec.TypeMaxOneRow, &p, offset)
 	p.childrenReqProps = props
 	p.SetStats(stats)
-	return &p
-}
-
-// Init initializes LogicalWindow.
-func (p LogicalWindow) Init(ctx base.PlanContext, offset int) *LogicalWindow {
-	p.baseLogicalPlan = newBaseLogicalPlan(ctx, plancodec.TypeWindow, &p, offset)
 	return &p
 }
 
@@ -264,18 +150,6 @@ func (p ImportInto) Init(ctx base.PlanContext) *ImportInto {
 	return &p
 }
 
-// Init initializes LogicalShow.
-func (p LogicalShow) Init(ctx base.PlanContext) *LogicalShow {
-	p.baseLogicalPlan = newBaseLogicalPlan(ctx, plancodec.TypeShow, &p, 0)
-	return &p
-}
-
-// Init initializes LogicalShowDDLJobs.
-func (p LogicalShowDDLJobs) Init(ctx base.PlanContext) *LogicalShowDDLJobs {
-	p.baseLogicalPlan = newBaseLogicalPlan(ctx, plancodec.TypeShowDDLJobs, &p, 0)
-	return &p
-}
-
 // Init initializes PhysicalShow.
 func (p PhysicalShow) Init(ctx base.PlanContext) *PhysicalShow {
 	p.basePhysicalPlan = newBasePhysicalPlan(ctx, plancodec.TypeShow, &p, 0)
@@ -289,12 +163,6 @@ func (p PhysicalShowDDLJobs) Init(ctx base.PlanContext) *PhysicalShowDDLJobs {
 	p.basePhysicalPlan = newBasePhysicalPlan(ctx, plancodec.TypeShowDDLJobs, &p, 0)
 	// Just use pseudo stats to avoid panic.
 	p.SetStats(&property.StatsInfo{RowCount: 1})
-	return &p
-}
-
-// Init initializes LogicalLock.
-func (p LogicalLock) Init(ctx base.PlanContext) *LogicalLock {
-	p.baseLogicalPlan = newBaseLogicalPlan(ctx, plancodec.TypeLock, &p, 0)
 	return &p
 }
 
@@ -315,12 +183,6 @@ func (p PhysicalTableScan) Init(ctx base.PlanContext, offset int) *PhysicalTable
 // Init initializes PhysicalIndexScan.
 func (p PhysicalIndexScan) Init(ctx base.PlanContext, offset int) *PhysicalIndexScan {
 	p.basePhysicalPlan = newBasePhysicalPlan(ctx, plancodec.TypeIdxScan, &p, offset)
-	return &p
-}
-
-// Init initializes LogicalMemTable.
-func (p LogicalMemTable) Init(ctx base.PlanContext, offset int) *LogicalMemTable {
-	p.baseLogicalPlan = newBaseLogicalPlan(ctx, plancodec.TypeMemTableScan, &p, offset)
 	return &p
 }
 
@@ -594,21 +456,9 @@ func flattenPushDownPlan(p base.PhysicalPlan) []base.PhysicalPlan {
 }
 
 // Init only assigns type and context.
-func (p LogicalCTE) Init(ctx base.PlanContext, offset int) *LogicalCTE {
-	p.baseLogicalPlan = newBaseLogicalPlan(ctx, plancodec.TypeCTE, &p, offset)
-	return &p
-}
-
-// Init only assigns type and context.
 func (p PhysicalCTE) Init(ctx base.PlanContext, stats *property.StatsInfo) *PhysicalCTE {
 	p.basePhysicalPlan = newBasePhysicalPlan(ctx, plancodec.TypeCTE, &p, 0)
 	p.SetStats(stats)
-	return &p
-}
-
-// Init only assigns type and context.
-func (p LogicalCTETable) Init(ctx base.PlanContext, offset int) *LogicalCTETable {
-	p.baseLogicalPlan = newBaseLogicalPlan(ctx, plancodec.TypeCTETable, &p, offset)
 	return &p
 }
 
@@ -630,12 +480,6 @@ func (p FKCheck) Init(ctx base.PlanContext) *FKCheck {
 func (p FKCascade) Init(ctx base.PlanContext) *FKCascade {
 	p.basePhysicalPlan = newBasePhysicalPlan(ctx, plancodec.TypeForeignKeyCascade, &p, 0)
 	p.SetStats(&property.StatsInfo{})
-	return &p
-}
-
-// Init initializes LogicalSequence
-func (p LogicalSequence) Init(ctx base.PlanContext, offset int) *LogicalSequence {
-	p.baseLogicalPlan = newBaseLogicalPlan(ctx, plancodec.TypeSequence, &p, offset)
 	return &p
 }
 

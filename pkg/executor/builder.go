@@ -683,7 +683,7 @@ func (b *executorBuilder) buildCleanupIndex(v *plannercore.CleanupIndex) exec.Ex
 	sessCtx := e.Ctx().GetSessionVars().StmtCtx
 	e.handleCols = buildHandleColsForExec(sessCtx, tblInfo, e.columns)
 	if e.index.Meta().Global {
-		e.columns = append(e.columns, model.NewExtraPartitionIDColInfo())
+		e.columns = append(e.columns, model.NewExtraPhysTblIDColInfo())
 	}
 	return e
 }
@@ -1369,9 +1369,14 @@ func (b *executorBuilder) buildUnionScanFromReader(reader exec.Executor, v *plan
 		us.columns = x.columns
 		us.table = x.table
 		us.virtualColumnIndex = buildVirtualColumnIndex(us.Schema(), us.columns)
-	default:
-		// The mem table will not be written by sql directly, so we can omit the union scan to avoid err reporting.
+	case *PointGetExecutor, *BatchPointGetExec, // PointGet and BatchPoint can handle virtual columns and dirty txn data themselves.
+		*TableDualExec,       // If TableDual, the result must be empty, so we can skip UnionScan and use TableDual directly here.
+		*TableSampleExecutor: // TableSample only supports sampling from disk, don't need to consider in-memory txn data for simplicity.
 		return originReader
+	default:
+		// TODO: consider more operators like Projection.
+		b.err = errors.NewNoStackErrorf("unexpected operator %T under UnionScan", reader)
+		return nil
 	}
 	return us
 }
@@ -1479,7 +1484,38 @@ func (b *executorBuilder) buildMergeJoin(v *plannercore.PhysicalMergeJoin) exec.
 	return e
 }
 
-func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) exec.Executor {
+func collectColumnIndexFromExpr(expr expression.Expression, leftColumnSize int, leftColumnIndex []int, rightColumnIndex []int) ([]int, []int) {
+	switch x := expr.(type) {
+	case *expression.Column:
+		colIndex := x.Index
+		if colIndex >= leftColumnSize {
+			rightColumnIndex = append(rightColumnIndex, colIndex-leftColumnSize)
+		} else {
+			leftColumnIndex = append(leftColumnIndex, colIndex)
+		}
+		return leftColumnIndex, rightColumnIndex
+	case *expression.Constant:
+		return leftColumnIndex, rightColumnIndex
+	case *expression.ScalarFunction:
+		for _, arg := range x.GetArgs() {
+			leftColumnIndex, rightColumnIndex = collectColumnIndexFromExpr(arg, leftColumnSize, leftColumnIndex, rightColumnIndex)
+		}
+		return leftColumnIndex, rightColumnIndex
+	default:
+		panic("unsupported expression")
+	}
+}
+
+func extractUsedColumnsInJoinOtherCondition(expr expression.CNFExprs, leftColumnSize int) ([]int, []int) {
+	leftColumnIndex := make([]int, 0, 1)
+	rightColumnIndex := make([]int, 0, 1)
+	for _, subExpr := range expr {
+		leftColumnIndex, rightColumnIndex = collectColumnIndexFromExpr(subExpr, leftColumnSize, leftColumnIndex, rightColumnIndex)
+	}
+	return leftColumnIndex, rightColumnIndex
+}
+
+func (b *executorBuilder) buildHashJoinV2(v *plannercore.PhysicalHashJoin) exec.Executor {
 	leftExec := b.build(v.Children()[0])
 	if b.err != nil {
 		return nil
@@ -1490,20 +1526,179 @@ func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) exec.Ex
 		return nil
 	}
 
-	e := &join.HashJoinExec{
+	e := &join.HashJoinV2Exec{
 		BaseExecutor:          exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID(), leftExec, rightExec),
-		ProbeSideTupleFetcher: &join.ProbeSideTupleFetcher{},
-		ProbeWorkers:          make([]*join.ProbeWorker, v.Concurrency),
-		BuildWorker:           &join.BuildWorker{},
-		HashJoinCtx: &join.HashJoinCtx{
-			SessCtx:         b.ctx,
-			IsOuterJoin:     v.JoinType.IsOuterJoin(),
-			UseOuterToBuild: v.UseOuterToBuild,
-			JoinType:        v.JoinType,
-			Concurrency:     v.Concurrency,
+		ProbeSideTupleFetcher: &join.ProbeSideTupleFetcherV2{},
+		ProbeWorkers:          make([]*join.ProbeWorkerV2, v.Concurrency),
+		BuildWorkers:          make([]*join.BuildWorkerV2, v.Concurrency),
+		HashJoinCtxV2: &join.HashJoinCtxV2{
+			OtherCondition:  v.OtherConditions,
+			PartitionNumber: min(int(v.Concurrency), 16),
 		},
 	}
-	e.HashJoinCtx.ChunkAllocPool = e.AllocPool
+	e.HashJoinCtxV2.SessCtx = b.ctx
+	e.HashJoinCtxV2.JoinType = v.JoinType
+	e.HashJoinCtxV2.Concurrency = v.Concurrency
+	e.ChunkAllocPool = e.AllocPool
+	e.HashJoinCtxV2.RightAsBuildSide = true
+	if v.InnerChildIdx == 1 && v.UseOuterToBuild {
+		e.HashJoinCtxV2.RightAsBuildSide = false
+	} else if v.InnerChildIdx == 0 && !v.UseOuterToBuild {
+		e.HashJoinCtxV2.RightAsBuildSide = false
+	}
+
+	lhsTypes, rhsTypes := exec.RetTypes(leftExec), exec.RetTypes(rightExec)
+	joinedTypes := make([]*types.FieldType, 0, len(lhsTypes)+len(rhsTypes))
+	joinedTypes = append(joinedTypes, lhsTypes...)
+	joinedTypes = append(joinedTypes, rhsTypes...)
+
+	if v.InnerChildIdx == 1 {
+		if len(v.RightConditions) > 0 {
+			b.err = errors.Annotate(exeerrors.ErrBuildExecutor, "join's inner condition should be empty")
+			return nil
+		}
+	} else {
+		if len(v.LeftConditions) > 0 {
+			b.err = errors.Annotate(exeerrors.ErrBuildExecutor, "join's inner condition should be empty")
+			return nil
+		}
+	}
+
+	var probeKeys, buildKeys []*expression.Column
+	var buildSideExec exec.Executor
+	if v.UseOuterToBuild {
+		if v.InnerChildIdx == 1 {
+			buildSideExec, buildKeys = leftExec, v.LeftJoinKeys
+			e.ProbeSideTupleFetcher.ProbeSideExec, probeKeys = rightExec, v.RightJoinKeys
+			e.HashJoinCtxV2.BuildFilter = v.LeftConditions
+		} else {
+			buildSideExec, buildKeys = rightExec, v.RightJoinKeys
+			e.ProbeSideTupleFetcher.ProbeSideExec, probeKeys = leftExec, v.LeftJoinKeys
+			e.HashJoinCtxV2.BuildFilter = v.RightConditions
+		}
+	} else {
+		if v.InnerChildIdx == 0 {
+			buildSideExec, buildKeys = leftExec, v.LeftJoinKeys
+			e.ProbeSideTupleFetcher.ProbeSideExec, probeKeys = rightExec, v.RightJoinKeys
+			e.HashJoinCtxV2.ProbeFilter = v.RightConditions
+		} else {
+			buildSideExec, buildKeys = rightExec, v.RightJoinKeys
+			e.ProbeSideTupleFetcher.ProbeSideExec, probeKeys = leftExec, v.LeftJoinKeys
+			e.HashJoinCtxV2.ProbeFilter = v.LeftConditions
+		}
+	}
+	probeKeyColIdx := make([]int, len(probeKeys))
+	buildKeyColIdx := make([]int, len(buildKeys))
+	for i := range buildKeys {
+		buildKeyColIdx[i] = buildKeys[i].Index
+	}
+	for i := range probeKeys {
+		probeKeyColIdx[i] = probeKeys[i].Index
+	}
+
+	colsFromChildren := v.Schema().Columns
+	if v.JoinType == plannercore.LeftOuterSemiJoin || v.JoinType == plannercore.AntiLeftOuterSemiJoin {
+		// the matched column is added inside join
+		colsFromChildren = colsFromChildren[:len(colsFromChildren)-1]
+	}
+	childrenUsedSchema := markChildrenUsedCols(colsFromChildren, v.Children()[0].Schema(), v.Children()[1].Schema())
+	if childrenUsedSchema == nil {
+		b.err = errors.New("children used should never be nil")
+		return nil
+	}
+	e.LUsed = make([]int, 0, len(childrenUsedSchema[0]))
+	e.LUsed = append(e.LUsed, childrenUsedSchema[0]...)
+	e.RUsed = make([]int, 0, len(childrenUsedSchema[1]))
+	e.RUsed = append(e.RUsed, childrenUsedSchema[1]...)
+	if v.OtherConditions != nil {
+		leftColumnSize := v.Children()[0].Schema().Len()
+		e.LUsedInOtherCondition, e.RUsedInOtherCondition = extractUsedColumnsInJoinOtherCondition(v.OtherConditions, leftColumnSize)
+	}
+	// todo add partition hash join exec
+	executor_metrics.ExecutorCountHashJoinExec.Inc()
+
+	leftExecTypes, rightExecTypes := exec.RetTypes(leftExec), exec.RetTypes(rightExec)
+	leftTypes, rightTypes := make([]*types.FieldType, 0, len(v.LeftJoinKeys)+len(v.LeftNAJoinKeys)), make([]*types.FieldType, 0, len(v.RightJoinKeys)+len(v.RightNAJoinKeys))
+	for i, col := range v.LeftJoinKeys {
+		leftTypes = append(leftTypes, leftExecTypes[col.Index].Clone())
+		leftTypes[i].SetFlag(col.RetType.GetFlag())
+	}
+	offset := len(v.LeftJoinKeys)
+	for i, col := range v.LeftNAJoinKeys {
+		leftTypes = append(leftTypes, leftExecTypes[col.Index].Clone())
+		leftTypes[i+offset].SetFlag(col.RetType.GetFlag())
+	}
+	for i, col := range v.RightJoinKeys {
+		rightTypes = append(rightTypes, rightExecTypes[col.Index].Clone())
+		rightTypes[i].SetFlag(col.RetType.GetFlag())
+	}
+	offset = len(v.RightJoinKeys)
+	for i, col := range v.RightNAJoinKeys {
+		rightTypes = append(rightTypes, rightExecTypes[col.Index].Clone())
+		rightTypes[i+offset].SetFlag(col.RetType.GetFlag())
+	}
+
+	// consider collations
+	for i := range v.EqualConditions {
+		chs, coll := v.EqualConditions[i].CharsetAndCollation()
+		leftTypes[i].SetCharset(chs)
+		leftTypes[i].SetCollate(coll)
+		rightTypes[i].SetCharset(chs)
+		rightTypes[i].SetCollate(coll)
+	}
+	offset = len(v.EqualConditions)
+	for i := range v.NAEqualConditions {
+		chs, coll := v.NAEqualConditions[i].CharsetAndCollation()
+		leftTypes[i+offset].SetCharset(chs)
+		leftTypes[i+offset].SetCollate(coll)
+		rightTypes[i+offset].SetCharset(chs)
+		rightTypes[i+offset].SetCollate(coll)
+	}
+	if e.RightAsBuildSide {
+		e.BuildKeyTypes, e.ProbeKeyTypes = rightTypes, leftTypes
+	} else {
+		e.BuildKeyTypes, e.ProbeKeyTypes = leftTypes, rightTypes
+	}
+	for i := uint(0); i < e.Concurrency; i++ {
+		e.ProbeWorkers[i] = &join.ProbeWorkerV2{
+			HashJoinCtx: e.HashJoinCtxV2,
+			JoinProbe:   join.NewJoinProbe(e.HashJoinCtxV2, i, v.JoinType, probeKeyColIdx, joinedTypes, e.ProbeKeyTypes, e.RightAsBuildSide),
+		}
+		e.ProbeWorkers[i].WorkerID = i
+
+		e.BuildWorkers[i] = join.NewJoinBuildWorkerV2(e.HashJoinCtxV2, i, buildSideExec, buildKeyColIdx, exec.RetTypes(buildSideExec))
+	}
+	return e
+}
+
+func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) exec.Executor {
+	if join.IsHashJoinV2Enabled() && v.CanUseHashJoinV2() {
+		return b.buildHashJoinV2(v)
+	}
+	leftExec := b.build(v.Children()[0])
+	if b.err != nil {
+		return nil
+	}
+
+	rightExec := b.build(v.Children()[1])
+	if b.err != nil {
+		return nil
+	}
+
+	e := &join.HashJoinV1Exec{
+		BaseExecutor:          exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID(), leftExec, rightExec),
+		ProbeSideTupleFetcher: &join.ProbeSideTupleFetcherV1{},
+		ProbeWorkers:          make([]*join.ProbeWorkerV1, v.Concurrency),
+		BuildWorker:           &join.BuildWorkerV1{},
+		HashJoinCtxV1: &join.HashJoinCtxV1{
+			IsOuterJoin:     v.JoinType.IsOuterJoin(),
+			UseOuterToBuild: v.UseOuterToBuild,
+		},
+	}
+	e.HashJoinCtxV1.SessCtx = b.ctx
+	e.HashJoinCtxV1.JoinType = v.JoinType
+	e.HashJoinCtxV1.Concurrency = v.Concurrency
+	e.HashJoinCtxV1.ChunkAllocPool = e.AllocPool
 	defaultValues := v.DefaultValues
 	lhsTypes, rhsTypes := exec.RetTypes(leftExec), exec.RetTypes(rightExec)
 	if v.InnerChildIdx == 1 {
@@ -1576,16 +1771,16 @@ func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) exec.Ex
 	}
 	childrenUsedSchema := markChildrenUsedCols(colsFromChildren, v.Children()[0].Schema(), v.Children()[1].Schema())
 	for i := uint(0); i < e.Concurrency; i++ {
-		e.ProbeWorkers[i] = &join.ProbeWorker{
-			HashJoinCtx:      e.HashJoinCtx,
-			WorkerID:         i,
+		e.ProbeWorkers[i] = &join.ProbeWorkerV1{
+			HashJoinCtx:      e.HashJoinCtxV1,
 			Joiner:           join.NewJoiner(b.ctx, v.JoinType, v.InnerChildIdx == 0, defaultValues, v.OtherConditions, lhsTypes, rhsTypes, childrenUsedSchema, isNAJoin),
 			ProbeKeyColIdx:   probeKeyColIdx,
 			ProbeNAKeyColIdx: probeNAKeColIdx,
 		}
+		e.ProbeWorkers[i].WorkerID = i
 	}
-	e.BuildWorker.BuildKeyColIdx, e.BuildWorker.BuildNAKeyColIdx, e.BuildWorker.BuildSideExec, e.BuildWorker.HashJoinCtx = buildKeyColIdx, buildNAKeyColIdx, buildSideExec, e.HashJoinCtx
-	e.HashJoinCtx.IsNullAware = isNAJoin
+	e.BuildWorker.BuildKeyColIdx, e.BuildWorker.BuildNAKeyColIdx, e.BuildWorker.BuildSideExec, e.BuildWorker.HashJoinCtx = buildKeyColIdx, buildNAKeyColIdx, buildSideExec, e.HashJoinCtxV1
+	e.HashJoinCtxV1.IsNullAware = isNAJoin
 	executor_metrics.ExecutorCountHashJoinExec.Inc()
 
 	// We should use JoinKey to construct the type information using by hashing, instead of using the child's schema directly.
@@ -3432,7 +3627,6 @@ func (b *executorBuilder) buildTableReader(v *plannercore.PhysicalTableReader) e
 		return cmp.Compare(i.GetPhysicalID(), j.GetPhysicalID())
 	})
 	ret.kvRangeBuilder = kvRangeBuilderFromRangeAndPartition{
-		sctx:       b.ctx,
 		partitions: partitions,
 	}
 
@@ -3908,8 +4102,6 @@ func buildNoRangeIndexMergeReader(b *executorBuilder, v *plannercore.PhysicalInd
 		return nil, err
 	}
 
-	paging := b.ctx.GetSessionVars().EnablePaging
-
 	e := &IndexMergeReaderExecutor{
 		BaseExecutor:             exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID()),
 		indexUsageReporter:       b.buildIndexUsageReporter(v),
@@ -3925,7 +4117,6 @@ func buildNoRangeIndexMergeReader(b *executorBuilder, v *plannercore.PhysicalInd
 		partialNetDataSizes:      partialDataSizes,
 		dataAvgRowSize:           v.GetAvgTableRowSize(),
 		dataReaderBuilder:        readerBuilder,
-		paging:                   paging,
 		handleCols:               v.HandleCols,
 		isCorColInPartialFilters: isCorColInPartialFilters,
 		isCorColInTableFilter:    isCorColInTableFilter,
@@ -4114,6 +4305,9 @@ func (builder *dataReaderBuilder) buildUnionScanForIndexJoin(ctx context.Context
 	}
 
 	ret := builder.buildUnionScanFromReader(reader, v)
+	if builder.err != nil {
+		return nil, builder.err
+	}
 	if us, ok := ret.(*UnionScanExec); ok {
 		err = us.open(ctx)
 	}
@@ -4269,11 +4463,10 @@ func dedupHandles(lookUpContents []*join.IndexJoinLookUpContent) ([]kv.Handle, [
 }
 
 type kvRangeBuilderFromRangeAndPartition struct {
-	sctx       sessionctx.Context
 	partitions []table.PhysicalTable
 }
 
-func (h kvRangeBuilderFromRangeAndPartition) buildKeyRangeSeparately(ranges []*ranger.Range) ([]int64, [][]kv.KeyRange, error) {
+func (h kvRangeBuilderFromRangeAndPartition) buildKeyRangeSeparately(dctx *distsqlctx.DistSQLContext, ranges []*ranger.Range) ([]int64, [][]kv.KeyRange, error) {
 	ret := make([][]kv.KeyRange, len(h.partitions))
 	pids := make([]int64, 0, len(h.partitions))
 	for i, p := range h.partitions {
@@ -4283,7 +4476,7 @@ func (h kvRangeBuilderFromRangeAndPartition) buildKeyRangeSeparately(ranges []*r
 		if len(ranges) == 0 {
 			continue
 		}
-		kvRange, err := distsql.TableHandleRangesToKVRanges(h.sctx.GetDistSQLCtx(), []int64{pid}, meta != nil && meta.IsCommonHandle, ranges)
+		kvRange, err := distsql.TableHandleRangesToKVRanges(dctx, []int64{pid}, meta != nil && meta.IsCommonHandle, ranges)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -4292,7 +4485,7 @@ func (h kvRangeBuilderFromRangeAndPartition) buildKeyRangeSeparately(ranges []*r
 	return pids, ret, nil
 }
 
-func (h kvRangeBuilderFromRangeAndPartition) buildKeyRange(ranges []*ranger.Range) ([][]kv.KeyRange, error) {
+func (h kvRangeBuilderFromRangeAndPartition) buildKeyRange(dctx *distsqlctx.DistSQLContext, ranges []*ranger.Range) ([][]kv.KeyRange, error) {
 	ret := make([][]kv.KeyRange, len(h.partitions))
 	if len(ranges) == 0 {
 		return ret, nil
@@ -4300,7 +4493,7 @@ func (h kvRangeBuilderFromRangeAndPartition) buildKeyRange(ranges []*ranger.Rang
 	for i, p := range h.partitions {
 		pid := p.GetPhysicalID()
 		meta := p.Meta()
-		kvRange, err := distsql.TableHandleRangesToKVRanges(h.sctx.GetDistSQLCtx(), []int64{pid}, meta != nil && meta.IsCommonHandle, ranges)
+		kvRange, err := distsql.TableHandleRangesToKVRanges(dctx, []int64{pid}, meta != nil && meta.IsCommonHandle, ranges)
 		if err != nil {
 			return nil, err
 		}
@@ -4935,7 +5128,7 @@ func NewRowDecoder(ctx sessionctx.Context, schema *expression.Schema, tbl *model
 	}
 	defVal := func(i int, chk *chunk.Chunk) error {
 		if reqCols[i].ID < 0 {
-			// model.ExtraHandleID, ExtraPidColID, ExtraPhysTblID... etc
+			// model.ExtraHandleID, ExtraPhysTblID... etc
 			// Don't set the default value for that column.
 			chk.AppendNull(i)
 			return nil

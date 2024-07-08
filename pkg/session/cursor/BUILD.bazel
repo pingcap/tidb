@@ -1,0 +1,21 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "cursor",
+    srcs = [
+        "state.go",
+        "tracker.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/session/cursor",
+    visibility = ["//visibility:public"],
+)
+
+go_test(
+    name = "cursor_test",
+    timeout = "short",
+    srcs = ["tracker_test.go"],
+    embed = [":cursor"],
+    flaky = True,
+    shard_count = 5,
+    deps = ["@com_github_stretchr_testify//require"],
+)

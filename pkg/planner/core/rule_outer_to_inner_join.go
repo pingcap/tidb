@@ -1,5 +1,4 @@
 // Copyright 2024 PingCAP, Inc.
-
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -62,16 +61,6 @@ func (*convertOuterToInnerJoin) optimize(_ context.Context, p base.LogicalPlan, 
 // false for those cases.
 
 // ConvertOuterToInnerJoin implements base.LogicalPlan ConvertOuterToInnerJoin interface.
-func (s *baseLogicalPlan) ConvertOuterToInnerJoin(predicates []expression.Expression) base.LogicalPlan {
-	p := s.self
-	for i, child := range p.Children() {
-		newChild := child.ConvertOuterToInnerJoin(predicates)
-		p.SetChild(i, newChild)
-	}
-	return p
-}
-
-// ConvertOuterToInnerJoin implements base.LogicalPlan ConvertOuterToInnerJoin interface.
 func (p *LogicalJoin) ConvertOuterToInnerJoin(predicates []expression.Expression) base.LogicalPlan {
 	innerTable := p.Children()[0]
 	outerTable := p.Children()[1]
@@ -127,24 +116,4 @@ func (p *LogicalJoin) ConvertOuterToInnerJoin(predicates []expression.Expression
 
 func (*convertOuterToInnerJoin) name() string {
 	return "convert_outer_to_inner_joins"
-}
-
-// ConvertOuterToInnerJoin implements base.LogicalPlan ConvertOuterToInnerJoin interface.
-func (s *LogicalSelection) ConvertOuterToInnerJoin(predicates []expression.Expression) base.LogicalPlan {
-	p := s.self.(*LogicalSelection)
-	combinedCond := append(predicates, p.Conditions...)
-	child := p.Children()[0]
-	child = child.ConvertOuterToInnerJoin(combinedCond)
-	p.SetChildren(child)
-	return p
-}
-
-// ConvertOuterToInnerJoin implements base.LogicalPlan ConvertOuterToInnerJoin interface.
-func (s *LogicalProjection) ConvertOuterToInnerJoin(predicates []expression.Expression) base.LogicalPlan {
-	p := s.self.(*LogicalProjection)
-	canBePushed, _ := BreakDownPredicates(p, predicates)
-	child := p.Children()[0]
-	child = child.ConvertOuterToInnerJoin(canBePushed)
-	p.SetChildren(child)
-	return p
 }

@@ -20,6 +20,7 @@ go_test(
         "//pkg/lightning/common",
         "//pkg/parser/model",
         "//pkg/testkit",
+        "//pkg/testkit/testfailpoint",
         "//pkg/util/dbterror/plannererrors",
         "//tests/realtikvtest",
         "@com_github_fsouza_fake_gcs_server//fakestorage",

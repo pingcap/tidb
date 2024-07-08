@@ -474,6 +474,7 @@ func insertRowsFromSelect(ctx context.Context, base insertCommon) error {
 		}
 		chkMemUsage := chk.MemoryUsage()
 		memTracker.Consume(chkMemUsage)
+		var totalMemDelta int64
 		for innerChunkRow := iter.Begin(); innerChunkRow != iter.End(); innerChunkRow = iter.Next() {
 			innerRow := innerChunkRow.GetDatumRow(fields)
 			e.rowCount++
@@ -486,21 +487,21 @@ func insertRowsFromSelect(ctx context.Context, base insertCommon) error {
 			if batchInsert && e.rowCount%uint64(batchSize) == 0 {
 				memUsageOfRows = types.EstimatedMemUsage(rows[0], len(rows))
 				memUsageOfExtraCols = types.EstimatedMemUsage(extraColsInSel[0], len(extraColsInSel))
-				memTracker.Consume(memUsageOfRows + memUsageOfExtraCols)
+				totalMemDelta += memUsageOfRows + memUsageOfExtraCols
 				e.Ctx().GetSessionVars().CurrInsertBatchExtraCols = extraColsInSel
 				if err = base.exec(ctx, rows); err != nil {
 					return err
 				}
 				rows = rows[:0]
 				extraColsInSel = extraColsInSel[:0]
-				memTracker.Consume(-memUsageOfRows)
-				memTracker.Consume(-memUsageOfExtraCols)
+				totalMemDelta += -memUsageOfRows - memUsageOfExtraCols
 				memUsageOfRows = 0
 				if err = e.doBatchInsert(ctx); err != nil {
 					return err
 				}
 			}
 		}
+		memTracker.Consume(totalMemDelta)
 
 		if len(rows) != 0 {
 			memUsageOfRows = types.EstimatedMemUsage(rows[0], len(rows))
@@ -514,19 +515,12 @@ func insertRowsFromSelect(ctx context.Context, base insertCommon) error {
 		}
 		rows = rows[:0]
 		extraColsInSel = extraColsInSel[:0]
-		memTracker.Consume(-memUsageOfRows)
-		memTracker.Consume(-memUsageOfExtraCols)
-		memTracker.Consume(-chkMemUsage)
+		memTracker.Consume(-memUsageOfRows - memUsageOfExtraCols - chkMemUsage)
 	}
 	return nil
 }
 
 func (e *InsertValues) doBatchInsert(ctx context.Context) error {
-	txn, err := e.Ctx().Txn(false)
-	if err != nil {
-		return exeerrors.ErrBatchInsertFail.GenWithStack("BatchInsert failed with error: %v", err)
-	}
-	e.memTracker.Consume(-int64(txn.Size()))
 	e.Ctx().StmtCommit(ctx)
 	if err := sessiontxn.NewTxnInStmt(ctx, e.Ctx()); err != nil {
 		// We should return a special error for batch insert.
@@ -1178,7 +1172,7 @@ func (e *InsertValues) handleDuplicateKey(ctx context.Context, txn kv.Transactio
 		}
 		return true, nil
 	}
-	_, handle, err := tables.FetchDuplicatedHandle(ctx, uk.newKey, true, txn, e.Table.Meta().ID, uk.commonHandle)
+	_, handle, err := tables.FetchDuplicatedHandle(ctx, uk.newKey, true, txn, e.Table.Meta().ID)
 	if err != nil {
 		return false, err
 	}
@@ -1373,7 +1367,11 @@ func (e *InsertValues) removeRow(
 		return true, nil
 	}
 
-	err = r.t.RemoveRecord(e.Ctx().GetTableCtx(), handle, oldRow)
+	if ph, ok := handle.(kv.PartitionHandle); ok {
+		err = e.Table.(table.PartitionedTable).GetPartition(ph.PartitionID).RemoveRecord(e.Ctx().GetTableCtx(), ph.Handle, oldRow)
+	} else {
+		err = r.t.RemoveRecord(e.Ctx().GetTableCtx(), handle, oldRow)
+	}
 	if err != nil {
 		return false, err
 	}

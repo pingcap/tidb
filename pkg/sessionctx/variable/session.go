@@ -56,6 +56,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/kvcache"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
+	"github.com/pingcap/tidb/pkg/util/redact"
 	"github.com/pingcap/tidb/pkg/util/replayer"
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
@@ -321,6 +322,35 @@ func (tc *TransactionContext) UpdateDeltaForTable(physicalTableID int64, delta i
 	item.TableID = physicalTableID
 	for key, val := range colSize {
 		item.ColSize[key] += val
+	}
+	tc.TableDeltaMap[physicalTableID] = item
+}
+
+// ColSize is a data struct to store the delta information for a table.
+type ColSize struct {
+	ColID int64
+	Size  int64
+}
+
+// UpdateDeltaForTableFromColSlice is the same as UpdateDeltaForTable, but it accepts a slice of column size.
+func (tc *TransactionContext) UpdateDeltaForTableFromColSlice(
+	physicalTableID int64, delta int64,
+	count int64, colSizes []ColSize,
+) {
+	tc.tdmLock.Lock()
+	defer tc.tdmLock.Unlock()
+	if tc.TableDeltaMap == nil {
+		tc.TableDeltaMap = make(map[int64]TableDelta)
+	}
+	item := tc.TableDeltaMap[physicalTableID]
+	if item.ColSize == nil && len(colSizes) > 0 {
+		item.ColSize = make(map[int64]int64, len(colSizes))
+	}
+	item.Delta += delta
+	item.Count += count
+	item.TableID = physicalTableID
+	for _, s := range colSizes {
+		item.ColSize[s.ColID] += s.Size
 	}
 	tc.TableDeltaMap[physicalTableID] = item
 }
@@ -1107,7 +1137,7 @@ type SessionVars struct {
 	DurationWaitTS time.Duration
 
 	// PrevStmt is used to store the previous executed statement in the current session.
-	PrevStmt fmt.Stringer
+	PrevStmt *LazyStmtText
 
 	// prevStmtDigest is used to store the digest of the previous statement in the current session.
 	prevStmtDigest string
@@ -1377,6 +1407,9 @@ type SessionVars struct {
 
 	// PreparedPlanCacheSize controls the size of prepared plan cache.
 	PreparedPlanCacheSize uint64
+
+	// EnableInstancePlanCache indicates whether to enable instance plan cache.
+	EnableInstancePlanCache bool
 
 	// PreparedPlanCacheMonitor indicates whether to enable prepared plan cache monitor.
 	EnablePreparedPlanCacheMemoryMonitor bool
@@ -1897,6 +1930,48 @@ func (p *PlanCacheParamList) AllParamValues() []types.Datum {
 	return p.paramValues
 }
 
+// LazyStmtText represents the sql text of a stmt that used in log. It's lazily evaluated to reduce the mem allocs.
+type LazyStmtText struct {
+	text   *string
+	SQL    string
+	Redact string
+	Params PlanCacheParamList
+	Format func(string) string
+}
+
+// SetText sets the text directly.
+func (s *LazyStmtText) SetText(text string) {
+	s.text = &text
+}
+
+// Update resets the lazy text and leads to re-eval for next `s.String()`. It copies params so it's safe to use
+// `SessionVars.PlanCacheParams` directly without worrying about the params get reset later.
+func (s *LazyStmtText) Update(redact string, sql string, params *PlanCacheParamList) {
+	s.text = nil
+	s.SQL = sql
+	s.Redact = redact
+	s.Params.Reset()
+	if params != nil {
+		s.Params.forNonPrepCache = params.forNonPrepCache
+		s.Params.paramValues = append(s.Params.paramValues, params.paramValues...)
+	}
+}
+
+// String implements fmt.Stringer.
+func (s *LazyStmtText) String() string {
+	if s == nil {
+		return ""
+	}
+	if s.text == nil {
+		text := redact.String(s.Redact, s.SQL+s.Params.String())
+		if s.Format != nil {
+			text = s.Format(text)
+		}
+		s.text = &text
+	}
+	return *s.text
+}
+
 // ConnectionInfo presents the connection information, which is mainly used by audit logs.
 type ConnectionInfo struct {
 	ConnectionID      uint64
@@ -2046,6 +2121,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		ResourceGroupName:             resourcegroup.DefaultResourceGroupName,
 		DefaultCollationForUTF8MB4:    mysql.DefaultCollationName,
 		GroupConcatMaxLen:             DefGroupConcatMaxLen,
+		EnableRedactLog:               DefTiDBRedactLog,
 	}
 	vars.status.Store(uint32(mysql.ServerStatusAutocommit))
 	vars.StmtCtx.ResourceGroupName = resourcegroup.DefaultResourceGroupName
@@ -3605,6 +3681,16 @@ func (s *SessionVars) GetRelatedTableForMDL() *sync.Map {
 		s.TxnCtx.relatedTableForMDL = new(sync.Map)
 	}
 	return s.TxnCtx.relatedTableForMDL
+}
+
+// ClearRelatedTableForMDL clears the related table for MDL.
+// related tables for MDL is filled during build logical plan or Preprocess for all DataSources,
+// even for queries inside DDLs like `create view as select xxx` and `create table as select xxx`.
+// it should be cleared before we execute the DDL statement.
+func (s *SessionVars) ClearRelatedTableForMDL() {
+	s.TxnCtx.tdmLock.Lock()
+	defer s.TxnCtx.tdmLock.Unlock()
+	s.TxnCtx.relatedTableForMDL = nil
 }
 
 // EnableForceInlineCTE returns the session variable enableForceInlineCTE

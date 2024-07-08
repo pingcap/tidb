@@ -56,7 +56,7 @@ type InsertExec struct {
 
 func (e *InsertExec) exec(ctx context.Context, rows [][]types.Datum) error {
 	defer trace.StartRegion(ctx, "InsertExec").End()
-	logutil.Eventf(ctx, "insert %d rows into table `%s`", len(rows), stringutil.MemoizeStr(func() string {
+	logutil.Eventf(ctx, "insert %d rows into table `%s`", len(rows), stringutil.StringerFunc(func() string {
 		var tblName string
 		if meta := e.Table.Meta(); meta != nil {
 			tblName = meta.Name.L
@@ -161,12 +161,12 @@ func prefetchConflictedOldRows(ctx context.Context, txn kv.Transaction, rows []t
 		for _, uk := range r.uniqueKeys {
 			if val, found := values[string(uk.newKey)]; found {
 				if tablecodec.IsTempIndexKey(uk.newKey) {
-					// If it is a temp index, the value cannot be decoded by DecodeHandleInUniqueIndexValue.
+					// If it is a temp index, the value cannot be decoded by DecodeHandleInIndexValue.
 					// Since this function is an optimization, we can skip prefetching the rows referenced by
 					// temp indexes.
 					continue
 				}
-				handle, err := tablecodec.DecodeHandleInUniqueIndexValue(val, uk.commonHandle)
+				handle, err := tablecodec.DecodeHandleInIndexValue(val)
 				if err != nil {
 					return err
 				}
@@ -253,7 +253,7 @@ func (e *InsertExec) batchUpdateDupRows(ctx context.Context, newRows [][]types.D
 		}
 
 		for _, uk := range r.uniqueKeys {
-			_, handle, err := tables.FetchDuplicatedHandle(ctx, uk.newKey, true, txn, e.Table.Meta().ID, uk.commonHandle)
+			_, handle, err := tables.FetchDuplicatedHandle(ctx, uk.newKey, true, txn, e.Table.Meta().ID)
 			if err != nil {
 				return err
 			}

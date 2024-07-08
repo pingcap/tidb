@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/expression/contextstatic"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -44,7 +45,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 	"go.uber.org/zap"
@@ -111,7 +111,7 @@ func newPartitionedTable(tbl *TableCommon, tblInfo *model.TableInfo) (table.Part
 	if pi == nil || len(pi.Definitions) == 0 {
 		return nil, table.ErrUnknownPartition
 	}
-	ret := &partitionedTable{TableCommon: *tbl}
+	ret := &partitionedTable{TableCommon: tbl.Copy()}
 	partitionExpr, err := newPartitionExpr(tblInfo, pi.Type, pi.Expr, pi.Columns, pi.Definitions)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -238,10 +238,30 @@ func initPartition(t *partitionedTable, def model.PartitionDefinition) (*partiti
 	return &newPart, nil
 }
 
+// NewPartitionExprBuildCtx returns a context to build partition expression.
+func NewPartitionExprBuildCtx() expression.BuildContext {
+	return contextstatic.NewStaticExprContext(
+		contextstatic.WithEvalCtx(contextstatic.NewStaticEvalContext(
+			// Set a non-strict SQL mode and allow all date values if possible to make sure constant fold can work to
+			// estimate some undetermined result when locating a row to a partition.
+			// See issue: https://github.com/pingcap/tidb/issues/54271 for details.
+			contextstatic.WithSQLMode(mysql.ModeAllowInvalidDates),
+			contextstatic.WithTypeFlags(types.StrictFlags.
+				WithIgnoreTruncateErr(true).
+				WithIgnoreZeroDateErr(true).
+				WithIgnoreZeroInDate(true).
+				WithIgnoreInvalidDateErr(true),
+			),
+			contextstatic.WithErrLevelMap(errctx.LevelMap{
+				errctx.ErrGroupTruncate: errctx.LevelIgnore,
+			}),
+		)),
+	)
+}
+
 func newPartitionExpr(tblInfo *model.TableInfo, tp model.PartitionType, expr string, partCols []model.CIStr, defs []model.PartitionDefinition) (*PartitionExpr, error) {
-	// a partitioned table cannot rely on session context/sql modes, so use a default one!
-	ctx := mock.NewContext()
-	dbName := model.NewCIStr(ctx.GetSessionVars().CurrentDB)
+	ctx := NewPartitionExprBuildCtx()
+	dbName := model.NewCIStr(ctx.GetEvalCtx().CurrentDB())
 	columns, names, err := expression.ColumnInfos2ColumnsAndNames(ctx, dbName, tblInfo.Name, tblInfo.Cols(), tblInfo)
 	if err != nil {
 		return nil, err
@@ -989,7 +1009,7 @@ func (lp *ForListPruning) locateListPartitionByRow(ctx expression.EvalContext, r
 		return -1, table.ErrNoPartitionForGivenValue.GenWithStackByArgs("NULL")
 	}
 	var valueMsg string
-	if mysql.HasUnsignedFlag(lp.LocateExpr.GetType().GetFlag()) {
+	if mysql.HasUnsignedFlag(lp.LocateExpr.GetType(ctx).GetFlag()) {
 		// Handle unsigned value
 		valueMsg = fmt.Sprintf("%d", uint64(value))
 	} else {
@@ -1130,16 +1150,16 @@ func (lp *ForListColumnPruning) LocateRanges(tc types.Context, ec errctx.Context
 	var err error
 	lowVal := r.LowVal[0]
 	if r.LowVal[0].Kind() == types.KindMinNotNull {
-		lowVal = types.GetMinValue(lp.ExprCol.GetType())
+		lowVal = types.GetMinValue(lp.ExprCol.GetType(lp.ctx.GetEvalCtx()))
 	}
 	highVal := r.HighVal[0]
 	if r.HighVal[0].Kind() == types.KindMaxValue {
-		highVal = types.GetMaxValue(lp.ExprCol.GetType())
+		highVal = types.GetMaxValue(lp.ExprCol.GetType(lp.ctx.GetEvalCtx()))
 	}
 
 	// For string type, values returned by GetMinValue and GetMaxValue are already encoded,
 	// so it's unnecessary to invoke genKey to encode them.
-	if lp.ExprCol.GetType().EvalType() == types.ETString && r.LowVal[0].Kind() == types.KindMinNotNull {
+	if lp.ExprCol.GetType(lp.ctx.GetEvalCtx()).EvalType() == types.ETString && r.LowVal[0].Kind() == types.KindMinNotNull {
 		lowKey = (&lowVal).GetBytes()
 	} else {
 		lowKey, err = lp.genKey(tc, ec, lowVal)
@@ -1148,7 +1168,7 @@ func (lp *ForListColumnPruning) LocateRanges(tc types.Context, ec errctx.Context
 		}
 	}
 
-	if lp.ExprCol.GetType().EvalType() == types.ETString && r.HighVal[0].Kind() == types.KindMaxValue {
+	if lp.ExprCol.GetType(lp.ctx.GetEvalCtx()).EvalType() == types.ETString && r.HighVal[0].Kind() == types.KindMaxValue {
 		highKey = (&highVal).GetBytes()
 	} else {
 		highKey, err = lp.genKey(tc, ec, highVal)
@@ -1406,7 +1426,7 @@ func (t *partitionedTable) locateRangePartition(ctx expression.EvalContext, part
 		}
 		ret = val
 	}
-	unsigned := mysql.HasUnsignedFlag(partitionExpr.Expr.GetType().GetFlag())
+	unsigned := mysql.HasUnsignedFlag(partitionExpr.Expr.GetType(ctx).GetFlag())
 	ranges := partitionExpr.ForRangePruning
 	length := len(ranges.LessThan)
 	pos := sort.Search(length, func(i int) bool {

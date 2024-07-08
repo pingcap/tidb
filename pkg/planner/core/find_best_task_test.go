@@ -21,17 +21,18 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/stretchr/testify/require"
 )
 
 type mockDataSource struct {
-	baseLogicalPlan
+	logicalop.BaseLogicalPlan
 }
 
 func (ds mockDataSource) Init(ctx base.PlanContext) *mockDataSource {
-	ds.baseLogicalPlan = newBaseLogicalPlan(ctx, "mockDS", &ds, 0)
+	ds.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(ctx, "mockDS", &ds, 0)
 	return &ds
 }
 
@@ -56,7 +57,7 @@ func (ds *mockDataSource) FindBestTask(prop *property.PhysicalProperty, planCoun
 //  3. If the property is empty, we still need to check `canGeneratePlan2` to decide
 //     whether it can generate physicalPlan2.
 type mockLogicalPlan4Test struct {
-	baseLogicalPlan
+	logicalop.BaseLogicalPlan
 	// hasHintForPlan2 indicates whether this mockPlan contains hint.
 	// This hint is used to generate physicalPlan2. See the implementation
 	// of ExhaustPhysicalPlans().
@@ -68,7 +69,7 @@ type mockLogicalPlan4Test struct {
 }
 
 func (p mockLogicalPlan4Test) Init(ctx base.PlanContext) *mockLogicalPlan4Test {
-	p.baseLogicalPlan = newBaseLogicalPlan(ctx, "mockPlan", &p, 0)
+	p.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(ctx, "mockPlan", &p, 0)
 	return &p
 }
 

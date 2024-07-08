@@ -191,7 +191,7 @@ func getAvgRowSize(stats *property.StatsInfo, cols []*expression.Column) (size f
 	} else {
 		// Estimate using just the type info.
 		for _, col := range cols {
-			size += float64(chunk.EstimateTypeWidth(col.GetType()))
+			size += float64(chunk.EstimateTypeWidth(col.GetStaticType()))
 		}
 	}
 	return
@@ -287,7 +287,7 @@ func appendExpr(p *PhysicalProjection, expr expression.Expression) *expression.C
 
 	col := &expression.Column{
 		UniqueID: p.SCtx().GetSessionVars().AllocPlanColumnID(),
-		RetType:  expr.GetType(),
+		RetType:  expr.GetType(p.SCtx().GetExprCtx().GetEvalCtx()),
 	}
 	col.SetCoercibility(expr.Coercibility())
 	p.schema.Append(col)
@@ -465,7 +465,7 @@ func (p *PhysicalHashJoin) attach2TaskForMpp(tasks ...base.Task) base.Task {
 
 				proj.schema = expression.NewSchema(&expression.Column{
 					UniqueID: proj.SCtx().GetSessionVars().AllocPlanColumnID(),
-					RetType:  constOne.GetType(),
+					RetType:  constOne.GetType(p.SCtx().GetExprCtx().GetEvalCtx()),
 				})
 				attachPlan2Task(proj, task)
 			} else {
@@ -1111,7 +1111,7 @@ func CheckAggCanPushCop(sctx base.PlanContext, aggFuncs []*aggregation.AggFuncDe
 			ret = false
 			break
 		}
-		if !aggregation.CheckAggPushDown(aggFunc, storeType) {
+		if !aggregation.CheckAggPushDown(sctx.GetExprCtx().GetEvalCtx(), aggFunc, storeType) {
 			reason = "AggFunc `" + aggFunc.Name + "` is not supported now"
 			ret = false
 			break
@@ -1179,6 +1179,8 @@ type AggInfo struct {
 // firstRowFuncMap is a map between partial first_row to final first_row, will be used in RemoveUnnecessaryFirstRow
 func BuildFinalModeAggregation(
 	sctx base.PlanContext, original *AggInfo, partialIsCop bool, isMPPTask bool) (partial, final *AggInfo, firstRowFuncMap map[*aggregation.AggFuncDesc]*aggregation.AggFuncDesc) {
+	ectx := sctx.GetExprCtx().GetEvalCtx()
+
 	firstRowFuncMap = make(map[*aggregation.AggFuncDesc]*aggregation.AggFuncDesc, len(original.AggFuncs))
 	partial = &AggInfo{
 		AggFuncs:     make([]*aggregation.AggFuncDesc, 0, len(original.AggFuncs)),
@@ -1201,7 +1203,7 @@ func BuildFinalModeAggregation(
 		} else {
 			gbyCol = &expression.Column{
 				UniqueID: sctx.GetSessionVars().AllocPlanColumnID(),
-				RetType:  gbyExpr.GetType(),
+				RetType:  gbyExpr.GetType(ectx),
 			}
 		}
 		partialGbySchema.Append(gbyCol)
@@ -1246,7 +1248,7 @@ func BuildFinalModeAggregation(
 				// 1. add all args to partial.GroupByItems
 				foundInGroupBy := false
 				for j, gbyExpr := range partial.GroupByItems {
-					if gbyExpr.Equal(sctx.GetExprCtx().GetEvalCtx(), distinctArg) && gbyExpr.GetType().Equal(distinctArg.GetType()) {
+					if gbyExpr.Equal(ectx, distinctArg) && gbyExpr.GetType(ectx).Equal(distinctArg.GetType(ectx)) {
 						// if the two expressions exactly the same in terms of data types and collation, then can avoid it.
 						foundInGroupBy = true
 						ret = partialGbySchema.Columns[j]
@@ -1260,7 +1262,7 @@ func BuildFinalModeAggregation(
 					} else {
 						gbyCol = &expression.Column{
 							UniqueID: sctx.GetSessionVars().AllocPlanColumnID(),
-							RetType:  distinctArg.GetType(),
+							RetType:  distinctArg.GetType(ectx),
 						}
 					}
 					// 2. add group by items if needed
@@ -1367,7 +1369,7 @@ func BuildFinalModeAggregation(
 			if aggregation.NeedValue(finalAggFunc.Name) {
 				partial.Schema.Append(&expression.Column{
 					UniqueID: sctx.GetSessionVars().AllocPlanColumnID(),
-					RetType:  original.Schema.Columns[i].GetType(),
+					RetType:  original.Schema.Columns[i].GetType(ectx),
 				})
 				args = append(args, partial.Schema.Columns[partialCursor])
 				partialCursor++
@@ -1391,7 +1393,7 @@ func BuildFinalModeAggregation(
 			} else if aggFunc.Name == ast.AggFuncApproxCountDistinct || aggFunc.Name == ast.AggFuncGroupConcat {
 				newAggFunc := aggFunc.Clone()
 				newAggFunc.Name = aggFunc.Name
-				newAggFunc.RetTp = partial.Schema.Columns[partialCursor-1].GetType()
+				newAggFunc.RetTp = partial.Schema.Columns[partialCursor-1].GetType(ectx)
 				partial.AggFuncs = append(partial.AggFuncs, newAggFunc)
 				if aggFunc.Name == ast.AggFuncGroupConcat {
 					// append the last separator arg
@@ -1936,6 +1938,8 @@ func (p *PhysicalHashAgg) scaleStats4GroupingSets(groupingSets expression.Groupi
 //	                     +- TableScan foo
 func (p *PhysicalHashAgg) adjust3StagePhaseAgg(partialAgg, finalAgg base.PhysicalPlan, canUse3StageAgg bool,
 	groupingSets expression.GroupingSets, mpp *MppTask) (final, mid, part, proj4Part base.PhysicalPlan, _ error) {
+	ectx := p.SCtx().GetExprCtx().GetEvalCtx()
+
 	if !(partialAgg != nil && canUse3StageAgg) {
 		// quick path: return the original finalAgg and partiAgg.
 		return finalAgg, nil, partialAgg, nil, nil
@@ -2053,10 +2057,10 @@ func (p *PhysicalHashAgg) adjust3StagePhaseAgg(partialAgg, finalAgg base.Physica
 			// for normal agg phase1, we should also modify them to target for specified group data.
 			// Expr = (case when groupingID = targeted_groupingID then arg else null end)
 			eqExpr := expression.NewFunctionInternal(p.SCtx().GetExprCtx(), ast.EQ, types.NewFieldType(mysql.TypeTiny), groupingIDCol, expression.NewUInt64Const(fun.GroupingID))
-			caseWhen := expression.NewFunctionInternal(p.SCtx().GetExprCtx(), ast.Case, fun.Args[0].GetType(), eqExpr, fun.Args[0], expression.NewNull())
+			caseWhen := expression.NewFunctionInternal(p.SCtx().GetExprCtx(), ast.Case, fun.Args[0].GetType(ectx), eqExpr, fun.Args[0], expression.NewNull())
 			caseWhenProjCol := &expression.Column{
 				UniqueID: p.SCtx().GetSessionVars().AllocPlanColumnID(),
-				RetType:  fun.Args[0].GetType(),
+				RetType:  fun.Args[0].GetType(ectx),
 			}
 			proj4Partial.Exprs = append(proj4Partial.Exprs, caseWhen)
 			proj4Partial.Schema().Append(caseWhenProjCol)
@@ -2119,6 +2123,8 @@ func (p *PhysicalHashAgg) adjust3StagePhaseAgg(partialAgg, finalAgg base.Physica
 }
 
 func (p *PhysicalHashAgg) attach2TaskForMpp(tasks ...base.Task) base.Task {
+	ectx := p.SCtx().GetExprCtx().GetEvalCtx()
+
 	t := tasks[0].Copy()
 	mpp, ok := t.(*MppTask)
 	if !ok {
@@ -2153,7 +2159,7 @@ func (p *PhysicalHashAgg) attach2TaskForMpp(tasks ...base.Task) base.Task {
 				}
 				partitionCols = append(partitionCols, &property.MPPPartitionColumn{
 					Col:       col,
-					CollateID: property.GetCollateIDByNameForPartition(col.GetType().GetCollate()),
+					CollateID: property.GetCollateIDByNameForPartition(col.GetType(ectx).GetCollate()),
 				})
 			}
 		}
@@ -2216,7 +2222,7 @@ func (p *PhysicalHashAgg) attach2TaskForMpp(tasks ...base.Task) base.Task {
 				}
 				partitionCols = append(partitionCols, &property.MPPPartitionColumn{
 					Col:       col,
-					CollateID: property.GetCollateIDByNameForPartition(col.GetType().GetCollate()),
+					CollateID: property.GetCollateIDByNameForPartition(col.GetType(ectx).GetCollate()),
 				})
 			}
 

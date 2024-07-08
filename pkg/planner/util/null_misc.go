@@ -50,7 +50,8 @@ func isNullRejectedInList(ctx base.PlanContext, expr *expression.ScalarFunction,
 			newArgs := make([]expression.Expression, 0, 2)
 			newArgs = append(newArgs, expr.GetArgs()[0])
 			newArgs = append(newArgs, arg)
-			eQCondition, err := expression.NewFunction(ctx.GetExprCtx(), ast.EQ, expr.GetType(), newArgs...)
+			eQCondition, err := expression.NewFunction(ctx.GetExprCtx(), ast.EQ,
+				expr.GetType(ctx.GetExprCtx().GetEvalCtx()), newArgs...)
 			if err != nil {
 				return false
 			}

@@ -121,7 +121,7 @@ func (c *aesDecryptFunctionClass) getFunction(ctx BuildContext, args []Expressio
 	if err != nil {
 		return nil, err
 	}
-	bf.tp.SetFlen(args[0].GetType().GetFlen()) // At most.
+	bf.tp.SetFlen(args[0].GetType(ctx.GetEvalCtx()).GetFlen()) // At most.
 	types.SetBinChsClnFlag(bf.tp)
 
 	blockMode := ctx.GetBlockEncryptionMode()
@@ -256,7 +256,7 @@ func (c *aesEncryptFunctionClass) getFunction(ctx BuildContext, args []Expressio
 	if err != nil {
 		return nil, err
 	}
-	bf.tp.SetFlen(aes.BlockSize * (args[0].GetType().GetFlen()/aes.BlockSize + 1)) // At most.
+	bf.tp.SetFlen(aes.BlockSize * (args[0].GetType(ctx.GetEvalCtx()).GetFlen()/aes.BlockSize + 1)) // At most.
 	types.SetBinChsClnFlag(bf.tp)
 
 	blockMode := ctx.GetBlockEncryptionMode()
@@ -389,7 +389,7 @@ func (c *decodeFunctionClass) getFunction(ctx BuildContext, args []Expression) (
 		return nil, err
 	}
 
-	bf.tp.SetFlen(args[0].GetType().GetFlen())
+	bf.tp.SetFlen(args[0].GetType(ctx.GetEvalCtx()).GetFlen())
 	sig := &builtinDecodeSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_Decode)
 	return sig, nil
@@ -452,7 +452,7 @@ func (c *encodeFunctionClass) getFunction(ctx BuildContext, args []Expression) (
 		return nil, err
 	}
 
-	bf.tp.SetFlen(args[0].GetType().GetFlen())
+	bf.tp.SetFlen(args[0].GetType(ctx.GetEvalCtx()).GetFlen())
 	sig := &builtinEncodeSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_Encode)
 	return sig, nil
@@ -848,7 +848,7 @@ func (c *compressFunctionClass) getFunction(ctx BuildContext, args []Expression)
 	if err != nil {
 		return nil, err
 	}
-	srcLen := args[0].GetType().GetFlen()
+	srcLen := args[0].GetType(ctx.GetEvalCtx()).GetFlen()
 	compressBound := srcLen + (srcLen >> 12) + (srcLen >> 14) + (srcLen >> 25) + 13
 	if compressBound > mysql.MaxBlobWidth {
 		compressBound = mysql.MaxBlobWidth

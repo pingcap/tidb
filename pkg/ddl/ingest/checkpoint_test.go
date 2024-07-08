@@ -60,7 +60,7 @@ func TestCheckpointManager(t *testing.T) {
 		return newTk.Session(), nil
 	}, 8, 8, 0)
 	ctx := context.Background()
-	sessPool := session.NewSessionPool(rs, store)
+	sessPool := session.NewSessionPool(rs)
 	flushCtrl := &dummyFlushCtrl{imported: false}
 	tmpFolder := t.TempDir()
 	createDummyFile(t, tmpFolder)
@@ -115,18 +115,17 @@ func TestCheckpointManagerUpdateReorg(t *testing.T) {
 		return newTk.Session(), nil
 	}, 8, 8, 0)
 	ctx := context.Background()
-	sessPool := session.NewSessionPool(rs, store)
+	sessPool := session.NewSessionPool(rs)
 	flushCtrl := &dummyFlushCtrl{imported: true}
 	tmpFolder := t.TempDir()
 	createDummyFile(t, tmpFolder)
 	mgr, err := ingest.NewCheckpointManager(ctx, flushCtrl, sessPool, 1, []int64{1}, tmpFolder, mockGetTSClient{})
 	require.NoError(t, err)
-	defer mgr.Close()
 
 	mgr.Register(1, []byte{'1', '9'})
 	mgr.UpdateTotalKeys(1, 100, true)
 	require.NoError(t, mgr.UpdateWrittenKeys(1, 100))
-	mgr.Flush() // Wait the global checkpoint to be updated to the reorg table.
+	mgr.Close() // Wait the global checkpoint to be updated to the reorg table.
 	r, err := tk.Exec("select reorg_meta from mysql.tidb_ddl_reorg where job_id = 1 and ele_id = 1;")
 	require.NoError(t, err)
 	req := r.NewChunk(nil)
@@ -168,7 +167,7 @@ func TestCheckpointManagerResumeReorg(t *testing.T) {
 		return newTk.Session(), nil
 	}, 8, 8, 0)
 	ctx := context.Background()
-	sessPool := session.NewSessionPool(rs, store)
+	sessPool := session.NewSessionPool(rs)
 	flushCtrl := &dummyFlushCtrl{imported: false}
 	tmpFolder := t.TempDir()
 	// checkpoint manager should not use local checkpoint if the folder is empty
@@ -198,6 +197,6 @@ type dummyFlushCtrl struct {
 	imported bool
 }
 
-func (d *dummyFlushCtrl) Flush(_ ingest.FlushMode) (bool, bool, int64, error) {
-	return true, d.imported, 0, nil
+func (d *dummyFlushCtrl) Flush(mode ingest.FlushMode) (bool, bool, error) {
+	return true, d.imported, nil
 }

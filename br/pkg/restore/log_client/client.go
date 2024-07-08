@@ -680,6 +680,16 @@ func (rc *LogClient) InitSchemasReplaceForDDL(
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
+		info := rc.dom.InfoSchema()
+		shcemas := info.AllSchemaNames()
+		for _, schema := range shcemas {
+			for _, table := range info.SchemaTables(schema) {
+				tableInfo := table.Meta()
+				if tableInfo.TiFlashReplica != nil && tableInfo.TiFlashReplica.Count > 0 {
+					return nil, errors.Errorf("exist table(s) have tiflash replica, please remove it before restore")
+				}
+			}
+		}
 	}
 
 	if len(dbMaps) <= 0 {

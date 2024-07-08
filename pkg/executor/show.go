@@ -721,9 +721,9 @@ func (e *ShowExec) fetchShowIndex() error {
 				break
 			}
 		}
-		colStats, ok := statsTbl.Columns[pkCol.ID]
+		colStats := statsTbl.GetCol(pkCol.ID)
 		var ndv int64
-		if ok {
+		if colStats != nil {
 			ndv = colStats.NDV
 		}
 		e.appendRow([]any{
@@ -783,9 +783,9 @@ func (e *ShowExec) fetchShowIndex() error {
 				expression = tblCol.GeneratedExprString
 			}
 
-			colStats, ok := statsTbl.Columns[tblCol.ID]
+			colStats := statsTbl.GetCol(tblCol.ID)
 			var ndv int64
-			if ok {
+			if colStats != nil {
 				ndv = colStats.NDV
 			}
 
@@ -1211,7 +1211,7 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *model.CISt
 		buf.WriteString(",\n")
 	}
 	for i, constrInfo := range publicConstraints {
-		fmt.Fprintf(buf, "CONSTRAINT %s CHECK ((%s))", stringutil.Escape(constrInfo.Name.O, sqlMode), constrInfo.ExprString)
+		fmt.Fprintf(buf, "  CONSTRAINT %s CHECK ((%s))", stringutil.Escape(constrInfo.Name.O, sqlMode), constrInfo.ExprString)
 		if !constrInfo.Enforced {
 			buf.WriteString(" /*!80016 NOT ENFORCED */")
 		}
@@ -1887,7 +1887,11 @@ func (e *ShowExec) fetchShowWarnings(errOnly bool) error {
 			sqlErr := terror.ToSQLError(x)
 			e.appendRow([]any{w.Level, int64(sqlErr.Code), sqlErr.Message})
 		default:
-			e.appendRow([]any{w.Level, int64(mysql.ErrUnknown), warn.Error()})
+			var err string
+			if warn != nil {
+				err = warn.Error()
+			}
+			e.appendRow([]any{w.Level, int64(mysql.ErrUnknown), err})
 		}
 	}
 	return nil
@@ -2355,7 +2359,7 @@ func tryFillViewColumnType(ctx context.Context, sctx sessionctx.Context, is info
 		for _, col := range tbl.Columns {
 			idx := expression.FindFieldNameIdxByColName(viewOutputNames, col.Name.L)
 			if idx >= 0 {
-				col.FieldType = *viewSchema.Columns[idx].GetType()
+				col.FieldType = *viewSchema.Columns[idx].GetType(sctx.GetExprCtx().GetEvalCtx())
 			}
 			if col.GetType() == mysql.TypeVarString {
 				col.SetType(mysql.TypeVarchar)

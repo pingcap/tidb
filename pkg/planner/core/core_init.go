@@ -28,9 +28,16 @@ import (
 func init() {
 	// For code refactor init.
 	utilfuncp.AddSelection = addSelection
+	utilfuncp.FindBestTask = findBestTask
 	utilfuncp.HasMaxOneRowUtil = HasMaxOneRow
 	utilfuncp.GetTaskPlanCost = getTaskPlanCost
+	utilfuncp.CanPushToCopImpl = canPushToCopImpl
+	utilfuncp.GetStreamAggs = getStreamAggs
+	utilfuncp.GetHashAggs = getHashAggs
+	utilfuncp.PruneByItems = pruneByItems
+
 	utilfuncp.AppendCandidate4PhysicalOptimizeOp = appendCandidate4PhysicalOptimizeOp
+	utilfuncp.PushDownTopNForBaseLogicalPlan = pushDownTopNForBaseLogicalPlan
 
 	// For mv index init.
 	cardinality.GetTblInfoForUsedStatsByPhysicalID = getTblInfoForUsedStatsByPhysicalID

@@ -290,7 +290,7 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 			if len(handleVal) == 0 {
 				continue
 			}
-			handle, err1 := tablecodec.DecodeHandleInUniqueIndexValue(handleVal, e.tblInfo.IsCommonHandle)
+			handle, err1 := tablecodec.DecodeHandleInIndexValue(handleVal)
 			if err1 != nil {
 				return err1
 			}

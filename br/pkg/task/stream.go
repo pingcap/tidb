@@ -1234,6 +1234,7 @@ func restoreStream(
 		totalSize              uint64
 		checkpointTotalKVCount uint64
 		checkpointTotalSize    uint64
+		currentTS              uint64
 		mu                     sync.Mutex
 		startTime              = time.Now()
 	)
@@ -1243,9 +1244,12 @@ func restoreStream(
 		} else {
 			totalDureTime := time.Since(startTime)
 			summary.Log("restore log success summary", zap.Duration("total-take", totalDureTime),
-				zap.Uint64("restore-from", cfg.StartTS), zap.Uint64("restore-to", cfg.RestoreTS),
-				zap.String("restore-from", stream.FormatDate(oracle.GetTimeFromTS(cfg.StartTS))),
-				zap.String("restore-to", stream.FormatDate(oracle.GetTimeFromTS(cfg.RestoreTS))),
+				zap.Uint64("source-start-point", cfg.StartTS),
+				zap.Uint64("source-end-point", cfg.RestoreTS),
+				zap.Uint64("target-end-point", currentTS),
+				zap.String("source-start", stream.FormatDate(oracle.GetTimeFromTS(cfg.StartTS))),
+				zap.String("source-end", stream.FormatDate(oracle.GetTimeFromTS(cfg.RestoreTS))),
+				zap.String("target-end", stream.FormatDate(oracle.GetTimeFromTS(currentTS))),
 				zap.Uint64("total-kv-count", totalKVCount),
 				zap.Uint64("skipped-kv-count-by-checkpoint", checkpointTotalKVCount),
 				zap.String("total-size", units.HumanSize(float64(totalSize))),
@@ -1280,7 +1284,6 @@ func restoreStream(
 	}
 	defer client.Close()
 
-	var currentTS uint64
 	if taskInfo != nil && taskInfo.RewriteTS > 0 {
 		// reuse the task's rewrite ts
 		log.Info("reuse the task's rewrite ts", zap.Uint64("rewrite-ts", taskInfo.RewriteTS))

@@ -175,7 +175,17 @@ func (d *DBStore) adjust(
 	}
 
 	if d.Security == nil {
-		d.Security = s
+		d.Security = &Security{
+			CAPath:                   s.CAPath,
+			CertPath:                 s.CertPath,
+			KeyPath:                  s.KeyPath,
+			CABytes:                  s.CABytes,
+			CertBytes:                s.CertBytes,
+			KeyBytes:                 s.KeyBytes,
+			RedactInfoLog:            s.RedactInfoLog,
+			TLSConfig:                s.TLSConfig,
+			AllowFallbackToPlaintext: s.AllowFallbackToPlaintext,
+		}
 	}
 
 	switch d.TLS {
@@ -202,9 +212,9 @@ func (d *DBStore) adjust(
 		d.Security.TLSConfig = nil
 		d.Security.CAPath = ""
 		d.Security.CertPath = ""
-		d.Security.KeyPath = ""
 		d.Security.CABytes = nil
 		d.Security.CertBytes = nil
+		d.Security.KeyPath = ""
 		d.Security.KeyBytes = nil
 	default:
 		return common.ErrInvalidConfig.GenWithStack("unsupported `tidb.tls` config %s", d.TLS)
@@ -884,6 +894,11 @@ func (m *MydumperRuntime) adjust() error {
 	if err := m.CSV.adjust(); err != nil {
 		return err
 	}
+	if m.StrictFormat && len(m.CSV.Terminator) == 0 {
+		return common.ErrInvalidConfig.GenWithStack(
+			`mydumper.strict-format can not be used with empty mydumper.csv.terminator. Please set mydumper.csv.terminator to a non-empty value like "\r\n"`)
+	}
+
 	for _, rule := range m.FileRouters {
 		if filepath.IsAbs(rule.Path) {
 			relPath, err := filepath.Rel(m.SourceDir, rule.Path)

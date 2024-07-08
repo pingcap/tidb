@@ -933,11 +933,13 @@ func (alloc *allocator) alloc4Signed(ctx context.Context, n uint64, increment, o
 		}
 		alloc.base, alloc.end = newBase, newEnd
 	}
-	logutil.Logger(context.TODO()).Debug("alloc N signed ID",
-		zap.Uint64("from ID", uint64(alloc.base)),
-		zap.Uint64("to ID", uint64(alloc.base+n1)),
-		zap.Int64("table ID", alloc.tbID),
-		zap.Int64("database ID", alloc.dbID))
+	if logutil.BgLogger().Core().Enabled(zap.DebugLevel) {
+		logutil.BgLogger().Debug("alloc N signed ID",
+			zap.Uint64("from ID", uint64(alloc.base)),
+			zap.Uint64("to ID", uint64(alloc.base+n1)),
+			zap.Int64("table ID", alloc.tbID),
+			zap.Int64("database ID", alloc.dbID))
+	}
 	mini = alloc.base
 	alloc.base += n1
 	return mini, alloc.base, nil

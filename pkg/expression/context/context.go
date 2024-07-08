@@ -53,6 +53,7 @@ func (a *SimplePlanColumnIDAllocator) AllocPlanColumnID() int64 {
 // EvalContext is used to evaluate an expression
 type EvalContext interface {
 	contextutil.WarnHandler
+	ParamValues
 	// CtxID indicates the id of the context.
 	CtxID() uint64
 	// SQLMode returns the sql mode
@@ -112,6 +113,9 @@ type BuildContext interface {
 	// in most cases except for the method `isNullRejected` in planner.
 	// See the comments for `isNullRejected` in planner for more details.
 	IsInNullRejectCheck() bool
+	// IsConstantPropagateCheck returns the flag to indicate whether the expression is in constant propagate check.
+	// It should be true only when we are doing constant propagation in rule_predicate_push_down.
+	IsConstantPropagateCheck() bool
 	// ConnectionID indicates the connection ID of the current session.
 	// If the context is not in a session, it should return 0.
 	ConnectionID() uint64
@@ -141,6 +145,80 @@ func WithNullRejectCheck(ctx ExprContext) *NullRejectCheckExprContext {
 // IsInNullRejectCheck always returns true for `NullRejectCheckExprContext`
 func (ctx *NullRejectCheckExprContext) IsInNullRejectCheck() bool {
 	return true
+}
+
+// ConstantPropagateCheckContext is a wrapper to return true for `IsConstantPropagateCheck`.
+type ConstantPropagateCheckContext struct {
+	ExprContext
+}
+
+// WithConstantPropagateCheck returns a new `ConstantPropagateCheckContext` with the given `ExprContext`.
+func WithConstantPropagateCheck(ctx ExprContext) *ConstantPropagateCheckContext {
+	return &ConstantPropagateCheckContext{ExprContext: ctx}
+}
+
+// IsConstantPropagateCheck always returns true for `ConstantPropagateCheckContext`
+func (ctx *ConstantPropagateCheckContext) IsConstantPropagateCheck() bool {
+	return true
+}
+
+type innerOverrideEvalContext struct {
+	EvalContext
+	typeCtx types.Context
+	errCtx  errctx.Context
+}
+
+// TypeCtx implements EvalContext.TypeCtx
+func (ctx *innerOverrideEvalContext) TypeCtx() types.Context {
+	return ctx.typeCtx
+}
+
+// ErrCtx implements EvalContext.GetEvalCtx
+func (ctx *innerOverrideEvalContext) ErrCtx() errctx.Context {
+	return ctx.errCtx
+}
+
+type innerOverrideBuildContext struct {
+	BuildContext
+	evalCtx EvalContext
+}
+
+// GetEvalCtx implements BuildContext.GetEvalCtx
+func (ctx *innerOverrideBuildContext) GetEvalCtx() EvalContext {
+	return ctx.evalCtx
+}
+
+// CtxWithHandleTruncateErrLevel returns a new BuildContext with the specified level for handling truncate error.
+func CtxWithHandleTruncateErrLevel(ctx BuildContext, level errctx.Level) BuildContext {
+	truncateAsWarnings, ignoreTruncate := false, false
+	switch level {
+	case errctx.LevelWarn:
+		truncateAsWarnings = true
+	case errctx.LevelIgnore:
+		ignoreTruncate = true
+	default:
+	}
+
+	evalCtx := ctx.GetEvalCtx()
+	tc, ec := evalCtx.TypeCtx(), evalCtx.ErrCtx()
+
+	flags := tc.Flags().
+		WithTruncateAsWarning(truncateAsWarnings).
+		WithIgnoreTruncateErr(ignoreTruncate)
+
+	if tc.Flags() == flags && ec.LevelForGroup(errctx.ErrGroupTruncate) == level {
+		// We do not need to create a new context if the flags and level are the same.
+		return ctx
+	}
+
+	return &innerOverrideBuildContext{
+		BuildContext: ctx,
+		evalCtx: &innerOverrideEvalContext{
+			EvalContext: evalCtx,
+			typeCtx:     tc.WithFlags(flags),
+			errCtx:      ec.WithErrGroupLevel(errctx.ErrGroupTruncate, level),
+		},
+	}
 }
 
 // AssertLocationWithSessionVars asserts the location in the context and session variables are the same.

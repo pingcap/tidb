@@ -43,7 +43,10 @@ func BenchmarkExtractDatumByOffsets(b *testing.B) {
 	require.NoError(b, err)
 	tblInfo := tbl.Meta()
 	idxInfo := tblInfo.FindIndexByName("idx")
-	copCtx, err := copr.NewCopContextSingleIndex(tblInfo, idxInfo, tk.Session(), "")
+	sctx := tk.Session()
+	copCtx, err := ddl.NewReorgCopContext(store, ddl.NewDDLReorgMeta(sctx), tblInfo, []*model.IndexInfo{idxInfo}, "")
+	require.NoError(b, err)
+	require.IsType(b, copCtx, &copr.CopContextSingleIndex{})
 	require.NoError(b, err)
 	startKey := tbl.RecordPrefix()
 	endKey := startKey.PrefixNext()
@@ -62,7 +65,7 @@ func BenchmarkExtractDatumByOffsets(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		ddl.ExtractDatumByOffsetsForTest(row, offsets, c.ExprColumnInfos, handleDataBuf)
+		ddl.ExtractDatumByOffsetsForTest(tk.Session().GetExprCtx().GetEvalCtx(), row, offsets, c.ExprColumnInfos, handleDataBuf)
 	}
 }
 

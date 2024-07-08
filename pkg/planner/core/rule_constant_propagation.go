@@ -86,13 +86,6 @@ func (*constantPropagationSolver) name() string {
 	return "constant_propagation"
 }
 
-// ConstantPropagation implements the LogicalPlan interface.
-func (*baseLogicalPlan) ConstantPropagation(_ base.LogicalPlan, _ int, _ *optimizetrace.LogicalOptimizeOp) (newRoot base.LogicalPlan) {
-	// Only LogicalJoin can apply constant propagation
-	// Other Logical plan do nothing
-	return nil
-}
-
 // ConstantPropagation implemented the logic of constant propagation in From List
 // Query: select * from t, (select a, b from s where s.a>1) tmp where tmp.a=t.a
 // Origin logical plan:
@@ -162,10 +155,10 @@ func (logicalJoin *LogicalJoin) ConstantPropagation(parentPlan base.LogicalPlan,
 	}
 	var candidateConstantPredicates []expression.Expression
 	if getConstantPredicateFromLeft {
-		candidateConstantPredicates = logicalJoin.children[0].PullUpConstantPredicates()
+		candidateConstantPredicates = logicalJoin.Children()[0].PullUpConstantPredicates()
 	}
 	if getConstantPredicateFromRight {
-		candidateConstantPredicates = append(candidateConstantPredicates, logicalJoin.children[1].PullUpConstantPredicates()...)
+		candidateConstantPredicates = append(candidateConstantPredicates, logicalJoin.Children()[1].PullUpConstantPredicates()...)
 	}
 	if len(candidateConstantPredicates) == 0 {
 		return
@@ -175,66 +168,10 @@ func (logicalJoin *LogicalJoin) ConstantPropagation(parentPlan base.LogicalPlan,
 	return addCandidateSelection(logicalJoin, currentChildIdx, parentPlan, candidateConstantPredicates, opt)
 }
 
-// PullUpConstantPredicates implements the LogicalPlan interface.
-func (*baseLogicalPlan) PullUpConstantPredicates() []expression.Expression {
-	// Only LogicalProjection and LogicalSelection can get constant predicates
-	// Other Logical plan return nil
-	return nil
-}
-
-// PullUpConstantPredicates implements the LogicalPlan interface.
-func (selection *LogicalSelection) PullUpConstantPredicates() []expression.Expression {
-	var result []expression.Expression
-	for _, candidatePredicate := range selection.Conditions {
-		// the candidate predicate should be a constant and compare predicate
-		match := validCompareConstantPredicate(candidatePredicate)
-		if match {
-			result = append(result, candidatePredicate)
-		}
-	}
-	return result
-}
-
-// PullUpConstantPredicates implements LogicalPlan interface.
-func (projection *LogicalProjection) PullUpConstantPredicates() []expression.Expression {
-	// projection has no column expr
-	if !canProjectionBeEliminatedLoose(projection) {
-		return nil
-	}
-	candidateConstantPredicates := projection.children[0].PullUpConstantPredicates()
-	// replace predicate by projection expr
-	// candidate predicate : a=1
-	// projection: a as a'
-	// result predicate : a'=1
-	replace := make(map[string]*expression.Column)
-	for i, expr := range projection.Exprs {
-		replace[string(expr.HashCode())] = projection.Schema().Columns[i]
-	}
-	result := make([]expression.Expression, 0, len(candidateConstantPredicates))
-	for _, predicate := range candidateConstantPredicates {
-		// The column of predicate must exist in projection exprs
-		columns := expression.ExtractColumns(predicate)
-		// The number of columns in candidate predicate must be 1.
-		if len(columns) != 1 {
-			continue
-		}
-		if replace[string(columns[0].HashCode())] == nil {
-			// The column of predicate will not appear on the upper level
-			// This means that this predicate does not apply to the constant propagation optimization rule
-			// For example: select * from t, (select b from s where s.a=1) tmp where t.b=s.b
-			continue
-		}
-		clonePredicate := predicate.Clone()
-		ResolveExprAndReplace(clonePredicate, replace)
-		result = append(result, clonePredicate)
-	}
-	return result
-}
-
 // validComparePredicate checks if the predicate is an expression like [column '>'|'>='|'<'|'<='|'=' constant].
 // return param1: return true, if the predicate is a compare constant predicate.
 // return param2: return the column side of predicate.
-func validCompareConstantPredicate(candidatePredicate expression.Expression) bool {
+func validCompareConstantPredicate(ctx expression.EvalContext, candidatePredicate expression.Expression) bool {
 	scalarFunction, ok := candidatePredicate.(*expression.ScalarFunction)
 	if !ok {
 		return false
@@ -244,9 +181,9 @@ func validCompareConstantPredicate(candidatePredicate expression.Expression) boo
 		scalarFunction.FuncName.L != ast.EQ {
 		return false
 	}
-	column, _ := expression.ValidCompareConstantPredicateHelper(scalarFunction, true)
+	column, _ := expression.ValidCompareConstantPredicateHelper(ctx, scalarFunction, true)
 	if column == nil {
-		column, _ = expression.ValidCompareConstantPredicateHelper(scalarFunction, false)
+		column, _ = expression.ValidCompareConstantPredicateHelper(ctx, scalarFunction, false)
 	}
 	if column == nil {
 		return false

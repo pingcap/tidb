@@ -1446,6 +1446,10 @@ func init() {
 	// but the plan package cannot import the executor package because of the dependency cycle.
 	// So we assign a function implemented in the executor package to the plan package to avoid the dependency cycle.
 	plannercore.EvalSubqueryFirstRow = func(ctx context.Context, p base.PhysicalPlan, is infoschema.InfoSchema, pctx planctx.PlanContext) ([]types.Datum, error) {
+		if fixcontrol.GetBoolWithDefault(pctx.GetSessionVars().OptimizerFixControl, fixcontrol.Fix43817, false) {
+			return nil, errors.NewNoStackError("evaluate non-correlated sub-queries during optimization phase is not allowed by fix-control 43817")
+		}
+
 		defer func(begin time.Time) {
 			s := pctx.GetSessionVars()
 			s.StmtCtx.SetSkipPlanCache("query has uncorrelated sub-queries is un-cacheable")
@@ -1780,9 +1784,32 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	}
 	sc.SetTimeZone(vars.Location())
 	sc.TaskID = stmtctx.AllocateTaskID()
-	sc.CTEStorageMap = map[int]*CTEStorages{}
+	if sc.CTEStorageMap == nil {
+		sc.CTEStorageMap = map[int]*CTEStorages{}
+	} else {
+		clear(sc.CTEStorageMap.(map[int]*CTEStorages))
+	}
+	if sc.LockTableIDs == nil {
+		sc.LockTableIDs = make(map[int64]struct{})
+	} else {
+		clear(sc.LockTableIDs)
+	}
+	if sc.TableStats == nil {
+		sc.TableStats = make(map[int64]any)
+	} else {
+		clear(sc.TableStats)
+	}
+	if sc.MDLRelatedTableIDs == nil {
+		sc.MDLRelatedTableIDs = make(map[int64]struct{})
+	} else {
+		clear(sc.MDLRelatedTableIDs)
+	}
+	if sc.TblInfo2UnionScan == nil {
+		sc.TblInfo2UnionScan = make(map[*model.TableInfo]bool)
+	} else {
+		clear(sc.TblInfo2UnionScan)
+	}
 	sc.IsStaleness = false
-	sc.LockTableIDs = make(map[int64]struct{})
 	sc.EnableOptimizeTrace = false
 	sc.OptimizeTracer = nil
 	sc.OptimizerCETrace = nil
@@ -1814,8 +1841,6 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	vars.DiskTracker.Killer = &vars.SQLKiller
 	vars.SQLKiller.Reset()
 	vars.SQLKiller.ConnID = vars.ConnectionID
-	vars.StmtCtx.TableStats = make(map[int64]any)
-	sc.MDLRelatedTableIDs = make(map[int64]struct{})
 
 	isAnalyze := false
 	if execStmt, ok := s.(*ast.ExecuteStmt); ok {
@@ -2048,7 +2073,6 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 
 	sc.SetForcePlanCache(fixcontrol.GetBoolWithDefault(vars.OptimizerFixControl, fixcontrol.Fix49736, false))
 	sc.SetAlwaysWarnSkipCache(sc.InExplainStmt && sc.ExplainFormat == "plan_cache")
-	sc.TblInfo2UnionScan = make(map[*model.TableInfo]bool)
 	errCount, warnCount := vars.StmtCtx.NumErrorWarnings()
 	vars.SysErrorCount = errCount
 	vars.SysWarningCount = warnCount

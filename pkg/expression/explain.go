@@ -37,11 +37,11 @@ func (expr *ScalarFunction) explainInfo(ctx EvalContext, normalized bool) string
 	intest.Assert(normalized || ctx != nil)
 	var buffer bytes.Buffer
 	fmt.Fprintf(&buffer, "%s(", expr.FuncName.L)
-	// convert `in(_tidb_pid, -1)` to `in(_tidb_pid, dual)` whether normalized equals to true or false.
+	// convert `in(_tidb_tid, -1)` to `in(_tidb_tid, dual)` whether normalized equals to true or false.
 	if expr.FuncName.L == ast.In {
 		args := expr.GetArgs()
-		if len(args) == 2 && args[0].ExplainNormalizedInfo() == model.ExtraPartitionIdName.L && args[1].(*Constant).Value.GetInt64() == -1 {
-			buffer.WriteString(model.ExtraPartitionIdName.L + ", dual)")
+		if len(args) == 2 && strings.HasSuffix(args[0].ExplainNormalizedInfo(), model.ExtraPhysTblIdName.L) && args[1].(*Constant).Value.GetInt64() == -1 {
+			buffer.WriteString(args[0].ExplainNormalizedInfo() + ", dual)")
 			return buffer.String()
 		}
 	}
@@ -105,29 +105,34 @@ func (expr *ScalarFunction) ExplainNormalizedInfo4InList() string {
 }
 
 // ColumnExplainInfo returns the explained info for column.
-func (col *Column) ColumnExplainInfo(normalized bool) string {
+func (col *Column) ColumnExplainInfo(ctx ParamValues, normalized bool) string {
 	if normalized {
-		if col.OrigName != "" {
-			return col.OrigName
-		}
-		return "?"
+		return col.ColumnExplainInfoNormalized()
 	}
-	return col.String()
+	return col.StringWithCtx(ctx)
+}
+
+// ColumnExplainInfoNormalized returns the normalized explained info for column.
+func (col *Column) ColumnExplainInfoNormalized() string {
+	if col.OrigName != "" {
+		return col.OrigName
+	}
+	return "?"
 }
 
 // ExplainInfo implements the Expression interface.
 func (col *Column) ExplainInfo(ctx EvalContext) string {
-	return col.ColumnExplainInfo(false)
+	return col.ColumnExplainInfo(ctx, false)
 }
 
 // ExplainNormalizedInfo implements the Expression interface.
 func (col *Column) ExplainNormalizedInfo() string {
-	return col.ColumnExplainInfo(true)
+	return col.ColumnExplainInfoNormalized()
 }
 
 // ExplainNormalizedInfo4InList implements the Expression interface.
 func (col *Column) ExplainNormalizedInfo4InList() string {
-	return col.ColumnExplainInfo(true)
+	return col.ColumnExplainInfoNormalized()
 }
 
 // ExplainInfo implements the Expression interface.
@@ -161,19 +166,19 @@ func (expr *Constant) format(dt types.Datum) string {
 }
 
 // ExplainExpressionList generates explain information for a list of expressions.
-func ExplainExpressionList(exprs []Expression, schema *Schema) string {
+func ExplainExpressionList(ctx EvalContext, exprs []Expression, schema *Schema) string {
 	builder := &strings.Builder{}
 	for i, expr := range exprs {
 		switch expr.(type) {
 		case *Column, *CorrelatedColumn:
-			builder.WriteString(expr.String())
-			if expr.String() != schema.Columns[i].String() {
+			builder.WriteString(expr.StringWithCtx(ctx))
+			if expr.StringWithCtx(ctx) != schema.Columns[i].StringWithCtx(ctx) {
 				// simple col projected again with another uniqueID without origin name.
 				builder.WriteString("->")
-				builder.WriteString(schema.Columns[i].String())
+				builder.WriteString(schema.Columns[i].StringWithCtx(ctx))
 			}
 		case *Constant:
-			v := expr.String()
+			v := expr.StringWithCtx(ctx)
 			length := 64
 			if len(v) < length {
 				builder.WriteString(v)
@@ -182,11 +187,11 @@ func ExplainExpressionList(exprs []Expression, schema *Schema) string {
 				fmt.Fprintf(builder, "(len:%d)", len(v))
 			}
 			builder.WriteString("->")
-			builder.WriteString(schema.Columns[i].String())
+			builder.WriteString(schema.Columns[i].StringWithCtx(ctx))
 		default:
-			builder.WriteString(expr.String())
+			builder.WriteString(expr.StringWithCtx(ctx))
 			builder.WriteString("->")
-			builder.WriteString(schema.Columns[i].String())
+			builder.WriteString(schema.Columns[i].StringWithCtx(ctx))
 		}
 		if i+1 < len(exprs) {
 			builder.WriteString(", ")
