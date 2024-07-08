@@ -67,16 +67,6 @@ func (p *LogicalMemTable) DeriveStats(_ []*property.StatsInfo, selfSchema *expre
 	return p.StatsInfo(), nil
 }
 
-// DeriveStats implement LogicalPlan DeriveStats interface.
-func (p *LogicalShow) DeriveStats(_ []*property.StatsInfo, selfSchema *expression.Schema, _ []*expression.Schema, _ [][]*expression.Column) (*property.StatsInfo, error) {
-	if p.StatsInfo() != nil {
-		return p.StatsInfo(), nil
-	}
-	// A fake count, just to avoid panic now.
-	p.SetStats(getFakeStats(selfSchema))
-	return p.StatsInfo(), nil
-}
-
 func getFakeStats(schema *expression.Schema) *property.StatsInfo {
 	profile := &property.StatsInfo{
 		RowCount: 1,
