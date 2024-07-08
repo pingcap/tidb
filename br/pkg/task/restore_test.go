@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/stretchr/testify/require"
+<<<<<<< HEAD
 	pd "github.com/tikv/pd/client"
 	"google.golang.org/grpc/keepalive"
 )
@@ -28,6 +29,35 @@ import (
 func TestRestoreConfigAdjust(t *testing.T) {
 	cfg := &RestoreConfig{}
 	cfg.Adjust()
+=======
+	"github.com/tikv/client-go/v2/oracle"
+	pdhttp "github.com/tikv/pd/client/http"
+)
+
+const pb uint64 = 1024 * 1024 * 1024 * 1024 * 1024
+
+func TestPreCheckTableTiFlashReplicas(t *testing.T) {
+	mockStores := []*metapb.Store{
+		{
+			Id: 1,
+			Labels: []*metapb.StoreLabel{
+				{
+					Key:   "engine",
+					Value: "tiflash",
+				},
+			},
+		},
+		{
+			Id: 2,
+			Labels: []*metapb.StoreLabel{
+				{
+					Key:   "engine",
+					Value: "tiflash",
+				},
+			},
+		},
+	}
+>>>>>>> 088fec9f232 (br: pre-check TiKV disk space before restore task (#54385))
 
 	require.Equal(t, uint32(defaultRestoreConcurrency), cfg.Config.Concurrency)
 	require.Equal(t, defaultSwitchInterval, cfg.Config.SwitchModeInterval)
@@ -271,4 +301,39 @@ func mockBackupMeta(mockSchemas []*backuppb.Schema, mockFiles []*backuppb.File) 
 		Files:   mockFiles,
 		Schemas: mockSchemas,
 	}
+}
+
+func TestTikvUsage(t *testing.T) {
+	files := []*backuppb.File{
+		{Name: "F1", Size_: 1 * pb},
+		{Name: "F2", Size_: 2 * pb},
+		{Name: "F3", Size_: 3 * pb},
+		{Name: "F4", Size_: 4 * pb},
+		{Name: "F5", Size_: 5 * pb},
+	}
+	replica := uint64(3)
+	storeCnt := 6
+	total := uint64(0)
+	for _, f := range files {
+		total += f.GetSize_()
+	}
+	ret := task.EstimateTikvUsage(files, replica, storeCnt)
+	require.Equal(t, total*replica/uint64(storeCnt), ret)
+}
+
+func TestTiflashUsage(t *testing.T) {
+	tables := []*metautil.Table{
+		{TiFlashReplicas: 0, Files: []*backuppb.File{{Size_: 1 * pb}}},
+		{TiFlashReplicas: 1, Files: []*backuppb.File{{Size_: 2 * pb}}},
+		{TiFlashReplicas: 2, Files: []*backuppb.File{{Size_: 3 * pb}}},
+	}
+
+	storeCnt := 3
+	ret := task.EstimateTiflashUsage(tables, storeCnt)
+	require.Equal(t, 8*pb/3, ret)
+}
+
+func TestCheckTikvSpace(t *testing.T) {
+	store := pdhttp.StoreInfo{Store: pdhttp.MetaStore{ID: 1}, Status: pdhttp.StoreStatus{Available: "500PB"}}
+	require.NoError(t, task.CheckStoreSpace(400*pb, &store))
 }

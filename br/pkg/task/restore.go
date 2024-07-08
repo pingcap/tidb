@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/docker/go-units"
 	"github.com/google/uuid"
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
@@ -31,10 +32,20 @@ import (
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/util"
+<<<<<<< HEAD
+=======
+	"github.com/pingcap/tidb/pkg/util/collate"
+	"github.com/pingcap/tidb/pkg/util/engine"
+>>>>>>> 088fec9f232 (br: pre-check TiKV disk space before restore task (#54385))
 	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 	"github.com/tikv/client-go/v2/tikv"
+<<<<<<< HEAD
+=======
+	pd "github.com/tikv/pd/client"
+	"github.com/tikv/pd/client/http"
+>>>>>>> 088fec9f232 (br: pre-check TiKV disk space before restore task (#54385))
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
@@ -90,6 +101,7 @@ const (
 	defaultFlagDdlBatchSize   = 128
 	resetSpeedLimitRetryTimes = 3
 	maxRestoreBatchSizeLimit  = 10240
+	pb                        = 1024 * 1024 * 1024 * 1024 * 1024
 )
 
 const (
@@ -785,6 +797,12 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		return errors.Annotate(berrors.ErrRestoreInvalidBackup, "contain tables but no databases")
 	}
 
+	if cfg.CheckRequirements {
+		if err := checkDiskSpace(ctx, mgr, files, tables); err != nil {
+			return errors.Trace(err)
+		}
+	}
+
 	archiveSize := reader.ArchiveSize(ctx, files)
 	g.Record(summary.RestoreDataSize, archiveSize)
 	//restore from tidb will fetch a general Size issue https://github.com/pingcap/tidb/issues/27247
@@ -1130,6 +1148,187 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	return nil
 }
 
+<<<<<<< HEAD
+=======
+func getMaxReplica(ctx context.Context, mgr *conn.Mgr) (cnt uint64, err error) {
+	var resp map[string]any
+	err = utils.WithRetry(ctx, func() error {
+		resp, err = mgr.GetPDHTTPClient().GetReplicateConfig(ctx)
+		return err
+	}, utils.NewPDReqBackoffer())
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+
+	key := "max-replicas"
+	val, ok := resp[key]
+	if !ok {
+		return 0, errors.Errorf("key %s not found in response %v", key, resp)
+	}
+	return uint64(val.(float64)), nil
+}
+
+func getStores(ctx context.Context, mgr *conn.Mgr) (stores *http.StoresInfo, err error) {
+	err = utils.WithRetry(ctx, func() error {
+		stores, err = mgr.GetPDHTTPClient().GetStores(ctx)
+		return err
+	}, utils.NewPDReqBackoffer())
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return stores, nil
+}
+
+func EstimateTikvUsage(files []*backuppb.File, maxReplica uint64, storeCnt int) uint64 {
+	if storeCnt == 0 {
+		return 0
+	}
+	var totalSize uint64 = 0
+	for _, file := range files {
+		totalSize += file.GetSize_()
+	}
+	return totalSize * maxReplica / uint64(storeCnt)
+}
+
+func EstimateTiflashUsage(tables []*metautil.Table, storeCnt int) uint64 {
+	if storeCnt == 0 {
+		return 0
+	}
+	var tiflashTotal uint64 = 0
+	for _, table := range tables {
+		if table.TiFlashReplicas <= 0 {
+			continue
+		}
+		tableBytes := uint64(0)
+		for _, file := range table.Files {
+			tableBytes += file.GetSize_()
+		}
+		tiflashTotal += tableBytes * uint64(table.TiFlashReplicas)
+	}
+	return tiflashTotal / uint64(storeCnt)
+}
+
+func CheckStoreSpace(necessary uint64, store *http.StoreInfo) error {
+	// Be careful editing the message, it is used in DiskCheckBackoffer
+	available, err := units.RAMInBytes(store.Status.Available)
+	if err != nil {
+		return errors.Annotatef(berrors.ErrPDInvalidResponse, "store %d has invalid available space %s", store.Store.ID, store.Status.Available)
+	}
+	if available <= 0 {
+		return errors.Annotatef(berrors.ErrPDInvalidResponse, "store %d has invalid available space %s", store.Store.ID, store.Status.Available)
+	}
+	if uint64(available) < necessary {
+		return errors.Errorf("store %d has no space left on device, available %s, necessary %s",
+			store.Store.ID, units.BytesSize(float64(available)), units.BytesSize(float64(necessary)))
+	}
+	return nil
+}
+
+func checkDiskSpace(ctx context.Context, mgr *conn.Mgr, files []*backuppb.File, tables []*metautil.Table) error {
+	maxReplica, err := getMaxReplica(ctx, mgr)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	stores, err := getStores(ctx, mgr)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	tikvCnt, tiflashCnt := 0, 0
+	for i := range stores.Stores {
+		store := &stores.Stores[i]
+		if engine.IsTiFlashHTTPResp(&store.Store) {
+			tiflashCnt += 1
+			continue
+		}
+		tikvCnt += 1
+	}
+
+	// We won't need to restore more than 1800 PB data at one time, right?
+	preserve := func(base uint64, ratio float32) uint64 {
+		if base > 1000*pb {
+			return base
+		}
+		return base * uint64(ratio*10) / 10
+	}
+	tikvUsage := preserve(EstimateTikvUsage(files, maxReplica, tikvCnt), 1.1)
+	tiflashUsage := preserve(EstimateTiflashUsage(tables, tiflashCnt), 1.1)
+
+	err = utils.WithRetry(ctx, func() error {
+		stores, err = getStores(ctx, mgr)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		for _, store := range stores.Stores {
+			if engine.IsTiFlashHTTPResp(&store.Store) {
+				if err := CheckStoreSpace(tiflashUsage, &store); err != nil {
+					return errors.Trace(err)
+				}
+				continue
+			}
+			if err := CheckStoreSpace(tikvUsage, &store); err != nil {
+				return errors.Trace(err)
+			}
+		}
+		return nil
+	}, utils.NewDiskCheckBackoffer())
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return nil
+}
+
+// Exhaust drains all remaining errors in the channel, into a slice of errors.
+func Exhaust(ec <-chan error) []error {
+	out := make([]error, 0, len(ec))
+	for {
+		select {
+		case err := <-ec:
+			out = append(out, err)
+		default:
+			// errCh will NEVER be closed(ya see, it has multi sender-part),
+			// so we just consume the current backlog of this channel, then return.
+			return out
+		}
+	}
+}
+
+// EstimateRangeSize estimates the total range count by file.
+func EstimateRangeSize(files []*backuppb.File) int {
+	result := 0
+	for _, f := range files {
+		if strings.HasSuffix(f.GetName(), "_write.sst") {
+			result++
+		}
+	}
+	return result
+}
+
+// MapTableToFiles makes a map that mapping table ID to its backup files.
+// aware that one file can and only can hold one table.
+func MapTableToFiles(files []*backuppb.File) map[int64][]*backuppb.File {
+	result := map[int64][]*backuppb.File{}
+	for _, file := range files {
+		tableID := tablecodec.DecodeTableID(file.GetStartKey())
+		tableEndID := tablecodec.DecodeTableID(file.GetEndKey())
+		if tableID != tableEndID {
+			log.Panic("key range spread between many files.",
+				zap.String("file name", file.Name),
+				logutil.Key("startKey", file.StartKey),
+				logutil.Key("endKey", file.EndKey))
+		}
+		if tableID == 0 {
+			log.Panic("invalid table key of file",
+				zap.String("file name", file.Name),
+				logutil.Key("startKey", file.StartKey),
+				logutil.Key("endKey", file.EndKey))
+		}
+		result[tableID] = append(result[tableID], file)
+	}
+	return result
+}
+
+>>>>>>> 088fec9f232 (br: pre-check TiKV disk space before restore task (#54385))
 // dropToBlackhole drop all incoming tables into black hole,
 // i.e. don't execute checksum, just increase the process anyhow.
 func dropToBlackhole(
