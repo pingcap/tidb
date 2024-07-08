@@ -2317,7 +2317,7 @@ func (e *executor) AddTablePartitions(ctx sessionctx.Context, ident ast.Ident, s
 			syntacticStart := strings.Index(query, syntacticSugar)
 			if syntacticStart == -1 {
 				logutil.DDLLogger().Error("Can't find related PARTITION definition in prepare stmt",
-					zap.String("PARTITION defiition", syntacticSugar), zap.String("prepare stmt", query))
+					zap.String("PARTITION definition", syntacticSugar), zap.String("prepare stmt", query))
 				return errors.Errorf("Can't find related PARTITION definition in PREPARE STMT")
 			}
 			newQuery := query[:syntacticStart] + "ADD PARTITION (" + buf.String() + ")" + query[syntacticStart+len(syntacticSugar):]

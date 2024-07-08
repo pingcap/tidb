@@ -666,7 +666,7 @@ func rewritePartitionQueryString(ctx sessionctx.Context, s *ast.PartitionOptions
 			syntacticStart := strings.Index(query, syntacticSugar)
 			if syntacticStart == -1 {
 				logutil.DDLLogger().Error("Can't find INTERVAL definition in prepare stmt",
-					zap.String("INTERVAL defiition", syntacticSugar), zap.String("prepare stmt", query))
+					zap.String("INTERVAL definition", syntacticSugar), zap.String("prepare stmt", query))
 				return errors.Errorf("Can't find INTERVAL definition in PREPARE STMT")
 			}
 			newQuery := query[:syntacticStart] + "(" + buf.String() + ")" + query[syntacticStart+len(syntacticSugar):]
