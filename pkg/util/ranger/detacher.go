@@ -183,8 +183,12 @@ func getPotentialEqOrInColOffset(sctx *rangerctx.RangerContext, expr expression.
 			}
 		}
 	case ast.IsNull:
-		if _, ok := f.GetArgs()[0].(*expression.Column); ok {
-			return 0
+		if c, ok := f.GetArgs()[0].(*expression.Column); ok {
+			for i, col := range cols {
+				if col.EqualColumn(c) {
+					return i
+				}
+			}
 		}
 	}
 	return -1
@@ -648,7 +652,8 @@ func allEqOrIn(expr expression.Expression) bool {
 func extractValueInfo(expr expression.Expression) *valueInfo {
 	if f, ok := expr.(*expression.ScalarFunction); ok {
 		if f.FuncName.L == ast.IsNull {
-			return &valueInfo{mutable: false}
+			var value = types.NewDatum(nil)
+			return &valueInfo{&value, false}
 		}
 		if f.FuncName.L == ast.EQ || f.FuncName.L == ast.NullEQ {
 			getValueInfo := func(c *expression.Constant) *valueInfo {
