@@ -967,15 +967,6 @@ func (p *PhysicalExchangeReceiver) ExplainInfo() (res string) {
 	return res
 }
 
-// ExplainInfo implements Plan interface.
-func (p *LogicalUnionScan) ExplainInfo() string {
-	buffer := bytes.NewBufferString("")
-	fmt.Fprintf(buffer, "conds:%s",
-		expression.SortedExplainExpressionList(p.SCtx().GetExprCtx().GetEvalCtx(), p.conditions))
-	fmt.Fprintf(buffer, ", handle:%s", p.handleCols)
-	return buffer.String()
-}
-
 func explainByItems(ctx expression.EvalContext, buffer *bytes.Buffer, byItems []*util.ByItems) *bytes.Buffer {
 	for i, item := range byItems {
 		if item.Desc {
