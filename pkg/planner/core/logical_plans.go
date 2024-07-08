@@ -319,14 +319,6 @@ func (s *ShowContents) MemoryUsage() (sum int64) {
 	return
 }
 
-// LogicalShow represents a show plan.
-type LogicalShow struct {
-	logicalop.LogicalSchemaProducer
-	ShowContents
-
-	Extractor base.ShowPredicateExtractor
-}
-
 // LogicalShowDDLJobs is for showing DDL job list.
 type LogicalShowDDLJobs struct {
 	logicalop.LogicalSchemaProducer

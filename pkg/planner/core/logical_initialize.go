@@ -44,12 +44,6 @@ func (p LogicalExpand) Init(ctx base.PlanContext, offset int) *LogicalExpand {
 	return &p
 }
 
-// Init initializes LogicalShow.
-func (p LogicalShow) Init(ctx base.PlanContext) *LogicalShow {
-	p.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(ctx, plancodec.TypeShow, &p, 0)
-	return &p
-}
-
 // Init initializes LogicalShowDDLJobs.
 func (p LogicalShowDDLJobs) Init(ctx base.PlanContext) *LogicalShowDDLJobs {
 	p.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(ctx, plancodec.TypeShowDDLJobs, &p, 0)
