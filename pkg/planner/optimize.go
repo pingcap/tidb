@@ -18,7 +18,6 @@ import (
 	"context"
 	"math"
 	"math/rand"
-	"slices"
 	"sync"
 	"time"
 
@@ -39,7 +38,6 @@ import (
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
-	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/hint"
@@ -614,7 +612,13 @@ func hypoIndexChecker(is infoschema.InfoSchema) func(db, tbl model.CIStr, cols .
 			return errors.NewNoStackErrorf("table '%v.%v' doesn't exist", db, tbl)
 		}
 		for _, col := range cols {
-			if !slices.ContainsFunc(t.Cols(), func(c *table.Column) bool { return c.Name.L == col.L }) {
+			found := false
+			for _, tblCol := range t.Cols() {
+				if tblCol.Name.L == col.L {
+					found = true
+				}
+			}
+			if !found {
 				return errors.NewNoStackErrorf("can't find column %v in table %v.%v", col, db, tbl)
 			}
 		}
