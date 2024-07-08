@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/model"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	fd "github.com/pingcap/tidb/pkg/planner/funcdep"
@@ -53,6 +52,13 @@ var (
 	_ base.LogicalPlan = &LogicalLimit{}
 	_ base.LogicalPlan = &LogicalWindow{}
 	_ base.LogicalPlan = &LogicalExpand{}
+	_ base.LogicalPlan = &LogicalUnionScan{}
+	_ base.LogicalPlan = &LogicalMemTable{}
+	_ base.LogicalPlan = &LogicalShow{}
+	_ base.LogicalPlan = &LogicalShowDDLJobs{}
+	_ base.LogicalPlan = &LogicalCTE{}
+	_ base.LogicalPlan = &LogicalCTETable{}
+	_ base.LogicalPlan = &LogicalSequence{}
 )
 
 func extractNotNullFromConds(conditions []expression.Expression, p base.LogicalPlan) intset.FastIntSet {
@@ -148,62 +154,6 @@ func extractEquivalenceCols(conditions []expression.Expression, sctx base.PlanCo
 		equivUniqueIDs = append(equivUniqueIDs, []intset.FastIntSet{intset.NewFastIntSet(lhsUniqueID), intset.NewFastIntSet(rhsUniqueID)})
 	}
 	return equivUniqueIDs
-}
-
-// LogicalApply gets one row from outer executor and gets one row from inner executor according to outer row.
-type LogicalApply struct {
-	LogicalJoin
-
-	CorCols []*expression.CorrelatedColumn
-	// NoDecorrelate is from /*+ no_decorrelate() */ hint.
-	NoDecorrelate bool
-}
-
-// ExtractCorrelatedCols implements LogicalPlan interface.
-func (la *LogicalApply) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
-	corCols := la.LogicalJoin.ExtractCorrelatedCols()
-	for i := len(corCols) - 1; i >= 0; i-- {
-		if la.Children()[0].Schema().Contains(&corCols[i].Column) {
-			corCols = append(corCols[:i], corCols[i+1:]...)
-		}
-	}
-	return corCols
-}
-
-// ExtractFD implements the LogicalPlan interface.
-func (la *LogicalApply) ExtractFD() *fd.FDSet {
-	innerPlan := la.Children()[1]
-	// build the join correlated equal condition for apply join, this equal condition is used for deriving the transitive FD between outer and inner side.
-	correlatedCols := coreusage.ExtractCorrelatedCols4LogicalPlan(innerPlan)
-	deduplicateCorrelatedCols := make(map[int64]*expression.CorrelatedColumn)
-	for _, cc := range correlatedCols {
-		if _, ok := deduplicateCorrelatedCols[cc.UniqueID]; !ok {
-			deduplicateCorrelatedCols[cc.UniqueID] = cc
-		}
-	}
-	eqCond := make([]expression.Expression, 0, 4)
-	// for case like select (select t1.a from t2) from t1. <t1.a> will be assigned with new UniqueID after sub query projection is built.
-	// we should distinguish them out, building the equivalence relationship from inner <t1.a> == outer <t1.a> in the apply-join for FD derivation.
-	for _, cc := range deduplicateCorrelatedCols {
-		// for every correlated column, find the connection with the inner newly built column.
-		for _, col := range innerPlan.Schema().Columns {
-			if cc.UniqueID == col.CorrelatedColUniqueID {
-				ccc := &cc.Column
-				cond := expression.NewFunctionInternal(la.SCtx().GetExprCtx(), ast.EQ, types.NewFieldType(mysql.TypeTiny), ccc, col)
-				eqCond = append(eqCond, cond.(*expression.ScalarFunction))
-			}
-		}
-	}
-	switch la.JoinType {
-	case InnerJoin:
-		return la.extractFDForInnerJoin(eqCond)
-	case LeftOuterJoin, RightOuterJoin:
-		return la.extractFDForOuterJoin(eqCond)
-	case SemiJoin:
-		return la.extractFDForSemiJoin(eqCond)
-	default:
-		return &fd.FDSet{HashCodeToUniqueID: make(map[string]int)}
-	}
 }
 
 // LogicalMemTable represents a memory table or virtual table
