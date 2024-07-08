@@ -529,9 +529,9 @@ func NewJoinProbe(ctx *HashJoinCtxV2, workID uint, joinType core.JoinType, keyIn
 	case core.InnerJoin:
 		return &innerJoinProbe{base}
 	case core.LeftOuterJoin:
-		return &leftOuterJoinProbe{baseJoinProbe: base}
+		return &leftOuterJoinProbe{baseOuterJoinProbe: baseOuterJoinProbe{baseJoinProbe: base, isLeftOuterJoinProbe: true, isOuterSideBuild: !rightAsBuildSide}}
 	case core.RightOuterJoin:
-		return &rightOuterJoinProbe{baseJoinProbe: base}
+		return &rightOuterJoinProbe{baseOuterJoinProbe: baseOuterJoinProbe{baseJoinProbe: base, isLeftOuterJoinProbe: false, isOuterSideBuild: rightAsBuildSide}}
 	default:
 		panic("unsupported join type")
 	}
