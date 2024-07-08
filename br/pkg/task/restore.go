@@ -948,10 +948,6 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		return errors.Trace(err)
 	}
 
-	var newTS uint64
-	if client.IsIncremental() {
-		newTS = restoreTS
-	}
 	ddlJobs := FilterDDLJobs(client.GetDDLJobs(), tables)
 	ddlJobs = FilterDDLJobByRules(ddlJobs, DDLJobBlockListRule)
 
@@ -1010,6 +1006,17 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		return errors.Trace(err)
 	}
 
+	var newTS uint64
+	if client.IsIncremental() {
+		// we need to get the new ts after execDDL
+		// or backfilled data in upstream may not be covered by
+		// the new ts.
+		// see https://github.com/pingcap/tidb/issues/54426
+		newTS, err = restore.GetTSWithRetry(ctx, mgr.GetPDClient())
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
 	// We make bigger errCh so we won't block on multi-part failed.
 	errCh := make(chan error, 32)
 
