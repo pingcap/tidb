@@ -333,10 +333,10 @@ func (s *statsReadWriter) LoadTablePartitionStats(tableInfo *model.TableInfo, pa
 }
 
 // LoadNeededHistograms will load histograms for those needed columns/indices.
-func (s *statsReadWriter) LoadNeededHistograms() (err error) {
+func (s *statsReadWriter) LoadNeededHistograms(is infoschema.InfoSchema) (err error) {
 	err = util.CallWithSCtx(s.statsHandler.SPool(), func(sctx sessionctx.Context) error {
 		loadFMSketch := config.GetGlobalConfig().Performance.EnableLoadFMSketch
-		return LoadNeededHistograms(sctx, s.statsHandler, loadFMSketch)
+		return LoadNeededHistograms(sctx, is, s.statsHandler, loadFMSketch)
 	}, util.FlagWrapTxn)
 	return err
 }

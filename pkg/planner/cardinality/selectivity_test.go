@@ -63,7 +63,7 @@ func TestCollationColumnEstimate(t *testing.T) {
 	require.Nil(t, h.DumpStatsDeltaToKV(true))
 	tk.MustExec("analyze table t all columns")
 	tk.MustExec("explain select * from t where a = 'aaa'")
-	require.Nil(t, h.LoadNeededHistograms())
+	require.Nil(t, h.LoadNeededHistograms(dom.InfoSchema()))
 	var (
 		input  []string
 		output [][]string
@@ -345,7 +345,7 @@ func TestColumnIndexNullEstimation(t *testing.T) {
 	}
 	// Make sure column stats has been loaded.
 	testKit.MustExec(`explain select * from t where a is null`)
-	require.Nil(t, h.LoadNeededHistograms())
+	require.Nil(t, h.LoadNeededHistograms(dom.InfoSchema()))
 	for i := 5; i < len(input); i++ {
 		testdata.OnRecord(func() {
 			output[i] = testdata.ConvertRowsToStrings(testKit.MustQuery(input[i]).Rows())
@@ -582,7 +582,7 @@ func TestRangeStepOverflow(t *testing.T) {
 	tk.MustExec("analyze table t")
 	// Trigger the loading of column stats.
 	tk.MustQuery("select * from t where col between '8499-1-23 2:14:38' and '9961-7-23 18:35:26'").Check(testkit.Rows())
-	require.Nil(t, h.LoadNeededHistograms())
+	require.Nil(t, h.LoadNeededHistograms(dom.InfoSchema()))
 	// Must execute successfully after loading the column stats.
 	tk.MustQuery("select * from t where col between '8499-1-23 2:14:38' and '9961-7-23 18:35:26'").Check(testkit.Rows())
 }

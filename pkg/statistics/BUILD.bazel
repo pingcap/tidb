@@ -82,7 +82,7 @@ go_test(
     data = glob(["testdata/**"]),
     embed = [":statistics"],
     flaky = True,
-    shard_count = 38,
+    shard_count = 37,
     deps = [
         "//pkg/config",
         "//pkg/meta/model",
