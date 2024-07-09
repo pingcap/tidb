@@ -156,30 +156,6 @@ func extractEquivalenceCols(conditions []expression.Expression, sctx base.PlanCo
 	return equivUniqueIDs
 }
 
-// LogicalMemTable represents a memory table or virtual table
-// Some memory tables wants to take the ownership of some predications
-// e.g
-// SELECT * FROM cluster_log WHERE type='tikv' AND address='192.16.5.32'
-// Assume that the table `cluster_log` is a memory table, which is used
-// to retrieve logs from remote components. In the above situation we should
-// send log search request to the target TiKV (192.16.5.32) directly instead of
-// requesting all cluster components log search gRPC interface to retrieve
-// log message and filtering them in TiDB node.
-type LogicalMemTable struct {
-	logicalop.LogicalSchemaProducer
-
-	Extractor base.MemTablePredicateExtractor
-	DBName    model.CIStr
-	TableInfo *model.TableInfo
-	Columns   []*model.ColumnInfo
-	// QueryTimeRange is used to specify the time range for metrics summary tables and inspection tables
-	// e.g: select /*+ time_range('2020-02-02 12:10:00', '2020-02-02 13:00:00') */ from metrics_summary;
-	//      select /*+ time_range('2020-02-02 12:10:00', '2020-02-02 13:00:00') */ from metrics_summary_by_label;
-	//      select /*+ time_range('2020-02-02 12:10:00', '2020-02-02 13:00:00') */ from inspection_summary;
-	//      select /*+ time_range('2020-02-02 12:10:00', '2020-02-02 13:00:00') */ from inspection_result;
-	QueryTimeRange util.QueryTimeRange
-}
-
 // WindowFrame represents a window function frame.
 type WindowFrame struct {
 	Type  ast.FrameType

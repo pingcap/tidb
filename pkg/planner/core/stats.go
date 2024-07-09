@@ -48,25 +48,6 @@ func (p *basePhysicalPlan) StatsCount() float64 {
 	return p.StatsInfo().RowCount
 }
 
-// DeriveStats implement LogicalPlan DeriveStats interface.
-func (p *LogicalMemTable) DeriveStats(_ []*property.StatsInfo, selfSchema *expression.Schema, _ []*expression.Schema, _ [][]*expression.Column) (*property.StatsInfo, error) {
-	if p.StatsInfo() != nil {
-		return p.StatsInfo(), nil
-	}
-	statsTable := statistics.PseudoTable(p.TableInfo, false, false)
-	stats := &property.StatsInfo{
-		RowCount:     float64(statsTable.RealtimeCount),
-		ColNDVs:      make(map[int64]float64, len(p.TableInfo.Columns)),
-		HistColl:     statsTable.GenerateHistCollFromColumnInfo(p.TableInfo, p.Schema().Columns),
-		StatsVersion: statistics.PseudoVersion,
-	}
-	for _, col := range selfSchema.Columns {
-		stats.ColNDVs[col.UniqueID] = float64(statsTable.RealtimeCount)
-	}
-	p.SetStats(stats)
-	return p.StatsInfo(), nil
-}
-
 func getFakeStats(schema *expression.Schema) *property.StatsInfo {
 	profile := &property.StatsInfo{
 		RowCount: 1,

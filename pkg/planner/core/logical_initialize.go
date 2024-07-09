@@ -50,12 +50,6 @@ func (p LogicalShowDDLJobs) Init(ctx base.PlanContext) *LogicalShowDDLJobs {
 	return &p
 }
 
-// Init initializes LogicalMemTable.
-func (p LogicalMemTable) Init(ctx base.PlanContext, offset int) *LogicalMemTable {
-	p.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(ctx, plancodec.TypeMemTableScan, &p, offset)
-	return &p
-}
-
 // Init only assigns type and context.
 func (p LogicalCTE) Init(ctx base.PlanContext, offset int) *LogicalCTE {
 	p.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(ctx, plancodec.TypeCTE, &p, offset)

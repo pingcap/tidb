@@ -19,7 +19,6 @@ import (
 	"slices"
 
 	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
@@ -166,38 +165,6 @@ func (ds *DataSource) PruneColumns(parentUsedCols []*expression.Column, opt *opt
 		return proj, nil
 	}
 	return ds, nil
-}
-
-// PruneColumns implements base.LogicalPlan interface.
-func (p *LogicalMemTable) PruneColumns(parentUsedCols []*expression.Column, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, error) {
-	switch p.TableInfo.Name.O {
-	case infoschema.TableStatementsSummary,
-		infoschema.TableStatementsSummaryHistory,
-		infoschema.TableSlowQuery,
-		infoschema.ClusterTableStatementsSummary,
-		infoschema.ClusterTableStatementsSummaryHistory,
-		infoschema.ClusterTableSlowLog,
-		infoschema.TableTiDBTrx,
-		infoschema.ClusterTableTiDBTrx,
-		infoschema.TableDataLockWaits,
-		infoschema.TableDeadlocks,
-		infoschema.ClusterTableDeadlocks,
-		infoschema.TableTables:
-	default:
-		return p, nil
-	}
-	prunedColumns := make([]*expression.Column, 0)
-	used := expression.GetUsedList(p.SCtx().GetExprCtx().GetEvalCtx(), parentUsedCols, p.Schema())
-	for i := len(used) - 1; i >= 0; i-- {
-		if !used[i] && p.Schema().Len() > 1 {
-			prunedColumns = append(prunedColumns, p.Schema().Columns[i])
-			p.Schema().Columns = append(p.Schema().Columns[:i], p.Schema().Columns[i+1:]...)
-			p.SetOutputNames(append(p.OutputNames()[:i], p.OutputNames()[i+1:]...))
-			p.Columns = append(p.Columns[:i], p.Columns[i+1:]...)
-		}
-	}
-	logicaltrace.AppendColumnPruneTraceStep(p, prunedColumns, opt)
-	return p, nil
 }
 
 func (p *LogicalJoin) extractUsedCols(parentUsedCols []*expression.Column) (leftCols []*expression.Column, rightCols []*expression.Column) {
