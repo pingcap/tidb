@@ -268,15 +268,16 @@ type basePhysicalPlan struct {
 	TiFlashFineGrainedShuffleStreamCount uint64
 }
 
-func (p *basePhysicalPlan) cloneWithSelf(newSelf base.PhysicalPlan) (*basePhysicalPlan, error) {
+func (p *basePhysicalPlan) cloneWithSelf(newCtx base.PlanContext, newSelf base.PhysicalPlan) (*basePhysicalPlan, error) {
 	base := &basePhysicalPlan{
 		Plan:                                 p.Plan,
 		self:                                 newSelf,
 		TiFlashFineGrainedShuffleStreamCount: p.TiFlashFineGrainedShuffleStreamCount,
 		probeParents:                         p.probeParents,
 	}
+	base.SetSCtx(newCtx)
 	for _, child := range p.children {
-		cloned, err := child.Clone()
+		cloned, err := child.Clone(newCtx)
 		if err != nil {
 			return nil, err
 		}
@@ -292,7 +293,7 @@ func (p *basePhysicalPlan) cloneWithSelf(newSelf base.PhysicalPlan) (*basePhysic
 }
 
 // Clone implements op.PhysicalPlan interface.
-func (p *basePhysicalPlan) Clone() (base.PhysicalPlan, error) {
+func (p *basePhysicalPlan) Clone(base.PlanContext) (base.PhysicalPlan, error) {
 	return nil, errors.Errorf("%T doesn't support cloning", p.self)
 }
 

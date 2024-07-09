@@ -1946,7 +1946,7 @@ func (p *PhysicalHashAgg) adjust3StagePhaseAgg(partialAgg, finalAgg base.Physica
 	}
 	if len(groupingSets) == 0 {
 		// single distinct agg mode.
-		clonedAgg, err := finalAgg.Clone()
+		clonedAgg, err := finalAgg.Clone(p.SCtx())
 		if err != nil {
 			return nil, nil, nil, nil, err
 		}
@@ -2027,7 +2027,7 @@ func (p *PhysicalHashAgg) adjust3StagePhaseAgg(partialAgg, finalAgg base.Physica
 	attachPlan2Task(physicalExpand, mpp)
 
 	// having group sets
-	clonedAgg, err := finalAgg.Clone()
+	clonedAgg, err := finalAgg.Clone(p.SCtx())
 	if err != nil {
 		return nil, nil, nil, nil, err
 	}
