@@ -560,14 +560,14 @@ func LoadHistogram(sctx sessionctx.Context, tableID int64, isIndex int, histID i
 }
 
 // LoadNeededHistograms will load histograms for those needed columns/indices.
-func LoadNeededHistograms(sctx sessionctx.Context, is infoschema.InfoSchema, statsCache statstypes.StatsHandle, loadFMSketch bool) (err error) {
+func LoadNeededHistograms(sctx sessionctx.Context, is infoschema.InfoSchema, statsHandle statstypes.StatsHandle, loadFMSketch bool) (err error) {
 	items := asyncload.AsyncLoadHistogramNeededItems.AllItems()
 	for _, item := range items {
 		if !item.IsIndex {
-			err = loadNeededColumnHistograms(sctx, is, statsCache, item.TableItemID, loadFMSketch, item.FullLoad)
+			err = loadNeededColumnHistograms(sctx, is, statsHandle, item.TableItemID, loadFMSketch, item.FullLoad)
 		} else {
 			// Index is always full load.
-			err = loadNeededIndexHistograms(sctx, statsCache, item.TableItemID, loadFMSketch)
+			err = loadNeededIndexHistograms(sctx, is, statsHandle, item.TableItemID, loadFMSketch)
 		}
 		if err != nil {
 			return err
@@ -612,13 +612,14 @@ func loadNeededColumnHistograms(sctx sessionctx.Context, is infoschema.InfoSchem
 	if !ok {
 		return nil
 	}
+
 	var colInfo *model.ColumnInfo
 	_, loadNeeded, analyzed := tbl.ColumnIsLoadNeeded(col.ID, true)
 	if !loadNeeded || !analyzed {
 		asyncload.AsyncLoadHistogramNeededItems.Delete(col)
 		return nil
 	}
-	colInfo = tbl.ColAndIdxExistenceMap.GetCol(col.ID)
+	colInfo = tblInfo.Meta().GetColumnByID(col.ID)
 	hg, _, statsVer, _, err := HistMetaFromStorageWithHighPriority(sctx, &col, colInfo)
 	if hg == nil || err != nil {
 		asyncload.AsyncLoadHistogramNeededItems.Delete(col)
@@ -686,8 +687,8 @@ func loadNeededColumnHistograms(sctx sessionctx.Context, is infoschema.InfoSchem
 	return nil
 }
 
-func loadNeededIndexHistograms(sctx sessionctx.Context, statsCache statstypes.StatsCache, idx model.TableItemID, loadFMSketch bool) (err error) {
-	tbl, ok := statsCache.Get(idx.TableID)
+func loadNeededIndexHistograms(sctx sessionctx.Context, is infoschema.InfoSchema, statsHandle statstypes.StatsHandle, idx model.TableItemID, loadFMSketch bool) (err error) {
+	tbl, ok := statsHandle.Get(idx.TableID)
 	if !ok {
 		return nil
 	}
@@ -701,7 +702,11 @@ func loadNeededIndexHistograms(sctx sessionctx.Context, statsCache statstypes.St
 		asyncload.AsyncLoadHistogramNeededItems.Delete(idx)
 		return err
 	}
-	idxInfo := tbl.ColAndIdxExistenceMap.GetIndex(idx.ID)
+	tblInfo, ok := statsHandle.TableInfoByID(is, idx.TableID)
+	if !ok {
+		return nil
+	}
+	idxInfo := tblInfo.Meta().FindIndexByID(idx.ID)
 	hg, err := HistogramFromStorageWithPriority(sctx, idx.TableID, idx.ID, types.NewFieldType(mysql.TypeBlob), hgMeta.NDV, 1, hgMeta.LastUpdateVersion, hgMeta.NullCount, hgMeta.TotColSize, hgMeta.Correlation, kv.PriorityHigh)
 	if err != nil {
 		return errors.Trace(err)
@@ -723,7 +728,7 @@ func loadNeededIndexHistograms(sctx sessionctx.Context, statsCache statstypes.St
 		StatsLoadedStatus: statistics.NewStatsFullLoadStatus()}
 	lastAnalyzePos.Copy(&idxHist.LastAnalyzePos)
 
-	tbl, ok = statsCache.Get(idx.TableID)
+	tbl, ok = statsHandle.Get(idx.TableID)
 	if !ok {
 		return nil
 	}
@@ -733,7 +738,7 @@ func loadNeededIndexHistograms(sctx sessionctx.Context, statsCache statstypes.St
 	}
 	tbl.SetIdx(idx.ID, idxHist)
 	tbl.LastAnalyzeVersion = max(tbl.LastAnalyzeVersion, idxHist.LastUpdateVersion)
-	statsCache.UpdateStatsCache([]*statistics.Table{tbl}, nil)
+	statsHandle.UpdateStatsCache([]*statistics.Table{tbl}, nil)
 	if idx.IsSyncLoadFailed {
 		logutil.BgLogger().Warn("Hist for index should already be loaded as sync but not found.",
 			zap.Int64("table_id", idx.TableID),

@@ -320,7 +320,7 @@ func (s *statsSyncLoad) handleOneItemTask(task *statstypes.NeededItemTask) (err 
 		if index != nil {
 			wrapper.idxInfo = index.Info
 		} else {
-			wrapper.idxInfo = tbl.ColAndIdxExistenceMap.GetIndex(item.ID)
+			wrapper.idxInfo = tblInfo.Meta().FindIndexByID(item.ID)
 		}
 	} else {
 		col, loadNeeded, analyzed := tbl.ColumnIsLoadNeeded(item.ID, task.Item.FullLoad)
@@ -330,7 +330,7 @@ func (s *statsSyncLoad) handleOneItemTask(task *statstypes.NeededItemTask) (err 
 		if col != nil {
 			wrapper.colInfo = col.Info
 		} else {
-			wrapper.colInfo = tbl.ColAndIdxExistenceMap.GetCol(item.ID)
+			wrapper.colInfo = tblInfo.Meta().GetColumnByID(item.ID)
 		}
 		// If this column is not analyzed yet and we don't have it in memory.
 		// We create a fake one for the pseudo estimation.
