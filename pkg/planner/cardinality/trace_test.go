@@ -67,7 +67,7 @@ func TestTraceCE(t *testing.T) {
 		tk.MustExec(sql)
 	}
 	statsHandle := dom.StatsHandle()
-	err := statsHandle.LoadNeededHistograms()
+	err := statsHandle.LoadNeededHistograms(dom.InfoSchema())
 	require.NoError(t, err)
 
 	sctx := tk.Session().(sessionctx.Context)
@@ -184,7 +184,7 @@ func TestTraceDebugSelectivity(t *testing.T) {
 		sql := "explain " + tt
 		tk.MustExec(sql)
 	}
-	err := statsHandle.LoadNeededHistograms()
+	err := statsHandle.LoadNeededHistograms(dom.InfoSchema())
 	require.NoError(t, err)
 
 	sctx := tk.Session().(sessionctx.Context)
