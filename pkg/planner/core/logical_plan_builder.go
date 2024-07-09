@@ -5651,7 +5651,6 @@ type TblColPosInfo struct {
 	HandleCols util.HandleCols
 
 	IndexesForDelete          map[int64][]int
-	RefColPosOfColUnderModify int
 }
 
 // MemoryUsage return the memory usage of TblColPosInfo
@@ -5738,7 +5737,6 @@ func buildColumns2Handle(
 // This function records the following things:
 //  1. The position of the columns used by indexes in the DELETE's select's output.
 //  2. The row id's position in the output.
-//  3. The possible reference column of the column under MODIFY/CHANGE ddl job.
 func buildColPositionInfoForDelete(
 	names []*types.FieldName,
 	tblID2Handle map[int64][]util.HandleCols,
@@ -5813,15 +5811,7 @@ func buildSingleTableColPosInfoForDelete(
 		indexColMap[idx.Meta().ID] = colPos
 	}
 
-	refPosOfColUnderModify := -1
-	// Check whether there's any DDL not finished. And check whether the unfinished job is CHANGE/MODIFY COLUMN by checking its ChangeStateInfo.
-	// Currently we only support one CHANGE/MODIFY COLUMN job at a time. So we can just use the first element of deletableCols to check.
-	// It also only records the offset. So we need to transform it to the real position.
-	if len(deletableCols) > len(pubCols) && deletableCols[len(pubCols)].ChangeStateInfo != nil {
-		refPosOfColUnderModify = offsetMap[deletableCols[len(pubCols)].ChangeStateInfo.DependencyColumnOffset]
-	}
-
-	return TblColPosInfo{tblInfo.ID, offset, end, handleCol, indexColMap, refPosOfColUnderModify}, nil
+	return TblColPosInfo{tblInfo.ID, offset, end, handleCol, indexColMap}, nil
 }
 
 func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (base.Plan, error) {

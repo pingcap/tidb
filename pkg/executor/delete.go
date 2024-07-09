@@ -177,7 +177,6 @@ func (e *DeleteExec) fixHandlePosInfoForMultiDelete() {
 				idxCols[i] -= info.Start
 			}
 		}
-		info.RefColPosOfColUnderModify -= info.Start
 	}
 }
 
