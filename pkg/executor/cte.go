@@ -442,10 +442,15 @@ func (p *cteProducer) computeRecursivePart(ctx context.Context) (err error) {
 			iterNum++
 			failpoint.Inject("assertIterTableSpillToDisk", func(maxIter failpoint.Value) {
 				if iterNum > 0 && iterNum < uint64(maxIter.(int)) && err == nil {
+<<<<<<< HEAD
 					if p.iterInTbl.GetMemBytes() != 0 || p.iterInTbl.GetDiskBytes() == 0 ||
 						p.iterOutTbl.GetMemBytes() != 0 || p.iterOutTbl.GetDiskBytes() == 0 ||
 						p.resTbl.GetMemBytes() != 0 || p.resTbl.GetDiskBytes() == 0 {
 						p.logTbls(ctx, err, iterNum)
+=======
+					if p.iterInTbl.GetDiskBytes() == 0 && p.iterOutTbl.GetDiskBytes() == 0 && p.resTbl.GetDiskBytes() == 0 {
+						p.logTbls(ctx, err, iterNum, zapcore.InfoLevel)
+>>>>>>> 887637bc3b1 (executor: fix cte mem tracker failpoint condition again (#54523))
 						panic("assert row container spill disk failed")
 					}
 				}
