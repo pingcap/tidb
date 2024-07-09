@@ -351,7 +351,7 @@ func updateMetaTable(ctx context.Context, e *exec.BaseExecutor, id uint64, updat
 	args := make([]any, 0, len(updates))
 
 	for column, value := range updates {
-		setClauses = append(setClauses, fmt.Sprintf("%s = %%?", column))
+		setClauses = append(setClauses, fmt.Sprintf("%s = %%?", ColumnName(column)))
 		args = append(args, value)
 	}
 
