@@ -1500,38 +1500,6 @@ func (t *TableCommon) removeRowIndices(ctx table.MutateContext, h kv.Handle, rec
 	return nil
 }
 
-func (t *TableCommon) removeRowIndicesNew(
-	ctx table.MutateContext,
-	h kv.Handle,
-	rec []types.Datum,
-	fillIdxRowFunc func(i *model.IndexInfo, row, buffer []types.Datum) ([]types.Datum, error),
-) error {
-	txn, err := ctx.Txn(true)
-	if err != nil {
-		return err
-	}
-	for _, v := range t.DeletableIndices() {
-		if v.Meta().Primary && (t.Meta().IsCommonHandle || t.Meta().PKIsHandle) {
-			continue
-		}
-		vals, err := fillIdxRowFunc(v.Meta(), rec, nil)
-		if err != nil {
-			logutil.BgLogger().Info("remove row index failed", zap.Any("index", v.Meta()), zap.Uint64("txnStartTS", txn.StartTS()), zap.String("handle", h.String()), zap.Any("record", rec), zap.Error(err))
-			return err
-		}
-		if err = v.Delete(ctx, txn, vals, h); err != nil {
-			if v.Meta().State != model.StatePublic && kv.ErrNotExist.Equal(err) {
-				// If the index is not in public state, we may have not created the index,
-				// or already deleted the index, so skip ErrNotExist error.
-				logutil.BgLogger().Debug("row index not exists", zap.Any("index", v.Meta()), zap.Uint64("txnStartTS", txn.StartTS()), zap.String("handle", h.String()))
-				continue
-			}
-			return err
-		}
-	}
-	return nil
-}
-
 // removeRowIndex implements table.Table RemoveRowIndex interface.
 func (t *TableCommon) removeRowIndex(ctx table.MutateContext, h kv.Handle, vals []types.Datum, idx table.Index, txn kv.Transaction) error {
 	return idx.Delete(ctx, txn, vals, h)
