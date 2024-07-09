@@ -1411,7 +1411,7 @@ func TestInitStatsLite(t *testing.T) {
 	// async stats load
 	tk.MustExec("set @@tidb_stats_load_sync_wait = 0")
 	tk.MustExec("explain select * from t where b > 1")
-	require.NoError(t, h.LoadNeededHistograms())
+	require.NoError(t, h.LoadNeededHistograms(dom.InfoSchema()))
 	statsTbl2 := h.GetTableStats(tblInfo)
 	colBStats1 := statsTbl2.GetCol(colBID)
 	colCStats := statsTbl2.GetCol(colCID)
