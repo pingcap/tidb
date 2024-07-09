@@ -76,8 +76,12 @@ func newHashJoinSpillHelper(hashJoinExec *HashJoinV2Exec, probeFieldTypes []*typ
 	helper.probeFieldTypes = append(helper.probeFieldTypes, probeFieldTypes...)                     // row data
 	helper.hash = fnv.New64()
 	helper.rehashBuf = new(bytes.Buffer)
-	helper.memTracker = hashJoinExec.memTracker
-	helper.diskTracker = hashJoinExec.diskTracker
+
+	// hashJoinExec may be nil in test
+	if hashJoinExec != nil {
+		helper.memTracker = hashJoinExec.memTracker
+		helper.diskTracker = hashJoinExec.diskTracker
+	}
 	return helper
 }
 
