@@ -90,7 +90,8 @@ type Bucket struct {
 	// Count is the number of items till this bucket.
 	Count int64
 	// Repeat is the number of repeats of the upper bound of the bucket.
-	// It used to estimate the row count of value equal to the upper bound of the bucket.(Very similar to TopN)
+	// For example, [x, y] the repeat is how many y appears in the data.
+	// It is used to estimate the row count of value equal to the upper bound of the bucket.(Very similar to TopN)
 	Repeat int64
 	// NDV is the number of distinct values in the bucket.
 	NDV int64
