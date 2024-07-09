@@ -323,12 +323,13 @@ func (s *statsSyncLoad) handleOneItemTask(task *statstypes.NeededItemTask) (err 
 		if col != nil {
 			wrapper.colInfo = col.Info
 		} else if colInfo := tbl.ColAndIdxExistenceMap.GetCol(item.ID); colInfo != nil {
-			wrapper.colInfo = tbl.ColAndIdxExistenceMap.GetCol(item.ID)
+			wrapper.colInfo = colInfo
 		} else {
+			// Now, we cannot init the column info in the ColAndIdxExistenceMap when to disable lite-init-stats.
+			// so we have to get the column info from the domain.
 			is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
 			tblInfo, ok := s.statsHandle.TableInfoByID(is, item.TableID)
 			if !ok {
-				fmt.Println("fuck")
 				return nil
 			}
 			wrapper.colInfo = tblInfo.Meta().GetColumnByID(item.ID)
@@ -557,6 +558,8 @@ func (s *statsSyncLoad) updateCachedItem(item model.TableItemID, colHist *statis
 		// If the column is analyzed we refresh the map for the possible change.
 		if colHist.StatsAvailable() {
 			tbl.ColAndIdxExistenceMap.InsertCol(item.ID, colHist.Info, true)
+		} else {
+			tbl.ColAndIdxExistenceMap.InsertCol(item.ID, colHist.Info, false)
 		}
 		// All the objects shares the same stats version. Update it here.
 		if colHist.StatsVer != statistics.Version0 {
