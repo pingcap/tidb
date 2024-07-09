@@ -26,7 +26,6 @@ import (
 	fd "github.com/pingcap/tidb/pkg/planner/funcdep"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
-	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/intset"
@@ -345,18 +344,6 @@ func (cc *CTEClass) MemoryUsage() (sum int64) {
 	return
 }
 
-// LogicalCTE is for CTE.
-type LogicalCTE struct {
-	logicalop.LogicalSchemaProducer
-
-	cte       *CTEClass
-	cteAsName model.CIStr
-	cteName   model.CIStr
-	seedStat  *property.StatsInfo
-
-	onlyUsedAsStorage bool
-}
-
 // LogicalCTETable is for CTE table
 type LogicalCTETable struct {
 	logicalop.LogicalSchemaProducer
@@ -367,15 +354,6 @@ type LogicalCTETable struct {
 
 	// seedSchema is only used in columnStatsUsageCollector to get column mapping
 	seedSchema *expression.Schema
-}
-
-// ExtractCorrelatedCols implements LogicalPlan interface.
-func (p *LogicalCTE) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
-	corCols := coreusage.ExtractCorrelatedCols4LogicalPlan(p.cte.seedPartLogicalPlan)
-	if p.cte.recursivePartLogicalPlan != nil {
-		corCols = append(corCols, coreusage.ExtractCorrelatedCols4LogicalPlan(p.cte.recursivePartLogicalPlan)...)
-	}
-	return corCols
 }
 
 // LogicalSequence is used to mark the CTE producer in the main query tree.

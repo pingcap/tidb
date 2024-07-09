@@ -15,7 +15,6 @@
 package core
 
 import (
-	"context"
 	"fmt"
 	"math"
 	"slices"
@@ -611,60 +610,6 @@ func getSingletonStats(schema *expression.Schema) *property.StatsInfo {
 		ret.ColNDVs[col.UniqueID] = 1
 	}
 	return ret
-}
-
-// DeriveStats implement LogicalPlan DeriveStats interface.
-func (p *LogicalCTE) DeriveStats(_ []*property.StatsInfo, selfSchema *expression.Schema, _ []*expression.Schema, _ [][]*expression.Column) (*property.StatsInfo, error) {
-	if p.StatsInfo() != nil {
-		return p.StatsInfo(), nil
-	}
-
-	var err error
-	if p.cte.seedPartPhysicalPlan == nil {
-		// Build push-downed predicates.
-		if len(p.cte.pushDownPredicates) > 0 {
-			newCond := expression.ComposeDNFCondition(p.SCtx().GetExprCtx(), p.cte.pushDownPredicates...)
-			newSel := LogicalSelection{Conditions: []expression.Expression{newCond}}.Init(p.SCtx(), p.cte.seedPartLogicalPlan.QueryBlockOffset())
-			newSel.SetChildren(p.cte.seedPartLogicalPlan)
-			p.cte.seedPartLogicalPlan = newSel
-			p.cte.optFlag |= flagPredicatePushDown
-		}
-		p.cte.seedPartLogicalPlan, p.cte.seedPartPhysicalPlan, _, err = doOptimize(context.TODO(), p.SCtx(), p.cte.optFlag, p.cte.seedPartLogicalPlan)
-		if err != nil {
-			return nil, err
-		}
-	}
-	if p.onlyUsedAsStorage {
-		p.SetChildren(p.cte.seedPartLogicalPlan)
-	}
-	resStat := p.cte.seedPartPhysicalPlan.StatsInfo()
-	// Changing the pointer so that seedStat in LogicalCTETable can get the new stat.
-	*p.seedStat = *resStat
-	p.SetStats(&property.StatsInfo{
-		RowCount: resStat.RowCount,
-		ColNDVs:  make(map[int64]float64, selfSchema.Len()),
-	})
-	for i, col := range selfSchema.Columns {
-		p.StatsInfo().ColNDVs[col.UniqueID] += resStat.ColNDVs[p.cte.seedPartLogicalPlan.Schema().Columns[i].UniqueID]
-	}
-	if p.cte.recursivePartLogicalPlan != nil {
-		if p.cte.recursivePartPhysicalPlan == nil {
-			p.cte.recursivePartPhysicalPlan, _, err = DoOptimize(context.TODO(), p.SCtx(), p.cte.optFlag, p.cte.recursivePartLogicalPlan)
-			if err != nil {
-				return nil, err
-			}
-		}
-		recurStat := p.cte.recursivePartLogicalPlan.StatsInfo()
-		for i, col := range selfSchema.Columns {
-			p.StatsInfo().ColNDVs[col.UniqueID] += recurStat.ColNDVs[p.cte.recursivePartLogicalPlan.Schema().Columns[i].UniqueID]
-		}
-		if p.cte.IsDistinct {
-			p.StatsInfo().RowCount, _ = cardinality.EstimateColsNDVWithMatchedLen(p.Schema().Columns, p.Schema(), p.StatsInfo())
-		} else {
-			p.StatsInfo().RowCount += recurStat.RowCount
-		}
-	}
-	return p.StatsInfo(), nil
 }
 
 // DeriveStats implement LogicalPlan DeriveStats interface.

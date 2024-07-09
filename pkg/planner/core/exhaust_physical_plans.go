@@ -3636,8 +3636,7 @@ func exhaustPhysicalPlans4LogicalMaxOneRow(p *LogicalMaxOneRow, prop *property.P
 	return []base.PhysicalPlan{mor}, true, nil
 }
 
-// ExhaustPhysicalPlans implements LogicalPlan interface.
-func (p *LogicalCTE) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
+func exhaustPhysicalPlans4LogicalCTE(p *LogicalCTE, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
 	pcte := PhysicalCTE{CTE: p.cte}.Init(p.SCtx(), p.StatsInfo())
 	if prop.IsFlashProp() {
 		pcte.storageSender = PhysicalExchangeSender{
