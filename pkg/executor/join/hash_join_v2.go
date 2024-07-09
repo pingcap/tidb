@@ -873,8 +873,9 @@ func (e *HashJoinV2Exec) fetchAndBuildHashTable(ctx context.Context) {
 		}()
 	}
 
-	waitJobDone := func(wg *sync.WaitGroup, errCh chan error) bool {
-		wg.Wait()
+	waitJobDone := func(wg1 *sync.WaitGroup, wg2 *sync.WaitGroup, errCh chan error) bool {
+		wg1.Wait()
+		wg2.Wait()
 		close(errCh)
 		if err := <-errCh; err != nil {
 			e.buildFinished <- err
@@ -893,8 +894,7 @@ func (e *HashJoinV2Exec) fetchAndBuildHashTable(ctx context.Context) {
 	srcChkCh, fetcherAndWorkerSyncer := e.fetchBuildSideRows(ctx, fetcherWaiter, workerWaiter, errCh, doneCh)
 	e.splitAndAppendToRowTable(srcChkCh, fetcherAndWorkerSyncer, workerWaiter, errCh, doneCh)
 
-	// Only when all workers exist, the fetcher will exist. So we can only wait fetcher here
-	success := waitJobDone(fetcherWaiter, errCh)
+	success := waitJobDone(fetcherWaiter, workerWaiter, errCh)
 	if !success {
 		return
 	}
@@ -911,7 +911,7 @@ func (e *HashJoinV2Exec) fetchAndBuildHashTable(ctx context.Context) {
 	buildTaskCh := e.createBuildTasks(totalSegmentCnt, wg, errCh, doneCh)
 	// TODO check spill when building hash table
 	e.buildHashTable(buildTaskCh, wg, errCh, doneCh)
-	waitJobDone(wg, errCh)
+	waitJobDone(wg, wg, errCh)
 }
 
 func (e *HashJoinV2Exec) fetchBuildSideRows(ctx context.Context, fetcherWaiter *sync.WaitGroup, workerWaiter *sync.WaitGroup, errCh chan error, doneCh chan struct{}) (chan *chunk.Chunk, *sync.WaitGroup) {

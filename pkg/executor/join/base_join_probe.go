@@ -310,6 +310,10 @@ func (j *baseJoinProbe) SetRestoredChunkForProbe(chk *chunk.Chunk, hashTable *ha
 }
 
 func (j *baseJoinProbe) SpillRemainingProbeChunks() error {
+	if j.spillTmpChk == nil {
+		return nil
+	}
+
 	for i := 0; i < j.ctx.PartitionNumber; i++ {
 		if j.spillTmpChk[i].NumRows() > 0 {
 			err := j.ctx.spillHelper.spillProbeChk(i, j.spillTmpChk[i])

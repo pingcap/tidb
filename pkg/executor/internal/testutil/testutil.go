@@ -110,7 +110,7 @@ func (mds *MockDataSource) GenColDatums(col int) (results []any) {
 		}
 
 		for i := 0; i < rows; i++ {
-			val, err := rand.Int(rand.Reader, big.NewInt(int64(ndv)))
+			val, err := rand.Int(rand.Reader, big.NewInt(int64(len(datums))))
 			if err != nil {
 				panic("Fail to generate int number")
 			}

@@ -65,6 +65,7 @@ type hashJoinSpillHelper struct {
 
 func newHashJoinSpillHelper(hashJoinExec *HashJoinV2Exec, probeFieldTypes []*types.FieldType) *hashJoinSpillHelper {
 	helper := &hashJoinSpillHelper{hashJoinExec: hashJoinExec}
+	helper.cond = sync.NewCond(new(sync.Mutex))
 	helper.buildSpillChkFieldTypes = make([]*types.FieldType, 0, 3)
 	helper.buildSpillChkFieldTypes = append(helper.buildSpillChkFieldTypes, types.NewFieldType(mysql.TypeLonglong)) // hash value
 	helper.buildSpillChkFieldTypes = append(helper.buildSpillChkFieldTypes, types.NewFieldType(mysql.TypeBit))      // valid join key

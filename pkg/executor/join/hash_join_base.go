@@ -162,6 +162,10 @@ func (fetcher *probeSideTupleFetcherBase) getProbeSideResource(shouldLimitProbeF
 // and sends the chunks to multiple channels which will be read by multiple join workers.
 func (fetcher *probeSideTupleFetcherBase) fetchProbeSideChunks(ctx context.Context, fetcherAndWorkerSyncer *sync.WaitGroup, spillHelper *hashJoinSpillHelper, maxChunkSize int, isBuildEmpty isBuildSideEmpty, canSkipIfBuildEmpty, needScanAfterProbeDone, shouldLimitProbeFetchSize bool, hashJoinCtx *hashJoinCtxBase) {
 	defer func() {
+		if fetcherAndWorkerSyncer != nil {
+			fetcherAndWorkerSyncer.Wait()
+		}
+
 		if spillHelper != nil {
 			spillHelper.hashJoinExec.hashTableContext.releaseAllMemoryUsage()
 

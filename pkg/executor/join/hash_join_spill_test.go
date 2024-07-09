@@ -15,19 +15,22 @@
 package join
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/base64"
 	"math/big"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/executor/internal/testutil"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/mock"
+	"github.com/stretchr/testify/require"
 )
 
 // left table:
@@ -113,41 +116,67 @@ func buildSchema(schemaTypes []*types.FieldType) *expression.Schema {
 			RetType: tp,
 		})
 	}
+	return schema
 }
 
-// Worker 3, partition 2
 func TestInnerJoinSpillCorrectness(t *testing.T) {
-	spillChunkSize = 100
+	for i := 0; i < 30; i++ { // TODO remove this loop
+		logutil.BgLogger().Info("xzxdebug start a test")
+		spillChunkSize = 100
 
-	// TODO trigger spill in different stages
-	ctx := mock.NewContext()
-	info := &hashJoinInfo{
-		ctx: ctx,
-		schema: buildSchema([]*types.FieldType{
-			types.NewFieldType(mysql.TypeLonglong),
-			types.NewFieldType(mysql.TypeLonglong),
-			types.NewFieldType(mysql.TypeVarString),
-			types.NewFieldType(mysql.TypeLonglong),
-			types.NewFieldType(mysql.TypeLonglong),
-			types.NewFieldType(mysql.TypeVarString),
-			types.NewFieldType(mysql.TypeLonglong),
-			types.NewFieldType(mysql.TypeLonglong),
-		}),
-		// TODO leftExec, rightExec
-		joinType: plannercore.InnerJoin,
-		rightAsBuildSide: true,
-		buildKeys: []*expression.Column{
-			&expression.Column{Index: 0, RetType: types.NewFieldType(mysql.TypeLonglong)},
-			&expression.Column{Index: 2, RetType: types.NewFieldType(mysql.TypeVarString)},
-		},
-		probeKeys: []*expression.Column{
-			&expression.Column{Index: 1, RetType: types.NewFieldType(mysql.TypeLonglong)},
-			&expression.Column{Index: 3, RetType: types.NewFieldType(mysql.TypeVarString)},
-		},
+		// TODO trigger spill in different stages
+		ctx := mock.NewContext()
+		leftDataSource, rightDataSource := buildLeftAndRightDataSource(ctx)
+		leftDataSource.PrepareChunks()
+		rightDataSource.PrepareChunks()
+
+		info := &hashJoinInfo{
+			ctx: ctx,
+			schema: buildSchema([]*types.FieldType{
+				types.NewFieldType(mysql.TypeLonglong),
+				types.NewFieldType(mysql.TypeLonglong),
+				types.NewFieldType(mysql.TypeVarString),
+				types.NewFieldType(mysql.TypeLonglong),
+				types.NewFieldType(mysql.TypeLonglong),
+				types.NewFieldType(mysql.TypeVarString),
+				types.NewFieldType(mysql.TypeLonglong),
+				types.NewFieldType(mysql.TypeLonglong),
+			}),
+			leftExec:         leftDataSource,
+			rightExec:        rightDataSource,
+			joinType:         plannercore.InnerJoin,
+			rightAsBuildSide: true,
+			buildKeys: []*expression.Column{
+				{Index: 0, RetType: types.NewFieldType(mysql.TypeLonglong)},
+				{Index: 2, RetType: types.NewFieldType(mysql.TypeVarString)},
+			},
+			probeKeys: []*expression.Column{
+				{Index: 1, RetType: types.NewFieldType(mysql.TypeLonglong)},
+				{Index: 3, RetType: types.NewFieldType(mysql.TypeVarString)},
+			},
+			lUsed:                 []int{0, 1, 3, 4},
+			rUsed:                 []int{0, 2, 3, 4},
+			otherCondition:        expression.CNFExprs{},
+			lUsedInOtherCondition: []int{0},
+			rUsedInOtherCondition: []int{4},
+		}
+
+		hashJoinExec := buildHashJoinV2Exec(info)
+		tmpCtx := context.Background()
+		err := hashJoinExec.Open(tmpCtx)
+		require.NoError(t, err)
+		chk := exec.NewFirstChunk(hashJoinExec)
+		for {
+			err = hashJoinExec.Next(tmpCtx, chk)
+			require.NoError(t, err)
+			if chk.NumRows() == 0 {
+				break
+			}
+		}
+
+		maxRowTableSegmentSize = 100 // TODO modify it after no-spill join has been executed
 	}
-	leftDataSource, rightDataSource := buildLeftAndRightDataSource(ctx)
 
-	maxRowTableSegmentSize = 100 // TODO modify it after no-spill join has been executed
 }
 
 func TestLeftOuterJoinSpillCorrectness(t *testing.T) {

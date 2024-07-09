@@ -37,7 +37,7 @@ type hashJoinInfo struct {
 	otherCondition        expression.CNFExprs
 	lUsedInOtherCondition []int
 	rUsedInOtherCondition []int
-	equalConditions       []*expression.ScalarFunction
+	equalConditions       []*expression.ScalarFunction // TODO do we need it?
 }
 
 func buildHashJoinV2Exec(info *hashJoinInfo) *HashJoinV2Exec {
@@ -49,7 +49,7 @@ func buildHashJoinV2Exec(info *hashJoinInfo) *HashJoinV2Exec {
 		BuildWorkers:          make([]*BuildWorkerV2, concurrency),
 		HashJoinCtxV2: &HashJoinCtxV2{
 			OtherCondition:  info.otherCondition,
-			PartitionNumber: concurrency,
+			PartitionNumber: 2,
 		},
 	}
 	e.HashJoinCtxV2.SessCtx = info.ctx
