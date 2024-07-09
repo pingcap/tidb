@@ -1,0 +1,489 @@
+# TestFlushTables
+FLUSH TABLES;
+-- error 1105
+FLUSH TABLES WITH READ LOCK;
+
+# TestUseDB
+USE test;
+-- error 1046
+USE ``;
+use executor__simple;
+
+# TestIssue9111
+# CREATE USER / DROP USER fails if admin doesn't have insert privilege on `mysql.user` table.
+drop user if exists 'user_admin'@'localhost';
+drop user if exists test_create_user;
+create user 'user_admin'@'localhost';
+grant create user on *.* to 'user_admin'@'localhost';
+
+connect (conn1, localhost, user_admin,,);
+create user test_create_user;
+drop user test_create_user;
+connection default;
+
+revoke create user on *.* from 'user_admin'@'localhost';
+grant insert, delete on mysql.user to 'user_admin'@'localhost';
+
+connection conn1;
+create user test_create_user;
+drop user test_create_user;
+create role test_create_user;
+drop role test_create_user;
+connection default;
+
+drop user 'user_admin'@'localhost';
+disconnect conn1;
+
+# TestRoleAtomic
+drop role if exists r1, r2, r3;
+create role r2;
+-- error 1396
+create role r1, r2, r3;
+SELECT user FROM mysql.User WHERE user in ('r1', 'r2', 'r3');
+-- error 1396
+drop role r1, r2, r3;
+SELECT user FROM mysql.User WHERE user in ('r1', 'r2', 'r3');
+drop role r2;
+
+# TestIssue23649
+# See https://github.com/pingcap/tidb/issues/23649
+DROP USER IF EXISTS issue23649;
+CREATE USER issue23649;
+-- error 3523
+GRANT bogusrole to issue23649;
+-- error 3523
+GRANT bogusrole to nonexisting;
+
+# TestSetCurrentUserPwd
+drop user if exists issue28534;
+CREATE USER issue28534;
+connect (conn1, localhost, issue28534,,);
+SET PASSWORD FOR CURRENT_USER() = "43582eussi";
+connection default;
+SELECT authentication_string FROM mysql.User WHERE User="issue28534";
+DROP USER IF EXISTS issue28534;
+disconnect conn1;
+
+# TestShowGrantsAfterDropRole
+drop user if exists u29473;
+drop role if exists r29473;
+CREATE USER u29473;
+CREATE ROLE r29473;
+GRANT r29473 TO u29473;
+GRANT CREATE USER ON *.* TO u29473;
+connect (conn1, localhost, u29473,,);
+SET ROLE r29473;
+DROP ROLE r29473;
+SHOW GRANTS;
+connection default;
+disconnect conn1;
+DROP USER IF EXISTS u29473;
+
+# TestPrivilegesAfterDropUser
+drop table if exists t1;
+drop user if exists u1;
+create table t1(id int, v int);
+CREATE USER u1 require ssl;
+GRANT CREATE ON executor__simple.* TO u1;
+GRANT UPDATE ON executor__simple.t1 TO u1;
+GRANT SYSTEM_VARIABLES_ADMIN ON *.* TO u1;
+GRANT SELECT(v), UPDATE(v) on executor__simple.t1 TO u1;
+SELECT COUNT(1) FROM mysql.global_grants WHERE USER='u1' AND HOST='%';
+SELECT COUNT(1) FROM mysql.global_priv WHERE USER='u1' AND HOST='%';
+SELECT COUNT(1) FROM mysql.tables_priv WHERE USER='u1' AND HOST='%';
+SELECT COUNT(1) FROM mysql.columns_priv WHERE USER='u1' AND HOST='%';
+SHOW GRANTS FOR u1;
+DROP USER u1;
+-- error 1141
+SHOW GRANTS FOR u1;
+SELECT * FROM mysql.global_grants WHERE USER='u1' AND HOST='%';
+SELECT * FROM mysql.global_priv WHERE USER='u1' AND HOST='%';
+SELECT * FROM mysql.tables_priv WHERE USER='u1' AND HOST='%';
+SELECT * FROM mysql.columns_priv WHERE USER='u1' AND HOST='%';
+DROP USER IF EXISTS u1;
+drop table t1;
+
+# TestDropRoleAfterRevoke
+# issue 29781
+drop role if exists r1,r2,r3;
+create role r1, r2, r3;
+grant r1,r2,r3 to current_user();
+set role all;
+revoke r1, r3 from root;
+drop role r1;
+drop role if exists r1, r2, r3;
+
+# TestStatementsCauseImplicitCommit
+# Test some of the implicit commit statements.
+# See https://dev.mysql.com/doc/refman/5.7/en/implicit-commit.html
+drop table if exists ic, xx;
+create table ic (id int primary key);
+begin;
+insert into ic values (0);
+create table xx (id int);
+select * from ic where id = 0;
+delete from ic;
+rollback;
+begin;
+insert into ic values (1);
+create user 'xx'@'127.0.0.1';
+select * from ic where id = 1;
+delete from ic;
+rollback;
+begin;
+insert into ic values (2);
+grant SELECT on executor__simple.ic to 'xx'@'127.0.0.1';
+select * from ic where id = 2;
+delete from ic;
+rollback;
+begin;
+insert into ic values (3);
+flush privileges;
+select * from ic where id = 3;
+delete from ic;
+rollback;
+begin;
+insert into ic values (4);
+analyze table ic;
+select * from ic where id = 4;
+delete from ic;
+rollback;
+
+# TestDoWithAggFunc
+DO sum(1);
+DO avg(@e+@f);
+DO GROUP_CONCAT(NULLIF(ELT(1, @e), 2.0) ORDER BY 1);
+
+# TestSetDefaultRoleAll
+drop user if exists test_all;
+create user test_all;
+connect (conn1, localhost, test_all,,);
+set default role all to test_all;
+connection default;
+disconnect conn1;
+
+# TestFlushPrivileges
+drop user if exists 'testflush'@'localhost';
+CREATE USER 'testflush'@'localhost' IDENTIFIED BY '';
+UPDATE mysql.User SET Select_priv='Y' WHERE User="testflush" and Host="localhost";
+connect (conn1, localhost, testflush,,);
+--error 1142
+SELECT authentication_string FROM mysql.User WHERE User="testflush" and Host="localhost";
+connection default;
+FLUSH PRIVILEGES;
+connection conn1;
+SELECT authentication_string FROM mysql.User WHERE User="testflush" and Host="localhost";
+connection default;
+disconnect conn1; 
+
+# TestCreateUserWithLDAP
+drop user if exists 'bob'@'localhost';
+drop user if exists 'bob2'@'localhost';
+CREATE USER 'bob'@'localhost' IDENTIFIED WITH authentication_ldap_simple AS 'uid=bob,ou=People,dc=example,dc=com';
+SELECT Host, User, authentication_string, plugin FROM mysql.User WHERE User = 'bob';
+CREATE USER 'bob2'@'localhost' IDENTIFIED WITH authentication_ldap_sasl AS 'uid=bob2,ou=People,dc=example,dc=com';
+SELECT Host, User, authentication_string, plugin FROM mysql.User WHERE User = 'bob2';
+
+# TestAlterUserWithLDAP
+drop user if exists 'bob'@'localhost';
+# case 1: alter from a LDAP user to LDAP user
+CREATE USER 'bob'@'localhost' IDENTIFIED WITH authentication_ldap_simple AS 'uid=bob,ou=People,dc=example,dc=com';
+SELECT Host, User, authentication_string, plugin FROM mysql.User WHERE User = 'bob';
+ALTER USER 'bob'@'localhost' IDENTIFIED WITH authentication_ldap_sasl AS 'uid=bob,ou=Manager,dc=example,dc=com';
+SELECT Host, User, authentication_string, plugin FROM mysql.User WHERE User = 'bob';
+# case 2: should ignore the password history
+ALTER USER 'bob'@'localhost' PASSWORD HISTORY 5
+;
+ALTER USER 'bob'@'localhost' IDENTIFIED WITH authentication_ldap_sasl AS 'uid=bob,ou=People,dc=example,dc=com';
+ALTER USER 'bob'@'localhost' IDENTIFIED WITH authentication_ldap_sasl AS 'uid=bob,ou=Manager,dc=example,dc=com';
+ALTER USER 'bob'@'localhost' IDENTIFIED WITH authentication_ldap_sasl AS 'uid=bob,ou=People,dc=example,dc=com';
+ALTER USER 'bob'@'localhost' IDENTIFIED WITH authentication_ldap_sasl AS 'uid=bob,ou=Manager,dc=example,dc=com';
+
+# TestIssue44098
+drop user if exists u1, u2, u3, u4, u5;
+set global validate_password.enable = 1;
+create user u1 identified with 'tidb_auth_token';
+create user u2 identified with 'auth_socket';
+create user u3 identified with 'authentication_ldap_simple';
+create user u4 identified with 'authentication_ldap_sasl';
+-- error 1819
+create user u5 identified with 'mysql_native_password';
+-- error 1819
+create user u5 identified with 'caching_sha2_password';
+-- error 1819
+create user u5 identified with 'tidb_sm3_password';
+-- error 1524
+create user u5 identified with 'mysql_clear_password';
+-- error 1524
+create user u5 identified with 'tidb_session_token';
+set global validate_password.enable = default;
+
+# TestIssue33144
+drop role if exists 'r1';
+create role 'r1' ;
+grant 'r1' to current_user();
+revoke 'r1' from current_user();
+grant 'r1' to current_user(),current_user();
+revoke 'r1' from current_user(),current_user();
+drop role 'r1' ;
+
+# TestRoleAdmin
+drop role if exists 'targetRole';
+drop user if exists 'testRoleAdmin';
+CREATE USER 'testRoleAdmin';
+CREATE ROLE 'targetRole';
+connect (conn1, localhost, testRoleAdmin,,);
+--error 1227
+GRANT `targetRole` TO `testRoleAdmin`;
+connection default;
+GRANT SUPER ON *.* TO `testRoleAdmin`;
+connection conn1;
+GRANT `targetRole` TO `testRoleAdmin`;
+REVOKE `targetRole` FROM `testRoleAdmin`;
+connection default;
+DROP USER 'testRoleAdmin';
+DROP ROLE 'targetRole';
+disconnect conn1;
+
+# TestDefaultRole
+drop role if exists r_1, r_2, r_3, u_1;
+CREATE ROLE r_1, r_2, r_3, u_1;
+insert into mysql.role_edges (FROM_HOST,FROM_USER,TO_HOST,TO_USER) values ('%','r_1','%','u_1');
+insert into mysql.role_edges (FROM_HOST,FROM_USER,TO_HOST,TO_USER) values ('%','r_2','%','u_1');
+flush privileges;
+-- error 3530
+SET DEFAULT ROLE r_3 TO u_1;
+-- error 1396
+SET DEFAULT ROLE r_1 TO u_1000;
+-- error 3530
+SET DEFAULT ROLE r_1, r_3 TO u_1;
+SET DEFAULT ROLE r_1 TO u_1;
+SELECT DEFAULT_ROLE_USER FROM mysql.default_roles WHERE USER="u_1";
+SET DEFAULT ROLE r_2 TO u_1;
+SELECT DEFAULT_ROLE_USER FROM mysql.default_roles WHERE USER="u_1";
+SET DEFAULT ROLE ALL TO u_1;
+SELECT DEFAULT_ROLE_USER FROM mysql.default_roles WHERE USER="u_1";
+SET DEFAULT ROLE NONE TO u_1;
+SELECT DEFAULT_ROLE_USER FROM mysql.default_roles WHERE USER="u_1";
+DROP USER r_1, r_2, r_3, u_1;
+
+# TestIssue17247
+drop user if exists 'issue17247';
+create user 'issue17247';
+grant CREATE USER on *.* to 'issue17247';
+connect (conn1, localhost, issue17247,,);
+ALTER USER USER() IDENTIFIED BY 'xxx';
+ALTER USER CURRENT_USER() IDENTIFIED BY 'yyy';
+ALTER USER CURRENT_USER IDENTIFIED BY 'zzz';
+connection default;
+ALTER USER 'issue17247'@'%' IDENTIFIED BY 'kkk';
+ALTER USER 'issue17247'@'%' IDENTIFIED BY PASSWORD '*B50FBDB37F1256824274912F2A1CE648082C3F1F';
+connection conn1;
+-- error 1064
+ALTER USER USER() IDENTIFIED BY PASSWORD '*B50FBDB37F1256824274912F2A1CE648082C3F1F';
+connection default;
+disconnect conn1;
+
+# TestDo
+drop table if exists t;
+do 1, @a:=1;
+select @a;
+create table t (i int);
+insert into t values (1);
+select * from t;
+do @a := (select * from t where i = 1);
+connect (conn1, localhost, root,, executor__simple);
+insert into t values (2);
+connection default;
+disconnect conn1;
+select * from t;
+
+# TestSetRoleAllCorner
+# For user with no role, `SET ROLE ALL` should active
+# a empty slice, rather than nil.
+drop user if exists set_role_all;
+create user set_role_all;
+connect (conn1, localhost, set_role_all,,);
+set role all;
+select current_role;
+connection default;
+disconnect conn1;
+
+# TestCreateRole
+drop user if exists testCreateRole;
+drop role if exists test_create_role;
+create user testCreateRole;
+grant CREATE USER on *.* to testCreateRole;
+
+connect (conn1, localhost, testCreateRole,,);
+create role test_create_role;
+
+connection default;
+revoke CREATE USER on *.* from testCreateRole;
+grant CREATE ROLE on *.* to testCreateRole;
+drop role test_create_role;
+
+connection conn1;
+create role test_create_role;
+
+connection default;
+drop role test_create_role;
+
+connection conn1;
+--error 1227
+create user test_create_role; 
+
+connection default;
+drop user testCreateRole;
+disconnect conn1;
+
+# TestDropRole
+drop user if exists testCreateRole;
+drop role if exists test_create_role;
+create user testCreateRole;
+create user test_create_role;
+grant CREATE USER on *.* to testCreateRole;
+
+connect (conn1, localhost, testCreateRole,,);
+drop role test_create_role;
+
+connection default;
+revoke CREATE USER on *.* from testCreateRole;
+create role test_create_role;
+grant DROP ROLE on *.* to testCreateRole;
+
+connection conn1;
+drop role test_create_role;
+
+connection default;
+create user test_create_role;
+
+connection conn1;
+--error 1227
+drop user test_create_role; 
+
+connection default;
+drop user testCreateRole;
+disconnect conn1;
+
+# TestSetResourceGroup
+SET GLOBAL tidb_enable_resource_control='on';
+drop RESOURCE GROUP if exists rg1;
+drop RESOURCE GROUP if exists rg2;
+drop user if exists user1;
+-- error 8249
+SET RESOURCE GROUP rg1;
+CREATE RESOURCE GROUP rg1 ru_per_sec = 100;
+
+create user user1;
+ALTER USER `user1` RESOURCE GROUP `rg1`;
+SELECT CURRENT_RESOURCE_GROUP();
+
+create role role_for_resource_group;
+-- error 8257
+alter user role_for_resource_group resource group rg1;
+drop role role_for_resource_group;
+
+connect(conn1, localhost, user1,,);
+SELECT CURRENT_RESOURCE_GROUP();
+
+connection default;
+SELECT CURRENT_RESOURCE_GROUP();
+CREATE RESOURCE GROUP rg2 ru_per_sec = 200;
+SET RESOURCE GROUP `rg2`;
+SELECT CURRENT_RESOURCE_GROUP();
+SET RESOURCE GROUP ``;
+SELECT CURRENT_RESOURCE_GROUP();
+SET RESOURCE GROUP default;
+SELECT CURRENT_RESOURCE_GROUP();
+SELECT /*+ RESOURCE_GROUP(rg1)*/ CURRENT_RESOURCE_GROUP();
+
+connection conn1;
+SELECT CURRENT_RESOURCE_GROUP();
+
+connection default;
+disconnect conn1;
+drop user user1;
+SET GLOBAL tidb_enable_resource_control=default;
+
+# TestUserAttributes
+drop user if exists testuser;
+drop user if exists testuser1;
+drop user if exists testuser2;
+
+## https://dev.mysql.com/doc/refman/8.0/en/create-user.html#create-user-comments-attributes
+CREATE USER testuser COMMENT '1234';
+CREATE USER testuser1 ATTRIBUTE '{"name": "Tom", "age": 19}';
+-- error 3140
+CREATE USER testuser2 ATTRIBUTE '{"name": "Tom", age: 19}';
+CREATE USER testuser2;
+SELECT user_attributes FROM mysql.user WHERE user = 'testuser';
+SELECT user_attributes FROM mysql.user WHERE user = 'testuser1';
+SELECT user_attributes FROM mysql.user WHERE user = 'testuser2';
+SELECT attribute FROM information_schema.user_attributes WHERE user = 'testuser';
+SELECT attribute FROM information_schema.user_attributes WHERE user = 'testuser1';
+SELECT attribute->>"$.age" AS age, attribute->>"$.name" AS name FROM information_schema.user_attributes WHERE user = 'testuser1';
+SELECT attribute FROM information_schema.user_attributes WHERE user = 'testuser2';
+
+## https://dev.mysql.com/doc/refman/8.0/en/alter-user.html#alter-user-comments-attributes
+ALTER USER testuser1 ATTRIBUTE '{"age": 20, "sex": "male"}';
+SELECT attribute FROM information_schema.user_attributes WHERE user = 'testuser1';
+ALTER USER testuser1 ATTRIBUTE '{"hobby": "soccer"}';
+SELECT attribute FROM information_schema.user_attributes WHERE user = 'testuser1';
+ALTER USER testuser1 ATTRIBUTE '{"sex": null, "hobby": null}';
+SELECT attribute FROM information_schema.user_attributes WHERE user = 'testuser1';
+ALTER USER testuser1 COMMENT '5678';
+SELECT attribute FROM information_schema.user_attributes WHERE user = 'testuser1';
+ALTER USER testuser1 COMMENT '';
+SELECT attribute FROM information_schema.user_attributes WHERE user = 'testuser1';
+ALTER USER testuser1 ATTRIBUTE '{"comment": null}';
+SELECT attribute FROM information_schema.user_attributes WHERE user = 'testuser1';
+
+## Non-root users could access COMMENT or ATTRIBUTE of all users via the view,
+## but not via the mysql.user table.
+connect (conn1, localhost, testuser1,,);
+SELECT user, host, attribute FROM information_schema.user_attributes where user in ('testuser', 'testuser1', 'testuser2') ORDER BY user;
+-- error 1142
+SELECT user, host, user_attributes FROM mysql.user ORDER BY user;
+
+## https://github.com/pingcap/tidb/issues/39207
+connection default;
+create user usr1@'%' identified by 'passord';
+alter user usr1 comment 'comment1';
+select user_attributes from mysql.user where user = 'usr1';
+set global tidb_enable_resource_control = 'on';
+drop RESOURCE group if exists rg1;
+CREATE RESOURCE GROUP rg1 ru_per_sec = 100;
+alter user usr1 resource group rg1;
+select user_attributes from mysql.user where user = 'usr1';
+
+set global tidb_enable_resource_control = default;
+disconnect conn1;
+
+# TestStmtAutoNewTxn
+-- echo ## Some statements are like DDL, they commit the previous txn automically.
+-- echo ## Fix issue https://github.com/pingcap/tidb/issues/10705
+begin;
+create user 'xxx'@'%';
+grant all privileges on *.* to 'xxx'@'%';
+create table auto_new (id int);
+begin;
+insert into auto_new values (1);
+revoke all privileges on *.* from 'xxx'@'%';
+-- echo ## insert statement has already committed
+rollback;
+
+-- echo ## Test the behavior when autocommit is false.
+select * from auto_new;
+set autocommit = 0;
+insert into auto_new values (2);
+create user 'yyy'@'%';
+rollback;
+select * from auto_new;
+
+drop user 'yyy'@'%';
+insert into auto_new values (3);
+rollback;
+select * from auto_new;
+
+set autocommit = default;
