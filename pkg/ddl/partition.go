@@ -4217,7 +4217,6 @@ func collectArgsType(tblInfo *model.TableInfo, exprs ...ast.ExprNode) ([]byte, e
 }
 
 func hasDateArgs(argsType ...byte) bool {
-	// Should it be slice.AllOf ?
 	return slice.AnyOf(argsType, func(i int) bool {
 		return argsType[i] == mysql.TypeDate || argsType[i] == mysql.TypeDatetime
 	})
