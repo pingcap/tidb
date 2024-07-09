@@ -180,7 +180,7 @@ func TestBasic(t *testing.T) {
 	require.False(t, ok)
 	require.Nil(t, gotTblInfo)
 
-	tb, err = is.TableByName(dbName, tbName)
+	tb, err = is.TableByName(context.Background(), dbName, tbName)
 	require.NoError(t, err)
 	require.NotNil(t, tb)
 
@@ -188,7 +188,7 @@ func TestBasic(t *testing.T) {
 	require.NoError(t, err)
 	require.Same(t, tb.Meta(), gotTblInfo)
 
-	_, err = is.TableByName(dbName, noexist)
+	_, err = is.TableByName(context.Background(), dbName, noexist)
 	require.Error(t, err)
 
 	gotTblInfo, err = is.TableInfoByName(dbName, noexist)
@@ -220,7 +220,7 @@ func TestBasic(t *testing.T) {
 	require.Len(t, tblInfos, 0)
 
 	// Make sure partitions table exists
-	tb, err = is.TableByName(model.NewCIStr("information_schema"), model.NewCIStr("partitions"))
+	tb, err = is.TableByName(context.Background(), model.NewCIStr("information_schema"), model.NewCIStr("partitions"))
 	require.NoError(t, err)
 	require.NotNil(t, tb)
 
@@ -324,7 +324,7 @@ func TestInfoTables(t *testing.T) {
 		"RESOURCE_GROUPS",
 	}
 	for _, tbl := range infoTables {
-		tb, err1 := is.TableByName(util.InformationSchemaName, model.NewCIStr(tbl))
+		tb, err1 := is.TableByName(context.Background(), util.InformationSchemaName, model.NewCIStr(tbl))
 		require.Nil(t, err1)
 		require.NotNil(t, tb)
 	}
@@ -528,10 +528,10 @@ func TestBuildBundle(t *testing.T) {
 	db, ok := is.SchemaByName(model.NewCIStr("test"))
 	require.True(t, ok)
 
-	tbl1, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	tbl1, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t1"))
 	require.NoError(t, err)
 
-	tbl2, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t2"))
+	tbl2, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t2"))
 	require.NoError(t, err)
 
 	var p1 model.PartitionDefinition
@@ -640,7 +640,7 @@ func TestLocalTemporaryTables(t *testing.T) {
 	}
 
 	assertTableByName := func(sc *infoschema.SessionTables, schemaName, tableName string, schema *model.DBInfo, tb table.Table) {
-		got, ok := sc.TableByName(model.NewCIStr(schemaName), model.NewCIStr(tableName))
+		got, ok := sc.TableByName(context.Background(), model.NewCIStr(schemaName), model.NewCIStr(tableName))
 		if tb == nil {
 			require.Nil(t, schema)
 			require.False(t, ok)
@@ -802,28 +802,28 @@ func TestLocalTemporaryTables(t *testing.T) {
 	require.NoError(t, err)
 
 	// test TableByName
-	tbl, err := is.TableByName(dbTest.Name, normalTbTestA.Meta().Name)
+	tbl, err := is.TableByName(context.Background(), dbTest.Name, normalTbTestA.Meta().Name)
 	require.NoError(t, err)
 	require.Equal(t, tmpTbTestA, tbl)
 	gotTblInfo, err := is.TableInfoByName(dbTest.Name, normalTbTestA.Meta().Name)
 	require.NoError(t, err)
 	require.Same(t, tmpTbTestA.Meta(), gotTblInfo)
 
-	tbl, err = is.TableByName(dbTest.Name, normalTbTestB.Meta().Name)
+	tbl, err = is.TableByName(context.Background(), dbTest.Name, normalTbTestB.Meta().Name)
 	require.NoError(t, err)
 	require.Equal(t, normalTbTestB.Meta(), tbl.Meta())
 	gotTblInfo, err = is.TableInfoByName(dbTest.Name, normalTbTestB.Meta().Name)
 	require.NoError(t, err)
 	require.Same(t, tbl.Meta(), gotTblInfo)
 
-	tbl, err = is.TableByName(db1.Name, tb11.Meta().Name)
+	tbl, err = is.TableByName(context.Background(), db1.Name, tb11.Meta().Name)
 	require.True(t, infoschema.ErrTableNotExists.Equal(err))
 	require.Nil(t, tbl)
 	gotTblInfo, err = is.TableInfoByName(dbTest.Name, tb11.Meta().Name)
 	require.True(t, infoschema.ErrTableNotExists.Equal(err))
 	require.Nil(t, gotTblInfo)
 
-	tbl, err = is.TableByName(db1.Name, tb12.Meta().Name)
+	tbl, err = is.TableByName(context.Background(), db1.Name, tb12.Meta().Name)
 	require.NoError(t, err)
 	require.Equal(t, tb12, tbl)
 	gotTblInfo, err = is.TableInfoByName(db1.Name, tb12.Meta().Name)
@@ -915,14 +915,14 @@ func TestInfoSchemaCreateTableLike(t *testing.T) {
 	tk.MustExec("create table t1 like information_schema.variables_info;")
 	tk.MustExec("alter table t1 add column c varchar(32);")
 	is := domain.GetDomain(tk.Session()).InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t1"))
 	require.NoError(t, err)
 	tblInfo := tbl.Meta()
 	require.Equal(t, tblInfo.Columns[8].Name.O, "c")
 	require.Equal(t, tblInfo.Columns[8].ID, int64(9))
 	tk.MustExec("alter table t1 add index idx(c);")
 	is = domain.GetDomain(tk.Session()).InfoSchema()
-	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	tbl, err = is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t1"))
 	require.NoError(t, err)
 	tblInfo = tbl.Meta()
 	require.Equal(t, tblInfo.Indices[0].Name.O, "idx")
@@ -932,14 +932,14 @@ func TestInfoSchemaCreateTableLike(t *testing.T) {
 	tk.MustExec("create table t2 like metrics_schema.up;")
 	tk.MustExec("alter table t2 add column c varchar(32);")
 	is = domain.GetDomain(tk.Session()).InfoSchema()
-	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t2"))
+	tbl, err = is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t2"))
 	require.NoError(t, err)
 	tblInfo = tbl.Meta()
 	require.Equal(t, tblInfo.Columns[4].Name.O, "c")
 	require.Equal(t, tblInfo.Columns[4].ID, int64(5))
 	tk.MustExec("alter table t2 add index idx(c);")
 	is = domain.GetDomain(tk.Session()).InfoSchema()
-	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t2"))
+	tbl, err = is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t2"))
 	require.NoError(t, err)
 	tblInfo = tbl.Meta()
 	require.Equal(t, tblInfo.Indices[0].Name.O, "idx")
@@ -1107,7 +1107,7 @@ func (tc *infoschemaTestContext) runModifyTable(tblName string, tp model.ActionT
 }
 
 func (tc *infoschemaTestContext) runAddColumn(tblName string) {
-	tbl, err := tc.is.TableByName(tc.dbInfo.Name, model.NewCIStr(tblName))
+	tbl, err := tc.is.TableByName(context.Background(), tc.dbInfo.Name, model.NewCIStr(tblName))
 	require.NoError(tc.t, err)
 
 	tc.addColumn(tbl.Meta())
@@ -1140,7 +1140,7 @@ func (tc *infoschemaTestContext) addColumn(tblInfo *model.TableInfo) {
 }
 
 func (tc *infoschemaTestContext) runModifyColumn(tblName string) {
-	tbl, err := tc.is.TableByName(tc.dbInfo.Name, model.NewCIStr(tblName))
+	tbl, err := tc.is.TableByName(context.Background(), tc.dbInfo.Name, model.NewCIStr(tblName))
 	require.NoError(tc.t, err)
 
 	tc.modifyColumn(tbl.Meta())

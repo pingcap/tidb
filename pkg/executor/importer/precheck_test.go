@@ -75,7 +75,7 @@ func TestCheckRequirements(t *testing.T) {
 	_, err := conn.Execute(ctx, "create table test.t(id int primary key)")
 	require.NoError(t, err)
 	is := tk.Session().GetDomainInfoSchema().(infoschema.InfoSchema)
-	tableObj, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tableObj, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 
 	c := &importer.LoadDataController{

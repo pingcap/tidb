@@ -79,7 +79,7 @@ func TestEarlyClose(t *testing.T) {
 
 	// Get table ID for split.
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("earlyclose"))
+	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("earlyclose"))
 	require.NoError(t, err)
 	tblID := tbl.Meta().ID
 

@@ -189,7 +189,7 @@ func CheckPrivilege(activeRoles []*auth.RoleIdentity, pm privilege.Manager, vs [
 // VisitInfo4PrivCheck generates privilege check infos because privilege check of local temporary tables is different
 // with normal tables. `CREATE` statement needs `CREATE TEMPORARY TABLE` privilege from the database, and subsequent
 // statements do not need any privileges.
-func VisitInfo4PrivCheck(is infoschema.InfoSchema, node ast.Node, vs []visitInfo) (privVisitInfo []visitInfo) {
+func VisitInfo4PrivCheck(ctx context.Context, is infoschema.InfoSchema, node ast.Node, vs []visitInfo) (privVisitInfo []visitInfo) {
 	if node == nil {
 		return vs
 	}
@@ -211,7 +211,7 @@ func VisitInfo4PrivCheck(is infoschema.InfoSchema, node ast.Node, vs []visitInfo
 				}
 			} else {
 				// `CREATE TABLE LIKE tmp` or `CREATE TABLE FROM SELECT tmp` in the future.
-				if needCheckTmpTablePriv(is, v) {
+				if needCheckTmpTablePriv(ctx, is, v) {
 					privVisitInfo = append(privVisitInfo, v)
 				}
 			}
@@ -224,7 +224,7 @@ func VisitInfo4PrivCheck(is infoschema.InfoSchema, node ast.Node, vs []visitInfo
 			privVisitInfo = make([]visitInfo, 0, len(vs))
 			if stmt.TemporaryKeyword != ast.TemporaryLocal {
 				for _, v := range vs {
-					if needCheckTmpTablePriv(is, v) {
+					if needCheckTmpTablePriv(ctx, is, v) {
 						privVisitInfo = append(privVisitInfo, v)
 					}
 				}
@@ -236,7 +236,7 @@ func VisitInfo4PrivCheck(is infoschema.InfoSchema, node ast.Node, vs []visitInfo
 	default:
 		privVisitInfo = make([]visitInfo, 0, len(vs))
 		for _, v := range vs {
-			if needCheckTmpTablePriv(is, v) {
+			if needCheckTmpTablePriv(ctx, is, v) {
 				privVisitInfo = append(privVisitInfo, v)
 			}
 		}
@@ -244,10 +244,10 @@ func VisitInfo4PrivCheck(is infoschema.InfoSchema, node ast.Node, vs []visitInfo
 	return
 }
 
-func needCheckTmpTablePriv(is infoschema.InfoSchema, v visitInfo) bool {
+func needCheckTmpTablePriv(ctx context.Context, is infoschema.InfoSchema, v visitInfo) bool {
 	if v.db != "" && v.table != "" {
 		// Other statements on local temporary tables except `CREATE` do not check any privileges.
-		tb, err := is.TableByName(model.NewCIStr(v.db), model.NewCIStr(v.table))
+		tb, err := is.TableByName(ctx, model.NewCIStr(v.db), model.NewCIStr(v.table))
 		// If the table doesn't exist, we do not report errors to avoid leaking the existence of the table.
 		if err == nil && tb.Meta().TempTableType == model.TempTableLocal {
 			return false

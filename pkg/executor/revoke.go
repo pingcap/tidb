@@ -114,7 +114,7 @@ func (e *RevokeExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 		if err != nil {
 			return err
 		}
-		err = e.revokeOneUser(internalSession, user.User.Username, user.User.Hostname)
+		err = e.revokeOneUser(ctx, internalSession, user.User.Username, user.User.Hostname)
 		if err != nil {
 			return err
 		}
@@ -143,7 +143,7 @@ func (e *RevokeExec) checkDynamicPrivilegeUsage() error {
 	return nil
 }
 
-func (e *RevokeExec) revokeOneUser(internalSession sessionctx.Context, user, host string) error {
+func (e *RevokeExec) revokeOneUser(ctx context.Context, internalSession sessionctx.Context, user, host string) error {
 	dbName := e.Level.DBName
 	if len(dbName) == 0 {
 		dbName = e.Ctx().GetSessionVars().CurrentDB
@@ -173,7 +173,7 @@ func (e *RevokeExec) revokeOneUser(internalSession sessionctx.Context, user, hos
 	}
 
 	for _, priv := range e.Privs {
-		err := e.revokePriv(internalSession, priv, user, host)
+		err := e.revokePriv(ctx, internalSession, priv, user, host)
 		if err != nil {
 			return err
 		}
@@ -181,7 +181,7 @@ func (e *RevokeExec) revokeOneUser(internalSession sessionctx.Context, user, hos
 	return nil
 }
 
-func (e *RevokeExec) revokePriv(internalSession sessionctx.Context, priv *ast.PrivElem, user, host string) error {
+func (e *RevokeExec) revokePriv(ctx context.Context, internalSession sessionctx.Context, priv *ast.PrivElem, user, host string) error {
 	if priv.Priv == mysql.UsagePriv {
 		return nil
 	}
@@ -192,9 +192,9 @@ func (e *RevokeExec) revokePriv(internalSession sessionctx.Context, priv *ast.Pr
 		return e.revokeDBPriv(internalSession, priv, user, host)
 	case ast.GrantLevelTable:
 		if len(priv.Cols) == 0 {
-			return e.revokeTablePriv(internalSession, priv, user, host)
+			return e.revokeTablePriv(ctx, internalSession, priv, user, host)
 		}
-		return e.revokeColumnPriv(internalSession, priv, user, host)
+		return e.revokeColumnPriv(ctx, internalSession, priv, user, host)
 	}
 	return errors.Errorf("Unknown revoke level: %#v", e.Level)
 }
@@ -262,9 +262,9 @@ func (e *RevokeExec) revokeDBPriv(internalSession sessionctx.Context, priv *ast.
 	return err
 }
 
-func (e *RevokeExec) revokeTablePriv(internalSession sessionctx.Context, priv *ast.PrivElem, user, host string) error {
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnPrivilege)
-	dbName, tbl, err := getTargetSchemaAndTable(e.Ctx(), e.Level.DBName, e.Level.TableName, e.is)
+func (e *RevokeExec) revokeTablePriv(ctx context.Context, internalSession sessionctx.Context, priv *ast.PrivElem, user, host string) error {
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnPrivilege)
+	dbName, tbl, err := getTargetSchemaAndTable(ctx, e.Ctx(), e.Level.DBName, e.Level.TableName, e.is)
 	if err != nil && !terror.ErrorEqual(err, infoschema.ErrTableNotExists) {
 		return err
 	}
@@ -295,9 +295,9 @@ func (e *RevokeExec) revokeTablePriv(internalSession sessionctx.Context, priv *a
 	return err
 }
 
-func (e *RevokeExec) revokeColumnPriv(internalSession sessionctx.Context, priv *ast.PrivElem, user, host string) error {
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnPrivilege)
-	dbName, tbl, err := getTargetSchemaAndTable(e.Ctx(), e.Level.DBName, e.Level.TableName, e.is)
+func (e *RevokeExec) revokeColumnPriv(ctx context.Context, internalSession sessionctx.Context, priv *ast.PrivElem, user, host string) error {
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnPrivilege)
+	dbName, tbl, err := getTargetSchemaAndTable(ctx, e.Ctx(), e.Level.DBName, e.Level.TableName, e.is)
 	if err != nil {
 		return err
 	}

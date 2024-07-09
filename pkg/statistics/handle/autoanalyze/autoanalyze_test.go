@@ -15,6 +15,7 @@
 package autoanalyze_test
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -181,7 +182,7 @@ func TestAutoAnalyzeOnChangeAnalyzeVer(t *testing.T) {
 	// Auto analyze when global ver is 1.
 	h.HandleAutoAnalyze()
 	require.NoError(t, h.Update(is))
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	statsTbl1 := h.GetTableStats(tbl.Meta())
 	// Check that all the version of t's stats are 1.
@@ -220,7 +221,7 @@ func TestAutoAnalyzeOnChangeAnalyzeVer(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	is = do.InfoSchema()
-	tbl2, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("tt"))
+	tbl2, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("tt"))
 	require.NoError(t, err)
 	require.NoError(t, h.Update(is))
 	h.HandleAutoAnalyze()
@@ -247,7 +248,7 @@ func TestTableAnalyzed(t *testing.T) {
 	testKit.MustExec("insert into t values (1)")
 
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
 	h := dom.StatsHandle()
