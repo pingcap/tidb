@@ -87,9 +87,14 @@ const EmptyHistogramSize = int64(unsafe.Sizeof(Histogram{}))
 
 // Bucket store the bucket count and repeat.
 type Bucket struct {
-	Count  int64
+	// Count is the number of items till this bucket.
+	Count int64
+	// Repeat is the number of times the upper-bound value of the bucket appears in the data.
+	// For example, in the range [x, y], Repeat indicates how many times y appears.
+	// It is used to estimate the row count of values equal to the upper bound of the bucket, similar to TopN.
 	Repeat int64
-	NDV    int64
+	// NDV is the number of distinct values in the bucket.
+	NDV int64
 }
 
 // EmptyBucketSize is the size of empty bucket, 3*8=24 now.
