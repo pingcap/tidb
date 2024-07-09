@@ -241,13 +241,11 @@ func setMppOrBatchCopForTableScan(curPlan base.PhysicalPlan) {
 func (p *PhysicalTableReader) Clone(newCtx base.PlanContext) (base.PhysicalPlan, error) {
 	cloned := new(PhysicalTableReader)
 	cloned.SetSCtx(newCtx)
-	fmt.Println(">>>>>>>>>>>>>>>>>>> 111 >>> ", cloned.SCtx().GetSessionVars().StmtCtx.UseCache())
 	base, err := p.physicalSchemaProducer.cloneWithSelf(newCtx, cloned)
 	if err != nil {
 		return nil, err
 	}
 	cloned.physicalSchemaProducer = *base
-	fmt.Println(">>>>>>>>>>>>>>>>>>> 222 >>> ", cloned.SCtx().GetSessionVars().StmtCtx.UseCache())
 	cloned.StoreType = p.StoreType
 	cloned.ReadReqType = p.ReadReqType
 	cloned.IsCommonHandle = p.IsCommonHandle
