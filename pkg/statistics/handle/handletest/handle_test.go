@@ -116,7 +116,7 @@ func TestVersion(t *testing.T) {
 	tbl1, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
 	require.NoError(t, err)
 	tableInfo1 := tbl1.Meta()
-	h, err := handle.NewHandle(testKit.Session(), testKit2.Session(), time.Millisecond, do.SysSessionPool(), do.SysProcTracker(), do.GetAutoAnalyzeProcID)
+	h, err := handle.NewHandle(testKit.Session(), testKit2.Session(), time.Millisecond, is, do.SysSessionPool(), do.SysProcTracker(), do.GetAutoAnalyzeProcID)
 	defer func() {
 		h.Close()
 	}()

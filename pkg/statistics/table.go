@@ -70,8 +70,6 @@ type Table struct {
 	// and the schema of the table does not change, we don't need to load the stats for this
 	// table again.
 	TblInfoUpdateTS uint64
-
-	IsPkIsHandle bool
 }
 
 // ColAndIdxExistenceMap is the meta map for statistics.Table.
@@ -166,6 +164,21 @@ func (m *ColAndIdxExistenceMap) Clone() *ColAndIdxExistenceMap {
 	mm.idxAnalyzed = maps.Clone(m.idxAnalyzed)
 	mm.idxInfoMap = maps.Clone(m.idxInfoMap)
 	return mm
+}
+
+const (
+	defaultColCap = 16
+	defaultIdxCap = 4
+)
+
+// NewColAndIndexExistenceMapWithoutSize return a new object with default capacity.
+func NewColAndIndexExistenceMapWithoutSize() *ColAndIdxExistenceMap {
+	return &ColAndIdxExistenceMap{
+		colInfoMap:  make(map[int64]*model.ColumnInfo, defaultColCap),
+		colAnalyzed: make(map[int64]bool, defaultColCap),
+		idxInfoMap:  make(map[int64]*model.IndexInfo, defaultIdxCap),
+		idxAnalyzed: make(map[int64]bool, defaultIdxCap),
+	}
 }
 
 // NewColAndIndexExistenceMap return a new object with the given capcity.
@@ -583,7 +596,6 @@ func (t *Table) Copy() *Table {
 		HistColl:           newHistColl,
 		Version:            t.Version,
 		TblInfoUpdateTS:    t.TblInfoUpdateTS,
-		IsPkIsHandle:       t.IsPkIsHandle,
 		LastAnalyzeVersion: t.LastAnalyzeVersion,
 	}
 	if t.ExtendedStats != nil {

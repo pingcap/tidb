@@ -57,20 +57,12 @@ func (h *Handle) initStatsMeta4Chunk(is infoschema.InfoSchema, cache statstypes.
 	var physicalID, maxPhysicalID int64
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		physicalID = row.GetInt64(1)
-		// The table is read-only. Please do not modify it.
-		table, ok := h.TableInfoByID(is, physicalID)
-		if !ok {
-			logutil.BgLogger().Debug("unknown physical ID in stats meta table, maybe it has been dropped", zap.Int64("ID", physicalID))
-			continue
-		}
 		maxPhysicalID = max(physicalID, maxPhysicalID)
-		tableInfo := table.Meta()
 		newHistColl := *statistics.NewHistColl(physicalID, true, row.GetInt64(3), row.GetInt64(2), 4, 4)
 		tbl := &statistics.Table{
 			HistColl:              newHistColl,
 			Version:               row.GetUint64(0),
-			ColAndIdxExistenceMap: statistics.NewColAndIndexExistenceMap(len(tableInfo.Columns), len(tableInfo.Indices)),
-			IsPkIsHandle:          tableInfo.PKIsHandle,
+			ColAndIdxExistenceMap: statistics.NewColAndIndexExistenceMapWithoutSize(),
 		}
 		cache.Put(physicalID, tbl) // put this table again since it is updated
 	}
