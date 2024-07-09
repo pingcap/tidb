@@ -1913,11 +1913,7 @@ func (w *GCWorker) saveValueToSysTable(key, value string) error {
 // GC placement rules when the partitions are removed by the GC worker.
 // Placement rules cannot be removed immediately after drop table / truncate table,
 // because the tables can be flashed back or recovered.
-<<<<<<< HEAD:store/gcworker/gc_worker.go
 func (w *GCWorker) doGCPlacementRules(se session.Session, safePoint uint64, dr util.DelRangeTask, gcPlacementRuleCache map[int64]interface{}) (err error) {
-=======
-func (w *GCWorker) doGCPlacementRules(se sessiontypes.Session, _ uint64, dr util.DelRangeTask, gcPlacementRuleCache map[int64]any) (err error) {
->>>>>>> d1f26715577 (gc: delete TiFlash placement rules in batch (#54071)):pkg/store/gcworker/gc_worker.go
 	// Get the job from the job history
 	var historyJob *model.Job
 	failpoint.Inject("mockHistoryJobForGC", func(v failpoint.Value) {
