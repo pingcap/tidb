@@ -19,7 +19,6 @@ import (
 	"cmp"
 	"context"
 	"fmt"
-	"github.com/pingcap/tipb/go-tipb"
 	"math"
 	"slices"
 	"sort"
@@ -41,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/pingcap/tidb/pkg/util/set"
+	"github.com/pingcap/tipb/go-tipb"
 )
 
 // FullRange represent used all partitions.
