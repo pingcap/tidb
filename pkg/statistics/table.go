@@ -809,6 +809,9 @@ func (t *Table) ColumnIsLoadNeeded(id int64, fullLoad bool) (*Column, bool, bool
 	if t.Pseudo {
 		return nil, false, false
 	}
+	if len(t.columns) == 0 {
+		return nil, true, true
+	}
 	col, ok := t.columns[id]
 	hasAnalyzed := t.ColAndIdxExistenceMap.HasAnalyzed(id, false)
 
@@ -819,7 +822,7 @@ func (t *Table) ColumnIsLoadNeeded(id int64, fullLoad bool) (*Column, bool, bool
 			// If we don't have this column. We skip it.
 			// It's something ridiculous. But it's possible that the stats don't have some ColumnInfo.
 			// We need to find a way to maintain it more correctly.
-			return nil, t.ColAndIdxExistenceMap.Has(id, false), false
+			return nil, false, true
 		}
 		// Otherwise we don't need to load it.
 		return nil, false, false
