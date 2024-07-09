@@ -3158,7 +3158,9 @@ var defaultSysVars = []*SysVar{
 				return err
 			}
 			if SchemaCacheSize.Load() != bt && ChangeSchemaCacheSize != nil {
-				ChangeSchemaCacheSize(bt)
+				if err := ChangeSchemaCacheSize(bt); err != nil {
+					return err
+				}
 			}
 			SchemaCacheSize.Store(bt)
 			SchemaCacheSizeOriginText.Store(str)
