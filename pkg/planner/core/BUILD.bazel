@@ -23,6 +23,7 @@ go_library(
         "initialize.go",
         "logical_aggregation.go",
         "logical_apply.go",
+        "logical_cte.go",
         "logical_datasource.go",
         "logical_expand.go",
         "logical_index_scan.go",
