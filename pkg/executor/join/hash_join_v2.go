@@ -23,7 +23,6 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
-	"unsafe"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
@@ -41,9 +40,22 @@ import (
 
 var (
 	_ exec.Executor = &HashJoinV2Exec{}
-	// EnableHashJoinV2 is a variable used only in test
-	EnableHashJoinV2 = atomic.Bool{}
+	// enableHashJoinV2 is a variable used only in test
+	enableHashJoinV2 = atomic.Bool{}
 )
+
+// IsHashJoinV2Enabled return true if hash join v2 is enabled
+func IsHashJoinV2Enabled() bool {
+	// sizeOfUintptr should always equal to sizeOfUnsafePointer, because according to golang's doc,
+	// a Pointer can be converted to an uintptr. Add this check here in case in the future go runtime
+	// change this
+	return enableHashJoinV2.Load() && sizeOfUintptr >= sizeOfUnsafePointer
+}
+
+// SetEnableHashJoinV2 enable/disable hash join v2
+func SetEnableHashJoinV2(enable bool) {
+	enableHashJoinV2.Store(enable)
+}
 
 type hashTableContext struct {
 	// rowTables is used during split partition stage, each buildWorker has
@@ -77,9 +89,7 @@ func (htc *hashTableContext) getCurrentRowSegment(workerID, partitionID int, tab
 
 func (htc *hashTableContext) finalizeCurrentSeg(workerID, partitionID int, builder *rowTableBuilder) {
 	seg := htc.getCurrentRowSegment(workerID, partitionID, nil, false)
-	for _, pos := range builder.startPosInRawData[partitionID] {
-		seg.rowLocations = append(seg.rowLocations, unsafe.Pointer(&seg.rawData[pos]))
-	}
+	seg.rowStartOffset = append(seg.rowStartOffset, builder.startPosInRawData[partitionID]...)
 	builder.crrntSizeOfRowTable[partitionID] = 0
 	builder.startPosInRawData[partitionID] = builder.startPosInRawData[partitionID][:0]
 	failpoint.Inject("finalizeCurrentSegPanic", nil)

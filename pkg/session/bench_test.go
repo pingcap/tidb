@@ -1944,3 +1944,158 @@ func TestBenchDaily(t *testing.T) {
 		BenchmarkAutoIncrement,
 	)
 }
+
+var batchNum = 100
+var batchSize = 100
+
+func BenchmarkPipelinedSimpleInsert(b *testing.B) {
+	logutil.InitLogger(&logutil.LogConfig{Config: log.Config{Level: "fatal"}})
+	se, do, st := prepareBenchSession()
+	defer func() {
+		se.Close()
+		do.Close()
+		st.Close()
+	}()
+	mustExecute(se, `create table tmp (id int, dt varchar(512))`)
+	mustExecute(se, `create table src (id int, dt varchar(512))`)
+	for i := 0; i < batchNum; i++ {
+		mustExecute(se, "begin")
+		for lines := 0; lines < batchSize; lines++ {
+			mustExecute(se, "insert into src values (42, repeat('x', 512))")
+		}
+		mustExecute(se, "commit")
+	}
+
+	se.GetSessionVars().BulkDMLEnabled = true
+	se.GetSessionVars().StmtCtx.InInsertStmt = true
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		se.Execute(context.Background(), "insert into tmp select * from src")
+	}
+	b.StopTimer()
+	b.ReportMetric(float64(b.Elapsed().Nanoseconds()/int64(b.N*batchSize*batchNum)), "ns/row")
+}
+
+func BenchmarkPipelinedInsertIgnoreNoDuplicates(b *testing.B) {
+	logutil.InitLogger(&logutil.LogConfig{Config: log.Config{Level: "fatal"}})
+	se, do, st := prepareBenchSession()
+	defer func() {
+		se.Close()
+		do.Close()
+		st.Close()
+	}()
+	mustExecute(se, `create table tmp (id int, dt varchar(512))`)
+	mustExecute(se, `create table src (id int, dt varchar(512))`)
+	for i := 0; i < batchNum; i++ {
+		mustExecute(se, "begin")
+		for lines := 0; lines < batchSize; lines++ {
+			mustExecute(se, "insert into src values (42, repeat('x', 512))")
+		}
+		mustExecute(se, "commit")
+	}
+
+	se.GetSessionVars().BulkDMLEnabled = true
+	se.GetSessionVars().StmtCtx.InInsertStmt = true
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		se.Execute(context.Background(), "insert ignore into tmp select * from src")
+	}
+	b.StopTimer()
+	b.ReportMetric(float64(b.Elapsed().Nanoseconds()/int64(b.N*batchSize*batchNum)), "ns/row")
+}
+
+func BenchmarkPipelinedInsertOnDuplicate(b *testing.B) {
+	logutil.InitLogger(&logutil.LogConfig{Config: log.Config{Level: "fatal"}})
+	se, do, st := prepareBenchSession()
+	defer func() {
+		se.Close()
+		do.Close()
+		st.Close()
+	}()
+	mustExecute(se, `create table tmp (id int, dt varchar(512), unique key k1(id))`)
+	mustExecute(se, `create table src (id int, dt varchar(512))`)
+	for i := 0; i < batchNum; i++ {
+		mustExecute(se, "begin")
+		for lines := 0; lines < batchSize; lines++ {
+			mustExecute(se,
+				fmt.Sprintf(
+					"insert into src values (%d, repeat('x', 512))",
+					i*100+lines,
+				),
+			)
+		}
+		mustExecute(se, "commit")
+	}
+
+	se.GetSessionVars().BulkDMLEnabled = true
+	se.GetSessionVars().StmtCtx.InInsertStmt = true
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		se.Execute(context.Background(),
+			"insert into tmp select * from src on duplicate key update dt = values(dt)")
+	}
+	b.StopTimer()
+	b.ReportMetric(float64(b.Elapsed().Nanoseconds()/int64(b.N*batchSize*batchNum)), "ns/row")
+}
+
+func BenchmarkPipelinedDelete(b *testing.B) {
+	logutil.InitLogger(&logutil.LogConfig{Config: log.Config{Level: "fatal"}})
+	se, do, st := prepareBenchSession()
+	defer func() {
+		se.Close()
+		do.Close()
+		st.Close()
+	}()
+	mustExecute(se, `create table tmp (id int, dt varchar(512))`)
+	mustExecute(se, `create table src (id int, dt varchar(512))`)
+	for i := 0; i < batchNum; i++ {
+		mustExecute(se, "begin")
+		for lines := 0; lines < batchSize; lines++ {
+			mustExecute(se, "insert into src values (42, repeat('x', 512))")
+		}
+		mustExecute(se, "commit")
+	}
+
+	se.GetSessionVars().BulkDMLEnabled = true
+	se.GetSessionVars().StmtCtx.InInsertStmt = true
+	b.StopTimer()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		se.Execute(context.Background(), "truncate tmp")
+		se.Execute(context.Background(), "insert into tmp select * from src")
+		b.StartTimer()
+		se.Execute(context.Background(), "delete from tmp")
+		b.StopTimer()
+	}
+	b.ReportMetric(float64(b.Elapsed().Nanoseconds()/int64(b.N*batchSize*batchNum)), "ns/row")
+}
+
+func BenchmarkPipelinedReplaceNoDuplicates(b *testing.B) {
+	logutil.InitLogger(&logutil.LogConfig{Config: log.Config{Level: "fatal"}})
+	se, do, st := prepareBenchSession()
+	defer func() {
+		se.Close()
+		do.Close()
+		st.Close()
+	}()
+	mustExecute(se, `create table tmp (id int, dt varchar(512))`)
+	mustExecute(se, `create table src (id int, dt varchar(512))`)
+	for i := 0; i < batchNum; i++ {
+		mustExecute(se, "begin")
+		for lines := 0; lines < batchSize; lines++ {
+			mustExecute(se, "insert into src values (42, repeat('x', 512))")
+		}
+		mustExecute(se, "commit")
+	}
+
+	se.GetSessionVars().BulkDMLEnabled = true
+	se.GetSessionVars().StmtCtx.InInsertStmt = true
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		se.Execute(context.Background(), "replace into tmp select * from src")
+	}
+	b.StopTimer()
+	b.ReportMetric(float64(b.Elapsed().Nanoseconds()/int64(b.N*batchSize*batchNum)), "ns/row")
+}

@@ -721,9 +721,9 @@ func (e *ShowExec) fetchShowIndex() error {
 				break
 			}
 		}
-		colStats, ok := statsTbl.Columns[pkCol.ID]
+		colStats := statsTbl.GetCol(pkCol.ID)
 		var ndv int64
-		if ok {
+		if colStats != nil {
 			ndv = colStats.NDV
 		}
 		e.appendRow([]any{
@@ -783,9 +783,9 @@ func (e *ShowExec) fetchShowIndex() error {
 				expression = tblCol.GeneratedExprString
 			}
 
-			colStats, ok := statsTbl.Columns[tblCol.ID]
+			colStats := statsTbl.GetCol(tblCol.ID)
 			var ndv int64
-			if ok {
+			if colStats != nil {
 				ndv = colStats.NDV
 			}
 
@@ -1887,7 +1887,11 @@ func (e *ShowExec) fetchShowWarnings(errOnly bool) error {
 			sqlErr := terror.ToSQLError(x)
 			e.appendRow([]any{w.Level, int64(sqlErr.Code), sqlErr.Message})
 		default:
-			e.appendRow([]any{w.Level, int64(mysql.ErrUnknown), warn.Error()})
+			var err string
+			if warn != nil {
+				err = warn.Error()
+			}
+			e.appendRow([]any{w.Level, int64(mysql.ErrUnknown), err})
 		}
 	}
 	return nil

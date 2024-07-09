@@ -445,6 +445,17 @@ func TestAdjustSecuritySection(t *testing.T) {
 			hasTLS:         false,
 			fallback2NoTLS: false,
 		},
+		{
+			input: `
+				[security]
+				ca-path = "/path/to/ca2.pem"
+				[tidb]
+				tls = "false"
+			`,
+			expectedCA:     "",
+			hasTLS:         false,
+			fallback2NoTLS: false,
+		},
 	}
 
 	for _, tc := range testCases {
@@ -465,6 +476,18 @@ func TestAdjustSecuritySection(t *testing.T) {
 			require.Nil(t, cfg.TiDB.Security.TLSConfig, comment)
 		}
 		require.Equal(t, tc.fallback2NoTLS, cfg.TiDB.Security.AllowFallbackToPlaintext, comment)
+		// test to see if the security ca-path is affected when tls is false.
+		if cfg.TiDB.TLS == "false" {
+			beforeAjustCfg := NewConfig()
+			assignMinimalLegalValue(beforeAjustCfg)
+			beforeAjustCfg.TiDB.DistSQLScanConcurrency = 1
+			err = beforeAjustCfg.LoadFromTOML([]byte(tc.input))
+			require.NoError(t, err, comment)
+
+			require.Nil(t, cfg.TiDB.Security.TLSConfig, comment)
+			require.Equal(t, "", cfg.TiDB.Security.CAPath, comment)
+			require.Equal(t, beforeAjustCfg.Security.CAPath, cfg.Security.CAPath, comment)
+		}
 	}
 	// test different tls config name
 	cfg := NewConfig()

@@ -105,29 +105,34 @@ func (expr *ScalarFunction) ExplainNormalizedInfo4InList() string {
 }
 
 // ColumnExplainInfo returns the explained info for column.
-func (col *Column) ColumnExplainInfo(normalized bool) string {
+func (col *Column) ColumnExplainInfo(ctx ParamValues, normalized bool) string {
 	if normalized {
-		if col.OrigName != "" {
-			return col.OrigName
-		}
-		return "?"
+		return col.ColumnExplainInfoNormalized()
 	}
-	return col.String()
+	return col.StringWithCtx(ctx)
+}
+
+// ColumnExplainInfoNormalized returns the normalized explained info for column.
+func (col *Column) ColumnExplainInfoNormalized() string {
+	if col.OrigName != "" {
+		return col.OrigName
+	}
+	return "?"
 }
 
 // ExplainInfo implements the Expression interface.
 func (col *Column) ExplainInfo(ctx EvalContext) string {
-	return col.ColumnExplainInfo(false)
+	return col.ColumnExplainInfo(ctx, false)
 }
 
 // ExplainNormalizedInfo implements the Expression interface.
 func (col *Column) ExplainNormalizedInfo() string {
-	return col.ColumnExplainInfo(true)
+	return col.ColumnExplainInfoNormalized()
 }
 
 // ExplainNormalizedInfo4InList implements the Expression interface.
 func (col *Column) ExplainNormalizedInfo4InList() string {
-	return col.ColumnExplainInfo(true)
+	return col.ColumnExplainInfoNormalized()
 }
 
 // ExplainInfo implements the Expression interface.
@@ -161,19 +166,19 @@ func (expr *Constant) format(dt types.Datum) string {
 }
 
 // ExplainExpressionList generates explain information for a list of expressions.
-func ExplainExpressionList(exprs []Expression, schema *Schema) string {
+func ExplainExpressionList(ctx EvalContext, exprs []Expression, schema *Schema) string {
 	builder := &strings.Builder{}
 	for i, expr := range exprs {
 		switch expr.(type) {
 		case *Column, *CorrelatedColumn:
-			builder.WriteString(expr.String())
-			if expr.String() != schema.Columns[i].String() {
+			builder.WriteString(expr.StringWithCtx(ctx))
+			if expr.StringWithCtx(ctx) != schema.Columns[i].StringWithCtx(ctx) {
 				// simple col projected again with another uniqueID without origin name.
 				builder.WriteString("->")
-				builder.WriteString(schema.Columns[i].String())
+				builder.WriteString(schema.Columns[i].StringWithCtx(ctx))
 			}
 		case *Constant:
-			v := expr.String()
+			v := expr.StringWithCtx(ctx)
 			length := 64
 			if len(v) < length {
 				builder.WriteString(v)
@@ -182,11 +187,11 @@ func ExplainExpressionList(exprs []Expression, schema *Schema) string {
 				fmt.Fprintf(builder, "(len:%d)", len(v))
 			}
 			builder.WriteString("->")
-			builder.WriteString(schema.Columns[i].String())
+			builder.WriteString(schema.Columns[i].StringWithCtx(ctx))
 		default:
-			builder.WriteString(expr.String())
+			builder.WriteString(expr.StringWithCtx(ctx))
 			builder.WriteString("->")
-			builder.WriteString(schema.Columns[i].String())
+			builder.WriteString(schema.Columns[i].StringWithCtx(ctx))
 		}
 		if i+1 < len(exprs) {
 			builder.WriteString(", ")

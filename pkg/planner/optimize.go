@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/planner/cascades"
 	pctx "github.com/pingcap/tidb/pkg/planner/context"
 	"github.com/pingcap/tidb/pkg/planner/core"
@@ -165,7 +166,9 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	}
 
 	tableHints := hint.ExtractTableHintsFromStmtNode(node, sessVars.StmtCtx)
-	originStmtHints, _, warns := hint.ParseStmtHints(tableHints, setVarHintChecker, byte(kv.ReplicaReadFollower))
+	originStmtHints, _, warns := hint.ParseStmtHints(tableHints,
+		setVarHintChecker, hypoIndexChecker(is),
+		sessVars.CurrentDB, byte(kv.ReplicaReadFollower))
 	sessVars.StmtCtx.StmtHints = originStmtHints
 	for _, warn := range warns {
 		sessVars.StmtCtx.AppendWarning(warn)
@@ -297,7 +300,9 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 				core.DebugTraceTryBinding(pctx, binding.Hint)
 			}
 			hint.BindHint(stmtNode, binding.Hint)
-			curStmtHints, _, curWarns := hint.ParseStmtHints(binding.Hint.GetStmtHints(), setVarHintChecker, byte(kv.ReplicaReadFollower))
+			curStmtHints, _, curWarns := hint.ParseStmtHints(binding.Hint.GetStmtHints(),
+				setVarHintChecker, hypoIndexChecker(is),
+				sessVars.CurrentDB, byte(kv.ReplicaReadFollower))
 			sessVars.StmtCtx.StmtHints = curStmtHints
 			// update session var by hint /set_var/
 			for name, val := range sessVars.StmtCtx.StmtHints.SetVars {
@@ -598,6 +603,27 @@ func setVarHintChecker(varName, hint string) (ok bool, warning error) {
 		warning = plannererrors.ErrNotHintUpdatable.FastGenByArgs(varName)
 	}
 	return true, warning
+}
+
+func hypoIndexChecker(is infoschema.InfoSchema) func(db, tbl model.CIStr, cols ...model.CIStr) error {
+	return func(db, tbl model.CIStr, cols ...model.CIStr) error {
+		t, err := is.TableByName(db, tbl)
+		if err != nil {
+			return errors.NewNoStackErrorf("table '%v.%v' doesn't exist", db, tbl)
+		}
+		for _, col := range cols {
+			found := false
+			for _, tblCol := range t.Cols() {
+				if tblCol.Name.L == col.L {
+					found = true
+				}
+			}
+			if !found {
+				return errors.NewNoStackErrorf("can't find column %v in table %v.%v", col, db, tbl)
+			}
+		}
+		return nil
+	}
 }
 
 func init() {

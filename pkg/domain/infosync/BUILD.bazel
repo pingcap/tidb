@@ -27,6 +27,7 @@ go_library(
         "//pkg/parser/model",
         "//pkg/parser/mysql",
         "//pkg/parser/terror",
+        "//pkg/session/cursor",
         "//pkg/sessionctx/binloginfo",
         "//pkg/sessionctx/variable",
         "//pkg/store/helper",

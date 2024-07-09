@@ -53,6 +53,7 @@ func (a *SimplePlanColumnIDAllocator) AllocPlanColumnID() int64 {
 // EvalContext is used to evaluate an expression
 type EvalContext interface {
 	contextutil.WarnHandler
+	ParamValues
 	// CtxID indicates the id of the context.
 	CtxID() uint64
 	// SQLMode returns the sql mode
@@ -82,8 +83,6 @@ type EvalContext interface {
 	GetOptionalPropSet() OptionalEvalPropKeySet
 	// GetOptionalPropProvider gets the optional property provider by key
 	GetOptionalPropProvider(OptionalEvalPropKey) (OptionalEvalPropProvider, bool)
-	// GetParamValue returns the value of the parameter by index.
-	GetParamValue(idx int) types.Datum
 }
 
 // BuildContext is used to build an expression

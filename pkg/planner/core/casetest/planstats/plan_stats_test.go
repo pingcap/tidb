@@ -51,6 +51,7 @@ func TestPlanStatsLoad(t *testing.T) {
 	tk.MustExec("set @@session.tidb_analyze_version=2")
 	tk.MustExec("set @@session.tidb_partition_prune_mode = 'static'")
 	tk.MustExec("set @@session.tidb_stats_load_sync_wait = 60000")
+	tk.MustExec("set tidb_opt_projection_push_down = 0")
 	tk.MustExec("create table t(a int, b int, c int, d int, primary key(a), key idx(b))")
 	tk.MustExec("insert into t values (1,1,1,1),(2,2,2,2),(3,3,3,3)")
 	tk.MustExec("create table pt(a int, b int, c int) partition by range(a) (partition p0 values less than (10), partition p1 values less than (20), partition p2 values less than maxvalue)")
@@ -197,7 +198,7 @@ func TestPlanStatsLoad(t *testing.T) {
 				require.True(t, ok)
 				pis, ok := pr.IndexPlans[0].(*plannercore.PhysicalIndexScan)
 				require.True(t, ok)
-				require.True(t, pis.StatsInfo().HistColl.Indices[1].IsEssentialStatsLoaded())
+				require.True(t, pis.StatsInfo().HistColl.GetIdx(1).IsEssentialStatsLoaded())
 			},
 		},
 	}
@@ -222,12 +223,15 @@ func TestPlanStatsLoad(t *testing.T) {
 }
 
 func countFullStats(stats *statistics.HistColl, colID int64) int {
-	for _, col := range stats.Columns {
+	cnt := -1
+	stats.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
 		if col.Info.ID == colID {
-			return col.Histogram.Len() + col.TopN.Num()
+			cnt = col.Histogram.Len() + col.TopN.Num()
+			return true
 		}
-	}
-	return -1
+		return false
+	})
+	return cnt
 }
 
 func TestPlanStatsLoadTimeout(t *testing.T) {
