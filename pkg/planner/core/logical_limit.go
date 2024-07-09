@@ -98,7 +98,7 @@ func (p *LogicalLimit) PruneColumns(parentUsedCols []*expression.Column, opt *op
 	return p, nil
 }
 
-// FindBestTask inherits BaseLogicalPlan.<3rd> implementation.
+// FindBestTask inherits BaseLogicalPlan.LogicalPlan.<3rd> implementation.
 
 // BuildKeyInfo implements base.LogicalPlan.<4th> interface.
 func (p *LogicalLimit) BuildKeyInfo(selfSchema *expression.Schema, childSchema []*expression.Schema) {
