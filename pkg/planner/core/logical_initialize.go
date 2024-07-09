@@ -38,33 +38,15 @@ func (la LogicalApply) Init(ctx base.PlanContext, offset int) *LogicalApply {
 	return &la
 }
 
-// Init initializes LogicalUnionScan.
-func (p LogicalUnionScan) Init(ctx base.PlanContext, qbOffset int) *LogicalUnionScan {
-	p.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(ctx, plancodec.TypeUnionScan, &p, qbOffset)
-	return &p
-}
-
 // Init initializes LogicalProjection.
 func (p LogicalExpand) Init(ctx base.PlanContext, offset int) *LogicalExpand {
 	p.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(ctx, plancodec.TypeExpand, &p, offset)
 	return &p
 }
 
-// Init initializes LogicalShow.
-func (p LogicalShow) Init(ctx base.PlanContext) *LogicalShow {
-	p.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(ctx, plancodec.TypeShow, &p, 0)
-	return &p
-}
-
 // Init initializes LogicalShowDDLJobs.
 func (p LogicalShowDDLJobs) Init(ctx base.PlanContext) *LogicalShowDDLJobs {
 	p.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(ctx, plancodec.TypeShowDDLJobs, &p, 0)
-	return &p
-}
-
-// Init initializes LogicalMemTable.
-func (p LogicalMemTable) Init(ctx base.PlanContext, offset int) *LogicalMemTable {
-	p.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(ctx, plancodec.TypeMemTableScan, &p, offset)
 	return &p
 }
 

@@ -515,7 +515,7 @@ func TestUpgradeVersionForSystemPausedJob(t *testing.T) {
 	}
 	dom.DDL().SetHook(hook)
 	var once sync.Once
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterDelivery2Worker", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterDeliveryJob", func(job *model.Job) {
 		if job != nil && job.ID == jobID {
 			once.Do(func() { ch <- struct{}{} })
 		}

@@ -255,7 +255,7 @@ func (rm *RunawayManager) MarkSyncerInitialized() {
 }
 
 // DeriveChecker derives a RunawayChecker from the given resource group
-func (rm *RunawayManager) DeriveChecker(resourceGroupName, originalSQL, sqlDigest, planDigest string) *RunawayChecker {
+func (rm *RunawayManager) DeriveChecker(resourceGroupName, originalSQL, sqlDigest, planDigest string, startTime time.Time) *RunawayChecker {
 	group, err := rm.resourceGroupCtl.GetResourceGroup(resourceGroupName)
 	if err != nil || group == nil {
 		logutil.BgLogger().Warn("cannot setup up runaway checker", zap.Error(err))
@@ -272,7 +272,7 @@ func (rm *RunawayManager) DeriveChecker(resourceGroupName, originalSQL, sqlDiges
 		rm.metricsMap.Store(resourceGroupName, counter)
 	}
 	counter.Inc()
-	return newRunawayChecker(rm, resourceGroupName, group.RunawaySettings, originalSQL, sqlDigest, planDigest)
+	return newRunawayChecker(rm, resourceGroupName, group.RunawaySettings, originalSQL, sqlDigest, planDigest, startTime)
 }
 
 func (rm *RunawayManager) markQuarantine(resourceGroupName, convict string, watchType rmpb.RunawayWatchType, action rmpb.RunawayAction, ttl time.Duration, now *time.Time) {
@@ -476,7 +476,7 @@ type RunawayChecker struct {
 	watchAction   rmpb.RunawayAction
 }
 
-func newRunawayChecker(manager *RunawayManager, resourceGroupName string, setting *rmpb.RunawaySettings, originalSQL, sqlDigest, planDigest string) *RunawayChecker {
+func newRunawayChecker(manager *RunawayManager, resourceGroupName string, setting *rmpb.RunawaySettings, originalSQL, sqlDigest, planDigest string, startTime time.Time) *RunawayChecker {
 	c := &RunawayChecker{
 		manager:           manager,
 		resourceGroupName: resourceGroupName,
@@ -488,7 +488,7 @@ func newRunawayChecker(manager *RunawayManager, resourceGroupName string, settin
 		markedByWatch:     false,
 	}
 	if setting != nil {
-		c.deadline = time.Now().Add(time.Duration(setting.Rule.ExecElapsedTimeMs) * time.Millisecond)
+		c.deadline = startTime.Add(time.Duration(setting.Rule.ExecElapsedTimeMs) * time.Millisecond)
 	}
 	return c
 }

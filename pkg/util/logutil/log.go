@@ -228,7 +228,7 @@ func Logger(ctx context.Context) *zap.Logger {
 // main function. Don't use it in `init` or equivalent functions otherwise it
 // will print to stdout.
 func BgLogger() *zap.Logger {
-	return log.L()
+	return log.L().With()
 }
 
 // LoggerWithTraceInfo attaches fields from trace info to logger

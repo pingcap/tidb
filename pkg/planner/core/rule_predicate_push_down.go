@@ -89,20 +89,6 @@ func splitSetGetVarFunc(filters []expression.Expression) ([]expression.Expressio
 }
 
 // PredicatePushDown implements base.LogicalPlan PredicatePushDown interface.
-func (p *LogicalUnionScan) PredicatePushDown(predicates []expression.Expression, opt *optimizetrace.LogicalOptimizeOp) ([]expression.Expression, base.LogicalPlan) {
-	if expression.ContainVirtualColumn(predicates) {
-		// predicates with virtual columns can't be pushed down to TiKV/TiFlash so they'll be put into a Projection
-		// below the UnionScan, but the current UnionScan doesn't support placing Projection below it, see #53951.
-		return predicates, p
-	}
-	retainedPredicates, _ := p.Children()[0].PredicatePushDown(predicates, opt)
-	p.conditions = make([]expression.Expression, 0, len(predicates))
-	p.conditions = append(p.conditions, predicates...)
-	// The conditions in UnionScan is only used for added rows, so parent Selection should not be removed.
-	return retainedPredicates, p
-}
-
-// PredicatePushDown implements base.LogicalPlan PredicatePushDown interface.
 func (ds *DataSource) PredicatePushDown(predicates []expression.Expression, opt *optimizetrace.LogicalOptimizeOp) ([]expression.Expression, base.LogicalPlan) {
 	predicates = expression.PropagateConstant(ds.SCtx().GetExprCtx(), predicates)
 	predicates = DeleteTrueExprs(ds, predicates)
@@ -488,14 +474,6 @@ func (p *LogicalJoin) outerJoinPropConst(predicates []expression.Expression) []e
 	joinConds, predicates = expression.PropConstOverOuterJoin(p.SCtx().GetExprCtx(), joinConds, predicates, outerTable.Schema(), innerTable.Schema(), nullSensitive)
 	p.AttachOnConds(joinConds)
 	return predicates
-}
-
-// PredicatePushDown implements base.LogicalPlan PredicatePushDown interface.
-func (p *LogicalMemTable) PredicatePushDown(predicates []expression.Expression, _ *optimizetrace.LogicalOptimizeOp) ([]expression.Expression, base.LogicalPlan) {
-	if p.Extractor != nil {
-		predicates = p.Extractor.Extract(p.SCtx(), p.Schema(), p.OutputNames(), predicates)
-	}
-	return predicates, p.Self()
 }
 
 func (*ppdSolver) name() string {
