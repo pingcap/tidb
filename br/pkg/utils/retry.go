@@ -248,7 +248,7 @@ func WithRetryV2[T any](
 }
 
 var sampleLoggerFactory = logutil.SampleLoggerFactory(
-	time.Minute, 3, zap.String(logutil.LogFieldCategory, "utils-sample-logger"),
+	time.Minute, 3, zap.String(logutil.LogFieldCategory, "utils"),
 )
 
 // WithRetryReturnLastErr is like WithRetry but the returned error is the last
