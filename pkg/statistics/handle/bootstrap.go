@@ -53,7 +53,7 @@ type MaxTidRecord struct {
 	tid atomic.Int64
 }
 
-func (h *Handle) initStatsMeta4Chunk(is infoschema.InfoSchema, cache statstypes.StatsCache, iter *chunk.Iterator4Chunk) {
+func (*Handle) initStatsMeta4Chunk(cache statstypes.StatsCache, iter *chunk.Iterator4Chunk) {
 	var physicalID, maxPhysicalID int64
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		physicalID = row.GetInt64(1)
@@ -73,7 +73,7 @@ func (h *Handle) initStatsMeta4Chunk(is infoschema.InfoSchema, cache statstypes.
 	}
 }
 
-func (h *Handle) initStatsMeta(is infoschema.InfoSchema) (statstypes.StatsCache, error) {
+func (h *Handle) initStatsMeta() (statstypes.StatsCache, error) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
 	sql := "select HIGH_PRIORITY version, table_id, modify_count, count from mysql.stats_meta"
 	rc, err := util.Exec(h.initStatsCtx, sql)
@@ -95,7 +95,7 @@ func (h *Handle) initStatsMeta(is infoschema.InfoSchema) (statstypes.StatsCache,
 		if req.NumRows() == 0 {
 			break
 		}
-		h.initStatsMeta4Chunk(is, tables, iter)
+		h.initStatsMeta4Chunk(tables, iter)
 	}
 	return tables, nil
 }
@@ -709,7 +709,7 @@ func (h *Handle) InitStatsLite(is infoschema.InfoSchema) (err error) {
 		return err
 	}
 	failpoint.Inject("beforeInitStatsLite", func() {})
-	cache, err := h.initStatsMeta(is)
+	cache, err := h.initStatsMeta()
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -743,7 +743,7 @@ func (h *Handle) InitStats(is infoschema.InfoSchema) (err error) {
 		return err
 	}
 	failpoint.Inject("beforeInitStats", func() {})
-	cache, err := h.initStatsMeta(is)
+	cache, err := h.initStatsMeta()
 	if err != nil {
 		return errors.Trace(err)
 	}
