@@ -205,7 +205,7 @@ func buildHist(
 			hg.Buckets[bucketIdx].Count = int64(totalCount)
 			// This means the value appears more than once in the sample, so we need to update the repeat count.
 			// Because we initialize the repeat count as ndvFactor, so we need to directly reset it to 2*sampleFactor.
-			// Find more details in the comments for initializing of the first bucket.
+			// Refer to the comments for the initialization of the first occurrence of this value for more details.
 			if hg.Buckets[bucketIdx].Repeat == int64(ndvFactor) {
 				// This is a special case, the value appears twice in the sample.
 				// repeat = 2 * sampleFactor
