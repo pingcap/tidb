@@ -403,8 +403,12 @@ type PlanCacheValue struct {
 // Since PlanCacheValue.Plan is not read-only, to solve the concurrency problem when sharing the same PlanCacheValue
 // across multiple sessions, we need to clone the PlanCacheValue for each session.
 func (v *PlanCacheValue) CloneForInstancePlanCache(newCtx base.PlanContext) (*PlanCacheValue, bool) {
-	clonedPlan, ok := v.Plan.CloneForPlanCache(newCtx)
+	phyPlan, ok := v.Plan.(base.PhysicalPlan)
 	if !ok {
+		return nil, false
+	}
+	clonedPlan, err := phyPlan.Clone(newCtx)
+	if err != nil {
 		return nil, false
 	}
 	cloned := new(PlanCacheValue)
