@@ -751,7 +751,7 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	return nil
 }
 
-func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConfig, clusterNonEmptyErr error) error {
+func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConfig, checkInfo *CheckInfo) error {
 	cfg.Adjust()
 	defer summary.Summary(cmdName)
 	ctx, cancel := context.WithCancel(c)
@@ -855,8 +855,8 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	}
 
 	// for full + log restore. should check the cluster is empty.
-	if client.IsFull() && clusterNonEmptyErr != nil {
-		return clusterNonEmptyErr
+	if client.IsFull() && checkInfo.FullRestoreCheckErr != nil {
+		return checkInfo.FullRestoreCheckErr
 	}
 
 	if client.IsIncremental() {
