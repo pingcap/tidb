@@ -957,6 +957,7 @@ func TestGetSchema(t *testing.T) {
 	ids = ids + ",abc"
 	resp, err = ts.FetchStatus(fmt.Sprintf("/db-table?table_ids=%s", ids))
 	require.NoError(t, err)
+	require.EqualValues(t, 400, resp.StatusCode)
 	require.NoError(t, resp.Body.Close())
 
 	db, err := sql.Open("mysql", ts.GetDSN())
