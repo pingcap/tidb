@@ -1423,7 +1423,7 @@ func TestTiFlashReorgPartition(t *testing.T) {
 	tk.MustExec(`alter table ddltiflash set tiflash replica 1`)
 	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailable * 3)
 	CheckTableAvailable(s.dom, t, 1, []string{})
-	tb := external.GetTableByName(context.Background(), t, tk, "test", "ddltiflash")
+	tb := external.GetTableByName(t, tk, "test", "ddltiflash")
 	firstPartitionID := tb.Meta().Partition.Definitions[0].ID
 	ruleName := fmt.Sprintf("table-%v-r", firstPartitionID)
 	_, ok := s.tiflash.GetPlacementRule(ruleName)

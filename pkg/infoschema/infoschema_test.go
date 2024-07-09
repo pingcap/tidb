@@ -718,9 +718,9 @@ func TestLocalTemporaryTables(t *testing.T) {
 		dbName := p.db.Name
 		tbName := p.tb.Meta().Name
 
-		assertTableByName(context.Background(), sc, dbName.O, tbName.O, p.db, p.tb)
-		assertTableByName(context.Background(), sc, dbName.L, tbName.L, p.db, p.tb)
-		assertTableByName(context.Background(),
+		assertTableByName(sc, dbName.O, tbName.O, p.db, p.tb)
+		assertTableByName(sc, dbName.L, tbName.L, p.db, p.tb)
+		assertTableByName(
 			sc,
 			strings.ToUpper(dbName.L[:1])+dbName.L[1:],
 			strings.ToUpper(tbName.L[:1])+tbName.L[1:],
@@ -755,7 +755,7 @@ func TestLocalTemporaryTables(t *testing.T) {
 	tb11.Meta().DBID = 0 // SchemaByTable will get incorrect result if not reset here.
 
 	// failed add has no effect
-	assertTableByName(context.Background(), sc, db1.Name.L, tb11.Meta().Name.L, db1, tb11)
+	assertTableByName(sc, db1.Name.L, tb11.Meta().Name.L, db1, tb11)
 
 	// delete some tables
 	require.True(t, sc.RemoveTable(model.NewCIStr("db1"), model.NewCIStr("tb1")))
@@ -770,7 +770,7 @@ func TestLocalTemporaryTables(t *testing.T) {
 		{"db2", "tb2"}, {"db2", "tb3"}, {"db2", "tbx"},
 		{"dbx", "tb1"},
 	} {
-		assertTableByName(context.Background(), sc, c.dbName, c.tbName, nil, nil)
+		assertTableByName(sc, c.dbName, c.tbName, nil, nil)
 		assertTableExists(sc, c.dbName, c.tbName, false)
 	}
 
