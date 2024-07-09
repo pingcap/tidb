@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/storage"
 	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
+	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -304,6 +305,7 @@ func (s *statsSyncLoad) handleOneItemTask(task *statstypes.NeededItemTask) (err 
 	if !ok {
 		return nil
 	}
+	var tblInfo table.Table
 	wrapper := &statsWrapper{}
 	if item.IsIndex {
 		index, loadNeeded := tbl.IndexIsLoadNeeded(item.ID)
@@ -323,12 +325,13 @@ func (s *statsSyncLoad) handleOneItemTask(task *statstypes.NeededItemTask) (err 
 		if col != nil {
 			wrapper.colInfo = col.Info
 		} else if colInfo := tbl.ColAndIdxExistenceMap.GetCol(item.ID); colInfo != nil {
-			wrapper.colInfo = tbl.ColAndIdxExistenceMap.GetCol(item.ID)
+			wrapper.colInfo = colInfo
 		} else {
+			// Now, we cannot init the column info in the ColAndIdxExistenceMap when to disable lite-init-stats.
+			// so we have to get the column info from the domain.
 			is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
-			tblInfo, ok := s.statsHandle.TableInfoByID(is, item.TableID)
+			tblInfo, ok = s.statsHandle.TableInfoByID(is, item.TableID)
 			if !ok {
-				fmt.Println("fuck")
 				return nil
 			}
 			wrapper.colInfo = tblInfo.Meta().GetColumnByID(item.ID)
@@ -554,14 +557,13 @@ func (s *statsSyncLoad) updateCachedItem(item model.TableItemID, colHist *statis
 		}
 		tbl = tbl.Copy()
 		tbl.SetCol(item.ID, colHist)
-		// If the column is analyzed we refresh the map for the possible change.
-		if colHist.StatsAvailable() {
-			tbl.ColAndIdxExistenceMap.InsertCol(item.ID, colHist.Info, true)
-		}
+
 		// All the objects shares the same stats version. Update it here.
 		if colHist.StatsVer != statistics.Version0 {
 			tbl.StatsVer = statistics.Version0
 		}
+		// we have to refresh the map for the possible change to ensure that the map information is not missing.
+		tbl.ColAndIdxExistenceMap.InsertCol(item.ID, colHist.Info, colHist.StatsAvailable())
 	} else if item.IsIndex && idxHist != nil {
 		index := tbl.GetIdx(item.ID)
 		// - If the stats is fully loaded,

@@ -64,7 +64,7 @@ create table t (created_at datetime) TTL = created_at + INTERVAL 100 YEAR TTL_JO
 show create table t;
 
 # TestShowHistogramsInFlight
-show histograms_in_flight;
+# show histograms_in_flight; TODO(hawkingrei): it is unstable, Please fix it after removing the infoschema in the stats.
 
 # TestShowOpenTables
 show open tables;

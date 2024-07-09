@@ -167,6 +167,11 @@ func (m *ColAndIdxExistenceMap) IsEmpty() bool {
 	return len(m.colInfoMap)+len(m.idxInfoMap) == 0
 }
 
+// IsColEmpty checks whether the column map is empty.
+func (m *ColAndIdxExistenceMap) IsColEmpty() bool {
+	return len(m.colInfoMap) == 0
+}
+
 // Clone deeply copies the map.
 func (m *ColAndIdxExistenceMap) Clone() *ColAndIdxExistenceMap {
 	mm := NewColAndIndexExistenceMap(len(m.colInfoMap), len(m.idxInfoMap))
@@ -809,23 +814,22 @@ func (t *Table) ColumnIsLoadNeeded(id int64, fullLoad bool) (*Column, bool, bool
 	if t.Pseudo {
 		return nil, false, false
 	}
-	if len(t.columns) == 0 {
+	// when we use non-lite init stats, it cannot init the stats for common columns.
+	// so we need to foce to load the stats.
+	col, ok := t.columns[id]
+	if !ok {
 		return nil, true, true
 	}
-	col, ok := t.columns[id]
 	hasAnalyzed := t.ColAndIdxExistenceMap.HasAnalyzed(id, false)
 
 	// If it's not analyzed yet.
 	if !hasAnalyzed {
 		// If we don't have it in memory, we create a fake hist for pseudo estimation (see handleOneItemTask()).
-		if !ok {
-			// If we don't have this column. We skip it.
-			// It's something ridiculous. But it's possible that the stats don't have some ColumnInfo.
-			// We need to find a way to maintain it more correctly.
-			return nil, false, true
-		}
+		// If we don't have this column. We skip it.
+		// It's something ridiculous. But it's possible that the stats don't have some ColumnInfo.
+		// We need to find a way to maintain it more correctly.
 		// Otherwise we don't need to load it.
-		return nil, false, false
+		return nil, t.ColAndIdxExistenceMap.Has(id, false), false
 	}
 
 	// Restore the condition from the simplified form:
