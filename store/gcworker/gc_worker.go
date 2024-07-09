@@ -1736,11 +1736,7 @@ func (w *GCWorker) saveValueToSysTable(key, value string) error {
 // GC placement rules when the partitions are removed by the GC worker.
 // Placement rules cannot be removed immediately after drop table / truncate table,
 // because the tables can be flashed back or recovered.
-<<<<<<< HEAD:store/gcworker/gc_worker.go
 func (w *GCWorker) doGCPlacementRules(se session.Session, safePoint uint64, dr util.DelRangeTask, gcPlacementRuleCache map[int64]interface{}) (err error) {
-=======
-func (w *GCWorker) doGCPlacementRules(se sessiontypes.Session, _ uint64, dr util.DelRangeTask, gcPlacementRuleCache map[int64]any) (err error) {
->>>>>>> d1f26715577 (gc: delete TiFlash placement rules in batch (#54071)):pkg/store/gcworker/gc_worker.go
 	// Get the job from the job history
 	var historyJob *model.Job
 	failpoint.Inject("mockHistoryJobForGC", func(v failpoint.Value) {
@@ -1793,21 +1789,8 @@ func (w *GCWorker) doGCPlacementRules(se sessiontypes.Session, _ uint64, dr util
 		return
 	}
 
-<<<<<<< HEAD:store/gcworker/gc_worker.go
-	for _, id := range physicalTableIDs {
-		// Delete pd rule
-		failpoint.Inject("gcDeletePlacementRuleCounter", func() {})
-		logutil.BgLogger().Info("try delete TiFlash pd rule",
-			zap.Int64("tableID", id), zap.String("endKey", string(dr.EndKey)), zap.Uint64("safePoint", safePoint))
-		ruleID := fmt.Sprintf("table-%v-r", id)
-		if err := infosync.DeleteTiFlashPlacementRule(context.Background(), "tiflash", ruleID); err != nil {
-			logutil.BgLogger().Error("delete TiFlash pd rule failed when gc",
-				zap.Error(err), zap.String("ruleID", ruleID), zap.Uint64("safePoint", safePoint))
-		}
-=======
 	if err := infosync.DeleteTiFlashPlacementRules(context.Background(), physicalTableIDs); err != nil {
 		logutil.BgLogger().Error("delete placement rules failed", zap.Error(err), zap.Int64s("tableIDs", physicalTableIDs))
->>>>>>> d1f26715577 (gc: delete TiFlash placement rules in batch (#54071)):pkg/store/gcworker/gc_worker.go
 	}
 	bundles := make([]*placement.Bundle, 0, len(physicalTableIDs))
 	for _, id := range physicalTableIDs {

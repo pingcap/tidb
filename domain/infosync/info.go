@@ -1134,11 +1134,11 @@ func DeleteTiFlashPlacementRules(ctx context.Context, physicalTableIDs []int64) 
 		return errors.Trace(err)
 	}
 	logutil.BgLogger().Info("DeleteTiFlashPlacementRules", zap.Int64s("physicalTableIDs", physicalTableIDs))
-	rules := make([]*pdhttp.Rule, 0, len(physicalTableIDs))
+	rules := make([]*placement.TiFlashRule, 0, len(physicalTableIDs))
 	for _, id := range physicalTableIDs {
 		// make a rule with count 0 to delete the rule
 		rule := MakeNewRule(id, 0, nil)
-		rules = append(rules, &rule)
+		rules = append(rules, rule)
 	}
 	return is.tiflashReplicaManager.SetPlacementRuleBatch(ctx, rules)
 }
