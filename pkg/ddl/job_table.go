@@ -494,7 +494,17 @@ func (d *ddl) delivery2LocalWorker(pool *workerPool, task *limitJobTask) {
 			metrics.DDLRunningJobCount.WithLabelValues(pool.tp().String()).Dec()
 		}()
 
-		err := wk.HandleLocalDDLJob(d.ddlCtx, job)
+		maxRetryTime := 100
+		var err error
+		for i := 0; i < maxRetryTime; i++ {
+			err = wk.HandleLocalDDLJob(d.ddlCtx, job)
+			// since local the job is not inserted into the ddl job queue, we need to add retry logic here.
+			if err == nil || !isRetryableError(err) {
+				break
+			}
+			logutil.DDLLogger().Info("handle local ddl job", zap.Int("retry times", i), zap.Error(err))
+			time.Sleep(time.Second)
+		}
 		pool.put(wk)
 		if err != nil {
 			logutil.DDLLogger().Info("handle ddl job failed", zap.Error(err), zap.Stringer("job", job))
