@@ -170,8 +170,7 @@ func cmdBuild(args ...string) bool {
 
 	// build all packages
 	if len(args) == 0 {
-		err := buildTestBinaryMulti(pkgs)
-		if err != nil {
+		if err := buildTestBinaryMulti(pkgs); err != nil {
 			log.Println("build package error", pkgs, err)
 			return false
 		}
@@ -201,28 +200,14 @@ func cmdRun(args ...string) bool {
 	start := time.Now()
 	// run all tests
 	if len(args) == 0 {
-		err := buildTestBinaryMulti(pkgs)
-		if err != nil {
+		if err := buildTestBinaryMulti(pkgs); err != nil {
 			log.Println("build package error", pkgs, err)
 			return false
 		}
 
-		for _, pkg := range pkgs {
-			exist, err := testBinaryExist(pkg)
-			if err != nil {
-				log.Println("check test binary existence error", err)
-				return false
-			}
-			if !exist {
-				fmt.Println("no test case in ", pkg)
-				continue
-			}
-
-			tasks, err = listTestCases(pkg, tasks)
-			if err != nil {
-				log.Println("list test cases error", err)
-				return false
-			}
+		if tasks, err = runExistingTestCases(pkgs); err != nil {
+			log.Println("run existing test cases error", err)
+			return false
 		}
 	}
 
@@ -355,6 +340,32 @@ func cmdRun(args ...string) bool {
 		}
 	}
 	return true
+}
+
+func runExistingTestCases(pkgs []string) (tasks []task, err error) {
+	wg := &sync.WaitGroup{}
+	tasksChannel := make(chan []task, len(pkgs))
+	for _, pkg := range pkgs {
+		exist, err := testBinaryExist(pkg)
+		if err != nil {
+			log.Println("check test binary existence error", err)
+			return nil, err
+		}
+		if !exist {
+			fmt.Println("no test case in ", pkg)
+			continue
+		}
+
+		wg.Add(1)
+		go listTestCasesConcurrent(wg, pkg, tasksChannel)
+	}
+
+	wg.Wait()
+	close(tasksChannel)
+	for t := range tasksChannel {
+		tasks = append(tasks, t...)
+	}
+	return tasks, nil
 }
 
 func parseCaseListFromFile(fileName string) (map[string]struct{}, error) {
@@ -649,6 +660,20 @@ func listTestCases(pkg string, tasks []task) ([]task, error) {
 	}
 
 	return tasks, nil
+}
+
+func listTestCasesConcurrent(wg *sync.WaitGroup, pkg string, tasksChannel chan<- []task) {
+	defer wg.Done()
+	newCases, err := listNewTestCases(pkg)
+	if err != nil {
+		log.Println("list test case error", pkg, err)
+		return
+	}
+	tasks := make([]task, 0, len(newCases))
+	for _, c := range newCases {
+		tasks = append(tasks, task{pkg, c})
+	}
+	tasksChannel <- tasks
 }
 
 func filterTestCases(tasks []task, arg1 string) ([]task, error) {

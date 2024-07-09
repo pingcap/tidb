@@ -242,21 +242,21 @@ func (do *Domain) runawayRecordFlushLoop() {
 
 	// this times is used to batch flushing records, with 1s duration,
 	// we can guarantee a watch record can be seen by the user within 1s.
-	runawayRecordFluashTimer := time.NewTimer(runawayRecordFlushInterval)
+	runawayRecordFlushTimer := time.NewTimer(runawayRecordFlushInterval)
 	runawayRecordGCTicker := time.NewTicker(runawayRecordGCInterval)
 	failpoint.Inject("FastRunawayGC", func() {
-		runawayRecordFluashTimer.Stop()
+		runawayRecordFlushTimer.Stop()
 		runawayRecordGCTicker.Stop()
-		runawayRecordFluashTimer = time.NewTimer(time.Millisecond * 50)
+		runawayRecordFlushTimer = time.NewTimer(time.Millisecond * 50)
 		runawayRecordGCTicker = time.NewTicker(time.Millisecond * 200)
 	})
 
 	fired := false
-	recordCh := do.RunawayManager().RunawayRecordChan()
-	quarantineRecordCh := do.RunawayManager().QuarantineRecordChan()
-	staleQuarantineRecordCh := do.RunawayManager().StaleQuarantineRecordChan()
-	flushThrehold := do.runawayManager.FlushThreshold()
-	records := make([]*resourcegroup.RunawayRecord, 0, flushThrehold)
+	recordCh := do.runawayManager.RunawayRecordChan()
+	quarantineRecordCh := do.runawayManager.QuarantineRecordChan()
+	staleQuarantineRecordCh := do.runawayManager.StaleQuarantineRecordChan()
+	flushThreshold := do.runawayManager.FlushThreshold()
+	records := make([]*resourcegroup.RunawayRecord, 0, flushThreshold)
 
 	flushRunawayRecords := func() {
 		if len(records) == 0 {
@@ -273,7 +273,7 @@ func (do *Domain) runawayRecordFlushLoop() {
 		select {
 		case <-do.exit:
 			return
-		case <-runawayRecordFluashTimer.C:
+		case <-runawayRecordFlushTimer.C:
 			flushRunawayRecords()
 			fired = true
 		case r := <-recordCh:
@@ -281,12 +281,12 @@ func (do *Domain) runawayRecordFlushLoop() {
 			failpoint.Inject("FastRunawayGC", func() {
 				flushRunawayRecords()
 			})
-			if len(records) >= flushThrehold {
+			if len(records) >= flushThreshold {
 				flushRunawayRecords()
 			} else if fired {
 				fired = false
 				// meet a new record, reset the timer.
-				runawayRecordFluashTimer.Reset(runawayRecordFlushInterval)
+				runawayRecordFlushTimer.Reset(runawayRecordFlushInterval)
 			}
 		case <-runawayRecordGCTicker.C:
 			go do.deleteExpiredRows("tidb_runaway_queries", "time", runawayRecordExpiredDuration)

@@ -54,8 +54,8 @@ type SessionStatesHandler interface {
 
 // SessionPlanCache is an interface for prepare and non-prepared plan cache
 type SessionPlanCache interface {
-	Get(key string, opts any) (value any, ok bool)
-	Put(key string, value, opts any)
+	Get(key string, paramTypes any) (value any, ok bool)
+	Put(key string, value, paramTypes any)
 	Delete(key string)
 	DeleteAll()
 	Size() int
@@ -67,9 +67,9 @@ type SessionPlanCache interface {
 // Value and Opts should always be *PlanCacheValue and *PlanCacheMatchOpts, use any to avoid cycle-import.
 type InstancePlanCache interface {
 	// Get gets the cached value from the cache according to key and opts.
-	Get(sctx Context, key string, opts any) (value any, ok bool)
+	Get(key string, paramTypes any) (value any, ok bool)
 	// Put puts the key and value into the cache.
-	Put(sctx Context, key string, value, opts any) (succ bool)
+	Put(key string, value, paramTypes any) (succ bool)
 	// Evict evicts some cached values.
 	Evict() (evicted bool)
 	// MemUsage returns the total memory usage of this plan cache.

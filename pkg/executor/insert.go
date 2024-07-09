@@ -56,7 +56,7 @@ type InsertExec struct {
 
 func (e *InsertExec) exec(ctx context.Context, rows [][]types.Datum) error {
 	defer trace.StartRegion(ctx, "InsertExec").End()
-	logutil.Eventf(ctx, "insert %d rows into table `%s`", len(rows), stringutil.MemoizeStr(func() string {
+	logutil.Eventf(ctx, "insert %d rows into table `%s`", len(rows), stringutil.StringerFunc(func() string {
 		var tblName string
 		if meta := e.Table.Meta(); meta != nil {
 			tblName = meta.Name.L
