@@ -100,7 +100,7 @@ func (h *Handle) initStatsMeta() (statstypes.StatsCache, error) {
 	return tables, nil
 }
 
-func (h *Handle) initStatsHistograms4ChunkLite(is infoschema.InfoSchema, cache statstypes.StatsCache, iter *chunk.Iterator4Chunk) {
+func (*Handle) initStatsHistograms4ChunkLite(cache statstypes.StatsCache, iter *chunk.Iterator4Chunk) {
 	var table *statistics.Table
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		tblID := row.GetInt64(0)
@@ -244,7 +244,7 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache stats
 	}
 }
 
-func (h *Handle) initStatsHistogramsLite(is infoschema.InfoSchema, cache statstypes.StatsCache) error {
+func (h *Handle) initStatsHistogramsLite(cache statstypes.StatsCache) error {
 	sql := "select /*+ ORDER_INDEX(mysql.stats_histograms,tbl)*/ HIGH_PRIORITY table_id, is_index, hist_id, distinct_count, version, null_count, tot_col_size, stats_ver, correlation, flag, last_analyze_pos from mysql.stats_histograms order by table_id"
 	rc, err := util.Exec(h.initStatsCtx, sql)
 	if err != nil {
@@ -262,7 +262,7 @@ func (h *Handle) initStatsHistogramsLite(is infoschema.InfoSchema, cache statsty
 		if req.NumRows() == 0 {
 			break
 		}
-		h.initStatsHistograms4ChunkLite(is, cache, iter)
+		h.initStatsHistograms4ChunkLite(cache, iter)
 	}
 	return nil
 }
@@ -676,7 +676,7 @@ func (h *Handle) initStatsBucketsConcurrency(cache statstypes.StatsCache, totalM
 // 1. Basic stats meta data is loaded.(count, modify count, etc.)
 // 2. Column/index stats are loaded. (only histogram)
 // 3. TopN, Bucket, FMSketch are not loaded.
-func (h *Handle) InitStatsLite(is infoschema.InfoSchema) (err error) {
+func (h *Handle) InitStatsLite() (err error) {
 	defer func() {
 		_, err1 := util.Exec(h.initStatsCtx, "commit")
 		if err == nil && err1 != nil {
@@ -693,7 +693,7 @@ func (h *Handle) InitStatsLite(is infoschema.InfoSchema) (err error) {
 		return errors.Trace(err)
 	}
 	statslogutil.StatsLogger().Info("complete to load the meta in the lite mode")
-	err = h.initStatsHistogramsLite(is, cache)
+	err = h.initStatsHistogramsLite(cache)
 	if err != nil {
 		return errors.Trace(err)
 	}

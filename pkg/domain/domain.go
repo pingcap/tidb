@@ -2340,7 +2340,7 @@ func (do *Domain) initStats() {
 	liteInitStats := config.GetGlobalConfig().Performance.LiteInitStats
 	var err error
 	if liteInitStats {
-		err = statsHandle.InitStatsLite(do.InfoSchema())
+		err = statsHandle.InitStatsLite()
 	} else {
 		err = statsHandle.InitStats(do.InfoSchema())
 	}
