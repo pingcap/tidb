@@ -295,13 +295,6 @@ func (s *ShowContents) MemoryUsage() (sum int64) {
 	return
 }
 
-// LogicalShowDDLJobs is for showing DDL job list.
-type LogicalShowDDLJobs struct {
-	logicalop.LogicalSchemaProducer
-
-	JobNumber int64
-}
-
 // CTEClass holds the information and plan for a CTE. Most of the fields in this struct are the same as cteInfo.
 // But the cteInfo is used when building the plan, and CTEClass is used also for building the executor.
 type CTEClass struct {
