@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -58,14 +59,15 @@ func GetSyncLoadConcurrencyByCPU() int {
 
 type statsSyncLoad struct {
 	statsHandle statstypes.StatsHandle
+	is          infoschema.InfoSchema
 	StatsLoad   statstypes.StatsLoad
 }
 
 var globalStatsSyncLoadSingleFlight singleflight.Group
 
 // NewStatsSyncLoad creates a new StatsSyncLoad.
-func NewStatsSyncLoad(statsHandle statstypes.StatsHandle) statstypes.StatsSyncLoad {
-	s := &statsSyncLoad{statsHandle: statsHandle}
+func NewStatsSyncLoad(is infoschema.InfoSchema, statsHandle statstypes.StatsHandle) statstypes.StatsSyncLoad {
+	s := &statsSyncLoad{statsHandle: statsHandle, is: is}
 	cfg := config.GetGlobalConfig()
 	s.StatsLoad.NeededItemsCh = make(chan *statstypes.NeededItemTask, cfg.Performance.StatsLoadQueueSize)
 	s.StatsLoad.TimeoutItemsCh = make(chan *statstypes.NeededItemTask, cfg.Performance.StatsLoadQueueSize)
@@ -300,9 +302,15 @@ func (s *statsSyncLoad) handleOneItemTask(task *statstypes.NeededItemTask) (err 
 	}()
 	item := task.Item.TableItemID
 	tbl, ok := s.statsHandle.Get(item.TableID)
+
 	if !ok {
 		return nil
 	}
+	tblInfo, ok := s.statsHandle.TableInfoByID(s.is, item.TableID)
+	if !ok {
+		return nil
+	}
+	isPkIsHandle := tblInfo.Meta().PKIsHandle
 	wrapper := &statsWrapper{}
 	if item.IsIndex {
 		index, loadNeeded := tbl.IndexIsLoadNeeded(item.ID)
@@ -312,7 +320,7 @@ func (s *statsSyncLoad) handleOneItemTask(task *statstypes.NeededItemTask) (err 
 		if index != nil {
 			wrapper.idxInfo = index.Info
 		} else {
-			wrapper.idxInfo = tbl.ColAndIdxExistenceMap.GetIndex(item.ID)
+			wrapper.idxInfo = tblInfo.Meta().FindIndexByID(item.ID)
 		}
 	} else {
 		col, loadNeeded, analyzed := tbl.ColumnIsLoadNeeded(item.ID, task.Item.FullLoad)
@@ -322,7 +330,7 @@ func (s *statsSyncLoad) handleOneItemTask(task *statstypes.NeededItemTask) (err 
 		if col != nil {
 			wrapper.colInfo = col.Info
 		} else {
-			wrapper.colInfo = tbl.ColAndIdxExistenceMap.GetCol(item.ID)
+			wrapper.colInfo = tblInfo.Meta().GetColumnByID(item.ID)
 		}
 		// If this column is not analyzed yet and we don't have it in memory.
 		// We create a fake one for the pseudo estimation.
@@ -331,7 +339,7 @@ func (s *statsSyncLoad) handleOneItemTask(task *statstypes.NeededItemTask) (err 
 				PhysicalID: item.TableID,
 				Info:       wrapper.colInfo,
 				Histogram:  *statistics.NewHistogram(item.ID, 0, 0, 0, &wrapper.colInfo.FieldType, 0, 0),
-				IsHandle:   tbl.IsPkIsHandle && mysql.HasPriKeyFlag(wrapper.colInfo.GetFlag()),
+				IsHandle:   isPkIsHandle && mysql.HasPriKeyFlag(wrapper.colInfo.GetFlag()),
 			}
 			s.updateCachedItem(item, wrapper.col, wrapper.idx, task.Item.FullLoad)
 			return nil
@@ -339,7 +347,7 @@ func (s *statsSyncLoad) handleOneItemTask(task *statstypes.NeededItemTask) (err 
 	}
 	t := time.Now()
 	needUpdate := false
-	wrapper, err = s.readStatsForOneItem(sctx, item, wrapper, tbl.IsPkIsHandle, task.Item.FullLoad)
+	wrapper, err = s.readStatsForOneItem(sctx, item, wrapper, isPkIsHandle, task.Item.FullLoad)
 	if err != nil {
 		return err
 	}
@@ -547,7 +555,7 @@ func (s *statsSyncLoad) updateCachedItem(item model.TableItemID, colHist *statis
 		tbl.SetCol(item.ID, colHist)
 		// If the column is analyzed we refresh the map for the possible change.
 		if colHist.StatsAvailable() {
-			tbl.ColAndIdxExistenceMap.InsertCol(item.ID, colHist.Info, true)
+			tbl.ColAndIdxExistenceMap.InsertCol(item.ID, true)
 		}
 		// All the objects shares the same stats version. Update it here.
 		if colHist.StatsVer != statistics.Version0 {
@@ -564,7 +572,7 @@ func (s *statsSyncLoad) updateCachedItem(item model.TableItemID, colHist *statis
 		tbl.SetIdx(item.ID, idxHist)
 		// If the index is analyzed we refresh the map for the possible change.
 		if idxHist.IsAnalyzed() {
-			tbl.ColAndIdxExistenceMap.InsertIndex(item.ID, idxHist.Info, true)
+			tbl.ColAndIdxExistenceMap.InsertIndex(item.ID, true)
 			// All the objects shares the same stats version. Update it here.
 			tbl.StatsVer = statistics.Version0
 		}

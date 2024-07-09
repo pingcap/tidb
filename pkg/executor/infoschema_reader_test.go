@@ -328,7 +328,7 @@ func TestForAnalyzeStatus(t *testing.T) {
 	tk.MustExec("insert into t1 values (1,2),(3,4)")
 	tk.MustExec("analyze table t1")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t1, reason to use this rate is \"use min(1, 110000/10000) as the sample-rate=1\"")) // 1 note.
-	require.NoError(t, dom.StatsHandle().LoadNeededHistograms())
+	require.NoError(t, dom.StatsHandle().LoadNeededHistograms(dom.InfoSchema()))
 	tk.MustExec("CREATE ROLE r_t1 ;")
 	tk.MustExec("GRANT ALL PRIVILEGES ON test.t1 TO r_t1;")
 	tk.MustExec("GRANT r_t1 TO analyze_tester;")
@@ -622,7 +622,7 @@ func TestReferencedTableSchemaWithForeignKey(t *testing.T) {
 	tk.MustExec("create table test.t1(id int primary key);")
 	tk.MustExec("create table test2.t2(i int, id int, foreign key (id) references test.t1(id));")
 
-	tk.MustQuery(`SELECT column_name, referenced_column_name, referenced_table_name, table_schema, referenced_table_schema 
+	tk.MustQuery(`SELECT column_name, referenced_column_name, referenced_table_name, table_schema, referenced_table_schema
 	FROM information_schema.key_column_usage
 	WHERE table_name = 't2' AND table_schema = 'test2';`).Check(testkit.Rows(
 		"id id t1 test2 test"))

@@ -53,24 +53,16 @@ type MaxTidRecord struct {
 	tid atomic.Int64
 }
 
-func (h *Handle) initStatsMeta4Chunk(is infoschema.InfoSchema, cache statstypes.StatsCache, iter *chunk.Iterator4Chunk) {
+func (*Handle) initStatsMeta4Chunk(cache statstypes.StatsCache, iter *chunk.Iterator4Chunk) {
 	var physicalID, maxPhysicalID int64
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		physicalID = row.GetInt64(1)
-		// The table is read-only. Please do not modify it.
-		table, ok := h.TableInfoByID(is, physicalID)
-		if !ok {
-			logutil.BgLogger().Debug("unknown physical ID in stats meta table, maybe it has been dropped", zap.Int64("ID", physicalID))
-			continue
-		}
 		maxPhysicalID = max(physicalID, maxPhysicalID)
-		tableInfo := table.Meta()
 		newHistColl := *statistics.NewHistColl(physicalID, true, row.GetInt64(3), row.GetInt64(2), 4, 4)
 		tbl := &statistics.Table{
 			HistColl:              newHistColl,
 			Version:               row.GetUint64(0),
-			ColAndIdxExistenceMap: statistics.NewColAndIndexExistenceMap(len(tableInfo.Columns), len(tableInfo.Indices)),
-			IsPkIsHandle:          tableInfo.PKIsHandle,
+			ColAndIdxExistenceMap: statistics.NewColAndIndexExistenceMapWithoutSize(),
 		}
 		cache.Put(physicalID, tbl) // put this table again since it is updated
 	}
@@ -81,7 +73,7 @@ func (h *Handle) initStatsMeta4Chunk(is infoschema.InfoSchema, cache statstypes.
 	}
 }
 
-func (h *Handle) initStatsMeta(is infoschema.InfoSchema) (statstypes.StatsCache, error) {
+func (h *Handle) initStatsMeta() (statstypes.StatsCache, error) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
 	sql := "select HIGH_PRIORITY version, table_id, modify_count, count from mysql.stats_meta"
 	rc, err := util.Exec(h.initStatsCtx, sql)
@@ -103,12 +95,12 @@ func (h *Handle) initStatsMeta(is infoschema.InfoSchema) (statstypes.StatsCache,
 		if req.NumRows() == 0 {
 			break
 		}
-		h.initStatsMeta4Chunk(is, tables, iter)
+		h.initStatsMeta4Chunk(tables, iter)
 	}
 	return tables, nil
 }
 
-func (h *Handle) initStatsHistograms4ChunkLite(is infoschema.InfoSchema, cache statstypes.StatsCache, iter *chunk.Iterator4Chunk) {
+func (*Handle) initStatsHistograms4ChunkLite(cache statstypes.StatsCache, iter *chunk.Iterator4Chunk) {
 	var table *statistics.Table
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		tblID := row.GetInt64(0)
@@ -128,39 +120,18 @@ func (h *Handle) initStatsHistograms4ChunkLite(is infoschema.InfoSchema, cache s
 		ndv := row.GetInt64(3)
 		nullCount := row.GetInt64(5)
 		statsVer := row.GetInt64(7)
-		tbl, _ := h.TableInfoByID(is, table.PhysicalID)
 		// All the objects in the table share the same stats version.
 		if statsVer != statistics.Version0 {
 			table.StatsVer = int(statsVer)
 		}
 		if isIndex > 0 {
-			var idxInfo *model.IndexInfo
-			for _, idx := range tbl.Meta().Indices {
-				if idx.ID == id {
-					idxInfo = idx
-					break
-				}
-			}
-			if idxInfo == nil {
-				continue
-			}
-			table.ColAndIdxExistenceMap.InsertIndex(idxInfo.ID, idxInfo, statsVer != statistics.Version0)
+			table.ColAndIdxExistenceMap.InsertIndex(id, statsVer != statistics.Version0)
 			if statsVer != statistics.Version0 {
 				// The LastAnalyzeVersion is added by ALTER table so its value might be 0.
 				table.LastAnalyzeVersion = max(table.LastAnalyzeVersion, row.GetUint64(4))
 			}
 		} else {
-			var colInfo *model.ColumnInfo
-			for _, col := range tbl.Meta().Columns {
-				if col.ID == id {
-					colInfo = col
-					break
-				}
-			}
-			if colInfo == nil {
-				continue
-			}
-			table.ColAndIdxExistenceMap.InsertCol(colInfo.ID, colInfo, statsVer != statistics.Version0 || ndv > 0 || nullCount > 0)
+			table.ColAndIdxExistenceMap.InsertCol(id, statsVer != statistics.Version0 || ndv > 0 || nullCount > 0)
 			if statsVer != statistics.Version0 {
 				// The LastAnalyzeVersion is added by ALTER table so its value might be 0.
 				table.LastAnalyzeVersion = max(table.LastAnalyzeVersion, row.GetUint64(4))
@@ -235,7 +206,7 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache stats
 			}
 			lastAnalyzePos.Copy(&index.LastAnalyzePos)
 			table.SetIdx(idxInfo.ID, index)
-			table.ColAndIdxExistenceMap.InsertIndex(idxInfo.ID, idxInfo, statsVer != statistics.Version0)
+			table.ColAndIdxExistenceMap.InsertIndex(idxInfo.ID, statsVer != statistics.Version0)
 		} else {
 			var colInfo *model.ColumnInfo
 			for _, col := range tbl.Meta().Columns {
@@ -261,7 +232,7 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache stats
 			col.StatsLoadedStatus = statistics.NewStatsAllEvictedStatus()
 			lastAnalyzePos.Copy(&col.LastAnalyzePos)
 			table.SetCol(hist.ID, col)
-			table.ColAndIdxExistenceMap.InsertCol(colInfo.ID, colInfo, statsVer != statistics.Version0 || ndv > 0 || nullCount > 0)
+			table.ColAndIdxExistenceMap.InsertCol(colInfo.ID, statsVer != statistics.Version0 || ndv > 0 || nullCount > 0)
 			if statsVer != statistics.Version0 {
 				// The LastAnalyzeVersion is added by ALTER table so its value might be 0.
 				table.LastAnalyzeVersion = max(table.LastAnalyzeVersion, version)
@@ -273,7 +244,7 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache stats
 	}
 }
 
-func (h *Handle) initStatsHistogramsLite(is infoschema.InfoSchema, cache statstypes.StatsCache) error {
+func (h *Handle) initStatsHistogramsLite(cache statstypes.StatsCache) error {
 	sql := "select /*+ ORDER_INDEX(mysql.stats_histograms,tbl)*/ HIGH_PRIORITY table_id, is_index, hist_id, distinct_count, version, null_count, tot_col_size, stats_ver, correlation, flag, last_analyze_pos from mysql.stats_histograms order by table_id"
 	rc, err := util.Exec(h.initStatsCtx, sql)
 	if err != nil {
@@ -291,7 +262,7 @@ func (h *Handle) initStatsHistogramsLite(is infoschema.InfoSchema, cache statsty
 		if req.NumRows() == 0 {
 			break
 		}
-		h.initStatsHistograms4ChunkLite(is, cache, iter)
+		h.initStatsHistograms4ChunkLite(cache, iter)
 	}
 	return nil
 }
@@ -705,7 +676,7 @@ func (h *Handle) initStatsBucketsConcurrency(cache statstypes.StatsCache, totalM
 // 1. Basic stats meta data is loaded.(count, modify count, etc.)
 // 2. Column/index stats are loaded. (only histogram)
 // 3. TopN, Bucket, FMSketch are not loaded.
-func (h *Handle) InitStatsLite(is infoschema.InfoSchema) (err error) {
+func (h *Handle) InitStatsLite() (err error) {
 	defer func() {
 		_, err1 := util.Exec(h.initStatsCtx, "commit")
 		if err == nil && err1 != nil {
@@ -717,12 +688,12 @@ func (h *Handle) InitStatsLite(is infoschema.InfoSchema) (err error) {
 		return err
 	}
 	failpoint.Inject("beforeInitStatsLite", func() {})
-	cache, err := h.initStatsMeta(is)
+	cache, err := h.initStatsMeta()
 	if err != nil {
 		return errors.Trace(err)
 	}
 	statslogutil.StatsLogger().Info("complete to load the meta in the lite mode")
-	err = h.initStatsHistogramsLite(is, cache)
+	err = h.initStatsHistogramsLite(cache)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -751,7 +722,7 @@ func (h *Handle) InitStats(is infoschema.InfoSchema) (err error) {
 		return err
 	}
 	failpoint.Inject("beforeInitStats", func() {})
-	cache, err := h.initStatsMeta(is)
+	cache, err := h.initStatsMeta()
 	if err != nil {
 		return errors.Trace(err)
 	}

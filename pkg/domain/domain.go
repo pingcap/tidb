@@ -2204,7 +2204,7 @@ func (do *Domain) StatsHandle() *handle.Handle {
 
 // CreateStatsHandle is used only for test.
 func (do *Domain) CreateStatsHandle(ctx, initStatsCtx sessionctx.Context) error {
-	h, err := handle.NewHandle(ctx, initStatsCtx, do.statsLease, do.sysSessionPool, &do.sysProcesses, do.GetAutoAnalyzeProcID)
+	h, err := handle.NewHandle(ctx, initStatsCtx, do.statsLease, do.InfoSchema(), do.sysSessionPool, &do.sysProcesses, do.GetAutoAnalyzeProcID)
 	if err != nil {
 		return err
 	}
@@ -2281,7 +2281,7 @@ func (do *Domain) LoadAndUpdateStatsLoop(ctxs []sessionctx.Context, initStatsCtx
 // It should be called only once in BootstrapSession.
 func (do *Domain) UpdateTableStatsLoop(ctx, initStatsCtx sessionctx.Context) error {
 	ctx.GetSessionVars().InRestrictedSQL = true
-	statsHandle, err := handle.NewHandle(ctx, initStatsCtx, do.statsLease, do.sysSessionPool, &do.sysProcesses, do.GetAutoAnalyzeProcID)
+	statsHandle, err := handle.NewHandle(ctx, initStatsCtx, do.statsLease, do.InfoSchema(), do.sysSessionPool, &do.sysProcesses, do.GetAutoAnalyzeProcID)
 	if err != nil {
 		return err
 	}
@@ -2391,7 +2391,7 @@ func (do *Domain) initStats() {
 	liteInitStats := config.GetGlobalConfig().Performance.LiteInitStats
 	var err error
 	if liteInitStats {
-		err = statsHandle.InitStatsLite(do.InfoSchema())
+		err = statsHandle.InitStatsLite()
 	} else {
 		err = statsHandle.InitStats(do.InfoSchema())
 	}
@@ -2425,7 +2425,7 @@ func (do *Domain) loadStatsWorker() {
 			if err != nil {
 				logutil.BgLogger().Debug("update stats info failed", zap.Error(err))
 			}
-			err = statsHandle.LoadNeededHistograms()
+			err = statsHandle.LoadNeededHistograms(do.InfoSchema())
 			if err != nil {
 				logutil.BgLogger().Debug("load histograms failed", zap.Error(err))
 			}

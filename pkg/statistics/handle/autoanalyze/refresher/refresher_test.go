@@ -385,10 +385,10 @@ func TestCalculateChangePercentage(t *testing.T) {
 	}
 	bothUnanalyzedMap := statistics.NewColAndIndexExistenceMap(0, 0)
 	bothAnalyzedMap := statistics.NewColAndIndexExistenceMap(2, 2)
-	bothAnalyzedMap.InsertCol(1, nil, true)
-	bothAnalyzedMap.InsertCol(2, nil, true)
-	bothAnalyzedMap.InsertIndex(1, nil, true)
-	bothAnalyzedMap.InsertIndex(2, nil, true)
+	bothAnalyzedMap.InsertCol(1, true)
+	bothAnalyzedMap.InsertCol(2, true)
+	bothAnalyzedMap.InsertIndex(1, true)
+	bothAnalyzedMap.InsertIndex(2, true)
 	tests := []struct {
 		name             string
 		tblStats         *statistics.Table
@@ -463,8 +463,8 @@ func TestGetTableLastAnalyzeDurationForUnanalyzedTable(t *testing.T) {
 
 func TestCheckIndexesNeedAnalyze(t *testing.T) {
 	analyzedMap := statistics.NewColAndIndexExistenceMap(1, 0)
-	analyzedMap.InsertCol(1, nil, true)
-	analyzedMap.InsertIndex(1, nil, false)
+	analyzedMap.InsertCol(1, true)
+	analyzedMap.InsertIndex(1, false)
 	tests := []struct {
 		name     string
 		tblInfo  *model.TableInfo
@@ -526,9 +526,9 @@ func TestCalculateIndicatorsForPartitions(t *testing.T) {
 	lastUpdateTs := oracle.GoTimeToTS(lastUpdateTime)
 	unanalyzedMap := statistics.NewColAndIndexExistenceMap(0, 0)
 	analyzedMap := statistics.NewColAndIndexExistenceMap(2, 1)
-	analyzedMap.InsertCol(1, nil, true)
-	analyzedMap.InsertCol(2, nil, true)
-	analyzedMap.InsertIndex(1, nil, true)
+	analyzedMap.InsertCol(1, true)
+	analyzedMap.InsertCol(2, true)
+	analyzedMap.InsertIndex(1, true)
 	tests := []struct {
 		name                       string
 		tblInfo                    *model.TableInfo
