@@ -3317,6 +3317,7 @@ func InitMDLVariableForBootstrap(store kv.Storage) error {
 	return nil
 }
 
+// InitTiDBSchemaCacheSize initializes the tidb schema cache size.
 func InitTiDBSchemaCacheSize(store kv.Storage) error {
 	var (
 		isNull bool
