@@ -36,6 +36,13 @@ var (
 	ErrResourceGroupExists = dbterror.ClassSchema.NewStd(mysql.ErrResourceGroupExists)
 	// ErrResourceGroupNotExists return for resource group not exists.
 	ErrResourceGroupNotExists = dbterror.ClassSchema.NewStd(mysql.ErrResourceGroupNotExists)
+<<<<<<< HEAD:infoschema/error.go
+=======
+	// ErrResourceGroupInvalidBackgroundTaskName return for unknown resource group background task name.
+	ErrResourceGroupInvalidBackgroundTaskName = dbterror.ClassExecutor.NewStd(mysql.ErrResourceGroupInvalidBackgroundTaskName)
+	// ErrResourceGroupInvalidForRole return for invalid resource group for role.
+	ErrResourceGroupInvalidForRole = dbterror.ClassSchema.NewStd(mysql.ErrResourceGroupInvalidForRole)
+>>>>>>> cbf34c51e99 (executor/simple: prohibit setting a resource group to a role (#54525)):pkg/infoschema/error.go
 	// ErrReservedSyntax for internal syntax.
 	ErrReservedSyntax = dbterror.ClassSchema.NewStd(mysql.ErrReservedSyntax)
 	// ErrTableExists returns for table already exists.
