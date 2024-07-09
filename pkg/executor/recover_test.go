@@ -576,11 +576,11 @@ func TestFlashbackSchema(t *testing.T) {
 	tk.MustExec("drop database test_flashback")
 
 	// test PD connection issue causes failure after tidb_ddl_error_count_limit
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockClearTablePlacementAndBundlesErr", `return()`))
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockClearTablePlacementAndBundlesErr", `return()`)
 	tk.MustGetErrMsg("flashback database test_flashback", "[ddl:-1]DDL job rollback, error msg: mock error for clearTablePlacementAndBundles")
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockClearTablePlacementAndBundlesErr", `1*return()`))
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockClearTablePlacementAndBundlesErr", `1*return()`)
 	tk.MustExec("flashback database test_flashback")
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockClearTablePlacementAndBundlesErr"))
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/mockClearTablePlacementAndBundlesErr")
 
 	// Test flashback database with db_not_exists name.
 	tk.MustGetErrMsg("flashback database db_not_exists", "Can't find dropped database: db_not_exists in DDL history jobs")

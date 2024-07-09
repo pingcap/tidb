@@ -1208,13 +1208,7 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 	// The cause of this job state is that the job is cancelled by client.
 	if job.IsCancelling() {
 		w.jobLogger(job).Debug("cancel DDL job", zap.String("job", job.String()))
-		ver, err = convertJob2RollbackJob(w, d, t, job)
-		if err == nil && job.State != model.JobStateRollingback && job.State != model.JobStateCancelled {
-			// must let `runDDLJob` return an error, otherwise `needUpdateRawArgs` will
-			// marshal empty Args into RawArgs.
-			err = errors.New("job can't be cancelled")
-		}
-		return ver, err
+		return convertJob2RollbackJob(w, d, t, job)
 	}
 
 	isRunnable, err := w.processJobPausingRequest(d, job)

@@ -267,7 +267,8 @@ func (w *worker) onRecoverSchema(d *ddlCtx, t *meta.Meta, job *model.Job) (ver i
 		}
 
 		recoverTbls := recoverSchemaInfo.RecoverTabsInfo
-		if sid := recoverSchemaInfo.RecoverSchemaIDOnOwner; sid > 0 {
+		if recoverSchemaInfo.LoadTablesOnExecute {
+			sid := recoverSchemaInfo.DBInfo.ID
 			snap := w.store.GetSnapshot(kv.NewVersion(recoverSchemaInfo.SnapshotTS))
 			snapMeta := meta.NewSnapshotMeta(snap)
 			tables, err2 := snapMeta.ListTables(sid)

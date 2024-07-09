@@ -649,11 +649,11 @@ func (e *DDLExec) getRecoverDBByName(schemaName model.CIStr) (recoverSchemaInfo 
 				continue
 			}
 			recoverSchemaInfo = &ddl.RecoverSchemaInfo{
-				DBInfo:                 schemaInfo,
-				RecoverSchemaIDOnOwner: job.SchemaID,
-				DropJobID:              job.ID,
-				SnapshotTS:             job.StartTS,
-				OldSchemaName:          schemaName,
+				DBInfo:              schemaInfo,
+				LoadTablesOnExecute: true,
+				DropJobID:           job.ID,
+				SnapshotTS:          job.StartTS,
+				OldSchemaName:       schemaName,
 			}
 			return true, nil
 		}
