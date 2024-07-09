@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -321,8 +322,16 @@ func (s *statsSyncLoad) handleOneItemTask(task *statstypes.NeededItemTask) (err 
 		}
 		if col != nil {
 			wrapper.colInfo = col.Info
-		} else {
+		} else if colInfo := tbl.ColAndIdxExistenceMap.GetCol(item.ID); colInfo != nil {
 			wrapper.colInfo = tbl.ColAndIdxExistenceMap.GetCol(item.ID)
+		} else {
+			is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
+			tblInfo, ok := s.statsHandle.TableInfoByID(is, item.TableID)
+			if !ok {
+				fmt.Println("fuck")
+				return nil
+			}
+			wrapper.colInfo = tblInfo.Meta().GetColumnByID(item.ID)
 		}
 		// If this column is not analyzed yet and we don't have it in memory.
 		// We create a fake one for the pseudo estimation.
