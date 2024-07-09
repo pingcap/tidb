@@ -59,8 +59,8 @@ func GetSyncLoadConcurrencyByCPU() int {
 
 type statsSyncLoad struct {
 	statsHandle statstypes.StatsHandle
-	StatsLoad   statstypes.StatsLoad
 	is          infoschema.InfoSchema
+	StatsLoad   statstypes.StatsLoad
 }
 
 var globalStatsSyncLoadSingleFlight singleflight.Group
