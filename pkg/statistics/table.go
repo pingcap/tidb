@@ -98,18 +98,6 @@ func (m *ColAndIdxExistenceMap) SomeAnalyzed() bool {
 	return false
 }
 
-// Has checks whether a column/index stats exists.
-// This method only checks whether the given item exists or not.
-// Don't check whether it has statistics or not.
-func (m *ColAndIdxExistenceMap) Has(id int64, isIndex bool) bool {
-	if isIndex {
-		_, ok := m.idxAnalyzed[id]
-		return ok
-	}
-	_, ok := m.colAnalyzed[id]
-	return ok
-}
-
 // HasAnalyzed checks whether a column/index stats exists and it has stats.
 // TODO: the map should only keep the analyzed cols.
 // There's three possible status of column/index's statistics:
