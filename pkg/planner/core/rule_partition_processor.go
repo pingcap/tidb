@@ -19,6 +19,7 @@ import (
 	"cmp"
 	"context"
 	"fmt"
+	"github.com/pingcap/tipb/go-tipb"
 	"math"
 	"slices"
 	"sort"
@@ -1087,19 +1088,50 @@ func makePartitionByFnCol(sctx base.PlanContext, columns []*expression.Column, n
 			}
 			col, ok = args[1].(*expression.Column)
 			if !ok {
+				// Special case where CastTimeToDuration is added
+				expr, ok := args[1].(*expression.ScalarFunction)
+				if !ok {
+					break
+				}
+				if expr.Function.PbCode() != tipb.ScalarFuncSig_CastTimeAsDuration {
+					break
+				}
+				castArgs := expr.GetArgs()
+				col, ok = castArgs[0].(*expression.Column)
+				if !ok {
+					break
+				}
+			}
+			if con.Value.Kind() != types.KindString {
 				break
 			}
-			// TODO: should we check for timestamp, since that may have time zone conversions?
-			val := strings.ToUpper(con.String())
-			switch val {
-			// WEEK is not included, since it may use default_week_format in the future!
-			case "DAY", "MONTH", "QUARTER", "YEAR", "DAY_MICROSECOND", "DAY_SECOND", "DAY_MINUTE", "DAY_HOUR", "YEAR_MONTH":
-				// TODO: we could check the type+fsp in the column definition
-				// to see if Strict monotone for DAY, DAY_MICROSECOND, DAY_SECOND
-				// Note, this function will not have the column as first argument,
-				// so in replaceColumnWithConst it will replace the second argument, which
-				// is special handling there too!
-				return col, raw, monotoneModeNonStrict, nil
+			val := con.Value.GetString()
+			colType := col.GetStaticType().GetType()
+			switch colType {
+			case mysql.TypeDate, mysql.TypeDatetime:
+				switch val {
+				// Only YEAR, YEAR_MONTH can be considered monotonic, the rest will wrap around!
+				case "YEAR", "YEAR_MONTH":
+					// Note, this function will not have the column as first argument,
+					// so in replaceColumnWithConst it will replace the second argument, which
+					// is special handling there too!
+					return col, raw, monotoneModeNonStrict, nil
+				default:
+					return col, raw, monotonous, nil
+				}
+			case mysql.TypeDuration:
+				switch val {
+				// Only HOUR* can be considered monotonic, the rest will wrap around!
+				// TODO: if fsp match for HOUR_SECOND or HOUR_MICROSECOND we could
+				// mark it as monotoneModeStrict
+				case "HOUR", "HOUR_MINUTE", "HOUR_SECOND", "HOUR_MICROSECOND":
+					// Note, this function will not have the column as first argument,
+					// so in replaceColumnWithConst it will replace the second argument, which
+					// is special handling there too!
+					return col, raw, monotoneModeNonStrict, nil
+				default:
+					return col, raw, monotonous, nil
+				}
 			}
 		}
 
@@ -1577,6 +1609,12 @@ func replaceColumnWithConst(partFn *expression.ScalarFunction, con *expression.C
 		}
 	}
 	if partFn.FuncName.L == ast.Extract {
+		if expr, ok := args[1].(*expression.ScalarFunction); ok && expr.Function.PbCode() == tipb.ScalarFuncSig_CastTimeAsDuration {
+			// Special handing if Cast is added
+			funcArgs := expr.GetArgs()
+			funcArgs[0] = con
+			return partFn
+		}
 		args[1] = con
 		return partFn
 	}
