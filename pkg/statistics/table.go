@@ -128,12 +128,12 @@ func (m *ColAndIdxExistenceMap) HasAnalyzed(id int64, isIndex bool) bool {
 }
 
 // InsertCol inserts a column with its meta into the map.
-func (m *ColAndIdxExistenceMap) InsertCol(id int64, info *model.ColumnInfo, analyzed bool) {
+func (m *ColAndIdxExistenceMap) InsertCol(id int64, analyzed bool) {
 	m.colAnalyzed[id] = analyzed
 }
 
 // InsertIndex inserts an index with its meta into the map.
-func (m *ColAndIdxExistenceMap) InsertIndex(id int64, info *model.IndexInfo, analyzed bool) {
+func (m *ColAndIdxExistenceMap) InsertIndex(id int64, analyzed bool) {
 	m.idxAnalyzed[id] = analyzed
 }
 
@@ -980,7 +980,7 @@ func PseudoTable(tblInfo *model.TableInfo, allowTriggerLoading bool, allowFillHi
 		// We would not collect stats for the hidden column and we won't use the hidden column to estimate.
 		// Thus we don't create pseudo stats for it.
 		if col.State == model.StatePublic && !col.Hidden {
-			t.ColAndIdxExistenceMap.InsertCol(col.ID, col, false)
+			t.ColAndIdxExistenceMap.InsertCol(col.ID, false)
 			if allowFillHistMeta {
 				t.columns[col.ID] = &Column{
 					PhysicalID: tblInfo.ID,
@@ -993,7 +993,7 @@ func PseudoTable(tblInfo *model.TableInfo, allowTriggerLoading bool, allowFillHi
 	}
 	for _, idx := range tblInfo.Indices {
 		if idx.State == model.StatePublic {
-			t.ColAndIdxExistenceMap.InsertIndex(idx.ID, idx, false)
+			t.ColAndIdxExistenceMap.InsertIndex(idx.ID, false)
 			if allowFillHistMeta {
 				t.indices[idx.ID] = &Index{
 					PhysicalID: tblInfo.ID,
