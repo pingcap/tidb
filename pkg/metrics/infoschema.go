@@ -26,8 +26,10 @@ var (
 	// InfoSchemaV2CacheMemLimit records the memory limit of infoschema v2 cache.
 	InfoSchemaV2CacheMemLimit prometheus.Gauge
 	// TableByNameDuration records the duration of TableByName API for infoschema v2.
-	TableByNameDuration     *prometheus.HistogramVec
-	TableByNameHitDuration  prometheus.Observer
+	TableByNameDuration *prometheus.HistogramVec
+	// TableByNameHitDuration is TableByNameDuration with label type "hit"
+	TableByNameHitDuration prometheus.Observer
+	// TableByNameMissDuration is TableByNameDuration with label type "miss"
 	TableByNameMissDuration prometheus.Observer
 )
 
