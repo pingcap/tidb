@@ -476,14 +476,6 @@ func (p *LogicalJoin) outerJoinPropConst(predicates []expression.Expression) []e
 	return predicates
 }
 
-// PredicatePushDown implements base.LogicalPlan PredicatePushDown interface.
-func (p *LogicalMemTable) PredicatePushDown(predicates []expression.Expression, _ *optimizetrace.LogicalOptimizeOp) ([]expression.Expression, base.LogicalPlan) {
-	if p.Extractor != nil {
-		predicates = p.Extractor.Extract(p.SCtx(), p.Schema(), p.OutputNames(), predicates)
-	}
-	return predicates, p.Self()
-}
-
 func (*ppdSolver) name() string {
 	return "predicate_push_down"
 }
