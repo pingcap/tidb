@@ -20,7 +20,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -29,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
 )
 
@@ -157,11 +157,7 @@ PARTITION p5 VALUES LESS THAN (1980))`)
 func TestListTablesWithSpecialAttribute(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/infoschema/mockTiFlashStoreCount", `return(true)`))
-	defer func() {
-		err := failpoint.Disable("github.com/pingcap/tidb/pkg/infoschema/mockTiFlashStoreCount")
-		require.NoError(t, err)
-	}()
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/infoschema/mockTiFlashStoreCount", `return(true)`)
 	tiflash := infosync.NewMockTiFlash()
 	infosync.SetMockTiFlash(tiflash)
 	defer func() {
@@ -283,16 +279,16 @@ func TestUnrelatedDDLTriggerReload(t *testing.T) {
 
 	// DDL on t2 should not cause reload or cache miss on t1
 	// before test, check failpoint works
-	failpoint.Enable("github.com/pingcap/tidb/pkg/infoschema/mockLoadTableInfoError", `return(true)`)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/infoschema/mockLoadTableInfoError", `return(true)`)
 	tk.MustExecToErr("select * from t1")
-	failpoint.Disable("github.com/pingcap/tidb/pkg/infoschema/mockLoadTableInfoError")
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/infoschema/mockLoadTableInfoError")
 
 	// Refill the cache, and do DDL
 	tk.MustQuery("select * from t1").Check(testkit.Rows())
 	tk.MustExec("create table t3 (id int)")
 
 	// Ensure failpoint works, and now verify that the code never call loadTableInfo()
-	failpoint.Enable("github.com/pingcap/tidb/pkg/infoschema/mockLoadTableInfoError", `return(true)`)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/infoschema/mockLoadTableInfoError", `return(true)`)
 	tk.MustQuery("select * from t1").Check(testkit.Rows())
-	failpoint.Disable("github.com/pingcap/tidb/pkg/infoschema/mockLoadTableInfoError")
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/infoschema/mockLoadTableInfoError")
 }

@@ -772,10 +772,8 @@ retry:
 }
 
 func loadTableInfo(r autoid.Requirement, infoData *Data, tblID, dbID int64, ts uint64, schemaVersion int64) (table.Table, error) {
-	failpoint.Inject("mockLoadTableInfoError", func(val failpoint.Value) {
-		if val.(bool) {
-			failpoint.Return(nil, errors.New("mockLoadTableInfoError"))
-		}
+	failpoint.Inject("mockLoadTableInfoError", func(_ failpoint.Value) {
+		failpoint.Return(nil, errors.New("mockLoadTableInfoError"))
 	})
 
 	// Try to avoid repeated concurrency loading.
