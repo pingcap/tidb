@@ -658,19 +658,18 @@ const (
 	updateDDLJobSQL = "update mysql.tidb_ddl_job set job_meta = %s where job_id = %d"
 )
 
-func insertDDLJobs2Table(ctx context.Context, se *sess.Session, tasks ...*limitJobTask) error {
+func insertDDLJobs2Table(ctx context.Context, se *sess.Session, jobs ...*model.Job) error {
 	failpoint.Inject("mockAddBatchDDLJobsErr", func(val failpoint.Value) {
 		if val.(bool) {
 			failpoint.Return(errors.Errorf("mockAddBatchDDLJobsErr"))
 		}
 	})
-	if len(tasks) == 0 {
+	if len(jobs) == 0 {
 		return nil
 	}
 	var sql bytes.Buffer
 	sql.WriteString(addDDLJobSQL)
-	for i := range tasks {
-		job := tasks[i].job
+	for i, job := range jobs {
 		b, err := job.Encode(true)
 		if err != nil {
 			return err

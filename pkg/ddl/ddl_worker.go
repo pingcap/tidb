@@ -49,7 +49,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/resourcegrouptag"
 	"github.com/pingcap/tidb/pkg/util/topsql"
 	topsqlstate "github.com/pingcap/tidb/pkg/util/topsql/state"
-	tikverror "github.com/tikv/client-go/v2/error"
 	tikv "github.com/tikv/client-go/v2/kv"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikvrpc"
@@ -449,6 +448,7 @@ func (d *ddl) addBatchDDLJobs(tasks []*limitJobTask) error {
 		return errors.Trace(err)
 	}
 
+	jobs := make([]*model.Job, 0, len(tasks))
 	for _, task := range tasks {
 		job := task.job
 		job.Version = currentVersion
@@ -484,6 +484,7 @@ func (d *ddl) addBatchDDLJobs(tasks []*limitJobTask) error {
 			return err
 		}
 
+		jobs = append(jobs, job)
 		injectModifyJobArgFailPoint(job)
 	}
 
@@ -513,22 +514,22 @@ func (d *ddl) addBatchDDLJobs(tasks []*limitJobTask) error {
 		return nil
 	}
 
-	if err = genIDAndInsertJobsWithRetry(ctx, se, tasks); err != nil {
+	if err = GenIDAndInsertJobsWithRetry(ctx, se, jobs); err != nil {
 		return errors.Trace(err)
 	}
-	for _, task := range tasks {
-		d.initJobDoneCh(task.job.ID)
+	for _, job := range jobs {
+		d.initJobDoneCh(job.ID)
 	}
 
 	return nil
 }
 
-// genIDAndInsertJobsWithRetry inserts DDL jobs to the DDL job table with retry.
+// GenIDAndInsertJobsWithRetry inserts DDL jobs to the DDL job table with retry.
 // job id allocation and job insertion are in the same transaction, as we want to
 // make sure DDL jobs are inserted in id order, then we can query from a min job ID
 // when scheduling DDL jobs to mitigate https://github.com/pingcap/tidb/issues/52905.
 // so this function has side effect, it will set the job id of 'tasks'.
-func genIDAndInsertJobsWithRetry(ctx context.Context, se sessionctx.Context, tasks []*limitJobTask) error {
+func GenIDAndInsertJobsWithRetry(ctx context.Context, se sessionctx.Context, jobs []*model.Job) error {
 	se.GetSessionVars().SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
 	ddlSe := sess.NewSession(se)
 
@@ -554,14 +555,14 @@ func genIDAndInsertJobsWithRetry(ctx context.Context, se sessionctx.Context, tas
 			txn.GetSnapshot().SetOption(kv.SnapshotTS, forUpdateTS)
 
 			m := meta.NewMeta(txn)
-			ids, err := m.GenGlobalIDs(len(tasks))
+			ids, err := m.GenGlobalIDs(len(jobs))
 			if err != nil {
 				return errors.Trace(err)
 			}
-			for idx := range tasks {
-				tasks[idx].job.ID = ids[idx]
+			for idx := range jobs {
+				jobs[idx].ID = ids[idx]
 			}
-			if err = insertDDLJobs2Table(ctx, ddlSe, tasks...); err != nil {
+			if err = insertDDLJobs2Table(ctx, ddlSe, jobs...); err != nil {
 				return errors.Trace(err)
 			}
 			return ddlSe.Commit(ctx)
@@ -595,7 +596,7 @@ func lockGlobalIDKey(ctx context.Context, ddlSe *sess.Session, txn kv.Transactio
 	for {
 		lockCtx := tikv.NewLockCtx(forUpdateTs, waitTime, time.Now())
 		err = txn.LockKeys(ctx, lockCtx, idKey)
-		if !tikverror.IsErrWriteConflict(err) {
+		if err == nil || !terror.ErrorEqual(kv.ErrWriteConflict, err) {
 			break
 		}
 		// ErrWriteConflict contains a conflict-commit-ts in most case, but it cannot
