@@ -756,7 +756,7 @@ func fillRowData(rowTableMeta *TableMeta, row *chunk.Row, seg *rowTableSegment) 
 func (b *rowTableBuilder) appendToRowTable(chk *chunk.Chunk, hashJoinCtx *HashJoinCtxV2, workerID int) error {
 	rowTableMeta := hashJoinCtx.hashTableMeta
 	for logicalRowIndex, physicalRowIndex := range b.usedRows {
-		if logicalRowIndex%10 == 0 || logicalRowIndex == len(b.usedRows)-1 {
+		if logicalRowIndex%100 == 0 || logicalRowIndex == len(b.usedRows)-1 {
 			err := checkSQLKiller(&hashJoinCtx.SessCtx.GetSessionVars().SQLKiller, "killedDuringBuild")
 			if err != nil {
 				return err
