@@ -279,7 +279,9 @@ func (w *buildWorkerBase) fetchBuildSideRows(ctx context.Context, hashJoinCtx *h
 		if workerWaiter != nil {
 			// Try to spill remaining rows if spill is triggered
 			err := checkSpillAndExecute(fetcherAndWorkerSyncer, spillHelper, true)
-			errCh <- errors.Trace(err)
+			if err != nil {
+				errCh <- errors.Trace(err)
+			}
 		}
 
 		// We must put the close of chkCh after the place of spilling remaining rows or there will be data race

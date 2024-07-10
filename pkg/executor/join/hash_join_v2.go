@@ -936,8 +936,8 @@ func (e *HashJoinV2Exec) fetchBuildSideRows(ctx context.Context, fetcherWaiter *
 }
 
 func (e *HashJoinV2Exec) splitAndAppendToRowTable(srcChkCh chan *chunk.Chunk, fetcherAndWorkerSyncer *sync.WaitGroup, workerWaiter *sync.WaitGroup, errCh chan error, doneCh chan struct{}) {
+	workerWaiter.Add(int(e.Concurrency))
 	for i := uint(0); i < e.Concurrency; i++ {
-		workerWaiter.Add(1)
 		workIndex := i
 		e.workerWg.RunWithRecover(
 			func() {
@@ -975,8 +975,8 @@ func (e *HashJoinV2Exec) createBuildTasks(totalSegmentCnt int, wg *sync.WaitGrou
 }
 
 func (e *HashJoinV2Exec) buildHashTable(buildTaskCh chan *buildTask, wg *sync.WaitGroup, errCh chan error, doneCh chan struct{}) {
+	wg.Add(int(e.Concurrency))
 	for i := uint(0); i < e.Concurrency; i++ {
-		wg.Add(1)
 		workID := i
 		e.workerWg.RunWithRecover(
 			func() {

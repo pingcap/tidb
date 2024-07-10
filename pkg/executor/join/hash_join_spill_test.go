@@ -120,7 +120,6 @@ func buildSchema(schemaTypes []*types.FieldType) *expression.Schema {
 }
 
 func TestInnerJoinSpillCorrectness(t *testing.T) {
-	logutil.BgLogger().Info("xzxdebug start a test")
 	spillChunkSize = 100
 
 	// TODO trigger spill in different stages
