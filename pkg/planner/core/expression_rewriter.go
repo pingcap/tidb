@@ -2545,7 +2545,7 @@ func (er *expressionRewriter) evalDefaultExprWithPlanCtx(planCtx *exprRewriterPl
 		return
 	}
 	var tbl table.Table
-	tbl, er.err = planCtx.builder.is.TableByName(dbName, name.OrigTblName)
+	tbl, er.err = planCtx.builder.is.TableByName(context.Background(), dbName, name.OrigTblName)
 	if er.err != nil {
 		return
 	}

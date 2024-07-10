@@ -107,7 +107,7 @@ func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isNonPrep
 	for i := 0; i < len(stmt.dbName); i++ {
 		tbl, ok := is.TableByID(stmt.tbls[i].Meta().ID)
 		if !ok {
-			tblByName, err := is.TableByName(stmt.dbName[i], stmt.tbls[i].Meta().Name)
+			tblByName, err := is.TableByName(context.Background(), stmt.dbName[i], stmt.tbls[i].Meta().Name)
 			if err != nil {
 				return plannererrors.ErrSchemaChanged.GenWithStack("Schema change caused error: %s", err.Error())
 			}
@@ -115,7 +115,7 @@ func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isNonPrep
 			stmt.tbls[i] = tblByName
 			stmt.RelateVersion[tblByName.Meta().ID] = tblByName.Meta().Revision
 		}
-		newTbl, err := tryLockMDLAndUpdateSchemaIfNecessary(sctx.GetPlanCtx(), stmt.dbName[i], stmt.tbls[i], is)
+		newTbl, err := tryLockMDLAndUpdateSchemaIfNecessary(ctx, sctx.GetPlanCtx(), stmt.dbName[i], stmt.tbls[i], is)
 		if err != nil {
 			schemaNotMatch = true
 			continue
@@ -239,7 +239,7 @@ func GetPlanFromPlanCache(ctx context.Context, sctx sessionctx.Context,
 				ctx.Value(PlanCacheKeyTestBeforeAdjust{}).(func(cachedVal *PlanCacheValue))(cachedVal)
 				defer ctx.Value(PlanCacheKeyTestAfterAdjust{}).(func(cachedVal *PlanCacheValue))(cachedVal)
 			}
-			if plan, names, ok, err := adjustCachedPlan(sctx, cachedVal, isNonPrepared, isPointPlan, binding, is, stmt); err != nil || ok {
+			if plan, names, ok, err := adjustCachedPlan(ctx, sctx, cachedVal, isNonPrepared, isPointPlan, binding, is, stmt); err != nil || ok {
 				return plan, names, err
 			}
 		}
@@ -265,13 +265,13 @@ func lookupPlanCache(sctx sessionctx.Context, cacheKey string, paramTypes []*typ
 	return nil, false
 }
 
-func adjustCachedPlan(sctx sessionctx.Context, cachedVal *PlanCacheValue, isNonPrepared, isPointPlan bool,
+func adjustCachedPlan(ctx context.Context, sctx sessionctx.Context, cachedVal *PlanCacheValue, isNonPrepared, isPointPlan bool,
 	bindSQL string, is infoschema.InfoSchema, stmt *PlanCacheStmt) (base.Plan,
 	[]*types.FieldName, bool, error) {
 	sessVars := sctx.GetSessionVars()
 	stmtCtx := sessVars.StmtCtx
 	if !isPointPlan { // keep the prior behavior
-		if err := checkPreparedPriv(sctx, stmt, is); err != nil {
+		if err := checkPreparedPriv(ctx, sctx, stmt, is); err != nil {
 			return nil, nil, false, err
 		}
 	}
@@ -337,9 +337,9 @@ func generateNewPlan(ctx context.Context, sctx sessionctx.Context, isNonPrepared
 }
 
 // checkPreparedPriv checks the privilege of the prepared statement
-func checkPreparedPriv(sctx sessionctx.Context, stmt *PlanCacheStmt, is infoschema.InfoSchema) error {
+func checkPreparedPriv(ctx context.Context, sctx sessionctx.Context, stmt *PlanCacheStmt, is infoschema.InfoSchema) error {
 	if pm := privilege.GetPrivilegeManager(sctx); pm != nil {
-		visitInfo := VisitInfo4PrivCheck(is, stmt.PreparedAst.Stmt, stmt.VisitInfos)
+		visitInfo := VisitInfo4PrivCheck(ctx, is, stmt.PreparedAst.Stmt, stmt.VisitInfos)
 		if err := CheckPrivilege(sctx.GetSessionVars().ActiveRoles, pm, visitInfo); err != nil {
 			return err
 		}

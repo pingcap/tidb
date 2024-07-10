@@ -15,6 +15,7 @@
 package exec_test
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"testing"
@@ -222,7 +223,7 @@ func TestIndexUsageReporterWithRealData(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t (id_1 int, id_2 int, unique key idx_1(id_1), unique key idx_2(id_2))")
 
-	table, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	table, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	tableID := table.Meta().ID
 	idx1ID := int64(0)
@@ -297,7 +298,7 @@ partition p1 values less than (20),
 partition p2 values less than (50),
 partition p3 values less than MAXVALUE)`)
 
-	table, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	table, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	idx1ID := int64(0)
 	for _, idx := range table.Indices() {
@@ -369,7 +370,7 @@ partition p1 values less than (20),
 partition p2 values less than (50),
 partition p3 values less than MAXVALUE)`)
 
-	table, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	table, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	idx1ID := int64(0)
 	for _, idx := range table.Indices() {
@@ -415,7 +416,7 @@ func TestDisableIndexUsageReporter(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t (id_1 int, id_2 int, unique key idx_1(id_1), unique key idx_2(id_2))")
 
-	table, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	table, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	tableID := table.Meta().ID
 	idx1ID := int64(0)

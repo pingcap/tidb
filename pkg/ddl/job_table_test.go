@@ -23,10 +23,8 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/syncer"
-	"github.com/pingcap/tidb/pkg/ddl/util/callback"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
@@ -38,15 +36,13 @@ import (
 // This test checks the chosen job records to see if there are wrong scheduling, if job A and job B cannot run concurrently,
 // then all the records of job A must before or after job B, no cross record between these 2 jobs.
 func TestDDLScheduling(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
+	store, _ := testkit.CreateMockStoreAndDomain(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("CREATE TABLE e (id INT NOT NULL) PARTITION BY RANGE (id) (PARTITION p1 VALUES LESS THAN (50), PARTITION p2 VALUES LESS THAN (100));")
 	tk.MustExec("CREATE TABLE e2 (id INT NOT NULL);")
 	tk.MustExec("CREATE TABLE e3 (id INT NOT NULL);")
-
-	d := dom.DDL()
 
 	ddlJobs := []string{
 		"alter table e2 add index idx(id)",
@@ -61,11 +57,10 @@ func TestDDLScheduling(t *testing.T) {
 		"ALTER TABLE e EXCHANGE PARTITION p1 WITH TABLE e3;",
 	}
 
-	hook := &callback.TestDDLCallback{}
 	var wg util.WaitGroupWrapper
 	wg.Add(1)
 	var once sync.Once
-	hook.OnGetJobBeforeExported = func() {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeLoadAndDeliverJobs", func() {
 		once.Do(func() {
 			for i, job := range ddlJobs {
 				wg.Run(func() {
@@ -88,22 +83,16 @@ func TestDDLScheduling(t *testing.T) {
 			}
 			wg.Done()
 		})
-	}
+	})
 
 	record := make([]int64, 0, 16)
-	hook.OnGetJobAfterExported = func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeDeliveryJob", func(job *model.Job) {
 		// record the job schedule order
 		record = append(record, job.ID)
-	}
+	})
 
-	err := failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockRunJobTime", `return(true)`)
-	require.NoError(t, err)
-	defer func() {
-		err := failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockRunJobTime")
-		require.NoError(t, err)
-	}()
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockRunJobTime", `return(true)`)
 
-	d.SetHook(hook)
 	wg.Wait()
 
 	// sort all the job id.
@@ -120,8 +109,8 @@ func TestDDLScheduling(t *testing.T) {
 
 	// map the job id to the DDL sequence.
 	// sortedIDs may looks like [30, 32, 34, 36, ...], it is the same order with the job in `ddlJobs`, 30 is the first job in `ddlJobs`, 32 is second...
-	// record may looks like [30, 30, 32, 32, 34, 32, 36, 34, ...]
-	// and the we map the record to the DDL sequence, [0, 0, 1, 1, 2, 1, 3, 2, ...]
+	require.Equal(t, len(ddlJobs), len(sortedIDs))
+	require.Equal(t, len(ddlJobs), len(record))
 	for i := range record {
 		idx, b := slices.BinarySearch(sortedIDs, record[i])
 		require.True(t, b)
@@ -237,7 +226,7 @@ func TestGeneralDDLWithQuery(t *testing.T) {
 	tk.MustExec("CREATE TABLE t (id INT NOT NULL);")
 
 	var beforeRunCh = make(chan struct{})
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeAllLoadDDLJobAndRun", func() {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeLoadAndDeliverJobs", func() {
 		<-beforeRunCh
 	})
 	var ch = make(chan struct{})

@@ -15,6 +15,7 @@
 package infoschema
 
 import (
+	"context"
 	"math"
 	"testing"
 
@@ -57,7 +58,7 @@ func TestV2Basic(t *testing.T) {
 	require.Equal(t, dbInfo, getDBInfo)
 	require.True(t, is.SchemaExists(schemaName))
 
-	getTableInfo, err := is.TableByName(schemaName, tableName)
+	getTableInfo, err := is.TableByName(context.Background(), schemaName, tableName)
 	require.NoError(t, err)
 	require.NotNil(t, getTableInfo)
 	require.True(t, is.TableExists(schemaName, tableName))
@@ -295,7 +296,7 @@ func TestBundles(t *testing.T) {
 	_, err = builder.ApplyDiff(meta.NewMeta(txn), &model.SchemaDiff{Type: model.ActionAlterTablePlacement, Version: 4, SchemaID: dbInfo.ID, TableID: tblInfo.ID})
 	require.NoError(t, err)
 	is = builder.Build(math.MaxUint64)
-	getTableInfo, err := is.TableByName(schemaName, tableName)
+	getTableInfo, err := is.TableByName(context.Background(), schemaName, tableName)
 	require.NoError(t, err)
 	require.Equal(t, policyRefInfo, getTableInfo.Meta().PlacementPolicyRef)
 	require.NoError(t, txn.Rollback())
@@ -309,7 +310,7 @@ func TestBundles(t *testing.T) {
 	_, err = builder.ApplyDiff(meta.NewMeta(txn), &model.SchemaDiff{Type: model.ActionAlterPlacementPolicy, Version: 5, SchemaID: policyInfo.ID})
 	require.NoError(t, err)
 	is = builder.Build(math.MaxUint64)
-	getTableInfo, err = is.TableByName(schemaName, tableName)
+	getTableInfo, err = is.TableByName(context.Background(), schemaName, tableName)
 	require.NoError(t, err)
 	getPolicyInfo, ok = is.PolicyByName(getTableInfo.Meta().PlacementPolicyRef.Name)
 	require.True(t, ok)

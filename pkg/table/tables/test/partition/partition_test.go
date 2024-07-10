@@ -56,7 +56,7 @@ PARTITION BY RANGE ( id ) (
 	require.NoError(t, err)
 	_, err = tk.Session().Execute(ctx, createTable1)
 	require.NoError(t, err)
-	tb, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	tb, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t1"))
 	require.NoError(t, err)
 	tbInfo := tb.Meta()
 	p0 := tbInfo.Partition.Definitions[0]
@@ -105,7 +105,7 @@ PARTITION BY RANGE ( id ) (
 	_, err = tk.Session().Execute(context.Background(), createTable2)
 	require.NoError(t, err)
 	require.Nil(t, sessiontxn.NewTxn(ctx, tk.Session()))
-	tb, err = dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t2"))
+	tb, err = dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t2"))
 	require.NoError(t, err)
 	_, err = tb.AddRecord(tk.Session().GetTableCtx(), types.MakeDatums(22))
 	require.NoError(t, err)
@@ -117,7 +117,7 @@ PARTITION BY RANGE ( id ) (
 	_, err = tk.Session().Execute(context.Background(), createTable3)
 	require.NoError(t, err)
 	require.Nil(t, sessiontxn.NewTxn(ctx, tk.Session()))
-	tb, err = dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t3"))
+	tb, err = dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t3"))
 	require.NoError(t, err)
 	_, err = tb.AddRecord(tk.Session().GetTableCtx(), types.MakeDatums(11))
 	require.True(t, table.ErrNoPartitionForGivenValue.Equal(err))
@@ -133,7 +133,7 @@ PARTITION BY RANGE ( id ) (
 	_, err = tk.Session().Execute(context.Background(), createTable4)
 	require.NoError(t, err)
 	require.Nil(t, sessiontxn.NewTxn(ctx, tk.Session()))
-	tb, err = dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t4"))
+	tb, err = dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t4"))
 	require.NoError(t, err)
 	_, err = tb.AddRecord(tk.Session().GetTableCtx(), types.MakeDatums(1, 11))
 	require.True(t, table.ErrNoPartitionForGivenValue.Equal(err))
@@ -150,7 +150,7 @@ func TestHashPartitionAddRecord(t *testing.T) {
 	require.NoError(t, err)
 	_, err = tk.Session().Execute(context.Background(), `CREATE TABLE test.t1 (id int(11), index(id)) PARTITION BY HASH (id) partitions 4;`)
 	require.NoError(t, err)
-	tb, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	tb, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t1"))
 	require.NoError(t, err)
 	tbInfo := tb.Meta()
 	p0 := tbInfo.Partition.Definitions[0]
@@ -187,7 +187,7 @@ func TestHashPartitionAddRecord(t *testing.T) {
 	// Test for partition expression is negative number.
 	_, err = tk.Session().Execute(context.Background(), `CREATE TABLE test.t2 (id int(11), index(id)) PARTITION BY HASH (id) partitions 11;`)
 	require.NoError(t, err)
-	tb, err = dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t2"))
+	tb, err = dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t2"))
 	require.NoError(t, err)
 	tbInfo = tb.Meta()
 	for i := 0; i < 11; i++ {
@@ -221,7 +221,7 @@ PARTITION BY RANGE ( id ) (
 	require.NoError(t, err)
 	_, err = tk.Session().Execute(context.Background(), createTable1)
 	require.NoError(t, err)
-	tb, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	tb, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t1"))
 	require.NoError(t, err)
 	tbInfo := tb.Meta()
 	ps := tbInfo.GetPartitionInfo()
@@ -247,7 +247,7 @@ func TestGeneratePartitionExpr(t *testing.T) {
 							partition p3 values less than maxvalue)`)
 	require.NoError(t, err)
 
-	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t1"))
 	require.NoError(t, err)
 	type partitionExpr interface {
 		PartitionExpr() *tables.PartitionExpr
@@ -354,7 +354,7 @@ func TestIssue31629(t *testing.T) {
 		require.NoError(t, err)
 		tk.MustQuery("show warnings").Check(testkit.Rows())
 
-		tb, err := dom.InfoSchema().TableByName(model.NewCIStr("Issue31629"), model.NewCIStr("t1"))
+		tb, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("Issue31629"), model.NewCIStr("t1"))
 		require.NoError(t, err)
 		tbp, ok := tb.(table.PartitionedTable)
 		require.Truef(t, ok, "test %d does not generate a table.PartitionedTable: %s (%T, %+v)", i, createTable, tb, tb)
@@ -2690,7 +2690,7 @@ func checkDMLInAllStates(t *testing.T, tk, tk2 *testkit.TestKit, schemaName, alt
 	transitions := 0
 	var currTbl table.Table
 	currSchema := sessiontxn.GetTxnManager(tk2.Session()).GetTxnInfoSchema()
-	prevTbl, err := currSchema.TableByName(model.NewCIStr(schemaName), model.NewCIStr("t"))
+	prevTbl, err := currSchema.TableByName(context.Background(), model.NewCIStr(schemaName), model.NewCIStr("t"))
 	require.NoError(t, err)
 	var hookErr error
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
@@ -2738,7 +2738,7 @@ func checkDMLInAllStates(t *testing.T, tk, tk2 *testkit.TestKit, schemaName, alt
 			tk2.MustQuery(`select count(*) from (select a from t except select a from t2) a`).Check(testkit.Rows("0"))
 			tk2.MustQuery(`select count(*) from (select a from t2 except select a from t) a`).Check(testkit.Rows("0"))
 			currSchema = sessiontxn.GetTxnManager(tk2.Session()).GetTxnInfoSchema()
-			currTbl, hookErr = currSchema.TableByName(model.NewCIStr(schemaName), model.NewCIStr("t"))
+			currTbl, hookErr = currSchema.TableByName(context.Background(), model.NewCIStr(schemaName), model.NewCIStr("t"))
 
 			require.True(t, tables.SwapReorgPartFields(currTbl, prevTbl))
 			// Now using previous schema version
