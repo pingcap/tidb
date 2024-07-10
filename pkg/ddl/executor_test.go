@@ -91,7 +91,7 @@ var (
 )
 
 func TestGenIDAndInsertJobsWithRetryQPS(t *testing.T) {
-	//t.Skip("it's for offline test only, skip it in CI")
+	t.Skip("it's for offline test only, skip it in CI")
 	thread, iterationPerThread, payloadSize := *threadVar, *iterationPerThreadVar, *payloadSizeVar
 	store := testkit.CreateMockStore(t, mockstore.WithStoreType(mockstore.EmbedUnistore))
 	// disable DDL to avoid it interfere the test
