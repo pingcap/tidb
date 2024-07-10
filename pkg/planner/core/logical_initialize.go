@@ -43,15 +43,3 @@ func (p LogicalExpand) Init(ctx base.PlanContext, offset int) *LogicalExpand {
 	p.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(ctx, plancodec.TypeExpand, &p, offset)
 	return &p
 }
-
-// Init only assigns type and context.
-func (p LogicalCTETable) Init(ctx base.PlanContext, offset int) *LogicalCTETable {
-	p.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(ctx, plancodec.TypeCTETable, &p, offset)
-	return &p
-}
-
-// Init initializes LogicalSequence
-func (p LogicalSequence) Init(ctx base.PlanContext, offset int) *LogicalSequence {
-	p.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(ctx, plancodec.TypeSequence, &p, offset)
-	return &p
-}
