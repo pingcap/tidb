@@ -1181,9 +1181,6 @@ func RunStreamRestore(
 		return errors.Trace(err)
 	}
 
-	// delay cluster checks after we get the backupmeta.
-	// for the case that the restore inc + log backup,
-	// we can still restore them.
 	checkInfo, err := checkPiTRTaskInfo(ctx, g, s, cfg)
 	if err != nil {
 		return errors.Trace(err)
@@ -1209,17 +1206,17 @@ func RunStreamRestore(
 		if _, err := glue.GetConsole(g).Out().Write(skipMsg); err != nil {
 			return errors.Trace(err)
 		}
-		if checkInfo.CurTaskInfo != nil && checkInfo.CurTaskInfo.TiFlashItems != nil {
+		if checkInfo.CheckpointInfo != nil && checkInfo.CheckpointInfo.TiFlashItems != nil {
 			log.Info("load tiflash records of snapshot restore from checkpoint")
 			if err != nil {
 				return errors.Trace(err)
 			}
-			cfg.tiflashRecorder.Load(checkInfo.CurTaskInfo.TiFlashItems)
+			cfg.tiflashRecorder.Load(checkInfo.CheckpointInfo.TiFlashItems)
 		}
 	}
 	// restore log.
 	cfg.adjustRestoreConfigForStreamRestore()
-	if err := restoreStream(ctx, g, cfg, checkInfo.CurTaskInfo); err != nil {
+	if err := restoreStream(ctx, g, cfg, checkInfo.CheckpointInfo); err != nil {
 		return errors.Trace(err)
 	}
 	return nil
@@ -1772,8 +1769,8 @@ func checkPiTRRequirements(mgr *conn.Mgr) error {
 	return nil
 }
 
-type CheckInfo struct {
-	CurTaskInfo         *checkpoint.CheckpointTaskInfoForLogRestore
+type PiTRTaskInfo struct {
+	CheckpointInfo      *checkpoint.CheckpointTaskInfoForLogRestore
 	NeedFullRestore     bool
 	FullRestoreCheckErr error
 }
@@ -1783,13 +1780,13 @@ func checkPiTRTaskInfo(
 	g glue.Glue,
 	s storage.ExternalStorage,
 	cfg *RestoreConfig,
-) (*CheckInfo, error) {
+) (*PiTRTaskInfo, error) {
 	var (
 		doFullRestore = (len(cfg.FullBackupStorage) > 0)
 		curTaskInfo   *checkpoint.CheckpointTaskInfoForLogRestore
 		errTaskMsg    string
 	)
-	checkInfo := &CheckInfo{}
+	checkInfo := &PiTRTaskInfo{}
 
 	mgr, err := NewMgr(ctx, g, cfg.PD, cfg.TLS, GetKeepalive(&cfg.Config),
 		cfg.CheckRequirements, true, conn.StreamVersionChecker)
@@ -1833,7 +1830,7 @@ func checkPiTRTaskInfo(
 			}
 		}
 	}
-	checkInfo.CurTaskInfo = curTaskInfo
+	checkInfo.CheckpointInfo = curTaskInfo
 	checkInfo.NeedFullRestore = doFullRestore
 	// restore full snapshot precheck.
 	if doFullRestore {
@@ -1848,6 +1845,9 @@ func checkPiTRTaskInfo(
 						"you can adjust the `start-ts` or `restored-ts` to continue with the previous execution. "+
 						"Otherwise, if you want to restore from scratch, please clean the cluster at first", errTaskMsg)
 				}
+				// delay cluster checks after we get the backupmeta.
+				// for the case that the restore inc + log backup,
+				// we can still restore them.
 				checkInfo.FullRestoreCheckErr = err
 				return checkInfo, nil
 			}
