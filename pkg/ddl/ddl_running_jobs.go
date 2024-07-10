@@ -364,3 +364,14 @@ func (j *runningJobs) allIDs() string {
 	defer j.mu.RUnlock()
 	return j.idsStrGetter()
 }
+
+func (j *runningJobs) cloneRunningIDs() map[int64]struct{} {
+	j.mu.RLock()
+	defer j.mu.RUnlock()
+
+	ids := make(map[int64]struct{}, len(j.ids))
+	for id := range j.ids {
+		ids[id] = struct{}{}
+	}
+	return ids
+}

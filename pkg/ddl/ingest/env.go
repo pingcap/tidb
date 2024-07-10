@@ -19,7 +19,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"slices"
 	"strconv"
 	"strings"
 
@@ -29,12 +28,10 @@ import (
 	sess "github.com/pingcap/tidb/pkg/ddl/internal/session"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/lightning/log"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"go.uber.org/zap"
-	"golang.org/x/exp/maps"
 )
 
 var (
@@ -110,10 +107,10 @@ func GenIngestTempDataDir() (string, error) {
 	return sortPath, nil
 }
 
-// CleanUpTempDir is used to remove the stale index data.
-// This function gets running DDL jobs from `mysql.tidb_ddl_job` and
-// it only removes the folders that related to finished jobs.
-func CleanUpTempDir(ctx context.Context, se sessionctx.Context, path string) {
+// CleanUpTempDir is used to remove the stale index data. This function gets
+// running DDL jobs from jobScheduler and it only removes the folders that
+// related to finished jobs.
+func CleanUpTempDir(path string, runningIDs map[int64]struct{}) {
 	entries, err := os.ReadDir(path)
 	if err != nil {
 		if strings.Contains(err.Error(), "no such file") {
@@ -139,15 +136,7 @@ func CleanUpTempDir(ctx context.Context, se sessionctx.Context, path string) {
 		return
 	}
 
-	idSlice := maps.Keys(toCheckJobIDs)
-	slices.Sort(idSlice)
-	processing, err := filterProcessingJobIDs(ctx, sess.NewSession(se), idSlice)
-	if err != nil {
-		logutil.DDLIngestLogger().Error(LitErrCleanSortPath, zap.Error(err))
-		return
-	}
-
-	for _, id := range processing {
+	for id := range runningIDs {
 		delete(toCheckJobIDs, id)
 	}
 

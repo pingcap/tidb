@@ -300,6 +300,8 @@ type ddl struct {
 	localJobCh chan *limitJobTask
 	// globalIDLocal locks global id to reduce write conflict.
 	globalIDLock sync.Mutex
+
+	runningJobs atomic.Pointer[runningJobs]
 }
 
 // waitSchemaSyncedController is to control whether to waitSchemaSynced or not.
@@ -883,7 +885,7 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 		ok := ingest.InitGlobalLightningEnv(ingestDataDir)
 		if ok {
 			d.wg.Run(func() {
-				d.CleanUpTempDirLoop(d.ctx, ingestDataDir)
+				d.CleanUpTempDirLoop(ingestDataDir)
 			})
 		}
 	}
@@ -891,7 +893,7 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 	return nil
 }
 
-func (d *ddl) CleanUpTempDirLoop(ctx context.Context, path string) {
+func (d *ddl) CleanUpTempDirLoop(path string) {
 	ticker := time.NewTicker(1 * time.Minute)
 	defer ticker.Stop()
 	for {
@@ -902,7 +904,11 @@ func (d *ddl) CleanUpTempDirLoop(ctx context.Context, path string) {
 				logutil.DDLLogger().Warn("get session from pool failed", zap.Error(err))
 				return
 			}
-			ingest.CleanUpTempDir(ctx, se, path)
+			var runningIDs map[int64]struct{}
+			if j := d.runningJobs.Load(); j != nil {
+				runningIDs = j.cloneRunningIDs()
+			}
+			ingest.CleanUpTempDir(path, runningIDs)
 			d.sessPool.Put(se)
 		case <-d.ctx.Done():
 			return

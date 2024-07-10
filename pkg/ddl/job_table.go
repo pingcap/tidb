@@ -109,10 +109,12 @@ func (l *ownerListener) OnBecomeOwner() {
 		sessPool:       l.ddl.sessPool,
 		delRangeMgr:    l.ddl.delRangeMgr,
 	}
+	l.ddl.runningJobs.Store(l.scheduler.runningJobs)
 	l.scheduler.start()
 }
 
 func (l *ownerListener) OnRetireOwner() {
+	l.ddl.runningJobs.Store(nil)
 	if l.scheduler == nil {
 		return
 	}
