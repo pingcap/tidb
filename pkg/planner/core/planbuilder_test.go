@@ -212,24 +212,24 @@ func TestDeepClone(t *testing.T) {
 	}
 	err := checkDeepClone(sort1, sort2)
 	require.Error(t, err)
-	require.Regexp(t, "invalid slice pointers, path PhysicalSort.ByItems", err.Error())
+	require.Equal(t, "same slice pointers, path *PhysicalSort.ByItems", err.Error())
 
 	byItems2 := []*util.ByItems{{Expr: expr}}
 	sort2.ByItems = byItems2
 	err = checkDeepClone(sort1, sort2)
 	require.Error(t, err)
-	require.Regexp(t, "same pointer, path PhysicalSort.ByItems.*Expression", err.Error())
+	require.Equal(t, "same pointer, path *PhysicalSort.ByItems[0].Expr", err.Error())
 
 	expr2 := &expression.Column{RetType: tp}
 	byItems2[0].Expr = expr2
 	err = checkDeepClone(sort1, sort2)
 	require.Error(t, err)
-	require.Regexp(t, "same pointer, path PhysicalSort.ByItems.*Expression.FieldType", err.Error())
+	require.Equal(t, "same pointer, path *PhysicalSort.ByItems[0].Expr.RetType", err.Error())
 
 	expr2.RetType = types.NewFieldType(mysql.TypeString)
 	err = checkDeepClone(sort1, sort2)
 	require.Error(t, err)
-	require.Regexp(t, "different values, path PhysicalSort.ByItems.*Expression.FieldType.uint8", err.Error())
+	require.Equal(t, "different values, path *PhysicalSort.ByItems[0].Expr.RetType.tp", err.Error())
 
 	expr2.RetType = types.NewFieldType(mysql.TypeLonglong)
 	require.NoError(t, checkDeepClone(sort1, sort2))
