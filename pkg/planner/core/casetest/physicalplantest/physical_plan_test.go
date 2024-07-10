@@ -1464,3 +1464,38 @@ func TestAlwaysTruePredicateWithSubquery(t *testing.T) {
 		tk.MustQuery(ts).Check(testkit.Rows(output[i].Plan...))
 	}
 }
+
+// TestExplainExpand
+func TestExplainExpand(t *testing.T) {
+	var (
+		input  []string
+		output []struct {
+			SQL     string
+			Plan    []string
+			Warning []string
+		}
+	)
+	planSuiteData := GetPlanSuiteData()
+	planSuiteData.LoadTestCases(t, &input, &output)
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("drop table if exists s")
+	tk.MustExec("create table t(a int, b int, c int, d int, e int)")
+	tk.MustExec("create table s(a int, b int, c int, d int, e int)")
+	tk.MustExec("CREATE TABLE `sales` (`year` int(11) DEFAULT NULL, `country` varchar(20) DEFAULT NULL,  `product` varchar(32) DEFAULT NULL,  `profit` int(11) DEFAULT NULL, `whatever` int)")
+
+	// error test
+	err := tk.ExecToErr("explain format = 'brief' SELECT country, product, SUM(profit) AS profit FROM sales GROUP BY country, country, product with rollup order by grouping(year);")
+	require.Equal(t, err.Error(), "[planner:3602]Argument #0 of GROUPING function is not in GROUP BY")
+
+	for i, ts := range input {
+		testdata.OnRecord(func() {
+			output[i].SQL = ts
+			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery(ts).Rows())
+		})
+		tk.MustQuery(ts).Check(testkit.Rows(output[i].Plan...))
+	}
+}

@@ -30,6 +30,7 @@ go_library(
         "delete.go",
         "distsql.go",
         "executor.go",
+        "expand.go",
         "explain.go",
         "foreign_key.go",
         "grant.go",
