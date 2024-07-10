@@ -544,6 +544,12 @@ func DecodeRowToDatumMap(b []byte, cols map[int64]*types.FieldType, loc *time.Lo
 // DecodeHandleToDatumMap decodes a handle into datum map.
 func DecodeHandleToDatumMap(handle kv.Handle, handleColIDs []int64,
 	cols map[int64]*types.FieldType, loc *time.Location, row map[int64]types.Datum) (map[int64]types.Datum, error) {
+	return DecodeHandleToDatumMapOptionalCheck(handle, handleColIDs, cols, loc, row, true)
+}
+
+// DecodeHandleToDatumMapOptionalCheck decodes a handle into datum map and can check if columns NeedRestoreData.
+func DecodeHandleToDatumMapOptionalCheck(handle kv.Handle, handleColIDs []int64,
+	cols map[int64]*types.FieldType, loc *time.Location, row map[int64]types.Datum, check bool) (map[int64]types.Datum, error) {
 	if handle == nil || len(handleColIDs) == 0 {
 		return row, nil
 	}
@@ -555,7 +561,7 @@ func DecodeHandleToDatumMap(handle kv.Handle, handleColIDs []int64,
 		if !ok {
 			continue
 		}
-		if types.NeedRestoredData(ft) {
+		if check && types.NeedRestoredData(ft) {
 			continue
 		}
 		d, err := decodeHandleToDatum(handle, ft, idx)

@@ -2706,16 +2706,22 @@ func decodeRecordKey(key []byte, tableID int64, tbl table.Table, loc *time.Locat
 			if len(handleColIDs) != handle.NumCols() {
 				return "", errors.Trace(errors.Errorf("primary key length not match handle columns number in key"))
 			}
-			datumMap, err := tablecodec.DecodeHandleToDatumMap(handle, handleColIDs, cols, loc, nil)
+			datumMap, err := tablecodec.DecodeHandleToDatumMapOptionalCheck(handle, handleColIDs, cols, loc, nil, false)
 			if err != nil {
 				return "", errors.Trace(err)
 			}
 			handleRet := make(map[string]any)
 			for colID := range datumMap {
 				dt := datumMap[colID]
-				dtStr, err := datumToJSONObject(&dt)
-				if err != nil {
-					return "", errors.Trace(err)
+				var dtStr any
+				if types.NeedRestoredData(cols[colID]) {
+					// Using Sort key, better to show the key as HEX
+					dtStr = fmt.Sprintf("%x", dt.GetString())
+				} else {
+					dtStr, err = datumToJSONObject(&dt)
+					if err != nil {
+						return "", errors.Trace(err)
+					}
 				}
 				found := false
 				for _, colInfo := range tblInfo.Columns {
@@ -2791,11 +2797,16 @@ func decodeIndexKey(key []byte, tableID int64, tbl table.Table, loc *time.Locati
 		ret["index_id"] = indexID
 		idxValMap := make(map[string]any, len(targetIndex.Columns))
 		for i := 0; i < len(targetIndex.Columns); i++ {
-			dtStr, err := datumToJSONObject(&ds[i])
-			if err != nil {
-				return "", errors.Trace(err)
+			if types.NeedRestoredData(tps[i]) {
+				// Using sort key, better to show the key as HEX
+				idxValMap[targetIndex.Columns[i].Name.L] = fmt.Sprintf("%x", ds[i].GetString())
+			} else {
+				dtStr, err := datumToJSONObject(&ds[i])
+				if err != nil {
+					return "", errors.Trace(err)
+				}
+				idxValMap[targetIndex.Columns[i].Name.L] = dtStr
 			}
-			idxValMap[targetIndex.Columns[i].Name.L] = dtStr
 		}
 		ret["index_vals"] = idxValMap
 		retStr, err := json.Marshal(ret)
