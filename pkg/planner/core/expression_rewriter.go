@@ -2660,17 +2660,21 @@ func decodeKeyFromString(tc types.Context, isVer infoschemactx.MetaOnlyInfoSchem
 }
 
 func decodeRecordKey(key []byte, tableID int64, tbl table.Table, loc *time.Location) (string, error) {
-	_, handle, err := tablecodec.DecodeRecordKey(key)
+	keyTableID, handle, err := tablecodec.DecodeRecordKey(key)
 	if err != nil {
 		return "", errors.Trace(err)
 	}
-	if handle.IsInt() {
-		ret := make(map[string]any)
-		if tbl != nil && tbl.Meta().Partition != nil {
-			ret["partition_id"] = tableID
-			tableID = tbl.Meta().ID
-		}
-		ret["table_id"] = strconv.FormatInt(tableID, 10)
+	if tableID > 0 && keyTableID > 0 && tableID != keyTableID {
+		return "", errors.Trace(errors.Errorf("tableID %X not matching the key: %X", tableID, key))
+	}
+	ret := make(map[string]any)
+	if tbl != nil && tbl.Meta().Partition != nil {
+		ret["partition_id"] = tableID
+		ret["table_id"] = tbl.Meta().ID
+	} else {
+		ret["table_id"] = tableID
+	}
+	if handle != nil && handle.IsInt() {
 		// When the clustered index is enabled, we should show the PK name.
 		if tbl != nil && tbl.Meta().HasClusteredIndex() {
 			ret[tbl.Meta().GetPkName().String()] = handle.IntValue()
@@ -2684,12 +2688,6 @@ func decodeRecordKey(key []byte, tableID int64, tbl table.Table, loc *time.Locat
 		return string(retStr), nil
 	}
 	if tbl != nil {
-		ret := make(map[string]any)
-		if tbl.Meta().Partition != nil {
-			ret["partition_id"] = tableID
-			tableID = tbl.Meta().ID
-		}
-		ret["table_id"] = tableID
 		if tablecodec.IsRecordKey(key) {
 			tblInfo := tbl.Meta()
 			idxInfo := tables.FindPrimaryIndex(tblInfo)
@@ -2741,9 +2739,11 @@ func decodeRecordKey(key []byte, tableID int64, tbl table.Table, loc *time.Locat
 		}
 		return string(retStr), nil
 	}
-	ret := make(map[string]any)
-	ret["table_id"] = tableID
-	ret["handle"] = handle.String()
+	if handle != nil {
+		ret["handle"] = handle.String()
+	} else {
+		ret["handle"] = "{}"
+	}
 	retStr, err := json.Marshal(ret)
 	if err != nil {
 		return "", errors.Trace(err)

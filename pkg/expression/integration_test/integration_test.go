@@ -459,7 +459,7 @@ func TestTiDBDecodeKeyFunc(t *testing.T) {
 
 	// Row Keys
 	result = tk.MustQuery("select tidb_decode_key( '74800000000000002B5F72800000000000A5D3' )")
-	result.Check(testkit.Rows(`{"_tidb_rowid":42451,"table_id":"43"}`))
+	result.Check(testkit.Rows(`{"_tidb_rowid":42451,"table_id":43}`))
 	result = tk.MustQuery("select tidb_decode_key( '74800000000000ffff5f7205bff199999999999a013131000000000000f9' )")
 	result.Check(testkit.Rows(`{"handle":"{1.1, 11}","table_id":65535}`))
 	result = tk.MustQuery(`select tidb_decode_key('7480000000000000FF5A5F720000000000FA')`)
@@ -550,7 +550,7 @@ func TestTiDBDecodeKeyFunc(t *testing.T) {
 	// https://github.com/pingcap/tidb/issues/33015.
 	hexKey = "74800000000000012B5F72800000000000A5D3"
 	sql = fmt.Sprintf("select tidb_decode_key('%s')", hexKey)
-	tk.MustQuery(sql).Check(testkit.Rows(`{"_tidb_rowid":42451,"table_id":"299"}`))
+	tk.MustQuery(sql).Check(testkit.Rows(`{"_tidb_rowid":42451,"table_id":299}`))
 
 	// Test the table with the nonclustered index.
 	const rowID = 10
@@ -569,7 +569,7 @@ func TestTiDBDecodeKeyFunc(t *testing.T) {
 	}
 	hexKey = buildTableRowKey(tbl.Meta().ID, rowID)
 	sql = fmt.Sprintf("select tidb_decode_key( '%s' )", hexKey)
-	rs = fmt.Sprintf(`{"_tidb_rowid":%d,"table_id":"%d"}`, rowID, tbl.Meta().ID)
+	rs = fmt.Sprintf(`{"_tidb_rowid":%d,"table_id":%d}`, rowID, tbl.Meta().ID)
 	tk.MustQuery(sql).Check(testkit.Rows(rs))
 
 	// Test the table with the clustered index.
@@ -581,7 +581,7 @@ func TestTiDBDecodeKeyFunc(t *testing.T) {
 	require.NoError(t, err)
 	hexKey = buildTableRowKey(tbl.Meta().ID, rowID)
 	sql = fmt.Sprintf("select tidb_decode_key( '%s' )", hexKey)
-	rs = fmt.Sprintf(`{"%s":%d,"table_id":"%d"}`, tbl.Meta().GetPkName().String(), rowID, tbl.Meta().ID)
+	rs = fmt.Sprintf(`{"%s":%d,"table_id":%d}`, tbl.Meta().GetPkName().String(), rowID, tbl.Meta().ID)
 	tk.MustQuery(sql).Check(testkit.Rows(rs))
 
 	// Test partition table.
@@ -594,7 +594,7 @@ func TestTiDBDecodeKeyFunc(t *testing.T) {
 	require.NotNil(t, tbl.Meta().Partition)
 	hexKey = buildTableRowKey(tbl.Meta().Partition.Definitions[0].ID, rowID)
 	sql = fmt.Sprintf("select tidb_decode_key( '%s' )", hexKey)
-	rs = fmt.Sprintf(`{"%s":%d,"partition_id":%d,"table_id":"%d"}`, tbl.Meta().GetPkName().String(), rowID, tbl.Meta().Partition.Definitions[0].ID, tbl.Meta().ID)
+	rs = fmt.Sprintf(`{"%s":%d,"partition_id":%d,"table_id":%d}`, tbl.Meta().GetPkName().String(), rowID, tbl.Meta().Partition.Definitions[0].ID, tbl.Meta().ID)
 	tk.MustQuery(sql).Check(testkit.Rows(rs))
 
 	hexKey = tablecodec.EncodeTablePrefix(tbl.Meta().Partition.Definitions[0].ID).String()
@@ -619,8 +619,8 @@ func TestTiDBDecodeKeyFunc(t *testing.T) {
 	tk.MustQuery(sql).Check(testkit.Rows(rs))
 
 	// Test empty row data and unknown table id
-	rs = fmt.Sprintf(`{"handle":"{}","table_id":%d}`, meta.MaxInt48-0xff)
-	kv = tablecodec.EncodeRowKey(meta.MaxInt48-0xff, []byte{})
+	rs = fmt.Sprintf(`{"handle":"{}","table_id":%d}`, 0xffffffffff00)
+	kv = tablecodec.EncodeRowKey(0xffffffffff00, []byte{})
 	// like 748000ffffffffff005f72
 	sql = fmt.Sprintf("select tidb_decode_key('%s')", kv)
 	tk.MustQuery(sql).Check(testkit.Rows(rs))
