@@ -79,6 +79,7 @@ const (
 	// FlagWaitTiFlashReady represents whether wait tiflash replica ready after table restored and checksumed.
 	FlagWaitTiFlashReady = "wait-tiflash-ready"
 
+	FlagForceUseStartTS = "force-use-start-ts"
 	// FlagStreamStartTS and FlagStreamRestoreTS is used for log restore timestamp range.
 	FlagStreamStartTS   = "start-ts"
 	FlagStreamRestoreTS = "restored-ts"
@@ -241,6 +242,7 @@ type RestoreConfig struct {
 	// if it is empty, directly take restoring log justly.
 	FullBackupStorage string `json:"full-backup-storage" toml:"full-backup-storage"`
 
+	ForceUseStartTS bool `json:"force-use-start-ts" toml:"force-use-start-ts"`
 	// [startTs, RestoreTS] is used to `restore log` from StartTS to RestoreTS.
 	StartTS         uint64                      `json:"start-ts" toml:"start-ts"`
 	RestoreTS       uint64                      `json:"restore-ts" toml:"restore-ts"`
@@ -289,6 +291,8 @@ func DefineRestoreFlags(flags *pflag.FlagSet) {
 
 // DefineStreamRestoreFlags defines for the restore log command.
 func DefineStreamRestoreFlags(command *cobra.Command) {
+	command.Flags().Bool(FlagForceUseStartTS, false, "force to use start-ts in log restore.\n"+
+		"It only can be used in a non table-id-rewritten cluster")
 	command.Flags().String(FlagStreamStartTS, "", "the start timestamp which log restore from.\n"+
 		"support TSO or datetime, e.g. '400036290571534337' or '2018-05-11 01:42:23+0800'")
 	command.Flags().String(FlagStreamRestoreTS, "", "the point of restore, used for log restore.\n"+
@@ -321,9 +325,20 @@ func (cfg *RestoreConfig) ParseStreamRestoreFlags(flags *pflag.FlagSet) error {
 		return errors.Trace(err)
 	}
 
-	if cfg.StartTS > 0 && len(cfg.FullBackupStorage) > 0 {
-		return errors.Annotatef(berrors.ErrInvalidArgument, "%v and %v are mutually exclusive",
-			FlagStreamStartTS, FlagStreamFullBackupStorage)
+	if cfg.ForceUseStartTS, err = flags.GetBool(FlagForceUseStartTS); err != nil {
+		return errors.Trace(err)
+	}
+
+	if cfg.StartTS > 0 {
+		if !cfg.ForceUseStartTS {
+			return errors.Annotatef(berrors.ErrInvalidArgument, "[Waring] Don't use `--start-ts` in a table id rewritten cluster.\n"+
+				"you should use `--full-backup-storage` at first, if you know what's going on and still want use it,\n"+
+				"you can add `--force-use-start-ts` to skip this check.")
+		}
+		if len(cfg.FullBackupStorage) > 0 {
+			return errors.Annotatef(berrors.ErrInvalidArgument, "%v and %v are mutually exclusive",
+				FlagStreamStartTS, FlagStreamFullBackupStorage)
+		}
 	}
 
 	if cfg.PitrBatchCount, err = flags.GetUint32(FlagPiTRBatchCount); err != nil {
