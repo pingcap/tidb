@@ -208,7 +208,7 @@ func TestDeepClone(t *testing.T) {
 	sort2 := &PhysicalSort{ByItems: byItems}
 	checkDeepClone := func(p1, p2 base.PhysicalPlan) error {
 		whiteList := []string{"*property.StatsInfo", "*sessionctx.Context", "*mock.Context"}
-		return checkDeepClonedCore(reflect.ValueOf(p1), reflect.ValueOf(p2), typeName(reflect.TypeOf(p1)), whiteList, nil)
+		return checkDeepClonedCore(reflect.ValueOf(p1), reflect.ValueOf(p2), typeName(reflect.TypeOf(p1)), nil, whiteList, nil)
 	}
 	err := checkDeepClone(sort1, sort2)
 	require.Error(t, err)
@@ -413,18 +413,28 @@ func checkPhysicalPlanClone(p base.PhysicalPlan) error {
 		return err
 	}
 	whiteList := []string{"*property.StatsInfo", "*sessionctx.Context", "*mock.Context", "*types.FieldType"}
-	return checkDeepClonedCore(reflect.ValueOf(p), reflect.ValueOf(cloned), typeName(reflect.TypeOf(p)), whiteList, nil)
+	return checkDeepClonedCore(reflect.ValueOf(p), reflect.ValueOf(cloned), typeName(reflect.TypeOf(p)), nil, whiteList, nil)
 }
 
 // CheckPlanDeepClone checks if p2 is deep cloned from p1, which means they should share no same pointer / map / slice.
 func CheckPlanDeepClone(p1, p2 base.Plan) error {
-	return checkDeepClonedCore(reflect.ValueOf(p1), reflect.ValueOf(p2), typeName(reflect.TypeOf(p1)), nil, nil)
+	return checkDeepClonedCore(reflect.ValueOf(p1), reflect.ValueOf(p2), typeName(reflect.TypeOf(p1)), nil, nil, nil)
 }
 
 // checkDeepClonedCore is used to check if v2 is deep cloned from v1.
 // It's modified from reflect.deepValueEqual. We cannot use reflect.DeepEqual here since they have different
 // logic, for example, if two pointers point the same address, they will pass the DeepEqual check while failing in the DeepClone check.
-func checkDeepClonedCore(v1, v2 reflect.Value, path string, whiteList []string, visited map[visit]bool) error {
+func checkDeepClonedCore(v1, v2 reflect.Value, path string, whitePathList, whiteTypeList []string, visited map[visit]bool) error {
+	skipPath := false
+	for _, p := range whitePathList {
+		if strings.HasSuffix(path, p) {
+			skipPath = true
+		}
+	}
+	if skipPath {
+		return nil
+	}
+
 	if !v1.IsValid() || !v2.IsValid() {
 		if v1.IsValid() != v2.IsValid() {
 			return errors.Errorf("invalid")
@@ -462,7 +472,7 @@ func checkDeepClonedCore(v1, v2 reflect.Value, path string, whiteList []string, 
 	switch v1.Kind() {
 	case reflect.Array:
 		for i := 0; i < v1.Len(); i++ {
-			if err := checkDeepClonedCore(v1.Index(i), v2.Index(i), fmt.Sprintf("%v[%v]", path, i), whiteList, visited); err != nil {
+			if err := checkDeepClonedCore(v1.Index(i), v2.Index(i), fmt.Sprintf("%v[%v]", path, i), whitePathList, whiteTypeList, visited); err != nil {
 				return err
 			}
 		}
@@ -483,7 +493,7 @@ func checkDeepClonedCore(v1, v2 reflect.Value, path string, whiteList []string, 
 			return errors.Errorf("same slice pointers, path %v", path)
 		}
 		for i := 0; i < v1.Len(); i++ {
-			if err := checkDeepClonedCore(v1.Index(i), v2.Index(i), fmt.Sprintf("%v[%v]", path, i), whiteList, visited); err != nil {
+			if err := checkDeepClonedCore(v1.Index(i), v2.Index(i), fmt.Sprintf("%v[%v]", path, i), whitePathList, whiteTypeList, visited); err != nil {
 				return err
 			}
 		}
@@ -494,7 +504,7 @@ func checkDeepClonedCore(v1, v2 reflect.Value, path string, whiteList []string, 
 		if v1.IsNil() != v2.IsNil() {
 			return errors.Errorf("invalid interfaces, path %v", path)
 		}
-		return checkDeepClonedCore(v1.Elem(), v2.Elem(), path, whiteList, visited)
+		return checkDeepClonedCore(v1.Elem(), v2.Elem(), path, whitePathList, whiteTypeList, visited)
 	case reflect.Ptr:
 		if v1.IsNil() && v2.IsNil() {
 			return nil
@@ -502,7 +512,7 @@ func checkDeepClonedCore(v1, v2 reflect.Value, path string, whiteList []string, 
 		if v1.Pointer() == v2.Pointer() {
 			typeName := v1.Type().String()
 			inWhiteList := false
-			for _, whiteName := range whiteList {
+			for _, whiteName := range whiteTypeList {
 				if whiteName == typeName {
 					inWhiteList = true
 					break
@@ -513,11 +523,11 @@ func checkDeepClonedCore(v1, v2 reflect.Value, path string, whiteList []string, 
 			}
 			return errors.Errorf("same pointer, path %v", path)
 		}
-		return checkDeepClonedCore(v1.Elem(), v2.Elem(), path, whiteList, visited)
+		return checkDeepClonedCore(v1.Elem(), v2.Elem(), path, whitePathList, whiteTypeList, visited)
 	case reflect.Struct:
 		for i, n := 0, v1.NumField(); i < n; i++ {
 			fieldName := v1.Type().Field(i).Name
-			if err := checkDeepClonedCore(v1.Field(i), v2.Field(i), fmt.Sprintf("%v.%v", path, fieldName), whiteList, visited); err != nil {
+			if err := checkDeepClonedCore(v1.Field(i), v2.Field(i), fmt.Sprintf("%v.%v", path, fieldName), whitePathList, whiteTypeList, visited); err != nil {
 				return err
 			}
 		}
@@ -540,7 +550,7 @@ func checkDeepClonedCore(v1, v2 reflect.Value, path string, whiteList []string, 
 			if !val1.IsValid() || !val2.IsValid() {
 				return errors.Errorf("invalid map value at %v", fmt.Sprintf("%v[%v]", path, typeName(k.Type())))
 			}
-			if err := checkDeepClonedCore(val1, val2, fmt.Sprintf("%v[%v]", path, typeName(k.Type())), whiteList, visited); err != nil {
+			if err := checkDeepClonedCore(val1, val2, fmt.Sprintf("%v[%v]", path, typeName(k.Type())), whitePathList, whiteTypeList, visited); err != nil {
 				return err
 			}
 		}
