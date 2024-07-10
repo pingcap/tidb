@@ -24,7 +24,7 @@
       {
         "Start": 800,
         "End": 900,
-        "Count": 755.754166655054
+        "Count": 739.0041666550542
       },
       {
         "Start": 900,
@@ -79,7 +79,7 @@
       {
         "Start": 800,
         "End": 1000,
-        "Count": 1213.946869573942
+        "Count": 1197.1968695739424
       },
       {
         "Start": 900,
@@ -104,7 +104,7 @@
       {
         "Start": 200,
         "End": 400,
-        "Count": 1215.0288209899081
+        "Count": 1224.0288209899081
       },
       {
         "Start": 200,
@@ -1532,7 +1532,7 @@
                   {
                     "Histogram NotNull Count": 3080,
                     "Increase Factor": 1,
-                    "TopN total count": 1095
+                    "TopN total count": 1097
                   },
                   {
                     "github.com/pingcap/tidb/pkg/planner/cardinality.GetColumnRowCount": [
@@ -1601,7 +1601,7 @@
                   {
                     "Histogram NotNull Count": 3080,
                     "Increase Factor": 1,
-                    "TopN total count": 1098
+                    "TopN total count": 1097
                   },
                   {
                     "github.com/pingcap/tidb/pkg/planner/cardinality.GetColumnRowCount": [
@@ -2191,7 +2191,7 @@
                             "github.com/pingcap/tidb/pkg/statistics.(*Histogram).EqualRowCount": [
                               {
                                 "Locate value in buckets": {
-                                  "BucketIdx": 105,
+                                  "BucketIdx": 46,
                                   "Exceed": false,
                                   "InBucket": true,
                                   "MatchLastValue": false,
@@ -2201,8 +2201,8 @@
                               {
                                 "Related Buckets in Histogram": [
                                   {
-                                    "Count": 848,
-                                    "Index": 105,
+                                    "Count": 846,
+                                    "Index": 46,
                                     "Repeat": 1
                                   }
                                 ]
@@ -2283,7 +2283,7 @@
                             "github.com/pingcap/tidb/pkg/statistics.(*Histogram).EqualRowCount": [
                               {
                                 "Locate value in buckets": {
-                                  "BucketIdx": 136,
+                                  "BucketIdx": 60,
                                   "Exceed": false,
                                   "InBucket": true,
                                   "MatchLastValue": false,
@@ -2293,8 +2293,8 @@
                               {
                                 "Related Buckets in Histogram": [
                                   {
-                                    "Count": 1096,
-                                    "Index": 136,
+                                    "Count": 1098,
+                                    "Index": 60,
                                     "Repeat": 1
                                   }
                                 ]
@@ -2374,7 +2374,7 @@
                             "github.com/pingcap/tidb/pkg/statistics.(*Histogram).EqualRowCount": [
                               {
                                 "Locate value in buckets": {
-                                  "BucketIdx": 105,
+                                  "BucketIdx": 46,
                                   "Exceed": false,
                                   "InBucket": true,
                                   "MatchLastValue": false,
@@ -2384,8 +2384,8 @@
                               {
                                 "Related Buckets in Histogram": [
                                   {
-                                    "Count": 848,
-                                    "Index": 105,
+                                    "Count": 846,
+                                    "Index": 46,
                                     "Repeat": 1
                                   }
                                 ]
@@ -2461,7 +2461,7 @@
                   {
                     "Histogram NotNull Count": 3080,
                     "Increase Factor": 1,
-                    "TopN total count": 1095
+                    "TopN total count": 1097
                   },
                   {
                     "github.com/pingcap/tidb/pkg/planner/cardinality.GetColumnRowCount": [
@@ -2613,7 +2613,7 @@
                   {
                     "Histogram NotNull Count": 3080,
                     "Increase Factor": 1,
-                    "TopN total count": 1098
+                    "TopN total count": 1097
                   },
                   {
                     "github.com/pingcap/tidb/pkg/planner/cardinality.GetColumnRowCount": [
@@ -3517,7 +3517,7 @@
                                 "Repeat": -1
                               },
                               {
-                                "Count": 8,
+                                "Count": 18,
                                 "Index": 0,
                                 "Repeat": 1
                               }
@@ -3548,7 +3548,7 @@
                                 "Repeat": -1
                               },
                               {
-                                "Count": 8,
+                                "Count": 18,
                                 "Index": 0,
                                 "Repeat": 1
                               }
@@ -3659,7 +3659,7 @@
                         "github.com/pingcap/tidb/pkg/statistics.(*Histogram).LessRowCountWithBktIdx": [
                           {
                             "Locate value in buckets": {
-                              "BucketIdx": 111,
+                              "BucketIdx": 49,
                               "Exceed": false,
                               "InBucket": true,
                               "MatchLastValue": false,
@@ -3669,20 +3669,20 @@
                           {
                             "Related Buckets in Histogram": [
                               {
-                                "Count": 888,
-                                "Index": 110,
+                                "Count": 882,
+                                "Index": 48,
                                 "Repeat": 1
                               },
                               {
-                                "Count": 896,
-                                "Index": 111,
+                                "Count": 900,
+                                "Index": 49,
                                 "Repeat": 1
                               }
                             ]
                           },
                           {
-                            "Bucket idx": 111,
-                            "Result": 890.625
+                            "Bucket idx": 49,
+                            "Result": 890.5
                           }
                         ]
                       },
@@ -3690,7 +3690,7 @@
                         "github.com/pingcap/tidb/pkg/statistics.(*Histogram).LessRowCountWithBktIdx": [
                           {
                             "Locate value in buckets": {
-                              "BucketIdx": 111,
+                              "BucketIdx": 49,
                               "Exceed": false,
                               "InBucket": true,
                               "MatchLastValue": false,
@@ -3700,20 +3700,20 @@
                           {
                             "Related Buckets in Histogram": [
                               {
-                                "Count": 888,
-                                "Index": 110,
+                                "Count": 882,
+                                "Index": 48,
                                 "Repeat": 1
                               },
                               {
-                                "Count": 896,
-                                "Index": 111,
+                                "Count": 900,
+                                "Index": 49,
                                 "Repeat": 1
                               }
                             ]
                           },
                           {
-                            "Bucket idx": 111,
-                            "Result": 893.25
+                            "Bucket idx": 49,
+                            "Result": 893.3333333333334
                           }
                         ]
                       },
@@ -3721,7 +3721,7 @@
                         "github.com/pingcap/tidb/pkg/statistics.(*Histogram).EqualRowCount": [
                           {
                             "Locate value in buckets": {
-                              "BucketIdx": 111,
+                              "BucketIdx": 49,
                               "Exceed": false,
                               "InBucket": true,
                               "MatchLastValue": false,
@@ -3731,8 +3731,8 @@
                           {
                             "Related Buckets in Histogram": [
                               {
-                                "Count": 896,
-                                "Index": 111,
+                                "Count": 900,
+                                "Index": 49,
                                 "Repeat": 1
                               }
                             ]
@@ -3786,7 +3786,7 @@
                       },
                       {
                         "End estimate range": {
-                          "RowCount": 2.713087248322148,
+                          "RowCount": 2.928411633109659,
                           "Type": "Range"
                         }
                       }
@@ -3794,7 +3794,7 @@
                   },
                   {
                     "Name": "b",
-                    "Result": 2.713087248322148
+                    "Result": 2.928411633109659
                   }
                 ]
               },
@@ -3847,7 +3847,7 @@
                                 "Repeat": -1
                               },
                               {
-                                "Count": 8,
+                                "Count": 18,
                                 "Index": 0,
                                 "Repeat": 1
                               }
@@ -3878,7 +3878,7 @@
                                 "Repeat": -1
                               },
                               {
-                                "Count": 8,
+                                "Count": 18,
                                 "Index": 0,
                                 "Repeat": 1
                               }
@@ -3978,7 +3978,7 @@
                         "github.com/pingcap/tidb/pkg/statistics.(*Histogram).LessRowCountWithBktIdx": [
                           {
                             "Locate value in buckets": {
-                              "BucketIdx": 111,
+                              "BucketIdx": 49,
                               "Exceed": false,
                               "InBucket": true,
                               "MatchLastValue": false,
@@ -3988,20 +3988,20 @@
                           {
                             "Related Buckets in Histogram": [
                               {
-                                "Count": 888,
-                                "Index": 110,
+                                "Count": 882,
+                                "Index": 48,
                                 "Repeat": 1
                               },
                               {
-                                "Count": 896,
-                                "Index": 111,
+                                "Count": 900,
+                                "Index": 49,
                                 "Repeat": 1
                               }
                             ]
                           },
                           {
-                            "Bucket idx": 111,
-                            "Result": 891.5
+                            "Bucket idx": 49,
+                            "Result": 891.4444444444445
                           }
                         ]
                       },
@@ -4009,7 +4009,7 @@
                         "github.com/pingcap/tidb/pkg/statistics.(*Histogram).LessRowCountWithBktIdx": [
                           {
                             "Locate value in buckets": {
-                              "BucketIdx": 111,
+                              "BucketIdx": 49,
                               "Exceed": false,
                               "InBucket": true,
                               "MatchLastValue": false,
@@ -4019,20 +4019,20 @@
                           {
                             "Related Buckets in Histogram": [
                               {
-                                "Count": 888,
-                                "Index": 110,
+                                "Count": 882,
+                                "Index": 48,
                                 "Repeat": 1
                               },
                               {
-                                "Count": 896,
-                                "Index": 111,
+                                "Count": 900,
+                                "Index": 49,
                                 "Repeat": 1
                               }
                             ]
                           },
                           {
-                            "Bucket idx": 111,
-                            "Result": 893.25
+                            "Bucket idx": 49,
+                            "Result": 893.3333333333334
                           }
                         ]
                       },
@@ -4040,7 +4040,7 @@
                         "github.com/pingcap/tidb/pkg/statistics.(*Histogram).EqualRowCount": [
                           {
                             "Locate value in buckets": {
-                              "BucketIdx": 111,
+                              "BucketIdx": 49,
                               "Exceed": false,
                               "InBucket": true,
                               "MatchLastValue": false,
@@ -4050,8 +4050,8 @@
                           {
                             "Related Buckets in Histogram": [
                               {
-                                "Count": 896,
-                                "Index": 111,
+                                "Count": 900,
+                                "Index": 49,
                                 "Repeat": 1
                               }
                             ]
@@ -4069,7 +4069,7 @@
                       },
                       {
                         "End estimate range": {
-                          "RowCount": 1.8087248322147653,
+                          "RowCount": 1.952274422073106,
                           "Type": "Range"
                         }
                       }
@@ -4077,7 +4077,7 @@
                   },
                   {
                     "Name": "ib",
-                    "Result": 1.8087248322147653
+                    "Result": 1.952274422073106
                   }
                 ]
               },
@@ -4086,7 +4086,7 @@
                   "gt(test.t.b, 400)",
                   "lt(test.t.b, 403)"
                 ],
-                "Selectivity": 0.0005872483221476511,
+                "Selectivity": 0.0006338553318419176,
                 "partial cover": false
               },
               {
