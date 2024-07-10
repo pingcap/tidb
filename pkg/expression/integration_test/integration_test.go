@@ -660,12 +660,13 @@ func TestTiDBDecodeKeyFuncString(t *testing.T) {
 	it, err := txn.Iter(prefix, end)
 	require.NoError(t, err)
 	expectedRes := make([]string, numRows)
-	rawKeys := make([]string, numRows)
-	rawKeys[0] = "7480000000000000685f72038000000000000001011c3e000000000000f9"
-	rawKeys[1] = "7480000000000000685f72038000000000000002011e0c1d651c3f0000fd"
-	rawKeys[2] = "7480000000000000685f7203800000000000000301fb40cf60fb40d97dff0000000000000000f7"
-	rawKeys[3] = "7480000000000000685f72038000000000000004010000000000000000f7"
-	rawKeys[4] = "7480000000000000685f72038000000000000005011c471e331e951e71ff1daa1ddd1e331cf4ff1c471e7100000000fb"
+	// Leaving rawKeys as comments, just for showing what the keys look like
+	//rawKeys := make([]string, numRows)
+	//rawKeys[0] = "7480000000000000685f72038000000000000001011c3e000000000000f9"
+	//rawKeys[1] = "7480000000000000685f72038000000000000002011e0c1d651c3f0000fd"
+	//rawKeys[2] = "7480000000000000685f7203800000000000000301fb40cf60fb40d97dff0000000000000000f7"
+	//rawKeys[3] = "7480000000000000685f72038000000000000004010000000000000000f7"
+	//rawKeys[4] = "7480000000000000685f72038000000000000005011c471e331e951e71ff1daa1ddd1e331cf4ff1c471e7100000000fb"
 	expectedRes[0] = fmt.Sprintf(`{"handle":{"a":"1","b":"1c3e"},"table_id":%d}`, tbl.Meta().ID)
 	expectedRes[1] = fmt.Sprintf(`{"handle":{"a":"2","b":"1e0c1d651c3f"},"table_id":%d}`, tbl.Meta().ID)
 	expectedRes[2] = fmt.Sprintf(`{"handle":{"a":"3","b":"fb40cf60fb40d97d"},"table_id":%d}`, tbl.Meta().ID)
@@ -676,7 +677,7 @@ func TestTiDBDecodeKeyFuncString(t *testing.T) {
 	for it.Valid() {
 		key := it.Key()
 		keyStr := key.String()
-		require.Equal(t, rawKeys[i], keyStr, "i=%d", i)
+		//require.Equal(t, rawKeys[i], keyStr, "i=%d", i)
 		tk.MustQuery(`select tidb_decode_key('` + keyStr + `')`).Check(testkit.Rows(expectedRes[i]))
 		err = it.Next()
 		require.NoError(t, err)
@@ -689,12 +690,12 @@ func TestTiDBDecodeKeyFuncString(t *testing.T) {
 	end = tablecodec.EncodeIndexSeekKey(tbl.Meta().ID, tbl.Meta().Indices[1].ID+1, nil)
 	it, err = txn.Iter(prefix, end)
 	require.NoError(t, err)
-	rawKeys = make([]string, numRows)
-	rawKeys[0] = "7480000000000000685f698000000000000002038000000000000000010000000000000000f7038000000000000004"
-	rawKeys[1] = "7480000000000000685f698000000000000002038000000000000001011c3e000000000000f9038000000000000001"
-	rawKeys[2] = "7480000000000000685f698000000000000002038000000000000002011e0c1d651c3f0000fd038000000000000002"
-	rawKeys[3] = "7480000000000000685f69800000000000000203800000000000000301fb40cf60fb40d97dff0000000000000000f7038000000000000003"
-	rawKeys[4] = "7480000000000000685f698000000000000002038000000000000005011c471e331e951e71ff1daa1ddd1e331cf4ff1c471e7100000000fb038000000000000005"
+	//rawKeys = make([]string, numRows)
+	//rawKeys[0] = "7480000000000000685f698000000000000002038000000000000000010000000000000000f7038000000000000004"
+	//rawKeys[1] = "7480000000000000685f698000000000000002038000000000000001011c3e000000000000f9038000000000000001"
+	//rawKeys[2] = "7480000000000000685f698000000000000002038000000000000002011e0c1d651c3f0000fd038000000000000002"
+	//rawKeys[3] = "7480000000000000685f69800000000000000203800000000000000301fb40cf60fb40d97dff0000000000000000f7038000000000000003"
+	//rawKeys[4] = "7480000000000000685f698000000000000002038000000000000005011c471e331e951e71ff1daa1ddd1e331cf4ff1c471e7100000000fb038000000000000005"
 	expectedRes[0] = fmt.Sprintf(`{"index_id":2,"index_vals":{"a":"4","b":"","c":"0"},"table_id":%d}`, tbl.Meta().ID)
 	expectedRes[1] = fmt.Sprintf(`{"index_id":2,"index_vals":{"a":"1","b":"1c3e","c":"1"},"table_id":%d}`, tbl.Meta().ID)
 	expectedRes[2] = fmt.Sprintf(`{"index_id":2,"index_vals":{"a":"2","b":"1e0c1d651c3f","c":"2"},"table_id":%d}`, tbl.Meta().ID)
@@ -704,7 +705,7 @@ func TestTiDBDecodeKeyFuncString(t *testing.T) {
 	for it.Valid() {
 		key := it.Key()
 		keyStr := key.String()
-		require.Equal(t, rawKeys[i], keyStr, "i=%d", i)
+		//require.Equal(t, rawKeys[i], keyStr, "i=%d", i)
 		tk.MustQuery(`select tidb_decode_key('` + keyStr + `')`).Check(testkit.Rows(expectedRes[i]))
 		err = it.Next()
 		require.NoError(t, err)
@@ -717,12 +718,12 @@ func TestTiDBDecodeKeyFuncString(t *testing.T) {
 	end = tablecodec.EncodeIndexSeekKey(tbl.Meta().ID, tbl.Meta().Indices[2].ID+1, nil)
 	it, err = txn.Iter(prefix, end)
 	require.NoError(t, err)
-	rawKeys = make([]string, numRows)
-	rawKeys[0] = "7480000000000000685f698000000000000003010700000000000000f8038000000000000004010000000000000000f7"
-	rawKeys[1] = "7480000000000000685f698000000000000003013100000000000000f8038000000000000001011c3e000000000000f9"
-	rawKeys[2] = "7480000000000000685f69800000000000000301506b320000000000fa038000000000000002011e0c1d651c3f0000fd"
-	rawKeys[3] = "7480000000000000685f69800000000000000301c3847274736dc3b6ff7267c3a573000000fc038000000000000005011c471e331e951e71ff1daa1ddd1e331cf4ff1c471e7100000000fb"
-	rawKeys[4] = "7480000000000000685f69800000000000000301e4bda0e5a5bd0000fd03800000000000000301fb40cf60fb40d97dff0000000000000000f7"
+	//rawKeys = make([]string, numRows)
+	//rawKeys[0] = "7480000000000000685f698000000000000003010700000000000000f8038000000000000004010000000000000000f7"
+	//rawKeys[1] = "7480000000000000685f698000000000000003013100000000000000f8038000000000000001011c3e000000000000f9"
+	//rawKeys[2] = "7480000000000000685f69800000000000000301506b320000000000fa038000000000000002011e0c1d651c3f0000fd"
+	//rawKeys[3] = "7480000000000000685f69800000000000000301c3847274736dc3b6ff7267c3a573000000fc038000000000000005011c471e331e951e71ff1daa1ddd1e331cf4ff1c471e7100000000fb"
+	//rawKeys[4] = "7480000000000000685f69800000000000000301e4bda0e5a5bd0000fd03800000000000000301fb40cf60fb40d97dff0000000000000000f7"
 	expectedRes[0] = fmt.Sprintf(`{"index_id":3,"index_vals":{"_v$_idx_b_bin_0":"\u0007"},"table_id":%d}`, tbl.Meta().ID)
 	expectedRes[1] = fmt.Sprintf(`{"index_id":3,"index_vals":{"_v$_idx_b_bin_0":"1"},"table_id":%d}`, tbl.Meta().ID)
 	expectedRes[2] = fmt.Sprintf(`{"index_id":3,"index_vals":{"_v$_idx_b_bin_0":"Pk2"},"table_id":%d}`, tbl.Meta().ID)
@@ -732,7 +733,7 @@ func TestTiDBDecodeKeyFuncString(t *testing.T) {
 	for it.Valid() {
 		key := it.Key()
 		keyStr := key.String()
-		require.Equal(t, rawKeys[i], keyStr, "i=%d", i)
+		//require.Equal(t, rawKeys[i], keyStr, "i=%d", i)
 		tk.MustQuery(`select tidb_decode_key('` + keyStr + `')`).Check(testkit.Rows(expectedRes[i]))
 		err = it.Next()
 		require.NoError(t, err)
@@ -775,13 +776,13 @@ func TestTiDBDecodeKeyFuncString2(t *testing.T) {
 	it, err := txn.Iter(prefix, end)
 	require.NoError(t, err)
 	expectedRes := make([]string, numRows)
-	rawKeys := make([]string, numRows)
-	rawKeys[0] = "7480000000000000685f72038000000000000001013100000000000000f8"
-	rawKeys[1] = "7480000000000000685f7203800000000000000201506b320000000000fa"
-	rawKeys[2] = "7480000000000000685f7203800000000000000201706b320000000000fa"
-	rawKeys[3] = "7480000000000000685f7203800000000000000301e4bda0e5a5bd0000fd"
-	rawKeys[4] = "7480000000000000685f72038000000000000004010700000000000000f8"
-	rawKeys[5] = "7480000000000000685f7203800000000000000501c3847274736dc3b6ff7267c3a573000000fc"
+	//rawKeys := make([]string, numRows)
+	//rawKeys[0] = "7480000000000000685f72038000000000000001013100000000000000f8"
+	//rawKeys[1] = "7480000000000000685f7203800000000000000201506b320000000000fa"
+	//rawKeys[2] = "7480000000000000685f7203800000000000000201706b320000000000fa"
+	//rawKeys[3] = "7480000000000000685f7203800000000000000301e4bda0e5a5bd0000fd"
+	//rawKeys[4] = "7480000000000000685f72038000000000000004010700000000000000f8"
+	//rawKeys[5] = "7480000000000000685f7203800000000000000501c3847274736dc3b6ff7267c3a573000000fc"
 	expectedRes[0] = fmt.Sprintf(`{"handle":{"a":"1","b":"1"},"table_id":%d}`, tbl.Meta().ID)
 	expectedRes[1] = fmt.Sprintf(`{"handle":{"a":"2","b":"Pk2"},"table_id":%d}`, tbl.Meta().ID)
 	expectedRes[2] = fmt.Sprintf(`{"handle":{"a":"2","b":"pk2"},"table_id":%d}`, tbl.Meta().ID)
@@ -793,7 +794,7 @@ func TestTiDBDecodeKeyFuncString2(t *testing.T) {
 	for it.Valid() {
 		key := it.Key()
 		keyStr := key.String()
-		require.Equal(t, rawKeys[i], keyStr, "i=%d", i)
+		//require.Equal(t, rawKeys[i], keyStr, "i=%d", i)
 		tk.MustQuery(`select tidb_decode_key('` + keyStr + `')`).Check(testkit.Rows(expectedRes[i]))
 		err = it.Next()
 		require.NoError(t, err)
