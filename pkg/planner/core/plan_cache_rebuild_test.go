@@ -182,6 +182,7 @@ func TestCheckPlanDeepClone(t *testing.T) {
 	l1.TblID2Handle[1] = nil
 	l2.TblID2Handle[1] = nil
 	ctx := core.MockContext()
+	defer ctx.Close()
 	l1.SetSCtx(ctx)
 	l2.SetSCtx(ctx)
 	require.Equal(t, core.CheckPlanDeepClone(l1, l2).Error(), "same pointer, path *PhysicalLock.basePhysicalPlan.Plan.ctx")
