@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/fatih/color"
 	"github.com/pingcap/errors"
 	pb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
@@ -427,59 +428,38 @@ func ReplaceMetadata(meta *pb.Metadata, filegroups []*pb.DataFileGroup) {
 	updateMetadataInternalStat(meta)
 }
 
-func ellipsisArray[T any](item []T) string {
-	if len(item) == 0 {
-		return "<empty>"
-	}
-	if len(item) == 1 {
-		return fmt.Sprintf("%v", item[0])
-	}
-	return fmt.Sprintf("%v and more %d items", item[0], len(item)-1)
-}
-
 func AddMigrationToTable(m *pb.Migration, table *glue.Table) {
+	rd := color.New(color.FgHiRed).Sprint
+	if m.TruncatedTo > 0 {
+		table.Add("truncated-to", strconv.FormatUint(m.TruncatedTo, 10))
+	}
+	for i, c := range m.Compactions {
+		addCompactionToTable(c, table, i)
+	}
+
 	if len(m.EditMeta) > 0 {
-		fileNames := make([]string, 0, len(m.EditMeta))
 		totalDeletePhyFile := 0
 		totalDeleteLgcFile := 0
 		for _, edit := range m.EditMeta {
-			fileNames = append(fileNames, edit.Path)
 			totalDeletePhyFile += len(edit.DeletePhysicalFiles)
 			for _, dl := range edit.DeleteLogicalFiles {
 				totalDeleteLgcFile += len(dl.Spans)
 			}
 		}
-		table.Add("edit-meta", ellipsisArray(fileNames))
-		table.Add("delete-physical-file", strconv.Itoa(totalDeletePhyFile))
-		table.Add("delete-logical-file", strconv.Itoa(totalDeleteLgcFile))
-	}
-	for i, c := range m.Compactions {
-		AddCompactionToTable(c, table, i)
+		table.Add("edit-meta-files", fmt.Sprintf("%s meta files will be edited.", rd(len(m.EditMeta))))
+		table.Add("delete-physical-file", fmt.Sprintf("%s physical files will be deleted.", rd(totalDeletePhyFile)))
+		table.Add("delete-logical-file", fmt.Sprintf("%s logical segments may be deleted, if possible.", rd(totalDeleteLgcFile)))
 	}
 	for i, c := range m.DestructPrefix {
-		table.Add(fmt.Sprintf("destruct-prefix[%02d]", i), c)
+		table.Add(fmt.Sprintf("destruct-prefix[%02d]", i), rd(c))
 	}
-	table.Add("truncated-to", strconv.FormatUint(m.TruncatedTo, 10))
 }
 
-func AddCompactionToTable(m *pb.LogFileCompaction, table *glue.Table, idx int) {
+func addCompactionToTable(m *pb.LogFileCompaction, table *glue.Table, idx int) {
 	withIdx := func(s string) string { return fmt.Sprintf("compactions[%d].%s", idx, s) }
 	table.Add(withIdx("name"), m.Name)
-	table.Add(withIdx("compaction-from-ts"), strconv.FormatUint(m.CompactionFromTs, 10))
-	table.Add(withIdx("compaction-until-ts"), strconv.FormatUint(m.CompactionUntilTs, 10))
-	table.Add(withIdx("artifactes"), m.Artifactes)
-	table.Add(withIdx("generated-files"), m.GeneratedFiles)
-	for _, comments := range strings.Split(m.Comments, "\n") {
-		if len(strings.Trim(comments, " \n")) <= 0 {
-			continue
-		}
-		key, value, found := strings.Cut(comments, ":")
-		if !found {
-			table.Add(withIdx("comment"), comments)
-		} else {
-			table.Add(withIdx(key), strings.TrimLeft(value, " "))
-		}
-	}
+	table.Add(withIdx("time"), fmt.Sprintf("%d ~ %d", m.CompactionFromTs, m.CompactionUntilTs))
+	table.Add(withIdx("file"), fmt.Sprintf("[%q, %q]", m.Artifactes, m.GeneratedFiles))
 }
 
 type MigrationExt struct {
