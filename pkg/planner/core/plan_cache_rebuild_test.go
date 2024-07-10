@@ -16,15 +16,17 @@ package core_test
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
+	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/planner/util"
+	"github.com/pingcap/tidb/pkg/types"
+	"github.com/stretchr/testify/require"
 	"math/rand"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/testkit"
-	"github.com/stretchr/testify/require"
 )
 
 func TestPlanCacheClone(t *testing.T) {
@@ -79,54 +81,69 @@ func testCachedPlanClone(t *testing.T, tk *testkit.TestKit, prep, set, exec1, ex
 	tk.MustQuery(exec1) // generate the first cached plan
 
 	// check adjusting the cloned plan should have no effect on the original plan
-	var original base.Plan
-	var originalFingerprint string
+	var original, adjusted base.Plan
 	before := func(cachedVal *core.PlanCacheValue) {
-		// get the current cached plan and its fingerprint
-		original, originalFingerprint = cachedVal.Plan, planFingerprint(t, cachedVal.Plan)
-		// replace the cached plan with a cloned one
-		cloned, err := original.(base.PhysicalPlan).Clone(original.SCtx())
-		require.NoError(t, err)
-		cachedVal.Plan = cloned
+		original = cachedVal.Plan
 	}
 	after := func(cachedVal *core.PlanCacheValue) {
-		cloned := cachedVal.Plan
-		require.True(t, originalFingerprint != planFingerprint(t, cloned))   // this cloned one have been adjusted by the optimizer
-		require.True(t, originalFingerprint == planFingerprint(t, original)) // the prior one should keep unchanged
+		adjusted = cachedVal.Plan
 	}
 	ctx := context.WithValue(context.Background(), core.PlanCacheKeyTestBeforeAdjust{}, before)
 	ctx = context.WithValue(ctx, core.PlanCacheKeyTestAfterAdjust{}, after)
 	tk.MustQueryWithContext(ctx, exec2)
 
-	// check the cloned plan should have the same result as the original plan
-	originalRes := tk.MustQuery(exec2).Sort()
-	clonePlan := func(cachedVal *core.PlanCacheValue) {
-		cloned, err := original.(base.PhysicalPlan).Clone(original.SCtx())
-		require.NoError(t, err)
-		cachedVal.Plan = cloned
-	}
-	ctx = context.WithValue(context.Background(), core.PlanCacheKeyTestBeforeAdjust{}, clonePlan)
-	clonedRes := tk.MustQueryWithContext(ctx, exec2)
-	originalRes.Equal(clonedRes.Sort().Rows())
+	require.NoError(t, core.CheckPlanDeepClone(original, adjusted))
 }
 
-func planFingerprint(t *testing.T, p base.Plan) string {
-	switch x := p.(type) {
-	case base.PhysicalPlan:
-		return physicalPlanFingerprint(t, x)
-	default:
-		// TODO: support Update/Insert/Delete plan
-		t.Fatalf("unexpected plan type %T", x)
-		return ""
-	}
-}
+func TestCheckPlanDeepClone(t *testing.T) {
+	// totally same pointer
+	ts1 := &core.PhysicalTableScan{}
+	require.Equal(t, core.CheckPlanDeepClone(ts1, ts1).Error(), "same pointer, path *PhysicalTableScan")
 
-func physicalPlanFingerprint(t *testing.T, p base.PhysicalPlan) string {
-	v, err := json.Marshal(p)
-	require.NoError(t, err)
-	childPrints := make([]string, len(p.Children()))
-	for i, child := range p.Children() {
-		childPrints[i] = physicalPlanFingerprint(t, child)
-	}
-	return fmt.Sprintf("%s(%s)", string(v), childPrints)
+	// share the same slice
+	ts2 := &core.PhysicalTableScan{}
+	ts1.AccessCondition = make([]expression.Expression, 10)
+	ts2.AccessCondition = ts1.AccessCondition
+	require.Equal(t, core.CheckPlanDeepClone(ts1, ts2).Error(), "same slice pointers, path *PhysicalTableScan.AccessCondition")
+
+	// same slice element
+	ts2.AccessCondition = make([]expression.Expression, 10)
+	expr := &expression.Column{}
+	ts1.AccessCondition[0] = expr
+	ts2.AccessCondition[0] = expr
+	require.Equal(t, core.CheckPlanDeepClone(ts1, ts2).Error(), "same pointer, path *PhysicalTableScan.AccessCondition[0]")
+
+	// same slice[0].pointer.pointer
+	ts2.AccessCondition[0] = new(expression.Column)
+	ts1.AccessCondition[0].(*expression.Column).RetType = new(types.FieldType)
+	ts2.AccessCondition[0].(*expression.Column).RetType = ts1.AccessCondition[0].(*expression.Column).RetType
+	require.Equal(t, core.CheckPlanDeepClone(ts1, ts2).Error(), "same pointer, path *PhysicalTableScan.AccessCondition[0].RetType")
+
+	// same interface
+	child := &core.PhysicalTableScan{}
+	ts1.SetProbeParents([]base.PhysicalPlan{child})
+	ts2.SetProbeParents([]base.PhysicalPlan{child})
+	require.Equal(t, core.CheckPlanDeepClone(ts1, ts2).Error(), "same pointer, path *PhysicalTableScan.physicalSchemaProducer.basePhysicalPlan.probeParents[0]")
+
+	// same map
+	l1 := &core.PhysicalLock{}
+	l2 := &core.PhysicalLock{}
+	l1.TblID2Handle = make(map[int64][]util.HandleCols)
+	l2.TblID2Handle = l1.TblID2Handle
+	require.Equal(t, core.CheckPlanDeepClone(l1, l2).Error(), "same map pointers, path *PhysicalLock.TblID2Handle")
+
+	// same pointer in map
+	l2.TblID2Handle = make(map[int64][]util.HandleCols)
+	cols := make([]util.HandleCols, 10)
+	l1.TblID2Handle[1] = cols
+	l2.TblID2Handle[1] = cols
+	require.Equal(t, core.CheckPlanDeepClone(l1, l2).Error(), "same slice pointers, path *PhysicalLock.TblID2Handle[int64]")
+
+	// same sctx
+	l1.TblID2Handle[1] = nil
+	l2.TblID2Handle[1] = nil
+	ctx := core.MockContext()
+	l1.SetSCtx(ctx)
+	l2.SetSCtx(ctx)
+	require.Equal(t, core.CheckPlanDeepClone(l1, l2).Error(), "same pointer, path *PhysicalLock.basePhysicalPlan.Plan.ctx")
 }
