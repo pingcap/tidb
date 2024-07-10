@@ -17,16 +17,16 @@ package core_test
 import (
 	"context"
 	"fmt"
-	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/planner/util"
-	"github.com/pingcap/tidb/pkg/types"
-	"github.com/stretchr/testify/require"
 	"math/rand"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/types"
+	"github.com/stretchr/testify/require"
 )
 
 func TestPlanCacheClone(t *testing.T) {
