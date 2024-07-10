@@ -161,19 +161,6 @@ func (fetcher *probeSideTupleFetcherBase) getProbeSideResource(shouldLimitProbeF
 // fetchProbeSideChunks get chunks from fetches chunks from the big table in a background goroutine
 // and sends the chunks to multiple channels which will be read by multiple join workers.
 func (fetcher *probeSideTupleFetcherBase) fetchProbeSideChunks(ctx context.Context, fetcherAndWorkerSyncer *sync.WaitGroup, spillHelper *hashJoinSpillHelper, maxChunkSize int, isBuildEmpty isBuildSideEmpty, canSkipIfBuildEmpty, needScanAfterProbeDone, shouldLimitProbeFetchSize bool, hashJoinCtx *hashJoinCtxBase) {
-	defer func() {
-		if fetcherAndWorkerSyncer != nil {
-			fetcherAndWorkerSyncer.Wait()
-		}
-
-		if spillHelper != nil {
-			spillHelper.hashJoinExec.hashTableContext.releaseAllMemoryUsage()
-
-			// We need to reset the flag, because spill may be triggered by other executors before releasing all memory usage
-			spillHelper.setNotSpilled()
-		}
-	}()
-
 	hasWaitedForBuild := false
 
 	// TODO add a case that first spill is triggered in probe stage
