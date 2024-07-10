@@ -1464,12 +1464,13 @@ func constructIndexJoinInnerSideTask(p *LogicalJoin, dsCopTask *CopTask, ds *Dat
 		ds.TableInfo.GetPartitionInfo() == nil {
 		if len(path.IdxCols) < len(groupByCols) {
 			preferStream = false
-		}
-		sctx := p.SCtx()
-		for i, groupbyCol := range groupByCols {
-			if path.IdxColLens[i] != types.UnspecifiedLength ||
-				!groupbyCol.EqualByExprAndID(sctx.GetExprCtx().GetEvalCtx(), path.IdxCols[i]) {
-				preferStream = false
+		} else {
+			sctx := p.SCtx()
+			for i, groupbyCol := range groupByCols {
+				if path.IdxColLens[i] != types.UnspecifiedLength ||
+					!groupbyCol.EqualByExprAndID(sctx.GetExprCtx().GetEvalCtx(), path.IdxCols[i]) {
+					preferStream = false
+				}
 			}
 		}
 	} else {
