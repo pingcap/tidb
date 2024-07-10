@@ -24,13 +24,13 @@ import (
 
 type subTable struct {
 	rowData          *rowTable
-	hashTable        []unsafe.Pointer
+	hashTable        []uintptr
 	posMask          uint64
 	isRowTableEmpty  bool
 	isHashTableEmpty bool
 }
 
-func (st *subTable) lookup(hashValue uint64) unsafe.Pointer {
+func (st *subTable) lookup(hashValue uint64) uintptr {
 	return st.hashTable[hashValue&st.posMask]
 }
 
@@ -70,21 +70,21 @@ func newSubTable(table *rowTable, tracker *memory.Tracker) *subTable {
 	if tracker != nil {
 		tracker.Consume(int64(hashTableLength) * serialization.UnsafePointerLen)
 	}
-	ret.hashTable = make([]unsafe.Pointer, hashTableLength)
+	ret.hashTable = make([]uintptr, hashTableLength)
 	ret.posMask = hashTableLength - 1
 	return ret
 }
 
 func (st *subTable) updateHashValue(pos uint64, rowAddress unsafe.Pointer) {
-	prev := st.hashTable[pos]
-	st.hashTable[pos] = rowAddress
+	prev := *(*unsafe.Pointer)(unsafe.Pointer(&st.hashTable[pos]))
+	*(*unsafe.Pointer)(unsafe.Pointer(&st.hashTable[pos])) = rowAddress
 	setNextRowAddress(rowAddress, prev)
 }
 
 func (st *subTable) atomicUpdateHashValue(pos uint64, rowAddress unsafe.Pointer) {
 	for {
-		prev := atomic.LoadPointer(&st.hashTable[pos])
-		if atomic.CompareAndSwapPointer(&st.hashTable[pos], prev, rowAddress) {
+		prev := atomic.LoadPointer((*unsafe.Pointer)(unsafe.Pointer(&st.hashTable[pos])))
+		if atomic.CompareAndSwapPointer((*unsafe.Pointer)(unsafe.Pointer(&st.hashTable[pos])), prev, rowAddress) {
 			setNextRowAddress(rowAddress, prev)
 			break
 		}
@@ -95,7 +95,7 @@ func (st *subTable) build(startSegmentIndex int, endSegmentIndex int) {
 	if startSegmentIndex == 0 && endSegmentIndex == len(st.rowData.segments) {
 		for i := startSegmentIndex; i < endSegmentIndex; i++ {
 			for _, index := range st.rowData.segments[i].validJoinKeyPos {
-				rowAddress := st.rowData.segments[i].rowLocations[index]
+				rowAddress := st.rowData.segments[i].getRowPointer(index)
 				hashValue := st.rowData.segments[i].hashValues[index]
 				pos := hashValue & st.posMask
 				st.updateHashValue(pos, rowAddress)
@@ -104,7 +104,7 @@ func (st *subTable) build(startSegmentIndex int, endSegmentIndex int) {
 	} else {
 		for i := startSegmentIndex; i < endSegmentIndex; i++ {
 			for _, index := range st.rowData.segments[i].validJoinKeyPos {
-				rowAddress := st.rowData.segments[i].rowLocations[index]
+				rowAddress := st.rowData.segments[i].getRowPointer(index)
 				hashValue := st.rowData.segments[i].hashValues[index]
 				pos := hashValue & st.posMask
 				st.atomicUpdateHashValue(pos, rowAddress)
@@ -139,7 +139,7 @@ type rowIter struct {
 }
 
 func (ri *rowIter) getValue() unsafe.Pointer {
-	return ri.table.tables[ri.currentPos.subTableIndex].rowData.segments[ri.currentPos.rowSegmentIndex].rowLocations[ri.currentPos.rowIndex]
+	return ri.table.tables[ri.currentPos.subTableIndex].rowData.segments[ri.currentPos.rowSegmentIndex].getRowPointer(int(ri.currentPos.rowIndex))
 }
 
 func (ri *rowIter) next() {

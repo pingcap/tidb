@@ -22,7 +22,6 @@ import (
 	"slices"
 	"sync"
 	"sync/atomic"
-	"unsafe"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -269,7 +268,7 @@ func (h *hashJoinSpillHelper) choosePartitionsToSpill(isInBuildStage bool) ([]in
 }
 
 func (h *hashJoinSpillHelper) generateSpilledValidJoinKey(seg *rowTableSegment, validJoinKeys []byte) []byte {
-	rowLen := len(seg.rowLocations)
+	rowLen := len(seg.rowStartOffset)
 	validJoinKeys = validJoinKeys[:rowLen]
 	for i := 0; i < rowLen; i++ {
 		validJoinKeys[i] = byte(0)
@@ -447,7 +446,7 @@ func (h *hashJoinSpillHelper) appendSegment(seg *rowTableSegment, row chunk.Row)
 
 	rawDataLen := len(seg.rawData)
 	seg.rawData = append(seg.rawData, rawData...)
-	seg.rowLocations = append(seg.rowLocations, unsafe.Pointer(&seg.rawData[rawDataLen]))
+	seg.rowStartOffset = append(seg.rowStartOffset, uint64(seg.rawData[rawDataLen]))
 }
 
 func (h *hashJoinSpillHelper) appendChunkToSegments(chunk *chunk.Chunk, segments []*rowTableSegment) {

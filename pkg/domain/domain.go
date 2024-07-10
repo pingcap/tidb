@@ -106,7 +106,10 @@ var (
 	mdlCheckLookDuration = 50 * time.Millisecond
 
 	// LoadSchemaDiffVersionGapThreshold is the threshold for version gap to reload domain by loading schema diffs
-	LoadSchemaDiffVersionGapThreshold int64 = 100
+	LoadSchemaDiffVersionGapThreshold int64 = 10000
+
+	// NewInstancePlanCache creates a new instance level plan cache, this function is designed to avoid cycle-import.
+	NewInstancePlanCache func(softMemLimit, hardMemLimit int64) sessionctx.InstancePlanCache
 )
 
 const (
@@ -198,6 +201,46 @@ type Domain struct {
 
 	mdlCheckCh      chan struct{}
 	stopAutoAnalyze atomicutil.Bool
+
+	instancePlanCache sessionctx.InstancePlanCache // the instance level plan cache
+
+	// deferFn is used to release infoschema object lazily during v1 and v2 switch
+	deferFn
+}
+
+type deferFn struct {
+	sync.Mutex
+	data []deferFnRecord
+}
+
+type deferFnRecord struct {
+	fn   func()
+	fire time.Time
+}
+
+func (df *deferFn) add(fn func(), fire time.Time) {
+	df.Lock()
+	defer df.Unlock()
+	df.data = append(df.data, deferFnRecord{fn: fn, fire: fire})
+}
+
+func (df *deferFn) check() {
+	now := time.Now()
+	df.Lock()
+	defer df.Unlock()
+
+	// iterate the slice, call the defer function and remove it.
+	rm := 0
+	for i := 0; i < len(df.data); i++ {
+		record := &df.data[i]
+		if now.After(record.fire) {
+			record.fn()
+			rm++
+		} else {
+			df.data[i-rm] = df.data[i]
+		}
+	}
+	df.data = df.data[:len(df.data)-rm]
 }
 
 type mdlCheckTableInfo struct {
@@ -245,6 +288,7 @@ func (do *Domain) loadInfoSchema(startTS uint64) (infoschema.InfoSchema, bool, i
 		schemaTs = 0
 	}
 
+	enableV2 := variable.SchemaCacheSize.Load() > 0
 	if is := do.infoCache.GetByVersion(neededSchemaVersion); is != nil {
 		isV2, raw := infoschema.IsV2(is)
 		if isV2 {
@@ -260,15 +304,17 @@ func (do *Domain) loadInfoSchema(startTS uint64) (infoschema.InfoSchema, bool, i
 		// the insert method check if schemaTs is zero
 		do.infoCache.Insert(is, schemaTs)
 
-		enableV2 := variable.SchemaCacheSize.Load() > 0
 		if enableV2 == isV2 {
 			return is, true, 0, nil, nil
 		}
 	}
 
+	var isV1V2Switch bool
 	currentSchemaVersion := int64(0)
 	if oldInfoSchema := do.infoCache.GetLatest(); oldInfoSchema != nil {
 		currentSchemaVersion = oldInfoSchema.SchemaMetaVersion()
+		isV2, _ := infoschema.IsV2(oldInfoSchema)
+		isV1V2Switch = enableV2 != isV2
 	}
 
 	// TODO: tryLoadSchemaDiffs has potential risks of failure. And it becomes worse in history reading cases.
@@ -289,7 +335,7 @@ func (do *Domain) loadInfoSchema(startTS uint64) (infoschema.InfoSchema, bool, i
 				zap.Bool("isV2", isV2),
 				zap.Int64("currentSchemaVersion", currentSchemaVersion),
 				zap.Int64("neededSchemaVersion", neededSchemaVersion),
-				zap.Duration("start time", time.Since(startTime)),
+				zap.Duration("elapsed time", time.Since(startTime)),
 				zap.Int64("gotSchemaVersion", is.SchemaMetaVersion()),
 				zap.Int64s("phyTblIDs", relatedChanges.PhyTblIDS),
 				zap.Uint64s("actionTypes", relatedChanges.ActionTypes),
@@ -314,18 +360,27 @@ func (do *Domain) loadInfoSchema(startTS uint64) (infoschema.InfoSchema, bool, i
 	if err != nil {
 		return nil, false, currentSchemaVersion, nil, err
 	}
+	infoschema_metrics.LoadSchemaDurationLoadAll.Observe(time.Since(startTime).Seconds())
+
 	newISBuilder, err := infoschema.NewBuilder(do, do.sysFacHack, do.infoCache.Data).InitWithDBInfos(schemas, policies, resourceGroups, neededSchemaVersion)
 	if err != nil {
 		return nil, false, currentSchemaVersion, nil, err
 	}
-	infoschema_metrics.LoadSchemaDurationLoadAll.Observe(time.Since(startTime).Seconds())
+	is := newISBuilder.Build(startTS)
+	isV2, _ := infoschema.IsV2(is)
 	logutil.BgLogger().Info("full load InfoSchema success",
+		zap.Bool("isV2", isV2),
 		zap.Int64("currentSchemaVersion", currentSchemaVersion),
 		zap.Int64("neededSchemaVersion", neededSchemaVersion),
-		zap.Duration("start time", time.Since(startTime)))
+		zap.Duration("elapsed time", time.Since(startTime)))
 
-	is := newISBuilder.Build(startTS)
-	do.infoCache.Insert(is, schemaTs)
+	if isV1V2Switch && schemaTs > 0 {
+		// Reset the whole info cache to avoid co-existing of both v1 and v2, causing the memory usage doubled.
+		fn := do.infoCache.Upsert(is, schemaTs)
+		do.deferFn.add(fn, time.Now().Add(10*time.Minute))
+	} else {
+		do.infoCache.Insert(is, schemaTs)
+	}
 	return is, false, currentSchemaVersion, nil, nil
 }
 
@@ -932,6 +987,7 @@ func (do *Domain) loadSchemaInLoop(ctx context.Context, lease time.Duration) {
 			if err != nil {
 				logutil.BgLogger().Error("reload schema in loop failed", zap.Error(err))
 			}
+			do.deferFn.check()
 		case _, ok := <-syncer.GlobalVersionCh():
 			err := do.Reload()
 			if err != nil {
@@ -1059,9 +1115,8 @@ func (do *Domain) Close() {
 	if do.etcdClient != nil {
 		terror.Log(errors.Trace(do.etcdClient.Close()))
 	}
-	if rm := do.RunawayManager(); rm != nil {
-		rm.Stop()
-	}
+
+	do.runawayManager.Stop()
 
 	if do.unprefixedEtcdCli != nil {
 		terror.Log(errors.Trace(do.unprefixedEtcdCli.Close()))
@@ -2449,13 +2504,13 @@ func (do *Domain) updateStatsWorker(_ sessionctx.Context, owner owner.Manager) {
 	deltaUpdateTicker := time.NewTicker(20*lease + randDuration)
 	gcStatsTicker := time.NewTicker(100 * lease)
 	dumpColStatsUsageTicker := time.NewTicker(100 * lease)
-	readMemTricker := time.NewTicker(memory.ReadMemInterval)
+	readMemTicker := time.NewTicker(memory.ReadMemInterval)
 	statsHandle := do.StatsHandle()
 	defer func() {
 		dumpColStatsUsageTicker.Stop()
 		gcStatsTicker.Stop()
 		deltaUpdateTicker.Stop()
-		readMemTricker.Stop()
+		readMemTicker.Stop()
 		do.SetStatsUpdating(false)
 		logutil.BgLogger().Info("updateStatsWorker exited.")
 	}()
@@ -2485,7 +2540,7 @@ func (do *Domain) updateStatsWorker(_ sessionctx.Context, owner owner.Manager) {
 				logutil.BgLogger().Debug("dump column stats usage failed", zap.Error(err))
 			}
 
-		case <-readMemTricker.C:
+		case <-readMemTicker.C:
 			memory.ForceReadMemStats()
 		}
 	}
@@ -3019,6 +3074,37 @@ func (do *Domain) TTLJobManager() *ttlworker.JobManager {
 // StopAutoAnalyze stops (*Domain).autoAnalyzeWorker to launch new auto analyze jobs.
 func (do *Domain) StopAutoAnalyze() {
 	do.stopAutoAnalyze.Store(true)
+}
+
+// InitInstancePlanCache initializes the instance level plan cache for this Domain.
+func (do *Domain) InitInstancePlanCache(softMemLimit, hardMemLimit int64) {
+	do.instancePlanCache = NewInstancePlanCache(softMemLimit, hardMemLimit)
+	do.wg.Run(do.planCacheEvictTrigger, "planCacheEvictTrigger")
+}
+
+// GetInstancePlanCache returns the instance level plan cache in this Domain.
+func (do *Domain) GetInstancePlanCache() sessionctx.InstancePlanCache {
+	return do.instancePlanCache
+}
+
+// planCacheEvictTrigger triggers the plan cache eviction periodically.
+func (do *Domain) planCacheEvictTrigger() {
+	defer util.Recover(metrics.LabelDomain, "planCacheEvictTrigger", nil, false)
+	ticker := time.NewTicker(time.Second * 5) // 5s by default
+	defer func() {
+		ticker.Stop()
+		logutil.BgLogger().Info("planCacheEvictTrigger exited.")
+	}()
+
+	for {
+		select {
+		case <-ticker.C:
+			do.instancePlanCache.Evict()
+			// TODO: update the metrics
+		case <-do.exit:
+			return
+		}
+	}
 }
 
 func init() {

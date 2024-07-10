@@ -222,7 +222,7 @@ func (s *ttlTableSession) ExecuteSQLWithCheck(ctx context.Context, sql string) (
 }
 
 func validateTTLWork(ctx context.Context, s session.Session, tbl *cache.PhysicalTable, expire time.Time) error {
-	curTbl, err := s.SessionInfoSchema().TableByName(tbl.Schema, tbl.Name)
+	curTbl, err := s.SessionInfoSchema().TableByName(context.Background(), tbl.Schema, tbl.Name)
 	if err != nil {
 		return err
 	}

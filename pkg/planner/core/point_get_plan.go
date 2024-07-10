@@ -164,7 +164,7 @@ func (*PointGetPlan) ToPB(_ *base.BuildPBContext, _ kv.StoreType) (*tipb.Executo
 }
 
 // Clone implements PhysicalPlan interface.
-func (p *PointGetPlan) Clone() (base.PhysicalPlan, error) {
+func (p *PointGetPlan) Clone(base.PlanContext) (base.PhysicalPlan, error) {
 	return nil, errors.Errorf("%T doesn't support cloning", p)
 }
 
@@ -481,7 +481,7 @@ func (p *BatchPointGetPlan) SetCost(cost float64) {
 }
 
 // Clone implements PhysicalPlan interface.
-func (p *BatchPointGetPlan) Clone() (base.PhysicalPlan, error) {
+func (p *BatchPointGetPlan) Clone(base.PlanContext) (base.PhysicalPlan, error) {
 	return nil, errors.Errorf("%T doesn't support cloning", p)
 }
 

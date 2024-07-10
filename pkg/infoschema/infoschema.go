@@ -16,6 +16,7 @@ package infoschema
 
 import (
 	"cmp"
+	stdctx "context"
 	"fmt"
 	"slices"
 	"sort"
@@ -220,7 +221,7 @@ func (is *infoSchema) SchemaExists(schema model.CIStr) bool {
 	return ok
 }
 
-func (is *infoSchema) TableByName(schema, table model.CIStr) (t table.Table, err error) {
+func (is *infoSchema) TableByName(ctx stdctx.Context, schema, table model.CIStr) (t table.Table, err error) {
 	if tbNames, ok := is.schemaMap[schema.L]; ok {
 		if t, ok = tbNames.tables[table.L]; ok {
 			return
@@ -231,13 +232,13 @@ func (is *infoSchema) TableByName(schema, table model.CIStr) (t table.Table, err
 
 // TableInfoByName implements InfoSchema.TableInfoByName
 func (is *infoSchema) TableInfoByName(schema, table model.CIStr) (*model.TableInfo, error) {
-	tbl, err := is.TableByName(schema, table)
+	tbl, err := is.TableByName(stdctx.Background(), schema, table)
 	return getTableInfo(tbl), err
 }
 
 // TableIsView indicates whether the schema.table is a view.
 func TableIsView(is InfoSchema, schema, table model.CIStr) bool {
-	tbl, err := is.TableByName(schema, table)
+	tbl, err := is.TableByName(stdctx.Background(), schema, table)
 	if err == nil {
 		return tbl.Meta().IsView()
 	}
@@ -246,7 +247,7 @@ func TableIsView(is InfoSchema, schema, table model.CIStr) bool {
 
 // TableIsSequence indicates whether the schema.table is a sequence.
 func TableIsSequence(is InfoSchema, schema, table model.CIStr) bool {
-	tbl, err := is.TableByName(schema, table)
+	tbl, err := is.TableByName(stdctx.Background(), schema, table)
 	if err == nil {
 		return tbl.Meta().IsSequence()
 	}
@@ -418,7 +419,7 @@ func (is *infoSchemaMisc) SchemaMetaVersion() int64 {
 
 // GetSequenceByName gets the sequence by name.
 func GetSequenceByName(is InfoSchema, schema, sequence model.CIStr) (util.SequenceTable, error) {
-	tbl, err := is.TableByName(schema, sequence)
+	tbl, err := is.TableByName(stdctx.Background(), schema, sequence)
 	if err != nil {
 		return nil, err
 	}
@@ -645,7 +646,7 @@ func NewSessionTables() *SessionTables {
 }
 
 // TableByName get table by name
-func (is *SessionTables) TableByName(schema, table model.CIStr) (table.Table, bool) {
+func (is *SessionTables) TableByName(ctx stdctx.Context, schema, table model.CIStr) (table.Table, bool) {
 	if tbNames, ok := is.schemaMap[schema.L]; ok {
 		if t, ok := tbNames.tables[table.L]; ok {
 			return t, true
@@ -656,7 +657,7 @@ func (is *SessionTables) TableByName(schema, table model.CIStr) (table.Table, bo
 
 // TableExists check if table with the name exists
 func (is *SessionTables) TableExists(schema, table model.CIStr) (ok bool) {
-	_, ok = is.TableByName(schema, table)
+	_, ok = is.TableByName(stdctx.Background(), schema, table)
 	return
 }
 
@@ -754,25 +755,25 @@ type SessionExtendedInfoSchema struct {
 }
 
 // TableByName implements InfoSchema.TableByName
-func (ts *SessionExtendedInfoSchema) TableByName(schema, table model.CIStr) (table.Table, error) {
+func (ts *SessionExtendedInfoSchema) TableByName(ctx stdctx.Context, schema, table model.CIStr) (table.Table, error) {
 	if ts.LocalTemporaryTables != nil {
-		if tbl, ok := ts.LocalTemporaryTables.TableByName(schema, table); ok {
+		if tbl, ok := ts.LocalTemporaryTables.TableByName(ctx, schema, table); ok {
 			return tbl, nil
 		}
 	}
 
 	if ts.MdlTables != nil {
-		if tbl, ok := ts.MdlTables.TableByName(schema, table); ok {
+		if tbl, ok := ts.MdlTables.TableByName(ctx, schema, table); ok {
 			return tbl, nil
 		}
 	}
 
-	return ts.InfoSchema.TableByName(schema, table)
+	return ts.InfoSchema.TableByName(ctx, schema, table)
 }
 
 // TableInfoByName implements InfoSchema.TableInfoByName
 func (ts *SessionExtendedInfoSchema) TableInfoByName(schema, table model.CIStr) (*model.TableInfo, error) {
-	tbl, err := ts.TableByName(schema, table)
+	tbl, err := ts.TableByName(stdctx.Background(), schema, table)
 	return getTableInfo(tbl), err
 }
 

@@ -179,7 +179,7 @@ func TestEliminateProjectionUnderUnion(t *testing.T) {
 	p, err = logicalOptimize(context.TODO(), flagPredicatePushDown|flagJoinReOrder|flagPrunColumns|flagEliminateProjection, p.(base.LogicalPlan))
 	require.NoError(t, err)
 	// after folding constants, the null flag should keep the same with the old one's (i.e., the schema's).
-	schemaNullFlag := p.(*LogicalProjection).Children()[0].(*LogicalJoin).Children()[1].Children()[1].(*LogicalProjection).schema.Columns[0].RetType.GetFlag() & mysql.NotNullFlag
+	schemaNullFlag := p.(*LogicalProjection).Children()[0].(*LogicalJoin).Children()[1].Children()[1].(*LogicalProjection).Schema().Columns[0].RetType.GetFlag() & mysql.NotNullFlag
 	exprNullFlag := p.(*LogicalProjection).Children()[0].(*LogicalJoin).Children()[1].Children()[1].(*LogicalProjection).Exprs[0].GetType(s.ctx.GetExprCtx().GetEvalCtx()).GetFlag() & mysql.NotNullFlag
 	require.Equal(t, exprNullFlag, schemaNullFlag)
 }
@@ -197,6 +197,7 @@ func TestJoinPredicatePushDown(t *testing.T) {
 	s := createPlannerSuite()
 	defer s.Close()
 	ctx := context.Background()
+	ectx := s.ctx.GetExprCtx().GetEvalCtx()
 	for i, ca := range input {
 		comment := fmt.Sprintf("for %s", ca)
 		stmt, err := s.p.ParseOneStmt(ca, "", "")
@@ -213,8 +214,8 @@ func TestJoinPredicatePushDown(t *testing.T) {
 		require.True(t, ok, comment)
 		rightPlan, ok := join.Children()[1].(*DataSource)
 		require.True(t, ok, comment)
-		leftCond := fmt.Sprintf("%s", leftPlan.pushedDownConds)
-		rightCond := fmt.Sprintf("%s", rightPlan.pushedDownConds)
+		leftCond := expression.StringifyExpressionsWithCtx(ectx, leftPlan.PushedDownConds)
+		rightCond := expression.StringifyExpressionsWithCtx(ectx, rightPlan.PushedDownConds)
 		testdata.OnRecord(func() {
 			output[i].Left, output[i].Right = leftCond, rightCond
 		})
@@ -237,6 +238,7 @@ func TestOuterWherePredicatePushDown(t *testing.T) {
 	s := createPlannerSuite()
 	defer s.Close()
 	ctx := context.Background()
+	ectx := s.ctx.GetExprCtx().GetEvalCtx()
 	for i, ca := range input {
 		comment := fmt.Sprintf("for %s", ca)
 		stmt, err := s.p.ParseOneStmt(ca, "", "")
@@ -249,7 +251,7 @@ func TestOuterWherePredicatePushDown(t *testing.T) {
 		require.True(t, ok, comment)
 		selection, ok := proj.Children()[0].(*LogicalSelection)
 		require.True(t, ok, comment)
-		selCond := fmt.Sprintf("%s", selection.Conditions)
+		selCond := expression.StringifyExpressionsWithCtx(ectx, selection.Conditions)
 		testdata.OnRecord(func() {
 			output[i].Sel = selCond
 		})
@@ -260,8 +262,8 @@ func TestOuterWherePredicatePushDown(t *testing.T) {
 		require.True(t, ok, comment)
 		rightPlan, ok := join.Children()[1].(*DataSource)
 		require.True(t, ok, comment)
-		leftCond := fmt.Sprintf("%s", leftPlan.pushedDownConds)
-		rightCond := fmt.Sprintf("%s", rightPlan.pushedDownConds)
+		leftCond := expression.StringifyExpressionsWithCtx(ectx, leftPlan.PushedDownConds)
+		rightCond := expression.StringifyExpressionsWithCtx(ectx, rightPlan.PushedDownConds)
 		testdata.OnRecord(func() {
 			output[i].Left, output[i].Right = leftCond, rightCond
 		})
@@ -352,6 +354,7 @@ func TestDeriveNotNullConds(t *testing.T) {
 	s := createPlannerSuite()
 	defer s.Close()
 	ctx := context.Background()
+	ectx := s.ctx.GetExprCtx().GetEvalCtx()
 	for i, ca := range input {
 		comment := fmt.Sprintf("for %s", ca)
 		stmt, err := s.p.ParseOneStmt(ca, "", "")
@@ -367,8 +370,8 @@ func TestDeriveNotNullConds(t *testing.T) {
 		join := p.(base.LogicalPlan).Children()[0].(*LogicalJoin)
 		left := join.Children()[0].(*DataSource)
 		right := join.Children()[1].(*DataSource)
-		leftConds := fmt.Sprintf("%s", left.pushedDownConds)
-		rightConds := fmt.Sprintf("%s", right.pushedDownConds)
+		leftConds := expression.StringifyExpressionsWithCtx(ectx, left.PushedDownConds)
+		rightConds := expression.StringifyExpressionsWithCtx(ectx, right.PushedDownConds)
 		testdata.OnRecord(func() {
 			output[i].Left, output[i].Right = leftConds, rightConds
 		})
@@ -390,7 +393,7 @@ func TestExtraPKNotNullFlag(t *testing.T) {
 	ds := p.(*LogicalProjection).Children()[0].(*LogicalAggregation).Children()[0].(*DataSource)
 	require.Equal(t, "_tidb_rowid", ds.Columns[2].Name.L)
 	require.Equal(t, mysql.PriKeyFlag|mysql.NotNullFlag, ds.Columns[2].GetFlag())
-	require.Equal(t, mysql.PriKeyFlag|mysql.NotNullFlag, ds.schema.Columns[2].RetType.GetFlag())
+	require.Equal(t, mysql.PriKeyFlag|mysql.NotNullFlag, ds.Schema().Columns[2].RetType.GetFlag())
 }
 
 func buildLogicPlan4GroupBy(s *plannerSuite, t *testing.T, sql string) (base.Plan, error) {
@@ -478,7 +481,7 @@ func TestDupRandJoinCondsPushDown(t *testing.T) {
 	require.True(t, ok, comment)
 	leftPlan, ok := join.Children()[0].(*LogicalSelection)
 	require.True(t, ok, comment)
-	leftCond := fmt.Sprintf("%s", leftPlan.Conditions)
+	leftCond := expression.StringifyExpressionsWithCtx(s.ctx.GetExprCtx().GetEvalCtx(), leftPlan.Conditions)
 	// Condition with mutable function cannot be de-duplicated when push down join conds.
 	require.Equal(t, "[gt(cast(test.t.a, double BINARY), rand()) gt(cast(test.t.a, double BINARY), rand())]", leftCond, comment)
 }
@@ -774,6 +777,7 @@ func TestAllocID(t *testing.T) {
 }
 
 func checkDataSourceCols(p base.LogicalPlan, t *testing.T, ans map[int][]string, comment string) {
+	ectx := p.SCtx().GetExprCtx().GetEvalCtx()
 	switch v := p.(type) {
 	case *DataSource, *LogicalUnionAll, *LogicalLimit:
 		testdata.OnRecord(func() {
@@ -784,9 +788,9 @@ func checkDataSourceCols(p base.LogicalPlan, t *testing.T, ans map[int][]string,
 		require.Equal(t, len(colList), len(p.Schema().Columns), comment)
 		for i, col := range p.Schema().Columns {
 			testdata.OnRecord(func() {
-				colList[i] = col.String()
+				colList[i] = col.StringWithCtx(ectx)
 			})
-			require.Equal(t, colList[i], col.String(), comment)
+			require.Equal(t, colList[i], col.StringWithCtx(ectx), comment)
 		}
 	}
 	for _, child := range p.Children() {
@@ -795,6 +799,7 @@ func checkDataSourceCols(p base.LogicalPlan, t *testing.T, ans map[int][]string,
 }
 
 func checkOrderByItems(p base.LogicalPlan, t *testing.T, colList *[]string, comment string) {
+	ectx := p.SCtx().GetExprCtx().GetEvalCtx()
 	switch p := p.(type) {
 	case *LogicalSort:
 		testdata.OnRecord(func() {
@@ -802,9 +807,9 @@ func checkOrderByItems(p base.LogicalPlan, t *testing.T, colList *[]string, comm
 		})
 		for i, col := range p.ByItems {
 			testdata.OnRecord(func() {
-				(*colList)[i] = col.String()
+				(*colList)[i] = col.StringWithCtx(ectx)
 			})
-			s := col.String()
+			s := col.StringWithCtx(ectx)
 			require.Equal(t, (*colList)[i], s, comment)
 		}
 	}
@@ -1010,6 +1015,7 @@ func TestValidate(t *testing.T) {
 }
 
 func checkUniqueKeys(p base.LogicalPlan, t *testing.T, ans map[int][][]string, sql string) {
+	ectx := p.SCtx().GetExprCtx().GetEvalCtx()
 	testdata.OnRecord(func() {
 		ans[p.ID()] = make([][]string, len(p.Schema().Keys))
 	})
@@ -1023,9 +1029,9 @@ func checkUniqueKeys(p base.LogicalPlan, t *testing.T, ans map[int][][]string, s
 		require.Equal(t, len(keyList[i]), len(p.Schema().Keys[i]), fmt.Sprintf("for %s, %v %v, the number of column doesn't match", sql, p.ID(), keyList[i]))
 		for j := range keyList[i] {
 			testdata.OnRecord(func() {
-				keyList[i][j] = p.Schema().Keys[i][j].String()
+				keyList[i][j] = p.Schema().Keys[i][j].StringWithCtx(ectx)
 			})
-			require.Equal(t, keyList[i][j], p.Schema().Keys[i][j].String(), fmt.Sprintf("for %s, %v %v, column dosen't match", sql, p.ID(), keyList[i]))
+			require.Equal(t, keyList[i][j], p.Schema().Keys[i][j].StringWithCtx(ectx), fmt.Sprintf("for %s, %v %v, column dosen't match", sql, p.ID(), keyList[i]))
 		}
 	}
 	testdata.OnRecord(func() {
@@ -1993,7 +1999,7 @@ func TestSkylinePruning(t *testing.T) {
 			case *LogicalProjection:
 				newItems := make([]*util.ByItems, 0, len(byItems))
 				for _, col := range byItems {
-					idx := v.schema.ColumnIndex(col.Expr.(*expression.Column))
+					idx := v.Schema().ColumnIndex(col.Expr.(*expression.Column))
 					switch expr := v.Exprs[idx].(type) {
 					case *expression.Column:
 						newItems = append(newItems, &util.ByItems{Expr: expr, Desc: col.Desc})
@@ -2110,8 +2116,8 @@ func TestConflictedJoinTypeHints(t *testing.T) {
 	require.True(t, ok)
 	join, ok := proj.Children()[0].(*LogicalJoin)
 	require.True(t, ok)
-	require.Nil(t, join.hintInfo)
-	require.Equal(t, uint(0), join.preferJoinType)
+	require.Nil(t, join.HintInfo)
+	require.Equal(t, uint(0), join.PreferJoinType)
 }
 
 func TestSimplyOuterJoinWithOnlyOuterExpr(t *testing.T) {
@@ -2332,13 +2338,13 @@ func TestRollupExpand(t *testing.T) {
 	require.Equal(t, builder.currentBlockExpand.GID != nil, true)
 	require.Equal(t, builder.currentBlockExpand.GPos == nil, true)
 	require.Equal(t, builder.currentBlockExpand.LevelExprs == nil, true)
-	require.Equal(t, builder.currentBlockExpand.rollupGroupingSets != nil, true)
-	require.Equal(t, builder.currentBlockExpand.rollupID2GIDS == nil, true)
-	require.Equal(t, builder.currentBlockExpand.rollupGroupingIDs == nil, true)
+	require.Equal(t, builder.currentBlockExpand.RollupGroupingSets != nil, true)
+	require.Equal(t, builder.currentBlockExpand.RollupID2GIDS == nil, true)
+	require.Equal(t, builder.currentBlockExpand.RollupGroupingIDs == nil, true)
 	require.Equal(t, builder.currentBlockExpand.GroupingMode == tipb.GroupingMode_ModeBitAnd, true)
 	require.Equal(t, builder.currentBlockExpand.ExtraGroupingColNames[0], "gid")
-	require.Equal(t, builder.currentBlockExpand.distinctSize, 3)
-	require.Equal(t, len(builder.currentBlockExpand.distinctGroupByCol), 2)
+	require.Equal(t, builder.currentBlockExpand.DistinctSize, 3)
+	require.Equal(t, len(builder.currentBlockExpand.DistinctGroupByCol), 2)
 
 	_, err = logicalOptimize(context.TODO(), flagPredicatePushDown|flagJoinReOrder|flagPrunColumns|flagEliminateProjection|flagResolveExpand, p.(base.LogicalPlan))
 	require.NoError(t, err)
@@ -2348,24 +2354,24 @@ func TestRollupExpand(t *testing.T) {
 	require.Equal(t, builder.currentBlockExpand.LevelExprs != nil, true)
 	require.Equal(t, len(builder.currentBlockExpand.LevelExprs), 3)
 	// for grouping set {}: gid = '00' = 0
-	require.Equal(t, expression.ExplainExpressionList(expand.LevelExprs[0], expand.schema), "test.t.a, <nil>->Column#13, <nil>->Column#14, 0->gid")
+	require.Equal(t, expression.ExplainExpressionList(s.ctx.GetExprCtx().GetEvalCtx(), expand.LevelExprs[0], expand.Schema()), "test.t.a, <nil>->Column#13, <nil>->Column#14, 0->gid")
 	// for grouping set {a}: gid = '01' = 1
-	require.Equal(t, expression.ExplainExpressionList(expand.LevelExprs[1], expand.schema), "test.t.a, Column#13, <nil>->Column#14, 1->gid")
+	require.Equal(t, expression.ExplainExpressionList(s.ctx.GetExprCtx().GetEvalCtx(), expand.LevelExprs[1], expand.Schema()), "test.t.a, Column#13, <nil>->Column#14, 1->gid")
 	// for grouping set {a,b}: gid = '11' = 3
-	require.Equal(t, expression.ExplainExpressionList(expand.LevelExprs[2], expand.schema), "test.t.a, Column#13, Column#14, 3->gid")
+	require.Equal(t, expression.ExplainExpressionList(s.ctx.GetExprCtx().GetEvalCtx(), expand.LevelExprs[2], expand.Schema()), "test.t.a, Column#13, Column#14, 3->gid")
 
 	require.Equal(t, expand.Schema().Len(), 4)
 	// source column a should be kept as real.
 	require.Equal(t, expand.Schema().Columns[0].RetType.GetFlag()&mysql.NotNullFlag, uint(1))
-	require.Equal(t, expand.names[0].String(), "test.t.a")
+	require.Equal(t, expand.OutputNames()[0].String(), "test.t.a")
 	// the grouping column a,b should be changed as nullable.
 	require.Equal(t, expand.Schema().Columns[1].RetType.GetFlag()&mysql.NotNullFlag, uint(0))
-	require.Equal(t, expand.names[1].String(), "test.ex_t.ex_a") // column#13
+	require.Equal(t, expand.OutputNames()[1].String(), "test.ex_t.ex_a") // column#13
 	require.Equal(t, expand.Schema().Columns[2].RetType.GetFlag()&mysql.NotNullFlag, uint(0))
-	require.Equal(t, expand.names[2].String(), "test.ex_t.ex_b") // column#14
+	require.Equal(t, expand.OutputNames()[2].String(), "test.ex_t.ex_b") // column#14
 	// the gid col
 	require.Equal(t, expand.Schema().Columns[3].RetType.GetFlag()&mysql.NotNullFlag, uint(1))
-	require.Equal(t, expand.names[3].String(), "gid")
+	require.Equal(t, expand.OutputNames()[3].String(), "gid")
 
 	// Test grouping marks generation.
 	// Expand.schema.columns[0] is normal source column.
@@ -2373,22 +2379,22 @@ func TestRollupExpand(t *testing.T) {
 	// Expand.schema.columns[2] is normal grouping set column b.
 	// Expand.schema.columns[2] is normal grouping gen column gid.
 	// mock grouping(a)
-	gm := expand.GenerateGroupingMarks([]*expression.Column{expand.schema.Columns[1]})
+	gm := expand.GenerateGroupingMarks([]*expression.Column{expand.Schema().Columns[1]})
 	require.NotNil(t, gm)
 	require.Equal(t, len(gm), 1)
 
 	// mock grouping(b)
-	gm = expand.GenerateGroupingMarks([]*expression.Column{expand.schema.Columns[2]})
+	gm = expand.GenerateGroupingMarks([]*expression.Column{expand.Schema().Columns[2]})
 	require.NotNil(t, gm)
 	require.Equal(t, len(gm), 1)
 
 	// mock grouping(a,b)
-	gm = expand.GenerateGroupingMarks([]*expression.Column{expand.schema.Columns[1], expand.schema.Columns[2]})
+	gm = expand.GenerateGroupingMarks([]*expression.Column{expand.Schema().Columns[1], expand.Schema().Columns[2]})
 	require.NotNil(t, gm)
 	require.Equal(t, len(gm), 2)
 
 	// mock grouping(b,a)
-	gm = expand.GenerateGroupingMarks([]*expression.Column{expand.schema.Columns[2], expand.schema.Columns[1]})
+	gm = expand.GenerateGroupingMarks([]*expression.Column{expand.Schema().Columns[2], expand.Schema().Columns[1]})
 	require.NotNil(t, gm)
 	require.Equal(t, len(gm), 2)
 }

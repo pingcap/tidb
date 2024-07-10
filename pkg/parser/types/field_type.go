@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/format"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"golang.org/x/exp/slices"
 )
 
 // UnspecifiedLength is unspecified length.
@@ -81,7 +82,7 @@ func (ft *FieldType) IsDecimalValid() bool {
 // IsVarLengthType Determine whether the column type is a variable-length type
 func (ft *FieldType) IsVarLengthType() bool {
 	switch ft.GetType() {
-	case mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeJSON, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
+	case mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeJSON, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob, mysql.TypeTiDBVectorFloat32:
 		return true
 	default:
 		return false
@@ -297,15 +298,10 @@ func (ft *FieldType) Equal(other *FieldType) bool {
 		ft.collate == other.collate &&
 		flenEqual &&
 		mysql.HasUnsignedFlag(ft.flag) == mysql.HasUnsignedFlag(other.flag)
-	if !partialEqual || len(ft.elems) != len(other.elems) {
+	if !partialEqual {
 		return false
 	}
-	for i := range ft.elems {
-		if ft.elems[i] != other.elems[i] {
-			return false
-		}
-	}
-	return true
+	return slices.Equal(ft.elems, other.elems)
 }
 
 // PartialEqual checks whether two FieldType objects are equal.
@@ -427,6 +423,10 @@ func (ft *FieldType) CompactStr() string {
 		}
 	case mysql.TypeYear:
 		suffix = fmt.Sprintf("(%d)", ft.flen)
+	case mysql.TypeTiDBVectorFloat32:
+		if ft.flen != UnspecifiedLength {
+			suffix = fmt.Sprintf("(%d)", ft.flen)
+		}
 	case mysql.TypeNull:
 		suffix = "(0)"
 	}
@@ -585,6 +585,8 @@ func (ft *FieldType) RestoreAsCastType(ctx *format.RestoreCtx, explicitCharset b
 		ctx.WriteKeyWord("FLOAT")
 	case mysql.TypeYear:
 		ctx.WriteKeyWord("YEAR")
+	case mysql.TypeTiDBVectorFloat32:
+		ctx.WriteKeyWord("VECTOR")
 	}
 	if ft.array {
 		ctx.WritePlain(" ")

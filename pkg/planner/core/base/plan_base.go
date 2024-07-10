@@ -129,7 +129,7 @@ type PhysicalPlan interface {
 	ExplainNormalizedInfo() string
 
 	// Clone clones this physical plan.
-	Clone() (PhysicalPlan, error)
+	Clone(newCtx PlanContext) (PhysicalPlan, error)
 
 	// AppendChildCandidate append child physicalPlan into tracer in order to track each child physicalPlan which can't
 	// be tracked during findBestTask or enumeratePhysicalPlans4Task

@@ -15,6 +15,7 @@
 package clustertablestest
 
 import (
+	"context"
 	"fmt"
 	"math/rand"
 	"net"
@@ -938,6 +939,7 @@ func TestQuickBinding(t *testing.T) {
 	tk := s.newTestKitWithRoot(t)
 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
 
+	tk.MustExec("set tidb_opt_projection_push_down = 0")
 	tk.MustExec("use test")
 	tk.MustExec(`create table t1 (pk int, a int, b int, c int, primary key(pk), key k_a(a), key k_bc(b, c))`)
 	tk.MustExec(`create table t2 (a int, b int, c int, key k_a(a), key k_bc(b, c))`) // no primary key
@@ -1731,7 +1733,7 @@ func TestMDLViewIDConflict(t *testing.T) {
 
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int);")
-	tbl, err := s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := s.dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	tk.MustExec("insert into t values (1)")
 
@@ -1742,7 +1744,7 @@ func TestMDLViewIDConflict(t *testing.T) {
 		bigTableName = fmt.Sprintf("t%d", i)
 		tk.MustExec(fmt.Sprintf("create table %s(a int);", bigTableName))
 
-		tbl, err := s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr(bigTableName))
+		tbl, err := s.dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr(bigTableName))
 		require.NoError(t, err)
 
 		require.LessOrEqual(t, tbl.Meta().ID, bigID)

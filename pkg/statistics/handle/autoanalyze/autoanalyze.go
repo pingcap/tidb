@@ -488,7 +488,7 @@ func tryAutoAnalyzeTable(
 
 	// Whether the table needs to analyze or not, we need to check the indices of the table.
 	for _, idx := range tblInfo.Indices {
-		if _, ok := statsTbl.Indices[idx.ID]; !ok && !statsTbl.ColAndIdxExistenceMap.HasAnalyzed(idx.ID, true) && idx.State == model.StatePublic {
+		if idxStats := statsTbl.GetIdx(idx.ID); idxStats == nil && !statsTbl.ColAndIdxExistenceMap.HasAnalyzed(idx.ID, true) && idx.State == model.StatePublic {
 			sqlWithIdx := sql + " index %n"
 			paramsWithIdx := append(params, idx.Name.O)
 			escaped, err := sqlescape.EscapeSQL(sqlWithIdx, paramsWithIdx...)

@@ -40,6 +40,8 @@ func (do *Domain) initDomainSysVars() {
 	setGlobalResourceControlFunc := do.setGlobalResourceControl
 	variable.SetGlobalResourceControl.Store(&setGlobalResourceControlFunc)
 	variable.SetLowResolutionTSOUpdateInterval = do.setLowResolutionTSOUpdateInterval
+
+	variable.ChangeSchemaCacheSize = do.changeSchemaCacheSize
 }
 
 // setStatsCacheCapacity sets statsCache cap
@@ -114,4 +116,10 @@ func (do *Domain) setExternalTimestamp(ctx context.Context, ts uint64) error {
 
 func (do *Domain) getExternalTimestamp(ctx context.Context) (uint64, error) {
 	return do.store.GetOracle().GetExternalTimestamp(ctx)
+}
+
+func (do *Domain) changeSchemaCacheSize(size uint64) {
+	if size > 0 {
+		do.infoCache.Data.SetCacheCapacity(size)
+	}
 }

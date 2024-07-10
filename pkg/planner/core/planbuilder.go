@@ -611,7 +611,7 @@ func (b *PlanBuilder) buildDo(ctx context.Context, v *ast.DoStmt) (base.Plan, er
 	dual.SetSchema(expression.NewSchema())
 	p = dual
 	proj := LogicalProjection{Exprs: make([]expression.Expression, 0, len(v.Exprs))}.Init(b.ctx, b.getSelectOffset())
-	proj.names = make([]*types.FieldName, len(v.Exprs))
+	proj.SetOutputNames(make([]*types.FieldName, len(v.Exprs)))
 	schema := expression.NewSchema(make([]*expression.Column, 0, len(v.Exprs))...)
 
 	// Since do statement only contain expression list, and it may contain aggFunc, detecting to build the aggMapper firstly.
@@ -1108,12 +1108,25 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 	}
 
 	// consider hypo-indexes
-	hypoIndexes := ctx.GetSessionVars().HypoIndexes
+	hypoIndexes := ctx.GetSessionVars().HypoIndexes // session level hypo-indexes
 	if ctx.GetSessionVars().StmtCtx.InExplainStmt && hypoIndexes != nil {
 		originalTableName := tblInfo.Name.L
 		if hypoIndexes[dbName.L] != nil && hypoIndexes[dbName.L][originalTableName] != nil {
 			for _, index := range hypoIndexes[dbName.L][originalTableName] {
 				publicPaths = append(publicPaths, &util.AccessPath{Index: index})
+			}
+		}
+	}
+	if len(ctx.GetSessionVars().StmtCtx.HintedHypoIndexes) > 0 { // statement-level hypo-indexes from hints
+		if !ctx.GetSessionVars().StmtCtx.InExplainStmt {
+			ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError("can only use HYPO_INDEX hint in explain-statements"))
+		} else {
+			hintedHypoIndexes := ctx.GetSessionVars().StmtCtx.HintedHypoIndexes
+			originalTableName := tblInfo.Name.L
+			if hintedHypoIndexes[dbName.L] != nil && hintedHypoIndexes[dbName.L][originalTableName] != nil {
+				for _, index := range hintedHypoIndexes[dbName.L][originalTableName] {
+					publicPaths = append(publicPaths, &util.AccessPath{Index: index})
+				}
 			}
 		}
 	}
@@ -1312,8 +1325,8 @@ func (b *PlanBuilder) buildSelectLock(src base.LogicalPlan, lock *ast.SelectLock
 	}
 	selectLock := LogicalLock{
 		Lock:               lock,
-		tblID2Handle:       b.handleHelper.tailMap(),
-		tblID2PhysTblIDCol: tblID2PhysTblIDCol,
+		TblID2Handle:       b.handleHelper.tailMap(),
+		TblID2PhysTblIDCol: tblID2PhysTblIDCol,
 	}.Init(b.ctx)
 	selectLock.SetChildren(src)
 	return selectLock, nil
@@ -1322,10 +1335,10 @@ func (b *PlanBuilder) buildSelectLock(src base.LogicalPlan, lock *ast.SelectLock
 func setExtraPhysTblIDColsOnDataSource(p base.LogicalPlan, tblID2PhysTblIDCol map[int64]*expression.Column) {
 	switch ds := p.(type) {
 	case *DataSource:
-		if ds.tableInfo.GetPartitionInfo() == nil {
+		if ds.TableInfo.GetPartitionInfo() == nil {
 			return
 		}
-		tblID2PhysTblIDCol[ds.tableInfo.ID] = ds.AddExtraPhysTblIDColumn()
+		tblID2PhysTblIDCol[ds.TableInfo.ID] = ds.AddExtraPhysTblIDColumn()
 	default:
 		for _, child := range p.Children() {
 			setExtraPhysTblIDColsOnDataSource(child, tblID2PhysTblIDCol)
@@ -1385,8 +1398,8 @@ func (b *PlanBuilder) buildAdmin(ctx context.Context, as *ast.AdminStmt) (base.P
 		ret = p
 	case ast.AdminShowDDLJobs:
 		p := LogicalShowDDLJobs{JobNumber: as.JobNumber}.Init(b.ctx)
-		p.setSchemaAndNames(buildShowDDLJobsFields())
-		for _, col := range p.schema.Columns {
+		p.SetSchemaAndNames(buildShowDDLJobsFields())
+		for _, col := range p.Schema().Columns {
 			col.UniqueID = b.ctx.GetSessionVars().AllocPlanColumnID()
 		}
 		ret = p
@@ -1866,7 +1879,7 @@ func GetPhysicalIDsAndPartitionNames(tblInfo *model.TableInfo, partitionNames []
 		return []int64{tblInfo.ID}, []string{""}, nil
 	}
 
-	// If the partitionNames is empty, we will return all partitions.
+	// If the PartitionNames is empty, we will return all partitions.
 	if len(partitionNames) == 0 {
 		ids := make([]int64, 0, len(pi.Definitions))
 		names := make([]string, 0, len(pi.Definitions))
@@ -1962,6 +1975,7 @@ func (b *PlanBuilder) getMustAnalyzedColumns(tbl *ast.TableName, cols *calcOnceM
 	return cols.data, nil
 }
 
+// getPredicateColumns gets the columns used in predicates.
 func (b *PlanBuilder) getPredicateColumns(tbl *ast.TableName, cols *calcOnceMap) (map[int64]struct{}, error) {
 	// Already calculated in the previous call.
 	if cols.calculated {
@@ -1976,10 +1990,13 @@ func (b *PlanBuilder) getPredicateColumns(tbl *ast.TableName, cols *calcOnceMap)
 		return nil, err
 	}
 	if len(colList) == 0 {
-		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("No predicate column has been collected yet for table %s.%s so all columns are analyzed", tbl.Schema.L, tbl.Name.L))
-		for _, colInfo := range tblInfo.Columns {
-			cols.data[colInfo.ID] = struct{}{}
-		}
+		b.ctx.GetSessionVars().StmtCtx.AppendWarning(
+			errors.NewNoStackErrorf(
+				"No predicate column has been collected yet for table %s.%s, so only indexes and the columns composing the indexes will be analyzed",
+				tbl.Schema.L,
+				tbl.Name.L,
+			),
+		)
 	} else {
 		for _, id := range colList {
 			cols.data[id] = struct{}{}
@@ -2017,22 +2034,40 @@ func (b *PlanBuilder) getFullAnalyzeColumnsInfo(
 	}
 
 	switch columnChoice {
-	case model.DefaultChoice, model.AllColumns:
-		return tbl.TableInfo.Columns, nil, nil
-	case model.PredicateColumns:
-		if mustAllColumns {
+	case model.DefaultChoice:
+		columnOptions := variable.AnalyzeColumnOptions.Load()
+		switch columnOptions {
+		case model.AllColumns.String():
+			return tbl.TableInfo.Columns, nil, nil
+		case model.PredicateColumns.String():
+			columns, err := b.getColumnsBasedOnPredicateColumns(
+				tbl,
+				predicateCols,
+				mustAnalyzedCols,
+				mustAllColumns,
+			)
+			if err != nil {
+				return nil, nil, err
+			}
+			return columns, nil, nil
+		default:
+			// Usually, this won't happen.
+			logutil.BgLogger().Warn("Unknown default column choice, analyze all columns", zap.String("choice", columnOptions))
 			return tbl.TableInfo.Columns, nil, nil
 		}
-		predicate, err := b.getPredicateColumns(tbl, predicateCols)
+	case model.AllColumns:
+		return tbl.TableInfo.Columns, nil, nil
+	case model.PredicateColumns:
+		columns, err := b.getColumnsBasedOnPredicateColumns(
+			tbl,
+			predicateCols,
+			mustAnalyzedCols,
+			mustAllColumns,
+		)
 		if err != nil {
 			return nil, nil, err
 		}
-		mustAnalyzed, err := b.getMustAnalyzedColumns(tbl, mustAnalyzedCols)
-		if err != nil {
-			return nil, nil, err
-		}
-		colSet := combineColumnSets(predicate, mustAnalyzed)
-		return getColumnListFromSet(tbl.TableInfo.Columns, colSet), nil, nil
+		return columns, nil, nil
 	case model.ColumnList:
 		colSet := getColumnSetFromSpecifiedCols(specifiedCols)
 		mustAnalyzed, err := b.getMustAnalyzedColumns(tbl, mustAnalyzedCols)
@@ -2056,6 +2091,26 @@ func (b *PlanBuilder) getFullAnalyzeColumnsInfo(
 	}
 
 	return nil, nil, nil
+}
+
+func (b *PlanBuilder) getColumnsBasedOnPredicateColumns(
+	tbl *ast.TableName,
+	predicateCols, mustAnalyzedCols *calcOnceMap,
+	rewriteAllStatsNeeded bool,
+) ([]*model.ColumnInfo, error) {
+	if rewriteAllStatsNeeded {
+		return tbl.TableInfo.Columns, nil
+	}
+	predicate, err := b.getPredicateColumns(tbl, predicateCols)
+	if err != nil {
+		return nil, err
+	}
+	mustAnalyzed, err := b.getMustAnalyzedColumns(tbl, mustAnalyzedCols)
+	if err != nil {
+		return nil, err
+	}
+	colSet := combineColumnSets(predicate, mustAnalyzed)
+	return getColumnListFromSet(tbl.TableInfo.Columns, colSet), nil
 }
 
 // Helper function to combine two column sets.
@@ -3151,7 +3206,7 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (base.P
 		}
 	case ast.ShowCreateTable, ast.ShowCreateSequence, ast.ShowPlacementForTable, ast.ShowPlacementForPartition:
 		var err error
-		if table, err := b.is.TableByName(show.Table.Schema, show.Table.Name); err == nil {
+		if table, err := b.is.TableByName(ctx, show.Table.Schema, show.Table.Name); err == nil {
 			isView = table.Meta().IsView()
 			isSequence = table.Meta().IsSequence()
 		}
@@ -3211,7 +3266,7 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (base.P
 		}
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, show.Table.Schema.L, show.Table.Name.L, "", err)
 	case ast.ShowRegions:
-		tableInfo, err := b.is.TableByName(show.Table.Schema, show.Table.Name)
+		tableInfo, err := b.is.TableByName(ctx, show.Table.Schema, show.Table.Name)
 		if err != nil {
 			return nil, err
 		}
@@ -3224,8 +3279,8 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (base.P
 
 	schema, names := buildShowSchema(show, isView, isSequence)
 	p.SetSchema(schema)
-	p.names = names
-	for _, col := range p.schema.Columns {
+	p.SetOutputNames(names)
+	for _, col := range p.Schema().Columns {
 		col.UniqueID = b.ctx.GetSessionVars().AllocPlanColumnID()
 	}
 	var err error
@@ -3255,10 +3310,10 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (base.P
 	}
 	if np != p {
 		b.optFlag |= flagEliminateProjection
-		fieldsLen := len(p.schema.Columns)
+		fieldsLen := len(p.Schema().Columns)
 		proj := LogicalProjection{Exprs: make([]expression.Expression, 0, fieldsLen)}.Init(b.ctx, 0)
 		schema := expression.NewSchema(make([]*expression.Column, 0, fieldsLen)...)
-		for _, col := range p.schema.Columns {
+		for _, col := range p.Schema().Columns {
 			proj.Exprs = append(proj.Exprs, col)
 			newCol := col.Clone().(*expression.Column)
 			newCol.UniqueID = b.ctx.GetSessionVars().AllocPlanColumnID()
@@ -3690,7 +3745,7 @@ func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (
 
 	mockTablePlan := LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
 	mockTablePlan.SetSchema(insertPlan.tableSchema)
-	mockTablePlan.names = insertPlan.tableColNames
+	mockTablePlan.SetOutputNames(insertPlan.tableColNames)
 
 	checkRefColumn := func(n ast.Node) ast.Node {
 		if insertPlan.NeedFillDefaultValue {
@@ -3719,7 +3774,7 @@ func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (
 	}
 
 	mockTablePlan.SetSchema(insertPlan.Schema4OnDuplicate)
-	mockTablePlan.names = insertPlan.names4OnDuplicate
+	mockTablePlan.SetOutputNames(insertPlan.names4OnDuplicate)
 
 	onDupColSet, err := insertPlan.resolveOnDuplicate(insert.OnDuplicate, tableInfo, func(node ast.ExprNode) (expression.Expression, error) {
 		return b.rewriteInsertOnDuplicateUpdate(ctx, node, mockTablePlan, insertPlan)
@@ -3729,8 +3784,8 @@ func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (
 	}
 
 	// Calculate generated columns.
-	mockTablePlan.schema = insertPlan.tableSchema
-	mockTablePlan.names = insertPlan.tableColNames
+	mockTablePlan.SetSchema(insertPlan.tableSchema)
+	mockTablePlan.SetOutputNames(insertPlan.tableColNames)
 	insertPlan.GenCols, err = b.resolveGeneratedColumns(ctx, insertPlan.Table.Cols(), onDupColSet, mockTablePlan)
 	if err != nil {
 		return nil, err
@@ -4127,7 +4182,7 @@ func (b *PlanBuilder) buildLoadData(ctx context.Context, ld *ast.LoadDataStmt) (
 		return nil, err
 	}
 	mockTablePlan.SetSchema(schema)
-	mockTablePlan.names = names
+	mockTablePlan.SetOutputNames(names)
 
 	p.GenCols, err = b.resolveGeneratedColumns(ctx, tableInPlan.Cols(), nil, mockTablePlan)
 	return p, err
@@ -4210,7 +4265,7 @@ func (b *PlanBuilder) buildImportInto(ctx context.Context, ld *ast.ImportIntoStm
 	// support set 'tidb_snapshot' first and then import into the target table.
 	//
 	// tidb_read_staleness can be used to do stale read too, it's allowed as long as
-	// tableInfo.ID matches with the latest schema.
+	// TableInfo.ID matches with the latest schema.
 	latestIS := b.ctx.GetDomainInfoSchema().(infoschema.InfoSchema)
 	tableInPlan, ok := latestIS.TableByID(tableInfo.ID)
 	if !ok {
@@ -4227,7 +4282,7 @@ func (b *PlanBuilder) buildImportInto(ctx context.Context, ld *ast.ImportIntoStm
 		return nil, err
 	}
 	mockTablePlan.SetSchema(schema)
-	mockTablePlan.names = names
+	mockTablePlan.SetOutputNames(names)
 
 	p.GenCols, err = b.resolveGeneratedColumns(ctx, tableInPlan.Cols(), nil, mockTablePlan)
 	if err != nil {
@@ -4338,7 +4393,7 @@ func (b *PlanBuilder) buildSplitIndexRegion(node *ast.SplitRegionStmt) (base.Pla
 		return nil, err
 	}
 	mockTablePlan.SetSchema(schema)
-	mockTablePlan.names = names
+	mockTablePlan.SetOutputNames(names)
 
 	p := &SplitRegion{
 		TableInfo:      tblInfo,
@@ -4453,7 +4508,7 @@ func (b *PlanBuilder) buildSplitTableRegion(node *ast.SplitRegionStmt) (base.Pla
 		return nil, err
 	}
 	mockTablePlan.SetSchema(schema)
-	mockTablePlan.names = names
+	mockTablePlan.SetOutputNames(names)
 
 	p := &SplitRegion{
 		TableInfo:      tblInfo,
